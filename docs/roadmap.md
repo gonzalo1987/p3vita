@@ -55,7 +55,8 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Mercancías, almacenes y precios
 - [x] Umbrales de precio de cada ciudad (`update_town_price_thresholds`), como al cargar la partida
 - [x] Comprar y vender entre un barco y la ciudad, idéntico al juego en 24 000 operaciones ([oracle.md](oracle.md))
-- [ ] Estadísticas de comercio del comerciante y comercio con el kontor
+- [x] Estadísticas de compra y venta del comerciante y su reputación en la ciudad, idénticas al juego
+- [ ] Comercio con el kontor (operación 0x1B)
 - [x] Ciudades: población, satisfacción, producción de las empresas, consumo, milicia, astillero, iglesia y oficinas de los comerciantes ([formats/town_tick.md](formats/town_tick.md))
 - [x] Mapa del mar con las ciudades y los barcos de la partida, con su rumbo ([formats/navigation.md](formats/navigation.md))
 - [x] Rutas entre ciudades como las calcula el juego (6633 rutas idénticas en las 12 partidas)
@@ -64,10 +65,12 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Tick de ciudad completo (0x51BA10), idéntico al juego byte a byte: 23 040 ticks partiendo de las 12 partidas, hasta 240 días ([oracle.md](oracle.md))
 - [x] Partidas cargadas en memoria igual que el juego (ciudades, oficinas, comerciantes, cola de eventos...)
 - [ ] Ejecutar las operaciones que encolan las ciudades (obras, materiales, avisos)
-- [ ] Resto de advance_time: tick de los comerciantes, asedios, tareas programadas
+- [x] Tick de cada comerciante (0x4F7BB0): contabilidad, valor de la compañía, reputación y rangos, idéntico al juego
+- [ ] Resto de advance_time: los 15 objetos del mundo (0x52D7D0), asedios, tareas programadas, lo diario y semanal
 - [x] Barcos de la IA en puerto: comercio con las ciudades y sus oficinas, elección de destino, tripulación, armas, reparación en el astillero y creación de convoyes, idénticos al juego ([formats/navigation.md](formats/navigation.md) §8)
 - [x] Barcos como memoria del juego; navegación idéntica byte a byte (avisos, lista por x, contadores)
-- [ ] Convoyes en el mar, piratas, persecuciones, encuentros y batallas
+- [x] Convoyes de los comerciantes: en puerto, saliendo, en el mar, entrando, deshaciéndose, idénticos al juego 60 días en las 12 partidas ([formats/navigation.md](formats/navigation.md) §9)
+- [ ] Piratas, persecuciones, encuentros y batallas
 - [ ] Tests que comparen con el comportamiento documentado del original
 
 ## Fase 5: interfaz

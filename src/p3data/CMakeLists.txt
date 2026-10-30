@@ -1,5 +1,9 @@
 add_library(p3data STATIC
 	aim.cpp
+	convoys.cpp
+	convoys_members.cpp
+	convoys_port.cpp
+	convoys_sea.cpp
 	cpr.cpp
 	font.cpp
 	image.cpp
@@ -18,6 +22,7 @@ add_library(p3data STATIC
 	town_tick/construction.cpp
 	town_tick/core.cpp
 	town_tick/facilities.cpp
+	town_tick/merchants.cpp
 	town_tick/offices.cpp
 	town_tick/population.cpp
 	town_tick/shared.cpp

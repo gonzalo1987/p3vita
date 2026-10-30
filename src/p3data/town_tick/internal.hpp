@@ -24,6 +24,8 @@
 //   ship_ai.cpp       barcos en puerto (estados 0, 4 y 5 de 0x506720) y las
 //                     decisiones de los de la IA (0x518B80)
 //   ship_trade.cpp    lo que compran y venden los barcos de la IA
+//   merchants.cpp     el tick de cada comerciante: 0x4F7BB0
+// Los convoyes (src/p3data/convoys*.cpp) son de Sailing.
 // shared.cpp tiene las funciones pequeñas que usan varios.
 
 namespace p3::data::tick {
@@ -152,6 +154,10 @@ void fn_4f8690(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32
 void fn_4f8840(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32_t money, int32_t amount, bool flag);
 }  // namespace offices_detail
 
+// merchants.cpp: el tick de un comerciante (0x4F7BB0), que advance_time hace
+// en los ticks con t & 7 == 1 (comerciante t >> 3) y t & 7 == 6 ((t + 0x100) >> 3).
+void fn_4f7bb0(SaveGame& save, int merchant);
+
 // ship_ai.cpp: los manejadores de 0x506720 para un barco de la lista de
 // barcos en puerto en los estados 0 (0x5067D0), 4 (0x506A19) y 5 (0x506B6A).
 // `link` apunta al u16 que enlaza el barco (la cabeza [+0xE8] del objeto de
@@ -162,6 +168,16 @@ bool fn_5067d0(SaveGame& save, int ship, uint16_t* link);
 bool fn_506a19(SaveGame& save, int ship, uint16_t* link);
 bool fn_506b6a(SaveGame& save, int ship, uint16_t* link);
 void fn_518b80(SaveGame& save, int ship, uint32_t arg);  // Un barco de la IA decide qué hacer en puerto.
+// ship_ai.cpp: lo que usan también los convoyes (src/p3data/convoys*.cpp).
+namespace ship_ai_detail {
+void fn_517770(SaveGame& save, int ship, uint32_t flags);  // Aviso a la interfaz del barco y de su convoy.
+bool fn_519ba0(const SaveGame& save, int ship);  // ¿Puede zarpar?
+bool fn_519c40(const SaveGame& save, int ship);  // ¿Puede guiar un convoy?
+void fn_509ae0(SaveGame& save);  // Más convoyes libres si no quedan.
+void fn_501be0(SaveGame& save, int convoy);  // Recalcula el convoy a partir de sus barcos.
+void fn_501680(SaveGame& save, int convoy, uint16_t ship, uint16_t mode);  // Convoy nuevo guiado por `ship`.
+void fn_535400(SaveGame& save, uint32_t town, uint32_t merchant);
+}  // namespace ship_ai_detail
 
 // ship_trade.cpp (las llama fn_518b80)
 void fn_519280(SaveGame& save, int ship);

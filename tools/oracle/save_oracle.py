@@ -356,6 +356,10 @@ def run_trades(o, count, out, seed=1300):
         new_stock = o.s32(o.town(town) + 4 + 4 * ware)
         new_money = o.s32(o.merchant(owner))
         state = [abs(new_stock - stock), abs(new_money - money), new_money, new_stock] + o.ship_state(ship, ware)
+        # Estadísticas del comerciante (0x4F8690 / 0x4F8840): ventas, compras y
+        # reputación en la ciudad (float).
+        m = o.merchant(owner)
+        state += [o.s32(m + 0x49C), o.s32(m + 0x4A0), f'{o.u32(m + 0x124 + 12 * town):08x}']
         out.write(f'{kind},{ship},{town},{ware},{difficulty},{amount},{",".join(map(str, state))}\n')
 
 

@@ -351,6 +351,10 @@ struct SaveGame {
 	// y, en las demás, 1 + el tiempo de viaje (en días) desde la más cercana
 	// con 0, hasta 15 (0x535400). Vacío si el hueco no lo tiene.
 	std::array<std::vector<uint8_t>, 8> player_towns;
+	// Puntos (u16 x, u16 y) de scripts/Expeditionen.dat, que el juego lee al
+	// crear el primer comerciante (*0x6DF2E0; su número, u32 [0x6DF2E4]). Los
+	// usa 0x534F10 (convoys_port.cpp). Vacío si no se ha leído.
+	std::vector<std::array<uint16_t, 2>> expeditions;
 };
 
 // Lee una partida ya descomprimida.

@@ -14,6 +14,8 @@ El estado son copias de la memoria del juego, por regiones:
   E      cola de eventos (*0x6DD73C, tantos registros de 0x18 como [0x6DD748])
   Y      tiempos de viaje entre ciudades ([+0x6C] del mundo, n × n bytes)
   V      convoyes (*0x6DD7A8, tantos registros de 0x3C como [0x6DD896])
+  Q      rutas de los barcos: por cada barco con [+0x24], u16 barco, u32 nº de
+         puntos y los puntos (i16 x, i16 y)
   K0..K7 los 40 bytes de cada hueco del objeto 0x6DE588 (*[0x6DEF90 + 4·i]; vacío si no hay)
   Ri Di Ni  registros de edificio, rejilla y nodos (0x14) de la ciudad i; en
          cada nodo, el puntero al siguiente se cambia por su propia dirección
@@ -30,14 +32,20 @@ Formato del fichero (enteros little endian):
   Al final, u8 'E'.
 
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
-       [--desde DÍA] [--max N] [--semilla S] [--barcos DATOS]
+       [--desde DÍA] [--max N] [--semilla S] [--barcos DATOS [--sin-ia] [--sin-convoyes] [--sin-comerciantes]]
 La función 51ba10 graba los ticks de ciudad enteros.
 
 Con --barcos (la carpeta de --navdata de save_oracle.py), cada tick hace
 además la actualización de los barcos del juego (0x506720) con los estados
-que reproduce p3vita (en puerto, 0 a 5; en el mar, 0x0F; sin convoyes) y, al
-final del tick, ejecuta las órdenes de zarpar (operación 0x00, 0x537670) que
-se han encolado. El juego ejecuta la cola entre dos llamadas a advance_time,
+que reproduce p3vita (en puerto, 0 a 5; en el mar, 0x0F; los convoyes de los
+comerciantes, pero no los de los piratas, que se quedan quietos, ni los
+encuentros de 0x5053C0) y, al final del tick, ejecuta las órdenes de zarpar
+(operación 0x00, 0x537670) que se han encolado. Con --sin-convoyes se salta
+todo el recorrido de los convoyes. También hace el tick de cada comerciante
+(0x4F7BB0), como advance_time: en los ticks con t & 7 == 1 el comerciante
+t >> 3 y con t & 7 == 6 el (t + 0x100) >> 3, antes de los barcos
+(--sin-comerciantes lo salta). Para repetir el mundo con tick_probe
+--continuo hay que grabar también 4f7bb0. El juego ejecuta la cola entre dos llamadas a advance_time,
 que hace hasta 8 ticks según el tiempo real; aquí y en p3vita, tras cada tick.
 Las funciones 506720 y 537670 también se pueden grabar. Con --sin-ia, los
 barcos como en sail_oracle.py: en puerto solo los estados 1, 2, 3 y el 0 de
@@ -54,6 +62,7 @@ from unicorn import UC_HOOK_CODE  # noqa: E402
 from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESP  # noqa: E402
 
 TOWN_TICK = 0x51BA10
+MERCHANT_TICK = 0x4F7BB0  # thiscall sobre el comerciante, con su índice
 UPDATE_SHIPS = 0x506720
 SET_SAIL = 0x537670  # operación 0x00
 UPDATE_DATE = 0x5310D0
@@ -74,12 +83,16 @@ OPERATION_SIZE = 0x14  # lo que copia 0x543F10; lo que sigue en la pila es basur
 TRAMPOLINE = SENTINEL + 0x10
 SHIPS_TRAMPOLINE = SENTINEL + 0x20
 SAIL_TRAMPOLINE = SENTINEL + 0x30
+MERCHANT_TRAMPOLINE = SENTINEL + 0x40
 # Actualización de barcos (ver sail_oracle.py): saltos por estado y convoyes.
 DOCKED_DISPATCH = 0x5067C0
 DOCKED_SKIP = 0x5068C6
 SAILING_DISPATCH = 0x506C4C
 SAILING_SKIP = 0x506CC3
 CONVOYS = 0x5070FD
+CONVOY_DISPATCH = 0x50719D  # salto por el estado del convoy (ebp: el convoy)
+CONVOY_SKIP = 0x507612  # el estado 0x13: pasa al siguiente convoy
+ENCOUNTERS = 0x5079DA  # cada 8 ticks, 0x5053C0 (encuentros): se salta
 EPILOGUE = 0x5079E8
 DOCKED_STATES = (0, 1, 2, 3, 4, 5)
 
@@ -108,9 +121,10 @@ def trampoline(target, args):
 
 
 class TownOracle(SaveOracle):
-    def __init__(self, exe, save, seed=1, navdata=None, ai=True):
+    def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True):
         super().__init__(exe, save, navdata)
         self.ai = ai
+        self.merchants = merchants and navdata is not None
         self.rand_state = seed
         self.queued = []  # para las muestras
         self.tick_operations = []  # las órdenes que se ejecutan al final del tick
@@ -120,8 +134,13 @@ class TownOracle(SaveOracle):
             quiet.update(QUIET_SHIPS)
             self.uc.hook_add(UC_HOOK_CODE, self._docked, begin=DOCKED_DISPATCH, end=DOCKED_DISPATCH)
             self.uc.hook_add(UC_HOOK_CODE, self._sailing, begin=SAILING_DISPATCH, end=SAILING_DISPATCH)
-            self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=CONVOYS, end=CONVOYS, user_data=EPILOGUE)
-            for at, target, args in ((SHIPS_TRAMPOLINE, UPDATE_SHIPS, 1), (SAIL_TRAMPOLINE, SET_SAIL, 0)):
+            if convoys:
+                self.uc.hook_add(UC_HOOK_CODE, self._convoy, begin=CONVOY_DISPATCH, end=CONVOY_DISPATCH)
+                self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=ENCOUNTERS, end=ENCOUNTERS, user_data=EPILOGUE)
+            else:
+                self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=CONVOYS, end=CONVOYS, user_data=EPILOGUE)
+            for at, target, args in ((SHIPS_TRAMPOLINE, UPDATE_SHIPS, 1), (SAIL_TRAMPOLINE, SET_SAIL, 0),
+                                     (MERCHANT_TRAMPOLINE, MERCHANT_TICK, 1)):
                 _, build = trampoline(target, args)
                 self.uc.mem_write(at, build(at))
         for address, pop in quiet.items():
@@ -155,6 +174,14 @@ class TownOracle(SaveOracle):
         from unicorn.x86_const import UC_X86_REG_ESI
         if self.u16(uc.reg_read(UC_X86_REG_ESI) + 0x134) != 0x0F:
             uc.reg_write(UC_X86_REG_EIP, SAILING_SKIP)
+
+    def _convoy(self, uc, address, size, user_data):
+        # Los convoyes de los piratas (el que los guía no es de un comerciante)
+        # se quedan quietos: sus ataques acaban en batallas, que el emulador no
+        # puede ejecutar.
+        from unicorn.x86_const import UC_X86_REG_EBP
+        if self.u8(uc.reg_read(UC_X86_REG_EBP)) >= self.counts()[2]:
+            uc.reg_write(UC_X86_REG_EIP, CONVOY_SKIP)
 
     def _jump(self, uc, address, size, target):
         uc.reg_write(UC_X86_REG_EIP, target)
@@ -209,6 +236,9 @@ class TownOracle(SaveOracle):
         town = t >> 3 if t & 7 == 7 else (t + 0xFF) >> 3 if t & 7 == 3 else None
         if town is not None and town < self.u32(WORLD + 0x10):
             self.town_tick(town)
+        merchant = t >> 3 if t & 7 == 1 else (t + 0x100) >> 3 if t & 7 == 6 else None
+        if self.merchants and merchant is not None and merchant < self.u16(WORLD + 0xA):
+            self.call(MERCHANT_TRAMPOLINE, [merchant], ecx=self.merchant(merchant))
         if self.ships:
             self.call(SHIPS_TRAMPOLINE, [tick], ecx=SHIPS)
             # Las órdenes de zarpar encoladas en este tick (las de las obras de
@@ -244,6 +274,13 @@ class TownOracle(SaveOracle):
         add('E', self.u32(EVENTS), self.u16(EVENTS + 0xC) * 0x18 if self.u32(EVENTS) else 0)
         add('Y', self.u32(WORLD + 0x6C), towns * towns if self.u32(WORLD + 0x6C) else 0)
         add('V', self.u32(SHIPS + 8), self.u16(SHIPS + 0xF6) * 0x3C if self.u32(SHIPS + 8) else 0)
+        routes = bytearray()
+        for i in range(ships):
+            route = self.u32(self.ship(i) + 0x24)
+            if route:
+                points, count = self.u32(route), self.u32(route + 4)
+                routes += struct.pack('<HI', i, count) + bytes(self.uc.mem_read(points, 4 * count))
+        out['Q'] = (0, bytes(routes))
         for i in range(8):
             p = self.u32(PLAYER_TOWNS + 4 * i)
             add(f'K{i}', p, 40 if p else 0)
@@ -366,8 +403,11 @@ def main():
     p.add_argument('--semilla', type=int, default=1)
     p.add_argument('--barcos', metavar='DATOS', help='también los barcos (carpeta con navdata/ y scripts/)')
     p.add_argument('--sin-ia', action='store_true', help='con --barcos, sin las decisiones de la IA en puerto')
+    p.add_argument('--sin-convoyes', action='store_true', help='con --barcos, sin el recorrido de los convoyes')
+    p.add_argument('--sin-comerciantes', action='store_true', help='con --barcos, sin el tick de los comerciantes')
     a = p.parse_args()
-    o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia)
+    o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
+                   not a.sin_comerciantes)
     o.load()
     functions = [int(x, 16) for x in a.functions.split(',')]
     with open(a.out, 'wb') as f:

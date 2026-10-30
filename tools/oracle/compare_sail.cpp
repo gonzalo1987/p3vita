@@ -107,7 +107,8 @@ int main(int argc, char** argv) {
 	}
 	Sailing sailing(save, *nav, load_sea_map_towns(*archive));
 	sailing.assign_loaded_routes();
-	sailing.set_ai(false);  // El oráculo de navegación no ejecuta la IA en puerto.
+	sailing.set_ai(false);  // El oráculo de navegación no ejecuta la IA en puerto
+	sailing.set_convoys(false);  // ni los convoyes.
 	auto advance = [&](uint32_t tick) {
 		while (save.tick() < tick) {
 			sailing.advance_tick();

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 
+#include "p3data/town_tick/internal.hpp"
+
 namespace p3::data {
 
 namespace {
@@ -166,6 +168,10 @@ TradeResult buy_to_ship(SaveGame& save, int ship_index, int town_index, int ware
 	add_cargo(ship, ware, result.amount, result.price);
 	recalculate_cargo(ship);
 	save.towns[size_t(town_index)].stock(size_t(ware)) -= uint32_t(result.amount);
+	// Estadística de compras y reputación en la ciudad (0x4F8840), con el
+	// almacén ya descontado.
+	tick::offices_detail::fn_4f8840(save, ship.owner(), uint32_t(town_index), uint32_t(ware), result.price,
+		result.amount, false);
 	return result;
 }
 
@@ -194,6 +200,10 @@ TradeResult sell_from_ship(SaveGame& save, int ship_index, int town_index, int w
 	ship.cargo(size_t(ware)) -= result.amount;
 	recalculate_cargo(ship);
 	save.merchants[ship.owner()].money() += result.price;
+	// Estadística de ventas y reputación en la ciudad (0x4F8690), con el
+	// almacén de antes de la venta.
+	tick::offices_detail::fn_4f8690(save, ship.owner(), uint32_t(town_index), uint32_t(ware), result.price,
+		result.amount, false);
 	save.towns[size_t(town_index)].stock(size_t(ware)) += uint32_t(result.amount);
 	return result;
 }

@@ -9,12 +9,13 @@ el propio código del juego en el emulador.
 > `src/p3data/navigation.cpp` (rutas, §5), `src/p3data/sailing.cpp`
 > (movimiento, puerto y orden de zarpar, §4 y §6),
 > `src/p3data/town_tick/ship_ai.cpp` y `ship_trade.cpp` (los barcos de la IA
-> en puerto, §8) y la vista del mapa del mar del visor (`src/app/main.cpp`);
+> en puerto, §8), `src/p3data/convoys*.cpp` (convoyes, §9) y la vista del mapa del mar del visor (`src/app/main.cpp`);
 > `tools/p3map` dibuja el mapa de una partida en un PNG. Las rutas entre
 > ciudades coinciden con las del juego en las 12 partidas v0x82 de `missav/`
 > (6633 rutas). La navegación, con los barcos de la IA decidiendo y
 > comerciando y los ticks de las ciudades, es idéntica byte a byte a la del
-> juego partiendo de la partida que lee p3vita (ver [../oracle.md](../oracle.md)).
+> juego partiendo de la partida que lee p3vita, también con los convoyes de
+> los comerciantes (ver [../oracle.md](../oracle.md)).
 
 ## 1. Coordenadas
 
@@ -351,6 +352,83 @@ barco de un comerciante de la IA llama a 0x518B80, que decide qué hace:
   ciudad) lo repara y lo devuelve con el estado 5, que (0x506B6A) vuelve al 0.
 
 Los barcos de la IA que se quedan en el mar sin ruta encolan cada 64 ticks
-una orden de zarpar (§4). Los convoyes se crean y se llenan en puerto, pero
-p3vita aún no los mueve (tercer bucle de 0x506720), igual que los piratas,
-las persecuciones y los encuentros (0x5053C0).
+una orden de zarpar (§4). Los convoyes se crean y se llenan en puerto (§9).
+
+## 9. Convoyes **[código + oráculo]**
+
+Un convoy es un registro de 0x3C bytes (array *0x6DD7A8, [0x6DD896]
+reservados; `SaveGame::convoys`) con sus barcos enlazados por el [+0x6] de
+cada barco, que mientras van en él no están en las listas de puerto ni del
+mar. Los convoyes que existen forman una lista que empieza en el [+0xEC] del
+objeto de los barcos y sigue por el [+0x8] de cada uno; los libres, otra en
+[+0xE4] (0x509AE0 reserva 0x20 más cuando no queda ninguno). Campos:
+
+| Offset | Qué |
+|-|-|
+| +0x0 u8 | dueño (el del barco que lo guía) |
+| +0x1 u8 | tipos de sus barcos (OR del [+0xE] de cada uno) |
+| +0x2 u16 | evento de la cola asociado (0xFFFF: ninguno); con uno de tipo 0x34 apunta los barcos que pierde |
+| +0x4 u32 | capacidad de los barcos del dueño |
+| +0x8 u16 | siguiente en su lista |
+| +0xA u16 | primer barco |
+| +0xC u32 | velocidad del más lento: rumbo de todos y velocidad que se ve, `(v << 6) / 115 + 4` |
+| +0x10 u16 | barco que lo guía |
+| +0x12 u16 | estado (el de los barcos): 0, 1, 2, 3 como en puerto; 4 al astillero; 6 en la lista de su ciudad; 0x0F navegando; 0x12 piratas al acecho; 0x13 fuera del mapa; 0x14 ataque a una ciudad; 0xFF libre |
+| +0x14 u16 | bit 1: todos del mismo dueño (al deshacerlo no se cobra ni cambia la reputación); 0x10: ningún barco del dueño puede guiarlo |
+| +0x16 u16 | ticks de la maniobra o de espera ([+0x138] de los barcos) |
+| +0x18 u32 | avisos a la interfaz |
+| +0x1C u16 | ciudad (0xFF en el mar) |
+| +0x1E u8, +0x1F u8 | origen y destino |
+| +0x20 s32 | dinero que se lleva un convoy de la IA que sale del mapa (lo cobra al volver) |
+| +0x24 u16 | con < 0x7FFF, al acabar la ruta en x < 0x82 y 0x578 < y < 0x708, sale del mapa |
+
+La IA los crea en puerto (0x519EB0 → 0x509B90, §8). El tercer recorrido de
+0x506720 los mueve según su estado (tabla 0x507D14). Antes, el convoy sin
+barcos sale de la lista y se borra (0x50A3D0), y el que se ha quedado sin
+guía se deshace (0x50A580). En cada estado:
+
+- **0 en puerto** (0x5071A4): si el que lo guía es de la IA decide como un
+  barco atracado (0x518B80) y espera al menos 0x200 ticks. Si su ciudad no
+  es su destino, todos pasan a esperar (1): los barcos de la IA que han
+  llegado a su destino dejan el convoy (0x509F80) y los demás reservan y
+  compran para la parada siguiente (0x519B50); después se recalcula
+  (0x501BE0). Si ya está en su destino, descansan (como en puerto).
+- **1 esperando** (0x5073C0): cada barco descuenta su espera y descansa un
+  punto por tick; cuando no queda ninguno esperando, sale (2) si va a otra
+  ciudad.
+- **2 saliendo** (0x5074DB): en el primer tick, 0x501EB0 hace salir a cada
+  barco como 0x5090E0 (el que no puede zarpar deja el convoy; la carga en
+  camino se suma al [0x670] del destino y al [0x370] de la ciudad de la que
+  sale) y 0x503CF0 les da la mitad de la velocidad del convoy. A los 64
+  ticks, al mar (0x0F): el guía entra en la lista por x, se recalcula la
+  bodega y, si todos son del mismo dueño de la IA, 0x503B50 encola las
+  operaciones 0x1E y 0x1F (cuatro), con `rand` y puntos de 0x534F10 (los
+  15 objetos del mundo en [+0xB10] o `scripts/Expeditionen.dat`).
+- **0x0F navegando** (0x50787F → 0x502110): el guía avanza por su ruta y los
+  demás copian su posición. El casco de los barcos de la IA y de los piratas
+  baja 1 en los ticks 0x28, 0x50 y 0x78 de cada 128 y el de los humanos uno
+  cada 4; el barco que se queda sin casco sale del convoy a la lista del mar.
+  En cada punto de la ruta, rumbo y llegada prevista para todos (0x50A240);
+  al final, una ciudad (entra en puerto: estado 3; ante un puerto cerrado se
+  queda fuera), el mar o la salida del oeste (0x5029F0: evento 0x12 en la
+  cola, posición (30000, 30000), estado 0x13). Si el guía ha cambiado de
+  convoy, 0x5017F0 elige otro y el recorrido vuelve a pasar por el mismo.
+- **3 entrando** (0x5076A0): a los 64 ticks atracan todos (0x519C90), el
+  dueño cobra [+0x20] y el convoy sigue si 0x5017F0 encuentra guía y es de
+  un solo dueño; si no, se deshace (0x50A580). Al deshacerse, cada
+  comerciante ajeno paga al dueño, si el convoy llega a su destino desde
+  otra ciudad, `10 · ⌊(⌊√Σ max([+0x114], 100)⌋ · ⌊√(20 · tiempo de viaje)⌋
+  + 99) / 100⌋`, y cambia la reputación (0x4F9050).
+- **4** pasa a la lista de convoyes de su ciudad ([0x820]) con el estado 6;
+  **9** (0x503930) y **0xA** cuentan una espera; **0xB** y **0x13**, nada;
+  cualquier otro estado deshace el convoy barco a barco y lo borra.
+
+En p3vita (`src/p3data/convoys*.cpp`, miembros de `Sailing`) los convoyes de
+los **piratas** (dueño que no es comerciante) se quedan quietos: sus
+ataques acaban en batallas (0x50BC40 → 0x605420), que no se reproducen, y
+tampoco los encuentros (0x5053C0) ni la persecución entera (0x50B030). Sin
+traducir, porque solo los alcanzan los piratas o los jugadores, que no
+tienen convoyes en las partidas: la rama de piratas de 0x5017F0 (crea un
+capitán), las rutas automáticas del jugador en convoy (0x503230, 0x4D4DD0),
+borrar los barcos que queden en un convoy al borrarlo (0x507FB0) y el
+ataque a una ciudad (0x50BA80).

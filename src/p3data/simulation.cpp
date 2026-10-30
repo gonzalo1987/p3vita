@@ -17,6 +17,17 @@ int town_for_tick(const SaveGame& save, uint32_t tick) {
 	return town >= 0 && size_t(town) < save.towns.size() ? town : -1;
 }
 
+int merchant_for_tick(const SaveGame& save, uint32_t tick) {
+	const uint32_t t = tick & 0xFF;
+	int merchant = -1;
+	if ((t & 7) == 1) {
+		merchant = int(t >> 3);
+	} else if ((t & 7) == 6) {
+		merchant = int((t + 0x100) >> 3);
+	}
+	return merchant >= 0 && merchant < save.globals.u16(global::kWorldMerchantCount) ? merchant : -1;
+}
+
 void town_tick(SaveGame& save, int town) {
 	tick::fn_51ba10(save, town, save.globals.u16(global::kWorldDayOfYear));
 }
@@ -26,6 +37,10 @@ void advance_game_tick(SaveGame& save, Sailing& sailing) {
 	const int town = town_for_tick(save, save.tick());
 	if (town >= 0) {
 		town_tick(save, town);
+	}
+	const int merchant = merchant_for_tick(save, save.tick());
+	if (merchant >= 0) {
+		tick::fn_4f7bb0(save, merchant);
 	}
 	sailing.update_ships();
 	run_queued_operations(save, sailing);

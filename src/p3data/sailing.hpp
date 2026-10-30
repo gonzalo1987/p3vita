@@ -20,8 +20,9 @@ namespace p3::data {
 // (esperando en puerto) y 0 (atracado) de los barcos del jugador, con los
 // avisos a la interfaz [+0x3C], la lista de los barcos en el mar ordenada
 // por x ([+0xA], [+0xC]) y los contadores del objeto de los barcos. Las
-// decisiones de la IA (town_tick/ship_ai.cpp), los piratas, los convoyes, el
-// astillero, los encuentros y las batallas no se reproducen todavía.
+// decisiones de la IA en puerto están en town_tick/ship_ai.cpp y los convoyes
+// de los comerciantes en convoys*.cpp; los piratas, los encuentros y las
+// batallas no se reproducen todavía.
 // Comprobado con el oráculo (tools/oracle/sail_oracle.py y, el mundo entero,
 // town_oracle.py --barcos --sin-ia con tick_probe; ver docs/oracle.md).
 
@@ -38,6 +39,10 @@ GameDate date_from_tick(uint32_t tick);
 
 // 0x516840: quita la ruta al barco y vuelve al primer punto.
 void clear_ship_route(SavedShip& ship);
+
+// 0x517410: desplazamiento por tick y rumbo del barco hacia `target` con
+// esa velocidad.
+void set_ship_course(SavedShip& ship, uint32_t speed, MapPoint target);
 
 // 0x5310D0: la fecha del mundo (día, mes, año y día del año) a partir de su
 // tick. El juego la recalcula al empezar cada día.
@@ -68,6 +73,8 @@ public:
 	// jugadores humanos, como en tools/oracle/sail_oracle.py y en
 	// town_oracle.py --sin-ia (para probar la navegación sin la IA).
 	void set_ai(bool enabled) { ai_ = enabled; }
+	// Con false no se recorren los convoyes (town_oracle.py --sin-convoyes).
+	void set_convoys(bool enabled) { convoys_ = enabled; }
 
 	// Un tick de advance_time (0x530E80) solo con la fecha y los barcos: lo
 	// mismo que begin_tick y update_ships. El tick completo, con las ciudades,
@@ -114,8 +121,32 @@ public:
 	// Velocidad de un barco según su tipo, su carga y su casco (0x5170F0).
 	static uint32_t speed(const SavedShip& ship);
 
+	// Convoyes (registros de 0x3C bytes en SaveGame::convoys; ver
+	// docs/formats/navigation.md §9): el tercer recorrido de 0x506720 y las
+	// funciones del juego que lo cuelgan, con el nombre de su dirección. Los
+	// argumentos que en el juego son punteros a un convoy o a un barco son su
+	// índice. Públicas para las sondas de tools/oracle.
+	void update_convoys();  // convoys.cpp
+	// convoys_sea.cpp: el convoy navega.
+	bool fn_502110(int convoy, uint32_t every_32);  // Un tick en el mar del convoy; false si deja de navegar.
+	void fn_505c30(uint16_t ship);  // (objeto de los barcos)
+	void fn_50a240(uint32_t arrival, uint32_t speed, uint32_t convoy, uint8_t heading);  // (objeto de los barcos)
+	void fn_501e10(int convoy, int ship);
+	void fn_5029f0(int convoy);
+	// convoys_members.cpp: los barcos entran y salen del convoy.
+	bool fn_5017f0(int convoy);
+	void fn_509f80(uint16_t ship);  // (objeto de los barcos) Saca el barco de su convoy.
+	void fn_50a580(uint16_t convoy);  // (objeto de los barcos) Deshace el convoy.
+	void fn_50a3d0(uint16_t convoy);  // (objeto de los barcos) Borra el convoy.
+	// convoys_port.cpp: el convoy en puerto.
+	bool fn_501eb0(int convoy);
+	void fn_503b50(int convoy);
+	void fn_503cf0(int convoy);
+	void fn_503930(int convoy);
+
 private:
 	bool ai_ = true;
+	bool convoys_ = true;
 
 	struct Assigned {
 		std::shared_ptr<SeaRoute> route;

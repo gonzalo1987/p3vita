@@ -226,3 +226,46 @@ azar para las ramas que las partidas no recorren. Así se encontraron, por
 ejemplo, que el juego exige el casco por encima del 20 % solo a los barcos
 con capitán (p3vita lo tenía al revés), que la IA crea convoyes en puerto, los
 avisos a la interfaz que pone cada estado y la lista de barcos ordenada por x.
+
+## Convoyes
+
+`town_oracle.py --barcos` ejecuta ahora también el recorrido de los convoyes
+de 0x506720 (`--sin-convoyes` lo salta, como antes). Los convoyes de los
+piratas se quedan quietos: en el salto por estado (0x50719D) pasan al
+siguiente, porque sus ataques acaban en batallas (0x50BC40 → 0x605420) que
+el emulador no puede ejecutar (se descubrió al dejarlos: la emulación se
+caía en 7 de las 12 partidas). Tampoco se ejecutan los encuentros del final
+(0x5053C0). Las grabaciones llevan una región `Q` con la ruta de cada barco
+que tiene (en el juego, [+0x24] es un puntero), que tick_probe reconstruye y
+compara: así las funciones que mueven barcos por su ruta se comprueban una a
+una. Con `--cpr`, tick_probe crea la navegación (`Sailing`) también para las
+llamadas sueltas, y las sondas la tienen en `probe_sailing()`.
+
+Las funciones de los convoyes (0x502110 y lo que cuelga, 0x5017F0, 0x509F80,
+0x50A580, 0x50A3D0, 0x501EB0, 0x503B50...) se tradujeron en tres partes, cada
+una comprobada sola en las 12 partidas (de 8 a 150 días) y con convoyes,
+barcos y ciudades cambiados al azar para las ramas que no salen; el
+recorrido, al juntarlas. Resultado del mundo entero (ciudades, barcos, IA,
+convoyes y órdenes de zarpar) partiendo de la partida que lee p3vita: **0
+diferencias byte a byte en las 12 partidas durante 60 días**, comparando
+también las rutas. Por el camino apareció que p3vita no leía los 15 objetos
+del mundo de [+0xB10] (0x52BBE0), que usa 0x534F10 para las operaciones
+que encola un convoy al zarpar: la comparación de la carga no los miraba
+porque solo compara los globales que llena el lector.
+
+El tick de los comerciantes (0x4F7BB0) también está en el oráculo del
+mundo (`--sin-comerciantes` lo salta); para repetir con tick_probe
+`--continuo` hay que grabar `4f7bb0` con el resto. Traducido
+([formats/town_tick.md](formats/town_tick.md) §9), el mundo entero con
+ciudades, comerciantes, barcos, IA y convoyes sale idéntico al juego, **0
+diferencias en las 12 partidas durante 60 días**:
+
+```sh
+python3 tools/oracle/town_oracle.py <exe> /tmp/1.raw /tmp/1-w.probe 60 51ba10,4f7bb0,506720,537670 --barcos /tmp/datos
+build/tools/oracle/tick_probe /tmp/1-w.probe --continuo --carga /tmp/1.raw --cpr p2arch0_eng.cpr
+```
+
+El oráculo de partidas (`compare_save`) compara ahora, después de cada
+compra y venta, las estadísticas del comerciante (ventas [0x49C], compras
+[0x4A0]) y su reputación en la ciudad: 0 diferencias en las 24 000
+operaciones de las 12 partidas.

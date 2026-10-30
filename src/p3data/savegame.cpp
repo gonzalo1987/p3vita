@@ -696,9 +696,19 @@ bool parse_world_tail(Reader& r, size_t town_count, uint16_t record_count, uint1
 			}
 		}
 	}
-	for (int i = 0; i < 15; ++i) {  // 0x52BBE0
-		r.skip(8 + 4 + 8 + 8);
-		r.skip(size_t(r.u16()) * 16);
+	// 0x52BBE0: los 15 objetos de 0x2C bytes del mundo en [+0xB10] (0x6DEFB0;
+	// su tick, 0x52D7D0, aún no se reproduce): 8 bytes, u32 [+0x8], 8 bytes en
+	// [+0xC] y en [+0x14] y u16 [+0x1C] con el número de registros de 16 bytes
+	// de una lista del montón ([+0x24]), que se descartan (vacías en las
+	// partidas de missav/). Los usa 0x534F10 (convoys_port.cpp).
+	for (uint32_t i = 0; i < 15; ++i) {
+		const uint32_t object = global::kWorld + 0xB10 + 0x2C * i;
+		for (uint32_t k = 0; k < 0x1C; ++k) {
+			out.globals.u8(object + k) = r.u8();
+		}
+		const uint16_t entries = r.u16();
+		out.globals.u16(object + 0x1C) = entries;
+		r.skip(size_t(entries) * 16);
 	}
 	if (r.u8() != 0) {
 		return fail(error, "la partida tiene un objeto del mundo (0x533DA0) que no se sabe leer");

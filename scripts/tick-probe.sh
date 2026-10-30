@@ -11,7 +11,8 @@
 # las variables P3_EXE (Patrician3.exe) y P3_CPR (p2arch0_eng.cpr). Las
 # partidas descomprimidas y las grabaciones van a ${P3_TMP:-/tmp}. Con
 # P3_SHIPS=<carpeta con navdata/ y scripts/StadtDaten.ini> el oráculo hace
-# pasar también los barcos (town_oracle.py --barcos).
+# pasar también los barcos (town_oracle.py --barcos) y tick_probe crea la
+# navegación (--cpr) para las funciones de Sailing (convoyes).
 set -e
 cd "$(dirname "$0")/.."
 : "${P3_EXE:?falta P3_EXE (ruta de Patrician3.exe)}"
@@ -36,9 +37,10 @@ for s in "${saves[@]}"; do
 	[ -f "$tmp/$s.raw" ] || build/tools/p3save/p3save "$P3_CPR" "missav/$s.pat" raw "$tmp/$s.raw" >/dev/null
 	probe="$tmp/$s-${functions//,/-}-$days.probe"
 	ships=()
-	[ -n "$P3_SHIPS" ] && ships=(--barcos "$P3_SHIPS")
+	cpr=()
+	[ -n "$P3_SHIPS" ] && ships=(--barcos "$P3_SHIPS") && cpr=(--cpr "$P3_CPR")
 	python3 tools/oracle/town_oracle.py "$P3_EXE" "$tmp/$s.raw" "$probe" "$days" "$functions" "${ships[@]}" >/dev/null
 	echo "== $s"
-	build/tools/oracle/tick_probe "$probe" "$@" || status=1
+	build/tools/oracle/tick_probe "$probe" "${cpr[@]}" "$@" || status=1
 done
 exit $status

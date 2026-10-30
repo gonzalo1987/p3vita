@@ -93,10 +93,12 @@ void clear_route(SavedShip& ship) {
 	clear_ship_route(ship);
 }
 
+}  // namespace
+
 // Rumbo y desplazamiento por tick hacia `target` (0x517410): tantos ticks
 // como 128 · distancia / velocidad, más uno, y el rumbo de 16 pasos según
 // el cuadrante y la pendiente del desplazamiento.
-void set_course(SavedShip& ship, uint32_t speed, MapPoint target) {
+void set_ship_course(SavedShip& ship, uint32_t speed, MapPoint target) {
 	const int32_t dx = target.x - whole(ship.x());
 	const int32_t dy = target.y - whole(ship.y());
 	const int32_t steps = 1 - ftol(std::sqrt(double(dy * dy + dx * dx)) * -128.0 / double(int32_t(speed)));
@@ -127,6 +129,12 @@ void set_course(SavedShip& ship, uint32_t speed, MapPoint target) {
 		turn = e * kSteep < limit ? 2 : e * kShallow < limit ? 3 : 4;
 	}
 	ship.heading() = uint8_t((base + turn) & 0xF);
+}
+
+namespace {
+
+void set_course(SavedShip& ship, uint32_t speed, MapPoint target) {
+	set_ship_course(ship, speed, target);
 }
 
 }  // namespace
@@ -183,6 +191,10 @@ MapPoint Sailing::approach(int town) const {
 }
 
 std::shared_ptr<SeaRoute> Sailing::town_route(int from, int to) {
+	if (matrix_.size() != save_.towns.size() * save_.towns.size()) {
+		// Creado antes de leer la partida (tools/oracle/tick_probe).
+		matrix_.assign(save_.towns.size() * save_.towns.size(), nullptr);
+	}
 	std::shared_ptr<SeaRoute>& route = matrix_.at(size_t(from) * save_.towns.size() + size_t(to));
 	if (!route) {
 		route = std::make_shared<SeaRoute>(nav_.route(approach(from), approach(to)));
@@ -426,8 +438,8 @@ void Sailing::begin_tick() {
 // los contadores, recorre la lista de puerto y la del mar y después los
 // convoyes. Cuando el tick acaba en 0x6F, antes de las listas, llama a
 // 0x514000 con cada uno de los cinco objetos de [+0xC] del objeto de los
-// barcos que existan; y al final, cada 8 ticks, a 0x5053C0. Ni lo uno ni lo
-// otro ni los convoyes se reproducen (el oráculo tampoco los ejecuta).
+// barcos que existan; y al final, cada 8 ticks, a 0x5053C0 (los encuentros).
+// Ni lo uno ni lo otro se reproducen (el oráculo tampoco los ejecuta).
 void Sailing::update_ships() {
 	GlobalMemory& g = save_.globals;
 	g.u16(kPlayerShipsInPort) = 0;
@@ -436,6 +448,9 @@ void Sailing::update_ships() {
 	g.u16(kPlayerConvoysAtSea) = 0;
 	update_docked();
 	update_sailing();
+	if (convoys_) {
+		update_convoys();
+	}
 }
 
 // Descanso en puerto (0x5067E5, igual en el estado 1): pasado un día desde

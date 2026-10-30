@@ -177,3 +177,45 @@ así que las ciudades no llegan a construir.
   cuenta la primera oficina; 0x5109B0 deja negativo [+0xC]; la granja de grano
   compara al revés al contratar; 0x524920 escribe fuera de la rejilla con un
   muelle en la última columna (aquí un `assert`).
+
+## 9. El tick del comerciante (0x4F7BB0) **[código + oráculo]**
+
+`advance_time` hace el tick de cada comerciante en los ticks con `t & 7 == 1`
+(comerciante `t >> 3`) y `t & 7 == 6` (comerciante `(t + 0x100) >> 3`), antes
+de los barcos: un tick al día por comerciante. Traducido en
+`src/p3data/town_tick/merchants.cpp` y conectado en `advance_game_tick`;
+idéntico al juego en las 12 partidas (60 días, y con estados retocados), y
+dentro del mundo entero.
+
+- Cada 7 días (día del juego múltiplo de 7), la contabilidad: el dinero
+  [+0x0] suma ingresos [+0x488] y resta gastos [+0x480], salarios [+0x490] y
+  otros gastos [+0x4A8], [+0x4D0]; avisos al jugador; se ponen a 0; [+0x15]
+  se limita a 200, [+0x25] a 0 y [+0x1E] baja 1.
+- Cada día: [+0x16] se acerca a 0 de 11 en 11; [+0x1F] (reputación con los
+  marineros) sube 1 hasta 20; [+0x22] se acerca 1 al objetivo 20 × rango en
+  la ciudad natal (el 7 cuenta 8) menos [+0x17] si es positivo; los préstamos
+  de la cola de eventos (tipo 1: [+0x8] importe, [+0x10] prestamista,
+  [+0x11] deudor; 0x4D9080) y los salarios de las tripulaciones (0x517F70,
+  [+0xC] del capitán) se suman a las deudas [+0x498] y a los salarios.
+- El valor de la compañía [+0x46C]: dinero, oficinas con sus existencias y
+  edificios (0x500330, 0x51F220, con los materiales de cada tipo de edificio
+  de 0x672A4C… y el valor de cada mercancía de 0x673A18) y barcos (0x52A7D0,
+  en 64 bits; con tipo > 3 el juego lee el propio barco como tabla). También
+  [+0x470] capacidad, [+0x474] marineros, [+0x478] barcos no hundidos,
+  [+0x47A] estado medio (‰) y [+0x47C] barcos.
+- Reputación por ciudad: tres componentes en [+0x11C + 12·i] (los dos
+  últimos ×0,99 al día), la de hoy [+0x2FC] y la de ayer [+0x3C4]; las
+  oficinas dan reputación por sus inquilinos ([0x2DE], [0x2E4]) y sus
+  empresas (0,01 por trabajador), el barco de la ciudad ([0x994]) uno más a
+  su dueño y el cónyuge ([+0x31], [+0x32]) en la ciudad natal.
+- Rangos [+0x39C + i] (0x4F75F0): el día 1 en la ciudad natal y cada día en
+  otras dos; para subir hacen falta reputación 7, 12, 20, 40 o 60 y un valor
+  de la compañía de 100 000, 200 000, 300 000, 500 000 o 900 000; 6 es
+  alcalde ([0x6F1] de la ciudad) y 7 alderman ([0x6DE52D] / [0x6DE52E]); el
+  bit de la ciudad en [+0x468] hace falta para los rangos 3 a 5. Optar a
+  alderman exige 120 de reputación.
+
+No se reproduce la candidatura a alderman (0x5326E0, con 0x532E30, que
+encola una operación): solo se llama si [0x6DF31C] es 0 y un alcalde llega a
+120 de reputación, lo que no pasa en las partidas en 60 días. Tampoco los
+avisos (0x4D6530, 0x548CA0, y la búsqueda en el buzón 0x4D7AC0).

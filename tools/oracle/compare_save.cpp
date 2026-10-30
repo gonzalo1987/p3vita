@@ -209,7 +209,7 @@ int main(int argc, char** argv) {
 			save.merchants.at(std::stoul(f[1])).money() = std::stoi(f[2]);
 			continue;
 		} else if (kind == "compra" || kind == "venta") {
-			const auto f = split(line, 14);
+			const auto f = split(line, 17);
 			const int ship = std::stoi(f[1]);
 			const int town = std::stoi(f[2]);
 			const int ware = std::stoi(f[3]);
@@ -226,6 +226,10 @@ int main(int argc, char** argv) {
 			check.field("precio medio", bits(s.average_price(size_t(ware))), f[11]);
 			check.field("ocupada", s.used(), f[12]);
 			check.field("equipo", s.equipment(), f[13]);
+			const MerchantMemory& m = save.merchants.at(s.owner()).memory;
+			check.field("ventas", m.s32(0x49C), f[14]);
+			check.field("compras", m.s32(0x4A0), f[15]);
+			check.field("reputación", bits(m.f32(0x124 + 12 * town)), f[16]);
 			++trades;
 		} else {
 			continue;

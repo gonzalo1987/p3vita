@@ -2,8 +2,9 @@
 // compara el resultado con el del juego, byte a byte, en la memoria de las
 // ciudades, oficinas, comerciantes, barcos, capitanes, globales...
 //
-// uso: tick_probe <fichero.probe> [--continuo] [--solo FUNCIÓN] [--max N]
-//        tick_probe <fichero.probe> --carga <partida.raw> [--continuo [--cpr p2arch0_eng.cpr [--sin-ia]]] [--max N]
+// uso: tick_probe <fichero.probe> [--continuo] [--cpr p2arch0_eng.cpr] [--solo FUNCIÓN] [--max N]
+//        tick_probe <fichero.probe> --carga <partida.raw> [--continuo [--cpr p2arch0_eng.cpr [--sin-ia]
+//          [--sin-convoyes]]] [--max N]
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
 // ella, así que una diferencia apunta a esa función. Con --continuo el estado
@@ -17,8 +18,15 @@
 // --continuo, la simulación de p3vita parte de esa lectura; con --cpr además
 // crea la navegación (Sailing) y repite también la actualización de barcos
 // (506720) y las órdenes de zarpar (537670) de una grabación hecha con
-// town_oracle.py --barcos: el mundo entero, tick a tick.
+// town_oracle.py --barcos: el mundo entero, tick a tick (--sin-ia y
+// --sin-convoyes, como en el oráculo).
+//
+// Con --cpr, las funciones de los barcos que necesitan la navegación (las de
+// los convoyes, la actualización de barcos) se pueden repetir también una a
+// una: las sondas la tienen en probe_sailing(). Las rutas de los barcos van en
+// la región Q de la grabación.
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
@@ -39,6 +47,16 @@
 
 using namespace p3::data;
 using namespace p3::probe;
+
+namespace {
+
+Sailing* g_sailing = nullptr;
+
+}  // namespace
+
+Sailing* p3::probe::probe_sailing() {
+	return g_sailing;
+}
 
 namespace {
 
@@ -200,6 +218,23 @@ void build_save(const State& state, SaveGame& save) {
 	if (const Region* v = find(state, "V")) {
 		copy_blocks(*v, save.convoys);
 	}
+	if (const Region* q = find(state, "Q")) {
+		// Rutas: u16 barco, u32 nº de puntos y los puntos. En el juego el
+		// barco tiene un puntero ([+0x24]); en p3vita, su copia de la ruta.
+		const std::vector<uint8_t>& b = q->bytes;
+		for (size_t o = 0; o + 6 <= b.size();) {
+			const uint16_t ship = get<uint16_t>(b.data(), o);
+			const uint32_t count = get<uint32_t>(b.data(), o + 2);
+			auto route = std::make_shared<SeaRoute>(count);
+			std::memcpy(route->data(), b.data() + o + 6, 4 * size_t(count));
+			o += 6 + 4 * size_t(count);
+			if (ship < save.ships.size()) {
+				const uint32_t pointer = save.ships[ship].memory.u32(0x24);
+				save.ships[ship].set_route(route);
+				save.ships[ship].memory.u32(0x24) = pointer;
+			}
+		}
+	}
 	for (size_t i = 0; i < save.player_towns.size(); ++i) {
 		if (const Region* k = find(state, "K" + std::to_string(i))) {
 			save.player_towns[i] = k->bytes;
@@ -258,6 +293,19 @@ State dump_save(const SaveGame& save, const State& game) {
 	}
 	if (s.count("V")) {
 		store_blocks(save.convoys, s["V"]);
+	}
+	if (s.count("Q")) {
+		std::vector<uint8_t>& b = s["Q"].bytes;
+		b.clear();
+		for (size_t i = 0; i < save.ships.size(); ++i) {
+			if (const std::shared_ptr<SeaRoute>& route = save.ships[i].route) {
+				const size_t o = b.size();
+				b.resize(o + 6 + 4 * route->size());
+				put<uint16_t>(b.data(), o, uint16_t(i));
+				put<uint32_t>(b.data(), o + 2, uint32_t(route->size()));
+				std::memcpy(b.data() + o + 6, route->data(), 4 * route->size());
+			}
+		}
 	}
 	for (size_t i = 0; i < save.player_towns.size(); ++i) {
 		const std::string k = "K" + std::to_string(i);
@@ -333,12 +381,15 @@ std::string describe(const std::string& region, size_t offset) {
 }
 
 // Globales que llena el lector de partidas: cabecera del mundo, del objeto de
-// los barcos, el jugador, el factor de la dificultad del comercio y el objeto
-// 0x6DE588 (sin sus punteros).
+// los barcos, el jugador, el factor de la dificultad del comercio, el objeto
+// 0x6DE588 (sin sus punteros) y los 15 objetos del mundo en [+0xB10] (sin su
+// lista).
 bool loaded_global(uint32_t a) {
 	return (a >= global::kWorld && a < global::kWorld + 0xE4) || (a >= global::kShips + 0xE0 && a < global::kShips + 0x100) ||
 		(a >= 0x6DE588 && a < 0x6DE588 + 0xA08) ||
 		(a >= global::kPlayer && a < global::kPlayer + 4) || (a >= 0x6DE43C && a < 0x6DE440) ||
+		(a >= global::kWorld + 0xB10 && a < global::kWorld + 0xB10 + 15 * 0x2C &&
+			(a - global::kWorld - 0xB10) % 0x2C < 0x1E) ||
 		(a >= 0x6DD744 && a < 0x6DD74A) || (a >= global::kShips + 0x100 && a < global::kShips + 0x108);
 }
 
@@ -411,6 +462,7 @@ int main(int argc, char** argv) {
 	}
 	bool continuous = false;
 	bool ai = true;
+	bool convoys = true;
 	std::string load;
 	std::string cpr;
 	uint32_t only = 0;
@@ -423,6 +475,8 @@ int main(int argc, char** argv) {
 			load = argv[++i];
 		} else if (arg == "--sin-ia") {
 			ai = false;
+		} else if (arg == "--sin-convoyes") {
+			convoys = false;
 		} else if (arg == "--cpr" && i + 1 < argc) {
 			cpr = argv[++i];
 		} else if (arg == "--solo" && i + 1 < argc) {
@@ -441,6 +495,10 @@ int main(int argc, char** argv) {
 	register_probes_construction(registry);
 	register_probes_ship_ai(registry);
 	register_probes_ship_trade(registry);
+	register_probes_convoys_sea(registry);
+	register_probes_convoys_members(registry);
+	register_probes_convoys_port(registry);
+	register_probes_merchants(registry);
 
 	Input in(argv[1]);
 	if (!in.ok() || !in.expect("P3PROBE1")) {
@@ -455,6 +513,22 @@ int main(int argc, char** argv) {
 	std::unique_ptr<NavData> nav;
 	std::unique_ptr<Sailing> sailing;
 	std::deque<std::vector<uint8_t>> pending_sail;  // Órdenes de zarpar que esperan a 537670.
+	if (!cpr.empty()) {
+		archive = CprArchive::open(cpr, &error);
+		nav = archive ? NavData::load(*archive, &error) : nullptr;
+		if (!nav) {
+			std::fprintf(stderr, "%s: %s\n", cpr.c_str(), error.c_str());
+			return 1;
+		}
+		sailing = std::make_unique<Sailing>(save, *nav, load_sea_map_towns(*archive));
+		sailing->set_ai(ai);
+		sailing->set_convoys(convoys);
+		g_sailing = sailing.get();
+		registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
+			sailing->update_ships();
+			return std::nullopt;
+		};
+	}
 	if (!load.empty()) {
 		std::ifstream f(load, std::ios::binary);
 		const std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -463,9 +537,11 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 		if (!continuous) {
-			// Los objetos de asedio (0x633730) aún no se leen.
+			// Los objetos de asedio (0x633730) aún no se leen, y las rutas de
+			// los barcos las da Sailing después de leer la partida.
 			State loaded = game;
 			loaded.erase("X");
+			loaded.erase("Q");
 			const int d = compare(dump_save(save, loaded), loaded, budget, "carga de " + load + ":", true);
 			std::printf("carga: %d diferencias\n", d);
 			return d ? 1 : 0;
@@ -475,22 +551,10 @@ int main(int argc, char** argv) {
 		if (const Region* x = find(game, "X")) {
 			copy_blocks(*x, save.sieges);
 		}
-		if (!cpr.empty()) {
-			archive = CprArchive::open(cpr, &error);
-			nav = archive ? NavData::load(*archive, &error) : nullptr;
-			if (!nav) {
-				std::fprintf(stderr, "%s: %s\n", cpr.c_str(), error.c_str());
-				return 1;
-			}
-			sailing = std::make_unique<Sailing>(save, *nav, load_sea_map_towns(*archive));
+		if (sailing) {
 			sailing->assign_loaded_routes();
-			sailing->set_ai(ai);
-			// La actualización de barcos y las órdenes de zarpar, que el oráculo
-			// ejecuta al final de cada tick (las de las ciudades no).
-			registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
-				sailing->update_ships();
-				return std::nullopt;
-			};
+			// Las órdenes de zarpar, que el oráculo ejecuta al final de cada
+			// tick (las de las ciudades no).
 			registry[0x537670] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
 				if (!pending_sail.empty()) {
 					int32_t f[5];
@@ -564,6 +628,22 @@ int main(int argc, char** argv) {
 			if (budget-- > 0) {
 				std::printf("%s\n    operaciones encoladas: juego %zu, p3vita %zu\n", title, queued.size(),
 					save.queued_operations.size());
+				for (size_t k = 0; k < std::max(queued.size(), save.queued_operations.size()); ++k) {
+					auto hex = [](const std::vector<std::vector<uint8_t>>& ops, size_t i) {
+						std::string s;
+						for (size_t b = 0; i < ops.size() && b < ops[i].size() && b < 0x14; ++b) {
+							char t[4];
+							std::snprintf(t, sizeof(t), "%02x", ops[i][b]);
+							s += t;
+						}
+						return s;
+					};
+					const std::string a = hex(queued, k);
+					const std::string b = hex(save.queued_operations, k);
+					if (a != b) {
+						std::printf("      %zu: juego %s\n         p3vita %s\n", k, a.c_str(), b.c_str());
+					}
+				}
 			}
 			++d;
 		}

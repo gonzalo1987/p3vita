@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
 
 namespace p3::probe {
@@ -84,5 +85,13 @@ void register_probes_offices(ProbeRegistry& r);
 void register_probes_construction(ProbeRegistry& r);
 void register_probes_ship_ai(ProbeRegistry& r);
 void register_probes_ship_trade(ProbeRegistry& r);
+void register_probes_convoys_sea(ProbeRegistry& r);
+void register_probes_convoys_members(ProbeRegistry& r);
+void register_probes_convoys_port(ProbeRegistry& r);
+void register_probes_merchants(ProbeRegistry& r);
+
+// La navegación sobre el SaveGame que reciben las sondas (tick_probe con
+// --cpr); nullptr sin --cpr. Para las funciones de Sailing (convoyes...).
+data::Sailing* probe_sailing();
 
 }  // namespace p3::probe
