@@ -61,7 +61,8 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Archivos por idioma montados como el juego: el español encima del inglés ([formats/fonts.md](formats/fonts.md))
 - [x] Texto con las fuentes TrueType del juego (Latin-1, con ñ) y nombres de ciudad en el idioma de los datos
 - [x] Barra superior en el visor con ciudad, año y habitantes
-- [ ] Mercado: existencias de la ciudad (exactas en la partida) y precios (umbrales por descifrar)
+- [x] Mercado: existencias, producción y consumo diarios de cada ciudad (de la partida)
+- [ ] Precios de compra y venta: fórmulas de P3Modding, pero los umbrales dependen de datos sin identificar
 - [ ] Rehacer la interfaz para 960×544 (16:9) con soporte táctil
 
 ## Fase 6: resto del juego

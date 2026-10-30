@@ -60,6 +60,13 @@ public:
 	}
 
 	template <size_t N>
+	void u32s(std::array<uint32_t, N>& out) {
+		for (uint32_t& v : out) {
+			v = u32();
+		}
+	}
+
+	template <size_t N>
 	void bytes(std::array<uint8_t, N>& out) {
 		if (ensure(N)) {
 			std::memcpy(out.data(), data_ + pos_, N);
@@ -90,17 +97,24 @@ private:
 bool parse_town(Reader& r, SavedTown& town, std::string* error) {
 	const std::string where = " en la ciudad que empieza en " + std::to_string(r.position());
 
-	// Parte 1: almacén (0x2C0 bytes) y datos generales de la ciudad.
+	// Parte 1: almacén (0x2C0 bytes, struct storage de P3Modding) y datos
+	// generales de la ciudad (struct town desde 0x2C0).
 	if (!r.separator()) {
 		return fail(error, "separador inesperado" + where);
 	}
-	r.skip(0x2C0);
+	r.skip(4);
+	r.u32s(town.wares);
+	r.u32s(town.business_consumption);
+	r.u32s(town.production);
+	r.skip(0x2C0 - 4 - 3 * kWareCount * 4);
 	r.skip(1);  // Índice en la tabla de ciudades.
 	town.town_id = r.u8();
 	r.skip(2 + 2 + 2);
 	r.skip(4 + 4 + 4);  // Flags, sin identificar y fecha de la última fiesta.
 	town.citizens = r.u32();
-	r.skip(16 + 1000 + 4);  // Habitantes por clase y estadísticas.
+	r.skip(16 + 16 + 8 + 8 + 8);  // Habitantes por clase, anteriores, viviendas y satisfacción.
+	r.u32s(town.citizen_consumption);  // [0x310]
+	r.skip(4 * 0x60 + 0x180 + 0x60 + 4);
 
 	// Parte 2: 20 bytes sin identificar.
 	if (!r.separator()) {

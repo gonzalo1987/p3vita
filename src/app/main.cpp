@@ -4,6 +4,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <memory>
@@ -17,6 +18,7 @@
 #include "p3data/savegame.hpp"
 #include "p3data/town.hpp"
 #include "p3data/town_buildings.hpp"
+#include "p3data/wares.hpp"
 
 using namespace p3::data;
 
@@ -35,8 +37,14 @@ constexpr uint8_t kTownHallType = 0x20;
 // Fuente del texto de la interfaz (Font4 de scripts/ttffonts.ini en la versión española).
 constexpr char kUiFont[] = "fonts/Tiepolo_bold.ttf";
 constexpr float kUiFontHeight = 23;
+constexpr float kSmallFontHeight = 18;
 constexpr int kBarHeight = 34;
 constexpr int kBarMargin = 12;
+// Panel del mercado, a la derecha bajo la barra.
+constexpr int kMarketWidth = 440;
+constexpr int kMarketRowHeight = 21;
+constexpr SDL_Color kTextColor = {255, 236, 190, 255};
+constexpr SDL_Color kDimColor = {200, 190, 170, 255};
 
 #ifdef __vita__
 const char* const kDataDirs[] = {"ux0:data/p3vita/"};
@@ -246,9 +254,52 @@ void draw_bar(SDL_Renderer* renderer, TextRenderer& text, const std::string& tit
 	const SDL_Rect bar = {0, 0, kScreenWidth, kBarHeight};
 	SDL_RenderFillRect(renderer, &bar);
 	const int y = (kBarHeight - text.line_height()) / 2;
-	text.draw(title, kBarMargin, y, {255, 236, 190, 255});
-	const std::string help = "L/R: ciudad    Triángulo: vista";
-	text.draw(help, kScreenWidth - kBarMargin - text.measure(help), y, {200, 200, 200, 255});
+	text.draw(title, kBarMargin, y, kTextColor);
+	const std::string help = "L/R: ciudad   Triángulo: vista   X: mercado";
+	text.draw(help, kScreenWidth - kBarMargin - text.measure(help), y, kDimColor);
+}
+
+// Cantidad en unidades del juego con un decimal, o entera si es grande.
+std::string format_amount(uint32_t internal, WareUnit unit, bool decimals) {
+	const double value = double(internal) / ware_scale(unit);
+	char buffer[32];
+	std::snprintf(buffer, sizeof(buffer), decimals ? "%.1f" : "%.0f", decimals ? value : double(int(value)));
+	return buffer;
+}
+
+// Existencias, producción y consumo diarios de las mercancías de una ciudad.
+void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SavedTown& town) {
+	constexpr int kPadding = 12;
+	const int columns[3] = {kPadding + 250, kPadding + 330, kPadding + 410};  // Bordes derechos.
+	const int height = kPadding * 2 + kMarketRowHeight * (kTradeWareCount + 2);
+	const SDL_Rect panel = {kScreenWidth - kMarketWidth - 8, kBarHeight + 6, kMarketWidth, height};
+
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 215);
+	SDL_RenderFillRect(renderer, &panel);
+	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+	SDL_RenderDrawRect(renderer, &panel);
+
+	auto right = [&](const std::string& s, int column, int y, SDL_Color color) {
+		text.draw(s, panel.x + columns[column] - text.measure(s), y, color);
+	};
+	int y = panel.y + kPadding;
+	text.draw("Mercancía", panel.x + kPadding, y, kDimColor);
+	right("Almacén", 0, y, kDimColor);
+	right("Prod./día", 1, y, kDimColor);
+	right("Cons./día", 2, y, kDimColor);
+	y += kMarketRowHeight * 3 / 2;
+	for (int w = 0; w < kTradeWareCount; ++w) {
+		const WareInfo& ware = kWares[size_t(w)];
+		const size_t i = size_t(w);
+		const char* unit = ware.unit == WareUnit::Barrel ? " barr." : " cargas";
+		text.draw(ware.name, panel.x + kPadding, y, kTextColor);
+		right(format_amount(town.wares[i], ware.unit, false) + unit, 0, y, kTextColor);
+		right(format_amount(town.production[i], ware.unit, true), 1, y, kTextColor);
+		right(format_amount(town.business_consumption[i] + town.citizen_consumption[i], ware.unit, true), 2, y,
+			kTextColor);
+		y += kMarketRowHeight;
+	}
 }
 
 int stick_speed(Sint16 value) {
@@ -297,9 +348,14 @@ int main(int argc, char** argv) {
 	auto view = std::make_unique<TownView>(renderer, *archive);
 	const std::vector<std::string> town_names = load_town_names(*archive);
 	std::unique_ptr<TextRenderer> text;
+	std::unique_ptr<TextRenderer> small_text;
 	if (auto font = FontAtlas::load(*archive, kUiFont, kUiFontHeight)) {
 		text = std::make_unique<TextRenderer>(renderer, std::move(font));
 	}
+	if (auto font = FontAtlas::load(*archive, kUiFont, kSmallFontHeight)) {
+		small_text = std::make_unique<TextRenderer>(renderer, std::move(font));
+	}
+	bool show_market = false;
 	SaveGame save;
 	const bool has_save = load_savegame(*archive, kStartSave, save) && !save.towns.empty();
 	const std::vector<int> regions = load_town_regions(*archive);
@@ -359,6 +415,8 @@ int main(int argc, char** argv) {
 					town_step = 1;
 				} else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_Y) {
 					next_mode = true;  // Triángulo en la Vita.
+				} else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A) {
+					show_market = !show_market;  // X en la Vita.
 				} else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_START) {
 					running = false;
 				}
@@ -370,6 +428,8 @@ int main(int argc, char** argv) {
 					town_step = 1;
 				} else if (event.key.keysym.sym == SDLK_e) {
 					next_mode = true;
+				} else if (event.key.keysym.sym == SDLK_m) {
+					show_market = !show_market;
 				} else if (event.key.keysym.sym == SDLK_ESCAPE) {
 					running = false;
 				}
@@ -430,10 +490,14 @@ int main(int argc, char** argv) {
 		if (text) {
 			draw_bar(renderer, *text, bar_title(save, town_names, template_ids, selection));
 		}
+		if (show_market && small_text && selection.mode == Mode::Saved) {
+			draw_market(renderer, *small_text, save.towns[selection.saved_index]);
+		}
 		SDL_RenderPresent(renderer);
 	}
 
 	// Las texturas tienen que liberarse antes de cerrar SDL.
+	small_text.reset();
 	text.reset();
 	view.reset();
 	if (controller) {

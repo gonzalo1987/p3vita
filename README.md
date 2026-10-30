@@ -76,8 +76,16 @@ De momento es un visor de ciudades. Arranca en Lübeck tal como empieza la
 partida de 1300 (`missav/1.pat`). La cruceta o el stick izquierdo mueven la
 cámara, arrastrar con el dedo desplaza el mapa, L y R cambian de ciudad,
 Triángulo alterna entre la partida, la plantilla con todos los edificios del
-diseñador (`.editor`) y solo el terreno (`.town`), y Start sale. En el PC, las
-flechas, Re Pág / Av Pág, E y Esc.
+diseñador (`.editor`) y solo el terreno (`.town`), X abre el mercado de la
+ciudad (existencias, producción y consumo) y Start sale. En el PC, las flechas,
+Re Pág / Av Pág, E, M y Esc.
+
+`p3save` lista las ciudades de una partida y muestra el almacén de cada una:
+
+```sh
+build/tools/p3save/p3save p2arch0_spa.cpr missav/1.pat
+build/tools/p3save/p3save p2arch0_spa.cpr missav/1.pat 9
+```
 
 ## Agradecimientos
 

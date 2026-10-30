@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "p3data/cpr.hpp"
+#include "p3data/wares.hpp"
 
 namespace p3::data {
 
@@ -39,6 +40,12 @@ struct SavedTown {
 	int town_id = 0;  // 0..39, el orden de scripts/StadtDaten.ini.
 	int template_map = 0;  // Mapa iso/towns/<n> en el que se basa.
 	uint32_t citizens = 0;
+	// Almacén de la ciudad, en unidades internas (ver ware_scale). Producción y
+	// consumos son diarios.
+	std::array<uint32_t, kWareCount> wares{};
+	std::array<uint32_t, kWareCount> production{};
+	std::array<uint32_t, kWareCount> business_consumption{};
+	std::array<uint32_t, kWareCount> citizen_consumption{};
 	uint32_t flags = 0;  // Qué objetos fijos existen: grúas, puestos, astilleros...
 	uint8_t church_level = 0;
 	std::vector<BuildingRecord> records;

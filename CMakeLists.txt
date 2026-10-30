@@ -20,6 +20,7 @@ endif()
 if(NOT VITA)
 	add_subdirectory(tools/cprtool)
 	add_subdirectory(tools/p3img)
+	add_subdirectory(tools/p3save)
 	add_subdirectory(tools/p3town)
 
 	enable_testing()

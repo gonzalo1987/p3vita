@@ -98,8 +98,8 @@ Offsets relativos al inicio del bloque (v0x82). Entre corchetes, el offset en el
 | Off | Tamaño | Contenido |
 |-|-|-|
 | +0x000 | 1 | separador |
-| +0x001 | 0x2C0 | almacén (0x52df20): `u32`, 3×24 `u32` mercancías/consumo/producción, 0x18 armas, 0x180 series, `u32` [0x000–0x2bf] |
-| +0x2C1 | 0x414 | parte 1 (0x527ac0): `u8` índice [0x2c0], `u8` **id de ciudad** [0x2c1], [0x2c2], [0x2c3]; `u16` [0x2c4], `u16` impuesto [0x2c6], `u32` flags [0x2c8], [0x2cc], [0x2d0], `u32` **habitantes** [0x2d4], `4×u32` por clase [0x2d8], … , `0x60` [0x670], `u32` [0x6d0] |
+| +0x001 | 0x2C0 | almacén (0x52df20, `struct storage` de P3Modding): `u32`, 24 `u32` **existencias**, 24 `u32` **consumo diario de las empresas**, 24 `u32` **producción diaria**, 0x18 armas, 0x180 series, `u32` [0x000–0x2bf]. Unidades internas: barril = 200, carga = 2000, pieza de armamento = 10 (`src/p3data/wares.hpp`) |
+| +0x2C1 | 0x414 | parte 1 (0x527ac0): `u8` índice [0x2c0], `u8` **id de ciudad** [0x2c1], [0x2c2], [0x2c3]; `u16` [0x2c4], `u16` impuesto [0x2c6], `u32` flags [0x2c8], [0x2cc], [0x2d0], `u32` **habitantes** [0x2d4], `4×u32` por clase [0x2d8], … , 24 `u32` **consumo diario de los habitantes** [0x310], … , `0x60` [0x670], `u32` [0x6d0] |
 | +0x6D5 | 1 | separador |
 | +0x6D6 | 20 | parte 2 (0x525e30): [0x82c–0x83f] |
 | +0x6EA | 1 | separador |
