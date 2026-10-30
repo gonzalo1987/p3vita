@@ -131,14 +131,7 @@ void register_probes_facilities(ProbeRegistry& r) {
 		fd::fn_530780(s, c.args[0] & 0xFFFF);
 		return std::nullopt;
 	};
-	// 0x5308A0 con create = 0 devuelve un puntero: no cambia nada y no se
-	// puede comparar eax; se comprueba con 0x51D4C0 y 0x51FF30.
-	r[0x5308A0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
-		if (c.args[2] == 0) {
-			fd::fn_5308a0(s, c.args[0], c.args[1]);
-		}
-		return std::nullopt;
-	};
+	// La sonda de 0x5308A0 (con y sin create) está en probes_events_towns.cpp.
 }
 
 }  // namespace p3::probe

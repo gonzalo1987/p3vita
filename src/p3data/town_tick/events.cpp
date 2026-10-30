@@ -22,11 +22,14 @@
 // 0x4E4984), 0x19 (capitanes y administradores que buscan trabajo,
 // 0x4E8E24), 0x1A (0x4F6C10 de cada comerciante), 0x1B (solo sin programa:
 // se quita) y 0x22 (pedidos de mercancía, 0x4DB7C0); 0x37 sin comprobar.
-// Los demás tipos van por grupos en events_big.cpp (0x2C, 0x05, 0x16),
-// events_towns.cpp (0x03, 0x01, 0x2A, 0x2B), events_mayor.cpp (0x02, con la
-// elección del alcalde, 0x0A/0x36 subastas, 0x20, 0x21) y events_rare.cpp
-// (0x0E, 0x12, 0x1C, 0x1E, 0x1F, 0x2E, 0x30, 0x32, 0x35). Los mensajes al
-// jugador y la interfaz no se traducen.
+// Los demás tipos, por grupos, también comprobados: events_big.cpp (0x2C, la
+// IA construye empresas; 0x05, encargos; 0x16), events_towns.cpp (0x03,
+// cada 10 días; 0x01, deudas; 0x2A y 0x2B, oficinas y barcos de la IA),
+// events_mayor.cpp (0x02, la elección del alcalde; 0x0A/0x36 subastas; 0x20,
+// el alderman; 0x21, la dieta de la Hansa) y events_rare.cpp (0x0E, 0x12,
+// 0x1C, 0x1E, 0x1F, 0x2E, 0x30, 0x32, 0x35). Sin traducir (no salen en las
+// partidas): el 0x32 con comerciante y el ataque pirata del 0x1E (0x5063C0).
+// Los mensajes al jugador y la interfaz no se traducen.
 
 #include <cstdlib>
 #include <cstring>
@@ -509,16 +512,16 @@ bool fn_4db220(const SaveGame& save, uint16_t owner) {
 
 // 0x4F5A20 (thiscall sobre el comerciante, con su índice en `me`): con
 // deudas, pone en venta (operación 0x28) el edificio de sus oficinas, en las
-// ciudades de [+0x468], que menos renta da por unidad (las casas de [+0x2CE]
-// con la renta [+0x4] y las unidades [+0xC] de su empresa en los registros
-// del mundo; las empresas de [+0x2D0] con [+0x2DE + 2·k] de la oficina y
-// 80/140/280 unidades) y, a igualdad, el más barato. Devuelve si lo ha hecho.
+// ciudades de [+0x468], que menos renta da por unidad (las empresas de
+// [+0x2CE] con la renta [+0x4] y las unidades [+0xC] de su tipo en los
+// registros del mundo; las casas de [+0x2D0] con [+0x2DE + 2·k] de la oficina
+// y 80/140/280 unidades) y, a igualdad, el más barato. Devuelve si lo ha hecho.
 //
 // La renta del mejor ([esp+0x2C]) no se inicializa en el juego: queda lo que
 // hubiera en la pila. En el oráculo vale 0 (nunca se elige nada) y aquí
 // también: con 0, ningún edificio mejora al primero y no se pone nada en venta.
 bool fn_4f5a20(SaveGame& save, int merchant, uint32_t me) {
-	static constexpr uint16_t kBusinessUnits[3] = {80, 140, 280};  // 0x672A18
+	static constexpr uint16_t kHouseUnits[3] = {80, 140, 280};  // 0x672A18
 	const MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	uint32_t best_value = 0;  // [esp+0x1C]
 	uint32_t best_record = 0;  // [esp+0x34]
@@ -583,7 +586,7 @@ bool fn_4f5a20(SaveGame& save, int merchant, uint32_t me) {
 			}
 			const uint32_t value = sale_value(record);
 			const int32_t kind = (int32_t(t.records[record].type) - 0x15) / 3;
-			choose(record, o.u16(0x2DE + 2 * size_t(kind)), kBusinessUnits[kind], value);
+			choose(record, o.u16(0x2DE + 2 * size_t(kind)), kHouseUnits[kind], value);
 		}
 	}
 	if (best_value == 0) {

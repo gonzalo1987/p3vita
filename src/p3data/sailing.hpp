@@ -134,6 +134,8 @@ public:
 	void fn_50a240(uint32_t arrival, uint32_t speed, uint32_t convoy, uint8_t heading);  // (objeto de los barcos)
 	void fn_501e10(int convoy, int ship);
 	void fn_5029f0(int convoy);
+	// town_tick/events_rare.cpp: la vuelta de una expedición (evento 0x12).
+	void fn_502b20(int convoy, uint32_t departure);
 	// convoys_members.cpp: los barcos entran y salen del convoy.
 	bool fn_5017f0(int convoy);
 	void fn_509f80(uint16_t ship);  // (objeto de los barcos) Saca el barco de su convoy.

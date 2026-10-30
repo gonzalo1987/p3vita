@@ -33,8 +33,6 @@ namespace {
 
 constexpr uint32_t kConvoyCount = global::kShips + 0xF6;  // u16 convoyes reservados
 // Cola de eventos con fecha (objeto 0x6DD73C; SaveGame::events).
-constexpr uint32_t kEventHead = 0x6DD73C + 0x8;  // u16 primero de la lista, en orden de tick
-constexpr uint32_t kEventFree = 0x6DD73C + 0xA;  // u16 primer registro libre
 constexpr uint32_t kEventCount = 0x6DD73C + 0xC;  // u16 registros reservados
 
 // Salida del oeste del mapa (0x502900): x < 0x82 y 0x578 < y < 0x708.
@@ -61,64 +59,6 @@ uint32_t town_count(const SaveGame& save) {
 // El comerciante del juego es de la IA (0x5303C0 y su [+0x8] distinto de 0).
 bool ai_merchant(const SaveGame& save, uint32_t merchant) {
 	return save.merchants[merchant].kind() != 0;
-}
-
-// 0x4D8DD0 (cola de eventos): lleva el evento de la cabeza a su sitio en la
-// lista, detrás de los que tienen un tick menor o igual. Igual que la de
-// savegame.cpp.
-void fn_4d8dd0(SaveGame& save) {
-	GlobalMemory& g = save.globals;
-	const uint16_t count = g.u16(kEventCount);
-	const uint16_t first = g.u16(kEventHead);
-	GameMemory<0x18>& e = save.events[first];
-	const uint16_t next = e.u16(4);
-	if (next >= count || e.u32(0) < save.events[next].u32(0)) {
-		return;
-	}
-	g.u16(kEventHead) = next;
-	uint16_t* link = &save.events[next].u16(4);
-	while (*link < count) {
-		if (e.u32(0) < save.events[*link].u32(0)) {
-			e.u16(4) = *link;
-			*link = first;
-			return;
-		}
-		link = &save.events[*link].u16(4);
-	}
-	e.u16(4) = 0xFFFF;
-	*link = first;
-}
-
-// 0x4D8CF0 (cola de eventos): toma un registro libre (si no queda ninguno,
-// reserva 0x80 más), lo pone en la lista con el tick `tick` y lo lleva a su
-// sitio (0x4D8DD0). Devuelve su índice.
-uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick) {
-	GlobalMemory& g = save.globals;
-	const uint16_t free = g.u16(kEventFree);
-	if (free >= g.u16(kEventCount)) {
-		// Sin comprobar con el oráculo (en las partidas siempre queda alguno
-		// libre). El juego copia los `free` primeros registros a un array nuevo
-		// de memoria sin inicializar (aquí, a 0) y enlaza los nuevos como libres.
-		const uint16_t count = uint16_t(g.u16(kEventCount) + 0x80);
-		g.u16(kEventCount) = count;
-		std::vector<GameMemory<0x18>> events(count);
-		for (size_t i = 0; i < free && i < save.events.size() && i < events.size(); ++i) {
-			events[i] = save.events[i];
-		}
-		save.events = std::move(events);
-		for (uint16_t i = free; i < g.u16(kEventCount);) {
-			GameMemory<0x18>& e = save.events[i];
-			e.u16(4) = ++i;
-		}
-	}
-	const uint16_t index = g.u16(kEventFree);
-	GameMemory<0x18>& e = save.events[index];
-	g.u16(kEventFree) = e.u16(4);
-	e.u16(4) = g.u16(kEventHead);
-	g.u16(kEventHead) = index;
-	e.u32(0) = tick;
-	fn_4d8dd0(save);
-	return index;
 }
 
 }  // namespace
@@ -434,7 +374,7 @@ void Sailing::fn_501e10(int convoy, int ship) {
 void Sailing::fn_5029f0(int convoy) {
 	GlobalMemory& g = save_.globals;
 	GameMemory<0x3C>& c = save_.convoys[size_t(convoy)];
-	GameMemory<0x18>& e = save_.events[fn_4d8cf0(save_, g.u32(global::kWorldTick))];
+	GameMemory<0x18>& e = save_.events[tick::events_detail::fn_4d8cf0(save_, g.u32(global::kWorldTick))];
 	e.u16(0x6) = 0x12;
 	e.u16(0xA) = kNoIndex;
 	e.u16(0x8) = save_.ships[c.u16(0x10)].convoy();

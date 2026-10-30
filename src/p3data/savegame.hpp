@@ -356,6 +356,13 @@ struct SaveGame {
 	// tick [+0x0], u16 siguiente [+0x4] y u16 tipo [+0x6], enlazados en orden de
 	// tick desde la cabeza u16 [0x6DD744]; u16 [0x6DD748] es su número.
 	std::vector<GameMemory<0x18>> events;
+	// Buzón de los avisos a los comerciantes (*0x6DD730, tantos como u16
+	// [0x6DD736]): entradas de 16 bytes con u8 [+0x0] día, u8 [+0x1] mes, u16
+	// [+0x2] año, u8 [+0x4] tipo y u16 [+0x6] siguiente; la lista de cada
+	// comerciante empieza en su u16 [+0xA]. El evento 0x16 (0x4E8234) mira en
+	// él los avisos 0x21 y 0x22 del jugador. Los avisos nuevos (0x4D6530) no se
+	// apuntan: es la interfaz.
+	std::vector<GameMemory<0x10>> mail;
 	// Matriz n × n del mundo (*[0x6DE50C], [+0x6C] de 0x6DE4A0; 0x531B70 la
 	// lee): lo que se tarda de una ciudad a otra, en dieciseisavos de día a la
 	// velocidad de una snaikka (0x516930; 0x516AB0 lo pasa a días).
@@ -370,10 +377,34 @@ struct SaveGame {
 	// y, en las demás, 1 + el tiempo de viaje (en días) desde la más cercana
 	// con 0, hasta 15 (0x535400). Vacío si el hueco no lo tiene.
 	std::array<std::vector<uint8_t>, 8> player_towns;
+	// Los 5 objetos de 0x18 bytes de los piratas en [+0xC] del objeto de los
+	// barcos (*[0x6DD7AC + 4·i]; los lee 0x5138B0): u16 [+0xC] la cabeza de su
+	// lista de barcos (por el [+0x4] de cada barco), u8 [+0xE] el número de
+	// ciudad (StadtDaten.ini) de su guarida, u16 [+0x16] (el evento 0x1F mira
+	// si pasa de 500). Los punteros [+0x0] (un objeto de 0x6C bytes) y [+0x4]
+	// (u16 [+0x8] registros de 8 bytes) valen 1 si hay algo y 0 si no; lo que
+	// apuntan no se guarda. Vacío si no existe; el puntero de los globales
+	// queda a 1 si existe y a 0 si no. Los mira la cola de eventos (0x03,
+	// 0x1F, 0x30, 0x32); en tick_probe, las regiones Z0..Z4.
+	std::array<std::optional<GameMemory<0x18>>, 5> pirates;
+	// Los encargos de los 15 objetos del mundo ([+0xB10] del mundo, 0x2C
+	// bytes cada uno): la lista del montón de su [+0x24], con su número en el
+	// u16 [+0x1C] y en el u32 [+0x28] del objeto. Registros de 16 bytes, en el
+	// orden de la lista: u16 [+0x0] comerciante, u8 [+0x2] cuál de las dos
+	// mercancías del objeto, u8 [+0x3] 0 si el objeto la vende y 1 si la
+	// compra, u32 [+0x4] cantidad que falta (barriles), u32 [+0x8] precio,
+	// u32 [+0xC] tick en que caduca. Los crea la llegada de una expedición
+	// (0x52C6C0, evento 0x12) y los quita 0x52D7D0; en tick_probe, las
+	// regiones F0..F14.
+	std::array<std::vector<GameMemory<0x10>>, 15> world_object_lists;
 	// Puntos (u16 x, u16 y) de scripts/Expeditionen.dat, que el juego lee al
 	// crear el primer comerciante (*0x6DF2E0; su número, u32 [0x6DF2E4]). Los
 	// usa 0x534F10 (convoys_port.cpp). Vacío si no se ha leído.
 	std::vector<std::array<uint16_t, 2>> expeditions;
+	// Nombres de barco (scripts/NamenSchiffe_eng.txt, [0x6DDB78] de ellos)
+	// tal como los parte el juego (0x5128D0), en Latin-1: 0x509A50 copia uno
+	// al [+0x160] de cada barco nuevo. Vacío si no se ha leído.
+	std::vector<std::string> ship_names;
 };
 
 // Lee una partida ya descomprimida.
@@ -390,8 +421,8 @@ bool load_savegame(const CprArchive& archive, const std::string& path, SaveGame&
 // apellidos y piratas, [0x6DDB78] y [0x6DDB7A] barcos; y la tabla de las 40
 // ciudades (0x6DDB90 + 0x34 · número de la ciudad; 0x51E440, de
 // StadtDaten.ini), sin el CString de [+0x28]; y los puntos de
-// scripts/Expeditionen.dat (SaveGame::expeditions y u32 [0x6DF2E4], 0x5346A0).
-// Tras parse_savegame.
+// scripts/Expeditionen.dat (SaveGame::expeditions y u32 [0x6DF2E4], 0x5346A0),
+// y los nombres de barco (SaveGame::ship_names). Tras parse_savegame.
 void load_game_scripts(const CprArchive& archive, SaveGame& save);
 
 // Descomprime una partida del archivo sin interpretarla.

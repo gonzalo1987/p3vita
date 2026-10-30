@@ -272,9 +272,11 @@ operaciones de las 12 partidas.
 
 ## El resto de advance_time
 
-Con `--resto PIEZAS` (`5315c0,535450,52d7d0,6349f0,4d85c0,633a90`), el
-oráculo del mundo hace también lo diario, las tareas programadas, los 15
-objetos del mundo, los asedios y la cola de eventos, en el orden del juego
+Con `--barcos`, el oráculo del mundo hace ahora por omisión todo el resto de
+advance_time (`--sin-resto` lo quita; `--resto PIEZAS`, de
+`5315c0,535450,52d7d0,6349f0,4d85c0,633a90`, solo las pedidas): lo diario,
+las tareas programadas, los 15 objetos del mundo, los asedios y la cola de
+eventos, en el orden del juego
 (ver [formats/world_tick.md](formats/world_tick.md)); las operaciones
 encoladas se ejecutan al final del tick. Con `--cpr` crea con el código del
 juego lo que la cola de eventos necesita: el objeto de los nombres
@@ -283,6 +285,24 @@ juego lo que la cola de eventos necesita: el objeto de los nombres
 los ejércitos sitiadores y las listas de los asedios (regiones `Ji`, `Ui`,
 `Li`, `Hi`), y la carga de las 12 partidas compara ya los asedios: 0
 diferencias. Resultado: el mundo entero con lo diario, las tareas, los
-objetos del mundo y los asedios, idéntico 30 días en las 12 partidas; la
-cola de eventos tiene traducidos solo algunos tipos (ver `events.cpp`).
+objetos del mundo y los asedios, idéntico 30 días en las 12 partidas.
+
+La cola de eventos se tradujo en dos tandas (la segunda, en cuatro grupos
+de tipos, cada uno con su agente y comprobado función a función en las 12
+partidas y 60 días, más unos pocos estados retocados por rama). Para ella
+la grabación lleva también el buzón de avisos (región `B`, *0x6DD730) y los
+5 objetos de los piratas (`Z0..Z4`, *[0x6DD7AC + 4·i]) y la lista de encargos
+de cada uno de los 15 objetos del mundo (`F0..F14`), y p3vita los lee de la
+partida. Con todo junto salía igual en 11 de las 12; tut3 se separaba el día
+18 en la llegada de una expedición (evento 0x12, 0x4E6B4A–0x4E79F1), que se
+tradujo después. Resultado, el mundo entero con todas las piezas (las que el
+oráculo hace por omisión):
+
+```sh
+python3 tools/oracle/town_oracle.py <exe> /tmp/1.raw /tmp/1-w.probe 60   51ba10,4f7bb0,506720,537670,5315c0,535450,52d7d0,6349f0,633a90,4d85c0 --barcos /tmp/datos --cpr p2arch0_eng.cpr
+build/tools/oracle/tick_probe /tmp/1-w.probe --continuo --carga /tmp/1.raw --cpr p2arch0_eng.cpr
+```
+
+**0 diferencias en las 12 partidas durante 60 días** (unos 56 minutos con
+las 12 en paralelo), y la carga, también en 0.
 

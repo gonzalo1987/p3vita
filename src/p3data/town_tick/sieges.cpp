@@ -62,10 +62,6 @@ constexpr uint32_t kAldermanBusy = 0x6DF31C;  // u32: si no es 0, no se encola e
 // Tabla de las ciudades (scripts/StadtDaten.ini, 0x6DDB90 + 0x34·i): [+0x30]
 // u8 región. El juego la indexa aquí con el índice de la ciudad en la partida.
 constexpr uint32_t kTownRegion = 0x6DDB90 + 0x30;
-// Cola de eventos con fecha (objeto 0x6DD73C; SaveGame::events).
-constexpr uint32_t kEventHead = 0x6DD73C + 0x8;  // u16 primero de la lista, en orden de tick
-constexpr uint32_t kEventFree = 0x6DD73C + 0xA;  // u16 primer registro libre
-constexpr uint32_t kEventCount = 0x6DD73C + 0xC;  // u16 registros reservados
 
 // Mercancías que se cuentan en barriles (200 unidades; las demás, en cargas
 // de 2000): 0x672C14.
@@ -129,61 +125,6 @@ GameMemory<0xC>& target(SiegeExtras& ex, size_t i) {
 		ex.army_targets.resize(i + 1);
 	}
 	return ex.army_targets[i];
-}
-
-// 0x4D8DD0 (cola de eventos): lleva el evento de la cabeza a su sitio en la
-// lista, detrás de los que tienen un tick menor o igual. Copia de la de
-// convoys_sea.cpp (allí, en un namespace anónimo).
-void fn_4d8dd0(SaveGame& save) {
-	GlobalMemory& g = save.globals;
-	const uint16_t count = g.u16(kEventCount);
-	const uint16_t first = g.u16(kEventHead);
-	GameMemory<0x18>& e = save.events[first];
-	const uint16_t next = e.u16(4);
-	if (next >= count || e.u32(0) < save.events[next].u32(0)) {
-		return;
-	}
-	g.u16(kEventHead) = next;
-	uint16_t* link = &save.events[next].u16(4);
-	while (*link < count) {
-		if (e.u32(0) < save.events[*link].u32(0)) {
-			e.u16(4) = *link;
-			*link = first;
-			return;
-		}
-		link = &save.events[*link].u16(4);
-	}
-	e.u16(4) = 0xFFFF;
-	*link = first;
-}
-
-// 0x4D8CF0 (cola de eventos): toma un registro libre (si no queda ninguno,
-// reserva 0x80 más), lo pone en la lista con el tick `tick` y lo lleva a su
-// sitio. Devuelve su índice. Copia de la de convoys_sea.cpp.
-uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick) {
-	GlobalMemory& g = save.globals;
-	const uint16_t free = g.u16(kEventFree);
-	if (free >= g.u16(kEventCount)) {
-		const uint16_t count = uint16_t(g.u16(kEventCount) + 0x80);
-		g.u16(kEventCount) = count;
-		std::vector<GameMemory<0x18>> events(count);
-		for (size_t i = 0; i < free && i < save.events.size() && i < events.size(); ++i) {
-			events[i] = save.events[i];
-		}
-		save.events = std::move(events);
-		for (uint16_t i = free; i < g.u16(kEventCount);) {
-			GameMemory<0x18>& e = save.events[i];
-			e.u16(4) = ++i;
-		}
-	}
-	const uint16_t index = g.u16(kEventFree);
-	GameMemory<0x18>& e = save.events[index];
-	g.u16(kEventFree) = e.u16(4);
-	e.u16(4) = g.u16(kEventHead);
-	g.u16(kEventHead) = index;
-	e.u32(0) = tick;
-	fn_4d8dd0(save);
-	return index;
 }
 
 }  // namespace
@@ -623,7 +564,7 @@ void fn_6281f0(SaveGame& save, int siege) {
 		if (group == 0xFF || a.u16(0x42) != a.u16(0x254 + 8 * size_t(group))) {
 			return;
 		}
-		GameMemory<0x18>& e = save.events[fn_4d8cf0(save, g.u32(kTick) + 1)];
+		GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, g.u32(kTick) + 1)];
 		e.u16(0x6) = 0x26;
 		e.u16(0x8) = uint16_t(a.u32(0x258 + 8 * size_t(a.u8(0x6F))));
 		e.u8(0x10) = a.u8(0x5D3);
@@ -858,7 +799,7 @@ void fn_6281f0(SaveGame& save, int siege) {
 		const BuildingRecord& r = record(st, target_at(ex, a.u8(0x6C)).u32(0x8));
 		const uint8_t x = r.x;
 		const uint8_t y = r.y;
-		GameMemory<0x18>& e = save.events[fn_4d8cf0(save, g.u32(kTick) + 1)];
+		GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, g.u32(kTick) + 1)];
 		e.u16(0x6) = 0x25;
 		e.u16(0x8) = 0xFFFF;
 		e.u16(0xA) = 0;

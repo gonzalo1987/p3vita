@@ -613,28 +613,37 @@ void set_event_date(GameMemory<0x18>& e, uint32_t tick) {
 	e.u8(0x10) = month;
 }
 
-// 0x4D8DD0: lleva el evento de la cabeza a su sitio en la lista, detrás de los
-// que tienen un tick menor o igual.
-void sort_event_head(SaveGame& out) {
-	const uint16_t count = out.globals.u16(0x6DD748);
-	const uint16_t first = out.globals.u16(0x6DD744);
-	GameMemory<0x18>& e = out.events[first];
-	uint16_t next = e.u16(4);
-	if (next >= count || e.u32(0) < out.events[next].u32(0)) {
-		return;
-	}
-	out.globals.u16(0x6DD744) = next;
-	uint16_t* link = &out.events[next].u16(4);
-	while (*link < count) {
-		if (e.u32(0) < out.events[*link].u32(0)) {
-			e.u16(4) = *link;
-			*link = first;
-			return;
+// Buzón de los avisos a los comerciantes (0x4D6350 sobre el objeto 0x6DD730),
+// justo tras los barcos: u32 versión, u16 número de avisos [0x6DD736], u16
+// [0x6DD734], u16 [0x6DD738], u16 [0x6DD73A] (desde la versión 2) y los
+// avisos (0x51A9B0): u8 día, u8 mes, u16 año, u8 tipo, u8, u16 siguiente (la
+// lista de cada comerciante empieza en su [+0xA]) y 8 bytes. Los de los tipos
+// 0x29, 0x47, 0x63 y 0x83 llevan detrás [+0xC] bytes y los 0x3C..0x40 y 0x71,
+// 16 bytes y tantos como el primer u32 de esos: el juego los guarda aparte
+// (punteros en [+0x8], y en [+0xC] los segundos); aquí no se guardan y los
+// punteros quedan a 0.
+void load_mail(Reader r, SaveGame& out) {
+	GlobalMemory& g = out.globals;
+	const uint32_t version = r.u32() & 0xFFFF;
+	g.u16(0x6DD736) = r.u16();
+	g.u16(0x6DD734) = r.u16();
+	g.u16(0x6DD738) = r.u16();
+	g.u16(0x6DD73A) = version >= 2 ? r.u16() : 0;
+	out.mail.assign(g.u16(0x6DD736), GameMemory<0x10>());
+	for (GameMemory<0x10>& m : out.mail) {
+		r.to(m, 0, 8);
+		const uint8_t type = m.u8(4);
+		if (type == 0x29 || type == 0x47 || type == 0x63 || type == 0x83) {
+			r.to(m, 8, 8);
+			m.u32(8) = 0;
+			r.skip(m.u32(0xC));
+		} else if ((type >= 0x3C && type <= 0x40) || type == 0x71) {
+			const uint32_t extra = r.u32();
+			r.skip(12 + size_t(extra));
+		} else {
+			r.to(m, 8, 8);
 		}
-		link = &out.events[*link].u16(4);
 	}
-	e.u16(4) = 0xFFFF;
-	*link = first;
 }
 
 // Cola de eventos con fecha (0x4D81E0 sobre el objeto 0x6DD73C), versión
@@ -691,7 +700,7 @@ void load_events(Reader r, SaveGame& out) {
 		set_event_date(e, tick);
 		e.u16(4) = head;
 		head = index;
-		sort_event_head(out);
+		tick::events_detail::fn_4d8dd0(out);
 	}
 }
 
@@ -744,10 +753,11 @@ bool parse_world_tail(Reader& r, size_t town_count, uint16_t record_count, uint1
 		}
 	}
 	// 0x52BBE0: los 15 objetos de 0x2C bytes del mundo en [+0xB10] (0x6DEFB0;
-	// su tick, 0x52D7D0, aún no se reproduce): 8 bytes, u32 [+0x8], 8 bytes en
-	// [+0xC] y en [+0x14] y u16 [+0x1C] con el número de registros de 16 bytes
-	// de una lista del montón ([+0x24]), que se descartan (vacías en las
-	// partidas de missav/). Los usa 0x534F10 (convoys_port.cpp).
+	// su tick es 0x52D7D0): 8 bytes, u32 [+0x8], 8 bytes en [+0xC] y en
+	// [+0x14] y u16 [+0x1C] con el número de registros de 16 bytes de su
+	// lista del montón ([+0x24], SaveGame::world_object_lists; vacías en las
+	// partidas de missav/), que el juego lleva también en el u32 [+0x28]. Los
+	// usan 0x534F10 (convoys_port.cpp) y el evento 0x12 (events_rare.cpp).
 	for (uint32_t i = 0; i < 15; ++i) {
 		const uint32_t object = global::kWorld + 0xB10 + 0x2C * i;
 		for (uint32_t k = 0; k < 0x1C; ++k) {
@@ -755,7 +765,11 @@ bool parse_world_tail(Reader& r, size_t town_count, uint16_t record_count, uint1
 		}
 		const uint16_t entries = r.u16();
 		out.globals.u16(object + 0x1C) = entries;
-		r.skip(size_t(entries) * 16);
+		out.globals.u32(object + 0x28) = entries;
+		out.world_object_lists[i].resize(entries);
+		for (GameMemory<0x10>& record : out.world_object_lists[i]) {
+			r.to(record, 0, 0x10);
+		}
 	}
 	if (r.u8() != 0) {
 		return fail(error, "la partida tiene un objeto del mundo (0x533DA0) que no se sabe leer");
@@ -798,6 +812,48 @@ bool parse_ships(Reader& r, SaveGame& out, std::string* error) {
 	r.to(out.globals.memory, global::kShips + 0x20 - GlobalMemory::kBegin, 0xC0);
 	for (uint32_t k = 0; k < 16; ++k) {
 		out.globals.u16(global::kShips + 0x2A + 12 * k) = 0;
+	}
+	// Los 5 piratas de [+0xC] (0x5044F5: desde la versión 0x63, cada uno tras
+	// un byte que dice si existe), como los lee 0x5138B0 con la versión 0x7F
+	// o más. Los formatos anteriores (los [+0xF8] primeros, sin ese byte;
+	// 0x513A40) no se leen. En los globales, el puntero [0x6DD7AC + 4·i] queda
+	// a 1 si existe (en el juego, el objeto del montón) y a 0 si no: la cola de
+	// eventos lo mira.
+	constexpr uint32_t kPirates = global::kShips + 0xC;
+	for (size_t i = 0; i < 5; ++i) {
+		out.pirates[i].reset();
+		out.globals.u32(kPirates + 4 * uint32_t(i)) = 0;
+	}
+	for (size_t i = 0; i < 5 && version >= 0x7F; ++i) {
+		if (r.u8() == 0) {
+			continue;
+		}
+		out.globals.u32(kPirates + 4 * uint32_t(i)) = 1;
+		GameMemory<0x18>& p = out.pirates[i].emplace();
+		p.u16(0x8) = r.u16();
+		p.u16(0xA) = r.u16();
+		p.u16(0xC) = r.u16();
+		p.u8(0xE) = r.u8();
+		p.u8(0xF) = r.u8();
+		p.u16(0x10) = r.u16();
+		p.u16(0x12) = r.u16();
+		p.u8(0x14) = r.u8();
+		p.u8(0x15) = r.u8() != 0 ? 1 : 0;
+		p.u16(0x16) = r.u16();
+		if (r.u8() != 0) {
+			// El objeto de 0x6C bytes de [+0x0] (0x4F9770, versión 0x7D o más):
+			// u32 ancho, u32 alto, 0x5C bytes y ancho × alto bytes.
+			p.u32(0x0) = 1;
+			const uint32_t width = r.u32();
+			const uint32_t height = r.u32();
+			r.skip(0x5C);
+			const int32_t cells = int32_t(width * height);
+			if (cells > 0) {
+				r.skip(size_t(cells));
+			}
+		}
+		p.u32(0x4) = p.u16(0x8) ? 1 : 0;
+		r.skip(size_t(p.u16(0x8)) * 8);
 	}
 	return r.ok() || fail(error, std::string(kTruncated) + " (barcos)");
 }
@@ -953,15 +1009,23 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 	parse_names(data, size, out);
 	// Tras los barcos van tres secciones (0x4D6350, 0x4D4BC0 y la cola de
 	// eventos, 0x4D81E0), otra de 5 bytes (0x611AE0) y los nombres, separadas
-	// por 0xAFFE: la de eventos es la cuarta empezando por el final.
+	// por 0xAFFE: la de eventos es la cuarta empezando por el final y la del
+	// buzón (0x4D6350), la sexta, justo tras los barcos (donde se ha quedado
+	// `r` si se han leído los piratas).
 	size_t separators = 0;
-	for (size_t pos = size - 4; pos > r.position(); --pos) {
-		if (data[pos] == 0xFE && data[pos + 1] == 0xAF && data[pos + 2] == 0 && data[pos + 3] == 0 &&
-			++separators == 4) {
-			Reader events(data, size);
-			events.skip(pos + 4);
-			load_events(events, out);
-			break;
+	for (size_t pos = size - 4; pos >= r.position() && pos > 0; --pos) {
+		if (data[pos] == 0xFE && data[pos + 1] == 0xAF && data[pos + 2] == 0 && data[pos + 3] == 0) {
+			++separators;
+			if (separators == 4 || separators == 6) {
+				Reader section(data, size);
+				section.skip(pos + 4);
+				if (separators == 4) {
+					load_events(section, out);
+				} else {
+					load_mail(section, out);
+					break;
+				}
+			}
 		}
 	}
 	return true;
@@ -1075,6 +1139,61 @@ const std::string* ini_text(const IniFile& ini, const std::string& section, cons
 	return k == s->second.end() ? nullptr : &k->second;
 }
 
+// 0x5128D0: parte una lista de nombres del juego en `count` nombres. Son parte
+// del nombre las letras (bytes >= 'A'), los espacios y los puntos; cualquier
+// otro byte, con los que le siguen por debajo de 'A', termina el nombre. Los
+// offsets son u16, como en el juego; los nombres que faltan son el primero.
+std::vector<std::string> split_game_names(const std::vector<uint8_t>& data, uint16_t count) {
+	std::vector<uint8_t> text(data.size() + 0x1E0 + 1, 0);
+	std::vector<uint16_t> offsets(size_t(count) + 2, 0);
+	auto put = [&](uint16_t at, uint8_t c) {
+		if (at < text.size()) {
+			text[at] = c;
+		}
+	};
+	uint32_t k = 1;
+	bool full = false;
+	for (size_t p = 0; p < data.size();) {
+		const uint8_t c = data[p];
+		if (c >= 0x41 || c == 0x20 || c == 0x2E) {
+			put(offsets[k]++, c);
+			++p;
+			continue;
+		}
+		for (++p; p < data.size() && data[p] < 0x41; ++p) {
+		}
+		put(offsets[k]++, 0);
+		const uint16_t at = offsets[k];
+		if (k >= count) {
+			put(at, 0);
+			full = true;
+			break;
+		}
+		offsets[k + 1] = at;
+		++k;
+	}
+	if (!full) {
+		if (offsets[k] > 0 && offsets[k] - 1u < text.size() && text[offsets[k] - 1u] != 0) {
+			put(offsets[k]++, 0);
+		} else {
+			--k;
+		}
+		const uint16_t at = offsets[k];
+		offsets[count] = at;
+		put(at, 0);
+		for (uint32_t i = k; i < count; ++i) {
+			offsets[i] = 0;
+		}
+	}
+	std::vector<std::string> names(count);
+	for (uint32_t i = 0; i < count; ++i) {
+		for (size_t p = offsets[i]; p < text.size() && text[p] != 0; ++p) {
+			names[i].push_back(char(text[p]));
+		}
+	}
+	return names;
+}
+
 }  // namespace
 
 void load_game_scripts(const CprArchive& archive, SaveGame& save) {
@@ -1094,6 +1213,16 @@ void load_game_scripts(const CprArchive& archive, SaveGame& save) {
 	globals.u16(0x6DDB76) = uint16_t(families + ini_int(names, people, "Piratennamen", 6));
 	globals.u16(0x6DDB78) = uint16_t(ini_int(names, people, "Schiffsnamen", 0x12C));
 	globals.u16(0x6DDB7A) = globals.u16(0x6DDB78);
+	// 0x5128D0: los nombres de barco.
+	for (const char* path : {"scripts/NamenSchiffe_eng.txt", "scripts/NamenSchiffe_spa.txt", "scripts/NamenSchiffe.txt"}) {
+		if (const CprEntry* entry = archive.find(path)) {
+			std::vector<uint8_t> data;
+			if (archive.read(*entry, data)) {
+				save.ship_names = split_game_names(data, globals.u16(0x6DDB78));
+				break;
+			}
+		}
+	}
 	// 0x51E440: la tabla de las ciudades.
 	IniFile towns;
 	read_ini(archive, "scripts/StadtDaten.ini", towns);

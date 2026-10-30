@@ -32,6 +32,10 @@
 // Los convoyes (src/p3data/convoys*.cpp) son de Sailing.
 // shared.cpp tiene las funciones pequeñas que usan varios.
 
+namespace p3::data {
+class Sailing;
+}  // namespace p3::data
+
 namespace p3::data::tick {
 
 // --- Utilidades comunes (shared.cpp) ---
@@ -183,6 +187,17 @@ void load_siege_army(SaveGame& save, int town);
 // events.cpp: tras los barcos, la cola de eventos (0x4D85C0, sobre el objeto
 // 0x6DD73C, con el tick).
 void fn_4d85c0(SaveGame& save, uint32_t tick);
+// events.cpp: la lista de la cola, que usan también los convoyes, los asedios
+// y el lector de la partida.
+namespace events_detail {
+// 0x4D8DD0: lleva el evento de la cabeza a su sitio en la lista, detrás de
+// los que tienen un tick menor o igual.
+void fn_4d8dd0(SaveGame& save);
+// 0x4D8CF0: toma un registro libre (si no queda ninguno, reserva 0x80 más),
+// lo pone en la cabeza con el tick `tick` y lo lleva a su sitio. Devuelve su
+// índice.
+uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick);
+}  // namespace events_detail
 // events_*.cpp: los manejadores de los demás tipos de la cola de eventos,
 // por grupos. Cada uno devuelve qué hace el despachador (0x4D85C0) con el
 // evento `event` (la cabeza de la cola) de tipo `type`: -1 si el tipo no es
@@ -196,6 +211,11 @@ int events_rare(SaveGame& save, uint16_t event, uint16_t type);  // 0xe, 0x12, 0
 // 0x4474D0, para las tormentas). La pone quien la atiende; sin ella, no hay agua.
 void set_event_navigation(const NavData* nav);
 const NavData* event_navigation();
+// events_rare.cpp: los barcos (Sailing) para la vuelta de las expediciones
+// (evento 0x12, 0x502B20). Lo pone quien atiende la cola; sin ellos, el
+// convoy no vuelve al mapa.
+void set_event_sailing(Sailing* sailing);
+Sailing* event_sailing();
 
 // ship_ai.cpp: los manejadores de 0x506720 para un barco de la lista de
 // barcos en puerto en los estados 0 (0x5067D0), 4 (0x506A19) y 5 (0x506B6A).

@@ -12,8 +12,9 @@
 # partidas descomprimidas y las grabaciones van a ${P3_TMP:-/tmp}. Con
 # P3_SHIPS=<carpeta con navdata/ y scripts/StadtDaten.ini> el oráculo hace
 # pasar también los barcos (town_oracle.py --barcos) y tick_probe crea la
-# navegación (--cpr) para las funciones de Sailing (convoyes). P3_ORACLE_OPTS
-# añade opciones al oráculo (p. ej. "--resto 5315c0,535450").
+# navegación (--cpr) para las funciones de Sailing (convoyes); el oráculo
+# ejecuta entonces también el resto de advance_time. P3_ORACLE_OPTS añade
+# opciones al oráculo (p. ej. "--sin-resto" o "--resto 5315c0,535450").
 set -e
 cd "$(dirname "$0")/.."
 : "${P3_EXE:?falta P3_EXE (ruta de Patrician3.exe)}"

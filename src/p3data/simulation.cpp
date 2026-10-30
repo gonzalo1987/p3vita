@@ -60,6 +60,7 @@ void advance_game_tick(SaveGame& save, Sailing& sailing) {
 	}
 	sailing.update_ships();
 	tick::set_event_navigation(&sailing.nav());
+	tick::set_event_sailing(&sailing);
 	tick::fn_4d85c0(save, save.tick());
 	for (size_t i = 0; i < save.sieges.size(); ++i) {
 		tick::fn_633a90(save, int(i));

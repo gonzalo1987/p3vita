@@ -67,7 +67,8 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [ ] Ejecutar las operaciones que encolan las ciudades (obras, materiales, avisos)
 - [x] Tick de cada comerciante (0x4F7BB0): contabilidad, valor de la compañía, reputación y rangos, idéntico al juego
 - [x] Lo diario y semanal, tareas programadas, los 15 objetos del mundo y los asedios, idénticos al juego ([formats/world_tick.md](formats/world_tick.md))
-- [ ] Cola de eventos (0x4D85C0): hechos los tipos 0x00, 0x04, 0x06, 0x08, 0x0D, 0x19, 0x1A, 0x22; faltan 0x01–0x03, 0x05, 0x16, 0x2A–0x2C y los raros
+- [x] Cola de eventos (0x4D85C0): todos los tipos que salen en las partidas (elecciones, subastas, deudas, encargos, expediciones, piratas, peste, la Hansa...), idénticos al juego ([formats/world_tick.md](formats/world_tick.md) §6)
+- [x] El mundo entero (advance_time sin la interfaz) idéntico al juego byte a byte 60 días en las 12 partidas ([oracle.md](oracle.md))
 - [x] Barcos de la IA en puerto: comercio con las ciudades y sus oficinas, elección de destino, tripulación, armas, reparación en el astillero y creación de convoyes, idénticos al juego ([formats/navigation.md](formats/navigation.md) §8)
 - [x] Barcos como memoria del juego; navegación idéntica byte a byte (avisos, lista por x, contadores)
 - [x] Convoyes de los comerciantes: en puerto, saliendo, en el mar, entrando, deshaciéndose, idénticos al juego 60 días en las 12 partidas ([formats/navigation.md](formats/navigation.md) §9)

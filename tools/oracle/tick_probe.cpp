@@ -257,6 +257,9 @@ void build_save(const State& state, SaveGame& save) {
 	if (const Region* e = find(state, "E")) {
 		copy_blocks(*e, save.events);
 	}
+	if (const Region* m = find(state, "B")) {
+		copy_blocks(*m, save.mail);
+	}
 	if (const Region* y = find(state, "Y")) {
 		save.town_travel = y->bytes;
 	}
@@ -283,6 +286,16 @@ void build_save(const State& state, SaveGame& save) {
 	for (size_t i = 0; i < save.player_towns.size(); ++i) {
 		if (const Region* k = find(state, "K" + std::to_string(i))) {
 			save.player_towns[i] = k->bytes;
+		}
+	}
+	for (size_t i = 0; i < save.pirates.size(); ++i) {
+		if (const Region* z = find(state, "Z" + std::to_string(i)); z && z->bytes.size() == 0x18) {
+			std::memcpy(save.pirates[i].emplace().bytes.data(), z->bytes.data(), 0x18);
+		}
+	}
+	for (size_t i = 0; i < save.world_object_lists.size(); ++i) {
+		if (const Region* f = find(state, "F" + std::to_string(i))) {
+			copy_blocks(*f, save.world_object_lists[i]);
 		}
 	}
 	save.rand_state = get<uint32_t>(state.at("r").bytes.data(), 0);
@@ -334,6 +347,9 @@ State dump_save(const SaveGame& save, const State& game) {
 	if (s.count("E")) {
 		store_blocks(save.events, s["E"]);
 	}
+	if (s.count("B")) {
+		store_blocks(save.mail, s["B"]);
+	}
 	if (s.count("Y")) {
 		s["Y"].bytes = save.town_travel;
 	}
@@ -357,6 +373,22 @@ State dump_save(const SaveGame& save, const State& game) {
 		const std::string k = "K" + std::to_string(i);
 		if (s.count(k)) {
 			s[k].bytes = save.player_towns[i];
+		}
+	}
+	for (size_t i = 0; i < save.pirates.size(); ++i) {
+		const std::string z = "Z" + std::to_string(i);
+		if (s.count(z)) {
+			std::vector<uint8_t>& b = s[z].bytes;
+			b.clear();
+			if (save.pirates[i]) {
+				b.assign(save.pirates[i]->bytes.begin(), save.pirates[i]->bytes.end());
+			}
+		}
+	}
+	for (size_t i = 0; i < save.world_object_lists.size(); ++i) {
+		const std::string f = "F" + std::to_string(i);
+		if (s.count(f)) {
+			store_blocks(save.world_object_lists[i], s[f]);
 		}
 	}
 	s["r"].bytes.resize(4);
@@ -438,16 +470,18 @@ bool script_global(uint32_t a) {
 
 // Globales que llena el lector de partidas: cabecera del mundo, del objeto de
 // los barcos, el jugador, el factor de la dificultad del comercio, el objeto
-// 0x6DE588 (sin sus punteros) y los 15 objetos del mundo en [+0xB10] (sin su
-// lista).
+// 0x6DE588 (sin sus punteros), los 15 objetos del mundo en [+0xB10] (sin el
+// puntero a su lista, con su número en [+0x28]) y los contadores del buzón de
+// los avisos (0x6DD734..0x6DD73B).
 bool loaded_global(uint32_t a) {
 	return script_global(a) ||
 		(a >= global::kWorld && a < global::kWorld + 0xE4) || (a >= global::kShips + 0xE0 && a < global::kShips + 0x100) ||
 		(a >= 0x6DE588 && a < 0x6DE588 + 0xA08) ||
 		(a >= global::kPlayer && a < global::kPlayer + 4) || (a >= 0x6DE43C && a < 0x6DE440) ||
 		(a >= global::kWorld + 0xB10 && a < global::kWorld + 0xB10 + 15 * 0x2C &&
-			(a - global::kWorld - 0xB10) % 0x2C < 0x1E) ||
-		(a >= 0x6DD744 && a < 0x6DD74A) || (a >= global::kShips + 0x100 && a < global::kShips + 0x108) ||
+			((a - global::kWorld - 0xB10) % 0x2C < 0x1E || (a - global::kWorld - 0xB10) % 0x2C >= 0x28)) ||
+		(a >= 0x6DD744 && a < 0x6DD74A) || (a >= 0x6DD734 && a < 0x6DD73C) ||
+		(a >= global::kShips + 0x100 && a < global::kShips + 0x108) ||
 		(a >= global::kShips + 0x20 && a < global::kShips + 0xE0);
 }
 
@@ -633,12 +667,15 @@ int main(int argc, char** argv) {
 	}
 	// Los puntos de las expediciones, que la grabación no guarda: de los datos.
 	std::vector<std::array<uint16_t, 2>> expeditions;
+	std::vector<std::string> ship_names;  // Tampoco los nombres de barco.
 	if (archive) {
 		SaveGame scripts;
 		load_game_scripts(*archive, scripts);
 		expeditions = scripts.expeditions;
+		ship_names = scripts.ship_names;
 		if (continuous && load.empty()) {
 			save.expeditions = expeditions;
+			save.ship_names = ship_names;
 		}
 	}
 	std::map<uint32_t, std::pair<int, int>> results;  // función → {bien, mal}
@@ -701,6 +738,7 @@ int main(int argc, char** argv) {
 		} else {
 			build_save(before, save);
 			save.expeditions = expeditions;
+			save.ship_names = ship_names;
 		}
 		save.queued_operations.clear();
 		const std::optional<uint32_t> ours = fn->second(save, call);

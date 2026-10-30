@@ -6,8 +6,6 @@
 // Lo que events.cpp expone para las sondas.
 namespace p3::data::tick::events_detail {
 
-void fn_4d8dd0(SaveGame& save);
-uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick);
 void fn_4f6c10(SaveGame& save, int merchant);
 int16_t fn_4f73d0(const SaveGame& save, int merchant);
 void fn_4f42b0(SaveGame& save, int merchant);
@@ -60,10 +58,12 @@ uint16_t event_index(const SaveGame& s, uint32_t address) {
 	return uint16_t((address - s.globals.u32(kEvents)) / 0x18);
 }
 
-// La navegación de tick_probe (--cpr) para lo que mira el agua del mapa.
+// La navegación de tick_probe (--cpr) para lo que mira el agua del mapa y
+// para la vuelta de las expediciones (evento 0x12).
 void use_navigation() {
-	if (const Sailing* sailing = probe_sailing()) {
+	if (Sailing* sailing = probe_sailing()) {
 		tick::set_event_navigation(&sailing->nav());
+		tick::set_event_sailing(sailing);
 	}
 }
 

@@ -33,9 +33,9 @@
 //     raíz(habitantes de todas las ciudades) / (30, 40 o 50 según el tipo)
 //     hasta 100000, 200000 o 0, y u32 [+0x14] y [+0x18] que bajan lo mismo
 //     hasta 0; u16 [+0x1C] y la lista del montón de [+0x24] (con su tamaño en
-//     [+0x28]): registros de 16 bytes con un u32 [+0x4] y un tick de
-//     caducidad u32 [+0xC] (los añade 0x52C6C0, que llama la cola de eventos
-//     desde 0x4E6F32).
+//     [+0x28]; SaveGame::world_object_lists): encargos de 16 bytes con un
+//     u32 [+0x4] (lo que falta) y un tick de caducidad u32 [+0xC] (los añade
+//     0x52C6C0, que llama la cola de eventos desde 0x4E6F32).
 
 #include <cmath>
 #include <cstring>
@@ -305,13 +305,22 @@ void fn_52d7d0(SaveGame& save, int object) {
 			down = 0;
 		}
 	}
-	// Después el juego recorre la lista de [+0x24] y quita (operator delete,
-	// [+0x28] y el u16 [+0x1C] bajan 1, y avisa a la interfaz con 0x5C7810)
-	// los registros con el tick de caducidad [+0xC] < tick del mundo o con
-	// [+0x4] == 0. No se traduce: las listas están vacías en las 12 partidas
-	// (las llena la cola de eventos, 0x4E6F32 → 0x52BFE0 → 0x52C6C0, que no
-	// se ha visto en 60 días) y p3vita no las guarda (savegame.cpp las
-	// descarta al leer).
+	// Después quita de su lista (SaveGame::world_object_lists; [+0x28] y el
+	// u16 [+0x1C] bajan 1, y avisa a la interfaz con 0x5C7810, que no se
+	// traduce) los encargos con el tick de caducidad [+0xC] < tick del mundo
+	// o sin nada que entregar ([+0x4] == 0). Las llena la llegada de una
+	// expedición (0x52C6C0, events_rare.cpp); vacías en las 12 partidas.
+	std::vector<GameMemory<0x10>>& list = save.world_object_lists[size_t(object)];
+	const uint32_t tick = g.u32(global::kWorldTick);
+	for (size_t i = 0; i < list.size();) {
+		if (list[i].u32(0xC) < tick || list[i].u32(0x4) == 0) {
+			list.erase(list.begin() + std::ptrdiff_t(i));
+			--g.u32(base + 0x28);
+			--g.u16(base + 0x1C);
+		} else {
+			++i;
+		}
+	}
 }
 
 }  // namespace p3::data::tick

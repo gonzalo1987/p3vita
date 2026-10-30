@@ -17,11 +17,15 @@ El estado son copias de la memoria del juego, por regiones:
   Li Hi  las listas [+0x101C] y [+0x1020] del asedio de la ciudad i: los 8 y
          16 primeros bytes de cada nodo, en orden
   E      cola de eventos (*0x6DD73C, tantos registros de 0x18 como [0x6DD748])
+  B      buzón de los avisos (*0x6DD730, tantas entradas de 16 bytes como [0x6DD736])
   Y      tiempos de viaje entre ciudades ([+0x6C] del mundo, n × n bytes)
   V      convoyes (*0x6DD7A8, tantos registros de 0x3C como [0x6DD896])
   Q      rutas de los barcos: por cada barco con [+0x24], u16 barco, u32 nº de
          puntos y los puntos (i16 x, i16 y)
   K0..K7 los 40 bytes de cada hueco del objeto 0x6DE588 (*[0x6DEF90 + 4·i]; vacío si no hay)
+  Z0..Z4 los 0x18 bytes de los 5 piratas del objeto de los barcos (*[0x6DD7AC + 4·i]; vacío si no hay)
+  F0..F14 los encargos de los 15 objetos del mundo (lista de [+0x24] de 0x6DEFB0 + 0x2C·i):
+         los 16 bytes de datos de cada nodo, en orden
   Ri Di Ni  registros de edificio, rejilla y nodos (0x14) de la ciudad i; en
          cada nodo, el puntero al siguiente se cambia por su propia dirección
   r      estado de rand()
@@ -38,7 +42,7 @@ Formato del fichero (enteros little endian):
 
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
        [--desde DÍA] [--max N] [--semilla S] [--cpr p2arch0_eng.cpr] [--barcos DATOS [--sin-ia] [--sin-convoyes]
-       [--sin-comerciantes] [--resto PIEZAS]]
+       [--sin-comerciantes] [--resto PIEZAS | --sin-resto]]
 La función 51ba10 graba los ticks de ciudad enteros.
 
 Con --cpr (o si DATOS/scripts tiene los ficheros), la carga crea también el
@@ -60,11 +64,11 @@ encuentros de 0x5053C0) y, al final del tick, ejecuta las órdenes de zarpar
 todo el recorrido de los convoyes. También hace el tick de cada comerciante
 (0x4F7BB0), como advance_time: en los ticks con t & 7 == 1 el comerciante
 t >> 3 y con t & 7 == 6 el (t + 0x100) >> 3, antes de los barcos
-(--sin-comerciantes lo salta). Para repetir el mundo con tick_probe
---continuo hay que grabar también 4f7bb0.
+(--sin-comerciantes lo salta).
 
-Con --resto PIEZAS (direcciones separadas por comas), además, el resto de
-advance_time que se pida, en su orden:
+Con --barcos hace además el resto de advance_time, en su orden (--resto
+PIEZAS, direcciones separadas por comas, solo las pedidas; --sin-resto,
+ninguna):
   5315c0  al empezar el día, tras la fecha: lo diario (semanal si el tick es
           múltiplo de 0x700), y el [+0x8B] del mundo baja 1 si no es 0
   535450  al empezar el día: las tareas programadas ([+0xE8] del mundo, con el tick)
@@ -72,8 +76,12 @@ advance_time que se pida, en su orden:
   6349f0  t & 7 == 7: el asedio de la ciudad t >> 3, tras su tick
   4d85c0  tras los barcos: la cola de eventos (con el tick)
   633a90  tras la cola de eventos: el asedio de cada ciudad
-(0x54DE90, las estadísticas de cada día, no se ejecuta.) El juego ejecuta la cola entre dos llamadas a advance_time,
-que hace hasta 8 ticks según el tiempo real; aquí y en p3vita, tras cada tick.
+(0x54DE90, las estadísticas de cada día, no se ejecuta.) El juego ejecuta
+la cola entre dos llamadas a advance_time, que hace hasta 8 ticks según el
+tiempo real; aquí y en p3vita, tras cada tick. La cola de eventos necesita lo
+de scripts/ (--cpr). Para repetir el mundo con tick_probe --continuo hay que
+grabar también 4f7bb0 y las piezas que se ejecuten:
+51ba10,4f7bb0,506720,537670,5315c0,535450,52d7d0,6349f0,633a90,4d85c0.
 Las funciones 506720 y 537670 también se pueden grabar. Con --sin-ia, los
 barcos como en sail_oracle.py: en puerto solo los estados 1, 2, 3 y el 0 de
 los jugadores humanos, y las órdenes encoladas no se ejecutan.
@@ -100,6 +108,7 @@ SETTINGS_SIZE = 0x4C
 PLAYER = 0x6DFC14
 SIEGES = 0x6DF270
 EVENTS = 0x6DD73C  # cola de eventos: puntero al array, cabeza u16 en +8, número u16 en +0xC
+MAIL = 0x6DD730  # buzón de los avisos: puntero a las entradas de 16 bytes, número u16 en +6
 PLAYER_TOWNS = 0x6DEF90  # 8 punteros a 40 bytes (un byte por ciudad) del objeto 0x6DE588
 GLOBALS = (0x6DD000, 0x6E0000)
 # Objeto de los nombres (0x5121C0 lo carga al arrancar el juego): punteros a
@@ -128,7 +137,7 @@ TRAMPOLINE = SENTINEL + 0x10
 SHIPS_TRAMPOLINE = SENTINEL + 0x20
 SAIL_TRAMPOLINE = SENTINEL + 0x30
 MERCHANT_TRAMPOLINE = SENTINEL + 0x40
-# El resto de advance_time (--resto): función → bytes de argumentos.
+# El resto de advance_time (con --barcos; --resto, --sin-resto): función → bytes de argumentos.
 REST = {0x5315C0: 1, 0x535450: 1, 0x52D7D0: 0, 0x6349F0: 0, 0x4D85C0: 1, 0x633A90: 0}
 REST_TRAMPOLINES = SENTINEL + 0x60  # uno cada 0x20 bytes, en el orden de REST
 # Actualización de barcos (ver sail_oracle.py): saltos por estado y convoyes.
@@ -614,6 +623,7 @@ class TownOracle(SaveOracle):
                         node = self.u32(node + data)
                     out[f'{name}{i}'] = (self.u32(siege + head), bytes(nodes))
         add('E', self.u32(EVENTS), self.u16(EVENTS + 0xC) * 0x18 if self.u32(EVENTS) else 0)
+        add('B', self.u32(MAIL), self.u16(MAIL + 6) * 0x10 if self.u32(MAIL) else 0)
         add('Y', self.u32(WORLD + 0x6C), towns * towns if self.u32(WORLD + 0x6C) else 0)
         add('V', self.u32(SHIPS + 8), self.u16(SHIPS + 0xF6) * 0x3C if self.u32(SHIPS + 8) else 0)
         routes = bytearray()
@@ -626,6 +636,17 @@ class TownOracle(SaveOracle):
         for i in range(8):
             p = self.u32(PLAYER_TOWNS + 4 * i)
             add(f'K{i}', p, 40 if p else 0)
+        for i in range(5):
+            p = self.u32(SHIPS + 0xC + 4 * i)
+            add(f'Z{i}', p, 0x18 if p else 0)
+        for i in range(15):
+            head = self.u32(WORLD + 0xB10 + 0x2C * i + 0x24)
+            records = bytearray()
+            node = self.u32(head) if head else head
+            while node != head:  # nodos de 0x18 bytes: siguiente, anterior y los datos
+                records += bytes(self.uc.mem_read(node + 8, 0x10))
+                node = self.u32(node)
+            out[f'F{i}'] = (head, bytes(records))
         for i in range(towns):
             t = self.town(i)
             add(f'R{i}', self.u32(t + 0x75C), self.u16(t + 0x776) * 8)
@@ -747,10 +768,17 @@ def main():
     p.add_argument('--sin-ia', action='store_true', help='con --barcos, sin las decisiones de la IA en puerto')
     p.add_argument('--sin-convoyes', action='store_true', help='con --barcos, sin el recorrido de los convoyes')
     p.add_argument('--sin-comerciantes', action='store_true', help='con --barcos, sin el tick de los comerciantes')
-    p.add_argument('--resto', default='', help='con --barcos, el resto de advance_time (5315c0,535450,...)')
+    p.add_argument('--resto', help='con --barcos, solo estas piezas del resto de advance_time (5315c0,535450,...); '
+                   'por omisión, todas')
+    p.add_argument('--sin-resto', action='store_true', help='con --barcos, sin el resto de advance_time')
     p.add_argument('--cpr', help='archivo de datos (p2arch0_eng.cpr) del que leer scripts/Namen*.txt')
     a = p.parse_args()
-    rest = [int(x, 16) for x in a.resto.split(',') if x]
+    if a.sin_resto:
+        rest = []
+    elif a.resto is None:
+        rest = list(REST)
+    else:
+        rest = [int(x, 16) for x in a.resto.split(',') if x]
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
                    not a.sin_comerciantes, rest, a.cpr)
     o.load()
