@@ -68,7 +68,14 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Tick de cada comerciante (0x4F7BB0): contabilidad, valor de la compañía, reputación y rangos, idéntico al juego
 - [x] Lo diario y semanal, tareas programadas, los 15 objetos del mundo y los asedios, idénticos al juego ([formats/world_tick.md](formats/world_tick.md))
 - [x] Cola de eventos (0x4D85C0): todos los tipos que salen en las partidas (elecciones, subastas, deudas, encargos, expediciones, piratas, peste, la Hansa...), idénticos al juego ([formats/world_tick.md](formats/world_tick.md) §6)
+- [ ] Guardar las cartas y avisos nuevos en el buzón de cada comerciante como el juego (0x4D6530; el buzón ya se lee de la partida, `SaveGame::mail`). Ahora no se guardan, y la simulación lo consulta: el evento 0x16 no repite un aviso que siga vigente (42 días), así que sin esto llega antes de tiempo. Hacerlo junto con las cartas de la interfaz
 - [x] El mundo entero (advance_time sin la interfaz) idéntico al juego byte a byte 60 días en las 12 partidas ([oracle.md](oracle.md))
+- [ ] **Llegar a Gobernador** (el cargo más alto de la Liga Hanseática, «Alderman» en la versión inglesa; es la meta del juego):
+  - [ ] la candidatura: cuando un alcalde llega a 120 de reputación, el tick del comerciante (0x4F75F0) lo presenta (0x5326E0 con 0x532E30) y encola las operaciones 0x85 y 0x86
+  - [ ] lo que hacen esas operaciones (por estudiar; p3vita aún no ejecuta las operaciones encoladas)
+  - [x] la elección en la reunión de la Hansa (evento 0x20), idéntica al juego
+  - [ ] el final: la ventana y el vídeo (`eldermann`) cuando el jugador sale elegido; el objetivo de la partida (evento 0x0E) ya se comprueba
+  - Las partidas de prueba no llegan a esto en 60 días: hará falta comprobarlo con estados retocados (un alcalde con 120 de reputación)
 - [x] Barcos de la IA en puerto: comercio con las ciudades y sus oficinas, elección de destino, tripulación, armas, reparación en el astillero y creación de convoyes, idénticos al juego ([formats/navigation.md](formats/navigation.md) §8)
 - [x] Barcos como memoria del juego; navegación idéntica byte a byte (avisos, lista por x, contadores)
 - [x] Convoyes de los comerciantes: en puerto, saliendo, en el mar, entrando, deshaciéndose, idénticos al juego 60 días en las 12 partidas ([formats/navigation.md](formats/navigation.md) §9)
@@ -92,6 +99,6 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 
 - [ ] Batallas navales
 - [ ] Comerciantes de la IA y rutas automáticas
-- [ ] Misiones, cartas y eventos
+- [ ] Misiones, cartas y eventos (las cartas, con el buzón de la fase 4)
 - [ ] Partidas guardadas
 - [ ] Vídeos Bink (FFmpeg) y audio MP3
