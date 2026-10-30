@@ -33,7 +33,8 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Partidas guardadas ([formats/savegame.md](formats/savegame.md)): edificios, objetos fijos y plantilla de cada ciudad
 - [x] Ciudades tal como empiezan (`missav/1.pat`, año 1300), con el estilo de su región
 - [ ] Partida nueva desde cero: `stadtplatz*.tow` y la generación de las casas (función sin localizar)
-- [ ] Kontors (hay que recorrer las oficinas), andamios de obras y bordes de calle de las celdas 0x81
+- [x] Comerciantes (dinero, nombre, cuál es el jugador), oficinas y barcos (posición, carga, bodega) de las partidas, comprobados con el oráculo
+- [ ] Dibujar los kontors (las oficinas ya se leen), andamios de obras y bordes de calle de las celdas 0x81
 - [ ] Partidas de la versión 0x4D (`missav/0100–0204.pat`)
 - [ ] Variantes de los tiles: sombras, nieve y andamios
 - [ ] Agua animada (`WaterSparkleTexID`)
@@ -51,7 +52,10 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 
 ## Fase 4: simulación
 
-- [ ] Mercancías, almacenes y precios
+- [x] Mercancías, almacenes y precios
+- [x] Umbrales de precio de cada ciudad (`update_town_price_thresholds`), como al cargar la partida
+- [x] Comprar y vender entre un barco y la ciudad, idéntico al juego en 24 000 operaciones ([oracle.md](oracle.md))
+- [ ] Estadísticas de comercio del comerciante y comercio con el kontor
 - [ ] Ciudades: población, producción y consumo
 - [ ] Barcos, rutas y navegación
 - [ ] Tests que comparen con el comportamiento documentado del original
@@ -64,6 +68,7 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Mercado: existencias, producción y consumo diarios de cada ciudad (de la partida)
 - [x] Precios de compra y venta con los umbrales guardados en la partida
 - [x] Precios idénticos al juego, comprobados con el oráculo (su propio código en un emulador de CPU, [oracle.md](oracle.md))
+- [x] Mercado interactivo en la Vita: elegir mercancía y cantidad, comprar y vender con el barco del jugador
 - [ ] Dificultad de comercio de la partida (de momento se supone la normal)
 - [ ] Rehacer la interfaz para 960×544 (16:9) con soporte táctil
 

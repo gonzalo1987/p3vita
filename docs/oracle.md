@@ -51,3 +51,42 @@ no depender del ejecutable.
   (ninguna) en todas las ciudades.
 - Vender: se ajustan a 0 las existencias negativas; con cantidad < 1, 0.
 - Sin la bandera de mercado (0x100), ambas devuelven 0.
+
+## Partidas y comercio
+
+`tools/oracle/save_oracle.py` hace lo mismo con una partida entera: carga en
+memoria emulada el mundo (0x52FB60) y los barcos (0x504230) de una partida ya
+descomprimida con el propio código del juego y vuelca, tal como quedan en
+memoria, las ciudades (existencias y umbrales de precio), los comerciantes, las
+oficinas y los barcos. Después ejecuta compras y ventas aleatorias con los
+manejadores de las operaciones 0x02 y 0x01 (0x537450 y 0x537340) sobre los
+barcos atracados de todos los comerciantes, cambiando a veces el dinero del
+comerciante y la dificultad, y anota el resultado de cada una.
+`tools/oracle/compare_save.cpp` lee la misma partida con `src/p3data`, repite
+las operaciones con `src/p3data/trade.cpp` y compara campo a campo; el precio
+medio de la carga, bit a bit.
+
+Para que el código de carga corra fuera del juego, el script sustituye
+`operator new`/`delete` por un montón propio, pone un puntero falso en
+0x6DF2E0 (si no, el constructor del comerciante abre
+`scripts/Expeditionen.dat`), crea los nodos centinela de las 15 `std::list`
+del mundo (que no se ha construido) y salta dos funciones que no leen nada del
+fichero: la matriz de distancias entre ciudades (0x4482C0) y el cálculo de la
+ruta de un barco por el mar (0x445010).
+
+```sh
+build/tools/p3save/p3save p2arch0_eng.cpr missav/1.pat raw /tmp/1.raw
+python3 tools/oracle/save_oracle.py <ruta>/Patrician3.exe /tmp/1.raw /tmp/1.csv 2000
+build/tools/oracle/compare_save /tmp/1.raw /tmp/1.csv
+```
+
+Resultado: en las 12 partidas v0x82 de `missav/` (`1`–`7.pat` y `tut0`–`tut4.pat`)
+coinciden todos los registros (ciudades con sus 96 umbrales, comerciantes,
+oficinas y barcos) y 24 000 compras y ventas: cantidad, precio, dinero,
+existencias, carga, precio medio, bodega ocupada y equipo.
+
+Esta comparación encontró algo que el oráculo de precios no podía ver: el
+juego recalcula los umbrales de precio al cargar cada ciudad y no usa los
+guardados (ver [formats/savegame.md](formats/savegame.md), §4.1). Con los
+guardados, las compras de ladrillos de cuatro partidas salían más baratas que
+en el juego.

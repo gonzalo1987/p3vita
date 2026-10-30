@@ -72,19 +72,30 @@ Para probarlo en la consola (con HENkaku o Enso):
    `p2arch0_spa.cpr`, que se monta encima (textos, nombres y fuentes en
    español). Con solo el español también arranca, pero le faltan datos.
 
-De momento es un visor de ciudades. Arranca en Lübeck tal como empieza la
-partida de 1300 (`missav/1.pat`). La cruceta o el stick izquierdo mueven la
-cámara, arrastrar con el dedo desplaza el mapa, L y R cambian de ciudad,
-Triángulo alterna entre la partida, la plantilla con todos los edificios del
-diseñador (`.editor`) y solo el terreno (`.town`), X abre el mercado de la
-ciudad (existencias, producción y consumo) y Start sale. En el PC, las flechas,
-Re Pág / Av Pág, E, M y Esc.
+De momento es un visor de ciudades en el que ya se puede comerciar. Arranca en
+Lübeck tal como empieza la partida de 1300 (`missav/1.pat`), con el comerciante
+del jugador (Georg Stromberg, 30 000 monedas) y su Snaikka en el puerto. La
+cruceta o el stick izquierdo mueven la cámara, arrastrar con el dedo desplaza el
+mapa, L y R cambian de ciudad, Triángulo alterna entre la partida, la plantilla
+con todos los edificios del diseñador (`.editor`) y solo el terreno (`.town`), y
+Start sale.
 
-`p3save` lista las ciudades de una partida y muestra el almacén de cada una:
+X abre el mercado de la ciudad: existencias, precio de compra y de venta de una
+unidad y lo que lleva tu barco. Con el mercado abierto, arriba y abajo eligen la
+mercancía, izquierda y derecha la cantidad (1, 5, 10 o todo), X compra, Cuadrado
+vende, Select pasa al siguiente barco del puerto y Círculo lo cierra. También se
+puede tocar una fila y los botones del pie. Los precios, los límites (almacén,
+bodega y dinero) y el precio medio de la carga son los del juego. En el PC: las
+flechas, Re Pág / Av Pág, E, M, C (comprar), V (vender), Tab y Esc.
+
+`p3save` lista las ciudades de una partida y muestra el almacén de cada una, sus
+comerciantes y sus barcos:
 
 ```sh
 build/tools/p3save/p3save p2arch0_spa.cpr missav/1.pat
 build/tools/p3save/p3save p2arch0_spa.cpr missav/1.pat 9
+build/tools/p3save/p3save p2arch0_spa.cpr missav/1.pat comerciantes
+build/tools/p3save/p3save p2arch0_spa.cpr missav/1.pat barcos
 ```
 
 ## Agradecimientos

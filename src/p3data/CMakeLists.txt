@@ -8,6 +8,8 @@ add_library(p3data STATIC
 	savegame.cpp
 	town.cpp
 	town_buildings.cpp
+	thresholds.cpp
+	trade.cpp
 )
 
 target_include_directories(p3data PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)

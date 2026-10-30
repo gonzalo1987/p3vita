@@ -27,3 +27,9 @@ target_link_libraries(prices_test PRIVATE p3data)
 target_compile_options(prices_test PRIVATE -Wall -Wextra)
 
 add_test(NAME prices COMMAND prices_test)
+
+add_executable(trade_test trade_test.cpp)
+target_link_libraries(trade_test PRIVATE p3data)
+target_compile_options(trade_test PRIVATE -Wall -Wextra)
+
+add_test(NAME trade COMMAND trade_test)

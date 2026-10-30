@@ -10,8 +10,12 @@ descomprimido. Marcas usadas:
 - **[supuesto]**: inferencia razonable que no he podido cerrar.
 
 > Implementación en p3vita: `src/p3data/lz.cpp` (descompresión),
-> `src/p3data/savegame.cpp` (§2–§6, solo la versión 0x82) y
-> `src/p3data/town_buildings.cpp` (§8). Sus tablas se han comprobado byte a byte
+> `src/p3data/savegame.cpp` (§2–§6 y §11–§13, solo la versión 0x82),
+> `src/p3data/thresholds.cpp` (§4.1), `src/p3data/trade.cpp` (§12.3) y
+> `src/p3data/town_buildings.cpp` (§8). Comerciantes, oficinas, barcos,
+> umbrales de precio y comercio están comprobados contra el propio juego con
+> `tools/oracle/save_oracle.py` en las 12 partidas v0x82 de `missav/` (ver
+> [../oracle.md](../oracle.md)). Sus tablas se han comprobado byte a byte
 > contra el ejecutable, y las 72 ciudades de `1.pat`, `3.pat` y `tut0.pat` salen
 > idénticas, celda a celda, a las de la referencia en Python escrita durante la
 > ingeniería inversa. Esa referencia y los scripts de análisis que se citan
@@ -26,7 +30,7 @@ descomprimido. Marcas usadas:
   `Save\Kam\`, `Save\Mehr\`, `MISSAV\`.
 - La primera palabra del `.pat` es `u32 = 0xAFFE | versión << 16` **[código]** (`0x549f40`:
   `shr edi,0x10`). En `missav/`: `1..7.pat` y `tut0..4.pat` son **v0x82**; `0100..0204.pat`
-  son **v0x4D** (no soportadas, ver §11). Todo lo que sigue es para v0x82; el código tiene ramas para versiones anteriores
+  son **v0x4D** (no soportadas, ver §14). Todo lo que sigue es para v0x82; el código tiene ramas para versiones anteriores
   que `p3save.py` replica en parte.
 - Los `.pst` son otra cosa (§10): no contienen edificios.
 
@@ -43,12 +47,12 @@ descarta. Rangos de `1.pat` **[datos]** (los 8 separadores están en 0x5c, 88229
 | 0x50 | `u32` [+0x8d4], `u32` [+0x8d8], `u32` [+0x8dc] (este último si v≥0x5F) | |
 | 0x5C | separador | |
 | 0x60 | **mundo** (objeto 0x6de4a0): cabecera (§3), 24 ciudades (§4) hasta 0xBE66E y el resto del mundo hasta 882292 | 0x52fb60 |
-| 882296 | barcos (nombres cada 372 bytes desde 883694) | 0x504230 (0x6dd7a0) |
+| 882296 | barcos (§12) | 0x504230 (0x6dd7a0) |
 | 935810 | encargos/ofertas (textos "Schmuggler", "Kurier"...) | 0x4d6350 (0x6dd730) |
 | 946574 | 4 bytes | 0x4d4bc0 (0x6dd728) |
 | 946582 | 8490 bytes sin identificar | 0x4d81e0 (0x6dd73c) |
 | 955076 | 5 bytes | 0x611ae0 (0x6e55d0) |
-| 955085 | tabla de nombres (40 ciudades en alemán, "Georg Stromberg") | 0x511e30 (0x6ddaa0) |
+| 955085 | tabla de nombres (§13) | 0x511e30 (0x6ddaa0) |
 | 955480 | separador final | |
 
 Dentro del mundo, tras las ciudades **[código, 0x52fb60]**: `n·n` bytes (n = nº de
@@ -56,7 +60,7 @@ ciudades; ¿distancias?), `u32` (v≥0x5A), n objetos de 0x1024 bytes en memoria
 (0x633730, guardados con formato propio), `[+6]` registros de 0x14 (0x4d32f0), `[+8]`
 oficinas/kontors (0x4feff0, tamaño variable: 6 bytes si están libres), `[+0xa]`
 comerciantes (0x4f4100), 0x5351d0, 15 × 0x52bbe0, un objeto opcional (0x533da0) y un byte.
-No los he recorrido.
+Formato en §11.
 
 ## 3. Cabecera del mundo (0x52fb60), desde 0x60 en 1.pat
 
@@ -64,7 +68,7 @@ No los he recorrido.
 
 | Off | Tipo | Campo (offset en 0x6de4a0) | 1.pat |
 |-|-|-|-|
-| 0x00 | u8, u8 | [+0], [+1] | 13, 4 |
+| 0x00 | u8, u8 | [+0], [+1] **mes** (0 = enero; lo usan los umbrales de precio, §4.1) | 13, 4 |
 | 0x02 | u16 | [+2] año de inicio **[datos]** | 1300 |
 | 0x04 | u16 | [+4] | 132 |
 | 0x06 | u32 | [+0x10] **nº de ciudades** | 24 |
@@ -113,21 +117,55 @@ Offsets relativos al inicio del bloque (v0x82). Entre corchetes, el offset en el
 | | 1 + 21·16 | separador + 21 instalaciones (0x510070, `struct facility` de P3Modding) [0x840–0x98f] |
 | | 85 + 16·M | [0x9a4] 16, [0x990] 4, [0x994] 2, [0x996] 2, 4×(1+1) [0x998/0x99c], [0x9a0] 2, [0x9a2] 2, [0x9b8] 4, [0x9bc] 1, [0x9bd] 1, [0x9c0] 4, [0x9c4] 1, [0x9c6] 18, [0x9d8] 18, `u16 M` y M nodos de 16 bytes (0x50fd40: `u32`, `u32`, `u16` BE, `u16` BE, `u8`, `u8`, `s16` BE) |
 
-### 4.1 Umbrales de precio **[datos]**
+### 4.1 Umbrales de precio **[código + oráculo]**
 
 El bloque que P3Modding llama `consumption_data` ([0x4F0], 24 × 16 bytes) son
-los cuatro umbrales de precio de cada mercancía tal como los deja
-`update_town_price_thresholds` (0x528070) en el último tick, así que los
-precios se calculan sin tener que reproducir esa función. Comprobado en Lübeck
-(`missav/1.pat`) contra el pseudocódigo de P3Modding, con
-`c = consumo de empresas + consumo de habitantes + 1`:
+los cuatro umbrales de precio de cada mercancía (t0 < t1 < t2 < t3: las
+existencias a partir de las que el precio baja de tramo), tal como los dejó
+`update_town_price_thresholds` (0x528070) en el último tick de la ciudad.
 
-- cerveza: t0 = 7c = 8204, t1 = 21c = 24612; t2 = t1 + 1000 (mínimo) y
-  t3 = t1 + t0 = 32816 (t3 se calcula antes de imponer los mínimos);
-- grano: t1 = 35c = 69370 (14 días más) y t2 = t1 + 10 · [0x490] = 113550;
-- herramientas: t0 = 7c + 2000 = 6844, t2 = t1 + 10 · 3120 = 49732;
-- madera, telas, ladrillos y pescado cuadran igual, con sus bonificaciones y
-  mínimos.
+**Pero el juego no usa los guardados**: el lector de la parte 1 (0x527ac0)
+llama a 0x528070 al terminar (0x527cc1), con parámetro `t0 de grano > 1`
+(con 0 solo pone {1, 2, 3, 4} en las 19 primeras mercancías). En ese momento
+el resto de la ciudad aún no está leído y conserva el valor del constructor;
+en particular, el u16 de la instalación 18 (campo [0x968]) vale 0, así que los
+ladrillos siguen siempre la rama «sin fábrica» al cargar. En 1.pat el recálculo
+da lo mismo que lo guardado, pero no siempre: en la ciudad 7 de 2.pat los
+ladrillos pasan de (80000, 160000, 163618, 167236) a (80000, 160000, 196180,
+436180) y su precio de compra cambia de 47 a 74 por carga hasta el siguiente tick.
+
+La función, leída en el ejecutable (`src/p3data/thresholds.cpp`), completa el
+pseudocódigo de P3Modding. Con `c = consumo de empresas + consumo de habitantes + 1`,
+`e = 2` si la ciudad está en crisis y 1 si no, y `s` = array sin identificar
+de [0x490] (P3Modding: «weird prods»):
+
+- Situación ([0x2C8]): crisis (`& 0x4000A10`: asedio, bloqueo, piratas o
+  hielo) → t1 = 28 días en vez de 14, `e = 2` y más demanda en las mercancías
+  de la máscara 0x8FF (grano–vino y madera); si no, incendio (`& 0x8000`, 0x8FF),
+  hambruna (`& 0x1000`, 0xFF) o peste (`& 0x8`, 0x7F). Las mercancías con más
+  demanda tienen t0 = 14 días en vez de 7.
+- t0 y t1 de las 19 primeras: días × c; ladrillos y armas empiezan en 0; el
+  grano suma otros t1 días.
+- Cosecha (mes [+1] del mundo): de septiembre a diciembre, t1 de grano y vino
+  sube 3/20, 3/10, 1/5 y 1/10.
+- Materiales: ladrillos t0 += 80000e, t1 += 160000e; madera += 42000/84000;
+  brea += 1800/3600; cáñamo += 5000e/10000e; herramientas += 2000e/4000e.
+- Armas (20–23): `a = habitantes · 10 / 200` (doble si `[0x2C8] & 0x810`),
+  `b = max(7 · consumo de habitantes, 10)`; t0 = b + a, t1 = max(3b + 2a, 50),
+  t2 = t1 + 10 · (producción + 1), t3 = t2 + b + a.
+- Las 20 mercancías de comercio: t2 = t1 + 10 · s, t3 = t2 + t0 (también los
+  ladrillos); +3600 a t3 de la brea y +160000 a t3 de los ladrillos si se
+  producen; telas +400/800/800/1600.
+- Ladrillos: si [0x968] > 300, t2 = t1 + s y t3 = t2 + s; si no, si t2 > 2·t1,
+  t2 = 2·t1 y t3 = 3·t1.
+- Mínimos (20 mercancías): t0 ≥ m y t_i ≥ (i + 1)·m, cada umbral por encima del
+  anterior (si no, anterior + m), con m = 1000 por barriles y 10000 por cargas.
+- No reproducido: durante un asedio, t0/t1 de la brea suben 7/14 veces el
+  consumo de brea del asedio (0x636920, solo si existe el objeto del asedio en
+  0x6df270, que al cargar aún no existe).
+
+Cobertura de las partidas de `missav/`: hay crisis, hambruna y los meses 8–10;
+no hay incendio, peste sola ni diciembre.
 
 Los precios (`src/p3data/prices.cpp`) reproducen `get_buy_price` y
 `get_sell_price` del ejecutable y coinciden al entero con ellas, comprobado
@@ -336,16 +374,183 @@ edificios. Además, los `Tut*.pst` de `missav/` son versión 8 y el exe exige la
 coincide llama a 0x54ddf0 (vaciar) y no lee nada **[código + datos]**. Para el tutorial, la
 ciudad sale de `tut0.pat`.
 
-## 11. Pendiente
+## 11. Resto del mundo: oficinas y comerciantes (0x52fb60)
+
+Tras las ciudades, en v0x82 y en este orden **[código + oráculo]** (n = nº de ciudades):
+
+| Contenido | Tamaño | Función |
+|-|-|-|
+| matriz n·n | n² bytes | |
+| u32 | 4 | |
+| n objetos de ciudad (0x1024 bytes en memoria) | 17 + n1·8 + n2·16 + 3 (+ opcional) | 0x633730 |
+| registros de 0x14 ([+6] de la cabecera) | 20 cada uno | 0x4d32f0 |
+| **oficinas** ([+8]) | 6 o 1100 | 0x4feff0 |
+| **comerciantes** ([+0xa]) | 1552 + variable | 0x4f4100 |
+| objeto del mundo + 0xe8 | 0xA00 + 8 + 40·k | 0x5351d0 |
+| 15 objetos de 0x2C | 30 + 16·c | 0x52bbe0 |
+| u8 ≠ 0 → objeto opcional | (no visto en ninguna partida) | 0x533da0 |
+| u8 [+0x8f] | 1 | |
+
+- 0x633730: `u32, u8, u16, u8, u8, 4 × (u8, u8)`, `u8 n1` y n1 × 8 bytes,
+  `u8 n2` y n2 × 16 bytes, `u8` y, si no es 0, un objeto de 0x650 bytes en
+  memoria (0x627ad0, de los asedios): `5 × u32, 7 × u16, 5 × u8, 5 × (u32, u32),
+  u8 total, u8 primero` y, si primero ≠ 0xFF, (total − primero) × 8 bytes.
+- 0x5351d0: 0xA00 bytes, 8 bytes y 40 bytes por cada uno de esos 8 que no sea 0xFF.
+- 0x52bbe0 (v > 0x71): 8 × u8, u32, 8 bytes, 8 bytes, `u16 c` y c × 16 bytes.
+
+### 11.1 Oficina (kontor)
+
+`u16` dueño [+0x2c4]: **0xFFFF = libre**, y entonces solo siguen `u16`
+[+0x2c8] (siguiente libre) y `u16` [+0x2ca]. Si no, 1100 bytes en total:
+
+| Off | Tipo | Campo |
+|-|-|-|
+| 0 | u16 | [+0x2c4] **dueño** (índice de comerciante) |
+| 2 | 704 | almacén, como el de las ciudades (§4): **existencias** en +4 |
+| 706 | u32 | [+0x2c0] |
+| 710 | u16 | [+0x2c8] |
+| 712 | u8 | [+0x2c6] **ciudad** (índice en la partida) |
+| 713 | u8 | [+0x2c7] |
+| 714 | u16 | [+0x2ca] **siguiente oficina de la ciudad** (la primera es [0x784] de la ciudad, §5) |
+| 716 | 384 | resto (0x4ff044: varios u16, 3 × 0x60, 6 × 8 bytes…) |
+
+En 1.pat las 37 primeras están ocupadas, una por comerciante en su ciudad
+natal, y las 27 restantes libres; todas las existencias valen 0.
+
+### 11.2 Comerciante (0x4f4100 → 0x4f6fa0 → 0x4f6240)
+
+1552 bytes fijos en v0x82 y, al final, 10 `u16` cuyos 15 bits bajos son la
+longitud de otras tantas listas de u16 que van a continuación. Campos usados
+(offset en el fichero y en el `struct merchant` de P3Modding):
+
+| Off | Tipo | Campo |
+|-|-|-|
+| 0 | s32 | [+0x0] **dinero** |
+| 8 | u16 | [+0x8] **tipo**: 0 = jugador humano; la IA usa 1 (pequeños), 5, 7 y 15 |
+| 12 | u16 | [+0xC] primera oficina |
+| 14 | u16 | [+0xE] **primer barco** (los demás siguen el campo +4 de cada barco) |
+| 25 | u8 | [+0x19] **ciudad natal** (índice) |
+| 26 | u8 | [+0x1A] hombre (≠ 0) |
+| 28 | u8 | [+0x1C] índice del nombre de pila (bit 7 = mujer, lo pone el juego al cargar según +0x1A) |
+| 29 | u8 | [+0x1D] índice del apellido |
+| 1336 | u32 | [+0x608] ciudades en las que no puede comerciar (un bit por índice) |
+| 1532 | 10 × u16 | [+0x60C] longitudes de las listas finales |
+
+El resto del orden: 0x4f6240 lee 268 bytes ([+0x0]…[+0xE2]), 0x4f6fa0 956
+([+0x118], reputación [+0x11C] 0x1E0, [+0x2FC] 0xA0, [+0x3C4] 0xA0, [+0x464],
+rangos [+0x39C] 0x28, [+0x468]…[+0x4D4]) y 0x534830 100; después 0x4f4100 lee
+[+0x53C], [+0x540], [+0x544], [+0x546], [+0x547], [+0x608], [+0x548] 0x60,
+[+0x5A8] 0x60 y [+0x60C] 0x14.
+
+**El jugador** es el último comerciante con tipo 0: así lo elige el juego al
+cargar una partida de un jugador (0x546978–0x5469a1). En 1.pat es el 36,
+Georg Stromberg, natural de Lübeck, con 30 000 monedas y un barco.
+
+## 12. Barcos (0x504230)
+
+Tras el separador: `u16` versión (= la de la partida), 16 `u16` de cabecera
+([+0xe0], [+0xe2], [+0xe4], [+0xe8], [+0xea], [+0xec], [+0xee], [+0xf0],
+**[+0xf2] capitanes**, **[+0xf4] barcos**, [+0xf6] convoyes, [+0xe6], [+0xfa],
+[+0xfc], [+0xfe], [+0xf8]), los capitanes (16 bytes cada uno en v ≥ 0x78), los
+barcos (0x517990) y después convoyes, 0xC0 bytes y 5 objetos opcionales, que no
+se leen.
+
+### 12.1 Barco
+
+`u16` estado [+0x134]. Si es ≥ 0x17 es un hueco libre y solo sigue un `u16`
+[+0x6] (y un `u8` más si la versión es ≥ 0x83). Si no, 372 bytes más la ruta
+(offsets en el fichero, contando el estado; entre corchetes, el `struct ship`
+de 0x180 bytes de P3Modding):
+
+| Off | Tipo | Campo |
+|-|-|-|
+| 0 | u16 | [+0x134] **estado**: 0x0F navegando, 0x12 pirata, 0x15 barcos sin dueño de cada ciudad; 0–6 en puerto |
+| 2 | u16 | [+0x4] siguiente barco del mismo dueño |
+| 4 | u8 | [+0x0] **dueño** (comerciante; 0xFF ninguno) |
+| 5 | u8 | [+0xE] **tipo**: 0 Snaikka, 1 Craier, 2 Kogge, 3 Holk |
+| 6 | u8 | [+0xF] nivel |
+| 10 | s32 | [+0x10] **capacidad** (unidades internas: Snaikka 30000 = 15 cargas, Kogge 90000) |
+| 14 | s32 | [+0x14] salud máxima |
+| 26 | s32 | [+0x18] salud |
+| 30, 34 | s32 | [+0x1C], [+0x20] posición x, y en el mapa del mar |
+| 38 | u32 | [+0x24] puntero a la ruta (del proceso que guardó) |
+| 56 | u8 | [+0x36] siguiendo una ruta |
+| 57, 58 | u8 | [+0x37] ciudad de origen, [+0x38] destino |
+| 59 | u8 | [+0x39] **ciudad en la que está** (0xFF en el mar) |
+| 66 | u16 | [+0x40] marineros |
+| 68 | u16 | [+0x42] capitán |
+| 86 | | si [+0x24] ≠ 0 y [+0x36] ≠ 0: `u16 n` y n × (u16, u16) de ruta; si no, el juego la recalcula (0x445010) |
+| R | 24 × s32 | [+0x54] **carga** por mercancía |
+| R + 96 | 24 × f32 | [+0xB4] **precio medio** pagado por unidad interna |
+| R + 192 | 26 | [+0x114], [+0x124]–[+0x12C], [+0x130], [+0x132], [+0x136], [+0x137], [+0x13A], [+0x13B], [+0x138] |
+| R + 218 | 24 × u8 | [+0x13C] artillería: tipo de pieza en cada hueco, ≥ 6 vacío |
+| R + 242 | u16 | [+0x154] armas de mano |
+| R + 244 | u8 | [+0x156] cargas ocupadas que no son mercancía |
+| R + 254 | 32 | [+0x160] **nombre** (Latin-1) |
+
+(R = 86 + longitud de la ruta.) Al cargar cada barco, el juego llama a
+0x5182b0, que también ejecuta antes y después de cada compra o venta:
+
+### 12.2 Bodega (0x5182b0) **[código + oráculo]**
+
+- Redondea hacia abajo la carga de cada mercancía a su unidad (2000 las
+  cargas, 200 los barriles, 10 las armas).
+- Ocupado = suma de la carga + 2000 · [+0x156]; se guarda en [+0x118]
+  redondeado hacia arriba a 200.
+- Equipo [+0x11C] = 400 por cada marinero por encima del mínimo del tipo
+  (tabla 0x673664: 10, 16, 30, 24) + el peso de cada pieza de artillería
+  (0x672cb4: 1000, 1000, 2000, 2000, 2000, 1000) + 10 por arma de mano.
+- Devuelve el espacio libre: capacidad − equipo − ocupado (sin redondear).
+
+### 12.3 Comprar y vender (operaciones 0x02 y 0x01) **[código + oráculo]**
+
+Operación de 20 bytes: código, `s32` cantidad, `u16` mercancía, `u16` barco,
+`u16`, `u16` ciudad. Manejadores en la tabla 0x537030 de 0x535760.
+
+Comprar (0x537450): el barco tiene que estar en esa ciudad ([+0x39]) y su
+dueño no tenerla vetada ([+0x608]). Límite = mín(existencias, espacio libre);
+si la cantidad lo supera, se toma el límite redondeado a cargas o barriles. Si
+el precio (`get_buy_price`) supera el dinero, 0x52f3e0 rebaja la cantidad:
+`cantidad · dinero / precio` redondeada, repetido mientras siga costando más
+que el dinero, y luego sube de unidad en unidad mientras cueste **menos** que
+el dinero y no pase de lo pedido. Después cobra, añade la carga (0x517fe0:
+precio medio = (medio · carga anterior + precio) / carga nueva, en double y
+guardado como float, con la carga redondeada a su unidad), recalcula la
+bodega, baja las existencias y apunta estadísticas del comerciante (0x4f8840).
+
+Vender (0x537340): no comprueba que el barco esté en la ciudad. Vende
+mín(cantidad, carga), recalcula la bodega, cobra `get_sell_price` con las
+existencias de antes de la venta, apunta estadísticas (0x4f8690) y suma la
+mercancía al almacén de la ciudad.
+
+Las estadísticas no cambian dinero, existencias ni carga, y p3vita aún no las
+reproduce.
+
+## 13. Tabla de nombres (0x511e30)
+
+Es la última sección, entre los dos últimos separadores: los 40 nombres de
+ciudad en alemán (terminados en 0), tres listas de nombres escritos por los
+jugadores (hombre, mujer, apellido), cada una con hasta 20 cadenas terminadas
+en 0 y cerrada con `#`, y un u32. Los índices de nombre del comerciante
+(§11.2) apuntan a `scripts/NamenMaenner.txt` / `NamenFrauen.txt` (80
+nombres) o `NamenFamilien.txt` (86 apellidos: los 80 de `Familiennamen` y los
+6 de piratas); los que pasan del final son estos huecos de la partida. En 1.pat
+el jugador usa el hueco 16 de las dos listas: «Georg» y «Stromberg» **[datos]**.
+Que las listas del juego vayan en el orden del fichero es **[supuesto]**, pero
+da nombres plausibles a los 36 comerciantes de la IA (Ferdinand Fugger, Hans Horn…).
+
+## 14. Pendiente
 
 - v0x4D (`0100–0204.pat`): siguiendo 0x549f40 para esa versión (ajustes de 0x28 bytes, sin
   [+0x8dc]) la cabecera del mundo sale incoherente (año 1, 0x849C0000 ciudades) y en 0x34 no
   hay `0xAFFE`; falta alguna rama que no he localizado.
-- Kontors: hay que recorrer las oficinas (0x4feff0, tamaño variable) y lo que va antes de ellas
-  en el mundo; `save_towns.py` no los dibuja y lo indica en el resumen.
+- Kontors en el mapa: las oficinas ya se leen (§11.1); falta dibujar `spielerkontor` y
+  `gegnerkontor` (§8.5).
 - Estatua de la ciudad (§8.3), grúas (qué modelo de los 6 elige el exe), capillas,
   ayuntamiento de las plantillas 21–23 y significado de `b2` = 0xFE/0xFD en murallas.
-- Andamios de edificios en obras (0x5891c0) y bordes de calle de las celdas 0x81 (elección
-  aleatoria 0x592cfd): no se dibujan.
-- El resto del fichero (barcos, comerciantes, oficinas, encargos) solo está delimitado.
-
+- Andamios de edificios en obras (0x5891c0) y bordes de calle de las celdas 0x81
+  (elección aleatoria 0x592cfd): no se dibujan.
+- Tras los barcos: encargos (0x4d6350) y las secciones de 0x4d4bc0, 0x4d81e0 y 0x611ae0 solo
+  están delimitadas.
+- Dificultad del comercio: la venta usa un factor (2.2/2.0/1.8 en 0x6DE3D8+0x64) que sale de
+  los ajustes de la partida; p3vita supone la normal.
