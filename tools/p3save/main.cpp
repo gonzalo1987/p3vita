@@ -35,24 +35,24 @@ std::string town_name(const std::vector<std::string>& names, int id) {
 
 // Nombre de la ciudad por su índice en la partida.
 std::string town_at(const SaveGame& save, const std::vector<std::string>& names, int index) {
-	return index >= 0 && size_t(index) < save.towns.size() ? town_name(names, save.towns[size_t(index)].town_id)
+	return index >= 0 && size_t(index) < save.towns.size() ? town_name(names, save.towns[size_t(index)].town_id())
 															 : "-";
 }
 
 void list_towns(const SaveGame& save, const std::vector<std::string>& names) {
 	static constexpr const char* kDifficulty[] = {"baja", "normal", "alta"};
 	std::printf("versión %#x, año %d, mes %d, %d comerciantes, %zu ciudades, dificultad del comercio %s\n",
-		save.version, save.year, save.month + 1, save.merchant_count, save.towns.size(),
+		save.version, save.year(), save.month() + 1, save.merchant_count, save.towns.size(),
 		kDifficulty[int(save.trade_difficulty)]);
 	for (size_t i = 0; i < save.towns.size(); ++i) {
 		const SavedTown& t = save.towns[i];
 		std::printf("%3zu  %-16s id %2d  plantilla %3d  %6u habitantes  %3zu registros de edificio\n", i,
-			town_name(names, t.town_id).c_str(), t.town_id, t.template_map, t.citizens, t.records.size());
+			town_name(names, t.town_id()).c_str(), t.town_id(), t.template_map(), t.citizens(), t.records.size());
 	}
 }
 
 void show_town(const SavedTown& t, const std::vector<std::string>& names, TradeDifficulty difficulty) {
-	std::printf("%s: %u habitantes\n\n", town_name(names, t.town_id).c_str(), t.citizens);
+	std::printf("%s: %u habitantes\n\n", town_name(names, t.town_id()).c_str(), t.citizens());
 	std::printf("%-14s %8s %8s %8s %8s %8s   %s\n", "mercancía", "almacén", "prod.", "consumo", "compra", "venta",
 		"umbrales t0..t3");
 	for (int w = 0; w < kWareCount; ++w) {
@@ -61,9 +61,9 @@ void show_town(const SavedTown& t, const std::vector<std::string>& names, TradeD
 		const double scale = unit;
 		const int32_t buy = buy_price(w, t.market(w), unit);
 		const int32_t sell = sell_price(w, t.market(w), unit, difficulty);
-		const auto& th = t.price_thresholds[i];
-		std::printf("%-14s %8.1f %8.2f %8.2f %8s %8d   %.1f %.1f %.1f %.1f\n", kWares[i].name, t.wares[i] / scale,
-			t.production[i] / scale, (t.business_consumption[i] + t.citizen_consumption[i]) / scale,
+		const auto& th = t.price_thresholds(i);
+		std::printf("%-14s %8.1f %8.2f %8.2f %8s %8d   %.1f %.1f %.1f %.1f\n", kWares[i].name, t.stock(i) / scale,
+			t.production(i) / scale, (t.business_consumption(i) + t.citizen_consumption(i)) / scale,
 			buy ? std::to_string(buy).c_str() : "-", sell, th[0] / scale, th[1] / scale, th[2] / scale,
 			th[3] / scale);
 	}
@@ -73,16 +73,16 @@ void list_merchants(const SaveGame& save, const std::vector<std::string>& towns,
 	for (size_t i = 0; i < save.merchants.size(); ++i) {
 		const SavedMerchant& m = save.merchants[i];
 		int ships = 0;
-		for (uint16_t s = m.first_ship; s < save.ships.size() && ships < 1000; s = save.ships[s].next_of_owner) {
+		for (uint16_t s = m.first_ship(); s < save.ships.size() && ships < 1000; s = save.ships[s].next_of_owner) {
 			++ships;
 		}
 		int offices = 0;
 		for (const SavedOffice& office : save.offices) {
-			offices += office.owner == i;
+			offices += office.owner() == i;
 		}
 		std::printf("%3zu %s %-24s %9d monedas  natal %-12s  %d barcos  %d oficinas  tipo %u\n", i,
-			int(i) == save.player ? "*" : " ", merchant_name(save, names, int(i)).c_str(), m.money,
-			town_at(save, towns, m.hometown).c_str(), ships, offices, m.kind);
+			int(i) == save.player ? "*" : " ", merchant_name(save, names, int(i)).c_str(), m.money(),
+			town_at(save, towns, m.hometown()).c_str(), ships, offices, m.kind());
 	}
 	std::printf("\n* = jugador\n");
 }

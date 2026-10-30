@@ -232,6 +232,7 @@ class SaveOracle:
         end = self.call(READ_SHIPS, [FILE + end + 4], ecx=SHIPS) - FILE
         if struct.unpack_from('<I', self.save, end)[0] != SEPARATOR:
             raise RuntimeError(f'los barcos acaban en {end}, sin separador')
+        self.ships_end = end
 
     # Acceso a lo cargado.
     def counts(self):

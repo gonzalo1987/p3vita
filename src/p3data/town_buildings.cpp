@@ -189,7 +189,7 @@ void building_objects(const BuildingRecord& record, const SavedTown& town, int r
 		break;
 	}
 	case kTileChurch:
-		tile = index.find_regional(tile_type, [&](const auto& p) { return has(p, 2, town.church_level); },
+		tile = index.find_regional(tile_type, [&](const auto& p) { return has(p, 2, town.church_level()); },
 			region, 1);
 		break;
 	case kTileTownHall:
@@ -224,7 +224,7 @@ void building_objects(const BuildingRecord& record, const SavedTown& town, int r
 	case kTileMonument:
 		if (record.owner >= merchant_count) {
 			// Supuesto: la estatua de la ciudad es el statue_* de su tabla.
-			const uint32_t statue = town.town_id < 40 ? kStatueByTown[town.town_id] : 0;
+			const uint32_t statue = town.town_id() < 40 ? kStatueByTown[town.town_id()] : 0;
 			tile = index.find(kTileStatue, [&](const auto& p) { return has(p, 1, statue); });
 		} else {
 			tile = index.find(tile_type, [&](const auto& p) { return has(p, 1, param); });
@@ -271,7 +271,7 @@ void fixed_objects(const SavedTown& town, const TownMap& map, const TileIndex& i
 		}
 	}
 
-	if (town.flags != 0) {
+	if (town.flags() != 0) {
 		// Supuesto: el modelo de cada grúa es el que tenga el .editor en esa celda.
 		const TileDef* default_crane = index.by_name("8bitkomplett_kranlinks");
 		for (size_t k = 0; k < f.cranes.size(); k += 2) {
@@ -293,7 +293,7 @@ void fixed_objects(const SavedTown& town, const TownMap& map, const TileIndex& i
 		}
 	}
 
-	if (town.flags & kFlagMarketStalls) {
+	if (town.flags() & kFlagMarketStalls) {
 		for (size_t k = 0; k < f.stall_models.size(); ++k) {
 			const uint8_t x = f.market_stalls[2 * k];
 			const uint8_t y = f.market_stalls[2 * k + 1];
@@ -305,13 +305,13 @@ void fixed_objects(const SavedTown& town, const TownMap& map, const TileIndex& i
 		}
 	}
 
-	if (town.flags & kFlagRepairShipyard) {
+	if (town.flags() & kFlagRepairShipyard) {
 		if (valid(f.shipyards[2], f.shipyards[3])) {
 			if (const TileDef* repair = index.by_name("repwerft")) {
 				out.push_back({f.shipyards[2], f.shipyards[3], repair});
 			}
 		}
-		if ((town.flags & kFlagShipyard) && valid(f.shipyards[0], f.shipyards[1])) {
+		if ((town.flags() & kFlagShipyard) && valid(f.shipyards[0], f.shipyards[1])) {
 			if (const TileDef* shipyard = index.by_name("werft")) {
 				out.push_back({f.shipyards[0], f.shipyards[1], shipyard});
 			}
@@ -430,12 +430,12 @@ bool load_saved_town(const CprArchive& archive, const SaveGame& save, size_t ind
 		return false;
 	}
 	const SavedTown& saved = save.towns[index];
-	if (!load_town(archive, saved.template_map, out, error)) {
+	if (!load_town(archive, saved.template_map(), out, error)) {
 		return false;
 	}
 	TownMap editor;
-	const bool has_editor = load_town(archive, saved.template_map, editor, nullptr, true);
-	const int region = saved.town_id < int(regions.size()) ? regions[size_t(saved.town_id)] : kFallbackRegion;
+	const bool has_editor = load_town(archive, saved.template_map(), editor, nullptr, true);
+	const int region = saved.town_id() < int(regions.size()) ? regions[size_t(saved.town_id())] : kFallbackRegion;
 	place_saved_buildings(saved, save.merchant_count, region, tiles, has_editor ? &editor : nullptr, out);
 	return true;
 }

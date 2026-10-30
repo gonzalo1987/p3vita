@@ -100,11 +100,11 @@ int main(int argc, char** argv) {
 
 	// Ciudades: símbolo azul si el jugador tiene oficina, rojo si no.
 	for (size_t i = 0; i < save.towns.size(); ++i) {
-		const int id = save.towns[i].town_id;
+		const int id = save.towns[i].town_id();
 		const SeaMapTown& t = towns[size_t(id)];
 		bool kontor = false;
 		for (const SavedOffice& office : save.offices) {
-			kontor |= office.used() && office.owner == save.player && office.town == i;
+			kontor |= office.used() && office.owner() == save.player && office.town() == i;
 		}
 		const int frame = kontor ? 3 : 0;
 		blit(map, symbols, (frame % 3) * kTownSymbolSize, (frame / 3) * kTownSymbolSize, kTownSymbolSize,

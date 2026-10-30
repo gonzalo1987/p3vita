@@ -566,7 +566,50 @@ el jugador usa el hueco 16 de las dos listas: «Georg» y «Stromberg» **[datos
 Que las listas del juego vayan en el orden del fichero es **[supuesto]**, pero
 da nombres plausibles a los 36 comerciantes de la IA (Ferdinand Fugger, Hans Horn…).
 
-## 14. Pendiente
+## 14. Los objetos en memoria tras la carga **[código + oráculo]**
+
+La simulación de las ciudades (`src/p3data/town_tick`) trabaja sobre los
+objetos con la misma disposición que en memoria (`game_memory.hpp`), así que
+`savegame.cpp` los llena como el cargador del juego. Comparado con el juego
+recién cargada la partida (`tick_probe --carga`, ver [../oracle.md](../oracle.md)):
+0 diferencias en las 12 partidas v0x82 en ciudades, oficinas, comerciantes,
+capitanes, registros de 0x14 del mundo, registros de edificio, rejillas,
+nodos, los campos con nombre de los barcos y los globales de abajo. Lo que no
+sale directamente de §4–§12:
+
+- Ciudad: la parte 1 (0x414 bytes) y la 2 van seguidas a [0x2C0] y [0x82C];
+  la parte 4 deja sin leer [0x822]; en la 5, los movimientos de dinero son
+  11 × 4 bytes en [0x704] y en [0x730] (versión ≥ 0x6A). El lector de la parte
+  1 apunta en el mundo el id ([+0x18 + índice]) y la plantilla ([+0x40 +
+  índice]) de la ciudad. Los nodos de [0x9B4] (0x14 bytes, el siguiente en
+  +0) quedan en orden inverso al del fichero, con `[+0xC]` y `[+0xE]` en big
+  endian sin signo y `[+0x12]` con signo.
+- Registros de edificio (0x51EC10): los libres (lista [0x760]) quedan con
+  x = y = 0xFF y, si la ciudad tiene estatua ([0x76C] & 1) y no hay ningún
+  registro del tipo 0x2D en [0x764], se añade uno al principio de esa lista en
+  [0x800] tomando un registro libre (0x51F100: si no queda ninguno, la tabla
+  crece en 0x80). Pasa en 21 ciudades de una de las partidas.
+- Oficina: su constructor (0x4FEBD0) deja 0xFFFF en [0x2C4], [0x2C8], [0x2CA],
+  [0x2CC], [0x2CE], [0x2D0] y [0x2F2], 0xFF en [0x2C6], 0x02020202 en [0x2E4]
+  y 0x32 en [0x2EC]; las libres solo leen [0x2C4], [0x2C8] y [0x2CA].
+- Comerciante: el reparto de los 1552 bytes está en `load_merchant_memory`
+  (0x4F6240, 0x4F6FA0, 0x534830 sobre [0x4D8] y 0x4F4100); [0x22] va en big
+  endian, [0x25] es 0 o 1, y las diez listas del final se guardan aparte
+  (punteros en [0x624]). [0xE4] y [0xE8] apuntan al nombre. El lector de
+  barcos cuenta en [0x47C] los barcos de cada comerciante (0x504652).
+- Capitán (0x4FDEB0, 16 bytes en el fichero): [0x0] 2, [0x2], [0x3], [0x4] 4,
+  [0xC] 2, [0x8..0xB], [0xE] (0 o 1) y [0xF].
+- Globales: los ajustes en `*0x6CC3E8` (0x4C bytes, con [0x3C..0x4B] a 0 y el
+  byte 8 limitado a 14 si el 0xF no es 6), la cabecera del mundo (§3; [+0x89]
+  es 0 o 1, [+0x8A] es 1 si el byte vale 0x7F), [+0x80] del mundo con el
+  número de comerciantes y [+0x8F] con el último byte del mundo, la cabecera
+  del objeto de los barcos ([+0xE0..+0xFE]), el jugador en 0x6DFC14 y el
+  factor de la dificultad del comercio en 0x6DE43C.
+
+No se leen todavía los objetos de asedio de cada ciudad (0x633730, en
+`*0x6DF270`): el tick de ciudad no los usa.
+
+## 15. Pendiente
 
 - v0x4D (`0100–0204.pat`): siguiendo 0x549f40 para esa versión (ajustes de 0x28 bytes, sin
   [+0x8dc]) la cabecera del mundo sale incoherente (año 1, 0x849C0000 ciudades) y en 0x34 no

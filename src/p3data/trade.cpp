@@ -89,7 +89,7 @@ bool valid(const SaveGame& save, int ship, int town, int ware) {
 
 // El comerciante tiene prohibido comerciar en esa ciudad (campo 0x608).
 bool banned(const SavedMerchant& merchant, int town) {
-	return merchant.banned_towns >> (town & 31) & 1;
+	return merchant.banned_towns() >> (town & 31) & 1;
 }
 
 }  // namespace
@@ -127,7 +127,7 @@ TradeResult quote_buy(const SaveGame& save, int ship_index, int town_index, int 
 		return {};
 	}
 	const SavedTown& town = save.towns[size_t(town_index)];
-	const int32_t stock = int32_t(town.wares[size_t(ware)]);
+	const int32_t stock = int32_t(town.stock(size_t(ware)));
 
 	int32_t limit = recalculate_cargo(ship);
 	if (stock < limit) {
@@ -141,8 +141,8 @@ TradeResult quote_buy(const SaveGame& save, int ship_index, int town_index, int 
 	}
 	const MarketState market = town.market(ware);
 	int32_t price = buy_price(ware, market, amount);
-	if (price > merchant.money) {
-		fit_to_money(ware, market, merchant.money, price, amount);
+	if (price > merchant.money()) {
+		fit_to_money(ware, market, merchant.money(), price, amount);
 	}
 	return amount > 0 ? TradeResult{amount, price} : TradeResult{};
 }
@@ -153,10 +153,10 @@ TradeResult buy_to_ship(SaveGame& save, int ship_index, int town_index, int ware
 		return {};
 	}
 	SavedShip& ship = save.ships[size_t(ship_index)];
-	save.merchants[ship.owner].money -= result.price;
+	save.merchants[ship.owner].money() -= result.price;
 	add_cargo(ship, ware, result.amount, result.price);
 	recalculate_cargo(ship);
-	save.towns[size_t(town_index)].wares[size_t(ware)] -= uint32_t(result.amount);
+	save.towns[size_t(town_index)].stock(size_t(ware)) -= uint32_t(result.amount);
 	return result;
 }
 
@@ -184,8 +184,8 @@ TradeResult sell_from_ship(SaveGame& save, int ship_index, int town_index, int w
 	SavedShip& ship = save.ships[size_t(ship_index)];
 	ship.cargo[size_t(ware)] -= result.amount;
 	recalculate_cargo(ship);
-	save.merchants[ship.owner].money += result.price;
-	save.towns[size_t(town_index)].wares[size_t(ware)] += uint32_t(result.amount);
+	save.merchants[ship.owner].money() += result.price;
+	save.towns[size_t(town_index)].stock(size_t(ware)) += uint32_t(result.amount);
 	return result;
 }
 

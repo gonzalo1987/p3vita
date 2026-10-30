@@ -88,6 +88,26 @@ void set_course(SavedShip& ship, uint32_t speed, MapPoint target) {
 
 }  // namespace
 
+void update_world_date(GlobalMemory& g) {
+	const uint32_t tick = g.u32(global::kWorldTick);
+	g.u16(global::kWorldYear) = uint16_t(tick / (365 * kTicksPerDay));
+	const uint16_t day = uint16_t((tick >> 8) % 365);
+	g.u16(global::kWorldDayOfYear) = day;
+	// El mes se busca desde el que había.
+	uint8_t month = g.u8(global::kWorldMonth);
+	if (day >= kMonthStart[month + 1]) {
+		do {
+			++month;
+		} while (day >= kMonthStart[month + 1]);
+	} else {
+		while (day < kMonthStart[month]) {
+			--month;
+		}
+	}
+	g.u8(global::kWorldMonth) = month;
+	g.u8(global::kWorldDay) = uint8_t(uint8_t(day) - uint8_t(kMonthStart[month]) + 1);
+}
+
 GameDate date_from_tick(uint32_t tick) {
 	GameDate date;
 	date.year = int(tick / (365 * kTicksPerDay));
@@ -104,7 +124,7 @@ Sailing::Sailing(SaveGame& save, const NavData& nav, std::vector<SeaMapTown> map
 
 int Sailing::town_at(MapPoint point) const {
 	for (size_t i = 0; i < save_.towns.size(); ++i) {
-		const SeaMapTown& t = map_towns_.at(size_t(save_.towns[i].town_id));
+		const SeaMapTown& t = map_towns_.at(size_t(save_.towns[i].town_id()));
 		const bool on_symbol = t.symbol_x < point.x && point.x < t.symbol_x + 22 && t.symbol_y < point.y &&
 			point.y < t.symbol_y + 22;
 		if (on_symbol || (t.approach_x == point.x && t.approach_y == point.y)) {
@@ -115,7 +135,7 @@ int Sailing::town_at(MapPoint point) const {
 }
 
 MapPoint Sailing::approach(int town) const {
-	const SeaMapTown& t = map_towns_.at(size_t(save_.towns.at(size_t(town)).town_id));
+	const SeaMapTown& t = map_towns_.at(size_t(save_.towns.at(size_t(town)).town_id()));
 	return {int16_t(t.approach_x), int16_t(t.approach_y)};
 }
 
@@ -196,11 +216,11 @@ uint32_t Sailing::travel_time(const SavedShip& ship) const {
 }
 
 bool Sailing::human(const SavedShip& ship) const {
-	return merchant(ship) && save_.merchants.at(ship.owner).kind == 0;
+	return merchant(ship) && save_.merchants.at(ship.owner).kind() == 0;
 }
 
 uint32_t Sailing::town_flags(int town) const {
-	return town >= 0 && size_t(town) < save_.towns.size() ? save_.towns[size_t(town)].situation : 0;
+	return town >= 0 && size_t(town) < save_.towns.size() ? save_.towns[size_t(town)].situation() : 0;
 }
 
 Sailing::SailCheck Sailing::sail_check(const SavedShip& ship) const {
@@ -214,7 +234,7 @@ Sailing::SailCheck Sailing::sail_check(const SavedShip& ship) const {
 	if (ship.used > ship.capacity) {
 		return SailCheck::Overloaded;
 	}
-	if (ship.captain >= save_.captain_count && ship.max_health > 5 * ship.health) {
+	if (ship.captain >= save_.captain_count() && ship.max_health > 5 * ship.health) {
 		return SailCheck::Damaged;
 	}
 	if (s == 7 || s == 9 || (s >= 12 && s <= 14) || s >= 17) {
@@ -224,14 +244,19 @@ Sailing::SailCheck Sailing::sail_check(const SavedShip& ship) const {
 }
 
 void Sailing::advance_tick() {
+	begin_tick();
+	update_ships();
+}
+
+void Sailing::begin_tick() {
 	events_.clear();
-	++save_.tick;
-	if (save_.tick % kTicksPerDay == 0) {
-		const GameDate date = date_from_tick(save_.tick);
-		save_.day = date.day;
-		save_.month = date.month;
-		save_.year = date.year;
+	++save_.tick();
+	if (save_.tick() % kTicksPerDay == 0) {
+		update_world_date(save_.globals);
 	}
+}
+
+void Sailing::update_ships() {
 	update_docked();
 	update_sailing();
 }
@@ -239,7 +264,7 @@ void Sailing::advance_tick() {
 // En puerto la tripulación descansa: pasado un día desde que atracó, sube un
 // punto por tick hasta 0x700.
 void Sailing::rest(SavedShip& ship) const {
-	if (ship.moved_tick + kTicksPerDay < save_.tick) {
+	if (ship.moved_tick + kTicksPerDay < save_.tick()) {
 		++ship.readiness;
 		if (int16_t(ship.readiness) >= kMaxReadiness) {
 			ship.readiness = kMaxReadiness;
@@ -249,7 +274,7 @@ void Sailing::rest(SavedShip& ship) const {
 
 // Lista de barcos en puerto (primera mitad de 0x506720).
 void Sailing::update_docked() {
-	uint16_t* link = &save_.docked_head;
+	uint16_t* link = &save_.docked_head();
 	while (*link < save_.ships.size()) {
 		const int index = *link;
 		SavedShip& ship = save_.ships[size_t(index)];
@@ -277,8 +302,8 @@ void Sailing::update_docked() {
 				// Fuera del puerto: pasa a la lista de los que navegan (0x5090E0).
 				start_voyage(ship);
 				*link = ship.next_in_list;
-				ship.next_in_list = save_.sailing_head;
-				save_.sailing_head = uint16_t(index);
+				ship.next_in_list = save_.sailing_head();
+				save_.sailing_head() = uint16_t(index);
 				continue;
 			}
 			if (ship.timer++ == 0) {
@@ -306,8 +331,8 @@ void Sailing::update_docked() {
 
 // Lista de barcos en el mar (segunda mitad de 0x506720).
 void Sailing::update_sailing() {
-	const bool every_32 = save_.tick % 32 == 0;
-	uint16_t* link = &save_.sailing_head;
+	const bool every_32 = save_.tick() % 32 == 0;
+	uint16_t* link = &save_.sailing_head();
 	while (*link < save_.ships.size()) {
 		const int index = *link;
 		SavedShip& ship = save_.ships[size_t(index)];
@@ -344,7 +369,7 @@ void Sailing::update_sailing() {
 // Un tick de un barco que navega (0x516CC0). Devuelve false si ha llegado a
 // una ciudad (o se ha hundido); el llamador lo hace entrar en el puerto.
 bool Sailing::sail(SavedShip& ship, int index) {
-	if (merchant(ship) && save_.tick % 4 == 0) {
+	if (merchant(ship) && save_.tick() % 4 == 0) {
 		--ship.health;  // El casco se desgasta en el mar.
 	}
 	if (ship.health <= 0) {
@@ -436,8 +461,8 @@ void Sailing::arrive(SavedShip& ship, int index, uint16_t& link, bool& again) {
 	}
 	ship.status = kShipArriving;
 	ship.timer = 0;
-	ship.next_in_list = save_.docked_head;
-	save_.docked_head = uint16_t(index);
+	ship.next_in_list = save_.docked_head();
+	save_.docked_head() = uint16_t(index);
 }
 
 // Casco a cero (0x506CD6).
@@ -454,14 +479,14 @@ void Sailing::sink(SavedShip& ship, int index, uint16_t& link) {
 void Sailing::dock(SavedShip& ship, int index) {
 	ship.status = kShipDocked;
 	ship.speed = 0;
-	ship.moved_tick = save_.tick;
+	ship.moved_tick = save_.tick();
 	if (ship.destination < save_.towns.size()) {
 		SavedTown& town = save_.towns[ship.destination];
 		for (int w = 0; w < kWareCount; ++w) {
-			town.in_transit[size_t(w)] -= ship.cargo[size_t(w)];
-			town.incoming[size_t(w)] -= ship.cargo[size_t(w)];
-			if (town.in_transit[size_t(w)] < 0) {
-				town.in_transit[size_t(w)] = 0;
+			town.in_transit(size_t(w)) -= ship.cargo[size_t(w)];
+			town.incoming(size_t(w)) -= ship.cargo[size_t(w)];
+			if (town.in_transit(size_t(w)) < 0) {
+				town.in_transit(size_t(w)) = 0;
 			}
 		}
 	}
@@ -471,7 +496,7 @@ void Sailing::dock(SavedShip& ship, int index) {
 
 // Sale del puerto al mar (0x5090E0).
 void Sailing::start_voyage(SavedShip& ship) {
-	ship.moved_tick = save_.tick;
+	ship.moved_tick = save_.tick();
 	recalculate_cargo(ship);
 	leave_port(ship);
 	ship.status = kShipSailing;
@@ -483,8 +508,8 @@ void Sailing::start_voyage(SavedShip& ship) {
 		for (int w = 0; w < kWareCount; ++w) {
 			const int32_t cargo = ship.cargo[size_t(w)];
 			if (cargo > 0) {
-				town.in_transit[size_t(w)] += cargo;
-				town.incoming[size_t(w)] += cargo;
+				town.in_transit(size_t(w)) += cargo;
+				town.incoming(size_t(w)) += cargo;
 				total += cargo;
 			}
 		}
@@ -512,7 +537,7 @@ void Sailing::leave_port(SavedShip& ship) {
 			const Assigned assigned = route_for(here, approach(ship.destination));
 			ship.route = assigned.route;
 			ship.own_route = assigned.own;
-			ship.arrival_tick = save_.tick + travel_time(ship);
+			ship.arrival_tick = save_.tick() + travel_time(ship);
 		}
 	}
 	ship.route_index = 0;
@@ -538,7 +563,7 @@ void Sailing::set_destination(SavedShip& ship, int town, int x, int y) {
 	const Assigned assigned = route_for(start, end);
 	ship.route = assigned.route;
 	ship.own_route = assigned.own;
-	ship.arrival_tick = save_.tick + travel_time(ship);
+	ship.arrival_tick = save_.tick() + travel_time(ship);
 }
 
 bool Sailing::set_sail(int index, int town, int x, int y) {
@@ -548,7 +573,7 @@ bool Sailing::set_sail(int index, int town, int x, int y) {
 	SavedShip& ship = save_.ships[size_t(index)];
 	ship.target = kNoIndex;
 	// En el astillero (6) o en el estado 8, y en convoy, el juego hace otras cosas.
-	if (ship.status == 6 || ship.status == 8 || ship.convoy < save_.convoy_count) {
+	if (ship.status == 6 || ship.status == 8 || ship.convoy < save_.convoy_count()) {
 		return false;
 	}
 	ship.orders &= 0xFC;
@@ -570,7 +595,7 @@ bool Sailing::set_sail(int index, int town, int x, int y) {
 			ship.status = kShipArriving;
 			ship.timer = uint16_t(kHarbourTicks - ship.timer);
 			ship.destination = ship.origin;
-			ship.arrival_tick = save_.tick - ship.timer + kHarbourTicks;
+			ship.arrival_tick = save_.tick() - ship.timer + kHarbourTicks;
 			clear_route(ship);
 			return true;
 		}

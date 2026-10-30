@@ -124,34 +124,34 @@ int main(int argc, char** argv) {
 			const auto f = split(line, 122);
 			const SavedTown& t = save.towns.at(std::stoul(f[1]));
 			for (int w = 0; w < kWareCount; ++w) {
-				check.field(kWares[size_t(w)].name, t.wares[size_t(w)], f[2 + size_t(w)]);
+				check.field(kWares[size_t(w)].name, t.stock(size_t(w)), f[2 + size_t(w)]);
 				for (int k = 0; k < 4; ++k) {
 					const std::string name = std::string("umbral ") + kWares[size_t(w)].name + " t" + std::to_string(k);
-					check.field(name.c_str(), t.price_thresholds[size_t(w)][size_t(k)], f[26 + size_t(w) * 4 + size_t(k)]);
+					check.field(name.c_str(), t.price_thresholds(size_t(w))[size_t(k)], f[26 + size_t(w) * 4 + size_t(k)]);
 				}
 			}
 			++records;
 		} else if (kind == "comerciante") {
 			const auto f = split(line, 11);
 			const SavedMerchant& m = save.merchants.at(std::stoul(f[1]));
-			check.field("dinero", m.money, f[2]);
-			check.field("tipo", m.kind, f[3]);
-			check.field("primera oficina", m.first_office, f[4]);
-			check.field("primer barco", m.first_ship, f[5]);
-			check.field("natal", m.hometown, f[6]);
-			check.field("hombre", int(m.male), f[7]);
-			check.field("nombre", m.first_name & 0x7F, f[8]);
-			check.field("apellido", m.family_name, f[9]);
-			check.field("vetos", m.banned_towns, f[10]);
+			check.field("dinero", m.money(), f[2]);
+			check.field("tipo", m.kind(), f[3]);
+			check.field("primera oficina", m.first_office(), f[4]);
+			check.field("primer barco", m.first_ship(), f[5]);
+			check.field("natal", m.hometown(), f[6]);
+			check.field("hombre", int(m.male()), f[7]);
+			check.field("nombre", m.first_name() & 0x7F, f[8]);
+			check.field("apellido", m.family_name(), f[9]);
+			check.field("vetos", m.banned_towns(), f[10]);
 			++records;
 		} else if (kind == "oficina") {
 			const auto f = split(line, 29);
 			const SavedOffice& o = save.offices.at(std::stoul(f[1]));
-			check.field("dueño", o.owner, f[2]);
-			check.field("ciudad", o.town, f[3]);
-			check.field("siguiente", o.next_in_town, f[4]);
+			check.field("dueño", o.owner(), f[2]);
+			check.field("ciudad", o.town(), f[3]);
+			check.field("siguiente", o.next_in_town(), f[4]);
 			for (int w = 0; w < kWareCount; ++w) {
-				check.field(kWares[size_t(w)].name, o.wares[size_t(w)], f[5 + size_t(w)]);
+				check.field(kWares[size_t(w)].name, o.stock(size_t(w)), f[5 + size_t(w)]);
 			}
 			++records;
 		} else if (kind == "barco") {
@@ -194,8 +194,8 @@ int main(int argc, char** argv) {
 				}
 				pos = comma + 1;
 			}
-			const SeaMapTown& from = map_towns.at(size_t(save.towns.at(std::stoul(f[1])).town_id));
-			const SeaMapTown& to = map_towns.at(size_t(save.towns.at(std::stoul(f[2])).town_id));
+			const SeaMapTown& from = map_towns.at(size_t(save.towns.at(std::stoul(f[1])).town_id()));
+			const SeaMapTown& to = map_towns.at(size_t(save.towns.at(std::stoul(f[2])).town_id()));
 			const std::vector<MapPoint> ours = nav->route({int16_t(from.approach_x), int16_t(from.approach_y)},
 				{int16_t(to.approach_x), int16_t(to.approach_y)});
 			std::string mine;
@@ -206,7 +206,7 @@ int main(int argc, char** argv) {
 			++routes;
 		} else if (kind == "dinero") {
 			const auto f = split(line, 3);
-			save.merchants.at(std::stoul(f[1])).money = std::stoi(f[2]);
+			save.merchants.at(std::stoul(f[1])).money() = std::stoi(f[2]);
 			continue;
 		} else if (kind == "compra" || kind == "venta") {
 			const auto f = split(line, 14);
@@ -220,8 +220,8 @@ int main(int argc, char** argv) {
 			const SavedShip& s = save.ships.at(size_t(ship));
 			check.field("cantidad", result.amount, f[6]);
 			check.field("precio", result.price, f[7]);
-			check.field("dinero", save.merchants.at(s.owner).money, f[8]);
-			check.field("existencias", int32_t(save.towns.at(size_t(town)).wares[size_t(ware)]), f[9]);
+			check.field("dinero", save.merchants.at(s.owner).money(), f[8]);
+			check.field("existencias", int32_t(save.towns.at(size_t(town)).stock(size_t(ware))), f[9]);
 			check.field("carga", s.cargo[size_t(ware)], f[10]);
 			check.field("precio medio", bits(s.average_price[size_t(ware)]), f[11]);
 			check.field("ocupada", s.used, f[12]);

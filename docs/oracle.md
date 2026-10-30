@@ -142,3 +142,53 @@ por ejemplo, que la orden a un barco de un convoy o del estado 6 sigue otro
 camino y que, si el punto de destino no tiene agua cerca, el juego lee fuera
 de su tabla de ciudades al salir del puerto (ver
 [formats/navigation.md](formats/navigation.md), §6).
+
+## Ciudades
+
+El tick de ciudad (0x51BA10) son unas 9000 instrucciones repartidas en más de
+cien funciones, y toca casi todo el struct town (muchos campos sin nombre), las
+oficinas, los comerciantes y algunos barcos. Para compararlo entero, p3vita
+guarda esos objetos con la misma disposición que en memoria
+(`src/p3data/game_memory.hpp`) y la comparación es byte a byte.
+
+`tools/oracle/town_oracle.py` carga la partida como el juego (además de lo de
+`save_oracle.py`: los ajustes en `*0x6CC3E8`, 0x5348B0, el jugador en
+0x6DFC14, la dificultad del comercio y las tres secciones que siguen a los
+barcos, con la cola de eventos) y hace pasar los días con la fecha y los ticks
+de ciudad del juego. `rand` se lleva fuera, con el generador de MSVC y semilla
+1 (el estado es por hilo); se saltan la interfaz (0x548CA0, 0x4D6530,
+0x613920, y al cargar la tabla de textos 0x511270), y las operaciones que se
+encolan (0x54AA70) se anotan sin ejecutarlas. Cada vez que se entra en una de
+las funciones pedidas guarda el estado de antes y el de después: copias de la
+memoria por regiones (globales, ciudades, oficinas, comerciantes, barcos,
+capitanes, registros del mundo, asedios, cola de eventos, registros de
+edificio, rejillas y nodos de cada ciudad, `rand`) como diferencias, y `esp`
+para resolver punteros a la pila del llamador. Se pueden grabar a la vez
+funciones que se llaman entre sí.
+
+`tools/oracle/tick_probe.cpp` repite cada llamada con su traducción
+(`src/p3data/town_tick`, registradas en `tools/oracle/probes_*.cpp`) y
+compara todo, también eax y las operaciones encoladas:
+
+- por omisión, cada llamada parte del estado del juego justo antes de ella;
+- `--continuo`: p3vita evoluciona solo desde el principio (con 51ba10);
+- `--carga partida.raw`: compara el estado del juego recién cargada la partida
+  con lo que lee `src/p3data/savegame.cpp`; con `--continuo`, la simulación
+  parte de esa lectura.
+
+```sh
+scripts/tick-probe.sh 527d40,51c830 8            # 8 días en las 12 partidas
+python3 tools/oracle/town_oracle.py <exe> /tmp/1.raw /tmp/1.probe 60 51ba10
+build/tools/oracle/tick_probe /tmp/1.probe --continuo --carga /tmp/1.raw
+```
+
+Resultado: 0 diferencias en cada una de las funciones traducidas (las de
+las seis partes, de 8 a 96 días en las 12 partidas, y con estados retocados
+para recorrer ramas que las partidas no recorren), en la carga de las 12
+partidas y en el tick de ciudad entero partiendo de la partida que lee
+p3vita: 60 días en las 12 partidas y 240 días en `1.pat`, `3.pat` y
+`tut2.pat` (23 040 ticks de ciudad). Por el camino se encontraron, por
+ejemplo, los 11 movimientos de dinero de la ciudad (el fichero guarda 0x2C
+bytes y no 0x28), que las operaciones encoladas son de 0x14 bytes y que la
+cola de eventos de la partida decide si la ciudad avisa de sus obras. Ver
+[formats/town_tick.md](formats/town_tick.md).

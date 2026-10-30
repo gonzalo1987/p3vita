@@ -56,12 +56,15 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Umbrales de precio de cada ciudad (`update_town_price_thresholds`), como al cargar la partida
 - [x] Comprar y vender entre un barco y la ciudad, idéntico al juego en 24 000 operaciones ([oracle.md](oracle.md))
 - [ ] Estadísticas de comercio del comerciante y comercio con el kontor
-- [ ] Ciudades: población, producción y consumo
+- [x] Ciudades: población, satisfacción, producción de las empresas, consumo, milicia, astillero, iglesia y oficinas de los comerciantes ([formats/town_tick.md](formats/town_tick.md))
 - [x] Mapa del mar con las ciudades y los barcos de la partida, con su rumbo ([formats/navigation.md](formats/navigation.md))
 - [x] Rutas entre ciudades como las calcula el juego (6633 rutas idénticas en las 12 partidas)
 - [x] Movimiento de los barcos tick a tick, salida y llegada a puerto y orden de zarpar, idénticos al juego en 32 días de las 12 partidas ([oracle.md](oracle.md))
 - [x] Paso del tiempo al ritmo del juego (234 ms por tick a velocidad normal) y fecha
-- [ ] Ticks de las ciudades: producción, consumo y umbrales de precio
+- [x] Tick de ciudad completo (0x51BA10), idéntico al juego byte a byte: 23 040 ticks partiendo de las 12 partidas, hasta 240 días ([oracle.md](oracle.md))
+- [x] Partidas cargadas en memoria igual que el juego (ciudades, oficinas, comerciantes, cola de eventos...)
+- [ ] Ejecutar las operaciones que encolan las ciudades (obras, materiales, avisos)
+- [ ] Resto de advance_time: tick de los comerciantes, asedios, tareas programadas
 - [ ] Barcos de la IA (sus decisiones de viaje), convoyes, astillero y piratas
 - [ ] Tests que comparen con el comportamiento documentado del original
 

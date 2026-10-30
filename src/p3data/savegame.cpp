@@ -104,6 +104,15 @@ public:
 		}
 	}
 
+	// Copia n bytes del fichero en la memoria de un objeto del juego.
+	template <size_t N>
+	void to(GameMemory<N>& memory, size_t offset, size_t n) {
+		if (ensure(n) && offset + n <= N) {
+			std::memcpy(memory.bytes.data() + offset, data_ + pos_, n);
+			pos_ += n;
+		}
+	}
+
 	// El juego salta sin mirar un byte entre las partes de cada ciudad; en las
 	// partidas de esta versión siempre vale 0x7F y sirve para comprobar el recorrido.
 	bool separator() { return u8() == kPartSeparator && ok_; }
@@ -123,57 +132,272 @@ private:
 	bool ok_ = true;
 };
 
-// Bloque de una ciudad. Los tamaños fijos corresponden a la versión 0x82.
-bool parse_town(Reader& r, int month, SavedTown& town, std::string* error) {
-	const std::string where = " en la ciudad que empieza en " + std::to_string(r.position());
+// --- La memoria del juego (game_memory.hpp) ---
+//
+// Segunda lectura de cada bloque que deja los objetos como los deja el
+// cargador del juego: cada trozo del fichero va a su offset en memoria.
 
-	// Parte 1: almacén (0x2C0 bytes, struct storage de P3Modding) y datos
-	// generales de la ciudad (struct town desde 0x2C0).
+// Umbrales de precio que recalcula el juego al terminar la parte 1 de la
+// ciudad (0x527CC1, ver parse_town).
+void recompute_thresholds(TownMemory& m, int month) {
+	std::array<PriceThresholds, kWareCount> t;
+	for (size_t w = 0; w < kWareCount; ++w) {
+		for (size_t i = 0; i < 4; ++i) {
+			t[w][i] = m.u32(0x4F0 + 16 * w + 4 * i);
+		}
+	}
+	if (m.s32(0x4F0) > 1) {
+		ThresholdInputs in;
+		in.flags = m.u32(0x2C8);
+		in.citizens = m.u32(0x2D4);
+		for (size_t w = 0; w < kWareCount; ++w) {
+			in.business_consumption[w] = m.u32(0x64 + 4 * w);
+			in.production[w] = m.u32(0xC4 + 4 * w);
+			in.citizen_consumption[w] = m.u32(0x310 + 4 * w);
+			in.supply[w] = m.u32(0x490 + 4 * w);
+		}
+		in.month = month;
+		in.brickworks = m.u16(0x968);
+		t = compute_price_thresholds(in, t);
+	} else {
+		for (size_t w = 0; w < size_t(kTradeWareCount) - 1; ++w) {
+			t[w] = {1, 2, 3, 4};
+		}
+	}
+	for (size_t w = 0; w < kWareCount; ++w) {
+		for (size_t i = 0; i < 4; ++i) {
+			m.u32(0x4F0 + 16 * w + 4 * i) = t[w][i];
+		}
+	}
+}
+
+struct Chunk {
+	size_t offset;
+	size_t size;
+};
+
+// Cabecera del mundo (0x52FB60) en el objeto del mundo (0x6DE4A0).
+void load_world_header(Reader r, GlobalMemory& g) {
+	auto to = [&](uint32_t offset, size_t n) {
+		for (size_t i = 0; i < n; ++i) {
+			g.u8(global::kWorld + offset + uint32_t(i)) = r.u8();
+		}
+	};
+	for (Chunk c : {Chunk{0x0, 1}, {0x1, 1}, {0x2, 2}, {0x4, 2}, {0x10, 4}, {0x6, 2}, {0x8, 2}, {0xA, 2}}) {
+		to(uint32_t(c.offset), c.size);
+	}
+	g.u8(global::kWorld + 0x89) = r.u8() != 0;
+	to(0x8C, 1);
+	g.u8(global::kWorld + 0x8A) = r.u8() == 0x7F;
+	for (Chunk c : {Chunk{0x8B, 1}, {0xC, 4}, {0x14, 4}, {0x7C, 2}, {0x7E, 2}, {0x18, 40}, {0x40, 40}, {0x8D, 1},
+			 {0x8E, 1}, {0x90, 7 * 12}}) {
+		to(uint32_t(c.offset), c.size);
+	}
+}
+
+// Capitán o administrador (0x4FDEB0), versión 0x82.
+void load_captain(Reader& r, CaptainMemory& m) {
+	for (Chunk c : {Chunk{0x0, 2}, {0x2, 1}, {0x3, 1}, {0x4, 4}, {0xC, 2}, {0x8, 1}, {0x9, 1}, {0xA, 1}, {0xB, 1}}) {
+		r.to(m, c.offset, c.size);
+	}
+	m.u8(0xE) = r.u8() != 0;
+	r.to(m, 0xF, 1);
+}
+
+// 0x51F100: saca un registro de edificio de la lista libre [0x760]; si no
+// queda ninguno, la tabla crece en 0x80 registros libres (0xFF).
+uint16_t take_free_record(SavedTown& town) {
+	TownMemory& m = town.memory;
+	if (m.u16(0x760) == m.u16(0x776)) {
+		const uint16_t old = m.u16(0x776);
+		const uint16_t count = uint16_t(old + 0x80);
+		m.u16(0x776) = count;
+		town.records.resize(count, BuildingRecord{0xFF, 0xFF, 0xFF, 0xFF, 0xFFFF, 0xFF, 0xFF});
+		for (uint16_t i = uint16_t(count - 1);; --i) {
+			town.records[i].next = uint16_t(i + 1);
+			if (i <= m.u16(0x760)) {
+				break;
+			}
+		}
+	}
+	const uint16_t index = m.u16(0x760);
+	m.u16(0x760) = town.records[index].next;
+	town.records[index].next = 0xFFFF;
+	return index;
+}
+
+// Lo que hace el juego con los registros al terminar la parte 3 (0x51EC10):
+// marca los libres con x = y = 0xFF y, si la ciudad tiene estatua
+// ([0x76C] & 1) y no hay ningún registro del tipo 0x2D en la lista [0x764],
+// añade uno al principio en su sitio ([0x800]).
+void fix_loaded_records(SavedTown& town) {
+	TownMemory& m = town.memory;
+	const size_t count = town.records.size();
+	for (size_t i = m.u16(0x760); i < count; i = town.records[i].next) {
+		town.records[i].x = 0xFF;
+		town.records[i].y = 0xFF;
+	}
+	for (size_t i = m.u16(0x764); i < count; i = town.records[i].next) {
+		if (town.records[i].type == 0x2D) {
+			return;
+		}
+	}
+	if (!(m.u32(0x76C) & 1)) {
+		return;
+	}
+	const uint16_t index = take_free_record(town);
+	town.records[index] = {m.u8(0x800), m.u8(0x801), 0xFF, 0x2D, m.u16(0x764), 0, 0};
+	m.u16(0x764) = index;
+}
+
+// Bloque de una ciudad (0x51B520), versión 0x82.
+void load_town_memory(Reader r, int month, SavedTown& town, GlobalMemory& globals) {
+	TownMemory& m = town.memory;
+	r.skip(1);
+	r.to(m, 0x000, 0x2C0);  // Almacén (0x52DF20).
+	r.to(m, 0x2C0, 0x414);  // Parte 1 (0x527AC0).
+	// El lector apunta en las tablas del mundo el id y la plantilla de la ciudad.
+	globals.u8(global::kWorld + 0x18 + m.u8(0x2C0)) = m.u8(0x2C1);
+	globals.u8(global::kWorld + 0x40 + m.u8(0x2C0)) = m.u8(0x2C2);
+	recompute_thresholds(m, month);
+	r.skip(1);
+	r.to(m, 0x82C, 20);  // Parte 2 (0x525E30).
+	r.skip(1);
+	// Parte 3 (0x51EC10): cabecera, iglesia, registros y town_class1.
+	for (Chunk c : {Chunk{0x776, 2}, {0x760, 2}, {0x762, 2}, {0x764, 2}, {0x76A, 2}, {0x768, 2}, {0x766, 2},
+			 {0x774, 1}, {0x771, 1}, {0x770, 1}, {0x76C, 4}, {0x784, 2}, {0x773, 1}, {0x772, 1}, {0x789, 1},
+			 {0x788, 1}, {0x78A, 1}, {0x78C, 2}, {0x78E, 2}, {0x786, 2}, {0x790, 2}, {0x792, 2}, {0x775, 1},
+			 {0x78B, 1}, {0x778, 6}, {0x77E, 6}, {0x794, 16}}) {
+		r.to(m, c.offset, c.size);
+	}
+	r.skip(size_t(m.u16(0x776)) * 8);  // Registros de edificio: SavedTown::records.
+	m.u32(0x7A4) = 1;  // town_class1 (0x4F9770).
+	r.to(m, 0x7A8, 4);
+	r.to(m, 0x7AC, 4);
+	r.to(m, 0x7B0, 0x5C);
+	town.grid.resize(size_t(m.u32(0x7A8)) * m.u32(0x7AC));
+	for (uint8_t& cell : town.grid) {
+		cell = r.u8();
+	}
+	r.skip(1);
+	// Parte 4 (0x52A2B0): los 2 bytes de 0x822 no se guardan.
+	for (Chunk c : {Chunk{0x810, 4}, {0x814, 4}, {0x818, 4}, {0x81C, 2}, {0x81E, 2}, {0x820, 2}, {0x824, 4},
+			 {0x828, 4}}) {
+		r.to(m, c.offset, c.size);
+	}
+	r.skip(1);
+	// Parte 5 (0x528870): dinero y sus 11 movimientos ([0x704], [0x730]).
+	for (Chunk c : {Chunk{0x6D4, 0x14}, {0x6E8, 8}, {0x6F0, 4}, {0x6F4, 4}, {0x6F8, 4}, {0x6FC, 4}, {0x700, 4},
+			 {0x704, 0x2C}, {0x730, 0x2C}}) {
+		r.to(m, c.offset, c.size);
+	}
+	r.skip(1);
+	for (size_t k = 0; k < 21; ++k) {
+		r.to(m, 0x840 + 16 * k, 16);  // Instalaciones (0x510070).
+	}
+	r.to(m, 0x9A4, 16);
+	r.to(m, 0x990, 4);
+	r.to(m, 0x994, 2);
+	r.to(m, 0x996, 2);
+	for (size_t i = 0; i < 4; ++i) {
+		r.to(m, 0x998 + i, 1);
+		r.to(m, 0x99C + i, 1);
+	}
+	for (Chunk c : {Chunk{0x9A0, 2}, {0x9A2, 2}, {0x9B8, 4}, {0x9BC, 1}, {0x9BD, 1}, {0x9C0, 4}, {0x9C4, 1},
+			 {0x9C6, 18}, {0x9D8, 18}}) {
+		r.to(m, c.offset, c.size);
+	}
+	// Nodos (0x50FD40): cada uno se pone el primero de la lista [0x9B4].
+	const uint16_t count = r.u16();
+	town.nodes.assign(count, TownNode());
+	for (size_t k = count; k-- > 0;) {
+		TownNode& node = town.nodes[k];
+		r.to(node, 4, 4);
+		r.to(node, 8, 4);
+		for (size_t o : {0xC, 0xE}) {
+			const uint8_t high = r.u8();
+			node.u16(o) = uint16_t(high << 8 | r.u8());
+		}
+		r.to(node, 0x10, 1);
+		r.to(node, 0x11, 1);
+		const int8_t high = int8_t(r.u8());
+		node.s16(0x12) = int16_t(high * 256 + int8_t(r.u8()));
+	}
+}
+
+// Oficina (0x4FEFF0), versión 0x82, sobre lo que deja su constructor (0x4FEBD0).
+void load_office_memory(Reader r, SavedOffice& office) {
+	OfficeMemory& m = office.memory;
+	for (size_t o : {0x2C4, 0x2C8, 0x2CA, 0x2CC, 0x2CE, 0x2D0, 0x2F2}) {
+		m.u16(o) = 0xFFFF;
+	}
+	m.u8(0x2C6) = 0xFF;
+	m.u32(0x2E4) = 0x02020202;
+	m.u16(0x2EC) = 0x32;
+	r.to(m, 0x2C4, 2);
+	if (m.u16(0x2C4) == 0xFFFF) {
+		r.to(m, 0x2C8, 2);
+		r.to(m, 0x2CA, 2);
+		return;
+	}
+	r.to(m, 0x000, 0x2C0);  // Almacén (0x52DF20).
+	for (Chunk c : {Chunk{0x2C0, 4}, {0x2C8, 2}, {0x2C6, 1}, {0x2C7, 1}, {0x2CA, 2}, {0x2CC, 2}, {0x2D2, 2},
+			 {0x2D4, 2}, {0x2CE, 2}, {0x2DE, 6}, {0x2D8, 6}, {0x2E4, 4}, {0x2D0, 2}, {0x2D6, 2}, {0x2EC, 2},
+			 {0x2EE, 2}, {0x2F0, 2}, {0x2F2, 2}, {0x2F4, 0x60}, {0x354, 0x60}, {0x3B8, 0x60}, {0x3B4, 4},
+			 {0x418, 8}, {0x420, 8}, {0x428, 8}, {0x430, 8}, {0x438, 8}, {0x440, 8}, {0x448, 2}, {0x44A, 2},
+			 {0x2E8, 4}}) {
+		r.to(m, c.offset, c.size);
+	}
+}
+
+// Comerciante (0x4F4100 → 0x4F6FA0 → 0x4F6240), versión 0x82. Las diez
+// listas del final ([0x624], punteros) no van a la memoria.
+void load_merchant_memory(Reader r, SavedMerchant& merchant) {
+	MerchantMemory& m = merchant.memory;
+	for (Chunk c : {Chunk{0x0, 4}, {0x4, 4}, {0x8, 2}, {0xA, 2}, {0xC, 2}, {0xE, 2}, {0x10, 4}, {0x14, 2},
+			 {0x16, 2}}) {
+		r.to(m, c.offset, c.size);
+	}
+	for (size_t o = 0x18; o <= 0x21; ++o) {
+		r.to(m, o, 1);
+	}
+	const int high = int8_t(r.u8());
+	m.u16(0x22) = uint16_t(high << 8 | r.u8());
+	r.to(m, 0x24, 1);
+	m.u8(0x25) = r.u8() != 0;
+	for (Chunk c : {Chunk{0x26, 1}, {0x27, 1}, {0x28, 4}, {0x2C, 4}, {0x30, 1}, {0x31, 1}, {0x32, 1}, {0x37, 1},
+			 {0x33, 1}, {0x36, 1}, {0x34, 2}, {0x38, 8}, {0xF0, 0x28}, {0x40, 0xA0}, {0xE0, 1}, {0xE1, 1}}) {
+		r.to(m, c.offset, c.size);
+	}
+	const uint8_t low = r.u8();
+	m.u16(0xE2) = uint16_t(low + (r.u8() << 8));
+	for (Chunk c : {Chunk{0x118, 4}, {0x11C, 0x1E0}, {0x2FC, 0xA0}, {0x3C4, 0xA0}, {0x464, 4}, {0x39C, 0x28},
+			 {0x468, 4}, {0x46C, 4}, {0x470, 4}, {0x474, 4}, {0x478, 2}, {0x47A, 2}}) {
+		r.to(m, c.offset, c.size);
+	}
+	for (size_t o = 0x480; o <= 0x4D4; o += 4) {
+		r.to(m, o, 4);
+	}
+	// 0x534830 sobre [0x4D8].
+	for (Chunk c : {Chunk{0x538, 4}, {0x4D8, 0x30}, {0x508, 0x30}, {0x53C, 4}, {0x540, 4}, {0x544, 2}, {0x546, 1},
+			 {0x547, 1}, {0x608, 4}, {0x548, 0x60}, {0x5A8, 0x60}, {0x60C, 0x14}}) {
+		r.to(m, c.offset, c.size);
+	}
+	m.u16(0x620) = 0;
+}
+
+// Bloque de una ciudad. Los tamaños fijos corresponden a la versión 0x82.
+bool parse_town(Reader& r, int month, SavedTown& town, GlobalMemory& globals, std::string* error) {
+	const std::string where = " en la ciudad que empieza en " + std::to_string(r.position());
+	load_town_memory(r, month, town, globals);
+
+	// Partes 1 y 2: el almacén y los datos de la ciudad van a la memoria
+	// (load_town_memory), incluidos los umbrales de precio que el juego
+	// recalcula al terminar la parte 1.
 	if (!r.separator()) {
 		return fail(error, "separador inesperado" + where);
 	}
-	r.skip(4);
-	r.u32s(town.wares);
-	r.u32s(town.business_consumption);
-	r.u32s(town.production);
-	r.skip(0x2C0 - 4 - 3 * kWareCount * 4);
-	r.skip(1);  // Índice en la tabla de ciudades.
-	town.town_id = r.u8();
-	r.skip(2 + 2 + 2);
-	town.situation = r.u32();  // [0x2C8]
-	r.skip(4 + 4);  // Sin identificar y fecha de la última fiesta.
-	town.citizens = r.u32();
-	r.skip(16 + 16 + 8 + 8 + 8);  // Habitantes por clase, anteriores, viviendas y satisfacción.
-	r.u32s(town.citizen_consumption);  // [0x310]
-	r.s32s(town.incoming);  // [0x370]
-	r.skip(2 * 0x60);
-	r.u32s(town.supply);  // [0x490]
-	for (PriceThresholds& thresholds : town.price_thresholds) {  // [0x4F0]
-		r.u32s(thresholds);
-	}
-	r.s32s(town.in_transit);  // [0x670]
-	r.skip(4);
-
-	// Al terminar esta parte el juego recalcula los umbrales de precio
-	// (0x527CC1). Lo que aún no ha leído de la ciudad, como las instalaciones,
-	// conserva el valor inicial; por eso la fábrica de ladrillos cuenta como 0.
-	if (int32_t(town.price_thresholds[0][0]) > 1) {
-		ThresholdInputs in;
-		in.flags = town.situation;
-		in.citizens = town.citizens;
-		in.business_consumption = town.business_consumption;
-		in.citizen_consumption = town.citizen_consumption;
-		in.production = town.production;
-		in.supply = town.supply;
-		in.month = month;
-		town.price_thresholds = compute_price_thresholds(in, town.price_thresholds);
-	} else {
-		for (int w = 0; w < kTradeWareCount - 1; ++w) {
-			town.price_thresholds[size_t(w)] = {1, 2, 3, 4};
-		}
-	}
-
-	// Parte 2: 20 bytes sin identificar.
+	r.skip(0x2C0 + 0x414);
 	if (!r.separator()) {
 		return fail(error, "separador inesperado (parte 2)" + where);
 	}
@@ -190,11 +414,8 @@ bool parse_town(Reader& r, int month, SavedTown& town, std::string* error) {
 	town.drawn_lists[3] = r.u16();
 	town.drawn_lists[2] = r.u16();  // Murallas, puertas y torres.
 	r.skip(2);  // Lista que el juego no dibuja (murallas antiguas).
-	r.skip(3);
-	town.flags = r.u32();
-	r.skip(2 + 5 + 10 + 2 + 12);
-	r.skip(15);  // Iglesia: el byte 16 es su nivel.
-	town.church_level = r.u8();
+	r.skip(3 + 4 + 2 + 5 + 10 + 2 + 12);
+	r.skip(16);  // Iglesia.
 	town.records.resize(record_count);
 	for (BuildingRecord& record : town.records) {
 		record.x = r.u8();
@@ -220,6 +441,8 @@ bool parse_town(Reader& r, int month, SavedTown& town, std::string* error) {
 	r.bytes(town.fixed.sites);
 	r.bytes(town.fixed.shipyards);
 	r.skip(size_t(width) * height);
+	fix_loaded_records(town);
+	town.drawn_lists[1] = town.memory.u16(0x764);
 
 	// Partes 4 y 5, instalaciones y nodos: aún no se usan.
 	if (!r.separator()) {
@@ -229,9 +452,7 @@ bool parse_town(Reader& r, int month, SavedTown& town, std::string* error) {
 	if (!r.separator()) {
 		return fail(error, "separador inesperado (parte 5)" + where);
 	}
-	r.skip(0x6F0 - 0x6D4);  // La parte 5 es el struct town desde 0x6D4.
-	town.taxed_ware = r.u8();
-	r.skip(136 - (0x6F0 - 0x6D4) - 1);
+	r.skip(136);
 	if (!r.separator()) {
 		return fail(error, "separador inesperado (instalaciones)" + where);
 	}
@@ -254,39 +475,13 @@ void skip_town_extra(Reader& r) {
 }
 
 void parse_office(Reader& r, SavedOffice& office) {
-	office.owner = r.u16();
-	if (!office.used()) {
-		r.skip(2);  // Siguiente oficina libre.
-		office.next_in_town = r.u16();
-		return;
-	}
-	// Almacén, como el de las ciudades.
-	r.skip(4);
-	r.u32s(office.wares);
-	r.skip(0x2C0 - 4 - kWareCount * 4);
-	r.skip(4 + 2);
-	office.town = r.u8();
-	r.skip(1);
-	office.next_in_town = r.u16();
-	r.skip(1100 - 716);
+	load_office_memory(r, office);
+	r.skip(office.used() ? 1100 : 6);
 }
 
 void parse_merchant(Reader& r, SavedMerchant& merchant) {
-	merchant.money = r.s32();
-	r.skip(4);
-	merchant.kind = r.u16();
-	r.skip(2);
-	merchant.first_office = r.u16();
-	merchant.first_ship = r.u16();
-	r.skip(4 + 2 + 2 + 1);
-	merchant.hometown = r.u8();
-	merchant.male = r.u8() != 0;
-	r.skip(1);
-	merchant.first_name = r.u8();
-	merchant.family_name = r.u8();
-	r.skip(1336 - 30);
-	merchant.banned_towns = r.u32();
-	r.skip(0x60 + 0x60);
+	load_merchant_memory(r, merchant);
+	r.skip(1532);
 	// Diez listas de u16 al final; su longitud va en los 15 bits bajos.
 	std::array<uint16_t, 10> lists{};
 	for (uint16_t& count : lists) {
@@ -301,7 +496,8 @@ void parse_merchant(Reader& r, SavedMerchant& merchant) {
 void parse_ship(Reader& r, int version, SavedShip& ship) {
 	ship.status = r.u16();
 	if (!ship.in_use()) {
-		r.skip(version >= 0x83 ? 3 : 2);
+		ship.next_in_list = r.u16();  // Siguiente hueco libre.
+		r.skip(version >= 0x83 ? 1 : 0);
 		return;
 	}
 	ship.next_of_owner = r.u16();
@@ -331,13 +527,14 @@ void parse_ship(Reader& r, int version, SavedShip& ship) {
 	ship.town = r.u8();
 	const int target_high = r.u8();
 	ship.target = uint16_t(target_high << 8 | r.u8());
-	r.skip(2);  // [+0x3C]: avisos a la interfaz.
+	ship.notices = r.u16();
 	ship.readiness = r.u16();
 	ship.sailors = r.u16();
 	ship.captain = r.u16();
 	ship.moved_tick = r.u32();
 	ship.arrival_tick = r.u32();
-	r.skip(2 * 4);
+	ship.built_tick = r.u32();
+	r.skip(4);  // [+0x50]
 	// La ruta solo se guarda si es del barco. Si navega de una ciudad a otra, al
 	// cargarlo el juego le da la de la matriz (0x445010, ver Sailing).
 	if (route != 0 && ship.own_route) {
@@ -372,6 +569,104 @@ void parse_ship(Reader& r, int version, SavedShip& ship) {
 	ship.name = latin1_to_utf8(r.text(32));
 }
 
+// 0x5311D0 con la fecha de un evento: día [+0xF] y mes [+0x10], los dos desde 1.
+void set_event_date(GameMemory<0x18>& e, uint32_t tick) {
+	static constexpr uint16_t kMonthStart[14] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365, 0};
+	const int32_t days = int32_t(tick) >> 8;
+	const int32_t year = days / 365;
+	const int32_t day = days - int32_t(uint16_t(year)) * 365;
+	uint8_t month = 0;
+	if (kMonthStart[0] <= day) {
+		do {
+			++month;
+		} while (kMonthStart[month] <= day);
+	}
+	e.u8(0xF) = uint8_t(uint8_t(day) - uint8_t(kMonthStart[month - 1]) + 1);
+	e.u8(0x10) = month;
+}
+
+// 0x4D8DD0: lleva el evento de la cabeza a su sitio en la lista, detrás de los
+// que tienen un tick menor o igual.
+void sort_event_head(SaveGame& out) {
+	const uint16_t count = out.globals.u16(0x6DD748);
+	const uint16_t first = out.globals.u16(0x6DD744);
+	GameMemory<0x18>& e = out.events[first];
+	uint16_t next = e.u16(4);
+	if (next >= count || e.u32(0) < out.events[next].u32(0)) {
+		return;
+	}
+	out.globals.u16(0x6DD744) = next;
+	uint16_t* link = &out.events[next].u16(4);
+	while (*link < count) {
+		if (e.u32(0) < out.events[*link].u32(0)) {
+			e.u16(4) = *link;
+			*link = first;
+			return;
+		}
+		link = &out.events[*link].u16(4);
+	}
+	e.u16(4) = 0xFFFF;
+	*link = first;
+}
+
+// Cola de eventos con fecha (0x4D81E0 sobre el objeto 0x6DD73C), versión
+// 0x82: u16 cabeza [0x6DD744], u16 [0x6DD746], u16 número de registros
+// [0x6DD748] y los registros de 0x18 bytes (u32 tick, u16 siguiente, u16 tipo,
+// enlazados en orden de tick desde la cabeza; un índice ≥ número termina).
+// Los de tipo 0x1B guardan después [+0x12] entradas de 16 bytes y los de tipo
+// 0x34 con [+0x15] ≥ 7 una lista de nodos de 5 bytes; son objetos aparte que
+// no se usan (sus punteros quedan a 0).
+void load_events(Reader r, SaveGame& out) {
+	GlobalMemory& g = out.globals;
+	for (uint32_t a : {0x6DD744u, 0x6DD746u, 0x6DD748u}) {
+		const uint16_t v = r.u16();
+		g.u16(a) = v;
+	}
+	const uint16_t count = g.u16(0x6DD748);
+	out.events.assign(count, GameMemory<0x18>());
+	for (GameMemory<0x18>& e : out.events) {
+		r.to(e, 0, 0x18);
+	}
+	for (GameMemory<0x18>& e : out.events) {
+		if (e.u16(6) == 0x1B) {
+			r.skip(size_t(e.u16(0x12)) * 16);
+			e.u32(8) = 0;
+			e.u32(0xC) = 0;
+		} else if (e.u16(6) == 0x34 && e.u8(0x15) >= 7 && e.u32(8) != 0) {
+			do {
+				r.skip(4);
+			} while (r.u8() == 0x7F && r.ok());
+			e.u32(8) = 0;
+		}
+	}
+	// Los eventos de tipo 2 con fecha absurda (desde el año 12000) pasan al
+	// mismo día del año, el primer año después del evento de la cabeza, y
+	// vuelven a su sitio en la lista.
+	uint16_t* link = &g.u16(0x6DD744);
+	while (*link < count) {
+		const uint16_t index = *link;
+		GameMemory<0x18>& e = out.events[index];
+		if (e.u16(6) != 2 || e.u32(0) < 0x42D56000) {
+			link = &e.u16(4);
+			continue;
+		}
+		uint16_t& head = g.u16(0x6DD744);
+		*link = e.u16(4);
+		const uint16_t day = uint16_t(int32_t(e.u16(8)) % 365);
+		e.u16(8) = day;
+		const uint32_t head_tick = out.events[head].u32(0);
+		uint32_t tick = ((head_tick / (365 * 256)) * 365 + day) * 256 + 0xFA;
+		while (tick <= out.events[head].u32(0)) {
+			tick += 365 * 256;
+		}
+		e.u32(0) = tick;
+		set_event_date(e, tick);
+		e.u16(4) = head;
+		head = index;
+		sort_event_head(out);
+	}
+}
+
 // Lo que sigue a las ciudades dentro del mundo (0x52FB60).
 bool parse_world_tail(Reader& r, size_t town_count, uint16_t record_count, uint16_t office_count,
 	SaveGame& out, std::string* error) {
@@ -385,7 +680,10 @@ bool parse_world_tail(Reader& r, size_t town_count, uint16_t record_count, uint1
 			skip_town_extra(r);
 		}
 	}
-	r.skip(size_t(record_count) * 20);  // 0x4D32F0
+	out.world_records.resize(record_count);  // 0x4D32F0
+	for (GameMemory<0x14>& record : out.world_records) {
+		r.to(record, 0, 0x14);
+	}
 
 	out.offices.resize(office_count);
 	for (SavedOffice& office : out.offices) {
@@ -412,7 +710,8 @@ bool parse_world_tail(Reader& r, size_t town_count, uint16_t record_count, uint1
 	if (r.u8() != 0) {
 		return fail(error, "la partida tiene un objeto del mundo (0x533DA0) que no se sabe leer");
 	}
-	r.skip(1);
+	out.globals.u8(global::kWorld + 0x8F) = r.u8();
+	out.globals.u16(global::kWorld + 0x80) = uint16_t(out.merchant_count);
 	return r.ok() || fail(error, std::string(kTruncated) + " (fin del mundo)");
 }
 
@@ -422,12 +721,17 @@ bool parse_ships(Reader& r, SaveGame& out, std::string* error) {
 	for (uint16_t& v : header) {
 		v = r.u16();
 	}
-	out.docked_head = header[3];
-	out.sailing_head = header[4];
-	out.captain_count = header[8];
 	const uint16_t ship_count = header[9];
-	out.convoy_count = header[10];
-	r.skip(size_t(out.captain_count) * 16);
+	// En el objeto de los barcos (0x6DD7A0), en el orden del fichero.
+	static constexpr uint32_t kHeaderFields[16] = {0xE0, 0xE2, 0xE4, 0xE8, 0xEA, 0xEC, 0xEE, 0xF0, 0xF2, 0xF4, 0xF6,
+		0xE6, 0xFA, 0xFC, 0xFE, 0xF8};
+	for (size_t i = 0; i < header.size(); ++i) {
+		out.globals.u16(global::kShips + kHeaderFields[i]) = header[i];
+	}
+	out.captains.resize(out.captain_count());
+	for (CaptainMemory& captain : out.captains) {
+		load_captain(r, captain);
+	}
 	out.ships.resize(ship_count);
 	for (SavedShip& ship : out.ships) {
 		parse_ship(r, version, ship);
@@ -500,6 +804,15 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 
 	// Ajustes de la partida. Al cargar, el juego aplica la dificultad del
 	// comercio del byte +0x10 (0x54A03C → 0x52E1A0): 0 baja, 1 normal, 2 o más alta.
+	// El juego copia los ajustes en *0x6CC3E8, borra sus 16 últimos bytes y
+	// limita el byte 8 a 14 salvo que el byte 0xF valga 6 (0x549F40).
+	if (size >= 4 + kSettingsSize) {
+		std::memcpy(out.settings.bytes.data(), data + 4, kSettingsSize);
+		std::fill(out.settings.bytes.begin() + 0x3C, out.settings.bytes.end(), 0);
+		if (out.settings.u8(0xF) != 6 && out.settings.u8(8) > 14) {
+			out.settings.u8(8) = 14;
+		}
+	}
 	r.skip(0x10);
 	out.trade_difficulty = TradeDifficulty(std::min<int>(r.u8(), 2));
 	r.skip(kSettingsSize - 0x11 + 3 * 4);
@@ -509,16 +822,14 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 
 	// Cabecera del mundo: fecha (el mes lo usan los umbrales de precio),
 	// ciudades, contadores y el tiempo de juego.
-	out.day = r.u8();
-	out.month = r.u8();
-	out.year = r.u16();
-	r.skip(2);  // Día del año.
+	load_world_header(r, out.globals);
+	r.skip(6);  // Fecha: en la memoria del mundo.
 	const uint32_t town_count = r.u32();
 	const uint16_t record_count = r.u16();  // Registros de 20 bytes sin identificar.
 	const uint16_t office_count = r.u16();
 	out.merchant_count = r.u16();
 	r.skip(4 + 4);
-	out.tick = r.u32();  // [+0x14]
+	r.skip(4);  // Tick: en la memoria del mundo.
 	r.skip(4);
 	std::array<uint8_t, kTownTableSize> town_ids{};
 	std::array<uint8_t, kTownTableSize> town_maps{};
@@ -532,13 +843,15 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 	out.towns.resize(town_count);
 	for (size_t i = 0; i < town_count; ++i) {
 		SavedTown& town = out.towns[i];
-		if (!parse_town(r, out.month, town, error)) {
+		if (!parse_town(r, out.month(), town, out.globals, error)) {
 			return false;
 		}
-		if (town.town_id != town_ids[i]) {
+		if (town.town_id() != town_ids[i]) {
 			return fail(error, "la ciudad " + std::to_string(i) + " no coincide con la tabla del mundo");
 		}
-		town.template_map = town_maps[i];
+		if (town.template_map() != town_maps[i]) {
+			return fail(error, "la plantilla de la ciudad " + std::to_string(i) + " no coincide con la tabla del mundo");
+		}
 	}
 
 	if (!parse_world_tail(r, town_count, record_count, office_count, out, error)) {
@@ -555,14 +868,39 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 			recalculate_cargo(ship);
 		}
 	}
+	// El lector de barcos cuenta los de cada comerciante en [0x47C] (0x504652).
+	for (SavedMerchant& merchant : out.merchants) {
+		uint32_t count = 0;
+		for (uint16_t i = merchant.memory.u16(0xE); i < out.ships.size(); i = out.ships[i].next_of_owner) {
+			++count;
+		}
+		merchant.memory.u32(0x47C) = count;
+	}
 	// Al cargar una partida de un jugador, el juego se queda con el último
 	// comerciante humano (0x5469A1).
 	for (size_t i = 0; i < out.merchants.size(); ++i) {
-		if (out.merchants[i].kind == 0) {
+		if (out.merchants[i].kind() == 0) {
 			out.player = int(i);
 		}
 	}
+	out.globals.u32(global::kPlayer) = uint32_t(std::max(out.player, 0));
+	// Factor de venta con poco almacén según la dificultad (0x52E1A0, tabla 0x6739FC).
+	static constexpr float kSellFactors[3] = {2.2f, 2.0f, 1.8f};
+	out.globals.f32(0x6DE3D8 + 0x64) = kSellFactors[int(out.trade_difficulty)];
 	parse_names(data, size, out);
+	// Tras los barcos van tres secciones (0x4D6350, 0x4D4BC0 y la cola de
+	// eventos, 0x4D81E0), otra de 5 bytes (0x611AE0) y los nombres, separadas
+	// por 0xAFFE: la de eventos es la cuarta empezando por el final.
+	size_t separators = 0;
+	for (size_t pos = size - 4; pos > r.position(); --pos) {
+		if (data[pos] == 0xFE && data[pos + 1] == 0xAF && data[pos + 2] == 0 && data[pos + 3] == 0 &&
+			++separators == 4) {
+			Reader events(data, size);
+			events.skip(pos + 4);
+			load_events(events, out);
+			break;
+		}
+	}
 	return true;
 }
 
@@ -624,8 +962,8 @@ std::string merchant_name(const SaveGame& save, const NameLists& names, int merc
 		return index < custom.size() ? custom[index] : std::string();
 	};
 	// El juego marca con el bit 7 los nombres de mujer.
-	const std::string first = pick(m.male ? 0 : 1, m.first_name & 0x7F);
-	const std::string family = pick(2, m.family_name);
+	const std::string first = pick(m.male() ? 0 : 1, m.first_name() & 0x7F);
+	const std::string family = pick(2, m.family_name());
 	return first.empty() ? family : family.empty() ? first : first + " " + family;
 }
 

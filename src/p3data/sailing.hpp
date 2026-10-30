@@ -33,6 +33,10 @@ struct GameDate {
 // Fecha de un tick (0x5310D0): años de 365 días, sin bisiestos.
 GameDate date_from_tick(uint32_t tick);
 
+// 0x5310D0: la fecha del mundo (día, mes, año y día del año) a partir de su
+// tick. El juego la recalcula al empezar cada día.
+void update_world_date(GlobalMemory& globals);
+
 // Lo que le ha pasado a un barco durante un tick.
 struct ShipEvent {
 	enum Kind {
@@ -54,8 +58,15 @@ public:
 	// una ciudad a otra reciben la ruta de la matriz. Llamar una vez, tras cargar.
 	void assign_loaded_routes();
 
-	// Un tick de advance_time (0x530E80): la fecha al empezar cada día y los barcos.
+	// Un tick de advance_time (0x530E80) solo con la fecha y los barcos: lo
+	// mismo que begin_tick y update_ships. El tick completo, con las ciudades,
+	// es advance_game_tick (simulation.hpp).
 	void advance_tick();
+
+	// Principio de un tick: sube el tick y, al empezar el día, la fecha.
+	void begin_tick();
+	// La actualización de los barcos (0x506720), al final de cada tick.
+	void update_ships();
 
 	// Lo ocurrido en el último tick.
 	const std::vector<ShipEvent>& events() const { return events_; }

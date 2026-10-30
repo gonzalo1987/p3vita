@@ -24,6 +24,7 @@
 #include "p3data/navigation.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/sailing.hpp"
+#include "p3data/simulation.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/seamap.hpp"
 #include "p3data/town.hpp"
@@ -262,7 +263,7 @@ public:
 
 	// Centro del símbolo de una ciudad de la partida.
 	SDL_Point town_center(const SaveGame& save, size_t town) const {
-		const SeaMapTown& t = towns_[size_t(save.towns[town].town_id)];
+		const SeaMapTown& t = towns_[size_t(save.towns[town].town_id())];
 		return {t.symbol_x + kTownSymbolSize / 2, t.symbol_y + kTownSymbolSize / 2};
 	}
 
@@ -287,11 +288,11 @@ public:
 
 		// Ciudades: azules las que tienen oficina del jugador; la elegida, resaltada.
 		for (size_t i = 0; i < save.towns.size(); ++i) {
-			const int id = save.towns[i].town_id;
+			const int id = save.towns[i].town_id();
 			const SeaMapTown& t = towns_[size_t(id)];
 			bool kontor = false;
 			for (const SavedOffice& office : save.offices) {
-				kontor |= office.used() && office.owner == save.player && office.town == i;
+				kontor |= office.used() && office.owner() == save.player && office.town() == i;
 			}
 			const int frame = (kontor ? 3 : 0) + (i == selected ? 1 : 0);
 			const SDL_Rect symbol_src = {(frame % 3) * kTownSymbolSize, (frame / 3) * kTownSymbolSize,
@@ -420,19 +421,19 @@ std::string day_and_month(int day, int month) {
 }
 
 std::string town_name(const SaveGame& save, const std::vector<std::string>& names, int town) {
-	const int id = save.towns[size_t(town)].town_id;
+	const int id = save.towns[size_t(town)].town_id();
 	return id < int(names.size()) ? names[size_t(id)] : "Ciudad " + std::to_string(id);
 }
 
 std::string bar_title(const SaveGame& save, const std::vector<std::string>& names,
 	const std::vector<int>& template_ids, const Selection& selection) {
 	if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
-		const std::string date = day_and_month(save.day, save.month) + " de " + std::to_string(save.year);
+		const std::string date = day_and_month(save.day(), save.month()) + " de " + std::to_string(save.year());
 		const std::string name = town_name(save, names, int(selection.saved_index));
 		if (selection.mode == Mode::Sea) {
 			return date + " - Mapa del mar - " + name;
 		}
-		return date + " - " + name + " - " + format_money(save.towns[selection.saved_index].citizens) +
+		return date + " - " + name + " - " + format_money(save.towns[selection.saved_index].citizens()) +
 			" habitantes";
 	}
 	return "Plantilla " + std::to_string(template_ids[selection.template_index]) +
@@ -509,7 +510,7 @@ std::string ship_activity(const SaveGame& save, const std::vector<std::string>& 
 			return "sin rumbo en el mar";
 		}
 		std::string text = there.empty() ? "navegando" : "navegando hacia " + there;
-		if (ship.arrival_tick > save.tick) {
+		if (ship.arrival_tick > save.tick()) {
 			const GameDate date = date_from_tick(ship.arrival_tick);
 			text += ", llegada prevista el " + day_and_month(date.day, date.month);
 		}
@@ -616,9 +617,9 @@ void trade(SaveGame& save, int town, MarketUi& ui, bool buying) {
 			name + " por " + format_money(result.price) + " monedas.";
 	} else if (!buying) {
 		ui.message = "No llevas " + name + " en la bodega.";
-	} else if (int32_t(market.wares[size_t(ui.ware)]) < ware_scale(ware.unit)) {
+	} else if (int32_t(market.stock(size_t(ui.ware))) < ware_scale(ware.unit)) {
 		ui.message = "La ciudad no tiene " + name + ".";
-	} else if (save.merchants[size_t(save.player)].money <
+	} else if (save.merchants[size_t(save.player)].money() <
 		buy_price(ui.ware, market.market(ui.ware), ware_scale(ware.unit))) {
 		ui.message = "No tienes dinero suficiente.";
 	} else {
@@ -732,7 +733,7 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 		const int32_t sell = sell_price(w, town.market(w), unit, save.trade_difficulty);
 		const char* short_unit = ware.unit == WareUnit::Barrel ? " barr." : " cargas";
 		text.draw(ware.name, left, y, kTextColor);
-		right(std::to_string(units(int32_t(town.wares[size_t(w)]), ware.unit)) + short_unit, 0, y, kTextColor);
+		right(std::to_string(units(int32_t(town.stock(size_t(w))), ware.unit)) + short_unit, 0, y, kTextColor);
 		right(buy ? std::to_string(buy) : "-", 1, y, kTextColor);
 		right(std::to_string(sell), 2, y, kTextColor);
 		if (ship) {
@@ -828,7 +829,7 @@ int main(int argc, char** argv) {
 	Selection selection;
 	if (has_save) {
 		for (size_t i = 0; i < save.towns.size(); ++i) {
-			if (save.towns[i].town_id == kLuebeck) {
+			if (save.towns[i].town_id() == kLuebeck) {
 				selection.saved_index = i;
 			}
 		}
@@ -949,7 +950,9 @@ int main(int argc, char** argv) {
 			clock = now - elapsed % speed.ms_per_tick;
 			const int ticks = std::min(int(elapsed / speed.ms_per_tick), speed.max_ticks);
 			for (int i = 0; i < ticks; ++i) {
-				sailing->advance_tick();
+				advance_game_tick(save, *sailing);
+				// Las operaciones que encolan las ciudades (obras) aún no se ejecutan.
+				save.queued_operations.clear();
 				for (const ShipEvent& event : sailing->events()) {
 					const SavedShip& ship = save.ships[size_t(event.ship)];
 					if (ship.owner != save.player) {
@@ -1164,7 +1167,7 @@ int main(int argc, char** argv) {
 			// Al pasar de la partida a las plantillas se sigue en el mismo mapa,
 			// con la cámara donde estaba.
 			if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
-				const int map = save.towns[selection.saved_index].template_map;
+				const int map = save.towns[selection.saved_index].template_map();
 				auto it = std::find(template_ids.begin(), template_ids.end(), map);
 				selection.template_index = it == template_ids.end() ? 0 : size_t(it - template_ids.begin());
 				keep_camera = selection.mode == Mode::Saved;
@@ -1214,7 +1217,7 @@ int main(int argc, char** argv) {
 		if (text) {
 			std::vector<std::string> right_texts;
 			if (trading) {
-				const std::string money = format_money(save.merchants[size_t(save.player)].money) + " monedas";
+				const std::string money = format_money(save.merchants[size_t(save.player)].money()) + " monedas";
 				right_texts = {merchant_name(save, names, save.player) + ": " + money, money};
 			} else if (at_sea) {
 				right_texts = {"L/R: ciudad   X: zarpar   Triángulo: entrar", "X: zarpar   Triángulo: entrar"};

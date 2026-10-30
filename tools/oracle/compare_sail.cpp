@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
 	Sailing sailing(save, *nav, load_sea_map_towns(*archive));
 	sailing.assign_loaded_routes();
 	auto advance = [&](uint32_t tick) {
-		while (save.tick < tick) {
+		while (save.tick() < tick) {
 			sailing.advance_tick();
 		}
 	};
@@ -133,11 +133,11 @@ int main(int argc, char** argv) {
 		const uint32_t tick = uint32_t(std::stoul(f[1]));
 		Checker check(line, reported);
 		if (kind == "inicio") {
-			check.field("tick", save.tick, f[1]);
+			check.field("tick", save.tick(), f[1]);
 		} else if (kind == "listas") {
 			advance(tick);
-			check.field("en puerto", save.docked_head, f[2]);
-			check.field("en el mar", save.sailing_head, f[3]);
+			check.field("en puerto", save.docked_head(), f[2]);
+			check.field("en el mar", save.sailing_head(), f[3]);
 		} else if (kind == "orden") {
 			advance(tick);
 			refused += !sailing.set_sail(std::stoi(f[2]), std::stoi(f[3]), std::stoi(f[4]), std::stoi(f[5]));
@@ -174,8 +174,8 @@ int main(int argc, char** argv) {
 			advance(tick);
 			const SavedTown& t = save.towns.at(std::stoul(f[2]));
 			for (int w = 0; w < kWareCount; ++w) {
-				check.field("[0x370]", t.incoming[size_t(w)], f.at(3 + size_t(w)));
-				check.field("[0x670]", t.in_transit[size_t(w)], f.at(27 + size_t(w)));
+				check.field("[0x370]", t.incoming(size_t(w)), f.at(3 + size_t(w)));
+				check.field("[0x670]", t.in_transit(size_t(w)), f.at(27 + size_t(w)));
 			}
 		} else {
 			continue;
@@ -183,7 +183,7 @@ int main(int argc, char** argv) {
 		++checked[kind];
 		wrong += !check.ok();
 	}
-	std::printf("tick final %u; órdenes %d (%d sin zarpar); llamadas de la IA saltadas %d\n", save.tick, orders,
+	std::printf("tick final %u; órdenes %d (%d sin zarpar); llamadas de la IA saltadas %d\n", save.tick(), orders,
 		refused, stubs);
 	for (const auto& [kind, count] : checked) {
 		std::printf("  %s: %d\n", kind.c_str(), count);

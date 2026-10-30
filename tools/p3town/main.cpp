@@ -192,7 +192,7 @@ int main(int argc, char** argv) {
 		}
 		const SavedTown& saved = save.towns[index];
 		std::printf("partida v%#x, año %d: ciudad %zu de %zu = id %d, plantilla %d, %u habitantes\n", save.version,
-			save.year, index, save.towns.size(), saved.town_id, saved.template_map, saved.citizens);
+			save.year(), index, save.towns.size(), saved.town_id(), saved.template_map(), saved.citizens());
 	} else if (town_file) {
 		// Un .town del disco, por ejemplo uno reconstruido desde una partida guardada.
 		const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(town_file)), std::istreambuf_iterator<char>());
