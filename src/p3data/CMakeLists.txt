@@ -6,6 +6,7 @@ add_library(p3data STATIC
 	lz.cpp
 	navigation.cpp
 	prices.cpp
+	sailing.cpp
 	savegame.cpp
 	seamap.cpp
 	town.cpp

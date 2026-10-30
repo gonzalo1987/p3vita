@@ -33,3 +33,9 @@ target_link_libraries(trade_test PRIVATE p3data)
 target_compile_options(trade_test PRIVATE -Wall -Wextra)
 
 add_test(NAME trade COMMAND trade_test)
+
+add_executable(sailing_test sailing_test.cpp)
+target_link_libraries(sailing_test PRIVATE p3data)
+target_compile_options(sailing_test PRIVATE -Wall -Wextra)
+
+add_test(NAME sailing COMMAND sailing_test)

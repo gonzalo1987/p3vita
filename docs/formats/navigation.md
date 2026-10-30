@@ -6,11 +6,13 @@ Ingeniería inversa de `Patrician3.exe` (GOG 1.1). Marcas como en
 el propio código del juego en el emulador.
 
 > Implementación en p3vita: `src/p3data/seamap.cpp` (posiciones del mapa),
-> `src/p3data/navigation.cpp` (rutas, §5) y la vista del mapa del mar del
-> visor (`src/app/main.cpp`); `tools/p3map` dibuja el mapa de una partida en
-> un PNG. Las rutas entre ciudades coinciden con las del juego en las 12
-> partidas v0x82 de `missav/` (6633 rutas, ver [../oracle.md](../oracle.md)).
-> El movimiento de los barcos (§4) aún no está implementado.
+> `src/p3data/navigation.cpp` (rutas, §5), `src/p3data/sailing.cpp`
+> (movimiento, puerto y orden de zarpar, §4 y §6) y la vista del mapa del mar
+> del visor (`src/app/main.cpp`); `tools/p3map` dibuja el mapa de una partida
+> en un PNG. Las rutas entre ciudades coinciden con las del juego en las 12
+> partidas v0x82 de `missav/` (6633 rutas) y la navegación también: 32 días
+> de juego en cada partida con unas 340 órdenes de zarpar, 0 diferencias en
+> 426 000 estados de barco (ver [../oracle.md](../oracle.md)).
 
 ## 1. Coordenadas
 
@@ -54,49 +56,83 @@ barcos caen en su sitio en las 24 ciudades de `1.pat` **[datos]**.
   (piratas) (P3Modding, `patches/scrollmap-render-all-ships.md`).
 - Marca del barco del jugador: `images/Schiffe/schiffmarker01.tga` (16 × 22).
 
-## 4. Movimiento (0x516cc0, un tick) **[código]**
+## 4. Movimiento (0x516cc0, un tick) **[código + oráculo]**
 
-`advance_time` (0x530E80) avanza tick a tick (256 por día) y en cada uno llama
-a la actualización de barcos 0x506720, que recorre dos listas de barcos con una
-máquina de estados. Los que navegan (estado 0x0F, segunda lista, tabla
-0x507CF0) llaman a 0x516cc0:
+`advance_time` (0x530E80) avanza tick a tick (256 por día). En cada tick, si
+`tick & 0xFF == 0` recalcula la fecha (0x5310D0: año = tick / 93440, día del
+año = (tick ≫ 8) mod 365 y el mes con la tabla 0x672D78, sin bisiestos) y
+siempre llama a la actualización de barcos 0x506720 (thiscall sobre el objeto
+de barcos 0x6DD7A0), que recorre con una máquina de estados dos listas
+enlazadas por [+0x6]: los barcos en puerto (cabeza [+0xE8], tabla 0x507CB0) y
+los que navegan ([+0xEA], tabla 0x507CF0), y después los convoyes ([+0xEC]).
+Los que navegan (estado 0x0F) llaman a 0x516cc0(índice):
 
-1. Si el dueño es un comerciante, cada 4 ticks (`tick & 3 == 0`) la salud
-   [+0x18] baja 1; con salud ≤ 0 devuelve «no ha llegado» y el llamador lo hunde.
-2. Sin ruta ([+0x24] = 0) pide una a la cola de operaciones (comerciantes de la IA).
+1. Si el dueño es un comerciante, cada 4 ticks (`tick & 3 == 0`) el casco
+   [+0x18] baja 1; con casco ≤ 0 devuelve 0 y el llamador lo hunde.
+2. Sin ruta ([+0x24] = 0) devuelve 1; si es de la IA, pone [+0x15C] a 0 y cada
+   64 ticks (`(índice ^ tick) & 0x3F == 0`) encola una operación 0x00 hacia su
+   destino o su ciudad natal (0x54AA70).
 3. Posición += desplazamiento ([+0x28], [+0x2C], 16.16).
-4. Si la parte entera de la posición coincide con el punto actual de la ruta
-   ([+0x34]), pasa al siguiente: centra la fracción (0x7FFF) y fija un nuevo
-   desplazamiento con 0x517410(velocidad, punto).
-5. Pasado el último punto: para el barco y busca la ciudad de ese punto
-   (0x446d50 del objeto de navegación). Si hay ciudad, coloca el barco en su
-   punto de llegada y anota la ciudad en [+0x39]; la llegada se detecta en el
-   tick siguiente (0x50d0c0 lo atraca).
+4. [+0x2], otro índice de la ruta, vuelve a 0 si su punto está a más de 0x48
+   píxeles en x o en y.
+5. Si la parte entera de la posición coincide con el punto actual de la ruta
+   ([+0x34]), pasa al siguiente: centra la fracción (0x7FFF), fija un nuevo
+   desplazamiento con 0x517410(velocidad, punto) y guarda en [+0x30] la
+   velocidad que se ve, `velocidad · 64 / 115 + 4`.
+6. Pasado el último punto: desplazamiento y [+0x30] a 0, y busca la ciudad de
+   ese punto (0x446d50). Si hay ciudad, coloca el barco en su punto de llegada
+   (fracción 0), anota la ciudad en [+0x39] y devuelve 0. Si no, se queda en
+   el mar sin ruta ([+0x24] y [+0x48] a 0, pero [+0x34] no vuelve a 0) y
+   devuelve 1. Los barcos con [+0x15C] (ataque pirata) pasan al estado 0x14.
 
-Velocidad (en el paso 4):
+0x446d50(punto): la primera ciudad de la partida (en el orden del mundo) cuyo
+símbolo lo contiene (`x0 < x < x0 + 22`, igual en y; StadtSymbolX/YPos) o
+cuyo punto de llegada es exactamente ese; si no, 0x28.
+
+Cada 32 ticks (`tick & 0x1F == 0`) el llamador baja en 1 el descanso de la
+tripulación [+0x3E] (u16; si el byte bajo pasa a 0xFF y el alto es < −1, el
+alto se queda en 0xFF). Con lo que devuelve 0x516cc0:
+
+- 1: si [+0x3A] (barco al que persigue) no es 0xFFFF, 0x50B030 (persecución;
+  p3vita solo reproduce que lo olvida si el índice no existe) y la lista
+  ordenada por x de 0x50D0C0 ([+0xA], [+0xC], para los encuentros), que no
+  afecta al movimiento.
+- 0 con casco ≤ 0: se hunde (0x506CD6): sin ruta, fuera de la lista, estado
+  0x11 y casco 0.
+- 0: llega a la ciudad [+0x39] (0x506D8E). Si la ciudad tiene en su
+  situación [+0x2C8] el bit 0x200 o 0x4000000 (bloqueo o asedio), o el 0x400
+  y el barco sigue una ruta automática ([+0x136] & 1), se queda fuera: sin
+  ruta, [+0x37] = [+0x39], [+0x39] = 0xFF, estado 0x0F, y **el bucle vuelve a
+  pasar por él en el mismo tick** (no avanza el enlace). Si no, quita la ruta
+  (0x516840), lo saca de la lista del mar y lo pone el primero de la de
+  puerto en el estado 3 con [+0x138] = 0.
+
+Velocidad (paso 5; también 0x5170F0), en enteros sin signo salvo la carga:
 
 ```
 carga = 614 · bodega ocupada [+0x118] / capacidad [+0x10]          (división entera)
 base  = (4096 − carga) · tabla_0x67366C[tipo] >> 12                 (635, 693, 520, 578)
-salud = clamp(130 · salud [+0x18] / salud máxima [+0x14] + 165, 204, 256)
-velocidad = salud · base >> 10
+casco = clamp(130 · casco [+0x18] / casco máximo [+0x14] + 165, 204, 256)
+velocidad = casco · base >> 10
 ```
 
-Una Snaikka vacía y sana: 256 · 635 >> 10 = 158.
+Una Snaikka vacía y sana: 256 · 635 >> 10 = 158; llena, 134.
 
 0x517410(velocidad, x, y): con `dx, dy` desde la parte entera de la
 posición, `pasos = 1 + trunc(128 · √(dx² + dy²) / velocidad)` (en double con la
 constante −128.0 de 0x673678) y desplazamiento = `(d << 16 ± 0x8000) / pasos`
-(+0x8000 si d > 0, −0x7FFF si d < 0; 0 si d = 0). El rumbo [+0x1] sale del
-cuadrante (bases 1, 5, 9, 13) más 0–4 según la razón entre |dx| y |dy|
-(umbrales 0x3244/65536 ≈ tan 11° y 0x96CC/65536 ≈ tan 30°): con `c` y `e` las
-componentes según el cuadrante (dx > 0 y dy > 0: base 9, c = dx, e = dy;
-dx > 0 y dy ≤ 0: base 5, c = |dy|, e = dx; dx ≤ 0 y dy > 0: base 13, c = dy,
-e = |dx|; si no, base 1, c = |dx|, e = |dy|), si c > e suma 2 si c · 0x96CC < e ≪ 16,
-1 si c · 0x3244 < e ≪ 16 y 0 si no; si c ≤ e, 2, 3 o 4 con los papeles cambiados.
+(+0x8000 si d > 0, −0x7FFF si d < 0; 0 si d = 0; división que trunca). El
+rumbo [+0x1] sale del desplazamiento ya calculado (vx, vy): el cuadrante da la
+base (1, 5, 9, 13) y la razón entre las componentes suma 0–4 (umbrales
+0x3244/65536 ≈ tan 11° y 0x96CC/65536 ≈ tan 30°): con `c` y `e` según el
+cuadrante (vx > 0 y vy > 0: base 9, c = vx, e = vy; vx > 0 y vy ≤ 0: base 5,
+c = |vy|, e = vx; vx ≤ 0 y vy > 0: base 13, c = vy, e = |vx|; si no, base 1,
+c = |vx|, e = |vy|), si c > e suma 2 si c · 0x96CC < e ≪ 16, 1 si
+c · 0x3244 < e ≪ 16 y 0 si no; si c ≤ e, 2, 3 o 4 con los papeles cambiados
+(productos de 64 bits). El rumbo se queda en 4 bits.
 
-Devuelve 0 cuando el barco llega (o se hunde) y 1 mientras navega; en el
-primer caso el llamador lo atraca (0x506d8e) o lo hunde (estado 0x11).
+Llegada prevista [+0x48] (0x5169C0): tick + `8 · longitud / velocidad`, con
+la longitud de la ruta sumando por tramo `16 · mayor + 7 · menor` de |dx| y |dy|.
 
 ## 5. Rutas **[código + oráculo]**
 
@@ -117,10 +153,20 @@ Los formatos de los tres ficheros los documenta P3Modding
 
 Al cargar una partida, 0x4482c0 calcula con 0x445d50 la ruta entre los puntos
 de llegada de cada par de ciudades y las guarda en la matriz. Un barco que
-navega entre dos ciudades no tiene ruta propia: al cargarlo, 0x445010 ve que
-los dos extremos son ciudades (0x446d50) y le da el puntero de la matriz, con
-el primer punto cambiado por el de salida; el campo [+0x36] indica si la ruta
-es suya (solo entonces se guarda y se libera).
+navega entre dos ciudades no tiene ruta propia: al cargarlo (0x516520, con
+los puntos de llegada de [+0x37] y [+0x38]), 0x445010 ve que los dos
+extremos son ciudades (0x446d50) y le da el puntero de la matriz, con el
+primer punto cambiado por el de salida; el campo [+0x36] indica si la ruta es
+suya (solo entonces se guarda y se libera) **[código + oráculo]**.
+
+0x445010(puntos, &ruta) es también la que da la ruta al zarpar. Con dos
+puntos que no son los dos ciudades calcula una ruta propia con el mismo
+algoritmo que 0x445d50 (repetido dentro de la función; p3vita usa
+`NavData::route` y coincide en las 415 órdenes hacia puntos del mar del
+oráculo). Si uno de los extremos no tiene agua en 50 celdas, no escribe la
+ruta, pero sí cambia el primer punto del elemento 6 · n de la matriz (la ruta
+de la ciudad 6 a la 0) por el de salida. Con tres puntos o más (0x44561E)
+encadena tramos; no se usa al zarpar.
 
 0x445d50(inicio, fin), con puntos en píxeles:
 
@@ -163,3 +209,88 @@ agua, la diagonal no se mira.
 Los cálculos de 0x446f20 mezclan floats y doubles con la FPU a 53 bits y
 `acos` (0x63B2C4, con `fpatan`); p3vita los hace en el mismo orden con
 `std::acos`. Con las comparaciones x87, un NaN sigue la rama de la esquina.
+
+## 6. Puerto: zarpar, salir y atracar **[código + oráculo]**
+
+Estados [+0x134] que intervienen (lista de puerto salvo 0x0F):
+
+| Estado | Manejador | Qué hace en cada tick |
+|-|-|-|
+| 0 atracado | 0x5067D0 | Pasado un día desde que atracó ([+0x44] + 0x100 < tick), el descanso [+0x3E] sube 1 hasta 0x700. Si es de la IA, decide su próximo viaje (0x518B80); si es de un jugador sin ruta automática, [+0x37] = [+0x39]. |
+| 1 esperando | 0x5068CE | El mismo descanso; [+0x138] cuenta atrás y a 0 pasa al estado 0. Lo usan los convoyes y los puertos bloqueados. |
+| 2 saliendo | 0x506945 | [+0x138] sube hasta 0x40. En el primer tick, si la ciudad está bloqueada (0x4000200) pasa al estado 1 con [+0x138] = 0x100 y sin ruta; si no, [+0x30] = velocidad / 2. Con 0x40, 0x5090E0 y a la lista del mar. |
+| 3 entrando | 0x506A86 | [+0x138] sube hasta 0x40; en el primer tick, [+0x30] = velocidad / 2 y [+0x15C] = 0. Con 0x40, atraca (0x519C90). |
+| 0x0F navegando | 0x506C53 | §4. |
+
+Lo demás de la escena del puerto (0x6E6220: 0x6132C0, 0x6135C0, 0x613920) es
+dibujo.
+
+**Salir al mar (0x5090E0):** [+0x44] = tick, recalcula la bodega (0x5182B0)
+y 0x516BC0: desplazamiento a 0, [+0x37] = [+0x39], posición = punto de
+llegada de la ciudad (fracción 0); si no tiene ruta, se la da 0x445010 hacia
+[+0x38] con [+0x48] = tick + llegada prevista; [+0x34] y [+0x2] a 0; el rumbo
+pasa a `(rumbo − 4) & 7` si era < 8 y a 2 si no. Después estado 0x0F,
+[+0x138] = 0, [+0x39] = 0xFF y, si el destino es una ciudad, suma su carga
+positiva a la mercancía en camino de esa ciudad ([+0x670] y [+0x370] del
+struct town). Si el dueño es un comerciante apunta la estadística de bodega
+llena (carga / capacidad en float: en el barco [+0x12C] y [+0x130]++, en el
+comerciante [+0x540] y [+0x544]++); si no, estado 0x12 (pirata).
+
+**Atracar (0x519C90):** estado 0, [+0x30] = 0, [+0x44] = tick, la ciudad
+[+0x39] cuenta un barco más ([+0x996]) y la ciudad de destino [+0x38] resta la
+carga de su mercancía en camino ([+0x670] se queda en ≥ 0; el juego no
+comprueba que [+0x38] sea una ciudad), mensaje al jugador y [+0x138] = 0.
+
+**Orden de zarpar, operación 0x00 (0x537670):** `{u32 código, u32 barco,
+u32 ciudad, s32 x, s32 y}`. [+0x3A] = 0xFFFF. Los estados 6 (el barco está en
+una lista de su ciudad, [+0x81E] del struct town) y 8 tienen su propio
+camino, y los barcos de un convoy ([+0x8] < [+0xF6]) también; p3vita no los
+reproduce. Si no: [+0x136] &= 0xFC; solo siguen los estados < 4, 0x0F y 0x10;
+en puerto (< 4) tiene que pasar 0x519BA0:
+
+- marineros [+0x40] ≥ mínimo del tipo (0x673660: 5, 8, 10, 12);
+- byte alto del descanso [+0x3F] > 0;
+- bodega ocupada ≤ capacidad;
+- con capitán ([+0x42] < [+0xF2]) o casco máximo ≤ 5 · casco;
+- estado distinto de 7, 9, 12–14 y < 17;
+- la ciudad, si está en una, sin los bits 0x4000200.
+
+Después, según el estado: 2 (saliendo) hacia la ciudad de la que sale (o su
+punto de llegada) da la vuelta: estado 3, [+0x138] = 0x40 − [+0x138],
+[+0x38] = [+0x37], [+0x48] = tick − [+0x138] + 0x40 y sin ruta. 3 (entrando):
+si es hacia la misma ciudad no hace nada; si no, da la vuelta: estado 2,
+[+0x138] = 0x40 − [+0x138], [+0x37] = [+0x39]. 0 y 1: si ya está en esa ciudad
+no hace nada; si no, [+0x37] = [+0x39], [+0x138] = 0 y estado 2. Los que
+navegan cambian de rumbo sin más. Al final, 0x5172A0 fija el destino ([+0x38]
+= ciudad, o 0xFF si es un punto del mar), pone la fracción de la posición a
+0x7FFF, quita la ruta y le da una nueva con 0x445010 desde la parte entera de
+la posición, con su llegada prevista; [+0x30] = 1.
+
+Un barco con destino 0xFF que se queda sin ruta lee al salir del puerto
+(0x516BC0) el id de ciudad 255 de la tabla de 40 del mundo, fuera de ella, y
+navega hacia el punto de llegada de esa ciudad; p3vita lo deja sin ruta.
+
+## 7. El tiempo real **[código]**
+
+El bucle de mensajes (0x4B8EE0) mide el tiempo con `timeGetTime` y duerme
+para no pasar de unos 50 fotogramas por segundo. 0x546620 convierte el tiempo
+transcurrido en ticks con los milisegundos por tick de la velocidad elegida
+(`segundos por día · 1000 / 256`, tabla 0x66DE7C) y encola una operación
+0xC4 hasta el tick nuevo, que llama a `advance_time`. Lo que pase de 8 ticks
+por actualización se pierde (256 en el avance rápido).
+
+| Velocidad | s/día | ms/tick |
+|-|-|-|
+| muy lenta (la de `ZEIT=0` en `P2.cfg`) | 120 | 468 |
+| lenta | 90 | 351 |
+| normal | 60 | 234 |
+| rápida | 30 | 117 |
+| muy rápida | 20 | 78 |
+| ralentizada (tecla Pausa) | 900 | 3515 |
+| avance rápido (F12) | — | 2 |
+
+Hay un tercer modo de 3375 ms por tick, con un tick como mucho por
+actualización, que por el código que lo activa parece el de las batallas
+navales **[supuesto]**. Las teclas + y − cambian la velocidad. Las partidas
+guardan los ms por tick después de los ajustes ([+0x8D4]; las de `missav/`
+están en 3515).

@@ -7,3 +7,6 @@
 *.cpr
 *.aim
 *.bik
+
+# Python (los oráculos importan save_oracle.py)
+__pycache__/

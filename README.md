@@ -72,16 +72,22 @@ Para probarlo en la consola (con HENkaku o Enso):
    `p2arch0_spa.cpr`, que se monta encima (textos, nombres y fuentes en
    español). Con solo el español también arranca, pero le faltan datos.
 
-De momento es un visor de ciudades en el que ya se puede comerciar. Arranca en
-Lübeck tal como empieza la partida de 1300 (`missav/1.pat`), con el comerciante
-del jugador (Georg Stromberg, 30 000 monedas) y su Snaikka en el puerto. La
-cruceta o el stick izquierdo mueven la cámara, arrastrar con el dedo desplaza el
-mapa, L y R cambian de ciudad y Start sale. Triángulo alterna entre la ciudad y
-el **mapa del mar**, con las ciudades y los barcos que navegan en sus posiciones
-de la partida (tu barco lleva una marca; tocar una ciudad la elige y Triángulo
-entra en ella). Con el mercado cerrado, Select pasa por la plantilla de la
-ciudad con todos los edificios del diseñador (`.editor`) y solo con el terreno
-(`.town`).
+De momento es un visor de ciudades en el que ya se puede comerciar y navegar.
+Arranca en Lübeck tal como empieza la partida de 1300 (`missav/1.pat`), con el
+comerciante del jugador (Georg Stromberg, 30 000 monedas) y su Snaikka en el
+puerto. El tiempo pasa como en el juego a velocidad normal (un día por minuto)
+y la fecha se ve en la barra. La cruceta o el stick izquierdo mueven la
+cámara, arrastrar con el dedo desplaza el mapa, L y R cambian de ciudad y
+Start sale. Triángulo alterna entre la ciudad y el **mapa del mar**, con las
+ciudades y los barcos (tu barco lleva una marca; tocar una ciudad la elige y
+Triángulo entra en ella). En el mapa del mar, X manda tu barco a la ciudad
+elegida: sale del puerto, navega por la ruta del juego (se dibuja su
+recorrido) y entra en el puerto de destino, donde ya se puede comerciar.
+Cuadrado elige otro de tus barcos y Select cambia la velocidad del juego
+(ralentizada, muy lenta, lenta, normal, rápida, muy rápida y avance rápido).
+La barra de abajo dice qué hace el barco y cuándo llegará. Fuera del mapa y
+con el mercado cerrado, Select pasa por la plantilla de la ciudad con todos
+los edificios del diseñador (`.editor`) y solo con el terreno (`.town`).
 
 X abre el mercado de la ciudad: existencias, precio de compra y de venta de una
 unidad y lo que lleva tu barco. Con el mercado abierto, arriba y abajo eligen la
@@ -90,7 +96,7 @@ vende, Select pasa al siguiente barco del puerto y Círculo lo cierra. También 
 puede tocar una fila y los botones del pie. Los precios, los límites (almacén,
 bodega y dinero) y el precio medio de la carga son los del juego. En el PC: las
 flechas, Re Pág / Av Pág, E (mapa), F (plantillas), M, C (comprar), V
-(vender), Tab y Esc.
+(vender), Intro (zarpar), Tab, + y − (velocidad) y Esc.
 
 `p3save` lista las ciudades de una partida y muestra el almacén de cada una, sus
 comerciantes y sus barcos:

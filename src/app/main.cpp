@@ -1,5 +1,8 @@
 // Visor de ciudades: dibuja las ciudades del juego original y permite
-// recorrerlas. Es el primer paso del motor; todavía no hay simulación.
+// recorrerlas, comerciar en su mercado y mandar los barcos del jugador de
+// una ciudad a otra por el mapa del mar mientras pasa el tiempo. Es el
+// primer paso del motor: de la simulación solo están el comercio y la
+// navegación.
 
 #include <SDL.h>
 
@@ -18,7 +21,9 @@
 #include "p3data/cpr.hpp"
 #include "p3data/font.hpp"
 #include "p3data/image.hpp"
+#include "p3data/navigation.hpp"
 #include "p3data/prices.hpp"
+#include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/seamap.hpp"
 #include "p3data/town.hpp"
@@ -272,8 +277,9 @@ public:
 		return -1;
 	}
 
+	// `course`: barco del que se dibuja lo que le queda de ruta.
 	void draw(const SaveGame& save, TextRenderer* names_text, const std::vector<std::string>& names, int camera_x,
-		int camera_y, size_t selected) {
+		int camera_y, size_t selected, const SavedShip* course) {
 		const SDL_Rect src = {camera_x, camera_y, std::min(kScreenWidth, width_ - camera_x),
 			std::min(kScreenHeight, height_ - camera_y)};
 		const SDL_Rect dst = {0, 0, src.w, src.h};
@@ -299,6 +305,21 @@ public:
 				names_text->draw(name, x - camera_x, t.name_y - camera_y,
 					i == selected ? SDL_Color{120, 20, 10, 255} : SDL_Color{40, 25, 10, 255});
 			}
+		}
+
+		if (course && course->route && (course->status == kShipSailing || course->status == kShipLeaving)) {
+			std::vector<SDL_Point> line = {{(course->x >> 16) - camera_x, (course->y >> 16) - camera_y}};
+			for (size_t i = course->route_index; i < course->route->size(); ++i) {
+				const MapPoint p = (*course->route)[i];
+				line.push_back({p.x - camera_x, p.y - camera_y});
+			}
+			// Dos líneas de un píxel, una al lado de la otra.
+			SDL_SetRenderDrawColor(renderer_, 120, 30, 15, 255);
+			SDL_RenderDrawLines(renderer_, line.data(), int(line.size()));
+			for (SDL_Point& p : line) {
+				++p.y;
+			}
+			SDL_RenderDrawLines(renderer_, line.data(), int(line.size()));
 		}
 
 		// Barcos: los que navegan, con su rumbo; los del jugador, con su marca
@@ -381,32 +402,6 @@ SDL_Point focus_point(const TownView& view, const SaveGame& save, const Selectio
 	return {view.width() / 2, view.height() / 2};
 }
 
-std::string bar_title(const SaveGame& save, const std::vector<std::string>& names,
-	const std::vector<int>& template_ids, const Selection& selection) {
-	if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
-		const SavedTown& town = save.towns[selection.saved_index];
-		const std::string name = town.town_id < int(names.size()) ? names[size_t(town.town_id)]
-																	: "Ciudad " + std::to_string(town.town_id);
-		if (selection.mode == Mode::Sea) {
-			return "Mapa del mar - " + name + " - año " + std::to_string(save.start_year);
-		}
-		return name + " - año " + std::to_string(save.start_year) + " - " + std::to_string(town.citizens) +
-			" habitantes";
-	}
-	return "Plantilla " + std::to_string(template_ids[selection.template_index]) +
-		(selection.mode == Mode::Designer ? " - todos los edificios del diseñador" : " - solo el terreno");
-}
-
-void draw_bar(SDL_Renderer* renderer, TextRenderer& text, const std::string& title, const std::string& right_text) {
-	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
-	const SDL_Rect bar = {0, 0, kScreenWidth, kBarHeight};
-	SDL_RenderFillRect(renderer, &bar);
-	const int y = (kBarHeight - text.line_height()) / 2;
-	text.draw(title, kBarMargin, y, kTextColor);
-	text.draw(right_text, kScreenWidth - kBarMargin - text.measure(right_text), y, kDimColor);
-}
-
 // Monedas con separador de miles: 30.000.
 std::string format_money(int64_t value) {
 	std::string digits = std::to_string(value < 0 ? -value : value);
@@ -414,6 +409,115 @@ std::string format_money(int64_t value) {
 		digits.insert(size_t(i), ".");
 	}
 	return value < 0 ? "-" + digits : digits;
+}
+
+constexpr const char* kMonthNames[12] = {"enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+	"septiembre", "octubre", "noviembre", "diciembre"};
+
+// «13 de mayo»
+std::string day_and_month(int day, int month) {
+	return std::to_string(day) + " de " + kMonthNames[month % 12];
+}
+
+std::string town_name(const SaveGame& save, const std::vector<std::string>& names, int town) {
+	const int id = save.towns[size_t(town)].town_id;
+	return id < int(names.size()) ? names[size_t(id)] : "Ciudad " + std::to_string(id);
+}
+
+std::string bar_title(const SaveGame& save, const std::vector<std::string>& names,
+	const std::vector<int>& template_ids, const Selection& selection) {
+	if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
+		const std::string date = day_and_month(save.day, save.month) + " de " + std::to_string(save.year);
+		const std::string name = town_name(save, names, int(selection.saved_index));
+		if (selection.mode == Mode::Sea) {
+			return date + " - Mapa del mar - " + name;
+		}
+		return date + " - " + name + " - " + format_money(save.towns[selection.saved_index].citizens) +
+			" habitantes";
+	}
+	return "Plantilla " + std::to_string(template_ids[selection.template_index]) +
+		(selection.mode == Mode::Designer ? " - todos los edificios del diseñador" : " - solo el terreno");
+}
+
+// Barra de texto a lo ancho de la pantalla: el título a la izquierda y, a la
+// derecha, el primero de los textos que quepa.
+void draw_bar(SDL_Renderer* renderer, TextRenderer& text, int top, const std::string& title,
+	const std::vector<std::string>& right_texts) {
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
+	const SDL_Rect bar = {0, top, kScreenWidth, kBarHeight};
+	SDL_RenderFillRect(renderer, &bar);
+	const int y = top + (kBarHeight - text.line_height()) / 2;
+	text.draw(title, kBarMargin, y, kTextColor);
+	const int room = kScreenWidth - 4 * kBarMargin - text.measure(title);
+	for (const std::string& right : right_texts) {
+		if (text.measure(right) <= room) {
+			text.draw(right, kScreenWidth - kBarMargin - text.measure(right), y, kDimColor);
+			break;
+		}
+	}
+}
+
+// Velocidades del juego (0x546620): milisegundos reales por tick, que son
+// los segundos por día de la tabla 0x66DE7C · 1000 / 256, y ticks como
+// máximo por fotograma; lo que pase de ahí se pierde, como en el juego.
+struct GameSpeed {
+	const char* name;
+	Uint32 ms_per_tick;
+	int max_ticks;
+};
+constexpr GameSpeed kGameSpeeds[] = {
+	{"ralentizada", 3515, 8},  // La de la tecla Pausa del juego.
+	{"muy lenta", 468, 8},
+	{"lenta", 351, 8},
+	{"normal", 234, 8},  // Un día por minuto.
+	{"rápida", 117, 8},
+	{"muy rápida", 78, 8},
+	{"avance rápido", 2, 256},  // F12 del juego.
+};
+constexpr int kGameSpeedCount = int(sizeof(kGameSpeeds) / sizeof(kGameSpeeds[0]));
+constexpr int kNormalSpeed = 3;
+
+// Barcos del jugador que existen (también los que navegan).
+std::vector<int> player_fleet(const SaveGame& save) {
+	std::vector<int> fleet;
+	for (size_t i = 0; i < save.ships.size(); ++i) {
+		const SavedShip& ship = save.ships[i];
+		if (ship.in_use() && ship.status != kShipSunk && ship.owner == save.player) {
+			fleet.push_back(int(i));
+		}
+	}
+	return fleet;
+}
+
+// Qué hace un barco: «saliendo de Lübeck hacia Visby».
+std::string ship_activity(const SaveGame& save, const std::vector<std::string>& names, const SavedShip& ship) {
+	const size_t count = save.towns.size();
+	const std::string here = ship.town < count ? town_name(save, names, ship.town) : "";
+	const std::string there = ship.destination < count ? town_name(save, names, ship.destination) : "";
+	switch (ship.status) {
+	case kShipDocked:
+		return "en el puerto de " + here;
+	case kShipWaiting:
+		return "esperando en " + here;
+	case kShipLeaving:
+		return "saliendo de " + here + (there.empty() ? "" : " hacia " + there);
+	case kShipArriving:
+		return "entrando en el puerto de " + here;
+	case kShipSailing: {
+		if (!ship.route) {
+			return "sin rumbo en el mar";
+		}
+		std::string text = there.empty() ? "navegando" : "navegando hacia " + there;
+		if (ship.arrival_tick > save.tick) {
+			const GameDate date = date_from_tick(ship.arrival_tick);
+			text += ", llegada prevista el " + day_and_month(date.day, date.month);
+		}
+		return text;
+	}
+	default:
+		return "";
+	}
 }
 
 // Cantidad en unidades del juego (barriles, cargas o piezas), redondeada hacia abajo.
@@ -731,6 +835,63 @@ int main(int argc, char** argv) {
 	} else {
 		selection.mode = Mode::Designer;
 	}
+	// Navegación: sin los datos de navdata/ los barcos no se mueven.
+	std::unique_ptr<NavData> nav = has_save ? NavData::load(*archive) : nullptr;
+	std::unique_ptr<Sailing> sailing;
+	if (nav) {
+		sailing = std::make_unique<Sailing>(save, *nav, load_sea_map_towns(*archive));
+		sailing->assign_loaded_routes();
+	}
+	size_t fleet_index = 0;  // Barco del jugador al que se dan las órdenes en el mapa del mar.
+	int game_speed = kNormalSpeed;
+	Uint32 clock = SDL_GetTicks();  // Hasta dónde se ha convertido el tiempo real en ticks.
+	// Aviso que se ve unos segundos bajo la barra superior.
+	std::string notice;
+	Uint32 notice_until = 0;
+	auto notify = [&](const std::string& message) {
+		notice = message;
+		notice_until = SDL_GetTicks() + kMessageTime;
+	};
+	auto fleet_ship = [&]() -> int {
+		const std::vector<int> fleet = player_fleet(save);
+		return fleet.empty() ? -1 : fleet[fleet_index % fleet.size()];
+	};
+	// X en el mapa del mar: el barco elegido zarpa hacia la ciudad elegida (operación 0x00).
+	auto order_sail = [&]() {
+		const int index = fleet_ship();
+		if (!sailing || index < 0) {
+			notify("No tienes ningún barco.");
+			return;
+		}
+		const SavedShip& ship = save.ships[size_t(index)];
+		const int town = int(selection.saved_index);
+		const std::string there = town_name(save, town_names, town);
+		const Sailing::SailCheck check = ship.status < 4 ? sailing->sail_check(ship) : Sailing::SailCheck::Ok;
+		if ((ship.status == kShipDocked || ship.status == kShipWaiting) && ship.town == town) {
+			notify(ship.name + " ya está en " + there + ".");
+		} else if (check == Sailing::SailCheck::FewSailors) {
+			notify("Faltan marineros para zarpar.");
+		} else if (check == Sailing::SailCheck::Tired) {
+			notify("La tripulación necesita descansar.");
+		} else if (check == Sailing::SailCheck::Overloaded) {
+			notify("Lleva más carga de la que cabe en la bodega.");
+		} else if (check == Sailing::SailCheck::Damaged) {
+			notify("El casco está demasiado dañado para zarpar sin capitán.");
+		} else if (check == Sailing::SailCheck::PortClosed) {
+			notify("El puerto está bloqueado.");
+		} else if (check != Sailing::SailCheck::Ok) {
+			notify(ship.name + " no puede zarpar ahora.");
+		} else {
+			const char* verb = ship.status == kShipSailing ? " pone rumbo a "
+				: ship.status == kShipLeaving && ship.town == town ? " vuelve a "
+				: " zarpa hacia ";
+			if (!sailing->set_sail(index, town)) {
+				notify(ship.name + " no puede zarpar ahora.");
+			} else {
+				notify(ship.name + verb + there + ".");
+			}
+		}
+	};
 
 	SDL_GameController* controller = nullptr;
 	bool reload = true;
@@ -780,6 +941,35 @@ int main(int argc, char** argv) {
 			keep_camera = false;
 		}
 
+		// Pasa el tiempo: los ticks que caben en el tiempo real transcurrido.
+		if (sailing) {
+			const GameSpeed& speed = kGameSpeeds[game_speed];
+			const Uint32 now = SDL_GetTicks();
+			const Uint32 elapsed = now - clock;
+			clock = now - elapsed % speed.ms_per_tick;
+			const int ticks = std::min(int(elapsed / speed.ms_per_tick), speed.max_ticks);
+			for (int i = 0; i < ticks; ++i) {
+				sailing->advance_tick();
+				for (const ShipEvent& event : sailing->events()) {
+					const SavedShip& ship = save.ships[size_t(event.ship)];
+					if (ship.owner != save.player) {
+						continue;
+					}
+					if (event.kind == ShipEvent::Arrived) {
+						notify(ship.name + " ha llegado a " + town_name(save, town_names, event.town) + ".");
+						// En el mapa del mar queda elegida la ciudad: Triángulo entra en ella.
+						if (selection.mode == Mode::Sea && event.ship == fleet_ship()) {
+							selection.saved_index = size_t(event.town);
+						}
+					} else if (event.kind == ShipEvent::Stopped) {
+						notify(ship.name + " se ha detenido en el mar.");
+					} else {
+						notify(ship.name + " se ha hundido.");
+					}
+				}
+			}
+		}
+
 		int town_step = 0;
 		bool next_mode = false;  // Triángulo: entre la ciudad y el mapa del mar.
 		bool next_debug_view = false;  // Select: vistas de las plantillas de ciudad.
@@ -805,24 +995,31 @@ int main(int argc, char** argv) {
 				case SDL_CONTROLLER_BUTTON_Y:  // Triángulo en la Vita.
 					next_mode = true;
 					break;
-				case SDL_CONTROLLER_BUTTON_A:  // X en la Vita: abre el mercado y compra.
+				case SDL_CONTROLLER_BUTTON_A:  // X en la Vita: abre el mercado y compra; en el mar, zarpar.
 					if (trading) {
 						trade(save, town_index, market, true);
 					} else if (selection.mode == Mode::Saved) {
 						market.open = true;
+					} else if (selection.mode == Mode::Sea) {
+						order_sail();
 					}
 					break;
-				case SDL_CONTROLLER_BUTTON_X:  // Cuadrado: vende.
+				case SDL_CONTROLLER_BUTTON_X:  // Cuadrado: vende; en el mar, el siguiente barco del jugador.
 					if (trading) {
 						trade(save, town_index, market, false);
+					} else if (selection.mode == Mode::Sea) {
+						fleet_index++;
 					}
 					break;
 				case SDL_CONTROLLER_BUTTON_B:  // Círculo: cierra el mercado.
 					market.open = false;
 					break;
-				case SDL_CONTROLLER_BUTTON_BACK:  // Select: siguiente barco del puerto o vista de plantilla.
+				case SDL_CONTROLLER_BUTTON_BACK:
+					// Select: siguiente barco del puerto, velocidad del juego en el mar o vista de plantilla.
 					if (trading) {
 						market.ship++;
+					} else if (selection.mode == Mode::Sea) {
+						game_speed = (game_speed + 1) % kGameSpeedCount;
 					} else {
 						next_debug_view = true;
 					}
@@ -869,6 +1066,20 @@ int main(int argc, char** argv) {
 					break;
 				case SDLK_TAB:
 					market.ship++;
+					fleet_index++;
+					break;
+				case SDLK_RETURN:
+					if (selection.mode == Mode::Sea) {
+						order_sail();
+					}
+					break;
+				case SDLK_PLUS:  // Como en el juego: + más rápido, - más lento.
+				case SDLK_KP_PLUS:
+					game_speed = std::min(game_speed + 1, kGameSpeedCount - 1);
+					break;
+				case SDLK_MINUS:
+				case SDLK_KP_MINUS:
+					game_speed = std::max(game_speed - 1, 0);
 					break;
 				case SDLK_UP:
 				case SDLK_DOWN:
@@ -993,21 +1204,49 @@ int main(int argc, char** argv) {
 
 		SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 		SDL_RenderClear(renderer);
+		const int course_ship = fleet_ship();
 		if (at_sea) {
-			sea->draw(save, small_text.get(), town_names, camera_x, camera_y, selection.saved_index);
+			sea->draw(save, small_text.get(), town_names, camera_x, camera_y, selection.saved_index,
+				course_ship >= 0 ? &save.ships[size_t(course_ship)] : nullptr);
 		} else {
 			view->draw(camera_x, camera_y);
 		}
 		if (text) {
-			const std::string right_text = trading
-				? merchant_name(save, names, save.player) + ": " +
-					format_money(save.merchants[size_t(save.player)].money) + " monedas"
-				: at_sea ? "L/R: ciudad   Triángulo: entrar"
-				: "L/R: ciudad   Triángulo: mapa   X: mercado";
-			draw_bar(renderer, *text, bar_title(save, town_names, template_ids, selection), right_text);
+			std::vector<std::string> right_texts;
+			if (trading) {
+				const std::string money = format_money(save.merchants[size_t(save.player)].money) + " monedas";
+				right_texts = {merchant_name(save, names, save.player) + ": " + money, money};
+			} else if (at_sea) {
+				right_texts = {"L/R: ciudad   X: zarpar   Triángulo: entrar", "X: zarpar   Triángulo: entrar"};
+			} else {
+				right_texts = {"L/R: ciudad   Triángulo: mapa   X: mercado", "Triángulo: mapa   X: mercado"};
+			}
+			draw_bar(renderer, *text, 0, bar_title(save, town_names, template_ids, selection), right_texts);
+		}
+		// En el mapa del mar, abajo: el barco al que se dan las órdenes y la velocidad del juego.
+		if (at_sea && small_text) {
+			std::string ship_text = "No tienes ningún barco.";
+			if (course_ship >= 0) {
+				const SavedShip& ship = save.ships[size_t(course_ship)];
+				ship_text = ship.name + " (" + kShipTypes[ship.type & 3] + "): " + ship_activity(save, town_names, ship);
+			}
+			const std::string speed = std::string("velocidad ") + kGameSpeeds[game_speed].name;
+			draw_bar(renderer, *small_text, kScreenHeight - kBarHeight, ship_text,
+				{"Cuadrado: barco   Select: " + speed, "Select: " + speed, speed});
 		}
 		if (trading) {
 			draw_market(renderer, *small_text, save, town_index, market);
+		}
+		if (small_text && !notice.empty() && !SDL_TICKS_PASSED(SDL_GetTicks(), notice_until)) {
+			const int padding = 8;
+			const SDL_Rect box = {8, kBarHeight + 6, small_text->measure(notice) + 2 * padding,
+				small_text->line_height() + padding};
+			SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+			SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
+			SDL_RenderFillRect(renderer, &box);
+			SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+			SDL_RenderDrawRect(renderer, &box);
+			small_text->draw(notice, box.x + padding, box.y + padding / 2, kTextColor);
 		}
 		SDL_RenderPresent(renderer);
 	}

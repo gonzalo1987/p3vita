@@ -105,3 +105,40 @@ juego recalcula los umbrales de precio al cargar cada ciudad y no usa los
 guardados (ver [formats/savegame.md](formats/savegame.md), §4.1). Con los
 guardados, las compras de ladrillos de cuatro partidas salían más baratas que
 en el juego.
+
+## Navegación
+
+`tools/oracle/sail_oracle.py` carga la partida con navegación (como
+`save_oracle.py --navdata`) y hace pasar el tiempo con el código del juego:
+en cada tick sube el tick del mundo, recalcula la fecha al empezar el día
+(0x5310D0) y llama a la actualización de barcos (0x506720) entera. Para que
+corra fuera del juego, unos ganchos en los dos saltos por estado de la
+función dejan pasar solo los estados que reproduce `src/p3data/sailing.cpp`
+(en puerto: 1, 2, 3 y el 0 de los barcos de jugadores humanos; en el mar,
+0x0F) y saltan el bucle de los convoyes. Las llamadas a la interfaz, a la
+escena del puerto y a la cola de mensajes se cambian por funciones vacías, y
+también las decisiones de la IA (pedir una ruta, buscar otro puerto, la ruta
+automática), que quedan anotadas. Cada 24 ticks de media da una orden de
+zarpar (operación 0x00, 0x537670) a un barco al azar de un comerciante que no
+va en convoy ni está en los estados 6 u 8, hacia una ciudad o, una de cada
+diez, hacia un punto de agua del mar. Vuelca cada N ticks y tras cada orden el
+estado de movimiento de todos los barcos, sus rutas cuando cambian, las
+cabezas de las dos listas y la mercancía en camino de cada ciudad.
+`tools/oracle/compare_sail.cpp` repite los mismos ticks y órdenes con
+`src/p3data` y compara.
+
+```sh
+python3 tools/oracle/sail_oracle.py <ruta>/Patrician3.exe /tmp/1.raw /tmp/datos /tmp/1-nav.csv 8192 32
+build/tools/oracle/compare_sail p2arch0_eng.cpr /tmp/1.raw /tmp/1-nav.csv
+```
+
+Resultado: en las 12 partidas v0x82, 32 días de juego (8192 ticks) en cada
+una, con 4065 órdenes de zarpar (415 hacia el mar), 0 diferencias en 426 316
+estados de barco, 4626 rutas y las listas y la mercancía en camino. Por el
+camino pasan unas 1900 salidas de puerto, 2400 llegadas, 80 barcos que dan la
+vuelta al entrar o al salir y 200 que se quedan en el mar al final de su
+ruta. No ha habido hundimientos ni puertos bloqueados. Así se encontraron,
+por ejemplo, que la orden a un barco de un convoy o del estado 6 sigue otro
+camino y que, si el punto de destino no tiene agua cerca, el juego lee fuera
+de su tabla de ciudades al salir del puerto (ver
+[formats/navigation.md](formats/navigation.md), §6).

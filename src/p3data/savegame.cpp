@@ -145,12 +145,14 @@ bool parse_town(Reader& r, int month, SavedTown& town, std::string* error) {
 	town.citizens = r.u32();
 	r.skip(16 + 16 + 8 + 8 + 8);  // Habitantes por clase, anteriores, viviendas y satisfacción.
 	r.u32s(town.citizen_consumption);  // [0x310]
-	r.skip(3 * 0x60);
+	r.s32s(town.incoming);  // [0x370]
+	r.skip(2 * 0x60);
 	r.u32s(town.supply);  // [0x490]
 	for (PriceThresholds& thresholds : town.price_thresholds) {  // [0x4F0]
 		r.u32s(thresholds);
 	}
-	r.skip(0x60 + 4);
+	r.s32s(town.in_transit);  // [0x670]
+	r.skip(4);
 
 	// Al terminar esta parte el juego recalcula los umbrales de precio
 	// (0x527CC1). Lo que aún no ha leído de la ciudad, como las instalaciones,
@@ -307,32 +309,57 @@ void parse_ship(Reader& r, int version, SavedShip& ship) {
 	ship.type = r.u8();
 	ship.level = r.u8();
 	ship.heading = r.u8();
-	r.skip(2);
+	// [+0x2]: dos bytes con signo, el alto primero.
+	const int high = int8_t(r.u8());
+	ship.route_mark = uint16_t((high << 8) + int8_t(r.u8()));
 	ship.capacity = r.s32();
 	ship.max_health = r.s32();
-	r.skip(4 * 2);
+	ship.next_in_list = r.u16();
+	ship.convoy = r.u16();
+	r.skip(2 * 2);  // [+0xA], [+0xC]: lista ordenada por x para los encuentros en el mar (0x50D0C0).
 	ship.health = r.s32();
 	ship.x = r.s32();
 	ship.y = r.s32();
 	const uint32_t route = r.u32();
-	r.skip(3 * 4 + 2);
-	const bool on_route = r.u8() != 0;
+	ship.dx = r.s32();
+	ship.dy = r.s32();
+	ship.speed = r.s32();
+	ship.route_index = r.u16();
+	ship.own_route = r.u8() != 0;
 	ship.origin = r.u8();
 	ship.destination = r.u8();
 	ship.town = r.u8();
-	r.skip(2 + 2 + 2);
+	const int target_high = r.u8();
+	ship.target = uint16_t(target_high << 8 | r.u8());
+	r.skip(2);  // [+0x3C]: avisos a la interfaz.
+	ship.readiness = r.u16();
 	ship.sailors = r.u16();
-	r.skip(2 + 4 * 4);
-	// La ruta solo se guarda si el barco la está siguiendo; si no, el juego la recalcula.
-	if (route != 0 && on_route) {
-		const uint16_t points = r.u16();
-		r.skip(size_t(points) * 4);
+	ship.captain = r.u16();
+	ship.moved_tick = r.u32();
+	ship.arrival_tick = r.u32();
+	r.skip(2 * 4);
+	// La ruta solo se guarda si es del barco. Si navega de una ciudad a otra, al
+	// cargarlo el juego le da la de la matriz (0x445010, ver Sailing).
+	if (route != 0 && ship.own_route) {
+		ship.route = std::make_shared<SeaRoute>(r.u16());
+		for (MapPoint& point : *ship.route) {
+			point.x = int16_t(r.u16());
+			point.y = int16_t(r.u16());
+		}
+	} else if (route != 0) {
+		ship.town_route = true;
 	}
 	r.s32s(ship.cargo);
 	for (float& price : ship.average_price) {
 		price = r.f32();
 	}
-	r.skip(4 * 4 + 2 * 2 + 4 + 2);
+	r.skip(3 * 4);
+	ship.load_factor_sum = r.f32();
+	ship.voyages = r.u16();
+	r.skip(2);
+	ship.orders = r.u8();
+	r.skip(3);
+	ship.timer = r.u16();
 	r.bytes(ship.artillery);
 	ship.hand_weapons = r.u16();
 	ship.extra_loads = r.u8();
@@ -340,7 +367,8 @@ void parse_ship(Reader& r, int version, SavedShip& ship) {
 	if (version >= 0x79) {
 		r.skip(4);
 	}
-	r.skip(1 + 1 + 2);
+	ship.raid = r.u8() != 0;
+	r.skip(1 + 2);
 	ship.name = latin1_to_utf8(r.text(32));
 }
 
@@ -394,9 +422,12 @@ bool parse_ships(Reader& r, SaveGame& out, std::string* error) {
 	for (uint16_t& v : header) {
 		v = r.u16();
 	}
-	const uint16_t captain_count = header[8];
+	out.docked_head = header[3];
+	out.sailing_head = header[4];
+	out.captain_count = header[8];
 	const uint16_t ship_count = header[9];
-	r.skip(size_t(captain_count) * 16);
+	out.convoy_count = header[10];
+	r.skip(size_t(out.captain_count) * 16);
 	out.ships.resize(ship_count);
 	for (SavedShip& ship : out.ships) {
 		parse_ship(r, version, ship);
@@ -476,16 +507,19 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 		return fail(error, "falta el separador antes del mundo");
 	}
 
-	// Cabecera del mundo: mes (lo usan los umbrales de precio), año, ciudades y contadores.
-	r.skip(1);
+	// Cabecera del mundo: fecha (el mes lo usan los umbrales de precio),
+	// ciudades, contadores y el tiempo de juego.
+	out.day = r.u8();
 	out.month = r.u8();
-	out.start_year = r.u16();
-	r.skip(2);
+	out.year = r.u16();
+	r.skip(2);  // Día del año.
 	const uint32_t town_count = r.u32();
 	const uint16_t record_count = r.u16();  // Registros de 20 bytes sin identificar.
 	const uint16_t office_count = r.u16();
 	out.merchant_count = r.u16();
-	r.skip(4 + 8 + 4);
+	r.skip(4 + 4);
+	out.tick = r.u32();  // [+0x14]
+	r.skip(4);
 	std::array<uint8_t, kTownTableSize> town_ids{};
 	std::array<uint8_t, kTownTableSize> town_maps{};
 	r.bytes(town_ids);

@@ -3,10 +3,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "p3data/cpr.hpp"
+#include "p3data/navigation.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/wares.hpp"
 
@@ -49,6 +51,12 @@ struct SavedTown {
 	std::array<uint32_t, kWareCount> production{};
 	std::array<uint32_t, kWareCount> business_consumption{};
 	std::array<uint32_t, kWareCount> citizen_consumption{};
+	// Mercancía que viene de camino en barcos que han zarpado hacia la ciudad:
+	// cada barco suma su carga al salir del puerto (0x5090E0) y la resta al
+	// atracar (0x519C90). [0x370] baja de cero; [0x670] se queda en cero y el
+	// juego lo recalcula de vez en cuando con los barcos que navegan (0x504970).
+	std::array<int32_t, kWareCount> incoming{};
+	std::array<int32_t, kWareCount> in_transit{};
 	// Array sin identificar de 0x490 que entra en los umbrales de precio.
 	std::array<uint32_t, kWareCount> supply{};
 	// Umbrales de precio. El juego los recalcula en cada tick y al cargar la
@@ -103,24 +111,64 @@ struct SavedMerchant {
 
 enum class ShipType : uint8_t { Snaikka, Craier, Cog, Hulk };
 
+// Estados de un barco ([+0x134]) que reproduce p3vita (ver sailing.hpp).
+enum ShipStatus : uint16_t {
+	kShipDocked = 0x00,  // Atracado.
+	kShipWaiting = 0x01,  // Esperando en puerto: ciudad bloqueada o barco de un convoy (cuenta [+0x138] atrás).
+	kShipLeaving = 0x02,  // Saliendo del puerto (64 ticks).
+	kShipArriving = 0x03,  // Entrando en el puerto (64 ticks).
+	kShipSailing = 0x0F,
+	kShipSunk = 0x11,
+	kShipPirate = 0x12,
+};
+
+// Ruta de un barco por el mar. Las rutas entre dos ciudades son las de la
+// matriz del objeto de navegación y las comparten todos los barcos que las siguen.
+using SeaRoute = std::vector<MapPoint>;
+
 struct SavedShip {
 	static constexpr uint16_t kFreeShipStatus = 0x17;
 
-	uint16_t status = kFreeShipStatus;  // 0x0F navegando, 0x12 pirata; ver in_use().
+	uint16_t status = kFreeShipStatus;  // ShipStatus; ver in_use().
 	uint8_t owner = 0xFF;  // Índice de comerciante.
 	uint8_t type = 0;  // ShipType.
 	uint8_t level = 0;
 	uint8_t heading = 0;  // Rumbo en 16 pasos: 1 oeste, 5 norte, 9 este, 13 sur (0x517410).
 	uint16_t next_of_owner = kNoIndex;
+	uint16_t next_in_list = kNoIndex;  // [+0x6] Siguiente en la lista de barcos en puerto o en el mar.
+	uint16_t convoy = kNoIndex;  // [+0x8]
 	int32_t capacity = 0;  // En unidades internas, como las mercancías.
 	int32_t health = 0;
 	int32_t max_health = 0;
-	int32_t x = 0;  // Posición en el mapa del mar.
+	int32_t x = 0;  // Posición en el mapa del mar, en 16.16.
 	int32_t y = 0;
 	uint8_t origin = 0xFF;  // Ciudad de la que salió.
-	uint8_t destination = 0xFF;
+	uint8_t destination = 0xFF;  // 0xFF si va a un punto del mar.
 	uint8_t town = 0xFF;  // Ciudad en la que está atracado; 0xFF en el mar.
 	uint16_t sailors = 0;
+	uint16_t captain = kNoIndex;  // [+0x42]
+
+	// Movimiento (docs/formats/navigation.md §4).
+	int32_t dx = 0;  // [+0x28], [+0x2C] Desplazamiento por tick, en 16.16.
+	int32_t dy = 0;
+	int32_t speed = 0;  // [+0x30] Velocidad que se muestra (0x516CC0).
+	uint16_t route_index = 0;  // [+0x34] Punto de la ruta hacia el que va.
+	uint16_t route_mark = 0;  // [+0x2] Otro índice de la ruta; vuelve a 0 si el barco se aleja de su punto.
+	std::shared_ptr<SeaRoute> route;  // [+0x24] Vacío: sin ruta.
+	bool own_route = false;  // [+0x36] La ruta es suya y no de la matriz.
+	// Al leer la partida: navega entre dos ciudades con la ruta de la matriz,
+	// que asigna Sailing al cargar (0x516520 → 0x445010).
+	bool town_route = false;
+	uint16_t target = kNoIndex;  // [+0x3A] Barco al que persigue.
+	uint16_t readiness = 0;  // [+0x3E] Baja navegando y se recupera en puerto; sin byte alto positivo no zarpa.
+	uint32_t moved_tick = 0;  // [+0x44] Tick en que zarpó o atracó.
+	uint32_t arrival_tick = 0;  // [+0x48] Llegada prevista.
+	uint16_t timer = 0;  // [+0x138] Ticks de la maniobra de puerto.
+	uint8_t orders = 0;  // [+0x136] Bit 0: ruta automática.
+	bool raid = false;  // [+0x15C] Ataque pirata a una ciudad.
+	float load_factor_sum = 0;  // [+0x12C] Suma de la bodega ocupada al zarpar, en tanto por uno.
+	uint16_t voyages = 0;  // [+0x130]
+
 	std::array<int32_t, kWareCount> cargo{};
 	std::array<float, kWareCount> average_price{};  // Lo pagado por unidad interna.
 	std::array<uint8_t, 24> artillery{};  // Tipo de pieza en cada hueco; >= 6 = vacío.
@@ -138,8 +186,13 @@ struct SavedShip {
 
 struct SaveGame {
 	int version = 0;
-	int start_year = 0;  // Año de la fecha de la partida.
+	// Tiempo de juego en ticks: 256 por día desde el día 0 del año 0 (365 días
+	// por año). La fecha sale de él (date_from_tick en sailing.hpp) y el juego
+	// la recalcula al empezar cada día.
+	uint32_t tick = 0;
+	int day = 1;  // 1..31
 	int month = 0;  // 0 = enero.
+	int year = 0;
 	// Cambia lo que paga una ciudad cuando tiene poco almacén (ver sell_price).
 	TradeDifficulty trade_difficulty = TradeDifficulty::Normal;
 	int merchant_count = 0;
@@ -147,6 +200,12 @@ struct SaveGame {
 	std::vector<SavedOffice> offices;
 	std::vector<SavedMerchant> merchants;
 	std::vector<SavedShip> ships;
+	// Listas de barcos que recorre la actualización de cada tick (0x506720),
+	// enlazadas por SavedShip::next_in_list: en puerto y en el mar.
+	uint16_t docked_head = kNoIndex;  // [+0xE8] del objeto de barcos
+	uint16_t sailing_head = kNoIndex;  // [+0xEA]
+	uint16_t captain_count = 0;
+	uint16_t convoy_count = 0;
 	int player = -1;  // Comerciante del jugador.
 	// Nombres escritos por los jugadores (20 huecos tras cada lista del juego):
 	// de hombre, de mujer y apellidos.

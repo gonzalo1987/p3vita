@@ -73,14 +73,14 @@ Formato en §11.
 
 | Off | Tipo | Campo (offset en 0x6de4a0) | 1.pat |
 |-|-|-|-|
-| 0x00 | u8, u8 | [+0], [+1] **mes** (0 = enero; lo usan los umbrales de precio, §4.1) | 13, 4 |
-| 0x02 | u16 | [+2] año de inicio **[datos]** | 1300 |
-| 0x04 | u16 | [+4] | 132 |
+| 0x00 | u8, u8 | [+0] **día** (1–31), [+1] **mes** (0 = enero; lo usan los umbrales de precio, §4.1) | 13, 4 |
+| 0x02 | u16 | [+2] **año** | 1300 |
+| 0x04 | u16 | [+4] día del año | 132 |
 | 0x06 | u32 | [+0x10] **nº de ciudades** | 24 |
 | 0x0A | u16 ×3 | [+6] nº registros 0x14, [+8] **nº de oficinas**, [+0xa] **nº de comerciantes** | 0, 64, 37 |
 | (v<0x5E: +4 bytes) | | | |
 | 0x10 | u8 ×4 | [+0x89] bool, [+0x8c], [+0x8a] (=1 si el byte es 0x7F), [+0x8b] | |
-| 0x14 | u32 ×2 | [+0xc], [+0x14] | |
+| 0x14 | u32 ×2 | [+0xc], [+0x14] **tick**: 256 por día desde el año 0, de 365 días; la fecha sale de él (navigation.md §4) | , 121506024 |
 | 0x1C | u16 ×2 | [+0x7c], [+0x7e] | 0, 37 |
 | 0x20 | u8[40] | [+0x18] **id de ciudad (0–39) de cada índice** | 0 2 4 5 8 9 … 39 |
 | 0x48 | u8[40] | [+0x40] **plantilla `iso/towns/<id>` de cada índice** | 19 20 15 14 21 … 9 |
@@ -108,7 +108,7 @@ Offsets relativos al inicio del bloque (v0x82). Entre corchetes, el offset en el
 |-|-|-|
 | +0x000 | 1 | separador |
 | +0x001 | 0x2C0 | almacén (0x52df20, `struct storage` de P3Modding): `u32`, 24 `u32` **existencias**, 24 `u32` **consumo diario de las empresas**, 24 `u32` **producción diaria**, 0x18 armas, 0x180 series, `u32` [0x000–0x2bf]. Unidades internas: barril = 200, carga = 2000, pieza de armamento = 10 (`src/p3data/wares.hpp`) |
-| +0x2C1 | 0x414 | parte 1 (0x527ac0): `u8` índice [0x2c0], `u8` **id de ciudad** [0x2c1], [0x2c2], [0x2c3]; `u16` [0x2c4], `u16` impuesto [0x2c6], `u32` flags [0x2c8], [0x2cc], [0x2d0], `u32` **habitantes** [0x2d4], `4×u32` por clase [0x2d8], … , 24 `u32` **consumo diario de los habitantes** [0x310], … , 24 `u32` [0x490] (el "array sin identificar" de los umbrales de P3Modding; ≈ producción), 24 × 4 `u32` **umbrales de precio t0–t3** [0x4F0] (ver abajo), `0x60` [0x670], `u32` [0x6d0] |
+| +0x2C1 | 0x414 | parte 1 (0x527ac0): `u8` índice [0x2c0], `u8` **id de ciudad** [0x2c1], [0x2c2], [0x2c3]; `u16` [0x2c4], `u16` impuesto [0x2c6], `u32` flags [0x2c8], [0x2cc], [0x2d0], `u32` **habitantes** [0x2d4], `4×u32` por clase [0x2d8], … , 24 `u32` **consumo diario de los habitantes** [0x310], 24 `s32` **mercancía en camino** [0x370] (navigation.md §6), … , 24 `u32` [0x490] (el "array sin identificar" de los umbrales de P3Modding; ≈ producción), 24 × 4 `u32` **umbrales de precio t0–t3** [0x4F0] (ver abajo), 24 `s32` **mercancía en camino** que no baja de 0 [0x670], `u32` [0x6d0] |
 | +0x6D5 | 1 | separador |
 | +0x6D6 | 20 | parte 2 (0x525e30): [0x82c–0x83f] |
 | +0x6EA | 1 | separador |
@@ -458,7 +458,8 @@ Tras el separador: `u16` versión (= la de la partida), 16 `u16` de cabecera
 **[+0xf2] capitanes**, **[+0xf4] barcos**, [+0xf6] convoyes, [+0xe6], [+0xfa],
 [+0xfc], [+0xfe], [+0xf8]), los capitanes (16 bytes cada uno en v ≥ 0x78), los
 barcos (0x517990) y después convoyes, 0xC0 bytes y 5 objetos opcionales, que no
-se leen.
+se leen. [+0xE8] y [+0xEA] son las cabezas de las listas de barcos en puerto y
+en el mar, que recorre la actualización de cada tick (navigation.md §4).
 
 ### 12.1 Barco
 
@@ -469,28 +470,49 @@ de 0x180 bytes de P3Modding):
 
 | Off | Tipo | Campo |
 |-|-|-|
-| 0 | u16 | [+0x134] **estado**: 0x0F navegando, 0x12 pirata, 0x15 barcos sin dueño de cada ciudad; 0–6 en puerto |
+| 0 | u16 | [+0x134] **estado**: 0 atracado, 1 esperando, 2 saliendo, 3 entrando, 6 en una lista de su ciudad, 0x0F navegando, 0x11 hundido, 0x12 pirata, 0x15 barcos sin dueño de cada ciudad (navigation.md §6) |
 | 2 | u16 | [+0x4] siguiente barco del mismo dueño |
 | 4 | u8 | [+0x0] **dueño** (comerciante; 0xFF ninguno) |
 | 5 | u8 | [+0xE] **tipo**: 0 Snaikka, 1 Craier, 2 Kogge, 3 Holk |
 | 6 | u8 | [+0xF] nivel |
+| 7 | u8 | [+0x1] **rumbo** (navigation.md §3) |
+| 8 | 2 × s8 | [+0x2] otro índice de la ruta: byte alto primero, `(b8 ≪ 8) + b9` con signo |
 | 10 | s32 | [+0x10] **capacidad** (unidades internas: Snaikka 30000 = 15 cargas, Kogge 90000) |
-| 14 | s32 | [+0x14] salud máxima |
-| 26 | s32 | [+0x18] salud |
-| 30, 34 | s32 | [+0x1C], [+0x20] posición x, y en el mapa del mar |
-| 38 | u32 | [+0x24] puntero a la ruta (del proceso que guardó) |
-| 56 | u8 | [+0x36] siguiendo una ruta |
-| 57, 58 | u8 | [+0x37] ciudad de origen, [+0x38] destino |
+| 14 | s32 | [+0x14] casco máximo |
+| 18 | u16 | [+0x6] **siguiente de su lista** (en puerto o en el mar, §12) |
+| 20 | u16 | [+0x8] convoy (< [+0xF6]: va en uno) |
+| 22, 24 | u16 | [+0xA], [+0xC] lista ordenada por x para los encuentros (0x50D0C0) |
+| 26 | s32 | [+0x18] casco |
+| 30, 34 | s32 | [+0x1C], [+0x20] posición x, y en el mapa del mar (16.16) |
+| 38 | u32 | [+0x24] puntero a la ruta (del proceso que guardó; solo importa si es 0) |
+| 42, 46 | s32 | [+0x28], [+0x2C] **desplazamiento por tick** (16.16) |
+| 50 | s32 | [+0x30] velocidad que se ve |
+| 54 | u16 | [+0x34] **punto de la ruta** hacia el que va |
+| 56 | u8 | [+0x36] la ruta es suya (no la de la matriz) |
+| 57, 58 | u8 | [+0x37] ciudad de origen, [+0x38] **destino** (0xFF: un punto del mar) |
 | 59 | u8 | [+0x39] **ciudad en la que está** (0xFF en el mar) |
+| 60 | 2 × u8 | [+0x3A] barco al que persigue, byte alto primero (0xFFFF ninguno) |
+| 62 | u16 | [+0x3C] avisos a la interfaz |
+| 64 | u16 | [+0x3E] **descanso** de la tripulación: baja navegando, sube en puerto; sin byte alto positivo no zarpa |
 | 66 | u16 | [+0x40] marineros |
-| 68 | u16 | [+0x42] capitán |
-| 86 | | si [+0x24] ≠ 0 y [+0x36] ≠ 0: `u16 n` y n × (u16, u16) de ruta; si no, el juego la recalcula (0x445010) |
+| 68 | u16 | [+0x42] capitán (< [+0xF2]: tiene) |
+| 70 | u32 | [+0x44] tick en que zarpó o atracó |
+| 74 | u32 | [+0x48] **llegada prevista** (tick) |
+| 78, 82 | u32 | [+0x4C], [+0x50] |
+| 86 | | si [+0x24] ≠ 0 y [+0x36] ≠ 0: `u16 n` y n × (s16, s16) de ruta; si [+0x24] ≠ 0 y [+0x36] = 0, el juego le da la ruta de la matriz entre [+0x37] y [+0x38] (0x445010, navigation.md §5) |
 | R | 24 × s32 | [+0x54] **carga** por mercancía |
 | R + 96 | 24 × f32 | [+0xB4] **precio medio** pagado por unidad interna |
-| R + 192 | 26 | [+0x114], [+0x124]–[+0x12C], [+0x130], [+0x132], [+0x136], [+0x137], [+0x13A], [+0x13B], [+0x138] |
+| R + 192 | u32 ×3 | [+0x114], [+0x124], [+0x128] |
+| R + 204 | f32 | [+0x12C] suma de la bodega llena al zarpar (tanto por uno) |
+| R + 208 | u16 ×2 | [+0x130] viajes, [+0x132] |
+| R + 212 | u8 ×4 | [+0x136] órdenes (bit 0: ruta automática), [+0x137], [+0x13A], [+0x13B] |
+| R + 216 | u16 | [+0x138] ticks de la maniobra de puerto |
 | R + 218 | 24 × u8 | [+0x13C] artillería: tipo de pieza en cada hueco, ≥ 6 vacío |
 | R + 242 | u16 | [+0x154] armas de mano |
 | R + 244 | u8 | [+0x156] cargas ocupadas que no son mercancía |
+| R + 245 | u8 | [+0x157]; si v ≥ 0x79, [+0x158], [+0x159] y `u16` [+0x15A] |
+| R + 250 | u8 | [+0x15C] ataque pirata a una ciudad (offsets con v ≥ 0x79) |
+| R + 251 | u8, 2 × u8 | [+0x15D], [+0x15E] (byte alto primero) |
 | R + 254 | 32 | [+0x160] **nombre** (Latin-1) |
 
 (R = 86 + longitud de la ruta.) Al cargar cada barco, el juego llama a

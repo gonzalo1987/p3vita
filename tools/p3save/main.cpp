@@ -42,7 +42,7 @@ std::string town_at(const SaveGame& save, const std::vector<std::string>& names,
 void list_towns(const SaveGame& save, const std::vector<std::string>& names) {
 	static constexpr const char* kDifficulty[] = {"baja", "normal", "alta"};
 	std::printf("versión %#x, año %d, mes %d, %d comerciantes, %zu ciudades, dificultad del comercio %s\n",
-		save.version, save.start_year, save.month + 1, save.merchant_count, save.towns.size(),
+		save.version, save.year, save.month + 1, save.merchant_count, save.towns.size(),
 		kDifficulty[int(save.trade_difficulty)]);
 	for (size_t i = 0; i < save.towns.size(); ++i) {
 		const SavedTown& t = save.towns[i];

@@ -59,8 +59,10 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [ ] Ciudades: población, producción y consumo
 - [x] Mapa del mar con las ciudades y los barcos de la partida, con su rumbo ([formats/navigation.md](formats/navigation.md))
 - [x] Rutas entre ciudades como las calcula el juego (6633 rutas idénticas en las 12 partidas)
-- [ ] Movimiento de los barcos tick a tick (0x516cc0, ya leído), llegada y orden de zarpar
-- [ ] Paso del tiempo y ticks de las ciudades
+- [x] Movimiento de los barcos tick a tick, salida y llegada a puerto y orden de zarpar, idénticos al juego en 32 días de las 12 partidas ([oracle.md](oracle.md))
+- [x] Paso del tiempo al ritmo del juego (234 ms por tick a velocidad normal) y fecha
+- [ ] Ticks de las ciudades: producción, consumo y umbrales de precio
+- [ ] Barcos de la IA (sus decisiones de viaje), convoyes, astillero y piratas
 - [ ] Tests que comparen con el comportamiento documentado del original
 
 ## Fase 5: interfaz
@@ -73,6 +75,7 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Precios idénticos al juego, comprobados con el oráculo (su propio código en un emulador de CPU, [oracle.md](oracle.md))
 - [x] Mercado interactivo en la Vita: elegir mercancía y cantidad, comprar y vender con el barco del jugador
 - [x] Dificultad de comercio de la partida
+- [x] Mapa del mar: mandar el barco del jugador a una ciudad, verlo navegar con su ruta y comerciar al llegar
 - [ ] Rehacer la interfaz para 960×544 (16:9) con soporte táctil
 
 ## Fase 6: resto del juego
