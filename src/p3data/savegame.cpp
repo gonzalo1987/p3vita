@@ -1,5 +1,6 @@
 #include "p3data/savegame.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 #include "p3data/lz.hpp"
@@ -305,7 +306,8 @@ void parse_ship(Reader& r, int version, SavedShip& ship) {
 	ship.owner = r.u8();
 	ship.type = r.u8();
 	ship.level = r.u8();
-	r.skip(1 + 2);
+	ship.heading = r.u8();
+	r.skip(2);
 	ship.capacity = r.s32();
 	ship.max_health = r.s32();
 	r.skip(4 * 2);
@@ -465,7 +467,11 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 		return fail(error, "versión de partida no soportada: " + std::to_string(out.version));
 	}
 
-	r.skip(kSettingsSize + 3 * 4);
+	// Ajustes de la partida. Al cargar, el juego aplica la dificultad del
+	// comercio del byte +0x10 (0x54A03C → 0x52E1A0): 0 baja, 1 normal, 2 o más alta.
+	r.skip(0x10);
+	out.trade_difficulty = TradeDifficulty(std::min<int>(r.u8(), 2));
+	r.skip(kSettingsSize - 0x11 + 3 * 4);
 	if (r.u32() != kMagic) {
 		return fail(error, "falta el separador antes del mundo");
 	}

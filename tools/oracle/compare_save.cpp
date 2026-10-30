@@ -97,7 +97,12 @@ int main(int argc, char** argv) {
 	while (std::getline(in, line)) {
 		const std::string kind = line.substr(0, line.find(','));
 		Checker check(line);
-		if (kind == "ciudad") {
+		if (kind == "dificultad") {
+			// Factor de venta que deja el juego: 2.2, 2.0 o 1.8 (0x6739FC).
+			static const char* const kFactors[] = {"400ccccd", "40000000", "3fe66666"};
+			check.field("factor de dificultad", std::string(kFactors[int(save.trade_difficulty)]), line.substr(11));
+			++records;
+		} else if (kind == "ciudad") {
 			const auto f = split(line, 122);
 			const SavedTown& t = save.towns.at(std::stoul(f[1]));
 			for (int w = 0; w < kWareCount; ++w) {

@@ -57,7 +57,9 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Comprar y vender entre un barco y la ciudad, idéntico al juego en 24 000 operaciones ([oracle.md](oracle.md))
 - [ ] Estadísticas de comercio del comerciante y comercio con el kontor
 - [ ] Ciudades: población, producción y consumo
-- [ ] Barcos, rutas y navegación
+- [x] Mapa del mar con las ciudades y los barcos de la partida, con su rumbo ([formats/navigation.md](formats/navigation.md))
+- [ ] Rutas entre ciudades (0x445010) y movimiento de los barcos tick a tick (0x516cc0, ya leído)
+- [ ] Paso del tiempo y ticks de las ciudades
 - [ ] Tests que comparen con el comportamiento documentado del original
 
 ## Fase 5: interfaz
@@ -69,7 +71,7 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Precios de compra y venta con los umbrales guardados en la partida
 - [x] Precios idénticos al juego, comprobados con el oráculo (su propio código en un emulador de CPU, [oracle.md](oracle.md))
 - [x] Mercado interactivo en la Vita: elegir mercancía y cantidad, comprar y vender con el barco del jugador
-- [ ] Dificultad de comercio de la partida (de momento se supone la normal)
+- [x] Dificultad de comercio de la partida
 - [ ] Rehacer la interfaz para 960×544 (16:9) con soporte táctil
 
 ## Fase 6: resto del juego

@@ -6,6 +6,7 @@ add_library(p3data STATIC
 	lz.cpp
 	prices.cpp
 	savegame.cpp
+	seamap.cpp
 	town.cpp
 	town_buildings.cpp
 	thresholds.cpp

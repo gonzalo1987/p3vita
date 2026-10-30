@@ -4,6 +4,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -19,6 +20,7 @@
 #include "p3data/image.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/savegame.hpp"
+#include "p3data/seamap.hpp"
 #include "p3data/town.hpp"
 #include "p3data/town_buildings.hpp"
 #include "p3data/trade.hpp"
@@ -202,9 +204,151 @@ private:
 	int height_ = 0;
 };
 
-// Qué se ve: una ciudad de la partida de inicio, o una plantilla de mapa con
-// todos los edificios del diseñador (.editor) o solo con el terreno (.town).
-enum class Mode { Saved, Designer, Terrain };
+// Textura de una imagen estándar (BMP, TGA...) del archivo; nullptr si falla.
+SDL_Texture* load_texture(SDL_Renderer* renderer, const CprArchive& archive, const char* path, int* width = nullptr,
+	int* height = nullptr) {
+	const CprEntry* entry = archive.find(path);
+	std::vector<uint8_t> data;
+	Image image;
+	if (!entry || !archive.read(*entry, data) || !decode_standard_image(data.data(), data.size(), image)) {
+		return nullptr;
+	}
+	SDL_Texture* texture =
+		SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, image.width, image.height);
+	if (texture) {
+		SDL_UpdateTexture(texture, nullptr, image.rgba.data(), image.width * 4);
+		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+	}
+	if (width) {
+		*width = image.width;
+	}
+	if (height) {
+		*height = image.height;
+	}
+	return texture;
+}
+
+// Mapa del mar: la imagen del juego con las ciudades y los barcos de la
+// partida, en las mismas coordenadas que guarda la partida.
+class SeaMapView {
+public:
+	SeaMapView(SDL_Renderer* renderer, const CprArchive& archive)
+		: renderer_(renderer), towns_(load_sea_map_towns(archive)) {
+		map_ = load_texture(renderer, archive, kSeaMapImage, &width_, &height_);
+		symbols_ = load_texture(renderer, archive, kTownSymbols);
+		marker_ = load_texture(renderer, archive, kShipMarker, &marker_width_, &marker_height_);
+		for (size_t i = 0; i < ships_.size(); ++i) {
+			ships_[i] = load_texture(renderer, archive, kShipSprites[i]);
+		}
+	}
+
+	~SeaMapView() {
+		for (SDL_Texture* texture : {map_, symbols_, marker_}) {
+			SDL_DestroyTexture(texture);
+		}
+		for (SDL_Texture* texture : ships_) {
+			SDL_DestroyTexture(texture);
+		}
+	}
+
+	bool ok() const { return map_ && !towns_.empty(); }
+	int width() const { return width_; }
+	int height() const { return height_; }
+
+	// Centro del símbolo de una ciudad de la partida.
+	SDL_Point town_center(const SaveGame& save, size_t town) const {
+		const SeaMapTown& t = towns_[size_t(save.towns[town].town_id)];
+		return {t.symbol_x + kTownSymbolSize / 2, t.symbol_y + kTownSymbolSize / 2};
+	}
+
+	// Ciudad de la partida cuyo símbolo (o nombre, con margen) está en un punto del mapa; -1 si ninguna.
+	int town_at(const SaveGame& save, int x, int y) const {
+		for (size_t i = 0; i < save.towns.size(); ++i) {
+			const SDL_Point c = town_center(save, i);
+			if (std::abs(x - c.x) <= kTownSymbolSize && std::abs(y - c.y) <= kTownSymbolSize) {
+				return int(i);
+			}
+		}
+		return -1;
+	}
+
+	void draw(const SaveGame& save, TextRenderer* names_text, const std::vector<std::string>& names, int camera_x,
+		int camera_y, size_t selected) {
+		const SDL_Rect src = {camera_x, camera_y, std::min(kScreenWidth, width_ - camera_x),
+			std::min(kScreenHeight, height_ - camera_y)};
+		const SDL_Rect dst = {0, 0, src.w, src.h};
+		SDL_RenderCopy(renderer_, map_, &src, &dst);
+
+		// Ciudades: azules las que tienen oficina del jugador; la elegida, resaltada.
+		for (size_t i = 0; i < save.towns.size(); ++i) {
+			const int id = save.towns[i].town_id;
+			const SeaMapTown& t = towns_[size_t(id)];
+			bool kontor = false;
+			for (const SavedOffice& office : save.offices) {
+				kontor |= office.used() && office.owner == save.player && office.town == i;
+			}
+			const int frame = (kontor ? 3 : 0) + (i == selected ? 1 : 0);
+			const SDL_Rect symbol_src = {(frame % 3) * kTownSymbolSize, (frame / 3) * kTownSymbolSize,
+				kTownSymbolSize, kTownSymbolSize};
+			const SDL_Rect symbol_dst = {t.symbol_x - camera_x, t.symbol_y - camera_y, kTownSymbolSize,
+				kTownSymbolSize};
+			SDL_RenderCopy(renderer_, symbols_, &symbol_src, &symbol_dst);
+			if (names_text && id < int(names.size())) {
+				const std::string& name = names[size_t(id)];
+				const int x = t.name_right_aligned ? t.name_x - names_text->measure(name) : t.name_x;
+				names_text->draw(name, x - camera_x, t.name_y - camera_y,
+					i == selected ? SDL_Color{120, 20, 10, 255} : SDL_Color{40, 25, 10, 255});
+			}
+		}
+
+		// Barcos: los que navegan, con su rumbo; los del jugador, con su marca
+		// (la de los atracados, sobre su ciudad).
+		for (const SavedShip& ship : save.ships) {
+			if (!ship.in_use()) {
+				continue;
+			}
+			int x = ship.x >> 16;
+			int y = ship.y >> 16;
+			const bool sailing = ship.status == 0x0F || ship.status == 0x12;
+			if (sailing) {
+				const int frame = ship.heading & 15;
+				const SDL_Rect ship_src = {(frame % 4) * kShipSpriteWidth, (frame / 4) * kShipSpriteHeight,
+					kShipSpriteWidth, kShipSpriteHeight};
+				const SDL_Rect ship_dst = {x - kShipSpriteWidth / 2 - camera_x, y - kShipSpriteHeight / 2 - camera_y,
+					kShipSpriteWidth, kShipSpriteHeight};
+				SDL_RenderCopy(renderer_, ships_[ship.type & 3], &ship_src, &ship_dst);
+			}
+			if (ship.owner != save.player || (!sailing && ship.town >= save.towns.size())) {
+				continue;
+			}
+			if (!sailing) {
+				const SDL_Point c = town_center(save, ship.town);
+				x = c.x;
+				y = c.y + kShipSpriteHeight / 2 - kTownSymbolSize;
+			}
+			const SDL_Rect marker_dst = {x - marker_width_ / 2 - camera_x,
+				y - kShipSpriteHeight / 2 - marker_height_ - camera_y, marker_width_, marker_height_};
+			SDL_RenderCopy(renderer_, marker_, nullptr, &marker_dst);
+		}
+	}
+
+private:
+	SDL_Renderer* renderer_;
+	std::vector<SeaMapTown> towns_;
+	SDL_Texture* map_ = nullptr;
+	SDL_Texture* symbols_ = nullptr;
+	SDL_Texture* marker_ = nullptr;
+	std::array<SDL_Texture*, 4> ships_{};
+	int width_ = 0;
+	int height_ = 0;
+	int marker_width_ = 0;
+	int marker_height_ = 0;
+};
+
+// Qué se ve: una ciudad de la partida de inicio, el mapa del mar, o una
+// plantilla de mapa con todos los edificios del diseñador (.editor) o solo con
+// el terreno (.town).
+enum class Mode { Saved, Sea, Designer, Terrain };
 
 struct Selection {
 	Mode mode = Mode::Saved;
@@ -239,10 +383,13 @@ SDL_Point focus_point(const TownView& view, const SaveGame& save, const Selectio
 
 std::string bar_title(const SaveGame& save, const std::vector<std::string>& names,
 	const std::vector<int>& template_ids, const Selection& selection) {
-	if (selection.mode == Mode::Saved) {
+	if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
 		const SavedTown& town = save.towns[selection.saved_index];
 		const std::string name = town.town_id < int(names.size()) ? names[size_t(town.town_id)]
 																	: "Ciudad " + std::to_string(town.town_id);
+		if (selection.mode == Mode::Sea) {
+			return "Mapa del mar - " + name + " - año " + std::to_string(save.start_year);
+		}
 		return name + " - año " + std::to_string(save.start_year) + " - " + std::to_string(town.citizens) +
 			" habitantes";
 	}
@@ -358,7 +505,7 @@ void trade(SaveGame& save, int town, MarketUi& ui, bool buying) {
 	}
 	const int32_t amount = trade_amount(save, ship, ui, buying);
 	const TradeResult result = buying ? buy_to_ship(save, ship, town, ui.ware, amount)
-									  : sell_from_ship(save, ship, town, ui.ware, amount);
+									  : sell_from_ship(save, ship, town, ui.ware, amount, save.trade_difficulty);
 	const SavedTown& market = save.towns[size_t(town)];
 	if (result.amount > 0) {
 		ui.message = std::string(buying ? "Compra: " : "Venta: ") + amount_text(result.amount, ware.unit) + " de " +
@@ -478,7 +625,7 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 		}
 		const int32_t unit = ware_scale(ware.unit);
 		const int32_t buy = buy_price(w, town.market(w), unit);
-		const int32_t sell = sell_price(w, town.market(w), unit);
+		const int32_t sell = sell_price(w, town.market(w), unit, save.trade_difficulty);
 		const char* short_unit = ware.unit == WareUnit::Barrel ? " barr." : " cargas";
 		text.draw(ware.name, left, y, kTextColor);
 		right(std::to_string(units(int32_t(town.wares[size_t(w)]), ware.unit)) + short_unit, 0, y, kTextColor);
@@ -498,7 +645,8 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 		const TradeResult buy =
 			quote_buy(save, ship_index, town_index, ui.ware, trade_amount(save, ship_index, ui, true));
 		const TradeResult sell =
-			quote_sell(save, ship_index, town_index, ui.ware, trade_amount(save, ship_index, ui, false));
+			quote_sell(save, ship_index, town_index, ui.ware, trade_amount(save, ship_index, ui, false),
+				save.trade_difficulty);
 		footer = buy.amount > 0 ? "Comprar " + amount_text(buy.amount, selected_unit) + ": " +
 				format_money(buy.price) + " monedas"
 								: "No se puede comprar";
@@ -558,6 +706,7 @@ int main(int argc, char** argv) {
 	}
 
 	auto view = std::make_unique<TownView>(renderer, *archive);
+	std::unique_ptr<SeaMapView> sea;  // Se carga la primera vez que se abre.
 	const std::vector<std::string> town_names = load_town_names(*archive);
 	std::unique_ptr<TextRenderer> text;
 	std::unique_ptr<TextRenderer> small_text;
@@ -599,6 +748,20 @@ int main(int argc, char** argv) {
 		const int town_index = int(selection.saved_index);
 		auto select_ware = [&](int step) { market.ware = (market.ware + kTradeWareCount + step) % kTradeWareCount; };
 		auto change_step = [&](int step) { market.step = (market.step + kTradeStepCount + step) % kTradeStepCount; };
+		if (reload && selection.mode == Mode::Sea) {
+			if (!sea) {
+				show_loading(renderer);
+				sea = std::make_unique<SeaMapView>(renderer, *archive);
+			}
+			if (!sea->ok()) {
+				SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kTitle, "No se encuentra el mapa del mar.", window);
+				break;
+			}
+			const SDL_Point focus = sea->town_center(save, selection.saved_index);
+			camera_x = focus.x - kScreenWidth / 2;
+			camera_y = focus.y - kScreenHeight / 2;
+			reload = false;
+		}
 		if (reload) {
 			show_loading(renderer);
 			TownMap town;
@@ -618,7 +781,8 @@ int main(int argc, char** argv) {
 		}
 
 		int town_step = 0;
-		bool next_mode = false;
+		bool next_mode = false;  // Triángulo: entre la ciudad y el mapa del mar.
+		bool next_debug_view = false;  // Select: vistas de las plantillas de ciudad.
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
 			switch (event.type) {
@@ -644,7 +808,7 @@ int main(int argc, char** argv) {
 				case SDL_CONTROLLER_BUTTON_A:  // X en la Vita: abre el mercado y compra.
 					if (trading) {
 						trade(save, town_index, market, true);
-					} else {
+					} else if (selection.mode == Mode::Saved) {
 						market.open = true;
 					}
 					break;
@@ -656,8 +820,12 @@ int main(int argc, char** argv) {
 				case SDL_CONTROLLER_BUTTON_B:  // Círculo: cierra el mercado.
 					market.open = false;
 					break;
-				case SDL_CONTROLLER_BUTTON_BACK:  // Select: siguiente barco del puerto.
-					market.ship++;
+				case SDL_CONTROLLER_BUTTON_BACK:  // Select: siguiente barco del puerto o vista de plantilla.
+					if (trading) {
+						market.ship++;
+					} else {
+						next_debug_view = true;
+					}
 					break;
 				case SDL_CONTROLLER_BUTTON_DPAD_UP:
 				case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
@@ -686,6 +854,9 @@ int main(int argc, char** argv) {
 					break;
 				case SDLK_e:
 					next_mode = true;
+					break;
+				case SDLK_f:
+					next_debug_view = true;
 					break;
 				case SDLK_m:
 					market.open = !market.open;
@@ -736,6 +907,13 @@ int main(int argc, char** argv) {
 				}
 				break;
 			case SDL_FINGERUP:
+				// En el mapa del mar, tocar una ciudad la elige.
+				if (selection.mode == Mode::Sea && sea && touch_moved < kTapDistance) {
+					const int town = sea->town_at(save, camera_x + touch_start.x, camera_y + touch_start.y);
+					if (town >= 0) {
+						selection.saved_index = size_t(town);
+					}
+				}
 				if (touch_on_panel && touch_moved < kTapDistance) {
 					const MarketLayout layout(small_text->line_height());
 					const int row = layout.row_at(touch_start.x, touch_start.y);
@@ -754,7 +932,7 @@ int main(int argc, char** argv) {
 			}
 		}
 		if (town_step != 0) {
-			if (selection.mode == Mode::Saved) {
+			if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
 				const size_t count = save.towns.size();
 				selection.saved_index = (selection.saved_index + count + size_t(town_step)) % count;
 			} else {
@@ -765,21 +943,29 @@ int main(int argc, char** argv) {
 			reload = true;
 			continue;
 		}
-		if (next_mode) {
+		if (next_mode && has_save) {
+			// Entre la ciudad elegida y el mapa del mar; desde una plantilla, a la ciudad.
+			selection.mode = selection.mode == Mode::Saved ? Mode::Sea : Mode::Saved;
+			reload = true;
+			continue;
+		}
+		if (next_debug_view) {
 			// Al pasar de la partida a las plantillas se sigue en el mismo mapa,
 			// con la cámara donde estaba.
-			if (selection.mode == Mode::Saved) {
+			if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
 				const int map = save.towns[selection.saved_index].template_map;
 				auto it = std::find(template_ids.begin(), template_ids.end(), map);
 				selection.template_index = it == template_ids.end() ? 0 : size_t(it - template_ids.begin());
+				keep_camera = selection.mode == Mode::Saved;
 				selection.mode = Mode::Designer;
 			} else if (selection.mode == Mode::Designer) {
 				selection.mode = Mode::Terrain;
+				keep_camera = true;
 			} else {
 				selection.mode = has_save ? Mode::Saved : Mode::Designer;
+				keep_camera = true;
 			}
 			reload = true;
-			keep_camera = true;
 			continue;
 		}
 
@@ -799,17 +985,25 @@ int main(int argc, char** argv) {
 			camera_x += kPadSpeed * (keys[SDL_SCANCODE_RIGHT] - keys[SDL_SCANCODE_LEFT]);
 			camera_y += kPadSpeed * (keys[SDL_SCANCODE_DOWN] - keys[SDL_SCANCODE_UP]);
 		}
-		camera_x = std::clamp(camera_x, 0, std::max(0, view->width() - kScreenWidth));
-		camera_y = std::clamp(camera_y, 0, std::max(0, view->height() - kScreenHeight));
+		const bool at_sea = selection.mode == Mode::Sea && sea;
+		const int view_width = at_sea ? sea->width() : view->width();
+		const int view_height = at_sea ? sea->height() : view->height();
+		camera_x = std::clamp(camera_x, 0, std::max(0, view_width - kScreenWidth));
+		camera_y = std::clamp(camera_y, 0, std::max(0, view_height - kScreenHeight));
 
 		SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 		SDL_RenderClear(renderer);
-		view->draw(camera_x, camera_y);
+		if (at_sea) {
+			sea->draw(save, small_text.get(), town_names, camera_x, camera_y, selection.saved_index);
+		} else {
+			view->draw(camera_x, camera_y);
+		}
 		if (text) {
 			const std::string right_text = trading
 				? merchant_name(save, names, save.player) + ": " +
 					format_money(save.merchants[size_t(save.player)].money) + " monedas"
-				: "L/R: ciudad   Triángulo: vista   X: mercado";
+				: at_sea ? "L/R: ciudad   Triángulo: entrar"
+				: "L/R: ciudad   Triángulo: mapa   X: mercado";
 			draw_bar(renderer, *text, bar_title(save, town_names, template_ids, selection), right_text);
 		}
 		if (trading) {
@@ -821,6 +1015,7 @@ int main(int argc, char** argv) {
 	// Las texturas tienen que liberarse antes de cerrar SDL.
 	small_text.reset();
 	text.reset();
+	sea.reset();
 	view.reset();
 	if (controller) {
 		SDL_GameControllerClose(controller);

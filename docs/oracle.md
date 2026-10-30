@@ -81,8 +81,8 @@ build/tools/oracle/compare_save /tmp/1.raw /tmp/1.csv
 ```
 
 Resultado: en las 12 partidas v0x82 de `missav/` (`1`–`7.pat` y `tut0`–`tut4.pat`)
-coinciden todos los registros (ciudades con sus 96 umbrales, comerciantes,
-oficinas y barcos) y 24 000 compras y ventas: cantidad, precio, dinero,
+coinciden todos los registros (dificultad del comercio, ciudades con sus 96
+umbrales, comerciantes, oficinas y barcos) y 24 000 compras y ventas: cantidad, precio, dinero,
 existencias, carga, precio medio, bodega ocupada y equipo.
 
 Esta comparación encontró algo que el oráculo de precios no podía ver: el

@@ -40,8 +40,10 @@ std::string town_at(const SaveGame& save, const std::vector<std::string>& names,
 }
 
 void list_towns(const SaveGame& save, const std::vector<std::string>& names) {
-	std::printf("versión %#x, año %d, %d comerciantes, %zu ciudades\n", save.version, save.start_year,
-		save.merchant_count, save.towns.size());
+	static constexpr const char* kDifficulty[] = {"baja", "normal", "alta"};
+	std::printf("versión %#x, año %d, mes %d, %d comerciantes, %zu ciudades, dificultad del comercio %s\n",
+		save.version, save.start_year, save.month + 1, save.merchant_count, save.towns.size(),
+		kDifficulty[int(save.trade_difficulty)]);
 	for (size_t i = 0; i < save.towns.size(); ++i) {
 		const SavedTown& t = save.towns[i];
 		std::printf("%3zu  %-16s id %2d  plantilla %3d  %6u habitantes  %3zu registros de edificio\n", i,
@@ -49,7 +51,7 @@ void list_towns(const SaveGame& save, const std::vector<std::string>& names) {
 	}
 }
 
-void show_town(const SavedTown& t, const std::vector<std::string>& names) {
+void show_town(const SavedTown& t, const std::vector<std::string>& names, TradeDifficulty difficulty) {
 	std::printf("%s: %u habitantes\n\n", town_name(names, t.town_id).c_str(), t.citizens);
 	std::printf("%-14s %8s %8s %8s %8s %8s   %s\n", "mercancía", "almacén", "prod.", "consumo", "compra", "venta",
 		"umbrales t0..t3");
@@ -58,7 +60,7 @@ void show_town(const SavedTown& t, const std::vector<std::string>& names) {
 		const int32_t unit = ware_scale(kWares[i].unit);
 		const double scale = unit;
 		const int32_t buy = buy_price(w, t.market(w), unit);
-		const int32_t sell = sell_price(w, t.market(w), unit);
+		const int32_t sell = sell_price(w, t.market(w), unit, difficulty);
 		const auto& th = t.price_thresholds[i];
 		std::printf("%-14s %8.1f %8.2f %8.2f %8s %8d   %.1f %.1f %.1f %.1f\n", kWares[i].name, t.wares[i] / scale,
 			t.production[i] / scale, (t.business_consumption[i] + t.citizen_consumption[i]) / scale,
@@ -156,7 +158,7 @@ int main(int argc, char** argv) {
 			std::fprintf(stderr, "la partida tiene %zu ciudades\n", save.towns.size());
 			return 1;
 		}
-		show_town(save.towns[index], names);
+		show_town(save.towns[index], names, save.trade_difficulty);
 	}
 	return 0;
 }

@@ -34,6 +34,8 @@ READ_WORLD = 0x52FB60
 READ_SHIPS = 0x504230
 BUY_TO_SHIP = 0x537450  # operación 0x02
 SELL_FROM_SHIP = 0x537340  # operación 0x01
+SET_TRADE_DIFFICULTY = 0x52E1A0  # la llama la carga con el byte +0x10 de los ajustes
+SETTINGS = 0x04  # ajustes de la partida en el fichero
 SKIPPED = {0x4482C0: 0, 0x445010: 8}  # dirección: bytes de argumentos que saca al volver
 WORLD = 0x6DE4A0
 SHIPS = 0x6DD7A0
@@ -191,6 +193,8 @@ class SaveOracle:
 
 def dump_state(o, out):
     towns, offices, merchants, ships = o.counts()
+    o.call(SET_TRADE_DIFFICULTY, [o.save[SETTINGS + 0x10]], ecx=SELL_CONTEXT)
+    out.write(f'dificultad,{o.u32(SELL_CONTEXT + 0x64):08x}\n')
     for i in range(towns):
         t = o.town(i)
         stock = [o.u32(t + 4 + 4 * w) for w in range(24)]

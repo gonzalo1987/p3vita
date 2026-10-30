@@ -76,9 +76,12 @@ De momento es un visor de ciudades en el que ya se puede comerciar. Arranca en
 Lübeck tal como empieza la partida de 1300 (`missav/1.pat`), con el comerciante
 del jugador (Georg Stromberg, 30 000 monedas) y su Snaikka en el puerto. La
 cruceta o el stick izquierdo mueven la cámara, arrastrar con el dedo desplaza el
-mapa, L y R cambian de ciudad, Triángulo alterna entre la partida, la plantilla
-con todos los edificios del diseñador (`.editor`) y solo el terreno (`.town`), y
-Start sale.
+mapa, L y R cambian de ciudad y Start sale. Triángulo alterna entre la ciudad y
+el **mapa del mar**, con las ciudades y los barcos que navegan en sus posiciones
+de la partida (tu barco lleva una marca; tocar una ciudad la elige y Triángulo
+entra en ella). Con el mercado cerrado, Select pasa por la plantilla de la
+ciudad con todos los edificios del diseñador (`.editor`) y solo con el terreno
+(`.town`).
 
 X abre el mercado de la ciudad: existencias, precio de compra y de venta de una
 unidad y lo que lleva tu barco. Con el mercado abierto, arriba y abajo eligen la
@@ -86,7 +89,8 @@ mercancía, izquierda y derecha la cantidad (1, 5, 10 o todo), X compra, Cuadrad
 vende, Select pasa al siguiente barco del puerto y Círculo lo cierra. También se
 puede tocar una fila y los botones del pie. Los precios, los límites (almacén,
 bodega y dinero) y el precio medio de la carga son los del juego. En el PC: las
-flechas, Re Pág / Av Pág, E, M, C (comprar), V (vender), Tab y Esc.
+flechas, Re Pág / Av Pág, E (mapa), F (plantillas), M, C (comprar), V
+(vender), Tab y Esc.
 
 `p3save` lista las ciudades de una partida y muestra el almacén de cada una, sus
 comerciantes y sus barcos:
@@ -96,6 +100,12 @@ build/tools/p3save/p3save p2arch0_spa.cpr missav/1.pat
 build/tools/p3save/p3save p2arch0_spa.cpr missav/1.pat 9
 build/tools/p3save/p3save p2arch0_spa.cpr missav/1.pat comerciantes
 build/tools/p3save/p3save p2arch0_spa.cpr missav/1.pat barcos
+```
+
+`p3map` dibuja el mapa del mar de una partida en un PNG:
+
+```sh
+build/tools/p3map/p3map p2arch0_eng.cpr missav/1.pat mapa.png p2arch0_spa.cpr
 ```
 
 ## Agradecimientos

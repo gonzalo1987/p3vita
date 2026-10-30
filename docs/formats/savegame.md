@@ -43,7 +43,7 @@ descarta. Rangos de `1.pat` **[datos]** (los 8 separadores están en 0x5c, 88229
 | Offset (1.pat) | Contenido | Función |
 |-|-|-|
 | 0x00 | `u32` magia+versión (`fe af 82 00`) | 0x549f40 |
-| 0x04 | ajustes de partida, 0x4C bytes (v≥0x7A; 0x3C si v≥0x76, 0x28 antes); a 0x2B va el nombre de la ciudad natal (`Lübeck`) | → `*0x6cc3e8` |
+| 0x04 | ajustes de partida, 0x4C bytes (v≥0x7A; 0x3C si v≥0x76, 0x28 antes); a 0x2B va el nombre de la ciudad natal (`Lübeck`); el byte +0x10 es la **dificultad del comercio** (abajo) | → `*0x6cc3e8` |
 | 0x50 | `u32` [+0x8d4], `u32` [+0x8d8], `u32` [+0x8dc] (este último si v≥0x5F) | |
 | 0x5C | separador | |
 | 0x60 | **mundo** (objeto 0x6de4a0): cabecera (§3), 24 ciudades (§4) hasta 0xBE66E y el resto del mundo hasta 882292 | 0x52fb60 |
@@ -54,6 +54,11 @@ descarta. Rangos de `1.pat` **[datos]** (los 8 separadores están en 0x5c, 88229
 | 955076 | 5 bytes | 0x611ae0 (0x6e55d0) |
 | 955085 | tabla de nombres (§13) | 0x511e30 (0x6ddaa0) |
 | 955480 | separador final | |
+
+Dificultad del comercio **[código + oráculo]**: al cargar, 0x549f40 llama a 0x52e1a0 con el byte
++0x10 de los ajustes (offset 0x14 del fichero), que fija el factor de venta con poco almacén
+(0x6DE3D8+0x64, tabla 0x6739FC): 0 → 2,2 (baja), 1 → 2,0 (normal), 2 o más → 1,8 (alta). En
+`missav/` valen 0 `1.pat`, `2.pat` y los tutoriales, y 1 de `3.pat` a `7.pat`.
 
 Dentro del mundo, tras las ciudades **[código, 0x52fb60]**: `n·n` bytes (n = nº de
 ciudades; ¿distancias?), `u32` (v≥0x5A), n objetos de 0x1024 bytes en memoria
@@ -552,5 +557,3 @@ da nombres plausibles a los 36 comerciantes de la IA (Ferdinand Fugger, Hans Hor
   (elección aleatoria 0x592cfd): no se dibujan.
 - Tras los barcos: encargos (0x4d6350) y las secciones de 0x4d4bc0, 0x4d81e0 y 0x611ae0 solo
   están delimitadas.
-- Dificultad del comercio: la venta usa un factor (2.2/2.0/1.8 en 0x6DE3D8+0x64) que sale de
-  los ajustes de la partida; p3vita supone la normal.

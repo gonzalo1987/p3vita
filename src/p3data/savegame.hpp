@@ -110,6 +110,7 @@ struct SavedShip {
 	uint8_t owner = 0xFF;  // Índice de comerciante.
 	uint8_t type = 0;  // ShipType.
 	uint8_t level = 0;
+	uint8_t heading = 0;  // Rumbo en 16 pasos: 0 oeste, 4 norte, 8 este, 12 sur (0x517410).
 	uint16_t next_of_owner = kNoIndex;
 	int32_t capacity = 0;  // En unidades internas, como las mercancías.
 	int32_t health = 0;
@@ -139,6 +140,8 @@ struct SaveGame {
 	int version = 0;
 	int start_year = 0;  // Año de la fecha de la partida.
 	int month = 0;  // 0 = enero.
+	// Cambia lo que paga una ciudad cuando tiene poco almacén (ver sell_price).
+	TradeDifficulty trade_difficulty = TradeDifficulty::Normal;
 	int merchant_count = 0;
 	std::vector<SavedTown> towns;
 	std::vector<SavedOffice> offices;
