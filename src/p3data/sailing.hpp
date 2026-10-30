@@ -112,6 +112,7 @@ public:
 	// Ciudad de la partida en un punto del mapa (0x446D50): la primera cuyo
 	// símbolo lo contiene o cuyo punto de llegada es ese; -1 si ninguna.
 	int town_at(MapPoint point) const;
+	const NavData& nav() const { return nav_; }
 	MapPoint approach(int town) const;
 
 	// Ruta entre los puntos de llegada de dos ciudades (la matriz que el

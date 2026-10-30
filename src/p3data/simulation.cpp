@@ -34,15 +34,36 @@ void town_tick(SaveGame& save, int town) {
 
 void advance_game_tick(SaveGame& save, Sailing& sailing) {
 	sailing.begin_tick();
+	const uint32_t t = save.tick() & 0xFF;
+	if (t == 0) {
+		// Al empezar el día (las estadísticas de 0x54DE90 no se reproducen).
+		tick::fn_5315c0(save, save.tick() % 0x700 == 0);
+		tick::fn_535450(save, save.tick());
+		uint8_t& countdown = save.globals.u8(global::kWorld + 0x8B);
+		if (countdown > 0) {
+			--countdown;
+		}
+	}
 	const int town = town_for_tick(save, save.tick());
 	if (town >= 0) {
 		town_tick(save, town);
+		if ((t & 7) == 7 && size_t(town) < save.sieges.size()) {
+			tick::fn_6349f0(save, town);
+		}
+	}
+	if ((t & 7) == 5 && (t >> 3) < 15) {
+		tick::fn_52d7d0(save, int(t >> 3));
 	}
 	const int merchant = merchant_for_tick(save, save.tick());
 	if (merchant >= 0) {
 		tick::fn_4f7bb0(save, merchant);
 	}
 	sailing.update_ships();
+	tick::set_event_navigation(&sailing.nav());
+	tick::fn_4d85c0(save, save.tick());
+	for (size_t i = 0; i < save.sieges.size(); ++i) {
+		tick::fn_633a90(save, int(i));
+	}
 	run_queued_operations(save, sailing);
 }
 

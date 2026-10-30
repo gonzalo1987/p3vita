@@ -269,3 +269,20 @@ El oráculo de partidas (`compare_save`) compara ahora, después de cada
 compra y venta, las estadísticas del comerciante (ventas [0x49C], compras
 [0x4A0]) y su reputación en la ciudad: 0 diferencias en las 24 000
 operaciones de las 12 partidas.
+
+## El resto de advance_time
+
+Con `--resto PIEZAS` (`5315c0,535450,52d7d0,6349f0,4d85c0,633a90`), el
+oráculo del mundo hace también lo diario, las tareas programadas, los 15
+objetos del mundo, los asedios y la cola de eventos, en el orden del juego
+(ver [formats/world_tick.md](formats/world_tick.md)); las operaciones
+encoladas se ejecutan al final del tick. Con `--cpr` crea con el código del
+juego lo que la cola de eventos necesita: el objeto de los nombres
+(`scripts/Namen*.txt`), la tabla entera de `StadtDaten.ini` y
+`Expeditionen.dat` (p3vita, con `load_game_scripts`). Las grabaciones llevan
+los ejércitos sitiadores y las listas de los asedios (regiones `Ji`, `Ui`,
+`Li`, `Hi`), y la carga de las 12 partidas compara ya los asedios: 0
+diferencias. Resultado: el mundo entero con lo diario, las tareas, los
+objetos del mundo y los asedios, idéntico 30 días en las 12 partidas; la
+cola de eventos tiene traducidos solo algunos tipos (ver `events.cpp`).
+

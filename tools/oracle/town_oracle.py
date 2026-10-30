@@ -11,6 +11,11 @@ El estado son copias de la memoria del juego, por regiones:
   P C    barcos (0x180) y capitanes (16)
   W      registros de 0x14 bytes del mundo (*0x6DE510, tantos como [0x6DE4A6])
   X      objetos de asedio de cada ciudad (*0x6DF270, 0x1024)
+  Ji Ui  el ejército que sitia la ciudad i ([+0x8] de su asedio, 0x650 bytes;
+         vacío si no hay) y sus objetivos ([+0x250] del ejército, 12 bytes
+         cada uno: todos los reservados, también los que ya no cuenta [+0x242])
+  Li Hi  las listas [+0x101C] y [+0x1020] del asedio de la ciudad i: los 8 y
+         16 primeros bytes de cada nodo, en orden
   E      cola de eventos (*0x6DD73C, tantos registros de 0x18 como [0x6DD748])
   Y      tiempos de viaje entre ciudades ([+0x6C] del mundo, n × n bytes)
   V      convoyes (*0x6DD7A8, tantos registros de 0x3C como [0x6DD896])
@@ -32,8 +37,19 @@ Formato del fichero (enteros little endian):
   Al final, u8 'E'.
 
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
-       [--desde DÍA] [--max N] [--semilla S] [--barcos DATOS [--sin-ia] [--sin-convoyes] [--sin-comerciantes]]
+       [--desde DÍA] [--max N] [--semilla S] [--cpr p2arch0_eng.cpr] [--barcos DATOS [--sin-ia] [--sin-convoyes]
+       [--sin-comerciantes] [--resto PIEZAS]]
 La función 51ba10 graba los ticks de ciudad enteros.
+
+Con --cpr (o si DATOS/scripts tiene los ficheros), la carga crea también el
+objeto de los nombres (0x6DDAA0) con el código del juego: las listas de
+scripts/Namen*.txt con sus números de scripts/Namen_eng.ini (0x5121C0) y los
+nombres escritos por los jugadores que guarda la partida (0x511E30). La cola
+de eventos saca nombres al azar con esos números. 0x5121C0 llena también la
+tabla de las ciudades de scripts/StadtDaten.ini (0x6DDB90, 0x51E440), y se
+leen los puntos de scripts/Expeditionen.dat (*0x6DF2E0, como 0x5346A0). Los
+textos de los mensajes (CString de MFC, sprintf) se ejecutan: las pocas
+funciones de KERNEL32 que usan se hacen en Python (setup_imports).
 
 Con --barcos (la carpeta de --navdata de save_oracle.py), cada tick hace
 además la actualización de los barcos del juego (0x506720) con los estados
@@ -45,7 +61,18 @@ todo el recorrido de los convoyes. También hace el tick de cada comerciante
 (0x4F7BB0), como advance_time: en los ticks con t & 7 == 1 el comerciante
 t >> 3 y con t & 7 == 6 el (t + 0x100) >> 3, antes de los barcos
 (--sin-comerciantes lo salta). Para repetir el mundo con tick_probe
---continuo hay que grabar también 4f7bb0. El juego ejecuta la cola entre dos llamadas a advance_time,
+--continuo hay que grabar también 4f7bb0.
+
+Con --resto PIEZAS (direcciones separadas por comas), además, el resto de
+advance_time que se pida, en su orden:
+  5315c0  al empezar el día, tras la fecha: lo diario (semanal si el tick es
+          múltiplo de 0x700), y el [+0x8B] del mundo baja 1 si no es 0
+  535450  al empezar el día: las tareas programadas ([+0xE8] del mundo, con el tick)
+  52d7d0  t & 7 == 5: el objeto t >> 3 de los 15 del mundo ([+0xB10])
+  6349f0  t & 7 == 7: el asedio de la ciudad t >> 3, tras su tick
+  4d85c0  tras los barcos: la cola de eventos (con el tick)
+  633a90  tras la cola de eventos: el asedio de cada ciudad
+(0x54DE90, las estadísticas de cada día, no se ejecuta.) El juego ejecuta la cola entre dos llamadas a advance_time,
 que hace hasta 8 ticks según el tiempo real; aquí y en p3vita, tras cada tick.
 Las funciones 506720 y 537670 también se pueden grabar. Con --sin-ia, los
 barcos como en sail_oracle.py: en puerto solo los estados 1, 2, 3 y el 0 de
@@ -57,7 +84,7 @@ import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from save_oracle import FILE, SENTINEL, SHIPS, WORLD, SaveOracle  # noqa: E402
+from save_oracle import EXPEDITIONS, FILE, SENTINEL, SEPARATOR, SHIPS, TOWN_TABLE, WORLD, SaveOracle  # noqa: E402
 from unicorn import UC_HOOK_CODE  # noqa: E402
 from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESP  # noqa: E402
 
@@ -75,6 +102,23 @@ SIEGES = 0x6DF270
 EVENTS = 0x6DD73C  # cola de eventos: puntero al array, cabeza u16 en +8, número u16 en +0xC
 PLAYER_TOWNS = 0x6DEF90  # 8 punteros a 40 bytes (un byte por ciudad) del objeto 0x6DE588
 GLOBALS = (0x6DD000, 0x6E0000)
+# Objeto de los nombres (0x5121C0 lo carga al arrancar el juego): punteros a
+# los textos de cada lista en +0xA8 (hombres), +0xAC (mujeres), +0xB0
+# (apellidos y piratas) y +0xB4 (barcos), a sus offsets (u16 por nombre) en
+# +0xBC.. +0xC8, y los números u16: +0xD0 hombres, +0xD2 mujeres, +0xD4
+# apellidos, +0xD6 apellidos y piratas, +0xD8 y +0xDA barcos. Tras cada lista
+# de personas, 20 huecos de 24 bytes para los nombres escritos por los jugadores.
+NAMES = 0x6DDAA0
+LOAD_NAMES = 0x5121C0
+READ_SAVE_NAMES = 0x511E30  # los nombres de la partida (los de los jugadores)
+ARCHIVE_READ = 0x6389EE  # importada: (archivo, ruta, &datos, &tamaño) → asa (0: no está); cdecl
+ARCHIVE_FREE = 0x6389F4  # importada: (archivo, asa); cdecl
+INI_INT = 0x4BE0B0  # thiscall (sección, clave, por omisión, fichero) → entero; ret 0x10
+INI_STRING = 0x4BE060  # thiscall (sección, clave, por omisión, búfer, tamaño, fichero) → longitud; ret 0x18
+# Tabla de las 40 ciudades (0x34 bytes por ciudad, por su número de
+# StadtDaten.ini): la llena 0x51E440 desde 0x5121C0. En +0x28, un CString.
+TOWN_TABLE_SIZE = 0x34
+EMPTY_CSTRING = 0x6C7CCC  # puntero a la cadena vacía de MFC con el que empieza un CString
 ENQUEUE = 0x54AA70  # encola una operación: se anota y no se ejecuta
 OPERATION_SIZE = 0x14  # lo que copia 0x543F10; lo que sigue en la pila es basura
 # El tick de ciudad se llama por este trampolín para que vuelva a una
@@ -84,6 +128,9 @@ TRAMPOLINE = SENTINEL + 0x10
 SHIPS_TRAMPOLINE = SENTINEL + 0x20
 SAIL_TRAMPOLINE = SENTINEL + 0x30
 MERCHANT_TRAMPOLINE = SENTINEL + 0x40
+# El resto de advance_time (--resto): función → bytes de argumentos.
+REST = {0x5315C0: 1, 0x535450: 1, 0x52D7D0: 0, 0x6349F0: 0, 0x4D85C0: 1, 0x633A90: 0}
+REST_TRAMPOLINES = SENTINEL + 0x60  # uno cada 0x20 bytes, en el orden de REST
 # Actualización de barcos (ver sail_oracle.py): saltos por estado y convoyes.
 DOCKED_DISPATCH = 0x5067C0
 DOCKED_SKIP = 0x5068C6
@@ -111,6 +158,45 @@ QUIET_SHIPS = {
     0x514000: 4,  # objetos del final de la sección de barcos
     0x51A2C0: 8, 0x4D5900: 8, 0x518860: 4,  # IA ante un puerto bloqueado; ruta automática (no se reproducen)
 }
+# Con la cola de eventos (--resto 4d85c0), además, interfaz:
+QUIET_EVENTS = {
+    0x5C6BA0: 0, 0x5C6BF0: 0,  # vuelve a dibujar una zona (*0x6E5558)
+    0x494990: 8, 0x4778A0: 8,  # avisos de un barco que cambia de dueño (*0x6CE6D0, *0x6CC950)
+    0x5C6740: 0x14,  # interfaz (objeto en ecx, que aquí es 0)
+}
+# Saltos sobre trozos de interfaz: dirección → adónde se salta.
+EVENT_JUMPS = {
+    0x4DC326: 0x4DC377,  # 0x4DC1F0: ventana de la interfaz (*0x6CC7E8, 0x469380 y 0x469AF0)
+    0x52590C: 0x5259B8,  # 0x5256F0: la ciudad que se ve (*0x6E51AC, [+0xC324]) no es nunca la del edificio
+}
+# Los mensajes llevan textos (CString de MFC, sprintf del CRT) que usan unas
+# pocas funciones de KERNEL32: se hacen aquí (ver TownOracle.setup_imports).
+
+
+def read_cpr(path):
+    """Índice de un archivo CPR (docs/formats/cpr.md): ruta normalizada → (offset, tamaño)."""
+    data = open(path, 'rb').read()
+    files = {}
+    chunk = 0x20
+    while chunk + 0x10 <= len(data):
+        index_size, _, count, data_size = struct.unpack_from('<IIII', data, chunk)
+        o = chunk + 0x10
+        for _ in range(count):
+            offset, size, _ = struct.unpack_from('<III', data, o)
+            end = data.index(b'\0', o + 12)
+            files[normalize(data[o + 12:end].decode('latin-1'))] = (offset, size)
+            o = end + 1
+        if index_size == 0:
+            break
+        chunk += index_size + data_size
+    return data, files
+
+
+def normalize(path):
+    path = path.replace('\\', '/').lower()
+    while path.startswith('./'):
+        path = path[2:]
+    return path
 
 
 def trampoline(target, args):
@@ -121,10 +207,19 @@ def trampoline(target, args):
 
 
 class TownOracle(SaveOracle):
-    def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True):
+    def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True, rest=(), cpr=None):
         super().__init__(exe, save, navdata)
+        self.navdata = navdata
+        self.cpr = read_cpr(cpr) if cpr else None
         self.ai = ai
         self.merchants = merchants and navdata is not None
+        self.rest = set(rest) if navdata is not None else set()
+        self.rest_trampolines = {}
+        for k, (target, args) in enumerate(REST.items()):
+            at = REST_TRAMPOLINES + 0x20 * k
+            _, build = trampoline(target, args)
+            self.uc.mem_write(at, build(at))
+            self.rest_trampolines[target] = at
         self.rand_state = seed
         self.queued = []  # para las muestras
         self.tick_operations = []  # las órdenes que se ejecutan al final del tick
@@ -143,6 +238,11 @@ class TownOracle(SaveOracle):
                                      (MERCHANT_TRAMPOLINE, MERCHANT_TICK, 1)):
                 _, build = trampoline(target, args)
                 self.uc.mem_write(at, build(at))
+        self.setup_imports(exe)
+        if 0x4D85C0 in self.rest:
+            quiet.update(QUIET_EVENTS)
+            for address, target in EVENT_JUMPS.items():
+                self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
         for address, pop in quiet.items():
             self.skipped[address] = pop
             self.uc.hook_add(UC_HOOK_CODE, self._quiet, begin=address, end=address)
@@ -157,6 +257,13 @@ class TownOracle(SaveOracle):
             self.queued.append(op)
             self.tick_operations.append(op)
         self._stub(uc, address, size, user_data)
+
+    def alloc(self, n):
+        # Se apunta lo pedido: los objetivos del ejército sitiador ([+0x250])
+        # se graban enteros (el juego sigue leyendo los que ya no cuenta [+0x242]).
+        p = super().alloc(n)
+        self.__dict__.setdefault('requested', {})[p] = n
+        return p
 
     def _docked(self, uc, address, size, user_data):
         from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_ESI
@@ -215,13 +322,218 @@ class TownOracle(SaveOracle):
         pos = self.ships_end + 4
         pos = self.call(0x4D6350, [FILE + pos], ecx=0x6DD730) - FILE + 4
         pos = self.call(0x4D4BC0, [FILE + pos], ecx=0x6DD728) - FILE + 4
-        self.call(0x4D81E0, [FILE + pos, version], ecx=EVENTS)
+        pos = self.call(0x4D81E0, [FILE + pos, version], ecx=EVENTS) - FILE
         self.uc.hook_del(hook)
+        if self.game_file('scripts/Namen_eng.ini') is not None:
+            self.load_names(pos, version)
         self.call(MERGE_TOWN_FLAGS, [], ecx=0x6DF278)
         self.call(0x52E1A0, [block[0x10]], ecx=0x6DE3D8)  # dificultad del comercio
         _, _, merchants, _ = self.counts()
         player = max((i for i in range(merchants) if self.u16(self.merchant(i) + 8) == 0), default=0)
         self.write_u32(PLAYER, player)
+
+    def setup_imports(self, exe):
+        """Las funciones importadas se llaman por la tabla de importaciones, que
+        en el emulador tiene lo que trae el fichero (la dirección relativa del
+        nombre de cada función): se reserva esa zona y se pone un gancho en cada
+        una. Las que no se hacen aquí paran la emulación con su nombre."""
+        data = open(exe, 'rb').read()
+        pe = struct.unpack_from('<I', data, 0x3C)[0]
+        optional_size = struct.unpack_from('<H', data, pe + 20)[0]
+        sections = [struct.unpack_from('<IIII', data, pe + 24 + optional_size + 40 * i + 8)
+                    for i in range(struct.unpack_from('<H', data, pe + 6)[0])]
+
+        def offset(rva):
+            for vsize, va, rsize, raw in sections:
+                if va <= rva < va + max(vsize, rsize):
+                    return raw + rva - va
+
+        self.imports = {}
+        o = offset(struct.unpack_from('<I', data, pe + 24 + 104)[0])
+        while struct.unpack_from('<I', data, o + 12)[0]:
+            lookup, _, _, name, thunks = struct.unpack_from('<IIIII', data, o)
+            p = offset(name)
+            dll = data[p:data.index(b'\0', p)].decode()
+            t, k = offset(lookup or thunks), 0
+            while struct.unpack_from('<I', data, t + 4 * k)[0]:
+                v = struct.unpack_from('<I', data, t + 4 * k)[0]
+                if not v & 0x80000000:
+                    p = offset(v) + 2
+                    iat = struct.unpack_from('<I', data, offset(thunks) + 4 * k)[0]
+                    self.imports[iat] = (dll, data[p:data.index(b'\0', p)].decode())
+                k += 1
+            o += 20
+        low, high = min(self.imports) & ~0xFFF, (max(self.imports) + 0x1000) & ~0xFFF
+        self.uc.mem_map(low, high - low)
+        self.tls = {}
+        self.uc.hook_add(UC_HOOK_CODE, self._import, begin=low, end=high - 1)
+        # Los constructores estáticos de los repartidores de memoria de los
+        # CString (CFixedAlloc de 0x50, 0x90, 0x110 y 0x210 bytes), que el CRT
+        # ejecuta al arrancar.
+        for f in (0x64F005, 0x64F034, 0x64F066, 0x64F098):
+            self.call(f, [])
+
+    def _import(self, uc, address, size, user_data):
+        dll, name = self.imports.get(address, ('?', f'{address:#x}'))
+        a = self._arg
+        if name == 'lstrlenA':
+            result, pop = (len(self.cstring(a(0))) if a(0) else 0), 4
+        elif name in ('InterlockedIncrement', 'InterlockedDecrement'):
+            result = (self.u32(a(0)) + (1 if name == 'InterlockedIncrement' else -1)) & 0xFFFFFFFF
+            self.write_u32(a(0), result)
+            pop = 4
+        elif name in ('EnterCriticalSection', 'LeaveCriticalSection', 'InitializeCriticalSection',
+                      'DeleteCriticalSection'):
+            result, pop = 0, 4
+        elif name == 'GetLastError':
+            result, pop = 0, 0
+        elif name == 'SetLastError':
+            result, pop = 0, 4
+        elif name == 'GetCurrentThreadId':
+            result, pop = 1, 0
+        elif name == 'TlsGetValue':
+            result, pop = self.tls.get(a(0), 0), 4
+        elif name == 'TlsSetValue':
+            self.tls[a(0)] = a(1)
+            result, pop = 1, 8
+        elif name == 'HeapAlloc':
+            result, pop = self.alloc(a(2)), 12
+        elif name == 'HeapFree':
+            self.release(a(2))
+            result, pop = 1, 12
+        elif name == 'HeapReAlloc':
+            old, size = a(2), a(3)
+            result = self.alloc(size)
+            self.uc.mem_write(result, bytes(self.uc.mem_read(old, min(size, self.sizes.get(old, 0)))))
+            self.release(old)
+            pop = 16
+        else:
+            raise RuntimeError(f'función importada sin hacer: {dll}!{name}')
+        self._returns(uc, result, pop)
+
+    def game_file(self, path):
+        """Un fichero de los datos del juego: de DATOS (--barcos) o del archivo (--cpr)."""
+        if self.navdata:
+            local = os.path.join(self.navdata, *normalize(path).split('/'))
+            for name in (local, os.path.join(self.navdata, path)):
+                if os.path.isfile(name):
+                    return open(name, 'rb').read()
+        if self.cpr:
+            data, files = self.cpr
+            entry = files.get(normalize(path))
+            if entry:
+                return data[entry[0]:entry[0] + entry[1]]
+        return None
+
+    def cstring(self, a):
+        out = bytearray()
+        while True:
+            c = self.u8(a + len(out))
+            if c == 0:
+                return out.decode('latin-1')
+            out.append(c)
+
+    def _returns(self, uc, value, pop):
+        esp = uc.reg_read(UC_X86_REG_ESP)
+        uc.reg_write(UC_X86_REG_EAX, value & 0xFFFFFFFF)
+        uc.reg_write(UC_X86_REG_ESP, esp + 4 + pop)
+        uc.reg_write(UC_X86_REG_EIP, self.u32(esp))
+
+    def _archive_read(self, uc, address, size, user_data):
+        data = self.game_file(self.cstring(self._arg(1)))
+        if data is None:
+            return self._returns(uc, 0, 0)
+        p = self.alloc(len(data))
+        self.uc.mem_write(p, data)
+        self.write_u32(self._arg(2), p)
+        self.write_u32(self._arg(3), len(data))
+        self._returns(uc, p, 0)
+
+    def _archive_free(self, uc, address, size, user_data):
+        self.release(self._arg(1))
+        self._returns(uc, 0, 0)
+
+    def ini_value(self, path, section, key):
+        """El texto de una clave de un .ini de los datos, o None."""
+        data = self.game_file(path)
+        current = None
+        for line in (data or b'').decode('latin-1').splitlines():
+            line = line.strip()
+            if line.startswith('['):
+                current = line[1:line.find(']')].lower()
+            elif current == section.lower() and '=' in line and line.split('=', 1)[0].strip().lower() == key.lower():
+                return line.split('=', 1)[1].strip()
+        return None
+
+    def _ini_int(self, uc, address, size, user_data):
+        # La clave de la sección leída con sscanf("%i"), o el valor por omisión.
+        text = self.ini_value(self.cstring(self._arg(3)), self.cstring(self._arg(0)), self.cstring(self._arg(1)))
+        value = self._arg(2)
+        if text is not None:
+            t = text.lstrip()
+            sign = -1 if t[:1] == '-' else 1
+            t = t[1:] if t[:1] in '+-' else t
+            base, digits = 10, '0123456789'
+            if t[:2].lower() == '0x' and t[2:3].lower() in '0123456789abcdef' and t[2:3]:
+                base, digits, t = 16, '0123456789abcdef', t[2:]
+            elif t[:1] == '0':
+                base, digits = 8, '01234567'
+            n, k = 0, 0
+            while k < len(t) and t[k].lower() in digits:
+                n = n * base + int(t[k], 16)
+                k += 1
+            if k:
+                value = sign * n
+        self._returns(uc, value, 0x10)
+
+    def _ini_string(self, uc, address, size, user_data):
+        # La clave, o el texto por omisión, en el búfer; devuelve su longitud.
+        text = self.ini_value(self.cstring(self._arg(5)), self.cstring(self._arg(0)), self.cstring(self._arg(1)))
+        value = (text.encode('latin-1') if text is not None else self.cstring(self._arg(2)).encode('latin-1'))
+        value = value[:max(self._arg(4) - 1, 0)]
+        self.uc.mem_write(self._arg(3), value + b'\0')
+        self._returns(uc, len(value), 0x18)
+
+    def load_names(self, events_end, version):
+        """Crea el objeto de los nombres como el juego: 0x5121C0 al arrancar
+        (ficheros de scripts/), los nombres de la partida (0x511E30) y otra vez
+        0x5121C0, que la carga llama al final (0x54A3E2) y deshace los nombres
+        de barco de la partida.
+
+        Los nombres son la última sección del fichero (tras ellos, un u32 y el
+        separador final). Entre la cola de eventos y ellos va la de 0x611AE0
+        (objeto 0x6E55D0), que crea objetos con vtable y aquí no se lee: la
+        sección se busca hacia atrás desde el final, como en savegame.cpp."""
+        if struct.unpack_from('<I', self.save, events_end)[0] != SEPARATOR:
+            raise RuntimeError(f'la cola de eventos acaba en {events_end}, sin separador')
+        pos = len(self.save) - 8
+        while pos > events_end and struct.unpack_from('<I', self.save, pos)[0] != SEPARATOR:
+            pos -= 1
+        if pos <= events_end or struct.unpack_from('<I', self.save, len(self.save) - 4)[0] != SEPARATOR:
+            raise RuntimeError('no se encuentra la sección de los nombres')
+        hooks = [self.uc.hook_add(UC_HOOK_CODE, f, begin=a, end=a) for a, f in (
+            (ARCHIVE_READ, self._archive_read), (ARCHIVE_FREE, self._archive_free), (INI_INT, self._ini_int),
+            (INI_STRING, self._ini_string))]
+        # La primera vez, 0x5121C0 lee también los nombres de las ciudades y la
+        # tabla de las ciudades (0x51E440, scripts/StadtDaten.ini); su CString
+        # lo inicializa el constructor estático de la tabla.
+        for i in range(40):
+            self.write_u32(TOWN_TABLE + i * TOWN_TABLE_SIZE + 0x28, self.u32(EMPTY_CSTRING))
+        self.call(LOAD_NAMES, [], ecx=NAMES)
+        # 0x5346A0 (constructor del objeto 0x6DF278) lee scripts/Expeditionen.dat
+        # si aún no lo ha hecho: u32 [0x6DF2E4] puntos (u16 x, u16 y) en *0x6DF2E0.
+        expeditions = self.game_file('scripts/Expeditionen.dat')
+        if expeditions is not None:
+            table = self.alloc(len(expeditions))
+            self.uc.mem_write(table, expeditions)
+            self.write_u32(EXPEDITIONS, table)
+            self.write_u32(EXPEDITIONS + 4, (len(expeditions) >> 2) & 0xFFFF)
+        end = self.call(READ_SAVE_NAMES, [FILE + pos + 4, version], ecx=NAMES) - FILE
+        if end + 4 != len(self.save):
+            raise RuntimeError(f'los nombres acaban en {end} y el fichero en {len(self.save)}')
+        self.call(LOAD_NAMES, [], ecx=NAMES)
+        for h in hooks:
+            self.uc.hook_del(h)
 
     def town_tick(self, i):
         self.call(TRAMPOLINE, [self.u16(WORLD + 4)], ecx=self.town(i))
@@ -233,16 +545,28 @@ class TownOracle(SaveOracle):
         t = tick & 0xFF
         if t == 0:
             self.call(UPDATE_DATE, [], ecx=WORLD)
+            self.run_rest(0x5315C0, [1 if tick % 0x700 == 0 else 0], WORLD)
+            self.run_rest(0x535450, [tick], WORLD + 0xE8)
+            if 0x5315C0 in self.rest and self.u8(WORLD + 0x8B) > 0:
+                self.uc.mem_write(WORLD + 0x8B, bytes([self.u8(WORLD + 0x8B) - 1]))
         town = t >> 3 if t & 7 == 7 else (t + 0xFF) >> 3 if t & 7 == 3 else None
         if town is not None and town < self.u32(WORLD + 0x10):
             self.town_tick(town)
+            if t & 7 == 7 and self.u32(SIEGES):
+                self.run_rest(0x6349F0, [], self.u32(SIEGES) + town * 0x1024)
+        if t & 7 == 5 and t >> 3 < 15:
+            self.run_rest(0x52D7D0, [], WORLD + 0xB10 + 0x2C * (t >> 3))
         merchant = t >> 3 if t & 7 == 1 else (t + 0x100) >> 3 if t & 7 == 6 else None
         if self.merchants and merchant is not None and merchant < self.u16(WORLD + 0xA):
             self.call(MERCHANT_TRAMPOLINE, [merchant], ecx=self.merchant(merchant))
         if self.ships:
             self.call(SHIPS_TRAMPOLINE, [tick], ecx=SHIPS)
-            # Las órdenes de zarpar encoladas en este tick (las de las obras de
-            # las ciudades no se ejecutan).
+            self.run_rest(0x4D85C0, [tick], EVENTS)
+            if self.u32(SIEGES):
+                for i in range(self.u32(WORLD + 0x10)):
+                    self.run_rest(0x633A90, [], self.u32(SIEGES) + i * 0x1024)
+            # Las órdenes de zarpar encoladas en este tick, al final (las de las
+            # obras de las ciudades no se ejecutan).
             operations, self.tick_operations = self.tick_operations, []
             for op in operations if self.ai else []:
                 if struct.unpack_from('<I', op, 0)[0] == 0:
@@ -251,6 +575,10 @@ class TownOracle(SaveOracle):
                     self.call(SAIL_TRAMPOLINE, [], ecx=buffer)
             self.tick_operations = []
         return tick
+
+    def run_rest(self, target, args, ecx):
+        if target in self.rest:
+            self.call(self.rest_trampolines[target], args, ecx=ecx)
 
     # Estado por regiones.
     def regions(self):
@@ -271,6 +599,20 @@ class TownOracle(SaveOracle):
         add('W', self.u32(WORLD + 0x70), self.u16(WORLD + 6) * 0x14)
         if self.u32(SIEGES):
             add('X', self.u32(SIEGES), towns * 0x1024)
+            for i in range(towns):
+                siege = self.u32(SIEGES) + i * 0x1024
+                army = self.u32(siege + 8)
+                add(f'J{i}', army, 0x650 if army else 0)
+                targets = self.u32(army + 0x250) if army else 0
+                size = self.__dict__.get('requested', {}).get(targets, 12 * self.u16(army + 0x242))
+                add(f'U{i}', targets, size // 12 * 12 if targets else 0)
+                for name, head, data in (('L', 0x101C, 8), ('H', 0x1020, 0x10)):
+                    nodes = bytearray()
+                    node = self.u32(siege + head)
+                    while node:  # los datos y, detrás, el siguiente
+                        nodes += bytes(self.uc.mem_read(node, data))
+                        node = self.u32(node + data)
+                    out[f'{name}{i}'] = (self.u32(siege + head), bytes(nodes))
         add('E', self.u32(EVENTS), self.u16(EVENTS + 0xC) * 0x18 if self.u32(EVENTS) else 0)
         add('Y', self.u32(WORLD + 0x6C), towns * towns if self.u32(WORLD + 0x6C) else 0)
         add('V', self.u32(SHIPS + 8), self.u16(SHIPS + 0xF6) * 0x3C if self.u32(SHIPS + 8) else 0)
@@ -405,9 +747,12 @@ def main():
     p.add_argument('--sin-ia', action='store_true', help='con --barcos, sin las decisiones de la IA en puerto')
     p.add_argument('--sin-convoyes', action='store_true', help='con --barcos, sin el recorrido de los convoyes')
     p.add_argument('--sin-comerciantes', action='store_true', help='con --barcos, sin el tick de los comerciantes')
+    p.add_argument('--resto', default='', help='con --barcos, el resto de advance_time (5315c0,535450,...)')
+    p.add_argument('--cpr', help='archivo de datos (p2arch0_eng.cpr) del que leer scripts/Namen*.txt')
     a = p.parse_args()
+    rest = [int(x, 16) for x in a.resto.split(',') if x]
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
-                   not a.sin_comerciantes)
+                   not a.sin_comerciantes, rest, a.cpr)
     o.load()
     functions = [int(x, 16) for x in a.functions.split(',')]
     with open(a.out, 'wb') as f:

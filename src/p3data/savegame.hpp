@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -291,6 +292,23 @@ struct SavedShip {
 	bool docked() const { return in_use() && town() != 0xFF && status() != 0x0F && status() != 0x12; }
 };
 
+// Lo que cuelga por punteros del objeto de asedio de una ciudad (0x633730).
+// En SiegeMemory, los punteros [+0x8], [+0x101C] y [+0x1020] valen 1 si hay
+// algo y 0 si no (en el juego, la dirección).
+struct SiegeExtras {
+	std::optional<SiegeArmyMemory> army;  // [+0x8]: el ejército que la sitia, si lo hay.
+	// [+0x250] del ejército (0x62B2B0): entradas de 12 bytes (u8 [+0x0] su
+	// número, u32 [+0x4] el reloj *0x6DCCF8, u32 [+0x8] registro de edificio),
+	// todas las reservadas: quedan las [+0x242] primeras, pero el juego sigue
+	// leyendo las demás. Vacío si no tiene.
+	std::vector<GameMemory<0xC>> army_targets;
+	// Listas [+0x101C] (nodos de 0xC bytes: 8 de datos y el siguiente en
+	// [+0x8]; las crea 0x6356D0) y [+0x1020] (nodos de 0x14: 16 de datos y el
+	// siguiente en [+0x10]): los datos de cada nodo, en el orden de la lista.
+	std::vector<GameMemory<8>> list_101c;
+	std::vector<GameMemory<0x10>> list_1020;
+};
+
 struct SaveGame {
 	int version = 0;
 	// Tiempo de juego en ticks: 256 por día desde el día 0 del año 0 (365 días
@@ -329,6 +347,7 @@ struct SaveGame {
 	std::vector<CaptainMemory> captains;  // Capitanes y administradores (*0x6DD7A0).
 	std::vector<GameMemory<0x14>> world_records;  // Registros de 0x14 bytes del mundo (*0x6DE510).
 	std::vector<SiegeMemory> sieges;  // Uno por ciudad (*0x6DF270); vacío si no existen.
+	std::vector<SiegeExtras> siege_extras;  // Lo que cuelga de cada uno de sieges (mismo índice).
 	uint32_t rand_state = 1;  // Estado de rand() de MSVC (0x639C03).
 	// Operaciones que la simulación ha encolado para el juego (0x54AA70): sus
 	// 0x14 bytes (los que copia 0x543F10). Quien avanza el tiempo las recoge.
@@ -361,7 +380,19 @@ struct SaveGame {
 bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string* error = nullptr);
 
 // Lee una partida comprimida (un único blob LZ) del archivo, p. ej. "missav/1.pat".
+// Llama también a load_game_scripts.
 bool load_savegame(const CprArchive& archive, const std::string& path, SaveGame& out, std::string* error = nullptr);
+
+// Lo que el juego lee de scripts/ al arrancar, deja en sus globales y usa la
+// simulación (la cola de eventos): los números de nombres de cada lista del
+// objeto de los nombres (0x6DDAA0; 0x5121C0 los lee de Namen_eng.ini): u16
+// [0x6DDB70] hombres, [0x6DDB72] mujeres, [0x6DDB74] apellidos, [0x6DDB76]
+// apellidos y piratas, [0x6DDB78] y [0x6DDB7A] barcos; y la tabla de las 40
+// ciudades (0x6DDB90 + 0x34 · número de la ciudad; 0x51E440, de
+// StadtDaten.ini), sin el CString de [+0x28]; y los puntos de
+// scripts/Expeditionen.dat (SaveGame::expeditions y u32 [0x6DF2E4], 0x5346A0).
+// Tras parse_savegame.
+void load_game_scripts(const CprArchive& archive, SaveGame& save);
 
 // Descomprime una partida del archivo sin interpretarla.
 bool read_savegame_data(const CprArchive& archive, const std::string& path, std::vector<uint8_t>& out,

@@ -111,6 +111,7 @@ using OfficeMemory = GameMemory<0x44C>;  // Oficina (kontor) de un comerciante.
 using MerchantMemory = GameMemory<0x650>;  // struct merchant
 using CaptainMemory = GameMemory<0x10>;  // Capitanes y administradores (*0x6DD7A0).
 using SiegeMemory = GameMemory<0x1024>;  // Objeto de cada ciudad en *0x6DF270 (asedios).
+using SiegeArmyMemory = GameMemory<0x650>;  // Ejército que sitia una ciudad ([+0x8] de su asedio, 0x627880).
 using SettingsMemory = GameMemory<0x4C>;  // Ajustes de la partida (*0x6CC3E8).
 
 }  // namespace p3::data

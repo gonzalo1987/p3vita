@@ -20,11 +20,18 @@ add_library(p3data STATIC
 	trade.cpp
 	town_tick/businesses.cpp
 	town_tick/construction.cpp
+	town_tick/daily.cpp
+	town_tick/events.cpp
+	town_tick/events_big.cpp
+	town_tick/events_mayor.cpp
+	town_tick/events_rare.cpp
+	town_tick/events_towns.cpp
 	town_tick/core.cpp
 	town_tick/facilities.cpp
 	town_tick/merchants.cpp
 	town_tick/offices.cpp
 	town_tick/population.cpp
+	town_tick/sieges.cpp
 	town_tick/shared.cpp
 	town_tick/ship_ai.cpp
 	town_tick/ship_trade.cpp

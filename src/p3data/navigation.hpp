@@ -43,6 +43,8 @@ public:
 
 	int width() const { return width_; }
 	int height() const { return height_; }
+	// ¿Agua en la celda (x, y) de la rejilla? Sin mirar los límites (0x4474D0 los mira antes).
+	bool is_water(int x, int y) const { return water(x, y); }
 
 private:
 	struct Candidate {

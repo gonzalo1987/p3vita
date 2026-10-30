@@ -89,6 +89,13 @@ void register_probes_convoys_sea(ProbeRegistry& r);
 void register_probes_convoys_members(ProbeRegistry& r);
 void register_probes_convoys_port(ProbeRegistry& r);
 void register_probes_merchants(ProbeRegistry& r);
+void register_probes_daily(ProbeRegistry& r);
+void register_probes_sieges(ProbeRegistry& r);
+void register_probes_events(ProbeRegistry& r);
+void register_probes_events_big(ProbeRegistry& r);
+void register_probes_events_towns(ProbeRegistry& r);
+void register_probes_events_mayor(ProbeRegistry& r);
+void register_probes_events_rare(ProbeRegistry& r);
 
 // La navegación sobre el SaveGame que reciben las sondas (tick_probe con
 // --cpr); nullptr sin --cpr. Para las funciones de Sailing (convoyes...).

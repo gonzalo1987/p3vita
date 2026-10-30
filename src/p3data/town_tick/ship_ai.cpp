@@ -573,7 +573,7 @@ void fn_535630(SaveGame& save, std::vector<uint8_t>& towns) {
 			for (uint32_t c = 0; c < town_count(save); ++c) {
 				const uint8_t days = uint8_t((fn_531b70(save, b, c) >> 4) + 1);
 				if (days < towns[c]) {
-					towns[c] = days;  // Solo en las pruebas sintéticas.
+					towns[c] = days;
 				}
 			}
 		} else if (towns[b] > 0xF) {

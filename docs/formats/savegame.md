@@ -618,8 +618,13 @@ de la ruta [+0x24]):
   del objeto de los barcos ([+0xE0..+0xFE]), el jugador en 0x6DFC14 y el
   factor de la dificultad del comercio en 0x6DE43C.
 
-No se leen todavía los objetos de asedio de cada ciudad (0x633730, en
-`*0x6DF270`): el tick de ciudad no los usa.
+También se leen los objetos de asedio de cada ciudad (0x633730, en
+`*0x6DF270`, `SaveGame::sieges`) y su ejército sitiador (0x627AD0, con lo
+que hace el lector después: puertas, posición y objetivos;
+`tick::load_siege_army`), con lo que cuelga de punteros en
+`SaveGame::siege_extras`, y los 15 objetos del mundo de [+0xB10] (0x52BBE0;
+su lista de registros de 16 bytes se descarta, vacía en las partidas). Ver
+[world_tick.md](world_tick.md).
 
 ## 15. Pendiente
 

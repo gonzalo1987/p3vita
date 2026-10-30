@@ -160,6 +160,50 @@ const Region* find(const State& s, const std::string& name) {
 	return it == s.end() ? nullptr : &it->second;
 }
 
+// Lo que cuelga de los objetos de asedio (regiones Ji, Ui, Li y Hi).
+void load_siege_extras(const State& state, SaveGame& save) {
+	save.siege_extras.assign(save.sieges.size(), SiegeExtras());
+	for (size_t i = 0; i < save.sieges.size(); ++i) {
+		SiegeExtras& extras = save.siege_extras[i];
+		const std::string n = std::to_string(i);
+		if (const Region* j = find(state, "J" + n); j && j->bytes.size() == SiegeArmyMemory::kSize) {
+			std::memcpy(extras.army.emplace().bytes.data(), j->bytes.data(), SiegeArmyMemory::kSize);
+		}
+		if (const Region* u = find(state, "U" + n)) {
+			copy_blocks(*u, extras.army_targets);
+		}
+		if (const Region* l = find(state, "L" + n)) {
+			copy_blocks(*l, extras.list_101c);
+		}
+		if (const Region* h = find(state, "H" + n)) {
+			copy_blocks(*h, extras.list_1020);
+		}
+	}
+}
+
+void store_siege_extras(const SaveGame& save, State& s) {
+	for (size_t i = 0; i < save.siege_extras.size(); ++i) {
+		const SiegeExtras& extras = save.siege_extras[i];
+		const std::string n = std::to_string(i);
+		if (s.count("J" + n)) {
+			std::vector<uint8_t>& b = s["J" + n].bytes;
+			b.clear();
+			if (extras.army) {
+				b.assign(extras.army->bytes.begin(), extras.army->bytes.end());
+			}
+		}
+		if (s.count("U" + n)) {
+			store_blocks(extras.army_targets, s["U" + n]);
+		}
+		if (s.count("L" + n)) {
+			store_blocks(extras.list_101c, s["L" + n]);
+		}
+		if (s.count("H" + n)) {
+			store_blocks(extras.list_1020, s["H" + n]);
+		}
+	}
+}
+
 // El estado de p3vita a partir del del juego.
 void build_save(const State& state, SaveGame& save) {
 	save = SaveGame();
@@ -208,6 +252,7 @@ void build_save(const State& state, SaveGame& save) {
 	copy_blocks(state.at("W"), save.world_records);
 	if (const Region* x = find(state, "X")) {
 		copy_blocks(*x, save.sieges);
+		load_siege_extras(state, save);
 	}
 	if (const Region* e = find(state, "E")) {
 		copy_blocks(*e, save.events);
@@ -285,6 +330,7 @@ State dump_save(const SaveGame& save, const State& game) {
 	if (s.count("X")) {
 		store_blocks(save.sieges, s["X"]);
 	}
+	store_siege_extras(save, s);
 	if (s.count("E")) {
 		store_blocks(save.events, s["E"]);
 	}
@@ -380,17 +426,29 @@ std::string describe(const std::string& region, size_t offset) {
 	return text;
 }
 
+// Con --cpr, p3vita lee también lo de scripts/ (load_game_scripts) y se comparan
+// los números de nombres, la tabla de las ciudades (sin su CString) y el número
+// de puntos de las expediciones.
+bool g_scripts_loaded = false;
+
+bool script_global(uint32_t a) {
+	return g_scripts_loaded && ((a >= 0x6DDB70 && a < 0x6DDB7C) || (a >= 0x6DF2E4 && a < 0x6DF2E8) ||
+		(a >= 0x6DDB90 && a < 0x6DDB90 + 40 * 0x34 && ((a - 0x6DDB90) % 0x34 < 0x28 || (a - 0x6DDB90) % 0x34 >= 0x2C)));
+}
+
 // Globales que llena el lector de partidas: cabecera del mundo, del objeto de
 // los barcos, el jugador, el factor de la dificultad del comercio, el objeto
 // 0x6DE588 (sin sus punteros) y los 15 objetos del mundo en [+0xB10] (sin su
 // lista).
 bool loaded_global(uint32_t a) {
-	return (a >= global::kWorld && a < global::kWorld + 0xE4) || (a >= global::kShips + 0xE0 && a < global::kShips + 0x100) ||
+	return script_global(a) ||
+		(a >= global::kWorld && a < global::kWorld + 0xE4) || (a >= global::kShips + 0xE0 && a < global::kShips + 0x100) ||
 		(a >= 0x6DE588 && a < 0x6DE588 + 0xA08) ||
 		(a >= global::kPlayer && a < global::kPlayer + 4) || (a >= 0x6DE43C && a < 0x6DE440) ||
 		(a >= global::kWorld + 0xB10 && a < global::kWorld + 0xB10 + 15 * 0x2C &&
 			(a - global::kWorld - 0xB10) % 0x2C < 0x1E) ||
-		(a >= 0x6DD744 && a < 0x6DD74A) || (a >= global::kShips + 0x100 && a < global::kShips + 0x108);
+		(a >= 0x6DD744 && a < 0x6DD74A) || (a >= global::kShips + 0x100 && a < global::kShips + 0x108) ||
+		(a >= global::kShips + 0x20 && a < global::kShips + 0xE0);
 }
 
 // Compara y escribe las diferencias. Devuelve cuántas hay. Con only_loaded,
@@ -499,6 +557,13 @@ int main(int argc, char** argv) {
 	register_probes_convoys_members(registry);
 	register_probes_convoys_port(registry);
 	register_probes_merchants(registry);
+	register_probes_daily(registry);
+	register_probes_sieges(registry);
+	register_probes_events(registry);
+	register_probes_events_big(registry);
+	register_probes_events_towns(registry);
+	register_probes_events_mayor(registry);
+	register_probes_events_rare(registry);
 
 	Input in(argv[1]);
 	if (!in.ok() || !in.expect("P3PROBE1")) {
@@ -536,21 +601,19 @@ int main(int argc, char** argv) {
 			std::fprintf(stderr, "%s: %s\n", load.c_str(), error.c_str());
 			return 1;
 		}
+		if (archive) {
+			load_game_scripts(*archive, save);
+			g_scripts_loaded = true;
+		}
 		if (!continuous) {
-			// Los objetos de asedio (0x633730) aún no se leen, y las rutas de
-			// los barcos las da Sailing después de leer la partida.
+			// Las rutas de los barcos las da Sailing después de leer la partida.
 			State loaded = game;
-			loaded.erase("X");
 			loaded.erase("Q");
 			const int d = compare(dump_save(save, loaded), loaded, budget, "carga de " + load + ":", true);
 			std::printf("carga: %d diferencias\n", d);
 			return d ? 1 : 0;
 		}
-		// Con --continuo, la simulación parte de lo que ha leído p3vita y de
-		// los objetos de asedio del juego.
-		if (const Region* x = find(game, "X")) {
-			copy_blocks(*x, save.sieges);
-		}
+		// Con --continuo, la simulación parte de lo que ha leído p3vita.
 		if (sailing) {
 			sailing->assign_loaded_routes();
 			// Las órdenes de zarpar, que el oráculo ejecuta al final de cada
@@ -568,8 +631,22 @@ int main(int argc, char** argv) {
 	} else if (continuous) {
 		build_save(game, save);
 	}
+	// Los puntos de las expediciones, que la grabación no guarda: de los datos.
+	std::vector<std::array<uint16_t, 2>> expeditions;
+	if (archive) {
+		SaveGame scripts;
+		load_game_scripts(*archive, scripts);
+		expeditions = scripts.expeditions;
+		if (continuous && load.empty()) {
+			save.expeditions = expeditions;
+		}
+	}
 	std::map<uint32_t, std::pair<int, int>> results;  // función → {bien, mal}
 	int missing = 0;
+	// Con --continuo: el [+0x8B] del mundo que advance_time baja tras 0x5315C0.
+	bool countdown_pending = false;
+	uint32_t countdown_tick = 0;
+	uint32_t countdown_esp = 0;
 	while (in.ok()) {
 		const uint8_t tag = in.u8();
 		if (tag != 'S') {
@@ -609,11 +686,29 @@ int main(int argc, char** argv) {
 				6);
 			save.globals.u32(global::kWorldTick) = get<uint32_t>(before.at("G").bytes.data(),
 				global::kWorldTick - GlobalMemory::kBegin);
+			// Tras lo diario (0x5315C0) y las tareas programadas (0x535450),
+			// advance_time baja 1 el [+0x8B] del mundo si no es 0 (como
+			// advance_game_tick y el oráculo con --resto 5315c0): antes de la
+			// siguiente llamada de primer nivel que no sea 0x535450.
+			if (countdown_pending &&
+				(call.tick != countdown_tick || (call.esp >= countdown_esp && call.function != 0x535450))) {
+				uint8_t& countdown = save.globals.u8(global::kWorld + 0x8B);
+				if (countdown > 0) {
+					--countdown;
+				}
+				countdown_pending = false;
+			}
 		} else {
 			build_save(before, save);
+			save.expeditions = expeditions;
 		}
 		save.queued_operations.clear();
 		const std::optional<uint32_t> ours = fn->second(save, call);
+		if (continuous && call.function == 0x5315C0) {
+			countdown_pending = true;
+			countdown_tick = call.tick;
+			countdown_esp = call.esp;
+		}
 		char title[128];
 		std::snprintf(title, sizeof(title), "0x%x tick %u ecx %08x arg %08x %08x:", call.function, call.tick, call.ecx,
 			call.args[0], call.args[1]);

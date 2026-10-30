@@ -21,9 +21,12 @@ namespace p3::data {
 // real; aquí, tras cada tick. Las demás operaciones encoladas (las obras de
 // las ciudades) se descartan.
 //
-// No se reproducen todavía los ticks de los 15 objetos del mundo (0x52D7D0),
-// los asedios (0x6349F0, 0x633A90), las tareas programadas (0x535450) ni lo
-// que hace el juego cada día y cada semana (0x5315C0, 0x54DE90).
+// Además, al empezar el día, lo diario (0x5315C0) y las tareas programadas
+// (0x535450); en los ticks 8·i + 5 el objeto i de los 15 del mundo
+// (0x52D7D0); tras el tick de la ciudad i en los 8·i + 7, su asedio
+// (0x6349F0), y al final la cola de eventos (0x4D85C0) y el asedio de cada
+// ciudad (0x633A90) (ver town_tick/internal.hpp). No se reproducen las
+// estadísticas de cada día (0x54DE90).
 
 // La ciudad (índice) que hace su tick en este tick del juego, o -1.
 int town_for_tick(const SaveGame& save, uint32_t tick);

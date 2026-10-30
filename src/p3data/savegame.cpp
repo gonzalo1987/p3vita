@@ -1,10 +1,13 @@
 #include "p3data/savegame.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
+#include <map>
 
 #include "p3data/lz.hpp"
 #include "p3data/thresholds.hpp"
+#include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
 namespace p3::data {
@@ -463,15 +466,54 @@ bool parse_town(Reader& r, int month, SavedTown& town, GlobalMemory& globals, st
 	return r.ok() || fail(error, kTruncated + where);
 }
 
-// Objeto opcional de cada ciudad (0x627AD0, 0x650 bytes en memoria; las
-// partidas de asedio lo llevan). No se usa: solo se salta.
-void skip_town_extra(Reader& r) {
-	r.skip(5 * 4 + 7 * 2 + 5 + 5 * 8);
-	const uint8_t count = r.u8();
-	const uint8_t first = r.u8();
-	if (first != 0xFF && first < count) {
-		r.skip(size_t(count - first) * 8);
+// Objeto de asedio de la ciudad `town` (0x633730, versión 0x82). 0x6339C0
+// deja a 0 lo que no se lee. Si lleva ejército, este (0x627880 y 0x627AD0)
+// queda como lo deja el juego tras leerlo (tick::load_siege_army).
+void parse_siege(Reader& r, SaveGame& out, size_t town) {
+	SiegeMemory& m = out.sieges[town];
+	SiegeExtras& extras = out.siege_extras[town];
+	for (Chunk c : {Chunk{0x0, 4}, {0x4, 1}, {0x1018, 2}, {0x101A, 1}, {0x101B, 1}}) {
+		r.to(m, c.offset, c.size);
 	}
+	for (size_t k = 0; k < 4; ++k) {
+		r.to(m, 0x1010 + k, 1);
+		r.to(m, 0x1014 + k, 1);
+	}
+	extras.list_101c.resize(r.u8());
+	for (GameMemory<8>& node : extras.list_101c) {
+		r.to(node, 0, 8);
+	}
+	extras.list_1020.resize(r.u8());
+	for (GameMemory<0x10>& node : extras.list_1020) {
+		r.to(node, 0, 0x10);
+	}
+	m.u32(0x101C) = extras.list_101c.empty() ? 0 : 1;
+	m.u32(0x1020) = extras.list_1020.empty() ? 0 : 1;
+	if (r.u8() == 0) {
+		return;
+	}
+	// 0x627880 y 0x627F70: todo a 0 salvo [+0x6F] = 0xFF; [+0x5D3] la ciudad.
+	SiegeArmyMemory& a = extras.army.emplace();
+	a.u8(0x6F) = 0xFF;
+	a.u8(0x5D3) = m.u8(0x4);
+	m.u32(0x8) = 1;
+	// 0x627AD0, versión 0x82.
+	for (Chunk c : {Chunk{0x4, 4}, {0x0, 4}, {0x57C, 4}, {0x580, 4}, {0x584, 4}, {0x42, 2}, {0x66, 2}, {0x3C, 2},
+			 {0x68, 2}, {0x3A, 2}, {0x6A, 2}, {0x44, 2}, {0x78, 1}, {0x6D, 1}, {0x5D4, 1}, {0x61C, 1}, {0x62C, 1}}) {
+		r.to(a, c.offset, c.size);
+	}
+	for (size_t k = 0; k < 5; ++k) {
+		r.to(a, 0x21C + 4 * k, 4);
+		r.to(a, 0x230 + 4 * k, 4);
+	}
+	r.to(a, 0x6E, 1);
+	r.to(a, 0x6F, 1);
+	if (a.u8(0x6F) != 0xFF) {
+		for (uint32_t b = a.u8(0x6F); b < a.u8(0x6E); ++b) {
+			r.to(a, 0x254 + 8 * b, 8);
+		}
+	}
+	tick::load_siege_army(out, int(town));
 }
 
 void parse_office(Reader& r, SavedOffice& office) {
@@ -661,13 +703,18 @@ bool parse_world_tail(Reader& r, size_t town_count, uint16_t record_count, uint1
 		v = r.u8();
 	}
 	r.skip(4);
-	for (size_t i = 0; i < town_count; ++i) {  // 0x633730
-		r.skip(4 + 1 + 2 + 1 + 1 + 4 * 2);
-		r.skip(size_t(r.u8()) * 8);
-		r.skip(size_t(r.u8()) * 16);
-		if (r.u8() != 0) {
-			skip_town_extra(r);
-		}
+	// Los objetos de asedio de cada ciudad (*0x6DF270).
+	out.sieges.assign(town_count, SiegeMemory());
+	out.siege_extras.assign(town_count, SiegeExtras());
+	for (size_t i = 0; i < town_count; ++i) {
+		// 0x6334B0: [+0x4] y [+0x1010..+0x1013] a 0xFF, [+0x1018] = 0x3FFF,
+		// [+0x101A] = 2; el lector del mundo pone en [+0x4] la ciudad.
+		SiegeMemory& m = out.sieges[i];
+		std::memset(&m.u8(0x1010), 0xFF, 4);
+		m.u16(0x1018) = 0x3FFF;
+		m.u8(0x101A) = 2;
+		m.u8(0x4) = uint8_t(i);
+		parse_siege(r, out, i);
 	}
 	out.world_records.resize(record_count);  // 0x4D32F0
 	for (GameMemory<0x14>& record : out.world_records) {
@@ -744,6 +791,13 @@ bool parse_ships(Reader& r, SaveGame& out, std::string* error) {
 	out.convoys.resize(header[10]);
 	for (GameMemory<0x3C>& convoy : out.convoys) {
 		r.to(convoy, 0, 0x3A);
+	}
+	// Los 16 huecos de 12 bytes del objeto de los barcos en [+0x20]
+	// (0x6DD7C0: u16 barco, s16 x [+0x4], s16 y [+0x6], u16 [+0x8]): el lector
+	// (0x5044F5) los copia tal cual y pone a 0 el u16 [+0xA] de cada uno.
+	r.to(out.globals.memory, global::kShips + 0x20 - GlobalMemory::kBegin, 0xC0);
+	for (uint32_t k = 0; k < 16; ++k) {
+		out.globals.u16(global::kShips + 0x2A + 12 * k) = 0;
 	}
 	return r.ok() || fail(error, std::string(kTruncated) + " (barcos)");
 }
@@ -934,7 +988,147 @@ bool read_savegame_data(const CprArchive& archive, const std::string& path, std:
 
 bool load_savegame(const CprArchive& archive, const std::string& path, SaveGame& out, std::string* error) {
 	std::vector<uint8_t> data;
-	return read_savegame_data(archive, path, data, error) && parse_savegame(data.data(), data.size(), out, error);
+	if (!read_savegame_data(archive, path, data, error) || !parse_savegame(data.data(), data.size(), out, error)) {
+		return false;
+	}
+	load_game_scripts(archive, out);
+	return true;
+}
+
+namespace {
+
+// Un .ini de los datos del juego: sección (en minúsculas) → clave (en
+// minúsculas) → texto.
+using IniFile = std::map<std::string, std::map<std::string, std::string>>;
+
+std::string lower(std::string s) {
+	for (char& c : s) {
+		if (c >= 'A' && c <= 'Z') {
+			c = char(c - 'A' + 'a');
+		}
+	}
+	return s;
+}
+
+std::string trim(const std::string& s) {
+	size_t a = 0;
+	size_t b = s.size();
+	while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\r')) {
+		++a;
+	}
+	while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t' || s[b - 1] == '\r')) {
+		--b;
+	}
+	return s.substr(a, b - a);
+}
+
+bool read_ini(const CprArchive& archive, const char* path, IniFile& out) {
+	const CprEntry* entry = archive.find(path);
+	std::vector<uint8_t> data;
+	if (!entry || !archive.read(*entry, data)) {
+		return false;
+	}
+	const std::string text(data.begin(), data.end());
+	std::map<std::string, std::string>* section = nullptr;
+	for (size_t pos = 0; pos < text.size();) {
+		size_t end = text.find('\n', pos);
+		if (end == std::string::npos) {
+			end = text.size();
+		}
+		const std::string line = trim(text.substr(pos, end - pos));
+		pos = end + 1;
+		if (!line.empty() && line[0] == '[') {
+			section = &out[lower(line.substr(1, line.find(']') - 1))];
+		} else if (section && line.find('=') != std::string::npos) {
+			const size_t equals = line.find('=');
+			const std::string key = lower(trim(line.substr(0, equals)));
+			if (!section->count(key)) {
+				(*section)[key] = trim(line.substr(equals + 1));
+			}
+		}
+	}
+	return true;
+}
+
+// Como 0x4BE0B0: la clave leída con sscanf("%i"), o `fallback`.
+int32_t ini_int(const IniFile& ini, const std::string& section, const std::string& key, int32_t fallback) {
+	auto s = ini.find(lower(section));
+	if (s == ini.end()) {
+		return fallback;
+	}
+	auto k = s->second.find(lower(key));
+	if (k == s->second.end()) {
+		return fallback;
+	}
+	const char* begin = k->second.c_str();
+	char* end = nullptr;
+	const long value = std::strtol(begin, &end, 0);
+	return end == begin ? fallback : int32_t(value);
+}
+
+const std::string* ini_text(const IniFile& ini, const std::string& section, const std::string& key) {
+	auto s = ini.find(lower(section));
+	if (s == ini.end()) {
+		return nullptr;
+	}
+	auto k = s->second.find(lower(key));
+	return k == s->second.end() ? nullptr : &k->second;
+}
+
+}  // namespace
+
+void load_game_scripts(const CprArchive& archive, SaveGame& save) {
+	GlobalMemory& globals = save.globals;
+	// 0x5121C0: los números de nombres de cada lista.
+	IniFile names;
+	for (const char* path : {"scripts/Namen_eng.ini", "scripts/Namen_spa.ini", "scripts/Namen.ini"}) {
+		if (read_ini(archive, path, names)) {
+			break;
+		}
+	}
+	const std::string people = "PERSONENNAMEN";
+	const uint16_t families = uint16_t(ini_int(names, people, "Familiennamen", 0x50));
+	globals.u16(0x6DDB70) = uint16_t(ini_int(names, people, "Maennernamen", 0x50));
+	globals.u16(0x6DDB72) = uint16_t(ini_int(names, people, "Frauennamen", 0x50));
+	globals.u16(0x6DDB74) = families;
+	globals.u16(0x6DDB76) = uint16_t(families + ini_int(names, people, "Piratennamen", 6));
+	globals.u16(0x6DDB78) = uint16_t(ini_int(names, people, "Schiffsnamen", 0x12C));
+	globals.u16(0x6DDB7A) = globals.u16(0x6DDB78);
+	// 0x51E440: la tabla de las ciudades.
+	IniFile towns;
+	read_ini(archive, "scripts/StadtDaten.ini", towns);
+	static const char* const kInts[10] = {"StadtSymbolXPos", "StadtSymbolYPos", "NamenXPos", "NamenYPos",
+		"EreignisSymbolXPos", "EreignisSymbolYPos", "SchiffAufLandXPos", "SchiffAufLandYPos", "AnfahrtXPos",
+		"AnfahrtYPos"};
+	for (uint32_t i = 0; i < 40; ++i) {
+		const uint32_t t = 0x6DDB90 + 0x34 * i;
+		const std::string section = "Stadt" + std::to_string(i);
+		for (uint32_t k = 0; k < 10; ++k) {
+			globals.s32(t + 4 * k) = ini_int(towns, section, kInts[k], 0);
+		}
+		globals.u16(t + 0x2C) = uint16_t(ini_int(towns, section, "SituationDerStadtAmFluss", 0));
+		globals.u8(t + 0x2E) = uint8_t(ini_int(towns, section, "LandwegNach", 0xFF));
+		globals.u8(t + 0x2F) = ini_int(towns, section, "AmFluss", 0) == 1;
+		globals.u8(t + 0x30) = uint8_t(ini_int(towns, section, "Region", 0));
+		globals.u8(t + 0x31) = uint8_t(ini_int(towns, section, "AusrichtungDesMeeres", 0));
+		if (const std::string* align = ini_text(towns, section, "NameLinksOderRechtsBuendig"); align && !align->empty()) {
+			globals.u8(t + 0x33) = uint8_t((*align)[0]);
+		}
+		globals.u8(t + 0x32) = uint8_t(ini_int(towns, section, "LautstaerkeDerMusik", 0x2D));
+	}
+	// 0x5346A0: los puntos de las expediciones (u16 x, u16 y), si aún no están.
+	if (const CprEntry* entry = archive.find("scripts/Expeditionen.dat"); entry && save.expeditions.empty()) {
+		std::vector<uint8_t> data;
+		if (archive.read(*entry, data)) {
+			const size_t count = (data.size() >> 2) & 0xFFFF;
+			save.expeditions.resize(count);
+			for (size_t i = 0; i < count; ++i) {
+				save.expeditions[i] = {uint16_t(data[4 * i] | data[4 * i + 1] << 8),
+					uint16_t(data[4 * i + 2] | data[4 * i + 3] << 8)};
+			}
+			globals.u32(0x6DF2E4) = uint32_t(count);
+		}
+	}
 }
 
 NameLists load_name_lists(const CprArchive& archive) {

@@ -25,6 +25,10 @@
 //                     decisiones de los de la IA (0x518B80)
 //   ship_trade.cpp    lo que compran y venden los barcos de la IA
 //   merchants.cpp     el tick de cada comerciante: 0x4F7BB0
+//   daily.cpp         lo diario (0x5315C0), las tareas programadas (0x535450)
+//                     y los 15 objetos del mundo (0x52D7D0)
+//   sieges.cpp        los asedios de cada ciudad: 0x6349F0, 0x633A90
+//   events.cpp        la cola de eventos: 0x4D85C0
 // Los convoyes (src/p3data/convoys*.cpp) son de Sailing.
 // shared.cpp tiene las funciones pequeñas que usan varios.
 
@@ -157,6 +161,41 @@ void fn_4f8840(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32
 // merchants.cpp: el tick de un comerciante (0x4F7BB0), que advance_time hace
 // en los ticks con t & 7 == 1 (comerciante t >> 3) y t & 7 == 6 ((t + 0x100) >> 3).
 void fn_4f7bb0(SaveGame& save, int merchant);
+
+// El resto de advance_time (0x530E80), en su orden dentro del tick:
+// daily.cpp: al empezar el día, tras la fecha, lo diario (0x5315C0; `weekly`
+// si el tick es múltiplo de 0x700) y las tareas programadas (0x535450, sobre
+// el [+0xE8] del mundo); en los ticks con t & 7 == 5, el objeto t >> 3 (< 15)
+// de los 15 del mundo ([+0xB10], 0x52D7D0).
+void fn_5315c0(SaveGame& save, bool weekly);
+void fn_535450(SaveGame& save, uint32_t tick);
+void fn_52d7d0(SaveGame& save, int object);
+// sieges.cpp: en los ticks con t & 7 == 7, tras el tick de la ciudad t >> 3,
+// su asedio (0x6349F0); al final de cada tick, el de cada ciudad (0x633A90).
+// Sobre SaveGame::sieges[ciudad].
+void fn_6349f0(SaveGame& save, int town);
+void fn_633a90(SaveGame& save, int town);
+// sieges.cpp: lo que hace el lector del ejército sitiador (0x627AD0, la
+// llama savegame.cpp) tras leer sus campos: las puertas de la muralla
+// ([+0x244..+0x24C]), su posición (0x632780), sus objetivos (0x62B2B0,
+// 0x62E810) y los indicadores [+0x78], [+0x79] y [+0x578].
+void load_siege_army(SaveGame& save, int town);
+// events.cpp: tras los barcos, la cola de eventos (0x4D85C0, sobre el objeto
+// 0x6DD73C, con el tick).
+void fn_4d85c0(SaveGame& save, uint32_t tick);
+// events_*.cpp: los manejadores de los demás tipos de la cola de eventos,
+// por grupos. Cada uno devuelve qué hace el despachador (0x4D85C0) con el
+// evento `event` (la cabeza de la cola) de tipo `type`: -1 si el tipo no es
+// del grupo, 0 quitarlo (vuelve a la lista de libres) y 1 llevarlo a su sitio
+// por su tick, ya cambiado (0x4D8DD0).
+int events_big(SaveGame& save, uint16_t event, uint16_t type);  // 0x2c, 0x5, 0x16
+int events_towns(SaveGame& save, uint16_t event, uint16_t type);  // 0x3, 0x1, 0x2a, 0x2b
+int events_mayor(SaveGame& save, uint16_t event, uint16_t type);  // 0x2, 0xa, 0x36, 0x20, 0x21
+int events_rare(SaveGame& save, uint16_t event, uint16_t type);  // 0xe, 0x12, 0x1c, 0x1e, 0x1f, 0x2e, 0x30, 0x32, 0x35
+// La navegación que usa la cola de eventos (agua en un punto del mapa,
+// 0x4474D0, para las tormentas). La pone quien la atiende; sin ella, no hay agua.
+void set_event_navigation(const NavData* nav);
+const NavData* event_navigation();
 
 // ship_ai.cpp: los manejadores de 0x506720 para un barco de la lista de
 // barcos en puerto en los estados 0 (0x5067D0), 4 (0x506A19) y 5 (0x506B6A).
