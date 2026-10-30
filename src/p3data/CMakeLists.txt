@@ -4,6 +4,7 @@ add_library(p3data STATIC
 	font.cpp
 	image.cpp
 	lz.cpp
+	navigation.cpp
 	prices.cpp
 	savegame.cpp
 	seamap.cpp

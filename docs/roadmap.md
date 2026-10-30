@@ -58,7 +58,8 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [ ] Estadísticas de comercio del comerciante y comercio con el kontor
 - [ ] Ciudades: población, producción y consumo
 - [x] Mapa del mar con las ciudades y los barcos de la partida, con su rumbo ([formats/navigation.md](formats/navigation.md))
-- [ ] Rutas entre ciudades (0x445010) y movimiento de los barcos tick a tick (0x516cc0, ya leído)
+- [x] Rutas entre ciudades como las calcula el juego (6633 rutas idénticas en las 12 partidas)
+- [ ] Movimiento de los barcos tick a tick (0x516cc0, ya leído), llegada y orden de zarpar
 - [ ] Paso del tiempo y ticks de las ciudades
 - [ ] Tests que comparen con el comportamiento documentado del original
 

@@ -14,7 +14,7 @@ constexpr char kSeaMapImage[] = "images/Vollansichtskarte.bmp";  // 2400 × 1800
 constexpr char kTownSymbols[] = "images/p_global_stadt01.tga";  // 3 × 3 símbolos de 26 × 26 (TEX30021)
 constexpr int kTownSymbolSize = 26;
 // Barcos vistos desde arriba: 16 rumbos de 52 × 56 en una rejilla de 4 × 4,
-// en el orden del byte de rumbo del barco (0 oeste, 4 norte, 8 este, 12 sur).
+// en el orden del byte de rumbo del barco (1 oeste, 5 norte, 9 este, 13 sur).
 constexpr const char* kShipSprites[4] = {"images/Schiffe/page_mschnigge01.tga", "images/Schiffe/page_mkraier01.tga",
 	"images/Schiffe/page_mkogge01.tga", "images/Schiffe/page_mholk01.tga"};
 constexpr int kShipSpriteWidth = 52;

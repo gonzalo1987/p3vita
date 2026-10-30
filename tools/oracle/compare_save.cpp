@@ -1,17 +1,22 @@
-// Compara la lectura de comerciantes, oficinas y barcos de src/p3data y el
-// comercio de src/p3data/trade.cpp con lo que obtiene el propio juego
-// (save_oracle.py): todos los campos deben coincidir, y el precio medio de la
-// carga, bit a bit.
+// Compara la lectura de comerciantes, oficinas y barcos de src/p3data, el
+// comercio de src/p3data/trade.cpp y, si se le da el archivo CPR, las rutas
+// entre ciudades de src/p3data/navigation.cpp con lo que obtiene el propio
+// juego (save_oracle.py): todos los campos deben coincidir, y el precio medio
+// de la carga, bit a bit.
 
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <type_traits>
 #include <vector>
 
+#include "p3data/cpr.hpp"
+#include "p3data/navigation.hpp"
 #include "p3data/savegame.hpp"
+#include "p3data/seamap.hpp"
 #include "p3data/trade.hpp"
 
 using namespace p3::data;
@@ -72,9 +77,21 @@ private:
 }  // namespace
 
 int main(int argc, char** argv) {
-	if (argc != 3) {
-		std::fprintf(stderr, "uso: compare_save <partida.raw> <oráculo.csv>\n");
+	if (argc != 3 && argc != 4) {
+		std::fprintf(stderr, "uso: compare_save <partida.raw> <oráculo.csv> [archivo.cpr para las rutas]\n");
 		return 2;
+	}
+	std::unique_ptr<NavData> nav;
+	std::vector<SeaMapTown> map_towns;
+	if (argc == 4) {
+		std::string error;
+		auto archive = CprArchive::open(argv[3], &error);
+		nav = archive ? NavData::load(*archive, &error) : nullptr;
+		if (!nav) {
+			std::fprintf(stderr, "%s\n", error.c_str());
+			return 1;
+		}
+		map_towns = load_sea_map_towns(*archive);
 	}
 	std::ifstream raw(argv[1], std::ios::binary);
 	const std::vector<uint8_t> data((std::istreambuf_iterator<char>(raw)), std::istreambuf_iterator<char>());
@@ -91,6 +108,7 @@ int main(int argc, char** argv) {
 	}
 
 	int records = 0;
+	int routes = 0;
 	int trades = 0;
 	int wrong = 0;
 	std::string line;
@@ -163,6 +181,29 @@ int main(int argc, char** argv) {
 				check.field("nombre", s.name, f[66]);
 			}
 			++records;
+		} else if (kind == "ruta") {
+			if (!nav) {
+				continue;
+			}
+			std::vector<std::string> f;
+			for (size_t pos = 0;;) {
+				const size_t comma = line.find(',', pos);
+				f.push_back(line.substr(pos, comma - pos));
+				if (comma == std::string::npos) {
+					break;
+				}
+				pos = comma + 1;
+			}
+			const SeaMapTown& from = map_towns.at(size_t(save.towns.at(std::stoul(f[1])).town_id));
+			const SeaMapTown& to = map_towns.at(size_t(save.towns.at(std::stoul(f[2])).town_id));
+			const std::vector<MapPoint> ours = nav->route({int16_t(from.approach_x), int16_t(from.approach_y)},
+				{int16_t(to.approach_x), int16_t(to.approach_y)});
+			std::string mine;
+			for (const MapPoint& p : ours) {
+				mine += (mine.empty() ? "" : ",") + std::to_string(p.x) + "," + std::to_string(p.y);
+			}
+			check.field("puntos", mine, line.substr(line.find(',', line.find(',', 5) + 1) + 1));
+			++routes;
 		} else if (kind == "dinero") {
 			const auto f = split(line, 3);
 			save.merchants.at(std::stoul(f[1])).money = std::stoi(f[2]);
@@ -191,6 +232,6 @@ int main(int argc, char** argv) {
 		}
 		wrong += !check.ok();
 	}
-	std::printf("registros: %d, operaciones: %d, con diferencias: %d\n", records, trades, wrong);
+	std::printf("registros: %d, rutas: %d, operaciones: %d, con diferencias: %d\n", records, routes, trades, wrong);
 	return wrong == 0 ? 0 : 1;
 }

@@ -5,10 +5,12 @@ Ingeniería inversa de `Patrician3.exe` (GOG 1.1). Marcas como en
 **[datos]** comprobado con los ficheros del juego, **[oráculo]** comparado con
 el propio código del juego en el emulador.
 
-> Implementación en p3vita: `src/p3data/seamap.cpp` (posiciones del mapa) y la
-> vista del mapa del mar del visor (`src/app/main.cpp`); `tools/p3map` dibuja
-> el mapa de una partida en un PNG. El movimiento de los barcos y las rutas
-> (§4–§5) aún no están implementados.
+> Implementación en p3vita: `src/p3data/seamap.cpp` (posiciones del mapa),
+> `src/p3data/navigation.cpp` (rutas, §5) y la vista del mapa del mar del
+> visor (`src/app/main.cpp`); `tools/p3map` dibuja el mapa de una partida en
+> un PNG. Las rutas entre ciudades coinciden con las del juego en las 12
+> partidas v0x82 de `missav/` (6633 rutas, ver [../oracle.md](../oracle.md)).
+> El movimiento de los barcos (§4) aún no está implementado.
 
 ## 1. Coordenadas
 
@@ -45,7 +47,8 @@ barcos caen en su sitio en las 24 ciudades de `1.pat` **[datos]**.
 - Sprites: `images/Schiffe/page_m{schnigge,kraier,kogge,holk}01.tga`
   (TEX30007–30004), 16 fotogramas de 52 × 56 en una rejilla de 4 × 4.
 - El fotograma es el **rumbo** del barco, el byte [+0x1] (offset 7 del barco
-  en la partida): 0 oeste, 4 norte, 8 este, 12 sur, en sentido horario
+  en la partida): 1 oeste, 5 norte, 9 este, 13 sur, en sentido horario; en la
+  hoja, cada fila de 4 va de un rumbo cardinal menos uno al siguiente
   **[código, 0x517410 + datos]**.
 - El mapa del juego solo dibuja los barcos con estado 0x0F (navegando) y 0x12
   (piratas) (P3Modding, `patches/scrollmap-render-all-ships.md`).
@@ -86,30 +89,77 @@ posición, `pasos = 1 + trunc(128 · √(dx² + dy²) / velocidad)` (en double c
 constante −128.0 de 0x673678) y desplazamiento = `(d << 16 ± 0x8000) / pasos`
 (+0x8000 si d > 0, −0x7FFF si d < 0; 0 si d = 0). El rumbo [+0x1] sale del
 cuadrante (bases 1, 5, 9, 13) más 0–4 según la razón entre |dx| y |dy|
-(umbrales 0x3244/65536 ≈ tan 11° y 0x96CC/65536 ≈ tan 30°).
+(umbrales 0x3244/65536 ≈ tan 11° y 0x96CC/65536 ≈ tan 30°): con `c` y `e` las
+componentes según el cuadrante (dx > 0 y dy > 0: base 9, c = dx, e = dy;
+dx > 0 y dy ≤ 0: base 5, c = |dy|, e = dx; dx ≤ 0 y dy > 0: base 13, c = dy,
+e = |dx|; si no, base 1, c = |dx|, e = |dy|), si c > e suma 2 si c · 0x96CC < e ≪ 16,
+1 si c · 0x3244 < e ≪ 16 y 0 si no; si c ≤ e, 2, 3 o 4 con los papeles cambiados.
 
-## 5. Rutas y objeto de navegación (pendiente)
+Devuelve 0 cuando el barco llega (o se hunde) y 1 mientras navega; en el
+primer caso el llamador lo atraca (0x506d8e) o lo hunde (estado 0x11).
+
+## 5. Rutas **[código + oráculo]**
 
 Objeto global `*0x6CBDC8` (0x2C bytes, constructor 0x444ba0). 0x444d30 lee
 los ficheros de `scripts/scrollmaps.ini` (`[Navmap0]`):
 
 | Campo | Contenido | Fichero |
 |-|-|-|
-| +0x18, +0x1A, +0x14 | ancho, alto y rejilla tierra/agua (u8) | `nav_matrix.dat` |
-| +0x1C, +0x0C | nº de puntos (350) y puntos (u16 x, u16 y) | `nav_vec.dat` |
-| +0x04 | nº × nº celdas (u32 distancia, u16 siguiente punto, en huecos de 8 bytes) | `matrix_int.dat` |
-| +0x10, +0x1E | matriz de rutas entre ciudades (n × n), la crea 0x4482c0 al cargar | |
+| +0x18, +0x1A, +0x14 | ancho, alto y rejilla tierra/agua (u8, 0 = agua) | `nav_matrix.dat` |
+| +0x1C, +0x0C | nº de puntos (350) y puntos (s16 x, s16 y, en celdas) | `nav_vec.dat` |
+| +0x04 | nº × nº celdas: u32 distancia (**16.16**) y s16 siguiente punto, en huecos de 8 bytes | `matrix_int.dat` |
+| +0x10, +0x1E | rutas entre las ciudades de la partida (n × n), las crea 0x4482c0 al cargar | |
+| +0x20, +0x24 | un precálculo por ciudad sobre toda la rejilla (0x448780), que las rutas no usan | |
 
 Los formatos de los tres ficheros los documenta P3Modding
 (`file-formats/navigation-matrix.md`, `navigation-vector.md`,
-`navpoint-matrix.md`).
+`navpoint-matrix.md`); la distancia de `matrix_int.dat` va en 16.16.
 
-La ruta de un barco ([+0x24] → {puntos, número}) la construye 0x445010
-(unas 1000 instrucciones; usa 0x446d50, 0x448450, 0x4445a0, 0x444800 y
-0x446f20, que parecen buscar el punto de navegación más cercano, recorrer la
-matriz y comprobar líneas sobre la rejilla). **Al cargar una partida, el juego
-recalcula la ruta de cada barco que navega** salvo que esté marcada como
-guardada ([+0x36]), así que hace falta reproducirla para mover los barcos de
-la partida. Plan: en el oráculo, rellenar el objeto de navegación con los
-ficheros, dejar de saltar 0x4482c0 y 0x445010, volcar las rutas resultantes y
-compararlas con la versión en C++; después, ejecutar 0x516cc0 tick a tick.
+Al cargar una partida, 0x4482c0 calcula con 0x445d50 la ruta entre los puntos
+de llegada de cada par de ciudades y las guarda en la matriz. Un barco que
+navega entre dos ciudades no tiene ruta propia: al cargarlo, 0x445010 ve que
+los dos extremos son ciudades (0x446d50) y le da el puntero de la matriz, con
+el primer punto cambiado por el de salida; el campo [+0x36] indica si la ruta
+es suya (solo entonces se guarda y se libera).
+
+0x445d50(inicio, fin), con puntos en píxeles:
+
+1. Pasa los dos puntos a celdas: `celda = ((píxel − 0x44) · 1000 + 1768) / 3536`
+   (al revés, `píxel = (celda · 3536 + 500) / 1000 + 0x44`, divisiones que
+   truncan). Si una celda es tierra, 0x448450 busca la de agua más cercana en
+   anillos cuadrados de radio 1 a 50 (de cada anillo, las columnas de los
+   extremos enteras y del resto solo la fila de arriba y la de abajo; gana la
+   de menor dx² + dy² y, a igualdad, la primera; para en cuanto ese mínimo no
+   supera el cuadrado del radio siguiente).
+2. Si desde una celda se ve la otra (0x4445a0), la ruta son los dos puntos.
+3. Si no, 0x444800 hace dos listas de los puntos de navegación visibles desde
+   cada celda, con su distancia `trunc(√((dx² + dy²) · 2³²) + 0,5)` (16.16, como
+   la matriz), insertando cada uno delante del primero que tenga menor
+   distancia. Elige el par que minimiza `distancia al inicio + matriz +
+   distancia al fin`; a igualdad, el de menor tramo de matriz y, si no, el
+   primero.
+4. La ruta: el punto de inicio, después recorre la matriz («siguiente punto»)
+   desde el punto elegido para el inicio hasta el del fin y, en cada punto de
+   navegación B (con A el anterior y C el siguiente, contando inicio y fin),
+   llama a 0x446f20; al final, el punto de fin.
+5. 0x446f20 recorta la esquina en B: con los puntos medios M1 de A–B y M2 de
+   B–C (en float), el giro es `180 − acos(v1x/|v1|) − acos(v2x/|v2|)` en grados
+   (v1 = B − M1, v2 = M2 − B). Si |giro| < 0,5 añade A y B (A solo si el
+   parámetro es 0; la ruta siempre lo pasa a 0). Si no, añade dos puntos a
+   distancia `r = mín(10, |giro|/180 · mín(|v1|, |v2|))` de B por cada tramo
+   (el segundo solo si es distinto del primero), con la pendiente de cada
+   tramo y redondeo `trunc(x + 0,5)`.
+6. Quita los puntos repetidos seguidos; tras quitar uno no compara el
+   siguiente.
+
+Visión directa (0x4445a0), entre celdas, recorriendo desde el segundo punto
+hacia el primero: primero 15 barreras verticales y 13 horizontales fijas
+(tablas 0x66D6E4/0x66D704/0x66D724 y 0x66D6C8/0x66D690/0x66D6AC) que cierran
+estrechos; un segmento las corta si `t = (X − x1)(y2 − y1) + (dx ≫ 1)` cae entre
+`(Y0 − y1) · dx` y `(Y1 − y1) · dx`. Después, Bresenham por las celdas
+intermedias buscando tierra; en una esquina exacta, si la celda intermedia es
+agua, la diagonal no se mira.
+
+Los cálculos de 0x446f20 mezclan floats y doubles con la FPU a 53 bits y
+`acos` (0x63B2C4, con `fpatan`); p3vita los hace en el mismo orden con
+`std::acos`. Con las comparaciones x87, un NaN sigue la rama de la esquina.

@@ -85,6 +85,21 @@ coinciden todos los registros (dificultad del comercio, ciudades con sus 96
 umbrales, comerciantes, oficinas y barcos) y 24 000 compras y ventas: cantidad, precio, dinero,
 existencias, carga, precio medio, bodega ocupada y equipo.
 
+Con `--navdata` (una carpeta con `navdata/` y `scripts/StadtDaten.ini`,
+sacados con `cprtool extract`), el script crea además el objeto de navegación
+del juego, deja que calcule las rutas entre ciudades al cargar y las vuelca;
+`compare_save`, con el archivo CPR como tercer argumento, las compara con
+`src/p3data/navigation.cpp`. Resultado: las 6633 rutas de las 12 partidas,
+idénticas punto a punto. Así se encontraron, por ejemplo, que las distancias
+van en 16.16 y que la visión directa recorre la línea desde el segundo punto.
+
+```sh
+build/tools/cprtool/cprtool extract p2arch0_eng.cpr /tmp/datos navdata
+build/tools/cprtool/cprtool extract p2arch0_eng.cpr /tmp/datos stadtdaten
+python3 tools/oracle/save_oracle.py <ruta>/Patrician3.exe /tmp/1.raw /tmp/1.csv 200 --navdata /tmp/datos
+build/tools/oracle/compare_save /tmp/1.raw /tmp/1.csv p2arch0_eng.cpr
+```
+
 Esta comparación encontró algo que el oráculo de precios no podía ver: el
 juego recalcula los umbrales de precio al cargar cada ciudad y no usa los
 guardados (ver [formats/savegame.md](formats/savegame.md), §4.1). Con los

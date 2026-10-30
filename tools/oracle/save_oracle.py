@@ -13,9 +13,15 @@ new/delete se sustituyen por un montón propio y se saltan dos funciones que no
 leen nada del fichero (la matriz de distancias entre ciudades y el cálculo de
 la ruta de un barco por el mar).
 
-uso: python3 save_oracle.py <Patrician3.exe> <partida.raw> <salida.csv> [operaciones]
+uso: python3 save_oracle.py <Patrician3.exe> <partida.raw> <salida.csv> [operaciones] [--navdata DIR]
 La partida descomprimida se obtiene con `p3save <archivo.cpr> missav/1.pat raw <partida.raw>`.
+
+Con --navdata (una carpeta con navdata/ y scripts/StadtDaten.ini, p. ej.
+`cprtool extract p2arch0_eng.cpr DIR navdata` y `... DIR stadtdaten`), crea el
+objeto de navegación y deja que el juego calcule las rutas entre ciudades al
+cargar (0x4482C0), y las vuelca.
 """
+import os
 import random
 import site
 import struct
@@ -37,6 +43,12 @@ SELL_FROM_SHIP = 0x537340  # operación 0x01
 SET_TRADE_DIFFICULTY = 0x52E1A0  # la llama la carga con el byte +0x10 de los ajustes
 SETTINGS = 0x04  # ajustes de la partida en el fichero
 SKIPPED = {0x4482C0: 0, 0x445010: 8}  # dirección: bytes de argumentos que saca al volver
+# Con navegación solo se salta el precálculo por ciudad sobre toda la rejilla
+# (0x448780): las rutas no lo usan y en el emulador es lentísimo.
+SKIPPED_WITH_NAVIGATION = {0x448780: 4}
+NAVIGATION = 0x6CBDC8  # puntero al objeto de navegación (0x2C bytes, constructor 0x444BA0)
+TOWN_TABLE = 0x6DDB90  # scripts/StadtDaten.ini: 0x34 bytes por ciudad (0x51E440)
+TOWN_FIELDS = {'StadtSymbolXPos': 0x0, 'StadtSymbolYPos': 0x4, 'AnfahrtXPos': 0x20, 'AnfahrtYPos': 0x24}
 WORLD = 0x6DE4A0
 SHIPS = 0x6DD7A0
 SELL_CONTEXT = 0x6DE3D8  # el float en +0x64 es el factor de dificultad del comercio
@@ -54,7 +66,7 @@ HEAP_SIZE = 0x0800_0000
 
 
 class SaveOracle:
-    def __init__(self, exe, save):
+    def __init__(self, exe, save, navdata=None):
         data = open(exe, 'rb').read()
         pe = struct.unpack_from('<I', data, 0x3C)[0]
         sections = struct.unpack_from('<H', data, pe + 6)[0]
@@ -77,8 +89,11 @@ class SaveOracle:
         uc.mem_write(FILE, save)
         self.save = save
         self.heap_top = HEAP
+        self.sizes = {}
+        self.free_blocks = {}
+        self.skipped = SKIPPED_WITH_NAVIGATION if navdata else SKIPPED
         uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._unmapped)
-        for address in (OPERATOR_NEW, MALLOC, OPERATOR_DELETE, FREE, *SKIPPED):
+        for address in (OPERATOR_NEW, MALLOC, OPERATOR_DELETE, FREE, *self.skipped):
             uc.hook_add(UC_HOOK_CODE, self._stub, begin=address, end=address)
         self.write_u32(EXPEDITIONS, self.alloc(0x1000))
         # El mundo no se ha construido: las std::list de sus 15 objetos de 0x2C
@@ -88,6 +103,48 @@ class SaveOracle:
             self.uc.mem_write(node, struct.pack('<II', node, node))
             self.uc.mem_write(WORLD + 0xB10 + i * 0x2C + 0x24, struct.pack('<II', node, 0))
         self.set_difficulty(1)
+        if navdata:
+            self.setup_navigation(navdata)
+
+    def setup_navigation(self, root):
+        """Crea el objeto de navegación como lo deja 0x444D30 al leer navdata/ y
+        carga la tabla de ciudades que el juego lee de StadtDaten.ini al arrancar."""
+        nav = self.alloc(0x2C)
+        self.call(0x444BA0, [], ecx=nav)
+        matrix = open(os.path.join(root, 'navdata', 'nav_matrix.dat'), 'rb').read()
+        width, height = struct.unpack_from('<HH', matrix, 0)
+        grid = self.alloc(width * height)
+        self.uc.mem_write(grid, matrix[4:4 + width * height])
+        vec = open(os.path.join(root, 'navdata', 'nav_vec.dat'), 'rb').read()
+        count = struct.unpack_from('<H', vec, 0)[0]
+        points = self.alloc(count * 4)
+        self.uc.mem_write(points, vec[4:4 + count * 4])
+        cells = open(os.path.join(root, 'navdata', 'matrix_int.dat'), 'rb').read()
+        rows = self.alloc(count * 4)
+        for i in range(count):
+            row = bytearray(count * 8)  # cada celda de 6 bytes va en un hueco de 8
+            for j in range(count):
+                o = (i * count + j) * 6
+                row[j * 8:j * 8 + 6] = cells[o:o + 6]
+            address = self.alloc(count * 8)
+            self.uc.mem_write(address, bytes(row))
+            self.write_u32(rows + i * 4, address)
+        self.write_u32(nav + 0x14, grid)
+        self.uc.mem_write(nav + 0x18, struct.pack('<HH', width, height))
+        self.write_u32(nav + 0xC, points)
+        self.uc.mem_write(nav + 0x1C, struct.pack('<H', count))
+        self.write_u32(nav + 0x4, rows)
+        self.uc.mem_write(nav + 0x28, bytes([1]))
+        self.write_u32(NAVIGATION, nav)
+        town = None
+        for line in open(os.path.join(root, 'scripts', 'StadtDaten.ini'), encoding='latin-1'):
+            line = line.strip()
+            if line.startswith('[Stadt'):
+                town = int(line[6:-1])
+            elif town is not None and '=' in line:
+                key, value = line.split('=', 1)
+                if key in TOWN_FIELDS:
+                    self.uc.mem_write(TOWN_TABLE + town * 0x34 + TOWN_FIELDS[key], struct.pack('<i', int(value)))
 
     def _unmapped(self, uc, access, address, size, value, user_data):
         print(f'acceso fuera de memoria en {address:#x} (eip {uc.reg_read(UC_X86_REG_EIP):#x})', file=sys.stderr)
@@ -99,9 +156,10 @@ class SaveOracle:
     def _stub(self, uc, address, size, user_data):
         if address in (OPERATOR_NEW, MALLOC):
             result, pop = self.alloc(self._arg(0)), 0
-        elif address in SKIPPED:
-            result, pop = 0, SKIPPED[address]
+        elif address in self.skipped:
+            result, pop = 0, self.skipped[address]
         else:
+            self.release(self._arg(0))
             result, pop = 0, 0
         esp = uc.reg_read(UC_X86_REG_ESP)
         uc.reg_write(UC_X86_REG_EAX, result)
@@ -109,12 +167,25 @@ class SaveOracle:
         uc.reg_write(UC_X86_REG_EIP, self.u32(esp))
 
     def alloc(self, n):
-        p = self.heap_top
-        self.heap_top = (p + n + 0x1F) & ~0xF
-        if self.heap_top > HEAP + HEAP_SIZE:
-            raise RuntimeError('montón agotado')
+        # Los bloques liberados se reutilizan por tamaño: el cálculo de rutas
+        # reserva y libera mucho.
+        size = (n + 0x1F) & ~0xF
+        reuse = self.free_blocks.get(size)
+        if reuse:
+            p = reuse.pop()
+        else:
+            p = self.heap_top
+            self.heap_top += size
+            if self.heap_top > HEAP + HEAP_SIZE:
+                raise RuntimeError('montón agotado')
+        self.sizes[p] = size
         self.uc.mem_write(p, b'\0' * n)
         return p
+
+    def release(self, p):
+        size = self.sizes.pop(p, None)
+        if size:
+            self.free_blocks.setdefault(size, []).append(p)
 
     def call(self, address, args, ecx=0):
         uc = self.uc
@@ -127,7 +198,7 @@ class SaveOracle:
         # El runtime de MSVC deja la FPU a 53 bits (0x27F); el emulador arranca con 64.
         uc.reg_write(UC_X86_REG_FPCW, 0x27F)
         try:
-            uc.emu_start(address, SENTINEL, count=500_000_000)
+            uc.emu_start(address, SENTINEL, timeout=1800 * 1000 * 1000)
         except UcError as e:
             raise RuntimeError(f'la emulación falló en {uc.reg_read(UC_X86_REG_EIP):#x}: {e}') from e
         if uc.reg_read(UC_X86_REG_EIP) != SENTINEL:
@@ -225,6 +296,20 @@ def dump_state(o, out):
                   f'{cargo},{prices},{name}\n')
 
 
+def dump_town_routes(o, out):
+    """Rutas entre ciudades que calculó el juego al cargar (matriz +0x10 del
+    objeto de navegación, n × n punteros a {puntos, número})."""
+    nav = o.u32(NAVIGATION)
+    matrix = o.u32(nav + 0x10)
+    towns = o.counts()[0]
+    for i in range(towns):
+        for j in range(towns):
+            route = o.u32(matrix + 4 * (i * towns + j))
+            points, count = o.u32(route), o.u32(route + 4)
+            coords = [v for k in range(count) for v in struct.unpack('<hh', o.uc.mem_read(points + 4 * k, 4))]
+            out.write(f'ruta,{i},{j},{",".join(map(str, coords))}\n')
+
+
 def random_amount(rng, ware):
     unit = 2000 if ware in LOAD_WARES else 200
     return rng.choice([unit, unit * rng.randint(1, 10), unit * rng.randint(10, 200), rng.randint(1, 5 * unit),
@@ -274,12 +359,20 @@ def run_trades(o, count, out, seed=1300):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) not in (4, 5):
+    args = sys.argv[1:]
+    navdata = None
+    if '--navdata' in args:
+        i = args.index('--navdata')
+        navdata = args[i + 1]
+        del args[i:i + 2]
+    if len(args) not in (3, 4):
         print(__doc__)
         sys.exit(2)
-    oracle = SaveOracle(sys.argv[1], open(sys.argv[2], 'rb').read())
+    oracle = SaveOracle(args[0], open(args[1], 'rb').read(), navdata)
     oracle.load()
-    with open(sys.argv[3], 'w', encoding='utf-8') as f:
+    with open(args[2], 'w', encoding='utf-8') as f:
         dump_state(oracle, f)
-        run_trades(oracle, int(sys.argv[4]) if len(sys.argv) == 5 else 2000, f)
+        if navdata:
+            dump_town_routes(oracle, f)
+        run_trades(oracle, int(args[3]) if len(args) == 4 else 2000, f)
     print('estado y operaciones escritos en', sys.argv[3])
