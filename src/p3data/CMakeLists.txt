@@ -21,6 +21,8 @@ add_library(p3data STATIC
 	town_tick/offices.cpp
 	town_tick/population.cpp
 	town_tick/shared.cpp
+	town_tick/ship_ai.cpp
+	town_tick/ship_trade.cpp
 )
 
 target_include_directories(p3data PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)

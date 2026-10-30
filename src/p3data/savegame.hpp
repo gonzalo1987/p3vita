@@ -147,6 +147,8 @@ enum ShipStatus : uint16_t {
 	kShipWaiting = 0x01,  // Esperando en puerto: ciudad bloqueada o barco de un convoy (cuenta [+0x138] atrás).
 	kShipLeaving = 0x02,  // Saliendo del puerto (64 ticks).
 	kShipArriving = 0x03,  // Entrando en el puerto (64 ticks).
+	kShipToShipyard = 0x04,  // Va a la lista de reparación de su ciudad (pasa al 6).
+	kShipFromShipyard = 0x05,  // Sale del astillero (vuelve al 0).
 	kShipSailing = 0x0F,
 	kShipSunk = 0x11,
 	kShipPirate = 0x12,
@@ -156,66 +158,137 @@ enum ShipStatus : uint16_t {
 // matriz del objeto de navegación y las comparten todos los barcos que las siguen.
 using SeaRoute = std::vector<MapPoint>;
 
+using ShipMemory = GameMemory<0x180>;  // struct ship
+
+// Barco: el struct ship del juego tal como queda en memoria al cargar la
+// partida (game_memory.hpp), con accesores para los campos conocidos. La ruta
+// va aparte (`route`); en la memoria, [+0x24] solo dice si la tiene.
 struct SavedShip {
 	static constexpr uint16_t kFreeShipStatus = 0x17;
 
-	uint16_t status = kFreeShipStatus;  // ShipStatus; ver in_use().
-	uint8_t owner = 0xFF;  // Índice de comerciante.
-	uint8_t type = 0;  // ShipType.
-	uint8_t level = 0;
-	uint8_t heading = 0;  // Rumbo en 16 pasos: 1 oeste, 5 norte, 9 este, 13 sur (0x517410).
-	uint16_t next_of_owner = kNoIndex;
-	uint16_t next_in_list = kNoIndex;  // [+0x6] Siguiente en la lista de barcos en puerto o en el mar.
-	uint16_t convoy = kNoIndex;  // [+0x8]
-	int32_t capacity = 0;  // En unidades internas, como las mercancías.
-	int32_t health = 0;
-	int32_t max_health = 0;
-	int32_t x = 0;  // Posición en el mapa del mar, en 16.16.
-	int32_t y = 0;
-	uint8_t origin = 0xFF;  // Ciudad de la que salió.
-	uint8_t destination = 0xFF;  // 0xFF si va a un punto del mar.
-	uint8_t town = 0xFF;  // Ciudad en la que está atracado; 0xFF en el mar.
-	uint16_t sailors = 0;
-	uint16_t captain = kNoIndex;  // [+0x42]
-
-	// Movimiento (docs/formats/navigation.md §4).
-	int32_t dx = 0;  // [+0x28], [+0x2C] Desplazamiento por tick, en 16.16.
-	int32_t dy = 0;
-	int32_t speed = 0;  // [+0x30] Velocidad que se muestra (0x516CC0).
-	uint16_t route_index = 0;  // [+0x34] Punto de la ruta hacia el que va.
-	uint16_t route_mark = 0;  // [+0x2] Otro índice de la ruta; vuelve a 0 si el barco se aleja de su punto.
-	std::shared_ptr<SeaRoute> route;  // [+0x24] Vacío: sin ruta.
-	bool own_route = false;  // [+0x36] La ruta es suya y no de la matriz.
+	ShipMemory memory;
+	// [+0x24] Vacío: sin ruta. Se cambia con set_route, que deja en la memoria
+	// [+0x24] a 1 o a 0 para el código que pregunta si el barco tiene ruta.
+	std::shared_ptr<SeaRoute> route;
 	// Al leer la partida: navega entre dos ciudades con la ruta de la matriz,
 	// que asigna Sailing al cargar (0x516520 → 0x445010).
 	bool town_route = false;
-	uint16_t target = kNoIndex;  // [+0x3A] Barco al que persigue.
+
+	// Un hueco libre, como lo deja el lector del juego (0x517A17).
+	SavedShip() {
+		status() = kFreeShipStatus;
+		owner() = 0xFF;
+		next_of_owner() = kNoIndex;
+		next_in_list() = kNoIndex;
+		memory.u16(0xA) = kNoIndex;
+		memory.u16(0xC) = kNoIndex;
+	}
+
+	uint16_t& status() { return memory.u16(0x134); }  // ShipStatus; ver in_use().
+	uint16_t status() const { return memory.u16(0x134); }
+	uint8_t& owner() { return memory.u8(0x0); }  // Índice de comerciante.
+	uint8_t owner() const { return memory.u8(0x0); }
+	uint8_t& heading() { return memory.u8(0x1); }  // Rumbo en 16 pasos: 1 oeste, 5 norte, 9 este, 13 sur (0x517410).
+	uint8_t heading() const { return memory.u8(0x1); }
+	// [+0x2] Otro índice de la ruta; vuelve a 0 si el barco se aleja de su punto.
+	uint16_t& route_mark() { return memory.u16(0x2); }
+	uint16_t route_mark() const { return memory.u16(0x2); }
+	uint16_t& next_of_owner() { return memory.u16(0x4); }
+	uint16_t next_of_owner() const { return memory.u16(0x4); }
+	// [+0x6] Siguiente en la lista de barcos en puerto o en el mar (o de huecos libres).
+	uint16_t& next_in_list() { return memory.u16(0x6); }
+	uint16_t next_in_list() const { return memory.u16(0x6); }
+	uint16_t& convoy() { return memory.u16(0x8); }
+	uint16_t convoy() const { return memory.u16(0x8); }
+	uint8_t& type() { return memory.u8(0xE); }  // ShipType.
+	uint8_t type() const { return memory.u8(0xE); }
+	uint8_t& level() { return memory.u8(0xF); }
+	uint8_t level() const { return memory.u8(0xF); }
+	int32_t& capacity() { return memory.s32(0x10); }  // En unidades internas, como las mercancías.
+	int32_t capacity() const { return memory.s32(0x10); }
+	int32_t& max_health() { return memory.s32(0x14); }
+	int32_t max_health() const { return memory.s32(0x14); }
+	int32_t& health() { return memory.s32(0x18); }
+	int32_t health() const { return memory.s32(0x18); }
+	int32_t& x() { return memory.s32(0x1C); }  // Posición en el mapa del mar, en 16.16.
+	int32_t x() const { return memory.s32(0x1C); }
+	int32_t& y() { return memory.s32(0x20); }
+	int32_t y() const { return memory.s32(0x20); }
+	// Movimiento (docs/formats/navigation.md §4).
+	int32_t& dx() { return memory.s32(0x28); }  // [+0x28], [+0x2C] Desplazamiento por tick, en 16.16.
+	int32_t dx() const { return memory.s32(0x28); }
+	int32_t& dy() { return memory.s32(0x2C); }
+	int32_t dy() const { return memory.s32(0x2C); }
+	int32_t& speed() { return memory.s32(0x30); }  // [+0x30] Velocidad que se muestra (0x516CC0).
+	int32_t speed() const { return memory.s32(0x30); }
+	uint16_t& route_index() { return memory.u16(0x34); }  // [+0x34] Punto de la ruta hacia el que va.
+	uint16_t route_index() const { return memory.u16(0x34); }
+	uint8_t& own_route() { return memory.u8(0x36); }  // [+0x36] La ruta es suya y no de la matriz.
+	uint8_t own_route() const { return memory.u8(0x36); }
+	uint8_t& origin() { return memory.u8(0x37); }  // Ciudad de la que salió.
+	uint8_t origin() const { return memory.u8(0x37); }
+	uint8_t& destination() { return memory.u8(0x38); }  // 0xFF si va a un punto del mar.
+	uint8_t destination() const { return memory.u8(0x38); }
+	uint8_t& town() { return memory.u8(0x39); }  // Ciudad en la que está atracado; 0xFF en el mar.
+	uint8_t town() const { return memory.u8(0x39); }
+	uint16_t& target() { return memory.u16(0x3A); }  // [+0x3A] Barco al que persigue.
+	uint16_t target() const { return memory.u16(0x3A); }
 	// [+0x3C] Avisos a la interfaz. El astillero pone 0x100 cada día que
 	// trabaja en el barco, 0x200 si le sube el descanso y 0x20 al terminarlo.
-	uint16_t notices = 0;
-	uint16_t readiness = 0;  // [+0x3E] Baja navegando y se recupera en puerto; sin byte alto positivo no zarpa.
-	uint32_t moved_tick = 0;  // [+0x44] Tick en que zarpó o atracó.
-	uint32_t arrival_tick = 0;  // [+0x48] Llegada prevista.
-	uint32_t built_tick = 0;  // [+0x4C] Tick en que el astillero lo terminó (0x5083B0).
-	uint16_t timer = 0;  // [+0x138] Ticks de la maniobra de puerto.
-	uint8_t orders = 0;  // [+0x136] Bit 0: ruta automática.
-	bool raid = false;  // [+0x15C] Ataque pirata a una ciudad.
-	float load_factor_sum = 0;  // [+0x12C] Suma de la bodega ocupada al zarpar, en tanto por uno.
-	uint16_t voyages = 0;  // [+0x130]
-
-	std::array<int32_t, kWareCount> cargo{};
-	std::array<float, kWareCount> average_price{};  // Lo pagado por unidad interna.
-	std::array<uint8_t, 24> artillery{};  // Tipo de pieza en cada hueco; >= 6 = vacío.
-	uint16_t hand_weapons = 0;
-	uint8_t extra_loads = 0;  // Cargas ocupadas que no son mercancía.
-	std::string name;
+	uint16_t& notices() { return memory.u16(0x3C); }
+	uint16_t notices() const { return memory.u16(0x3C); }
+	// [+0x3E] Baja navegando y se recupera en puerto; sin byte alto positivo no zarpa.
+	uint16_t& readiness() { return memory.u16(0x3E); }
+	uint16_t readiness() const { return memory.u16(0x3E); }
+	uint16_t& sailors() { return memory.u16(0x40); }
+	uint16_t sailors() const { return memory.u16(0x40); }
+	uint16_t& captain() { return memory.u16(0x42); }
+	uint16_t captain() const { return memory.u16(0x42); }
+	uint32_t& moved_tick() { return memory.u32(0x44); }  // [+0x44] Tick en que zarpó o atracó.
+	uint32_t moved_tick() const { return memory.u32(0x44); }
+	uint32_t& arrival_tick() { return memory.u32(0x48); }  // [+0x48] Llegada prevista.
+	uint32_t arrival_tick() const { return memory.u32(0x48); }
+	uint32_t& built_tick() { return memory.u32(0x4C); }  // [+0x4C] Tick en que el astillero lo terminó (0x5083B0).
+	uint32_t built_tick() const { return memory.u32(0x4C); }
+	int32_t& cargo(int ware) { return memory.s32(0x54 + 4 * size_t(ware)); }
+	int32_t cargo(int ware) const { return memory.s32(0x54 + 4 * size_t(ware)); }
+	// Lo pagado por unidad interna.
+	float& average_price(int ware) { return memory.f32(0xB4 + 4 * size_t(ware)); }
+	float average_price(int ware) const { return memory.f32(0xB4 + 4 * size_t(ware)); }
 	// Lo que el juego recalcula al cargar y después de cada compra o venta
 	// (ver recalculate_cargo en trade.hpp).
-	int32_t used = 0;  // Bodega ocupada, redondeada a barriles.
-	int32_t equipment = 0;  // Peso de artillería, armas y marineros de más.
+	int32_t& used() { return memory.s32(0x118); }  // Bodega ocupada, redondeada a barriles.
+	int32_t used() const { return memory.s32(0x118); }
+	int32_t& equipment() { return memory.s32(0x11C); }  // Peso de artillería, armas y marineros de más.
+	int32_t equipment() const { return memory.s32(0x11C); }
+	// [+0x12C] Suma de la bodega ocupada al zarpar, en tanto por uno.
+	float& load_factor_sum() { return memory.f32(0x12C); }
+	float load_factor_sum() const { return memory.f32(0x12C); }
+	uint16_t& voyages() { return memory.u16(0x130); }
+	uint16_t voyages() const { return memory.u16(0x130); }
+	uint8_t& orders() { return memory.u8(0x136); }  // [+0x136] Bit 0: ruta automática.
+	uint8_t orders() const { return memory.u8(0x136); }
+	uint16_t& timer() { return memory.u16(0x138); }  // [+0x138] Ticks de la maniobra de puerto.
+	uint16_t timer() const { return memory.u16(0x138); }
+	// Tipo de pieza en cada uno de los 24 huecos de artillería; >= 6 = vacío.
+	uint8_t& artillery(int slot) { return memory.u8(0x13C + size_t(slot)); }
+	uint8_t artillery(int slot) const { return memory.u8(0x13C + size_t(slot)); }
+	uint16_t& hand_weapons() { return memory.u16(0x154); }
+	uint16_t hand_weapons() const { return memory.u16(0x154); }
+	uint8_t& extra_loads() { return memory.u8(0x156); }  // Cargas ocupadas que no son mercancía.
+	uint8_t extra_loads() const { return memory.u8(0x156); }
+	uint8_t& raid() { return memory.u8(0x15C); }  // [+0x15C] Ataque pirata a una ciudad.
+	uint8_t raid() const { return memory.u8(0x15C); }
+	// Nombre (Latin-1 en [+0x160], 32 bytes), en UTF-8.
+	std::string name() const;
 
-	bool in_use() const { return status < kFreeShipStatus; }
-	bool docked() const { return in_use() && town != 0xFF && status != 0x0F && status != 0x12; }
+	void set_route(std::shared_ptr<SeaRoute> r) {
+		route = std::move(r);
+		memory.u32(0x24) = route ? 1 : 0;
+	}
+
+	bool in_use() const { return status() < kFreeShipStatus; }
+	bool docked() const { return in_use() && town() != 0xFF && status() != 0x0F && status() != 0x12; }
 };
 
 struct SaveGame {
@@ -264,6 +337,20 @@ struct SaveGame {
 	// tick [+0x0], u16 siguiente [+0x4] y u16 tipo [+0x6], enlazados en orden de
 	// tick desde la cabeza u16 [0x6DD744]; u16 [0x6DD748] es su número.
 	std::vector<GameMemory<0x18>> events;
+	// Matriz n × n del mundo (*[0x6DE50C], [+0x6C] de 0x6DE4A0; 0x531B70 la
+	// lee): lo que se tarda de una ciudad a otra, en dieciseisavos de día a la
+	// velocidad de una snaikka (0x516930; 0x516AB0 lo pasa a días).
+	std::vector<uint8_t> town_travel;
+	// Convoyes (*0x6DD7A8, tantos como [0x6DD896]): registros de 0x3C bytes
+	// enlazados por el u16 [+0x8] en la lista de libres ([0x6DD884]) o en la
+	// de los que existen ([0x6DD88C]). Ver ship_ai.cpp.
+	std::vector<GameMemory<0x3C>> convoys;
+	// Objeto 0x6DE588 (0x5351D0): 8 huecos, uno por jugador humano, con su
+	// comerciante en el u8 [0x6DEF88 + i] (0xFF: libre) y un byte por ciudad
+	// (40) en *[0x6DEF90 + 4·i]: 0 en las ciudades en las que tiene un barco
+	// y, en las demás, 1 + el tiempo de viaje (en días) desde la más cercana
+	// con 0, hasta 15 (0x535400). Vacío si el hueco no lo tiene.
+	std::array<std::vector<uint8_t>, 8> player_towns;
 };
 
 // Lee una partida ya descomprimida.

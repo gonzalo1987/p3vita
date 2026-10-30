@@ -508,24 +508,24 @@ void fn_5083b0(SaveGame& save, int town, int32_t work) {
 		return;
 	}
 	SavedShip& ship = save.ships[index];
-	ship.notices |= 0x100;
-	ship.health = add32(ship.health, work);
+	ship.notices() |= 0x100;
+	ship.health() = add32(ship.health(), work);
 	t.s32(0x814) = add32(t.s32(0x814), work);
-	if (ship.max_health > ship.health) {
+	if (ship.max_health() > ship.health()) {
 		return;
 	}
 	const uint32_t tick = save.globals.u32(global::kWorldTick);
-	ship.built_tick = tick > 0x7FFFFFFF ? 0x7FFFFFFF : tick;
-	ship.notices |= 0x20;
-	ship.health = ship.max_health;
-	ship.status = 5;
-	ship.timer = 0;
+	ship.built_tick() = tick > 0x7FFFFFFF ? 0x7FFFFFFF : tick;
+	ship.notices() |= 0x20;
+	ship.health() = ship.max_health();
+	ship.status() = 5;
+	ship.timer() = 0;
 	// 0x4D6530: aviso a los comerciantes (no se traduce).
-	t.u16(0x81C) = ship.next_in_list;
-	ship.next_in_list = save.globals.u16(kDockedHead);
+	t.u16(0x81C) = ship.next_in_list();
+	ship.next_in_list() = save.globals.u16(kDockedHead);
 	save.globals.u16(kDockedHead) = index;
-	if (ship.owner < merchant_count(save)) {
-		MerchantMemory& m = save.merchants[ship.owner].memory;
+	if (ship.owner() < merchant_count(save)) {
+		MerchantMemory& m = save.merchants[ship.owner()].memory;
 		m.u16(0x478) = uint16_t(m.u16(0x478) + 1);  // Barcos construidos.
 		// Si el dueño es un jugador humano: carta (0x548CA0) y, si es el
 		// jugador, la ventana del barco nuevo (0x469380 y 0x469AF0, que puede
@@ -544,39 +544,39 @@ void fn_508aa0(SaveGame& save, int town, int32_t work) {
 	while (*link < ships) {
 		const uint16_t index = *link;
 		SavedShip& ship = save.ships[index];
-		const int32_t health = add32(ship.health, work);
-		const uint16_t readiness = ship.readiness;
-		ship.notices |= 0x100;
-		const uint16_t notices = ship.notices;
-		ship.health = health;
+		const int32_t health = add32(ship.health(), work);
+		const uint16_t readiness = ship.readiness();
+		ship.notices() |= 0x100;
+		const uint16_t notices = ship.notices();
+		ship.health() = health;
 		if (int16_t(readiness) < 0x700) {
-			ship.readiness = uint16_t(readiness + 0x100);
-			ship.notices = notices | 0x200;
+			ship.readiness() = uint16_t(readiness + 0x100);
+			ship.notices() = notices | 0x200;
 		} else {
-			ship.readiness = 0x700;
+			ship.readiness() = 0x700;
 		}
-		if (health >= ship.max_health) {
-			t.s32(0x814) = add32(t.s32(0x814), add32(sub32(ship.max_health, health), work));
-			ship.health = ship.max_health;
-			*link = ship.next_in_list;
+		if (health >= ship.max_health()) {
+			t.s32(0x814) = add32(t.s32(0x814), add32(sub32(ship.max_health(), health), work));
+			ship.health() = ship.max_health();
+			*link = ship.next_in_list();
 			// Si el dueño es un jugador humano y la orden no tiene los bits 0 y
 			// 1: carta (0x548CA0, no se traduce).
-			ship.status = 5;
-			ship.timer = 0;
-			ship.next_in_list = save.globals.u16(kDockedHead);
-			if (ship.orders == 2) {
-				ship.orders = 1;  // Sin comprobar con el oráculo
+			ship.status() = 5;
+			ship.timer() = 0;
+			ship.next_in_list() = save.globals.u16(kDockedHead);
+			if (ship.orders() == 2) {
+				ship.orders() = 1;  // Sin comprobar con el oráculo
 			}
-		} else if (ship.orders == 1) {
+		} else if (ship.orders() == 1) {
 			// Sin comprobar con el oráculo
 			t.s32(0x814) = add32(t.s32(0x814), work);
-			*link = ship.next_in_list;
-			ship.status = 5;
-			ship.timer = 0;
-			ship.next_in_list = save.globals.u16(kDockedHead);
+			*link = ship.next_in_list();
+			ship.status() = 5;
+			ship.timer() = 0;
+			ship.next_in_list() = save.globals.u16(kDockedHead);
 		} else {
 			t.s32(0x814) = add32(t.s32(0x814), work);
-			link = &ship.next_in_list;
+			link = &ship.next_in_list();
 			continue;
 		}
 		save.globals.u16(kDockedHead) = index;

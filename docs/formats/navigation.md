@@ -7,12 +7,14 @@ el propio código del juego en el emulador.
 
 > Implementación en p3vita: `src/p3data/seamap.cpp` (posiciones del mapa),
 > `src/p3data/navigation.cpp` (rutas, §5), `src/p3data/sailing.cpp`
-> (movimiento, puerto y orden de zarpar, §4 y §6) y la vista del mapa del mar
-> del visor (`src/app/main.cpp`); `tools/p3map` dibuja el mapa de una partida
-> en un PNG. Las rutas entre ciudades coinciden con las del juego en las 12
-> partidas v0x82 de `missav/` (6633 rutas) y la navegación también: 32 días
-> de juego en cada partida con unas 340 órdenes de zarpar, 0 diferencias en
-> 426 000 estados de barco (ver [../oracle.md](../oracle.md)).
+> (movimiento, puerto y orden de zarpar, §4 y §6),
+> `src/p3data/town_tick/ship_ai.cpp` y `ship_trade.cpp` (los barcos de la IA
+> en puerto, §8) y la vista del mapa del mar del visor (`src/app/main.cpp`);
+> `tools/p3map` dibuja el mapa de una partida en un PNG. Las rutas entre
+> ciudades coinciden con las del juego en las 12 partidas v0x82 de `missav/`
+> (6633 rutas). La navegación, con los barcos de la IA decidiendo y
+> comerciando y los ticks de las ciudades, es idéntica byte a byte a la del
+> juego partiendo de la partida que lee p3vita (ver [../oracle.md](../oracle.md)).
 
 ## 1. Coordenadas
 
@@ -251,7 +253,8 @@ en puerto (< 4) tiene que pasar 0x519BA0:
 - marineros [+0x40] ≥ mínimo del tipo (0x673660: 5, 8, 10, 12);
 - byte alto del descanso [+0x3F] > 0;
 - bodega ocupada ≤ capacidad;
-- con capitán ([+0x42] < [+0xF2]) o casco máximo ≤ 5 · casco;
+- sin capitán ([+0x42] ≥ [+0xF2]) o casco máximo ≤ 5 · casco (con capitán, el
+  barco no zarpa con el casco por debajo del 20 %);
 - estado distinto de 7, 9, 12–14 y < 17;
 - la ciudad, si está en una, sin los bits 0x4000200.
 
@@ -269,6 +272,26 @@ la posición, con su llegada prevista; [+0x30] = 1.
 Un barco con destino 0xFF que se queda sin ruta lee al salir del puerto
 (0x516BC0) el id de ciudad 255 de la tabla de 40 del mundo, fuera de ella, y
 navega hacia el punto de llegada de esa ciudad; p3vita lo deja sin ruta.
+
+### 6.1 Lo que no mueve el barco pero sí cambia la memoria **[código + oráculo]**
+
+- Avisos a la interfaz [+0x3C] (u16, siempre con `or`): 0x2000 cuando cambia
+  la parte entera de la posición, 0x80 al cambiar de tramo si cambia la
+  velocidad que se ve (`([+0x30] ^ velocidad) & ~0xF`), al acabar la ruta y
+  en el primer tick del estado 2; 0x28 al llegar a una ciudad, al zarpar y al
+  dar la vuelta entrando en el puerto; 0x08 al quedarse en el mar sin ruta;
+  0x20 en los cambios de estado; 0x1000 en el primer tick del estado 3; 0x200
+  cuando cambia el byte alto del descanso; 0x800 con una orden nueva (0x517770).
+- Lista de los barcos en el mar ordenada por x, para los encuentros: [+0xA]
+  el anterior y [+0xC] el siguiente, sin cabeza. 0x50CE50 mete el barco al
+  zarpar (tras la cabeza de la lista del mar), 0x50D0C0 lo recoloca tras cada
+  tick en el mar y 0x50D040 lo saca al entrar en puerto o al hundirse.
+- Contadores del objeto de los barcos, a 0 al empezar 0x506720: [+0x100]
+  barcos del jugador en puerto (estados 0 a 3), [+0x102] en el mar, [+0x104]
+  y [+0x106] sus convoyes.
+- Al atracar, la ciudad cuenta un barco más en [+0x996]; al zarpar, el
+  comerciante suma la bodega llena (float) en [+0x540] y un viaje en [+0x544].
+- La orden de zarpar deja en [+0x13B] la ciudad de destino.
 
 ## 7. El tiempo real **[código]**
 
@@ -294,3 +317,40 @@ actualización, que por el código que lo activa parece el de las batallas
 navales **[supuesto]**. Las teclas + y − cambian la velocidad. Las partidas
 guardan los ms por tick después de los ajustes ([+0x8D4]; las de `missav/`
 están en 3515).
+
+## 8. Los barcos de la IA en puerto **[código + oráculo]**
+
+En la lista de barcos en puerto de 0x506720, el estado 0 (0x5067D0) de un
+barco de un comerciante de la IA llama a 0x518B80, que decide qué hace:
+
+- Órdenes [+0x136] & 0x20: quedarse quieto (estado 1, 0x80 ticks, sin
+  marineros); & 0x10: va armado (0x51A070 monta la artillería del almacén de
+  armas de la ciudad, [0x124]; 0x519FC0 y 0x5184F0 contratan marineros de más).
+- Cada barco tiene una ciudad base [+0x13A] (donde están las oficinas de su
+  dueño) y una ciudad a la que va a comerciar [+0x13B]. Al llegar a esta,
+  0x519280 deja en la oficina de la base lo que le falta y vende el resto; en
+  las ciudades de paso, 0x5193F0 (volviendo a la base) y 0x5196B0 (yendo a
+  comerciar) reservan lo que falta a las oficinas y a la base y llenan la
+  oficina de la ciudad en la que están.
+- Al volver a la base elige otra ciudad para comerciar (0x518FF0): la de más
+  margen esperado (0x52F030, con los tiempos de viaje de la matriz [+0x6C] del
+  mundo, 0x531B70 y 0x516AB0) entre las que tienen mercado y no están
+  sitiadas ni bloqueadas (0x518D60; las cocas y hulks tampoco van donde está
+  el bit 1 de [0x2C8]); 0x519170 añade una parada intermedia [+0x38] si
+  alarga el viaje menos de un 20 %. Antes de zarpar compra lo que más ganancia
+  promete (0x519920). La IA cobra 6·precio/5 al vender y paga 5·precio/6 al
+  comprar, y apunta el saldo en [+0x124].
+- Si puede zarpar (0x519BA0) pasa al estado 2 hacia su próxima parada; si la
+  bodega no llega a la cuarta parte, carga primero. 0x519EB0 la une a un convoy
+  o lo crea (0x509B90, 0x509AE0, 0x501680...). Si no puede (0x518E00), espera
+  (estado 1, [0x547] + 0x40 ticks del comerciante, o 3·[0x547] con la
+  tripulación cansada) o, con el casco por debajo de (0x200 − [0x547])/0x200
+  del máximo, va al astillero (estado 4).
+- Estado 4 (0x506A19): sale de la lista y entra en la de reparación de su
+  ciudad ([0x81E], 0x52AC80) con el estado 6; el astillero (0x508AA0, tick de
+  ciudad) lo repara y lo devuelve con el estado 5, que (0x506B6A) vuelve al 0.
+
+Los barcos de la IA que se quedan en el mar sin ruta encolan cada 64 ticks
+una orden de zarpar (§4). Los convoyes se crean y se llenan en puerto, pero
+p3vita aún no los mueve (tercer bucle de 0x506720), igual que los piratas,
+las persecuciones y los encuentros (0x5053C0).

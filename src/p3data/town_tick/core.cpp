@@ -544,10 +544,10 @@ void fn_51ba10(SaveGame& save, int town, uint32_t day_of_year) {
 	const uint16_t ship = t.u16(0x994);
 	if (ship < save.globals.u16(global::kShipCount) && (save.globals.u32(global::kWorldTick) >> 8) % 7 == 0) {
 		if (t.u32(0x990) > t.u32(0x700)) {
-			save.ships[ship].status = 3;
+			save.ships[ship].status() = 3;
 			t.u16(0x994) = 0xFFFF;
-		} else if (save.ships[ship].owner < merchant_count(save)) {
-			MerchantMemory& owner = save.merchants[save.ships[ship].owner].memory;
+		} else if (save.ships[ship].owner() < merchant_count(save)) {
+			MerchantMemory& owner = save.merchants[save.ships[ship].owner()].memory;
 			owner.u32(0) += t.u32(0x990);
 			owner.u32(0x4C8) += t.u32(0x990);
 			fn_529f90(save, town, int32_t(t.u32(0x990)), 7);

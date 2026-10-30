@@ -308,9 +308,9 @@ public:
 			}
 		}
 
-		if (course && course->route && (course->status == kShipSailing || course->status == kShipLeaving)) {
-			std::vector<SDL_Point> line = {{(course->x >> 16) - camera_x, (course->y >> 16) - camera_y}};
-			for (size_t i = course->route_index; i < course->route->size(); ++i) {
+		if (course && course->route && (course->status() == kShipSailing || course->status() == kShipLeaving)) {
+			std::vector<SDL_Point> line = {{(course->x() >> 16) - camera_x, (course->y() >> 16) - camera_y}};
+			for (size_t i = course->route_index(); i < course->route->size(); ++i) {
 				const MapPoint p = (*course->route)[i];
 				line.push_back({p.x - camera_x, p.y - camera_y});
 			}
@@ -329,22 +329,22 @@ public:
 			if (!ship.in_use()) {
 				continue;
 			}
-			int x = ship.x >> 16;
-			int y = ship.y >> 16;
-			const bool sailing = ship.status == 0x0F || ship.status == 0x12;
+			int x = ship.x() >> 16;
+			int y = ship.y() >> 16;
+			const bool sailing = ship.status() == 0x0F || ship.status() == 0x12;
 			if (sailing) {
-				const int frame = ship.heading & 15;
+				const int frame = ship.heading() & 15;
 				const SDL_Rect ship_src = {(frame % 4) * kShipSpriteWidth, (frame / 4) * kShipSpriteHeight,
 					kShipSpriteWidth, kShipSpriteHeight};
 				const SDL_Rect ship_dst = {x - kShipSpriteWidth / 2 - camera_x, y - kShipSpriteHeight / 2 - camera_y,
 					kShipSpriteWidth, kShipSpriteHeight};
-				SDL_RenderCopy(renderer_, ships_[ship.type & 3], &ship_src, &ship_dst);
+				SDL_RenderCopy(renderer_, ships_[ship.type() & 3], &ship_src, &ship_dst);
 			}
-			if (ship.owner != save.player || (!sailing && ship.town >= save.towns.size())) {
+			if (ship.owner() != save.player || (!sailing && ship.town() >= save.towns.size())) {
 				continue;
 			}
 			if (!sailing) {
-				const SDL_Point c = town_center(save, ship.town);
+				const SDL_Point c = town_center(save, ship.town());
 				x = c.x;
 				y = c.y + kShipSpriteHeight / 2 - kTownSymbolSize;
 			}
@@ -484,7 +484,7 @@ std::vector<int> player_fleet(const SaveGame& save) {
 	std::vector<int> fleet;
 	for (size_t i = 0; i < save.ships.size(); ++i) {
 		const SavedShip& ship = save.ships[i];
-		if (ship.in_use() && ship.status != kShipSunk && ship.owner == save.player) {
+		if (ship.in_use() && ship.status() != kShipSunk && ship.owner() == save.player) {
 			fleet.push_back(int(i));
 		}
 	}
@@ -494,9 +494,9 @@ std::vector<int> player_fleet(const SaveGame& save) {
 // Qué hace un barco: «saliendo de Lübeck hacia Visby».
 std::string ship_activity(const SaveGame& save, const std::vector<std::string>& names, const SavedShip& ship) {
 	const size_t count = save.towns.size();
-	const std::string here = ship.town < count ? town_name(save, names, ship.town) : "";
-	const std::string there = ship.destination < count ? town_name(save, names, ship.destination) : "";
-	switch (ship.status) {
+	const std::string here = ship.town() < count ? town_name(save, names, ship.town()) : "";
+	const std::string there = ship.destination() < count ? town_name(save, names, ship.destination()) : "";
+	switch (ship.status()) {
 	case kShipDocked:
 		return "en el puerto de " + here;
 	case kShipWaiting:
@@ -510,8 +510,8 @@ std::string ship_activity(const SaveGame& save, const std::vector<std::string>& 
 			return "sin rumbo en el mar";
 		}
 		std::string text = there.empty() ? "navegando" : "navegando hacia " + there;
-		if (ship.arrival_tick > save.tick()) {
-			const GameDate date = date_from_tick(ship.arrival_tick);
+		if (ship.arrival_tick() > save.tick()) {
+			const GameDate date = date_from_tick(ship.arrival_tick());
 			text += ", llegada prevista el " + day_and_month(date.day, date.month);
 		}
 		return text;
@@ -565,7 +565,7 @@ std::vector<int> player_ships_in(const SaveGame& save, int town) {
 	std::vector<int> ships;
 	for (size_t i = 0; i < save.ships.size(); ++i) {
 		const SavedShip& ship = save.ships[i];
-		if (ship.docked() && ship.owner == save.player && ship.town == town) {
+		if (ship.docked() && ship.owner() == save.player && ship.town() == town) {
 			ships.push_back(int(i));
 		}
 	}
@@ -585,7 +585,7 @@ int32_t trade_amount(const SaveGame& save, int ship, const MarketUi& ui, bool bu
 		return step * ware_scale(unit);
 	}
 	// Todo: el juego ya limita la compra al almacén, la bodega y el dinero.
-	return buying ? 1000 * 1000 * 1000 : save.ships[size_t(ship)].cargo[size_t(ui.ware)];
+	return buying ? 1000 * 1000 * 1000 : save.ships[size_t(ship)].cargo(size_t(ui.ware));
 }
 
 std::string step_text(const MarketUi& ui) {
@@ -706,9 +706,9 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 
 	if (ship) {
 		char hold[96];
-		std::snprintf(hold, sizeof(hold), ": %.1f de %.1f cargas", ship->used / 2000.0,
-			(ship->capacity - ship->equipment) / 2000.0);
-		text.draw(ship->name + " (" + kShipTypes[ship->type & 3] + ")" + hold, left, layout.header_y, kTextColor);
+		std::snprintf(hold, sizeof(hold), ": %.1f de %.1f cargas", ship->used() / 2000.0,
+			(ship->capacity() - ship->equipment()) / 2000.0);
+		text.draw(ship->name() + " (" + kShipTypes[ship->type() & 3] + ")" + hold, left, layout.header_y, kTextColor);
 	} else {
 		text.draw("No tienes ningún barco en este puerto.", left, layout.header_y, kDimColor);
 	}
@@ -737,7 +737,7 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 		right(buy ? std::to_string(buy) : "-", 1, y, kTextColor);
 		right(std::to_string(sell), 2, y, kTextColor);
 		if (ship) {
-			const int n = units(ship->cargo[size_t(w)], ware.unit);
+			const int n = units(ship->cargo(size_t(w)), ware.unit);
 			right(n ? std::to_string(n) + short_unit : "-", 3, y, n ? kTextColor : kDimColor);
 		}
 	}
@@ -867,9 +867,9 @@ int main(int argc, char** argv) {
 		const SavedShip& ship = save.ships[size_t(index)];
 		const int town = int(selection.saved_index);
 		const std::string there = town_name(save, town_names, town);
-		const Sailing::SailCheck check = ship.status < 4 ? sailing->sail_check(ship) : Sailing::SailCheck::Ok;
-		if ((ship.status == kShipDocked || ship.status == kShipWaiting) && ship.town == town) {
-			notify(ship.name + " ya está en " + there + ".");
+		const Sailing::SailCheck check = ship.status() < 4 ? sailing->sail_check(ship) : Sailing::SailCheck::Ok;
+		if ((ship.status() == kShipDocked || ship.status() == kShipWaiting) && ship.town() == town) {
+			notify(ship.name() + " ya está en " + there + ".");
 		} else if (check == Sailing::SailCheck::FewSailors) {
 			notify("Faltan marineros para zarpar.");
 		} else if (check == Sailing::SailCheck::Tired) {
@@ -881,15 +881,15 @@ int main(int argc, char** argv) {
 		} else if (check == Sailing::SailCheck::PortClosed) {
 			notify("El puerto está bloqueado.");
 		} else if (check != Sailing::SailCheck::Ok) {
-			notify(ship.name + " no puede zarpar ahora.");
+			notify(ship.name() + " no puede zarpar ahora.");
 		} else {
-			const char* verb = ship.status == kShipSailing ? " pone rumbo a "
-				: ship.status == kShipLeaving && ship.town == town ? " vuelve a "
+			const char* verb = ship.status() == kShipSailing ? " pone rumbo a "
+				: ship.status() == kShipLeaving && ship.town() == town ? " vuelve a "
 				: " zarpa hacia ";
 			if (!sailing->set_sail(index, town)) {
-				notify(ship.name + " no puede zarpar ahora.");
+				notify(ship.name() + " no puede zarpar ahora.");
 			} else {
-				notify(ship.name + verb + there + ".");
+				notify(ship.name() + verb + there + ".");
 			}
 		}
 	};
@@ -951,23 +951,21 @@ int main(int argc, char** argv) {
 			const int ticks = std::min(int(elapsed / speed.ms_per_tick), speed.max_ticks);
 			for (int i = 0; i < ticks; ++i) {
 				advance_game_tick(save, *sailing);
-				// Las operaciones que encolan las ciudades (obras) aún no se ejecutan.
-				save.queued_operations.clear();
 				for (const ShipEvent& event : sailing->events()) {
 					const SavedShip& ship = save.ships[size_t(event.ship)];
-					if (ship.owner != save.player) {
+					if (ship.owner() != save.player) {
 						continue;
 					}
 					if (event.kind == ShipEvent::Arrived) {
-						notify(ship.name + " ha llegado a " + town_name(save, town_names, event.town) + ".");
+						notify(ship.name() + " ha llegado a " + town_name(save, town_names, event.town) + ".");
 						// En el mapa del mar queda elegida la ciudad: Triángulo entra en ella.
 						if (selection.mode == Mode::Sea && event.ship == fleet_ship()) {
 							selection.saved_index = size_t(event.town);
 						}
 					} else if (event.kind == ShipEvent::Stopped) {
-						notify(ship.name + " se ha detenido en el mar.");
+						notify(ship.name() + " se ha detenido en el mar.");
 					} else {
-						notify(ship.name + " se ha hundido.");
+						notify(ship.name() + " se ha hundido.");
 					}
 				}
 			}
@@ -1231,7 +1229,7 @@ int main(int argc, char** argv) {
 			std::string ship_text = "No tienes ningún barco.";
 			if (course_ship >= 0) {
 				const SavedShip& ship = save.ships[size_t(course_ship)];
-				ship_text = ship.name + " (" + kShipTypes[ship.type & 3] + "): " + ship_activity(save, town_names, ship);
+				ship_text = ship.name() + " (" + kShipTypes[ship.type() & 3] + "): " + ship_activity(save, town_names, ship);
 			}
 			const std::string speed = std::string("velocidad ") + kGameSpeeds[game_speed].name;
 			draw_bar(renderer, *small_text, kScreenHeight - kBarHeight, ship_text,

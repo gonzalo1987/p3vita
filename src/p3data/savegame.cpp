@@ -492,81 +492,67 @@ void parse_merchant(Reader& r, SavedMerchant& merchant) {
 	}
 }
 
-// Barco (0x517990 y 0x516520). Los huecos libres solo guardan su estado y un u16.
+// Barco (0x517990 y 0x516520), versión 0x82, en su memoria. Los huecos
+// libres solo guardan su estado, el siguiente hueco libre y, desde la versión
+// 0x83, [+0x137]; lo demás es lo que deja el constructor de SavedShip.
 void parse_ship(Reader& r, int version, SavedShip& ship) {
-	ship.status = r.u16();
+	ShipMemory& m = ship.memory;
+	r.to(m, 0x134, 2);
 	if (!ship.in_use()) {
-		ship.next_in_list = r.u16();  // Siguiente hueco libre.
-		r.skip(version >= 0x83 ? 1 : 0);
+		r.to(m, 0x6, 2);
+		if (version >= 0x83) {
+			r.to(m, 0x137, 1);
+		}
 		return;
 	}
-	ship.next_of_owner = r.u16();
-	ship.owner = r.u8();
-	ship.type = r.u8();
-	ship.level = r.u8();
-	ship.heading = r.u8();
+	// 0x516520.
+	for (Chunk c : {Chunk{0x4, 2}, {0x0, 1}, {0xE, 1}, {0xF, 1}, {0x1, 1}}) {
+		r.to(m, c.offset, c.size);
+	}
 	// [+0x2]: dos bytes con signo, el alto primero.
 	const int high = int8_t(r.u8());
-	ship.route_mark = uint16_t((high << 8) + int8_t(r.u8()));
-	ship.capacity = r.s32();
-	ship.max_health = r.s32();
-	ship.next_in_list = r.u16();
-	ship.convoy = r.u16();
-	r.skip(2 * 2);  // [+0xA], [+0xC]: lista ordenada por x para los encuentros en el mar (0x50D0C0).
-	ship.health = r.s32();
-	ship.x = r.s32();
-	ship.y = r.s32();
-	const uint32_t route = r.u32();
-	ship.dx = r.s32();
-	ship.dy = r.s32();
-	ship.speed = r.s32();
-	ship.route_index = r.u16();
-	ship.own_route = r.u8() != 0;
-	ship.origin = r.u8();
-	ship.destination = r.u8();
-	ship.town = r.u8();
+	m.u16(0x2) = uint16_t((high << 8) + int8_t(r.u8()));
+	for (Chunk c : {Chunk{0x10, 4}, {0x14, 4}, {0x6, 2}, {0x8, 2}, {0xA, 2}, {0xC, 2}, {0x18, 4}, {0x1C, 4},
+			 {0x20, 4}, {0x24, 4}, {0x28, 4}, {0x2C, 4}, {0x30, 4}, {0x34, 2}, {0x36, 1}, {0x37, 1}, {0x38, 1},
+			 {0x39, 1}}) {
+		r.to(m, c.offset, c.size);
+	}
 	const int target_high = r.u8();
-	ship.target = uint16_t(target_high << 8 | r.u8());
-	ship.notices = r.u16();
-	ship.readiness = r.u16();
-	ship.sailors = r.u16();
-	ship.captain = r.u16();
-	ship.moved_tick = r.u32();
-	ship.arrival_tick = r.u32();
-	ship.built_tick = r.u32();
-	r.skip(4);  // [+0x50]
+	m.u16(0x3A) = uint16_t(target_high << 8 | r.u8());
+	for (Chunk c : {Chunk{0x3C, 2}, {0x3E, 2}, {0x40, 2}, {0x42, 2}, {0x44, 4}, {0x48, 4}, {0x4C, 4}, {0x50, 4}}) {
+		r.to(m, c.offset, c.size);
+	}
 	// La ruta solo se guarda si es del barco. Si navega de una ciudad a otra, al
-	// cargarlo el juego le da la de la matriz (0x445010, ver Sailing).
-	if (route != 0 && ship.own_route) {
-		ship.route = std::make_shared<SeaRoute>(r.u16());
-		for (MapPoint& point : *ship.route) {
+	// cargarlo el juego le da la de la matriz (0x445010, ver Sailing). El
+	// puntero [+0x24] de la memoria no se mantiene: la ruta es `route`.
+	if (m.u32(0x24) != 0 && ship.own_route()) {
+		auto route = std::make_shared<SeaRoute>(r.u16());
+		for (MapPoint& point : *route) {
 			point.x = int16_t(r.u16());
 			point.y = int16_t(r.u16());
 		}
-	} else if (route != 0) {
+		ship.set_route(route);
+	} else if (m.u32(0x24) != 0) {
 		ship.town_route = true;
 	}
-	r.s32s(ship.cargo);
-	for (float& price : ship.average_price) {
-		price = r.f32();
+	// 0x517990.
+	for (Chunk c : {Chunk{0x54, 0x60}, {0xB4, 0x60}, {0x114, 4}, {0x124, 4}, {0x128, 4}, {0x12C, 4}, {0x130, 2},
+			 {0x132, 2}, {0x136, 1}, {0x137, 1}, {0x13A, 1}, {0x13B, 1}, {0x138, 2}, {0x13C, 24}, {0x154, 2},
+			 {0x156, 1}, {0x157, 1}}) {
+		r.to(m, c.offset, c.size);
 	}
-	r.skip(3 * 4);
-	ship.load_factor_sum = r.f32();
-	ship.voyages = r.u16();
-	r.skip(2);
-	ship.orders = r.u8();
-	r.skip(3);
-	ship.timer = r.u16();
-	r.bytes(ship.artillery);
-	ship.hand_weapons = r.u16();
-	ship.extra_loads = r.u8();
-	r.skip(1);
 	if (version >= 0x79) {
-		r.skip(4);
+		r.to(m, 0x158, 1);
+		r.to(m, 0x159, 1);
+		r.to(m, 0x15A, 2);
+	} else {
+		m.u8(0x159) = 0xFF;
 	}
-	ship.raid = r.u8() != 0;
-	r.skip(1 + 2);
-	ship.name = latin1_to_utf8(r.text(32));
+	m.u8(0x15C) = r.u8() != 0;
+	r.to(m, 0x15D, 1);
+	const uint8_t b0 = r.u8();
+	m.u16(0x15E) = uint16_t((b0 << 8) + r.u8());
+	r.to(m, 0x160, 32);
 }
 
 // 0x5311D0 con la fecha de un evento: día [+0xF] y mes [+0x10], los dos desde 1.
@@ -670,7 +656,10 @@ void load_events(Reader r, SaveGame& out) {
 // Lo que sigue a las ciudades dentro del mundo (0x52FB60).
 bool parse_world_tail(Reader& r, size_t town_count, uint16_t record_count, uint16_t office_count,
 	SaveGame& out, std::string* error) {
-	r.skip(town_count * town_count);
+	out.town_travel.resize(town_count * town_count);  // [+0x6C] del mundo
+	for (uint8_t& v : out.town_travel) {
+		v = r.u8();
+	}
 	r.skip(4);
 	for (size_t i = 0; i < town_count; ++i) {  // 0x633730
 		r.skip(4 + 1 + 2 + 1 + 1 + 4 * 2);
@@ -694,13 +683,17 @@ bool parse_world_tail(Reader& r, size_t town_count, uint16_t record_count, uint1
 		parse_merchant(r, merchant);
 	}
 
-	// 0x5351D0: un bloque fijo y hasta 8 registros de 40 bytes.
-	r.skip(0xA00);
-	std::array<uint8_t, 8> slots{};
-	r.bytes(slots);
-	for (uint8_t slot : slots) {
-		if (slot != 0xFF) {
-			r.skip(40);
+	// 0x5351D0: el objeto 0x6DE588 (0xA00 bytes y los comerciantes de sus 8
+	// huecos) y un registro de 40 bytes por hueco usado.
+	for (uint32_t a = 0x6DE588; a < 0x6DE588 + 0xA08; ++a) {
+		out.globals.u8(a) = r.u8();
+	}
+	for (size_t i = 0; i < out.player_towns.size(); ++i) {
+		if (out.globals.u8(0x6DEF88 + uint32_t(i)) < 0xFF) {
+			out.player_towns[i].resize(40);
+			for (uint8_t& v : out.player_towns[i]) {
+				v = r.u8();
+			}
 		}
 	}
 	for (int i = 0; i < 15; ++i) {  // 0x52BBE0
@@ -735,6 +728,12 @@ bool parse_ships(Reader& r, SaveGame& out, std::string* error) {
 	out.ships.resize(ship_count);
 	for (SavedShip& ship : out.ships) {
 		parse_ship(r, version, ship);
+	}
+	// Los convoyes (0x5014E0): en esta versión, sus 0x3A primeros bytes tal
+	// como van en memoria.
+	out.convoys.resize(header[10]);
+	for (GameMemory<0x3C>& convoy : out.convoys) {
+		r.to(convoy, 0, 0x3A);
 	}
 	return r.ok() || fail(error, std::string(kTruncated) + " (barcos)");
 }
@@ -871,7 +870,7 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 	// El lector de barcos cuenta los de cada comerciante en [0x47C] (0x504652).
 	for (SavedMerchant& merchant : out.merchants) {
 		uint32_t count = 0;
-		for (uint16_t i = merchant.memory.u16(0xE); i < out.ships.size(); i = out.ships[i].next_of_owner) {
+		for (uint16_t i = merchant.memory.u16(0xE); i < out.ships.size(); i = out.ships[i].next_of_owner()) {
 			++count;
 		}
 		merchant.memory.u32(0x47C) = count;
@@ -902,6 +901,15 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 		}
 	}
 	return true;
+}
+
+std::string SavedShip::name() const {
+	const char* p = reinterpret_cast<const char*>(memory.bytes.data() + 0x160);
+	size_t n = 0;
+	while (n < 32 && p[n] != 0) {
+		++n;
+	}
+	return latin1_to_utf8(std::string_view(p, n));
 }
 
 bool read_savegame_data(const CprArchive& archive, const std::string& path, std::vector<uint8_t>& out,

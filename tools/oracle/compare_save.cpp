@@ -157,28 +157,28 @@ int main(int argc, char** argv) {
 		} else if (kind == "barco") {
 			const auto f = split(line, 67);
 			const SavedShip& s = save.ships.at(std::stoul(f[1]));
-			check.field("estado", s.status, f[2]);
+			check.field("estado", s.status(), f[2]);
 			if (f.size() > 3) {
-				check.field("dueño", s.owner, f[3]);
-				check.field("tipo", s.type, f[4]);
-				check.field("nivel", s.level, f[5]);
-				check.field("siguiente", s.next_of_owner, f[6]);
-				check.field("capacidad", s.capacity, f[7]);
-				check.field("salud", s.health, f[8]);
-				check.field("salud máxima", s.max_health, f[9]);
-				check.field("x", s.x, f[10]);
-				check.field("y", s.y, f[11]);
-				check.field("origen", s.origin, f[12]);
-				check.field("destino", s.destination, f[13]);
-				check.field("ciudad", s.town, f[14]);
-				check.field("marineros", s.sailors, f[15]);
-				check.field("ocupada", s.used, f[16]);
-				check.field("equipo", s.equipment, f[17]);
+				check.field("dueño", s.owner(), f[3]);
+				check.field("tipo", s.type(), f[4]);
+				check.field("nivel", s.level(), f[5]);
+				check.field("siguiente", s.next_of_owner(), f[6]);
+				check.field("capacidad", s.capacity(), f[7]);
+				check.field("salud", s.health(), f[8]);
+				check.field("salud máxima", s.max_health(), f[9]);
+				check.field("x", s.x(), f[10]);
+				check.field("y", s.y(), f[11]);
+				check.field("origen", s.origin(), f[12]);
+				check.field("destino", s.destination(), f[13]);
+				check.field("ciudad", s.town(), f[14]);
+				check.field("marineros", s.sailors(), f[15]);
+				check.field("ocupada", s.used(), f[16]);
+				check.field("equipo", s.equipment(), f[17]);
 				for (int w = 0; w < kWareCount; ++w) {
-					check.field(kWares[size_t(w)].name, s.cargo[size_t(w)], f[18 + size_t(w)]);
-					check.field("precio medio", bits(s.average_price[size_t(w)]), f[42 + size_t(w)]);
+					check.field(kWares[size_t(w)].name, s.cargo(size_t(w)), f[18 + size_t(w)]);
+					check.field("precio medio", bits(s.average_price(size_t(w))), f[42 + size_t(w)]);
 				}
-				check.field("nombre", s.name, f[66]);
+				check.field("nombre", s.name(), f[66]);
 			}
 			++records;
 		} else if (kind == "ruta") {
@@ -220,12 +220,12 @@ int main(int argc, char** argv) {
 			const SavedShip& s = save.ships.at(size_t(ship));
 			check.field("cantidad", result.amount, f[6]);
 			check.field("precio", result.price, f[7]);
-			check.field("dinero", save.merchants.at(s.owner).money(), f[8]);
+			check.field("dinero", save.merchants.at(s.owner()).money(), f[8]);
 			check.field("existencias", int32_t(save.towns.at(size_t(town)).stock(size_t(ware))), f[9]);
-			check.field("carga", s.cargo[size_t(ware)], f[10]);
-			check.field("precio medio", bits(s.average_price[size_t(ware)]), f[11]);
-			check.field("ocupada", s.used, f[12]);
-			check.field("equipo", s.equipment, f[13]);
+			check.field("carga", s.cargo(size_t(ware)), f[10]);
+			check.field("precio medio", bits(s.average_price(size_t(ware))), f[11]);
+			check.field("ocupada", s.used(), f[12]);
+			check.field("equipo", s.equipment(), f[13]);
 			++trades;
 		} else {
 			continue;

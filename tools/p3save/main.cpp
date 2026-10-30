@@ -73,7 +73,7 @@ void list_merchants(const SaveGame& save, const std::vector<std::string>& towns,
 	for (size_t i = 0; i < save.merchants.size(); ++i) {
 		const SavedMerchant& m = save.merchants[i];
 		int ships = 0;
-		for (uint16_t s = m.first_ship(); s < save.ships.size() && ships < 1000; s = save.ships[s].next_of_owner) {
+		for (uint16_t s = m.first_ship(); s < save.ships.size() && ships < 1000; s = save.ships[s].next_of_owner()) {
 			++ships;
 		}
 		int offices = 0;
@@ -95,7 +95,7 @@ void list_ships(const SaveGame& save, const std::vector<std::string>& towns) {
 		}
 		std::string cargo;
 		for (int w = 0; w < kWareCount; ++w) {
-			const int32_t amount = s.cargo[size_t(w)];
+			const int32_t amount = s.cargo(size_t(w));
 			if (amount != 0) {
 				char buffer[64];
 				std::snprintf(buffer, sizeof(buffer), " %s %g", kWares[size_t(w)].name,
@@ -103,11 +103,11 @@ void list_ships(const SaveGame& save, const std::vector<std::string>& towns) {
 				cargo += buffer;
 			}
 		}
-		const std::string place = s.status == 0x0F ? "→ " + town_at(save, towns, s.destination)
-												   : town_at(save, towns, s.town);
+		const std::string place = s.status() == 0x0F ? "→ " + town_at(save, towns, s.destination())
+												   : town_at(save, towns, s.town());
 		std::printf("%3zu %-18s %-7s dueño %3u  estado %#04x  %-14s  bodega %5.1f/%5.1f  salud %3d%%  |%s\n", i,
-			s.name.c_str(), kShipTypes[s.type & 3], s.owner, s.status, place.c_str(), s.used / 2000.0,
-			(s.capacity - s.equipment) / 2000.0, s.max_health ? s.health * 100 / s.max_health : 0, cargo.c_str());
+			s.name().c_str(), kShipTypes[s.type() & 3], s.owner(), s.status(), place.c_str(), s.used() / 2000.0,
+			(s.capacity() - s.equipment()) / 2000.0, s.max_health() ? s.health() * 100 / s.max_health() : 0, cargo.c_str());
 	}
 	std::printf("\nbodega en cargas (2000 unidades); la capacidad ya descuenta artillería y tripulación\n");
 }

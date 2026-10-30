@@ -17,10 +17,13 @@ namespace p3::data {
 //
 // De la actualización de barcos de cada tick (0x506720) se reproducen los
 // estados 0x0F (navegando), 2 (saliendo del puerto), 3 (entrando), 1
-// (esperando en puerto) y 0 (atracado) de los barcos del jugador. Las
-// decisiones de la IA, los piratas, los convoyes, el astillero y las
-// batallas no se reproducen todavía. Comprobado con el oráculo
-// (tools/oracle/sail_oracle.py, ver docs/oracle.md).
+// (esperando en puerto) y 0 (atracado) de los barcos del jugador, con los
+// avisos a la interfaz [+0x3C], la lista de los barcos en el mar ordenada
+// por x ([+0xA], [+0xC]) y los contadores del objeto de los barcos. Las
+// decisiones de la IA (town_tick/ship_ai.cpp), los piratas, los convoyes, el
+// astillero, los encuentros y las batallas no se reproducen todavía.
+// Comprobado con el oráculo (tools/oracle/sail_oracle.py y, el mundo entero,
+// town_oracle.py --barcos --sin-ia con tick_probe; ver docs/oracle.md).
 
 constexpr uint32_t kTicksPerDay = 256;
 
@@ -32,6 +35,9 @@ struct GameDate {
 
 // Fecha de un tick (0x5310D0): años de 365 días, sin bisiestos.
 GameDate date_from_tick(uint32_t tick);
+
+// 0x516840: quita la ruta al barco y vuelve al primer punto.
+void clear_ship_route(SavedShip& ship);
 
 // 0x5310D0: la fecha del mundo (día, mes, año y día del año) a partir de su
 // tick. El juego la recalcula al empezar cada día.
@@ -57,6 +63,11 @@ public:
 	// Lo que hace el juego al leer los barcos (0x516520): los que navegan de
 	// una ciudad a otra reciben la ruta de la matriz. Llamar una vez, tras cargar.
 	void assign_loaded_routes();
+
+	// Con false, en puerto solo se ejecutan los estados 1, 2, 3 y el 0 de los
+	// jugadores humanos, como en tools/oracle/sail_oracle.py y en
+	// town_oracle.py --sin-ia (para probar la navegación sin la IA).
+	void set_ai(bool enabled) { ai_ = enabled; }
 
 	// Un tick de advance_time (0x530E80) solo con la fecha y los barcos: lo
 	// mismo que begin_tick y update_ships. El tick completo, con las ciudades,
@@ -84,7 +95,7 @@ public:
 		FewSailors,  // Menos marineros que el mínimo del tipo de barco.
 		Tired,  // La tripulación no ha descansado (byte alto de readiness ≤ 0).
 		Overloaded,  // Más carga que capacidad.
-		Damaged,  // Sin capitán y con el casco por debajo del 20 %.
+		Damaged,  // Con capitán y con el casco por debajo del 20 % (sin capitán no se mira).
 		Busy,  // En un estado en el que no puede zarpar (astillero...).
 		PortClosed,  // La ciudad está bloqueada o sitiada.
 	};
@@ -104,6 +115,8 @@ public:
 	static uint32_t speed(const SavedShip& ship);
 
 private:
+	bool ai_ = true;
+
 	struct Assigned {
 		std::shared_ptr<SeaRoute> route;
 		bool own = false;
@@ -111,17 +124,27 @@ private:
 
 	Assigned route_for(MapPoint start, MapPoint end);
 	uint32_t travel_time(const SavedShip& ship) const;
-	bool merchant(const SavedShip& ship) const { return ship.owner < save_.merchant_count; }
+	bool merchant(const SavedShip& ship) const { return ship.owner() < save_.merchant_count; }
 	bool human(const SavedShip& ship) const;
+	bool player(const SavedShip& ship) const;  // Del comerciante del jugador ([0x6DFC14]).
 	uint32_t town_flags(int town) const;
 
+	// Lista de los barcos en el mar ordenada por x ([+0xA], [+0xC]).
+	void unlink_x(uint16_t index);  // 0x50D040
+	void sort_x(uint16_t index);  // 0x50D0C0
+	void insert_x(uint16_t index, uint32_t after);  // 0x50CE50
+
 	void update_docked();
+	void waiting(SavedShip& ship);
+	bool leaving(SavedShip& ship, uint16_t index, uint16_t& link);
+	void arriving(SavedShip& ship, uint16_t index);
 	void update_sailing();
-	bool sail(SavedShip& ship, int index);
-	void arrive(SavedShip& ship, int index, uint16_t& link, bool& again);
-	void sink(SavedShip& ship, int index, uint16_t& link);
-	void dock(SavedShip& ship, int index);
-	void start_voyage(SavedShip& ship);
+	bool sail(SavedShip& ship, uint16_t index);
+	bool pursue(SavedShip& ship);
+	void arrive(SavedShip& ship, uint16_t index, uint16_t& link);
+	void sink(SavedShip& ship, uint16_t index, uint16_t& link);
+	void dock(SavedShip& ship, uint16_t index);
+	void start_voyage(SavedShip& ship, uint16_t index);
 	void leave_port(SavedShip& ship);
 	void set_destination(SavedShip& ship, int town, int x, int y);
 	void rest(SavedShip& ship) const;

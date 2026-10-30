@@ -121,19 +121,19 @@ int main(int argc, char** argv) {
 	std::vector<Image> sprites(4);
 	int drawn = 0;
 	for (const SavedShip& ship : save.ships) {
-		if (!ship.in_use() || (ship.status != 0x0F && ship.status != 0x12)) {
+		if (!ship.in_use() || (ship.status() != 0x0F && ship.status() != 0x12)) {
 			continue;
 		}
-		Image& sheet = sprites[ship.type & 3];
-		if (sheet.rgba.empty() && !load_image(*archive, kShipSprites[ship.type & 3], sheet)) {
+		Image& sheet = sprites[ship.type() & 3];
+		if (sheet.rgba.empty() && !load_image(*archive, kShipSprites[ship.type() & 3], sheet)) {
 			return 1;
 		}
-		const int frame = ship.heading & 15;
-		const int x = ship.x >> 16;
-		const int y = ship.y >> 16;
+		const int frame = ship.heading() & 15;
+		const int x = ship.x() >> 16;
+		const int y = ship.y() >> 16;
 		blit(map, sheet, (frame % 4) * kShipSpriteWidth, (frame / 4) * kShipSpriteHeight, kShipSpriteWidth,
 			kShipSpriteHeight, x - kShipSpriteWidth / 2, y - kShipSpriteHeight / 2);
-		if (ship.owner == save.player) {
+		if (ship.owner() == save.player) {
 			blit(map, marker, 0, 0, marker.width, marker.height, x - marker.width / 2,
 				y - kShipSpriteHeight / 2 - marker.height);
 		}

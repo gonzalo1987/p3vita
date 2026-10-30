@@ -12,6 +12,9 @@ El estado son copias de la memoria del juego, por regiones:
   W      registros de 0x14 bytes del mundo (*0x6DE510, tantos como [0x6DE4A6])
   X      objetos de asedio de cada ciudad (*0x6DF270, 0x1024)
   E      cola de eventos (*0x6DD73C, tantos registros de 0x18 como [0x6DD748])
+  Y      tiempos de viaje entre ciudades ([+0x6C] del mundo, n × n bytes)
+  V      convoyes (*0x6DD7A8, tantos registros de 0x3C como [0x6DD896])
+  K0..K7 los 40 bytes de cada hueco del objeto 0x6DE588 (*[0x6DEF90 + 4·i]; vacío si no hay)
   Ri Di Ni  registros de edificio, rejilla y nodos (0x14) de la ciudad i; en
          cada nodo, el puntero al siguiente se cambia por su propia dirección
   r      estado de rand()
@@ -27,8 +30,18 @@ Formato del fichero (enteros little endian):
   Al final, u8 'E'.
 
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
-       [--desde DÍA] [--max N] [--semilla S]
+       [--desde DÍA] [--max N] [--semilla S] [--barcos DATOS]
 La función 51ba10 graba los ticks de ciudad enteros.
+
+Con --barcos (la carpeta de --navdata de save_oracle.py), cada tick hace
+además la actualización de los barcos del juego (0x506720) con los estados
+que reproduce p3vita (en puerto, 0 a 5; en el mar, 0x0F; sin convoyes) y, al
+final del tick, ejecuta las órdenes de zarpar (operación 0x00, 0x537670) que
+se han encolado. El juego ejecuta la cola entre dos llamadas a advance_time,
+que hace hasta 8 ticks según el tiempo real; aquí y en p3vita, tras cada tick.
+Las funciones 506720 y 537670 también se pueden grabar. Con --sin-ia, los
+barcos como en sail_oracle.py: en puerto solo los estados 1, 2, 3 y el 0 de
+los jugadores humanos, y las órdenes encoladas no se ejecutan.
 """
 import argparse
 import os
@@ -41,6 +54,8 @@ from unicorn import UC_HOOK_CODE  # noqa: E402
 from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESP  # noqa: E402
 
 TOWN_TICK = 0x51BA10
+UPDATE_SHIPS = 0x506720
+SET_SAIL = 0x537670  # operación 0x00
 UPDATE_DATE = 0x5310D0
 RAND = 0x639C03
 MERGE_TOWN_FLAGS = 0x5348B0  # la carga lo llama con 0x6DF278 tras leer el mundo
@@ -49,6 +64,7 @@ SETTINGS_SIZE = 0x4C
 PLAYER = 0x6DFC14
 SIEGES = 0x6DF270
 EVENTS = 0x6DD73C  # cola de eventos: puntero al array, cabeza u16 en +8, número u16 en +0xC
+PLAYER_TOWNS = 0x6DEF90  # 8 punteros a 40 bytes (un byte por ciudad) del objeto 0x6DE588
 GLOBALS = (0x6DD000, 0x6E0000)
 ENQUEUE = 0x54AA70  # encola una operación: se anota y no se ejecuta
 OPERATION_SIZE = 0x14  # lo que copia 0x543F10; lo que sigue en la pila es basura
@@ -56,6 +72,16 @@ OPERATION_SIZE = 0x14  # lo que copia 0x543F10; lo que sigue en la pila es basur
 # instrucción de verdad y no a SENTINEL (donde la emulación se para sin pasar
 # por los ganchos): si no, Recorder no ve la salida de 0x51BA10.
 TRAMPOLINE = SENTINEL + 0x10
+SHIPS_TRAMPOLINE = SENTINEL + 0x20
+SAIL_TRAMPOLINE = SENTINEL + 0x30
+# Actualización de barcos (ver sail_oracle.py): saltos por estado y convoyes.
+DOCKED_DISPATCH = 0x5067C0
+DOCKED_SKIP = 0x5068C6
+SAILING_DISPATCH = 0x506C4C
+SAILING_SKIP = 0x506CC3
+CONVOYS = 0x5070FD
+EPILOGUE = 0x5079E8
+DOCKED_STATES = (0, 1, 2, 3, 4, 5)
 
 # Funciones de interfaz que no cambian el estado del mundo: dirección →
 # bytes de argumentos que sacan al volver.
@@ -64,14 +90,41 @@ QUIET = {
     0x613920: 4,  # escena del puerto (0x6E6220)
     0x4D6530: 8,  # mensaje a uno o varios comerciantes (buzón 0x6DD730)
 }
+# Con barcos, además (ver sail_oracle.py):
+QUIET_SHIPS = {
+    0x44F940: 4,  # avisa a la interfaz de que un barco del jugador ha cambiado
+    0x453DF0: 0,  # interfaz
+    0x6132C0: 4, 0x6135C0: 8,  # escena del puerto
+    0x514000: 4,  # objetos del final de la sección de barcos
+    0x51A2C0: 8, 0x4D5900: 8, 0x518860: 4,  # IA ante un puerto bloqueado; ruta automática (no se reproducen)
+}
+
+
+def trampoline(target, args):
+    """push dword [esp+4·args] (args veces); call target; ret 4·args"""
+    code = bytes([0xFF, 0x74, 0x24, 4 * args]) * args
+    return code, lambda at: code + bytes([0xE8]) + struct.pack('<i', target - (at + len(code) + 5)) + \
+        bytes([0xC2, 4 * args, 0x00])
 
 
 class TownOracle(SaveOracle):
-    def __init__(self, exe, save, seed=1):
-        super().__init__(exe, save)
+    def __init__(self, exe, save, seed=1, navdata=None, ai=True):
+        super().__init__(exe, save, navdata)
+        self.ai = ai
         self.rand_state = seed
-        self.queued = []
-        for address, pop in {**QUIET, ENQUEUE: 4}.items():
+        self.queued = []  # para las muestras
+        self.tick_operations = []  # las órdenes que se ejecutan al final del tick
+        self.ships = navdata is not None
+        quiet = {**QUIET, ENQUEUE: 4}
+        if self.ships:
+            quiet.update(QUIET_SHIPS)
+            self.uc.hook_add(UC_HOOK_CODE, self._docked, begin=DOCKED_DISPATCH, end=DOCKED_DISPATCH)
+            self.uc.hook_add(UC_HOOK_CODE, self._sailing, begin=SAILING_DISPATCH, end=SAILING_DISPATCH)
+            self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=CONVOYS, end=CONVOYS, user_data=EPILOGUE)
+            for at, target, args in ((SHIPS_TRAMPOLINE, UPDATE_SHIPS, 1), (SAIL_TRAMPOLINE, SET_SAIL, 0)):
+                _, build = trampoline(target, args)
+                self.uc.mem_write(at, build(at))
+        for address, pop in quiet.items():
             self.skipped[address] = pop
             self.uc.hook_add(UC_HOOK_CODE, self._quiet, begin=address, end=address)
         self.uc.hook_add(UC_HOOK_CODE, self._rand, begin=RAND, end=RAND)
@@ -81,8 +134,30 @@ class TownOracle(SaveOracle):
 
     def _quiet(self, uc, address, size, user_data):
         if address == ENQUEUE:
-            self.queued.append(bytes(uc.mem_read(self._arg(0), OPERATION_SIZE)))
+            op = bytes(uc.mem_read(self._arg(0), OPERATION_SIZE))
+            self.queued.append(op)
+            self.tick_operations.append(op)
         self._stub(uc, address, size, user_data)
+
+    def _docked(self, uc, address, size, user_data):
+        from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_ESI
+        status = uc.reg_read(UC_X86_REG_ECX)
+        if self.ai:
+            allowed = status in DOCKED_STATES
+        else:
+            owner = self.u8(uc.reg_read(UC_X86_REG_ESI))
+            human = owner < self.counts()[2] and self.u16(self.merchant(owner) + 8) == 0
+            allowed = status in (1, 2, 3) or (status == 0 and human)
+        if not allowed:
+            uc.reg_write(UC_X86_REG_EIP, DOCKED_SKIP)
+
+    def _sailing(self, uc, address, size, user_data):
+        from unicorn.x86_const import UC_X86_REG_ESI
+        if self.u16(uc.reg_read(UC_X86_REG_ESI) + 0x134) != 0x0F:
+            uc.reg_write(UC_X86_REG_EIP, SAILING_SKIP)
+
+    def _jump(self, uc, address, size, target):
+        uc.reg_write(UC_X86_REG_EIP, target)
 
     def _rand(self, uc, address, size, user_data):
         # rand() de MSVC (0x639C03): el estado es por hilo y en el emulador no
@@ -134,6 +209,17 @@ class TownOracle(SaveOracle):
         town = t >> 3 if t & 7 == 7 else (t + 0xFF) >> 3 if t & 7 == 3 else None
         if town is not None and town < self.u32(WORLD + 0x10):
             self.town_tick(town)
+        if self.ships:
+            self.call(SHIPS_TRAMPOLINE, [tick], ecx=SHIPS)
+            # Las órdenes de zarpar encoladas en este tick (las de las obras de
+            # las ciudades no se ejecutan).
+            operations, self.tick_operations = self.tick_operations, []
+            for op in operations if self.ai else []:
+                if struct.unpack_from('<I', op, 0)[0] == 0:
+                    buffer = self.alloc(OPERATION_SIZE)
+                    self.uc.mem_write(buffer, op)
+                    self.call(SAIL_TRAMPOLINE, [], ecx=buffer)
+            self.tick_operations = []
         return tick
 
     # Estado por regiones.
@@ -156,6 +242,11 @@ class TownOracle(SaveOracle):
         if self.u32(SIEGES):
             add('X', self.u32(SIEGES), towns * 0x1024)
         add('E', self.u32(EVENTS), self.u16(EVENTS + 0xC) * 0x18 if self.u32(EVENTS) else 0)
+        add('Y', self.u32(WORLD + 0x6C), towns * towns if self.u32(WORLD + 0x6C) else 0)
+        add('V', self.u32(SHIPS + 8), self.u16(SHIPS + 0xF6) * 0x3C if self.u32(SHIPS + 8) else 0)
+        for i in range(8):
+            p = self.u32(PLAYER_TOWNS + 4 * i)
+            add(f'K{i}', p, 40 if p else 0)
         for i in range(towns):
             t = self.town(i)
             add(f'R{i}', self.u32(t + 0x75C), self.u16(t + 0x776) * 8)
@@ -273,8 +364,10 @@ def main():
     p.add_argument('--desde', type=int, default=0, help='primer día en el que se graba')
     p.add_argument('--max', type=int, default=1 << 30, help='muestras como mucho')
     p.add_argument('--semilla', type=int, default=1)
+    p.add_argument('--barcos', metavar='DATOS', help='también los barcos (carpeta con navdata/ y scripts/)')
+    p.add_argument('--sin-ia', action='store_true', help='con --barcos, sin las decisiones de la IA en puerto')
     a = p.parse_args()
-    o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla)
+    o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia)
     o.load()
     functions = [int(x, 16) for x in a.functions.split(',')]
     with open(a.out, 'wb') as f:

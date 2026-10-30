@@ -107,6 +107,7 @@ int main(int argc, char** argv) {
 	}
 	Sailing sailing(save, *nav, load_sea_map_towns(*archive));
 	sailing.assign_loaded_routes();
+	sailing.set_ai(false);  // El oráculo de navegación no ejecuta la IA en puerto.
 	auto advance = [&](uint32_t tick) {
 		while (save.tick() < tick) {
 			sailing.advance_tick();
@@ -149,14 +150,14 @@ int main(int argc, char** argv) {
 			const char* const names[] = {"estado", "x", "y", "dx", "dy", "velocidad", "punto", "marca", "rumbo",
 				"casco", "origen", "destino", "ciudad", "ruta propia", "maniobra", "zarpó/atracó", "llegada prevista",
 				"ataque", "descanso", "siguiente", "persigue", "carga media", "viajes", "puntos de la ruta"};
-			const std::string ours[] = {std::to_string(s.status), std::to_string(s.x), std::to_string(s.y),
-				std::to_string(s.dx), std::to_string(s.dy), std::to_string(s.speed), std::to_string(s.route_index),
-				std::to_string(s.route_mark), std::to_string(s.heading), std::to_string(s.health),
-				std::to_string(s.origin), std::to_string(s.destination), std::to_string(s.town),
-				std::to_string(int(s.own_route)), std::to_string(s.timer), std::to_string(s.moved_tick),
-				std::to_string(s.arrival_tick), std::to_string(int(s.raid)), std::to_string(s.readiness),
-				std::to_string(s.next_in_list), std::to_string(s.target), hex(s.load_factor_sum),
-				std::to_string(s.voyages), s.route ? std::to_string(s.route->size()) : "-1"};
+			const std::string ours[] = {std::to_string(s.status()), std::to_string(s.x()), std::to_string(s.y()),
+				std::to_string(s.dx()), std::to_string(s.dy()), std::to_string(s.speed()), std::to_string(s.route_index()),
+				std::to_string(s.route_mark()), std::to_string(s.heading()), std::to_string(s.health()),
+				std::to_string(s.origin()), std::to_string(s.destination()), std::to_string(s.town()),
+				std::to_string(int(s.own_route())), std::to_string(s.timer()), std::to_string(s.moved_tick()),
+				std::to_string(s.arrival_tick()), std::to_string(int(s.raid())), std::to_string(s.readiness()),
+				std::to_string(s.next_in_list()), std::to_string(s.target()), hex(s.load_factor_sum()),
+				std::to_string(s.voyages()), s.route ? std::to_string(s.route->size()) : "-1"};
 			for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
 				check.field(names[i], ours[i], f.at(3 + i));
 			}

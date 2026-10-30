@@ -12,6 +12,8 @@ constexpr std::array<int32_t, 4> kMinSailors = {10, 16, 30, 24};
 constexpr int32_t kSailorWeight = 400;
 // Peso de cada tipo de pieza de artillería (tabla 0x672CB4).
 constexpr std::array<int32_t, 6> kArtilleryWeight = {1000, 1000, 2000, 2000, 2000, 1000};
+// 0x672CC8: lo que suma cada tipo de pieza a [+0x120] del barco.
+constexpr std::array<int32_t, 6> kArtilleryFirepower = {9, 10, 22, 24, 30, 18};
 constexpr int32_t kHandWeaponWeight = 10;
 constexpr int32_t kLoad = 2000;
 
@@ -32,12 +34,12 @@ void add_cargo(SavedShip& ship, int ware, int32_t amount, int32_t price) {
 		return;
 	}
 	const size_t w = size_t(ware);
-	const int32_t old = ship.cargo[w];
-	const double total = double(ship.average_price[w]) * double(old) + double(price);
+	const int32_t old = ship.cargo(w);
+	const double total = double(ship.average_price(w)) * double(old) + double(price);
 	int32_t cargo = old + amount;
 	cargo -= cargo % cargo_unit(ware);
-	ship.cargo[w] = cargo;
-	ship.average_price[w] = float(total / double(cargo));
+	ship.cargo(w) = cargo;
+	ship.average_price(w) = float(total / double(cargo));
 }
 
 // Reduce la compra a lo que el comerciante puede pagar (0x52F3E0): primero
@@ -84,7 +86,7 @@ void fit_to_money(int ware, const MarketState& market, int32_t money, int32_t& p
 
 bool valid(const SaveGame& save, int ship, int town, int ware) {
 	return ship >= 0 && size_t(ship) < save.ships.size() && town >= 0 && size_t(town) < save.towns.size() &&
-		ware >= 0 && ware < kWareCount && save.ships[size_t(ship)].owner < save.merchants.size();
+		ware >= 0 && ware < kWareCount && save.ships[size_t(ship)].owner() < save.merchants.size();
 }
 
 // El comerciante tiene prohibido comerciar en esa ciudad (campo 0x608).
@@ -96,25 +98,32 @@ bool banned(const SavedMerchant& merchant, int town) {
 
 int32_t recalculate_cargo(SavedShip& ship) {
 	int32_t used = 0;
+	uint32_t value = 0;  // [+0x114] Lo que costó la carga: carga · precio medio, truncado.
 	for (int w = kWareCount - 1; w >= 0; --w) {
-		int32_t& cargo = ship.cargo[size_t(w)];
+		int32_t& cargo = ship.cargo(w);
 		cargo -= cargo % cargo_unit(w);
 		used += cargo;
+		value += uint32_t(int64_t(double(float(cargo)) * double(ship.average_price(w))));
 	}
-	used += int32_t(ship.extra_loads) * kLoad;
+	ship.memory.u32(0x114) = value;
+	used += int32_t(ship.extra_loads()) * kLoad;
 
-	const int32_t min_sailors = kMinSailors[ship.type & 3];
-	int32_t equipment = ship.sailors > min_sailors ? (ship.sailors - min_sailors) * kSailorWeight : 0;
-	for (uint8_t piece : ship.artillery) {
+	const int32_t min_sailors = kMinSailors[ship.type() & 3];
+	int32_t equipment = ship.sailors() > min_sailors ? (ship.sailors() - min_sailors) * kSailorWeight : 0;
+	int32_t firepower = 0;  // [+0x120] Suma de la tabla 0x672CC8 por pieza de artillería.
+	for (int slot = 0; slot < 24; ++slot) {
+		const uint8_t piece = ship.artillery(slot);
 		if (piece < kArtilleryWeight.size()) {
 			equipment += kArtilleryWeight[piece];
+			firepower += kArtilleryFirepower[piece];
 		}
 	}
-	equipment += int32_t(ship.hand_weapons) * kHandWeaponWeight;
+	ship.memory.s32(0x120) = firepower;
+	equipment += int32_t(ship.hand_weapons()) * kHandWeaponWeight;
 
-	ship.equipment = equipment;
-	ship.used = (used + 199) / 200 * 200;
-	return ship.capacity - equipment - used;
+	ship.equipment() = equipment;
+	ship.used() = (used + 199) / 200 * 200;
+	return ship.capacity() - equipment - used;
 }
 
 TradeResult quote_buy(const SaveGame& save, int ship_index, int town_index, int ware, int32_t amount) {
@@ -122,8 +131,8 @@ TradeResult quote_buy(const SaveGame& save, int ship_index, int town_index, int 
 		return {};
 	}
 	SavedShip ship = save.ships[size_t(ship_index)];
-	const SavedMerchant& merchant = save.merchants[ship.owner];
-	if (ship.town != town_index || banned(merchant, town_index)) {
+	const SavedMerchant& merchant = save.merchants[ship.owner()];
+	if (ship.town() != town_index || banned(merchant, town_index)) {
 		return {};
 	}
 	const SavedTown& town = save.towns[size_t(town_index)];
@@ -153,7 +162,7 @@ TradeResult buy_to_ship(SaveGame& save, int ship_index, int town_index, int ware
 		return {};
 	}
 	SavedShip& ship = save.ships[size_t(ship_index)];
-	save.merchants[ship.owner].money() -= result.price;
+	save.merchants[ship.owner()].money() -= result.price;
 	add_cargo(ship, ware, result.amount, result.price);
 	recalculate_cargo(ship);
 	save.towns[size_t(town_index)].stock(size_t(ware)) -= uint32_t(result.amount);
@@ -166,10 +175,10 @@ TradeResult quote_sell(const SaveGame& save, int ship_index, int town_index, int
 		return {};
 	}
 	const SavedShip& ship = save.ships[size_t(ship_index)];
-	if (banned(save.merchants[ship.owner], town_index)) {
+	if (banned(save.merchants[ship.owner()], town_index)) {
 		return {};
 	}
-	amount = std::min(amount, ship.cargo[size_t(ware)]);
+	amount = std::min(amount, ship.cargo(size_t(ware)));
 	const SavedTown& town = save.towns[size_t(town_index)];
 	return {amount, sell_price(ware, town.market(ware), amount, difficulty)};
 }
@@ -182,9 +191,9 @@ TradeResult sell_from_ship(SaveGame& save, int ship_index, int town_index, int w
 		return {};
 	}
 	SavedShip& ship = save.ships[size_t(ship_index)];
-	ship.cargo[size_t(ware)] -= result.amount;
+	ship.cargo(size_t(ware)) -= result.amount;
 	recalculate_cargo(ship);
-	save.merchants[ship.owner].money() += result.price;
+	save.merchants[ship.owner()].money() += result.price;
 	save.towns[size_t(town_index)].stock(size_t(ware)) += uint32_t(result.amount);
 	return result;
 }

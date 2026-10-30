@@ -21,6 +21,9 @@
 //   facilities.cpp    instalaciones de los tipos 0..3 (milicia, astillero...)
 //   offices.cpp       oficinas de los comerciantes: 0x4FFD40, 0x4FFF20
 //   construction.cpp  obras de la ciudad: 0x524920, 0x51E070, 0x51D870
+//   ship_ai.cpp       barcos en puerto (estados 0, 4 y 5 de 0x506720) y las
+//                     decisiones de los de la IA (0x518B80)
+//   ship_trade.cpp    lo que compran y venden los barcos de la IA
 // shared.cpp tiene las funciones pequeñas que usan varios.
 
 namespace p3::data::tick {
@@ -137,5 +140,41 @@ void fn_4fff20(SaveGame& save, int office, uint32_t day_of_year);
 void fn_524920(SaveGame& save, int town, int32_t workers);
 void fn_51e070(SaveGame& save, int town);
 void fn_51d870(SaveGame& save, int town);
+
+// Ya traducidas y que también usan los barcos de la IA.
+namespace facilities_detail {
+// 0x5308A0 con create = 0: la oficina del comerciante en la ciudad, o -1.
+int fn_5308a0(const SaveGame& save, uint32_t merchant, uint32_t town);
+}  // namespace facilities_detail
+namespace offices_detail {
+// 0x4F8690 y 0x4F8840: estadísticas de venta y de compra del comerciante.
+void fn_4f8690(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32_t money, int32_t amount, bool flag);
+void fn_4f8840(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32_t money, int32_t amount, bool flag);
+}  // namespace offices_detail
+
+// ship_ai.cpp: los manejadores de 0x506720 para un barco de la lista de
+// barcos en puerto en los estados 0 (0x5067D0), 4 (0x506A19) y 5 (0x506B6A).
+// `link` apunta al u16 que enlaza el barco (la cabeza [+0xE8] del objeto de
+// los barcos o el [+0x6] del anterior). Devuelven true si el recorrido sigue
+// por el [+0x6] del barco y false si el barco ha salido de la lista (el
+// recorrido sigue por `link`).
+bool fn_5067d0(SaveGame& save, int ship, uint16_t* link);
+bool fn_506a19(SaveGame& save, int ship, uint16_t* link);
+bool fn_506b6a(SaveGame& save, int ship, uint16_t* link);
+void fn_518b80(SaveGame& save, int ship, uint32_t arg);  // Un barco de la IA decide qué hacer en puerto.
+
+// ship_trade.cpp (las llama fn_518b80)
+void fn_519280(SaveGame& save, int ship);
+void fn_5193f0(SaveGame& save, int ship);
+void fn_5196b0(SaveGame& save, int ship);
+void fn_519920(SaveGame& save, int ship, uint32_t town);
+void fn_51a070(SaveGame& save, int ship, int town);  // ecx = el barco, arg = [0x124] (armas) de la ciudad.
+// ship_trade.cpp: lo que usa también 0x518FF0.
+namespace ship_trade_detail {
+uint8_t fn_531b70(const SaveGame& save, uint32_t a, uint32_t b);  // Tiempo de viaje entre dos ciudades.
+int32_t fn_516ab0(const SaveGame& save, int ship, uint32_t town);  // Días de viaje del barco hasta la ciudad.
+// Cantidad que conviene llevar de `from` a `to` y margen (`factor`).
+int32_t fn_52f030(const SaveGame& save, uint32_t from, uint32_t to, uint32_t ware, int32_t days, float& factor);
+}  // namespace ship_trade_detail
 
 }  // namespace p3::data::tick

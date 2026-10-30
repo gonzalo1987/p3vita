@@ -65,7 +65,9 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Partidas cargadas en memoria igual que el juego (ciudades, oficinas, comerciantes, cola de eventos...)
 - [ ] Ejecutar las operaciones que encolan las ciudades (obras, materiales, avisos)
 - [ ] Resto de advance_time: tick de los comerciantes, asedios, tareas programadas
-- [ ] Barcos de la IA (sus decisiones de viaje), convoyes, astillero y piratas
+- [x] Barcos de la IA en puerto: comercio con las ciudades y sus oficinas, elección de destino, tripulación, armas, reparación en el astillero y creación de convoyes, idénticos al juego ([formats/navigation.md](formats/navigation.md) §8)
+- [x] Barcos como memoria del juego; navegación idéntica byte a byte (avisos, lista por x, contadores)
+- [ ] Convoyes en el mar, piratas, persecuciones, encuentros y batallas
 - [ ] Tests que comparen con el comportamiento documentado del original
 
 ## Fase 5: interfaz

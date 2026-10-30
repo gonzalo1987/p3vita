@@ -527,6 +527,9 @@ de 0x180 bytes de P3Modding):
 - Equipo [+0x11C] = 400 por cada marinero por encima del mínimo del tipo
   (tabla 0x673664: 10, 16, 30, 24) + el peso de cada pieza de artillería
   (0x672cb4: 1000, 1000, 2000, 2000, 2000, 1000) + 10 por arma de mano.
+- [+0x114]: lo que costó la carga, la suma de `ftol(carga · precio medio)`
+  (la carga pasada a float); [+0x120]: la suma por pieza de artillería de la
+  tabla 0x672CC8 (9, 10, 22, 24, 30, 18).
 - Devuelve el espacio libre: capacidad − equipo − ocupado (sin redondear).
 
 ### 12.3 Comprar y vender (operaciones 0x02 y 0x01) **[código + oráculo]**
@@ -575,7 +578,8 @@ recién cargada la partida (`tick_probe --carga`, ver [../oracle.md](../oracle.m
 0 diferencias en las 12 partidas v0x82 en ciudades, oficinas, comerciantes,
 capitanes, registros de 0x14 del mundo, registros de edificio, rejillas,
 nodos, los campos con nombre de los barcos y los globales de abajo. Lo que no
-sale directamente de §4–§12:
+sale directamente de §4–§12 (los barcos se comparan enteros salvo el puntero
+de la ruta [+0x24]):
 
 - Ciudad: la parte 1 (0x414 bytes) y la 2 van seguidas a [0x2C0] y [0x82C];
   la parte 4 deja sin leer [0x822]; en la 5, los movimientos de dinero son
@@ -599,6 +603,14 @@ sale directamente de §4–§12:
   barcos cuenta en [0x47C] los barcos de cada comerciante (0x504652).
 - Capitán (0x4FDEB0, 16 bytes en el fichero): [0x0] 2, [0x2], [0x3], [0x4] 4,
   [0xC] 2, [0x8..0xB], [0xE] (0 o 1) y [0xF].
+- Barco (0x516520 y 0x517990, en el orden de §12.1): [+0x2] y [+0x3A] van en
+  big endian, [+0x15C] es 0 o 1 y [+0x15E] es big endian sin signo; tras
+  [+0x50] y la ruta, [+0x114], [+0x124], [+0x128] y [+0x12C]..[+0x132] van
+  seguidos, y después [+0x136], [+0x137], [+0x13A], [+0x13B] y [+0x138]. Los
+  huecos libres quedan con dueño 0xFF, [+0x4], [+0xA] y [+0xC] a 0xFFFF y lo
+  demás a 0, salvo [+0x6] (siguiente hueco libre) y [+0x137] (desde la
+  versión 0x83), que se leen. Después la bodega (§12.2) recalcula [+0x114],
+  [+0x118], [+0x11C] y [+0x120].
 - Globales: los ajustes en `*0x6CC3E8` (0x4C bytes, con [0x3C..0x4B] a 0 y el
   byte 8 limitado a 14 si el 0xF no es 6), la cabecera del mundo (§3; [+0x89]
   es 0 o 1, [+0x8A] es 1 si el byte vale 0x7F), [+0x80] del mundo con el

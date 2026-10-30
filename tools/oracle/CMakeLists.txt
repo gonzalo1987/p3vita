@@ -14,7 +14,8 @@ target_link_libraries(compare_sail PRIVATE p3data)
 target_compile_options(compare_sail PRIVATE -Wall -Wextra)
 
 add_executable(tick_probe tick_probe.cpp probes_shared.cpp probes_core.cpp probes_population.cpp
-	probes_businesses.cpp probes_facilities.cpp probes_offices.cpp probes_construction.cpp)
+	probes_businesses.cpp probes_facilities.cpp probes_offices.cpp probes_construction.cpp probes_ship_ai.cpp
+	probes_ship_trade.cpp)
 
 target_link_libraries(tick_probe PRIVATE p3data)
 target_compile_options(tick_probe PRIVATE -Wall -Wextra)

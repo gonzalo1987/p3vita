@@ -19,7 +19,8 @@ namespace p3::probe {
 
 // Qué objeto del juego hay en una dirección del emulador.
 struct Location {
-	enum Kind { None, Global, Settings, Town, Office, Merchant, Ship, Captain, WorldRecord, Siege, Node, Records, Grid };
+	enum Kind { None, Global, Settings, Town, Office, Merchant, Ship, Captain, WorldRecord, Siege, Node, Records, Grid,
+		Convoy };
 	Kind kind = None;
 	int index = -1;  // Ciudad, oficina, comerciante... (en Node, Records y Grid, la ciudad).
 	int item = -1;  // En Node, el nodo dentro de la lista de la ciudad; en Records, el registro.
@@ -52,6 +53,7 @@ struct ProbeCall {
 	int office(uint32_t address) const { return exact(address, Location::Office); }
 	int merchant(uint32_t address) const { return exact(address, Location::Merchant); }
 	int ship(uint32_t address) const { return exact(address, Location::Ship); }
+	int convoy(uint32_t address) const { return exact(address, Location::Convoy); }
 	// Instalación de una ciudad: {ciudad, instalación} o {-1, -1}.
 	std::pair<int, int> facility(uint32_t address) const {
 		const Location l = locate(address);
@@ -80,5 +82,7 @@ void register_probes_businesses(ProbeRegistry& r);
 void register_probes_facilities(ProbeRegistry& r);
 void register_probes_offices(ProbeRegistry& r);
 void register_probes_construction(ProbeRegistry& r);
+void register_probes_ship_ai(ProbeRegistry& r);
+void register_probes_ship_trade(ProbeRegistry& r);
 
 }  // namespace p3::probe

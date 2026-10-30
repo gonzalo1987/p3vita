@@ -22,10 +22,10 @@ void expect(bool ok, const char* what) {
 
 SavedShip snaikka() {
 	SavedShip ship;
-	ship.status = kShipDocked;
-	ship.type = uint8_t(ShipType::Snaikka);
-	ship.capacity = 30000;
-	ship.health = ship.max_health = 42000;
+	ship.status() = kShipDocked;
+	ship.type() = uint8_t(ShipType::Snaikka);
+	ship.capacity() = 30000;
+	ship.health() = ship.max_health() = 42000;
 	return ship;
 }
 
@@ -46,14 +46,14 @@ int main() {
 	SavedShip ship = snaikka();
 	expect(Sailing::speed(ship) == 158, "velocidad de una Snaikka vacía");
 	// Llena: (4096 − 614) · 635 >> 12 = 539, por 256 >> 10.
-	ship.used = 30000;
+	ship.used() = 30000;
 	expect(Sailing::speed(ship) == 134, "velocidad de una Snaikka llena");
 	// Con el casco por debajo de un tercio la velocidad baja hasta un 80 %.
-	ship.used = 0;
-	ship.health = 1;
+	ship.used() = 0;
+	ship.health() = 1;
 	expect(Sailing::speed(ship) == 0xCC * 635u >> 10, "velocidad con el casco destrozado");
-	ship.type = uint8_t(ShipType::Craier);
-	ship.health = ship.max_health;
+	ship.type() = uint8_t(ShipType::Craier);
+	ship.health() = ship.max_health();
 	expect(Sailing::speed(ship) == 173, "velocidad de un Craier vacío");
 
 	if (failures == 0) {

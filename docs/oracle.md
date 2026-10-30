@@ -192,3 +192,37 @@ ejemplo, los 11 movimientos de dinero de la ciudad (el fichero guarda 0x2C
 bytes y no 0x28), que las operaciones encoladas son de 0x14 bytes y que la
 cola de eventos de la partida decide si la ciudad avisa de sus obras. Ver
 [formats/town_tick.md](formats/town_tick.md).
+
+## El mundo entero: ciudades, barcos y la IA
+
+Con `--barcos DATOS` (la carpeta de `--navdata`), `town_oracle.py` hace en
+cada tick lo que reproduce p3vita de `advance_time`: la fecha, el tick de
+ciudad, la actualización de barcos del juego (0x506720) con los estados en
+puerto 0 a 5 (también las decisiones de los barcos de la IA, 0x518B80) y en el
+mar el 0x0F, sin convoyes en el mar, piratas ni encuentros, y al final del
+tick ejecuta las órdenes de zarpar encoladas (0x537670). `--sin-ia` deja los
+barcos como en `sail_oracle.py`. Con los barcos ya como memoria del juego, la
+comparación es del barco entero salvo el puntero de la ruta.
+
+`tick_probe --continuo --carga partida.raw --cpr p2arch0_eng.cpr` repite una
+grabación de `51ba10,506720,537670` partiendo de la partida que lee p3vita:
+el mundo entero tick a tick (`Sailing` y `advance_game_tick`).
+
+```sh
+python3 tools/oracle/town_oracle.py <exe> /tmp/1.raw /tmp/1-w.probe 60 51ba10,506720,537670 --barcos /tmp/datos
+build/tools/oracle/tick_probe /tmp/1-w.probe --continuo --carga /tmp/1.raw --cpr p2arch0_eng.cpr
+```
+
+Resultado: 0 diferencias byte a byte en las 12 partidas v0x82 durante 60
+días (15 360 actualizaciones de barcos y unos 1440 ticks de ciudad por
+partida), con los barcos de la IA comerciando, eligiendo destino, yendo al
+astillero y formando convoyes. Sin la IA (`--sin-ia`, y `tick_probe
+--sin-ia`), también 0 en 32 días; el oráculo de navegación de antes sigue en
+0 con `Sailing::set_ai(false)`.
+
+Las funciones de la IA se comprobaron también una a una (grabando con
+`P3_SHIPS=/tmp/datos scripts/tick-probe.sh ...`) y con estados retocados al
+azar para las ramas que las partidas no recorren. Así se encontraron, por
+ejemplo, que el juego exige el casco por encima del 20 % solo a los barcos
+con capitán (p3vita lo tenía al revés), que la IA crea convoyes en puerto, los
+avisos a la interfaz que pone cada estado y la lista de barcos ordenada por x.

@@ -1,10 +1,9 @@
 // Repite con src/p3data/town_tick las llamadas que grabó town_oracle.py y
 // compara el resultado con el del juego, byte a byte, en la memoria de las
-// ciudades, oficinas, comerciantes, capitanes, globales... y, de los barcos,
-// en los campos que tiene SavedShip.
+// ciudades, oficinas, comerciantes, barcos, capitanes, globales...
 //
 // uso: tick_probe <fichero.probe> [--continuo] [--solo FUNCIÓN] [--max N]
-//        tick_probe <fichero.probe> --carga <partida.raw> [--max N]
+//        tick_probe <fichero.probe> --carga <partida.raw> [--continuo [--cpr p2arch0_eng.cpr [--sin-ia]]] [--max N]
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
 // ella, así que una diferencia apunta a esa función. Con --continuo el estado
@@ -15,7 +14,10 @@
 // Con --carga compara el estado inicial de la grabación (el juego recién
 // cargada la partida) con lo que lee src/p3data/savegame.cpp de la misma
 // partida; de los globales, solo los que llena el lector. Con --carga y
-// --continuo, la simulación de p3vita parte de esa lectura.
+// --continuo, la simulación de p3vita parte de esa lectura; con --cpr además
+// crea la navegación (Sailing) y repite también la actualización de barcos
+// (506720) y las órdenes de zarpar (537670) de una grabación hecha con
+// town_oracle.py --barcos: el mundo entero, tick a tick.
 
 #include <cinttypes>
 #include <cstdio>
@@ -26,7 +28,13 @@
 #include <string>
 #include <vector>
 
+#include <deque>
+#include <memory>
+
+#include "p3data/navigation.hpp"
+#include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
+#include "p3data/seamap.hpp"
 #include "probe_registry.hpp"
 
 using namespace p3::data;
@@ -102,8 +110,6 @@ void apply_diff(Input& in, State& state) {
 	}
 }
 
-// --- Barcos: SavedShip ↔ memoria del juego (struct ship, 0x180 bytes) ---
-
 template <class T>
 T get(const uint8_t* p, size_t o) {
 	T v;
@@ -113,116 +119,6 @@ T get(const uint8_t* p, size_t o) {
 template <class T>
 void put(uint8_t* p, size_t o, T v) {
 	std::memcpy(p + o, &v, sizeof(v));
-}
-
-void ship_from_memory(const uint8_t* p, SavedShip& s) {
-	s.status = get<uint16_t>(p, 0x134);
-	s.owner = p[0x0];
-	s.heading = p[0x1];
-	s.route_mark = get<uint16_t>(p, 0x2);
-	s.next_of_owner = get<uint16_t>(p, 0x4);
-	s.next_in_list = get<uint16_t>(p, 0x6);
-	s.convoy = get<uint16_t>(p, 0x8);
-	s.type = p[0xE];
-	s.level = p[0xF];
-	s.capacity = get<int32_t>(p, 0x10);
-	s.max_health = get<int32_t>(p, 0x14);
-	s.health = get<int32_t>(p, 0x18);
-	s.x = get<int32_t>(p, 0x1C);
-	s.y = get<int32_t>(p, 0x20);
-	s.dx = get<int32_t>(p, 0x28);
-	s.dy = get<int32_t>(p, 0x2C);
-	s.speed = get<int32_t>(p, 0x30);
-	s.route_index = get<uint16_t>(p, 0x34);
-	s.own_route = p[0x36] != 0;
-	s.origin = p[0x37];
-	s.destination = p[0x38];
-	s.town = p[0x39];
-	s.target = get<uint16_t>(p, 0x3A);
-	s.notices = get<uint16_t>(p, 0x3C);
-	s.readiness = get<uint16_t>(p, 0x3E);
-	s.sailors = get<uint16_t>(p, 0x40);
-	s.captain = get<uint16_t>(p, 0x42);
-	s.moved_tick = get<uint32_t>(p, 0x44);
-	s.arrival_tick = get<uint32_t>(p, 0x48);
-	s.built_tick = get<uint32_t>(p, 0x4C);
-	for (size_t w = 0; w < kWareCount; ++w) {
-		s.cargo[w] = get<int32_t>(p, 0x54 + 4 * w);
-		s.average_price[w] = get<float>(p, 0xB4 + 4 * w);
-	}
-	s.used = get<int32_t>(p, 0x118);
-	s.equipment = get<int32_t>(p, 0x11C);
-	s.load_factor_sum = get<float>(p, 0x12C);
-	s.voyages = get<uint16_t>(p, 0x130);
-	s.orders = p[0x136];
-	s.timer = get<uint16_t>(p, 0x138);
-	std::memcpy(s.artillery.data(), p + 0x13C, s.artillery.size());
-	s.hand_weapons = get<uint16_t>(p, 0x154);
-	s.extra_loads = p[0x156];
-	s.raid = p[0x15C] != 0;
-}
-
-void ship_to_memory(const SavedShip& s, uint8_t* p) {
-	put<uint16_t>(p, 0x134, s.status);
-	p[0x0] = s.owner;
-	p[0x1] = s.heading;
-	put<uint16_t>(p, 0x2, s.route_mark);
-	put<uint16_t>(p, 0x4, s.next_of_owner);
-	put<uint16_t>(p, 0x6, s.next_in_list);
-	put<uint16_t>(p, 0x8, s.convoy);
-	p[0xE] = s.type;
-	p[0xF] = s.level;
-	put<int32_t>(p, 0x10, s.capacity);
-	put<int32_t>(p, 0x14, s.max_health);
-	put<int32_t>(p, 0x18, s.health);
-	put<int32_t>(p, 0x1C, s.x);
-	put<int32_t>(p, 0x20, s.y);
-	put<int32_t>(p, 0x28, s.dx);
-	put<int32_t>(p, 0x2C, s.dy);
-	put<int32_t>(p, 0x30, s.speed);
-	put<uint16_t>(p, 0x34, s.route_index);
-	p[0x36] = s.own_route;
-	p[0x37] = s.origin;
-	p[0x38] = s.destination;
-	p[0x39] = s.town;
-	put<uint16_t>(p, 0x3A, s.target);
-	put<uint16_t>(p, 0x3C, s.notices);
-	put<uint16_t>(p, 0x3E, s.readiness);
-	put<uint16_t>(p, 0x40, s.sailors);
-	put<uint16_t>(p, 0x42, s.captain);
-	put<uint32_t>(p, 0x44, s.moved_tick);
-	put<uint32_t>(p, 0x48, s.arrival_tick);
-	put<uint32_t>(p, 0x4C, s.built_tick);
-	for (size_t w = 0; w < kWareCount; ++w) {
-		put<int32_t>(p, 0x54 + 4 * w, s.cargo[w]);
-		put<float>(p, 0xB4 + 4 * w, s.average_price[w]);
-	}
-	put<int32_t>(p, 0x118, s.used);
-	put<int32_t>(p, 0x11C, s.equipment);
-	put<float>(p, 0x12C, s.load_factor_sum);
-	put<uint16_t>(p, 0x130, s.voyages);
-	p[0x136] = s.orders;
-	put<uint16_t>(p, 0x138, s.timer);
-	std::memcpy(p + 0x13C, s.artillery.data(), s.artillery.size());
-	put<uint16_t>(p, 0x154, s.hand_weapons);
-	p[0x156] = s.extra_loads;
-	p[0x15C] = s.raid;
-}
-
-// Offsets de struct ship que tiene SavedShip (los únicos que se comparan).
-std::vector<bool> ship_mask() {
-	std::vector<bool> m(0x180, false);
-	auto mark = [&](size_t o, size_t n) {
-		for (size_t i = 0; i < n; ++i) {
-			m[o + i] = true;
-		}
-	};
-	mark(0x0, 2), mark(0x2, 2), mark(0x4, 2), mark(0x6, 2), mark(0x8, 2), mark(0xE, 2), mark(0x10, 0x14);
-	mark(0x28, 0xC), mark(0x34, 2), mark(0x36, 6), mark(0x3C, 2), mark(0x3E, 0xE), mark(0x4C, 4), mark(0x54, 0xC0);
-	mark(0x118, 8);
-	mark(0x12C, 6), mark(0x134, 1), mark(0x135, 1), mark(0x136, 1), mark(0x138, 2), mark(0x13C, 24);
-	mark(0x154, 3), mark(0x15C, 1);
-	return m;
 }
 
 template <size_t N>
@@ -286,9 +182,9 @@ void build_save(const State& state, SaveGame& save) {
 		save.merchants[i].memory = merchants[i];
 	}
 	const Region& p = state.at("P");
-	save.ships.resize(p.bytes.size() / 0x180);
+	save.ships.resize(p.bytes.size() / ShipMemory::kSize);
 	for (size_t i = 0; i < save.ships.size(); ++i) {
-		ship_from_memory(p.bytes.data() + i * 0x180, save.ships[i]);
+		std::memcpy(save.ships[i].memory.bytes.data(), p.bytes.data() + i * ShipMemory::kSize, ShipMemory::kSize);
 	}
 	copy_blocks(state.at("C"), save.captains);
 	copy_blocks(state.at("W"), save.world_records);
@@ -297,6 +193,17 @@ void build_save(const State& state, SaveGame& save) {
 	}
 	if (const Region* e = find(state, "E")) {
 		copy_blocks(*e, save.events);
+	}
+	if (const Region* y = find(state, "Y")) {
+		save.town_travel = y->bytes;
+	}
+	if (const Region* v = find(state, "V")) {
+		copy_blocks(*v, save.convoys);
+	}
+	for (size_t i = 0; i < save.player_towns.size(); ++i) {
+		if (const Region* k = find(state, "K" + std::to_string(i))) {
+			save.player_towns[i] = k->bytes;
+		}
 	}
 	save.rand_state = get<uint32_t>(state.at("r").bytes.data(), 0);
 	save.player = int(save.globals.u32(global::kPlayer));
@@ -334,9 +241,9 @@ State dump_save(const SaveGame& save, const State& game) {
 	}
 	store_blocks(merchants, s["M"]);
 	Region& p = s["P"];
-	p.bytes.resize(save.ships.size() * 0x180);
+	p.bytes.resize(save.ships.size() * ShipMemory::kSize);
 	for (size_t i = 0; i < save.ships.size(); ++i) {
-		ship_to_memory(save.ships[i], p.bytes.data() + i * 0x180);
+		std::memcpy(p.bytes.data() + i * ShipMemory::kSize, save.ships[i].memory.bytes.data(), ShipMemory::kSize);
 	}
 	store_blocks(save.captains, s["C"]);
 	store_blocks(save.world_records, s["W"]);
@@ -345,6 +252,18 @@ State dump_save(const SaveGame& save, const State& game) {
 	}
 	if (s.count("E")) {
 		store_blocks(save.events, s["E"]);
+	}
+	if (s.count("Y")) {
+		s["Y"].bytes = save.town_travel;
+	}
+	if (s.count("V")) {
+		store_blocks(save.convoys, s["V"]);
+	}
+	for (size_t i = 0; i < save.player_towns.size(); ++i) {
+		const std::string k = "K" + std::to_string(i);
+		if (s.count(k)) {
+			s[k].bytes = save.player_towns[i];
+		}
 	}
 	s["r"].bytes.resize(4);
 	put<uint32_t>(s["r"].bytes.data(), 0, save.rand_state);
@@ -371,7 +290,7 @@ Location locate(const State& state, uint32_t a) {
 	if (in("A", 0, Location::Settings) || in("T", TownMemory::kSize, Location::Town) ||
 		in("O", OfficeMemory::kSize, Location::Office) || in("M", MerchantMemory::kSize, Location::Merchant) ||
 		in("P", 0x180, Location::Ship) || in("C", 0x10, Location::Captain) || in("W", 0x14, Location::WorldRecord) ||
-		in("X", SiegeMemory::kSize, Location::Siege)) {
+		in("X", SiegeMemory::kSize, Location::Siege) || in("V", 0x3C, Location::Convoy)) {
 		return l;
 	}
 	for (const auto& [name, r] : state) {
@@ -400,8 +319,8 @@ std::string describe(const std::string& region, size_t offset) {
 	char text[96];
 	const char* name = region.c_str();
 	const size_t sizes[] = {TownMemory::kSize, OfficeMemory::kSize, MerchantMemory::kSize, 0x180, 0x10, 0x14,
-		SiegeMemory::kSize};
-	const char* names = "TOMPCWX";
+		SiegeMemory::kSize, 0x3C};
+	const char* names = "TOMPCWXV";
 	if (const char* k = std::strchr(names, name[0]); k && name[1] == '\0') {
 		const size_t size = sizes[k - names];
 		std::snprintf(text, sizeof(text), "%s[%zu]+0x%zx", name, offset / size, offset % size);
@@ -414,17 +333,18 @@ std::string describe(const std::string& region, size_t offset) {
 }
 
 // Globales que llena el lector de partidas: cabecera del mundo, del objeto de
-// los barcos, el jugador y el factor de la dificultad del comercio.
+// los barcos, el jugador, el factor de la dificultad del comercio y el objeto
+// 0x6DE588 (sin sus punteros).
 bool loaded_global(uint32_t a) {
 	return (a >= global::kWorld && a < global::kWorld + 0xE4) || (a >= global::kShips + 0xE0 && a < global::kShips + 0x100) ||
+		(a >= 0x6DE588 && a < 0x6DE588 + 0xA08) ||
 		(a >= global::kPlayer && a < global::kPlayer + 4) || (a >= 0x6DE43C && a < 0x6DE440) ||
-		(a >= 0x6DD744 && a < 0x6DD74A);
+		(a >= 0x6DD744 && a < 0x6DD74A) || (a >= global::kShips + 0x100 && a < global::kShips + 0x108);
 }
 
 // Compara y escribe las diferencias. Devuelve cuántas hay. Con only_loaded,
 // de los globales solo compara los que llena el lector de partidas.
 int compare(const State& ours, const State& game, int& budget, const std::string& title, bool only_loaded = false) {
-	static const std::vector<bool> kShipMask = ship_mask();
 	int differences = 0;
 	bool header = false;
 	auto report = [&](const std::string& what) {
@@ -454,10 +374,7 @@ int compare(const State& ours, const State& game, int& budget, const std::string
 		}
 		const bool town = name == "T";
 		for (size_t i = 0; i < a.size(); ++i) {
-			// De un hueco libre de barco solo cuentan su estado y el siguiente libre.
-			const bool free_ship = name == "P" && get<uint16_t>(b.data(), i / 0x180 * 0x180 + 0x134) >= 0x17 &&
-				i % 0x180 != 0x134 && i % 0x180 != 0x135 && i % 0x180 != 6 && i % 0x180 != 7;
-			if (a[i] == b[i] || (name == "P" && !kShipMask[i % 0x180]) || free_ship ||
+			if (a[i] == b[i] ||
 				(only_loaded && name == "G" && !loaded_global(GlobalMemory::kBegin + uint32_t(i)))) {
 				continue;
 			}
@@ -470,7 +387,8 @@ int compare(const State& ours, const State& game, int& budget, const std::string
 			// del comerciante a su nombre (0x512A60/0x512AE0) y el siguiente de
 			// cada nodo.
 			const size_t merchant_field = w % MerchantMemory::kSize;
-			const bool pointer = looks_like_pointer(vb) ||
+			// La ruta de un barco ([+0x24]) va aparte en p3vita.
+			const bool pointer = looks_like_pointer(vb) || (name == "P" && w % ShipMemory::kSize == 0x24) ||
 				(town && (field == 0x75C || field == 0x80C || field == 0x9B4)) || (name[0] == 'N' && w % 0x14 == 0) ||
 				(name == "M" && (merchant_field == 0xE4 || merchant_field == 0xE8));
 			if (!pointer) {
@@ -492,7 +410,9 @@ int main(int argc, char** argv) {
 		return 2;
 	}
 	bool continuous = false;
+	bool ai = true;
 	std::string load;
+	std::string cpr;
 	uint32_t only = 0;
 	int budget = 60;
 	for (int i = 2; i < argc; ++i) {
@@ -501,6 +421,10 @@ int main(int argc, char** argv) {
 			continuous = true;
 		} else if (arg == "--carga" && i + 1 < argc) {
 			load = argv[++i];
+		} else if (arg == "--sin-ia") {
+			ai = false;
+		} else if (arg == "--cpr" && i + 1 < argc) {
+			cpr = argv[++i];
 		} else if (arg == "--solo" && i + 1 < argc) {
 			only = uint32_t(std::strtoul(argv[++i], nullptr, 16));
 		} else if (arg == "--max" && i + 1 < argc) {
@@ -515,6 +439,8 @@ int main(int argc, char** argv) {
 	register_probes_facilities(registry);
 	register_probes_offices(registry);
 	register_probes_construction(registry);
+	register_probes_ship_ai(registry);
+	register_probes_ship_trade(registry);
 
 	Input in(argv[1]);
 	if (!in.ok() || !in.expect("P3PROBE1")) {
@@ -524,10 +450,14 @@ int main(int argc, char** argv) {
 	State game;
 	read_regions(in, game);
 	SaveGame save;
+	std::string error;
+	std::unique_ptr<CprArchive> archive;
+	std::unique_ptr<NavData> nav;
+	std::unique_ptr<Sailing> sailing;
+	std::deque<std::vector<uint8_t>> pending_sail;  // Órdenes de zarpar que esperan a 537670.
 	if (!load.empty()) {
 		std::ifstream f(load, std::ios::binary);
 		const std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-		std::string error;
 		if (!parse_savegame(data.data(), data.size(), save, &error)) {
 			std::fprintf(stderr, "%s: %s\n", load.c_str(), error.c_str());
 			return 1;
@@ -544,6 +474,32 @@ int main(int argc, char** argv) {
 		// los objetos de asedio del juego.
 		if (const Region* x = find(game, "X")) {
 			copy_blocks(*x, save.sieges);
+		}
+		if (!cpr.empty()) {
+			archive = CprArchive::open(cpr, &error);
+			nav = archive ? NavData::load(*archive, &error) : nullptr;
+			if (!nav) {
+				std::fprintf(stderr, "%s: %s\n", cpr.c_str(), error.c_str());
+				return 1;
+			}
+			sailing = std::make_unique<Sailing>(save, *nav, load_sea_map_towns(*archive));
+			sailing->assign_loaded_routes();
+			sailing->set_ai(ai);
+			// La actualización de barcos y las órdenes de zarpar, que el oráculo
+			// ejecuta al final de cada tick (las de las ciudades no).
+			registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
+				sailing->update_ships();
+				return std::nullopt;
+			};
+			registry[0x537670] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
+				if (!pending_sail.empty()) {
+					int32_t f[5];
+					std::memcpy(f, pending_sail.front().data(), sizeof(f));
+					pending_sail.pop_front();
+					sailing->set_sail(f[1], f[2], f[3], f[4]);
+				}
+				return std::nullopt;
+			};
 		}
 	} else if (continuous) {
 		build_save(game, save);
@@ -613,6 +569,11 @@ int main(int argc, char** argv) {
 		}
 		auto& r = results[call.function];
 		(d ? r.second : r.first)++;
+		for (const std::vector<uint8_t>& op : save.queued_operations) {
+			if (op.size() >= 0x14 && get<uint32_t>(op.data(), 0) == 0) {
+				pending_sail.push_back(op);
+			}
+		}
 	}
 	int bad = 0;
 	for (const auto& [f, r] : results) {
