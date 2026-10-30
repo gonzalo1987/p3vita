@@ -4,6 +4,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -15,6 +16,7 @@
 #include "p3data/cpr.hpp"
 #include "p3data/font.hpp"
 #include "p3data/image.hpp"
+#include "p3data/prices.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/town.hpp"
 #include "p3data/town_buildings.hpp"
@@ -41,7 +43,7 @@ constexpr float kSmallFontHeight = 18;
 constexpr int kBarHeight = 34;
 constexpr int kBarMargin = 12;
 // Panel del mercado, a la derecha bajo la barra.
-constexpr int kMarketWidth = 440;
+constexpr int kMarketWidth = 460;
 constexpr int kMarketRowHeight = 21;
 constexpr SDL_Color kTextColor = {255, 236, 190, 255};
 constexpr SDL_Color kDimColor = {200, 190, 170, 255};
@@ -267,10 +269,10 @@ std::string format_amount(uint32_t internal, WareUnit unit, bool decimals) {
 	return buffer;
 }
 
-// Existencias, producción y consumo diarios de las mercancías de una ciudad.
+// Existencias, precios de una unidad y balance diario de las mercancías de una ciudad.
 void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SavedTown& town) {
 	constexpr int kPadding = 12;
-	const int columns[3] = {kPadding + 250, kPadding + 330, kPadding + 410};  // Bordes derechos.
+	const int columns[4] = {220, 300, 370, 448};  // Bordes derechos.
 	const int height = kPadding * 2 + kMarketRowHeight * (kTradeWareCount + 2);
 	const SDL_Rect panel = {kScreenWidth - kMarketWidth - 8, kBarHeight + 6, kMarketWidth, height};
 
@@ -286,18 +288,28 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SavedTown& to
 	int y = panel.y + kPadding;
 	text.draw("Mercancía", panel.x + kPadding, y, kDimColor);
 	right("Almacén", 0, y, kDimColor);
-	right("Prod./día", 1, y, kDimColor);
-	right("Cons./día", 2, y, kDimColor);
+	right("Compra", 1, y, kDimColor);
+	right("Venta", 2, y, kDimColor);
+	right("Balance", 3, y, kDimColor);
 	y += kMarketRowHeight * 3 / 2;
 	for (int w = 0; w < kTradeWareCount; ++w) {
 		const WareInfo& ware = kWares[size_t(w)];
 		const size_t i = size_t(w);
-		const char* unit = ware.unit == WareUnit::Barrel ? " barr." : " cargas";
+		const int32_t unit_amount = ware_scale(ware.unit);
+		const int32_t buy = buy_price(w, town.market(w), unit_amount);
+		const int32_t sell = sell_price(w, town.market(w), unit_amount);
+		const double balance =
+			(double(town.production[i]) - double(town.business_consumption[i]) - double(town.citizen_consumption[i])) /
+			unit_amount;
+		char balance_text[16];
+		std::snprintf(balance_text, sizeof(balance_text), "%+.1f", balance);
+
 		text.draw(ware.name, panel.x + kPadding, y, kTextColor);
+		const char* unit = ware.unit == WareUnit::Barrel ? " barr." : " cargas";
 		right(format_amount(town.wares[i], ware.unit, false) + unit, 0, y, kTextColor);
-		right(format_amount(town.production[i], ware.unit, true), 1, y, kTextColor);
-		right(format_amount(town.business_consumption[i] + town.citizen_consumption[i], ware.unit, true), 2, y,
-			kTextColor);
+		right(buy ? std::to_string(buy) : "-", 1, y, kTextColor);
+		right(std::to_string(sell), 2, y, kTextColor);
+		right(balance_text, 3, y, balance < 0 ? SDL_Color{240, 150, 120, 255} : SDL_Color{170, 220, 150, 255});
 		y += kMarketRowHeight;
 	}
 }

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "p3data/cpr.hpp"
+#include "p3data/prices.hpp"
 #include "p3data/wares.hpp"
 
 namespace p3::data {
@@ -46,6 +47,20 @@ struct SavedTown {
 	std::array<uint32_t, kWareCount> production{};
 	std::array<uint32_t, kWareCount> business_consumption{};
 	std::array<uint32_t, kWareCount> citizen_consumption{};
+	// Umbrales de precio que el juego recalcula cada tick y guarda ya hechos.
+	std::array<PriceThresholds, kWareCount> price_thresholds{};
+	uint8_t taxed_ware = 0xFF;  // Mercancía con recargo del 15 % al comprar; 0xFF = ninguna.
+
+	bool has_market() const { return flags & 0x100; }
+
+	MarketState market(int ware) const {
+		MarketState state;
+		state.stock = int32_t(wares[size_t(ware)]);
+		state.thresholds = price_thresholds[size_t(ware)];
+		state.open = has_market();
+		state.taxed = taxed_ware == ware;
+		return state;
+	}
 	uint32_t flags = 0;  // Qué objetos fijos existen: grúas, puestos, astilleros...
 	uint8_t church_level = 0;
 	std::vector<BuildingRecord> records;

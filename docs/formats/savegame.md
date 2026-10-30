@@ -99,7 +99,7 @@ Offsets relativos al inicio del bloque (v0x82). Entre corchetes, el offset en el
 |-|-|-|
 | +0x000 | 1 | separador |
 | +0x001 | 0x2C0 | almacén (0x52df20, `struct storage` de P3Modding): `u32`, 24 `u32` **existencias**, 24 `u32` **consumo diario de las empresas**, 24 `u32` **producción diaria**, 0x18 armas, 0x180 series, `u32` [0x000–0x2bf]. Unidades internas: barril = 200, carga = 2000, pieza de armamento = 10 (`src/p3data/wares.hpp`) |
-| +0x2C1 | 0x414 | parte 1 (0x527ac0): `u8` índice [0x2c0], `u8` **id de ciudad** [0x2c1], [0x2c2], [0x2c3]; `u16` [0x2c4], `u16` impuesto [0x2c6], `u32` flags [0x2c8], [0x2cc], [0x2d0], `u32` **habitantes** [0x2d4], `4×u32` por clase [0x2d8], … , 24 `u32` **consumo diario de los habitantes** [0x310], … , `0x60` [0x670], `u32` [0x6d0] |
+| +0x2C1 | 0x414 | parte 1 (0x527ac0): `u8` índice [0x2c0], `u8` **id de ciudad** [0x2c1], [0x2c2], [0x2c3]; `u16` [0x2c4], `u16` impuesto [0x2c6], `u32` flags [0x2c8], [0x2cc], [0x2d0], `u32` **habitantes** [0x2d4], `4×u32` por clase [0x2d8], … , 24 `u32` **consumo diario de los habitantes** [0x310], … , 24 `u32` [0x490] (el "array sin identificar" de los umbrales de P3Modding; ≈ producción), 24 × 4 `u32` **umbrales de precio t0–t3** [0x4F0] (ver abajo), `0x60` [0x670], `u32` [0x6d0] |
 | +0x6D5 | 1 | separador |
 | +0x6D6 | 20 | parte 2 (0x525e30): [0x82c–0x83f] |
 | +0x6EA | 1 | separador |
@@ -112,6 +112,28 @@ Offsets relativos al inicio del bloque (v0x82). Entre corchetes, el offset en el
 | | 1 + 136 | separador + parte 5 (0x528870) [0x6d4–0x75b]; sus primeros 20 bytes [0x6d4] contienen `ff ff ff ff 03 02 02 02 06 05 04 04`, la firma que se repetía en muchos bloques |
 | | 1 + 21·16 | separador + 21 instalaciones (0x510070, `struct facility` de P3Modding) [0x840–0x98f] |
 | | 85 + 16·M | [0x9a4] 16, [0x990] 4, [0x994] 2, [0x996] 2, 4×(1+1) [0x998/0x99c], [0x9a0] 2, [0x9a2] 2, [0x9b8] 4, [0x9bc] 1, [0x9bd] 1, [0x9c0] 4, [0x9c4] 1, [0x9c6] 18, [0x9d8] 18, `u16 M` y M nodos de 16 bytes (0x50fd40: `u32`, `u32`, `u16` BE, `u16` BE, `u8`, `u8`, `s16` BE) |
+
+### 4.1 Umbrales de precio **[datos]**
+
+El bloque que P3Modding llama `consumption_data` ([0x4F0], 24 × 16 bytes) son
+los cuatro umbrales de precio de cada mercancía tal como los deja
+`update_town_price_thresholds` (0x528070) en el último tick, así que los
+precios se calculan sin tener que reproducir esa función. Comprobado en Lübeck
+(`missav/1.pat`) contra el pseudocódigo de P3Modding, con
+`c = consumo de empresas + consumo de habitantes + 1`:
+
+- cerveza: t0 = 7c = 8204, t1 = 21c = 24612; t2 = t1 + 1000 (mínimo) y
+  t3 = t1 + t0 = 32816 (t3 se calcula antes de imponer los mínimos);
+- grano: t1 = 35c = 69370 (14 días más) y t2 = t1 + 10 · [0x490] = 113550;
+- herramientas: t0 = 7c + 2000 = 6844, t2 = t1 + 10 · 3120 = 49732;
+- madera, telas, ladrillos y pescado cuadran igual, con sus bonificaciones y
+  mínimos.
+
+Los precios (`src/p3data/prices.cpp`) reproducen `get_buy_price` y
+`get_sell_price` del ejecutable y coinciden al entero con ellas, comprobado
+ejecutándolas en un emulador de CPU (ver [../oracle.md](../oracle.md)). La
+mercancía con recargo de la ciudad es el byte [0x6F0] (parte 5 del bloque);
+0xFF = ninguna.
 
 ## 5. Edificios: cabecera de la parte 3 y registros de 8 bytes
 

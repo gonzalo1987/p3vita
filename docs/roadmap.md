@@ -62,7 +62,9 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Texto con las fuentes TrueType del juego (Latin-1, con ñ) y nombres de ciudad en el idioma de los datos
 - [x] Barra superior en el visor con ciudad, año y habitantes
 - [x] Mercado: existencias, producción y consumo diarios de cada ciudad (de la partida)
-- [ ] Precios de compra y venta: fórmulas de P3Modding, pero los umbrales dependen de datos sin identificar
+- [x] Precios de compra y venta con los umbrales guardados en la partida
+- [x] Precios idénticos al juego, comprobados con el oráculo (su propio código en un emulador de CPU, [oracle.md](oracle.md))
+- [ ] Dificultad de comercio de la partida (de momento se supone la normal)
 - [ ] Rehacer la interfaz para 960×544 (16:9) con soporte táctil
 
 ## Fase 6: resto del juego

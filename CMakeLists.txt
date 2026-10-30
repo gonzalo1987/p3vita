@@ -19,6 +19,7 @@ endif()
 # Las herramientas de datos y los tests solo tienen sentido en el PC.
 if(NOT VITA)
 	add_subdirectory(tools/cprtool)
+	add_subdirectory(tools/oracle)
 	add_subdirectory(tools/p3img)
 	add_subdirectory(tools/p3save)
 	add_subdirectory(tools/p3town)

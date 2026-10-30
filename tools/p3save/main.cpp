@@ -7,6 +7,7 @@
 
 #include "p3data/cpr.hpp"
 #include "p3data/font.hpp"
+#include "p3data/prices.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/wares.hpp"
 
@@ -39,13 +40,19 @@ void list_towns(const SaveGame& save, const std::vector<std::string>& names) {
 
 void show_town(const SavedTown& t, const std::vector<std::string>& names) {
 	std::printf("%s: %u habitantes\n\n", town_name(names, t.town_id).c_str(), t.citizens);
-	std::printf("%-14s %10s %12s %14s %14s\n", "mercancía", "existencias", "producción", "consumo empr.",
-		"consumo hab.");
+	std::printf("%-14s %8s %8s %8s %8s %8s   %s\n", "mercancía", "almacén", "prod.", "consumo", "compra", "venta",
+		"umbrales t0..t3");
 	for (int w = 0; w < kWareCount; ++w) {
-		const double scale = ware_scale(kWares[size_t(w)].unit);
-		std::printf("%-14s %10.1f %12.2f %14.2f %14.2f\n", kWares[size_t(w)].name, t.wares[size_t(w)] / scale,
-			t.production[size_t(w)] / scale, t.business_consumption[size_t(w)] / scale,
-			t.citizen_consumption[size_t(w)] / scale);
+		const size_t i = size_t(w);
+		const int32_t unit = ware_scale(kWares[i].unit);
+		const double scale = unit;
+		const int32_t buy = buy_price(w, t.market(w), unit);
+		const int32_t sell = sell_price(w, t.market(w), unit);
+		const auto& th = t.price_thresholds[i];
+		std::printf("%-14s %8.1f %8.2f %8.2f %8s %8d   %.1f %.1f %.1f %.1f\n", kWares[i].name, t.wares[i] / scale,
+			t.production[i] / scale, (t.business_consumption[i] + t.citizen_consumption[i]) / scale,
+			buy ? std::to_string(buy).c_str() : "-", sell, th[0] / scale, th[1] / scale, th[2] / scale,
+			th[3] / scale);
 	}
 }
 

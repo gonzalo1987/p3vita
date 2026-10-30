@@ -21,3 +21,9 @@ target_link_libraries(buildings_test PRIVATE p3data)
 target_compile_options(buildings_test PRIVATE -Wall -Wextra)
 
 add_test(NAME buildings COMMAND buildings_test)
+
+add_executable(prices_test prices_test.cpp)
+target_link_libraries(prices_test PRIVATE p3data)
+target_compile_options(prices_test PRIVATE -Wall -Wextra)
+
+add_test(NAME prices COMMAND prices_test)

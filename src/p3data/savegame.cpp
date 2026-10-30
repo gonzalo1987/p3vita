@@ -114,7 +114,11 @@ bool parse_town(Reader& r, SavedTown& town, std::string* error) {
 	town.citizens = r.u32();
 	r.skip(16 + 16 + 8 + 8 + 8);  // Habitantes por clase, anteriores, viviendas y satisfacción.
 	r.u32s(town.citizen_consumption);  // [0x310]
-	r.skip(4 * 0x60 + 0x180 + 0x60 + 4);
+	r.skip(4 * 0x60);
+	for (PriceThresholds& thresholds : town.price_thresholds) {  // [0x4F0]
+		r.u32s(thresholds);
+	}
+	r.skip(0x60 + 4);
 
 	// Parte 2: 20 bytes sin identificar.
 	if (!r.separator()) {
@@ -172,7 +176,9 @@ bool parse_town(Reader& r, SavedTown& town, std::string* error) {
 	if (!r.separator()) {
 		return fail(error, "separador inesperado (parte 5)" + where);
 	}
-	r.skip(136);
+	r.skip(0x6F0 - 0x6D4);  // La parte 5 es el struct town desde 0x6D4.
+	town.taxed_ware = r.u8();
+	r.skip(136 - (0x6F0 - 0x6D4) - 1);
 	if (!r.separator()) {
 		return fail(error, "separador inesperado (instalaciones)" + where);
 	}
