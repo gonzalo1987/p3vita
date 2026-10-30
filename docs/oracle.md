@@ -306,3 +306,50 @@ build/tools/oracle/tick_probe /tmp/1-w.probe --continuo --carga /tmp/1.raw --cpr
 **0 diferencias en las 12 partidas durante 60 días** (unos 56 minutos con
 las 12 en paralelo), y la carga, también en 0.
 
+## Las operaciones encoladas y la candidatura a Gobernador
+
+El oráculo del mundo ejecuta ahora al final de cada tick las operaciones
+encoladas con el ejecutor del juego (0x535760, ver
+[formats/world_tick.md](formats/world_tick.md) §7), en su orden, las de los
+códigos de `--operaciones` (por omisión `0,85,86`: zarpar y los encargos de
+la Hansa); las demás se siguen descartando, como en p3vita
+(`run_operation`, `simulation.cpp`). El ejecutor se llama por un trampolín
+que le deja en la pila los 0x14 bytes de la operación y la marca «P3OP», así
+que al grabar `535760` tick_probe repite cada operación (sonda en
+`probes_alderman.cpp`). El juego también llama a 0x535760 desde dentro (el
+evento 0x03, los barcos), con la operación en su pila: esas muestras no
+llevan la marca y tick_probe las salta («llamadas saltadas»); las repite la
+sonda de la función que las contiene. Para el mundo entero con `--continuo`
+se graba `535760` en vez de `537670` (las dos a la vez repetirían la orden de
+zarpar; tick_probe lo rechaza):
+
+```sh
+python3 tools/oracle/town_oracle.py <exe> /tmp/1.raw /tmp/1-w.probe 60   51ba10,4f7bb0,506720,535760,5315c0,535450,52d7d0,6349f0,633a90,4d85c0 --barcos /tmp/datos --cpr p2arch0_eng.cpr
+build/tools/oracle/tick_probe /tmp/1-w.probe --continuo --carga /tmp/1.raw --cpr p2arch0_eng.cpr
+```
+
+Resultado con el ejecutor: el mundo entero sin retocar, 0 diferencias en las
+12 partidas durante 7 días (los 60 no caben en una ejecución en primer
+plano; en las partidas no sale ninguna 0x85 ni 0x86, así que lo único nuevo
+es que la orden de zarpar pasa por el ejecutor).
+
+**Estados retocados.** `tools/oracle/retouch.py` graba como el oráculo del
+mundo partiendo de la partida cambiada tras la carga por un escenario, y
+tick_probe repite cada llamada desde el estado del juego (sin `--continuo`
+ni `--carga`: p3vita no conoce el retoque). Los escenarios de la candidatura
+a Gobernador (un alcalde con 120 de reputación, que las partidas no tienen
+en 60 días; ver la cabecera del script) se comprobaron grabando
+`4f7bb0,5326e0,535760,4d85c0` durante 3 días:
+
+| Escenario | Partidas | Resultado |
+|-|-|-|
+| `candidato` (un alcalde de la IA) | las 12 | 0 diferencias: la candidatura, sus 5–6 operaciones, el tick de los comerciantes y la cola de eventos (con los encargos nuevos) |
+| `jugador` (el jugador humano) | 1, 3 | 0 diferencias |
+| `dos_candidatos` (la segunda candidatura no crea nada) | 1, 5 | 0 diferencias |
+| `sin_carretera` (sin encargo de carretera) | 1 | 0 diferencias |
+| `encargos_viejos` (la 0x86 anula uno guardado y salta el que tiene comerciante) | 2 | 0 diferencias, sin grabar 4d85c0: el encargo con comerciante pasa por la parte del evento 0x32 que aún falta |
+
+Por el camino apareció que el plazo del encargo de la carretera lee la
+tabla de los meses (0x672D78) hasta la entrada 129: p3vita lleva copiados
+esos 130 valores del ejecutable.
+

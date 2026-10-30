@@ -15,11 +15,12 @@ namespace p3::data {
 // 8·(i − 32) + 6 el de los comerciantes 32..63 (0x4F7BB0); al final, la
 // actualización de los barcos (Sailing), con los convoyes.
 //
-// Después ejecuta las órdenes de zarpar que se han encolado en el tick
-// (operación 0x00, que encolan los barcos de la IA): el juego ejecuta su cola
-// entre dos llamadas a advance_time, que hace hasta 8 ticks según el tiempo
-// real; aquí, tras cada tick. Las demás operaciones encoladas (las obras de
-// las ciudades) se descartan.
+// Después ejecuta las operaciones que se han encolado en el tick, en su orden
+// (run_operation, el ejecutor 0x535760): el juego ejecuta su cola entre dos
+// llamadas a advance_time, que hace hasta 8 ticks según el tiempo real; aquí,
+// tras cada tick. Se reproducen las órdenes de zarpar (0x00, las encolan los
+// barcos de la IA) y los encargos de la Hansa (0x85 y 0x86, la candidatura a
+// Gobernador); las demás (las obras de las ciudades...) se descartan.
 //
 // Además, al empezar el día, lo diario (0x5315C0) y las tareas programadas
 // (0x535450); en los ticks 8·i + 5 el objeto i de los 15 del mundo
@@ -40,7 +41,12 @@ void town_tick(SaveGame& save, int town);
 // Un tick completo.
 void advance_game_tick(SaveGame& save, Sailing& sailing);
 
-// Ejecuta las órdenes de zarpar encoladas y vacía la cola.
+// Ejecuta las operaciones encoladas y vacía la cola.
 void run_queued_operations(SaveGame& save, Sailing& sailing);
+
+// El ejecutor (0x535760): una operación encolada (0x14 bytes: u32 código y
+// sus datos) según su código, de las que reproduce p3vita (0x00, 0x85 y
+// 0x86); las demás no hacen nada. Sin `sailing`, la 0x00 tampoco.
+void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation);
 
 }  // namespace p3::data

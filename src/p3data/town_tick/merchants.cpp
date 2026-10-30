@@ -35,7 +35,7 @@
 //
 // Globales: [0x6DE52D] u8 el comerciante alderman (del mundo, [+0x8D]) y
 // [0x6DE52E] u8 su ciudad (solo para el aviso); [0x6DF31C] u32 (si es 0,
-// 0x4F75F0 llama a 0x5326E0).
+// 0x4F75F0 llama a 0x5326E0, la candidatura a Gobernador, en alderman.cpp).
 //
 // No se traducen los avisos (0x4D6530, 0x548CA0), la interfaz (0x6CC7E8) ni
 // los gráficos de la ciudad (0x6E51AC): no cambian la simulación. Las ramas
@@ -388,9 +388,8 @@ void fn_4f75f0(SaveGame& save, int merchant, uint32_t town) {
 		}
 		m.u8(0x37) = 1;
 		if (save.globals.u32(kAldermanBusy) == 0) {
-			// 0x5326E0 sobre el mundo (387 instrucciones; candidatura a
-			// alderman, encola una operación): no se traduce, no se ejecuta en
-			// las 12 partidas. Sin comprobar con el oráculo.
+			// La candidatura (alderman.cpp): encola los encargos de la Hansa.
+			fn_5326e0(save);
 		}
 		// Al jugador humano, el aviso 0x6D (con 0x4F9430 y [0x6DE52E]): no se traduce.
 		return;

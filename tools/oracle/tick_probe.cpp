@@ -17,9 +17,11 @@
 // partida; de los globales, solo los que llena el lector. Con --carga y
 // --continuo, la simulación de p3vita parte de esa lectura; con --cpr además
 // crea la navegación (Sailing) y repite también la actualización de barcos
-// (506720) y las órdenes de zarpar (537670) de una grabación hecha con
+// (506720) y las operaciones encoladas de una grabación hecha con
 // town_oracle.py --barcos: el mundo entero, tick a tick (--sin-ia y
-// --sin-convoyes, como en el oráculo).
+// --sin-convoyes, como en el oráculo). Las operaciones, grabando el
+// ejecutor (535760, que lleva la operación en la pila) o solo las órdenes de
+// zarpar (537670), pero no las dos.
 //
 // Con --cpr, las funciones de los barcos que necesitan la navegación (las de
 // los convoyes, la actualización de barcos) se pueden repetir también una a
@@ -598,6 +600,7 @@ int main(int argc, char** argv) {
 	register_probes_events_towns(registry);
 	register_probes_events_mayor(registry);
 	register_probes_events_rare(registry);
+	register_probes_alderman(registry);
 
 	Input in(argv[1]);
 	if (!in.ok() || !in.expect("P3PROBE1")) {
@@ -679,11 +682,14 @@ int main(int argc, char** argv) {
 		}
 	}
 	std::map<uint32_t, std::pair<int, int>> results;  // función → {bien, mal}
+	std::map<uint32_t, int> skipped;  // función → muestras que la sonda no puede repetir
 	int missing = 0;
 	// Con --continuo: el [+0x8B] del mundo que advance_time baja tras 0x5315C0.
 	bool countdown_pending = false;
 	uint32_t countdown_tick = 0;
 	uint32_t countdown_esp = 0;
+	bool executor_seen = false;
+	bool sail_seen = false;
 	while (in.ok()) {
 		const uint8_t tag = in.u8();
 		if (tag != 'S') {
@@ -708,6 +714,16 @@ int main(int argc, char** argv) {
 		}
 		if (only && call.function != only) {
 			continue;
+		}
+		if (continuous && ((call.function == 0x535760 && call.args[5] == 0x504F3350) || call.function == 0x537670)) {
+			// El ejecutor llama a 0x537670 para la orden de zarpar: grabadas las
+			// dos, la orden se repetiría (las llamadas al ejecutor del oráculo
+			// llevan la marca «P3OP» tras la operación).
+			(call.function == 0x535760 ? executor_seen : sail_seen) = true;
+			if (executor_seen && sail_seen) {
+				std::fprintf(stderr, "con --continuo, graba 535760 (el ejecutor) o 537670, no las dos\n");
+				return 2;
+			}
 		}
 		auto fn = registry.find(call.function);
 		if (fn == registry.end()) {
@@ -746,6 +762,10 @@ int main(int argc, char** argv) {
 			countdown_pending = true;
 			countdown_tick = call.tick;
 			countdown_esp = call.esp;
+		}
+		if (call.skip) {
+			++skipped[call.function];
+			continue;
 		}
 		char title[128];
 		std::snprintf(title, sizeof(title), "0x%x tick %u ecx %08x arg %08x %08x:", call.function, call.tick, call.ecx,
@@ -792,6 +812,9 @@ int main(int argc, char** argv) {
 	for (const auto& [f, r] : results) {
 		std::printf("0x%x: %d llamadas iguales, %d distintas\n", f, r.first, r.second);
 		bad += r.second;
+	}
+	for (const auto& [f, n] : skipped) {
+		std::printf("0x%x: %d llamadas saltadas (desde dentro del juego)\n", f, n);
 	}
 	if (missing) {
 		std::printf("%d llamadas a funciones sin registrar\n", missing);

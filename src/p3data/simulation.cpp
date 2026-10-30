@@ -72,11 +72,27 @@ void run_queued_operations(SaveGame& save, Sailing& sailing) {
 	std::vector<std::vector<uint8_t>> operations;
 	operations.swap(save.queued_operations);
 	for (const std::vector<uint8_t>& op : operations) {
-		int32_t fields[5];
-		std::memcpy(fields, op.data(), sizeof(fields));
-		if (fields[0] == 0) {  // Zarpar (0x537670): {0, barco, ciudad, x, y}.
-			sailing.set_sail(fields[1], fields[2], fields[3], fields[4]);
+		run_operation(save, &sailing, op.data());
+	}
+}
+
+void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
+	int32_t fields[5];
+	std::memcpy(fields, operation, sizeof(fields));
+	switch (uint32_t(fields[0])) {
+	case 0x00:  // Zarpar (0x537670): {0, barco, ciudad, x, y}.
+		if (sailing) {
+			sailing->set_sail(fields[1], fields[2], fields[3], fields[4]);
 		}
+		break;
+	case 0x85:  // Crear un encargo de la Hansa (0x53FD10).
+		tick::fn_53fd10(save, operation);
+		break;
+	case 0x86:  // Quitar los encargos de la Hansa que ya no valen (en 0x536801).
+		tick::fn_53fe20(save);
+		break;
+	default:  // Las demás aún no se reproducen.
+		break;
 	}
 }
 

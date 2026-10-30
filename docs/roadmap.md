@@ -64,18 +64,26 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Paso del tiempo al ritmo del juego (234 ms por tick a velocidad normal) y fecha
 - [x] Tick de ciudad completo (0x51BA10), idéntico al juego byte a byte: 23 040 ticks partiendo de las 12 partidas, hasta 240 días ([oracle.md](oracle.md))
 - [x] Partidas cargadas en memoria igual que el juego (ciudades, oficinas, comerciantes, cola de eventos...)
-- [ ] Ejecutar las operaciones que encolan las ciudades (obras, materiales, avisos)
+- [ ] Ejecutar las operaciones que encolan las ciudades (obras, materiales, avisos), con el ejecutor del juego (0x535760, [formats/world_tick.md](formats/world_tick.md) §7)
 - [x] Tick de cada comerciante (0x4F7BB0): contabilidad, valor de la compañía, reputación y rangos, idéntico al juego
 - [x] Lo diario y semanal, tareas programadas, los 15 objetos del mundo y los asedios, idénticos al juego ([formats/world_tick.md](formats/world_tick.md))
 - [x] Cola de eventos (0x4D85C0): todos los tipos que salen en las partidas (elecciones, subastas, deudas, encargos, expediciones, piratas, peste, la Hansa...), idénticos al juego ([formats/world_tick.md](formats/world_tick.md) §6)
 - [ ] Guardar las cartas y avisos nuevos en el buzón de cada comerciante como el juego (0x4D6530; el buzón ya se lee de la partida, `SaveGame::mail`). Ahora no se guardan, y la simulación lo consulta: el evento 0x16 no repite un aviso que siga vigente (42 días), así que sin esto llega antes de tiempo. Hacerlo junto con las cartas de la interfaz
 - [x] El mundo entero (advance_time sin la interfaz) idéntico al juego byte a byte 60 días en las 12 partidas ([oracle.md](oracle.md))
-- [ ] **Llegar a Gobernador** (el cargo más alto de la Liga Hanseática, «Alderman» en la versión inglesa; es la meta del juego):
-  - [ ] la candidatura: cuando un alcalde llega a 120 de reputación, el tick del comerciante (0x4F75F0) lo presenta (0x5326E0 con 0x532E30) y encola las operaciones 0x85 y 0x86
-  - [ ] lo que hacen esas operaciones (por estudiar; p3vita aún no ejecuta las operaciones encoladas)
+- [ ] **Llegar a Gobernador** (el cargo más alto de la Liga Hanseática, «Alderman» en la versión inglesa; es la meta del juego). El camino entero está en [formats/world_tick.md](formats/world_tick.md) §7 y §8: un alcalde con 120 de reputación pasa a candidato, la Hansa ofrece encargos, con tres cumplidos se presenta a la elección.
+  - [x] el ejecutor de las operaciones encoladas (0x535760, tabla 0x537030), en p3vita (`run_operation`) y en el oráculo, con las operaciones 0x00, 0x85 y 0x86; las demás aún se descartan
+  - [x] la candidatura: el tick del comerciante (0x4F75F0) pone [+0x37] = 1 y 0x5326E0 (con 0x532E30 y 0x515A60) encola una operación 0x86 y hasta cinco 0x85, una por tipo de encargo; idéntica al juego con estados retocados en las 12 partidas (`tools/oracle/retouch.py`)
+  - [x] las operaciones 0x85 (0x53FD10: crea el encargo, un evento 0x32 sin comerciante, si no hay ya uno igual) y 0x86 (quita los encargos sin comerciante que ya no valen), idénticas al juego
+  - [x] los encargos sin comerciante (evento 0x32): maduran unos 64 días y se dan a un comerciante de la IA candidato
+  - [ ] los encargos con comerciante (evento 0x32, 0x4EB0EB..0x4EBF0F, ~1100 instrucciones más lo que cuelga): el principio (0x4EBF54), la comprobación diaria hasta el plazo y, al cumplirse, [+0x37] + 1 (0x4EC354); con 4 se puede presentar
+    - [ ] lo común (el principio, el plazo vencido con su castigo de reputación 0x4F9170, el encargo fallido) y los tipos 2 (cazar un barco pirata: se cumple cuando otra parte del juego, al parecer la batalla, pone [+0x16] = 1) y 4 (una ciudad pequeña que llegue a N habitantes)
+    - [ ] el tipo 1 (carretera entre dos ciudades): la IA la construye con 0x4F9C80 y 0x521900 (1071 instrucciones, el edificio terminado)
+    - [ ] el tipo 3 (guarida pirata): por fases, con lo que parece una batalla (0x514530, 0x5FBFE0, 0x60234C, 0x611D80...), que el emulador no ejecuta
+    - [ ] el tipo 0 (fundar una ciudad): al empezar crea una ciudad entera en plena partida (0x531D50, que carga su mapa del archivo); se cumple cuando la ciudad tiene mercado; va con «partida nueva desde cero»
+  - [ ] que el jugador coja un encargo (operación 0x4B, 0x53B440) y lo que haga desde la interfaz para cumplirlo (p. ej. la operación 0x3B de la carretera)
   - [x] la elección en la reunión de la Hansa (evento 0x20), idéntica al juego
   - [ ] el final: la ventana y el vídeo (`eldermann`) cuando el jugador sale elegido; el objetivo de la partida (evento 0x0E) ya se comprueba
-  - Las partidas de prueba no llegan a esto en 60 días: hará falta comprobarlo con estados retocados (un alcalde con 120 de reputación)
+  - Las partidas de prueba no llegan a esto en 60 días (ningún alcalde comerciante llega a 120): se comprueba con estados retocados, unos pocos dirigidos a cada rama
 - [x] Barcos de la IA en puerto: comercio con las ciudades y sus oficinas, elección de destino, tripulación, armas, reparación en el astillero y creación de convoyes, idénticos al juego ([formats/navigation.md](formats/navigation.md) §8)
 - [x] Barcos como memoria del juego; navegación idéntica byte a byte (avisos, lista por x, contadores)
 - [x] Convoyes de los comerciantes: en puerto, saliendo, en el mar, entrando, deshaciéndose, idénticos al juego 60 días en las 12 partidas ([formats/navigation.md](formats/navigation.md) §9)

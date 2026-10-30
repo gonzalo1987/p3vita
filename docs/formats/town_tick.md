@@ -168,7 +168,9 @@ así que las ciudades no llegan a construir.
 
 - La interfaz: mensajes y cartas (0x548CA0, 0x4D6530), ventanas del jugador y
   el dibujo de la vista de la ciudad (0x590680, 0x5891C0).
-- Las operaciones encoladas no se ejecutan (obras, materiales, avisos).
+- Las operaciones que encolan las ciudades no se ejecutan (obras,
+  materiales, avisos); el ejecutor solo hace las 0x00, 0x85 y 0x86
+  ([world_tick.md](world_tick.md) §7).
 - Convoyes en reparación en el astillero (lista [0x820], vacía en las 12
   partidas) y los barcos nuevos de jugadores humanos (carta y ventana).
 - Ramas que no se dan en las partidas ni en los estados retocados con los que
@@ -215,7 +217,8 @@ dentro del mundo entero.
   bit de la ciudad en [+0x468] hace falta para los rangos 3 a 5. Optar a
   alderman exige 120 de reputación.
 
-No se reproduce la candidatura a alderman (0x5326E0, con 0x532E30, que
-encola una operación): solo se llama si [0x6DF31C] es 0 y un alcalde llega a
-120 de reputación, lo que no pasa en las partidas en 60 días. Tampoco los
-avisos (0x4D6530, 0x548CA0, y la búsqueda en el buzón 0x4D7AC0).
+La candidatura a Gobernador (0x5326E0, con 0x532E30, que encola las
+operaciones 0x86 y 0x85) solo se llama si [0x6DF31C] es 0 y un alcalde llega
+a 120 de reputación, lo que no pasa en las partidas en 60 días: ver
+[world_tick.md](world_tick.md) §8. No se reproducen los avisos (0x4D6530,
+0x548CA0, y la búsqueda en el buzón 0x4D7AC0).

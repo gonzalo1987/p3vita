@@ -39,6 +39,10 @@ struct ProbeCall {
 	// Bits de eax que se comparan: la sonda de una función que devuelve un u8 o
 	// un u16 en al/ax (el resto de eax queda con basura) pone 0xFF o 0xFFFF.
 	mutable uint32_t eax_mask = 0xFFFFFFFF;
+	// La sonda lo pone si la muestra no se puede repetir (una llamada al
+	// ejecutor 0x535760 desde dentro del juego, sin la operación): no se
+	// compara; la repite la sonda de la función que la contiene.
+	mutable bool skip = false;
 
 	// El u32 de la pila del llamador en `address` si cae entre los argumentos
 	// grabados (para punteros a variables locales del llamador).
@@ -96,6 +100,7 @@ void register_probes_events_big(ProbeRegistry& r);
 void register_probes_events_towns(ProbeRegistry& r);
 void register_probes_events_mayor(ProbeRegistry& r);
 void register_probes_events_rare(ProbeRegistry& r);
+void register_probes_alderman(ProbeRegistry& r);
 
 // La navegación sobre el SaveGame que reciben las sondas (tick_probe con
 // --cpr); nullptr sin --cpr. Para las funciones de Sailing (convoyes...).

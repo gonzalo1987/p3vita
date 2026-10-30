@@ -25,6 +25,8 @@
 //                     decisiones de los de la IA (0x518B80)
 //   ship_trade.cpp    lo que compran y venden los barcos de la IA
 //   merchants.cpp     el tick de cada comerciante: 0x4F7BB0
+//   alderman.cpp      la candidatura a Gobernador (0x5326E0) y las
+//                     operaciones 0x85 y 0x86 que encola
 //   daily.cpp         lo diario (0x5315C0), las tareas programadas (0x535450)
 //                     y los 15 objetos del mundo (0x52D7D0)
 //   sieges.cpp        los asedios de cada ciudad: 0x6349F0, 0x633A90
@@ -165,6 +167,16 @@ void fn_4f8840(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32
 // merchants.cpp: el tick de un comerciante (0x4F7BB0), que advance_time hace
 // en los ticks con t & 7 == 1 (comerciante t >> 3) y t & 7 == 6 ((t + 0x100) >> 3).
 void fn_4f7bb0(SaveGame& save, int merchant);
+
+// alderman.cpp: la candidatura a Gobernador (0x5326E0, la llama 0x4F75F0
+// cuando un alcalde llega a 120 de reputación para optar), que encola una
+// operación 0x86 y una 0x85 por encargo de la Hansa; y lo que hace el
+// ejecutor (0x535760, simulation.cpp) con ellas: 0x85 crea el encargo
+// (0x53FD10, sobre los 0x14 bytes de la operación) y 0x86 quita los que ya
+// no valen (0x53FE20).
+void fn_5326e0(SaveGame& save);
+void fn_53fd10(SaveGame& save, const uint8_t* operation);
+void fn_53fe20(SaveGame& save);
 
 // El resto de advance_time (0x530E80), en su orden dentro del tick:
 // daily.cpp: al empezar el día, tras la fecha, lo diario (0x5315C0; `weekly`

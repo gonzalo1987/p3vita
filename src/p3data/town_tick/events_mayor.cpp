@@ -419,9 +419,9 @@ void fn_528e60(SaveGame& save, int town) {
 	}
 	const uint8_t mayor = t.u8(0x6F1);
 	if (mayor < count) {
-		// Con [+0x37] = 0 y reputación >= 120, 0x4F75F0 llamaría a 0x5326E0
-		// (candidatura a alderman, encola operaciones 0x85 y 0x86), que
-		// merchants.cpp no traduce.
+		// Con [+0x37] = 0 y reputación >= 120, 0x4F75F0 llama a 0x5326E0
+		// (candidatura a Gobernador, alderman.cpp: encola las operaciones
+		// 0x86 y 0x85).
 		merchants_detail::fn_4f75f0(save, mayor, t.u8(0x2C0));
 		// Al jugador humano, la carta (0x548CA0) y, si es el jugador, la
 		// ventana (0x469380 y 0x469AF0): no se traducen.
