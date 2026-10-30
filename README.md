@@ -67,8 +67,10 @@ bash scripts/build-vita.sh
 Para probarlo en la consola (con HENkaku o Enso):
 
 1. Instala `p3vita.vpk` con VitaShell.
-2. Copia `p2arch0_spa.cpr` (o `p2arch0_eng.cpr`) de tu instalación del juego a
-   `ux0:data/p3vita/`.
+2. Copia `p2arch0_eng.cpr` de tu instalación del juego a `ux0:data/p3vita/`; es
+   la base de todas las versiones. Para la versión española copia también
+   `p2arch0_spa.cpr`, que se monta encima (textos, nombres y fuentes en
+   español). Con solo el español también arranca, pero le faltan datos.
 
 De momento es un visor de ciudades. Arranca en Lübeck tal como empieza la
 partida de 1300 (`missav/1.pat`). La cruceta o el stick izquierdo mueven la
@@ -82,5 +84,6 @@ flechas, Re Pág / Av Pág, E y Esc.
 Los formatos de archivo y las mecánicas del juego se basan en la documentación
 de ingeniería inversa de [P3Modding](https://github.com/P3Modding).
 
-Las imágenes estándar se decodifican con [stb](https://github.com/nothings/stb)
-(dominio público), incluido en `third_party/stb`.
+Las imágenes estándar y las fuentes TrueType se decodifican con
+[stb](https://github.com/nothings/stb) (dominio público), incluido en
+`third_party/stb`.

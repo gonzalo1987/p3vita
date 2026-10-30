@@ -58,6 +58,10 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 
 ## Fase 5: interfaz
 
+- [x] Archivos por idioma montados como el juego: el español encima del inglés ([formats/fonts.md](formats/fonts.md))
+- [x] Texto con las fuentes TrueType del juego (Latin-1, con ñ) y nombres de ciudad en el idioma de los datos
+- [x] Barra superior en el visor con ciudad, año y habitantes
+- [ ] Mercado: existencias de la ciudad (exactas en la partida) y precios (umbrales por descifrar)
 - [ ] Rehacer la interfaz para 960×544 (16:9) con soporte táctil
 
 ## Fase 6: resto del juego

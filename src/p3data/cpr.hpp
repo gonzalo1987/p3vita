@@ -16,6 +16,7 @@ struct CprEntry {
 	uint32_t offset = 0;  // Desde el inicio del archivo CPR.
 	uint32_t size = 0;
 	uint32_t unknown = 0;
+	size_t file = 0;  // Qué fichero montado la contiene.
 };
 
 // Archivo CPR de Ascaron (p2arch0_*.cpr, p2arch1_*.cpr).
@@ -27,8 +28,13 @@ public:
 	// Devuelve nullptr y describe el fallo en `error` si no se puede leer.
 	static std::unique_ptr<CprArchive> open(const std::string& file_path, std::string* error = nullptr);
 
-	// Cadena de versión de la cabecera, por ejemplo "V0.9".
+	// Monta otro CPR encima, como hace el juego con el de cada idioma sobre el
+	// inglés: sus entradas sustituyen a las que tengan la misma ruta.
+	bool mount(const std::string& file_path, std::string* error = nullptr);
+
+	// Cadena de versión de la cabecera del primer fichero, por ejemplo "V0.9".
 	const std::string& version() const { return version_; }
+	// Una entrada por ruta: la del último fichero montado que la tenga.
 	const std::vector<CprEntry>& entries() const { return entries_; }
 
 	// Busca sin distinguir mayúsculas y aceptando '/' o '\' como separador.
@@ -41,9 +47,15 @@ private:
 		void operator()(std::FILE* f) const { std::fclose(f); }
 	};
 
+	using File = std::unique_ptr<std::FILE, FileCloser>;
+
 	CprArchive() = default;
 
-	std::unique_ptr<std::FILE, FileCloser> file_;
+	// Lee el índice de un fichero; las entradas salen con `file` = `file_index`.
+	static bool read_index(std::FILE* f, size_t file_index, std::string& version, std::vector<CprEntry>& entries,
+		std::string* error);
+
+	std::vector<File> files_;
 	std::string version_;
 	std::vector<CprEntry> entries_;
 	std::unordered_map<std::string, size_t> index_by_path_;

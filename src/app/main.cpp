@@ -12,6 +12,7 @@
 
 #include "p3data/aim.hpp"
 #include "p3data/cpr.hpp"
+#include "p3data/font.hpp"
 #include "p3data/image.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/town.hpp"
@@ -31,13 +32,20 @@ constexpr int kStickDeadZone = 6000;
 constexpr char kStartSave[] = "missav/1.pat";
 constexpr int kLuebeck = 14;
 constexpr uint8_t kTownHallType = 0x20;
+// Fuente del texto de la interfaz (Font4 de scripts/ttffonts.ini en la versión española).
+constexpr char kUiFont[] = "fonts/Tiepolo_bold.ttf";
+constexpr float kUiFontHeight = 23;
+constexpr int kBarHeight = 34;
+constexpr int kBarMargin = 12;
 
 #ifdef __vita__
 const char* const kDataDirs[] = {"ux0:data/p3vita/"};
 #else
 const char* const kDataDirs[] = {"data/", "./"};
 #endif
-const char* const kArchiveNames[] = {"p2arch0_spa.cpr", "p2arch0_eng.cpr"};
+// El archivo inglés es la base de todas las versiones; el del idioma va encima.
+constexpr char kBaseArchive[] = "p2arch0_eng.cpr";
+constexpr char kLanguageArchive[] = "p2arch0_spa.cpr";
 
 std::unique_ptr<CprArchive> open_archive(const char* dir_override, std::string& tried) {
 	std::vector<std::string> dirs;
@@ -52,16 +60,51 @@ std::unique_ptr<CprArchive> open_archive(const char* dir_override, std::string& 
 	}
 
 	for (const std::string& dir : dirs) {
-		for (const char* name : kArchiveNames) {
-			const std::string path = dir + name;
-			tried += "\n" + path;
-			if (auto archive = CprArchive::open(path)) {
-				return archive;
-			}
+		tried += "\n" + dir;
+		if (auto archive = CprArchive::open(dir + kBaseArchive)) {
+			archive->mount(dir + kLanguageArchive);  // Opcional.
+			return archive;
+		}
+		// Sin la base, el archivo español solo también sirve para ver las ciudades.
+		if (auto archive = CprArchive::open(dir + kLanguageArchive)) {
+			return archive;
 		}
 	}
 	return nullptr;
 }
+
+// Texto de la interfaz con una fuente del juego subida como textura.
+class TextRenderer {
+public:
+	TextRenderer(SDL_Renderer* renderer, std::unique_ptr<FontAtlas> font) : renderer_(renderer), font_(std::move(font)) {
+		const Image& image = font_->image();
+		texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, image.width,
+			image.height);
+		if (texture_) {
+			SDL_UpdateTexture(texture_, nullptr, image.rgba.data(), image.width * 4);
+			SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
+		}
+	}
+
+	~TextRenderer() { SDL_DestroyTexture(texture_); }
+
+	int measure(const std::string& text) const { return font_->measure(text); }
+	int line_height() const { return font_->line_height(); }
+
+	void draw(const std::string& text, int x, int y, SDL_Color color) {
+		SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
+		for (const FontAtlas::Quad& q : font_->layout(text, x, y)) {
+			const SDL_Rect src = {q.src_x, q.src_y, q.width, q.height};
+			const SDL_Rect dst = {q.dst_x, q.dst_y, q.width, q.height};
+			SDL_RenderCopy(renderer_, texture_, &src, &dst);
+		}
+	}
+
+private:
+	SDL_Renderer* renderer_;
+	std::unique_ptr<FontAtlas> font_;
+	SDL_Texture* texture_ = nullptr;
+};
 
 // Mapa de una ciudad listo para dibujar: los trozos de sprite con su textura.
 class TownView {
@@ -184,6 +227,30 @@ SDL_Point focus_point(const TownView& view, const SaveGame& save, const Selectio
 	return {view.width() / 2, view.height() / 2};
 }
 
+std::string bar_title(const SaveGame& save, const std::vector<std::string>& names,
+	const std::vector<int>& template_ids, const Selection& selection) {
+	if (selection.mode == Mode::Saved) {
+		const SavedTown& town = save.towns[selection.saved_index];
+		const std::string name = town.town_id < int(names.size()) ? names[size_t(town.town_id)]
+																	: "Ciudad " + std::to_string(town.town_id);
+		return name + " - año " + std::to_string(save.start_year) + " - " + std::to_string(town.citizens) +
+			" habitantes";
+	}
+	return "Plantilla " + std::to_string(template_ids[selection.template_index]) +
+		(selection.mode == Mode::Designer ? " - todos los edificios del diseñador" : " - solo el terreno");
+}
+
+void draw_bar(SDL_Renderer* renderer, TextRenderer& text, const std::string& title) {
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
+	const SDL_Rect bar = {0, 0, kScreenWidth, kBarHeight};
+	SDL_RenderFillRect(renderer, &bar);
+	const int y = (kBarHeight - text.line_height()) / 2;
+	text.draw(title, kBarMargin, y, {255, 236, 190, 255});
+	const std::string help = "L/R: ciudad    Triángulo: vista";
+	text.draw(help, kScreenWidth - kBarMargin - text.measure(help), y, {200, 200, 200, 255});
+}
+
 int stick_speed(Sint16 value) {
 	if (std::abs(value) < kStickDeadZone) {
 		return 0;
@@ -220,13 +287,19 @@ int main(int argc, char** argv) {
 	if (template_ids.empty()) {
 		const std::string message = archive
 			? std::string("El archivo CPR no contiene mapas de ciudad.")
-			: "No se encuentran los datos del juego. Copia p2arch0_spa.cpr o p2arch0_eng.cpr en:" + tried;
+			: "No se encuentran los datos del juego. Copia p2arch0_eng.cpr (y p2arch0_spa.cpr para la "
+			  "versión española) en:" + tried;
 		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kTitle, message.c_str(), window);
 		SDL_Quit();
 		return 1;
 	}
 
 	auto view = std::make_unique<TownView>(renderer, *archive);
+	const std::vector<std::string> town_names = load_town_names(*archive);
+	std::unique_ptr<TextRenderer> text;
+	if (auto font = FontAtlas::load(*archive, kUiFont, kUiFontHeight)) {
+		text = std::make_unique<TextRenderer>(renderer, std::move(font));
+	}
 	SaveGame save;
 	const bool has_save = load_savegame(*archive, kStartSave, save) && !save.towns.empty();
 	const std::vector<int> regions = load_town_regions(*archive);
@@ -354,10 +427,14 @@ int main(int argc, char** argv) {
 		SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 		SDL_RenderClear(renderer);
 		view->draw(camera_x, camera_y);
+		if (text) {
+			draw_bar(renderer, *text, bar_title(save, town_names, template_ids, selection));
+		}
 		SDL_RenderPresent(renderer);
 	}
 
 	// Las texturas tienen que liberarse antes de cerrar SDL.
+	text.reset();
 	view.reset();
 	if (controller) {
 		SDL_GameControllerClose(controller);

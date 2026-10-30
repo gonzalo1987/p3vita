@@ -27,16 +27,49 @@ bool fail(std::string* error, std::string message) {
 
 std::unique_ptr<CprArchive> CprArchive::open(const std::string& file_path, std::string* error) {
 	std::unique_ptr<CprArchive> archive(new CprArchive());
-	archive->file_.reset(std::fopen(file_path.c_str(), "rb"));
-	std::FILE* f = archive->file_.get();
-	if (!f) {
+	File file(std::fopen(file_path.c_str(), "rb"));
+	if (!file) {
 		fail(error, "no se puede abrir " + file_path);
 		return nullptr;
 	}
-
-	if (std::fseek(f, 0, SEEK_END) != 0) {
-		fail(error, "no se puede obtener el tamaño de " + file_path);
+	if (!read_index(file.get(), 0, archive->version_, archive->entries_, error)) {
 		return nullptr;
+	}
+	for (size_t i = 0; i < archive->entries_.size(); ++i) {
+		archive->index_by_path_.emplace(normalize_path(archive->entries_[i].path), i);
+	}
+	archive->files_.push_back(std::move(file));
+	return archive;
+}
+
+bool CprArchive::mount(const std::string& file_path, std::string* error) {
+	File file(std::fopen(file_path.c_str(), "rb"));
+	if (!file) {
+		return fail(error, "no se puede abrir " + file_path);
+	}
+	std::string version;
+	std::vector<CprEntry> entries;
+	if (!read_index(file.get(), files_.size(), version, entries, error)) {
+		return false;
+	}
+	for (CprEntry& entry : entries) {
+		const std::string key = normalize_path(entry.path);
+		auto it = index_by_path_.find(key);
+		if (it != index_by_path_.end()) {
+			entries_[it->second] = std::move(entry);
+		} else {
+			index_by_path_.emplace(key, entries_.size());
+			entries_.push_back(std::move(entry));
+		}
+	}
+	files_.push_back(std::move(file));
+	return true;
+}
+
+bool CprArchive::read_index(std::FILE* f, size_t file_index, std::string& version_out,
+	std::vector<CprEntry>& entries, std::string* error) {
+	if (std::fseek(f, 0, SEEK_END) != 0) {
+		return fail(error, "no se puede obtener el tamaño del archivo");
 	}
 	const long file_size = std::ftell(f);
 
@@ -44,18 +77,15 @@ std::unique_ptr<CprArchive> CprArchive::open(const std::string& file_path, std::
 	uint8_t header[kFirstChunk];
 	if (file_size < kFirstChunk || std::fseek(f, 0, SEEK_SET) != 0 ||
 		std::fread(header, 1, sizeof(header), f) != sizeof(header)) {
-		fail(error, "cabecera incompleta");
-		return nullptr;
+		return fail(error, "cabecera incompleta");
 	}
 	if (std::memcmp(header, kMagic, kMagicSize) != 0) {
-		fail(error, "no es un archivo CPR (firma incorrecta)");
-		return nullptr;
+		return fail(error, "no es un archivo CPR (firma incorrecta)");
 	}
 	const char* version = reinterpret_cast<const char*>(header + kMagicSize);
 	const size_t version_max = sizeof(header) - kMagicSize;
 	const void* version_end = std::memchr(version, 0, version_max);
-	archive->version_.assign(version,
-		version_end ? static_cast<const char*>(version_end) - version : version_max);
+	version_out.assign(version, version_end ? static_cast<const char*>(version_end) - version : version_max);
 
 	// Cada chunk: cabecera de 16 bytes, índice y datos. `index_size` incluye la
 	// cabecera del chunk, así que los datos empiezan en chunk_pos + index_size.
@@ -65,8 +95,7 @@ std::unique_ptr<CprArchive> CprArchive::open(const std::string& file_path, std::
 		uint8_t chunk_header[kChunkHeaderSize];
 		if (std::fseek(f, chunk_pos, SEEK_SET) != 0 ||
 			std::fread(chunk_header, 1, sizeof(chunk_header), f) != sizeof(chunk_header)) {
-			fail(error, "cabecera de chunk incompleta en " + std::to_string(chunk_pos));
-			return nullptr;
+			return fail(error, "cabecera de chunk incompleta en " + std::to_string(chunk_pos));
 		}
 		// El segundo campo parece ser los bytes usados del índice (cabecera
 		// incluida); no hace falta para leerlo.
@@ -75,49 +104,43 @@ std::unique_ptr<CprArchive> CprArchive::open(const std::string& file_path, std::
 		const uint32_t data_size = read_u32_le(chunk_header + 12);
 
 		if (index_size < kChunkHeaderSize || chunk_pos + long(index_size) + long(data_size) > file_size) {
-			fail(error, "chunk con tamaños inválidos en " + std::to_string(chunk_pos));
-			return nullptr;
+			return fail(error, "chunk con tamaños inválidos en " + std::to_string(chunk_pos));
 		}
 
 		index.resize(index_size - kChunkHeaderSize);
 		if (std::fread(index.data(), 1, index.size(), f) != index.size()) {
-			fail(error, "índice incompleto en " + std::to_string(chunk_pos));
-			return nullptr;
+			return fail(error, "índice incompleto en " + std::to_string(chunk_pos));
 		}
 
 		size_t p = 0;
 		for (uint32_t i = 0; i < files; ++i) {
 			if (p + kEntryFixedSize >= index.size()) {
-				fail(error, "entrada de índice fuera del chunk en " + std::to_string(chunk_pos));
-				return nullptr;
+				return fail(error, "entrada de índice fuera del chunk en " + std::to_string(chunk_pos));
 			}
 			CprEntry entry;
 			entry.offset = read_u32_le(&index[p + 0]);
 			entry.size = read_u32_le(&index[p + 4]);
 			entry.unknown = read_u32_le(&index[p + 8]);
+			entry.file = file_index;
 			p += kEntryFixedSize;
 
 			const void* end = std::memchr(&index[p], 0, index.size() - p);
 			if (!end) {
-				fail(error, "ruta sin terminador en " + std::to_string(chunk_pos));
-				return nullptr;
+				return fail(error, "ruta sin terminador en " + std::to_string(chunk_pos));
 			}
 			const size_t length = static_cast<const uint8_t*>(end) - &index[p];
 			entry.path.assign(reinterpret_cast<const char*>(&index[p]), length);
 			p += length + 1;
 
 			if (long(entry.offset) + long(entry.size) > file_size) {
-				fail(error, "la entrada " + latin1_to_utf8(entry.path) + " sale del archivo");
-				return nullptr;
+				return fail(error, "la entrada " + latin1_to_utf8(entry.path) + " sale del archivo");
 			}
-			archive->index_by_path_.emplace(normalize_path(entry.path), archive->entries_.size());
-			archive->entries_.push_back(std::move(entry));
+			entries.push_back(std::move(entry));
 		}
 
 		chunk_pos += long(index_size) + long(data_size);
 	}
-
-	return archive;
+	return true;
 }
 
 const CprEntry* CprArchive::find(std::string_view path) const {
@@ -126,8 +149,11 @@ const CprEntry* CprArchive::find(std::string_view path) const {
 }
 
 bool CprArchive::read(const CprEntry& entry, std::vector<uint8_t>& out) const {
+	if (entry.file >= files_.size()) {
+		return false;
+	}
 	out.resize(entry.size);
-	std::FILE* f = file_.get();
+	std::FILE* f = files_[entry.file].get();
 	return std::fseek(f, long(entry.offset), SEEK_SET) == 0 &&
 		std::fread(out.data(), 1, out.size(), f) == out.size();
 }

@@ -1,6 +1,7 @@
 // Comprueba y exporta a PNG las imágenes guardadas en los archivos CPR.
 
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <map>
 #include <string>
@@ -8,6 +9,7 @@
 
 #include "p3data/aim.hpp"
 #include "p3data/cpr.hpp"
+#include "p3data/font.hpp"
 #include "p3data/image.hpp"
 #include "stb_image_write.h"
 
@@ -22,6 +24,7 @@ int usage() {
 		"uso: p3img check  <archivo.cpr> [filtro]\n"
 		"     p3img digest <archivo.cpr> [filtro]\n"
 		"     p3img png    <archivo.cpr> <ruta interna> <salida.png>\n"
+		"     p3img text   <archivo.cpr> <fuente.ttf> <altura> <texto> <salida.png>\n"
 		"\n"
 		"check decodifica todas las imágenes (AIM, BMP, TGA, JPG y PNG) y resume los fallos.\n"
 		"digest imprime el CRC32 de los píxeles RGBA de cada imagen, para comparar decodificadores.\n");
@@ -126,6 +129,59 @@ void write_to_stream(void* context, void* data, int size) {
 	static_cast<std::ofstream*>(context)->write(static_cast<const char*>(data), size);
 }
 
+bool write_png(const Image& image, const std::string& out_path) {
+	std::ofstream file(out_path, std::ios::binary);
+	return stbi_write_png_to_func(write_to_stream, &file, image.width, image.height, 4, image.rgba.data(),
+			   image.width * 4) &&
+		file;
+}
+
+// Texto blanco sobre fondo oscuro, para comprobar las fuentes.
+int render_text(const CprArchive& archive, const std::string& font_path, float height, const std::string& text,
+	const std::string& out_path) {
+	std::string error;
+	auto font = p3::data::FontAtlas::load(archive, font_path, height, &error);
+	if (!font) {
+		std::fprintf(stderr, "%s: %s\n", font_path.c_str(), error.c_str());
+		return 1;
+	}
+	constexpr int kMargin = 6;
+	Image canvas;
+	canvas.width = font->measure(text) + 2 * kMargin;
+	canvas.height = font->line_height() + 2 * kMargin;
+	canvas.rgba.resize(size_t(canvas.width) * canvas.height * 4);
+	for (size_t i = 0; i < canvas.rgba.size(); i += 4) {
+		canvas.rgba[i] = 40;
+		canvas.rgba[i + 1] = 32;
+		canvas.rgba[i + 2] = 24;
+		canvas.rgba[i + 3] = 255;
+	}
+	const Image& atlas = font->image();
+	for (const auto& q : font->layout(text, kMargin, kMargin)) {
+		for (int y = 0; y < q.height; ++y) {
+			for (int x = 0; x < q.width; ++x) {
+				const int dx = q.dst_x + x;
+				const int dy = q.dst_y + y;
+				if (dx < 0 || dy < 0 || dx >= canvas.width || dy >= canvas.height) {
+					continue;
+				}
+				const int alpha = atlas.rgba[(size_t(q.src_y + y) * atlas.width + size_t(q.src_x + x)) * 4 + 3];
+				uint8_t* dst = &canvas.rgba[(size_t(dy) * canvas.width + dx) * 4];
+				for (int c = 0; c < 3; ++c) {
+					dst[c] = uint8_t((255 * alpha + dst[c] * (255 - alpha)) / 255);
+				}
+			}
+		}
+	}
+	if (!write_png(canvas, out_path)) {
+		std::fprintf(stderr, "error al escribir %s\n", out_path.c_str());
+		return 1;
+	}
+	std::printf("%s a %.0f px: %dx%d, atlas %dx%d\n", font_path.c_str(), height, canvas.width, canvas.height,
+		atlas.width, atlas.height);
+	return 0;
+}
+
 int export_png(const CprArchive& archive, const std::string& path, const std::string& out_path) {
 	const CprEntry* entry = archive.find(path);
 	if (!entry) {
@@ -172,6 +228,9 @@ int main(int argc, char** argv) {
 	}
 	if (command == "png" && argc == 5) {
 		return export_png(*archive, argv[3], argv[4]);
+	}
+	if (command == "text" && argc == 7) {
+		return render_text(*archive, argv[3], float(std::atof(argv[4])), argv[5], argv[6]);
 	}
 	return usage();
 }

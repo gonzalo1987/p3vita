@@ -101,6 +101,23 @@ int main() {
 	truncated.resize(truncated.size() - 4);
 	check(CprArchive::open(write_temp("p3vita_cpr_trunc.cpr", truncated)) == nullptr, "rechaza un archivo truncado");
 
+	// Un archivo montado encima sustituye las entradas con la misma ruta.
+	auto layered = CprArchive::open(write_temp("p3vita_cpr_base.cpr",
+		build_archive({{"scripts\\a.txt", "base"}, {"b.txt", "solo en la base"}})));
+	check(layered && layered->mount(write_temp("p3vita_cpr_top.cpr",
+		build_archive({{"SCRIPTS\\A.TXT", "encima"}, {"c.txt", "nuevo"}}))), "monta un archivo encima de otro");
+	if (layered) {
+		auto text = [&](const char* path) {
+			const auto* entry = layered->find(path);
+			std::vector<uint8_t> data;
+			return entry && layered->read(*entry, data) ? std::string(data.begin(), data.end()) : std::string("?");
+		};
+		check(text("scripts/a.txt") == "encima", "gana la entrada del archivo montado");
+		check(text("b.txt") == "solo en la base", "se conservan las entradas de la base");
+		check(text("c.txt") == "nuevo", "se añaden las entradas nuevas");
+		check(layered->entries().size() == 3, "una entrada por ruta");
+	}
+
 	if (failures == 0) {
 		std::printf("cpr_test: todo correcto\n");
 	}
