@@ -1,0 +1,9 @@
+# Compilaciones
+/build*/
+/dist/
+
+# Los datos del juego nunca se suben al repositorio: cada jugador usa su copia.
+/gamedata/
+*.cpr
+*.aim
+*.bik
