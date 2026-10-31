@@ -8,6 +8,7 @@ add_library(p3data STATIC
 	convoys_sea.cpp
 	cpr.cpp
 	font.cpp
+	game_fixes.cpp
 	hanse_tasks.cpp
 	image.cpp
 	lz.cpp

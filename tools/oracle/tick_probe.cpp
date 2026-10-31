@@ -7,6 +7,7 @@
 //          [--sin-convoyes] [--no-storms]]] [--max N] [--write OUT]
 // --no-storms: without the storms (0x5053C0), as town_oracle.py --no-storms.
 // --pirates: the pirate convoys move (battle/pirates.cpp), as town_oracle.py --pirates.
+// --fix-game-bugs: with the fixes to the game's bugs (game_fixes.hpp), off by default.
 // --storms (on by default now) is still accepted.
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
@@ -48,6 +49,7 @@
 #include <deque>
 #include <memory>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/navigation.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
@@ -628,6 +630,10 @@ int main(int argc, char** argv) {
 			storms = false;
 		} else if (arg == "--pirates") {
 			pirates = true;
+		} else if (arg == "--fix-game-bugs") {
+			// What the fixes to the game's bugs change (game_fixes.hpp): the
+			// differences then show where a fix acts.
+			p3::data::set_fix_game_bugs(true);
 		} else if (arg == "--cpr" && i + 1 < argc) {
 			cpr = argv[++i];
 		} else if (arg == "--solo" && i + 1 < argc) {

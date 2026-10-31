@@ -30,6 +30,7 @@
 #include <cstring>
 #include <vector>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -360,7 +361,9 @@ constexpr uint16_t kLetterMonth[16] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 2
 // of its heap record (SaveGame::mail_records). A letter of type 0x86 or more cuts the chain where it is (the link
 // to it becomes 0xFFFF; the letter is still looked at, and the walk goes on
 // from it); if that letter is removed, the game loses the free list (its
-// head becomes 0xFFFF).
+// head becomes 0xFFFF). Game bug: with fix_game_bugs() the chain is not
+// cut, so the letters after it stay in the merchant's list and a removed
+// letter goes to the free list.
 void fn_4d6780(SaveGame& save, int32_t merchant) {
 	GlobalMemory& g = save.globals;
 	if (merchant >= int32_t(merchant_count(save))) {
@@ -377,7 +380,7 @@ void fn_4d6780(SaveGame& save, int32_t merchant) {
 	for (uint32_t left = count; index < count && left > 0; --left) {
 		GameMemory<0x10>& letter = save.mail[index];
 		const uint8_t type = letter.u8(4);
-		if (type >= 0x86) {
+		if (type >= 0x86 && !fix_game_bugs()) {
 			*link = 0xFFFF;  // Sin comprobar con el oráculo.
 		}
 		const uint32_t month = letter.u8(1) & 0x7F;
@@ -2263,7 +2266,10 @@ void fn_5098b0(SaveGame& save, uint16_t& slot) {
 // [0x994]); en 2, 9, 15, 16, 19 y 20 espera 0x40 ticks; en 3, lo que le
 // falta (0x41 − [+0x138]); en los demás, nada. Si el capitán ya no está en
 // el barco, lo busca en el primer barco de cada comerciante, del último al
-// primero. Devuelve si sigue (con el tick ya cambiado). Comprobado con
+// primero (game bug: if it isn't there, the game loops for ever and p3vita
+// removes the event; with fix_game_bugs() it looks through every ship of
+// each merchant, [+0xE] then [+0x4]). Devuelve si sigue (con el tick ya
+// cambiado). Comprobado con
 // estados retocados (`retouch.py capitanes`) en los estados 1 (con el convoy
 // que guía), 2, 3, 6, 15 y 19; los demás, sin comprobar con el oráculo.
 bool fn_4ddc00(SaveGame& save, uint16_t event) {
@@ -2281,6 +2287,19 @@ bool fn_4ddc00(SaveGame& save, uint16_t event) {
 		for (uint32_t m = merchant_count(save); m > 0 && !found;) {
 			const uint32_t first = merchant_of(save, --m).u16(0xE);
 			if (first >= ship_count(save)) {
+				continue;
+			}
+			if (fix_game_bugs()) {
+				uint32_t steps = ship_count(save);  // Guards against a broken chain.
+				for (uint32_t t = first; t < ship_count(save) && steps > 0 && !found; --steps) {
+					if (ship_of(save, t).u16(0x42) == captain) {
+						s = t;
+						e.u32(0x8) = s;
+						found = true;
+					} else {
+						t = ship_of(save, t).u16(0x4);
+					}
+				}
 				continue;
 			}
 			if (ship_of(save, first).u16(0x42) != captain) {

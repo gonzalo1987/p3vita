@@ -5,6 +5,7 @@
 #include <cstring>
 #include <utility>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -655,11 +656,15 @@ void fn_5366e8(SaveGame& save, const uint8_t* operation) {
 // si la cola tiene más de 0x80 registros y el registro 0x80 (siempre ese:
 // 0x4D8DB0 con 0x80) es un encargo (tipo 5, events_big.cpp), sus [+0x12] y
 // [+0x14] pasan a ser los dos u16. La encola el evento 0x05.
+// Game bug: the operation carries the record it is for in [+4] (the task
+// that starts), but the handler always uses record 0x80. With
+// fix_game_bugs() it uses [+4].
 void fn_536756(SaveGame& save, const uint8_t* operation) {
-	if (save.globals.u16(kEventCount) <= 0x80) {
+	const uint32_t record = fix_game_bugs() ? field(operation, 4) : 0x80;
+	if (save.globals.u16(kEventCount) <= record) {
 		return;  // Sin comprobar con el oráculo.
 	}
-	GameMemory<0x18>& e = save.events[0x80];
+	GameMemory<0x18>& e = save.events[record];
 	if (e.u16(6) != 5) {
 		return;
 	}

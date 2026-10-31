@@ -20,6 +20,7 @@
 #include "p3data/aim.hpp"
 #include "p3data/cpr.hpp"
 #include "p3data/font.hpp"
+#include "p3data/game_fixes.hpp"
 #include "p3data/hanse_tasks.hpp"
 #include "p3data/image.hpp"
 #include "p3data/navigation.hpp"
@@ -34,6 +35,7 @@
 #include "p3data/wares.hpp"
 #include "debug_states.hpp"
 #include "script.hpp"
+#include "settings.hpp"
 
 using namespace p3::data;
 using p3::app::InputScript;
@@ -1148,6 +1150,73 @@ void show_loading(SDL_Renderer* renderer) {
 	SDL_RenderPresent(renderer);
 }
 
+// The settings screen (Start on the Vita, Escape on the PC): the fixes to
+// the game's bugs (p3data/game_fixes.hpp) and quitting the viewer.
+struct SettingsUi {
+	bool open = false;
+	int row = 0;  // 0: fix the game's bugs, 1: quit
+};
+
+constexpr int kSettingsRows = 2;
+
+struct SettingsLayout {
+	static constexpr int kWidth = 560;
+	static constexpr int kPadding = 10;
+	SDL_Rect panel{};
+	int header_y = 0;
+	int rows_y = 0;
+	int row_height = 0;
+	explicit SettingsLayout(int line_height) {
+		row_height = 2 * line_height + 8;
+		const int height = kPadding * 3 + line_height + kSettingsRows * row_height + line_height;
+		panel = {(kScreenWidth - kWidth) / 2, (kScreenHeight - height) / 2, kWidth, height};
+		header_y = panel.y + kPadding;
+		rows_y = header_y + line_height + kPadding;
+	}
+	int row_at(int x, int y) const {
+		if (x < panel.x || x >= panel.x + panel.w || y < rows_y) {
+			return -1;
+		}
+		const int row = (y - rows_y) / row_height;
+		return row < kSettingsRows ? row : -1;
+	}
+};
+
+void draw_settings(SDL_Renderer* renderer, TextRenderer& text, const SettingsUi& ui,
+	const p3::app::AppSettings& settings) {
+	const SettingsLayout layout(text.line_height());
+	const SDL_Rect& panel = layout.panel;
+	const int left = panel.x + SettingsLayout::kPadding;
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 235);
+	SDL_RenderFillRect(renderer, &panel);
+	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+	SDL_RenderDrawRect(renderer, &panel);
+	text.draw("Opciones", left, layout.header_y, kTextColor);
+	const std::string close = "Círculo: cerrar";
+	text.draw(close, panel.x + panel.w - SettingsLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
+
+	const std::string rows[kSettingsRows][2] = {
+		{std::string("Corregir los fallos del juego: ") + (settings.fix_game_bugs ? "Sí" : "No"),
+			settings.fix_game_bugs ? "Con «No», el juego hace lo mismo que el original, fallos incluidos."
+								   : "Ahora se comporta como el original, fallos incluidos."},
+		{"Salir del juego", ""},
+	};
+	for (int i = 0; i < kSettingsRows; ++i) {
+		const int y = layout.rows_y + i * layout.row_height;
+		if (i == ui.row) {
+			const SDL_Rect selected = {panel.x + 4, y - 2, panel.w - 8, layout.row_height - 4};
+			SDL_SetRenderDrawColor(renderer, 120, 90, 45, 160);
+			SDL_RenderFillRect(renderer, &selected);
+		}
+		text.draw(rows[i][0], left, y, kTextColor);
+		if (!rows[i][1].empty()) {
+			text.draw(rows[i][1], left + 12, y + text.line_height(), kDimColor);
+		}
+	}
+	text.draw("X: cambiar o elegir", left, layout.rows_y + kSettingsRows * layout.row_height + 4, kDimColor);
+}
+
 // The command line (only on the PC: the Vita starts the viewer without one).
 struct Options {
 	const char* data_dir = nullptr;
@@ -1155,16 +1224,21 @@ struct Options {
 	const char* steps = nullptr;
 	const char* screenshot = nullptr;
 	const char* debug_state = nullptr;
+	const char* fix_game_bugs = nullptr;  // on|off: overrides the settings file
 };
 
 void print_usage() {
 	std::printf(
 		"usage: p3vita [DATA_DIR] [--cpr FILE] [--steps STEPS] [--screenshot FILE.png]\n"
-		"              [--debug-state STATES]\n"
+		"              [--debug-state STATES] [--fix-game-bugs on|off]\n"
 		"\n"
 		"Shows the towns of Patrician III. DATA_DIR is the folder with p2arch0_eng.cpr\n"
 		"(and p2arch0_spa.cpr for the Spanish version, optional); by default data/ and\n"
 		"the current folder. --cpr gives the English archive itself.\n"
+"\n"
+"--fix-game-bugs on|off overrides the setting of the same name (the fixes to\n"
+"the original game's bugs; on by default), which the settings screen (Start, or\n"
+"Escape on the PC) keeps in p3vita-settings.txt in the data folder.\n"
 		"\n"
 		"With --steps or --screenshot it runs without a window: it plays the steps,\n"
 		"saves the screen into FILE.png at the end and quits.\n"
@@ -1186,6 +1260,7 @@ int parse_options(int argc, char** argv, Options& options) {
 			: arg == "--steps" ? &options.steps
 			: arg == "--screenshot" ? &options.screenshot
 			: arg == "--debug-state" ? &options.debug_state
+			: arg == "--fix-game-bugs" ? &options.fix_game_bugs
 			: nullptr;
 		if (arg == "--help" || arg == "-h") {
 			print_usage();
@@ -1197,6 +1272,10 @@ int parse_options(int argc, char** argv, Options& options) {
 				return 2;
 			}
 			*value = argv[++i];
+			if (value == &options.fix_game_bugs && std::string(*value) != "on" && std::string(*value) != "off") {
+				std::fprintf(stderr, "--fix-game-bugs takes on or off\n");
+				return 2;
+			}
 		} else if (arg.compare(0, 1, "-") == 0 || options.data_dir) {
 			std::fprintf(stderr, "unknown argument: %s (see --help)\n", argv[i]);
 			return 2;
@@ -1377,6 +1456,14 @@ int main(int argc, char** argv) {
 	bool reload = true;
 	bool keep_camera = false;
 	LiveTown live;  // The saved town on screen (Mode::Saved).
+	// The settings: the file, then the command line; scripted runs don't save them.
+	const std::string settings_file = p3::app::settings_path(options.data_dir);
+	p3::app::AppSettings settings = p3::app::load_settings(settings_file);
+	if (options.fix_game_bugs) {
+		settings.fix_game_bugs = std::string(options.fix_game_bugs) == "on";
+	}
+	p3::data::set_fix_game_bugs(settings.fix_game_bugs);
+	SettingsUi settings_ui;
 	bool running = true;
 	int camera_x = 0;
 	int camera_y = 0;
@@ -1397,6 +1484,37 @@ int main(int argc, char** argv) {
 		// The Hanse panel, in the save's towns like the market (never both open).
 		const bool in_hanse = hanse.open && !trading && selection.mode == Mode::Saved && save.player >= 0 && small_text;
 		const HanseView hanse_now = in_hanse ? hanse_view(save, town_index) : HanseView();
+		const bool in_settings = settings_ui.open && small_text;
+		auto settings_act = [&]() {
+			if (settings_ui.row == 0) {
+				settings.fix_game_bugs = !settings.fix_game_bugs;
+				p3::data::set_fix_game_bugs(settings.fix_game_bugs);
+				if (!script && !p3::app::save_settings(settings_file, settings)) {
+					std::fprintf(stderr, "can't save %s\n", settings_file.c_str());
+				}
+			} else {
+				running = false;
+			}
+		};
+		// With the settings open, every button is theirs.
+		auto settings_button = [&](Uint8 button) {
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+				settings_ui.row = (settings_ui.row + kSettingsRows + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1)) %
+					kSettingsRows;
+				break;
+			case SDL_CONTROLLER_BUTTON_A:
+				settings_act();
+				break;
+			case SDL_CONTROLLER_BUTTON_B:
+			case SDL_CONTROLLER_BUTTON_START:
+				settings_ui.open = false;
+				break;
+			default:
+				break;
+			}
+		};
 		auto hanse_select = [&](int step) {
 			const int rows = hanse_now.rows();
 			hanse.row = rows > 0 ? (hanse.row + rows + step) % rows : 0;
@@ -1547,6 +1665,10 @@ int main(int argc, char** argv) {
 				}
 				break;
 			case SDL_CONTROLLERBUTTONDOWN:
+				if (in_settings) {
+					settings_button(event.cbutton.button);
+					break;
+				}
 				if (in_hanse && hanse_button(event.cbutton.button)) {
 					break;
 				}
@@ -1605,12 +1727,21 @@ int main(int argc, char** argv) {
 						change_step(event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1);
 					}
 					break;
-				case SDL_CONTROLLER_BUTTON_START:
-					running = false;
+				case SDL_CONTROLLER_BUTTON_START:  // The settings (and quitting).
+					settings_ui = {true, 0};
 					break;
 				}
 				break;
 			case SDL_KEYDOWN:
+				if (in_settings) {
+					const SDL_Keycode key = event.key.keysym.sym;
+					settings_button(key == SDLK_UP ? SDL_CONTROLLER_BUTTON_DPAD_UP
+						: key == SDLK_DOWN ? SDL_CONTROLLER_BUTTON_DPAD_DOWN
+						: key == SDLK_RETURN || key == SDLK_c ? SDL_CONTROLLER_BUTTON_A
+						: key == SDLK_ESCAPE ? SDL_CONTROLLER_BUTTON_B
+						: SDL_CONTROLLER_BUTTON_INVALID);
+					break;
+				}
 				if (in_hanse) {
 					// Keyboard: the arrows, C or Enter to act, H or Escape to close.
 					const SDL_Keycode key = event.key.keysym.sym;
@@ -1686,7 +1817,7 @@ int main(int argc, char** argv) {
 					if (market.open) {
 						market.open = false;
 					} else {
-						running = false;
+						settings_ui = {true, 0};  // The settings (and quitting).
 					}
 					break;
 				}
@@ -1696,7 +1827,8 @@ int main(int argc, char** argv) {
 				touch_moved = 0;
 				touch_on_panel =
 					(trading && inside(MarketLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
-					(in_hanse && inside(HanseLayout(small_text->line_height()).panel, touch_start.x, touch_start.y));
+					(in_hanse && inside(HanseLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
+					(in_settings && inside(SettingsLayout(small_text->line_height()).panel, touch_start.x, touch_start.y));
 				break;
 			case SDL_FINGERMOTION:
 				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
@@ -1715,7 +1847,15 @@ int main(int argc, char** argv) {
 						selection.saved_index = size_t(town);
 					}
 				}
-				if (touch_on_panel && in_hanse && touch_moved < kTapDistance) {
+				if (in_settings && touch_moved < kTapDistance) {
+					const int row = SettingsLayout(small_text->line_height()).row_at(touch_start.x, touch_start.y);
+					if (row >= 0) {
+						settings_ui.row = row;
+						settings_act();
+					} else if (!touch_on_panel) {
+						settings_ui.open = false;  // A tap outside closes it.
+					}
+				} else if (touch_on_panel && in_hanse && touch_moved < kTapDistance) {
 					const HanseLayout layout(small_text->line_height());
 					const int row = layout.row_at(touch_start.x, touch_start.y, hanse_now.rows());
 					if (hanse_now.road_here && inside(layout.amount_button, touch_start.x, touch_start.y)) {
@@ -1856,6 +1996,9 @@ int main(int argc, char** argv) {
 		}
 		if (trading) {
 			draw_market(renderer, *small_text, save, town_index, market);
+		}
+		if (in_settings) {
+			draw_settings(renderer, *small_text, settings_ui, settings);
 		}
 		if (small_text && !notice.empty() && !SDL_TICKS_PASSED(app_ticks(), notice_until)) {
 			const int padding = 8;
