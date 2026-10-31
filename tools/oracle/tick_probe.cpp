@@ -318,6 +318,11 @@ void build_save(const State& state, SaveGame& save) {
 			copy_blocks(*f, save.world_object_lists[i]);
 		}
 	}
+	for (int k = 0; k < 5; ++k) {  // The statistics (town_oracle.py --statistics).
+		if (const Region* r = find(state, "S" + std::to_string(k))) {
+			read_statistics_region(save, k, r->bytes);
+		}
+	}
 	save.rand_state = get<uint32_t>(state.at("r").bytes.data(), 0);
 	save.player = int(save.globals.u32(global::kPlayer));
 }
@@ -385,6 +390,11 @@ State dump_save(const SaveGame& save, const State& game) {
 	}
 	if (s.count("Y")) {
 		s["Y"].bytes = save.town_travel;
+	}
+	for (int k = 0; k < 5; ++k) {  // The statistics (town_oracle.py --statistics).
+		if (s.count("S" + std::to_string(k))) {
+			s["S" + std::to_string(k)].bytes = statistics_region(save, k);
+		}
 	}
 	if (s.count("V")) {
 		store_blocks(save.convoys, s["V"]);
@@ -515,7 +525,10 @@ bool loaded_global(uint32_t a) {
 			((a - global::kWorld - 0xB10) % 0x2C < 0x1E || (a - global::kWorld - 0xB10) % 0x2C >= 0x28)) ||
 		(a >= 0x6DD744 && a < 0x6DD74A) || (a >= 0x6DD734 && a < 0x6DD73C) ||
 		(a >= global::kShips + 0x100 && a < global::kShips + 0x108) ||
-		(a >= global::kShips + 0x20 && a < global::kShips + 0xE0);
+		(a >= global::kShips + 0x20 && a < global::kShips + 0xE0) ||
+		// The header of the statistics (0x6DFC90): the u16 counters and the
+		// bytes [+0x20..+0x23], not its pointers (regions S0..S4).
+		(a >= 0x6DFC90 && a < 0x6DFC9C) || (a >= 0x6DFCB0 && a < 0x6DFCB4);
 }
 
 // Compara y escribe las diferencias. Devuelve cuántas hay. Con only_loaded,
@@ -657,6 +670,7 @@ int main(int argc, char** argv) {
 	register_probes_events_rare(registry);
 	register_probes_alderman(registry);
 	register_probes_battle(registry);
+	register_probes_statistics(registry);
 
 	Input in(argv[1]);
 	if (!in.ok() || !in.expect("P3PROBE1")) {
@@ -806,8 +820,10 @@ int main(int argc, char** argv) {
 			// advance_time baja 1 el [+0x8B] del mundo si no es 0 (como
 			// advance_game_tick y el oráculo con --resto 5315c0): antes de la
 			// siguiente llamada de primer nivel que no sea 0x535450.
+			// Nor the statistics (0x54DE90), which run between 0x5315C0 and 0x535450.
 			if (countdown_pending &&
-				(call.tick != countdown_tick || (call.esp >= countdown_esp && call.function != 0x535450))) {
+				(call.tick != countdown_tick || (call.esp >= countdown_esp && call.function != 0x535450 &&
+					call.function != 0x54DE90))) {
 				uint8_t& countdown = save.globals.u8(global::kWorld + 0x8B);
 				if (countdown > 0) {
 					--countdown;

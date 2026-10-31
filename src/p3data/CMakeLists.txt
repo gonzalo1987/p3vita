@@ -14,6 +14,7 @@ add_library(p3data STATIC
 	sailing.cpp
 	savegame.cpp
 	savegame_write.cpp
+	statistics.cpp
 	lz_compress.cpp
 	seamap.cpp
 	simulation.cpp
