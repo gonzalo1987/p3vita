@@ -1,4 +1,4 @@
-add_executable(p3vita main.cpp)
+add_executable(p3vita main.cpp script.cpp)
 
 target_link_libraries(p3vita PRIVATE p3data)
 target_compile_options(p3vita PRIVATE -Wall -Wextra)
@@ -16,5 +16,6 @@ if(VITA)
 		NAME "Patrician III"
 	)
 else()
-	target_link_libraries(p3vita PRIVATE SDL2::SDL2)
+	# On the PC the viewer can also run without a window and save screenshots (--steps).
+	target_link_libraries(p3vita PRIVATE SDL2::SDL2 stb_image_write)
 endif()

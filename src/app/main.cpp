@@ -31,10 +31,20 @@
 #include "p3data/town_buildings.hpp"
 #include "p3data/trade.hpp"
 #include "p3data/wares.hpp"
+#include "script.hpp"
 
 using namespace p3::data;
+using p3::app::InputScript;
 
 namespace {
+
+// With --steps the viewer runs without a window and its time is the script's
+// (one frame, 1/60 s), so that every run comes out the same.
+const InputScript* g_script = nullptr;
+
+Uint32 app_ticks() {
+	return g_script ? g_script->now() : SDL_GetTicks();
+}
 
 constexpr int kScreenWidth = 960;
 constexpr int kScreenHeight = 544;
@@ -65,7 +75,32 @@ const char* const kDataDirs[] = {"data/", "./"};
 constexpr char kBaseArchive[] = "p2arch0_eng.cpr";
 constexpr char kLanguageArchive[] = "p2arch0_spa.cpr";
 
-std::unique_ptr<CprArchive> open_archive(const char* dir_override, std::string& tried) {
+// The error on the console (on the PC) and, with a window, in a message box.
+void show_error(SDL_Window* window, const std::string& message) {
+#ifndef __vita__
+	std::fprintf(stderr, "%s\n", message.c_str());
+#endif
+	if (!g_script) {
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kTitle, message.c_str(), window);
+	}
+}
+
+// `cpr_file` (--cpr): the English archive itself; the language one is mounted
+// if it is in the same folder.
+std::unique_ptr<CprArchive> open_archive(const char* dir_override, const char* cpr_file, std::string& tried) {
+	if (cpr_file) {
+		tried += std::string("\n") + cpr_file;
+		auto archive = CprArchive::open(cpr_file);
+		if (archive) {
+			const std::string path = cpr_file;
+			const size_t slash = path.find_last_of('/');
+			const std::string dir = slash == std::string::npos ? "" : path.substr(0, slash + 1);
+			if (path.substr(dir.size()) != kLanguageArchive) {
+				archive->mount(dir + kLanguageArchive);  // Optional.
+			}
+		}
+		return archive;
+	}
 	std::vector<std::string> dirs;
 	if (dir_override) {
 		std::string dir = dir_override;
@@ -598,7 +633,7 @@ void trade(SaveGame& save, int town, MarketUi& ui, bool buying) {
 	const WareInfo& ware = kWares[size_t(ui.ware)];
 	std::string name = ware.name;
 	name[0] = char(std::tolower(uint8_t(name[0])));
-	ui.message_until = SDL_GetTicks() + kMessageTime;
+	ui.message_until = app_ticks() + kMessageTime;
 	if (ship < 0) {
 		ui.message = "No tienes ningún barco en este puerto.";
 		return;
@@ -744,7 +779,7 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 
 	// El resultado de la última operación o, si no, lo que costaría comerciar
 	// ahora con la cantidad elegida.
-	const bool show_message = !ui.message.empty() && !SDL_TICKS_PASSED(SDL_GetTicks(), ui.message_until);
+	const bool show_message = !ui.message.empty() && !SDL_TICKS_PASSED(app_ticks(), ui.message_until);
 	std::string footer = show_message ? ui.message : "";
 	if (!show_message && ship) {
 		const TradeResult buy =
@@ -780,35 +815,126 @@ void show_loading(SDL_Renderer* renderer) {
 	SDL_RenderPresent(renderer);
 }
 
+// The command line (only on the PC: the Vita starts the viewer without one).
+struct Options {
+	const char* data_dir = nullptr;
+	const char* cpr = nullptr;
+	const char* steps = nullptr;
+	const char* screenshot = nullptr;
+};
+
+void print_usage() {
+	std::printf(
+		"usage: p3vita [DATA_DIR] [--cpr FILE] [--steps STEPS] [--screenshot FILE.png]\n"
+		"\n"
+		"Shows the towns of Patrician III. DATA_DIR is the folder with p2arch0_eng.cpr\n"
+		"(and p2arch0_spa.cpr for the Spanish version, optional); by default data/ and\n"
+		"the current folder. --cpr gives the English archive itself.\n"
+		"\n"
+		"With --steps or --screenshot it runs without a window: it plays the steps,\n"
+		"saves the screen into FILE.png at the end and quits.\n"
+		"\n"
+		"%s"
+		"\n"
+		"Example: p3vita --cpr p2arch0_eng.cpr --steps \"Triangle,R,shot:sea.png,X,days:5\"\n"
+		"         --screenshot sailing.png\n",
+		p3::app::kStepsHelp);
+}
+
+// -1: go on; otherwise the exit code (0 after --help, 2 for a wrong command line).
+int parse_options(int argc, char** argv, Options& options) {
+	for (int i = 1; i < argc; ++i) {
+		const std::string arg = argv[i];
+		const char** value = arg == "--cpr" ? &options.cpr
+			: arg == "--steps" ? &options.steps
+			: arg == "--screenshot" ? &options.screenshot
+			: nullptr;
+		if (arg == "--help" || arg == "-h") {
+			print_usage();
+			return 0;
+		}
+		if (value) {
+			if (i + 1 >= argc) {
+				std::fprintf(stderr, "%s needs a value (see --help)\n", argv[i]);
+				return 2;
+			}
+			*value = argv[++i];
+		} else if (arg.compare(0, 1, "-") == 0 || options.data_dir) {
+			std::fprintf(stderr, "unknown argument: %s (see --help)\n", argv[i]);
+			return 2;
+		} else {
+			options.data_dir = argv[i];
+		}
+	}
+	return -1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
+	Options options;
+	if (const int code = parse_options(argc, argv, options); code >= 0) {
+		return code;
+	}
+	// Without a window: the steps of the command line and a screenshot at the end.
+	std::unique_ptr<InputScript> script;
+	if (options.steps || options.screenshot) {
+		std::string error;
+		std::string steps = options.steps ? options.steps : "";
+		if (options.screenshot) {
+			steps += std::string(",shot:") + options.screenshot;
+		}
+		script = InputScript::parse(steps, error);
+		if (!script) {
+			std::fprintf(stderr, "--steps: %s\n", error.c_str());
+			return 2;
+		}
+		g_script = script.get();
+		// SDL_VIDEODRIVER, if set, wins over the hint.
+		SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
+	}
+#ifndef __vita__
+	SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "1");  // On the PC the mouse is the touch screen.
+#endif
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
+		show_error(nullptr, SDL_GetError());
 		return 1;
 	}
-	SDL_Window* window = SDL_CreateWindow(kTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-		kScreenWidth, kScreenHeight, 0);
-	SDL_Renderer* renderer =
-		window ? SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) : nullptr;
+	SDL_Window* window = nullptr;
+	SDL_Surface* screen = nullptr;  // Without a window the renderer draws into it.
+	SDL_Renderer* renderer = nullptr;
+	if (script) {
+		screen = SDL_CreateRGBSurfaceWithFormat(0, kScreenWidth, kScreenHeight, 32, SDL_PIXELFORMAT_ARGB8888);
+		renderer = screen ? SDL_CreateSoftwareRenderer(screen) : nullptr;
+	} else {
+		window = SDL_CreateWindow(kTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, kScreenWidth,
+			kScreenHeight, 0);
+		renderer =
+			window ? SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) : nullptr;
+		if (window && !renderer) {
+			renderer = SDL_CreateRenderer(window, -1, 0);  // Any (for example with SDL_VIDEODRIVER=offscreen).
+		}
+	}
 	if (!renderer) {
-		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kTitle, SDL_GetError(), window);
+		show_error(window, SDL_GetError());
 		SDL_Quit();
 		return 1;
 	}
 	show_loading(renderer);
 
 	std::string tried;
-	auto archive = open_archive(argc > 1 ? argv[1] : nullptr, tried);
+	auto archive = open_archive(options.data_dir, options.cpr, tried);
 	const std::vector<int> template_ids = archive ? list_town_ids(*archive) : std::vector<int>{};
 	if (template_ids.empty()) {
 		const std::string message = archive
 			? std::string("El archivo CPR no contiene mapas de ciudad.")
 			: "No se encuentran los datos del juego. Copia p2arch0_eng.cpr (y p2arch0_spa.cpr para la "
 			  "versión española) en:" + tried;
-		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kTitle, message.c_str(), window);
+		show_error(window, message);
 		SDL_Quit();
 		return 1;
 	}
+	bool screenshot_failed = false;
 
 	auto view = std::make_unique<TownView>(renderer, *archive);
 	std::unique_ptr<SeaMapView> sea;  // Se carga la primera vez que se abre.
@@ -845,13 +971,13 @@ int main(int argc, char** argv) {
 	}
 	size_t fleet_index = 0;  // Barco del jugador al que se dan las órdenes en el mapa del mar.
 	int game_speed = kNormalSpeed;
-	Uint32 clock = SDL_GetTicks();  // Hasta dónde se ha convertido el tiempo real en ticks.
+	Uint32 clock = app_ticks();  // Hasta dónde se ha convertido el tiempo real en ticks.
 	// Aviso que se ve unos segundos bajo la barra superior.
 	std::string notice;
 	Uint32 notice_until = 0;
 	auto notify = [&](const std::string& message) {
 		notice = message;
-		notice_until = SDL_GetTicks() + kMessageTime;
+		notice_until = app_ticks() + kMessageTime;
 	};
 	auto fleet_ship = [&]() -> int {
 		const std::vector<int> fleet = player_fleet(save);
@@ -905,6 +1031,12 @@ int main(int argc, char** argv) {
 	int touch_moved = 0;
 	bool touch_on_panel = false;
 	while (running) {
+		if (script) {
+			script->start_frame();
+			if (script->finished()) {
+				break;
+			}
+		}
 		// El mercado solo existe en las ciudades de la partida, con el jugador cargado.
 		const bool trading = market.open && selection.mode == Mode::Saved && save.player >= 0 && small_text;
 		const int town_index = int(selection.saved_index);
@@ -916,7 +1048,7 @@ int main(int argc, char** argv) {
 				sea = std::make_unique<SeaMapView>(renderer, *archive);
 			}
 			if (!sea->ok()) {
-				SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kTitle, "No se encuentra el mapa del mar.", window);
+				show_error(window, "No se encuentra el mapa del mar.");
 				break;
 			}
 			const SDL_Point focus = sea->town_center(save, selection.saved_index);
@@ -929,7 +1061,7 @@ int main(int argc, char** argv) {
 			TownMap town;
 			std::string error;
 			if (!load_selection(*archive, view->tiles(), save, regions, template_ids, selection, town, error)) {
-				SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kTitle, error.c_str(), window);
+				show_error(window, error);
 				break;
 			}
 			view->show(town);
@@ -945,10 +1077,11 @@ int main(int argc, char** argv) {
 		// Pasa el tiempo: los ticks que caben en el tiempo real transcurrido.
 		if (sailing) {
 			const GameSpeed& speed = kGameSpeeds[game_speed];
-			const Uint32 now = SDL_GetTicks();
+			const Uint32 now = app_ticks();
 			const Uint32 elapsed = now - clock;
 			clock = now - elapsed % speed.ms_per_tick;
-			const int ticks = std::min(int(elapsed / speed.ms_per_tick), speed.max_ticks);
+			const int ticks =
+				std::min(int(elapsed / speed.ms_per_tick), speed.max_ticks) + (script ? script->extra_ticks() : 0);
 			for (int i = 0; i < ticks; ++i) {
 				advance_game_tick(save, *sailing);
 				for (const ShipEvent& event : sailing->events()) {
@@ -1182,15 +1315,18 @@ int main(int argc, char** argv) {
 		}
 
 		// Con el mercado abierto, la cruceta y las flechas son suyas; el stick sigue moviendo la cámara.
+		// The pad is the controller's or the script's.
+		auto pad = [&](SDL_GameControllerButton button) {
+			return int((controller && SDL_GameControllerGetButton(controller, button)) ||
+				(script && script->held(button)));
+		};
 		if (controller) {
 			camera_x += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX));
 			camera_y += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY));
-			if (!trading) {
-				camera_x += kPadSpeed * (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) -
-					SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT));
-				camera_y += kPadSpeed * (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN) -
-					SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_UP));
-			}
+		}
+		if (!trading) {
+			camera_x += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) - pad(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
+			camera_y += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_DOWN) - pad(SDL_CONTROLLER_BUTTON_DPAD_UP));
 		}
 		if (!trading) {
 			const Uint8* keys = SDL_GetKeyboardState(nullptr);
@@ -1238,7 +1374,7 @@ int main(int argc, char** argv) {
 		if (trading) {
 			draw_market(renderer, *small_text, save, town_index, market);
 		}
-		if (small_text && !notice.empty() && !SDL_TICKS_PASSED(SDL_GetTicks(), notice_until)) {
+		if (small_text && !notice.empty() && !SDL_TICKS_PASSED(app_ticks(), notice_until)) {
 			const int padding = 8;
 			const SDL_Rect box = {8, kBarHeight + 6, small_text->measure(notice) + 2 * padding,
 				small_text->line_height() + padding};
@@ -1248,6 +1384,15 @@ int main(int argc, char** argv) {
 			SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
 			SDL_RenderDrawRect(renderer, &box);
 			small_text->draw(notice, box.x + padding, box.y + padding / 2, kTextColor);
+		}
+		if (script && !script->screenshot().empty()) {
+			std::string error;
+			if (p3::app::save_screenshot(renderer, kScreenWidth, kScreenHeight, script->screenshot(), error)) {
+				std::printf("%s\n", script->screenshot().c_str());
+			} else {
+				std::fprintf(stderr, "%s\n", error.c_str());
+				screenshot_failed = true;
+			}
 		}
 		SDL_RenderPresent(renderer);
 	}
@@ -1262,6 +1407,7 @@ int main(int argc, char** argv) {
 	}
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
+	SDL_FreeSurface(screen);
 	SDL_Quit();
-	return 0;
+	return screenshot_failed ? 1 : 0;
 }
