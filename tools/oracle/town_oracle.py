@@ -195,6 +195,7 @@ EVENT_JUMPS = {
     0x629CEA: 0x629D3B,
     0x62B239: 0x62B261,
     0x4ECD3E: 0x4ECD71,  # 0x4ECB14 (evento 0x38): el monumento, si es la ciudad que se ve (0x590680)
+    0x4E0DB9: 0x4E0E13,  # 0x4E09D4 (evento 0x24, fase 1): la ventana (*0x6CC7E8, 0x469380 y 0x469AF0)
 }
 # Los mensajes llevan textos (CString de MFC, sprintf del CRT) que usan unas
 # pocas funciones de KERNEL32: se hacen aquí (ver TownOracle.setup_imports).

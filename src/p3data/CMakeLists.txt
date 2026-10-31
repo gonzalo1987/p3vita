@@ -33,6 +33,7 @@ add_library(p3data STATIC
 	town_tick/merchants.cpp
 	town_tick/new_town.cpp
 	town_tick/operations.cpp
+	town_tick/diet.cpp
 	town_tick/offices.cpp
 	town_tick/population.cpp
 	town_tick/sieges.cpp

@@ -79,6 +79,7 @@ Los eventos que p3vita creaba y no atendía; graban 4d85c0:
   monumento             0x38: el monumento al alcalde reelegido (alcaldes de la IA a mano)
   incendio              0x25 y 0x26: arden una torre, una pieza de muralla, una empresa, una
                         casa y un edificio de la ciudad (graba 2 días)
+  dieta                 0x34, 0x24 y 0x23: las misiones de la dieta de la Hansa (0x4E09D4)
 Los asedios (operación 0x8E); graban 535760 y 633a90:
   asedio                uno a una ciudad sin muralla (rescate sin atacar) y
                         otro en la región de la ciudad natal del jugador, con
@@ -902,6 +903,42 @@ def incendio(o):
     return lambda: print(f'después: {show()}')
 
 
+def dieta(o):
+    """Las misiones que aprueba la dieta de la Hansa (0x4E09D4), como las deja
+    el evento 0x21 al aprobar las propuestas 0, 1 y 2: eventos 0x34 (la caza
+    de piratas, en la ciudad del alderman), 0x24 y 0x23 (en otras dos
+    ciudades), a los ticks siguientes, en la fase 0 sin participantes ni
+    flota. Graba, por ejemplo, 12 días de 4d85c0 y 535760. Devuelve lo que
+    escribe al final: la fase, el convoy y su estado."""
+    towns = o.u32(WORLD + 0x10)
+    hanse = o.u8(0x6DE52E)
+    hanse = hanse if hanse < towns else 0
+    others = [i for i in range(towns) if i != hanse][:2]
+    now = o.u32(WORLD + 0x14)
+    created = []
+    for k, (kind, town) in enumerate([(0x34, hanse), (0x24, others[0]), (0x23, others[1])]):
+        e = o.call(0x4D8CF0, [now + 1 + k], ecx=to.EVENTS)
+        w16(o, e + 6, kind)
+        o.uc.mem_write(e + 8, bytes([0xFF] * 8))
+        w32(o, e + 0x10, 0)
+        w8(o, e + 0x14, town)
+        w8(o, e + 0x15, 0)
+        w16(o, e + 0x16, 0xFFFF)
+        created.append((kind, town))
+    print(f'misiones (tipo, ciudad): {created}')
+
+    def show():
+        out = []
+        for i, a in events(o):
+            kind = o.u16(a + 6)
+            if kind in (0x23, 0x24, 0x34):
+                convoy = o.u16(a + 0x16)
+                state = o.u16(o.u32(to.SHIPS + 8) + 0x3C * convoy + 0x12) if convoy < o.u16(to.SHIPS + 0xF6) else None
+                out.append((hex(kind), o.u8(a + 0x15), convoy, state, bytes(o.uc.mem_read(a + 8, 8)).hex()))
+        return out
+    return lambda: print(f'después (tipo, fase, convoy, estado, [+0x8]): {show()}')
+
+
 def jugador_carretera_vencida(o):
     """El jugador con la carretera vencida: el juego crea un encargo igual con
     la ciudad [+0x10] como comerciante, que sigue avanzando. Graba 2 días."""
@@ -917,7 +954,7 @@ SCENARIOS = {f.__name__: f for f in (candidato, jugador, dos_candidatos, sin_car
                                      encargo_nuevo, encargo_cumplido, encargo_vencido, barco_perdido,
                                      jugador_coge, jugador_vencido,
                                      nueva_sin_marca, nueva_alcalde_ia, nueva_alcalde_humano, nueva_sin_alcalde,
-                                     poblada, rica, fundar_aceite, robo, asedio, capitanes, impuesto, monumento, incendio)}
+                                     poblada, rica, fundar_aceite, robo, asedio, capitanes, impuesto, monumento, incendio, dieta)}
 
 
 def main():

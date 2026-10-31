@@ -153,6 +153,9 @@ public:
 
 	// 0x50CE50: mete el barco en la lista por x (también la usa la operación 0x78).
 	void insert_x(uint16_t index, uint32_t after);
+	// 0x5172A0: nueva ruta del barco desde donde está, a la ciudad `town` o a
+	// (x, y) (también la usa la flota de la Hansa, `diet.cpp`).
+	void set_destination(SavedShip& ship, int town, int x, int y);
 
 private:
 	bool ai_ = true;
@@ -186,7 +189,6 @@ private:
 	void dock(SavedShip& ship, uint16_t index);
 	void start_voyage(SavedShip& ship, uint16_t index);
 	void leave_port(SavedShip& ship);
-	void set_destination(SavedShip& ship, int town, int x, int y);
 	void rest(SavedShip& ship) const;
 
 	SaveGame& save_;

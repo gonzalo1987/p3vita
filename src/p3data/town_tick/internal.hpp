@@ -299,6 +299,12 @@ uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick);
 int events_big(SaveGame& save, uint16_t event, uint16_t type);  // 0x2c, 0x5, 0x16
 int events_towns(SaveGame& save, uint16_t event, uint16_t type);  // 0x3, 0x1, 0x2a, 0x2b, 0x27
 int events_mayor(SaveGame& save, uint16_t event, uint16_t type);  // 0x2, 0xa, 0x36, 0x20, 0x21
+// diet.cpp: las misiones que aprueba la dieta de la Hansa (eventos 0x23,
+// 0x24 y 0x34, 0x4E09D4) con su flota (0x50AC40). Devuelve 1 si el evento
+// sigue (con el tick ya cambiado) o 0 si se quita.
+namespace diet_detail {
+int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing);
+}  // namespace diet_detail
 int events_rare(SaveGame& save, uint16_t event, uint16_t type);  // 0xe, 0x12, 0x1c, 0x1e, 0x1f, 0x25, 0x26, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x35, 0x38, 0x39
 // La navegación que usa la cola de eventos (agua en un punto del mapa,
 // 0x4474D0, para las tormentas). La pone quien la atiende; sin ella, no hay agua.

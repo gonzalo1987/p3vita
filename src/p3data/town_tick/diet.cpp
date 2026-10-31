@@ -1,0 +1,725 @@
+// Las misiones que aprueba la dieta de la Hansa (evento 0x21, events_mayor.cpp):
+// con las propuestas 0, 1 y 2 su registro pasa a ser un evento 0x34, 0x24 o
+// 0x23 al día siguiente, que atiende 0x4E09D4 con la flota de la Hansa
+// (0x50AC40: uno o dos barcos de guerra nuevos de los comerciantes de la IA de
+// las ciudades de la Hansa, en un convoy).
+//
+//   0x34  la caza de los piratas desde la ciudad del alderman: la flota sale
+//         al mar, persigue a los barcos piratas y vuelve.
+//   0x24  la ciudad [+0x14] queda protegida ([0x2C8] |= 0x600) mientras su
+//         satisfacción [0x304] no baje de −20.
+//   0x23  con un solo barco, la ciudad [+0x14] ([0x2C8] |= 0x400) da
+//         encargos (operación 0x81) a los jugadores humanos con un barco en
+//         ella, hasta un plazo o mientras la satisfacción no baje de −10.
+//
+// Campos del evento: [+0x8..+0xF] los comerciantes que participan (0xFF
+// ninguno; en el 0x34, desde la fase 2, [+0x8] u32 una lista de avisos del
+// juego, [+0xC], [+0xD] la posición de los piratas y [+0xE]), u32 [+0x10]
+// un plazo, u8 [+0x14] la ciudad, u8 [+0x15] la fase (0..10), u16 [+0x16] el
+// convoy de la flota. Las cartas, avisos y ventanas no se reproducen (la
+// lista de [+0x8] del 0x34, 0x4F3980..0x4F3CE0, solo sirve para la carta
+// final).
+
+#include <cstring>
+#include <vector>
+
+#include "p3data/sailing.hpp"
+#include "p3data/town_tick/internal.hpp"
+#include "p3data/trade.hpp"
+
+namespace p3::data::tick {
+
+namespace events_mayor_detail {
+uint16_t fn_507d60(SaveGame& save, uint16_t& out, uint32_t town, uint32_t mode);
+void fn_52a8d0(SaveGame& save, int town, int ship, uint32_t type);
+void fn_5181d0(SaveGame& save, int ship);
+void fn_509a50(SaveGame& save, int ship);
+}  // namespace events_mayor_detail
+namespace events_detail {
+uint16_t fn_5097c0(SaveGame& save, bool keep);
+void fn_4fe190(CaptainMemory& c);
+}  // namespace events_detail
+namespace ship_ai_detail {
+int32_t fn_5184f0(SaveGame& save, int ship);
+}  // namespace ship_ai_detail
+
+namespace {
+
+using Event = GameMemory<0x18>;
+
+constexpr uint32_t kEvents = 0x6DD73C;
+constexpr uint32_t kEventHead = kEvents + 0x8;  // u16
+constexpr uint32_t kTick = global::kWorldTick;
+constexpr uint32_t kTownIds = 0x6DE4B8;  // u8 por ciudad: su número de StadtDaten.ini.
+constexpr uint32_t kTownTable = 0x6DDB90;  // 0x34 bytes por número: [+0x20], [+0x24] x, y en el mapa.
+constexpr uint32_t kAldermanBusy = 0x6DF31C;  // u32
+constexpr uint32_t kFreeConvoy = global::kShips + 0xE4;  // u16 primer convoy libre.
+constexpr uint32_t kDockedHead = global::kShips + 0xE8;  // u16 lista de barcos en puerto.
+constexpr uint32_t kSeaHead = global::kShips + 0xEA;  // u16 (0x6DD88A)
+constexpr uint32_t kConvoyHead = global::kShips + 0xEC;  // u16 lista de convoyes.
+constexpr uint32_t kConvoyCount = global::kShips + 0xF6;  // u16
+
+uint32_t town_count(const SaveGame& save) {
+	return save.globals.u32(global::kWorldTownCount);
+}
+
+uint32_t merchant_count(const SaveGame& save) {
+	return save.globals.u16(global::kWorldMerchantCount);
+}
+
+uint32_t ship_count(const SaveGame& save) {
+	return save.globals.u16(global::kShipCount);
+}
+
+uint32_t convoy_count(const SaveGame& save) {
+	return save.globals.u16(kConvoyCount);
+}
+
+// ¿Está el convoy en la lista de convoyes ([0x6DD88C], por [+0x8])?
+bool listed(const SaveGame& save, uint16_t convoy) {
+	for (uint32_t c = save.globals.u16(kConvoyHead);; c = save.convoys[c].u16(0x8)) {
+		if (c == convoy) {
+			return true;
+		}
+		if (c >= convoy_count(save)) {
+			return false;
+		}
+	}
+}
+
+// Un campo de la fila de la ciudad en la tabla de StadtDaten.ini (por su número).
+uint32_t table(const SaveGame& save, uint32_t town, uint32_t field) {
+	return save.globals.u32(kTownTable + 0x34 * uint32_t(save.globals.u8(kTownIds + town)) + field);
+}
+
+}  // namespace
+
+namespace diet_detail {
+
+// 0x4F92B0 (sobre el comerciante, con la ciudad y `armed`): cuántos barcos
+// pondría en una misión de la Hansa, uno por cada cinco de los suyos con
+// casco, en puerto o navegando (estados < 4, 0xF, 0x10), sin la marca 2 de
+// [+0xE] si la ciudad tiene el bit 1 de [0x2C8] y, con `armed`, que puedan ir
+// armados (0x519C40).
+uint16_t fn_4f92b0(const SaveGame& save, uint32_t merchant, uint32_t town, bool armed) {
+	const uint8_t skip = (save.towns[town].memory.u8(0x2C8) & 1) ? 2 : 0;
+	uint32_t n = 0;
+	for (uint32_t s = save.merchants[merchant].memory.u16(0xE); s < ship_count(save); s = save.ships[s].memory.u16(0x4)) {
+		const ShipMemory& ship = save.ships[s].memory;
+		const uint16_t status = ship.u16(0x134);
+		if (ship.s32(0x18) <= 0 || !(status < 4 || status == 0xF || status == 0x10) || (ship.u8(0xE) & skip)) {
+			continue;
+		}
+		if (armed && !ship_ai_detail::fn_519c40(save, int(s))) {
+			continue;
+		}
+		++n;
+	}
+	return uint16_t(n / 5);
+}
+
+// 0x4F8CA0 (sobre el comerciante, con la ciudad): su reputación baja 3
+// (0x66FD54) en ella o, con una ciudad que no existe, en todas las de la
+// Hansa (bit 0x40 de [0x2C8]); [+0x22] baja 60 y [+0x1E], 1 (si no es 0).
+void fn_4f8ca0(SaveGame& save, uint32_t merchant, uint32_t town) {
+	MerchantMemory& m = save.merchants[merchant].memory;
+	auto lower = [&](uint32_t t) {
+		float& r = m.f32(0x120 + 12 * t);
+		r = float(double(r) - 3.0);
+	};
+	if (town < town_count(save)) {
+		lower(town);  // Sin comprobar con el oráculo.
+	} else {
+		for (uint32_t t = 0; t < town_count(save); ++t) {
+			if (save.towns[t].memory.u8(0x2C8) & 0x40) {
+				lower(t);
+			}
+		}
+	}
+	m.u16(0x22) = uint16_t(m.u16(0x22) + 0xFFC4);
+	if (m.u8(0x1E) != 0) {
+		--m.u8(0x1E);
+	}
+}
+
+// 0x4F9120 (sobre el comerciante, con la ciudad y el casco del barco que
+// pone): su reputación en la ciudad sube casco · [+0x464] · 0,05 / 2800
+// (0x672DC0, 0x66BC64).
+void fn_4f9120(SaveGame& save, uint32_t merchant, uint32_t town, uint32_t hull) {
+	static constexpr uint32_t kShare = 0x3D4CCCCD;  // 0,05f
+	float share;
+	std::memcpy(&share, &kShare, sizeof(share));
+	MerchantMemory& m = save.merchants[merchant].memory;
+	const float gain = float(double(float(double(hull))) * double(m.f32(0x464)) * double(share) / 2800.0);
+	float& r = m.f32(0x120 + 12 * town);
+	r = float(double(r) + double(gain));
+}
+
+// 0x50AC40 (sobre el objeto de los barcos): la flota de la Hansa para el
+// evento `event` de la ciudad `town`: un convoy libre ([0x6DD884]; 0x509AE0
+// si no queda) con un barco nuevo (con `two`, dos) de los dos comerciantes
+// de la IA de ciudades de la Hansa (bit 0x40 de [0x2C8] de su ciudad natal)
+// con más [+0x478]: 0x507D60 en la ciudad, tipo 1 o 2 (0x52A8D0, con el bit 1
+// de [0x2C8] de la ciudad), nivel 2, 5 u 8 cargas de casco más y de bodega
+// menos (0x66E048, 0x66E060), reputación (0x4F9120), al principio de la lista
+// del dueño, nombre (0x509A50), artillería (0x5181D0, los huecos que no puede
+// llevar con 3/6 o 0), marineros (0x5184F0), capitán (0x5097C0, con su sueldo
+// 0x4FE190) y bodega (0x5182B0). El convoy (0x501680 con 0x80) va al
+// principio de la lista de convoyes, con el estado 9 (0xA para la caza de
+// piratas: `hunt`, y 0x900 en [+0x16]) y [+0x2] el evento. Devuelve el convoy.
+uint16_t fn_50ac40(SaveGame& save, uint32_t town, uint16_t event, bool two, bool hunt) {
+	GlobalMemory& g = save.globals;
+	const uint16_t convoy = g.u16(kFreeConvoy);
+	ship_ai_detail::fn_509ae0(save);
+	if (convoy >= convoy_count(save)) {
+		return 0xFFFF;  // Sin comprobar con el oráculo (el juego seguiría con un convoy que no existe).
+	}
+	g.u16(kFreeConvoy) = save.convoys[convoy].u16(0x8);
+	save.convoys[convoy].u16(0x8) = 0xFFFF;
+	save.convoys[convoy].u16(0xA) = 0xFFFF;
+	uint8_t chosen[2] = {0, 0};  // el que más y el segundo
+	uint16_t best = 0;
+	uint16_t second = 0;
+	for (uint32_t m = 0; m < merchant_count(save); ++m) {
+		const MerchantMemory& mm = save.merchants[m].memory;
+		if (mm.u16(8) == 0 || !(save.towns[mm.u8(0x19)].memory.u8(0x2C8) & 0x40)) {
+			continue;
+		}
+		const uint16_t v = mm.u16(0x478);
+		if (second > v) {
+			continue;
+		}
+		if (best > v) {
+			second = v;
+			chosen[1] = uint8_t(m);
+		} else {
+			second = best;
+			chosen[1] = chosen[0];
+			chosen[0] = uint8_t(m);
+			best = v;
+		}
+	}
+	const uint16_t status = hunt ? 0xA : 9;
+	for (uint32_t k = two ? 2 : 1; k > 0; --k) {
+		const uint8_t owner = chosen[k - 1];
+		uint16_t index = 0;
+		events_mayor_detail::fn_507d60(save, index, town, 3);
+		const bool small = save.towns[town].memory.u8(0x2C8) & 1;
+		const uint32_t extra = small ? 5 : 8;
+		events_mayor_detail::fn_52a8d0(save, int(town), index, small ? 1 : 2);
+		ShipMemory& s = save.ships[index].memory;
+		s.u8(0xF) = 2;
+		s.u32(0x14) += 2800 * extra;
+		s.u32(0x18) = s.u32(0x14);
+		s.u32(0x10) -= 2000 * extra;
+		fn_4f9120(save, owner, town, s.u32(0x14));
+		MerchantMemory& m = save.merchants[owner].memory;
+		s.u8(0x0) = owner;
+		s.u16(0x4) = m.u16(0xE);
+		m.u16(0xE) = index;
+		events_mayor_detail::fn_509a50(save, index);
+		events_mayor_detail::fn_5181d0(save, index);
+		const uint16_t sailors = uint16_t(ship_ai_detail::fn_5184f0(save, index));
+		ShipMemory& t = save.ships[index].memory;
+		t.u16(0x40) = sailors;
+		t.u16(0x154) = sailors;
+		const uint16_t captain = events_detail::fn_5097c0(save, false);
+		save.ships[index].memory.u16(0x42) = captain;
+		events_detail::fn_4fe190(save.captains[captain]);
+		ShipMemory& u = save.ships[index].memory;
+		for (size_t o = 0x13C; o < 0x154; o += 2) {
+			if (u.u8(o) > 7) {
+				if (u.u8(o + 1) > 7) {
+					u.u8(o) = 3;
+					u.u8(o + 1) = 6;
+				} else {
+					u.u8(o) = 0;
+				}
+			}
+		}
+		recalculate_cargo(save.ships[index]);
+		GameMemory<0x3C>& c = save.convoys[convoy];
+		u.u16(0x8) = convoy;
+		u.u16(0x6) = c.u16(0xA);
+		u.u16(0x134) = status;
+		c.u16(0xA) = index;
+	}
+	ship_ai_detail::fn_501680(save, convoy, save.convoys[convoy].u16(0xA), 0x80);
+	GameMemory<0x3C>& c = save.convoys[convoy];
+	c.u16(0x8) = g.u16(kConvoyHead);
+	g.u16(kConvoyHead) = convoy;
+	c.u16(0x12) = status;
+	c.u16(0x16) = 0;
+	for (uint32_t s = c.u16(0xA); s < ship_count(save); s = save.ships[s].memory.u16(0x6)) {
+		ShipMemory& ship = save.ships[s].memory;
+		ship.u8(0x3C) |= 0x20;
+		ship.u16(0x134) = status;
+		ship.u16(0x138) = 0;
+	}
+	c.u16(0x2) = event;
+	if (hunt) {
+		c.u16(0x16) = 0x900;
+	}
+	return convoy;
+}
+
+namespace {
+
+// El final de la caza de piratas: la lista de avisos de [+0x8] se libera.
+int finish(Event& e) {
+	e.u32(0x8) = 0;
+	return 0;
+}
+
+// Fase 3 (y la 6 mientras dure): la ciudad con 0x400 y la operación 0x81 a
+// cada jugador humano con un barco en ella en el estado 3.
+int encargos(SaveGame& save, Event& e, uint32_t town) {
+	GlobalMemory& g = save.globals;
+	save.towns[town].memory.u32(0x2C8) |= 0x400;
+	bool any = false;
+	for (uint32_t m = 0; m < merchant_count(save); ++m) {
+		if (save.merchants[m].memory.u16(8) != 0) {
+			continue;
+		}
+		for (uint32_t s = save.merchants[m].memory.u16(0xE); s < ship_count(save); s = save.ships[s].memory.u16(0x4)) {
+			const ShipMemory& ship = save.ships[s].memory;
+			if (ship.u8(0x39) == town && ship.u16(0x134) == 3) {
+				if (g.u32(kAldermanBusy) == 0) {
+					uint8_t op[0x14];
+					const uint32_t fields[5] = {0x81, m, 1, 0x100, town};
+					std::memcpy(op, fields, sizeof(op));
+					enqueue_operation(save, op, sizeof(op));
+				}
+				any = true;
+				break;
+			}
+		}
+	}
+	e.u32(0) += 0x45;
+	if (any) {
+		e.u32(0) = (e.u32(0) | 0xFF) + 1;
+	}
+	if (e.u32(0) <= e.u32(0x10) || e.u8(0x15) == 6) {
+		return 1;
+	}
+	e.u8(0x15) = 6;
+	e.u32(0x10) = e.u32(0) + 0x1C00;
+	return 1;
+}
+
+// La flota se deshace (o termina la protección): fase 5.
+int disband(SaveGame& save, Event& e, uint32_t town) {
+	GlobalMemory& g = save.globals;
+	const uint16_t convoy = e.u16(0x16);
+	if (convoy < convoy_count(save) && g.u16(kConvoyHead) != convoy) {
+		bool found = false;
+		for (uint32_t c = g.u16(kConvoyHead); c < convoy_count(save);) {
+			c = save.convoys[c].u16(0x8);
+			if (c == convoy) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			e.u32(0) += 0x20;  // Sin comprobar con el oráculo.
+			return 1;
+		}
+	}
+	if (town < town_count(save)) {
+		save.towns[town].memory.u32(0x2C8) &= ~0x600u;
+	}
+	if (convoy >= convoy_count(save)) {
+		return 0;  // Sin comprobar con el oráculo.
+	}
+	GameMemory<0x3C>& c = save.convoys[convoy];
+	while (c.u16(0xA) < ship_count(save)) {
+		const uint16_t s = c.u16(0xA);
+		ShipMemory& ship = save.ships[s].memory;
+		c.u16(0xA) = ship.u16(0x6);
+		ship.u8(0x3C) |= 0x60;
+		ship.u16(0x6) = 0xFFFF;
+		ship.u16(0x8) = 0xFFFF;
+		ship.u16(0x134) = 0;
+		ship.u16(0x3C) |= 0x20;
+		ship.u16(0x6) = g.u16(kDockedHead);
+		g.u16(kDockedHead) = s;
+		ship.u16(0x138) = 0x20;
+	}
+	return 0;
+}
+
+}  // namespace
+
+// 0x4E09D4 (eventos 0x23, 0x24 y 0x34 de la cabeza): la misión de la Hansa
+// por fases ([+0x15], tabla 0x4E1B54). Devuelve 1 si sigue (con el tick ya
+// cambiado) o 0 si se quita.
+int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
+	GlobalMemory& g = save.globals;
+	Event& e = save.events[event];
+	const uint16_t type = e.u16(6);
+	const uint32_t town = e.u8(0x14);
+	if (town >= town_count(save) || e.u8(0x15) > 10) {
+		return 0;  // Sin comprobar con el oráculo.
+	}
+	TownMemory& t = save.towns[town].memory;
+	switch (e.u8(0x15)) {
+	case 0: {
+		// Los que participan: cada jugador humano con barcos para ello
+		// (0x4F92B0) y, si pone más de uno y tiene [+0x478] > 10, otra vez con
+		// la mitad de eso; de más a menos (burbuja), los 2 primeros (8 en el
+		// 0x34 y el 0x24) en [+0x8..+0xF]. En el 0x23, cada uno una vez.
+		e.u8(0x15) = 1;
+		e.u32(0) = (e.u32(0) + 0x100) & 0xFFFFFF00;
+		struct Entry {
+			uint32_t merchant;
+			uint32_t value;
+		};
+		std::vector<Entry> list(2 * merchant_count(save) + 2);
+		uint32_t n = 0;
+		for (uint32_t m = 0; m < merchant_count(save); ++m) {
+			const MerchantMemory& mm = save.merchants[m].memory;
+			if (mm.u16(8) != 0) {
+				continue;
+			}
+			const uint32_t v = fn_4f92b0(save, m, town, type != 0x23);
+			list[n] = {m, v};
+			if (v <= 1) {
+				n += v;
+			} else if (mm.u16(0x478) > 10) {
+				++n;
+				list[n] = {m, uint32_t(mm.u16(0x478) >> 1)};
+				++n;
+			}
+		}
+		for (uint32_t i = 1; n > 1 && i < n; ++i) {
+			bool swapped = false;
+			for (uint32_t j = n - 1; j > i; --j) {
+				if (list[j - 1].value < list[j].value) {
+					std::swap(list[j - 1], list[j]);
+					swapped = true;
+				}
+			}
+			if (!swapped) {
+				break;
+			}
+		}
+		uint32_t take = type != 0x23 ? 8 : 2;
+		if (take > n) {
+			take = n;
+		}
+		for (uint32_t k = 0; k < 8; ++k) {
+			e.u8(0x8 + k) = k < take ? uint8_t(list[k].merchant) : 0xFF;
+		}
+		for (uint32_t m = 0; m < merchant_count(save); ++m) {
+			if (save.merchants[m].memory.u16(8) != 0) {
+				continue;
+			}
+			uint8_t seen = 0;
+			for (uint32_t k = 0; k < 8; ++k) {
+				if (e.u8(0x8 + k) != m) {
+					continue;
+				}
+				if (type == 0x23 && seen != 0) {
+					e.u8(0x8 + k) = 0xFF;
+				} else {
+					++seen;
+				}
+			}
+		}
+		return 1;
+	}
+	case 1: {
+		// La flota (con un barco en el 0x23 y en caza en el 0x34).
+		if (type != 0x34) {
+			t.u32(0x2C8) |= 0x400;
+		}
+		const uint16_t head = g.u16(kEventHead);
+		const uint16_t convoy = fn_50ac40(save, town, head, type != 0x23, type == 0x34);
+		Event& f = save.events[event];
+		f.u16(0x16) = convoy;
+		f.u32(0) += 0x900;
+		f.u8(0x15) = 2;
+		return 1;
+	}
+	case 2: {
+		// Los que participan pierden reputación en las ciudades de la Hansa
+		// (0x4F8CA0), una vez por cada vez que salen en la lista, y la lista
+		// se vacía.
+		for (uint32_t k = 0; k < 8; ++k) {
+			const uint8_t m = e.u8(0x8 + k);
+			if (m < merchant_count(save)) {
+				fn_4f8ca0(save, m, 0xFF);
+				for (uint32_t j = k + 1; j < 8; ++j) {
+					if (e.u8(0x8 + j) == m) {
+						e.u8(0x8 + j) = 0xFF;
+						fn_4f8ca0(save, m, 0xFF);
+					}
+				}
+			}
+			e.u8(0x8 + k) = 0xFF;
+		}
+		if (type == 0x34) {
+			e.u32(0x8) = 0;
+			e.u32(0) += 1;
+			e.u8(0xE) = 0;  // 0x672859
+			e.u8(0x15) = 7;
+			// La posición de los piratas: la del capitán ([+0x2], [+0x3]) del
+			// primer barco con capitán de los piratas.
+			for (uint32_t k = 0; k < save.pirates.size() && k < 5; ++k) {
+				if (!save.pirates[k]) {
+					continue;
+				}
+				for (uint32_t s = save.pirates[k]->u16(0xC); s < ship_count(save); s = save.ships[s].memory.u16(0x4)) {
+					const uint16_t captain = save.ships[s].memory.u16(0x42);
+					if (captain < g.u16(global::kCaptainCount)) {
+						e.u8(0xC) = save.captains[captain].u8(2);
+						e.u8(0xD) = save.captains[captain].u8(3);
+						return 1;
+					}
+				}
+			}
+			return 1;
+		}
+		if (type == 0x24) {
+			t.u32(0x2C8) |= 0x200;
+			e.u32(0) += 0xA00;
+			e.u8(0x15) = 4;
+			return 1;
+		}
+		e.u32(0) += 0x40;
+		e.u8(0x15) = 3;
+		e.u32(0x10) = g.u32(kTick) + 0xA00;
+		return 1;
+	}
+	case 3:
+		return encargos(save, e, town);
+	case 6:
+		if (e.u32(0x10) < e.u32(0) || int16_t(t.u16(0x304)) < -10) {
+			t.u8(0x6F0) = 0xFF;
+			e.u32(0) += 5;
+			e.u8(0x15) = 5;
+			return 1;
+		}
+		return encargos(save, e, town);
+	case 4:
+		if (int16_t(t.u16(0x304)) >= -20) {
+			e.u32(0) += 0x100;
+			return 1;
+		}
+		t.u8(0x6F0) = 0xFF;
+		e.u32(0) += 1;
+		e.u8(0x15) = 5;
+		return 1;
+	case 5:
+		return disband(save, e, town);
+	case 7: {
+		// La flota de caza se prepara: el convoy al estado 0xB y cuenta 0x40.
+		const uint16_t convoy = e.u16(0x16);
+		if (convoy >= convoy_count(save)) {
+			return finish(e);  // Sin comprobar con el oráculo.
+		}
+		GameMemory<0x3C>& c = save.convoys[convoy];
+		uint32_t value = 1;
+		if (c.u16(0x12) != 0xB) {
+			value = c.u32(0xC) >> 1;
+			c.u16(0x12) = 0xB;
+			c.u32(0x18) |= 0x20;
+			c.u16(0x16) = 0;
+		} else if (++c.u16(0x16) >= 0x40) {
+			e.u8(0x15) = 8;
+		}
+		for (uint32_t s = c.u16(0xA); s < ship_count(save);) {
+			ShipMemory& ship = save.ships[s].memory;
+			s = ship.u16(0x6);
+			ship.u16(0x138) = c.u16(0x16);
+			if (ship.u16(0x134) != c.u16(0x12)) {
+				ship.u16(0x3C) |= 0xA0;
+				ship.u16(0x134) = c.u16(0x12);
+				ship.u32(0x30) = value;
+			}
+		}
+		e.u32(0) += 1;
+		return 1;
+	}
+	case 8: {
+		// Sale al mar (estado 0x16) desde la posición de la ciudad.
+		const uint16_t convoy = e.u16(0x16);
+		if (convoy >= convoy_count(save)) {
+			return finish(e);  // Sin comprobar con el oráculo.
+		}
+		GameMemory<0x3C>& c = save.convoys[convoy];
+		const uint16_t lead_index = c.u16(0x10);
+		if (lead_index >= ship_count(save)) {
+			return finish(e);  // Sin comprobar con el oráculo (el juego no lo mira).
+		}
+		c.u8(0x1E) = c.u8(0x1C);
+		c.u32(0x18) |= 0x20;
+		c.u16(0x1C) = 0xFF;
+		c.u16(0x16) = 0;
+		c.u16(0x12) = 0x16;
+		ShipMemory& lead = save.ships[lead_index].memory;
+		const uint16_t first = c.u16(0xA);
+		lead.u16(0x1E) = uint16_t(table(save, town, 0x20));
+		lead.u16(0x1C) = 0;
+		lead.u16(0x22) = uint16_t(table(save, town, 0x24));
+		lead.u16(0x20) = 0;
+		lead.u32(0x30) = 0;
+		if (sailing) {
+			sailing->insert_x(lead_index, g.u16(kSeaHead));
+		}
+		for (uint32_t s = first; s < ship_count(save);) {
+			ShipMemory& ship = save.ships[s].memory;
+			ship.u16(0x138) = 0;
+			ship.u32(0x1C) = lead.u32(0x1C);
+			ship.u32(0x20) = lead.u32(0x20);
+			s = ship.u16(0x6);
+			ship.u16(0x3C) |= 0x20A8;
+			ship.u16(0x134) = c.u16(0x12);
+			ship.u32(0x30) = lead.u32(0x30);
+			ship.u8(0x39) = c.u8(0x1C);
+		}
+		e.u8(0x15) = 9;
+		lead.u16(0x3A) = 0xFFFF;
+		e.u32(0x10) = uint32_t(e.u16(0x16)) * 75 + e.u32(0) + 0x1F00;
+		[[fallthrough]];
+	}
+	case 9: {
+		// La caza: hasta el plazo [+0x10], tras el primer barco pirata que guíe
+		// un convoy; sin él, hacia la ciudad.
+		if (e.u32(0x10) < g.u32(kTick)) {
+			e.u8(0x15) = 10;
+			e.u32(0) += 1;
+			return 1;
+		}
+		const uint16_t convoy = e.u16(0x16);
+		if (convoy >= convoy_count(save)) {
+			return finish(e);  // Sin comprobar con el oráculo.
+		}
+		GameMemory<0x3C>& c = save.convoys[convoy];
+		const uint16_t lead_index = c.u16(0x10);
+		if (lead_index >= ship_count(save)) {
+			return finish(e);  // Sin comprobar con el oráculo (el juego no lo mira).
+		}
+		if (c.u16(0x12) == 0x14) {
+			e.u32(0) += 0x40;  // Sin comprobar con el oráculo.
+			return 1;
+		}
+		if (!listed(save, convoy)) {
+			e.u8(0x15) = 10;  // Sin comprobar con el oráculo.
+			e.u32(0) += 1;
+			return 1;
+		}
+		SavedShip& lead = save.ships[lead_index];
+		const uint32_t ships = ship_count(save);
+		uint16_t target = lead.memory.u16(0x3A);
+		if (target >= ships) {
+			if (g.u32(kTick) < e.u32(0x10)) {
+				for (uint32_t k = 0; k < save.pirates.size() && k < 5 && target >= ships; ++k) {
+					if (!save.pirates[k]) {
+						continue;
+					}
+					for (uint32_t s = save.pirates[k]->u16(0xC); s < ships; s = save.ships[s].memory.u16(0x4)) {
+						const ShipMemory& p = save.ships[s].memory;
+						const uint16_t pc = p.u16(0x8);
+						if (pc < convoy_count(save) && (p.u16(0xA) < ships || p.u16(0xC) < ships) &&
+							save.convoys[pc].u16(0x10) == s) {
+							target = uint16_t(s);
+							lead.memory.u16(0x3A) = target;
+							break;
+						}
+					}
+				}
+			}
+		} else {
+			const ShipMemory& p = save.ships[target].memory;
+			if (p.u16(0x134) != 0x12 || p.u16(0x8) >= convoy_count(save)) {
+				target = 0xFFFF;
+				lead.memory.u16(0x3A) = 0xFFFF;
+			}
+		}
+		if (lead.memory.u16(0x3A) >= ships) {
+			if (sailing) {
+				sailing->set_destination(lead, int(town), 0, 0);
+			}
+			e.u32(0) += 0x20;
+			return 1;
+		}
+		const SavedShip& prey = save.ships[target];
+		int32_t x = int16_t(prey.memory.u16(0x1E));
+		int32_t y = int16_t(prey.memory.u16(0x22));
+		if (prey.memory.u32(0x24) != 0 && prey.route) {
+			const uint32_t k = g.u32(kTick) & 7;
+			if (k < prey.route->size()) {
+				x = (*prey.route)[k].x;
+				y = (*prey.route)[k].y;
+			}
+		}
+		if (sailing) {
+			sailing->set_destination(lead, 0xFF, x, y);
+		}
+		const int32_t dx = int32_t(int16_t(prey.memory.u16(0x1E))) - int32_t(int16_t(lead.memory.u16(0x1E)));
+		if (dx > 0) {
+			e.u32(0) += dx > 0x6B ? 0x6B : uint32_t(dx + 1);
+		} else if (dx < -0x46) {
+			e.u32(0) += 0x46;
+		} else {
+			e.u32(0) += uint32_t(1 - dx);
+		}
+		return 1;
+	}
+	case 10: {
+		// La vuelta: rumbo a la ciudad; al llegar (a menos de 10), el convoy y
+		// sus barcos pasan del estado 0x16 al 0xF y se acaba (la carta a los
+		// jugadores humanos con lo visto, 0x4F3AF0, no se reproduce).
+		const uint16_t convoy = e.u16(0x16);
+		if (convoy >= convoy_count(save)) {
+			return finish(e);  // Sin comprobar con el oráculo.
+		}
+		if (!listed(save, convoy)) {
+			e.u32(0) += 0x40;  // Sin comprobar con el oráculo.
+			return 1;
+		}
+		GameMemory<0x3C>& c = save.convoys[convoy];
+		if (c.u16(0x12) != 0x16 || c.u16(0x10) >= ship_count(save)) {
+			return finish(e);  // Sin comprobar con el oráculo.
+		}
+		SavedShip& lead = save.ships[c.u16(0x10)];
+		lead.memory.u16(0x3A) = 0xFFFF;
+		if (sailing) {
+			sailing->set_destination(lead, int(town), 0, 0);
+		}
+		int32_t dx = int32_t(table(save, town, 0x20)) - int32_t(int16_t(lead.memory.u16(0x1E)));
+		if (dx < 0) {
+			dx = -dx;
+		}
+		const int32_t tx = int32_t(table(save, town, 0x24));
+		const int32_t ly = int16_t(lead.memory.u16(0x22));
+		const int32_t distance = (dx + (tx > ly ? tx - ly : ly - tx)) >> 1;
+		if (distance > 0x46) {
+			e.u32(0) += 0x46;
+			return 1;
+		}
+		if (distance > 10) {
+			e.u32(0) += uint32_t(distance - 7);
+			return 1;
+		}
+		e.u32(0x8) = 0;
+		c.u32(0x18) |= 0x20;
+		c.u16(0x12) = 0xF;
+		for (uint32_t s = c.u16(0xA); s < ship_count(save); s = save.ships[s].memory.u16(0x6)) {
+			ShipMemory& ship = save.ships[s].memory;
+			if (ship.u16(0x134) == 0x16) {
+				ship.u16(0x3C) |= 0x20;
+				ship.u16(0x134) = 0xF;
+			}
+		}
+		return 0;
+	}
+	default:
+		return 0;
+	}
+}
+
+}  // namespace diet_detail
+
+}  // namespace p3::data::tick

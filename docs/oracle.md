@@ -509,3 +509,10 @@ TIPOS PARTIDA...` (re/emu/sesion5) dice cuándo aparecen (el primero, el día
 13 de la partida 7) y `FUNCS=4d85c0 late.sh` los compara llamada a llamada
 (días 13 a 19 de la 7, 19 a 23 de la 5, 28 a 32 de la 4 y 39 a 43 de la 3):
 iguales. Las 60 jornadas de antes no llegaban a ninguno.
+Las misiones de la dieta (0x23, 0x24, 0x34): en las partidas la dieta nunca
+aprueba nada, así que el escenario `dieta` crea los tres eventos como los
+deja el 0x21 al aprobar (fase 0). Grabando `4d85c0` y `535760` los días 1 a
+12 (`dieta:12`) y 36 a 52 (`DESDE=36 ... dieta:52`) de las partidas 1, 3, 5
+y 7: iguales (las 11 fases: la flota, la caza en el mar, la vuelta, la
+protección, los encargos 0x81 y el final). El oráculo salta la ventana de la
+fase 1 del 0x24 (`EVENT_JUMPS`, 0x4E0DB9 → 0x4E0E13).

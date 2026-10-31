@@ -2908,6 +2908,10 @@ int events_rare(SaveGame& save, uint16_t event, uint16_t type) {
 		return int(fn_4ea594(save));
 	case 0x32:
 		return int(fn_4eafe4(save));
+	case 0x23:
+	case 0x24:
+	case 0x34:
+		return diet_detail::fn_4e09d4(save, event, event_sailing());  // Las misiones de la dieta (diet.cpp).
 	case 0x25:
 		return fn_4e1b84(save, event) ? 1 : 0;  // Arde un objetivo del asedio.
 	case 0x26:
