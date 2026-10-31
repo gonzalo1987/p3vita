@@ -58,6 +58,13 @@ inline int64_t ftol(double v) { return int64_t(v); }
 // de 5 a 10, gastos (restan de [0x700]).
 void fn_529f90(SaveGame& save, int town, int32_t amount, uint32_t kind);
 
+// grid.cpp: pone un edificio de tipo `type` en (x, y) de la rejilla de la
+// ciudad, con lo que hace alrededor (bits de tamaños, calles), si la celda
+// vale (0x4FB9C0).
+void fn_4fb9c0(SaveGame& save, int town, uint32_t x, uint32_t y, uint8_t type, uint8_t param);
+// La huella de una torre en (x, y) (0x4FBDB0).
+void fn_4fbdb0(SaveGame& save, int town, uint32_t x, uint32_t y);
+
 // 0x4FCFE0 sobre town_class1 ([0x7A4] de la ciudad): ¿el punto de muralla
 // `i` (0..3) cae dentro de la rejilla?
 bool fn_4fcfe0(const SaveGame& save, int town, uint32_t i);
@@ -193,6 +200,15 @@ void fn_531bd0(SaveGame& save);
 uint32_t fn_4ecdf4(SaveGame& save);
 uint32_t fn_4ea0d4(SaveGame& save);
 void fn_535fd6(SaveGame& save, const uint8_t* operation);
+// construction.cpp: la operación 0x22, construir (0x53CE30): edificios
+// (0x521900), torres (0x523830, 0x523D70) y murallas (0x522B20).
+// Y los materiales: 0x27 (0x535BBC: la ciudad los recibe) y 0x23 (0x535B12:
+// la muralla de un lado, 0x522B20).
+namespace construction_detail {
+void fn_53ce30(SaveGame& save, const uint8_t* operation);
+void fn_535bbc(SaveGame& save, const uint8_t* operation);
+void fn_535b12(SaveGame& save, const uint8_t* operation);
+}  // namespace construction_detail
 void fn_53b440(SaveGame& save, const uint8_t* operation);
 // La operación 0x3B (0x53A3E0): el comerciante aporta materiales a su
 // encargo de la carretera, de su oficina y de sus barcos en la ciudad.

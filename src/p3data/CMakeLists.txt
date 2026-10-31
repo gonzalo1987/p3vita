@@ -21,6 +21,7 @@ add_library(p3data STATIC
 	town_tick/alderman.cpp
 	town_tick/businesses.cpp
 	town_tick/construction.cpp
+	town_tick/grid.cpp
 	town_tick/daily.cpp
 	town_tick/events.cpp
 	town_tick/events_big.cpp

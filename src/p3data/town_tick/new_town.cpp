@@ -488,9 +488,34 @@ void fn_545b20(SaveGame& save, int town) {
 	t.u32(0x304) = 0x00320032;
 }
 
+// 0x5462F0 (sobre la ciudad): un nodo nuevo (0x50FCA0) al principio de su
+// lista [0x9B4], de la instalación `k` (4..20) de la ciudad, con [+0xC] y
+// [+0xE] (0x50FE00, como mucho 1024) = 1024 / (3 · nº de ciudades / 16) por
+// 200 (k = 4), 700 (0xD), 500 (0x10) o 100, en /1024; lo demás a 0.
+void fn_5462f0(SaveGame& save, int town, uint32_t k) {
+	if (k >= 0x15 || k <= 3) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	SavedTown& st = save.towns[size_t(town)];
+	const uint32_t parts = (save.globals.u32(kTownCount) * 3) >> 4;
+	if (parts == 0) {
+		return;  // El juego divide por 0 con menos de 6 ciudades.
+	}
+	const uint32_t share = 0x400 / parts;
+	const uint32_t factor = k == 0x10 ? 500 : k == 0xD ? 700 : k == 4 ? 200 : 100;
+	const uint16_t amount = uint16_t((share * factor) >> 10);
+	TownNode node;
+	node.u8(0x10) = uint8_t(k);
+	node.u8(0x11) = st.memory.u8(0x2C0);
+	node.u16(0xC) = amount > 0x400 ? 0x400 : amount;
+	node.u16(0xE) = node.u16(0xC);
+	st.nodes.insert(st.nodes.begin(), node);
+}
+
 // 0x5458D0 (sobre la ciudad): lo demás de una ciudad nueva (0x545B20): la
 // productividad de las instalaciones (1024; las empresas de las mercancías
-// de `wares`, 1024; las de `other`, 768; las demás, 0) y, sin `flag`, sin
+// de `wares`, 1024; las de `other`, 768; las demás, 0), los nodos de
+// 0x5462F0 por los bits 0x40000, 0x80000 y 0x100000 de `wares` y, sin `flag`, sin
 // soldados ni trabajadores, la eficiencia de cada empresa (0x673C2C), el
 // almacén vacío, 38 habitantes y las calles (0x4FA6F0).
 void fn_5458d0(SaveGame& save, int town, bool flag, uint32_t wares, uint32_t other) {
@@ -515,12 +540,16 @@ void fn_5458d0(SaveGame& save, int town, bool flag, uint32_t wares, uint32_t oth
 	} else {
 		t.u32(0x2CC) = 0;
 	}
-	if (wares & 0x1C0000) {
-		// Por reescribir: 0x5462F0 con 4, 0x10 o 0xD (los bits 0x40000,
-		// 0x80000 y 0x100000 de la máscara), que añade a la lista de nodos
-		// [0x9B4] el de esa instalación (0x50FCA0, 0x50FE00). Al fundar solo
-		// sale el 0x40000: 0x532E30 lo pone cuando el aceite (0xA) es de las
-		// mercancías que más faltan. Sin él, la ciudad nueva no tiene ese nodo.
+	// Al fundar solo sale el 0x40000: 0x532E30 lo pone cuando el aceite (0xA)
+	// es de las mercancías que más faltan.
+	if (wares & 0x40000) {
+		fn_5462f0(save, town, 4);
+	}
+	if (wares & 0x80000) {
+		fn_5462f0(save, town, 0x10);  // Sin comprobar con el oráculo.
+	}
+	if (wares & 0x100000) {
+		fn_5462f0(save, town, 0xD);  // Sin comprobar con el oráculo.
 	}
 	if (wares & 0x200000) {
 		t.u32(0x2C8) |= 0x8000000;  // Sin comprobar con el oráculo.

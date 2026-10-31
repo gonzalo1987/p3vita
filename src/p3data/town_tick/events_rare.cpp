@@ -1190,53 +1190,6 @@ void fn_4fa1d0(SaveGame& save, int town, uint32_t side, std::vector<WallPiece>& 
 	out.resize(count);
 }
 
-// 0x4FB9C0 (sobre town_class1): pone en la rejilla el edificio `type` de
-// la celda (x, y) si la celda tiene los bits de su clase. Solo se traducen
-// las comprobaciones: las piezas de muralla (las únicas que llegan aquí,
-// desde 0x522B20) dan una máscara de más de 8 bits y no ponen nunca nada.
-void fn_4fb9c0(SaveGame& save, int town, uint32_t x, uint32_t y, uint8_t type, uint8_t param) {
-	SavedTown& st = save.towns[size_t(town)];
-	// 0x672F84: dirección (s8) de cada tipo de edificio.
-	static constexpr int8_t kDirection[64] = {3, 7, 0, 0, 4, 0, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 10, 10, 3, 2, 3, 0, 0, 3, 0, 5, 3, 2, 2, 3, 6, 7, 6, 6, 6, 6, 6, 6, 8, 9, 8, 9, 0, 0, 0,
-		0x2C, 0x1B, 0x0B, 0x08};
-	int32_t dir = type < 64 ? kDirection[type] : 0;
-	uint32_t mask = 0;
-	const int64_t i = int64_t(int32_t(uint32_t(st.memory.s32(0x7AC)) * x + y));
-	assert(i >= 0 && size_t(i) < st.grid.size());
-	uint8_t& c = st.grid[size_t(i)];
-	if (type == 5) {
-		mask = 0xE;  // Sin comprobar con el oráculo.
-	} else if (type == 3) {
-		mask = 0x1D;  // Sin comprobar con el oráculo.
-	} else if (type == 0x2D) {
-		// Sin comprobar con el oráculo. La estatua.
-		if ((c & 0x3F) == 0x13) {
-			c = 0x8B;
-		}
-		return;
-	} else if (type < 0x15) {
-		mask = (1u << (uint32_t(dir) & 31)) | 0x20;  // Sin comprobar con el oráculo.
-	} else if (type <= 0x1E) {
-		// Sin comprobar con el oráculo.
-		if (param == 0xE0) {  // 0x67792F
-			dir = 1;
-			mask = 0xA2;
-		} else {
-			mask = 0xA1;
-		}
-	} else {
-		mask = (1u << (uint32_t(dir) & 31)) | 0xA0;
-	}
-	if ((uint32_t(c) & mask) != mask) {
-		return;
-	}
-	// Por traducir: ocupar las celdas del edificio (0x4FBEC0, 0x4FBBA0,
-	// 0x4FC1D0, 0x4FC990, 0x4FBFF0, 0x4FC130, con la dirección `dir`) y
-	// poner a 1 town_class1 [+0x0]. No sale en las 12 partidas.
-	(void)dir;
-}
-
 // 0x522B20 (sobre la ciudad): si no hay obras pendientes ([+0x766] =
 // 0xFFFF) y el punto de muralla `side` está en la rejilla, mete en la lista
 // de obras pendientes las piezas de la muralla (0x4FA1D0), de la ciudad

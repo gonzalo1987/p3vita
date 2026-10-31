@@ -11,10 +11,16 @@
 // puertas y torres.
 
 #include <cassert>
+#include <cstring>
 
+#include "p3data/trade.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
+
+namespace events_rare_detail {
+void fn_522b20(SaveGame& save, int town, uint32_t side);
+}  // namespace events_rare_detail
 
 namespace construction_detail {
 
@@ -32,6 +38,7 @@ void fn_51e270(SaveGame& save, int town);
 void fn_5250d0(const SaveGame& save, int town, uint8_t& x, uint8_t& y);
 bool fn_4fcbd0(const SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
 bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
+void fn_523830(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner);
 bool fn_524d60(SaveGame& save, int town, uint32_t x, uint32_t y);
 void fn_524f00(SaveGame& save, int town);
 void fn_524cd0(SaveGame& save, int town);
@@ -101,6 +108,31 @@ constexpr uint32_t kEvents = 0x6DD73C;  // Cola de eventos (SaveGame::events).
 constexpr uint32_t kEventHead = kEvents + 8;  // 0x6DD744
 constexpr uint32_t kEventCount = kEvents + 0xC;  // 0x6DD748
 constexpr uint32_t kWorldNoTownWork = 0x6DE52A;  // u8; distinto de 0: sin obras ni avisos (también lo mira 0x51BA10).
+constexpr uint32_t kTownIds = 0x6DE4B8;  // u8 por ciudad: su número de StadtDaten.ini.
+constexpr uint32_t kConvoyCount = global::kShips + 0xF6;  // u16 (0x6DD896)
+constexpr uint32_t kExplored = 0x6DF278;  // 0x64 bytes: lo que han marcado los comerciantes (0x534920).
+
+// 0x672BB4: días de obra de cada tipo de edificio.
+constexpr uint8_t kBuildDays[60] = {200, 250, 25, 200, 100, 100, 100, 200, 100, 50, 200, 50, 200, 50, 50, 200, 200,
+	100, 25, 25, 50, 200, 200, 200, 100, 100, 100, 50, 50, 50, 100, 250, 250, 200, 200, 200, 200, 150, 200, 100, 25,
+	200, 250, 200, 200, 5, 0, 50, 200, 0, 200, 0, 0, 0, 25, 50, 50, 0, 0, 0};
+// 0x672B78: lo que cuesta construir cada tipo (× 100; a un comerciante, el
+// tipo 5 sin [0x2CC] × 60), además de los materiales que falten.
+constexpr uint8_t kBuildFee[60] = {130, 30, 2, 40, 80, 50, 50, 80, 30, 30, 50, 30, 80, 30, 100, 80, 80, 50, 10, 10, 30,
+	80, 80, 80, 80, 80, 80, 50, 50, 50, 100, 80, 80, 40, 80, 40, 40, 80, 80, 50, 20, 70, 250, 150, 20, 50, 40, 100, 25,
+	40, 25, 40, 20, 20, 2, 4, 4, 0, 0, 0};
+// 0x673A64, 0x673A44, 0x673A48 y 0x673A5C (f32): lo que paga la ciudad por
+// cada unidad interna de ladrillos, madera, herramientas y cáñamo que saca de
+// la oficina de un comerciante para una torre.
+constexpr float kTowerBricksPrice = 0x1.46dc6p-5f;  // 0,0399
+constexpr float kTowerTimberPrice = 0x1.c28f5ep-6f;  // 0,0275
+constexpr float kTowerToolsPrice = 0x1.472b02p+0f;  // 1,278
+constexpr float kTowerHempPrice = 0x1.c28f5ep-3f;  // 0,22
+// 0x672C14: la unidad de cada mercancía (0 cargas, 1 barriles, 2 piezas).
+constexpr uint8_t kWareUnit[24] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};
+// 0x66FD5C y 0x672838 (f32): lo que da a la reputación un pozo y un 0x29/0x2C sin más.
+constexpr float kWellReputation = 0.1f;
+constexpr float kChapelReputation = 0.01f;
 
 // Operación para el juego: 0x14 bytes (lo que copia 0x543F10). 0x535740 la
 // crea con 0xFFFFFFFF en el primer u32 y el resto a 0.
@@ -870,70 +902,779 @@ void fn_524e20(SaveGame& save, int town) {
 }
 
 // 0x4FCBD0 (town_class1 [0x7A4]): ¿se puede construir un edificio de tipo
-// `type` en (x, y)? Según el tipo (tabla 0x4FCF58), la clase de la celda y
-// las de alrededor. Reescrito solo el tipo 0x27 (la carretera de los
-// encargos de la Hansa): la celda de la clase 0x18.
+// `type` en (x, y)? Según el tipo (tablas 0x4FCFA4 y 0x4FCF58): los tipos 1
+// y 0x2E, en su punto fijo ([0x80A], [0x808]); los edificios municipales y
+// el 0x05, en la celda de su clase (& 0x3F); las casas, una celda con los
+// bits 0xA1 (0xA2 mirando al noroeste); el pozo, la celda 0x84; las
+// empresas y los demás, con el bit de su clase (0x672F84) y 0x20 (0xA0 los
+// de la lista de edificios 0x26, 0x29..0x2C); el 0x2D, la celda 0x93 (sin el
+// bit 0x40). Los demás (0, 2, más de 0x30), no.
 bool fn_4fcbd0(const SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t type, uint8_t param) {
-	(void)param;
 	const SavedTown& st = save.towns[size_t(town)];
-	if (type != kTypeRoad) {
-		// Por reescribir: los demás tipos (las operaciones de construir).
-		assert(false);
+	const TownMemory& t = st.memory;
+	const uint8_t c = cell(st, int64_t(t.s32(0x7AC)) * x + y);
+	auto has = [&](uint8_t mask) { return (c & mask) == mask; };
+	auto site = [&](uint8_t extra) { return has(uint8_t(uint8_t(1u << (kSiteBit[type] & 31)) | extra)); };
+	switch (type) {
+	case 0x01: return x == t.u8(0x80A) && y == t.u8(0x80B);
+	case 0x2E: return x == t.u8(0x808) && y == t.u8(0x809);
+	case 0x03: return (c & 0x3F) == 0x1D;
+	case 0x05: return (c & 0x3F) == 0x0E;
+	case 0x1F: return (c & 0x3F) == 0x19;
+	case 0x20: return (c & 0x3F) == 0x1B;
+	case 0x21: return (c & 0x3F) == 0x14;
+	case 0x22: return (c & 0x3F) == 0x1A;
+	case 0x23: return (c & 0x3F) == 0x16;
+	case 0x24: return (c & 0x3F) == 0x17;
+	case 0x25: return (c & 0x3F) == 0x15;
+	case kTypeRoad: return (c & 0x3F) == kRoadSite;
+	case kTypeTower: return (c & 0x3F) == 0x1C;
+	case kTypeWell: return c == 0x84;
+	case 0x2D: return (c & 0xBF) == 0x93;
+	case 0x26: case 0x29: case 0x2A: case 0x2B: case 0x2C:
+		return site(0xA0);
+	default:
+		if (type >= 0x15 && type <= 0x1E) {
+			return has(param == kNorthWest ? 0xA2 : 0xA1);
+		}
+		if ((type >= 0x04 && type <= 0x14 && type != 0x05) || type == kTypePier) {
+			return site(0x20);
+		}
 		return false;
 	}
-	return (cell(st, int64_t(st.memory.s32(0x7AC)) * x + y) & 0x3F) == kRoadSite;
+}
+
+// 0x517770 (sobre el barco): los avisos `flags` en [+0x3C] y, si va en un
+// convoy, también en el [+0x18] del convoy.
+void fn_517770(SaveGame& save, SavedShip& ship, uint16_t flags) {
+	ship.memory.u16(0x3C) |= flags;
+	const uint16_t convoy = ship.memory.u16(0x8);
+	if (convoy < save.globals.u16(kConvoyCount)) {
+		save.convoys[convoy].u32(0x18) |= flags;
+	}
+}
+
+// 0x5259D0 (sobre la ciudad): ¿tiene ya el comerciante `owner` un edificio de
+// tipo `type` en alguno de 20 puntos junto a (x, y)? En la lista de su
+// oficina en la ciudad ([+0x2CE], si la tiene) o, suyo, en las obras [0x762].
+bool fn_5259d0(const SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t type, uint8_t owner) {
+	const SavedTown& st = save.towns[size_t(town)];
+	const TownMemory& t = st.memory;
+	const int office = facilities_detail::fn_5308a0(save, owner, uint32_t(town));
+	// Los 20 puntos: 4 cerca y cada uno de los demás, el de 4 antes un paso en
+	// diagonal (y − 1; en los pares, x + 1 si la y de antes era impar; en los
+	// impares, x − 1 si la nueva es impar). En bytes, como el juego.
+	uint8_t px[20];
+	uint8_t py[20];
+	const uint8_t side = uint8_t((y & 1) + x);
+	px[0] = uint8_t(x + 1);
+	py[0] = uint8_t(y + 6);
+	px[1] = uint8_t(side - 2);
+	py[1] = uint8_t(y + 7);
+	px[2] = uint8_t(x - 3);
+	py[2] = uint8_t(y - 2);
+	px[3] = uint8_t(side + 3);
+	py[3] = uint8_t(y - 3);
+	for (uint32_t k = 4; k < 20; ++k) {
+		px[k] = px[k - 4];
+		py[k] = uint8_t(py[k - 4] - 1);
+		if ((k & 1) == 0) {
+			if (py[k - 4] & 1) {
+				px[k] = uint8_t(px[k] + 1);
+			}
+		} else if (py[k] & 1) {
+			px[k] = uint8_t(px[k] - 1);
+		}
+	}
+	auto near = [&](const BuildingRecord& r) {
+		for (uint32_t k = 0; k < 20; ++k) {
+			if (r.y == py[k] && r.x == px[k]) {
+				return true;
+			}
+		}
+		return false;
+	};
+	const uint32_t count = t.u16(0x776);
+	if (office >= 0) {
+		for (uint32_t i = save.offices[size_t(office)].memory.u16(0x2CE); i < count;) {
+			const BuildingRecord& r = st.records[i];
+			i = r.next;
+			if (r.type == type && near(r)) {
+				return true;
+			}
+		}
+	}
+	for (uint32_t i = t.u16(0x762); i < count;) {
+		const BuildingRecord& r = st.records[i];
+		i = r.next;
+		if (r.type == type && r.owner == owner && near(r)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// 0x500A70 (sobre la oficina): saca para una obra `amount` de la mercancía
+// `ware`. Si el almacén de la oficina no llega, primero de los barcos del
+// dueño atracados en su ciudad (estado < 4), dejando en cada uno lo que le
+// queda redondeado a la unidad de la mercancía (en todos los que tienen,
+// aunque ya no falte nada; 0x517770 con 4 y la bodega, 0x5182B0); después del
+// almacén. Deja en `amount` lo que falta.
+void fn_500a70(SaveGame& save, int office, uint32_t ware, int32_t& amount) {
+	OfficeMemory& o = save.offices[size_t(office)].memory;
+	if (o.s32(4 + 4 * ware) < amount) {
+		const MerchantMemory& m = save.merchants[o.u16(0x2C4)].memory;
+		const uint32_t unit = kWareUnit[ware] == 0 ? 2000 : kWareUnit[ware] == 1 ? 200 : 10;
+		const uint32_t ships = save.globals.u16(global::kShipCount);
+		for (uint32_t s = m.u16(0xE); s < ships;) {
+			SavedShip& ship = save.ships[s];
+			s = ship.memory.u16(0x4);
+			int32_t& cargo = ship.memory.s32(0x54 + 4 * ware);
+			if (ship.memory.u8(0x39) != o.u8(0x2C6) || ship.memory.u16(0x134) >= 4 || cargo <= 0) {
+				continue;
+			}
+			if (amount > cargo) {
+				amount -= cargo;
+				cargo = 0;
+			} else {
+				cargo -= amount;
+				amount = 0;
+				cargo = int32_t(uint32_t(cargo) / unit * unit);
+			}
+			fn_517770(save, ship, 4);
+			recalculate_cargo(ship);
+		}
+	}
+	int32_t& stock = o.s32(4 + 4 * ware);
+	if (stock >= amount) {
+		stock -= amount;
+		amount = 0;
+	} else {
+		amount -= stock;
+		stock = 0;
+	}
+}
+
+// 0x4F5450 (sobre el comerciante): sin oficina en la ciudad, saca `amount`
+// de la mercancía `ware` de sus barcos atracados en ella (estado < 4 y no 2)
+// hasta que no falte; cada barco que mira recalcula su bodega (0x5182B0).
+void fn_4f5450(SaveGame& save, int merchant, uint32_t ware, uint32_t town, int32_t& amount) {
+	if (amount <= 0) {
+		return;
+	}
+	const uint32_t ships = save.globals.u16(global::kShipCount);
+	for (uint32_t s = save.merchants[size_t(merchant)].memory.u16(0xE); s < ships;) {
+		SavedShip& ship = save.ships[s];
+		s = ship.memory.u16(0x4);
+		const uint16_t status = ship.memory.u16(0x134);
+		if (ship.memory.u8(0x39) != town || status >= 4 || status == 2) {
+			continue;
+		}
+		int32_t& cargo = ship.memory.s32(0x54 + 4 * ware);
+		if (cargo >= amount) {
+			cargo -= amount;
+			amount = 0;
+			recalculate_cargo(ship);
+			return;
+		}
+		amount -= cargo;
+		cargo = 0;
+		recalculate_cargo(ship);
+	}
+}
+
+// 0x4F89E0 (sobre el comerciante): por un pozo nuevo en la ciudad, si hay
+// menos de 5 por cada 2500 habitantes ([0x789] · 2500 / [0x2D4]), el primer
+// componente de su reputación allí sube [+0x464] · 0,1.
+void fn_4f89e0(SaveGame& save, int merchant, uint32_t town) {
+	const TownMemory& t = save.towns[town].memory;
+	const int32_t people = t.s32(0x2D4);
+	if (people < 1 || int32_t(t.u8(0x789)) * 2500 / people >= 5) {
+		return;
+	}
+	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
+	float& r = m.f32(0x11C + 12 * town);
+	r = float(double(m.f32(0x464)) * double(kWellReputation) + double(r));
+}
+
+// 0x4F8A50 (sobre el comerciante): por un edificio 0x29 o 0x2C, con `count`,
+// si hay menos de uno por cada 5000 habitantes ([0x773] + [0x771]), el
+// primer componente de su reputación sube [+0x464]; sin `count`, [+0x464] · 0,01.
+void fn_4f8a50(SaveGame& save, int merchant, uint32_t town, bool count) {
+	const TownMemory& t = save.towns[town].memory;
+	const int32_t people = t.s32(0x2D4);
+	if (people < 1) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
+	float& r = m.f32(0x11C + 12 * town);
+	if (!count) {
+		r = float(double(m.f32(0x464)) * double(kChapelReputation) + double(r));  // Sin comprobar con el oráculo.
+	} else if ((int32_t(t.u8(0x773)) + t.u8(0x771)) * 5000 < people) {
+		r = float(double(m.f32(0x464)) + double(r));  // Sin comprobar con el oráculo.
+	}
+}
+
+// 0x4F8C70 (sobre el comerciante): el primer componente de su reputación en
+// la ciudad sube [+0x464] (edificios 0x2A y 0x2B).
+void fn_4f8c70(SaveGame& save, int merchant, uint32_t town) {
+	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
+	float& r = m.f32(0x11C + 12 * town);
+	r = float(double(m.f32(0x464)) + double(r));  // Sin comprobar con el oráculo.
+}
+
+// 0x4F8560 (sobre el comerciante): paga `amount` por el edificio 0x22 de la
+// ciudad la primera vez (bit de la ciudad en [+0x468]; sin [0x6DE52A]):
+// [+0x4BC] lo suma, lo que ha marcado ([+0x4D8], 0x64 bytes) pasa al global
+// 0x6DF278 (0x534920) y el segundo componente de su reputación sube
+// [+0x464]. La carta (0x4D6530) no se reproduce.
+void fn_4f8560(SaveGame& save, int merchant, uint32_t town, int32_t amount) {
+	GlobalMemory& g = save.globals;
+	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
+	if (town >= g.u32(global::kWorldTownCount) || m.s32(0) < amount) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const uint32_t bit = 1u << (town & 31);
+	if ((m.u32(0x468) & bit) || g.u8(kWorldNoTownWork)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	// Sin comprobar con el oráculo.
+	m.u32(0x468) |= bit;
+	m.s32(0x4BC) += amount;
+	m.s32(0) -= amount;
+	for (uint32_t k = 0; k < 0x64; k += 4) {
+		g.u32(kExplored + k) |= m.u32(0x4D8 + k);
+	}
+	float& r = m.f32(0x120 + 12 * town);
+	r = float(double(m.f32(0x464)) + double(r));
 }
 
 // 0x521900 (sobre la ciudad): construye un edificio de tipo `type` (< 0x30)
-// del dueño `owner` en (x, y) si el solar vale (0x4FCBD0): marca la celda,
-// mete un registro en la lista de obras en curso [0x762] (0x51F100,
-// 0x5254C0) con sus días de obra (0x672BB4) y cobra los materiales.
-// Devuelve si lo ha construido. Reescrito solo el camino de la ciudad
-// (dueño >= nº de comerciantes) con el tipo 0x27, el de la carretera (el
-// único que se ha medido: 140 de sus 1071 instrucciones); los demás, por
-// reescribir (lo que hace con el asedio, [0x2C8] & 0x10, solo lo usan ellos).
+// del dueño `owner` en (x, y) si el solar vale (0x4FCBD0). Sin dueño (la
+// ciudad), salvo la carretera (0x27), exige ladrillos, madera, herramientas y
+// cáñamo en su almacén. Según el tipo (tabla 0x522690): los edificios
+// municipales, con los de antes ya hechos (bits de [0x76C]), marcan su bit y
+// la celda (0x8B); las empresas (salvo en asedio, [0x2C8] & 0x10 fuera de la
+// muralla) y los demás se ponen en la rejilla (0x4FB9C0; las casas como la
+// primera de su grupo de 3); el ayuntamiento (0x23) pone además la estatua
+// (0x2D) en la lista de edificios; el pozo (0x28), uno por cada 500
+// habitantes. Después, un registro en las obras [0x762] (0x51F100, 0x5254C0)
+// con sus días (0x672BB4). Un comerciante saca los materiales de su oficina
+// y sus barcos (0x500A70, 0x4F5450), paga a la ciudad (0x672B78 más lo que
+// le falte a precio de compra, 0x52E430) y, según el tipo, gana reputación;
+// los edificios municipales que paga pasan a la ciudad (dueño 0xFF). La
+// ciudad pierde del almacén los ladrillos, la madera y las herramientas que
+// falten (sin bajar de 0). Las casas cuentan en [0x774]. No se reproduce la
+// vista de la ciudad (0x590680, 0x5891C0). Devuelve si lo ha construido.
 bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, uint8_t type, uint8_t param) {
 	if (type >= 0x30) {
 		return false;  // Sin comprobar con el oráculo.
 	}
+	TownMemory& t = save.towns[size_t(town)].memory;
+	const int64_t at = int64_t(t.s32(0x7AC)) * x + y;
+	auto grid = [&]() -> uint8_t { return cell(save.towns[size_t(town)], at); };
+	auto set_grid = [&](uint8_t v) {
+		SavedTown& st = save.towns[size_t(town)];
+		if (at >= 0 && at < int64_t(st.grid.size())) {
+			st.grid[size_t(at)] = v;
+		}
+	};
+	const bool siege = (t.u8(0x2C8) & 0x10) && grid() < 0x80;
 	if (!fn_4fcbd0(save, town, x, y, type, param)) {
 		return false;
 	}
-	if (owner < save.globals.u16(global::kWorldMerchantCount) || type != kTypeRoad) {
-		// Por reescribir: los edificios de los comerciantes (con su oficina,
-		// 0x5308A0, y la interfaz de la ciudad que se ve) y los demás tipos
-		// (exigen los materiales y marcan la rejilla según el tipo).
-		assert(false);
+	int32_t bricks = int32_t(kBricks[type]) * kLoad;
+	int32_t timber = int32_t(kTimber[type]) * kLoad;
+	int32_t tools = int32_t(kTools[type]) * kBarrel;
+	int32_t hemp = int32_t(kHemp[type]) * kLoad;
+	if (type == 5 && t.u32(0x2CC) == 0) {
+		hemp >>= 1;  // Sin comprobar con el oráculo.
+	}
+	const bool merchant = owner < save.globals.u16(global::kWorldMerchantCount);
+	int office = -1;
+	if (merchant) {
+		office = facilities_detail::fn_5308a0(save, owner, uint32_t(town));
+	} else if (type != kTypeRoad &&
+		(t.s32(0x50) < bricks || t.s32(0x30) < timber || t.s32(0x34) < tools || t.s32(0x48) < hemp)) {
 		return false;
 	}
-	SavedTown& st = save.towns[size_t(town)];
-	// El tipo 0x27: la celda pasa a 0x8B y [0x7A4] (town_class1) a 1.
-	const int64_t i = int64_t(st.memory.s32(0x7AC)) * x + y;
-	assert(i >= 0 && i < int64_t(st.grid.size()));
-	st.grid[size_t(i)] = 0x8B;
-	st.memory.u32(0x7A4) = 1;
+	const uint32_t bits = t.u32(0x76C);
+	// Un edificio municipal: su bit en [0x76C], la celda 0x8B y [0x7A4] = 1.
+	auto municipal = [&](uint32_t mask, uint32_t want, uint32_t bit) {
+		if ((bits & mask) != want) {
+			return false;  // Sin comprobar con el oráculo.
+		}
+		t.u32(0x76C) = bits | bit;
+		set_grid(0x8B);
+		t.u32(0x7A4) = 1;
+		return true;
+	};
+	// Las empresas: fuera de la muralla en un asedio, no.
+	auto business = [&]() {
+		if (siege) {
+			return false;  // Sin comprobar con el oráculo.
+		}
+		if (grid() >= 0x80) {
+			++t.u16(0x78C);
+		}
+		++t.u16(0x78E);
+		return true;
+	};
+	switch (type) {
+	case 0x01:
+		if (!municipal(0x50, 0x10, 0x40)) {
+			return false;
+		}
+		break;
+	case 0x03:
+		if (!municipal(0x6, 0x2, 0x4)) {
+			return false;
+		}
+		break;
+	case 0x04: case 0x08: case 0x09: case 0x0A: case 0x0F: case 0x10: case 0x14:
+		if (!business()) {
+			return false;
+		}
+		param = fn_5259d0(save, town, x, y, type, owner) ? uint8_t(t.u8(0x760) & 0x7F) : uint8_t(0xFF);
+		fn_4fb9c0(save, town, x, y, type, param);
+		break;
+	case 0x06: case 0x07: case 0x0B: case 0x0C: case 0x0D: case 0x0E: case 0x11: case 0x12: case 0x13:
+		if (!business()) {
+			return false;
+		}
+		fn_4fb9c0(save, town, x, y, type, param);
+		break;
+	case 0x05: case 0x1E:
+		fn_4fb9c0(save, town, x, y, type, param);
+		break;
+	case 0x15: case 0x16: case 0x17: case 0x18: case 0x19: case 0x1A: case 0x1B: case 0x1C: case 0x1D:
+		type = uint8_t(0x15 + 3 * ((type - 0x15) / 3));
+		fn_4fb9c0(save, town, x, y, type, param);
+		break;
+	case 0x1F:
+		if (!municipal(0x27F, 0x7F, 0x200)) {
+			return false;
+		}
+		break;
+	case 0x20:
+		if (!municipal(0x3, 0x1, 0x2)) {
+			return false;
+		}
+		break;
+	case 0x21:
+		if (!municipal(0xC, 0x4, 0x8)) {
+			return false;
+		}
+		if (fn_4fcfe0(save, town, 0)) {
+			events_rare_detail::fn_522b20(save, town, 0);  // Sin comprobar con el oráculo.
+		}
+		break;
+	case 0x22:
+		if (!municipal(0x2010, 0x10, 0x2000)) {
+			return false;
+		}
+		if (merchant) {
+			fn_4f8560(save, owner, uint32_t(town), 0);
+		}
+		break;
+	case 0x23: {
+		if (!municipal(0x1, 0x0, 0x1)) {
+			return false;
+		}
+		// La estatua, al principio de la lista de edificios.
+		const uint16_t r = fn_51f100(save, town);
+		SavedTown& st = save.towns[size_t(town)];
+		BuildingRecord& rec = st.records[r];
+		rec.x = st.memory.u8(0x800);
+		rec.y = st.memory.u8(0x801);
+		rec.owner = 0xFF;
+		rec.type = 0x2D;
+		rec.next = st.memory.u16(0x764);
+		rec.pending = 0;
+		rec.param = 0;
+		st.memory.u16(0x764) = r;
+		break;
+	}
+	case 0x24:
+		if (!municipal(0x30, 0x10, 0x20)) {
+			return false;
+		}
+		break;
+	case 0x25:
+		if (!municipal(0x810, 0x10, 0x800)) {
+			return false;
+		}
+		break;
+	case 0x26:
+		if ((bits & 0x4010) != 0x10) {
+			return false;  // Sin comprobar con el oráculo.
+		}
+		t.u32(0x76C) = bits | 0x4000;
+		fn_4fb9c0(save, town, x, y, 0x26, param);
+		break;
+	case kTypeRoad:
+		set_grid(0x8B);
+		t.u32(0x7A4) = 1;
+		break;
+	case kTypeWell:
+		if (int32_t(t.u8(0x789)) * 500 > t.s32(0x2D4)) {
+			return false;  // Sin comprobar con el oráculo.
+		}
+		++t.u8(0x789);
+		set_grid(0x92);
+		break;
+	case 0x29:
+		fn_4fb9c0(save, town, x, y, 0x29, param);
+		++t.u8(0x772);
+		break;
+	case 0x2A:
+		if ((bits & 0x600) != 0x200) {
+			return false;  // Sin comprobar con el oráculo.
+		}
+		t.u32(0x76C) = bits | 0x400;
+		fn_4fb9c0(save, town, x, y, 0x2A, param);
+		break;
+	case 0x2B:
+		if ((bits & 0x1200) != 0x200) {
+			return false;  // Sin comprobar con el oráculo.
+		}
+		t.u32(0x76C) = bits | 0x1000;
+		fn_4fb9c0(save, town, x, y, 0x2B, param);
+		break;
+	case kTypePier:
+		fn_4fb9c0(save, town, x, y, 0x2B, param);  // El código del 0x2B tras escribir [0x76C].
+		break;
+	case 0x2C:
+		fn_4fb9c0(save, town, x, y, 0x29, param);
+		++t.u8(0x770);
+		break;
+	case 0x2D:
+		param = save.globals.u8(kTownIds + t.u8(0x2C0));
+		fn_4fb9c0(save, town, x, y, 0x2D, param);
+		break;
+	case 0x2E:
+		if (!municipal(0x10080, 0x80, 0x10000)) {
+			return false;
+		}
+		break;
+	default:  // 0x00 y 0x02.
+		return false;
+	}
 	const uint16_t r = fn_51f100(save, town);
-	SavedTown& s = save.towns[size_t(town)];
-	BuildingRecord& rec = s.records[r];
-	rec.x = x;
-	rec.y = y;
-	rec.owner = owner;
-	rec.type = type;
-	rec.next = 0xFFFF;
-	rec.pending = kRoadBuildTime;
-	rec.param = param;
+	{
+		BuildingRecord& rec = save.towns[size_t(town)].records[r];
+		rec.x = x;
+		rec.y = y;
+		rec.owner = owner;
+		rec.type = type;
+		rec.next = 0xFFFF;
+		rec.pending = kBuildDays[type];
+		rec.param = param;
+	}
 	fn_5254c0(save, town, r);
-	// Los materiales de la ciudad (tipos >= 0x1E: sin el cáñamo), sin bajar de 0.
-	TownMemory& t = save.towns[size_t(town)].memory;
-	t.s32(0x50) -= int32_t(kBricks[type]) * kLoad;
-	t.s32(0x30) -= int32_t(kTimber[type]) * kLoad;
-	t.s32(0x34) -= int32_t(kTools[type]) * kBarrel;
+	// Las casas y el almacén: [0x774] baja si miran al noroeste y si no sube.
+	auto houses = [&]() {
+		const uint8_t p = save.towns[size_t(town)].records[r].param;
+		t.u8(0x774) = uint8_t(p == kNorthWest ? t.u8(0x774) - 1 : t.u8(0x774) + 1);
+	};
+	if (merchant) {
+		if (office >= 0) {
+			fn_500a70(save, office, 0x13, bricks);
+			fn_500a70(save, office, 0xB, timber);
+			fn_500a70(save, office, 0xC, tools);
+			fn_500a70(save, office, 0x11, hemp);
+		} else {
+			fn_4f5450(save, owner, 0x13, uint32_t(town), bricks);  // Sin comprobar con el oráculo.
+			fn_4f5450(save, owner, 0xB, uint32_t(town), timber);
+			fn_4f5450(save, owner, 0xC, uint32_t(town), tools);
+			fn_4f5450(save, owner, 0x11, uint32_t(town), hemp);
+		}
+		int32_t fee = int32_t(kBuildFee[type]) * (type == 5 && t.u32(0x2CC) == 0 ? 3 : 5) * 20;
+		if (bricks > 0) {
+			fee += game_buy_price(save, 0x13, town, bricks);
+		}
+		if (timber > 0) {
+			fee += game_buy_price(save, 0xB, town, timber);
+		}
+		if (tools > 0) {
+			fee += game_buy_price(save, 0xC, town, tools);
+		}
+		MerchantMemory& m = save.merchants[owner].memory;
+		m.s32(0) -= fee;
+		m.s32(0x4C0) += fee;
+		if (type < 0x15) {
+		} else if (type < 0x1E) {
+			houses();
+		} else if (type == 0x1E) {
+			houses();  // Sin comprobar con el oráculo.
+			if (office >= 0) {
+				// Por reescribir: 0x4FF2D0 (sobre la oficina), lo que hace el
+				// almacén nuevo. No ha salido en 30 días de las 12 partidas.
+			}
+		} else if (type == 0x29 || type == 0x2C) {
+			fn_4f8a50(save, owner, uint32_t(town), true);
+		} else if (type == kTypeWell) {
+			fn_4f89e0(save, owner, uint32_t(town));
+		} else if (type == 0x2A || type == 0x2B) {
+			fn_4f8c70(save, owner, uint32_t(town));
+		} else {
+			save.towns[size_t(town)].records[r].owner = 0xFF;
+		}
+	} else if (type < 0x1E) {
+		houses();
+	}
+	t.s32(0x50) -= bricks;
+	t.s32(0x30) -= timber;
+	t.s32(0x34) -= tools;
 	for (const size_t o : {size_t(0x50), size_t(0x30), size_t(0x34)}) {
 		if (t.s32(o) < 0) {
 			t.s32(o) = 0;
 		}
 	}
 	return true;
+}
+
+// 0x523830 (sobre la ciudad): una torre en (x, y) del dueño `owner`. En una
+// celda de torre (0x1C), una torre nueva (0x30) a las obras (0x5254C0) y su
+// huella (0x4FBDB0). Si no, mejora lo que haya allí en la lista de murallas
+// [0x768], que sale de ella: un tramo (0x36) pasa a 0x32, al final de las
+// obras; una torre 0x30 a 0x31 y una 0x32 a 0x33, que vuelven al principio
+// de [0x768]. En un asedio ([0x2C8] & 0x10) el tramo vuelve tal cual y la
+// 0x32 sin cambiar, y no pasa nada más. Con oficina del dueño en la ciudad,
+// la ciudad saca de ella los materiales (0x500A70) y le paga un precio fijo
+// por unidad (0x673A64...; [+0x0] y [+0x49C]); lo que falta sale de su
+// almacén (sin bajar de 0) y apunta como gasto (0x529F90, 6) lo pagado, lo
+// que cuesta (0x672B78 · 100) y lo que falta a precio de compra (0x52E430).
+// El registro queda con (x, y) y sus días; la torre nueva, sin dueño.
+// [0x788] + 1. No se reproduce la vista de la ciudad (0x590680, 0x5891C0).
+void fn_523830(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
+	TownMemory& t = save.towns[size_t(town)].memory;
+	const uint32_t count = t.u16(0x776);
+	uint32_t r = 0;
+	if ((cell(save.towns[size_t(town)], int64_t(t.s32(0x7AC)) * x + y) & 0x3F) == 0x1C) {
+		r = fn_51f100(save, town);
+		BuildingRecord& rec = save.towns[size_t(town)].records[r];
+		rec.type = kTypeTower;
+		rec.next = 0xFFFF;
+		fn_5254c0(save, town, r);
+		fn_4fbdb0(save, town, x, y);
+	} else {
+		std::vector<BuildingRecord>& records = save.towns[size_t(town)].records;
+		uint16_t* link = &t.u16(0x768);
+		r = 0xFFFFF;
+		while (*link < count) {
+			BuildingRecord& rec = records[*link];
+			if (rec.x == x && rec.y == y && (rec.type == kTypeWall || rec.type == kTypeTower || rec.type == 0x32)) {
+				r = *link;
+				*link = rec.next;
+				rec.next = 0xFFFF;
+				break;
+			}
+			link = &rec.next;
+		}
+		if (r >= count) {
+			return;  // Sin comprobar con el oráculo.
+		}
+		BuildingRecord& rec = records[r];
+		const bool siege = t.u8(0x2C8) & 0x10;
+		if (rec.type == kTypeWall) {
+			if (siege) {
+				rec.next = t.u16(0x768);  // Sin comprobar con el oráculo.
+				t.u16(0x768) = uint16_t(r);
+				return;
+			}
+			rec.type = 0x32;
+			uint16_t* end = &t.u16(0x762);
+			while (*end < count) {
+				end = &records[*end].next;
+			}
+			*end = uint16_t(r);
+		} else if (rec.type == kTypeTower) {
+			rec.type = 0x31;
+			rec.next = t.u16(0x768);
+			t.u16(0x768) = uint16_t(r);
+		} else {
+			rec.next = t.u16(0x768);
+			t.u16(0x768) = uint16_t(r);
+			if (siege) {
+				return;  // Sin comprobar con el oráculo.
+			}
+			rec.type = 0x33;
+		}
+		t.u32(0x7A4) = 1;
+	}
+	const uint8_t type = save.towns[size_t(town)].records[r].type;
+	int32_t bricks = int32_t(kBricks[type]) * kLoad;
+	int32_t timber = int32_t(kTimber[type]) * kLoad;
+	int32_t tools = int32_t(kTools[type]) * kBarrel;
+	int32_t hemp = int32_t(kHemp[type]) * kLoad;
+	int32_t paid = 0;
+	if (owner < save.globals.u16(global::kWorldMerchantCount)) {
+		const int office = facilities_detail::fn_5308a0(save, owner, uint32_t(town));
+		if (office >= 0) {
+			auto take = [&](uint32_t ware, int32_t& amount, float price) {
+				if (amount <= 0) {
+					return;
+				}
+				const int32_t before = amount;
+				fn_500a70(save, office, ware, amount);
+				paid += int32_t(ftol(double(float(before - amount)) * double(price)));
+			};
+			take(0x13, bricks, kTowerBricksPrice);
+			take(0xB, timber, kTowerTimberPrice);
+			take(0xC, tools, kTowerToolsPrice);
+			take(0x11, hemp, kTowerHempPrice);
+			MerchantMemory& m = save.merchants[owner].memory;
+			m.s32(0) += paid;
+			m.s32(0x49C) += paid;
+		}
+	}
+	auto lose = [&](size_t o, int32_t amount) {
+		t.s32(o) -= amount;
+		if (t.s32(o) < 0) {
+			t.s32(o) = 0;
+		}
+	};
+	lose(0x50, bricks);
+	lose(0x30, timber);
+	lose(0x34, tools);
+	lose(0x48, hemp);
+	int32_t cost = paid + int32_t(kBuildFee[type]) * 100 + game_buy_price(save, 0x13, town, bricks);
+	cost += game_buy_price(save, 0xB, town, timber);
+	cost += game_buy_price(save, 0xC, town, tools);
+	cost += game_buy_price(save, 0x11, town, hemp);
+	fn_529f90(save, town, cost, 6);
+	BuildingRecord& rec = save.towns[size_t(town)].records[r];
+	rec.x = x;
+	rec.y = y;
+	rec.pending = kBuildDays[type];
+	if (type == kTypeTower) {
+		rec.owner = 0xFF;
+		rec.param = 0;
+	}
+	++t.u8(0x788);
+}
+
+// 0x523D70 (sobre la ciudad; las operaciones de los tipos 0x34 y 0x35): la
+// primera pieza de la lista de murallas [0x768] ya terminada en (x, y) baja
+// su tipo en 3, con los costes del tipo 0x34. Como en 0x523830, salvo dos
+// fallos del juego reproducidos: las herramientas se sacan de la oficina con
+// lo que falta de madera (y las que se cuentan no bajan; lo que se paga por
+// ellas es 1,278 · 0 = 0), y al comerciante no se le paga, aunque lo que
+// valen cuenta como gasto de la ciudad. Sin la pieza, nada.
+void fn_523d70(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
+	SavedTown& st = save.towns[size_t(town)];
+	TownMemory& t = st.memory;
+	const uint32_t count = t.u16(0x776);
+	uint32_t r = t.u16(0x768);
+	while (r < count && (st.records[r].pending > 0 || st.records[r].x != x || st.records[r].y != y)) {
+		r = st.records[r].next;
+	}
+	if (r >= count) {
+		return;
+	}
+	// Sin comprobar con el oráculo (no ha salido en 30 días de las 12 partidas).
+	constexpr uint8_t kGate = 0x34;
+	int32_t bricks = int32_t(kBricks[kGate]) * kLoad;
+	int32_t timber = int32_t(kTimber[kGate]) * kLoad;
+	const int32_t tools = int32_t(kTools[kGate]) * kBarrel;
+	int32_t hemp = int32_t(kHemp[kGate]) * kLoad;
+	int32_t paid = 0;
+	if (owner < save.globals.u16(global::kWorldMerchantCount)) {
+		const int office = facilities_detail::fn_5308a0(save, owner, uint32_t(town));
+		if (office >= 0) {
+			auto take = [&](uint32_t ware, int32_t& amount, float price) {
+				const int32_t before = amount;
+				fn_500a70(save, office, ware, amount);
+				return int32_t(ftol(double(float(before - amount)) * double(price)));
+			};
+			if (bricks > 0) {
+				paid = take(0x13, bricks, kTowerBricksPrice);
+			}
+			if (timber > 0) {
+				paid += take(0xB, timber, kTowerTimberPrice);
+			}
+			if (tools > 0) {
+				fn_500a70(save, office, 0xC, timber);
+			}
+			if (hemp > 0) {
+				paid += take(0x11, hemp, kTowerHempPrice);
+			}
+		}
+	}
+	auto lose = [&](size_t o, int32_t amount) {
+		t.s32(o) -= amount;
+		if (t.s32(o) < 0) {
+			t.s32(o) = 0;
+		}
+	};
+	lose(0x50, bricks);
+	lose(0x30, timber);
+	lose(0x34, tools);
+	lose(0x48, hemp);
+	int32_t cost = paid + int32_t(kBuildFee[kGate]) * 100 + game_buy_price(save, 0x13, town, bricks);
+	cost += game_buy_price(save, 0xB, town, timber);
+	cost += game_buy_price(save, 0xC, town, tools);
+	cost += game_buy_price(save, 0x11, town, hemp);
+	fn_529f90(save, town, cost, 6);
+	save.towns[size_t(town)].records[r].type = uint8_t(save.towns[size_t(town)].records[r].type - 3);
+	t.u32(0x7A4) = 1;
+}
+
+// La operación 0x27 (0x535BBC, en el ejecutor): {0x27, u32 ciudad (el byte
+// bajo; con el bit 31, también 0x672B01 · 2000 de cáñamo), u32 ladrillos,
+// u32 madera, u32 herramientas}: la ciudad los recibe en su almacén. La
+// encolan las obras de la ciudad cuando le faltan (0x51D870).
+void fn_535bbc(SaveGame& save, const uint8_t* operation) {
+	uint32_t fields[5];
+	std::memcpy(fields, operation, sizeof(fields));
+	const uint32_t town = fields[1] & 0xFF;
+	if (town >= save.globals.u32(global::kWorldTownCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	TownMemory& t = save.towns[town].memory;
+	if (int32_t(fields[1]) < 0) {
+		t.u32(0x48) += uint32_t(kHemp[1]) * uint32_t(kLoad);  // Sin comprobar con el oráculo.
+	}
+	t.u32(0x50) += fields[2];
+	t.u32(0x30) += fields[3];
+	t.u32(0x34) += fields[4];
+}
+
+// La operación 0x23 (0x535B12): {0x23, u32 lado, u32 ciudad}: empieza la
+// muralla de ese lado (0x522B20).
+void fn_535b12(SaveGame& save, const uint8_t* operation) {
+	uint32_t fields[3];
+	std::memcpy(fields, operation, sizeof(fields));
+	if (fields[2] >= save.globals.u32(global::kWorldTownCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	events_rare_detail::fn_522b20(save, int(fields[2]), fields[1]);
+}
+
+// 0x53CE30 (la operación 0x22, construir; 0x21 con `request`): {0x22,
+// [+4] u8 dueño, [+5] u8 ciudad, [+6] x, [+7] y, [+8] tipo, [+9] parámetro}.
+// Según el tipo: hasta 0x2F, 0x521900; 0x30..0x33, las torres (0x523830);
+// 0x34 y 0x35, 0x523D70; 0x36..0x39, la muralla de ese lado (0x522B20). La
+// 0x21 (solo desde la interfaz) no se reproduce.
+void fn_53ce30(SaveGame& save, const uint8_t* operation) {
+	const uint8_t owner = operation[4];
+	const uint32_t town = operation[5];
+	const uint8_t x = operation[6];
+	const uint8_t y = operation[7];
+	const uint8_t type = operation[8];
+	if (town >= save.globals.u32(global::kWorldTownCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	if (type < 0x30) {
+		fn_521900(save, int(town), owner, x, y, type, operation[9]);
+	} else if (type <= 0x33) {
+		fn_523830(save, int(town), x, y, owner);
+	} else if (type <= 0x35) {
+		fn_523d70(save, int(town), x, y, owner);
+	} else if (type <= 0x39) {
+		events_rare_detail::fn_522b20(save, int(town), uint32_t(type - 0x36));  // Sin comprobar con el oráculo.
+	}
 }
 
 }  // namespace construction_detail

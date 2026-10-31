@@ -196,7 +196,10 @@ tabla 0x537030) a unos 180 manejadores; los códigos 0x14, 0x73, 0x9C–0x9E,
 |-|-|-|
 | 0x00 | 0x537670 | zarpar ([navigation.md](navigation.md)) |
 | 0x01, 0x02 | 0x537340, 0x537450 | vender, comprar |
-| 0x22, 0x23, 0x24, 0x27 | | obras de las ciudades (construir, materiales; [town_tick.md](town_tick.md) §6) |
+| 0x22 | 0x53CE30 | construir: {0x22, u8 dueño, u8 ciudad, x, y, tipo, parámetro}; hasta 0x2F, 0x521900 (con la rejilla, `town_tick/grid.cpp`); 0x30..0x33, las torres (0x523830); 0x34 y 0x35, 0x523D70; 0x36..0x39, la muralla (0x522B20). La 0x21 (interfaz) es lo mismo con otra búsqueda del tipo |
+| 0x23 | 0x535B12 | {0x23, u32 lado, u32 ciudad}: empieza la muralla de ese lado (0x522B20) |
+| 0x24 | 0x522C70 | las piezas de muralla pendientes ([0x766]) de la ciudad; por reescribir |
+| 0x27 | 0x535BBC | {0x27, u32 ciudad (con el bit 31, también cáñamo), ladrillos, madera, herramientas}: la ciudad los recibe; la piden sus obras cuando le faltan |
 | 0x3B | 0x53A3E0 | la carretera de un encargo de la Hansa (tipo 1, §8) desde la interfaz |
 | 0x46 | dentro de 0x535760, en 0x535FD6 | alcalde para una ciudad sin él: {0x46, comerciante, ciudad, -, marca}; si tiene rango ≥ 5 en su ciudad natal o con la marca 0xBADEAFFE en [+0x10] (la encola el evento 0x2F, §8; también la interfaz, desde 0x41AD92 y 0x41B554) |
 | 0x4B | 0x53B440 | un candidato coge un encargo de la Hansa (§8) |
@@ -209,7 +212,7 @@ en el código).
 
 p3vita guarda las operaciones en `SaveGame::queued_operations` y las ejecuta
 al final de cada tick, en su orden (`run_queued_operations` y el ejecutor
-`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x3B, la 0x46, la 0x4B, la 0x85 y la 0x86; las
+`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x22, la 0x23, la 0x27, la 0x3B, la 0x46, la 0x4B, la 0x85 y la 0x86; las
 demás se descartan. El oráculo del mundo hace lo mismo con el ejecutor del
 juego ([../oracle.md](../oracle.md), «Las operaciones encoladas»). Lo que encolan las ciudades y la cola de eventos en 200
 días de la partida 1 (con un candidato retocado): 0x22 ×1924, 0x7B ×1704,
@@ -233,8 +236,8 @@ sobre el oráculo del mundo).
 > nueva (evento 0x2F y operación 0x46, también en `new_town.cpp`). Falta el
 > ataque a la guarida del tipo 3 (una batalla) y, para que se cumpla el de
 > fundar, que la ciudad crezca con sus obras (abajo). Por reescribir dentro
-> de la fundación, sin salir en las partidas: 0x5462F0, 0x545CE0/0x545F50,
-> 0x4F99B0 y la elección del alcalde (abajo).
+> de la fundación, sin poder salir al fundar en plena partida:
+> 0x545CE0/0x545F50, 0x4F99B0 y la elección del alcalde (abajo).
 
 [+0x37] del comerciante: 0 nada; 1 a 3 candidato con 0 a 2 encargos
 cumplidos; 4 puede presentarse (si su ciudad natal tiene [0x2C8] & 0x40).
@@ -376,14 +379,16 @@ viaje (0x531BD0). Después 0x4EBF54 pone de alcalde al comerciante y crea un
 evento 0x39 para mañana: la muralla de la ciudad (0x4ECDF4, con 0x5252F0 y
 0x522B20).
 
-Por reescribir dentro de la fundación (en `new_town.cpp`, marcadas así):
-- 0x5462F0 (en 0x5458D0, con 4, 0x10 o 0xD por los bits 0x40000, 0x80000 y
-  0x100000 de las mercancías): añade a la lista de nodos [0x9B4] de la
-  ciudad el de esa instalación (0x50FCA0, 0x50FE00, cantidad según el
-  número de ciudades). Al fundar en plena partida solo sale el 0x40000, que
-  0x532E30 pone cuando el aceite (0xA) es de las mercancías que más faltan:
-  **es la única de estas cuatro a la que se puede llegar** (no ha salido en
-  las partidas 1 y 3); sin ella, la ciudad nueva no tiene ese nodo.
+0x5462F0 (en 0x5458D0, una vez por cada bit 0x40000, 0x80000 y 0x100000 de
+las mercancías, con 4, 0x10 y 0xD; en p3vita `fn_5462f0`): un nodo nuevo
+(0x50FCA0) al principio de la lista [0x9B4] de la ciudad, de esa
+instalación y de la ciudad, con [+0xC] = [+0xE] (0x50FE00, como mucho 1024)
+= 1024 / (3 · nº de ciudades >> 4) por 200 (4), 700 (0xD), 500 (0x10) o 100,
+>> 10. Al fundar en plena partida solo sale el 0x40000, que 0x532E30 pone
+cuando el aceite (0xA) es de las mercancías que más faltan.
+
+Por reescribir dentro de la fundación (en `new_town.cpp`, marcadas así; a
+ninguna se llega al fundar en plena partida):
 - 0x545CE0 y 0x545F50 (en 0x5458D0 con [+0xF] ≠ 0: preparar una ciudad que
   ya existe; 0x545F50 construye sus edificios y le da el mercado). Al fundar,
   [+0xF] = 0.

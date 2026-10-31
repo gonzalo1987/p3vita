@@ -23,6 +23,9 @@ bool fn_524d60(SaveGame& save, int town, uint32_t x, uint32_t y);
 void fn_524f00(SaveGame& save, int town);
 void fn_524cd0(SaveGame& save, int town);
 void fn_524e20(SaveGame& save, int town);
+bool fn_4fcbd0(const SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
+bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
+void fn_523830(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner);
 
 }  // namespace p3::data::tick::construction_detail
 
@@ -32,6 +35,34 @@ using namespace p3::data;
 namespace detail = tick::construction_detail;
 
 void register_probes_construction(ProbeRegistry& r) {
+	r[0x521900] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// Sobre la ciudad: (dueño, x, y, tipo, parámetro); devuelve 0 o 1.
+		const int town = c.town(c.ecx);
+		if (town < 0) {
+			return 0xDEAD;
+		}
+		return uint32_t(detail::fn_521900(s, town, uint8_t(c.args[0]), uint8_t(c.args[1]), uint8_t(c.args[2]),
+			uint8_t(c.args[3]), uint8_t(c.args[4])));
+	};
+	r[0x523830] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// Sobre la ciudad: (x, y, dueño).
+		const int town = c.town(c.ecx);
+		if (town < 0) {
+			return 0xDEAD;
+		}
+		detail::fn_523830(s, town, uint8_t(c.args[0]), uint8_t(c.args[1]), uint8_t(c.args[2]));
+		return std::nullopt;
+	};
+	r[0x4FCBD0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// Sobre town_class1 ([0x7A4] de la ciudad); devuelve un byte.
+		const Location l = c.locate(c.ecx);
+		if (l.kind != Location::Town || l.offset != 0x7A4) {
+			return 0xDEAD;
+		}
+		c.eax_mask = 0xFF;
+		return uint32_t(detail::fn_4fcbd0(s, l.index, uint8_t(c.args[0]), uint8_t(c.args[1]), uint8_t(c.args[2]),
+			uint8_t(c.args[3])));
+	};
 	r[0x524920] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		tick::fn_524920(s, c.town(c.ecx), int32_t(c.args[0]));
 		return std::nullopt;

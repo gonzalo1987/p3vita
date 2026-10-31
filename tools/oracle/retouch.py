@@ -58,6 +58,7 @@ una batalla que el emulador no ejecuta):
   guarida_fallida  fase 3: fallida
 Fundar una ciudad (tipo 0):
   fundar           el encargo dado sin empezar: se crea la ciudad
+  fundar_aceite    lo mismo con la máscara de cuando falta aceite: el nodo de 0x5462F0
 El desarrollo de la ciudad nueva (evento 0x2F, 0x4EA0D4), adelantado al tick
 siguiente; graban 535760 y 4d85c0. Los cuatro primeros fundan la ciudad sin
 grabar; los otros crean el evento en ciudades que ya existen:
@@ -474,6 +475,16 @@ def fundar(o):
     i, a = tasks[0]
     w8(o, a + 0xD, m)
     print(f'encargo {i}: fundar la ciudad {o.u8(a + 0x14)} para {m}; {o.u32(WORLD + 0x10)} ciudades')
+    return i, a
+
+
+def fundar_aceite(o):
+    """fundar con la máscara de mercancías que deja 0x532E30 cuando falta
+    aceite (| 0x40020): la ciudad nueva tiene el nodo de 0x5462F0 (con 4) en
+    su lista [0x9B4]. Graba 4ebf54 2 días y, aparte, el mundo 4 días."""
+    i, a = fundar(o)
+    w32(o, a + 0x10, o.u32(a + 0x10) | 0x40020)
+    print(f'máscara {o.u32(a + 0x10):#x}')
 
 
 # --- El desarrollo de la ciudad nueva (evento 0x2F, 0x4EA0D4) ---
@@ -659,7 +670,7 @@ SCENARIOS = {f.__name__: f for f in (candidato, jugador, dos_candidatos, sin_car
                                      encargo_nuevo, encargo_cumplido, encargo_vencido, barco_perdido,
                                      jugador_coge, jugador_vencido,
                                      nueva_sin_marca, nueva_alcalde_ia, nueva_alcalde_humano, nueva_sin_alcalde,
-                                     poblada, rica)}
+                                     poblada, rica, fundar_aceite)}
 
 
 def main():
@@ -690,6 +701,12 @@ def main():
                 break
         f.write(b'E')
     print(f'{rec.count} muestras en {a.out}')
+    last = o.u32(WORLD + 0x10) - 1
+    nodes, node = [], o.u32(o.town(last) + 0x9B4)
+    while node:
+        nodes.append(bytes(o.uc.mem_read(node + 4, 0x10)).hex())
+        node = o.u32(node)
+    print(f'nodos de la ciudad {last}: {nodes}')
     for i, e in events(o):
         if o.u16(e + 6) == 0x32:
             raw = bytes(o.uc.mem_read(e, 0x18))

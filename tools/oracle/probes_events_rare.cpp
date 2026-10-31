@@ -18,7 +18,6 @@ void fn_4f91c0(SaveGame& save, int merchant);
 uint32_t fn_4ea594(SaveGame& save);
 uint32_t fn_4fac70(const SaveGame& save, int town);
 void fn_52a150(SaveGame& save, int town, uint8_t rate);
-void fn_4fb9c0(SaveGame& save, int town, uint32_t x, uint32_t y, uint8_t type, uint8_t param);
 void fn_522b20(SaveGame& save, int town, uint32_t side);
 struct WallPiece {
 	uint8_t x = 0;
@@ -155,7 +154,7 @@ void register_probes_events_rare(ProbeRegistry& r) {
 		if (town < 0) {
 			return 0xDEAD;
 		}
-		rd::fn_4fb9c0(s, town, c.args[0], c.args[1], uint8_t(c.args[3]), uint8_t(c.args[4]));
+		tick::fn_4fb9c0(s, town, c.args[0], c.args[1], uint8_t(c.args[3]), uint8_t(c.args[4]));
 		return std::nullopt;
 	};
 	r[0x4FA1D0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {

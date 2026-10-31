@@ -311,9 +311,10 @@ las 12 en paralelo), y la carga, también en 0.
 El oráculo del mundo ejecuta ahora al final de cada tick las operaciones
 encoladas con el ejecutor del juego (0x535760, ver
 [formats/world_tick.md](formats/world_tick.md) §7), en su orden, las de los
-códigos de `--operaciones` (por omisión `0,3b,46,4b,85,86`: zarpar, los
-encargos de la Hansa y el alcalde de una ciudad nueva); las demás se siguen
-descartando, como en p3vita
+códigos de `--operaciones` (por omisión `0,22,23,27,3b,46,4b,85,86`:
+zarpar, construir con sus materiales y murallas, los encargos de la Hansa y
+el alcalde de una ciudad nueva); las demás se siguen descartando, como en
+p3vita
 (`run_operation`, `simulation.cpp`). El ejecutor se llama por un trampolín
 que le deja en la pila los 0x14 bytes de la operación y la marca «P3OP», así
 que al grabar `535760` tick_probe repite cada operación (sonda en
@@ -373,6 +374,7 @@ puede hacer pasar el mundo sin grabar hasta el tick anterior al encargo.
 | `carretera_ia`, `carretera_tramos`, `carretera_ultimo`, `carretera_obra`, `carretera_hecha`, `jugador_carretera_vencida`, `jugador_materiales` (el tipo 1 y la operación 0x3B) | 1, 3 (`carretera_ultimo` también 5 y tut2) | 0 diferencias, también en las ciudades (rejilla, registros, obras) |
 | `guarida_lejos`, `guarida_cerca`, `guarida_rondando`, `guarida_hecha`, `guarida_fallida` (el tipo 3 sin el ataque) | 3, 5 | 0 diferencias, también en los barcos piratas nuevos |
 | `fundar` (el tipo 0: la ciudad nueva) | 1, 3 | 0 diferencias en la fundación (0x4EBF54 con 0x531D50 entero) y en cada pieza suelta, y en los 6 días siguientes grabando todo el mundo (los ticks de la ciudad nueva, su asedio, su muralla con el evento 0x39) |
+| `fundar_aceite` (la máscara de cuando falta aceite: el nodo de 0x5462F0) | 1, 3 | 0 diferencias grabando `4ebf54` (2 días) y `51ba10,4d85c0,535760` (4 días: los ticks de la ciudad nueva ya trabajan con el nodo) |
 
 Para fundar una ciudad el oráculo lee del archivo como el juego
 (`Archiver.dll`: `arc_CreateFile`, `arc_FileLength`, `arc_Read` y
@@ -409,3 +411,31 @@ tick al que vuelve el evento (`retouch.py` lo escribe al final):
 
 El mundo sin retocar, con la 0x46 entre las operaciones del oráculo: 0
 diferencias en las 12 partidas durante 7 días.
+
+## Las obras: la operación 0x22
+
+Construir (0x53CE30 y lo que cuelga: 0x521900, la rejilla de `grid.cpp`,
+las torres 0x523830) se comprobó función a función con el oráculo
+ejecutando la 0x22 y grabando la función (`re/emu/sesion5/ops22.sh DÍAS
+FUNCIONES`, fuera del repositorio: `town_oracle.py --operaciones
+0,3b,46,4b,85,86,22` en las 12 partidas y `tick_probe` llamada a llamada):
+
+| Funciones | Días | Llamadas | Resultado |
+|-|-|-|-|
+| 0x4FB9C0 (poner un edificio en la rejilla, con sus calles) y 0x4FCBD0 (si el solar vale) | 30 | 260 y 137 | 0 diferencias |
+| 0x521900 (el edificio entero: registro, materiales de la oficina y los barcos, pago, reputación) | 30 | 137 | 0 diferencias |
+| 0x523830 (las torres) | 30 | 35 | 0 diferencias |
+
+Después, con la 0x22 entre las operaciones por omisión (en p3vita y en el
+oráculo), el mundo entero sin retocar: 0 diferencias en las 12 partidas
+durante 7 días (`world.sh 7`). No salen en las partidas: 0x523D70 (tipos
+0x34 y 0x35), el almacén de un comerciante (0x4FF2D0, por reescribir), los
+edificios 0x22, 0x29, 0x2A, 0x2B y 0x2C pagados por un comerciante, ni
+construir sin oficina (0x4F5450).
+
+Con los materiales (0x27) y las murallas (0x23) también entre las de por
+omisión: el mundo entero sin retocar, 0 diferencias en las 12 partidas
+durante 7 días (la 0x27 no sale en ellas), y el escenario `fundar` 40 días
+grabando `535760,51ba10,4d85c0` (la ciudad nueva pide materiales, los recibe
+y levanta su primer edificio municipal): 0 diferencias en las partidas 1 y 3
+(85 operaciones, 1998 ticks de ciudad).

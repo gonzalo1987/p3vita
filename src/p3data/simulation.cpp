@@ -85,6 +85,15 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			sailing->set_sail(fields[1], fields[2], fields[3], fields[4]);
 		}
 		break;
+	case 0x22:  // Construir (0x53CE30): las obras de las ciudades y de los comerciantes.
+		tick::construction_detail::fn_53ce30(save, operation);
+		break;
+	case 0x23:  // Empezar la muralla de un lado (0x535B12).
+		tick::construction_detail::fn_535b12(save, operation);
+		break;
+	case 0x27:  // Materiales para las obras de una ciudad (0x535BBC).
+		tick::construction_detail::fn_535bbc(save, operation);
+		break;
 	case 0x3B:  // Materiales para la carretera de un encargo de la Hansa (0x53A3E0).
 		tick::fn_53a3e0(save, operation);
 		break;
