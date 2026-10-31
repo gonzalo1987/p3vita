@@ -18,7 +18,9 @@ Cómo leerla:
 ## En marcha (31-10-2026)
 
 - Sesión local: la parte B del inventario está hecha salvo la 0x9F y la 0xB5, que van con las batallas. Lo siguiente es la parte C y después la D.
-- `cloud/battles`: las piezas 2 (los piratas que se mueven) y 3 (la batalla automática en el mar) del plan de las batallas.
+- `cloud/statistics`: las estadísticas diarias (0x54DE90), el `.pst` de verdad y los tres pasos del final del cargador.
+- `cloud/alderman-viewer-2`: comprobar la elección con el jugador de candidato, el voto del jugador, aceptar la candidatura, la lista de candidatos, la ventana del final y los textos de la interfaz leídos del exe.
+- Batallas: la pieza 2 está en `main`. Lo siguiente es `tasks/battles-2.md` (el «pool» de los piratas, deshacer el convoy en la guarida y la infraestructura de la pieza 3); todavía no está lanzada.
 - `cloud/unchecked-branches`: comprobar con estados retocados las ramas «Sin comprobar con el oráculo» de los ficheros del tick de ciudad, empezando por `alderman.cpp`.
 
 ## Estado por partes (medido)
@@ -38,7 +40,7 @@ Cómo se mide:
 |-|-|-|-|-|-|
 | Tick de ciudad (0x51BA10) | 155 | 67 | 64 (96 %) | 2 (3 %) | 0 (1 %) |
 | Tick de cada comerciante (0x4F7BB0) | 25 | 10 | 9 (93 %) | 1 (6 %) | 0 (0 %) |
-| Barcos: navegación, IA y convoyes (0x506720) | 152 | 62 | 29 (47 %) | 24 (38 %) | 9 (15 %) |
+| Barcos: navegación, IA y convoyes (0x506720) | 152 | 62 | 32 (52 %) | 24 (39 %) | 5 (8 %) |
 | Lo diario, tareas programadas y objetos del mundo | 12 | 2 | 2 (97 %) | 0 (3 %) | 0 (0 %) |
 | Asedios (0x6349F0, 0x633A90) | 28 | 15 | 13 (89 %) | 2 (11 %) | 0 (0 %) |
 | Cola de eventos (0x4D85C0) | 415 | 193 | 152 (79 %) | 26 (14 %) | 15 (8 %) |
@@ -48,10 +50,10 @@ Cómo se mide:
 | Guardar partida (0x549CC0) | 38 | 11 | 0 (0 %) | 10 (96 %) | 0 (4 %) |
 | Tormentas (0x5053C0) | 4 | 5 | 5 (97 %) | 0 (3 %) | 0 (0 %) |
 | Guiones de misiones (0x4ECF64, 0x511270) | 73 | 23 | 3 (14 %) | 7 (32 %) | 12 (54 %) |
-| **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | 217 (76 %) | 43 (15 %) | 27 (9 %) |
+| **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | 221 (77 %) | 44 (15 %) | 22 (8 %) |
 
 Notas:
-- **Barcos**: lo que falta son los piratas (0x505C90, 0x515360, 0x50D9E0, 0x517170: pieza 2 de las batallas) y las rutas comerciales (0x4D5200, 0x4D4C90...).
+- **Barcos**: los piratas que se mueven ya están (pieza 2 de las batallas, detrás de `--pirates`). Lo que falta son las rutas comerciales (0x4D5200, 0x52ACD0, 0x4D4C90...), la actualización de los objetos piratas (0x514000 → 0x513EC0) y la guarida (0x515DA0 → 0x513BF0).
 - **Cola de eventos**: lo que falta son los tipos que p3vita aún no atiende (0x4E5664, 0x4E38B4, 0x4DDF40, 0x4E7A14...).
 - **Cargar y guardar partida**: aunque en la tabla salgan como «nombrado», están hechos e idénticos al juego en las 12 partidas. `savegame.cpp` y `savegame_write.cpp` los reescriben por estructuras y no con funciones `fn_`, y algunas direcciones (0x504230, los barcos) ni siquiera salen en los comentarios, así que la medida se queda corta.
 - **Batallas**: no van en la tabla, porque usan sobre todo llamadas por tablas de métodos, que este grafo no sigue. Su estudio, que sí las sigue ([cloud/battles.md](cloud/battles.md)), cuenta sin la interfaz 249 funciones (148 KB) en el mar y 41 (50 KB) en las ciudades. De eso solo están hechas las tormentas.
@@ -227,15 +229,19 @@ Decidido: p3vita y el oráculo harán avanzar las batallas con una operación 0x
 
 El plan, por piezas, cada una detrás de su ajuste hasta comprobarla:
 1. [x] Las tormentas (arriba).
-2. [ ] Los piratas que se mueven, sin batallas (en marcha: `cloud/battles`). Incluye:
-   - el estado 0x12 del convoy (0x507A65: 0x50D9E0, 0x515360, 0x505C90 y 0x50CFB0);
-   - los estados 0x11 y 0x12 en el mar (0x507022 y 0x507099);
-   - 0x517170 y la rama pirata de 0x5017F0;
-   - el ataque del evento 0x1E (0x5063C0);
-   - la actualización de los objetos piratas (0x514000), con la operación 0xB5.
+2. [ ] Los piratas que se mueven, sin batallas. Hecho en su mayor parte, detrás de `Sailing::set_pirates`, `town_oracle.py --pirates` y `tick_probe --pirates`, que de momento van apagados por omisión ([cloud/battles.md](cloud/battles.md) §7; `src/p3data/battle/pirates.cpp`):
+   - [x] el estado 0x12 del convoy pirata (0x507A65), con el nuevo rumbo (0x505C90), la elección del blanco (0x50D9E0), la decisión de atacar (0x515360), la velocidad de batalla (0x612930), los bajos (0x50E340) y 0x5159C0;
+   - [x] los puntos de cada ciudad entre los que eligen adónde ir (0x448780, al cargar). El oráculo se lo saltaba; con `--pirates` lo ejecuta (2,8 s más por carga) y p3vita calcula lo mismo;
+   - comprobado: 0 diferencias llamada a llamada en las 12 partidas durante 7 días (9455 llamadas a 0x505C90, 8064 a 0x50D9E0, 5965 a 0x515360 y 3265 a 0x612930), y el mundo entero con los piratas encendidos, 0 diferencias en las 12 partidas;
+   - regla provisional, igual en p3vita y en el oráculo, mientras no haya batallas: un pirata que iría a atacar (0x507BE9 → 0x50BC40) sigue como si no tuviera blanco; un convoy que acaba su ruta en una ciudad (0x507C0B) sigue como si navegara; y uno que llega a su guarida no se deshace (0x505FF1 → 0x506029). `--pirates` se queda apagado hasta que la pieza 3 quite el primer salto;
+   - [ ] deshacer el convoy en la guarida (0x514B80). Mueve los barcos al «pool» de cada pirata, y 0x515DA0 planifica en él los edificios de la guarida; ese «pool» todavía no lo guardan ni `SaveGame` ni las regiones del oráculo. Hacerlo antes de la pieza 3;
+   - [ ] estados retocados para las ramas que las partidas no recorren;
+   - [ ] los estados 0x11 y 0x12 en el mar (0x507022 y 0x507099), 0x517170, la rama pirata de 0x5017F0, el ataque del evento 0x1E (0x5063C0) y la actualización de los objetos piratas (0x514000), con la operación 0xB5: lo que de esto no haya quedado ya cubierto.
+3. [ ] La batalla automática en el mar. Ya se sabe cómo es en memoria una batalla viva: el objeto de 0x1E98 bytes, una copia de 0x180 bytes de cada barco que lucha, varias listas y una docena de bloques de la escena ([cloud/battles.md](cloud/battles.md) §8). Antes de reescribirla hay que:
+   - hacer que el oráculo grabe todo eso como regiones, cambiando los punteros por índices;
+   - crear un `SaveGame::battles` que tick_probe lea y compare.
 
-   Mientras falten las batallas, los piratas se paran cuando empezaría una (0x50BC40, 0x50B250, 0x50BA80, 0x611D80).
-3. [ ] La batalla automática en el mar (en marcha: `cloud/battles`):
+   Después se reescriben unas 15 000 instrucciones, en el orden de §8:
    - empezar y acabar: 0x50BC40, 0x605420, 0x50BFD0, 0x6079D0... (unas 7500 instrucciones);
    - cada paso, la operación 0x94 con el método +0x14: 0x606CC0, 0x608F70, 0x6197F0... (unas 7000);
    - un `SaveGame::battles` como memoria del juego, y las regiones de las batallas en el oráculo;
