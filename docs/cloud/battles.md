@@ -29,7 +29,8 @@ encuentros y batallas») and its pieces, in order.
   pirates on in both, 12 saves × 7 days, 0 «distintas»; and the default world,
   the same (§7). Left in it: the disbanding at the nest (0x514B80) and
   retouched states for the branches the saves don't reach.
-- **Piece 3, the automatic sea battle:** not started.
+- **Piece 3, the automatic sea battle:** started: the layout of a live
+  battle and the plan to record and compare it (§8); no code yet.
 - The battle clock rule is decided (below) and written for `docs/oracle.md`.
 
 ## Decisions for the user
@@ -588,6 +589,40 @@ Checked:
 Not checked yet: the branches the saves don't reach (a human target in
 0x515360, a convoy bigger than `[+0xF8]`, `[+0x136]` & 0x80/0x40, a seen ship
 in `[+0x52]`, a target set with the flag 0x40): retouched states to write.
+
+## 8. Piece 3: the automatic sea battle (started: the layout)
+
+What a live sea battle holds (`re/battles/layout.py 5 4`: save 5, the
+battle of day 3, right after 0x605420; heap blocks the object points to, and
+one level down):
+
+| Field | Block | What (seen so far) |
+|-|-|-|
+| the object | 0x1E98 | `[0x6E55D0 + 4·k]`; the fields of §1 |
+| `[+0x4]` | 4 · ships | a pointer per ship of the battle to a **copy of the ship struct (0x180)**: the battle moves these, not the ships of the world |
+| `[+0x8]`, `[+0xC]`, `[+0xA74]`, `[+0xA78]` | 2 · ships | u16 per ship (sides, links) |
+| `[+0x18]`, `[+0x1C]`, `[+0x24]` | 0x50, 0x90, 0x90 | arrays of the scene base (0x618F10) |
+| `[+0x28]`..`[+0x40]` | 0x110 each | blocks of the scene base |
+| `[+0x48]`, `[+0x4C]`, `[+0x50]` | pointer arrays | to more blocks of 0x110 |
+
+So to compare a battle call by call (0x50BC40, then each operation 0x94):
+1. **The oracle** (Recorder/regions) needs a region per battle slot with the
+   object and, after it, every block above, with the pointers inside replaced
+   by the number of the block (as `Q` does for routes). With `--battles`, the
+   jump 0x507BE9 of `PIRATE_JUMPS` goes, and after each tick with battles
+   (`[0x6E59D4]` ≠ 0) the oracle runs operation 0x94 with 84 steps (the rule
+   of «Decisions»), recorded as `535760`.
+2. **p3vita** needs `SaveGame::battles` (255 slots: the object as game memory
+   plus those blocks, with indices instead of pointers), read from the probe
+   regions by tick_probe and compared like the ships.
+3. Then the functions, in this order, each with its probe: 0x611CD0,
+   0x603A70, 0x618F10, 0x618F90, 0x619450, 0x619560, 0x61A1D0, 0x61A4E0 and
+   **0x605420** (the setup), 0x50BC40 (the attack); the step 0x606CC0 and what
+   it calls (0x608850, 0x608F70, 0x609D40, 0x6197F0, 0x61F02F...); the end
+   (0x611740, 0x603BC0, 0x50BFD0, 0x6079D0, 0x608230, 0x60D299, 0x60F479).
+   About 15 000 instructions in all (§5, piece 3).
+
+Not done in this session: the regions, `SaveGame::battles` and the functions.
 
 ## Changes to shared files
 
