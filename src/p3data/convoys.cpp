@@ -96,7 +96,14 @@ void Sailing::update_convoys() {
 			continue;
 		}
 		if (c.u8(0x0) >= save_.merchant_count) {
-			// Piratas: no se reproducen (ver la cabecera).
+			// Piratas: no se reproducen (ver la cabecera), salvo con
+			// set_pirates(true) su estado 0x12 (battle/pirates.cpp; los demás
+			// estados no salen en las partidas).
+			if (pirates_ && c.u16(0x12) == 0x12) {
+				if (pirate_convoy(index, link())) {
+					continue;
+				}
+			}
 			previous = index;
 			continue;
 		}

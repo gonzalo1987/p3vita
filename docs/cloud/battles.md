@@ -1,13 +1,69 @@
-# Battles and encounters: the study (cloud/battles)
+# Battles and encounters (cloud/battles)
 
-Task `tasks/battles.md` of p3vita-datos. Phase 1 (this study) is about the
-battle subsystem of Patrician3.exe (inventory part E, roadmap «Piratas,
-persecuciones, encuentros y batallas»): what is simulation and what is UI,
-where the simulation reaches it from and how often, what the oracle needs to
-run it, and a plan in pieces.
+Task `tasks/battles.md` of p3vita-datos: the study of the battle subsystem
+of Patrician3.exe (inventory part E, roadmap «Piratas, persecuciones,
+encuentros y batallas») and its pieces, in order.
 
-Status: **phase 1 done** (2026-10-31); **phase 2 done for piece 1** of the
-plan, the storms (§6), behind a setting that is off by default. See «Done and left» at the end.
+## Summary
+
+- **Phase 1, the study (done):** the two battle classes (sea battle 0x1E98
+  bytes, town battle 0x2F24, up to 255 in 0x6E55D0, saved in the savegame),
+  what is simulation and what is UI (without the UI: 249 functions / 148 KB
+  for the sea battle, 41 / 50 KB for the town battle, not 1 MB), where
+  `advance_time` starts battles and how often (17 automatic sea battles in 30
+  days of the 12 saves with the pirates moving, all of a pirate convoy against
+  an AI ship; the emulator runs them to the end), how they are stepped
+  (operation 0x94 from the real-time driver, not `advance_time`), that
+  0x5053C0 is the storms, what the oracle needs and a plan in 7 pieces (§1–§5).
+- **Piece 1, the storms (done, merged into `main` at 1c4fbfd and on by
+  default since 61cdbfa):** 0x5053C0, 0x505290 and 0x447580 in
+  `src/p3data/battle/storms.cpp`; call by call 0 differences in the 12 saves
+  (10 days) and in retouched states covering every reachable block; the
+  world with the storms on, 0 differences (§6).
+- **Piece 2, the pirates moving (done behind `--pirates`, with a rule while
+  the battles don't exist):** the convoy state 0x12 (0x507A65) and 0x505C90,
+  0x50D9E0, 0x515360, 0x612930, 0x50E340, 0x5159C0 and the per-town
+  waypoints 0x448780 in `src/p3data/battle/pirates.cpp`; call by call 0
+  differences in the 12 saves, 7 days (9455 calls of 0x505C90, 8064 of
+  0x50D9E0, 5965 of 0x515360, 3265 of 0x612930); the whole world with the
+  pirates on in both, 12 saves × 7 days, 0 «distintas»; and the default world,
+  the same (§7). Left in it: the disbanding at the nest (0x514B80) and
+  retouched states for the branches the saves don't reach.
+- **Piece 3, the automatic sea battle:** started: the layout of a live
+  battle and the plan to record and compare it (§8); no code yet.
+- The battle clock rule is decided (below) and written for `docs/oracle.md`.
+
+## Decisions for the user
+
+- **The battle clock (decided):** one operation 0x94 with 84 steps after
+  each tick in which there are battles (`[0x6E59D4]` ≠ 0). For
+  `docs/oracle.md`: «Las batallas avanzan con la operación 0x94, que en el
+  juego encola el bucle de tiempo real (0x546620 → 0x612DB0) con los pasos
+  del reloj; p3vita y el oráculo la ejecutan, con 84 pasos, al final de cada
+  tick en el que haya batallas, tras las demás operaciones encoladas.» (The
+  result of a battle doesn't depend on how the steps are cut, §3.)
+- **Piece 2 changes the oracle's load** (recommendation: accept): with the
+  pirates on, the per-town precompute 0x448780 runs at the load (today it is
+  skipped, `SKIPPED_WITH_NAVIGATION`), because the pirates choose their
+  waypoints from it ([+0x20], [+0x24] of the navigation object). It adds
+  2.8 s per load and p3vita must compute the same lists.
+- **The rule for piece 2 alone** (recommendation: only as a step, until
+  pieces 3 and 6): while battles don't exist, a pirate that would attack
+  (0x507BE9 → 0x50BC40) goes on as if it had no target, and a pirate convoy
+  that ends its route (0x507C0B → town battle) goes on as if it still sailed.
+  Also, until 0x514B80 is rewritten, a convoy at its nest is not disbanded
+  (0x505FF1 → 0x506029). p3vita (`Sailing::set_pirates`) and the oracle
+  (`--pirates`, `PIRATE_JUMPS`) do the same. Keep `--pirates` off by default
+  until piece 3 removes the first jump.
+- **0x514B80 needs the pirates' pool** (recommendation: next, before piece
+  3): disbanding at the nest moves the ships into the pirate's pool and
+  0x515DA0 plans the nest's buildings in a pool of 8-byte entries ([+0x4]
+  pointer, [+0x8] size, [+0xA] free head of the pirate object) that the
+  savegame reader (0x5138B0) reads but `SaveGame::pirates` (0x18 bytes) and
+  the oracle's regions `Z0..Z4` don't keep. It needs that pool in SaveGame and
+  a region for it (Recorder/regions: coordinate with whoever owns the oracle).
+- The two possible game bugs of «Game bugs» (the battle clock, the town
+  battle reading the town view): to confirm before fixing.
 
 Tools written for the study (in p3vita-datos, branch `cloud/battles`,
 `re/battles/`; nothing in p3vita uses them):
@@ -434,6 +490,140 @@ without the storms (calls to 0x535760 from inside the game). The default
 (storms off) is the code of `main` by construction: `storms_` is false and the
 oracle installs the same jump as before; `world.sh` itself was not rerun.
 
+Since 61cdbfa (`main`) the storms are on by default in p3vita, tick_probe
+and the oracle (`--no-storms` turns them off).
+
+## 7. Piece 2: the pirates moving (in progress)
+
+What runs when the pirates move and no battle starts (`re/battles/pirates.py`
+SAVE DAYS, without recording, against `--off`, the oracle of today; the 12
+saves, 10 days, 3 min): the pirate convoys are only ever in **state 0x12**
+(20 619 passes); no pirate ship alone at sea or in port. New functions entered
+(none in p3vita): 0x505C90, 0x50D9E0, 0x50E340, 0x514B80, 0x515360, 0x515DA0,
+0x612930, 0x621750 (an empty `ret`), and 0x50BC40, the start of a battle.
+
+The handler of state 0x12 (0x507A65, in 0x506720; `c` the convoy, `G` its
+guide):
+1. `G` back in the list by x (0x50CE50) if it is in none; the wait `c[+0x16]`
+   counts down into `G[+0x138]`.
+2. If `c[+0x14] & 0x40` (the target was set by 0x50BA80 / the attack of event
+   0x1E): clear it; if `G[+0x50]` is a merchant's ship sailing (0x0F/0x10) →
+   step 4. Otherwise, every 4 ticks, 0x50D9E0 (choose a target) and 0x515360
+   (worth attacking?) → step 4.
+3. No target: without a route, 0x505C90 (a new course; it may disband the
+   convoy at its nest: the walk goes on from the same link); then the convoy
+   sails (0x502110 with 1) and is sorted by x (0x50D0C0); when its route ends
+   (0x502110 false) it leaves the list and attacks the town `c[+0x1C]` (town
+   battle: 0x611D80, 0x5FBFE0, piece 6).
+4. Attack: if `G[+0x50]` still sails (0x0F), the convoy leaves the list and
+   0x50BC40 starts the sea battle (piece 3).
+
+The functions:
+- **0x50D9E0** (thiscall on the ships object, the guide; 202 instructions):
+  keeps `[+0x50]` if it is sailing (0x0F/0x10), closer than `[0x6DD7A0 +
+  0xFC]` (distance²) and outside the shallows (table 0x673564, the three
+  boxes of `sailing.cpp`); otherwise looks for the nearest ship by the list
+  by x within `[+0xFE]` in x (both ways), not a storm (0x15), closer than
+  `[+0xFA]`, outside the shallows. No owner check here.
+- **0x515360** (cdecl, the guide; 313): whether to attack `T = [+0x50]`
+  (clears `[+0x50]` when not): not its own ([+0x15D]), a merchant's, sailing;
+  an AI merchant without flag 4 in `[+0x8]` only if the pirate doesn't wait
+  (`[+0x138]` = 0); a human only if `[0x39C + home town]` of the merchant +
+  difficulty ≥ 2 and the wait ≤ 0x900. A privateer (`[+0x15D]` a merchant)
+  always. Otherwise compares the convoys: the pirates' best battle speed
+  (0x612930) and the target's worst, `19 · target ≤ 20 · pirates`; the crews
+  and arms (`[+0x40]`, `[+0x120]`) `7 · target ≤ 10 · pirates`; the target
+  carries cargo and a pirate has 2000 free; and the target is not in the
+  shallows (0x50E340). Within 20 px (0x190) it stops (0x516840) and returns
+  1; else it heads for it (route cleared, `[+0x52]` = the target) unless its
+  route already ends next to it.
+- **0x612930** (on 0x6E55D0, a ship; 83): the battle speed of a ship:
+  `(0x1000 − 614 · cargo / capacity) · table 0x67ADC0[type] >> 12` (table
+  0x2B5, 0x2B5, 0x242, 0x242) times the hull factor `clamp(179 · hull / max +
+  0x71, 0xA6, 0x100) >> 10`, times `(captain's [+0x9] + 2550) / 2550` with a
+  captain; 1 without capacity or hull.
+- **0x50E340** (2 arguments): whether a point is in the shallows.
+- **0x505C90** (on the ships object, &link; 443, plus 0x514B80 129,
+  0x515DA0 102, 0x5159C0 72, 0x513BF0 144 and the generator 0x46C320..380):
+  a new course for a convoy without a route: if a ship is weak (crew under
+  the table 0x673660, hull under 80 %, arms under 2 · `[0x672CC8]`) or loaded,
+  it goes home (the nest of its pirate, 0x51A470 → the town table 0x6DDBB0);
+  at the nest it is disbanded (0x514B80, which queues an operation). Else it
+  follows `G[+0x52]` (a ship it saw) or goes to a random waypoint of the
+  per-town lists `[nav+0x20]` (counts) and `[nav+0x24]` (points) with the
+  generator seeded with the tick.
+- **0x448780** (on the navigation object, a town; about 460 instructions,
+  0x448450 for each cell, 0x445010 the route): **the per-town list of
+  waypoints** that 0x4482C0 builds at the load (and 0x448040 for a new town):
+  the water cells (every 16 of the grid) whose route from the town is between
+  two lengths, widening the ring until there are 10. The oracle skips it
+  (`SKIPPED_WITH_NAVIGATION`, «las rutas no lo usan»): with it the load
+  takes 2.8 s more for the 24 towns (save 3: 10 to 29 points per town). p3vita
+  doesn't have it either.
+
+Rewritten in `src/p3data/battle/pirates.cpp` (members of `Sailing`):
+`pirate_convoy` (0x507A65, called from `update_convoys` for the pirate
+convoys in state 0x12 when `set_pirates(true)`), `fn_505c90`, `fn_50d9e0`,
+`fn_515360`, `fn_612930`, `fn_448780` (computed per town the first time a
+waypoint of it is wanted: the game does it at the load, but it has no
+randomness and nothing else reads it), and the free functions `fn_50e340`,
+`fn_5159c0`. Not rewritten: 0x514B80 (see «Decisions»).
+
+The oracle: `town_oracle.py --pirates` (pirate convoys through
+`CONVOY_DISPATCH`, 0x448780 runs at the load, `PIRATE_JUMPS`); tick_probe
+`--pirates`; probes of 0x612930, 0x50D9E0, 0x515360, 0x505C90 in
+`probes_battle.cpp` (0x505C90 receives the address of a variable of
+0x506720 that holds the address of the link: the probe reads it from the
+recorded stack).
+
+Checked:
+- call by call (`town_oracle.py ... 7 50d9e0,515360,612930,505c90 --barcos
+  --cpr --pirates`, then `tick_probe --cpr`): 0 differences in the 12 saves,
+  7 days: 0x505C90 9455 calls, 0x50D9E0 8064, 0x515360 5965, 0x612930 3265
+  (none in saves 1, 2, tut2 and tut4: no pirate convoy at sea); 81 s.
+- the whole world with the pirates on in both (`world.sh` with `--pirates` in
+  the oracle and in tick_probe): 0 «distintas» in the 12 saves, 7 days
+  (363 s); and the default `world.sh 7` in the 12: 0 «distintas» (354 s);
+  «saltadas» as always (1, 0, 0, 0, 5, 0, 4, 0, 0, 2, 5, 7).
+
+Not checked yet: the branches the saves don't reach (a human target in
+0x515360, a convoy bigger than `[+0xF8]`, `[+0x136]` & 0x80/0x40, a seen ship
+in `[+0x52]`, a target set with the flag 0x40): retouched states to write.
+
+## 8. Piece 3: the automatic sea battle (started: the layout)
+
+What a live sea battle holds (`re/battles/layout.py 5 4`: save 5, the
+battle of day 3, right after 0x605420; heap blocks the object points to, and
+one level down):
+
+| Field | Block | What (seen so far) |
+|-|-|-|
+| the object | 0x1E98 | `[0x6E55D0 + 4·k]`; the fields of §1 |
+| `[+0x4]` | 4 · ships | a pointer per ship of the battle to a **copy of the ship struct (0x180)**: the battle moves these, not the ships of the world |
+| `[+0x8]`, `[+0xC]`, `[+0xA74]`, `[+0xA78]` | 2 · ships | u16 per ship (sides, links) |
+| `[+0x18]`, `[+0x1C]`, `[+0x24]` | 0x50, 0x90, 0x90 | arrays of the scene base (0x618F10) |
+| `[+0x28]`..`[+0x40]` | 0x110 each | blocks of the scene base |
+| `[+0x48]`, `[+0x4C]`, `[+0x50]` | pointer arrays | to more blocks of 0x110 |
+
+So to compare a battle call by call (0x50BC40, then each operation 0x94):
+1. **The oracle** (Recorder/regions) needs a region per battle slot with the
+   object and, after it, every block above, with the pointers inside replaced
+   by the number of the block (as `Q` does for routes). With `--battles`, the
+   jump 0x507BE9 of `PIRATE_JUMPS` goes, and after each tick with battles
+   (`[0x6E59D4]` ≠ 0) the oracle runs operation 0x94 with 84 steps (the rule
+   of «Decisions»), recorded as `535760`.
+2. **p3vita** needs `SaveGame::battles` (255 slots: the object as game memory
+   plus those blocks, with indices instead of pointers), read from the probe
+   regions by tick_probe and compared like the ships.
+3. Then the functions, in this order, each with its probe: 0x611CD0,
+   0x603A70, 0x618F10, 0x618F90, 0x619450, 0x619560, 0x61A1D0, 0x61A4E0 and
+   **0x605420** (the setup), 0x50BC40 (the attack); the step 0x606CC0 and what
+   it calls (0x608850, 0x608F70, 0x609D40, 0x6197F0, 0x61F02F...); the end
+   (0x611740, 0x603BC0, 0x50BFD0, 0x6079D0, 0x608230, 0x60D299, 0x60F479).
+   About 15 000 instructions in all (§5, piece 3).
+
+Not done in this session: the regions, `SaveGame::battles` and the functions.
+
 ## Changes to shared files
 
 None of the files reserved for the local session (operations.cpp,
@@ -466,6 +656,13 @@ none of the shared docs. Nothing of Recorder, the regions or `write_diff`.
   declarations of `fn_5053c0`, `fn_505290` and `fn_447580`.
 - `src/p3data/sailing.cpp` (`update_ships`): after `update_convoys()`,
   `if (storms_ && (save_.tick() & 7) == 0) fn_5053c0();` and a comment.
+- Piece 2: `town_oracle.py` gets `--pirates` (constructor argument
+  `pirates=False`, `PIRATE_JUMPS`, `PIRATE_WAYPOINTS` and a `_stub` override
+  that lets 0x448780 run; `_convoy` keeps skipping the pirates without it);
+  `src/p3data/convoys.cpp`: in the pirate skip of `update_convoys`, the call
+  to `pirate_convoy` when `pirates_` (no change without it);
+  `src/p3data/navigation.hpp`: `find_water` (0x448450) public;
+  `sailing.hpp`: the new members; tick_probe `--pirates`.
 - `tools/oracle/tick_probe.cpp`: the option `--storms` (→ `set_storms`) and
   `register_probes_battle`; `tools/oracle/probe_registry.hpp`: its
   declaration; the two `CMakeLists.txt`: the new files.
