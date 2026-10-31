@@ -17,7 +17,7 @@ Branch `cloud/statistics`, from main f9d86eb. Task:
 |-|-|
 | 1. The daily statistics (0x54DE90) | done: rewritten, checked in the 12 saves, on by default |
 | 2. The real `.pst` | done: same bytes as the game's, read back the same |
-| 3. The loader's last three steps | pending |
+| 3. The loader's last three steps | done: load 0 differences in the 12 saves and in retouched ones |
 
 ## 1. The daily statistics (0x54DE90)
 
@@ -144,6 +144,47 @@ p3vita's `.pat` and `.pst` and compares with p3vita's load: `town_oracle.py
 The `.pat` of the same runs: 0 different bytes (save 7: the 12 bytes of
 padding of the battles, `docs/cloud/savegames.md`).
 
+## 3. The loader's last three steps
+
+What 0x549F40 does after reading the sections (`docs/cloud/savegames.md`
+§1.3), now in p3vita and in the oracle:
+
+1. **The ship names** (0x5131B0 on the names object, for each ship of each
+   merchant from the last one, and of each pirate): `finish_load` in
+   `src/p3data/savegame_load.cpp`, called at the end of `load_game_scripts`
+   (it needs the game's ship names). With a version (every save p3vita
+   reads), a ship whose index [+0x15E] is one of the game's 300 names takes
+   that name, in the game's language (in 1.pat ship 0 "Lupus", index 147,
+   becomes "Dawn Greeting"); the tutorial ships of the original game
+   (indexes 0x12C..0x12F with "Adler der See", "Altes Fass", "Willeharm",
+   "Morgengruß", "Sturmwind", "Windgurke", "Nepumuk", "Klabauter",
+   "Seepott" or "Susanna") the index of that name; any other 0x7FFF − type
+   and "snaikka", "crayer", "cog" or "hulk". The search that follows (and
+   0x512D40, which adds a ship name of the save) is only reached by a version
+   0; rewritten anyway, with the save's ship names kept by `parse_names`
+   (`SaveOpaque::save_ship_names`). In the 12 saves it renames 112 to 152
+   ships of each and changes some [+0x15E] in 3 and tut4.
+2. **The routes of the ships** (0x5048C0: 0x517C10 for each ship, from the
+   last one): `Sailing::check_loaded_routes` (`src/p3data/sailing_load.cpp`),
+   at the end of `Sailing::assign_loaded_routes`, since it needs the routes.
+   A ship whose next point [+0x34] doesn't exist or is behind it (by its
+   movement per tick) gets a new route (0x5172A0) to its destination or to
+   the last point of its route; if it is out of the map (2400 × 1800) it
+   first goes to (100, 100). Nothing changes in the 12 saves.
+3. **The trade routes** (0x4D60B0): those neither in the free list nor
+   reached from a ship's [+0x132] go to the free list. In `finish_load`.
+   The saves have none.
+
+`town_oracle.py` does the three in its load (`loader_last_steps`, between
+reading the save's names and the second 0x5121C0, as the game; the route
+check only with the navigation), always: `TownOracle(last_steps=True)`.
+
+| Check | Result |
+|-|-|
+| `tick_probe --carga` (0 days), the 12 saves | 0 differences |
+| `write-retouched.sh` 1, 3, tut4 (2 trade routes) | load 0 differences, 0 different bytes |
+| `write_retouch --routes` on 1 and 3 (a ship with a point [+0x34] it hasn't, one with its own route out of the map), 1 day of the whole world, continuous | 0 different; in the oracle's load ship 1 gets a new route and ship 16 goes to (100, 100) (1), ship 88 a new route (3) |
+
 ## Changes to shared files
 
 - `src/p3data/simulation.cpp` (`advance_game_tick`): after `fn_5315c0`,
@@ -164,4 +205,12 @@ padding of the battles, `docs/cloud/savegames.md`).
 - `tools/oracle/probe_registry.hpp`, `tools/oracle/CMakeLists.txt`,
   `src/p3data/CMakeLists.txt`: the new files.
 - `src/p3data/savegame.hpp`: `Statistics`, `SaveGame::statistics`,
-  `SaveGame::record_statistics`.
+  `SaveGame::record_statistics`, `SaveOpaque::save_ship_names`.
+- `src/p3data/savegame.cpp`: `parse_names` keeps the save's ship names;
+  `load_game_scripts` calls `finish_load`.
+- `src/p3data/sailing.hpp`, `sailing.cpp`: `check_loaded_routes` and
+  `fn_517c10` (in the new `sailing_load.cpp`), called at the end of
+  `assign_loaded_routes`.
+- `tools/oracle/town_oracle.py`: `loader_last_steps` in the load
+  (`last_steps=True`).
+- `tools/oracle/write_retouch.cpp`: `--routes`.

@@ -261,6 +261,7 @@ void Sailing::assign_loaded_routes() {
 			ship.own_route() = assigned.own;
 		}
 	}
+	check_loaded_routes();  // 0x5048C0, at the end of 0x549F40 (sailing_load.cpp)
 }
 
 uint32_t Sailing::speed(const SavedShip& ship) {

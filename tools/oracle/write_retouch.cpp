@@ -4,7 +4,7 @@
 // expiring the notices first. scripts/write-retouched.sh then makes the game
 // (in the emulator) and p3data load it and save it again, and compares.
 //
-// usage: write_retouch <p2arch0_eng.cpr> <save> <out.pat>
+// usage: write_retouch <p2arch0_eng.cpr> <save> <out.pat> [--routes]
 //
 // What it adds (each one with values the saves don't have):
 // - town 0: two lists in its siege object (3 nodes of 8 bytes, 2 of 16);
@@ -76,9 +76,32 @@ std::vector<uint8_t> pattern(size_t n, uint8_t seed) {
 
 }  // namespace
 
+// --routes: only two ships for the route check at the end of the load
+// (0x5048C0, Sailing::check_loaded_routes): one sailing between two towns
+// with a point [+0x34] its route hasn't, one with its own route out of the
+// map (x 3000). The game's loader and Sailing then give both a new route; it
+// needs the navigation, so it is checked with tick_probe --continuo.
+int retouch_routes(SaveGame& save) {
+	int found = 0;
+	for (SavedShip& ship : save.ships) {
+		if (!ship.in_use() || ship.status() != kShipSailing || ship.memory.u32(0x24) == 0) {
+			continue;
+		}
+		if (!(found & 1) && ship.town_route) {
+			ship.memory.u16(0x34) = 0x7FFF;
+			found |= 1;
+		} else if (!(found & 2) && ship.own_route() && ship.route && !ship.route->empty()) {
+			ship.memory.u16(0x1E) = 3000;
+			found |= 2;
+		}
+	}
+	return found;
+}
+
 int main(int argc, char** argv) {
-	if (argc != 4) {
-		std::fprintf(stderr, "usage: write_retouch <p2arch0_eng.cpr> <save> <out.pat>\n");
+	const bool routes = argc == 5 && std::string(argv[4]) == "--routes";
+	if (argc != 4 && !routes) {
+		std::fprintf(stderr, "usage: write_retouch <p2arch0_eng.cpr> <save> <out.pat> [--routes]\n");
 		return 2;
 	}
 	std::string error;
@@ -89,6 +112,21 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 	GlobalMemory& g = save.globals;
+	if (routes) {
+		if (retouch_routes(save) != 3) {
+			std::fprintf(stderr, "the save hasn't the two ships\n");
+			return 1;
+		}
+		const std::vector<uint8_t> raw = write_savegame(save);
+		const std::vector<uint8_t> packed = lz_compress(raw.data(), raw.size());
+		FILE* out = std::fopen(argv[3], "wb");
+		const bool ok = out && std::fwrite(packed.data(), 1, packed.size(), out) == packed.size();
+		if (out) {
+			std::fclose(out);
+		}
+		std::printf("%s\n", ok ? argv[3] : "can't write");
+		return ok ? 0 : 1;
+	}
 
 	// Town 0: the two lists of its siege object.
 	SiegeExtras& extras = save.siege_extras.at(0);

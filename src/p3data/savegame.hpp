@@ -338,6 +338,10 @@ struct SaveOpaque {
 	std::vector<GameMemory<0xDC>> trade_routes;
 	// The battles (0x611AE0 on 0x6E55D0), as in the file.
 	std::vector<uint8_t> battles;
+	// The ship names written by the players that the save carries (the end of
+	// its names section, 0x511E30), in Latin-1: they only last for the load
+	// (savegame_load.hpp).
+	std::vector<std::string> save_ship_names;
 	// The 40 town names of scripts/NamenStaedte_eng.txt (0x5125E0), by town
 	// number, in Latin-1 (the table 0x6DDA00). Read by load_game_scripts.
 	std::vector<std::string> town_names;

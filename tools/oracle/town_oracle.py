@@ -286,7 +286,7 @@ def executor_trampoline(at):
 
 class TownOracle(SaveOracle):
     def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True, rest=(), cpr=None,
-                 operations=OPERATIONS, storms=True, statistics=False):
+                 operations=OPERATIONS, storms=True, statistics=False, last_steps=True):
         super().__init__(exe, save, navdata)
         self.fast_read = fast_reader(self.uc)
         self.navdata = navdata
@@ -302,6 +302,7 @@ class TownOracle(SaveOracle):
             self.uc.mem_write(at, build(at))
             self.rest_trampolines[target] = at
         self.statistics = statistics
+        self.last_steps = last_steps
         _, build = trampoline(STATISTICS, 0)
         self.uc.mem_write(STATISTICS_TRAMPOLINE, build(STATISTICS_TRAMPOLINE))
         self.rand_state = seed
@@ -608,6 +609,35 @@ class TownOracle(SaveOracle):
         self.uc.mem_write(self._arg(3), value + b'\0')
         self._returns(uc, len(value), 0x18)
 
+    def loader_last_steps(self, version):
+        """What 0x549F40 does after reading the sections (0x54A1CD..0x54A2FA):
+        0x5131B0 on the names object for each ship of each merchant (from the
+        last one; his list from [+0xE] by the [+0x4] of each ship) and of each
+        pirate (from [+0xC] of the 5 objects of [0x6DD7AC]), with the ship's
+        [+0x15E], its name [+0x160], its type & 3 and the version; then
+        0x5048C0 (0x517C10 for each ship, from the last one) and 0x4D60B0 on
+        the trade routes (0x6DD728)."""
+        ships = self.u16(SHIPS + 0xF4)
+
+        def register(first):
+            i = first
+            while i < self.u16(SHIPS + 0xF4):
+                ship = self.ship(i)
+                nxt = self.u16(ship + 4)
+                self.call(0x5131B0, [ship + 0x15E, ship + 0x160, self.u8(ship + 0xE) & 3, version], ecx=NAMES)
+                i = nxt
+        for m in range(self.u16(WORLD + 0xA) - 1, -1, -1):
+            register(self.u16(self.merchant(m) + 0xE))
+        for k in range(5):
+            pirate = self.u32(SHIPS + 0xC + 4 * k)
+            if pirate:
+                register(self.u16(pirate + 0xC))
+        if ships and self.navdata:
+            # Only with the navigation (the routes of the ships), as in p3vita
+            # (Sailing::assign_loaded_routes).
+            self.call(0x5048C0, [], ecx=SHIPS)
+        self.call(0x4D60B0, [], ecx=0x6DD728)
+
     def load_names(self, events_end, version):
         """Crea el objeto de los nombres como el juego: 0x5121C0 al arrancar
         (ficheros de scripts/), los nombres de la partida (0x511E30) y otra vez
@@ -645,6 +675,8 @@ class TownOracle(SaveOracle):
         end = self.call(READ_SAVE_NAMES, [FILE + pos + 4, version], ecx=NAMES) - FILE
         if end + 4 != len(self.save):
             raise RuntimeError(f'los nombres acaban en {end} y el fichero en {len(self.save)}')
+        if self.last_steps:
+            self.loader_last_steps(version)
         self.call(LOAD_NAMES, [], ecx=NAMES)
         for h in hooks:
             self.uc.hook_del(h)
