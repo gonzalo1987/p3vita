@@ -72,6 +72,9 @@ RANGES = [
     (0x4ECDF4, 0x4ECF5E),  # event 0x39
     (0x4EA0D4, 0x4EA590),  # event 0x2F
     (0x535FD6, 0x536050),  # operation 0x46
+    (0x510C50, 0x510F98), (0x51D410, 0x51D4B9), (0x51D4C0, 0x51D5E6),  # the militia
+    (0x51FF30, 0x520507),  # the works advance
+    (0x510AA0, 0x510C4B),  # what the weaponsmith makes
 ]
 
 
@@ -945,6 +948,246 @@ def mayor_ops(o):
     return during
 
 
+# --- facilities.cpp ---
+
+WORLD_RECORDS = 0x6DE510  # pointer to the world records (0x14 bytes)
+RECORD_COUNT, RECORD_FREE = WORLD + 0x6, WORLD + 0x7C  # u16
+
+
+def plain_town(o):
+    """A town without a merchant mayor and with [0x2C8] & 0xF10 = 0."""
+    towns, _, merchants, _ = o.counts()
+    return next(t for t in range(towns) if o.u8(o.town(t) + 0x6F1) >= merchants and not o.u32(o.town(t) + 0x2C8) & 0xF10)
+
+
+def militia(o):
+    """Direct calls to 0x510C50 (the militia, facility 0) of a town without
+    a merchant mayor: with its employees not 5 per soldier; with guards to
+    spare for its inhabitants (one dismissed, 0x51D410) and soldiers of the
+    other types to spare for its walls (types 1, 2 and 3 in turn); with the
+    human player as mayor. 0x51D410 directly: a type without soldiers nor
+    recruits, and the third class with fewer than 20 people. 0x51D4C0 with
+    the human player as mayor, with and without an office there."""
+    t = plain_town(o)
+    a = o.town(t)
+    f = a + 0x840
+    player = o.u32(to.PLAYER)
+
+    def soldiers(guards, others):
+        for i, n in enumerate([guards] + list(others)):
+            w8(o, a + 0x998 + i, n)
+            w8(o, a + 0x99C + i, 0)
+        w16(o, a + 0x844, 5 * (guards + sum(others)))
+        w16(o, f + 0x4, 5 * (guards + sum(others)))
+
+    def during(o):
+        w32(o, a + 0x700, 10000000)
+        soldiers(3, (1, 1, 1))
+        w16(o, f + 0x4, 0)
+        direct(o, 0x510C50, [], ecx=f)
+        soldiers(8, (0, 0, 0))
+        w32(o, a + 0x2D4, 300)
+        direct(o, 0x510C50, [], ecx=f)
+        w32(o, a + 0x2D4, 400)
+        w16(o, a + 0x786, 0)
+        for others in ((2, 0, 0), (0, 2, 0), (0, 0, 2)):
+            soldiers(5, others)
+            direct(o, 0x510C50, [], ecx=f)
+        w8(o, a + 0x6F1, player)
+        direct(o, 0x510C50, [], ecx=f)
+        soldiers(2, (0, 0, 0))
+        direct(o, 0x51D410, [3], ecx=a)
+        w32(o, a + 0x2E0, 5)
+        direct(o, 0x51D410, [0], ecx=a)
+        w32(o, a + 0x2E4, 1000)
+        w32(o, a + 0x54, 1000)
+        direct(o, 0x51D4C0, [0], ecx=a)
+        office = facilities_office(o, player, t)
+        if office is not None:
+            w32(o, o.office(office) + 0x54, 1000)
+            direct(o, 0x51D4C0, [0], ecx=a)
+            print(f'player {player}: office {office} in town {t}')
+        for town in range(o.counts()[0]):
+            first = facilities_office(o, player, town)
+            if first is not None and town != t:
+                w8(o, o.town(town) + 0x6F1, player)
+                w32(o, o.town(town) + 0x2E4, 1000)
+                w32(o, o.office(first) + 0x54, 1000)
+                direct(o, 0x51D4C0, [0], ecx=o.town(town))
+                print(f'player mayor of town {town}, where he has office {first}')
+                break
+    return during
+
+
+def facilities_office(o, m, t):
+    """Merchant m's office in town t, or None."""
+    return next((f for f in rt.merchant_offices(o, m) if o.u8(o.office(f) + 0x2C6) == t), None)
+
+
+def works_completion(o):
+    """Direct calls to 0x51FF30 (the town's works advance) on a works list
+    made of new records (0x51F100) with 1 day left: owned by a merchant with
+    an office there, the types of each way to finish (shipyard, to the town,
+    wall, tower, big tower, the gate that replaces a piece, free) and by the
+    town (free, shipyard, list, flag, replace); first with [0x2C8] & 0x800
+    (the 0x30 waits), then without it."""
+    m = rt.ai_with_office(o)[0]
+    t = office_town(o, m)
+    a = o.town(t)
+    walls = records(o, t, 0x768)
+    gate37 = next((r for r in walls if r[4] == 0x37), walls[0])
+    gate38 = next((r for r in walls if r[4] == 0x38), walls[0])
+    plan = [(m, 1, None), (m, 3, None), (m, 0x30, None), (m, 0x36, None), (m, 0x37, None), (m, 0x34, gate37),
+            (m, 2, None), (0xFF, 2, None), (0xFF, 1, None), (0xFF, 0x1F, None), (0xFF, 0x2E, None), (0xFF, 0x35, gate38)]
+    base = o.u32(a + 0x75C)
+    link = a + 0x762
+    while o.u16(link) < o.u16(a + 0x776):
+        link = base + 8 * o.u16(link) + 4
+    for owner, kind, at in plan:
+        r = o.call(0x51F100, [], ecx=a) & 0xFFFF
+        base = o.u32(a + 0x75C)
+        x, y = (at[1], at[2]) if at else (o.u8(a + 0x800), o.u8(a + 0x801))
+        o.uc.mem_write(base + 8 * r, bytes([x, y, owner, kind]) + struct.pack('<H', 0xFFFF) + bytes([1, 0]))
+        w16(o, link, r)
+        link = base + 8 * r + 4
+        print(f'record {r}: owner {owner}, type {kind:#x} at ({x}, {y})')
+
+    def during(o):
+        w32(o, a + 0x2C8, o.u32(a + 0x2C8) | 0x800)
+        direct(o, 0x51FF30, [200], ecx=a)
+        w32(o, a + 0x2C8, o.u32(a + 0x2C8) & ~0x800)
+        direct(o, 0x51FF30, [200], ecx=a)
+    return during
+
+
+def world_records(o):
+    """Direct calls on the world records: 0x4D36E0 (an office's business)
+    with 6 and 9 of the type; 0x5306B0 with no free record left (the table
+    grows by 0x40); 0x530780 on a record already free and on a business with
+    employees (with fewer poor than twice them and with more)."""
+    count = o.u16(RECORD_COUNT)
+    table = o.u32(WORLD_RECORDS)
+    business = next(i for i in range(count) if o.u8(table + 0x14 * i + 6) < 0x15 and o.u8(table + 0x14 * i + 7) < o.counts()[0]
+                    and o.u16(table + 0x14 * i + 0x8) == 0xFFFF and i != o.u16(RECORD_FREE))
+    print(f'{count} world records, free head {o.u16(RECORD_FREE)}, business {business}')
+
+    def during(o):
+        rec = o.u32(WORLD_RECORDS) + 0x14 * business
+        for n in (6, 9):
+            direct(o, 0x4D36E0, [n], ecx=rec)
+        free = o.u16(RECORD_FREE)
+        if free < o.u16(RECORD_COUNT):
+            direct(o, 0x530780, [free], ecx=WORLD)
+        town = o.town(o.u8(rec + 7))
+        w16(o, rec + 4, 30)
+        w32(o, town + 0x2E0, 20)
+        direct(o, 0x530780, [business], ecx=WORLD)
+        w16(o, RECORD_FREE, o.u16(RECORD_COUNT))
+        print(f'0x5306B0 → {direct(o, 0x5306B0, [], ecx=WORLD) & 0xFFFF}, count {o.u16(RECORD_COUNT)}')
+    return during
+
+
+def wall_level(o):
+    """Direct calls to 0x5252F0 (the wall's level): a town whose first
+    pending piece is not the town's and no piece is 0xFE's (0); one without
+    pending pieces and without the point 2 (2)."""
+    towns = o.counts()[0]
+    t1, t2 = 0, 1
+
+    def during(o):
+        a = o.town(t1)
+        pending = records(o, t1, 0x766)
+        w8(o, o.u32(a + 0x75C) + 8 * pending[0][0] + 2, 3)
+        for r in records(o, t1, 0x768):
+            if r[3] == 0xFE:
+                w8(o, o.u32(a + 0x75C) + 8 * r[0] + 2, 0xFD)
+        direct(o, 0x5252F0, [], ecx=a)
+        a = o.town(t2)
+        w16(o, a + 0x766, o.u16(a + 0x776))
+        w8(o, a + 0x7B4, 0xFF)
+        direct(o, 0x5252F0, [], ecx=a)
+    return during
+
+
+def shipyard_repair(o):
+    """Direct calls to 0x508AA0 (the shipyard repairs; thiscall on the ships
+    object, with the town and the work) with two AI ships put in the town's
+    repair list [0x81E]: one that ends with orders 2 and one that doesn't
+    with orders 1."""
+    m = rt.ai_with_office(o)[0]
+    t = office_town(o, m)
+    a = o.town(t)
+    s1, s2 = merchant_ships(o, m)[:2]
+
+    def during(o):
+        for s, health, orders in ((s1, -10, 2), (s2, -100000, 1)):
+            sa = o.ship(s)
+            w32(o, sa + 0x18, o.s32(sa + 0x14) + health)
+            w8(o, sa + 0x136, orders)
+        w16(o, o.ship(s1) + 0x6, s2)
+        w16(o, o.ship(s2) + 0x6, 0xFFFF)
+        w16(o, a + 0x81E, s1)
+        direct(o, 0x508AA0, [t, 1000], ecx=to.SHIPS)
+    return during
+
+
+def weaponsmith(o):
+    """Direct calls on the weaponsmith (facility 3) of town 0: 0x510AA0 with
+    the weapon it makes ([0x6D0] = 0x15) still in its range (kept); 0x50F6E0
+    with its [+0x0] at 0 (it becomes 0x400)."""
+    a = o.town(0)
+    f = a + 0x840 + 16 * 3
+
+    def during(o):
+        w32(o, a + 0x6D0, 0x15)
+        direct(o, 0x510AA0, [], ecx=f)
+        w32(o, f, 0)
+        direct(o, 0x50F6E0, [a, 0x15], ecx=f)
+    return during
+
+
+def office_recount(o):
+    """Direct calls to 0x4FF2D0 (an office recounts its buildings) on an AI
+    merchant's office: with [0x2F0] > 0; with a store (0x1E) still pending
+    in its list; with one of its businesses (world records, [0x2CC]) whose
+    buildings are gone (it is removed: 0x50E380 and 0x530780)."""
+    def buildings(f):
+        oa = o.office(f)
+        a = o.town(o.u8(oa + 0x2C6))
+        n, r, k = o.u16(a + 0x776), o.u16(oa + 0x2CE), 0
+        while r < n:
+            k += 1
+            r = o.u16(o.u32(a + 0x75C) + 8 * r + 4)
+        return k
+    office, m = max(((f, m) for m in rt.ai_with_office(o) for f in rt.merchant_offices(o, m)), key=lambda x: buildings(x[0]))
+    oa = o.office(office)
+    t = o.u8(oa + 0x2C6)
+    a = o.town(t)
+    print(f'merchant {m}, office {office} in town {t} ({buildings(office)} buildings)')
+
+    def during(o):
+        w16(o, oa + 0x2F0, 1)
+        direct(o, 0x4FF2D0, [], ecx=oa)
+        w16(o, oa + 0x2F0, 0)
+        base = o.u32(a + 0x75C)
+        n = o.u16(a + 0x776)
+        r, kinds = o.u16(oa + 0x2CE), []
+        while r < n:
+            kinds.append((r, o.u8(base + 8 * r + 3)))
+            r = o.u16(base + 8 * r + 4)
+        print(f'its buildings: {kinds}')
+        if kinds:
+            first, kind = kinds[0]
+            w8(o, base + 8 * first + 3, 0x1E)
+            w8(o, base + 8 * first + 6, 3)
+            direct(o, 0x4FF2D0, [], ecx=oa)
+            gone = [r for r, k in kinds if k == kind]
+            for r in gone:
+                w8(o, base + 8 * r + 3, 0x1E)
+            direct(o, 0x4FF2D0, [], ecx=oa)
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -996,15 +1239,32 @@ SCENARIOS = {
         '4ecdf4>4ecf58', '4ece19>4ecf58', '4ece48', '4ece9c>4ecf58', '4ecea4', '4ea0f9']),
     'mayor_ops': Scenario(mayor_ops, [0x535760], 0, [
         '535fd6>537025', '535fed>537025', '535ffe>537025', '536039>537025']),
+    # facilities.cpp
+    'militia': Scenario(militia, [0x510C50, 0x51D410, 0x51D4C0], 0, [
+        '510cfb', '@510ebd', '@510f30', '@510f53', '@510f5c', '510e67>510f75', '51d43f>51d4b7', '51d497', '@51d587']),
+    'works_completion': Scenario(works_completion, [0x51FF30], 0, [
+        '@520022', '520127', '52010c', '5201ac', '5201c7', '5201e9', '52020c', '520298', '520324', '520316', '520352',
+        '520369', '5203dd']),
+    'world_records': Scenario(world_records, [0x4D36E0, 0x5306B0, 0x530780], 0, ['@4d373e', '@5306d3', '@53079e']),
+    'wall_level': Scenario(wall_level, [0x5252F0], 0, ['@525343', '@52535a']),
+    'shipyard_repair': Scenario(shipyard_repair, [0x508AA0], 0, ['@508bf6', '@508c20']),
+    'weaponsmith': Scenario(weaponsmith, [0x510AA0, 0x50F6E0], 0, ['510b29>510c45', '@50f724']),
+    'office_recount': Scenario(office_recount, [0x4FF2D0], 0, ['@4ff31b', '@4ff3d1', '@4ff64e']),
 }
 
 
 class Blocks:
     """The blocks run in RANGES and the edges between consecutive ones of
-    the same emulator run."""
+    the same emulator run; and the instructions of the '@' targets run."""
 
-    def __init__(self, o):
+    def __init__(self, o, targets=()):
         self.blocks, self.edges, self.last = set(), set(), None
+        self.ran = set()
+        from unicorn import UC_HOOK_CODE
+        for t in targets:
+            if t.startswith('@'):
+                a = int(t[1:], 16)
+                o.uc.hook_add(UC_HOOK_CODE, lambda uc, address, size, data: self.ran.add(address), begin=a, end=a)
         for lo, hi in RANGES:
             o.uc.hook_add(UC_HOOK_BLOCK, self._hit, begin=lo, end=hi)
         start = o.uc.emu_start
@@ -1023,7 +1283,9 @@ class Blocks:
     def report(self, targets):
         missing = 0
         for t in targets:
-            if '>' in t:
+            if t.startswith('@'):
+                hit = int(t[1:], 16) in self.ran
+            elif '>' in t:
                 a, b = (int(x, 16) for x in t.split('>'))
                 hit = (a, b) in self.edges
             else:
@@ -1059,7 +1321,7 @@ def main():
         inspect(o)
         return
     s = SCENARIOS[a.scenario]
-    blocks = Blocks(o)
+    blocks = Blocks(o, s.targets)
     o.load()
     during = s.setup(o)
     functions = [int(x, 16) for x in a.functions.split(',')] if a.functions else s.functions

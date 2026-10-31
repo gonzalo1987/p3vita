@@ -246,7 +246,7 @@ void weaponsmith(SaveGame& save, FacilityMemory& f, StorageMemory& storage, uint
 	const uint32_t kind = item - 0x14;
 	const uint32_t day = (save.globals.u32(global::kWorldTick) >> 8) & 7;
 	if (f.s32(0x0) == 0) {
-		f.s32(0x0) = 0x400;  // Sin comprobar con el oráculo
+		f.s32(0x0) = 0x400;  // Checked with the oracle: scenario weaponsmith (saves 3 and 5, direct calls).
 	}
 	// Producción diaria de las cuatro armas, fabrique lo que fabrique.
 	for (size_t w = 0; w < 4; ++w) {
@@ -368,7 +368,8 @@ void set_office_business(SaveGame& save, GameMemory<0x14>& r, int32_t n) {
 	const int32_t productivity = save.towns[r.u8(0x7)].memory.u16(0x840 + 16 * type + 0x8);
 	int32_t efficiency = productivity;
 	if (n >= 6) {
-		// Con 9 o más, sin comprobar con el oráculo.
+		// From 6 and from 9: checked with the oracle, scenario world_records (saves 3
+		// and 5, direct calls).
 		efficiency = n >= 9 ? productivity + productivity / 10 : productivity * 106 / 100;
 	} else if (n >= 3) {
 		efficiency = productivity * 103 / 100;
@@ -396,10 +397,10 @@ uint8_t fn_5252f0(const SaveGame& save, int town) {
 				return 1;
 			}
 		}
-		return 0;  // Sin comprobar con el oráculo
+		return 0;  // Checked with the oracle: scenario wall_level (saves 3 and 5, direct calls).
 	}
 	if (!fn_4fcfe0(save, town, 2)) {
-		return 2;  // Sin comprobar con el oráculo
+		return 2;  // Checked with the oracle: scenario wall_level (saves 3 and 5, direct calls).
 	}
 	if (!fn_4fcfe0(save, town, 1)) {
 		return 1;
@@ -433,7 +434,8 @@ void fn_51d410(SaveGame& save, int town, uint32_t type) {
 	uint8_t& soldiers = t.u8(0x998 + type);
 	uint8_t& recruits = t.u8(0x99C + type);
 	if (soldiers == 0 && recruits == 0) {
-		return;  // Sin comprobar con el oráculo
+		return;  // Only from operation 0x40 (the interface).
+		// Checked with the oracle: scenario militia (saves 3 and 5, direct calls).
 	}
 	if (recruits > 0) {
 		--recruits;
@@ -448,7 +450,7 @@ void fn_51d410(SaveGame& save, int town, uint32_t type) {
 			c -= left;
 			break;
 		}
-		left = sub32(add32(left, 1), c);  // Sin comprobar con el oráculo
+		left = sub32(add32(left, 1), c);  // Checked with the oracle: scenario militia (saves 3 and 5, direct calls).
 		c = 1;
 	}
 	t.u16(0x844) = uint16_t(t.u16(0x844) - 5);
@@ -482,7 +484,7 @@ void fn_51d4c0(SaveGame& save, int town, uint32_t type) {
 	int32_t* weapons = &t.s32(0x54 + 4 * type);
 	const uint8_t mayor = t.u8(0x6F1);
 	if (mayor < merchant_count(save) && save.merchants[mayor].memory.u16(0x8) == 0) {
-		// Sin comprobar con el oráculo
+		// A human mayor: his office's weapons. Checked with the oracle: scenario militia (saves 3 and 5, direct calls).
 		const int office = fn_5308a0(save, mayor, t.u8(0x2C0));
 		if (office < 0) {
 			return;
@@ -565,10 +567,10 @@ void fn_508aa0(SaveGame& save, int town, int32_t work) {
 			ship.timer() = 0;
 			ship.next_in_list() = save.globals.u16(kDockedHead);
 			if (ship.orders() == 2) {
-				ship.orders() = 1;  // Sin comprobar con el oráculo
+				ship.orders() = 1;  // Checked with the oracle: scenario shipyard_repair (saves 3 and 5, direct calls).
 			}
 		} else if (ship.orders() == 1) {
-			// Sin comprobar con el oráculo
+			// Checked with the oracle: scenario shipyard_repair (saves 3 and 5, direct calls).
 			t.s32(0x814) = add32(t.s32(0x814), work);
 			*link = ship.next_in_list();
 			ship.status() = 5;
@@ -615,7 +617,7 @@ void fn_51ff30(SaveGame& save, int town, uint32_t workers) {
 			continue;
 		}
 		if (no_0x30 && r.type == 0x30) {
-			link = &r.next;  // Sin comprobar con el oráculo
+			link = &r.next;  // Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 			continue;
 		}
 		if (r.pending > 5 || r.pending > left) {
@@ -644,7 +646,7 @@ void fn_51ff30(SaveGame& save, int town, uint32_t workers) {
 			}
 			switch (action) {
 			case kOwnedShipyard:
-				// Sin comprobar con el oráculo
+				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 				t.u32(0x76C) |= 0x80;
 				t.u16(0x854) = 1;  // Empleados del astillero (instalación 1).
 				t.s32(0x2E0) = add32(t.s32(0x2E0), 4);
@@ -652,7 +654,7 @@ void fn_51ff30(SaveGame& save, int town, uint32_t workers) {
 				free_record(st, index);
 				break;
 			case kOwnedTownList:
-				// Sin comprobar con el oráculo
+				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 				r.owner = 0xFF;
 				r.next = t.u16(0x764);
 				t.u16(0x764) = index;
@@ -676,41 +678,41 @@ void fn_51ff30(SaveGame& save, int town, uint32_t workers) {
 				t.u16(0x764) = index;
 				break;
 			case kOwnedWall:
-				// Sin comprobar con el oráculo
+				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 				r.owner = 0xFF;
 				r.next = t.u16(0x768);
 				t.u16(0x768) = index;
 				break;
 			case kOwnedTower:
 			case kOwnedBigTower:
-				// Sin comprobar con el oráculo
+				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 				t.u16(0x786) = uint16_t(t.u16(0x786) + (action == kOwnedTower ? 1 : 3));
 				r.owner = 0xFF;
 				r.next = t.u16(0x768);
 				t.u16(0x768) = index;
 				break;
 			case kOwnedReplaceWall:
-				// Sin comprobar con el oráculo
+				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 				replace_wall(st, r.x, r.y);
 				free_record(st, index);
 				break;
 			default:
-				free_record(st, index);  // Sin comprobar con el oráculo
+				free_record(st, index);  // Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 				break;
 			}
 			// 0x4D6530: aviso al dueño (no se traduce).
 		} else if (r.type <= 0x38) {
 			switch (kTownCompletion[r.type]) {
 			case kTownFree:
-				free_record(st, index);  // Sin comprobar con el oráculo
+				free_record(st, index);  // Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 				break;
 			case kTownShipyard:
-				// Sin comprobar con el oráculo
+				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 				t.u32(0x76C) |= 0x80;
 				free_record(st, index);
 				break;
 			case kTownList:
-				// Sin comprobar con el oráculo
+				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 				r.next = t.u16(0x764);
 				t.u16(0x764) = index;
 				break;
@@ -720,7 +722,7 @@ void fn_51ff30(SaveGame& save, int town, uint32_t workers) {
 				fn_520bd0(save, town);
 				break;
 			case kTownFlag:
-				// Sin comprobar con el oráculo
+				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 				t.u32(0x76C) |= 0x20000;
 				free_record(st, index);
 				break;
@@ -729,7 +731,7 @@ void fn_51ff30(SaveGame& save, int town, uint32_t workers) {
 				t.u16(0x768) = index;
 				break;
 			case kTownReplaceWall:
-				// Sin comprobar con el oráculo
+				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
 				replace_wall(st, r.x, r.y);
 				free_record(st, index);
 				break;
@@ -772,7 +774,8 @@ uint16_t fn_5306b0(SaveGame& save) {
 	if (g.u16(kWorldRecordFree) >= g.u16(kWorldRecordCount)) {
 		const uint16_t old = g.u16(kWorldRecordCount);
 		g.u16(kWorldRecordFree) = old;
-		const uint16_t size = old < 0x14 ? 0x80 : uint16_t(old + 0x40);  // + 0x40: sin comprobar con el oráculo
+		const uint16_t size = old < 0x14 ? 0x80 : uint16_t(old + 0x40);  // Growing by 0x40: checked with the oracle, scenario
+		// world_records (saves 3 and 5, direct calls).
 		g.u16(kWorldRecordCount) = size;
 		save.world_records.resize(size);
 		for (uint32_t i = old; i < size; ++i) {
@@ -790,7 +793,7 @@ uint16_t fn_5306b0(SaveGame& save) {
 // 0x530780: devuelve un registro del mundo a la lista libre. Si era una empresa
 // con empleados, el doble salen de los pobres y de los acomodados.
 void fn_530780(SaveGame& save, uint32_t record) {
-	// Sin comprobar con el oráculo
+	// Checked with the oracle: scenario world_records (saves 3 and 5, direct calls).
 	GlobalMemory& g = save.globals;
 	const uint16_t count = g.u16(kWorldRecordCount);
 	const uint16_t head = g.u16(kWorldRecordFree);
@@ -850,7 +853,7 @@ void fn_510c50(SaveGame& save, int town, int facility) {
 	}
 	const uint32_t employees = uint32_t(soldiers) * 5;
 	if (f.u16(0x4) != employees) {
-		// Sin comprobar con el oráculo
+		// Checked with the oracle: scenario militia (saves 3 and 5, direct calls).
 		const int32_t moved = int32_t((employees - f.u16(0x4)) << 2);
 		f.u16(0x4) = uint16_t(employees);
 		const int32_t beggars = sub32(t.s32(0x2E4), moved);
@@ -903,7 +906,7 @@ void fn_510c50(SaveGame& save, int town, int facility) {
 	fn_529f90(save, home, pay, 5);
 	const uint8_t mayor = t.u8(0x6F1);
 	if (mayor < merchant_count(save) && save.merchants[mayor].memory.u16(0x8) == 0) {
-		return;  // Sin comprobar con el oráculo
+		return;  // Checked with the oracle: scenario militia (saves 3 and 5, direct calls).
 	}
 	if (t.u32(0x2C8) & 0xF10) {
 		for (uint32_t i = 0; i < 4; ++i) {
@@ -917,7 +920,7 @@ void fn_510c50(SaveGame& save, int town, int facility) {
 	if (wanted > guards) {
 		fn_51d4c0(save, home, 0);
 	} else if (wanted < guards && wanted > 0) {
-		fn_51d410(save, home, 0);  // Sin comprobar con el oráculo
+		fn_51d410(save, home, 0);  // Checked with the oracle: scenario militia (saves 3 and 5, direct calls).
 	}
 	// De los tipos 1..3, uno por cada 5 defensas de la muralla.
 	const int32_t wanted_others = int32_t(t.u16(0x786)) / 5;
@@ -928,7 +931,7 @@ void fn_510c50(SaveGame& save, int town, int facility) {
 	if (wanted_others > others) {
 		fn_51d4c0(save, home, (save.globals.u32(global::kWorldDayOfYear) & 1) + 1);
 	} else if (wanted_others < others) {
-		// Sin comprobar con el oráculo
+		// Checked with the oracle: scenario militia (saves 3 and 5, direct calls).
 		if (t.u8(0x99D) + t.u8(0x999) > 0) {
 			fn_51d410(save, home, 1);
 		} else if (t.u8(0x99E) + t.u8(0x99A) > 0) {
@@ -945,7 +948,9 @@ void fn_50e500(SaveGame& save, int town, int facility) {
 }
 
 void fn_50e500(SaveGame& save, StorageMemory& s, FacilityMemory& f) {
-	militia_beer(save, f, s);  // Sin comprobar con el oráculo
+	militia_beer(save, f, s);  // Unreachable: the offices never have businesses of types 0..3 (their
+	// buildings of those types go to the town, 0x51FF30), so 0x4D3780 never
+	// calls this.
 }
 
 // 0x50E570: el astillero gasta brea del almacén (la ciudad) y trabaja en los
@@ -955,7 +960,9 @@ void fn_50e570(SaveGame& save, int town, int facility) {
 }
 
 void fn_50e570(SaveGame& save, StorageMemory& s, FacilityMemory& f) {
-	shipyard(save, f, s);  // Sin comprobar con el oráculo
+	shipyard(save, f, s);  // Unreachable: the offices never have businesses of types 0..3 (their
+	// buildings of those types go to the town, 0x51FF30), so 0x4D3780 never
+	// calls this.
 }
 
 // 0x50E610: obras de la ciudad. Avanzan con un punto por empleado (0x51FF30);
@@ -991,7 +998,7 @@ uint32_t fn_510aa0(SaveGame& save, int town, int facility) {
 	int32_t level = int32_t(fn_52bb00(save, f.u8(0x7)));
 	uint32_t last_weapon;
 	if (level <= 1) {
-		level = 2;  // Sin comprobar con el oráculo
+		level = 2;  // Unreachable: 0x52BB00 gives 2..5.
 		last_weapon = 0x15;
 	} else if (level <= 2) {
 		last_weapon = 0x15;
@@ -1002,7 +1009,7 @@ uint32_t fn_510aa0(SaveGame& save, int town, int facility) {
 	uint32_t ware = 0x14 + (t.s32(0x44) <= 0 ? 1 : 0);
 	const uint32_t current = t.u32(0x6D0);
 	if (current >= ware && current <= last_weapon) {
-		return current;  // Sin comprobar con el oráculo
+		return current;  // Checked with the oracle: scenario weaponsmith (saves 3 and 5, direct calls).
 	}
 	// Armas: existencias × 1024 / tercer umbral de precio.
 	for (; ware <= last_weapon; ++ware) {
@@ -1051,7 +1058,9 @@ void fn_50f6e0(SaveGame& save, int town, int facility, uint32_t item) {
 }
 
 void fn_50f6e0(SaveGame& save, StorageMemory& s, FacilityMemory& f, uint32_t item) {
-	weaponsmith(save, f, s, item);  // Sin comprobar con el oráculo
+	weaponsmith(save, f, s, item);  // Unreachable: the offices never have businesses of types 0..3 (their
+	// buildings of those types go to the town, 0x51FF30), so 0x4D3780 never
+	// calls this.
 }
 
 // 0x4FF2D0: recuenta las empresas y casas de una oficina: almacenes ([0x2EC],
@@ -1067,7 +1076,7 @@ void fn_4ff2d0(SaveGame& save, int office) {
 	int16_t businesses[21] = {};
 	o.u16(0x2D2) = 0;
 	if (o.u16(0x2F0) > 0) {
-		o.u16(0x2EC) = 0;  // Sin comprobar con el oráculo
+		o.u16(0x2EC) = 0;  // Checked with the oracle: scenario office_recount (saves 3 and 5, direct calls).
 		o.u16(0x2EE) = 0x32;
 	} else {
 		o.u16(0x2EC) = 0x32;
@@ -1087,7 +1096,7 @@ void fn_4ff2d0(SaveGame& save, int office) {
 			++businesses[r.type];
 		} else if (r.type == 0x1E) {
 			if (r.pending > 0) {
-				r.pending = 0;  // Sin comprobar con el oráculo
+				r.pending = 0;  // Checked with the oracle: scenario office_recount (saves 3 and 5, direct calls).
 			}
 			o.u16(0x2EC) = uint16_t(o.u16(0x2EC) + 200);
 		}
@@ -1173,7 +1182,8 @@ void fn_4ff2d0(SaveGame& save, int office) {
 			businesses[type] = -1;
 			link = &r.u16(0x8);
 		} else {
-			// Sin comprobar con el oráculo
+			// A business whose buildings are gone. Checked with the oracle: scenario
+			// office_recount (saves 3 and 5, direct calls).
 			fn_50e380(save, facility_of(r), r.u16(0x4), true);
 			*link = r.u16(0x8);
 			r.u16(0x8) = 0xFFFF;
