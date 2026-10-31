@@ -14,7 +14,10 @@ task owns, checked against the game with retouched states.
   `tools/oracle/unchecked.sh` (runs scenarios in several saves, 4 at a time,
   and repeats each recording with `tick_probe`) and
   `tools/oracle/probes_unchecked.cpp` (probes for 0x51A4E0, 0x51A750,
-  0x516170 and 0x5144A0).
+  0x516170, 0x5144A0, 0x4F9C80, 0x4FA7F0, 0x5250D0, 0x51F3A0, 0x4F8A50,
+  0x4F8C70 and 0x4F8560; the ones with pointers to the caller's variables
+  take them in scratch globals, 0x6DFF00..0x6DFFFF, that the game never
+  uses).
 - **`alderman.cpp`** (the path to Alderman, the priority): its 28 marks are
   gone. 27 branches checked with 10 scenarios (19 runs in saves 1, 3 and 5:
   81 of 81 target branches run by the game, 2757 calls repeated, 0
@@ -22,8 +25,14 @@ task owns, checked against the game with retouched states.
   difference found and fixed: operation 0x3B with a merchant out of the
   world, a game bug now reproduced (see «Game bugs»). Whole world after it:
   `world.sh 7`, 12 saves in three batches, 0 different.
+- **`construction.cpp`**: its 42 marks are gone, all checked with 7
+  scenarios (14 runs in saves 3 and 5: 130 of 130 target branches run, 472
+  calls repeated, 0 different). Two gaps rewritten on the way: 0x51FAB0
+  building at once (`immediate`, an `assert(false)` before; only the
+  interface and 0x545F50 use it) and the store (0x1E) a merchant builds,
+  which recounts his office (0x4FF2D0). Whole world: 0 different.
 
-Left: `construction.cpp` (42), `new_town.cpp` (21), `facilities.cpp` (35),
+Left: `new_town.cpp` (21), `facilities.cpp` (35),
 `offices.cpp` (28), `businesses.cpp` (7), `population.cpp` (8),
 `merchants.cpp` (6), `diet.cpp` (15), `sieges.cpp` (17), `grid.cpp` (6).
 
@@ -114,6 +123,41 @@ doesn't rewrite yet (the pirate fleets, 0x514000, and the battles); the
 rest are states a game reaches (a pirate whose ships were lost, 26 towns,
 the lair's pirate out at sea...).
 
+## construction.cpp
+
+42 marks: all checked, 0 left. Scenarios (saves 3 and 5; 0 days: direct
+calls and operations run while recording):
+
+| Branch (p3vita) | Game | Scenario |
+|---|---|---|
+| 0x4F9C80: type ≥ 0x39; every type's site (both orientations and flags); out of the grid; the start is already a site | 0x4F9C80→0x4FA10D, 0x4F9CC9→0x4FA10D, 0x4F9CA6, 0x4F9CBB, the 17 case blocks, 0x4F9EAB→0x4F9EE2 | `site_search` |
+| 0x51FAB0: type < 0x15 without a site; houses next to one of their type (both branches); bath; shipyard; tower at once | 0x51FAE0→0x51FE7F, 0x51FBBC, 0x51FBC0, 0x51FC05, 0x51FC17, 0x51FC4D | `site_search` |
+| 0x51FAB0 at once (rewritten): a house (0x521900) and a tower (0x523830) | 0x51FDB3, 0x51FDD9 | `site_search` |
+| 0x5250D0: x wraps at the left edge | 0x525177 | `site_search` |
+| 0x5254C0: types ≥ 0x30 at the end | 0x52552B | `tower_ops`, `wall_ops` |
+| 0x521900: type ≥ 0x30; the fisherman's hemp halved; a municipal building already built; a business in a siege; the arsenal's wall (0x522B20); bath, well, 0x2A, 0x2B refused | 0x521919, 0x521A08, 0x521DA3, 0x521AE2, 0x521E12, 0x52207F, 0x5220E5, 0x522169, 0x5221C1 | `build_ops` |
+| 0x521900 by a merchant: no office (0x4F5450), the store (+ 0x4FF2D0, rewritten), 0x29/0x2C (0x4F8A50), 0x2A/0x2B (0x4F8C70), 0x22 (0x4F8560) | 0x522415, 0x522533, 0x52255A, 0x5225A2, 0x522592 | `build_ops` |
+| 0x4F8A50: no inhabitants, without `count`, few | 0x4F8A50→0x4F8AE6, 0x4F8AC7, 0x4F8AA8 | `chapel_reputation` (direct), `build_ops` |
+| 0x4F8560 (op 0x37): town out of the world, poor, already paid, 0x6DE52A, paid | 0x4F8560/0x4F858F→0x4F8672, 0x4F85AF/0x4F85C5→0x4F8661, 0x4F85D3 | `build_ops` |
+| 0x523830: no piece there; a wall piece and a 0x32 in a siege; a new tower | 0x523927→0x523D66, 0x523990, 0x5239C0→0x523D66 | `tower_ops`, `tower_ops_big` |
+| 0x523D70: a gate on a finished piece (with the reproduced tools bug) | 0x523E3D | `tower_ops` |
+| 0x51F3A0: the fisherman's hemp halved | 0x51F44C | `cost_fisherman` (direct) |
+| 0x522C70: siege; the wall closed | 0x522CA3→0x523803, 0x5230DC | `wall_ops` |
+| ops 0x27 (out of the world, hemp bit), 0x23, 0x24, 0x22 (out of the world), 0x22 of 0x36..0x39 | 0x535BBC→0x537025, 0x535BE8, 0x535B12/0x535B44→0x537025, 0x53CE30→0x53CEF2, 0x53CF25 | `build_ops` |
+
+Calls repeated (all equal): 0x4F9C80 230, 0x535760 81, 0x521900 34,
+0x51FAB0 28, 0x5254C0 24, 0x523830 17, 0x4F8A50 12, 0x4F8560 12, 0x5250D0
+6, 0x4FA7F0 6, 0x51F3A0 6, 0x4F8C70 6, 0x522C70 4. The sites are prepared
+by writing the cell of the grid with the class each type asks for.
+
+Reachability: types ≥ 0x39 (0x4F9C80) and ≥ 0x30 (0x521900) no caller
+passes; 0x4F8A50 without `count` only from operation 0x25 (0x5244F0),
+which the simulation doesn't queue (interface); building at once only from
+the interface and 0x545F50; the operations' checks of a town out of the
+world only matter for the interface and network games. Still not
+rewritten here: 0x4F9C80 with the types 0x34 and 0x35 (the game searches
+with an unset mask: no caller of the simulation uses them).
+
 ## Game bugs
 
 - **Operation 0x3B with a merchant out of the world** (certain; 0x53A4CA
@@ -129,8 +173,14 @@ the lair's pirate out at sea...).
 
 ## For the inventory
 
-- `alderman.cpp`: every branch checked with the oracle (scenarios of
-  `tools/oracle/retouch_unchecked.py`).
+- `alderman.cpp` and `construction.cpp`: every branch checked with the
+  oracle (scenarios of `tools/oracle/retouch_unchecked.py`).
+- D: 0x4FF2D0 for the store a merchant builds is done (`construction.cpp`);
+  0x51FAB0 building at once is rewritten.
+- B/C: operation 0x25 (0x535B7B → 0x5244F0, which calls 0x51F3A0 and
+  0x4F8A50 without `count`) is not handled by p3vita; nothing in the
+  simulation queues it as far as these checks go (worth confirming in the
+  operations inventory).
 
 ## Changes to shared files
 
@@ -143,6 +193,9 @@ the lair's pirate out at sea...).
 
 - `prepare.sh --test`: 45 s.
 - The 19 runs of `alderman.cpp`'s scenarios (recording and tick_probe): 25 s.
+- The 14 runs of `construction.cpp`'s scenarios: 9 s.
+- `world.sh 7`, the 12 saves in three batches after `construction.cpp`:
+  130 s, 126 s and 116 s (0 different).
 - `world.sh 7`, the 12 saves in three batches after `alderman.cpp`: 130 s,
   131 s and 121 s (0 different; skipped as in `README.md`: 1 in save 1, 5 in
   5, 4 in 7, 2 in tut2, 5 in tut3, 7 in tut4).

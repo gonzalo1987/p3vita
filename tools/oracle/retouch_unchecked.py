@@ -53,6 +53,19 @@ RANGES = [
     (0x5144A0, 0x514528),  # the pirates reinforce their lair
     (0x53A3E0, 0x53A61D),  # operation 0x3B
     (0x53B440, 0x53B4CE),  # operation 0x4B
+    (0x4F9C80, 0x4FA12E),  # a site for a building
+    (0x51FAB0, 0x51FE88),  # the town's works: a building
+    (0x5250D0, 0x525212),  # where to look for a well
+    (0x5254C0, 0x52555F),  # into the works
+    (0x521900, 0x522626),  # build
+    (0x523830, 0x523D6D),  # a tower
+    (0x523D70, 0x52409A),  # a gate
+    (0x522C70, 0x523829),  # the next wall piece
+    (0x51F3A0, 0x51FA2D),  # what building costs
+    (0x4F8A50, 0x4F8AE9), (0x4F8C70, 0x4F8C92), (0x4F8560, 0x4F8684),  # reputation for buildings
+    (0x535B05, 0x535C30),  # the executor's cases 0x22..0x27
+    (0x53CE30, 0x53CF44),  # operation 0x22
+    (0x537025, 0x53702F),  # the executor's end
 ]
 
 
@@ -436,12 +449,320 @@ def ship_artillery(o):
     return during
 
 
+# --- construction.cpp ---
+
+SCRATCH = 0x6DFF00  # 0x100 bytes of the globals the game doesn't use: pointer arguments of direct calls
+SCRATCH_X, SCRATCH_Y = 0x6DFFF0, 0x6DFFF4
+NORTH_WEST, NORTH_EAST = 0xE0, 0x20  # 0x67792F, 0x677929: the houses' orientations
+GRID = 0x80C  # town_class1 [+0x68]: the grid, height [0x7AC] bytes per column
+
+
+def store(o, t, n=1000000):
+    """The town's store with n of bricks, timber, tools and hemp."""
+    a = o.town(t)
+    for off in (0x50, 0x30, 0x34, 0x48):
+        w32(o, a + off, n)
+
+
+def grid_at(o, t, x, y):
+    a = o.town(t)
+    return o.u32(a + GRID) + o.s32(a + 0x7AC) * x + y
+
+
+def set_cell(o, t, x, y, v):
+    w8(o, grid_at(o, t, x, y), v)
+
+
+def cells(o, t, kind):
+    """The (x, y) of the grid cells with (cell & 0x3F) == kind."""
+    a = o.town(t)
+    w, h = o.s32(a + 0x7A8), o.s32(a + 0x7AC)
+    data = bytes(o.uc.mem_read(o.u32(a + GRID), w * h))
+    return [(i // h, i % h) for i, c in enumerate(data) if c & 0x3F == kind]
+
+
+def records(o, t, head):
+    """[(index, x, y, owner, type, pending)] of the town's list at [head]."""
+    a = o.town(t)
+    n, base, out, r = o.u16(a + 0x776), o.u32(a + 0x75C), [], o.u16(a + head)
+    while r < n:
+        rec = bytes(o.uc.mem_read(base + 8 * r, 8))
+        out.append((r, rec[0], rec[1], rec[2], rec[3], rec[6]))
+        r = struct.unpack_from('<H', rec, 4)[0]
+    return out
+
+
+def find_site(o, t, kind, x, y, param=NORTH_EAST, flag=0):
+    """Direct call to 0x4F9C80 (with x and y in the scratch globals)."""
+    w8(o, SCRATCH_X, x)
+    w8(o, SCRATCH_Y, y)
+    found = direct(o, 0x4F9C80, [SCRATCH_X, SCRATCH_Y, kind, param, flag], ecx=o.town(t) + 0x7A4) & 0xFF
+    return found, o.u8(SCRATCH_X), o.u8(SCRATCH_Y)
+
+
+def build_op(o, owner, t, x, y, kind, param=0):
+    operation(o, 0x22, owner, t, x, y, kind, param, 0, 0, fmt='<IBBBBBBBB')
+
+
+def office_town(o, m):
+    """The town of merchant m's first office."""
+    first = o.u16(o.merchant(m) + 0xC)
+    return o.u8(o.office(first) + 0x2C6)
+
+
+def site_search(o):
+    """Direct calls in town 0: 0x4F9C80 for every type from the statue (but
+    0x34 and 0x35, whose mask the game leaves unset: see construction.cpp),
+    both orientations and both values of the flag; from out of the grid; from
+    a cell that already is a site. 0x51FAB0 for a type < 0x15 without a site,
+    the houses (next to one of their type in the list), the bath, the
+    shipyard and, building at once, a tower and a house. 0x5250D0 with the
+    statue near the left edge and the wells counted so that x wraps."""
+    t = 0
+    a = o.town(t)
+    sx, sy = o.u8(a + 0x800), o.u8(a + 0x801)
+
+    def during(o):
+        for kind in range(0x3A):
+            if kind in (0x34, 0x35):
+                continue
+            for param, flag in ((NORTH_EAST, 0), (NORTH_WEST, 1)):
+                found = find_site(o, t, kind, sx, sy, param, flag)
+                print(f'0x4F9C80 type {kind:#x} param {param:#x} flag {flag}: {found}')
+        print(f'from out of the grid: {find_site(o, t, 0x10, 0xFF, 0xFF)}')
+        ok, x, y = find_site(o, t, 0x10, sx, sy)
+        print(f'from a site: {find_site(o, t, 0x10, x, y)}')
+        store(o, t)
+        for kind in (0x02, 0x26, 0x2E) + tuple(range(0x15, 0x1E)):
+            print(f'0x51FAB0 type {kind:#x}: {direct(o, 0x51FAB0, [kind, 0], ecx=a)}')
+        for kind in (0x30, 0x15):
+            print(f'0x51FAB0 type {kind:#x} at once: {direct(o, 0x51FAB0, [kind, 1], ecx=a)}')
+        w8(o, a + 0x800, 10)
+        for wells in (4, 6, 12):
+            w8(o, a + 0x789, wells)
+            w8(o, SCRATCH_X, 0)
+            w8(o, SCRATCH_Y, 0)
+            direct(o, 0x5250D0, [SCRATCH_X, SCRATCH_Y], ecx=a)
+            print(f'0x5250D0, statue x 10, {wells} wells: ({o.u8(SCRATCH_X)}, {o.u8(SCRATCH_Y)})')
+    return during
+
+
+def construction_merchant(o):
+    """An AI merchant with an office and the town of that office."""
+    m = rt.ai_with_office(o)[0]
+    return m, office_town(o, m)
+
+
+def build_ops(o):
+    """Operations 0x22 (0x53CE30 → 0x521900) in the town of an AI merchant's
+    office, on grid cells set to the site of each type (to the right of the
+    statue): the town builds a fisherman with [0x2CC] = 0 (the hemp halved),
+    a town hall it already has, a business outside the walls in a siege, an
+    arsenal (bit 0x8 cleared: the wall from point 0, 0x522B20), a bath it
+    already has, a well with too many, the 0x2A and 0x2B without their bits;
+    the merchant builds a store (0x4FF2D0 on his office), a 0x29 and a 0x2C
+    (0x4F8A50), a 0x2A and a 0x2B (0x4F8C70) and a 0x22 (0x4F8560); another
+    merchant without an office there builds from his docked ship (0x4F5450).
+    A direct call to 0x521900 with type 0x30. Operations 0x37 (0x4F8560):
+    town out of the world, not enough money, already paid, 0x6DE52A set.
+    Operations 0x27 (out of the world, with the hemp bit), 0x23, 0x24 and
+    0x22 (out of the world) and 0x22 of types 0x36..0x39 (a wall, 0x522B20)."""
+    m, t = construction_merchant(o)
+    a = o.town(t)
+    towns, _, merchants, _ = o.counts()
+    other = next(x for x in rt.ai_with_office(o) if t not in [o.u8(o.office(f) + 0x2C6) for f in rt.merchant_offices(o, x)]
+                 and merchant_ships(o, x))
+    ship = merchant_ships(o, other)[0]
+    sx, sy = o.u8(a + 0x800), o.u8(a + 0x801)
+    print(f'town {t}, merchant {m} (office), merchant {other} (no office, ship {ship}), statue ({sx}, {sy})')
+
+    def during(o):
+        store(o, t)
+        w32(o, o.merchant(m), 50000000)
+        w32(o, o.merchant(other), 50000000)
+        w, h = o.s32(a + 0x7A8), o.s32(a + 0x7AC)
+        spot = iter([(x, y) for y in range(max(sy - 8, 2), min(sy + 9, h - 2), 4)
+                     for x in range(max(sx - 10, 2), min(sx + 11, w - 2), 2) if (x, y) != (sx, sy)])
+
+        def at(value):
+            x, y = next(spot)
+            set_cell(o, t, x, y, value)
+            print(f'cell ({x}, {y}) = {value:#x}; works {len(records(o, t, 0x762))}')
+            return x, y
+        bits = o.u32(a + 0x76C)
+        w32(o, a + 0x2CC, 0)
+        build_op(o, 0xFF, t, *at(0x0E), 0x05)
+        w32(o, a + 0x76C, bits | 0x3)
+        build_op(o, 0xFF, t, *at(0x1B), 0x20)
+        w32(o, a + 0x2C8, o.u32(a + 0x2C8) | 0x10)
+        build_op(o, 0xFF, t, *at(0x30), 0x04)
+        w32(o, a + 0x2C8, o.u32(a + 0x2C8) & ~0x10)
+        w32(o, a + 0x76C, (bits | 0x4) & ~0x8)
+        point = bytes(o.uc.mem_read(a + 0x7B0, 2))
+        w8(o, a + 0x7B0, sx)
+        w8(o, a + 0x7B1, sy)
+        build_op(o, 0xFF, t, *at(0x14), 0x21)
+        o.uc.mem_write(a + 0x7B0, point)
+        w32(o, a + 0x76C, bits | 0x4010)
+        build_op(o, 0xFF, t, *at(0xFF), 0x26)
+        w8(o, a + 0x789, 200)
+        build_op(o, 0xFF, t, *at(0x84), 0x28)
+        w32(o, a + 0x76C, bits | 0x600)
+        build_op(o, 0xFF, t, *at(0xFF), 0x2A)
+        w32(o, a + 0x76C, (bits | 0x1000) & ~0x200)
+        build_op(o, 0xFF, t, *at(0xFF), 0x2B)
+        w32(o, a + 0x76C, bits)
+        build_op(o, m, t, *at(0xFF), 0x1E, NORTH_EAST)
+        w32(o, a + 0x2D4, 100000)
+        w8(o, a + 0x773, 0)
+        w8(o, a + 0x771, 0)
+        build_op(o, m, t, *at(0xFF), 0x29)
+        build_op(o, m, t, *at(0xFF), 0x2C)
+        w32(o, a + 0x76C, (bits & ~0x1400) | 0x200)
+        build_op(o, m, t, *at(0xFF), 0x2A)
+        build_op(o, m, t, *at(0xFF), 0x2B)
+        w32(o, a + 0x76C, (bits | 0x10) & ~0x2000)
+        build_op(o, m, t, *at(0x1A), 0x22)
+        s = o.ship(ship)
+        w8(o, s + 0x39, t)
+        w16(o, s + 0x134, 1)
+        w32(o, s + 0x54 + 4 * 0x13, 40 * 2000)
+        build_op(o, other, t, *at(0x30), 0x04)
+        x, y = at(0xFF)
+        direct(o, 0x521900, [0xFF, x, y, 0x30, 0], ecx=a)
+        for town, amount, money, paid, flag in ((towns, 10, None, 0, 0), (t, 10, 5, 0, 0), (t, 10, None, 1, 0),
+                                                (t, 10, None, 0, 1), (t, 10, None, 0, 0)):
+            ma = o.merchant(m)
+            w32(o, ma + 0x468, (o.u32(ma + 0x468) | (1 << t)) if paid else (o.u32(ma + 0x468) & ~(1 << t)))
+            w32(o, ma, money if money is not None else 50000000)
+            w8(o, 0x6DE52A, flag)
+            operation(o, 0x37, m, town, amount)
+        w8(o, 0x6DE52A, 0)
+        operation(o, 0x27, towns, 1, 1, 1)
+        operation(o, 0x27, t | 0x80000000, 2000, 2000, 200)
+        operation(o, 0x23, 0, towns)
+        operation(o, 0x24, m, towns, 0)
+        build_op(o, m, towns, sx, sy, 0x04)
+        for kind in (0x36, 0x37, 0x38, 0x39):
+            build_op(o, 0xFF, t, sx, sy, kind)
+    return during
+
+
+def tower_ops(o, pick=None):
+    """Operations 0x22 of towers and gates (0x523830, 0x523D70) in the town
+    of an AI merchant's office: a new tower on a tower cell (0x1C: into the
+    works at the end, 0x5254C0); a tower where there is no piece; in a siege,
+    on a wall piece (0x36) and on a 0x32; a gate (0x34) on a finished piece
+    by the merchant, who has an office there."""
+    m, t = (pick or construction_merchant)(o)
+    a = o.town(t)
+    walls = records(o, t, 0x768)
+    piece = next(r for r in walls if r[4] == 0x36)
+    finished = next(r for r in walls if r[5] == 0 and r[0] != piece[0])
+    big = next((r for r in walls if r[4] == 0x32), None)
+    towers = cells(o, t, 0x1C)
+    print(f'town {t}: tower cells {towers}, wall piece {piece}, finished {finished}, 0x32 {big}')
+
+    def during(o):
+        store(o, t)
+        w32(o, a + 0x700, 50000000)
+        if towers:
+            build_op(o, 0xFF, t, *towers[0], 0x30)
+        build_op(o, 0xFF, t, o.u8(a + 0x800), o.u8(a + 0x801), 0x30)
+        w32(o, a + 0x2C8, o.u32(a + 0x2C8) | 0x10)
+        build_op(o, m, t, piece[1], piece[2], 0x30)
+        if big:
+            build_op(o, m, t, big[1], big[2], 0x32)
+        w32(o, a + 0x2C8, o.u32(a + 0x2C8) & ~0x10)
+        build_op(o, m, t, finished[1], finished[2], 0x34)
+    return during
+
+
+def town_with_big(o):
+    """The town of an AI merchant's office with a 0x32 piece in [0x768]."""
+    for m in rt.ai_with_office(o):
+        for f in rt.merchant_offices(o, m):
+            t = o.u8(o.office(f) + 0x2C6)
+            if any(r[4] == 0x32 for r in records(o, t, 0x768)):
+                return m, t
+    return construction_merchant(o)
+
+
+def tower_ops_big(o):
+    """tower_ops in a town where there is a 0x32 piece."""
+    return tower_ops(o, town_with_big)
+
+
+def wall_ops(o):
+    """Operations 0x24 (0x522C70) in the town of an AI merchant's office:
+    in a siege (nothing); and with a single pending piece ([0x766] cut after
+    the first one that is not a wall, or the first) that the merchant can
+    pay: the wall is closed (the pieces of that side out, the counts again,
+    the debts of the offices...)."""
+    m, t = construction_merchant(o)
+    a = o.town(t)
+    pending = records(o, t, 0x766)
+    print(f'town {t}: {len(pending)} pending pieces, first {pending[:3]}')
+
+    def during(o):
+        store(o, t)
+        w32(o, a + 0x700, 50000000)
+        w32(o, a + 0x2C8, o.u32(a + 0x2C8) | 0x10)
+        operation(o, 0x24, m, t, 0)
+        w32(o, a + 0x2C8, o.u32(a + 0x2C8) & ~0x10)
+        first = pending[0]
+        w16(o, o.u32(a + 0x75C) + 8 * first[0] + 4, 0xFFFF)
+        operation(o, 0x24, m, t, 0 if first[4] == 0x36 else 1)
+        print(f'pending now {records(o, t, 0x766)}, [0x76C] {o.u32(a + 0x76C):#x}')
+    return during
+
+
+def cost_fisherman(o):
+    """Direct calls to 0x51F3A0 (its 0x44-byte structure in the scratch
+    globals) for a merchant with an office in the town: the fisherman (type
+    5) with [0x2CC] = 0 and with 0x400, and a tower."""
+    m, t = construction_merchant(o)
+    a = o.town(t)
+
+    def during(o):
+        for kind, hemp in ((5, 0), (5, 0x400), (0x30, 0)):
+            w32(o, a + 0x2CC, hemp)
+            o.uc.mem_write(SCRATCH, bytes(0x44))
+            w16(o, SCRATCH + 0x3C, kind)
+            w16(o, SCRATCH + 0x3E, m)
+            print(f'0x51F3A0 type {kind:#x}, [0x2CC] {hemp:#x}: {direct(o, 0x51F3A0, [SCRATCH], ecx=a) & 0xFF}')
+    return during
+
+
+def chapel_reputation(o):
+    """Direct calls to 0x4F8A50 and 0x4F8C70 on an AI merchant: a town
+    without inhabitants; without `count` (only operation 0x25 calls with 0);
+    with few 0x29 and 0x2C for the inhabitants and with enough."""
+    m, t = construction_merchant(o)
+    a, ma = o.town(t), o.merchant(m)
+
+    def during(o):
+        people = o.s32(a + 0x2D4)
+        w32(o, a + 0x2D4, 0)
+        direct(o, 0x4F8A50, [t, 1], ecx=ma)
+        w32(o, a + 0x2D4, people)
+        direct(o, 0x4F8A50, [t, 0], ecx=ma)
+        w8(o, a + 0x773, 0)
+        w8(o, a + 0x771, 0)
+        direct(o, 0x4F8A50, [t, 1], ecx=ma)
+        w8(o, a + 0x773, 50)
+        direct(o, 0x4F8A50, [t, 1], ecx=ma)
+        direct(o, 0x4F8C70, [t], ecx=ma)
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
 
 
 EVENTS_FUNCTIONS = [0x4D85C0, 0x4EBF54]
+BUILD_FUNCTIONS = [0x535760, 0x521900, 0x523830, 0x522C70, 0x4F8A50, 0x4F8C70, 0x4F8560, 0x5254C0]
 SCENARIOS = {
     'candidacy_pirate_index': Scenario(candidacy_pirate_index, [0x5326E0, 0x535760], 1, ['51a48e']),
     'candidacy_no_targets': Scenario(candidacy_no_targets, [0x5326E0, 0x535760], 1,
@@ -460,6 +781,23 @@ SCENARIOS = {
     'nest_reinforce_away': Scenario(nest_reinforce_away, EVENTS_FUNCTIONS + [0x5144A0], 1, ['5144b0>514526']),
     'ship_artillery': Scenario(ship_artillery, [0x51A4E0, 0x51A750], 0, [
         '51a4e0>51a73c', '51a50a>51a73c', '51a51e>51a73c', '51a530', '51a566', '51a5f0', '51a637', '51a76d>51a806']),
+    # construction.cpp
+    'site_search': Scenario(site_search, [0x4F9C80, 0x51FAB0, 0x5250D0, 0x4FA7F0, 0x521900, 0x523830], 0, [
+        '4f9c80>4fa10d', '4f9cc9>4fa10d', '4f9ca6', '4f9cbb', '4f9cef', '4f9d2e', '4f9d3d', '4f9d4c', '4f9d99',
+        '4f9dae', '4f9e02', '4f9e17', '4f9e30', '4f9e47', '4f9e59', '4f9e68', '4f9e91', '4f9e9b', '4f9eab>4f9ee2',
+        '51fae0>51fe7f', '51fbbc', '51fbc0', '51fc05', '51fc17', '51fc4d', '51fdb3', '51fdd9', '525177']),
+    'build_ops': Scenario(build_ops, BUILD_FUNCTIONS, 0, [
+        '521a08', '521da3', '521ae2', '521e12', '52207f', '5220e5', '522169', '5221c1', '522533', '52255a',
+        '5225a2', '522592', '4f8aa8', '522415', '521919', '4f8560>4f8672', '4f858f>4f8672', '4f85af>4f8661',
+        '4f85c5>4f8661', '4f85d3',
+        '535bbc>537025', '535be8', '535b12>537025', '535b44>537025', '53ce30>53cef2', '53cf25']),
+    'tower_ops': Scenario(tower_ops, BUILD_FUNCTIONS, 0, [
+        '52552b', '523927>523d66', '523990', '523e3d']),
+    'tower_ops_big': Scenario(tower_ops_big, BUILD_FUNCTIONS, 0, ['5239c0>523d66']),
+    'wall_ops': Scenario(wall_ops, BUILD_FUNCTIONS, 0, ['522ca3>523803', '5230dc']),
+    'cost_fisherman': Scenario(cost_fisherman, [0x51F3A0], 0, ['51f44c']),
+    'chapel_reputation': Scenario(chapel_reputation, [0x4F8A50, 0x4F8C70], 0, [
+        '4f8a50>4f8ae6', '4f8ac7', '4f8aa8']),
 }
 
 
