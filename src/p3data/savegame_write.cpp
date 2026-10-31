@@ -7,6 +7,11 @@
 
 namespace p3::data {
 
+namespace tick::events_towns_detail {
+// 0x4D6780 (town_tick/events_towns.cpp): expires the old notices of a merchant.
+void fn_4d6780(SaveGame& save, int32_t merchant);
+}  // namespace tick::events_towns_detail
+
 // The writers of Patrician3.exe, one function each, in the order 0x549CC0
 // calls them (docs/cloud/savegames.md §1.1). Each one writes what its reader
 // in savegame.cpp reads, from the memory p3data keeps like the game's.
@@ -400,25 +405,40 @@ bool notice_with_block(uint8_t type) {
 	return (type >= 0x3C && type <= 0x40) || type == 0x71;
 }
 
-// 0x4D62B0 (version 5) and 0x51A8D0 for each notice.
+// 0x4D62B0 (version 5) and 0x51A8D0 for each notice: its 8 bytes and, for
+// the types with a buffer, the pointer, [+0xC] and the [+0xC] bytes of the
+// buffer; for the types with a record, the 16 bytes of the record
+// (SaveGame::mail_records, which the simulation changes) and its [+0x0] bytes
+// (SaveOpaque::mail_extras, as read); for the others, [+0x8..+0xF].
 void write_mail(Writer& w, const SaveGame& save) {
 	const GlobalMemory& g = save.globals;
 	w.u32(0xAFFE0005);
 	for (uint32_t a : {kMailCount, kMailFree, kMailbox + 0x8, kMailbox + 0xA}) {
 		w.from(g, a, 2);
 	}
-	for (size_t i = 0; i < save.mail.size(); ++i) {
-		const GameMemory<0x10>& m = save.mail[i];
+	// `n` bytes of what was read (zeros past its end: only if the state has
+	// changed a size the file had).
+	auto kept = [&](size_t i, size_t n) {
 		static const std::vector<uint8_t> kNone;
 		const std::vector<uint8_t>& extras = i < save.opaque.mail_extras.size() ? save.opaque.mail_extras[i] : kNone;
+		for (size_t k = 0; k < n; ++k) {
+			w.u8(k < extras.size() ? extras[k] : 0);
+		}
+	};
+	for (size_t i = 0; i < save.mail.size(); ++i) {
+		const GameMemory<0x10>& m = save.mail[i];
 		w.from(m, 0, 8);
 		const uint8_t type = m.u8(4);
 		if (notice_with_buffer(type)) {
 			w.u32(pointer(true));
-			w.u32(uint32_t(extras.size()));
-			w.bytes(extras);
+			w.from(m, 0xC, 4);
+			kept(i, m.u32(0xC));
 		} else if (notice_with_block(type)) {
-			w.bytes(extras);
+			static const GameMemory<0x10> kEmpty{};
+			const GameMemory<0x10>& record =
+				i < save.mail_records.size() && save.mail_records[i] ? *save.mail_records[i] : kEmpty;
+			w.from(record, 0, 0x10);
+			kept(i, record.u32(0));
 		} else {
 			w.from(m, 8, 8);
 		}
@@ -528,122 +548,11 @@ std::vector<std::string> split_town_names(const std::vector<uint8_t>& data) {
 	return names;
 }
 
-// The month starts of 0x672D78 (as in savegame.cpp).
-constexpr uint16_t kMonthStart[14] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365, 0};
-
-// 0x6C0198: how long each type of notice lasts (0x4D6780). From the type
-// 0x86 on, the table runs into other data and the limit is always 0.
-constexpr uint8_t kNoticeClass[0x86] = {
-	2, 3, 3, 2, 2, 2, 4, 3, 2, 4, 1, 1, 4, 4, 4, 4,
-	4, 3, 2, 1, 1, 2, 2, 2, 2, 1, 2, 2, 4, 2, 2, 2,
-	2, 2, 2, 4, 2, 2, 2, 3, 2, 2, 2, 2, 1, 1, 1, 1,
-	2, 1, 1, 2, 2, 4, 1, 1, 4, 4, 4, 1, 4, 1, 2, 3,
-	4, 1, 1, 2, 4, 4, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2,
-	2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 3, 2, 1, 2, 1, 4,
-	2, 2, 2, 3, 1, 1, 3, 3, 3, 3, 2, 1, 1, 1, 1, 1,
-	1, 4, 4, 2, 2, 2, 1, 1, 1, 2, 2, 1, 2, 1, 1, 2,
-	1, 2, 1, 2, 1, 1,
-};
-
-// 0x6C0220: the limits a merchant chooses ([+0x38], [+0x39], [+0x3A]), in
-// ticks: never, 40, 20, 10 and 5 days.
-constexpr uint32_t kNoticeLimits[5] = {0xFFFFFFFF, 0x2800, 0x1400, 0xA00, 0x500};
-
-uint32_t notice_limit(const SaveGame& save, const SavedMerchant& merchant, size_t index) {
-	const GameMemory<0x10>& n = save.mail[index];
-	const uint8_t type = n.u8(4);
-	const uint8_t cls = type < sizeof(kNoticeClass) ? kNoticeClass[type] : 0;
-	auto chosen = [&](size_t field) {
-		const uint8_t k = merchant.memory.u8(field);
-		return k < 5 ? kNoticeLimits[k] : 0;  // Beyond the table in the game; not checked.
-	};
-	switch (cls) {
-	case 1:
-		return chosen(0x38);
-	case 2:
-		return type == 0x46 ? 0xFFFFFFFF : chosen(0x39);
-	case 3:
-		return type == 0x11 ? 0x700 : chosen(0x3A);
-	case 4:
-		if (type == 0x0F || type == 0x10) {
-			return 0x700;
-		}
-		if (type == 0x72) {
-			return 0x1C00;
-		}
-		if (type == 0x71) {
-			// [+0x8] points to the 16-byte block of the notice: until its u32
-			// [+0x4], it doesn't expire.
-			const std::vector<uint8_t>& block = save.opaque.mail_extras[index];
-			uint32_t until = 0;
-			if (block.size() >= 8) {
-				std::memcpy(&until, block.data() + 4, 4);
-			}
-			return save.globals.u32(global::kWorldTick) < until ? 0xFFFFFFFF : 0;
-		}
-		return 0xFFFFFFFF;
-	default:
-		return 0;
-	}
-}
-
-// 0x51AAB0: empties a notice (and frees its extras); [+0x6] stays.
-void clear_notice(SaveGame& save, size_t index) {
-	GameMemory<0x10>& n = save.mail[index];
-	n.u8(0) = 0;
-	n.u8(1) = 0;
-	n.u16(2) = 0xFFFF;
-	n.u8(4) = 0xFF;
-	n.u8(5) = 0;
-	std::memset(&n.u8(8), 0, 8);
-	if (index < save.opaque.mail_extras.size()) {
-		save.opaque.mail_extras[index].clear();
-	}
-}
-
 }  // namespace
 
-void expire_merchant_mail(SaveGame& save, int merchant) {
-	GlobalMemory& g = save.globals;
-	if (merchant < 0 || merchant >= int(save.merchants.size())) {
-		return;
-	}
-	SavedMerchant& m = save.merchants[size_t(merchant)];
-	const uint16_t count = g.u16(kMailCount);
-	const uint32_t tick = g.u32(global::kWorldTick);
-	uint16_t* link = &m.memory.u16(0xA);
-	if (*link >= count) {
-		return;
-	}
-	// The game counts down from the number of notices so as not to loop for ever.
-	for (int remaining = count; remaining > 0 && *link < count && *link < save.mail.size(); --remaining) {
-		const size_t index = *link;
-		GameMemory<0x10>& n = save.mail[index];
-		if (n.u8(4) >= 0x86) {
-			// GAME BUG (looks like one): a notice of an unknown type cuts the
-			// merchant's list at the link that points to it (0x4D6800), but
-			// this one is still checked below. Not checked with the oracle.
-			*link = 0xFFFF;
-		}
-		const uint32_t days = uint32_t(n.u16(2)) * 365 + kMonthStart[(n.u8(1) & 0x7F) % 14] + n.u8(0) - 1;
-		const uint32_t stamp = days << 8;
-		const uint32_t age = tick > stamp ? tick - stamp : 0;
-		if (age > notice_limit(save, m, index)) {
-			// Out of the merchant's list and into the free one.
-			const uint16_t taken = *link;
-			*link = n.u16(6);
-			clear_notice(save, index);
-			n.u16(6) = g.u16(kMailFree);
-			g.u16(kMailFree) = taken;
-		} else {
-			link = &n.u16(6);
-		}
-	}
-}
-
 void prepare_save(SaveGame& save) {
-	for (size_t i = 0; i < save.merchants.size() && i < save.globals.u16(global::kWorldMerchantCount); ++i) {
-		expire_merchant_mail(save, int(i));
+	for (uint32_t i = 0; i < save.globals.u16(global::kWorldMerchantCount); ++i) {
+		tick::events_towns_detail::fn_4d6780(save, int32_t(i));
 	}
 }
 

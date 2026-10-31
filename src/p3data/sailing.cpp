@@ -7,6 +7,10 @@
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
+namespace p3::data::tick::events_rare_detail {
+void fn_5098b0(SaveGame& save, uint16_t& captain);
+}  // namespace p3::data::tick::events_rare_detail
+
 namespace p3::data {
 
 namespace {
@@ -454,6 +458,9 @@ void Sailing::begin_tick() {
 // 0x514000 con cada uno de los cinco objetos de [+0xC] del objeto de los
 // barcos que existan; y al final, cada 8 ticks, a 0x5053C0 (los encuentros).
 // Ni lo uno ni lo otro se reproducen (el oráculo tampoco los ejecuta).
+// 0x5053C0 (the storms, battle/storms.cpp) runs unless set_storms(false), as
+// the oracle does unless --no-storms; without the convoys, the oracle skips
+// it too.
 void Sailing::update_ships() {
 	GlobalMemory& g = save_.globals;
 	g.u16(kPlayerShipsInPort) = 0;
@@ -464,6 +471,9 @@ void Sailing::update_ships() {
 	update_sailing();
 	if (convoys_) {
 		update_convoys();
+		if (storms_ && (save_.tick() & 7) == 0) {
+			fn_5053c0();
+		}
 	}
 }
 
@@ -849,6 +859,102 @@ void Sailing::arrive(SavedShip& ship, uint16_t index, uint16_t& link) {
 	ship.timer() = 0;
 	ship.next_in_list() = save_.docked_head();
 	save_.docked_head() = index;
+}
+
+// 0x507FB0 (on the ship object, with a ship): deletes the ship. Its route is
+// cleared (0x516840), its captain goes back to the free list (0x5098B0) and
+// [+0x42] = 0xFFFF, it leaves the list by x (0x50D040), and a trade route
+// [+0x132] is released (0x4D4DD0 on 0x6DD728, which SaveGame does not have:
+// not reproduced) and set to 0xFFFF. If it is already in the free list
+// [0xE2], nothing else. Then state 0xFF; out of its owner's list ([+0xE]) and
+// out of the owner's 11 ship lists ([+0x60C] counts, [+0x624] heap arrays:
+// 0x4F5900, not reproduced when they hold ships); a ship of no merchant
+// leaves the lists of the 5 pirates (0x515F00); owner 0xFF, [+0x4] = 0xFFFF.
+// It leaves the first list it is in: in port ([0xE8]), at sea ([0xEA]) or
+// the two shipyard lists of a town ([0x81C], [0x81E]; for a ship of no
+// merchant the game starts at town 5), and its convoy's members (the game
+// checks the convoy against the number of ships; then 0x501BE0). Last, the
+// free list [0xE6] if [+0x137] > 0, otherwise [0xE2].
+void Sailing::fn_507fb0(uint16_t index) {
+	GlobalMemory& g = save_.globals;
+	const uint32_t count = g.u16(global::kShipCount);
+	if (index >= count) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	SavedShip& ship = save_.ships[index];
+	ShipMemory& s = ship.memory;
+	clear_ship_route(ship);
+	tick::events_rare_detail::fn_5098b0(save_, s.u16(0x42));
+	s.u16(0x42) = 0xFFFF;
+	unlink_x(index);
+	if (s.u16(0x132) < g.u16(0x6DD72A)) {  // The trade routes' count ([+0x2] of 0x6DD728).
+		s.u16(0x132) = 0xFFFF;  // Sin comprobar con el oráculo.
+	}
+	for (uint32_t i = g.u16(global::kShips + 0xE2); i < count; i = save_.ships[i].memory.u16(6)) {
+		if (i == index) {
+			return;  // Sin comprobar con el oráculo.
+		}
+	}
+	s.u16(0x134) = 0xFF;
+	uint32_t first_town = 0;
+	if (s.u8(0) < save_.merchant_count) {
+		MerchantMemory& m = save_.merchants[s.u8(0)].memory;
+		for (uint16_t* link = &m.u16(0xE); *link < count;) {
+			if (*link == index) {
+				*link = s.u16(4);
+			} else {
+				link = &save_.ships[*link].memory.u16(4);
+			}
+		}
+		s.u8(0) = 0xFF;
+		for (size_t k = 0; k < 11; ++k) {
+			if (m.u16(0x60C + 2 * k) & 0x7FFF) {
+				// Sin comprobar con el oráculo: the heap array is not in SaveGame.
+			}
+		}
+	} else {
+		// Sin comprobar con el oráculo.
+		for (auto& pirate : save_.pirates) {
+			if (!pirate) {
+				continue;
+			}
+			for (uint16_t* link = &pirate->u16(0xC); *link < count; link = &save_.ships[*link].memory.u16(4)) {
+				if (*link == index) {
+					*link = s.u16(4);
+					s.u16(4) = 0xFFFF;
+					break;
+				}
+			}
+		}
+		s.u8(0) = 0xFF;
+		first_town = 5;
+	}
+	s.u16(4) = 0xFFFF;
+	auto unlink = [&](uint16_t& head) {
+		for (uint16_t* link = &head; *link < count; link = &save_.ships[*link].memory.u16(6)) {
+			if (*link == index) {
+				*link = s.u16(6);
+				return true;
+			}
+		}
+		return false;
+	};
+	if (!unlink(g.u16(global::kShips + 0xE8)) && !unlink(g.u16(global::kShips + 0xEA))) {
+		bool found = false;
+		for (uint32_t t = first_town; t < save_.towns.size() && !found; ++t) {
+			TownMemory& town = save_.towns[t].memory;
+			found = unlink(town.u16(0x81C));
+			found = unlink(town.u16(0x81E)) || found;
+		}
+	}
+	const uint16_t convoy = s.u16(8);
+	if (convoy < count && convoy < save_.convoys.size() && unlink(save_.convoys[convoy].u16(0xA)) &&
+		convoy < save_.convoy_count()) {
+		tick::ship_ai_detail::fn_501be0(save_, convoy);
+	}
+	uint16_t& free = s.u8(0x137) > 0 ? g.u16(global::kShips + 0xE6) : g.u16(global::kShips + 0xE2);
+	s.u16(6) = free;
+	free = index;
 }
 
 // Casco a cero (0x506CD6). Los barcos de la IA se borran después (0x507FB0),

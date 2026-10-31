@@ -233,6 +233,43 @@ void fn_539dc0(SaveGame& save, const uint8_t* operation);
 void fn_53fa80(SaveGame& save, const uint8_t* operation);
 // 0x37 (el comerciante paga por una ciudad, 0x4F8560; en 0x535E04).
 void fn_535e04(SaveGame& save, const uint8_t* operation);
+// 0x61 (la fiesta de un comerciante en una ciudad: el evento 0x07, 0x53DBF0).
+void fn_53dbf0(SaveGame& save, const uint8_t* operation);
+// 0x2C (un barco encargado al astillero de una ciudad, 0x52A360; en 0x535C70).
+void fn_535c70(SaveGame& save, const uint8_t* operation);
+// Las que solo crean o tocan eventos: 0x38 (una subasta de barco, el evento
+// 0x0A; en 0x535E3B), 0x7C (la peste, el 0x1C; en 0x536642), 0x7F (ciudades
+// con 0x4000000 y eventos 0x35; en 0x5366E8), 0x80 (el registro 0x80 de la
+// cola; en 0x536756) y 0x83 (un evento 0x00; en 0x5367B5).
+void fn_535e3b(SaveGame& save, const uint8_t* operation);
+void fn_536642(SaveGame& save, const uint8_t* operation);
+void fn_5366e8(SaveGame& save, const uint8_t* operation);
+void fn_536756(SaveGame& save, const uint8_t* operation);
+void fn_5367b5(SaveGame& save, const uint8_t* operation);
+// 0x84 (el encargo del jefe de la Hansa: el evento 0x30, 0x53FCA0), 0x67 (un
+// administrador mejora, 0x53DDF0) y 0x48 (una propuesta para una ciudad: la
+// votación 0x2E o, sin consejo, el impuesto, 0x53B010).
+void fn_53fca0(SaveGame& save, const uint8_t* operation);
+void fn_53ddf0(SaveGame& save, const uint8_t* operation);
+void fn_53b010(SaveGame& save, const uint8_t* operation);
+// 0x28 (un comerciante pone en venta un edificio: la subasta 0x4DAB00, 0x53D190).
+void fn_53d190(SaveGame& save, const uint8_t* operation);
+// 0x7E (la temporada de piratas que viene: el evento 0x1F, 0x53F8B0).
+void fn_53f8b0(SaveGame& save, const uint8_t* operation);
+// 0x7D (un incendio en una ciudad: el evento 0x1D; en 0x5366A0).
+void fn_5366a0(SaveGame& save, const uint8_t* operation);
+// 0x13 (el capitán del barco de un jugador humano se retira: el evento 0x27, 0x538C40).
+void fn_538c40(SaveGame& save, const uint8_t* operation);
+// 0x60 (a merchant's wedding is arranged: event 0x15, 0x53DA90).
+void fn_53da90(SaveGame& save, const uint8_t* operation);
+// 0x65 (an AI merchant goes bankrupt, 0x4F5D80; 0x53DD70).
+void fn_53dd70(SaveGame& save, const uint8_t* operation);
+// 0x87 (a child is born to a married merchant, 0x53FEA0).
+void fn_53fea0(SaveGame& save, const uint8_t* operation);
+// 0x0A (a ship is deleted, Sailing::fn_507fb0; in 0x535866).
+void fn_535866(SaveGame& save, Sailing* sailing, const uint8_t* operation);
+// 0xB8 (network games' sync checks, 0x542F10).
+void fn_542f10(SaveGame& save, const uint8_t* operation);
 // construction.cpp: la operación 0x22, construir (0x53CE30): edificios
 // (0x521900), torres (0x523830, 0x523D70) y murallas (0x522B20).
 // Y los materiales: 0x27 (0x535BBC: la ciudad los recibe) y 0x23 (0x535B12:

@@ -80,6 +80,30 @@ Los eventos que p3vita creaba y no atendía; graban 4d85c0:
   incendio              0x25 y 0x26: arden una torre, una pieza de muralla, una empresa, una
                         casa y un edificio de la ciudad (graba 2 días)
   dieta                 0x34, 0x24 y 0x23: las misiones de la dieta de la Hansa (0x4E09D4)
+Las operaciones de la simulación que p3vita descartaba (inventario, parte B); graban 535760 y 4d85c0:
+  fiesta                0x61 y el evento 0x07: fiestas de la IA (con precio, sin dinero, con
+                        deudas, sin oficina) y del jugador con la oficina llena
+  fiesta_vacia          la del jugador con una sola mercancía de la fiesta
+  fiesta_ciudad         la fiesta de la ciudad (0x5316E0 en el evento 0x03, adelantado)
+  astillero             0x2C: barcos encargados al astillero (materiales de la oficina, de los
+                        barcos y de la ciudad; sin oficina, sin astillero, sin dinero; el jugador)
+  astillero_ciudad      el evento 0x2B adelantado con la ciudad 0 muy poblada: encola la 0x2C
+  eventos_op            0x38, 0x7C, 0x7F, 0x80 y 0x83: las que solo crean o tocan eventos
+  propuestas            0x84 (el encargo del jefe de la Hansa), 0x67 (un administrador) y 0x48
+                        (la votación del consejo o, sin consejo, los impuestos)
+  subasta               0x28: edificios en venta (una subasta en fase 2, una nueva, sin el bit de
+                        la ciudad, una celda vacía)
+  subasta_ajuste        lo mismo con el byte [+0xD] de los ajustes a 0: la subasta en fase 1
+  temporada             0x7E: la temporada de piratas que viene (evento 0x1F)
+  incendio_ciudad       0x7D y el evento 0x1D: incendios en un almacén, una casa y un edificio de la ciudad
+  capitan_jugador       0x13: el capitán de un barco del jugador se retira (evento 0x27)
+  boda                  0x60 and event 0x15: weddings with their dowry ships and feast
+  quiebra               0x65: an AI merchant goes bankrupt (debts, mayor, new name)
+  hijo                  0x87: a child is born to a married merchant
+  desguace              0x0A: ships deleted (in port, at sea, in a convoy, the player's)
+  red, red_activa       0xB8: network sync checks (all kinds; with [0x6DF31C] = 1)
+  cartas                0x4D6780: the player's old letters, event 0x03 moved to his day
+  hijo_natural          0x4F69B0: married AI merchants, event 0x03 moved: a child (0x87)
 Los asedios (operación 0x8E); graban 535760 y 633a90:
   asedio                uno a una ciudad sin muralla (rescate sin atacar) y
                         otro en la región de la ciudad natal del jugador, con
@@ -939,6 +963,613 @@ def dieta(o):
     return lambda: print(f'después (tipo, fase, convoy, estado, [+0x8]): {show()}')
 
 
+FEAST = (3, 2, 2, 2, 0, 1, 0, 2)  # 0x6734E8: lo de cada mercancía por invitado
+
+
+def merchant_offices(o, m):
+    """Las oficinas del comerciante (lista [+0xC], siguiente en [+0x2C8])."""
+    out, i = [], o.u16(o.merchant(m) + 0xC)
+    while i < o.u16(WORLD + 8):
+        out.append(i)
+        i = o.u16(o.office(i) + 0x2C8)
+    return out
+
+
+def move_event(o, i, a, tick):
+    """El evento i (en a) pasa al tick: se desengancha de la cola, se pone en
+    cabeza y 0x4D8DD0 lo coloca."""
+    order = [j for j, _ in events(o)]
+    k = order.index(i)
+    link = to.EVENTS + 8 if k == 0 else o.u32(to.EVENTS) + 0x18 * order[k - 1] + 4
+    w16(o, link, o.u16(a + 4))
+    w16(o, a + 4, o.u16(to.EVENTS + 8))
+    w16(o, to.EVENTS + 8, i)
+    w32(o, a, tick)
+    o.call(0x4D8DD0, [], ecx=to.EVENTS)
+
+
+def feast_op(o, m, tick, town, price):
+    o.tick_operations.append(struct.pack('<5I', 0x61, m, tick, town, price))
+
+
+def feast_guests(o, m, town):
+    """Los invitados de la fiesta de un humano (0x4E23A4): habitantes · k / 100."""
+    rep = struct.unpack('<f', bytes(o.uc.mem_read(o.merchant(m) + 0x2FC + 4 * town, 4)))[0]
+    k = min(max(int(rep) + 0x27, 0), 0x63)
+    return o.u32(o.town(town) + 0x2D4) * k // 100
+
+
+def show_feast(o, towns, merchants, office):
+    """Lo que cambia una fiesta: [0x2D0] de las ciudades, el dinero y [+0x4BC]
+    de los comerciantes y lo de la fiesta en la oficina."""
+    def s32(a):
+        return struct.unpack('<i', bytes(o.uc.mem_read(a, 4)))[0]
+    return lambda: print(f'[0x2D0] {[(t, hex(o.u32(o.town(t) + 0x2D0))) for t in towns]};'
+                         f' dinero {[(m, s32(o.merchant(m)), s32(o.merchant(m) + 0x4BC)) for m in merchants]};'
+                         f' oficina {office}: {[s32(o.office(office) + 4 + 4 * w) for w in range(8)]}')
+
+
+def fiesta(o):
+    """Fiestas (operación 0x61, 0x53DBF0, y el evento 0x07, 0x4E23A4): al final
+    del primer tick, operaciones 0x61 con sus eventos a los 16, 32... ticks:
+    un comerciante de la IA en la ciudad de su oficina, con precio; otro sin
+    dinero para el precio (no hay fiesta) y otro con deudas (el juego compara
+    sin signo: la hay); uno sin oficina en la ciudad (nada); un comerciante
+    que no existe; y el jugador, con reputación 100 y la oficina llena (salvo
+    la mercancía 7: se cuenta pero no llega) en una ciudad con el bit 0x1000
+    de [0x2C8]. Graba 1 día. Devuelve lo que escribe al final."""
+    now, towns = o.u32(WORLD + 0x14), o.u32(WORLD + 0x10)
+    ai = ai_with_office(o)
+    a, b, c = ai[0], ai[1], ai[2]
+    ta, tb, tc = (o.u8(o.office(merchant_offices(o, m)[0]) + 0x2C6) for m in (a, b, c))
+    w32(o, o.merchant(c), -5000)
+    mine = {o.u8(o.office(f) + 0x2C6) for f in merchant_offices(o, a)}
+    none = next(t for t in range(towns) if t not in mine)
+    money_b = o.u32(o.merchant(b))
+    feast_op(o, a, now + 0x10, ta, 1000)
+    feast_op(o, b, now + 0x20, tb, money_b + 1)
+    feast_op(o, c, now + 0x30, tc, 1000)
+    feast_op(o, a, now + 0x40, none, 0)
+    feast_op(o, 0xFF, now + 0x50, ta, 0)
+    p = o.u32(to.PLAYER)
+    office = merchant_offices(o, p)[0]
+    tp = o.u8(o.office(office) + 0x2C6)
+    wf(o, o.merchant(p) + 0x2FC + 4 * tp, 100.0)
+    w32(o, o.town(tp) + 0x2C8, o.u32(o.town(tp) + 0x2C8) | 0x1000)
+    guests = feast_guests(o, p, tp)
+    for w in range(8):
+        if FEAST[w]:
+            w32(o, o.office(office) + 4 + 4 * w, max(50000, FEAST[w] * guests * 4 + 4000))
+    w32(o, o.office(office) + 4 + 4 * 7, 2 * guests + 1)
+    feast_op(o, p, now + 0x60, tp, 500)
+    print(f'IA {a} en {ta}, {b} en {tb} (dinero {money_b}), {c} en {tc} (deudas), {a} en {none} (sin oficina);'
+          f' jugador {p} en {tp} (oficina {office}, {guests} invitados)')
+    return show_feast(o, [ta, tb, tc, none, tp], [a, b, c, p], office)
+
+
+def fiesta_vacia(o):
+    """La fiesta del jugador (operación 0x61 y evento 0x07) con una sola de las
+    mercancías de la fiesta en su oficina: la ciudad no la apunta y su
+    reputación baja 1. Graba 1 día."""
+    now = o.u32(WORLD + 0x14)
+    p = o.u32(to.PLAYER)
+    office = merchant_offices(o, p)[0]
+    tp = o.u8(o.office(office) + 0x2C6)
+    guests = feast_guests(o, p, tp)
+    for w in range(8):
+        w32(o, o.office(office) + 4 + 4 * w, 0)
+    w32(o, o.office(office) + 4, 3 * guests + 2000)
+    feast_op(o, p, now + 0x10, tp, 0)
+    print(f'jugador {p} en {tp} (oficina {office}, {guests} invitados)')
+    return show_feast(o, [tp], [p], office)
+
+
+def fiesta_ciudad(o):
+    """La fiesta de la ciudad ([+0x84] y [+0x88] del mundo) pasa en la segunda
+    ciudad con oficinas de comerciantes a los que puede invitar y el evento
+    0x03 se adelanta al tick siguiente: 0x5316E0 encola la operación 0x61 de
+    un comerciante de la IA al azar, con su evento 0x07 a los 10 a 30 días.
+    Graba hasta el evento."""
+    now, towns = o.u32(WORLD + 0x14), o.u32(WORLD + 0x10)
+
+    def guest(f):  # los que mira 0x531470: de la IA y sin el bit 4 de [+0x8]
+        m = o.merchant(o.u16(o.office(f) + 0x2C4))
+        return o.u16(m + 8) and not o.u8(m + 8) & 4
+    town = [t for t in range(towns) if any(guest(f) for f in office_list(o, t))][1]
+    w32(o, WORLD + 0x84, now)
+    w8(o, WORLD + 0x88, town)
+    i, a = next((i, a) for i, a in events(o) if o.u16(a + 6) == 3)
+    move_event(o, i, a, now + 1)
+    pop = o.u32(o.town(town) + 0x2D4)
+    print(f'fiesta en la ciudad {town} ({pop} habitantes): el evento 0x07 hacia el día'
+          f' {((pop % 11 + 5) << 9) // 256 + 1}')
+    return show_feast(o, [town], [], 0)
+
+
+def yard_op(o, merchant, town, kind, force):
+    o.tick_operations.append(struct.pack('<5I', 0x2C, kind, merchant, town, force))
+
+
+def ships_in(o, m, town):
+    """Los barcos del comerciante en la ciudad que mira 0x52A360 (estado < 4)."""
+    out, s = [], o.u16(o.merchant(m) + 0xE)
+    while s < o.u16(to.SHIPS + 0xF4):
+        if o.u8(o.ship(s) + 0x39) == town and o.u16(o.ship(s) + 0x134) < 4:
+            out.append(s)
+        s = o.u16(o.ship(s) + 4)
+    return out
+
+
+def show_yard(o, merchants):
+    """El primer barco de cada comerciante, su nombre y su dinero."""
+    def line(m):
+        s = o.u16(o.merchant(m) + 0xE)
+        name = bytes(o.uc.mem_read(o.ship(s) + 0x160, 24)).split(b'\0')[0] if s < o.u16(to.SHIPS + 0xF4) else b''
+        return m, s, name.decode('latin-1'), struct.unpack('<i', bytes(o.uc.mem_read(o.merchant(m), 4)))[0]
+    return lambda: print(f'(comerciante, primer barco, nombre, dinero): {[line(m) for m in merchants]}')
+
+
+YARD_WARES = ((0xB, 2000), (8, 200), (0xC, 200), (0x11, 2000), (0xF, 200))  # los materiales de los barcos
+
+
+def yard_materials(o, t, n=40):
+    """n unidades (cargas o barriles) de cada material de los barcos en la ciudad."""
+    for w, unit in YARD_WARES:
+        w32(o, o.town(t) + 4 + 4 * w, n * unit)
+
+
+def astillero(o):
+    """Barcos encargados al astillero (operación 0x2C, 0x52A360), al final del
+    primer tick, en la ciudad A con astillero para craieres (con 150 de cada
+    material) que más comerciantes de la IA con oficina y barcos tiene: uno
+    de ellos (con paño negativo en la oficina y, si tiene barco allí, con
+    ruta automática y madera, brea y cáñamo) encarga un craier; otro sin
+    oficina allí, una coca (o un craier, si el astillero no las hace); un
+    tipo grande en una ciudad con [0x2C8] & 1 (no); una ciudad sin astillero
+    (no); uno sin dinero y sin forzar (no); el jugador, con dinero, una
+    snaikka (o un craier) sin forzar; y otro craier en una ciudad con
+    astillero y sin materiales (no). Graba 1 día."""
+    towns, merchants = o.u32(WORLD + 0x10), o.u16(WORLD + 0xA)
+    p = o.u32(to.PLAYER)
+
+    def yard(t, kinds):
+        return o.u32(o.town(t) + 0x76C) & 0x20000 and all(o.u8(o.town(t) + 0x824 + k) < 0x80 for k in kinds)
+
+    def owners(t):
+        return [m for m in sorted({o.u16(o.office(f) + 0x2C4) for f in office_list(o, t)})
+                if m < merchants and m != p and o.u16(o.merchant(m) + 8)]
+    a = max((t for t in range(towns) if yard(t, (1,)) and owners(t)),
+            key=lambda t: (sum(1 for m in owners(t) if ships_in(o, m, t)), len(owners(t))))
+    yard_materials(o, a, 150)
+    big = 3 if yard(a, (3,)) else 1
+    small = 0 if yard(a, (0,)) else 1
+    m1 = max(owners(a), key=lambda m: len(ships_in(o, m, a)))
+    office = next(f for f in office_list(o, a) if o.u16(o.office(f) + 0x2C4) == m1)
+    w32(o, o.office(office) + 4 + 4 * 8, -500)
+    ships = ships_in(o, m1, a)
+    if ships:
+        s = ships[0]
+        w8(o, o.ship(s) + 0x136, o.u8(o.ship(s) + 0x136) | 1)
+        for w, n in ((0xB, 6000), (0xF, 1000), (0x11, 4100)):
+            w32(o, o.ship(s) + 0x54 + 4 * w, n)
+    here = set(owners(a)) | {o.u16(o.office(f) + 0x2C4) for f in office_list(o, a)}
+    m2 = next(m for m in range(merchants) if m not in here and m != p and o.u16(o.merchant(m) + 8))
+    c = next(t for t in range(towns) if t != a and yard(t, (2,)))
+    w32(o, o.town(c) + 0x2C8, o.u32(o.town(c) + 0x2C8) | 1)
+    d = next(t for t in range(towns) if not o.u32(o.town(t) + 0x76C) & 0x20000)
+    e = next(t for t in range(towns) if t not in (a, c) and yard(t, (1,)))
+    for w, _ in YARD_WARES:
+        w32(o, o.town(e) + 4 + 4 * w, 0)
+    m3 = next(m for m in range(merchants) if m not in (m1, m2, p) and o.u16(o.merchant(m) + 8))
+    w32(o, o.merchant(m3), 100)
+    w32(o, o.merchant(p), 500000)
+    yard_op(o, m1, a, 1, 1)
+    yard_op(o, m2, a, big, 1)
+    yard_op(o, m1, c, 2, 1)
+    yard_op(o, m1, d, 1, 1)
+    yard_op(o, m3, a, big, 0)
+    yard_op(o, p, a, small, 0)
+    yard_op(o, m1, e, 1, 1)
+    print(f'ciudad A {a}: {m1} (oficina {office}, barcos {ships}), {m2} sin oficina; ciudad pequeña {c}, sin astillero {d},'
+          f' sin materiales {e}; sin dinero {m3}; jugador {p}')
+    return show_yard(o, [m1, m2, m3, p])
+
+
+def astillero_ciudad(o):
+    """El evento 0x2B (0x4DE790) adelantado al tick siguiente con la ciudad 0
+    muy poblada (más de 400 habitantes por barco, contados como el evento) y
+    40 de cada material en las ciudades con astillero: el comerciante de la IA
+    con menos barcos encarga uno (operación 0x2C). Graba 1 día."""
+    i, a = next((i, a) for i, a in events(o) if o.u16(a + 6) == 0x2B)
+    move_event(o, i, a, o.u32(WORLD + 0x14) + 1)
+    towns, merchants = o.u32(WORLD + 0x10), o.u16(WORLD + 0xA)
+    total = sum(o.u32(o.town(t) + 0x2D4) for t in range(towns))
+    ships = 0
+    for m in range(merchants):
+        flags = o.u16(o.merchant(m) + 8)
+        if flags == 0 or flags & 4:
+            ships += o.u16(o.merchant(m) + 0x478)
+        else:
+            s = o.u16(o.merchant(m) + 0xE)
+            while s < o.u16(to.SHIPS + 0xF4):
+                ships += 1
+                s = o.u16(o.ship(s) + 4)
+    set_population(o, 0, o.u32(o.town(0) + 0x2D4) + max(0, ships * 400 - total) + 1000)
+    for t in range(towns):
+        if o.u32(o.town(t) + 0x76C) & 0x20000:
+            yard_materials(o, t)
+    print(f'{total} habitantes, {ships} barcos: la ciudad 0 con {o.u32(o.town(0) + 0x2D4)}')
+    return show_yard(o, range(merchants))
+
+
+def eventos_op(o):
+    """Las operaciones que solo crean o tocan eventos, al final del primer
+    tick: 0x38 (subasta de barco, evento 0x0A, a 40 días en la ciudad 30 %
+    ciudades; y otra a menos de 40 días: no), 0x7C (la peste, evento 0x1C,
+    mañana y con un día que ya ha pasado: al empezar el siguiente), 0x7F (las
+    ciudades 0, 1 y una que no existe con 0x4000000 y eventos 0x35 a los 128
+    ticks; y otra con un tick pasado: no), 0x80 (el registro 0x80 de la cola;
+    si está libre, con el tipo 5) y 0x83 (un evento 0x00 con grano para la
+    ciudad 2, como en una partida en red). Graba 2 días. Devuelve lo que
+    escribe al final."""
+    now, day = o.u32(WORLD + 0x14), o.u16(WORLD + 4)
+    base = o.u32(to.EVENTS)
+    r80 = base + 0x18 * 0x80
+    kind = o.u16(r80 + 6) if o.u16(to.EVENTS + 0xC) > 0x80 else None
+    if kind == 0xFFFF:
+        w16(o, r80 + 6, 5)
+    ops = [(0x80, 0, 0x1234, 0x5678, 0), (0x38, now + 0x2810, 30, 0, 0), (0x38, now + 0x100, 1, 0, 0),
+           (0x7F, 0, 1, 0xFF, now + 0x80), (0x7F, 2, 3, 4, now), (0x83, now + 0x40, 20000, 2, 0)]
+    for op in ops:
+        o.tick_operations.append(struct.pack('<5I', *op))
+    # La peste como la encola 0x4DCA90: 4 bytes, el fin, 0, habitantes / 40, el día y la ciudad.
+    for town, when in ((3, day + 1), (4, max(day - 1, 0))):
+        o.tick_operations.append(struct.pack('<I4BIHHHBB', 0x7C, 0x31, 0x40, 0x45, 0x50, now + 0x900, 0,
+                                             o.u32(o.town(town) + 0x2D4) // 40, when, town, 0))
+    print(f'día {day}; registro 0x80: tipo {kind if kind is None else hex(kind)}')
+    return lambda: print(f'[0x2C8] de las ciudades 0..4: {[hex(o.u32(o.town(t) + 0x2C8)) for t in range(5)]};'
+                         f' registro 0x80: {bytes(o.uc.mem_read(r80, 0x18)).hex()}')
+
+
+def propuestas(o):
+    """Al final del primer tick: 0x84 (el encargo del jefe de la Hansa, evento
+    0x30: uno de tipo 5 pedido antes de 0x100 ticks, que se retrasa, y otro de
+    tipo 2 a los 3 días); 0x67 (el administrador de una oficina mejora; otra
+    con un administrador que no es el suyo y otra con un comerciante que no
+    existe; si alguna oficina tiene administrador); y 0x48 (la ampliación de una ciudad con consejo, como 0x51E270:
+    la votación 0x2E; y en la ciudad 5 sin consejo, sin los bits 0xE0 de
+    [0x2C8]: el impuesto extraordinario, evento 0x31, y el impuesto por cabeza
+    con 7 y con 25, que se queda en 10). Graba 4 días. Devuelve lo que
+    escribe al final."""
+    now = o.u32(WORLD + 0x14)
+    towns, merchants = o.u32(WORLD + 0x10), o.u16(WORLD + 0xA)
+    captains = o.u16(to.SHIPS + 0xF2)
+    for kind, when in ((5, now + 0x50), (2, now + 0x300)):
+        o.tick_operations.append(struct.pack('<II4B6BH', 0x84, when, 3, kind, 0x41, 0x42, 1, 2, 3, 4, 5, 6, 0))
+    office = next((f for f in range(o.u16(WORLD + 8)) if o.u16(o.office(f) + 0x2F2) < captains), None)
+    if office is not None:
+        admin, m, town = o.u16(o.office(office) + 0x2F2), o.u16(o.office(office) + 0x2C4), o.u8(o.office(office) + 0x2C6)
+        for a, mm in ((admin, m), ((admin + 1) % captains, m), (admin, merchants + 3)):
+            o.tick_operations.append(struct.pack('<5I', 0x67, a, mm, town, 0x60))
+        print(f'oficina {office} del comerciante {m} en {town}: administrador {admin}')
+    else:
+        print('ninguna oficina con administrador: sin 0x67')
+    o.tick_operations.append(struct.pack('<IIIBBBBBBH', 0x48, now + 0x700, 0, 1, 1, 0, 1, 0xFF, 0, 0))
+    w32(o, o.town(5) + 0x2C8, o.u32(o.town(5) + 0x2C8) & ~0xE0)
+    for kind, x in ((0, 0), (3, 7), (3, 25), (2, 9)):
+        o.tick_operations.append(struct.pack('<IIIBBBBBBH', 0x48, now + 0x100, 5000, 5, kind, x, 0, 0, 0, 0))
+    print(f'impuesto por cabeza de la ciudad 5: {o.u8(o.town(5) + 0x6F8)}')
+    return lambda: print(f'impuesto por cabeza de la ciudad 5: {o.u8(o.town(5) + 0x6F8)}')
+
+
+def records_of(o, t, head):
+    """(registro, x, y) de una lista de edificios de la ciudad ([0x75C], siguiente en [+4])."""
+    out, r = [], head
+    base, n = o.u32(o.town(t) + 0x75C), o.u16(o.town(t) + 0x776)
+    while r < n:
+        out.append((r, o.u8(base + 8 * r), o.u8(base + 8 * r + 1)))
+        r = o.u16(base + 8 * r + 4)
+    return out
+
+
+def subasta(o):
+    """Edificios en venta (operación 0x28, 0x53D190 con 0x4DAB00), al final del
+    primer tick, de comerciantes de la IA con oficina y al menos dos empresas
+    en una ciudad: en la ciudad A hay una subasta en fase 2 sin edificios (a
+    16 días): uno se añade a ella; en la B, uno abre una subasta nueva y el
+    segundo se añade a esa (fase 1); en la C su dueño no tiene el bit de la
+    ciudad en [+0x468] (no); y una celda vacía de la B (no está: recuenta la
+    oficina). Graba 2 días."""
+    now = o.u32(WORLD + 0x14)
+    found = []
+    for f in range(o.u16(WORLD + 8)):
+        m, t = o.u16(o.office(f) + 0x2C4), o.u8(o.office(f) + 0x2C6)
+        if m >= o.u16(WORLD + 0xA) or not o.u16(o.merchant(m) + 8) or t in [x[1] for x in found]:
+            continue
+        recs = records_of(o, t, o.u16(o.office(f) + 0x2CE))
+        if len(recs) >= 2 and o.u32(o.merchant(m) + 0x468) & (1 << (t & 31)):
+            found.append((m, t, recs))
+    (ma, ta, ra), (mb, tb, rb), (mc, tc, rc) = found[:3]
+    a = o.call(0x4D8CF0, [now + 0x1000], ecx=to.EVENTS)
+    w16(o, a + 6, 0x36)
+    for k in range(3):
+        w16(o, a + 8 + 2 * k, 0xFFFF)
+    w16(o, a + 0xE, 0x1000)
+    w32(o, a + 0x10, 0)
+    for off, v in ((0x14, 2), (0x15, ta), (0x16, 0), (0x17, 0xFF)):
+        w8(o, a + off, v)
+    w32(o, o.merchant(mc) + 0x468, o.u32(o.merchant(mc) + 0x468) & ~(1 << (tc & 31)))
+    for m, t, (r, x, y) in ((ma, ta, ra[0]), (mb, tb, rb[0]), (mb, tb, rb[1]), (mc, tc, rc[0]), (mb, tb, (0, 0, 0))):
+        o.tick_operations.append(struct.pack('<5I', 0x28, t, m, x, y))
+    print(f'A: {ma} en {ta} {ra[:1]}; B: {mb} en {tb} {rb[:2]}; C: {mc} en {tc} {rc[:1]}; ajustes [+0xD]'
+          f' {o.u8(o.u32(to.SETTINGS_POINTER) + 0xD)}')
+
+    def show():
+        for i, e in events(o):
+            if o.u16(e + 6) == 0x36:
+                print(f'subasta {i}: {bytes(o.uc.mem_read(e, 0x18)).hex()}')
+    return show
+
+
+def subasta_ajuste(o):
+    """subasta con el byte [+0xD] de los ajustes a 0 (en las partidas vale 3):
+    el segundo edificio de la B se añade a la subasta en fase 1 que abre el
+    primero. Graba 2 días."""
+    w8(o, o.u32(to.SETTINGS_POINTER) + 0xD, 0)
+    return subasta(o)
+
+
+def temporada(o):
+    """La temporada de piratas que viene (operación 0x7E, 0x53F8B0, el evento
+    0x1F), al final del primer tick: con los bits 0..2 a 0 en los cuatro u32
+    (todos los cambios) y con 7, 5, 3, 6. Graba 1 día. Devuelve lo que
+    escribe al final."""
+    for words in ((0x12340008, 0x56780010, 0x9ABC0018, 0xDEF00020), (0x11111117, 0x22222225, 0x33333333, 0x44444446)):
+        o.tick_operations.append(struct.pack('<5I', 0x7E, *words))
+
+    def show():
+        for i, e in events(o):
+            if o.u16(e + 6) == 0x1F:
+                print(f'evento {i}: {bytes(o.uc.mem_read(e, 0x18)).hex()}')
+    return show
+
+
+FLAMMABLE = {t for t in range(4, 0x1F)} | {0x29, 0x2C}  # 0x672B3C
+
+
+def incendio_ciudad(o):
+    """Incendios en las ciudades (operación 0x7D, el evento 0x1D 0x4E9564), al
+    final del primer tick, cada uno en su ciudad y con su evento a tick
+    múltiplo de 64 (se extiende enseguida): uno que empieza en un almacén
+    (0x1E) de un comerciante (0x500C30) y puede arder 4 edificios; otro en una
+    casa de una oficina ([+0x2D0]), 5; y otro en un edificio de la ciudad
+    ([0x764]), 3. Graba 4 días. Devuelve lo que escribe al final."""
+    now, towns = o.u32(WORLD + 0x14), o.u32(WORLD + 0x10)
+    base = lambda t: o.u32(o.town(t) + 0x75C)
+    kind = lambda t, r: o.u8(base(t) + 8 * r + 3)
+    used, fires = set(), []
+
+    def first(lists, test):
+        for t, head in lists:
+            if t in used:
+                continue
+            for r, x, y in records_of(o, t, head):
+                if test(t, r):
+                    used.add(t)
+                    return t, r, x, y
+        return None
+    offices = [(o.u8(o.office(f) + 0x2C6), f) for f in range(o.u16(WORLD + 8))]
+    for lists, test, top in (([(t, o.u16(o.office(f) + 0x2CE)) for t, f in offices], lambda t, r: kind(t, r) == 0x1E, 4),
+                             ([(t, o.u16(o.office(f) + 0x2D0)) for t, f in offices], lambda t, r: kind(t, r) in FLAMMABLE, 5),
+                             ([(t, o.u16(o.town(t) + 0x764)) for t in range(towns)], lambda t, r: kind(t, r) in FLAMMABLE, 3)):
+        hit = first(lists, test)
+        if hit:
+            t, r, x, y = hit
+            fires.append((t, r, kind(t, r)))
+            o.tick_operations.append(struct.pack('<IIHHBBBBI', 0x7D, (now + 0x40) & ~0x3F, 0, top, x, y, t, 0, 0))
+    print(f'incendios (ciudad, registro, tipo): {fires}')
+    return lambda: print(f'después: {[(t, hex(o.u32(o.town(t) + 0x2C8)), o.u16(o.town(t) + 0x76A)) for t, _, _ in fires]}')
+
+
+def capitan_jugador(o):
+    """El capitán de un barco del jugador se retira (operación 0x13, 0x538C40,
+    y el evento 0x27 al tick siguiente), al final del primer tick; y otra con
+    un capitán que no existe (nada). Graba 1 día. Devuelve lo que escribe al
+    final."""
+    p, ships, captains = o.u32(to.PLAYER), o.u16(to.SHIPS + 0xF4), o.u16(to.SHIPS + 0xF2)
+    s = o.u16(o.merchant(p) + 0xE)
+    while s < ships and o.u16(o.ship(s) + 0x42) >= captains:
+        s = o.u16(o.ship(s) + 4)
+    c = o.u16(o.ship(s) + 0x42)
+    o.tick_operations.append(struct.pack('<5I', 0x13, s, c, 0, 0))
+    o.tick_operations.append(struct.pack('<5I', 0x13, s, captains + 5, 0, 0))
+    print(f'barco {s} del jugador {p}, capitán {c}, estado {o.u16(o.ship(s) + 0x134)}')
+    return lambda: print(f'después: capitán {o.u16(o.ship(s) + 0x42)}, estado {o.u16(o.ship(s) + 0x134)}')
+
+
+def boda(o):
+    """Weddings (operation 0x60, 0x53DA90, and event 0x15, 0x4E7C74), queued at
+    the end of the first tick for the next day: the AI merchant with the
+    biggest fleet (its first ship with 240 more loads of hold: a cog and a
+    crayer), in a town with [0x2C8] & 1 (the cog becomes a crayer), wares 0xFF (the second one becomes tools); the player, wares
+    0x31, in his home town (his letters' marks are cleared); a merchant whose
+    [+0x28] has passed (nothing); and one with a past tick (nothing). Each
+    wedding ends in a feast (event 0x07). Records 2 days. Returns what it
+    prints at the end."""
+    now, towns, merchants = o.u32(WORLD + 0x14), o.u32(WORLD + 0x10), o.u16(WORLD + 0xA)
+    p = o.u32(to.PLAYER)
+    when = (now + 0x180) & ~0xFF
+
+    def fleet(m):
+        total, s = 0, o.u16(o.merchant(m) + 0xE)
+        while s < o.u16(to.SHIPS + 0xF4):
+            total += struct.unpack('<i', bytes(o.uc.mem_read(o.ship(s) + 0x10, 4)))[0] // 40000
+            s = o.u16(o.ship(s) + 4)
+        return total
+    ai = [m for m in range(merchants) if o.u16(o.merchant(m) + 8) and not o.u8(o.merchant(m) + 8) & 4]
+    big = max(ai, key=fleet)
+    other = next(m for m in ai if m != big)
+    small = next((t for t in range(towns) if o.u32(o.town(t) + 0x2C8) & 1), 0)
+    for m in (big, p):
+        w32(o, o.merchant(m) + 0x28, 0xFFFFFFFF)
+    first = o.u16(o.merchant(big) + 0xE)  # a bigger hold: more than 10 points, a cog and a crayer
+    w32(o, o.ship(first) + 0x10, o.u32(o.ship(first) + 0x10) + 480000)
+    w32(o, o.merchant(other) + 0x28, now)
+    for m, town, wares in ((big, small, 0xFF), (p, o.u8(o.merchant(p) + 0x19), 0x31), (other, 0, 0x22)):
+        o.tick_operations.append(struct.pack('<IIHBBBBBBBBH', 0x60, when, 5500, wares, 7, 0x85, 3, town, 1, 0, m, 0))
+    o.tick_operations.append(struct.pack('<IIHBBBBBBBBH', 0x60, now, 5500, 0x22, 7, 0x85, 3, 0, 1, 0, big, 0))
+    print(f'boda de {big} (flota {fleet(big)}) en {small}, del jugador {p} (flota {fleet(p)}), {other} sin plazo')
+
+    def show():
+        for m in (big, p, other):
+            s = o.u16(o.merchant(m) + 0xE)
+            print(f'{m}: [+0x28] {o.u32(o.merchant(m) + 0x28):#x}, [+0x478] {o.u16(o.merchant(m) + 0x478)}, primer barco {s}'
+                  f' tipo {o.u8(o.ship(s) + 0xE)} carga {[x for x in struct.unpack("<24i", bytes(o.uc.mem_read(o.ship(s) + 0x54, 96))) if x]}')
+    return show
+
+
+def quiebra(o):
+    """Bankruptcies (operation 0x65, 0x4F5D80) at the end of the first tick: an
+    AI merchant made mayor of his home town, with two debts (events 0x01 at
+    16 days: one owed to him, one owed by him); and the player (nothing).
+    Records 2 days. Returns what it prints at the end."""
+    now = o.u32(WORLD + 0x14)
+    m = ai_with_office(o)[0]
+    p = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(m) + 0x19)
+    w8(o, o.town(home) + 0x6F1, m)
+    for creditor, debtor in ((m, (m + 1) % o.u16(WORLD + 0xA)), ((m + 2) % o.u16(WORLD + 0xA), m)):
+        a = o.call(0x4D8CF0, [now + 0x1000], ecx=to.EVENTS)
+        w16(o, a + 6, 1)
+        w32(o, a + 8, 20000)
+        w32(o, a + 0xC, now & ~0xFF)
+        for off, v in ((0x10, creditor), (0x11, debtor), (0x12, 0), (0x13, 3), (0x14, home)):
+            w8(o, a + off, v)
+    for who in (m, p):
+        o.tick_operations.append(struct.pack('<5I', 0x65, who, 0, 0, 0))
+    print(f'quiebra de {m} (alcalde de {home}), y del jugador {p}')
+
+    def show():
+        mm = o.merchant(m)
+        print(f'{m}: dinero {o.u32(mm)}, nombre {o.u8(mm + 0x1C)}/{o.u8(mm + 0x1D)}, alcalde de {home}:'
+              f' {o.u8(o.town(home) + 0x6F1)}; deudas: {[bytes(o.uc.mem_read(a + 0xC, 9)).hex() for _, a in events(o) if o.u16(a + 6) == 1][:4]}')
+    return show
+
+
+def hijo(o):
+    """Children (operation 0x87, 0x53FEA0) at the end of the first tick: an AI
+    merchant married 300 days ago gets one, and a second one right after
+    does not (the first was just born); an unmarried merchant and one married
+    100 days ago get none. Records 1 day. Returns what it prints at the end."""
+    now, towns = o.u32(WORLD + 0x14), o.u32(WORLD + 0x10)
+    a, b, c = ai_with_office(o)[:3]
+    for m, days in ((a, 300), (c, 100)):
+        mm = o.merchant(m)
+        w8(o, mm + 0x31, o.u8(mm + 0x19))
+        w32(o, mm + 0x28, now - 18 * 365 * 256)
+        w32(o, mm + 0x2C, now - days * 256)
+    w8(o, o.merchant(b) + 0x31, 0xFF)
+    for m, name in ((a, 11), (a, 12), (b, 13), (c, 14)):
+        o.tick_operations.append(struct.pack('<IBB4B10x', 0x87, m, name, 1, 2, 3, 4))
+    print(f'casado {a} (300 días), {c} (100 días), soltero {b}')
+    return lambda: print(f'hijos: {[(m, o.u8(o.merchant(m) + 0x36), o.u16(o.merchant(m) + 0x34)) for m in (a, b, c)]}')
+
+
+def desguace(o):
+    """Ships deleted (operation 0x0A, 0x507FB0) at the end of the first tick:
+    an AI ship in port, one at sea, a convoy member that is not its leader,
+    one with the wrong owner (nothing) and one of the player. Records 1 day.
+    Returns what it prints at the end."""
+    ships, merchants = o.u16(to.SHIPS + 0xF4), o.u16(WORLD + 0xA)
+    p = o.u32(to.PLAYER)
+
+    def chain(head):
+        out, s = [], head
+        while s < ships:
+            out.append(s)
+            s = o.u16(o.ship(s) + 6)
+        return out
+    port, sea = chain(o.u16(to.SHIPS + 0xE8)), chain(o.u16(to.SHIPS + 0xEA))
+    convoys = o.u16(to.SHIPS + 0xF6)
+
+    def ai(s):
+        m = o.u8(o.ship(s))
+        return m < merchants and o.u16(o.merchant(m) + 8) and o.u16(o.ship(s) + 8) >= convoys
+    lead = lambda c: o.u16(o.u32(to.SHIPS + 8) + 0x3C * c + 0x10)
+    member = next((s for s in range(ships) if o.u8(o.ship(s)) < merchants and o.u16(o.ship(s) + 8) < convoys
+                   and lead(o.u16(o.ship(s) + 8)) != s), None)
+    chosen = [next(s for s in port if ai(s)), next(s for s in sea if ai(s))]
+    if member is not None:
+        chosen.append(member)
+    mine = o.u16(o.merchant(p) + 0xE)
+    for s in chosen + ([mine] if mine < ships else []):
+        o.tick_operations.append(struct.pack('<5I', 0x0A, s, o.u8(o.ship(s)), 0, 0))
+    o.tick_operations.append(struct.pack('<5I', 0x0A, chosen[0], (o.u8(o.ship(chosen[0])) + 1) & 0xFF, 0, 0))
+    lists = [o.u16(o.merchant(p) + 0x60C + 2 * k) & 0x7FFF for k in range(11)]
+    print(f'barcos borrados {chosen} y del jugador {mine} (sus listas: {lists})')
+    return lambda: print(f'después (dueño, estado, siguiente): {[(o.u8(o.ship(s)), o.u16(o.ship(s) + 0x134), o.u16(o.ship(s) + 6)) for s in chosen]}'
+                         f'; libres {o.u16(to.SHIPS + 0xE2)}')
+
+
+def red(o):
+    """Network sync checks (operation 0xB8, 0x542F10) at the end of the first
+    tick: kinds 0 (with flag 0 and 1), 1 to 5 and 9. With [0x6DF31C] = 0,
+    kinds 1 and 2 queue nothing. Records 1 day."""
+    for kind, flag in ((0, 0), (0, 1), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (9, 1)):
+        o.tick_operations.append(struct.pack('<5I', 0xB8, kind, flag, 0, 0))
+    print(f'[0x6DF31C] {o.u32(0x6DF31C)}')
+
+
+def red_activa(o):
+    """red with [0x6DF31C] = 1 (as in a network game): kinds 1 and 2 queue a
+    0xB9 per ship and a 0xBA per town. Records 1 day."""
+    w32(o, 0x6DF31C, 1)
+    red(o)
+
+
+def cartas(o):
+    """Old letters (0x4D6780, from event 0x03): event 0x03 moved to the first
+    day whose day of year modulo the number of merchants is the player, who
+    keeps letters 5 days ([+0x38..+0x3A] = 4). Records until that day.
+    Returns what it prints at the end: the player's letters."""
+    now, day, merchants = o.u32(WORLD + 0x14), o.u16(WORLD + 4), o.u16(WORLD + 0xA)
+    p = o.u32(to.PLAYER)
+    k = next(k for k in range(1, merchants + 1) if (day + k) % merchants == p)
+    i, a = next((i, a) for i, a in events(o) if o.u16(a + 6) == 3)
+    move_event(o, i, a, (now & ~0xFF) + 0x100 * k + 1)
+    for off in (0x38, 0x39, 0x3A):
+        w8(o, o.merchant(p) + off, 4)
+
+    def letters():
+        out, j = [], o.u16(o.merchant(p) + 0xA)
+        while j < o.u16(to.MAIL + 6) and len(out) < 64:
+            e = o.u32(to.MAIL) + 0x10 * j
+            out.append((j, hex(o.u8(e + 4))))
+            j = o.u16(e + 6)
+        return out
+    print(f'jugador {p}: el evento 0x03 en {k} días; cartas {letters()}')
+    return lambda: print(f'después: {letters()}; libre {o.u16(to.MAIL + 4)}')
+
+
+def hijo_natural(o):
+    """Children from event 0x03 (0x4F69B0 queues operation 0x87): every AI
+    merchant married 300 days ago, those with an even index already with 9
+    children (too many), and event 0x03 moved to the next tick. Records 1 day.
+    Returns what it prints at the end."""
+    now, merchants = o.u32(WORLD + 0x14), o.u16(WORLD + 0xA)
+    ai = [m for m in range(merchants) if o.u16(o.merchant(m) + 8)]
+    for m in ai:
+        mm = o.merchant(m)
+        w8(o, mm + 0x31, o.u8(mm + 0x19))
+        w32(o, mm + 0x28, now - 18 * 365 * 256)
+        w32(o, mm + 0x2C, now - 300 * 256)
+        w8(o, mm + 0x36, 9 if m % 2 == 0 else 0)
+    i, a = next((i, a) for i, a in events(o) if o.u16(a + 6) == 3)
+    move_event(o, i, a, now + 1)
+    print(f'{len(ai)} comerciantes casados')
+    return lambda: print(f'con hijos: {[(m, o.u8(o.merchant(m) + 0x36)) for m in ai if o.u16(o.merchant(m) + 0x34) != 0xFFFF]}')
+
+
 def jugador_carretera_vencida(o):
     """El jugador con la carretera vencida: el juego crea un encargo igual con
     la ciudad [+0x10] como comerciante, que sigue avanzando. Graba 2 días."""
@@ -954,7 +1585,11 @@ SCENARIOS = {f.__name__: f for f in (candidato, jugador, dos_candidatos, sin_car
                                      encargo_nuevo, encargo_cumplido, encargo_vencido, barco_perdido,
                                      jugador_coge, jugador_vencido,
                                      nueva_sin_marca, nueva_alcalde_ia, nueva_alcalde_humano, nueva_sin_alcalde,
-                                     poblada, rica, fundar_aceite, robo, asedio, capitanes, impuesto, monumento, incendio, dieta)}
+                                     poblada, rica, fundar_aceite, robo, asedio, capitanes, impuesto, monumento, incendio, dieta,
+                                     fiesta, fiesta_vacia, fiesta_ciudad, astillero, astillero_ciudad, eventos_op,
+                                     propuestas, subasta, subasta_ajuste, temporada, incendio_ciudad,
+                                     capitan_jugador, boda, quiebra, hijo, desguace, red, red_activa, cartas,
+                                     hijo_natural)}
 
 
 def main():

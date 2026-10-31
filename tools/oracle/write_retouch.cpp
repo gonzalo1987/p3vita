@@ -61,6 +61,7 @@ size_t take_free_notice(SaveGame& save) {
 	}
 	save.globals.u16(kMailFree) = save.mail[index].u16(6);
 	save.mail[index] = GameMemory<0x10>();
+	save.mail_records[index].reset();
 	save.opaque.mail_extras[index].clear();
 	return index;
 }
@@ -172,14 +173,14 @@ int main(int argc, char** argv) {
 		n.u8(4) = notice.type;
 		n.u8(5) = 0x21;
 		if (notice.type == 0x71) {
-			// The 16-byte block (its u32 [+0x0] the bytes that follow, [+0x4]
-			// the tick until which it doesn't expire) and 3 bytes.
-			std::vector<uint8_t> block(16 + 3, 0x5A);
-			const uint32_t size = 3;
-			const uint32_t until = g.u32(global::kWorldTick) + 1000;
-			std::memcpy(block.data(), &size, 4);
-			std::memcpy(block.data() + 4, &until, 4);
-			save.opaque.mail_extras[index] = block;
+			// The 16-byte record (SaveGame::mail_records: its u32 [+0x0] the
+			// bytes that follow it in the file, [+0x4] the tick until which
+			// it doesn't expire) and those 3 bytes.
+			GameMemory<0x10>& record = save.mail_records[index].emplace();
+			std::memset(record.bytes.data(), 0x5A, 0x10);
+			record.u32(0) = 3;
+			record.u32(4) = g.u32(global::kWorldTick) + 1000;
+			save.opaque.mail_extras[index] = {0x5A, 0x5A, 0x5A};
 		} else {
 			std::memcpy(&n.u8(8), pattern(8, notice.type).data(), 8);
 		}

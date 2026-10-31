@@ -1,5 +1,6 @@
 add_library(p3data STATIC
 	aim.cpp
+	battle/storms.cpp
 	convoys.cpp
 	convoys_members.cpp
 	convoys_port.cpp
@@ -53,3 +54,7 @@ target_compile_options(p3data PRIVATE -ffp-contract=off)
 # La simulación de las ciudades lee y escribe los objetos del juego por offset
 # (game_memory.hpp).
 target_compile_options(p3data PUBLIC -fno-strict-aliasing)
+# Signed overflow wraps, as in the game's x86 code. The PC builds checked with
+# the oracle already use it (top-level CMakeLists.txt); here it reaches the
+# Vita's Release build too, so the Vita computes what the oracle checked.
+target_compile_options(p3data PUBLIC -fwrapv)

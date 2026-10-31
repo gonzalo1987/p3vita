@@ -18,13 +18,8 @@ namespace p3::data {
 constexpr int kWrittenSaveVersion = 0x85;
 
 // What 0x5472F0 does to the state before writing: 0x4D6780 for each
-// merchant (expire_merchant_mail).
+// merchant (fn_4d6780 in town_tick/events_towns.cpp: expires its old notices).
 void prepare_save(SaveGame& save);
-
-// 0x4D6780 (thiscall on the mailbox 0x6DD730, with a merchant): takes out of
-// the merchant's list the notices older than their type allows and puts
-// them in the free list; their extras (SaveOpaque::mail_extras) go too.
-void expire_merchant_mail(SaveGame& save, int merchant);
 
 // The uncompressed .pat as 0x549CC0 writes it. Like the game, it changes
 // SaveGame::settings first (date, hometown and its name, rank: see

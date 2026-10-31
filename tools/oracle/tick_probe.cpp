@@ -4,7 +4,9 @@
 //
 // uso: tick_probe <fichero.probe> [--continuo] [--cpr p2arch0_eng.cpr] [--solo FUNCIÓN] [--max N]
 //        tick_probe <fichero.probe> --carga <partida.raw> [--continuo [--cpr p2arch0_eng.cpr [--sin-ia]
-//          [--sin-convoyes]]] [--max N] [--write OUT]
+//          [--sin-convoyes] [--no-storms]]] [--max N] [--write OUT]
+// --no-storms: without the storms (0x5053C0), as town_oracle.py --no-storms.
+// --storms (on by default now) is still accepted.
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
 // ella, así que una diferencia apunta a esa función. Con --continuo el estado
@@ -267,6 +269,17 @@ void build_save(const State& state, SaveGame& save) {
 	if (const Region* m = find(state, "B")) {
 		copy_blocks(*m, save.mail);
 	}
+	if (const Region* l = find(state, "L")) {
+		// The letters' heap records: u16 letter and 16 bytes, for each.
+		save.mail_records.assign(save.mail.size(), std::nullopt);
+		const std::vector<uint8_t>& b = l->bytes;
+		for (size_t o = 0; o + 0x12 <= b.size(); o += 0x12) {
+			const uint16_t i = get<uint16_t>(b.data(), o);
+			if (i < save.mail_records.size()) {
+				std::memcpy(save.mail_records[i].emplace().bytes.data(), b.data() + o + 2, 0x10);
+			}
+		}
+	}
 	if (const Region* y = find(state, "Y")) {
 		save.town_travel = y->bytes;
 	}
@@ -356,6 +369,19 @@ State dump_save(const SaveGame& save, const State& game) {
 	}
 	if (s.count("B")) {
 		store_blocks(save.mail, s["B"]);
+	}
+	if (s.count("L")) {
+		std::vector<uint8_t>& b = s["L"].bytes;
+		b.clear();
+		for (size_t i = 0; i < save.mail_records.size() && i < save.mail.size(); ++i) {
+			const uint8_t kind = save.mail[i].u8(4);
+			if (save.mail_records[i] && ((kind >= 0x3C && kind <= 0x40) || kind == 0x71)) {
+				const size_t o = b.size();
+				b.resize(o + 0x12);
+				put<uint16_t>(b.data(), o, uint16_t(i));
+				std::memcpy(b.data() + o + 2, save.mail_records[i]->bytes.data(), 0x10);
+			}
+		}
 	}
 	if (s.count("Y")) {
 		s["Y"].bytes = save.town_travel;
@@ -494,6 +520,19 @@ bool loaded_global(uint32_t a) {
 
 // Compara y escribe las diferencias. Devuelve cuántas hay. Con only_loaded,
 // de los globales solo compara los que llena el lector de partidas.
+// The first index from i on where a and b differ (n if none). Nearly all the
+// state is equal after each call, so equal stretches are skipped 64 bytes at
+// a time: comparing byte by byte was 87% of tick_probe's time.
+size_t next_difference(const uint8_t* a, const uint8_t* b, size_t i, size_t n) {
+	while (i + 64 <= n && std::memcmp(a + i, b + i, 64) == 0) {
+		i += 64;
+	}
+	while (i < n && a[i] == b[i]) {
+		++i;
+	}
+	return i;
+}
+
 int compare(const State& ours, const State& game, int& budget, const std::string& title, bool only_loaded = false) {
 	int differences = 0;
 	bool header = false;
@@ -524,8 +563,11 @@ int compare(const State& ours, const State& game, int& budget, const std::string
 		}
 		const bool town = name == "T";
 		for (size_t i = 0; i < a.size(); ++i) {
-			if (a[i] == b[i] ||
-				(only_loaded && name == "G" && !loaded_global(GlobalMemory::kBegin + uint32_t(i)))) {
+			i = next_difference(a.data(), b.data(), i, a.size());
+			if (i == a.size()) {
+				break;
+			}
+			if (only_loaded && name == "G" && !loaded_global(GlobalMemory::kBegin + uint32_t(i))) {
 				continue;
 			}
 			// La palabra de 4 bytes alineada que lo contiene.
@@ -562,6 +604,7 @@ int main(int argc, char** argv) {
 	bool continuous = false;
 	bool ai = true;
 	bool convoys = true;
+	bool storms = true;
 	std::string load;
 	std::string cpr;
 	uint32_t only = 0;
@@ -577,6 +620,10 @@ int main(int argc, char** argv) {
 			ai = false;
 		} else if (arg == "--sin-convoyes") {
 			convoys = false;
+		} else if (arg == "--storms") {
+			storms = true;
+		} else if (arg == "--no-storms") {
+			storms = false;
 		} else if (arg == "--cpr" && i + 1 < argc) {
 			cpr = argv[++i];
 		} else if (arg == "--solo" && i + 1 < argc) {
@@ -609,6 +656,7 @@ int main(int argc, char** argv) {
 	register_probes_events_mayor(registry);
 	register_probes_events_rare(registry);
 	register_probes_alderman(registry);
+	register_probes_battle(registry);
 
 	Input in(argv[1]);
 	if (!in.ok() || !in.expect("P3PROBE1")) {
@@ -633,6 +681,7 @@ int main(int argc, char** argv) {
 		sailing = std::make_unique<Sailing>(save, *nav, load_sea_map_towns(*archive));
 		sailing->set_ai(ai);
 		sailing->set_convoys(convoys);
+		sailing->set_storms(storms);
 		g_sailing = sailing.get();
 		registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
 			sailing->update_ships();
@@ -679,16 +728,19 @@ int main(int argc, char** argv) {
 	// Los puntos de las expediciones, que la grabación no guarda: de los datos.
 	std::vector<std::array<uint16_t, 2>> expeditions;
 	std::vector<std::string> ship_names;  // Tampoco los nombres de barco.
+	std::array<std::vector<std::string>, 2> first_names;  // Nor the first names.
 	std::vector<std::vector<uint8_t>> town_templates;  // Ni las plantillas de las ciudades nuevas.
 	if (archive) {
 		SaveGame scripts;
 		load_game_scripts(*archive, scripts);
 		expeditions = scripts.expeditions;
 		ship_names = scripts.ship_names;
+		first_names = scripts.first_names;
 		town_templates = scripts.town_templates;
 		if (continuous && load.empty()) {
 			save.expeditions = expeditions;
 			save.ship_names = ship_names;
+			save.first_names = first_names;
 			save.town_templates = town_templates;
 		}
 	}
@@ -766,6 +818,7 @@ int main(int argc, char** argv) {
 			build_save(before, save);
 			save.expeditions = expeditions;
 			save.ship_names = ship_names;
+			save.first_names = first_names;
 			save.town_templates = town_templates;
 		}
 		save.queued_operations.clear();

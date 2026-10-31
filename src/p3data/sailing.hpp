@@ -44,6 +44,12 @@ void clear_ship_route(SavedShip& ship);
 // esa velocidad.
 void set_ship_course(SavedShip& ship, uint32_t speed, MapPoint target);
 
+// 0x447580 (battle/storms.cpp): `route` goes round the storm at `storm`
+// (a new route: the old one up to `current`, the ship's position `ship`, the
+// corners of the octagon round the storm, the old one from `found`).
+bool fn_447580(const NavData& nav, std::shared_ptr<SeaRoute>& route, MapPoint storm, MapPoint ship, uint32_t found,
+		uint32_t current, bool own);
+
 // 0x5310D0: la fecha del mundo (día, mes, año y día del año) a partir de su
 // tick. El juego la recalcula al empezar cada día.
 void update_world_date(GlobalMemory& globals);
@@ -75,6 +81,10 @@ public:
 	void set_ai(bool enabled) { ai_ = enabled; }
 	// Con false no se recorren los convoyes (town_oracle.py --sin-convoyes).
 	void set_convoys(bool enabled) { convoys_ = enabled; }
+	// The storms (0x5053C0) run every 8 ticks after the convoys, as in the game
+	// and the oracle. On by default (the whole world, 7 days in the 12 saves:
+	// 0 differences); false matches town_oracle.py --no-storms.
+	void set_storms(bool enabled) { storms_ = enabled; }
 
 	// Un tick de advance_time (0x530E80) solo con la fecha y los barcos: lo
 	// mismo que begin_tick y update_ships. El tick completo, con las ciudades,
@@ -151,8 +161,14 @@ public:
 	void fn_503cf0(int convoy);
 	void fn_503930(int convoy);
 
+	// battle/storms.cpp: the storms.
+	void fn_5053c0();  // (ships object) Every storm against the ships near it.
+	void fn_505290(uint16_t ship, int32_t storm_x, int32_t storm_y);  // (ships object) The route round a storm.
+
 	// 0x50CE50: mete el barco en la lista por x (también la usa la operación 0x78).
 	void insert_x(uint16_t index, uint32_t after);
+	// 0x507FB0 (on the ship object): deletes the ship (operation 0x0A).
+	void fn_507fb0(uint16_t index);
 	// 0x5172A0: nueva ruta del barco desde donde está, a la ciudad `town` o a
 	// (x, y) (también la usa la flota de la Hansa, `diet.cpp`).
 	void set_destination(SavedShip& ship, int town, int x, int y);
@@ -160,6 +176,7 @@ public:
 private:
 	bool ai_ = true;
 	bool convoys_ = true;
+	bool storms_ = true;
 
 	struct Assigned {
 		std::shared_ptr<SeaRoute> route;

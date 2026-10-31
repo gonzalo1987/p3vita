@@ -17,7 +17,8 @@ if [[ ! -x "$VITASDK/bin/vdpm" ]]; then
 	"$tmp/vdpm/bootstrap-vitasdk.sh" --install-dir "$VITASDK"
 fi
 
-vdpm install sdl2
+# The answer to vdpm's questions, for sessions without a terminal.
+vdpm install sdl2 <<< $'y\ny\ny'
 
 arm-vita-eabi-gcc --version | head -n1
 cmake --version | head -n1
