@@ -1509,6 +1509,49 @@ def diet_branches(o):
     return during
 
 
+# --- grid.cpp ---
+
+def grid_branches(o):
+    """Direct calls on town 0's grid (thiscall on town_class1): 0x4FACD0 (a
+    building leaves the grid) of a fisherman (5) and a pier (0x2F); 0x4FD680
+    (inside the walls) with the statue out of the grid; 0x4FD830 after a gate
+    0x37 in a cell outside the town, so that 0x4FDA10 looks for the walls:
+    with no wall cell (0x91) at all, with the statue inside and with it out
+    of the grid; and with a single wall cell, after the statue, whose four
+    seeds aren't 0x11."""
+    a = o.town(0)
+    c1 = a + 0x7A4
+    w, h = o.s32(a + 0x7A8), o.s32(a + 0x7AC)
+    base = o.u32(a + GRID)
+    data = bytearray(o.uc.mem_read(base, w * h))
+    sx, sy = o.u8(a + 0x800), o.u8(a + 0x801)
+    # A gate cell outside the town: neither (x + 1, y) nor (x, y − 4) inside.
+    gx, gy = next((x, y) for x in range(4, w - 4) for y in range(8, h - 8)
+                  if not data[h * (x + 1) + y] & 0x80 and not data[h * x + y - 4] & 0x80)
+    walls = [i for i, c in enumerate(data) if c == 0x91]
+    print(f'grid {w}×{h}, statue ({sx}, {sy}), {len(walls)} wall cells, gate cell ({gx}, {gy})')
+
+    def during(o):
+        direct(o, 0x4FACD0, [sx + 3, sy + 4, 5, 0], ecx=c1)
+        direct(o, 0x4FACD0, [sx + 6, sy + 8, 0x2F, 0], ecx=c1)
+        w8(o, a + 0x800, 0xFF)
+        direct(o, 0x4FD680, [], ecx=c1)
+        for i in walls:
+            w8(o, base + i, 0x11)
+        w8(o, a + 0x800, sx)
+        direct(o, 0x4FD830, [gx, gy, 0x37], ecx=c1)
+        w8(o, a + 0x800, w + 2)
+        direct(o, 0x4FD830, [gx, gy, 0x37], ecx=c1)
+        w8(o, a + 0x800, sx)
+        start = sx * h + sy
+        cell = start + 4 * h + 1
+        w8(o, base + cell, 0x91)
+        for d in (2 * h + 2, -2 * h - 2, -2 * h + 2, 2 * h - 2):
+            w8(o, base + cell + d, 0x05)
+        direct(o, 0x4FD830, [gx, gy, 0x37], ecx=c1)
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -1591,6 +1634,9 @@ SCENARIOS = {
     'diet_branches': Scenario(diet_branches, [0x4D85C0, 0x4F8CA0], 0, [
         '@4e0a10>4e1b36', '@4e0a2e>4e1b36', '@4e1272>4e1830', '@4e13a7>4e1b36', '@4e147d>4e1b18', '@4e1547>4e1b18',
         '@4e16af>4e1b18', '@4e16e7', '@4e170d>4e168f', '@4e18fd>4e1b18', '@4e193d>4e16e9', '@4e195d>4e1b18', '@4f8caf']),
+    # grid.cpp
+    'grid_branches': Scenario(grid_branches, [0x4FACD0, 0x4FD680, 0x4FD830], 0, [
+        '@4fb161', '@4fb1f7', '@4fd693>4fd816', '@4fdb0d>4fdc95', '@4fdb21', '@4fdbb4>4fdc91']),
 }
 
 

@@ -50,6 +50,8 @@ task owns, checked against the game with retouched states.
 - **`diet.cpp`**: its 15 marks are gone: 12 checked with 1 scenario (saves
   3 and 5: 13 of 13 targets, 6 calls equal), 3 unreachable. Only comments
   changed.
+- **`grid.cpp`**: its 6 marks are gone, all checked with 1 scenario (saves
+  3 and 5: 6 of 6 targets, 6 calls equal). Only comments changed.
 
 Left: `sieges.cpp` (17), `grid.cpp` (6).
 
@@ -284,6 +286,18 @@ A 0x34 from phase 2 on keeps in [+0x8] the game's list of notices for the
 final letter: the scenario gives it none (0), as the game frees it on
 finishing.
 
+## grid.cpp
+
+6 marks: all checked. Scenario `grid_branches` (saves 3 and 5, direct calls
+on town 0's town_class1; probes for 0x4FD680, 0x4FACD0 and 0x4FD830):
+0x4FACD0 of a fisherman (type 5, 0x4FB161) and a pier (0x2F, 0x4FB1F7);
+0x4FD680 with the statue out of the grid (0x4FD693→0x4FD816); 0x4FD830
+after a gate 0x37 outside the town, so that 0x4FDA10 looks for the walls:
+no wall cell (0x91) and the statue out of the grid (0x4FDB0D→0x4FDC95), no
+wall cell after the statue (0x4FDB21), a single wall cell after it whose
+four seeds aren't 0x11 (0x4FDBB4→0x4FDC91). (The game's forward search
+also reads the byte right after the grid; p3vita stops at the end.)
+
 ## Game bugs
 
 - **Operation 0x3B with a merchant out of the world** (certain; 0x53A4CA
@@ -315,8 +329,9 @@ finishing.
 ## For the inventory
 
 - `alderman.cpp`, `construction.cpp`, `new_town.cpp`, `facilities.cpp`,
-  `offices.cpp`, `businesses.cpp`, `population.cpp`, `merchants.cpp` and
-  `diet.cpp`: every branch checked with the oracle or explained (scenarios of `tools/oracle/retouch_unchecked.py`).
+  `offices.cpp`, `businesses.cpp`, `population.cpp`, `merchants.cpp`,
+  `diet.cpp` and `grid.cpp`: every branch checked with the oracle or
+  explained (scenarios of `tools/oracle/retouch_unchecked.py`).
 - D: 0x4FF2D0 for the store a merchant builds is done (`construction.cpp`);
   0x51FAB0 building at once is rewritten.
 - B/C: operation 0x25 (0x535B7B → 0x5244F0, which calls 0x51F3A0 and

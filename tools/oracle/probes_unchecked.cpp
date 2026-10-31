@@ -194,6 +194,34 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		tick::diet_detail::fn_4f8ca0(s, uint32_t(c.merchant(c.ecx)), c.args[0] & 0xFF);
 		return std::nullopt;
 	};
+	// grid.cpp: thiscall on town_class1 ([0x7A4] of the town).
+	r[0x4FD680] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int town = town_class1(c, c.ecx);
+		if (town < 0) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		tick::fn_4fd680(s, town);
+		return std::nullopt;
+	};
+	r[0x4FACD0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int town = town_class1(c, c.ecx);
+		if (town < 0) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		tick::fn_4facd0(s, town, c.args[0], c.args[1], c.args[2], c.args[3]);
+		return std::nullopt;
+	};
+	r[0x4FD830] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int town = town_class1(c, c.ecx);
+		if (town < 0) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		tick::fn_4fd830(s, town, c.args[0], c.args[1], c.args[2]);
+		return std::nullopt;
+	};
 	r[0x5462F0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		// thiscall on the town (the facility k): a node at the front of [0x9B4].
 		tick::new_town_detail::fn_5462f0(s, c.town(c.ecx), c.args[0]);
