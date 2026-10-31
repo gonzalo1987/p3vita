@@ -6,8 +6,8 @@ persecuciones, encuentros y batallas»): what is simulation and what is UI,
 where the simulation reaches it from and how often, what the oracle needs to
 run it, and a plan in pieces.
 
-Status: **phase 1 done** (2026-10-31); phase 2 not started. See «Done and
-left» at the end.
+Status: **phase 1 done** (2026-10-31); **phase 2 in progress**: piece 1 of
+the plan, the storms (§6). See «Done and left» at the end.
 
 Tools written for the study (in p3vita-datos, branch `cloud/battles`,
 `re/battles/`; nothing in p3vita uses them):
@@ -382,6 +382,34 @@ instructions not yet in p3vita (static, from `graph.py`, and what ran).
    0x93, 0x98, 0xA0 from the UI). With the UI phase. Until then, the rule of
    §4 for human sides.
 
+## 6. Phase 2: the storms (piece 1)
+
+Rewritten in `src/p3data/battle/storms.cpp` (members of `Sailing`):
+0x5053C0 (`fn_5053c0`), 0x505290 (`fn_505290`) and the reroute of the
+navigation 0x447580 (`fn_447580`, a free function on `NavData`). Off by
+default: `Sailing::set_storms(true)` makes `update_ships` call it every 8
+ticks after the convoys (only with the convoys on, as in the oracle).
+
+The oracle: `town_oracle.py --storms` (with `--barcos`) stops jumping over
+0x5053C0 and jumps over its two writes to the sea map (`STORM_UI_JUMPS`,
+0x50596F → 0x505983 and 0x5059CA → 0x5059E0: `*0x6CBDD8 + 0x2B22`, which is 0
+in the emulator). tick_probe: `--storms` (for `--continuo`) and the probes of
+`tools/oracle/probes_battle.cpp` (0x5053C0, 0x505290, 0x447580).
+
+Checked, call by call (`town_oracle.py ... 10 5053c0,505290,447580 --barcos
+/tmp/datos --cpr ... --storms`, then `tick_probe --cpr`): **0 differences in
+the 12 saves, 10 days each**: 3840 calls of 0x5053C0, 350 of 0x505290, 48 of
+0x447580 (1 min 9 s, four saves at a time).
+
+Blocks that the saves don't reach (`re/battles/blocks.py`, 10 days in the
+12): in 0x5053C0 a convoy hit by a storm of kind 2 (both walks), the minimum
+of 1 for a convoy's ships, the push back with only a vertical course, the
+countdown of the sea map `[+0xA]` (always 0 in the saves) and the UI at the
+end; in 0x505290 the player's ship (UI, not reproduced); in 0x447580 the
+plain insertion of the ship's position (the two pairs of corners touch, or
+both ways round have land), the case of the way down being empty, and the
+paths after land on the second way. To check with retouched states (next).
+
 ## For the roadmap
 
 - «Piratas, persecuciones, encuentros y batallas» → split into the 7 pieces
@@ -444,4 +472,7 @@ days, 20 s), the town battle (2 s, stops).
 Not built for the Vita (no change to `src/app` or to an API the viewer
 uses).
 
-Left: phase 2 (the first piece of §5).
+Phase 2 so far: §6.
+
+Left: the retouched states for the branches of §6, the world with the storms
+on (4 saves), and then piece 2 of §5.

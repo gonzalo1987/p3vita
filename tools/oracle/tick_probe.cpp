@@ -4,7 +4,8 @@
 //
 // uso: tick_probe <fichero.probe> [--continuo] [--cpr p2arch0_eng.cpr] [--solo FUNCIÓN] [--max N]
 //        tick_probe <fichero.probe> --carga <partida.raw> [--continuo [--cpr p2arch0_eng.cpr [--sin-ia]
-//          [--sin-convoyes]]] [--max N]
+//          [--sin-convoyes] [--storms]]] [--max N]
+// --storms: the storms (0x5053C0) too, as town_oracle.py --storms.
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
 // ella, así que una diferencia apunta a esa función. Con --continuo el estado
@@ -557,6 +558,7 @@ int main(int argc, char** argv) {
 	bool continuous = false;
 	bool ai = true;
 	bool convoys = true;
+	bool storms = false;
 	std::string load;
 	std::string cpr;
 	uint32_t only = 0;
@@ -571,6 +573,8 @@ int main(int argc, char** argv) {
 			ai = false;
 		} else if (arg == "--sin-convoyes") {
 			convoys = false;
+		} else if (arg == "--storms") {
+			storms = true;
 		} else if (arg == "--cpr" && i + 1 < argc) {
 			cpr = argv[++i];
 		} else if (arg == "--solo" && i + 1 < argc) {
@@ -601,6 +605,7 @@ int main(int argc, char** argv) {
 	register_probes_events_mayor(registry);
 	register_probes_events_rare(registry);
 	register_probes_alderman(registry);
+	register_probes_battle(registry);
 
 	Input in(argv[1]);
 	if (!in.ok() || !in.expect("P3PROBE1")) {
@@ -625,6 +630,7 @@ int main(int argc, char** argv) {
 		sailing = std::make_unique<Sailing>(save, *nav, load_sea_map_towns(*archive));
 		sailing->set_ai(ai);
 		sailing->set_convoys(convoys);
+		sailing->set_storms(storms);
 		g_sailing = sailing.get();
 		registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
 			sailing->update_ships();
