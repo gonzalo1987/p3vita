@@ -4,7 +4,7 @@ Task: `p3vita-datos/tasks/oracle-speed.md`. Make the checks faster without
 changing what is recorded: the `.probe` files must come out byte-identical
 and `tick_probe` must print the same.
 
-Status: **part 1 (measurement) done**; part 2 (speedups) in progress.
+Status: **part 1 (measurement) done**; part 2 (speedups) written but **not checked yet** (commit "WIP"): regions() reads each block once, write_diff skips equal 4 KB blocks, the Recorder skips the "before" snapshot when nothing can have changed, and the PC build defaults to -O2.
 
 ## Part 1: where the time goes (before any change)
 

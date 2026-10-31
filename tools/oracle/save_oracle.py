@@ -59,6 +59,7 @@ TRADE_WARES = 20
 LOAD_WARES = (0, 1, 2, 11, 14, 16, 17, 19)
 
 STACK = 0x0100_0000
+STACK_SIZE = 0x10_0000
 SENTINEL = 0x0300_0000
 FILE = 0x0400_0000
 HEAP = 0x1000_0000
@@ -82,7 +83,7 @@ class SaveOracle:
             o = pe + 24 + optional_size + i * 40
             vsize, va, rsize, raw = struct.unpack_from('<IIII', data, o + 8)
             uc.mem_write(base + va, data[raw:raw + min(rsize, max(vsize, rsize))])
-        uc.mem_map(STACK, 0x10_0000)
+        uc.mem_map(STACK, STACK_SIZE)
         uc.mem_map(SENTINEL, 0x1000)
         uc.mem_map(HEAP, HEAP_SIZE)
         uc.mem_map(FILE, (len(save) + 0xFFFF) & ~0xFFF)
