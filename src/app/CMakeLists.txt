@@ -5,6 +5,11 @@ target_compile_options(p3vita PRIVATE -Wall -Wextra)
 
 if(VITA)
 	target_link_libraries(p3vita PRIVATE SDL2::SDL2-static)
+	# vita-elf-create puts its SCE data (about 2.7 KB) right after the code
+	# segment and fails ("segment 1 overlaps") when the data segment starts
+	# closer than that, which depends on the code size. VitaSDK's linker script
+	# leaves __sce_headroom bytes before the data segment.
+	target_link_options(p3vita PRIVATE -Wl,--defsym,__sce_headroom=0x1000)
 
 	set(P3_VITA_TITLEID "PTRC00003")
 	set(P3_VITA_VERSION "00.01")
