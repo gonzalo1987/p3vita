@@ -19,7 +19,6 @@ Cómo leerla:
 
 - Sesión local: la parte B del inventario está hecha salvo la 0x9F y la 0xB5, que van con las batallas. Lo siguiente es la parte C y después la D.
 - `cloud/battles`: las piezas 2 (los piratas que se mueven) y 3 (la batalla automática en el mar) del plan de las batallas.
-- `cloud/alderman-viewer`: el camino a Gobernador en el visor, la parte del jugador.
 - `cloud/unchecked-branches`: comprobar con estados retocados las ramas «Sin comprobar con el oráculo» de los ficheros del tick de ciudad, empezando por `alderman.cpp`.
 
 ## Estado por partes (medido)
@@ -202,7 +201,17 @@ El cargo más alto de la Liga Hanseática («Alderman» en la versión inglesa) 
     - [ ] 0x4F99B0: la ciudad sin plantilla de mapa. Las 28 plantillas existen
     - [ ] la elección del alcalde dentro de 0x531D50 (0x532063..0x5321C5, con el bit 0x40 de la situación). Al fundar la situación es 0
 - [x] Que el jugador coja un encargo (operación 0x4B, 0x53B440) y aporte materiales a la carretera (operación 0x3B, 0x53A3E0)
-- [ ] La parte del jugador en el visor: ver si es candidato y qué le falta, los encargos de la Hansa con su plazo, coger uno (0x4B), aportar materiales a la carretera desde la oficina o los barcos (0x3B), el avance del encargo y la elección (en marcha: `cloud/alderman-viewer`)
+- [x] La parte del jugador en el visor ([cloud/alderman-viewer.md](cloud/alderman-viewer.md); `src/p3data/hanse_tasks.cpp`). Con Cuadrado en una ciudad se abre el panel de la Hansa, que muestra:
+  - quién es Gobernador y la fecha de la próxima elección;
+  - si el jugador es candidato o qué le falta (ser alcalde y llegar a 120 de reputación);
+  - los encargos con su plazo, para coger uno (operación 0x4B, con los mismos bytes que la ventana del juego 0x5E87D0: {0x4B, jugador, evento});
+  - el avance del encargo cogido;
+  - en las ciudades de la carretera, lo que falta y lo que hay de cada material, para entregarlo (operación 0x3B, como la ventana 0x5F2A20: {0x3B, u16 evento, u16 cantidad, ciudad, jugador, mercancía}; la cantidad es la menor entre la elegida (1, 5, 50 o todo), lo que hay y lo que falta);
+  - un aviso con el resultado de cada elección.
+
+  Funciona con botones, teclado y táctil. `--debug-state mayor|candidate|materials|level4|alderman` pone al jugador en los estados a los que no llegan las partidas. Comprobado con 8 escenarios de `tools/oracle/retouch_player.py`, que encolan los bytes del visor en el juego (coger cada tipo de encargo, un segundo encargo rechazado, un jugador que no es candidato, las entregas con cada cantidad): 0 diferencias en las partidas 1 y 3. Compila para la Vita; falta probarlo en ella
+- [ ] Comprobar la elección con el jugador de candidato. Con `--debug-state level4`, el jugador pierde la elección del 7 de septiembre de 1300 frente al ciudadano de Rostock. Puede ser correcto, porque deciden los votos de las ciudades, pero falta un escenario del oráculo sobre el día de la elección (evento 0x20)
+- [ ] Lo que le falta al jugador en el visor: su voto en la elección (el último paso que da), la pregunta de aceptar la candidatura y la lista de candidatos
 - [x] La elección en la reunión de la Hansa (evento 0x20)
 - [ ] El final: la ventana y el vídeo (`eldermann`) cuando el jugador sale elegido. El objetivo de la partida (evento 0x0E) ya se comprueba
 - Las partidas de prueba no llegan a esto en 60 días (ningún alcalde comerciante llega a 120), así que se comprueba con estados retocados, unos pocos dirigidos a cada rama
@@ -296,7 +305,8 @@ Un ajuste (feature flag) **activado por omisión** con el que p3vita corrige los
 - [ ] Rehacer la interfaz para 960×544 (16:9) con soporte táctil
 - [ ] Los nombres de las ciudades en el mapa del mar se ven blandos. Se dibujan con stb_truetype (suavizado, sin ajustar las letras a los píxeles) en marrón oscuro y sin contorno sobre un fondo con textura. Comparar con una captura del juego original (letra, tamaño, color, contorno, suavizado) e igualarlo
 - [ ] Una franja en los bordes de arriba y abajo del mapa del mar (parte de `Vollansichtskarte.bmp` que el juego seguramente tapa con su interfaz): parar la cámara antes
-- [ ] El camino a Gobernador del jugador (fase 4, «Llegar a Gobernador»; en marcha: `cloud/alderman-viewer`)
+- [x] El panel de la Hansa para el camino a Gobernador (fase 4, «Llegar a Gobernador»: lo hecho y lo que falta)
+- [ ] Los textos de la interfaz del juego. No están en el CPR, que solo tiene los nombres de ciudades, personas y barcos: están dentro de `Patrician3.exe`, en el idioma de cada instalación. El exe español es otro: de 2003, 2 957 312 bytes y MD5 43306e87…, distinto del inglés. Hay que leerlos del exe del idioma, en vez de los textos propios del visor (que ahora están en español en el código). En la Vita habrá que copiar también el exe a `ux0:data/p3vita/`
 - [ ] Las acciones del jugador: la interfaz encola el resto de los 193 códigos de operación (comprar, vender, construir, contratar...)
 - [ ] Los guiones de los textos y las misiones. 0x511270 interpreta los textos del juego y, con el comando 0xFD, programa eventos 0x1B con un guion que ejecuta 0x4ECF64 (el intérprete). Se arranca desde la interfaz (la operación 0xC0 y otros dos caminos); en las partidas, los 0x1B llegan sin guion. El oráculo salta 0x511270 al cargar
 
