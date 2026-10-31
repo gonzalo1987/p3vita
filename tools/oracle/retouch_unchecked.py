@@ -707,6 +707,51 @@ def tower_ops(o, pick=None):
     return during
 
 
+def pier_edge(o):
+    """0x524920 (a new pier) in a town whose only pier cell (0x0F) is in the
+    last column with y = 1 (the others become 0x0B), with the bit 0x1000000
+    of [0x2C8] cleared, timber and tools in the store and many workers: the
+    fourth cell is past the grid (the game writes after it) and the third
+    (y - 2) is the last row of the previous column. For the fix
+    (tick_probe --fix-game-bugs): that one is not written."""
+    t = construction_merchant(o)[1]
+    a = o.town(t)
+    w = o.s32(a + 0x7A8)
+    for x, y in cells(o, t, 0x0F):
+        if o.u8(grid_at(o, t, x, y)) == 0x0F:
+            set_cell(o, t, x, y, 0x0B)
+    set_cell(o, t, w - 1, 1, 0x0F)
+    w32(o, a + 0x2C8, o.u32(a + 0x2C8) & ~0x1000000)
+    store(o, t)
+    print(f'town {t}: width {w}, pier cell ({w - 1}, 1)')
+
+    def during(o):
+        direct(o, 0x524920, [100000], ecx=a)
+    return during
+
+
+def gate_costs(o):
+    """Operation 0x22 of a gate (0x34, 0x523D70) on a finished piece by an AI
+    merchant whose office there has some of each material (less than the
+    gate needs of bricks and hemp, more of tools than of timber): the game
+    takes the tools with the timber's amount, pays 0 for them and nothing to
+    the merchant. For the fix (tick_probe --fix-game-bugs): as the towers."""
+    m, t = construction_merchant(o)
+    a = o.town(t)
+    f = facilities_office(o, m, t)
+    walls = records(o, t, 0x768)
+    finished = next(r for r in walls if r[5] == 0)
+    for ware, n in ((0x13, 3 * 2000), (0xB, 2 * 2000), (0xC, 9 * 200), (0x11, 1 * 2000)):
+        w32(o, o.office(f) + 4 + 4 * ware, n)
+    print(f'town {t}: office {f} of merchant {m}, finished piece {finished}')
+
+    def during(o):
+        store(o, t)
+        w32(o, a + 0x700, 50000000)
+        build_op(o, m, t, finished[1], finished[2], 0x34)
+    return during
+
+
 def town_with_big(o):
     """The town of an AI merchant's office with a 0x32 piece in [0x768]."""
     for m in rt.ai_with_office(o):
@@ -1752,6 +1797,8 @@ SCENARIOS = {
         '535bbc>537025', '535be8', '535b12>537025', '535b44>537025', '53ce30>53cef2', '53cf25']),
     'tower_ops': Scenario(tower_ops, BUILD_FUNCTIONS, 0, [
         '52552b', '523927>523d66', '523990', '523e3d']),
+    'gate_costs': Scenario(gate_costs, BUILD_FUNCTIONS, 0, ['523e3d']),
+    'pier_edge': Scenario(pier_edge, [0x524920], 0, ['@524ad8']),
     'tower_ops_big': Scenario(tower_ops_big, BUILD_FUNCTIONS, 0, ['5239c0>523d66']),
     'wall_ops': Scenario(wall_ops, BUILD_FUNCTIONS, 0, ['522ca3>523803', '5230dc']),
     'cost_fisherman': Scenario(cost_fisherman, [0x51F3A0], 0, ['51f44c']),

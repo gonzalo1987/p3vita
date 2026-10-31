@@ -13,8 +13,9 @@
 #include <cassert>
 #include <cstring>
 
-#include "p3data/trade.hpp"
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/trade.hpp"
 
 namespace p3::data::tick {
 
@@ -1591,8 +1592,9 @@ void fn_523830(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 // fallos del juego reproducidos: las herramientas se sacan de la oficina con
 // lo que falta de madera (y las que se cuentan no bajan; lo que se paga por
 // ellas es 1,278 · 0 = 0), y al comerciante no se le paga, aunque lo que
-// valen cuenta como gasto de la ciudad (corrección opcional en el roadmap,
-// «Corregir los fallos del juego»). Sin la pieza, nada.
+// valen cuenta como gasto de la ciudad. With fix_game_bugs() the costs are
+// worked out as in 0x523830 (each material with its amount and price, and
+// the merchant is paid). Sin la pieza, nada.
 void fn_523d70(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 	SavedTown& st = save.towns[size_t(town)];
 	TownMemory& t = st.memory;
@@ -1608,10 +1610,31 @@ void fn_523d70(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 	constexpr uint8_t kGate = 0x34;
 	int32_t bricks = int32_t(kBricks[kGate]) * kLoad;
 	int32_t timber = int32_t(kTimber[kGate]) * kLoad;
-	const int32_t tools = int32_t(kTools[kGate]) * kBarrel;
+	int32_t tools = int32_t(kTools[kGate]) * kBarrel;
 	int32_t hemp = int32_t(kHemp[kGate]) * kLoad;
 	int32_t paid = 0;
-	if (owner < save.globals.u16(global::kWorldMerchantCount)) {
+	if (owner < save.globals.u16(global::kWorldMerchantCount) && fix_game_bugs()) {
+		// The fix: as 0x523830 does for the towers. Each material with its
+		// own amount and price, and the merchant gets what is paid.
+		const int office = facilities_detail::fn_5308a0(save, owner, uint32_t(town));
+		if (office >= 0) {
+			auto take = [&](uint32_t ware, int32_t& amount, float price) {
+				if (amount <= 0) {
+					return;
+				}
+				const int32_t before = amount;
+				fn_500a70(save, office, ware, amount);
+				paid += int32_t(ftol(double(float(before - amount)) * double(price)));
+			};
+			take(0x13, bricks, kTowerBricksPrice);
+			take(0xB, timber, kTowerTimberPrice);
+			take(0xC, tools, kTowerToolsPrice);
+			take(0x11, hemp, kTowerHempPrice);
+			MerchantMemory& m = save.merchants[owner].memory;
+			m.s32(0) += paid;
+			m.s32(0x49C) += paid;
+		}
+	} else if (owner < save.globals.u16(global::kWorldMerchantCount)) {
 		const int office = facilities_detail::fn_5308a0(save, owner, uint32_t(town));
 		if (office >= 0) {
 			auto take = [&](uint32_t ware, int32_t& amount, float price) {
@@ -1626,6 +1649,8 @@ void fn_523d70(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 				paid += take(0xB, timber, kTowerTimberPrice);
 			}
 			if (tools > 0) {
+				// Game bug: the tools with the timber's amount, and the
+				// counter of the tools doesn't go down.
 				fn_500a70(save, office, 0xC, timber);
 			}
 			if (hemp > 0) {
@@ -2229,17 +2254,31 @@ void fn_524920(SaveGame& save, int town, int32_t workers) {
 	fn_5254c0(save, town, k);
 	// Celdas del muelle en obras: la del ancla, las dos de debajo y la de al
 	// lado (rejilla escalonada).
+	// Game bug: the game doesn't check the cells. With the pier in the last
+	// column (and y odd) the fourth one is past the grid: the game writes
+	// into whatever follows it, p3vita skips it; with y < 2 a cell above the
+	// pier is the last ones of the previous column (inside the grid: written
+	// as the game does). With fix_game_bugs() only the cells inside the grid
+	// (column and row) are marked. Checked with the oracle: scenario
+	// pier_edge (saves 3 and 5, direct calls).
 	const int64_t h = t.s32(0x7AC);
-	auto occupy = [&](int64_t i) {
-		assert(i >= 0 && i < int64_t(st.grid.size()));  // El juego no lo comprueba.
+	auto occupy = [&](int64_t column, int64_t row) {
+		if (fix_game_bugs()) {
+			if (column >= 0 && column < t.s32(0x7A8) && row >= 0 && row < h &&
+				h * column + row < int64_t(st.grid.size())) {
+				st.grid[size_t(h * column + row)] = 0x0B;
+			}
+			return;
+		}
+		const int64_t i = h * column + row;
 		if (i >= 0 && i < int64_t(st.grid.size())) {
 			st.grid[size_t(i)] = 0x0B;
 		}
 	};
-	occupy(h * x + y);
-	occupy(h * x + y - 1);
-	occupy(h * x + y - 2);
-	occupy(h * ((y & 1) ? x + 1 : x - 1) + y - 1);
+	occupy(x, y);
+	occupy(x, int64_t(y) - 1);
+	occupy(x, int64_t(y) - 2);
+	occupy((y & 1) ? int64_t(x) + 1 : int64_t(x) - 1, int64_t(y) - 1);
 	// Después, si la vista de la ciudad (*0x6E51AC) es la de esta ciudad,
 	// 0x590680 y 0x5891C0 crean el objeto del muelle en la vista isométrica:
 	// solo dibujo, no cambian la simulación (el objeto del tipo de .let 0x5F,
