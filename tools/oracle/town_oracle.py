@@ -42,7 +42,7 @@ Formato del fichero (enteros little endian):
 
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
        [--desde DÍA] [--max N] [--semilla S] [--cpr p2arch0_eng.cpr] [--barcos DATOS [--sin-ia] [--sin-convoyes]
-       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms]]
+       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms]] [--write OUT]
 La función 51ba10 graba los ticks de ciudad enteros.
 
 Con --cpr (o si DATOS/scripts tiene los ficheros), la carga crea también el
@@ -90,6 +90,9 @@ de scripts/ (--cpr). Para repetir el mundo con tick_probe --continuo hay que
 grabar también 4f7bb0 y las piezas que se ejecuten:
 51ba10,4f7bb0,506720,535760,5315c0,535450,52d7d0,6349f0,633a90,4d85c0
 (535760, el ejecutor, o 537670, solo las órdenes de zarpar, pero no las dos).
+With --write OUT, after the days it runs the game's save code on the state
+reached and writes the uncompressed .pat (write_oracle.py), to compare with
+tick_probe --write.
 Con --sin-ia, los barcos como en sail_oracle.py: en puerto solo los estados
 1, 2, 3 y el 0 de los jugadores humanos, y las operaciones encoladas no se
 ejecutan.
@@ -1033,6 +1036,8 @@ def main():
                    'por omisión, todas')
     p.add_argument('--sin-resto', action='store_true', help='con --barcos, sin el resto de advance_time')
     p.add_argument('--cpr', help='archivo de datos (p2arch0_eng.cpr) del que leer scripts/Namen*.txt')
+    p.add_argument('--write', metavar='OUT', help='at the end, the uncompressed .pat the game writes for the state '
+                   'reached (write_oracle.py)')
     p.add_argument('--operaciones', default=','.join(f'{x:x}' for x in OPERATIONS),
                    help='con --barcos, códigos (hex) de las operaciones encoladas que se ejecutan')
     a = p.parse_args()
@@ -1057,6 +1062,14 @@ def main():
                 break
         f.write(b'E')
     print(f'{rec.count} muestras en {a.out}')
+    if a.write:
+        # What the load does and the oracle leaves out (the 12 bytes after the
+        # settings, the battles), only now, so that the days run as without
+        # --write; then the game's save code.
+        from write_oracle import prepare_game_object, write_files
+        prepare_game_object(o)
+        write_files(o, a.write)
+        print(f'save written in {a.write}')
 
 
 if __name__ == '__main__':

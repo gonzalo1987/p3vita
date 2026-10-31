@@ -309,6 +309,40 @@ struct SiegeExtras {
 	std::vector<GameMemory<0x10>> list_1020;
 };
 
+// What the game saves and p3vita reads without using it, kept so that
+// write_savegame (savegame_write.hpp) writes it back as the game does (see
+// docs/cloud/savegames.md). Filled by parse_savegame and load_game_scripts.
+struct SaveOpaque {
+	// The ten lists of u16 at the end of each merchant (the game keeps
+	// pointers to them in [0x624]; their lengths are the 15 low bits of the u16
+	// [0x60C + 2·k]).
+	std::vector<std::array<std::vector<uint16_t>, 10>> merchant_lists;
+	// Each pirate's map object ([+0x0], 0x4F9770: u32 width, u32 height, 0x5C
+	// bytes and width × height cells) and its records of 8 bytes ([+0x4],
+	// [+0x8] of them), as in the file. Empty if it has none.
+	std::array<std::vector<uint8_t>, 5> pirate_maps;
+	std::array<std::vector<uint8_t>, 5> pirate_records;
+	// For each notice of SaveGame::mail, the bytes the file has after it that
+	// the simulation doesn't use: the [+0xC] bytes of its buffer for the types
+	// 0x29, 0x47, 0x63 and 0x83; for 0x3C..0x40 and 0x71, the [+0x0] bytes
+	// that follow its 16-byte record (SaveGame::mail_records, live state).
+	std::vector<std::vector<uint8_t>> mail_extras;
+	// For each event of SaveGame::events, what follows the records: [+0x12]
+	// entries of 4 bytes (type 0x1B) or the node list of type 0x34 (with
+	// [+0x15] >= 7 and a list: 4 bytes a node, 0x7F before each next one and
+	// 0 at the end).
+	std::vector<std::vector<uint8_t>> event_extras;
+	// The automatic trade routes of the player: the records of 0xDC bytes of
+	// the object 0x6DD728 (0x4D4BC0; their number is the u16 [0x6DD72A] of
+	// the globals, which the simulation reads).
+	std::vector<GameMemory<0xDC>> trade_routes;
+	// The battles (0x611AE0 on 0x6E55D0), as in the file.
+	std::vector<uint8_t> battles;
+	// The 40 town names of scripts/NamenStaedte_eng.txt (0x5125E0), by town
+	// number, in Latin-1 (the table 0x6DDA00). Read by load_game_scripts.
+	std::vector<std::string> town_names;
+};
+
 struct SaveGame {
 	int version = 0;
 	// Tiempo de juego en ticks: 256 por día desde el día 0 del año 0 (365 días
@@ -419,6 +453,8 @@ struct SaveGame {
 	// them (0x5121C0 with 0x5128D0), in Latin-1: 0x512A60 gives one, and
 	// 0x4F69B0 uses the length of a merchant's. Empty if not read.
 	std::array<std::vector<std::string>, 2> first_names;
+	// What p3vita keeps only to write the save (savegame_write.hpp).
+	SaveOpaque opaque;
 };
 
 // Lee una partida ya descomprimida.
