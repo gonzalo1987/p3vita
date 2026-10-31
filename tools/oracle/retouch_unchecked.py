@@ -30,7 +30,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import retouch as rt  # noqa: E402
 import town_oracle as to  # noqa: E402
-from unicorn import UC_HOOK_BLOCK  # noqa: E402
+from unicorn import UC_HOOK_BLOCK, UC_HOOK_CODE  # noqa: E402
 
 WORLD = to.WORLD
 PIRATES = 0x6DD7AC  # 5 pointers to the pirate objects (0x18 bytes)
@@ -1811,6 +1811,139 @@ def siege_gates(o):
     return during
 
 
+def side_gates(o, t):
+    """The first three gates of the side the army attacks in town t (as
+    0x629C60 finds them) and the town's wall pieces (0x36) of [0x768]."""
+    side = o.call(0x5252F0, [], ecx=o.town(t)) & 0xFF
+    gates = [r for r in records(o, t, 0x768) + records(o, t, 0x762)
+             if r[4] in (0x34, 0x35, 0x37, 0x38) and r[3] == (0xFF - side) & 0xFF][:3]
+    pieces = [r for r in records(o, t, 0x768) if r[4] == 0x36]
+    return gates, pieces
+
+
+def tower_next_to(o, t, piece, gate, pending):
+    """The wall piece `piece` becomes a tower 0x32 next to `gate` (distance
+    0 for 0x629C60), with `pending` days of works."""
+    at = o.u32(o.town(t) + 0x75C) + 8 * piece[0]
+    o.uc.mem_write(at, bytes([gate[1], (gate[2] - 2) & 0xFF]))
+    w8(o, at + 3, 0x32)
+    w8(o, at + 6, pending)
+
+
+def siege_fixes(o):
+    """Two sieges made with the game's code (operation 0x8E) for game bugs of
+    0x629C60 (for tick_probe --fix-game-bugs). In one town a tower in the
+    works (1 day left) is put next to each of the first three gates of the
+    side it attacks, so whichever gate it takes has towers near that
+    0x62B2B0 doesn't make targets: the strength adds entries it didn't fill.
+    In another one finished towers next to the second and third gates make
+    it take the first, the records outside the wall lists are chained into
+    an office's buildings ([+0x2CE]; the other offices without any) at that
+    gate's place, and no grid cell has the bit 0x80 (inside the walls): more
+    than 0x7F groups come: from the 101st on they run over the army's own
+    fields and past it, and the game works on what it has overwritten, so
+    with the setting off that call differs from p3vita (see sieges.cpp).
+    And a third one for the gate not found (gate_missing)."""
+    towns = o.counts()[0]
+    ready = [i for i in range(towns) if rt.siege_ready(o, i)]
+    t1, t2 = ready[0], ready[1]
+    gates, pieces = side_gates(o, t1)
+    for g, r in zip(gates, pieces):
+        tower_next_to(o, t1, r, g, 1)
+    print(f'town {t1}: gates {[g[0] for g in gates]}, towers in the works next to them '
+          f'{[r[0] for r in pieces[:len(gates)]]}; record 0 {records_at(o, t1, 0)}')
+    a2 = o.town(t2)
+    gates, pieces = side_gates(o, t2)
+    for g, r in zip(gates[1:], pieces):
+        tower_next_to(o, t2, r, g, 0)
+    n, base = o.u16(a2 + 0x776), o.u32(a2 + 0x75C)
+    walls = {r[0] for r in records(o, t2, 0x768) + records(o, t2, 0x762)}
+    chain = [r for r in range(n) if r not in walls and o.u8(base + 8 * r + 3) != 5]
+    for r, nxt in zip(chain, chain[1:] + [0xFFFF]):
+        o.uc.mem_write(base + 8 * r, bytes([gates[0][1], gates[0][2]]))
+        w16(o, base + 8 * r + 4, nxt)
+    offices = town_offices(o, t2)
+    for f in offices:
+        w16(o, o.office(f) + 0x2CE, 0xFFFF)
+    w16(o, o.office(offices[0]) + 0x2CE, chain[0])
+    w, h = o.s32(a2 + 0x7A8), o.s32(a2 + 0x7AC)
+    grid = o.u32(a2 + GRID)
+    o.uc.mem_write(grid, bytes(c & 0x7F for c in o.uc.mem_read(grid, w * h)))
+    print(f'town {t2}: gates {[g[0] for g in gates]}; office {offices[0]} with {len(chain)} records')
+    t3 = gate_missing(o, ready[-1])
+    seen = set()
+
+    def read_at_0(uc, address, size, data):
+        value = bytes(uc.mem_read(0, 4)).hex()
+        if value not in seen:
+            seen.add(value)
+            print(f'address 0 when 0x629C60 reads a gate (0x62A4F8): {value}')
+    o.uc.hook_add(UC_HOOK_CODE, read_at_0, begin=0x62A4F8, end=0x62A4F8)
+
+    def during(o):
+        operation(o, 0x8E, t1, 1, 0x80, 0)
+        operation(o, 0x8E, t2, 1, 0x80, 0)
+        operation(o, 0x8E, t3, 1, 0x80, 0)
+        for t in (t1, t2, t3):
+            army = o.u32(siege_object(o, t) + 8)
+            print(f'town {t}: gate {o.u8(army + 0x6D)}, targets {o.u16(army + 0x242)}, '
+                  f'groups {o.u8(army + 0x6E)}, strength {o.u32(army + 0x580)}')
+    return during
+
+
+def gate_missing(o, t):
+    """Town t retouched as in siege_gates (two gates on the side, worth the
+    same), with an office building outside the walls nearer (0x30, 0xEF)
+    than the chosen gate, and nearer it than the other one (the two gates
+    moved for that). The game reads the gate not found from address 0 (on
+    Windows it fails; in the oracle that place), so it leaves the building
+    out of the groups; with the fix it is a group."""
+    a = o.town(t)
+    base, n = o.u32(a + 0x75C), o.u16(a + 0x776)
+    for r in records(o, t, 0x768):
+        if r[4] in (0x32, 0x33):
+            w8(o, base + 8 * r[0] + 3, 0x36)
+    side = o.call(0x5252F0, [], ecx=a) & 0xFF
+    gates = [r for r in records(o, t, 0x768) + records(o, t, 0x762)
+             if r[4] in (0x34, 0x35, 0x37, 0x38) and r[3] == (0xFF - side) & 0xFF]
+    for r in gates[2:]:
+        w8(o, base + 8 * r[0] + 2, ((0xFF - side) ^ 1) & 0xFF)
+    g0, g1 = gates[0], gates[1]
+    v0, v1 = (int(g[4] in (0x34, 0x35)) for g in (g0, g1))
+    chosen, other = (g1, g0) if v1 < v0 or (v1 == v0 and o.s32(a + 0x2D4) % 2 == 0) else (g0, g1)
+    w, h = o.s32(a + 0x7A8), o.s32(a + 0x7AC)
+    # The gates moved (the choice depends on their types and the inhabitants,
+    # not on where they are), so that there is room for such a building.
+    for g, (gx, gy) in ((chosen, (20, 30)), (other, (2, 2))):
+        o.uc.mem_write(base + 8 * g[0], bytes([gx, gy]))
+    chosen, other = (chosen[0], 20, 30), (other[0], 2, 2)
+
+    def d2(x, y, g):
+        return (x - g[1]) ** 2 + (y - g[2]) ** 2
+    # The game reads the missing gate from address 0 (see sieges.cpp): in
+    # the oracle, during the operation, the stack address 0x010FEF30, so
+    # (0x30, 0xEF) (printed below). A place nearer that than the chosen
+    # gate, and nearer the chosen gate than the other one.
+    missing = (None, 0x30, 0xEF)
+    x, y = min(((x, y) for x in range(w) for y in range(h)
+                if d2(x, y, missing) < d2(x, y, chosen) < d2(x, y, other)),
+               key=lambda p: d2(p[0], p[1], chosen))
+    f, r = next((f, o.u16(o.office(f) + 0x2CE)) for f in town_offices(o, t)
+                if o.u16(o.office(f) + 0x2CE) < n and o.u8(base + 8 * o.u16(o.office(f) + 0x2CE) + 3) != 5)
+    o.uc.mem_write(base + 8 * r, bytes([x, y]))
+    cell = grid_at(o, t, x, y)
+    w8(o, cell, o.u8(cell) & 0x7F)
+    print(f'town {t}: gates {chosen} (chosen) and {other}; record {r} of office {f} at ({x}, {y}); '
+          f'at address 0: {bytes(o.uc.mem_read(0, 8)).hex()}')
+    return t
+
+
+def records_at(o, t, r):
+    """The record r of town t: (x, y, owner, type, pending)."""
+    rec = bytes(o.uc.mem_read(o.u32(o.town(t) + 0x75C) + 8 * r, 8))
+    return rec[0], rec[1], rec[2], rec[3], rec[6]
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -1906,6 +2039,7 @@ SCENARIOS = {
                                                 0x635220, 0x635440], 0, [
         '@629c9b>62b28f', '@62e8f2', '@62b3ce', '@6290e9', '@62927e', '@51d64c', '@634600', '@6352b4',
         '@6353ad', '@6355c5']),
+    'siege_fixes': Scenario(siege_fixes, [0x535760], 0, []),
     'siege_gates': Scenario(siege_gates, [0x535760], 0, ['@62a3ba', '@62a49f']),
 }
 

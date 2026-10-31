@@ -47,10 +47,12 @@
 // no cambian la simulación.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <vector>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -1221,7 +1223,9 @@ void fn_635740(SaveGame& save, int siege) {
 //   desde el más lejano siguiendo la dirección. De la longitud del camino
 //   desde la esquina del mapa más cercana salen la llegada ([+0x42], [+0x66],
 //   [+0x44] y la de cada grupo [+0x254 + 8·k]), la retirada [+0x6A] y el
-//   rescate [+0x68].
+//   rescate [+0x68]. Three game bugs (no room check for the groups, a gate not
+//   found read from address 0, unfilled targets in the strength), fixed with
+//   fix_game_bugs().
 //   Al final, la fuerza de cada bando ([+0x57C], [+0x580] con los objetivos),
 //   el objetivo (0x62E810), [+0x5D4] y el bit 0x10 de la situación de la
 //   ciudad.
@@ -1296,6 +1300,7 @@ void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 		bool wrapped = false;
 		uint16_t best = 0xFFFF;
 		uint8_t ties = 0;
+		uint32_t gates_found = 0;
 		for (uint32_t k = 0; k < 3; ++k) {
 			uint32_t& current = a.u32(0x244 + 4 * k);
 			while (current < count) {
@@ -1313,6 +1318,7 @@ void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 			if (current >= count) {
 				break;
 			}
+			++gates_found;
 			const BuildingRecord& gate = record(st, current);
 			uint32_t value = gate.type == 0x34 || gate.type == 0x35 ? 1 : 0;
 			uint32_t near = 0;
@@ -1371,16 +1377,46 @@ void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 				}
 			}
 		}
+		// The groups' records ([+0x258 + 8·k], u32; their arrival is the u16
+		// [+0x254 + 8·k]). Game bug: the game doesn't check that they fit:
+		// from the 101st on they run over the army's own fields ([+0x574] on:
+		// a graphics object, [+0x578], the strengths [+0x57C] and [+0x580],
+		// the town [+0x5D3]...) and from 0x7F on past the army, its heap
+		// block. In the oracle (scenario siege_fixes, saves 3 and 5) the game
+		// then works on what it has overwritten (it doesn't even mark its town
+		// as besieged); p3vita doesn't reproduce that: it writes the groups
+		// that fall inside the army there, as the game does, and keeps the
+		// rest in `spill` for the removal below (afterwards at most
+		// 4 + 63 + 1 are left). With fix_game_bugs() no more than 100 come.
+		std::array<uint32_t, 256> spill{};
+		auto group = [&](uint32_t k) -> uint32_t& {
+			const size_t at = 0x258 + 8 * size_t(k);
+			return at + 4 <= SiegeArmyMemory::kSize ? a.u32(at) : spill[k];
+		};
 		uint8_t pick = 0;
 		for (const uint16_t i : outside) {
 			const BuildingRecord& b = record(st, i);
 			int32_t closest = 0x7FFFFFFF;
-			pick = 0;
+			pick = fix_game_bugs() ? 0xFF : 0;
 			for (uint8_t k = 0; k < 3; ++k) {
+				// Game bug: with fix_game_bugs() a gate not found is left out.
+				if (fix_game_bugs() && k >= gates_found) {
+					continue;
+				}
 				// Una puerta que no se ha encontrado: el juego lee del registro 0
 				// (el que no existe, de la dirección 0). Checked with the oracle:
 				// scenario siege_gates (saves 3 and 5; two gates on the side).
-				const BuildingRecord& gate = record(st, a.u32(0x244 + 4 * size_t(k)));
+				// Game bug: on Windows reading address 0 fails. In the oracle
+				// address 0 is what fs:0 points to, the SEH chain, which holds
+				// the address of the latest handler on the stack while the
+				// executor runs, 0x010FEF30: the gate is at (0x30, 0xEF), and
+				// p3vita reads that too (scenario siege_fixes, saves 3 and 5: an
+				// office building nearer it than the gates).
+				BuildingRecord missing{};
+				missing.x = 0x30;
+				missing.y = 0xEF;
+				const uint32_t found = a.u32(0x244 + 4 * size_t(k));
+				const BuildingRecord& gate = found < count ? record(st, found) : missing;
 				const int32_t dx = int32_t(gate.x) - int32_t(b.x);
 				const int32_t dy = int32_t(gate.y) - int32_t(b.y);
 				if (dy * dy + dx * dx < closest) {
@@ -1388,12 +1424,13 @@ void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 					pick = k;
 				}
 			}
-			const size_t at = 0x258 + 8 * size_t(a.u8(0x6E));
+			// With fix_game_bugs() no more than fit (up to [+0x574]).
+			if (fix_game_bugs() && a.u8(0x6E) >= 100) {
+				break;
+			}
 			if (pick == a.u8(0x6D) && b.type != 5) {
-				if (at + 4 <= SiegeArmyMemory::kSize) {
-					a.u32(at) = i;
-				}
-				++a.u8(0x6E);  // El juego no mira si caben (más de 0x7F se sale del ejército).
+				group(a.u8(0x6E)) = i;
+				++a.u8(0x6E);
 			}
 		}
 		// Quita algunos: en el i-ésimo, si los ricos % (los que quedan − i)
@@ -1409,7 +1446,7 @@ void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 				const uint8_t last = a.u8(0x6E);
 				if (rich % (int32_t(i) - int32_t(last)) >= int32_t(keep) - int32_t(i)) {
 					a.u8(0x6E) = uint8_t(last - 1);
-					a.u32(0x258 + 8 * size_t(i)) = a.u32(0x258 + 8 * size_t(last - 1));
+					group(i) = group(uint8_t(last - 1));
 				} else {
 					++i;
 				}
@@ -1500,7 +1537,12 @@ void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 	auto defenders = [&](uint32_t k) { return uint32_t(a.u16(0x232 + 4 * k)); };
 	a.u32(0x57C) = 120 * troops(0) + 30 * troops(1) + 40 * troops(2) + 45 * troops(3) + 378 * troops(4);
 	a.u32(0x580) = 120 * defenders(0) + 30 * defenders(1) + 40 * defenders(2) + 45 * defenders(3);
-	for (uint32_t i = 0; i < targets; ++i) {
+	// Game bug: `targets` counts the towers near the gate in the works too,
+	// which 0x62B2B0 doesn't make targets, so the last ones are entries it
+	// didn't fill (record 0 here and in the oracle; in the game, whatever the
+	// heap had). With fix_game_bugs() only the targets it filled ([+0x242]).
+	const uint32_t counted = fix_game_bugs() ? a.u16(0x242) : targets;
+	for (uint32_t i = 0; i < counted; ++i) {
 		const BuildingRecord& b = record(st, target_at(ex, i).u32(0x8));
 		if (b.pending == 0) {
 			a.u32(0x580) += b.type == 0x32 ? 0x2D0 : 0x708;
