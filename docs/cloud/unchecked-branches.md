@@ -35,9 +35,11 @@ task owns, checked against the game with retouched states.
 - **`new_town.cpp`**: its 21 marks are gone: 20 checked with 5 scenarios
   (10 runs in saves 3 and 5: 50 of 50 targets, 1570 calls equal), 1
   unreachable. Only comments changed, so no world run.
+- **`facilities.cpp`**: its 35 marks are gone: 31 checked with 7 scenarios
+  (14 runs in saves 3 and 5: 68 of 68 targets, 64 calls equal), 4
+  unreachable. Only comments changed.
 
-Left: `facilities.cpp` (35),
-`offices.cpp` (28), `businesses.cpp` (7), `population.cpp` (8),
+Left: `offices.cpp` (28), `businesses.cpp` (7), `population.cpp` (8),
 `merchants.cpp` (6), `diet.cpp` (15), `sieges.cpp` (17), `grid.cpp` (6).
 
 ## Decisions for the user
@@ -181,6 +183,30 @@ with an unset mask: no caller of the simulation uses them).
 Calls repeated (all equal): 0x4D85C0 1536, 0x5289B0 10, 0x535760 10,
 0x5462F0 8, 0x5458D0 4, 0x4EBF54 2.
 
+## facilities.cpp
+
+35 marks: 31 checked, 4 unreachable, 0 left. All direct calls (saves 3 and
+5):
+
+| Branch (p3vita) | Scenario |
+|---|---|
+| 0x510C50 (militia): employees not 5 per soldier; guards to spare (0x51D410 of type 0); soldiers of types 1, 2, 3 to spare for the walls; a human mayor | `militia` |
+| 0x51D410: a type without soldiers nor recruits (only operation 0x40, interface); the third class under 20 | `militia` |
+| 0x51D4C0: a human mayor (his office's weapons; without an office there, nothing) | `militia` |
+| 0x51FF30: the 0x30 waits with [0x2C8] & 0x800; owned works ending as shipyard, town list, wall, tower, big tower, replaced gate, free; the town's as free, shipyard, list, flag, replaced gate | `works_completion` (a works list of new records, 0x51F100) |
+| 0x4D36E0 with 6 and 9 businesses; 0x5306B0 growing by 0x40; 0x530780 on a free record and on a business with employees | `world_records` |
+| 0x5252F0: 0 (first pending piece not the town's) and 2 (no point 2) | `wall_level` |
+| 0x508AA0: a repaired ship with orders 2, one not finished with orders 1 | `shipyard_repair` |
+| 0x510AA0 keeps its weapon; 0x50F6E0 with [+0x0] = 0 | `weaponsmith` |
+| 0x4FF2D0: [0x2F0] > 0; a pending store; a business whose buildings are gone | `office_recount` |
+| unreachable: 0x510AA0 with level ≤ 1 (0x52BB00 gives 2..5); the office versions of 0x50E500, 0x50E570 and 0x50F6E0 (offices never have businesses of types 0..3: those buildings go to the town) | — |
+
+Calls repeated (all equal): 0x510C50 12, 0x51D410 12, 0x51D4C0 10,
+0x4FF2D0 6, 0x51FF30 4, 0x4D36E0 4, 0x5252F0 4, 0x530780 4, and 2 each of
+0x508AA0, 0x50F6E0, 0x510AA0 and 0x5306B0. A direct call of 0x4D3780 on a
+business of type 0..3 also showed that p3vita asserts there (an access out
+of a merchant's memory); it can't happen, so it is left as it is.
+
 ## Game bugs
 
 - **Operation 0x3B with a merchant out of the world** (certain; 0x53A4CA
@@ -196,14 +222,15 @@ Calls repeated (all equal): 0x4D85C0 1536, 0x5289B0 10, 0x535760 10,
 
 ## For the inventory
 
-- `alderman.cpp`, `construction.cpp` and `new_town.cpp`: every branch
-  checked with the oracle (scenarios of `tools/oracle/retouch_unchecked.py`).
+- `alderman.cpp`, `construction.cpp`, `new_town.cpp` and `facilities.cpp`:
+  every branch checked with the oracle (scenarios of `tools/oracle/retouch_unchecked.py`).
 - D: 0x4FF2D0 for the store a merchant builds is done (`construction.cpp`);
   0x51FAB0 building at once is rewritten.
 - B/C: operation 0x25 (0x535B7B → 0x5244F0, which calls 0x51F3A0 and
   0x4F8A50 without `count`) is not handled by p3vita; nothing in the
   simulation queues it as far as these checks go (worth confirming in the
-  operations inventory).
+  operations inventory). The same for operations 0x40 and 0x41 (dismiss and
+  recruit soldiers: 0x51D410 and 0x51D4C0, the mayor's interface).
 
 ## Changes to shared files
 
