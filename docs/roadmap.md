@@ -18,14 +18,13 @@ Cómo leerla:
 ## En marcha (31-10-2026)
 
 - Sesión local: la parte B del inventario está hecha salvo la 0x9F y la 0xB5, que van con las batallas. Lo siguiente es la parte C y después la D.
-- `cloud/savegames`: guardar partidas como el juego (el `.pat` en la versión 0x85, comprimido igual, y el `.pst`). Está terminada, pero falta juntarla: choca con la lectura de las cartas antiguas de la sesión local.
 - `cloud/battles`: las piezas 2 (los piratas que se mueven) y 3 (la batalla automática en el mar) del plan de las batallas.
 - `cloud/alderman-viewer`: el camino a Gobernador en el visor, la parte del jugador.
 - `cloud/unchecked-branches`: comprobar con estados retocados las ramas «Sin comprobar con el oráculo» de los ficheros del tick de ciudad, empezando por `alderman.cpp`.
 
 ## Estado por partes (medido)
 
-Cuánto código del juego tiene p3vita en cada parte de la simulación, medido el 31-10-2026 sobre `main` (61cdbfa) con `re/emu/sesion5/coverage_parts.py` (Python de Windows; para repetirlo: `python coverage_parts.py RUTA/p3vita/src`).
+Cuánto código del juego tiene p3vita en cada parte de la simulación, medido el 31-10-2026 sobre `main` (con `cloud/savegames` ya junta) con `re/emu/sesion5/coverage_parts.py` (Python de Windows; para repetirlo: `python coverage_parts.py RUTA/p3vita/src`).
 
 Cómo se mide:
 - Para cada parte se toman sus funciones de entrada del juego y todo lo que cuelga de ellas, sin la interfaz.
@@ -43,18 +42,19 @@ Cómo se mide:
 | Barcos: navegación, IA y convoyes (0x506720) | 152 | 62 | 29 (47 %) | 24 (38 %) | 9 (15 %) |
 | Lo diario, tareas programadas y objetos del mundo | 12 | 2 | 2 (97 %) | 0 (3 %) | 0 (0 %) |
 | Asedios (0x6349F0, 0x633A90) | 28 | 15 | 13 (89 %) | 2 (11 %) | 0 (0 %) |
-| Cola de eventos (0x4D85C0) | 415 | 193 | 152 (79 %) | 25 (13 %) | 17 (9 %) |
+| Cola de eventos (0x4D85C0) | 415 | 193 | 152 (79 %) | 26 (14 %) | 15 (8 %) |
 | Operaciones que encola la simulación | 172 | 72 | 53 (74 %) | 14 (19 %) | 5 (6 %) |
-| Camino a Gobernador | 223 | 93 | 69 (74 %) | 19 (20 %) | 5 (5 %) |
+| Camino a Gobernador | 223 | 93 | 69 (74 %) | 21 (22 %) | 3 (4 %) |
 | Cargar partida (0x549F40) | 103 | 42 | 4 (9 %) | 32 (75 %) | 7 (16 %) |
+| Guardar partida (0x549CC0) | 38 | 11 | 0 (0 %) | 10 (96 %) | 0 (4 %) |
 | Tormentas (0x5053C0) | 4 | 5 | 5 (97 %) | 0 (3 %) | 0 (0 %) |
 | Guiones de misiones (0x4ECF64, 0x511270) | 73 | 23 | 3 (14 %) | 7 (32 %) | 12 (54 %) |
-| **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | 217 (76 %) | 41 (14 %) | 29 (10 %) |
+| **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | 217 (76 %) | 43 (15 %) | 27 (9 %) |
 
 Notas:
 - **Barcos**: lo que falta son los piratas (0x505C90, 0x515360, 0x50D9E0, 0x517170: pieza 2 de las batallas) y las rutas comerciales (0x4D5200, 0x4D4C90...).
 - **Cola de eventos**: lo que falta son los tipos que p3vita aún no atiende (0x4E5664, 0x4E38B4, 0x4DDF40, 0x4E7A14...).
-- **Cargar partida**: aunque en la tabla salga «nombrado», está hecho e idéntico al juego en las 12 partidas. `savegame.cpp` lo reescribe por estructuras y no con funciones `fn_`, y algunas direcciones (0x504230, los barcos) ni siquiera salen en los comentarios, así que la medida se queda corta.
+- **Cargar y guardar partida**: aunque en la tabla salgan como «nombrado», están hechos e idénticos al juego en las 12 partidas. `savegame.cpp` y `savegame_write.cpp` los reescriben por estructuras y no con funciones `fn_`, y algunas direcciones (0x504230, los barcos) ni siquiera salen en los comentarios, así que la medida se queda corta.
 - **Batallas**: no van en la tabla, porque usan sobre todo llamadas por tablas de métodos, que este grafo no sigue. Su estudio, que sí las sigue ([cloud/battles.md](cloud/battles.md)), cuenta sin la interfaz 249 funciones (148 KB) en el mar y 41 (50 KB) en las ciudades. De eso solo están hechas las tormentas.
 - **Todo el ejecutable**, con la interfaz y las batallas: p3vita reescribe un 11 % (`coverage.py`). La mayor parte del resto es interfaz.
 
@@ -232,7 +232,7 @@ El plan, por piezas, cada una detrás de su ajuste hasta comprobarla:
    - un `SaveGame::battles` como memoria del juego, y las regiones de las batallas en el oráculo;
    - la operación 0x9F.
 4. [ ] Las otras batallas en el mar: la persecución que alcanza al barco (0x50B250, también la operación 0x99) y la flota de la Hansa en una ciudad protegida (0x50BA80).
-5. [ ] Las batallas en la partida guardada: 0x611AE0 (leer), 0x611950 (escribir) y los métodos +0x10 (0x604600), +0x18 (0x608230) y +0xC (0x604220).
+5. [ ] Las batallas en la partida guardada: 0x611AE0 (leer), 0x611950 (escribir) y los métodos +0x10 (0x604600), +0x18 (0x608230) y +0xC (0x604220). Ahora p3vita guarda las batallas tal como las lee. Al interpretarlas, poner a cero los 3 bytes de relleno de cada entrada de la tabla del final, que el juego escribe sin inicializar (en la partida 7 son 0xCD).
 6. [ ] La batalla en una ciudad (los piratas contra una ciudad y la guarida pirata):
    - 41 funciones (0x5FBFE0, 0x621770, 0x5FE7E0, 0x624950...);
    - las operaciones que encola: 0x92, 0x95–0x98, 0x9A, 0x9B, 0xA0 y 0xB4;
@@ -274,7 +274,10 @@ Un ajuste (feature flag) **activado por omisión** con el que p3vita corrige los
   No pasa en las partidas; p3vita lee un registro a 0 y no escribe fuera.
 - [ ] **El reloj de las batallas** (0x612DB0; sin confirmar). Mueve su tiempo [+0xC44] 40 ms por cada *paso* en lugar de por cada 40 ms consumidos, así que las batallas avanzan a la mitad de lo previsto (unos 50 pasos por tick a 60 fotogramas por segundo y 40 a 25) y su velocidad depende de los fotogramas. No cambia el resultado, solo lo que dura
 - [ ] **La batalla en una ciudad lee la vista de la ciudad** (*0x6E51AC, 0x58D030; sin confirmar). Toma su geometría de la ciudad que mira el jugador, no necesariamente de la atacada. Falta ver qué hace el juego cuando no coinciden
-- `cloud/savegames` ha encontrado más al guardar (el nombre de otra ciudad natal en los ajustes, la lista de avisos cortada por un aviso de tipo 0x86 o mayor, los nodos de los eventos 0x34 que se degradan en cada carga). Se añaden aquí al juntar esa rama.
+- [ ] **El nombre de la ciudad natal al guardar** (0x549D7D). El escritor copia en los ajustes de la partida ([+0x27]) el nombre de la tabla 0x6DDA00, que va por número de ciudad (0..39), pero usa el índice en la partida de la ciudad natal del jugador. En `1.pat` escribe «Cologne» (número 9) por Lübeck (índice 9, número 14). Seguramente es el nombre que sale en el menú de cargar; no comprobado. Reproducido en `update_settings`
+- [ ] **El relleno de las batallas** (0x611950). Cada entrada de la tabla del final de las batallas ocupa 8 bytes en el fichero; el lector solo guarda 5 (0x612A20 lee dos u32 y se queda con el byte bajo del segundo), y el escritor escribe 8, así que 3 bytes salen de lo que hubiera en la memoria (0xCD en la partida 7, 0 en el emulador)
+- [ ] **Los nodos del evento 0x34 cambian en cada carga y guardado** (0x4F3A40/0x4F39E0). El lector rellena dos veces el u16 [+0x6] con el tercer byte del nodo y se salta el cuarto; el escritor escribe el signo del byte bajo de [+0x6] y ese byte. Un nodo `b0 b1 b2 b3` se guarda como `b0 b1 signo(b2) b2`, y la lista siempre acaba en 0. Reproducido en `write_event_nodes`, igual que el juego
+- [ ] **La lista de nodos de cada ciudad** ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar): el escritor la escribe en orden y el lector pone cada nodo el primero. Si el orden no importa, no hace daño
 
 - [ ] Tests que comparen con el comportamiento documentado del original
 
@@ -302,7 +305,20 @@ Un ajuste (feature flag) **activado por omisión** con el que p3vita corrige los
 - [ ] Las batallas navales (fase 4, «Piratas, persecuciones, encuentros y batallas»)
 - [ ] Las rutas comerciales automáticas, del jugador y de la IA (0x4D4DD0; tampoco se reproduce al borrar un barco, operación 0x0A)
 - [ ] Misiones, cartas y eventos (las cartas, con el buzón de la fase 4)
-- [ ] Guardar partidas como el juego: el `.pat` (versión 0x85, comprimido igual) y el `.pst` (en marcha: `cloud/savegames`; falta juntarla)
+- [x] Guardar partidas como el juego ([cloud/savegames.md](cloud/savegames.md); `src/p3data/savegame_write.cpp`, `lz_compress.cpp`; `p3save write` y `p3save compress`; `--write` en `town_oracle.py` y `tick_probe`):
+  - el `.pat` en la versión 0x85, la misma que escribe el juego, comprimido con el compresor del juego reescrito (0x54C410); el `.pst`, con las estadísticas vacías;
+  - comprobado contra el escritor del juego (0x549CC0), byte a byte: 0 bytes distintos en 11 de las 12 partidas. En la 7 quedan 12 bytes de relleno de las batallas, que el juego escribe sin inicializar (ver los fallos del juego);
+  - lo mismo después de jugar 4 días;
+  - ida y vuelta: el lector del juego y el de p3vita cargan lo que escribe p3vita, con 0 diferencias;
+  - el compresor da los mismos bytes que el del juego en las 12 partidas;
+  - estados retocados para lo que las partidas no tienen: listas de asedio, el mapa de un pirata, encargos, eventos 0x34, rutas comerciales y buzones;
+  - de paso, dos fallos de p3vita al leer, arreglados: saltaba 16 bytes por entrada en los eventos 0x1B en vez de 4, y dejaba vacíos los nombres de los jugadores en 10 de las 12 partidas.
+
+  Falta:
+  - [ ] las estadísticas de verdad del `.pst`, cuando se reescriban las estadísticas diarias (abajo);
+  - [ ] los nombres de barco que añada el jugador durante la partida;
+  - [ ] el objeto opcional del mundo (0x533DA0): ninguna partida lo tiene y p3vita lo rechaza al leer. Reescribirlo solo si aparece una partida que lo tenga
+- [ ] Las estadísticas diarias para las gráficas (0x54DE90): ni p3vita ni el oráculo las hacen. Se guardan en el `.pst`
 - [ ] Vídeos Bink (FFmpeg) y audio MP3
 
 ## Herramientas y comprobaciones
