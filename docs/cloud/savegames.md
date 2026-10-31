@@ -15,6 +15,31 @@ merging on the PC.
 | 4. C++ writer (`savegame_write.cpp`), byte for byte | done for the 12 saves (§2) |
 | 5. LZ compressor rewritten in C++ | done: same bytes as the game's in the 12 saves (§3) |
 | 6. After playing, round trip, `.pst` | done: round trip (§4), after playing (§5), retouched states (§6), empty `.pst` (§7) |
+| Whole world at the end | `SAVES='1 3 5 7' world.sh 7`: 0 «distintas» (§8) |
+
+In short, checked:
+1. Byte for byte against the game right after loading: 0 different bytes
+   in 11 of the 12 saves; in save 7, 12 bytes of padding the game writes
+   without initializing (battles, "Game bugs").
+2. The same after 4 days of the whole world (saves 1, 3, 7): the same
+   result.
+3. Round trip: the game's readers load what p3vita writes (v0x85) and
+   p3vita loads it the same: 0 differences in the 12 saves; the game and
+   p3vita save it again the same.
+4. Compression: the game's compressor rewritten; same bytes as the game's
+   in the 12 saves.
+Plus retouched saves for every branch the saves don't reach (0 differences),
+and the `.pst` with empty statistics, the same as the game's.
+
+What is left (none of it is needed to save a game the game loads):
+- The real statistics of the `.pst` (§7).
+- The battles are kept as they are in the file (the `battles` task).
+- The optional object of [+0xE4] of the world (0x533DA0/0x533D10): p3vita
+  refuses a save that has it; none of the saves has it.
+- Ship names added by the player during a game (§6).
+- `fn_4d6780` in `town_tick/events_towns.cpp` can call
+  `expire_merchant_mail` (the local session's file, not changed).
+- The loader steps of §1.3 (not part of this task).
 
 ## 1. How the game saves
 
@@ -343,6 +368,14 @@ each, 0x54CB90 is its size, 0x54CA20 builds an empty one), and above all the
 daily update that fills them (0x54DE90, which neither the oracle nor p3vita
 runs). The `Tut*.pst` of `missav/` are version 8 and the game rejects them.
 
+## 8. The whole world at the end
+
+The changes to `savegame.cpp` touch the loader, so at the end:
+`SAVES='1 3 5 7' bash re/emu/sesion5/world.sh 7`: 10 functions in each save,
+**0 «distintas»** in the four; «saltadas» 1, 0, 5 and 4 (the same as in the
+README of p3vita-datos); 718 s here. The full check of the 12 saves is left
+for the PC when merging.
+
 ## For the roadmap
 
 - Loader: 0x549F40 does more than the readers (§1.3): 0x5131B0 for the
@@ -422,4 +455,7 @@ Looks like one:
 - `tick_probe --carga` with a recording of 0 days: 2 s a save;
   `scripts/write-reload.sh` for the 12: 25 s; `scripts/write-after-days.sh 4
   1 3 7`: 6 min 11 s; `scripts/write-retouched.sh`: 4 s a save.
-- Not built for the Vita (no VitaSDK here; `src/app` not touched).
+- `world.sh 7` with 4 saves: 718 s.
+- Not built for the Vita (no VitaSDK here; `src/app` not touched; the new
+  code in `src/p3data` is plain C++17 like the rest).
+- ctest has 8 tests now (`lz_test`): `build.sh` and the README count 7.
