@@ -34,6 +34,14 @@ Scenarios:
                convoy), one without (deleted)
   guide        direct calls of 0x5017F0 on the pirate convoys: guide without
                hull, no captains, no hull at all, guide without sailors
+  daily        direct calls of 0x514000 on each pirate: a privateer's ship at
+               the nest, [+0x14] = 4, no captains, no ships at the nest; then
+               the countdowns of the pool, an empty pool, and every pirate
+               ship in one pirate's list (many away)
+  leave        direct calls of 0x514D40 (operation 0xB5): ships with a captain
+               accepted and refused, up to 3; a privateer's ship that goes home
+               and one that leaves with the pirates
+  retire       each pirate goes away ([+0x15] = 1; 0x514000, 0x513EC0)
 """
 import argparse
 import os
@@ -47,7 +55,7 @@ from town_oracle import WORLD  # noqa: E402
 SORT_X = 0x50D0C0  # thiscall on the ships object (index): the ship back in its place in the list by x
 PLAN = 0x515DA0
 FUNCTIONS = [0x514B80, 0x515DA0, 0x513BF0, 0x505C90]
-RANGES = {0x514B80: 0x514D36, 0x515DA0: 0x515E9D, 0x513BF0: 0x513D11, 0x505C90: 0x506270}
+RANGES = {0x514000: 0x514492, 0x514D40: 0x5152EE, 0x513EC0: 0x513FF3, 0x514B80: 0x514D36, 0x515DA0: 0x515E9D, 0x513BF0: 0x513D11, 0x505C90: 0x506270}
 TOWN_TABLE = 0x6DDB90
 TICK = 0x6DE4B4
 # A call from Python returns to SENTINEL, where the emulation stops before the
@@ -287,7 +295,167 @@ def guide(o):
         print(f'convoy {c}: guide {lead}, ships {members}, captains {captains}: 0x5017F0 4 times')
 
 
-SCENARIOS = {f.__name__: f for f in (disband, disband_map, plan, lost, alone, guide)}
+DAILY = 0x514000  # thiscall on a pirate object (its number)
+LEAVE_NEST = 0x514D40  # thiscall on a pirate object (most ships, strength): operation 0xB5
+GO_AWAY = 0x513EC0  # thiscall on a pirate object
+INSERT_X = 0x50CE50  # thiscall on the ships object (ship, after): into the list by x
+
+
+def nest_ships(o, pirate):
+    """The ships at the pirate's nest ([+0x12], linked by [+0x6])."""
+    out = []
+    i = o.u16(pirate + 0x12)
+    while i < o.counts()[3] and len(out) < 1000:
+        out.append(i)
+        i = o.u16(o.ship(i) + 0x6)
+    return out
+
+
+def captain(o, c):
+    return o.u32(to.SHIPS) + 0x10 * c
+
+
+def daily(o):
+    """Direct calls of 0x514000 on each pirate, with [+0x10] cleared: as it is;
+    every ship at the nest repaired and the first a privateer's (merchant 0)
+    whose time has passed (it is chosen: operation 0xB5 with 1); [+0x14] = 4
+    (0x673658 past its 4 entries: a ship at the nest without captain is
+    deleted); no captains at all (the first at the nest gets one); no ships
+    at the nest at a day & 3 = 0 (0x516170 makes one) and at day & 3 = 1."""
+    captains = o.u16(to.SHIPS + 0xF2)
+    for k, pirate in pirates(o):
+        w16(o, pirate + 0x10, 0xFFFF)
+        direct(o, DAILY, [k], pirate)
+        nest = nest_ships(o, pirate)
+        for i in nest:
+            s = o.ship(i)
+            w32(o, s + 0x18, o.s32(s + 0x14))
+        if nest:
+            s = o.ship(nest[0])
+            w8(o, s + 0x15D, 0)
+            w32(o, s + 0x4C, 0)
+        direct(o, DAILY, [k], pirate)
+        keep = o.u8(pirate + 0x14)
+        w8(o, pirate + 0x14, 4)
+        for i in nest_ships(o, pirate)[1:]:
+            w16(o, o.ship(i) + 0x42, 0xFFFF)
+        direct(o, DAILY, [k], pirate)
+        w8(o, pirate + 0x14, keep)
+        i = o.u16(pirate + 0xC)
+        while i < o.counts()[3]:
+            w16(o, o.ship(i) + 0x42, 0xFFFF)
+            i = o.u16(o.ship(i) + 0x4)
+        direct(o, DAILY, [k], pirate)
+        for day in (0, 1):
+            w16(o, pirate + 0x12, 0xFFFF)
+            w8(o, WORLD + 4, (o.u8(WORLD + 4) & ~3) | day)
+            direct(o, DAILY, [k], pirate)
+        print(f'pirate {k}: nest {nest}, captains {captains}: 0x514000 6 times')
+    # The countdowns of the pool ([+0x6] 0x10, 2), an empty pool, and a
+    # pirate with every pirate ship in its list (many away: a ship at the nest
+    # without captain is deleted) and [+0x14] = 4.
+    found = pirates(o)
+    if not found:
+        return
+    k, pirate = found[0]
+    pool = o.u32(pirate + 0x4)
+    for e, value in ((0, 0x10), (1, 2), (2, 0x10)):
+        if e < o.u16(pirate + 0x8):
+            w8(o, pool + 8 * e + 6, value)
+    direct(o, DAILY, [k], pirate)
+    keep = o.u16(pirate + 0x8)
+    w16(o, pirate + 0x8, 0)
+    direct(o, DAILY, [k], pirate)
+    w16(o, pirate + 0x8, keep)
+    ships = o.counts()[3]
+    pirate_ships = [i for i in range(ships) if o.u8(o.ship(i)) == 0xFF and o.u8(o.ship(i) + 0x15D) >= o.counts()[2]
+                    and o.u16(o.ship(i) + 0x134) != 0x15]
+    nest = [i for i in pirate_ships if o.u16(o.ship(i) + 0x134) not in (0x12,)][:1] or pirate_ships[:1]
+    if nest:
+        # One of them at the nest without captain, after another with captain
+        # 0; all in [+0xC].
+        first = [i for i in pirate_ships if i != nest[0]][:1]
+        w16(o, pirate + 0x12, (first or nest)[0])
+        if first:
+            w16(o, o.ship(first[0]) + 0x6, nest[0])
+            w16(o, o.ship(first[0]) + 0x42, 0)
+        w16(o, o.ship(nest[0]) + 0x6, 0xFFFF)
+        w16(o, o.ship(nest[0]) + 0x42, 0xFFFF)
+        for a, b in zip(pirate_ships, pirate_ships[1:] + [0xFFFF]):
+            w16(o, o.ship(a) + 0x4, b)
+        w16(o, pirate + 0xC, pirate_ships[0])
+        w8(o, pirate + 0x14, 4)
+        direct(o, DAILY, [k], pirate)
+        print(f'pirate {k}: {len(pirate_ships)} ships in its list, {nest[0]} at the nest')
+    w16(o, pirate + 0xC, 0xFFFF)  # no ships at all
+    direct(o, DAILY, [k], pirate)
+
+
+def leave(o):
+    """Direct calls of 0x514D40 (operation 0xB5) on each pirate: the ships at
+    the nest with full hull and captain 0 (accepted, [+0x8] > 0x20), the
+    second one's captain 1 refused ([+0x8] = 0x10, 0x5098B0), up to 3 ships;
+    then a privateer's ship (merchant 0) whose time has passed (it goes home:
+    message, maybe event 5, deleted), and one whose time has not."""
+    w8(o, captain(o, 0) + 8, 0x40)
+    w8(o, captain(o, 1) + 8, 0x10)
+    for k, pirate in pirates(o):
+        w16(o, pirate + 0x10, 0xFFFF)
+        nest = nest_ships(o, pirate)
+        for n, i in enumerate(nest):
+            s = o.ship(i)
+            w32(o, s + 0x18, o.s32(s + 0x14))
+            w16(o, s + 0x42, 1 if n == 0 else 0xFFFF)
+        if len(nest) > 1:
+            w16(o, o.ship(nest[1]) + 0x42, 0)
+            o.call(INSERT_X, [nest[1], 0xFFFF], ecx=to.SHIPS)
+        if len(nest) > 2:
+            w16(o, o.ship(nest[2]) + 0x42, 0)
+        direct(o, LEAVE_NEST, [3, 0x1F4], pirate)
+        for when in (0, 0x7FFFFFFF):
+            nest = nest_ships(o, pirate)
+            if not nest:
+                break
+            s = o.ship(nest[0])
+            w16(o, s + 0x42, 0)
+            w8(o, s + 0x15D, 0)
+            w32(o, s + 0x4C, when)
+            direct(o, LEAVE_NEST, [1, 0x1F4], pirate)
+        w16(o, pirate + 0x12, 0xFFFF)
+        direct(o, LEAVE_NEST, [1, 0x1F4], pirate)
+        print(f'pirate {k}: 0x514D40 4 times')
+
+
+def retire(o):
+    """Each pirate goes away ([+0x15] = 1): 0x514000 deletes the ships at its
+    nest and sinks its other ships (those in the list of convoys, or alone);
+    for the second pirate its list [+0xC] is emptied first, so 0x513EC0 runs
+    and the object is deleted (it has a map); for the third, a direct call of
+    0x513EC0 with its lists and a map. Run it with 0 days: a convoy of a
+    pirate that went away is left without a guide (see «Game bugs»)."""
+    for n, (k, pirate) in enumerate(pirates(o)):
+        if n == 2:
+            if not o.u32(pirate):
+                give_map(o, pirate)
+            direct(o, GO_AWAY, [], pirate)
+            print(f'pirate {k}: 0x513EC0 with its lists')
+            continue
+        w8(o, pirate + 0x15, 1)
+        if n == 1:
+            w16(o, pirate + 0xC, 0xFFFF)
+            if not o.u32(pirate):
+                give_map(o, pirate)
+        direct(o, DAILY, [k], pirate)
+        if n == 0 and o.u32(to.SHIPS + 0xC + 4 * k):
+            # Again without ships, map or pool: 0x513EC0 and the object deleted.
+            w16(o, pirate + 0xC, 0xFFFF)
+            w16(o, pirate + 0x8, 0)
+            w32(o, pirate + 0x4, 0)
+            direct(o, DAILY, [k], pirate)
+        print(f'pirate {k} goes away')
+
+
+SCENARIOS = {f.__name__: f for f in (disband, disband_map, plan, lost, alone, guide, daily, leave, retire)}
 
 
 def main():

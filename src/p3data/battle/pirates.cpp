@@ -767,6 +767,12 @@ bool Sailing::pirate_convoy(uint16_t index, uint16_t& link) {
 	// 0x502110 false is the end of the route (a town battle: piece 6); with the
 	// rule, the same as true.
 	fn_502110(index, 1);
+	if (save_.convoys[index].u16(0x10) >= save_.ships.size()) {
+		// A convoy whose ships have no hull (its pirate went away, 0x514000)
+		// has no guide: the game sorts ship 0xFFFF (0x50D0C0), outside the
+		// ships (see «Game bugs» in docs/cloud/battles-2.md). Not reproduced.
+		return false;
+	}
 	sort_x(save_.convoys[index].u16(0x10));
 	(void)count;
 	return false;

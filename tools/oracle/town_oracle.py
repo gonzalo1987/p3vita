@@ -186,6 +186,11 @@ STORM_UI_JUMPS = {0x50596F: 0x505983, 0x5059CA: 0x5059E0}
 # as if it were elsewhere), as before cloud/battles-2.
 PIRATE_JUMPS = {0x507BE9: 0x507B23, 0x507C0B: 0x507B5F}
 NO_DISBAND_JUMP = {0x505FF1: 0x506029}
+# With --pirates, the pirate objects' daily update runs (0x514000, otherwise
+# quiet) and the operation it queues is executed: 0xB5, a convoy leaves the
+# nest (0x514D40).
+PIRATE_UPDATE = 0x514000
+PIRATE_OPERATIONS = (0xB5,)
 PIRATE_WAYPOINTS = 0x448780
 EPILOGUE = 0x5079E8
 DOCKED_STATES = (0, 1, 2, 3, 4, 5)
@@ -299,6 +304,8 @@ class TownOracle(SaveOracle):
     def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True, rest=(), cpr=None,
                  operations=OPERATIONS, storms=True, pirates=False, disband=True):
         self.pirates = pirates and navdata is not None and convoys
+        if self.pirates:
+            operations = tuple(operations) + PIRATE_OPERATIONS
         super().__init__(exe, save, navdata)
         self.fast_read = fast_reader(self.uc)
         self.navdata = navdata
@@ -320,6 +327,8 @@ class TownOracle(SaveOracle):
         quiet = {**QUIET, ENQUEUE: 4}
         if self.ships:
             quiet.update(QUIET_SHIPS)
+            if self.pirates:
+                del quiet[PIRATE_UPDATE]
             self.uc.hook_add(UC_HOOK_CODE, self._docked, begin=DOCKED_DISPATCH, end=DOCKED_DISPATCH)
             self.uc.hook_add(UC_HOOK_CODE, self._sailing, begin=SAILING_DISPATCH, end=SAILING_DISPATCH)
             if convoys:

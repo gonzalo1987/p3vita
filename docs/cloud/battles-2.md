@@ -36,6 +36,15 @@ automatic sea battle).
   (0x506720 256 calls per save and day, 0x5062F0, 0x517170, 0x5017F0 up to
   15 calls per save).
 
+- **Part 2: the pirate objects' day (done):** 0x514000 (daily, behind
+  `--pirates`), 0x513EC0, and operation 0xB5 (0x514D40, with 0x515750 and
+  0x5185C0: a convoy leaves the nest) in `battle/pirate_objects.cpp`; the
+  oracle runs 0x514000 (no longer quiet) and executes 0xB5 with `--pirates`.
+  Call by call in the 12 saves × 7 days: 189 calls of 0x514000, 6 of
+  0x514D40, 0 differences; the world with `--pirates`, saves 3, 5, 6, 7 × 7
+  days, 0 «distintas»; retouched `daily`, `leave`, `retire`: every reachable
+  branch, 0 differences.
+
 ## Decisions for the user
 
 - **The grid functions on a nest's map** (recommendation: for
@@ -200,6 +209,82 @@ recording `506720,517170,5062f0,5017f0`, 1 day; tick_probe `--pirates`):
   guide without sailors: 0 differences (9–15 calls each).
 Probes 0x517170 and 0x5062F0 in `probes_battle.cpp`.
 
+### 2.3 The pirate objects' day: 0x514000, 0x513EC0 and operation 0xB5
+
+0x506720 calls **0x514000** (on each pirate object, with its number) when
+the tick ends in 0x6F, before the walks. Today the oracle keeps it quiet
+(`QUIET_SHIPS`); with `--pirates` it runs, in p3vita too
+(`update_ships`).
+- A pirate that goes away (`[+0x15]` = 1, set by 0x54A57A when the pirates
+  are switched off in the game's options): the ships at its nest are deleted
+  (0x507FB0); of the ships of its list `[+0xC]`, those with no convoy or
+  whose convoy is in the list lose their hull; when the list is empty,
+  **0x513EC0** (map and pool freed, `[+0x3C]` |= 0x100 and no hull for the
+  ships of `[+0xC]`, its convoy `[+0x10]` deleted, the ships at the nest
+  deleted, the merchants with `[+0xE1]` = its nest get 0xFF in `[+0xE0]`,
+  `[+0xE1]`, its `[+0xE]`, `[+0xF]`, `[+0x14]` = 0xFF) and the object is
+  deleted (pointer 0).
+- Otherwise: each of its ships gets `[+0x158]` = k (0x51A4C0); they are
+  counted (the pirates' own, `[+0x15D]` not a merchant; those with a
+  captain). With a convoy out (`[+0x10]`) it stops there. The countdowns
+  `[+0x6]` of the pool go down 4 (to 0). Without ships at the nest, when
+  `[0x6DE4A4] & 3` = 0, a new one (0x516170 type 2, strength 4000, full hull,
+  two levels, 0x5185C0 sailors). With them, each is repaired 1000 (fully if
+  less is missing: then a privateer's ship, or else one with a captain, is
+  chosen) and the pirates' own are not counted as away. More away than
+  0x673658[`[+0x14]`] + 3 (past its 4 entries the bytes that follow, 0, 0,
+  0, 0x4B): the first ship at the nest without captain and of the pirates is
+  deleted. No captain in any ship: the first at the nest gets one
+  (0x5097C0). A chosen ship, and none away or a privateer's, outside network
+  games and with `[0x6DE52A]` = 0: **operation 0xB5** {k, `[+0x14]` · 100 +
+  0x78, 1 for a privateer or `[+0x14]` + 1}.
+
+Operation 0xB5 (0x536E8C → **0x514D40** on the pirate, most ships, strength):
+walking the ships at the nest, those without captain are passed; a captain
+that 0x4FE150 refuses (`[+0x8]` ≤ 0x20) leaves (0x5098B0); the first with a
+good captain and a full hull is taken out and the walk ends. A privateer's
+ship whose `[+0x4C]` has passed goes home instead: a message to every
+merchant (UI) about an AI merchant chosen with the generator seeded by the
+tick, one time in 10 an event 5 in 0x300 ticks (0x4D8CF0; its fields in
+the code), and the ship is deleted. Otherwise the ship is a convoy of its own
+(0x5062F0 on a local head); a pirates' one takes ships at the nest with full
+hull and no captain, up to `most`. Each ship goes to the nest's approach
+point in state 0x12, is armed (**0x515750**: cargo emptied, flag 4, no
+artillery, strength · (setting `[0x12]` + 4) / 4 of artillery of the Hanse
+leader's town's level, the sailors **0x5185C0** at 70/85/100 % with a
+captain or 50/70/90 % without, `[+0x154]`), becomes the pirates' (owner
+0xFF), leaves the list by x, loses course, route, target and wait; the
+convoy is the pirates' in state 0x12 and goes into the list (0x501BE0,
+0x50AAE0). The strength is updated by each 0x515750, so it grows from ship
+to ship ((setting + 4) / 4 each time).
+
+p3vita: `battle/pirate_objects.cpp` (`fn_514000`, `fn_513ec0`, `fn_514d40`,
+and `fn_515750`, `fn_5185c0`, `fn_517770` inside); `run_operation` case
+0xB5. Probes 0x514000, 0x513EC0, 0x514D40.
+
+Checked:
+- probes `514000,514d40,513ec0,514b80`, 12 saves × 7 days, `--pirates`: 0
+  differences (0x514000 7 calls in the saves with one pirate, 21 with three;
+  0x514D40 1–2 calls in saves 3, 5, 6, 7); 53 s.
+- the world with `--pirates`, saves 3, 5, 6, 7 × 7 days: 0 «distintas».
+- retouched (`retouch_pirates.py`, direct calls, 0 days): `daily` (saves 3,
+  5, tut0, 1: a privateer at the nest, `[+0x14]` = 4, no captains, no ships
+  at the nest at both day parities, the pool's countdowns, an empty pool,
+  every pirate ship in one list so one at the nest is deleted, no ships at
+  all), `leave` (captains accepted and refused, a ship in the list by x, up to
+  3 ships, a privateer going home and one leaving, an empty nest), `retire`
+  (saves 6, 7, tut4, 3: with maps, without map or pool, a direct 0x513EC0):
+  0 differences. Every branch of 0x514000, 0x514D40 and 0x513EC0 has run
+  except the unreachable ones (0x51413F, 0x514169 and 0x513EE8 test a map
+  that 0x513EC0 has just freed; 0x51529E a convoy without ships).
+
+**A pirate that goes away with a convoy at sea** (retouched `retire` with
+days): 0x514000 takes the hull of its convoy's ships, the convoy stays in
+state 0x12, and the next tick 0x5017F0 finds no ship with hull and leaves
+`[+0x10]` past the last ship; 0x507A65 then sorts ship 0xFFFF in the list by
+x (0x50D0C0), outside the ships: the emulator stops there. p3vita stops
+before it (`pirate_convoy`); see «Game bugs».
+
 ## Changes to shared files
 
 - `src/p3data/savegame.cpp` (cloud/statistics): one line, at the end of the
@@ -233,6 +318,22 @@ Probes 0x517170 and 0x5062F0 in `probes_battle.cpp`.
   `lost_in_port` with `pirates_`; in `update_sailing`, the states 0x11 and
   0x12 → `lost_at_sea`, `pirate_at_sea` with `pirates_`. `sailing.hpp`: their
   declarations, `fn_5062f0` and the free `fn_517170`.
+- `src/p3data/simulation.cpp` (`run_operation`, local session's): before
+  `case 0xB8`,
+
+  ```cpp
+  case 0xB5:  // A pirate convoy leaves the nest (0x536E8C → 0x514D40; battle/pirate_objects.cpp).
+      if (sailing && uint32_t(fields[1]) < 5 && save.pirates[size_t(fields[1])] &&
+          save.globals.u32(global::kShips + 0xC + 4 * uint32_t(fields[1])) != 0) {
+          sailing->fn_514d40(size_t(fields[1]), uint16_t(fields[3]), uint16_t(fields[2]));
+      }
+      break;
+  ```
+- `src/p3data/sailing.cpp` (`update_ships`): with `pirates_`, when the tick
+  ends in 0x6F, `fn_514000` for each pirate; `sailing.hpp`: `fn_514000`,
+  `fn_513ec0`, `fn_514d40`.
+- `tools/oracle/town_oracle.py`: `PIRATE_UPDATE`, `PIRATE_OPERATIONS`; with
+  `--pirates`, 0x514000 is not quiet and 0xB5 is executed.
 - `src/p3data/convoys_members.cpp`: the pirate branch of `fn_5017f0` and the
   declaration of `fn_5097c0` (`town_tick/events.cpp`).
 - Declared in my files (not changed): `fn_4f9c80`
@@ -260,6 +361,12 @@ Certain:
   arguments in the first call.
 
 Looks like one:
+- **A convoy of a pirate that goes away** (the pirates switched off in the
+  options while a pirate convoy is at sea): its ships lose their hull
+  (0x514000) but the convoy stays, without a guide, and 0x507A65 sorts ship
+  0xFFFF in the list by x (0x50D0C0), reading outside the ships array (the
+  emulator stops there). Seen only in a retouched state. Not reproduced:
+  p3vita skips the sort.
 - **0x514B80 queues operation 0x12 (the captain improves) for the convoy's
   guide once per ship that has a captain**, instead of for each ship: the
   guide's captain improves up to n times and the others' never. Probably the
@@ -268,7 +375,7 @@ Looks like one:
 ## Done and left
 
 Done: part 1; of part 2, the disbanding (§2.1), the states 0x11 and 0x12
-and 0x5017F0 (§2.2). Left: part 2 (0x5063C0, 0x514000 with operation 0xB5,
+and 0x5017F0 (§2.2), the pirate objects' day (§2.3). Left: part 2 (0x5063C0,
 retouched states), part 3 (battle infrastructure) and part 4 (the battle).
 
 Not built for the Vita yet.

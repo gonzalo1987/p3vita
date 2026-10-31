@@ -1,6 +1,7 @@
 add_library(p3data STATIC
 	aim.cpp
 	battle/pirate_nests.cpp
+	battle/pirate_objects.cpp
 	battle/pirates.cpp
 	battle/storms.cpp
 	convoys.cpp

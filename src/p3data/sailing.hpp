@@ -177,6 +177,10 @@ public:
 	bool fn_515360(uint16_t ship);  // Whether a pirate attacks its target now.
 	bool fn_505c90(uint16_t convoy, uint16_t& link);  // (ships object) A new course for a pirate convoy.
 	void fn_514b80(size_t pirate, uint16_t convoy);  // (pirate object) The convoy disbanded at the nest.
+	// battle/pirate_objects.cpp: the pirate objects' day (with set_pirates).
+	void fn_514000(size_t pirate);  // (pirate object) Its daily update; may queue operation 0xB5.
+	void fn_513ec0(size_t pirate);  // (pirate object) The pirate goes away.
+	void fn_514d40(size_t pirate, uint16_t most, uint16_t strength);  // Operation 0xB5: a convoy leaves the nest.
 	// 0x5062F0 (ships object): a new convoy led by `ship`, at the head of the
 	// list `head` (not inside SaveGame::convoys: it may grow); its index.
 	uint16_t fn_5062f0(uint16_t& head, uint16_t ship);

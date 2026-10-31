@@ -202,6 +202,12 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x86:  // Quitar los encargos de la Hansa que ya no valen (en 0x536801).
 		tick::fn_53fe20(save);
 		break;
+	case 0xB5:  // A pirate convoy leaves the nest (0x536E8C → 0x514D40; battle/pirate_objects.cpp).
+		if (sailing && uint32_t(fields[1]) < 5 && save.pirates[size_t(fields[1])] &&
+			save.globals.u32(global::kShips + 0xC + 4 * uint32_t(fields[1])) != 0) {
+			sailing->fn_514d40(size_t(fields[1]), uint16_t(fields[3]), uint16_t(fields[2]));
+		}
+		break;
 	case 0xB8:  // Network games' sync checks (0x542F10).
 		tick::fn_542f10(save, operation);
 		break;

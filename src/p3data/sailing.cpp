@@ -457,7 +457,8 @@ void Sailing::begin_tick() {
 // convoyes. Cuando el tick acaba en 0x6F, antes de las listas, llama a
 // 0x514000 con cada uno de los cinco objetos de [+0xC] del objeto de los
 // barcos que existan; y al final, cada 8 ticks, a 0x5053C0 (los encuentros).
-// Ni lo uno ni lo otro se reproducen (el oráculo tampoco los ejecuta).
+// 0x514000 runs with set_pirates(true) (battle/pirate_objects.cpp), as the
+// oracle with --pirates.
 // 0x5053C0 (the storms, battle/storms.cpp) runs unless set_storms(false), as
 // the oracle does unless --no-storms; without the convoys, the oracle skips
 // it too.
@@ -467,6 +468,14 @@ void Sailing::update_ships() {
 	g.u16(kPlayerShipsAtSea) = 0;
 	g.u16(kPlayerConvoysInPort) = 0;
 	g.u16(kPlayerConvoysAtSea) = 0;
+	if (pirates_ && (save_.tick() & 0xFF) == 0x6F) {
+		// 0x514000 for each pirate object (battle/pirate_objects.cpp).
+		for (size_t k = 0; k < save_.pirates.size(); ++k) {
+			if (g.u32(global::kShips + 0xC + 4 * uint32_t(k)) != 0 && save_.pirates[k]) {
+				fn_514000(k);
+			}
+		}
+	}
 	update_docked();
 	update_sailing();
 	if (convoys_) {

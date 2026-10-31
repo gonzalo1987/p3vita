@@ -113,6 +113,33 @@ void register_probes_battle(ProbeRegistry& r) {
 		probe_sailing()->fn_514b80(size_t(k), uint16_t(c.args[0]));
 		return std::nullopt;
 	};
+	// 0x514000: thiscall on a pirate object, its number.
+	r[0x514000] = [pirate](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int k = pirate(save, c.ecx);
+		if (k < 0 || !probe_sailing()) {
+			return kBad;
+		}
+		probe_sailing()->fn_514000(size_t(k));
+		return std::nullopt;
+	};
+	// 0x513EC0: thiscall on a pirate object.
+	r[0x513EC0] = [pirate](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int k = pirate(save, c.ecx);
+		if (k < 0 || !probe_sailing()) {
+			return kBad;
+		}
+		probe_sailing()->fn_513ec0(size_t(k));
+		return std::nullopt;
+	};
+	// 0x514D40: thiscall on a pirate object, the most ships and the strength (u16 each).
+	r[0x514D40] = [pirate](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int k = pirate(save, c.ecx);
+		if (k < 0 || !probe_sailing()) {
+			return kBad;
+		}
+		probe_sailing()->fn_514d40(size_t(k), uint16_t(c.args[0]), uint16_t(c.args[1]));
+		return std::nullopt;
+	};
 	// 0x517170: thiscall on a ship.
 	r[0x517170] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
 		const int ship = c.ship(c.ecx);
