@@ -257,6 +257,18 @@ uint16_t election_today(const SaveGame& save) {
 	return i < save.events.size() && save.events[i].u16(6) == kElectionEvent ? i : 0xFFFF;
 }
 
+uint16_t election_event(const SaveGame& save) {
+	uint16_t found = 0xFFFF;
+	walk_events(save, [&](uint16_t i, const GameMemory<0x18>& e) {
+		if (e.u16(6) == kElectionEvent) {
+			found = i;
+			return false;
+		}
+		return true;
+	});
+	return found;
+}
+
 bool player_can_vote(const SaveGame& save) {
 	return election_today(save) != 0xFFFF && tick::fn_4d9d40(save);
 }
@@ -275,6 +287,19 @@ std::array<ElectionCandidate, 4> election_candidates(const SaveGame& save, uint1
 		candidate.index = candidate.merchant ? (index < int(merchant_count(save)) ? index : -1)
 											 : (index < int(save.towns.size()) ? index : -1);
 		candidate.votes = e.u8(0xC + k);
+	}
+	return out;
+}
+
+std::array<ElectionCandidate, 4> next_election_candidates(const SaveGame& save) {
+	std::array<ElectionCandidate, 4> out{};
+	uint8_t towns[4];
+	uint8_t merchants[4];
+	tick::events_mayor_detail::fn_529700(save, towns, merchants);
+	for (size_t k = 0; k < 4; ++k) {
+		ElectionCandidate& c = out[k];
+		c.merchant = merchants[k] < merchant_count(save);
+		c.index = c.merchant ? merchants[k] : towns[k] < save.towns.size() ? towns[k] : -1;
 	}
 	return out;
 }

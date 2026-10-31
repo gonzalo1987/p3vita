@@ -30,4 +30,10 @@ bool fn_4d9d40(const SaveGame& save);
 // [+0x10 + k]), more abstains ([+0x14], [+0x15] up to 0xFA).
 void fn_53aa10(SaveGame& save, const uint8_t* operation);
 
+// In events_mayor.cpp (the local session's), used here as it is: 0x529700,
+// the 4 candidates for the next election (town and merchant, or 0xFF).
+namespace events_mayor_detail {
+void fn_529700(const SaveGame& save, uint8_t town[4], uint8_t merchant[4]);
+}  // namespace events_mayor_detail
+
 }  // namespace p3::data::tick

@@ -106,6 +106,9 @@ OperationBytes vote_operation(uint32_t player, uint32_t choice);
 
 // Today's election of the Alderman (event 0x20, 0x4D9C70), or 0xFFFF.
 uint16_t election_today(const SaveGame& save);
+// The election's event 0x20, whatever its day (after the count it keeps the
+// votes until the next year's first phase), or 0xFFFF.
+uint16_t election_event(const SaveGame& save);
 // Whether the player can vote in it now (0x4D9D40).
 bool player_can_vote(const SaveGame& save);
 // The election's candidates ([+0x8 + k]): a merchant (| 0x80) or a town whose
@@ -116,6 +119,9 @@ struct ElectionCandidate {
 	int votes = 0;
 };
 std::array<ElectionCandidate, 4> election_candidates(const SaveGame& save, uint16_t event);
+// The candidates for the next election as the game's window lists them
+// before it (0x529700): a merchant, or the town whose mayor stands.
+std::array<ElectionCandidate, 4> next_election_candidates(const SaveGame& save);
 
 // Adds the operation to the queue; advance_game_tick runs it after the next
 // tick, as the game runs its queue between two calls to advance_time.

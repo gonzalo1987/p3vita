@@ -51,3 +51,9 @@ target_link_libraries(hanse_tasks_test PRIVATE p3data)
 target_compile_options(hanse_tasks_test PRIVATE -Wall -Wextra)
 
 add_test(NAME hanse_tasks COMMAND hanse_tasks_test)
+
+add_executable(game_texts_test game_texts_test.cpp)
+target_link_libraries(game_texts_test PRIVATE p3data)
+target_compile_options(game_texts_test PRIVATE -Wall -Wextra)
+
+add_test(NAME game_texts COMMAND game_texts_test)
