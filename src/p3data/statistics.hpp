@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "p3data/savegame.hpp"
 
@@ -32,5 +34,23 @@ void add_merchant_statistics(SaveGame& save, int merchant);
 
 // 0x54DDF0 (on 0x6DFC90): empties the statistics (u16 [+0x0..+0x8] at 0).
 void clear_statistics(SaveGame& save);
+
+// The uncompressed .pst as the game writes it (0x54D7F0 and 0x54D870,
+// version 0xB): u32 0xAFFE000B, the 6 u16 of the header, the four lists of the
+// towns (a byte 1 before each record: u32 number and its blocks; 0 at the end
+// or alone if empty), each followed by u32 0xAFFEAFFE, the merchants' objects
+// (u16, u16, u8, u8, u16 years, their 80 records of the rings and their
+// years, 0x6C bytes each) and 0xAFFEAFFE. Like the game's size function, it
+// sets [+0xA] of the header to the number of objects and [+0x6] of each one
+// to its years; and like the game's save function, it adds one byte (0) when
+// there are months (the size function counts one too many).
+std::vector<uint8_t> write_statistics(SaveGame& save);
+
+// 0x54DA60: reads a .pst into the statistics. Of another version (the
+// Tut*.pst of missav/ are 8) it empties them (0x54DDF0) and reads nothing.
+// GAME BUG (looks like one): it builds each merchant's object with 0x54CA20
+// for the merchant 0, whose record of the day clears the counters of the
+// merchant 0, before reading the object over it. False if it is cut short.
+bool read_statistics(const uint8_t* data, size_t size, SaveGame& save);
 
 }  // namespace p3::data

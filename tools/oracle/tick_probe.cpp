@@ -26,8 +26,10 @@
 // zarpar (537670), pero no las dos.
 //
 // With --write OUT, at the end it writes the uncompressed .pat of the state
-// reached as the game's save function does (savegame_write.hpp), to compare
-// with town_oracle.py --write (tools/oracle/compare_written.py).
+// reached as the game's save function does (savegame_write.hpp), and its .pst
+// to OUT.pst, to compare with town_oracle.py --write
+// (tools/oracle/compare_written.py). With --carga and --pst FILE it reads an
+// uncompressed .pst after the save (statistics.hpp).
 //
 // Con --cpr, las funciones de los barcos que necesitan la navegación (las de
 // los convoyes, la actualización de barcos) se pueden repetir también una a
@@ -51,6 +53,7 @@
 #include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/savegame_write.hpp"
+#include "p3data/statistics.hpp"
 #include "p3data/seamap.hpp"
 #include "probe_registry.hpp"
 
@@ -623,6 +626,7 @@ int main(int argc, char** argv) {
 	uint32_t only = 0;
 	int budget = 60;
 	std::string write_path;  // --write: the save of the state reached (savegame_write.hpp).
+	std::string pst_path;  // --pst: with --carga, an uncompressed .pst read after it (statistics.hpp).
 	for (int i = 2; i < argc; ++i) {
 		const std::string arg = argv[i];
 		if (arg == "--continuo") {
@@ -645,6 +649,8 @@ int main(int argc, char** argv) {
 			budget = std::atoi(argv[++i]);
 		} else if (arg == "--write" && i + 1 < argc) {
 			write_path = argv[++i];
+		} else if (arg == "--pst" && i + 1 < argc) {
+			pst_path = argv[++i];
 		}
 	}
 	ProbeRegistry registry;
@@ -712,6 +718,14 @@ int main(int argc, char** argv) {
 		if (archive) {
 			load_game_scripts(*archive, save);
 			g_scripts_loaded = true;
+		}
+		if (!pst_path.empty()) {
+			std::ifstream p(pst_path, std::ios::binary);
+			const std::vector<uint8_t> pst((std::istreambuf_iterator<char>(p)), std::istreambuf_iterator<char>());
+			if (!read_statistics(pst.data(), pst.size(), save)) {
+				std::fprintf(stderr, "%s: cut short\n", pst_path.c_str());
+				return 1;
+			}
 		}
 		if (!continuous) {
 			// Las rutas de los barcos las da Sailing después de leer la partida.
@@ -907,7 +921,10 @@ int main(int argc, char** argv) {
 		const std::vector<uint8_t> raw = write_savegame(save);
 		std::ofstream out(write_path, std::ios::binary);
 		out.write(reinterpret_cast<const char*>(raw.data()), std::streamsize(raw.size()));
-		std::printf("%zu bytes in %s\n", raw.size(), write_path.c_str());
+		const std::vector<uint8_t> pst = write_statistics(save);
+		std::ofstream out_pst(write_path + ".pst", std::ios::binary);
+		out_pst.write(reinterpret_cast<const char*>(pst.data()), std::streamsize(pst.size()));
+		std::printf("%zu bytes in %s, %zu in %s.pst\n", raw.size(), write_path.c_str(), pst.size(), write_path.c_str());
 	}
 	return bad ? 1 : 0;
 }

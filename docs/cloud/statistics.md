@@ -16,7 +16,7 @@ Branch `cloud/statistics`, from main f9d86eb. Task:
 | Part | State |
 |-|-|
 | 1. The daily statistics (0x54DE90) | done: rewritten, checked in the 12 saves, on by default |
-| 2. The real `.pst` | pending |
+| 2. The real `.pst` | done: same bytes as the game's, read back the same |
 | 3. The loader's last three steps | pending |
 
 ## 1. The daily statistics (0x54DE90)
@@ -103,6 +103,47 @@ too, since it goes to the `.pst` (part 2).
 | `scripts/statistics-world.sh 7`, the 12 saves in three batches | 0 different in the 12 (182 + 173 + 154 s; without the statistics 370 s) |
 | `world.sh 7` as it is, `SAVES='1 3 7 tut4'`, with the statistics on by default | 0 «distintas», 11 functions (183 s) |
 
+## 2. The real `.pst`
+
+`write_statistics` (0x54D7F0 and 0x54D870) and `read_statistics` (0x54DA60)
+in `statistics.cpp`; `statistics_file(SaveGame&)` compresses it,
+`p3save write` puts it next to the `.pat`, and `load_savegame` (and `p3save`
+from the disk) reads the `.pst` next to a `.pat` as 0x5476E0 does (none, or
+of another version like the `Tut*.pst` of `missav/`: empty statistics).
+
+The file (version 0xB): u32 0xAFFE000B; the 6 u16 of the header ([+0xA] set
+by the size function to the number of merchant objects); for each of the
+four lists of the towns, a byte 1 before each record (u32 number and its
+blocks of 0x204) and a byte 0 at the end, then u32 0xAFFEAFFE; each
+merchant's object (u16 merchant, u16, u8, u8, u16 years — the size function
+recounts them —, its 32 + 24 + 24 records of the rings and its years, 0x6C
+bytes each: the link isn't saved); u32 0xAFFEAFFE.
+
+Two things of the game reproduced:
+- **0x54D7F0 counts one byte too many when there are months** (0x54D822,
+  `lea esi, [esi + eax + 1]` and then `inc esi`), and 0x5472F0 compresses
+  that size: the `.pst` ends in one byte more, whatever the buffer had (0 in
+  the emulator; p3vita writes 0). The reader leaves it.
+- **0x54DA60 builds each merchant's object with 0x54CA20 for the merchant
+  0** before reading it over: the record of the day of the merchant 0 clears
+  his 15 counters at each object read.
+
+Checks (`scripts/write-after-days.sh 4`, which now compares the `.pst` of the
+game and of p3vita byte for byte, and then makes the game's readers load
+p3vita's `.pat` and `.pst` and compares with p3vita's load: `town_oracle.py
+--pst` and `tick_probe --carga --pst`):
+
+| Save | `.pst` | Reload of `.pat` + `.pst` |
+|-|-|-|
+| 1 | same bytes (174 409) | 0 differences |
+| 3 | same bytes (174 409) | 0 differences |
+| 7 | same bytes (174 409) | 0 differences |
+| 1 moved to 30 Dec 1301 (weeks, months, a year) | same bytes (200 592) | 0 differences |
+| 3 moved to 30 Dec 1301 | same bytes (200 592) | 0 differences |
+
+The `.pat` of the same runs: 0 different bytes (save 7: the 12 bytes of
+padding of the battles, `docs/cloud/savegames.md`).
+
 ## Changes to shared files
 
 - `src/p3data/simulation.cpp` (`advance_game_tick`): after `fn_5315c0`,
@@ -112,7 +153,14 @@ too, since it goes to the `.pst` (part 2).
   at the end of `regions()`, 0x54DE90 added to the recorded functions);
   `OPERATIONS` not touched.
 - `tools/oracle/tick_probe.cpp`: the regions S0..S4, the header among the
-  compared globals, `register_probes_statistics`, the countdown rule.
+  compared globals, `register_probes_statistics`, the countdown rule,
+  `--write` also writes OUT.pst, `--pst FILE` with `--carga`.
+- `tools/oracle/write_oracle.py`: `game_statistics`, `read_game_statistics`;
+  `write_files` also writes OUT.pst. `town_oracle.py`: `--pst FILE`.
+- `src/p3data/savegame.cpp` (`load_savegame`): reads the `.pst` next to the
+  `.pat`. `savegame_write.{hpp,cpp}`: `statistics_file(SaveGame&)`,
+  `load_statistics_file`. `tools/p3save/main.cpp`: writes and reads the real
+  `.pst`. `scripts/write-after-days.sh`: the `.pst` checks.
 - `tools/oracle/probe_registry.hpp`, `tools/oracle/CMakeLists.txt`,
   `src/p3data/CMakeLists.txt`: the new files.
 - `src/p3data/savegame.hpp`: `Statistics`, `SaveGame::statistics`,

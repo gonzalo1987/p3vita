@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cstring>
 
+#include "p3data/lz.hpp"
 #include "p3data/lz_compress.hpp"
+#include "p3data/statistics.hpp"
 
 namespace p3::data {
 
@@ -619,6 +621,24 @@ std::vector<uint8_t> empty_statistics() {
 std::vector<uint8_t> statistics_file() {
 	const std::vector<uint8_t> raw = empty_statistics();
 	return lz_compress(raw.data(), raw.size());
+}
+
+std::vector<uint8_t> statistics_file(SaveGame& save) {
+	const std::vector<uint8_t> raw = write_statistics(save);
+	return lz_compress(raw.data(), raw.size());
+}
+
+bool load_statistics_file(const std::vector<uint8_t>* pst, SaveGame& save) {
+	if (!pst) {
+		clear_statistics(save);
+		return true;
+	}
+	std::vector<uint8_t> raw;
+	if (!lz_decompress_file(pst->data(), pst->size(), raw)) {
+		clear_statistics(save);
+		return false;
+	}
+	return read_statistics(raw.data(), raw.size(), save);
 }
 
 void load_save_scripts(const CprArchive& archive, SaveGame& save) {

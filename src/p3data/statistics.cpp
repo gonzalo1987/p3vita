@@ -391,6 +391,171 @@ void add_merchant_statistics(SaveGame& save, int merchant) {
 	save.statistics.merchants.insert(save.statistics.merchants.begin(), new_merchant_statistics(save, merchant));
 }
 
+namespace {
+
+void put_u8(std::vector<uint8_t>& out, uint8_t v) {
+	out.push_back(v);
+}
+void put_u16(std::vector<uint8_t>& out, uint16_t v) {
+	out.push_back(uint8_t(v));
+	out.push_back(uint8_t(v >> 8));
+}
+void put_u32(std::vector<uint8_t>& out, uint32_t v) {
+	put_u16(out, uint16_t(v));
+	put_u16(out, uint16_t(v >> 16));
+}
+void put_bytes(std::vector<uint8_t>& out, const uint8_t* p, size_t n) {
+	out.insert(out.end(), p, p + n);
+}
+
+constexpr uint32_t kPstTag = 0xAFFE000B;
+constexpr uint32_t kPstSeparator = 0xAFFEAFFE;
+
+// Sequential reading of the .pst with bounds.
+class PstReader {
+public:
+	PstReader(const uint8_t* data, size_t size) : data_(data), size_(size) {}
+	bool ok() const { return ok_; }
+	const uint8_t* take(size_t n) {
+		if (!ok_ || size_ - pos_ < n) {
+			ok_ = false;
+			return nullptr;
+		}
+		const uint8_t* p = data_ + pos_;
+		pos_ += n;
+		return p;
+	}
+	uint8_t u8() {
+		const uint8_t* p = take(1);
+		return p ? p[0] : 0;
+	}
+	uint16_t u16() {
+		const uint8_t* p = take(2);
+		return p ? uint16_t(p[0] | p[1] << 8) : 0;
+	}
+	uint32_t u32() {
+		const uint8_t* p = take(4);
+		return p ? uint32_t(p[0] | p[1] << 8 | p[2] << 16 | uint32_t(p[3]) << 24) : 0;
+	}
+
+private:
+	const uint8_t* data_;
+	size_t size_;
+	size_t pos_ = 0;
+	bool ok_ = true;
+};
+
+}  // namespace
+
+std::vector<uint8_t> write_statistics(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	Statistics& st = save.statistics;
+	// 0x54D7F0 and 0x54CB90: the number of objects and of the years of each.
+	g.u16(kStatistics + 0xA) = uint16_t(st.merchants.size());
+	for (MerchantStatistics& m : st.merchants) {
+		m.memory.u16(0x6) = uint16_t(m.years.size());
+	}
+	std::vector<uint8_t> out;
+	put_u32(out, kPstTag);
+	for (uint32_t o = 0; o <= 0xA; o += 2) {
+		put_u16(out, g.u16(kStatistics + o));
+	}
+	for (const std::vector<TownStatistics>& list : st.towns) {
+		// 0x54D080.
+		for (size_t k = 0; k < list.size(); ++k) {
+			put_u8(out, 1);
+			put_u32(out, uint32_t(list[k].size()));
+			for (const GameMemory<0x204>& town : list[k]) {
+				put_bytes(out, town.bytes.data(), 0x204);
+			}
+		}
+		put_u8(out, 0);
+		put_u32(out, kPstSeparator);
+	}
+	// 0x54CBD0 for each object.
+	for (const MerchantStatistics& m : st.merchants) {
+		const GameMemory<0x2310>& o = m.memory;
+		put_u16(out, o.u16(0x0));
+		put_u16(out, o.u16(0x2));
+		put_u8(out, o.u8(0x4));
+		put_u8(out, o.u8(0x5));
+		put_u16(out, o.u16(0x6));
+		for (auto [first, count] : {std::pair<size_t, size_t>{kDays, 32}, {kWeeks, 24}, {kMonths, 24}}) {
+			for (size_t r = 0; r < count; ++r) {
+				put_bytes(out, o.bytes.data() + first + kRecord * r, kLink);
+			}
+		}
+		for (const GameMemory<0x70>& year : m.years) {
+			put_bytes(out, year.bytes.data(), kLink);
+		}
+	}
+	put_u32(out, kPstSeparator);
+	// GAME BUG: 0x54D7F0 counts the months' list one byte too many (0x54D822:
+	// `lea esi, [esi + eax + 1]` and then `inc esi`), and 0x5472F0 compresses
+	// that size: the file has one byte more, whatever the buffer held (0 in
+	// the emulator, and here).
+	if (!st.towns[2].empty()) {
+		put_u8(out, 0);
+	}
+	return out;
+}
+
+bool read_statistics(const uint8_t* data, size_t size, SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	PstReader r(data, size);
+	if (r.u32() != kPstTag) {
+		clear_statistics(save);
+		return r.ok();
+	}
+	for (uint32_t o = 0; o <= 0xA; o += 2) {
+		g.u16(kStatistics + o) = r.u16();
+	}
+	Statistics& st = save.statistics;
+	for (std::vector<TownStatistics>& list : st.towns) {
+		// 0x54D100.
+		list.clear();
+		if (r.u8() == 1) {
+			do {
+				TownStatistics record(r.u32());
+				for (GameMemory<0x204>& town : record) {
+					if (const uint8_t* p = r.take(0x204)) {
+						std::memcpy(town.bytes.data(), p, 0x204);
+					}
+				}
+				list.push_back(std::move(record));
+			} while (r.u8() != 0 && r.ok());
+		}
+		r.u32();
+	}
+	st.merchants.clear();
+	for (uint32_t k = 0; k < g.u16(kStatistics + 0xA) && r.ok(); ++k) {
+		// 0x54CA20 for the merchant 0, then 0x54CCC0.
+		MerchantStatistics m = new_merchant_statistics(save, 0);
+		GameMemory<0x2310>& o = m.memory;
+		o.u16(0x0) = r.u16();
+		o.u16(0x2) = r.u16();
+		o.u8(0x4) = r.u8();
+		o.u8(0x5) = r.u8();
+		o.u16(0x6) = r.u16();
+		for (auto [first, count] : {std::pair<size_t, size_t>{kDays, 32}, {kWeeks, 24}, {kMonths, 24}}) {
+			for (size_t i = 0; i < count; ++i) {
+				if (const uint8_t* p = r.take(kLink)) {
+					std::memcpy(o.bytes.data() + first + kRecord * i, p, kLink);
+				}
+			}
+		}
+		m.years.assign(o.u16(0x6), GameMemory<0x70>());
+		for (GameMemory<0x70>& year : m.years) {
+			if (const uint8_t* p = r.take(kLink)) {
+				std::memcpy(year.bytes.data(), p, kLink);
+			}
+		}
+		st.merchants.push_back(std::move(m));
+	}
+	r.u32();
+	return r.ok();
+}
+
 void clear_statistics(SaveGame& save) {
 	save.statistics = Statistics();
 	for (uint32_t o = 0; o < 0xA; o += 2) {

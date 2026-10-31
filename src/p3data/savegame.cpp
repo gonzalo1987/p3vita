@@ -1123,6 +1123,12 @@ bool load_savegame(const CprArchive& archive, const std::string& path, SaveGame&
 		return false;
 	}
 	load_game_scripts(archive, out);
+	// The .pst next to it (0x5476E0 reads it after the .pat), if it is there.
+	if (path.size() > 4 && path.compare(path.size() - 4, 4, ".pat") == 0) {
+		std::vector<uint8_t> pst;
+		const CprEntry* entry = archive.find(path.substr(0, path.size() - 4) + ".pst");
+		load_statistics_file(entry && archive.read(*entry, pst) ? &pst : nullptr, out);
+	}
 	return true;
 }
 

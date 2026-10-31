@@ -42,7 +42,7 @@ Formato del fichero (enteros little endian):
 
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
        [--desde DÍA] [--max N] [--semilla S] [--cpr p2arch0_eng.cpr] [--barcos DATOS [--sin-ia] [--sin-convoyes]
-       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms] [--no-statistics]] [--write OUT]
+       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms] [--no-statistics]] [--pst FILE] [--write OUT]
 La función 51ba10 graba los ticks de ciudad enteros.
 
 Con --cpr (o si DATOS/scripts tiene los ficheros), la carga crea también el
@@ -92,7 +92,8 @@ grabar también 4f7bb0 y las piezas que se ejecuten:
 (535760, el ejecutor, o 537670, solo las órdenes de zarpar, pero no las dos).
 With --write OUT, after the days it runs the game's save code on the state
 reached and writes the uncompressed .pat (write_oracle.py), to compare with
-tick_probe --write.
+tick_probe --write; and the .pst (0x54D870) to OUT.pst. With --pst FILE, an
+uncompressed .pst is read after the save (0x54DA60).
 Con --sin-ia, los barcos como en sail_oracle.py: en puerto solo los estados
 1, 2, 3 y el 0 de los jugadores humanos, y las operaciones encoladas no se
 ejecutan.
@@ -1078,6 +1079,7 @@ def main():
     p.add_argument('--no-storms', action='store_true',
                    help='with --barcos, without the storms (0x5053C0, every 8 ticks), which run by default')
     p.add_argument('--storms', action='store_true', help='on by default now; kept for older scripts')
+    p.add_argument('--pst', metavar='FILE', help='an uncompressed .pst to read after the save (0x54DA60)')
     p.add_argument('--no-statistics', action='store_true',
                    help='without the daily statistics (0x54DE90, after 0x5315C0; regions S0..S4), which run by default')
     p.add_argument('--statistics', action='store_true', help='on by default now; kept for older scripts')
@@ -1100,6 +1102,10 @@ def main():
                    not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], not a.no_storms,
                    not a.no_statistics)
     o.load()
+    if a.pst:
+        # The .pst next to the save (uncompressed), as 0x5476E0 reads it.
+        from write_oracle import read_game_statistics
+        read_game_statistics(o, open(a.pst, 'rb').read())
     functions = [int(x, 16) for x in a.functions.split(',')]
     if not a.no_statistics and STATISTICS not in functions:
         # tick_probe --continuo repeats only what is recorded: with the
@@ -1123,7 +1129,7 @@ def main():
         from write_oracle import prepare_game_object, write_files
         prepare_game_object(o)
         write_files(o, a.write)
-        print(f'save written in {a.write}')
+        print(f'save written in {a.write} (and {a.write}.pst)')
 
 
 if __name__ == '__main__':
