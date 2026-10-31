@@ -10,7 +10,10 @@
 #include "p3data/cpr.hpp"
 #include "p3data/font.hpp"
 #include "p3data/prices.hpp"
+#include "p3data/lz.hpp"
 #include "p3data/savegame.hpp"
+#include "p3data/savegame_write.hpp"
+#include "p3data/lz_compress.hpp"
 #include "p3data/wares.hpp"
 
 using namespace p3::data;
@@ -22,10 +25,13 @@ constexpr const char* kShipTypes[] = {"Snaikka", "Craier", "Kogge", "Holk"};
 int usage() {
 	std::fprintf(stderr,
 		"uso: p3save <archivo.cpr> <partida> [ciudad | comerciantes | barcos | raw <salida>]\n"
+		"       p3save <archivo.cpr> <partida> write <out.pat> [<out.raw>]\n"
 		"\n"
 		"Sin más argumentos, lista las ciudades de la partida (p. ej. missav/1.pat).\n"
 		"Con el número de una ciudad, muestra su almacén, producción y consumo.\n"
-		"comerciantes y barcos los listan; raw guarda la partida descomprimida.\n");
+		"comerciantes y barcos los listan; raw guarda la partida descomprimida.\n"
+		"write saves it again as the game does (version 0x85; with <out.raw>, also uncompressed).\n"
+		"<partida> is read from the archive or, if it isn't there, from the disk.\n");
 	return 2;
 }
 
@@ -112,10 +118,47 @@ void list_ships(const SaveGame& save, const std::vector<std::string>& towns) {
 	std::printf("\nbodega en cargas (2000 unidades); la capacidad ya descuenta artillería y tripulación\n");
 }
 
+bool write_file(const char* path, const std::vector<uint8_t>& data) {
+	FILE* out = std::fopen(path, "wb");
+	const bool ok = out && std::fwrite(data.data(), 1, data.size(), out) == data.size();
+	if (out) {
+		std::fclose(out);
+	}
+	if (!ok) {
+		std::fprintf(stderr, "can't write %s\n", path);
+	}
+	return ok;
+}
+
+// A save from the archive or, if it isn't there, from the disk.
+bool load_any_savegame(const CprArchive& archive, const std::string& path, SaveGame& save, std::string* error) {
+	if (archive.find(path)) {
+		return load_savegame(archive, path, save, error);
+	}
+	FILE* f = std::fopen(path.c_str(), "rb");
+	if (!f) {
+		*error = "can't read " + path;
+		return false;
+	}
+	std::vector<uint8_t> packed;
+	uint8_t buffer[1 << 16];
+	for (size_t n; (n = std::fread(buffer, 1, sizeof(buffer), f)) > 0;) {
+		packed.insert(packed.end(), buffer, buffer + n);
+	}
+	std::fclose(f);
+	std::vector<uint8_t> data;
+	if (!lz_decompress_file(packed.data(), packed.size(), data, error) ||
+		!parse_savegame(data.data(), data.size(), save, error)) {
+		return false;
+	}
+	load_game_scripts(archive, save);
+	return true;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-	if (argc < 3 || argc > 5) {
+	if (argc < 3 || argc > 6) {
 		return usage();
 	}
 	std::string error;
@@ -141,9 +184,22 @@ int main(int argc, char** argv) {
 	}
 
 	SaveGame save;
-	if (!load_savegame(*archive, argv[2], save, &error)) {
+	if (!load_any_savegame(*archive, argv[2], save, &error)) {
 		std::fprintf(stderr, "%s\n", error.c_str());
 		return 1;
+	}
+	if (command == "write") {
+		if (argc < 5) {
+			return usage();
+		}
+		prepare_save(save);
+		const std::vector<uint8_t> raw = write_savegame(save);
+		const std::vector<uint8_t> packed = lz_compress(raw.data(), raw.size());
+		if (!write_file(argv[4], packed) || (argc == 6 && !write_file(argv[5], raw))) {
+			return 1;
+		}
+		std::printf("%zu bytes (%zu uncompressed) in %s\n", packed.size(), raw.size(), argv[4]);
+		return 0;
 	}
 	const std::vector<std::string> names = load_town_names(*archive);
 	if (command.empty()) {

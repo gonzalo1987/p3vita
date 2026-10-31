@@ -7,6 +7,7 @@
 #include <map>
 
 #include "p3data/lz.hpp"
+#include "p3data/savegame_write.hpp"
 #include "p3data/thresholds.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -115,6 +116,11 @@ public:
 			std::memcpy(memory.bytes.data() + offset, data_ + pos_, n);
 			pos_ += n;
 		}
+	}
+
+	// The bytes read since `start` (a position()), for SaveOpaque.
+	std::vector<uint8_t> since(size_t start) const {
+		return ok_ && start <= pos_ ? std::vector<uint8_t>(data_ + start, data_ + pos_) : std::vector<uint8_t>();
 	}
 
 	// El juego salta sin mirar un byte entre las partes de cada ciudad; en las
@@ -522,7 +528,7 @@ void parse_office(Reader& r, SavedOffice& office) {
 	r.skip(office.used() ? 1100 : 6);
 }
 
-void parse_merchant(Reader& r, SavedMerchant& merchant) {
+void parse_merchant(Reader& r, SavedMerchant& merchant, std::array<std::vector<uint16_t>, 10>& kept_lists) {
 	load_merchant_memory(r, merchant);
 	r.skip(1532);
 	// Diez listas de u16 al final; su longitud va en los 15 bits bajos.
@@ -530,8 +536,12 @@ void parse_merchant(Reader& r, SavedMerchant& merchant) {
 	for (uint16_t& count : lists) {
 		count = r.u16();
 	}
-	for (uint16_t count : lists) {
-		r.skip(size_t(count & 0x7FFF) * 2);
+	// Kept for write_savegame (SaveOpaque::merchant_lists).
+	for (size_t k = 0; k < lists.size(); ++k) {
+		kept_lists[k].resize(lists[k] & 0x7FFF);
+		for (uint16_t& v : kept_lists[k]) {
+			v = r.u16();
+		}
 	}
 }
 
@@ -631,16 +641,22 @@ void load_mail(Reader r, SaveGame& out) {
 	g.u16(0x6DD738) = r.u16();
 	g.u16(0x6DD73A) = version >= 2 ? r.u16() : 0;
 	out.mail.assign(g.u16(0x6DD736), GameMemory<0x10>());
-	for (GameMemory<0x10>& m : out.mail) {
+	out.opaque.mail_extras.assign(out.mail.size(), {});
+	for (size_t i = 0; i < out.mail.size(); ++i) {
+		GameMemory<0x10>& m = out.mail[i];
 		r.to(m, 0, 8);
 		const uint8_t type = m.u8(4);
+		const size_t extra_start = r.position();
 		if (type == 0x29 || type == 0x47 || type == 0x63 || type == 0x83) {
 			r.to(m, 8, 8);
 			m.u32(8) = 0;
+			const size_t start = r.position();
 			r.skip(m.u32(0xC));
+			out.opaque.mail_extras[i] = r.since(start);  // Kept for write_savegame.
 		} else if ((type >= 0x3C && type <= 0x40) || type == 0x71) {
 			const uint32_t extra = r.u32();
 			r.skip(12 + size_t(extra));
+			out.opaque.mail_extras[i] = r.since(extra_start);  // Kept for write_savegame.
 		} else {
 			r.to(m, 8, 8);
 		}
@@ -665,9 +681,13 @@ void load_events(Reader r, SaveGame& out) {
 	for (GameMemory<0x18>& e : out.events) {
 		r.to(e, 0, 0x18);
 	}
-	for (GameMemory<0x18>& e : out.events) {
+	out.opaque.event_extras.assign(count, {});
+	for (size_t i = 0; i < out.events.size(); ++i) {
+		GameMemory<0x18>& e = out.events[i];
+		const size_t extra_start = r.position();
 		if (e.u16(6) == 0x1B) {
-			r.skip(size_t(e.u16(0x12)) * 16);
+			// 4 bytes an entry in the file (0x4D831B), in a buffer of 16 each.
+			r.skip(size_t(e.u16(0x12)) * 4);
 			e.u32(8) = 0;
 			e.u32(0xC) = 0;
 		} else if (e.u16(6) == 0x34 && e.u8(0x15) >= 7 && e.u32(8) != 0) {
@@ -676,6 +696,7 @@ void load_events(Reader r, SaveGame& out) {
 			} while (r.u8() == 0x7F && r.ok());
 			e.u32(8) = 0;
 		}
+		out.opaque.event_extras[i] = r.since(extra_start);  // Kept for write_savegame.
 	}
 	// Los eventos de tipo 2 con fecha absurda (desde el año 12000) pasan al
 	// mismo día del año, el primer año después del evento de la cabeza, y
@@ -736,8 +757,9 @@ bool parse_world_tail(Reader& r, size_t town_count, uint16_t record_count, uint1
 		parse_office(r, office);
 	}
 	out.merchants.resize(size_t(out.merchant_count));
-	for (SavedMerchant& merchant : out.merchants) {
-		parse_merchant(r, merchant);
+	out.opaque.merchant_lists.assign(out.merchants.size(), {});
+	for (size_t i = 0; i < out.merchants.size(); ++i) {
+		parse_merchant(r, out.merchants[i], out.opaque.merchant_lists[i]);
 	}
 
 	// 0x5351D0: el objeto 0x6DE588 (0xA00 bytes y los comerciantes de sus 8
@@ -824,6 +846,8 @@ bool parse_ships(Reader& r, SaveGame& out, std::string* error) {
 	for (size_t i = 0; i < 5; ++i) {
 		out.pirates[i].reset();
 		out.globals.u32(kPirates + 4 * uint32_t(i)) = 0;
+		out.opaque.pirate_maps[i].clear();
+		out.opaque.pirate_records[i].clear();
 	}
 	for (size_t i = 0; i < 5 && version >= 0x7F; ++i) {
 		if (r.u8() == 0) {
@@ -845,6 +869,7 @@ bool parse_ships(Reader& r, SaveGame& out, std::string* error) {
 			// El objeto de 0x6C bytes de [+0x0] (0x4F9770, versión 0x7D o más):
 			// u32 ancho, u32 alto, 0x5C bytes y ancho × alto bytes.
 			p.u32(0x0) = 1;
+			const size_t map_start = r.position();
 			const uint32_t width = r.u32();
 			const uint32_t height = r.u32();
 			r.skip(0x5C);
@@ -852,9 +877,12 @@ bool parse_ships(Reader& r, SaveGame& out, std::string* error) {
 			if (cells > 0) {
 				r.skip(size_t(cells));
 			}
+			out.opaque.pirate_maps[i] = r.since(map_start);  // Kept for write_savegame.
 		}
 		p.u32(0x4) = p.u16(0x8) ? 1 : 0;
+		const size_t records_start = r.position();
 		r.skip(size_t(p.u16(0x8)) * 8);
+		out.opaque.pirate_records[i] = r.since(records_start);
 	}
 	return r.ok() || fail(error, std::string(kTruncated) + " (barcos)");
 }
@@ -902,9 +930,14 @@ void parse_names(const uint8_t* data, size_t size, SaveGame& out) {
 		}
 		++pos;
 	}
-	// Tras las listas queda un u32 antes del separador final.
-	if (pos + 4 == size - 4) {
-		out.custom_names = std::move(lists);
+	// Then the ship names of the save (u16 number, u16 bytes and the text),
+	// which the game undoes at the end of the load (0x5121C0), and the final
+	// separator.
+	if (pos + 4 <= size - 4) {
+		const size_t text = size_t(data[pos + 2] | data[pos + 3] << 8);
+		if (pos + 4 + text == size - 4) {
+			out.custom_names = std::move(lists);
+		}
 	}
 }
 
@@ -935,7 +968,16 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 	}
 	r.skip(0x10);
 	out.trade_difficulty = TradeDifficulty(std::min<int>(r.u8(), 2));
-	r.skip(kSettingsSize - 0x11 + 3 * 4);
+	r.skip(kSettingsSize - 0x11);
+	// [+0x8D4], [+0x8D8] and [+0x8DC] of the game object 0x6DF2F0 (0x549F40):
+	// the ms per tick, a value the loader sets to 2 when it is above 4, and
+	// one more. Only write_savegame uses them.
+	for (uint32_t a : {0x6DFBC4u, 0x6DFBC8u, 0x6DFBCCu}) {
+		out.globals.u32(a) = r.u32();
+	}
+	if (out.globals.u32(0x6DFBC8) > 4) {
+		out.globals.u32(0x6DFBC8) = 2;
+	}
 	if (r.u32() != kMagic) {
 		return fail(error, "falta el separador antes del mundo");
 	}
@@ -1014,6 +1056,7 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 	// buzón (0x4D6350), la sexta, justo tras los barcos (donde se ha quedado
 	// `r` si se han leído los piratas).
 	size_t separators = 0;
+	size_t next_separator = size - 4;  // The one found before (after `pos` in the file).
 	for (size_t pos = size - 4; pos >= r.position() && pos > 0; --pos) {
 		if (data[pos] == 0xFE && data[pos + 1] == 0xAF && data[pos + 2] == 0 && data[pos + 3] == 0) {
 			++separators;
@@ -1026,7 +1069,23 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 					load_mail(section, out);
 					break;
 				}
+			} else if (separators == 3) {
+				// The battles (0x611AE0), kept as they are for write_savegame.
+				out.opaque.battles.assign(data + pos + 4, data + next_separator);
+			} else if (separators == 5) {
+				// 0x4D4BC0 on 0x6DD728, the automatic trade routes: u16 [+0x0],
+				// u16 [+0x2] and that many records of 0xDC bytes, which only
+				// write_savegame uses.
+				Reader section(data, size);
+				section.skip(pos + 4);
+				out.globals.u16(0x6DD728) = section.u16();
+				out.globals.u16(0x6DD72A) = section.u16();
+				out.opaque.trade_routes.assign(out.globals.u16(0x6DD72A), GameMemory<0xDC>());
+				for (GameMemory<0xDC>& record : out.opaque.trade_routes) {
+					section.to(record, 0, 0xDC);
+				}
 			}
+			next_separator = pos;
 		}
 	}
 	return true;
@@ -1224,6 +1283,7 @@ void load_game_scripts(const CprArchive& archive, SaveGame& save) {
 			}
 		}
 	}
+	load_save_scripts(archive, save);  // For write_savegame (savegame_write.hpp).
 	// Las plantillas de mapa de las ciudades nuevas (0x4F9B40).
 	save.town_templates.clear();
 	for (unsigned i = 0; i < 100; ++i) {

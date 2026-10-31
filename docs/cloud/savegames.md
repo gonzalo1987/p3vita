@@ -9,11 +9,11 @@ merging on the PC.
 
 | Part | State |
 |-|-|
-| 1. Reader ↔ writer table of the game | done (below) |
-| 2. Oracle: the game's writer in the emulator | pending |
+| 1. Reader ↔ writer table of the game | done (§1) |
+| 2. Oracle: the game's writer in the emulator | done (`tools/oracle/write_oracle.py`) |
 | 3. Version 0x85 branches in the readers | pending |
-| 4. C++ writer (`savegame_write.cpp`), byte for byte | pending |
-| 5. LZ compressor rewritten in C++ | pending |
+| 4. C++ writer (`savegame_write.cpp`), byte for byte | done for the 12 saves (§2) |
+| 5. LZ compressor rewritten in C++ | pending: `lz_compress` writes a stored block for now |
 | 6. After playing, round trip, `.pst` | pending |
 
 ## 1. How the game saves
@@ -22,8 +22,9 @@ The save function is **0x5472F0** (thiscall on the game object 0x6DF2F0, the
 same `ecx` the loader 0x5476E0 gives to 0x549F40; one argument). In order:
 
 1. For each merchant `i < [0x6DE4AA]`: **0x4D6780(i)** on the mailbox
-   0x6DD730 (expires old notices; p3vita has it as a stub, `fn_4d6780` in
-   `town_tick/events_towns.cpp`, because the mailboxes of the saves are empty).
+   0x6DD730 (expires old notices; p3vita had it as a stub, `fn_4d6780` in
+   `town_tick/events_towns.cpp`, because the mailboxes of the saves are
+   empty; now rewritten whole as `expire_merchant_mail`, §2.3).
 2. Builds the path (`Save\Ein\`, `Save\Kam\` or `Save\Mehr\` from byte
    [+0xD] of the settings, then the name, then `.pat`) and opens it with
    `CFile` (0x653C1D, mode 0x9001).
@@ -39,7 +40,7 @@ Every writer has the reader's shape: `thiscall(object, u8* out)` returns the
 end. Every size function only reads.
 
 **The game writes version 0x85** (first u32 `0x0085AFFE`), not the 0x82 of
-the saves in `missav/`. So p3vita must write 0x85 and, for the round trip,
+the saves in `missav/`. So p3vita writes 0x85 and, for the round trip, must
 read 0x85 too (part 3).
 
 ### 1.1 Reader ↔ writer ↔ size
@@ -81,7 +82,7 @@ Readers as in `docs/formats/savegame.md`. "Object" is `ecx`.
 | · pirate | | 0x5138B0 | 0x5137E0 | 0x5137B0 |
 | mailbox | 0x6DD730 | 0x4D6350 | 0x4D62B0 | 0x4D6270 |
 | · notice | | 0x51A9B0 | 0x51A8D0 | 0x51A890 |
-| records of 0xDC | 0x6DD728 | 0x4D4BC0 | 0x4D4B60 | 0x4D4B40 |
+| automatic trade routes (0xDC each) | 0x6DD728 | 0x4D4BC0 | 0x4D4B60 | 0x4D4B40 |
 | event queue | 0x6DD73C | 0x4D81E0 | 0x4D80F0 | 0x4D8080 |
 | · node lists of event 0x34 | | 0x4F3A40 | 0x4F39E0 | 0x4F39C0 |
 | battles | 0x6E55D0 | 0x611AE0 | 0x611950 | 0x6118F0 |
@@ -93,18 +94,36 @@ Readers as in `docs/formats/savegame.md`. "Object" is `ecx`.
 (The last row: the writer calls 0x54CBD0 for each object; the matching
 reader is still to be confirmed.)
 
-### 1.2 What 0x549CC0 does besides writing
+### 1.2 What the writers do besides copying memory
 
-Before writing the 0x4C bytes of the settings (`*0x6CC3E8`) it changes them
-**in memory**: [+0x1A] = day, [+0x1B] = month + 1, u16 [+0x1C] = year of the
-world; [+0x1E] = hometown of the player (0x6DFC14) unless `[0x6DF2F0] & 0xC`
-(then 0); [+0x27..+0x3A] = 0 and the name of that town copied in
-(`strcpy` from the table of pointers 0x6DDA00); [+0x3B] = (male of the
-player) << 7 | his rank in the hometown (merchant [0x39C + hometown]);
-[+0x3C..+0x4B] = 0. Then it writes `u32` [0x6DFBC4], [0x6DFBC8], [0x6DFBCC]
-([+0x8D4..+0x8DC] of 0x6DF2F0: ms per tick, a speed value the loader clamps
-to 2 when it is above 4, and one more) and the eight sections, each followed
-by `u32 0xAFFE`.
+- 0x549CC0 changes the settings (`*0x6CC3E8`) **in memory** before writing
+  their 0x4C bytes: [+0x1A] = day, [+0x1B] = month + 1, u16 [+0x1C] = year
+  of the world; [+0x1E] = hometown of the player (0x6DFC14) unless
+  `[0x6DF2F0] & 0xC` (then 0); [+0x27..+0x3A] = 0 and a town name copied in
+  (`strcpy` from the table 0x6DDA00, see "Game bugs"); [+0x3B] = (male of the
+  player) << 7 | his rank in the hometown (merchant [0x39C + hometown]);
+  [+0x3C..+0x4B] = 0. Then it writes `u32` [0x6DFBC4], [0x6DFBC8],
+  [0x6DFBCC] ([+0x8D4..+0x8DC] of 0x6DF2F0: ms per tick, a speed value the
+  loader clamps to 2 when it is above 4, and one more) and the eight
+  sections, each followed by `u32 0xAFFE`.
+- 0x52F870 (world): after the town matrix it writes the constant bytes
+  `F1 F2 F3 F4` (the u32 the reader skips); [+0x8A] goes as 0x7F or 0; and
+  before the offices it walks the free list (from [+0x7E] of the world,
+  through [+0x2C8]) setting each owner [+0x2C4] to 0xFFFF **in memory**.
+- Nodes of a town ([0x9B4]): written in the order of the list; the reader
+  puts each one first, so the order turns round at each save and load.
+- 0x504010 (ships) starts with u16 0x85; free ship slots carry the byte
+  [+0x137] from version 0x83 (that's why the ships section grows).
+- 0x4D62B0 (mailbox) writes version 5 (`0xAFFE0005`).
+- 0x511C60 (names) writes the 40 town names as `"A"`; before copying each
+  name written by the players it puts a 0 in the last byte of its slot of 24
+  bytes (**in memory**: 23 characters at most); and the ship names of the
+  save are written as u16 0, u16 0 (the loader undoes them: 0x5121C0 at the
+  end of the load).
+- Pointers into the file: the route of a ship ([+0x24]), the buffer of the
+  notices 0x29/0x47/0x63/0x83 ([+0x8]), and [+0x8]/[+0xC] of the events 0x1B
+  and 0x34. Only their being null matters to the readers (0x4D835E reads the
+  list of an event 0x34 only if its [+0x8] isn't 0). p3vita writes 1.
 
 ### 1.3 What the loader does that the oracle and p3vita don't
 
@@ -112,28 +131,143 @@ by `u32 0xAFFE`.
 sections: registers the name of each ship of each merchant and pirate in
 the names object (0x5131B0), checks the route of each ship (0x5048C0 →
 0x517C10 per ship: may move it or recompute its route) and checks the
-records of 0xDC (0x4D60B0). `town_oracle.py` calls the readers one by one
-and does none of this, so `tick_probe --carga` doesn't see it either. See
-"For the roadmap".
+trade routes (0x4D60B0). `town_oracle.py` calls the readers one by one and
+does none of this, so `tick_probe --carga` doesn't see it either. See "For
+the roadmap".
 
 The `.pst` is optional for loading: if it isn't found, 0x5476E0 calls
 0x54DDF0 (empty statistics) and goes on.
 
+## 2. The writer in p3vita
+
+- `src/p3data/savegame_write.{hpp,cpp}`: `prepare_save` (0x4D6780 for each
+  merchant), `write_savegame` (0x549CC0, the uncompressed `.pat`),
+  `savegame_file` (the three, compressed), `expire_merchant_mail` (0x4D6780)
+  and `load_save_scripts` (the town names, called from
+  `load_game_scripts`).
+- `src/p3data/lz_compress.{hpp,cpp}`: `lz_compress` (part 5).
+- `SaveOpaque` in `savegame.hpp` (`SaveGame::opaque`): what p3vita read and
+  threw away before and the writer needs: the ten lists of each merchant,
+  the pirates' maps and records, the extras of the notices and of the
+  events, the trade routes, the battles (as in the file) and the town names.
+  The 12 bytes [0x6DFBC4..0x6DFBCC] and the u16 [0x6DD728], [0x6DD72A] go to
+  the globals.
+- `p3save <cpr> <save> write <out.pat> [<out.raw>]` (the save is read from
+  the archive or, if it isn't there, from the disk).
+- Checks: `tools/oracle/write_oracle.py` (the game's code: load like
+  `town_oracle.py`, the 12 bytes and the battles like 0x549F40, then
+  0x4D6780, 0x549C60, 0x549CC0 and 0x54C410), `tools/oracle/compare_written.py`
+  (byte for byte by sections; pointers counted apart) and
+  `scripts/write-check.sh [SAVES]` (both on each save; 19 s for the 12 here).
+
+### 2.1 Check 1: byte for byte against the game, right after loading
+
+`scripts/write-check.sh`, the 12 v0x82 saves of `missav/`, uncompressed:
+
+| Save | Bytes | Different | Pointers (ships, mailbox, events) |
+|-|-|-|-|
+| 1 | 955 308 | 0 | 69, 0, 73 |
+| 2 | 845 446 | 0 | 78, 0, 75 |
+| 3 | 1 076 815 | 0 | 80, 10, 49 |
+| 4 | 1 042 754 | 0 | 60, 6, 51 |
+| 5 | 1 019 569 | 0 | 76, 5, 51 |
+| 6 | 1 025 883 | 0 | 80, 0, 51 |
+| 7 | 1 009 572 | **12** (battles) | 85, 0, 54 |
+| tut0 | 967 514 | 0 | 76, 0, 59 |
+| tut1 | 967 974 | 0 | 76, 1, 59 |
+| tut2 | 947 295 | 0 | 78, 0, 59 |
+| tut3 | 969 629 | 0 | 75, 0, 59 |
+| tut4 | 956 157 | 0 | 64, 2, 59 |
+
+The 12 bytes of save 7 are padding the game writes without initializing (see
+"Game bugs"): 3 bytes after each of the 4 entries of the battles' table; in
+the file they are 0xCD, in the emulator 0. p3vita keeps the battles as they
+are in the file (they are the `battles` task's), so it writes 0xCD.
+
+The load (`tick_probe --carga`, 0 days) still has 0 differences in the 12
+saves after the changes to `savegame.cpp`.
+
+### 2.2 Fixes to the reader (savegame.cpp)
+
+- Events 0x1B: the file has 4 bytes an entry ([+0x12] of them, 0x4D831B
+  copies `n·4` into a buffer of `n·16`); the reader skipped `n·16`. It went
+  unnoticed because these extras go at the end of the section and only the
+  lists of the events 0x34 (none in the saves) come after them.
+- Names: after the three lists the save has its own ship names (u16
+  number, u16 bytes and the text), not always a u32 0; when they weren't
+  empty (saves 3–7 and the five tutorials) `parse_names` left
+  `custom_names` empty.
+
+### 2.3 0x4D6780 (expire the notices of a merchant)
+
+Rewritten whole in `expire_merchant_mail`: the age of each notice of the
+merchant's list (`tick − ((year·365 + month start[month & 0x7F] + day −
+1) << 8)`, table 0x672D78) against a limit by the class of its type
+(0x6C0198): 0 → 0; 1 → the merchant's choice [+0x38] (table 0x6C0220:
+never, 40, 20, 10, 5 days); 2 → never for 0x46, else [+0x39]; 3 → 7 days
+for 0x11, else [+0x3A]; 4 → 7 days for 0x0F and 0x10, 28 for 0x72, for 0x71
+never until the u32 [+0x4] of its block, else never. Expired notices are
+emptied (0x51AAB0) and go to the head of the free list [0x6DD734]. The
+mailboxes of the merchants are empty in the 12 saves, so only retouched
+states will reach it (pending).
+
 ## For the roadmap
 
 - Loader: 0x549F40 does more than the readers (§1.3): 0x5131B0 for the
-  ship names, 0x5048C0/0x517C10 for the ship routes, 0x4D60B0, the clamp of
-  [+0x8D8] and the 12 bytes [0x6DFBC4..0x6DFBCC], which p3vita skips today.
+  ship names, 0x5048C0/0x517C10 for the ship routes, 0x4D60B0 for the trade
+  routes. p3vita and the oracle don't do it.
+- The playable milestone can save with `savegame_file`; the `.pst` isn't
+  needed to load (the statistics start empty).
 
 ## For the inventory
 
 - New: the save path (0x5472F0 and everything under 0x549CC0, 0x549C60,
-  0x54C410, 0x54D7F0, 0x54D870).
+  0x54C410, 0x54D7F0, 0x54D870); 0x4D6780 rewritten whole.
+- `fn_4d6780` in `town_tick/events_towns.cpp` (the stub the event 0x03
+  calls) can call `expire_merchant_mail` instead (not changed here: it is
+  the local session's file).
 
 ## Game bugs
 
-(none yet)
+Certain:
+- **0x549D7D: wrong town name in the settings of the save.** The writer
+  copies to [+0x27] of the settings the name from the table 0x6DDA00, which
+  goes by town number (0..39), using the index in the save of the player's
+  hometown. In 1.pat it writes "Cologne" (number 9) for Lübeck (index 9,
+  number 14). Reproduced in `update_settings`. (Presumably the name shown in
+  the load menu; not checked.)
+- **0x611950: uninitialized padding in the battles.** Each entry of the
+  table at the end of the battles is 8 bytes in the file; the reader keeps
+  only 5 (0x612A20 gets two u32 and keeps the low byte of the second) and the
+  writer writes 8, so 3 bytes come from whatever was in memory (0xCD in
+  save 7, 0 in the emulator).
+
+Looks like one:
+- **0x4D6800**: in 0x4D6780 a notice of type ≥ 0x86 cuts the merchant's list
+  at the link that points to it, and is still checked and maybe expired.
+  Reproduced; not reached by the saves.
+- The node list of a town ([0x9B4]) turns round at each save and load (the
+  writer writes it in order, the reader puts each node first). Harmless if
+  the order doesn't matter.
 
 ## Changes to shared files
 
-(none yet)
+- `src/p3data/savegame.hpp`: new `struct SaveOpaque` before `SaveGame` and
+  the member `SaveGame::opaque` at its end.
+- `src/p3data/savegame.cpp`: `Reader::since`; `parse_merchant` keeps the
+  lists (new argument); `parse_ships` keeps the pirates' maps and records;
+  `load_mail` keeps the extras of the notices; `load_events` keeps the
+  extras and reads 4 bytes per entry of the type 0x1B (§2.2); `parse_names`
+  accepts the ship names (§2.2); `parse_savegame` reads the 12 bytes after
+  the settings into [0x6DFBC4..0x6DFBCC] (with the clamp of the loader), the
+  trade routes (5th section from the end) and the battles (3rd);
+  `load_game_scripts` calls `load_save_scripts`. Nothing else changes in
+  what it reads (load: 0 differences in the 12 saves).
+- `src/p3data/CMakeLists.txt`: `savegame_write.cpp`, `lz_compress.cpp`.
+- `tools/p3save/main.cpp`: `write`, and reading the save from the disk.
+
+## Time of the checks
+
+- `write_oracle.py`: 1.5 s a save; `scripts/write-check.sh` for the 12: 19 s.
+- `tick_probe --carga` with a recording of 0 days: 2 s a save.
+- Not built for the Vita (no VitaSDK here; `src/app` not touched).
