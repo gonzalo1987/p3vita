@@ -4,8 +4,10 @@
 //
 // uso: tick_probe <fichero.probe> [--continuo] [--cpr p2arch0_eng.cpr] [--solo FUNCIÓN] [--max N]
 //        tick_probe <fichero.probe> --carga <partida.raw> [--continuo [--cpr p2arch0_eng.cpr [--sin-ia]
-//          [--sin-convoyes] [--no-storms]]] [--max N]
+//          [--sin-convoyes] [--no-storms]]] [--max N] [--write OUT]
 // --no-storms: without the storms (0x5053C0), as town_oracle.py --no-storms.
+// --pirates: the pirate convoys move (battle/pirates.cpp), as town_oracle.py --pirates.
+// --fix-game-bugs: with the fixes to the game's bugs (game_fixes.hpp), off by default.
 // --storms (on by default now) is still accepted.
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
@@ -25,6 +27,10 @@
 // ejecutor (535760, que lleva la operación en la pila) o solo las órdenes de
 // zarpar (537670), pero no las dos.
 //
+// With --write OUT, at the end it writes the uncompressed .pat of the state
+// reached as the game's save function does (savegame_write.hpp), to compare
+// with town_oracle.py --write (tools/oracle/compare_written.py).
+//
 // Con --cpr, las funciones de los barcos que necesitan la navegación (las de
 // los convoyes, la actualización de barcos) se pueden repetir también una a
 // una: las sondas la tienen en probe_sailing(). Las rutas de los barcos van en
@@ -43,9 +49,11 @@
 #include <deque>
 #include <memory>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/navigation.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
+#include "p3data/savegame_write.hpp"
 #include "p3data/seamap.hpp"
 #include "probe_registry.hpp"
 
@@ -600,10 +608,12 @@ int main(int argc, char** argv) {
 	bool ai = true;
 	bool convoys = true;
 	bool storms = true;
+	bool pirates = false;
 	std::string load;
 	std::string cpr;
 	uint32_t only = 0;
 	int budget = 60;
+	std::string write_path;  // --write: the save of the state reached (savegame_write.hpp).
 	for (int i = 2; i < argc; ++i) {
 		const std::string arg = argv[i];
 		if (arg == "--continuo") {
@@ -618,12 +628,20 @@ int main(int argc, char** argv) {
 			storms = true;
 		} else if (arg == "--no-storms") {
 			storms = false;
+		} else if (arg == "--pirates") {
+			pirates = true;
+		} else if (arg == "--fix-game-bugs") {
+			// What the fixes to the game's bugs change (game_fixes.hpp): the
+			// differences then show where a fix acts.
+			p3::data::set_fix_game_bugs(true);
 		} else if (arg == "--cpr" && i + 1 < argc) {
 			cpr = argv[++i];
 		} else if (arg == "--solo" && i + 1 < argc) {
 			only = uint32_t(std::strtoul(argv[++i], nullptr, 16));
 		} else if (arg == "--max" && i + 1 < argc) {
 			budget = std::atoi(argv[++i]);
+		} else if (arg == "--write" && i + 1 < argc) {
+			write_path = argv[++i];
 		}
 	}
 	ProbeRegistry registry;
@@ -675,6 +693,7 @@ int main(int argc, char** argv) {
 		sailing->set_ai(ai);
 		sailing->set_convoys(convoys);
 		sailing->set_storms(storms);
+		sailing->set_pirates(pirates);
 		g_sailing = sailing.get();
 		registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
 			sailing->update_ships();
@@ -876,6 +895,15 @@ int main(int argc, char** argv) {
 	}
 	if (missing) {
 		std::printf("%d llamadas a funciones sin registrar\n", missing);
+	}
+	if (!write_path.empty()) {
+		// The uncompressed .pat of the state reached, as the game's save
+		// function writes it (compare with town_oracle.py --write).
+		prepare_save(save);
+		const std::vector<uint8_t> raw = write_savegame(save);
+		std::ofstream out(write_path, std::ios::binary);
+		out.write(reinterpret_cast<const char*>(raw.data()), std::streamsize(raw.size()));
+		std::printf("%zu bytes in %s\n", raw.size(), write_path.c_str());
 	}
 	return bad ? 1 : 0;
 }

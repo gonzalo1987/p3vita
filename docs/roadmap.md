@@ -6,6 +6,59 @@ reimplementación del motor que lee los datos originales del juego (versión GOG
 
 Cada fase termina en un hito que se puede comprobar a simple vista.
 
+Cómo leerla:
+- `[x]` hecho y comprobado; `[ ]` pendiente.
+- «(en marcha: `cloud/…`)»: lo está haciendo una sesión en la nube; todavía no está en `main`.
+- Lo terminado va resumido. El detalle está en los documentos enlazados:
+  [formats/](formats/), [oracle.md](oracle.md), [inventario.md](inventario.md)
+  (todo lo que hace la simulación del juego, sacado del ejecutable) y las notas
+  de las sesiones en la nube, [cloud/](cloud/).
+- Este documento se queda en español: lo lee el usuario.
+
+## En marcha (31-10-2026)
+
+- Sesión local: la parte B del inventario está hecha salvo la 0x9F y la 0xB5, que van con las batallas. Lo siguiente es la parte C y después la D.
+- `cloud/statistics`: las estadísticas diarias (0x54DE90), el `.pst` de verdad y los tres pasos del final del cargador.
+- No se lanzan más sesiones en la nube: queda poco crédito (66 de 250 el 31-10-2026). Lo que tenga cada sesión al acabar se junta como siempre.
+- Batallas: la pieza 2 está en `main`. Lo siguiente es `tasks/battles-2.md` (el «pool» de los piratas, deshacer el convoy en la guarida y la infraestructura de la pieza 3); todavía no está lanzada.
+- `cloud/unchecked-branches`: comprobar con estados retocados las ramas «Sin comprobar con el oráculo» de los ficheros del tick de ciudad, empezando por `alderman.cpp`.
+
+## Estado por partes (medido)
+
+Cuánto código del juego tiene p3vita en cada parte de la simulación, medido el 31-10-2026 sobre `main` (con `cloud/savegames` ya junta) con `re/emu/sesion5/coverage_parts.py` (Python de Windows; para repetirlo: `python coverage_parts.py RUTA/p3vita/src`).
+
+Cómo se mide:
+- Para cada parte se toman sus funciones de entrada del juego y todo lo que cuelga de ellas, sin la interfaz.
+- Se usa el cuerpo real de cada función, siguiendo sus saltos.
+- **Reescrito**: funciones `fn_XXXXXX` de p3vita.
+- **Nombrado**: la dirección solo sale en un comentario de p3vita. Puede estar reescrita sin ese nombre (la carga de partidas, la navegación) o saltada a propósito (cartas, ventanas).
+- **Sin nada**: p3vita no la tiene.
+- Las partes se solapan: una función que usan varias cuenta en cada una.
+- Es un grafo estático, sin las llamadas indirectas, así que las cifras son orientativas.
+
+| Parte | Funciones | KB | Reescrito | Nombrado | Sin nada |
+|-|-|-|-|-|-|
+| Tick de ciudad (0x51BA10) | 155 | 67 | 64 (96 %) | 2 (3 %) | 0 (1 %) |
+| Tick de cada comerciante (0x4F7BB0) | 25 | 10 | 9 (93 %) | 1 (6 %) | 0 (0 %) |
+| Barcos: navegación, IA y convoyes (0x506720) | 152 | 62 | 32 (52 %) | 24 (39 %) | 5 (8 %) |
+| Lo diario, tareas programadas y objetos del mundo | 12 | 2 | 2 (97 %) | 0 (3 %) | 0 (0 %) |
+| Asedios (0x6349F0, 0x633A90) | 28 | 15 | 13 (89 %) | 2 (11 %) | 0 (0 %) |
+| Cola de eventos (0x4D85C0) | 415 | 193 | 152 (79 %) | 26 (14 %) | 15 (8 %) |
+| Operaciones que encola la simulación | 172 | 72 | 53 (74 %) | 14 (19 %) | 5 (6 %) |
+| Camino a Gobernador | 223 | 93 | 69 (74 %) | 21 (22 %) | 3 (4 %) |
+| Cargar partida (0x549F40) | 103 | 42 | 4 (9 %) | 32 (75 %) | 7 (16 %) |
+| Guardar partida (0x549CC0) | 38 | 11 | 0 (0 %) | 10 (96 %) | 0 (4 %) |
+| Tormentas (0x5053C0) | 4 | 5 | 5 (97 %) | 0 (3 %) | 0 (0 %) |
+| Guiones de misiones (0x4ECF64, 0x511270) | 73 | 23 | 3 (14 %) | 7 (32 %) | 12 (54 %) |
+| **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | 221 (77 %) | 44 (15 %) | 22 (8 %) |
+
+Notas:
+- **Barcos**: los piratas que se mueven ya están (pieza 2 de las batallas, detrás de `--pirates`). Lo que falta son las rutas comerciales (0x4D5200, 0x52ACD0, 0x4D4C90...), la actualización de los objetos piratas (0x514000 → 0x513EC0) y la guarida (0x515DA0 → 0x513BF0).
+- **Cola de eventos**: lo que falta son los tipos que p3vita aún no atiende (0x4E5664, 0x4E38B4, 0x4DDF40, 0x4E7A14...).
+- **Cargar y guardar partida**: aunque en la tabla salgan como «nombrado», están hechos e idénticos al juego en las 12 partidas. `savegame.cpp` y `savegame_write.cpp` los reescriben por estructuras y no con funciones `fn_`, y algunas direcciones (0x504230, los barcos) ni siquiera salen en los comentarios, así que la medida se queda corta.
+- **Batallas**: no van en la tabla, porque usan sobre todo llamadas por tablas de métodos, que este grafo no sigue. Su estudio, que sí las sigue ([cloud/battles.md](cloud/battles.md)), cuenta sin la interfaz 249 funciones (148 KB) en el mar y 41 (50 KB) en las ciudades. De eso solo están hechas las tormentas.
+- **Todo el ejecutable**, con la interfaz y las batallas: p3vita reescribe un 11 % (`coverage.py`). La mayor parte del resto es interfaz.
+
 ## Fase 1: entorno y datos
 
 - [x] Repositorio y estructura CMake
@@ -16,8 +69,9 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [ ] Icono y LiveArea propios (sin usar arte del juego)
 - [x] Lector de archivos CPR (`src/p3data/cpr.*`), herramienta `cprtool` y test
 - [x] Formato CPR documentado en [formats/cpr.md](formats/cpr.md)
+- [x] Repositorios privados en GitHub (`p3vita` y `p3vita-datos`) y entorno de las sesiones en la nube. Los datos del juego van solo en `p3vita-datos`, nunca en `p3vita`
 
-## Fase 2: herramientas de datos
+## Fase 2: herramientas de datos y dibujo de las ciudades
 
 - [x] BMP, TGA y JPG con stb_image (1100 de 1100 ficheros, inglés y español) y herramienta `p3img`
 - [x] Formato AIM documentado ([formats/aim.md](formats/aim.md)) por ingeniería inversa de `AIM.dll`
@@ -30,125 +84,226 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 **Hito:** ver una ciudad dibujada en el PC. ✔
 
 - [x] Ciudades con edificios desde los `.editor` (superconjunto: todas las murallas a la vez)
-- [x] Partidas guardadas ([formats/savegame.md](formats/savegame.md)): edificios, objetos fijos y plantilla de cada ciudad
+- [x] Partidas guardadas leídas ([formats/savegame.md](formats/savegame.md)): edificios, objetos fijos y plantilla de cada ciudad
 - [x] Ciudades tal como empiezan (`missav/1.pat`, año 1300), con el estilo de su región
-- [ ] Partida nueva desde cero: `stadtplatz*.tow` y la generación de las casas (función sin localizar)
 - [x] Comerciantes (dinero, nombre, cuál es el jugador), oficinas y barcos (posición, carga, bodega) de las partidas, comprobados con el oráculo
-- [ ] Dibujar los kontors (las oficinas ya se leen), andamios de obras y bordes de calle de las celdas 0x81
+- [ ] Partida nueva desde cero: `stadtplatz*.tow` y la generación de las casas (función sin localizar)
+- [ ] Dibujar los kontors (las oficinas ya se leen), los andamios de las obras y los bordes de calle de las celdas 0x81
 - [ ] Partidas de la versión 0x4D (`missav/0100–0204.pat`)
 - [ ] Variantes de los tiles: sombras, nieve y andamios
 - [ ] Agua animada (`WaterSparkleTexID`)
-- [ ] **La ciudad viva en pantalla.** La simulación ya cambia la ciudad como el juego (edificios nuevos, obras, murallas, asedios), pero la vista es una imagen fija. Es un trabajo grande, para más adelante:
-  - [ ] antes, contrastar con el juego original qué se ve y qué cambia: si la ciudad se redibuja en cuanto se construye algo, qué se anima en tiempo real (gente, carros, agua, humo...), cómo se ve un asedio y si los edificios atacados cambian. Del código solo se sabe que el ejército sitiador tiene objetos gráficos propios y que el juego prepara sus gráficos (0x62C730) si la ciudad sitiada es la que se está viendo
-  - [ ] redibujarla mientras pasa el tiempo: ahora se hace al entrar en la ciudad (o al cambiar de vista) y no cambia hasta salir y volver
-  - [ ] dibujar desde las listas de edificios actuales de la ciudad ([0x762..0x768] de su memoria) y no desde la copia que se hace al cargar la partida (`SavedTown::drawn_lists`): la simulación mete edificios nuevos en cabeza de lista y esos no salen ni al volver a entrar
-  - [ ] el asedio en la vista: el campamento, las tropas y el ataque a la puerta (lo que la simulación salta: 0x62C730 y los objetos del ejército [+0x1F8], [+0x574], [+0x5DC..]) y el aviso al jugador
-  - [ ] los habitantes y los carros por las calles y las animaciones de los edificios
+
+### La ciudad viva en pantalla
+
+La simulación cambia la ciudad como el juego (edificios nuevos, obras, murallas, asedios), y la vista tiene que seguirla.
+
+- [x] Dibujar desde el estado actual de la ciudad, no desde la copia hecha al cargar la partida: las listas [0x762] (obras), [0x764] (edificios), [0x768] (fortificaciones) y [0x76A] (lo que arde), los puntos fijos [0x7B0..0x80B], [0x76C] y la iglesia [0x7A3]. Nada más cargar, las 285 ciudades de las 12 partidas salen byte a byte igual que antes ([cloud/desktop-viewer.md](cloud/desktop-viewer.md))
+- [x] Redibujarla cuando cambian sus edificios, sin mover la cámara, y también al volver a entrar
+- [ ] Antes de seguir, contrastar con el juego original qué se ve y qué cambia: si la ciudad se redibuja en cuanto se construye algo, qué se anima en tiempo real (gente, carros, agua, humo...), cómo se ve un asedio y si los edificios atacados cambian. Del código solo se sabe que el ejército sitiador tiene objetos gráficos propios y que el juego prepara sus gráficos (0x62C730) si la ciudad sitiada es la que se está viendo
+- [ ] Andamios: lo que está en obras ([0x762], con `pending` ≠ 0) se dibuja como el edificio terminado (las casas, con la variante 0). Mirar en el juego original qué dibuja y cómo avanza
+- [ ] El fuego ([0x76A]) se dibuja como el edificio normal: falta el humo y las llamas
+- [ ] El asedio en la vista: el campamento, las tropas y el ataque a la puerta (lo que la simulación salta: 0x62C730 y los objetos del ejército [+0x1F8], [+0x574], [+0x5DC..]) y el aviso al jugador
+- [ ] Los habitantes y los carros por las calles, las animaciones de los edificios y los barcos en el puerto
+- [ ] Coste en la Vita: cada redibujado rehace la ciudad entera (2 ms de colocar en el PC, más rehacer la lista de sprites). Si da tirones en avance rápido, redibujar solo las celdas que cambian
+- [ ] Quitar `SavedTown::drawn_lists` y `SavedTown::fixed`, que ya no se usan para dibujar (el cargador los sigue llenando)
 
 ## Fase 3: esqueleto del motor
 
-- [ ] Plataforma común con SDL2 (ventana, entrada, audio) para PC y Vita
+- [ ] Plataforma común con SDL2 (ventana, entrada, audio) para PC y Vita. La ventana y la entrada ya funcionan en los dos (el visor corre en el PC con SDL2 de escritorio); falta el audio
 - [x] Render isométrico con cámara (visor de ciudades en `src/app`)
 - [x] Entrada táctil y con sticks en la Vita
 - [x] Probado en una Vita real: el desplazamiento va fluido
 
-**Hito:** mover la cámara por una ciudad en la Vita. ✔
+**Hito:** mover la cámara por una ciudad (Lübeck) en la Vita. ✔
 
-**Hito:** mover la cámara por Lübeck en la Vita.
+- [x] El visor en el PC con SDL2 de escritorio (`libsdl2-dev`, SDL 2.0.20 o posterior): el ratón hace de pantalla táctil, los errores salen por consola y `--cpr ARCHIVO` elige los datos (el CPR español se monta si está al lado del inglés)
+- [x] Ejecuciones sin ventana, con una lista de pasos y capturas (`--steps`, `--screenshot`; `p3vita --help`), iguales fotograma a fotograma: la interfaz se puede ver sin sacar un VPK
+- [x] Compilación para la Vita: `vita-elf-create` fallaba («segment 1 overlaps») según el tamaño del código. Se arregla dejando 0x1000 bytes de margen (`__sce_headroom`, en `src/app/CMakeLists.txt`). p3data se compila con `-fwrapv` y `-fno-strict-aliasing` en todas las plataformas, que es lo que se comprueba con el oráculo
 
 ## Fase 4: simulación
 
-- [ ] **Inventario completo de la simulación, sacado del ejecutable** (no de lo que sale en las partidas). La lista cerrada, con el orden de trabajo, en [inventario.md](inventario.md): hasta ahora se reescribe lo que las partidas y los estados retocados recorren (con todas las ramas de cada función, las que no salen marcadas «Sin comprobar con el oráculo»), pero hay funciones enteras a las que no se llega. Lo que se sabe:
-  - [ ] la cola de eventos: la tabla 0x4D8A28 tiene 58 tipos y p3vita atiende 45; los otros 13 tienen manejador en el juego y p3vita los quita sin hacer nada. Quién crea cada uno (`callgraph_eventos.tsv`: 0x4D8CF0 seguido del tipo en [+6], y a mano):
-    - **los crea código que p3vita ya tiene** (hechos todos: 0x23, 0x24, 0x34, 0x25, 0x26, 0x27, 0x31 y 0x38; ver [inventario.md](inventario.md)) (huecos reales: cuando vencen, p3vita los quita sin hacer lo suyo; no ha salido en las comparaciones porque tardan en vencer): 0x23, 0x24 y 0x34 (las decisiones de la dieta de la Hansa, evento 0x21; los consultan los convoyes y los barcos; 0x4E09D4, unos 7,6 KB, que además encola la 0x81 a los jugadores humanos), 0x25 y 0x26 (el asedio, 0x6281F0: cae un objetivo, llega un grupo; 0x4E1B84 y 0x4E1E54, que llaman a los gráficos de la ciudad 0x599040: separar), 0x27 (los capitanes de la IA que se retiran, evento 0x03; 0x4DDC00), 0x31 (lo aprobado por el consejo, evento 0x2E; 0x4EAB94) y 0x38 (la elección de alcalde, 0x528E60; 0x4ECB14)
-    - **los crean operaciones de la simulación aún sin reescribir**: [x] 0x07 (la 0x61; 0x4E23A4, la fiesta de un comerciante: hecho), [x] 0x15 (la 0x60; 0x4E7C74, a merchant's wedding: done), [x] 0x1D (la 0x7D; 0x4E9564, un incendio en la ciudad: hecho) y 0x28 (0x4DDF40; not created by 0x13 after all: its creator 0x538DA0 is never called, so it belongs with 0x0B and 0x29 below). Las 0x38, 0x7C, 0x7F y 0x83 crean eventos que p3vita ya atiende (0x0A, 0x1C, 0x35 y 0x00)
-    - **solo desde el intérprete de misiones, la interfaz o acciones del jugador**: 0x09 (0x4ECF64), 0x0C (la 0x3A), 0x0F (la 0x4F), 0x10 (la 0x53), 0x11 (la 0x3D), 0x13 (la 0x5F), 0x14 (la 0xA4), 0x17 (la 0x72), 0x18 (la 0x2B) y 0x2D (la 0x35)
-    - **sin creador encontrado** (el tipo no se escribe como constante tras 0x4D8CF0): 0x0B (0x4E37F4) y 0x29 (0x4DDE70); also 0x28 (0x4DDF40), whose only creator, 0x538DA0, is dead code
-  - [ ] las operaciones: la tabla 0x537030 tiene 193 códigos y p3vita ejecuta 41. **Las que encola la simulación** (de las 363 llamadas a 0x54AA70, las de funciones a las que se llega desde advance_time pasando solo por lo que ya tiene p3vita; `re/emu/sesion5/callgraph.py`, con el código leído a mano donde el script no lo saca) y p3vita aún descarta, con quién la encola y su manejador:
-    - [x] 0x0A (0x4768B0, barcos; 0x507FB0: a ship is deleted, done), [x] 0x13 (evento 0x03, 0x4DCEA0; 0x538C40: a human player's captain retires, event 0x27; done), [x] 0x28 (la IA, 0x4F5A20; 0x53D190: poner un edificio en venta, con 0x4DAB00, hecha), [x] 0x2C (evento 0x2B, 0x4DE790; 0x52A360 y 0x52B2C0: hecha), [x] 0x38 (0x4DD400; una subasta de barco, el evento 0x0A: hecha), [x] 0x48 (avisos, 0x51E070/0x51E270; 0x53B010: una propuesta para una ciudad, hecha), [x] 0x60 (evento 0x16, dead branch; 0x53DA90: a wedding, done), [x] 0x61 (0x5316E0; 0x53DBF0 y el evento 0x07: hecha), [x] 0x65 (la IA, 0x4F4E50; 0x4F5D80: an AI merchant goes bankrupt, done), [x] 0x67 (0x4DCEA0; 0x53DDF0: un administrador mejora, hecha), [x] 0x7C (0x4DCA90; la peste: hecha), [x] 0x7D (0x4DCBF0; un incendio en la ciudad, el evento 0x1D: hecha), [x] 0x7E (evento 0x1F; 0x53F8B0: la temporada de piratas que viene, hecha), [x] 0x7F (evento 0x0D, 0x4E3F44; un evento: hecha), [x] 0x80 (evento 0x05; 0x4D8DB0: hecha), [x] 0x83 (evento 0x00; un evento: hecha), [x] 0x84 (eventos 0x1F y 0x03; 0x53FCA0: el evento 0x30, hecha), [x] 0x87 (un hijo, 0x4F69B0; 0x53FEA0: done; its enqueuer 0x4F69B0 is still to be rewritten), 0x9F (0x50B250, barcos; battles), 0xB5 (0x514000, barcos; 0x514D40; the pirate objects' update, not run), [x] 0xB8 (eventos 0x03, solo en red; 0x542F10: network sync checks, done). Left from this list after the seventh session: 0x9F (battles) and 0xB5 (a pirate fleet leaving its lair; queued only by the pirate objects' update 0x514000, which is not run), each with its subsystem (inventory, part B)
-    - casi todas de unos cientos de bytes a 3 KB; varias crean eventos de los que p3vita no atiende
-    - las demás que salen desde advance_time pasan por partes aún sin reescribir: las batallas (0x5FBFE0: 0x92–0xA0, 0xB4), el intérprete de misiones (0x4ECF64: 0x28, 0x7C, 0x7D, 0x82, 0x8E, y por la interfaz 0x60–0x77, 0x8C, 0xA2–0xA8, 0xBF), los gráficos de la ciudad (0x599040, desde el evento 0x25 y la muralla: 0x08, 0x09, 0x0A, 0x2F, 0x39, 0x52, 0x56–0x59, 0x61, 0x93) y 0x5C7810 (de los objetos del mundo: 0x33, 0x34, 0x36, 0x37, 0x98). Hay que mirar si alguna de esas ramas es simulación
-  - [ ] el grafo de llamadas estático desde las piezas de advance_time (0x51BA10, 0x4F7BB0, 0x506720, 0x535760, 0x5315C0, 0x535450, 0x52D7D0, 0x6349F0, 0x633A90, 0x4D85C0), contra las funciones que ya tiene p3vita (`fn_XXXXXX`), separando las de interfaz y gráficos
-  - [ ] lo que el código ya marca: «Por reescribir», «no se reproduce» y los manejadores que no hacen nada
-- [x] Mercancías, almacenes y precios
-- [x] Umbrales de precio de cada ciudad (`update_town_price_thresholds`), como al cargar la partida
-- [x] Comprar y vender entre un barco y la ciudad, idéntico al juego en 24 000 operaciones ([oracle.md](oracle.md))
-- [x] Estadísticas de compra y venta del comerciante y su reputación en la ciudad, idénticas al juego
-- [ ] Comercio con el kontor (operación 0x1B)
-- [x] Ciudades: población, satisfacción, producción de las empresas, consumo, milicia, astillero, iglesia y oficinas de los comerciantes ([formats/town_tick.md](formats/town_tick.md))
-- [x] Mapa del mar con las ciudades y los barcos de la partida, con su rumbo ([formats/navigation.md](formats/navigation.md))
-- [x] Rutas entre ciudades como las calcula el juego (6633 rutas idénticas en las 12 partidas)
-- [x] Movimiento de los barcos tick a tick, salida y llegada a puerto y orden de zarpar, idénticos al juego en 32 días de las 12 partidas ([oracle.md](oracle.md))
-- [x] Paso del tiempo al ritmo del juego (234 ms por tick a velocidad normal) y fecha
-- [x] Tick de ciudad completo (0x51BA10), idéntico al juego byte a byte: 23 040 ticks partiendo de las 12 partidas, hasta 240 días ([oracle.md](oracle.md))
+### Hecho e idéntico al juego
+
+Comprobado byte a byte con el oráculo, que ejecuta el código del juego en un emulador de CPU ([oracle.md](oracle.md)).
+
+- [x] Mercancías, almacenes y precios; los umbrales de precio de cada ciudad (`update_town_price_thresholds`), como al cargar la partida
+- [x] Comprar y vender entre un barco y la ciudad: 24 000 operaciones iguales. Las estadísticas de compra y venta del comerciante y su reputación en la ciudad, también
 - [x] Partidas cargadas en memoria igual que el juego (ciudades, oficinas, comerciantes, cola de eventos...)
-- [ ] Ejecutar las operaciones que encolan las ciudades (obras, materiales, avisos), con el ejecutor del juego (0x535760, [formats/world_tick.md](formats/world_tick.md) §7). Hace falta para llegar a Gobernador: la ciudad fundada crece con sus obras hasta tener mercado, que es lo que cumple el encargo de fundar. Medido en 20 días de las 12 partidas (código: veces, quién la encola):
-  - [x] **0x22 construir** (169: las casas y edificios de la ciudad 0x51D870/0x51FAB0, muelles y murallas 0x524D5A/0x524E0D/0x5250BA, la IA de los comerciantes 0x4DFA41/0x4DFC63/0x4F4E46). Manejador 0x53CE30; al ejecutarla recorre unas 2400 instrucciones. Por partes:
-    - [x] colocar el edificio en la rejilla de la ciudad (`town_tick/grid.cpp`): 0x4FB9C0 entero con 0x4FB8F0, 0x4FBBA0, 0x4FBEC0, 0x4FBFF0, 0x4FC130, 0x4FC1D0, 0x4FC4A0, 0x4FC630, 0x4FC8C0 y 0x4FC990 (huella, bits de tamaños, calles hasta las que hay), y 0x4FCBD0 entero (si el solar vale); idénticos al juego en 30 días de las 12 partidas con el oráculo ejecutando la 0x22 (260 y 137 llamadas)
-    - [x] el registro del edificio: 0x521900 entero con 0x5259D0, 0x500A70, 0x4F5450, 0x517770 y la reputación (0x4F89E0, 0x4F8A50, 0x4F8C70, 0x4F8560 sin la carta); idéntico al juego en 30 días de las 12 partidas (137 llamadas)
-      - [ ] por reescribir: 0x4FF2D0, lo que hace el almacén nuevo (tipo 0x1E) de un comerciante con oficina (308 instrucciones; no ha salido en 30 días de las 12 partidas)
-    - [x] las torres: 0x523830 (tipos 0x30..0x33), idéntica al juego en 30 días de las 12 partidas (35 llamadas), y 0x523D70 (0x34, 0x35, sin salir en las partidas: sin comprobar)
-    - [x] el manejador 0x53CE30 y ejecutarla en `run_operation` y en el oráculo (por omisión): el mundo entero con las obras, 0 diferencias en las 12 partidas durante 7 días
-  - [x] 0x27 (los materiales que pide la ciudad para sus obras: la ciudad los recibe, 0x535BBC) y 0x23 (empezar la muralla de un lado, 0x535B12 → 0x522B20); con el escenario `fundar` 40 días, idénticas al juego
-  - [x] **0x24** (2397 en 20 días; la siguiente pieza de muralla pendiente, [0x766]): 0x522C70 con lo que cuesta (0x51F3A0), la rejilla (0x4FBD60, 0x4FD830 con el relleno de dentro de la muralla 0x4FDA10) y el cierre de la muralla (0x4FACD0 para las piezas, 0x4FDCE0, 0x4FD680, 0x524B70, las deudas de las oficinas como eventos 0x01); idéntica al juego llamada a llamada en 30 días de las 12 partidas (4154 llamadas, con un cierre en la partida 5). **La ciudad fundada no crecía sin ella**: empieza su muralla hacia el día 100 y, mientras tiene piezas pendientes, no hace casas; con la 0x24 la acaba y empieza a crecer (272 habitantes el día 420; las 756 operaciones de esos 420 días, iguales al juego)
-    - [x] 0x4FACD0 para los tipos de menos de 0x32 (quitar edificios de la rejilla): lo usan los incendios del asedio (eventos 0x25 y 0x26, 0x521240); comprobado con `retouch.py incendio` y los asedios de las partidas
-  - **Las que faltan cambian el mundo**: con el código del juego, la ciudad fundada sale distinta desde el día 40 ejecutando todas las operaciones que si solo se ejecutan las que reproduce p3vita. Medido cuáles (`re/emu/sesion5/opsdiff.sh PARTIDA DÍAS`: el mundo con las de p3vita y con cada una más, huellas de cada región por día; partidas 1, 3 y 5, 20 días): cambian el mundo la 0x7B (las ciudades desde el día 1-2, en todas), la 0x78 (globales y barcos), la 0x79 y la 0x7A (ciudades), la 0x1E y la 0x1F (convoyes), la 0x12 (capitanes) y la 0x64 (eventos); la 0x8E se para en el emulador (toca la vista de la ciudad). Las demás (0x29, 0x2C, 0x37, 0x38, 0x48, 0x61, 0x67, 0x7D, 0x7E, 0x81, 0x84) no cambian nada en 20 días
-  - [x] 0x7B (0x5365E3: los capitanes y administradores que buscan trabajo, 6 bytes en [0x9C6 + 6·k] de la ciudad), 0x79 (0x536535: [0x82C] de hasta 8 ciudades) y 0x7A (0x536570: [0x834..0x83F] de una ciudad), las dos de la dieta de la Hansa (`town_tick/operations.cpp`): el mundo entero 7 días en las 12 partidas, 0 diferencias
-  - [x] 0x1E (0x539B50: un convoy sale de expedición hacia el borde oeste) y 0x1F (0x539C60: un punto de su ruta), con la **rama de convoy de la orden de zarpar** (0x537670 en `Sailing::set_sail`: el guía mueve el convoy, los demás salen de él, la vuelta al puerto de todo el convoy, el dinero de una expedición sin empezar): el mundo entero 7 días en las 12 partidas, 0 diferencias (en la partida 2 sale una expedición). Antes, **las expediciones de la IA no salían** (tampoco en el oráculo, que las descartaba)
-  - [x] 0x78 (0x5051E0: un barco nuevo en las 16 entradas de [0x6DD7C0], con 0x507D60 y 0x50CE50) y 0x12 (0x538A80: el capitán de un barco mejora sus habilidades, con tope por bits de su índice, y su salario 0x4FE190; sin la carta): el mundo entero 7 días en las 12 partidas, 0 diferencias (la 0x78 sale en 10 de ellas)
-  - [x] 0x64 (en 0x5363EE) y el evento 0x33 (0x4EC934): **los robos en las oficinas de los jugadores humanos** con pocos guardias (los encola 0x4DD790 en el evento 0x03): hasta tres mercancías pasan de la oficina al mercado de la ciudad, como mucho lo que hay (la carta 0x73 al jugador no se reproduce). Idénticos al juego con el escenario `robo` de `retouch.py` en las partidas 1 a 7 (lo que hay, más de lo que hay, lo que no hay, el tope de tres, una ciudad sin oficina); el mundo entero 7 días en las 12 partidas, 0 diferencias
-  - [x] **0x8E, los asedios** (en 0x536A67): 0x633AF0 crea el ejército sitiador y 0x629C60 lo prepara (tropas según los habitantes y la dificultad, la puerta con menos torres cerca, los grupos que llegan desde los edificios de fuera de la muralla, los plazos de llegada, retirada y rescate; sin muralla, rescate sin ataque) y, si el jugador tiene rango 5 en una ciudad natal de la misma región, le piden ayuda (operación 0x8B). Antes **no había asedios nuevos** en p3vita: solo los de la partida. El oráculo se salta la ventana al jugador y los gráficos de la ciudad que se ve (donde se paraba). Idéntica al juego: los 5 ejércitos de 20 días de las partidas 4 a 7 (con 0, 1 y 2 grupos y objetivos) y sus 18 432 ticks de asedio siguientes, y el escenario `asedio` de `retouch.py` (sin muralla y con la 0x8B) en 6 partidas; el mundo entero 7 días en las 12 partidas, 0 diferencias. Con eso se reproducían todas las que cambiaban el mundo en 20 días de las partidas
-  - [x] con la ciudad fundada y más días (`opsdiff_n.sh` con `FOUND=1`, 40 a 200 días) salen otras: 0x29 (0x539DC0: un préstamo, el evento 0x01; los del prestamista de la ciudad a los comerciantes, desde 0x4F4F6B), 0x81 (0x53FA80: un encargo de la dieta de la Hansa, el evento 0x05) y 0x37 (en 0x535E04: el comerciante paga por una ciudad, 0x4F8560). Iguales al juego llamada a llamada en la ciudad fundada (partidas 1 y 3, días 14 a 32 y 28 a 88: 193 y 2591 llamadas) y el mundo entero 7 días en las 12 partidas, 0 diferencias
-  - [ ] y faltan: [x] 0x61 (0x53DBF0, la fiesta de un comerciante, con el evento 0x07, 0x4E23A4: la ciudad apunta la fiesta, [0x2D0], que cuenta en su satisfacción; iguales al juego con los escenarios `fiesta`, `fiesta_vacia` y `fiesta_ciudad`, y el mundo entero 7 días en las 12 partidas, 0 diferencias) y [x] 0x2C (0x52A360 sobre la ciudad, con 0x52B2C0: un barco encargado al astillero por el comerciante de la IA con menos barcos; iguales al juego con los escenarios `astillero` y `astillero_ciudad`, y el mundo entero 7 días en las 12 partidas, 0 diferencias). Entran en el inventario completo (arriba)
-  - [ ] el resto: 0x7B (3588, el evento 0x19: capitanes y administradores que buscan trabajo), 0x1E y 0x1F (17 y 68, los convoyes al zarpar, 0x503B50), 0x48 avisos (58, 0x51E070), 0x78 (44), 0x79, 0x7A y 0x81 (24, 24 y 4, la dieta de la Hansa), 0x37 (16 en 20 días; 1071 en 520 días de la partida 1, desde 0x4F4B30), 0x64, 0x8E (asedios), 0x12, 0x29, 0x2C, 0x38, 0x61, 0x67, 0x7D, 0x7E, 0x84 (pocas). El emulador las ejecuta todas sin fallar (con `OPS=` en el oráculo)
-- [x] Tick de cada comerciante (0x4F7BB0): contabilidad, valor de la compañía, reputación y rangos, idéntico al juego
-- [x] Lo diario y semanal, tareas programadas, los 15 objetos del mundo y los asedios, idénticos al juego ([formats/world_tick.md](formats/world_tick.md))
-- [x] Cola de eventos (0x4D85C0): todos los tipos que salen en las partidas (elecciones, subastas, deudas, encargos, expediciones, piratas, peste, la Hansa...), idénticos al juego ([formats/world_tick.md](formats/world_tick.md) §6)
-- [ ] Guardar las cartas y avisos nuevos en el buzón de cada comerciante como el juego (0x4D6530; el buzón ya se lee de la partida, `SaveGame::mail`). Ahora no se guardan, y la simulación lo consulta: el evento 0x16 no repite un aviso que siga vigente (42 días), así que sin esto llega antes de tiempo. Hacerlo junto con las cartas de la interfaz
-- [x] El mundo entero (advance_time sin la interfaz) idéntico al juego byte a byte 60 días en las 12 partidas ([oracle.md](oracle.md))
-- [ ] **Llegar a Gobernador** (el cargo más alto de la Liga Hanseática, «Alderman» en la versión inglesa; es la meta del juego). El camino entero está en [formats/world_tick.md](formats/world_tick.md) §7 y §8: un alcalde con 120 de reputación pasa a candidato, la Hansa ofrece encargos, con tres cumplidos se presenta a la elección.
-  - [x] el ejecutor de las operaciones encoladas (0x535760, tabla 0x537030), en p3vita (`run_operation`) y en el oráculo, con las operaciones 0x00, 0x0A, 0x12, 0x13, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x28, 0x29, 0x2C, 0x37, 0x38, 0x3B, 0x46, 0x48, 0x4B, 0x60, 0x61, 0x64, 0x65, 0x67, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86, 0x87, 0x8E y 0xB8; las demás aún se descartan (la 0x8B, la petición de ayuda en un asedio, es de la interfaz)
-  - [x] la candidatura: el tick del comerciante (0x4F75F0) pone [+0x37] = 1 y 0x5326E0 (con 0x532E30 y 0x515A60) encola una operación 0x86 y hasta cinco 0x85, una por tipo de encargo; idéntica al juego con estados retocados en las 12 partidas (`tools/oracle/retouch.py`)
-  - [x] las operaciones 0x85 (0x53FD10: crea el encargo, un evento 0x32 sin comerciante, si no hay ya uno igual) y 0x86 (quita los encargos sin comerciante que ya no valen), idénticas al juego
-  - [x] los encargos sin comerciante (evento 0x32): maduran unos 64 días y se dan a un comerciante de la IA candidato
-  - [ ] los encargos con comerciante (evento 0x32, 0x4EB0EB..0x4EBF0F, `alderman.cpp`): el principio (0x4EBF54), la comprobación hasta el plazo y, al cumplirse, [+0x37] + 1 (0x4EC354); con 4 se puede presentar
-    - [x] lo común (el principio, el plazo vencido con su castigo de reputación 0x4F9170, el encargo fallido) y los tipos 2 (cazar un barco pirata: se cumple cuando la batalla pone [+0x16] = 1) y 4 (una ciudad pequeña que llegue a N habitantes), idénticos al juego
-    - [x] el tipo 1 (carretera entre dos ciudades), con los edificios 0x27 (0x521900 y 0x4FCBD0, solo ese camino); la IA nunca aporta materiales, así que su carretera siempre vence
-    - [x] el tipo 3 (guarida pirata), con el refuerzo de los piratas (barcos nuevos, 0x5144A0 y 0x516170), salvo el ataque: [ ] la batalla al llegar un barco a la guarida (0x6130B0, 0x611D80, 0x5FBFE0), que el emulador no ejecuta
-    - [x] el tipo 0 (fundar una ciudad, `new_town.cpp`): al empezar crea una ciudad entera en plena partida (0x531D50: la plantilla `iso/towns/stadtplatz%.2u.tow`, el constructor, los candidatos, los capitanes, el astillero, las rutas y la matriz de tiempos de viaje) y su muralla (evento 0x39), idénticos al juego; la ciudad nueva sigue igual que en el juego los días siguientes
-    - [x] el desarrollo de la ciudad nueva (evento 0x2F, 0x4EA0D4, a los 180 días de fundarla): con su primer edificio municipal, la oficina de su alcalde si es de la IA o, sin alcalde, la operación 0x46 (0x535FD6) que hace alcalde al comerciante de la IA con más rango; después, con 1000 habitantes y según su muralla, le da el mercado, y con muchos pobres encarga un prestamista; idéntico al juego con estados retocados dirigidos a cada rama ([oracle.md](oracle.md), «Los encargos de la Hansa»)
-    - [ ] que se cumpla el de fundar: se cumple cuando la ciudad tiene mercado, y eso solo lo da el evento 0x2F cuando la ciudad tiene su primer edificio municipal y pasa de 1000 habitantes. p3vita lo hace todo como el juego hasta el día 420 (edificios municipales hacia el día 40, muralla, y empieza a crecer: 272 habitantes). Medido con el código del juego en el emulador (`grow.sh`, partida 1): la ciudad se queda en 272 habitantes hasta el día 520 y sin edificios nuevos, también ejecutando todas las operaciones (empieza una segunda muralla que se atasca sin herramientas); el plazo del encargo es de unos dos años, así que en el emulador no parece llegar a cumplirse. Pendiente: medir más allá de 550 días (no cabe en 10 minutos en primer plano) y ver si en el juego de verdad crece porque alguien le lleva mercancías
-    - [ ] la ciudad nueva en el visor de la Vita (sin probar)
-    - [ ] por reescribir dentro de la fundación (`new_town.cpp`, marcadas «Por reescribir»):
-      - [x] 0x5462F0: el nodo de una instalación en la lista [0x9B4] de la ciudad (0x50FCA0, 0x50FE00). Era la única a la que se llega al fundar: cuando el aceite (mercancía 0xA) es de las que más faltan al elegir el sitio (0x532E30 añade el bit 0x40000); idéntica al juego con el escenario `fundar_aceite` (la fundación y los 4 días siguientes)
-      - [ ] 0x545CE0 y 0x545F50: preparar una ciudad que ya existe (sus edificios y su mercado); al fundar no se llega ([+0xF] = 0 en el registro)
-      - [ ] 0x4F99B0: la ciudad sin plantilla de mapa; las 28 plantillas existen
-      - [ ] la elección del alcalde dentro de 0x531D50 (0x532063..0x5321C5, con el bit 0x40 de la situación); al fundar la situación es 0
-  - [x] que el jugador coja un encargo (operación 0x4B, 0x53B440) y aporte materiales a la carretera (operación 0x3B, 0x53A3E0)
-  - [ ] la interfaz que encola esas dos operaciones en el visor: ver los encargos de la Hansa sin dar, coger uno (0x4B) y aportar materiales a la carretera desde la oficina o los barcos (0x3B)
-  - [ ] (opcional) **corregir el fallo del juego en la carretera vencida del jugador**. Ahora se reproduce tal cual, para que p3vita siga siendo idéntico al juego y se pueda comparar con el oráculo; la corrección iría detrás del ajuste de «Corregir los fallos del juego» (abajo). El fallo, en 0x4EAFE4 (0x4EB25F): cuando al jugador humano se le vence el encargo de la carretera, el juego crea un encargo igual, ya empezado, y pone como su comerciante [+0xD] la ciudad [+0x10], que es un **índice de ciudad, no de comerciante**, y en sus materiales 0xFF y 0xFFFFFFFF (1023 de cada uno). Consecuencias, si ese índice es menor que el número de comerciantes (lo normal: 24 ciudades y unos 37 comerciantes):
-    - ese encargo no vence nunca: los tramos se hacen solos cada día y medio, y cerca del plazo siempre tiene materiales para lo que falta, así que el plazo se alarga;
-    - la ciudad acaba con la carretera construida (los edificios 0x27 en las dos ciudades) sin que nadie haya aportado nada;
-    - al cumplirse, 0x4EC354 sube el [+0x37] del comerciante que tenga ese índice: un comerciante cualquiera avanza en la candidatura a Gobernador sin haber hecho el encargo (y, si es el jugador, le cuenta un encargo que no hizo); si ese comerciante no es candidato, pasa de 0 a 1 sin haber sido alcalde;
-    - si el índice no es menor que el número de comerciantes, el encargo cuenta como sin dar y se quita enseguida (las dos ciudades ya tienen el bit 0x8000).
-    Corrección posible: no crear la copia, o crearla sin comerciante (0xFF). Otras rarezas del mismo encargo, también reproducidas: el plazo inicial (0x5326E0) cuenta los días como meses y lee la tabla de los meses (0x672D78) fuera de sus límites, hasta la entrada 129; y la operación 0x3B con un comerciante que no existe toma por cantidad que falta un puntero (esa no se reproduce: p3vita no hace nada).
-  - [x] la elección en la reunión de la Hansa (evento 0x20), idéntica al juego
-  - [ ] el final: la ventana y el vídeo (`eldermann`) cuando el jugador sale elegido; el objetivo de la partida (evento 0x0E) ya se comprueba
-  - Las partidas de prueba no llegan a esto en 60 días (ningún alcalde comerciante llega a 120): se comprueba con estados retocados, unos pocos dirigidos a cada rama
-- [x] Barcos de la IA en puerto: comercio con las ciudades y sus oficinas, elección de destino, tripulación, armas, reparación en el astillero y creación de convoyes, idénticos al juego ([formats/navigation.md](formats/navigation.md) §8)
-- [x] Barcos como memoria del juego; navegación idéntica byte a byte (avisos, lista por x, contadores)
-- [x] Convoyes de los comerciantes: en puerto, saliendo, en el mar, entrando, deshaciéndose, idénticos al juego 60 días en las 12 partidas ([formats/navigation.md](formats/navigation.md) §9)
-- [ ] Piratas, persecuciones, encuentros y batallas
-- [ ] (opcional) **Corregir los fallos del juego** detrás de un ajuste (feature flag) **activado por omisión**: con él, p3vita corrige los fallos que vayamos encontrando; apagado, se comporta como el original, para jugar a la versión original y para las comprobaciones con el oráculo (que comparan con el juego tal cual). Ahora todos se reproducen tal cual. Cada fallo que aparezca se apunta aquí:
-  - [ ] la carretera vencida del jugador (0x4EAFE4; detalle y consecuencias en «Llegar a Gobernador», arriba)
-  - [ ] las mejoras de las piezas de muralla (la operación 0x22 de los tipos 0x34 y 0x35, 0x523D70, `construction.cpp`). Comparada con la de las torres (0x523830), que hace bien las cuentas: (1) las herramientas se sacan de la oficina del comerciante con la cantidad de **madera** que falta (baja el contador de la madera, y la ciudad pierde de su almacén todas las herramientas y las paga enteras); (2) lo que se le paga por ellas es 1,278 · 0 (multiplica por la constante 0x66BC6C, que vale 0, en lugar de por lo sacado); (3) al comerciante no se le paga nada de lo que sale de su oficina, aunque la ciudad lo apunta como gasto (0x529F90). Los dos primeros son fallos casi seguro; el tercero lo parece. Sin comprobar con el oráculo: no sale en 30 días de las 12 partidas
-  - [ ] los del tick de ciudad ([formats/town_tick.md](formats/town_tick.md) §8): el administrador de 0x51C360 solo cuenta la primera oficina; 0x5109B0 deja negativo [+0xC]; la granja de grano compara al revés al contratar; 0x524920 escribe fuera de la rejilla con un muelle en la última columna
-  - [ ] la IA de los comerciantes con deudas (0x4F5A20, al elegir qué edificio poner en venta, operación 0x28): la renta del mejor ([esp+0x2C]) no se inicializa, así que lo que hace depende de lo que haya quedado en la pila de la llamada anterior (en el oráculo suele ser 0 y nunca pone nada en venta; tras un impuesto extraordinario, evento 0x31, en el mismo tick, sí). p3vita usa 0. Corrección posible: empezar por el primero que tenga unidades
-  - [ ] el capitán de la IA que se retira (evento 0x27, 0x4DDC00): si ya no está en su barco, el juego lo busca solo en el primer barco de cada comerciante y, si no es ese, se queda en un bucle sin fin (0x4DDCB0). p3vita quita el evento
-  - [ ] la operación 0x80 (en 0x536756; solo en partidas en red, la encola el evento 0x05 al empezar un encargo): lleva en [+4] el registro de la cola que toca (la cabeza, el encargo que empieza) y los dos números al azar para sus [+0x12] y [+0x14], pero el manejador escribe siempre en el registro 0x80 (0x4D8DB0 con la constante 0x80), y solo si ese es un encargo. El encargo que empieza se queda con 0xFFFF en los dos. Corrección posible: usar [+4]
-  - [ ] the old letters (0x4D6780): a letter of type 0x86 or more cuts the merchant's chain (the link to it becomes 0xFFFF) and, if it is old enough to be removed, the mailbox's free list is lost (its head becomes 0xFFFF, the register that held the cut link). Not seen in the saves. Possible fix: skip the cut, or keep the letter's index
-  - [ ] the surname of a bankrupt merchant (0x4F5D80, operation 0x65): the new surname is ([0x6DD888] + day) modulo the surname index of the *last* merchant (the register left over from the loop that marks the surnames in use), not modulo the number of surnames; if that index is 0 the game divides by zero (p3vita keeps the old surname), and the search for a free one wraps at that index. Possible fix: use the number of surnames ([0x6DDB74])
-  - [ ] el ejército sitiador nuevo (0x629C60): no mira cuántos grupos caben (más de 0x7F se sale del ejército), si no encuentra las tres puertas lee el registro de la dirección 0 (en el juego, un cuelgue), y al sumar la fuerza de los objetivos cuenta las torres cerca de la puerta en obras aunque 0x62B2B0 no las haya puesto de objetivo (lee entradas sin llenar). No pasa en las partidas; p3vita lee un registro a 0 y no escribe fuera
+- [x] El tick de ciudad completo (0x51BA10: población, satisfacción, producción de las empresas, consumo, milicia, astillero, iglesia y oficinas de los comerciantes; [formats/town_tick.md](formats/town_tick.md)): 23 040 ticks partiendo de las 12 partidas, hasta 240 días
+- [x] El mapa del mar con las ciudades y los barcos; las rutas entre ciudades (6633 rutas iguales); el movimiento de los barcos, la salida y llegada a puerto y la orden de zarpar ([formats/navigation.md](formats/navigation.md))
+- [x] El paso del tiempo al ritmo del juego (234 ms por tick a velocidad normal) y la fecha
+- [x] El tick de cada comerciante (0x4F7BB0): contabilidad, valor de la compañía, reputación y rangos
+- [x] Lo diario y semanal, las tareas programadas, los 15 objetos del mundo y los asedios ([formats/world_tick.md](formats/world_tick.md))
+- [x] La cola de eventos (0x4D85C0): todos los tipos que salen en las partidas (elecciones, subastas, deudas, encargos, expediciones, piratas, peste, la Hansa...) ([formats/world_tick.md](formats/world_tick.md) §6)
+- [x] Los barcos de la IA en puerto (comercio con las ciudades y sus oficinas, elección de destino, tripulación, armas, reparación en el astillero, creación de convoyes; [formats/navigation.md](formats/navigation.md) §8), los barcos como memoria del juego y los convoyes de los comerciantes (§9)
+- [x] El ejecutor de las operaciones encoladas (0x535760, tabla 0x537030; `run_operation` y el oráculo), con 0x00, 0x0A, 0x12, 0x13, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x28, 0x29, 0x2C, 0x37, 0x38, 0x3B, 0x46, 0x48, 0x4B, 0x60, 0x61, 0x64, 0x65, 0x67, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86, 0x87, 0x8E y 0xB8 (qué hace cada una: [inventario.md](inventario.md), parte B). Las demás aún se descartan; la 0x8B, la petición de ayuda en un asedio, es de la interfaz
+- [x] Las obras de las ciudades:
+  - la operación 0x22 (construir: la rejilla 0x4FB9C0/0x4FCBD0, el registro 0x521900 y las torres 0x523830/0x523D70);
+  - la 0x27 (los materiales que recibe la ciudad), la 0x23 (empezar una muralla) y la 0x24 (cada pieza de muralla y su cierre).
+
+  Con ellas, la ciudad fundada levanta sus edificios municipales, acaba su muralla y empieza a crecer (272 habitantes el día 420, igual que el juego)
+- [x] Todas las operaciones que cambian el mundo en las partidas y con la ciudad fundada:
+  - 0x7B, 0x79 y 0x7A;
+  - 0x1E y 0x1F, con la rama de convoy de la orden de zarpar;
+  - 0x78, 0x12, la 0x64 con el evento 0x33, la 0x8E (los asedios nuevos);
+  - 0x29, 0x81, 0x37, la 0x61 con el evento 0x07, y la 0x2C.
+- [x] **El mundo entero** (advance_time sin la interfaz) idéntico al juego byte a byte 60 días en las 12 partidas. La comprobación de 7 días en las 12 partidas (`world.sh 7`) tarda 98 s
+- [x] Las tormentas (0x5053C0 con 0x505290 y el desvío de la ruta 0x447580, cada 8 ticks; `src/p3data/battle/storms.cpp`). Comprobadas llamada a llamada en las 12 partidas (10 días: 3840, 350 y 48 llamadas) y con estados retocados que recorren todos los bloques alcanzables. Están encendidas por omisión en p3vita y en el oráculo; `--no-storms` las apaga. El mundo entero sale a 0 diferencias en las 12 partidas con ellas y sin ellas. Bajan el casco de los barcos en 8 de las 12 partidas en 10 días
+
+### El inventario de la simulación
+
+La lista cerrada, sacada del ejecutable y no de lo que sale en las partidas, está en [inventario.md](inventario.md). Se hizo con el grafo de llamadas estático (`re/emu/sesion5/callgraph.py`; las tablas, en `re/emu/sesion5/inventario/`). El grafo parte de advance_time (0x530E80) y de sus piezas (0x51BA10, 0x4F7BB0, 0x506720, 0x535760, 0x5315C0, 0x535450, 0x52D7D0, 0x6349F0, 0x633A90 y 0x4D85C0), y separa la interfaz. Incluye:
+- la tabla de eventos 0x4D8A28, con sus 58 tipos y quién crea cada uno (0x4D8CF0 con el tipo en [+6], `callgraph_eventos.tsv`);
+- la tabla de operaciones 0x537030, con sus 193 códigos;
+- las 363 llamadas a 0x54AA70, la función que encola (`callgraph_encolar.tsv`).
+
+- [x] A: los eventos que p3vita creaba y no atendía (0x23, 0x24, 0x34, 0x25, 0x26, 0x27, 0x31 y 0x38)
+- [ ] B: las operaciones que encola la simulación. Hechas todas salvo:
+  - [ ] 0x9F, que va con la batalla en el mar (pieza 3 de las batallas);
+  - [ ] 0xB5, una flota pirata que sale de su guarida. Solo la encola la actualización de los objetos piratas (0x514000), que aún no se ejecuta (pieza 2).
+- [ ] Los tipos de evento que p3vita todavía no atiende:
+  - solo los crean el intérprete de misiones, la interfaz o las acciones del jugador: 0x09 (0x4ECF64), 0x0C (operación 0x3A), 0x0F (0x4F), 0x10 (0x53), 0x11 (0x3D), 0x13 (0x5F), 0x14 (0xA4), 0x17 (0x72), 0x18 (0x2B) y 0x2D (0x35);
+  - sin creador encontrado: 0x0B (0x4E37F4) y 0x29 (0x4DDE70); también 0x28 (0x4DDF40), cuyo único creador, 0x538DA0, es código muerto.
+- [ ] Las demás operaciones a las que se llega desde advance_time pasan por partes aún sin reescribir. Hay que mirar si alguna de esas ramas es simulación:
+  - las batallas (0x5FBFE0: 0x92–0xA0 y 0xB4);
+  - el intérprete de misiones (0x4ECF64: 0x28, 0x7C, 0x7D, 0x82 y 0x8E; y por la interfaz 0x60–0x77, 0x8C, 0xA2–0xA8 y 0xBF);
+  - los gráficos de la ciudad (0x599040, desde el evento 0x25 y la muralla: 0x08, 0x09, 0x0A, 0x2F, 0x39, 0x52, 0x56–0x59, 0x61 y 0x93);
+  - 0x5C7810, desde los objetos del mundo (0x33, 0x34, 0x36, 0x37 y 0x98).
+- [ ] C: las llamadas desde lo reescrito a funciones que p3vita no nombra (la lista, en el inventario)
+- [ ] D: lo que marca el propio código:
+  - [ ] «Por reescribir» (14). Entre ellos, 0x4FF2D0, el almacén nuevo (tipo 0x1E) de un comerciante con oficina: `fn_4ff2d0` ya existe en `facilities.cpp` y la usa la operación 0x28, pero el comentario de `construction.cpp` la sigue marcando. Hay que ver si está completa;
+  - [ ] «no se reproduce» (115): repasar que ninguno toque el estado;
+  - [ ] «Sin comprobar con el oráculo» (347). Las de los ficheros del tick de ciudad están en marcha en `cloud/unchecked-branches`.
+- [ ] E: los subsistemas aparte: las batallas (abajo), los guiones de misiones (fase 5), la vista de la ciudad (fase 2) y las acciones del jugador (fase 5)
+- [ ] Los tres pasos del final del cargador del juego que ni p3vita ni el oráculo hacen: registrar los nombres de barco, revisar la ruta de cada barco y revisar las rutas comerciales (lo encontró `cloud/savegames`)
+- [ ] El comercio con el kontor (operación 0x1B)
+- [ ] Guardar las cartas y avisos nuevos en el buzón de cada comerciante como el juego (0x4D6530). El buzón ya se lee de la partida (`SaveGame::mail`, con los registros de las cartas antiguas en `SaveGame::mail_records`), y las cartas caducadas ya se quitan (0x4D6780). Pero las nuevas no se guardan, y la simulación lo consulta: el evento 0x16 no repite un aviso que siga vigente (42 días), así que sin esto llega antes de tiempo. Hacerlo junto con las cartas de la interfaz
+
+### Llegar a Gobernador
+
+El cargo más alto de la Liga Hanseática («Alderman» en la versión inglesa) es la meta del juego. El camino entero está en [formats/world_tick.md](formats/world_tick.md) §7 y §8: un alcalde con 120 de reputación pasa a candidato, la Hansa le ofrece encargos y, con tres cumplidos, se presenta a la elección.
+
+- [x] La candidatura: el tick del comerciante (0x4F75F0) pone [+0x37] = 1, y 0x5326E0 (con 0x532E30 y 0x515A60) encola una operación 0x86 y hasta cinco 0x85, una por tipo de encargo. Idéntica al juego con estados retocados en las 12 partidas (`tools/oracle/retouch.py`)
+- [x] Las operaciones 0x85 (0x53FD10: crea el encargo, un evento 0x32 sin comerciante, si no hay ya uno igual) y 0x86 (quita los encargos sin comerciante que ya no valen)
+- [x] Los encargos sin comerciante (evento 0x32): maduran unos 64 días y se dan a un comerciante de la IA candidato
+- [ ] Los encargos con comerciante (evento 0x32, 0x4EB0EB..0x4EBF0F, `alderman.cpp`): el principio (0x4EBF54), la comprobación hasta el plazo y, al cumplirse, [+0x37] + 1 (0x4EC354); con 4 se puede presentar
+  - [x] lo común (el principio, el plazo vencido con su castigo de reputación 0x4F9170, el encargo fallido) y los tipos 2 (cazar un barco pirata: se cumple cuando la batalla pone [+0x16] = 1) y 4 (una ciudad pequeña que llegue a N habitantes)
+  - [x] el tipo 1 (carretera entre dos ciudades), con los edificios 0x27 (0x521900 y 0x4FCBD0, solo ese camino). La IA nunca aporta materiales, así que su carretera siempre vence
+  - [ ] el tipo 3 (guarida pirata): hecho el refuerzo de los piratas (barcos nuevos, 0x5144A0 y 0x516170). Falta el ataque: la batalla al llegar un barco a la guarida (0x6130B0, 0x611D80, 0x5FBFE0), que el emulador no ejecuta. Va con la pieza 6 de las batallas
+  - [x] el tipo 0 (fundar una ciudad, `new_town.cpp`): al empezar crea una ciudad entera en plena partida (0x531D50: la plantilla `iso/towns/stadtplatz%.2u.tow`, el constructor, los candidatos, los capitanes, el astillero, las rutas y la matriz de tiempos de viaje) y su muralla (evento 0x39). La ciudad nueva sigue igual que en el juego los días siguientes
+  - [x] el desarrollo de la ciudad nueva (evento 0x2F, 0x4EA0D4, a los 180 días de fundarla). Con su primer edificio municipal llega la oficina de su alcalde si es de la IA o, sin alcalde, la operación 0x46 (0x535FD6), que hace alcalde al comerciante de la IA con más rango. Después, con 1000 habitantes y según su muralla, le da el mercado, y con muchos pobres encarga un prestamista. Idéntico al juego con estados retocados dirigidos a cada rama ([oracle.md](oracle.md), «Los encargos de la Hansa»)
+  - [ ] que se cumpla el de fundar. Se cumple cuando la ciudad tiene mercado, y eso solo lo da el evento 0x2F cuando la ciudad tiene su primer edificio municipal y pasa de 1000 habitantes.
+    - p3vita lo hace todo como el juego hasta el día 420: edificios municipales hacia el día 40, muralla, y empieza a crecer (272 habitantes).
+    - Medido con el código del juego en el emulador (`grow.sh`, partida 1): la ciudad se queda en 272 habitantes hasta el día 520 y sin edificios nuevos, también ejecutando todas las operaciones (empieza una segunda muralla que se atasca sin herramientas). El plazo del encargo es de unos dos años, así que en el emulador no parece llegar a cumplirse.
+    - Pendiente: medir más allá de 550 días (con el oráculo rápido ya cabe mejor; usar `--desde`) y ver si en el juego de verdad crece porque alguien le lleva mercancías.
+  - [ ] la ciudad nueva en el visor de la Vita (sin probar)
+  - [ ] por reescribir dentro de la fundación (`new_town.cpp`, marcadas «Por reescribir»):
+    - [x] 0x5462F0: el nodo de una instalación en la lista [0x9B4] de la ciudad (0x50FCA0, 0x50FE00). Era la única a la que se llega al fundar: cuando el aceite (mercancía 0xA) es de las que más faltan al elegir el sitio (0x532E30 añade el bit 0x40000). Idéntica al juego con el escenario `fundar_aceite`
+    - [ ] 0x545CE0 y 0x545F50: preparar una ciudad que ya existe (sus edificios y su mercado). Al fundar no se llega ([+0xF] = 0 en el registro)
+    - [ ] 0x4F99B0: la ciudad sin plantilla de mapa. Las 28 plantillas existen
+    - [ ] la elección del alcalde dentro de 0x531D50 (0x532063..0x5321C5, con el bit 0x40 de la situación). Al fundar la situación es 0
+- [x] Que el jugador coja un encargo (operación 0x4B, 0x53B440) y aporte materiales a la carretera (operación 0x3B, 0x53A3E0)
+- [x] La parte del jugador en el visor ([cloud/alderman-viewer.md](cloud/alderman-viewer.md); `src/p3data/hanse_tasks.cpp`). Con Cuadrado en una ciudad se abre el panel de la Hansa, que muestra:
+  - quién es Gobernador y la fecha de la próxima elección;
+  - si el jugador es candidato o qué le falta (ser alcalde y llegar a 120 de reputación);
+  - los encargos con su plazo, para coger uno (operación 0x4B, con los mismos bytes que la ventana del juego 0x5E87D0: {0x4B, jugador, evento});
+  - el avance del encargo cogido;
+  - en las ciudades de la carretera, lo que falta y lo que hay de cada material, para entregarlo (operación 0x3B, como la ventana 0x5F2A20: {0x3B, u16 evento, u16 cantidad, ciudad, jugador, mercancía}; la cantidad es la menor entre la elegida (1, 5, 50 o todo), lo que hay y lo que falta);
+  - un aviso con el resultado de cada elección.
+
+  Funciona con botones, teclado y táctil. `--debug-state mayor|candidate|materials|level4|alderman` pone al jugador en los estados a los que no llegan las partidas. Comprobado con 8 escenarios de `tools/oracle/retouch_player.py`, que encolan los bytes del visor en el juego (coger cada tipo de encargo, un segundo encargo rechazado, un jugador que no es candidato, las entregas con cada cantidad): 0 diferencias en las partidas 1 y 3. Compila para la Vita; falta probarlo en ella
+- [x] Comprobar la elección con el jugador de candidato. Con el jugador a nivel 4 y la elección adelantada al día siguiente, gana en las partidas 1 y 3, igual en el juego que en p3vita: 0 diferencias en 0x4D85C0 y 0x535760 (escenario `election_level4` de `retouch_player.py`). Antes perdía porque la elección llegaba 117 días después, con el estado ya cambiado. En el visor: `--debug-state election-tomorrow` ([cloud/alderman-viewer-2.md](cloud/alderman-viewer-2.md))
+- [x] El voto del jugador: la operación 0x3F (0x53AA10, `town_tick/votes.cpp`), que la ventana de la Hansa encola como {0x3F, jugador, fila}; sirve también para las votaciones de la dieta. Está en `run_operation` y en `OPERATIONS` del oráculo. Comprobado con 10 escenarios × 2 partidas, a 0 diferencias: votarse a sí mismo, a otro, dos veces, el día antes, el día después, con rango 3, una fila que no vale, y en la dieta sí, no y abstención
+- [x] La lista de candidatos: la página «elección» del panel (Select). Antes del día, con la misma función del juego (0x529700); el día de la elección, con sus votos. X vota
+- [ ] La candidatura a alcalde del jugador. «Aceptar la candidatura» no existe para Gobernador: el juego hace candidato al alcalde solo. La pregunta «Accept candidature?» es del ayuntamiento de la ciudad natal (0x5E387E, botones [+0x604] y [+0x6EC]) y parece la candidatura a alcalde (el evento 0x02, sus candidatos [0x6D4..0x6E7] y sus apoyos [0x6DC]). No se sabe aún qué encolan esos botones. Sin tarea por ahora
+- [x] La elección en la reunión de la Hansa (evento 0x20)
+- [ ] El final. Hecha la ventana, con los textos del juego («Oficina del Gobernador» y «… ha sido elegido Gobernador de la Liga Hanseática por N votos.»). Falta el vídeo `eldermann`, con los vídeos Bink. El objetivo de la partida (evento 0x0E) ya se comprueba
+- Las partidas de prueba no llegan a esto en 60 días (ningún alcalde comerciante llega a 120), así que se comprueba con estados retocados, unos pocos dirigidos a cada rama
+
+### Piratas, persecuciones, encuentros y batallas
+
+El estudio está en [cloud/battles.md](cloud/battles.md).
+- Hay dos clases de batalla: en el mar (0x1E98 bytes) y en una ciudad, que incluye la guarida pirata (0x2F24). Caben hasta 255, en 0x6E55D0, y se guardan en la partida.
+- Sin la interfaz son 249 funciones (148 KB) en el mar y 41 (50 KB) en la ciudad.
+- advance_time solo las empieza. Las hace avanzar la operación 0x94, que encola el bucle de tiempo real (0x546620 → 0x612DB0) con pasos sacados del reloj: de media, 84 por tick a cualquier velocidad.
+
+Decidido: p3vita y el oráculo harán avanzar las batallas con una operación 0x94 de **84 pasos después de cada tick en que haya batallas**. El juego no es determinista aquí, porque depende del reloj real, así que cualquier regla fija es una elección. El resultado de una batalla automática no depende de cómo se repartan los pasos; solo cambia el tick en que acaba.
+
+El plan, por piezas, cada una detrás de su ajuste hasta comprobarla:
+1. [x] Las tormentas (arriba).
+2. [ ] Los piratas que se mueven, sin batallas. Hecho en su mayor parte, detrás de `Sailing::set_pirates`, `town_oracle.py --pirates` y `tick_probe --pirates`, que de momento van apagados por omisión ([cloud/battles.md](cloud/battles.md) §7; `src/p3data/battle/pirates.cpp`):
+   - [x] el estado 0x12 del convoy pirata (0x507A65), con el nuevo rumbo (0x505C90), la elección del blanco (0x50D9E0), la decisión de atacar (0x515360), la velocidad de batalla (0x612930), los bajos (0x50E340) y 0x5159C0;
+   - [x] los puntos de cada ciudad entre los que eligen adónde ir (0x448780, al cargar). El oráculo se lo saltaba; con `--pirates` lo ejecuta (2,8 s más por carga) y p3vita calcula lo mismo;
+   - comprobado: 0 diferencias llamada a llamada en las 12 partidas durante 7 días (9455 llamadas a 0x505C90, 8064 a 0x50D9E0, 5965 a 0x515360 y 3265 a 0x612930), y el mundo entero con los piratas encendidos, 0 diferencias en las 12 partidas;
+   - regla provisional, igual en p3vita y en el oráculo, mientras no haya batallas: un pirata que iría a atacar (0x507BE9 → 0x50BC40) sigue como si no tuviera blanco; un convoy que acaba su ruta en una ciudad (0x507C0B) sigue como si navegara; y uno que llega a su guarida no se deshace (0x505FF1 → 0x506029). `--pirates` se queda apagado hasta que la pieza 3 quite el primer salto;
+   - [ ] deshacer el convoy en la guarida (0x514B80). Mueve los barcos al «pool» de cada pirata, y 0x515DA0 planifica en él los edificios de la guarida; ese «pool» todavía no lo guardan ni `SaveGame` ni las regiones del oráculo. Hacerlo antes de la pieza 3;
+   - [ ] estados retocados para las ramas que las partidas no recorren;
+   - [ ] los estados 0x11 y 0x12 en el mar (0x507022 y 0x507099), 0x517170, la rama pirata de 0x5017F0, el ataque del evento 0x1E (0x5063C0) y la actualización de los objetos piratas (0x514000), con la operación 0xB5: lo que de esto no haya quedado ya cubierto.
+3. [ ] La batalla automática en el mar. Ya se sabe cómo es en memoria una batalla viva: el objeto de 0x1E98 bytes, una copia de 0x180 bytes de cada barco que lucha, varias listas y una docena de bloques de la escena ([cloud/battles.md](cloud/battles.md) §8). Antes de reescribirla hay que:
+   - hacer que el oráculo grabe todo eso como regiones, cambiando los punteros por índices;
+   - crear un `SaveGame::battles` que tick_probe lea y compare.
+
+   Después se reescriben unas 15 000 instrucciones, en el orden de §8:
+   - empezar y acabar: 0x50BC40, 0x605420, 0x50BFD0, 0x6079D0... (unas 7500 instrucciones);
+   - cada paso, la operación 0x94 con el método +0x14: 0x606CC0, 0x608F70, 0x6197F0... (unas 7000);
+   - un `SaveGame::battles` como memoria del juego, y las regiones de las batallas en el oráculo;
+   - la operación 0x9F.
+4. [ ] Las otras batallas en el mar: la persecución que alcanza al barco (0x50B250, también la operación 0x99) y la flota de la Hansa en una ciudad protegida (0x50BA80).
+5. [ ] Las batallas en la partida guardada: 0x611AE0 (leer), 0x611950 (escribir) y los métodos +0x10 (0x604600), +0x18 (0x608230) y +0xC (0x604220). Ahora p3vita guarda las batallas tal como las lee. Al interpretarlas, poner a cero los 3 bytes de relleno de cada entrada de la tabla del final, que el juego escribe sin inicializar (en la partida 7 son 0xCD).
+6. [ ] La batalla en una ciudad (los piratas contra una ciudad y la guarida pirata):
+   - 41 funciones (0x5FBFE0, 0x621770, 0x5FE7E0, 0x624950...);
+   - las operaciones que encola: 0x92, 0x95–0x98, 0x9A, 0x9B, 0xA0 y 0xB4;
+   - la geometría de la vista de la ciudad (0x58D030, 0x58B740), que el emulador no tiene;
+   - lo que cuelga de ella: la guarida 0x515C00, los edificios quemados de los eventos 0x25/0x26 y el ataque del encargo de la Hansa de tipo 3.
+7. [ ] La batalla que dirige el jugador: la ventana (0x41D9B0), el método +0x10 y 0x61A880 con sus controles, y las órdenes (operaciones 0x92, 0x93, 0x98 y 0xA0 desde la interfaz). Va con la interfaz.
+
+### Corregir los fallos del juego (opcional)
+
+Un ajuste (feature flag) **activado por omisión** con el que p3vita corrige los fallos que vayamos encontrando. Apagado, se comporta como el original, para jugar a la versión original y para las comprobaciones con el oráculo (que comparan con el juego tal cual).
+
+- [x] El ajuste:
+  - `fix_game_bugs()`, en `src/p3data/game_fixes.hpp`. Cada corrección va con `if (fix_game_bugs())` al lado del comportamiento original.
+  - En la librería está apagado, así que el oráculo, tick_probe y los tests comparan con el original sin tocar nada.
+  - El visor lo enciende por omisión desde su pantalla de **Opciones** (Start en la Vita, Escape en el PC), que también tiene «Salir del juego». Se guarda en `p3vita-settings.txt`, en la carpeta de datos (`ux0:data/p3vita/` en la Vita), y `--fix-game-bugs on|off` lo cambia por una vez.
+  - `tick_probe --fix-game-bugs` enseña qué cambian las correcciones frente al juego.
+  - Comprobado: con el ajuste apagado, el mundo entero da 0 diferencias en las 12 partidas. Encendido, solo cambia lo que corrigen (abajo). `tests/game_fixes_test.cpp` prueba las correcciones sin datos del juego.
+- Cada fallo se corrige en el fichero de la sesión que lo lleva; las que están en marcha lo hacen en sus ficheros.
+
+- [ ] **La carretera vencida del jugador** (0x4EAFE4, en 0x4EB25F). *(Por corregir en `alderman.cpp`, de `cloud/unchecked-branches`.)* Cuando al jugador humano se le vence el encargo de la carretera, el juego crea un encargo igual, ya empezado. Como su comerciante [+0xD] pone la ciudad [+0x10], que es un **índice de ciudad, no de comerciante**, y en sus materiales 0xFF y 0xFFFFFFFF (1023 de cada uno). Si ese índice es menor que el número de comerciantes (lo normal: 24 ciudades y unos 37 comerciantes):
+  - ese encargo no vence nunca: los tramos se hacen solos cada día y medio y, cerca del plazo, siempre tiene materiales para lo que falta, así que el plazo se alarga;
+  - la ciudad acaba con la carretera construida (los edificios 0x27 en las dos ciudades) sin que nadie haya aportado nada;
+  - al cumplirse, 0x4EC354 sube el [+0x37] del comerciante que tenga ese índice. Un comerciante cualquiera avanza en la candidatura a Gobernador sin haber hecho el encargo; si es el jugador, le cuenta un encargo que no hizo. Si ese comerciante no es candidato, pasa de 0 a 1 sin haber sido alcalde.
+
+  Si el índice no es menor que el número de comerciantes, el encargo cuenta como sin dar y se quita enseguida (las dos ciudades ya tienen el bit 0x8000). Corrección posible: no crear la copia, o crearla sin comerciante (0xFF). Otras rarezas del mismo encargo, también reproducidas: el plazo inicial (0x5326E0) cuenta los días como meses y lee la tabla de los meses (0x672D78) fuera de sus límites, hasta la entrada 129. Además, la operación 0x3B con un comerciante que no existe toma como cantidad que falta un puntero; esa no se reproduce, porque p3vita no hace nada.
+- [ ] **Las mejoras de las piezas de muralla** *(Por corregir en `construction.cpp`, de `cloud/unchecked-branches`.)* (la operación 0x22 de los tipos 0x34 y 0x35, 0x523D70, `construction.cpp`). Comparada con la de las torres (0x523830), que hace bien las cuentas:
+  1. Las herramientas se sacan de la oficina del comerciante con la cantidad de **madera** que falta: baja el contador de la madera, y la ciudad pierde de su almacén todas las herramientas y las paga enteras.
+  2. Lo que se le paga por ellas es 1,278 · 0: multiplica por la constante 0x66BC6C, que vale 0, en lugar de por lo sacado.
+  3. Al comerciante no se le paga nada de lo que sale de su oficina, aunque la ciudad lo apunta como gasto (0x529F90).
+
+  Los dos primeros son fallos casi seguro; el tercero lo parece. Sin comprobar con el oráculo: no sale en 30 días de las 12 partidas.
+- [ ] **Los del tick de ciudad** *(Por corregir en `population.cpp`, `businesses.cpp` y `construction.cpp`, de `cloud/unchecked-branches`.)* ([formats/town_tick.md](formats/town_tick.md) §8):
+  - el administrador de 0x51C360 solo cuenta la primera oficina;
+  - 0x5109B0 deja negativo [+0xC];
+  - la granja de grano compara al revés al contratar;
+  - 0x524920 escribe fuera de la rejilla con un muelle en la última columna.
+- [x] **La IA de los comerciantes con deudas** (0x4F5A20, al elegir qué edificio poner en venta, operación 0x28). La renta del mejor ([esp+0x2C]) no se inicializa, así que lo que hace depende de lo que haya quedado en la pila de la llamada anterior. En el oráculo suele ser 0 y nunca pone nada en venta; tras un impuesto extraordinario (evento 0x31) en el mismo tick, sí. p3vita usa 0. **Corregido con el ajuste**: el primer edificio con unidades pasa a ser el mejor, y los demás se comparan por renta por unidad. Con el ajuste encendido, en la partida tut0 un comerciante de la IA con deudas pone en venta un edificio que el original no ponía (operación 0x28 antes del préstamo 0x29) (`events.cpp`)
+- [x] **El capitán de la IA que se retira** (evento 0x27, 0x4DDC00). Si ya no está en su barco, el juego lo busca solo en el primer barco de cada comerciante y, si no es ese, se queda en un bucle sin fin (0x4DDCB0). p3vita quita el evento. **Corregido con el ajuste**: busca al capitán en todos los barcos de cada comerciante ([+0xE] y luego [+0x4]) (`events_towns.cpp`)
+- [x] **La operación 0x80** (en 0x536756; solo en partidas en red, la encola el evento 0x05 al empezar un encargo). Lleva en [+4] el registro de la cola que toca (la cabeza, el encargo que empieza) y los dos números al azar para sus [+0x12] y [+0x14]. Pero el manejador escribe siempre en el registro 0x80 (0x4D8DB0 con la constante 0x80), y solo si ese es un encargo, así que el encargo que empieza se queda con 0xFFFF en los dos. **Corregido con el ajuste**: usa el registro de [+4] (`operations.cpp`)
+- [x] **Las cartas antiguas** (0x4D6780). Una carta de tipo 0x86 o mayor corta la cadena del comerciante: el enlace a ella pasa a 0xFFFF. Si además es lo bastante vieja para quitarla, se pierde la lista libre del buzón: su cabeza pasa a 0xFFFF, el registro que tenía el enlace cortado. No sale en las partidas. **Corregido con el ajuste**: no se corta la cadena, así que la carta quitada va a la lista libre (`events_towns.cpp`; probado en `game_fixes_test`)
+- [ ] **El apellido de un comerciante en quiebra** *(Por corregir en `merchants.cpp`, de `cloud/unchecked-branches`.)* (0x4F5D80, operación 0x65). El apellido nuevo es ([0x6DD888] + día) módulo el índice del apellido del *último* comerciante (el registro que queda del bucle que marca los apellidos en uso), no módulo el número de apellidos. Si ese índice es 0, el juego divide entre cero (p3vita deja el apellido viejo), y la búsqueda de uno libre da la vuelta en ese índice. Corrección posible: usar el número de apellidos ([0x6DDB74])
+- [ ] **El ejército sitiador nuevo** *(Por corregir en `sieges.cpp`, de `cloud/unchecked-branches`.)* (0x629C60):
+  - no mira cuántos grupos caben, y con más de 0x7F se sale del ejército;
+  - si no encuentra las tres puertas, lee el registro de la dirección 0 (en el juego, un cuelgue);
+  - al sumar la fuerza de los objetivos cuenta las torres cerca de la puerta en obras, aunque 0x62B2B0 no las haya puesto de objetivo (lee entradas sin llenar).
+
+  No pasa en las partidas; p3vita lee un registro a 0 y no escribe fuera.
+- [ ] **El reloj de las batallas** (0x612DB0; sin confirmar). Mueve su tiempo [+0xC44] 40 ms por cada *paso* en lugar de por cada 40 ms consumidos, así que las batallas avanzan a la mitad de lo previsto (unos 50 pasos por tick a 60 fotogramas por segundo y 40 a 25) y su velocidad depende de los fotogramas. No cambia el resultado, solo lo que dura
+- [ ] **La batalla en una ciudad lee la vista de la ciudad** (*0x6E51AC, 0x58D030; sin confirmar). Toma su geometría de la ciudad que mira el jugador, no necesariamente de la atacada. Falta ver qué hace el juego cuando no coinciden
+- [ ] **El nombre de la ciudad natal al guardar** *(Por corregir en `savegame_write.cpp`, de `cloud/statistics`.)* (0x549D7D). El escritor copia en los ajustes de la partida ([+0x27]) el nombre de la tabla 0x6DDA00, que va por número de ciudad (0..39), pero usa el índice en la partida de la ciudad natal del jugador. En `1.pat` escribe «Cologne» (número 9) por Lübeck (índice 9, número 14). Seguramente es el nombre que sale en el menú de cargar; no comprobado. Reproducido en `update_settings`
+- [ ] **El relleno de las batallas** *(Por corregir en `savegame_write.cpp`, de `cloud/statistics` (o de las batallas, pieza 5).)* (0x611950). Cada entrada de la tabla del final de las batallas ocupa 8 bytes en el fichero; el lector solo guarda 5 (0x612A20 lee dos u32 y se queda con el byte bajo del segundo), y el escritor escribe 8, así que 3 bytes salen de lo que hubiera en la memoria (0xCD en la partida 7, 0 en el emulador)
+- [ ] **Los nodos del evento 0x34 cambian en cada carga y guardado** *(Por corregir en `savegame*.cpp`, de `cloud/statistics`.)* (0x4F3A40/0x4F39E0). El lector rellena dos veces el u16 [+0x6] con el tercer byte del nodo y se salta el cuarto; el escritor escribe el signo del byte bajo de [+0x6] y ese byte. Un nodo `b0 b1 b2 b3` se guarda como `b0 b1 signo(b2) b2`, y la lista siempre acaba en 0. Reproducido en `write_event_nodes`, igual que el juego
+- [ ] **La lista de nodos de cada ciudad** ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar): el escritor la escribe en orden y el lector pone cada nodo el primero. Si el orden no importa, no hace daño
+
 - [ ] Tests que comparen con el comportamiento documentado del original
 
 ## Fase 5: interfaz
@@ -158,16 +313,56 @@ Cada fase termina en un hito que se puede comprobar a simple vista.
 - [x] Barra superior en el visor con ciudad, año y habitantes
 - [x] Mercado: existencias, producción y consumo diarios de cada ciudad (de la partida)
 - [x] Precios de compra y venta con los umbrales guardados en la partida
-- [x] Precios idénticos al juego, comprobados con el oráculo (su propio código en un emulador de CPU, [oracle.md](oracle.md))
+- [x] Precios idénticos al juego, comprobados con el oráculo
 - [x] Mercado interactivo en la Vita: elegir mercancía y cantidad, comprar y vender con el barco del jugador
 - [x] Dificultad de comercio de la partida
 - [x] Mapa del mar: mandar el barco del jugador a una ciudad, verlo navegar con su ruta y comerciar al llegar
+- [x] Revisado con capturas en el PC lo que faltaba por confirmar en la Vita: los edificios de la partida, la barra de texto (cabe, con tildes), el panel del mercado (cabe; también el táctil), el mapa del mar y la navegación (ruta, llegada prevista, aviso al llegar). Falta verlo en la Vita
 - [ ] Rehacer la interfaz para 960×544 (16:9) con soporte táctil
+- [ ] Los nombres de las ciudades en el mapa del mar se ven blandos. Se dibujan con stb_truetype (suavizado, sin ajustar las letras a los píxeles) en marrón oscuro y sin contorno sobre un fondo con textura. Comparar con una captura del juego original (letra, tamaño, color, contorno, suavizado) e igualarlo
+- [ ] Una franja en los bordes de arriba y abajo del mapa del mar (parte de `Vollansichtskarte.bmp` que el juego seguramente tapa con su interfaz): parar la cámara antes
+- [x] El panel de la Hansa para el camino a Gobernador (fase 4, «Llegar a Gobernador»: lo hecho y lo que falta)
+- [ ] Los textos de la interfaz del juego. No están en el CPR, que solo tiene los nombres de ciudades, personas y barcos: están dentro de `Patrician3.exe`, en el idioma de cada instalación (el exe español es otro, de 2003). `src/p3data/game_texts.cpp` los lee al arrancar del exe de la instalación (reconoce el inglés de GOG 1.1 y el español) y en p3vita solo guarda dónde está cada texto, nunca el texto (`tests/game_texts_test.cpp`). En la Vita hay que copiar el exe a `ux0:data/p3vita/` (README).
+  - [x] el panel de la Hansa: los encargos y su descripción, la respuesta de la Hansa, la elección y la ventana del final;
+  - [ ] el resto del visor (mercado, barra, mapa del mar), que sigue con textos propios en español; con el exe inglés el panel mezcla idiomas. Hacerlo igual, buscando cada texto en las dos versiones.
+- [ ] Las acciones del jugador: la interfaz encola el resto de los 193 códigos de operación (comprar, vender, construir, contratar...)
+- [ ] Los guiones de los textos y las misiones. 0x511270 interpreta los textos del juego y, con el comando 0xFD, programa eventos 0x1B con un guion que ejecuta 0x4ECF64 (el intérprete). Se arranca desde la interfaz (la operación 0xC0 y otros dos caminos); en las partidas, los 0x1B llegan sin guion. El oráculo salta 0x511270 al cargar
 
 ## Fase 6: resto del juego
 
-- [ ] Batallas navales
-- [ ] Comerciantes de la IA y rutas automáticas
+- [ ] Las batallas navales (fase 4, «Piratas, persecuciones, encuentros y batallas»)
+- [ ] Las rutas comerciales automáticas, del jugador y de la IA (0x4D4DD0; tampoco se reproduce al borrar un barco, operación 0x0A)
 - [ ] Misiones, cartas y eventos (las cartas, con el buzón de la fase 4)
-- [ ] Partidas guardadas
+- [x] Guardar partidas como el juego ([cloud/savegames.md](cloud/savegames.md); `src/p3data/savegame_write.cpp`, `lz_compress.cpp`; `p3save write` y `p3save compress`; `--write` en `town_oracle.py` y `tick_probe`):
+  - el `.pat` en la versión 0x85, la misma que escribe el juego, comprimido con el compresor del juego reescrito (0x54C410); el `.pst`, con las estadísticas vacías;
+  - comprobado contra el escritor del juego (0x549CC0), byte a byte: 0 bytes distintos en 11 de las 12 partidas. En la 7 quedan 12 bytes de relleno de las batallas, que el juego escribe sin inicializar (ver los fallos del juego);
+  - lo mismo después de jugar 4 días;
+  - ida y vuelta: el lector del juego y el de p3vita cargan lo que escribe p3vita, con 0 diferencias;
+  - el compresor da los mismos bytes que el del juego en las 12 partidas;
+  - estados retocados para lo que las partidas no tienen: listas de asedio, el mapa de un pirata, encargos, eventos 0x34, rutas comerciales y buzones;
+  - de paso, dos fallos de p3vita al leer, arreglados: saltaba 16 bytes por entrada en los eventos 0x1B en vez de 4, y dejaba vacíos los nombres de los jugadores en 10 de las 12 partidas.
+
+  Falta:
+  - [ ] las estadísticas de verdad del `.pst`, cuando se reescriban las estadísticas diarias (abajo);
+  - [ ] los nombres de barco que añada el jugador durante la partida;
+  - [ ] el objeto opcional del mundo (0x533DA0): ninguna partida lo tiene y p3vita lo rechaza al leer. Reescribirlo solo si aparece una partida que lo tenga
+- [ ] Las estadísticas diarias para las gráficas (0x54DE90): ni p3vita ni el oráculo las hacen. Se guardan en el `.pst`
 - [ ] Vídeos Bink (FFmpeg) y audio MP3
+
+## Herramientas y comprobaciones
+
+- [x] Oráculo unas 4 veces más rápido (`cloud/oracle-speed`, [cloud/oracle-speed.md](cloud/oracle-speed.md)):
+  - `regions()` lee cada bloque una vez, y `write_diff` compara por bloques de 4 KB;
+  - el Recorder se salta la foto de antes de una llamada cuando nada puede haber cambiado (`P3_ORACLE_CHECK=1` la hace igualmente y la compara);
+  - tick_probe compara con `memcmp`;
+  - el PC se compila con `-O2 -fwrapv -fno-strict-aliasing` por omisión.
+
+  `world.sh 7` en las 12 partidas: 98 s (antes, 392 s), con las grabaciones idénticas byte a byte
+- [x] Medir el estado de cada parte: `re/emu/sesion5/coverage_parts.py` (la tabla de «Estado por partes», arriba). A diferencia de `callgraph.py`, sigue el cuerpo real de cada función, y además poda los gráficos del asedio (0x62BE90, 0x62C730...) y la ventana del final (0x4220B0). Con `coverage_parts.py RUTA PARTE` lista las entradas más grandes a lo que falta. Pendiente: que siga también las tablas de métodos, como el grafo de las batallas (`re/battles/graph.py` de p3vita-datos)
+- [ ] Arreglar el modo «solo ciudades» de `town_oracle.py`. Sin `--barcos` (como lo lanza `scripts/tick-probe.sh` sin `P3_SHIPS`) se para en la primera foto con `UC_ERR_READ_UNMAPPED` en las rutas (región Q). Arreglo: grabar Q solo con `--barcos`, o limpiar el [+0x24] de los barcos al cargar sin navegación
+- [ ] Más velocidad para el oráculo (estimaciones en [cloud/oracle-speed.md](cloud/oracle-speed.md)):
+  - `regions()` en C: un 25–30 % menos de oráculo;
+  - lanzar tick_probe a la vez que el oráculo por una tubería en `world.sh`: un 15 % menos en el PC;
+  - saltarse la foto de después en las llamadas que no escriben nada;
+  - comparar en tick_probe solo las regiones que cambian.
+- [ ] Pasar al inglés lo que aún está en español en el repositorio, menos este documento: los docs, las opciones y mensajes de las herramientas, los nombres de los escenarios, los scripts de `re/` y el HANDOFF. La tarea es `tasks/english.md` de p3vita-datos, cuando estén juntas todas las ramas

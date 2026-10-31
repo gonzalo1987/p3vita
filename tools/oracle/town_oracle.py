@@ -42,7 +42,7 @@ Formato del fichero (enteros little endian):
 
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
        [--desde DÍA] [--max N] [--semilla S] [--cpr p2arch0_eng.cpr] [--barcos DATOS [--sin-ia] [--sin-convoyes]
-       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms]]
+       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms] [--pirates]] [--write OUT]
 La función 51ba10 graba los ticks de ciudad enteros.
 
 Con --cpr (o si DATOS/scripts tiene los ficheros), la carga crea también el
@@ -90,6 +90,9 @@ de scripts/ (--cpr). Para repetir el mundo con tick_probe --continuo hay que
 grabar también 4f7bb0 y las piezas que se ejecuten:
 51ba10,4f7bb0,506720,535760,5315c0,535450,52d7d0,6349f0,633a90,4d85c0
 (535760, el ejecutor, o 537670, solo las órdenes de zarpar, pero no las dos).
+With --write OUT, after the days it runs the game's save code on the state
+reached and writes the uncompressed .pat (write_oracle.py), to compare with
+tick_probe --write.
 Con --sin-ia, los barcos como en sail_oracle.py: en puerto solo los estados
 1, 2, 3 y el 0 de los jugadores humanos, y las operaciones encoladas no se
 ejecutan.
@@ -112,7 +115,7 @@ UPDATE_SHIPS = 0x506720
 SET_SAIL = 0x537670  # operación 0x00
 EXECUTOR = 0x535760  # ejecuta una operación encolada (thiscall sobre ella)
 EXECUTOR_MAGIC = 0x504F3350  # «P3OP»: tras la operación en la pila, la marca de las llamadas del oráculo
-OPERATIONS = (0x00, 0x0A, 0x12, 0x13, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x28, 0x29, 0x2C, 0x37, 0x38, 0x3B, 0x46, 0x48, 0x4B, 0x60, 0x61, 0x64,
+OPERATIONS = (0x00, 0x0A, 0x12, 0x13, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x28, 0x29, 0x2C, 0x37, 0x38, 0x3B, 0x3F, 0x46, 0x48, 0x4B, 0x60, 0x61, 0x64,
               0x65, 0x67, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86,
               0x87, 0x8E, 0xB8)  # las que se ejecutan por omisión
 UPDATE_DATE = 0x5310D0
@@ -167,6 +170,16 @@ ENCOUNTERS = 0x5079DA  # cada 8 ticks, 0x5053C0 (encuentros): se salta
 # Unless --no-storms, 0x5053C0 (the storms) runs; its two writes to the sea map
 # (*0x6CBDD8 + 0x2B22, UI) are jumped over.
 STORM_UI_JUMPS = {0x50596F: 0x505983, 0x5059CA: 0x5059E0}
+# With --pirates, the pirate convoys move (their state 0x12, 0x507A65) and the
+# per-town waypoints they choose from are computed at the load (0x448780, on
+# the navigation object). Until the battles are rewritten, the two places
+# where a battle would start are jumped over: the attack on the target
+# (0x507BE9 → 0x50BC40) goes on as if there were no target, and the end of the
+# route (0x507C0B → a town battle) goes on as if the convoy still sailed.
+# And, until 0x514B80 is rewritten, a convoy at its nest is not disbanded
+# (0x505FF1 → 0x506029, in 0x505C90: as if it were elsewhere).
+PIRATE_JUMPS = {0x507BE9: 0x507B23, 0x507C0B: 0x507B5F, 0x505FF1: 0x506029}
+PIRATE_WAYPOINTS = 0x448780
 EPILOGUE = 0x5079E8
 DOCKED_STATES = (0, 1, 2, 3, 4, 5)
 
@@ -277,7 +290,8 @@ def executor_trampoline(at):
 
 class TownOracle(SaveOracle):
     def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True, rest=(), cpr=None,
-                 operations=OPERATIONS, storms=True):
+                 operations=OPERATIONS, storms=True, pirates=False):
+        self.pirates = pirates and navdata is not None and convoys
         super().__init__(exe, save, navdata)
         self.fast_read = fast_reader(self.uc)
         self.navdata = navdata
@@ -303,6 +317,9 @@ class TownOracle(SaveOracle):
             self.uc.hook_add(UC_HOOK_CODE, self._sailing, begin=SAILING_DISPATCH, end=SAILING_DISPATCH)
             if convoys:
                 self.uc.hook_add(UC_HOOK_CODE, self._convoy, begin=CONVOY_DISPATCH, end=CONVOY_DISPATCH)
+                if self.pirates:
+                    for address, target in PIRATE_JUMPS.items():
+                        self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
                 if storms:
                     for address, target in STORM_UI_JUMPS.items():
                         self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
@@ -363,8 +380,14 @@ class TownOracle(SaveOracle):
         # se quedan quietos: sus ataques acaban en batallas, que el emulador no
         # puede ejecutar.
         from unicorn.x86_const import UC_X86_REG_EBP
-        if self.u8(uc.reg_read(UC_X86_REG_EBP)) >= self.counts()[2]:
+        if not self.pirates and self.u8(uc.reg_read(UC_X86_REG_EBP)) >= self.counts()[2]:
             uc.reg_write(UC_X86_REG_EIP, CONVOY_SKIP)
+
+    def _stub(self, uc, address, size, user_data):
+        # With --pirates, 0x448780 runs (save_oracle.py skips it).
+        if address == PIRATE_WAYPOINTS and getattr(self, 'pirates', False):
+            return
+        super()._stub(uc, address, size, user_data)
 
     def _jump(self, uc, address, size, target):
         uc.reg_write(UC_X86_REG_EIP, target)
@@ -1029,10 +1052,14 @@ def main():
     p.add_argument('--no-storms', action='store_true',
                    help='with --barcos, without the storms (0x5053C0, every 8 ticks), which run by default')
     p.add_argument('--storms', action='store_true', help='on by default now; kept for older scripts')
+    p.add_argument('--pirates', action='store_true',
+                   help='with --barcos, the pirate convoys move (without battles yet; see PIRATE_JUMPS)')
     p.add_argument('--resto', help='con --barcos, solo estas piezas del resto de advance_time (5315c0,535450,...); '
                    'por omisión, todas')
     p.add_argument('--sin-resto', action='store_true', help='con --barcos, sin el resto de advance_time')
     p.add_argument('--cpr', help='archivo de datos (p2arch0_eng.cpr) del que leer scripts/Namen*.txt')
+    p.add_argument('--write', metavar='OUT', help='at the end, the uncompressed .pat the game writes for the state '
+                   'reached (write_oracle.py)')
     p.add_argument('--operaciones', default=','.join(f'{x:x}' for x in OPERATIONS),
                    help='con --barcos, códigos (hex) de las operaciones encoladas que se ejecutan')
     a = p.parse_args()
@@ -1043,7 +1070,8 @@ def main():
     else:
         rest = [int(x, 16) for x in a.resto.split(',') if x]
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
-                   not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], not a.no_storms)
+                   not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], not a.no_storms,
+                   a.pirates)
     o.load()
     functions = [int(x, 16) for x in a.functions.split(',')]
     with open(a.out, 'wb') as f:
@@ -1057,6 +1085,14 @@ def main():
                 break
         f.write(b'E')
     print(f'{rec.count} muestras en {a.out}')
+    if a.write:
+        # What the load does and the oracle leaves out (the 12 bytes after the
+        # settings, the battles), only now, so that the days run as without
+        # --write; then the game's save code.
+        from write_oracle import prepare_game_object, write_files
+        prepare_game_object(o)
+        write_files(o, a.write)
+        print(f'save written in {a.write}')
 
 
 if __name__ == '__main__':

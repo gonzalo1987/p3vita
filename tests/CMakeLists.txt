@@ -39,3 +39,27 @@ target_link_libraries(sailing_test PRIVATE p3data)
 target_compile_options(sailing_test PRIVATE -Wall -Wextra)
 
 add_test(NAME sailing COMMAND sailing_test)
+
+add_executable(lz_test lz_test.cpp)
+target_link_libraries(lz_test PRIVATE p3data)
+target_compile_options(lz_test PRIVATE -Wall -Wextra)
+
+add_test(NAME lz COMMAND lz_test)
+
+add_executable(hanse_tasks_test hanse_tasks_test.cpp)
+target_link_libraries(hanse_tasks_test PRIVATE p3data)
+target_compile_options(hanse_tasks_test PRIVATE -Wall -Wextra)
+
+add_test(NAME hanse_tasks COMMAND hanse_tasks_test)
+
+add_executable(game_fixes_test game_fixes_test.cpp)
+target_link_libraries(game_fixes_test PRIVATE p3data)
+target_compile_options(game_fixes_test PRIVATE -Wall -Wextra)
+
+add_test(NAME game_fixes COMMAND game_fixes_test)
+
+add_executable(game_texts_test game_texts_test.cpp)
+target_link_libraries(game_texts_test PRIVATE p3data)
+target_compile_options(game_texts_test PRIVATE -Wall -Wextra)
+
+add_test(NAME game_texts COMMAND game_texts_test)

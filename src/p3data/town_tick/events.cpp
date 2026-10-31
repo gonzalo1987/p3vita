@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -671,7 +672,12 @@ bool fn_4f5a20(SaveGame& save, int merchant, uint32_t me) {
 		auto choose = [&](uint32_t record, uint32_t r, uint32_t u, uint32_t value) {
 			const uint32_t lhs = r * best_units;
 			const uint32_t rhs = best_rent * u;
-			if (lhs < rhs || (lhs == rhs && value < best_value)) {
+			// Game bug: the best rent [esp+0x2C] starts uninitialized; with 0 (what p3vita
+			// and usually the oracle have) nothing is ever chosen. With fix_game_bugs()
+			// the first building with units becomes the best, and the rest are compared
+			// by rent per unit as the game meant.
+			const bool first = fix_game_bugs() && best_units == 0 && u > 0;
+			if (first || lhs < rhs || (lhs == rhs && value < best_value)) {
 				best_record = record;  // Sin comprobar con el oráculo.
 				best_rent = r;
 				best_units = u;
