@@ -36,6 +36,15 @@ std::vector<uint8_t> write_savegame(SaveGame& save);
 // prepare_save, write_savegame and lz_compress: the bytes of the .pat file.
 std::vector<uint8_t> savegame_file(SaveGame& save);
 
+// The .pst the game writes (0x54D870, version 0xB) when its statistics
+// (0x6DFC90) are empty, as 0x54DDF0 leaves them, uncompressed (40 bytes).
+// The game loads it as it loads a save without .pst: with the statistics
+// empty. p3data doesn't keep the statistics (docs/cloud/savegames.md §7).
+std::vector<uint8_t> empty_statistics();
+
+// empty_statistics compressed: the bytes of the .pst file.
+std::vector<uint8_t> statistics_file();
+
 // What load_game_scripts reads for the writer: the town names
 // (SaveOpaque::town_names, scripts/NamenStaedte_eng.txt).
 void load_save_scripts(const CprArchive& archive, SaveGame& save);

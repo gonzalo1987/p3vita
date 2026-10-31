@@ -31,7 +31,8 @@ int usage() {
 		"Sin más argumentos, lista las ciudades de la partida (p. ej. missav/1.pat).\n"
 		"Con el número de una ciudad, muestra su almacén, producción y consumo.\n"
 		"comerciantes y barcos los listan; raw guarda la partida descomprimida.\n"
-		"write saves it again as the game does (version 0x85; with <out.raw>, also uncompressed).\n"
+		"write saves it again as the game does (version 0x85; with <out.raw>, also uncompressed),\n"
+		"and the .pst next to <out.pat> with empty statistics.\n"
 		"<partida> is read from the archive or, if it isn't there, from the disk.\n"
 		"compress compresses any file as the game does (lz_compress).\n");
 	return 2;
@@ -219,6 +220,15 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 		std::printf("%zu bytes (%zu uncompressed) in %s\n", packed.size(), raw.size(), argv[4]);
+		// The .pst next to it, as the game saves both: with empty statistics.
+		std::string pst = argv[4];
+		if (pst.size() > 4 && pst.compare(pst.size() - 4, 4, ".pat") == 0) {
+			pst.replace(pst.size() - 4, 4, ".pst");
+			if (!write_file(pst.c_str(), statistics_file())) {
+				return 1;
+			}
+			std::printf("empty statistics in %s\n", pst.c_str());
+		}
 		return 0;
 	}
 	const std::vector<std::string> names = load_town_names(*archive);

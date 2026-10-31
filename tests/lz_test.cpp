@@ -1,4 +1,5 @@
-// The LZ compressor (lz_compress.hpp) against the game's: the expected bytes
+// The LZ compressor (lz_compress.hpp) and the empty .pst (savegame_write.hpp)
+// against the game's: the expected bytes
 // are what 0x54C410 of Patrician3.exe writes for the same synthetic inputs
 // (computed in the emulator, as tools/oracle/write_oracle.py runs it), and
 // every output must decompress to its input.
@@ -9,6 +10,7 @@
 
 #include "p3data/lz.hpp"
 #include "p3data/lz_compress.hpp"
+#include "p3data/savegame_write.hpp"
 
 using namespace p3::data;
 
@@ -145,6 +147,13 @@ int main() {
 	round_trip(noise, "noise");
 	const std::vector<uint8_t> stored = lz_compress(noise.data(), noise.size());
 	check(stored.size() == noise.size() + 4, "noise is not stored");
+	// The empty .pst: what 0x54D870 writes after 0x54DDF0, and 0x54C410 of it
+	// (both computed in the emulator).
+	check(empty_statistics() ==
+			from_hex("0b00feaf00000000000000000000000000feaffeaf00feaffeaf00feaffeaf00feaffeaffeaffeaf"),
+		"empty_statistics is not what the game writes");
+	check(statistics_file() == from_hex("280000001600f0f70a207c38e0a4f14b14000000"),
+		"statistics_file is not what the game writes");
 	if (failures == 0) {
 		std::printf("lz_compress: ok\n");
 	}

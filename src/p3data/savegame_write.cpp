@@ -692,6 +692,26 @@ std::vector<uint8_t> savegame_file(SaveGame& save) {
 	return lz_compress(raw.data(), raw.size());
 }
 
+std::vector<uint8_t> empty_statistics() {
+	std::vector<uint8_t> out;
+	Writer w(out);
+	w.u32(0xAFFE000B);
+	for (int i = 0; i < 6; ++i) {
+		w.u16(0);  // [+0x0..+0xA]: the counters, and [+0xA] the objects of the list.
+	}
+	for (int i = 0; i < 4; ++i) {
+		w.u8(0);  // The series [+0xC..+0x18] (0x54D080) aren't there.
+		w.u32(0xAFFEAFFE);
+	}
+	w.u32(0xAFFEAFFE);  // No objects in the list [+0x1C] (0x54CBD0).
+	return out;
+}
+
+std::vector<uint8_t> statistics_file() {
+	const std::vector<uint8_t> raw = empty_statistics();
+	return lz_compress(raw.data(), raw.size());
+}
+
 void load_save_scripts(const CprArchive& archive, SaveGame& save) {
 	for (const char* path : {"scripts/NamenStaedte_eng.txt", "scripts/NamenStaedte_spa.txt", "scripts/NamenStaedte.txt"}) {
 		if (const CprEntry* entry = archive.find(path)) {

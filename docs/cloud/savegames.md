@@ -14,7 +14,7 @@ merging on the PC.
 | 3. Version 0x85 branches in the readers | done: only the free ship slots branch above 0x82 (§4) |
 | 4. C++ writer (`savegame_write.cpp`), byte for byte | done for the 12 saves (§2) |
 | 5. LZ compressor rewritten in C++ | done: same bytes as the game's in the 12 saves (§3) |
-| 6. After playing, round trip, `.pst` | round trip (§4), after playing (§5) and retouched states (§6) done; `.pst` pending |
+| 6. After playing, round trip, `.pst` | done: round trip (§4), after playing (§5), retouched states (§6), empty `.pst` (§7) |
 
 ## 1. How the game saves
 
@@ -320,13 +320,37 @@ byte isn't in the file), the optional object of [+0xE4] of the world
 (0x511C60 writes them if [+0xDA] > [+0xD8] of the names object; p3vita has
 no way to add them yet and writes u16 0, u16 0).
 
+## 7. The `.pst`
+
+The game doesn't need it to load a save: if 0x5476E0 doesn't find it, it
+empties the statistics (0x54DDF0) and goes on. p3data doesn't keep the
+statistics, so it writes the `.pst` the game writes when they are empty
+(`empty_statistics`, `statistics_file`; `p3save write` puts it next to the
+`.pat`): u32 0xAFFE000B, 6 u16 at 0, the four series absent (a byte 0 and
+the u32 0xAFFEAFFE each) and the final 0xAFFEAFFE, 40 bytes, 20 compressed.
+Same bytes as the game's writer (0x54D870 after 0x54DDF0) and its compressor
+in the emulator, and 0x54DA60 reads it back (counters 0, no series);
+`tests/lz_test.cpp` checks both. Writing it instead of nothing keeps an old
+`.pst` of the same name from being loaded with a save that isn't its own.
+
+What is missing to keep the real statistics (for the graphs of the game):
+the reader 0x54DA60 and the writer 0x54D870 with their parts: the 6 u16
+counters [+0x0..+0xA] (days, months, years of data), the four optional
+series [+0xC..+0x18] (0x54D080 and its size 0x54D050: blocks of k · 0x204
+bytes, k series of 129 u32, docs/formats/savegame.md §10), the list of
+objects of 0x2310 bytes from [+0x1C] (linked by [+0x230C]; 0x54CBD0 writes
+each, 0x54CB90 is its size, 0x54CA20 builds an empty one), and above all the
+daily update that fills them (0x54DE90, which neither the oracle nor p3vita
+runs). The `Tut*.pst` of `missav/` are version 8 and the game rejects them.
+
 ## For the roadmap
 
 - Loader: 0x549F40 does more than the readers (§1.3): 0x5131B0 for the
   ship names, 0x5048C0/0x517C10 for the ship routes, 0x4D60B0 for the trade
   routes. p3vita and the oracle don't do it.
-- The playable milestone can save with `savegame_file`; the `.pst` isn't
-  needed to load (the statistics start empty).
+- The playable milestone can save with `savegame_file` and `statistics_file`
+  (the `.pst` with empty statistics, §7). Keeping the real statistics needs
+  0x54DE90 and the `.pst` reader and writer (§7).
 
 ## For the inventory
 
