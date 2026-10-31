@@ -542,3 +542,22 @@ partidas (`world.sh 7`, 0 diferencias tras cada una):
 | 0x87, a child of a married merchant | `hijo:1` (married 300 days ago: one child, not a second right after; unmarried; married 100 days ago) | 1, 3, 5, 7 | equal |
 | 0x65, an AI merchant goes bankrupt | `quiebra:2` recording also `4f7bb0` (made mayor of his home town, with a debt owed to him and one he owes; and the player: nothing) | 1, 3, 5, 7 | equal |
 
+
+## Speed, the storms and the battle steps (2026-10-31)
+
+From the cloud sessions merged on 2026-10-31 (notes in
+[cloud/oracle-speed.md](cloud/oracle-speed.md) and
+[cloud/battles.md](cloud/battles.md)).
+
+- **About 4 times faster** (`cloud/oracle-speed`):
+  - `regions()` reads each block once and takes the pointers and counts from the blocks it has already copied;
+  - `write_diff` compares 4 KB blocks first;
+  - the `Recorder` skips the snapshot before a call when nothing can have changed (checked from the code bytes);
+  - `tick_probe` skips equal stretches with `memcmp`;
+  - the PC builds use `-O2 -fwrapv -fno-strict-aliasing` when there is no build type (before, `-O0`).
+
+  The `.probe` files are byte-identical to the old ones. `world.sh 7` in the 12 saves: 98 s on the PC (it was 392 s).
+- **`P3_ORACLE_CHECK=1`**: the `Recorder` takes every skipped snapshot anyway and compares it (it raises if it differs). Use it after changing the recording machinery or the trampolines. New regions go through the fast readers of `regions()` (`read`, `block`, `gu32`), not `self.uc.mem_read`/`self.u32`.
+- **The storms run by default** (0x5053C0 every 8 ticks, `src/p3data/battle/storms.cpp`), in p3vita (`Sailing`), `tick_probe` and `town_oracle.py`, as in the game; `--no-storms` turns them off in both (`--storms` is still accepted). The whole world for 7 days in the 12 saves: 0 differences with and without them. Recordings made before 61cdbfa have no storms: repeat them with `tick_probe --no-storms`. Retouched states: `tools/oracle/retouch_storms.py`.
+- **The battle steps (decided, not implemented yet)**: the game steps the battles with operation 0x94, queued by the real-time driver (0x546620 → 0x612DB0) with steps taken from the real clock, 84 per tick on average at any speed. p3vita and the oracle will queue **one operation 0x94 with 84 steps after each tick in which there are battles**. The result of an automatic battle doesn't depend on how the steps are cut, only the tick in which it ends.
+- **Known tool bug**: without `--barcos` (as `scripts/tick-probe.sh` runs it when `P3_SHIPS` is unset), `town_oracle.py` stops at the first snapshot with `UC_ERR_READ_UNMAPPED` in the routes (region `Q`): the ships' route pointers `[+0x24]` are the save's, which point nowhere without navigation. It was so before the speedup too. Fix: record `Q` only with `--barcos`, or clear `[+0x24]` on load without navigation.
