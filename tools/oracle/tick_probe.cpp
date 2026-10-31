@@ -7,6 +7,7 @@
 //          [--sin-convoyes] [--no-storms]]] [--max N] [--write OUT]
 // --no-storms: without the storms (0x5053C0), as town_oracle.py --no-storms.
 // --pirates: the pirate convoys move (battle/pirates.cpp), as town_oracle.py --pirates.
+// --no-disband: with --pirates, a convoy at its nest is not disbanded, as town_oracle.py --no-disband.
 // --storms (on by default now) is still accepted.
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
@@ -632,6 +633,7 @@ int main(int argc, char** argv) {
 	bool convoys = true;
 	bool storms = true;
 	bool pirates = false;
+	bool disband = true;
 	std::string load;
 	std::string cpr;
 	uint32_t only = 0;
@@ -653,6 +655,8 @@ int main(int argc, char** argv) {
 			storms = false;
 		} else if (arg == "--pirates") {
 			pirates = true;
+		} else if (arg == "--no-disband") {
+			disband = false;
 		} else if (arg == "--cpr" && i + 1 < argc) {
 			cpr = argv[++i];
 		} else if (arg == "--solo" && i + 1 < argc) {
@@ -712,6 +716,7 @@ int main(int argc, char** argv) {
 		sailing->set_convoys(convoys);
 		sailing->set_storms(storms);
 		sailing->set_pirates(pirates);
+		sailing->set_pirate_disbanding(disband);
 		g_sailing = sailing.get();
 		registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
 			sailing->update_ships();

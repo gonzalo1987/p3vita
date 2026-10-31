@@ -45,4 +45,18 @@ void load_pirate_nests(SaveGame& save);
 // 0x7F and the map (0x4F9680), or 0, and the [+0x8] entries of the pool.
 std::vector<uint8_t> pirate_nest_bytes(const SaveGame& save, size_t i);
 
+// 0x513BF0 (on the pirate object): takes an entry of pirate k's pool (the
+// head of the free ones, growing the pool by 0x20 when there is none) and
+// returns its index. Entry 0 gets the kind 0x24; any other is appended to the
+// list that starts at entry 0, with the kind 0x1B. x, y and [+0x2] become
+// 0xFF, [+0x6] and [+0x7] 0.
+size_t fn_513bf0(SaveGame& save, size_t k);
+
+// 0x515DA0 (on the pirate object): plans a building of pirate k's nest, while
+// it has fewer than [+0x16] / 200 − 2 (at most 0x20) and no convoy in
+// [+0x10]: a new entry of kind 0x1B, its orientation 0x20 or 0xE0 by the
+// tick, and, with a map, a place near entry 0 (0x4F9C80) where it is put
+// (0x4FB9C0).
+void fn_515da0(SaveGame& save, size_t k);
+
 }  // namespace p3::data

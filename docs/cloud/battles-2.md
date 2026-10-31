@@ -18,9 +18,24 @@ automatic sea battle).
   includes the new regions; 1 to 3 pirates with a pool in every save, no
   nest map in any).
 
+- **Part 2 (in progress): the disbanding at the nest (done):** 0x514B80,
+  0x515DA0 and 0x513BF0 rewritten (`battle/pirates.cpp`,
+  `battle/pirate_nests.cpp`); the third jump of the provisional rule
+  (0x505FF1) is gone with `--pirates` (`--no-disband` keeps it). Checked call
+  by call: the 12 saves' pirate convoys, 7 days (8 calls of 0x514B80 in 6
+  saves, 1097 of 0x505C90), and the retouched states of
+  `tools/oracle/retouch_pirates.py` (`disband`, `disband_map`, `plan`: every
+  block of the three functions), 0 differences; the world with `--pirates`
+  in saves 3, 4, 5, 6 × 7 days, 0 «distintas».
+
 ## Decisions for the user
 
-- None yet.
+- **The grid functions on a nest's map** (recommendation: for
+  cloud/unchecked-branches or whoever owns `town_tick/grid.cpp` and
+  `construction.cpp`): `fn_4f9c80` and `fn_4fb9c0` take a town; the nest's
+  map is the same object. This branch swaps it into town 0 for the call
+  (`on_nest_map`, exact but a trick). A version of both on a
+  `town_class1` view (the 0x6C bytes and the cells) would remove it.
 
 ## 1. The pirates' pool (part 1)
 
@@ -65,6 +80,73 @@ Checked:
   111 s); with `--pirates` in the oracle and tick_probe: 0 «distintas» (129 +
   129 + 118 s). «saltadas» as always (1, 0, 0, 0, 5, 0, 4, 0, 0, 2, 5, 7).
 
+## 2. The rest of piece 2
+
+### 2.1 Disbanding a convoy at its nest: 0x514B80, 0x515DA0, 0x513BF0
+
+In 0x505C90, a pirate convoy that goes home and whose guide is exactly at
+the approach point of its pirate's nest (table 0x6DDB90 + 0x34 · `[+0xE]`)
+leaves the list of convoys (the link takes its `[+0x8]`), its guide leaves
+the list by x (0x50D040) and **0x514B80** (on the pirate object) disbands
+it:
+- each ship (from the convoy's `[+0xA]`): `[+0x8]` = 0xFFFF, to the head of
+  the pirate's list of ships at the nest (`[+0x12]`, linked by the ship's
+  `[+0x6]`), position `[+0x1C]`, `[+0x20]` = 0x7FFFFFFF; its cargo is sold:
+  for each ware, `ftol(float(amount) · 0x673A18[ware])` (floats), added up
+  over all the ships, and the cargo emptied; with less than half its hull
+  (`[+0x14] >> 1 > [+0x18]`) its owner `[+0x15D]` becomes 0xFF; under level
+  2 (`[+0xF]`) it goes up one (0x51A750); with a captain and outside a
+  network game, operation 0x12 (the captain improves, 0x538A80) is queued
+  **for the convoy's guide** (if it has a captain), once per ship with a
+  captain;
+- the convoy is deleted (0x50A3D0), the pirate's `[+0x16]` (u16) grows by
+  the sum / 1000 and **0x515DA0** plans a building of the nest.
+
+0x515DA0: `left = [+0x16] / 200 − 2` (at most 0x20); nothing if the pirate
+has a convoy in `[+0x10]` (< the number of convoys); it walks the list from
+entry 0 and stops when it has counted `left` entries of kind 0x1B; otherwise
+**0x513BF0** takes an entry (kind 0x1B), its `[+0x7]` = 0x20 at an odd tick,
+0xE0 at an even one; without a map x and y stay 0xFF; with one, x = entry
+0's x − (tick & 3) + 0xF and y = entry 0's y − ([0x6DE4A4] & 3) + 0xF,
+0x4F9C80 looks for a place from there and, if found, 0x4FB9C0 puts the
+building. The game passes the arguments of 0x4F9C80 swapped (see «Game
+bugs»): it looks for a site of type 0x20 or 0xE0 (the orientation) and
+0x4FB9C0 then puts type 0x2A with that orientation, which never fits there.
+
+The map of the nest is a town_class1 object like a town's, and p3vita's
+grid functions (`fn_4f9c80`, `fn_4fb9c0`, town_tick files) work on a town:
+`on_nest_map` (`pirate_nests.cpp`) puts the nest's map in the place of town
+0's for the call and back. A cleaner way, for whoever owns those files: a
+version of them on `town_class1` + grid (see «Decisions»).
+
+What the saves reach (12 saves, 7 days, `--pirates`): 0x514B80 8 times (saves
+3, 4, 5, 6, tut1 once, 7 twice), each followed by 0x515DA0, which returns
+before taking an entry (the pirates have under 600 in `[+0x16]`); 0x513BF0
+never; no pirate has a map. Probes `514b80,515da0,513bf0,505c90`: 0
+differences (43 s for 8 saves).
+
+Retouched states, `tools/oracle/retouch_pirates.py` (new):
+- `disband`: every pirate convoy in state 0x12 at its nest without a route
+  and with cargo (wares 0, 9, 20, 23), the guide with captain 0, levels 0, 1,
+  2..., the last ship at 1/3 of its hull, the pirate with 0x3000 and a full
+  pool (0x513BF0 grows it). Saves 3 and 5: 5 disbandings, 0 differences.
+- `disband_map`: the same with a map for each pirate (a copy of town 0's).
+  Saves 3 and 4: 0 differences.
+- `plan`: direct calls of 0x515DA0 (through a trampoline: a call straight
+  from Python returns to the sentinel and the Recorder never closes its
+  sample) on each pirate at an odd and an even tick: with a convoy, no money,
+  no map, a map with entry 0 at the anchor, at (0, 0) and at (0xF0, 0xF0)
+  (outside the grid: 0x4F9C80 moves it to the anchor), with a town hall site
+  where the search starts and 3 rings away, and with the pool full. Saves 1,
+  3, tut4: 0x515DA0 18 + 54 + 18 calls, 0x513BF0 14 + 42 + 14, 0 differences.
+With them every block of 0x514B80, 0x515DA0 and 0x513BF0 has run (checked
+with `--blocks`) except the network-game test of 0x514B80.
+
+The oracle: `--pirates` no longer jumps over 0x505FF1 (`NO_DISBAND_JUMP`,
+with `--no-disband`); tick_probe `--no-disband`
+(`Sailing::set_pirate_disbanding`). Probes 0x514B80, 0x515DA0, 0x513BF0 in
+`probes_battle.cpp` (the pirate is found by its pointer in the globals).
+
 ## Changes to shared files
 
 - `src/p3data/savegame.cpp` (cloud/statistics): one line, at the end of the
@@ -88,6 +170,12 @@ Checked:
   `regions()` and in the header's list.
 - `tools/oracle/tick_probe.cpp`: load and dump of those regions.
 - `src/p3data/CMakeLists.txt`: the new file.
+- `src/p3data/sailing.hpp`: `fn_514b80`, `set_pirate_disbanding`,
+  `disband_`.
+- `tools/oracle/town_oracle.py`: `NO_DISBAND_JUMP` out of `PIRATE_JUMPS`,
+  the option `--no-disband` and the constructor argument `disband=True`.
+- Declared in my files (not changed): `fn_4f9c80`
+  (`town_tick/construction.cpp`), `fn_51a750` (`town_tick/alderman.cpp`).
 
 ## For the roadmap
 
@@ -100,14 +188,25 @@ Checked:
 ## Game bugs
 
 Certain:
-- None yet.
+- **0x515DA0 calls 0x4F9C80 with the type and the orientation swapped**:
+  `0x4F9C80(&x, &y, orientation, 0x2A, 0)` where its arguments are (x, y,
+  type, orientation, flag), while the next call is `0x4FB9C0(x, y, 0, 0x2A,
+  orientation)`. So the search is for a site of type 0xE0 (always fails:
+  ≥ 0x39) or 0x20 (a town hall site, class 0x1B), and 0x4FB9C0 then wants
+  the bits of type 0x2A (mask 0xA4) in a cell of class 0x1B, which never has
+  bit 2: **the nest's buildings are never put on its map**; only the entry
+  in the pool (with the place) remains. Reproduced. Fix: swap the two
+  arguments in the first call.
 
 Looks like one:
-- None yet.
+- **0x514B80 queues operation 0x12 (the captain improves) for the convoy's
+  guide once per ship that has a captain**, instead of for each ship: the
+  guide's captain improves up to n times and the others' never. Probably the
+  ship was meant. Reproduced.
 
 ## Done and left
 
-Done: part 1. Left: part 2 (0x514B80, 0x515DA0, the sea states, 0x517170,
+Done: part 1; of part 2, the disbanding (§2.1). Left: part 2 (the sea states, 0x517170,
 the pirate branch of 0x5017F0, 0x5063C0, 0x514000 with operation 0xB5,
 retouched states), part 3 (battle infrastructure) and part 4 (the battle).
 

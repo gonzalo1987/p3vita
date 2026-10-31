@@ -173,6 +173,10 @@ public:
 	bool fn_50d9e0(uint16_t ship);  // (ships object) A pirate's target.
 	bool fn_515360(uint16_t ship);  // Whether a pirate attacks its target now.
 	bool fn_505c90(uint16_t convoy, uint16_t& link);  // (ships object) A new course for a pirate convoy.
+	void fn_514b80(size_t pirate, uint16_t convoy);  // (pirate object) The convoy disbanded at the nest.
+	// Off: a pirate convoy at its nest goes on as if it were elsewhere (the
+	// third jump of the rule of piece 2; town_oracle.py --no-disband).
+	void set_pirate_disbanding(bool enabled) { disband_ = enabled; }
 	// 0x507A65: the state 0x12 of a pirate convoy in the walk of the convoys;
 	// true if it left the list (the walk goes on from the same link).
 	bool pirate_convoy(uint16_t convoy, uint16_t& link);
@@ -194,6 +198,7 @@ private:
 	bool convoys_ = true;
 	bool storms_ = true;
 	bool pirates_ = false;
+	bool disband_ = true;
 	std::vector<std::vector<uint32_t>> waypoints_;  // 0x448780 per town ([+0x20], [+0x24] of the navigation)
 	std::vector<bool> has_waypoints_;
 

@@ -1,0 +1,220 @@
+"""Retouched states for the pirates (docs/cloud/battles-2.md): records like
+town_oracle.py --barcos --pirates starting from the save changed after the
+load by a scenario, for the branches the saves don't reach. tick_probe
+(with --pirates) repeats each call from the game's state just before it
+(without --continuo: p3vita doesn't know the retouch).
+
+usage: python3 retouch_pirates.py <Patrician3.exe> <save.raw> <out.probe> <days> <scenario>
+       --barcos DATA --cpr p2arch0_eng.cpr [--functions F,F...] [--blocks]
+By default it records 514b80,515da0,513bf0,505c90. With --blocks it prints
+the blocks of the recorded functions that ran.
+
+Scenarios:
+  disband      every pirate convoy at sea in state 0x12 is put at its pirate's
+               nest without a route and with cargo (so 0x505C90 sends it home
+               and 0x514B80 disbands it): its guide gets captain 0, its last
+               ship 1/3 of its hull, the levels of its ships are 0, 1, 2...;
+               the pirate gets 0x3000 of [+0x16] and a full pool (0x513BF0
+               grows it)
+  disband_map  the same, and each pirate gets a map for its nest (a copy of
+               town 0's town_class1 object and grid), entry 0 of its pool at
+               the anchor [+0x5C], [+0x5D]
+  plan         direct calls of 0x515DA0 on each pirate, at an even and at an
+               odd tick: with a convoy in [+0x10] (it returns), with no money,
+               with 0x3000 and no map, with a map (entry 0 at the anchor, at
+               (0, 0) and at (0xF0, 0xF0), outside the grid; with a town hall
+               site, class 0x1B, where the search starts and 3 rings away),
+               and with the pool full
+"""
+import argparse
+import os
+import struct
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import town_oracle as to  # noqa: E402
+from town_oracle import WORLD  # noqa: E402
+
+SORT_X = 0x50D0C0  # thiscall on the ships object (index): the ship back in its place in the list by x
+PLAN = 0x515DA0
+FUNCTIONS = [0x514B80, 0x515DA0, 0x513BF0, 0x505C90]
+RANGES = {0x514B80: 0x514D36, 0x515DA0: 0x515E9D, 0x513BF0: 0x513D11, 0x505C90: 0x506270}
+TOWN_TABLE = 0x6DDB90
+TICK = 0x6DE4B4
+# A call from Python returns to SENTINEL, where the emulation stops before the
+# Recorder can close the sample: the direct calls go through a trampoline.
+PLAN_TRAMPOLINE = to.SENTINEL + 0x180
+
+
+def w8(o, a, v):
+    o.uc.mem_write(a, bytes([v & 0xFF]))
+
+
+def w16(o, a, v):
+    o.uc.mem_write(a, struct.pack('<H', v & 0xFFFF))
+
+
+def w32(o, a, v):
+    o.uc.mem_write(a, struct.pack('<I', v & 0xFFFFFFFF))
+
+
+def pirates(o):
+    """[(k, address of the pirate object)] of the pirates that exist."""
+    return [(k, o.u32(to.SHIPS + 0xC + 4 * k)) for k in range(5) if o.u32(to.SHIPS + 0xC + 4 * k)]
+
+
+def pirate_convoys(o):
+    """[(convoy, guide, members)] of the pirate convoys in the list in state 0x12."""
+    base = o.u32(to.SHIPS + 0x8)
+    ships = o.counts()[3]
+    out = []
+    c = o.u16(to.SHIPS + 0xEC)
+    while c < o.u16(to.SHIPS + 0xF6):
+        p = base + 0x3C * c
+        if o.u8(p) >= o.counts()[2] and o.u16(p + 0x12) == 0x12:
+            members = []
+            m = o.u16(p + 0xA)
+            while m < ships:
+                members.append(m)
+                m = o.u16(o.ship(m) + 0x6)
+            out.append((c, o.u16(p + 0x10), members))
+        c = o.u16(p + 0x8)
+    return out
+
+
+def full_pool(o, pirate):
+    w16(o, pirate + 0xA, o.u16(pirate + 0x8))
+
+
+def give_map(o, pirate):
+    """A map for the nest: a copy of town 0's town_class1 object and grid; entry
+    0 of the pool at its anchor [+0x5C], [+0x5D]."""
+    town = o.u32(WORLD + 0x68)
+    obj = bytes(o.uc.mem_read(town + 0x7A4, 0x6C))
+    width, height = struct.unpack_from('<ii', obj, 4)
+    cells = o.alloc(width * height)
+    o.uc.mem_write(cells, bytes(o.uc.mem_read(o.u32(town + 0x80C), width * height)))
+    m = o.alloc(0x6C)
+    o.uc.mem_write(m, obj[:0x68] + struct.pack('<I', cells))
+    w32(o, pirate, m)
+    pool = o.u32(pirate + 0x4)
+    w8(o, pool, obj[0x5C])
+    w8(o, pool + 1, obj[0x5D])
+    print(f'pirate at {pirate:#x}: map {width} x {height}, entry 0 at ({obj[0x5C]}, {obj[0x5D]})')
+    return m
+
+
+def disband(o, with_map=False):
+    captains = o.u16(to.SHIPS + 0xF2)
+    for c, guide, members in pirate_convoys(o):
+        k = o.u8(o.ship(guide) + 0x158)
+        pirate = o.u32(to.SHIPS + 0xC + 4 * k) if k < 5 else 0
+        if not pirate:
+            continue
+        nest = o.u8(pirate + 0xE)
+        x = o.u16(TOWN_TABLE + 0x34 * nest + 0x20)
+        y = o.u16(TOWN_TABLE + 0x34 * nest + 0x24)
+        g = o.ship(guide)
+        w32(o, g + 0x1C, x << 16)
+        w32(o, g + 0x20, y << 16)
+        w32(o, g + 0x24, 0)
+        o.call(SORT_X, [guide], ecx=to.SHIPS)
+        if captains and o.u16(g + 0x42) >= captains:
+            w16(o, g + 0x42, 0)
+        for n, m in enumerate(members):
+            s = o.ship(m)
+            w8(o, s + 0x136, o.u8(s + 0x136) & 0x7F)
+            w8(o, s + 0xF, n % 3)
+            for ware, amount in ((0, 1001), (9, 333), (20, 7), (23, 0x7FFF)):
+                w32(o, s + 0x54 + 4 * ware, amount + n)
+        last = o.ship(members[-1])
+        w32(o, last + 0x18, o.s32(last + 0x14) // 3)
+        w16(o, pirate + 0x16, 0x3000)
+        full_pool(o, pirate)
+        if with_map and not o.u32(pirate):
+            give_map(o, pirate)
+        print(f'convoy {c}: guide {guide} at the nest {nest} of pirate {k} ({x}, {y}), ships {members}')
+
+
+def disband_map(o):
+    disband(o, True)
+
+
+def plan(o):
+    _, build = to.trampoline(PLAN, 0)
+    o.uc.mem_write(PLAN_TRAMPOLINE, build(PLAN_TRAMPOLINE))
+    convoys = o.u16(to.SHIPS + 0xF6)
+    for tick in (0, 1):
+        w32(o, TICK, (o.u32(TICK) & ~3) | tick)
+        for k, pirate in pirates(o):
+            w16(o, pirate + 0x10, 0 if convoys else 0xFFFF)
+            o.call(PLAN_TRAMPOLINE, [], ecx=pirate)  # with a convoy (or none, if there are no convoys)
+            w16(o, pirate + 0x10, 0xFFFF)
+            w16(o, pirate + 0x16, 0)
+            o.call(PLAN_TRAMPOLINE, [], ecx=pirate)  # no money
+            w16(o, pirate + 0x16, 0x3000)
+            o.call(PLAN_TRAMPOLINE, [], ecx=pirate)  # no map
+            m = o.u32(pirate) or give_map(o, pirate)
+            pool = o.u32(pirate + 0x4)
+            anchor = bytes(o.uc.mem_read(m + 0x5C, 2))
+            for at in (anchor, b'\0\0', b'\xf0\xf0'):
+                o.uc.mem_write(pool, at)
+                o.call(PLAN_TRAMPOLINE, [], ecx=pirate)
+            # A town hall site (class 0x1B, what the type 0x20 looks for) where
+            # the search starts, and then one 3 rings away.
+            o.uc.mem_write(pool, anchor)
+            width, height = struct.unpack('<ii', bytes(o.uc.mem_read(m + 4, 8)))
+            cells = o.u32(m + 0x68)
+            x0 = (anchor[0] - (o.u32(TICK) & 3) + 0xF) & 0xFF
+            y0 = (anchor[1] - (o.u8(WORLD + 4) & 3) + 0xF) & 0xFF
+            for dx in (0, 3):
+                at = cells + (x0 + dx) * height + y0
+                keep = o.u8(at)
+                w8(o, at, 0x1B)
+                o.call(PLAN_TRAMPOLINE, [], ecx=pirate)
+                w8(o, at, keep)
+            full_pool(o, pirate)
+            o.call(PLAN_TRAMPOLINE, [], ecx=pirate)
+            print(f'pirate {k}: 0x515DA0 9 times at tick & 3 = {tick}')
+
+
+SCENARIOS = {f.__name__: f for f in (disband, disband_map, plan)}
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    p.add_argument('exe')
+    p.add_argument('save')
+    p.add_argument('out')
+    p.add_argument('days', type=int)
+    p.add_argument('scenario', choices=sorted(SCENARIOS))
+    p.add_argument('--barcos', metavar='DATA', required=True)
+    p.add_argument('--cpr', required=True)
+    p.add_argument('--functions', default=','.join(f'{x:x}' for x in FUNCTIONS))
+    p.add_argument('--blocks', action='store_true')
+    a = p.parse_args()
+    functions = [int(x, 16) for x in a.functions.split(',') if x]
+    o = to.TownOracle(a.exe, open(a.save, 'rb').read(), 1, a.barcos, rest=list(to.REST), cpr=a.cpr, pirates=True)
+    hits = set()
+    if a.blocks:
+        from unicorn import UC_HOOK_BLOCK
+        for lo in functions:
+            if lo in RANGES:
+                o.uc.hook_add(UC_HOOK_BLOCK, lambda uc, address, size, data: hits.add(address), begin=lo,
+                              end=RANGES[lo])
+    o.load()
+    with open(a.out, 'wb') as f:
+        f.write(b'P3PROBE1')
+        rec = to.Recorder(o, functions, f, 1 << 30)
+        rec.active = True
+        SCENARIOS[a.scenario](o)
+        for _ in range(a.days * 256):
+            o.advance_tick()
+        f.write(b'E')
+    print(f'{rec.count} samples in {a.out}')
+    if a.blocks:
+        print('blocks run: ' + ' '.join(f'{x:#x}' for x in sorted(hits)))
+
+
+if __name__ == '__main__':
+    main()

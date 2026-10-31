@@ -75,6 +75,44 @@ void register_probes_battle(ProbeRegistry& r) {
 		c.eax_mask = 0xFF;
 		return probe_sailing()->fn_505c90(*link, *link) ? 1 : 0;
 	};
+	// The pirate objects: ecx is one of *[0x6DD7AC + 4·k] (the globals of the
+	// state hold the game's pointers).
+	auto pirate = [](const SaveGame& save, uint32_t address) -> int {
+		for (int k = 0; k < 5; ++k) {
+			if (address != 0 && save.globals.u32(global::kShips + 0xC + 4 * uint32_t(k)) == address && save.pirates[size_t(k)]) {
+				return k;
+			}
+		}
+		return -1;
+	};
+	// 0x513BF0: thiscall on a pirate object; returns the address of the entry.
+	r[0x513BF0] = [pirate](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int k = pirate(save, c.ecx);
+		if (k < 0) {
+			return kBad;
+		}
+		fn_513bf0(save, size_t(k));
+		c.eax_mask = 0;
+		return 0;
+	};
+	// 0x515DA0: thiscall on a pirate object.
+	r[0x515DA0] = [pirate](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int k = pirate(save, c.ecx);
+		if (k < 0) {
+			return kBad;
+		}
+		fn_515da0(save, size_t(k));
+		return std::nullopt;
+	};
+	// 0x514B80: thiscall on a pirate object, the convoy.
+	r[0x514B80] = [pirate](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int k = pirate(save, c.ecx);
+		if (k < 0 || !probe_sailing() || (c.args[0] & 0xFFFF) >= save.convoys.size()) {
+			return kBad;
+		}
+		probe_sailing()->fn_514b80(size_t(k), uint16_t(c.args[0]));
+		return std::nullopt;
+	};
 	// 0x447580: thiscall on the navigation object (the address of the ship's
 	// route [+0x24], the storm and the ship as packed points, the first point
 	// far from the storm, the point the ship goes to, whether the route is its
