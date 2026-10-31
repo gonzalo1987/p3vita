@@ -5,6 +5,63 @@ are written as the work goes; the sections "For the roadmap", "For the
 inventory" and "Game bugs" are meant to be moved into the shared docs when
 merging on the PC.
 
+## Summary
+
+p3vita now writes the save (`.pat`) the way Patrician III does: the game's
+save function (0x5472F0) and every writer under it are rewritten in
+`src/p3data/savegame_write.cpp` (`prepare_save`, `write_savegame`,
+`savegame_file`), the game's LZ compressor in `src/p3data/lz_compress.cpp`,
+and the `.pst` is written as the game writes it with empty statistics. The
+game writes version 0x85; p3vita now reads 0x82 to 0x85. Checked against
+the game's own code in the emulator (`write_oracle.py`), on top of main at
+61cdbfa (fast oracle, storms on):
+
+1. Byte for byte right after loading (`scripts/write-check.sh`): 0
+   different bytes in 11 of the 12 saves of `missav/`; in save 7, 12 bytes
+   of padding that the game itself writes without initializing (battles).
+2. After 4 days of the whole world (`scripts/write-after-days.sh 4 1 3 7`):
+   0 different calls, and the same 0 / 0 / 12 different bytes.
+3. Round trip (`scripts/write-reload.sh`): the game's readers load what
+   p3vita writes and p3vita loads it the same, 0 differences in the 12
+   saves.
+4. Compression: the game's compressor gives the same bytes as p3vita's on
+   the 12 saves (and on 5 synthetic inputs in ctest).
+5. Retouched saves for every branch the 12 saves don't reach, including the
+   mailboxes of 0x4D6780 (`scripts/write-retouched.sh` on 1, 3, tut4): load
+   0 differences, 0 different bytes.
+6. The whole world, `world.sh 7` in the 12 saves in three batches: 0
+   «distintas» (370 s). Built for the Vita (VPK, 1 min 17 s).
+
+Game bugs found and reproduced: the wrong hometown name in the settings of
+every save ("Cologne" for Lübeck), the uninitialized padding of the
+battles, the nodes of the events 0x34 that change at each load and save,
+and the notices of type ≥ 0x86 that cut a merchant's list and can lose the
+free list. Two bugs of p3vita's reader fixed (events 0x1B, names).
+
+## Decisions for the user
+
+1. **The 12 bytes of save 7.** p3vita keeps the battles as in the file, so
+   it writes the original 0xCD padding where the game (in the emulator)
+   writes 0. Recommendation: leave it, and let the `battles` task zero bytes
+   5..7 of each entry of the battles' table when it parses them (§2.1).
+2. **ctest has 8 tests now** (`lz_test`). Recommendation: change the "7 of
+   7" of the README of p3vita-datos and of `build.sh` when merging.
+3. **The loader steps p3vita and the oracle don't do** (§1.3: the ship
+   names in the names object, 0x5048C0/0x517C10 checking the ship routes,
+   0x4D60B0 checking the trade routes). Recommendation: a small task for
+   the loader; it isn't needed for saving, and `tick_probe --carga` can't
+   see it because the oracle skips it too.
+4. **The `.pst`.** p3vita writes it with empty statistics (what the game
+   loads when there is none). Recommendation: keep it so until the daily
+   statistics (0x54DE90) are rewritten (§7).
+5. **The optional world object of 0x533DA0** (none of the saves has it):
+   p3vita refuses a save that has it. Recommendation: rewrite it only if a
+   save with it appears.
+6. **Two loaders of the town names**: `load_town_names` (font.cpp, UTF-8,
+   Spanish first, for showing them) and `load_save_scripts` (Latin-1, the
+   English file first, as the English exe, for the writer).
+   Recommendation: keep both; the writer needs the bytes the exe uses.
+
 ## Status
 
 | Part | State |
@@ -15,31 +72,12 @@ merging on the PC.
 | 4. C++ writer (`savegame_write.cpp`), byte for byte | done for the 12 saves (§2) |
 | 5. LZ compressor rewritten in C++ | done: same bytes as the game's in the 12 saves (§3) |
 | 6. After playing, round trip, `.pst` | done: round trip (§4), after playing (§5), retouched states (§6), empty `.pst` (§7) |
-| Whole world at the end | `SAVES='1 3 5 7' world.sh 7`: 0 «distintas» (§8) |
+| Merge of main 61cdbfa, all checks again | done (§8) |
 
-In short, checked:
-1. Byte for byte against the game right after loading: 0 different bytes
-   in 11 of the 12 saves; in save 7, 12 bytes of padding the game writes
-   without initializing (battles, "Game bugs").
-2. The same after 4 days of the whole world (saves 1, 3, 7): the same
-   result.
-3. Round trip: the game's readers load what p3vita writes (v0x85) and
-   p3vita loads it the same: 0 differences in the 12 saves; the game and
-   p3vita save it again the same.
-4. Compression: the game's compressor rewritten; same bytes as the game's
-   in the 12 saves.
-Plus retouched saves for every branch the saves don't reach (0 differences),
-and the `.pst` with empty statistics, the same as the game's.
-
-What is left (none of it is needed to save a game the game loads):
-- The real statistics of the `.pst` (§7).
-- The battles are kept as they are in the file (the `battles` task).
-- The optional object of [+0xE4] of the world (0x533DA0/0x533D10): p3vita
-  refuses a save that has it; none of the saves has it.
-- Ship names added by the player during a game (§6).
-- `fn_4d6780` in `town_tick/events_towns.cpp` can call
-  `expire_merchant_mail` (the local session's file, not changed).
-- The loader steps of §1.3 (not part of this task).
+What is left (none of it is needed to save a game the game loads): the real
+statistics of the `.pst` (§7), the battles (kept as in the file; the
+`battles` task), the optional object of [+0xE4] of the world, ship names
+added by the player during a game (§6), and the loader steps of §1.3.
 
 ## 1. How the game saves
 
@@ -47,9 +85,8 @@ The save function is **0x5472F0** (thiscall on the game object 0x6DF2F0, the
 same `ecx` the loader 0x5476E0 gives to 0x549F40; one argument). In order:
 
 1. For each merchant `i < [0x6DE4AA]`: **0x4D6780(i)** on the mailbox
-   0x6DD730 (expires old notices; p3vita had it as a stub, `fn_4d6780` in
-   `town_tick/events_towns.cpp`, because the mailboxes of the saves are
-   empty; now rewritten whole as `expire_merchant_mail`, §2.3).
+   0x6DD730 (expires old notices: `fn_4d6780` in
+   `town_tick/events_towns.cpp`, the local session's, §2.3).
 2. Builds the path (`Save\Ein\`, `Save\Kam\` or `Save\Mehr\` from byte
    [+0xD] of the settings, then the name, then `.pat`) and opens it with
    `CFile` (0x653C1D, mode 0x9001).
@@ -169,9 +206,9 @@ The `.pst` is optional for loading: if it isn't found, 0x5476E0 calls
 
 - `src/p3data/savegame_write.{hpp,cpp}`: `prepare_save` (0x4D6780 for each
   merchant), `write_savegame` (0x549CC0, the uncompressed `.pat`),
-  `savegame_file` (the three, compressed), `expire_merchant_mail` (0x4D6780)
-  and `load_save_scripts` (the town names, called from
-  `load_game_scripts`).
+  `savegame_file` (the three, compressed), `empty_statistics` and
+  `statistics_file` (the `.pst`, §7), and `load_save_scripts` (the town
+  names, called from `load_game_scripts`).
 - `src/p3data/lz_compress.{hpp,cpp}`: `lz_compress`, the game's compressor (§3).
 - `SaveOpaque` in `savegame.hpp` (`SaveGame::opaque`): what p3vita read and
   threw away before and the writer needs: the ten lists of each merchant,
@@ -230,18 +267,19 @@ saves after the changes to `savegame.cpp`.
   empty (saves 3–7 and the five tutorials) `parse_names` left
   `custom_names` empty.
 
-### 2.3 0x4D6780 (expire the notices of a merchant)
+### 2.3 0x4D6780 and the notices with a record
 
-Rewritten whole in `expire_merchant_mail`: the age of each notice of the
-merchant's list (`tick − ((year·365 + month start[month & 0x7F] + day −
-1) << 8)`, table 0x672D78) against a limit by the class of its type
-(0x6C0198): 0 → 0; 1 → the merchant's choice [+0x38] (table 0x6C0220:
-never, 40, 20, 10, 5 days); 2 → never for 0x46, else [+0x39]; 3 → 7 days
-for 0x11, else [+0x3A]; 4 → 7 days for 0x0F and 0x10, 28 for 0x72, for 0x71
-never until the u32 [+0x4] of its block, else never. Expired notices are
-emptied (0x51AAB0) and go to the head of the free list [0x6DD734]. The
-mailboxes of the merchants are empty in the 12 saves, so only retouched
-states will reach it (pending).
+`prepare_save` calls `fn_4d6780` (town_tick/events_towns.cpp), the local
+session's rewrite of 0x4D6780, checked call by call there (scenarios
+`fiesta_ciudad` and `cartas`); my own copy (`expire_merchant_mail`) was
+removed when merging main. The notices of types 0x3C..0x40 and 0x71 carry a
+16-byte record that the simulation keeps as live state
+(`SaveGame::mail_records`, region L of the oracle); the writer writes that
+record and, after it, its [+0x0] bytes, which only the file has
+(`SaveOpaque::mail_extras`). The retouched saves (§6) give merchant 0 a list
+of 9 notices of every class (one 0x71 kept by the tick of its record) and
+merchant 2 one that loses the free list: the game's 0x4D6780 and
+`fn_4d6780` leave the same bytes.
 
 ## 3. The compressor
 
@@ -368,13 +406,29 @@ each, 0x54CB90 is its size, 0x54CA20 builds an empty one), and above all the
 daily update that fills them (0x54DE90, which neither the oracle nor p3vita
 runs). The `Tut*.pst` of `missav/` are version 8 and the game rejects them.
 
-## 8. The whole world at the end
+## 8. After merging main (61cdbfa)
 
-The changes to `savegame.cpp` touch the loader, so at the end:
-`SAVES='1 3 5 7' bash re/emu/sesion5/world.sh 7`: 10 functions in each save,
-**0 «distintas»** in the four; «saltadas» 1, 0, 5 and 4 (the same as in the
-README of p3vita-datos); 718 s here. The full check of the 12 saves is left
-for the PC when merging.
+Main brought the fast oracle, the storms on by default and the local
+session's work. Conflicts in `savegame.cpp`/`.hpp`: the notices with a
+record (§2.3), the first names of `load_game_scripts` (kept as they are;
+`load_save_scripts` only reads the town names), and the usage lines of
+`tick_probe.cpp` and `town_oracle.py` (`--no-storms` and `--write`). All the
+checks again:
+
+| Check | Result | Time |
+|-|-|-|
+| `write-check.sh`, 12 saves | 0 different in 11, 12 (battles) in save 7; compressor equal in 12 | 30 s |
+| `write-reload.sh`, 12 saves | load: 0 differences in 12 | 23 s |
+| `write-retouched.sh` 1, 3, tut4 | load 0 differences; 0 different bytes (955 977, 1 077 484, 956 826) | 4 s each |
+| `write-after-days.sh 4 1 3 7` | 0 different calls; 0, 0, 12 different bytes (951 322, 1 072 935, 1 005 238) | 59 s |
+| `world.sh 7`, `1 2 3 4` | 0 «distintas»; «saltadas» 1, 0, 0, 0 | 136 s |
+| `world.sh 7`, `5 6 7 tut0` | 0 «distintas»; «saltadas» 5, 0, 4, 0 | 124 s |
+| `world.sh 7`, `tut1 tut2 tut3 tut4` | 0 «distintas»; «saltadas» 0, 2, 5, 7 | 110 s |
+| `vita_check.sh` (VitaSDK installed with `scripts/setup-vitasdk.sh`) | VPK built, no errors or warnings | 1 min 17 s |
+
+The «saltadas» are the same as in the README of p3vita-datos. Before the
+merge, `SAVES='1 3 5 7' world.sh 7` had also given 0 «distintas» (718 s
+with the slow oracle).
 
 ## For the roadmap
 
@@ -388,10 +442,8 @@ for the PC when merging.
 ## For the inventory
 
 - New: the save path (0x5472F0 and everything under 0x549CC0, 0x549C60,
-  0x54C410, 0x54D7F0, 0x54D870); 0x4D6780 rewritten whole.
-- `fn_4d6780` in `town_tick/events_towns.cpp` (the stub the event 0x03
-  calls) can call `expire_merchant_mail` instead (not changed here: it is
-  the local session's file).
+  0x54C410, 0x54D7F0 and 0x54D870 for an empty `.pst`); 0x4D6780 is the
+  local session's `fn_4d6780`.
 
 ## Game bugs
 
@@ -412,8 +464,8 @@ Certain:
   0x4D6780 cuts the list at the link that points to it (0xFFFF), and the
   notices after it stay out of every list; if the notice also expires, the
   new head of the free notices is that cut link (0xFFFF), so all the free
-  notices are lost. Reproduced in `expire_merchant_mail`, same as the game
-  in the retouched states (§6).
+  notices are lost. Reproduced in `fn_4d6780` (the local session's), same as
+  the game in the retouched states (§6).
 - **0x4F3A40/0x4F39E0: the nodes of the event 0x34 change at each load and
   save.** The reader makes the u16 [+0x6] of the third byte of the node
   twice and skips the fourth; the writer writes the sign of the low byte of
@@ -432,30 +484,33 @@ Looks like one:
   the member `SaveGame::opaque` at its end.
 - `src/p3data/savegame.cpp`: `Reader::since`; `parse_merchant` keeps the
   lists (new argument); `parse_ships` keeps the pirates' maps and records;
-  `load_mail` keeps the extras of the notices; `load_events` keeps the
+  `load_mail` keeps what follows each notice in the file (the buffers, and
+  what follows the records of `mail_records`); `load_events` keeps the
   extras and reads 4 bytes per entry of the type 0x1B (§2.2); `parse_names`
   accepts the ship names (§2.2); `parse_savegame` reads the 12 bytes after
   the settings into [0x6DFBC4..0x6DFBCC] (with the clamp of the loader), the
   trade routes (5th section from the end) and the battles (3rd);
-  `load_game_scripts` calls `load_save_scripts`; versions 0x82 to 0x85
+  `load_game_scripts` calls `load_save_scripts` (after the first names); versions 0x82 to 0x85
   (`kOldestVersion`, `kNewestVersion` instead of `kSupportedVersion`).
   Nothing else changes in what it reads (load: 0 differences in the 12
   saves).
 - `src/p3data/CMakeLists.txt`: `savegame_write.cpp`, `lz_compress.cpp`.
 - `tests/CMakeLists.txt`: `lz_test` (ctest goes from 7 to 8 tests).
 - `tools/p3save/main.cpp`: `write`, `compress`, and reading the save from the disk.
-- `tools/oracle/tick_probe.cpp`: `--write OUT` (at the end of `main`).
+- `tools/oracle/tick_probe.cpp`: `--write OUT` (at the end of `main`; region
+  L and the rest as on main).
 - `tools/oracle/town_oracle.py`: `--write OUT` (in `main` and the
   docstring; `OPERATIONS` not touched).
 - `tools/oracle/CMakeLists.txt`: `write_retouch`.
 
 ## Time of the checks
 
-- `write_oracle.py`: 1.5 s a save; `scripts/write-check.sh` for the 12: 19 s.
+- `write_oracle.py`: 1.5 s a save; `scripts/write-check.sh` for the 12: 30 s.
 - `tick_probe --carga` with a recording of 0 days: 2 s a save;
-  `scripts/write-reload.sh` for the 12: 25 s; `scripts/write-after-days.sh 4
-  1 3 7`: 6 min 11 s; `scripts/write-retouched.sh`: 4 s a save.
-- `world.sh 7` with 4 saves: 718 s.
-- Not built for the Vita (no VitaSDK here; `src/app` not touched; the new
-  code in `src/p3data` is plain C++17 like the rest).
+  `scripts/write-reload.sh` for the 12: 23 s; `scripts/write-retouched.sh`:
+  4 s a save; `scripts/write-after-days.sh 4 1 3 7`: 59 s with the fast
+  oracle (6 min 11 s before).
+- `world.sh 7`, the 12 saves in three batches: 370 s.
+- Built for the Vita: `scripts/setup-vitasdk.sh` (11 s) and
+  `re/emu/sesion5/vita_check.sh` (1 min 17 s), no errors or warnings.
 - ctest has 8 tests now (`lz_test`): `build.sh` and the README count 7.
