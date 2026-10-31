@@ -198,7 +198,7 @@ tabla 0x537030) a unos 180 manejadores; los códigos 0x14, 0x73, 0x9C–0x9E,
 | 0x01, 0x02 | 0x537340, 0x537450 | vender, comprar |
 | 0x22 | 0x53CE30 | construir: {0x22, u8 dueño, u8 ciudad, x, y, tipo, parámetro}; hasta 0x2F, 0x521900 (con la rejilla, `town_tick/grid.cpp`); 0x30..0x33, las torres (0x523830); 0x34 y 0x35, 0x523D70; 0x36..0x39, la muralla (0x522B20). La 0x21 (interfaz) es lo mismo con otra búsqueda del tipo |
 | 0x23 | 0x535B12 | {0x23, u32 lado, u32 ciudad}: empieza la muralla de ese lado (0x522B20) |
-| 0x24 | 0x522C70 | las piezas de muralla pendientes ([0x766]) de la ciudad; por reescribir |
+| 0x24 | 0x522C70 | {0x24, u32 dueño, u32 ciudad, u32 clase (0 tramos, 1 las demás)}: la siguiente pieza de muralla pendiente ([0x766]) que se pueda pagar (0x51F3A0; el dueño, un comerciante con oficina en la ciudad) pasa a las obras; con la última, el cierre de la muralla (`construction.cpp`, `grid.cpp`) |
 | 0x27 | 0x535BBC | {0x27, u32 ciudad (con el bit 31, también cáñamo), ladrillos, madera, herramientas}: la ciudad los recibe; la piden sus obras cuando le faltan |
 | 0x3B | 0x53A3E0 | la carretera de un encargo de la Hansa (tipo 1, §8) desde la interfaz |
 | 0x46 | dentro de 0x535760, en 0x535FD6 | alcalde para una ciudad sin él: {0x46, comerciante, ciudad, -, marca}; si tiene rango ≥ 5 en su ciudad natal o con la marca 0xBADEAFFE en [+0x10] (la encola el evento 0x2F, §8; también la interfaz, desde 0x41AD92 y 0x41B554) |
@@ -212,7 +212,7 @@ en el código).
 
 p3vita guarda las operaciones en `SaveGame::queued_operations` y las ejecuta
 al final de cada tick, en su orden (`run_queued_operations` y el ejecutor
-`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x22, la 0x23, la 0x27, la 0x3B, la 0x46, la 0x4B, la 0x85 y la 0x86; las
+`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x22, la 0x23, la 0x24, la 0x27, la 0x3B, la 0x46, la 0x4B, la 0x85 y la 0x86; las
 demás se descartan. El oráculo del mundo hace lo mismo con el ejecutor del
 juego ([../oracle.md](../oracle.md), «Las operaciones encoladas»). Lo que encolan las ciudades y la cola de eventos en 200
 días de la partida 1 (con un candidato retocado): 0x22 ×1924, 0x7B ×1704,

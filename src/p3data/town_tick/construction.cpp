@@ -39,6 +39,8 @@ void fn_5250d0(const SaveGame& save, int town, uint8_t& x, uint8_t& y);
 bool fn_4fcbd0(const SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
 bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
 void fn_523830(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner);
+void fn_522c70(SaveGame& save, int town, uint32_t owner, uint32_t kind);
+bool fn_51f3a0(SaveGame& save, int town, GameMemory<0x44>& s);
 bool fn_524d60(SaveGame& save, int town, uint32_t x, uint32_t y);
 void fn_524f00(SaveGame& save, int town);
 void fn_524cd0(SaveGame& save, int town);
@@ -1622,6 +1624,433 @@ void fn_523d70(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 	t.u32(0x7A4) = 1;
 }
 
+// 0x51F3A0 (sobre la ciudad): lo que cuesta construir el tipo s.u16(0x3C) al
+// dueño s.u16(0x3E), en `s` (la estructura del juego, 0x44 bytes): [+0x00]
+// lo que pide de ladrillos, madera, herramientas y cáñamo (0x673720), en
+// cargas o barriles; [+0x10] lo que tiene el dueño en sus barcos atracados
+// en la ciudad (estado < 4 y no 2) y en su oficina; [+0x20] lo que falta
+// (que pone la ciudad: si no le llega, [+0x41] = 0 y lo que tiene); [+0x30]
+// lo que falta a precio de compra (0x52E430) y, de 0x30 en adelante, lo que
+// se le paga al dueño por lo suyo (0x673A18); [+0x34] eso más lo que cuesta
+// (0x672B78); [+0x38] los días de obra / 5; [+0x40] si llega el dinero (el
+// del dueño o, de 0x30 en adelante, el de la ciudad, [0x700]); [+0x42] si
+// puede (con oficina, o es el alcalde, o el tipo 0); [+0x43] por qué no
+// (edificio municipal ya hecho, sitio, pozos...). Sin dueño comerciante o
+// con tipo 0x39 o más, falso. Devuelve si se puede.
+bool fn_51f3a0(SaveGame& save, int town, GameMemory<0x44>& s) {
+	// 0x673720: las mercancías de los materiales. 0x673A18: su precio (f32)
+	// para lo que se saca de lo del dueño.
+	static constexpr uint32_t kMaterials[4] = {0x13, 0xB, 0xC, 0x11};
+	static constexpr float kOwnPrice[4] = {0x1.46dc6p-5f, 0x1.c28f5ep-6f, 0x1.472b02p+0f, 0x1.c28f5ep-3f};
+	const uint32_t owner = s.u16(0x3E);
+	const uint32_t type = s.u16(0x3C);
+	if (owner >= save.globals.u16(global::kWorldMerchantCount) || type >= 0x39) {
+		return false;
+	}
+	TownMemory& t = save.towns[size_t(town)].memory;
+	int32_t unit[4];
+	for (size_t k = 0; k < 4; ++k) {
+		unit[k] = kWareUnit[kMaterials[k]] != 0 ? kBarrel : kLoad;
+	}
+	s.u8(0x43) = 0;
+	s.s32(0x30) = 0;
+	s.u32(0x0) = kBricks[type];
+	s.u32(0x4) = kTimber[type];
+	s.u32(0x8) = kTools[type];
+	s.u32(0xC) = kHemp[type];
+	if (type == 5 && t.u32(0x2CC) == 0) {
+		s.s32(0xC) >>= 1;  // Sin comprobar con el oráculo.
+	}
+	for (size_t k = 0; k < 4; ++k) {
+		s.s32(0x10 + 4 * k) = 0;
+	}
+	const uint32_t ships = save.globals.u16(global::kShipCount);
+	for (uint32_t i = save.merchants[owner].memory.u16(0xE); i < ships;) {
+		const SavedShip& ship = save.ships[i];
+		i = ship.memory.u16(0x4);
+		const uint16_t status = ship.memory.u16(0x134);
+		if (ship.memory.u8(0x39) != t.u8(0x2C0) || status >= 4 || status == 2) {
+			continue;
+		}
+		for (size_t k = 0; k < 4; ++k) {
+			s.s32(0x10 + 4 * k) += ship.memory.s32(0x54 + 4 * kMaterials[k]) / unit[k];
+		}
+	}
+	const int office = facilities_detail::fn_5308a0(save, owner, uint32_t(town));
+	if (office < 0) {
+		s.u8(0x42) = type == 0 || t.u8(0x6F1) == owner ? 1 : 0;
+	} else {
+		s.u8(0x42) = 1;
+		const OfficeMemory& o = save.offices[size_t(office)].memory;
+		for (size_t k = 0; k < 4; ++k) {
+			s.s32(0x10 + 4 * k) += o.s32(4 + 4 * kMaterials[k]) / unit[k];
+		}
+	}
+	for (size_t k = 0; k < 4; ++k) {
+		const int32_t need = s.s32(4 * k);
+		const int32_t have = s.s32(0x10 + 4 * k);
+		s.s32(0x20 + 4 * k) = need > have ? need - have : 0;
+	}
+	if (type >= 0x30) {
+		for (size_t k = 0; k < 4; ++k) {
+			const int32_t have = s.s32(0x10 + 4 * k);
+			if (have <= 0) {
+				continue;
+			}
+			const int32_t need = s.s32(4 * k);
+			const int32_t value = unit[k] * (need < have ? need : have);
+			s.s32(0x30) += int32_t(ftol(double(float(value)) * double(kOwnPrice[k])));
+		}
+	}
+	s.u8(0x41) = 1;
+	for (size_t k = 0; k < 4; ++k) {
+		if (s.s32(0x20 + 4 * k) <= 0) {
+			continue;
+		}
+		const int32_t amount = s.s32(0x20 + 4 * k) * unit[k];
+		s.s32(0x30) += game_buy_price(save, int(kMaterials[k]), town, amount);
+		const int32_t stock = t.s32(4 + 4 * kMaterials[k]);
+		if (amount > stock) {
+			s.u8(0x41) = 0;
+			s.s32(0x20 + 4 * k) = stock / unit[k];
+		}
+	}
+	s.s32(0x34) = int32_t(kBuildFee[type]) * (type == 5 && t.u32(0x2CC) == 0 ? 60 : 100) + s.s32(0x30);
+	if (type >= 0x30) {
+		s.u8(0x40) = 1;
+		if (t.s32(0x700) < s.s32(0x34)) {
+			s.u8(0x43) = 4;
+		}
+	} else {
+		s.u8(0x40) = save.merchants[owner].memory.s32(0) >= s.s32(0x34) ? 1 : 0;
+	}
+	s.s32(0x38) = (int32_t(kBuildDays[type]) + 4) / 5;
+	const uint32_t bits = t.u32(0x76C);
+	auto done = [&](uint32_t bit) {
+		if (bits & bit) {
+			s.u8(0x43) = 1;
+		}
+	};
+	// Torres y la 0x29: con sitio para muralla al lado 1, o al 2 con piezas
+	// pendientes, 2; si no, con pocos habitantes para otra más, 3.
+	auto towers = [&](bool enough) {
+		const bool wall = fn_4fcfe0(save, town, 1) ||
+			(fn_4fcfe0(save, town, 2) && t.u16(0x766) < t.u16(0x776));
+		if (wall || !enough) {
+			s.u8(0x43) = 3;
+		}
+		if (s.u8(0x43) == 0 || s.u8(0x43) == 3) {
+			if (wall) {
+				s.u8(0x43) = 2;
+			}
+		}
+	};
+	switch (type) {
+	case 0x00:
+		if (office >= 0) {
+			s.u8(0x43) = 1;
+		}
+		break;
+	case 0x01: done(0x40); break;
+	case 0x02:
+		if (t.u16(0x790) >= t.u16(0x792)) {
+			s.u8(0x43) = 5;
+		}
+		break;
+	case 0x03: done(0x4); break;
+	case 0x1F: done(0x200); break;
+	case 0x20: done(0x2); break;
+	case 0x21: done(0x8); break;
+	case 0x22: done(0x2000); break;
+	case 0x23: done(0x1); break;
+	case 0x24: done(0x20); break;
+	case 0x25: done(0x800); break;
+	case 0x26: done(0x4000); break;
+	case 0x2A: done(0x400); break;
+	case 0x2B: done(0x1000); break;
+	case 0x2C: towers((t.s32(0x2D4) + 5000) / 10000 > int32_t(t.u8(0x770))); break;
+	case 0x29: towers(t.s32(0x2D4) / 10000 >= int32_t(t.u8(0x772))); break;
+	case kTypeWell:
+		if (int32_t(t.u8(0x789)) * 500 > t.s32(0x2D4)) {
+			s.u8(0x43) = 6;
+		}
+		break;
+	default:
+		break;
+	}
+	return s.u8(0x40) && s.u8(0x41) && s.u8(0x42) && s.u8(0x43) == 0;
+}
+
+// 0x524B70 (sobre la ciudad): recuenta la lista que empieza en `r`: las
+// empresas (tipos < 0x15 salvo el 5) en [0x78E] y, dentro de la ciudad
+// (celda ≥ 0x80), en [0x78C]; las torres en [0x788] (0x30..0x33) y lo que
+// vale la muralla en [0x786] (0x32, 0x33 y 0x36, 1; 0x34, 0x35 y de 0x37 en
+// adelante, 3).
+void fn_524b70(SaveGame& save, int town, uint32_t r) {
+	SavedTown& st = save.towns[size_t(town)];
+	TownMemory& t = st.memory;
+	const uint32_t count = t.u16(0x776);
+	while (r < count) {
+		const BuildingRecord& rec = st.records[r];
+		const uint8_t type = rec.type;
+		if (type == 5) {
+		} else if (type < 0x15) {
+			if (cell(st, int64_t(t.s32(0x7AC)) * rec.x + rec.y) >= 0x80) {
+				++t.u16(0x78C);
+			}
+			++t.u16(0x78E);
+		} else if (type < 0x30) {
+		} else if (type == 0x30 || type == 0x31) {
+			++t.u8(0x788);
+		} else if (type == 0x32 || type == 0x33) {
+			++t.u8(0x788);
+			++t.u16(0x786);
+		} else if (type == kTypeWall) {
+			++t.u16(0x786);
+		} else {
+			t.u16(0x786) = uint16_t(t.u16(0x786) + 3);
+		}
+		r = rec.next;
+	}
+}
+
+// 0x522C70 (sobre la ciudad; la operación 0x24, {0x24, dueño, ciudad,
+// clase}): la siguiente pieza de muralla pendiente ([0x766]) de la clase
+// (0, tramos 0x36; 1, las demás) que se pueda pagar (0x51F3A0, con el dueño:
+// sin comerciante con oficina en la ciudad no se hace nada) pasa a las obras
+// (0x5254C0). Los materiales salen de la oficina y los barcos del dueño, que
+// cobra un precio fijo por unidad (como en las torres, 0x523830); la ciudad
+// apunta el gasto (0x529F90, 6) y pierde lo que faltaba. En la rejilla, la
+// pieza (0x4FBD60; las 0x37/0x38, también dos al lado y lo que recuperan,
+// 0x4FD830). En un asedio, nada. Si era la última pendiente, el cierre de la
+// muralla: las piezas de ese lado ya hechas o en obras salen de sus listas
+// (0x4FACD0 las quita de la rejilla) y se recuentan las demás; [0x76C] |=
+// 0x10, el dentro de la ciudad (0x4FD680), los recuentos (0x524B70); las
+// puertas 0x34/0x35 en obras sin su pieza se quitan; sin alcalde comerciante,
+// cada oficina de la ciudad debe a la ciudad su parte (un evento 0x01 a 20
+// días); y los bits de tamaño (0x4FBFF0, 0x4FC130). No se reproducen la
+// carta del juego ni la vista de la ciudad.
+void fn_522c70(SaveGame& save, int town, uint32_t owner, uint32_t kind) {
+	GlobalMemory& g = save.globals;
+	TownMemory& t = save.towns[size_t(town)].memory;
+	if (t.u8(0x2C8) & 0x10) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	int office = -1;
+	if (owner < g.u16(global::kWorldMerchantCount)) {
+		office = facilities_detail::fn_5308a0(save, owner, uint32_t(town));
+		if (office < 0) {
+			return;
+		}
+	}
+	std::vector<BuildingRecord>& records = save.towns[size_t(town)].records;
+	const uint32_t count = t.u16(0x776);
+	uint16_t* link = &t.u16(0x766);
+	while (*link < count && uint32_t(records[*link].type == kTypeWall) == kind) {
+		link = &records[*link].next;
+	}
+	if (*link >= count) {
+		return;
+	}
+	const uint32_t r = *link;
+	GameMemory<0x44> s;
+	s.u16(0x3C) = records[r].type;
+	s.u16(0x3E) = uint16_t(owner);
+	if (!fn_51f3a0(save, town, s)) {
+		return;
+	}
+	*link = records[r].next;
+	records[r].next = 0xFFFF;
+	fn_5254c0(save, town, r);
+	if (office >= 0) {
+		int32_t paid = 0;
+		auto take = [&](uint32_t ware, int32_t amount, float price) {
+			if (amount <= 0) {
+				return 0;
+			}
+			const int32_t before = amount;
+			fn_500a70(save, office, ware, amount);
+			return int32_t(ftol(double(float(before - amount)) * double(price)));
+		};
+		paid = take(0x13, s.s32(0x0) * kLoad, kTowerBricksPrice);
+		paid += take(0xB, s.s32(0x4) * kLoad, kTowerTimberPrice);
+		paid += take(0xC, s.s32(0x8) * kBarrel, kTowerToolsPrice);
+		paid += take(0x11, s.s32(0xC) * kLoad, kTowerHempPrice);
+		MerchantMemory& m = save.merchants[owner].memory;
+		m.s32(0) += paid;
+		m.s32(0x49C) += paid;
+	}
+	fn_529f90(save, town, s.s32(0x34), 6);
+	auto lose = [&](size_t o, int32_t amount) {
+		t.s32(o) -= amount;
+		if (t.s32(o) < 0) {
+			t.s32(o) = 0;
+		}
+	};
+	lose(0x50, s.s32(0x20) * kLoad);
+	lose(0x30, s.s32(0x24) * kLoad);
+	lose(0x34, s.s32(0x28) * kBarrel);
+	lose(0x48, s.s32(0x2C) * kLoad);
+	const BuildingRecord piece = save.towns[size_t(town)].records[r];
+	if (kind != 0) {
+		if (piece.type == 0x38) {
+			fn_4fbd60(save, town, piece.x - 1u, piece.y - 2u);
+			fn_4fbd60(save, town, piece.x - 2u, piece.y - 4u);
+		} else {
+			fn_4fbd60(save, town, piece.x + 1u, piece.y - 2u);
+			fn_4fbd60(save, town, piece.x + 2u, piece.y - 4u);
+		}
+		fn_4fd830(save, town, piece.x, piece.y, piece.type);
+	}
+	fn_4fbd60(save, town, piece.x, piece.y);
+	if (t.u16(0x766) < t.u16(0x776)) {
+		return;
+	}
+	// El cierre de la muralla (sin comprobar con el oráculo: no sale en 10
+	// días de las 12 partidas).
+	std::vector<uint8_t> done;  // (x, y) de las piezas quitadas.
+	const uint8_t side = piece.owner;  // 0xFF − lado (0x522B20).
+	t.u16(0x786) = 0;
+	{
+		std::vector<BuildingRecord>& recs = save.towns[size_t(town)].records;
+		uint16_t* l = &t.u16(0x768);
+		while (*l < t.u16(0x776)) {
+			const uint16_t i = *l;
+			BuildingRecord& rec = recs[i];
+			if (rec.type >= 0x32 && side < rec.owner) {
+				fn_4facd0(save, town, rec.x, rec.y, rec.type, rec.param);
+				done.push_back(rec.x);
+				done.push_back(rec.y);
+				*l = rec.next;
+				rec.next = t.u16(0x760);
+				t.u16(0x760) = i;
+				continue;
+			}
+			if (rec.type >= 0x32) {
+				t.u16(0x786) = uint16_t(t.u16(0x786) + (rec.type == kTypeWall || rec.type < 0x34 ? 1 : 3));
+			}
+			l = &rec.next;
+		}
+		if (t.u16(0x786) == 0) {
+			t.u16(0x786) = 1;
+		}
+		l = &t.u16(0x762);
+		while (*l < t.u16(0x776)) {
+			const uint16_t i = *l;
+			BuildingRecord& rec = recs[i];
+			if (side < rec.owner && rec.type >= 0x32) {
+				fn_4facd0(save, town, rec.x, rec.y, rec.type, rec.param);
+				*l = rec.next;
+				rec.next = t.u16(0x760);
+				t.u16(0x760) = i;
+				rec.type = 0xFF;
+				continue;
+			}
+			l = &rec.next;
+		}
+		for (uint32_t i = t.u16(0x762); i < t.u16(0x776); i = recs[i].next) {
+			if (recs[i].type >= 0x32) {
+				t.u16(0x786) = uint16_t(t.u16(0x786) + (recs[i].type <= kTypeWall ? 1 : 3));
+			}
+		}
+	}
+	t.u32(0x76C) |= 0x10;
+	fn_4fd680(save, town);
+	t.u8(0x788) = 0;
+	t.u16(0x78C) = 1;
+	t.u16(0x78E) = 1;
+	t.u16(0x786) = 0;
+	fn_524b70(save, town, t.u16(0x768));
+	const uint16_t offices = g.u16(global::kWorldOfficeCount);
+	for (uint32_t o = t.u16(0x784); o < offices;) {
+		const OfficeMemory& om = save.offices[o].memory;
+		o = om.u16(0x2CA);
+		fn_524b70(save, town, om.u16(0x2CE));
+	}
+	if (t.u16(0x786) == 0) {
+		t.u16(0x786) = 1;
+	}
+	// Las puertas (0x34, 0x35) en obras sin su pieza (+ 3) en las murallas.
+	{
+		std::vector<BuildingRecord>& recs = save.towns[size_t(town)].records;
+		uint16_t* l = &t.u16(0x762);
+		while (*l < t.u16(0x776)) {
+			const uint16_t i = *l;
+			BuildingRecord& rec = recs[i];
+			if (rec.type != 0x34 && rec.type != 0x35) {
+				l = &rec.next;
+				continue;
+			}
+			bool kept = false;
+			for (uint32_t j = t.u16(0x768); j < t.u16(0x776); j = recs[j].next) {
+				const BuildingRecord& w = recs[j];
+				if (w.type >= 0x37 && w.type - rec.type == 3 && w.x == rec.x && w.y == rec.y) {
+					kept = true;
+					break;
+				}
+			}
+			if (kept) {
+				l = &rec.next;
+				continue;
+			}
+			*l = rec.next;
+			rec.next = t.u16(0x760);
+			t.u16(0x760) = i;
+			rec.x = 0xFF;
+			rec.y = 0xFF;
+			rec.owner = 0xFF;
+			rec.type = 0xFF;
+			rec.pending = 0;
+			rec.param = 0;
+		}
+	}
+	// Sin alcalde comerciante, cada oficina debe su parte de la muralla.
+	if (t.u8(0x6F1) >= g.u16(global::kWorldMerchantCount)) {
+		const std::vector<BuildingRecord>& recs = save.towns[size_t(town)].records;
+		for (uint32_t o = t.u16(0x784); o < g.u16(global::kWorldOfficeCount);) {
+			const OfficeMemory& om = save.offices[o].memory;
+			o = om.u16(0x2CA);
+			int32_t sum = 0;
+			for (const size_t head : {size_t(0x2CE), size_t(0x2D0)}) {
+				for (uint32_t i = om.u16(head); i < t.u16(0x776); i = recs[i].next) {
+					sum += kBuildFee[recs[i].type < 60 ? recs[i].type : 0];
+				}
+			}
+			const int32_t cap = int32_t(t.u16(0x786)) * 500;
+			if (sum > cap) {
+				sum = cap;
+			}
+			// (Al jugador humano, una carta: 0x4D6530; no se reproduce.)
+			const int32_t amount = sum * 100;
+			if (amount <= 0) {
+				continue;
+			}
+			const uint8_t debtor = uint8_t(om.u16(0x2C4));
+			const uint16_t e = events_detail::fn_4d8cf0(save, g.u32(global::kWorldTick) + 0x1400);
+			GameMemory<0x18>& ev = save.events[e];
+			ev.u16(0x6) = 1;
+			ev.u8(0x12) = 0;
+			ev.u8(0x15) = 0;
+			ev.u8(0x16) = 0;
+			ev.u8(0x17) = 0;
+			ev.s32(0x8) = amount;
+			ev.u8(0x13) = 0;
+			ev.u8(0x10) = 0xFF;
+			ev.u8(0x11) = debtor;
+			ev.u8(0x14) = t.u8(0x2C0);
+			ev.u32(0xC) = g.u32(global::kWorldTick) & ~0xFFu;
+			save.merchants[debtor].memory.s32(0x4BC) += amount;
+			fn_529f90(save, town, amount, 2);
+		}
+	}
+	for (size_t k = done.size(); k >= 2; k -= 2) {
+		fn_4fbff0(save, town, done[k - 2], done[k - 1], 0);
+	}
+	for (int32_t x = t.s32(0x7A8) - 12; x > 12; x -= 18) {
+		fn_4fc130(save, town, x);
+	}
+}
+
 // La operación 0x27 (0x535BBC, en el ejecutor): {0x27, u32 ciudad (el byte
 // bajo; con el bit 31, también 0x672B01 · 2000 de cáñamo), u32 ladrillos,
 // u32 madera, u32 herramientas}: la ciudad los recibe en su almacén. La
@@ -1640,6 +2069,17 @@ void fn_535bbc(SaveGame& save, const uint8_t* operation) {
 	t.u32(0x50) += fields[2];
 	t.u32(0x30) += fields[3];
 	t.u32(0x34) += fields[4];
+}
+
+// La operación 0x24 (0x535B44): {0x24, u32 dueño, u32 ciudad, u32 clase}:
+// la siguiente pieza de muralla pendiente (0x522C70).
+void fn_535b44(SaveGame& save, const uint8_t* operation) {
+	uint32_t fields[4];
+	std::memcpy(fields, operation, sizeof(fields));
+	if (fields[2] >= save.globals.u32(global::kWorldTownCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	fn_522c70(save, int(fields[2]), fields[1], fields[3]);
 }
 
 // La operación 0x23 (0x535B12): {0x23, u32 lado, u32 ciudad}: empieza la

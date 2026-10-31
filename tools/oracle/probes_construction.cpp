@@ -26,6 +26,7 @@ void fn_524e20(SaveGame& save, int town);
 bool fn_4fcbd0(const SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
 bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
 void fn_523830(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner);
+void fn_522c70(SaveGame& save, int town, uint32_t owner, uint32_t kind);
 
 }  // namespace p3::data::tick::construction_detail
 
@@ -43,6 +44,15 @@ void register_probes_construction(ProbeRegistry& r) {
 		}
 		return uint32_t(detail::fn_521900(s, town, uint8_t(c.args[0]), uint8_t(c.args[1]), uint8_t(c.args[2]),
 			uint8_t(c.args[3]), uint8_t(c.args[4])));
+	};
+	r[0x522C70] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// Sobre la ciudad: (dueño, clase).
+		const int town = c.town(c.ecx);
+		if (town < 0) {
+			return 0xDEAD;
+		}
+		detail::fn_522c70(s, town, c.args[0], c.args[1]);
+		return std::nullopt;
 	};
 	r[0x523830] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		// Sobre la ciudad: (x, y, dueño).

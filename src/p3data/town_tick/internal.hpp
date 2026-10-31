@@ -64,6 +64,16 @@ void fn_529f90(SaveGame& save, int town, int32_t amount, uint32_t kind);
 void fn_4fb9c0(SaveGame& save, int town, uint32_t x, uint32_t y, uint8_t type, uint8_t param);
 // La huella de una torre en (x, y) (0x4FBDB0).
 void fn_4fbdb0(SaveGame& save, int town, uint32_t x, uint32_t y);
+// Las murallas (la operación 0x24): una pieza en (x, y) (0x4FBD60); de qué
+// lado queda la ciudad y lo que recupera (0x4FD830); el dentro de la ciudad
+// (0x4FD680); quitar una pieza de la rejilla al cerrar la muralla (0x4FACD0);
+// y 0x4FBFF0 y 0x4FC130 sobre la ciudad.
+void fn_4fbd60(SaveGame& save, int town, uint32_t x, uint32_t y);
+void fn_4fd830(SaveGame& save, int town, uint32_t x, uint32_t y, uint32_t type);
+void fn_4fd680(SaveGame& save, int town);
+void fn_4facd0(SaveGame& save, int town, uint32_t x, uint32_t y, uint32_t type, uint32_t param);
+void fn_4fbff0(SaveGame& save, int town, int32_t x, int32_t y, uint32_t cls);
+void fn_4fc130(SaveGame& save, int town, int32_t x);
 
 // 0x4FCFE0 sobre town_class1 ([0x7A4] de la ciudad): ¿el punto de muralla
 // `i` (0..3) cae dentro de la rejilla?
@@ -208,6 +218,7 @@ namespace construction_detail {
 void fn_53ce30(SaveGame& save, const uint8_t* operation);
 void fn_535bbc(SaveGame& save, const uint8_t* operation);
 void fn_535b12(SaveGame& save, const uint8_t* operation);
+void fn_535b44(SaveGame& save, const uint8_t* operation);
 }  // namespace construction_detail
 void fn_53b440(SaveGame& save, const uint8_t* operation);
 // La operación 0x3B (0x53A3E0): el comerciante aporta materiales a su

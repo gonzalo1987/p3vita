@@ -91,6 +91,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x23:  // Empezar la muralla de un lado (0x535B12).
 		tick::construction_detail::fn_535b12(save, operation);
 		break;
+	case 0x24:  // La siguiente pieza de muralla pendiente (0x535B44, 0x522C70).
+		tick::construction_detail::fn_535b44(save, operation);
+		break;
 	case 0x27:  // Materiales para las obras de una ciudad (0x535BBC).
 		tick::construction_detail::fn_535bbc(save, operation);
 		break;

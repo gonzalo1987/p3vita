@@ -148,9 +148,9 @@ bytes): 0x22 construir (propietario, ciudad, x, y, tipo, parámetro), 0x23,
 0x24, 0x27 materiales (ciudad, ladrillos, madera, herramientas) y 0x48 aviso.
 p3vita las deja en `SaveGame::queued_operations` y las ejecuta al final del
 tick como el juego: la 0x22 (construir, 0x53CE30: `construction.cpp` y la
-rejilla en `grid.cpp`), la 0x27 (materiales) y la 0x23 (empezar una
-muralla) ([world_tick.md](world_tick.md) §7). La 0x24 (las piezas de
-muralla pendientes) aún se descarta.
+rejilla en `grid.cpp`), la 0x27 (materiales), la 0x23 (empezar una
+muralla) y la 0x24 (las piezas de muralla pendientes)
+([world_tick.md](world_tick.md) §7).
 
 ## 7. Globales y otros objetos
 
@@ -172,8 +172,8 @@ muralla pendientes) aún se descarta.
 - La interfaz: mensajes y cartas (0x548CA0, 0x4D6530), ventanas del jugador y
   el dibujo de la vista de la ciudad (0x590680, 0x5891C0).
 - De las operaciones que encolan las ciudades se ejecutan la 0x22
-  (construir), la 0x27 (materiales) y la 0x23; las piezas de muralla
-  pendientes (0x24) y los avisos, no
+  (construir), la 0x27 (materiales), la 0x23 y la 0x24 (murallas); los
+  avisos (0x48), no
   ([world_tick.md](world_tick.md) §7). Lo que hace el almacén nuevo de un
   comerciante (0x4FF2D0) está por reescribir.
 - Convoyes en reparación en el astillero (lista [0x820], vacía en las 12

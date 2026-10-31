@@ -589,6 +589,241 @@ void fn_4fb9c0(SaveGame& save, int town, uint32_t x, uint32_t y, uint8_t type, u
 	st.memory.u32(0x7A4) = 1;
 }
 
+namespace {
+
+// 0x4FDA10: marca con 0x40 lo que queda dentro de la muralla. Busca, desde
+// la estatua (town_class1 [+0x5C], [+0x5D]) hacia atrás y si no hacia
+// delante, la primera celda 0x91 (muralla) y, a dos filas y dos columnas,
+// una vecina 0x11; desde ella rellena por las cuatro vecinas (índices de 16
+// bits, como el juego): las de menos de 0x40 se marcan y siguen las libres o
+// de clase ≥ 0x11, de calle (< 5) y ocupadas (0x0B), no la muralla.
+void fn_4fda10(Grid& g) {
+	TownMemory& t = g.st.memory;
+	const uint32_t cells = uint32_t(g.w * g.h);
+	std::vector<uint16_t> buf(size_t(cells > 0 ? cells : 1));
+	const uint32_t start = uint32_t(t.u8(0x800)) * uint32_t(g.h) + t.u8(0x801);
+	const uint16_t h = uint16_t(g.h);
+	// Las cuatro celdas a dos de la 0x91 en c; la primera 0x11, o −1.
+	auto seed = [&](uint32_t c) -> int32_t {
+		const uint16_t n[4] = {uint16_t(c + 2u * h + 2), uint16_t(c - 2u * h - 2), uint16_t(c - 2u * h + 2),
+			uint16_t(c + 2u * h - 2)};
+		for (uint16_t i : n) {
+			if (g.get(i) == 0x11) {
+				return i;
+			}
+		}
+		return -1;
+	};
+	int32_t first = -1;
+	bool found = false;
+	for (uint32_t c = start; c > 0;) {
+		--c;
+		if (g.get(c) == 0x91) {
+			first = seed(c);
+			found = true;
+			break;
+		}
+	}
+	if (!found || first < 0) {
+		if (start >= cells) {
+			return;  // Sin comprobar con el oráculo.
+		}
+		uint32_t c = start;
+		do {
+			++c;
+		} while (c < cells && g.get(c) != 0x91);
+		if (c >= cells) {
+			return;  // Sin comprobar con el oráculo.
+		}
+		first = seed(c);
+		if (first < 0) {
+			return;  // Sin comprobar con el oráculo.
+		}
+	}
+	buf[0] = uint16_t(first);
+	size_t n = 1;
+	for (size_t k = 0; k < n; ++k) {
+		const uint16_t c = buf[k];
+		const uint16_t next[4] = {uint16_t(c + 1), uint16_t(c - 1), uint16_t((c & 1) ? h + c - 1 : c - h - 1),
+			uint16_t((c & 1) ? h + c + 1 : c - h + 1)};
+		for (uint16_t nb : next) {
+			const uint32_t v = g.get(nb);
+			if (v >= 0x40) {
+				continue;
+			}
+			if (v >= 0x20 || v < 5 || v >= 0x11 || v == kBusy) {
+				buf[n++] = nb;
+			}
+			g.set(nb, uint8_t(v | 0x40));
+		}
+	}
+}
+
+// Quita la marca 0x40 de toda la rejilla.
+void unmark_all(Grid& g) {
+	for (int64_t i = int64_t(g.w) * g.h; i > 0;) {
+		--i;
+		g.set(i, uint8_t(g.get(i) & 0xBF));
+	}
+}
+
+}  // namespace
+
+// 0x4FD680 (town_class1): el bit 0x80 (dentro de la ciudad): se quita de toda
+// la rejilla y se pone en lo que se alcanza desde la estatua ([0x800],
+// [0x801]) por una cola circular de 4 · (ancho + alto) celdas (índices de 16
+// bits), pasando a las vecinas c − 1, c + 1, esa ± alto (− si es impar) y
+// esa − 2, salvo las de muralla (clases 5..0xD, sin 0x0B) y las ya marcadas.
+void fn_4fd680(SaveGame& save, int town) {
+	SavedTown& st = save.towns[size_t(town)];
+	Grid g(st);
+	const int32_t sx = st.memory.u8(0x800);
+	const int32_t sy = st.memory.u8(0x801);
+	if (sx >= g.w || sy >= g.h) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const int32_t cells = g.h * g.w;
+	const int32_t size = (g.h + g.w) * 4;
+	std::vector<uint16_t> ring(size_t(size > 0 ? size : 1));
+	for (int64_t i = cells; i > 0;) {
+		--i;
+		g.set(i, uint8_t(g.get(i) & 0x7F));
+	}
+	const uint16_t h = uint16_t(g.h);
+	const uint16_t start = uint16_t(uint16_t(uint16_t(sx) * h) + sy);
+	ring[0] = start;
+	g.set(start, uint8_t(g.get(start) | 0x80));
+	int32_t read = 0;
+	int32_t write = 1;
+	do {
+		uint16_t cur = ring[size_t(read)];
+		if (++read >= size) {
+			read = 0;
+		}
+		for (int k = 0; k < 4; ++k) {
+			if (k == 0) {
+				cur = uint16_t(cur - 1);
+			} else if (k == 1) {
+				cur = uint16_t(cur + 2);
+			} else if (k == 2) {
+				cur = uint16_t((cur & 1) ? cur - h : cur + h);
+			} else {
+				cur = uint16_t(cur - 2);
+			}
+			if (int32_t(cur) >= cells) {
+				continue;
+			}
+			const uint8_t v = g.get(cur);
+			const uint8_t cls = v & 0x3F;
+			if ((v & 0x80) || (cls >= 5 && cls <= 0xD && cls != kBusy)) {
+				continue;
+			}
+			ring[size_t(write)] = cur;
+			if (++write >= size) {
+				write = 0;
+			}
+			g.set(cur, uint8_t(v | 0x80));
+		}
+	} while (write != read);
+}
+
+// 0x4FBD60 (town_class1): una pieza de muralla en (x, y): las celdas (x, y),
+// (x, y − 1), (x, y − 2) y la de al lado en diagonal pasan a 5.
+void fn_4fbd60(SaveGame& save, int town, uint32_t x, uint32_t y) {
+	Grid g(save.towns[size_t(town)]);
+	const int64_t i = int64_t(int32_t(uint32_t(g.h) * x + y));
+	g.set(i, 5);
+	g.set(i - 1, 5);
+	g.set(i - 2, 5);
+	g.set((y & 1) ? i - 1 + g.h : i - 1 - g.h, 5);
+}
+
+// 0x4FD830 (town_class1): tras una pieza de muralla 0x37 (u otra, 0x38) en
+// (x, y), de qué lado queda la ciudad: el de la celda de (x + 1, y) o la de
+// (x, y − 4), por el bit 0x80 o, si ninguna lo tiene, por la marca de
+// 0x4FDA10 (que se quita después en toda la rejilla); y, con los 8
+// desplazamientos de ese lado (0x673440), las celdas donde vuelve a caber un
+// edificio de tamaño k (0x4FB8F0) recuperan el bit k.
+void fn_4fd830(SaveGame& save, int town, uint32_t x, uint32_t y, uint32_t type) {
+	// 0x673440: por lado, 8 ternas (pasos en y hacia abajo, pasos en y hacia
+	// arriba, tamaño).
+	static constexpr int8_t kSide[4][8][3] = {
+		{{-3, 2, 0}, {-3, -5, 0}, {-3, 1, 1}, {-3, -5, 1}, {-3, 2, 3}, {-3, -5, 3}, {-3, 4, 4}, {-3, -5, 4}},
+		{{1, -3, 0}, {-5, -3, 0}, {2, -3, 1}, {-5, -3, 1}, {3, -3, 3}, {-5, -3, 3}, {3, -3, 4}, {-5, -3, 4}},
+		{{3, -5, 0}, {3, 2, 0}, {4, -5, 1}, {4, 1, 1}, {5, -5, 3}, {5, 2, 3}, {5, -5, 4}, {5, 4, 4}},
+		{{-5, 4, 0}, {1, 4, 0}, {-5, 3, 1}, {2, 3, 1}, {-5, 4, 3}, {3, 4, 3}, {-5, 6, 4}, {3, 6, 4}}};
+	Grid g(save.towns[size_t(town)]);
+	const int64_t i = int64_t(int32_t(uint32_t(g.h) * x + y));
+	int side = 0;
+	if (type == 0x37) {
+		if (g.get(i + g.h) & 0x80) {
+			side = 0;
+		} else if (g.get(i - 4) & 0x80) {
+			side = 2;
+		} else {
+			fn_4fda10(g);
+			side = (g.get(i + g.h) & 0x40) ? 0 : (g.get(i - 4) & 0x40) ? 2 : 0;
+			unmark_all(g);
+		}
+	} else {
+		if (g.get(i - g.h) & 0x80) {
+			side = 1;
+		} else if (g.get(i - 4) & 0x80) {
+			side = 3;
+		} else {
+			fn_4fda10(g);
+			side = (g.get(i - g.h) & 0x40) ? 1 : (g.get(i - 4) & 0x40) ? 3 : 1;
+			unmark_all(g);
+		}
+	}
+	for (const auto& e : kSide[side]) {
+		int32_t cx = int32_t(x);
+		int32_t cy = int32_t(y);
+		for (int32_t a = e[0]; a > 0; --a) {
+			const bool odd = cy & 1;
+			++cy;
+			if (odd) {
+				++cx;
+			}
+		}
+		for (int32_t a = e[0]; a < 0; ++a) {
+			--cy;
+			if (cy & 1) {
+				--cx;
+			}
+		}
+		for (int32_t b = e[1]; b > 0; --b) {
+			++cy;
+			if (cy & 1) {
+				--cx;
+			}
+		}
+		for (int32_t b = e[1]; b < 0; ++b) {
+			const bool odd = cy & 1;
+			--cy;
+			if (odd) {
+				++cx;
+			}
+		}
+		const uint32_t k = uint32_t(int32_t(e[2]));
+		if (fn_4fb8f0(g, cx, cy, k)) {
+			const int64_t j = g.at(cx, cy);
+			g.set(j, uint8_t(g.get(j) | (1u << k)));
+		}
+	}
+}
+
+// 0x4FBFF0 y 0x4FC130 sobre la ciudad, para quien no tiene la rejilla.
+void fn_4fbff0(SaveGame& save, int town, int32_t x, int32_t y, uint32_t cls) {
+	Grid g(save.towns[size_t(town)]);
+	fn_4fbff0(g, x, y, cls);
+}
+
+void fn_4fc130(SaveGame& save, int town, int32_t x) {
+	Grid g(save.towns[size_t(town)]);
+	fn_4fc130(g, x);
+}
+
 // 0x4FBDB0 (town_class1): la huella de una torre (2 × 2 celdas desde (x, y)),
 // los bits de alrededor (0x4FBEC0 con la clase 6) y [0x7A4] = 1.
 void fn_4fbdb0(SaveGame& save, int town, uint32_t x, uint32_t y) {
@@ -597,6 +832,152 @@ void fn_4fbdb0(SaveGame& save, int town, uint32_t x, uint32_t y) {
 	occupy(g, int32_t(x), int32_t(y), 2, 2);
 	fn_4fbec0(g, int32_t(x), int32_t(y), 6);
 	st.memory.u32(0x7A4) = 1;
+}
+
+}  // namespace p3::data::tick
+
+namespace p3::data::tick {
+
+namespace {
+
+// 0x4FDCE0 (town_class1): tras quitar un tramo o torre en la celda i, los
+// huecos de dos celdas entre piezas de muralla (clase 0x0D) a los lados se
+// rellenan con 0x0D (cuatro casos, según la paridad de i).
+void fn_4fdce0(Grid& g, int64_t i) {
+	constexpr uint8_t kWall = 0x0D;
+	const int64_t h = g.h;
+	auto is = [&](int64_t j) { return g.get(j) == kWall; };
+	auto put = [&](int64_t a, int64_t b) {
+		g.set(a, kWall);
+		g.set(b, kWall);
+	};
+	if ((i & 1) == 0) {
+		if (is(i + 1) && is(i - h - 2)) {
+			put(i, i - h - 1);
+		}
+		if (is(i + h) && is(i - h - 3)) {
+			put(i - 1, i - 2);
+		}
+		if (is(i - h + 1) && is(i + h - 2)) {
+			put(i, i - 1);
+		}
+		if (is(i - h) && is(i - 3)) {
+			put(i - h - 1, i - 2);
+		}
+	} else {
+		if (is(i + h + 1) && is(i - h - 2)) {
+			put(i, i - 1);
+		}
+		if (is(i + h) && is(i - 3)) {
+			put(i + h - 1, i - 2);
+		}
+		if (is(i + 1) && is(i + h - 2)) {
+			put(i, i + h - 1);
+		}
+		if (is(i - h) && is(i + h - 3)) {
+			put(i - 1, i - 2);
+		}
+	}
+}
+
+}  // namespace
+
+// 0x4FACD0 (town_class1): quita de la rejilla el edificio de tipo `type` de
+// (x, y). Reescrito solo para las piezas de muralla (tipo 0x32 o más, las
+// que quita el cierre de la muralla, 0x522C70): las celdas de la pieza pasan
+// a libres (& 0xE0 | 0x20) y las de calle de muralla de alrededor (clase
+// 0x11) también; las puertas (0x34/0x37, 0x35/0x38) dejan además un tramo de
+// calle (clases 4 y 3); los tramos y torres rellenan los huecos de muralla
+// de al lado (0x4FDCE0). Por reescribir: los demás tipos (5, 0x2F, 0x30,
+// 0x31 y los edificios), que solo usan otros llamadores aún no reescritos.
+void fn_4facd0(SaveGame& save, int town, uint32_t x, uint32_t y, uint32_t type, uint32_t param) {
+	(void)param;
+	if (int32_t(type) < 0x32) {
+		return;  // Por reescribir.
+	}
+	Grid g(save.towns[size_t(town)]);
+	const int64_t h = g.h;
+	const int64_t i = int64_t(int32_t(uint32_t(g.h) * x + y));
+	const int64_t p = i & 1;
+	auto free_cell = [&](int64_t j) { g.set(j, uint8_t((g.get(j) & 0xE0) | 0x20)); };
+	auto free_street = [&](int64_t j) {
+		if ((g.get(j) & 0x3F) == 0x11) {
+			free_cell(j);
+		}
+	};
+	auto mark = [&](int64_t j, uint8_t keep, uint8_t bits) { g.set(j, uint8_t((g.get(j) & keep) | bits)); };
+	if (type == 0x37 || type == 0x34) {
+		int64_t j = i;
+		for (int k = 0; k < 2; ++k) {
+			auto step = [&]() {
+				const bool odd = j & 1;
+				--j;
+				if (odd) {
+					j += h;
+				}
+			};
+			free_cell(j);
+			step();
+			mark(j, 0xC4, 4);
+			step();
+			mark(j, 0xC3, 3);
+			step();
+			mark(j, 0xC3, 3);
+			step();
+			mark(j, 0xC4, 4);
+			step();
+			free_cell(j);
+			j = p ? i - 1 : i - h - 1;
+		}
+		free_street(i - h - 2);
+		free_street(i + 3 * h - 4);
+		free_street(p == 1 ? i + 1 + h : i + 1);
+		free_street(i + (p + 1) * h - 7);
+		return;
+	}
+	if (type == 0x38 || type == 0x35) {
+		int64_t j = i;
+		for (int k = 0; k < 2; ++k) {
+			auto step = [&]() {
+				--j;
+				if (j & 1) {
+					j -= h;
+				}
+			};
+			free_cell(j);
+			step();
+			mark(j, 0xC4, 4);
+			step();
+			mark(j, 0xC3, 3);
+			step();
+			mark(j, 0xC3, 3);
+			step();
+			mark(j, 0xC4, 4);
+			step();
+			free_cell(j);
+			j = p ? i - 1 + h : i - 1;
+		}
+		free_street(h + i - 2);
+		free_street(i - 3 * h - 4);
+		free_street(p == 1 ? i + 1 : i - h + 1);
+		free_street(i - (2 - p) * h - 7);
+		return;
+	}
+	// Tramos y torres (0x32, 0x33, 0x36...).
+	free_cell(i);
+	free_cell(i - 1);
+	free_cell(i - 2);
+	free_cell(p ? h + i - 1 : i - h - 1);
+	free_street(i - h - 2);
+	free_street(i - h);
+	free_street(i + h);
+	free_street(i + h - 2);
+	const int64_t n = p ? h + i + 1 : i + 1;
+	free_street(n);
+	free_street(n - 4);
+	free_street(n - 4 - h);
+	free_street(n - h);
+	fn_4fdce0(g, i);
 }
 
 }  // namespace p3::data::tick

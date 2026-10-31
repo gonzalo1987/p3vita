@@ -311,7 +311,7 @@ las 12 en paralelo), y la carga, también en 0.
 El oráculo del mundo ejecuta ahora al final de cada tick las operaciones
 encoladas con el ejecutor del juego (0x535760, ver
 [formats/world_tick.md](formats/world_tick.md) §7), en su orden, las de los
-códigos de `--operaciones` (por omisión `0,22,23,27,3b,46,4b,85,86`:
+códigos de `--operaciones` (por omisión `0,22,23,24,27,3b,46,4b,85,86`:
 zarpar, construir con sus materiales y murallas, los encargos de la Hansa y
 el alcalde de una ciudad nueva); las demás se siguen descartando, como en
 p3vita
@@ -439,3 +439,13 @@ durante 7 días (la 0x27 no sale en ellas), y el escenario `fundar` 40 días
 grabando `535760,51ba10,4d85c0` (la ciudad nueva pide materiales, los recibe
 y levanta su primer edificio municipal): 0 diferencias en las partidas 1 y 3
 (85 operaciones, 1998 ticks de ciudad).
+
+Las murallas (la operación 0x24, 0x522C70 con 0x51F3A0 y la rejilla):
+llamada a llamada con `ops22.sh 30 522c70` (`OPS` con la 0x24), 4154
+llamadas iguales en 30 días de las 12 partidas, entre ellas el cierre de la
+muralla de la ciudad 16 de la partida 5. Con la 0x24 entre las de por
+omisión, el mundo entero sin retocar, 0 diferencias en las 12 partidas
+durante 7 días; y `fundar` 420 días grabando `535760` (partida 1): las 756
+operaciones de la ciudad nueva y de las demás, iguales al juego (la ciudad
+nueva levanta sus edificios municipales, acaba su muralla y empieza a
+crecer: 272 habitantes).
