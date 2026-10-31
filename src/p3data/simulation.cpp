@@ -106,6 +106,12 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x27:  // Materiales para las obras de una ciudad (0x535BBC).
 		tick::construction_detail::fn_535bbc(save, operation);
 		break;
+	case 0x29:  // Un préstamo: el evento 0x01 (0x539DC0).
+		tick::fn_539dc0(save, operation);
+		break;
+	case 0x37:  // El comerciante paga por una ciudad (0x535E04, 0x4F8560).
+		tick::fn_535e04(save, operation);
+		break;
 	case 0x3B:  // Materiales para la carretera de un encargo de la Hansa (0x53A3E0).
 		tick::fn_53a3e0(save, operation);
 		break;
@@ -117,6 +123,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x64:  // Un robo en una oficina: el evento 0x33 (0x5363EE).
 		tick::fn_5363ee(save, operation);
+		break;
+	case 0x81:  // Un encargo de la dieta de la Hansa: el evento 0x05 (0x53FA80).
+		tick::fn_53fa80(save, operation);
 		break;
 	case 0x8E:  // Un asedio: el ejército sitiador (0x536A67, 0x633AF0).
 		tick::fn_536a67(save, operation);

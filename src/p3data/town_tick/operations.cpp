@@ -196,6 +196,116 @@ void fn_5363ee(SaveGame& save, const uint8_t* operation) {
 	std::memcpy(e.bytes.data() + 8, operation + 4, 0x10);
 }
 
+namespace {
+
+// 0x4F8FE0 (sobre el comerciante, con la ciudad, el tipo y la cantidad):
+// presta `amount` en la ciudad: se le resta y su reputación en ella
+// ([+0x120 + 12·ciudad], float) sube (4 − tipo) · cantidad · 0,0000125
+// (0x672F3C) · [+0x464].
+void fn_4f8fe0(SaveGame& save, uint32_t merchant, uint32_t town, uint32_t kind, uint16_t amount) {
+	static constexpr uint32_t kLoanReputation = 0x3751B717;  // 0x672F3C
+	float factor;
+	std::memcpy(&factor, &kLoanReputation, sizeof(factor));
+	MerchantMemory& m = save.merchants[merchant].memory;
+	const float weight = float(double(uint32_t(4 - kind)));
+	m.s32(0) = int32_t(uint32_t(m.s32(0)) - amount);
+	const float gain = float(double(weight) * double(float(int32_t(amount))) * double(factor));
+	const float r = float(double(gain) * double(m.f32(0x464)));
+	m.f32(0x120 + 12 * town) = float(double(m.f32(0x120 + 12 * town)) + double(r));
+}
+
+}  // namespace
+
+// La operación 0x29 (0x539DC0): un préstamo {0x29, u32 [+0x4], u8 [+0x8],
+// 3 bytes [+0x9], u16 [+0xC] la cantidad, u8 [+0xE] semanas, u8 [+0xF], u8
+// [+0x10] el que presta (>= comerciantes: la ciudad, su prestamista), u8
+// [+0x11] el que lo pide, u8 [+0x12] ciudad, u8 [+0x13] tipo (bits 0..3) y
+// hueco (bits 4..7)}. Si el que presta es un comerciante, tiene que tener la
+// cantidad. La deuda: un evento 0x01 (events_towns.cpp) dentro de las
+// semanas, con [+0x8] los 4 bytes, [+0xC] el tick con el byte bajo [+0xF],
+// [+0x10] y [+0x11] los dos, [+0x12] [+0x8], [+0x13] las semanas, [+0x14] la
+// ciudad y [+0x15..+0x17] los 3 bytes. Un hueco < 6 vacía el de la taberna
+// de la ciudad ([0x9CA + 6·hueco]); el que lo pide recibe la cantidad y el
+// comerciante que presta la paga (0x4F8FE0, con el tipo como mucho 4). La
+// encola el tick de los comerciantes (desde 0x4F4F6B: piden al prestamista
+// de la ciudad).
+void fn_539dc0(SaveGame& save, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	const uint32_t town = operation[0x12];
+	if (town >= g.u32(global::kWorldTownCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const uint32_t merchants = g.u16(global::kWorldMerchantCount);
+	const uint8_t lender = operation[0x10];
+	const uint8_t borrower = operation[0x11];
+	const uint16_t amount = half(operation, 0xC);
+	if (lender < merchants && save.merchants[lender].memory.s32(0) < int32_t(amount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const uint32_t tick = g.u32(global::kWorldTick);
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick + operation[0xE] * 0x700u)];
+	e.u16(6) = 1;
+	e.u32(0x8) = field(operation, 4);
+	e.u32(0xC) = (tick & 0xFFFFFF00) | operation[0xF];
+	e.u8(0x10) = lender;
+	e.u8(0x11) = borrower;
+	e.u8(0x12) = operation[0x8];
+	e.u8(0x13) = operation[0xE];
+	e.u8(0x14) = uint8_t(town);
+	e.u8(0x15) = operation[0x9];
+	e.u8(0x16) = operation[0xA];
+	e.u8(0x17) = operation[0xB];
+	const uint32_t slot = operation[0x13] >> 4;
+	if (slot < 6) {
+		save.towns[town].memory.u16(0x9CA + 6 * slot) = 0;  // Sin comprobar con el oráculo.
+	}
+	if (borrower < merchants) {
+		MerchantMemory& m = save.merchants[borrower].memory;
+		m.s32(0) = int32_t(uint32_t(m.s32(0)) + amount);
+	}
+	if (lender < merchants) {
+		const uint32_t kind = operation[0x13] & 0xF;
+		fn_4f8fe0(save, lender, town, kind > 4 ? 4 : kind, amount);  // Sin comprobar con el oráculo.
+	}
+}
+
+// La operación 0x37 (en 0x535E04): {0x37, u32 comerciante, u32 ciudad, s32
+// cantidad}: el comerciante paga por la ciudad (0x4F8560, como por el
+// edificio 0x22: la primera vez en cada ciudad). La encola el tick de los
+// comerciantes (desde 0x4F4B30).
+void fn_535e04(SaveGame& save, const uint8_t* operation) {
+	const uint32_t merchant = field(operation, 4);
+	if (merchant >= save.globals.u16(global::kWorldMerchantCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	construction_detail::fn_4f8560(save, int(merchant), field(operation, 8), int32_t(field(operation, 0xC)));
+}
+
+// La operación 0x81 (0x53FA80): {0x81, u32 comerciante, u32 tipo, u32 plazo,
+// u8 [+0x10]}: un encargo de la dieta de la Hansa al comerciante: el evento
+// 0x05 (events_big.cpp) a tick + plazo + 256 con el byte bajo a 0x80 (a
+// mitad de día), con [+0x8] el comerciante, [+0x9] el [+0x10], [+0xA] 0,
+// [+0xB] su ciudad natal, [+0xC] el tick de ahora, [+0x10] el tipo (como
+// mucho 7) y [+0x11] 0. La encola la dieta (evento 0x21, desde 0x4DCE97).
+void fn_53fa80(SaveGame& save, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	const uint32_t merchant = field(operation, 4);
+	if (merchant >= g.u16(global::kWorldMerchantCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const uint32_t tick = g.u32(global::kWorldTick);
+	const uint32_t when = ((field(operation, 0xC) + tick + 0x100) & 0xFFFFFF00) | 0x80;
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, when)];
+	e.u16(6) = 5;
+	e.u8(0x8) = uint8_t(merchant);
+	e.u8(0x9) = operation[0x10];
+	e.u8(0xA) = 0;
+	e.u8(0xB) = save.merchants[merchant].memory.u8(0x19);
+	e.u32(0xC) = tick;
+	e.u8(0x10) = operation[0x8] > 7 ? 7 : operation[0x8];
+	e.u8(0x11) = 0;
+}
+
 // La operación 0x78 (0x5051E0, sobre el objeto de los barcos): {0x78, u8 a,
 // …, u16 b, u16 x, u16 y}: un barco nuevo (0x507D60 con 4) en el primer hueco
 // libre de las 16 entradas de 12 bytes de [0x6DD7C0] (su índice, b, x, y, a

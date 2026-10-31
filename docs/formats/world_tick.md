@@ -226,6 +226,10 @@ tabla 0x537030) a unos 180 manejadores; los códigos 0x14, 0x73, 0x9C–0x9E,
 | 0x79 | en 0x536535 | la dieta de la Hansa: ocho parejas (ciudad, valor) → [0x82C] de cada ciudad |
 | 0x7A | en 0x536570 | la dieta de la Hansa: {ciudad A, ciudad B, u32, u16} → [0x834..0x83F] de la ciudad A, si no tiene comerciante en [0x83F] |
 | 0x7B | en 0x5365E3 | {0x7B, 6 bytes, …, [+0x10] ciudad | k << 8}: el capitán o administrador k (0..5) que busca trabajo en la ciudad, [0x9C6 + 6·k] (evento 0x19) |
+| 0x29 | 0x539DC0 | un préstamo: {0x29, u32, u8, 3 bytes, u16 cantidad, u8 semanas, u8, u8 el que presta (>= comerciantes: el prestamista de la ciudad), u8 el que pide, u8 ciudad, u8 tipo y hueco}: el evento 0x01 dentro de las semanas, el dinero al que pide y, si presta un comerciante, se le resta y gana reputación (0x4F8FE0); un hueco < 6 vacía el de la taberna [0x9CA + 6·k] (`operations.cpp`) |
+| 0x37 | dentro de 0x535760, en 0x535E04 | {0x37, comerciante, ciudad, cantidad}: 0x4F8560, el comerciante paga por la ciudad (la primera vez) |
+| 0x61 | 0x53DBF0 | {0x61, comerciante, tick, u32, precio}: un evento 0x07 en ese tick, si el comerciante tiene el precio, que se le cobra (sin reescribir: p3vita no atiende el evento 0x07) |
+| 0x81 | 0x53FA80 | {0x81, comerciante, tipo, plazo, u8}: un encargo de la dieta de la Hansa, el evento 0x05 a tick + plazo + 256 con el byte bajo a 0x80 |
 | 0x85 | 0x53FD10 | crea un encargo de la Hansa (§8) |
 | 0x8E | dentro de 0x535760, en 0x536A67 | un asedio: {0x8E, u32 ciudad, u32 tipo de ejército, u8 r, …, u32 flag} → 0x633AF0 (§5, `sieges.cpp`) |
 | 0x86 | dentro de 0x535760, en 0x536801 (copia en 0x53FE20) | quita los encargos de la Hansa sin comerciante que ya no valen (§8) |
@@ -236,7 +240,7 @@ en el código).
 
 p3vita guarda las operaciones en `SaveGame::queued_operations` y las ejecuta
 al final de cada tick, en su orden (`run_queued_operations` y el ejecutor
-`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x12, la 0x1E, la 0x1F, la 0x22, la 0x23, la 0x24, la 0x27, la 0x3B, la 0x46, la 0x4B, la 0x64, la 0x78, la 0x79, la 0x7A, la 0x7B, la 0x85, la 0x86 y la 0x8E; las
+`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x12, la 0x1E, la 0x1F, la 0x22, la 0x23, la 0x24, la 0x27, la 0x29, la 0x37, la 0x3B, la 0x46, la 0x4B, la 0x64, la 0x78, la 0x79, la 0x7A, la 0x7B, la 0x81, la 0x85, la 0x86 y la 0x8E; las
 demás se descartan. El oráculo del mundo hace lo mismo con el ejecutor del
 juego ([../oracle.md](../oracle.md), «Las operaciones encoladas»). Lo que encolan las ciudades y la cola de eventos en 200
 días de la partida 1 (con un candidato retocado): 0x22 ×1924, 0x7B ×1704,

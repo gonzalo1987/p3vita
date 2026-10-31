@@ -483,3 +483,11 @@ juego. Las ramas que no salen, con el escenario `asedio` de `retouch.py`
 diferencias en 6 partidas (en la 3 todas las murallas tienen piezas
 pendientes). Con la 0x8E entre las de por omisión, el mundo entero, 0
 diferencias en las 12 partidas durante 7 días.
+Con más días y la ciudad fundada salen otras: `opsdiff.py` con `FOUND=1`
+funda antes la ciudad (`retouch.found_town`), y `opsdiff_n.sh DÍAS
+PARTIDA...` compara varias partidas a la vez. En 40 a 200 días de las
+partidas 1 y 3 cambian el mundo la 0x29, la 0x81, la 0x37, la 0x61 y la
+0x2C. Las tres primeras, reescritas: llamada a llamada en la ciudad fundada
+(`DESDE=14 FUNCS=535760 ret2f.sh fundar:32` en la partida 1 y `DESDE=28
+... fundar:88` en la 3; `ret2f.sh` acepta `DESDE`), 193 y 2591 llamadas
+iguales, y el mundo entero 7 días en las 12 partidas, 0 diferencias.

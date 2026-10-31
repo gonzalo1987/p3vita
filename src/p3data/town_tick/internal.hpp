@@ -227,6 +227,12 @@ void fn_538a80(SaveGame& save, const uint8_t* operation);
 void fn_5051e0(SaveGame& save, Sailing* sailing, const uint8_t* operation);
 // 0x64 (un robo en una oficina: el evento 0x33, en 0x5363EE).
 void fn_5363ee(SaveGame& save, const uint8_t* operation);
+// 0x29 (un préstamo: el evento 0x01, 0x539DC0) y 0x81 (un encargo de la
+// dieta de la Hansa: el evento 0x05, 0x53FA80).
+void fn_539dc0(SaveGame& save, const uint8_t* operation);
+void fn_53fa80(SaveGame& save, const uint8_t* operation);
+// 0x37 (el comerciante paga por una ciudad, 0x4F8560; en 0x535E04).
+void fn_535e04(SaveGame& save, const uint8_t* operation);
 // construction.cpp: la operación 0x22, construir (0x53CE30): edificios
 // (0x521900), torres (0x523830, 0x523D70) y murallas (0x522B20).
 // Y los materiales: 0x27 (0x535BBC: la ciudad los recibe) y 0x23 (0x535B12:
@@ -236,6 +242,9 @@ void fn_53ce30(SaveGame& save, const uint8_t* operation);
 void fn_535bbc(SaveGame& save, const uint8_t* operation);
 void fn_535b12(SaveGame& save, const uint8_t* operation);
 void fn_535b44(SaveGame& save, const uint8_t* operation);
+// 0x4F8560 (sobre el comerciante): paga por el edificio 0x22 de la ciudad
+// la primera vez; también la operación 0x37.
+void fn_4f8560(SaveGame& save, int merchant, uint32_t town, int32_t amount);
 }  // namespace construction_detail
 void fn_53b440(SaveGame& save, const uint8_t* operation);
 // La operación 0x3B (0x53A3E0): el comerciante aporta materiales a su
