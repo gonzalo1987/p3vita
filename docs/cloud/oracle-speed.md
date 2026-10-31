@@ -192,9 +192,107 @@ the rest (emulation, hooks, writing) 2.8 s. A day with nothing recorded takes
   recordings identical): record `Q` only with `--barcos`, or clear `[+0x24]`
   on load without navigation.
 
+### The other oracles and helpers
+
+- `retouch.py` uses `town_oracle.Recorder` and `regions()`: it gets every
+  speedup (checked with `robo:1`, identical).
+- `re/emu/sesion5/opsdiff.py` uses `regions()` (md5 of the bytes, still
+  `bytes`): faster without changes. The other helpers (`armies.py`,
+  `cov_fn.py`, `events_seen.py`...) build a `TownOracle` and read a few
+  fields: nothing to gain.
+- `save_oracle.py` (0.6 s with its default run) and `sail_oracle.py` (4.2 s
+  for 2048 ticks) write CSV with field-by-field reads and are not part of
+  `world.sh`: not worth touching. (`sail_oracle.route()` reads the points one
+  by one; one read would do, if it ever matters.)
+
+## What else could be sped up (not done)
+
+Estimates for `world.sh` on a save, where the oracle is now about 80% and
+`tick_probe` about 15–20% of the time:
+
+1. **Overlap `tick_probe` with the oracle**: `world.sh` runs them one after
+   the other per save and then deletes the `.probe`. `tick_probe` reads the
+   file sequentially, so a named pipe (`mkfifo`) would let it run on another
+   core while the oracle records. On the PC (32 threads, 12 saves) that
+   takes `tick_probe` out of the wall time: about 15% less for `world.sh`.
+   Here, with 4 vCPU and 4 saves, little or nothing. It is a change to
+   `re/emu/sesion5/world.sh` (the PC's), not to p3vita; it needs checking that
+   `tick_probe` never seeks.
+2. **`regions()` in C**: a snapshot is about 220 reads and 211 entries built
+   in Python (0.55 ms, of which the reads are 0.17 ms). A small C helper (or
+   a `ctypes` function compiled with the tools) could take it to about
+   0.1 ms: 3–4 s of the 12 s of a save-day, about 25–30% of the oracle. Not
+   done: it adds a compiled piece to the Python tools.
+3. **Skip the "after" snapshot of calls that write nothing** (most calls to
+   `0x633A90` probably change nothing): it would need to know that the
+   emulated code wrote nothing outside the stack. Unicorn has no dirty-page
+   API, and a `UC_HOOK_MEM_WRITE` hook sends every write through the slow
+   path. Worth a measurement only if 2 is done and the snapshots still
+   dominate: up to 40% of the remaining snapshots.
+4. **`write_diff`**: 1.5 s per save-day (13540 calls); most of it is the
+   equality test of 211 regions per call. Comparing only the regions that a
+   cheaper test says may have changed would save maybe 1 s per save-day
+   (8%).
+5. **`tick_probe`**: what is left is the `memcmp` of the whole state after
+   each call (55%) and `dump_save` (24%), about 3.3 s per save-day.
+   Comparing only the regions the call changed (the `.probe` says which)
+   could halve it: about 5% of `world.sh`.
+6. `load()` is 1.4 s per run, once: nothing to gain in runs of days.
+
 ## For the roadmap
 
-(filled in at the end)
+- Checks are about 4 times faster (`world.sh 7` on 4 saves: 580 s to 134 s
+  here; on the PC, expect `world.sh 7` on the 12 saves well under the
+  6.5 min of before). The «Cloud measurements» of the p3vita-datos README
+  are from before this branch.
+- Tool bug to fix (not the game's): the towns-only mode of `town_oracle.py`
+  (no `--barcos`, as `scripts/tick-probe.sh` without `P3_SHIPS`) fails on the
+  first snapshot (see «Found on the way»).
+- The Vita build uses `Release` (`-O3`, with strict aliasing and no
+  `-fwrapv`), while the PC builds that the oracle checks now use `-O2
+  -fwrapv -fno-strict-aliasing` (before, `-O0`). If p3data has signed
+  overflow or type punning somewhere, the Vita could compute something
+  different from what is checked. Worth considering the same two flags for
+  the Vita build (not checked: no VitaSDK here). What is certain is only that
+  the PC results didn't change.
+- Possible next speedups: «What else could be sped up», above.
+
+For `docs/oracle.md` (not edited here; it is shared):
+- `P3_ORACLE_CHECK=1`: the `Recorder` takes every skipped snapshot anyway and
+  compares it (raises if it differs). Use it after changing the recording
+  machinery or the trampolines.
+- The PC build is optimized by default (`-O2 -fwrapv -fno-strict-aliasing`
+  when there is no build type).
+
+## Changes to shared files
+
+- `CMakeLists.txt` (top level): the default `-O2 -fwrapv
+  -fno-strict-aliasing` when there is no build type (10 lines). Applies to
+  `build.sh`'s build and any build without `CMAKE_BUILD_TYPE`; not to the
+  Vita (it sets `Release`) nor to MSVC.
+- `tools/oracle/town_oracle.py`: only the recording machinery (`regions`,
+  `write_diff` and the new `changed_runs`, `Recorder`, the new
+  `fast_reader`, and `self.fast_read` in `TownOracle.__init__`). `OPERATIONS`,
+  `EVENT_JUMPS` and the rest of the lists are untouched.
+- `tools/oracle/save_oracle.py`: `STACK_SIZE` (used in its `mem_map`).
+- `tools/oracle/tick_probe.cpp`: `next_difference()` and its use in
+  `compare()`.
+- None of the files of part B (`operations.cpp`, `simulation.cpp`,
+  `events*.cpp`, `internal.hpp`, `retouch.py`) and no shared doc.
+
+## Checks run and their time
+
+- Measurement (part 1): 4 oracle runs of 1 day (plain and cProfile), 2 of
+  `tick_probe` at `-O0` and 2 at `-O2`, the timer breakdown: about 5 min.
+- Reference recordings with `main`'s scripts (7 jobs, 4 at a time): 318 s.
+- Each byte-identity round (the 7 recordings, with `P3_ORACLE_CHECK=1` and
+  without it): 223 s + 94 s in the first round, about 2 + 1.3 min in the
+  second.
+- `SAVES='1 3 5 7' world.sh 7`: 580 s (before), 166 s, 134 s.
+- `build.sh` and ctest 7 of 7 before each push.
+- **Not built for the Vita** (no VitaSDK in the cloud); the Vita build
+  doesn't use anything changed here (the `CMakeLists.txt` default doesn't
+  apply to it, and the tools aren't built for it).
 
 ## For the inventory
 
