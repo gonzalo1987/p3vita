@@ -100,6 +100,8 @@ Las operaciones de la simulación que p3vita descartaba (inventario, parte B); g
   boda                  0x60 and event 0x15: weddings with their dowry ships and feast
   quiebra               0x65: an AI merchant goes bankrupt (debts, mayor, new name)
   hijo                  0x87: a child is born to a married merchant
+  desguace              0x0A: ships deleted (in port, at sea, in a convoy, the player's)
+  red, red_activa       0xB8: network sync checks (all kinds; with [0x6DF31C] = 1)
 Los asedios (operación 0x8E); graban 535760 y 633a90:
   asedio                uno a una ciudad sin muralla (rescate sin atacar) y
                         otro en la región de la ciudad natal del jugador, con
@@ -1471,6 +1473,58 @@ def hijo(o):
     return lambda: print(f'hijos: {[(m, o.u8(o.merchant(m) + 0x36), o.u16(o.merchant(m) + 0x34)) for m in (a, b, c)]}')
 
 
+def desguace(o):
+    """Ships deleted (operation 0x0A, 0x507FB0) at the end of the first tick:
+    an AI ship in port, one at sea, a convoy member that is not its leader,
+    one with the wrong owner (nothing) and one of the player. Records 1 day.
+    Returns what it prints at the end."""
+    ships, merchants = o.u16(to.SHIPS + 0xF4), o.u16(WORLD + 0xA)
+    p = o.u32(to.PLAYER)
+
+    def chain(head):
+        out, s = [], head
+        while s < ships:
+            out.append(s)
+            s = o.u16(o.ship(s) + 6)
+        return out
+    port, sea = chain(o.u16(to.SHIPS + 0xE8)), chain(o.u16(to.SHIPS + 0xEA))
+    convoys = o.u16(to.SHIPS + 0xF6)
+
+    def ai(s):
+        m = o.u8(o.ship(s))
+        return m < merchants and o.u16(o.merchant(m) + 8) and o.u16(o.ship(s) + 8) >= convoys
+    lead = lambda c: o.u16(o.u32(to.SHIPS + 8) + 0x3C * c + 0x10)
+    member = next((s for s in range(ships) if o.u8(o.ship(s)) < merchants and o.u16(o.ship(s) + 8) < convoys
+                   and lead(o.u16(o.ship(s) + 8)) != s), None)
+    chosen = [next(s for s in port if ai(s)), next(s for s in sea if ai(s))]
+    if member is not None:
+        chosen.append(member)
+    mine = o.u16(o.merchant(p) + 0xE)
+    for s in chosen + ([mine] if mine < ships else []):
+        o.tick_operations.append(struct.pack('<5I', 0x0A, s, o.u8(o.ship(s)), 0, 0))
+    o.tick_operations.append(struct.pack('<5I', 0x0A, chosen[0], (o.u8(o.ship(chosen[0])) + 1) & 0xFF, 0, 0))
+    lists = [o.u16(o.merchant(p) + 0x60C + 2 * k) & 0x7FFF for k in range(11)]
+    print(f'barcos borrados {chosen} y del jugador {mine} (sus listas: {lists})')
+    return lambda: print(f'después (dueño, estado, siguiente): {[(o.u8(o.ship(s)), o.u16(o.ship(s) + 0x134), o.u16(o.ship(s) + 6)) for s in chosen]}'
+                         f'; libres {o.u16(to.SHIPS + 0xE2)}')
+
+
+def red(o):
+    """Network sync checks (operation 0xB8, 0x542F10) at the end of the first
+    tick: kinds 0 (with flag 0 and 1), 1 to 5 and 9. With [0x6DF31C] = 0,
+    kinds 1 and 2 queue nothing. Records 1 day."""
+    for kind, flag in ((0, 0), (0, 1), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (9, 1)):
+        o.tick_operations.append(struct.pack('<5I', 0xB8, kind, flag, 0, 0))
+    print(f'[0x6DF31C] {o.u32(0x6DF31C)}')
+
+
+def red_activa(o):
+    """red with [0x6DF31C] = 1 (as in a network game): kinds 1 and 2 queue a
+    0xB9 per ship and a 0xBA per town. Records 1 day."""
+    w32(o, 0x6DF31C, 1)
+    red(o)
+
+
 def jugador_carretera_vencida(o):
     """El jugador con la carretera vencida: el juego crea un encargo igual con
     la ciudad [+0x10] como comerciante, que sigue avanzando. Graba 2 días."""
@@ -1489,7 +1543,7 @@ SCENARIOS = {f.__name__: f for f in (candidato, jugador, dos_candidatos, sin_car
                                      poblada, rica, fundar_aceite, robo, asedio, capitanes, impuesto, monumento, incendio, dieta,
                                      fiesta, fiesta_vacia, fiesta_ciudad, astillero, astillero_ciudad, eventos_op,
                                      propuestas, subasta, subasta_ajuste, temporada, incendio_ciudad,
-                                     capitan_jugador, boda, quiebra, hijo)}
+                                     capitan_jugador, boda, quiebra, hijo, desguace, red, red_activa)}
 
 
 def main():

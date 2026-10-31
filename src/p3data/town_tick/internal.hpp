@@ -266,6 +266,10 @@ void fn_53da90(SaveGame& save, const uint8_t* operation);
 void fn_53dd70(SaveGame& save, const uint8_t* operation);
 // 0x87 (a child is born to a married merchant, 0x53FEA0).
 void fn_53fea0(SaveGame& save, const uint8_t* operation);
+// 0x0A (a ship is deleted, Sailing::fn_507fb0; in 0x535866).
+void fn_535866(SaveGame& save, Sailing* sailing, const uint8_t* operation);
+// 0xB8 (network games' sync checks, 0x542F10).
+void fn_542f10(SaveGame& save, const uint8_t* operation);
 // construction.cpp: la operación 0x22, construir (0x53CE30): edificios
 // (0x521900), torres (0x523830, 0x523D70) y murallas (0x522B20).
 // Y los materiales: 0x27 (0x535BBC: la ciudad los recibe) y 0x23 (0x535B12:

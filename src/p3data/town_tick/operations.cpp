@@ -351,6 +351,176 @@ void fn_536642(SaveGame& save, const uint8_t* operation) {
 	std::memcpy(e.bytes.data() + 8, operation + 4, 0x10);
 }
 
+// Operation 0xB8 (0x542F10): {0xB8, u32 kind, u32 flag}: network games'
+// sync checks. It queues operations that do nothing when run, with checksums
+// of the state: kind 1, one 0xB9 per ship (index, [+0x34], [+0x1C],
+// [+0x20], [+0x18]) and kind 2, one 0xBA per town (index, two flag bits of
+// [0x2C8], the four classes of citizens, the sums of [0x310 + 4w], of the
+// stock and of [0x64 + 4w]), both only with [0x6DF31C]; kind 3, a 0xBC with
+// the event queue's and the ship object's counters; kind 4, a 0xBE per
+// merchant (money, [+0x46C], [+0x22], index); kind 5, nothing. Any other
+// kind: with flag 1 a 0xBB (tick, the merchants' money + [+0x46C] + [+0x22]
+// + 100 in 30 bits, the citizens, the counters), and always [0x6DFBF8] = 0
+// and a 0xD4 (stock of the towns in 22 bits each, tick | the positions of
+// the 16 special ships, the positions of the merchants' and pirates' ships,
+// the merchants' cargo). Queued by event 0x03 in network games (kind 0).
+void fn_542f10(SaveGame& save, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	const uint32_t ships = g.u16(global::kShipCount);
+	const uint32_t towns = g.u32(global::kWorldTownCount);
+	const uint32_t merchants = g.u16(global::kWorldMerchantCount);
+	struct Out {
+		uint8_t bytes[0x14] = {};
+		void u32(size_t o, uint32_t v) { std::memcpy(bytes + o, &v, 4); }
+		void u16(size_t o, uint16_t v) { std::memcpy(bytes + o, &v, 2); }
+		void u8(size_t o, uint8_t v) { bytes[o] = v; }
+	};
+	auto queue = [&](const Out& out) { enqueue_operation(save, out.bytes, sizeof(out.bytes)); };
+	// The ship object's and the event queue's counters (u16 each).
+	auto counters = [&](uint32_t a) { return uint32_t(g.u16(a)); };
+	switch (field(operation, 4)) {
+	case 1:
+		if (g.u32(0x6DF31C) == 0) {
+			return;
+		}
+		for (uint32_t i = 0; i < ships; ++i) {
+			const ShipMemory& s = save.ships[i].memory;
+			Out out;
+			out.u32(0, 0xB9);
+			out.u16(4, uint16_t(i));
+			out.u16(6, s.u16(0x34));
+			out.u32(8, s.u32(0x1C));
+			out.u32(0xC, s.u32(0x20));
+			out.u32(0x10, s.u32(0x18));
+			queue(out);
+		}
+		return;
+	case 2:
+		if (g.u32(0x6DF31C) == 0) {
+			return;
+		}
+		for (uint32_t i = 0; i < towns; ++i) {
+			const TownMemory& t = save.towns[i].memory;
+			Out out;
+			out.u32(0, 0xBA);
+			out.u8(4, uint8_t(i));
+			out.u8(5, uint8_t(((t.s32(0x2C8) >> 7) & 0x3F) + (t.u8(0x2C8) & 0x3F)));
+			out.u16(6, uint16_t(t.u16(0x2E4) + t.u16(0x2E0) + t.u16(0x2DC) + t.u16(0x2D8)));
+			uint32_t a = 0, stock = 0, b = 0;
+			for (uint32_t w = 0; w < 24; ++w) {
+				stock += t.u32(4 + 4 * w);
+				a += t.u32(0x310 + 4 * w);
+				b += t.u32(0x64 + 4 * w);
+			}
+			out.u32(8, a);
+			out.u32(0xC, stock);
+			out.u32(0x10, b);
+			queue(out);
+		}
+		return;
+	case 3: {
+		Out out;
+		out.u32(0, 0xBC);
+		out.u32(4, (counters(0x6DD746) << 16) + counters(0x6DD744));
+		out.u32(8, (counters(0x6DD888) << 16) + counters(0x6DD88A));
+		out.u32(0xC, (counters(0x6DD882) << 16) + counters(0x6DD880));
+		out.u32(0x10, (counters(0x6DD884) << 16) + counters(0x6DD734));
+		queue(out);
+		return;
+	}
+	case 4:
+		for (uint32_t i = 0; i < merchants; ++i) {
+			const MerchantMemory& m = save.merchants[i].memory;
+			Out out;
+			out.u32(0, 0xBE);
+			out.u32(4, m.u32(0));
+			out.u32(8, m.u32(0x46C));
+			out.u32(0xC, uint32_t(int32_t(m.s16(0x22))));
+			out.u32(0x10, i);
+			queue(out);
+		}
+		return;
+	case 5:
+		return;  // Sin comprobar con el oráculo.
+	default:
+		break;
+	}
+	if (field(operation, 8) == 1) {
+		Out out;
+		out.u32(0, 0xBB);
+		out.u32(4, g.u32(global::kWorldTick));
+		uint32_t money = 0;
+		for (uint32_t i = merchants; i > 0;) {
+			const MerchantMemory& m = save.merchants[--i].memory;
+			money += m.u32(0) + m.u32(0x46C);
+			money = (money + uint16_t(m.u16(0x22) + 0x64)) & 0x3FFFFFFF;
+		}
+		out.u32(8, money);
+		uint32_t citizens = 0;
+		for (uint32_t i = 0; i < towns; ++i) {
+			citizens += save.towns[i].memory.u32(0x2D4);
+		}
+		out.u32(0xC, citizens);
+		out.u32(0x10, counters(0x6DD746) + counters(0x6DD744) + counters(0x6DD888) + counters(0x6DD88A) +
+			counters(0x6DD882) + counters(0x6DD880) + counters(0x6DD884));
+		queue(out);
+	}
+	g.u32(0x6DFBF8) = 0;
+	Out out;
+	out.u32(0, 0xD4);
+	uint32_t stock = 0;
+	for (uint32_t i = 0; i < towns; ++i) {
+		for (uint32_t w = 0; w < 24; ++w) {
+			stock += save.towns[i].memory.u32(4 + 4 * w) & 0x3FFFFF;
+		}
+	}
+	out.u32(4, stock);
+	uint32_t special = 0;
+	for (uint32_t k = 0; k < 16; ++k) {
+		const uint32_t e = global::kShips + 0x20 + 12 * k;  // 0x6DD7C0
+		if (g.u16(e) < uint16_t(ships)) {
+			special += uint32_t(g.u16(e + 4)) + g.u16(e + 6);
+		}
+	}
+	out.u32(8, ((special & 0xFFFF) << 16) + (g.u32(global::kWorldTick) & 0xFFFF));
+	uint32_t places = 0;
+	uint32_t cargo = 0;
+	for (uint32_t i = merchants; i > 0;) {
+		const MerchantMemory& m = save.merchants[--i].memory;
+		for (uint32_t s = m.u16(0xE); s < ships; s = save.ships[s].memory.u16(4)) {
+			const ShipMemory& ship = save.ships[s].memory;
+			places += ship.u32(0x20) + ship.u32(0x1C);
+			for (uint32_t w = 0; w < 24; ++w) {
+				cargo += ship.u32(0x54 + 4 * w);
+			}
+		}
+	}
+	for (const auto& pirate : save.pirates) {
+		if (!pirate) {
+			continue;
+		}
+		for (uint32_t s = pirate->u16(0xC); s < ships; s = save.ships[s].memory.u16(4)) {
+			places += save.ships[s].memory.u32(0x20) + save.ships[s].memory.u32(0x1C);  // Sin comprobar con el oráculo.
+		}
+	}
+	out.u32(0xC, places);
+	out.u32(0x10, cargo);
+	queue(out);
+}
+
+// Operation 0x0A (in 0x535866): {0x0A, u32 ship, u32 owner}: the ship is
+// deleted (0x507FB0, Sailing::fn_507fb0) if it still belongs to that owner.
+// Queued only by the interface (0x4768B0: scrapping a ship).
+void fn_535866(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
+	const uint32_t ship = field(operation, 4);
+	if (ship >= save.globals.u16(global::kShipCount) || save.ships[ship].memory.u8(0) != field(operation, 8)) {
+		return;  // Comprobado solo con estados retocados.
+	}
+	if (sailing) {
+		sailing->fn_507fb0(uint16_t(ship));
+	}
+}
+
 // Operation 0x87 (0x53FEA0): {0x87, u8 merchant, u8 first name, 4 bytes}: a
 // child is born to a married merchant ([+0x31] a town), after [+0x28] and at
 // least 279 days (0x11700 ticks) after the wedding [+0x2C], if no child of

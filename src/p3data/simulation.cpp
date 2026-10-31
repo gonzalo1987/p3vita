@@ -85,6 +85,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			sailing->set_sail(fields[1], fields[2], fields[3], fields[4]);
 		}
 		break;
+	case 0x0A:  // A ship is deleted (0x535866, 0x507FB0).
+		tick::fn_535866(save, sailing, operation);
+		break;
 	case 0x12:  // El capitán de un barco mejora (0x538A80).
 		tick::fn_538a80(save, operation);
 		break;
@@ -198,6 +201,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x86:  // Quitar los encargos de la Hansa que ya no valen (en 0x536801).
 		tick::fn_53fe20(save);
+		break;
+	case 0xB8:  // Network games' sync checks (0x542F10).
+		tick::fn_542f10(save, operation);
 		break;
 	default:  // Las demás aún no se reproducen.
 		break;

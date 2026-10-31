@@ -535,6 +535,8 @@ partidas (`world.sh 7`, 0 diferencias tras cada una):
 | 0x7D, un incendio en la ciudad, con el evento 0x1D | `incendio_ciudad:4` (tres incendios, cada uno en su ciudad: en un almacén de un comerciante, 0x500C30; en una casa de una oficina; en un edificio de la ciudad; se extienden a 3 y 4 edificios, uno se para sin más cerca, y se apagan) | 1, 3, 5, 7 (en la 1 solo el de la casa) | iguales |
 | 0x13, a human player's captain retires (event 0x27) | `capitan_jugador:1` (the player's first ship with a captain; and a captain that does not exist) | 1, 3, 5, 7 (in 1 the player's ship has no captain) | equal |
 | 0x60, a wedding (event 0x15, with 0x50E000 and the feast) | `boda:2` recording also `506720` (the AI merchant with the biggest fleet, its first ship with a bigger hold, in a town with [0x2C8] & 1; the player; a merchant whose [+0x28] has passed; a past tick) | 1, 3, 5, 7 | equal |
+| 0x0A, a ship deleted (0x507FB0) | `desguace:1` recording also `506720` (an AI ship in port, one at sea, a convoy member, the player's first ship; the wrong owner: nothing) | 1, 3, 5, 7 | equal |
+| 0xB8, network sync checks | `red:1` and `red_activa:1` (kinds 0 with flag 0 and 1, 1 to 5 and 9; [0x6DF31C] 0 and 1) | 1, 3, 5, 7 | equal, also the operations queued in each call |
 | 0x87, a child of a married merchant | `hijo:1` (married 300 days ago: one child, not a second right after; unmarried; married 100 days ago) | 1, 3, 5, 7 | equal |
 | 0x65, an AI merchant goes bankrupt | `quiebra:2` recording also `4f7bb0` (made mayor of his home town, with a debt owed to him and one he owes; and the player: nothing) | 1, 3, 5, 7 | equal |
 
