@@ -48,7 +48,7 @@ void run_queued_operations(SaveGame& save, Sailing& sailing);
 
 // El ejecutor (0x535760): una operación encolada (0x14 bytes: u32 código y
 // sus datos) según su código, de las que reproduce p3vita (0x00, 0x22, 0x23,
-// 0x24, 0x27, 0x3B, 0x46, 0x4B, 0x85 y 0x86); las demás no hacen nada. Sin `sailing`, la 0x00 tampoco.
+// 0x24, 0x27, 0x3B, 0x46, 0x4B, 0x79, 0x7A, 0x7B, 0x85 y 0x86); las demás no hacen nada. Sin `sailing`, la 0x00 tampoco.
 void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation);
 
 }  // namespace p3::data

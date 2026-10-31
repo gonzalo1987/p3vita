@@ -311,7 +311,7 @@ las 12 en paralelo), y la carga, también en 0.
 El oráculo del mundo ejecuta ahora al final de cada tick las operaciones
 encoladas con el ejecutor del juego (0x535760, ver
 [formats/world_tick.md](formats/world_tick.md) §7), en su orden, las de los
-códigos de `--operaciones` (por omisión `0,22,23,24,27,3b,46,4b,85,86`:
+códigos de `--operaciones` (por omisión `0,22,23,24,27,3b,46,4b,79,7a,7b,85,86`:
 zarpar, construir con sus materiales y murallas, los encargos de la Hansa y
 el alcalde de una ciudad nueva); las demás se siguen descartando, como en
 p3vita
@@ -449,3 +449,13 @@ durante 7 días; y `fundar` 420 días grabando `535760` (partida 1): las 756
 operaciones de la ciudad nueva y de las demás, iguales al juego (la ciudad
 nueva levanta sus edificios municipales, acaba su muralla y empieza a
 crecer: 272 habitantes).
+
+**Qué operaciones cambian el mundo.** `re/emu/sesion5/opsdiff.sh PARTIDA
+DÍAS` hace pasar el mundo del oráculo (sin grabar) con las operaciones que
+reproduce p3vita y con cada una de las demás añadida, y compara cada día una
+huella de cada región: en las partidas 1, 3 y 5 y 20 días cambian el mundo
+la 0x7B, 0x78, 0x79, 0x7A, 0x1E, 0x1F, 0x12 y 0x64 (la 0x8E para el
+emulador). Con la 0x79, la 0x7A y la 0x7B reescritas y entre las de por
+omisión: el mundo entero, 0 diferencias en las 12 partidas durante 7 días.
+La 0x1E (expediciones) sale distinta en la partida 2 porque `set_sail` no
+hace la rama de convoy de 0x537670: queda sin ejecutar.

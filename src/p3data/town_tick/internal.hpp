@@ -210,6 +210,17 @@ void fn_531bd0(SaveGame& save);
 uint32_t fn_4ecdf4(SaveGame& save);
 uint32_t fn_4ea0d4(SaveGame& save);
 void fn_535fd6(SaveGame& save, const uint8_t* operation);
+// operations.cpp: otros manejadores del ejecutor: 0x7B (capitanes y
+// administradores que buscan trabajo en una ciudad, 0x5365E3), 0x79 y 0x7A
+// (la dieta de la Hansa, 0x536535 y 0x536570).
+void fn_5365e3(SaveGame& save, const uint8_t* operation);
+void fn_536535(SaveGame& save, const uint8_t* operation);
+void fn_536570(SaveGame& save, const uint8_t* operation);
+// Y los convoyes de expedición: 0x1E (sale, 0x539B50) y 0x1F (un punto de
+// su ruta, 0x539C60). Aún no se ejecutan: la salida necesita la rama de
+// convoy de la orden de zarpar (0x537670), que Sailing::set_sail no hace.
+void fn_539b50(SaveGame& save, Sailing* sailing, const uint8_t* operation);
+void fn_539c60(SaveGame& save, const uint8_t* operation);
 // construction.cpp: la operación 0x22, construir (0x53CE30): edificios
 // (0x521900), torres (0x523830, 0x523D70) y murallas (0x522B20).
 // Y los materiales: 0x27 (0x535BBC: la ciudad los recibe) y 0x23 (0x535B12:

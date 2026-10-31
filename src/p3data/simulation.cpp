@@ -106,6 +106,15 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x4B:  // Un candidato coge un encargo de la Hansa (0x53B440).
 		tick::fn_53b440(save, operation);
 		break;
+	case 0x79:  // La dieta de la Hansa: un byte por ciudad (0x536535).
+		tick::fn_536535(save, operation);
+		break;
+	case 0x7A:  // La dieta de la Hansa: [0x834..0x83F] de una ciudad (0x536570).
+		tick::fn_536570(save, operation);
+		break;
+	case 0x7B:  // Capitanes y administradores que buscan trabajo (0x5365E3).
+		tick::fn_5365e3(save, operation);
+		break;
 	case 0x85:  // Crear un encargo de la Hansa (0x53FD10).
 		tick::fn_53fd10(save, operation);
 		break;
