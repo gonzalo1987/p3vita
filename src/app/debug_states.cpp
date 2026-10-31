@@ -1,5 +1,7 @@
 #include "debug_states.hpp"
 
+#include <algorithm>
+
 #include "p3data/game_memory.hpp"
 #include "p3data/hanse_tasks.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -52,6 +54,30 @@ void give_materials(SaveGame& save) {
 	recalculate_cargo(ship);
 }
 
+// The election of the Alderman (event 0x20) moved to the first phase of the
+// next day, as election_tomorrow of tools/oracle/retouch_player.py: unlinked,
+// put at the head with its new tick and placed again (0x4D8DD0).
+bool election_tomorrow(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	constexpr uint32_t kEventHead = 0x6DD73C + 0x8;
+	constexpr uint32_t kEventCount = 0x6DD73C + 0xC;
+	const uint32_t count = std::min<uint32_t>(g.u16(kEventCount), uint32_t(save.events.size()));
+	uint16_t* link = &g.u16(kEventHead);
+	for (size_t walked = 0; *link < count && walked < count; ++walked) {
+		const uint16_t i = *link;
+		if (save.events[i].u16(6) == 0x20) {
+			*link = save.events[i].u16(4);
+			save.events[i].u16(4) = g.u16(kEventHead);
+			g.u16(kEventHead) = i;
+			save.events[i].u32(0) = (g.u32(global::kWorldTick) & ~0xFFu) + 0x100;
+			tick::events_detail::fn_4d8dd0(save);
+			return true;
+		}
+		link = &save.events[i].u16(4);
+	}
+	return false;
+}
+
 }  // namespace
 
 const char kDebugStatesHelp[] =
@@ -60,7 +86,8 @@ const char kDebugStatesHelp[] =
 	"  candidate   mayor and candidate: the Hanse offers its tasks after a tick\n"
 	"  materials   road materials in the player's first ship (12 loads)\n"
 	"  level4      three tasks done: the player can stand for election\n"
-	"  alderman    the player is the Alderman\n";
+	"  alderman    the player is the Alderman\n"
+	"  election-tomorrow  the election of the Alderman at the start of the next day\n";
 
 bool apply_debug_states(SaveGame& save, const std::string& states, std::string& error) {
 	if (save.player < 0 || size_t(save.player) >= save.merchants.size()) {
@@ -90,6 +117,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			m.u8(0x37) = 4;
 			// The election (0x529700) looks at the merchants of the towns with [0x2C8] & 0x40.
 			save.towns[m.u8(0x19)].memory.u32(0x2C8) |= 0x40;
+		} else if (state == "election-tomorrow") {
+			if (!election_tomorrow(save)) {
+				error = "the save has no election (event 0x20)";
+				return false;
+			}
 		} else if (state == "alderman") {
 			save.globals.u8(kAlderman) = uint8_t(save.player);
 			save.globals.u8(kAldermanTown) = m.u8(0x19);

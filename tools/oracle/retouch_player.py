@@ -31,6 +31,12 @@ wood, bricks and hemp in its first ship, docked there):
                    what is still needed)
   give_needed      1 section left: «all» of each material, clamped to what is
                    still needed
+The election of the Alderman (event 0x20, 0x4DBBD0), moved to the start of
+the next day (tick low byte 0: the first phase), with the player at level 4
+as `--debug-state level4` of the viewer leaves it (mayor of its home town,
+the third component of its reputation at 20 in every town, [+0x37] = 4, the
+home town with [0x2C8] & 0x40):
+  election_level4  the player can stand: the election runs its phases that day
 Records 535760 and 4d85c0, for example 2 days.
 """
 
@@ -187,8 +193,46 @@ def give_needed(o):
     give(o, 1, (0xFFFFFFFF,) * 4)
 
 
+def level4(o):
+    """The player as --debug-state level4 leaves it (src/app/debug_states.cpp)."""
+    m = o.u32(to.PLAYER)
+    ma = o.merchant(m)
+    home = o.u8(ma + 0x19)
+    rt.w8(o, o.town(home) + 0x6F1, rt.owner(o, m))
+    for i in range(o.u32(WORLD + 0x10)):
+        rt.wf(o, ma + 0x124 + 12 * i, 20.0)
+    rt.w8(o, ma + 0x37, 4)
+    rt.w32(o, o.town(home) + 0x2C8, o.u32(o.town(home) + 0x2C8) | 0x40)
+    return m, home
+
+
+def election_tomorrow(o):
+    """The event 0x20 moved to the first phase of the next day; returns (index, address)."""
+    i, a = next((i, a) for i, a in rt.events(o) if o.u16(a + 6) == 0x20)
+    tick = (o.u32(WORLD + 0x14) & ~0xFF) + 0x100
+    rt.move_event(o, i, a, tick)
+    print(f'election: event {i} at tick {tick:#x}')
+    return i, a
+
+
+def election_level4(o):
+    m, home = level4(o)
+    election_tomorrow(o)
+    print(f'player {m}, home town {home}, alderman {o.u8(0x6DE52D)} (town {o.u8(0x6DE52E)})')
+
+
+def print_election(o):
+    """The election's event and the Alderman after the run."""
+    for i, a in rt.events(o):
+        if o.u16(a + 6) == 0x20:
+            raw = bytes(o.uc.mem_read(a, 0x18))
+            print(f'election {i}: tick {o.u32(a):#x} candidates {raw[8:12].hex()} votes {raw[12:16].hex()}'
+                  f' to give {raw[16:20].hex()} humans {raw[0x14]:#x}')
+    print(f'alderman {o.u8(0x6DE52D)} (town {o.u8(0x6DE52E)})')
+
+
 SCENARIOS = {f.__name__: f for f in (take_scenario(0), take_scenario(1), take_scenario(2), take_scenario(4), take_two,
-                                     take_not_candidate, give_road, give_needed)}
+                                     take_not_candidate, give_road, give_needed, election_level4)}
 
 
 def main():
@@ -206,6 +250,11 @@ def main():
     p.add_argument('--max', type=int, default=1 << 30)
     a = p.parse_args()
     PLAYER_OPS = a.player_ops
+    # The end of the election when a human merchant wins (0x4DBBD0): the
+    # windows (*0x6CC7E8, 0x469380 and 0x469AF0; and 0x5499F0 when it is the
+    # player), which p3vita doesn't reproduce either (events_mayor.cpp). Only
+    # in this script: town_oracle.py isn't changed.
+    to.EVENT_JUMPS.setdefault(0x4DC041, 0x4DC0F2)
     o = to.TownOracle(a.exe, open(a.save, 'rb').read(), 1, a.barcos, rest=list(to.REST), cpr=a.cpr)
     o.load()
     SCENARIOS[a.scenario](o)
@@ -220,6 +269,7 @@ def main():
                 break
         f.write(b'E')
     print(f'{rec.count} samples in {a.out}')
+    print_election(o)
     m = o.u32(to.PLAYER)
     for i, e in rt.events(o):
         if o.u16(e + 6) == 0x32:
