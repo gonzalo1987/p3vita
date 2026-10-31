@@ -66,6 +66,12 @@ RANGES = [
     (0x535B05, 0x535C30),  # the executor's cases 0x22..0x27
     (0x53CE30, 0x53CF44),  # operation 0x22
     (0x537025, 0x53702F),  # the executor's end
+    (0x5289B0, 0x528CB2),  # the candidates for mayor
+    (0x5458D0, 0x545B11), (0x5462F0, 0x5463BC),  # a new town
+    (0x531D50, 0x532286),  # found a town
+    (0x4ECDF4, 0x4ECF5E),  # event 0x39
+    (0x4EA0D4, 0x4EA590),  # event 0x2F
+    (0x535FD6, 0x536050),  # operation 0x46
 ]
 
 
@@ -756,6 +762,189 @@ def chapel_reputation(o):
     return during
 
 
+# --- new_town.cpp ---
+
+MALE_NAMES, FAMILY_NAMES = 0x6DDB70, 0x6DDB74  # u16: the numbers of names of the lists (0x6DDAA0 + 0xD0, + 0xD4)
+
+
+def candidate_wraps(o, t, seed, step):
+    """Which wraps of 0x5289B0's series (names, families, [0x6EC]) a call with
+    seed and step would make in town t (the same steps as the game)."""
+    a = o.town(t)
+    nm, nf = o.u16(MALE_NAMES), o.u16(FAMILY_NAMES)
+    v, hit = seed & 0xFFFFFFFF, set()
+    lists = {}
+    for base, n, tag in ((0x6D4, nm, 'names'), (0x6D8, nf, 'families')):
+        got = []
+        for i in range(4):
+            v %= n
+            c = 0
+            while c < i:
+                if got[c] == v:
+                    v += 1
+                    if v >= n:
+                        v = 0
+                        hit.add(tag)
+                    c = 0
+                    continue
+                c += 1
+            got.append(v)
+            v = (v + i + step) & 0xFFFFFFFF
+        lists[base] = got
+    # (The names may change against the other towns: ignored, it only moves the series' start below.)
+    old = [o.u8(a + 0x6E4 + c) for c in range(4)]
+    e8 = []
+    for i in range(4):
+        v %= nf
+        e8.append(v)
+        c = 0
+        while c < i:
+            if old[c] == v:
+                v += 1
+                if v >= nm:
+                    v = 0
+                c = 1
+                continue
+            c += 1
+        v = (v + i + step) & 0xFFFFFFFF
+    ec = []
+    for i in range(4):
+        v %= nf
+        c = 0
+        while c < i + 4:
+            other = lists[0x6D8][c] if c < 4 else (e8 + ec)[c]
+            if other == v:
+                v += 1
+                if v >= nf:
+                    v = 0
+                    hit.add('6ec')
+                c = 1
+                continue
+            c += 1
+        ec.append(v)
+        v = (v + i + step) & 0xFFFFFFFF
+    return hit
+
+
+def mayor_names(o):
+    """Direct calls to 0x5289B0 (the candidates for mayor) in town 0 with
+    series whose names, families and [0x6EC] wrap round the end of their
+    lists; then town 1 gets town 0's candidates and town 0 draws again with
+    the same series: they meet another town's (the name or the family moves
+    on, in turns)."""
+    nm, nf = o.u16(MALE_NAMES), o.u16(FAMILY_NAMES)
+    calls = []
+    for tag in ('names', 'families', '6ec'):
+        for step in (0, 1, 2, nm, nf):
+            seed = next((s for s in range(4 * max(nm, nf)) if tag in candidate_wraps(o, 0, s, step)), None)
+            if seed is not None:
+                calls.append((seed, step))
+                break
+    print(f'{nm} names, {nf} families; series {calls}')
+
+    def during(o):
+        for seed, step in calls:
+            direct(o, 0x5289B0, [0, seed, step], ecx=o.town(0))
+        seed, step = 12345, 7
+        direct(o, 0x5289B0, [1, seed, step], ecx=o.town(0))
+        o.uc.mem_write(o.town(1) + 0x6D4, bytes(o.uc.mem_read(o.town(0) + 0x6D4, 8)))
+        direct(o, 0x5289B0, [1, seed, step], ecx=o.town(0))
+    return during
+
+
+def new_town_bits(o):
+    """Direct calls to 0x5458D0 (what is left of a new town; without its flag)
+    on town 0 with the bits of `wares` the founding never gives (0x20000,
+    0x80000, 0x100000, 0x200000) and with 0x20000 in `other`; and to 0x5462F0
+    with facilities out of 4..20."""
+    a = o.town(0)
+
+    def during(o):
+        direct(o, 0x5458D0, [0, 0x3A0000 | 0x7, 0x18], ecx=a)
+        direct(o, 0x5458D0, [0, 0x10, 0x20000], ecx=a)
+        for k in (3, 0x15):
+            direct(o, 0x5462F0, [k], ecx=a)
+    return during
+
+
+def river_town(o):
+    """retouch.fundar with the number of the new town changed to a free one
+    whose StadtDaten.ini entry is on a river ([+0x2F]): 0x531D50 sets the bit
+    1 of [0x2C8]. The world runs until 0x4EBF54 founds it."""
+    used = {o.u8(TOWN_IDS + i) for i in range(o.counts()[0])} | {o.u8(p + 0xE) for _, p in pirates(o)}
+    river = [n for n in range(40) if o.u8(to.TOWN_TABLE + 0x34 * n + 0x2F)]
+    print(f'numbers on a river: {river}; taken {sorted(used)}')
+    i, a = rt.fundar(o)
+    n = o.u8(a + 0x14)
+    if n not in river:
+        w8(o, to.TOWN_TABLE + 0x34 * n + 0x2F, 1)
+        print(f'number {n} (the task\'s) put on a river')
+
+
+def new_event(o, tick, kind, **fields):
+    """A new event (0x4D8CF0) at `tick` (from now) with its kind and bytes
+    (b8=… a u8 at [+0x8], d10=… a u32)."""
+    a = o.call(0x4D8CF0, [o.u32(WORLD + 0x14) + tick], ecx=to.EVENTS)  # returns the event
+    i = (a - o.u32(to.EVENTS)) // 0x18
+    w16(o, a + 6, kind)
+    for name, value in fields.items():
+        {'b': w8, 'w': w16, 'd': w32}[name[0]](o, a + int(name[1:], 16), value)
+    print(f'event {i}: {kind:#x} at +{tick:#x}, {bytes(o.uc.mem_read(a + 8, 0x10)).hex()}')
+    return i, a
+
+
+def new_town_events(o):
+    """Events 0x39 (0x4ECDF4: the new town's wall) and 0x2F (0x4EA0D4) in
+    the next ticks, on existing towns: 0x39 of a town out of the world; of
+    one with [0x2C8] & 0xE0; of one with pending pieces; of one without
+    them and without the point 2 of the wall (0x5252F0 = 2); of one without
+    the point 1 (= 1, with walls in the works and without); 0x2F of a town
+    out of the world."""
+    towns = o.counts()[0]
+    for t in range(1, 6):
+        a = o.town(t)
+        w32(o, a + 0x2C8, o.u32(a + 0x2C8) & ~0xE0)
+    for t in (3, 4, 5):
+        a = o.town(t)
+        w16(o, a + 0x766, o.u16(a + 0x776))
+    a = o.town(3)
+    w8(o, a + 0x7B4, 0xFF)  # point 2 out of the grid
+    for t in (4, 5):
+        w8(o, o.town(t) + 0x7B2, 0xFF)  # point 1 out of the grid
+    a = o.town(5)
+    for r in records(o, 5, 0x762):
+        w8(o, o.u32(a + 0x75C) + 8 * r[0] + 3, 0x2F)  # no wall pieces in the works
+    new_event(o, 1, 0x39, b8=towns)
+    new_event(o, 2, 0x39, b8=0)
+    new_event(o, 3, 0x39, b8=1)
+    new_event(o, 4, 0x39, b8=3)
+    new_event(o, 5, 0x39, b8=4)
+    new_event(o, 6, 0x39, b8=5)
+    new_event(o, 7, 0x2F, dC=towns)
+
+
+def mayor_ops(o):
+    """Operations 0x46 (0x535FD6): a merchant and a town out of the world; a
+    town that has a mayor; an AI merchant without rank 5 at home and without
+    the mark (nothing) and with it (mayor)."""
+    towns, _, merchants, _ = o.counts()
+    free = next(t for t in range(towns) if o.u8(o.town(t) + 0x6F1) >= merchants)
+    taken = next(t for t in range(towns) if t != free)
+    m = rt.ai_with_office(o)[0]
+    w8(o, o.town(taken) + 0x6F1, rt.ai_with_office(o)[1])
+    ma = o.merchant(m)
+    w8(o, ma + 0x39C + o.u8(ma + 0x19), 2)
+    print(f'town {free} without a mayor, town {taken} with one; merchant {m}')
+
+    def during(o):
+        operation(o, 0x46, merchants, free, 0, 0)
+        operation(o, 0x46, m, towns, 0, 0)
+        operation(o, 0x46, m, taken, 0, 0)
+        operation(o, 0x46, m, free, 0, 0)
+        operation(o, 0x46, m, free, 0, 0xBADEAFFE)
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -798,6 +987,15 @@ SCENARIOS = {
     'cost_fisherman': Scenario(cost_fisherman, [0x51F3A0], 0, ['51f44c']),
     'chapel_reputation': Scenario(chapel_reputation, [0x4F8A50, 0x4F8C70], 0, [
         '4f8a50>4f8ae6', '4f8ac7', '4f8aa8']),
+    # new_town.cpp
+    'mayor_names': Scenario(mayor_names, [0x5289B0], 0, ['528a0d', '528a55', '528c1d', '528adb', '528ae3', '528afb']),
+    'new_town_bits': Scenario(new_town_bits, [0x5458D0, 0x5462F0], 0, [
+        '545958', '54597b', '5459be', '5459d5', '5459ec', '545aab', '5462f0>546387', '546313>546387']),
+    'river_town': Scenario(river_town, EVENTS_FUNCTIONS, 2, ['531ff7']),
+    'new_town_events': Scenario(new_town_events, [0x4D85C0], 1, [
+        '4ecdf4>4ecf58', '4ece19>4ecf58', '4ece48', '4ece9c>4ecf58', '4ecea4', '4ea0f9']),
+    'mayor_ops': Scenario(mayor_ops, [0x535760], 0, [
+        '535fd6>537025', '535fed>537025', '535ffe>537025', '536039>537025']),
 }
 
 

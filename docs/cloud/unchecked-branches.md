@@ -32,7 +32,11 @@ task owns, checked against the game with retouched states.
   interface and 0x545F50 use it) and the store (0x1E) a merchant builds,
   which recounts his office (0x4FF2D0). Whole world: 0 different.
 
-Left: `new_town.cpp` (21), `facilities.cpp` (35),
+- **`new_town.cpp`**: its 21 marks are gone: 20 checked with 5 scenarios
+  (10 runs in saves 3 and 5: 50 of 50 targets, 1570 calls equal), 1
+  unreachable. Only comments changed, so no world run.
+
+Left: `facilities.cpp` (35),
 `offices.cpp` (28), `businesses.cpp` (7), `population.cpp` (8),
 `merchants.cpp` (6), `diet.cpp` (15), `sieges.cpp` (17), `grid.cpp` (6).
 
@@ -158,6 +162,25 @@ world only matter for the interface and network games. Still not
 rewritten here: 0x4F9C80 with the types 0x34 and 0x35 (the game searches
 with an unset mask: no caller of the simulation uses them).
 
+## new_town.cpp
+
+21 marks: 20 checked, 1 unreachable, 0 left. Scenarios (saves 3 and 5):
+
+| Branch (p3vita) | Game | Scenario |
+|---|---|---|
+| 0x5289B0: the names, families and [0x6EC] wrap round their list | 0x528A0D, 0x528A55, 0x528C1D | `mayor_names` (direct calls, series chosen by replaying the game's steps in Python) |
+| 0x5289B0: the same pair as another town's (the name, then the family, moves on) | 0x528ADB, 0x528AE3, 0x528AFB | `mayor_names` |
+| 0x5289B0: more than 100000 checks | 0x528B57 | unreachable (at most ~2500) |
+| 0x5462F0: facility out of 4..20 | 0x5462F0/0x546313→0x546387 | `new_town_bits` (direct) |
+| 0x5458D0: bits 0x20000 of `wares` and of `other`, 0x80000, 0x100000, 0x200000; [0x2CC] > 0 | 0x545958, 0x54597B, 0x5459BE, 0x5459D5, 0x5459EC, 0x545AAB | `new_town_bits` (direct; the founding never gives them) |
+| 0x531D50: a town on a river (AmFluss) | 0x531FF7 | `river_town` (the founding; the river numbers 9, 31 and 39 are taken in these saves, so the task's number gets the flag in the table) |
+| 0x4ECDF4 (event 0x39): town out of the world; [0x2C8] & 0xE0; pending pieces; wall 2; wall 0/1 | 0x4ECDF4/0x4ECE19→0x4ECF58, 0x4ECE48, 0x4ECE9C→0x4ECF58, 0x4ECEA4 | `new_town_events` |
+| 0x4EA0D4 (event 0x2F): town out of the world | 0x4EA0F9 | `new_town_events` |
+| op 0x46: merchant or town out of the world; a mayor already; rank < 5 without the mark | 0x535FD6/0x535FED/0x535FFE/0x536039→0x537025 | `mayor_ops` |
+
+Calls repeated (all equal): 0x4D85C0 1536, 0x5289B0 10, 0x535760 10,
+0x5462F0 8, 0x5458D0 4, 0x4EBF54 2.
+
 ## Game bugs
 
 - **Operation 0x3B with a merchant out of the world** (certain; 0x53A4CA
@@ -173,8 +196,8 @@ with an unset mask: no caller of the simulation uses them).
 
 ## For the inventory
 
-- `alderman.cpp` and `construction.cpp`: every branch checked with the
-  oracle (scenarios of `tools/oracle/retouch_unchecked.py`).
+- `alderman.cpp`, `construction.cpp` and `new_town.cpp`: every branch
+  checked with the oracle (scenarios of `tools/oracle/retouch_unchecked.py`).
 - D: 0x4FF2D0 for the store a merchant builds is done (`construction.cpp`);
   0x51FAB0 building at once is rewritten.
 - B/C: operation 0x25 (0x535B7B → 0x5244F0, which calls 0x51F3A0 and
@@ -193,7 +216,8 @@ with an unset mask: no caller of the simulation uses them).
 
 - `prepare.sh --test`: 45 s.
 - The 19 runs of `alderman.cpp`'s scenarios (recording and tick_probe): 25 s.
-- The 14 runs of `construction.cpp`'s scenarios: 9 s.
+- The 14 runs of `construction.cpp`'s scenarios: 9 s; the 10 of
+  `new_town.cpp`: about 15 s.
 - `world.sh 7`, the 12 saves in three batches after `construction.cpp`:
   130 s, 126 s and 116 s (0 different).
 - `world.sh 7`, the 12 saves in three batches after `alderman.cpp`: 130 s,
