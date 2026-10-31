@@ -4,8 +4,9 @@
 //
 // uso: tick_probe <fichero.probe> [--continuo] [--cpr p2arch0_eng.cpr] [--solo FUNCIÓN] [--max N]
 //        tick_probe <fichero.probe> --carga <partida.raw> [--continuo [--cpr p2arch0_eng.cpr [--sin-ia]
-//          [--sin-convoyes] [--storms]]] [--max N]
-// --storms: the storms (0x5053C0) too, as town_oracle.py --storms.
+//          [--sin-convoyes] [--no-storms]]] [--max N]
+// --no-storms: without the storms (0x5053C0), as town_oracle.py --no-storms.
+// --storms (on by default now) is still accepted.
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
 // ella, así que una diferencia apunta a esa función. Con --continuo el estado
@@ -598,7 +599,7 @@ int main(int argc, char** argv) {
 	bool continuous = false;
 	bool ai = true;
 	bool convoys = true;
-	bool storms = false;
+	bool storms = true;
 	std::string load;
 	std::string cpr;
 	uint32_t only = 0;
@@ -615,6 +616,8 @@ int main(int argc, char** argv) {
 			convoys = false;
 		} else if (arg == "--storms") {
 			storms = true;
+		} else if (arg == "--no-storms") {
+			storms = false;
 		} else if (arg == "--cpr" && i + 1 < argc) {
 			cpr = argv[++i];
 		} else if (arg == "--solo" && i + 1 < argc) {

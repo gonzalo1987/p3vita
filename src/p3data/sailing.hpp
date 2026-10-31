@@ -81,8 +81,9 @@ public:
 	void set_ai(bool enabled) { ai_ = enabled; }
 	// Con false no se recorren los convoyes (town_oracle.py --sin-convoyes).
 	void set_convoys(bool enabled) { convoys_ = enabled; }
-	// With true, the storms (0x5053C0) run every 8 ticks after the convoys, as
-	// with town_oracle.py --storms. Off by default: the oracle skips them too.
+	// The storms (0x5053C0) run every 8 ticks after the convoys, as in the game
+	// and the oracle. On by default (the whole world, 7 days in the 12 saves:
+	// 0 differences); false matches town_oracle.py --no-storms.
 	void set_storms(bool enabled) { storms_ = enabled; }
 
 	// Un tick de advance_time (0x530E80) solo con la fecha y los barcos: lo
@@ -175,7 +176,7 @@ public:
 private:
 	bool ai_ = true;
 	bool convoys_ = true;
-	bool storms_ = false;
+	bool storms_ = true;
 
 	struct Assigned {
 		std::shared_ptr<SeaRoute> route;
