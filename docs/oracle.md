@@ -516,3 +516,25 @@ deja el 0x21 al aprobar (fase 0). Grabando `4d85c0` y `535760` los días 1 a
 y 7: iguales (las 11 fases: la flota, la caza en el mar, la vuelta, la
 protección, los encargos 0x81 y el final). El oráculo salta la ventana de la
 fase 1 del 0x24 (`EVENT_JUMPS`, 0x4E0DB9 → 0x4E0E13).
+
+**Las operaciones de la simulación que p3vita descartaba**
+([inventario.md](inventario.md), parte B): cada una entre las de por omisión
+(`OPERATIONS` de `town_oracle.py` y `run_operation`), con escenarios de
+`retouch.py` que la encolan o la provocan, grabando `4d85c0` y `535760`
+(`ret2f.sh ESCENARIO:DÍAS` con `SAVES`), y el mundo entero 7 días en las 12
+partidas (`world.sh 7`, 0 diferencias tras cada una):
+
+| Operación | Escenarios | Partidas | Resultado |
+|-|-|-|-|
+| 0x61, la fiesta, con el evento 0x07 | `fiesta:1` (la IA con precio, sin dinero, con deudas, sin oficina, un comerciante que no existe; el jugador con reputación 100 y la oficina llena en una ciudad con el bit 0x1000), `fiesta_vacia:1` (el jugador con una sola mercancía), `fiesta_ciudad:32` (la fiesta de la ciudad pasa y el evento 0x03 se adelanta: 0x5316E0 encola la 0x61 y el evento llega a los 12 a 30 días) | 1, 3, 5, 7 | iguales; en `fiesta_ciudad` de la partida 3, el día 20, una diferencia en el buzón que no es de la fiesta: el evento 0x03 adelantado le toca a un comerciante con avisos caducados (0x4D6780, por traducir) |
+| 0x2C, un barco encargado al astillero | `astillero:1` (en la ciudad A con astillero y 150 de cada material: un comerciante de la IA con paño negativo en su oficina y un barco con ruta automática y materiales, otro sin oficina allí, el jugador con dinero; y no se pueden: un tipo grande en una ciudad con [0x2C8] & 1, una ciudad sin astillero, uno sin dinero y sin forzar, una ciudad sin materiales), `astillero_ciudad:1` (el evento 0x2B adelantado, con la ciudad 0 muy poblada y materiales: encola la 0x2C), y `astillero:8` grabando también `51ba10` y `506720` (el barco en obras en el astillero) | 1, 3, 5, 7 | iguales; en `astillero:8` de la partida 5, el día 1, la IA del comerciante al que el escenario deja 100 monedas encola una 0x28 que p3vita no: el fallo de 0x4F5A20 (variable sin inicializar, en el roadmap), no la 0x2C |
+| 0x38 (subasta de barco), 0x7C (la peste), 0x7F (el bit 0x4000000 y los eventos 0x35), 0x80 y 0x83 (partidas en red) | `eventos_op:2` (la 0x80 la primera, sobre el registro 0x80 libre con el tipo 5 o en uso; la 0x38 a 40 días y a menos; la peste mañana y con un día pasado; la 0x7F con una ciudad que no existe y con un tick pasado; un evento 0x00 con grano) | 1, 3, 5, 7 | iguales |
+| 0x84 (el evento 0x30), 0x67 (un administrador), 0x48 (una propuesta) | `propuestas:4` (la 0x84 pedida antes de 0x100 ticks y a 3 días; la 0x67 válida, con otro administrador y con un comerciante que no existe; la 0x48 como la ampliación de 0x51E270 en una ciudad con consejo y, en la ciudad 5 sin los bits 0xE0, el impuesto extraordinario y el impuesto por cabeza con 7 y con 25) | 1 a 7 (la 0x67, en 4, 5 y 6) | iguales |
+| 0x28, un edificio en venta (0x4DAB00) | `subasta:2` (en la ciudad A se añade a una subasta en fase 2; en la B abre una nueva y otro edificio abre otra; sin el bit de la ciudad en [+0x468]; una celda vacía) y `subasta_ajuste` (con el byte [+0xD] de los ajustes a 0: el segundo se añade a la de fase 1), 2 días y 30 días (las subastas acaban y se venden) | 3, 5, 7 (2 y 30 días: 3 y 5) | iguales (en las partidas 1 y 2 ningún comerciante de la IA tiene dos empresas en la ciudad de una oficina) |
+| 0x7E, la temporada de piratas | `temporada:1` (los bits 0..2 a 0 y otros) | 1, 3, 5, 7 | iguales |
+| 0x7D, un incendio en la ciudad, con el evento 0x1D | `incendio_ciudad:4` (tres incendios, cada uno en su ciudad: en un almacén de un comerciante, 0x500C30; en una casa de una oficina; en un edificio de la ciudad; se extienden a 3 y 4 edificios, uno se para sin más cerca, y se apagan) | 1, 3, 5, 7 (en la 1 solo el de la casa) | iguales |
+| 0x13, a human player's captain retires (event 0x27) | `capitan_jugador:1` (the player's first ship with a captain; and a captain that does not exist) | 1, 3, 5, 7 (in 1 the player's ship has no captain) | equal |
+| 0x60, a wedding (event 0x15, with 0x50E000 and the feast) | `boda:2` recording also `506720` (the AI merchant with the biggest fleet, its first ship with a bigger hold, in a town with [0x2C8] & 1; the player; a merchant whose [+0x28] has passed; a past tick) | 1, 3, 5, 7 | equal |
+| 0x87, a child of a married merchant | `hijo:1` (married 300 days ago: one child, not a second right after; unmarried; married 100 days ago) | 1, 3, 5, 7 | equal |
+| 0x65, an AI merchant goes bankrupt | `quiebra:2` recording also `4f7bb0` (made mayor of his home town, with a debt owed to him and one he owes; and the player: nothing) | 1, 3, 5, 7 | equal |
+

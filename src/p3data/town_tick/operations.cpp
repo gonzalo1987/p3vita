@@ -3,6 +3,7 @@
 // de la Hansa.
 
 #include <cstring>
+#include <utility>
 
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -11,15 +12,35 @@ namespace p3::data::tick {
 
 namespace events_detail {
 void fn_4fe190(CaptainMemory& c);
+uint16_t fn_5097c0(SaveGame& save, bool keep);
 }  // namespace events_detail
 namespace events_mayor_detail {
 uint16_t fn_507d60(SaveGame& save, uint16_t& out, uint32_t town, uint32_t mode);
 }  // namespace events_mayor_detail
+namespace events_towns_detail {
+bool fn_52a360(SaveGame& save, int town, uint32_t merchant_arg, uint32_t type_arg, uint8_t force);
+}  // namespace events_towns_detail
+namespace events_rare_detail {
+void fn_52a150(SaveGame& save, int town, uint8_t rate);
+}  // namespace events_rare_detail
+namespace construction_detail {
+void fn_4d9fc0(const SaveGame& save, uint32_t& tick, uint32_t town);
+}  // namespace construction_detail
+namespace events_detail {
+void fn_4dab00(SaveGame& save, uint32_t town_arg, uint32_t record_arg);
+}  // namespace events_detail
+namespace events_towns_detail {
+void fn_4d6fd0(SaveGame& save, uint32_t index);
+}  // namespace events_towns_detail
+namespace merchants_detail {
+void fn_4f5d80(SaveGame& save, int merchant);
+}  // namespace merchants_detail
 
 namespace {
 
 constexpr uint32_t kConvoyCount = global::kShips + 0xF6;  // u16 (0x6DD896)
 constexpr uint32_t kExpeditionMark = 0x6DE52B;  // u8 ([+0x8B] del mundo)
+constexpr uint32_t kEventCount = 0x6DD748;  // u16 registros de la cola ([+0xC] de 0x6DD73C)
 
 uint16_t half(const uint8_t* operation, size_t offset) {
 	uint16_t v;
@@ -279,6 +300,407 @@ void fn_535e04(SaveGame& save, const uint8_t* operation) {
 		return;  // Sin comprobar con el oráculo.
 	}
 	construction_detail::fn_4f8560(save, int(merchant), field(operation, 8), int32_t(field(operation, 0xC)));
+}
+
+// La operación 0x2C (en 0x535C70): {0x2C, u8 tipo, …, u8 comerciante, …, u32
+// ciudad, u8 force}: el comerciante encarga un barco al astillero de la
+// ciudad (0x52A360, events_towns.cpp). La encola el evento 0x2B (0x4DE790)
+// para el comerciante de la IA con menos barcos, con force = 1.
+void fn_535c70(SaveGame& save, const uint8_t* operation) {
+	const uint32_t town = field(operation, 0xC);
+	if (town >= save.globals.u32(global::kWorldTownCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	events_towns_detail::fn_52a360(save, int(town), operation[8], operation[4], operation[0x10]);
+}
+
+// La operación 0x38 (en 0x535E3B): {0x38, u32 tick, u32 ciudad}: una
+// subasta de barco, el evento 0x0A (events_mayor.cpp) en ese tick con la
+// fase [+0x14] = 0 (crear el barco) y la ciudad [+0x15] (módulo el número de
+// ciudades), si es al menos 0x2800 ticks (40 días) más tarde. El resto del
+// registro queda como estuviera. La encola 0x4DD400 (los primeros días del
+// año, en el evento 0x03).
+void fn_535e3b(SaveGame& save, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t tick = field(operation, 4);
+	if (tick < g.u32(global::kWorldTick) + 0x2800) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const uint32_t town = field(operation, 8) % g.u32(global::kWorldTownCount);
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick)];
+	e.u16(6) = 0xA;
+	e.u8(0x14) = 0;
+	e.u8(0x15) = uint8_t(town);
+}
+
+// La operación 0x7C (en 0x536642): {0x7C, 16 bytes, …, u16 [+0x10] día del
+// año}: la peste, el evento 0x1C (events_rare.cpp) con los 16 bytes en
+// [+0x8], ese día de este año ((año · 365 + día) · 256) o, si ya ha pasado,
+// al empezar el día siguiente. La encola 0x4DCA90 (en el evento 0x03).
+void fn_536642(SaveGame& save, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	const uint16_t day = half(operation, 0x10);
+	uint32_t tick;
+	if (day < g.u16(global::kWorldDayOfYear)) {
+		tick = (g.u32(global::kWorldTick) | 0xFF) + 1;  // Sin comprobar con el oráculo.
+	} else {
+		tick = (uint32_t(g.u16(global::kWorldYear)) * 365 + day) << 8;
+	}
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick)];
+	e.u16(6) = 0x1C;
+	std::memcpy(e.bytes.data() + 8, operation + 4, 0x10);
+}
+
+// Operation 0x87 (0x53FEA0): {0x87, u8 merchant, u8 first name, 4 bytes}: a
+// child is born to a married merchant ([+0x31] a town), after [+0x28] and at
+// least 279 days (0x11700 ticks) after the wedding [+0x2C], if no child of
+// his (the list [+0x34] of 16-byte records among the captains, next in
+// [+0x0]) was born less than 279 days ago: a free record (0x5097C0) at the
+// head of the list with [+0x2] the first name, [+0x3] his surname, [+0x4]
+// the birth tick, [+0x8..+0xB] the 4 bytes and [+0xF] = 0xFF; [+0x36] counts
+// the children. The letter 0x7A to a human father is not reproduced. Queued
+// by 0x4F69B0 (in event 0x03; still to be rewritten in events_towns.cpp).
+void fn_53fea0(SaveGame& save, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	const uint8_t merchant = operation[4];
+	if (merchant >= g.u16(global::kWorldMerchantCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	MerchantMemory& m = save.merchants[merchant].memory;
+	const uint32_t now = g.u32(global::kWorldTick);
+	if (m.u8(0x31) >= g.u32(global::kWorldTownCount) || now <= m.u32(0x28) || now < m.u32(0x2C) + 0x11700) {
+		return;  // Comprobado solo con estados retocados.
+	}
+	const uint32_t captains = g.u16(global::kCaptainCount);
+	for (uint32_t c = m.u16(0x34); c < captains; c = save.captains[c].u16(0)) {
+		if (now - 0x11700 < save.captains[c].u32(4)) {
+			return;  // Comprobado solo con estados retocados.
+		}
+	}
+	const uint16_t child = events_detail::fn_5097c0(save, true);
+	CaptainMemory& c = save.captains[child];
+	c.u16(0) = m.u16(0x34);
+	m.u16(0x34) = child;
+	++m.u8(0x36);
+	c.u8(2) = operation[5];
+	c.u8(3) = m.u8(0x1D);
+	c.u32(4) = now;
+	std::memcpy(c.bytes.data() + 8, operation + 6, 4);
+	c.u8(0xF) = 0xFF;
+}
+
+// Operation 0x65 (0x53DD70): {0x65, u32 merchant}: the merchant goes
+// bankrupt (0x4F5D80, merchants.cpp). Queued by the AI of a merchant with
+// less than −50000 who cannot borrow (0x4F4E50).
+void fn_53dd70(SaveGame& save, const uint8_t* operation) {
+	const uint32_t merchant = field(operation, 4);
+	if (merchant >= save.globals.u16(global::kWorldMerchantCount)) {
+		return;  // The game does not check it (0x5303C0).
+	}
+	merchants_detail::fn_4f5d80(save, int(merchant));
+}
+
+// Operation 0x60 (0x53DA90): {0x60, u32 tick, u16 [+0x8], 8 bytes [+0xA]}: a
+// merchant's wedding is arranged: if the tick is still to come, event 0x15
+// (events_towns.cpp, fn_4e7c74) on that day (the low byte of the tick, also
+// in the operation, set to 0) with [+0x8] the tick, [+0xC] the u16 and
+// [+0xE..+0x15] the 8 bytes ([+0x15] the merchant). If [+0x11] is a merchant,
+// the marks of his letters are cleared (0x4D6FD0); the letter itself is not
+// reproduced. Queued by the mission interpreter (0x4D6C90) and the interface:
+// the branch of event 0x16 that would queue it for the AI is dead code.
+void fn_53da90(SaveGame& save, const uint8_t* operation) {
+	uint32_t tick = field(operation, 4);
+	if (save.globals.u32(global::kWorldTick) >= tick) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	tick &= 0xFFFFFF00;
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick)];
+	e.u16(6) = 0x15;
+	e.u32(8) = tick;
+	e.u16(0xC) = half(operation, 8);
+	std::memcpy(e.bytes.data() + 0xE, operation + 0xA, 8);
+	const uint8_t merchant = operation[0x11];
+	if (merchant < save.globals.u16(global::kWorldMerchantCount)) {
+		events_towns_detail::fn_4d6fd0(save, save.merchants[merchant].memory.u16(0xA));
+	}
+}
+
+// La operación 0x13 (0x538C40): {0x13, u32 barco, u32 capitán}: el capitán
+// del barco de un jugador humano se retira: el evento 0x27 (events_towns.cpp,
+// fn_4ddc00) en el tick siguiente con el barco y el capitán, y [+0xE] del
+// capitán a 1 (se está retirando). La carta 0x52 al dueño no se reproduce. La
+// encola 0x4DCEA0 (en el evento 0x03) para los barcos de los jugadores
+// humanos; a los de la IA les crea el evento directamente.
+void fn_538c40(SaveGame& save, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t ship = field(operation, 4);
+	const uint32_t captain = field(operation, 8);
+	if (captain >= g.u16(global::kCaptainCount) || ship >= g.u16(global::kShipCount)) {
+		return;  // Comprobado solo con estados retocados.
+	}
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, g.u32(global::kWorldTick) + 1)];
+	e.u16(6) = 0x27;
+	e.u32(8) = ship;
+	e.u32(0xC) = captain;
+	save.captains[captain].u8(0xE) = 1;
+}
+
+// La operación 0x7D (en 0x5366A0): {0x7D, u32 tick, 12 bytes}: un incendio
+// en una ciudad, el evento 0x1D (events_towns.cpp) en ese tick (como pronto,
+// ahora) con los 16 bytes en [+0x8]: [+0xC] los que han ardido (0), [+0xE]
+// cuántos pueden arder, la celda ([+0x10], [+0x11]) y la ciudad [+0x12]. La
+// encola 0x4DCBF0 (en el evento 0x03).
+void fn_5366a0(SaveGame& save, const uint8_t* operation) {
+	uint32_t tick = save.globals.u32(global::kWorldTick);
+	if (tick < field(operation, 4)) {
+		tick = field(operation, 4);
+	}
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick)];
+	e.u16(6) = 0x1D;
+	std::memcpy(e.bytes.data() + 8, operation + 4, 0x10);
+}
+
+// La operación 0x7F (en 0x5366E8): {0x7F, u32 ciudad ×3, u32 tick}: si el
+// tick es futuro, cada ciudad que exista pasa a tener el bit 0x4000000 de
+// [0x2C8] y un evento 0x35 (que se lo quita, events_rare.cpp) en ese tick con
+// la ciudad en [+0x8]. La encola el evento 0x0D (0x4E3F44).
+void fn_5366e8(SaveGame& save, const uint8_t* operation) {
+	const uint32_t tick = field(operation, 0x10);
+	if (tick <= save.globals.u32(global::kWorldTick)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	for (size_t k = 0; k < 3; ++k) {
+		const uint32_t town = field(operation, 4 + 4 * k);
+		if (town >= save.globals.u32(global::kWorldTownCount)) {
+			continue;
+		}
+		save.towns[town].memory.u32(0x2C8) |= 0x4000000;
+		GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick)];
+		e.u16(6) = 0x35;
+		e.u32(8) = town;
+	}
+}
+
+// La operación 0x80 (en 0x536756): {0x80, u32, u16 [+0x8], …, u16 [+0xC]}:
+// si la cola tiene más de 0x80 registros y el registro 0x80 (siempre ese:
+// 0x4D8DB0 con 0x80) es un encargo (tipo 5, events_big.cpp), sus [+0x12] y
+// [+0x14] pasan a ser los dos u16. La encola el evento 0x05.
+void fn_536756(SaveGame& save, const uint8_t* operation) {
+	if (save.globals.u16(kEventCount) <= 0x80) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	GameMemory<0x18>& e = save.events[0x80];
+	if (e.u16(6) != 5) {
+		return;
+	}
+	e.u16(0x12) = half(operation, 8);
+	e.u16(0x14) = half(operation, 0xC);
+}
+
+// La operación 0x83 (en 0x5367B5): {0x83, u32 tick, u32, u8}: un evento 0x00
+// (grano, events.cpp) en ese tick con [+0x8] el tick, [+0xC] el u32 y
+// [+0x10] el u8. La encola el evento 0x00.
+void fn_5367b5(SaveGame& save, const uint8_t* operation) {
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, field(operation, 4))];
+	e.u16(6) = 0;
+	e.u32(8) = field(operation, 4);
+	e.u32(0xC) = field(operation, 8);
+	e.u8(0x10) = operation[0xC];
+}
+
+// La operación 0x84 (0x53FCA0): {0x84, u32 tick, 4 bytes [+0x8], 6 bytes
+// [+0xC]}: el encargo del jefe de la Hansa, el evento 0x30 (events_rare.cpp)
+// en ese tick (como pronto, dentro de 0x100) con [+0x8] el tick de ahora,
+// [+0xC..+0x11] los 6 bytes y [+0x12..+0x15] los 4. La encolan el torneo
+// (0x4DD530, en el evento 0x03) y la temporada de piratas (evento 0x1F).
+void fn_53fca0(SaveGame& save, const uint8_t* operation) {
+	const uint32_t now = save.globals.u32(global::kWorldTick);
+	uint32_t tick = now + 0x100;
+	if (field(operation, 4) > tick) {
+		tick = field(operation, 4);
+	}
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick)];
+	e.u16(6) = 0x30;
+	e.u32(8) = now;
+	std::memcpy(e.bytes.data() + 0xC, operation + 0xC, 6);
+	std::memcpy(e.bytes.data() + 0x12, operation + 8, 4);
+}
+
+// La operación 0x67 (0x53DDF0): {0x67, u32 administrador, u32 comerciante,
+// u32 ciudad, u8 habilidad}: si el administrador sigue en la oficina del
+// comerciante en la ciudad ([+0x2F2]), su habilidad [+0xA] pasa a ser la de
+// la operación y su sueldo [+0xC] = habilidad / 43 · 20 + 10 (0x4FE160). La
+// carta al comerciante (0x4D6530, con el sueldo y 0x500F10) no se reproduce.
+// La encola 0x4DCEA0 (en el evento 0x03).
+void fn_53ddf0(SaveGame& save, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t administrator = field(operation, 4);
+	const uint32_t merchant = field(operation, 8);
+	const uint32_t town = field(operation, 0xC);
+	if (merchant >= g.u16(global::kWorldMerchantCount) || town >= g.u32(global::kWorldTownCount) ||
+		administrator >= g.u16(global::kCaptainCount)) {
+		return;  // Comprobado solo con estados retocados.
+	}
+	const int office = facilities_detail::fn_5308a0(save, merchant & 0xFFFF, town & 0xFFFF);
+	if (office < 0 || save.offices[size_t(office)].memory.u16(0x2F2) != administrator) {
+		return;  // Comprobado solo con estados retocados.
+	}
+	CaptainMemory& c = save.captains[administrator];
+	c.u8(0xA) = operation[0x10];
+	c.u16(0xC) = uint16_t(c.u8(0xA) / 43 * 20 + 10);
+}
+
+// La operación 0x48 (0x53B010): {0x48, u32 tick, u32 [+0x8], u8 ciudad, u8
+// tipo, 3 bytes [+0xE]}: una propuesta para la ciudad. Con consejo ([0x2C8] &
+// 0xE0), la votación: el evento 0x2E (events_rare.cpp) en el tick ajustado
+// por 0x4D9FC0 (el juego lo cambia en la operación) con [+0x8], la ciudad, el
+// tipo, 0 en [+0xE..+0x13] y los 3 bytes en [+0x14]. Sin consejo se aplica ya:
+// el tipo 0, el impuesto extraordinario (el evento 0x31 en el tick siguiente
+// con [+0x8] y la ciudad); el tipo 3, el impuesto por cabeza [+0xE]
+// (0x52A150); los demás, nada. La encolan las obras de la ciudad (0x51E070 y
+// 0x51E270, construction.cpp).
+void fn_53b010(SaveGame& save, const uint8_t* operation) {
+	const uint8_t town = operation[0xC];
+	if (town >= save.towns.size()) {
+		return;  // El juego no lo mira (leería fuera de las ciudades).
+	}
+	if (save.towns[town].memory.u8(0x2C8) & 0xE0) {
+		uint32_t tick = field(operation, 4);
+		construction_detail::fn_4d9fc0(save, tick, town);
+		GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick)];
+		e.u16(6) = 0x2E;
+		e.u32(8) = field(operation, 8);
+		e.u8(0xC) = town;
+		e.u8(0xD) = operation[0xD];
+		std::memset(e.bytes.data() + 0xE, 0, 6);
+		std::memcpy(e.bytes.data() + 0x14, operation + 0xE, 3);
+		return;
+	}
+	// Comprobado solo con estados retocados.
+	if (operation[0xD] == 0) {
+		GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, save.globals.u32(global::kWorldTick) + 1)];
+		e.u16(6) = 0x31;
+		e.u32(8) = field(operation, 8);
+		e.u8(0xC) = town;
+	} else if (operation[0xD] == 3) {
+		events_rare_detail::fn_52a150(save, town, operation[0xE]);
+	}
+}
+
+// La operación 0x28 (0x53D190): {0x28, u32 ciudad, u32 comerciante, u32 x,
+// u32 y}: el comerciante pone en venta su edificio de la celda (x, y) de la
+// ciudad, si tiene oficina en ella (y, en una ciudad con [0x2C8] & 0x10, si
+// la celda tiene el bit 7). Lo busca por su celda en las listas de su
+// oficina ([+0x2D0] y [+0x2CE]) y en la de la ciudad ([0x762]); si lo
+// encuentra, la subasta (0x4DAB00, events.cpp); si no, recuenta la oficina
+// (0x4FF2D0). La encola la IA de un comerciante con deudas (0x4F5A20), que
+// casi nunca lo hace por un fallo del juego (ver el roadmap).
+void fn_53d190(SaveGame& save, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t town = field(operation, 4);
+	const uint32_t merchant = field(operation, 8);
+	if (town >= g.u32(global::kWorldTownCount) || merchant >= g.u16(global::kWorldMerchantCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const int office = facilities_detail::fn_5308a0(save, merchant & 0xFFFF, town & 0xFFFF);
+	if (office < 0) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const SavedTown& st = save.towns[town];
+	const uint32_t x = field(operation, 0xC);
+	const uint32_t y = field(operation, 0x10);
+	if (st.memory.u8(0x2C8) & 0x10) {
+		// Sin comprobar con el oráculo (el juego no mira si la celda cae en la rejilla).
+		const size_t cell = size_t(st.memory.u32(0x7AC) * x + y);
+		if (cell >= st.grid.size() || !(st.grid[cell] & 0x80)) {
+			return;
+		}
+	}
+	const OfficeMemory& o = save.offices[size_t(office)].memory;
+	const uint32_t records = st.memory.u16(0x776);
+	for (const uint16_t head : {o.u16(0x2D0), o.u16(0x2CE), st.memory.u16(0x762)}) {
+		for (uint32_t r = head; r < records; r = st.records[r].next) {
+			if (st.records[r].x == x && st.records[r].y == y) {
+				events_detail::fn_4dab00(save, operation[4], r);
+				return;
+			}
+		}
+	}
+	fn_4ff2d0(save, office);  // Sin comprobar con el oráculo.
+}
+
+// La operación 0x7E (0x53F8B0): {0x7E, 4 u32 al azar}: la temporada de
+// piratas que viene, el evento 0x1F (events_rare.cpp) el 1 de marzo (día 59,
+// 0x672D7C) del año que toca (el siguiente desde ese día) más ([+4] & 0xF)
+// días y ([+8] & 0xFF) ticks. En [+0x8 + k], las ciudades sin el bit 0x40 de
+// [0x2C8], en orden (el juego no mira cuántas: con más de 16 escribiría en el
+// registro siguiente), barajadas según los bits 0..2 del primer byte de cada
+// u32 (cambia [+0x8 + c] con [+0xC + c], [+0x8 + 2c] con [+0x9 + 2c] y [+0x8
+// + c] con [+0xF − c]); y en [+0x10..+0x17], los dos primeros bytes de cada
+// u32. La encola el evento 0x1F al acabar la temporada.
+void fn_53f8b0(SaveGame& save, const uint8_t* operation) {
+	constexpr uint32_t kMarch = 59;  // 0x672D7C
+	const GlobalMemory& g = save.globals;
+	uint32_t year = g.u16(global::kWorldYear);
+	if (g.u16(global::kWorldDayOfYear) >= kMarch) {
+		++year;
+	}
+	const uint32_t tick = ((year * 365 + (field(operation, 4) & 0xF) + kMarch) << 8) + (field(operation, 8) & 0xFF);
+	const uint16_t index = events_detail::fn_4d8cf0(save, tick);
+	save.events[index].u16(6) = 0x1F;
+	uint32_t k = 0;
+	for (uint32_t i = 0; i < g.u32(global::kWorldTownCount); ++i) {
+		if (save.towns[i].memory.u8(0x2C8) & 0x40) {
+			continue;
+		}
+		const size_t at = size_t(index) * 0x18 + 8 + k++;
+		if (at < save.events.size() * 0x18) {
+			save.events[at / 0x18].u8(at % 0x18) = uint8_t(i);  // Pasado [+0x17], sin comprobar con el oráculo.
+		}
+	}
+	GameMemory<0x18>& e = save.events[index];
+	for (uint32_t c = 0; c < 4; ++c) {
+		const uint8_t bits = operation[4 + 4 * c];
+		if (!(bits & 1)) {
+			std::swap(e.u8(8 + c), e.u8(0xC + c));
+		}
+		if (!(bits & 2)) {
+			std::swap(e.u8(8 + 2 * c), e.u8(9 + 2 * c));
+		}
+		if (!(bits & 4)) {
+			std::swap(e.u8(8 + c), e.u8(0xF - c));
+		}
+	}
+	for (uint32_t c = 0; c < 4; ++c) {
+		e.u8(0x10 + 2 * c) = operation[4 + 4 * c];
+		e.u8(0x11 + 2 * c) = operation[5 + 4 * c];
+	}
+}
+
+// La operación 0x61 (0x53DBF0): {0x61, u32 comerciante, u32 tick, u32
+// ciudad, u32 precio}: la fiesta del comerciante en la ciudad, si tiene el
+// precio (el juego compara sin signo: con deudas, también): el evento 0x07
+// (events_towns.cpp, fn_4e23a4) en ese tick con [+0x8] el comerciante,
+// [+0xC] la ciudad y [+0x10] = 2, y se le cobra el precio de su dinero y de
+// [+0x4BC]. La encola 0x5316E0 (en el evento 0x03) con precio 0 para un
+// comerciante de la IA; con precio, la interfaz.
+void fn_53dbf0(SaveGame& save, const uint8_t* operation) {
+	const uint32_t merchant = field(operation, 4);
+	if (merchant >= save.globals.u16(global::kWorldMerchantCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	MerchantMemory& m = save.merchants[merchant].memory;
+	const uint32_t price = field(operation, 0x10);
+	if (m.u32(0) < price) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, field(operation, 8))];
+	e.u16(6) = 7;
+	e.u32(8) = merchant;
+	e.u32(0xC) = field(operation, 0xC);
+	e.u32(0x10) = 2;
+	m.u32(0) -= price;
+	m.u32(0x4BC) -= price;
 }
 
 // La operación 0x81 (0x53FA80): {0x81, u32 comerciante, u32 tipo, u32 plazo,

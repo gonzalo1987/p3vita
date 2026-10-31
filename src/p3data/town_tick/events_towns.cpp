@@ -1,5 +1,6 @@
 // La cola de eventos (events.cpp): los tipos 0x03 (0x4DDA40), 0x01 (0x4DB4E0),
-// 0x2A (0x4DE4F0), 0x2B (0x4DE790) y 0x27 (0x4DDC00).
+// 0x2A (0x4DE4F0), 0x2B (0x4DE790), 0x27 (0x4DDC00), 0x07 (0x4E23A4), 0x1D
+// (0x4E9564) and 0x15 (0x4E7C74).
 //
 //   0x01  deuda de un comerciante ([+0x11]) con otro ([+0x10]; 0xFF: con la
 //         ciudad), u32 [+0x8] lo que debe, [+0x14] la ciudad: cada 10 días
@@ -8,11 +9,17 @@
 //   0x03  cada 10 días: lo de los capitanes (0x4DCEA0), la mercancía que viene
 //         en barcos (0x504970) y operaciones para el juego: especialidades de
 //         las ciudades (0x79), rumores (0x7A), plagas (0x7C), incendios (0x7D),
-//         ofertas a los ricos (0x81), fiestas (0x61), piratas del año (0x38),
+//         ofertas a los ricos (0x81), fiestas (0x61), subastas de barcos (0x38),
 //         torneos (0x84) y robos en las oficinas del jugador (0x64).
 //   0x2A  un comerciante de la IA rico abre una oficina (0x5308A0 con create).
 //   0x2B  el comerciante de la IA con menos barcos encarga uno (operación 0x2C,
 //         0x52B2C0).
+//   0x07  la fiesta de un comerciante en una ciudad (la operación 0x61, que
+//         encola la fiesta del evento 0x03, 0x5316E0).
+//   0x1D  un incendio en una ciudad (la operación 0x7D, que encola 0x4DCBF0 en
+//         el evento 0x03): se extiende a los edificios cercanos y los borra.
+//   0x15  a merchant's wedding (operation 0x60, queued only by the mission
+//         interpreter and the interface): the dowry ships and the feast.
 //
 // Comprobado con el oráculo (town_oracle.py --barcos --cpr --resto 4d85c0) en
 // las 12 partidas y 60 días. Lo que no sale en ellas se ha comprobado con
@@ -23,6 +30,7 @@
 #include <cstring>
 #include <vector>
 
+#include "p3data/prices.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -33,7 +41,27 @@ namespace p3::data::tick {
 namespace events_detail {
 uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick);
 void fn_4fe190(CaptainMemory& c);
+int16_t fn_4f9580(const SaveGame& save, int merchant, uint32_t town);
 }  // namespace events_detail
+namespace events_mayor_detail {
+uint16_t fn_507d60(SaveGame& save, uint16_t& out, uint32_t town, uint32_t mode);
+void fn_52a8d0(SaveGame& save, int town, int ship, uint32_t type);
+void fn_5181d0(SaveGame& save, int ship);
+void fn_509a50(SaveGame& save, int ship);
+}  // namespace events_mayor_detail
+namespace diet_detail {
+void fn_4f9120(SaveGame& save, uint32_t merchant, uint32_t town, uint32_t hull);
+}  // namespace diet_detail
+namespace events_rare_detail {
+void fn_4db100(SaveGame& save, uint32_t town, uint16_t record);
+}  // namespace events_rare_detail
+namespace alderman_detail {
+void fn_51a750(SaveGame& save, int ship, uint8_t n);
+void fn_51a4e0(SaveGame& save, int ship, uint32_t strength, uint8_t level);
+}  // namespace alderman_detail
+namespace facilities_detail {
+uint32_t fn_52bb00(const SaveGame& save, int town);
+}  // namespace facilities_detail
 namespace merchants_detail {
 uint8_t fn_4f9430(const SaveGame& save, int merchant);
 }  // namespace merchants_detail
@@ -776,6 +804,108 @@ void fn_5316e0(SaveGame& save) {
 	}
 }
 
+// Lo que se come y se bebe en una fiesta, por invitado, en las 8 primeras
+// mercancías (0x6734E8).
+constexpr uint8_t kFeastWares[8] = {3, 2, 2, 2, 0, 1, 0, 2};
+
+// 0x4F8EB0 (thiscall sobre el comerciante, con la ciudad y n): su reputación
+// en la ciudad ([+0x120 + 12·ciudad], float) sube n · [+0x464] · 0,5
+// (0x66BC58); con n = 0, baja 1.
+void fn_4f8eb0(SaveGame& save, int merchant, uint32_t town, uint32_t n) {
+	MerchantMemory& m = merchant_of(save, uint32_t(merchant));
+	float r = -1.0f;
+	if (n != 0) {
+		r = float(double(float(n)) * double(m.f32(0x464)) * 0.5);
+	}
+	m.f32(0x120 + 12 * town) = float(double(r) + double(m.f32(0x120 + 12 * town)));
+}
+
+// 0x5004C0 (thiscall sobre la oficina, con n invitados): la fiesta gasta de
+// la oficina, de cada una de las 8 mercancías de 0x6734E8, n veces lo de la
+// tabla, el doble (el cuádruple si la ciudad tiene el bit 0x1000 de [0x2C8]),
+// en unidades enteras hacia arriba (barriles de 200 o cargas de 2000) y como
+// mucho lo que hay; devuelve lo que vale a precio de compra (0x52E430).
+int32_t fn_5004c0(SaveGame& save, int office, uint16_t n) {
+	OfficeMemory& o = save.offices[size_t(office)].memory;
+	const uint32_t town = o.u8(0x2C6);
+	const bool lavish = (town_of(save, town).u32(0x2C8) >> 12) & 1;
+	int32_t total = 0;
+	for (uint32_t w = 0; w < 8; ++w) {
+		int32_t need = int32_t(kFeastWares[w]) * n;
+		if (need <= 0) {
+			continue;
+		}
+		need = lavish ? need << 2 : need * 2;
+		const int32_t unit = kFineUnit[w] ? 200 : 2000;
+		need = (need + unit - 1) / unit * unit;
+		int32_t& stock = o.s32(4 + 4 * w);
+		if (need <= stock) {
+			total += game_buy_price(save, int(w), int(town), need);
+			stock -= need;
+		} else {
+			total += game_buy_price(save, int(w), int(town), stock);
+			stock = 0;
+		}
+	}
+	return total;
+}
+
+// 0x4E23A4 (el evento 0x07, stdcall con el evento): la fiesta del
+// comerciante [+0x8] en la ciudad [+0xC] (la crea la operación 0x61 con
+// [+0x10] = 2). Sin oficina suya en la ciudad, nada. Si es de la IA, la
+// ciudad apunta la fiesta ([0x2D0] = el tick; las semanas desde la última
+// cuentan en la satisfacción, population.cpp). Si es humano, con k su
+// reputación en la ciudad + 39 (de 0 a 99) y los invitados, habitantes · k /
+// 100: c, las mercancías de la fiesta (0x6734E8) que su oficina tiene para
+// todos; la oficina gasta para habitantes · (c · k / 6, de 2 a 99) / 100
+// invitados (al menos 5; 0x5004C0); con c > 1 la ciudad apunta la fiesta; y
+// su reputación sube c / 2 (0x4F8EB0). La carta 0x24 (0x4D6530) y, con c >=
+// 2 y [+0x10] != 0, el mensaje y la ventana no se reproducen.
+void fn_4e23a4(SaveGame& save, uint16_t event) {
+	const Event& e = save.events[event];
+	const int office = facilities_detail::fn_5308a0(save, e.u16(8), e.u16(0xC));
+	if (office < 0) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const uint32_t merchant = e.u32(8);
+	const uint32_t town = e.u32(0xC);
+	if (merchant_of(save, merchant).u16(8) != 0) {
+		town_of(save, town).u32(0x2D0) = save.globals.u32(kTick);
+		return;
+	}
+	// Comprobado solo con estados retocados.
+	int32_t k = int32_t(events_detail::fn_4f9580(save, int(merchant), town)) + 0x27;
+	if (k < 0) {
+		k = 0;  // Sin comprobar con el oráculo.
+	} else if (k > 0x63) {
+		k = 0x63;
+	}
+	const int32_t people = town_of(save, town).s32(0x2D4);
+	const int32_t guests = people * k / 100;
+	const OfficeMemory& o = save.offices[size_t(office)].memory;
+	uint32_t count = 0;
+	for (uint32_t w = 0; w < 8; ++w) {
+		if (kFeastWares[w] > 0 && int32_t(kFeastWares[w]) * guests <= o.s32(4 + 4 * w)) {
+			++count;
+		}
+	}
+	int32_t share = int32_t(count) * k / 6;
+	if (share > 0x63) {
+		share = 0x63;  // Sin comprobar con el oráculo.
+	} else if (share < 2) {
+		share = 2;
+	}
+	int32_t spent = people * share / 100;
+	if (spent < 5) {
+		spent = 5;  // Sin comprobar con el oráculo.
+	}
+	fn_5004c0(save, office, uint16_t(spent));
+	if (count > 1) {
+		town_of(save, town).u32(0x2D0) = save.globals.u32(kTick);
+	}
+	fn_4f8eb0(save, int(merchant), town, count >> 1);
+}
+
 // 0x4DCA90: una plaga (operación 0x7C) en una ciudad al azar sin [0x2C8] & 8,
 // con más probabilidad si [0x790] · 100 < [0x792] · 75 y si ([0x771] +
 // [0x773]) · 50000 < habitantes · 8.
@@ -851,9 +981,358 @@ void fn_4dcbf0(SaveGame& save) {
 	enqueue(save, op);
 }
 
-// 0x4DD400 (thiscall sobre la cola, los 10 primeros días del año): los
-// ataques piratas del año (operaciones 0x38 con su tick, cada 123 a 251 días
-// desde el último evento 0x0A de la cola) a ciudades con [0x2C8] & 0xC0.
+// --- Event 0x15: a merchant's wedding (operation 0x60) ---
+
+// 0x4D6FD0 (on the mailbox 0x6DD730, with a letter): clears the marks of the
+// chain of letters that starts there (next in [+0x6]): [+0xE] of the 0x21
+// ones and [+0xF] of the 0x22 ones; at most as many steps as letters.
+void fn_4d6fd0(SaveGame& save, uint32_t index) {
+	const uint32_t count = save.globals.u16(kMailCount);
+	for (uint32_t left = count; index < count && left > 0; --left) {
+		GameMemory<0x10>& letter = save.mail[index];
+		if (letter.u8(4) == 0x21) {
+			letter.u16(0xE) = 0;
+		} else if (letter.u8(4) == 0x22) {
+			letter.u8(0xF) = 0;
+		}
+		index = letter.u16(6);
+	}
+}
+
+// Minimum crew of each ship type (0x673660).
+constexpr uint8_t kMinCrew[4] = {5, 8, 10, 12};
+
+// 0x50E000 (on the ship object, with a pointer to the type, `strength`, the
+// town and the merchant): a ship given to the merchant in the town. A big
+// type (bit 1) becomes a crayer (1, also in the caller's variable) in a town
+// with [0x2C8] & 1. The ship (0x507D60, in port) gets its size from the
+// town's shipyard (0x52A8D0); with `strength`, its hold (0x5182B0) and
+// artillery of the town's level (0x52BB00, 0x51A4E0), going up a level
+// (0x51A750) while its strength [+0x120] falls short. Then: full hull
+// ([+0x18] = [+0x14]), owner, [+0x3D] |= 4, first of the merchant's list,
+// home port [+0x13A] (a human's home town, otherwise this town), state 3
+// (entering port; [+0x138] = 0x15 in network games), minimum crew, hold,
+// artillery slots (0x5181D0), [+0x3E] = 0x700, a name from the list (as
+// 0x509A50), built ((type + town + [0x31C] byte + 365 · (2 + index % 4))
+// days ago and one more ship in the merchant's [+0x478]. Returns its index.
+uint16_t fn_50e000(SaveGame& save, uint16_t& type, uint32_t strength, uint32_t town_arg, uint32_t merchant_arg) {
+	const uint32_t town = town_arg & 0xFF;
+	const uint32_t merchant = merchant_arg & 0xFF;
+	const TownMemory& t = town_of(save, town);
+	if ((t.u32(0x2C8) & 1) && (type & 2)) {
+		type = 1;  // Sin comprobar con el oráculo.
+	}
+	uint16_t index = 0xFFFF;
+	events_mayor_detail::fn_507d60(save, index, town, 1);
+	events_mayor_detail::fn_52a8d0(save, int(town), index, type & 0xFF);
+	if (strength != 0) {
+		// Sin comprobar con el oráculo (the wedding gives ships without artillery).
+		recalculate_cargo(save.ships[index]);
+		const uint8_t level = uint8_t(facilities_detail::fn_52bb00(save, int(town)));
+		alderman_detail::fn_51a4e0(save, index, strength, level);
+		while (strength > ship_of(save, index).u32(0x120) && ship_of(save, index).u8(0xF) < 2) {
+			alderman_detail::fn_51a750(save, index, 1);
+			alderman_detail::fn_51a4e0(save, index, strength, level);
+		}
+	}
+	MerchantMemory& m = merchant_of(save, merchant);
+	ShipMemory& s = ship_of(save, index);
+	s.u32(0x18) = s.u32(0x14);
+	s.u8(0) = uint8_t(merchant_arg);
+	s.u8(0x3D) |= 4;
+	s.u16(4) = m.u16(0xE);
+	m.u16(0xE) = index;
+	s.u8(0x13A) = m.u16(8) == 0 ? m.u8(0x19) : uint8_t(town_arg);
+	s.u16(0x134) = 3;
+	if (save.globals.u8(kOperations) & 2) {
+		s.u16(0x138) = 0x15;  // Sin comprobar con el oráculo (network games).
+	}
+	s.u16(0x40) = kMinCrew[s.u8(0xE) & 3];
+	recalculate_cargo(save.ships[index]);
+	events_mayor_detail::fn_5181d0(save, index);
+	const uint32_t now = save.globals.u32(kTick);
+	const int16_t wait = int16_t(uint16_t((now & 0xFF) + index + 0xFA0));
+	ship_of(save, index).u16(0x3E) = wait > 0x700 ? 0x700 : uint16_t(wait);
+	events_mayor_detail::fn_509a50(save, index);
+	const uint32_t days = uint32_t(type) + (t.u32(0x31C) & 0xFF) + town + 365 * ((index & 3) + 2u);
+	ship_of(save, index).u32(0x4C) = now - (days << 8);
+	++m.u16(0x478);
+	return index;
+}
+
+// The ships of a wedding by the groom's fleet (0x4E81FC; 0xFF: none).
+constexpr uint8_t kDowry[12][2] = {{0, 0xFF}, {0, 0xFF}, {0, 0xFF}, {0, 0xFF}, {0, 0xFF}, {0, 0xFF}, {1, 0xFF},
+	{2, 0xFF}, {1, 0}, {2, 0xFF}, {2, 0}, {2, 1}};
+
+// 0x4E7C74 (event 0x15, created by operation 0x60): the wedding of merchant
+// [+0x15]. Nothing (the event goes) unless his [+0x28] is still to come.
+// The bride: [+0x28] = now − [+0xC] days (her birth), [+0x2C] = now, and
+// [+0x27], [+0x30..+0x33] from [+0xF], [+0x10], [+0x12], [+0x13], [+0x14].
+// The dowry: by his fleet (the holds [+0x10] / 40000 of his ships, minus
+// [+0x13]; kDowry), one or two ships given in town [+0x12] (0x50E000), with
+// hull ([+0x14] / 32) · (([+0x13] − [+0x14]) · 3 + 23), cargo of the ware
+// [+0xE] & 0xF (only with room: ((index & 15) + 15) · 170 / its base price,
+// nothing under 100, at most half the hold) and of [+0xE] >> 4 (tools, or 3
+// if the first one is tools, when it is the same ware: ((tick & 15) + 15) ·
+// 170 / its price, at most a quarter of the hold), whole barrels or loads,
+// minimum crew and hold (0x5182B0). Then the event becomes the wedding feast
+// (an event 0x07 for the merchant in his home town with [+0x10] = 0) and
+// stays. The letters and the window are not reproduced. Returns whether it
+// stays.
+bool fn_4e7c74(SaveGame& save, uint16_t event) {
+	const uint32_t merchant = save.events[event].u8(0x15);
+	if (merchant >= merchant_count(save)) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	const uint32_t now = save.globals.u32(kTick);
+	MerchantMemory& m = merchant_of(save, merchant);
+	if (m.u32(0x28) <= now) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	Event& e = save.events[event];
+	m.u32(0x28) = now - (uint32_t(e.u16(0xC)) << 8);
+	m.u32(0x2C) = now;
+	m.u8(0x27) = e.u8(0xF);
+	m.u8(0x30) = e.u8(0x10);
+	m.u8(0x31) = e.u8(0x12);
+	m.u8(0x32) = e.u8(0x13);
+	m.u8(0x33) = e.u8(0x14);
+	int32_t fleet = 0;
+	for (uint32_t s = m.u16(0xE); s < ship_count(save); s = ship_of(save, s).u16(4)) {
+		fleet += ship_of(save, s).s32(0x10) / 40000;
+	}
+	fleet -= e.u8(0x13);
+	if (fleet < 0) {
+		fleet = 0;  // Sin comprobar con el oráculo.
+	}
+	const uint8_t* dowry = kDowry[fleet > 10 ? 11 : fleet];
+	for (int c = 0; c < 2; ++c) {
+		uint16_t type = dowry[c];
+		if (type > 3) {
+			continue;
+		}
+		const uint16_t index = fn_50e000(save, type, 0, e.u8(0x12), e.u8(0x15));
+		ShipMemory& s = ship_of(save, index);
+		s.s32(0x18) = s.s32(0x14) >> 5;
+		s.s32(0x18) = ((int32_t(e.u8(0x13)) - int32_t(e.u8(0x14))) * 3 + 0x17) * s.s32(0x18);
+		auto load = [&](uint32_t w, int32_t value, int32_t most) {
+			int32_t amount = int32_t(ftol(double(float(value)) / double(ware_base_price(int(w)))));
+			if (amount < 100) {
+				amount = 0;
+			} else if (amount > most) {
+				amount = most;
+			}
+			const int32_t unit = kFineUnit[w] ? 200 : 2000;
+			s.s32(0x54 + 4 * w) = amount / unit * unit;
+		};
+		const uint32_t first = e.u8(0xE) & 0xF;
+		const int32_t room = recalculate_cargo(save.ships[index]);
+		if (room <= 0) {
+			s.s32(0x54 + 4 * first) = 0;  // Sin comprobar con el oráculo.
+		} else {
+			load(first, ((int32_t(index) & 0xF) + 0xF) * 170, s.s32(0x10) >> 1);
+		}
+		uint32_t second = e.u8(0xE) >> 4;
+		if (second == first) {
+			second = first == 0xC ? 3 : 0xC;
+		}
+		load(second, (int32_t(now & 0xF) + 0xF) * 170, s.s32(0x10) >> 2);
+		s.u16(0x40) = kMinCrew[s.u8(0xE) & 3];
+		recalculate_cargo(save.ships[index]);
+	}
+	Event& feast = save.events[event];
+	feast.u16(6) = 7;
+	feast.u32(8) = merchant;
+	feast.u32(0xC) = m.u8(0x19);
+	feast.u32(0x10) = 0;
+	return true;
+}
+
+// --- Evento 0x1D: un incendio en la ciudad (la operación 0x7D) ---
+
+// Los tipos de edificio que arden en un incendio de la ciudad (0x672B3C): las
+// casas y empresas (4 a 0x1E), 0x29 y 0x2C.
+constexpr uint8_t kFlammable[0x39] = {0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+// 0x500C30 (thiscall sobre la oficina): ha ardido un almacén suyo. Lo que se
+// pierde: 200 si la oficina tiene [+0x2EC] · 2000 o más; si no, ((tick +
+// [+0x2E2]) & 0x3F) · (existencias · 200 / almacenes) / 64, o 400000 si
+// con eso quedaría más de [+0x2EC] · 2000 − 400000. Sale de las tres
+// mercancías que más hay (en empate, la de índice menor; si hay menos de
+// tres, la que menos): un tercio de lo que se pierde de la tercera, la
+// mitad de lo que queda de la segunda y el resto de la primera, en unidades
+// enteras (cargas o barriles; como mucho 200 y lo que hay). La carta 0x75 al
+// comerciante no se reproduce.
+void fn_500c30(SaveGame& save, int office) {
+	OfficeMemory& o = save.offices[size_t(office)].memory;
+	const int32_t stores = o.u16(0x2EC);
+	const int32_t capacity = int32_t(uint32_t(stores) * 2000);
+	int32_t stock = 0;
+	for (uint32_t w = 0; w < 24; ++w) {
+		stock = int32_t(uint32_t(stock) + uint32_t(o.s32(4 + 4 * w)));
+	}
+	int32_t loss = 200;
+	if (stock < capacity) {
+		const int32_t chance = int32_t((uint32_t(o.u16(0x2E2)) + save.globals.u32(kTick)) & 0x3F);
+		loss = int32_t(uint32_t(chance) * uint32_t(int32_t(uint32_t(stock) * 200) / stores)) >> 6;
+		if (int32_t(uint32_t(stock) - uint32_t(loss)) > int32_t(uint32_t(capacity) - 400000)) {
+			loss = 400000;
+		}
+	}
+	uint32_t least = 0;
+	for (uint32_t w = 1; w < 24; ++w) {
+		if (o.s32(4 + 4 * w) < o.s32(4 + 4 * least)) {
+			least = w;
+		}
+	}
+	uint32_t top[3] = {least, least, least};
+	for (uint32_t w = 0; w < 24; ++w) {
+		for (int k = 2; k >= 0 && o.s32(4 + 4 * top[k]) < o.s32(4 + 4 * w); --k) {
+			if (k < 2) {
+				top[k + 1] = top[k];
+			}
+			top[k] = w;
+		}
+	}
+	for (int k = 2; k >= 0; --k) {
+		const uint32_t w = top[k];
+		int32_t share = loss / (k + 1);
+		if (share >= o.s32(4 + 4 * w)) {
+			share = o.s32(4 + 4 * w);
+		}
+		const int32_t unit = kFineUnit[w] ? 200 : 2000;
+		int32_t units = share / unit;
+		if (units > 0xC8) {
+			units = 0xC8;
+		}
+		const int32_t amount = units * unit;
+		if (amount > 0) {
+			o.s32(4 + 4 * w) -= amount;
+			loss -= amount;
+		}
+	}
+}
+
+// 0x4E9564 (el evento 0x1D, lo crea la operación 0x7D): un incendio en la
+// ciudad [+0x12] que empieza en la celda ([+0x10], [+0x11]). Cada 64 ticks
+// (el evento vuelve cada 8 y esto, con los bits 3..5 del tick a 0), mientras
+// [+0xC] (los que han ardido) sea menor que [+0xE], el fuego pasa al
+// edificio que arde (0x672B3C) más cercano a la celda (distancia² < 100; en
+// empate, el primero), buscado en la lista de la ciudad [0x764] y en las de
+// cada oficina de la ciudad ([+0x2D0] y [+0x2CE]); sin ninguno, deja de
+// extenderse ([+0xE] = [+0xC]). Ese edificio sale de su lista (de un
+// comerciante con oficina allí, la [+0x2D0] si se encontró en una de esas y
+// si no la [+0x2CE]; si no es de un comerciante, la de la ciudad; si no está
+// en ella, deja de extenderse) y pasa a la de lo que arde [0x76A] con 50 de
+// vida ([+0x6]), la celda del fuego pasa a ser la suya, [+0xC] + 1, y se quita
+// de las subastas (0x4DB100); la oficina de su dueño se recuenta (0x4FF2D0;
+// si era un almacén, 0x500C30 antes). Cada 8 ticks, todo lo que arde salvo
+// las torres pierde 51 de vida (con más de 50) o 1, y con 0 se borra
+// (0x521240). Sin nada que extender ni que arda, la ciudad pierde el bit
+// 0x8000 de [0x2C8] y se quita; si no, lo tiene (con el aviso 0x59 la primera
+// vez, que no se reproduce) y vuelve. Los gráficos de la ciudad que se ve no
+// se reproducen. Devuelve si sigue.
+bool fn_4e9564(SaveGame& save, uint16_t event) {
+	const uint32_t town = save.events[event].u8(0x12);
+	SavedTown& st = save.towns[town];
+	TownMemory& t = st.memory;
+	const uint32_t records = t.u16(0x776);
+	if (!(save.events[event].u8(0) & 0x38) && save.events[event].u16(0xE) > save.events[event].u16(0xC)) {
+		Event& e = save.events[event];
+		int32_t nearest = 100;
+		uint32_t best = 0xFFFFF;
+		bool in_houses = false;  // [esp+0x2C]: si se encontró en la lista [+0x2D0] de una oficina
+		auto look = [&](uint32_t head, bool houses) {
+			for (uint32_t r = head; r < records; r = st.records[r].next) {
+				const BuildingRecord& b = st.records[r];
+				const int32_t dx = int32_t(b.x) - int32_t(e.u8(0x10));
+				const int32_t dy = int32_t(b.y) - int32_t(e.u8(0x11));
+				const int32_t d = dx * dx + dy * dy;
+				if (b.type < sizeof(kFlammable) && kFlammable[b.type] && d < nearest) {
+					in_houses = houses;
+					best = r;
+					nearest = d;
+				}
+			}
+		};
+		look(t.u16(0x764), false);
+		for (uint32_t o = t.u16(0x784); o < office_count(save); o = save.offices[o].memory.u16(0x2CA)) {
+			look(save.offices[o].memory.u16(0x2D0), true);
+			look(save.offices[o].memory.u16(0x2CE), false);
+		}
+		if (best >= records) {
+			e.u16(0xE) = e.u16(0xC);
+		} else {
+			BuildingRecord& b = st.records[best];
+			int office = -1;
+			uint16_t* head = nullptr;
+			if (b.owner >= merchant_count(save)) {
+				head = &t.u16(0x764);
+			} else if ((office = facilities_detail::fn_5308a0(save, b.owner, town)) >= 0) {
+				OfficeMemory& o = save.offices[size_t(office)].memory;
+				head = in_houses ? &o.u16(0x2D0) : &o.u16(0x2CE);
+			}
+			if (!head) {
+				e.u16(0xE) = e.u16(0xC);  // Sin comprobar con el oráculo.
+			} else {
+				uint16_t* link = head;
+				while (*link < records && *link != best) {
+					link = &st.records[*link].next;
+				}
+				if (*link != best) {
+					e.u16(0xE) = e.u16(0xC);  // Sin comprobar con el oráculo.
+				} else {
+					e.u8(0x10) = b.x;
+					++e.u16(0xC);
+					e.u8(0x11) = b.y;
+					*link = b.next;
+					b.next = t.u16(0x76A);
+					t.u16(0x76A) = uint16_t(best);
+					b.pending = 0x32;
+					events_rare_detail::fn_4db100(save, town, uint16_t(best));
+				}
+				if (office >= 0) {
+					if (st.records[best].type == 0x1E) {
+						fn_500c30(save, office);  // Sin comprobar con el oráculo.
+					}
+					fn_4ff2d0(save, office);
+				}
+			}
+		}
+	}
+	for (uint16_t* link = &t.u16(0x76A); *link < records;) {
+		BuildingRecord& b = st.records[*link];
+		if (b.type == 0x32 || b.type == 0x33) {
+			link = &b.next;  // Sin comprobar con el oráculo.
+			continue;
+		}
+		if (b.pending > 0x32) {
+			b.pending = uint8_t(b.pending - 0x33);  // Sin comprobar con el oráculo.
+		} else if (b.pending >= 1) {
+			--b.pending;
+		} else {
+			const uint16_t index = *link;
+			*link = b.next;
+			b.next = 0xFFFF;
+			construction_detail::fn_521240(save, int(town), index);
+			continue;
+		}
+		link = &b.next;
+	}
+	Event& e = save.events[event];
+	e.u32(0) += 8;
+	if (e.u16(0xE) <= e.u16(0xC) && t.u16(0x76A) == 0xFFFF) {
+		t.u32(0x2C8) &= ~0x8000u;
+		return false;
+	}
+	t.u32(0x2C8) |= 0x8000;
+	return true;
+}
+
+// 0x4DD400 (thiscall sobre la cola, los 10 primeros días del año): las
+// subastas de barcos del año (operaciones 0x38 con su tick, cada 123 a 251
+// días desde el último evento 0x0A de la cola) en ciudades con [0x2C8] & 0xC0.
 void fn_4dd400(SaveGame& save) {
 	Operation op;
 	GlobalMemory& g = save.globals;
@@ -1419,6 +1898,118 @@ bool ship_order_possible(const SaveGame& save, int town, uint32_t type, uint32_t
 	return fn_52b2c0(save, town, order, type, merchant);
 }
 
+// Los nombres de los barcos nuevos de un jugador humano, por tipo (0x6C0CB4).
+constexpr const char* kDefaultShipNames[4] = {"snaikka", "crayer", "cog", "hulk"};
+
+// 0x52A360 (thiscall sobre la ciudad, con el comerciante, el tipo y `force`):
+// el comerciante encarga al astillero un barco del tipo. Nada (devuelve
+// false) sin astillero para el tipo ([0x824 + tipo] < 0), con un tipo grande
+// (bit 1) en una ciudad con [0x2C8] & 1, si 0x52B2C0 no lo permite o, salvo
+// con `force` = 1 (la simulación), si no le llega el dinero. Los materiales
+// (madera, paño, herramientas, cáñamo y brea) salen primero de su oficina en
+// la ciudad y después de sus barcos en ella (estado < 4; a diferencia de
+// 0x52B2C0, también los de ruta automática), en unidades enteras y hasta lo
+// que 0x52B2C0 dice que se usa de lo suyo; lo demás se compra a la ciudad (sin
+// bajar de 0). El barco nuevo (0x507D60 en el astillero) con el tamaño que
+// da el astillero (como 0x52A8D0), su artillería (0x5181D0) y su bodega
+// (0x5182B0) va al principio de la lista del comerciante, con su ciudad natal
+// en [+0x13A] y nombre: de la lista (0x509A50) si es de la IA; si es humano,
+// el del tipo con [+0x15E] = 0x7FFF − tipo. Se cobra el coste (dinero,
+// [+0x4C4] y [+0x48] del barco), [+0x4C] el tick y reputación (0x4F9120).
+bool fn_52a360(SaveGame& save, int town, uint32_t merchant_arg, uint32_t type_arg, uint8_t force) {
+	static constexpr uint8_t kWares[5] = {0xB, 8, 0xC, 0x11, 0xF};  // madera, paño, herramientas, cáñamo, brea
+	TownMemory& t = town_of(save, uint32_t(town));
+	const uint32_t merchant = merchant_arg & 0xFF;
+	const uint32_t type = type_arg & 0xFF;
+	if (t.s8(0x824 + type) < 0) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	if ((type_arg & 2) && (t.u8(0x2C8) & 1)) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	ShipOrder order;
+	if (!fn_52b2c0(save, town, order, type_arg, merchant)) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	MerchantMemory& m = merchant_of(save, merchant);
+	if (order.cost > m.s32(0) && force != 1) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	// Lo que hay en unidades enteras, como mucho lo que queda por usar de lo
+	// suyo (con existencias negativas, el juego divide igual: las sube).
+	auto take = [&](int32_t& stock, size_t k) {
+		const int32_t unit = kFineUnit[kWares[k]] ? 200 : 2000;
+		int32_t units = stock / unit;
+		if (units > order.used[k]) {
+			units = order.used[k];
+			order.used[k] = 0;
+		} else {
+			order.used[k] -= units;
+		}
+		stock = int32_t(uint32_t(stock) - uint32_t(unit * units));
+	};
+	const uint8_t here = t.u8(0x2C0);
+	const int office = facilities_detail::fn_5308a0(save, merchant, here);
+	if (office >= 0) {
+		for (size_t k = 0; k < 5; ++k) {
+			take(save.offices[size_t(office)].memory.s32(4 + 4 * kWares[k]), k);
+		}
+	}
+	for (uint32_t s = m.u16(0xE); s < ship_count(save);) {
+		ShipMemory& ship = ship_of(save, s);
+		const uint32_t next = ship.u16(4);
+		if (ship.u8(0x39) == here && ship.u16(0x134) < 4) {
+			bool changed = false;
+			for (size_t k = 0; k < 5; ++k) {
+				int32_t& cargo = ship.s32(0x54 + 4 * kWares[k]);
+				if (cargo > 0) {
+					take(cargo, k);
+					changed = true;
+				}
+			}
+			if (changed) {
+				recalculate_cargo(save.ships[s]);
+			}
+		}
+		s = next;
+	}
+	for (size_t k = 0; k < 5; ++k) {
+		const int32_t unit = kFineUnit[kWares[k]] ? 200 : 2000;
+		int32_t& stock = t.s32(4 + 4 * kWares[k]);
+		stock = int32_t(uint32_t(stock) - uint32_t(order.buy[k] * unit));
+	}
+	for (size_t o = 0x60; o >= 4; o -= 4) {
+		if (t.s32(o) < 0) {
+			t.s32(o) = 0;
+		}
+	}
+	uint16_t index = 0;
+	events_mayor_detail::fn_507d60(save, index, here, 0);
+	events_mayor_detail::fn_52a8d0(save, town, index, type_arg);
+	events_mayor_detail::fn_5181d0(save, index);
+	recalculate_cargo(save.ships[index]);
+	ShipMemory& s = ship_of(save, index);
+	s.u8(0) = uint8_t(merchant_arg);
+	s.u16(4) = m.u16(0xE);
+	m.u16(0xE) = index;
+	s.u8(0x13A) = m.u8(0x19);
+	if (m.u16(8) == 0) {
+		// Sin comprobar con el oráculo.
+		s.u16(0x15E) = uint16_t(0x7FFF - (s.u8(0xE) & 3));
+		const char* name = kDefaultShipNames[type & 3];
+		std::memcpy(s.bytes.data() + 0x160, name, std::strlen(name) + 1);
+	} else {
+		events_mayor_detail::fn_509a50(save, index);
+	}
+	s.u32(0x18) = 0;
+	m.s32(0) = int32_t(uint32_t(m.s32(0)) - uint32_t(order.cost));
+	m.s32(0x4C4) = int32_t(uint32_t(m.s32(0x4C4)) + uint32_t(order.cost));
+	s.s32(0x48) = order.cost;
+	s.u32(0x4C) = save.globals.u32(kTick);
+	diet_detail::fn_4f9120(save, merchant, here, s.u32(0x14));
+	return true;
+}
+
 // 0x4DE790 (evento 0x2B): si los barcos de todos los comerciantes (los de la
 // IA, contados; los humanos, [+0x478]) por 400 no llegan a los habitantes,
 // el de la IA (sin [+0x8] & 4) con menos barcos encarga uno (operación 0x2C:
@@ -1629,6 +2220,13 @@ int events_towns(SaveGame& save, uint16_t event, uint16_t type) {
 		return 1;
 	case 0x27:
 		return fn_4ddc00(save, event) ? 1 : 0;  // Un capitán de la IA se retira.
+	case 0x07:
+		fn_4e23a4(save, event);  // La fiesta de un comerciante.
+		return 0;
+	case 0x1D:
+		return fn_4e9564(save, event) ? 1 : 0;  // Un incendio en la ciudad.
+	case 0x15:
+		return fn_4e7c74(save, event) ? 1 : 0;  // A merchant's wedding.
 	default:
 		return -1;
 	}

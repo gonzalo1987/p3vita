@@ -490,6 +490,133 @@ void fn_4dafe0(const SaveGame& save, uint32_t town, uint32_t record, uint32_t& t
 	}
 }
 
+// 0x4DAB00 (thiscall sobre la cola, con la ciudad y el registro): pone en
+// venta el edificio del comerciante (una subasta, evento 0x36, events_mayor.cpp),
+// si no lo está ya (0x4DAFE0) y su dueño tiene el bit de la ciudad en
+// [+0x468]. Lo mete en el primer hueco libre (registro >= número) de los 3 de
+// una subasta de la ciudad ya abierta: en fase 1 y antes del día siguiente
+// más 0x300 ticks (sin el byte [+0xD] de los ajustes; con él no se busca ahí)
+// o, si no, en fase 2 a menos de 0x3200 ticks; con el bit 15 si su celda
+// tiene el bit 7. Si no hay hueco, una subasta nueva en el tick siguiente
+// (fase 1, sus edificios [+0x8] = el registro y dos libres, [+0x17] = 0xFF) y
+// su espera [+0xE] (en días, desde 14 a 20 según el tick y el registro) se
+// alarga hasta que los 6 días que acaba no caigan cerca de otras subastas
+// (eventos 0x0A y 0x36: los 6 días desde cuando acaba cada una); al final, en
+// ticks.
+void fn_4dab00(SaveGame& save, uint32_t town_arg, uint32_t record_arg) {
+	GlobalMemory& g = save.globals;
+	const uint32_t town = town_arg & 0xFF;
+	if (town >= town_count(save)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const SavedTown& st = save.towns[town];
+	const uint32_t records = st.memory.u16(0x776);
+	const uint16_t record = uint16_t(record_arg);
+	if (record >= records) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	uint32_t tick;
+	int32_t price;
+	fn_4dafe0(save, town_arg, record_arg, tick, price);
+	if (price != -1) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const BuildingRecord& b = st.records[record];
+	if (b.owner >= merchant_count(save)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	if (!(save.merchants[b.owner].memory.u32(0x468) & (1u << (town & 31)))) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const bool fine = st.grid[size_t(st.memory.u32(0x7AC)) * b.x + b.y] & 0x80;
+	const uint32_t now = g.u32(kTick);
+	const uint32_t count = g.u16(kEventCount);
+	// Un hueco en una subasta abierta de la ciudad en la fase `phase`.
+	auto add = [&](Event& e, uint8_t phase) {
+		if (e.u16(6) != 0x36 || e.u8(0x15) != uint8_t(town_arg) || e.u8(0x14) != phase) {
+			return false;
+		}
+		for (size_t k = 0; k < 3; ++k) {
+			if ((e.u16(8 + 2 * k) & 0x7FFF) >= records) {
+				e.u16(8 + 2 * k) = uint16_t(record | (fine ? 0x8000 : 0));
+				return true;
+			}
+		}
+		return false;
+	};
+	uint32_t i = g.u16(kEventHead);
+	const uint32_t soon = (now | 0xFF) + 0x301;
+	for (; i < count && save.events[i].u32(0) < soon; i = save.events[i].u16(4)) {
+		if (save.settings.u8(0xD) == 0 && add(save.events[i], 1)) {
+			return;  // Sin comprobar con el oráculo.
+		}
+	}
+	for (; i < count && save.events[i].u32(0) <= now + 0x3200; i = save.events[i].u16(4)) {
+		if (add(save.events[i], 2)) {
+			return;  // Sin comprobar con el oráculo.
+		}
+	}
+	// Los días (desde hoy) que ya tienen una subasta acabando cerca: 0.
+	std::vector<uint8_t> free_day(0x190, 1);
+	for (i = g.u16(kEventHead); i < count; i = save.events[i].u16(4)) {
+		const Event& e = save.events[i];
+		if (e.u16(6) != 0xA && e.u16(6) != 0x36) {
+			continue;
+		}
+		uint32_t end = e.u32(0);
+		switch (e.u8(0x14)) {
+		case 0:
+			end += 0x2000;
+			break;
+		case 1:
+			end += uint32_t(e.u16(0xE)) + 0x200;
+			break;
+		case 2:
+			end += 0x200;
+			break;
+		default:
+			break;
+		}
+		int32_t day = int32_t(end - now) >> 8;
+		if (day >= 0x17C) {
+			continue;
+		}
+		for (int k = 0; k < 6; ++k, ++day) {
+			if (day >= 0) {
+				free_day[size_t(day)] = 0;
+			}  // (Con un día negativo, el juego escribiría antes del búfer.)
+		}
+	}
+	Event& e = save.events[fn_4d8cf0(save, now + 1)];
+	e.u16(6) = 0x36;
+	e.u8(0x17) = 0xFF;
+	e.u16(8) = uint16_t(record | (fine ? 0x8000 : 0));
+	e.u16(0xA) = 0xFFFF;
+	e.u16(0xC) = 0xFFFF;
+	e.u16(0x10) = 0;
+	e.u16(0x12) = 0;
+	e.u8(0x14) = 1;
+	e.u8(0x15) = uint8_t(town_arg);
+	e.u8(0x16) = 0;
+	e.u16(0xE) = uint16_t((now & 3) + (record & 3) + 0xE);
+	for (;;) {
+		int32_t day = int32_t(e.u16(0xE)) + 5;
+		if (day >= 0x190) {
+			break;  // Sin comprobar con el oráculo.
+		}
+		int32_t left = 6;
+		while (left > 0 && free_day[size_t(day)] != 0) {
+			--day;
+			--left;
+		}
+		if (left == 0) {
+			break;
+		}
+		e.u16(0xE) = uint16_t(e.u16(0xE) + left);
+	}
+	e.u16(0xE) = uint16_t(e.u16(0xE) << 8);
+}
+
 // 0x4DB220 (thiscall sobre la cola): ¿hay en venta (evento 0x36) algún
 // edificio del comerciante `owner`? Sin comprobar con el oráculo.
 bool fn_4db220(const SaveGame& save, uint16_t owner) {

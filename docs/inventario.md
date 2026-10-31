@@ -46,31 +46,31 @@ Las que encolan funciones a las que se llega desde advance_time pasando
 solo por lo que ya tiene p3vita. Casi todas son de unos cientos de bytes a
 3 KB.
 
-- [ ] 0x0A (0x4768B0, barcos; 0x507FB0)
-- [ ] 0x13 (evento 0x03, 0x4DCEA0; 0x538C40): crea el evento 0x28 (0x4DDF40)
-- [ ] 0x28 (la IA, 0x4F5A20; 0x53D190)
-- [ ] 0x2C (evento 0x2B, 0x4DE790; 0x52A360 y 0x52B2C0)
-- [ ] 0x38 (0x4DD400; crea un evento 0x0A, que p3vita atiende)
-- [ ] 0x48 (avisos, 0x51E070 y 0x51E270; 0x53B010)
-- [ ] 0x60 (evento 0x16; 0x53DA90): crea el evento 0x15 (0x4E7C74)
-- [ ] 0x61 (0x5316E0; 0x53DBF0): crea el evento 0x07 (0x4E23A4)
-- [ ] 0x65 (la IA, 0x4F4E50; 0x4F5D80)
-- [ ] 0x67 (0x4DCEA0; 0x53DDF0)
-- [ ] 0x7C (0x4DCA90; crea un evento 0x1C, la peste)
-- [ ] 0x7D (0x4DCBF0): crea el evento 0x1D (0x4E9564)
-- [ ] 0x7E (evento 0x1F; 0x53F8B0)
-- [ ] 0x7F (evento 0x0D, 0x4E3F44): marca ciudades con 0x4000000 y crea eventos 0x35
-- [ ] 0x80 (evento 0x05; 0x4D8DB0)
-- [ ] 0x83 (evento 0x00; crea un evento 0x00)
-- [ ] 0x84 (eventos 0x1F y 0x03; 0x53FCA0)
-- [ ] 0x87 (un hijo, 0x4F69B0; 0x53FEA0)
-- [ ] 0x9F (0x50B250, barcos)
-- [ ] 0xB5 (0x514000, barcos; 0x514D40)
-- [ ] 0xB8 (eventos 0x03, solo en partidas en red; 0x542F10)
+- [ ] 0x0A (0x4768B0, barcos; 0x507FB0): seen in this pass: {0x0A, ship, owner} → 0x507FB0 (1 KB, scrapping a ship, with interface notices) if the ship is still the owner's; 0x4768B0 is interface code (an object with a ship list at [+0x8F4]), reached only from the town view of a siege (0x62BE90). Belongs with the player's actions (E)
+- [x] 0x13 (0x538C40; queued by 0x4DCEA0 in event 0x03): **the captain of a human player's ship retires**: it creates event 0x27 (already handled) on the next tick and sets the captain's [+0xE] to 1 (for AI ships, 0x4DCEA0 creates the event directly). It does *not* create event 0x28, as the call graph said: event 0x28 (0x4DDF40) is created by 0x538DA0, which sits right after 0x538C40 and is never called (no direct call, no address in the data): event 0x28 has no reachable creator, like 0x0B and 0x29. Scenario `capitan_jugador`: equal in saves 1, 3, 5 and 7
+- [x] 0x28 (0x53D190, con 0x4DAB00; la encola la IA de un comerciante con deudas, 0x4F5A20, que casi nunca lo hace por el fallo de la variable sin inicializar): **un comerciante pone en venta un edificio**: lo busca por su celda en las listas de su oficina y de la ciudad y abre o amplía una subasta (evento 0x36: en fase 1 con el byte [+0xD] de los ajustes a 0, en fase 2, o nueva en un día sin subastas cerca); si no lo encuentra, recuenta la oficina (0x4FF2D0). `operations.cpp` y `events.cpp`. Escenarios `subasta` y `subasta_ajuste` (las tres maneras, sin el bit de la ciudad, una celda vacía): iguales en las partidas 3, 5 y 7, también 30 días hasta que se venden
+- [x] 0x2C (en 0x535C70; 0x52A360 sobre la ciudad): **un barco encargado al astillero**. La encola el evento 0x2B (0x4DE790) para el comerciante de la IA con menos barcos cuando hay más de 400 habitantes por barco. Los materiales salen de su oficina, de sus barcos en la ciudad (también los de ruta automática, que 0x52B2C0 no cuenta) y lo que falta se compra a la ciudad; el barco nuevo queda en el astillero (0x507D60), al principio de la lista del dueño, con nombre (0x509A50; para un humano, «snaikka», «crayer», «cog» o «hulk»). `operations.cpp` y `events_towns.cpp`. Escenarios `astillero` (siete encargos: de la IA con y sin oficina, del jugador y cuatro que no se pueden) y `astillero_ciudad` (el evento 0x2B adelantado): iguales en las partidas 1, 3, 5 y 7, y 8 días después con el tick de ciudad y los barcos (el barco en obras)
+- [x] 0x38 (en 0x535E3B; la encola 0x4DD400): **una subasta de barco**, el evento 0x0A en fase 0 en una ciudad, si es al menos 40 días más tarde. Escenario `eventos_op` (con 0x7C, 0x7F, 0x80 y 0x83): iguales en las partidas 1, 3, 5 y 7
+- [x] 0x48 (0x53B010; la encolan las obras, 0x51E070 y 0x51E270): **una propuesta para una ciudad**: con consejo, la votación (evento 0x2E, en el tick que ajusta 0x4D9FC0); sin consejo se aplica ya (el impuesto extraordinario, evento 0x31, o el impuesto por cabeza, 0x52A150). Escenario `propuestas` (con 0x84 y 0x67): iguales en las partidas 1 a 7
+- [x] 0x60 (0x53DA90) and event 0x15 (0x4E7C74): **a merchant's wedding**. The operation creates the event on the given day and clears the marks of the merchant's letters (0x4D6FD0); the event records the bride in the merchant ([+0x27..+0x33]), gives one or two dowry ships by the size of his fleet (0x50E000: a ship given in a town, with cargo) and becomes the wedding feast (event 0x07). Only the mission interpreter (0x4D6C90) and the interface queue it: the branch of event 0x16 that would queue it for the AI is dead code (`mov edx,0x4F3690; test edx,edx; jne`). `operations.cpp`, `events_towns.cpp`. Scenario `boda`: equal in saves 1, 3, 5 and 7, also the ships 2 days later
+- [x] 0x61 (0x53DBF0) y el evento 0x07 (0x4E23A4): **la fiesta de un comerciante en una ciudad**. La encola la fiesta de la ciudad (0x5316E0, en el evento 0x03) para un comerciante de la IA al azar de los de sus oficinas, a los 10 a 30 días; la operación cobra el precio (0 desde la simulación; compara sin signo: con deudas, también) y crea el evento. Al vencer, para la IA la ciudad apunta la fiesta ([0x2D0], que cuenta en la satisfacción); para un humano (la fiesta que da el jugador desde la interfaz), la oficina gasta lo de la fiesta según los invitados (0x5004C0) y su reputación sube (0x4F8EB0). `operations.cpp` y `events_towns.cpp`. Escenarios `fiesta`, `fiesta_vacia` y `fiesta_ciudad` (32 días, la 0x61 que encola 0x5316E0 y su evento): iguales en las partidas 1, 3, 5 y 7
+- [x] 0x65 (0x53DD70 → 0x4F5D80; queued by the AI of a merchant under −50000 who cannot borrow, 0x4F4E50): **an AI merchant goes bankrupt** and becomes a new merchant: his debts go to the town or to nobody, his statistics and reputations restart (0x4F72C0), 1000000 coins, a new life (0x4F68D0), a new first name and surname, and he stops being mayor; ships, offices and buildings stay. Game bug reproduced: the surname is taken modulo the surname index of the last merchant, not the number of surnames (in the roadmap). The graph records (0x54E1F0/0x54E170) are not reproduced. `merchants.cpp`. Scenario `quiebra`: equal in saves 1, 3, 5 and 7, also the merchants' ticks after it
+- [x] 0x67 (0x53DDF0; la encola 0x4DCEA0): **un administrador mejora** su habilidad y su sueldo (0x4FE160), si sigue en la oficina. `propuestas` (partidas 4, 5 y 6, las que tienen una oficina con administrador)
+- [x] 0x7C (en 0x536642; la encola 0x4DCA90): **la peste**, el evento 0x1C el día del año pedido (o al empezar el siguiente, si ya ha pasado). `eventos_op`
+- [x] 0x7D (en 0x5366A0; la encola 0x4DCBF0) y el evento 0x1D (0x4E9564): **un incendio en una ciudad**: cada 64 ticks el fuego pasa al edificio inflamable más cercano (de la ciudad o de las oficinas) hasta un número; lo que arde pierde vida cada 8 ticks y se borra (0x521240); la ciudad lleva el bit 0x8000 mientras dura. Si arde un almacén, la oficina pierde mercancía (0x500C30). `events_towns.cpp`. Escenario `incendio_ciudad` (en un almacén, una casa y un edificio de la ciudad): iguales en las partidas 1, 3, 5 y 7
+- [x] 0x7E (0x53F8B0; la encola el evento 0x1F al acabar la temporada): **la temporada de piratas que viene**, el evento 0x1F el 1 de marzo con las ciudades sin el bit 0x40 barajadas. Escenario `temporada`: iguales en las partidas 1, 3, 5 y 7
+- [x] 0x7F (en 0x5366E8; la encola el evento 0x0D, 0x4E3F44): hasta tres ciudades con el bit 0x4000000 de [0x2C8] y un evento 0x35 cada una, que se lo quita. `eventos_op`
+- [x] 0x80 (en 0x536756; la encola el evento 0x05 en partidas en red): dos campos del registro 0x80 de la cola, si es un encargo (tipo 5). Fallo del juego: la operación lleva en [+4] el registro que toca y el manejador usa siempre el 0x80 (en el roadmap). `eventos_op`
+- [x] 0x83 (en 0x5367B5; la encola el evento 0x00 en partidas en red): un evento 0x00 (grano) con sus datos. `eventos_op`
+- [x] 0x84 (0x53FCA0; la encolan el torneo, 0x4DD530, y la temporada de piratas, evento 0x1F): **el encargo del jefe de la Hansa**, el evento 0x30. `propuestas`
+- [x] 0x87 (0x53FEA0): **a child is born to a married merchant** (279 days after the wedding and after the previous child): a 16-byte record from the captains' list (0x5097C0) at the head of his children's list [+0x34], [+0x36] + 1. Scenario `hijo`: equal in saves 1, 3, 5 and 7. Its enqueuer, 0x4F69B0 (event 0x03), is still «Por traducir» in `events_towns.cpp` (it needs the length of the merchant's name, 0x512A60): with weddings now rewritten it becomes reachable for the player (weddings come from the missions and the interface), so it is the next piece of D for this family
+- [ ] 0x9F (0x50B250, barcos): seen: {0x9F, i < 0xFF, u16} → 0x611309 (192 bytes) on the battle object *(0x6E55D0 + 4i), which only exists during a battle. Belongs with the battles (E)
+- [ ] 0xB5 (0x514000, barcos; 0x514D40): seen: {0xB5, i < 5, u16, u16} → 0x514D40 (2.4 KB with what it calls, some interface) on pirate object i ([0x6DD7AC + 4i]); queued by 0x514000, the pirate objects' update called from the ships update (0x506720), which neither p3vita nor the oracle runs (QUIET_SHIPS). Belongs with the pirates (E)
+- [ ] 0xB8 (eventos 0x03, solo en partidas en red; 0x542F10): seen: 0x542F10 (1.6 KB with what it calls); network games only
 
-Ya se reproducen: 0x00, 0x12, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x29,
-0x37, 0x3B, 0x46, 0x4B, 0x64, 0x78, 0x79, 0x7A, 0x7B, 0x81, 0x85, 0x86 y
-0x8E.
+Ya se reproducen: 0x00, 0x12, 0x13, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x28,
+0x29, 0x2C, 0x37, 0x38, 0x3B, 0x46, 0x48, 0x4B, 0x60, 0x61, 0x64, 0x65, 0x67, 0x78, 0x79,
+0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86, 0x87 y 0x8E.
 
 ## C. Llamadas desde lo reescrito a funciones que p3vita no nombra
 
@@ -90,7 +90,7 @@ interfaz o un hueco:
 
 ## D. Lo que marca el propio código
 
-- [ ] «Por reescribir» y «Por traducir» (14; hecho ya 0x4FACD0 para los tipos de menos de 0x32): el principio del encargo de fundar una ciudad y el ataque a la guarida pirata (`alderman.cpp`), 0x4FF2D0 (el almacén del comerciante, `construction.cpp`), 0x629C30 sobre [+0x8] y el intérprete de misiones (`events.cpp`), el ataque al barco 0x5063C0 (`events_rare.cpp`), los mensajes caducados y una rama sin longitud (`events_towns.cpp`), 0x4FACD0 para los tipos de menos de 0x32 (`grid.cpp`), 0x4F99B0 sin plantilla, 0x545CE0 y 0x545F50, y la elección del alcalde en la fundación (`new_town.cpp`)
+- [ ] «Por reescribir» y «Por traducir» (14; hecho ya 0x4FACD0 para los tipos de menos de 0x32): el principio del encargo de fundar una ciudad y el ataque a la guarida pirata (`alderman.cpp`), 0x4FF2D0 (el almacén del comerciante, `construction.cpp`; el comentario parece viejo: `fn_4ff2d0` ya está en `facilities.cpp`, recontar la oficina, y la usa la 0x28), 0x629C30 sobre [+0x8] y el intérprete de misiones (`events.cpp`), el ataque al barco 0x5063C0 (`events_rare.cpp`), los mensajes caducados (0x4D6780: sale con el escenario `fiesta_ciudad` en la partida 3, el día 20, cuando el evento 0x03 adelantado le toca a un comerciante con avisos; el juego libera dos entradas del buzón) y una rama sin longitud (`events_towns.cpp`), 0x4FACD0 para los tipos de menos de 0x32 (`grid.cpp`), 0x4F99B0 sin plantilla, 0x545CE0 y 0x545F50, y la elección del alcalde en la fundación (`new_town.cpp`)
 - [ ] «no se reproduce» y «no se traduce» (115): casi todo avisos, cartas, ventanas y gráficos; repasar que ninguno toque el estado
 - [ ] «Sin comprobar con el oráculo» (347): ramas escritas que ninguna partida recorre; probarlas con estados retocados (`tools/oracle/retouch.py`), empezando por las de A y B
 

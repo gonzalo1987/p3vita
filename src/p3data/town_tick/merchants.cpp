@@ -44,6 +44,7 @@
 // estados retocados al azar.
 
 #include <cstring>
+#include <vector>
 
 #include "p3data/town_tick/internal.hpp"
 
@@ -622,5 +623,151 @@ void fn_4f7bb0(SaveGame& save, int merchant) {
 	const int16_t w = m.s16(0x22);
 	m.s16(0x22) = int16_t(int32_t(w) > target ? uint16_t(w) - 1u : uint16_t(w) + 1u);
 }
+
+namespace events_towns_detail {
+void fn_4d6780(SaveGame& save, int32_t merchant);
+}  // namespace events_towns_detail
+
+namespace merchants_detail {
+
+// 0x4F72C0 (on the merchant): his statistics and reputations start again:
+// [+0x118] = 1, zeros in [+0x11C..+0x2FB], [+0x2FC..+0x39B], [+0x39C..+0x3C3],
+// [+0x3C4..+0x463] and [+0x468..+0x4D7] (but [+0x47C] and [+0x47E]), and
+// [+0x464] = 1.0.
+void fn_4f72c0(MerchantMemory& m) {
+	m.u32(0x118) = 1;
+	std::memset(m.bytes.data() + 0x11C, 0, 0x1E0);
+	std::memset(m.bytes.data() + 0x2FC, 0, 0xA0);
+	std::memset(m.bytes.data() + 0x3C4, 0, 0xA0);
+	std::memset(m.bytes.data() + 0x39C, 0, 0x28);
+	for (size_t o = 0x468; o < 0x478; o += 4) {
+		m.u32(o) = 0;
+	}
+	m.u16(0x478) = 0;
+	m.u16(0x47A) = 0;
+	for (size_t o = 0x480; o < 0x4D8; o += 4) {
+		m.u32(o) = 0;
+	}
+	m.f32(0x464) = 1.0f;
+}
+
+// 0x4F68D0 (on the merchant, with the tick, a1, the merchant (unused), a3 and
+// a4): a new life: born a1 years ago (a3 != 0) or (a1 & 31) + 25 (a3 = 0), at
+// tick % 365 of that year ([+0x10], in ticks); [+0x18] = his home town;
+// [+0x1A] = a4 != 0; unmarried ([+0x28], [+0x2C] = −1, [+0x27], [+0x30],
+// [+0x31] = 0xFF, [+0x34] = 0xFFFF) and the rest of his person to defaults.
+void fn_4f68d0(SaveGame& save, MerchantMemory& m, uint32_t tick, uint32_t a1, uint8_t a3, uint8_t a4) {
+	uint16_t year = save.globals.u16(global::kWorldYear);
+	if (a3 != 0) {
+		year = uint16_t(year - uint16_t(a1));  // Sin comprobar con el oráculo.
+	} else {
+		year = uint16_t(year - (a1 & 0x1F) - 0x19);
+	}
+	m.u32(0x10) = (uint32_t(year) * 365 + tick % 365) << 8;
+	m.u8(0x18) = m.u8(0x19);
+	m.u8(0x1A) = a4 != 0 ? 1 : 0;
+	m.u32(0x28) = 0xFFFFFFFF;
+	m.u32(0x2C) = 0xFFFFFFFF;
+	for (size_t o : {0x32, 0x33, 0x36, 0x25, 0x37, 0x1C, 0x1D, 0x1E, 0x1B, 0x20, 0x21, 0x24}) {
+		m.u8(o) = 0;
+	}
+	m.u16(0x14) = 0;
+	m.u16(0x16) = 0;
+	m.u32(4) = 0;
+	m.u8(0x27) = 0xFF;
+	m.u8(0x30) = 0xFF;
+	m.u8(0x31) = 0xFF;
+	m.u16(0x34) = 0xFFFF;
+	m.u8(0x1F) = 0xF;
+	m.u16(0x22) = 1;
+	m.u8(0xE0) = 0xFF;
+	m.u8(0xE1) = 0xFF;
+	m.u16(0xE2) = 0xFFFF;
+}
+
+// 0x4F5D80 (on the merchant; operation 0x65): an AI merchant goes bankrupt
+// and becomes a new merchant (a human one, nothing). His debts (events 0x01):
+// owed to him, now owed to the town ([+0x10] = 0xFF); owed by him, to nobody
+// ([+0x11] = [+0xC] = 0xFF). Then: [+0x53C] = 800000, [+0x540], [+0x544],
+// [+0x608] = 0, [+0x546] = the tick's low byte and [+0x547] = 7 times it,
+// zeros in [+0x548..+0x607]; statistics (0x4F72C0) with [+0x464] = 2.0; no
+// expeditions ([+0x4D8..+0x537], 0x534890); 1000000 coins; a new life
+// (0x4F68D0); [+0x26] = 0 and [+0x38..+0x3F] = 5; his old letters (0x4D6780);
+// a first name day % men's names ([0x6DDB70]) and a surname
+// ([0x6DD888] + day) % (the surname index of the last merchant: the game
+// divides by that and not by the number of surnames), going up past the
+// ones in use (back to 0 after that divisor); and he stops being mayor of his
+// home town. His ships, offices and buildings stay. The records for the
+// graphs (0x54E1F0, 0x54E170: heap, from [0x6DFCAC]) are not reproduced.
+void fn_4f5d80(SaveGame& save, int merchant) {
+	GlobalMemory& g = save.globals;
+	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
+	if (m.u16(8) == 0) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const uint16_t me = uint16_t(merchant);
+	for (uint32_t i = g.u16(0x6DD744); i < g.u16(0x6DD748);) {
+		GameMemory<0x18>& e = save.events[i];
+		i = e.u16(4);
+		if (e.u16(6) != 1) {
+			continue;
+		}
+		if (e.u8(0x10) == me) {
+			e.u8(0x10) = 0xFF;
+		} else if (e.u8(0x11) == me) {
+			e.u8(0x11) = 0xFF;
+			e.u8(0xC) = 0xFF;
+		}
+	}
+	const uint32_t now = g.u32(global::kWorldTick);
+	m.u32(0x53C) = 800000;
+	m.u32(0x540) = 0;
+	m.u16(0x544) = 0;
+	m.u32(0x608) = 0;
+	m.u8(0x546) = uint8_t(now);
+	m.u8(0x547) = uint8_t(uint8_t(now) * 7);
+	std::memset(m.bytes.data() + 0x548, 0, 0x60);
+	std::memset(m.bytes.data() + 0x5A8, 0, 0x60);
+	fn_4f72c0(m);
+	std::memset(m.bytes.data() + 0x4D8, 0, 0x60);
+	m.f32(0x464) = 2.0f;
+	m.s32(0) = 1000000;
+	fn_4f68d0(save, m, now, now & 3, 0, 1);
+	m.u8(0x26) = 0;
+	std::memset(m.bytes.data() + 0x38, 5, 8);
+	events_towns_detail::fn_4d6780(save, merchant);
+	const uint32_t day = g.u16(global::kWorldDayOfYear);
+	m.u8(0x1C) = uint8_t(int32_t(day) % int32_t(g.u16(0x6DDB70)));
+	const uint32_t surnames = g.u16(0x6DDB74);
+	std::vector<uint8_t> used(surnames, 0);
+	const uint32_t count = g.u16(global::kWorldMerchantCount);
+	uint32_t divisor = 0;
+	for (uint32_t k = 0; k < count; ++k) {
+		divisor = save.merchants[k].memory.u8(0x1D);
+		if (divisor < surnames) {
+			used[divisor] = 1;
+		}
+	}
+	if (divisor == 0) {
+		return;  // Sin comprobar con el oráculo (the game divides by zero).
+	}
+	uint32_t surname = (uint32_t(g.u16(0x6DD888)) + day) % divisor;
+	m.u8(0x1D) = uint8_t(surname);
+	while (surname < surnames && used[surname]) {
+		// (Past the number of surnames the game reads beyond its buffer.)
+		surname = m.u8(0x1D) + 1u;
+		m.u8(0x1D) = uint8_t(surname);
+		if ((surname & 0xFF) > divisor) {
+			m.u8(0x1D) = 0;  // Sin comprobar con el oráculo.
+		}
+		surname = m.u8(0x1D);
+	}
+	TownMemory& home = save.towns[m.u8(0x19)].memory;
+	if (home.u8(0x6F1) == me) {
+		home.u8(0x6F1) = 0xFF;  // Sin comprobar con el oráculo.
+	}
+}
+
+}  // namespace merchants_detail
 
 }  // namespace p3::data::tick
