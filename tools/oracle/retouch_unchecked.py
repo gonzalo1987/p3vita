@@ -1453,6 +1453,62 @@ def bankruptcy_zero(o):
     return during
 
 
+# --- diet.cpp ---
+
+CONVOYS = 0x6DD7A8  # pointer to the convoys (0x3C bytes)
+CONVOY_COUNT, FREE_CONVOY, CONVOY_HEAD = to.SHIPS + 0xF6, to.SHIPS + 0xE4, to.SHIPS + 0xEC
+
+
+def convoy_list(o, head):
+    out, c = [], o.u16(head)
+    while c < o.u16(CONVOY_COUNT) and len(out) < 1000:
+        out.append(c)
+        c = o.u16(o.u32(CONVOYS) + 0x3C * c + 0x8)
+    return out
+
+
+def diet_branches(o):
+    """Missions of the Hanse's diet (events 0x34 and 0x24, 0x4E09D4) put at
+    the current tick and the event queue (0x4D85C0) called directly, so that
+    no other part of the world runs: a town out of the world; a phase past
+    10; disbanding (phase 5) a convoy out of the list and one out of the
+    table; phase 7 and 8 without a convoy; phase 9 without a convoy, with
+    the convoy fighting (state 0x14) and with a convoy out of the list;
+    phase 10 without a convoy, out of the list and with the convoy not
+    sailing back (state ≠ 0x16). 0x4F8CA0 with a town (only the battles
+    pass one)."""
+    towns = o.counts()[0]
+    listed = convoy_list(o, CONVOY_HEAD)
+    free = convoy_list(o, FREE_CONVOY)
+    sea = next(c for c in listed if o.u16(o.u32(CONVOYS) + 0x3C * c + 0x12) != 0x16)
+    print(f'{len(listed)} convoys listed, {len(free)} free; listed convoy {sea}, free convoy {free[0]}')
+    m = rt.ai_with_office(o)[0]
+
+    def during(o):
+        # [+0x8] of a 0x34 from phase 2 on is the game's list of notices: none (0).
+        new_event(o, 0, 0x34, d8=0, b14=towns, b15=0)
+        new_event(o, 0, 0x34, d8=0, b14=1, b15=11)
+        new_event(o, 0, 0x34, d8=0, b14=1, b15=5, w16=free[0])
+        new_event(o, 0, 0x24, d8=0xFFFFFFFF, dC=0xFFFFFFFF, b14=1, b15=5, w16=0xFFFF)
+        new_event(o, 0, 0x34, d8=0, b14=1, b15=7, w16=0xFFFF)
+        new_event(o, 0, 0x34, d8=0, b14=1, b15=8, w16=0xFFFF)
+        later = o.u32(WORLD + 0x14) + 0x1000
+        new_event(o, 0, 0x34, d8=0, b14=1, b15=9, w16=0xFFFF, d10=later)
+        new_event(o, 0, 0x34, d8=0, b14=1, b15=9, w16=free[0], d10=later)
+        new_event(o, 0, 0x34, d8=0, b14=1, b15=10, w16=0xFFFF)
+        new_event(o, 0, 0x34, d8=0, b14=1, b15=10, w16=free[0])
+        new_event(o, 0, 0x34, d8=0, b14=1, b15=10, w16=sea)
+        direct(o, 0x4D85C0, [o.u32(WORLD + 0x14)], ecx=to.EVENTS)
+        state = o.u32(CONVOYS) + 0x3C * sea + 0x12
+        old = o.u16(state)
+        w16(o, state, 0x14)
+        new_event(o, 0, 0x34, d8=0, b14=1, b15=9, w16=sea, d10=later)
+        direct(o, 0x4D85C0, [o.u32(WORLD + 0x14)], ecx=to.EVENTS)
+        w16(o, state, old)
+        direct(o, 0x4F8CA0, [2], ecx=o.merchant(m))
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -1531,6 +1587,10 @@ SCENARIOS = {
     'job_offers': Scenario(job_offers, [0x51CBE0], 0, ['@51ccda>51cd3f', '@51ccf4>51cd3f']),
     'bankruptcy': Scenario(bankruptcy, [0x535760, 0x4F68D0], 0, ['@4f5d99>4f5fbf', '@4f5f79', '@4f5fbc', '@4f68e2']),
     'bankruptcy_zero': Scenario(bankruptcy_zero, [], 0, ['@4f5f57']),
+    # diet.cpp
+    'diet_branches': Scenario(diet_branches, [0x4D85C0, 0x4F8CA0], 0, [
+        '@4e0a10>4e1b36', '@4e0a2e>4e1b36', '@4e1272>4e1830', '@4e13a7>4e1b36', '@4e147d>4e1b18', '@4e1547>4e1b18',
+        '@4e16af>4e1b18', '@4e16e7', '@4e170d>4e168f', '@4e18fd>4e1b18', '@4e193d>4e16e9', '@4e195d>4e1b18', '@4f8caf']),
 }
 
 

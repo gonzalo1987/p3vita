@@ -128,7 +128,8 @@ void fn_4f8ca0(SaveGame& save, uint32_t merchant, uint32_t town) {
 		r = float(double(r) - 3.0);
 	};
 	if (town < town_count(save)) {
-		lower(town);  // Sin comprobar con el oráculo.
+		lower(town);  // Only the battles pass a town. Checked with the oracle: scenario diet_branches
+		// (saves 3 and 5, a direct call).
 	} else {
 		for (uint32_t t = 0; t < town_count(save); ++t) {
 			if (save.towns[t].memory.u8(0x2C8) & 0x40) {
@@ -172,7 +173,8 @@ uint16_t fn_50ac40(SaveGame& save, uint32_t town, uint16_t event, bool two, bool
 	const uint16_t convoy = g.u16(kFreeConvoy);
 	ship_ai_detail::fn_509ae0(save);
 	if (convoy >= convoy_count(save)) {
-		return 0xFFFF;  // Sin comprobar con el oráculo (el juego seguiría con un convoy que no existe).
+		return 0xFFFF;  // Unreachable: 0x509AE0 grows the table when no convoy is free, so the one
+		// taken before exists (the game would go on with it as it is).
 	}
 	g.u16(kFreeConvoy) = save.convoys[convoy].u16(0x8);
 	save.convoys[convoy].u16(0x8) = 0xFFFF;
@@ -321,7 +323,7 @@ int disband(SaveGame& save, Event& e, uint32_t town) {
 			}
 		}
 		if (!found) {
-			e.u32(0) += 0x20;  // Sin comprobar con el oráculo.
+			e.u32(0) += 0x20;  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 			return 1;
 		}
 	}
@@ -329,7 +331,7 @@ int disband(SaveGame& save, Event& e, uint32_t town) {
 		save.towns[town].memory.u32(0x2C8) &= ~0x600u;
 	}
 	if (convoy >= convoy_count(save)) {
-		return 0;  // Sin comprobar con el oráculo.
+		return 0;  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 	}
 	GameMemory<0x3C>& c = save.convoys[convoy];
 	while (c.u16(0xA) < ship_count(save)) {
@@ -359,7 +361,9 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 	const uint16_t type = e.u16(6);
 	const uint32_t town = e.u8(0x14);
 	if (town >= town_count(save) || e.u8(0x15) > 10) {
-		return 0;  // Sin comprobar con el oráculo.
+		// A town out of the world or a phase past 10. Checked with the oracle: scenario
+		// diet_branches (saves 3 and 5).
+		return 0;
 	}
 	TownMemory& t = save.towns[town].memory;
 	switch (e.u8(0x15)) {
@@ -516,7 +520,7 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 		// La flota de caza se prepara: el convoy al estado 0xB y cuenta 0x40.
 		const uint16_t convoy = e.u16(0x16);
 		if (convoy >= convoy_count(save)) {
-			return finish(e);  // Sin comprobar con el oráculo.
+			return finish(e);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 		}
 		GameMemory<0x3C>& c = save.convoys[convoy];
 		uint32_t value = 1;
@@ -545,12 +549,13 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 		// Sale al mar (estado 0x16) desde la posición de la ciudad.
 		const uint16_t convoy = e.u16(0x16);
 		if (convoy >= convoy_count(save)) {
-			return finish(e);  // Sin comprobar con el oráculo.
+			return finish(e);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 		}
 		GameMemory<0x3C>& c = save.convoys[convoy];
 		const uint16_t lead_index = c.u16(0x10);
 		if (lead_index >= ship_count(save)) {
-			return finish(e);  // Sin comprobar con el oráculo (el juego no lo mira).
+			return finish(e);  // Unreachable: the game doesn't look, and a convoy of the fleet always has
+			// its leading ship.
 		}
 		c.u8(0x1E) = c.u8(0x1C);
 		c.u32(0x18) |= 0x20;
@@ -593,19 +598,22 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 		}
 		const uint16_t convoy = e.u16(0x16);
 		if (convoy >= convoy_count(save)) {
-			return finish(e);  // Sin comprobar con el oráculo.
+			return finish(e);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 		}
 		GameMemory<0x3C>& c = save.convoys[convoy];
 		const uint16_t lead_index = c.u16(0x10);
 		if (lead_index >= ship_count(save)) {
-			return finish(e);  // Sin comprobar con el oráculo (el juego no lo mira).
+			return finish(e);  // Unreachable: the game doesn't look, and a convoy of the fleet always has
+			// its leading ship.
 		}
 		if (c.u16(0x12) == 0x14) {
-			e.u32(0) += 0x40;  // Sin comprobar con el oráculo.
+			// The convoy fighting (state 0x14). Checked with the oracle: scenario diet_branches
+			// (saves 3 and 5).
+			e.u32(0) += 0x40;
 			return 1;
 		}
 		if (!listed(save, convoy)) {
-			e.u8(0x15) = 10;  // Sin comprobar con el oráculo.
+			e.u8(0x15) = 10;  // Out of the list. Checked with the oracle: scenario diet_branches (saves 3 and 5).
 			e.u32(0) += 1;
 			return 1;
 		}
@@ -673,15 +681,15 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 		// jugadores humanos con lo visto, 0x4F3AF0, no se reproduce).
 		const uint16_t convoy = e.u16(0x16);
 		if (convoy >= convoy_count(save)) {
-			return finish(e);  // Sin comprobar con el oráculo.
+			return finish(e);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 		}
 		if (!listed(save, convoy)) {
-			e.u32(0) += 0x40;  // Sin comprobar con el oráculo.
+			e.u32(0) += 0x40;  // Out of the list. Checked with the oracle: scenario diet_branches (saves 3 and 5).
 			return 1;
 		}
 		GameMemory<0x3C>& c = save.convoys[convoy];
 		if (c.u16(0x12) != 0x16 || c.u16(0x10) >= ship_count(save)) {
-			return finish(e);  // Sin comprobar con el oráculo.
+			return finish(e);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 		}
 		SavedShip& lead = save.ships[c.u16(0x10)];
 		lead.memory.u16(0x3A) = 0xFFFF;

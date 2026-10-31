@@ -47,8 +47,11 @@ task owns, checked against the game with retouched states.
   rounding case) and 1 game bug the oracle confirms (a division by zero,
   the game fails); one more game bug found (a search that never ends).
   Only comments changed.
+- **`diet.cpp`**: its 15 marks are gone: 12 checked with 1 scenario (saves
+  3 and 5: 13 of 13 targets, 6 calls equal), 3 unreachable. Only comments
+  changed.
 
-Left: `diet.cpp` (15), `sieges.cpp` (17), `grid.cpp` (6).
+Left: `sieges.cpp` (17), `grid.cpp` (6).
 
 ## Decisions for the user
 
@@ -260,6 +263,27 @@ when it falls into a jump target, so some edges aren't seen as blocks.
 Calls repeated (all equal): 0x520840 144, 0x50E380 4, 0x4F68D0 4,
 0x535760 4, 0x50FBC0 2, 0x5109B0 2, 0x51CBE0 2.
 
+## diet.cpp
+
+15 marks: 12 checked, 3 unreachable, 0 left. Scenario `diet_branches`
+(saves 3 and 5): missions of the diet (events 0x34 and 0x24) put at the
+current tick, and the event queue (0x4D85C0) called directly so that no
+other part of the world runs; plus a direct call to 0x4F8CA0.
+
+| Branch (p3vita) | Game |
+|---|---|
+| 0x4E09D4: a town out of the world; a phase past 10 | 0x4E0A10/0x4E0A2E→0x4E1B36 |
+| disband (phase 5): a convoy out of the list; one out of the table | 0x4E1272→0x4E1830, 0x4E13A7→0x4E1B36 |
+| phases 7, 8, 9, 10 without a convoy | 0x4E147D/0x4E1547/0x4E16AF/0x4E18FD→0x4E1B18 |
+| phase 9: the convoy fighting (0x14); out of the list | 0x4E16E7, 0x4E170D→0x4E168F |
+| phase 10: out of the list; the convoy not sailing back | 0x4E193D→0x4E16E9, 0x4E195D→0x4E1B18 |
+| 0x4F8CA0 with a town (only the battles pass one) | 0x4F8CAF |
+| unreachable: 0x50AC40 without a free convoy (0x509AE0 grows the table first); phases 8 and 9 with a convoy without its leading ship (the game doesn't look; the fleet's convoy always has it) | — |
+
+A 0x34 from phase 2 on keeps in [+0x8] the game's list of notices for the
+final letter: the scenario gives it none (0), as the game frees it on
+finishing.
+
 ## Game bugs
 
 - **Operation 0x3B with a merchant out of the world** (certain; 0x53A4CA
@@ -291,8 +315,8 @@ Calls repeated (all equal): 0x520840 144, 0x50E380 4, 0x4F68D0 4,
 ## For the inventory
 
 - `alderman.cpp`, `construction.cpp`, `new_town.cpp`, `facilities.cpp`,
-  `offices.cpp`, `businesses.cpp`, `population.cpp` and `merchants.cpp`:
-  every branch checked with the oracle or explained (scenarios of `tools/oracle/retouch_unchecked.py`).
+  `offices.cpp`, `businesses.cpp`, `population.cpp`, `merchants.cpp` and
+  `diet.cpp`: every branch checked with the oracle or explained (scenarios of `tools/oracle/retouch_unchecked.py`).
 - D: 0x4FF2D0 for the store a merchant builds is done (`construction.cpp`);
   0x51FAB0 building at once is rewritten.
 - B/C: operation 0x25 (0x535B7B → 0x5244F0, which calls 0x51F3A0 and

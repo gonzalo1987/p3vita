@@ -37,6 +37,13 @@ void fn_4f68d0(SaveGame& save, MerchantMemory& m, uint32_t tick, uint32_t a1, ui
 
 }  // namespace p3::data::tick::merchants_detail
 
+// What diet.cpp exposes for them.
+namespace p3::data::tick::diet_detail {
+
+void fn_4f8ca0(SaveGame& save, uint32_t merchant, uint32_t town);
+
+}  // namespace p3::data::tick::diet_detail
+
 // What new_town.cpp exposes for them.
 namespace p3::data::tick::new_town_detail {
 
@@ -180,6 +187,11 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		const int m = c.merchant(c.ecx);
 		tick::merchants_detail::fn_4f68d0(s, s.merchants[size_t(m)].memory, c.args[0], c.args[1], uint8_t(c.args[3]),
 			uint8_t(c.args[4]));
+		return std::nullopt;
+	};
+	r[0x4F8CA0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the merchant (town): his reputation goes down.
+		tick::diet_detail::fn_4f8ca0(s, uint32_t(c.merchant(c.ecx)), c.args[0] & 0xFF);
 		return std::nullopt;
 	};
 	r[0x5462F0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
