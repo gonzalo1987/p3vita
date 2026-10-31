@@ -416,6 +416,10 @@ reads them.
 - The 19 runs of `alderman.cpp`'s scenarios (recording and tick_probe): 25 s.
 - The 14 runs of `construction.cpp`'s scenarios: 9 s; the 10 of
   `new_town.cpp`: about 15 s.
+- `world.sh 7`, the 12 saves in three batches at the end (branch head):
+  132 s, 129 s and 116 s (0 different; skipped as in `README.md`).
+- The scenarios of the other files: seconds each (sieges, 6 runs: about
+  10 s).
 - `world.sh 7`, the 12 saves in three batches after `construction.cpp`:
   130 s, 126 s and 116 s (0 different).
 - `world.sh 7`, the 12 saves in three batches after `alderman.cpp`: 130 s,
