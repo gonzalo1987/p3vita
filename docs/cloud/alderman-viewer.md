@@ -6,11 +6,81 @@ graphics): `screenshots/alderman-viewer/` in p3vita-datos, branch
 
 ## Summary
 
-(in progress: part 1, the study, is written below; parts 2 and 3 to come)
+The viewer now has the player's side of the path to Alderman. Square in a
+town opens the **Hanse panel**:
+- the Alderman and the date of the next election;
+- whether the player is a candidate, or what is missing (being a mayor,
+  the «reputation to stand» out of 120);
+- the Hanse tasks on offer with their deadline, and taking one (operation
+  **0x4B**);
+- the task taken, its deadline and progress;
+- for a road, in either of its two towns, the materials still needed and
+  available, given with operation **0x3B**, with the game's amounts 1, 5, 50
+  and all;
+- a notice with the result of each election («¡Has sido elegido Gobernador
+  de la Hansa!» if the player wins).
+
+The panel works with buttons, keyboard and touch, like the market. Both
+operations are built byte for byte as the game's windows build them (study
+below: 0x5E87D0 and 0x5F2A20). `--debug-state` puts the player in the states
+the saves never reach (mayor, candidate, materials, level4, alderman).
+
+Checks:
+- **Oracle**: `tools/oracle/retouch_player.py`, 8 scenarios × saves 1 and 3,
+  2 days, recording 535760 and 4d85c0: **0 differences** in every one
+  (535760: 25 to 39 equal calls per run, 4d85c0: 512). They queue the bytes
+  the viewer builds (`player_ops`) and choose them with the game's own code,
+  as its windows do:
+  - taking a task of each type (found, road, pirate ship, grow);
+  - a second task in the same tick (refused);
+  - a player who isn't a candidate (refused);
+  - giving each road material with each amount, clamped to what is
+    available and to what is still needed.
+- **Tests**: ctest 8 of 8 (new `hanse_tasks_test`: the operations' bytes and
+  the window's amount).
+- **Vita**: the VPK builds with no warnings (1,194,088 bytes).
+- **Screenshots**: 15, checked by looking at them (p3vita-datos,
+  `screenshots/alderman-viewer/`).
+
+The game's UI texts are not in the CPR (they are in `Patrician3.exe`), so
+the panel's texts are the viewer's own, in Spanish like the rest of the
+viewer. The names (towns, people, ships) come from the CPR and the save.
 
 ## Decisions for the user
 
-(to come)
+1. **The game's texts** (part 3 of the task). They are strings in
+   `Patrician3.exe`, in the language of each installation, reached through
+   pointer tables (see «Where the game's texts are»); the CPR only has the
+   names. Options:
+   - read them from the executable: the Vita would also need
+     `Patrician3.exe` in `ux0:data/p3vita/`, plus the addresses of the
+     tables in the Spanish executable, which isn't in p3vita-datos;
+   - keep the viewer's own strings, as now.
+
+   **Recommendation**: add the Spanish GOG `Patrician3.exe` to p3vita-datos
+   (`game/` or a `game-spa/`). A later task can then find its text tables and
+   write a loader that falls back to the viewer's strings when the
+   executable isn't there.
+2. **The election**. With `--debug-state level4` the player (mayor, three
+   tasks done, «reputation to stand» about 470, home town with the 0x40
+   flag) loses the election of 7 September 1300 to the citizen of Rostock.
+   It may be right (the votes of the towns), but nothing here checks it.
+   **Recommendation**: an oracle scenario with the player at level 4 over
+   the election day (event 0x20), in `retouch_player.py` or for the session
+   that owns the election code.
+3. **What comes next in the viewer** (not done):
+   - the player's vote in the election («Choose a candidate and cast your
+     vote.»);
+   - the candidature question («Accept candidature?», text 95 of 0x69EE38):
+     how the game asks and what it queues hasn't been studied;
+   - the list of candidates;
+   - the `eldermann` video and the end window.
+
+   **Recommendation**: study the vote first. It is the last step the player
+   takes on the path to Alderman.
+4. Minor: the town bar has no room for «Triángulo: mapa» once «Cuadrado:
+   Hansa» is there; it shows «X: mercado   Cuadrado: Hansa». **Recommendation**:
+   leave it; the sea map's own bar says how to go back.
 
 ## 1. Study: how the game's UI does it
 
@@ -93,3 +163,100 @@ targeted by a notorious pirate...», «...a pirate's hideout...», «A town in
 the %s is having big supply problems...», «Many thanks for taking on this
 important task.»). The CPR has the names (towns, people, ships:
 `scripts/Namen*.txt`), which the viewer already reads.
+
+## 2. The viewer
+
+- `src/p3data/hanse_tasks.{hpp,cpp}` (new): what the game's UI reads.
+  - `offered_hanse_tasks` (0x4EC5F4), `merchant_hanse_task` (0x4EC694),
+    `road_materials` (0x4EC704);
+  - `available_road_materials` (the office from 0x5308A0, the ships docked);
+  - `candidacy_reputation` (the sum of 0x4F75F0, the same as 0x4F73D0's),
+    `mayor_towns`, `alderman_election_tick`;
+  - the operations: `take_task_operation`, `road_materials_operation`,
+    `road_window_amount` and `queue_operation`. The executor runs them after
+    the next tick, as the game runs its queue between two calls to
+    advance_time.
+
+  It only reads the save, except `queue_operation`; nothing in the
+  simulation calls it, so no `world.sh`.
+- `src/app/main.cpp`: the panel (`HanseUi`, `HanseView`, `HanseLayout`,
+  `hanse_act`, `draw_hanse`). It opens with Square in a town (H on the
+  keyboard):
+  - up/down picks the task or the material;
+  - left/right picks the amount (1, 5, 50, all);
+  - X takes the task or gives the material, Circle or Square closes;
+  - touch works on the rows and the buttons.
+
+  A notice gives the result of each election.
+- `src/app/debug_states.{hpp,cpp}` (new), `--debug-state` (see `p3vita
+  --help`). The candidate does what 0x4F75F0 does past 120: [+0x37] = 1 and
+  the candidacy (0x5326E0, `fn_5326e0`, which queues the 0x86 and 0x85
+  operations). Its tasks appear after the next tick.
+
+What the screenshots showed and is worth knowing:
+- In save 1, the candidacy offers 4 tasks: found Windau, road Stettin–Torun
+  (120 sections: 360 loads of wood, 480 of bricks, 120 barrels of tools, 240
+  loads of hemp), the pirate ship Hildegard, Visby to 3,250 inhabitants.
+  There is no pirate nest (no pirate has more than 2 ships).
+- When a task starts (0x4EBF54) the game sets its target and deadline again:
+  Visby offered at 3,250 until 1 May 1301, taken at 3,300 until 13 May
+  1301. p3vita does the same (`take_grow`: 0 differences).
+
+Pending in the panel (besides the decisions above):
+- The game's longer descriptions of each task (in the executable).
+- Progress of the pirate tasks: they need the battles, which aren't in
+  p3vita yet.
+- The map of the pirate's hideout.
+
+## 3. Checks and times
+
+- `tools/oracle/retouch_player.py`: the scenarios, the bytes from
+  `tools/oracle/player_ops`. A runner like `ret2f.sh`, with the scripts'
+  paths as `/home/user/...` here:
+  `python3 retouch_player.py EXE /tmp/$s.raw OUT.probe 2 4d85c0,535760
+  SCENARIO --barcos /tmp/datos --cpr CPR --player-ops
+  ~/build/p3vita-pc-check/tools/oracle/player_ops`, then `tick_probe
+  OUT.probe --cpr CPR`. 2 scenarios × 2 saves took 10 s; 6 × 2, 32 s.
+
+  | Scenario | Save 1 (535760 / 4d85c0) | Save 3 |
+  |---|---|---|
+  | take_found | 36 / 512 equal | 25 / 512 equal |
+  | take_road | 36 / 512 | 25 / 512 |
+  | take_ship | 36 / 512 | 25 / 512 |
+  | take_grow | 36 / 512 | 25 / 512 |
+  | take_two | 37 / 512 | 26 / 512 |
+  | take_not_candidate | 37 / 512 | 25 / 512 |
+  | give_road | 39 / 512 | 27 / 512 |
+  | give_needed | 39 / 512 | 27 / 512 |
+
+  All with 0 differences.
+- In save 3 the player's office town has no road pair, so the scenario
+  gives from the ship only, in the road's town. Save 1 covers the office
+  (Lübeck is in the pair 12–14).
+- `build.sh`: ctest 8 of 8. `vita_check.sh`: VPK of 1,194,088 bytes, no
+  warnings. Not tried on a Vita.
+- No `world.sh`: no code the simulation or the loader runs has changed.
+
+## For the roadmap
+
+- The path to Alderman, the player's side in the viewer: candidacy, tasks,
+  taking one (0x4B), the road materials (0x3B), progress, the election's
+  result. Left: the vote, the candidature question, the end (video and
+  window), the game's texts (decision 1).
+
+## For the inventory
+
+- UI functions studied (not simulation): 0x5E87D0 (task window: 0x4B and
+  the developers' 0x4A), 0x5F2A20 and 0x5EED40 (road window: 0x3B), with
+  the helpers 0x4EC5F4 and 0x4EC704. Operation 0x4A (queued by the task
+  window's other buttons) is not in the executor's list of what p3vita runs.
+
+## Game bugs
+
+None found.
+
+## Changes to shared files
+
+None. Not touched: `alderman.cpp`, `run_operation`, `retouch.py` (only
+imported). Additions to `src/p3data/CMakeLists.txt`,
+`tools/oracle/CMakeLists.txt` and `tests/CMakeLists.txt`.
