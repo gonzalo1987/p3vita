@@ -207,7 +207,8 @@ void fn_4d3670(SaveGame& save, int record, uint32_t id) {
 	if (change > 0) {
 		fn_4d4a40(save, uint16_t(~id), uint16_t(change));
 	} else if (change < 0) {
-		fn_50e380(save, facility_of(r), uint32_t(-change), true);  // Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
+		// Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
+		fn_50e380(save, facility_of(r), uint32_t(-change), true);
 	}
 }
 
@@ -264,7 +265,9 @@ void fn_4d4400(SaveGame& save, int record, int office, int32_t made, int32_t mad
 			const float p = float(made);
 			v = double(p) * double(avg(4)) / double(kFive) + v;
 			v = double(p) * double(avg(17)) / double(kTen) + v;
-			avg(2) = fish > 0 ? float(v / double(fish)) : 0.0f;  // Without fish. Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
+			// Without fish. Checked with the oracle: scenario office_business (saves 3 and 5,
+			// direct calls).
+			avg(2) = fish > 0 ? float(v / double(fish)) : 0.0f;
 			return;
 		}
 		input(made, 4, kFive);
@@ -299,13 +302,17 @@ void fn_4d4400(SaveGame& save, int record, int office, int32_t made, int32_t mad
 		v = double(q) * double(avg(11)) / double(kFive) + v;
 		v = double(q) * double(avg(4)) / double(kTen) + v;
 		v = double(leather_cost) + v;
-		avg(13) = leather > 0 ? float(v / double(leather)) : 0.0f;  // Without leather. Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
+		// Without leather. Checked with the oracle: scenario office_business (saves 3 and 5, direct
+		// calls).
+		avg(13) = leather > 0 ? float(v / double(leather)) : 0.0f;
 		const int32_t meat = o.s32(8);
 		v = double(sub(meat, made)) * double(avg(1));
 		const float p = float(made);
 		v = double(p) * double(avg(4)) / double(kFour) + v;
 		v = double(cost) + v;
-		avg(1) = meat > 0 ? float(v / double(meat)) : 0.0f;  // Without meat. Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
+		// Without meat. Checked with the oracle: scenario office_business (saves 3 and 5, direct
+		// calls).
+		avg(1) = meat > 0 ? float(v / double(meat)) : 0.0f;
 		return;
 	}
 	case 11:
@@ -523,7 +530,9 @@ void fn_4d3560(SaveGame& save, int record, int merchant, int office) {
 void fn_4f8690(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32_t money, int32_t amount, bool flag) {
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	const TownMemory& t = save.towns[town].memory;
-	add_total(m, flag ? 0x4B0 : 0x49C, money);  // Without flag: Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
+	// Without flag: Checked with the oracle: scenario office_business (saves 3 and 5, direct
+	// calls).
+	add_total(m, flag ? 0x4B0 : 0x49C, money);
 	if (ware >= 0x14) {
 		return;  // Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
 	}
@@ -545,7 +554,9 @@ void fn_4f8690(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32
 void fn_4f8840(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32_t money, int32_t amount, bool flag) {
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	const TownMemory& t = save.towns[town].memory;
-	add_total(m, flag ? 0x4B4 : 0x4A0, money);  // Without flag: Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
+	// Without flag: Checked with the oracle: scenario office_business (saves 3 and 5, direct
+	// calls).
+	add_total(m, flag ? 0x4B4 : 0x4A0, money);
 	const int32_t threshold = t.s32(0x4F4 + 16 * ware) >> 1;
 	const int32_t room = sub(threshold, t.s32(4 + 4 * ware));
 	if (room <= 0) {
@@ -611,20 +622,24 @@ int32_t fn_52ec50(const SaveGame& save, uint32_t ware, int town, int32_t price, 
 		r = float(double(kQualityScale) / double(rest) * double(r));
 	}
 	if (ware == t.u8(0x6F0)) {
-		r = float(double(r) * double(kTaxFactor));  // Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
+		// Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
+		r = float(double(r) * double(kTaxFactor));
 	}
 	auto threshold = [&t, ware](size_t i) { return t.s32(0x4F0 + 16 * ware + 4 * i); };
 	if (!(r > kBuyFactor[4]) && !(r != r)) {
 		return 0x7FFFFFFF;  // Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
 	}
 	if (r < kBuyFactor[3]) {
-		return factor_stock(r, kBuyFactor[3], kBuyFactor[4], threshold(2), threshold(3));  // Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
+		// Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
+		return factor_stock(r, kBuyFactor[3], kBuyFactor[4], threshold(2), threshold(3));
 	}
 	if (r < kBuyFactor[2]) {
-		return factor_stock(r, kBuyFactor[2], kBuyFactor[3], threshold(1), threshold(2));  // Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
+		// Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
+		return factor_stock(r, kBuyFactor[2], kBuyFactor[3], threshold(1), threshold(2));
 	}
 	if (r < kBuyFactor[1]) {
-		return factor_stock(r, kBuyFactor[1], kBuyFactor[2], threshold(0), threshold(1));  // Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
+		// Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
+		return factor_stock(r, kBuyFactor[1], kBuyFactor[2], threshold(0), threshold(1));
 	}
 	if (r < kBuyFactor[0]) {
 		// Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
@@ -751,7 +766,9 @@ void fn_4ff780(SaveGame& save, int office) {
 	TownMemory& t = save.towns[size_t(town)].memory;
 	const int merchant = o.u16(0x2C4);
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
-	int32_t margin = 100;  // Without an administrator: Checked with the oracle: scenario office_orders (saves 3 and 5, direct calls).
+	// Without an administrator: Checked with the oracle: scenario office_orders (saves 3 and 5,
+	// direct calls).
+	int32_t margin = 100;
 	const uint32_t admin = o.u16(0x2F2);
 	if (admin < save.globals.u16(global::kCaptainCount)) {
 		margin = uint8_t((50 - int32_t(save.captains[admin].u8(0xA)) / 43) * 2);
@@ -790,7 +807,8 @@ void fn_4ff780(SaveGame& save, int office) {
 				amount = wanted;
 			}
 			if (t.s32(4 + 4 * w) < amount) {
-				amount = t.s32(4 + 4 * w);  // Checked with the oracle: scenario office_orders (saves 3 and 5, direct calls).
+				// Checked with the oracle: scenario office_orders (saves 3 and 5, direct calls).
+				amount = t.s32(4 + 4 * w);
 			}
 			const int32_t cost_town = game_buy_price(save, int(w), town, amount);
 			// 0x1000000 or more: checked with the oracle, scenario office_orders.
@@ -931,7 +949,9 @@ void fn_4fff20(SaveGame& save, int office, uint32_t day_of_year) {
 	const uint16_t orders = o.u16(0x2D6);
 	if (orders & 0x10) {
 		if (m.u16(8) == 0) {
-			o.u8(0x2D6) &= 0xEF;  // The human players don't have it. Checked with the oracle: scenario office_orders (saves 3 and 5, direct calls).
+			// The human players don't have it. Checked with the oracle: scenario office_orders
+			// (saves 3 and 5, direct calls).
+			o.u8(0x2D6) &= 0xEF;
 		} else {
 			fn_4ffa30(save, office);
 		}

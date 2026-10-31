@@ -300,7 +300,9 @@ void fn_5254c0(SaveGame& save, int town, uint32_t index) {
 			}
 			link = &r.next;
 		}
-	} else {  // Towers (0x523830) and wall pieces (0x522C70). Checked with the oracle: scenario tower_ops and wall_ops (saves 3 and 5).
+	// Towers (0x523830) and wall pieces (0x522C70). Checked with the oracle: scenario tower_ops and
+	// wall_ops (saves 3 and 5).
+	} else {
 		while (*link < n) {
 			link = &records[*link].next;
 		}
@@ -1290,7 +1292,8 @@ bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, ui
 			return false;
 		}
 		if (fn_4fcfe0(save, town, 0)) {
-			events_rare_detail::fn_522b20(save, town, 0);  // Checked with the oracle: scenario build_ops (saves 3 and 5).
+			// Checked with the oracle: scenario build_ops (saves 3 and 5).
+			events_rare_detail::fn_522b20(save, town, 0);
 		}
 		break;
 	case 0x22:

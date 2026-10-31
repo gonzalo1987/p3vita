@@ -41,11 +41,23 @@ task owns, checked against the game with retouched states.
 - **`offices.cpp`**: its 28 marks are gone: 26 checked with 3 scenarios
   (6 runs in saves 3 and 5: 62 of 62 targets, 188 calls equal), 2
   unreachable. Only comments changed.
+- **`businesses.cpp`, `population.cpp`, `merchants.cpp`** (7, 8 and 6
+  marks): 10 checked with 5 scenarios (10 runs in saves 3 and 5: 24 of 26
+  targets, 162 calls equal), 10 unreachable, 1 not reached (a float
+  rounding case) and 1 game bug the oracle confirms (a division by zero,
+  the game fails); one more game bug found (a search that never ends).
+  Only comments changed.
 
-Left: `businesses.cpp` (7), `population.cpp` (8),
-`merchants.cpp` (6), `diet.cpp` (15), `sieges.cpp` (17), `grid.cpp` (6).
+Left: `diet.cpp` (15), `sieges.cpp` (17), `grid.cpp` (6).
 
 ## Decisions for the user
+
+- **The bankruptcy's endless surname search** (`merchants.cpp`, 0x4F5D80):
+  reproduced as it is, so p3vita would hang where the game hangs (rare: the
+  last merchant's surname index small and every surname up to it taken).
+  Recommendation: keep it for now and fix it with the fix-bugs setting (stop
+  after one turn); if a hang on the Vita is not acceptable even as an
+  option, fix it always.
 
 - **Operation 0x3B with a merchant out of the world** (`alderman.cpp`,
   0x53A3E0): the game uses the event's address as the amount missing and
@@ -229,6 +241,25 @@ Calls repeated (all equal): 0x52EA80 74, 0x52EC50 74, 0x4D4400 10,
 (`@A>B`: B runs right after the jump at A): the emulator merges blocks
 when it falls into a jump target, so some edges aren't seen as blocks.
 
+## businesses.cpp, population.cpp, merchants.cpp
+
+| Branch (p3vita) | Scenario / why not |
+|---|---|
+| 0x50E380 with more than its workers, with `all` and without; 0x5109B0 with more than its workers; 0x50FBC0's timber below 0 (only by an overflow: pig iron below 0 and the timber at the top) | `business_staff` (direct) |
+| 0x50E380: a share passing the people left | unreachable (the shares are floors of weight · people / sum with weights ≥ 0) |
+| 0x5101D0: the works wanting fewer than 5; a type > 20 | unreachable (0x50E610 gives 5 or more; facilities 0..20) |
+| 0x51C360: n ≥ the staff (facilities) and n > the staff (offices' businesses) | unreachable (what is left of the sum is under the ratio, ≥ 2) |
+| 0x520840: 2·half ≤ the occupancy | unreachable (exact; a full class is handled before) |
+| 0x520840: a negative step | not reached: only float rounding could do it; `housing` tries every town of saves 3 and 5 with each class 1, 2 and 3 places short of full (144 calls, all equal) and it never happens |
+| 0x51CBE0: a job offer of a world record out of the table and one of another town | `job_offers` (direct) |
+| 0x520BD0: the truncated parts passing the surplus; a negative class | unreachable |
+| 0x4F7BB0: the clamp at ±30000 | unreachable (\|target\| ≤ 20 × 127) |
+| 0x4F5D80 (op 0x65): the human player; the search for a free surname going back to 0; the merchant was his home town's mayor; 0x4F68D0 with a3 = 1 | `bankruptcy` |
+| 0x4F5D80: the divisor (the last merchant's surname) is 0 | game bug: the game divides by zero (`bankruptcy_zero`: an exception at 0x4F5F57); p3vita returns |
+
+Calls repeated (all equal): 0x520840 144, 0x50E380 4, 0x4F68D0 4,
+0x535760 4, 0x50FBC0 2, 0x5109B0 2, 0x51CBE0 2.
+
 ## Game bugs
 
 - **Operation 0x3B with a merchant out of the world** (certain; 0x53A4CA
@@ -238,14 +269,30 @@ when it falls into a jump target, so some edges aren't seen as blocks.
   [+0x13]). Reproduced (`alderman.cpp`, `fn_53a3e0`). Fix: return without
   touching the task.
 
+- **The bankruptcy divides by zero** (certain; 0x4F5F57, operation 0x65):
+  the free surname is searched modulo the last merchant's surname index; if
+  that is 0 the game fails (confirmed with the oracle: an exception). p3vita
+  returns instead (it can't reproduce a failure). Fix: modulo the number
+  of surnames.
+- **The bankruptcy's surname search can never end** (certain from the code,
+  seen in the oracle with a retouched state; 0x4F5F68..0x4F5F86): the
+  bankrupt merchant's own surname is already 0 (0x4F68D0 runs before), so
+  if every surname from 0 to that divisor is taken the loop goes round for
+  ever. In the game it needs the last merchant's surname index to be small
+  and every surname up to it taken. p3vita reproduces it (it would hang
+  too). Fix: stop after one turn.
+- (Also in the code, already noted there: past the number of surnames the
+  search reads beyond its table.)
+
 ## For the roadmap
 
 - The list of game bugs: the one above.
 
 ## For the inventory
 
-- `alderman.cpp`, `construction.cpp`, `new_town.cpp`, `facilities.cpp` and
-  `offices.cpp`: every branch checked with the oracle (scenarios of `tools/oracle/retouch_unchecked.py`).
+- `alderman.cpp`, `construction.cpp`, `new_town.cpp`, `facilities.cpp`,
+  `offices.cpp`, `businesses.cpp`, `population.cpp` and `merchants.cpp`:
+  every branch checked with the oracle or explained (scenarios of `tools/oracle/retouch_unchecked.py`).
 - D: 0x4FF2D0 for the store a merchant builds is done (`construction.cpp`);
   0x51FAB0 building at once is rewritten.
 - B/C: operation 0x25 (0x535B7B → 0x5244F0, which calls 0x51F3A0 and

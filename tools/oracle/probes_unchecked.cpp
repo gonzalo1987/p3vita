@@ -30,6 +30,13 @@ void fn_4f8560(SaveGame& save, int merchant, uint32_t town, int32_t amount);
 
 }  // namespace p3::data::tick::construction_detail
 
+// What merchants.cpp exposes for them.
+namespace p3::data::tick::merchants_detail {
+
+void fn_4f68d0(SaveGame& save, MerchantMemory& m, uint32_t tick, uint32_t a1, uint8_t a3, uint8_t a4);
+
+}  // namespace p3::data::tick::merchants_detail
+
 // What new_town.cpp exposes for them.
 namespace p3::data::tick::new_town_detail {
 
@@ -166,6 +173,13 @@ void register_probes_unchecked(ProbeRegistry& r) {
 	r[0x4F8560] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		// thiscall on the merchant (its index, for the letter; town, amount).
 		cd::fn_4f8560(s, c.merchant(c.ecx), c.args[1], int32_t(c.args[2]));
+		return std::nullopt;
+	};
+	r[0x4F68D0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the merchant (tick, a1, the merchant, a3, a4): a new life.
+		const int m = c.merchant(c.ecx);
+		tick::merchants_detail::fn_4f68d0(s, s.merchants[size_t(m)].memory, c.args[0], c.args[1], uint8_t(c.args[3]),
+			uint8_t(c.args[4]));
 		return std::nullopt;
 	};
 	r[0x5462F0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {

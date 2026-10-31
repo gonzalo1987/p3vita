@@ -697,14 +697,16 @@ void fn_51ff30(SaveGame& save, int town, uint32_t workers) {
 				free_record(st, index);
 				break;
 			default:
-				free_record(st, index);  // Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
+				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
+				free_record(st, index);
 				break;
 			}
 			// 0x4D6530: aviso al dueño (no se traduce).
 		} else if (r.type <= 0x38) {
 			switch (kTownCompletion[r.type]) {
 			case kTownFree:
-				free_record(st, index);  // Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
+				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
+				free_record(st, index);
 				break;
 			case kTownShipyard:
 				// Checked with the oracle: scenario works_completion (saves 3 and 5, direct calls).
@@ -774,8 +776,9 @@ uint16_t fn_5306b0(SaveGame& save) {
 	if (g.u16(kWorldRecordFree) >= g.u16(kWorldRecordCount)) {
 		const uint16_t old = g.u16(kWorldRecordCount);
 		g.u16(kWorldRecordFree) = old;
-		const uint16_t size = old < 0x14 ? 0x80 : uint16_t(old + 0x40);  // Growing by 0x40: checked with the oracle, scenario
-		// world_records (saves 3 and 5, direct calls).
+		// Growing by 0x40: checked with the oracle, scenario world_records (saves 3 and 5, direct
+		// calls).
+		const uint16_t size = old < 0x14 ? 0x80 : uint16_t(old + 0x40);
 		g.u16(kWorldRecordCount) = size;
 		save.world_records.resize(size);
 		for (uint32_t i = old; i < size; ++i) {

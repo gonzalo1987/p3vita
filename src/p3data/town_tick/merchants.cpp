@@ -614,7 +614,7 @@ void fn_4f7bb0(SaveGame& save, int merchant) {
 		target -= m.s8(0x17);
 	}
 	target *= 20;
-	// Sin comprobar con el oráculo (no puede pasar: |target| <= 20 × 127).
+	// Unreachable: |target| <= 20 × 127.
 	if (target > 30000) {
 		target = 30000;
 	} else if (target < -30000) {
@@ -659,7 +659,8 @@ void fn_4f72c0(MerchantMemory& m) {
 void fn_4f68d0(SaveGame& save, MerchantMemory& m, uint32_t tick, uint32_t a1, uint8_t a3, uint8_t a4) {
 	uint16_t year = save.globals.u16(global::kWorldYear);
 	if (a3 != 0) {
-		year = uint16_t(year - uint16_t(a1));  // Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario bankruptcy (saves 3 and 5, a direct call).
+		year = uint16_t(year - uint16_t(a1));
 	} else {
 		year = uint16_t(year - (a1 & 0x1F) - 0x19);
 	}
@@ -703,7 +704,7 @@ void fn_4f5d80(SaveGame& save, int merchant) {
 	GlobalMemory& g = save.globals;
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	if (m.u16(8) == 0) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario bankruptcy (saves 3 and 5; operation 0x65).
 	}
 	const uint16_t me = uint16_t(merchant);
 	for (uint32_t i = g.u16(0x6DD744); i < g.u16(0x6DD748);) {
@@ -749,22 +750,27 @@ void fn_4f5d80(SaveGame& save, int merchant) {
 		}
 	}
 	if (divisor == 0) {
-		return;  // Sin comprobar con el oráculo (the game divides by zero).
+		return;  // Game bug: the game divides by zero here and fails (scenario
+		// bankruptcy_zero, saves 3 and 5: an exception at 0x4F5F57); p3vita can't fail, so
+		// it returns.
 	}
 	uint32_t surname = (uint32_t(g.u16(0x6DD888)) + day) % divisor;
 	m.u8(0x1D) = uint8_t(surname);
+	// Game bug: the merchant's own surname is already 0 (0x4F68D0 above), so if
+	// every surname from 0 to the divisor is taken the search never ends, in the
+	// game and here (reproduced as it is).
 	while (surname < surnames && used[surname]) {
 		// (Past the number of surnames the game reads beyond its buffer.)
 		surname = m.u8(0x1D) + 1u;
 		m.u8(0x1D) = uint8_t(surname);
 		if ((surname & 0xFF) > divisor) {
-			m.u8(0x1D) = 0;  // Sin comprobar con el oráculo.
+			m.u8(0x1D) = 0;  // Checked with the oracle: scenario bankruptcy (saves 3 and 5; operation 0x65).
 		}
 		surname = m.u8(0x1D);
 	}
 	TownMemory& home = save.towns[m.u8(0x19)].memory;
 	if (home.u8(0x6F1) == me) {
-		home.u8(0x6F1) = 0xFF;  // Sin comprobar con el oráculo.
+		home.u8(0x6F1) = 0xFF;  // Checked with the oracle: scenario bankruptcy (saves 3 and 5; operation 0x65).
 	}
 }
 

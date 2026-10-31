@@ -1322,6 +1322,137 @@ def office_business(o):
     return during
 
 
+# --- businesses.cpp, population.cpp, merchants.cpp ---
+
+JOB_OFFERS = 0x6DD628  # u32 count, s16 who at +4 + 2·k, u16 wanted at +0x82 + 2·k
+
+
+def business_staff(o):
+    """Direct calls on town 0's businesses: 0x50E380 (dismiss) with more than
+    its workers, with and without `all`; 0x5109B0 with more than its workers;
+    0x50FBC0 (the workshop) with pig iron below zero and the timber at the
+    top (the subtraction overflows)."""
+    a = o.town(0)
+    k = next(k for k in range(4, 21) if o.u16(a + 0x840 + 16 * k + 4) > 2)
+    f = a + 0x840 + 16 * k
+    workshop = a + 0x840 + 16 * 7
+    print(f'facility {k} with {o.u16(f + 4)} workers')
+
+    def during(o):
+        n = o.u16(f + 4)
+        direct(o, 0x50E380, [n + 5, 1], ecx=f)
+        w16(o, f + 4, n)
+        direct(o, 0x50E380, [n + 5, 0], ecx=f)
+        w16(o, f + 4, n)
+        direct(o, 0x5109B0, [n + 5], ecx=f)
+        w16(o, workshop + 4, 50)
+        w32(o, a + 4 + 4 * 0xB, 0x7FFFFFF0)
+        w32(o, a + 4 + 4 * 0x10, 0xFFFFFF00)
+        direct(o, 0x50FBC0, [a, 60], ecx=workshop)
+    return during
+
+
+def housing(o):
+    """Direct calls to 0x520840 (the occupancy of the houses) in every town
+    with each class 1, 2 and 3 places short of full: float rounding can make
+    the step negative there (exactly it is (places − occupancy)² / ...)."""
+    towns = o.counts()[0]
+
+    def during(o):
+        for t in range(towns):
+            a = o.town(t)
+            places = [o.u16(a + 0x77E + 2 * k) for k in range(3)]
+            for less in (1, 2, 3):
+                for k in range(3):
+                    w16(o, a + 0x778 + 2 * k, max(places[k] - less, 0))
+                direct(o, 0x520840, [a + 0x778, o.u16(a + 0x764)], ecx=a)
+    return during
+
+
+def job_offers(o):
+    """A direct call to 0x51CBE0 (the beggars take jobs) with two offers of an
+    office's business that can't be: a world record out of the table and one
+    of another town."""
+    m, f, rec_index = first_business(o)
+    t = o.u8(o.office(f) + 0x2C6)
+    other = (t + 1) % o.counts()[0]
+    a = o.town(t)
+
+    def during(o):
+        w32(o, a + 0x2E4, 1000)
+        w16(o, a + 0x2FC, o.s32(a + 0x2E0) + 500)
+        w32(o, a + 0x76C, o.u32(a + 0x76C) | 0x200)
+        w32(o, JOB_OFFERS, 2)
+        w16(o, JOB_OFFERS + 4, ~o.u16(RECORD_COUNT) & 0xFFFF)
+        w16(o, JOB_OFFERS + 0x82, 20)
+        w16(o, JOB_OFFERS + 6, ~rec_index & 0xFFFF)
+        w16(o, JOB_OFFERS + 0x84, 20)
+        rec = o.u32(WORLD_RECORDS) + 0x14 * rec_index
+        w8(o, rec + 7, other)
+        direct(o, 0x51CBE0, [], ecx=a)
+    return during
+
+
+def bankruptcy(o):
+    """Operations 0x65 (0x4F5D80, a merchant goes bankrupt): the human
+    player (nothing); an AI merchant who is the mayor of his home town, with
+    the surnames set so that the search for a free one passes the divisor
+    (the last merchant's surname) and goes back to 0. A direct call to
+    0x4F68D0 (a new life) with a3 = 1."""
+    towns, _, merchants, _ = o.counts()
+    m = rt.ai_with_office(o)[0]
+    ma = o.merchant(m)
+    home = o.u8(ma + 0x19)
+    day = o.u16(WORLD + 4)
+    g = o.u16(0x6DD888)
+    surnames = o.u16(FAMILY_NAMES)
+    last = merchants - 1
+    # The bankrupt merchant's own surname is 0 by then (0x4F68D0), so a value
+    # in 1..s0 − 1 must be free or the game never stops looking.
+    divisor = next(d for d in range(3, 40) if (g + day) % d >= 2)
+    s0 = (g + day) % divisor
+    held = {x: o.u8(o.merchant(x) + 0x1D) for x in range(merchants)}
+    used = {v for v in held.values() if v < surnames}
+    pool = [v for v in range(divisor + 1, surnames) if v not in used]
+    # Valid surnames only (an index past the list makes the game build a bad name).
+    for x, v in held.items():
+        if v < s0 and x != last:
+            held[x] = pool.pop()
+    w8(o, ma + 0x1D, pool.pop())
+    spare = [x for x, v in held.items() if v > divisor and x not in (m, last)]
+    for v in range(s0, divisor):
+        if v not in held.values():
+            held[spare.pop()] = v
+    held[last] = divisor
+    for x, v in held.items():
+        w8(o, o.merchant(x) + 0x1D, v)
+    w8(o, o.town(home) + 0x6F1, m)
+    print(f'merchant {m}, mayor of {home}; surnames {s0}..{divisor - 1} taken, the last one has {divisor}, none below {s0}'
+          f' (but his own, 0 after his new life)')
+
+    def during(o):
+        operation(o, 0x65, o.u32(to.PLAYER))
+        operation(o, 0x65, m)
+        direct(o, 0x4F68D0, [o.u32(WORLD + 0x14), 40, m, 1, 0], ecx=o.merchant(rt.ai_with_office(o)[1]))
+    return during
+
+
+def bankruptcy_zero(o):
+    """Operation 0x65 with the last merchant's surname 0: the game divides by
+    zero (an exception in the emulator; p3vita returns). Nothing to repeat."""
+    merchants = o.counts()[2]
+    w8(o, o.merchant(merchants - 1) + 0x1D, 0)
+    m = rt.ai_with_office(o)[0]
+
+    def during(o):
+        try:
+            operation(o, 0x65, m)
+            print('no exception')
+        except RuntimeError as e:
+            print(f'the game fails: {e}')
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -1393,6 +1524,13 @@ SCENARIOS = {
     'office_business': Scenario(office_business, [0x4D4400, 0x4D3670, 0x4D3560, 0x4F8690, 0x4F8840], 0, [
         '@4d449e>4d497c', '@4d467e', '@4d47c2', '@4d4846', '@4d36d3', '@4d3602', '@4f86df', '@4f888f', '@4f871a',
         '@4f872b>4f8831']),
+    # businesses.cpp, population.cpp, merchants.cpp
+    'business_staff': Scenario(business_staff, [0x50E380, 0x5109B0, 0x50FBC0], 0, [
+        '@50e3b3', '@50e3bd', '@50e3cb', '@5109ca', '@50fc92']),
+    'housing': Scenario(housing, [0x520840], 0, ['@520a28']),
+    'job_offers': Scenario(job_offers, [0x51CBE0], 0, ['@51ccda>51cd3f', '@51ccf4>51cd3f']),
+    'bankruptcy': Scenario(bankruptcy, [0x535760, 0x4F68D0], 0, ['@4f5d99>4f5fbf', '@4f5f79', '@4f5fbc', '@4f68e2']),
+    'bankruptcy_zero': Scenario(bankruptcy_zero, [], 0, ['@4f5f57']),
 }
 
 

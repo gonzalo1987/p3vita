@@ -204,7 +204,9 @@ int32_t fn_51c360(SaveGame& save, int town, int32_t workers) {
 			n = workers;
 		}
 		if (n >= current) {
-			// Sin comprobar con el oráculo.
+			// Unreachable: what is left of the sum is under the ratio (2 or more) and a
+			// facility only adds its staff over the minimum (30 or 60), so sum / ratio never
+			// reaches its staff.
 			n = current - 1;
 			staff = 1;
 		} else {
@@ -238,7 +240,8 @@ int32_t fn_51c360(SaveGame& save, int town, int32_t workers) {
 				n = workers;
 			}
 			if (n > current) {
-				// Sin comprobar con el oráculo.
+				// Unreachable: what is left of the sum is under the ratio (2 or more), so
+				// sum / ratio never passes the staff just added.
 				n = current;
 				r.u16(4) = 0;
 			} else {
@@ -301,7 +304,8 @@ void fn_520840(SaveGame& save, int town, uint16_t* occupancy, uint32_t head) {
 			start[k] = 0;
 			step[k] = float(double(occ) / double(triangle));
 		} else if (double(half) + double(half) <= double(occ)) {
-			// Sin comprobar con el oráculo (2·half es el total de plazas, mayor que la ocupación).
+			// Unreachable: 2·half is the total of places, exactly (no rounding at these
+			// sizes), and a full class is handled above.
 			start[k] = capacity_f;
 			step[k] = 0;
 		} else {
@@ -311,7 +315,10 @@ void fn_520840(SaveGame& save, int town, uint16_t* occupancy, uint32_t head) {
 			step[k] = float((double(occ) - double(first) * double(houses_f)) / double(triangle));
 		}
 		if (step[k] < 0.0f) {
-			// Sin comprobar con el oráculo (sin redondeos, el paso es (total − ocupación)² / ocupación / triangle).
+			// Not reached: exactly the step is (total − occupancy)² / occupancy / triangle;
+			// only float rounding could make it negative. Scenario housing (every town of saves
+			// 3 and 5, each class 1, 2 and 3 places short of full: 144 calls equal) doesn't get
+			// there.
 			step[k] = 0;
 		}
 	}
@@ -496,11 +503,11 @@ void fn_51cbe0(SaveGame& save, int town) {
 			// Empresa de un comerciante: registro ~who del mundo, si es de esta ciudad.
 			const uint32_t record = uint32_t(-1 - int32_t(who));
 			if (record >= save.globals.u16(kWorldRecordCount)) {
-				continue;  // Sin comprobar con el oráculo.
+				continue;  // Checked with the oracle: scenario job_offers (saves 3 and 5, a direct call).
 			}
 			GameMemory<0x14>& r = save.world_records[record];
 			if (r.u8(7) != t.u8(0x2C0)) {
-				continue;  // Sin comprobar con el oráculo.
+				continue;  // Checked with the oracle: scenario job_offers (saves 3 and 5, a direct call).
 			}
 			staff = &r.u16(4);
 		} else {
@@ -741,7 +748,7 @@ void fn_520bd0(SaveGame& save, int town) {
 					n = room;
 				}
 				if (n > surplus[k]) {
-					// Sin comprobar con el oráculo (las partes truncadas no suman más que el sobrante).
+					// Unreachable: the truncated parts never add up to more than the surplus.
 					occupied = uint16_t(surplus[k] + current);
 					surplus[k] = 0;
 				} else {
@@ -766,7 +773,7 @@ void fn_520bd0(SaveGame& save, int town) {
 			}
 		} else if (s < 0) {
 			if (-s > int32_t(occupied)) {
-				// Sin comprobar con el oráculo (haría falta un número de habitantes negativo).
+				// Unreachable: it would need a negative number of inhabitants.
 				surplus[k] = occupied + s;
 				occupied = 0;
 			} else {
