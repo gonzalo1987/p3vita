@@ -932,8 +932,7 @@ std::string hanse_progress_text(const SaveGame& save, const HanseTask& t, const 
 			: "La ciudad se funda al empezar el encargo.";
 	case HanseTaskType::Road:
 		return "Tramos hechos: " + std::to_string(v.road.sections - v.road.sections_left) + " de " +
-			std::to_string(v.road.sections) + " (" + std::to_string(v.road.percent()) + " %)." +
-			(v.road_here || t.data[2] == 0 ? "" : " Lleva los materiales a una de las dos ciudades.");
+			std::to_string(v.road.sections) + " (" + std::to_string(v.road.percent()) + " %).";
 	case HanseTaskType::PirateShip:
 		return "Hunde el barco pirata (las batallas aún no están en p3vita).";
 	case HanseTaskType::PirateNest:
@@ -1118,6 +1117,10 @@ void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save
 		}
 		text.draw("Plazo: hasta el " + full_date(t.deadline) + ".", left, layout.detail_y, kTextColor);
 		text.draw(hanse_progress_text(save, t, v, town_names), left, layout.detail_y + lh, kTextColor);
+		if (HanseTaskType(t.type) == HanseTaskType::Road && !v.road_here && t.data[2] > 0) {
+			text.draw("Lleva los materiales a " + town_name(save, town_names, t.data[0]) + " o a " +
+				town_name(save, town_names, t.data[1]) + ".", left, layout.detail_y + 2 * lh, kDimColor);
+		}
 	}
 
 	const bool show_message = !ui.message.empty() && !SDL_TICKS_PASSED(app_ticks(), ui.message_until);
@@ -1826,7 +1829,8 @@ int main(int argc, char** argv) {
 				right_texts = {"L/R: ciudad   X: zarpar   Triángulo: entrar", "X: zarpar   Triángulo: entrar"};
 			} else if (selection.mode == Mode::Saved) {
 				right_texts = {"L/R: ciudad   Triángulo: mapa   X: mercado   Cuadrado: Hansa",
-					"Triángulo: mapa   X: mercado   Cuadrado: Hansa", "X: mercado   Cuadrado: Hansa",
+					"Triángulo: mapa   X: mercado   Cuadrado: Hansa", "Triángulo: mapa  X: mercado  Cuadrado: Hansa",
+					"X: mercado   Cuadrado: Hansa",
 					"Triángulo: mapa   X: mercado"};
 			} else {
 				right_texts = {"L/R: ciudad   Triángulo: mapa   X: mercado", "Triángulo: mapa   X: mercado"};
