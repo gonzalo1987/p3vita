@@ -23,6 +23,7 @@
 // instalaciones) se suma lo que produciría con `max_workers` trabajadores,
 // que entra en los umbrales de precio.
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -627,7 +628,8 @@ namespace businesses_detail {
 // float [+0xC] y su parte entera se va a la ciudad (0x50E380, como mendigos):
 // nadie si trabajadores y reserva suman ya 30 o más y, si no, como mucho lo
 // que falte para 30. Lo que se va se resta dos veces del acumulado, como en
-// el juego. En los tipos 0..3 los despedidos se van todos a la ciudad.
+// el juego (with fix_game_bugs(), once). En los tipos 0..3 los despedidos se
+// van todos a la ciudad.
 void fn_5109b0(SaveGame& save, FacilityMemory& fc, uint32_t count) {
 	uint32_t n = count;
 	const uint32_t workers = fc.u16(4);
@@ -654,7 +656,12 @@ void fn_5109b0(SaveGame& save, FacilityMemory& fc, uint32_t count) {
 		}
 		fc.u16(4) = uint16_t(now + n);
 		fc.u16(0xA) -= uint16_t(n);
-		fc.f32(0xC) = float(double(fc.f32(0xC)) - double(float(double(n))));
+		// Game bug: what leaves was already taken from the float; taking it
+		// again leaves [+0xC] negative (and fewer leave the next times).
+		// With fix_game_bugs() it keeps the fraction.
+		if (!fix_game_bugs()) {
+			fc.f32(0xC) = float(double(fc.f32(0xC)) - double(float(double(n))));
+		}
 	}
 	if (n > 0) {
 		fn_50e380(save, fc, n, false);
@@ -869,8 +876,9 @@ void fn_5101d0(SaveGame& save, int town, int facility) {
 		// En la granja de grano la comparación está al revés: si cabe lo que
 		// falta, contrata hasta llenar el sitio y lo que queda por apuntar sale
 		// negativo (0x4D4A40 no lo cuenta); si no cabe, contrata todo lo que
-		// falta aunque pase de 60.
-		if (type == 9 ? room >= need : room < need) {
+		// falta aunque pase de 60. Game bug: with fix_game_bugs() it compares as
+		// the other types do.
+		if (type == 9 && !fix_game_bugs() ? room >= need : room < need) {
 			need -= room;
 			fn_5108e0(save, fc, room);
 			need += room;

@@ -1416,6 +1416,58 @@ def business_staff(o):
     return during
 
 
+def town_offices(o, t):
+    """The offices of town t, in its list ([0x784], next [+0x2CA])."""
+    offices, out, f = o.counts()[1], [], o.u16(o.town(t) + 0x784)
+    while f < offices:
+        out.append(f)
+        f = o.u16(o.office(f) + 0x2CA)
+    return out
+
+
+def town_tick_fixes(o):
+    """Direct calls for three game bugs of the town tick (for
+    tick_probe --fix-game-bugs): 0x51C360 (people leaving poor) in a town
+    where an office after the first has businesses with staff, without
+    workers starting in the facilities (the game adds only the first
+    office's businesses); 0x5109B0 on a business with a reserve and a float
+    [+0xC] near 1, so that one leaves (the game takes it from the float
+    twice: negative); 0x5101D0 on the grain farm (facility 9) with 1 worker
+    and no reserve (the game compares the room the other way round)."""
+    towns, _, _, _ = o.counts()
+    count = o.u16(RECORD_COUNT)
+
+    base = o.u32(WORLD + 0x70)  # the world records, 0x14 bytes each
+
+    def staffed(f):
+        r = o.u16(o.office(f) + 0x2CC)
+        while r < count:
+            if o.u16(base + 0x14 * r + 4):
+                return True
+            r = o.u16(base + 0x14 * r + 8)
+        return False
+    t = next(t for t in range(towns) if any(staffed(f) for f in town_offices(o, t)[1:]))
+    a = o.town(t)
+    for k in range(1, 21):
+        w16(o, a + 0x840 + 16 * k + 0xA, 0)
+    print(f'town {t}: offices {town_offices(o, t)}')
+    b = next(k for k in range(4, 21) if k != 9 and o.u16(o.town(0) + 0x840 + 16 * k + 4) > 4)
+    f = o.town(0) + 0x840 + 16 * b
+    farm = o.town(0) + 0x840 + 16 * 9
+    print(f'business {b} of town 0 with {o.u16(f + 4)} workers; the farm\'s type {o.u8(farm + 6)}')
+
+    def during(o):
+        direct(o, 0x51C360, [20], ecx=a)
+        w16(o, f + 4, 5)
+        w16(o, f + 0xA, 10)
+        o.uc.mem_write(f + 0xC, struct.pack('<f', 0.9))
+        direct(o, 0x5109B0, [2], ecx=f)
+        w16(o, farm + 4, 1)
+        w16(o, farm + 0xA, 0)
+        direct(o, 0x5101D0, [o.town(0)], ecx=farm)
+    return during
+
+
 def housing(o):
     """Direct calls to 0x520840 (the occupancy of the houses) in every town
     with each class 1, 2 and 3 places short of full: float rounding can make
@@ -1836,6 +1888,7 @@ SCENARIOS = {
     # businesses.cpp, population.cpp, merchants.cpp
     'business_staff': Scenario(business_staff, [0x50E380, 0x5109B0, 0x50FBC0], 0, [
         '@50e3b3', '@50e3bd', '@50e3cb', '@5109ca', '@50fc92']),
+    'town_tick_fixes': Scenario(town_tick_fixes, [0x51C360, 0x5109B0, 0x5101D0], 0, []),
     'housing': Scenario(housing, [0x520840], 0, ['@520a28']),
     'job_offers': Scenario(job_offers, [0x51CBE0], 0, ['@51ccda>51cd3f', '@51ccf4>51cd3f']),
     'bankruptcy': Scenario(bankruptcy, [0x535760, 0x4F68D0], 0, ['@4f5d99>4f5fbf', '@4f5f79', '@4f5fbc', '@4f68e2']),

@@ -36,6 +36,7 @@
 
 #include <cmath>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -172,6 +173,8 @@ int32_t fn_51c360(SaveGame& save, int town, int32_t workers) {
 	// Empresas de los comerciantes. El juego sigue después con el índice en el
 	// que termina la lista de registros (y no con la siguiente oficina,
 	// [+0x2CA]), así que en la práctica solo cuenta la primera oficina.
+	// Game bug: with fix_game_bugs() it goes on with [+0x2CA], as the second
+	// loop does, so every office's businesses count.
 	int32_t office = t.u16(0x784);
 	while (office < offices && workers >= 0) {
 		const OfficeMemory& o = save.offices[size_t(office)].memory;
@@ -181,7 +184,7 @@ int32_t fn_51c360(SaveGame& save, int town, int32_t workers) {
 			record = r.u16(8);
 			excess = int32_t(uint32_t(excess) + r.u16(4));
 		}
-		office = record;
+		office = fix_game_bugs() ? int32_t(o.u16(0x2CA)) : record;
 	}
 	int32_t ratio = excess / workers;
 	if (ratio < 2) {
