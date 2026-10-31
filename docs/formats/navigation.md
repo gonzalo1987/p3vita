@@ -247,9 +247,12 @@ comprueba que [+0x38] sea una ciudad), mensaje al jugador y [+0x138] = 0.
 **Orden de zarpar, operación 0x00 (0x537670):** `{u32 código, u32 barco,
 u32 ciudad, s32 x, s32 y}`. [+0x3A] = 0xFFFF. Los estados 6 (el barco está en
 una lista de su ciudad, [+0x81E] del struct town) y 8 tienen su propio
-camino, y los barcos de un convoy ([+0x8] < [+0xF6]) también; p3vita no los
-reproduce. Si no: [+0x136] &= 0xFC; solo siguen los estados < 4, 0x0F y 0x10;
-en puerto (< 4) tiene que pasar 0x519BA0:
+camino; p3vita no los reproduce. Si no: [+0x136] &= 0xFC, el aviso 0x800
+(0x517770, también en el [+0x18] de su convoy); solo siguen los estados < 4,
+0x0F y 0x10. Un barco de un convoy ([+0x8] < [+0xF6]): si lo guía, el
+[+0x16] del convoy a 0; si no, sale del convoy (0x509F80, 0x501BE0) y, sin
+capitán, [+0x3C] |= 0x1000 y [+0x15C] = 0. En puerto (< 4) tiene que pasar
+0x519BA0:
 
 - marineros [+0x40] ≥ mínimo del tipo (0x673660: 5, 8, 10, 12);
 - byte alto del descanso [+0x3F] > 0;
@@ -261,14 +264,19 @@ en puerto (< 4) tiene que pasar 0x519BA0:
 
 Después, según el estado: 2 (saliendo) hacia la ciudad de la que sale (o su
 punto de llegada) da la vuelta: estado 3, [+0x138] = 0x40 − [+0x138],
-[+0x38] = [+0x37], [+0x48] = tick − [+0x138] + 0x40 y sin ruta. 3 (entrando):
-si es hacia la misma ciudad no hace nada; si no, da la vuelta: estado 2,
-[+0x138] = 0x40 − [+0x138], [+0x37] = [+0x39]. 0 y 1: si ya está en esa ciudad
-no hace nada; si no, [+0x37] = [+0x39], [+0x138] = 0 y estado 2. Los que
-navegan cambian de rumbo sin más. Al final, 0x5172A0 fija el destino ([+0x38]
-= ciudad, o 0xFF si es un punto del mar), pone la fracción de la posición a
-0x7FFF, quita la ruta y le da una nueva con 0x445010 desde la parte entera de
-la posición, con su llegada prevista; [+0x30] = 1.
+[+0x38] = [+0x37], [+0x48] = tick − [+0x138] + 0x40 y sin ruta; el guía de un
+convoy, con todos sus barcos (y el convoy: [+0x12] = 3, [+0x16], [+0x1F]); y
+no sigue. 3 (entrando): si es hacia la misma ciudad no hace nada; si no, da
+la vuelta: estado 2, [+0x138] = 0x40 − [+0x138], [+0x37] = [+0x39] (y el
+convoy: [+0x18] |= 0x28, [+0x1C], [+0x12] = 2, [+0x16]). 0 y 1: si ya está en
+esa ciudad no hace nada; si no, [+0x37] = [+0x39], [+0x138] = 0 y estado 2.
+Los que navegan cambian de rumbo sin más. Si el barco iba en un convoy con
+una expedición sin empezar ([+0x38] < 3), el dinero del convoy vuelve al
+dueño. Al final, 0x5172A0 fija el destino ([+0x38] = ciudad, o 0xFF si es un
+punto del mar), pone la fracción de la posición a 0x7FFF, quita la ruta y le
+da una nueva con 0x445010 desde la parte entera de la posición, con su
+llegada prevista; [+0x30] = 1; y el convoy del guía, [+0x38] = 0xFFFF,
+[+0x1F] = la ciudad, el barco parado pasa al estado 1 y 0x501BE0.
 
 Un barco con destino 0xFF que se queda sin ruta lee al salir del puerto
 (0x516BC0) el id de ciudad 255 de la tabla de 40 del mundo, fuera de ella, y

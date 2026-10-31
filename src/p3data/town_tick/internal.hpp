@@ -217,8 +217,8 @@ void fn_5365e3(SaveGame& save, const uint8_t* operation);
 void fn_536535(SaveGame& save, const uint8_t* operation);
 void fn_536570(SaveGame& save, const uint8_t* operation);
 // Y los convoyes de expedición: 0x1E (sale, 0x539B50) y 0x1F (un punto de
-// su ruta, 0x539C60). Aún no se ejecutan: la salida necesita la rama de
-// convoy de la orden de zarpar (0x537670), que Sailing::set_sail no hace.
+// su ruta, 0x539C60); la salida usa la rama de convoy de la orden de
+// zarpar (Sailing::set_sail).
 void fn_539b50(SaveGame& save, Sailing* sailing, const uint8_t* operation);
 void fn_539c60(SaveGame& save, const uint8_t* operation);
 // construction.cpp: la operación 0x22, construir (0x53CE30): edificios

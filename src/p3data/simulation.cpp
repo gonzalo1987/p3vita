@@ -85,6 +85,12 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			sailing->set_sail(fields[1], fields[2], fields[3], fields[4]);
 		}
 		break;
+	case 0x1E:  // Un convoy sale de expedición (0x539B50).
+		tick::fn_539b50(save, sailing, operation);
+		break;
+	case 0x1F:  // Un punto de la ruta de expedición de un convoy (0x539C60).
+		tick::fn_539c60(save, operation);
+		break;
 	case 0x22:  // Construir (0x53CE30): las obras de las ciudades y de los comerciantes.
 		tick::construction_detail::fn_53ce30(save, operation);
 		break;

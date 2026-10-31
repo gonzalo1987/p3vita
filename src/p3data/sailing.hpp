@@ -92,7 +92,7 @@ public:
 	// Operación 0x00 (0x537670): el barco zarpa hacia la ciudad `town` o, si
 	// town no es una ciudad de la partida, hacia el punto (x, y) del mapa.
 	// Devuelve false si el juego no haría nada (no puede zarpar, ya está ahí...)
-	// o si es un caso que p3vita no reproduce (convoyes, barcos en el astillero).
+	// o si es un caso que p3vita no reproduce (barcos en el astillero, estados 6 y 8).
 	bool set_sail(int ship, int town, int x = 0, int y = 0);
 
 	// Lo que set_sail comprueba antes de zarpar un barco que está en puerto

@@ -981,15 +981,31 @@ bool Sailing::set_sail(int index, int town, int x, int y) {
 		return false;
 	}
 	ship.orders() &= 0xFC;
-	// 0x517770: aviso de la nueva orden (también en el convoy, [+0x18]).
+	// 0x517770: aviso de la nueva orden, también en el convoy ([+0x18]).
 	ship.notices() |= kNoticeOrder;
+	if (ship.convoy() < save_.convoy_count()) {
+		save_.convoys[ship.convoy()].u32(0x18) |= kNoticeOrder;
+	}
 	const uint16_t status = ship.status();
 	if (status >= 4 && status != kShipSailing && status != 0x10) {
 		return false;
 	}
-	// Los barcos de un convoy ([+0x8]) mueven el convoy: no se reproduce.
+	// En un convoy: el guía lo lleva ([+0x16] = 0); otro barco sale de él
+	// (0x509F80, 0x501BE0) y, sin capitán, se queda sin ataque pendiente.
+	int convoy = -1;
 	if (ship.convoy() < save_.convoy_count()) {
-		return false;
+		convoy = ship.convoy();
+		GameMemory<0x3C>& c = save_.convoys[size_t(convoy)];
+		if (c.u16(0x10) == index) {
+			c.u16(0x16) = 0;
+		} else {
+			fn_509f80(uint16_t(index));
+			tick::ship_ai_detail::fn_501be0(save_, convoy);
+			if (ship.captain() >= save_.globals.u16(global::kCaptainCount)) {
+				ship.notices() |= 0x1000;
+				ship.raid() = 0;
+			}
+		}
 	}
 	if (status < 4 && !can_sail(ship)) {
 		return false;
@@ -1001,7 +1017,25 @@ bool Sailing::set_sail(int index, int town, int x, int y) {
 	};
 	if (status == kShipLeaving) {
 		if (to_town ? town == ship.origin() : at_origin()) {
-			// Vuelve al puerto del que está saliendo.
+			// Vuelve al puerto del que está saliendo; con su convoy, todo él.
+			if (ship.convoy() < save_.convoy_count()) {
+				GameMemory<0x3C>& c = save_.convoys[ship.convoy()];
+				c.u16(0x12) = kShipArriving;
+				c.u16(0x16) = uint16_t(kHarbourTicks - ship.timer());
+				c.u8(0x1F) = ship.origin();
+				const uint32_t ships = save_.globals.u16(global::kShipCount);
+				for (uint32_t s = c.u16(0xA); s < ships; s = save_.ships[s].next_in_list()) {
+					SavedShip& m = save_.ships[s];
+					const uint16_t timer = uint16_t(kHarbourTicks - m.timer());
+					m.notices() |= kNoticeStatus;
+					m.status() = kShipArriving;
+					m.timer() = timer;
+					m.destination() = m.origin();
+					m.arrival_tick() = save_.tick() - timer + kHarbourTicks;
+					clear_route(m);
+				}
+				return true;
+			}
 			ship.notices() |= kNoticeStatus;
 			ship.status() = kShipArriving;
 			ship.timer() = uint16_t(kHarbourTicks - ship.timer());
@@ -1014,11 +1048,18 @@ bool Sailing::set_sail(int index, int town, int x, int y) {
 		if (to_town ? town == ship.destination() : at_origin()) {
 			return false;
 		}
-		// Da la vuelta mientras entraba.
+		// Da la vuelta mientras entraba (con su convoy).
 		ship.status() = kShipLeaving;
 		ship.notices() |= kNoticeRoute | kNoticeStatus;
 		ship.timer() = uint16_t(kHarbourTicks - ship.timer());
 		ship.origin() = ship.town();
+		if (ship.convoy() < save_.convoy_count()) {
+			GameMemory<0x3C>& c = save_.convoys[ship.convoy()];
+			c.u32(0x18) |= kNoticeRoute | kNoticeStatus;
+			c.u16(0x1C) = ship.town();
+			c.u16(0x12) = kShipLeaving;
+			c.u16(0x16) = ship.timer();
+		}
 	} else if (status < 4) {
 		if (to_town && town == ship.town()) {
 			return false;
@@ -1028,11 +1069,32 @@ bool Sailing::set_sail(int index, int town, int x, int y) {
 		ship.timer() = 0;
 		ship.status() = kShipLeaving;
 	}
+	// El convoy con una expedición sin empezar ([+0x38] < 3) devuelve su
+	// dinero al dueño del barco.
+	if (convoy >= 0) {
+		GameMemory<0x3C>& c = save_.convoys[size_t(convoy)];
+		if (c.u16(0x38) < 3) {
+			if (ship.owner() < save_.globals.u16(global::kWorldMerchantCount)) {
+				save_.merchants[ship.owner()].memory.s32(0) += c.s32(0x20);
+			}
+			c.s32(0x20) = 0;
+			c.u16(0x38) = 0xFFFF;
+		}
+	}
 	set_destination(ship, to_town ? town : kNoTown, x, y);
 	if (ship.destination() < save_.towns.size()) {
 		ship.memory.u8(0x13B) = ship.destination();  // Última ciudad de destino.
 	}
 	ship.speed() = 1;
+	if (ship.convoy() < save_.convoy_count()) {
+		GameMemory<0x3C>& c = save_.convoys[ship.convoy()];
+		c.u16(0x38) = 0xFFFF;
+		c.u8(0x1F) = uint8_t(town);
+		if (ship.status() == 0) {
+			ship.status() = 1;
+		}
+		tick::ship_ai_detail::fn_501be0(save_, ship.convoy());
+	}
 	return true;
 }
 

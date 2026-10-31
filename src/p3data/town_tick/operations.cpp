@@ -102,9 +102,6 @@ void fn_536570(SaveGame& save, const uint8_t* operation) {
 // [+0x20] el dinero pedido, que sale del dueño (como mucho el que tiene; el
 // global [0x6DE52B] pasa a ser al menos 0x76: el juego compara el byte de la
 // operación ya cambiado). La encolan los convoyes de la IA (0x503B50).
-// Aún no se ejecuta (run_operation): el guía de un convoy necesita la rama
-// de convoy de 0x537670, que Sailing::set_sail no reproduce (en la partida 2
-// sale distinto: el bit 0x400000 de [+0x14] del convoy y la ruta).
 void fn_539b50(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	const int convoy = expedition_convoy(save, half(operation, 8));
 	if (convoy < 0) {
