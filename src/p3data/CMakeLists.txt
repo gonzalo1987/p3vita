@@ -41,6 +41,7 @@ add_library(p3data STATIC
 	town_tick/offices.cpp
 	town_tick/population.cpp
 	town_tick/sieges.cpp
+	town_tick/votes.cpp
 	town_tick/shared.cpp
 	town_tick/ship_ai.cpp
 	town_tick/ship_trade.cpp

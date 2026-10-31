@@ -5,6 +5,7 @@
 
 #include "p3data/game_memory.hpp"
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/town_tick/votes.hpp"
 
 namespace p3::data {
 
@@ -242,6 +243,40 @@ OperationBytes road_materials_operation(uint16_t event, uint16_t amount, uint8_t
 	op[9] = player;
 	op[0xA] = ware;
 	return op;
+}
+
+OperationBytes vote_operation(uint32_t player, uint32_t choice) {
+	OperationBytes op{};
+	const uint32_t fields[3] = {0x3F, player, choice};
+	std::memcpy(op.data(), fields, sizeof(fields));
+	return op;
+}
+
+uint16_t election_today(const SaveGame& save) {
+	const uint16_t i = tick::fn_4d9c70(save);
+	return i < save.events.size() && save.events[i].u16(6) == kElectionEvent ? i : 0xFFFF;
+}
+
+bool player_can_vote(const SaveGame& save) {
+	return election_today(save) != 0xFFFF && tick::fn_4d9d40(save);
+}
+
+std::array<ElectionCandidate, 4> election_candidates(const SaveGame& save, uint16_t event) {
+	std::array<ElectionCandidate, 4> out{};
+	if (event >= save.events.size() || save.events[event].u16(6) != kElectionEvent) {
+		return out;
+	}
+	const GameMemory<0x18>& e = save.events[event];
+	for (size_t k = 0; k < 4; ++k) {
+		const uint8_t c = e.u8(0x8 + k);
+		ElectionCandidate& candidate = out[k];
+		candidate.merchant = (c & 0x80) != 0;
+		const int index = c & 0x7F;
+		candidate.index = candidate.merchant ? (index < int(merchant_count(save)) ? index : -1)
+											 : (index < int(save.towns.size()) ? index : -1);
+		candidate.votes = e.u8(0xC + k);
+	}
+	return out;
 }
 
 void queue_operation(SaveGame& save, const OperationBytes& operation) {

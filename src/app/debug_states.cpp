@@ -23,6 +23,7 @@ constexpr uint32_t kAldermanBusy = 0x6DF31C;  // u32: no candidacy while it isn'
 void make_mayor(SaveGame& save) {
 	MerchantMemory& m = save.merchants[size_t(save.player)].memory;
 	save.towns[m.u8(0x19)].memory.u8(0x6F1) = uint8_t(merchant_as_owner(save, save.player));
+	m.u8(0x39C + m.u8(0x19)) = 6;  // The mayor's rank at home, as 0x4F75F0 leaves it.
 	for (size_t i = 0; i < save.towns.size(); ++i) {
 		m.f32(0x124 + 12 * i) = 20.0f;
 	}
