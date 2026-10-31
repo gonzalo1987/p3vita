@@ -9,6 +9,7 @@ add_library(p3data STATIC
 	cpr.cpp
 	font.cpp
 	game_fixes.cpp
+	game_texts.cpp
 	hanse_tasks.cpp
 	image.cpp
 	lz.cpp
@@ -43,6 +44,7 @@ add_library(p3data STATIC
 	town_tick/offices.cpp
 	town_tick/population.cpp
 	town_tick/sieges.cpp
+	town_tick/votes.cpp
 	town_tick/shared.cpp
 	town_tick/ship_ai.cpp
 	town_tick/ship_trade.cpp

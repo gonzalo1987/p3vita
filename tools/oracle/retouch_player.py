@@ -31,6 +31,24 @@ wood, bricks and hemp in its first ship, docked there):
                    what is still needed)
   give_needed      1 section left: «all» of each material, clamped to what is
                    still needed
+The election of the Alderman (event 0x20, 0x4DBBD0), moved to the start of
+the next day (tick low byte 0: the first phase), with the player at level 4
+as `--debug-state level4` of the viewer leaves it (mayor of its home town,
+the third component of its reputation at 20 in every town, [+0x37] = 4, the
+home town with [0x2C8] & 0x40):
+  election_level4  the player can stand: the election runs its phases that day
+The player's vote (operation 0x3F, the Hanse window 0x5E8280), on the
+election day (tick 0x20, after the first phase) unless said otherwise:
+  vote_self        for its own candidacy
+  vote_other       for another candidate
+  vote_twice       twice in the same tick: the second is refused (its bit is cleared)
+  vote_early       the day before the election: refused (no election today)
+  vote_late        the day after: refused
+  vote_rank3       its rank at home lowered to 3 first: refused
+  vote_bad_choice  for the candidate 4: its bit is cleared, nothing counted
+The same operation in a vote of the Hanse diet (event 0x21, made for the
+next day: proposal 5 about a town without [0x2C8] & 0x40), 0x20 ticks after:
+  diet_yes, diet_no, diet_abstain
 Records 535760 and 4d85c0, for example 2 days.
 """
 
@@ -187,8 +205,138 @@ def give_needed(o):
     give(o, 1, (0xFFFFFFFF,) * 4)
 
 
+def level4(o):
+    """The player as --debug-state level4 leaves it (src/app/debug_states.cpp)."""
+    m = o.u32(to.PLAYER)
+    ma = o.merchant(m)
+    home = o.u8(ma + 0x19)
+    rt.w8(o, o.town(home) + 0x6F1, rt.owner(o, m))
+    rt.w8(o, ma + 0x39C + home, 6)  # the mayor's rank at home, as 0x4F75F0 leaves it
+    for i in range(o.u32(WORLD + 0x10)):
+        rt.wf(o, ma + 0x124 + 12 * i, 20.0)
+    rt.w8(o, ma + 0x37, 4)
+    rt.w32(o, o.town(home) + 0x2C8, o.u32(o.town(home) + 0x2C8) | 0x40)
+    return m, home
+
+
+def election_tomorrow(o):
+    """The event 0x20 moved to the first phase of the next day; returns (index, address)."""
+    i, a = next((i, a) for i, a in rt.events(o) if o.u16(a + 6) == 0x20)
+    tick = (o.u32(WORLD + 0x14) & ~0xFF) + 0x100
+    rt.move_event(o, i, a, tick)
+    print(f'election: event {i} at tick {tick:#x}')
+    return i, a
+
+
+def election_level4(o):
+    m, home = level4(o)
+    print(f'player {m}, home town {home}, alderman {o.u8(0x6DE52D)} (town {o.u8(0x6DE52E)})')
+    return election_tomorrow(o)
+
+
+def at(tick, act):
+    """A hook for main: act(o) just before the world tick `tick`."""
+    def hook(o):
+        if o.u32(WORLD + 0x14) == tick:
+            act(o)
+    return hook
+
+
+def candidate_of(o, m):
+    """The row k of the merchant m among the election's candidates, or None."""
+    for i, a in rt.events(o):
+        if o.u16(a + 6) == 0x20:
+            rows = list(bytes(o.uc.mem_read(a + 8, 4)))
+            return rows.index(0x80 | m) if 0x80 | m in rows else None
+    return None
+
+
+def vote(o, choice):
+    m = o.u32(to.PLAYER)
+    o.tick_operations.append(player_op('vote', m, choice))
+    print(f'0x3F: merchant {m} votes {choice} at tick {o.u32(WORLD + 0x14):#x}')
+
+
+def vote_scenario(name, choose, offset=0x20, times=1, rank=None):
+    """The player at level 4 and the election tomorrow; `offset` ticks after
+    the election's first phase (0x20: that day, after it), the vote(s) for
+    choose(o, m), with its rank at home changed first if `rank`."""
+    def scenario(o):
+        election_level4(o)
+        start = next(o.u32(a) for i, a in rt.events(o) if o.u16(a + 6) == 0x20)
+
+        def act(o):
+            m = o.u32(to.PLAYER)
+            if rank is not None:
+                rt.w8(o, o.merchant(m) + 0x39C + o.u8(o.merchant(m) + 0x19), rank)
+            for _ in range(times):
+                vote(o, choose(o, m))
+        return at(start + offset, act)
+    scenario.__name__ = name
+    return scenario
+
+
+def own(o, m):
+    k = candidate_of(o, m)
+    return 0 if k is None else k  # None before the election (vote_early)
+
+
+def other(o, m):
+    k = candidate_of(o, m)
+    return 0 if k != 0 else 1
+
+
+def show_diet(o, i):
+    a = o.u32(to.EVENTS) + 0x18 * i
+    raw = bytes(o.uc.mem_read(a, 0x18))
+    print(f'diet {i} at {o.u32(WORLD + 0x14):#x}: type {o.u16(a + 6):#x} to give {raw[0x10:0x12].hex()}'
+          f' yes/no {raw[0x12:0x14].hex()} abstain {raw[0x14:0x16].hex()} humans {raw[0x16]:#x}')
+
+
+def diet_scenario(name, choice):
+    """The player at level 4 and a vote of the Hanse diet (event 0x21) made
+    for the start of the next day: proposal 5 (the town pays 80000) about a
+    town without the 0x40 flag; 0x20 ticks after, the player votes `choice`
+    (0 yes, 1 no, 2 abstain)."""
+    def scenario(o):
+        m, home = level4(o)
+        towns = o.u32(WORLD + 0x10)
+        town = next(i for i in range(towns) if i != home and not o.u32(o.town(i) + 0x2C8) & 0x40)
+        tick = (o.u32(WORLD + 0x14) & ~0xFF) + 0x100
+        a = o.call(0x4D8CF0, [tick], ecx=to.EVENTS)
+        o.uc.mem_write(a + 6, struct.pack('<H', 0x21) + bytes([o.u8(0x6DE52E), town, 0, 0, 0, 0, 5]) + bytes(9))
+        print(f'diet: event {(a - o.u32(to.EVENTS)) // 0x18} at tick {tick:#x} about town {town}')
+        index = (a - o.u32(to.EVENTS)) // 0x18
+        vote_at, show_at = at(tick + 0x20, lambda o: vote(o, choice)), at(tick + 0x22, lambda o: show_diet(o, index))
+        return lambda o: (vote_at(o), show_at(o))
+    scenario.__name__ = name
+    return scenario
+
+
+def print_election(o):
+    """The election's event and the Alderman after the run."""
+    for i, a in rt.events(o):
+        if o.u16(a + 6) == 0x20:
+            raw = bytes(o.uc.mem_read(a, 0x18))
+            print(f'election {i}: tick {o.u32(a):#x} candidates {raw[8:12].hex()} votes {raw[12:16].hex()}'
+                  f' to give {raw[16:20].hex()} humans {raw[0x14]:#x}')
+        if o.u16(a + 6) == 0x21:
+            raw = bytes(o.uc.mem_read(a, 0x18))
+            print(f'diet {i}: tick {o.u32(a):#x} to give {raw[0x10:0x12].hex()} yes/no {raw[0x12:0x14].hex()}'
+                  f' abstain {raw[0x14:0x16].hex()} humans {raw[0x16]:#x}')
+    print(f'alderman {o.u8(0x6DE52D)} (town {o.u8(0x6DE52E)})')
+
+
 SCENARIOS = {f.__name__: f for f in (take_scenario(0), take_scenario(1), take_scenario(2), take_scenario(4), take_two,
-                                     take_not_candidate, give_road, give_needed)}
+                                     take_not_candidate, give_road, give_needed, election_level4,
+                                     vote_scenario('vote_self', own), vote_scenario('vote_other', other),
+                                     vote_scenario('vote_twice', own, times=2),
+                                     vote_scenario('vote_early', own, offset=-0x10),
+                                     vote_scenario('vote_late', own, offset=0x110),
+                                     vote_scenario('vote_rank3', own, rank=3),
+                                     vote_scenario('vote_bad_choice', lambda o, m: 4),
+                                     diet_scenario('diet_yes', 0), diet_scenario('diet_no', 1),
+                                     diet_scenario('diet_abstain', 2))}
 
 
 def main():
@@ -206,20 +354,31 @@ def main():
     p.add_argument('--max', type=int, default=1 << 30)
     a = p.parse_args()
     PLAYER_OPS = a.player_ops
+    # The end of the election when a human merchant wins (0x4DBBD0): the
+    # windows (*0x6CC7E8, 0x469380 and 0x469AF0; and 0x5499F0 when it is the
+    # player), which p3vita doesn't reproduce either (events_mayor.cpp). Only
+    # in this script: town_oracle.py isn't changed.
+    to.EVENT_JUMPS.setdefault(0x4DC041, 0x4DC0F2)
     o = to.TownOracle(a.exe, open(a.save, 'rb').read(), 1, a.barcos, rest=list(to.REST), cpr=a.cpr)
     o.load()
-    SCENARIOS[a.scenario](o)
+    # The vote (0x3F) isn't in town_oracle.OPERATIONS (part B's list): only
+    # here, so that the oracle runs it at the end of the tick.
+    o.operations = set(o.operations) | {0x3F}
+    hook = SCENARIOS[a.scenario](o)
     with open(a.out, 'wb') as f:
         f.write(b'P3PROBE1')
         rec = to.Recorder(o, [int(x, 16) for x in a.functions.split(',')], f, a.max)
         rec.active = True
-        for _ in range(a.days):
+        for day in range(a.days):
             for _ in range(256):
+                if callable(hook):
+                    hook(o)
                 o.advance_tick()
             if rec.count >= a.max:
                 break
         f.write(b'E')
     print(f'{rec.count} samples in {a.out}')
+    print_election(o)
     m = o.u32(to.PLAYER)
     for i, e in rt.events(o):
         if o.u16(e + 6) == 0x32:

@@ -4,6 +4,7 @@
 //
 // usage: player_ops take PLAYER EVENT
 //        player_ops road EVENT AMOUNT TOWN PLAYER WARE
+//        player_ops vote PLAYER CHOICE
 
 #include <cstdio>
 #include <cstdlib>
@@ -19,7 +20,8 @@ int usage() {
 	std::fprintf(stderr,
 		"usage: player_ops take PLAYER EVENT\n"
 		"       player_ops road EVENT AMOUNT TOWN PLAYER WARE\n"
-		"Prints the operation the viewer queues (0x4B or 0x3B, 0x14 bytes) in hex.\n");
+		"       player_ops vote PLAYER CHOICE\n"
+		"Prints the operation the viewer queues (0x4B, 0x3B or 0x3F, 0x14 bytes) in hex.\n");
 	return 2;
 }
 
@@ -37,6 +39,8 @@ int main(int argc, char** argv) {
 	} else if (what == "road" && argc == 7) {
 		op = road_materials_operation(uint16_t(number(argv[2])), uint16_t(number(argv[3])), uint8_t(number(argv[4])),
 			uint8_t(number(argv[5])), uint8_t(number(argv[6])));
+	} else if (what == "vote" && argc == 4) {
+		op = vote_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])));
 	} else {
 		return usage();
 	}
