@@ -18,7 +18,6 @@ Cómo leerla:
 ## En marcha (31-10-2026)
 
 - Sesión local: la parte B del inventario está hecha salvo la 0x9F y la 0xB5, que van con las batallas. Lo siguiente es la parte C y después la D.
-- `cloud/statistics`: las estadísticas diarias (0x54DE90), el `.pst` de verdad y los tres pasos del final del cargador.
 - No se lanzan más sesiones en la nube: queda poco crédito (66 de 250 el 31-10-2026). Lo que tenga cada sesión al acabar se junta como siempre.
 - Batallas: la pieza 2 está en `main`. Lo siguiente es `tasks/battles-2.md` (el «pool» de los piratas, deshacer el convoy en la guarida y la infraestructura de la pieza 3); todavía no está lanzada.
 - `cloud/unchecked-branches`: comprobar con estados retocados las ramas «Sin comprobar con el oráculo» de los ficheros del tick de ciudad, empezando por `alderman.cpp`.
@@ -43,14 +42,14 @@ Cómo se mide:
 | Barcos: navegación, IA y convoyes (0x506720) | 152 | 62 | 32 (52 %) | 24 (39 %) | 5 (8 %) |
 | Lo diario, tareas programadas y objetos del mundo | 12 | 2 | 2 (97 %) | 0 (3 %) | 0 (0 %) |
 | Asedios (0x6349F0, 0x633A90) | 28 | 15 | 13 (89 %) | 2 (11 %) | 0 (0 %) |
-| Cola de eventos (0x4D85C0) | 415 | 193 | 152 (79 %) | 26 (14 %) | 15 (8 %) |
-| Operaciones que encola la simulación | 172 | 72 | 53 (74 %) | 14 (19 %) | 5 (6 %) |
-| Camino a Gobernador | 223 | 93 | 69 (74 %) | 21 (22 %) | 3 (4 %) |
-| Cargar partida (0x549F40) | 103 | 42 | 4 (9 %) | 32 (75 %) | 7 (16 %) |
+| Cola de eventos (0x4D85C0) | 415 | 193 | 153 (79 %) | 26 (14 %) | 14 (7 %) |
+| Operaciones que encola la simulación | 172 | 72 | 53 (74 %) | 15 (21 %) | 3 (5 %) |
+| Camino a Gobernador | 223 | 93 | 70 (75 %) | 21 (22 %) | 2 (2 %) |
+| Cargar partida (0x549F40) | 103 | 42 | 5 (13 %) | 34 (81 %) | 3 (6 %) |
 | Guardar partida (0x549CC0) | 38 | 11 | 0 (0 %) | 10 (96 %) | 0 (4 %) |
 | Tormentas (0x5053C0) | 4 | 5 | 5 (97 %) | 0 (3 %) | 0 (0 %) |
 | Guiones de misiones (0x4ECF64, 0x511270) | 73 | 23 | 3 (14 %) | 7 (32 %) | 12 (54 %) |
-| **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | 221 (77 %) | 44 (15 %) | 22 (8 %) |
+| **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | 221 (77 %) | 45 (16 %) | 20 (7 %) |
 
 Notas:
 - **Barcos**: los piratas que se mueven ya están (pieza 2 de las batallas, detrás de `--pirates`). Lo que falta son las rutas comerciales (0x4D5200, 0x52ACD0, 0x4D4C90...), la actualización de los objetos piratas (0x514000 → 0x513EC0) y la guarida (0x515DA0 → 0x513BF0).
@@ -175,7 +174,7 @@ La lista cerrada, sacada del ejecutable y no de lo que sale en las partidas, est
   - [ ] «no se reproduce» (115): repasar que ninguno toque el estado;
   - [ ] «Sin comprobar con el oráculo» (347). Las de los ficheros del tick de ciudad están en marcha en `cloud/unchecked-branches`.
 - [ ] E: los subsistemas aparte: las batallas (abajo), los guiones de misiones (fase 5), la vista de la ciudad (fase 2) y las acciones del jugador (fase 5)
-- [ ] Los tres pasos del final del cargador del juego que ni p3vita ni el oráculo hacen: registrar los nombres de barco, revisar la ruta de cada barco y revisar las rutas comerciales (lo encontró `cloud/savegames`)
+- [x] Los tres pasos del final del cargador del juego (en 0x549F40): registrar los nombres de barco (0x5131B0), revisar la ruta de cada barco (0x5048C0, 0x517C10) y revisar las rutas comerciales (0x4D60B0). `tick_probe --carga` da 0 diferencias en las 12 partidas y en estados retocados ([cloud/statistics.md](cloud/statistics.md))
 - [ ] El comercio con el kontor (operación 0x1B)
 - [ ] Guardar las cartas y avisos nuevos en el buzón de cada comerciante como el juego (0x4D6530). El buzón ya se lee de la partida (`SaveGame::mail`, con los registros de las cartas antiguas en `SaveGame::mail_records`), y las cartas caducadas ya se quitan (0x4D6780). Pero las nuevas no se guardan, y la simulación lo consulta: el evento 0x16 no repite un aviso que siga vigente (42 días), así que sin esto llega antes de tiempo. Hacerlo junto con las cartas de la interfaz
 
@@ -249,7 +248,7 @@ El plan, por piezas, cada una detrás de su ajuste hasta comprobarla:
    - un `SaveGame::battles` como memoria del juego, y las regiones de las batallas en el oráculo;
    - la operación 0x9F.
 4. [ ] Las otras batallas en el mar: la persecución que alcanza al barco (0x50B250, también la operación 0x99) y la flota de la Hansa en una ciudad protegida (0x50BA80).
-5. [ ] Las batallas en la partida guardada: 0x611AE0 (leer), 0x611950 (escribir) y los métodos +0x10 (0x604600), +0x18 (0x608230) y +0xC (0x604220). Ahora p3vita guarda las batallas tal como las lee. Al interpretarlas, poner a cero los 3 bytes de relleno de cada entrada de la tabla del final, que el juego escribe sin inicializar (en la partida 7 son 0xCD).
+5. [ ] Las batallas en la partida guardada: 0x611AE0 (leer), 0x611950 (escribir) y los métodos +0x10 (0x604600), +0x18 (0x608230) y +0xC (0x604220). Ahora p3vita guarda las batallas tal como las lee. **La partida 7 tiene una batalla en el mar**, con 3 barcos, y una tabla de 3 huecos y 4 entradas: es la única de las 12 con algo que cargar (lo encontró `cloud/statistics`; las notas de las batallas decían que ninguna tenía). Con el ajuste, el relleno sin inicializar ya se escribe a cero (fallos del juego, abajo).
 6. [ ] La batalla en una ciudad (los piratas contra una ciudad y la guarida pirata):
    - 41 funciones (0x5FBFE0, 0x621770, 0x5FE7E0, 0x624950...);
    - las operaciones que encola: 0x92, 0x95–0x98, 0x9A, 0x9B, 0xA0 y 0xB4;
@@ -299,9 +298,10 @@ Un ajuste (feature flag) **activado por omisión** con el que p3vita corrige los
   No pasa en las partidas; p3vita lee un registro a 0 y no escribe fuera.
 - [ ] **El reloj de las batallas** (0x612DB0; sin confirmar). Mueve su tiempo [+0xC44] 40 ms por cada *paso* en lugar de por cada 40 ms consumidos, así que las batallas avanzan a la mitad de lo previsto (unos 50 pasos por tick a 60 fotogramas por segundo y 40 a 25) y su velocidad depende de los fotogramas. No cambia el resultado, solo lo que dura
 - [ ] **La batalla en una ciudad lee la vista de la ciudad** (*0x6E51AC, 0x58D030; sin confirmar). Toma su geometría de la ciudad que mira el jugador, no necesariamente de la atacada. Falta ver qué hace el juego cuando no coinciden
-- [ ] **El nombre de la ciudad natal al guardar** *(Por corregir en `savegame_write.cpp`, de `cloud/statistics`.)* (0x549D7D). El escritor copia en los ajustes de la partida ([+0x27]) el nombre de la tabla 0x6DDA00, que va por número de ciudad (0..39), pero usa el índice en la partida de la ciudad natal del jugador. En `1.pat` escribe «Cologne» (número 9) por Lübeck (índice 9, número 14). Seguramente es el nombre que sale en el menú de cargar; no comprobado. Reproducido en `update_settings`
-- [ ] **El relleno de las batallas** *(Por corregir en `savegame_write.cpp`, de `cloud/statistics` (o de las batallas, pieza 5).)* (0x611950). Cada entrada de la tabla del final de las batallas ocupa 8 bytes en el fichero; el lector solo guarda 5 (0x612A20 lee dos u32 y se queda con el byte bajo del segundo), y el escritor escribe 8, así que 3 bytes salen de lo que hubiera en la memoria (0xCD en la partida 7, 0 en el emulador)
-- [ ] **Los nodos del evento 0x34 cambian en cada carga y guardado** *(Por corregir en `savegame*.cpp`, de `cloud/statistics`.)* (0x4F3A40/0x4F39E0). El lector rellena dos veces el u16 [+0x6] con el tercer byte del nodo y se salta el cuarto; el escritor escribe el signo del byte bajo de [+0x6] y ese byte. Un nodo `b0 b1 b2 b3` se guarda como `b0 b1 signo(b2) b2`, y la lista siempre acaba en 0. Reproducido en `write_event_nodes`, igual que el juego
+- [x] **El nombre de la ciudad natal al guardar** (0x549D7D). El escritor copia en los ajustes de la partida ([+0x27]) el nombre de la tabla 0x6DDA00, que va por número de ciudad (0..39), pero usa el índice en la partida de la ciudad natal del jugador. En `1.pat` escribe «Cologne» (número 9) por Lübeck (índice 9, número 14). Seguramente es el nombre que sale en el menú de cargar; no comprobado. Reproducido en `update_settings`. **Corregido con el ajuste**: el nombre se toma por el número de la ciudad (tabla 0x6DE4B8): «Luebeck» en la partida 1, «Rostock» en la 3, «Gdansk» en la 7, la ciudad natal del jugador en las 12
+- [x] **El relleno de las batallas** (0x611950). Cada entrada de la tabla del final de las batallas ocupa 8 bytes en el fichero; el lector solo guarda 5 (0x612A20 lee dos u32 y se queda con el byte bajo del segundo), y el escritor escribe 8, así que 3 bytes salen de lo que hubiera en la memoria (0xCD en la partida 7, 0 en el emulador). **Corregido con el ajuste**: se escriben a cero, recorriendo la sección como la escribe el juego (0x604220); si el recorrido no cuadra, no se toca nada. En la partida 7, los 12 bytes coinciden ya con los del emulador
+- [x] **Los nodos del evento 0x34 cambian en cada carga y guardado** (0x4F3A40/0x4F39E0). El lector rellena dos veces el u16 [+0x6] con el tercer byte del nodo y se salta el cuarto; el escritor escribe el signo del byte bajo de [+0x6] y ese byte. Un nodo `b0 b1 b2 b3` se guarda como `b0 b1 signo(b2) b2`, y la lista siempre acaba en 0. Reproducido en `write_event_nodes`, igual que el juego. **Corregido con el ajuste**: cada nodo se guarda tal como se leyó (por el código, lector y escritor querían un u16 en big-endian; parece fallo, no es seguro)
+- [ ] **El tamaño del `.pst`** tiene un byte de más cuando hay meses, y **leer un `.pst` pone a cero los contadores del comerciante 0** (`cloud/statistics`, §2). Los dos se reproducen tal cual. El de la lectura es el único que se nota al jugar: merece una corrección detrás del ajuste (`savegame_load.cpp`)
 - [ ] **La lista de nodos de cada ciudad** ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar): el escritor la escribe en orden y el lector pone cada nodo el primero. Si el orden no importa, no hace daño
 
 - [ ] Tests que comparen con el comportamiento documentado del original
@@ -343,10 +343,11 @@ Un ajuste (feature flag) **activado por omisión** con el que p3vita corrige los
   - de paso, dos fallos de p3vita al leer, arreglados: saltaba 16 bytes por entrada en los eventos 0x1B en vez de 4, y dejaba vacíos los nombres de los jugadores en 10 de las 12 partidas.
 
   Falta:
-  - [ ] las estadísticas de verdad del `.pst`, cuando se reescriban las estadísticas diarias (abajo);
+  - [x] las estadísticas de verdad del `.pst` (versión 0xB): los mismos bytes que el escritor del juego en las partidas 1, 3 y 7, también tras pasar al 30 de diciembre (semanas, meses y un año), y el juego carga el `.pat` y el `.pst` de p3vita igual que p3vita;
   - [ ] los nombres de barco que añada el jugador durante la partida;
   - [ ] el objeto opcional del mundo (0x533DA0): ninguna partida lo tiene y p3vita lo rechaza al leer. Reescribirlo solo si aparece una partida que lo tenga
-- [ ] Las estadísticas diarias para las gráficas (0x54DE90): ni p3vita ni el oráculo las hacen. Se guardan en el `.pst`
+- [x] Las estadísticas diarias (0x54DE90, `src/p3data/statistics.cpp`), con 0x54E170 y 0x54E1F0 (las de un comerciante) y 0x54DDF0. No son solo para las gráficas: cada día ponen a cero contadores de las ciudades y de los comerciantes. Encendidas por omisión en p3vita (`SaveGame::record_statistics`) y en el oráculo (regiones S0..S4; `--no-statistics` las apaga): el mundo entero 7 días en las 12 partidas, 0 diferencias. Hacen el oráculo un 25–37 % más lento. Se guardan en el `.pst`
+  - [ ] las dos llamadas de la quiebra de un comerciante (operación 0x65, `fn_4f5d80` en `merchants.cpp`): 0x54E1F0 en 0x4F5DA5 y 0x54E170 en 0x4F5F8E. Las funciones ya existen (`remove_merchant_statistics`, `add_merchant_statistics`); faltan las dos líneas, al juntar `cloud/unchecked-branches`, que es la dueña del fichero. Las operaciones 0xA7 (0x541D70) y 0xB3 (0x542A30) también llaman a 0x54E170, pero p3vita aún no las tiene
 - [ ] Vídeos Bink (FFmpeg) y audio MP3
 
 ## Herramientas y comprobaciones
