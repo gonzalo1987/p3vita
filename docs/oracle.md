@@ -353,3 +353,25 @@ Por el camino apareció que el plazo del encargo de la carretera lee la
 tabla de los meses (0x672D78) hasta la entrada 129: p3vita lleva copiados
 esos 130 valores del ejecutable.
 
+
+## Los encargos de la Hansa
+
+El evento 0x32 con comerciante y las operaciones 0x4B y 0x3B
+([formats/world_tick.md](formats/world_tick.md) §8) se comprobaron con más
+escenarios de `retouch.py`. Estos hacen candidato a un comerciante con el
+código del juego al cargar (la candidatura y sus operaciones, sin grabar) y
+colocan cada encargo en una rama; graban `535760` y `4d85c0` (con
+`51ba10` el de las obras de la carretera). Cuando hace falta un barco quieto
+o un barco navegando junto a la guarida, el escenario mueve la guarida (su
+posición en la tabla de StadtDaten.ini, en los globales) y no el barco, y
+puede hacer pasar el mundo sin grabar hasta el tick anterior al encargo.
+
+| Escenarios | Partidas | Resultado |
+|-|-|-|
+| `encargo_nuevo`, `encargo_cumplido`, `encargo_vencido`, `barco_perdido`, `jugador_coge`, `jugador_vencido` (lo común y los tipos 2 y 4, la operación 0x4B) | 1, 3 | 0 diferencias |
+| `carretera_ia`, `carretera_tramos`, `carretera_ultimo`, `carretera_obra`, `carretera_hecha`, `jugador_carretera_vencida`, `jugador_materiales` (el tipo 1 y la operación 0x3B) | 1, 3 (`carretera_ultimo` también 5 y tut2) | 0 diferencias, también en las ciudades (rejilla, registros, obras) |
+| `guarida_lejos`, `guarida_cerca`, `guarida_rondando`, `guarida_hecha`, `guarida_fallida` (el tipo 3 sin el ataque) | 3, 5 | 0 diferencias, también en los barcos piratas nuevos |
+
+No se pueden comprobar: el ataque a la guarida (un barco justo en ella:
+empieza una batalla) y el tipo 0 (fundar una ciudad; el oráculo no lee
+todavía del archivo con `Archiver.dll`).

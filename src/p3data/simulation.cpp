@@ -85,6 +85,12 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			sailing->set_sail(fields[1], fields[2], fields[3], fields[4]);
 		}
 		break;
+	case 0x3B:  // Materiales para la carretera de un encargo de la Hansa (0x53A3E0).
+		tick::fn_53a3e0(save, operation);
+		break;
+	case 0x4B:  // Un candidato coge un encargo de la Hansa (0x53B440).
+		tick::fn_53b440(save, operation);
+		break;
 	case 0x85:  // Crear un encargo de la Hansa (0x53FD10).
 		tick::fn_53fd10(save, operation);
 		break;

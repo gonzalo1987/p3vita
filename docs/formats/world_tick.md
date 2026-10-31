@@ -207,7 +207,7 @@ en el código).
 
 p3vita guarda las operaciones en `SaveGame::queued_operations` y las ejecuta
 al final de cada tick, en su orden (`run_queued_operations` y el ejecutor
-`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x85 y la 0x86; las
+`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x3B, la 0x4B, la 0x85 y la 0x86; las
 demás se descartan. El oráculo del mundo hace lo mismo con el ejecutor del
 juego ([../oracle.md](../oracle.md), «Las operaciones encoladas»). Lo que encolan las ciudades y la cola de eventos en 200
 días de la partida 1 (con un candidato retocado): 0x22 ×1924, 0x7B ×1704,
@@ -223,11 +223,12 @@ sube el [+0x37] del comerciante y con 4 se presenta a la elección (evento
 emulador (`re/emu/cand_cov.py`, fuera del repositorio: estados retocados
 sobre el oráculo del mundo).
 
-> En p3vita (`src/p3data/town_tick/alderman.cpp`): la candidatura y las
-> operaciones 0x85 y 0x86, idénticas al juego con estados retocados en las
-> 12 partidas ([../oracle.md](../oracle.md), «Las operaciones encoladas»).
-> Falta el evento 0x32 con comerciante (abajo) y lo que hace el jugador
-> desde la interfaz (operaciones 0x4B y 0x3B).
+> En p3vita (`src/p3data/town_tick/alderman.cpp`): la candidatura, las
+> operaciones 0x85, 0x86, 0x4B y 0x3B y el evento 0x32 con comerciante
+> (los tipos 1 a 4), idénticos al juego con estados retocados
+> ([../oracle.md](../oracle.md), «Las operaciones encoladas» y «Los encargos
+> de la Hansa»). Falta el tipo 0 (fundar una ciudad) y el ataque a la
+> guarida del tipo 3 (una batalla).
 
 [+0x37] del comerciante: 0 nada; 1 a 3 candidato con 0 a 2 encargos
 cumplidos; 4 puede presentarse (si su ciudad natal tiene [0x2C8] & 0x40).
@@ -292,19 +293,53 @@ anulado o fallido), [+0xD] u8 comerciante (≥ nº de comerciantes: sin dar),
   ciudad nueva, su alcalde el comerciante, y un evento 0x39 al día siguiente.
   Tipo 1: el bit 0x8000 en [0x76C] de las dos ciudades y el plazo pasa a
   (1,5 · días + 20) días desde hoy.
-- Empezado, antes del plazo (tabla 0x4EBF38), según el tipo: 0 se cumple
-  cuando la ciudad nueva tiene mercado ([0x76C] & 0x100; si no, mira cada 2
-  días); 1 la IA construye la carretera por tramos ([+0x12], [+0x13];
-  0x4F9C80 y 0x521900); 2 cada 4 días mira que el barco siga siendo pirata
-  (estado 0x12) con el mismo capitán (si no, [+0x16] = 2: fallido, con
-  avisos) y se cumple con [+0x16] = 1, que pone otra parte del juego (al
-  parecer, la batalla); 3 por fases ([+0x12]), con lo que parece una batalla
-  (0x514530, 0x5FBFE0, 0x60234C, 0x611D80, 0x6130B0); 4 se cumple cuando la
-  ciudad llega a los habitantes (si no, mira cada semana); 5 se quita.
-- Plazo vencido: 0x4F9170 resta una constante (0x66BC80) del primer
-  componente de su reputación en las ciudades con [0x2C8] & 0xC0, avisos al
-  humano (tabla 0x4EBF24) y el encargo pasa al tipo 5; se quita a los 28 días.
-- Cumplido: 0x4EC354 suma 1 a [+0x37] (con 4, el aviso lleva 0x80).
+- Empezado, antes del plazo (tabla 0x4EBF38), según el tipo:
+  - 0: se cumple cuando la ciudad nueva tiene mercado ([0x76C] & 0x100; si
+    no, mira cada 2 días).
+  - 1, la carretera: mientras queden tramos ([+0x12], los días del par),
+    cada día y medio, si el encargo tiene los materiales de uno (0x672BF0:
+    3 de madera, 4 de ladrillos, 1 de herramientas, 2 de cáñamo, en
+    contadores de 10 bits: [+0x14 + k] y dos bits en [+0x13]), los gasta y
+    el tramo se hace; con el último, el edificio 0x27 en las dos ciudades
+    (0x4F9C80 busca la única celda de la clase 0x18 de la ciudad, 0x521900
+    lo pone en obras: 100 días, y cobra ladrillos, madera y herramientas a la
+    ciudad). Cerca del plazo, si tiene los materiales de lo que falta, lo
+    alarga 2 días. Sin tramos, se cumple cuando los dos edificios están
+    terminados (lista [0x764]); el plazo se alarga lo que haga falta. **Los
+    materiales solo los aporta el jugador** (operación 0x3B, que solo encola
+    la interfaz): el de la IA siempre vence.
+  - 2: cada 4 días mira que el barco siga siendo pirata (estado 0x12) con el
+    mismo capitán (si no, [+0x16] = 2: fallido, se quita); se cumple con
+    [+0x16] = 1, que pone 0x4EC864 desde las batallas.
+  - 3, la guarida, por fases ([+0x12]): 0 espera a que un barco del
+    comerciante se acerque (distancia² < 200; mira de 2 a 64 ticks después
+    según lo cerca que esté el más cercano), pasa a la 1, apunta la guarida
+    en su [+0xE1] y cada pirata con esa guarida se refuerza (0x5144A0: los
+    barcos de la dificultad, 0x673658 = 4, 8, 16, 18, menos los que tiene,
+    nuevos con 0x516170: nivel 1, artillería hasta [+0x14] · 40 + 100 y
+    capitán); 1 espera a que uno llegue justo a la guarida (de 1 a 31
+    ticks) y entonces el barco o su convoy ataca y empieza una batalla
+    (0x6130B0, 0x611D80, 0x5FBFE0); 2 (lo pone la batalla) cumplido; 3 o
+    más, fallido.
+  - 4: se cumple cuando la ciudad llega a los habitantes (si no, mira cada
+    semana y el último día antes del plazo).
+  - 5: se quita.
+- Plazo vencido: 0x4F9170 resta 1 (0x66BC80) del primer componente de su
+  reputación en las ciudades con [0x2C8] & 0xC0, avisos al humano (tabla
+  0x4EBF24) y el encargo pasa al tipo 5; se quita a los 28 días. Al jugador
+  humano, además: con el de la guarida, su [+0xE1] = 0xFF; con el de la
+  carretera, un encargo igual empezado cuyo «comerciante» [+0xD] es el
+  índice de la ciudad [+0x10], con 1023 de cada material: la carretera la
+  acaba haciendo la ciudad, y al cumplirse sube el [+0x37] del comerciante
+  que tenga ese índice (un fallo del juego, reproducido).
+- Cumplido: 0x4EC354 suma 1 a [+0x37] (2 si ha fundado una ciudad; con 4,
+  el aviso lleva 0x80).
+- La operación 0x3B (0x53A3E0, de la interfaz): u16 [+0x4] el encargo,
+  u16 [+0x6] cuánto (cargas o barriles, 0x672C14), u8 [+0x8] ciudad, u8
+  [+0x9] comerciante, u8 [+0xA] el material (0..3) o su mercancía. Lo saca
+  de su oficina en la ciudad y después de sus barcos atracados en ella, y lo
+  suma al contador del encargo. Con el comerciante ≥ nº de comerciantes, el
+  juego toma por lo que falta un puntero: no se reproduce.
 
 **Medido** (un alcalde de la IA retocado con 120 en cada una de las 12
 partidas): sale siempre una 0x86 y 4 o 5 encargos (el 3 falta donde ningún
@@ -314,4 +349,13 @@ y las 0x85 no crean nada. Instrucciones ejecutadas: 0x5326E0 336–385 de 387,
 encargos dados a la fuerza a ese comerciante (sin el de fundar): el de cazar
 el pirata vence el día 38; los otros vencen hacia el día 200 y el 370; la IA
 no cumple ninguno en ese tiempo. El de fundar una ciudad para el emulador el
-día 5: 0x531D50 lee del archivo (`Archiver.dll!arc_CreateFile`).
+día 5: 0x531D50 lee del archivo (`Archiver.dll!arc_CreateFile`) la plantilla
+`iso/towns/stadtplatz%.2u.tow`.
+
+Construir el edificio de la carretera solo ejecuta 140 de las 1071
+instrucciones de 0x521900 (más 28 de 0x4FCBD0); el juego empieza a buscar el
+solar desde lo que haya en su pila, pero como cada ciudad tiene una sola
+celda 0x18 (ninguna, las de índice 8 y 9) y la espiral de 0x4F9C80 recorre
+toda la rejilla, no importa: p3vita empieza en la estatua. El refuerzo
+pirata ejecuta unas 930 instrucciones, casi todas ya reescritas (0x507D60,
+0x509A50, 0x5097C0...).

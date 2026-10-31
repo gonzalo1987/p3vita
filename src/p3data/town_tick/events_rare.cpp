@@ -1543,10 +1543,8 @@ uint32_t fn_4eafe4(SaveGame& save) {
 	const uint16_t head = g.u16(kEventHead);
 	Event& e = save.events[head];
 	if (e.u8(0xD) < merchant_count(save)) {
-		// Por traducir: el encargo de un comerciante (0x4EB0EB..0x4EBF0F, con
-		// 0x4EBF54, 0x531D50, 0x5333C0, 0x4F9170...). No sale en las 12
-		// partidas; aquí el evento se quita.
-		return 0;
+		// El encargo de un comerciante (0x4EB0EB..0x4EBF0F): alderman.cpp.
+		return fn_4eb0eb(save);
 	}
 	if (e.u8(0xC) >= 5 || !fn_532c50(save, head)) {
 		return 0;

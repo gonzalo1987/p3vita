@@ -21,19 +21,58 @@
 //
 // No hay avisos: 0x5326E0 solo llama además a 0x4EC5F4 (la lista de los
 // encargos sin dar), cuyo resultado no usa.
+//
+// Después, el encargo ya dado a un comerciante (la parte de 0x4EAFE4, evento
+// 0x32, desde 0x4EB0EB; la llama fn_4eafe4 de events_rare.cpp): 0x4EBF54 lo
+// empieza, cada tipo comprueba su objetivo hasta el plazo, 0x4EC354 lo da por
+// cumplido ([+0x37] del comerciante + 1) y, si vence, 0x4F9170 castiga su
+// reputación y el encargo pasa al tipo 5. El evento 0x32 (0x18 bytes):
+//   [+0x0] u32 tick   [+0x8..+0x17] el encargo de arriba, y además
+//   [+0xE] u8 madurez (sin comerciante)   [+0xF] u8 empezado
+//   [+0x16] u8 tipo 0: la ciudad nueva; tipo 2: 1 cumplido, 2 fallido
+// El jugador humano coge un encargo con la operación 0x4B (0x53B440).
+// La carretera (tipo 1) gasta por tramos los materiales que aporta el
+// jugador (operación 0x3B) y, al acabar, construye un edificio 0x27 en las
+// dos ciudades (construction.cpp, 0x521900).
+// La guarida pirata (tipo 3) espera a que un barco del comerciante se
+// acerque (los piratas se refuerzan con barcos nuevos, 0x5144A0) y llegue a
+// ella. Por reescribir: el principio del tipo 0 (crea la ciudad, 0x531D50) y
+// el ataque a la guarida (una batalla). Los avisos (0x4D6530, 0x548CA0) y las
+// ventanas del jugador no cambian la simulación.
 
 #include <cstring>
 
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/trade.hpp"
 
 namespace p3::data::tick {
 
 namespace events_rare_detail {
 bool fn_532c50(const SaveGame& save, uint32_t index);
 }  // namespace events_rare_detail
+namespace construction_detail {
+bool fn_4f9c80(const SaveGame& save, int town, uint8_t& x, uint8_t& y, uint32_t type, uint8_t param, bool flag);
+bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
+}  // namespace construction_detail
+namespace events_mayor_detail {
+uint16_t fn_507d60(SaveGame& save, uint16_t& out, uint32_t town, uint32_t mode);
+void fn_52a8d0(SaveGame& save, int town, int ship, uint32_t type);
+void fn_5181d0(SaveGame& save, int ship);
+void fn_509a50(SaveGame& save, int ship);
+}  // namespace events_mayor_detail
+namespace events_detail {
+uint16_t fn_5097c0(SaveGame& save, bool keep);
+}  // namespace events_detail
+namespace ship_ai_detail {
+int32_t fn_5184f0(SaveGame& save, int ship);
+}  // namespace ship_ai_detail
+namespace facilities_detail {
+uint32_t fn_52bb00(const SaveGame& save, int town);
+}  // namespace facilities_detail
 
 namespace {
 
+constexpr uint32_t kEventBusy = 0x6DD73C + 0x4;  // u32 1 mientras 0x4D85C0 atiende la cola.
 constexpr uint32_t kEventHead = 0x6DD73C + 0x8;  // u16 primer evento de la cola.
 constexpr uint32_t kEventCount = 0x6DD73C + 0xC;  // u16 eventos.
 constexpr uint32_t kTownCount = global::kWorldTownCount;  // u32
@@ -47,6 +86,7 @@ constexpr uint32_t kYear = global::kWorldYear;  // u16
 constexpr uint32_t kTownIds = 0x6DE4B8;  // u8 por ciudad: su número de StadtDaten.ini.
 constexpr uint32_t kTownTable = 0x6DDB90;  // 0x34 bytes por número: [+0x20], [+0x24] s32 x, y; [+0x30] u8 región.
 constexpr uint32_t kPirates = global::kShips + 0xC;  // 0x6DD7AC: 5 punteros a los objetos piratas.
+constexpr uint32_t kHanseTown = 0x6DE52E;  // u8 ([+0x8E] del mundo): la ciudad del jefe de la Hansa.
 
 // 0x672D78: día del año en que empieza cada mes (el 12 es el final del año)
 // y lo que sigue en el ejecutable, que el plazo de la carretera lee al
@@ -66,6 +106,13 @@ constexpr uint16_t kMonthStart[130] = {0x0000, 0x001F, 0x003B, 0x005A, 0x0078, 0
 // unir una carretera y los días de obra; el cuarto byte no se usa aquí.
 constexpr uint8_t kRoads[7][4] = {{0x03, 0x04, 0x50, 0x20}, {0x09, 0x0A, 0x82, 0x34}, {0x0B, 0x0D, 0x1E, 0x0C},
 	{0x0C, 0x0E, 0x28, 0x10}, {0x1C, 0x1F, 0x78, 0x30}, {0x24, 0x25, 0x3C, 0x18}, {0x26, 0x27, 0x5A, 0x24}};
+
+// 0x672BF0: los materiales de un tramo de carretera, en el orden de los
+// contadores del encargo ([+0x14 + k], con dos bits más en [+0x13]).
+constexpr uint8_t kRoadSegment[4] = {0x03, 0x04, 0x01, 0x02};
+
+// El tipo de edificio de la carretera (registros [0x75C] de la ciudad).
+constexpr uint8_t kRoadBuilding = 0x27;
 
 // 0x672D50: un byte por número de ciudad para el encargo de fundarla.
 constexpr uint8_t kNewTownByte[40] = {0x13, 0x1B, 0x14, 0x19, 0x0F, 0x0E, 0x1A, 0x18, 0x15, 0x10, 0x07, 0x16, 0x03,
@@ -499,6 +546,696 @@ void fn_53fe20(SaveGame& save) {
 			e.u8(0xC) = 5;
 		}
 	}
+}
+
+// --- El encargo con comerciante ---
+
+namespace alderman_detail {
+
+// 0x4F9170 (sobre el comerciante): el castigo de un encargo vencido: 1 menos
+// en el primer componente de su reputación en cada ciudad con [0x2C8] & 0xC0.
+void fn_4f9170(SaveGame& save, int merchant) {
+	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
+	for (uint32_t i = town_count(save); i > 0;) {
+		--i;
+		if (save.towns[i].memory.u8(0x2C8) & 0xC0) {
+			float& f = m.f32(0x11C + 12 * size_t(i));
+			f = float(double(f) - 1.0);  // 0x66BC80
+		}
+	}
+}
+
+// 0x4EC694 (sobre la cola de eventos): el primer encargo de la Hansa del
+// comerciante, o 0xFFFF (también si no existe o no es candidato).
+uint16_t fn_4ec694(const SaveGame& save, uint32_t merchant) {
+	const GlobalMemory& g = save.globals;
+	if (merchant >= g.u16(kMerchantCount) || save.merchants[merchant].memory.u8(0x37) == 0) {
+		return 0xFFFF;
+	}
+	for (uint32_t i = g.u16(kEventHead); i < g.u16(kEventCount); i = save.events[i].u16(4)) {
+		const GameMemory<0x18>& e = save.events[i];
+		if (e.u16(6) == 0x32 && e.u8(0xD) == merchant) {
+			return uint16_t(i);
+		}
+	}
+	return 0xFFFF;
+}
+
+// 0x4EBF54 (sobre la cola de eventos, con el índice del evento): empieza el
+// encargo ([+0xF] = 1) y le pone el plazo según el tipo. Los avisos al
+// comerciante (0x4D6530, con su fecha de 0x5311D0) no se reescriben.
+void fn_4ebf54(SaveGame& save, uint32_t index) {
+	GlobalMemory& g = save.globals;
+	GameMemory<0x18>& e = save.events[index];
+	if (e.u8(0xF) != 0) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	e.u8(0xF) = 1;
+	const uint32_t now = g.u32(kTick);
+	switch (e.u8(0xC)) {
+	case 0:
+		// Por reescribir: crea la ciudad (0x531D50, que carga su mapa del
+		// archivo), [+0x16] es la ciudad nueva y el comerciante su alcalde, y
+		// un evento 0x39 para mañana.
+		break;
+	case 1: {
+		// La carretera: el bit 0x8000 en las dos ciudades y (1,5 · días + 20)
+		// días de plazo, con los días del par de 0x672BF8 (620 si no está).
+		const uint32_t a = e.u8(0x10);
+		const uint32_t b = e.u8(0x11);
+		save.towns[a].memory.u32(0x76C) |= 0x8000;
+		save.towns[b].memory.u32(0x76C) |= 0x8000;
+		const uint8_t ida = g.u8(kTownIds + a);
+		const uint8_t idb = g.u8(kTownIds + b);
+		bool found = false;
+		for (const uint8_t* pair : kRoads) {
+			if ((pair[0] == ida && pair[1] == idb) || (pair[0] == idb && pair[1] == ida)) {
+				const uint32_t days = pair[2];
+				e.u32(8) = (((days >> 1) + days + 0x14) << 8) + now;
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			e.u32(8) = now + 0x26C00;  // Sin comprobar con el oráculo.
+		}
+		break;
+	}
+	case 2:
+		e.u32(8) = (now + 0x1E00) | 0xFF;
+		break;
+	case 3:
+		e.u32(8) = (now + 0x1E00) | 0xFF;
+		e.u16(0x14) = 0xFFFF;
+		break;
+	case 4: {
+		// Los habitantes que debe tener: los de 16 bits de ahora + 2000, en
+		// centenas.
+		const uint16_t people = uint16_t(save.towns[e.u8(0x12)].memory.u32(0x2D4) + 0x7D0);
+		e.u32(8) = (now + 0x16D00) | 0xFF;
+		e.u16(0x10) = uint16_t(people / 100 * 100);
+		break;
+	}
+	default:
+		break;  // Sin comprobar con el oráculo.
+	}
+}
+
+// 0x4EC354 (sobre la cola de eventos: el evento de la cabeza): el encargo
+// cumplido. El comerciante sube su [+0x37] (2 si ha fundado una ciudad); los
+// avisos no se reescriben.
+void fn_4ec354(SaveGame& save) {
+	const GameMemory<0x18>& e = save.events[save.globals.u16(kEventHead)];
+	MerchantMemory& m = save.merchants[e.u8(0xD)].memory;
+	++m.u8(0x37);
+	if (e.u8(0xC) == 0) {
+		++m.u8(0x37);  // Sin comprobar con el oráculo.
+	}
+}
+
+// ¿Hay ya un edificio de la carretera entre los de la ciudad (lista [0x764],
+// registros por 0x51F1F0)?
+bool has_road_building(const SaveGame& save, uint32_t town) {
+	const SavedTown& t = save.towns[town];
+	const uint32_t count = t.memory.u16(0x776);
+	for (uint32_t r = t.memory.u16(0x764); r < count; r = t.records[r].next) {
+		if (t.records[r].type == kRoadBuilding) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Lo que el encargo de la carretera lleva de cada material ([+0x14 + k] y
+// dos bits más en [+0x13]).
+int32_t road_material(const GameMemory<0x18>& e, uint32_t k) {
+	return int32_t((((uint32_t(e.u8(0x13)) >> (2 * k)) & 3) << 8) + e.u8(0x14 + k));
+}
+
+// 0x4EB44A..0x4EB718 (el encargo de la carretera, antes del plazo): mientras
+// queden tramos ([+0x12]), cada día y medio, si el encargo tiene los
+// materiales de uno (0x672BF0; los aporta el jugador con la operación 0x3B),
+// los gasta y el tramo se hace; con el último se construye el edificio 0x27
+// en las dos ciudades. Cerca del plazo, si tiene los materiales de lo que
+// falta, el plazo se alarga 2 días. Sin tramos, cada 2 días mira si los dos
+// edificios están terminados (el plazo se alarga lo que haga falta).
+uint32_t road_progress(SaveGame& save, GameMemory<0x18>& e, uint32_t tick, uint32_t deadline) {
+	const uint32_t a = e.u8(0x10);
+	const uint32_t b = e.u8(0x11);
+	if (a >= town_count(save) || b >= town_count(save)) {
+		return 0;  // Sin comprobar con el oráculo.
+	}
+	if (e.u8(0x12) != 0) {
+		e.u32(0) = tick + 0x180;
+		for (uint32_t k = 0; k < 4; ++k) {
+			if (road_material(e, k) < int32_t(kRoadSegment[k])) {
+				return 1;
+			}
+		}
+		for (uint32_t k = 0; k < 4; ++k) {
+			const int32_t left = road_material(e, k) - int32_t(kRoadSegment[k]);
+			e.u8(0x14 + k) = uint8_t(left);
+			const uint8_t bits = uint8_t(~(3u << (2 * k)) & e.u8(0x13));
+			e.u8(0x13) = uint8_t(bits | uint8_t((left & 0x300) >> (8 - 2 * k)));
+		}
+		--e.u8(0x12);
+		if (e.u8(0x12) == 0) {
+			// El edificio de la carretera en las dos ciudades, de la ciudad
+			// (0xFF), en su solar (0x4F9C80, el resultado no se mira). El juego
+			// empieza a buscar desde lo que haya en su pila y la segunda ciudad
+			// desde lo que dejó la primera; como cada ciudad tiene una sola
+			// celda de esa clase (o ninguna) y la espiral recorre toda la
+			// rejilla, el resultado no depende de ello: aquí, desde la estatua.
+			uint8_t x = 0xFF;
+			uint8_t y = 0xFF;
+			for (const uint32_t town : {a, b}) {
+				construction_detail::fn_4f9c80(save, int(town), x, y, kRoadBuilding, 0, true);
+				construction_detail::fn_521900(save, int(town), 0xFF, x, y, kRoadBuilding, 0);
+			}
+		}
+		if (e.u32(0) >= e.u32(8)) {
+			const int32_t segments = e.u8(0x12);
+			for (uint32_t k = 0; k < 4; ++k) {
+				if (road_material(e, k) < int32_t(kRoadSegment[k]) * segments) {
+					return 1;
+				}
+			}
+			e.u32(8) = e.u32(0) + 0x200;
+		}
+		return 1;
+	}
+	e.u32(0) = tick + 0x200;
+	if (e.u32(0) >= deadline) {
+		e.u32(8) = e.u32(0) + 1;
+	}
+	if (has_road_building(save, a) && has_road_building(save, b)) {
+		fn_4ec354(save);
+		return 0;
+	}
+	return 1;
+}
+
+// --- La guarida pirata (tipo 3) ---
+
+// 0x51A750 (sobre el barco): sube `n` niveles al barco (sin pasar del 2):
+// más casco ([+0x14]) y menos bodega ([+0x10]) por cada carga de su tipo
+// (0x66E030 + 0x18 · tipo), y vuelve a calcular sus huecos de artillería
+// (0x5181D0) y su bodega (0x5182B0).
+void fn_51a750(SaveGame& save, int ship, uint8_t n) {
+	static constexpr int32_t kLoadsPerLevel[4] = {3, 5, 8, 10};  // 0x66E030, 0x66E048, 0x66E060, 0x66E078
+	ShipMemory& s = save.ships[size_t(ship)].memory;
+	uint8_t levels = uint8_t(2 - s.u8(0xF));
+	if (levels > n) {
+		levels = n;
+	}
+	if (levels == 0) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const int32_t loads = int32_t(levels) * kLoadsPerLevel[s.u8(0xE) & 3];
+	s.u8(0xF) = uint8_t(s.u8(0xF) + levels);
+	s.u16(0x3C) |= 0x104;
+	s.s32(0x14) += loads * 2800;
+	s.s32(0x10) -= loads * 2000;
+	events_mayor_detail::fn_5181d0(save, ship);
+	recalculate_cargo(save.ships[size_t(ship)]);
+}
+
+// 0x51A4E0 (sobre el barco): le pone artillería del nivel `level` (2..4: las
+// piezas grandes, que ocupan dos huecos [+0x13C + 2i], marcado el segundo con
+// 6; después las pequeñas, de nivel 1, en los huecos sueltos) mientras le
+// quepa ([+0x10] − [+0x118] − [+0x11C], el peso en 0x672CB4) y su fuerza
+// [+0x120] (0x672CC8) no llegue a `strength`. Con nivel < 2, nada.
+void fn_51a4e0(SaveGame& save, int ship, uint32_t strength, uint8_t level) {
+	static constexpr int32_t kWeight[6] = {1000, 1000, 2000, 2000, 2000, 1000};  // 0x672CB4 (u16)
+	static constexpr uint32_t kPower[6] = {9, 10, 22, 24, 30, 18};  // 0x672CC8
+	ShipMemory& s = save.ships[size_t(ship)].memory;
+	int32_t space = s.s32(0x10) - s.s32(0x118) - s.s32(0x11C);
+	if (strength <= s.u32(0x120) || space < kWeight[0] || level < 2) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	if (level > 4) {
+		level = 4;  // Sin comprobar con el oráculo.
+	}
+	auto add = [&](uint8_t piece) {
+		s.s32(0x11C) += kWeight[piece];
+		space -= kWeight[piece];
+		s.u32(0x120) += kPower[piece];
+	};
+	auto remove = [&](uint8_t piece) {  // Sin comprobar con el oráculo.
+		s.u32(0x120) -= kPower[piece];
+		s.s32(0x11C) -= kWeight[piece];
+		space += kWeight[piece];
+	};
+	// Las piezas grandes en los pares de huecos libres.
+	for (uint32_t i = 0; i < 0x18; i += 2) {
+		if (s.u8(0x13C + i) != 0xFF || s.u8(0x13D + i) != 0xFF) {
+			continue;
+		}
+		if (kWeight[level] > space) {
+			break;  // Sin comprobar con el oráculo.
+		}
+		s.u8(0x13C + i) = level;
+		s.u8(0x13D + i) = 6;
+		add(level);
+		if (strength <= s.u32(0x120)) {
+			return;
+		}
+	}
+	// Las piezas de menos nivel se cambian por una grande.
+	for (uint32_t i = 0; i < 0x18; i += 2) {
+		const uint8_t piece = s.u8(0x13C + i);
+		if (piece >= level) {
+			continue;
+		}
+		const uint8_t second = s.u8(0x13D + i);  // Sin comprobar con el oráculo.
+		if (second == 7 || (space < kWeight[0] && second > 7)) {
+			continue;
+		}
+		remove(piece);
+		if (level > second) {
+			remove(second);
+		}
+		s.u8(0x13C + i) = level;
+		s.u8(0x13D + i) = 6;
+		add(level);
+		if (strength <= s.u32(0x120)) {
+			return;
+		}
+	}
+	// Las pequeñas en los huecos sueltos.
+	const uint8_t small = level > 1 ? 1 : level;
+	for (uint32_t i = 0; i < 0x18; ++i) {
+		if (s.u8(0x13C + i) != 0xFF) {
+			continue;
+		}
+		if (kWeight[small] > space) {
+			return;
+		}
+		s.u8(0x13C + i) = small;
+		add(small);
+		if (strength <= s.u32(0x120)) {
+			return;
+		}
+	}
+}
+
+// 0x516170 (sobre el objeto pirata `pirate`): un barco pirata nuevo del tipo
+// `type` (0x507D60, fuera de las listas) en su guarida, al principio de sus
+// dos listas ([+0xC] por [+0x4] y [+0x12] por [+0x6]), del tamaño de la
+// ciudad 0 (0x52A8D0), con nombre (0x509A50), un nivel más (0x51A750),
+// artillería hasta `strength` del nivel de la ciudad del jefe de la Hansa
+// (0x52BB00, 0x51A4E0), marineros (0x5184F0) y, con `captain`, capitán.
+void fn_516170(SaveGame& save, uint32_t pirate, uint32_t type, bool captain, uint32_t strength) {
+	GameMemory<0x18>& p = *save.pirates[pirate];
+	uint16_t index = 0;
+	events_mayor_detail::fn_507d60(save, index, 0, 3);
+	ShipMemory& s = save.ships[index].memory;
+	s.u16(0x4) = p.u16(0xC);
+	p.u16(0xC) = index;
+	s.u16(0x6) = p.u16(0x12);
+	p.u16(0x12) = index;
+	events_mayor_detail::fn_52a8d0(save, 0, index, type);
+	events_mayor_detail::fn_5181d0(save, index);
+	events_mayor_detail::fn_509a50(save, index);
+	fn_51a750(save, index, 1);
+	const uint32_t level = facilities_detail::fn_52bb00(save, save.globals.u8(kHanseTown));
+	fn_51a4e0(save, index, strength & 0xFFFF, uint8_t(level));
+	ShipMemory& m = save.ships[index].memory;
+	const uint16_t sailors = uint16_t(ship_ai_detail::fn_5184f0(save, index));
+	m.u16(0x40) = sailors;
+	m.u16(0x154) = sailors;
+	recalculate_cargo(save.ships[index]);
+	m.u8(0x0) = 0xFF;
+	m.u8(0x13A) = 0;
+	m.u32(0x18) = m.u32(0x14);
+	const uint32_t nest = p.u8(0xE);
+	m.u16(0x1E) = uint16_t(save.globals.u32(kTownTable + 0x20 + 0x34 * nest));
+	m.u16(0x22) = uint16_t(save.globals.u32(kTownTable + 0x24 + 0x34 * nest));
+	if (captain) {
+		const uint16_t c = events_detail::fn_5097c0(save, true);
+		save.ships[index].memory.u16(0x42) = c;
+	}
+}
+
+// 0x5144A0 (sobre el objeto pirata `pirate`, con su guarida `nest`): si es
+// la suya y el pirata está en ella ([+0x0] = 0), completa sus barcos de la
+// lista [+0x12] hasta los de la dificultad de los piratas (ajustes [0x13],
+// 0x673658), con la fuerza de [+0x14] · 40 + 100.
+void fn_5144a0(SaveGame& save, uint32_t pirate, uint32_t nest) {
+	static constexpr uint8_t kPirateShips[4] = {4, 8, 16, 18};  // 0x673658
+	GameMemory<0x18>& p = *save.pirates[pirate];
+	if (uint32_t(p.u8(0xE)) != (nest & 0xFFFF) || p.u32(0) != 0) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const uint8_t difficulty = save.settings.u8(0x13);
+	int32_t missing = difficulty < 4 ? kPirateShips[difficulty] : 0;
+	const GlobalMemory& g = save.globals;
+	for (uint32_t s = p.u16(0x12); s < g.u16(kShipCount); s = save.ships[s].memory.u16(0x6)) {
+		--missing;
+	}
+	for (; missing > 0; --missing) {
+		const uint32_t type = (uint32_t(g.u8(global::kWorldDayOfYear)) + uint32_t(missing)) & 3;
+		fn_516170(save, pirate, type, true, uint32_t(save.pirates[pirate]->u8(0x14)) * 40 + 100);
+	}
+}
+
+// La distancia² de un barco a la guarida `nest` (la posición de su número de
+// StadtDaten.ini), en píxeles del mapa.
+int32_t nest_distance(const SaveGame& save, const ShipMemory& ship, uint32_t nest) {
+	const uint32_t dx = uint32_t(int32_t(ship.s16(0x1E))) - save.globals.u32(kTownTable + 0x20 + 0x34 * nest);
+	const uint32_t dy = uint32_t(int32_t(ship.s16(0x22))) - save.globals.u32(kTownTable + 0x24 + 0x34 * nest);
+	return int32_t(dy * dy + dx * dx);
+}
+
+// 0x4EB85D..0x4EBE50 (el encargo de la guarida, antes del plazo), por fases
+// en [+0x12]: 0 espera a que un barco del comerciante se acerque a la
+// guarida (distancia² < 200; las esperas, de 2 a 64 ticks según lo cerca que
+// esté el más cercano) y entonces pasa a la 1, apunta la guarida en su
+// [+0xE1] y los piratas se refuerzan (0x5144A0); 1 espera a que uno llegue
+// justo a la guarida (de 1 a 31 ticks) y la ataca: una batalla (0x6130B0,
+// 0x611D80, 0x5FBFE0), por reescribir; 2 (la guarida destruida, lo pone la
+// batalla) cumplido; 3 o más, fallido. Sin el pirata o con otra guarida, la
+// fase 3.
+uint32_t nest_progress(SaveGame& save, GameMemory<0x18>& e, uint32_t tick) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t merchant = e.u8(0xD);
+	const uint32_t pirate = e.u8(0x10);
+	const uint32_t nest = e.u8(0x11);
+	const bool valid = pirate < 5 && g.u32(kPirates + 4 * pirate) != 0 && save.pirates[pirate] &&
+		save.pirates[pirate]->u8(0xE) == nest;
+	switch (e.u8(0x12)) {
+	case 0: {
+		if (!valid) {
+			e.u32(0) = tick + 0x100;  // Sin comprobar con el oráculo.
+			e.u8(0x12) = 3;
+			return 1;
+		}
+		int32_t wait = 0x40;
+		for (uint32_t s = save.merchants[merchant].memory.u16(0xE); s < g.u16(kShipCount);) {
+			const ShipMemory& ship = save.ships[s].memory;
+			s = ship.u16(0x4);
+			const int32_t d2 = nest_distance(save, ship, nest);
+			if (d2 < 0xC8) {
+				e.u8(0x12) = 1;
+				save.merchants[merchant].memory.u8(0xE1) = uint8_t(nest);
+				for (uint32_t k = 0; k < 5; ++k) {
+					if (g.u32(kPirates + 4 * k) != 0 && save.pirates[k]) {
+						fn_5144a0(save, k, nest);
+					}
+				}
+			} else if (d2 < 0x1000) {
+				const int32_t step = d2 > 0x400 ? 0x16 : d2 > 0x200 ? 0xC : d2 > 0x100 ? 6 : 2;
+				if (step < wait) {
+					wait = step;
+				}
+			}
+		}
+		e.u32(0) = tick + uint32_t(wait);
+		return 1;
+	}
+	case 1: {
+		if (!valid) {
+			e.u32(0) = tick + 1;  // Sin comprobar con el oráculo.
+			e.u8(0x12) = 3;
+			return 1;
+		}
+		// El barco que ataca ([+0x14]) ya no está en la guarida: ninguno.
+		const uint32_t attacker = e.u16(0x14);
+		if (attacker < g.u16(kShipCount)) {
+			const ShipMemory& ship = save.ships[attacker].memory;  // Sin comprobar con el oráculo.
+			if (int32_t(ship.s16(0x1E)) != g.s32(kTownTable + 0x20 + 0x34 * nest) ||
+				int32_t(ship.s16(0x22)) != g.s32(kTownTable + 0x24 + 0x34 * nest)) {
+				e.u16(0x14) = 0xFFFF;
+			}
+		}
+		uint32_t wait = 0x1F;
+		for (uint32_t s = save.merchants[merchant].memory.u16(0xE); s < g.u16(kShipCount);
+			 s = save.ships[s].memory.u16(0x4)) {
+			const ShipMemory& ship = save.ships[s].memory;
+			if (s == e.u16(0x14) || ship.u16(0x134) != 0xF) {
+				continue;
+			}
+			const int32_t d2 = nest_distance(save, ship, nest);
+			if (d2 == 0) {
+				// Por reescribir: el barco (o su convoy) ataca la guarida
+				// (estado 0x14, 0x50A4E0/0x505B60, 0x50D040, 0x5062F0,
+				// 0x50E280) y empieza una batalla (0x515D00, 0x6130B0,
+				// 0x60234C o 0x514530, 0x611D80, 0x5FBFE0), que el emulador
+				// no ejecuta; [+0x14] es el barco. El juego vuelve a mirar a
+				// los 64 ticks.
+				e.u32(0) = tick + 0x40;
+				return 1;
+			}
+			if (d2 < 0x40) {
+				wait = 1;
+			} else if (d2 < 0xE1) {
+				wait &= 3;
+			} else if (d2 < 0x640) {
+				wait &= 7;
+			}
+		}
+		e.u32(0) = tick + wait;
+		return 1;
+	}
+	case 2:
+		save.merchants[merchant].memory.u8(0xE1) = 0xFF;
+		fn_4ec354(save);
+		return 0;
+	default:
+		// Fallido: al jugador humano, los avisos y la ventana (no se reescriben).
+		save.merchants[merchant].memory.u8(0xE1) = 0xFF;
+		return 0;
+	}
+}
+
+}  // namespace alderman_detail
+
+// La parte de 0x4EAFE4 (el evento 0x32 de la cabeza) con comerciante
+// ([+0xD] < nº de comerciantes; desde 0x4EB0EB): devuelve lo que hace el
+// despachador con el evento (0 quitarlo, 1 recolocarlo por su tick).
+uint32_t fn_4eb0eb(SaveGame& save) {
+	using namespace alderman_detail;
+	GlobalMemory& g = save.globals;
+	GameMemory<0x18>* e = &save.events[g.u16(kEventHead)];
+	if (e->u8(0xF) == 0) {
+		g.u32(kEventBusy) = 0;
+		fn_4ebf54(save, g.u16(kEventHead));
+		g.u32(kEventBusy) = 1;
+		save.events[g.u16(kEventHead)].u32(0) += 0x100;
+		return 1;
+	}
+	const uint32_t tick = e->u32(0);
+	const uint32_t deadline = e->u32(8);
+	if (tick >= deadline) {
+		// Vencido: el castigo y, al jugador humano, los avisos; el encargo
+		// pasa al tipo 5 y se quita a los 28 días.
+		const uint32_t merchant = e->u8(0xD);
+		fn_4f9170(save, int(merchant));
+		if (save.merchants[merchant].memory.u16(8) == 0) {
+			switch (e->u8(0xC)) {
+			case 1: {
+				// Un encargo nuevo igual, con la ciudad [+0x10] en [+0xD].
+				g.u32(kEventBusy) = 0;
+				const uint16_t created = events_detail::fn_4d8cf0(save, e->u32(0) + 1);
+				g.u32(kEventBusy) = 1;
+				e = &save.events[g.u16(kEventHead)];
+				GameMemory<0x18>& c = save.events[created];
+				c.u16(6) = e->u16(6);
+				c.u32(8) = e->u32(0) + 0xBA00;
+				c.u8(0xC) = 1;
+				c.u8(0xD) = e->u8(0x10);
+				c.u8(0xE) = e->u8(0xE);
+				c.u8(0xF) = e->u8(0xF);
+				c.u8(0x10) = e->u8(0x10);
+				c.u8(0x11) = e->u8(0x11);
+				c.u8(0x12) = e->u8(0x12);
+				c.u8(0x13) = 0xFF;
+				c.u32(0x14) = 0xFFFFFFFF;
+				break;
+			}
+			case 3:
+				save.merchants[e->u8(0xD)].memory.u8(0xE1) = 0xFF;
+				break;
+			default:
+				break;
+			}
+			// Los avisos (0x4D6530, 0x548CA0) y, si es el jugador, la
+			// ventana (0x469380, 0x469AF0): no se reescriben.
+		}
+		e->u8(0xC) = 5;
+		e->u32(0) = g.u32(kTick) + 0x1C00;
+		e->u32(8) = e->u32(0) + 1;
+		return 1;
+	}
+	switch (e->u8(0xC)) {
+	case 0:
+		// La ciudad nueva: se cumple cuando tiene mercado. (Mientras el
+		// principio no cree la ciudad, [+0x16] no es una: el juego leería
+		// fuera.)
+		if (e->u8(0x16) < town_count(save) && (save.towns[e->u8(0x16)].memory.u32(0x76C) & 0x100)) {  // Sin comprobar con el oráculo.
+			fn_4ec354(save);
+			return 0;
+		}
+		e->u32(0) = tick + 0x200;
+		return 1;
+	case 1:
+		return road_progress(save, *e, tick, deadline);
+	case 2:
+		// El barco pirata: cada 4 días, que siga siendo pirata con el mismo
+		// capitán (si no, fallido). [+0x16] = 1 lo pone otra parte del juego
+		// (0x4EC864, desde las batallas).
+		if (e->u8(0x16) == 0) {
+			bool same = false;
+			const uint32_t s = e->u16(0x10);
+			if (s < g.u16(kShipCount)) {
+				const ShipMemory& ship = save.ships[s].memory;
+				const uint32_t c = ship.u16(0x42);
+				if (ship.u16(0x134) == 0x12 && c < g.u16(kCaptainCount)) {
+					const CaptainMemory& captain = save.captains[c];
+					same = captain.u8(2) == e->u16(0x12) && captain.u8(3) == e->u16(0x14);
+				}
+			}
+			if (!same) {
+				e->u8(0x16) = 2;
+			}
+			e->u32(0) = tick + 0x400;
+			return 1;
+		}
+		if (e->u8(0x16) == 1) {
+			fn_4ec354(save);  // Sin comprobar con el oráculo.
+			return 0;
+		}
+		// Fallido: al jugador humano, los avisos y la ventana (no se reescriben).
+		return 0;
+	case 3:
+		return nest_progress(save, *e, tick);
+	case 4:
+		// La ciudad: se cumple al llegar a los habitantes; si no, se mira
+		// cada semana y el último día antes del plazo.
+		if (save.towns[e->u8(0x12)].memory.s32(0x2D4) >= int32_t(e->u16(0x10))) {
+			fn_4ec354(save);
+			return 0;
+		}
+		if (tick + 0x700 <= deadline) {
+			e->u32(0) = tick + 0x700;
+			return 1;
+		}
+		e->u32(0) = tick + 1;
+		if (tick + 1 < deadline) {
+			e->u32(0) = deadline - 1;
+		}
+		return 1;
+	default:
+		// 5 (anulado o fallido): se quita (la interfaz, 0x6E558C, no).
+		return 0;
+	}
+}
+
+// 0x53A3E0 (operación 0x3B: u16 [+0x4] evento, u16 [+0x6] cantidad, u8 [+0x8]
+// ciudad, u8 [+0x9] comerciante, u8 [+0xA] material 0..3 o mercancía): el
+// comerciante aporta materiales a su encargo de la carretera con mercado en
+// esa ciudad. La cantidad (en cargas o barriles, 0x672C14) sale primero de su
+// oficina en la ciudad y después de sus barcos atracados en ella, y lo que
+// consigue se suma al contador del material en el encargo.
+void fn_53a3e0(SaveGame& save, const uint8_t* operation) {
+	Operation op;
+	std::memcpy(op.bytes.data(), operation, op.bytes.size());
+	const GlobalMemory& g = save.globals;
+	const uint32_t index = op.u16(4);
+	const uint32_t town = op.u8(8);
+	if (index >= g.u16(kEventCount) || town >= town_count(save)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	GameMemory<0x18>& e = save.events[index];
+	if (e.u16(6) != 0x32 || e.u8(0xC) != 1 || e.u8(0xD) != op.u8(9) ||
+		(e.u8(0x10) != town && e.u8(0x11) != town) || e.u8(0x12) == 0) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	// 0x672BF4: la mercancía de cada material (madera, ladrillos,
+	// herramientas, cáñamo). [+0xA] es el material o su mercancía; si no es
+	// ninguna, el último.
+	static constexpr uint8_t kRoadWares[4] = {0x0B, 0x13, 0x0C, 0x11};
+	// 0x672C14: las mercancías que van en barriles.
+	static constexpr uint8_t kInBarrels[24] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};
+	uint32_t k = 0;
+	uint32_t ware = 0;
+	const uint8_t given = op.u8(0xA);
+	if (given < 4) {
+		k = given;
+		ware = kRoadWares[given];
+	} else {
+		k = 0;
+		ware = kRoadWares[3];
+		while (k < 3 && kRoadWares[k] != given) {
+			++k;
+		}
+		if (k < 3) {
+			ware = given;
+		}
+	}
+	const int32_t unit = kInBarrels[ware] ? 200 : 2000;
+	const uint32_t merchant = op.u8(9);
+	if (merchant >= g.u16(kMerchantCount)) {
+		// El juego toma por cantidad que falta un puntero (el del evento): no
+		// se puede reproducir. Sin comprobar con el oráculo.
+		return;
+	}
+	int32_t missing = op.u16(6);
+	const int office = facilities_detail::fn_5308a0(save, merchant, town);
+	if (office >= 0) {
+		int32_t& stock = save.offices[size_t(office)].memory.s32(0x4 + 4 * ware);
+		int32_t n = stock / unit;
+		if (n > missing) {
+			n = missing;
+			missing = 0;
+		} else {
+			missing -= n;
+		}
+		stock -= n * unit;
+	}
+	for (uint32_t s = save.merchants[merchant].memory.u16(0xE); s < g.u16(kShipCount) && missing > 0;
+		 s = save.ships[s].memory.u16(0x4)) {
+		ShipMemory& ship = save.ships[s].memory;
+		if (ship.u8(0x39) != town || (ship.u8(0x136) & 1) || ship.s32(0x54 + 4 * ware) <= 0) {
+			continue;
+		}
+		int32_t& cargo = ship.s32(0x54 + 4 * ware);
+		int32_t n = cargo / unit;
+		if (n < missing) {
+			missing -= n;
+		} else {
+			n = missing;
+			missing = 0;
+		}
+		cargo -= n * unit;
+		recalculate_cargo(save.ships[s]);
+	}
+	const int32_t total = alderman_detail::road_material(e, k) + int32_t(op.u16(6)) - missing;
+	e.u8(0x14 + k) = uint8_t(total);
+	e.u8(0x13) = uint8_t(((total & 0x300) >> (8 - 2 * k)) | (~(3u << (2 * k)) & e.u8(0x13)));
+}
+
+// 0x53B440 (operación 0x4B: {0x4B, comerciante, evento}): un candidato que
+// aún no tiene encargo coge uno sin dar y lo empieza (0x4EBF54).
+void fn_53b440(SaveGame& save, const uint8_t* operation) {
+	using namespace alderman_detail;
+	Operation op;
+	std::memcpy(op.bytes.data(), operation, op.bytes.size());
+	const GlobalMemory& g = save.globals;
+	const uint32_t merchant = op.u32(4);
+	const uint32_t index = op.u32(8);
+	if (merchant >= g.u16(kMerchantCount) || index >= g.u16(kEventCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	GameMemory<0x18>& e = save.events[index];
+	if (e.u16(6) != 0x32 || e.u8(0xD) < g.u16(kMerchantCount) || e.u8(0xC) >= 5) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	if (save.merchants[merchant].memory.u8(0x37) == 0 || fn_4ec694(save, merchant) != 0xFFFF) {
+		return;
+	}
+	e.u8(0xD) = uint8_t(merchant);
+	fn_4ebf54(save, index);
 }
 
 }  // namespace p3::data::tick

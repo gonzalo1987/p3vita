@@ -61,8 +61,8 @@ que reproduce p3vita (en puerto, 0 a 5; en el mar, 0x0F; los convoyes de los
 comerciantes, pero no los de los piratas, que se quedan quietos, ni los
 encuentros de 0x5053C0) y, al final del tick, ejecuta con el ejecutor del
 juego (0x535760) las operaciones que se han encolado, en su orden, de los
-códigos de --operaciones (por omisión 0,85,86: zarpar, crear y revisar los
-encargos de la Hansa); las demás se descartan. El ejecutor se llama por un
+códigos de --operaciones (por omisión 0,3b,4b,85,86: zarpar y los encargos
+de la Hansa: materiales de la carretera, cogerlos, crearlos y revisarlos); las demás se descartan. El ejecutor se llama por un
 trampolín que le pone en la pila los 0x14 bytes de la operación y una marca:
 al grabar 535760, tick_probe la lee de los argumentos (y salta las llamadas
 que hace el propio juego, sin la marca). Con --sin-convoyes se salta
@@ -108,7 +108,7 @@ UPDATE_SHIPS = 0x506720
 SET_SAIL = 0x537670  # operación 0x00
 EXECUTOR = 0x535760  # ejecuta una operación encolada (thiscall sobre ella)
 EXECUTOR_MAGIC = 0x504F3350  # «P3OP»: tras la operación en la pila, la marca de las llamadas del oráculo
-OPERATIONS = (0x00, 0x85, 0x86)  # las que se ejecutan por omisión
+OPERATIONS = (0x00, 0x3B, 0x4B, 0x85, 0x86)  # las que se ejecutan por omisión
 UPDATE_DATE = 0x5310D0
 RAND = 0x639C03
 MERGE_TOWN_FLAGS = 0x5348B0  # la carga lo llama con 0x6DF278 tras leer el mundo
@@ -398,6 +398,8 @@ class TownOracle(SaveOracle):
         low, high = min(self.imports) & ~0xFFF, (max(self.imports) + 0x1000) & ~0xFFF
         self.uc.mem_map(low, high - low)
         self.tls = {}
+        self.files = {}  # asa → [datos, posición] (Archiver.dll)
+        self.files_open = 0
         self.uc.hook_add(UC_HOOK_CODE, self._import, begin=low, end=high - 1)
         # Los constructores estáticos de los repartidores de memoria de los
         # CString (CFixedAlloc de 0x50, 0x90, 0x110 y 0x210 bytes), que el CRT
@@ -439,6 +441,30 @@ class TownOracle(SaveOracle):
             self.uc.mem_write(result, bytes(self.uc.mem_read(old, min(size, self.sizes.get(old, 0)))))
             self.release(old)
             pop = 16
+        elif name == 'arc_CreateFile':
+            # Archiver.dll (cdecl): (contenedor, ruta) → asa o 0; el fichero, de
+            # los datos del juego (DATOS o --cpr). Lo usa la carga de la
+            # plantilla de una ciudad nueva (0x4F9B40).
+            data = self.game_file(self.cstring(a(1)))
+            result = 0
+            if data is not None:
+                self.files_open += 1
+                result = 0x7F000000 + self.files_open
+                self.files[result] = [data, 0]
+            pop = 0
+        elif name == 'arc_FileLength':
+            result, pop = len(self.files[a(0)][0]) if a(0) in self.files else 0, 0
+        elif name == 'arc_Read':
+            # (asa, destino, bytes) → leídos.
+            f = self.files.get(a(0))
+            chunk = f[0][f[1]:f[1] + a(2)] if f else b''
+            if chunk:
+                self.uc.mem_write(a(1), chunk)
+                f[1] += len(chunk)
+            result, pop = len(chunk), 0
+        elif name == 'arc_ReleaseFile':
+            self.files.pop(a(0), None)
+            result, pop = 0, 0
         else:
             raise RuntimeError(f'función importada sin hacer: {dll}!{name}')
         self._returns(uc, result, pop)

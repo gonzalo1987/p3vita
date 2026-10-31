@@ -177,6 +177,15 @@ void fn_4f7bb0(SaveGame& save, int merchant);
 void fn_5326e0(SaveGame& save);
 void fn_53fd10(SaveGame& save, const uint8_t* operation);
 void fn_53fe20(SaveGame& save);
+// El encargo de la Hansa ya dado a un comerciante: la parte de 0x4EAFE4
+// (evento 0x32 de la cabeza) desde 0x4EB0EB, que devuelve lo que hace el
+// despachador (0 quitarlo, 1 recolocarlo); y la operación 0x4B (0x53B440),
+// con la que el jugador humano coge un encargo.
+uint32_t fn_4eb0eb(SaveGame& save);
+void fn_53b440(SaveGame& save, const uint8_t* operation);
+// La operación 0x3B (0x53A3E0): el comerciante aporta materiales a su
+// encargo de la carretera, de su oficina y de sus barcos en la ciudad.
+void fn_53a3e0(SaveGame& save, const uint8_t* operation);
 
 // El resto de advance_time (0x530E80), en su orden dentro del tick:
 // daily.cpp: al empezar el día, tras la fecha, lo diario (0x5315C0; `weekly`

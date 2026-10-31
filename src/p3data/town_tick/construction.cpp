@@ -30,6 +30,8 @@ void fn_4fa7f0(const SaveGame& save, int town, uint8_t& x, uint8_t& y);
 uint32_t fn_51fab0(SaveGame& save, int town, uint8_t type, bool immediate);
 void fn_51e270(SaveGame& save, int town);
 void fn_5250d0(const SaveGame& save, int town, uint8_t& x, uint8_t& y);
+bool fn_4fcbd0(const SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
+bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
 bool fn_524d60(SaveGame& save, int town, uint32_t x, uint32_t y);
 void fn_524f00(SaveGame& save, int town);
 void fn_524cd0(SaveGame& save, int town);
@@ -75,6 +77,9 @@ constexpr uint8_t kSiteBit[57] = {  // 0x672F84
 	0x0A, 0x03, 0x02, 0x03, 0x00, 0x00, 0x03, 0x00, 0x05, 0x03, 0x02, 0x02, 0x03, 0x06, 0x07, 0x06,
 	0x06, 0x06, 0x06, 0x06, 0x06, 0x08, 0x09, 0x08, 0x09};
 constexpr uint8_t kPierBuildTime = 0x32;  // 0x672BE3: tabla 0x672BB4 (días de obra) para el tipo 0x2F.
+constexpr uint8_t kRoadBuildTime = 0x64;  // 0x672BDB: la misma tabla para el tipo 0x27.
+constexpr uint8_t kTypeRoad = 0x27;  // El edificio de la carretera (encargo de la Hansa, alderman.cpp).
+constexpr uint8_t kRoadSite = 0x18;  // Su clase de celda: una (o ninguna) por ciudad.
 constexpr uint32_t kPierWorkersFactor = 0x1E;  // 0x6729DE
 
 constexpr uint8_t kTypePier = 0x2F;  // Muelle (maulwurf).
@@ -862,6 +867,73 @@ void fn_524e20(SaveGame& save, int town) {
 		op.enqueue(save);
 		return;
 	}
+}
+
+// 0x4FCBD0 (town_class1 [0x7A4]): ¿se puede construir un edificio de tipo
+// `type` en (x, y)? Según el tipo (tabla 0x4FCF58), la clase de la celda y
+// las de alrededor. Reescrito solo el tipo 0x27 (la carretera de los
+// encargos de la Hansa): la celda de la clase 0x18.
+bool fn_4fcbd0(const SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t type, uint8_t param) {
+	(void)param;
+	const SavedTown& st = save.towns[size_t(town)];
+	if (type != kTypeRoad) {
+		// Por reescribir: los demás tipos (las operaciones de construir).
+		assert(false);
+		return false;
+	}
+	return (cell(st, int64_t(st.memory.s32(0x7AC)) * x + y) & 0x3F) == kRoadSite;
+}
+
+// 0x521900 (sobre la ciudad): construye un edificio de tipo `type` (< 0x30)
+// del dueño `owner` en (x, y) si el solar vale (0x4FCBD0): marca la celda,
+// mete un registro en la lista de obras en curso [0x762] (0x51F100,
+// 0x5254C0) con sus días de obra (0x672BB4) y cobra los materiales.
+// Devuelve si lo ha construido. Reescrito solo el camino de la ciudad
+// (dueño >= nº de comerciantes) con el tipo 0x27, el de la carretera (el
+// único que se ha medido: 140 de sus 1071 instrucciones); los demás, por
+// reescribir (lo que hace con el asedio, [0x2C8] & 0x10, solo lo usan ellos).
+bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, uint8_t type, uint8_t param) {
+	if (type >= 0x30) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	if (!fn_4fcbd0(save, town, x, y, type, param)) {
+		return false;
+	}
+	if (owner < save.globals.u16(global::kWorldMerchantCount) || type != kTypeRoad) {
+		// Por reescribir: los edificios de los comerciantes (con su oficina,
+		// 0x5308A0, y la interfaz de la ciudad que se ve) y los demás tipos
+		// (exigen los materiales y marcan la rejilla según el tipo).
+		assert(false);
+		return false;
+	}
+	SavedTown& st = save.towns[size_t(town)];
+	// El tipo 0x27: la celda pasa a 0x8B y [0x7A4] (town_class1) a 1.
+	const int64_t i = int64_t(st.memory.s32(0x7AC)) * x + y;
+	assert(i >= 0 && i < int64_t(st.grid.size()));
+	st.grid[size_t(i)] = 0x8B;
+	st.memory.u32(0x7A4) = 1;
+	const uint16_t r = fn_51f100(save, town);
+	SavedTown& s = save.towns[size_t(town)];
+	BuildingRecord& rec = s.records[r];
+	rec.x = x;
+	rec.y = y;
+	rec.owner = owner;
+	rec.type = type;
+	rec.next = 0xFFFF;
+	rec.pending = kRoadBuildTime;
+	rec.param = param;
+	fn_5254c0(save, town, r);
+	// Los materiales de la ciudad (tipos >= 0x1E: sin el cáñamo), sin bajar de 0.
+	TownMemory& t = save.towns[size_t(town)].memory;
+	t.s32(0x50) -= int32_t(kBricks[type]) * kLoad;
+	t.s32(0x30) -= int32_t(kTimber[type]) * kLoad;
+	t.s32(0x34) -= int32_t(kTools[type]) * kBarrel;
+	for (const size_t o : {size_t(0x50), size_t(0x30), size_t(0x34)}) {
+		if (t.s32(o) < 0) {
+			t.s32(o) = 0;
+		}
+	}
+	return true;
 }
 
 }  // namespace construction_detail
