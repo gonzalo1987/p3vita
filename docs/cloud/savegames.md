@@ -14,7 +14,7 @@ merging on the PC.
 | 3. Version 0x85 branches in the readers | done: only the free ship slots branch above 0x82 (§4) |
 | 4. C++ writer (`savegame_write.cpp`), byte for byte | done for the 12 saves (§2) |
 | 5. LZ compressor rewritten in C++ | done: same bytes as the game's in the 12 saves (§3) |
-| 6. After playing, round trip, `.pst` | round trip done (§4); after playing and `.pst` pending |
+| 6. After playing, round trip, `.pst` | round trip (§4) and after playing (§5) done; retouched states and `.pst` pending |
 
 ## 1. How the game saves
 
@@ -267,6 +267,20 @@ lists of the towns that have more than one node (14 bytes in save 1), and
 the third is equal to the first: the order of [0x9B4] turns round at each
 save and load, as in the game (§1.2).
 
+## 5. Check 2: after playing
+
+`scripts/write-after-days.sh DAYS [SAVES]`: the whole world with the pieces
+of `world.sh` in the oracle (`town_oracle.py ... --write OUT`, which at the
+end does what the oracle's load leaves out and runs the game's save code)
+and in p3vita (`tick_probe --continuo --carga ... --write OUT`), then
+`compare_written.py`. 4 days, saves 1, 3 and 7 (6 min 11 s here):
+
+| Save | Calls different | Bytes | Different | Pointers (ships, mailbox, events) |
+|-|-|-|-|-|
+| 1 | 0 | 951 142 | 0 | 74, 0, 58 |
+| 3 | 0 | 1 073 302 | 0 | 91, 10, 30 |
+| 7 | 0 | 1 005 238 | 12 (battles, §2.1) | 85, 0, 40 |
+
 ## For the roadmap
 
 - Loader: 0x549F40 does more than the readers (§1.3): 0x5131B0 for the
@@ -324,10 +338,14 @@ Looks like one:
 - `src/p3data/CMakeLists.txt`: `savegame_write.cpp`, `lz_compress.cpp`.
 - `tests/CMakeLists.txt`: `lz_test` (ctest goes from 7 to 8 tests).
 - `tools/p3save/main.cpp`: `write`, `compress`, and reading the save from the disk.
+- `tools/oracle/tick_probe.cpp`: `--write OUT` (at the end of `main`).
+- `tools/oracle/town_oracle.py`: `--write OUT` (in `main` and the
+  docstring; `OPERATIONS` not touched).
 
 ## Time of the checks
 
 - `write_oracle.py`: 1.5 s a save; `scripts/write-check.sh` for the 12: 19 s.
 - `tick_probe --carga` with a recording of 0 days: 2 s a save;
-  `scripts/write-reload.sh` for the 12: 25 s.
+  `scripts/write-reload.sh` for the 12: 25 s; `scripts/write-after-days.sh 4
+  1 3 7`: 6 min 11 s.
 - Not built for the Vita (no VitaSDK here; `src/app` not touched).

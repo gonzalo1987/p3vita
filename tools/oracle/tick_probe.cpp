@@ -4,7 +4,7 @@
 //
 // uso: tick_probe <fichero.probe> [--continuo] [--cpr p2arch0_eng.cpr] [--solo FUNCIÓN] [--max N]
 //        tick_probe <fichero.probe> --carga <partida.raw> [--continuo [--cpr p2arch0_eng.cpr [--sin-ia]
-//          [--sin-convoyes]]] [--max N]
+//          [--sin-convoyes]]] [--max N] [--write OUT]
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
 // ella, así que una diferencia apunta a esa función. Con --continuo el estado
@@ -22,6 +22,10 @@
 // --sin-convoyes, como en el oráculo). Las operaciones, grabando el
 // ejecutor (535760, que lleva la operación en la pila) o solo las órdenes de
 // zarpar (537670), pero no las dos.
+//
+// With --write OUT, at the end it writes the uncompressed .pat of the state
+// reached as the game's save function does (savegame_write.hpp), to compare
+// with town_oracle.py --write (tools/oracle/compare_written.py).
 //
 // Con --cpr, las funciones de los barcos que necesitan la navegación (las de
 // los convoyes, la actualización de barcos) se pueden repetir también una a
@@ -44,6 +48,7 @@
 #include "p3data/navigation.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
+#include "p3data/savegame_write.hpp"
 #include "p3data/seamap.hpp"
 #include "probe_registry.hpp"
 
@@ -561,6 +566,7 @@ int main(int argc, char** argv) {
 	std::string cpr;
 	uint32_t only = 0;
 	int budget = 60;
+	std::string write_path;  // --write: the save of the state reached (savegame_write.hpp).
 	for (int i = 2; i < argc; ++i) {
 		const std::string arg = argv[i];
 		if (arg == "--continuo") {
@@ -577,6 +583,8 @@ int main(int argc, char** argv) {
 			only = uint32_t(std::strtoul(argv[++i], nullptr, 16));
 		} else if (arg == "--max" && i + 1 < argc) {
 			budget = std::atoi(argv[++i]);
+		} else if (arg == "--write" && i + 1 < argc) {
+			write_path = argv[++i];
 		}
 	}
 	ProbeRegistry registry;
@@ -822,6 +830,15 @@ int main(int argc, char** argv) {
 	}
 	if (missing) {
 		std::printf("%d llamadas a funciones sin registrar\n", missing);
+	}
+	if (!write_path.empty()) {
+		// The uncompressed .pat of the state reached, as the game's save
+		// function writes it (compare with town_oracle.py --write).
+		prepare_save(save);
+		const std::vector<uint8_t> raw = write_savegame(save);
+		std::ofstream out(write_path, std::ios::binary);
+		out.write(reinterpret_cast<const char*>(raw.data()), std::streamsize(raw.size()));
+		std::printf("%zu bytes in %s\n", raw.size(), write_path.c_str());
 	}
 	return bad ? 1 : 0;
 }
