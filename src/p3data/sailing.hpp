@@ -53,6 +53,9 @@ bool fn_50e340(int16_t x, int16_t y);
 bool fn_447580(const NavData& nav, std::shared_ptr<SeaRoute>& route, MapPoint storm, MapPoint ship, uint32_t found,
 		uint32_t current, bool own);
 
+// 0x517170 (battle/pirates.cpp; on the ship): to the approach point of one of its towns.
+void fn_517170(SaveGame& save, uint16_t ship);
+
 // 0x5310D0: la fecha del mundo (día, mes, año y día del año) a partir de su
 // tick. El juego la recalcula al empezar cada día.
 void update_world_date(GlobalMemory& globals);
@@ -174,6 +177,14 @@ public:
 	bool fn_515360(uint16_t ship);  // Whether a pirate attacks its target now.
 	bool fn_505c90(uint16_t convoy, uint16_t& link);  // (ships object) A new course for a pirate convoy.
 	void fn_514b80(size_t pirate, uint16_t convoy);  // (pirate object) The convoy disbanded at the nest.
+	// 0x5062F0 (ships object): a new convoy led by `ship`, at the head of the
+	// list `head` (not inside SaveGame::convoys: it may grow); its index.
+	uint16_t fn_5062f0(uint16_t& head, uint16_t ship);
+	// The states 0x11 (a lost ship) and 0x12 (a pirate alone) of the walks of
+	// 0x506720: the ship leaves the list (link takes the next one).
+	void lost_in_port(uint16_t ship, uint16_t& link);  // 0x506AF2
+	void lost_at_sea(uint16_t ship, uint16_t& link);  // 0x507022
+	void pirate_at_sea(uint16_t ship, uint16_t& link);  // 0x507099
 	// Off: a pirate convoy at its nest goes on as if it were elsewhere (the
 	// third jump of the rule of piece 2; town_oracle.py --no-disband).
 	void set_pirate_disbanding(bool enabled) { disband_ = enabled; }

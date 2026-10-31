@@ -113,6 +113,28 @@ void register_probes_battle(ProbeRegistry& r) {
 		probe_sailing()->fn_514b80(size_t(k), uint16_t(c.args[0]));
 		return std::nullopt;
 	};
+	// 0x517170: thiscall on a ship.
+	r[0x517170] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int ship = c.ship(c.ecx);
+		if (ship < 0) {
+			return kBad;
+		}
+		fn_517170(save, uint16_t(ship));
+		c.eax_mask = 0;
+		return 0;
+	};
+	// 0x5062F0: thiscall on the ships object, the address of the head of a
+	// list of convoys (a global, or [+0x8] of a convoy) and the ship.
+	r[0x5062F0] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const Location l = c.locate(c.args[0]);
+		const int ship = int(c.args[1] & 0xFFFF);
+		if (!probe_sailing() || l.kind != Location::Global || ship >= int(save.ships.size())) {
+			return kBad;
+		}
+		probe_sailing()->fn_5062f0(save.globals.u16(l.offset), uint16_t(ship));
+		c.eax_mask = 0;
+		return 0;
+	};
 	// 0x447580: thiscall on the navigation object (the address of the ship's
 	// route [+0x24], the storm and the ship as packed points, the first point
 	// far from the storm, the point the ship goes to, whether the route is its

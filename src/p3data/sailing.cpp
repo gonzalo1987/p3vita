@@ -541,6 +541,13 @@ void Sailing::update_docked() {
 		case kShipArriving:
 			arriving(ship, index);
 			break;
+		case kShipSunk:
+			// State 0x11 (0x506AF2), with the pirates (battle/pirates.cpp).
+			if (pirates_) {
+				lost_in_port(index, *link);
+				continue;
+			}
+			break;
 		}
 		link = &ship.next_in_list();
 	}
@@ -614,6 +621,16 @@ void Sailing::update_sailing() {
 		const uint16_t index = *link;
 		SavedShip& ship = save_.ships[index];
 		if (ship.status() != kShipSailing) {
+			// States 0x11 and 0x12 (0x507022, 0x507099), with the pirates
+			// (battle/pirates.cpp): the ship leaves the list (*link is the next).
+			if (pirates_ && (ship.status() == kShipSunk || ship.status() == kShipPirate)) {
+				if (ship.status() == kShipSunk) {
+					lost_at_sea(index, *link);
+				} else {
+					pirate_at_sea(index, *link);
+				}
+				continue;
+			}
 			link = &ship.next_in_list();
 			continue;
 		}

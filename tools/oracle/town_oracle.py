@@ -179,6 +179,8 @@ STORM_UI_JUMPS = {0x50596F: 0x505983, 0x5059CA: 0x5059E0}
 # where a battle would start are jumped over: the attack on the target
 # (0x507BE9 → 0x50BC40) goes on as if there were no target, and the end of the
 # route (0x507C0B → a town battle) goes on as if the convoy still sailed.
+# The ships in state 0x11 (lost: in port 0x506AF2, at sea 0x507022) and the
+# pirates alone at sea (0x12, 0x507099) go through too.
 # A convoy at its nest is disbanded (0x514B80, rewritten in p3vita); with
 # --no-disband it is not (NO_DISBAND_JUMP, 0x505FF1 → 0x506029 in 0x505C90:
 # as if it were elsewhere), as before cloud/battles-2.
@@ -366,7 +368,9 @@ class TownOracle(SaveOracle):
     def _docked(self, uc, address, size, user_data):
         from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_ESI
         status = uc.reg_read(UC_X86_REG_ECX)
-        if self.ai:
+        if self.pirates and status == 0x11:
+            allowed = True  # 0x506AF2, a lost ship (with 0x517170)
+        elif self.ai:
             allowed = status in DOCKED_STATES
         else:
             owner = self.u8(uc.reg_read(UC_X86_REG_ESI))
@@ -377,7 +381,10 @@ class TownOracle(SaveOracle):
 
     def _sailing(self, uc, address, size, user_data):
         from unicorn.x86_const import UC_X86_REG_ESI
-        if self.u16(uc.reg_read(UC_X86_REG_ESI) + 0x134) != 0x0F:
+        status = self.u16(uc.reg_read(UC_X86_REG_ESI) + 0x134)
+        # With --pirates, also 0x11 (a lost ship, 0x507022) and 0x12 (a pirate
+        # alone, 0x507099: it becomes a convoy).
+        if status != 0x0F and not (self.pirates and status in (0x11, 0x12)):
             uc.reg_write(UC_X86_REG_EIP, SAILING_SKIP)
 
     def _convoy(self, uc, address, size, user_data):

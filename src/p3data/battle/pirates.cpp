@@ -625,6 +625,113 @@ void Sailing::fn_514b80(size_t k, uint16_t convoy) {
 	fn_515da0(save_, k);
 }
 
+// 0x5062F0: takes a free convoy (0x509AE0 makes 0x20 more when there is
+// none), puts it at the head of `head` and makes `ship` its only ship and
+// guide: owner, the ship's [+0xE], the towns [+0x39], [+0x37], [+0x38], the
+// capacity [+0x10], [+0x18] |= 0x400, then 0x501680 with the mode 2; the wait
+// [+0x16] = 0x100 and the state that of the ship.
+uint16_t Sailing::fn_5062f0(uint16_t& head, uint16_t ship) {
+	GlobalMemory& g = save_.globals;
+	constexpr uint32_t kFreeConvoy = global::kShips + 0xE4;
+	if (g.u16(kFreeConvoy) >= save_.convoy_count()) {
+		tick::ship_ai_detail::fn_509ae0(save_);
+	}
+	const uint16_t index = g.u16(kFreeConvoy);
+	GameMemory<0x3C>& c = save_.convoys[index];
+	g.u16(kFreeConvoy) = c.u16(0x8);
+	c.u16(0x8) = head;
+	head = index;
+	c.u16(0xA) = ship;
+	ShipMemory& s = save_.ships[ship].memory;
+	c.u8(0x0) = s.u8(0x0);
+	c.u8(0x1) = s.u8(0xE);
+	c.u16(0x1C) = s.u8(0x39);
+	c.u8(0x1E) = s.u8(0x37);
+	c.u8(0x1F) = s.u8(0x38);
+	c.u32(0x4) = s.u32(0x10);
+	c.u32(0x18) |= 0x400;
+	s.u16(0x8) = index;
+	tick::ship_ai_detail::fn_501680(save_, index, ship, 2);
+	save_.convoys[index].u16(0x16) = 0x100;
+	save_.convoys[index].u16(0x12) = save_.ships[ship].memory.u16(0x134);
+	return index;
+}
+
+// 0x517170 (on the ship): puts it at the approach point of one of its towns
+// ([+0x39], else [+0x37], else [+0x38], else town 0; the first one that is a
+// town of the game), [+0x3D] |= 0x20.
+void fn_517170(SaveGame& save, uint16_t ship) {
+	ShipMemory& s = save.ships[ship].memory;
+	const GlobalMemory& g = save.globals;
+	const uint32_t towns = g.u32(kTownCount);
+	uint32_t town = s.u8(0x39);
+	if (town >= towns) {
+		town = s.u8(0x37);
+		if (town >= towns) {
+			town = s.u8(0x38) < towns ? s.u8(0x38) : 0;
+		}
+	}
+	s.s32(0x1C) = 0;
+	s.s32(0x20) = 0;
+	const uint32_t number = g.u8(kTownOrder + town);
+	s.u16(0x1E) = g.u16(kTownTable + 0x34 * number + 0x20);
+	s.u8(0x3D) |= 0x20;
+	s.u16(0x22) = g.u16(kTownTable + 0x34 * number + 0x24);
+}
+
+// State 0x11 in port (0x506AF2): out of the list and of its convoy; a human
+// player's ship stays (0x517170 puts it at one of its towns, with no target,
+// hull or sailors); any other is deleted (0x507FB0).
+void Sailing::lost_in_port(uint16_t index, uint16_t& link) {
+	SavedShip& ship = save_.ships[index];
+	ShipMemory& s = ship.memory;
+	link = s.u16(0x6);
+	s.u16(0x6) = 0xFFFF;
+	s.u16(0x8) = 0xFFFF;
+	if (human(ship)) {
+		// 0x44F940: the sea map is told (UI).
+		fn_517170(save_, index);
+		s.u16(0x50) = 0xFFFF;
+		s.u16(0x52) = 0xFFFF;
+		s.s32(0x18) = 0;
+		s.u16(0x40) = 0;
+		return;
+	}
+	fn_507fb0(index);
+}
+
+// State 0x11 at sea (0x507022): out of the list and of the list by x, with no
+// target; deleted (0x507FB0) unless it is a human player's.
+void Sailing::lost_at_sea(uint16_t index, uint16_t& link) {
+	SavedShip& ship = save_.ships[index];
+	ShipMemory& s = ship.memory;
+	link = s.u16(0x6);
+	s.u16(0x6) = 0xFFFF;
+	unlink_x(index);
+	s.u16(0x50) = 0xFFFF;
+	s.u16(0x52) = 0xFFFF;
+	if (human(ship)) {
+		return;
+	}
+	// 0x494990 and 0x4778A0 with 0x17: the UI is told.
+	fn_507fb0(index);
+}
+
+// State 0x12 at sea, a pirate alone (0x507099): out of the list; with hull, a
+// convoy of its own (0x5062F0), which the walk of the convoys moves; without,
+// out of the list by x and deleted.
+void Sailing::pirate_at_sea(uint16_t index, uint16_t& link) {
+	ShipMemory& s = save_.ships[index].memory;
+	link = s.u16(0x6);
+	s.u16(0x6) = 0xFFFF;
+	if (s.s32(0x18) > 0) {
+		fn_5062f0(save_.globals.u16(global::kShips + 0xEC), index);
+		return;
+	}
+	unlink_x(index);
+	fn_507fb0(index);
+}
+
 // 0x507A65, the state 0x12 of a pirate convoy in 0x506720 (§7 of
 // docs/cloud/battles.md): the guide back in the list by x if it is in none;
 // the wait [+0x16] counts down into the guide's [+0x138]; a target (set by

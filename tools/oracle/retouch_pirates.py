@@ -6,7 +6,8 @@ load by a scenario, for the branches the saves don't reach. tick_probe
 
 usage: python3 retouch_pirates.py <Patrician3.exe> <save.raw> <out.probe> <days> <scenario>
        --barcos DATA --cpr p2arch0_eng.cpr [--functions F,F...] [--blocks]
-By default it records 514b80,515da0,513bf0,505c90. With --blocks it prints
+By default it records 514b80,515da0,513bf0,505c90 (lost, alone and guide:
+use --functions 506720,517170,5062f0,5017f0). With --blocks it prints
 the blocks of the recorded functions that ran.
 
 Scenarios:
@@ -25,6 +26,14 @@ Scenarios:
                (0, 0) and at (0xF0, 0xF0), outside the grid; with a town hall
                site, class 0x1B, where the search starts and 3 rings away),
                and with the pool full
+  lost         state 0x11 for a human player's ship and an AI merchant's ship
+               in port (0x506AF2, 0x517170) and at sea (0x507022; if no human
+               player's ship is alone at sea, an AI one becomes the player's)
+  alone        a pirate alone at sea in state 0x12 (0x507099): a ship of each
+               pirate convoy leaves it; one with hull (0x5062F0 makes it a
+               convoy), one without (deleted)
+  guide        direct calls of 0x5017F0 on the pirate convoys: guide without
+               hull, no captains, no hull at all, guide without sailors
 """
 import argparse
 import os
@@ -42,8 +51,23 @@ RANGES = {0x514B80: 0x514D36, 0x515DA0: 0x515E9D, 0x513BF0: 0x513D11, 0x505C90: 
 TOWN_TABLE = 0x6DDB90
 TICK = 0x6DE4B4
 # A call from Python returns to SENTINEL, where the emulation stops before the
-# Recorder can close the sample: the direct calls go through a trampoline.
-PLAN_TRAMPOLINE = to.SENTINEL + 0x180
+# Recorder can close the sample: the direct calls go through a trampoline
+# (one each 0x20 bytes from here).
+TRAMPOLINES = to.SENTINEL + 0x180
+CHECK_GUIDE = 0x5017F0  # thiscall on a convoy
+LEAVE_CONVOY = 0x509F80  # thiscall on the ships object (ship): out of its convoy
+_trampolines = {}
+
+
+def direct(o, target, args, ecx):
+    """Calls target(args) on ecx through a trampoline, so that the Recorder
+    records it."""
+    at = _trampolines.get(target)
+    if at is None:
+        at = _trampolines[target] = TRAMPOLINES + 0x20 * len(_trampolines)
+        _, build = to.trampoline(target, len(args))
+        o.uc.mem_write(at, build(at))
+    return o.call(at, args, ecx=ecx)
 
 
 def w8(o, a, v):
@@ -141,25 +165,23 @@ def disband_map(o):
 
 
 def plan(o):
-    _, build = to.trampoline(PLAN, 0)
-    o.uc.mem_write(PLAN_TRAMPOLINE, build(PLAN_TRAMPOLINE))
     convoys = o.u16(to.SHIPS + 0xF6)
     for tick in (0, 1):
         w32(o, TICK, (o.u32(TICK) & ~3) | tick)
         for k, pirate in pirates(o):
             w16(o, pirate + 0x10, 0 if convoys else 0xFFFF)
-            o.call(PLAN_TRAMPOLINE, [], ecx=pirate)  # with a convoy (or none, if there are no convoys)
+            direct(o, PLAN, [], pirate)  # with a convoy (or none, if there are no convoys)
             w16(o, pirate + 0x10, 0xFFFF)
             w16(o, pirate + 0x16, 0)
-            o.call(PLAN_TRAMPOLINE, [], ecx=pirate)  # no money
+            direct(o, PLAN, [], pirate)  # no money
             w16(o, pirate + 0x16, 0x3000)
-            o.call(PLAN_TRAMPOLINE, [], ecx=pirate)  # no map
+            direct(o, PLAN, [], pirate)  # no map
             m = o.u32(pirate) or give_map(o, pirate)
             pool = o.u32(pirate + 0x4)
             anchor = bytes(o.uc.mem_read(m + 0x5C, 2))
             for at in (anchor, b'\0\0', b'\xf0\xf0'):
                 o.uc.mem_write(pool, at)
-                o.call(PLAN_TRAMPOLINE, [], ecx=pirate)
+                direct(o, PLAN, [], pirate)
             # A town hall site (class 0x1B, what the type 0x20 looks for) where
             # the search starts, and then one 3 rings away.
             o.uc.mem_write(pool, anchor)
@@ -171,14 +193,101 @@ def plan(o):
                 at = cells + (x0 + dx) * height + y0
                 keep = o.u8(at)
                 w8(o, at, 0x1B)
-                o.call(PLAN_TRAMPOLINE, [], ecx=pirate)
+                direct(o, PLAN, [], pirate)
                 w8(o, at, keep)
             full_pool(o, pirate)
-            o.call(PLAN_TRAMPOLINE, [], ecx=pirate)
+            direct(o, PLAN, [], pirate)
             print(f'pirate {k}: 0x515DA0 9 times at tick & 3 = {tick}')
 
 
-SCENARIOS = {f.__name__: f for f in (disband, disband_map, plan)}
+def walk(o, head):
+    """The ships of the list that starts at the global head (linked by [+0x6])."""
+    out = []
+    i = o.u16(head)
+    while i < o.counts()[3] and len(out) < 10000:
+        out.append(i)
+        i = o.u16(o.ship(i) + 0x6)
+    return out
+
+
+def human(o, i):
+    owner = o.u8(o.ship(i))
+    return owner < o.counts()[2] and o.u16(o.merchant(owner) + 8) == 0
+
+
+def lost(o):
+    """State 0x11 for two ships in port and two at sea: a human player's and
+    an AI merchant's in each list (the first ones found)."""
+    for head, where in ((to.SHIPS + 0xE8, 'port'), (to.SHIPS + 0xEA, 'sea')):
+        chosen = {}
+        for i in walk(o, head):
+            s = o.ship(i)
+            if o.u8(s) >= o.counts()[2] or o.u16(s + 0x8) < o.u16(to.SHIPS + 0xF6):
+                continue
+            if human(o, i):
+                chosen.setdefault(True, i)
+                continue
+            if not human(o, i) and False not in chosen:
+                chosen[False] = i
+            elif not human(o, i) and True not in chosen:
+                # No human player's ship alone in the list: an AI one becomes
+                # the player's.
+                w8(o, o.ship(i), o.u32(0x6DFC14))
+                chosen[True] = i
+        for is_human, i in chosen.items():
+            w16(o, o.ship(i) + 0x134, 0x11)
+            print(f'{where}: ship {i} ({"human" if is_human else "AI"}) in state 0x11')
+
+
+def alone(o):
+    """A pirate ship alone at sea in state 0x12: the last ship of each pirate
+    convoy in state 0x12 leaves it (0x509F80) and is put at the head of the
+    sea list; the one of the second convoy with no hull; for the first, no free
+    convoy is left (0x5062F0 makes more with 0x509AE0)."""
+    for n, (c, guide, members) in enumerate(pirate_convoys(o)):
+        if len(members) < 2:
+            continue
+        ship = members[-1] if members[-1] != guide else members[0]
+        o.call(LEAVE_CONVOY, [ship], ecx=to.SHIPS)
+        s = o.ship(ship)
+        if n == 1:
+            w32(o, s + 0x18, 0)
+        if n == 0:
+            w16(o, to.SHIPS + 0xE4, o.u16(to.SHIPS + 0xF6))  # no free convoy: 0x509AE0 makes more
+        if ship not in walk(o, to.SHIPS + 0xEA):  # at the head of the sea list
+            w16(o, s + 0x6, o.u16(to.SHIPS + 0xEA))
+            w16(o, to.SHIPS + 0xEA, ship)
+        print(f'convoy {c}: ship {ship} alone, state {o.u16(s + 0x134):#x}, hull {o.s32(s + 0x18)}, '
+              f'in the sea list: {ship in walk(o, to.SHIPS + 0xEA)}')
+
+
+def guide(o):
+    """Direct calls of 0x5017F0 on each pirate convoy in state 0x12: the guide
+    without hull (another with hull and captain guides); no captain in the
+    convoy (the first with hull gets a new one, 0x5097C0); no ship with hull;
+    the guide without sailors and in the list by x (it goes back to it)."""
+    captains = o.u16(to.SHIPS + 0xF2)
+    base = o.u32(to.SHIPS + 0x8)
+    for c, lead, members in pirate_convoys(o):
+        convoy = base + 0x3C * c
+        keep = {i: bytes(o.uc.mem_read(o.ship(i), 0x180)) for i in members}
+        w32(o, o.ship(lead) + 0x18, 0)
+        direct(o, CHECK_GUIDE, [], convoy)
+        for i in members:
+            w16(o, o.ship(i) + 0x42, 0xFFFF)
+        direct(o, CHECK_GUIDE, [], convoy)
+        for i in members:
+            w32(o, o.ship(i) + 0x18, 0)
+        direct(o, CHECK_GUIDE, [], convoy)
+        for i, data in keep.items():
+            o.uc.mem_write(o.ship(i), data)
+        w16(o, convoy + 0x10, lead)
+        w16(o, o.ship(lead) + 0x40, 0)
+        direct(o, CHECK_GUIDE, [], convoy)
+        print(f'convoy {c}: guide {lead}, ships {members}, captains {captains}: 0x5017F0 4 times')
+
+
+SCENARIOS = {f.__name__: f for f in (disband, disband_map, plan, lost, alone, guide)}
 
 
 def main():

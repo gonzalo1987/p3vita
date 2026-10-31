@@ -28,6 +28,14 @@ automatic sea battle).
   block of the three functions), 0 differences; the world with `--pirates`
   in saves 3, 4, 5, 6 × 7 days, 0 «distintas».
 
+- **Part 2: the states 0x11 and 0x12 and the pirate branch of 0x5017F0
+  (done):** the lost ship (state 0x11 in port, 0x506AF2 with 0x517170, and
+  at sea, 0x507022), the pirate alone at sea (0x12, 0x507099, with 0x5062F0)
+  behind `--pirates`, and the pirate branch of 0x5017F0 (always). The saves
+  don't reach them; retouched states `lost`, `alone`, `guide`: 0 differences
+  (0x506720 256 calls per save and day, 0x5062F0, 0x517170, 0x5017F0 up to
+  15 calls per save).
+
 ## Decisions for the user
 
 - **The grid functions on a nest's map** (recommendation: for
@@ -147,6 +155,51 @@ with `--no-disband`); tick_probe `--no-disband`
 (`Sailing::set_pirate_disbanding`). Probes 0x514B80, 0x515DA0, 0x513BF0 in
 `probes_battle.cpp` (the pirate is found by its pointer in the globals).
 
+### 2.2 The lost ship and the pirate alone: states 0x11 and 0x12
+
+The two walks of 0x506720 dispatch by the ship's state (tables 0x507CB0 for
+port, 0x507CF0 for sea). With `--pirates` (oracle `_docked`/`_sailing`, p3vita
+`pirates_`) these now run too:
+- **port, state 0x11 (0x506AF2), a lost ship:** out of the port list and of
+  its convoy (`[+0x6]`, `[+0x8]` = 0xFFFF); a human player's ship stays out
+  of every list at the approach point of one of its towns (0x517170: the
+  first of `[+0x39]`, `[+0x37]`, `[+0x38]` that is a town, else town 0;
+  `[+0x3D]` |= 0x20; 0x44F940 tells the sea map, UI), with no target
+  (`[+0x50]`, `[+0x52]`), hull or sailors; any other is deleted (0x507FB0).
+- **sea, state 0x11 (0x507022):** out of the sea list and the list by x, no
+  target; deleted unless it is a human player's (two UI notices with 0x17
+  before, quiet).
+- **sea, state 0x12 (0x507099), a pirate alone:** out of the sea list; with
+  hull, **0x5062F0** makes it a convoy of its own at the head of the convoys
+  (a free convoy, 0x509AE0 if none; owner, `[+0xE]`, the towns, the capacity,
+  `[+0x18]` |= 0x400, 0x501680 with mode 2, wait 0x100, the ship's state),
+  which the walk of the convoys then moves; without hull, out of the list by
+  x and deleted.
+Who sets these states: 0x5070CF (sea states 0xA, 0xB, 0x16: state 0x11 and
+no hull) and the end of the battles (piece 3).
+
+**The pirate branch of 0x5017F0** (0x5018E4: the guide of a pirate convoy is
+gone or has no hull or sailors): the first ship with hull and a captain
+guides; else the first with hull, with a new captain (0x5097C0 with 1); the
+bit 0x10 of `[+0x14]` is cleared and the new guide goes back to the list by x
+if the old was in it (true). With no hull at all, `[+0x10]` ends past the
+last ship and false. Rewritten without a setting (it is the game's code; it
+was a `return false` that nothing reached).
+
+The saves reach none of this. Retouched states (`retouch_pirates.py`,
+recording `506720,517170,5062f0,5017f0`, 1 day; tick_probe `--pirates`):
+- `lost` (saves 3, 5, 6, tut0): state 0x11 for a human and an AI ship in
+  port and at sea (an AI ship becomes the player's when no human ship is
+  alone at sea): 0 differences (256 calls of 0x506720 each).
+- `alone` (saves 3, 4, 5, 6): a ship of each pirate convoy leaves it
+  (0x509F80) and is put at the head of the sea list, one with no hull, and
+  no free convoy for the first (0x509AE0): 0 differences (1–2 calls of
+  0x5062F0 each).
+- `guide` (saves 3, 5, 6, tut0): direct calls of 0x5017F0 on each pirate
+  convoy with the guide without hull, no captains, no hull at all and the
+  guide without sailors: 0 differences (9–15 calls each).
+Probes 0x517170 and 0x5062F0 in `probes_battle.cpp`.
+
 ## Changes to shared files
 
 - `src/p3data/savegame.cpp` (cloud/statistics): one line, at the end of the
@@ -174,6 +227,14 @@ with `--no-disband`); tick_probe `--no-disband`
   `disband_`.
 - `tools/oracle/town_oracle.py`: `NO_DISBAND_JUMP` out of `PIRATE_JUMPS`,
   the option `--no-disband` and the constructor argument `disband=True`.
+- `tools/oracle/town_oracle.py`: with `--pirates`, `_docked` lets the port
+  state 0x11 through and `_sailing` the sea states 0x11 and 0x12.
+- `src/p3data/sailing.cpp`: in `update_docked`, `case kShipSunk` →
+  `lost_in_port` with `pirates_`; in `update_sailing`, the states 0x11 and
+  0x12 → `lost_at_sea`, `pirate_at_sea` with `pirates_`. `sailing.hpp`: their
+  declarations, `fn_5062f0` and the free `fn_517170`.
+- `src/p3data/convoys_members.cpp`: the pirate branch of `fn_5017f0` and the
+  declaration of `fn_5097c0` (`town_tick/events.cpp`).
 - Declared in my files (not changed): `fn_4f9c80`
   (`town_tick/construction.cpp`), `fn_51a750` (`town_tick/alderman.cpp`).
 
@@ -206,8 +267,8 @@ Looks like one:
 
 ## Done and left
 
-Done: part 1; of part 2, the disbanding (§2.1). Left: part 2 (the sea states, 0x517170,
-the pirate branch of 0x5017F0, 0x5063C0, 0x514000 with operation 0xB5,
+Done: part 1; of part 2, the disbanding (§2.1), the states 0x11 and 0x12
+and 0x5017F0 (§2.2). Left: part 2 (0x5063C0, 0x514000 with operation 0xB5,
 retouched states), part 3 (battle infrastructure) and part 4 (the battle).
 
 Not built for the Vita yet.
