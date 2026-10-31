@@ -161,7 +161,10 @@ Pending (not in this first step):
   as on `main` (byte for byte); ctest 7 of 7 with and without SDL2;
   `vita_check.sh`: VPK of 1,165,565 bytes, no warnings.
 - Times: `prepare.sh` 24 s, VitaSDK 2–3 min, `vita_check.sh` 75 s the first
-  time and 16 s after, a screenshot run 0.6–2.4 s.
+  time and 16 s after, a screenshot run 0.6–2.4 s (200 game days in a town,
+  3.5 s), the 285 towns with `p3town` 13 s.
+- Screenshot runs are reproducible: the part 3 screenshots taken twice (two
+  builds) are pixel for pixel the same.
 
 ## For the roadmap
 
@@ -171,6 +174,18 @@ Pending (not in this first step):
   its memory and drawn again when its buildings change, also on entering it
   again). Left: scaffolding, fires, animations, people, the siege on screen,
   and redrawing only what changes if the Vita needs it (see above).
+
+## For the README
+
+A section «The viewer on the PC»: `sudo apt install libsdl2-dev`, build as
+usual (the viewer is `build/src/app/p3vita`), run `p3vita DATA_DIR` or
+`p3vita --cpr p2arch0_eng.cpr` (keyboard as before; the mouse is the touch
+screen), and `p3vita --help` for the screenshots without a window.
+
+For `environment.md` in p3vita-datos: installing `libsdl2-dev` doesn't break
+the PC build (not even on `main`: it built with no warnings and ctest 7 of
+7 before any change here); it only makes every build also compile the viewer
+(a few seconds).
 
 ## For the inventory
 
