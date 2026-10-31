@@ -2496,6 +2496,8 @@ int events_rare(SaveGame& save, uint16_t event, uint16_t type) {
 		return int(fn_4e0334(save, event));
 	case 0x2E:
 		return int(fn_4e9a94(save));
+	case 0x2F:
+		return int(fn_4ea0d4(save));  // El desarrollo de una ciudad nueva (new_town.cpp).
 	case 0x30:
 		return int(fn_4ea594(save));
 	case 0x32:

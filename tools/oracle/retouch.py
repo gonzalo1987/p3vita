@@ -58,6 +58,16 @@ una batalla que el emulador no ejecuta):
   guarida_fallida  fase 3: fallida
 Fundar una ciudad (tipo 0):
   fundar           el encargo dado sin empezar: se crea la ciudad
+El desarrollo de la ciudad nueva (evento 0x2F, 0x4EA0D4), adelantado al tick
+siguiente; graban 535760 y 4d85c0. Los cuatro primeros fundan la ciudad sin
+grabar; los otros crean el evento en ciudades que ya existen:
+  nueva_sin_marca       sin el bit 1 de [0x76C]: espera
+  nueva_alcalde_ia      alcalde de la IA: su oficina; con la bandera 0x80 y menos de 500
+  nueva_alcalde_humano  el jugador de alcalde: sin oficina; 700 habitantes
+  nueva_sin_alcalde     la operación 0x46 y, a los 14 días, la oficina (16 días)
+  poblada               más de 1000 habitantes con cada muralla (0x5252F0): 1 o 2
+                        (el mercado y después el prestamista), 0xFF, 0 con tramo y 0 sin él
+  rica                  la fase 2: con el prestamista (0x800) y con 1500 sin pasar
 """
 import argparse
 import os
@@ -466,6 +476,151 @@ def fundar(o):
     print(f'encargo {i}: fundar la ciudad {o.u8(a + 0x14)} para {m}; {o.u32(WORLD + 0x10)} ciudades')
 
 
+# --- El desarrollo de la ciudad nueva (evento 0x2F, 0x4EA0D4) ---
+
+def found_town(o):
+    """fundar y el mundo sin grabar hasta que 0x4EBF54 crea la ciudad; su índice."""
+    fundar(o)
+    towns = o.u32(WORLD + 0x10)
+    for _ in range(256 * 8):
+        o.advance_tick()
+        if o.u32(WORLD + 0x10) > towns:
+            print(f'ciudad {towns} fundada en el tick {o.u32(WORLD + 0x14):#x}')
+            return towns
+    raise RuntimeError('no se ha fundado la ciudad en 8 días')
+
+
+def development(o, town, phases, set_bits=0, clear_bits=0):
+    """El evento 0x2F de la ciudad (el de la fundación o uno nuevo, 0x4D8CF0)
+    con las fases `phases` en [+0x10], para el tick siguiente: se desengancha
+    de la cola, se pone en cabeza y 0x4D8DD0 lo coloca. Cambia los bits de
+    [0x76C] de la ciudad."""
+    now = o.u32(WORLD + 0x14)
+    found = [(i, a) for i, a in events(o) if o.u16(a + 6) == 0x2F and o.u32(a + 0xC) == town]
+    if found:
+        i, a = found[0]
+        order = [j for j, _ in events(o)]
+        k = order.index(i)
+        link = to.EVENTS + 8 if k == 0 else o.u32(to.EVENTS) + 0x18 * order[k - 1] + 4
+        w16(o, link, o.u16(a + 4))
+        w16(o, a + 4, o.u16(to.EVENTS + 8))
+        w16(o, to.EVENTS + 8, i)
+        w32(o, a, now + 1)
+        o.call(0x4D8DD0, [], ecx=to.EVENTS)
+    else:
+        a = o.call(0x4D8CF0, [now + 1], ecx=to.EVENTS)  # devuelve el evento
+        i = (a - o.u32(to.EVENTS)) // 0x18
+        w16(o, a + 6, 0x2F)
+        w32(o, a + 8, 0)
+        w32(o, a + 0xC, town)
+        w32(o, a + 0x14, now)
+    w32(o, a + 0x10, phases)
+    t = o.town(town)
+    w32(o, t + 0x76C, (o.u32(t + 0x76C) | set_bits) & ~clear_bits)
+    print(f'evento {i}: 0x2F de la ciudad {town} en el tick {o.u32(a):#x}, fases {phases:#x}, [0x76C] {o.u32(t + 0x76C):#x},'
+          f' {o.u32(t + 0x2D4)} habitantes, alcalde {o.u8(t + 0x6F1)}')
+
+
+def set_population(o, town, n):
+    """n habitantes: la diferencia, en los pobres ([0x2E0])."""
+    t = o.town(town)
+    w32(o, t + 0x2E0, o.u32(t + 0x2E0) + n - o.u32(t + 0x2D4))
+    w32(o, t + 0x2D4, n)
+
+
+def nueva_sin_marca(o):
+    """La ciudad nueva sin el bit 1 de [0x76C]: vuelve a los 21 días. Graba 2 días."""
+    development(o, found_town(o), 0, clear_bits=1)
+
+
+def nueva_alcalde_ia(o):
+    """La ciudad nueva con el bit 1, con el fundador (de la IA) de alcalde,
+    como la deja la fundación, y la bandera 0x80: su oficina (0x5308A0), fase
+    1 y, al dieciseisavo de día, 4 pobres más y menos de 500 habitantes.
+    Graba 2 días."""
+    development(o, found_town(o), 0x80, set_bits=1)
+
+
+def nueva_alcalde_humano(o):
+    """La ciudad nueva con el bit 1, el jugador de alcalde y 700 habitantes:
+    sin oficina, fase 1 y después 0x88DB − 35 por habitante. Graba 2 días."""
+    town = found_town(o)
+    w8(o, o.town(town) + 0x6F1, o.u32(to.PLAYER))
+    set_population(o, town, 700)
+    development(o, town, 0, set_bits=1)
+
+
+def nueva_sin_alcalde(o):
+    """La ciudad nueva con el bit 1 y sin alcalde: la operación 0x46 hace
+    alcalde al comerciante de la IA con más rango (0x535FD6) y, a los 14
+    días, su oficina. Graba 16 días."""
+    town = found_town(o)
+    w8(o, o.town(town) + 0x6F1, 0xFF)
+    development(o, town, 0, set_bits=1)
+
+
+def wall(o, town):
+    return o.call(0x5252F0, [], ecx=o.town(town)) & 0xFF
+
+
+def poblada(o):
+    """Cuatro ciudades de más de 1000 habitantes en la fase 1 de 0x2F, sin
+    mercado (bit 0x100) ni prestamista (0x800), según su muralla (0x5252F0,
+    dirigida con los puntos de muralla [0x7B0 + 2·i]): 1 o 2, el mercado y,
+    a los 5 ticks, la fase 2 y, al día, el prestamista (0x51FAB0, 0x25); 0xFF,
+    28 días; 0 con un tramo de la ciudad en obras (el último de la lista
+    [0x762] pasa a 0x36 con dueño 0xFF), 14 días; 0 sin él, el mercado y 28
+    días. Graba 3 días. Los puntos solo cuentan sin piezas de muralla
+    pendientes ([0x766]): en las partidas que tienen piezas en todas las
+    ciudades (la 3) no hay muralla 0xFF."""
+    def works(i):
+        t, out = o.town(i), []
+        r = o.u16(t + 0x762)
+        while r < o.u16(t + 0x776):
+            out.append(r)
+            r = o.u16(o.u32(t + 0x75C) + 8 * r + 4)
+        return out
+
+    def by_points(i):
+        return o.u16(o.town(i) + 0x766) >= o.u16(o.town(i) + 0x776)
+
+    towns = [i for i in range(o.u32(WORLD + 0x10)) if o.u32(o.town(i) + 0x2D4) >= 1000]
+    natural = [i for i in towns if wall(o, i) in (1, 2)]
+    a = natural[0] if natural else next(i for i in towns if wall(o, i) == 0 and by_points(i))
+    if not natural:
+        w16(o, o.town(a) + 0x7B4, 0xFFFF)  # el punto 2 fuera: 2
+    zero = [i for i in towns if i != a and wall(o, i) == 0]
+    chosen = [a]
+    c = max((i for i in zero if works(i)), key=lambda i: len(works(i)), default=None)
+    if c is not None:
+        t = o.town(c)
+        rec = o.u32(t + 0x75C) + 8 * works(c)[-1]
+        w8(o, rec + 2, 0xFF)
+        w8(o, rec + 3, 0x36)
+        print(f'ciudad {c}: la última de sus {len(works(c))} obras pasa a ser un tramo de muralla de la ciudad')
+        chosen.append(c)
+    b = next((i for i in zero if i not in chosen and by_points(i)), None)
+    if b is not None:
+        t = o.town(b)
+        o.uc.mem_write(t + 0x7B0, bytes(o.uc.mem_read(t + 0x7B2, 2)))  # el punto 0 dentro: 0xFF
+        chosen.append(b)
+    chosen.append(next(i for i in zero if i not in chosen))
+    for town in chosen:
+        print(f'ciudad {town}: muralla {wall(o, town):#x}')
+        development(o, town, 1, clear_bits=0x900)
+
+
+def rica(o):
+    """Dos ciudades en la fase 2 de 0x2F: una con el prestamista (bit 0x800):
+    fase 3 y a los 21 días; otra sin él y con 3 · 400 pobres + 300
+    acomodados = 1500 (no pasa de 1500): 28 días. Graba 2 días."""
+    development(o, 0, 0x101)
+    t = o.town(1)
+    w32(o, t + 0x2E0, 400)
+    w32(o, t + 0x2DC, 300)
+    development(o, 1, 0x101, clear_bits=0x800)
+
+
 def office_list(o, town):
     """Las oficinas de la ciudad (lista [0x784], siguiente en [+0x2CA])."""
     out, i = [], o.u16(o.town(town) + 0x784)
@@ -502,7 +657,9 @@ SCENARIOS = {f.__name__: f for f in (candidato, jugador, dos_candidatos, sin_car
                                      guarida_fallida,
                                      jugador_carretera_vencida,
                                      encargo_nuevo, encargo_cumplido, encargo_vencido, barco_perdido,
-                                     jugador_coge, jugador_vencido)}
+                                     jugador_coge, jugador_vencido,
+                                     nueva_sin_marca, nueva_alcalde_ia, nueva_alcalde_humano, nueva_sin_alcalde,
+                                     poblada, rica)}
 
 
 def main():
@@ -537,6 +694,11 @@ def main():
         if o.u16(e + 6) == 0x32:
             raw = bytes(o.uc.mem_read(e, 0x18))
             print(f'encargo {i}: tipo {raw[0xC]} comerciante {raw[0xD]} plazo {o.u32(e + 8):#x} datos {raw[0x10:].hex()}')
+        elif o.u16(e + 6) == 0x2F:
+            t = o.town(o.u32(e + 0xC))
+            print(f'evento {i}: 0x2F de la ciudad {o.u32(e + 0xC)} en el tick {o.u32(e):#x} (ahora {o.u32(WORLD + 0x14):#x}),'
+                  f' fases {o.u32(e + 0x10):#x}, [0x76C] {o.u32(t + 0x76C):#x}, {o.u32(t + 0x2D4)} habitantes,'
+                  f' alcalde {o.u8(t + 0x6F1)}, oficinas {office_list(o, o.u32(e + 0xC))}')
 
 
 if __name__ == '__main__':

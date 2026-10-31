@@ -88,6 +88,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x3B:  // Materiales para la carretera de un encargo de la Hansa (0x53A3E0).
 		tick::fn_53a3e0(save, operation);
 		break;
+	case 0x46:  // Alcalde para una ciudad nueva (0x535FD6).
+		tick::fn_535fd6(save, operation);
+		break;
 	case 0x4B:  // Un candidato coge un encargo de la Hansa (0x53B440).
 		tick::fn_53b440(save, operation);
 		break;

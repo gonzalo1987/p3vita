@@ -4,7 +4,10 @@
 // (0x51B100) y la prepara: candidatos a alcalde (0x5289B0), capitanes
 // (0x526A50), astillero y plantilla del mapa (0x545890:
 // iso/towns/stadtplatz%.2u.tow), lo demás (0x5458D0), las rutas (0x448040,
-// Sailing::add_town) y la matriz de tiempos de viaje (0x531BD0).
+// Sailing::add_town) y la matriz de tiempos de viaje (0x531BD0). Después, sus
+// eventos: la muralla (0x39, 0x4ECDF4) y su desarrollo (0x2F, 0x4EA0D4: el
+// alcalde, con la operación 0x46 si no tiene, 0x535FD6; su oficina, la
+// población y el prestamista).
 //
 // Los punteros que el juego deja en los globales (los nombres de la ciudad,
 // 0x5127E0: [0x6DD960 + 4·i] y [0x6DDA00 + 4·i]) no se reproducen.
@@ -30,12 +33,19 @@ uint8_t fn_5252f0(const SaveGame& save, int town);
 namespace events_rare_detail {
 void fn_522b20(SaveGame& save, int town, uint32_t side);
 }  // namespace events_rare_detail
+namespace events_towns_detail {
+int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town);
+}  // namespace events_towns_detail
+namespace construction_detail {
+uint32_t fn_51fab0(SaveGame& save, int town, uint8_t type, bool immediate);
+}  // namespace construction_detail
 
 namespace {
 
 constexpr uint32_t kTownCount = global::kWorldTownCount;  // u32
 constexpr uint32_t kMerchantCount = global::kWorldMerchantCount;  // u16
 constexpr uint32_t kTick = global::kWorldTick;  // u32
+constexpr uint32_t kAldermanBusy = 0x6DF31C;  // u32 (ver merchants.cpp)
 constexpr uint32_t kEventHead = 0x6DD73C + 0x8;  // u16 primer evento de la cola.
 constexpr uint32_t kYear = global::kWorldYear;  // u16
 constexpr uint32_t kTownIds = 0x6DE4B8;  // u8 por ciudad ([+0x18] del mundo): su número de StadtDaten.ini.
@@ -507,7 +517,10 @@ void fn_5458d0(SaveGame& save, int town, bool flag, uint32_t wares, uint32_t oth
 	}
 	if (wares & 0x1C0000) {
 		// Por reescribir: 0x5462F0 con 4, 0x10 o 0xD (los bits 0x40000,
-		// 0x80000 y 0x100000 de la máscara).
+		// 0x80000 y 0x100000 de la máscara), que añade a la lista de nodos
+		// [0x9B4] el de esa instalación (0x50FCA0, 0x50FE00). Al fundar solo
+		// sale el 0x40000: 0x532E30 lo pone cuando el aceite (0xA) es de las
+		// mercancías que más faltan. Sin él, la ciudad nueva no tiene ese nodo.
 	}
 	if (wares & 0x200000) {
 		t.u32(0x2C8) |= 0x8000000;  // Sin comprobar con el oráculo.
@@ -724,6 +737,174 @@ uint32_t fn_4ecdf4(SaveGame& save) {
 	}
 	save.events[g.u16(kEventHead)].u32(0) += 0x1F00;
 	return 1;
+}
+
+// 0x4EA0D4 (evento 0x2F de la cabeza, [+0xC] la ciudad nueva, [+0x10] sus
+// fases, [+0x14] el tick en que empezó la última): el desarrollo de una
+// ciudad fundada en plena partida; 0x531D50 lo crea a los 180 días. Mira los
+// bits de [0x76C] de la ciudad que había al empezar. Sin la ciudad, se quita;
+// si no, vuelve siempre:
+// - Fase 0 (sin el bit 1): sin el bit 1 de [0x76C], a los 21 días. Con
+//   alcalde, su oficina si es de la IA (0x5308A0), fase 1 y al dieciseisavo
+//   de día. Sin alcalde (y sin [0x6DF31C]), la operación 0x46 que hace
+//   alcalde al comerciante de la IA con más rango en su ciudad natal que no
+//   lo sea de otra (0x535FD6), y a los 14 días.
+// - Fase 1: con el bit 0x80, 4 pobres más y un trabajador en la instalación
+//   1 si no tiene. Con el bit 0x100 de [0x76C], fase 2. Si no, según los
+//   habitantes: desde 1000, la muralla (0x5252F0): 1 o 2, el bit 0x100 de
+//   [0x76C] y 5 ticks; 0, si hay un tramo (tipo ≥ 0x36) de la ciudad en la
+//   lista de obras, 14 días, y si no, el bit 0x100 y 28 días; más, 28 días.
+//   De 500 a 1000, 0x88DB − 35 por habitante; menos de 500, 28 días.
+// - Fase 2 (0x100): con el bit 0x800 de [0x76C], fase 3. Si no, con más de
+//   1500 entre tres veces los pobres y los acomodados, la ciudad encarga un
+//   prestamista (0x51FAB0, edificio 0x25; sin [0x6DF31C]) y vuelve a la
+//   semana; si no, a los 28 días.
+// - Fase 3 (0x800): a los 21 días.
+uint32_t fn_4ea0d4(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	auto event = [&]() -> GameMemory<0x18>& { return save.events[g.u16(kEventHead)]; };
+	const uint32_t town = event().u32(0xC);
+	if (town >= g.u32(kTownCount)) {
+		return 0;  // Sin comprobar con el oráculo.
+	}
+	SavedTown& st = save.towns[town];
+	TownMemory& t = st.memory;
+	const uint32_t bits = t.u32(0x76C);
+	const uint32_t merchants = g.u16(kMerchantCount);
+	if ((event().u32(0x10) & 1) == 0) {
+		if ((bits & 1) == 0) {
+			event().u32(0) += 0x1500;
+			return 1;
+		}
+		const uint32_t mayor = t.u8(0x6F1);
+		if (mayor < merchants) {
+			if (save.merchants[mayor].memory.u16(8) != 0) {
+				events_towns_detail::fn_5308a0_create(save, mayor, town & 0xFFFF);
+			}
+			event().u32(0x10) |= 1;
+			event().u32(0x14) = g.u32(kTick);
+			event().u32(0) += 0x100;
+			return 1;
+		}
+		if (g.u32(kAldermanBusy) == 0) {
+			uint32_t best = 0;
+			uint32_t chosen = 0xFF;
+			for (uint32_t m = merchants; m > 0;) {
+				--m;
+				const MerchantMemory& mm = save.merchants[m].memory;
+				if (mm.u16(8) == 0) {
+					continue;
+				}
+				uint32_t other = 0;
+				while (other < g.u32(kTownCount) && save.towns[other].memory.u8(0x6F1) != m) {
+					++other;
+				}
+				if (other < g.u32(kTownCount)) {
+					continue;
+				}
+				const uint32_t rank = mm.u8(0x39C + mm.u8(0x19));
+				if (rank > best) {
+					best = rank;
+					chosen = m;
+				}
+			}
+			if (chosen < merchants) {
+				// 0x535740 y la operación: {0x46, comerciante, ciudad, 0xCDCDCDCD, 0xBADEAFFE}.
+				uint8_t op[0x14];
+				const uint32_t fields[5] = {0x46, chosen, town, 0xCDCDCDCD, 0xBADEAFFE};
+				std::memcpy(op, fields, sizeof(op));
+				enqueue_operation(save, op, sizeof(op));
+			}
+		}
+		event().u32(0) += 0xE00;
+		return 1;
+	}
+	const uint32_t phase = event().u32(0x10);
+	if ((phase & 0x80) && t.u16(0x854) == 0) {
+		t.u16(0x854) = 1;
+		t.u32(0x2E0) += 4;
+		t.u32(0x2D4) += 4;
+	}
+	if ((phase & 0x100) == 0) {
+		if (bits & 0x100) {
+			event().u32(0x10) = phase | 0x100;
+			event().u32(0) += 0x100;
+			return 1;
+		}
+		const int32_t population = t.s32(0x2D4);
+		if (population < 500) {
+			event().u32(0) += 0x1C00;
+			return 1;
+		}
+		if (population < 1000) {
+			event().u32(0) += uint32_t(0x88DB - population * 35);
+			return 1;
+		}
+		const uint8_t wall = facilities_detail::fn_5252f0(save, int(town));
+		if (wall == 1 || wall == 2) {
+			t.u32(0x76C) |= 0x100;
+			event().u32(0) += 5;
+			return 1;
+		}
+		if (wall != 0) {
+			event().u32(0) += 0x1C00;
+			return 1;
+		}
+		const uint32_t count = t.u16(0x776);
+		uint32_t r = t.u16(0x762);
+		while (r < count && (st.records[r].type < 0x36 || st.records[r].owner != 0xFF)) {
+			r = st.records[r].next;
+		}
+		if (r < count) {
+			event().u32(0) += 0xE00;
+			return 1;
+		}
+		t.u32(0x76C) |= 0x100;
+		event().u32(0) += 0x1C00;
+		return 1;
+	}
+	if (phase & 0x800) {
+		event().u32(0) += 0x1500;
+		return 1;
+	}
+	if (bits & 0x800) {
+		event().u32(0x10) = phase | 0x800;
+		event().u32(0x14) = g.u32(kTick);
+		event().u32(0) += 0x100;
+		return 1;
+	}
+	if (t.u32(0x2E0) * 3 + t.u32(0x2DC) > 0x5DC) {
+		if (g.u32(kAldermanBusy) == 0) {
+			construction_detail::fn_51fab0(save, int(town), 0x25, false);
+		}
+		event().u32(0) += 0x700;
+		return 1;
+	}
+	event().u32(0) += 0x1C00;
+	return 1;
+}
+
+// La operación 0x46 (0x535FD6, en el ejecutor 0x535760): {0x46, comerciante,
+// ciudad, -, marca}. Si la ciudad no tiene alcalde, el comerciante pasa a
+// serlo si tiene rango 5 o más en su ciudad natal o si la operación lleva la
+// marca 0xBADEAFFE (la del evento 0x2F siempre la lleva).
+void fn_535fd6(SaveGame& save, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	uint32_t fields[5];
+	std::memcpy(fields, operation, sizeof(fields));
+	const uint32_t merchants = g.u16(kMerchantCount);
+	if (fields[1] >= merchants || fields[2] >= g.u32(kTownCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	TownMemory& t = town_of(save, int(fields[2]));
+	if (t.u8(0x6F1) < merchants) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const MerchantMemory& m = save.merchants[fields[1]].memory;
+	if (m.u8(0x39C + m.u8(0x19)) < 5 && fields[4] != 0xBADEAFFE) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	t.u8(0x6F1) = uint8_t(fields[1]);
 }
 
 }  // namespace p3::data::tick

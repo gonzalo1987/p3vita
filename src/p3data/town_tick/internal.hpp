@@ -187,8 +187,12 @@ uint32_t fn_4eb0eb(SaveGame& save);
 // (0x531BD0).
 void fn_531d50(SaveGame& save, const GameMemory<0x10>& rec);
 void fn_531bd0(SaveGame& save);
-// El evento 0x39 (0x4ECDF4, la muralla de la ciudad nueva), como los de events_rare.
+// Los eventos 0x39 (0x4ECDF4, la muralla de la ciudad nueva) y 0x2F
+// (0x4EA0D4, su desarrollo), como los de events_rare; y la operación 0x46
+// (0x535FD6), que da alcalde a la ciudad nueva.
 uint32_t fn_4ecdf4(SaveGame& save);
+uint32_t fn_4ea0d4(SaveGame& save);
+void fn_535fd6(SaveGame& save, const uint8_t* operation);
 void fn_53b440(SaveGame& save, const uint8_t* operation);
 // La operación 0x3B (0x53A3E0): el comerciante aporta materiales a su
 // encargo de la carretera, de su oficina y de sus barcos en la ciudad.

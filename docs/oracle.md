@@ -311,8 +311,9 @@ las 12 en paralelo), y la carga, también en 0.
 El oráculo del mundo ejecuta ahora al final de cada tick las operaciones
 encoladas con el ejecutor del juego (0x535760, ver
 [formats/world_tick.md](formats/world_tick.md) §7), en su orden, las de los
-códigos de `--operaciones` (por omisión `0,85,86`: zarpar y los encargos de
-la Hansa); las demás se siguen descartando, como en p3vita
+códigos de `--operaciones` (por omisión `0,3b,46,4b,85,86`: zarpar, los
+encargos de la Hansa y el alcalde de una ciudad nueva); las demás se siguen
+descartando, como en p3vita
 (`run_operation`, `simulation.cpp`). El ejecutor se llama por un trampolín
 que le deja en la pila los 0x14 bytes de la operación y la marca «P3OP», así
 que al grabar `535760` tick_probe repite cada operación (sonda en
@@ -381,4 +382,30 @@ plantillas de mapa (`SaveGame::town_templates`). El registro que recibe
 comprueba entero grabando 0x4EBF54.
 
 No se puede comprobar el ataque a la guarida (un barco justo en ella:
-empieza una batalla). Falta el evento 0x2F de la ciudad nueva.
+empieza una batalla).
+
+**El desarrollo de la ciudad nueva** (evento 0x2F, 0x4EA0D4, y la operación
+0x46, 0x535FD6; [formats/world_tick.md](formats/world_tick.md) §8). El
+evento llega a los 180 días de fundar, así que los escenarios lo adelantan
+al tick siguiente: lo desenganchan de la cola, lo ponen en cabeza y lo
+colocan con 0x4D8DD0 del juego (o, en una ciudad que ya existe, lo crean con
+0x4D8CF0), con las fases y los bits de [0x76C] de cada rama. Los cuatro
+primeros fundan antes la ciudad sin grabar (`fundar` y el mundo hasta que
+0x4EBF54 la crea); los otros dos usan ciudades de la partida de más de 1000
+habitantes, que ya tienen muralla. La muralla (0x5252F0) se dirige con los
+puntos de muralla [0x7B0 + 2·i] (0x4FCFE0), que solo cuentan sin piezas de
+muralla pendientes ([0x766]): en la partida 3 todas las ciudades tienen, así
+que allí no sale 0xFF. Graban `4d85c0,535760`; la rama tomada se ve en el
+tick al que vuelve el evento (`retouch.py` lo escribe al final):
+
+| Escenario | Días | Ramas | Partidas | Resultado |
+|-|-|-|-|-|
+| `nueva_sin_marca` | 2 | sin el bit 1 de [0x76C]: 21 días | 1, 3 | 0 diferencias |
+| `nueva_alcalde_ia` | 2 | el fundador, de la IA, es su alcalde: su oficina (0x5308A0) y la fase 1; después la bandera 0x80 (4 pobres más) y menos de 500 habitantes: 28 días | 1, 3 | 0 diferencias |
+| `nueva_alcalde_humano` | 2 | el jugador de alcalde: sin oficina; después 699 habitantes: 0x88DB − 35 · 699 ticks | 1, 3 | 0 diferencias |
+| `nueva_sin_alcalde` | 16 | la operación 0x46 (el comerciante 23, el de la IA con más rango que no es alcalde; en la partida 1 con rango 2, entra por la marca 0xBADEAFFE), que el ejecutor ejecuta; a los 14 días, su oficina | 1, 3 | 0 diferencias |
+| `poblada` | 3 | muralla 2 (partida 1, retocada) o 1 (partida 3): el mercado, a los 5 ticks la fase 2 y al día el prestamista (0x51FAB0 con 0x25); 0xFF: 28 días; 0 con un tramo de la ciudad en obras (el último de 1 o de 3): 14 días; 0 sin él: el mercado y 28 días | 1, 3 | 0 diferencias |
+| `rica` | 2 | la fase 2 con el prestamista (bit 0x800): fase 3 y 21 días; sin él y 3 · 400 + 300 = 1500, que no pasa: 28 días | 1, 3 | 0 diferencias |
+
+El mundo sin retocar, con la 0x46 entre las operaciones del oráculo: 0
+diferencias en las 12 partidas durante 7 días.
