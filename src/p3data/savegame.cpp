@@ -7,6 +7,7 @@
 #include <map>
 
 #include "p3data/lz.hpp"
+#include "p3data/savegame_load.hpp"
 #include "p3data/savegame_write.hpp"
 #include "p3data/thresholds.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -941,9 +942,18 @@ void parse_names(const uint8_t* data, size_t size, SaveGame& out) {
 	// which the game undoes at the end of the load (0x5121C0), and the final
 	// separator.
 	if (pos + 4 <= size - 4) {
+		const size_t count = size_t(data[pos] | data[pos + 1] << 8);
 		const size_t text = size_t(data[pos + 2] | data[pos + 3] << 8);
 		if (pos + 4 + text == size - 4) {
 			out.custom_names = std::move(lists);
+			// The ship names of the save, for the load (savegame_load.hpp).
+			out.opaque.save_ship_names.clear();
+			for (size_t p = pos + 4, end = pos + 4 + text; p < end && out.opaque.save_ship_names.size() < count;) {
+				const void* zero = std::memchr(data + p, 0, end - p);
+				const size_t n = zero ? size_t(static_cast<const uint8_t*>(zero) - (data + p)) : end - p;
+				out.opaque.save_ship_names.emplace_back(reinterpret_cast<const char*>(data + p), n);
+				p += n + 1;
+			}
 		}
 	}
 }
@@ -1123,6 +1133,12 @@ bool load_savegame(const CprArchive& archive, const std::string& path, SaveGame&
 		return false;
 	}
 	load_game_scripts(archive, out);
+	// The .pst next to it (0x5476E0 reads it after the .pat), if it is there.
+	if (path.size() > 4 && path.compare(path.size() - 4, 4, ".pat") == 0) {
+		std::vector<uint8_t> pst;
+		const CprEntry* entry = archive.find(path.substr(0, path.size() - 4) + ".pst");
+		load_statistics_file(entry && archive.read(*entry, pst) ? &pst : nullptr, out);
+	}
 	return true;
 }
 
@@ -1302,6 +1318,7 @@ void load_game_scripts(const CprArchive& archive, SaveGame& save) {
 		}
 	}
 	load_save_scripts(archive, save);  // For write_savegame (savegame_write.hpp).
+	finish_load(save);  // The loader's last steps (savegame_load.hpp).
 	// Las plantillas de mapa de las ciudades nuevas (0x4F9B40).
 	save.town_templates.clear();
 	for (unsigned i = 0; i < 100; ++i) {

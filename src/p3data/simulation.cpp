@@ -1,4 +1,5 @@
 #include "p3data/simulation.hpp"
+#include "p3data/statistics.hpp"
 
 #include <cstring>
 
@@ -37,8 +38,11 @@ void advance_game_tick(SaveGame& save, Sailing& sailing) {
 	sailing.begin_tick();
 	const uint32_t t = save.tick() & 0xFF;
 	if (t == 0) {
-		// Al empezar el día (las estadísticas de 0x54DE90 no se reproducen).
+		// Al empezar el día.
 		tick::fn_5315c0(save, save.tick() % 0x700 == 0);
+		if (save.record_statistics) {
+			daily_statistics(save);  // 0x54DE90 (statistics.hpp)
+		}
 		tick::fn_535450(save, save.tick());
 		uint8_t& countdown = save.globals.u8(global::kWorld + 0x8B);
 		if (countdown > 0) {

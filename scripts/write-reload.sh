@@ -14,11 +14,17 @@ cd "$(dirname "$0")/.."
 : "${P3_SHIPS:?missing P3_SHIPS (folder with navdata/ and scripts/)}"
 tmp=${P3_TMP:-/tmp}
 build=${BUILD:-build}
+# P3_FIX_GAME_BUGS=1: p3vita writes with the fixes to the game's bugs
+# (game_fixes.hpp); the differences left are then those the fixes make.
+fix=()
+if [ -n "${P3_FIX_GAME_BUGS:-}" ]; then
+	fix=(--fix-game-bugs)
+fi
 saves=("$@")
 [ ${#saves[@]} -eq 0 ] && saves=(1 2 3 4 5 6 7 tut0 tut1 tut2 tut3 tut4)
 status=0
 for s in "${saves[@]}"; do
-	"$build/tools/p3save/p3save" "$P3_CPR" "missav/$s.pat" write "$tmp/$s-written.pat" >/dev/null
+	"$build/tools/p3save/p3save" "${fix[@]}" "$P3_CPR" "missav/$s.pat" write "$tmp/$s-written.pat" >/dev/null
 	"$build/tools/p3save/p3save" "$P3_CPR" "$tmp/$s-written.pat" raw "$tmp/$s-written.raw"
 	python3 tools/oracle/town_oracle.py "$P3_EXE" "$tmp/$s-written.raw" "$tmp/$s-written.probe" 0 51ba10 \
 		--barcos "$P3_SHIPS" --cpr "$P3_CPR" >/dev/null

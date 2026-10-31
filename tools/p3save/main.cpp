@@ -9,6 +9,7 @@
 
 #include "p3data/cpr.hpp"
 #include "p3data/font.hpp"
+#include "p3data/game_fixes.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/lz.hpp"
 #include "p3data/savegame.hpp"
@@ -26,13 +27,14 @@ int usage() {
 	std::fprintf(stderr,
 		"uso: p3save <archivo.cpr> <partida> [ciudad | comerciantes | barcos | raw <salida>]\n"
 		"       p3save <archivo.cpr> <partida> write <out.pat> [<out.raw>]\n"
+		"       (--fix-game-bugs anywhere: with the fixes to the game's bugs, game_fixes.hpp)\n"
 		"       p3save compress <in> <out>\n"
 		"\n"
 		"Sin más argumentos, lista las ciudades de la partida (p. ej. missav/1.pat).\n"
 		"Con el número de una ciudad, muestra su almacén, producción y consumo.\n"
 		"comerciantes y barcos los listan; raw guarda la partida descomprimida.\n"
 		"write saves it again as the game does (version 0x85; with <out.raw>, also uncompressed),\n"
-		"and the .pst next to <out.pat> with empty statistics.\n"
+		"and the .pst of its statistics next to <out.pat>.\n"
 		"<partida> is read from the archive or, if it isn't there, from the disk.\n"
 		"compress compresses any file as the game does (lz_compress).\n");
 	return 2;
@@ -154,17 +156,44 @@ bool read_any_savegame_data(const CprArchive& archive, const std::string& path, 
 }
 
 bool load_any_savegame(const CprArchive& archive, const std::string& path, SaveGame& save, std::string* error) {
+	if (archive.find(path)) {
+		return load_savegame(archive, path, save, error);  // with its .pst, if the archive has it
+	}
 	std::vector<uint8_t> data;
 	if (!read_any_savegame_data(archive, path, data, error) || !parse_savegame(data.data(), data.size(), save, error)) {
 		return false;
 	}
 	load_game_scripts(archive, save);
+	// The .pst next to it on the disk, if there is one.
+	if (path.size() > 4 && path.compare(path.size() - 4, 4, ".pat") == 0) {
+		std::vector<uint8_t> pst;
+		if (FILE* f = std::fopen((path.substr(0, path.size() - 4) + ".pst").c_str(), "rb")) {
+			for (int c; (c = std::fgetc(f)) != EOF;) {
+				pst.push_back(uint8_t(c));
+			}
+			std::fclose(f);
+			load_statistics_file(&pst, save);
+		} else {
+			load_statistics_file(nullptr, save);
+		}
+	}
 	return true;
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
+	// --fix-game-bugs anywhere: the fixes to the game's bugs (off by default,
+	// as the game: what the writer's checks compare).
+	int kept = 1;
+	for (int i = 1; i < argc; ++i) {
+		if (std::strcmp(argv[i], "--fix-game-bugs") == 0) {
+			p3::data::set_fix_game_bugs(true);
+		} else {
+			argv[kept++] = argv[i];
+		}
+	}
+	argc = kept;
 	if (argc == 4 && std::strcmp(argv[1], "compress") == 0) {
 		FILE* f = std::fopen(argv[2], "rb");
 		if (!f) {
@@ -224,10 +253,10 @@ int main(int argc, char** argv) {
 		std::string pst = argv[4];
 		if (pst.size() > 4 && pst.compare(pst.size() - 4, 4, ".pat") == 0) {
 			pst.replace(pst.size() - 4, 4, ".pst");
-			if (!write_file(pst.c_str(), statistics_file())) {
+			if (!write_file(pst.c_str(), statistics_file(save))) {
 				return 1;
 			}
-			std::printf("empty statistics in %s\n", pst.c_str());
+			std::printf("statistics in %s\n", pst.c_str());
 		}
 		return 0;
 	}

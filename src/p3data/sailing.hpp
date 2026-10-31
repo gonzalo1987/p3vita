@@ -76,7 +76,12 @@ public:
 
 	// Lo que hace el juego al leer los barcos (0x516520): los que navegan de
 	// una ciudad a otra reciben la ruta de la matriz. Llamar una vez, tras cargar.
+	// Then, as at the end of 0x549F40, check_loaded_routes.
 	void assign_loaded_routes();
+	// 0x5048C0 (sailing_load.cpp): fn_517c10 for each ship, from the last one.
+	void check_loaded_routes();
+	// 0x517C10: a ship no longer on its way to its next point gets a new route.
+	void fn_517c10(uint16_t index);
 
 	// Con false, en puerto solo se ejecutan los estados 1, 2, 3 y el 0 de los
 	// jugadores humanos, como en tools/oracle/sail_oracle.py y en

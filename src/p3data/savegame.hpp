@@ -338,9 +338,37 @@ struct SaveOpaque {
 	std::vector<GameMemory<0xDC>> trade_routes;
 	// The battles (0x611AE0 on 0x6E55D0), as in the file.
 	std::vector<uint8_t> battles;
+	// The ship names written by the players that the save carries (the end of
+	// its names section, 0x511E30), in Latin-1: they only last for the load
+	// (savegame_load.hpp).
+	std::vector<std::string> save_ship_names;
 	// The 40 town names of scripts/NamenStaedte_eng.txt (0x5125E0), by town
 	// number, in Latin-1 (the table 0x6DDA00). Read by load_game_scripts.
 	std::vector<std::string> town_names;
+};
+
+// The statistics for the graphs of the game: the object 0x6DFC90, filled
+// every day by 0x54DE90 and saved in the .pst (statistics.hpp). Its header
+// (u16 [+0x0..+0xA] and the bytes [+0x20..+0x23]) is in the globals.
+// A record of the towns: one block of 0x204 bytes for each town (0x54D1D0),
+// as the game's {u32 number, data, next}.
+using TownStatistics = std::vector<GameMemory<0x204>>;
+// The object of 0x2310 bytes of a merchant (0x54CA20): u16 [+0x0] the
+// merchant, u16 [+0x2], u8 [+0x4], u8 [+0x5] the current record of its rings
+// of records of 0x70 bytes (32 days from [+0x8], 24 weeks from [+0xE08], 24
+// months from [+0x1888]), u16 [+0x6] its years. In each record the game
+// links the previous one by the pointer [+0x6C]; the rings never change, so
+// here that u32 holds the offset of the previous record in the object, and
+// [+0x2308] (the years) and [+0x230C] (the next object) are 0.
+struct MerchantStatistics {
+	GameMemory<0x2310> memory;
+	std::vector<GameMemory<0x70>> years;  // The list [+0x2308], newest first (the link [+0x6C] at 0).
+};
+struct Statistics {
+	// [+0xC] the days (32 kept), [+0x10] the weeks, [+0x14] the months (25
+	// kept), [+0x18] the years: newest first.
+	std::array<std::vector<TownStatistics>, 4> towns;
+	std::vector<MerchantStatistics> merchants;  // [+0x1C], in the order of the list.
 };
 
 struct SaveGame {
@@ -455,6 +483,11 @@ struct SaveGame {
 	std::array<std::vector<std::string>, 2> first_names;
 	// What p3vita keeps only to write the save (savegame_write.hpp).
 	SaveOpaque opaque;
+	// The daily statistics (statistics.hpp) and whether advance_game_tick
+	// records them (0x54DE90), as the game does: on since it is checked
+	// (0 differences in the 12 saves, docs/cloud/statistics.md).
+	Statistics statistics;
+	bool record_statistics = true;
 };
 
 // Lee una partida ya descomprimida.

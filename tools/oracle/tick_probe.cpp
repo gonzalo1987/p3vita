@@ -28,8 +28,10 @@
 // zarpar (537670), pero no las dos.
 //
 // With --write OUT, at the end it writes the uncompressed .pat of the state
-// reached as the game's save function does (savegame_write.hpp), to compare
-// with town_oracle.py --write (tools/oracle/compare_written.py).
+// reached as the game's save function does (savegame_write.hpp), and its .pst
+// to OUT.pst, to compare with town_oracle.py --write
+// (tools/oracle/compare_written.py). With --carga and --pst FILE it reads an
+// uncompressed .pst after the save (statistics.hpp).
 //
 // Con --cpr, las funciones de los barcos que necesitan la navegación (las de
 // los convoyes, la actualización de barcos) se pueden repetir también una a
@@ -54,6 +56,7 @@
 #include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/savegame_write.hpp"
+#include "p3data/statistics.hpp"
 #include "p3data/seamap.hpp"
 #include "probe_registry.hpp"
 
@@ -321,6 +324,11 @@ void build_save(const State& state, SaveGame& save) {
 			copy_blocks(*f, save.world_object_lists[i]);
 		}
 	}
+	for (int k = 0; k < 5; ++k) {  // The statistics (town_oracle.py --statistics).
+		if (const Region* r = find(state, "S" + std::to_string(k))) {
+			read_statistics_region(save, k, r->bytes);
+		}
+	}
 	save.rand_state = get<uint32_t>(state.at("r").bytes.data(), 0);
 	save.player = int(save.globals.u32(global::kPlayer));
 }
@@ -388,6 +396,11 @@ State dump_save(const SaveGame& save, const State& game) {
 	}
 	if (s.count("Y")) {
 		s["Y"].bytes = save.town_travel;
+	}
+	for (int k = 0; k < 5; ++k) {  // The statistics (town_oracle.py --statistics).
+		if (s.count("S" + std::to_string(k))) {
+			s["S" + std::to_string(k)].bytes = statistics_region(save, k);
+		}
 	}
 	if (s.count("V")) {
 		store_blocks(save.convoys, s["V"]);
@@ -518,7 +531,10 @@ bool loaded_global(uint32_t a) {
 			((a - global::kWorld - 0xB10) % 0x2C < 0x1E || (a - global::kWorld - 0xB10) % 0x2C >= 0x28)) ||
 		(a >= 0x6DD744 && a < 0x6DD74A) || (a >= 0x6DD734 && a < 0x6DD73C) ||
 		(a >= global::kShips + 0x100 && a < global::kShips + 0x108) ||
-		(a >= global::kShips + 0x20 && a < global::kShips + 0xE0);
+		(a >= global::kShips + 0x20 && a < global::kShips + 0xE0) ||
+		// The header of the statistics (0x6DFC90): the u16 counters and the
+		// bytes [+0x20..+0x23], not its pointers (regions S0..S4).
+		(a >= 0x6DFC90 && a < 0x6DFC9C) || (a >= 0x6DFCB0 && a < 0x6DFCB4);
 }
 
 // Compara y escribe las diferencias. Devuelve cuántas hay. Con only_loaded,
@@ -614,6 +630,7 @@ int main(int argc, char** argv) {
 	uint32_t only = 0;
 	int budget = 60;
 	std::string write_path;  // --write: the save of the state reached (savegame_write.hpp).
+	std::string pst_path;  // --pst: with --carga, an uncompressed .pst read after it (statistics.hpp).
 	for (int i = 2; i < argc; ++i) {
 		const std::string arg = argv[i];
 		if (arg == "--continuo") {
@@ -642,6 +659,8 @@ int main(int argc, char** argv) {
 			budget = std::atoi(argv[++i]);
 		} else if (arg == "--write" && i + 1 < argc) {
 			write_path = argv[++i];
+		} else if (arg == "--pst" && i + 1 < argc) {
+			pst_path = argv[++i];
 		}
 	}
 	ProbeRegistry registry;
@@ -667,6 +686,7 @@ int main(int argc, char** argv) {
 	register_probes_events_rare(registry);
 	register_probes_alderman(registry);
 	register_probes_battle(registry);
+	register_probes_statistics(registry);
 
 	Input in(argv[1]);
 	if (!in.ok() || !in.expect("P3PROBE1")) {
@@ -709,6 +729,14 @@ int main(int argc, char** argv) {
 		if (archive) {
 			load_game_scripts(*archive, save);
 			g_scripts_loaded = true;
+		}
+		if (!pst_path.empty()) {
+			std::ifstream p(pst_path, std::ios::binary);
+			const std::vector<uint8_t> pst((std::istreambuf_iterator<char>(p)), std::istreambuf_iterator<char>());
+			if (!read_statistics(pst.data(), pst.size(), save)) {
+				std::fprintf(stderr, "%s: cut short\n", pst_path.c_str());
+				return 1;
+			}
 		}
 		if (!continuous) {
 			// Las rutas de los barcos las da Sailing después de leer la partida.
@@ -817,8 +845,10 @@ int main(int argc, char** argv) {
 			// advance_time baja 1 el [+0x8B] del mundo si no es 0 (como
 			// advance_game_tick y el oráculo con --resto 5315c0): antes de la
 			// siguiente llamada de primer nivel que no sea 0x535450.
+			// Nor the statistics (0x54DE90), which run between 0x5315C0 and 0x535450.
 			if (countdown_pending &&
-				(call.tick != countdown_tick || (call.esp >= countdown_esp && call.function != 0x535450))) {
+				(call.tick != countdown_tick || (call.esp >= countdown_esp && call.function != 0x535450 &&
+					call.function != 0x54DE90))) {
 				uint8_t& countdown = save.globals.u8(global::kWorld + 0x8B);
 				if (countdown > 0) {
 					--countdown;
@@ -902,7 +932,10 @@ int main(int argc, char** argv) {
 		const std::vector<uint8_t> raw = write_savegame(save);
 		std::ofstream out(write_path, std::ios::binary);
 		out.write(reinterpret_cast<const char*>(raw.data()), std::streamsize(raw.size()));
-		std::printf("%zu bytes in %s\n", raw.size(), write_path.c_str());
+		const std::vector<uint8_t> pst = write_statistics(save);
+		std::ofstream out_pst(write_path + ".pst", std::ios::binary);
+		out_pst.write(reinterpret_cast<const char*>(pst.data()), std::streamsize(pst.size()));
+		std::printf("%zu bytes in %s, %zu in %s.pst\n", raw.size(), write_path.c_str(), pst.size(), write_path.c_str());
 	}
 	return bad ? 1 : 0;
 }

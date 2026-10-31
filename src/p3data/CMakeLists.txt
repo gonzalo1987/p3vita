@@ -16,8 +16,11 @@ add_library(p3data STATIC
 	navigation.cpp
 	prices.cpp
 	sailing.cpp
+	sailing_load.cpp
 	savegame.cpp
 	savegame_write.cpp
+	savegame_load.cpp
+	statistics.cpp
 	lz_compress.cpp
 	seamap.cpp
 	simulation.cpp
