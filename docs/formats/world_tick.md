@@ -225,10 +225,10 @@ sobre el oráculo del mundo).
 
 > En p3vita (`src/p3data/town_tick/alderman.cpp`): la candidatura, las
 > operaciones 0x85, 0x86, 0x4B y 0x3B y el evento 0x32 con comerciante
-> (los tipos 1 a 4), idénticos al juego con estados retocados
-> ([../oracle.md](../oracle.md), «Las operaciones encoladas» y «Los encargos
-> de la Hansa»). Falta el tipo 0 (fundar una ciudad) y el ataque a la
-> guarida del tipo 3 (una batalla).
+> (todos los tipos; fundar una ciudad en `new_town.cpp`), idénticos al juego
+> con estados retocados ([../oracle.md](../oracle.md), «Las operaciones
+> encoladas» y «Los encargos de la Hansa»). Falta el ataque a la guarida del
+> tipo 3 (una batalla) y el evento 0x2F de la ciudad nueva.
 
 [+0x37] del comerciante: 0 nada; 1 a 3 candidato con 0 a 2 encargos
 cumplidos; 4 puede presentarse (si su ciudad natal tiene [0x2C8] & 0x40).
@@ -351,6 +351,30 @@ el pirata vence el día 38; los otros vencen hacia el día 200 y el 370; la IA
 no cumple ninguno en ese tiempo. El de fundar una ciudad para el emulador el
 día 5: 0x531D50 lee del archivo (`Archiver.dll!arc_CreateFile`) la plantilla
 `iso/towns/stadtplatz%.2u.tow`.
+
+**Fundar una ciudad** (al empezar el encargo de tipo 0, 0x4EBF54). Arma un
+registro de 16 bytes (u32 situación 0, u32 mercancías [+0x10] del encargo,
+u32 0, u8 número de ciudad [+0x14], u8 plantilla [+0x15], u8 índice nuevo =
+nº de ciudades, que también va a [+0x16], u8 0) y llama a 0x531D50, que
+amplía las ciudades (constructor 0x51B100, copiando las de antes) y sus
+asedios (0x6334B0, [+0x4] el índice), pone el índice, el número (mundo
+[+0x18 + i]) y la plantilla (mundo [+0x40 + i], [0x2C2]), elige los
+ciudadanos candidatos a alcalde (0x5289B0), le da dos capitanes (0x526A50),
+el astillero según el año (0x545BE0, nada con 0) y el mapa de la plantilla
+`iso/towns/stadtplatz%.2u.tow` (0x51E8D0 → 0x4F9B40 → 0x4F9770: el mismo
+formato que el town_class1 de la partida), lo demás (0x5458D0: productividad
+de las empresas de las mercancías de la máscara, 38 habitantes, las calles)
+y un evento 0x2F a los 180 días; rehace las rutas (0x448040: la matriz de
+rutas pasa a n × n, las de la nueva con 0x445D50) y la matriz de tiempos de
+viaje (0x531BD0). Después 0x4EBF54 pone de alcalde al comerciante y crea un
+evento 0x39 para mañana: la muralla de la ciudad (0x4ECDF4, con 0x5252F0 y
+0x522B20). El encargo se cumple cuando la ciudad tiene mercado: lo construye
+con sus obras, y las operaciones de obras (0x22...) aún no se ejecutan, así
+que de momento ni en p3vita ni en el oráculo llega a cumplirse. El evento
+0x2F (0x4EA0D4, 391 instrucciones, cada 14 días desde los 180) lleva el
+crecimiento de la ciudad nueva: con el primer edificio municipal, la oficina
+de su alcalde comerciante (0x5308A0) o, si no lo es, la operación 0x46 a un
+jugador humano; está por reescribir.
 
 Construir el edificio de la carretera solo ejecuta 140 de las 1071
 instrucciones de 0x521900 (más 28 de 0x4FCBD0); el juego empieza a buscar el

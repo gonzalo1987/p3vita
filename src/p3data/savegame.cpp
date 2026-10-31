@@ -1,6 +1,7 @@
 #include "p3data/savegame.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -1222,6 +1223,18 @@ void load_game_scripts(const CprArchive& archive, SaveGame& save) {
 				break;
 			}
 		}
+	}
+	// Las plantillas de mapa de las ciudades nuevas (0x4F9B40).
+	save.town_templates.clear();
+	for (unsigned i = 0; i < 100; ++i) {
+		char path[40];
+		std::snprintf(path, sizeof(path), "iso/towns/stadtplatz%.2u.tow", i);
+		const CprEntry* entry = archive.find(path);
+		if (!entry) {
+			break;
+		}
+		save.town_templates.emplace_back();
+		archive.read(*entry, save.town_templates.back());
 	}
 	// 0x51E440: la tabla de las ciudades.
 	IniFile towns;

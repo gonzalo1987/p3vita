@@ -9,8 +9,19 @@
 namespace p3::data::tick::alderman_detail {
 
 uint8_t fn_515a60(const SaveGame& save, uint32_t from);
+void fn_4ebf54(SaveGame& save, uint32_t index);
 
 }  // namespace p3::data::tick::alderman_detail
+
+// Lo que new_town.cpp expone para las sondas.
+namespace p3::data::tick::new_town_detail {
+
+void fn_5289b0(SaveGame& save, int town, uint32_t flag, uint32_t seed, uint32_t step);
+void fn_526a50(SaveGame& save, int town, bool flag);
+void fn_545890(SaveGame& save, int town, bool flag);
+void fn_5458d0(SaveGame& save, int town, bool flag, uint32_t wares, uint32_t other);
+
+}  // namespace p3::data::tick::new_town_detail
 
 namespace p3::probe {
 
@@ -25,6 +36,35 @@ void register_probes_alderman(ProbeRegistry& r) {
 	r[0x515A60] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		c.eax_mask = 0xFF;  // Devuelve un u8 en al.
 		return tick::alderman_detail::fn_515a60(s, c.args[0]);
+	};
+	// Fundar una ciudad (new_town.cpp).
+	namespace nt = tick::new_town_detail;
+	r[0x5289B0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		nt::fn_5289b0(s, c.town(c.ecx), c.args[0], c.args[1], c.args[2]);
+		return std::nullopt;
+	};
+	r[0x526A50] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		nt::fn_526a50(s, c.town(c.ecx), (c.args[0] & 0xFF) != 0);
+		return std::nullopt;
+	};
+	r[0x545890] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		nt::fn_545890(s, c.town(c.ecx), c.args[0] != 0);
+		return std::nullopt;
+	};
+	r[0x5458D0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		nt::fn_5458d0(s, c.town(c.ecx), c.args[0] != 0, c.args[1], c.args[2]);
+		return std::nullopt;
+	};
+	r[0x531BD0] = [](SaveGame& s, const ProbeCall&) -> std::optional<uint32_t> {
+		tick::set_event_sailing(probe_sailing());
+		tick::fn_531bd0(s);
+		return std::nullopt;
+	};
+	r[0x4EBF54] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// Sobre la cola de eventos, con el índice del evento: empieza el encargo.
+		tick::set_event_sailing(probe_sailing());
+		tick::alderman_detail::fn_4ebf54(s, c.args[0] & 0xFFFF);
+		return std::nullopt;
 	};
 	r[0x535760] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		// thiscall sobre la operación, que está en el montón del emulador: el

@@ -2500,6 +2500,8 @@ int events_rare(SaveGame& save, uint16_t event, uint16_t type) {
 		return int(fn_4ea594(save));
 	case 0x32:
 		return int(fn_4eafe4(save));
+	case 0x39:
+		return int(fn_4ecdf4(save));  // La muralla de una ciudad nueva (new_town.cpp).
 	case 0x35:
 		fn_4e94a4(save);
 		return 0;

@@ -118,6 +118,10 @@ public:
 	// Ruta entre los puntos de llegada de dos ciudades (la matriz que el
 	// juego calcula al cargar con 0x4482C0; aquí, la primera vez que se pide).
 	std::shared_ptr<SeaRoute> town_route(int from, int to);
+	// Una ciudad más al final de SaveGame::towns (0x448040, al fundarla): la
+	// matriz de rutas pasa a n × n conservando las de antes; las de la nueva
+	// se calculan al pedirlas, con el mismo algoritmo que usa el juego.
+	void add_town();
 
 	// Velocidad de un barco según su tipo, su carga y su casco (0x5170F0).
 	static uint32_t speed(const SavedShip& ship);

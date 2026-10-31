@@ -182,6 +182,13 @@ void fn_53fe20(SaveGame& save);
 // despachador (0 quitarlo, 1 recolocarlo); y la operación 0x4B (0x53B440),
 // con la que el jugador humano coge un encargo.
 uint32_t fn_4eb0eb(SaveGame& save);
+// new_town.cpp: fundar una ciudad (0x531D50, con el registro de 16 bytes que
+// arma 0x4EBF54) y la matriz de tiempos de viaje con la ciudad nueva
+// (0x531BD0).
+void fn_531d50(SaveGame& save, const GameMemory<0x10>& rec);
+void fn_531bd0(SaveGame& save);
+// El evento 0x39 (0x4ECDF4, la muralla de la ciudad nueva), como los de events_rare.
+uint32_t fn_4ecdf4(SaveGame& save);
 void fn_53b440(SaveGame& save, const uint8_t* operation);
 // La operación 0x3B (0x53A3E0): el comerciante aporta materiales a su
 // encargo de la carretera, de su oficina y de sus barcos en la ciudad.

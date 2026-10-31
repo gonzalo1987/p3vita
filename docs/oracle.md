@@ -371,7 +371,14 @@ puede hacer pasar el mundo sin grabar hasta el tick anterior al encargo.
 | `encargo_nuevo`, `encargo_cumplido`, `encargo_vencido`, `barco_perdido`, `jugador_coge`, `jugador_vencido` (lo común y los tipos 2 y 4, la operación 0x4B) | 1, 3 | 0 diferencias |
 | `carretera_ia`, `carretera_tramos`, `carretera_ultimo`, `carretera_obra`, `carretera_hecha`, `jugador_carretera_vencida`, `jugador_materiales` (el tipo 1 y la operación 0x3B) | 1, 3 (`carretera_ultimo` también 5 y tut2) | 0 diferencias, también en las ciudades (rejilla, registros, obras) |
 | `guarida_lejos`, `guarida_cerca`, `guarida_rondando`, `guarida_hecha`, `guarida_fallida` (el tipo 3 sin el ataque) | 3, 5 | 0 diferencias, también en los barcos piratas nuevos |
+| `fundar` (el tipo 0: la ciudad nueva) | 1, 3 | 0 diferencias en la fundación (0x4EBF54 con 0x531D50 entero) y en cada pieza suelta, y en los 6 días siguientes grabando todo el mundo (los ticks de la ciudad nueva, su asedio, su muralla con el evento 0x39) |
 
-No se pueden comprobar: el ataque a la guarida (un barco justo en ella:
-empieza una batalla) y el tipo 0 (fundar una ciudad; el oráculo no lee
-todavía del archivo con `Archiver.dll`).
+Para fundar una ciudad el oráculo lee del archivo como el juego
+(`Archiver.dll`: `arc_CreateFile`, `arc_FileLength`, `arc_Read` y
+`arc_ReleaseFile`, desde DATOS o `--cpr`), y tick_probe da a las sondas las
+plantillas de mapa (`SaveGame::town_templates`). El registro que recibe
+0x531D50 está en la pila del juego, fuera de lo que graba el oráculo: se
+comprueba entero grabando 0x4EBF54.
+
+No se puede comprobar el ataque a la guarida (un barco justo en ella:
+empieza una batalla). Falta el evento 0x2F de la ciudad nueva.

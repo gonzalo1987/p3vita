@@ -367,6 +367,10 @@ struct SaveGame {
 	// lee): lo que se tarda de una ciudad a otra, en dieciseisavos de día a la
 	// velocidad de una snaikka (0x516930; 0x516AB0 lo pasa a días).
 	std::vector<uint8_t> town_travel;
+	// Las plantillas de mapa de una ciudad nueva (iso/towns/stadtplatz%.2u.tow,
+	// por su número; las lee 0x4F9B40 al fundar una ciudad): u32 ancho, u32
+	// alto, 0x5C bytes de town_class1 y la rejilla. Las carga load_game_scripts.
+	std::vector<std::vector<uint8_t>> town_templates;
 	// Convoyes (*0x6DD7A8, tantos como [0x6DD896]): registros de 0x3C bytes
 	// enlazados por el u16 [+0x8] en la lista de libres ([0x6DD884]) o en la
 	// de los que existen ([0x6DD88C]). Ver ship_ai.cpp.

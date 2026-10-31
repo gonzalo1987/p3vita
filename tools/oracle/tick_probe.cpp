@@ -671,14 +671,17 @@ int main(int argc, char** argv) {
 	// Los puntos de las expediciones, que la grabación no guarda: de los datos.
 	std::vector<std::array<uint16_t, 2>> expeditions;
 	std::vector<std::string> ship_names;  // Tampoco los nombres de barco.
+	std::vector<std::vector<uint8_t>> town_templates;  // Ni las plantillas de las ciudades nuevas.
 	if (archive) {
 		SaveGame scripts;
 		load_game_scripts(*archive, scripts);
 		expeditions = scripts.expeditions;
 		ship_names = scripts.ship_names;
+		town_templates = scripts.town_templates;
 		if (continuous && load.empty()) {
 			save.expeditions = expeditions;
 			save.ship_names = ship_names;
+			save.town_templates = town_templates;
 		}
 	}
 	std::map<uint32_t, std::pair<int, int>> results;  // función → {bien, mal}
@@ -755,6 +758,7 @@ int main(int argc, char** argv) {
 			build_save(before, save);
 			save.expeditions = expeditions;
 			save.ship_names = ship_names;
+			save.town_templates = town_templates;
 		}
 		save.queued_operations.clear();
 		const std::optional<uint32_t> ours = fn->second(save, call);

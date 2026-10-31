@@ -202,6 +202,20 @@ std::shared_ptr<SeaRoute> Sailing::town_route(int from, int to) {
 	return route;
 }
 
+void Sailing::add_town() {
+	const size_t n = save_.towns.size();
+	const size_t old = n - 1;
+	std::vector<std::shared_ptr<SeaRoute>> grown(n * n);
+	if (matrix_.size() == old * old) {
+		for (size_t r = 0; r < old; ++r) {
+			for (size_t c = 0; c < old; ++c) {
+				grown[r * n + c] = matrix_[r * old + c];
+			}
+		}
+	}
+	matrix_ = std::move(grown);
+}
+
 // Ruta para ir de `start` a `end` (0x445010 con dos puntos). Entre dos
 // ciudades es la de la matriz, compartida, a la que el juego cambia el primer
 // punto por el de salida; si no, una ruta nueva que es del barco.

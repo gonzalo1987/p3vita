@@ -593,11 +593,26 @@ void fn_4ebf54(SaveGame& save, uint32_t index) {
 	e.u8(0xF) = 1;
 	const uint32_t now = g.u32(kTick);
 	switch (e.u8(0xC)) {
-	case 0:
-		// Por reescribir: crea la ciudad (0x531D50, que carga su mapa del
-		// archivo), [+0x16] es la ciudad nueva y el comerciante su alcalde, y
-		// un evento 0x39 para mañana.
+	case 0: {
+		// Funda la ciudad (new_town.cpp: 0x531D50) con el índice siguiente
+		// ([+0x16]), su número [+0x14], las mercancías [+0x10] y la plantilla
+		// [+0x15]; el comerciante es su alcalde, y un evento 0x39 para mañana.
+		GameMemory<0x10> rec;
+		rec.u32(0x4) = e.u32(0x10);
+		rec.u8(0xC) = e.u8(0x14);
+		rec.u8(0xD) = e.u8(0x15);
+		const uint8_t town = uint8_t(g.u32(kTownCount));
+		rec.u8(0xE) = town;
+		e.u8(0x16) = town;
+		fn_531d50(save, rec);
+		save.towns[town].memory.u8(0x6F1) = save.events[index].u8(0xD);
+		g.u32(kEventBusy) = 0;
+		const uint16_t created = events_detail::fn_4d8cf0(save, g.u32(kTick) + 0x100);
+		g.u32(kEventBusy) = 1;
+		save.events[created].u16(0x6) = 0x39;
+		save.events[created].u8(0x8) = town;
 		break;
+	}
 	case 1: {
 		// La carretera: el bit 0x8000 en las dos ciudades y (1,5 · días + 20)
 		// días de plazo, con los días del par de 0x672BF8 (620 si no está).
