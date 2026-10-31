@@ -20,6 +20,7 @@
 #include "p3data/aim.hpp"
 #include "p3data/cpr.hpp"
 #include "p3data/font.hpp"
+#include "p3data/hanse_tasks.hpp"
 #include "p3data/image.hpp"
 #include "p3data/navigation.hpp"
 #include "p3data/prices.hpp"
@@ -31,6 +32,7 @@
 #include "p3data/town_buildings.hpp"
 #include "p3data/trade.hpp"
 #include "p3data/wares.hpp"
+#include "debug_states.hpp"
 #include "script.hpp"
 
 using namespace p3::data;
@@ -834,6 +836,305 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 	}
 }
 
+// --- The Hanse panel: the path to Alderman («Gobernador») ---
+// What the game shows in its Hanse task window (0x5E87D0) and its road
+// window (0x5F2A20), and the operations they queue (0x4B and 0x3B, built in
+// p3data/hanse_tasks.cpp); see docs/cloud/alderman-viewer.md. The game's own
+// texts are in Patrician3.exe, not in the CPR, so these are the viewer's,
+// with the names (towns, people, ships) from the CPR and the save.
+
+struct HanseUi {
+	bool open = false;
+	int row = 0;  // Selected task or material.
+	int amount = 0;  // Index in kRoadAmounts.
+	std::string message;
+	Uint32 message_until = 0;
+};
+
+// What the panel shows, worked out from the save each frame.
+struct HanseView {
+	int level = 0;  // candidacy_level of the player.
+	bool is_alderman = false;
+	uint16_t task = 0xFFFF;  // The player's task, or 0xFFFF.
+	std::vector<uint16_t> offered;  // Tasks on offer, for a candidate without a task.
+	bool road_here = false;  // The player's road can take materials in this town.
+	RoadMaterials road;
+	std::array<int, 4> available{};
+
+	int rows() const { return task != 0xFFFF ? (road_here ? 4 : 0) : int(offered.size()); }
+};
+
+HanseView hanse_view(const SaveGame& save, int town) {
+	HanseView v;
+	const int player = save.player;
+	v.level = candidacy_level(save, player);
+	v.is_alderman = alderman(save) == player;
+	v.task = merchant_hanse_task(save, player);
+	if (v.task == 0xFFFF) {
+		// The game's window offers the tasks to a candidate without one (0x4EC5F4).
+		if (v.level >= 1 && v.level <= 3) {
+			v.offered = offered_hanse_tasks(save);
+		}
+	} else if (road_materials(save, v.task, player, v.road)) {
+		// The road window works in either of the two towns while sections are
+		// left (what the executor of 0x3B, 0x53A3E0, accepts).
+		const HanseTask t = hanse_task(save, v.task);
+		v.road_here = (t.data[0] == town || t.data[1] == town) && t.data[2] > 0;
+		v.available = available_road_materials(save, player, town);
+	}
+	return v;
+}
+
+// Name of a town by its number in StadtDaten.ini (not its index in the save).
+std::string numbered_town_name(const std::vector<std::string>& names, int number) {
+	return number >= 0 && number < int(names.size()) ? names[size_t(number)] : "la ciudad " + std::to_string(number);
+}
+
+std::string full_date(uint32_t tick) {
+	const GameDate date = date_from_tick(tick);
+	return day_and_month(date.day, date.month) + " de " + std::to_string(date.year);
+}
+
+// One line for a task: what to do. The game's descriptions (one per type,
+// «An overland trade route is to be established between two towns...») are
+// longer and in the executable.
+std::string hanse_task_text(const SaveGame& save, const HanseTask& t, const std::vector<std::string>& town_names) {
+	auto index_name = [&](int town) {
+		return town < int(save.towns.size()) ? town_name(save, town_names, town) : "la ciudad " + std::to_string(town);
+	};
+	switch (HanseTaskType(t.type)) {
+	case HanseTaskType::FoundTown:
+		return "Fundar una ciudad nueva: " + numbered_town_name(town_names, t.data[4]);
+	case HanseTaskType::Road:
+		return "Carretera entre " + index_name(t.data[0]) + " y " + index_name(t.data[1]);
+	case HanseTaskType::PirateShip: {
+		const size_t ship = size_t(t.data[0] | t.data[1] << 8);
+		return ship < save.ships.size() ? "Cazar el barco pirata " + save.ships[ship].name()
+										: "Cazar un barco pirata";
+	}
+	case HanseTaskType::PirateNest:
+		return "Acabar con la guarida pirata de " + numbered_town_name(town_names, t.data[1]);
+	case HanseTaskType::GrowTown:
+		return "Que " + index_name(t.data[2]) + " llegue a " + format_money(t.data[0] | t.data[1] << 8) +
+			" habitantes";
+	default:
+		return "Encargo anulado";
+	}
+}
+
+// How the player's task is going.
+std::string hanse_progress_text(const SaveGame& save, const HanseTask& t, const HanseView& v,
+	const std::vector<std::string>& town_names) {
+	switch (HanseTaskType(t.type)) {
+	case HanseTaskType::FoundTown:
+		return t.started && t.data[6] < save.towns.size()
+			? "Se cumple cuando " + town_name(save, town_names, t.data[6]) + " tenga mercado."
+			: "La ciudad se funda al empezar el encargo.";
+	case HanseTaskType::Road:
+		return "Tramos hechos: " + std::to_string(v.road.sections - v.road.sections_left) + " de " +
+			std::to_string(v.road.sections) + " (" + std::to_string(v.road.percent()) + " %).";
+	case HanseTaskType::PirateShip:
+		return "Hunde el barco pirata (las batallas aún no están en p3vita).";
+	case HanseTaskType::PirateNest:
+		return t.data[2] == 0 ? "Acerca un barco a la guarida." : "Ataca la guarida (las batallas aún no están).";
+	case HanseTaskType::GrowTown:
+		return t.data[2] < save.towns.size() ? "Habitantes ahora: " + format_money(save.towns[t.data[2]].citizens()) + "."
+											 : "";
+	default:
+		return "";
+	}
+}
+
+std::string road_amount_text(int amount) {
+	const uint32_t n = kRoadAmounts[size_t(amount)];
+	return n == 0xFFFFFFFF ? "todo" : std::to_string(n);
+}
+
+// Disposición del panel, compartida por el dibujo y el táctil.
+struct HanseLayout {
+	static constexpr int kWidth = 600;
+	static constexpr int kPadding = 10;
+	static constexpr int kRowHeight = 22;
+	static constexpr int kMaxRows = 5;
+	static constexpr int kInfoLines = 5;
+	SDL_Rect panel{};
+	int header_y = 0;
+	int info_y = 0;
+	int title_y = 0;
+	int rows_y = 0;
+	int detail_y = 0;
+	int footer_y = 0;
+	SDL_Rect amount_button{};
+	SDL_Rect act_button{};
+
+	explicit HanseLayout(int line_height) {
+		const int button_height = line_height + 4;
+		panel = {kScreenWidth - kWidth - 8, kBarHeight + 4, kWidth, kScreenHeight - kBarHeight - 12};
+		header_y = panel.y + kPadding;
+		info_y = header_y + line_height + 6;
+		title_y = info_y + kInfoLines * line_height + 6;
+		rows_y = title_y + line_height + 2;
+		detail_y = rows_y + kMaxRows * kRowHeight + 6;
+		const int button_y = panel.y + panel.h - kPadding - button_height;
+		footer_y = button_y - line_height - 4;
+		const int inner = kWidth - 2 * kPadding - 8;
+		amount_button = {panel.x + kPadding, button_y, inner / 2, button_height};
+		act_button = {amount_button.x + amount_button.w + 8, button_y, inner - amount_button.w, button_height};
+	}
+
+	int row_at(int x, int y, int rows) const {
+		if (x < panel.x || x >= panel.x + panel.w || y < rows_y) {
+			return -1;
+		}
+		const int row = (y - rows_y) / kRowHeight;
+		return row < rows ? row : -1;
+	}
+};
+
+// X or the act button: take the selected task (0x4B) or give the selected
+// material (0x3B), as the game's windows do. The executor runs it after the
+// next tick, as the game runs its queue between two calls to advance_time.
+void hanse_act(SaveGame& save, int town, HanseUi& ui, const HanseView& v) {
+	ui.message_until = app_ticks() + kMessageTime;
+	if (v.task == 0xFFFF && ui.row < int(v.offered.size())) {
+		queue_operation(save, take_task_operation(uint32_t(save.player), v.offered[size_t(ui.row)]));
+		ui.message = "Has aceptado el encargo.";  // The game: «Many thanks for taking on this important task.»
+		ui.row = 0;
+		return;
+	}
+	if (v.road_here && ui.row < 4) {
+		const int k = ui.row;
+		const uint16_t needed = v.road.needed(k);
+		if (needed == 0 || v.available[size_t(k)] <= 0) {
+			ui.message = needed == 0 ? "Ya no hace falta más." : "No tienes en esta ciudad.";
+			return;
+		}
+		const uint16_t amount = road_window_amount(kRoadAmounts[size_t(ui.amount)], uint32_t(v.available[size_t(k)]),
+			needed);
+		queue_operation(save, road_materials_operation(v.task, amount, uint8_t(town), uint8_t(save.player),
+			kRoadWares[size_t(k)]));
+		const WareInfo& ware = kWares[kRoadWares[size_t(k)]];
+		std::string name = ware.name;
+		name[0] = char(std::tolower(uint8_t(name[0])));
+		ui.message = "Entregas " + std::to_string(amount) + " " + unit_name(ware.unit, amount) + " de " + name + ".";
+		return;
+	}
+	ui.message = v.level == 0 ? "Aún no eres candidato." : "No hay nada que hacer aquí.";
+}
+
+// The Alderman: a merchant, or a citizen of the town [0x6DE52E].
+std::string alderman_name(const SaveGame& save, const NameLists& names, const std::vector<std::string>& town_names) {
+	const int chief = alderman(save);
+	if (chief < save.merchant_count && chief < int(save.merchants.size())) {
+		return merchant_name(save, names, chief);
+	}
+	const int town = save.globals.u8(0x6DE52E);
+	return town < int(save.towns.size()) ? "un ciudadano de " + town_name(save, town_names, town) : "un ciudadano";
+}
+
+void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, const HanseUi& ui,
+	const HanseView& v, const std::vector<std::string>& town_names, const NameLists& names) {
+	const HanseLayout layout(text.line_height());
+	const SDL_Rect& panel = layout.panel;
+	const int left = panel.x + HanseLayout::kPadding;
+	const int lh = text.line_height();
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
+	SDL_RenderFillRect(renderer, &panel);
+	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+	SDL_RenderDrawRect(renderer, &panel);
+
+	text.draw("La Hansa", left, layout.header_y, kTextColor);
+	const std::string close = "Círculo: cerrar";
+	text.draw(close, panel.x + panel.w - HanseLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
+
+	// The Alderman, the election and the player's candidacy.
+	std::vector<std::pair<std::string, SDL_Color>> info;
+	info.push_back({"Gobernador: " + alderman_name(save, names, town_names), kTextColor});
+	if (const uint32_t election = alderman_election_tick(save)) {
+		info.push_back({"Próxima elección: " + full_date(election), kTextColor});
+	}
+	if (v.is_alderman) {
+		info.push_back({"¡Eres Gobernador de la Hansa!", kTextColor});
+	} else if (v.level == 0) {
+		const std::vector<int> mayor = mayor_towns(save, save.player);
+		info.push_back({"No eres candidato a Gobernador.", kDimColor});
+		info.push_back({mayor.empty() ? "Hace falta ser alcalde de una ciudad." : "Alcalde de " +
+			town_name(save, town_names, mayor[0]) + ".", kDimColor});
+		info.push_back({"Reputación para optar: " + std::to_string(candidacy_reputation(save, save.player)) + " de " +
+			std::to_string(kCandidacyReputation) + ".", kDimColor});
+	} else if (v.level <= 3) {
+		info.push_back({"Candidato a Gobernador: " + std::to_string(v.level - 1) + " de 3 encargos cumplidos.",
+			kTextColor});
+	} else {
+		info.push_back({"Has cumplido los encargos: puedes presentarte a la elección.", kTextColor});
+	}
+	for (size_t i = 0; i < info.size() && i < size_t(HanseLayout::kInfoLines); ++i) {
+		text.draw(info[i].first, left, layout.info_y + int(i) * lh, info[i].second);
+	}
+
+	auto row_box = [&](int row) {
+		const SDL_Rect box = {panel.x + 2, layout.rows_y + row * HanseLayout::kRowHeight - 1, panel.w - 4,
+			HanseLayout::kRowHeight};
+		SDL_SetRenderDrawColor(renderer, 110, 80, 40, 230);
+		SDL_RenderFillRect(renderer, &box);
+	};
+	if (v.task == 0xFFFF && !v.offered.empty()) {
+		text.draw("Encargos de la Hansa (elige uno):", left, layout.title_y, kDimColor);
+		for (size_t i = 0; i < v.offered.size(); ++i) {
+			const int y = layout.rows_y + int(i) * HanseLayout::kRowHeight;
+			if (int(i) == ui.row) {
+				row_box(int(i));
+			}
+			const HanseTask t = hanse_task(save, v.offered[i]);
+			text.draw(hanse_task_text(save, t, town_names), left, y, kTextColor);
+		}
+		if (ui.row < int(v.offered.size())) {
+			const HanseTask t = hanse_task(save, v.offered[size_t(ui.row)]);
+			text.draw("Plazo: hasta el " + full_date(t.deadline) + ".", left, layout.detail_y, kTextColor);
+		}
+	} else if (v.task != 0xFFFF) {
+		const HanseTask t = hanse_task(save, v.task);
+		text.draw("Tu encargo: " + hanse_task_text(save, t, town_names), left, layout.title_y, kTextColor);
+		if (v.road_here) {
+			static constexpr int kColumns[2] = {330, 470};  // Right edges.
+			auto right = [&](const std::string& s, int column, int y, SDL_Color color) {
+				text.draw(s, panel.x + kColumns[column] - text.measure(s), y, color);
+			};
+			for (int k = 0; k < 4; ++k) {
+				const int y = layout.rows_y + k * HanseLayout::kRowHeight;
+				if (k == ui.row) {
+					row_box(k);
+				}
+				const WareInfo& ware = kWares[kRoadWares[size_t(k)]];
+				const uint16_t needed = v.road.needed(k);
+				const bool enabled = needed != 0 && v.available[size_t(k)] > 0;
+				text.draw(ware.name, left, y, enabled ? kTextColor : kDimColor);
+				const char* unit = ware.unit == WareUnit::Barrel ? " barr." : " cargas";
+				right("falta " + std::to_string(needed) + unit, 0, y, enabled ? kTextColor : kDimColor);
+				right("tienes " + std::to_string(v.available[size_t(k)]) + unit, 1, y, enabled ? kTextColor : kDimColor);
+			}
+		}
+		text.draw("Plazo: hasta el " + full_date(t.deadline) + ".", left, layout.detail_y, kTextColor);
+		text.draw(hanse_progress_text(save, t, v, town_names), left, layout.detail_y + lh, kTextColor);
+		if (HanseTaskType(t.type) == HanseTaskType::Road && !v.road_here && t.data[2] > 0) {
+			text.draw("Lleva los materiales a " + town_name(save, town_names, t.data[0]) + " o a " +
+				town_name(save, town_names, t.data[1]) + ".", left, layout.detail_y + 2 * lh, kDimColor);
+		}
+	}
+
+	const bool show_message = !ui.message.empty() && !SDL_TICKS_PASSED(app_ticks(), ui.message_until);
+	if (show_message) {
+		text.draw(ui.message, left, layout.footer_y, kTextColor);
+	}
+	if (v.road_here) {
+		draw_button(renderer, text, layout.amount_button, "Izq./Der.: " + road_amount_text(ui.amount));
+		draw_button(renderer, text, layout.act_button, "X: entregar");
+	} else if (v.task == 0xFFFF && !v.offered.empty()) {
+		draw_button(renderer, text, layout.act_button, "X: aceptar el encargo");
+	}
+}
+
 int stick_speed(Sint16 value) {
 	if (std::abs(value) < kStickDeadZone) {
 		return 0;
@@ -853,11 +1154,13 @@ struct Options {
 	const char* cpr = nullptr;
 	const char* steps = nullptr;
 	const char* screenshot = nullptr;
+	const char* debug_state = nullptr;
 };
 
 void print_usage() {
 	std::printf(
 		"usage: p3vita [DATA_DIR] [--cpr FILE] [--steps STEPS] [--screenshot FILE.png]\n"
+		"              [--debug-state STATES]\n"
 		"\n"
 		"Shows the towns of Patrician III. DATA_DIR is the folder with p2arch0_eng.cpr\n"
 		"(and p2arch0_spa.cpr for the Spanish version, optional); by default data/ and\n"
@@ -868,9 +1171,11 @@ void print_usage() {
 		"\n"
 		"%s"
 		"\n"
+		"%s"
+		"\n"
 		"Example: p3vita --cpr p2arch0_eng.cpr --steps \"Triangle,R,shot:sea.png,X,days:5\"\n"
 		"         --screenshot sailing.png\n",
-		p3::app::kStepsHelp);
+		p3::app::kStepsHelp, p3::app::kDebugStatesHelp);
 }
 
 // -1: go on; otherwise the exit code (0 after --help, 2 for a wrong command line).
@@ -880,6 +1185,7 @@ int parse_options(int argc, char** argv, Options& options) {
 		const char** value = arg == "--cpr" ? &options.cpr
 			: arg == "--steps" ? &options.steps
 			: arg == "--screenshot" ? &options.screenshot
+			: arg == "--debug-state" ? &options.debug_state
 			: nullptr;
 		if (arg == "--help" || arg == "-h") {
 			print_usage();
@@ -983,8 +1289,20 @@ int main(int argc, char** argv) {
 		small_text = std::make_unique<TextRenderer>(renderer, std::move(font));
 	}
 	MarketUi market;
+	HanseUi hanse;  // The Hanse panel (Square in a town).
 	SaveGame save;
 	const bool has_save = load_savegame(*archive, kStartSave, save) && !save.towns.empty();
+	if (options.debug_state) {
+		std::string error;
+		if (!has_save || !p3::app::apply_debug_states(save, options.debug_state, error)) {
+			show_error(window, "--debug-state: " + (has_save ? error : std::string("no save")));
+			SDL_Quit();
+			return 2;
+		}
+	}
+	// To tell the player the result of each election of the Alderman.
+	int last_alderman = alderman(save);
+	uint32_t last_election = alderman_election_tick(save);
 	const std::vector<int> regions = load_town_regions(*archive);
 	const NameLists names = load_name_lists(*archive);
 	Selection selection;
@@ -1076,6 +1394,46 @@ int main(int argc, char** argv) {
 		// El mercado solo existe en las ciudades de la partida, con el jugador cargado.
 		const bool trading = market.open && selection.mode == Mode::Saved && save.player >= 0 && small_text;
 		const int town_index = int(selection.saved_index);
+		// The Hanse panel, in the save's towns like the market (never both open).
+		const bool in_hanse = hanse.open && !trading && selection.mode == Mode::Saved && save.player >= 0 && small_text;
+		const HanseView hanse_now = in_hanse ? hanse_view(save, town_index) : HanseView();
+		auto hanse_select = [&](int step) {
+			const int rows = hanse_now.rows();
+			hanse.row = rows > 0 ? (hanse.row + rows + step) % rows : 0;
+		};
+		auto change_amount = [&](int step) {
+			const int count = int(kRoadAmounts.size());
+			hanse.amount = (hanse.amount + count + step) % count;
+		};
+		auto open_hanse = [&](bool open) {
+			hanse.open = open;
+			hanse.row = 0;
+			if (open) {
+				market.open = false;
+			}
+		};
+		// With the panel open the pad, X, Circle and Square are its own; the rest work as usual.
+		auto hanse_button = [&](Uint8 button) {
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+				hanse_select(button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1);
+				return true;
+			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+				change_amount(button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1);
+				return true;
+			case SDL_CONTROLLER_BUTTON_A:
+				hanse_act(save, town_index, hanse, hanse_now);
+				return true;
+			case SDL_CONTROLLER_BUTTON_B:
+			case SDL_CONTROLLER_BUTTON_X:
+				open_hanse(false);
+				return true;
+			default:
+				return false;
+			}
+		};
 		auto select_ware = [&](int step) { market.ware = (market.ware + kTradeWareCount + step) % kTradeWareCount; };
 		auto change_step = [&](int step) { market.step = (market.step + kTradeStepCount + step) % kTradeStepCount; };
 		if (reload && selection.mode == Mode::Sea) {
@@ -1149,6 +1507,21 @@ int main(int argc, char** argv) {
 					}
 				}
 			}
+			// The election of the Alderman (event 0x20): its result. The game also
+			// shows a window and, for the player, the video `eldermann` (pending).
+			const uint32_t election = alderman_election_tick(save);
+			if (alderman(save) != last_alderman || (election != last_election && last_election != 0 &&
+				(election & ~0xFFu) != (last_election & ~0xFFu))) {
+				const bool same = alderman(save) == last_alderman;
+				last_alderman = alderman(save);
+				if (last_alderman == save.player) {
+					notify(same ? "Sigues siendo Gobernador de la Hansa." : "¡Has sido elegido Gobernador de la Hansa!");
+				} else {
+					notify(std::string(same ? "Elección de Gobernador: sigue " : "Nuevo Gobernador de la Hansa: ") +
+						alderman_name(save, names, town_names) + ".");
+				}
+			}
+			last_election = election;
 		}
 
 		// The living town: when the simulation changes the buildings of the town
@@ -1174,6 +1547,9 @@ int main(int argc, char** argv) {
 				}
 				break;
 			case SDL_CONTROLLERBUTTONDOWN:
+				if (in_hanse && hanse_button(event.cbutton.button)) {
+					break;
+				}
 				switch (event.cbutton.button) {
 				case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
 					town_step = -1;
@@ -1189,15 +1565,19 @@ int main(int argc, char** argv) {
 						trade(save, town_index, market, true);
 					} else if (selection.mode == Mode::Saved) {
 						market.open = true;
+						hanse.open = false;
 					} else if (selection.mode == Mode::Sea) {
 						order_sail();
 					}
 					break;
-				case SDL_CONTROLLER_BUTTON_X:  // Cuadrado: vende; en el mar, el siguiente barco del jugador.
+				case SDL_CONTROLLER_BUTTON_X:
+					// Cuadrado: vende; en el mar, el siguiente barco del jugador; en la ciudad, the Hanse panel.
 					if (trading) {
 						trade(save, town_index, market, false);
 					} else if (selection.mode == Mode::Sea) {
 						fleet_index++;
+					} else if (selection.mode == Mode::Saved) {
+						open_hanse(true);
 					}
 					break;
 				case SDL_CONTROLLER_BUTTON_B:  // Círculo: cierra el mercado.
@@ -1231,7 +1611,26 @@ int main(int argc, char** argv) {
 				}
 				break;
 			case SDL_KEYDOWN:
+				if (in_hanse) {
+					// Keyboard: the arrows, C or Enter to act, H or Escape to close.
+					const SDL_Keycode key = event.key.keysym.sym;
+					const Uint8 button = key == SDLK_UP ? SDL_CONTROLLER_BUTTON_DPAD_UP
+						: key == SDLK_DOWN ? SDL_CONTROLLER_BUTTON_DPAD_DOWN
+						: key == SDLK_LEFT ? SDL_CONTROLLER_BUTTON_DPAD_LEFT
+						: key == SDLK_RIGHT ? SDL_CONTROLLER_BUTTON_DPAD_RIGHT
+						: key == SDLK_c || key == SDLK_RETURN ? SDL_CONTROLLER_BUTTON_A
+						: key == SDLK_h || key == SDLK_ESCAPE ? SDL_CONTROLLER_BUTTON_B
+						: SDL_CONTROLLER_BUTTON_INVALID;
+					if (button != Uint8(SDL_CONTROLLER_BUTTON_INVALID) && hanse_button(button)) {
+						break;
+					}
+				}
 				switch (event.key.keysym.sym) {
+				case SDLK_h:
+					if (selection.mode == Mode::Saved) {
+						open_hanse(true);
+					}
+					break;
 				case SDLK_PAGEUP:
 					town_step = -1;
 					break;
@@ -1246,6 +1645,7 @@ int main(int argc, char** argv) {
 					break;
 				case SDLK_m:
 					market.open = !market.open;
+					hanse.open = false;
 					break;
 				case SDLK_c:
 				case SDLK_v:
@@ -1295,7 +1695,8 @@ int main(int argc, char** argv) {
 				touch_start = {int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight)};
 				touch_moved = 0;
 				touch_on_panel =
-					trading && inside(MarketLayout(small_text->line_height()).panel, touch_start.x, touch_start.y);
+					(trading && inside(MarketLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
+					(in_hanse && inside(HanseLayout(small_text->line_height()).panel, touch_start.x, touch_start.y));
 				break;
 			case SDL_FINGERMOTION:
 				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
@@ -1314,7 +1715,17 @@ int main(int argc, char** argv) {
 						selection.saved_index = size_t(town);
 					}
 				}
-				if (touch_on_panel && touch_moved < kTapDistance) {
+				if (touch_on_panel && in_hanse && touch_moved < kTapDistance) {
+					const HanseLayout layout(small_text->line_height());
+					const int row = layout.row_at(touch_start.x, touch_start.y, hanse_now.rows());
+					if (hanse_now.road_here && inside(layout.amount_button, touch_start.x, touch_start.y)) {
+						change_amount(1);
+					} else if (inside(layout.act_button, touch_start.x, touch_start.y)) {
+						hanse_act(save, town_index, hanse, hanse_now);
+					} else if (row >= 0) {
+						hanse.row = row;
+					}
+				} else if (touch_on_panel && touch_moved < kTapDistance) {
 					const MarketLayout layout(small_text->line_height());
 					const int row = layout.row_at(touch_start.x, touch_start.y);
 					if (inside(layout.step_button, touch_start.x, touch_start.y)) {
@@ -1379,11 +1790,11 @@ int main(int argc, char** argv) {
 			camera_x += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX));
 			camera_y += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY));
 		}
-		if (!trading) {
+		if (!trading && !in_hanse) {
 			camera_x += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) - pad(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
 			camera_y += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_DOWN) - pad(SDL_CONTROLLER_BUTTON_DPAD_UP));
 		}
-		if (!trading) {
+		if (!trading && !in_hanse) {
 			const Uint8* keys = SDL_GetKeyboardState(nullptr);
 			camera_x += kPadSpeed * (keys[SDL_SCANCODE_RIGHT] - keys[SDL_SCANCODE_LEFT]);
 			camera_y += kPadSpeed * (keys[SDL_SCANCODE_DOWN] - keys[SDL_SCANCODE_UP]);
@@ -1411,11 +1822,16 @@ int main(int argc, char** argv) {
 		}
 		if (text) {
 			std::vector<std::string> right_texts;
-			if (trading) {
+			if (trading || in_hanse) {
 				const std::string money = format_money(save.merchants[size_t(save.player)].money()) + " monedas";
 				right_texts = {merchant_name(save, names, save.player) + ": " + money, money};
 			} else if (at_sea) {
 				right_texts = {"L/R: ciudad   X: zarpar   Triángulo: entrar", "X: zarpar   Triángulo: entrar"};
+			} else if (selection.mode == Mode::Saved) {
+				right_texts = {"L/R: ciudad   Triángulo: mapa   X: mercado   Cuadrado: Hansa",
+					"Triángulo: mapa   X: mercado   Cuadrado: Hansa", "Triángulo: mapa  X: mercado  Cuadrado: Hansa",
+					"X: mercado   Cuadrado: Hansa",
+					"Triángulo: mapa   X: mercado"};
 			} else {
 				right_texts = {"L/R: ciudad   Triángulo: mapa   X: mercado", "Triángulo: mapa   X: mercado"};
 			}
@@ -1431,6 +1847,12 @@ int main(int argc, char** argv) {
 			const std::string speed = std::string("velocidad ") + kGameSpeeds[game_speed].name;
 			draw_bar(renderer, *small_text, kScreenHeight - kBarHeight, ship_text,
 				{"Cuadrado: barco   Select: " + speed, "Select: " + speed, speed});
+		}
+		if (in_hanse) {
+			// After this frame's ticks and operations: what the panel shows now.
+			const HanseView view_now = hanse_view(save, town_index);
+			hanse.row = std::min(hanse.row, std::max(0, view_now.rows() - 1));
+			draw_hanse(renderer, *small_text, save, hanse, view_now, town_names, names);
 		}
 		if (trading) {
 			draw_market(renderer, *small_text, save, town_index, market);

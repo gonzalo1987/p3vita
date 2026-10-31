@@ -1,4 +1,4 @@
-add_executable(p3vita main.cpp script.cpp)
+add_executable(p3vita main.cpp script.cpp debug_states.cpp)
 
 target_link_libraries(p3vita PRIVATE p3data)
 target_compile_options(p3vita PRIVATE -Wall -Wextra)
