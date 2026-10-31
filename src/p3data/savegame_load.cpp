@@ -1,5 +1,6 @@
 #include "p3data/savegame_load.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -27,10 +28,17 @@ const Special kSpecial[] = {{0x12C, "Adler der See", 2}, {0x12C, "Altes Fass", 9
 	{0x12D, "Windgurke", 0x125}, {0x12D, "Nepumuk", 2}, {0x12E, "Klabauter", 0x88}, {0x12E, "Seepott", 0xE1},
 	{0x12F, "Susanna", 0x108}};
 
+// The length of the name of [+0x160], at most 32 (std::memchr: strnlen isn't
+// declared in the Vita's C library).
+size_t ship_name_length(const ShipMemory& m) {
+	const uint8_t* p = m.bytes.data() + 0x160;
+	const void* end = std::memchr(p, 0, 32);
+	return end ? size_t(static_cast<const uint8_t*>(end) - p) : 32;
+}
+
 // The name of [+0x160] (32 bytes; the game would read past them without a 0).
 std::string ship_name(const ShipMemory& m) {
-	const char* p = reinterpret_cast<const char*>(m.bytes.data() + 0x160);
-	return std::string(p, strnlen(p, 32));
+	return std::string(reinterpret_cast<const char*>(m.bytes.data() + 0x160), ship_name_length(m));
 }
 
 // strcpy into [+0x160] (the bytes after the 0 stay).
@@ -94,7 +102,7 @@ void register_ship_name(const SaveGame& save, ShipMemory& m, std::vector<std::st
 			return;
 		}
 	}
-	if (strnlen(reinterpret_cast<const char*>(m.bytes.data() + 0x160), 32) < 32) {
+	if (ship_name_length(m) < 32) {
 		// 0x512D40: a new ship name of the save (not checked with the oracle:
 		// only a version 0 gets here).
 		custom.push_back(name);

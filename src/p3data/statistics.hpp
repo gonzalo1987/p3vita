@@ -28,9 +28,17 @@ constexpr uint32_t kStatistics = 0x6DFC90;
 void daily_statistics(SaveGame& save);
 
 // 0x54E170 (on 0x6DFC90): the object of the merchant if it hasn't one, at the
-// head of the list (0x54CA20). The game calls it when a merchant starts again
-// (0x4F5D80) and from the operations of 0x541FFB and 0x542DFB.
+// head of the list (0x54CA20). The game calls it when an AI merchant goes
+// bankrupt and starts again (0x4F5D80, the operation 0x65) and from the
+// operations 0xA7 (0x541D70) and 0xB3 (0x542A30), after 0x4F7BB0; p3vita
+// doesn't make those calls yet (docs/cloud/statistics.md, Decisions).
 void add_merchant_statistics(SaveGame& save, int merchant);
+
+// 0x54E1F0 (on 0x6DFC90): if the merchant is below the number of merchants
+// (u16 0x6DE4AA), takes the merchant's object out of the list and frees it
+// with its years (0x54CB40). The game calls it when an AI merchant goes
+// bankrupt (0x4F5D80), before 0x54E170 gives the merchant a new one.
+void remove_merchant_statistics(SaveGame& save, int merchant);
 
 // 0x54DDF0 (on 0x6DFC90): empties the statistics (u16 [+0x0..+0x8] at 0).
 void clear_statistics(SaveGame& save);

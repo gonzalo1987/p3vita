@@ -94,6 +94,11 @@ void register_probes_statistics(ProbeRegistry& r) {
 		add_merchant_statistics(save, int(c.args[0] & 0xFFFF));
 		return std::nullopt;
 	};
+	// 0x54E1F0: thiscall on 0x6DFC90, the merchant.
+	r[0x54E1F0] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		remove_merchant_statistics(save, int(c.args[0] & 0xFFFF));
+		return std::nullopt;
+	};
 }
 
 }  // namespace p3::probe

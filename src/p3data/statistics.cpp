@@ -391,6 +391,19 @@ void add_merchant_statistics(SaveGame& save, int merchant) {
 	save.statistics.merchants.insert(save.statistics.merchants.begin(), new_merchant_statistics(save, merchant));
 }
 
+void remove_merchant_statistics(SaveGame& save, int merchant) {
+	if (uint16_t(merchant) >= save.globals.u16(global::kWorldMerchantCount)) {
+		return;
+	}
+	auto& list = save.statistics.merchants;
+	for (auto it = list.begin(); it != list.end(); ++it) {
+		if (it->memory.u16(0x0) == uint16_t(merchant)) {
+			list.erase(it);  // 0x54CB40 frees its years, then the object
+			return;
+		}
+	}
+}
+
 namespace {
 
 void put_u8(std::vector<uint8_t>& out, uint8_t v) {

@@ -5,11 +5,72 @@ Branch `cloud/statistics`, from main f9d86eb. Task:
 
 ## Summary
 
-(Filled at the end.)
+All three parts of `tasks/statistics.md` are done and checked against the
+game's code in the emulator.
+
+- **Part 1, the daily statistics (0x54DE90).** Rewritten in C++ in
+  `src/p3data/statistics.cpp`, with the functions the simulation can run on
+  the object 0x6DFC90: 0x54E170 (a merchant's object), 0x54E1F0 (taking it
+  out, on a bankruptcy) and 0x54DDF0 (clearing). This is state, not only
+  drawing: every day it clears counters of the towns and of the merchants.
+  The oracle records it (regions S0..S4, `P3_ORACLE_CHECK=1` passes), and
+  `advance_game_tick` calls it behind `SaveGame::record_statistics`. That
+  setting is **on by default**, because the whole world for 7 days in the 12
+  saves gives 0 differences.
+- **Part 2, the real `.pst`.** p3vita writes it as the game does (version
+  0xB) and reads it back. It gives the same bytes as the game's writer in
+  1, 3 and 7 (174 409 bytes), and in 1 and 3 moved to the 30th of December
+  (200 592 bytes: weeks, months and a year). When the game loads p3vita's
+  `.pat` and `.pst`, the result matches p3vita's own load (0 differences).
+- **Part 3, the loader's last three steps** (in 0x549F40): the ship names
+  (0x5131B0), each ship's route (0x5048C0, 0x517C10) and the trade routes
+  (0x4D60B0). `tick_probe --carga` gives 0 differences in the 12 saves, and
+  also in retouched states aimed at the branches the saves don't reach.
+- **Two game bugs, reproduced and marked** (§2): the `.pst` size has one
+  byte too many when there are months, and reading a `.pst` clears the
+  counters of merchant 0.
+
+Final checks, on the last commit:
+
+| Check | Result | Time |
+|-|-|-|
+| `build.sh` + ctest | built, 8 of 8 | |
+| `world.sh 7`, `SAVES='1 2 3 4'`, `'5 6 7 tut0'`, `'tut1 tut2 tut3 tut4'` (11 functions, the statistics on by default) | 0 «distintas» in the 12 (skipped calls as before: 1, 0, 0, 0, 5, 0, 4, 0, 0, 2, 5, 7) | 161 + 164 + 140 s |
+| `scripts/write-after-days.sh 4 1 3 7` | 0 calls different; `.pat` 0 different bytes in 1 and 3, and in 7 only the 12 known padding bytes of the battles; `.pst` same bytes (174 409); reload 0 differences | 81 s |
+| `scripts/write-after-days.sh 1 1 tut4`, after the Vita fix | the same: 0, 0 bytes, same `.pst` (124 853), reload 0 | |
+| `tools/oracle/retouch_statistics.py` on 1 and 3 (a bankruptcy's 0x54E1F0 and 0x54E170, then 2 days), `P3_ORACLE_CHECK=1` | 0x54E1F0 3 + 3, 0x54E170 2 + 2, 0x54DE90 2 + 2 calls equal | |
+| Vita build (`vita_check.sh`) | builds (`p3vita.vpk`), once `strnlen` became `memchr` in `savegame_load.cpp` (the Vita's C library doesn't declare `strnlen`) | 20 s |
+
+The statistics make the oracle's whole world about 37 % slower: in
+`statistics-world.sh 7` the 12 saves took 509 s with them and 370 s without.
 
 ## Decisions for the user
 
-(Filled at the end.)
+1. **Who calls 0x54E1F0 and 0x54E170 for a bankrupt merchant.** The game
+   calls them from 0x4F5D80, the operation 0x65: 0x54E1F0 at 0x4F5DA5, and
+   0x54E170 at 0x4F5F8E. In p3vita, `fn_4f5d80` lives in
+   `src/p3data/town_tick/merchants.cpp`, which isn't my file, and it notes
+   these calls as not reproduced. The functions now exist and are checked
+   (`remove_merchant_statistics`, `add_merchant_statistics`). The operations
+   0xA7 (0x541D70) and 0xB3 (0x542A30) call 0x54E170 too, but p3vita doesn't
+   have those operations yet. *Recommendation:* whoever owns `merchants.cpp`
+   adds the two calls at those two points of `fn_4f5d80`. That's two lines,
+   and `world.sh` checks them as soon as some save reaches a bankruptcy.
+2. **The two game bugs of the `.pst`** (the extra byte, and merchant 0's
+   counters cleared on reading). Both are reproduced as the game has them.
+   *Recommendation:* keep them. If you want them under main's new setting
+   for fixing the game's bugs (21cade4), only the reading one changes
+   anything you can see in play.
+3. **`retouch.py` and `retouch_storms.py`.** They keep
+   `TownOracle(statistics=False)`, so their recordings don't change. They do
+   now get the loader's last steps (`last_steps=True`), as the game does.
+   *Recommendation:* leave it like this. Turn the statistics on in them the
+   next time someone works on them.
+4. **Merging main (21cade4) into this branch.** `git merge-tree` shows only
+   one conflict, in `tools/oracle/town_oracle.py`. Both sides add options:
+   `--pirates` and `pirates=False` from main, `--no-statistics`, `--pst`,
+   `statistics=False` and `last_steps=True` from here. The trampolines don't
+   overlap (main adds none). *Recommendation:* keep both sides.
 
 ## Status
 
@@ -24,8 +85,8 @@ Branch `cloud/statistics`, from main f9d86eb. Task:
 `advance_time` (0x530E80) calls 0x54DE90 on the object 0x6DFC90 at the start
 of each day, after the date (0x5310D0) and the daily work (0x5315C0) and
 before the scheduled tasks (0x535450). Rewritten in `src/p3data/statistics.cpp`
-(`daily_statistics`), with 0x54E170 (`add_merchant_statistics`) and 0x54DDF0
-(`clear_statistics`).
+(`daily_statistics`), with 0x54E170 (`add_merchant_statistics`), 0x54E1F0
+(`remove_merchant_statistics`) and 0x54DDF0 (`clear_statistics`).
 
 ### What it records and where
 
@@ -102,6 +163,13 @@ too, since it goes to the `.pst` (part 2).
 | `scripts/statistics-world.sh 4 1 3 s1dec s3dec` (the whole world with the statistics, continuous) | 0 different in the 4 (120 s) |
 | `scripts/statistics-world.sh 7`, the 12 saves in three batches | 0 different in the 12 (182 + 173 + 154 s; without the statistics 370 s) |
 | `world.sh 7` as it is, `SAVES='1 3 7 tut4'`, with the statistics on by default | 0 «distintas», 11 functions (183 s) |
+| `retouch_statistics.py` 2 days on 1 and 3 (0x54E1F0 on a middle object, on a merchant without one and past the merchants; 0x54E170 twice), `P3_ORACLE_CHECK=1` | all calls equal (0x54E1F0 3, 0x54E170 2, 0x54DE90 2 in each) |
+
+0x54E1F0 and 0x54E170 are only reached by a bankruptcy (operation 0x65,
+0x4F5D80), which no save reaches in 7 days. So
+`tools/oracle/retouch_statistics.py` calls them from Python after the first
+day. It records them, then runs two more days. In 1 and 3, merchant 30
+leaves the middle of the list and comes back at its head.
 
 ## 2. The real `.pst`
 
@@ -187,8 +255,33 @@ check only with the navigation), always: `TownOracle(last_steps=True)`.
 
 ## Changes to shared files
 
-- `src/p3data/simulation.cpp` (`advance_game_tick`): after `fn_5315c0`,
-  `if (save.record_statistics) daily_statistics(save);` and the include.
+- `src/p3data/simulation.cpp` (`advance_game_tick`), the whole diff:
+
+```diff
+ #include "p3data/simulation.hpp"
++#include "p3data/statistics.hpp"
+@@ void advance_game_tick(SaveGame& save, Sailing& sailing) {
+ 	if (t == 0) {
+-		// Al empezar el día (las estadísticas de 0x54DE90 no se reproducen).
++		// Al empezar el día.
+ 		tick::fn_5315c0(save, save.tick() % 0x700 == 0);
++		if (save.record_statistics) {
++			daily_statistics(save);  // 0x54DE90 (statistics.hpp)
++		}
+ 		tick::fn_535450(save, save.tick());
+```
+
+- `tools/oracle/town_oracle.py` (98 lines added, 6 removed):
+  - constants `STATISTICS`, `STATISTICS_OBJECT` and
+    `STATISTICS_TRAMPOLINE = SENTINEL + 0x170`;
+  - `TownOracle(..., statistics=False, last_steps=True)`;
+  - in `advance_tick`, the call after 0x5315C0;
+  - the regions S0..S4 at the end of `regions()`;
+  - `loader_last_steps` in `load_names`;
+  - in the CLI, `--no-statistics` (statistics on by default; `--statistics`
+    is kept and does nothing), `--pst FILE`, and 0x54DE90 added to the
+    recorded functions;
+  - the usage line.
 - `tools/oracle/town_oracle.py`: the statistics on by default, `--no-statistics`
   (constants, the trampoline, the call in `advance_tick`, the regions S0..S4
   at the end of `regions()`, 0x54DE90 added to the recorded functions);
@@ -214,3 +307,6 @@ check only with the navigation), always: `TownOracle(last_steps=True)`.
 - `tools/oracle/town_oracle.py`: `loader_last_steps` in the load
   (`last_steps=True`).
 - `tools/oracle/write_retouch.cpp`: `--routes`.
+- New: `src/p3data/statistics.{hpp,cpp}`, `savegame_load.{hpp,cpp}`,
+  `sailing_load.cpp`, `tools/oracle/probes_statistics.cpp` (also 0x54E1F0),
+  `retouch_date.py`, `retouch_statistics.py`, `scripts/statistics-world.sh`.
