@@ -39,3 +39,9 @@ target_link_libraries(sailing_test PRIVATE p3data)
 target_compile_options(sailing_test PRIVATE -Wall -Wextra)
 
 add_test(NAME sailing COMMAND sailing_test)
+
+add_executable(hanse_tasks_test hanse_tasks_test.cpp)
+target_link_libraries(hanse_tasks_test PRIVATE p3data)
+target_compile_options(hanse_tasks_test PRIVATE -Wall -Wextra)
+
+add_test(NAME hanse_tasks COMMAND hanse_tasks_test)

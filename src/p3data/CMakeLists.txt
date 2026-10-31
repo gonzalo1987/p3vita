@@ -7,6 +7,7 @@ add_library(p3data STATIC
 	convoys_sea.cpp
 	cpr.cpp
 	font.cpp
+	hanse_tasks.cpp
 	image.cpp
 	lz.cpp
 	navigation.cpp
