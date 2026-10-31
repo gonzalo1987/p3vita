@@ -9,6 +9,7 @@
 
 #include "p3data/cpr.hpp"
 #include "p3data/font.hpp"
+#include "p3data/game_fixes.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/lz.hpp"
 #include "p3data/savegame.hpp"
@@ -26,6 +27,7 @@ int usage() {
 	std::fprintf(stderr,
 		"uso: p3save <archivo.cpr> <partida> [ciudad | comerciantes | barcos | raw <salida>]\n"
 		"       p3save <archivo.cpr> <partida> write <out.pat> [<out.raw>]\n"
+		"       (--fix-game-bugs anywhere: with the fixes to the game's bugs, game_fixes.hpp)\n"
 		"       p3save compress <in> <out>\n"
 		"\n"
 		"Sin más argumentos, lista las ciudades de la partida (p. ej. missav/1.pat).\n"
@@ -181,6 +183,17 @@ bool load_any_savegame(const CprArchive& archive, const std::string& path, SaveG
 }  // namespace
 
 int main(int argc, char** argv) {
+	// --fix-game-bugs anywhere: the fixes to the game's bugs (off by default,
+	// as the game: what the writer's checks compare).
+	int kept = 1;
+	for (int i = 1; i < argc; ++i) {
+		if (std::strcmp(argv[i], "--fix-game-bugs") == 0) {
+			p3::data::set_fix_game_bugs(true);
+		} else {
+			argv[kept++] = argv[i];
+		}
+	}
+	argc = kept;
 	if (argc == 4 && std::strcmp(argv[1], "compress") == 0) {
 		FILE* f = std::fopen(argv[2], "rb");
 		if (!f) {

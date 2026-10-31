@@ -6,7 +6,8 @@ Branch `cloud/statistics`, from main f9d86eb. Task:
 ## Summary
 
 All three parts of `tasks/statistics.md` are done and checked against the
-game's code in the emulator.
+game's code in the emulator. After that, main (f2c9dc3) was merged in, and
+three bugs of the game's save are fixed behind `fix_game_bugs()` (§4).
 
 - **Part 1, the daily statistics (0x54DE90).** Rewritten in C++ in
   `src/p3data/statistics.cpp`, with the functions the simulation can run on
@@ -29,8 +30,29 @@ game's code in the emulator.
 - **Two game bugs, reproduced and marked** (§2): the `.pst` size has one
   byte too many when there are months, and reading a `.pst` clears the
   counters of merchant 0.
+- **Three save bugs, fixed behind `fix_game_bugs()`** (§4), in
+  `savegame_write.cpp`:
+  - the hometown's name in the settings (0x549D7D);
+  - the uninitialized padding of the battles (0x611950), now written as
+    zeros;
+  - the nodes of the event 0x34 (0x4F39E0), now written as they were read.
 
-Final checks, on the last commit:
+  With the setting off, every check gives what it gave before. With it on,
+  only those bytes change (plus the mailbox, from main's fix of 0x4D6780).
+
+Checks of the fixes, after the merge with main:
+
+| Check | Setting off | Setting on (`P3_FIX_GAME_BUGS=1`) |
+|-|-|-|
+| `build.sh` + ctest | built, 11 of 11 (main's tests too) | |
+| `write-check.sh`, 12 saves | as before: 0 different bytes in 11, 7 has its 12 bytes of padding; compressor the same in the 12 (19 s) | only the hometown's name in the header: 7 to 9 bytes in each save (1: "Luebeck" for "Cologne"; 3: "Rostock" for "Bremen"; 7: "Gdansk" for "Tonsberg"; each the player's hometown). In 7 the 12 padding bytes now equal the game's |
+| `write-retouched.sh` 1, 3, tut4 | load 0 differences, 0 different bytes | 13 different bytes in each: the name (6), the 4th byte of the 2 nodes of the event 0x34 (2), and the mailbox (4 + 1), from main's fix of 0x4D6780 |
+| `write-reload.sh` | 0 differences in the 12 (24 s) | 0 differences in 1, 3, 7 and tut4 |
+| `write-after-days.sh 4 1 3 7` | as before: 0 calls different; 0, 0 and the 12 bytes of 7; same `.pst`; reload 0 | |
+| `world.sh 7`, three batches | 0 «distintas» in the 12, skipped as before (166 + 159 + 143 s) | |
+| Vita build | builds (`p3vita.vpk`) | |
+
+Final checks of the three parts, before the merge:
 
 | Check | Result | Time |
 |-|-|-|
@@ -66,11 +88,15 @@ The statistics make the oracle's whole world about 37 % slower: in
    now get the loader's last steps (`last_steps=True`), as the game does.
    *Recommendation:* leave it like this. Turn the statistics on in them the
    next time someone works on them.
-4. **Merging main (21cade4) into this branch.** `git merge-tree` shows only
-   one conflict, in `tools/oracle/town_oracle.py`. Both sides add options:
-   `--pirates` and `pirates=False` from main, `--no-statistics`, `--pst`,
-   `statistics=False` and `last_steps=True` from here. The trampolines don't
-   overlap (main adds none). *Recommendation:* keep both sides.
+4. **The roadmap's three entries** for these bugs (`docs/roadmap.md`, «El
+   nombre de la ciudad natal al guardar», «El relleno de las batallas», «Los
+   nodos del evento 0x34») can be ticked. I didn't touch the roadmap.
+   *Recommendation:* tick them when merging.
+5. **Save 7 has a battle.** `docs/cloud/battles.md` says there is no battle
+   in any of the 12 saves, but the battles section of 7.pat holds one sea
+   battle with 3 ships, and a table of 3 slots and 4 entries (§4). It is the
+   only save with something to load for piece 5 of the battles (the
+   savegame). *Recommendation:* tell `cloud/battles`.
 
 ## Status
 
@@ -79,6 +105,8 @@ The statistics make the oracle's whole world about 37 % slower: in
 | 1. The daily statistics (0x54DE90) | done: rewritten, checked in the 12 saves, on by default |
 | 2. The real `.pst` | done: same bytes as the game's, read back the same |
 | 3. The loader's last three steps | done: load 0 differences in the 12 saves and in retouched ones |
+| Merge of main (f2c9dc3) | done: one conflict in `town_oracle.py`, both sides kept |
+| 4. The save's bugs behind `fix_game_bugs()` | done: off as before, on only what each fix changes |
 
 ## 1. The daily statistics (0x54DE90)
 
@@ -253,6 +281,69 @@ check only with the navigation), always: `TownOracle(last_steps=True)`.
 | `write-retouched.sh` 1, 3, tut4 (2 trade routes) | load 0 differences, 0 different bytes |
 | `write_retouch --routes` on 1 and 3 (a ship with a point [+0x34] it hasn't, one with its own route out of the map), 1 day of the whole world, continuous | 0 different; in the oracle's load ship 1 gets a new route and ship 16 goes to (100, 100) (1), ship 88 a new route (3) |
 
+## 4. The save's bugs, fixed behind `fix_game_bugs()`
+
+Main merged in at f2c9dc3. The only conflict was in
+`tools/oracle/town_oracle.py`, where both sides add options: `--pirates` and
+`pirates=False` from main, and `--no-statistics`, `--pst`,
+`statistics=False` and `last_steps=True` from here. Both are kept, as
+`TownOracle(..., storms, pirates, statistics, last_steps)`. The trampolines
+don't overlap.
+
+The three fixes are in `src/p3data/savegame_write.cpp`, each next to the
+original behaviour. They follow the README's rule: the original when the
+setting is off (the library's default, what the checks compare), the fix
+when it is on (the viewer's default).
+
+1. **The hometown's name (0x549D7D), certain.** The game copies to [+0x27]
+   of the settings the name from 0x6DDA00, which goes by town number, but
+   it uses the index in the save. The fix takes the number of that index
+   (u8 0x6DE4B8 + index) and copies at most 19 characters, so the 0 stays
+   inside the 0x14 bytes of the field and doesn't run over [+0x3B].
+   Checked: the name written is the player's hometown in each of the 12
+   saves ("Rostock" in 3, "Gdansk" in 7, "Luebeck" in the other 10; the game
+   writes "Cologne", "Harlingen", "Bremen" or "Tonsberg").
+2. **The padding of the battles (0x611950), certain.** The fix writes the
+   3 padding bytes of each 8-byte entry of the table as zeros, which is what
+   the game writes in the emulator. To find them, `battle_padding` walks the
+   section as 0x611950 and 0x604220 write it. The section starts with a u8,
+   the number of battles. Each battle is a u8 kind, plus 0x1D bytes first
+   for a town battle (0x5FBEA0). Then come the parts of 0x604220:
+
+   | Part | Size |
+   |-|-|
+   | header (u8 n at +0x0, u16 a and b at +0x1/+0x3, the heads of two ship lists at +0x5/+0x7) | 0x27 |
+   | n entries, plus 4 bytes more for each of the first two | 4n + 8 |
+   | u16 m and m u32 of bits | 2 + 4m |
+   | two arrays of u16 (the first is the ships' links) | 2·2(a + b) |
+   | fixed block | 0x400 |
+   | each ship of the two lists | 0x2F |
+   | each bit set | 0x1F |
+
+   After the battles comes the table: u32 the number of slots, and for each
+   slot a u32 index, a u32 k and k entries of 8 bytes (a u32, a u8 and the 3
+   padding bytes). The sizes come from the size functions (0x6118F0,
+   0x604140 = 0x431 + 4·(n + m + a + b) plus 0x2F a ship (0x61A780) and
+   0x1F a bit (0x602E10)), and the reader (0x604600) takes a + b and 32·m
+   from the same fields. If the walk doesn't end exactly at the end of the
+   section, nothing is changed. In 7.pat: one sea battle (n = 2, a + b = 3,
+   3 ships, m = 0) that ends at 0x4D4; slots 96, 98 and 136 with 1, 1 and 2
+   entries; the end at 0x510, the size of the section. The padding is at
+   0x4E5, 0x4F5, 0x505 and 0x50D, the 12 bytes `write-check` showed.
+3. **The nodes of the event 0x34 (0x4F3A40/0x4F39E0), looks like one.**
+   Both functions mean a big-endian u16 at [+0x6]: the writer's
+   `sar dl, 8` should be `sar dx, 8`, and the reader forgets to load the
+   fourth byte as the low one. Fixed, each node is written as it was read,
+   `b0 b1 b2 b3`, with 0x7F between nodes and a 0 at the end. p3vita keeps
+   the nodes only as the file's bytes and nothing reads [+0x6], so the
+   reader needs no change.
+
+Tools: `p3save --fix-game-bugs` (anywhere in the line) and
+`P3_FIX_GAME_BUGS=1` for `write-check.sh`, `write-reload.sh` and
+`write-retouched.sh`. These pass it to `p3save write`. `write-after-days.sh`
+doesn't take it, because there the setting would also change the
+simulation (main's fixes in `town_tick`). The checks are in the Summary.
+
 ## Changes to shared files
 
 - `src/p3data/simulation.cpp` (`advance_game_tick`), the whole diff:
@@ -307,6 +398,11 @@ check only with the navigation), always: `TownOracle(last_steps=True)`.
 - `tools/oracle/town_oracle.py`: `loader_last_steps` in the load
   (`last_steps=True`).
 - `tools/oracle/write_retouch.cpp`: `--routes`.
+- After the merge: `tools/oracle/town_oracle.py`, the conflict resolved as
+  in §4 (the constructor's arguments `pirates, statistics, last_steps`, and
+  the call in `main` passing `a.pirates, not a.no_statistics`).
+  `tools/p3save/main.cpp`: `--fix-game-bugs`. `scripts/write-check.sh`,
+  `write-reload.sh` and `write-retouched.sh`: `P3_FIX_GAME_BUGS`.
 - New: `src/p3data/statistics.{hpp,cpp}`, `savegame_load.{hpp,cpp}`,
   `sailing_load.cpp`, `tools/oracle/probes_statistics.cpp` (also 0x54E1F0),
   `retouch_date.py`, `retouch_statistics.py`, `scripts/statistics-world.sh`.

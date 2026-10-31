@@ -17,12 +17,18 @@ tmp=${P3_TMP:-/tmp}
 build=${BUILD:-build}
 saves=("$@")
 [ ${#saves[@]} -eq 0 ] && saves=(1 2 3 4 5 6 7 tut0 tut1 tut2 tut3 tut4)
+# P3_FIX_GAME_BUGS=1: p3vita writes with the fixes to the game's bugs
+# (game_fixes.hpp); the differences left are then those the fixes make.
+fix=()
+if [ -n "${P3_FIX_GAME_BUGS:-}" ]; then
+	fix=(--fix-game-bugs)
+fi
 status=0
 for s in "${saves[@]}"; do
 	[ -f "$tmp/$s.raw" ] || "$build/tools/p3save/p3save" "$P3_CPR" "missav/$s.pat" raw "$tmp/$s.raw" >/dev/null
 	python3 tools/oracle/write_oracle.py "$P3_EXE" "$tmp/$s.raw" "$tmp/$s-game-written.raw" \
 		--packed "$tmp/$s-game-written.pat" --cpr "$P3_CPR" >/dev/null
-	"$build/tools/p3save/p3save" "$P3_CPR" "missav/$s.pat" write "$tmp/$s-written.pat" "$tmp/$s-written.raw" >/dev/null
+	"$build/tools/p3save/p3save" "${fix[@]}" "$P3_CPR" "missav/$s.pat" write "$tmp/$s-written.pat" "$tmp/$s-written.raw" >/dev/null
 	echo "== $s"
 	python3 tools/oracle/compare_written.py "$tmp/$s-game-written.raw" "$tmp/$s-written.raw" || status=1
 	"$build/tools/p3save/p3save" compress "$tmp/$s-game-written.raw" "$tmp/$s-recompressed.pat"
