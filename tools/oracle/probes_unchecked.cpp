@@ -44,6 +44,19 @@ void fn_4f8ca0(SaveGame& save, uint32_t merchant, uint32_t town);
 
 }  // namespace p3::data::tick::diet_detail
 
+// What sieges.cpp exposes for them.
+namespace p3::data::tick::sieges_detail {
+
+void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag);
+
+}  // namespace p3::data::tick::sieges_detail
+
+namespace p3::data::tick::sieges_detail {
+
+bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices);
+
+}  // namespace p3::data::tick::sieges_detail
+
 // What new_town.cpp exposes for them.
 namespace p3::data::tick::new_town_detail {
 
@@ -62,6 +75,16 @@ int pirate_at(const SaveGame& s, uint32_t address) {
 	for (uint32_t k = 0; k < 5; ++k) {
 		if (address != 0 && s.globals.u32(0x6DD7AC + 4 * k) == address && s.pirates[k]) {
 			return int(k);
+		}
+	}
+	return -1;
+}
+
+// The siege whose army is at `address` (its [+0x8]), or -1.
+int army_of(const SaveGame& s, uint32_t address) {
+	for (size_t i = 0; i < s.sieges.size(); ++i) {
+		if (address != 0 && s.sieges[i].u32(0x8) == address && i < s.siege_extras.size() && s.siege_extras[i].army) {
+			return int(i);
 		}
 	}
 	return -1;
@@ -221,6 +244,32 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		}
 		tick::fn_4fd830(s, town, c.args[0], c.args[1], c.args[2]);
 		return std::nullopt;
+	};
+	r[0x629C60] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the besieging army (kind, r, flag).
+		const int siege = army_of(s, c.ecx);
+		if (siege < 0) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		tick::sieges_detail::fn_629c60(s, siege, uint8_t(c.args[0]), uint8_t(c.args[1]), uint8_t(c.args[2]));
+		return std::nullopt;
+	};
+	// 0x633DB0 (the ransom; thiscall on the siege object): as the probe of
+	// probes_sieges.cpp, but when the scenario points its two outputs (amount,
+	// offices) at the scratch globals they are written there, as the game does.
+	r[0x633DB0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		c.eax_mask = 0xFF;
+		const Location l = c.locate(c.ecx);
+		const int siege = l.kind == Location::Siege && l.offset == 0 ? l.index : -1;
+		uint32_t amount = 0;
+		uint16_t offices = 0;
+		const bool paid = tick::sieges_detail::fn_633db0(s, siege, amount, offices);
+		if (in_globals(c, c.args[0]) && in_globals(c, c.args[1])) {
+			s.globals.u32(c.args[0]) = amount;
+			s.globals.u16(c.args[1]) = offices;
+		}
+		return paid ? 1 : 0;
 	};
 	r[0x5462F0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		// thiscall on the town (the facility k): a node at the front of [0x9B4].

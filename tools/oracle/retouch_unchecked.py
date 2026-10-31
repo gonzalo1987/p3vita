@@ -1552,6 +1552,149 @@ def grid_branches(o):
     return during
 
 
+# --- sieges.cpp ---
+
+def siege_object(o, t):
+    return o.u32(to.SIEGES) + 0x1024 * t
+
+
+def siege_ops(o):
+    """Operations 0x8E (a siege, 0x633AF0): a town out of the world; a town
+    of the region of the human player's home town, where he has rank 5 (he is
+    asked for help: operation 0x8B)."""
+    towns = o.counts()[0]
+    m = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(m) + 0x19)
+    ready = [i for i in range(towns) if rt.siege_ready(o, i)]
+    b = next(i for i in ready if i != home and rt.region(o, i) == rt.region(o, home))
+    w8(o, o.merchant(m) + 0x39C + home, 5)
+    print(f'town {b}, of the region of {home}, home town of the player {m}')
+
+    def during(o):
+        operation(o, 0x8E, towns, 1, 0x80, 1)
+        operation(o, 0x8E, b, 2, 0x31, 1)
+    return during
+
+
+def siege_branches(o):
+    """A siege made with the game's code (operation 0x8E, without the flag, on
+    a town that can have one and where an AI merchant has an office) and
+    direct calls on it: 0x629C60 again on its army, not new ([+0x3A] set:
+    nothing); 0x62B2B0 (the loader's targets) with [+0x242] set; 0x62E810
+    with the first target's record not finished; 0x6281F0 (the army's day)
+    attacking a gate 0x34 with ammunition, without pitch and with it;
+    0x51D5F0 (a defender lost) with few people in the classes; 0x633DB0 (the
+    ransom) with nothing to pay, and with money just under the limit and
+    wares to fill it; 0x635220 (what the town lacks) with only one ware in
+    stock (over 0x800000) and no wares chosen yet; 0x635440 (supplies) with
+    a node that pays past the 0x4FFF cap."""
+    towns, _, merchants, _ = o.counts()
+    ready = [i for i in range(towns) if rt.siege_ready(o, i)]
+    t, m = next((i, x) for i in ready for x in rt.ai_with_office(o) if facilities_office(o, x, i) is not None)
+    a = o.town(t)
+    s = siege_object(o, t)
+    print(f'siege of town {t} (object {s:#x}); merchant {m} has an office there')
+
+    def during(o):
+        operation(o, 0x8E, t, 1, 0x80, 0)
+        army = o.u32(s + 8)
+        print(f'army at {army:#x}: [+0x3A] {o.u16(army + 0x3A)}, targets [+0x242] {o.u16(army + 0x242)}')
+        soldiers, other = o.u16(army + 0x3A), o.u16(army + 0x6A)
+        w16(o, army + 0x3A, 5)
+        w16(o, army + 0x6A, 0)
+        direct(o, 0x629C60, [1, 0x80, 0], ecx=army)
+        w16(o, army + 0x3A, soldiers)
+        w16(o, army + 0x6A, other)
+        base = o.u32(a + 0x75C)
+        for r in records(o, t, 0x768):
+            if r[4] == 0x36 and r[5] == 0:
+                w8(o, base + 8 * r[0] + 3, 0x32)  # finished pieces the army can aim at
+        # As many as it will find (with fewer the game writes past its block: see sieges.cpp).
+        pieces = [r for r in records(o, t, 0x768) if r[4] in (0x32, 0x33) and r[5] == 0]
+        w16(o, army + 0x242, len(pieces))
+        direct(o, 0x62B2B0, [], ecx=army)
+        targets = o.u32(army + 0x250)
+        print(f'targets now {o.u16(army + 0x242)} at {targets:#x}')
+        if targets and o.u16(army + 0x242):
+            w8(o, base + 8 * o.u32(targets + 8) + 6, 3)
+        direct(o, 0x62E810, [], ecx=army)
+        gate = o.u32(army + 0x244 + 4 * o.u8(army + 0x6D))
+        if gate < o.u16(a + 0x776):
+            w8(o, base + 8 * gate + 3, 0x34)
+        for pitch in (0, 1000000):
+            w32(o, army + 0x4, 0x30)
+            w8(o, army + 0x78, 0)
+            w16(o, army + 0x42, 0)
+            w32(o, a + 0x40, pitch)
+            direct(o, 0x6281F0, [], ecx=army)
+        w8(o, a + 0x999, 2)
+        w32(o, a + 0x2E0, 5)
+        direct(o, 0x51D5F0, [1], ecx=a)
+        offices = [f for f in range(o.u16(WORLD + 8)) if o.u8(o.office(f) + 0x2C6) == t]
+        w32(o, s, 0)
+        w32(o, a + 0x700, 0)
+        for w in range(24):
+            w32(o, a + 4 + 4 * w, 0)
+            for f in offices:
+                w32(o, o.office(f) + 4 + 4 * w, 0)
+        direct(o, 0x633DB0, [SCRATCH, SCRATCH + 4, SCRATCH + 8], ecx=s)
+        limit = (o.u32(a + 0x2E0) + (o.u32(a + 0x2DC) + o.u32(a + 0x2D8) * 2) * 2) << 4
+        w32(o, s, 0)
+        # Ware 23 is worth 14.0 a unit: 200 units pay 2800 exactly, so after it
+        # the ransom is at the limit and ware 22 is not taken.
+        w32(o, a + 0x700, max(limit - 2800, 1))
+        w32(o, a + 4 + 4 * 23, 1000)
+        w32(o, a + 4 + 4 * 22, 1000)
+        print(f'ransom limit {limit}')
+        direct(o, 0x633DB0, [SCRATCH, SCRATCH + 4, SCRATCH + 8], ecx=s)
+        print(f'ransom: amount {o.u32(SCRATCH)}, ware 23 left {o.u32(a + 4 + 4 * 23)}, ware 22 left {o.u32(a + 4 + 4 * 22)}')
+        for x in range(towns):
+            for w in range(1, 24):
+                w32(o, o.town(x) + 4 + 4 * w, 0)
+        for f in range(o.u16(WORLD + 8)):
+            for w in range(1, 24):
+                w32(o, o.office(f) + 4 + 4 * w, 0)
+        w32(o, o.town(0) + 4, 9000000)
+        o.uc.mem_write(s + 0x1010, bytes([0xFF] * 4))
+        direct(o, 0x635220, [], ecx=s)
+        office = facilities_office(o, m, t)
+        w32(o, o.office(office) + 4 + 4 * 3, 100000)  # beer, in barrels
+        node = o.alloc(12)
+        o.uc.mem_write(node, bytes([3, 0, 0, m]) + struct.pack('<HHI', 10, 5, 0))
+        w32(o, s + 0x101C, node)
+        w16(o, s + 0x1018, 0x4FF0)
+        direct(o, 0x635440, [], ecx=s)
+    return during
+
+
+def siege_gates(o):
+    """A siege made with the game's code (operation 0x8E) on a town retouched
+    so that 0x629C60 finds only two gates on the side it attacks, worth the
+    same (no towers 0x32 or 0x33 left near them): the tie is broken by the
+    inhabitants, and the third gate, not found, is read from the record of
+    address 0 when sorting the office buildings outside the walls."""
+    towns = o.counts()[0]
+    ready = [i for i in range(towns) if rt.siege_ready(o, i)]
+    t = ready[-1]
+    a = o.town(t)
+    base = o.u32(a + 0x75C)
+    for r in records(o, t, 0x768):
+        if r[4] in (0x32, 0x33):
+            w8(o, base + 8 * r[0] + 3, 0x36)
+    side = o.call(0x5252F0, [], ecx=a) & 0xFF
+    gates = [r for r in records(o, t, 0x768) + records(o, t, 0x762)
+             if r[4] in (0x34, 0x35, 0x37, 0x38) and r[3] == (0xFF - side) & 0xFF]
+    for r in gates[2:]:
+        w8(o, base + 8 * r[0] + 2, ((0xFF - side) ^ 1) & 0xFF)
+    print(f'town {t}: side {side}, gates of that side {[(r[0], hex(r[4])) for r in gates]}; two are left')
+
+    def during(o):
+        operation(o, 0x8E, t, 1, 0x80, 0)
+        army = o.u32(siege_object(o, t) + 8)
+        print(f'gates chosen {[o.u32(army + 0x244 + 4 * k) for k in range(3)]} of {o.u16(a + 0x776)} records')
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -1637,6 +1780,13 @@ SCENARIOS = {
     # grid.cpp
     'grid_branches': Scenario(grid_branches, [0x4FACD0, 0x4FD680, 0x4FD830], 0, [
         '@4fb161', '@4fb1f7', '@4fd693>4fd816', '@4fdb0d>4fdc95', '@4fdb21', '@4fdbb4>4fdc91']),
+    # sieges.cpp
+    'siege_ops': Scenario(siege_ops, [0x535760], 0, ['@536a72>537025', '@633cdf']),
+    'siege_branches': Scenario(siege_branches, [0x535760, 0x629C60, 0x62E810, 0x62B2B0, 0x6281F0, 0x51D5F0, 0x633DB0,
+                                                0x635220, 0x635440], 0, [
+        '@629c9b>62b28f', '@62e8f2', '@62b3ce', '@6290e9', '@62927e', '@51d64c', '@634600', '@6352b4',
+        '@6353ad', '@6355c5']),
+    'siege_gates': Scenario(siege_gates, [0x535760], 0, ['@62a3ba', '@62a49f']),
 }
 
 

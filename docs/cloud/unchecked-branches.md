@@ -6,7 +6,29 @@ task owns, checked against the game with retouched states.
 
 ## Summary
 
-**In progress.** Done so far:
+**Done.** The 213 marks «Sin comprobar con el oráculo» of the 11 files this
+task owns are gone: 188 branches checked with the oracle, 23 explained in
+the code as unreachable, 1 not reached (a float rounding case in
+`businesses.cpp`) and 1 where the game fails (a division by zero, checked:
+the oracle gets the exception). 42 scenarios; every recording repeated with
+`tick_probe` with 0 different calls. Two pieces of simulation code changed:
+`alderman.cpp` (a game bug now reproduced) and `construction.cpp` (two
+gaps rewritten in C++); after each, `world.sh 7` on the 12 saves: 0
+different. The rest only changed comments.
+
+| File | Marks | Checked | Unreachable | Other | Scenarios | Targets |
+|---|---|---|---|---|---|---|
+| alderman.cpp | 28 | 27 | 1 | — | 10 | 81/81 |
+| construction.cpp | 42 | 42 | 0 | — | 7 | 130/130 |
+| new_town.cpp | 21 | 20 | 1 | — | 5 | 50/50 |
+| facilities.cpp | 35 | 31 | 4 | — | 7 | 68/68 |
+| offices.cpp | 28 | 26 | 2 | — | 3 | 62/62 |
+| businesses.cpp, population.cpp, merchants.cpp | 21 | 10 | 9 | 1 not reached, 1 game failure | 5 | 24/26 |
+| diet.cpp | 15 | 12 | 3 | — | 1 | 13/13 |
+| grid.cpp | 6 | 6 | 0 | — | 1 | 6/6 |
+| sieges.cpp | 17 | 14 | 3 | — | 3 | 28/28 |
+
+Details per file below. In order:
 
 - **Tools** (new files): `tools/oracle/retouch_unchecked.py` (the scenarios:
   a retouched state, direct calls or operations while recording, and block
@@ -15,7 +37,8 @@ task owns, checked against the game with retouched states.
   and repeats each recording with `tick_probe`) and
   `tools/oracle/probes_unchecked.cpp` (probes for 0x51A4E0, 0x51A750,
   0x516170, 0x5144A0, 0x4F9C80, 0x4FA7F0, 0x5250D0, 0x51F3A0, 0x4F8A50,
-  0x4F8C70 and 0x4F8560; the ones with pointers to the caller's variables
+  0x4F8C70, 0x4F8560, 0x5462F0, 0x4F68D0, 0x4F8CA0, 0x4FD680, 0x4FACD0,
+  0x4FD830, 0x629C60 and 0x633DB0; the ones with pointers to the caller's variables
   take them in scratch globals, 0x6DFF00..0x6DFFFF, that the game never
   uses).
 - **`alderman.cpp`** (the path to Alderman, the priority): its 28 marks are
@@ -31,7 +54,6 @@ task owns, checked against the game with retouched states.
   building at once (`immediate`, an `assert(false)` before; only the
   interface and 0x545F50 use it) and the store (0x1E) a merchant builds,
   which recounts his office (0x4FF2D0). Whole world: 0 different.
-
 - **`new_town.cpp`**: its 21 marks are gone: 20 checked with 5 scenarios
   (10 runs in saves 3 and 5: 50 of 50 targets, 1570 calls equal), 1
   unreachable. Only comments changed, so no world run.
@@ -43,7 +65,7 @@ task owns, checked against the game with retouched states.
   unreachable. Only comments changed.
 - **`businesses.cpp`, `population.cpp`, `merchants.cpp`** (7, 8 and 6
   marks): 10 checked with 5 scenarios (10 runs in saves 3 and 5: 24 of 26
-  targets, 162 calls equal), 10 unreachable, 1 not reached (a float
+  targets, 162 calls equal), 9 unreachable, 1 not reached (a float
   rounding case) and 1 game bug the oracle confirms (a division by zero,
   the game fails); one more game bug found (a search that never ends).
   Only comments changed.
@@ -53,7 +75,17 @@ task owns, checked against the game with retouched states.
 - **`grid.cpp`**: its 6 marks are gone, all checked with 1 scenario (saves
   3 and 5: 6 of 6 targets, 6 calls equal). Only comments changed.
 
-Left: `sieges.cpp` (17), `grid.cpp` (6).
+- **`sieges.cpp`**: its 17 marks are gone: 14 checked with 3 scenarios
+  (saves 3 and 5: 28 of 28 targets, every call equal), 3 unreachable; one
+  more game bug noted (0x62B2B0 doesn't check its size). Only comments
+  changed.
+
+Marks left in files this task doesn't own (other sessions' or the local
+one's): `src/p3data/convoys.cpp` 6, `convoys_members.cpp` 1,
+`convoys_port.cpp` 3, `convoys_sea.cpp` 4, `sailing.cpp` 7; in
+`src/p3data/town_tick/`: `events.cpp` 45, `events_big.cpp` 1,
+`events_mayor.cpp` 30, `events_rare.cpp` 68, `events_towns.cpp` 45,
+`operations.cpp` 32, `ship_ai.cpp` 3, `ship_trade.cpp` 4.
 
 ## Decisions for the user
 
@@ -298,6 +330,30 @@ wall cell after the statue (0x4FDB21), a single wall cell after it whose
 four seeds aren't 0x11 (0x4FDBB4→0x4FDC91). (The game's forward search
 also reads the byte right after the grid; p3vita stops at the end.)
 
+## sieges.cpp
+
+17 marks: 14 checked, 3 unreachable, 0 left. Scenarios (saves 3 and 5; no
+days, all within the same tick):
+
+| Branch (p3vita) | Game | Scenario |
+|---|---|---|
+| operation 0x8E: a town out of the world; the human player with rank 5 in the region (asked for help: operation 0x8B queued) | 0x536A72→0x537025, 0x633CDF | `siege_ops` |
+| 0x629C60 on an army that is not new ([+0x3A] set) | 0x629C9B→0x62B28F | `siege_branches` |
+| 0x62E810 with the first target not finished (`++[+0x6C]`) | 0x62E8F2 | `siege_branches` |
+| 0x62B2B0 (the loader's targets) with [+0x242] set | 0x62B3CE | `siege_branches` |
+| 0x6281F0: a gate 0x34 attacked with ammunition, without pitch and with it | 0x6290E9, 0x62927E | `siege_branches` |
+| 0x51D5F0 (a defender lost) with few people in the classes | 0x51D64C | `siege_branches` |
+| 0x633DB0 (the ransom): nothing to pay | 0x634600 | `siege_branches` |
+| 0x635220: a ware over 0x800000 in stock; no ware chosen (0xFF) | 0x6352B4, 0x6353AD | `siege_branches` |
+| 0x635440: the supplies pay past the 0x4FFF cap | 0x6355C5 | `siege_branches` |
+| 0x629C60: two gates on the side worth the same (the tie by inhabitants), and the third one, not found, read from address 0 | 0x62A3BA, 0x62A49F | `siege_gates` |
+| unreachable: the NaN of the distances (a 256 × 256 grid doesn't overflow); the ransom's `take = 0` (amount + paid reaches the limit only if 200 · k units of a ware are worth an exact number, and none of wares 0..19 is); 0x633AF0 with a player that is not a merchant (the human player always is) | — | — |
+
+All 28 targets ran, every call equal. `probes_unchecked.cpp` has its own
+probe for 0x633DB0 (it overrides the one in `probes_sieges`): it writes the
+amount and the offices back into the scratch globals, where the scenario
+reads them.
+
 ## Game bugs
 
 - **Operation 0x3B with a merchant out of the world** (certain; 0x53A4CA
@@ -322,15 +378,22 @@ also reads the byte right after the grid; p3vita stops at the end.)
 - (Also in the code, already noted there: past the number of surnames the
   search reads beyond its table.)
 
+- **0x62B2B0 doesn't check how many targets fit** (certain from the code,
+  0x62B2F8..0x62B3B7): it reallocs [+0x250] for [+0x242] entries, then
+  writes one for every tower 0x32/0x33 near the gate it finds, without
+  looking at that size; with more it writes past its heap block. Only the
+  loader calls it, and in the saves [+0x242] is always 0. p3vita grows the
+  vector (comment in `sieges.cpp`). Fix: the same.
+
 ## For the roadmap
 
-- The list of game bugs: the one above.
+- The list of game bugs: the five above (two of them are decisions).
 
 ## For the inventory
 
 - `alderman.cpp`, `construction.cpp`, `new_town.cpp`, `facilities.cpp`,
   `offices.cpp`, `businesses.cpp`, `population.cpp`, `merchants.cpp`,
-  `diet.cpp` and `grid.cpp`: every branch checked with the oracle or
+  `diet.cpp`, `grid.cpp` and `sieges.cpp`: every branch checked with the oracle or
   explained (scenarios of `tools/oracle/retouch_unchecked.py`).
 - D: 0x4FF2D0 for the store a merchant builds is done (`construction.cpp`);
   0x51FAB0 building at once is rewritten.

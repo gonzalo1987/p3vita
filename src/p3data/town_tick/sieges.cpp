@@ -135,7 +135,8 @@ int32_t square_sum(int32_t a, int32_t b) {
 
 // sqrt de la CRT (0x63AAE4) más 0,5 (0x66A7D0) y __ftol: la distancia
 // redondeada. Con un negativo (desbordado) el juego pasa por el error de la
-// CRT y __ftol de NaN deja 0. Sin comprobar con el oráculo (no ocurre).
+// CRT y __ftol de NaN deja 0. Unreachable: the distances of a 256 × 256 grid
+// don't overflow.
 int32_t rounded_root(int32_t v) {
 	return v < 0 ? 0 : int32_t(ftol(std::sqrt(double(v)) + 0.5));
 }
@@ -286,10 +287,12 @@ void fn_62b2b0(SaveGame& save, int siege) {
 		a.u16(0x242) = count;
 		return;
 	}
-	// Sin comprobar con el oráculo: solo lo llama el lector y en las partidas
-	// [+0x242] siempre es 0. realloc a [+0x242] entradas; el juego no comprueba que quepan las que
-	// encuentra. El reloj *0x6DCCF8 (de los gráficos, fuera de los globales)
-	// vale 0 en el oráculo y aquí.
+	// Solo lo llama el lector y en las partidas [+0x242] siempre es 0. realloc
+	// a [+0x242] entradas. Game bug: it doesn't check that the targets it finds
+	// fit; with more it writes past its heap block (p3vita grows the vector).
+	// El reloj *0x6DCCF8 (de los gráficos, fuera de los globales) vale 0 en el
+	// oráculo y aquí. Checked with the oracle: scenario siege_branches (saves 3
+	// and 5, direct calls, with [+0x242] as many as it finds).
 	ex.army_targets.resize(a.u16(0x242));
 	a.u32(0x250) = 1;
 	for (uint32_t i = t.u16(0x768); i < t.u16(0x776);) {
@@ -344,7 +347,7 @@ void fn_62e810(SaveGame& save, int siege) {
 	for (uint8_t b = 0; b <= a.u8(0x6C); ++b) {
 		const BuildingRecord& r = record(st, target_at(ex, b).u32(0x8));
 		if (r.pending != 0 || r.type != type) {
-			++a.u8(0x6C);  // Sin comprobar con el oráculo
+			++a.u8(0x6C);  // Checked with the oracle: scenario siege_branches (saves 3 and 5, direct calls).
 		}
 	}
 }
@@ -387,7 +390,7 @@ void fn_51d5f0(SaveGame& save, int town, uint32_t k) {
 			t.s32(o) = int32_t(uint32_t(v) - uint32_t(left));
 			left = 0;
 		} else {
-			t.s32(o) = 1;  // Sin comprobar con el oráculo
+			t.s32(o) = 1;  // Checked with the oracle: scenario siege_branches (saves 3 and 5, direct calls).
 			left = int32_t(uint32_t(left) + (1u - uint32_t(v)));
 		}
 		t.u32(0x2D4) += t.u32(o);
@@ -522,7 +525,9 @@ bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices) {
 			const uint32_t value = uint32_t(ftol(double(stock) * double(ware_value(w))));
 			if (value + amount + paid > limit) {
 				if (limit <= amount + paid) {
-					take = 0;  // Sin comprobar con el oráculo
+					take = 0;  // Unreachable: here amount + paid only reaches the limit if a
+					// ware's 200 · k units are worth an exact number, and none of wares 0..19 is (with
+					// the capacity of 20000; the exact ones, 20..23, are not in the list).
 				} else {
 					const float rest = float(int64_t(limit - amount - paid));
 					take = uint32_t(ftol(double(rest) / double(ware_value(w))));
@@ -542,7 +547,7 @@ bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices) {
 		}
 	}
 	if (amount + paid == 0) {
-		return false;  // Sin comprobar con el oráculo
+		return false;  // Checked with the oracle: scenario siege_branches (saves 3 and 5, direct calls).
 	}
 	fn_529f90(save, town, int32_t(amount), 8);
 	s.u32(0x0) = today << 8;
@@ -699,7 +704,9 @@ void fn_6281f0(SaveGame& save, int siege) {
 				a.u8(0x62C) = uint8_t(0xFF - rest);
 				extra -= rest;
 				if (extra < pitch_attack) {
-					extra = 0;  // Sin comprobar con el oráculo
+					// Without pitch enough. Checked with the oracle: scenario siege_branches (saves
+					// 3 and 5, direct calls).
+					extra = 0;
 					pitch_attack = 0;
 				}
 				extra -= pitch_attack;
@@ -743,7 +750,9 @@ void fn_6281f0(SaveGame& save, int siege) {
 				// 0: ninguna puerta atacada es de tipo 0x34 o 0x35).
 				const uint32_t ammo = a.u32(0x4);
 				if (ammo > 0x1B) {
-					a.u32(0x4) = ammo - 0x1B;  // Sin comprobar con el oráculo
+					// With pitch. Checked with the oracle: scenario siege_branches (saves 3 and 5,
+					// direct calls).
+					a.u32(0x4) = ammo - 0x1B;
 				} else if (ammo != 0) {
 					a.u32(0x4) = 1;
 				}
@@ -967,7 +976,7 @@ void fn_635220(SaveGame& save, int siege) {
 		uint32_t want = need[w];
 		uint32_t shortage;
 		if (have > 0x800000) {
-			// Sin comprobar con el oráculo
+			// Over 0x800000 in the towns. Checked with the oracle: scenario siege_branches (saves 3 and 5, direct calls).
 			want >>= 9;
 			if (want == 0) {
 				shortage = have;
@@ -1007,7 +1016,7 @@ void fn_635220(SaveGame& save, int siege) {
 	if (first) {
 		for (size_t k = 1; k < 4; ++k) {
 			if (value[k] < 0x100) {
-				best[k] = 0xFF;  // Sin comprobar con el oráculo
+				best[k] = 0xFF;  // Checked with the oracle: scenario siege_branches (saves 3 and 5, direct calls).
 			}
 		}
 	}
@@ -1085,7 +1094,7 @@ void fn_635440(SaveGame& save, int siege) {
 						s.u16(0x1018) = 0x4FFF;
 					} else {
 						gain = (gain << 9) / 25;
-						// (El tope 0x4FFF, sin comprobar con el oráculo.)
+						// The 0x4FFF cap: checked with the oracle, scenario siege_branches.
 						s.u16(0x1018) = countdown + gain > 0x4FFF ? 0x4FFF : uint16_t(countdown + gain);
 					}
 				}
@@ -1224,7 +1233,7 @@ void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 	SiegeArmyMemory& a = *ex.army;
 	const GlobalMemory& g = save.globals;
 	if (a.u16(0x3A) != 0 || a.u16(0x21E) != 0) {
-		return;  // Sin comprobar con el oráculo (el ejército es nuevo).
+		return;  // The army is not new. Checked with the oracle: scenario siege_branches (saves 3 and 5, direct calls).
 	}
 	// Lo que tuviera de antes (en un ejército nuevo no hay nada).
 	a.u16(0x590) = 0;
@@ -1326,7 +1335,9 @@ void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 				chosen = true;
 			} else if (uint16_t(value) == best) {
 				++ties;
-				chosen = t.s32(0x2D4) % int32_t(ties) == 0;  // Sin comprobar con el oráculo.
+				// Gates worth the same. Checked with the oracle: scenario siege_gates (saves 3 and
+				// 5).
+				chosen = t.s32(0x2D4) % int32_t(ties) == 0;
 			}
 			if (chosen) {
 				targets = uint16_t(near);
@@ -1367,7 +1378,8 @@ void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 			pick = 0;
 			for (uint8_t k = 0; k < 3; ++k) {
 				// Una puerta que no se ha encontrado: el juego lee del registro 0
-				// (el que no existe, de la dirección 0). Sin comprobar con el oráculo.
+				// (el que no existe, de la dirección 0). Checked with the oracle:
+				// scenario siege_gates (saves 3 and 5; two gates on the side).
 				const BuildingRecord& gate = record(st, a.u32(0x244 + 4 * size_t(k)));
 				const int32_t dx = int32_t(gate.x) - int32_t(b.x);
 				const int32_t dy = int32_t(gate.y) - int32_t(b.y);
@@ -1553,7 +1565,7 @@ void fn_633af0(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 	}
 	const uint32_t player = g.u32(global::kPlayer);
 	if (player >= g.u16(global::kWorldMerchantCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Unreachable: the human player's index is always a merchant's.
 	}
 	const MerchantMemory& m = save.merchants[player].memory;
 	const uint8_t home = m.u8(0x19);
@@ -1562,8 +1574,8 @@ void fn_633af0(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 			g.u8(kTownRegion + 0x34 * uint32_t(g.u8(kTownIds + home)))) {
 		return;
 	}
-	// Sin comprobar con el oráculo desde aquí (el jugador de las partidas no
-	// tiene rango 5).
+	// From here (the player of the saves doesn't have rank 5): checked with the
+	// oracle, scenario siege_ops (saves 3 and 5; operation 0x8B queued).
 	for (const GameMemory<0x10>& node : save.siege_extras[home].list_1020) {
 		if (node.u8(0x5) == uint8_t(player) && node.u8(0x7) != 0 && node.u8(0x8) == 0) {
 			return;
@@ -1694,7 +1706,7 @@ void fn_536a67(SaveGame& save, const uint8_t* operation) {
 	std::memcpy(&town, operation + 4, 4);
 	std::memcpy(&flag, operation + 0x10, 4);
 	if (town >= save.globals.u32(kTownCount) || town >= save.sieges.size()) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario siege_ops (saves 3 and 5).
 	}
 	fn_633af0(save, int(town), operation[8], operation[0xC], flag != 0 ? 1 : 0);
 }
