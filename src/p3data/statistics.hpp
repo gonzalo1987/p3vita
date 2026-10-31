@@ -30,8 +30,9 @@ void daily_statistics(SaveGame& save);
 // 0x54E170 (on 0x6DFC90): the object of the merchant if it hasn't one, at the
 // head of the list (0x54CA20). The game calls it when an AI merchant goes
 // bankrupt and starts again (0x4F5D80, the operation 0x65) and from the
-// operations 0xA7 (0x541D70) and 0xB3 (0x542A30), after 0x4F7BB0; p3vita
-// doesn't make those calls yet (docs/cloud/statistics.md, Decisions).
+// operations 0xA7 (0x541D70) and 0xB3 (0x542A30), after 0x4F7BB0. p3vita
+// makes the call of 0x4F5D80 (fn_4f5d80, merchants.cpp); those operations
+// aren't in p3vita yet.
 void add_merchant_statistics(SaveGame& save, int merchant);
 
 // 0x54E1F0 (on 0x6DFC90): if the merchant is below the number of merchants

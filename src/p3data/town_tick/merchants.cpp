@@ -47,6 +47,7 @@
 #include <vector>
 
 #include "p3data/game_fixes.hpp"
+#include "p3data/statistics.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -708,6 +709,7 @@ void fn_4f5d80(SaveGame& save, int merchant) {
 	if (m.u16(8) == 0) {
 		return;  // Checked with the oracle: scenario bankruptcy (saves 3 and 5; operation 0x65).
 	}
+	remove_merchant_statistics(save, merchant);  // 0x54E1F0 (at 0x4F5DA5): out of the statistics
 	const uint16_t me = uint16_t(merchant);
 	for (uint32_t i = g.u16(0x6DD744); i < g.u16(0x6DD748);) {
 		GameMemory<0x18>& e = save.events[i];
@@ -764,6 +766,7 @@ void fn_4f5d80(SaveGame& save, int merchant) {
 			}
 			m.u8(0x1D) = uint8_t(taken[surname] ? first : surname);
 		}
+		add_merchant_statistics(save, merchant);  // 0x54E170 (at 0x4F5F8E): a new statistics object
 		TownMemory& home = save.towns[m.u8(0x19)].memory;
 		if (home.u8(0x6F1) == me) {
 			home.u8(0x6F1) = 0xFF;
@@ -797,6 +800,7 @@ void fn_4f5d80(SaveGame& save, int merchant) {
 		}
 		surname = m.u8(0x1D);
 	}
+	add_merchant_statistics(save, merchant);  // 0x54E170 (at 0x4F5F8E): a new statistics object
 	TownMemory& home = save.towns[m.u8(0x19)].memory;
 	if (home.u8(0x6F1) == me) {
 		home.u8(0x6F1) = 0xFF;  // Checked with the oracle: scenario bankruptcy (saves 3 and 5; operation 0x65).
