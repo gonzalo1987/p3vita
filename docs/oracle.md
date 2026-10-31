@@ -471,3 +471,15 @@ jugador con más mercancía y otro en una ciudad donde no tiene oficina
 (`ret2f.sh robo:1`, grabando `535760` y `4d85c0`): 0 diferencias en las
 partidas 1 a 7. Y entre las de por omisión, el mundo entero, 0 diferencias
 en las 12 partidas durante 7 días.
+La 0x8E (asedios) paraba el emulador: 0x629C60 lee la ciudad que se ve
+([*0x6E51AC + 0xC324]). El oráculo salta ahí y en la ventana al jugador
+(`EVENT_JUMPS`: 0x629CEA → 0x629D3B y 0x62B239 → 0x62B261). En 20 días crea
+5 ejércitos en las partidas 4 a 7 (`re/emu/sesion5/armies.sh`); los de los
+días 1 y 5, con el mundo entero (partidas 7 y 6, 7 días), y los de los días
+9, 19 y 20 llamada a llamada grabando solo esos días (`late.sh
+PARTIDA:DESDE:DÍAS`, con `--desde`; 535760, 633a90 y 6349f0): iguales al
+juego. Las ramas que no salen, con el escenario `asedio` de `retouch.py`
+(sin muralla, y la petición de ayuda 0x8B con el jugador de rango 5): 0
+diferencias en 6 partidas (en la 3 todas las murallas tienen piezas
+pendientes). Con la 0x8E entre las de por omisión, el mundo entero, 0
+diferencias en las 12 partidas durante 7 días.

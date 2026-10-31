@@ -103,6 +103,21 @@ bytes). Campos: ver la cabecera de `src/p3data/town_tick/sieges.cpp`.
   asedios (ajustes [0x16]) y la región de la ciudad (`Region` de
   StadtDaten.ini, byte [+0x30] de la tabla 0x6DDB90, indexada aquí con el
   índice de la ciudad en la partida).
+- **La operación 0x8E** (en 0x536A67, `fn_536a67`): 0x633AF0 sobre el asedio
+  de la ciudad. Si no tiene ejército, tiene el bit 0x100 de [0x76C] y tres
+  puertas o torres de muralla, lo crea (0x627880) y lo prepara (0x629C60):
+  tropas de cada tipo según ((dificultad + 2) · 765 + 2r) · habitantes / 2550
+  (tablas 0x67B5C8 y 0x67B604), los defensores de [0x998 + k]; sin muralla
+  (0x5252F0 da 0xFF) no ataca y cobra el rescate; con ella, de las tres
+  primeras puertas del lado, la de menos torres cerca (sus objetivos,
+  0x62B2B0, y su posición, 0x632780), los grupos que llegan (los edificios de
+  las oficinas fuera de la muralla más cerca de esa puerta, 0x525220, menos
+  algunos según los ricos y ordenados por dirección) y, de la longitud del
+  camino desde la esquina del mapa más cercana (raíz + 0,5), la llegada
+  ([+0x42], [+0x44], [+0x254 + 8·k]), la retirada [+0x6A] y el rescate
+  [+0x68]. La ciudad pasa a la situación 0x10. Si el jugador tiene rango 5 en
+  su ciudad natal, de la misma región, le piden ayuda (operación 0x8B). No se
+  reproducen la ventana al jugador, la carta 0x53 ni los gráficos.
 - **0x633A90** (cada tick): si hay ejército, lucha contra la ciudad
   (0x6281F0): gasta provisiones y munición, llegan sus grupos (evento 0x26),
   ataca una puerta y los objetivos de [+0x250] (evento 0x25 al caer uno),
@@ -212,6 +227,7 @@ tabla 0x537030) a unos 180 manejadores; los códigos 0x14, 0x73, 0x9C–0x9E,
 | 0x7A | en 0x536570 | la dieta de la Hansa: {ciudad A, ciudad B, u32, u16} → [0x834..0x83F] de la ciudad A, si no tiene comerciante en [0x83F] |
 | 0x7B | en 0x5365E3 | {0x7B, 6 bytes, …, [+0x10] ciudad | k << 8}: el capitán o administrador k (0..5) que busca trabajo en la ciudad, [0x9C6 + 6·k] (evento 0x19) |
 | 0x85 | 0x53FD10 | crea un encargo de la Hansa (§8) |
+| 0x8E | dentro de 0x535760, en 0x536A67 | un asedio: {0x8E, u32 ciudad, u32 tipo de ejército, u8 r, …, u32 flag} → 0x633AF0 (§5, `sieges.cpp`) |
 | 0x86 | dentro de 0x535760, en 0x536801 (copia en 0x53FE20) | quita los encargos de la Hansa sin comerciante que ya no valen (§8) |
 
 El u32 [0x6DF31C] ([+0x2C] del objeto 0x6DF2F0) vale 0 en las partidas; si
@@ -220,7 +236,7 @@ en el código).
 
 p3vita guarda las operaciones en `SaveGame::queued_operations` y las ejecuta
 al final de cada tick, en su orden (`run_queued_operations` y el ejecutor
-`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x12, la 0x1E, la 0x1F, la 0x22, la 0x23, la 0x24, la 0x27, la 0x3B, la 0x46, la 0x4B, la 0x64, la 0x78, la 0x79, la 0x7A, la 0x7B, la 0x85 y la 0x86; las
+`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x12, la 0x1E, la 0x1F, la 0x22, la 0x23, la 0x24, la 0x27, la 0x3B, la 0x46, la 0x4B, la 0x64, la 0x78, la 0x79, la 0x7A, la 0x7B, la 0x85, la 0x86 y la 0x8E; las
 demás se descartan. El oráculo del mundo hace lo mismo con el ejecutor del
 juego ([../oracle.md](../oracle.md), «Las operaciones encoladas»). Lo que encolan las ciudades y la cola de eventos en 200
 días de la partida 1 (con un candidato retocado): 0x22 ×1924, 0x7B ×1704,

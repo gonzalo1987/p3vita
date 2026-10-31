@@ -255,6 +255,9 @@ void fn_52d7d0(SaveGame& save, int object);
 // Sobre SaveGame::sieges[ciudad].
 void fn_6349f0(SaveGame& save, int town);
 void fn_633a90(SaveGame& save, int town);
+// sieges.cpp: la operación 0x8E, un asedio a una ciudad (en 0x536A67:
+// 0x633AF0 crea el ejército sitiador y 0x629C60 lo prepara).
+void fn_536a67(SaveGame& save, const uint8_t* operation);
 // sieges.cpp: lo que hace el lector del ejército sitiador (0x627AD0, la
 // llama savegame.cpp) tras leer sus campos: las puertas de la muralla
 // ([+0x244..+0x24C]), su posición (0x632780), sus objetivos (0x62B2B0,

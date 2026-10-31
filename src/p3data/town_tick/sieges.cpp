@@ -46,7 +46,10 @@
 // gráficos (0x6E51AC, [+0x77], los objetos [+0x1F8], [+0x574], [+0x5DC]...):
 // no cambian la simulación.
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <vector>
 
 #include "p3data/town_tick/internal.hpp"
 
@@ -86,6 +89,18 @@ constexpr uint32_t kUnit[3][7] = {
 	{0x24, 0x33, 0x2, 0x7, 0xa, 0x7, 0x3},
 };
 
+// Ejército nuevo (0x629C60): sitiadores de cada tipo de tropa por unidad de
+// fuerza, según el tipo de ejército 0..2 (0x67B5C8, 5 u32 por tipo; en
+// 16.16), y el tope de cada uno (0x67B604, u16).
+constexpr uint32_t kArmyTroops[3][5] = {
+	{0x106, 0x83, 0x63, 0x0, 0x37},
+	{0x106, 0x83, 0x0, 0x57, 0x37},
+	{0x106, 0x0, 0x63, 0x57, 0x37},
+};
+constexpr uint16_t kArmyTroopCap[5] = {0x28, 0x16, 0x12, 0xF, 0x6};
+
+constexpr uint32_t kTownIds = 0x6DE4B8;  // u8 por ciudad ([+0x18] del mundo): su número de StadtDaten.ini.
+
 // Direcciones (0x677928 + k: 0x20·k).
 constexpr uint8_t kDirection1 = 0x20;  // 0x677929
 constexpr uint8_t kDirection3 = 0x60;  // 0x67792B
@@ -111,6 +126,27 @@ bool wall_gate(uint8_t type) {
 }
 bool wall_gate_other_side(uint8_t type) {
 	return type == 0x38 || type == 0x35;
+}
+
+// a² + b² en 32 bits, como el juego (imul).
+int32_t square_sum(int32_t a, int32_t b) {
+	return int32_t(uint32_t(a) * uint32_t(a) + uint32_t(b) * uint32_t(b));
+}
+
+// sqrt de la CRT (0x63AAE4) más 0,5 (0x66A7D0) y __ftol: la distancia
+// redondeada. Con un negativo (desbordado) el juego pasa por el error de la
+// CRT y __ftol de NaN deja 0. Sin comprobar con el oráculo (no ocurre).
+int32_t rounded_root(int32_t v) {
+	return v < 0 ? 0 : int32_t(ftol(std::sqrt(double(v)) + 0.5));
+}
+
+// La menor de las distancias de (x, y) a las cuatro esquinas del mapa de la
+// ciudad (0x7F, 0xE1), con la x al doble.
+int32_t corner_distance(int32_t x, int32_t y) {
+	int32_t best = rounded_root(square_sum(2 * x, y));
+	best = std::min(best, rounded_root(square_sum(2 * (0x7F - x), y)));
+	best = std::min(best, rounded_root(square_sum(2 * x, 0xE1 - y)));
+	return std::min(best, rounded_root(square_sum(2 * (0x7F - x), 0xE1 - y)));
 }
 
 // Entrada i de [+0x250] del ejército. El juego no comprueba el tamaño: lee
@@ -1161,6 +1197,394 @@ void fn_635740(SaveGame& save, int siege) {
 	}
 }
 
+// 0x629C60 (sobre el ejército recién creado, desde 0x633AF0, con el tipo de
+// ejército `kind` 0..2, `r` y `flag`): lo prepara para sitiar la ciudad.
+//   Tropas: las de cada tipo según la fuerza ((dificultad + 2) · 765 + 2r) ·
+//   habitantes / 2550 (0x67B5C8, con tope 0x67B604; al menos 3 del tipo 0);
+//   los defensores, de [0x998 + k] de la ciudad.
+//   Sin muralla (0x5252F0 da 0xFF): no ataca y cobra el rescate.
+//   Con ella: de las tres primeras puertas del lado (como el lector), la que
+//   tiene menos torres cerca (a distancia² ≤ 0x48; con empate, según los
+//   habitantes), con esas torres de objetivos (0x62B2B0) y su posición
+//   (0x632780). Los grupos que llegan ([+0x6E], [+0x258 + 8·k]): los edificios
+//   de las oficinas de la ciudad fuera de la muralla (0x525220) más cerca de
+//   esa puerta que de las otras, menos algunos según los ricos, ordenados
+//   desde el más lejano siguiendo la dirección. De la longitud del camino
+//   desde la esquina del mapa más cercana salen la llegada ([+0x42], [+0x66],
+//   [+0x44] y la de cada grupo [+0x254 + 8·k]), la retirada [+0x6A] y el
+//   rescate [+0x68].
+//   Al final, la fuerza de cada bando ([+0x57C], [+0x580] con los objetivos),
+//   el objetivo (0x62E810), [+0x5D4] y el bit 0x10 de la situación de la
+//   ciudad.
+// No se reproducen la ventana al jugador (si es su ciudad natal o es su
+// alcalde: 0x469380 y 0x469AF0), la carta a todos (0x4D6530, tipo 0x53), ni
+// los gráficos (los objetos [+0x5DC..] y, si es la ciudad que se ve, 0x62C730).
+void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag) {
+	SiegeExtras& ex = save.siege_extras[size_t(siege)];
+	SiegeArmyMemory& a = *ex.army;
+	const GlobalMemory& g = save.globals;
+	if (a.u16(0x3A) != 0 || a.u16(0x21E) != 0) {
+		return;  // Sin comprobar con el oráculo (el ejército es nuevo).
+	}
+	// Lo que tuviera de antes (en un ejército nuevo no hay nada).
+	a.u16(0x590) = 0;
+	a.u16(0x592) = 0;
+	a.u8(0x77) = 0;
+	a.u32(0x250) = 0;
+	ex.army_targets.clear();
+	a.u8(0x78) = 0;
+	a.u8(0x61C) = flag;
+	const int town = a.u8(0x5D3);
+	const SavedTown& st = save.towns[size_t(town)];
+	TownMemory& t = save.towns[size_t(town)].memory;
+	const uint8_t side = fn_5252f0(save, town);
+	a.u32(0x584) = g.u32(kTick) >> 8;
+	if (kind > 2) {
+		kind = 2;  // No pasa: 0x6349F0 encola 0..2.
+	}
+	const uint32_t difficulty = save.settings.u8(0x16);
+	const int32_t strength = int32_t(((difficulty + 2) * 765 + 2u * r) * t.u32(0x2D4)) / 2550;
+	for (uint32_t k = 0; k < 5; ++k) {
+		uint32_t troops = kArmyTroops[kind][k] * uint32_t(strength) + 0x7FFF;
+		if ((troops >> 16) > kArmyTroopCap[k]) {
+			troops = (troops & 0xFFFF) | (uint32_t(kArmyTroopCap[k]) << 16);
+		}
+		a.u32(0x21C + 4 * k) = (troops & 0xFFFF0000) | 0xFFFF;
+		if (k < 4) {
+			a.u16(0x232 + 4 * k) = t.u8(0x998 + k);
+		}
+		a.u16(0x230 + 4 * k) = 0xFFFF;
+	}
+	if (a.u16(0x21E) < 3) {
+		a.u16(0x21E) = 3;
+	}
+	uint16_t targets = 0;
+	if (side == 0xFF) {
+		a.u32(0x4) = 0;
+		a.u8(0x79) = 1;
+		a.u8(0x78) = 1;
+		a.u32(0x0) = 0;
+		a.u16(0x22E) = 0;
+		a.u16(0x242) = 0;
+		a.u16(0x8) = 0xFFFF;
+		a.u8(0x6E) = 0;
+		a.u16(0x66) = 1;
+		a.u16(0x42) = 0;
+		a.u16(0x44) = 0;
+		a.u16(0x6A) = 1;
+		a.u16(0x68) = 0x1E00;
+		a.u16(0x3C) = 0x1E00;
+		a.u8(0x6D) = uint8_t(t.s32(0x2D4) % 3);
+		a.u8(0x6F) = 0xFF;
+	} else {
+		a.u32(0x4) = 0x10000;
+		a.u8(0x79) = 0;
+		a.u32(0x0) = 0x10000;
+		const uint32_t count = t.u16(0x776);
+		// La puerta: de las tres primeras del lado, la de menos valor (1 si es
+		// de tipo 0x34 o 0x35, más 2 por torre 0x32 y 3 por torre 0x33 cerca).
+		a.u32(0x244) = t.u16(0x768);
+		bool wrapped = false;
+		uint16_t best = 0xFFFF;
+		uint8_t ties = 0;
+		for (uint32_t k = 0; k < 3; ++k) {
+			uint32_t& current = a.u32(0x244 + 4 * k);
+			while (current < count) {
+				const BuildingRecord& b = record(st, current);
+				if ((wall_gate(b.type) || wall_gate_other_side(b.type)) && b.owner == 0xFF - side) {
+					break;
+				}
+				if (!wrapped && b.next >= count) {
+					wrapped = true;
+					current = t.u16(0x762);
+				} else {
+					current = b.next;
+				}
+			}
+			if (current >= count) {
+				break;
+			}
+			const BuildingRecord& gate = record(st, current);
+			uint32_t value = gate.type == 0x34 || gate.type == 0x35 ? 1 : 0;
+			uint32_t near = 0;
+			for (uint32_t i = t.u16(0x768); i < count;) {
+				const BuildingRecord& b = record(st, i);
+				if (b.type == 0x32 || b.type == 0x33) {
+					const int32_t dx = (int32_t(gate.x) - int32_t(b.x)) * 2;
+					const int32_t dy = int32_t(gate.y) - int32_t(b.y) - 2;
+					if (dy * dy + dx * dx <= 0x48) {
+						value += b.type == 0x32 ? 2 : 3;
+						++near;
+					}
+				}
+				i = b.next;
+			}
+			bool chosen = false;
+			if (uint16_t(value) < best) {
+				best = uint16_t(value);
+				ties = 1;
+				chosen = true;
+			} else if (uint16_t(value) == best) {
+				++ties;
+				chosen = t.s32(0x2D4) % int32_t(ties) == 0;  // Sin comprobar con el oráculo.
+			}
+			if (chosen) {
+				targets = uint16_t(near);
+				a.u8(0x6D) = uint8_t(k);
+			}
+			if (k == 2) {
+				break;
+			}
+			if (!wrapped && gate.next >= count) {
+				wrapped = true;
+				a.u32(0x248 + 4 * k) = t.u16(0x762);
+			} else {
+				a.u32(0x248 + 4 * k) = gate.next;
+			}
+		}
+		a.u16(0x242) = targets;
+		fn_62b2b0(save, siege);
+		fn_632780(save, siege);
+		a.u8(0x6E) = 0;
+		// 0x525220: los edificios de las oficinas de la ciudad que quedan fuera
+		// de la muralla (sin el bit 0x80 en la rejilla). Se quedan los que
+		// tienen más cerca la puerta elegida que las otras dos (y no son del
+		// tipo 5).
+		std::vector<uint16_t> outside;
+		for (uint32_t o = t.u16(0x784); o < g.u16(kOfficeCount); o = save.offices[o].memory.u16(0x2CA)) {
+			for (uint32_t i = save.offices[o].memory.u16(0x2CE); i < count; i = record(st, i).next) {
+				const BuildingRecord& b = record(st, i);
+				const size_t cell = size_t(b.x) * t.u32(0x7AC) + b.y;
+				if (!((cell < st.grid.size() ? st.grid[cell] : 0) & 0x80)) {
+					outside.push_back(uint16_t(i));
+				}
+			}
+		}
+		uint8_t pick = 0;
+		for (const uint16_t i : outside) {
+			const BuildingRecord& b = record(st, i);
+			int32_t closest = 0x7FFFFFFF;
+			pick = 0;
+			for (uint8_t k = 0; k < 3; ++k) {
+				// Una puerta que no se ha encontrado: el juego lee del registro 0
+				// (el que no existe, de la dirección 0). Sin comprobar con el oráculo.
+				const BuildingRecord& gate = record(st, a.u32(0x244 + 4 * size_t(k)));
+				const int32_t dx = int32_t(gate.x) - int32_t(b.x);
+				const int32_t dy = int32_t(gate.y) - int32_t(b.y);
+				if (dy * dy + dx * dx < closest) {
+					closest = dy * dy + dx * dx;
+					pick = k;
+				}
+			}
+			const size_t at = 0x258 + 8 * size_t(a.u8(0x6E));
+			if (pick == a.u8(0x6D) && b.type != 5) {
+				if (at + 4 <= SiegeArmyMemory::kSize) {
+					a.u32(at) = i;
+				}
+				++a.u8(0x6E);  // El juego no mira si caben (más de 0x7F se sale del ejército).
+			}
+		}
+		// Quita algunos: en el i-ésimo, si los ricos % (los que quedan − i)
+		// no bajan de (los que se quedan − i), lo cambia por el último.
+		if (a.u8(0x6E) > 0) {
+			const int32_t rich = t.s32(0x2D8);
+			const uint8_t n = a.u8(0x6E);
+			uint8_t keep = uint8_t(rich % 5 + (n >> 2) + 1);
+			if (keep > n) {
+				keep = n;
+			}
+			for (uint8_t i = 0; i < a.u8(0x6E);) {
+				const uint8_t last = a.u8(0x6E);
+				if (rich % (int32_t(i) - int32_t(last)) >= int32_t(keep) - int32_t(i)) {
+					a.u8(0x6E) = uint8_t(last - 1);
+					a.u32(0x258 + 8 * size_t(i)) = a.u32(0x258 + 8 * size_t(last - 1));
+				} else {
+					++i;
+				}
+			}
+		}
+		// Los ordena: primero el más lejano a la posición del ejército; después,
+		// cada vez, el que más sigue la dirección del anterior (producto escalar).
+		auto at_group = [&](uint32_t k) -> const BuildingRecord& { return record(st, a.u32(0x258 + 8 * k)); };
+		int32_t previous_dx = 0x7FFFFFFF;
+		int32_t previous_dy = 0;
+		int32_t chosen_dx = 0;
+		int32_t chosen_dy = 0;
+		for (uint32_t j = 0; int32_t(j) < int32_t(a.u8(0x6E)) - 1; ++j) {
+			int32_t top = INT32_MIN;
+			for (uint32_t i = j; i < a.u8(0x6E); ++i) {
+				const BuildingRecord& b = at_group(i);
+				const int32_t dx = (int32_t(a.u16(0x8)) - int32_t(b.x)) * 2;
+				const int32_t dy = int32_t(a.u16(0xA)) - int32_t(b.y);
+				const int32_t v = previous_dx == 0x7FFFFFFF ? square_sum(dy, dx)
+					: int32_t(uint32_t(previous_dy) * uint32_t(dy) + uint32_t(previous_dx) * uint32_t(dx));
+				if (v > top) {
+					top = v;
+					pick = uint8_t(i);
+					chosen_dx = dx;
+					chosen_dy = dy;
+				}
+			}
+			previous_dy = chosen_dy;
+			previous_dx = chosen_dx;
+			if (pick != j) {
+				const uint32_t moved = a.u32(0x258 + 8 * size_t(pick));
+				a.u32(0x258 + 8 * size_t(pick)) = a.u32(0x258 + 8 * size_t(j));
+				a.u32(0x258 + 8 * size_t(j)) = moved & 0xFFFF;
+			}
+		}
+		// La longitud del camino: desde la esquina más cercana al primer grupo,
+		// de grupo en grupo y del último al ejército; sin grupos, desde la
+		// esquina más cercana al ejército.
+		const uint8_t groups = a.u8(0x6E);
+		int32_t length = 0;
+		int32_t first = 0;
+		if (groups > 0) {
+			const BuildingRecord& g0 = at_group(0);
+			first = corner_distance(g0.x, g0.y);
+			const BuildingRecord& last = at_group(groups - 1u);
+			length = rounded_root(square_sum((int32_t(a.u16(0x8)) - last.x) * 2, int32_t(a.u16(0xA)) - last.y)) +
+				first + 0x28;
+			for (uint32_t k = 1; k < groups; ++k) {
+				const BuildingRecord& b = at_group(k);
+				const BuildingRecord& p = at_group(k - 1);
+				length += rounded_root(square_sum((int32_t(b.x) - p.x) * 2, int32_t(b.y) - p.y)) + 0xA;
+			}
+		} else {
+			length = corner_distance(a.u16(0x8), a.u16(0xA)) + 0x1E;
+		}
+		auto ticks = [](int32_t d) {
+			const uint16_t v = uint16_t(int32_t(uint32_t(d) * 65u) >> 2);
+			return v < 0x900 ? uint16_t(0x900) : v > 0x1300 ? uint16_t(0x1300) : v;
+		};
+		a.u16(0x66) = ticks(length);
+		a.u16(0x42) = a.u16(0x66);
+		a.u16(0x6A) = ticks(corner_distance(a.u16(0x8), a.u16(0xA)));
+		a.u16(0x68) = uint16_t((side + 1) * 0xA00);
+		const int32_t arrival = int32_t(a.u16(0x66)) - int32_t(a.u16(0x66)) * 30 / length;
+		a.u16(0x44) = uint16_t(arrival);
+		if (groups == 0) {
+			a.u8(0x6F) = 0xFF;
+		} else {
+			// Cada grupo llega cuando el ejército ha recorrido su parte del camino.
+			int32_t rest = length - 0x1E;
+			int32_t current = arrival - int32_t(uint32_t(a.u16(0x44)) * uint32_t(first)) / rest;
+			rest -= first;
+			for (uint32_t k = 0; k < groups; ++k) {
+				const BuildingRecord& b = at_group(k);
+				const BuildingRecord& p = at_group(k == 0 ? 0 : k - 1);
+				const int32_t d = rounded_root(square_sum((int32_t(b.x) - p.x) * 2, int32_t(b.y) - p.y)) + 0xA;
+				const int32_t step = int32_t((uint32_t(current) & 0xFFFF) * uint32_t(d)) / rest;
+				rest -= d;
+				current -= step;
+				a.u16(0x254 + 8 * k) = uint16_t(current);
+			}
+			a.u8(0x6F) = 0;
+		}
+	}
+	// La fuerza de los sitiadores y la de los defensores (más 720 por torre
+	// 0x32 terminada de los objetivos y 1800 por las demás).
+	auto troops = [&](uint32_t k) { return uint32_t(a.u16(0x21E + 4 * k)); };
+	auto defenders = [&](uint32_t k) { return uint32_t(a.u16(0x232 + 4 * k)); };
+	a.u32(0x57C) = 120 * troops(0) + 30 * troops(1) + 40 * troops(2) + 45 * troops(3) + 378 * troops(4);
+	a.u32(0x580) = 120 * defenders(0) + 30 * defenders(1) + 40 * defenders(2) + 45 * defenders(3);
+	for (uint32_t i = 0; i < targets; ++i) {
+		const BuildingRecord& b = record(st, target_at(ex, i).u32(0x8));
+		if (b.pending == 0) {
+			a.u32(0x580) += b.type == 0x32 ? 0x2D0 : 0x708;
+		}
+	}
+	fn_62e810(save, siege);
+	const uint8_t level = uint8_t(int32_t(troops(0) + troops(1) + troops(2) + troops(3)) / 6);
+	a.u8(0x5D4) = level < 1 ? 1 : level > 6 ? 6 : level;
+	t.u32(0x2C8) |= 0x10;
+	a.u8(0x578) = 0xFF;
+	a.u32(0x620) = 0xFFFFFFFF;
+	a.u32(0x624) = 0;
+	a.u8(0x62C) = 0xFF;
+}
+
+// 0x633AF0 (sobre el asedio de la ciudad; la operación 0x8E, con el tipo de
+// ejército, r y flag): si la ciudad no tiene ya ejército, tiene el bit 0x100
+// de [0x76C] y al menos tres puertas o torres de muralla (tipos ≥ 0x34 salvo
+// 0x36 en la lista [0x768]; si no, también las 0x34 en obras [0x762]), crea el
+// ejército (0x627880: todo a 0 salvo [+0x6F] = 0xFF) y lo prepara (0x629C60).
+// Con flag, si el jugador tiene rango ≥ 5 en su ciudad natal, que no es esta
+// pero es de su región, y no tiene un pago pendiente con ella ([+0x1020] del
+// asedio de su ciudad natal), le pide ayuda: operación 0x8B {0x8B, 5 bytes al
+// azar, ciudad natal, jugador, ciudad, u32 el día dentro de 21}.
+void fn_633af0(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag) {
+	SiegeMemory& s = save.sieges[size_t(siege)];
+	SiegeExtras& ex = save.siege_extras[size_t(siege)];
+	GlobalMemory& g = save.globals;
+	const uint8_t town = s.u8(0x4);
+	const SavedTown& st = save.towns[town];
+	const TownMemory& t = st.memory;
+	if (ex.army || !(t.u32(0x76C) & 0x100)) {
+		return;
+	}
+	const uint32_t count = t.u16(0x776);
+	uint32_t gates = 0;
+	for (uint32_t i = t.u16(0x768); i < count; i = record(st, i).next) {
+		const uint8_t type = record(st, i).type;
+		if (type >= 0x34 && type != 0x36) {
+			++gates;
+		}
+	}
+	if (gates < 3) {
+		for (uint32_t i = t.u16(0x762); i < count; i = record(st, i).next) {
+			if (record(st, i).type == 0x34) {
+				++gates;
+			}
+		}
+		if (gates < 3) {
+			return;
+		}
+	}
+	s.u8(0x101A) = 2;
+	SiegeArmyMemory& a = ex.army.emplace();
+	a.u8(0x6F) = 0xFF;
+	ex.army_targets.clear();
+	s.u32(0x8) = 1;
+	a.u8(0x5D3) = town;
+	fn_629c60(save, siege, kind, r, flag);
+	if (flag == 0) {
+		return;
+	}
+	const uint32_t player = g.u32(global::kPlayer);
+	if (player >= g.u16(global::kWorldMerchantCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const MerchantMemory& m = save.merchants[player].memory;
+	const uint8_t home = m.u8(0x19);
+	if (m.u8(0x39C + home) < 5 || town == home ||
+		g.u8(kTownRegion + 0x34 * uint32_t(g.u8(kTownIds + town))) !=
+			g.u8(kTownRegion + 0x34 * uint32_t(g.u8(kTownIds + home)))) {
+		return;
+	}
+	// Sin comprobar con el oráculo desde aquí (el jugador de las partidas no
+	// tiene rango 5).
+	for (const GameMemory<0x10>& node : save.siege_extras[home].list_1020) {
+		if (node.u8(0x5) == uint8_t(player) && node.u8(0x7) != 0 && node.u8(0x8) == 0) {
+			return;
+		}
+	}
+	uint8_t op[0x14] = {};
+	op[0] = 0x8B;
+	auto roll = [&](uint32_t n, uint8_t base) { return uint8_t((int32_t(game_rand(save)) % int32_t(n) + base) * 5); };
+	op[0x8] = roll(9, 8);
+	op[0x6] = roll(9, 8);
+	op[0x4] = roll(5, 4);
+	op[0x7] = roll(9, 8);
+	op[0x5] = roll(5, 4);
+	op[0x9] = home;
+	op[0xA] = uint8_t(player);
+	op[0xB] = town;
+	const uint32_t when = (g.u32(kTick) + 0x1500) & 0xFFFFFF00;
+	std::memcpy(op + 0xC, &when, 4);
+	enqueue_operation(save, op, sizeof(op));
+}
+
 }  // namespace sieges_detail
 
 using namespace sieges_detail;
@@ -1259,6 +1683,20 @@ void fn_633a90(SaveGame& save, int town) {
 		ex.army_targets.clear();
 		save.sieges[size_t(town)].u32(0x8) = 0;
 	}
+}
+
+// La operación 0x8E (en 0x536A67): {0x8E, u32 ciudad, u32 tipo de ejército,
+// u8 [+0xC] r, …, u32 [+0x10] flag}: un asedio a la ciudad (0x633AF0, sobre
+// su objeto de asedio). La encola 0x6349F0.
+void fn_536a67(SaveGame& save, const uint8_t* operation) {
+	uint32_t town;
+	uint32_t flag;
+	std::memcpy(&town, operation + 4, 4);
+	std::memcpy(&flag, operation + 0x10, 4);
+	if (town >= save.globals.u32(kTownCount) || town >= save.sieges.size()) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	fn_633af0(save, int(town), operation[8], operation[0xC], flag != 0 ? 1 : 0);
 }
 
 // Lo que hace 0x627AD0 tras leer los campos del ejército (desde 0x627D77).

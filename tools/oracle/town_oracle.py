@@ -110,7 +110,8 @@ UPDATE_SHIPS = 0x506720
 SET_SAIL = 0x537670  # operación 0x00
 EXECUTOR = 0x535760  # ejecuta una operación encolada (thiscall sobre ella)
 EXECUTOR_MAGIC = 0x504F3350  # «P3OP»: tras la operación en la pila, la marca de las llamadas del oráculo
-OPERATIONS = (0x00, 0x12, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x3B, 0x46, 0x4B, 0x64, 0x78, 0x79, 0x7A, 0x7B, 0x85, 0x86)  # las que se ejecutan por omisión
+OPERATIONS = (0x00, 0x12, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x3B, 0x46, 0x4B, 0x64, 0x78, 0x79, 0x7A, 0x7B, 0x85, 0x86,
+              0x8E)  # las que se ejecutan por omisión
 UPDATE_DATE = 0x5310D0
 RAND = 0x639C03
 MERGE_TOWN_FLAGS = 0x5348B0  # la carga lo llama con 0x6DF278 tras leer el mundo
@@ -188,6 +189,11 @@ QUIET_EVENTS = {
 EVENT_JUMPS = {
     0x4DC326: 0x4DC377,  # 0x4DC1F0: ventana de la interfaz (*0x6CC7E8, 0x469380 y 0x469AF0)
     0x52590C: 0x5259B8,  # 0x5256F0: la ciudad que se ve (*0x6E51AC, [+0xC324]) no es nunca la del edificio
+    # 0x629C60 (el ejército sitiador nuevo, operación 0x8E): la ventana al
+    # jugador si es su ciudad (*0x6CC7E8, 0x469380 y 0x469AF0) y los gráficos
+    # si es la ciudad que se ve (*0x6E51AC, [+0xC324]; 0x4B2200, 0x62C730).
+    0x629CEA: 0x629D3B,
+    0x62B239: 0x62B261,
 }
 # Los mensajes llevan textos (CString de MFC, sprintf del CRT) que usan unas
 # pocas funciones de KERNEL32: se hacen aquí (ver TownOracle.setup_imports).

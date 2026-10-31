@@ -73,6 +73,10 @@ Los robos en las oficinas (operación 0x64, evento 0x33); graban 535760 y 4d85c0
   robo                  dos robos al jugador: en su oficina con más mercancía
                         (lo que hay, lo que no, 0xFF y el tope de tres) y en
                         una ciudad sin oficina suya
+Los asedios (operación 0x8E); graban 535760 y 633a90:
+  asedio                uno a una ciudad sin muralla (rescate sin atacar) y
+                        otro en la región de la ciudad natal del jugador, con
+                        rango 5 en ella: le piden ayuda (operación 0x8B)
 """
 import argparse
 import os
@@ -659,6 +663,51 @@ def carretera_hecha(o):
             print(f'ciudad {o.u8(task[1] + k)}: registro {head} pasa a ser del tipo 0x27')
 
 
+def siege_ready(o, i):
+    """¿Puede la ciudad i recibir un ejército (0x633AF0)? Sin ejército, con el
+    bit 0x100 de [0x76C] y tres puertas o torres de muralla."""
+    t = o.town(i)
+    if not o.u32(t + 0x76C) & 0x100 or o.u32(o.u32(to.SIEGES) + 0x1024 * i + 8):
+        return False
+    count, records = o.u16(t + 0x776), o.u32(t + 0x75C)
+
+    def types(head):
+        out, r = [], head
+        while r < count:
+            out.append(o.u8(records + 8 * r + 3))
+            r = o.u16(records + 8 * r + 4)
+        return out
+
+    gates = sum(1 for k in types(o.u16(t + 0x768)) if k >= 0x34 and k != 0x36)
+    if gates < 3:
+        gates += sum(1 for k in types(o.u16(t + 0x762)) if k == 0x34)
+    return gates >= 3
+
+
+def region(o, i):
+    return o.u8(0x6DDB90 + 0x34 * o.u8(WORLD + 0x18 + i) + 0x30)
+
+
+def asedio(o):
+    """Dos asedios (operaciones 0x8E al final del primer tick, 0x633AF0 y
+    0x629C60): uno en una ciudad sin muralla (0x5252F0 da 0xFF con el punto 0
+    de la muralla dentro: no ataca y cobra el rescate) y otro en una ciudad de
+    la región de la ciudad natal del jugador, con rango 5 en ella ([+0x39C]):
+    le pide ayuda (operación 0x8B). Graba 1 día."""
+    m = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(m) + 0x19)
+    towns = [i for i in range(o.u32(WORLD + 0x10)) if siege_ready(o, i)]
+    a = next(i for i in towns if wall(o, i) == 0 and o.u16(o.town(i) + 0x766) >= o.u16(o.town(i) + 0x776))
+    t = o.town(a)
+    o.uc.mem_write(t + 0x7B0, bytes(o.uc.mem_read(t + 0x7B2, 2)))
+    print(f'ciudad {a}: muralla {wall(o, a):#x}')
+    b = next(i for i in towns if i not in (a, home) and region(o, i) == region(o, home))
+    w8(o, o.merchant(m) + 0x39C + home, 5)
+    print(f'ciudad {b}: muralla {wall(o, b):#x}, de la región de {home}, la ciudad natal del jugador {m}')
+    for town, kind, r in ((a, 1, 0x80), (b, 2, 0x31)):
+        o.tick_operations.append(struct.pack('<5I', 0x8E, town, kind, r, 1))
+
+
 BARREL = (0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1)  # 0x672C14
 
 
@@ -714,7 +763,7 @@ SCENARIOS = {f.__name__: f for f in (candidato, jugador, dos_candidatos, sin_car
                                      encargo_nuevo, encargo_cumplido, encargo_vencido, barco_perdido,
                                      jugador_coge, jugador_vencido,
                                      nueva_sin_marca, nueva_alcalde_ia, nueva_alcalde_humano, nueva_sin_alcalde,
-                                     poblada, rica, fundar_aceite, robo)}
+                                     poblada, rica, fundar_aceite, robo, asedio)}
 
 
 def main():
