@@ -1,5 +1,6 @@
 add_library(p3data STATIC
 	aim.cpp
+	battle/pirates.cpp
 	battle/storms.cpp
 	convoys.cpp
 	convoys_members.cpp
@@ -7,6 +8,9 @@ add_library(p3data STATIC
 	convoys_sea.cpp
 	cpr.cpp
 	font.cpp
+	game_fixes.cpp
+	game_texts.cpp
+	hanse_tasks.cpp
 	image.cpp
 	lz.cpp
 	navigation.cpp
@@ -43,6 +47,7 @@ add_library(p3data STATIC
 	town_tick/offices.cpp
 	town_tick/population.cpp
 	town_tick/sieges.cpp
+	town_tick/votes.cpp
 	town_tick/shared.cpp
 	town_tick/ship_ai.cpp
 	town_tick/ship_trade.cpp

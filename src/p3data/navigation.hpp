@@ -45,6 +45,8 @@ public:
 	int height() const { return height_; }
 	// ¿Agua en la celda (x, y) de la rejilla? Sin mirar los límites (0x4474D0 los mira antes).
 	bool is_water(int x, int y) const { return water(x, y); }
+	// 0x448450: the nearest water to `cell` within `radius` (the cell changes); false if none.
+	bool find_water(MapPoint& cell, int radius) const;
 
 private:
 	struct Candidate {
@@ -53,7 +55,6 @@ private:
 	};
 
 	bool water(int x, int y) const { return grid_[size_t(y * width_ + x)] == 0; }
-	bool find_water(MapPoint& cell, int radius) const;
 	std::vector<Candidate> visible_points(MapPoint cell) const;
 	void best_pair(MapPoint start, MapPoint end, int& from, int& to) const;
 	uint32_t distance(int a, int b) const { return distance_[size_t(a) * points_.size() + size_t(b)]; }

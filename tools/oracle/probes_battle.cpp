@@ -31,6 +31,50 @@ void register_probes_battle(ProbeRegistry& r) {
 		probe_sailing()->fn_505290(uint16_t(ship), int32_t(c.args[2]), int32_t(c.args[3]));
 		return std::nullopt;
 	};
+	// 0x612930: thiscall on the battles (0x6E55D0), the ship: its battle speed.
+	r[0x612930] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		if (!probe_sailing()) {
+			return kBad;
+		}
+		return probe_sailing()->fn_612930(uint16_t(c.args[0]));
+	};
+	// 0x50D9E0: thiscall on the ships object, the guide of a pirate convoy; returns al.
+	r[0x50D9E0] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		if (!probe_sailing()) {
+			return kBad;
+		}
+		c.eax_mask = 0xFF;
+		return probe_sailing()->fn_50d9e0(uint16_t(c.args[0])) ? 1 : 0;
+	};
+	// 0x515360: cdecl, the guide of a pirate convoy; returns al.
+	r[0x515360] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		if (!probe_sailing()) {
+			return kBad;
+		}
+		c.eax_mask = 0xFF;
+		return probe_sailing()->fn_515360(uint16_t(c.args[0])) ? 1 : 0;
+	};
+	// 0x505C90: thiscall on the ships object, the address of a variable of the
+	// caller (0x506720) that holds the address of the convoy's link (the head
+	// of the list in the globals or [+0x8] of the convoy before); returns al.
+	r[0x505C90] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const std::optional<uint32_t> address = c.stack(c.args[0]);
+		if (!address) {
+			return kBad;
+		}
+		const Location l = c.locate(*address);
+		uint16_t* link = nullptr;
+		if (l.kind == Location::Global) {
+			link = &save.globals.u16(l.offset);
+		} else if (l.kind == Location::Convoy && l.offset == 0x8) {
+			link = &save.convoys[size_t(l.index)].u16(0x8);
+		}
+		if (!probe_sailing() || !link || *link >= save.convoys.size()) {
+			return kBad;
+		}
+		c.eax_mask = 0xFF;
+		return probe_sailing()->fn_505c90(*link, *link) ? 1 : 0;
+	};
 	// 0x447580: thiscall on the navigation object (the address of the ship's
 	// route [+0x24], the storm and the ship as packed points, the first point
 	// far from the storm, the point the ship goes to, whether the route is its

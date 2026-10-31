@@ -561,3 +561,15 @@ From the cloud sessions merged on 2026-10-31 (notes in
 - **The storms run by default** (0x5053C0 every 8 ticks, `src/p3data/battle/storms.cpp`), in p3vita (`Sailing`), `tick_probe` and `town_oracle.py`, as in the game; `--no-storms` turns them off in both (`--storms` is still accepted). The whole world for 7 days in the 12 saves: 0 differences with and without them. Recordings made before 61cdbfa have no storms: repeat them with `tick_probe --no-storms`. Retouched states: `tools/oracle/retouch_storms.py`.
 - **The battle steps (decided, not implemented yet)**: the game steps the battles with operation 0x94, queued by the real-time driver (0x546620 → 0x612DB0) with steps taken from the real clock, 84 per tick on average at any speed. p3vita and the oracle will queue **one operation 0x94 with 84 steps after each tick in which there are battles**. The result of an automatic battle doesn't depend on how the steps are cut, only the tick in which it ends.
 - **Known tool bug**: without `--barcos` (as `scripts/tick-probe.sh` runs it when `P3_SHIPS` is unset), `town_oracle.py` stops at the first snapshot with `UC_ERR_READ_UNMAPPED` in the routes (region `Q`): the ships' route pointers `[+0x24]` are the save's, which point nowhere without navigation. It was so before the speedup too. Fix: record `Q` only with `--barcos`, or clear `[+0x24]` on load without navigation.
+
+## The pirates moving (2026-10-31)
+
+From `cloud/battles`, piece 2 ([cloud/battles.md](cloud/battles.md) §7).
+- `town_oracle.py --pirates` and `tick_probe --pirates` (`Sailing::set_pirates` in p3vita) move the pirate convoys: their state 0x12 (0x507A65) with 0x505C90, 0x50D9E0, 0x515360, 0x612930, 0x50E340 and 0x5159C0. **Off by default** until the automatic sea battle (piece 3) exists.
+- With `--pirates` the oracle runs, at the load, the per-town waypoints 0x448780 (otherwise skipped with the navigation), from which the pirates choose where to go: 2.8 s more per load.
+- Provisional rule, the same in p3vita and in the oracle (`PIRATE_JUMPS`): a pirate that would attack (0x507BE9 → 0x50BC40) goes on as if it had no target; a convoy that ends its route in a town (0x507C0B) goes on as if it still sailed; a convoy at its nest is not disbanded (0x505FF1 → 0x506029, until 0x514B80 is rewritten).
+- Checked: call by call, 0 differences in the 12 saves for 7 days; the whole world with the pirates on in both, 0 differences in the 12 saves; the default world, unchanged.
+
+## The fixes to the game's bugs (2026-10-31)
+
+`p3::data::fix_game_bugs()` (`src/p3data/game_fixes.hpp`) is **off in the library**, so the oracle's comparisons (tick_probe, the scenarios, the writer's checks, the tests) see the original behaviour, bugs included, as always. The viewer turns it on by default (its Options screen). `tick_probe --fix-game-bugs` runs p3vita with the fixes: the differences then show exactly where a fix acts (for example, in tut0 an AI merchant in debt puts a building on sale, operation 0x28, which the game doesn't because of an uninitialized variable in 0x4F5A20). The list of bugs and which are fixed: roadmap, «Corregir los fallos del juego».
