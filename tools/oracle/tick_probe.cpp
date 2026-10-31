@@ -313,6 +313,18 @@ void build_save(const State& state, SaveGame& save) {
 		if (const Region* z = find(state, "Z" + std::to_string(i)); z && z->bytes.size() == 0x18) {
 			std::memcpy(save.pirates[i].emplace().bytes.data(), z->bytes.data(), 0x18);
 		}
+		// The map of the nest, its cells and the pool (battle/pirate_nests.hpp).
+		PirateNest& nest = save.pirate_nests[i];
+		nest = PirateNest{};
+		if (const Region* m = find(state, "ZM" + std::to_string(i)); m && m->bytes.size() == 0x6C) {
+			std::memcpy(nest.map.emplace().bytes.data(), m->bytes.data(), 0x6C);
+		}
+		if (const Region* d = find(state, "ZD" + std::to_string(i))) {
+			nest.cells = d->bytes;
+		}
+		if (const Region* p = find(state, "ZP" + std::to_string(i))) {
+			copy_blocks(*p, nest.pool);
+		}
 	}
 	for (size_t i = 0; i < save.world_object_lists.size(); ++i) {
 		if (const Region* f = find(state, "F" + std::to_string(i))) {
@@ -417,6 +429,19 @@ State dump_save(const SaveGame& save, const State& game) {
 			if (save.pirates[i]) {
 				b.assign(save.pirates[i]->bytes.begin(), save.pirates[i]->bytes.end());
 			}
+		}
+		const PirateNest& nest = save.pirate_nests[i];
+		if (auto m = s.find("ZM" + std::to_string(i)); m != s.end()) {
+			m->second.bytes.clear();
+			if (nest.map) {
+				m->second.bytes.assign(nest.map->bytes.begin(), nest.map->bytes.end());
+			}
+		}
+		if (auto d = s.find("ZD" + std::to_string(i)); d != s.end()) {
+			d->second.bytes = nest.cells;
+		}
+		if (auto p = s.find("ZP" + std::to_string(i)); p != s.end()) {
+			store_blocks(nest.pool, p->second);
 		}
 	}
 	for (size_t i = 0; i < save.world_object_lists.size(); ++i) {

@@ -24,6 +24,9 @@ El estado son copias de la memoria del juego, por regiones:
          puntos y los puntos (i16 x, i16 y)
   K0..K7 los 40 bytes de cada hueco del objeto 0x6DE588 (*[0x6DEF90 + 4·i]; vacío si no hay)
   Z0..Z4 los 0x18 bytes de los 5 piratas del objeto de los barcos (*[0x6DD7AC + 4·i]; vacío si no hay)
+  ZMi ZDi ZPi  what pirate i points to: the map of its nest ([+0x0], 0x6C bytes),
+         its cells ([+0x68] of the map, width × height) and the pool ([+0x4],
+         [+0x8] entries of 8 bytes); empty if it has none
   F0..F14 los encargos de los 15 objetos del mundo (lista de [+0x24] de 0x6DEFB0 + 0x2C·i):
          los 16 bytes de datos de cada nodo, en orden
   Ri Di Ni  registros de edificio, rejilla y nodos (0x14) de la ciudad i; en
@@ -806,7 +809,18 @@ class TownOracle(SaveOracle):
             out[f'K{i}'] = (p, block(p, 40 if p else 0))
         for i in range(5):
             p = gu32(SHIPS + 0xC + 4 * i)
-            out[f'Z{i}'] = (p, block(p, 0x18 if p else 0))
+            pirate = block(p, 0x18 if p else 0)
+            out[f'Z{i}'] = (p, pirate)
+            # What the pirate points to: the map of its nest ([+0x0], 0x6C
+            # bytes, and its cells, [+0x68]) and the pool ([+0x4], [+0x8]
+            # entries of 8 bytes).
+            nest_map, pool = unpack('<II', pirate, 0) if p else (0, 0)
+            map_block = block(nest_map, 0x6C if nest_map else 0)
+            out[f'ZM{i}'] = (nest_map, map_block)
+            cells = unpack('<I', map_block, 0x68)[0] if nest_map else 0
+            width, height = unpack('<ii', map_block, 4) if cells else (0, 0)
+            out[f'ZD{i}'] = (cells, block(cells, width * height if cells and width > 0 and height > 0 else 0))
+            out[f'ZP{i}'] = (pool, block(pool, 8 * unpack('<H', pirate, 8)[0] if pool else 0))
         for i in range(15):
             head = gu32(WORLD + 0xB10 + 0x2C * i + 0x24)
             nodes = []

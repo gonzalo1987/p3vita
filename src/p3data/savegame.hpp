@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "p3data/battle/pirate_nests.hpp"
 #include "p3data/cpr.hpp"
 #include "p3data/game_memory.hpp"
 #include "p3data/navigation.hpp"
@@ -319,7 +320,9 @@ struct SaveOpaque {
 	std::vector<std::array<std::vector<uint16_t>, 10>> merchant_lists;
 	// Each pirate's map object ([+0x0], 0x4F9770: u32 width, u32 height, 0x5C
 	// bytes and width × height cells) and its records of 8 bytes ([+0x4],
-	// [+0x8] of them), as in the file. Empty if it has none.
+	// [+0x8] of them), as in the file. Empty if it has none. Only between
+	// parse_savegame and load_pirate_nests, which moves them into
+	// SaveGame::pirate_nests (live state).
 	std::array<std::vector<uint8_t>, 5> pirate_maps;
 	std::array<std::vector<uint8_t>, 5> pirate_records;
 	// For each notice of SaveGame::mail, the bytes the file has after it that
@@ -430,6 +433,10 @@ struct SaveGame {
 	// queda a 1 si existe y a 0 si no. Los mira la cola de eventos (0x03,
 	// 0x1F, 0x30, 0x32); en tick_probe, las regiones Z0..Z4.
 	std::array<std::optional<GameMemory<0x18>>, 5> pirates;
+	// What [+0x0] and [+0x4] of each pirate point to: the map of its nest and
+	// its pool (battle/pirate_nests.hpp). Loaded by load_pirate_nests; in
+	// tick_probe, the regions ZMi, ZDi and ZPi.
+	std::array<PirateNest, 5> pirate_nests;
 	// Los encargos de los 15 objetos del mundo ([+0xB10] del mundo, 0x2C
 	// bytes cada uno): la lista del montón de su [+0x24], con su número en el
 	// u16 [+0x1C] y en el u32 [+0x28] del objeto. Registros de 16 bytes, en el

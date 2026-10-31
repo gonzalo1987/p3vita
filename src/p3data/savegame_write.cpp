@@ -388,10 +388,7 @@ void write_ships(Writer& w, const SaveGame& save) {
 		const GameMemory<0x18>& p = *save.pirates[i];
 		chunks(w, p,
 			{{0x8, 2}, {0xA, 2}, {0xC, 2}, {0xE, 1}, {0xF, 1}, {0x10, 2}, {0x12, 2}, {0x14, 1}, {0x15, 1}, {0x16, 2}});
-		const std::vector<uint8_t>& map = save.opaque.pirate_maps[i];
-		w.u8(map.empty() ? 0 : 0x7F);
-		w.bytes(map);  // 0x4F9680
-		w.bytes(save.opaque.pirate_records[i]);
+		w.bytes(pirate_nest_bytes(save, i));  // The map (0x4F9680) and the pool.
 	}
 }
 
