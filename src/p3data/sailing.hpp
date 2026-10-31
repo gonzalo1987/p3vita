@@ -151,6 +151,9 @@ public:
 	void fn_503cf0(int convoy);
 	void fn_503930(int convoy);
 
+	// 0x50CE50: mete el barco en la lista por x (también la usa la operación 0x78).
+	void insert_x(uint16_t index, uint32_t after);
+
 private:
 	bool ai_ = true;
 	bool convoys_ = true;
@@ -170,7 +173,6 @@ private:
 	// Lista de los barcos en el mar ordenada por x ([+0xA], [+0xC]).
 	void unlink_x(uint16_t index);  // 0x50D040
 	void sort_x(uint16_t index);  // 0x50D0C0
-	void insert_x(uint16_t index, uint32_t after);  // 0x50CE50
 
 	void update_docked();
 	void waiting(SavedShip& ship);

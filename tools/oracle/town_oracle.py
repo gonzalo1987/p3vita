@@ -61,8 +61,8 @@ que reproduce p3vita (en puerto, 0 a 5; en el mar, 0x0F; los convoyes de los
 comerciantes, pero no los de los piratas, que se quedan quietos, ni los
 encuentros de 0x5053C0) y, al final del tick, ejecuta con el ejecutor del
 juego (0x535760) las operaciones que se han encolado, en su orden, de los
-códigos de --operaciones (por omisión 0,1e,1f,22,23,24,27,3b,46,4b,79,7a,7b,85,86:
-zarpar, las expediciones, construir con sus materiales y murallas, la dieta de la Hansa, los
+códigos de --operaciones (por omisión 0,12,1e,1f,22,23,24,27,3b,46,4b,78,79,7a,7b,85,86:
+zarpar, los capitanes, las expediciones, un barco nuevo, construir con sus materiales y murallas, la dieta de la Hansa, los
 capitanes y administradores que buscan trabajo, el alcalde de una ciudad nueva y los encargos de la Hansa: materiales de la
 carretera, cogerlos, crearlos y revisarlos); las demás se descartan. El ejecutor se llama por un
 trampolín que le pone en la pila los 0x14 bytes de la operación y una marca:
@@ -110,7 +110,7 @@ UPDATE_SHIPS = 0x506720
 SET_SAIL = 0x537670  # operación 0x00
 EXECUTOR = 0x535760  # ejecuta una operación encolada (thiscall sobre ella)
 EXECUTOR_MAGIC = 0x504F3350  # «P3OP»: tras la operación en la pila, la marca de las llamadas del oráculo
-OPERATIONS = (0x00, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x3B, 0x46, 0x4B, 0x79, 0x7A, 0x7B, 0x85, 0x86)  # las que se ejecutan por omisión
+OPERATIONS = (0x00, 0x12, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x3B, 0x46, 0x4B, 0x78, 0x79, 0x7A, 0x7B, 0x85, 0x86)  # las que se ejecutan por omisión
 UPDATE_DATE = 0x5310D0
 RAND = 0x639C03
 MERGE_TOWN_FLAGS = 0x5348B0  # la carga lo llama con 0x6DF278 tras leer el mundo

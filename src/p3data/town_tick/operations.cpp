@@ -9,6 +9,13 @@
 
 namespace p3::data::tick {
 
+namespace events_detail {
+void fn_4fe190(CaptainMemory& c);
+}  // namespace events_detail
+namespace events_mayor_detail {
+uint16_t fn_507d60(SaveGame& save, uint16_t& out, uint32_t town, uint32_t mode);
+}  // namespace events_mayor_detail
+
 namespace {
 
 constexpr uint32_t kConvoyCount = global::kShips + 0xF6;  // u16 (0x6DD896)
@@ -148,6 +155,70 @@ void fn_539c60(SaveGame& save, const uint8_t* operation) {
 	c.u16(0x24 + 4 * k) = half(operation, 8);
 	c.u16(0x26 + 4 * k) = half(operation, 0xA);
 	c.u8(0x34 + k) = operation[0xC];
+}
+
+// La operación 0x12 (0x538A80): {0x12, u32 barco, u8 a, …, u8 b}: el
+// capitán del barco mejora: sus habilidades [+9] (más a), [+0xA] y [+0xB]
+// (más b las dos), cada una con un tope según los bits del índice del
+// capitán (0x673B34: 250, 200, 250, 150) y sin dar la vuelta; y su salario
+// se recalcula (0x4FE190). Al jugador humano, si sube, una carta (0x4D6530;
+// no se reproduce).
+void fn_538a80(SaveGame& save, const uint8_t* operation) {
+	static constexpr uint8_t kSkillCap[4] = {250, 200, 250, 150};
+	const uint32_t ship = field(operation, 4);
+	if (ship >= save.globals.u16(global::kShipCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const uint16_t c = save.ships[ship].captain();
+	if (c >= save.globals.u16(global::kCaptainCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	CaptainMemory& cap = save.captains[c];
+	auto raise = [&](size_t o, uint8_t add, uint8_t top) {
+		const uint8_t old = cap.u8(o);
+		const uint8_t v = uint8_t(old + add);
+		cap.u8(o) = v > top || v < old ? top : v;
+	};
+	raise(0x9, operation[8], kSkillCap[c & 3]);
+	raise(0xA, operation[0xC], kSkillCap[(c >> 2) & 3]);
+	raise(0xB, operation[0xC], kSkillCap[(c >> 4) & 3]);
+	events_detail::fn_4fe190(cap);
+}
+
+// La operación 0x78 (0x5051E0, sobre el objeto de los barcos): {0x78, u8 a,
+// …, u16 b, u16 x, u16 y}: un barco nuevo (0x507D60 con 4) en el primer hueco
+// libre de las 16 entradas de 12 bytes de [0x6DD7C0] (su índice, b, x, y, a
+// y 0), en (x, y) y en la lista por x (0x50CE50). Sin hueco, nada. (La marca
+// de la interfaz [*0x6CBDD8 + 0x2B22] no se reproduce.)
+void fn_5051e0(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	constexpr uint32_t kSpecial = global::kShips + 0x20;  // 0x6DD7C0
+	const uint16_t ships = g.u16(global::kShipCount);
+	int slot = -1;
+	for (int i = 0; i < 16; ++i) {
+		if (g.u16(kSpecial + 12 * uint32_t(i)) >= ships) {
+			slot = i;
+			break;
+		}
+	}
+	if (slot < 0) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	const uint32_t e = kSpecial + 12 * uint32_t(slot);
+	g.u16(e + 8) = operation[4];
+	g.u16(e + 2) = half(operation, 8);
+	g.u16(e + 0xA) = 0;
+	uint16_t index = 0;
+	events_mayor_detail::fn_507d60(save, index, uint32_t(slot), 4);
+	g.u16(e) = index;
+	g.u16(e + 4) = half(operation, 0xC);
+	g.u16(e + 6) = half(operation, 0x10);
+	SavedShip& s = save.ships[index];
+	s.memory.u16(0x1E) = half(operation, 0xC);
+	s.memory.u16(0x22) = half(operation, 0x10);
+	if (sailing) {
+		sailing->insert_x(index, 0xFFFFFFFF);
+	}
 }
 
 }  // namespace p3::data::tick

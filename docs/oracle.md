@@ -311,7 +311,7 @@ las 12 en paralelo), y la carga, también en 0.
 El oráculo del mundo ejecuta ahora al final de cada tick las operaciones
 encoladas con el ejecutor del juego (0x535760, ver
 [formats/world_tick.md](formats/world_tick.md) §7), en su orden, las de los
-códigos de `--operaciones` (por omisión `0,1e,1f,22,23,24,27,3b,46,4b,79,7a,7b,85,86`:
+códigos de `--operaciones` (por omisión `0,12,1e,1f,22,23,24,27,3b,46,4b,78,79,7a,7b,85,86`:
 zarpar, construir con sus materiales y murallas, los encargos de la Hansa y
 el alcalde de una ciudad nueva); las demás se siguen descartando, como en
 p3vita
@@ -461,3 +461,5 @@ La 0x1E (expediciones) salía distinta en la partida 2 porque `set_sail` no
 hacía la rama de convoy de 0x537670; con ella reescrita, la 0x1E y la 0x1F
 entre las de por omisión: el mundo entero, 0 diferencias en las 12 partidas
 durante 7 días.
+Con la 0x12 (capitanes) y la 0x78 (un barco nuevo) también: el mundo
+entero, 0 diferencias en las 12 partidas durante 7 días.

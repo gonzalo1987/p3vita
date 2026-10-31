@@ -85,6 +85,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			sailing->set_sail(fields[1], fields[2], fields[3], fields[4]);
 		}
 		break;
+	case 0x12:  // El capitán de un barco mejora (0x538A80).
+		tick::fn_538a80(save, operation);
+		break;
 	case 0x1E:  // Un convoy sale de expedición (0x539B50).
 		tick::fn_539b50(save, sailing, operation);
 		break;
@@ -111,6 +114,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x4B:  // Un candidato coge un encargo de la Hansa (0x53B440).
 		tick::fn_53b440(save, operation);
+		break;
+	case 0x78:  // Un barco nuevo en las entradas de [0x6DD7C0] (0x5051E0).
+		tick::fn_5051e0(save, sailing, operation);
 		break;
 	case 0x79:  // La dieta de la Hansa: un byte por ciudad (0x536535).
 		tick::fn_536535(save, operation);

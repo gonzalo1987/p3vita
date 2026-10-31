@@ -221,6 +221,10 @@ void fn_536570(SaveGame& save, const uint8_t* operation);
 // zarpar (Sailing::set_sail).
 void fn_539b50(SaveGame& save, Sailing* sailing, const uint8_t* operation);
 void fn_539c60(SaveGame& save, const uint8_t* operation);
+// 0x12 (un capitán mejora, 0x538A80) y 0x78 (un barco nuevo en las 16
+// entradas de [0x6DD7C0], 0x5051E0).
+void fn_538a80(SaveGame& save, const uint8_t* operation);
+void fn_5051e0(SaveGame& save, Sailing* sailing, const uint8_t* operation);
 // construction.cpp: la operación 0x22, construir (0x53CE30): edificios
 // (0x521900), torres (0x523830, 0x523D70) y murallas (0x522B20).
 // Y los materiales: 0x27 (0x535BBC: la ciudad los recibe) y 0x23 (0x535B12:

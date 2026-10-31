@@ -205,7 +205,8 @@ tabla 0x537030) a unos 180 manejadores; los códigos 0x14, 0x73, 0x9C–0x9E,
 | 0x46 | dentro de 0x535760, en 0x535FD6 | alcalde para una ciudad sin él: {0x46, comerciante, ciudad, -, marca}; si tiene rango ≥ 5 en su ciudad natal o con la marca 0xBADEAFFE en [+0x10] (la encola el evento 0x2F, §8; también la interfaz, desde 0x41AD92 y 0x41B554) |
 | 0x4B | 0x53B440 | un candidato coge un encargo de la Hansa (§8) |
 | 0x64 | dentro de 0x535760, en 0x5363EE | un evento 0x33 a tick + [+0x12] con los 16 bytes de la operación |
-| 0x78 | 0x5051E0 (sobre los barcos) | por reescribir |
+| 0x12 | 0x538A80 | {0x12, u32 barco, u8 a, …, u8 b}: el capitán del barco suma a a [+9] y b a [+0xA] y [+0xB], con tope por los bits de su índice (0x673B34: 250, 200, 250, 150), y recalcula su salario (0x4FE190) |
+| 0x78 | 0x5051E0 (sobre los barcos) | un barco nuevo (0x507D60 con 4) en el primer hueco de las 16 entradas de 12 bytes de [0x6DD7C0], en (x, y) y en la lista por x |
 | 0x79 | en 0x536535 | la dieta de la Hansa: ocho parejas (ciudad, valor) → [0x82C] de cada ciudad |
 | 0x7A | en 0x536570 | la dieta de la Hansa: {ciudad A, ciudad B, u32, u16} → [0x834..0x83F] de la ciudad A, si no tiene comerciante en [0x83F] |
 | 0x7B | en 0x5365E3 | {0x7B, 6 bytes, …, [+0x10] ciudad | k << 8}: el capitán o administrador k (0..5) que busca trabajo en la ciudad, [0x9C6 + 6·k] (evento 0x19) |
@@ -218,7 +219,7 @@ en el código).
 
 p3vita guarda las operaciones en `SaveGame::queued_operations` y las ejecuta
 al final de cada tick, en su orden (`run_queued_operations` y el ejecutor
-`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x1E, la 0x1F, la 0x22, la 0x23, la 0x24, la 0x27, la 0x3B, la 0x46, la 0x4B, la 0x79, la 0x7A, la 0x7B, la 0x85 y la 0x86; las
+`run_operation`, `simulation.cpp`): de momento la 0x00, la 0x12, la 0x1E, la 0x1F, la 0x22, la 0x23, la 0x24, la 0x27, la 0x3B, la 0x46, la 0x4B, la 0x78, la 0x79, la 0x7A, la 0x7B, la 0x85 y la 0x86; las
 demás se descartan. El oráculo del mundo hace lo mismo con el ejecutor del
 juego ([../oracle.md](../oracle.md), «Las operaciones encoladas»). Lo que encolan las ciudades y la cola de eventos en 200
 días de la partida 1 (con un candidato retocado): 0x22 ×1924, 0x7B ×1704,
