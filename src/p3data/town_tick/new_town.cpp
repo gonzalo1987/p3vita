@@ -270,7 +270,7 @@ void fn_5289b0(SaveGame& save, int town, uint32_t flag, uint32_t seed, uint32_t 
 			for (uint32_t c = 0; c < i;) {
 				if (t.u8(base + c) == uint8_t(v)) {
 					if (++v >= count) {
-						v = 0;  // Sin comprobar con el oráculo.
+						v = 0;  // Checked with the oracle: scenario mayor_names (saves 3 and 5, direct calls).
 					}
 					c = 0;
 					continue;
@@ -297,7 +297,8 @@ void fn_5289b0(SaveGame& save, int town, uint32_t flag, uint32_t seed, uint32_t 
 				if (o.u8(0x6D8 + k) != t.u8(0x6D8 + j) || o.u8(0x6D4 + k) != t.u8(0x6D4 + j)) {
 					continue;
 				}
-				// Sin comprobar con el oráculo.
+				// The same pair as another town's. Checked with the oracle: scenario
+				// mayor_names (saves 3 and 5, direct calls).
 				if (name_first) {
 					t.u8(0x6D4 + j) = uint8_t(t.u8(0x6D4 + j) + 1);
 					if (t.u8(0x6D4 + j) >= 0x50) {
@@ -313,7 +314,9 @@ void fn_5289b0(SaveGame& save, int town, uint32_t flag, uint32_t seed, uint32_t 
 				other = int32_t(g.u32(kTownCount));
 			}
 			if (checked++ > 100000) {
-				j = 4;  // Sin comprobar con el oráculo.
+				// Unreachable: each clash moves the name or the family on and the other
+				// towns hold at most 100 pairs, so a draw makes at most about 2500 checks.
+				j = 4;
 				break;
 			}
 		}
@@ -349,7 +352,7 @@ void fn_5289b0(SaveGame& save, int town, uint32_t flag, uint32_t seed, uint32_t 
 			const uint8_t other = c < 4 ? t.u8(0x6D8 + c) : t.u8(0x6E8 + c);
 			if (other == uint8_t(v)) {
 				if (++v >= count) {
-					v = 0;  // Sin comprobar con el oráculo.
+					v = 0;  // Checked with the oracle: scenario mayor_names (saves 3 and 5, direct calls).
 				}
 				c = 1;
 				continue;
@@ -494,7 +497,8 @@ void fn_545b20(SaveGame& save, int town) {
 // 200 (k = 4), 700 (0xD), 500 (0x10) o 100, en /1024; lo demás a 0.
 void fn_5462f0(SaveGame& save, int town, uint32_t k) {
 	if (k >= 0x15 || k <= 3) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Its only caller (0x5458D0) passes 4, 0xD and 0x10.
+		// Checked with the oracle: scenario new_town_bits (saves 3 and 5, direct calls).
 	}
 	SavedTown& st = save.towns[size_t(town)];
 	const uint32_t parts = (save.globals.u32(kTownCount) * 3) >> 4;
@@ -532,10 +536,13 @@ void fn_5458d0(SaveGame& save, int town, bool flag, uint32_t wares, uint32_t oth
 		t.u16(0x848 + 16 * size_t(k)) = (wares & bit) ? 0x400 : (other & bit) ? 0x300 : 0;
 	}
 	if (wares & 0x20000) {
-		t.u16(0x898) = 0x300;  // Sin comprobar con el oráculo.
+		// The founding never gives these bits (it passes other = 0, and
+		// 0x532E30's mask has no bit above 0x40000). Each one is checked with the oracle, scenario
+		// new_town_bits (saves 3 and 5, direct calls).
+		t.u16(0x898) = 0x300;
 		t.u32(0x2CC) = 0x400;
 	} else if (other & 0x20000) {
-		t.u16(0x898) = 0x300;  // Sin comprobar con el oráculo.
+		t.u16(0x898) = 0x300;  // Checked with the oracle: new_town_bits.
 		t.u32(0x2CC) = 0x300;
 	} else {
 		t.u32(0x2CC) = 0;
@@ -546,13 +553,13 @@ void fn_5458d0(SaveGame& save, int town, bool flag, uint32_t wares, uint32_t oth
 		fn_5462f0(save, town, 4);
 	}
 	if (wares & 0x80000) {
-		fn_5462f0(save, town, 0x10);  // Sin comprobar con el oráculo.
+		fn_5462f0(save, town, 0x10);  // Checked with the oracle: new_town_bits.
 	}
 	if (wares & 0x100000) {
-		fn_5462f0(save, town, 0xD);  // Sin comprobar con el oráculo.
+		fn_5462f0(save, town, 0xD);  // Checked with the oracle: new_town_bits.
 	}
 	if (wares & 0x200000) {
-		t.u32(0x2C8) |= 0x8000000;  // Sin comprobar con el oráculo.
+		t.u32(0x2C8) |= 0x8000000;  // Checked with the oracle: new_town_bits.
 	}
 	t.u16(0x9A0) = 10;
 	if (flag) {
@@ -575,7 +582,7 @@ void fn_5458d0(SaveGame& save, int town, bool flag, uint32_t wares, uint32_t oth
 		f.s32(0x0) = int32_t(uint32_t(f.u16(0x8)) * kEfficiency[k - 4]) >> 10;
 	}
 	if (t.u32(0x2CC) > 0) {
-		t.u32(0x890) = t.u16(0x898);  // Sin comprobar con el oráculo.
+		t.u32(0x890) = t.u16(0x898);  // Checked with the oracle: scenario new_town_bits (saves 3 and 5, direct calls).
 	}
 	std::memset(t.bytes.data() + 0x4, 0, 0x60);
 	t.u32(0x2D4) = 0x26;
@@ -679,7 +686,8 @@ void fn_531d50(SaveGame& save, const GameMemory<0x10>& rec) {
 	t.u8(0x2C2) = rec.u8(0xD);
 	t.u32(0x2C8) = rec.u32(0x0);
 	if (g.u8(kTownTable + 0x34 * uint32_t(number) + 0x2F)) {
-		t.u32(0x2C8) |= 1;  // AmFluss. Sin comprobar con el oráculo.
+		t.u32(0x2C8) |= 1;  // AmFluss. Checked with the oracle: scenario river_town (saves 3 and 5; the
+		// numbers on a river are taken there, so the task's number gets the flag).
 	}
 	fn_5289b0(save, int(index), rec.u8(0xF), rec.u32(0x4) * (uint32_t(number) + 1),
 		rec.u32(0x8) * (uint32_t(number) + 1));
@@ -720,15 +728,17 @@ uint32_t fn_4ecdf4(SaveGame& save) {
 	GameMemory<0x18>& e = save.events[g.u16(kEventHead)];
 	const uint32_t town = e.u8(0x8);
 	if (town >= g.u32(kTownCount)) {
-		return 0;  // Sin comprobar con el oráculo.
+		// Each branch: checked with the oracle, scenario new_town_events (saves 3
+		// and 5; events 0x39 of existing towns).
+		return 0;
 	}
 	const SavedTown& st = save.towns[town];
 	if (st.memory.u8(0x2C8) & 0xE0) {
-		return 0;  // Sin comprobar con el oráculo.
+		return 0;  // Checked with the oracle: new_town_events.
 	}
 	const uint32_t count = st.memory.u16(0x776);
 	if (st.memory.u16(0x766) < count) {
-		// Sin comprobar con el oráculo.
+		// Checked with the oracle: new_town_events.
 		for (uint32_t r = st.memory.u16(0x766); r < count; r = st.records[r].next) {
 			e.u32(0) += 0x100;
 		}
@@ -740,9 +750,9 @@ uint32_t fn_4ecdf4(SaveGame& save) {
 		return 1;
 	}
 	if (wall >= 2) {
-		return 0;  // Sin comprobar con el oráculo.
+		return 0;  // Checked with the oracle: new_town_events.
 	}
-	// Sin comprobar con el oráculo.
+	// Checked with the oracle: new_town_events.
 	uint32_t days = 0;
 	for (uint32_t r = st.memory.u16(0x762); r < count; r = st.records[r].next) {
 		if (st.records[r].type == 0x36) {
@@ -794,7 +804,7 @@ uint32_t fn_4ea0d4(SaveGame& save) {
 	auto event = [&]() -> GameMemory<0x18>& { return save.events[g.u16(kEventHead)]; };
 	const uint32_t town = event().u32(0xC);
 	if (town >= g.u32(kTownCount)) {
-		return 0;  // Sin comprobar con el oráculo.
+		return 0;  // Checked with the oracle: scenario new_town_events (saves 3 and 5).
 	}
 	SavedTown& st = save.towns[town];
 	TownMemory& t = st.memory;
@@ -923,15 +933,16 @@ void fn_535fd6(SaveGame& save, const uint8_t* operation) {
 	std::memcpy(fields, operation, sizeof(fields));
 	const uint32_t merchants = g.u16(kMerchantCount);
 	if (fields[1] >= merchants || fields[2] >= g.u32(kTownCount)) {
-		return;  // Sin comprobar con el oráculo.
+		// Each check: checked with the oracle, scenario mayor_ops (saves 3 and 5).
+		return;
 	}
 	TownMemory& t = town_of(save, int(fields[2]));
 	if (t.u8(0x6F1) < merchants) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: mayor_ops.
 	}
 	const MerchantMemory& m = save.merchants[fields[1]].memory;
 	if (m.u8(0x39C + m.u8(0x19)) < 5 && fields[4] != 0xBADEAFFE) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: mayor_ops.
 	}
 	t.u8(0x6F1) = uint8_t(fields[1]);
 }

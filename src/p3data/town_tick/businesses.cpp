@@ -23,6 +23,7 @@
 // instalaciones) se suma lo que produciría con `max_workers` trabajadores,
 // que entra en los umbrales de precio.
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -233,8 +234,10 @@ void fn_50fbc0(SaveGame& save, StorageMemory& s, FacilityMemory& fc, uint32_t ma
 	s.u32(stock(kTimber)) -= uint32_t(made);
 	s.u32(stock(kPigIron)) -= uint32_t(made);
 	if (s.s32(stock(kTimber)) < 0) {
-		// Sin comprobar con el oráculo: con lo hecho ya recortado a la madera
-		// que hay, no puede quedar negativa (salvo desbordamiento).
+		// With what is made already cut to the timber there is, it can't go
+		// negative but by an overflow (a negative stock of pig iron and the
+		// timber at the top). Checked with the oracle: scenario business_staff
+		// (saves 3 and 5, direct calls).
 		s.u32(stock(kTimber)) = 0;
 	}
 }
@@ -558,12 +561,13 @@ void fn_50e380(SaveGame& save, FacilityMemory& fc, uint32_t count, bool allow_al
 	const uint16_t workers = fc.u16(4);
 	uint32_t n = count;
 	if (allow_all) {
-		// Sin comprobar con el oráculo: solo desde otros llamadores (0x4D36D3, 0x4FF64E).
+		// Only from other callers (0x4D36D3, 0x4FF64E). Checked with the oracle:
+		// scenarios business_staff, office_business and office_recount (saves 3 and 5).
 		if (n > workers) {
 			n = workers;
 		}
 	} else if (n >= workers) {
-		n = uint32_t(workers) - 1;  // Sin comprobar con el oráculo.
+		n = uint32_t(workers) - 1;  // Checked with the oracle: scenario business_staff (saves 3 and 5, direct calls).
 	}
 	if (n < 1) {
 		return;
@@ -592,7 +596,9 @@ void fn_50e380(SaveGame& save, FacilityMemory& fc, uint32_t count, bool allow_al
 			moved = citizens - 1;
 		}
 		if (moved > left) {
-			moved = left;  // Sin comprobar con el oráculo.
+			moved = left;  // Unreachable: with the classes kept at 1 or more the weights
+			// are >= 0 and each share is floor(weight · people / sum), so the shares never pass
+			// the people left.
 		}
 		t.s32(0x2D8 + 4 * i) = citizens - moved;
 		left -= moved;
@@ -622,12 +628,15 @@ namespace businesses_detail {
 // float [+0xC] y su parte entera se va a la ciudad (0x50E380, como mendigos):
 // nadie si trabajadores y reserva suman ya 30 o más y, si no, como mucho lo
 // que falte para 30. Lo que se va se resta dos veces del acumulado, como en
-// el juego. En los tipos 0..3 los despedidos se van todos a la ciudad.
+// el juego (with fix_game_bugs(), once). En los tipos 0..3 los despedidos se
+// van todos a la ciudad.
 void fn_5109b0(SaveGame& save, FacilityMemory& fc, uint32_t count) {
 	uint32_t n = count;
 	const uint32_t workers = fc.u16(4);
 	if (workers < n) {
-		n = workers - 1;  // Sin comprobar con el oráculo: 0x5101D0 nunca pide tantos.
+		// 0x5101D0 never asks for so many. Checked with the oracle: scenario
+		// business_staff (saves 3 and 5, direct calls).
+		n = workers - 1;
 	}
 	if (fc.u8(6) > 3) {
 		fc.u16(0xA) += uint16_t(n);
@@ -647,7 +656,12 @@ void fn_5109b0(SaveGame& save, FacilityMemory& fc, uint32_t count) {
 		}
 		fc.u16(4) = uint16_t(now + n);
 		fc.u16(0xA) -= uint16_t(n);
-		fc.f32(0xC) = float(double(fc.f32(0xC)) - double(float(double(n))));
+		// Game bug: what leaves was already taken from the float; taking it
+		// again leaves [+0xC] negative (and fewer leave the next times).
+		// With fix_game_bugs() it keeps the fraction.
+		if (!fix_game_bugs()) {
+			fc.f32(0xC) = float(double(fc.f32(0xC)) - double(float(double(n))));
+		}
 	}
 	if (n > 0) {
 		fn_50e380(save, fc, n, false);
@@ -767,7 +781,7 @@ void fn_5101d0(SaveGame& save, int town, int facility) {
 	case 2:
 		wanted = fn_50e610(save, town, facility);
 		if (wanted < 5) {
-			wanted = 5;  // Sin comprobar con el oráculo.
+			wanted = 5;  // Unreachable: 0x50E610 gives 5 or more.
 		}
 		break;
 	case 3: {
@@ -832,7 +846,7 @@ void fn_5101d0(SaveGame& save, int town, int facility) {
 		business(kHemp, [&] { fn_50ebf0(save, s, fc, 0x3E); });
 		break;
 	default:
-		break;  // Sin comprobar con el oráculo (no hay tipos > 20).
+		break;  // Unreachable: the facilities are 0..20.
 	}
 
 	const uint32_t workers = fc.u16(4);
@@ -862,8 +876,9 @@ void fn_5101d0(SaveGame& save, int town, int facility) {
 		// En la granja de grano la comparación está al revés: si cabe lo que
 		// falta, contrata hasta llenar el sitio y lo que queda por apuntar sale
 		// negativo (0x4D4A40 no lo cuenta); si no cabe, contrata todo lo que
-		// falta aunque pase de 60.
-		if (type == 9 ? room >= need : room < need) {
+		// falta aunque pase de 60. Game bug: with fix_game_bugs() it compares as
+		// the other types do.
+		if (type == 9 && !fix_game_bugs() ? room >= need : room < need) {
 			need -= room;
 			fn_5108e0(save, fc, room);
 			need += room;

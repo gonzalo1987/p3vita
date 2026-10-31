@@ -687,6 +687,7 @@ int main(int argc, char** argv) {
 	register_probes_alderman(registry);
 	register_probes_battle(registry);
 	register_probes_statistics(registry);
+	register_probes_unchecked(registry);
 
 	Input in(argv[1]);
 	if (!in.ok() || !in.expect("P3PROBE1")) {

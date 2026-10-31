@@ -42,6 +42,7 @@
 
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -72,6 +73,7 @@ uint32_t fn_52bb00(const SaveGame& save, int town);
 
 namespace {
 
+constexpr uint32_t kEvents = 0x6DD73C;  // u32 the address of the queue's array (in the game's memory).
 constexpr uint32_t kEventBusy = 0x6DD73C + 0x4;  // u32 1 mientras 0x4D85C0 atiende la cola.
 constexpr uint32_t kEventHead = 0x6DD73C + 0x8;  // u16 primer evento de la cola.
 constexpr uint32_t kEventCount = 0x6DD73C + 0xC;  // u16 eventos.
@@ -172,7 +174,10 @@ uint8_t fn_515a60(const SaveGame& save, uint32_t from) {
 	for (;;) {
 		if (n >= 0x28) {
 			if (wrapped) {
-				return 0;  // Sin comprobar con el oráculo.
+				// Unreachable: 0x5326E0 founds towns only while there are fewer
+				// than 26, so with the 5 pirate lairs at most 31 of the 40
+				// numbers are taken (0x515A60 is only called from 0x532E30).
+				return 0;
 			}
 			wrapped = true;
 			n = 0;
@@ -191,7 +196,8 @@ uint8_t fn_51a470(const SaveGame& save, int ship) {
 	if (p < 5 && save.globals.u32(kPirates + 4 * uint32_t(p)) != 0) {
 		return p;
 	}
-	for (uint8_t k = 0; k < 5; ++k) {  // Sin comprobar con el oráculo.
+	// The ship's pirate doesn't exist. Checked with the oracle: scenario candidacy_pirate_index (saves 1 and 3).
+	for (uint8_t k = 0; k < 5; ++k) {
 		if (save.globals.u32(kPirates + 4 * uint32_t(k)) != 0) {
 			return k;
 		}
@@ -328,7 +334,7 @@ void fn_5326e0(SaveGame& save) {
 		case 0: {
 			// Fundar una ciudad, si hay menos de 26.
 			if (towns >= 0x1A) {
-				continue;  // Sin comprobar con el oráculo.
+				continue;  // Checked with the oracle: scenario candidacy_26_towns (save 3).
 			}
 			uint32_t m = month + 0x19;
 			uint32_t t = uint32_t(g.u16(kYear)) * 365u * 256u;
@@ -416,7 +422,7 @@ void fn_5326e0(SaveGame& save) {
 				}
 			}
 			if (rec.u16(8) >= g.u16(kShipCount)) {
-				continue;  // Sin comprobar con el oráculo.
+				continue;  // Checked with the oracle: scenario candidacy_no_targets (saves 1 and 3).
 			}
 			rec.u32(0) = month_tick_once(save, month + 3);
 			const int ship = rec.u16(8);
@@ -471,7 +477,7 @@ void fn_5326e0(SaveGame& save) {
 				}
 			}
 			if (chosen == 0xFF) {
-				continue;  // Sin comprobar con el oráculo.
+				continue;  // Checked with the oracle: scenario candidacy_no_targets (saves 1 and 3).
 			}
 			rec.u16(8) = uint16_t((least + 0x7D0) / 250 * 250);
 			rec.u32(0) = ((uint32_t(g.u16(kYear)) + 1) * 365u + kMonthStart[month]) << 8;
@@ -492,7 +498,8 @@ void fn_53fd10(SaveGame& save, const uint8_t* operation) {
 	std::memcpy(op.bytes.data(), operation, op.bytes.size());
 	const uint8_t kind = op.u8(8);
 	if (kind >= 5) {
-		return;  // Sin comprobar con el oráculo.
+		// Only the interface or a network game: 0x5326E0 queues kinds 0..4.
+		return;  // Checked with the oracle: scenario hanse_ops (saves 3 and 5).
 	}
 	GlobalMemory& g = save.globals;
 	for (uint32_t i = g.u16(kEventHead); i < g.u16(kEventCount); i = save.events[i].u16(4)) {
@@ -588,7 +595,9 @@ void fn_4ebf54(SaveGame& save, uint32_t index) {
 	GlobalMemory& g = save.globals;
 	GameMemory<0x18>& e = save.events[index];
 	if (e.u8(0xF) != 0) {
-		return;  // Sin comprobar con el oráculo.
+		// From the operation 0x4B on a task not given but started (the copy
+		// of an expired road, 0x4EB0EB). Checked with the oracle: scenario hanse_ops (saves 3 and 5).
+		return;
 	}
 	e.u8(0xF) = 1;
 	const uint32_t now = g.u32(kTick);
@@ -632,7 +641,7 @@ void fn_4ebf54(SaveGame& save, uint32_t index) {
 			}
 		}
 		if (!found) {
-			e.u32(8) = now + 0x26C00;  // Sin comprobar con el oráculo.
+			e.u32(8) = now + 0x26C00;  // Checked with the oracle: scenario task_branches (saves 3 and 5).
 		}
 		break;
 	}
@@ -652,7 +661,7 @@ void fn_4ebf54(SaveGame& save, uint32_t index) {
 		break;
 	}
 	default:
-		break;  // Sin comprobar con el oráculo.
+		break;  // Checked with the oracle: scenario task_branches (saves 3 and 5).
 	}
 }
 
@@ -664,7 +673,7 @@ void fn_4ec354(SaveGame& save) {
 	MerchantMemory& m = save.merchants[e.u8(0xD)].memory;
 	++m.u8(0x37);
 	if (e.u8(0xC) == 0) {
-		++m.u8(0x37);  // Sin comprobar con el oráculo.
+		++m.u8(0x37);  // Checked with the oracle: scenario new_town_market (saves 3 and 5).
 	}
 }
 
@@ -698,7 +707,7 @@ uint32_t road_progress(SaveGame& save, GameMemory<0x18>& e, uint32_t tick, uint3
 	const uint32_t a = e.u8(0x10);
 	const uint32_t b = e.u8(0x11);
 	if (a >= town_count(save) || b >= town_count(save)) {
-		return 0;  // Sin comprobar con el oráculo.
+		return 0;  // Checked with the oracle: scenario task_branches (saves 3 and 5).
 	}
 	if (e.u8(0x12) != 0) {
 		e.u32(0) = tick + 0x180;
@@ -764,7 +773,9 @@ void fn_51a750(SaveGame& save, int ship, uint8_t n) {
 		levels = n;
 	}
 	if (levels == 0) {
-		return;  // Sin comprobar con el oráculo.
+		// Not from 0x516170 (a new ship is at level 0) nor 0x50E000 (it stops
+		// at 2); the game's other callers aren't rewritten yet.
+		return;  // Checked with the oracle: scenario ship_artillery (saves 3 and 5, direct calls).
 	}
 	const int32_t loads = int32_t(levels) * kLoadsPerLevel[s.u8(0xE) & 3];
 	s.u8(0xF) = uint8_t(s.u8(0xF) + levels);
@@ -786,17 +797,19 @@ void fn_51a4e0(SaveGame& save, int ship, uint32_t strength, uint8_t level) {
 	ShipMemory& s = save.ships[size_t(ship)].memory;
 	int32_t space = s.s32(0x10) - s.s32(0x118) - s.s32(0x11C);
 	if (strength <= s.u32(0x120) || space < kWeight[0] || level < 2) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario ship_artillery (saves 3 and 5, direct calls).
 	}
 	if (level > 4) {
-		level = 4;  // Sin comprobar con el oráculo.
+		// 0x52BB00 gives up to 5. Checked with the oracle: scenarios nest_reinforce and ship_artillery
+		// (saves 3 and 5).
+		level = 4;
 	}
 	auto add = [&](uint8_t piece) {
 		s.s32(0x11C) += kWeight[piece];
 		space -= kWeight[piece];
 		s.u32(0x120) += kPower[piece];
 	};
-	auto remove = [&](uint8_t piece) {  // Sin comprobar con el oráculo.
+	auto remove = [&](uint8_t piece) {
 		s.u32(0x120) -= kPower[piece];
 		s.s32(0x11C) -= kWeight[piece];
 		space += kWeight[piece];
@@ -807,7 +820,7 @@ void fn_51a4e0(SaveGame& save, int ship, uint32_t strength, uint8_t level) {
 			continue;
 		}
 		if (kWeight[level] > space) {
-			break;  // Sin comprobar con el oráculo.
+			break;  // Checked with the oracle: scenario ship_artillery (saves 3 and 5, direct calls).
 		}
 		s.u8(0x13C + i) = level;
 		s.u8(0x13D + i) = 6;
@@ -822,7 +835,10 @@ void fn_51a4e0(SaveGame& save, int ship, uint32_t strength, uint8_t level) {
 		if (piece >= level) {
 			continue;
 		}
-		const uint8_t second = s.u8(0x13D + i);  // Sin comprobar con el oráculo.
+		// Only for a ship that already has artillery: not from 0x516170 (a new
+		// ship); the game's other callers aren't rewritten yet.
+		// Checked with the oracle: scenario ship_artillery (saves 3 and 5, direct calls).
+		const uint8_t second = s.u8(0x13D + i);
 		if (second == 7 || (space < kWeight[0] && second > 7)) {
 			continue;
 		}
@@ -900,7 +916,9 @@ void fn_5144a0(SaveGame& save, uint32_t pirate, uint32_t nest) {
 	static constexpr uint8_t kPirateShips[4] = {4, 8, 16, 18};  // 0x673658
 	GameMemory<0x18>& p = *save.pirates[pirate];
 	if (uint32_t(p.u8(0xE)) != (nest & 0xFFFF) || p.u32(0) != 0) {
-		return;  // Sin comprobar con el oráculo.
+		// The other pirates, and the lair's pirate when it is out. Checked with the oracle: scenarios
+		// nest_reinforce and nest_reinforce_away (saves 3 and 5).
+		return;
 	}
 	const uint8_t difficulty = save.settings.u8(0x13);
 	int32_t missing = difficulty < 4 ? kPirateShips[difficulty] : 0;
@@ -941,7 +959,7 @@ uint32_t nest_progress(SaveGame& save, GameMemory<0x18>& e, uint32_t tick) {
 	switch (e.u8(0x12)) {
 	case 0: {
 		if (!valid) {
-			e.u32(0) = tick + 0x100;  // Sin comprobar con el oráculo.
+			e.u32(0) = tick + 0x100;  // Checked with the oracle: scenario nest_branches (saves 3 and 5).
 			e.u8(0x12) = 3;
 			return 1;
 		}
@@ -970,14 +988,16 @@ uint32_t nest_progress(SaveGame& save, GameMemory<0x18>& e, uint32_t tick) {
 	}
 	case 1: {
 		if (!valid) {
-			e.u32(0) = tick + 1;  // Sin comprobar con el oráculo.
+			e.u32(0) = tick + 1;  // Checked with the oracle: scenario nest_branches (saves 3 and 5).
 			e.u8(0x12) = 3;
 			return 1;
 		}
 		// El barco que ataca ([+0x14]) ya no está en la guarida: ninguno.
 		const uint32_t attacker = e.u16(0x14);
 		if (attacker < g.u16(kShipCount)) {
-			const ShipMemory& ship = save.ships[attacker].memory;  // Sin comprobar con el oráculo.
+			// [+0x14] is set by the attack (a battle, not rewritten).
+			// Checked with the oracle: scenario nest_branches (saves 3 and 5).
+			const ShipMemory& ship = save.ships[attacker].memory;
 			if (int32_t(ship.s16(0x1E)) != g.s32(kTownTable + 0x20 + 0x34 * nest) ||
 				int32_t(ship.s16(0x22)) != g.s32(kTownTable + 0x24 + 0x34 * nest)) {
 				e.u16(0x14) = 0xFFFF;
@@ -1050,6 +1070,14 @@ uint32_t fn_4eb0eb(SaveGame& save) {
 			switch (e->u8(0xC)) {
 			case 1: {
 				// Un encargo nuevo igual, con la ciudad [+0x10] en [+0xD].
+				// Game bug: [+0x10] is a town, not a merchant. With a town
+				// index under the number of merchants the copy belongs to that
+				// merchant: it never expires (the sections build themselves),
+				// the road gets built and, when it is done, 0x4EC354 counts it
+				// for that merchant's candidacy. With fix_game_bugs() the copy
+				// has no merchant (0xFF): as the two towns keep the bit 0x8000
+				// of the road, the game's own check (0x532C50) removes it on
+				// its first turn, as with a town index past the merchants.
 				g.u32(kEventBusy) = 0;
 				const uint16_t created = events_detail::fn_4d8cf0(save, e->u32(0) + 1);
 				g.u32(kEventBusy) = 1;
@@ -1058,7 +1086,7 @@ uint32_t fn_4eb0eb(SaveGame& save) {
 				c.u16(6) = e->u16(6);
 				c.u32(8) = e->u32(0) + 0xBA00;
 				c.u8(0xC) = 1;
-				c.u8(0xD) = e->u8(0x10);
+				c.u8(0xD) = fix_game_bugs() ? 0xFF : e->u8(0x10);
 				c.u8(0xE) = e->u8(0xE);
 				c.u8(0xF) = e->u8(0xF);
 				c.u8(0x10) = e->u8(0x10);
@@ -1087,7 +1115,8 @@ uint32_t fn_4eb0eb(SaveGame& save) {
 		// La ciudad nueva: se cumple cuando tiene mercado. (Mientras el
 		// principio no cree la ciudad, [+0x16] no es una: el juego leería
 		// fuera.)
-		if (e->u8(0x16) < town_count(save) && (save.towns[e->u8(0x16)].memory.u32(0x76C) & 0x100)) {  // Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario new_town_market (saves 3 and 5).
+		if (e->u8(0x16) < town_count(save) && (save.towns[e->u8(0x16)].memory.u32(0x76C) & 0x100)) {
 			fn_4ec354(save);
 			return 0;
 		}
@@ -1117,7 +1146,7 @@ uint32_t fn_4eb0eb(SaveGame& save) {
 			return 1;
 		}
 		if (e->u8(0x16) == 1) {
-			fn_4ec354(save);  // Sin comprobar con el oráculo.
+			fn_4ec354(save);  // Checked with the oracle: scenario task_branches (saves 3 and 5).
 			return 0;
 		}
 		// Fallido: al jugador humano, los avisos y la ventana (no se reescriben).
@@ -1152,19 +1181,22 @@ uint32_t fn_4eb0eb(SaveGame& save) {
 // esa ciudad. La cantidad (en cargas o barriles, 0x672C14) sale primero de su
 // oficina en la ciudad y después de sus barcos atracados en ella, y lo que
 // consigue se suma al contador del material en el encargo.
+// Game bug (reproduced): with a merchant out of the world the amount missing is
+// the event's address (see below).
 void fn_53a3e0(SaveGame& save, const uint8_t* operation) {
 	Operation op;
 	std::memcpy(op.bytes.data(), operation, op.bytes.size());
 	const GlobalMemory& g = save.globals;
 	const uint32_t index = op.u16(4);
 	const uint32_t town = op.u8(8);
+	// Each check: checked with the oracle, scenario hanse_ops (saves 3 and 5).
 	if (index >= g.u16(kEventCount) || town >= town_count(save)) {
-		return;  // Sin comprobar con el oráculo.
+		return;
 	}
 	GameMemory<0x18>& e = save.events[index];
 	if (e.u16(6) != 0x32 || e.u8(0xC) != 1 || e.u8(0xD) != op.u8(9) ||
 		(e.u8(0x10) != town && e.u8(0x11) != town) || e.u8(0x12) == 0) {
-		return;  // Sin comprobar con el oráculo.
+		return;
 	}
 	// 0x672BF4: la mercancía de cada material (madera, ladrillos,
 	// herramientas, cáñamo). [+0xA] es el material o su mercancía; si no es
@@ -1191,8 +1223,21 @@ void fn_53a3e0(SaveGame& save, const uint8_t* operation) {
 	const int32_t unit = kInBarrels[ware] ? 200 : 2000;
 	const uint32_t merchant = op.u8(9);
 	if (merchant >= g.u16(kMerchantCount)) {
-		// El juego toma por cantidad que falta un puntero (el del evento): no
-		// se puede reproducir. Sin comprobar con el oráculo.
+		// Game bug: with a merchant out of the world (only the interface or a
+		// network game could send one, on a road task not given yet, whose
+		// [+0xD] is 0xFF) nothing is taken, and the game uses as the amount
+		// still missing the address of the event (0x53A619: edi is still the
+		// event pointer): the counter gets amount − address, its low 10 bits.
+		// The address is the queue's array (*0x6DD73C) + 0x18 · index.
+		// Checked with the oracle: scenario hanse_ops (saves 3 and 5).
+		// With fix_game_bugs() nothing is given, so the task is left as it is.
+		if (fix_game_bugs()) {
+			return;
+		}
+		const uint32_t address = g.u32(kEvents) + 0x18 * index;
+		const uint32_t total = uint32_t(alderman_detail::road_material(e, k)) + op.u16(6) - address;
+		e.u8(0x14 + k) = uint8_t(total);
+		e.u8(0x13) = uint8_t(((total & 0x300) >> (8 - 2 * k)) | (~(3u << (2 * k)) & e.u8(0x13)));
 		return;
 	}
 	int32_t missing = op.u16(6);
@@ -1239,12 +1284,13 @@ void fn_53b440(SaveGame& save, const uint8_t* operation) {
 	const GlobalMemory& g = save.globals;
 	const uint32_t merchant = op.u32(4);
 	const uint32_t index = op.u32(8);
+	// Each check: checked with the oracle, scenario hanse_ops (saves 3 and 5).
 	if (merchant >= g.u16(kMerchantCount) || index >= g.u16(kEventCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;
 	}
 	GameMemory<0x18>& e = save.events[index];
 	if (e.u16(6) != 0x32 || e.u8(0xD) < g.u16(kMerchantCount) || e.u8(0xC) >= 5) {
-		return;  // Sin comprobar con el oráculo.
+		return;
 	}
 	if (save.merchants[merchant].memory.u8(0x37) == 0 || fn_4ec694(save, merchant) != 0xFFFF) {
 		return;

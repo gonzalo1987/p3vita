@@ -13,8 +13,9 @@
 #include <cassert>
 #include <cstring>
 
-#include "p3data/trade.hpp"
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/trade.hpp"
 
 namespace p3::data::tick {
 
@@ -300,7 +301,9 @@ void fn_5254c0(SaveGame& save, int town, uint32_t index) {
 			}
 			link = &r.next;
 		}
-	} else {  // Sin comprobar con el oráculo (0x524920 solo mete muelles, 0x2F).
+	// Towers (0x523830) and wall pieces (0x522C70). Checked with the oracle: scenario tower_ops and
+	// wall_ops (saves 3 and 5).
+	} else {
 		while (*link < n) {
 			link = &records[*link].next;
 		}
@@ -319,7 +322,8 @@ bool fn_4f9c80(const SaveGame& save, int town, uint8_t& x, uint8_t& y, uint32_t 
 	const SavedTown& st = save.towns[size_t(town)];
 	const TownMemory& t = st.memory;
 	if (int32_t(type) >= 0x39) {
-		return false;  // Sin comprobar con el oráculo (las obras piden tipos <= 0x30).
+		// No caller asks for these types. Checked with the oracle: scenario site_search (saves 3 and 5, direct calls).
+		return false;
 	}
 	const int32_t w = t.s32(0x7A8);
 	const int32_t h = t.s32(0x7AC);
@@ -331,8 +335,9 @@ bool fn_4f9c80(const SaveGame& save, int town, uint8_t& x, uint8_t& y, uint32_t 
 	}
 	// Clase de celda (rejilla, savegame.md §7) que sirve de solar. Las obras
 	// de la ciudad solo piden los tipos 0x01, 0x03, 0x15, 0x18, 0x1B,
-	// 0x1F..0x21, 0x23, 0x24 y 0x30: los demás casos (de otros llamadores)
-	// están sin comprobar con el oráculo.
+	// 0x1F..0x21, 0x23, 0x24 y 0x30. Every type (but 0x34 and 0x35, below),
+	// with both orientations and both flags: checked with the oracle, scenario
+	// site_search (saves 3 and 5, direct calls).
 	uint32_t mask = 0x3F;
 	uint32_t value = 0;
 	switch (type) {
@@ -388,7 +393,7 @@ bool fn_4f9c80(const SaveGame& save, int town, uint8_t& x, uint8_t& y, uint32_t 
 	const int32_t cx0 = x;
 	const int32_t cy0 = y;
 	if ((uint32_t(cell(st, int64_t(h) * cx0 + cy0)) & mask) == value) {
-		return true;  // Sin comprobar con el oráculo.
+		return true;  // Checked with the oracle: scenario site_search (saves 3 and 5, direct calls).
 	}
 	// Anillos r = 1, 2...: cuatro lados (arriba, derecha, abajo, izquierda)
 	// recortados a la rejilla. En la rejilla escalonada, un paso en y avanza
@@ -591,7 +596,9 @@ uint32_t fn_51fab0(SaveGame& save, int town, uint8_t type, bool immediate) {
 			x = t.u8(0x800);
 			y = t.u8(0x801);
 		} else {
-			return 0;  // Sin comprobar con el oráculo (las obras solo piden 0x01 y 0x03).
+			// The works only ask for 0x01 and 0x03. Checked with the oracle: scenario site_search (saves 3 and 5,
+			// direct calls).
+			return 0;
 		}
 	} else if (type < 0x1E) {
 		uint32_t skip = save.globals.u32(global::kWorldDayOfYear) & 7;
@@ -610,10 +617,12 @@ uint32_t fn_51fab0(SaveGame& save, int town, uint8_t type, bool immediate) {
 				--skip;
 				continue;
 			}
+			// A house of the same type. Checked with the oracle: scenario site_search
+			// (saves 3 and 5, direct calls).
 			if (skip == 0) {
-				break;  // Sin comprobar con el oráculo.
+				break;
 			}
-			skip -= 2;  // Sin comprobar con el oráculo.
+			skip -= 2;
 		}
 		if (!immediate && x == t.u8(0x800)) {
 			near_statue();
@@ -625,11 +634,11 @@ uint32_t fn_51fab0(SaveGame& save, int town, uint8_t type, bool immediate) {
 			y = t.u8(0x801);
 			break;
 		case 0x26:  // Solar del baño.
-			x = t.u8(0x806);  // Sin comprobar con el oráculo (las obras no piden 0x26).
+			x = t.u8(0x806);  // Checked with the oracle: scenario site_search (saves 3 and 5, direct calls).
 			y = t.u8(0x807);
 			break;
 		case 0x2E:
-			x = t.u8(0x808);  // Sin comprobar con el oráculo (las obras no piden 0x2E).
+			x = t.u8(0x808);  // Checked with the oracle: scenario site_search (saves 3 and 5, direct calls).
 			y = t.u8(0x809);
 			break;
 		case kTypeTower:
@@ -638,7 +647,8 @@ uint32_t fn_51fab0(SaveGame& save, int town, uint8_t type, bool immediate) {
 			if (!immediate) {
 				near_statue();
 			} else {
-				// Sin comprobar con el oráculo (las obras llaman con `immediate` = 0).
+				// The works call with `immediate` = 0. Checked with the oracle: scenario site_search (saves 3
+				// and 5, direct calls).
 				x = uint8_t(x + 3 - (save.globals.u8(global::kWorldDayOfYear) & 7));
 				y = uint8_t(y + 3 - (save.globals.u8(global::kWorldMonth) & 7));
 			}
@@ -660,11 +670,20 @@ uint32_t fn_51fab0(SaveGame& save, int town, uint8_t type, bool immediate) {
 		}
 	}
 	if (immediate) {
-		// No traducido: construye ya el edificio (0x521900 para los tipos
-		// < 0x30, 0x523830 hasta 0x33 y 0x522C70 para el resto). Lo hacen las
-		// operaciones del juego; las obras de la ciudad (0x51D870) siempre
-		// llaman con 0.
-		assert(false);
+		// Builds at once, as the town (0xFF): 0x521900 for the types < 0x30
+		// (its result), 0x523830 up to 0x33 and 0x522C70 for the rest (no type
+		// with a site gets there). Only the interface and 0x545F50 (a town that
+		// already exists, not rewritten yet) call with it; the town's works
+		// (0x51D870) and the event 0x2F always call with 0.
+		// Checked with the oracle: scenario site_search (saves 3 and 5, direct calls).
+		if (type < 0x30) {
+			return fn_521900(save, town, 0xFF, x, y, type, param) ? 1 : 0;
+		}
+		if (type <= 0x33) {
+			fn_523830(save, town, x, y, 0xFF);
+			return 1;
+		}
+		fn_522c70(save, town, 0xFF, type != kTypeWall ? 1 : 0);
 		return 1;
 	}
 	Operation op;
@@ -734,7 +753,8 @@ void fn_5250d0(const SaveGame& save, int town, uint8_t& x, uint8_t& y) {
 	// Fuera de la rejilla (a menos de 2 celdas del borde) se toma un resto. El
 	// juego lo repite para x y para y con el mismo código.
 	auto place = [](uint8_t& v, int32_t d, int32_t size) {
-		if (2 - d > int32_t(v)) {  // Para x, sin comprobar con el oráculo (para y, sí).
+		// For x: checked with the oracle, scenario site_search (saves 3 and 5, direct calls).
+		if (2 - d > int32_t(v)) {
 			v = uint8_t(int32_t(uint32_t(d) & 0xFF) % (size - 4) + 2);
 		} else if (size < int32_t(v) + d + 2) {
 			v = uint8_t(int32_t(uint8_t(uint8_t(d) * 3 + v)) % (size - 4) + 2);
@@ -1105,15 +1125,18 @@ void fn_4f89e0(SaveGame& save, int merchant, uint32_t town) {
 void fn_4f8a50(SaveGame& save, int merchant, uint32_t town, bool count) {
 	const TownMemory& t = save.towns[town].memory;
 	const int32_t people = t.s32(0x2D4);
+	// Each branch: checked with the oracle, scenarios chapel_reputation (direct
+	// calls) and build_ops (saves 3 and 5). Without `count` only from the
+	// operation 0x25 (0x5244F0), which the simulation doesn't queue.
 	if (people < 1) {
-		return;  // Sin comprobar con el oráculo.
+		return;
 	}
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	float& r = m.f32(0x11C + 12 * town);
 	if (!count) {
-		r = float(double(m.f32(0x464)) * double(kChapelReputation) + double(r));  // Sin comprobar con el oráculo.
+		r = float(double(m.f32(0x464)) * double(kChapelReputation) + double(r));
 	} else if ((int32_t(t.u8(0x773)) + t.u8(0x771)) * 5000 < people) {
-		r = float(double(m.f32(0x464)) + double(r));  // Sin comprobar con el oráculo.
+		r = float(double(m.f32(0x464)) + double(r));
 	}
 }
 
@@ -1122,7 +1145,7 @@ void fn_4f8a50(SaveGame& save, int merchant, uint32_t town, bool count) {
 void fn_4f8c70(SaveGame& save, int merchant, uint32_t town) {
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	float& r = m.f32(0x11C + 12 * town);
-	r = float(double(m.f32(0x464)) + double(r));  // Sin comprobar con el oráculo.
+	r = float(double(m.f32(0x464)) + double(r));  // Checked with the oracle: scenario build_ops (saves 3 and 5).
 }
 
 // 0x4F8560 (sobre el comerciante): paga `amount` por el edificio 0x22 de la
@@ -1133,14 +1156,15 @@ void fn_4f8c70(SaveGame& save, int merchant, uint32_t town) {
 void fn_4f8560(SaveGame& save, int merchant, uint32_t town, int32_t amount) {
 	GlobalMemory& g = save.globals;
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
+	// Each branch: checked with the oracle, scenario build_ops (saves 3 and 5;
+	// operations 0x37 and 0x22).
 	if (town >= g.u32(global::kWorldTownCount) || m.s32(0) < amount) {
-		return;  // Sin comprobar con el oráculo.
+		return;
 	}
 	const uint32_t bit = 1u << (town & 31);
 	if ((m.u32(0x468) & bit) || g.u8(kWorldNoTownWork)) {
-		return;  // Sin comprobar con el oráculo.
+		return;
 	}
-	// Sin comprobar con el oráculo.
 	m.u32(0x468) |= bit;
 	m.s32(0x4BC) += amount;
 	m.s32(0) -= amount;
@@ -1170,7 +1194,8 @@ void fn_4f8560(SaveGame& save, int merchant, uint32_t town, int32_t amount) {
 // vista de la ciudad (0x590680, 0x5891C0). Devuelve si lo ha construido.
 bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, uint8_t type, uint8_t param) {
 	if (type >= 0x30) {
-		return false;  // Sin comprobar con el oráculo.
+		// No caller passes it (0x53CE30 sends those types elsewhere).
+		return false;  // Checked with the oracle: scenario build_ops (saves 3 and 5, a direct call).
 	}
 	TownMemory& t = save.towns[size_t(town)].memory;
 	const int64_t at = int64_t(t.s32(0x7AC)) * x + y;
@@ -1190,7 +1215,7 @@ bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, ui
 	int32_t tools = int32_t(kTools[type]) * kBarrel;
 	int32_t hemp = int32_t(kHemp[type]) * kLoad;
 	if (type == 5 && t.u32(0x2CC) == 0) {
-		hemp >>= 1;  // Sin comprobar con el oráculo.
+		hemp >>= 1;  // Checked with the oracle: scenario build_ops (saves 3 and 5).
 	}
 	const bool merchant = owner < save.globals.u16(global::kWorldMerchantCount);
 	int office = -1;
@@ -1204,7 +1229,7 @@ bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, ui
 	// Un edificio municipal: su bit en [0x76C], la celda 0x8B y [0x7A4] = 1.
 	auto municipal = [&](uint32_t mask, uint32_t want, uint32_t bit) {
 		if ((bits & mask) != want) {
-			return false;  // Sin comprobar con el oráculo.
+			return false;  // Checked with the oracle: scenario build_ops (saves 3 and 5).
 		}
 		t.u32(0x76C) = bits | bit;
 		set_grid(0x8B);
@@ -1214,7 +1239,7 @@ bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, ui
 	// Las empresas: fuera de la muralla en un asedio, no.
 	auto business = [&]() {
 		if (siege) {
-			return false;  // Sin comprobar con el oráculo.
+			return false;  // Checked with the oracle: scenario build_ops (saves 3 and 5).
 		}
 		if (grid() >= 0x80) {
 			++t.u16(0x78C);
@@ -1268,7 +1293,8 @@ bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, ui
 			return false;
 		}
 		if (fn_4fcfe0(save, town, 0)) {
-			events_rare_detail::fn_522b20(save, town, 0);  // Sin comprobar con el oráculo.
+			// Checked with the oracle: scenario build_ops (saves 3 and 5).
+			events_rare_detail::fn_522b20(save, town, 0);
 		}
 		break;
 	case 0x22:
@@ -1309,7 +1335,7 @@ bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, ui
 		break;
 	case 0x26:
 		if ((bits & 0x4010) != 0x10) {
-			return false;  // Sin comprobar con el oráculo.
+			return false;  // Checked with the oracle: scenario build_ops (saves 3 and 5).
 		}
 		t.u32(0x76C) = bits | 0x4000;
 		fn_4fb9c0(save, town, x, y, 0x26, param);
@@ -1320,7 +1346,7 @@ bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, ui
 		break;
 	case kTypeWell:
 		if (int32_t(t.u8(0x789)) * 500 > t.s32(0x2D4)) {
-			return false;  // Sin comprobar con el oráculo.
+			return false;  // Checked with the oracle: scenario build_ops (saves 3 and 5).
 		}
 		++t.u8(0x789);
 		set_grid(0x92);
@@ -1331,14 +1357,14 @@ bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, ui
 		break;
 	case 0x2A:
 		if ((bits & 0x600) != 0x200) {
-			return false;  // Sin comprobar con el oráculo.
+			return false;  // Checked with the oracle: scenario build_ops (saves 3 and 5).
 		}
 		t.u32(0x76C) = bits | 0x400;
 		fn_4fb9c0(save, town, x, y, 0x2A, param);
 		break;
 	case 0x2B:
 		if ((bits & 0x1200) != 0x200) {
-			return false;  // Sin comprobar con el oráculo.
+			return false;  // Checked with the oracle: scenario build_ops (saves 3 and 5).
 		}
 		t.u32(0x76C) = bits | 0x1000;
 		fn_4fb9c0(save, town, x, y, 0x2B, param);
@@ -1386,7 +1412,8 @@ bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, ui
 			fn_500a70(save, office, 0xC, tools);
 			fn_500a70(save, office, 0x11, hemp);
 		} else {
-			fn_4f5450(save, owner, 0x13, uint32_t(town), bricks);  // Sin comprobar con el oráculo.
+			// Checked with the oracle: scenario build_ops (saves 3 and 5).
+			fn_4f5450(save, owner, 0x13, uint32_t(town), bricks);
 			fn_4f5450(save, owner, 0xB, uint32_t(town), timber);
 			fn_4f5450(save, owner, 0xC, uint32_t(town), tools);
 			fn_4f5450(save, owner, 0x11, uint32_t(town), hemp);
@@ -1408,10 +1435,12 @@ bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, ui
 		} else if (type < 0x1E) {
 			houses();
 		} else if (type == 0x1E) {
-			houses();  // Sin comprobar con el oráculo.
+			// The store: like the houses, and its office recounts (0x4FF2D0,
+			// facilities.cpp). Checked with the oracle: scenario build_ops
+			// (saves 3 and 5).
+			houses();
 			if (office >= 0) {
-				// Por reescribir: 0x4FF2D0 (sobre la oficina), lo que hace el
-				// almacén nuevo. No ha salido en 30 días de las 12 partidas.
+				fn_4ff2d0(save, office);
 			}
 		} else if (type == 0x29 || type == 0x2C) {
 			fn_4f8a50(save, owner, uint32_t(town), true);
@@ -1475,13 +1504,13 @@ void fn_523830(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 			link = &rec.next;
 		}
 		if (r >= count) {
-			return;  // Sin comprobar con el oráculo.
+			return;  // Checked with the oracle: scenario tower_ops (saves 3 and 5).
 		}
 		BuildingRecord& rec = records[r];
 		const bool siege = t.u8(0x2C8) & 0x10;
 		if (rec.type == kTypeWall) {
 			if (siege) {
-				rec.next = t.u16(0x768);  // Sin comprobar con el oráculo.
+				rec.next = t.u16(0x768);  // Checked with the oracle: scenario tower_ops (saves 3 and 5).
 				t.u16(0x768) = uint16_t(r);
 				return;
 			}
@@ -1499,7 +1528,7 @@ void fn_523830(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 			rec.next = t.u16(0x768);
 			t.u16(0x768) = uint16_t(r);
 			if (siege) {
-				return;  // Sin comprobar con el oráculo.
+				return;  // Checked with the oracle: scenario tower_ops_big (saves 3 and 5).
 			}
 			rec.type = 0x33;
 		}
@@ -1563,8 +1592,9 @@ void fn_523830(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 // fallos del juego reproducidos: las herramientas se sacan de la oficina con
 // lo que falta de madera (y las que se cuentan no bajan; lo que se paga por
 // ellas es 1,278 · 0 = 0), y al comerciante no se le paga, aunque lo que
-// valen cuenta como gasto de la ciudad (corrección opcional en el roadmap,
-// «Corregir los fallos del juego»). Sin la pieza, nada.
+// valen cuenta como gasto de la ciudad. With fix_game_bugs() the costs are
+// worked out as in 0x523830 (each material with its amount and price, and
+// the merchant is paid). Sin la pieza, nada.
 void fn_523d70(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 	SavedTown& st = save.towns[size_t(town)];
 	TownMemory& t = st.memory;
@@ -1576,14 +1606,35 @@ void fn_523d70(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 	if (r >= count) {
 		return;
 	}
-	// Sin comprobar con el oráculo (no ha salido en 30 días de las 12 partidas).
+	// Checked with the oracle: scenario tower_ops (saves 3 and 5; the merchant has an office there).
 	constexpr uint8_t kGate = 0x34;
 	int32_t bricks = int32_t(kBricks[kGate]) * kLoad;
 	int32_t timber = int32_t(kTimber[kGate]) * kLoad;
-	const int32_t tools = int32_t(kTools[kGate]) * kBarrel;
+	int32_t tools = int32_t(kTools[kGate]) * kBarrel;
 	int32_t hemp = int32_t(kHemp[kGate]) * kLoad;
 	int32_t paid = 0;
-	if (owner < save.globals.u16(global::kWorldMerchantCount)) {
+	if (owner < save.globals.u16(global::kWorldMerchantCount) && fix_game_bugs()) {
+		// The fix: as 0x523830 does for the towers. Each material with its
+		// own amount and price, and the merchant gets what is paid.
+		const int office = facilities_detail::fn_5308a0(save, owner, uint32_t(town));
+		if (office >= 0) {
+			auto take = [&](uint32_t ware, int32_t& amount, float price) {
+				if (amount <= 0) {
+					return;
+				}
+				const int32_t before = amount;
+				fn_500a70(save, office, ware, amount);
+				paid += int32_t(ftol(double(float(before - amount)) * double(price)));
+			};
+			take(0x13, bricks, kTowerBricksPrice);
+			take(0xB, timber, kTowerTimberPrice);
+			take(0xC, tools, kTowerToolsPrice);
+			take(0x11, hemp, kTowerHempPrice);
+			MerchantMemory& m = save.merchants[owner].memory;
+			m.s32(0) += paid;
+			m.s32(0x49C) += paid;
+		}
+	} else if (owner < save.globals.u16(global::kWorldMerchantCount)) {
 		const int office = facilities_detail::fn_5308a0(save, owner, uint32_t(town));
 		if (office >= 0) {
 			auto take = [&](uint32_t ware, int32_t& amount, float price) {
@@ -1598,6 +1649,8 @@ void fn_523d70(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 				paid += take(0xB, timber, kTowerTimberPrice);
 			}
 			if (tools > 0) {
+				// Game bug: the tools with the timber's amount, and the
+				// counter of the tools doesn't go down.
 				fn_500a70(save, office, 0xC, timber);
 			}
 			if (hemp > 0) {
@@ -1659,7 +1712,7 @@ bool fn_51f3a0(SaveGame& save, int town, GameMemory<0x44>& s) {
 	s.u32(0x8) = kTools[type];
 	s.u32(0xC) = kHemp[type];
 	if (type == 5 && t.u32(0x2CC) == 0) {
-		s.s32(0xC) >>= 1;  // Sin comprobar con el oráculo.
+		s.s32(0xC) >>= 1;  // Checked with the oracle: scenario cost_fisherman (saves 3 and 5, direct calls).
 	}
 	for (size_t k = 0; k < 4; ++k) {
 		s.s32(0x10 + 4 * k) = 0;
@@ -1834,7 +1887,7 @@ void fn_522c70(SaveGame& save, int town, uint32_t owner, uint32_t kind) {
 	GlobalMemory& g = save.globals;
 	TownMemory& t = save.towns[size_t(town)].memory;
 	if (t.u8(0x2C8) & 0x10) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario wall_ops (saves 3 and 5).
 	}
 	int office = -1;
 	if (owner < g.u16(global::kWorldMerchantCount)) {
@@ -1906,8 +1959,8 @@ void fn_522c70(SaveGame& save, int town, uint32_t owner, uint32_t kind) {
 	if (t.u16(0x766) < t.u16(0x776)) {
 		return;
 	}
-	// El cierre de la muralla (sin comprobar con el oráculo: no sale en 10
-	// días de las 12 partidas).
+	// El cierre de la muralla (no sale en 10 días de las 12 partidas).
+	// Checked with the oracle: scenario wall_ops (saves 3 and 5).
 	std::vector<uint8_t> done;  // (x, y) de las piezas quitadas.
 	const uint8_t side = piece.owner;  // 0xFF − lado (0x522B20).
 	t.u16(0x786) = 0;
@@ -2059,12 +2112,13 @@ void fn_535bbc(SaveGame& save, const uint8_t* operation) {
 	uint32_t fields[5];
 	std::memcpy(fields, operation, sizeof(fields));
 	const uint32_t town = fields[1] & 0xFF;
+	// Each branch: checked with the oracle, scenario build_ops (saves 3 and 5).
 	if (town >= save.globals.u32(global::kWorldTownCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;
 	}
 	TownMemory& t = save.towns[town].memory;
 	if (int32_t(fields[1]) < 0) {
-		t.u32(0x48) += uint32_t(kHemp[1]) * uint32_t(kLoad);  // Sin comprobar con el oráculo.
+		t.u32(0x48) += uint32_t(kHemp[1]) * uint32_t(kLoad);
 	}
 	t.u32(0x50) += fields[2];
 	t.u32(0x30) += fields[3];
@@ -2077,7 +2131,7 @@ void fn_535b44(SaveGame& save, const uint8_t* operation) {
 	uint32_t fields[4];
 	std::memcpy(fields, operation, sizeof(fields));
 	if (fields[2] >= save.globals.u32(global::kWorldTownCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario build_ops (saves 3 and 5).
 	}
 	fn_522c70(save, int(fields[2]), fields[1], fields[3]);
 }
@@ -2088,7 +2142,7 @@ void fn_535b12(SaveGame& save, const uint8_t* operation) {
 	uint32_t fields[3];
 	std::memcpy(fields, operation, sizeof(fields));
 	if (fields[2] >= save.globals.u32(global::kWorldTownCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario build_ops (saves 3 and 5).
 	}
 	events_rare_detail::fn_522b20(save, int(fields[2]), fields[1]);
 }
@@ -2105,7 +2159,7 @@ void fn_53ce30(SaveGame& save, const uint8_t* operation) {
 	const uint8_t y = operation[7];
 	const uint8_t type = operation[8];
 	if (town >= save.globals.u32(global::kWorldTownCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario build_ops (saves 3 and 5).
 	}
 	if (type < 0x30) {
 		fn_521900(save, int(town), owner, x, y, type, operation[9]);
@@ -2114,7 +2168,8 @@ void fn_53ce30(SaveGame& save, const uint8_t* operation) {
 	} else if (type <= 0x35) {
 		fn_523d70(save, int(town), x, y, owner);
 	} else if (type <= 0x39) {
-		events_rare_detail::fn_522b20(save, int(town), uint32_t(type - 0x36));  // Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario build_ops (saves 3 and 5).
+		events_rare_detail::fn_522b20(save, int(town), uint32_t(type - 0x36));
 	}
 }
 
@@ -2199,17 +2254,31 @@ void fn_524920(SaveGame& save, int town, int32_t workers) {
 	fn_5254c0(save, town, k);
 	// Celdas del muelle en obras: la del ancla, las dos de debajo y la de al
 	// lado (rejilla escalonada).
+	// Game bug: the game doesn't check the cells. With the pier in the last
+	// column (and y odd) the fourth one is past the grid: the game writes
+	// into whatever follows it, p3vita skips it; with y < 2 a cell above the
+	// pier is the last ones of the previous column (inside the grid: written
+	// as the game does). With fix_game_bugs() only the cells inside the grid
+	// (column and row) are marked. Checked with the oracle: scenario
+	// pier_edge (saves 3 and 5, direct calls).
 	const int64_t h = t.s32(0x7AC);
-	auto occupy = [&](int64_t i) {
-		assert(i >= 0 && i < int64_t(st.grid.size()));  // El juego no lo comprueba.
+	auto occupy = [&](int64_t column, int64_t row) {
+		if (fix_game_bugs()) {
+			if (column >= 0 && column < t.s32(0x7A8) && row >= 0 && row < h &&
+				h * column + row < int64_t(st.grid.size())) {
+				st.grid[size_t(h * column + row)] = 0x0B;
+			}
+			return;
+		}
+		const int64_t i = h * column + row;
 		if (i >= 0 && i < int64_t(st.grid.size())) {
 			st.grid[size_t(i)] = 0x0B;
 		}
 	};
-	occupy(h * x + y);
-	occupy(h * x + y - 1);
-	occupy(h * x + y - 2);
-	occupy(h * ((y & 1) ? x + 1 : x - 1) + y - 1);
+	occupy(x, y);
+	occupy(x, int64_t(y) - 1);
+	occupy(x, int64_t(y) - 2);
+	occupy((y & 1) ? int64_t(x) + 1 : int64_t(x) - 1, int64_t(y) - 1);
 	// Después, si la vista de la ciudad (*0x6E51AC) es la de esta ciudad,
 	// 0x590680 y 0x5891C0 crean el objeto del muelle en la vista isométrica:
 	// solo dibujo, no cambian la simulación (el objeto del tipo de .let 0x5F,
