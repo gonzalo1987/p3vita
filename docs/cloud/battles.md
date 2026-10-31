@@ -6,8 +6,8 @@ persecuciones, encuentros y batallas»): what is simulation and what is UI,
 where the simulation reaches it from and how often, what the oracle needs to
 run it, and a plan in pieces.
 
-Status: **phase 1 done** (2026-10-31); **phase 2 in progress**: piece 1 of
-the plan, the storms (§6). See «Done and left» at the end.
+Status: **phase 1 done** (2026-10-31); **phase 2 done for piece 1** of the
+plan, the storms (§6), behind a setting that is off by default. See «Done and left» at the end.
 
 Tools written for the study (in p3vita-datos, branch `cloud/battles`,
 `re/battles/`; nothing in p3vita uses them):
@@ -426,13 +426,61 @@ of `(k + 8) & 7` (k + 8 is never negative) and the empty ways round
 (0x447888 and the `b > d`, `a < c` exits: after `c −= 8` and `d += 8` they
 can't happen).
 
+The world with the storms on in both (`town_oracle.py ... --storms` with the
+functions of `world.sh`, then `tick_probe --continuo --carga ... --storms`;
+the script is `world.sh` with the two options added): **0 «distintas» in
+saves 1, 3, 5 and 7, 7 days** (570 s); «saltadas» 1, 0, 5 and 4, the same as
+without the storms (calls to 0x535760 from inside the game). The default
+(storms off) is the code of `main` by construction: `storms_` is false and the
+oracle installs the same jump as before; `world.sh` itself was not rerun.
+
+## Changes to shared files
+
+None of the files reserved for the local session (operations.cpp,
+`run_operation`, events*.cpp, internal.hpp, `OPERATIONS` and retouch.py) and
+none of the shared docs. Nothing of Recorder, the regions or `write_diff`.
+
+- `tools/oracle/town_oracle.py` (16 lines): the option `--storms` and the
+  constructor argument `storms=False`; with it, instead of the jump over
+  0x5053C0 (`ENCOUNTERS`), the two jumps of `STORM_UI_JUMPS`. The diff:
+
+  ```diff
+  -       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS]]
+  +       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--storms]]
+  +# With --storms, 0x5053C0 (the storms) runs; its two writes to the sea map
+  +# (*0x6CBDD8 + 0x2B22, UI) are jumped over.
+  +STORM_UI_JUMPS = {0x50596F: 0x505983, 0x5059CA: 0x5059E0}
+  -                 operations=OPERATIONS):
+  +                 operations=OPERATIONS, storms=False):
+  -                self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=ENCOUNTERS, end=ENCOUNTERS, user_data=EPILOGUE)
+  +                if storms:
+  +                    for address, target in STORM_UI_JUMPS.items():
+  +                        self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
+  +                else:
+  +                    self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=ENCOUNTERS, end=ENCOUNTERS, user_data=EPILOGUE)
+  +    p.add_argument('--storms', action='store_true', help='with --barcos, the storms too (0x5053C0, every 8 ticks)')
+  -                   not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x])
+  +                   not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], a.storms)
+  ```
+- `src/p3data/sailing.hpp`: `set_storms`, `storms_` (false), the
+  declarations of `fn_5053c0`, `fn_505290` and `fn_447580`.
+- `src/p3data/sailing.cpp` (`update_ships`): after `update_convoys()`,
+  `if (storms_ && (save_.tick() & 7) == 0) fn_5053c0();` and a comment.
+- `tools/oracle/tick_probe.cpp`: the option `--storms` (→ `set_storms`) and
+  `register_probes_battle`; `tools/oracle/probe_registry.hpp`: its
+  declaration; the two `CMakeLists.txt`: the new files.
+
 ## For the roadmap
 
 - «Piratas, persecuciones, encuentros y batallas» → split into the 7 pieces
   of §5 (storms, pirates moving, automatic sea battle, chases and the Hanse
   fleet, battles in the savegame, town battle, the player's battle).
-- New: «Las tormentas (0x5053C0)»: today p3vita and the oracle skip them,
-  and they lower the hull of ships in 8 of the 12 saves in 10 days.
+- New: «Las tormentas (0x5053C0)»: rewritten in this branch behind a
+  setting (`Sailing::set_storms`, `town_oracle.py --storms`, `tick_probe
+  --storms`), off by default; checked call by call in the 12 saves and with
+  retouched states (§6). To switch on together in p3vita and in the oracle
+  when merging (then `world.sh` with the storms). They lower the hull of
+  ships in 8 of the 12 saves in 10 days.
 - The rule for stepping the battles (operation 0x94 with N steps after each
   tick) is a decision to take and write in `docs/oracle.md`.
 
@@ -440,6 +488,7 @@ can't happen).
 
 Part E, «Batallas y encuentros»: replace the line with
 - 0x5053C0 is the storms, not encounters (§1); simulation, every 8 ticks.
+  Rewritten (§6) with 0x505290 and 0x447580, behind a setting.
 - The battle closure without the UI is 249 + 41 functions (148 KB sea, 50 KB
   town), not 1 MB; 48 functions (55 KB) run in the automatic battles of the
   saves (§2, `re/battles/graph.py components`).
@@ -485,9 +534,22 @@ in the 12 saves (47 s, four at a time), 30 days in the 12 (2.5 min), the
 dieta scenario 24 days in 4 saves (36 s), the step comparison (3 runs of 4
 days, 20 s), the town battle (2 s, stops).
 
-Not built for the Vita (no change to `src/app` or to an API the viewer
-uses).
+Not built for the Vita (phase 1 changed no code).
 
 Phase 2 so far: §6.
 
-Left: the world with the storms on (4 saves, running), and then piece 2 of §5.
+Phase 2 is done for piece 1 (the storms), behind its setting. I chose the
+storms as the first piece instead of the automatic sea battle: they are
+small, need nothing else and act in 8 of the 12 saves, while the sea battle
+needs the pirates moving (piece 2) and new regions in the oracle's recording
+for the battle objects (Recorder/regions: oracle-speed's part).
+
+Left: pieces 2 to 7 of §5. On the PC, when merging: `world.sh 7` in the 12
+saves as usual (storms off), and the same with `--storms` in the oracle and
+in tick_probe before switching them on by default.
+
+Time of the checks of phase 2: the 12 saves × 10 days of probes 1 min 9 s;
+the retouched states about 30 s per batch of 10 (5 batches); the world with
+the storms 570 s; `build.sh` 20 s each time. Not built for the Vita (no
+VitaSDK here, see the README); the change is in p3data (`Sailing`), which
+the viewer links, but no API it uses changed.
