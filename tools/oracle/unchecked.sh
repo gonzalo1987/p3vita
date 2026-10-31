@@ -7,7 +7,8 @@
 # Variables: P3_EXE, P3_CPR, P3_SHIPS (the folder with navdata/ and
 # scripts/StadtDaten.ini), P3_BUILD (the build with tools/oracle/tick_probe,
 # default build), P3_TMP (the decompressed saves, default /tmp), KEEP=1
-# keeps the recordings, TAIL (lines of each log, default 40).
+# keeps the recordings, TAIL (lines of each log, default 40), PROBE_ARGS
+# (more options for tick_probe, e.g. --fix-game-bugs).
 set -u
 cd "$(dirname "$0")/../.."
 : "${P3_EXE:?P3_EXE missing (path of Patrician3.exe)}"
@@ -46,7 +47,7 @@ for job in "${jobs[@]}"; do
 	tail -n "${TAIL:-40}" "$out/$2-$1.log"
 	grep -q "MISSING\|Traceback\|Error" "$out/$2-$1.log" && status=1
 	if [ -f "$out/$2-$1.probe" ]; then
-		"$build/tools/oracle/tick_probe" "$out/$2-$1.probe" --cpr "$P3_CPR" 2>&1 | tail -n 12 | tee "$out/$2-$1.cmp"
+		"$build/tools/oracle/tick_probe" "$out/$2-$1.probe" --cpr "$P3_CPR" ${PROBE_ARGS:-} 2>&1 | tail -n 12 | tee "$out/$2-$1.cmp"
 		grep -q "[1-9][0-9]* distintas" "$out/$2-$1.cmp" && status=1
 		[ -n "${KEEP:-}" ] || rm -f "$out/$2-$1.probe"
 	fi

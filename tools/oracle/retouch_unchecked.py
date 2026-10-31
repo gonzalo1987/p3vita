@@ -349,6 +349,25 @@ def task_branches(o):
         set_task(o, tasks[3], kind=1, merchant=ais[4], started=1, deadline=0x3000, f10=0, f11=0xFF, f12=3, at=5)
 
 
+def road_expired(o):
+    """The human player's road task expires in the next tick (0x4EB25F):
+    the game makes an equal task, already started, whose merchant [+0xD] is
+    the town [+0x10] (a game bug). The town is under the number of
+    merchants, so the copy is that merchant's; the two towns have the bit
+    0x8000 of [0x76C], as when the task started. For the fix
+    (tick_probe --fix-game-bugs): the copy has no merchant and is removed."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    tasks = candidacy_tasks(o, rt.ai_with_office(o)[0])
+    i, j = 1, 2
+    assert i < merchants
+    for t in (i, j):
+        w32(o, o.town(t) + 0x76C, o.u32(o.town(t) + 0x76C) | 0x8000)
+    # [+0xE] past 0x0F: otherwise the word [+0xC..+0xF] (0x0100xx01) looks
+    # like a pointer to tick_probe, which doesn't compare it.
+    set_task(o, tasks[1], merchant=player, started=1, deadline=0, f0e=0x20, f10=i, f11=j, f12=3, at=1)
+
+
 def new_town_market(o):
     """A town founded with the game's code (retouch.found_town) gets its
     market (bit 0x100 of [0x76C]) and its task is looked at in the next
@@ -1713,6 +1732,7 @@ SCENARIOS = {
         '53b47a>53b4cc', '53b488>53b4cc', '4ebf89>4ec30c']),
     'task_branches': Scenario(task_branches, EVENTS_FUNCTIONS, 1, [
         '4ec108', '4ebf9a>4ec30c', '4eb7aa', '4eb44a>4ebf0f', '4eb45d>4ebf0f']),
+    'road_expired': Scenario(road_expired, EVENTS_FUNCTIONS, 1, ['4eb25f']),
     'new_town_market': Scenario(new_town_market, EVENTS_FUNCTIONS, 1, ['4eb41e', '4ec481']),
     'nest_branches': Scenario(nest_branches, EVENTS_FUNCTIONS, 1, ['4ebd06', '4eb972', '4eb99e', '4eb9d9']),
     'nest_reinforce': Scenario(nest_reinforce, EVENTS_FUNCTIONS + [0x5144A0, 0x516170, 0x51A4E0, 0x51A750], 1,

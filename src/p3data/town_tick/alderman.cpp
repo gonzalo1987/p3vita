@@ -42,6 +42,7 @@
 
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -1069,6 +1070,14 @@ uint32_t fn_4eb0eb(SaveGame& save) {
 			switch (e->u8(0xC)) {
 			case 1: {
 				// Un encargo nuevo igual, con la ciudad [+0x10] en [+0xD].
+				// Game bug: [+0x10] is a town, not a merchant. With a town
+				// index under the number of merchants the copy belongs to that
+				// merchant: it never expires (the sections build themselves),
+				// the road gets built and, when it is done, 0x4EC354 counts it
+				// for that merchant's candidacy. With fix_game_bugs() the copy
+				// has no merchant (0xFF): as the two towns keep the bit 0x8000
+				// of the road, the game's own check (0x532C50) removes it on
+				// its first turn, as with a town index past the merchants.
 				g.u32(kEventBusy) = 0;
 				const uint16_t created = events_detail::fn_4d8cf0(save, e->u32(0) + 1);
 				g.u32(kEventBusy) = 1;
@@ -1077,7 +1086,7 @@ uint32_t fn_4eb0eb(SaveGame& save) {
 				c.u16(6) = e->u16(6);
 				c.u32(8) = e->u32(0) + 0xBA00;
 				c.u8(0xC) = 1;
-				c.u8(0xD) = e->u8(0x10);
+				c.u8(0xD) = fix_game_bugs() ? 0xFF : e->u8(0x10);
 				c.u8(0xE) = e->u8(0xE);
 				c.u8(0xF) = e->u8(0xF);
 				c.u8(0x10) = e->u8(0x10);
@@ -1221,6 +1230,10 @@ void fn_53a3e0(SaveGame& save, const uint8_t* operation) {
 		// event pointer): the counter gets amount − address, its low 10 bits.
 		// The address is the queue's array (*0x6DD73C) + 0x18 · index.
 		// Checked with the oracle: scenario hanse_ops (saves 3 and 5).
+		// With fix_game_bugs() nothing is given, so the task is left as it is.
+		if (fix_game_bugs()) {
+			return;
+		}
 		const uint32_t address = g.u32(kEvents) + 0x18 * index;
 		const uint32_t total = uint32_t(alderman_detail::road_material(e, k)) + op.u16(6) - address;
 		e.u8(0x14 + k) = uint8_t(total);
