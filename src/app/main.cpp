@@ -922,8 +922,11 @@ int main(int argc, char** argv) {
 			return 2;
 		}
 		g_script = script.get();
-		// SDL_VIDEODRIVER, if set, wins over the hint.
-		SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
+		// The dummy video driver, unless SDL_VIDEODRIVER already chooses one.
+		// The environment variable works with every SDL 2; the hint
+		// SDL_HINT_VIDEODRIVER only exists from SDL 2.0.22 (Ubuntu 22.04 has
+		// 2.0.20).
+		SDL_setenv("SDL_VIDEODRIVER", "dummy", 0);
 	}
 #ifndef __vita__
 	SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "1");  // On the PC the mouse is the touch screen.
