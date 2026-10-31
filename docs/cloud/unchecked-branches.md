@@ -2,7 +2,8 @@
 
 Task: `p3vita-datos/tasks/unchecked-branches.md`. The branches marked «Sin
 comprobar con el oráculo» in the files of `src/p3data/town_tick/` that this
-task owns, checked against the game with retouched states.
+task owns, checked against the game with retouched states; then (second
+part) the game's bugs of these files fixed behind `fix_game_bugs()`.
 
 ## Summary
 
@@ -87,22 +88,80 @@ one's): `src/p3data/convoys.cpp` 6, `convoys_members.cpp` 1,
 `events_mayor.cpp` 30, `events_rare.cpp` 68, `events_towns.cpp` 45,
 `operations.cpp` 32, `ship_ai.cpp` 3, `ship_trade.cpp` 4.
 
+**Second part: the game's bugs fixed behind `fix_game_bugs()`** (main
+21cade4 merged; the items of the roadmap's «Corregir los fallos del juego»
+that are this task's, plus the two of the first part). Each fix is next to
+the original behaviour, in the file of the bug:
+
+| Bug | File | With the setting on |
+|---|---|---|
+| The player's expired road (0x4EB25F): the copy's merchant is the town [+0x10] | `alderman.cpp` | the copy has no merchant (0xFF): the game's own check removes it |
+| Operation 0x3B with a merchant out of the world (the event's address as the amount) | `alderman.cpp` | nothing: the task stays as it is |
+| The wall pieces' upgrade 0x523D70: the tools with the timber's amount, paid 1.278 · 0, the merchant not paid | `construction.cpp` | the costs as for the towers (0x523830) |
+| 0x524920 with a pier in the last column (or y < 2): cells past the grid, or in the previous column | `construction.cpp` | only the cells inside the grid |
+| 0x51C360 adds only the first office's businesses | `population.cpp` | every office ([+0x2CA]) |
+| 0x5109B0 takes what leaves from the float [+0xC] twice (negative) | `businesses.cpp` | once (it keeps the fraction) |
+| The grain farm compares the room the other way round when hiring | `businesses.cpp` | as the other facilities |
+| The bankrupt merchant's surname (0x4F5D80): modulo the last merchant's surname index (division by zero, endless search, read past the table) | `merchants.cpp` | modulo the number of surnames, without himself, one turn at most |
+| The new besieging army 0x629C60: no room check for the groups; the gate not found read from address 0; unfilled targets in the strength | `sieges.cpp` | at most 100 groups; the missing gates left out; only the targets 0x62B2B0 filled |
+
+How each was checked (details in «Fixes behind fix_game_bugs»):
+- with the setting off, the scenarios that reach each bug (new ones:
+  `road_expired`, `gate_costs`, `pier_edge`, `town_tick_fixes`,
+  `siege_fixes`; and `hanse_ops`, `tower_ops`, `bankruptcy`, `siege_gates`,
+  `siege_branches`) give 0 different calls, except one call of
+  `siege_fixes` where the game overwrites its own army (explained there);
+  and `world.sh 7` on the 12 saves: 0 different;
+- with `tick_probe --fix-game-bugs`, only what each fix changes differs;
+- the whole world with `--fix-game-bugs` (7 days, 12 saves): three of the
+  fixes act in normal play (0x51C360 in 6 saves, the grain farm in save 3,
+  0x5109B0 in saves 1, 5, 6 and tut4); in tut0, another session's fix
+  (operation 0x28); nothing else. Each first difference was traced to a
+  fix.
+
 ## Decisions for the user
 
-- **The bankruptcy's endless surname search** (`merchants.cpp`, 0x4F5D80):
-  reproduced as it is, so p3vita would hang where the game hangs (rare: the
-  last merchant's surname index small and every surname up to it taken).
-  Recommendation: keep it for now and fix it with the fix-bugs setting (stop
-  after one turn); if a hang on the Vita is not acceptable even as an
-  option, fix it always.
+- **The two decisions of the first part are done as recommended**: the
+  bankruptcy's endless search and operation 0x3B are reproduced with the
+  setting off and fixed with it on.
 
-- **Operation 0x3B with a merchant out of the world** (`alderman.cpp`,
-  0x53A3E0): the game uses the event's address as the amount missing and
-  writes garbage into the road task's counters. p3vita now does the same
-  with the address in `*0x6DD73C` (what the oracle has; in p3vita's own
-  runs it is whatever the loader leaves there). Only the interface or a
-  network game could send it. Recommendation: keep it as a game bug for the
-  fix-bugs setting (with the fix: do nothing, as p3vita did before).
+- **The player's expired road**: the roadmap gave two fixes, no copy or a
+  copy without merchant. I chose the copy without merchant (0xFF): the
+  event queue stays as in the game (the copy is made and then removed by
+  the game's own check, 0x532C50, because the two towns keep the road's
+  bit 0x8000), so the fix changes one byte. The road between those two
+  towns is never offered again either way (that bit stays, as when an AI
+  merchant fails it). If you'd rather offer the road again, it needs the
+  bit cleared too: say so.
+
+- **The fixes change normal play**: 0x51C360 (people leaving poor:
+  fewer workers dismissed from the facilities when the town has several
+  offices with businesses), 0x5109B0 (the float of the reserve) and the
+  grain farm act in 7 of the 12 saves within 7 days. That is what the
+  setting is for (on by default in the viewer); just so you know it is not
+  only rare cases.
+
+- **0x629C60 with the setting off, in states the saves don't reach**:
+  - more than 100 groups: the game overwrites its own army ([+0x574] on:
+    a graphics object, the strengths, its town...) and then the heap;
+    p3vita can't reproduce that, so it keeps the groups that fall outside
+    in a local array (before, an `assert` failed there);
+  - the gate not found: the game reads address 0 (on Windows it fails);
+    the oracle has there, at that moment, an SEH frame's address on its
+    stack (0x010FEF30), so p3vita reads (0x30, 0xEF) to match the oracle
+    (before it read (0, 0), which matched only while no building was near
+    either). Recommendation: keep it; the alternative is (0, 0) and
+    accepting a difference with the oracle in that retouched state.
+
+- **A blind spot of tick_probe** (shared file, not touched): a 4-byte word
+  that looks like a pointer (0x01000000..0x010FFFFF, 0x04000000..,
+  0x10000000..0x17FFFFFF) is never compared. In an event 0x32 the word
+  [+0xC..+0xF] is `01 merchant 00 01` for a started road task, so a wrong
+  merchant there was invisible (found with `road_expired`: the scenario now
+  sets [+0xE] = 0x20 to avoid it). The earlier checks of `alderman.cpp`
+  could have missed a difference in [+0xD] of a started task with
+  [+0xE] < 0x10. Suggestion for whoever owns tick_probe: don't take as
+  pointers the words of the regions that have no pointers (E, B, W...).
 
 ## How it is checked
 
@@ -354,27 +413,66 @@ probe for 0x633DB0 (it overrides the one in `probes_sieges`): it writes the
 amount and the offices back into the scratch globals, where the scenario
 reads them.
 
+## Fixes behind fix_game_bugs
+
+Each fix is `if (fix_game_bugs())` next to the original code. Checked with
+the scenarios below in saves 3 and 5: off, every call equal to the game;
+on (`PROBE_ARGS=--fix-game-bugs bash tools/oracle/unchecked.sh ...`, or
+`tick_probe ... --fix-game-bugs` on a recording kept with `KEEP=1`), only
+what the fix changes:
+
+| Fix | Scenario | With `--fix-game-bugs`, the differences |
+|---|---|---|
+| The player's expired road | `road_expired` (new: the player's road task expiring in the next tick, town 1 < merchants) | one call of 0x4D85C0: the copy's [+0xD], 0x01 → 0xFF |
+| Operation 0x3B, merchant out of the world | `hanse_ops` | the 5 calls of 0x3B with that merchant: the task's counters [+0x13..+0x17] left as they were |
+| The gate's upgrade 0x523D70 | `gate_costs` (new: the merchant's office with some of each material); `tower_ops` | 0x523D70's call: the office gives 5 barrels of tools (what the gate needs, not the timber's amount), the town doesn't lose its tools and takes timber, the merchant gets 1626 ([+0x0], [+0x49C]), the town's expense [+0x71C] and money [+0x700] |
+| 0x524920's cells | `pier_edge` (new: the only pier cell at (last column, 1)) | the third cell, the last row of the previous column, not written |
+| 0x51C360 | `town_tick_fixes` (new: a town whose second office has staffed businesses) | the workers dismissed from each facility and business |
+| 0x5109B0 | `town_tick_fixes` (a business with a reserve and the float at 0.9) | [+0xC]: 0.14 instead of −0.86 |
+| The grain farm | `town_tick_fixes` (the farm with 1 worker) | it hires what it needs (to 9) instead of filling the room (15), and takes less from the reserves and the beggars |
+| The surname | `bankruptcy` | the new surname byte (1 → 0x30 in save 3, 1 → 0x0D in save 5) |
+| 0x629C60's strength | `siege_fixes` (new: a tower in the works next to each gate) | [+0x580]: 1800 less (the unfilled entry read record 0, a finished piece) |
+| 0x629C60's groups | `siege_fixes` (an office with every record outside the wall lists, at the chosen gate's place, no grid bit 0x80) | the army is sane (its town marked besieged, at most 100 groups) where the game overwrote itself |
+| 0x629C60's missing gate | `siege_fixes` (two gates on the side, moved, and an office building nearer the place read at address 0) | the groups: the buildings the game gave to the missing gate go to the found ones |
+
+With the setting off, `siege_fixes` has one call different from the game
+on purpose: the second town, where the game overwrites its own army (see
+«Game bugs»). Everything else in these scenarios is equal off.
+
+**The world with the fixes** (the 12 saves, 7 days, `world.sh` with
+`--fix-game-bugs` added to tick_probe, `--continuo`): saves 2, tut1, tut2
+and tut3 give 0 different; tut0 gives 1 (operation 0x28: another session's
+fix, as the roadmap says); saves 1, 3, 4, 5, 6, 7 and tut4 differ from
+the first call where one of these fixes acts (then it carries on). With
+traces (not committed) in saves 3 and 6: 0x51C360's fix acts in 4 and 7
+towns, the grain farm's 26 times in save 3, 0x5109B0's once in save 6;
+with 0x51C360's fix disabled, save 6's first difference moves to
+0x5109B0's float. In saves 1, 5 and tut4 the first difference is
+0x5109B0's float of a facility ([+0x96C] of the town); in 4 and 7, the
+workers (0x51C360).
+
 ## Game bugs
 
 - **Operation 0x3B with a merchant out of the world** (certain; 0x53A4CA
   `jae 0x53A619`, where edi is still the event pointer): nothing is taken
   from offices or ships, and the road task's counter of the material gets
   `counter + amount − address of the event` (its low 8 bits, and 2 more in
-  [+0x13]). Reproduced (`alderman.cpp`, `fn_53a3e0`). Fix: return without
-  touching the task.
+  [+0x13]). Reproduced (`alderman.cpp`, `fn_53a3e0`). Fixed with
+  `fix_game_bugs()`: return without touching the task.
 
 - **The bankruptcy divides by zero** (certain; 0x4F5F57, operation 0x65):
   the free surname is searched modulo the last merchant's surname index; if
   that is 0 the game fails (confirmed with the oracle: an exception). p3vita
-  returns instead (it can't reproduce a failure). Fix: modulo the number
-  of surnames.
+  returns instead (it can't reproduce a failure). Fixed with
+  `fix_game_bugs()`: modulo the number of surnames.
 - **The bankruptcy's surname search can never end** (certain from the code,
   seen in the oracle with a retouched state; 0x4F5F68..0x4F5F86): the
   bankrupt merchant's own surname is already 0 (0x4F68D0 runs before), so
   if every surname from 0 to that divisor is taken the loop goes round for
   ever. In the game it needs the last merchant's surname index to be small
   and every surname up to it taken. p3vita reproduces it (it would hang
-  too). Fix: stop after one turn.
+  too). Fixed with `fix_game_bugs()`: one turn at most, and the merchant
+  himself doesn't count.
 - (Also in the code, already noted there: past the number of surnames the
   search reads beyond its table.)
 
@@ -385,9 +483,34 @@ reads them.
   loader calls it, and in the saves [+0x242] is always 0. p3vita grows the
   vector (comment in `sieges.cpp`). Fix: the same.
 
+- **0x629C60's groups run over the army before they leave it** (certain
+  from the layout, seen in the oracle with `siege_fixes`): the roadmap says
+  «more than 0x7F leave the army», but the groups are 8 bytes from
+  [+0x254], so from the 101st on they overwrite the army's own fields
+  ([+0x574] a graphics object, [+0x578], the strengths, the town [+0x5D3],
+  the level...): in the oracle the game then doesn't even mark its town
+  as besieged. Fixed with `fix_game_bugs()` (at most 100).
+- **The gate not found** (certain): 0x51F1F0 gives 0 for an index out of
+  the list, and 0x629C60 reads the gate's x and y at address 0: on
+  Windows the game fails. In the oracle it reads an SEH frame's address
+  (0x010FEF30: (0x30, 0xEF)).
+
 ## For the roadmap
 
-- The list of game bugs: the five above (two of them are decisions).
+- «Corregir los fallos del juego»: these items can be ticked, «Corregido
+  con el ajuste» (details above, in the table of the summary): la carretera
+  vencida del jugador (`alderman.cpp`; and the operation 0x3B sentence of
+  that item: now reproduced with the setting off and fixed with it on);
+  las mejoras de las piezas de muralla (`construction.cpp`; the item says
+  «sin comprobar con el oráculo»: now checked, `gate_costs`, `tower_ops`);
+  los del tick de ciudad (`population.cpp`, `businesses.cpp`,
+  `construction.cpp`; checked with `town_tick_fixes` and `pier_edge`; the
+  first three act in normal play: see the summary); el apellido de un
+  comerciante en quiebra (`merchants.cpp`); el ejército sitiador nuevo
+  (`sieges.cpp`; with the correction about the groups in «Game bugs»).
+- `docs/formats/town_tick.md` §8, the sentence on the bugs: they are fixed
+  with the setting, and 0x524920 no longer has an `assert`.
+- The list of game bugs: the ones above.
 
 ## For the inventory
 
@@ -425,6 +548,11 @@ reads them.
 - `world.sh 7`, the 12 saves in three batches after `alderman.cpp`: 130 s,
   131 s and 121 s (0 different; skipped as in `README.md`: 1 in save 1, 5 in
   5, 4 in 7, 2 in tut2, 5 in tut3, 7 in tut4).
+
+- The fixes: each scenario, off and on, seconds; `world.sh 7` off after
+  them: 132 s, 129 s and 122 s (0 different; skipped as always); the same
+  with `--fix-game-bugs` (a copy of `world.sh` in the scratchpad): about
+  the same time.
 
 Not built for the Vita: nothing in `src/app` or in the p3data API the viewer
 uses changed.
