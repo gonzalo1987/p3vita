@@ -17,7 +17,11 @@ namespace p3::data {
 namespace {
 
 constexpr uint32_t kMagic = 0xAFFE;
-constexpr int kSupportedVersion = 0x82;
+// The versions read: 0x82 (missav/) to 0x85 (what the game writes). The
+// readers of the game only branch above 0x82 for the free ship slots
+// ([+0x137] from 0x83, parse_ship).
+constexpr int kOldestVersion = 0x82;
+constexpr int kNewestVersion = 0x85;
 constexpr size_t kSettingsSize = 0x4C;
 constexpr uint8_t kPartSeparator = 0x7F;
 constexpr size_t kTownTableSize = 40;
@@ -951,7 +955,7 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 	}
 	out = SaveGame();
 	out.version = int(tag >> 16);
-	if (out.version != kSupportedVersion) {
+	if (out.version < kOldestVersion || out.version > kNewestVersion) {
 		return fail(error, "versión de partida no soportada: " + std::to_string(out.version));
 	}
 

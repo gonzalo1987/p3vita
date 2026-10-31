@@ -11,10 +11,10 @@ merging on the PC.
 |-|-|
 | 1. Reader ↔ writer table of the game | done (§1) |
 | 2. Oracle: the game's writer in the emulator | done (`tools/oracle/write_oracle.py`) |
-| 3. Version 0x85 branches in the readers | pending |
+| 3. Version 0x85 branches in the readers | done: only the free ship slots branch above 0x82 (§4) |
 | 4. C++ writer (`savegame_write.cpp`), byte for byte | done for the 12 saves (§2) |
 | 5. LZ compressor rewritten in C++ | done: same bytes as the game's in the 12 saves (§3) |
-| 6. After playing, round trip, `.pst` | pending |
+| 6. After playing, round trip, `.pst` | round trip done (§4); after playing and `.pst` pending |
 
 ## 1. How the game saves
 
@@ -246,6 +246,27 @@ p3vita, gives the same bytes as the game's (189 700 for save 1; 161 892 to
 278 028). The files p3vita writes differ from the game's only through the
 pointers (§2.1), so their compressed sizes differ a little.
 
+## 4. Reading version 0x85 and the round trip
+
+Every version comparison of the readers (all the functions of §1.1, with
+`cfg.py`): only one is above 0x82, the byte [+0x137] of the free ship slots
+from 0x83 (0x5179FF), which `parse_ship` already had; the others (0x55 to
+0x82: `cmp ebx,0x82; jb` in 0x4FF1E3, the office) take the same branch for
+0x82 and 0x85. The mailbox (version 5) and the `.pst` (0xB) carry their own.
+So `parse_savegame` now reads the versions 0x82 to 0x85.
+
+Check 3, `scripts/write-reload.sh` (25 s for the 12 saves): `p3save write`,
+the game's readers load the written file in the emulator (`town_oracle.py`,
+0 days) and `tick_probe --carga` compares that with what p3vita reads from
+the same file: **0 differences in the 12 saves**.
+
+Writing again a file p3vita wrote (v0x85), saves 1, 3, 7 and tut4: the game's
+writer and p3vita's give the same bytes (0 different; in save 7 the 12 of the
+battles). p3vita's second save differs from its first only in the node
+lists of the towns that have more than one node (14 bytes in save 1), and
+the third is equal to the first: the order of [0x9B4] turns round at each
+save and load, as in the game (§1.2).
+
 ## For the roadmap
 
 - Loader: 0x549F40 does more than the readers (§1.3): 0x5131B0 for the
@@ -296,8 +317,10 @@ Looks like one:
   accepts the ship names (§2.2); `parse_savegame` reads the 12 bytes after
   the settings into [0x6DFBC4..0x6DFBCC] (with the clamp of the loader), the
   trade routes (5th section from the end) and the battles (3rd);
-  `load_game_scripts` calls `load_save_scripts`. Nothing else changes in
-  what it reads (load: 0 differences in the 12 saves).
+  `load_game_scripts` calls `load_save_scripts`; versions 0x82 to 0x85
+  (`kOldestVersion`, `kNewestVersion` instead of `kSupportedVersion`).
+  Nothing else changes in what it reads (load: 0 differences in the 12
+  saves).
 - `src/p3data/CMakeLists.txt`: `savegame_write.cpp`, `lz_compress.cpp`.
 - `tests/CMakeLists.txt`: `lz_test` (ctest goes from 7 to 8 tests).
 - `tools/p3save/main.cpp`: `write`, `compress`, and reading the save from the disk.
@@ -305,5 +328,6 @@ Looks like one:
 ## Time of the checks
 
 - `write_oracle.py`: 1.5 s a save; `scripts/write-check.sh` for the 12: 19 s.
-- `tick_probe --carga` with a recording of 0 days: 2 s a save.
+- `tick_probe --carga` with a recording of 0 days: 2 s a save;
+  `scripts/write-reload.sh` for the 12: 25 s.
 - Not built for the Vita (no VitaSDK here; `src/app` not touched).
