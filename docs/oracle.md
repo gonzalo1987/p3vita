@@ -502,3 +502,10 @@ la IA de un comerciante endeudado encola después una 0x28 que p3vita no: es
 la variable sin inicializar de 0x4F5A20 (fallo del juego; ver el roadmap), no
 el evento. El monumento llama a 0x590680 si la ciudad es la que se ve: el
 oráculo salta ahí (`EVENT_JUMPS`, 0x4ECD3E → 0x4ECD71).
+Los incendios del asedio (0x25 y 0x26): `incendio` (partidas 3 a 7: una
+torre, otra pieza de muralla, una empresa, una casa y un edificio de la
+ciudad) y, sin retocar, los asedios de las partidas: `events_seen.sh DÍAS
+TIPOS PARTIDA...` (re/emu/sesion5) dice cuándo aparecen (el primero, el día
+13 de la partida 7) y `FUNCS=4d85c0 late.sh` los compara llamada a llamada
+(días 13 a 19 de la 7, 19 a 23 de la 5, 28 a 32 de la 4 y 39 a 43 de la 3):
+iguales. Las 60 jornadas de antes no llegaban a ninguno.

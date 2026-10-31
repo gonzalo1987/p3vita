@@ -1,7 +1,7 @@
-// La cola de eventos (events.cpp): los tipos 0x0E (0x4E4A44), 0x12 (0x4E6A54), 0x1C (0x4E9094), 0x1E (0x4DFD44), 0x1F (0x4E0334), 0x2E (0x4E9A94), 0x30 (0x4EA594), 0x31 (0x4EAB94), 0x32 (0x4EAFE4), 0x33 (0x4EC934), 0x35 (0x4E94A4) y 0x38 (0x4ECB14).
+// La cola de eventos (events.cpp): los tipos 0x0E (0x4E4A44), 0x12 (0x4E6A54), 0x1C (0x4E9094), 0x1E (0x4DFD44), 0x1F (0x4E0334), 0x25 (0x4E1B84), 0x26 (0x4E1E54), 0x2E (0x4E9A94), 0x30 (0x4EA594), 0x31 (0x4EAB94), 0x32 (0x4EAFE4), 0x33 (0x4EC934), 0x35 (0x4E94A4) y 0x38 (0x4ECB14).
 //
 // Lo que hace el despachador (0x4D85C0) con cada uno tras su manejador: los
-// tipos 0x0E, 0x12, 0x1C, 0x1E, 0x1F, 0x2E, 0x30, 0x32 y 0x38 deciden por lo que
+// tipos 0x0E, 0x12, 0x1C, 0x1E, 0x1F, 0x25, 0x26, 0x2E, 0x30, 0x32 y 0x38 deciden por lo que
 // devuelve el manejador (0: quitarlo, 1: llevarlo a su sitio por su tick ya
 // cambiado); el 0x31, el 0x33 y el 0x35 se quitan siempre. Los avisos (0x548CA0, 0x4D6530, las
 // ventanas de *0x6CC7E8 y *0x6CBB40) no se traducen.
@@ -23,6 +23,8 @@
 //   0x1F  la temporada de piratas (marzo a octubre): elige ciudades
 //         ([+0x8..+0xF]), crea sus eventos 0x1E y encola la operación 0x84;
 //         desde noviembre encola la 0x7E y se quita.
+//   0x25, 0x26  los incendios del asedio: arde un objetivo caído o un
+//         edificio de fuera de la muralla (ver fn_4e1b84 y fn_4e1e54).
 //   0x2E  la votación del consejo de la ciudad [+0xC] (propuesta [+0xD] 0..3).
 //   0x31  el impuesto extraordinario que aprueba el consejo (ver fn_4eab94).
 //   0x38  el monumento al alcalde reelegido (ver fn_4ecb14).
@@ -600,6 +602,223 @@ void fn_4eab94(SaveGame& save) {
 			return;
 		}
 	}
+}
+
+// --- Eventos 0x25 y 0x26: los incendios del asedio ---
+
+// 0x4DB100 (sobre la cola): quita el edificio `record` de la primera subasta
+// de edificios (evento 0x36) de la ciudad que lo tenga entre sus tres lotes
+// ([+0x8], [+0xA], [+0xC], con el bit 0x8000): los de detrás se corren y el
+// último queda en 0xFFFF; si la subasta se queda sin lotes, se quita el
+// evento (vuelve a la lista de libres).
+void fn_4db100(SaveGame& save, uint32_t town, uint16_t record) {
+	GlobalMemory& g = save.globals;
+	if (town >= town_count(save) || record >= save.towns[town].memory.u16(0x776)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	uint16_t* link = &g.u16(kEventHead);
+	while (*link < g.u16(kEventCount)) {
+		Event& e = save.events[*link];
+		if (e.u16(6) == 0x36 && e.u8(0x15) == town) {
+			bool found = false;
+			for (uint32_t k = 0; k < 3; ++k) {
+				const uint16_t lot = e.u16(0x8 + 2 * k);
+				if (found) {
+					e.u16(0x6 + 2 * k) = lot;
+				} else if ((lot & 0x7FFF) == record) {
+					found = true;
+				}
+			}
+			if (found) {
+				// Sin comprobar con el oráculo: en las partidas no hay subastas de
+				// edificios de fuera de la muralla durante un asedio.
+				e.u16(0xC) = 0xFFFF;
+				if ((e.u16(0x8) & 0x7FFF) >= save.towns[town].memory.u16(0x776)) {
+					const uint16_t index = *link;
+					*link = e.u16(0x4);
+					e.u16(0x6) = 0xFFFF;
+					e.u16(0x4) = g.u16(kEvents + 0xA);
+					g.u16(kEvents + 0xA) = index;
+				}
+				return;
+			}
+		}
+		link = &e.u16(0x4);
+	}
+}
+
+namespace {
+
+// Lo que resta al fuego un edificio en obras: −50 · obras / sus días de obra.
+int16_t unfinished(const BuildingRecord& b) {
+	const uint8_t days = construction_detail::build_days(b.type);
+	return days ? int16_t(-50 * int32_t(b.pending) / int32_t(days)) : 0;  // El juego divide por 0 sin días.
+}
+
+// El fuego avanza: la vida [+0xA] baja 51 (1 desde 50) y se ve en las obras
+// del edificio; dentro de 5 ticks, otra vez. Devuelve false si ya no le queda.
+bool burn(SavedTown& st, Event& e) {
+	int16_t life = int16_t(e.u16(0xA));
+	if (life <= 0) {
+		return false;
+	}
+	life = life > 50 ? int16_t(life - 51) : int16_t(life - 1);
+	e.u16(0xA) = uint16_t(life);
+	if (e.u16(0x8) < st.records.size()) {
+		st.records[e.u16(0x8)].pending = uint8_t(life);
+	}
+	e.u32(0) += 5;
+	return true;
+}
+
+// El enlace de la lista que empieza en `head` que apunta a `record`, o
+// nullptr si no está.
+uint16_t* find_link(SavedTown& st, uint16_t& head, uint16_t record) {
+	const uint32_t count = st.memory.u16(0x776);
+	for (uint16_t* link = &head; *link < count && *link < st.records.size(); link = &st.records[*link].next) {
+		if (*link == record) {
+			return link;
+		}
+	}
+	return nullptr;
+}
+
+}  // namespace
+
+// 0x4E1B84 (evento 0x25, lo crea el tick del asedio 0x6281F0 al caer un
+// objetivo): el fuego en el edificio de la celda ([+0xC], [+0xE]) de la
+// ciudad [+0x10]. La primera vez ([+0x11]), lo saca de la lista de murallas
+// [0x768] (si no está, se quita el evento) y lo pasa a la de lo que arde
+// [0x76A], con 100 de vida (menos si estaba en obras). Mientras le quede,
+// arde (ver burn). Al acabar: una torre (0x32, 0x33) queda en ruinas (0x36,
+// sin obras, otra vez en [0x768]); lo demás se borra (0x521240). Con una
+// ciudad que no existe (0xFE − k) es la guarida pirata k (0x515C00), de las
+// batallas: por reescribir con ellas. Los gráficos (0x5891C0, 0x599040 y
+// 0x590680 si es la ciudad que se ve) no se reproducen. Devuelve si sigue.
+// Comprobado con estados retocados (`retouch.py incendio`, también el 0x26).
+bool fn_4e1b84(SaveGame& save, uint16_t event) {
+	Event& e = save.events[event];
+	const uint32_t town = e.u8(0x10);
+	if (town >= town_count(save)) {
+		return false;  // Por reescribir con las batallas (0x515C00).
+	}
+	SavedTown& st = save.towns[town];
+	TownMemory& t = st.memory;
+	if (e.u8(0x11)) {
+		e.u8(0x11) = 0;
+		e.u16(0xA) = 100;
+		e.u16(0x8) = 0xFFFF;
+		const uint32_t count = t.u16(0x776);
+		for (uint16_t* link = &t.u16(0x768); *link < count && *link < st.records.size();) {
+			BuildingRecord& b = st.records[*link];
+			if (b.x == e.u16(0xC) && b.y == e.u16(0xE)) {
+				e.u16(0x8) = *link;
+				*link = b.next;
+				b.next = t.u16(0x76A);
+				t.u16(0x76A) = e.u16(0x8);
+				if (b.pending > 0) {
+					e.u16(0xA) = uint16_t(e.u16(0xA) + unfinished(b));  // Sin comprobar con el oráculo.
+				}
+				break;
+			}
+			link = &b.next;
+		}
+		if (e.u16(0x8) >= count) {
+			return false;  // Sin comprobar con el oráculo.
+		}
+	}
+	if (burn(st, e)) {
+		return true;
+	}
+	uint16_t* link = find_link(st, t.u16(0x76A), e.u16(0x8));
+	if (!link) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	BuildingRecord& b = st.records[e.u16(0x8)];
+	*link = b.next;
+	if (b.type == 0x32 || b.type == 0x33) {
+		b.type = 0x36;
+		b.pending = 0;
+		b.next = t.u16(0x768);
+		t.u16(0x768) = e.u16(0x8);
+		return false;
+	}
+	b.next = 0xFFFF;
+	construction_detail::fn_521240(save, int(town), e.u16(0x8));
+	return false;
+}
+
+// 0x4E1E54 (evento 0x26, lo crea el tick del asedio al llegar un grupo): el
+// fuego en el edificio [+0x8] de la ciudad [+0x10], de fuera de la muralla.
+// La primera vez ([+0x11]): nada con los tipos 0x28, 0x32 y 0x33; apunta su
+// celda en [+0xC], [+0xE], lo quita de las subastas (0x4DB100) y de su lista
+// (las de la oficina de su dueño, [+0x2CE] y [+0x2D0]; las de la ciudad, de
+// la ciudad o del tipo 0x29, [0x764]) y lo pasa a la de lo que arde [0x76A],
+// con 100 de vida (menos si estaba en obras). Con el bit 0x8000 de [0x2C8],
+// se acaba ahí. Mientras le quede, arde (ver burn); al acabar, se borra
+// (0x521240). Los gráficos no se reproducen. Devuelve si sigue.
+bool fn_4e1e54(SaveGame& save, uint16_t event) {
+	Event& e = save.events[event];
+	const uint32_t town = e.u8(0x10);
+	if (town >= town_count(save)) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	SavedTown& st = save.towns[town];
+	TownMemory& t = st.memory;
+	const uint32_t count = t.u16(0x776);
+	const uint16_t index = e.u16(0x8);
+	if (e.u8(0x11)) {
+		e.u8(0x11) = 0;
+		e.u16(0xA) = 100;
+		if (index >= count || index >= st.records.size()) {
+			return false;  // Sin comprobar con el oráculo (el juego leería de 0).
+		}
+		BuildingRecord& b = st.records[index];
+		if (b.type == 0x28 || b.type == 0x32 || b.type == 0x33) {
+			return false;  // Sin comprobar con el oráculo.
+		}
+		e.u16(0xC) = b.x;
+		e.u16(0xE) = b.y;
+		fn_4db100(save, town, index);
+		uint16_t* link = nullptr;
+		if (b.owner < merchant_count(save) && b.type != 0x29) {
+			const int office = facilities_detail::fn_5308a0(save, b.owner, town);
+			if (office < 0) {
+				return false;  // Sin comprobar con el oráculo.
+			}
+			OfficeMemory& o = save.offices[size_t(office)].memory;
+			link = find_link(st, o.u16(0x2CE), index);
+			if (!link) {
+				link = find_link(st, o.u16(0x2D0), index);
+			}
+		} else {
+			// El juego, si no lo encuentra, vuelve a buscar en la misma lista.
+			link = find_link(st, t.u16(0x764), index);  // Sin comprobar con el oráculo.
+		}
+		if (!link) {
+			return false;  // Sin comprobar con el oráculo.
+		}
+		*link = b.next;
+		b.next = t.u16(0x76A);
+		t.u16(0x76A) = index;
+		if (b.pending > 0) {
+			e.u16(0xA) = uint16_t(e.u16(0xA) + unfinished(b));  // Sin comprobar con el oráculo.
+		}
+	}
+	if (t.u32(0x2C8) & 0x8000) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	if (burn(st, e)) {
+		return true;
+	}
+	uint16_t* link = find_link(st, t.u16(0x76A), index);
+	if (!link) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	*link = st.records[index].next;
+	st.records[index].next = 0xFFFF;
+	construction_detail::fn_521240(save, int(town), index);
+	return false;
 }
 
 // --- Evento 0x38 ---
@@ -2689,6 +2908,10 @@ int events_rare(SaveGame& save, uint16_t event, uint16_t type) {
 		return int(fn_4ea594(save));
 	case 0x32:
 		return int(fn_4eafe4(save));
+	case 0x25:
+		return fn_4e1b84(save, event) ? 1 : 0;  // Arde un objetivo del asedio.
+	case 0x26:
+		return fn_4e1e54(save, event) ? 1 : 0;  // Arde un edificio de fuera de la muralla.
 	case 0x31:
 		fn_4eab94(save);  // El impuesto extraordinario de una ciudad.
 		return 0;

@@ -883,17 +883,112 @@ void fn_4fdce0(Grid& g, int64_t i) {
 }  // namespace
 
 // 0x4FACD0 (town_class1): quita de la rejilla el edificio de tipo `type` de
-// (x, y). Reescrito solo para las piezas de muralla (tipo 0x32 o más, las
-// que quita el cierre de la muralla, 0x522C70): las celdas de la pieza pasan
-// a libres (& 0xE0 | 0x20) y las de calle de muralla de alrededor (clase
-// 0x11) también; las puertas (0x34/0x37, 0x35/0x38) dejan además un tramo de
-// calle (clases 4 y 3); los tramos y torres rellenan los huecos de muralla
-// de al lado (0x4FDCE0). Por reescribir: los demás tipos (5, 0x2F, 0x30,
-// 0x31 y los edificios), que solo usan otros llamadores aún no reescritos.
+// (x, y), con su orientación `param`.
+//   Las piezas de muralla (tipo 0x32 o más, las que quita el cierre de la
+//   muralla, 0x522C70): las celdas de la pieza pasan a libres (& 0xE0 |
+//   0x20) y las de calle de muralla de alrededor (clase 0x11) también; las
+//   puertas (0x34/0x37, 0x35/0x38) dejan además un tramo de calle (clases 4
+//   y 3); los tramos y torres rellenan los huecos de muralla de al lado
+//   (0x4FDCE0).
+//   El tipo 5 y las torres 0x30 y 0x31 dejan unas celdas fijas (0xE o 0x1C y
+//   0x1E alrededor) y nada más. Los demás (el 0x2F, con otras celdas fijas
+//   antes): liberan la huella de su clase (0x672F84; las casas 0x15..0x1D
+//   orientadas a 0xE0, la clase 1), & 0x80 | 0x20, y alrededor vuelven a
+//   poner el bit de cada tamaño 0..4 donde cabe (0x4FB8F0). Lo usan el
+//   borrado de un edificio (0x521240) en los incendios del asedio (eventos
+//   0x25 y 0x26): comprobado con `retouch.py incendio` (las torres 0x30,
+//   empresas, casas y edificios de la ciudad; los tipos 5 y 0x2F, sin
+//   comprobar).
 void fn_4facd0(SaveGame& save, int town, uint32_t x, uint32_t y, uint32_t type, uint32_t param) {
-	(void)param;
 	if (int32_t(type) < 0x32) {
-		return;  // Por reescribir.
+		Grid g(save.towns[size_t(town)]);
+		const int64_t h = g.h;
+		const int64_t i = int64_t(int32_t(uint32_t(g.h) * x + y));
+		if (type == 5) {
+			// Sin comprobar con el oráculo.
+			g.set(i, 0xE);
+			g.set(i - 1, 0x1E);
+			g.set(i - 2, 0x1E);
+			if (i & 1) {
+				g.set(i + h - 1, 0x1E);
+				g.set(i + h - 2, 0x1E);
+				g.set(i + h - 3, 0x1E);
+			} else {
+				g.set(i - 3, 0x1E);
+				g.set(i + 2 * h - 2, 0x1E);
+				g.set(i - h - 1, 0x1E);
+			}
+			return;
+		}
+		if (type == 0x30 || type == 0x31) {
+			g.set(i, 0x1C);
+			g.set(i - 1, 0x1E);
+			g.set(i - 2, 0x1E);
+			g.set((y & 1) ? i + h - 1 : i - h - 1, 0x1E);
+			return;
+		}
+		int32_t cls;
+		if (type == 0x2F) {
+			// Sin comprobar con el oráculo.
+			g.set(i, 0xF);
+			g.set(i - 1, 0x1E);
+			g.set(i - 2, 0x1E);
+			g.set((y & 1) ? i + h - 1 : i - h - 1, 0x1E);
+			cls = kClass[0x2F];
+		} else if (type >= 0x15 && type < 0x1E && param == 0xE0) {
+			cls = 1;  // 0x67792F: la dirección 7.
+		} else {
+			cls = kClass[type];
+		}
+		int64_t row = i;
+		for (int32_t r = kDepth[cls]; r > 0; --r) {
+			int64_t j = row;
+			for (int32_t c = kWidth[cls]; c > 0; --c) {
+				g.set(j, uint8_t((g.get(j) & 0x80) | 0x20));
+				const bool odd = j & 1;
+				--j;
+				if (odd) {
+					j += h;
+				}
+			}
+			--row;
+			if (row & 1) {
+				row -= h;
+			}
+		}
+		for (int32_t s = 0; s < 5; ++s) {
+			const int32_t ds = kDepth[s];
+			const int32_t ws = kWidth[s];
+			int32_t cx = int32_t(x) + (ds - 1) / 2;
+			if ((y & 1) && ((ds - 1) & 1)) {
+				++cx;
+			}
+			cx -= (ws - 1) / 2;
+			if (!(y & 1) && ((ws - 1) & 1)) {
+				--cx;
+			}
+			int32_t cy = int32_t(y) + ds - 1 + ws - 1;
+			for (int32_t r = kDepth[cls] + ds - 1; r > 0; --r) {
+				int32_t px = cx;
+				int32_t py = cy;
+				for (int32_t c = kWidth[cls] + ws - 1; c > 0; --c) {
+					if (fn_4fb8f0(g, px, py, uint32_t(s))) {
+						const int64_t j = g.at(px, py);
+						g.set(j, uint8_t(g.get(j) | (1u << s)));
+					}
+					--py;
+					if (!(py & 1)) {
+						++px;
+					}
+				}
+				const bool odd = cy & 1;
+				--cy;
+				if (!odd) {
+					--cx;
+				}
+			}
+		}
+		return;
 	}
 	Grid g(save.towns[size_t(town)]);
 	const int64_t h = g.h;

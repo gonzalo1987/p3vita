@@ -2118,6 +2118,34 @@ void fn_53ce30(SaveGame& save, const uint8_t* operation) {
 	}
 }
 
+// 0x521240 (sobre la ciudad): borra el edificio `record` y los que le siguen
+// en su lista ([+0x4]; quien lo llama la corta antes): cada uno vuelve a la
+// lista de libres [0x760], se quita de la rejilla (0x4FACD0) y queda con x, y,
+// dueño y tipo a 0xFF y las obras y el parámetro a 0.
+void fn_521240(SaveGame& save, int town, uint32_t record) {
+	SavedTown& st = save.towns[size_t(town)];
+	TownMemory& t = st.memory;
+	for (uint32_t r = record; r < t.u16(0x776) && r < st.records.size();) {
+		BuildingRecord& b = st.records[r];
+		const uint16_t next = b.next;
+		b.next = t.u16(0x760);
+		t.u16(0x760) = uint16_t(r);
+		fn_4facd0(save, town, b.x, b.y, b.type, b.param);
+		b.x = 0xFF;
+		b.y = 0xFF;
+		b.owner = 0xFF;
+		b.type = 0xFF;
+		b.pending = 0;
+		b.param = 0;
+		r = next;
+	}
+}
+
+// Días de obra del tipo de edificio (0x672BB4).
+uint8_t build_days(uint8_t type) {
+	return type < 60 ? kBuildDays[type] : 0;
+}
+
 }  // namespace construction_detail
 
 // 0x524920: tramo nuevo de muelle (0x2F) si `workers` (la suma de lo que

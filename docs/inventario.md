@@ -35,7 +35,7 @@ el despachador los quita sin hacer lo suyo. No ha salido en las
 comparaciones porque tardan en vencer o porque su efecto tarda.
 
 - [ ] 0x23, 0x24 y 0x34 (0x4E09D4, unos 7,6 KB): las decisiones de la dieta de la Hansa (los crea el evento 0x21); los consultan los convoyes y los barcos. Encola además la 0x81 a los jugadores humanos con un barco en la ciudad
-- [ ] 0x25 (0x4E1B84) y 0x26 (0x4E1E54): en un asedio, cae un objetivo y llega un grupo (los crea 0x6281F0). Llaman a los gráficos de la ciudad (0x599040): separar lo que es simulación
+- [x] 0x25 (0x4E1B84) y 0x26 (0x4E1E54): los incendios del asedio (los crea 0x6281F0 al caer un objetivo y al llegar un grupo): el edificio arde (100 de vida, 51 o 1 cada 5 ticks) y al final una torre queda en ruinas (0x36) y lo demás se borra (0x521240, con 0x4FACD0 ya para todos los tipos; 0x4DB100 lo quita de las subastas). Los gráficos solo con la vista de la ciudad. Escenario `incendio` (partidas 3 a 7) y los asedios de verdad de las partidas 3, 4, 5 y 7 (el primer incendio, el día 13 de la 7), iguales. Falta la guarida pirata (ciudad 0xFE − k, 0x515C00), que llega desde las batallas
 - [x] 0x27 (0x4DDC00): un capitán de la IA que se retira (lo crea el evento 0x03): deja el barco (0x5098B0) según el estado de este. Escenario `capitanes` de `retouch.py`: iguales en las partidas 1 a 7
 - [x] 0x31 (0x4EAB94): el impuesto extraordinario que aprueba el consejo de una ciudad (lo crea el evento 0x2E): lo pagan los comerciantes con oficina, con deudas si no pueden, y puede haber queja a la Hansa (evento 0x30). Escenario `impuesto`: el estado igual en las 7; en 2 de ellas la IA de un comerciante endeudado elige después distinto por un fallo del juego (una variable sin inicializar en 0x4F5A20; ver el roadmap)
 - [x] 0x38 (0x4ECB14): el monumento al alcalde reelegido (lo crea 0x528E60): el edificio 0x2D de la ciudad pasa a ser suyo cuando la muralla está. Escenario `monumento`: iguales en las 7
@@ -90,7 +90,7 @@ interfaz o un hueco:
 
 ## D. Lo que marca el propio código
 
-- [ ] «Por reescribir» y «Por traducir» (14): el principio del encargo de fundar una ciudad y el ataque a la guarida pirata (`alderman.cpp`), 0x4FF2D0 (el almacén del comerciante, `construction.cpp`), 0x629C30 sobre [+0x8] y el intérprete de misiones (`events.cpp`), el ataque al barco 0x5063C0 (`events_rare.cpp`), los mensajes caducados y una rama sin longitud (`events_towns.cpp`), 0x4FACD0 para los tipos de menos de 0x32 (`grid.cpp`), 0x4F99B0 sin plantilla, 0x545CE0 y 0x545F50, y la elección del alcalde en la fundación (`new_town.cpp`)
+- [ ] «Por reescribir» y «Por traducir» (14; hecho ya 0x4FACD0 para los tipos de menos de 0x32): el principio del encargo de fundar una ciudad y el ataque a la guarida pirata (`alderman.cpp`), 0x4FF2D0 (el almacén del comerciante, `construction.cpp`), 0x629C30 sobre [+0x8] y el intérprete de misiones (`events.cpp`), el ataque al barco 0x5063C0 (`events_rare.cpp`), los mensajes caducados y una rama sin longitud (`events_towns.cpp`), 0x4FACD0 para los tipos de menos de 0x32 (`grid.cpp`), 0x4F99B0 sin plantilla, 0x545CE0 y 0x545F50, y la elección del alcalde en la fundación (`new_town.cpp`)
 - [ ] «no se reproduce» y «no se traduce» (115): casi todo avisos, cartas, ventanas y gráficos; repasar que ninguno toque el estado
 - [ ] «Sin comprobar con el oráculo» (347): ramas escritas que ninguna partida recorre; probarlas con estados retocados (`tools/oracle/retouch.py`), empezando por las de A y B
 

@@ -77,6 +77,8 @@ Los eventos que p3vita creaba y no atendía; graban 4d85c0:
   capitanes             0x27: capitanes de la IA que se retiran, uno por estado de barco
   impuesto              0x31: el impuesto extraordinario (deudas y queja a la Hansa)
   monumento             0x38: el monumento al alcalde reelegido (alcaldes de la IA a mano)
+  incendio              0x25 y 0x26: arden una torre, una pieza de muralla, una empresa, una
+                        casa y un edificio de la ciudad (graba 2 días)
 Los asedios (operación 0x8E); graban 535760 y 633a90:
   asedio                uno a una ciudad sin muralla (rescate sin atacar) y
                         otro en la región de la ciudad natal del jugador, con
@@ -845,6 +847,61 @@ def monumento(o):
     return lambda: print(f'después: {[(i, (o.u8(monument(i) + 2), o.u8(monument(i) + 7)) if monument(i) else None) for i, _ in cases]}')
 
 
+def incendio(o):
+    """Los incendios del asedio en una ciudad: eventos 0x25 (0x4E1B84) sobre
+    una torre (0x32, 0x33: queda en ruinas, 0x36) y sobre otra pieza de la
+    lista de murallas [0x768] (se borra), y 0x26 (0x4E1E54) sobre una empresa
+    ([+0x2CE] de una oficina) y una casa ([+0x2D0]) de comerciantes y un
+    edificio de la ciudad ([0x764]): arden y se borran (0x521240, 0x4FACD0).
+    Graba 2 días. Devuelve lo que escribe al final: tipo, obras y dueño de
+    cada uno."""
+    towns, merchants = o.u32(WORLD + 0x10), o.u16(WORLD + 0xA)
+
+    def walk(t, head):
+        out, r = [], o.u16(head)
+        while r < o.u16(t + 0x776):
+            out.append(r)
+            r = o.u16(o.u32(t + 0x75C) + 8 * r + 4)
+        return out
+
+    def rec(t, r):
+        return o.u32(t + 0x75C) + 8 * r
+
+    for town in range(towns):
+        t = o.town(town)
+        walls = walk(t, t + 0x768)
+        towers = [r for r in walls if o.u8(rec(t, r) + 3) in (0x32, 0x33)]
+        others = [r for r in walls if o.u8(rec(t, r) + 3) not in (0x32, 0x33)]
+        offices = office_list(o, town)
+        firms = [r for f in offices for r in walk(t, o.office(f) + 0x2CE) if o.u8(rec(t, r) + 3) not in (0x28, 0x29)]
+        houses = [r for f in offices for r in walk(t, o.office(f) + 0x2D0)]
+        city = [r for r in walk(t, t + 0x764) if o.u8(rec(t, r) + 2) >= merchants and o.u8(rec(t, r) + 3) not in (0x28, 0x32, 0x33)]
+        if towers and others and firms and houses and city:
+            break
+    else:
+        raise RuntimeError('ninguna ciudad con todo')
+    cases = [(0x25, towers[0]), (0x25, others[0]), (0x26, firms[0]), (0x26, houses[0]), (0x26, city[0])]
+    now = o.u32(WORLD + 0x14)
+    for k, (kind, r) in enumerate(cases):
+        e = o.call(0x4D8CF0, [now + 1 + k], ecx=to.EVENTS)
+        w16(o, e + 6, kind)
+        if kind == 0x25:
+            w16(o, e + 8, 0xFFFF)
+            w16(o, e + 0xA, 0)
+            w16(o, e + 0xC, o.u8(rec(t, r)))
+            w16(o, e + 0xE, o.u8(rec(t, r) + 1))
+        else:
+            w16(o, e + 8, r)
+        w8(o, e + 0x10, town)
+        w8(o, e + 0x11, 1)
+
+    def show():
+        return [(kind, r, o.u8(rec(t, r) + 3), o.u8(rec(t, r) + 6), o.u8(rec(t, r) + 2)) for kind, r in cases]
+
+    print(f'ciudad {town}: (evento, registro, tipo, obras, dueño) {show()}')
+    return lambda: print(f'después: {show()}')
+
+
 def jugador_carretera_vencida(o):
     """El jugador con la carretera vencida: el juego crea un encargo igual con
     la ciudad [+0x10] como comerciante, que sigue avanzando. Graba 2 días."""
@@ -860,7 +917,7 @@ SCENARIOS = {f.__name__: f for f in (candidato, jugador, dos_candidatos, sin_car
                                      encargo_nuevo, encargo_cumplido, encargo_vencido, barco_perdido,
                                      jugador_coge, jugador_vencido,
                                      nueva_sin_marca, nueva_alcalde_ia, nueva_alcalde_humano, nueva_sin_alcalde,
-                                     poblada, rica, fundar_aceite, robo, asedio, capitanes, impuesto, monumento)}
+                                     poblada, rica, fundar_aceite, robo, asedio, capitanes, impuesto, monumento, incendio)}
 
 
 def main():
