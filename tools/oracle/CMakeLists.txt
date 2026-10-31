@@ -21,3 +21,8 @@ add_executable(tick_probe tick_probe.cpp probes_shared.cpp probes_core.cpp probe
 
 target_link_libraries(tick_probe PRIVATE p3data)
 target_compile_options(tick_probe PRIVATE -Wall -Wextra)
+
+add_executable(write_retouch write_retouch.cpp)
+
+target_link_libraries(write_retouch PRIVATE p3data)
+target_compile_options(write_retouch PRIVATE -Wall -Wextra)

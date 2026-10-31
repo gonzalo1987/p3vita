@@ -302,13 +302,12 @@ void write_world(Writer& w, SaveGame& save) {
 			}
 		}
 	}
-	// 0x52BB30: the 15 world objects of [+0xB10].
+	// 0x52BB30: the 15 world objects of [+0xB10]: their first 0x1C bytes,
+	// the u16 [+0x1C] (not the length of the list) and the records of the list.
 	for (uint32_t i = 0; i < 15; ++i) {
 		const uint32_t object = W + 0xB10 + 0x2C * i;
-		w.from(g, object, 0x1C);
-		const std::vector<GameMemory<0x10>>& list = save.world_object_lists[i];
-		w.u16(uint16_t(list.size()));
-		for (const GameMemory<0x10>& record : list) {
+		w.from(g, object, 0x1E);
+		for (const GameMemory<0x10>& record : save.world_object_lists[i]) {
 			w.from(record, 0, 0x10);
 		}
 	}
@@ -426,6 +425,27 @@ void write_mail(Writer& w, const SaveGame& save) {
 	}
 }
 
+// 0x4F39E0: the node list of an event 0x34, from the bytes of the file it
+// was read from (4 a node, 0x7F before each next one). GAME BUG (looks like
+// one): the reader (0x4F3A40) keeps [+0x4] and [+0x5] and makes the u16
+// [+0x6] of the third byte twice (b2 · 0x101), skipping the fourth; the
+// writer writes [+0x4], [+0x5], the sign of the low byte of [+0x6] (`sar dl,
+// 8` on a byte register) and that byte. So each node becomes b0 b1 sign(b2)
+// b2, and the list always ends in 0.
+void write_event_nodes(Writer& w, const std::vector<uint8_t>& list) {
+	for (size_t p = 0; p + 4 <= list.size(); p += 5) {
+		w.u8(list[p]);
+		w.u8(list[p + 1]);
+		w.u8(list[p + 2] & 0x80 ? 0xFF : 0);
+		w.u8(list[p + 2]);
+		if (p + 4 >= list.size() || list[p + 4] != 0x7F) {
+			break;
+		}
+		w.u8(0x7F);
+	}
+	w.u8(0);
+}
+
 // 0x4D80F0: the event queue and, after the records, the extras of the types
 // 0x1B (4 bytes an entry) and 0x34 (0x4F39E0).
 void write_events(Writer& w, const SaveGame& save) {
@@ -448,8 +468,10 @@ void write_events(Writer& w, const SaveGame& save) {
 	}
 	for (size_t i = 0; i < save.events.size(); ++i) {
 		const GameMemory<0x18>& e = save.events[i];
-		if (e.u16(6) == 0x1B || (e.u16(6) == 0x34 && e.u8(0x15) >= 7)) {
+		if (e.u16(6) == 0x1B) {
 			w.bytes(extras_of(i));
+		} else if (e.u16(6) == 0x34 && e.u8(0x15) >= 7) {
+			write_event_nodes(w, extras_of(i));
 		}
 	}
 }

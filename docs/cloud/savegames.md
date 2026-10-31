@@ -14,7 +14,7 @@ merging on the PC.
 | 3. Version 0x85 branches in the readers | done: only the free ship slots branch above 0x82 (§4) |
 | 4. C++ writer (`savegame_write.cpp`), byte for byte | done for the 12 saves (§2) |
 | 5. LZ compressor rewritten in C++ | done: same bytes as the game's in the 12 saves (§3) |
-| 6. After playing, round trip, `.pst` | round trip (§4) and after playing (§5) done; retouched states and `.pst` pending |
+| 6. After playing, round trip, `.pst` | round trip (§4), after playing (§5) and retouched states (§6) done; `.pst` pending |
 
 ## 1. How the game saves
 
@@ -112,6 +112,8 @@ reader is still to be confirmed.)
   through [+0x2C8]) setting each owner [+0x2C4] to 0xFFFF **in memory**.
 - Nodes of a town ([0x9B4]): written in the order of the list; the reader
   puts each one first, so the order turns round at each save and load.
+- 0x52BB30 (the 15 world objects) writes as the number of its records the
+  u16 [+0x1C], not the length of its list.
 - 0x504010 (ships) starts with u16 0x85; free ship slots carry the byte
   [+0x137] from version 0x83 (that's why the ships section grows).
 - 0x4D62B0 (mailbox) writes version 5 (`0xAFFE0005`).
@@ -281,6 +283,43 @@ and in p3vita (`tick_probe --continuo --carga ... --write OUT`), then
 | 3 | 0 | 1 073 302 | 0 | 91, 10, 30 |
 | 7 | 0 | 1 005 238 | 12 (battles, §2.1) | 85, 0, 40 |
 
+## 6. Retouched states: the branches the saves don't reach
+
+What the 12 saves reach (counted with p3data): ships with their own route
+(1 to 78 a save), free ship slots, besieging armies (saves 3, 4, 5, 7),
+pirates with records, the slots of 0x6DE588, free offices, towns with more
+than one node, notices with extras of the types 0x29, 0x3D, 0x3E, 0x47 and
+0x71, events 0x1B. What they don't: the two lists of the siege objects, the
+pirates' map objects, the records of the 15 world objects, the lists of the
+events 0x34, the ten lists of the merchants (empty in all), the trade
+routes, the notices 0x63 and 0x83, and any notice in a merchant's list
+(0x4D6780 does nothing in them).
+
+`tools/oracle/write_retouch.cpp` loads a save, adds all of that (see its
+header; merchant 0 gets a list of 9 notices of every class of 0x4D6780,
+expired and not, a 0x71 kept by its block and a 0x90 dated tomorrow that
+cuts the list; merchant 2 a 0x95 that cuts its list and expires) and writes
+it without expiring. `scripts/write-retouched.sh [SAVE]`: the game's readers
+load it and `tick_probe --carga` compares with p3data's load; then the game
+(with 0x4D6780 for each merchant) and p3data save it again:
+
+| Base save | Load | Bytes | Different |
+|-|-|-|-|
+| 1 | 0 differences | 955 977 | 0 |
+| 3 | 0 differences | 1 077 484 | 0 |
+| tut4 | 0 differences | 956 826 | 0 |
+
+Checked that it isn't empty: the saved file differs from the retouched one in
+the mailbox (the expired notices emptied, the free list lost, see "Game
+bugs") and in the nodes of the event 0x34, which come out as the game
+leaves them.
+
+Not checked: `[0x6DF2F0] & 0xC` in 0x549CC0 (the hometown written as 0; the
+byte isn't in the file), the optional object of [+0xE4] of the world
+(0x533D10; p3vita doesn't read it), and ship names added during the game
+(0x511C60 writes them if [+0xDA] > [+0xD8] of the names object; p3vita has
+no way to add them yet and writes u16 0, u16 0).
+
 ## For the roadmap
 
 - Loader: 0x549F40 does more than the readers (§1.3): 0x5131B0 for the
@@ -312,10 +351,20 @@ Certain:
   writer writes 8, so 3 bytes come from whatever was in memory (0xCD in
   save 7, 0 in the emulator).
 
+- **0x4D6800 and 0x4D68E0: a notice of type ≥ 0x86 in a merchant's list.**
+  0x4D6780 cuts the list at the link that points to it (0xFFFF), and the
+  notices after it stay out of every list; if the notice also expires, the
+  new head of the free notices is that cut link (0xFFFF), so all the free
+  notices are lost. Reproduced in `expire_merchant_mail`, same as the game
+  in the retouched states (§6).
+- **0x4F3A40/0x4F39E0: the nodes of the event 0x34 change at each load and
+  save.** The reader makes the u16 [+0x6] of the third byte of the node
+  twice and skips the fourth; the writer writes the sign of the low byte of
+  [+0x6] and that byte. A node `b0 b1 b2 b3` is saved as `b0 b1 sign(b2)
+  b2`, and the list always ends in 0. Reproduced in `write_event_nodes`,
+  same as the game (§6).
+
 Looks like one:
-- **0x4D6800**: in 0x4D6780 a notice of type ≥ 0x86 cuts the merchant's list
-  at the link that points to it, and is still checked and maybe expired.
-  Reproduced; not reached by the saves.
 - The node list of a town ([0x9B4]) turns round at each save and load (the
   writer writes it in order, the reader puts each node first). Harmless if
   the order doesn't matter.
@@ -341,11 +390,12 @@ Looks like one:
 - `tools/oracle/tick_probe.cpp`: `--write OUT` (at the end of `main`).
 - `tools/oracle/town_oracle.py`: `--write OUT` (in `main` and the
   docstring; `OPERATIONS` not touched).
+- `tools/oracle/CMakeLists.txt`: `write_retouch`.
 
 ## Time of the checks
 
 - `write_oracle.py`: 1.5 s a save; `scripts/write-check.sh` for the 12: 19 s.
 - `tick_probe --carga` with a recording of 0 days: 2 s a save;
   `scripts/write-reload.sh` for the 12: 25 s; `scripts/write-after-days.sh 4
-  1 3 7`: 6 min 11 s.
+  1 3 7`: 6 min 11 s; `scripts/write-retouched.sh`: 4 s a save.
 - Not built for the Vita (no VitaSDK here; `src/app` not touched).
