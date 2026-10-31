@@ -262,6 +262,17 @@ void build_save(const State& state, SaveGame& save) {
 	if (const Region* m = find(state, "B")) {
 		copy_blocks(*m, save.mail);
 	}
+	if (const Region* l = find(state, "L")) {
+		// The letters' heap records: u16 letter and 16 bytes, for each.
+		save.mail_records.assign(save.mail.size(), std::nullopt);
+		const std::vector<uint8_t>& b = l->bytes;
+		for (size_t o = 0; o + 0x12 <= b.size(); o += 0x12) {
+			const uint16_t i = get<uint16_t>(b.data(), o);
+			if (i < save.mail_records.size()) {
+				std::memcpy(save.mail_records[i].emplace().bytes.data(), b.data() + o + 2, 0x10);
+			}
+		}
+	}
 	if (const Region* y = find(state, "Y")) {
 		save.town_travel = y->bytes;
 	}
@@ -351,6 +362,19 @@ State dump_save(const SaveGame& save, const State& game) {
 	}
 	if (s.count("B")) {
 		store_blocks(save.mail, s["B"]);
+	}
+	if (s.count("L")) {
+		std::vector<uint8_t>& b = s["L"].bytes;
+		b.clear();
+		for (size_t i = 0; i < save.mail_records.size() && i < save.mail.size(); ++i) {
+			const uint8_t kind = save.mail[i].u8(4);
+			if (save.mail_records[i] && ((kind >= 0x3C && kind <= 0x40) || kind == 0x71)) {
+				const size_t o = b.size();
+				b.resize(o + 0x12);
+				put<uint16_t>(b.data(), o, uint16_t(i));
+				std::memcpy(b.data() + o + 2, save.mail_records[i]->bytes.data(), 0x10);
+			}
+		}
 	}
 	if (s.count("Y")) {
 		s["Y"].bytes = save.town_travel;
@@ -671,16 +695,19 @@ int main(int argc, char** argv) {
 	// Los puntos de las expediciones, que la grabación no guarda: de los datos.
 	std::vector<std::array<uint16_t, 2>> expeditions;
 	std::vector<std::string> ship_names;  // Tampoco los nombres de barco.
+	std::array<std::vector<std::string>, 2> first_names;  // Nor the first names.
 	std::vector<std::vector<uint8_t>> town_templates;  // Ni las plantillas de las ciudades nuevas.
 	if (archive) {
 		SaveGame scripts;
 		load_game_scripts(*archive, scripts);
 		expeditions = scripts.expeditions;
 		ship_names = scripts.ship_names;
+		first_names = scripts.first_names;
 		town_templates = scripts.town_templates;
 		if (continuous && load.empty()) {
 			save.expeditions = expeditions;
 			save.ship_names = ship_names;
+			save.first_names = first_names;
 			save.town_templates = town_templates;
 		}
 	}
@@ -758,6 +785,7 @@ int main(int argc, char** argv) {
 			build_save(before, save);
 			save.expeditions = expeditions;
 			save.ship_names = ship_names;
+			save.first_names = first_names;
 			save.town_templates = town_templates;
 		}
 		save.queued_operations.clear();

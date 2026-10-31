@@ -198,10 +198,10 @@ y 1 de cada 11 una tormenta. Al final 0x502B20: los barcos con casco vuelven a
 dueño cobra el [+0x20] y gana 51 de reputación.
 
 La cola lee también lo que la partida guarda y p3vita no leía: el buzón de
-avisos (0x4D6350, justo tras los barcos: `SaveGame::mail`), los 5 objetos de
+avisos (0x4D6350, justo tras los barcos: `SaveGame::mail`, and the 16-byte heap records of the letters of types 0x3C..0x40 and 0x71: `SaveGame::mail_records`, region L), los 5 objetos de
 los piratas (0x5138B0, al final de los barcos: `SaveGame::pirates`) y los
 nombres de barco de `scripts/NamenSchiffe*.txt` (0x5128D0,
-`SaveGame::ship_names`). Los avisos nuevos (0x4D6530) no se apuntan en el
+`SaveGame::ship_names`). Old letters are removed by 0x4D6780 (event 0x03, one merchant every 10 days, and a bankruptcy): a letter older than its keeping time (by type, table 0x6C0198: the merchant's settings [+0x38..+0x3A] with 0x6C0220 = never, 40, 20, 10, 5 days or none; fixed 7 days for 0x0F, 0x10, 0x11, 28 for 0x72, never for 0x46 and the other fixed ones; 0x71 until the tick [+0x4] of its record) goes back to the free list emptied (0x51AAB0); a letter of type 0x86 or more cuts the chain, and if it is removed the free list is lost (game bug). Los avisos nuevos (0x4D6530) no se apuntan en el
 buzón: en el juego, un aviso 0x21 recién enviado aplazaría el siguiente 0x16
 42 días.
 
@@ -255,7 +255,7 @@ tabla 0x537030) a unos 180 manejadores; los códigos 0x14, 0x73, 0x9C–0x9E,
 | 0x61 | 0x53DBF0 | la fiesta de un comerciante: {0x61, comerciante, tick, ciudad, precio}: si tiene el precio (comparado sin signo: con deudas, también), se le cobra (dinero y [+0x4BC]) y un evento 0x07 en ese tick con el comerciante, la ciudad y [+0x10] = 2 (§6). La encola la fiesta de la ciudad (0x5316E0, en el evento 0x03: [+0x84] el tick y [+0x88] la ciudad del mundo) con precio 0 para un comerciante de la IA al azar de los de sus oficinas (sin el bit 4 de [+0x8]), a los 10 a 30 días; la siguiente, en una ciudad al azar (0..19) a los 13 a 32 días. Con precio, la interfaz (`operations.cpp`) |
 | 0x81 | 0x53FA80 | {0x81, comerciante, tipo, plazo, u8}: un encargo de la dieta de la Hansa, el evento 0x05 a tick + plazo + 256 con el byte bajo a 0x80 |
 | 0x85 | 0x53FD10 | crea un encargo de la Hansa (§8) |
-| 0x87 | 0x53FEA0 | {0x87, u8 merchant, u8 first name, 4 bytes}: a child of a married merchant ([+0x31] a town; after [+0x28] and 279 days after [+0x2C]; none of his children, list [+0x34] of 16-byte records among the captains, born less than 279 days ago): a free record (0x5097C0) at the head of [+0x34] with the name, his surname [+0x1D], the birth tick and the 4 bytes; [+0x36] + 1. Queued by 0x4F69B0 (event 0x03; still to be rewritten) |
+| 0x87 | 0x53FEA0 | {0x87, u8 merchant, u8 first name, 4 bytes}: a child of a married merchant ([+0x31] a town; after [+0x28] and 279 days after [+0x2C]; none of his children, list [+0x34] of 16-byte records among the captains, born less than 279 days ago): a free record (0x5097C0) at the head of [+0x34] with the name, his surname [+0x1D], the birth tick and the 4 bytes; [+0x36] + 1. Queued by 0x4F69B0 (event 0x03): married, after [+0x28] and 279 days after [+0x2C], fewer children than (length of his first name, 0x512A60, % 3) + 2 and none born less than 279 days ago; the name a random byte not used by a brother or sister (otherwise the next man's name or, past 0x7F, (n & 0x7F) % women + 0x81), and 4 random bytes & 0x7F |
 | 0xB8 | 0x542F10 | {0xB8, kind, flag}: network sync checks: it queues operations that do nothing when run, with checksums: kind 1 a 0xB9 per ship and kind 2 a 0xBA per town (only with [0x6DF31C]), kind 3 a 0xBC with counters, kind 4 a 0xBE per merchant, kind 5 nothing; any other kind, with flag 1 a 0xBB (money, citizens, counters) and always [0x6DFBF8] = 0 and a 0xD4 (stock of the towns, positions of the special ships, of the merchants' and pirates' ships, cargo). Event 0x03 queues kind 0 in network games |
 | 0x8E | dentro de 0x535760, en 0x536A67 | un asedio: {0x8E, u32 ciudad, u32 tipo de ejército, u8 r, …, u32 flag} → 0x633AF0 (§5, `sieges.cpp`) |
 | 0x86 | dentro de 0x535760, en 0x536801 (copia en 0x53FE20) | quita los encargos de la Hansa sin comerciante que ya no valen (§8) |

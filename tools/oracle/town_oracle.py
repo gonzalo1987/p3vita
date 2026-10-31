@@ -685,6 +685,15 @@ class TownOracle(SaveOracle):
                     out[f'{name}{i}'] = (self.u32(siege + head), bytes(nodes))
         add('E', self.u32(EVENTS), self.u16(EVENTS + 0xC) * 0x18 if self.u32(EVENTS) else 0)
         add('B', self.u32(MAIL), self.u16(MAIL + 6) * 0x10 if self.u32(MAIL) else 0)
+        # The 16-byte heap record of the letters of types 0x3C..0x40 and 0x71
+        # (pointer in [+0x8]): u16 letter and the 16 bytes, for each.
+        records = bytearray()
+        letters = out['B'][1]
+        for i in range(len(letters) // 0x10):
+            kind, pointer = letters[0x10 * i + 4], struct.unpack_from('<I', letters, 0x10 * i + 8)[0]
+            if pointer and (0x3C <= kind <= 0x40 or kind == 0x71):
+                records += struct.pack('<H', i) + bytes(self.uc.mem_read(pointer, 0x10))
+        out['L'] = (0, bytes(records))
         add('Y', self.u32(WORLD + 0x6C), towns * towns if self.u32(WORLD + 0x6C) else 0)
         add('V', self.u32(SHIPS + 8), self.u16(SHIPS + 0xF6) * 0x3C if self.u32(SHIPS + 8) else 0)
         routes = bytearray()

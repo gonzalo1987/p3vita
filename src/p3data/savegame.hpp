@@ -363,6 +363,11 @@ struct SaveGame {
 	// él los avisos 0x21 y 0x22 del jugador. Los avisos nuevos (0x4D6530) no se
 	// apuntan: es la interfaz.
 	std::vector<GameMemory<0x10>> mail;
+	// The 16-byte heap record of each letter of types 0x3C..0x40 and 0x71
+	// (the game keeps it apart, pointer in [+0x8]; for 0x71, [+0x4] is the
+	// tick until which the letter is kept, 0x4D6780). Same size as `mail`;
+	// empty for the other letters. In tick_probe, region L.
+	std::vector<std::optional<GameMemory<0x10>>> mail_records;
 	// Matriz n × n del mundo (*[0x6DE50C], [+0x6C] de 0x6DE4A0; 0x531B70 la
 	// lee): lo que se tarda de una ciudad a otra, en dieciseisavos de día a la
 	// velocidad de una snaikka (0x516930; 0x516AB0 lo pasa a días).
@@ -409,6 +414,11 @@ struct SaveGame {
 	// tal como los parte el juego (0x5128D0), en Latin-1: 0x509A50 copia uno
 	// al [+0x160] de cada barco nuevo. Vacío si no se ha leído.
 	std::vector<std::string> ship_names;
+	// Men's and women's first names (scripts/NamenMaenner.txt and
+	// NamenFrauen.txt, [0x6DDB70] and [0x6DDB72] of them) as the game splits
+	// them (0x5121C0 with 0x5128D0), in Latin-1: 0x512A60 gives one, and
+	// 0x4F69B0 uses the length of a merchant's. Empty if not read.
+	std::array<std::vector<std::string>, 2> first_names;
 };
 
 // Lee una partida ya descomprimida.

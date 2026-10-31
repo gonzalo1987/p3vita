@@ -102,6 +102,8 @@ Las operaciones de la simulación que p3vita descartaba (inventario, parte B); g
   hijo                  0x87: a child is born to a married merchant
   desguace              0x0A: ships deleted (in port, at sea, in a convoy, the player's)
   red, red_activa       0xB8: network sync checks (all kinds; with [0x6DF31C] = 1)
+  cartas                0x4D6780: the player's old letters, event 0x03 moved to his day
+  hijo_natural          0x4F69B0: married AI merchants, event 0x03 moved: a child (0x87)
 Los asedios (operación 0x8E); graban 535760 y 633a90:
   asedio                uno a una ciudad sin muralla (rescate sin atacar) y
                         otro en la región de la ciudad natal del jugador, con
@@ -1525,6 +1527,49 @@ def red_activa(o):
     red(o)
 
 
+def cartas(o):
+    """Old letters (0x4D6780, from event 0x03): event 0x03 moved to the first
+    day whose day of year modulo the number of merchants is the player, who
+    keeps letters 5 days ([+0x38..+0x3A] = 4). Records until that day.
+    Returns what it prints at the end: the player's letters."""
+    now, day, merchants = o.u32(WORLD + 0x14), o.u16(WORLD + 4), o.u16(WORLD + 0xA)
+    p = o.u32(to.PLAYER)
+    k = next(k for k in range(1, merchants + 1) if (day + k) % merchants == p)
+    i, a = next((i, a) for i, a in events(o) if o.u16(a + 6) == 3)
+    move_event(o, i, a, (now & ~0xFF) + 0x100 * k + 1)
+    for off in (0x38, 0x39, 0x3A):
+        w8(o, o.merchant(p) + off, 4)
+
+    def letters():
+        out, j = [], o.u16(o.merchant(p) + 0xA)
+        while j < o.u16(to.MAIL + 6) and len(out) < 64:
+            e = o.u32(to.MAIL) + 0x10 * j
+            out.append((j, hex(o.u8(e + 4))))
+            j = o.u16(e + 6)
+        return out
+    print(f'jugador {p}: el evento 0x03 en {k} días; cartas {letters()}')
+    return lambda: print(f'después: {letters()}; libre {o.u16(to.MAIL + 4)}')
+
+
+def hijo_natural(o):
+    """Children from event 0x03 (0x4F69B0 queues operation 0x87): every AI
+    merchant married 300 days ago, those with an even index already with 9
+    children (too many), and event 0x03 moved to the next tick. Records 1 day.
+    Returns what it prints at the end."""
+    now, merchants = o.u32(WORLD + 0x14), o.u16(WORLD + 0xA)
+    ai = [m for m in range(merchants) if o.u16(o.merchant(m) + 8)]
+    for m in ai:
+        mm = o.merchant(m)
+        w8(o, mm + 0x31, o.u8(mm + 0x19))
+        w32(o, mm + 0x28, now - 18 * 365 * 256)
+        w32(o, mm + 0x2C, now - 300 * 256)
+        w8(o, mm + 0x36, 9 if m % 2 == 0 else 0)
+    i, a = next((i, a) for i, a in events(o) if o.u16(a + 6) == 3)
+    move_event(o, i, a, now + 1)
+    print(f'{len(ai)} comerciantes casados')
+    return lambda: print(f'con hijos: {[(m, o.u8(o.merchant(m) + 0x36)) for m in ai if o.u16(o.merchant(m) + 0x34) != 0xFFFF]}')
+
+
 def jugador_carretera_vencida(o):
     """El jugador con la carretera vencida: el juego crea un encargo igual con
     la ciudad [+0x10] como comerciante, que sigue avanzando. Graba 2 días."""
@@ -1543,7 +1588,8 @@ SCENARIOS = {f.__name__: f for f in (candidato, jugador, dos_candidatos, sin_car
                                      poblada, rica, fundar_aceite, robo, asedio, capitanes, impuesto, monumento, incendio, dieta,
                                      fiesta, fiesta_vacia, fiesta_ciudad, astillero, astillero_ciudad, eventos_op,
                                      propuestas, subasta, subasta_ajuste, temporada, incendio_ciudad,
-                                     capitan_jugador, boda, quiebra, hijo, desguace, red, red_activa)}
+                                     capitan_jugador, boda, quiebra, hijo, desguace, red, red_activa, cartas,
+                                     hijo_natural)}
 
 
 def main():

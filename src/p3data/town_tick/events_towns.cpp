@@ -89,6 +89,7 @@ constexpr uint32_t kOperations = 0x6DF2F0;  // u32 del objeto de las operaciones
 constexpr uint32_t kOperationCount = 0x6DF346;  // u16 operaciones encoladas ([+0x56] de 0x6DF2F0)
 // Buzón de los mensajes a los comerciantes (0x6DD730): u16 [+0x6] su número.
 constexpr uint32_t kMailCount = 0x6DD736;
+constexpr uint32_t kMailFree = 0x6DD734;  // u16 the mailbox's first free letter
 // Del mundo: [+0x84] u32 tick y [+0x88] u8 ciudad de la próxima fiesta (0x5316E0).
 constexpr uint32_t kFeastTick = global::kWorld + 0x84;
 constexpr uint32_t kFeastTown = global::kWorld + 0x88;
@@ -330,19 +331,103 @@ uint32_t fn_4db4e0(SaveGame& save, uint16_t event) {
 
 // --- Evento 0x03: cada 10 días ---
 
-// 0x4D6780 (thiscall sobre el buzón 0x6DD730, con un comerciante): quita sus
-// mensajes viejos. En las partidas los buzones de los comerciantes llegan
-// vacíos ([+0xA] >= [0x6DD736]) y no se escribe en ellos (0x4D6530 no se
-// reproduce).
+// How long each type of letter is kept (0x6C0198): 1 to 3, by the
+// merchant's settings [+0x38], [+0x39], [+0x3A]; 4, fixed by type; 0, not at
+// all. Past 0x87 the table runs into other data, which gives no 1 to 4.
+constexpr uint8_t kLetterKind[0x88] = {
+	2, 3, 3, 2, 2, 2, 4, 3, 2, 4, 1, 1, 4, 4, 4, 4, 4, 3, 2, 1, 1, 2, 2, 2,
+	2, 1, 2, 2, 4, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 3, 2, 2, 2, 2, 1, 1, 1, 1,
+	2, 1, 1, 2, 2, 4, 1, 1, 4, 4, 4, 1, 4, 1, 2, 3, 4, 1, 1, 2, 4, 4, 2, 1,
+	1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 3, 2, 1, 2, 1, 4,
+	2, 2, 2, 3, 1, 1, 3, 3, 3, 3, 2, 1, 1, 1, 1, 1, 1, 4, 4, 2, 2, 2, 1, 1,
+	1, 2, 2, 1, 2, 1, 1, 2, 1, 2, 1, 2, 1, 1, 0, 0,
+};
+// The keeping times of those settings (0x6C0220: never, 40, 20, 10, 5 days,
+// none; past 5 the table runs into text).
+constexpr uint32_t kLetterKeep[10] = {0xFFFFFFFF, 0x2800, 0x1400, 0xA00, 0x500, 0, 1702323527, 1650811506,
+	540702049, 1701604449};
+// First day of each month (0x672D78; the game masks the month with 0x7F).
+constexpr uint16_t kLetterMonth[16] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365, 0, 31, 28};
+
+// 0x4D6780 (on the mailbox 0x6DD730, with a merchant): his letters (the chain
+// from [+0xA], next in [+0x6]; at most as many steps as letters) that are
+// older than their keeping time go back to the mailbox's free list ([+0x4]),
+// emptied (0x51AAB0, which also frees what hangs from them on the heap). The
+// age: from the letter's date (day [+0x0] from 1, month [+0x1], year
+// [+0x2]); the keeping time by type (kLetterKind): the merchant's setting,
+// or fixed: never for 0x46, 7 days for 0x11, 0x0F and 0x10, 28 days for
+// 0x72, never for the other fixed ones; 0x71 is kept until the tick [+0x4]
+// of its heap record (SaveGame::mail_records). A letter of type 0x86 or more cuts the chain where it is (the link
+// to it becomes 0xFFFF; the letter is still looked at, and the walk goes on
+// from it); if that letter is removed, the game loses the free list (its
+// head becomes 0xFFFF).
 void fn_4d6780(SaveGame& save, int32_t merchant) {
+	GlobalMemory& g = save.globals;
 	if (merchant >= int32_t(merchant_count(save))) {
 		return;  // Sin comprobar con el oráculo.
 	}
-	if (merchant_of(save, uint32_t(merchant)).u16(0xA) >= save.globals.u16(kMailCount)) {
-		return;
+	MerchantMemory& m = merchant_of(save, uint32_t(merchant));
+	const uint32_t count = g.u16(kMailCount);
+	const uint32_t now = g.u32(kTick);
+	auto setting = [&](size_t o) {
+		return m.u8(o) < 10 ? kLetterKeep[m.u8(o)] : 0;  // Past 9, sin comprobar con el oráculo.
+	};
+	uint16_t* link = &m.u16(0xA);
+	uint32_t index = *link;
+	for (uint32_t left = count; index < count && left > 0; --left) {
+		GameMemory<0x10>& letter = save.mail[index];
+		const uint8_t type = letter.u8(4);
+		if (type >= 0x86) {
+			*link = 0xFFFF;  // Sin comprobar con el oráculo.
+		}
+		const uint32_t month = letter.u8(1) & 0x7F;
+		const uint32_t date = (month < 16 ? kLetterMonth[month] : 0) + uint32_t(letter.u16(2)) * 365 + letter.u8(0) - 1;
+		const uint32_t written = date << 8;
+		const uint32_t age = now > written ? now - written : 0;
+		uint32_t keep = 0;
+		switch (type < 0x88 ? kLetterKind[type] : 0) {
+		case 1:
+			keep = setting(0x38);
+			break;
+		case 2:
+			keep = type == 0x46 ? 0xFFFFFFFF : setting(0x39);
+			break;
+		case 3:
+			keep = type == 0x11 ? 0x700 : setting(0x3A);
+			break;
+		case 4:
+			if (type == 0xF || type == 0x10) {
+				keep = 0x700;
+			} else if (type == 0x72) {
+				keep = 0x1C00;
+			} else if (type == 0x71 && index < save.mail_records.size() && save.mail_records[index]) {
+				keep = now < save.mail_records[index]->u32(4) ? 0xFFFFFFFF : 0;
+			} else {
+				keep = 0xFFFFFFFF;  // Sin comprobar con el oráculo (0x71 without a record: the game reads [0 + 4]).
+			}
+			break;
+		default:
+			break;
+		}
+		if (age > keep) {
+			const uint16_t removed = *link;
+			*link = letter.u16(6);
+			letter.u8(0) = 0;
+			letter.u8(1) = 0;
+			letter.u16(2) = 0xFFFF;
+			letter.u8(4) = 0xFF;
+			letter.u8(5) = 0;
+			std::memset(letter.bytes.data() + 8, 0, 8);
+			if (index < save.mail_records.size()) {
+				save.mail_records[index].reset();  // 0x51AAB0 frees it.
+			}
+			letter.u16(6) = g.u16(kMailFree);
+			g.u16(kMailFree) = removed;
+		} else {
+			link = &letter.u16(6);
+		}
+		index = *link;
 	}
-	// Por traducir: con mensajes, los que han caducado vuelven a la lista de
-	// libres del buzón; sus registros (*0x6DD730) no están en SaveGame.
 }
 
 // 0x504970 (sobre el objeto de los barcos): la mercancía que viene de camino
@@ -1501,23 +1586,85 @@ void fn_4dd790(SaveGame& save) {
 	}
 }
 
-// 0x4F69B0 (thiscall sobre el comerciante, con su índice): ¿nace un hijo
-// (operación 0x87)? Solo casado ([+0x31] una ciudad), después de [+0x28] y
-// 279 días después de [+0x2C]. En las partidas nadie está casado.
+// 0x512A60 (on the names object) with a first name `index`: the length of
+// its text as the game holds it (bit 7, a woman's): from the game's list,
+// then the 20 written by the players (SaveGame::custom_names, in UTF-8: its
+// characters, which are Latin-1 bytes in the game), and past them the
+// list's first name.
+uint8_t first_name_length(const SaveGame& save, uint8_t index) {
+	const size_t list = (index & 0x80) ? 1 : 0;
+	const uint32_t i = list ? (index & 0x7Fu) : index;
+	const uint32_t count = save.globals.u16(list ? 0x6DDB72 : 0x6DDB70);
+	const std::vector<std::string>& names = save.first_names[list];
+	if (i < count) {
+		return i < names.size() ? uint8_t(names[i].size()) : 0;
+	}
+	if (i >= count + 20) {
+		return names.empty() ? 0 : uint8_t(names[0].size());  // Sin comprobar con el oráculo.
+	}
+	// Sin comprobar con el oráculo.
+	const std::vector<std::string>& custom = save.custom_names[list];
+	if (i - count >= custom.size()) {
+		return 0;
+	}
+	uint8_t length = 0;
+	for (const char c : custom[i - count]) {
+		if ((uint8_t(c) & 0xC0) != 0x80) {
+			++length;
+		}
+	}
+	return length;
+}
+
+// 0x4F69B0 (on the merchant, with his index `me`): is a child born
+// (operation 0x87)? Only to a married merchant ([+0x31] a town), after
+// [+0x28] and 279 days after the wedding [+0x2C], with fewer children
+// ([+0x36]) than (length of his first name % 3) + 2 and none of them (list
+// [+0x34]) born less than 279 days ago. The child's name: a random byte; if
+// a brother or sister has it (or it is a man's name past their number), the
+// next man's name ((n + 1) % men) or, past 0x7F, a woman's one ((n & 0x7F) %
+// women + 0x81: the game is one off). The 4 bytes, random & 0x7F.
 bool fn_4f69b0(SaveGame& save, int merchant, uint8_t me) {
-	(void)me;
 	const MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	const uint32_t tick = save.globals.u32(kTick);
-	// 0x512A60: su nombre, para el número de hijos que puede tener.
+	const uint8_t length = first_name_length(save, m.u8(0x1C));
 	if (town_count(save) <= m.u8(0x31) || tick <= m.u32(0x28) || tick - 0x11700 < m.u32(0x2C)) {
 		return false;
 	}
-	// Por traducir: no sale en las 12 partidas. Necesita la longitud del
-	// nombre del comerciante ([+0x1C], 0x512A60: listas de scripts/Namen*.txt
-	// o los nombres de la partida), que la simulación no tiene: hasta (longitud
-	// % 3) + 2 hijos ([+0x36]); ninguno nacido hace menos de 279 días (la lista
-	// de capitanes [+0x34]); un nombre al azar que no tengan; operación 0x87.
-	return false;
+	// Comprobado solo con estados retocados (nobody is married in the saves).
+	if (int32_t(length % 3 + 2) <= int32_t(m.u8(0x36))) {
+		return false;
+	}
+	const uint32_t men = save.globals.u16(0x6DDB70);
+	const uint32_t women = save.globals.u16(0x6DDB72);
+	uint8_t free[0x100];
+	for (uint32_t k = 0; k < 0x80; ++k) {
+		free[k] = k < men ? 1 : 0;
+		free[0x80 + k] = 1;
+	}
+	for (uint32_t c = m.u16(0x34); c < captain_count(save); c = save.captains[c].u16(0)) {
+		if (tick - 0x11700 < save.captains[c].u32(4)) {
+			return false;
+		}
+		free[save.captains[c].u8(2)] = 0;
+	}
+	uint8_t name = uint8_t(game_rand(save));
+	while (free[name] == 0) {
+		if (name > 0x7F) {
+			name = women ? uint8_t(int32_t(name & 0x7F) % int32_t(women) - 0x7F) : 0;  // Sin comprobar con el oráculo.
+		} else {
+			name = men ? uint8_t(int32_t(name + 1) % int32_t(men)) : 0;
+		}
+	}
+	Operation op;
+	op.u32(0, 0x87);
+	op.u8(4, me);
+	op.u8(5, name);
+	for (size_t k = 6; k < 10; ++k) {
+		op.u8(k, uint8_t(game_rand(save) & 0x7F));
+	}
+	enqueue(save, op);
+	return true;
 }
 
 // 0x4DDA40 (evento 0x03, cada 10 días; el despachador le suma 0xA00 al

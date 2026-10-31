@@ -621,8 +621,8 @@ void set_event_date(GameMemory<0x18>& e, uint32_t tick) {
 // lista de cada comerciante empieza en su [+0xA]) y 8 bytes. Los de los tipos
 // 0x29, 0x47, 0x63 y 0x83 llevan detrás [+0xC] bytes y los 0x3C..0x40 y 0x71,
 // 16 bytes y tantos como el primer u32 de esos: el juego los guarda aparte
-// (punteros en [+0x8], y en [+0xC] los segundos); aquí no se guardan y los
-// punteros quedan a 0.
+// (punteros en [+0x8], y en [+0xC] los segundos); aquí los punteros quedan a 0
+// and the 16 bytes go to SaveGame::mail_records (the rest is skipped).
 void load_mail(Reader r, SaveGame& out) {
 	GlobalMemory& g = out.globals;
 	const uint32_t version = r.u32() & 0xFFFF;
@@ -631,7 +631,9 @@ void load_mail(Reader r, SaveGame& out) {
 	g.u16(0x6DD738) = r.u16();
 	g.u16(0x6DD73A) = version >= 2 ? r.u16() : 0;
 	out.mail.assign(g.u16(0x6DD736), GameMemory<0x10>());
-	for (GameMemory<0x10>& m : out.mail) {
+	out.mail_records.assign(out.mail.size(), std::nullopt);
+	for (size_t i = 0; i < out.mail.size(); ++i) {
+		GameMemory<0x10>& m = out.mail[i];
 		r.to(m, 0, 8);
 		const uint8_t type = m.u8(4);
 		if (type == 0x29 || type == 0x47 || type == 0x63 || type == 0x83) {
@@ -639,8 +641,9 @@ void load_mail(Reader r, SaveGame& out) {
 			m.u32(8) = 0;
 			r.skip(m.u32(0xC));
 		} else if ((type >= 0x3C && type <= 0x40) || type == 0x71) {
-			const uint32_t extra = r.u32();
-			r.skip(12 + size_t(extra));
+			GameMemory<0x10>& record = out.mail_records[i].emplace();
+			r.to(record, 0, 0x10);
+			r.skip(record.u32(0));
 		} else {
 			r.to(m, 8, 8);
 		}
@@ -1221,6 +1224,17 @@ void load_game_scripts(const CprArchive& archive, SaveGame& save) {
 			if (archive.read(*entry, data)) {
 				save.ship_names = split_game_names(data, globals.u16(0x6DDB78));
 				break;
+			}
+		}
+	}
+	// 0x5121C0: the men's and women's first names, split as the ship names.
+	const char* const first_names[2] = {"scripts/NamenMaenner.txt", "scripts/NamenFrauen.txt"};
+	for (size_t list = 0; list < 2; ++list) {
+		save.first_names[list].clear();
+		if (const CprEntry* entry = archive.find(first_names[list])) {
+			std::vector<uint8_t> data;
+			if (archive.read(*entry, data)) {
+				save.first_names[list] = split_game_names(data, globals.u16(list ? 0x6DDB72 : 0x6DDB70));
 			}
 		}
 	}
