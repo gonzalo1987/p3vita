@@ -1,5 +1,6 @@
 add_library(p3data STATIC
 	aim.cpp
+	battle/storms.cpp
 	convoys.cpp
 	convoys_members.cpp
 	convoys_port.cpp

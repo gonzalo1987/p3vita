@@ -458,6 +458,8 @@ void Sailing::begin_tick() {
 // 0x514000 con cada uno de los cinco objetos de [+0xC] del objeto de los
 // barcos que existan; y al final, cada 8 ticks, a 0x5053C0 (los encuentros).
 // Ni lo uno ni lo otro se reproducen (el oráculo tampoco los ejecuta).
+// 0x5053C0 (the storms, battle/storms.cpp) runs with set_storms(true), as
+// town_oracle.py --storms does; without the convoys, the oracle skips it too.
 void Sailing::update_ships() {
 	GlobalMemory& g = save_.globals;
 	g.u16(kPlayerShipsInPort) = 0;
@@ -468,6 +470,9 @@ void Sailing::update_ships() {
 	update_sailing();
 	if (convoys_) {
 		update_convoys();
+		if (storms_ && (save_.tick() & 7) == 0) {
+			fn_5053c0();
+		}
 	}
 }
 

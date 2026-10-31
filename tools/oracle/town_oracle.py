@@ -42,7 +42,7 @@ Formato del fichero (enteros little endian):
 
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
        [--desde DÍA] [--max N] [--semilla S] [--cpr p2arch0_eng.cpr] [--barcos DATOS [--sin-ia] [--sin-convoyes]
-       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS]]
+       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--storms]]
 La función 51ba10 graba los ticks de ciudad enteros.
 
 Con --cpr (o si DATOS/scripts tiene los ficheros), la carga crea también el
@@ -164,6 +164,9 @@ CONVOYS = 0x5070FD
 CONVOY_DISPATCH = 0x50719D  # salto por el estado del convoy (ebp: el convoy)
 CONVOY_SKIP = 0x507612  # el estado 0x13: pasa al siguiente convoy
 ENCOUNTERS = 0x5079DA  # cada 8 ticks, 0x5053C0 (encuentros): se salta
+# With --storms, 0x5053C0 (the storms) runs; its two writes to the sea map
+# (*0x6CBDD8 + 0x2B22, UI) are jumped over.
+STORM_UI_JUMPS = {0x50596F: 0x505983, 0x5059CA: 0x5059E0}
 EPILOGUE = 0x5079E8
 DOCKED_STATES = (0, 1, 2, 3, 4, 5)
 
@@ -274,7 +277,7 @@ def executor_trampoline(at):
 
 class TownOracle(SaveOracle):
     def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True, rest=(), cpr=None,
-                 operations=OPERATIONS):
+                 operations=OPERATIONS, storms=False):
         super().__init__(exe, save, navdata)
         self.fast_read = fast_reader(self.uc)
         self.navdata = navdata
@@ -300,7 +303,11 @@ class TownOracle(SaveOracle):
             self.uc.hook_add(UC_HOOK_CODE, self._sailing, begin=SAILING_DISPATCH, end=SAILING_DISPATCH)
             if convoys:
                 self.uc.hook_add(UC_HOOK_CODE, self._convoy, begin=CONVOY_DISPATCH, end=CONVOY_DISPATCH)
-                self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=ENCOUNTERS, end=ENCOUNTERS, user_data=EPILOGUE)
+                if storms:
+                    for address, target in STORM_UI_JUMPS.items():
+                        self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
+                else:
+                    self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=ENCOUNTERS, end=ENCOUNTERS, user_data=EPILOGUE)
             else:
                 self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=CONVOYS, end=CONVOYS, user_data=EPILOGUE)
             for at, target, args in ((SHIPS_TRAMPOLINE, UPDATE_SHIPS, 1), (MERCHANT_TRAMPOLINE, MERCHANT_TICK, 1)):
@@ -1019,6 +1026,7 @@ def main():
     p.add_argument('--sin-ia', action='store_true', help='con --barcos, sin las decisiones de la IA en puerto')
     p.add_argument('--sin-convoyes', action='store_true', help='con --barcos, sin el recorrido de los convoyes')
     p.add_argument('--sin-comerciantes', action='store_true', help='con --barcos, sin el tick de los comerciantes')
+    p.add_argument('--storms', action='store_true', help='with --barcos, the storms too (0x5053C0, every 8 ticks)')
     p.add_argument('--resto', help='con --barcos, solo estas piezas del resto de advance_time (5315c0,535450,...); '
                    'por omisión, todas')
     p.add_argument('--sin-resto', action='store_true', help='con --barcos, sin el resto de advance_time')
@@ -1033,7 +1041,7 @@ def main():
     else:
         rest = [int(x, 16) for x in a.resto.split(',') if x]
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
-                   not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x])
+                   not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], a.storms)
     o.load()
     functions = [int(x, 16) for x in a.functions.split(',')]
     with open(a.out, 'wb') as f:
