@@ -173,6 +173,9 @@ public:
 	bool fn_50d9e0(uint16_t ship);  // (ships object) A pirate's target.
 	bool fn_515360(uint16_t ship);  // Whether a pirate attacks its target now.
 	bool fn_505c90(uint16_t convoy, uint16_t& link);  // (ships object) A new course for a pirate convoy.
+	// 0x507A65: the state 0x12 of a pirate convoy in the walk of the convoys;
+	// true if it left the list (the walk goes on from the same link).
+	bool pirate_convoy(uint16_t convoy, uint16_t& link);
 
 	// battle/storms.cpp: the storms.
 	void fn_5053c0();  // (ships object) Every storm against the ships near it.

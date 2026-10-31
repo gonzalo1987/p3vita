@@ -560,4 +560,44 @@ bool Sailing::fn_505c90(uint16_t index, uint16_t& link) {
 	return false;
 }
 
+// 0x507A65, the state 0x12 of a pirate convoy in 0x506720 (§7 of
+// docs/cloud/battles.md): the guide back in the list by x if it is in none;
+// the wait [+0x16] counts down into the guide's [+0x138]; a target (set by
+// someone else with the flag 0x40 of [+0x14], or every 4 ticks 0x50D9E0 and
+// 0x515360); then, without a route, a new course (0x505C90), and the convoy
+// sails (0x502110 with 1) and is sorted by x. The attack (0x50BC40) and the
+// end of the route (a town battle) follow the rule of piece 2: as if there
+// were no target, and as if it still sailed.
+bool Sailing::pirate_convoy(uint16_t index, uint16_t& link) {
+	const uint32_t count = save_.ships.size();
+	GameMemory<0x3C>& c = save_.convoys[index];
+	const uint16_t leader = c.u16(0x10);
+	SavedShip& lead = save_.ships[leader];
+	if (lead.memory.u16(0xA) == 0xFFFF && lead.memory.u16(0xC) == 0xFFFF) {
+		insert_x(leader, 0xFFFF);
+	}
+	if (c.u16(0x16) > 0) {
+		--c.u16(0x16);
+		save_.ships[c.u16(0x10)].timer() = c.u16(0x16);
+	}
+	const uint16_t flags = c.u16(0x14);
+	if (flags & 0x40) {
+		c.u16(0x14) = uint16_t(flags & 0xFFBF);
+		// The target set by someone else: the attack (0x50BC40) is for piece 3.
+	} else if ((save_.tick() & 3) == 0 && fn_50d9e0(leader)) {
+		fn_515360(leader);  // An attack would follow (0x50BC40): piece 3.
+	}
+	if (!save_.ships[c.u16(0x10)].route) {
+		if (fn_505c90(index, link)) {
+			return true;
+		}
+	}
+	// 0x502110 false is the end of the route (a town battle: piece 6); with the
+	// rule, the same as true.
+	fn_502110(index, 1);
+	sort_x(save_.convoys[index].u16(0x10));
+	(void)count;
+	return false;
+}
+
 }  // namespace p3::data

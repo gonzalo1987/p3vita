@@ -6,6 +6,7 @@
 //        tick_probe <fichero.probe> --carga <partida.raw> [--continuo [--cpr p2arch0_eng.cpr [--sin-ia]
 //          [--sin-convoyes] [--no-storms]]] [--max N]
 // --no-storms: without the storms (0x5053C0), as town_oracle.py --no-storms.
+// --pirates: the pirate convoys move (battle/pirates.cpp), as town_oracle.py --pirates.
 // --storms (on by default now) is still accepted.
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
@@ -600,6 +601,7 @@ int main(int argc, char** argv) {
 	bool ai = true;
 	bool convoys = true;
 	bool storms = true;
+	bool pirates = false;
 	std::string load;
 	std::string cpr;
 	uint32_t only = 0;
@@ -618,6 +620,8 @@ int main(int argc, char** argv) {
 			storms = true;
 		} else if (arg == "--no-storms") {
 			storms = false;
+		} else if (arg == "--pirates") {
+			pirates = true;
 		} else if (arg == "--cpr" && i + 1 < argc) {
 			cpr = argv[++i];
 		} else if (arg == "--solo" && i + 1 < argc) {
@@ -674,6 +678,7 @@ int main(int argc, char** argv) {
 		sailing->set_ai(ai);
 		sailing->set_convoys(convoys);
 		sailing->set_storms(storms);
+		sailing->set_pirates(pirates);
 		g_sailing = sailing.get();
 		registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
 			sailing->update_ships();

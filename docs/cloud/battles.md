@@ -20,11 +20,17 @@ encuentros y batallas») and its pieces, in order.
   `src/p3data/battle/storms.cpp`; call by call 0 differences in the 12 saves
   (10 days) and in retouched states covering every reachable block; the
   world with the storms on, 0 differences (§6).
-- **Piece 2, the pirates moving (in progress):** measured what runs (§7):
-  only the convoy state 0x12, 8 functions not in p3vita (about 1 400
-  instructions) and the per-town precompute 0x448780 that the oracle skipped
-  and the pirates need (2.8 s in the emulator for the 24 towns).
+- **Piece 2, the pirates moving (done behind `--pirates`, with a rule while
+  the battles don't exist):** the convoy state 0x12 (0x507A65) and 0x505C90,
+  0x50D9E0, 0x515360, 0x612930, 0x50E340, 0x5159C0 and the per-town
+  waypoints 0x448780 in `src/p3data/battle/pirates.cpp`; call by call 0
+  differences in the 12 saves, 7 days (9455 calls of 0x505C90, 8064 of
+  0x50D9E0, 5965 of 0x515360, 3265 of 0x612930); the whole world with the
+  pirates on in both, 12 saves × 7 days, 0 «distintas»; and the default world,
+  the same (§7). Left in it: the disbanding at the nest (0x514B80) and
+  retouched states for the branches the saves don't reach.
 - **Piece 3, the automatic sea battle:** not started.
+- The battle clock rule is decided (below) and written for `docs/oracle.md`.
 
 ## Decisions for the user
 
@@ -40,11 +46,21 @@ encuentros y batallas») and its pieces, in order.
   skipped, `SKIPPED_WITH_NAVIGATION`), because the pirates choose their
   waypoints from it ([+0x20], [+0x24] of the navigation object). It adds
   2.8 s per load and p3vita must compute the same lists.
-- **The rule for piece 2 alone** (recommendation: only as a step, until piece
-  3): while battles don't exist, a pirate that would attack (0x507BE9 →
-  0x50BC40) goes on as if it had no target, and a pirate convoy that arrives
-  at a town (0x507C0B → town battle) gets a new course. Both p3vita and the
-  oracle (`--pirates`) do it; it disappears with pieces 3 and 6.
+- **The rule for piece 2 alone** (recommendation: only as a step, until
+  pieces 3 and 6): while battles don't exist, a pirate that would attack
+  (0x507BE9 → 0x50BC40) goes on as if it had no target, and a pirate convoy
+  that ends its route (0x507C0B → town battle) goes on as if it still sailed.
+  Also, until 0x514B80 is rewritten, a convoy at its nest is not disbanded
+  (0x505FF1 → 0x506029). p3vita (`Sailing::set_pirates`) and the oracle
+  (`--pirates`, `PIRATE_JUMPS`) do the same. Keep `--pirates` off by default
+  until piece 3 removes the first jump.
+- **0x514B80 needs the pirates' pool** (recommendation: next, before piece
+  3): disbanding at the nest moves the ships into the pirate's pool and
+  0x515DA0 plans the nest's buildings in a pool of 8-byte entries ([+0x4]
+  pointer, [+0x8] size, [+0xA] free head of the pirate object) that the
+  savegame reader (0x5138B0) reads but `SaveGame::pirates` (0x18 bytes) and
+  the oracle's regions `Z0..Z4` don't keep. It needs that pool in SaveGame and
+  a region for it (Recorder/regions: coordinate with whoever owns the oracle).
 - The two possible game bugs of «Game bugs» (the battle clock, the town
   battle reading the town view): to confirm before fixing.
 
@@ -544,10 +560,34 @@ The functions:
   takes 2.8 s more for the 24 towns (save 3: 10 to 29 points per town). p3vita
   doesn't have it either.
 
-Still to do for piece 2: rewrite these (≈ 1 900 instructions with 0x448780),
-`--pirates` in the oracle (pirate convoys through `CONVOY_DISPATCH`,
-0x448780 at the load, the two jumps of the rule of «Decisions»), the same in
-p3vita (`Sailing::set_pirates`), probes and retouched states.
+Rewritten in `src/p3data/battle/pirates.cpp` (members of `Sailing`):
+`pirate_convoy` (0x507A65, called from `update_convoys` for the pirate
+convoys in state 0x12 when `set_pirates(true)`), `fn_505c90`, `fn_50d9e0`,
+`fn_515360`, `fn_612930`, `fn_448780` (computed per town the first time a
+waypoint of it is wanted: the game does it at the load, but it has no
+randomness and nothing else reads it), and the free functions `fn_50e340`,
+`fn_5159c0`. Not rewritten: 0x514B80 (see «Decisions»).
+
+The oracle: `town_oracle.py --pirates` (pirate convoys through
+`CONVOY_DISPATCH`, 0x448780 runs at the load, `PIRATE_JUMPS`); tick_probe
+`--pirates`; probes of 0x612930, 0x50D9E0, 0x515360, 0x505C90 in
+`probes_battle.cpp` (0x505C90 receives the address of a variable of
+0x506720 that holds the address of the link: the probe reads it from the
+recorded stack).
+
+Checked:
+- call by call (`town_oracle.py ... 7 50d9e0,515360,612930,505c90 --barcos
+  --cpr --pirates`, then `tick_probe --cpr`): 0 differences in the 12 saves,
+  7 days: 0x505C90 9455 calls, 0x50D9E0 8064, 0x515360 5965, 0x612930 3265
+  (none in saves 1, 2, tut2 and tut4: no pirate convoy at sea); 81 s.
+- the whole world with the pirates on in both (`world.sh` with `--pirates` in
+  the oracle and in tick_probe): 0 «distintas» in the 12 saves, 7 days
+  (363 s); and the default `world.sh 7` in the 12: 0 «distintas» (354 s);
+  «saltadas» as always (1, 0, 0, 0, 5, 0, 4, 0, 0, 2, 5, 7).
+
+Not checked yet: the branches the saves don't reach (a human target in
+0x515360, a convoy bigger than `[+0xF8]`, `[+0x136]` & 0x80/0x40, a seen ship
+in `[+0x52]`, a target set with the flag 0x40): retouched states to write.
 
 ## Changes to shared files
 
@@ -581,6 +621,13 @@ none of the shared docs. Nothing of Recorder, the regions or `write_diff`.
   declarations of `fn_5053c0`, `fn_505290` and `fn_447580`.
 - `src/p3data/sailing.cpp` (`update_ships`): after `update_convoys()`,
   `if (storms_ && (save_.tick() & 7) == 0) fn_5053c0();` and a comment.
+- Piece 2: `town_oracle.py` gets `--pirates` (constructor argument
+  `pirates=False`, `PIRATE_JUMPS`, `PIRATE_WAYPOINTS` and a `_stub` override
+  that lets 0x448780 run; `_convoy` keeps skipping the pirates without it);
+  `src/p3data/convoys.cpp`: in the pirate skip of `update_convoys`, the call
+  to `pirate_convoy` when `pirates_` (no change without it);
+  `src/p3data/navigation.hpp`: `find_water` (0x448450) public;
+  `sailing.hpp`: the new members; tick_probe `--pirates`.
 - `tools/oracle/tick_probe.cpp`: the option `--storms` (→ `set_storms`) and
   `register_probes_battle`; `tools/oracle/probe_registry.hpp`: its
   declaration; the two `CMakeLists.txt`: the new files.
