@@ -56,13 +56,20 @@ int main() {
 	put(town, 50, 50, {200, 0x0000});
 	put(town, 51, 49, {200, 0x0001});
 
+	const TownMap base = town;
+
 	SavedTown saved;
 	saved.records = {{10, 20, 0xFF, 0x24, 1, 0, 0}};
-	saved.drawn_lists = {1, 0, 1, 1};  // Solo la lista de edificios tiene el registro 0.
-	saved.fixed.lighthouses.fill(0xFF);
-	saved.fixed.cranes.fill(0xFF);
-	saved.fixed.market_stalls.fill(0xFF);
-	saved.fixed.shipyards.fill(0xFF);
+	// The list heads in the town's memory: only the buildings list [0x764] has record 0.
+	saved.memory.u16(0x760) = 1;
+	saved.memory.u16(0x762) = 1;
+	saved.memory.u16(0x764) = 0;
+	saved.memory.u16(0x766) = 1;
+	saved.memory.u16(0x768) = 1;
+	saved.memory.u16(0x76A) = 1;
+	for (size_t o = 0x7B0; o < 0x80C; ++o) {
+		saved.memory.u8(o) = 0xFF;  // No fixed points.
+	}
 
 	const size_t missing = place_saved_buildings(saved, 0, 2, tiles, nullptr, town);
 	check(missing == 0, "todos los edificios tienen tile");
@@ -83,6 +90,30 @@ int main() {
 	}
 	check(building_cells == 6, "la taberna ocupa 6 celdas");
 	check(tree_cells == 2 && cell(town, 50, 50).tile == 200, "solo se quita el árbol que pisa la taberna");
+
+	// The simulation puts a new building at the head of [0x764]: it is drawn,
+	// and the key of what is drawn changes.
+	const uint64_t key = drawn_buildings_key(saved);
+	saved.records[0].next = 0xFFFF;  // Still the last one.
+	saved.records.push_back({70, 80, 0xFF, 0x24, 0, 0, 0});
+	saved.memory.u16(0x764) = 1;
+	for (size_t head = 0x760; head <= 0x76A; head += 2) {
+		if (head != 0x764) {
+			saved.memory.u16(head) = 3;  // Past the last record: empty.
+		}
+	}
+	const uint64_t built = drawn_buildings_key(saved);
+	check(built != key, "a new building changes the key");
+	TownMap again = base;
+	place_saved_buildings(saved, 0, 2, tiles, nullptr, again);
+	check(cell(again, 70, 80).tile == 100 && cell(again, 10, 20).tile == 100,
+		"the new building and the old one are drawn");
+
+	// A record that isn't drawn (in the free list [0x760]) doesn't change it.
+	saved.records.push_back({0xFF, 0xFF, 0xFF, 0xFF, 3, 0xFF, 0xFF});
+	saved.memory.u16(0x760) = 2;
+	saved.records[2].param = 7;
+	check(drawn_buildings_key(saved) == built, "a free record doesn't change the key");
 
 	if (failures == 0) {
 		std::printf("buildings_test: todo correcto\n");
