@@ -1561,7 +1561,8 @@ void fn_523830(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 // fallos del juego reproducidos: las herramientas se sacan de la oficina con
 // lo que falta de madera (y las que se cuentan no bajan; lo que se paga por
 // ellas es 1,278 · 0 = 0), y al comerciante no se le paga, aunque lo que
-// valen cuenta como gasto de la ciudad. Sin la pieza, nada.
+// valen cuenta como gasto de la ciudad (corrección opcional en el roadmap,
+// «Corregir los fallos del juego»). Sin la pieza, nada.
 void fn_523d70(SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t owner) {
 	SavedTown& st = save.towns[size_t(town)];
 	TownMemory& t = st.memory;

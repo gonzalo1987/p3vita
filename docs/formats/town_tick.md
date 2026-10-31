@@ -183,7 +183,8 @@ muralla pendientes) aún se descarta.
 - Fallos del juego reproducidos tal cual: el administrador de 0x51C360 solo
   cuenta la primera oficina; 0x5109B0 deja negativo [+0xC]; la granja de grano
   compara al revés al contratar; 0x524920 escribe fuera de la rejilla con un
-  muelle en la última columna (aquí un `assert`).
+  muelle en la última columna (aquí un `assert`). Su corrección opcional, en
+  el roadmap («Corregir los fallos del juego»).
 
 ## 9. El tick del comerciante (0x4F7BB0) **[código + oráculo]**
 
