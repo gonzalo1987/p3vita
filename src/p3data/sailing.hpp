@@ -47,6 +47,9 @@ void set_ship_course(SavedShip& ship, uint32_t speed, MapPoint target);
 // 0x447580 (battle/storms.cpp): `route` goes round the storm at `storm`
 // (a new route: the old one up to `current`, the ship's position `ship`, the
 // corners of the octagon round the storm, the old one from `found`).
+// 0x50E340 (battle/pirates.cpp): the point is in the shallows (table 0x673564).
+bool fn_50e340(int16_t x, int16_t y);
+
 bool fn_447580(const NavData& nav, std::shared_ptr<SeaRoute>& route, MapPoint storm, MapPoint ship, uint32_t found,
 		uint32_t current, bool own);
 
@@ -161,6 +164,16 @@ public:
 	void fn_503cf0(int convoy);
 	void fn_503930(int convoy);
 
+	// battle/pirates.cpp: the pirates at sea (off unless set_pirates(true), as
+	// town_oracle.py --pirates).
+	void set_pirates(bool enabled) { pirates_ = enabled; }
+	void fn_448780(int town);  // (navigation object) The waypoints round a town.
+	const std::vector<uint32_t>& waypoints(int town);  // Those of 0x448780 (computed the first time).
+	uint32_t fn_612930(uint16_t ship) const;  // (battles) The battle speed of a ship.
+	bool fn_50d9e0(uint16_t ship);  // (ships object) A pirate's target.
+	bool fn_515360(uint16_t ship);  // Whether a pirate attacks its target now.
+	bool fn_505c90(uint16_t convoy, uint16_t& link);  // (ships object) A new course for a pirate convoy.
+
 	// battle/storms.cpp: the storms.
 	void fn_5053c0();  // (ships object) Every storm against the ships near it.
 	void fn_505290(uint16_t ship, int32_t storm_x, int32_t storm_y);  // (ships object) The route round a storm.
@@ -177,6 +190,9 @@ private:
 	bool ai_ = true;
 	bool convoys_ = true;
 	bool storms_ = true;
+	bool pirates_ = false;
+	std::vector<std::vector<uint32_t>> waypoints_;  // 0x448780 per town ([+0x20], [+0x24] of the navigation)
+	std::vector<bool> has_waypoints_;
 
 	struct Assigned {
 		std::shared_ptr<SeaRoute> route;
