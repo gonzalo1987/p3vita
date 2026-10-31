@@ -95,6 +95,7 @@ Con --sin-ia, los barcos como en sail_oracle.py: en puerto solo los estados
 ejecutan.
 """
 import argparse
+import ctypes
 import os
 import struct
 import sys
@@ -202,6 +203,29 @@ EVENT_JUMPS = {
 # pocas funciones de KERNEL32: se hacen aquí (ver TownOracle.setup_imports).
 
 
+def fast_reader(uc):
+    """A function (address, size) → bytes that reads the emulator's memory
+    like uc.mem_read, but straight into one reused buffer and with a single
+    copy: the binding's mem_read allocates and zeroes a buffer per call and
+    copies it twice. Errors go through uc.mem_read, so they are the same."""
+    try:
+        from unicorn.unicorn_py3.unicorn import uclib
+        handle, uc_mem_read = uc._uch, uclib.uc_mem_read
+    except (ImportError, AttributeError):  # another version of the binding
+        return lambda address, size: bytes(uc.mem_read(address, size))
+    buffers = [ctypes.create_string_buffer(1 << 16)]
+    string_at = ctypes.string_at
+
+    def read(address, size):
+        buffer = buffers[0]
+        if size > len(buffer):
+            buffer = buffers[0] = ctypes.create_string_buffer(size)
+        if uc_mem_read(handle, address, buffer, size):
+            return bytes(uc.mem_read(address, size))  # raises UcError
+        return string_at(buffer, size)
+    return read
+
+
 def read_cpr(path):
     """Índice de un archivo CPR (docs/formats/cpr.md): ruta normalizada → (offset, tamaño)."""
     data = open(path, 'rb').read()
@@ -251,6 +275,7 @@ class TownOracle(SaveOracle):
     def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True, rest=(), cpr=None,
                  operations=OPERATIONS):
         super().__init__(exe, save, navdata)
+        self.fast_read = fast_reader(self.uc)
         self.navdata = navdata
         self.operations = set(operations)
         self.cpr = read_cpr(cpr) if cpr else None
@@ -661,7 +686,7 @@ class TownOracle(SaveOracle):
         node is read in one piece (its data and the next pointer). The result
         is the same, byte for byte, as reading every field from memory.
         """
-        read = self.uc.mem_read
+        read = self.fast_read
         unpack = struct.unpack_from
         g0 = GLOBALS[0]
         g = bytes(read(g0, GLOBALS[1] - g0))
@@ -673,11 +698,11 @@ class TownOracle(SaveOracle):
             return unpack('<H', g, a - g0)[0]
 
         def block(address, size):
-            return bytes(read(address, size)) if size else b''
+            return read(address, size) if size else b''
 
         towns, offices, merchants, ships = gu32(WORLD + 0x10), gu16(WORLD + 8), gu16(WORLD + 0xA), gu16(SHIPS + 0xF4)
         out = {'G': (g0, g)}
-        settings = self.u32(SETTINGS_POINTER)
+        settings = unpack('<I', read(SETTINGS_POINTER, 4))[0]
         out['A'] = (settings, block(settings, SETTINGS_SIZE))
         first_town = gu32(WORLD + 0x68)
         town_block = block(first_town, towns * 0x9F8)
@@ -744,7 +769,7 @@ class TownOracle(SaveOracle):
         for i in range(15):
             head = gu32(WORLD + 0xB10 + 0x2C * i + 0x24)
             nodes = []
-            node = self.u32(head) if head else head
+            node = unpack('<I', read(head, 4))[0] if head else head
             while node != head:  # nodos de 0x18 bytes: siguiente, anterior y los datos
                 piece = read(node, 0x18)
                 nodes.append(piece[8:])
@@ -924,9 +949,9 @@ class Recorder:
             return
         o = self.o
         esp = uc.reg_read(UC_X86_REG_ESP)
-        ret = o.u32(esp)
-        header = b'S' + struct.pack('<IIII8I', address, o.u32(WORLD + 0x14), uc.reg_read(UC_X86_REG_ECX), esp,
-                                    *(o.u32(esp + 4 + 4 * k) for k in range(8)))
+        stack = bytes(uc.mem_read(esp, 36))  # the return address and 8 arguments
+        ret = struct.unpack_from('<I', stack)[0]
+        header = b'S' + struct.pack('<IIII', address, o.u32(WORLD + 0x14), uc.reg_read(UC_X86_REG_ECX), esp) + stack[4:]
         first_in_run = self.entered_run != self.changes[0]
         self.entered_run = self.changes[0]
         if (first_in_run and self.unchanged is not None

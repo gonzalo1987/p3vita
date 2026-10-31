@@ -4,8 +4,8 @@ Task: `p3vita-datos/tasks/oracle-speed.md`. Make the checks faster without
 changing what is recorded: the `.probe` files must come out byte-identical
 and `tick_probe` must print the same.
 
-Status: **part 1 (measurement) and part 2, first round (regions, write_diff,
-skipped snapshots, -O2) done and checked**; looking for more.
+Status: **parts 1 and 2 done and checked** (two rounds). `world.sh 7` on
+saves 1 3 5 7: 580 s before, 134 s after (4.3 times faster), 0 «distintas».
 
 ## Part 1: where the time goes (before any change)
 
@@ -141,6 +141,45 @@ part 1):
 «saltadas» (1, 0, 5, 4). (580 s is less than the 17 min of the setup task
 for other saves: this machine seems faster; both numbers are from this
 session.)
+
+### Second round: direct reads and `tick_probe`'s comparison (checked)
+
+- **`fast_reader()`** (`town_oracle.py`): `regions()` reads through
+  `uc_mem_read` into one reused ctypes buffer and `ctypes.string_at` (one
+  copy), instead of the binding's `mem_read` (a new zeroed buffer per call
+  and two copies). It uses the binding's internals (`uclib`, `Uc._uch`) of
+  unicorn 2.1.4, the version `prepare.sh` installs and the PC uses; with
+  another binding it falls back to `uc.mem_read`, and on an error it repeats
+  the read with `uc.mem_read` so the exception is the same. The `Recorder`
+  reads the return address and the 8 arguments in one read. Small gain: a
+  snapshot copies about 1.1 MB (700 KB of them are the 24 towns' `D` maps)
+  in about 220 reads (70 blocks, 2 per ship with a route, the list heads),
+  0.55 ms; the reads are 0.17 ms of it, the rest is Python.
+- **`tick_probe`'s `compare()`** compared the whole state (about 1.1 MB)
+  byte by byte after every call: 87% of `tick_probe`'s time at `-O2`.
+  `next_difference()` now skips equal stretches 64 bytes at a time with
+  `memcmp`; the differing bytes are handled exactly as before.
+
+Check: the same 7 recordings as in the first round, compared with the
+reference of `main` (the scripts of 9749d5b and the `-O0` `tick_probe`):
+`.probe` 7 of 7 identical and `tick_probe` output 7 of 7 identical, both with
+`P3_ORACLE_CHECK=1` and without it. ctest 7 of 7.
+
+| Job (4 in parallel) | `main` | First round | Second round |
+|---|---|---|---|
+| saves 1/3/5/7, 3 days, `--barcos`: oracle | 144–150 s | 48–51 s | 46.5–47 s |
+| same: `tick_probe` | 93–97 s | 19–20 s | 9.7–10.3 s |
+| save 7, 2 days, `--desde 1`: oracle / `tick_probe` | 39.1 / 33.9 s | 15.6 / 7.8 s | 14.2 / 5.0 s |
+| whole set | 318 s | 94 s | 76 s |
+| **`SAVES='1 3 5 7' world.sh 7`** | **580 s** | **166 s** | **134 s** |
+
+`world.sh 7`: 0 «distintas» and the same «saltadas» (1, 0, 5, 4) every time.
+
+Where a save-day goes now (save 1, oracle alone, 2 in parallel): 11.8 s, of
+which `regions()` 5.6 s (7040 snapshots), `write_diff` 1.5 s, `load()` 1.4 s,
+the rest (emulation, hooks, writing) 2.8 s. A day with nothing recorded takes
+3 s (load included): recording is about 9 of the 12 s. `tick_probe`: about
+3.3 s per save-day.
 
 ### Found on the way (tool bug, not the game's)
 
