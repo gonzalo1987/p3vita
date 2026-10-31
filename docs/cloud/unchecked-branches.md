@@ -38,8 +38,11 @@ task owns, checked against the game with retouched states.
 - **`facilities.cpp`**: its 35 marks are gone: 31 checked with 7 scenarios
   (14 runs in saves 3 and 5: 68 of 68 targets, 64 calls equal), 4
   unreachable. Only comments changed.
+- **`offices.cpp`**: its 28 marks are gone: 26 checked with 3 scenarios
+  (6 runs in saves 3 and 5: 62 of 62 targets, 188 calls equal), 2
+  unreachable. Only comments changed.
 
-Left: `offices.cpp` (28), `businesses.cpp` (7), `population.cpp` (8),
+Left: `businesses.cpp` (7), `population.cpp` (8),
 `merchants.cpp` (6), `diet.cpp` (15), `sieges.cpp` (17), `grid.cpp` (6).
 
 ## Decisions for the user
@@ -207,6 +210,25 @@ Calls repeated (all equal): 0x510C50 12, 0x51D410 12, 0x51D4C0 10,
 business of type 0..3 also showed that p3vita asserts there (an access out
 of a merchant's memory); it can't happen, so it is left as it is.
 
+## offices.cpp
+
+28 marks: 26 checked, 2 unreachable, 0 left. All direct calls (saves 3 and
+5):
+
+| Branch (p3vita) | Scenario |
+|---|---|
+| 0x4FFF20: the human player's office with the orders 0x10 (cleared); orders 2 (0x4FFC20, which no save has) | `office_orders` |
+| 0x4FF780 (administrator): none; selling over its stock (0x52EA80, no save sells); buying more than the town has (negative thresholds), for 0x1000000 or more, without the money | `office_orders` |
+| 0x52EC50 and 0x52EA80: every interval of the price curve (17 prices × 2 wares), quality, the taxed ware, no market | `reverse_prices` |
+| 0x4D4400: a type out of 4..20 (type 3); fishing without fish, cattle without leather and without meat; 0x4D3670 dismissing; 0x4D3560 a human's fishing with [0x2CC]; 0x4F8690/0x4F8840 without `flag`, saturating at 0x7FFFFFFF, and a ware ≥ 0x14 | `office_business` |
+| unreachable: 0x4D3780's types 0..3 (as in facilities.cpp); 0x4D4400 with a type ≥ 0x15 (the game divides by a 0 of 0x6729D0 first) | — |
+
+Calls repeated (all equal): 0x52EA80 74, 0x52EC50 74, 0x4D4400 10,
+0x4F8690 8, 0x4F8840 6, 0x4FF780 4, 0x4FFC20 4, 0x4FFF20 4, 0x4D3560 2,
+0x4D3670 2. The script's targets can now also be a taken jump
+(`@A>B`: B runs right after the jump at A): the emulator merges blocks
+when it falls into a jump target, so some edges aren't seen as blocks.
+
 ## Game bugs
 
 - **Operation 0x3B with a merchant out of the world** (certain; 0x53A4CA
@@ -222,8 +244,8 @@ of a merchant's memory); it can't happen, so it is left as it is.
 
 ## For the inventory
 
-- `alderman.cpp`, `construction.cpp`, `new_town.cpp` and `facilities.cpp`:
-  every branch checked with the oracle (scenarios of `tools/oracle/retouch_unchecked.py`).
+- `alderman.cpp`, `construction.cpp`, `new_town.cpp`, `facilities.cpp` and
+  `offices.cpp`: every branch checked with the oracle (scenarios of `tools/oracle/retouch_unchecked.py`).
 - D: 0x4FF2D0 for the store a merchant builds is done (`construction.cpp`);
   0x51FAB0 building at once is rewritten.
 - B/C: operation 0x25 (0x535B7B → 0x5244F0, which calls 0x51F3A0 and

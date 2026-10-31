@@ -142,7 +142,7 @@ void add_total(MerchantMemory& m, size_t field, int32_t money) {
 	} else if (0x7FFFFFFF - total >= money) {
 		m.s32(field) = total + money;
 	} else {
-		m.s32(field) = 0x7FFFFFFF;  // Sin comprobar con el oráculo.
+		m.s32(field) = 0x7FFFFFFF;  // Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
 	}
 }
 
@@ -207,7 +207,7 @@ void fn_4d3670(SaveGame& save, int record, uint32_t id) {
 	if (change > 0) {
 		fn_4d4a40(save, uint16_t(~id), uint16_t(change));
 	} else if (change < 0) {
-		fn_50e380(save, facility_of(r), uint32_t(-change), true);  // Sin comprobar con el oráculo.
+		fn_50e380(save, facility_of(r), uint32_t(-change), true);  // Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
 	}
 }
 
@@ -224,7 +224,8 @@ void fn_4d4400(SaveGame& save, int record, int office, int32_t made, int32_t mad
 	const uint32_t type = r.u8(6);
 	const TownMemory& t = save.towns[r.u8(7)].memory;
 	if (type - 4 > 0x10) {
-		return;  // Sin comprobar con el oráculo (las oficinas solo tienen los tipos 4..20).
+		return;  // Unreachable: the offices only have types 4..20 (and with 0x15 or more the
+		// game divides by 0 first, 0x4D444C). Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
 	}
 	auto avg = [&o](size_t ware) -> float& { return o.f32(0x3B8 + 4 * ware); };
 	const int32_t buildings = int32_t(r.u16(0xC)) / int32_t(kJobsPerBuilding[type]);
@@ -263,7 +264,7 @@ void fn_4d4400(SaveGame& save, int record, int office, int32_t made, int32_t mad
 			const float p = float(made);
 			v = double(p) * double(avg(4)) / double(kFive) + v;
 			v = double(p) * double(avg(17)) / double(kTen) + v;
-			avg(2) = fish > 0 ? float(v / double(fish)) : 0.0f;  // Sin comprobar con el oráculo (sin pescado).
+			avg(2) = fish > 0 ? float(v / double(fish)) : 0.0f;  // Without fish. Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
 			return;
 		}
 		input(made, 4, kFive);
@@ -298,13 +299,13 @@ void fn_4d4400(SaveGame& save, int record, int office, int32_t made, int32_t mad
 		v = double(q) * double(avg(11)) / double(kFive) + v;
 		v = double(q) * double(avg(4)) / double(kTen) + v;
 		v = double(leather_cost) + v;
-		avg(13) = leather > 0 ? float(v / double(leather)) : 0.0f;  // Sin comprobar con el oráculo (sin cuero).
+		avg(13) = leather > 0 ? float(v / double(leather)) : 0.0f;  // Without leather. Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
 		const int32_t meat = o.s32(8);
 		v = double(sub(meat, made)) * double(avg(1));
 		const float p = float(made);
 		v = double(p) * double(avg(4)) / double(kFour) + v;
 		v = double(cost) + v;
-		avg(1) = meat > 0 ? float(v / double(meat)) : 0.0f;  // Sin comprobar con el oráculo (sin carne).
+		avg(1) = meat > 0 ? float(v / double(meat)) : 0.0f;  // Without meat. Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
 		return;
 	}
 	case 11:
@@ -371,8 +372,9 @@ void fn_4d3780(SaveGame& save, int record, int office, uint32_t& active) {
 		}
 	};
 	switch (type) {
-	// Tipos 0..3 (milicia, astillero...): sin comprobar con el oráculo, las
-	// oficinas no los tienen en las 12 partidas. No apuntan el coste medio.
+	// Tipos 0..3 (milicia, astillero...): no apuntan el coste medio.
+	// Unreachable: the offices never have businesses of types 0..3 (their
+	// buildings of those types go to the town, 0x51FF30).
 	case 0:
 		fn_50e500(save, s, f);
 		break;
@@ -504,7 +506,7 @@ void fn_4d3560(SaveGame& save, int record, int merchant, int office) {
 	const bool human = m.u16(8) == 0;
 	int32_t wages = imul(human ? kWages[type] : kWagesAi[type], workers) / 3;
 	if (type == 5 && save.towns[r.u8(7)].memory.u32(0x2CC) != 0) {
-		// Sin comprobar con el oráculo con un jugador humano.
+		// With a human player: Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
 		wages += human ? imul(kWages[21], workers) / 3 : imul(workers, 7);
 	}
 	m.u32(0x480) += uint32_t(wages);
@@ -521,9 +523,9 @@ void fn_4d3560(SaveGame& save, int record, int merchant, int office) {
 void fn_4f8690(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32_t money, int32_t amount, bool flag) {
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	const TownMemory& t = save.towns[town].memory;
-	add_total(m, flag ? 0x4B0 : 0x49C, money);  // Sin `flag`: sin comprobar con el oráculo.
+	add_total(m, flag ? 0x4B0 : 0x49C, money);  // Without flag: Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
 	if (ware >= 0x14) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
 	}
 	const int32_t threshold = t.s32(0x4F4 + 16 * ware);
 	const int32_t room = sub(threshold, t.s32(4 + 4 * ware));
@@ -543,7 +545,7 @@ void fn_4f8690(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32
 void fn_4f8840(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32_t money, int32_t amount, bool flag) {
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	const TownMemory& t = save.towns[town].memory;
-	add_total(m, flag ? 0x4B4 : 0x4A0, money);  // Sin `flag`: sin comprobar con el oráculo.
+	add_total(m, flag ? 0x4B4 : 0x4A0, money);  // Without flag: Checked with the oracle: scenario office_business (saves 3 and 5, direct calls).
 	const int32_t threshold = t.s32(0x4F4 + 16 * ware) >> 1;
 	const int32_t room = sub(threshold, t.s32(4 + 4 * ware));
 	if (room <= 0) {
@@ -560,8 +562,9 @@ void fn_4f8840(SaveGame& save, int merchant, uint32_t town, uint32_t ware, int32
 // 0x52EA80 (thiscall sobre 0x6DE3D8): existencias de la ciudad a partir de las
 // cuales vender `ware` le reporta menos de `price` por unidad (0x7FFFFFFF si
 // nunca baja de ahí; sin mercado, 0 o 0x7FFFFFFF según el signo de `price`).
-// Sin comprobar con el oráculo: solo la llama la venta de 0x4FF780, que no sale
-// en las 12 partidas.
+// Only the sale of 0x4FF780 calls it (no save sells). Checked with the oracle:
+// scenarios reverse_prices (every interval, saves 3 and 5, direct calls) and
+// office_orders (a sale).
 int32_t fn_52ea80(const SaveGame& save, uint32_t ware, int town, int32_t price) {
 	const TownMemory& t = save.towns[size_t(town)].memory;
 	if (!(t.u32(0x76C) & 0x100)) {
@@ -597,34 +600,34 @@ int32_t fn_52ea80(const SaveGame& save, uint32_t ware, int town, int32_t price) 
 int32_t fn_52ec50(const SaveGame& save, uint32_t ware, int town, int32_t price, uint32_t quality) {
 	const TownMemory& t = save.towns[size_t(town)].memory;
 	if (!(t.u32(0x76C) & 0x100)) {
-		return t.s32(4 + 4 * ware);  // Sin comprobar con el oráculo.
+		return t.s32(4 + 4 * ware);  // Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
 	}
 	const float p = float(price);
 	float r = float(price_factor(ware, double(p) + double(kPriceOffset)));
 	if (quality != 0) {
-		// Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
 		const float q = float(quality & 0xFF);
 		const float rest = float(double(kQualityScale) - double(q));
 		r = float(double(kQualityScale) / double(rest) * double(r));
 	}
 	if (ware == t.u8(0x6F0)) {
-		r = float(double(r) * double(kTaxFactor));  // Sin comprobar con el oráculo.
+		r = float(double(r) * double(kTaxFactor));  // Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
 	}
 	auto threshold = [&t, ware](size_t i) { return t.s32(0x4F0 + 16 * ware + 4 * i); };
 	if (!(r > kBuyFactor[4]) && !(r != r)) {
-		return 0x7FFFFFFF;  // Sin comprobar con el oráculo.
+		return 0x7FFFFFFF;  // Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
 	}
 	if (r < kBuyFactor[3]) {
-		return factor_stock(r, kBuyFactor[3], kBuyFactor[4], threshold(2), threshold(3));  // Sin comprobar con el oráculo.
+		return factor_stock(r, kBuyFactor[3], kBuyFactor[4], threshold(2), threshold(3));  // Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
 	}
 	if (r < kBuyFactor[2]) {
-		return factor_stock(r, kBuyFactor[2], kBuyFactor[3], threshold(1), threshold(2));  // Sin comprobar con el oráculo.
+		return factor_stock(r, kBuyFactor[2], kBuyFactor[3], threshold(1), threshold(2));  // Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
 	}
 	if (r < kBuyFactor[1]) {
-		return factor_stock(r, kBuyFactor[1], kBuyFactor[2], threshold(0), threshold(1));  // Sin comprobar con el oráculo.
+		return factor_stock(r, kBuyFactor[1], kBuyFactor[2], threshold(0), threshold(1));  // Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
 	}
 	if (r < kBuyFactor[0]) {
-		// Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario reverse_prices (saves 3 and 5, direct calls).
 		const float width = float(threshold(0));
 		return ftol32((double(kBuyFactor[0]) - double(r)) * double(width) / (double(kBuyFactor[0]) - double(kBuyFactor[1])));
 	}
@@ -701,7 +704,8 @@ void fn_4ffa30(SaveGame& save, int office) {
 // 0x4FFC20 (órdenes 2): compra a la ciudad lo que les falta a las empresas de
 // la oficina para su consumo del día, si no cuesta más de 1,3 veces el precio
 // base y el comerciante tiene el dinero (lo paga todo aunque la ciudad no lo tenga).
-// Sin comprobar con el oráculo: ninguna oficina de las 12 partidas tiene esta orden.
+// No office of the 12 saves has this order. Checked with the oracle: scenario
+// office_orders (saves 3 and 5, direct calls).
 void fn_4ffc20(SaveGame& save, int office) {
 	OfficeMemory& o = save.offices[size_t(office)].memory;
 	const int town = o.u8(0x2C6);
@@ -747,7 +751,7 @@ void fn_4ff780(SaveGame& save, int office) {
 	TownMemory& t = save.towns[size_t(town)].memory;
 	const int merchant = o.u16(0x2C4);
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
-	int32_t margin = 100;  // Sin administrador: sin comprobar con el oráculo.
+	int32_t margin = 100;  // Without an administrator: Checked with the oracle: scenario office_orders (saves 3 and 5, direct calls).
 	const uint32_t admin = o.u16(0x2F2);
 	if (admin < save.globals.u16(global::kCaptainCount)) {
 		margin = uint8_t((50 - int32_t(save.captains[admin].u8(0xA)) / 43) * 2);
@@ -755,7 +759,7 @@ void fn_4ff780(SaveGame& save, int office) {
 	for (uint32_t w = 24; w-- > 0;) {
 		const int32_t price = o.s32(0x2F4 + 4 * w);
 		if (price > 0) {
-			// Sin comprobar con el oráculo: en las 12 partidas solo compran.
+			// No save sells. Checked with the oracle: scenario office_orders (saves 3 and 5, direct calls).
 			const int32_t spare = sub(o.s32(4 + 4 * w), o.s32(0x354 + 4 * w));
 			if (spare <= 0) {
 				continue;
@@ -786,13 +790,14 @@ void fn_4ff780(SaveGame& save, int office) {
 				amount = wanted;
 			}
 			if (t.s32(4 + 4 * w) < amount) {
-				amount = t.s32(4 + 4 * w);  // Sin comprobar con el oráculo.
+				amount = t.s32(4 + 4 * w);  // Checked with the oracle: scenario office_orders (saves 3 and 5, direct calls).
 			}
 			const int32_t cost_town = game_buy_price(save, int(w), town, amount);
-			const int32_t cost = cost_town >= 0x1000000 ? imul(cost_town / 100, margin)  // Sin comprobar con el oráculo.
+			// 0x1000000 or more: checked with the oracle, scenario office_orders.
+			const int32_t cost = cost_town >= 0x1000000 ? imul(cost_town / 100, margin)
 				: imul(cost_town, margin) / 100;
 			if (m.s32(0) < cost) {
-				continue;  // Sin comprobar con el oráculo.
+				continue;  // Checked with the oracle: scenario office_orders (saves 3 and 5, direct calls).
 			}
 			t.u32(4 + 4 * w) -= uint32_t(amount);
 			const int32_t old = o.s32(4 + 4 * w);
@@ -926,13 +931,13 @@ void fn_4fff20(SaveGame& save, int office, uint32_t day_of_year) {
 	const uint16_t orders = o.u16(0x2D6);
 	if (orders & 0x10) {
 		if (m.u16(8) == 0) {
-			o.u8(0x2D6) &= 0xEF;  // Sin comprobar con el oráculo: los humanos no la tienen.
+			o.u8(0x2D6) &= 0xEF;  // The human players don't have it. Checked with the oracle: scenario office_orders (saves 3 and 5, direct calls).
 		} else {
 			fn_4ffa30(save, office);
 		}
 	} else {
 		if (orders & 2) {
-			fn_4ffc20(save, office);  // Sin comprobar con el oráculo.
+			fn_4ffc20(save, office);  // Checked with the oracle: scenario office_orders (saves 3 and 5, direct calls).
 		}
 		if (o.u8(0x2D6) & 1) {
 			fn_4ff780(save, office);

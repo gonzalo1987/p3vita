@@ -75,6 +75,7 @@ RANGES = [
     (0x510C50, 0x510F98), (0x51D410, 0x51D4B9), (0x51D4C0, 0x51D5E6),  # the militia
     (0x51FF30, 0x520507),  # the works advance
     (0x510AA0, 0x510C4B),  # what the weaponsmith makes
+    (0x4D4400, 0x4D4985),  # an office business's average costs
 ]
 
 
@@ -1188,6 +1189,139 @@ def office_recount(o):
     return during
 
 
+# --- offices.cpp ---
+
+PRICES = 0x6DE3D8  # the prices object
+
+
+def first_business(o, ai=True):
+    """(merchant, office, world record) of the first office with a business."""
+    merchants = o.counts()[2]
+    for m in (rt.ai_with_office(o) if ai else [o.u32(to.PLAYER)]):
+        for f in rt.merchant_offices(o, m):
+            r = o.u16(o.office(f) + 0x2CC)
+            if r < o.u16(RECORD_COUNT):
+                return m, f, r
+    raise RuntimeError('no office with a business')
+
+
+def office_orders(o):
+    """Direct calls on AI and human offices: 0x4FFF20 (the office's day) of
+    the human player with the orders 0x10 (cleared) and of an AI merchant
+    with the orders 2 (0x4FFC20: buys what its businesses need); 0x4FF780 (the
+    administrator) without an administrator, selling what passes its stock
+    (0x52EA80) and buying more than the town has, for 0x1000000 or more, and
+    with a merchant without money."""
+    player = o.u32(to.PLAYER)
+    human = next((f for f in rt.merchant_offices(o, player)), None)
+    m, f, _ = first_business(o)
+    oa = o.office(f)
+    t = o.u8(oa + 0x2C6)
+    a = o.town(t)
+    print(f'player office {human}; merchant {m}, office {f} in town {t}')
+
+    def during(o):
+        day = o.u16(WORLD + 4)
+        if human is not None:
+            w16(o, o.office(human) + 0x2D6, 0x10)
+            direct(o, 0x4FFF20, [day], ecx=o.office(human))
+        w32(o, o.merchant(m), 100000000)
+        w16(o, oa + 0x2D6, 2)
+        for w in range(24):
+            w32(o, oa + 0x64 + 4 * w, o.s32(oa + 4 + 4 * w) + 2000)
+        direct(o, 0x4FFF20, [day], ecx=oa)
+        direct(o, 0x4FFC20, [], ecx=oa)
+        w16(o, oa + 0x2F2, 0xFFFF)
+        for w in range(24):
+            w32(o, oa + 0x2F4 + 4 * w, 0)
+        w32(o, oa + 4 + 4 * 2, 40000)
+        w32(o, oa + 0x354 + 4 * 2, 1000)
+        w32(o, oa + 0x2F4 + 4 * 2, 30)  # sell fish over its stock for 30 or more
+        w32(o, oa + 0x354 + 4 * 0xB, 10000000)
+        w32(o, oa + 0x2F4 + 4 * 0xB, -1000)  # buy timber up to a lot, for up to 1000
+        w32(o, oa + 0x354 + 4 * 0x13, 1000000000)
+        w32(o, oa + 0x2F4 + 4 * 0x13, -1000000000)  # bricks at any price: all the town has, 0x1000000 or more
+        w32(o, a + 4 + 4 * 0x13, 1000000000)
+        w32(o, oa + 0x354 + 4 * 0x11, 10000000)
+        w32(o, oa + 0x2F4 + 4 * 0x11, -1000)  # hemp, with negative thresholds: more than the town has
+        for i in range(4):
+            w32(o, a + 0x4F0 + 16 * 0x11 + 4 * i, -100000 * (i + 1))
+        direct(o, 0x4FF780, [], ecx=oa)
+        w32(o, o.merchant(m), 10)
+        w32(o, a + 4 + 4 * 0x13, 1000000000)
+        w32(o, oa + 4 + 4 * 0x13, 0)
+        direct(o, 0x4FF780, [], ecx=oa)
+    return during
+
+
+def reverse_prices(o):
+    """Direct calls to 0x52EC50 (the stock below which buying costs more than
+    a price) and 0x52EA80 (above which selling pays less) for a ware of town
+    0 with prices from far below to far above its base: every interval of
+    the price curve; with quality; the town's taxed ware; a town without a
+    market."""
+    a = o.town(0)
+
+    def during(o):
+        for ware in (0, 0xB):
+            for price in (1, 5, 10, 20, 30, 40, 50, 60, 80, 100, 150, 200, 300, 500, 1000, 3000, 100000):
+                direct(o, 0x52EC50, [ware, 0, price, 0], ecx=PRICES)
+                direct(o, 0x52EA80, [ware, 0, price], ecx=PRICES)
+        direct(o, 0x52EC50, [0xB, 0, 50, 0x80], ecx=PRICES)
+        taxed = o.u8(a + 0x6F0)
+        w8(o, a + 0x6F0, 0xB)
+        direct(o, 0x52EC50, [0xB, 0, 50, 0], ecx=PRICES)
+        w8(o, a + 0x6F0, taxed)
+        w32(o, a + 0x76C, o.u32(a + 0x76C) & ~0x100)
+        direct(o, 0x52EC50, [0xB, 0, 50, 0], ecx=PRICES)
+        direct(o, 0x52EA80, [0xB, 0, 50], ecx=PRICES)
+        direct(o, 0x52EA80, [0xB, 0, -50], ecx=PRICES)
+    return during
+
+
+def office_business(o):
+    """Direct calls on an AI office's business (a world record): 0x4D4400
+    (the average costs) as a type out of 4..20, as fishing (5) without fish
+    and as cattle (10) without leather and without meat; 0x4D3670 with more
+    workers than it wants (dismissed, 0x50E380); 0x4D3560 (wages) as fishing
+    in a town with [0x2CC] for the human player. 0x4F8690 and 0x4F8840 (the
+    merchant's sales and purchases) without `flag`, with totals that
+    saturate, and 0x4F8690 with a ware ≥ 0x14."""
+    m, f, rec_index = first_business(o)
+    oa, ma = o.office(f), o.merchant(m)
+    player = o.u32(to.PLAYER)
+
+    def during(o):
+        rec = o.u32(WORLD_RECORDS) + 0x14 * rec_index
+        kind = o.u8(rec + 6)
+        w8(o, rec + 6, 3)  # (with 0x15 the game divides by 0 first: see offices.cpp)
+        direct(o, 0x4D4400, [oa, 10, 0], ecx=rec)
+        w32(o, o.town(o.u8(rec + 7)) + 0x2CC, 0x400)
+        for k, stock in ((5, (0xC, 0x2C)), (10, (0x38, 0x8))):
+            w8(o, rec + 6, k)
+            for off in stock:
+                w32(o, oa + off, 0)
+            direct(o, 0x4D4400, [oa, 0, 0], ecx=rec)
+            direct(o, 0x4D4400, [oa, 0, 5], ecx=rec)
+        w8(o, rec + 6, kind)
+        w16(o, rec + 4, 500)
+        direct(o, 0x4D3670, [0x1234], ecx=rec)
+        w8(o, rec + 6, 5)
+        t = o.u8(rec + 7)
+        w32(o, o.town(t) + 0x2CC, 0x400)
+        direct(o, 0x4D3560, [o.merchant(player), oa], ecx=rec)
+        w8(o, rec + 6, kind)
+        t = o.u8(oa + 0x2C6)
+        for fn, field in ((0x4F8690, 0x49C), (0x4F8840, 0x4A0)):
+            direct(o, fn, [t, 2, 100, 10, 0], ecx=ma)
+            w32(o, ma + field, 0x7FFFFF00)
+            direct(o, fn, [t, 2, 0x1000, 10, 0], ecx=ma)
+            w32(o, ma + field + 0x14, 0x7FFFFF00)
+            direct(o, fn, [t, 2, 0x1000, 10, 1], ecx=ma)
+        direct(o, 0x4F8690, [t, 0x14, 100, 10, 1], ecx=ma)
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -1250,6 +1384,15 @@ SCENARIOS = {
     'shipyard_repair': Scenario(shipyard_repair, [0x508AA0], 0, ['@508bf6', '@508c20']),
     'weaponsmith': Scenario(weaponsmith, [0x510AA0, 0x50F6E0], 0, ['510b29>510c45', '@50f724']),
     'office_recount': Scenario(office_recount, [0x4FF2D0], 0, ['@4ff31b', '@4ff3d1', '@4ff64e']),
+    # offices.cpp
+    'office_orders': Scenario(office_orders, [0x4FFF20, 0x4FFC20, 0x4FF780, 0x52EA80], 0, [
+        '@5001a8', '@5001c0', '@4ff817', '@4ff83e', '@4ff932', '@4ff958', '@4ff98a>4ffa15']),
+    'reverse_prices': Scenario(reverse_prices, [0x52EC50, 0x52EA80], 0, [
+        '@52ec80', '@52ecdf', '@52ed25', '@52ed44', '@52ed61', '@52edb0', '@52edff', '@52ee4d', '@52eab5', '@52eb25',
+        '@52eb3f', '@52eb8c', '@52ebd9', '@52ec22']),
+    'office_business': Scenario(office_business, [0x4D4400, 0x4D3670, 0x4D3560, 0x4F8690, 0x4F8840], 0, [
+        '@4d449e>4d497c', '@4d467e', '@4d47c2', '@4d4846', '@4d36d3', '@4d3602', '@4f86df', '@4f888f', '@4f871a',
+        '@4f872b>4f8831']),
 }
 
 
@@ -1261,8 +1404,14 @@ class Blocks:
         self.blocks, self.edges, self.last = set(), set(), None
         self.ran = set()
         from unicorn import UC_HOOK_CODE
+        self.taken, self.pending = set(), {}
         for t in targets:
-            if t.startswith('@'):
+            if t.startswith('@') and '>' in t:
+                # A jump at A taken to B: B runs right after A (and not A's next instruction).
+                a, b = (int(x, 16) for x in t[1:].split('>'))
+                o.uc.hook_add(UC_HOOK_CODE, self._jump_from, begin=a, end=a + 15, user_data=a)
+                o.uc.hook_add(UC_HOOK_CODE, self._jump_to, begin=b, end=b, user_data=(a, b))
+            elif t.startswith('@'):
                 a = int(t[1:], 16)
                 o.uc.hook_add(UC_HOOK_CODE, lambda uc, address, size, data: self.ran.add(address), begin=a, end=a)
         for lo, hi in RANGES:
@@ -1274,6 +1423,17 @@ class Blocks:
             return start(*args, **kwargs)
         o.uc.emu_start = emu_start
 
+    def _jump_from(self, uc, address, size, a):
+        if address == a:
+            self.pending[a] = a + size
+        elif self.pending.get(a) == address:
+            self.pending[a] = None
+
+    def _jump_to(self, uc, address, size, ab):
+        if self.pending.get(ab[0]):
+            self.taken.add(ab)
+        self.pending[ab[0]] = None
+
     def _hit(self, uc, address, size, data):
         self.blocks.add(address)
         if self.last is not None:
@@ -1283,8 +1443,12 @@ class Blocks:
     def report(self, targets):
         missing = 0
         for t in targets:
-            if t.startswith('@'):
-                hit = int(t[1:], 16) in self.ran
+            if t.startswith('@') and '>' in t:
+                a, b = (int(x, 16) for x in t[1:].split('>'))
+                hit = (a, b) in self.taken
+            elif t.startswith('@'):
+                a = int(t[1:], 16)
+                hit = a in self.ran
             elif '>' in t:
                 a, b = (int(x, 16) for x in t.split('>'))
                 hit = (a, b) in self.edges
