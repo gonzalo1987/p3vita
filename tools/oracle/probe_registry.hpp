@@ -102,6 +102,7 @@ void register_probes_events_mayor(ProbeRegistry& r);
 void register_probes_events_rare(ProbeRegistry& r);
 void register_probes_alderman(ProbeRegistry& r);
 void register_probes_battle(ProbeRegistry& r);
+void register_probes_unchecked(ProbeRegistry& r);
 
 // La navegación sobre el SaveGame que reciben las sondas (tick_probe con
 // --cpr); nullptr sin --cpr. Para las funciones de Sailing (convoyes...).
