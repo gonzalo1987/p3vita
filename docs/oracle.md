@@ -463,3 +463,11 @@ entre las de por omisión: el mundo entero, 0 diferencias en las 12 partidas
 durante 7 días.
 Con la 0x12 (capitanes) y la 0x78 (un barco nuevo) también: el mundo
 entero, 0 diferencias en las 12 partidas durante 7 días.
+La 0x64 (los robos en las oficinas del jugador, con el evento 0x33) sale
+poco sola (en 20 días, una vez en las partidas 4 y 5, con el evento unos 8
+días después). El escenario `robo` de `retouch.py` la encola dos veces al
+final del primer tick con eventos a 16 y 32 ticks, uno en la oficina del
+jugador con más mercancía y otro en una ciudad donde no tiene oficina
+(`ret2f.sh robo:1`, grabando `535760` y `4d85c0`): 0 diferencias en las
+partidas 1 a 7. Y entre las de por omisión, el mundo entero, 0 diferencias
+en las 12 partidas durante 7 días.

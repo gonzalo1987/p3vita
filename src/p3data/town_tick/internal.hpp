@@ -225,6 +225,8 @@ void fn_539c60(SaveGame& save, const uint8_t* operation);
 // entradas de [0x6DD7C0], 0x5051E0).
 void fn_538a80(SaveGame& save, const uint8_t* operation);
 void fn_5051e0(SaveGame& save, Sailing* sailing, const uint8_t* operation);
+// 0x64 (un robo en una oficina: el evento 0x33, en 0x5363EE).
+void fn_5363ee(SaveGame& save, const uint8_t* operation);
 // construction.cpp: la operación 0x22, construir (0x53CE30): edificios
 // (0x521900), torres (0x523830, 0x523D70) y murallas (0x522B20).
 // Y los materiales: 0x27 (0x535BBC: la ciudad los recibe) y 0x23 (0x535B12:
@@ -280,7 +282,7 @@ uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick);
 int events_big(SaveGame& save, uint16_t event, uint16_t type);  // 0x2c, 0x5, 0x16
 int events_towns(SaveGame& save, uint16_t event, uint16_t type);  // 0x3, 0x1, 0x2a, 0x2b
 int events_mayor(SaveGame& save, uint16_t event, uint16_t type);  // 0x2, 0xa, 0x36, 0x20, 0x21
-int events_rare(SaveGame& save, uint16_t event, uint16_t type);  // 0xe, 0x12, 0x1c, 0x1e, 0x1f, 0x2e, 0x30, 0x32, 0x35
+int events_rare(SaveGame& save, uint16_t event, uint16_t type);  // 0xe, 0x12, 0x1c, 0x1e, 0x1f, 0x2e, 0x2f, 0x30, 0x32, 0x33, 0x35, 0x39
 // La navegación que usa la cola de eventos (agua en un punto del mapa,
 // 0x4474D0, para las tormentas). La pone quien la atiende; sin ella, no hay agua.
 void set_event_navigation(const NavData* nav);

@@ -1,9 +1,9 @@
-// La cola de eventos (events.cpp): los tipos 0x0E (0x4E4A44), 0x12 (0x4E6A54), 0x1C (0x4E9094), 0x1E (0x4DFD44), 0x1F (0x4E0334), 0x2E (0x4E9A94), 0x30 (0x4EA594), 0x32 (0x4EAFE4) y 0x35 (0x4E94A4).
+// La cola de eventos (events.cpp): los tipos 0x0E (0x4E4A44), 0x12 (0x4E6A54), 0x1C (0x4E9094), 0x1E (0x4DFD44), 0x1F (0x4E0334), 0x2E (0x4E9A94), 0x30 (0x4EA594), 0x32 (0x4EAFE4), 0x33 (0x4EC934) y 0x35 (0x4E94A4).
 //
 // Lo que hace el despachador (0x4D85C0) con cada uno tras su manejador: los
 // tipos 0x0E, 0x12, 0x1C, 0x1E, 0x1F, 0x2E, 0x30 y 0x32 deciden por lo que
 // devuelve el manejador (0: quitarlo, 1: llevarlo a su sitio por su tick ya
-// cambiado); el 0x35 se quita siempre. Los avisos (0x548CA0, 0x4D6530, las
+// cambiado); el 0x33 y el 0x35 se quitan siempre. Los avisos (0x548CA0, 0x4D6530, las
 // ventanas de *0x6CC7E8 y *0x6CBB40) no se traducen.
 //
 //   0x0E  el final de la partida: el objetivo [+0x8] (1..6) con el plazo
@@ -28,6 +28,8 @@
 //         reunión (evento 0x21 en [0x6DE52E]); con él, plazos y reputación.
 //   0x32  los encargos de la Hansa para un comerciante de la IA ([+0xD]); el
 //         del comerciante no está traducido (ver fn_4eafe4).
+//   0x33  un robo en una oficina: hasta tres mercancías pasan de ella al
+//         mercado de la ciudad (ver fn_4ec934).
 //   0x35  quita el bit 0x4000000 de la situación de la ciudad [+0x8].
 //
 // Los 15 objetos del mundo ([+0xB10] del mundo, 0x6DEFB0, 0x2C bytes): u8
@@ -2431,6 +2433,48 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 	return 0;
 }
 
+// --- Evento 0x33 ---
+
+// 0x4EC934 (evento 0x33, lo crea la operación 0x64 con lo que encola
+// 0x4DD790): un robo en la oficina del comerciante [+0xE] en la ciudad
+// [+0xF]. De las mercancías [+0x8 + k] (k = 0..5; >= 0x18 ninguna), con su
+// cantidad [+0x10 + k] en cargas o barriles, se lleva hasta tres: lo que
+// haya en la oficina, como mucho esa cantidad (si hay menos, [+0x10 + k]
+// pasa a lo que había), y lo pone en el mercado de la ciudad. Sin oficina,
+// nada. La carta al comerciante (0x4D6530, tipo 0x73, con lo robado) no se
+// reproduce. El despachador lo quita siempre.
+void fn_4ec934(SaveGame& save, uint16_t event) {
+	Event& e = save.events[event];
+	const uint32_t town = e.u8(0xF);
+	const int office = facilities_detail::fn_5308a0(save, e.u8(0xE), town);
+	if (office < 0) {
+		return;
+	}
+	TownMemory& t = save.towns[town].memory;
+	OfficeMemory& o = save.offices[size_t(office)].memory;
+	uint32_t stolen = 0;
+	for (uint32_t k = 0; k < 6 && stolen < 3; ++k) {
+		const uint32_t ware = e.u8(0x8 + k);
+		if (ware >= 0x18) {
+			continue;
+		}
+		const int32_t unit = kBarrelWare[ware] ? 200 : 2000;
+		const int32_t amount = int32_t(e.u8(0x10 + k)) * unit;
+		int32_t& stock = o.s32(0x4 + 4 * ware);
+		if (amount > stock) {
+			e.u8(0x10 + k) = uint8_t(stock / unit);
+			t.s32(0x4 + 4 * ware) += stock;
+			stock = 0;
+		} else {
+			stock -= amount;
+			t.s32(0x4 + 4 * ware) += amount;
+		}
+		if (e.u8(0x10 + k) > 0) {
+			++stolen;
+		}
+	}
+}
+
 }  // namespace events_rare_detail
 
 using namespace events_rare_detail;
@@ -2455,6 +2499,9 @@ int events_rare(SaveGame& save, uint16_t event, uint16_t type) {
 		return int(fn_4ea594(save));
 	case 0x32:
 		return int(fn_4eafe4(save));
+	case 0x33:
+		fn_4ec934(save, event);
+		return 0;
 	case 0x39:
 		return int(fn_4ecdf4(save));  // La muralla de una ciudad nueva (new_town.cpp).
 	case 0x35:

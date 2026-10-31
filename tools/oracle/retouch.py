@@ -69,6 +69,10 @@ grabar; los otros crean el evento en ciudades que ya existen:
   poblada               más de 1000 habitantes con cada muralla (0x5252F0): 1 o 2
                         (el mercado y después el prestamista), 0xFF, 0 con tramo y 0 sin él
   rica                  la fase 2: con el prestamista (0x800) y con 1500 sin pasar
+Los robos en las oficinas (operación 0x64, evento 0x33); graban 535760 y 4d85c0:
+  robo                  dos robos al jugador: en su oficina con más mercancía
+                        (lo que hay, lo que no, 0xFF y el tope de tres) y en
+                        una ciudad sin oficina suya
 """
 import argparse
 import os
@@ -655,6 +659,46 @@ def carretera_hecha(o):
             print(f'ciudad {o.u8(task[1] + k)}: registro {head} pasa a ser del tipo 0x27')
 
 
+BARREL = (0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1)  # 0x672C14
+
+
+def robo(o):
+    """Dos robos en oficinas del jugador: operaciones 0x64 al final del primer
+    tick, con sus eventos 0x33 (0x4EC934) a los 16 y 32 ticks. En la oficina
+    con más mercancía: más de lo que hay de una (se lleva lo que hay), una que
+    no tiene, una 0xFF y tres que sí (de la última ya no se lleva nada: van
+    tres). En una ciudad sin oficina suya, nada. Graba 1 día. Devuelve lo que
+    escribe al final: lo que queda en la oficina."""
+    m = o.u32(to.PLAYER)
+    offices, i = [], o.u16(o.merchant(m) + 0xC)
+    while i < o.u16(WORLD + 8):
+        offices.append(i)
+        i = o.u16(o.office(i) + 0x2C8)
+
+    def stock(office, w):
+        return struct.unpack('<i', bytes(o.uc.mem_read(o.office(office) + 4 + 4 * w, 4)))[0]
+
+    office = max(offices, key=lambda f: sum(max(stock(f, w), 0) for w in range(20)))
+    unit = [200 if BARREL[w] else 2000 for w in range(24)]
+    have = [w for w in range(20) if stock(office, w) >= unit[w]]
+    short = next((w for w in have if stock(office, w) // unit[w] < 255), None)
+    empty = next(w for w in range(20) if stock(office, w) <= 0)
+    pairs = [(short, stock(office, short) // unit[short] + 1)] if short is not None else []
+    pairs += [(empty, 5), (0xFF, 7)] + [(w, 1) for w in have if w != short][:3]
+    pairs += [(0xFF, 0)] * (6 - len(pairs))
+    town = o.u8(o.office(office) + 0x2C6)
+    op = struct.pack('<I6B2B6BH', 0x64, *[w for w, _ in pairs], m, town, *[n for _, n in pairs], 0x10)
+    o.tick_operations.append(op)
+    print(f'oficina {office} del jugador {m} en la ciudad {town}: (mercancía, pedido, hay)'
+          f' {[(w, n, stock(office, w) if w < 20 else 0) for w, n in pairs]}')
+    towns = {o.u8(o.office(f) + 0x2C6) for f in offices}
+    other = next(t for t in range(o.u32(WORLD + 0x10)) if t not in towns)
+    o.tick_operations.append(struct.pack('<I6B2B6BH', 0x64, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, m, other,
+                                         1, 0, 0, 0, 0, 0, 0x20))
+    print(f'ciudad {other} sin oficina del jugador')
+    return lambda: print(f'después: {[(w, stock(office, w) if w < 20 else 0) for w, _ in pairs]}')
+
+
 def jugador_carretera_vencida(o):
     """El jugador con la carretera vencida: el juego crea un encargo igual con
     la ciudad [+0x10] como comerciante, que sigue avanzando. Graba 2 días."""
@@ -670,7 +714,7 @@ SCENARIOS = {f.__name__: f for f in (candidato, jugador, dos_candidatos, sin_car
                                      encargo_nuevo, encargo_cumplido, encargo_vencido, barco_perdido,
                                      jugador_coge, jugador_vencido,
                                      nueva_sin_marca, nueva_alcalde_ia, nueva_alcalde_humano, nueva_sin_alcalde,
-                                     poblada, rica, fundar_aceite)}
+                                     poblada, rica, fundar_aceite, robo)}
 
 
 def main():
@@ -689,7 +733,7 @@ def main():
     a = p.parse_args()
     o = to.TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, rest=list(to.REST), cpr=a.cpr)
     o.load()
-    SCENARIOS[a.scenario](o)
+    after = SCENARIOS[a.scenario](o)
     with open(a.out, 'wb') as f:
         f.write(b'P3PROBE1')
         rec = to.Recorder(o, [int(x, 16) for x in a.functions.split(',')], f, a.max)
@@ -701,6 +745,8 @@ def main():
                 break
         f.write(b'E')
     print(f'{rec.count} muestras en {a.out}')
+    if callable(after):
+        after()
     last = o.u32(WORLD + 0x10) - 1
     nodes, node = [], o.u32(o.town(last) + 0x9B4)
     while node:

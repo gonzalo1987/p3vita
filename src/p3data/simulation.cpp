@@ -115,6 +115,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x4B:  // Un candidato coge un encargo de la Hansa (0x53B440).
 		tick::fn_53b440(save, operation);
 		break;
+	case 0x64:  // Un robo en una oficina: el evento 0x33 (0x5363EE).
+		tick::fn_5363ee(save, operation);
+		break;
 	case 0x78:  // Un barco nuevo en las entradas de [0x6DD7C0] (0x5051E0).
 		tick::fn_5051e0(save, sailing, operation);
 		break;

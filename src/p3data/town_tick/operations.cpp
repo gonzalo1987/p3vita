@@ -185,6 +185,17 @@ void fn_538a80(SaveGame& save, const uint8_t* operation) {
 	events_detail::fn_4fe190(cap);
 }
 
+// La operación 0x64 (en 0x5363EE): {0x64, 16 bytes, …, u16 [+0x12] plazo}:
+// un evento 0x33, un robo en una oficina (events_rare.cpp, fn_4ec934), a tick
+// + plazo con los 16 bytes. La encola el evento 0x03 (0x4DD790) en las
+// oficinas de los jugadores humanos con pocos guardias.
+void fn_5363ee(SaveGame& save, const uint8_t* operation) {
+	const uint32_t tick = save.globals.u32(global::kWorldTick) + half(operation, 0x12);
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick)];
+	e.u16(6) = 0x33;
+	std::memcpy(e.bytes.data() + 8, operation + 4, 0x10);
+}
+
 // La operación 0x78 (0x5051E0, sobre el objeto de los barcos): {0x78, u8 a,
 // …, u16 b, u16 x, u16 y}: un barco nuevo (0x507D60 con 4) en el primer hueco
 // libre de las 16 entradas de 12 bytes de [0x6DD7C0] (su índice, b, x, y, a
