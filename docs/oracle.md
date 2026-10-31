@@ -491,3 +491,14 @@ partidas 1 y 3 cambian el mundo la 0x29, la 0x81, la 0x37, la 0x61 y la
 (`DESDE=14 FUNCS=535760 ret2f.sh fundar:32` en la partida 1 y `DESDE=28
 ... fundar:88` en la 3; `ret2f.sh` acepta `DESDE`), 193 y 2591 llamadas
 iguales, y el mundo entero 7 días en las 12 partidas, 0 diferencias.
+
+**Los eventos que p3vita creaba y no atendía** ([inventario.md](inventario.md),
+parte A): escenarios de `retouch.py` que crean el evento para los ticks
+siguientes, grabando `4d85c0` (`FUNCS=4d85c0 ret2f.sh ESCENARIO:DÍAS`):
+`capitanes` (0x27, uno por estado de barco), `impuesto` (0x31, con deudas y
+la queja a la Hansa) y `monumento` (0x38, con alcaldes de la IA puestos a
+mano). Iguales en las partidas 1 a 7; con el impuesto, en las partidas 5 y 6
+la IA de un comerciante endeudado encola después una 0x28 que p3vita no: es
+la variable sin inicializar de 0x4F5A20 (fallo del juego; ver el roadmap), no
+el evento. El monumento llama a 0x590680 si la ciudad es la que se ve: el
+oráculo salta ahí (`EVENT_JUMPS`, 0x4ECD3E → 0x4ECD71).

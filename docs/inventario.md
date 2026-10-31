@@ -36,9 +36,9 @@ comparaciones porque tardan en vencer o porque su efecto tarda.
 
 - [ ] 0x23, 0x24 y 0x34 (0x4E09D4, unos 7,6 KB): las decisiones de la dieta de la Hansa (los crea el evento 0x21); los consultan los convoyes y los barcos. Encola además la 0x81 a los jugadores humanos con un barco en la ciudad
 - [ ] 0x25 (0x4E1B84) y 0x26 (0x4E1E54): en un asedio, cae un objetivo y llega un grupo (los crea 0x6281F0). Llaman a los gráficos de la ciudad (0x599040): separar lo que es simulación
-- [ ] 0x27 (0x4DDC00): los capitanes de la IA que se retiran (los crea el evento 0x03)
-- [ ] 0x31 (0x4EAB94): lo aprobado por el consejo de una ciudad (lo crea el evento 0x2E)
-- [ ] 0x38 (0x4ECB14): tras la elección de alcalde (lo crea 0x528E60)
+- [x] 0x27 (0x4DDC00): un capitán de la IA que se retira (lo crea el evento 0x03): deja el barco (0x5098B0) según el estado de este. Escenario `capitanes` de `retouch.py`: iguales en las partidas 1 a 7
+- [x] 0x31 (0x4EAB94): el impuesto extraordinario que aprueba el consejo de una ciudad (lo crea el evento 0x2E): lo pagan los comerciantes con oficina, con deudas si no pueden, y puede haber queja a la Hansa (evento 0x30). Escenario `impuesto`: el estado igual en las 7; en 2 de ellas la IA de un comerciante endeudado elige después distinto por un fallo del juego (una variable sin inicializar en 0x4F5A20; ver el roadmap)
+- [x] 0x38 (0x4ECB14): el monumento al alcalde reelegido (lo crea 0x528E60): el edificio 0x2D de la ciudad pasa a ser suyo cuando la muralla está. Escenario `monumento`: iguales en las 7
 
 ## B. Operaciones que encola la simulación y p3vita descarta
 

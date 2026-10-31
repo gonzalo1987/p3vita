@@ -1,5 +1,5 @@
 // La cola de eventos (events.cpp): los tipos 0x03 (0x4DDA40), 0x01 (0x4DB4E0),
-// 0x2A (0x4DE4F0) y 0x2B (0x4DE790).
+// 0x2A (0x4DE4F0), 0x2B (0x4DE790) y 0x27 (0x4DDC00).
 //
 //   0x01  deuda de un comerciante ([+0x11]) con otro ([+0x10]; 0xFF: con la
 //         ciudad), u32 [+0x8] lo que debe, [+0x14] la ciudad: cada 10 días
@@ -23,6 +23,7 @@
 #include <cstring>
 #include <vector>
 
+#include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -1492,6 +1493,121 @@ void fn_4de790(SaveGame& save, uint16_t event) {
 	}
 }
 
+// 0x5098B0 (sobre el objeto de los barcos, con el hueco del capitán de un
+// barco): el capitán vuelve a la lista de libres ([0x6DD880], encadenada por
+// su u16 [+0x0]): en cabeza, y el hueco se queda con lo que tenía en [+0x0].
+// Si ya estaba en la lista, el hueco pasa a 0xFFFF.
+void fn_5098b0(SaveGame& save, uint16_t& slot) {
+	GlobalMemory& g = save.globals;
+	constexpr uint32_t kFreeCaptain = global::kShips + 0xE0;  // u16 (0x6DD880)
+	const uint16_t count = g.u16(global::kCaptainCount);
+	const uint16_t c = slot;
+	if (c >= count) {
+		return;
+	}
+	for (uint16_t f = g.u16(kFreeCaptain); f < count; f = save.captains[f].u16(0)) {
+		if (f == c) {
+			slot = 0xFFFF;  // Sin comprobar con el oráculo.
+			return;
+		}
+	}
+	slot = save.captains[c].u16(0);
+	save.captains[c].u16(0) = g.u16(kFreeCaptain);
+	g.u16(kFreeCaptain) = c;
+}
+
+// 0x4DDC00 (evento 0x27, lo crea 0x4DCEA0 en el evento 0x03): el capitán
+// [+0xC] del barco [+0x8], de un comerciante de la IA, se retira, según el
+// estado del barco ([+0x134]): en 0 y 1 deja el barco (si guía un convoy, lo
+// deshace antes, 0x50A580); en 4..6, si guía un convoy, espera 0x20 ticks y,
+// si no, lo deja; en 7 y 12..14 lo deja; en 8 (en el astillero) lo deja, el
+// barco pasa al estado 0 y el astillero de la ciudad queda libre ([0x990],
+// [0x994]); en 2, 9, 15, 16, 19 y 20 espera 0x40 ticks; en 3, lo que le
+// falta (0x41 − [+0x138]); en los demás, nada. Si el capitán ya no está en
+// el barco, lo busca en el primer barco de cada comerciante, del último al
+// primero. Devuelve si sigue (con el tick ya cambiado). Comprobado con
+// estados retocados (`retouch.py capitanes`) en los estados 1 (con el convoy
+// que guía), 2, 3, 6, 15 y 19; los demás, sin comprobar con el oráculo.
+bool fn_4ddc00(SaveGame& save, uint16_t event) {
+	GlobalMemory& g = save.globals;
+	constexpr uint32_t kConvoyCount = global::kShips + 0xF6;  // u16 (0x6DD896)
+	Event& e = save.events[event];
+	const uint32_t captain = e.u32(0xC);
+	if (captain >= captain_count(save)) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	uint32_t s = e.u32(0x8);
+	if (s >= ship_count(save) || ship_of(save, s).u16(0x42) != captain) {
+		// Sin comprobar con el oráculo.
+		bool found = false;
+		for (uint32_t m = merchant_count(save); m > 0 && !found;) {
+			const uint32_t first = merchant_of(save, --m).u16(0xE);
+			if (first >= ship_count(save)) {
+				continue;
+			}
+			if (ship_of(save, first).u16(0x42) != captain) {
+				// El juego se queda aquí en un bucle sin fin (0x4DDCB0 salta a
+				// sí mismo): solo mira el primer barco. Aquí se quita el evento.
+				return false;
+			}
+			s = first;
+			e.u32(0x8) = s;
+			found = true;
+		}
+		if (!found) {
+			return false;
+		}
+	}
+	ShipMemory& ship = ship_of(save, s);
+	const uint16_t status = ship.u16(0x134);
+	auto leads = [&] {
+		const uint16_t convoy = ship.u16(0x8);
+		return convoy < g.u16(kConvoyCount) && save.convoys[convoy].u16(0x10) == s;
+	};
+	auto release = [&] {
+		uint16_t slot = ship.u16(0x42);
+		fn_5098b0(save, slot);
+		ship.u16(0x42) = slot;
+	};
+	switch (status) {
+	case 0:
+	case 1:
+		if (leads()) {
+			if (Sailing* sailing = event_sailing()) {
+				sailing->fn_50a580(ship.u16(0x8));
+			}
+		}
+		release();
+		return false;
+	case 2: case 9: case 15: case 16: case 19: case 20:
+		e.u32(0) += 0x40;
+		return true;
+	case 3:
+		e.u32(0) += 0x41 - ship.u16(0x138);
+		return true;
+	case 4: case 5: case 6:
+		if (leads()) {
+			e.u32(0) += 0x20;
+			return true;
+		}
+		release();
+		return false;
+	case 7: case 12: case 13: case 14:
+		release();
+		return false;
+	case 8: {
+		release();
+		ship.u16(0x134) = 0;
+		TownMemory& t = save.towns[ship.u8(0x39)].memory;
+		t.u16(0x994) = 0xFFFF;
+		t.u32(0x990) = 0;
+		return false;
+	}
+	default:
+		return false;
+	}
+}
+
 }  // namespace events_towns_detail
 
 using namespace events_towns_detail;
@@ -1511,6 +1627,8 @@ int events_towns(SaveGame& save, uint16_t event, uint16_t type) {
 	case 0x2B:
 		fn_4de790(save, event);
 		return 1;
+	case 0x27:
+		return fn_4ddc00(save, event) ? 1 : 0;  // Un capitán de la IA se retira.
 	default:
 		return -1;
 	}

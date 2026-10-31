@@ -73,6 +73,10 @@ Los robos en las oficinas (operación 0x64, evento 0x33); graban 535760 y 4d85c0
   robo                  dos robos al jugador: en su oficina con más mercancía
                         (lo que hay, lo que no, 0xFF y el tope de tres) y en
                         una ciudad sin oficina suya
+Los eventos que p3vita creaba y no atendía; graban 4d85c0:
+  capitanes             0x27: capitanes de la IA que se retiran, uno por estado de barco
+  impuesto              0x31: el impuesto extraordinario (deudas y queja a la Hansa)
+  monumento             0x38: el monumento al alcalde reelegido (alcaldes de la IA a mano)
 Los asedios (operación 0x8E); graban 535760 y 633a90:
   asedio                uno a una ciudad sin muralla (rescate sin atacar) y
                         otro en la región de la ciudad natal del jugador, con
@@ -748,6 +752,99 @@ def robo(o):
     return lambda: print(f'después: {[(w, stock(office, w) if w < 20 else 0) for w, _ in pairs]}')
 
 
+def capitanes(o):
+    """Eventos 0x27 (0x4DDC00: un capitán de la IA se retira) a los ticks
+    siguientes, uno por cada estado de barco ([+0x134]) distinto entre los
+    barcos de la IA con capitán, y uno más con un guía de convoy. Graba 1 día.
+    Devuelve lo que escribe al final: el capitán y el estado de esos barcos."""
+    ships, captains = o.u16(to.SHIPS + 0xF4), o.u16(to.SHIPS + 0xF2)
+    merchants = o.u16(WORLD + 0xA)
+    chosen, statuses = [], set()
+    for s in range(ships):
+        p = o.ship(s)
+        owner, captain, status = o.u8(p), o.u16(p + 0x42), o.u16(p + 0x134)
+        if owner >= merchants or not o.u16(o.merchant(owner) + 8) or captain >= captains:
+            continue
+        convoy = o.u16(p + 8)
+        lead = convoy < o.u16(to.SHIPS + 0xF6) and o.u16(o.u32(to.SHIPS + 8) + 0x3C * convoy + 0x10) == s
+        if status not in statuses or (lead and not any(c[3] for c in chosen)):
+            statuses.add(status)
+            chosen.append((s, captain, status, lead))
+    now = o.u32(WORLD + 0x14)
+    for k, (s, captain, status, lead) in enumerate(chosen):
+        a = o.call(0x4D8CF0, [now + 1 + k], ecx=to.EVENTS)
+        w16(o, a + 6, 0x27)
+        w32(o, a + 8, s)
+        w32(o, a + 0xC, captain)
+    print(f'eventos 0x27 (barco, capitán, estado, guía): {chosen}')
+    return lambda: print(f'después (capitán, estado): {[(o.u16(o.ship(s) + 0x42), o.u16(o.ship(s) + 0x134)) for s, *_ in chosen]}')
+
+
+def impuesto(o):
+    """Eventos 0x31 (0x4EAB94: el impuesto extraordinario de una ciudad) a los
+    ticks siguientes: en una ciudad con oficinas, 20000 (pagan todos); en
+    otra, con el bit 0x100 de [0x76C], 3000000 (deudas en trozos de 250000 y
+    la queja a la Hansa, un evento 0x30); en una sin oficinas, nada. Para la
+    queja, la primera ciudad con alcalde de la IA o sin alcalde comerciante
+    (de las demás) lleva el bit 0x40 de [0x2C8]. Graba 2 días."""
+    towns, merchants = o.u32(WORLD + 0x10), o.u16(WORLD + 0xA)
+    offices = [i for i in range(towns) if office_list(o, i)]
+    a, b = offices[0], offices[1]
+    w32(o, o.town(b) + 0x76C, o.u32(o.town(b) + 0x76C) | 0x100)
+
+    def leader(i):
+        mayor = o.u8(o.town(i) + 0x6F1)
+        return mayor >= merchants or o.u16(o.merchant(mayor) + 8) != 0
+
+    c = next(i for i in range(towns) if i not in (a, b) and leader(i))
+    w32(o, o.town(c) + 0x2C8, o.u32(o.town(c) + 0x2C8) | 0x40)
+    empty = [i for i in range(towns) if i not in offices]
+    now = o.u32(WORLD + 0x14)
+    for k, (town, amount) in enumerate([(a, 20000), (b, 3000000)] + [(t, 5000) for t in empty[:1]]):
+        e = o.call(0x4D8CF0, [now + 1 + k], ecx=to.EVENTS)
+        w16(o, e + 6, 0x31)
+        w32(o, e + 8, amount)
+        w8(o, e + 0xC, town)
+    print(f'impuesto en {a} (20000), {b} (3000000, bit 0x100), {empty[:1]} sin oficinas;'
+          f' preside {c} (alcalde {o.u8(o.town(c) + 0x6F1)})')
+
+
+def monumento(o):
+    """Eventos 0x38 (0x4ECB14: el monumento al alcalde reelegido) a los ticks
+    siguientes: en cada ciudad con alcalde comerciante (las cuatro primeras
+    lo pasan a tener, de la IA), a su nombre, y uno a nombre de otro (no es
+    su alcalde: nada). Graba 1 día. Devuelve lo que
+    escribe al final: el dueño y la variante del primer edificio 0x2D de cada
+    una."""
+    towns, merchants = o.u32(WORLD + 0x10), o.u16(WORLD + 0xA)
+
+    def monument(i):
+        t = o.town(i)
+        r = o.u16(t + 0x764)
+        while r < o.u16(t + 0x776):
+            rec = o.u32(t + 0x75C) + 8 * r
+            if o.u8(rec + 3) == 0x2D:
+                return rec
+            r = o.u16(rec + 4)
+        return None
+
+    ai = ai_with_office(o)
+    for k, i in enumerate(range(min(4, towns))):
+        w8(o, o.town(i) + 0x6F1, ai[k % len(ai)])  # alcalde de la IA
+    cases = [(i, o.u8(o.town(i) + 0x6F1)) for i in range(towns) if o.u8(o.town(i) + 0x6F1) < merchants]
+    if cases:
+        cases.append((cases[0][0], (cases[0][1] + 1) % merchants))
+    now = o.u32(WORLD + 0x14)
+    for k, (town, m) in enumerate(cases):
+        e = o.call(0x4D8CF0, [now + 1 + k], ecx=to.EVENTS)
+        w16(o, e + 6, 0x38)
+        w8(o, e + 8, town)
+        w8(o, e + 9, m)
+    info = [(i, m, (o.u8(monument(i) + 2), o.u8(monument(i) + 7)) if monument(i) else None) for i, m in cases]
+    print(f'eventos 0x38 (ciudad, comerciante, monumento (dueño, variante)): {info}')
+    return lambda: print(f'después: {[(i, (o.u8(monument(i) + 2), o.u8(monument(i) + 7)) if monument(i) else None) for i, _ in cases]}')
+
+
 def jugador_carretera_vencida(o):
     """El jugador con la carretera vencida: el juego crea un encargo igual con
     la ciudad [+0x10] como comerciante, que sigue avanzando. Graba 2 días."""
@@ -763,7 +860,7 @@ SCENARIOS = {f.__name__: f for f in (candidato, jugador, dos_candidatos, sin_car
                                      encargo_nuevo, encargo_cumplido, encargo_vencido, barco_perdido,
                                      jugador_coge, jugador_vencido,
                                      nueva_sin_marca, nueva_alcalde_ia, nueva_alcalde_humano, nueva_sin_alcalde,
-                                     poblada, rica, fundar_aceite, robo, asedio)}
+                                     poblada, rica, fundar_aceite, robo, asedio, capitanes, impuesto, monumento)}
 
 
 def main():

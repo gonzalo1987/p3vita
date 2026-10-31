@@ -1,9 +1,9 @@
-// La cola de eventos (events.cpp): los tipos 0x0E (0x4E4A44), 0x12 (0x4E6A54), 0x1C (0x4E9094), 0x1E (0x4DFD44), 0x1F (0x4E0334), 0x2E (0x4E9A94), 0x30 (0x4EA594), 0x32 (0x4EAFE4), 0x33 (0x4EC934) y 0x35 (0x4E94A4).
+// La cola de eventos (events.cpp): los tipos 0x0E (0x4E4A44), 0x12 (0x4E6A54), 0x1C (0x4E9094), 0x1E (0x4DFD44), 0x1F (0x4E0334), 0x2E (0x4E9A94), 0x30 (0x4EA594), 0x31 (0x4EAB94), 0x32 (0x4EAFE4), 0x33 (0x4EC934), 0x35 (0x4E94A4) y 0x38 (0x4ECB14).
 //
 // Lo que hace el despachador (0x4D85C0) con cada uno tras su manejador: los
-// tipos 0x0E, 0x12, 0x1C, 0x1E, 0x1F, 0x2E, 0x30 y 0x32 deciden por lo que
+// tipos 0x0E, 0x12, 0x1C, 0x1E, 0x1F, 0x2E, 0x30, 0x32 y 0x38 deciden por lo que
 // devuelve el manejador (0: quitarlo, 1: llevarlo a su sitio por su tick ya
-// cambiado); el 0x33 y el 0x35 se quitan siempre. Los avisos (0x548CA0, 0x4D6530, las
+// cambiado); el 0x31, el 0x33 y el 0x35 se quitan siempre. Los avisos (0x548CA0, 0x4D6530, las
 // ventanas de *0x6CC7E8 y *0x6CBB40) no se traducen.
 //
 //   0x0E  el final de la partida: el objetivo [+0x8] (1..6) con el plazo
@@ -24,6 +24,8 @@
 //         ([+0x8..+0xF]), crea sus eventos 0x1E y encola la operación 0x84;
 //         desde noviembre encola la 0x7E y se quita.
 //   0x2E  la votación del consejo de la ciudad [+0xC] (propuesta [+0xD] 0..3).
+//   0x31  el impuesto extraordinario que aprueba el consejo (ver fn_4eab94).
+//   0x38  el monumento al alcalde reelegido (ver fn_4ecb14).
 //   0x30  el encargo del jefe de la Hansa ([0x6DE52D]): sin jefe humano, la
 //         reunión (evento 0x21 en [0x6DE52E]); con él, plazos y reputación.
 //   0x32  los encargos de la Hansa para un comerciante de la IA ([+0xD]); el
@@ -474,6 +476,194 @@ uint32_t fn_4e9094(SaveGame& save) {
 		t.u32(0x2C8) |= 8;
 	}
 	return 1;
+}
+
+// --- Evento 0x31 ---
+
+// 0x4EAB94 (evento 0x31, lo crea el 0x2E un día después de aprobar la
+// propuesta 0): el impuesto extraordinario de la ciudad [+0xC], de [+0x8].
+// Sin oficinas en ella, nada. La ciudad lo cobra (0x529F90, ingreso 2) y lo
+// pagan los comerciantes con oficina en ella: la mitad a partes iguales y la
+// otra mitad según la oficina ([+0x2D2] + [+0x2D4] + 1); cada parte suma a su
+// [+0x4BC] y sale de su dinero (si lo tiene, positivo); lo que no puede
+// pagar queda como deudas con la ciudad (eventos 0x01 a 7 días, de 250000
+// como mucho). Si alguno de los que pagan no es de la ciudad ni su alcalde y
+// la ciudad tiene el bit 0x100 de [0x76C] (y no el 0x40 de [0x2C8]), una
+// queja a la Hansa: un evento 0x30 al día siguiente, de gravedad 5 −
+// impuesto / 50000 (al menos 1), con el que preside la primera ciudad con el
+// bit 0x40 (su alcalde de la IA o, sin alcalde comerciante, un concejal). Las
+// cartas (0x4D6530) no se reproducen. Se quita siempre.
+void fn_4eab94(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	const uint32_t amount = head_event(save).u32(0x8);
+	const uint8_t town = head_event(save).u8(0xC);
+	if (town >= town_count(save)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	TownMemory& t = save.towns[town].memory;
+	uint32_t offices = 0;
+	uint32_t size = 0;
+	for (uint32_t o = t.u16(0x784); o < office_count(save); o = save.offices[o].memory.u16(0x2CA)) {
+		const OfficeMemory& office = save.offices[o].memory;
+		size += uint32_t(office.u16(0x2D2)) + office.u16(0x2D4) + 1;
+		++offices;
+	}
+	if (offices == 0) {
+		return;
+	}
+	fn_529f90(save, town, int32_t(amount), 2);
+	const uint32_t half = amount >> 1;
+	const uint32_t even = half / offices;
+	bool complaint = false;
+	for (uint32_t o = t.u16(0x784); o < office_count(save);) {
+		const OfficeMemory& office = save.offices[o].memory;
+		const uint32_t next = office.u16(0x2CA);
+		uint32_t share = (uint32_t(office.u16(0x2D4)) + office.u16(0x2D2) + 1) * half / size + even;
+		const uint16_t owner = office.u16(0x2C4);
+		if (owner >= merchant_count(save)) {
+			o = next;
+			continue;  // Sin comprobar con el oráculo (el juego no lo mira).
+		}
+		MerchantMemory& m = save.merchants[owner].memory;
+		m.u32(0x4BC) += share;
+		const int32_t money = m.s32(0);
+		bool paid = false;
+		if (money > 0) {
+			if (uint32_t(money) > share) {
+				m.s32(0) = int32_t(uint32_t(money) - share);
+				paid = true;
+			} else {
+				share -= uint32_t(money);
+				m.s32(0) = 0;
+			}
+		}
+		while (!paid && share > 0) {
+			g.u32(kEventBusy) = 0;
+			const uint16_t n = fn_4d8cf0(save, g.u32(kTick) + 0x700);
+			g.u32(kEventBusy) = 1;
+			Event& d = save.events[n];
+			d.u16(6) = 1;
+			d.u8(0x12) = 0;
+			d.u8(0x15) = 0;
+			d.u8(0x16) = 0;
+			d.u8(0x17) = 0;
+			const uint32_t part = share > 250000 ? 250000 : share;
+			d.u32(0x8) = part;
+			share -= part;
+			d.u8(0x13) = 0;
+			d.u8(0x10) = 0xFF;
+			d.u8(0x11) = office.u8(0x2C4);
+			d.u32(0xC) = g.u32(kTick);
+			d.u8(0xC) = 0;
+			d.u8(0x14) = t.u8(0x2C0);
+		}
+		complaint |= m.u8(0x19) != town && owner != t.u8(0x6F1) && (t.u32(0x76C) & 0x100);
+		o = next;
+	}
+	if (!complaint || (t.u32(0x2C8) & 0x40)) {
+		return;
+	}
+	g.u32(kEventBusy) = 0;
+	const uint16_t n = fn_4d8cf0(save, g.u32(kTick) + 0x100);
+	g.u32(kEventBusy) = 1;
+	Event& c = save.events[n];
+	c.u16(6) = 0x30;
+	c.u32(0x8) = g.u32(kTick);
+	c.u8(0x12) = t.u8(0x2C0);
+	c.u8(0x13) = 1;
+	c.u8(0x14) = 0xFF;
+	c.u8(0x15) = 0;
+	const uint32_t steps = amount / 50000;
+	c.u8(0xC) = steps >= 5 ? 1 : uint8_t(5 - steps);
+	for (uint32_t i = 0; i < town_count(save); ++i) {
+		const TownMemory& h = save.towns[i].memory;
+		if (!(h.u32(0x2C8) & 0x40)) {
+			continue;
+		}
+		const uint8_t mayor = h.u8(0x6F1);
+		if (mayor >= merchant_count(save)) {
+			const uint32_t k = uint8_t(~mayor) & 3;
+			c.u8(0xD) = h.u8(0x6D4 + k);
+			c.u8(0xE) = h.u8(0x6D8 + k);
+			c.u8(0xF) = uint8_t(i);
+			c.u8(0x10) = h.u8(0x6E0 + k);
+			c.u8(0x11) = h.u8(0x6E4 + k);
+			return;
+		}
+		const MerchantMemory& m = save.merchants[mayor].memory;
+		if (m.u16(8) != 0) {
+			c.u8(0xD) = m.u8(0x1C);
+			c.u8(0xE) = m.u8(0x1D);
+			c.u8(0xF) = uint8_t(i);
+			c.u8(0x10) = merchants_detail::fn_4f9430(save, mayor);
+			c.u8(0x11) = m.u8(0x39C + m.u8(0x19));
+			return;
+		}
+	}
+}
+
+// --- Evento 0x38 ---
+
+// 0x4ECB14 (evento 0x38, lo crea la elección de alcalde 0x528E60 a la
+// primera reelección de un comerciante): el monumento al alcalde [+0x9] de
+// la ciudad [+0x8]. Nada si ya no es su alcalde, si hay otro 0x38 suyo en la
+// cola o si la ciudad no tiene un edificio de tipo 0x2D de la ciudad (el
+// primero de ese tipo en la lista [0x764]). Si no, se aplaza 0x3E00 ticks más
+// 31 · ([+0x1C] & 0x3FF) / 2 del barco [0x6DD88A] y, mientras la muralla no
+// esté (0x4FCFE0 del punto 1, o del 2 con piezas pendientes en [0x766]),
+// espera; después el monumento pasa a ser del alcalde ([+0x2]), con la
+// variante [+0x7] (tick + ciudad + comerciante) % 3, 3 más con rango > 7
+// (0x4F9430). Los gráficos (0x590680 si es la ciudad que se ve) y las cartas
+// no se reproducen. Devuelve si sigue (con el tick ya cambiado). Comprobado
+// con estados retocados (`retouch.py monumento`: esperar a la muralla, el
+// monumento y otro comerciante que ya no es alcalde).
+bool fn_4ecb14(SaveGame& save, uint16_t event) {
+	const GlobalMemory& g = save.globals;
+	Event& e = save.events[event];
+	const uint32_t town = e.u8(0x8);
+	const uint8_t merchant = e.u8(0x9);
+	if (town >= town_count(save) || merchant >= merchant_count(save)) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	SavedTown& st = save.towns[town];
+	const TownMemory& t = st.memory;
+	if (merchant != t.u8(0x6F1)) {
+		return false;
+	}
+	for (uint32_t i = e.u16(0x4); i < g.u16(kEventCount); i = save.events[i].u16(0x4)) {
+		if (save.events[i].u16(6) == 0x38 && save.events[i].u8(0x9) == merchant) {
+			return false;  // Sin comprobar con el oráculo.
+		}
+	}
+	const uint32_t count = t.u16(0x776);
+	uint32_t monument = 0xFFFF;
+	for (uint32_t i = t.u16(0x764); i < count; i = st.records[i].next) {
+		if (st.records[i].type == 0x2D) {
+			if (st.records[i].owner >= merchant_count(save)) {
+				monument = i;
+			}
+			break;
+		}
+	}
+	if (monument >= count) {
+		return false;  // Sin comprobar con el oráculo.
+	}
+	e.u32(0) += 0x3E00;
+	const uint16_t ship = g.u16(global::kShips + 0xEA);  // 0x6DD88A
+	if (ship < ship_count(save)) {
+		const uint32_t x = save.ships[ship].memory.u32(0x1C) & 0x3FF;
+		e.u32(0) += uint32_t(int32_t((x * 31) << 8) >> 9);
+	}
+	if (fn_4fcfe0(save, int(town), 1) || (fn_4fcfe0(save, int(town), 2) && t.u16(0x766) < count)) {
+		return true;
+	}
+	BuildingRecord& r = st.records[monument];
+	r.owner = merchant;
+	r.param = uint8_t((g.u32(kTick) + town + merchant) % 3);
+	if (merchants_detail::fn_4f9430(save, merchant) > 7) {
+		r.param = uint8_t(r.param + 3);
+	}
+	return false;
 }
 
 // --- Evento 0x35 ---
@@ -2499,6 +2689,11 @@ int events_rare(SaveGame& save, uint16_t event, uint16_t type) {
 		return int(fn_4ea594(save));
 	case 0x32:
 		return int(fn_4eafe4(save));
+	case 0x31:
+		fn_4eab94(save);  // El impuesto extraordinario de una ciudad.
+		return 0;
+	case 0x38:
+		return fn_4ecb14(save, event) ? 1 : 0;  // El monumento al alcalde reelegido.
 	case 0x33:
 		fn_4ec934(save, event);
 		return 0;
