@@ -13,7 +13,7 @@ merging on the PC.
 | 2. Oracle: the game's writer in the emulator | done (`tools/oracle/write_oracle.py`) |
 | 3. Version 0x85 branches in the readers | pending |
 | 4. C++ writer (`savegame_write.cpp`), byte for byte | done for the 12 saves (§2) |
-| 5. LZ compressor rewritten in C++ | pending: `lz_compress` writes a stored block for now |
+| 5. LZ compressor rewritten in C++ | done: same bytes as the game's in the 12 saves (§3) |
 | 6. After playing, round trip, `.pst` | pending |
 
 ## 1. How the game saves
@@ -145,7 +145,7 @@ The `.pst` is optional for loading: if it isn't found, 0x5476E0 calls
   `savegame_file` (the three, compressed), `expire_merchant_mail` (0x4D6780)
   and `load_save_scripts` (the town names, called from
   `load_game_scripts`).
-- `src/p3data/lz_compress.{hpp,cpp}`: `lz_compress` (part 5).
+- `src/p3data/lz_compress.{hpp,cpp}`: `lz_compress`, the game's compressor (§3).
 - `SaveOpaque` in `savegame.hpp` (`SaveGame::opaque`): what p3vita read and
   threw away before and the writer needs: the ten lists of each merchant,
   the pirates' maps and records, the extras of the notices and of the
@@ -153,12 +153,17 @@ The `.pst` is optional for loading: if it isn't found, 0x5476E0 calls
   The 12 bytes [0x6DFBC4..0x6DFBCC] and the u16 [0x6DD728], [0x6DD72A] go to
   the globals.
 - `p3save <cpr> <save> write <out.pat> [<out.raw>]` (the save is read from
-  the archive or, if it isn't there, from the disk).
+  the archive or, if it isn't there, from the disk; `raw` too) and `p3save
+  compress <in> <out>`.
 - Checks: `tools/oracle/write_oracle.py` (the game's code: load like
   `town_oracle.py`, the 12 bytes and the battles like 0x549F40, then
   0x4D6780, 0x549C60, 0x549CC0 and 0x54C410), `tools/oracle/compare_written.py`
   (byte for byte by sections; pointers counted apart) and
-  `scripts/write-check.sh [SAVES]` (both on each save; 19 s for the 12 here).
+  `scripts/write-check.sh [SAVES]` (both on each save, the compressor alone on
+  the game's uncompressed file, and p3vita's `.pat` decompressed again; 19 s
+  for the 12 here). `tests/lz_test.cpp` (ctest, now 8 of 8): 5 synthetic
+  inputs against the bytes the game's compressor writes for them (computed
+  in the emulator) and round trips.
 
 ### 2.1 Check 1: byte for byte against the game, right after loading
 
@@ -210,6 +215,36 @@ never until the u32 [+0x4] of its block, else never. Expired notices are
 emptied (0x51AAB0) and go to the head of the free list [0x6DD734]. The
 mailboxes of the merchants are empty in the 12 saves, so only retouched
 states will reach it (pending).
+
+## 3. The compressor
+
+The game's compressor is in the exe (statically linked, not in
+`archiver.dll`): 0x54C410 allocates a hash table of 0x40000 bytes and a ring
+of 0x17E8 and calls 0x6381E0, which keeps its state in globals
+(0x6C7B20..0x6C7CB8). Rewritten in `lz_compress.cpp` with the same choices,
+which decide the bytes:
+
+- Below 16 bytes, or when the output reaches the size of the input (checked
+  after each u32 written, 0x6387C7 changes the return address to
+  0x63826C), a stored block (`n < 0`, 0x638274).
+- The u32 size, the first byte as a literal; then at each position 0x6384D4:
+  if its two bytes are equal, a literal and the run from the next byte as a
+  match at distance 1 (if it is at least 2 bytes); if not, the longest match
+  of the hash chain of the two bytes (u16 key, 0x10000 heads), newest first,
+  the newest on a tie, and the first that reaches the end of the input wins
+  at once; with no chain, a literal. Each position covered is inserted at the
+  head of its chain (0x638434); the chains keep the last 510 positions (ring
+  of 0x1FE nodes; the oldest leaves its chain when its node is reused). The
+  last byte, if no match covered it, is a literal, and the last u32 is
+  written even if it is empty.
+- Distance − 1 in 8 classes (`c`: 3 bits, then `c + 1` bits from 0, 2, 6,
+  14, 30, 62, 126, 254), length − 2 in fields of 2, 3, 4... bits (table
+  0x6C7BCC: 2^w − 1).
+
+Result: the game's uncompressed file of each of the 12 saves, compressed by
+p3vita, gives the same bytes as the game's (189 700 for save 1; 161 892 to
+278 028). The files p3vita writes differ from the game's only through the
+pointers (§2.1), so their compressed sizes differ a little.
 
 ## For the roadmap
 
@@ -264,7 +299,8 @@ Looks like one:
   `load_game_scripts` calls `load_save_scripts`. Nothing else changes in
   what it reads (load: 0 differences in the 12 saves).
 - `src/p3data/CMakeLists.txt`: `savegame_write.cpp`, `lz_compress.cpp`.
-- `tools/p3save/main.cpp`: `write`, and reading the save from the disk.
+- `tests/CMakeLists.txt`: `lz_test` (ctest goes from 7 to 8 tests).
+- `tools/p3save/main.cpp`: `write`, `compress`, and reading the save from the disk.
 
 ## Time of the checks
 

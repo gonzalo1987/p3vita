@@ -26,12 +26,14 @@ int usage() {
 	std::fprintf(stderr,
 		"uso: p3save <archivo.cpr> <partida> [ciudad | comerciantes | barcos | raw <salida>]\n"
 		"       p3save <archivo.cpr> <partida> write <out.pat> [<out.raw>]\n"
+		"       p3save compress <in> <out>\n"
 		"\n"
 		"Sin más argumentos, lista las ciudades de la partida (p. ej. missav/1.pat).\n"
 		"Con el número de una ciudad, muestra su almacén, producción y consumo.\n"
 		"comerciantes y barcos los listan; raw guarda la partida descomprimida.\n"
 		"write saves it again as the game does (version 0x85; with <out.raw>, also uncompressed).\n"
-		"<partida> is read from the archive or, if it isn't there, from the disk.\n");
+		"<partida> is read from the archive or, if it isn't there, from the disk.\n"
+		"compress compresses any file as the game does (lz_compress).\n");
 	return 2;
 }
 
@@ -130,10 +132,11 @@ bool write_file(const char* path, const std::vector<uint8_t>& data) {
 	return ok;
 }
 
-// A save from the archive or, if it isn't there, from the disk.
-bool load_any_savegame(const CprArchive& archive, const std::string& path, SaveGame& save, std::string* error) {
+// A save from the archive or, if it isn't there, from the disk, decompressed.
+bool read_any_savegame_data(const CprArchive& archive, const std::string& path, std::vector<uint8_t>& data,
+	std::string* error) {
 	if (archive.find(path)) {
-		return load_savegame(archive, path, save, error);
+		return read_savegame_data(archive, path, data, error);
 	}
 	FILE* f = std::fopen(path.c_str(), "rb");
 	if (!f) {
@@ -146,9 +149,12 @@ bool load_any_savegame(const CprArchive& archive, const std::string& path, SaveG
 		packed.insert(packed.end(), buffer, buffer + n);
 	}
 	std::fclose(f);
+	return lz_decompress_file(packed.data(), packed.size(), data, error);
+}
+
+bool load_any_savegame(const CprArchive& archive, const std::string& path, SaveGame& save, std::string* error) {
 	std::vector<uint8_t> data;
-	if (!lz_decompress_file(packed.data(), packed.size(), data, error) ||
-		!parse_savegame(data.data(), data.size(), save, error)) {
+	if (!read_any_savegame_data(archive, path, data, error) || !parse_savegame(data.data(), data.size(), save, error)) {
 		return false;
 	}
 	load_game_scripts(archive, save);
@@ -158,6 +164,20 @@ bool load_any_savegame(const CprArchive& archive, const std::string& path, SaveG
 }  // namespace
 
 int main(int argc, char** argv) {
+	if (argc == 4 && std::strcmp(argv[1], "compress") == 0) {
+		FILE* f = std::fopen(argv[2], "rb");
+		if (!f) {
+			std::fprintf(stderr, "can't read %s\n", argv[2]);
+			return 1;
+		}
+		std::vector<uint8_t> data;
+		uint8_t buffer[1 << 16];
+		for (size_t n; (n = std::fread(buffer, 1, sizeof(buffer), f)) > 0;) {
+			data.insert(data.end(), buffer, buffer + n);
+		}
+		std::fclose(f);
+		return write_file(argv[3], lz_compress(data.data(), data.size())) ? 0 : 1;
+	}
 	if (argc < 3 || argc > 6) {
 		return usage();
 	}
@@ -170,7 +190,7 @@ int main(int argc, char** argv) {
 	const std::string command = argc > 3 ? argv[3] : "";
 	if (command == "raw") {
 		std::vector<uint8_t> data;
-		if (argc != 5 || !read_savegame_data(*archive, argv[2], data, &error)) {
+		if (argc != 5 || !read_any_savegame_data(*archive, argv[2], data, &error)) {
 			std::fprintf(stderr, "%s\n", argc != 5 ? "falta el fichero de salida" : error.c_str());
 			return 1;
 		}

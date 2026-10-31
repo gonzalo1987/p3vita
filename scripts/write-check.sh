@@ -1,7 +1,9 @@
 #!/bin/bash
 # Writes each save with the game's code (tools/oracle/write_oracle.py) and with
 # p3data (p3save write) and compares the uncompressed files byte for byte
-# (tools/oracle/compare_written.py) and the compressed ones.
+# (tools/oracle/compare_written.py); then compresses the game's uncompressed
+# file with p3data (p3save compress) and compares it with the game's
+# compressed one, and decompresses p3data's .pat (p3save raw of the file).
 #
 # usage: scripts/write-check.sh [SAVES...]   (by default the 12 v0x82 ones of missav/)
 # Needs: build/ (or BUILD=<dir>) built, unicorn for python3 and the variables
@@ -23,11 +25,20 @@ for s in "${saves[@]}"; do
 	"$build/tools/p3save/p3save" "$P3_CPR" "missav/$s.pat" write "$tmp/$s-written.pat" "$tmp/$s-written.raw" >/dev/null
 	echo "== $s"
 	python3 tools/oracle/compare_written.py "$tmp/$s-game-written.raw" "$tmp/$s-written.raw" || status=1
-	if cmp -s "$tmp/$s-game-written.pat" "$tmp/$s-written.pat"; then
-		echo "compressed: equal ($(stat -c %s "$tmp/$s-written.pat") bytes)"
+	"$build/tools/p3save/p3save" compress "$tmp/$s-game-written.raw" "$tmp/$s-recompressed.pat"
+	if cmp -s "$tmp/$s-game-written.pat" "$tmp/$s-recompressed.pat"; then
+		echo "compressor: same bytes as the game's ($(stat -c %s "$tmp/$s-recompressed.pat"))"
 	else
-		echo "compressed: different ($(stat -c %s "$tmp/$s-game-written.pat") bytes in the game, $(stat -c %s "$tmp/$s-written.pat") in p3vita)"
+		echo "compressor: different ($(stat -c %s "$tmp/$s-game-written.pat") bytes in the game, $(stat -c %s "$tmp/$s-recompressed.pat") in p3vita)"
+		status=1
 	fi
-	rm -f "$tmp/$s-game-written.raw" "$tmp/$s-written.raw"
+	if "$build/tools/p3save/p3save" "$P3_CPR" "$tmp/$s-written.pat" raw "$tmp/$s-unpacked.raw" 2>/dev/null &&
+		cmp -s "$tmp/$s-unpacked.raw" "$tmp/$s-written.raw"; then
+		echo "p3vita's .pat decompresses to its .raw"
+	else
+		echo "p3vita's .pat does NOT decompress to its .raw"
+		status=1
+	fi
+	rm -f "$tmp/$s-game-written.raw" "$tmp/$s-written.raw" "$tmp/$s-recompressed.pat" "$tmp/$s-unpacked.raw"
 done
 exit $status

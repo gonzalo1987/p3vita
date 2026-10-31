@@ -39,3 +39,9 @@ target_link_libraries(sailing_test PRIVATE p3data)
 target_compile_options(sailing_test PRIVATE -Wall -Wextra)
 
 add_test(NAME sailing COMMAND sailing_test)
+
+add_executable(lz_test lz_test.cpp)
+target_link_libraries(lz_test PRIVATE p3data)
+target_compile_options(lz_test PRIVATE -Wall -Wextra)
+
+add_test(NAME lz COMMAND lz_test)
