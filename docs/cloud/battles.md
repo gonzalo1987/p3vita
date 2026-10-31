@@ -1,13 +1,52 @@
-# Battles and encounters: the study (cloud/battles)
+# Battles and encounters (cloud/battles)
 
-Task `tasks/battles.md` of p3vita-datos. Phase 1 (this study) is about the
-battle subsystem of Patrician3.exe (inventory part E, roadmap «Piratas,
-persecuciones, encuentros y batallas»): what is simulation and what is UI,
-where the simulation reaches it from and how often, what the oracle needs to
-run it, and a plan in pieces.
+Task `tasks/battles.md` of p3vita-datos: the study of the battle subsystem
+of Patrician3.exe (inventory part E, roadmap «Piratas, persecuciones,
+encuentros y batallas») and its pieces, in order.
 
-Status: **phase 1 done** (2026-10-31); **phase 2 done for piece 1** of the
-plan, the storms (§6), behind a setting that is off by default. See «Done and left» at the end.
+## Summary
+
+- **Phase 1, the study (done):** the two battle classes (sea battle 0x1E98
+  bytes, town battle 0x2F24, up to 255 in 0x6E55D0, saved in the savegame),
+  what is simulation and what is UI (without the UI: 249 functions / 148 KB
+  for the sea battle, 41 / 50 KB for the town battle, not 1 MB), where
+  `advance_time` starts battles and how often (17 automatic sea battles in 30
+  days of the 12 saves with the pirates moving, all of a pirate convoy against
+  an AI ship; the emulator runs them to the end), how they are stepped
+  (operation 0x94 from the real-time driver, not `advance_time`), that
+  0x5053C0 is the storms, what the oracle needs and a plan in 7 pieces (§1–§5).
+- **Piece 1, the storms (done, merged into `main` at 1c4fbfd and on by
+  default since 61cdbfa):** 0x5053C0, 0x505290 and 0x447580 in
+  `src/p3data/battle/storms.cpp`; call by call 0 differences in the 12 saves
+  (10 days) and in retouched states covering every reachable block; the
+  world with the storms on, 0 differences (§6).
+- **Piece 2, the pirates moving (in progress):** measured what runs (§7):
+  only the convoy state 0x12, 8 functions not in p3vita (about 1 400
+  instructions) and the per-town precompute 0x448780 that the oracle skipped
+  and the pirates need (2.8 s in the emulator for the 24 towns).
+- **Piece 3, the automatic sea battle:** not started.
+
+## Decisions for the user
+
+- **The battle clock (decided):** one operation 0x94 with 84 steps after
+  each tick in which there are battles (`[0x6E59D4]` ≠ 0). For
+  `docs/oracle.md`: «Las batallas avanzan con la operación 0x94, que en el
+  juego encola el bucle de tiempo real (0x546620 → 0x612DB0) con los pasos
+  del reloj; p3vita y el oráculo la ejecutan, con 84 pasos, al final de cada
+  tick en el que haya batallas, tras las demás operaciones encoladas.» (The
+  result of a battle doesn't depend on how the steps are cut, §3.)
+- **Piece 2 changes the oracle's load** (recommendation: accept): with the
+  pirates on, the per-town precompute 0x448780 runs at the load (today it is
+  skipped, `SKIPPED_WITH_NAVIGATION`), because the pirates choose their
+  waypoints from it ([+0x20], [+0x24] of the navigation object). It adds
+  2.8 s per load and p3vita must compute the same lists.
+- **The rule for piece 2 alone** (recommendation: only as a step, until piece
+  3): while battles don't exist, a pirate that would attack (0x507BE9 →
+  0x50BC40) goes on as if it had no target, and a pirate convoy that arrives
+  at a town (0x507C0B → town battle) gets a new course. Both p3vita and the
+  oracle (`--pirates`) do it; it disappears with pieces 3 and 6.
+- The two possible game bugs of «Game bugs» (the battle clock, the town
+  battle reading the town view): to confirm before fixing.
 
 Tools written for the study (in p3vita-datos, branch `cloud/battles`,
 `re/battles/`; nothing in p3vita uses them):
@@ -433,6 +472,82 @@ saves 1, 3, 5 and 7, 7 days** (570 s); «saltadas» 1, 0, 5 and 4, the same as
 without the storms (calls to 0x535760 from inside the game). The default
 (storms off) is the code of `main` by construction: `storms_` is false and the
 oracle installs the same jump as before; `world.sh` itself was not rerun.
+
+Since 61cdbfa (`main`) the storms are on by default in p3vita, tick_probe
+and the oracle (`--no-storms` turns them off).
+
+## 7. Piece 2: the pirates moving (in progress)
+
+What runs when the pirates move and no battle starts (`re/battles/pirates.py`
+SAVE DAYS, without recording, against `--off`, the oracle of today; the 12
+saves, 10 days, 3 min): the pirate convoys are only ever in **state 0x12**
+(20 619 passes); no pirate ship alone at sea or in port. New functions entered
+(none in p3vita): 0x505C90, 0x50D9E0, 0x50E340, 0x514B80, 0x515360, 0x515DA0,
+0x612930, 0x621750 (an empty `ret`), and 0x50BC40, the start of a battle.
+
+The handler of state 0x12 (0x507A65, in 0x506720; `c` the convoy, `G` its
+guide):
+1. `G` back in the list by x (0x50CE50) if it is in none; the wait `c[+0x16]`
+   counts down into `G[+0x138]`.
+2. If `c[+0x14] & 0x40` (the target was set by 0x50BA80 / the attack of event
+   0x1E): clear it; if `G[+0x50]` is a merchant's ship sailing (0x0F/0x10) →
+   step 4. Otherwise, every 4 ticks, 0x50D9E0 (choose a target) and 0x515360
+   (worth attacking?) → step 4.
+3. No target: without a route, 0x505C90 (a new course; it may disband the
+   convoy at its nest: the walk goes on from the same link); then the convoy
+   sails (0x502110 with 1) and is sorted by x (0x50D0C0); when its route ends
+   (0x502110 false) it leaves the list and attacks the town `c[+0x1C]` (town
+   battle: 0x611D80, 0x5FBFE0, piece 6).
+4. Attack: if `G[+0x50]` still sails (0x0F), the convoy leaves the list and
+   0x50BC40 starts the sea battle (piece 3).
+
+The functions:
+- **0x50D9E0** (thiscall on the ships object, the guide; 202 instructions):
+  keeps `[+0x50]` if it is sailing (0x0F/0x10), closer than `[0x6DD7A0 +
+  0xFC]` (distance²) and outside the shallows (table 0x673564, the three
+  boxes of `sailing.cpp`); otherwise looks for the nearest ship by the list
+  by x within `[+0xFE]` in x (both ways), not a storm (0x15), closer than
+  `[+0xFA]`, outside the shallows. No owner check here.
+- **0x515360** (cdecl, the guide; 313): whether to attack `T = [+0x50]`
+  (clears `[+0x50]` when not): not its own ([+0x15D]), a merchant's, sailing;
+  an AI merchant without flag 4 in `[+0x8]` only if the pirate doesn't wait
+  (`[+0x138]` = 0); a human only if `[0x39C + home town]` of the merchant +
+  difficulty ≥ 2 and the wait ≤ 0x900. A privateer (`[+0x15D]` a merchant)
+  always. Otherwise compares the convoys: the pirates' best battle speed
+  (0x612930) and the target's worst, `19 · target ≤ 20 · pirates`; the crews
+  and arms (`[+0x40]`, `[+0x120]`) `7 · target ≤ 10 · pirates`; the target
+  carries cargo and a pirate has 2000 free; and the target is not in the
+  shallows (0x50E340). Within 20 px (0x190) it stops (0x516840) and returns
+  1; else it heads for it (route cleared, `[+0x52]` = the target) unless its
+  route already ends next to it.
+- **0x612930** (on 0x6E55D0, a ship; 83): the battle speed of a ship:
+  `(0x1000 − 614 · cargo / capacity) · table 0x67ADC0[type] >> 12` (table
+  0x2B5, 0x2B5, 0x242, 0x242) times the hull factor `clamp(179 · hull / max +
+  0x71, 0xA6, 0x100) >> 10`, times `(captain's [+0x9] + 2550) / 2550` with a
+  captain; 1 without capacity or hull.
+- **0x50E340** (2 arguments): whether a point is in the shallows.
+- **0x505C90** (on the ships object, &link; 443, plus 0x514B80 129,
+  0x515DA0 102, 0x5159C0 72, 0x513BF0 144 and the generator 0x46C320..380):
+  a new course for a convoy without a route: if a ship is weak (crew under
+  the table 0x673660, hull under 80 %, arms under 2 · `[0x672CC8]`) or loaded,
+  it goes home (the nest of its pirate, 0x51A470 → the town table 0x6DDBB0);
+  at the nest it is disbanded (0x514B80, which queues an operation). Else it
+  follows `G[+0x52]` (a ship it saw) or goes to a random waypoint of the
+  per-town lists `[nav+0x20]` (counts) and `[nav+0x24]` (points) with the
+  generator seeded with the tick.
+- **0x448780** (on the navigation object, a town; about 460 instructions,
+  0x448450 for each cell, 0x445010 the route): **the per-town list of
+  waypoints** that 0x4482C0 builds at the load (and 0x448040 for a new town):
+  the water cells (every 16 of the grid) whose route from the town is between
+  two lengths, widening the ring until there are 10. The oracle skips it
+  (`SKIPPED_WITH_NAVIGATION`, «las rutas no lo usan»): with it the load
+  takes 2.8 s more for the 24 towns (save 3: 10 to 29 points per town). p3vita
+  doesn't have it either.
+
+Still to do for piece 2: rewrite these (≈ 1 900 instructions with 0x448780),
+`--pirates` in the oracle (pirate convoys through `CONVOY_DISPATCH`,
+0x448780 at the load, the two jumps of the rule of «Decisions»), the same in
+p3vita (`Sailing::set_pirates`), probes and retouched states.
 
 ## Changes to shared files
 
