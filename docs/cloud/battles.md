@@ -408,7 +408,23 @@ countdown of the sea map `[+0xA]` (always 0 in the saves) and the UI at the
 end; in 0x505290 the player's ship (UI, not reproduced); in 0x447580 the
 plain insertion of the ship's position (the two pairs of corners touch, or
 both ways round have land), the case of the way down being empty, and the
-paths after land on the second way. To check with retouched states (next).
+paths after land on the second way.
+
+Retouched states for them: `tools/oracle/retouch_storms.py` (new; it moves
+the existing storms next to chosen ships and sets kind, strength and
+countdown, then records 5053c0,505290,447580 one day; `--blocks` prints the
+blocks that ran). Scenarios `convoys` (kinds 2 and 0 on convoys at sea, a ship
+with 2 of hull), `countdown` (the countdown at 6, 3, and two storms that end
+with it at 2 and 10), `vertical` (a course with `[+0x28]` = 0), `reroute`
+(a storm at 8 places round ships with a captain and a route) and `coast` (the
+same near a town). Run in saves 1, 3 and 5 (all), and `coast` also in 2, 4,
+6, 7, tut0–tut4, `reroute` in 2, 4 and tut1: **0 differences in all** (each
+run 1 day, 30 s for a batch of 10). With them every block of the three
+functions has run except the player's ship in 0x505290 (0x50539A: a call
+to the UI, not reproduced) and blocks that can't be reached: the sign fix-up
+of `(k + 8) & 7` (k + 8 is never negative) and the empty ways round
+(0x447888 and the `b > d`, `a < c` exits: after `c −= 8` and `d += 8` they
+can't happen).
 
 ## For the roadmap
 
@@ -474,5 +490,4 @@ uses).
 
 Phase 2 so far: §6.
 
-Left: the retouched states for the branches of §6, the world with the storms
-on (4 saves), and then piece 2 of §5.
+Left: the world with the storms on (4 saves, running), and then piece 2 of §5.
