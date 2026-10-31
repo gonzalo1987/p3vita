@@ -46,6 +46,7 @@
 #include <cstring>
 #include <vector>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -698,7 +699,8 @@ void fn_4f68d0(SaveGame& save, MerchantMemory& m, uint32_t tick, uint32_t a1, ui
 // ([0x6DD888] + day) % (the surname index of the last merchant: the game
 // divides by that and not by the number of surnames), going up past the
 // ones in use (back to 0 after that divisor); and he stops being mayor of his
-// home town. His ships, offices and buildings stay. The records for the
+// home town (game bugs, all three fixed with fix_game_bugs(): see below). His
+// ships, offices and buildings stay. The records for the
 // graphs (0x54E1F0, 0x54E170: heap, from [0x6DFCAC]) are not reproduced.
 void fn_4f5d80(SaveGame& save, int merchant) {
 	GlobalMemory& g = save.globals;
@@ -740,8 +742,35 @@ void fn_4f5d80(SaveGame& save, int merchant) {
 	const uint32_t day = g.u16(global::kWorldDayOfYear);
 	m.u8(0x1C) = uint8_t(int32_t(day) % int32_t(g.u16(0x6DDB70)));
 	const uint32_t surnames = g.u16(0x6DDB74);
-	std::vector<uint8_t> used(surnames, 0);
 	const uint32_t count = g.u16(global::kWorldMerchantCount);
+	if (fix_game_bugs()) {
+		// The fix: modulo the number of surnames (at most 256: [+0x1D] is a
+		// byte), without counting the merchant himself (his surname is
+		// already 0) and going round once at most (if all are taken, the
+		// first one).
+		const uint32_t n = surnames < 256 ? surnames : 256;
+		if (n > 0) {
+			std::vector<uint8_t> taken(n, 0);
+			for (uint32_t k = 0; k < count; ++k) {
+				const uint32_t other = save.merchants[k].memory.u8(0x1D);
+				if (k != uint32_t(merchant) && other < n) {
+					taken[other] = 1;
+				}
+			}
+			const uint32_t first = (uint32_t(g.u16(0x6DD888)) + day) % n;
+			uint32_t surname = first;
+			for (uint32_t tries = 0; tries < n && taken[surname]; ++tries) {
+				surname = (surname + 1) % n;
+			}
+			m.u8(0x1D) = uint8_t(taken[surname] ? first : surname);
+		}
+		TownMemory& home = save.towns[m.u8(0x19)].memory;
+		if (home.u8(0x6F1) == me) {
+			home.u8(0x6F1) = 0xFF;
+		}
+		return;
+	}
+	std::vector<uint8_t> used(surnames, 0);
 	uint32_t divisor = 0;
 	for (uint32_t k = 0; k < count; ++k) {
 		divisor = save.merchants[k].memory.u8(0x1D);
