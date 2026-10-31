@@ -1,8 +1,9 @@
 #!/bin/bash
-# The whole world with the daily statistics (town_oracle.py --statistics, which
-# records 0x54DE90 too), as re/emu/sesion5/world.sh in p3vita-datos does
-# without them: the oracle and tick_probe --continuo --carga for each save, in
-# parallel, and the count of different calls.
+# The whole world with the daily statistics (on by default in town_oracle.py,
+# which then records 0x54DE90 too), as re/emu/sesion5/world.sh in
+# p3vita-datos: the oracle and tick_probe --continuo --carga for each save, in
+# parallel, and the count of different calls. OPTS adds options to the oracle
+# (OPTS=--no-statistics: without them).
 #
 # usage: scripts/statistics-world.sh DAYS [SAVES...]   (by default 1 2 3 4)
 # Needs P3_EXE, P3_CPR and P3_SHIPS as scripts/write-reload.sh; BUILD.
@@ -22,7 +23,7 @@ for s in "${saves[@]}"; do
 	(
 		[ -f "$tmp/$s.raw" ] || "$build/tools/p3save/p3save" "$P3_CPR" "missav/$s.pat" raw "$tmp/$s.raw" >/dev/null
 		python3 tools/oracle/town_oracle.py "$P3_EXE" "$tmp/$s.raw" "$tmp/$s-statistics.probe" "$days" "$functions" \
-			--barcos "$P3_SHIPS" --cpr "$P3_CPR" --statistics >/dev/null 2>"$tmp/$s-statistics.err"
+			--barcos "$P3_SHIPS" --cpr "$P3_CPR" $OPTS >/dev/null 2>"$tmp/$s-statistics.err"
 		"$build/tools/oracle/tick_probe" "$tmp/$s-statistics.probe" --continuo --carga "$tmp/$s.raw" --cpr "$P3_CPR" \
 			--max 8 >"$tmp/$s-statistics.txt" 2>&1
 		rm -f "$tmp/$s-statistics.probe"

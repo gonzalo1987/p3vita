@@ -42,7 +42,7 @@ Formato del fichero (enteros little endian):
 
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
        [--desde DÍA] [--max N] [--semilla S] [--cpr p2arch0_eng.cpr] [--barcos DATOS [--sin-ia] [--sin-convoyes]
-       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms] [--statistics]] [--write OUT]
+       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms] [--no-statistics]] [--write OUT]
 La función 51ba10 graba los ticks de ciudad enteros.
 
 Con --cpr (o si DATOS/scripts tiene los ficheros), la carga crea también el
@@ -83,7 +83,7 @@ ninguna):
   6349f0  t & 7 == 7: el asedio de la ciudad t >> 3, tras su tick
   4d85c0  tras los barcos: la cola de eventos (con el tick)
   633a90  tras la cola de eventos: el asedio de cada ciudad
-(0x54DE90, the daily statistics, only with --statistics: after 5315c0.) El juego ejecuta
+(0x54DE90, the daily statistics, after 5315c0 unless --no-statistics; always recorded.) El juego ejecuta
 la cola entre dos llamadas a advance_time, que hace hasta 8 ticks según el
 tiempo real; aquí y en p3vita, tras cada tick. La cola de eventos necesita lo
 de scripts/ (--cpr). Para repetir el mundo con tick_probe --continuo hay que
@@ -158,7 +158,7 @@ MERCHANT_TRAMPOLINE = SENTINEL + 0x40
 REST = {0x5315C0: 1, 0x535450: 1, 0x52D7D0: 0, 0x6349F0: 0, 0x4D85C0: 1, 0x633A90: 0}
 REST_TRAMPOLINES = SENTINEL + 0x60  # uno cada 0x20 bytes, en el orden de REST
 EXECUTOR_TRAMPOLINE = SENTINEL + 0x140  # tras los de REST; 0x23 bytes: ver executor_trampoline
-# The daily statistics (0x54DE90 on 0x6DFC90; --statistics): after 0x5315C0, as
+# The daily statistics (0x54DE90 on 0x6DFC90; unless --no-statistics): after 0x5315C0, as
 # advance_time does. Its lists are the regions S0..S4 (see regions()).
 STATISTICS = 0x54DE90
 STATISTICS_OBJECT = 0x6DFC90
@@ -1078,8 +1078,9 @@ def main():
     p.add_argument('--no-storms', action='store_true',
                    help='with --barcos, without the storms (0x5053C0, every 8 ticks), which run by default')
     p.add_argument('--storms', action='store_true', help='on by default now; kept for older scripts')
-    p.add_argument('--statistics', action='store_true',
-                   help='also the daily statistics (0x54DE90, after 0x5315C0; regions S0..S4)')
+    p.add_argument('--no-statistics', action='store_true',
+                   help='without the daily statistics (0x54DE90, after 0x5315C0; regions S0..S4), which run by default')
+    p.add_argument('--statistics', action='store_true', help='on by default now; kept for older scripts')
     p.add_argument('--resto', help='con --barcos, solo estas piezas del resto de advance_time (5315c0,535450,...); '
                    'por omisión, todas')
     p.add_argument('--sin-resto', action='store_true', help='con --barcos, sin el resto de advance_time')
@@ -1097,10 +1098,10 @@ def main():
         rest = [int(x, 16) for x in a.resto.split(',') if x]
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
                    not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], not a.no_storms,
-                   a.statistics)
+                   not a.no_statistics)
     o.load()
     functions = [int(x, 16) for x in a.functions.split(',')]
-    if a.statistics and STATISTICS not in functions:
+    if not a.no_statistics and STATISTICS not in functions:
         # tick_probe --continuo repeats only what is recorded: with the
         # statistics, 0x54DE90 always is (it changes towns and merchants).
         functions.append(STATISTICS)

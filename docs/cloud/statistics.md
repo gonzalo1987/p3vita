@@ -15,7 +15,7 @@ Branch `cloud/statistics`, from main f9d86eb. Task:
 
 | Part | State |
 |-|-|
-| 1. The daily statistics (0x54DE90) | rewritten and checked; on by default pending the 12 saves |
+| 1. The daily statistics (0x54DE90) | done: rewritten, checked in the 12 saves, on by default |
 | 2. The real `.pst` | pending |
 | 3. The loader's last three steps | pending |
 
@@ -84,7 +84,11 @@ too, since it goes to the `.pst` (part 2).
   compares, and the countdown [+0x8B] of the world no longer decreased before
   0x54DE90 (it goes between 0x5315C0 and 0x535450).
 - `advance_game_tick` calls `daily_statistics` after 0x5315C0 if
-  `SaveGame::record_statistics` (false until the 12 saves are checked).
+  `SaveGame::record_statistics`, now true by default; `town_oracle.py`
+  runs them by default too (`--no-statistics` to leave them out; the class
+  `TownOracle` keeps `statistics=False`, so `retouch.py` and
+  `retouch_storms.py` don't change), and `world.sh` as it is records them
+  (11 functions).
 - `tools/oracle/retouch_date.py`: moves the date of a save (here to 30
   December 1301, so that within 3 days come a new week of the towns, of the
   merchants, a month and a year).
@@ -96,14 +100,17 @@ too, since it goes to the `.pst` (part 2).
 | `scripts/tick-probe.sh 54de90 3 1 3` (`P3_ORACLE_OPTS=--statistics`) | 3 + 3 calls equal |
 | the same, 4 days, saves 1 and 3 moved to 30 December 1301 | 4 + 4 calls equal |
 | `scripts/statistics-world.sh 4 1 3 s1dec s3dec` (the whole world with the statistics, continuous) | 0 different in the 4 (120 s) |
+| `scripts/statistics-world.sh 7`, the 12 saves in three batches | 0 different in the 12 (182 + 173 + 154 s; without the statistics 370 s) |
+| `world.sh 7` as it is, `SAVES='1 3 7 tut4'`, with the statistics on by default | 0 «distintas», 11 functions (183 s) |
 
 ## Changes to shared files
 
 - `src/p3data/simulation.cpp` (`advance_game_tick`): after `fn_5315c0`,
   `if (save.record_statistics) daily_statistics(save);` and the include.
-- `tools/oracle/town_oracle.py`: `--statistics` (constants, the trampoline,
-  the call in `advance_tick`, the regions S0..S4 at the end of `regions()`,
-  0x54DE90 added to the recorded functions); `OPERATIONS` not touched.
+- `tools/oracle/town_oracle.py`: the statistics on by default, `--no-statistics`
+  (constants, the trampoline, the call in `advance_tick`, the regions S0..S4
+  at the end of `regions()`, 0x54DE90 added to the recorded functions);
+  `OPERATIONS` not touched.
 - `tools/oracle/tick_probe.cpp`: the regions S0..S4, the header among the
   compared globals, `register_probes_statistics`, the countdown rule.
 - `tools/oracle/probe_registry.hpp`, `tools/oracle/CMakeLists.txt`,

@@ -480,9 +480,10 @@ struct SaveGame {
 	// What p3vita keeps only to write the save (savegame_write.hpp).
 	SaveOpaque opaque;
 	// The daily statistics (statistics.hpp) and whether advance_game_tick
-	// records them (0x54DE90).
+	// records them (0x54DE90), as the game does: on since it is checked
+	// (0 differences in the 12 saves, docs/cloud/statistics.md).
 	Statistics statistics;
-	bool record_statistics = false;
+	bool record_statistics = true;
 };
 
 // Lee una partida ya descomprimida.
