@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/town_tick/votes.hpp"
 
 namespace p3::data {
 
@@ -126,6 +127,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x38:  // Una subasta de barco: el evento 0x0A (0x535E3B).
 		tick::fn_535e3b(save, operation);
+		break;
+	case 0x3F:  // The vote of a human player in an election or the diet (0x53AA10).
+		tick::fn_53aa10(save, operation);
 		break;
 	case 0x3B:  // Materiales para la carretera de un encargo de la Hansa (0x53A3E0).
 		tick::fn_53a3e0(save, operation);
