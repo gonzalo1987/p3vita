@@ -82,6 +82,7 @@ const char kStepsHelp[] =
 	"  frames:N     N frames without input (time passes at the game's speed)\n"
 	"  days:N       N frames of fast forward, one game day (256 ticks) each\n"
 	"  tap:X:Y      touch the screen at (X, Y) and let go\n"
+	"  cell:X:Y     center the camera on the town's cell (X, Y)\n"
 	"  shot:FILE    save the screen as a PNG\n";
 
 std::unique_ptr<InputScript> InputScript::parse(const std::string& steps, std::string& error) {
@@ -111,13 +112,14 @@ std::unique_ptr<InputScript> InputScript::parse(const std::string& steps, std::s
 				error = "wrong number in step \"" + text + "\"";
 				return nullptr;
 			}
-		} else if (head == "tap" && colon != std::string::npos) {
+		} else if ((head == "tap" || head == "cell") && colon != std::string::npos) {
 			const size_t second = rest.find(':');
-			step.kind = Kind::Tap;
+			step.kind = head == "tap" ? Kind::Tap : Kind::Cell;
 			step.x = second == std::string::npos ? -1 : number(rest.substr(0, second));
 			step.y = second == std::string::npos ? -1 : number(rest.substr(second + 1));
-			if (step.x < 0 || step.y < 0 || step.x >= kScreenWidth || step.y >= kScreenHeight) {
-				error = "wrong position in step \"" + text + "\" (the screen is 960x544)";
+			const bool off_screen = step.kind == Kind::Tap && (step.x >= kScreenWidth || step.y >= kScreenHeight);
+			if (step.x < 0 || step.y < 0 || off_screen) {
+				error = "wrong position in step \"" + text + "\"" + (off_screen ? " (the screen is 960x544)" : "");
 				return nullptr;
 			}
 		} else if (colon == std::string::npos) {
@@ -166,6 +168,8 @@ void InputScript::start_frame() {
 	++frame_;
 	extra_ticks_ = 0;
 	screenshot_.clear();
+	look_x_ = -1;
+	look_y_ = -1;
 	// The end of a press or a hold: the button goes up in the frame after.
 	if (held_ != SDL_CONTROLLER_BUTTON_INVALID && progress_ == 0) {
 		push_button(held_, false);
@@ -195,6 +199,10 @@ void InputScript::start_frame() {
 		break;
 	case Kind::Tap:
 		push_finger(progress_ == 0 ? SDL_FINGERDOWN : SDL_FINGERUP, step.x, step.y);
+		break;
+	case Kind::Cell:
+		look_x_ = step.x;
+		look_y_ = step.y;
 		break;
 	}
 	if (++progress_ >= length) {

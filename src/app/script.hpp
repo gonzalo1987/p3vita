@@ -31,6 +31,12 @@ public:
 	int extra_ticks() const { return extra_ticks_; }
 	// File to save the screen into at the end of this frame, or empty.
 	const std::string& screenshot() const { return screenshot_; }
+	// Town cell to center the camera on in this frame (cell:X:Y), if any.
+	bool look_at(int& x, int& y) const {
+		x = look_x_;
+		y = look_y_;
+		return look_x_ >= 0;
+	}
 	// All the steps have been played (after the last frame's screenshot).
 	bool finished() const { return finished_; }
 
@@ -38,12 +44,12 @@ public:
 	Uint32 now() const { return Uint32(frame_) * kScriptFrameMs; }
 
 private:
-	enum class Kind { Press, Hold, Frames, Days, Shot, Tap };
+	enum class Kind { Press, Hold, Frames, Days, Shot, Tap, Cell };
 	struct Step {
 		Kind kind = Kind::Press;
 		SDL_GameControllerButton button = SDL_CONTROLLER_BUTTON_INVALID;
 		int count = 1;  // Frames held, frames waited or days.
-		int x = 0;  // Tap position on the screen.
+		int x = 0;  // Tap position on the screen, or town cell.
 		int y = 0;
 		std::string file;
 	};
@@ -58,6 +64,8 @@ private:
 	SDL_GameControllerButton held_ = SDL_CONTROLLER_BUTTON_INVALID;
 	int extra_ticks_ = 0;
 	std::string screenshot_;
+	int look_x_ = -1;
+	int look_y_ = -1;
 	bool finished_ = false;
 };
 

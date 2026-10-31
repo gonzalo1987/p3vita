@@ -11,6 +11,44 @@ namespace {
 constexpr int kFallbackRegion = 2;
 constexpr size_t kMaxListWalk = 5000;
 
+// The record lists the game draws (0x521580), in its order: works in progress,
+// the town's buildings, fortifications and what burns. [0x760] (free) and
+// [0x766] (walls still to build) aren't drawn.
+constexpr size_t kDrawnListHeads[] = {0x762, 0x764, 0x768, 0x76A};
+// The fixed points (TownFixedPoints) in the town's memory, as the save has them.
+constexpr size_t kFixedPoints = 0x7B0;
+static_assert(sizeof(TownFixedPoints) == 0x5C, "the fixed points are [0x7B0..0x80B]");
+
+TownFixedPoints current_fixed_points(const TownMemory& m) {
+	TownFixedPoints f;
+	size_t o = kFixedPoints;
+	auto copy = [&](auto& points) {
+		for (uint8_t& b : points) {
+			b = m.u8(o++);
+		}
+	};
+	copy(f.walls);
+	copy(f.lighthouses);
+	copy(f.cranes);
+	copy(f.market_stalls);
+	copy(f.stall_models);
+	copy(f.sites);
+	copy(f.shipyards);
+	return f;
+}
+
+// Calls visit(record) for each record of the drawn lists, in the game's order.
+template <typename Visit>
+void walk_drawn_records(const SavedTown& saved, Visit visit) {
+	for (const size_t head : kDrawnListHeads) {
+		size_t walked = 0;
+		for (size_t i = saved.memory.u16(head); i < saved.records.size() && walked < kMaxListWalk;
+			 i = saved.records[i].next, ++walked) {
+			visit(saved.records[i]);
+		}
+	}
+}
+
 // Tablas copiadas de Patrician3.exe (GOG 1.1); ver docs/formats/savegame.md.
 // 0x672FC0: tipo de edificio de la partida -> tipo del .let.
 constexpr uint8_t kBuildingTileType[0x39] = {
@@ -257,9 +295,8 @@ void building_objects(const BuildingRecord& record, const SavedTown& town, int r
 	}
 }
 
-void fixed_objects(const SavedTown& town, const TownMap& map, const TileIndex& index, const TownMap* editor,
-	const TileSet& tiles, std::vector<Placed>& out) {
-	const TownFixedPoints& f = town.fixed;
+void fixed_objects(const SavedTown& town, const TownFixedPoints& f, const TownMap& map, const TileIndex& index,
+	const TownMap* editor, const TileSet& tiles, std::vector<Placed>& out) {
 	// Los puntos sin uso valen 0xFF y caen fuera del mapa.
 	auto valid = [&](uint8_t x, uint8_t y) { return in_map(map, x, y); };
 
@@ -354,13 +391,10 @@ size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int reg
 	size_t missing = 0;
 
 	// Las listas que dibuja el juego, siguiendo el campo `next` de cada registro.
-	for (const uint16_t head : saved.drawn_lists) {
-		size_t walked = 0;
-		for (size_t i = head; i < saved.records.size() && walked < kMaxListWalk; i = saved.records[i].next, ++walked) {
-			building_objects(saved.records[i], saved, region, merchant_count, index, placed, missing);
-		}
-	}
-	fixed_objects(saved, town, index, editor, tiles, placed);
+	walk_drawn_records(saved, [&](const BuildingRecord& record) {
+		building_objects(record, saved, region, merchant_count, index, placed, missing);
+	});
+	fixed_objects(saved, current_fixed_points(saved.memory), town, index, editor, tiles, placed);
 
 	// Objetos naturales del mapa (árboles, rocas...), agrupados por huella desde
 	// su celda delantera, para poder quitarlos enteros si un edificio los pisa.
@@ -421,6 +455,45 @@ size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int reg
 	return missing;
 }
 
+uint64_t drawn_buildings_key(const SavedTown& saved) {
+	// FNV-1a over what place_saved_buildings reads.
+	uint64_t key = 0xCBF29CE484222325ull;
+	auto add = [&](uint32_t value, int bytes) {
+		for (int i = 0; i < bytes; ++i) {
+			key = (key ^ ((value >> (8 * i)) & 0xFF)) * 0x100000001B3ull;
+		}
+	};
+	add(uint32_t(saved.town_id()), 1);
+	add(saved.flags(), 4);
+	add(saved.church_level(), 1);
+	for (size_t o = kFixedPoints; o < kFixedPoints + sizeof(TownFixedPoints); ++o) {
+		add(saved.memory.u8(o), 1);
+	}
+	// The records in drawing order (which list each one is in doesn't change the drawing).
+	walk_drawn_records(saved, [&](const BuildingRecord& r) {
+		add(uint32_t(r.x) | uint32_t(r.y) << 8 | uint32_t(r.owner) << 16 | uint32_t(r.type) << 24, 4);
+		add(uint32_t(r.pending != 0) | uint32_t(r.param) << 8, 2);
+	});
+	return key;
+}
+
+bool load_saved_town_template(const CprArchive& archive, const SavedTown& saved, const std::vector<int>& regions,
+	SavedTownTemplate& out, std::string* error) {
+	if (!load_town(archive, saved.template_map(), out.town, error)) {
+		return false;
+	}
+	out.has_editor = load_town(archive, saved.template_map(), out.editor, nullptr, true);
+	out.region = saved.town_id() < int(regions.size()) ? regions[size_t(saved.town_id())] : kFallbackRegion;
+	return true;
+}
+
+void place_saved_town(const SavedTownTemplate& base, const SaveGame& save, size_t index, const TileSet& tiles,
+	TownMap& out) {
+	out = base.town;
+	place_saved_buildings(save.towns[index], save.merchant_count, base.region, tiles,
+		base.has_editor ? &base.editor : nullptr, out);
+}
+
 bool load_saved_town(const CprArchive& archive, const SaveGame& save, size_t index, const TileSet& tiles,
 	const std::vector<int>& regions, TownMap& out, std::string* error) {
 	if (index >= save.towns.size()) {
@@ -429,14 +502,11 @@ bool load_saved_town(const CprArchive& archive, const SaveGame& save, size_t ind
 		}
 		return false;
 	}
-	const SavedTown& saved = save.towns[index];
-	if (!load_town(archive, saved.template_map(), out, error)) {
+	SavedTownTemplate base;
+	if (!load_saved_town_template(archive, save.towns[index], regions, base, error)) {
 		return false;
 	}
-	TownMap editor;
-	const bool has_editor = load_town(archive, saved.template_map(), editor, nullptr, true);
-	const int region = saved.town_id() < int(regions.size()) ? regions[size_t(saved.town_id())] : kFallbackRegion;
-	place_saved_buildings(saved, save.merchant_count, region, tiles, has_editor ? &editor : nullptr, out);
+	place_saved_town(base, save, index, tiles, out);
 	return true;
 }
 

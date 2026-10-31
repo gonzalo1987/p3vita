@@ -413,12 +413,44 @@ struct Selection {
 	size_t template_index = 0;
 };
 
-bool load_selection(const CprArchive& archive, const TileSet& tiles, const SaveGame& save,
-	const std::vector<int>& regions, const std::vector<int>& template_ids, const Selection& selection,
-	TownMap& out, std::string& error) {
-	if (selection.mode == Mode::Saved) {
-		return load_saved_town(archive, save, selection.saved_index, tiles, regions, out, &error);
+// The saved town on screen, drawn from its current state (the town's memory,
+// not what it was at load time): its template is loaded once, and its
+// buildings are placed again whenever the simulation changes them.
+class LiveTown {
+public:
+	bool load(const CprArchive& archive, const SaveGame& save, size_t index, const std::vector<int>& regions,
+		std::string& error) {
+		index_ = index;
+		loaded_ = false;
+		if (index >= save.towns.size()) {
+			error = "the save has no town " + std::to_string(index);
+			return false;
+		}
+		loaded_ = load_saved_town_template(archive, save.towns[index], regions, base_, &error);
+		return loaded_;
 	}
+
+	// The town as it is now.
+	void draw(const SaveGame& save, const TileSet& tiles, TownMap& out) {
+		place_saved_town(base_, save, index_, tiles, out);
+		key_ = drawn_buildings_key(save.towns[index_]);
+	}
+
+	// Whether its buildings have changed since the last draw.
+	bool changed(const SaveGame& save) const {
+		return loaded_ && drawn_buildings_key(save.towns[index_]) != key_;
+	}
+
+private:
+	SavedTownTemplate base_;
+	size_t index_ = 0;
+	bool loaded_ = false;
+	uint64_t key_ = 0;
+};
+
+// A template map (Mode::Designer or Mode::Terrain).
+bool load_template(const CprArchive& archive, const std::vector<int>& template_ids, const Selection& selection,
+	TownMap& out, std::string& error) {
 	const int id = template_ids[selection.template_index];
 	// El mapa 30 no tiene .editor: se ve su terreno.
 	return (selection.mode == Mode::Designer && load_town(archive, id, out, &error, true)) ||
@@ -1023,6 +1055,7 @@ int main(int argc, char** argv) {
 	SDL_GameController* controller = nullptr;
 	bool reload = true;
 	bool keep_camera = false;
+	LiveTown live;  // The saved town on screen (Mode::Saved).
 	bool running = true;
 	int camera_x = 0;
 	int camera_y = 0;
@@ -1060,7 +1093,16 @@ int main(int argc, char** argv) {
 			show_loading(renderer);
 			TownMap town;
 			std::string error;
-			if (!load_selection(*archive, view->tiles(), save, regions, template_ids, selection, town, error)) {
+			bool loaded = false;
+			if (selection.mode == Mode::Saved) {
+				loaded = live.load(*archive, save, selection.saved_index, regions, error);
+				if (loaded) {
+					live.draw(save, view->tiles(), town);
+				}
+			} else {
+				loaded = load_template(*archive, template_ids, selection, town, error);
+			}
+			if (!loaded) {
 				show_error(window, error);
 				break;
 			}
@@ -1075,6 +1117,7 @@ int main(int argc, char** argv) {
 		}
 
 		// Pasa el tiempo: los ticks que caben en el tiempo real transcurrido.
+		int ticks_run = 0;
 		if (sailing) {
 			const GameSpeed& speed = kGameSpeeds[game_speed];
 			const Uint32 now = app_ticks();
@@ -1082,6 +1125,7 @@ int main(int argc, char** argv) {
 			clock = now - elapsed % speed.ms_per_tick;
 			const int ticks =
 				std::min(int(elapsed / speed.ms_per_tick), speed.max_ticks) + (script ? script->extra_ticks() : 0);
+			ticks_run = ticks;
 			for (int i = 0; i < ticks; ++i) {
 				advance_game_tick(save, *sailing);
 				for (const ShipEvent& event : sailing->events()) {
@@ -1102,6 +1146,14 @@ int main(int argc, char** argv) {
 					}
 				}
 			}
+		}
+
+		// The living town: when the simulation changes the buildings of the town
+		// on screen, it is drawn again, with the camera where it was.
+		if (ticks_run > 0 && selection.mode == Mode::Saved && live.changed(save)) {
+			TownMap town;
+			live.draw(save, view->tiles(), town);
+			view->show(town);
 		}
 
 		int town_step = 0;
@@ -1334,6 +1386,12 @@ int main(int argc, char** argv) {
 			camera_y += kPadSpeed * (keys[SDL_SCANCODE_DOWN] - keys[SDL_SCANCODE_UP]);
 		}
 		const bool at_sea = selection.mode == Mode::Sea && sea;
+		int look_x = 0;
+		int look_y = 0;
+		if (script && !at_sea && script->look_at(look_x, look_y)) {
+			camera_x = cell_screen_x(look_x, look_y) - kScreenWidth / 2;
+			camera_y = cell_screen_y(look_y) - kScreenHeight / 2;
+		}
 		const int view_width = at_sea ? sea->width() : view->width();
 		const int view_height = at_sea ? sea->height() : view->height();
 		camera_x = std::clamp(camera_x, 0, std::max(0, view_width - kScreenWidth));
