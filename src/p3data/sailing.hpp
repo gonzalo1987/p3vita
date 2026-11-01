@@ -237,6 +237,9 @@ public:
 	// battle/ship_step.cpp: the step of a scene's ship (blocks of BattleGraph).
 	void fn_6271d7(size_t entry, uint8_t dir);  // (its [+0x4]) It turns towards a direction.
 	void fn_6264c0(size_t entry, uint8_t wind, uint8_t strength, bool flag);  // (its [+0x4]) It moves.
+	void fn_61dbbf(size_t entry);  // (scene's ship, method +0x4) A target.
+	void fn_61f1bf(size_t entry);  // (scene's ship) A round of a boarding.
+	void fn_60c1c9(size_t battle, uint16_t winner, uint16_t taken);  // (battle) A ship taken.
 	// battle/attack.cpp
 	void fn_50bc40(uint16_t convoy);  // (ships object) A pirate convoy attacks: a sea battle.
 	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.

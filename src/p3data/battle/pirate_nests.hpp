@@ -59,4 +59,8 @@ size_t fn_513bf0(SaveGame& save, size_t k);
 // (0x4FB9C0).
 void fn_515da0(SaveGame& save, size_t k);
 
+// 0x515F70 (on the pirate object; battle/capture.cpp): pirate k's share of a
+// rich loot.
+void fn_515f70(SaveGame& save, size_t k);
+
 }  // namespace p3::data

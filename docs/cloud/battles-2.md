@@ -550,6 +550,19 @@ tut3, 7 days; 39 s):
   is in `battle/battle_math.hpp`. Saves 5, 6, tut0, tut3, 7 days: 0x6264C0
   3349 + 1807 + 330 + 214 calls, 0x6271D7 2477 + 1447 + 328 + 212, 0
   differences.
+- **0x61DBBF** (method +0x4 of a scene's ship: a target among the enemy's
+  ships, by the battle's generator weighted by arms per hull), **0x61F1BF**
+  (a round of a boarding: losses by strength, the reserve, fleeing) and
+  **0x60C1C9** (`battle/capture.cpp`: a ship taken: the plunder of its
+  reserve and wares by worth, 0x673A18; the pay and fame of the merchant of
+  the winner's guide; the pirates' share **0x515F70**: [+0x16], a planned
+  building, maybe a new wreck at the nest, a nest building back). Saves 4,
+  5, 6, tut0, tut1, tut3, 7 days: 0x61DBBF 15 + 12 + 2 + 2 calls, 0x61F1BF
+  78 + 378 + 156, 0x60C1C9 1 + 4 + 2, 0x515F70 3 + 2, 0 differences. Not
+  rewritten in 0x60C1C9 (not run in the saves): the winner taking the ship
+  over (operation 0x91 at once, 0x540520, and the sides' lists), a side of
+  the player (its messages and window, part 7), the letters (0x4D6530, not
+  rewritten in p3vita).
 - **The recording of BT took numbers for pointers**: at the start of a
   battle the places of the scene's ships are whole, so their 16.16 x
   ([+0x8]) is x · 65536, 0x10xx0000 for x from 4096 on, and the heap gives

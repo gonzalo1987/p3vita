@@ -261,3 +261,205 @@ void Sailing::fn_6264c0(size_t e, uint8_t wind, uint8_t strength, bool flag) {
 }
 
 }  // namespace p3::data
+
+namespace p3::data {
+
+// 0x61DBBF (method +0x4 of a scene's ship): a target, unless [+0x161]: an
+// enemy ship (the other side's list: [+0x65C] for team 0, else [+0x10];
+// next by [+0xC]) not out (0x6) chosen by the battle's generator, each as
+// likely as its arms per hull (0x61EFDF); the first when none has any.
+// [+0x128] the target's place, or 0xFFFF.
+void Sailing::fn_61dbbf(size_t e) {
+	BattleGraph& g = save_.battles;
+	if (g.get<uint8_t>(e, 0x161) > 0) {
+		return;
+	}
+	const size_t b = scene_battle(e);
+	const uint8_t team = g.get<uint8_t>(b, 0x559 + size_t(g.get<uint8_t>(e, 0x13D)));
+	const uint16_t head = g.get<uint16_t>(b, team == 0 ? 0x65C : 0x10);
+	const size_t next = size_t(g.ptr(b, 0xC));
+	auto out = [&](uint16_t k) { return (g.get<uint8_t>(battle_entry(b, k), 0x12A) & 0x6) != 0; };
+	int32_t total = 0;
+	for (uint16_t k = head; k != 0xFFFF; k = g.get<uint16_t>(next, 2 * size_t(k))) {
+		if (!out(k)) {
+			total += fn_61efdf(battle_entry(b, k));
+		}
+	}
+	if (total > 0) {
+		total = int32_t(battle_rand(g, b) % uint32_t(total) + 1);
+	}
+	uint16_t k = head;
+	while (k != 0xFFFF) {
+		if (!out(k)) {
+			total -= fn_61efdf(battle_entry(b, k));
+			if (total <= 0) {
+				break;
+			}
+		}
+		k = g.get<uint16_t>(next, 2 * size_t(k));
+	}
+	g.set<uint16_t>(e, 0x128, k);
+}
+
+namespace {
+
+// The boarding strength of a scene's ship: its sailors (one more with a
+// captain) and its reserve ([+0x154]: twice the sailors if fewer, else
+// added), by its fighting [+0x3F] (0 to 4; ±2 for a human merchant's ship by
+// the difficulty, settings [+0x12]: 0 → +2, 2 → −2) and its captain's
+// [+0xB].
+struct Boarders {
+	uint32_t sailors;
+	uint32_t strength;
+};
+
+}  // namespace
+
+// 0x61F1BF (on a scene's ship grappling another of a higher place,
+// [+0x128]): a round of the boarding. Not while either has more than 2
+// sails up. One that fled (0x20) and that the other doesn't attack
+// (0x6212FB with the flag) gives up (0x60C1C9: taken by the other); else
+// its team's mode [+0xACA] becomes 0xFF. Each side loses sailors by the
+// other's strength against its own and the battle's generator (the
+// fractions kept in [+0x13A]; 16 times as many in an automatic battle),
+// each one lost may be one of the reserve (generator); a side that loses
+// them all is taken (0x60C1C9, its sailors 1). Ships that lost some get
+// [+0x3C] | 2. An AI side whose strength · 3 is below twice the other's
+// sailors flees (0x20) unless its owner is 0xFF.
+//
+// The crash's sound at the start (0x443690, UI; none in the emulator, so
+// [+0x14A] stays) is left out.
+void Sailing::fn_61f1bf(size_t e) {
+	BattleGraph& g = save_.battles;
+	const size_t b = scene_battle(e);
+	const uint16_t place = g.get<uint16_t>(e, 0x138), other = g.get<uint16_t>(e, 0x128);
+	const size_t t = battle_entry(b, other);
+	if (g.get<uint8_t>(e, 0x26) > 2 || g.get<uint8_t>(t, 0x26) > 2) {
+		return;
+	}
+	auto team = [&](size_t x) { return g.get<uint8_t>(b, 0x559 + size_t(g.get<uint8_t>(x, 0x13D))); };
+	if (g.get<uint8_t>(e, 0x12A) & 0x20) {
+		if (!fn_6212fb(t, e, true)) {
+			fn_60c1c9(b, other, place);
+			return;
+		}
+		g.set<uint8_t>(b, 0xACA + size_t(1 - team(e)), 0xFF);
+	}
+	if (g.get<uint8_t>(t, 0x12A) & 0x20) {
+		if (!fn_6212fb(e, t, true)) {
+			fn_60c1c9(b, place, other);
+			return;
+		}
+		g.set<uint8_t>(b, 0xACA + size_t(team(e)), 0xFF);
+	}
+	const uint16_t captains = save_.globals.u16(global::kCaptainCount);
+	auto boarders = [&](size_t x) {
+		const ShipMemory& s = scene_ship(x);
+		uint32_t n = s.u16(0x40);
+		if (s.u16(0x42) < captains) {
+			++n;
+		}
+		const uint32_t reserve = s.u16(0x154);
+		const uint32_t fighters = reserve < n ? reserve + n : n + n;
+		int8_t fight = int8_t(s.u8(0x3F));
+		if (fight < 0) {
+			fight = 0;
+		} else if (fight > 4) {
+			fight = 4;
+		}
+		const uint8_t owner = s.u8(0x0);
+		if (owner != 0xFF && owner < save_.merchants.size() && save_.merchants[owner].memory.u16(0x8) == 0) {
+			const uint8_t difficulty = save_.settings.u8(0x12);
+			if (difficulty == 0) {
+				fight = int8_t(fight + 2);
+			} else if (difficulty == 2) {
+				fight = int8_t(fight - 2);
+			}
+		}
+		uint32_t strength = uint32_t(mul(int32_t(fight) + 0x12, int32_t(fighters)) + 10) / 20u;
+		const uint16_t captain = s.u16(0x42);
+		if (captain < captains && captain < save_.captains.size()) {
+			const int32_t skill = save_.captains[captain].u8(0xB);
+			strength = uint32_t(mul(mul(skill, 6) / 17 + 0x64, int32_t(strength))) / 100u;
+		}
+		return Boarders{n, strength};
+	};
+	Boarders me = boarders(e), them = boarders(t);
+	if (me.strength == 0) {
+		me.strength = 1;
+	}
+	if (them.strength == 0) {
+		them.strength = 1;
+	}
+	const bool automatic = g.get<uint8_t>(b, 0xAC8) != 0;
+	auto losses = [&](const Boarders& by, const Boarders& of, size_t x) {
+		const uint32_t r = battle_rand(g, b) % 26u;
+		const uint32_t ratio = by.strength * 100u / of.strength + (of.sailors + by.strength) * 3u;
+		uint32_t lost = (r + 0x5C) * ratio * 40u / 1000u;
+		if (automatic) {
+			lost <<= 4;
+		}
+		const uint32_t sum = lost + g.get<uint16_t>(x, 0x13A);
+		g.set<uint16_t>(x, 0x13A, uint16_t(sum));
+		return sum >> 16;
+	};
+	uint32_t lost_them = losses(me, them, t);
+	uint32_t lost_me = losses(them, me, e);
+	// Each one lost may be one of the reserve.
+	auto reserve = [&](size_t x, uint32_t lost, uint32_t sailors) {
+		for (uint32_t i = lost; i > 0; --i) {
+			ShipMemory& s = save_.ships[g.get<uint32_t>(x, 0x4)].memory;
+			uint32_t r = s.u16(0x154);
+			if (r > sailors) {
+				r = sailors;
+			}
+			if (battle_rand(g, b) % (2 * sailors) < (r & 0xFFFF)) {
+				s.u16(0x154) = uint16_t(s.u16(0x154) - 1);
+			}
+		}
+	};
+	if (lost_them != 0) {
+		if (lost_them > them.sailors) {
+			lost_them = them.sailors;
+		}
+		reserve(t, lost_them, them.sailors);
+		if (lost_them == them.sailors) {
+			save_.ships[g.get<uint32_t>(t, 0x4)].memory.u16(0x40) = 1;
+			fn_60c1c9(b, place, other);
+			return;
+		}
+	}
+	ShipMemory& mine = save_.ships[g.get<uint32_t>(e, 0x4)].memory;
+	ShipMemory& theirs = save_.ships[g.get<uint32_t>(t, 0x4)].memory;
+	if (lost_me != 0) {
+		if (lost_me > me.sailors) {
+			lost_me = me.sailors;
+		}
+		reserve(e, lost_me, me.sailors);
+		if (lost_me == me.sailors) {
+			mine.u16(0x40) = 1;
+			fn_60c1c9(b, other, place);
+			return;
+		}
+		mine.u8(0x3C) = uint8_t(mine.u8(0x3C) | 0x2);
+	}
+	if (lost_them != 0) {
+		theirs.u8(0x3C) = uint8_t(theirs.u8(0x3C) | 0x2);
+	}
+	mine.u16(0x40) = uint16_t(mine.u16(0x40) - lost_me);
+	theirs.u16(0x40) = uint16_t(theirs.u16(0x40) - lost_them);
+	auto flees = [&](size_t x, const Boarders& own, const Boarders& foe) {
+		const uint8_t side = g.get<uint8_t>(x, 0x13D);
+		return g.get<uint8_t>(b, 0x5D + size_t(side)) != 0 && own.strength * 3 < foe.sailors * 2 &&
+			g.get<uint16_t>(b, 0x35A + 2 * size_t(side)) != 0xFF;
+	};
+	if (flees(e, me, them)) {
+		g.set<uint8_t>(e, 0x12A, uint8_t(g.get<uint8_t>(e, 0x12A) | 0x20));
+		return;
+	}
+	if (flees(t, them, me)) {
+		g.set<uint8_t>(t, 0x12A, uint8_t(g.get<uint8_t>(t, 0x12A) | 0x20));
+	}
+}
+
+}  // namespace p3::data
