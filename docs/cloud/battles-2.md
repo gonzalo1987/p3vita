@@ -505,6 +505,13 @@ tut3, 7 days; 39 s):
   5, 6, tut0, tut1, tut3, 7 days): 0x50BC40 11 calls and 0x506720 6 × 1792
   calls (the ships' update, with the attacks in it), 0 differences.
 
+- The step, started (`battle/battle_step.cpp`): **0x6212FB** (an enemy to
+  attack), **0x61EFDF** (arms per hull), **0x61F02F** (whether to board),
+  **0x6029B0** (the direction of a vector, table 0x67AA28), **0x619560**
+  (a scene item freed). Call by call with `--pirates --battles` (saves 5, 6,
+  5 days): 0x6212FB 7698 calls, 0x61F02F 7781, 0x61EFDF 161, 0x6029B0
+  9996, 0x619560 2, 0 differences.
+
 So with `--battles`, p3vita starts the automatic sea battles exactly as the
 game. What is left is the battle itself: the step (operation 0x94, method
 +0x14, 0x606CC0 and what it calls, about 7 000 instructions) and its end

@@ -209,6 +209,44 @@ void register_probes_battle(ProbeRegistry& r) {
 		probe_sailing()->fn_50bc40(convoy);
 		return std::nullopt;
 	};
+	// Scene ships: thiscall on one, another (and a flag); return al or eax.
+	r[0x6212FB] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int e = battle_block(c.ecx), f = battle_block(c.args[0]);
+		if (!probe_sailing() || e < 0 || f < 0) {
+			return kBad;
+		}
+		c.eax_mask = 0xFF;
+		return probe_sailing()->fn_6212fb(size_t(e), size_t(f), (c.args[1] & 0xFF) != 0) ? 1 : 0;
+	};
+	// 0x6029B0: stdcall (dx, dy); returns al.
+	r[0x6029B0] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		c.eax_mask = 0xFF;
+		return fn_6029b0(int32_t(c.args[0]), int32_t(c.args[1]));
+	};
+	// 0x619560: thiscall on a scene (a battle), the item.
+	r[0x619560] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int b = battle_block(c.ecx);
+		if (!probe_sailing() || b < 0) {
+			return kBad;
+		}
+		probe_sailing()->fn_619560(size_t(b), uint16_t(c.args[0]));
+		return std::nullopt;
+	};
+	r[0x61EFDF] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int e = battle_block(c.ecx);
+		if (!probe_sailing() || e < 0) {
+			return kBad;
+		}
+		return uint32_t(probe_sailing()->fn_61efdf(size_t(e)));
+	};
+	r[0x61F02F] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int e = battle_block(c.ecx), f = battle_block(c.args[0]);
+		if (!probe_sailing() || e < 0 || f < 0) {
+			return kBad;
+		}
+		c.eax_mask = 0xFF;
+		return probe_sailing()->fn_61f02f(size_t(e), size_t(f), (c.args[1] & 0xFF) != 0) ? 1 : 0;
+	};
 	// 0x605420: thiscall on a sea battle (ship A, ship D, a byte, a flag).
 	r[0x605420] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
 		const int battle = battle_block(c.ecx);

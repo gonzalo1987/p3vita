@@ -53,6 +53,9 @@ bool fn_50e340(int16_t x, int16_t y);
 bool fn_447580(const NavData& nav, std::shared_ptr<SeaRoute>& route, MapPoint storm, MapPoint ship, uint32_t found,
 		uint32_t current, bool own);
 
+// 0x6029B0 (battle/battle_step.cpp): the direction of (dx, dy), 256ths of a turn.
+uint8_t fn_6029b0(int32_t dx, int32_t dy);
+
 // 0x517170 (battle/pirates.cpp; on the ship): to the approach point of one of its towns.
 void fn_517170(SaveGame& save, uint16_t ship);
 
@@ -213,6 +216,13 @@ public:
 	void fn_60f479(size_t battle);  // (sea battle) The rocks and islets.
 	void fn_608230(size_t battle, bool arg);  // (sea battle, method +0x18)
 	void fn_605420(size_t battle, uint16_t a, uint16_t d, uint8_t c, uint32_t flag);  // (sea battle) Its setup.
+	// battle/battle_step.cpp: the step of a battle.
+	const ShipMemory& scene_ship(size_t entry) const;  // The ship of a scene's ship.
+	size_t scene_battle(size_t entry) const;  // Its battle.
+	bool fn_6212fb(size_t entry, size_t other, bool flag) const;  // (scene's ship) An enemy to attack.
+	int32_t fn_61efdf(size_t entry) const;  // (scene's ship) Arms per hull.
+	bool fn_61f02f(size_t entry, size_t other, bool flag) const;  // (scene's ship) Whether to board.
+	void fn_619560(size_t battle, uint16_t item);  // (scene) An item freed.
 	// battle/attack.cpp
 	void fn_50bc40(uint16_t convoy);  // (ships object) A pirate convoy attacks: a sea battle.
 	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.
