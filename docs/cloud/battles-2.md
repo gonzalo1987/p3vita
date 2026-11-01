@@ -572,6 +572,12 @@ tut3, 7 days; 39 s):
   seldom fire (they board): one broadside in tut3 (7 days) and one in save
   6 (21 days), both equal. Not rewritten: with a human side the guns fire
   cannon balls (0x61E8EF, part 7).
+- **0x61A9E0** (method +0x0 of a scene's ship: its whole sub-step:
+  sinking, out of the area, counters, grappling, a human side's course, an
+  AI's decision to flee, fleeing, its target, the chase 4 steps ahead, the
+  edges, broadside, its boxes, firing) with **0x611149**. Saves 4, 5, 6,
+  tut0, tut3, 7 days: 435 + 3355 + 1809 + 332 + 216 calls, 0 differences.
+  The branches of a human side are written but not run in the saves.
 - **The recording of BT took numbers for pointers**: at the start of a
   battle the places of the scene's ships are whole, so their 16.16 x
   ([+0x8]) is x · 65536, 0x10xx0000 for x from 4096 on, and the heap gives
@@ -738,6 +744,12 @@ Looks like one:
   0xFFFF in the list by x (0x50D0C0), reading outside the ships array (the
   emulator stops there). Seen only in a retouched state. Not reproduced:
   p3vita skips the sort.
+- **0x61A9E0 tests the top edge with x**: of the four edges of the area a
+  ship chasing an enemy keeps off, the second (y < 0x190, directions 0xC0 to
+  0x3F) is tested as `x < 0x190`, like the first. So near the left edge the
+  ship also avoids heading up, and near the top edge it doesn't. Also, only
+  the first edge marks its directions by how close it is (0x190 − x); the
+  other three mark 0xFF (the value they compute is unused). Reproduced.
 - **0x60ADBF leaves the side it found unset when the segment meets no
   side of the hull**, and 0x608F70 then reads that byte of its stack, never
   written, as an index into 0x67AB98. It doesn't happen in the saves (the

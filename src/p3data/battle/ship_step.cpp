@@ -7,6 +7,7 @@
 // it heads ([+0x20] x, or < 0 for nowhere, [+0x22] y), its sails [+0x26],
 // its 256 directions [+0x27] (how much each is to be avoided, 0x60BCDA).
 
+#include <algorithm>
 #include <cstdlib>
 
 #include "p3data/battle/battle_math.hpp"
@@ -777,6 +778,497 @@ void Sailing::fn_61dd4f(size_t e, bool flag) {
 	if (starboard_target != 0xFFFF && g.get<uint8_t>(e, 0x131) == 0) {
 		fire(starboard_target, starboard, 1, 0x131);
 	}
+}
+
+}  // namespace p3::data
+
+namespace p3::data {
+
+namespace {
+
+// 0x67AF7C (s16 by type): half the size of a ship's box in the scene.
+constexpr int32_t kBoxHalf[4] = {55, 66, 70, 84};
+
+}  // namespace
+
+// 0x61A9E0 (method +0x0 of a scene's ship; the wind's direction [+0x670]):
+// the ship's sub-step (docs/cloud/battles-2.md §4). In order:
+// - sinking (0x4): its heading to the nearest 32nd, its speed down by 0x179
+//   (0x1790 automatic) until it stops, adrift (0x6264C0 without sails);
+//   out (0x2 or 0x4): nothing more;
+// - out of the area (10 to 0x21F6, 0x1DFA): out (0x2), the battle's [+0xAC4]
+//   0, [+0xAC6] its place, its items freed;
+// - the counters [+0x130], [+0x131] (loading), [+0x161] down (by 0xF more in
+//   an automatic battle); a fled ship whose enemies' mode is 0xFF fights on;
+// - grappling (0x8): over if the other is out; else the lower place fights
+//   the boarding (0x61F1BF), they turn side by side and slow down; adrift;
+// - fled or without sailors: adrift;
+// - a human side without a target: its course [+0x24] and sails [+0x148];
+// - an AI side (without [+0x161]) decides whether to flee (0x1), by the
+//   teams' sums ([+0xA90]...) and its arms and hull; fleeing, it heads away
+//   from the enemies' centre (or the area's) to the edge; without a target
+//   it looks for one (method +0x4, 0x61DBBF); a target out, of its team, fled
+//   and harmless, or grappling a stronger one is dropped; else it heads to
+//   where the target will be (4 steps ahead), keeps off the edges, and when
+//   close (300²/360², or 420²/480² with [+0x13C]) turns broadside (0x10) to
+//   the freest side, or boards;
+// - its boxes in the scene ([+0xA74], [+0xA78]: hull and circle), its
+//   directions cleared, and it fires (method +0x8, 0x61DD4F) if it has a
+//   target or is an AI's.
+// Its sails [+0x26] change at most once per 0x4B sub-steps ([+0x149]).
+//
+// The top edge is tested with x, not y (see «Game bugs» in
+// docs/cloud/battles-2.md): reproduced. Not rewritten: the UI object
+// [+0x134] (0 in the emulator).
+void Sailing::fn_61a9e0(size_t e, uint8_t wind) {
+	BattleGraph& g = save_.battles;
+	const size_t b = scene_battle(e);
+	const bool automatic = g.get<uint8_t>(b, 0xAC8) != 0;
+	auto u8 = [&](size_t o) { return g.get<uint8_t>(e, o); };
+	auto set8 = [&](size_t o, uint32_t v) { g.set<uint8_t>(e, o, uint8_t(v)); };
+	auto flags = [&]() { return g.get<uint8_t>(e, 0x12A); };
+	const uint8_t side = u8(0x13D);
+	const uint8_t team = g.get<uint8_t>(b, 0x559 + size_t(side));
+	const bool ai = g.get<uint8_t>(b, 0x5D + size_t(side)) != 0;
+	const uint16_t place = g.get<uint16_t>(e, 0x138);
+	const uint8_t strength = g.get<uint8_t>(b, 0x671);
+	auto item = [&](size_t at) { return g.get<uint16_t>(size_t(g.ptr(b, at)), 2 * size_t(place)); };
+	// The boxes of its two items: far away when out (with `check`), else
+	// around it (its hull) and 0x168 wider (its circle).
+	auto boxes = [&](bool check) {
+		if (check && (flags() & 0x6)) {
+			const uint16_t far = uint16_t(-100 * int32_t(place));
+			fn_6197a0(b, item(0xA74), far, 0xFF9C, far, 0xFF9C);
+			fn_6197a0(b, item(0xA78), far, 0xFF9C, far, 0xFF9C);
+			return;
+		}
+		const int32_t h = kBoxHalf[scene_ship(e).u8(0xE) & 3];
+		const int32_t x = g.get<int16_t>(e, 0xA), y = g.get<int16_t>(e, 0xE);
+		fn_6197a0(b, item(0xA74), uint16_t(x - h), uint16_t(y - h), uint16_t(x + h), uint16_t(y + h));
+		fn_6197a0(b, item(0xA78), uint16_t(x - h - 0x168), uint16_t(y - h - 0x168), uint16_t(x + h + 0x168),
+			uint16_t(y + h + 0x168));
+	};
+	auto clear = [&]() {
+		for (size_t k = 0; k < 0x100; ++k) {
+			g.set<uint8_t>(e, 0x27 + k, 0);
+		}
+	};
+	// Sails down one, once per 0x4B sub-steps.
+	auto lower = [&]() {
+		if (u8(0x26) > 0 && u8(0x149) == 0) {
+			set8(0x26, u8(0x26) - 1);
+			set8(0x149, 0x4B);
+		}
+	};
+	// After moving: a change of sails only once per 0x4B sub-steps.
+	auto keep = [&](uint8_t before) {
+		if (before != u8(0x26)) {
+			if (u8(0x149) != 0) {
+				set8(0x26, before);
+			} else {
+				set8(0x149, 0x4B);
+			}
+		}
+	};
+	auto adrift = [&](bool check) {
+		g.set<uint16_t>(e, 0x20, 0xFFFF);
+		fn_6264c0(e, wind, strength, false);
+		boxes(check);
+		clear();
+	};
+	{
+		const uint8_t h5 = uint8_t((u8(0x11) + 0x10) & 0x1F);
+		if ((flags() & 0x4) && (h5 & 0x18)) {
+			set8(0x11, h5 < 0x10 ? u8(0x11) - 1 : u8(0x11) + 1);
+		}
+	}
+	if ((flags() & 0x4) && g.get<int32_t>(e, 0x1C) != 0) {
+		const int32_t slow = automatic ? 0x1790 : 0x179;
+		if (g.get<int32_t>(e, 0x1C) <= slow) {
+			g.set<int32_t>(e, 0x1C, 0);
+			return;
+		}
+		g.set<int32_t>(e, 0x1C, g.get<int32_t>(e, 0x1C) - slow);
+		g.set<uint16_t>(e, 0x20, 0xFFFF);
+		const uint8_t sails = u8(0x26);
+		set8(0x26, 0);
+		fn_6264c0(e, wind, strength, false);
+		set8(0x26, sails);
+	}
+	if (flags() & 0x6) {
+		return;
+	}
+	if (u8(0x149) != 0) {
+		set8(0x149, u8(0x149) - 1);
+	}
+	{
+		const int32_t x = g.get<int16_t>(e, 0xA), y = g.get<int16_t>(e, 0xE);
+		if (x < 10 || y < 10 || x > 0x21F6 || y > 0x1DFA) {
+			set8(0x12A, flags() | 0x2);
+			g.set<uint8_t>(b, 0xAC4, 0);
+			g.set<uint16_t>(b, 0xAC6, place);
+			g.set<uint32_t>(e, 0x134, 0);  // A UI object (released by the game; none in the emulator).
+			fn_619560(b, item(0xA74));
+			fn_619560(b, item(0xA78));
+			return;
+		}
+	}
+	for (const size_t o : {0x130, 0x131, 0x161}) {
+		if (u8(o) != 0) {
+			set8(o, u8(o) - 1);
+		}
+	}
+	if (automatic) {
+		for (const size_t o : {0x130, 0x131, 0x161}) {
+			set8(o, u8(o) < 0x10 ? 0 : u8(o) - 0xF);
+		}
+	}
+	if ((flags() & 0x20) && g.get<uint8_t>(b, 0xACA + size_t(1 - team)) == 0xFF) {
+		set8(0x12A, flags() & 0xDF);
+	}
+	if (flags() & 0x8) {
+		if (g.get<uint8_t>(battle_entry(b, g.get<uint16_t>(e, 0x128)), 0x12A) & 0x6) {
+			g.set<uint16_t>(e, 0x128, 0xFFFF);
+			set8(0x12A, flags() & 0xF7);
+		} else {
+			if (place < g.get<uint16_t>(e, 0x128)) {
+				fn_61f1bf(e);
+			}
+			if (g.get<uint16_t>(e, 0x128) != 0xFFFF) {
+				lower();
+				const size_t t = battle_entry(b, g.get<uint16_t>(e, 0x128));
+				const int16_t dx = int16_t(g.get<uint16_t>(e, 0xA) - g.get<uint16_t>(t, 0xA));
+				const int16_t dy = int16_t(g.get<uint16_t>(e, 0xE) - g.get<uint16_t>(t, 0xE));
+				const uint8_t rel = uint8_t(u8(0x11) - fn_6029b0(dx, dy));
+				if ((rel > 0 && rel < 0x48) || (rel > 0x80 && rel < 0xB8)) {
+					set8(0x11, u8(0x11) + 2);
+				} else if ((rel > 0x48 && rel < 0x80) || rel > 0xB8) {
+					set8(0x11, u8(0x11) - 2);
+				}
+				g.set<int32_t>(e, 0x1C, g.get<int32_t>(e, 0x1C) - (g.get<int32_t>(e, 0x1C) >> 4));
+			}
+			adrift(true);
+			return;
+		}
+	}
+	const ShipMemory& s = scene_ship(e);
+	if ((flags() & 0x20) || s.u16(0x40) == 0) {
+		lower();
+		adrift(true);
+		return;
+	}
+	if (g.get<uint8_t>(b, 0x5C) == 0 && !ai && g.get<uint16_t>(e, 0x128) == 0xFFFF && !(flags() & 0x1)) {
+		// A human side without a target: its course and sails.
+		const int16_t course = g.get<int16_t>(e, 0x24);
+		if (course >= 0) {
+			if (u8(0x11) == uint8_t(course) && course < 0x100) {
+				g.set<uint16_t>(e, 0x20, 0xFFFF);
+			} else {
+				g.set<uint16_t>(e, 0x20, uint16_t(g.get<int16_t>(e, 0xA) + (sine(uint32_t(course)) >> 10)));
+				g.set<uint16_t>(e, 0x22, uint16_t(g.get<int16_t>(e, 0xE) - (cosine(uint32_t(course)) >> 10)));
+			}
+		}
+		if (u8(0x149) == 0) {
+			if (u8(0x148) < u8(0x26)) {
+				set8(0x26, u8(0x26) - 1);
+				set8(0x149, 0x4B);
+			} else if (u8(0x148) > u8(0x26)) {
+				set8(0x26, u8(0x26) + 1);
+				set8(0x149, 0x4B);
+			}
+		}
+		fn_6264c0(e, wind, strength, false);
+		boxes(true);
+		clear();
+		return;
+	}
+	if (team == 1 && (flags() & 0x20) && g.get<uint8_t>(b, 0xACA) == 0xFF) {
+		set8(0x12A, flags() & 0xDF);
+	}
+	if (u8(0x161) == 0 && ai) {
+		fn_61a9e0_flee(e);
+	}
+	if (flags() & 0x1) {
+		// Fleeing: away from the enemies' centre (or the area's, near the
+		// edge), to the edge of the area.
+		const int32_t x = g.get<int16_t>(e, 0xA), y = g.get<int16_t>(e, 0xE);
+		int32_t dx, dy;
+		if (x < 0x190 || x > 0x2070 || y < 0x190 || y > 0x1C74) {
+			dx = x - 0x1100;
+			dy = y - 0xF02;
+		} else {
+			dx = x - g.get<int32_t>(b, 0xAB4 + 4 * size_t(1 - team));
+			dy = y - g.get<int32_t>(b, 0xABC + 4 * size_t(1 - team));
+		}
+		if (dx < 0) {
+			dy = mul(-x, dy) / dx;
+			dx = -x;
+		} else if (dx > 0) {
+			dy = mul(0x2200 - x, dy) / dx;
+			dx = 0x2200 - x;
+		} else {
+			dy = dy < 0 ? -y : 0x1E04 - y;
+		}
+		if (dy < -y) {
+			dx = mul(dx, -y) / dy;
+			dy = -y;
+		} else if (dy > 0x1E04 - y) {
+			dx = mul(0x1E04 - y, dx) / dy;
+			dy = 0x1E04 - y;
+		}
+		g.set<uint16_t>(e, 0x20, uint16_t(x + dx));
+		g.set<uint16_t>(e, 0x22, uint16_t(y + dy));
+		const uint8_t before = u8(0x26);
+		fn_6264c0(e, wind, strength, true);
+		keep(before);
+	} else if (g.get<uint16_t>(e, 0x128) == 0xFFFF) {
+		g.set<uint16_t>(e, 0x20, 0xFFFF);
+		if (ai) {
+			fn_61dbbf(e);
+		}
+		const uint8_t before = u8(0x26);
+		fn_6264c0(e, wind, strength, ai);
+		keep(before);
+		boxes(false);
+		clear();
+		return;
+	} else {
+		const size_t t = battle_entry(b, g.get<uint16_t>(e, 0x128));
+		const uint8_t tflags = g.get<uint8_t>(t, 0x12A);
+		const uint8_t tteam = g.get<uint8_t>(b, 0x559 + size_t(g.get<uint8_t>(t, 0x13D)));
+		bool drop = (tflags & 0x6) != 0;
+		if (!drop && ai) {
+			if (tteam == team) {
+				drop = true;
+			} else if ((tflags & 0x20) && !fn_6212fb(e, t, false) && fn_61efdf(t) == 0) {
+				drop = true;
+			} else if (tflags & 0x8) {
+				const uint32_t theirs = scene_ship(battle_entry(b, g.get<uint16_t>(t, 0x128))).u16(0x40);
+				if (int32_t(scene_ship(t).u16(0x40)) > int32_t(2 * theirs)) {
+					drop = true;
+				}
+			}
+		}
+		if (drop) {
+			g.set<uint16_t>(e, 0x20, 0xFFFF);
+			if (ai) {
+				fn_61dbbf(e);
+			} else {
+				g.set<uint16_t>(e, 0x128, 0xFFFF);
+				set8(0x148, u8(0x26));
+				g.set<uint16_t>(e, 0x24, u8(0x11));
+			}
+			const uint8_t before = u8(0x26);
+			fn_6264c0(e, wind, strength, ai || g.get<uint8_t>(b, 0x5C) != 0);
+			keep(before);
+			boxes(false);
+			clear();
+			return;
+		}
+		g.set<uint16_t>(e, 0x20, g.get<uint16_t>(t, 0xA));
+		g.set<uint16_t>(e, 0x22, g.get<uint16_t>(t, 0xE));
+		const int32_t x = g.get<int16_t>(e, 0xA), y = g.get<int16_t>(e, 0xE);
+		const int32_t dx0 = g.get<int16_t>(e, 0x20) - x, dy0 = g.get<int16_t>(e, 0x22) - y;
+		int32_t dx = dx0, dy = dy0;
+		for (int i = 0; i < 4; ++i) {
+			const int32_t q = int32_t(uint32_t(root(mul(dx, dx) + mul(dy, dy))) << 8) / 0x530;
+			int32_t vx = g.get<int32_t>(t, 0x14), vy = g.get<int32_t>(t, 0x18);
+			if (automatic) {
+				vx >>= 4;
+				vy >>= 4;
+			}
+			dx = dx0 + (mul(vx, q) >> 16);
+			dy = dy0 + (mul(vy, q) >> 16);
+		}
+		const uint32_t d2 = uint32_t(mul(dx, dx) + mul(dy, dy));
+		if (tteam != team) {
+			// The edges of the area are to be avoided, unless boarding the
+			// target that way.
+			auto boarding = [&]() { return fn_61f02f(e, t, false); };
+			if (x < 0x190 && !(boarding() && dx <= 0)) {
+				const uint8_t v = uint8_t(std::min(0x190 - x, 0xFF));
+				for (size_t k = 0; k < 0x80; ++k) {
+					g.set<uint8_t>(e, 0x27 + 0x80 + k, v);
+				}
+			}
+			if (x < 0x190 && !(boarding() && dy <= 0)) {  // The game tests x (y meant).
+				for (size_t k = 0; k < 0x80; ++k) {
+					g.set<uint8_t>(e, 0x27 + ((k + 0xC0) & 0xFF), 0xFF);
+				}
+			}
+			if (x > 0x2070 && !(boarding() && dx >= 0)) {
+				for (size_t k = 0; k < 0x80; ++k) {
+					g.set<uint8_t>(e, 0x27 + k, 0xFF);
+				}
+			}
+			if (y > 0x1C74 && !(boarding() && dy >= 0)) {
+				for (size_t k = 0; k < 0x80; ++k) {
+					g.set<uint8_t>(e, 0x27 + 0x40 + k, 0xFF);
+				}
+			}
+		}
+		const bool wide = u8(0x13C) != 0;
+		const uint32_t near = wide ? 0x15F90 : 0x2B110, far = wide ? 0x1FA40 : 0x38400;
+		if (d2 < near) {
+			if (tteam == team) {
+				lower();
+				g.set<uint16_t>(e, 0x20, 0xFFFF);
+			} else {
+				set8(0x12A, flags() | 0x10);
+			}
+		}
+		if (d2 < far && (flags() & 0x10) && !fn_61f02f(e, t, true)) {
+			// Broadside: across the line to the target, the freest side.
+			g.set<uint16_t>(e, 0x20, 0xFFFF);
+			uint8_t dir = fn_6029b0(int16_t(dy), -int32_t(int16_t(dx)));
+			const uint8_t h = u8(0x11);
+			if (uint8_t(h - dir + 0x40) > 0x80) {
+				dir = uint8_t(dir + 0x80);
+			}
+			auto avoid = [&](uint8_t k) { return g.get<uint8_t>(e, 0x27 + size_t(k)); };
+			if (avoid(dir) > 0x80 && avoid(uint8_t(dir + 0x80)) < avoid(dir)) {
+				dir = uint8_t(dir + 0x80);
+			}
+			if (avoid(dir) != 0) {
+				uint8_t k = uint8_t(dir - h);
+				k = (k & 0x80) ? uint8_t((k >> 1) + 0x80) : uint8_t(k >> 1);
+				uint8_t best = uint8_t(h + k);
+				uint8_t i = 1, least = 0xFF;
+				for (;;) {
+					if (avoid(uint8_t(dir + i)) == 0 || avoid(uint8_t(dir - i)) == 0) {
+						break;
+					}
+					++i;
+					if (avoid(uint8_t(dir + i)) < least) {
+						least = avoid(uint8_t(dir + i));
+						best = uint8_t(dir + i);
+					}
+					if (avoid(uint8_t(dir - i)) < least) {
+						least = avoid(uint8_t(dir - i));
+						best = uint8_t(dir - i);
+					}
+					if (i == 0x80) {
+						break;
+					}
+				}
+				dir = best;
+			}
+			if (int32_t(dir) - int32_t(h) > 1 || int32_t(h) - int32_t(dir) > 1) {
+				fn_6271d7(e, dir);
+			}
+			if (u8(0x149) == 0 && u8(0x26) < 4) {
+				set8(0x26, u8(0x26) + 1);
+				set8(0x149, 0x4B);
+			}
+			fn_6264c0(e, wind, strength, false);
+		} else {
+			set8(0x12A, flags() & 0xEF);
+			const uint8_t before = u8(0x26);
+			fn_6264c0(e, wind, strength, true);
+			keep(before);
+		}
+	}
+	boxes(true);
+	clear();
+	if (g.get<uint16_t>(e, 0x128) != 0xFFFF || ai) {
+		fn_61dd4f(e, false);
+	}
+}
+
+// The decision to flee of an AI ship (part of 0x61A9E0, at 0x61BD39): by
+// the enemy's best arms, its hull, and the teams' sums of the sub-step
+// (strength [+0xA90], sailors [+0xA98], fighters [+0xA9C], ships [+0xAB0];
+// team 0 at the first of each pair). Team 0 flees (0x1, and the battle's
+// [+0xAC9]) when far weaker, its hull low or unarmed and outnumbered,
+// unless its owner [+0x35A] is 0xFE and its ship's [+0x0] is [+0x35C]; team
+// 1 likewise, or (a pirate team, 0x611149) heads off (0x20).
+void Sailing::fn_61a9e0_flee(size_t e) {
+	BattleGraph& g = save_.battles;
+	const size_t b = scene_battle(e);
+	const uint8_t side = g.get<uint8_t>(e, 0x13D);
+	const uint8_t team = g.get<uint8_t>(b, 0x559 + size_t(side));
+	const ShipMemory& s = scene_ship(e);
+	auto flag = [&](uint8_t bit) { g.set<uint8_t>(e, 0x12A, uint8_t(g.get<uint8_t>(e, 0x12A) | bit)); };
+	auto unflag = [&]() { g.set<uint8_t>(e, 0x12A, uint8_t(g.get<uint8_t>(e, 0x12A) & 0xFE)); };
+	uint32_t limit = uint32_t(mul(g.get<int32_t>(b, 0xAA0 + 4 * size_t(1 - team)), 0x8C));
+	if (g.get<uint8_t>(b, 0xAB0 + size_t(team)) > 1) {
+		if (uint32_t(mul(int32_t(limit), 3)) > s.u32(0x14)) {
+			limit = uint32_t(s.s32(0x14) / 3);
+		}
+	} else if (uint32_t(mul(int32_t(limit), 3)) > 2 * s.u32(0x14)) {
+		limit = uint32_t(mul(s.s32(0x14), 2) / 3);
+	}
+	if (uint32_t(mul(int32_t(limit), 4)) < s.u32(0x14)) {
+		limit = uint32_t(s.s32(0x14) >> 2);
+	}
+	const uint32_t a90 = g.get<uint32_t>(b, 0xA90), a94 = g.get<uint32_t>(b, 0xA94);
+	const int32_t a98 = g.get<uint16_t>(b, 0xA98), a9a = g.get<uint16_t>(b, 0xA9A);
+	const int32_t a9c = g.get<uint16_t>(b, 0xA9C), a9e = g.get<uint16_t>(b, 0xA9E);
+	const uint8_t n0 = g.get<uint8_t>(b, 0xAB0), n1 = g.get<uint8_t>(b, 0xAB1);
+	if (team == 0) {
+		if (g.get<uint16_t>(b, 0x35A + 2 * size_t(side)) == 0xFF) {
+			return;
+		}
+		if (g.get<uint32_t>(e, 0x144) == s.u32(0x18) && g.get<uint8_t>(b, 0xAC9) == 0) {
+			return;
+		}
+		auto flee = [&]() {
+			flag(0x1);
+			g.set<uint8_t>(b, 0xAC9, 1);
+		};
+		if (uint32_t(mul(int32_t(a90), n0)) * 2 < a94 && a9c * n0 < a9a * 2) {
+			flee();
+		} else if (uint32_t(mul(int32_t(a90), n0)) * 4 < a94) {
+			flee();
+		} else if (a9c * n0 * 3 < a9a) {
+			flee();
+		} else if (s.u32(0x18) < limit) {
+			flee();
+		} else if (s.u32(0x120) == 0 && int32_t(s.u16(0x40)) < a9a * 2) {
+			flee();
+		} else if (g.get<uint16_t>(b, 0x35A) != 0xFE || s.u8(0x0) != g.get<uint16_t>(b, 0x35C)) {
+			unflag();
+		}
+		return;
+	}
+	if (a9e * n1 * 3 < a98) {
+		flag(0x1);
+	} else if (uint32_t(mul(int32_t(a94), n1)) * 4 < a90) {
+		const bool away = g.get<uint16_t>(b, 0x35A + 2 * size_t(side)) != 0xFF &&
+			fn_612930(uint16_t(g.get<uint32_t>(e, 0x4))) * 10 <= g.get<uint32_t>(b, 0xAA8) * 9 &&
+			g.get<uint32_t>(e, 0x144) != s.u32(0x18) && g.get<uint8_t>(b, 0xACA) != 0xFF &&
+			g.get<uint8_t>(b, 0xACB) == 0 && fn_611149(b, side);
+		flag(away ? 0x20 : 0x1);
+	} else if (uint32_t(mul(int32_t(a94), n1)) * 2 < a90 && a9e * n1 < a98 * 2) {
+		flag(0x1);
+	} else if (s.u32(0x18) < limit) {
+		flag(0x1);
+	} else if (s.u32(0x120) == 0 && int32_t(s.u16(0x40)) < a98 * 2) {
+		flag(0x1);
+	} else if (g.get<uint16_t>(b, 0x35C) != 0xFE || s.u8(0x0) != g.get<uint16_t>(b, 0x35A)) {
+		unflag();
+	}
+}
+
+}  // namespace p3::data
+
+namespace p3::data {
+
+// 0x611149 (on the battle; a side): whether a ship of team 1's side may head
+// off: a side of team 1 with its mode [+0xACB] at most 3, while side 0's list
+// ([+0x10]) has a ship not out, fled nor taken (0x66).
+bool Sailing::fn_611149(size_t b, uint8_t side) const {
+	const BattleGraph& g = save_.battles;
+	if (g.get<uint8_t>(b, 0x559 + size_t(side)) == 0 || g.get<uint8_t>(b, 0xACB) > 3) {
+		return false;
+	}
+	const size_t next = size_t(g.ptr(b, 0xC));
+	for (uint16_t k = g.get<uint16_t>(b, 0x10); k != 0xFFFF; k = g.get<uint16_t>(next, 2 * size_t(k))) {
+		if (!(g.get<uint8_t>(battle_entry(b, k), 0x12A) & 0x66)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 }  // namespace p3::data
