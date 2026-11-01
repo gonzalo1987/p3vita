@@ -363,9 +363,7 @@ def road_expired(o):
     assert i < merchants
     for t in (i, j):
         w32(o, o.town(t) + 0x76C, o.u32(o.town(t) + 0x76C) | 0x8000)
-    # [+0xE] past 0x0F: otherwise the word [+0xC..+0xF] (0x0100xx01) looks
-    # like a pointer to tick_probe, which doesn't compare it.
-    set_task(o, tasks[1], merchant=player, started=1, deadline=0, f0e=0x20, f10=i, f11=j, f12=3, at=1)
+    set_task(o, tasks[1], merchant=player, started=1, deadline=0, f10=i, f11=j, f12=3, at=1)
 
 
 def new_town_market(o):
