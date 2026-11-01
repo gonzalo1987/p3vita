@@ -181,6 +181,15 @@ public:
 	void fn_514000(size_t pirate);  // (pirate object) Its daily update; may queue operation 0xB5.
 	void fn_513ec0(size_t pirate);  // (pirate object) The pirate goes away.
 	void fn_514d40(size_t pirate, uint16_t most, uint16_t strength);  // Operation 0xB5: a convoy leaves the nest.
+	// battle/battles.cpp: the battles' clock (with set_battles, as the oracle
+	// with --battles; docs/cloud/battles-2.md §3).
+	static constexpr uint32_t kBattleSteps = 84;
+	void set_battles(bool enabled) { battles_ = enabled; }
+	bool battles() const { return battles_; }
+	void step_battles();  // After each tick: operation 0x94 with kBattleSteps when there are battles.
+	void fn_536bbf(uint32_t steps);  // Operation 0x94: the battles take their steps.
+	void fn_612c90(bool network);  // (battles) Operation 0xC8 with 2 if a battle has a human side.
+	void fn_612d20(bool network);  // (battles) Operation 0xC8 with 0 if none has.
 	uint16_t fn_5063c0(uint16_t target, uint32_t kind);  // (ships object) The pirate of event 0x1E attacks a ship.
 	// 0x5062F0 (ships object): a new convoy led by `ship`, at the head of the
 	// list `head` (not inside SaveGame::convoys: it may grow); its index.
@@ -215,6 +224,7 @@ private:
 	bool storms_ = true;
 	bool pirates_ = false;
 	bool disband_ = true;
+	bool battles_ = false;
 	std::vector<std::vector<uint32_t>> waypoints_;  // 0x448780 per town ([+0x20], [+0x24] of the navigation)
 	std::vector<bool> has_waypoints_;
 

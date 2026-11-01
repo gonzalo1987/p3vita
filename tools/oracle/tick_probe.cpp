@@ -8,6 +8,7 @@
 // --no-storms: without the storms (0x5053C0), as town_oracle.py --no-storms.
 // --pirates: the pirate convoys move (battle/pirates.cpp), as town_oracle.py --pirates.
 // --no-disband: with --pirates, a convoy at its nest is not disbanded, as town_oracle.py --no-disband.
+// --battles: with --pirates, the battles' clock (Sailing::set_battles), as town_oracle.py --battles.
 // --storms (on by default now) is still accepted.
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
@@ -334,6 +335,22 @@ void build_save(const State& state, SaveGame& save) {
 			copy_blocks(*f, save.world_object_lists[i]);
 		}
 	}
+	if (const Region* bt = find(state, "BT")) {
+		// The battles: u32 number of blocks and, for each, u32 size and the bytes.
+		const std::vector<uint8_t>& b = bt->bytes;
+		save.battles.blocks.clear();
+		size_t o = 4;
+		const uint32_t n = b.size() >= 4 ? get<uint32_t>(b.data(), 0) : 0;
+		for (uint32_t k = 0; k < n && o + 4 <= b.size(); ++k) {
+			const uint32_t size = get<uint32_t>(b.data(), o);
+			o += 4;
+			save.battles.blocks.emplace_back(b.begin() + std::ptrdiff_t(o), b.begin() + std::ptrdiff_t(o + size));
+			o += size;
+		}
+		if (save.battles.blocks.empty()) {
+			save.battles = BattleGraph{};
+		}
+	}
 	save.rand_state = get<uint32_t>(state.at("r").bytes.data(), 0);
 	save.player = int(save.globals.u32(global::kPlayer));
 }
@@ -451,6 +468,17 @@ State dump_save(const SaveGame& save, const State& game) {
 		const std::string f = "F" + std::to_string(i);
 		if (s.count(f)) {
 			store_blocks(save.world_object_lists[i], s[f]);
+		}
+	}
+	if (auto bt = s.find("BT"); bt != s.end()) {
+		std::vector<uint8_t>& b = bt->second.bytes;
+		b.assign(4, 0);
+		put<uint32_t>(b.data(), 0, uint32_t(save.battles.blocks.size()));
+		for (const std::vector<uint8_t>& block : save.battles.blocks) {
+			const size_t o = b.size();
+			b.resize(o + 4);
+			put<uint32_t>(b.data(), o, uint32_t(block.size()));
+			b.insert(b.end(), block.begin(), block.end());
 		}
 	}
 	s["r"].bytes.resize(4);
@@ -636,6 +664,7 @@ int main(int argc, char** argv) {
 	bool storms = true;
 	bool pirates = false;
 	bool disband = true;
+	bool battles = false;
 	std::string load;
 	std::string cpr;
 	uint32_t only = 0;
@@ -659,6 +688,8 @@ int main(int argc, char** argv) {
 			pirates = true;
 		} else if (arg == "--no-disband") {
 			disband = false;
+		} else if (arg == "--battles") {
+			battles = true;
 		} else if (arg == "--cpr" && i + 1 < argc) {
 			cpr = argv[++i];
 		} else if (arg == "--solo" && i + 1 < argc) {
@@ -719,6 +750,7 @@ int main(int argc, char** argv) {
 		sailing->set_storms(storms);
 		sailing->set_pirates(pirates);
 		sailing->set_pirate_disbanding(disband);
+		sailing->set_battles(battles);
 		g_sailing = sailing.get();
 		registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
 			sailing->update_ships();

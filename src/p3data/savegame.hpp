@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "p3data/battle/battles.hpp"
 #include "p3data/battle/pirate_nests.hpp"
 #include "p3data/cpr.hpp"
 #include "p3data/game_memory.hpp"
@@ -437,6 +438,9 @@ struct SaveGame {
 	// its pool (battle/pirate_nests.hpp). Loaded by load_pirate_nests; in
 	// tick_probe, the regions ZMi, ZDi and ZPi.
 	std::array<PirateNest, 5> pirate_nests;
+	// The battles (0x6E55D0 and its heap blocks; battle/battles.hpp). None in
+	// the saves: the empty object. In tick_probe, region BT.
+	BattleGraph battles;
 	// Los encargos de los 15 objetos del mundo ([+0xB10] del mundo, 0x2C
 	// bytes cada uno): la lista del montón de su [+0x24], con su número en el
 	// u16 [+0x1C] y en el u32 [+0x28] del objeto. Registros de 16 bytes, en el
