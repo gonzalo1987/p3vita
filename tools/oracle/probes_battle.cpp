@@ -159,15 +159,25 @@ void register_probes_battle(ProbeRegistry& r) {
 		return 0;
 	};
 	// 0x5062F0: thiscall on the ships object, the address of the head of a
-	// list of convoys (a global, or [+0x8] of a convoy) and the ship.
+	// list of convoys (a global, or a local of 0x514D40 on the stack) and the ship.
 	r[0x5062F0] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
 		const Location l = c.locate(c.args[0]);
 		const int ship = int(c.args[1] & 0xFFFF);
-		if (!probe_sailing() || l.kind != Location::Global || ship >= int(save.ships.size())) {
+		if (!probe_sailing() || ship >= int(save.ships.size())) {
 			return kBad;
 		}
-		probe_sailing()->fn_5062f0(save.globals.u16(l.offset), uint16_t(ship));
 		c.eax_mask = 0;
+		if (l.kind == Location::Global) {
+			probe_sailing()->fn_5062f0(save.globals.u16(l.offset), uint16_t(ship));
+			return 0;
+		}
+		// A local head on the stack (0x514D40): its value from the recording.
+		const std::optional<uint32_t> head = c.stack(c.args[0]);
+		if (!head) {
+			return kBad;
+		}
+		uint16_t local = uint16_t(*head);
+		probe_sailing()->fn_5062f0(local, uint16_t(ship));
 		return 0;
 	};
 	// 0x447580: thiscall on the navigation object (the address of the ship's

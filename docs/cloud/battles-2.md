@@ -53,6 +53,23 @@ automatic sea battle).
 - **Part 2 closed:** the world, 12 saves × 7 days, 0 «distintas» by default
   (133 + 137 + 119 s) and with `--pirates` (142 + 140 + 127 s).
 
+- **Main merged (0320701: statistics, unchecked-branches, tick_probe
+  comparing the words that look like pointers):** `pointer_field` learnt the
+  pirate's `[+0x0]` (the nest's map), `ZMi` `[+0x68]` and, in `BT`, the
+  words that still look like pointers; the probe of 0x5062F0 reads a head
+  on the stack. Everything checked again: `write-check.sh` as before; the
+  pirate probes in the 12 saves × 7 days, 0 differences; every retouched
+  scenario, 0 differences; the world 12 saves × 7 days, 0 «distintas» by
+  default (182 + 179 + 164 s) and with `--pirates` (187 + 191 + 194 s).
+- **Part 3, the infrastructure (in progress):** the oracle records the
+  battles as one region `BT` (the object of 0x6E55D0 and every heap block
+  that hangs from it, pointers turned into block indices) and has
+  `--battles` (the pirates attack; operation 0x94 with 84 steps after each
+  tick with battles); p3vita has `SaveGame::battles` (`BattleGraph`), which
+  tick_probe loads and compares, the clock rule (`Sailing::step_battles`,
+  behind `set_battles`) and operation 0x94 without the battles' own step
+  (part 4). §3.
+
 ## Decisions for the user
 
 - **The grid functions on a nest's map** (recommendation: for
@@ -347,6 +364,67 @@ While checking it: tick_probe now empties `SaveGame::pirates[i]` when the
 region `Zi` is empty (before, a pirate deleted in the game stayed in p3vita
 from an earlier sample).
 
+## 3. Piece 3, the infrastructure
+
+### 3.1 What a live sea battle holds
+
+`re/battles/layout.py`-like walk (save 5, the battle of day 3, right after
+0x605420 and 3 ticks later): 28 heap blocks hang from the battle object,
+none of them a world block:
+- the object (0x1E98, vtable 0x67AD44); `[+0x4]` an array (4 · ships) of
+  pointers to the **scene's ships**: objects of 0x164 bytes, vtable 0x67B0D4,
+  with a pointer back to the battle at `+0x12C` and, once they move, at
+  `+0x68` a pointer into the navigation's points (a world block: the only
+  pointer that leaves the battle); `[+0x8]`, `[+0xC]`, `[+0xA74]`,
+  `[+0xA78]` arrays of u16 per ship; `[+0x18]` 0x40, `[+0x1C]`, `[+0x24]`
+  0x80, `[+0x28]..[+0x40]` six blocks of 0x100; `[+0x48]`, `[+0x4C]`,
+  `[+0x50]` arrays of two pointers to blocks of 0x100.
+- So the «0x180 copies of the ships» of the plan are these 0x164-byte scene
+  objects.
+
+### 3.2 The oracle: region BT and `--battles`
+
+`TownOracle.battle_graph` (`town_oracle.py`, in `regions()`, through the
+fast reader): block 0 is the battles object at 0x6E55D0 (0xC48 bytes, up to
+its clock `[+0xC44]`: the 255 slots, the count `[+0x404]`, the flag
+`[+0x3FE]`, the timers `[+0xC30]`, `[+0xC34]`); then every heap block
+reachable through a pointer to its start (not the world's blocks, the
+regions' addresses), in the order of a walk by offsets, with its requested
+size. Every pointer into one of these blocks becomes `0xF0000000 | block <<
+16 | offset`; other pointers stay. Region bytes: u32 number of blocks and,
+for each, u32 size and the bytes. The order is the walk's, not the
+allocation's, so p3vita gets the same bytes if it has the same structure.
+After the load the object is all zero in the emulator (its constructor
+doesn't run): one block of zeros, as p3vita's empty `BattleGraph`.
+
+`--battles` (with `--pirates`): the jump 0x507BE9 (the attack) goes, and
+after each tick with battles (`[0x6E59D4]` ≠ 0), after the tick's other
+operations, operation 0x94 with `BATTLE_STEPS` = 84 through the executor
+trampoline (recorded as 0x535760, like the others). The third jump of the
+rule (the end of a route, a town battle) stays.
+
+Checked: `P3_ORACLE_CHECK=1`, the world 1 day in saves 3 and 5 (BT always
+present, no battle): 0 «distintas»; `--pirates --battles` in save 5, 5 days
+(437 samples, the battle of day 3 recorded: about 18 KB of BT): the
+snapshot check passes.
+
+### 3.3 p3vita: SaveGame::battles, the clock rule, operation 0x94
+
+- `battle/battles.hpp`: `BattleGraph` (the blocks as the oracle records
+  them; `count()`, `battle(k)`, `get`/`set`), `SaveGame::battles`.
+- `battle/battles.cpp`: `Sailing::step_battles` (the rule: with
+  `set_battles`, operation 0x94 with `kBattleSteps` = 84 when there are
+  battles, called at the end of `advance_game_tick`), `fn_536bbf`
+  (operation 0x94: method +0x14 of each battle that runs, **not rewritten
+  yet**, then the time mode and `[+0x3FE]` = 1), `fn_612c90` and
+  `fn_612d20` (operation 0xC8 with 2 if a battle has a human side, with 0 if
+  none has: tick_probe compares the queued operations).
+- tick_probe: loads and dumps `BT`; `--battles` (`set_battles`).
+
+With `--battles` the comparison of the steps differs (the battles don't
+move in p3vita yet): save 5, 5 days, 266 equal executor calls and 163
+different (the ones with a battle), as expected until part 4.
+
 ## Changes to shared files
 
 - `src/p3data/savegame.cpp` (cloud/statistics): one line, at the end of the
@@ -400,6 +478,25 @@ from an earlier sample).
   `SaveGame::pirates[i]`.
 - `src/p3data/convoys_members.cpp`: the pirate branch of `fn_5017f0` and the
   declaration of `fn_5097c0` (`town_tick/events.cpp`).
+- `src/p3data/simulation.cpp` (local session's): at the end of
+  `advance_game_tick`, after `run_queued_operations(save, sailing);`, the
+  line `sailing.step_battles();  // The battles' clock (battle/battles.cpp).`;
+  in `run_operation`, before `case 0xB5`:
+
+  ```cpp
+  case 0x94:  // The battles take their steps (0x536BBF; battle/battles.cpp).
+      if (sailing) {
+          sailing->fn_536bbf(uint32_t(fields[1]) & 0xFFFF);
+      }
+      break;
+  ```
+- `src/p3data/savegame.hpp`: the include of `battle/battles.hpp` and
+  `SaveGame::battles`.
+- `tools/oracle/town_oracle.py`: `BATTLES`, `BATTLES_SIZE`, `BATTLE_POINTER`,
+  `BATTLE_STEPS`, `BATTLE_JUMP`, `battle_graph`, the region `BT`, `--battles`
+  (constructor `battles=False`, after main's `statistics`, `last_steps`).
+- `tools/oracle/tick_probe.cpp`: `BT`, `--battles`, and in `pointer_field`
+  (from main) the cases `Z` `[+0x0]`, `ZM` `[+0x68]`, `BT`.
 - Declared in my files (not changed): `fn_4f9c80`
   (`town_tick/construction.cpp`), `fn_51a750` (`town_tick/alderman.cpp`).
 
@@ -445,7 +542,7 @@ Looks like one:
 
 Done: part 1; of part 2, the disbanding (§2.1), the states 0x11 and 0x12
 and 0x5017F0 (§2.2), the pirate objects' day (§2.3), the attack of event
-0x1E (§2.4, not connected). Left: part 3 (battle infrastructure) and part 4
-(the battle).
+0x1E (§2.4, not connected); of part 3, the recording, SaveGame::battles and the
+clock (§3). Left: part 4 (the battle itself).
 
 Not built for the Vita yet.
