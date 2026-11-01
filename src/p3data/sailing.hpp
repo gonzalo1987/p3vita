@@ -223,6 +223,12 @@ public:
 	int32_t fn_61efdf(size_t entry) const;  // (scene's ship) Arms per hull.
 	bool fn_61f02f(size_t entry, size_t other, bool flag) const;  // (scene's ship) Whether to board.
 	void fn_619560(size_t battle, uint16_t item);  // (scene) An item freed.
+	size_t battle_entry(size_t battle, uint16_t place) const;  // The scene's ship in a place.
+	bool fn_609d40(size_t battle, uint16_t i, uint16_t j, int32_t& x, int32_t& y) const;  // Hulls crossing.
+	void fn_60adbf(size_t battle, uint16_t i, int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t& x, int32_t& y,
+		uint8_t& side) const;  // Where a segment meets a hull.
+	bool fn_608f70(size_t battle, uint16_t i, uint16_t j);  // Two ships collide.
+	void fn_609ba0(size_t battle, uint16_t i, uint16_t j);  // They collide and may grapple.
 	// battle/attack.cpp
 	void fn_50bc40(uint16_t convoy);  // (ships object) A pirate convoy attacks: a sea battle.
 	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.

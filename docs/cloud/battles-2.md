@@ -511,6 +511,22 @@ tut3, 7 days; 39 s):
   (a scene item freed). Call by call with `--pirates --battles` (saves 5, 6,
   5 days): 0x6212FB 7698 calls, 0x61F02F 7781, 0x61EFDF 161, 0x6029B0
   9996, 0x619560 2, 0 differences.
+- The collisions (`battle_step.cpp`, tables 0x67ABB0 the sine, 0x67AB30 the
+  hulls, 0x67AB88/0x67AB90/0x67AB98; 0x67ACB8 is a copy of 0x67AA28):
+  **0x609BA0** (two ships collide and may grapple), **0x608F70** (the
+  collision: pushed apart when closer than 10, else a blow to each where the
+  line from the other's centre to the crossing meets its hull: a push, a
+  turn, the speed), **0x609D40** (whether two hulls cross, and where),
+  **0x60ADBF** (where a segment meets a hull; no probe: its results go to
+  the caller's stack, checked with 0x608F70). Call by call (saves 5, 6, tut0,
+  tut3, 7 days): 0x608F70 771 + 745 calls, 0x609BA0 35 + 59, 0x609D40 528 +
+  468, 0 differences. `[+0xAC8]` is 1 in an automatic battle (no human side)
+  and makes the pushes and turns larger; its 0 branches, and the blow on a
+  side that turns it the other way, are not run in the saves: left for a
+  retouched state with a human side once 0x606CC0 is done. The crash's
+  sound (0x443690, UI; it gives none in the emulator) is left out.
+  Not wired yet into p3vita's simulation (their caller is the step), so the
+  world can't change with them; the world is checked when 0x606CC0 is.
 
 So with `--battles`, p3vita starts the automatic sea battles exactly as the
 game. What is left is the battle itself: the step (operation 0x94, method
@@ -660,6 +676,11 @@ Looks like one:
   0xFFFF in the list by x (0x50D0C0), reading outside the ships array (the
   emulator stops there). Seen only in a retouched state. Not reproduced:
   p3vita skips the sort.
+- **0x60ADBF leaves the side it found unset when the segment meets no
+  side of the hull**, and 0x608F70 then reads that byte of its stack, never
+  written, as an index into 0x67AB98. It doesn't happen in the saves (the
+  segment goes from the other ship's centre to a point where the hulls
+  cross). p3vita starts it at 0 (`fn_608f70`).
 - **0x514B80 queues operation 0x12 (the captain improves) for the convoy's
   guide once per ship that has a captain**, instead of for each ship: the
   guide's captain improves up to n times and the others' never. Probably the

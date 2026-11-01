@@ -247,6 +247,34 @@ void register_probes_battle(ProbeRegistry& r) {
 		c.eax_mask = 0xFF;
 		return probe_sailing()->fn_61f02f(size_t(e), size_t(f), (c.args[1] & 0xFF) != 0) ? 1 : 0;
 	};
+	// Collisions: thiscall on a battle, two places. 0x609D40 returns al (its
+	// two results go to the caller's stack and are checked with 0x608F70, as
+	// those of 0x60ADBF, which has no probe).
+	r[0x609D40] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int b = battle_block(c.ecx);
+		if (!probe_sailing() || b < 0) {
+			return kBad;
+		}
+		int32_t x = 0, y = 0;
+		c.eax_mask = 0xFF;
+		return probe_sailing()->fn_609d40(size_t(b), uint16_t(c.args[0]), uint16_t(c.args[1]), x, y) ? 1 : 0;
+	};
+	r[0x608F70] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int b = battle_block(c.ecx);
+		if (!probe_sailing() || b < 0) {
+			return kBad;
+		}
+		c.eax_mask = 0xFF;
+		return probe_sailing()->fn_608f70(size_t(b), uint16_t(c.args[0]), uint16_t(c.args[1])) ? 1 : 0;
+	};
+	r[0x609BA0] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int b = battle_block(c.ecx);
+		if (!probe_sailing() || b < 0) {
+			return kBad;
+		}
+		probe_sailing()->fn_609ba0(size_t(b), uint16_t(c.args[0]), uint16_t(c.args[1]));
+		return std::nullopt;
+	};
 	// 0x605420: thiscall on a sea battle (ship A, ship D, a byte, a flag).
 	r[0x605420] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
 		const int battle = battle_block(c.ecx);
