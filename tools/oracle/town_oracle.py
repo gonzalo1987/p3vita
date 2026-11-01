@@ -50,7 +50,7 @@ Formato del fichero (enteros little endian):
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
        [--desde DÍA] [--max N] [--semilla S] [--cpr p2arch0_eng.cpr] [--barcos DATOS [--sin-ia] [--sin-convoyes]
        [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms]
-       [--pirates [--no-disband] [--battles]] [--no-statistics]] [--pst FILE] [--write OUT]
+       [--no-pirates] [--no-disband] [--no-statistics]] [--pst FILE] [--write OUT]
 La función 51ba10 graba los ticks de ciudad enteros.
 
 Con --cpr (o si DATOS/scripts tiene los ficheros), la carga crea también el
@@ -338,7 +338,7 @@ def executor_trampoline(at):
 
 class TownOracle(SaveOracle):
     def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True, rest=(), cpr=None,
-                 operations=OPERATIONS, storms=True, pirates=False, statistics=False, last_steps=True,
+                 operations=OPERATIONS, storms=True, pirates=True, statistics=False, last_steps=True,
                  disband=True, battles=False):
         self.pirates = pirates and navdata is not None and convoys
         self.battles = self.pirates  # `battles` is kept for older scripts.
@@ -1293,13 +1293,15 @@ def main():
     p.add_argument('--no-storms', action='store_true',
                    help='with --barcos, without the storms (0x5053C0, every 8 ticks), which run by default')
     p.add_argument('--storms', action='store_true', help='on by default now; kept for older scripts')
-    p.add_argument('--pirates', action='store_true',
-                   help='with --barcos, the pirate convoys move and attack (sea battles; see PIRATE_JUMPS)')
+    p.add_argument('--no-pirates', action='store_true',
+                   help='with --barcos, without the pirates: their convoys stay still and nothing attacks '
+                        '(by default they move and attack, with their sea battles; see PIRATE_JUMPS)')
+    p.add_argument('--pirates', action='store_true', help='on by default now; kept for older scripts')
     p.add_argument('--battles', action='store_true',
-                   help='on with --pirates now (the pirates attack, 0x50BC40, and operation 0x94 steps the '
+                   help='on with the pirates now (the pirates attack, 0x50BC40, and operation 0x94 steps the '
                         'battles); kept for older scripts')
     p.add_argument('--no-disband', action='store_true',
-                   help='with --pirates, a convoy at its nest is not disbanded (0x514B80; NO_DISBAND_JUMP)')
+                   help='with the pirates, a convoy at its nest is not disbanded (0x514B80; NO_DISBAND_JUMP)')
     p.add_argument('--pst', metavar='FILE', help='an uncompressed .pst to read after the save (0x54DA60)')
     p.add_argument('--no-statistics', action='store_true',
                    help='without the daily statistics (0x54DE90, after 0x5315C0; regions S0..S4), which run by default')
@@ -1321,7 +1323,7 @@ def main():
         rest = [int(x, 16) for x in a.resto.split(',') if x]
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
                    not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], not a.no_storms,
-                   a.pirates, not a.no_statistics, disband=not a.no_disband, battles=a.battles)
+                   not a.no_pirates, not a.no_statistics, disband=not a.no_disband, battles=a.battles)
     o.load()
     if a.pst:
         # The .pst next to the save (uncompressed), as 0x5476E0 reads it.

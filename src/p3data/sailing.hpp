@@ -177,8 +177,9 @@ public:
 	void fn_503cf0(int convoy);
 	void fn_503930(int convoy);
 
-	// battle/pirates.cpp: the pirates at sea (off unless set_pirates(true), as
-	// town_oracle.py --pirates), with their sea battles (set_battles).
+	// battle/pirates.cpp: the pirates at sea, with their sea battles
+	// (set_battles); on by default, as in the game and town_oracle.py
+	// (set_pirates(false) as town_oracle.py --no-pirates).
 	void set_pirates(bool enabled) {
 		pirates_ = enabled;
 		battles_ = enabled;
@@ -307,9 +308,9 @@ private:
 	bool ai_ = true;
 	bool convoys_ = true;
 	bool storms_ = true;
-	bool pirates_ = false;
+	bool pirates_ = true;
 	bool disband_ = true;
-	bool battles_ = false;
+	bool battles_ = true;
 	std::vector<std::vector<uint32_t>> waypoints_;  // 0x448780 per town ([+0x20], [+0x24] of the navigation)
 	std::vector<bool> has_waypoints_;
 

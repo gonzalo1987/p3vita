@@ -6,9 +6,10 @@
 //        tick_probe <fichero.probe> --carga <partida.raw> [--continuo [--cpr p2arch0_eng.cpr [--sin-ia]
 //          [--sin-convoyes] [--no-storms]]] [--max N] [--write OUT]
 // --no-storms: without the storms (0x5053C0), as town_oracle.py --no-storms.
-// --pirates: the pirate convoys move (battle/pirates.cpp), as town_oracle.py --pirates.
-// --no-disband: with --pirates, a convoy at its nest is not disbanded, as town_oracle.py --no-disband.
-// --battles: kept for older scripts; the battles go with --pirates now (Sailing::set_pirates), as in
+// --no-pirates: without the pirates (battle/pirates.cpp) and their battles, as town_oracle.py
+// --no-pirates; they are on by default (--pirates is still accepted).
+// --no-disband: with the pirates, a convoy at its nest is not disbanded, as town_oracle.py --no-disband.
+// --battles: kept for older scripts; the battles go with the pirates now (Sailing::set_pirates), as in
 // town_oracle.py.
 // --fix-game-bugs: with the fixes to the game's bugs (game_fixes.hpp), off by default.
 // --storms (on by default now) is still accepted.
@@ -807,7 +808,7 @@ int main(int argc, char** argv) {
 	bool ai = true;
 	bool convoys = true;
 	bool storms = true;
-	bool pirates = false;
+	bool pirates = true;
 	bool disband = true;
 	bool battles = false;
 	std::string load;
@@ -832,6 +833,8 @@ int main(int argc, char** argv) {
 			storms = false;
 		} else if (arg == "--pirates") {
 			pirates = true;
+		} else if (arg == "--no-pirates") {
+			pirates = false;
 		} else if (arg == "--no-disband") {
 			disband = false;
 		} else if (arg == "--battles") {
