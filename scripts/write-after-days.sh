@@ -7,6 +7,9 @@
 # --pst). The saves run in parallel.
 #
 # usage: scripts/write-after-days.sh DAYS [SAVES...]   (by default 1 3 7)
+# P3_FIX_GAME_BUGS=1: p3vita's reload of the .pat and the .pst with the fixes
+# to the game's bugs (only the load: the days and the writing stay the
+# game's, since there the fixes would change the simulation).
 # Needs the same as scripts/write-reload.sh.
 cd "$(dirname "$0")/.."
 : "${P3_EXE:?missing P3_EXE (path of Patrician3.exe)}"
@@ -14,6 +17,10 @@ cd "$(dirname "$0")/.."
 : "${P3_SHIPS:?missing P3_SHIPS (folder with navdata/ and scripts/)}"
 tmp=${P3_TMP:-/tmp}
 build=${BUILD:-build}
+fix=()
+if [ -n "${P3_FIX_GAME_BUGS:-}" ]; then
+	fix=(--fix-game-bugs)
+fi
 days=${1:?missing DAYS}
 shift
 saves=("$@")
@@ -46,7 +53,7 @@ for s in "${saves[@]}"; do
 	python3 tools/oracle/town_oracle.py "$P3_EXE" "$tmp/$s-after-p3vita.raw" "$tmp/$s-after-reload.probe" 0 51ba10 \
 		--barcos "$P3_SHIPS" --cpr "$P3_CPR" --pst "$tmp/$s-after-p3vita.raw.pst" >/dev/null
 	echo "reload of the .pat and the .pst: $("$build/tools/oracle/tick_probe" "$tmp/$s-after-reload.probe" --carga \
-		"$tmp/$s-after-p3vita.raw" --pst "$tmp/$s-after-p3vita.raw.pst" --cpr "$P3_CPR" | tail -1)"
+		"$tmp/$s-after-p3vita.raw" --pst "$tmp/$s-after-p3vita.raw.pst" --cpr "$P3_CPR" "${fix[@]}" | tail -1)"
 	rm -f "$tmp/$s-after-reload.probe" "$tmp/$s-after-game.raw" "$tmp/$s-after-p3vita.raw" "$tmp/$s-after-game.raw.pst" \
 		"$tmp/$s-after-p3vita.raw.pst" "$tmp/$s-after.txt" "$tmp/$s-after.err"
 done

@@ -2,6 +2,8 @@
 
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
+
 namespace p3::data {
 
 namespace tick::events_detail {
@@ -148,8 +150,9 @@ float add(float a, float b) {
 }
 
 // 0x54C520: the merchant's record of the day in `r`. It takes and clears
-// his counters of the day.
-void merchant_record(SaveGame& save, int merchant, uint8_t* r) {
+// his counters of the day (without `clear`, it only takes them: not the
+// game's, for the fix in read_statistics).
+void merchant_record(SaveGame& save, int merchant, uint8_t* r, bool clear = true) {
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	const GlobalMemory& g = save.globals;
 	f32(r, 0x0) = float(m.s32(0x46C));
@@ -173,7 +176,9 @@ void merchant_record(SaveGame& save, int merchant, uint8_t* r) {
 	}
 	for (size_t o : {0x484, 0x494, 0x4A0, 0x49C, 0x4A4, 0x48C, 0x4AC, 0x4C0, 0x4C4, 0x4C8, 0x4B8, 0x4BC, 0x4B0,
 			 0x4B4, 0x4CC}) {
-		m.u32(o) = 0;
+		if (clear) {
+			m.u32(o) = 0;
+		}
 	}
 	u32(r, 0x48) = 0;
 	u32(r, 0x5C) = 0;
@@ -257,14 +262,15 @@ void clear_record(uint8_t* r) {
 	std::memset(r, 0, kLink);
 }
 
-// 0x54CA20: the object of a merchant, its rings filled with his record now.
-MerchantStatistics new_merchant_statistics(SaveGame& save, int merchant) {
+// 0x54CA20: the object of a merchant, its rings filled with his record now
+// (`clear`: as merchant_record).
+MerchantStatistics new_merchant_statistics(SaveGame& save, int merchant, bool clear = true) {
 	MerchantStatistics out;
 	GameMemory<0x2310>& m = out.memory;
 	uint8_t* base = m.bytes.data();
 	m.u16(0x0) = uint16_t(merchant);
 	clear_record(base + kDays);
-	merchant_record(save, merchant, base + kDays);
+	merchant_record(save, merchant, base + kDays, clear);
 	auto ring = [&](size_t first, size_t count, bool own_first) {
 		if (!own_first) {
 			clear_record(base + first);
@@ -542,8 +548,13 @@ bool read_statistics(const uint8_t* data, size_t size, SaveGame& save) {
 	}
 	st.merchants.clear();
 	for (uint32_t k = 0; k < g.u16(kStatistics + 0xA) && r.ok(); ++k) {
-		// 0x54CA20 for the merchant 0, then 0x54CCC0.
-		MerchantStatistics m = new_merchant_statistics(save, 0);
+		// 0x54CA20 for the merchant 0, then 0x54CCC0. GAME BUG (looks like
+		// one): the record of the day of 0x54CA20 clears the 15 counters of
+		// the merchant 0 at each object read. The file then overwrites the
+		// 0x6C bytes of every record of the rings, so the object doesn't
+		// depend on that record: fixed, the counters stay (the object is the
+		// same, byte for byte).
+		MerchantStatistics m = new_merchant_statistics(save, 0, !fix_game_bugs());
 		GameMemory<0x2310>& o = m.memory;
 		o.u16(0x0) = r.u16();
 		o.u16(0x2) = r.u16();
