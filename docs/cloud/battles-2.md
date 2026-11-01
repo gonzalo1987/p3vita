@@ -563,6 +563,15 @@ tut3, 7 days; 39 s):
   over (operation 0x91 at once, 0x540520, and the sides' lists), a side of
   the player (its messages and window, part 7), the letters (0x4D6530, not
   rewritten in p3vita).
+- **0x61DD4F** (method +0x8 of a scene's ship: it fires; where the ships
+  will be, friends in the way, the closest enemy on each side), **0x620F0B**
+  (a broadside's damage: guns by distance, captain, fighting, generator),
+  **0x61F96F** (a hit: hull, sunk, a gun lost, sailors) and **0x611649** (the
+  music level [+0x1E94]). Saves 4, 5, 6, tut0, tut3, 7 days: 0x61DD4F 277 +
+  2540 + 1483 + 328 + 212 calls, 0 differences; but automatic battles
+  seldom fire (they board): one broadside in tut3 (7 days) and one in save
+  6 (21 days), both equal. Not rewritten: with a human side the guns fire
+  cannon balls (0x61E8EF, part 7).
 - **The recording of BT took numbers for pointers**: at the start of a
   battle the places of the scene's ships are whole, so their 16.16 x
   ([+0x8]) is x · 65536, 0x10xx0000 for x from 4096 on, and the heap gives

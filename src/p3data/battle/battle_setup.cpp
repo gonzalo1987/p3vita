@@ -8,16 +8,17 @@
 #include <cstdint>
 #include <limits>
 
+#include "p3data/battle/battle_math.hpp"
 #include "p3data/sailing.hpp"
 
 namespace p3::data {
 
+using battle_math::kGunA;
+using battle_math::kGunB;
+using battle_math::kGunTime;
+
 namespace {
 
-// 0x672CD0, 0x672CC0, 0x672CE4: per kind of gun (< 6), two factors and a time.
-constexpr uint8_t kGunA[6] = {60, 80, 60, 80, 90, 90};
-constexpr uint8_t kGunB[6] = {32, 32, 77, 77, 96, 58};
-constexpr uint16_t kGunTime[6] = {480, 160, 480, 160, 120, 120};
 constexpr uint32_t kSceneShipVtable = 0x67B0D4;
 // 0x67AB80: half the size of a ship of each type, in the battle's units.
 constexpr uint16_t kShipHalf[8] = {55, 66, 70, 84, 102, 121, 121, 148};

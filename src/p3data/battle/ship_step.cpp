@@ -11,6 +11,7 @@
 
 #include "p3data/battle/battle_math.hpp"
 #include "p3data/sailing.hpp"
+#include "p3data/trade.hpp"
 
 namespace p3::data {
 
@@ -459,6 +460,322 @@ void Sailing::fn_61f1bf(size_t e) {
 	}
 	if (flees(t, them, me)) {
 		g.set<uint8_t>(t, 0x12A, uint8_t(g.get<uint8_t>(t, 0x12A) | 0x20));
+	}
+}
+
+}  // namespace p3::data
+
+namespace p3::data {
+
+// 0x611649 (on the battle; a level): the battle's music [+0x1E94] >> 10
+// raised to the level (method +0x28 of a sea battle is 0: as it is).
+void Sailing::fn_611649(size_t b, uint8_t level) {
+	BattleGraph& g = save_.battles;
+	const uint16_t v = g.get<uint16_t>(b, 0x1E94);
+	if (level > (v >> 10)) {
+		g.set<uint16_t>(b, 0x1E94, uint16_t((uint32_t(level) << 10) + (v & 0x3FF)));
+	}
+}
+
+// 0x620F0B (on a scene's ship; a side, a distance, two outputs the battle
+// step doesn't ask for): the damage of a broadside: per gun of the side (the
+// slots 0, 1, 4, 5... for side 0, 2, 3, 6, 7... for side 1; [+0x13C] of its
+// ship), its two factors less by the distance over 6 times its time, then
+// · 28 / 64, by its captain ([+0xB]) and fighting [+0x3F] (as the boarding),
+// and the battle's generator (85 to 115 %); at least 1, or 0 without guns.
+int32_t Sailing::fn_620f0b(size_t e, uint8_t side, uint16_t distance) {
+	BattleGraph& g = save_.battles;
+	const ShipMemory& s = scene_ship(e);
+	int32_t total = 0;
+	uint32_t guns = 0;
+	const uint8_t first = uint8_t(side * 2);
+	if (first < 0x18) {
+		for (uint32_t slot = first; slot < 0x18; slot += 4) {
+			for (uint32_t k = slot; k < slot + 2; ++k) {
+				const uint8_t gun = s.u8(0x13C + k);
+				if (gun >= 6) {
+					continue;
+				}
+				const int32_t a = int32_t(kGunA[gun]) * kGunB[gun];
+				int32_t v = a + mul(int32_t(distance), a) / (-6 * int32_t(kGunTime[gun]));
+				if (v < 0) {
+					v = 0;
+				}
+				total += v;
+				++guns;
+			}
+		}
+	}
+	if (guns == 0) {
+		return 0;
+	}
+	int32_t damage = mul(total >> 6, 2800) / 100;
+	const uint16_t captains = save_.globals.u16(global::kCaptainCount);
+	const uint16_t captain = s.u16(0x42);
+	if (captain < captains && captain < save_.captains.size()) {
+		const int32_t skill = save_.captains[captain].u8(0xB);
+		damage = mul(mul(skill, 6) / 17 + 0x64, damage) / 100;
+	}
+	int8_t fight = int8_t(s.u8(0x3F));
+	if (fight < 0) {
+		fight = 0;
+	} else if (fight > 4) {
+		fight = 4;
+	}
+	const uint8_t owner = s.u8(0x0);
+	if (owner != 0xFF && owner < save_.merchants.size() && save_.merchants[owner].memory.u16(0x8) == 0) {
+		const uint8_t difficulty = save_.settings.u8(0x12);
+		if (difficulty == 0) {
+			fight = int8_t(fight + 2);
+		} else if (difficulty == 2) {
+			fight = int8_t(fight - 2);
+		}
+	}
+	if (fight < 1) {
+		damage += mul(int32_t(fight) - 1, damage) / 20;
+	} else if (fight > 2) {
+		damage += mul(int32_t(fight) - 2, damage) / 20;
+	}
+	const uint32_t r = battle_rand(g, scene_battle(e)) % 31u + 0x55u;
+	const uint32_t d = uint32_t(mul(int32_t(r), damage)) / 100u;
+	return d == 0 ? 1 : int32_t(d);
+}
+
+// 0x61F96F (on a scene's ship; damage, sailors lost or −1, the guns' side
+// or 0): a hit. Nothing once the battle is over ([+0x5C]). Sailors lost by
+// the damage against the hull (the battle's generator; fractions in
+// [+0x13A]) when −1. Its ship [+0x3C] | 0x100; sunk (0x2: [+0x18] 0, the
+// scene's ship 0x4 alone, its items freed, the battle's [+0xAC4] 1 and
+// [+0xAC6] its place) when the damage reaches its hull, else less hull.
+// Then maybe a gun lost (the generator, by the damage over 28 000; side 3:
+// either at random) and the sailors (the captain too when all). 2 if sunk,
+// 1 if a gun was lost, else 0.
+//
+// A message when a pirate ship sinks (0x4D6530) is not rewritten in p3vita.
+uint8_t Sailing::fn_61f96f(size_t e, int32_t damage, int16_t sailors, uint8_t side) {
+	BattleGraph& g = save_.battles;
+	const size_t b = scene_battle(e);
+	if (g.get<uint8_t>(b, 0x5C) != 0) {
+		return 0;
+	}
+	SavedShip& ship = save_.ships[g.get<uint32_t>(e, 0x4)];
+	ShipMemory& s = ship.memory;
+	if (sailors < 0) {
+		if (damage > 0) {
+			const uint32_t r = battle_rand(g, b);
+			uint32_t v = uint32_t(mul(mul(int32_t(r & 0x400) + 0xC00, damage), int32_t(s.u16(0x40)) + 1));
+			const uint32_t hull = uint32_t(s.s32(0x14) >> 4);
+			v = hull != 0 ? v / hull : 0;  // The game divides by 0 for a hull under 16.
+			v += g.get<uint16_t>(e, 0x13A);
+			g.set<uint16_t>(e, 0x13A, uint16_t(v));
+			sailors = int16_t(int32_t(v) >> 16);
+		} else {
+			sailors = 0;
+		}
+	}
+	uint8_t result = 0;
+	if (!(g.get<uint8_t>(e, 0x12A) & 0x6) && damage > 0) {
+		s.u16(0x3C) = uint16_t(s.u16(0x3C) | 0x100);
+		if (damage >= s.s32(0x18)) {
+			s.u32(0x18) = 0;
+			g.set<uint8_t>(e, 0x12A, 0x4);
+			g.set<uint8_t>(b, 0xAC4, 1);
+			const uint16_t place = g.get<uint16_t>(e, 0x138);
+			g.set<uint16_t>(b, 0xAC6, place);
+			fn_619560(b, g.get<uint16_t>(size_t(g.ptr(b, 0xA74)), 2 * size_t(place)));
+			fn_619560(b, g.get<uint16_t>(size_t(g.ptr(b, 0xA78)), 2 * size_t(place)));
+			result = 2;
+		} else {
+			s.s32(0x18) -= damage;
+		}
+		if (side > 0 && battle_rand(g, b) % 0x6D60u < uint32_t(damage)) {
+			side = side == 3 ? uint8_t((battle_rand(g, b) & 1) + 1) : uint8_t(3 - side);
+			uint32_t guns = 0;
+			for (uint32_t k = uint32_t(side) * 2; k < 0x18; k += 4) {
+				guns += s.u8(0x13C + k) < 6 ? 1 : 0;
+				guns += s.u8(0x13D + k) < 6 ? 1 : 0;
+			}
+			if (guns > 0) {
+				uint32_t n = battle_rand(g, b) % guns;
+				for (uint32_t k = uint32_t(side) * 2; k < 0x18; k += 4) {
+					if (s.u8(0x13C + k) < 6) {
+						if (n == 0) {
+							if (result == 0) {
+								result = 1;
+							}
+							s.u8(0x13C + k) = 0xFF;
+							if (s.u8(0x13D + k) == 6) {
+								s.u8(0x13D + k) = 0xFF;
+							}
+							s.u16(0x3C) = uint16_t(s.u16(0x3C) | 0x10);
+							recalculate_cargo(ship);
+							break;
+						}
+						--n;
+					}
+					if (s.u8(0x13D + k) < 6) {
+						if (n == 0) {
+							if (result == 0) {
+								result = 1;
+							}
+							s.u8(0x13D + k) = 0xFF;
+							s.u16(0x3C) = uint16_t(s.u16(0x3C) | 0x10);
+							recalculate_cargo(ship);
+							break;
+						}
+						--n;
+					}
+				}
+			}
+		}
+	}
+	if (sailors > 0) {
+		s.u16(0x3C) = uint16_t(s.u16(0x3C) | 0x2);
+		if (int32_t(sailors) > int32_t(s.u16(0x40))) {
+			s.u16(0x42) = 0xFFFF;
+			s.u16(0x40) = 0;
+		} else {
+			s.u16(0x40) = uint16_t(s.u16(0x40) - sailors);
+		}
+	}
+	return result;
+}
+
+// 0x61DD4F (method +0x8 of a scene's ship; a flag): it fires. Not without
+// arms, when out, taken, fleeing or grappling (0x2E), or with both sides
+// loading ([+0x130], [+0x131]). Where each ship will be (4 steps ahead by
+// its last move), its direction from the ship's heading: its friends near
+// a broadside (0x37 to 0x49 starboard, 0xB7 to 0xC9 port, wider when close)
+// make that side keep to enemies closer than them (by 0x50); the closest
+// enemy within 480 on each side is its target (without the flag, an AI
+// ship leaves fleeing enemies without [+0x136] & 0x40 and grappling ones
+// with fewer than half the sailors of the ship they grapple, and a human
+// side only fires at its own target; none it would board, 0x61F02F). In an
+// automatic battle each side with a target and loaded fires at once: the
+// damage (0x620F0B) hits it (0x61F96F, guns of either side), the side loads
+// (0x96), its team's mode [+0xACA] one more (0xFF if the target fled), and
+// the music (0x611649: 0xB when it sank, else 9) if the team is [+0xAD2] − 1.
+//
+// Not rewritten: with a human side the guns fire cannon balls (0x61E8EF,
+// part 7).
+void Sailing::fn_61dd4f(size_t e, bool flag) {
+	BattleGraph& g = save_.battles;
+	const ShipMemory& s = scene_ship(e);
+	if (s.u32(0x120) == 0 || (g.get<uint8_t>(e, 0x12A) & 0x2E) ||
+		(g.get<uint8_t>(e, 0x130) != 0 && g.get<uint8_t>(e, 0x131) != 0)) {
+		return;
+	}
+	const size_t b = scene_battle(e);
+	const bool automatic = g.get<uint8_t>(b, 0xAC8) != 0;
+	const uint8_t team = g.get<uint8_t>(b, 0x559 + size_t(g.get<uint8_t>(e, 0x13D)));
+	const size_t next = size_t(g.ptr(b, 0xC));
+	const int32_t ex = g.get<int16_t>(e, 0xA), ey = g.get<int16_t>(e, 0xE);
+	const uint8_t heading = g.get<uint8_t>(e, 0x11);
+	// Where ship f will be: 4 steps of its last move by how far it is.
+	auto ahead = [&](size_t f, int32_t& px, int32_t& py, int32_t& last) {
+		const int32_t dx = g.get<int16_t>(f, 0xA) - ex, dy = g.get<int16_t>(f, 0xE) - ey;
+		px = dx;
+		py = dy;
+		for (int i = 0; i < 4; ++i) {
+			last = mul(py, py) + mul(px, px);
+			const int32_t q = int32_t(uint32_t(root(last)) << 8) / 1328;
+			int32_t vx = g.get<int32_t>(f, 0x14), vy = g.get<int32_t>(f, 0x18);
+			if (automatic) {
+				vx >>= 4;
+				vy >>= 4;
+			}
+			py = (mul(vy, q) >> 16) + dy;
+			px = (mul(vx, q) >> 16) + dx;
+		}
+	};
+	int32_t starboard = 0x7FFFFFFF, port = 0x7FFFFFFF;
+	uint16_t starboard_target = 0xFFFF, port_target = 0xFFFF;
+	for (uint16_t k = g.get<uint16_t>(b, team == 0 ? 0x10 : 0x65C); k != 0xFFFF;
+		 k = g.get<uint16_t>(next, 2 * size_t(k))) {
+		if (k == g.get<uint16_t>(e, 0x138)) {
+			continue;
+		}
+		const size_t f = battle_entry(b, k);
+		if (g.get<uint8_t>(f, 0x12A) & 0x6) {
+			continue;
+		}
+		int32_t px = 0, py = 0, last = 0;
+		ahead(f, px, py, last);
+		const int32_t rel = uint8_t(fn_6029b0(int16_t(px), int16_t(py)) - heading);
+		const int32_t d2 = mul(py, py) + mul(px, px);
+		const int32_t spread = d2 < 0x559 ? 0x37 : 2000 / root(d2);
+		if (rel + spread > 0x37 && rel - spread < 0x49) {
+			if (d2 < starboard) {
+				starboard = d2 - 0x50;
+			}
+		} else if (rel + spread > 0xB7 && rel - spread < 0xC9 && d2 < port) {
+			port = d2 - 0x50;
+		}
+	}
+	const bool ai = g.get<uint8_t>(b, 0x5D + size_t(g.get<uint8_t>(e, 0x13D))) != 0;
+	for (uint16_t k = g.get<uint16_t>(b, team == 0 ? 0x65C : 0x10); k != 0xFFFF;
+		 k = g.get<uint16_t>(next, 2 * size_t(k))) {
+		const size_t f = battle_entry(b, k);
+		const uint8_t flags = g.get<uint8_t>(f, 0x12A);
+		if (flags & 0x6) {
+			continue;
+		}
+		if (!flag) {
+			if (ai && (flags & 0x20) && !(scene_ship(f).u8(0x136) & 0x40)) {
+				continue;
+			}
+			if (ai && (flags & 0x8)) {
+				const uint32_t theirs = scene_ship(battle_entry(b, g.get<uint16_t>(f, 0x128))).u16(0x40);
+				if (int32_t(2u * scene_ship(f).u16(0x40)) < int32_t(theirs)) {
+					continue;
+				}
+			}
+			if (k != g.get<uint16_t>(e, 0x128) && !ai) {
+				continue;
+			}
+			if (fn_61f02f(e, f, true)) {
+				continue;
+			}
+		}
+		int32_t px = 0, py = 0, last = 0;
+		ahead(f, px, py, last);
+		const int32_t rel = uint8_t(fn_6029b0(int16_t(px), int16_t(py)) - heading);
+		const int32_t spread = last < 0x64 ? 0x37 : 500 / root(last);
+		const int32_t d2 = mul(py, py) + mul(px, px);
+		if (rel + spread > 0x37 && rel - spread < 0x49) {
+			if (d2 < starboard && d2 <= 0x38400) {
+				starboard = d2;
+				starboard_target = k;
+			}
+		} else if (rel + spread > 0xB7 && rel - spread < 0xC9 && d2 < port && d2 <= 0x38400) {
+			port = d2;
+			port_target = k;
+		}
+	}
+	if (!automatic) {
+		return;  // Not rewritten: cannon balls (0x61E8EF), part 7.
+	}
+	auto fire = [&](uint16_t target, int32_t d2, uint8_t side, size_t loading) {
+		const int32_t damage = fn_620f0b(e, side, uint16_t(root(d2)));
+		const size_t t = battle_entry(b, target);
+		const uint8_t result = fn_61f96f(t, damage, -1, 3);
+		g.set<uint8_t>(e, loading, 0x96);
+		const uint8_t own = g.get<uint8_t>(b, 0x559 + size_t(g.get<uint8_t>(e, 0x13D)));
+		if (g.get<uint8_t>(b, 0xACA + size_t(own)) < 0x7F) {
+			g.set<uint8_t>(b, 0xACA + size_t(own), uint8_t(g.get<uint8_t>(b, 0xACA + size_t(own)) + 1));
+		}
+		if (g.get<uint8_t>(t, 0x12A) & 0x20) {
+			g.set<uint8_t>(b, 0xACA + size_t(own), 0xFF);
+		}
+		if (uint32_t(own) + 1 == g.get<uint8_t>(b, 0xAD2)) {
+			fn_611649(b, result == 2 ? 0xB : 9);
+		}
+	};
+	if (port_target != 0xFFFF && g.get<uint8_t>(e, 0x130) == 0) {
+		fire(port_target, port, 0, 0x130);
+	}
+	if (starboard_target != 0xFFFF && g.get<uint8_t>(e, 0x131) == 0) {
+		fire(starboard_target, starboard, 1, 0x131);
 	}
 }
 
