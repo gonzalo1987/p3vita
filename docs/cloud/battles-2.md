@@ -578,6 +578,14 @@ tut3, 7 days; 39 s):
   edges, broadside, its boxes, firing) with **0x611149**. Saves 4, 5, 6,
   tut0, tut3, 7 days: 435 + 3355 + 1809 + 332 + 216 calls, 0 differences.
   The branches of a human side are written but not run in the saves.
+- **0x606CC0** (method +0x14 of a sea battle, the step: the sub-steps, the
+  teams' sums, the wind, each ship's sub-step, whether a side has lost or
+  leaves, the items that meet). Saves 4, 5, 6, tut0, tut1, tut3, 7 days: 27
+  + 184 + 103 + 31 + 20 + 20 calls equal; 2 + 8 + 6 + 2 + 2 + 2 differ: the
+  last two ticks of each battle, which reach its end (method +0x1C,
+  0x60D299, and the destructor, method +0x4, 0x611740 → 0x603BC0), next to
+  be rewritten (`battle/battle_end.cpp`). Not wired into the simulation
+  until then.
 - **The recording of BT took numbers for pointers**: at the start of a
   battle the places of the scene's ships are whole, so their 16.16 x
   ([+0x8]) is x · 65536, 0x10xx0000 for x from 4096 on, and the heap gives

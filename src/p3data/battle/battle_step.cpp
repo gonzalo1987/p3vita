@@ -797,3 +797,224 @@ void Sailing::fn_6197f0(size_t b) {
 }
 
 }  // namespace p3::data
+
+namespace p3::data {
+
+// 0x606CC0 (method +0x14 of a sea battle; steps): the battle's step.
+// Automatic (both sides the AI's): the steps (0xFFF0 in a network game) and
+// the carry [+0x130F] make (steps + carry) >> 4 sub-steps; with a human
+// side at most 5 ([+0xAC8] says which). A battle over ([+0x5C]) counts down
+// [+0x15C] by the steps and, when it reaches it, ends (method +0x4,
+// 0x611740). Each sub-step: the teams' sums ([+0xA90] strength, [+0xA98]
+// sailors, [+0xA9C] fighters, [+0xAA0] arms, [+0xAA8] battle speed: the
+// largest; [+0xAB4], [+0xABC] the centre, or the area's) of the ships not
+// out, fled nor taken (0x26); the counter [+0xA8C] (0 at 25); the end when
+// over and [+0x15C] is 0 or above 0xF000 (method +0x1C, 0x60D299, with
+// whether side 1 has a ship with sailors); the wind (0x6113C9); each ship's
+// sub-step (method +0x0, 0x61A9E0); whether a side has lost (all its ships
+// out or taken, unless the other plunders a taken one with cargo and has
+// room) — the battle is over ([+0x5C]; [+0x15C] 0xFFFE the first time); a
+// side all fled leaves the area when the other can't follow; then the
+// scene's items that meet (0x6197F0).
+//
+// Not rewritten: what concerns a human side (the sea map and the battle
+// window [+0x1E92], [+0x12E9], [+0x12EA], operation 0x96; part 7), the cannon balls (0x603130 for each of
+// [+0x668], only from a human side's guns) and 0x608550 (with [+0x12E0] and
+// [+0x66C], not run in the saves).
+void Sailing::fn_606cc0(size_t b, uint16_t steps) {
+	BattleGraph& g = save_.battles;
+	auto u8 = [&](size_t o) { return g.get<uint8_t>(b, o); };
+	if (steps == 0) {
+		return;
+	}
+	if (u8(0x5C) != 0) {
+		const uint16_t left = g.get<uint16_t>(b, 0x15C);
+		if (left <= steps) {
+			g.set<uint16_t>(b, 0x15C, 0);
+			fn_611740(b, true);
+			return;
+		}
+		g.set<uint16_t>(b, 0x15C, uint16_t(left - steps));
+	} else {
+		// A side still counting down ([+0x15C] by side): only the player's
+		// count (the window, UI, left out), at most 5 steps; nothing else.
+		bool counting = false;
+		for (size_t i = 0; i < u8(0x558); ++i) {
+			if (g.get<uint16_t>(b, 0x15C + 2 * i) > 0) {
+				counting = true;
+			}
+		}
+		if (u8(0x12E9) == 0 && counting) {
+			const uint16_t most = steps > 5 ? 5 : steps;
+			const uint32_t player = save_.globals.u32(0x6DFC14);
+			for (size_t i = 0; i < u8(0x558); ++i) {
+				const uint16_t left = g.get<uint16_t>(b, 0x15C + 2 * i);
+				if (g.get<uint16_t>(b, 0x35A + 2 * i) == player && u8(0x5D + i) == 0 && left > 0 && left != 0xFFFF) {
+					g.set<uint16_t>(b, 0x15C + 2 * i, left <= most ? 0xFFFE : uint16_t(left - most));
+				}
+			}
+			return;
+		}
+		bool automatic = true;
+		for (size_t i = 0; i < u8(0x558); ++i) {
+			if (u8(0x5D + i) == 0) {
+				automatic = false;  // A human side: part 7 (operation 0x96 and its countdown).
+			}
+		}
+		if (automatic) {
+			uint32_t t = steps;
+			if (save_.globals.u32(0x6DFC18) != 0) {
+				t = 0xFFF0;
+			}
+			g.set<uint8_t>(b, 0xAC8, 1);
+			t = (t & 0xFFFF) + u8(0x130F);
+			g.set<uint8_t>(b, 0x130F, uint8_t(t & 0xF));
+			steps = uint16_t((t & 0xFFFF) >> 4);
+		} else {
+			if (steps > 5) {
+				steps = 5;
+			}
+			g.set<uint8_t>(b, 0xAC8, 0);
+		}
+	}
+	const size_t next = size_t(g.ptr(b, 0xC));
+	auto nx = [&](uint16_t k) { return g.get<uint16_t>(next, 2 * size_t(k)); };
+	for (uint16_t step = 0; step < steps; ++step) {
+		for (const size_t o : {0xA90, 0xA94, 0xAA0, 0xAA4, 0xAB4, 0xAB8, 0xABC, 0xAC0, 0xAA8, 0xAAC}) {
+			g.set<uint32_t>(b, o, 0);
+		}
+		for (const size_t o : {0xA98, 0xA9A, 0xA9C, 0xA9E}) {
+			g.set<uint16_t>(b, o, 0);
+		}
+		for (size_t sd = 0; sd < 2; ++sd) {
+			uint16_t n = 0;
+			for (uint16_t k = g.get<uint16_t>(b, sd == 0 ? 0x10 : 0x65C); k != 0xFFFF; k = nx(k)) {
+				const size_t e = battle_entry(b, k);
+				if (g.get<uint8_t>(e, 0x12A) & 0x26) {
+					continue;
+				}
+				g.set<uint32_t>(b, 0xA90 + 4 * sd, g.get<uint32_t>(b, 0xA90 + 4 * sd) + uint32_t(fn_62125b(e)));
+				const ShipMemory& s = scene_ship(e);
+				const uint16_t sailors = s.u16(0x40);
+				if (sailors > g.get<uint16_t>(b, 0xA98 + 2 * sd)) {
+					g.set<uint16_t>(b, 0xA98 + 2 * sd, sailors);
+				}
+				const uint16_t reserve = s.u16(0x154);
+				const uint16_t fighting = uint16_t(sailors < reserve ? sailors + sailors : sailors + reserve);
+				if (fighting > g.get<uint16_t>(b, 0xA9C + 2 * sd)) {
+					g.set<uint16_t>(b, 0xA9C + 2 * sd, fighting);
+				}
+				if (s.u32(0x120) > g.get<uint32_t>(b, 0xAA0 + 4 * sd)) {
+					g.set<uint32_t>(b, 0xAA0 + 4 * sd, s.u32(0x120));
+				}
+				const uint32_t speed = fn_612930(uint16_t(g.get<uint32_t>(e, 0x4)));
+				if (g.get<uint32_t>(b, 0xAA8 + 4 * sd) < speed) {
+					g.set<uint32_t>(b, 0xAA8 + 4 * sd, speed);
+				}
+				++n;
+				g.set<int32_t>(b, 0xAB4 + 4 * sd, g.get<int32_t>(b, 0xAB4 + 4 * sd) + g.get<int16_t>(e, 0xA));
+				g.set<int32_t>(b, 0xABC + 4 * sd, g.get<int32_t>(b, 0xABC + 4 * sd) + g.get<int16_t>(e, 0xE));
+			}
+			if (n != 0) {
+				g.set<uint32_t>(b, 0xAB4 + 4 * sd, g.get<uint32_t>(b, 0xAB4 + 4 * sd) / n);
+				g.set<uint32_t>(b, 0xABC + 4 * sd, g.get<uint32_t>(b, 0xABC + 4 * sd) / n);
+			} else {
+				g.set<uint32_t>(b, 0xAB4 + 4 * sd, 0x1100);
+				g.set<uint32_t>(b, 0xABC + 4 * sd, 0xF02);
+			}
+		}
+		const uint8_t count = uint8_t(u8(0xA8C) + 1);
+		g.set<uint8_t>(b, 0xA8C, count * 40 >= 1000 ? 0 : count);
+		if (u8(0x5C) == 1) {
+			const uint16_t left = g.get<uint16_t>(b, 0x15C);
+			if (left == 0 || left > 0xF000) {
+				bool sailors = false;
+				if (g.get<uint16_t>(b, 0x65A) > 0) {
+					for (uint16_t k = g.get<uint16_t>(b, 0x65C); k != 0xFFFF; k = nx(k)) {
+						const size_t e = battle_entry(b, k);
+						if (!(g.get<uint8_t>(e, 0x12A) & 0x26) && scene_ship(e).u16(0x40) > 0) {
+							sailors = true;
+						}
+					}
+				}
+				fn_60d299(b, sailors);
+				return;
+			}
+		}
+		fn_6113c9(b);
+		// Per side: lost (all out or taken), plunders (a taken ship with
+		// cargo), has room (2000), all fled.
+		bool lost[2] = {true, true}, plunder[2] = {false, false}, room[2] = {false, false}, fled[2] = {true, true};
+		for (size_t sd = 0; sd < 2; ++sd) {
+			for (uint16_t k = g.get<uint16_t>(b, sd == 0 ? 0x10 : 0x65C); k != 0xFFFF; k = nx(k)) {
+				const size_t e = battle_entry(b, k);
+				const uint8_t fl = g.get<uint8_t>(e, 0x12A);
+				if (!(fl & 0x6)) {
+					if (!(fl & 0x20)) {
+						fled[sd] = false;
+					}
+					const ShipMemory& s = scene_ship(e);
+					if (fl & 0x40) {
+						if (s.s32(0x118) > 0) {
+							for (size_t w = 0; w < 24; ++w) {
+								if (s.u32(0x54 + 4 * w) != 0) {
+									plunder[sd] = true;
+									break;
+								}
+							}
+						}
+					} else {
+						lost[sd] = false;
+						if (!(fl & 0x20) && s.s32(0x10) - s.s32(0x11C) - s.s32(0x118) >= 2000) {
+							room[sd] = true;
+						}
+					}
+				}
+				fn_61a9e0(e, u8(0x670));
+			}
+		}
+		if (plunder[0] && room[1]) {
+			lost[0] = false;
+		}
+		if (plunder[1] && room[0]) {
+			lost[1] = false;
+		}
+		bool over = lost[0] || lost[1];
+		if (!lost[0] && !lost[1]) {
+			// A side all fled leaves when the other can't follow (no room).
+			auto leave = [&](size_t owner_at) {
+				const uint8_t owner = u8(owner_at);
+				const uint16_t head =
+					g.get<uint16_t>(b, 0x35A) == owner ? g.get<uint16_t>(b, 0x65C) : g.get<uint16_t>(b, 0x10);
+				for (uint16_t k = head; k < g.get<uint16_t>(b, 0x14); k = nx(k)) {
+					const size_t e = battle_entry(b, k);
+					if (!(g.get<uint8_t>(e, 0x12A) & 0xE)) {
+						g.set<uint8_t>(e, 0x12A, uint8_t(g.get<uint8_t>(e, 0x12A) | 0x2));
+						g.set<uint8_t>(b, 0xAC4, 0);
+						g.set<uint16_t>(b, 0xAC6, k);
+					}
+				}
+			};
+			if (!room[1] && fled[0] && u8(0x5E) != 0) {
+				if (u8(0x5C) != 0) {
+					over = false;
+				} else {
+					leave(0x35C);
+				}
+			} else if (!room[0] && fled[1] && u8(0x5D) != 0) {
+				if (u8(0x5C) != 0) {
+					over = false;
+				} else {
+					leave(0x35A);
+				}
+			}
+		}
+		if (u8(0x5C) == 0 && over) {
+			g.set<uint16_t>(b, 0x15C, 0xFFFE);
+		}
+		g.set<uint8_t>(b, 0x5C, over ? 1 : 0);
+		fn_6197f0(b);
+	}
+}
+
+}  // namespace p3::data

@@ -5,6 +5,7 @@ add_library(p3data STATIC
 	battle/battle_step.cpp
 	battle/ship_step.cpp
 	battle/capture.cpp
+	battle/battle_end.cpp
 	battle/battles.cpp
 	battle/pirate_nests.cpp
 	battle/pirate_objects.cpp

@@ -247,6 +247,10 @@ public:
 	void fn_61a9e0(size_t entry, uint8_t wind);  // (scene's ship, method +0x0) Its sub-step.
 	void fn_61a9e0_flee(size_t entry);  // (part of 0x61A9E0) An AI ship decides whether to flee.
 	bool fn_611149(size_t battle, uint8_t side) const;  // (battle) Team 1 may head off.
+	void fn_606cc0(size_t battle, uint16_t steps);  // (sea battle, method +0x14) Its step.
+	// battle/battle_end.cpp: the end of a sea battle.
+	void fn_60d299(size_t battle, bool sailors);  // (sea battle, method +0x1C) The end.
+	void fn_611740(size_t battle, bool free);  // (sea battle, method +0x4) Its destructor.
 	// battle/attack.cpp
 	void fn_50bc40(uint16_t convoy);  // (ships object) A pirate convoy attacks: a sea battle.
 	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.
