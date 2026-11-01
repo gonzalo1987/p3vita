@@ -982,12 +982,17 @@ uint32_t fn_4dfd44(SaveGame& save, uint16_t event) {
 				const int32_t dy = y - sm.s16(0x22);
 				const int32_t d2 = int32_t(uint32_t(dy) * uint32_t(dy) + uint32_t(dx) * uint32_t(dx));
 				if (d2 < int32_t(uint32_t(g.u16(kPirateRange)) << 6)) {
-					// Sin comprobar con el oráculo.
 					e.u8(0x10) = 3;
 					e.u8(0x16) = uint8_t(s);
 					e.u16(0x12) = sm.u16(0x15E);
-					// Por traducir: el ataque al barco (0x5063C0 con 1, sobre el
-					// objeto de los barcos), que no sale en las 12 partidas.
+					// The attack on the ship (0x5063C0 with 1, on the ships
+					// object: battle/pirate_objects.cpp), with the pirates on
+					// (docs/cloud/battles-2.md §2.4). It may add a ship: `sm`
+					// isn't used after it. Checked with retouch_pirates.py
+					// event_attack; the 12 saves never get here.
+					if (Sailing* sailing = event_sailing(); sailing && sailing->pirates()) {
+						sailing->fn_5063c0(uint16_t(s), 1);
+					}
 					const uint8_t left = e.u8(0x15);
 					e.u32(0) += 0x200;
 					e.u8(0x15) = uint8_t(left - 1);
@@ -1028,7 +1033,11 @@ uint32_t fn_4dfd44(SaveGame& save, uint16_t event) {
 			const int32_t dy = y - sm.s16(0x22);
 			const int32_t d2 = int32_t(uint32_t(dy) * uint32_t(dy) + uint32_t(dx) * uint32_t(dx));
 			if (d2 < int32_t(uint32_t(g.u16(kPirateRange)) << 6)) {
-				// Por traducir: 0x5063C0 con 0 sobre el barco `s`.
+				// Another attack, 0x5063C0 with 0 on the ship `s`, with the
+				// pirates on (as in state 2).
+				if (Sailing* sailing = event_sailing(); sailing && sailing->pirates()) {
+					sailing->fn_5063c0(uint16_t(s), 0);
+				}
 				break;
 			}
 		}

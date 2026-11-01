@@ -47,6 +47,8 @@ Scenarios:
   attack_one   one call of 0x5063C0 (kind 0), then the days
   attack_new   the same and then no pirate at all (one is made: 0x513D80);
                with 0 days
+  event_attack event 0x1E in state 2 near a human player's ship: the attack
+               (0x5063C0 from 0x4DFD44, events_rare.cpp); with 0 days
 """
 import argparse
 import os
@@ -506,7 +508,89 @@ def attack_new(o):
     direct(o, ATTACK, [target, 4], to.SHIPS)
 
 
-SCENARIOS = {f.__name__: f for f in (disband, disband_map, plan, lost, alone, guide, daily, leave, retire, attack, attack_new, attack_one)}
+PIRATE_RANGE = 0x6DD89C  # u16: event 0x1E's radius² / 64 (kPirateRange in events_rare.cpp)
+TOWN_IDS = 0x6DE4B8  # u8 per town: its number in StadtDaten.ini
+
+
+def event_attack(o):
+    """Event 0x1E (0x4DFD44) in state 2, due in the next tick, at the town
+    nearest to a human player's ship with [+0x134] = 0xF, and the radius
+    [0x6DD89C] at its maximum: 0x5063C0 attacks that ship (kind 1) and the
+    event goes to state 3, which calls 0x5063C0 with 0 when a ship of the
+    merchant [+0x16] is near (here a second event, in state 3 on that
+    merchant). Two events of the queue are turned into them. Run it with 0
+    days: it runs the tick of the attacks itself."""
+    import retouch as rt
+    towns, _, merchants, _ = o.counts()
+
+    def human_ships():
+        for m in range(merchants):
+            if not o.u16(o.merchant(m) + 8):
+                s = o.u16(o.merchant(m) + 0xE)
+                while s < o.counts()[3]:
+                    yield m, s
+                    s = o.u16(o.ship(s) + 4)
+
+    def at_sea():
+        return [(m, s) for m, s in human_ships() if o.u16(o.ship(s) + 0x134) == 0xF]
+
+    if not at_sea():
+        # No human player's ship at sea in the saves: those in port are
+        # ordered to town 0 or the last town (operation 0x00, 0x537670) and
+        # the ticks go on until one sails.
+        for m, s in list(human_ships()):
+            for target in (0, towns - 1):
+                if o.u16(o.ship(s) + 0x134) == 0:
+                    op = o.alloc(20)
+                    o.uc.mem_write(op, struct.pack('<IIIii', 0, s, target, 0, 0))
+                    o.call(to.SET_SAIL, [], ecx=op)
+        for _ in range(256):
+            if at_sea():
+                break
+            o.advance_tick()
+    best = None
+    for m, s in at_sea():
+        a = o.ship(s)
+        x, y = struct.unpack('<h', o.uc.mem_read(a + 0x1E, 2))[0], struct.unpack('<h', o.uc.mem_read(a + 0x22, 2))[0]
+        for t in range(towns):
+            entry = TOWN_TABLE + 0x34 * o.u8(TOWN_IDS + t)
+            tx, ty = struct.unpack('<ii', o.uc.mem_read(entry + 0x20, 8))
+            d2 = (tx - x) ** 2 + (ty - y) ** 2
+            if best is None or d2 < best[0]:
+                best = (d2, m, s, t)
+    assert best, 'no ship of a human player at sea ([+0x134] = 0xF)'
+    d2, m, s, town = best
+    now = o.u32(WORLD + 0x14)
+    assert d2 < 0xFFFF << 6, best
+    w16(o, PIRATE_RANGE, 0xFFFF)
+    queue = rt.events(o)
+    for state, (i, a) in ((2, queue[-1]), (3, queue[-2])):
+        w16(o, a + 6, 0x1E)
+        w32(o, a + 8, 0)
+        w32(o, a + 0xC, now + 0x100000)  # still going: «keep»
+        w8(o, a + 0x10, state)
+        w8(o, a + 0x11, town)
+        w8(o, a + 0x14, 1)
+        if state == 2:
+            w16(o, a + 0x12, 0)
+            w8(o, a + 0x15, 3)  # attacks left
+            w8(o, a + 0x16, 0)
+        else:
+            # State 3 on merchant m: no notice ([+0x12] = 0xFFFF) and its
+            # [+0x1B] not 4 past [+0x17] (no reward), so it looks for m's
+            # ships near the town.
+            w16(o, a + 0x12, 0xFFFF)
+            w8(o, a + 0x16, m)
+            w8(o, a + 0x17, o.u8(o.merchant(m) + 0x1B))
+        rt.move_event(o, i, a, now + 1)
+        print(f'event {i}: 0x1E in state {state} at town {town}; merchant {m}, ship {s} at distance² {d2}')
+    # The tick of the two attacks; in the next one the new pirates attack the
+    # human player's ship, a battle with a human side (part 7, not in the
+    # oracle: the emulator stops), so the scenario ends here.
+    o.advance_tick()
+
+
+SCENARIOS = {f.__name__: f for f in (disband, disband_map, plan, lost, alone, guide, daily, leave, retire, attack, attack_new, attack_one, event_attack)}
 
 
 def main():

@@ -184,6 +184,7 @@ public:
 		pirates_ = enabled;
 		battles_ = enabled;
 	}
+	bool pirates() const { return pirates_; }
 	void fn_448780(int town);  // (navigation object) The waypoints round a town.
 	const std::vector<uint32_t>& waypoints(int town);  // Those of 0x448780 (computed the first time).
 	uint32_t fn_612930(uint16_t ship) const;  // (battles) The battle speed of a ship.

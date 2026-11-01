@@ -19,7 +19,7 @@ Cómo leerla:
 
 - Sesión local: la parte B del inventario está hecha salvo la 0x9F y la 0xB5, que van con las batallas. Lo siguiente es la parte C y después la D.
 - No se lanzan más sesiones en la nube: queda poco crédito (66 de 250 el 31-10-2026). Lo que tenga cada sesión al acabar se junta como siempre.
-- Batallas: `cloud/battles-2` está juntada en `main` (01-11-2026): los piratas enteros, encendidos por omisión, la batalla automática en el mar y las batallas en la partida guardada. Lo siguiente sería una tarea `battles-3`: el lado humano con las balas de cañón (parte 7) y las batallas en las ciudades (pieza 6). Para la sesión local queda conectar el ataque del evento 0x1E en `events_rare.cpp`.
+- Batallas: `cloud/battles-2` está juntada en `main` (01-11-2026): los piratas enteros, encendidos por omisión, la batalla automática en el mar y las batallas en la partida guardada. Lo siguiente sería una tarea `battles-3`: el lado humano con las balas de cañón (parte 7) y las batallas en las ciudades (pieza 6). El ataque del evento 0x1E ya está conectado.
 - Juntado en `main` el 01-11-2026, de sesiones ya terminadas a las que se dio una última instrucción: el punto ciego de tick_probe (`cloud/unchecked-branches`), la lectura del `.pst` corregida con el ajuste (`cloud/statistics`) y los textos del juego en el resto del visor (`cloud/viewer-texts`).
 
 ## Estado por partes (medido)
@@ -242,7 +242,7 @@ El plan, por piezas, cada una detrás de su ajuste hasta comprobarla:
    - el estado 0x12 del convoy pirata (0x507A65), con el nuevo rumbo (0x505C90), la elección del blanco (0x50D9E0), la decisión de atacar (0x515360), la velocidad de batalla (0x612930), los bajos (0x50E340), 0x5159C0 y los puntos de cada ciudad (0x448780, al cargar);
    - el «pool» y el mapa de la guarida de cada pirata, como memoria del juego (`SaveGame::pirate_nests`; regiones `ZMi`, `ZDi`, `ZPi` del oráculo), leídos y escritos como el juego;
    - deshacer el convoy en la guarida (0x514B80, 0x515DA0, 0x513BF0), el barco perdido y el pirata solo (estados 0x11 y 0x12: 0x506AF2, 0x517170, 0x507022, 0x507099, 0x5062F0), la rama pirata de 0x5017F0, el día de los objetos pirata (0x514000, 0x513EC0) con la operación 0xB5 (0x514D40, 0x515750, 0x5185C0);
-   - el ataque del evento 0x1E (0x5063C0, 0x513D80, 0x515EA0): reescrito, pero **sin conectar**. Faltan sus dos llamadas en `events_rare.cpp`, que es de la sesión local (las notas, §2.4, dicen dónde);
+   - el ataque del evento 0x1E (0x5063C0, 0x513D80, 0x515EA0), conectado el 01-11-2026 en `events_rare.cpp` (estados 2 y 3 de 0x4DFD44, con los piratas encendidos). Ninguna partida llega ahí: escenario `event_attack` de `retouch_pirates.py` (un barco del jugador zarpa y dos eventos 0x1E, en los estados 2 y 3, saltan en el mismo tick), partidas 1, 3 y 5: 66 llamadas iguales de 0x4D85C0, 2 de 0x5063C0 y 66 de 0x506720, 0 distintas. El tick siguiente ya es una batalla con un lado humano (parte 7), que el oráculo no puede seguir;
    - comprobado: llamada a llamada en las 12 partidas × 7 días y con 12 escenarios retocados de `tools/oracle/retouch_pirates.py` (todas las ramas que se pueden alcanzar), 0 diferencias; el mundo entero con los piratas, 0 diferencias en las 12 partidas;
    - de la regla provisional solo queda el segundo salto: un convoy que acaba su ruta en una ciudad sigue como si navegara, en vez de atacarla (la batalla en una ciudad, pieza 6).
 3. [x] La batalla automática en el mar ([cloud/battles-2.md](cloud/battles-2.md) §3–4; `src/p3data/battle/`):
