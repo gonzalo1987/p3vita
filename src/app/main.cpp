@@ -51,6 +51,15 @@ Uint32 app_ticks() {
 	return g_script ? g_script->now() : SDL_GetTicks();
 }
 
+// The game's interface texts (from its Patrician3.exe, see game_texts.hpp), or
+// nullptr: then the viewer's own, in Spanish. Texts the game doesn't have
+// (the Vita's buttons, the viewer's own messages) are always the viewer's.
+const GameTexts* g_texts = nullptr;
+
+std::string game_text(GameText id, const std::string& fallback) {
+	return g_texts ? g_texts->get(id) : fallback;
+}
+
 constexpr int kScreenWidth = 960;
 constexpr int kScreenHeight = 544;
 constexpr char kTitle[] = "Patrician III";
@@ -487,9 +496,23 @@ std::string format_money(int64_t value) {
 constexpr const char* kMonthNames[12] = {"enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
 	"septiembre", "octubre", "noviembre", "diciembre"};
 
+std::string month_name(int month) {
+	return g_texts ? g_texts->month(month) : kMonthNames[((month % 12) + 12) % 12];
+}
+
 // «13 de mayo»
 std::string day_and_month(int day, int month) {
-	return std::to_string(day) + " de " + kMonthNames[month % 12];
+	return std::to_string(day) + " de " + month_name(month);
+}
+
+// A date as the game writes it («13 de mayo de 1300», «13. May 1300»).
+std::string game_date(int day, int month, int year) {
+	if (!g_texts) {
+		return day_and_month(day, month) + " de " + std::to_string(year);
+	}
+	std::string date = g_texts->format(GameText::Date, {std::to_string(day), month_name(month), std::to_string(year)});
+	date.erase(std::remove(date.begin(), date.end(), '"'), date.end());  // The text ends in a quote.
+	return date;
 }
 
 std::string town_name(const SaveGame& save, const std::vector<std::string>& names, int town) {
@@ -500,13 +523,14 @@ std::string town_name(const SaveGame& save, const std::vector<std::string>& name
 std::string bar_title(const SaveGame& save, const std::vector<std::string>& names,
 	const std::vector<int>& template_ids, const Selection& selection) {
 	if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
-		const std::string date = day_and_month(save.day(), save.month()) + " de " + std::to_string(save.year());
+		const std::string date = game_date(save.day(), save.month(), save.year());
 		const std::string name = town_name(save, names, int(selection.saved_index));
 		if (selection.mode == Mode::Sea) {
 			return date + " - Mapa del mar - " + name;
 		}
-		return date + " - " + name + " - " + format_money(save.towns[selection.saved_index].citizens()) +
-			" habitantes";
+		const std::string citizens = format_money(save.towns[selection.saved_index].citizens());
+		return date + " - " + name + " - " +
+			(g_texts ? g_texts->format(GameText::Inhabitants, {citizens}) : citizens + " habitantes");
 	}
 	return "Plantilla " + std::to_string(template_ids[selection.template_index]) +
 		(selection.mode == Mode::Designer ? " - todos los edificios del diseñador" : " - solo el terreno");
@@ -549,6 +573,14 @@ constexpr GameSpeed kGameSpeeds[] = {
 	{"avance rápido", 2, 256},  // F12 del juego.
 };
 constexpr int kGameSpeedCount = int(sizeof(kGameSpeeds) / sizeof(kGameSpeeds[0]));
+
+// The speed's name: the game's six (its settings window, 0x69A934); fast
+// forward (F12) has none.
+std::string speed_name(int speed) {
+	static constexpr GameText kNames[] = {GameText::SpeedSlowdown, GameText::SpeedVerySlow, GameText::SpeedSlow,
+		GameText::SpeedNormal, GameText::SpeedFast, GameText::SpeedVeryFast};
+	return g_texts && speed < 6 ? g_texts->get(kNames[speed]) : kGameSpeeds[speed].name;
+}
 constexpr int kNormalSpeed = 3;
 
 // Barcos del jugador que existen (también los que navegan).
@@ -579,7 +611,7 @@ std::string ship_activity(const SaveGame& save, const std::vector<std::string>& 
 		return "entrando en el puerto de " + here;
 	case kShipSailing: {
 		if (!ship.route) {
-			return "sin rumbo en el mar";
+			return game_text(GameText::AtSea, "sin rumbo en el mar");
 		}
 		std::string text = there.empty() ? "navegando" : "navegando hacia " + there;
 		if (ship.arrival_tick() > save.tick()) {
@@ -610,9 +642,35 @@ std::string unit_name(WareUnit unit, int count) {
 	}
 }
 
+// «5 cargas», or the game's «%.0f load» («5 toneladas»).
+std::string amount_label(int n, WareUnit unit) {
+	if (!g_texts) {
+		return std::to_string(n) + " " + unit_name(unit, n);
+	}
+	const GameText id = unit == WareUnit::Barrel ? GameText::AmountBarrels
+		: unit == WareUnit::Load ? GameText::AmountLoads
+		: GameText::AmountPieces;
+	return g_texts->format(id, {std::to_string(n)});
+}
+
 std::string amount_text(int32_t internal, WareUnit unit) {
-	const int n = units(internal, unit);
-	return std::to_string(n) + " " + unit_name(unit, n);
+	return amount_label(units(internal, unit), unit);
+}
+
+// A ware's name: in lower case for the sentences, capitalized for the rows.
+std::string ware_name(int ware) {
+	if (g_texts && ware >= 0 && ware < 20) {
+		return g_texts->get(GameText(int(GameText::WareGrain) + ware));
+	}
+	std::string name = kWares[size_t(ware)].name;
+	name[0] = char(std::tolower(uint8_t(name[0])));
+	return name;
+}
+
+std::string ware_label(int ware) {
+	std::string name = ware_name(ware);
+	name[0] = char(std::toupper(uint8_t(name[0])));  // All of them start with an ASCII letter.
+	return name;
 }
 
 // Lo que se compra o vende de cada vez, en barriles o cargas; 0 = todo lo posible.
@@ -621,6 +679,11 @@ constexpr int kTradeStepCount = int(sizeof(kTradeSteps) / sizeof(kTradeSteps[0])
 constexpr Uint32 kMessageTime = 4000;  // Milisegundos que se ve el resultado de una operación.
 
 constexpr const char* kShipTypes[] = {"Snaikka", "Craier", "Kogge", "Holk"};
+
+// The ship type's name (the Spanish game has Goleta, Carabela, Nao, Galeón).
+std::string ship_type_name(int type) {
+	return game_text(GameText(int(GameText::ShipSnaikka) + (type & 3)), kShipTypes[type & 3]);
+}
 
 // Estado del panel de mercado.
 struct MarketUi {
@@ -662,14 +725,13 @@ int32_t trade_amount(const SaveGame& save, int ship, const MarketUi& ui, bool bu
 
 std::string step_text(const MarketUi& ui) {
 	const int step = kTradeSteps[ui.step];
-	return step > 0 ? std::to_string(step) + " " + unit_name(kWares[size_t(ui.ware)].unit, step) : "todo";
+	return step > 0 ? amount_label(step, kWares[size_t(ui.ware)].unit) : "todo";
 }
 
 void trade(SaveGame& save, int town, MarketUi& ui, bool buying) {
 	const int ship = market_ship(save, town, ui);
 	const WareInfo& ware = kWares[size_t(ui.ware)];
-	std::string name = ware.name;
-	name[0] = char(std::tolower(uint8_t(name[0])));
+	const std::string name = ware_name(ui.ware);
 	ui.message_until = app_ticks() + kMessageTime;
 	if (ship < 0) {
 		ui.message = "No tienes ningún barco en este puerto.";
@@ -693,7 +755,7 @@ void trade(SaveGame& save, int town, MarketUi& ui, bool buying) {
 		ui.message = "La ciudad no tiene " + name + ".";
 	} else if (save.merchants[size_t(save.player)].money() <
 		buy_price(ui.ware, market.market(ui.ware), ware_scale(ware.unit))) {
-		ui.message = "No tienes dinero suficiente.";
+		ui.message = game_text(GameText::NotEnoughMoney, "No tienes dinero suficiente.");
 	} else {
 		ui.message = "No queda sitio en la bodega.";
 	}
@@ -705,7 +767,7 @@ struct MarketLayout {
 	static constexpr int kPadding = 10;
 	static constexpr int kRowHeight = 19;
 	static constexpr int kGap = 8;
-	static constexpr int kColumns[4] = {250, 320, 390, 548};  // Bordes derechos de las columnas.
+	static constexpr int kColumns[4] = {250, 335, 410, 548};  // Bordes derechos de las columnas.
 	SDL_Rect panel{};
 	int header_y = 0;
 	int titles_y = 0;
@@ -777,21 +839,25 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 	};
 
 	if (ship) {
-		char hold[96];
-		std::snprintf(hold, sizeof(hold), ": %.1f de %.1f cargas", ship->used() / 2000.0,
-			(ship->capacity() - ship->equipment()) / 2000.0);
-		text.draw(ship->name() + " (" + kShipTypes[ship->type() & 3] + ")" + hold, left, layout.header_y, kTextColor);
+		char used[32];
+		char capacity[32];
+		std::snprintf(used, sizeof(used), "%.1f", ship->used() / 2000.0);
+		std::snprintf(capacity, sizeof(capacity), "%.1f", (ship->capacity() - ship->equipment()) / 2000.0);
+		const std::string hold = g_texts
+			? std::string(used) + " / " + g_texts->format(GameText::AmountLoadsDecimal, {capacity})
+			: std::string(used) + " de " + capacity + " cargas";
+		text.draw(ship->name() + " (" + ship_type_name(ship->type()) + "): " + hold, left, layout.header_y, kTextColor);
 	} else {
 		text.draw("No tienes ningún barco en este puerto.", left, layout.header_y, kDimColor);
 	}
 	const std::string close = "Círculo: cerrar";
 	text.draw(close, panel.x + panel.w - MarketLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
 
-	text.draw("Mercancía", left, layout.titles_y, kDimColor);
-	right("Ciudad", 0, layout.titles_y, kDimColor);
-	right("Compra", 1, layout.titles_y, kDimColor);
-	right("Venta", 2, layout.titles_y, kDimColor);
-	right("Bodega", 3, layout.titles_y, kDimColor);
+	text.draw(game_text(GameText::MarketGoods, "Mercancía"), left, layout.titles_y, kDimColor);
+	right(game_text(GameText::MarketTown, "Ciudad"), 0, layout.titles_y, kDimColor);
+	right(game_text(GameText::MarketBuy, "Compra"), 1, layout.titles_y, kDimColor);
+	right(game_text(GameText::MarketSell, "Venta"), 2, layout.titles_y, kDimColor);
+	right(game_text(GameText::MarketShip, "Bodega"), 3, layout.titles_y, kDimColor);
 	for (int w = 0; w < kTradeWareCount; ++w) {
 		const WareInfo& ware = kWares[size_t(w)];
 		const int y = layout.rows_y + w * MarketLayout::kRowHeight;
@@ -803,14 +869,17 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 		const int32_t unit = ware_scale(ware.unit);
 		const int32_t buy = buy_price(w, town.market(w), unit);
 		const int32_t sell = sell_price(w, town.market(w), unit, save.trade_difficulty);
-		const char* short_unit = ware.unit == WareUnit::Barrel ? " barr." : " cargas";
-		text.draw(ware.name, left, y, kTextColor);
-		right(std::to_string(units(int32_t(town.stock(size_t(w))), ware.unit)) + short_unit, 0, y, kTextColor);
+		auto amount = [&](int n) {
+			return g_texts ? amount_label(n, ware.unit)
+						   : std::to_string(n) + (ware.unit == WareUnit::Barrel ? " barr." : " cargas");
+		};
+		text.draw(ware_label(w), left, y, kTextColor);
+		right(amount(units(int32_t(town.stock(size_t(w))), ware.unit)), 0, y, kTextColor);
 		right(buy ? std::to_string(buy) : "-", 1, y, kTextColor);
 		right(std::to_string(sell), 2, y, kTextColor);
 		if (ship) {
 			const int n = units(ship->cargo(size_t(w)), ware.unit);
-			right(n ? std::to_string(n) + short_unit : "-", 3, y, n ? kTextColor : kDimColor);
+			right(n ? amount(n) : "-", 3, y, n ? kTextColor : kDimColor);
 		}
 	}
 
@@ -922,7 +991,7 @@ std::string numbered_town_name(const std::vector<std::string>& names, int number
 
 std::string full_date(uint32_t tick) {
 	const GameDate date = date_from_tick(tick);
-	return day_and_month(date.day, date.month) + " de " + std::to_string(date.year);
+	return game_date(date.day, date.month, date.year);
 }
 
 std::string index_town_name(const SaveGame& save, const HanseContext& c, int town) {
@@ -1179,9 +1248,7 @@ void hanse_act(SaveGame& save, int town, HanseUi& ui, const HanseView& v, const 
 		queue_operation(save, road_materials_operation(v.task, amount, uint8_t(town), uint8_t(save.player),
 			kRoadWares[size_t(k)]));
 		const WareInfo& ware = kWares[kRoadWares[size_t(k)]];
-		std::string name = ware.name;
-		name[0] = char(std::tolower(uint8_t(name[0])));
-		ui.message = "Entregas " + std::to_string(amount) + " " + unit_name(ware.unit, amount) + " de " + name + ".";
+		ui.message = "Entregas " + amount_label(amount, ware.unit) + " de " + ware_name(kRoadWares[size_t(k)]) + ".";
 		return;
 	}
 	ui.message = v.level == 0 ? "Aún no eres candidato." : "No hay nada que hacer aquí.";
@@ -1307,7 +1374,7 @@ void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save
 		const HanseTask t = hanse_task(save, v.task);
 		text.draw("Tu encargo: " + hanse_task_text(save, t, c), left, layout.title_y, kTextColor);
 		if (v.road_here) {
-			static constexpr int kColumns[2] = {330, 470};  // Right edges.
+			static constexpr int kColumns[2] = {390, 590};  // Right edges.
 			auto right = [&](const std::string& s, int column, int y, SDL_Color color) {
 				text.draw(s, panel.x + kColumns[column] - text.measure(s), y, color);
 			};
@@ -1319,10 +1386,13 @@ void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save
 				const WareInfo& ware = kWares[kRoadWares[size_t(k)]];
 				const uint16_t needed = v.road.needed(k);
 				const bool enabled = needed != 0 && v.available[size_t(k)] > 0;
-				text.draw(ware.name, left, y, enabled ? kTextColor : kDimColor);
-				const char* unit = ware.unit == WareUnit::Barrel ? " barr." : " cargas";
-				right("falta " + std::to_string(needed) + unit, 0, y, enabled ? kTextColor : kDimColor);
-				right("tienes " + std::to_string(v.available[size_t(k)]) + unit, 1, y, enabled ? kTextColor : kDimColor);
+				text.draw(ware_label(kRoadWares[size_t(k)]), left, y, enabled ? kTextColor : kDimColor);
+				auto amount = [&](int n) {
+					return g_texts ? amount_label(n, ware.unit)
+								   : std::to_string(n) + (ware.unit == WareUnit::Barrel ? " barr." : " cargas");
+				};
+				right("falta " + amount(needed), 0, y, enabled ? kTextColor : kDimColor);
+				right("tienes " + amount(v.available[size_t(k)]), 1, y, enabled ? kTextColor : kDimColor);
 			}
 		} else if (ui.briefing) {
 			// No rows: what the Hanse says when the player takes it.
@@ -1675,6 +1745,7 @@ int main(int argc, char** argv) {
 #endif
 	}
 	const HanseContext hanse_context{town_names, names, regions, game_texts.get()};
+	g_texts = game_texts.get();
 	EndWindow end_window;  // When the player is elected Alderman.
 	Selection selection;
 	if (has_save) {
@@ -1721,13 +1792,13 @@ int main(int argc, char** argv) {
 		if ((ship.status() == kShipDocked || ship.status() == kShipWaiting) && ship.town() == town) {
 			notify(ship.name() + " ya está en " + there + ".");
 		} else if (check == Sailing::SailCheck::FewSailors) {
-			notify("Faltan marineros para zarpar.");
+			notify(game_text(GameText::SailNoCrew, "Faltan marineros para zarpar."));
 		} else if (check == Sailing::SailCheck::Tired) {
-			notify("La tripulación necesita descansar.");
+			notify(game_text(GameText::SailMutiny, "La tripulación necesita descansar."));
 		} else if (check == Sailing::SailCheck::Overloaded) {
-			notify("Lleva más carga de la que cabe en la bodega.");
+			notify(game_text(GameText::SailOverloaded, "Lleva más carga de la que cabe en la bodega."));
 		} else if (check == Sailing::SailCheck::Damaged) {
-			notify("El casco está demasiado dañado para zarpar sin capitán.");
+			notify(game_text(GameText::SailDamaged, "El casco está demasiado dañado para zarpar sin capitán."));
 		} else if (check == Sailing::SailCheck::PortClosed) {
 			notify("El puerto está bloqueado.");
 		} else if (check != Sailing::SailCheck::Ok) {
@@ -1910,7 +1981,17 @@ int main(int argc, char** argv) {
 						continue;
 					}
 					if (event.kind == ShipEvent::Arrived) {
-						notify(ship.name() + " ha llegado a " + town_name(save, town_names, event.town) + ".");
+						const std::string there = town_name(save, town_names, event.town);
+						if (g_texts) {
+							// The game's «The %s has reached its destination.», with the town.
+							std::string reached = g_texts->format(GameText::ReachedDestination, {ship.name()});
+							if (!reached.empty() && reached.back() == '.') {
+								reached.pop_back();
+							}
+							notify(reached + ": " + there + ".");
+						} else {
+							notify(ship.name() + " ha llegado a " + there + ".");
+						}
 						// En el mapa del mar queda elegida la ciudad: Triángulo entra en ella.
 						if (selection.mode == Mode::Sea && event.ship == fleet_ship()) {
 							selection.saved_index = size_t(event.town);
@@ -1918,7 +1999,7 @@ int main(int argc, char** argv) {
 					} else if (event.kind == ShipEvent::Stopped) {
 						notify(ship.name() + " se ha detenido en el mar.");
 					} else {
-						notify(ship.name() + " se ha hundido.");
+						notify(g_texts ? ship.name() + ": " + g_texts->get(GameText::Sunk) : ship.name() + " se ha hundido.");
 					}
 				}
 			}
@@ -2307,9 +2388,10 @@ int main(int argc, char** argv) {
 			std::string ship_text = "No tienes ningún barco.";
 			if (course_ship >= 0) {
 				const SavedShip& ship = save.ships[size_t(course_ship)];
-				ship_text = ship.name() + " (" + kShipTypes[ship.type() & 3] + "): " + ship_activity(save, town_names, ship);
+				ship_text = ship.name() + " (" + ship_type_name(ship.type()) + "): " + ship_activity(save, town_names, ship);
 			}
-			const std::string speed = std::string("velocidad ") + kGameSpeeds[game_speed].name;
+			const std::string speed = g_texts ? g_texts->get(GameText::GameSpeed) + ": " + speed_name(game_speed)
+											  : std::string("velocidad ") + speed_name(game_speed);
 			draw_bar(renderer, *small_text, kScreenHeight - kBarHeight, ship_text,
 				{"Cuadrado: barco   Select: " + speed, "Select: " + speed, speed});
 		}

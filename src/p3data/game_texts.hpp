@@ -42,6 +42,36 @@ enum class GameText {
 	Elected,  // «%s %s %s %s from %s was elected Alderman of the Hanseatic League by %d votes.»
 	MonthJanuary,  // The 12 months, for the dates in the texts.
 	MonthDecember = MonthJanuary + 11,
+	WareGrain,  // The 20 trade wares, in lower case («grain»...), in the order of kWares.
+	WareBricks = WareGrain + 19,
+	ShipSnaikka,  // The 4 ship types («Snaikka», «Crayer», «Cog», «Hulk»).
+	ShipHulk = ShipSnaikka + 3,
+	MarketGoods,  // The trade window's columns: «Goods», «Town», «Buy», «Sell», «Ship».
+	MarketTown,
+	MarketBuy,
+	MarketSell,
+	MarketShip,
+	AmountLoads,  // «%.0f load», «%.0f barrel», «%.0f pieces».
+	AmountBarrels,
+	AmountPieces,
+	AmountLoadsDecimal,  // «%.1f load»
+	NotEnoughMoney,  // «Not enough money!»
+	Inhabitants,  // «%.0f inhabitants»
+	Date,  // «%u. %s %u» (day, month, year)
+	AtSea,  // «at sea»
+	Sunk,  // «Sunk»
+	ReachedDestination,  // «The %s has reached its destination.»
+	SailNoCrew,  // «The ship cannot sail because there are not enough crew members.»
+	SailOverloaded,  // «The ship cannot sail because it is overloaded.»
+	SailDamaged,  // «Because of the bad condition of the ship, the captain refuses to set sail.»
+	SailMutiny,  // «The crew is mutinous and refuses to sail...»
+	GameSpeed,  // «Game speed»
+	SpeedVerySlow,  // «very slow», «slow», «normal», «fast», «very fast», «slowdown».
+	SpeedSlow,
+	SpeedNormal,
+	SpeedFast,
+	SpeedVeryFast,
+	SpeedSlowdown,
 	Count
 };
 
