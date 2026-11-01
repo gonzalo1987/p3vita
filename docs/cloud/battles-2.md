@@ -7,70 +7,64 @@ automatic sea battle).
 ## Summary
 
 - **Part 1, the pirates' pool (done):** the heap blocks of the 5 pirate
-  objects, the pool of 8-byte entries ([+0x4], [+0x8], [+0xA]) and the map of
-  the nest ([+0x0], a town_class1 object with its cells), are now game memory
-  in `SaveGame::pirate_nests` (`src/p3data/battle/pirate_nests.*`), loaded
-  as 0x5138B0/0x4F9770 do, written back as 0x5137E0/0x4F9680 do, and recorded
-  by the oracle (regions `ZMi`, `ZDi`, `ZPi`) and compared by tick_probe.
-  Checked: `write-check.sh` the 12 saves as before (0 different in 11, the
-  12 known ones of the battles section in save 7); the world 12 saves × 7
-  days, 0 «distintas», by default and with `--pirates` (the load comparison
-  includes the new regions; 1 to 3 pirates with a pool in every save, no
-  nest map in any).
-
-- **Part 2 (in progress): the disbanding at the nest (done):** 0x514B80,
-  0x515DA0 and 0x513BF0 rewritten (`battle/pirates.cpp`,
-  `battle/pirate_nests.cpp`); the third jump of the provisional rule
-  (0x505FF1) is gone with `--pirates` (`--no-disband` keeps it). Checked call
-  by call: the 12 saves' pirate convoys, 7 days (8 calls of 0x514B80 in 6
-  saves, 1097 of 0x505C90), and the retouched states of
-  `tools/oracle/retouch_pirates.py` (`disband`, `disband_map`, `plan`: every
-  block of the three functions), 0 differences; the world with `--pirates`
-  in saves 3, 4, 5, 6 × 7 days, 0 «distintas».
-
-- **Part 2: the states 0x11 and 0x12 and the pirate branch of 0x5017F0
-  (done):** the lost ship (state 0x11 in port, 0x506AF2 with 0x517170, and
-  at sea, 0x507022), the pirate alone at sea (0x12, 0x507099, with 0x5062F0)
-  behind `--pirates`, and the pirate branch of 0x5017F0 (always). The saves
-  don't reach them; retouched states `lost`, `alone`, `guide`: 0 differences
-  (0x506720 256 calls per save and day, 0x5062F0, 0x517170, 0x5017F0 up to
-  15 calls per save).
-
-- **Part 2: the pirate objects' day (done):** 0x514000 (daily, behind
-  `--pirates`), 0x513EC0, and operation 0xB5 (0x514D40, with 0x515750 and
-  0x5185C0: a convoy leaves the nest) in `battle/pirate_objects.cpp`; the
-  oracle runs 0x514000 (no longer quiet) and executes 0xB5 with `--pirates`.
-  Call by call in the 12 saves × 7 days: 189 calls of 0x514000, 6 of
-  0x514D40, 0 differences; the world with `--pirates`, saves 3, 5, 6, 7 × 7
-  days, 0 «distintas»; retouched `daily`, `leave`, `retire`: every reachable
-  branch, 0 differences.
-
-- **Part 2: the attack of event 0x1E (rewritten, not connected):** 0x5063C0
-  with 0x513D80 (a new pirate) and 0x515EA0; 0 differences in retouched
-  direct calls (`attack`, `attack_new`, `attack_one`, saves 1, 3, 5, 6, tut0,
-  tut2). Its call is in `events_rare.cpp` (the local session's file): the
-  change is described in §2.4, not made.
-- **Part 2 closed:** the world, 12 saves × 7 days, 0 «distintas» by default
-  (133 + 137 + 119 s) and with `--pirates` (142 + 140 + 127 s).
-
-- **Main merged (0320701: statistics, unchecked-branches, tick_probe
-  comparing the words that look like pointers):** `pointer_field` learnt the
-  pirate's `[+0x0]` (the nest's map), `ZMi` `[+0x68]` and, in `BT`, the
-  words that still look like pointers; the probe of 0x5062F0 reads a head
-  on the stack. Everything checked again: `write-check.sh` as before; the
-  pirate probes in the 12 saves × 7 days, 0 differences; every retouched
-  scenario, 0 differences; the world 12 saves × 7 days, 0 «distintas» by
-  default (182 + 179 + 164 s) and with `--pirates` (187 + 191 + 194 s).
-- **Part 3, the infrastructure (in progress):** the oracle records the
-  battles as one region `BT` (the object of 0x6E55D0 and every heap block
-  that hangs from it, pointers turned into block indices) and has
-  `--battles` (the pirates attack; operation 0x94 with 84 steps after each
-  tick with battles); p3vita has `SaveGame::battles` (`BattleGraph`), which
-  tick_probe loads and compares, the clock rule (`Sailing::step_battles`,
-  behind `set_battles`) and operation 0x94 without the battles' own step
-  (part 4). §3.
+  objects (the pool of 8-byte entries and the map of the nest) are game
+  memory in `SaveGame::pirate_nests`, loaded and written as the game does,
+  recorded by the oracle (`ZMi`, `ZDi`, `ZPi`) and compared by tick_probe.
+  `write-check.sh` as before; the world 12 saves × 7 days, 0 «distintas».
+- **Part 2, the rest of the pirates moving (done):** the disbanding at the
+  nest (0x514B80, 0x515DA0, 0x513BF0: the third jump of the provisional
+  rule is gone), the lost ship and the pirate alone (states 0x11, 0x12:
+  0x506AF2, 0x517170, 0x507022, 0x507099, 0x5062F0), the pirate branch of
+  0x5017F0, the pirate objects' day (0x514000, 0x513EC0) with operation 0xB5
+  (0x514D40, 0x515750, 0x5185C0), and the attack of event 0x1E (0x5063C0,
+  0x513D80, 0x515EA0; rewritten, its call in the local session's
+  `events_rare.cpp` described, not made). Checked call by call in the 12
+  saves × 7 days (0x514000 182–189 calls, 0x505C90 1775, 0x514D40 6...) and
+  with the retouched states of the new `tools/oracle/retouch_pirates.py`
+  (12 scenarios, every reachable branch): 0 differences; the world 12 saves
+  × 7 days, 0 «distintas» by default and with `--pirates`.
+- **Part 3, the infrastructure (done):** the oracle records the battles as
+  one region `BT` (the object of 0x6E55D0 and every heap block that hangs
+  from it, pointers turned into block indices; `BA` their addresses for the
+  probes) and has `--battles` (the pirates attack; after each tick with
+  battles, operation 0x94 with 84 steps); p3vita has `SaveGame::battles`
+  (`BattleGraph`, normalized to the oracle's order), compared by tick_probe,
+  the clock rule (`Sailing::step_battles`, `set_battles`) and operation 0x94
+  (without the battles' own step yet).
+- **Part 4, the battle (started):** the whole start of an automatic sea
+  battle is rewritten and equal call by call: the attack 0x50BC40 and the
+  setup 0x605420 with what they call (0x611CD0, 0x603A70, 0x618F10,
+  0x619450, 0x61A1D0, 0x61A4E0, 0x62125B, 0x61A750, 0x503AC0, 0x608230,
+  0x6079D0, 0x60F479, 0x6197A0, 0x50CFB0, 0x5176C0, 0x505B60). With
+  `--pirates --battles`, in the 6 saves with battles × 7 days: 0x50BC40 11
+  calls, 0x605420 11, 0x619450 670, 0x62125B 6297, and the ships' update
+  0x506720 6 × 1792 calls with the attacks in it, 0 differences. Left: the
+  step of a battle (0x606CC0 and its tree) and its end, about 15 000
+  instructions, mapped in §4 and `docs/cloud/battles-2-605420.md`.
+- Main (0320701) merged; everything checked again after it. The oracle's
+  `HeapReAlloc` now keeps only the old block's requested bytes (the rest
+  zero, as `alloc`): the default world after it, 0 «distintas».
+- Built for the Vita (`vita_check.sh`: VPK, no errors or warnings).
 
 ## Decisions for the user
+
+- **`--pirates` by default** (recommendation: not yet). With `--battles`
+  the pirates attack as in the game, but the battles don't move in p3vita
+  until the step is rewritten (part 4); without `--battles` the first jump
+  of the provisional rule stays. Switch both on together when the step and
+  the end are done and the world with `--pirates --battles` gives 0
+  «distintas».
+- **The oracle's realloc** (recommendation: accept): `HeapReAlloc` copied
+  the old block up to its rounded size, so a grown block got the stale bytes
+  of the heap slack (a battle's page array got a pointer to another block
+  that way). Now it keeps the old block's requested bytes and the rest is
+  zero, the same convention as `alloc`. The default world: 0 «distintas».
+- **The event 0x1E's attack** (recommendation: whoever owns
+  `town_tick/events_rare.cpp` adds the two calls of §2.4, with the pirates
+  on).
+- **What to do next** (recommendation: a task `battles-3` for the step and
+  the end of the automatic sea battle, with the map of §4 and
+  `docs/cloud/battles-2-605420.md`; then the other sea battles, piece 4).
 
 - **The battles' rocks and the town view** (recommendation: give the
   oracle a town view object with the game's `[+0x510]`, once its value is
@@ -576,11 +570,39 @@ p3vita), and without `--battles` the first jump of the rule stays.
 
 ## For the roadmap
 
-- (to fill)
+- «Piratas, persecuciones, encuentros y batallas», piece 2 (the pirates
+  moving): done in p3vita behind `--pirates` (`Sailing::set_pirates`): the
+  convoys at sea, the disbanding at the nest, the nest's pool and map, the
+  lost ship and the pirate alone, the pirate objects' day and operation
+  0xB5, the attack of event 0x1E (to connect in `events_rare.cpp`). Only the
+  first jump of the provisional rule (the attack, until the battles step)
+  and the second (the end of a route: the town battle, piece 6) remain.
+- Piece 3 (the automatic sea battle): the infrastructure is done
+  (`--battles`, region `BT`, `SaveGame::battles`, the clock rule) and the
+  start of a battle (the attack and the setup). Left: the step and the end
+  (§4: about 15 000 instructions).
+- New, for the oracle: `HeapReAlloc` keeps only the requested bytes (§4).
+- New decision: the battles' rocks depend on the town view (§4,
+  «Decisions»).
 
 ## For the inventory
 
-- (to fill)
+Part E, «Batallas y encuentros»:
+- The pirates' pool and nest map: game memory (`SaveGame::pirate_nests`).
+- 0x514B80, 0x515DA0, 0x513BF0, 0x514000, 0x513EC0, 0x514D40 (operation
+  0xB5), 0x515750, 0x5185C0, 0x5062F0, 0x517170, the states 0x11 and 0x12
+  of 0x506720 (0x506AF2, 0x507022, 0x507099), the pirate branch of
+  0x5017F0, 0x5063C0, 0x513D80, 0x515EA0: rewritten.
+- The sea battle: 0x50BC40, 0x611CD0, 0x603A70, 0x618F10, 0x605420
+  (automatic path), 0x608230, 0x6079D0, 0x60F479, 0x619450, 0x61A1D0,
+  0x6197A0, 0x61A4E0, 0x62125B, 0x61A750, 0x503AC0, 0x50CFB0, 0x5176C0,
+  0x505B60, operation 0x94 (0x536BBF, without the step), 0x612C90,
+  0x612D20: rewritten. The step (0x606CC0: method +0x14) and what it calls
+  (0x6113C9, 0x6197F0 and the battle's method +0x0 0x608850 for two scene
+  items, the scene ship's method +0x0 0x61A9E0, 3041 instructions, with
+  0x6264C0, 0x61F1BF, 0x6271D7...), the end (method +0x1C 0x60D299, +0x4
+  0x611740 → 0x603BC0, 0x50BFD0, 0x60C1C9): to do. Part D: «el ataque al
+  barco 0x5063C0» is done (not connected).
 
 ## Game bugs
 
@@ -614,9 +636,18 @@ Looks like one:
 
 ## Done and left
 
-Done: part 1; of part 2, the disbanding (§2.1), the states 0x11 and 0x12
-and 0x5017F0 (§2.2), the pirate objects' day (§2.3), the attack of event
-0x1E (§2.4, not connected); of part 3, the recording, SaveGame::battles and the
-clock (§3). Left: part 4 (the battle itself).
+Done: parts 1, 2 and 3; of part 4, the start of an automatic sea battle
+(the attack and the setup, §4). Left: the step and the end of a battle
+(§4), then the other battles (pieces 4–7 of docs/cloud/battles.md).
 
-Not built for the Vita yet.
+Times of the checks here: the world 12 saves × 7 days, three batches of 4,
+about 2–3 min each (133–194 s); the probes of a part in 6–12 saves × 7
+days, 37–64 s; a retouched scenario in 4 saves, 6–12 s; `write-check.sh`
+18 s; `build.sh` about 20 s; the Vita build 1 min 42 s (VitaSDK installed
+with `scripts/setup-vitasdk.sh` in 11 s).
+
+Built for the Vita: `vita_check.sh`, VPK built, no errors or warnings
+(after the setup of a battle, 4e33692...).
+
+Not run (long): the world with `--pirates --battles` (it differs by
+construction until the step is rewritten).
