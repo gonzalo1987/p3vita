@@ -72,6 +72,14 @@ automatic sea battle).
 
 ## Decisions for the user
 
+- **The battles' rocks and the town view** (recommendation: give the
+  oracle a town view object with the game's `[+0x510]`, once its value is
+  known, and use the same in p3vita): 0x60F479 multiplies the rocks' and
+  islets' boxes by half the town view's width (`*0x6E51AC`, UI); the
+  emulator has none, so they are 0 there and in p3vita (`kTownViewHalf`).
+  Until then the oracle and p3vita agree with each other, not with the
+  game, for the automatic battles' obstacles. (The same family as the town
+  battle reading the town view, docs/cloud/battles.md.)
 - **The grid functions on a nest's map** (recommendation: for
   cloud/unchecked-branches or whoever owns `town_tick/grid.cpp` and
   `construction.cpp`): `fn_4f9c80` and `fn_4fb9c0` take a town; the nest's
@@ -458,12 +466,24 @@ tut3, 7 days; 39 s):
   n for no block, n rounded up to 16 for a block (the CRT's HeapReAlloc);
   p3vita's `BattleGraph::realloc_at` does the same.
 
-What 0x605420 does (its automatic path; the human side's messages and the
-window are part 7) is written down in `docs/cloud/battles-2-605420.md`, read
-from the disassembly with the coverage of the battles of saves 4, 5, 6 and
-tut0. Still to rewrite before it can be compared: 0x605420 itself and the
-method it calls at the end, +0x18 (0x608230), which runs +0x2C (0x6079D0,
-632 instructions) and 0x60F479 (769); and then the attack 0x50BC40.
+- **0x605420, the setup of a sea battle** (its automatic path; notes in
+  `docs/cloud/battles-2-605420.md`), with **0x608230** (method +0x18),
+  **0x6079D0** (method +0x2C: the two sides in formation, with a square
+  root and the battle's generator), **0x60F479** (the rocks and islets) and
+  **0x6197A0**: 11 calls of 0x605420 in saves 4, 5, 6, tut0, tut1, tut3, 0
+  differences (the whole battle object and every block it hangs, the scene's
+  ships included). Not rewritten in it: the human sides' messages and
+  window (part 7), a storm or two pirates as sides (method +0x4, the end) and
+  the end when `[+0x5C]` (method +0x1C, 0x60D299).
+- **0x60F479 depends on the town view**: it multiplies the coordinates of
+  its items (the rocks' and islets' boxes in the scene) by u16 `[*0x6E51AC
+  + 0x510]` / 2, the half width of the town view (UI). The emulator has no
+  town view: 0, and p3vita reproduces that (`kTownViewHalf`). In the game
+  the rocks' boxes have their real size, so the battles there may differ
+  (ships avoiding or hitting rocks). See «Decisions».
+
+Next: the attack 0x50BC40 (it calls 0x611CD0 and 0x605420, done), then the
+step (operation 0x94, method +0x14, 0x606CC0) and the end of a battle.
 
 
 ## Changes to shared files

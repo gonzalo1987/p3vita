@@ -208,6 +208,11 @@ public:
 	int32_t fn_62125b(size_t entry) const;  // (scene's ship) Its strength.
 	bool fn_61a750(size_t entry, size_t other) const;  // (scene's ship) Stronger than the other.
 	bool fn_503ac0(uint16_t convoy) const;  // (convoy) Whether it is the Hanse fleet of its event 0x34.
+	void fn_6197a0(size_t scene, uint16_t item, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2);  // An item's box.
+	void fn_6079d0(size_t battle);  // (sea battle, method +0x2C) The two sides in formation.
+	void fn_60f479(size_t battle);  // (sea battle) The rocks and islets.
+	void fn_608230(size_t battle, bool arg);  // (sea battle, method +0x18)
+	void fn_605420(size_t battle, uint16_t a, uint16_t d, uint8_t c, uint32_t flag);  // (sea battle) Its setup.
 	uint16_t fn_5063c0(uint16_t target, uint32_t kind);  // (ships object) The pirate of event 0x1E attacks a ship.
 	// 0x5062F0 (ships object): a new convoy led by `ship`, at the head of the
 	// list `head` (not inside SaveGame::convoys: it may grow); its index.

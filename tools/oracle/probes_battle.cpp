@@ -200,6 +200,16 @@ void register_probes_battle(ProbeRegistry& r) {
 		c.eax_mask = 0xFF;
 		return probe_sailing()->fn_503ac0(uint16_t(convoy)) ? 1 : 0;
 	};
+	// 0x605420: thiscall on a sea battle (ship A, ship D, a byte, a flag).
+	r[0x605420] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int battle = battle_block(c.ecx);
+		const uint16_t a = uint16_t(c.args[0]), d = uint16_t(c.args[1]);
+		if (!probe_sailing() || battle < 0 || a >= save.ships.size() || d >= save.ships.size()) {
+			return kBad;
+		}
+		probe_sailing()->fn_605420(size_t(battle), a, d, uint8_t(c.args[2]), c.args[3]);
+		return std::nullopt;
+	};
 	// 0x611CD0: thiscall on the battles; returns the slot (al).
 	r[0x611CD0] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
 		if (!probe_sailing()) {
