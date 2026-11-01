@@ -46,6 +46,19 @@ automatic sea battle).
   zero, as `alloc`): the default world after it, 0 «distintas».
 - Built for the Vita (`vita_check.sh`: VPK, no errors or warnings).
 
+- **Correction to docs/cloud/battles.md («no battle in any of the 12
+  saves»):** three saves have a sea battle saved, all of pirates (owner
+  0xFF) against one merchant: **6** (3 ships, 2 + 1, against merchant 0x1D,
+  automatic), **7** (3 ships, 2 + 1, against 0x20, automatic) and **tut4**
+  (4 ships, 3 + 1, against 0x24, not automatic: a human side). Read with the
+  game's reader 0x611AE0 (`write_oracle.prepare_game_object`): count
+  `[0x6E59D4]` = 1, slot 0, vtable 0x67AD44, `[+0x15C]` = 0. Their battles
+  sections are 1240, 1296 and 1291 bytes (5 in the other saves). They are
+  the «pirate convoys left in state 0x14, outside the list» that
+  battles.md saw in 6, 7 and tut4. (cloud/statistics reported save 7, the
+  one whose padding the writer got wrong; main bc353ec writes it as zeros
+  with `fix_game_bugs()`.) The case for piece 5 (the battles in the save).
+
 ## Decisions for the user
 
 - **`--pirates` by default** (recommendation: not yet). With `--battles`
@@ -62,6 +75,9 @@ automatic sea battle).
 - **The event 0x1E's attack** (recommendation: whoever owns
   `town_tick/events_rare.cpp` adds the two calls of §2.4, with the pirates
   on).
+- **The battles saved in saves 6, 7 and tut4** (recommendation: piece 5
+  after the step; until then the oracle and p3vita both leave them out, so
+  the world agrees but those three saves run without their battle).
 - **What to do next** (recommendation: a task `battles-3` for the step and
   the end of the automatic sea battle, with the map of §4 and
   `docs/cloud/battles-2-605420.md`; then the other sea battles, piece 4).
@@ -396,8 +412,14 @@ size. Every pointer into one of these blocks becomes `0xF0000000 | block <<
 16 | offset`; other pointers stay. Region bytes: u32 number of blocks and,
 for each, u32 size and the bytes. The order is the walk's, not the
 allocation's, so p3vita gets the same bytes if it has the same structure.
-After the load the object is all zero in the emulator (its constructor
-doesn't run): one block of zeros, as p3vita's empty `BattleGraph`.
+After the load the object is all zero in the emulator: town_oracle.py's
+load doesn't run the battles' reader 0x611AE0 (only write_oracle.py does,
+for writing), so the battles saved in saves 6, 7 and tut4 don't exist there,
+and p3vita doesn't load them either (`SaveOpaque`): one block of zeros on
+both sides. Loading them (0x611AE0 in the oracle's load, and p3vita reading
+the section into `BattleGraph`) is piece 5; with it those three saves would
+start with a battle running (in tut4 one with a human side, part 7's
+window).
 
 `--battles` (with `--pirates`): the jump 0x507BE9 (the attack) goes, and
 after each tick with battles (`[0x6E59D4]` ≠ 0), after the tick's other
@@ -584,6 +606,8 @@ p3vita), and without `--battles` the first jump of the rule stays.
 - New, for the oracle: `HeapReAlloc` keeps only the requested bytes (§4).
 - New decision: the battles' rocks depend on the town view (§4,
   «Decisions»).
+- Correction: saves 6, 7 and tut4 have a sea battle saved (pirates against a
+  merchant); the oracle's load and p3vita leave it out today. Piece 5.
 
 ## For the inventory
 
