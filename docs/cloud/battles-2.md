@@ -482,8 +482,19 @@ tut3, 7 days; 39 s):
   the rocks' boxes have their real size, so the battles there may differ
   (ships avoiding or hitting rocks). See «Decisions».
 
-Next: the attack 0x50BC40 (it calls 0x611CD0 and 0x605420, done), then the
-step (operation 0x94, method +0x14, 0x606CC0) and the end of a battle.
+- **The attack, 0x50BC40** (`battle/attack.cpp`, with 0x50CFB0, 0x5176C0,
+  0x505B60), wired into the convoy state 0x12 (`pirate_convoy`, as
+  0x507BAE) with `set_battles`: the first jump of the provisional rule is
+  gone with `--battles`. Call by call with `--pirates --battles` (saves 4,
+  5, 6, tut0, tut1, tut3, 7 days): 0x50BC40 11 calls and 0x506720 6 × 1792
+  calls (the ships' update, with the attacks in it), 0 differences.
+
+So with `--battles`, p3vita starts the automatic sea battles exactly as the
+game. What is left is the battle itself: the step (operation 0x94, method
++0x14, 0x606CC0 and what it calls, about 7 000 instructions) and its end
+(methods +0x4, +0x1C, 0x50BFD0...). Until then `--pirates` can't be
+switched on by default with `--battles` (the battles would never move in
+p3vita), and without `--battles` the first jump of the rule stays.
 
 
 ## Changes to shared files

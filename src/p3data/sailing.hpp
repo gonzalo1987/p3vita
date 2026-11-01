@@ -213,6 +213,11 @@ public:
 	void fn_60f479(size_t battle);  // (sea battle) The rocks and islets.
 	void fn_608230(size_t battle, bool arg);  // (sea battle, method +0x18)
 	void fn_605420(size_t battle, uint16_t a, uint16_t d, uint8_t c, uint32_t flag);  // (sea battle) Its setup.
+	// battle/attack.cpp
+	void fn_50bc40(uint16_t convoy);  // (ships object) A pirate convoy attacks: a sea battle.
+	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.
+	void fn_5176c0(uint16_t ship, uint16_t guide);  // (ship) Takes the guide's route if it has none.
+	void fn_505b60(uint16_t ship);  // (ships object) A ship leaves the sea list.
 	uint16_t fn_5063c0(uint16_t target, uint32_t kind);  // (ships object) The pirate of event 0x1E attacks a ship.
 	// 0x5062F0 (ships object): a new convoy led by `ship`, at the head of the
 	// list `head` (not inside SaveGame::convoys: it may grow); its index.

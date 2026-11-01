@@ -754,12 +754,31 @@ bool Sailing::pirate_convoy(uint16_t index, uint16_t& link) {
 		save_.ships[c.u16(0x10)].timer() = c.u16(0x16);
 	}
 	const uint16_t flags = c.u16(0x14);
+	bool attack = false;
 	if (flags & 0x40) {
 		c.u16(0x14) = uint16_t(flags & 0xFFBF);
-		// The target set by someone else: the attack (0x50BC40) is for piece 3.
+		// The target set by someone else (the attack of event 0x1E): a
+		// merchant's ship that sails.
+		const uint16_t t = save_.ships[c.u16(0x10)].memory.u16(0x50);
+		if (t < count && save_.ships[t].owner() < save_.merchant_count) {
+			const uint16_t st = save_.ships[t].status();
+			attack = st == kStatusSailing || st == kStatusPursuing;
+		}
 	} else if ((save_.tick() & 3) == 0 && fn_50d9e0(leader)) {
-		fn_515360(leader);  // An attack would follow (0x50BC40): piece 3.
+		attack = fn_515360(leader);
 	}
+	if (attack && battles_) {
+		// 0x507BAE: the target still sails (0x0F): the convoy leaves the list
+		// and attacks (0x50BC40, a sea battle); the walk goes on from the link.
+		const uint16_t t = save_.ships[save_.convoys[index].u16(0x10)].memory.u16(0x50);
+		if (t < count && save_.ships[t].status() == kStatusSailing) {
+			link = save_.convoys[index].u16(0x8);
+			save_.convoys[index].u16(0x8) = 0xFFFF;
+			fn_50bc40(index);
+			return true;
+		}
+	}
+	// Without battles (the rule of piece 2), as if there were no target.
 	if (!save_.ships[c.u16(0x10)].route) {
 		if (fn_505c90(index, link)) {
 			return true;
@@ -775,7 +794,6 @@ bool Sailing::pirate_convoy(uint16_t index, uint16_t& link) {
 		return false;
 	}
 	sort_x(save_.convoys[index].u16(0x10));
-	(void)count;
 	return false;
 }
 

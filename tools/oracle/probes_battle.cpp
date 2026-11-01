@@ -200,6 +200,15 @@ void register_probes_battle(ProbeRegistry& r) {
 		c.eax_mask = 0xFF;
 		return probe_sailing()->fn_503ac0(uint16_t(convoy)) ? 1 : 0;
 	};
+	// 0x50BC40: thiscall on the ships object, the attacking convoy.
+	r[0x50BC40] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const uint16_t convoy = uint16_t(c.args[0]);
+		if (!probe_sailing() || convoy >= save.convoys.size()) {
+			return kBad;
+		}
+		probe_sailing()->fn_50bc40(convoy);
+		return std::nullopt;
+	};
 	// 0x605420: thiscall on a sea battle (ship A, ship D, a byte, a flag).
 	r[0x605420] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
 		const int battle = battle_block(c.ecx);
