@@ -24,6 +24,7 @@ El estado son copias de la memoria del juego, por regiones:
          puntos y los puntos (i16 x, i16 y)
   K0..K7 los 40 bytes de cada hueco del objeto 0x6DE588 (*[0x6DEF90 + 4·i]; vacío si no hay)
   Z0..Z4 los 0x18 bytes de los 5 piratas del objeto de los barcos (*[0x6DD7AC + 4·i]; vacío si no hay)
+  BA     the address of each block of BT in the emulator (for the probes)
   BT     the battles: the object of 0x6E55D0 and every heap block that hangs from
          it, pointers inside turned into BATTLE_POINTER | block << 16 | offset
          (see TownOracle.battle_graph)
@@ -558,8 +559,13 @@ class TownOracle(SaveOracle):
             result, pop = 1, 12
         elif name == 'HeapReAlloc':
             old, size = a(2), a(3)
+            # The old block's requested bytes are kept and the rest is zero, as
+            # alloc gives zeros (before, the copy went up to the old block's
+            # rounded size, bringing the slack's stale bytes; the battles'
+            # page arrays read them: docs/cloud/battles-2.md §4).
+            kept = self.__dict__.get('requested', {}).get(old, self.sizes.get(old, 0))
             result = self.alloc(size)
-            self.uc.mem_write(result, bytes(self.uc.mem_read(old, min(size, self.sizes.get(old, 0)))))
+            self.uc.mem_write(result, bytes(self.uc.mem_read(old, min(size, kept))))
             self.release(old)
             pop = 16
         elif name == 'arc_CreateFile':
@@ -936,7 +942,9 @@ class TownOracle(SaveOracle):
                 nodes.append(piece[4:])
                 node = unpack('<I', piece, 0)[0]
             out[f'N{i}'] = (first, b''.join(nodes))
-        out['BT'] = (BATTLES, self.battle_graph(read, {a for a, _ in out.values() if a}))
+        graph, addresses = self.battle_graph(read, {a for a, _ in out.values() if a})
+        out['BT'] = (BATTLES, graph)
+        out['BA'] = (0, addresses)
         # The statistics (0x6DFC90): S0..S3 the records of the towns of its
         # lists [+0xC] (days), [+0x10] (weeks), [+0x14] (months) and [+0x18]
         # (years), newest first: u32 number and the blocks of 0x204 bytes of
@@ -984,7 +992,9 @@ class TownOracle(SaveOracle):
         the world's blocks: the regions), in the order of a walk by offsets.
         Each pointer into one of these blocks is replaced by BATTLE_POINTER |
         block << 16 | offset; other pointers (the navigation's points...) stay.
-        Bytes: u32 number of blocks and, for each, u32 size and the bytes."""
+        Bytes: u32 number of blocks and, for each, u32 size and the bytes. Also
+        the emulator's address of each block (region BA: tick_probe's probes
+        find a block by the pointer a function receives; not compared)."""
         unpack = struct.unpack_from
         sizes = self.sizes
         requested = self.__dict__.get('requested', {})
@@ -1014,7 +1024,7 @@ class TownOracle(SaveOracle):
                 data = struct.pack(f'<{len(words)}I', *words) + data[len(words) * 4:]
             parts.append(struct.pack('<I', len(data)))
             parts.append(data)
-        return b''.join(parts)
+        return b''.join(parts), struct.pack(f'<{len(blocks)}I', *(a for a, _ in blocks))
 
 
 def write_regions(f, regions):

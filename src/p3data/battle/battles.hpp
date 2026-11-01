@@ -4,6 +4,7 @@
 // 0x6E55D0 and every heap block that hangs from it, as the oracle records
 // them (region BT, town_oracle.py TownOracle.battle_graph).
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -57,6 +58,27 @@ struct BattleGraph {
 		blocks.emplace_back(size, 0);
 		return blocks.size() - 1;
 	}
+	// The block the pointer at `offset` of `block` points to the start of, or −1.
+	int ptr(size_t block, size_t offset) const { return target(get<uint32_t>(block, offset)); }
+	void set_ptr(size_t block, size_t offset, int to) {
+		set<uint32_t>(block, offset, to < 0 ? 0 : pointer(size_t(to)));
+	}
+	// realloc (0x63A29F) of the block the pointer at `offset` of `block`
+	// points to: a new block (the oracle's sizes: n from no block, else n
+	// rounded up to 16, as the CRT's HeapReAlloc), the old bytes copied and
+	// the rest zero; the pointer updated. The new block's index.
+	size_t realloc_at(size_t block, size_t offset, size_t n) {
+		const int old = ptr(block, offset);
+		const size_t size = old < 0 ? n : (n + 15) & ~size_t(15);
+		const size_t b = alloc(size);
+		if (old >= 0) {
+			const size_t keep = std::min(size, blocks[size_t(old)].size());
+			std::memcpy(blocks[b].data(), blocks[size_t(old)].data(), keep);
+		}
+		set_ptr(block, offset, int(b));
+		return b;
+	}
+
 	// The same graph with its blocks in the oracle's order (a walk from block
 	// 0 by offsets, following the pointers to a block's start); blocks no
 	// pointer reaches are left out (freed or lost).

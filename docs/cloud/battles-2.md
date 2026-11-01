@@ -437,6 +437,34 @@ tut3, 7 days; 39 s):
 - **0x611CD0** (a new sea battle in the first free slot, the count),
   **0x603A70** (its constructor), **0x618F10** (the scene's constructor):
   11 calls of 0x611CD0, 0 differences.
+- `battle/battle_setup.cpp`: **0x619450** (a new item of the scene) with
+  **0x61A1D0** (the scene's arrays grow by 0x20 items, realloc), **0x62125B**
+  (a scene ship's strength) and **0x61A750**, **0x503AC0** (the Hanse
+  fleet's convoy), and **0x61A4E0** (a scene ship, 0x164 bytes): 0x619450
+  670 calls, 0x62125B 6297, 0x61A750 12, 0x503AC0 11, 0 differences.
+  0x61A4E0 can't be compared alone (its block hangs from the battle only
+  after it returns): its samples are skipped; it is checked with 0x605420.
+- The probes find a battle block by the emulator's address it receives:
+  the oracle records region `BA` (the address of each block of BT, not
+  compared) and tick_probe's `battle_block`.
+- **The oracle's realloc changed** (`HeapReAlloc` in
+  `TownOracle.setup_imports`): it copied the old block up to its rounded
+  size, bringing the stale bytes of the heap slack into the new block; the
+  page arrays of a battle scene (realloc from 4 to 8 bytes) got a stale
+  pointer to another block that way, which the walk of BT recorded. Now it
+  keeps the old block's requested bytes and the rest is zero, as `alloc`
+  gives zeros. The world 12 saves × 7 days by default after it: 0
+  «distintas» (180 + 178 + 162 s). The sizes the oracle sees for a realloc:
+  n for no block, n rounded up to 16 for a block (the CRT's HeapReAlloc);
+  p3vita's `BattleGraph::realloc_at` does the same.
+
+What 0x605420 does (its automatic path; the human side's messages and the
+window are part 7) is written down in `docs/cloud/battles-2-605420.md`, read
+from the disassembly with the coverage of the battles of saves 4, 5, 6 and
+tut0. Still to rewrite before it can be compared: 0x605420 itself and the
+method it calls at the end, +0x18 (0x608230), which runs +0x2C (0x6079D0,
+632 instructions) and 0x60F479 (769); and then the attack 0x50BC40.
+
 
 ## Changes to shared files
 
@@ -505,7 +533,9 @@ tut3, 7 days; 39 s):
   ```
 - `src/p3data/savegame.hpp`: the include of `battle/battles.hpp` and
   `SaveGame::battles`.
-- `tools/oracle/town_oracle.py`: `BATTLES`, `BATTLES_SIZE`, `BATTLE_POINTER`,
+- `tools/oracle/town_oracle.py`: `HeapReAlloc` keeps only the old block's
+  requested bytes (§4); the region `BA`;
+  `BATTLES`, `BATTLES_SIZE`, `BATTLE_POINTER`,
   `BATTLE_STEPS`, `BATTLE_JUMP`, `battle_graph`, the region `BT`, `--battles`
   (constructor `battles=False`, after main's `statistics`, `last_steps`).
 - `tools/oracle/tick_probe.cpp`: `BT`, `--battles`, and in `pointer_field`

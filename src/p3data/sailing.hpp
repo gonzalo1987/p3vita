@@ -201,6 +201,13 @@ public:
 	uint8_t fn_611cd0();  // (battles) A new sea battle; its slot or 0xFF.
 	void fn_603a70(size_t block, uint8_t slot);  // The sea battle's constructor.
 	void fn_618f10(size_t block);  // The scene's constructor.
+	// battle/battle_setup.cpp: blocks of BattleGraph (save().battles).
+	uint16_t fn_61a1d0(size_t scene);  // (scene) A free item, growing the arrays.
+	uint16_t fn_619450(size_t scene, uint8_t a0, uint8_t a1, uint16_t a2, uint16_t a3, uint16_t a4, uint16_t a5);
+	void fn_61a4e0(size_t entry, uint16_t ship, size_t battle, uint16_t index, uint8_t side);  // A scene's ship.
+	int32_t fn_62125b(size_t entry) const;  // (scene's ship) Its strength.
+	bool fn_61a750(size_t entry, size_t other) const;  // (scene's ship) Stronger than the other.
+	bool fn_503ac0(uint16_t convoy) const;  // (convoy) Whether it is the Hanse fleet of its event 0x34.
 	uint16_t fn_5063c0(uint16_t target, uint32_t kind);  // (ships object) The pirate of event 0x1E attacks a ship.
 	// 0x5062F0 (ships object): a new convoy led by `ship`, at the head of the
 	// list `head` (not inside SaveGame::convoys: it may grow); its index.

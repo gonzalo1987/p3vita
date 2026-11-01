@@ -66,6 +66,19 @@ using namespace p3::data;
 using namespace p3::probe;
 
 namespace {
+std::vector<uint32_t> g_battle_addresses;  // region BA: the emulator's address of each block of BT
+}  // namespace
+
+int p3::probe::battle_block(uint32_t address) {
+	for (size_t i = 0; i < g_battle_addresses.size(); ++i) {
+		if (g_battle_addresses[i] == address && address != 0) {
+			return int(i);
+		}
+	}
+	return -1;
+}
+
+namespace {
 
 Sailing* g_sailing = nullptr;
 
@@ -344,6 +357,10 @@ void build_save(const State& state, SaveGame& save) {
 		if (const Region* r = find(state, "S" + std::to_string(k))) {
 			read_statistics_region(save, k, r->bytes);
 		}
+	}
+	if (const Region* ba = find(state, "BA")) {
+		g_battle_addresses.assign(ba->bytes.size() / 4, 0);
+		std::memcpy(g_battle_addresses.data(), ba->bytes.data(), g_battle_addresses.size() * 4);
 	}
 	if (const Region* bt = find(state, "BT")) {
 		// The battles: u32 number of blocks and, for each, u32 size and the bytes.

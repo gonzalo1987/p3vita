@@ -29,6 +29,10 @@ struct Location {
 };
 
 // Una llamada grabada por town_oracle.py.
+// The battles' blocks (region BT) by the emulator's address of each (region
+// BA), of the state before the call: the block that starts at `address`, or −1.
+int battle_block(uint32_t address);
+
 struct ProbeCall {
 	uint32_t function = 0;
 	uint32_t tick = 0;
