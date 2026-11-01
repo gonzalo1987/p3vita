@@ -186,16 +186,17 @@ ENCOUNTERS = 0x5079DA  # cada 8 ticks, 0x5053C0 (encuentros): se salta
 STORM_UI_JUMPS = {0x50596F: 0x505983, 0x5059CA: 0x5059E0}
 # With --pirates, the pirate convoys move (their state 0x12, 0x507A65) and the
 # per-town waypoints they choose from are computed at the load (0x448780, on
-# the navigation object). Until the battles are rewritten, the two places
-# where a battle would start are jumped over: the attack on the target
-# (0x507BE9 → 0x50BC40) goes on as if there were no target, and the end of the
-# route (0x507C0B → a town battle) goes on as if the convoy still sailed.
+# the navigation object). Their attack on a target (0x507BE9 → 0x50BC40, a
+# sea battle) runs, with the battles' clock (BATTLE_STEPS; the sea battles are
+# rewritten in p3vita, docs/cloud/battles-2.md §4). The end of the route
+# (0x507C0B → a town battle, not rewritten yet) is jumped over: the convoy
+# goes on as if it still sailed.
 # The ships in state 0x11 (lost: in port 0x506AF2, at sea 0x507022) and the
 # pirates alone at sea (0x12, 0x507099) go through too.
 # A convoy at its nest is disbanded (0x514B80, rewritten in p3vita); with
 # --no-disband it is not (NO_DISBAND_JUMP, 0x505FF1 → 0x506029 in 0x505C90:
 # as if it were elsewhere), as before cloud/battles-2.
-PIRATE_JUMPS = {0x507BE9: 0x507B23, 0x507C0B: 0x507B5F}
+PIRATE_JUMPS = {0x507C0B: 0x507B5F}
 NO_DISBAND_JUMP = {0x505FF1: 0x506029}
 # With --pirates, the pirate objects' daily update runs (0x514000, otherwise
 # quiet) and the operation it queues is executed: 0xB5, a convoy leaves the
@@ -216,13 +217,12 @@ HEAP_BEGIN, HEAP_END = 0x1000_0000, 0x1800_0000
 # places are whole and a block can start at 0x10xx0000), a sea battle's
 # generator. As BattleGraph::number_field.
 BATTLE_NUMBERS = {(0x164, 0x67B0D4): (0x8, 0xC, 0x14, 0x18, 0x1C), (0x1E98, 0x67AD44): (0xADC,)}
-# With --battles (and --pirates): the attack of a pirate convoy (0x507BE9 →
-# 0x50BC40) is not jumped over, and after each tick with battles the oracle
-# executes operation 0x94 with BATTLE_STEPS steps (the clock rule of
-# docs/oracle.md: the game's real-time driver 0x612DB0 queues it with the
-# steps of the real clock, about 84.4 per tick).
+# With --pirates, after each tick with battles the oracle executes operation
+# 0x94 with BATTLE_STEPS steps (the clock rule of docs/oracle.md: the game's
+# real-time driver 0x612DB0 queues it with the steps of the real clock, about
+# 84.4 per tick). (Until cloud/battles-2 this needed --battles, and without
+# it the attack 0x507BE9 was jumped over too.)
 BATTLE_STEPS = 84
-BATTLE_JUMP = 0x507BE9
 EPILOGUE = 0x5079E8
 DOCKED_STATES = (0, 1, 2, 3, 4, 5)
 
@@ -336,7 +336,7 @@ class TownOracle(SaveOracle):
                  operations=OPERATIONS, storms=True, pirates=False, statistics=False, last_steps=True,
                  disband=True, battles=False):
         self.pirates = pirates and navdata is not None and convoys
-        self.battles = battles and self.pirates
+        self.battles = self.pirates  # `battles` is kept for older scripts.
         if self.pirates:
             operations = tuple(operations) + PIRATE_OPERATIONS
         super().__init__(exe, save, navdata)
@@ -372,8 +372,6 @@ class TownOracle(SaveOracle):
                 self.uc.hook_add(UC_HOOK_CODE, self._convoy, begin=CONVOY_DISPATCH, end=CONVOY_DISPATCH)
                 if self.pirates:
                     jumps = dict(PIRATE_JUMPS if disband else {**PIRATE_JUMPS, **NO_DISBAND_JUMP})
-                    if self.battles:
-                        del jumps[BATTLE_JUMP]
                     for address, target in jumps.items():
                         self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
                 if storms:
@@ -1261,10 +1259,10 @@ def main():
                    help='with --barcos, without the storms (0x5053C0, every 8 ticks), which run by default')
     p.add_argument('--storms', action='store_true', help='on by default now; kept for older scripts')
     p.add_argument('--pirates', action='store_true',
-                   help='with --barcos, the pirate convoys move (without battles yet; see PIRATE_JUMPS)')
+                   help='with --barcos, the pirate convoys move and attack (sea battles; see PIRATE_JUMPS)')
     p.add_argument('--battles', action='store_true',
-                   help='with --pirates, the pirates attack (0x50BC40) and operation 0x94 steps the battles '
-                        '(BATTLE_STEPS after each tick with battles)')
+                   help='on with --pirates now (the pirates attack, 0x50BC40, and operation 0x94 steps the '
+                        'battles); kept for older scripts')
     p.add_argument('--no-disband', action='store_true',
                    help='with --pirates, a convoy at its nest is not disbanded (0x514B80; NO_DISBAND_JUMP)')
     p.add_argument('--pst', metavar='FILE', help='an uncompressed .pst to read after the save (0x54DA60)')

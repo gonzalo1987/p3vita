@@ -8,7 +8,8 @@
 // --no-storms: without the storms (0x5053C0), as town_oracle.py --no-storms.
 // --pirates: the pirate convoys move (battle/pirates.cpp), as town_oracle.py --pirates.
 // --no-disband: with --pirates, a convoy at its nest is not disbanded, as town_oracle.py --no-disband.
-// --battles: with --pirates, the battles' clock (Sailing::set_battles), as town_oracle.py --battles.
+// --battles: kept for older scripts; the battles go with --pirates now (Sailing::set_pirates), as in
+// town_oracle.py.
 // --fix-game-bugs: with the fixes to the game's bugs (game_fixes.hpp), off by default.
 // --storms (on by default now) is still accepted.
 //
@@ -862,7 +863,7 @@ int main(int argc, char** argv) {
 		sailing->set_storms(storms);
 		sailing->set_pirates(pirates);
 		sailing->set_pirate_disbanding(disband);
-		sailing->set_battles(battles);
+		sailing->set_battles(battles || pirates);
 		g_sailing = sailing.get();
 		registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
 			sailing->update_ships();

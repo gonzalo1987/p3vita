@@ -156,15 +156,16 @@ void Sailing::step_battles() {
 }
 
 // Operation 0x94 (0x536BBF): each battle that runs ([+0x15C] ≠ 0xFFFF) takes
-// `steps` steps (method +0x14: 0x606CC0 for a sea battle, 0x5FD510 for a town
-// battle; not rewritten yet, part 4); then the time mode (0x612D20 in game
-// mode 2, else 0x612C90) and [+0x3FE] = 1.
+// `steps` steps (method +0x14: 0x606CC0 for a sea battle, battle_step.cpp;
+// 0x5FD510 for a town battle, not rewritten: none in the saves); then the
+// time mode (0x612D20 in game mode 2, else 0x612C90) and [+0x3FE] = 1.
 void Sailing::fn_536bbf(uint32_t steps) {
 	BattleGraph& b = save_.battles;
 	for (size_t k = 0; k < b.count(); ++k) {
 		const int battle = b.battle(k);
-		if (battle >= 0 && b.get<uint16_t>(size_t(battle), kRunning) != BattleGraph::kStopped) {
-			(void)steps;  // Method +0x14: part 4.
+		if (battle >= 0 && b.get<uint16_t>(size_t(battle), kRunning) != BattleGraph::kStopped &&
+			b.get<uint32_t>(size_t(battle), 0) == kSeaBattleVtable) {
+			fn_606cc0(size_t(battle), uint16_t(steps));
 		}
 	}
 	if (save_.globals.u32(kGameMode) == 2) {

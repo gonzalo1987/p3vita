@@ -176,8 +176,11 @@ public:
 	void fn_503930(int convoy);
 
 	// battle/pirates.cpp: the pirates at sea (off unless set_pirates(true), as
-	// town_oracle.py --pirates).
-	void set_pirates(bool enabled) { pirates_ = enabled; }
+	// town_oracle.py --pirates), with their sea battles (set_battles).
+	void set_pirates(bool enabled) {
+		pirates_ = enabled;
+		battles_ = enabled;
+	}
 	void fn_448780(int town);  // (navigation object) The waypoints round a town.
 	const std::vector<uint32_t>& waypoints(int town);  // Those of 0x448780 (computed the first time).
 	uint32_t fn_612930(uint16_t ship) const;  // (battles) The battle speed of a ship.
@@ -189,8 +192,8 @@ public:
 	void fn_514000(size_t pirate);  // (pirate object) Its daily update; may queue operation 0xB5.
 	void fn_513ec0(size_t pirate);  // (pirate object) The pirate goes away.
 	void fn_514d40(size_t pirate, uint16_t most, uint16_t strength);  // Operation 0xB5: a convoy leaves the nest.
-	// battle/battles.cpp: the battles' clock (with set_battles, as the oracle
-	// with --battles; docs/cloud/battles-2.md §3).
+	// battle/battles.cpp: the battles' clock (on with set_pirates, as the
+	// oracle with --pirates; docs/cloud/battles-2.md §3).
 	static constexpr uint32_t kBattleSteps = 84;
 	void set_battles(bool enabled) { battles_ = enabled; }
 	bool battles() const { return battles_; }

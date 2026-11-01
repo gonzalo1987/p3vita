@@ -31,16 +31,24 @@ automatic sea battle).
   (`BattleGraph`, normalized to the oracle's order), compared by tick_probe,
   the clock rule (`Sailing::step_battles`, `set_battles`) and operation 0x94
   (without the battles' own step yet).
-- **Part 4, the battle (started):** the whole start of an automatic sea
-  battle is rewritten and equal call by call: the attack 0x50BC40 and the
-  setup 0x605420 with what they call (0x611CD0, 0x603A70, 0x618F10,
-  0x619450, 0x61A1D0, 0x61A4E0, 0x62125B, 0x61A750, 0x503AC0, 0x608230,
-  0x6079D0, 0x60F479, 0x6197A0, 0x50CFB0, 0x5176C0, 0x505B60). With
-  `--pirates --battles`, in the 6 saves with battles × 7 days: 0x50BC40 11
-  calls, 0x605420 11, 0x619450 670, 0x62125B 6297, and the ships' update
-  0x506720 6 × 1792 calls with the attacks in it, 0 differences. Left: the
-  step of a battle (0x606CC0 and its tree) and its end, about 15 000
-  instructions, mapped in §4 and `docs/cloud/battles-2-605420.md`.
+- **Part 4, the battle (done for automatic sea battles):** the start (the
+  attack 0x50BC40, the setup 0x605420 and what they call), **the step**
+  (operation 0x94 → method +0x14, 0x606CC0: the sub-steps, each ship's
+  sub-step 0x61A9E0 with its movement 0x6264C0/0x6271D7, target 0x61DBBF,
+  boarding 0x61F1BF, capture 0x60C1C9, firing 0x61DD4F/0x620F0B/0x61F96F,
+  the collisions 0x6197F0/0x608850/0x608F70..., the wind 0x6113C9) and
+  **the end** (0x60D299, the destructor 0x611740/0x603BC0, the convoys
+  after it 0x50BFD0, the table of ships that met 0x612BD0) are rewritten
+  and equal call by call (0x606CC0 407 calls in 6 saves × 7 days, all
+  equal). **Wired into the simulation, and the first jump of the rule is
+  gone**: with `--pirates` the pirates attack and their sea battles run
+  (`--battles` is now a no-op kept for older scripts; `set_pirates` turns
+  the battles on). The world 12 saves × 7 days with `--pirates`: **0
+  «distintas»**; by default: 0 «distintas». Not rewritten (not run in the
+  saves, listed in §4): what concerns a human side (part 7), cannon balls,
+  rocks and islets as obstacles, the winner taking a ship over (0x60C1C9's
+  attack branch with operation 0x91, seen in one retouched state), town
+  battles (the second jump).
 - Main (0320701) merged; everything checked again after it. The oracle's
   `HeapReAlloc` now keeps only the old block's requested bytes (the rest
   zero, as `alloc`): the default world after it, 0 «distintas».
@@ -61,12 +69,17 @@ automatic sea battle).
 
 ## Decisions for the user
 
-- **`--pirates` by default** (recommendation: not yet). With `--battles`
-  the pirates attack as in the game, but the battles don't move in p3vita
-  until the step is rewritten (part 4); without `--battles` the first jump
-  of the provisional rule stays. Switch both on together when the step and
-  the end are done and the world with `--pirates --battles` gives 0
-  «distintas».
+- **`--pirates` by default** (recommendation: yes, now, in the oracle and
+  in p3vita's simulation, after the user's look): the pirates move, attack
+  and fight their automatic sea battles as in the game, and the world 12
+  saves × 7 days with `--pirates` gives 0 «distintas», as by default (about
+  10 % slower: 197–217 s per batch of 4 against 187–199 s). What stays
+  apart with it: the second jump (a pirate convoy at the end of its route
+  goes on instead of attacking the town: town battles, piece 6), the
+  branches listed in §4 that the saves don't reach, and the battles saved
+  in saves 6, 7 and tut4 (piece 5). The other sessions' world checks would
+  change from then on (more of the game runs): better done at one moment
+  for all.
 - **The oracle's realloc** (recommendation: accept): `HeapReAlloc` copied
   the old block up to its rounded size, so a grown block got the stale bytes
   of the heap slack (a battle's page array got a pointer to another block
@@ -78,9 +91,10 @@ automatic sea battle).
 - **The battles saved in saves 6, 7 and tut4** (recommendation: piece 5
   after the step; until then the oracle and p3vita both leave them out, so
   the world agrees but those three saves run without their battle).
-- **What to do next** (recommendation: a task `battles-3` for the step and
-  the end of the automatic sea battle, with the map of §4 and
-  `docs/cloud/battles-2-605420.md`; then the other sea battles, piece 4).
+- **What to do next** (recommendation: a task `battles-3` for what part 4
+  leaves (the winner taking a ship over, 0x60C1C9 with operation 0x91,
+  0x540520; cannon balls and the human side, part 7; town battles, piece 6)
+  and piece 5, the battles in the save).
 
 - **The battles' rocks and the town view** (recommendation: give the
   oracle a town view object with the game's `[+0x510]`, once its value is
@@ -707,6 +721,13 @@ p3vita), and without `--battles` the first jump of the rule stays.
   leaves those words as they are (§4, the 16.16 places); `tick_probe.cpp`:
   in `pointer_field`, `BT` compares them even when they look like a pointer
   (`BattleGraph::number_field`).
+- `tools/oracle/town_oracle.py`: the first jump of the rule removed
+  (`PIRATE_JUMPS` keeps only 0x507C0B; `BATTLE_JUMP` gone); the battles go
+  with `--pirates` (`self.battles = self.pirates`; `--battles` and the
+  constructor's `battles` kept, no-ops). `tick_probe.cpp`:
+  `set_battles(battles || pirates)`. `sailing.hpp`: `set_pirates` turns the
+  battles on too. `src/p3data/battle/battles.cpp` (`fn_536bbf`): the step of
+  each sea battle (0x606CC0).
 - Declared in my files (not changed): `fn_4f9c80`
   (`town_tick/construction.cpp`), `fn_51a750` (`town_tick/alderman.cpp`).
 
@@ -795,9 +816,18 @@ Looks like one:
 
 ## Done and left
 
-Done: parts 1, 2 and 3; of part 4, the start of an automatic sea battle
-(the attack and the setup, §4). Left: the step and the end of a battle
-(§4), then the other battles (pieces 4–7 of docs/cloud/battles.md).
+Done: parts 1, 2, 3 and 4 for the automatic sea battle: start, step and
+end equal call by call, wired into the simulation, the first jump gone;
+the world 12 saves × 7 days by default and with `--pirates`, 0 «distintas»
+(three batches each). The retouched scenarios of `retouch_pirates.py` again
+with the battles: 0 differences, except `attack_one` in tut0 (one tick of
+0x606CC0: the winner takes a ship over, 0x60C1C9's attack branch, not
+rewritten) and `attack_new` with 2 days (the emulator doesn't finish it in
+20 min: six pirates stacked, as `attack`, which runs with 0 days).
+Left: the branches of §4 not run in the saves (the winner taking a ship
+over with operation 0x91, cannon balls and the human side, rocks and
+islets, 0x608550, 0x6132C0), the AC8 = 0 branches of the collisions, then
+the other battles (pieces 4–7 of docs/cloud/battles.md).
 
 Times of the checks here: the world 12 saves × 7 days, three batches of 4,
 about 2–3 min each (133–194 s); the probes of a part in 6–12 saves × 7
@@ -808,5 +838,4 @@ with `scripts/setup-vitasdk.sh` in 11 s).
 Built for the Vita: `vita_check.sh`, VPK built, no errors or warnings
 (after the setup of a battle, 4e33692...).
 
-Not run (long): the world with `--pirates --battles` (it differs by
-construction until the step is rewritten).
+The world with `--pirates` (the battles on): 199–217 s per batch of 4.
