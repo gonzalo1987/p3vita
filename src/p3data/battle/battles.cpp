@@ -34,7 +34,7 @@ BattleGraph BattleGraph::normalized() const {
 		for (size_t o = 0; o + 4 <= data.size(); o += 4) {
 			uint32_t w;
 			std::memcpy(&w, data.data() + o, 4);
-			const int b = target(w);
+			const int b = number_field(data, o) ? -1 : target(w);
 			if (b >= 0 && index[size_t(b)] < 0) {
 				index[size_t(b)] = int(order.size());
 				order.push_back(b);
@@ -48,7 +48,7 @@ BattleGraph BattleGraph::normalized() const {
 		for (size_t o = 0; o + 4 <= data.size(); o += 4) {
 			uint32_t w;
 			std::memcpy(&w, data.data() + o, 4);
-			if ((w & 0xF0000000) == kPointer) {
+			if ((w & 0xF0000000) == kPointer && !number_field(data, o)) {
 				const size_t from = (w >> 16) & 0xFFF;
 				if (from < blocks.size() && index[from] >= 0) {
 					w = pointer(size_t(index[from]), w & 0xFFFF);

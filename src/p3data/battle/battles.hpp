@@ -40,6 +40,26 @@ struct BattleGraph {
 		}
 	}
 
+	// The words of a block that are numbers even when they look like a
+	// pointer: in a scene's ship (0x164 bytes, vtable 0x67B0D4) its place and
+	// speeds in 16.16 ([+0x8], [+0xC], [+0x14], [+0x18], [+0x1C]: x · 65536
+	// can be the address of a heap block), in a sea battle (0x1E98 bytes,
+	// vtable 0x67AD44) its generator [+0xADC]. The oracle's walk leaves them
+	// as they are (town_oracle.py, BATTLE_NUMBERS).
+	static bool number_field(const std::vector<uint8_t>& block, size_t offset) {
+		uint32_t vtable = 0;
+		if (block.size() >= 4) {
+			std::memcpy(&vtable, block.data(), 4);
+		}
+		if (block.size() == 0x164 && vtable == 0x67B0D4) {
+			return offset == 0x8 || offset == 0xC || offset == 0x14 || offset == 0x18 || offset == 0x1C;
+		}
+		if (block.size() == 0x1E98 && vtable == 0x67AD44) {
+			return offset == 0xADC;
+		}
+		return false;
+	}
+
 	// A pointer to `offset` of block `block`, as the graph keeps it.
 	static uint32_t pointer(size_t block, size_t offset = 0) {
 		return kPointer | uint32_t(block) << 16 | uint32_t(offset);
@@ -88,5 +108,13 @@ struct BattleGraph {
 	// The block of the battle in slot k, or −1.
 	int battle(size_t k) const { return target(get<uint32_t>(0, 4 * k)); }
 };
+
+// The battle's generator ([+0xADC] of a sea battle, as 0x46C380 without the modulo).
+inline uint32_t battle_rand(BattleGraph& g, size_t b) {
+	uint32_t x = 0xA205B063u - g.get<uint32_t>(b, 0xADC) * 0x44BF19B3u;
+	x = (x & 1) ? (x >> 1) | 0x80000000u : x >> 1;
+	g.set<uint32_t>(b, 0xADC, x);
+	return x;
+}
 
 }  // namespace p3::data

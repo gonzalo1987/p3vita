@@ -232,6 +232,8 @@ public:
 	bool fn_60bc5a(size_t battle, uint16_t item, uint16_t place) const;  // A ship inside an item's circle.
 	void fn_60bcda(size_t battle, uint16_t item, uint16_t place, int32_t a, int32_t minus, uint8_t level);
 	void fn_608850(size_t battle, uint16_t a, uint16_t b);  // (battle, method +0x0) Two items meet.
+	void fn_6113c9(size_t battle);  // (battle) The wind of a sub-step.
+	void fn_6197f0(size_t battle);  // (scene) The items that meet (method +0x0 for each pair).
 	// battle/attack.cpp
 	void fn_50bc40(uint16_t convoy);  // (ships object) A pirate convoy attacks: a sea battle.
 	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.

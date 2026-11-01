@@ -210,6 +210,12 @@ BATTLES_SIZE = 0xC48
 BATTLE_COUNT = BATTLES + 0x404  # u8: slots in use
 BATTLE_POINTER = 0xF0000000  # | block << 16 | offset: a pointer inside the graph
 HEAP_BEGIN, HEAP_END = 0x1000_0000, 0x1800_0000
+# The words of a battle block that are numbers even when they look like a
+# pointer, by (size, vtable): a scene's ship's place and speeds in 16.16 (x ·
+# 65536 can be the address of a heap block: at the start of a battle the
+# places are whole and a block can start at 0x10xx0000), a sea battle's
+# generator. As BattleGraph::number_field.
+BATTLE_NUMBERS = {(0x164, 0x67B0D4): (0x8, 0xC, 0x14, 0x18, 0x1C), (0x1E98, 0x67AD44): (0xADC,)}
 # With --battles (and --pirates): the attack of a pirate convoy (0x507BE9 →
 # 0x50BC40) is not jumped over, and after each tick with battles the oracle
 # executes operation 0x94 with BATTLE_STEPS steps (the clock rule of
@@ -998,12 +1004,19 @@ class TownOracle(SaveOracle):
         unpack = struct.unpack_from
         sizes = self.sizes
         requested = self.__dict__.get('requested', {})
+        def numbers(data):
+            vtable = unpack('<I', data, 0)[0] if len(data) >= 4 else 0
+            return BATTLE_NUMBERS.get((len(data), vtable), ())
+
         blocks = [(BATTLES, read(BATTLES, BATTLES_SIZE))]
         index = {BATTLES: 0}
         i = 0
         while i < len(blocks):
             data = blocks[i][1]
-            for v in unpack(f'<{len(data) // 4}I', data):
+            skip = numbers(data)
+            for k, v in enumerate(unpack(f'<{len(data) // 4}I', data)):
+                if 4 * k in skip:
+                    continue
                 if HEAP_BEGIN <= v < HEAP_END and v not in index and v in sizes and v not in world:
                     index[v] = len(blocks)
                     blocks.append((v, read(v, requested.get(v, sizes[v]))))
@@ -1013,7 +1026,10 @@ class TownOracle(SaveOracle):
         for a, data in blocks:
             words = list(unpack(f'<{len(data) // 4}I', data))
             changed = False
+            skip = numbers(data)
             for k, v in enumerate(words):
+                if 4 * k in skip:
+                    continue
                 if HEAP_BEGIN <= v < HEAP_END or v == BATTLES or BATTLES < v < BATTLES + BATTLES_SIZE:
                     for lo, hi, j in spans:
                         if lo <= v < hi:

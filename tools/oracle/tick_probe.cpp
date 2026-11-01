@@ -603,8 +603,26 @@ bool pointer_field(const std::string& name, size_t w, const std::vector<uint8_t>
 	if (name == "BT") {
 		// The battles: their own pointers are BATTLE_POINTER | block << 16 |
 		// offset and compared; what still looks like a pointer points
-		// outside them (the navigation's points of a scene's ship...).
-		return looks_like_pointer(v);
+		// outside them (the navigation's points of a scene's ship...), but
+		// for the fields that are numbers (BattleGraph::number_field).
+		if (!looks_like_pointer(v)) {
+			return false;
+		}
+		size_t at = 4;
+		uint32_t n = 0;
+		std::memcpy(&n, game.data(), std::min<size_t>(4, game.size()));
+		for (uint32_t k = 0; k < n && at + 4 <= game.size(); ++k) {
+			uint32_t size = 0;
+			std::memcpy(&size, game.data() + at, 4);
+			at += 4;
+			if (w >= at && w < at + size) {
+				const std::vector<uint8_t> block(game.begin() + std::ptrdiff_t(at),
+					game.begin() + std::ptrdiff_t(std::min<size_t>(at + size, game.size())));
+				return !BattleGraph::number_field(block, w - at);
+			}
+			at += size;
+		}
+		return true;
 	}
 	if (name == "B") {
 		// The letters' buffers (load_mail: p3vita keeps 0 there).

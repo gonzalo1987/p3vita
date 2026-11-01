@@ -690,3 +690,135 @@ void Sailing::fn_608850(size_t b, uint16_t a, uint16_t other) {
 }
 
 }  // namespace p3::data
+
+namespace p3::data {
+
+// 0x6113C9 (on the battle): the wind of a sub-step, by the battle's
+// generator x. Its direction [+0x670] turns 8 one way or the other when x &
+// 0xF (automatic, [+0xAC8]) or x & 0xFF (with a human side) is 0 or 1; its
+// strength [+0x671] moves one towards ((x >> 16 & 0xFF) % 10 + strength + 2)
+// / 2 when x >> 8 & 0xF (automatic) or x >> 8 & 0xFF is 0.
+//
+// With a human side, after a change, the battle on screen ([+0x662] =
+// [0x6E59CC]) moves the 0xE0 objects of [+0x1B10] with the wind (UI): left
+// out, not run in the saves (all their battles are automatic).
+void Sailing::fn_6113c9(size_t b) {
+	BattleGraph& g = save_.battles;
+	const uint32_t x = battle_rand(g, b);
+	const uint8_t r = uint8_t(x >> 16);
+	const uint8_t c = uint8_t(x >> 8);
+	auto strength = [&]() {
+		const uint8_t s = g.get<uint8_t>(b, 0x671);
+		const uint8_t to = uint8_t((r % 10 + s + 2) >> 1);
+		if (to < s) {
+			g.set<uint8_t>(b, 0x671, uint8_t(s - 1));
+		} else if (to > s) {
+			g.set<uint8_t>(b, 0x671, uint8_t(s + 1));
+		}
+	};
+	auto turn = [&](uint32_t v) {
+		if (v == 0) {
+			g.set<uint8_t>(b, 0x670, uint8_t(g.get<uint8_t>(b, 0x670) + 8));
+		} else if (v == 1) {
+			g.set<uint8_t>(b, 0x670, uint8_t(g.get<uint8_t>(b, 0x670) - 8));
+		}
+	};
+	if (g.get<uint8_t>(b, 0xAC8) != 0) {
+		turn(x & 0xF);
+		if ((c & 0xF) == 0) {
+			strength();
+		}
+		return;
+	}
+	turn(x & 0xFF);
+	if (c == 0) {
+		strength();
+	}
+}
+
+}  // namespace p3::data
+
+namespace p3::data {
+
+// 0x6197F0 (on the scene): the items that meet. Each axis keeps the ends of
+// every item's box (node 2·item its start, 2·item + 1 its end; the keys in
+// [+0x28] for x, [+0x38] for y) in a list ([+0x2C]/[+0x3C] next,
+// [+0x30]/[+0x40] previous, [+0x34]/[+0x44] the head), sorted by bubbling
+// until no pair is swapped; an end passing a start (or back) sets (or
+// clears) the pair's bits in the axis' matrix ([+0x48], [+0x4C]: pages of 32
+// items, a bit each). Then for each item i and each item k crossing it on
+// both axes ([+0x50] = [+0x48] & [+0x4C]), method +0x0 of the battle
+// (0x608850) with i, k. (The game tests the bits of [+0x50] in groups; they
+// don't change during the calls.)
+void Sailing::fn_6197f0(size_t b) {
+	BattleGraph& g = save_.battles;
+	auto bit = [&](size_t matrix, uint32_t x, uint32_t y, bool on) {
+		const size_t page = size_t(g.ptr(matrix, 4 * size_t(x >> 5)));
+		const uint32_t w = g.get<uint32_t>(page, 4 * size_t(y));
+		g.set<uint32_t>(page, 4 * size_t(y), on ? w | 1u << (x & 31) : w & ~(1u << (x & 31)));
+	};
+	for (const auto& [keys_at, next_at, prev_at, head_at, matrix_at] :
+		{std::array<size_t, 5>{0x28, 0x2C, 0x30, 0x34, 0x48}, std::array<size_t, 5>{0x38, 0x3C, 0x40, 0x44, 0x4C}}) {
+		bool swapped = true;
+		while (swapped && g.get<uint16_t>(b, head_at) != 0xFFFF) {
+			swapped = false;
+			const size_t keys = size_t(g.ptr(b, keys_at)), next = size_t(g.ptr(b, next_at)), prev = size_t(g.ptr(b, prev_at));
+			const size_t matrix = size_t(g.ptr(b, matrix_at));
+			auto nx = [&](uint16_t v) { return g.get<uint16_t>(next, 2 * size_t(v)); };
+			uint16_t p = 0xFFFF;
+			uint16_t d = g.get<uint16_t>(b, head_at);
+			uint16_t a = nx(d);
+			if (a == 0xFFFF) {
+				break;
+			}
+			do {
+				const uint16_t n = nx(a);
+				if (g.get<int16_t>(keys, 2 * size_t(d)) > g.get<int16_t>(keys, 2 * size_t(a))) {
+					swapped = true;
+					if (p != 0xFFFF) {
+						g.set<uint16_t>(next, 2 * size_t(p), a);
+					} else {
+						g.set<uint16_t>(b, head_at, a);
+					}
+					g.set<uint16_t>(next, 2 * size_t(d), n);
+					g.set<uint16_t>(prev, 2 * size_t(d), a);
+					g.set<uint16_t>(next, 2 * size_t(a), d);
+					g.set<uint16_t>(prev, 2 * size_t(a), p);
+					if (n != 0xFFFF) {
+						g.set<uint16_t>(prev, 2 * size_t(n), d);
+					}
+					if ((a & 1) && !(d & 1)) {
+						bit(matrix, a >> 1, d >> 1, false);
+						bit(matrix, d >> 1, a >> 1, false);
+					} else if (!(a & 1) && (d & 1)) {
+						bit(matrix, a >> 1, d >> 1, true);
+						bit(matrix, d >> 1, a >> 1, true);
+					}
+					p = a;
+				} else {
+					p = d;
+					d = a;
+				}
+				a = n;
+			} while (a != 0xFFFF);
+		}
+	}
+	const uint16_t used = g.get<uint16_t>(b, 0x54);
+	const uint16_t pages = uint16_t((int32_t(used) + 0x1F) >> 5);
+	for (uint16_t i = 0; i < g.get<uint16_t>(b, 0x54); ++i) {
+		for (uint16_t p = 0; p < pages; ++p) {
+			const size_t px = size_t(g.ptr(size_t(g.ptr(b, 0x48)), 4 * size_t(p)));
+			const size_t py = size_t(g.ptr(size_t(g.ptr(b, 0x4C)), 4 * size_t(p)));
+			const size_t both = size_t(g.ptr(size_t(g.ptr(b, 0x50)), 4 * size_t(p)));
+			g.set<uint32_t>(both, 4 * size_t(i), g.get<uint32_t>(px, 4 * size_t(i)) & g.get<uint32_t>(py, 4 * size_t(i)));
+			for (uint32_t k = 0; k < 32; ++k) {
+				const size_t now = size_t(g.ptr(size_t(g.ptr(b, 0x50)), 4 * size_t(p)));
+				if (g.get<uint32_t>(now, 4 * size_t(i)) >> k & 1) {
+					fn_608850(b, i, uint16_t(32 * p + k));
+				}
+			}
+		}
+	}
+}
+
+}  // namespace p3::data

@@ -38,14 +38,6 @@ int32_t game_ftol(double v) {
 	return int32_t(int64_t(v));
 }
 
-// The battle's generator ([+0xADC], as 0x46C380 without the modulo).
-uint32_t battle_rand(BattleGraph& g, size_t b) {
-	uint32_t x = 0xA205B063u - g.get<uint32_t>(b, 0xADC) * 0x44BF19B3u;
-	x = (x & 1) ? (x >> 1) | 0x80000000u : x >> 1;
-	g.set<uint32_t>(b, 0xADC, x);
-	return x;
-}
-
 int32_t s16(uint32_t v) {
 	return int16_t(uint16_t(v));
 }

@@ -536,6 +536,23 @@ tut3, 7 days; 39 s):
   differences. Not rewritten yet in 0x608850 (not run in the saves): kind 1
   (a cannon ball: 0x60A73C, 0x603470) and kinds 2 and 3 (a rock, an islet:
   0x60B357, 0x61F96F; their boxes have no size in the emulator).
+- **0x6113C9** (the wind of a sub-step, by the battle's generator) and
+  **0x6197F0** (the scene's items that meet: both axes sorted by bubbling
+  lists of the boxes' ends, two bit matrices of the pairs that cross, then
+  0x608850 for each pair crossing on both): saves 5, 6, tut0, 7 days,
+  0x6113C9 972 + 547 + 166 calls, 0x6197F0 the same, 0 differences.
+- **The recording of BT took numbers for pointers**: at the start of a
+  battle the places of the scene's ships are whole, so their 16.16 x
+  ([+0x8]) is x · 65536, 0x10xx0000 for x from 4096 on, and the heap gives
+  blocks that start exactly there: `battle_graph` turned the place into a
+  pointer to that block (block 0x20, x = −4064 in p3vita). Now the oracle
+  knows the words of a battle block that are numbers (`BATTLE_NUMBERS`: a
+  scene ship's [+0x8], [+0xC], [+0x14], [+0x18], [+0x1C], a sea battle's
+  generator [+0xADC]; by size and vtable) and leaves them alone, as
+  p3vita's `BattleGraph::normalized` (`number_field`), and tick_probe
+  compares them even when they look like a pointer (before, they were never
+  compared then). The probes of §4 again after it (saves 4, 5, 6, tut0,
+  tut1, tut3, 7 days): 0 differences.
 
 So with `--battles`, p3vita starts the automatic sea battles exactly as the
 game. What is left is the battle itself: the step (operation 0x94, method
@@ -619,6 +636,10 @@ p3vita), and without `--battles` the first jump of the rule stays.
   (constructor `battles=False`, after main's `statistics`, `last_steps`).
 - `tools/oracle/tick_probe.cpp`: `BT`, `--battles`, and in `pointer_field`
   (from main) the cases `Z` `[+0x0]`, `ZM` `[+0x68]`, `BT`.
+- `tools/oracle/town_oracle.py`: `BATTLE_NUMBERS`, and `battle_graph`
+  leaves those words as they are (§4, the 16.16 places); `tick_probe.cpp`:
+  in `pointer_field`, `BT` compares them even when they look like a pointer
+  (`BattleGraph::number_field`).
 - Declared in my files (not changed): `fn_4f9c80`
   (`town_tick/construction.cpp`), `fn_51a750` (`town_tick/alderman.cpp`).
 
