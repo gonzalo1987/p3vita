@@ -243,6 +243,7 @@ public:
 	void fn_61dbbf(size_t entry);  // (scene's ship, method +0x4) A target.
 	void fn_61f1bf(size_t entry);  // (scene's ship) A round of a boarding.
 	void fn_60c1c9(size_t battle, uint16_t winner, uint16_t taken);  // (battle) A ship taken.
+	void fn_540520(uint16_t winner, uint16_t taken);  // Operation 0x91: a ship takes another.
 	void fn_611649(size_t battle, uint8_t level);  // (battle) Its music raised.
 	int32_t fn_620f0b(size_t entry, uint8_t side, uint16_t distance);  // (scene's ship) A broadside's damage.
 	uint8_t fn_61f96f(size_t entry, int32_t damage, int16_t sailors, uint8_t side);  // (scene's ship) A hit.

@@ -46,9 +46,7 @@ automatic sea battle).
   the battles on). The world 12 saves × 7 days with `--pirates`: **0
   «distintas»**; by default: 0 «distintas». Not rewritten (not run in the
   saves, listed in §4): what concerns a human side (part 7), cannon balls,
-  rocks and islets as obstacles, the winner taking a ship over (0x60C1C9's
-  attack branch with operation 0x91, seen in one retouched state), town
-  battles (the second jump).
+  rocks and islets as obstacles, town battles (the second jump).
 - Main (0320701) merged; everything checked again after it. The oracle's
   `HeapReAlloc` now keeps only the old block's requested bytes (the rest
   zero, as `alloc`): the default world after it, 0 «distintas».
@@ -92,8 +90,7 @@ automatic sea battle).
   after the step; until then the oracle and p3vita both leave them out, so
   the world agrees but those three saves run without their battle).
 - **What to do next** (recommendation: a task `battles-3` for what part 4
-  leaves (the winner taking a ship over, 0x60C1C9 with operation 0x91,
-  0x540520; cannon balls and the human side, part 7; town battles, piece 6)
+  leaves (cannon balls and the human side, part 7; town battles, piece 6)
   and piece 5, the battles in the save).
 
 - **The battles' rocks and the town view** (recommendation: give the
@@ -621,6 +618,16 @@ tut3, 7 days; 39 s):
   run as in the game. Not reproduced in 0x50BFD0: the trade routes
   [+0x132] (0x4D4DD0 on 0x6DD728, not in SaveGame), the Hanse event's list of
   sunk ships (0x4F3980, 0x4F3AD0), letters and UI.
+- **The winner takes a ship over** (0x60C1C9's attack branch: the ship
+  changes sides in the battle's lists) with **operation 0x91** (0x540520:
+  a ship takes another: the same owner's share their sailors; otherwise
+  out of its owner, convoy and lists, an event 5, fame, its captains freed,
+  into the winner's owner and convoy; a pirate winner's guide's merchant is
+  paid its worth). Wired in `run_operation` too. Checked with the retouched
+  `attack_one` (saves tut0, 3, 5, 6, 2 days): 0x60C1C9 1 + 2 calls, 0x606CC0
+  41 + 31 + 45 + 75, 0x50BFD0 10, 0 differences (0x540520 itself runs from
+  inside the game, checked within 0x60C1C9). Its merchant-winner branch is
+  written but not run (in these battles the pirates win).
 - **The recording of BT took numbers for pointers**: at the start of a
   battle the places of the scene's ships are whole, so their 16.16 x
   ([+0x8]) is x · 65536, 0x10xx0000 for x from 4096 on, and the heap gives
@@ -721,6 +728,16 @@ p3vita), and without `--battles` the first jump of the rule stays.
   leaves those words as they are (§4, the 16.16 places); `tick_probe.cpp`:
   in `pointer_field`, `BT` compares them even when they look like a pointer
   (`BattleGraph::number_field`).
+- `src/p3data/simulation.cpp` (`run_operation`, local session's): before
+  `case 0x94`,
+
+  ```cpp
+  case 0x91:  // A ship takes another (0x536B92 → 0x540520; battle/capture.cpp).
+      if (sailing) {
+          sailing->fn_540520(uint16_t(fields[1]), uint16_t(fields[2]));
+      }
+      break;
+  ```
 - `tools/oracle/town_oracle.py`: the first jump of the rule removed
   (`PIRATE_JUMPS` keeps only 0x507C0B; `BATTLE_JUMP` gone); the battles go
   with `--pirates` (`self.battles = self.pirates`; `--battles` and the
@@ -820,13 +837,11 @@ Done: parts 1, 2, 3 and 4 for the automatic sea battle: start, step and
 end equal call by call, wired into the simulation, the first jump gone;
 the world 12 saves × 7 days by default and with `--pirates`, 0 «distintas»
 (three batches each). The retouched scenarios of `retouch_pirates.py` again
-with the battles: 0 differences, except `attack_one` in tut0 (one tick of
-0x606CC0: the winner takes a ship over, 0x60C1C9's attack branch, not
-rewritten) and `attack_new` with 2 days (the emulator doesn't finish it in
+with the battles: 0 differences (`attack_one` after operation 0x91 was
+rewritten), but `attack_new` with 2 days (the emulator doesn't finish it in
 20 min: six pirates stacked, as `attack`, which runs with 0 days).
-Left: the branches of §4 not run in the saves (the winner taking a ship
-over with operation 0x91, cannon balls and the human side, rocks and
-islets, 0x608550, 0x6132C0), the AC8 = 0 branches of the collisions, then
+Left: the branches of §4 not run in the saves (cannon balls and the human
+side, rocks and islets, 0x608550, 0x6132C0), the AC8 = 0 branches of the collisions, then
 the other battles (pieces 4–7 of docs/cloud/battles.md).
 
 Times of the checks here: the world 12 saves × 7 days, three batches of 4,

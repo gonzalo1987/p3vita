@@ -211,6 +211,11 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x86:  // Quitar los encargos de la Hansa que ya no valen (en 0x536801).
 		tick::fn_53fe20(save);
 		break;
+	case 0x91:  // A ship takes another (0x536B92 → 0x540520; battle/capture.cpp).
+		if (sailing) {
+			sailing->fn_540520(uint16_t(fields[1]), uint16_t(fields[2]));
+		}
+		break;
 	case 0x94:  // The battles take their steps (0x536BBF; battle/battles.cpp).
 		if (sailing) {
 			sailing->fn_536bbf(uint32_t(fields[1]) & 0xFFFF);

@@ -451,6 +451,18 @@ void register_probes_battle(ProbeRegistry& r) {
 		c.eax_mask = 0;
 		return 0;
 	};
+	// 0x540520: thiscall on an operation 0x91 record (u32 [+0x4] the winner,
+	// [+0x8] the ship taken), on the caller's stack.
+	r[0x540520] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		const std::optional<uint32_t> w = c.stack(c.ecx + 4), t = c.stack(c.ecx + 8);
+		if (!probe_sailing() || !w || !t) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		probe_sailing()->fn_540520(uint16_t(*w), uint16_t(*t));
+		c.eax_mask = 0;
+		return 0;
+	};
 	// 0x605420: thiscall on a sea battle (ship A, ship D, a byte, a flag).
 	r[0x605420] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
 		const int battle = battle_block(c.ecx);

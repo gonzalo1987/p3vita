@@ -6,6 +6,7 @@
 #include "p3data/battle/battle_math.hpp"
 #include "p3data/battle/pirate_nests.hpp"
 #include "p3data/sailing.hpp"
+#include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
 namespace p3::data::tick::alderman_detail {
@@ -13,6 +14,12 @@ namespace p3::data::tick::alderman_detail {
 uint8_t fn_51a470(const SaveGame& save, int ship);
 void fn_516170(SaveGame& save, uint32_t pirate, uint32_t type, bool captain, uint32_t strength);
 }  // namespace p3::data::tick::alderman_detail
+namespace p3::data::tick::merchants_detail {
+int32_t fn_52a7d0(const SaveGame& save, int ship);  // town_tick/merchants.cpp: a ship's worth.
+}  // namespace p3::data::tick::merchants_detail
+namespace p3::data::tick::events_rare_detail {
+void fn_5098b0(SaveGame& save, uint16_t& captain);  // town_tick/events_rare.cpp: a captain freed.
+}  // namespace p3::data::tick::events_rare_detail
 
 namespace p3::data {
 
@@ -124,10 +131,10 @@ void fn_515f70(SaveGame& save, size_t k) {
 // fame + 65; a pirate with 5 000 or more gets its share (0x515F70). The
 // winner's team, when [+0xAD2] is it + 1, raises [+0x1E94] >> 10 to 10.
 //
-// Not rewritten (not run in the saves): the winner attacks the ship and
-// takes it (operation 0x91 at once, 0x540520, and the sides' lists); a
-// side of the player (its messages and window, part 7); the messages of a
-// pirate ship with a captain taken (0x4D6530, not rewritten in p3vita).
+// When the winner attacks it (0x6212FB with the flag) it takes it over
+// instead (operation 0x91, 0x540520). Not rewritten: a side of the player
+// (its messages and window, part 7) and the letters (0x4D6530, not
+// rewritten in p3vita).
 void Sailing::fn_60c1c9(size_t b, uint16_t winner, uint16_t taken) {
 	BattleGraph& g = save_.battles;
 	const size_t w = battle_entry(b, winner), t = battle_entry(b, taken);
@@ -143,7 +150,49 @@ void Sailing::fn_60c1c9(size_t b, uint16_t winner, uint16_t taken) {
 		g.set<uint16_t>(x, 0x20, 0xFFFF);
 	}
 	if (attack) {
-		return;  // Not rewritten: see above.
+		// The winner takes it over: no sailors, the winner's side, not fled
+		// nor taken; operation 0x91 at once (0x540520); the team's guide
+		// [+0xA84] moves on if it was this ship; from one side's list to the
+		// other, after the winner ([+0x658], [+0x65A] the counts; [+0x8]
+		// previous, [+0xC] next); no captain; the music up to 12.
+		const uint32_t taken_ship = g.get<uint32_t>(t, 0x4);
+		save_.ships[taken_ship].memory.u16(0x40) = 0;
+		g.set<uint8_t>(t, 0x13D, g.get<uint8_t>(w, 0x13D));
+		g.set<uint8_t>(t, 0x12A, uint8_t(g.get<uint8_t>(t, 0x12A) & 0xDE));
+		fn_540520(uint16_t(g.get<uint32_t>(w, 0x4)), uint16_t(taken_ship));
+		const uint8_t tt = g.get<uint8_t>(b, 0x559 + size_t(g.get<uint8_t>(t, 0x13D)));
+		if (g.get<uint32_t>(b, 0xA84 + 4 * size_t(tt)) == taken_ship) {
+			g.set<uint32_t>(b, 0xA84 + 4 * size_t(tt), save_.ships[taken_ship].memory.u16(0x6));
+		}
+		const size_t prev = size_t(g.ptr(b, 0x8)), next = size_t(g.ptr(b, 0xC));
+		auto pv = [&](uint16_t k) { return g.get<uint16_t>(prev, 2 * size_t(k)); };
+		auto nx = [&](uint16_t k) { return g.get<uint16_t>(next, 2 * size_t(k)); };
+		const uint8_t wt = g.get<uint8_t>(b, 0x559 + size_t(g.get<uint8_t>(w, 0x13D)));
+		const size_t from_head = wt == 0 ? 0x65C : 0x10;
+		g.set<uint16_t>(b, 0x658, uint16_t(g.get<uint16_t>(b, 0x658) + (wt == 0 ? 1 : -1)));
+		g.set<uint16_t>(b, 0x65A, uint16_t(g.get<uint16_t>(b, 0x65A) + (wt == 0 ? -1 : 1)));
+		if (pv(taken) == 0xFFFF) {
+			g.set<uint16_t>(b, from_head, nx(taken));
+		} else {
+			g.set<uint16_t>(next, 2 * size_t(pv(taken)), nx(taken));
+		}
+		if (nx(taken) != 0xFFFF) {
+			g.set<uint16_t>(prev, 2 * size_t(nx(taken)), pv(taken));
+		}
+		g.set<uint16_t>(next, 2 * size_t(taken), nx(winner));
+		g.set<uint16_t>(prev, 2 * size_t(taken), winner);
+		g.set<uint16_t>(next, 2 * size_t(winner), taken);
+		if (nx(taken) != 0xFFFF) {
+			g.set<uint16_t>(prev, 2 * size_t(nx(taken)), taken);
+		}
+		save_.ships[taken_ship].memory.u16(0x42) = 0xFFFF;
+		if (uint32_t(wt) + 1 == g.get<uint8_t>(b, 0xAD2)) {
+			const uint16_t v = g.get<uint16_t>(b, 0x1E94);
+			if (0xC > (v >> 10)) {  // 0xE when method +0x28, 0 for a sea battle.
+				g.set<uint16_t>(b, 0x1E94, uint16_t((0xC << 10) + (v & 0x3FF)));
+			}
+		}
+		return;
 	}
 	SavedShip& sw = save_.ships[g.get<uint32_t>(w, 0x4)];
 	SavedShip& st = save_.ships[g.get<uint32_t>(t, 0x4)];
@@ -248,6 +297,223 @@ void Sailing::fn_60c1c9(size_t b, uint16_t winner, uint16_t taken) {
 			g.set<uint16_t>(b, 0x1E94, uint16_t((v & 0x3FF) + 0x2800));
 		}
 	}
+}
+
+}  // namespace p3::data
+
+namespace p3::data {
+
+namespace {
+
+constexpr uint8_t kMinCrew[4] = {5, 8, 10, 12};  // 0x673660, by type
+// The sailors of two ships of the same owner shared by their minimum crews
+// (at least 2 in all; the second at least 1, at most its minimum).
+void share_crew(ShipMemory& a, ShipMemory& t) {
+	uint16_t n = uint16_t(a.u16(0x40) + t.u16(0x40));
+	if (n < 2) {
+		n = 2;
+	}
+	const uint8_t mt = kMinCrew[t.u8(0xE) & 3], ma = kMinCrew[a.u8(0xE) & 3];
+	uint16_t k = uint16_t(int32_t(n) * mt / (int32_t(mt) + ma));
+	if (k < 1) {
+		k = 1;
+	} else if (k > mt) {
+		k = mt;
+	}
+	t.u16(0x40) = k;
+	a.u16(0x40) = uint16_t(n - k);
+}
+
+}  // namespace
+
+// Operation 0x91 (0x540520; ships w and t): w takes t. Of the same owner they
+// only share their sailors. Otherwise t leaves the list by x, its event 5
+// about a merchant's ship lost to a pirate ([+0x15D] then 0xFF), its pirate
+// event (0x4EC864), its owner (its merchant's list and counts, [+0x1B]; or
+// the pirates' lists) and its convoy (a new guide, 0x5017F0, 0x501BE0). A
+// merchant w's owner gets it (list [+0xE], counts, [+0x1B], fame: +0x672DE0
+// from a merchant, else 0x4F8D90), its captains freed (0x5098B0), w's
+// [+0x1C], [+0x20], destination by w's convoy (state 0x14); a pirate w's
+// guide's merchant gets its worth (0x52A7D0 and its wares by 0x673A18, 65 %,
+// at most 60 000; fame + 65), it joins w's pirate list, the pirate's share
+// (0x515F70; state 0x12). Then t has w's owner, [+0x15C], marks [+0x3C] |
+// 0x1420, w's convoy, no trade route [+0x136], the sailors shared, [+0x3A]
+// 0xFFFF.
+//
+// Not reproduced: the letters (0x4D6530), the UI (0x494990, 0x4778A0), the
+// Hanse event's lists of ships (0x4F3980/0x4F3AD0, not kept in p3vita) and
+// so its [+0xE] mark by a captain's place.
+void Sailing::fn_540520(uint16_t wi, uint16_t ti) {
+	GlobalMemory& gl = save_.globals;
+	const uint16_t ships = gl.u16(global::kShipCount);
+	if (wi >= ships || ti >= ships) {
+		return;
+	}
+	SavedShip& wsh = save_.ships[wi];
+	SavedShip& tsh = save_.ships[ti];
+	ShipMemory& W = wsh.memory;
+	ShipMemory& T = tsh.memory;
+	const uint16_t merchants = gl.u16(global::kWorldMerchantCount);
+	const uint16_t captains = gl.u16(global::kCaptainCount);
+	if (T.u16(0xA) < ships || T.u16(0xC) < ships) {
+		unlink_x(ti);
+	}
+	const uint8_t towner = T.u8(0x0);
+	if (W.u8(0x0) == towner) {
+		share_crew(W, T);
+		return;
+	}
+	const uint32_t tick = gl.u32(0x6DE4B4);
+	if (T.u8(0x15D) < merchants) {
+		if (towner >= merchants && W.u8(0x0) < merchants && W.u8(0x0) != T.u8(0x15D)) {
+			GameMemory<0x18>& e = save_.events[tick::events_detail::fn_4d8cf0(save_, tick + 0x300)];
+			e.u16(0x6) = 5;
+			e.u8(0x8) = T.u8(0x15D);
+			e.u8(0x9) = save_.merchants[T.u8(0x15D)].memory.u8(0x19);
+			e.u8(0xA) = W.u8(0x0);
+			e.u8(0xB) = e.u8(0x9);
+			e.u32(0xC) = tick;
+			e.u8(0x10) = 4;
+			e.u8(0x11) = 0;
+			e.u16(0x16) = T.u16(0x15E);
+		}
+		T.u8(0x15D) = 0xFF;
+	}
+	if (T.u16(0x134) == 0x12) {
+		fn_4ec864(ti, W.u8(0x0));
+	}
+	T.u8(0x3D) = uint8_t(T.u8(0x3D) | 0x4);
+	if (towner < merchants) {
+		clear_ship_route(tsh);
+		MerchantMemory& m = save_.merchants[towner].memory;
+		uint16_t* link = &m.u16(0xE);
+		while (*link != ti) {
+			if (*link >= ships) {
+				T.u32(0x18) = 0;
+				return;
+			}
+			link = &save_.ships[*link].memory.u16(0x4);
+		}
+		*link = T.u16(0x4);
+		m.u32(0x47C) = m.u32(0x47C) > 1 ? m.u32(0x47C) - 1 : 0;
+		m.u16(0x478) = m.u16(0x478) > 1 ? uint16_t(m.u16(0x478) - 1) : 0;
+		if (m.u8(0x1B) > 0) {
+			m.u8(0x1B) = uint8_t(m.u8(0x1B) - 1);
+		}
+	} else {
+		for (auto& p : save_.pirates) {  // 0x5066F0 → 0x515F00
+			if (!p) {
+				continue;
+			}
+			for (uint16_t* link = &p->u16(0xC); *link < ships; link = &save_.ships[*link].memory.u16(0x4)) {
+				if (*link == ti) {
+					*link = T.u16(0x4);
+					T.u16(0x4) = 0xFFFF;
+					break;
+				}
+			}
+		}
+	}
+	const uint16_t convoys = save_.convoy_count();
+	if (T.u16(0x8) < convoys) {
+		const uint16_t ci = T.u16(0x8);
+		GameMemory<0x3C>& c = save_.convoys[ci];
+		// The Hanse event's list of ships (0x503B00, 0x4F3980): not kept in p3vita.
+		uint16_t* link = &c.u16(0xA);
+		while (*link < ships) {
+			if (*link == ti) {
+				*link = T.u16(0x6);
+			} else {
+				link = &save_.ships[*link].memory.u16(0x6);
+			}
+		}
+		if (c.u16(0x10) == ti) {
+			fn_5017f0(ci);
+			tick::ship_ai_detail::fn_501be0(save_, ci);
+		}
+	}
+	if (W.u8(0x0) < merchants) {
+		MerchantMemory& m = save_.merchants[W.u8(0x0)].memory;
+		T.u16(0x4) = m.u16(0xE);
+		m.u32(0x47C) += 1;
+		m.u16(0x478) = uint16_t(m.u16(0x478) + 1);
+		m.u16(0xE) = ti;
+		if (T.u8(0x0) < merchants) {
+			const int16_t fame = 65;  // 0x672DE0 (s16)
+			const int32_t f = m.s16(0x16);
+			if (fame > 0) {
+				m.s16(0x16) = f < 0x7FFF - fame ? int16_t(f + fame) : int16_t(0x7FFF);
+			} else {
+				m.s16(0x16) = f + 0x8000 > -fame ? int16_t(f + fame) : int16_t(-0x8000);
+			}
+		} else {
+			fn_4f8d90(W.u8(0x0), T.u16(0x42) < captains);
+		}
+		if (m.u8(0x1B) < 0xFA) {
+			m.u8(0x1B) = uint8_t(m.u8(0x1B) + 1);
+		}
+		T.u16(0x134) = 0x14;
+		while (T.u16(0x42) < captains) {
+			// A letter to the winner about the captain of a pirate (0x4D6530): not rewritten.
+			tick::events_rare_detail::fn_5098b0(save_, T.u16(0x42));
+		}
+		T.u32(0x1C) = W.u32(0x1C);
+		T.u32(0x20) = W.u32(0x20);
+		clear_ship_route(tsh);
+		if (W.u16(0x8) < convoys) {
+			const GameMemory<0x3C>& wc = save_.convoys[W.u16(0x8)];
+			T.u8(0x38) = wc.u8(0x1F);
+			if (T.u8(0x38) >= gl.u32(0x6DE4B0) && (wc.u8(0x14) & 0x10)) {
+				T.u8(0x38) = m.u8(0x19);
+			}
+		} else {
+			T.u8(0x38) = m.u8(0x19);
+		}
+	} else {
+		// The guide of w's convoy (the game reads it without checking).
+		const uint16_t guide = W.u16(0x8) < save_.convoys.size() ? save_.convoys[W.u16(0x8)].u16(0x10) : 0xFFFF;
+		if (guide < save_.ships.size() && save_.ships[guide].memory.u8(0x15D) < merchants &&
+			save_.ships[guide].memory.u16(0x42) < captains) {
+			const ShipMemory& gs = save_.ships[guide].memory;
+			MerchantMemory& m = save_.merchants[gs.u8(0x15D)].memory;
+			int32_t worth = tick::merchants_detail::fn_52a7d0(save_, ti);
+			for (int ware = 0; ware < 24; ++ware) {
+				const float units = float(T.s32(0x54 + 4 * size_t(ware)));
+				worth += int32_t(int64_t(double(units) * double(kWorth[ware])));
+			}
+			int32_t pay = int32_t(uint32_t(worth) * 65u) / 100;
+			if (pay > 0xEA60) {
+				pay = 0xEA60;
+			}
+			m.u32(0x0) += uint32_t(pay);
+			m.u32(0x4B8) += uint32_t(pay);
+			const int32_t f = m.s16(0x16);
+			m.s16(0x16) = f < 0x7FFF - kLootFame ? int16_t(f + kLootFame) : int16_t(0x7FFF);
+			// A letter (0x4D6530) when paid: not rewritten.
+		}
+		T.u16(0x4) = W.u16(0x4);
+		W.u16(0x4) = ti;
+		while (T.u16(0x42) < captains) {
+			tick::events_rare_detail::fn_5098b0(save_, T.u16(0x42));
+		}
+		const uint8_t k = tick::alderman_detail::fn_51a470(save_, int(wi));
+		if (k < 5 && save_.pirates[k]) {
+			fn_515f70(save_, k);
+		}
+		T.u16(0x134) = 0x12;
+	}
+	T.u8(0x0) = W.u8(0x0);
+	T.u8(0x15C) = W.u8(0x15C);
+	T.u16(0x3C) = uint16_t(T.u16(0x3C) | 0x1420);
+	if (W.u16(0x8) < convoys) {
+		T.u16(0x8) = W.u16(0x8);
+		GameMemory<0x3C>& wc = save_.convoys[W.u16(0x8)];
+		T.u16(0x6) = wc.u16(0xA);
+		wc.u16(0xA) = ti;
+	}
+	T.u8(0x136) = 0;
+	share_crew(W, T);
+	T.u16(0x3A) = 0xFFFF;
 }
 
 }  // namespace p3::data
