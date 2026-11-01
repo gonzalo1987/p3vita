@@ -626,18 +626,24 @@ void fn_4fda10(Grid& g) {
 	}
 	if (!found || first < 0) {
 		if (start >= cells) {
-			return;  // Sin comprobar con el oráculo.
+			// No wall cell and the statue out of the grid. Checked with the oracle: scenario
+			// grid_branches (saves 3 and 5, direct calls).
+			return;
 		}
 		uint32_t c = start;
 		do {
 			++c;
 		} while (c < cells && g.get(c) != 0x91);
 		if (c >= cells) {
-			return;  // Sin comprobar con el oráculo.
+			// No wall cell after the statue. Checked with the oracle: scenario grid_branches (saves
+			// 3 and 5, direct calls).
+			return;
 		}
 		first = seed(c);
 		if (first < 0) {
-			return;  // Sin comprobar con el oráculo.
+			// Its four seeds aren't 0x11. Checked with the oracle: scenario grid_branches (saves 3
+			// and 5, direct calls).
+			return;
 		}
 	}
 	buf[0] = uint16_t(first);
@@ -680,7 +686,7 @@ void fn_4fd680(SaveGame& save, int town) {
 	const int32_t sx = st.memory.u8(0x800);
 	const int32_t sy = st.memory.u8(0x801);
 	if (sx >= g.w || sy >= g.h) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario grid_branches (saves 3 and 5, direct calls).
 	}
 	const int32_t cells = g.h * g.w;
 	const int32_t size = (g.h + g.w) * 4;
@@ -897,15 +903,15 @@ void fn_4fdce0(Grid& g, int64_t i) {
 //   poner el bit de cada tamaño 0..4 donde cabe (0x4FB8F0). Lo usan el
 //   borrado de un edificio (0x521240) en los incendios del asedio (eventos
 //   0x25 y 0x26): comprobado con `retouch.py incendio` (las torres 0x30,
-//   empresas, casas y edificios de la ciudad; los tipos 5 y 0x2F, sin
-//   comprobar).
+//   empresas, casas y edificios de la ciudad; the types 5 and 0x2F with the
+//   scenario grid_branches of retouch_unchecked.py).
 void fn_4facd0(SaveGame& save, int town, uint32_t x, uint32_t y, uint32_t type, uint32_t param) {
 	if (int32_t(type) < 0x32) {
 		Grid g(save.towns[size_t(town)]);
 		const int64_t h = g.h;
 		const int64_t i = int64_t(int32_t(uint32_t(g.h) * x + y));
 		if (type == 5) {
-			// Sin comprobar con el oráculo.
+			// Checked with the oracle: scenario grid_branches (saves 3 and 5, direct calls).
 			g.set(i, 0xE);
 			g.set(i - 1, 0x1E);
 			g.set(i - 2, 0x1E);
@@ -929,7 +935,7 @@ void fn_4facd0(SaveGame& save, int town, uint32_t x, uint32_t y, uint32_t type, 
 		}
 		int32_t cls;
 		if (type == 0x2F) {
-			// Sin comprobar con el oráculo.
+			// Checked with the oracle: scenario grid_branches (saves 3 and 5, direct calls).
 			g.set(i, 0xF);
 			g.set(i - 1, 0x1E);
 			g.set(i - 2, 0x1E);

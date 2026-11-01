@@ -569,3 +569,15 @@ From `cloud/battles`, piece 2 ([cloud/battles.md](cloud/battles.md) §7).
 - With `--pirates` the oracle runs, at the load, the per-town waypoints 0x448780 (otherwise skipped with the navigation), from which the pirates choose where to go: 2.8 s more per load.
 - Provisional rule, the same in p3vita and in the oracle (`PIRATE_JUMPS`): a pirate that would attack (0x507BE9 → 0x50BC40) goes on as if it had no target; a convoy that ends its route in a town (0x507C0B) goes on as if it still sailed; a convoy at its nest is not disbanded (0x505FF1 → 0x506029, until 0x514B80 is rewritten).
 - Checked: call by call, 0 differences in the 12 saves for 7 days; the whole world with the pirates on in both, 0 differences in the 12 saves; the default world, unchanged.
+
+## What tick_probe skips: the pointer fields (2026-11-01)
+
+From `cloud/unchecked-branches` ([cloud/unchecked-branches.md](cloud/unchecked-branches.md)). Until then `compare` skipped, in every region, any 4-byte word whose game value looked like a pointer (`looks_like_pointer`: the oracle's stack 0x01000000..0x010FFFFF, save file 0x04000000.. and heap 0x10000000..0x17FFFFFF). That hid grid words (0x10101010...), building records (type 0x10..0x17 in the high byte), town, office and merchant fields, the businesses' staff, event bytes (a started road task's `01 merchant 00 01`) and routes. Now `pointer_field(region, word, game bytes, value)` decides:
+- the globals (`G`) and the armies (`J*`): the old rule, because not all their pointer fields are known;
+- elsewhere, only the known pointer fields: towns `T` [+0x75C], [+0x80C], [+0x9B4] (records, grid, nodes); merchants `M` [+0xE4], [+0xE8] (the name's strings); ships `P` [+0x24] (the route, apart in p3vita); sieges `X` [+0x8], [+0x101C], [+0x1020]; nodes `N*` each node's address; pirates `Z0..Z4` [+0x4]; letters `B` [+0x8] of types 0x29, 0x47, 0x63, 0x83 and [+0x8], [+0xC] of 0x3C..0x40 and 0x71; events `E` [+0x8], [+0xC] of type 0x1B and [+0x8] of 0x34 (the buffers p3vita's loader leaves at 0). Everything else is compared.
+
+A new region with pointers must add its fields here; otherwise they show up as differences. The whole world for 7 days in the 12 saves stayed at 0 differences with the new rule, and every retouched scenario gave the same equal calls.
+
+## The fixes to the game's bugs (2026-10-31)
+
+`p3::data::fix_game_bugs()` (`src/p3data/game_fixes.hpp`) is **off in the library**, so the oracle's comparisons (tick_probe, the scenarios, the writer's checks, the tests) see the original behaviour, bugs included, as always. The viewer turns it on by default (its Options screen). `tick_probe --fix-game-bugs` runs p3vita with the fixes: the differences then show exactly where a fix acts (for example, in tut0 an AI merchant in debt puts a building on sale, operation 0x28, which the game doesn't because of an uninitialized variable in 0x4F5A20). The list of bugs and which are fixed: roadmap, «Corregir los fallos del juego».

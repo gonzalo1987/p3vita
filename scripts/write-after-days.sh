@@ -2,7 +2,9 @@
 # Check 2 of the savegame writer: the whole world for DAYS days with the
 # game's code (town_oracle.py, the pieces of world.sh) and with p3data
 # (tick_probe --continuo --carga), and then both write the save (--write);
-# compare_written.py compares them byte for byte. The saves run in parallel.
+# compare_written.py compares them byte for byte, and their .pst too; then the
+# game and p3vita load p3vita's .pat and .pst again (tick_probe --carga
+# --pst). The saves run in parallel.
 #
 # usage: scripts/write-after-days.sh DAYS [SAVES...]   (by default 1 3 7)
 # Needs the same as scripts/write-reload.sh.
@@ -32,5 +34,20 @@ status=0
 for s in "${saves[@]}"; do
 	echo "== $s: $(grep -o '[0-9]* distintas' "$tmp/$s-after.txt" | awk '{n+=$1} END {print n+0}') calls different $(head -c 300 "$tmp/$s-after.err")"
 	python3 tools/oracle/compare_written.py "$tmp/$s-after-game.raw" "$tmp/$s-after-p3vita.raw" || status=1
+	# The .pst (the daily statistics): byte for byte, and then the game's
+	# readers load p3vita's .pat and .pst and tick_probe --carga compares that
+	# with what p3vita reads from them.
+	if cmp -s "$tmp/$s-after-game.raw.pst" "$tmp/$s-after-p3vita.raw.pst"; then
+		echo ".pst: same bytes ($(stat -c %s "$tmp/$s-after-p3vita.raw.pst"))"
+	else
+		echo ".pst: different ($(stat -c %s "$tmp/$s-after-game.raw.pst") bytes in the game, $(stat -c %s "$tmp/$s-after-p3vita.raw.pst") in p3vita)"
+		status=1
+	fi
+	python3 tools/oracle/town_oracle.py "$P3_EXE" "$tmp/$s-after-p3vita.raw" "$tmp/$s-after-reload.probe" 0 51ba10 \
+		--barcos "$P3_SHIPS" --cpr "$P3_CPR" --pst "$tmp/$s-after-p3vita.raw.pst" >/dev/null
+	echo "reload of the .pat and the .pst: $("$build/tools/oracle/tick_probe" "$tmp/$s-after-reload.probe" --carga \
+		"$tmp/$s-after-p3vita.raw" --pst "$tmp/$s-after-p3vita.raw.pst" --cpr "$P3_CPR" | tail -1)"
+	rm -f "$tmp/$s-after-reload.probe" "$tmp/$s-after-game.raw" "$tmp/$s-after-p3vita.raw" "$tmp/$s-after-game.raw.pst" \
+		"$tmp/$s-after-p3vita.raw.pst" "$tmp/$s-after.txt" "$tmp/$s-after.err"
 done
 exit $status

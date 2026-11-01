@@ -100,6 +100,29 @@ OperationBytes take_task_operation(uint32_t player, uint16_t event);
 // player, u8 the material's ware}.
 OperationBytes road_materials_operation(uint16_t event, uint16_t amount, uint8_t town, uint8_t player, uint8_t ware);
 
+// 0x3F (Hanse window 0x5E8280): {0x3F, player, choice}: in the election the
+// candidate 0..3, in a vote of the diet 0 yes, 1 no, 2 abstain.
+OperationBytes vote_operation(uint32_t player, uint32_t choice);
+
+// Today's election of the Alderman (event 0x20, 0x4D9C70), or 0xFFFF.
+uint16_t election_today(const SaveGame& save);
+// The election's event 0x20, whatever its day (after the count it keeps the
+// votes until the next year's first phase), or 0xFFFF.
+uint16_t election_event(const SaveGame& save);
+// Whether the player can vote in it now (0x4D9D40).
+bool player_can_vote(const SaveGame& save);
+// The election's candidates ([+0x8 + k]): a merchant (| 0x80) or a town whose
+// mayor stands; and the votes they have so far ([+0xC + k]).
+struct ElectionCandidate {
+	bool merchant = false;
+	int index = -1;  // Merchant or town index; -1: none.
+	int votes = 0;
+};
+std::array<ElectionCandidate, 4> election_candidates(const SaveGame& save, uint16_t event);
+// The candidates for the next election as the game's window lists them
+// before it (0x529700): a merchant, or the town whose mayor stands.
+std::array<ElectionCandidate, 4> next_election_candidates(const SaveGame& save);
+
 // Adds the operation to the queue; advance_game_tick runs it after the next
 // tick, as the game runs its queue between two calls to advance_time.
 void queue_operation(SaveGame& save, const OperationBytes& operation);

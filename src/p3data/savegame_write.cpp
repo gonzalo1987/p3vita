@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
+#include "p3data/lz.hpp"
 #include "p3data/lz_compress.hpp"
+#include "p3data/statistics.hpp"
 
 namespace p3::data {
 
@@ -23,6 +26,7 @@ constexpr uint32_t kGameObject = 0x6DF2F0;  // The object of 0x549F40 and 0x5472
 constexpr uint32_t kMailbox = 0x6DD730;
 constexpr uint32_t kMailCount = kMailbox + 0x6;  // u16
 constexpr uint32_t kMailFree = kMailbox + 0x4;  // u16: the head of the free notices.
+constexpr uint32_t kTownNumbers = 0x6DE4B8;  // u8 per town of the save: its number (0..39)
 
 // Sequential writing, little endian like the game.
 class Writer {
@@ -98,9 +102,13 @@ void update_settings(SaveGame& save) {
 	// by town number (0..39), with the index in the save of the player's
 	// hometown: in 1.pat it writes "Cologne" (number 9) for Lübeck (index 9,
 	// number 14). strcpy: the name may run over [+0x3B] and later fields.
-	if (hometown < save.opaque.town_names.size()) {
-		const std::string& name = save.opaque.town_names[hometown];
-		const size_t n = std::min(name.size() + 1, SettingsMemory::kSize - 0x27);
+	// Fixed: the name of the hometown's number (0x6DE4B8), at most 19
+	// characters and its 0 in the 0x14 bytes of [+0x27].
+	const size_t number = fix_game_bugs() ? g.u8(kTownNumbers + hometown) : hometown;
+	if (number < save.opaque.town_names.size()) {
+		const std::string& name = save.opaque.town_names[number];
+		const size_t n = fix_game_bugs() ? std::min<size_t>(name.size(), 0x13)
+		                                 : std::min(name.size() + 1, SettingsMemory::kSize - 0x27);
 		std::memcpy(&s.u8(0x27), name.c_str(), n);
 	}
 	s.u8(0x3B) = 0;
@@ -448,13 +456,20 @@ void write_mail(Writer& w, const SaveGame& save) {
 // [+0x6] of the third byte twice (b2 · 0x101), skipping the fourth; the
 // writer writes [+0x4], [+0x5], the sign of the low byte of [+0x6] (`sar dl,
 // 8` on a byte register) and that byte. So each node becomes b0 b1 sign(b2)
-// b2, and the list always ends in 0.
+// b2, and the list always ends in 0. Both meant a big-endian u16 (`sar dx, 8`
+// and the fourth byte as its low one); fixed, each node is written as it was
+// read (b0 b1 b2 b3), and the list ends in 0 as the game's.
 void write_event_nodes(Writer& w, const std::vector<uint8_t>& list) {
 	for (size_t p = 0; p + 4 <= list.size(); p += 5) {
 		w.u8(list[p]);
 		w.u8(list[p + 1]);
-		w.u8(list[p + 2] & 0x80 ? 0xFF : 0);
-		w.u8(list[p + 2]);
+		if (fix_game_bugs()) {
+			w.u8(list[p + 2]);
+			w.u8(list[p + 3]);
+		} else {
+			w.u8(list[p + 2] & 0x80 ? 0xFF : 0);
+			w.u8(list[p + 2]);
+		}
 		if (p + 4 >= list.size() || list[p + 4] != 0x7F) {
 			break;
 		}
@@ -491,6 +506,97 @@ void write_events(Writer& w, const SaveGame& save) {
 			write_event_nodes(w, extras_of(i));
 		}
 	}
+}
+
+// GAME BUG: 0x611950 writes each entry of the table at the end of the
+// battles as 8 bytes of memory, of which the reader (0x612A20: two u32, the
+// low byte of the second) keeps 5: the other 3 are whatever the memory had
+// (0xCD in 7.pat, 0 in the emulator). p3vita keeps the battles as they were
+// read, so it writes what the file had. This finds where those 3 bytes are:
+// u8 the battles; each one a u8 kind (not 0: a town battle, 0x5FBEA0, with
+// 0x1D bytes before the rest) and what 0x604220 writes: 0x27 bytes (u8 n at
+// +0x0, u16 a and b at +0x1 and +0x3, the heads of two lists of ships at
+// +0x5 and +0x7), n entries of 4 bytes and 4 more for the first two, u16 m
+// and m u32 of bits, 2 · (a + b) u16, 0x400 bytes, 0x2F bytes for each ship
+// of the two lists (the u16 links are the first (a + b) u16) and 0x1F for
+// each bit set; then u32 the slots of the table and, for each, u32 its
+// index, u32 k and k entries of 8 bytes. Empty if the bytes don't end there.
+std::vector<size_t> battle_padding(const std::vector<uint8_t>& b) {
+	size_t p = 0;
+	bool ok = true;
+	auto need = [&](size_t n) {
+		ok = ok && n <= b.size() - std::min(p, b.size());
+		return ok;
+	};
+	auto u16 = [&](size_t at) { return uint16_t(b[at] | b[at + 1] << 8); };
+	auto u32 = [&](size_t at) { return uint32_t(u16(at) | uint32_t(u16(at + 2)) << 16); };
+	if (!need(1)) {
+		return {};
+	}
+	const uint8_t battles = b[p++];
+	for (uint8_t i = 0; i < battles; ++i) {
+		if (!need(1)) {
+			return {};
+		}
+		p += b[p] ? 1 + 0x1D : 1;
+		if (!need(0x27)) {
+			return {};
+		}
+		const size_t header = p;
+		const uint8_t n = b[header];
+		const size_t links = size_t(u16(header + 1)) + u16(header + 3);
+		p += 0x27 + 4 * size_t(n) + 4 * std::min<size_t>(n, 2);
+		if (!need(2)) {
+			return {};
+		}
+		const size_t words = u16(p);
+		p += 2;
+		if (!need(4 * words)) {
+			return {};
+		}
+		size_t bits = 0;
+		for (size_t k = 0; k < 4 * words; ++k) {
+			for (uint8_t v = b[p + k]; v; v &= uint8_t(v - 1)) {
+				++bits;
+			}
+		}
+		p += 4 * words;
+		if (!need(4 * links)) {
+			return {};
+		}
+		const size_t next = p;
+		p += 4 * links + 0x400;
+		for (size_t head : {header + 5, header + 7}) {
+			size_t count = 0;
+			for (uint16_t ship = u16(head); ship != 0xFFFF; ship = u16(next + 2 * size_t(ship))) {
+				if (ship >= links || ++count > links) {
+					return {};
+				}
+				p += 0x2F;
+			}
+		}
+		p += 0x1F * bits;
+	}
+	std::vector<size_t> padding;
+	if (!need(4)) {
+		return {};
+	}
+	const uint32_t slots = u32(p);
+	p += 4;
+	for (uint32_t i = 0; i < slots; ++i) {
+		if (!need(8)) {
+			return {};
+		}
+		const uint32_t entries = u32(p + 4);
+		p += 8;
+		if (!need(8 * size_t(entries))) {
+			return {};
+		}
+		for (uint32_t k = 0; k < entries; ++k, p += 8) {
+			padding.push_back(p + 5);
+		}
+	}
+	return p == b.size() ? padding : std::vector<size_t>();
 }
 
 // UTF-8 to Latin-1, as the game keeps the names (latin1_to_utf8 undone).
@@ -579,10 +685,17 @@ std::vector<uint8_t> write_savegame(SaveGame& save) {
 	w.separator();
 	write_events(w, save);
 	w.separator();
-	// 0x611950: the battles, as they were read.
+	// 0x611950: the battles, as they were read (fixed: the padding of the
+	// table at their end at 0, battle_padding).
 	if (save.opaque.battles.empty()) {
 		w.u8(0);
 		w.u32(0);
+	} else if (fix_game_bugs()) {
+		std::vector<uint8_t> battles = save.opaque.battles;
+		for (size_t p : battle_padding(battles)) {
+			std::memset(battles.data() + p, 0, 3);
+		}
+		w.bytes(battles);
 	} else {
 		w.bytes(save.opaque.battles);
 	}
@@ -616,6 +729,24 @@ std::vector<uint8_t> empty_statistics() {
 std::vector<uint8_t> statistics_file() {
 	const std::vector<uint8_t> raw = empty_statistics();
 	return lz_compress(raw.data(), raw.size());
+}
+
+std::vector<uint8_t> statistics_file(SaveGame& save) {
+	const std::vector<uint8_t> raw = write_statistics(save);
+	return lz_compress(raw.data(), raw.size());
+}
+
+bool load_statistics_file(const std::vector<uint8_t>* pst, SaveGame& save) {
+	if (!pst) {
+		clear_statistics(save);
+		return true;
+	}
+	std::vector<uint8_t> raw;
+	if (!lz_decompress_file(pst->data(), pst->size(), raw)) {
+		clear_statistics(save);
+		return false;
+	}
+	return read_statistics(raw.data(), raw.size(), save);
 }
 
 void load_save_scripts(const CprArchive& archive, SaveGame& save) {

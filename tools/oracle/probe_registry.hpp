@@ -102,6 +102,12 @@ void register_probes_events_mayor(ProbeRegistry& r);
 void register_probes_events_rare(ProbeRegistry& r);
 void register_probes_alderman(ProbeRegistry& r);
 void register_probes_battle(ProbeRegistry& r);
+void register_probes_statistics(ProbeRegistry& r);
+// The regions S0..S4 of the statistics (probes_statistics.cpp): k < 4 the
+// records of the towns of the list k, 4 the objects of the merchants.
+std::vector<uint8_t> statistics_region(const data::SaveGame& save, int k);
+void read_statistics_region(data::SaveGame& save, int k, const std::vector<uint8_t>& bytes);
+void register_probes_unchecked(ProbeRegistry& r);
 
 // La navegación sobre el SaveGame que reciben las sondas (tick_probe con
 // --cpr); nullptr sin --cpr. Para las funciones de Sailing (convoyes...).

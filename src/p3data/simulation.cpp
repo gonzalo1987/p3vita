@@ -1,8 +1,10 @@
 #include "p3data/simulation.hpp"
+#include "p3data/statistics.hpp"
 
 #include <cstring>
 
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/town_tick/votes.hpp"
 
 namespace p3::data {
 
@@ -36,8 +38,11 @@ void advance_game_tick(SaveGame& save, Sailing& sailing) {
 	sailing.begin_tick();
 	const uint32_t t = save.tick() & 0xFF;
 	if (t == 0) {
-		// Al empezar el día (las estadísticas de 0x54DE90 no se reproducen).
+		// Al empezar el día.
 		tick::fn_5315c0(save, save.tick() % 0x700 == 0);
+		if (save.record_statistics) {
+			daily_statistics(save);  // 0x54DE90 (statistics.hpp)
+		}
 		tick::fn_535450(save, save.tick());
 		uint8_t& countdown = save.globals.u8(global::kWorld + 0x8B);
 		if (countdown > 0) {
@@ -127,6 +132,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x38:  // Una subasta de barco: el evento 0x0A (0x535E3B).
 		tick::fn_535e3b(save, operation);
+		break;
+	case 0x3F:  // The vote of a human player in an election or the diet (0x53AA10).
+		tick::fn_53aa10(save, operation);
 		break;
 	case 0x3B:  // Materiales para la carretera de un encargo de la Hansa (0x53A3E0).
 		tick::fn_53a3e0(save, operation);

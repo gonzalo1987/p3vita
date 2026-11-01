@@ -11,14 +11,19 @@ add_library(p3data STATIC
 	convoys_sea.cpp
 	cpr.cpp
 	font.cpp
+	game_fixes.cpp
+	game_texts.cpp
 	hanse_tasks.cpp
 	image.cpp
 	lz.cpp
 	navigation.cpp
 	prices.cpp
 	sailing.cpp
+	sailing_load.cpp
 	savegame.cpp
 	savegame_write.cpp
+	savegame_load.cpp
+	statistics.cpp
 	lz_compress.cpp
 	seamap.cpp
 	simulation.cpp
@@ -45,6 +50,7 @@ add_library(p3data STATIC
 	town_tick/offices.cpp
 	town_tick/population.cpp
 	town_tick/sieges.cpp
+	town_tick/votes.cpp
 	town_tick/shared.cpp
 	town_tick/ship_ai.cpp
 	town_tick/ship_trade.cpp

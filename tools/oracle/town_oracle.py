@@ -48,7 +48,8 @@ Formato del fichero (enteros little endian):
 
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
        [--desde DÍA] [--max N] [--semilla S] [--cpr p2arch0_eng.cpr] [--barcos DATOS [--sin-ia] [--sin-convoyes]
-       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms] [--pirates [--no-disband] [--battles]]] [--write OUT]
+       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms]
+       [--pirates [--no-disband] [--battles]] [--no-statistics]] [--pst FILE] [--write OUT]
 La función 51ba10 graba los ticks de ciudad enteros.
 
 Con --cpr (o si DATOS/scripts tiene los ficheros), la carga crea también el
@@ -89,7 +90,7 @@ ninguna):
   6349f0  t & 7 == 7: el asedio de la ciudad t >> 3, tras su tick
   4d85c0  tras los barcos: la cola de eventos (con el tick)
   633a90  tras la cola de eventos: el asedio de cada ciudad
-(0x54DE90, las estadísticas de cada día, no se ejecuta.) El juego ejecuta
+(0x54DE90, the daily statistics, after 5315c0 unless --no-statistics; always recorded.) El juego ejecuta
 la cola entre dos llamadas a advance_time, que hace hasta 8 ticks según el
 tiempo real; aquí y en p3vita, tras cada tick. La cola de eventos necesita lo
 de scripts/ (--cpr). Para repetir el mundo con tick_probe --continuo hay que
@@ -98,7 +99,8 @@ grabar también 4f7bb0 y las piezas que se ejecuten:
 (535760, el ejecutor, o 537670, solo las órdenes de zarpar, pero no las dos).
 With --write OUT, after the days it runs the game's save code on the state
 reached and writes the uncompressed .pat (write_oracle.py), to compare with
-tick_probe --write.
+tick_probe --write; and the .pst (0x54D870) to OUT.pst. With --pst FILE, an
+uncompressed .pst is read after the save (0x54DA60).
 Con --sin-ia, los barcos como en sail_oracle.py: en puerto solo los estados
 1, 2, 3 y el 0 de los jugadores humanos, y las operaciones encoladas no se
 ejecutan.
@@ -121,7 +123,7 @@ UPDATE_SHIPS = 0x506720
 SET_SAIL = 0x537670  # operación 0x00
 EXECUTOR = 0x535760  # ejecuta una operación encolada (thiscall sobre ella)
 EXECUTOR_MAGIC = 0x504F3350  # «P3OP»: tras la operación en la pila, la marca de las llamadas del oráculo
-OPERATIONS = (0x00, 0x0A, 0x12, 0x13, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x28, 0x29, 0x2C, 0x37, 0x38, 0x3B, 0x46, 0x48, 0x4B, 0x60, 0x61, 0x64,
+OPERATIONS = (0x00, 0x0A, 0x12, 0x13, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x28, 0x29, 0x2C, 0x37, 0x38, 0x3B, 0x3F, 0x46, 0x48, 0x4B, 0x60, 0x61, 0x64,
               0x65, 0x67, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86,
               0x87, 0x8E, 0xB8)  # las que se ejecutan por omisión
 UPDATE_DATE = 0x5310D0
@@ -164,6 +166,11 @@ MERCHANT_TRAMPOLINE = SENTINEL + 0x40
 REST = {0x5315C0: 1, 0x535450: 1, 0x52D7D0: 0, 0x6349F0: 0, 0x4D85C0: 1, 0x633A90: 0}
 REST_TRAMPOLINES = SENTINEL + 0x60  # uno cada 0x20 bytes, en el orden de REST
 EXECUTOR_TRAMPOLINE = SENTINEL + 0x140  # tras los de REST; 0x23 bytes: ver executor_trampoline
+# The daily statistics (0x54DE90 on 0x6DFC90; unless --no-statistics): after 0x5315C0, as
+# advance_time does. Its lists are the regions S0..S4 (see regions()).
+STATISTICS = 0x54DE90
+STATISTICS_OBJECT = 0x6DFC90
+STATISTICS_TRAMPOLINE = SENTINEL + 0x170
 # Actualización de barcos (ver sail_oracle.py): saltos por estado y convoyes.
 DOCKED_DISPATCH = 0x5067C0
 DOCKED_SKIP = 0x5068C6
@@ -319,7 +326,8 @@ def executor_trampoline(at):
 
 class TownOracle(SaveOracle):
     def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True, rest=(), cpr=None,
-                 operations=OPERATIONS, storms=True, pirates=False, disband=True, battles=False):
+                 operations=OPERATIONS, storms=True, pirates=False, statistics=False, last_steps=True,
+                 disband=True, battles=False):
         self.pirates = pirates and navdata is not None and convoys
         self.battles = battles and self.pirates
         if self.pirates:
@@ -338,6 +346,10 @@ class TownOracle(SaveOracle):
             _, build = trampoline(target, args)
             self.uc.mem_write(at, build(at))
             self.rest_trampolines[target] = at
+        self.statistics = statistics
+        self.last_steps = last_steps
+        _, build = trampoline(STATISTICS, 0)
+        self.uc.mem_write(STATISTICS_TRAMPOLINE, build(STATISTICS_TRAMPOLINE))
         self.rand_state = seed
         self.queued = []  # para las muestras
         self.tick_operations = []  # las órdenes que se ejecutan al final del tick
@@ -661,6 +673,35 @@ class TownOracle(SaveOracle):
         self.uc.mem_write(self._arg(3), value + b'\0')
         self._returns(uc, len(value), 0x18)
 
+    def loader_last_steps(self, version):
+        """What 0x549F40 does after reading the sections (0x54A1CD..0x54A2FA):
+        0x5131B0 on the names object for each ship of each merchant (from the
+        last one; his list from [+0xE] by the [+0x4] of each ship) and of each
+        pirate (from [+0xC] of the 5 objects of [0x6DD7AC]), with the ship's
+        [+0x15E], its name [+0x160], its type & 3 and the version; then
+        0x5048C0 (0x517C10 for each ship, from the last one) and 0x4D60B0 on
+        the trade routes (0x6DD728)."""
+        ships = self.u16(SHIPS + 0xF4)
+
+        def register(first):
+            i = first
+            while i < self.u16(SHIPS + 0xF4):
+                ship = self.ship(i)
+                nxt = self.u16(ship + 4)
+                self.call(0x5131B0, [ship + 0x15E, ship + 0x160, self.u8(ship + 0xE) & 3, version], ecx=NAMES)
+                i = nxt
+        for m in range(self.u16(WORLD + 0xA) - 1, -1, -1):
+            register(self.u16(self.merchant(m) + 0xE))
+        for k in range(5):
+            pirate = self.u32(SHIPS + 0xC + 4 * k)
+            if pirate:
+                register(self.u16(pirate + 0xC))
+        if ships and self.navdata:
+            # Only with the navigation (the routes of the ships), as in p3vita
+            # (Sailing::assign_loaded_routes).
+            self.call(0x5048C0, [], ecx=SHIPS)
+        self.call(0x4D60B0, [], ecx=0x6DD728)
+
     def load_names(self, events_end, version):
         """Crea el objeto de los nombres como el juego: 0x5121C0 al arrancar
         (ficheros de scripts/), los nombres de la partida (0x511E30) y otra vez
@@ -698,6 +739,8 @@ class TownOracle(SaveOracle):
         end = self.call(READ_SAVE_NAMES, [FILE + pos + 4, version], ecx=NAMES) - FILE
         if end + 4 != len(self.save):
             raise RuntimeError(f'los nombres acaban en {end} y el fichero en {len(self.save)}')
+        if self.last_steps:
+            self.loader_last_steps(version)
         self.call(LOAD_NAMES, [], ecx=NAMES)
         for h in hooks:
             self.uc.hook_del(h)
@@ -713,6 +756,8 @@ class TownOracle(SaveOracle):
         if t == 0:
             self.call(UPDATE_DATE, [], ecx=WORLD)
             self.run_rest(0x5315C0, [1 if tick % 0x700 == 0 else 0], WORLD)
+            if self.statistics:
+                self.call(STATISTICS_TRAMPOLINE, [], ecx=STATISTICS_OBJECT)
             self.run_rest(0x535450, [tick], WORLD + 0xE8)
             if 0x5315C0 in self.rest and self.u8(WORLD + 0x8B) > 0:
                 self.uc.mem_write(WORLD + 0x8B, bytes([self.u8(WORLD + 0x8B) - 1]))
@@ -892,6 +937,42 @@ class TownOracle(SaveOracle):
                 node = unpack('<I', piece, 0)[0]
             out[f'N{i}'] = (first, b''.join(nodes))
         out['BT'] = (BATTLES, self.battle_graph(read, {a for a, _ in out.values() if a}))
+        # The statistics (0x6DFC90): S0..S3 the records of the towns of its
+        # lists [+0xC] (days), [+0x10] (weeks), [+0x14] (months) and [+0x18]
+        # (years), newest first: u32 number and the blocks of 0x204 bytes of
+        # each record. S4 the objects of the merchants ([+0x1C], by [+0x230C]):
+        # the 0x2310 bytes with the links of its rings ([+0x6C] of each record
+        # of 0x70) as offsets in the object and [+0x2308], [+0x230C] at 0, then
+        # u32 number of years and their records (the link at 0).
+        for k in range(4):
+            records = []
+            node = gu32(STATISTICS_OBJECT + 0xC + 4 * k)
+            while node:
+                count, data, node = unpack('<III', read(node, 12))
+                records.append(struct.pack('<I', count))
+                records.append(block(data, count * 0x204 if data else 0))
+            out[f'S{k}'] = (0, b''.join(records))
+        objects = []
+        node = gu32(STATISTICS_OBJECT + 0x1C)
+        while node:
+            piece = bytearray(read(node, 0x2310))
+            for first, count in ((0x8, 32), (0xE08, 24), (0x1888, 24)):
+                for r in range(count):
+                    at = first + 0x70 * r + 0x6C
+                    link = unpack('<I', piece, at)[0]
+                    piece[at:at + 4] = struct.pack('<I', link - node if node <= link < node + 0x2310 else 0)
+            year = unpack('<I', piece, 0x2308)[0]
+            following = unpack('<I', piece, 0x230C)[0]
+            piece[0x2308:0x2310] = bytes(8)
+            years = []
+            while year:
+                record = bytearray(read(year, 0x70))
+                year = unpack('<I', record, 0x6C)[0]
+                record[0x6C:0x70] = bytes(4)
+                years.append(bytes(record))
+            objects.append(bytes(piece) + struct.pack('<I', len(years)) + b''.join(years))
+            node = following
+        out['S4'] = (0, b''.join(objects))
         out['r'] = (0, struct.pack('<I', self.rand_state))
         return out
 
@@ -1160,6 +1241,10 @@ def main():
                         '(BATTLE_STEPS after each tick with battles)')
     p.add_argument('--no-disband', action='store_true',
                    help='with --pirates, a convoy at its nest is not disbanded (0x514B80; NO_DISBAND_JUMP)')
+    p.add_argument('--pst', metavar='FILE', help='an uncompressed .pst to read after the save (0x54DA60)')
+    p.add_argument('--no-statistics', action='store_true',
+                   help='without the daily statistics (0x54DE90, after 0x5315C0; regions S0..S4), which run by default')
+    p.add_argument('--statistics', action='store_true', help='on by default now; kept for older scripts')
     p.add_argument('--resto', help='con --barcos, solo estas piezas del resto de advance_time (5315c0,535450,...); '
                    'por omisión, todas')
     p.add_argument('--sin-resto', action='store_true', help='con --barcos, sin el resto de advance_time')
@@ -1177,9 +1262,17 @@ def main():
         rest = [int(x, 16) for x in a.resto.split(',') if x]
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
                    not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], not a.no_storms,
-                   a.pirates, not a.no_disband, a.battles)
+                   a.pirates, not a.no_statistics, disband=not a.no_disband, battles=a.battles)
     o.load()
+    if a.pst:
+        # The .pst next to the save (uncompressed), as 0x5476E0 reads it.
+        from write_oracle import read_game_statistics
+        read_game_statistics(o, open(a.pst, 'rb').read())
     functions = [int(x, 16) for x in a.functions.split(',')]
+    if not a.no_statistics and STATISTICS not in functions:
+        # tick_probe --continuo repeats only what is recorded: with the
+        # statistics, 0x54DE90 always is (it changes towns and merchants).
+        functions.append(STATISTICS)
     with open(a.out, 'wb') as f:
         f.write(b'P3PROBE1')
         rec = Recorder(o, functions, f, a.max)
@@ -1198,7 +1291,7 @@ def main():
         from write_oracle import prepare_game_object, write_files
         prepare_game_object(o)
         write_files(o, a.write)
-        print(f'save written in {a.write}')
+        print(f'save written in {a.write} (and {a.write}.pst)')
 
 
 if __name__ == '__main__':

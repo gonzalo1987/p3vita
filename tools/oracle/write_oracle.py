@@ -9,8 +9,7 @@ The game's save function is 0x5472F0. What runs here, in its order:
   0x549C60     size of the .pat
   0x549CC0     writes the .pat (version 0x85) on the game object 0x6DF2F0
   0x54C410     compresses it (thiscall on the object built by 0x54C3F0)
-The .pst (0x54D7F0, 0x54D870 on 0x6DFC90) isn't written: p3data doesn't
-read the statistics.
+and the .pst (0x54D7F0, 0x54D870 on 0x6DFC90), uncompressed, to <out.raw>.pst.
 
 usage: python3 write_oracle.py <Patrician3.exe> <save.raw> <out.raw> [--packed OUT] [--cpr p2arch0_eng.cpr]
        [--no-expire]
@@ -80,13 +79,45 @@ def game_save(o, expire=True):
     return raw, packed
 
 
+STATISTICS_OBJECT = 0x6DFC90
+PST_SIZE = 0x54D7F0  # thiscall on STATISTICS_OBJECT → size (it also sets [+0xA])
+WRITE_PST = 0x54D870  # thiscall on STATISTICS_OBJECT, (out) → end
+READ_PST = 0x54DA60  # thiscall on STATISTICS_OBJECT, (data) → end
+
+
+def game_statistics(o):
+    """The uncompressed .pst the game's save function writes after the .pat:
+    the `size` bytes of 0x54D7F0 that 0x5472F0 compresses. 0x54D7F0 counts one
+    byte more than 0x54D870 writes when there are months: that last byte is
+    whatever the buffer had (0 here)."""
+    size = o.call(PST_SIZE, [], ecx=STATISTICS_OBJECT)
+    out = o.alloc(size + 0x10)
+    end = o.call(WRITE_PST, [out], ecx=STATISTICS_OBJECT)
+    if not size - 1 <= end - out <= size:
+        raise RuntimeError(f'0x54D870 wrote {end - out} bytes and 0x54D7F0 said {size}')
+    return bytes(o.uc.mem_read(out, size))
+
+
+def read_game_statistics(o, data):
+    """0x54DA60 on an uncompressed .pst, as 0x5476E0 does after the .pat."""
+    buffer = o.alloc(len(data) + 0x10)
+    o.uc.mem_write(buffer, data)
+    end = o.call(READ_PST, [buffer], ecx=STATISTICS_OBJECT)
+    # It leaves out the byte too many of a file with months (game_statistics).
+    if not len(data) - 1 <= end - buffer <= len(data):
+        raise RuntimeError(f'0x54DA60 read {end - buffer} bytes of {len(data)}')
+
+
 def write_files(o, out, packed_out=None, expire=True):
+    """The .pat to `out` (and compressed to `packed_out`) and the .pst to `out`.pst."""
     raw, packed = game_save(o, expire)
     with open(out, 'wb') as f:
         f.write(raw)
     if packed_out:
         with open(packed_out, 'wb') as f:
             f.write(packed)
+    with open(out + '.pst', 'wb') as f:
+        f.write(game_statistics(o))
     return raw, packed
 
 
