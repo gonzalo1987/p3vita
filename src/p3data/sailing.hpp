@@ -251,6 +251,11 @@ public:
 	// battle/battle_end.cpp: the end of a sea battle.
 	void fn_60d299(size_t battle, bool sailors);  // (sea battle, method +0x1C) The end.
 	void fn_611740(size_t battle, bool free);  // (sea battle, method +0x4) Its destructor.
+	void fn_612a20(uint32_t i, uint32_t j, uint8_t value);  // (battles) Ship j met by ship i.
+	void fn_612bd0(uint16_t a, uint16_t b);  // (battles) Two convoys' ships met.
+	void fn_50cb80(uint16_t convoy, uint16_t other, uint32_t value, uint8_t level);  // An event 5.
+	void fn_50c9e0(uint16_t convoy, bool flag);  // A Hanse convoy after its battle.
+	void fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other);  // A convoy after its battle.
 	// battle/attack.cpp
 	void fn_50bc40(uint16_t convoy);  // (ships object) A pirate convoy attacks: a sea battle.
 	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.

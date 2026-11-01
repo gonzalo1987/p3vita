@@ -586,6 +586,19 @@ tut3, 7 days; 39 s):
   0x60D299, and the destructor, method +0x4, 0x611740 → 0x603BC0), next to
   be rewritten (`battle/battle_end.cpp`). Not wired into the simulation
   until then.
+- The end (`battle/battle_end.cpp`): **0x60D299** (method +0x1C: a third
+  party that stays for another battle, the counts and the music by how each
+  ship ended, the pirates' news [+0x408] of the battles object, the battle
+  over with [+0x15C] 1 or 250), **0x611740/0x603BC0** (the destructor: the
+  slot and count, the time mode, a new battle with the third party, the
+  table of ships that met **0x612BD0/0x612A20** ([+0xC30], [+0xC34] of the
+  battles object), the event 5 **0x50CB80**, a Hanse convoy home
+  **0x50C9E0** (but 0x6132C0, not run in the saves) and each convoy after the
+  battle, 0x50BFD0, being rewritten). Saves 4, 5, 6, tut0, tut1, tut3, 7
+  days: 0x60D299 11 calls, 0x612BD0 11, 0 differences; 0x606CC0 now differs
+  only in the battle's last tick (1 + 4 + 3 + 1 + 1 + 1 of 396 calls), the
+  one that reaches 0x50BFD0. The report and letters of the end (0x4D6530),
+  the news ticker and the player's window are not rewritten (messages, UI).
 - **The recording of BT took numbers for pointers**: at the start of a
   battle the places of the scene's ships are whole, so their 16.16 x
   ([+0x8]) is x · 65536, 0x10xx0000 for x from 4096 on, and the heap gives
