@@ -541,6 +541,15 @@ tut3, 7 days; 39 s):
   lists of the boxes' ends, two bit matrices of the pairs that cross, then
   0x608850 for each pair crossing on both): saves 5, 6, tut0, 7 days,
   0x6113C9 972 + 547 + 166 calls, 0x6197F0 the same, 0 differences.
+- `battle/ship_step.cpp` (the step of a scene's ship), first part:
+  **0x6264C0** (it moves: its speed towards its battle speed by the wind,
+  its sails and the wind's strength; its ship's [+0x30]; then it turns to
+  where it heads, or the least avoided direction near it, with the sails set
+  by the distance) and **0x6271D7** (it turns: a rate by type, speed,
+  captain and hull; the way round with less to avoid). The shared arithmetic
+  is in `battle/battle_math.hpp`. Saves 5, 6, tut0, tut3, 7 days: 0x6264C0
+  3349 + 1807 + 330 + 214 calls, 0x6271D7 2477 + 1447 + 328 + 212, 0
+  differences.
 - **The recording of BT took numbers for pointers**: at the start of a
   battle the places of the scene's ships are whole, so their 16.16 x
   ([+0x8]) is x · 65536, 0x10xx0000 for x from 4096 on, and the heap gives
@@ -584,7 +593,8 @@ p3vita), and without `--battles` the first jump of the rule stays.
 - `tools/oracle/town_oracle.py`: the regions `ZMi`, `ZDi`, `ZPi` in
   `regions()` and in the header's list.
 - `tools/oracle/tick_probe.cpp`: load and dump of those regions.
-- `src/p3data/CMakeLists.txt`: the new file.
+- `src/p3data/CMakeLists.txt`: the new files (`battle/pirate_nests.cpp`,
+  ..., `battle/ship_step.cpp`).
 - `src/p3data/sailing.hpp`: `fn_514b80`, `set_pirate_disbanding`,
   `disband_`.
 - `tools/oracle/town_oracle.py`: `NO_DISBAND_JUMP` out of `PIRATE_JUMPS`,

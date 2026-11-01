@@ -234,6 +234,9 @@ public:
 	void fn_608850(size_t battle, uint16_t a, uint16_t b);  // (battle, method +0x0) Two items meet.
 	void fn_6113c9(size_t battle);  // (battle) The wind of a sub-step.
 	void fn_6197f0(size_t battle);  // (scene) The items that meet (method +0x0 for each pair).
+	// battle/ship_step.cpp: the step of a scene's ship (blocks of BattleGraph).
+	void fn_6271d7(size_t entry, uint8_t dir);  // (its [+0x4]) It turns towards a direction.
+	void fn_6264c0(size_t entry, uint8_t wind, uint8_t strength, bool flag);  // (its [+0x4]) It moves.
 	// battle/attack.cpp
 	void fn_50bc40(uint16_t convoy);  // (ships object) A pirate convoy attacks: a sea battle.
 	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.
