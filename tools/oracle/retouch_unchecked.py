@@ -2112,7 +2112,7 @@ class Blocks:
 def main():
     if '--list' in sys.argv:
         for name, s in SCENARIOS.items():
-            print(f'{name}: {(s.setup.__doc__ or "").strip().splitlines()[0]}')
+            print(f'{name}: {((s.setup.__doc__ or "").strip().splitlines() or [""])[0]}')
         return
     p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     p.add_argument('exe')
