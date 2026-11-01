@@ -490,6 +490,56 @@ bool looks_like_pointer(uint32_t v) {
 		(v >= 0x1000'0000 && v < 0x1800'0000);
 }
 
+// Whether the word at `w` of the game's region `name` (bytes `game`, value
+// `v`) is a pointer, which p3vita doesn't have or keeps elsewhere, so it is
+// not compared. The globals (G) and the armies (J) have pointers in places
+// not all known: there, every word that looks like one (looks_like_pointer:
+// the oracle's stack, save file and heap). Elsewhere only the known pointer
+// fields; the rest is compared even if it looks like a pointer (a building
+// record, a grid row or an event's bytes often do).
+bool pointer_field(const std::string& name, size_t w, const std::vector<uint8_t>& game, uint32_t v) {
+	const char kind = name[0];
+	if (name == "G" || kind == 'J') {
+		return looks_like_pointer(v);
+	}
+	if (name == "T") {
+		const size_t field = w % TownMemory::kSize;
+		return field == 0x75C || field == 0x80C || field == 0x9B4;  // records, grid, nodes [0x9B4]
+	}
+	if (name == "M") {
+		const size_t field = w % MerchantMemory::kSize;
+		return field == 0xE4 || field == 0xE8;  // the name's strings (0x512A60/0x512AE0)
+	}
+	if (name == "P") {
+		return w % ShipMemory::kSize == 0x24;  // the route, apart in p3vita
+	}
+	if (name == "X") {
+		const size_t field = w % SiegeMemory::kSize;
+		return field == 0x8 || field == 0x101C || field == 0x1020;  // the army and the two lists
+	}
+	if (kind == 'N') {
+		return w % 0x14 == 0;  // each node's address
+	}
+	if (kind == 'Z' && name.size() == 2) {
+		return w == 0x4;  // the pirate's object
+	}
+	if (name == "B") {
+		// The letters' buffers (load_mail: p3vita keeps 0 there).
+		const size_t field = w % 0x10;
+		const uint8_t type = game[w - field + 4];
+		const bool buffer = type == 0x29 || type == 0x47 || type == 0x63 || type == 0x83;
+		const bool record = (type >= 0x3C && type <= 0x40) || type == 0x71;
+		return (field == 0x8 && (buffer || record)) || (field == 0xC && record);
+	}
+	if (name == "E") {
+		// The events' objects (load_events: p3vita keeps 0 there).
+		const size_t field = w % 0x18;
+		const uint16_t type = uint16_t(game[w - field + 6] | game[w - field + 7] << 8);
+		return (type == 0x1B && (field == 0x8 || field == 0xC)) || (type == 0x34 && field == 0x8);
+	}
+	return false;
+}
+
 std::string describe(const std::string& region, size_t offset) {
 	char text[96];
 	const char* name = region.c_str();
@@ -580,7 +630,6 @@ int compare(const State& ours, const State& game, int& budget, const std::string
 				" en el juego");
 			continue;
 		}
-		const bool town = name == "T";
 		for (size_t i = 0; i < a.size(); ++i) {
 			i = next_difference(a.data(), b.data(), i, a.size());
 			if (i == a.size()) {
@@ -593,16 +642,7 @@ int compare(const State& ours, const State& game, int& budget, const std::string
 			const size_t w = i & ~size_t(3);
 			const uint32_t va = w + 4 <= a.size() ? get<uint32_t>(a.data(), w) : a[i];
 			const uint32_t vb = w + 4 <= b.size() ? get<uint32_t>(b.data(), w) : b[i];
-			const size_t field = town ? w % TownMemory::kSize : w;
-			// Punteros: los de la ciudad a sus registros, rejilla y nodos, los
-			// del comerciante a su nombre (0x512A60/0x512AE0) y el siguiente de
-			// cada nodo.
-			const size_t merchant_field = w % MerchantMemory::kSize;
-			// La ruta de un barco ([+0x24]) va aparte en p3vita.
-			const bool pointer = looks_like_pointer(vb) || (name == "P" && w % ShipMemory::kSize == 0x24) ||
-				(town && (field == 0x75C || field == 0x80C || field == 0x9B4)) || (name[0] == 'N' && w % 0x14 == 0) ||
-				(name == "M" && (merchant_field == 0xE4 || merchant_field == 0xE8));
-			if (!pointer) {
+			if (!pointer_field(name, w, b, vb)) {
 				char text[160];
 				std::snprintf(text, sizeof(text), "%s: juego %08x, p3vita %08x", describe(name, w).c_str(), vb, va);
 				report(text);

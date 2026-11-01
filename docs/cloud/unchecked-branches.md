@@ -153,15 +153,38 @@ How each was checked (details in «Fixes behind fix_game_bugs»):
     either). Recommendation: keep it; the alternative is (0, 0) and
     accepting a difference with the oracle in that retouched state.
 
-- **A blind spot of tick_probe** (shared file, not touched): a 4-byte word
-  that looks like a pointer (0x01000000..0x010FFFFF, 0x04000000..,
-  0x10000000..0x17FFFFFF) is never compared. In an event 0x32 the word
-  [+0xC..+0xF] is `01 merchant 00 01` for a started road task, so a wrong
-  merchant there was invisible (found with `road_expired`: the scenario now
-  sets [+0xE] = 0x20 to avoid it). The earlier checks of `alderman.cpp`
-  could have missed a difference in [+0xD] of a started task with
-  [+0xE] < 0x10. Suggestion for whoever owns tick_probe: don't take as
-  pointers the words of the regions that have no pointers (E, B, W...).
+- **tick_probe's blind spot, fixed** (third part, at your request; shared
+  file): it never compared a 4-byte word that looked like a pointer (the
+  oracle's stack 0x01000000..0x010FFFFF, save file 0x04000000.. and heap
+  0x10000000..0x17FFFFFF), in any region. That hid much more than the
+  events: in saves 3 and tut4 right after loading, thousands of grid words
+  (0x10101010...), hundreds of building records (type 0x10..0x17 in the
+  high byte), about 100 fields of the towns, offices' and merchants' fields
+  (names, ranks), the businesses' staff [+0x4] of the world records, the
+  events' [+0xC] (a started road task's `01 merchant 00 01`), the routes...
+  Now that rule stays only for the globals (G) and the armies (J), whose
+  pointers aren't all known; elsewhere only the known pointer fields are
+  skipped: the towns' records, grid and nodes ([+0x75C], [+0x80C],
+  [+0x9B4]), the merchants' names ([+0xE4], [+0xE8]), the ships' routes
+  ([+0x24]), the sieges' army and lists ([+0x8], [+0x101C], [+0x1020]),
+  the nodes' addresses, the pirates' objects ([+0x4]), and the buffers the
+  loader leaves at 0 in the letters ([+0x8] of types 0x29, 0x47, 0x63,
+  0x83; [+0x8] and [+0xC] of 0x3C..0x40 and 0x71) and the events ([+0x8]
+  and [+0xC] of 0x1B, [+0x8] of 0x34). Checked:
+  - `road_expired` without its workaround ([+0xE] = 0x20, now gone) shows
+    the copy's merchant with `--fix-game-bugs`, which was invisible;
+  - the whole world, 7 days, 12 saves: still 0 different (skipped as
+    always), so nothing was hiding a difference there;
+  - every scenario of this task again (`alderman.cpp`'s in saves 1 and 3
+    or 3 and 5 as before, the rest in 3 and 5): every call equal, the same
+    targets hit; only the two known exceptions (`housing`'s target that is
+    never reached, and `siege_fixes`'s second town, J1 and T[1] only);
+  - the fixes with `--fix-game-bugs`: the same differences as before, no
+    more.
+
+  So `alderman.cpp`'s [+0xD] of the started tasks (and everything else) was
+  right: nothing to change there. Not covered: the globals and the armies
+  keep the old rule (a pointer-looking value there is still skipped).
 
 ## How it is checked
 
@@ -423,7 +446,7 @@ what the fix changes:
 
 | Fix | Scenario | With `--fix-game-bugs`, the differences |
 |---|---|---|
-| The player's expired road | `road_expired` (new: the player's road task expiring in the next tick, town 1 < merchants) | one call of 0x4D85C0: the copy's [+0xD], 0x01 → 0xFF |
+| The player's expired road | `road_expired` (new: the player's road task expiring in the next tick, town 1 < merchants; only visible since tick_probe's blind spot was fixed, or with [+0xE] ≥ 0x10) | one call of 0x4D85C0: the copy's [+0xD], 0x01 → 0xFF |
 | Operation 0x3B, merchant out of the world | `hanse_ops` | the 5 calls of 0x3B with that merchant: the task's counters [+0x13..+0x17] left as they were |
 | The gate's upgrade 0x523D70 | `gate_costs` (new: the merchant's office with some of each material); `tower_ops` | 0x523D70's call: the office gives 5 barrels of tools (what the gate needs, not the timber's amount), the town doesn't lose its tools and takes timber, the merchant gets 1626 ([+0x0], [+0x49C]), the town's expense [+0x71C] and money [+0x700] |
 | 0x524920's cells | `pier_edge` (new: the only pier cell at (last column, 1)) | the third cell, the last row of the previous column, not written |
@@ -531,7 +554,8 @@ workers (0x51C360).
 - `tools/oracle/CMakeLists.txt`: `probes_unchecked.cpp` added to tick_probe.
 - `tools/oracle/probe_registry.hpp`: `register_probes_unchecked` declared.
 - `tools/oracle/tick_probe.cpp`: `register_probes_unchecked(registry);`
-  after `register_probes_battle`.
+  after `register_probes_battle`; and (third part) `pointer_field`, which
+  replaces the pointer test in `compare` (see «Decisions for the user»).
 
 ## Times
 
