@@ -59,7 +59,8 @@ std::vector<uint8_t> write_statistics(SaveGame& save);
 // Tut*.pst of missav/ are 8) it empties them (0x54DDF0) and reads nothing.
 // GAME BUG (looks like one): it builds each merchant's object with 0x54CA20
 // for the merchant 0, whose record of the day clears the counters of the
-// merchant 0, before reading the object over it. False if it is cut short.
+// merchant 0, before reading the object over it; with fix_game_bugs() the
+// counters stay. False if it is cut short.
 bool read_statistics(const uint8_t* data, size_t size, SaveGame& save);
 
 }  // namespace p3::data

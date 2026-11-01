@@ -29,7 +29,8 @@ three bugs of the game's save are fixed behind `fix_game_bugs()` (§4).
   also in retouched states aimed at the branches the saves don't reach.
 - **Two game bugs, reproduced and marked** (§2): the `.pst` size has one
   byte too many when there are months, and reading a `.pst` clears the
-  counters of merchant 0.
+  counters of merchant 0. The second one is now fixed behind
+  `fix_game_bugs()` (§4.4).
 - **Three save bugs, fixed behind `fix_game_bugs()`** (§4), in
   `savegame_write.cpp`:
   - the hometown's name in the settings (0x549D7D);
@@ -78,11 +79,10 @@ The statistics make the oracle's whole world about 37 % slower: in
    have those operations yet. *Recommendation:* whoever owns `merchants.cpp`
    adds the two calls at those two points of `fn_4f5d80`. That's two lines,
    and `world.sh` checks them as soon as some save reaches a bankruptcy.
-2. **The two game bugs of the `.pst`** (the extra byte, and merchant 0's
-   counters cleared on reading). Both are reproduced as the game has them.
-   *Recommendation:* keep them. If you want them under main's new setting
-   for fixing the game's bugs (21cade4), only the reading one changes
-   anything you can see in play.
+2. **The extra byte of the `.pst`.** It is reproduced as the game has it,
+   and it isn't behind the setting. The reading bug (merchant 0's
+   counters) now is (§4.4). *Recommendation:* leave the extra byte as it
+   is. Nobody reads it, so fixing it would only change the file's size.
 3. **`retouch.py` and `retouch_storms.py`.** They keep
    `TownOracle(statistics=False)`, so their recordings don't change. They do
    now get the loader's last steps (`last_steps=True`), as the game does.
@@ -222,7 +222,8 @@ Two things of the game reproduced:
   the emulator; p3vita writes 0). The reader leaves it.
 - **0x54DA60 builds each merchant's object with 0x54CA20 for the merchant
   0** before reading it over: the record of the day of the merchant 0 clears
-  his 15 counters at each object read.
+  his 15 counters at each object read. Fixed behind `fix_game_bugs()`
+  (§4.4).
 
 Checks (`scripts/write-after-days.sh 4`, which now compares the `.pst` of the
 game and of p3vita byte for byte, and then makes the game's readers load
@@ -338,11 +339,38 @@ when it is on (the viewer's default).
    the nodes only as the file's bytes and nothing reads [+0x6], so the
    reader needs no change.
 
+4. **Reading a `.pst` clears the counters of merchant 0 (0x54DA60), looks
+   like one.** For each object it reads, the game first builds an object
+   for merchant 0 with 0x54CA20. That runs merchant 0's record of the day
+   (0x54C520), which takes his 15 counters [0x484..0x4CC] and clears them.
+   Then the file overwrites the 0x6C bytes of every record of the rings, so
+   the object read doesn't depend on that record. Fixed in
+   `read_statistics` (`statistics.cpp`, where the reader is; the load calls
+   it through `load_statistics_file`): the record is taken without clearing
+   (`merchant_record(..., clear)`). The object is the same byte for byte,
+   and merchant 0 keeps his counters of the day. 0x4F9580 and 0x4F73D0,
+   which the record also calls, only read.
+
 Tools: `p3save --fix-game-bugs` (anywhere in the line) and
 `P3_FIX_GAME_BUGS=1` for `write-check.sh`, `write-reload.sh` and
-`write-retouched.sh`. These pass it to `p3save write`. `write-after-days.sh`
-doesn't take it, because there the setting would also change the
-simulation (main's fixes in `town_tick`). The checks are in the Summary.
+`write-retouched.sh`. These pass it to `p3save write`. In
+`write-after-days.sh`, `P3_FIX_GAME_BUGS=1` reaches only p3vita's reload of
+the `.pat` and the `.pst` (`tick_probe --carga --pst --fix-game-bugs`). The
+days and the writing stay the game's, because there the setting would also
+change the simulation (main's fixes in `town_tick`).
+
+Checks of the fix of the reading:
+
+| Check | Setting off | Setting on |
+|-|-|-|
+| `write-after-days.sh 4 1 3 7` | as before: 0 calls different; 0, 0 and the 12 bytes of 7; same `.pst`; reload 0 | |
+| reload after 4 days, saves 1 and 3 | 0 differences | 6 differences in each, all in merchant 0's counters (1: [0x494], [0x4A4], [0x4B0], [0x4B4], [0x4BC], [0x4C0]; 3: [0x484], [0x494], [0x4A4], [0x4B0], [0x4B4], [0x4BC]). The game leaves them at 0, p3vita keeps them. The statistics objects are the same |
+| reload after 1 day, tut4 | 0 differences | 3 differences, merchant 0's counters |
+| `write-check.sh` (12), `write-reload.sh` (12), `write-retouched.sh` 1, 3, tut4 | as before (11 with 0 bytes and 7 with its 12; reload 0 in the 12; retouched 0 and 0) | |
+| ctest, Vita build | 11 of 11; builds | |
+
+`world.sh` doesn't read a `.pst` (the `Tut*.pst` of `missav/` are version 8
+and are cleared without reading), so this fix can't change it.
 
 ## Changes to shared files
 
@@ -402,7 +430,8 @@ simulation (main's fixes in `town_tick`). The checks are in the Summary.
   in §4 (the constructor's arguments `pirates, statistics, last_steps`, and
   the call in `main` passing `a.pirates, not a.no_statistics`).
   `tools/p3save/main.cpp`: `--fix-game-bugs`. `scripts/write-check.sh`,
-  `write-reload.sh` and `write-retouched.sh`: `P3_FIX_GAME_BUGS`.
+  `write-reload.sh`, `write-retouched.sh` and `write-after-days.sh`:
+  `P3_FIX_GAME_BUGS`.
 - New: `src/p3data/statistics.{hpp,cpp}`, `savegame_load.{hpp,cpp}`,
   `sailing_load.cpp`, `tools/oracle/probes_statistics.cpp` (also 0x54E1F0),
   `retouch_date.py`, `retouch_statistics.py`, `scripts/statistics-world.sh`.
