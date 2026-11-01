@@ -892,6 +892,7 @@ bool parse_ships(Reader& r, SaveGame& out, std::string* error) {
 		r.skip(size_t(p.u16(0x8)) * 8);
 		out.opaque.pirate_records[i] = r.since(records_start);
 	}
+	load_pirate_nests(out);
 	return r.ok() || fail(error, std::string(kTruncated) + " (barcos)");
 }
 

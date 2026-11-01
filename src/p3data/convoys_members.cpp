@@ -32,6 +32,11 @@
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 
+namespace p3::data::tick::events_detail {
+// 0x5097C0 (town_tick/events*.cpp): a new captain.
+uint16_t fn_5097c0(SaveGame& save, bool keep);
+}  // namespace p3::data::tick::events_detail
+
 namespace p3::data {
 
 namespace {
@@ -150,13 +155,33 @@ bool Sailing::fn_5017f0(int convoy) {
 		}
 	}
 	if (uint16_t(c.u8(0x0)) >= merchant_count(save_)) {
-		// Convoy de piratas (0x5018E4): guía el primero con casco y capitán
-		// (true) o, si no hay, el primero con casco, al que se le da un
-		// capitán nuevo (0x5097C0, que lo inicializa con 0x4FDF50) (true); si
-		// ninguno tiene casco, sin guía y false. No se reproduce: solo lo
-		// alcanzan los piratas, cuyos convoyes no se mueven (ver la cabecera
-		// de convoys.cpp), y 0x4FDF50 divide entre los u16 [0x6DDB70] y
-		// [0x6DDB74], que el oráculo deja a 0.
+		// A pirate convoy (0x5018E4): the first ship with hull and a captain
+		// guides it; else the first with hull, which gets a new captain
+		// (0x5097C0 with 1); either way the bit 0x10 of [+0x14] is cleared and
+		// it goes back to the list by x if the old one was in it (true). If no
+		// ship has hull, [+0x10] is left past the last one and false.
+		const uint16_t first = c.u16(0xA);
+		for (c.u16(0x10) = first; c.u16(0x10) < count; c.u16(0x10) = save_.ships[c.u16(0x10)].memory.u16(0x6)) {
+			const ShipMemory& m = save_.ships[c.u16(0x10)].memory;
+			if (m.s32(0x18) > 0 && m.u16(0x42) < captain_count(save_)) {
+				c.u8(0x14) &= 0xEF;
+				if (relink) {
+					insert_x(c.u16(0x10), 0xFFFF);
+				}
+				return true;
+			}
+		}
+		for (c.u16(0x10) = first; c.u16(0x10) < count; c.u16(0x10) = save_.ships[c.u16(0x10)].memory.u16(0x6)) {
+			ShipMemory& m = save_.ships[c.u16(0x10)].memory;
+			if (m.s32(0x18) > 0) {
+				m.u16(0x42) = tick::events_detail::fn_5097c0(save_, true);
+				save_.convoys[size_t(convoy)].u8(0x14) &= 0xEF;
+				if (relink) {
+					insert_x(save_.convoys[size_t(convoy)].u16(0x10), 0xFFFF);
+				}
+				return true;
+			}
+		}
 		return false;
 	}
 	for (uint32_t i = c.u16(0xA); i < ship_count(save_); i = save_.ships[i].memory.u16(0x6)) {

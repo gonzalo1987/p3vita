@@ -24,6 +24,13 @@ El estado son copias de la memoria del juego, por regiones:
          puntos y los puntos (i16 x, i16 y)
   K0..K7 los 40 bytes de cada hueco del objeto 0x6DE588 (*[0x6DEF90 + 4·i]; vacío si no hay)
   Z0..Z4 los 0x18 bytes de los 5 piratas del objeto de los barcos (*[0x6DD7AC + 4·i]; vacío si no hay)
+  BA     the address of each block of BT in the emulator (for the probes)
+  BT     the battles: the object of 0x6E55D0 and every heap block that hangs from
+         it, pointers inside turned into BATTLE_POINTER | block << 16 | offset
+         (see TownOracle.battle_graph)
+  ZMi ZDi ZPi  what pirate i points to: the map of its nest ([+0x0], 0x6C bytes),
+         its cells ([+0x68] of the map, width × height) and the pool ([+0x4],
+         [+0x8] entries of 8 bytes); empty if it has none
   F0..F14 los encargos de los 15 objetos del mundo (lista de [+0x24] de 0x6DEFB0 + 0x2C·i):
          los 16 bytes de datos de cada nodo, en orden
   Ri Di Ni  registros de edificio, rejilla y nodos (0x14) de la ciudad i; en
@@ -42,8 +49,8 @@ Formato del fichero (enteros little endian):
 
 uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días> <función>[,<función>...]
        [--desde DÍA] [--max N] [--semilla S] [--cpr p2arch0_eng.cpr] [--barcos DATOS [--sin-ia] [--sin-convoyes]
-       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms] [--pirates]
-       [--no-statistics]] [--pst FILE] [--write OUT]
+       [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms]
+       [--pirates [--no-disband] [--battles]] [--no-statistics]] [--pst FILE] [--write OUT]
 La función 51ba10 graba los ticks de ciudad enteros.
 
 Con --cpr (o si DATOS/scripts tiene los ficheros), la carga crea también el
@@ -179,14 +186,48 @@ ENCOUNTERS = 0x5079DA  # cada 8 ticks, 0x5053C0 (encuentros): se salta
 STORM_UI_JUMPS = {0x50596F: 0x505983, 0x5059CA: 0x5059E0}
 # With --pirates, the pirate convoys move (their state 0x12, 0x507A65) and the
 # per-town waypoints they choose from are computed at the load (0x448780, on
-# the navigation object). Until the battles are rewritten, the two places
-# where a battle would start are jumped over: the attack on the target
-# (0x507BE9 → 0x50BC40) goes on as if there were no target, and the end of the
-# route (0x507C0B → a town battle) goes on as if the convoy still sailed.
-# And, until 0x514B80 is rewritten, a convoy at its nest is not disbanded
-# (0x505FF1 → 0x506029, in 0x505C90: as if it were elsewhere).
-PIRATE_JUMPS = {0x507BE9: 0x507B23, 0x507C0B: 0x507B5F, 0x505FF1: 0x506029}
+# the navigation object). Their attack on a target (0x507BE9 → 0x50BC40, a
+# sea battle) runs, with the battles' clock (BATTLE_STEPS; the sea battles are
+# rewritten in p3vita, docs/cloud/battles-2.md §4). The end of the route
+# (0x507C0B → a town battle, not rewritten yet) is jumped over: the convoy
+# goes on as if it still sailed.
+# The ships in state 0x11 (lost: in port 0x506AF2, at sea 0x507022) and the
+# pirates alone at sea (0x12, 0x507099) go through too.
+# A convoy at its nest is disbanded (0x514B80, rewritten in p3vita); with
+# --no-disband it is not (NO_DISBAND_JUMP, 0x505FF1 → 0x506029 in 0x505C90:
+# as if it were elsewhere), as before cloud/battles-2.
+# At a sea battle's end (0x60D299) the news ticker's window (*0x6CC7E8,
+# 0x469380 and 0x469AF0) is jumped over (0x60EB55 → 0x60EBAC); the tick in
+# the battles object's [+0x408] is kept.
+PIRATE_JUMPS = {0x507C0B: 0x507B5F, 0x60EB55: 0x60EBAC}
+NO_DISBAND_JUMP = {0x505FF1: 0x506029}
+# With --pirates, the pirate objects' daily update runs (0x514000, otherwise
+# quiet) and the operation it queues is executed: 0xB5, a convoy leaves the
+# nest (0x514D40).
+PIRATE_UPDATE = 0x514000
+PIRATE_OPERATIONS = (0xB5,)
 PIRATE_WAYPOINTS = 0x448780
+# The battles (docs/cloud/battles-2.md §3): the object of 0x6E55D0 and its
+# heap blocks, recorded as the region BT (TownOracle.battle_graph).
+BATTLES = 0x6E55D0
+READ_BATTLES = 0x611AE0  # thiscall on BATTLES, (data, version) → end
+SEPARATOR_BYTES = b'\xfe\xaf\x00\x00'
+BATTLES_SIZE = 0xC48
+BATTLE_COUNT = BATTLES + 0x404  # u8: slots in use
+BATTLE_POINTER = 0xF0000000  # | block << 16 | offset: a pointer inside the graph
+HEAP_BEGIN, HEAP_END = 0x1000_0000, 0x1800_0000
+# The words of a battle block that are numbers even when they look like a
+# pointer, by (size, vtable): a scene's ship's place and speeds in 16.16 (x ·
+# 65536 can be the address of a heap block: at the start of a battle the
+# places are whole and a block can start at 0x10xx0000), a sea battle's
+# generator. As BattleGraph::number_field.
+BATTLE_NUMBERS = {(0x164, 0x67B0D4): (0x8, 0xC, 0x14, 0x18, 0x1C), (0x1E98, 0x67AD44): (0xADC,)}
+# With --pirates, after each tick with battles the oracle executes operation
+# 0x94 with BATTLE_STEPS steps (the clock rule of docs/oracle.md: the game's
+# real-time driver 0x612DB0 queues it with the steps of the real clock, about
+# 84.4 per tick). (Until cloud/battles-2 this needed --battles, and without
+# it the attack 0x507BE9 was jumped over too.)
+BATTLE_STEPS = 84
 EPILOGUE = 0x5079E8
 DOCKED_STATES = (0, 1, 2, 3, 4, 5)
 
@@ -297,8 +338,12 @@ def executor_trampoline(at):
 
 class TownOracle(SaveOracle):
     def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True, rest=(), cpr=None,
-                 operations=OPERATIONS, storms=True, pirates=False, statistics=False, last_steps=True):
+                 operations=OPERATIONS, storms=True, pirates=False, statistics=False, last_steps=True,
+                 disband=True, battles=False):
         self.pirates = pirates and navdata is not None and convoys
+        self.battles = self.pirates  # `battles` is kept for older scripts.
+        if self.pirates:
+            operations = tuple(operations) + PIRATE_OPERATIONS
         super().__init__(exe, save, navdata)
         self.fast_read = fast_reader(self.uc)
         self.navdata = navdata
@@ -324,12 +369,15 @@ class TownOracle(SaveOracle):
         quiet = {**QUIET, ENQUEUE: 4}
         if self.ships:
             quiet.update(QUIET_SHIPS)
+            if self.pirates:
+                del quiet[PIRATE_UPDATE]
             self.uc.hook_add(UC_HOOK_CODE, self._docked, begin=DOCKED_DISPATCH, end=DOCKED_DISPATCH)
             self.uc.hook_add(UC_HOOK_CODE, self._sailing, begin=SAILING_DISPATCH, end=SAILING_DISPATCH)
             if convoys:
                 self.uc.hook_add(UC_HOOK_CODE, self._convoy, begin=CONVOY_DISPATCH, end=CONVOY_DISPATCH)
                 if self.pirates:
-                    for address, target in PIRATE_JUMPS.items():
+                    jumps = dict(PIRATE_JUMPS if disband else {**PIRATE_JUMPS, **NO_DISBAND_JUMP})
+                    for address, target in jumps.items():
                         self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
                 if storms:
                     for address, target in STORM_UI_JUMPS.items():
@@ -372,7 +420,9 @@ class TownOracle(SaveOracle):
     def _docked(self, uc, address, size, user_data):
         from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_ESI
         status = uc.reg_read(UC_X86_REG_ECX)
-        if self.ai:
+        if self.pirates and status == 0x11:
+            allowed = True  # 0x506AF2, a lost ship (with 0x517170)
+        elif self.ai:
             allowed = status in DOCKED_STATES
         else:
             owner = self.u8(uc.reg_read(UC_X86_REG_ESI))
@@ -383,7 +433,10 @@ class TownOracle(SaveOracle):
 
     def _sailing(self, uc, address, size, user_data):
         from unicorn.x86_const import UC_X86_REG_ESI
-        if self.u16(uc.reg_read(UC_X86_REG_ESI) + 0x134) != 0x0F:
+        status = self.u16(uc.reg_read(UC_X86_REG_ESI) + 0x134)
+        # With --pirates, also 0x11 (a lost ship, 0x507022) and 0x12 (a pirate
+        # alone, 0x507099: it becomes a convoy).
+        if status != 0x0F and not (self.pirates and status in (0x11, 0x12)):
             uc.reg_write(UC_X86_REG_EIP, SAILING_SKIP)
 
     def _convoy(self, uc, address, size, user_data):
@@ -441,6 +494,26 @@ class TownOracle(SaveOracle):
         _, _, merchants, _ = self.counts()
         player = max((i for i in range(merchants) if self.u16(self.merchant(i) + 8) == 0), default=0)
         self.write_u32(PLAYER, player)
+        self.load_battles()
+
+    def load_battles(self):
+        """The battles of the save (0x611AE0 on 0x6E55D0, the third section
+        from the end; 0x549F40 reads it after the events, and nothing read in
+        between uses it): saves 6, 7 and tut4 start with a sea battle
+        (docs/cloud/battles-2.md §5). Once (write_oracle.prepare_game_object
+        doesn't read it again)."""
+        separators = []
+        pos = len(self.save) - 4
+        while pos > 0 and len(separators) < 3:
+            if self.save[pos:pos + 4] == SEPARATOR_BYTES:
+                separators.append(pos)
+            pos -= 1
+        start, end = separators[2] + 4, separators[1]
+        version = struct.unpack_from('<I', self.save, 0)[0] >> 16
+        got = self.call(READ_BATTLES, [FILE + start, version], ecx=BATTLES) - FILE
+        if got != end:
+            raise RuntimeError(f'the battles end at {got}, not at {end}')
+        self.battles_loaded = True
 
     def setup_imports(self, exe):
         """Las funciones importadas se llaman por la tabla de importaciones, que
@@ -515,8 +588,13 @@ class TownOracle(SaveOracle):
             result, pop = 1, 12
         elif name == 'HeapReAlloc':
             old, size = a(2), a(3)
+            # The old block's requested bytes are kept and the rest is zero, as
+            # alloc gives zeros (before, the copy went up to the old block's
+            # rounded size, bringing the slack's stale bytes; the battles'
+            # page arrays read them: docs/cloud/battles-2.md §4).
+            kept = self.__dict__.get('requested', {}).get(old, self.sizes.get(old, 0))
             result = self.alloc(size)
-            self.uc.mem_write(result, bytes(self.uc.mem_read(old, min(size, self.sizes.get(old, 0)))))
+            self.uc.mem_write(result, bytes(self.uc.mem_read(old, min(size, kept))))
             self.release(old)
             pop = 16
         elif name == 'arc_CreateFile':
@@ -744,6 +822,13 @@ class TownOracle(SaveOracle):
                     self.uc.mem_write(buffer, op)
                     self.call(EXECUTOR_TRAMPOLINE, list(struct.unpack('<5I', op)) + [EXECUTOR_MAGIC], ecx=buffer)
             self.tick_operations = []
+        if self.battles and self.u8(BATTLE_COUNT):
+            # The clock rule: operation 0x94 with BATTLE_STEPS steps after the
+            # tick's other operations, when there are battles.
+            op = struct.pack('<5I', 0x94, BATTLE_STEPS, 0, 0, 0)
+            buffer = self.alloc(OPERATION_SIZE)
+            self.uc.mem_write(buffer, op)
+            self.call(EXECUTOR_TRAMPOLINE, list(struct.unpack('<5I', op)) + [EXECUTOR_MAGIC], ecx=buffer)
         return tick
 
     def run_rest(self, target, args, ecx):
@@ -850,7 +935,18 @@ class TownOracle(SaveOracle):
             out[f'K{i}'] = (p, block(p, 40 if p else 0))
         for i in range(5):
             p = gu32(SHIPS + 0xC + 4 * i)
-            out[f'Z{i}'] = (p, block(p, 0x18 if p else 0))
+            pirate = block(p, 0x18 if p else 0)
+            out[f'Z{i}'] = (p, pirate)
+            # What the pirate points to: the map of its nest ([+0x0], 0x6C
+            # bytes, and its cells, [+0x68]) and the pool ([+0x4], [+0x8]
+            # entries of 8 bytes).
+            nest_map, pool = unpack('<II', pirate, 0) if p else (0, 0)
+            map_block = block(nest_map, 0x6C if nest_map else 0)
+            out[f'ZM{i}'] = (nest_map, map_block)
+            cells = unpack('<I', map_block, 0x68)[0] if nest_map else 0
+            width, height = unpack('<ii', map_block, 4) if cells else (0, 0)
+            out[f'ZD{i}'] = (cells, block(cells, width * height if cells and width > 0 and height > 0 else 0))
+            out[f'ZP{i}'] = (pool, block(pool, 8 * unpack('<H', pirate, 8)[0] if pool else 0))
         for i in range(15):
             head = gu32(WORLD + 0xB10 + 0x2C * i + 0x24)
             nodes = []
@@ -875,6 +971,9 @@ class TownOracle(SaveOracle):
                 nodes.append(piece[4:])
                 node = unpack('<I', piece, 0)[0]
             out[f'N{i}'] = (first, b''.join(nodes))
+        graph, addresses = self.battle_graph(read, {a for a, _ in out.values() if a})
+        out['BT'] = (BATTLES, graph)
+        out['BA'] = (0, addresses)
         # The statistics (0x6DFC90): S0..S3 the records of the towns of its
         # lists [+0xC] (days), [+0x10] (weeks), [+0x14] (months) and [+0x18]
         # (years), newest first: u32 number and the blocks of 0x204 bytes of
@@ -913,6 +1012,68 @@ class TownOracle(SaveOracle):
         out['S4'] = (0, b''.join(objects))
         out['r'] = (0, struct.pack('<I', self.rand_state))
         return out
+
+    def battle_graph(self, read, world):
+        """The battles as one block graph (region BT): block 0 is the battles
+        object 0x6E55D0 (BATTLES_SIZE bytes: the 255 slots, the count
+        [+0x404], the timers [+0xC30], the clock [+0xC44]...), then every heap
+        block reachable from it through a pointer to the block's start (not
+        the world's blocks: the regions), in the order of a walk by offsets.
+        Each pointer into one of these blocks is replaced by BATTLE_POINTER |
+        block << 16 | offset; other pointers (the navigation's points...) stay.
+        Bytes: u32 number of blocks and, for each, u32 size and the bytes. Also
+        the emulator's address of each block (region BA: tick_probe's probes
+        find a block by the pointer a function receives; not compared)."""
+        unpack = struct.unpack_from
+        sizes = self.sizes
+        requested = self.__dict__.get('requested', {})
+        # The pages of a sea battle's bits (its page lists [+0x48], [+0x4C],
+        # [+0x50]): every word a mask of bits, a number (bit 28 is the heap's
+        # first block). As BattleGraph::bit_pages.
+        lists, pages = set(), set()
+        def numbers(address, data):
+            if address in pages:
+                return range(0, len(data), 4)
+            vtable = unpack('<I', data, 0)[0] if len(data) >= 4 else 0
+            return BATTLE_NUMBERS.get((len(data), vtable), ())
+
+        blocks = [(BATTLES, read(BATTLES, BATTLES_SIZE))]
+        index = {BATTLES: 0}
+        i = 0
+        while i < len(blocks):
+            address, data = blocks[i]
+            if len(data) == 0x1E98 and unpack('<I', data, 0)[0] == 0x67AD44:
+                lists.update(unpack('<I', data, o)[0] for o in (0x48, 0x4C, 0x50))
+            elif address in lists:
+                pages.update(unpack(f'<{len(data) // 4}I', data))
+            skip = numbers(address, data)
+            for k, v in enumerate(unpack(f'<{len(data) // 4}I', data)):
+                if 4 * k in skip:
+                    continue
+                if HEAP_BEGIN <= v < HEAP_END and v not in index and v in sizes and v not in world:
+                    index[v] = len(blocks)
+                    blocks.append((v, read(v, requested.get(v, sizes[v]))))
+            i += 1
+        spans = [(a, a + len(d), j) for j, (a, d) in enumerate(blocks)]
+        parts = [struct.pack('<I', len(blocks))]
+        for a, data in blocks:
+            words = list(unpack(f'<{len(data) // 4}I', data))
+            changed = False
+            skip = numbers(a, data)
+            for k, v in enumerate(words):
+                if 4 * k in skip:
+                    continue
+                if HEAP_BEGIN <= v < HEAP_END or v == BATTLES or BATTLES < v < BATTLES + BATTLES_SIZE:
+                    for lo, hi, j in spans:
+                        if lo <= v < hi:
+                            words[k] = BATTLE_POINTER | j << 16 | (v - lo)
+                            changed = True
+                            break
+            if changed:
+                data = struct.pack(f'<{len(words)}I', *words) + data[len(words) * 4:]
+            parts.append(struct.pack('<I', len(data)))
+            parts.append(data)
+        return b''.join(parts), struct.pack(f'<{len(blocks)}I', *(a for a, _ in blocks))
 
 
 def write_regions(f, regions):
@@ -1133,7 +1294,12 @@ def main():
                    help='with --barcos, without the storms (0x5053C0, every 8 ticks), which run by default')
     p.add_argument('--storms', action='store_true', help='on by default now; kept for older scripts')
     p.add_argument('--pirates', action='store_true',
-                   help='with --barcos, the pirate convoys move (without battles yet; see PIRATE_JUMPS)')
+                   help='with --barcos, the pirate convoys move and attack (sea battles; see PIRATE_JUMPS)')
+    p.add_argument('--battles', action='store_true',
+                   help='on with --pirates now (the pirates attack, 0x50BC40, and operation 0x94 steps the '
+                        'battles); kept for older scripts')
+    p.add_argument('--no-disband', action='store_true',
+                   help='with --pirates, a convoy at its nest is not disbanded (0x514B80; NO_DISBAND_JUMP)')
     p.add_argument('--pst', metavar='FILE', help='an uncompressed .pst to read after the save (0x54DA60)')
     p.add_argument('--no-statistics', action='store_true',
                    help='without the daily statistics (0x54DE90, after 0x5315C0; regions S0..S4), which run by default')
@@ -1155,7 +1321,7 @@ def main():
         rest = [int(x, 16) for x in a.resto.split(',') if x]
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
                    not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], not a.no_storms,
-                   a.pirates, not a.no_statistics)
+                   a.pirates, not a.no_statistics, disband=not a.no_disband, battles=a.battles)
     o.load()
     if a.pst:
         # The .pst next to the save (uncompressed), as 0x5476E0 reads it.

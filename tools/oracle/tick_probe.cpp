@@ -7,6 +7,9 @@
 //          [--sin-convoyes] [--no-storms]]] [--max N] [--write OUT]
 // --no-storms: without the storms (0x5053C0), as town_oracle.py --no-storms.
 // --pirates: the pirate convoys move (battle/pirates.cpp), as town_oracle.py --pirates.
+// --no-disband: with --pirates, a convoy at its nest is not disbanded, as town_oracle.py --no-disband.
+// --battles: kept for older scripts; the battles go with --pirates now (Sailing::set_pirates), as in
+// town_oracle.py.
 // --fix-game-bugs: with the fixes to the game's bugs (game_fixes.hpp), off by default.
 // --storms (on by default now) is still accepted.
 //
@@ -62,6 +65,19 @@
 
 using namespace p3::data;
 using namespace p3::probe;
+
+namespace {
+std::vector<uint32_t> g_battle_addresses;  // region BA: the emulator's address of each block of BT
+}  // namespace
+
+int p3::probe::battle_block(uint32_t address) {
+	for (size_t i = 0; i < g_battle_addresses.size(); ++i) {
+		if (g_battle_addresses[i] == address && address != 0) {
+			return int(i);
+		}
+	}
+	return -1;
+}
 
 namespace {
 
@@ -317,6 +333,20 @@ void build_save(const State& state, SaveGame& save) {
 	for (size_t i = 0; i < save.pirates.size(); ++i) {
 		if (const Region* z = find(state, "Z" + std::to_string(i)); z && z->bytes.size() == 0x18) {
 			std::memcpy(save.pirates[i].emplace().bytes.data(), z->bytes.data(), 0x18);
+		} else if (z) {
+			save.pirates[i].reset();  // No pirate (an empty region): not the one of an earlier sample.
+		}
+		// The map of the nest, its cells and the pool (battle/pirate_nests.hpp).
+		PirateNest& nest = save.pirate_nests[i];
+		nest = PirateNest{};
+		if (const Region* m = find(state, "ZM" + std::to_string(i)); m && m->bytes.size() == 0x6C) {
+			std::memcpy(nest.map.emplace().bytes.data(), m->bytes.data(), 0x6C);
+		}
+		if (const Region* d = find(state, "ZD" + std::to_string(i))) {
+			nest.cells = d->bytes;
+		}
+		if (const Region* p = find(state, "ZP" + std::to_string(i))) {
+			copy_blocks(*p, nest.pool);
 		}
 	}
 	for (size_t i = 0; i < save.world_object_lists.size(); ++i) {
@@ -327,6 +357,26 @@ void build_save(const State& state, SaveGame& save) {
 	for (int k = 0; k < 5; ++k) {  // The statistics (town_oracle.py --statistics).
 		if (const Region* r = find(state, "S" + std::to_string(k))) {
 			read_statistics_region(save, k, r->bytes);
+		}
+	}
+	if (const Region* ba = find(state, "BA")) {
+		g_battle_addresses.assign(ba->bytes.size() / 4, 0);
+		std::memcpy(g_battle_addresses.data(), ba->bytes.data(), g_battle_addresses.size() * 4);
+	}
+	if (const Region* bt = find(state, "BT")) {
+		// The battles: u32 number of blocks and, for each, u32 size and the bytes.
+		const std::vector<uint8_t>& b = bt->bytes;
+		save.battles.blocks.clear();
+		size_t o = 4;
+		const uint32_t n = b.size() >= 4 ? get<uint32_t>(b.data(), 0) : 0;
+		for (uint32_t k = 0; k < n && o + 4 <= b.size(); ++k) {
+			const uint32_t size = get<uint32_t>(b.data(), o);
+			o += 4;
+			save.battles.blocks.emplace_back(b.begin() + std::ptrdiff_t(o), b.begin() + std::ptrdiff_t(o + size));
+			o += size;
+		}
+		if (save.battles.blocks.empty()) {
+			save.battles = BattleGraph{};
 		}
 	}
 	save.rand_state = get<uint32_t>(state.at("r").bytes.data(), 0);
@@ -433,11 +483,36 @@ State dump_save(const SaveGame& save, const State& game) {
 				b.assign(save.pirates[i]->bytes.begin(), save.pirates[i]->bytes.end());
 			}
 		}
+		const PirateNest& nest = save.pirate_nests[i];
+		if (auto m = s.find("ZM" + std::to_string(i)); m != s.end()) {
+			m->second.bytes.clear();
+			if (nest.map) {
+				m->second.bytes.assign(nest.map->bytes.begin(), nest.map->bytes.end());
+			}
+		}
+		if (auto d = s.find("ZD" + std::to_string(i)); d != s.end()) {
+			d->second.bytes = nest.cells;
+		}
+		if (auto p = s.find("ZP" + std::to_string(i)); p != s.end()) {
+			store_blocks(nest.pool, p->second);
+		}
 	}
 	for (size_t i = 0; i < save.world_object_lists.size(); ++i) {
 		const std::string f = "F" + std::to_string(i);
 		if (s.count(f)) {
 			store_blocks(save.world_object_lists[i], s[f]);
+		}
+	}
+	if (auto bt = s.find("BT"); bt != s.end()) {
+		std::vector<uint8_t>& b = bt->second.bytes;
+		const BattleGraph graph = save.battles.normalized();  // in the oracle's order
+		b.assign(4, 0);
+		put<uint32_t>(b.data(), 0, uint32_t(graph.blocks.size()));
+		for (const std::vector<uint8_t>& block : graph.blocks) {
+			const size_t o = b.size();
+			b.resize(o + 4);
+			put<uint32_t>(b.data(), o, uint32_t(block.size()));
+			b.insert(b.end(), block.begin(), block.end());
 		}
 	}
 	s["r"].bytes.resize(4);
@@ -521,7 +596,42 @@ bool pointer_field(const std::string& name, size_t w, const std::vector<uint8_t>
 		return w % 0x14 == 0;  // each node's address
 	}
 	if (kind == 'Z' && name.size() == 2) {
-		return w == 0x4;  // the pirate's object
+		return w == 0x0 || w == 0x4;  // the nest's map and the pool (p3vita: 1 if there is one)
+	}
+	if (name.size() == 3 && name[0] == 'Z' && name[1] == 'M') {
+		return w == 0x68;  // the nest map's cells (region ZDi)
+	}
+	if (name == "BT") {
+		// The battles: their own pointers are BATTLE_POINTER | block << 16 |
+		// offset and compared; what still looks like a pointer points
+		// outside them (the navigation's points of a scene's ship...), but
+		// for the fields that are numbers (BattleGraph::number_field).
+		if (!looks_like_pointer(v)) {
+			return false;
+		}
+		// The game's graph, to know the pages of bits (BattleGraph::bit_pages).
+		BattleGraph graph;
+		graph.blocks.clear();
+		std::vector<size_t> starts;
+		size_t at = 4;
+		uint32_t n = 0;
+		std::memcpy(&n, game.data(), std::min<size_t>(4, game.size()));
+		for (uint32_t k = 0; k < n && at + 4 <= game.size(); ++k) {
+			uint32_t size = 0;
+			std::memcpy(&size, game.data() + at, 4);
+			at += 4;
+			starts.push_back(at);
+			graph.blocks.emplace_back(game.begin() + std::ptrdiff_t(std::min(at, game.size())),
+				game.begin() + std::ptrdiff_t(std::min<size_t>(at + size, game.size())));
+			at += size;
+		}
+		const std::vector<bool> pages = graph.bit_pages();
+		for (size_t k = 0; k < starts.size(); ++k) {
+			if (w >= starts[k] && w < starts[k] + graph.blocks[k].size()) {
+				return !pages[k] && !BattleGraph::number_field(graph.blocks[k], w - starts[k]);
+			}
+		}
+		return true;
 	}
 	if (name == "B") {
 		// The letters' buffers (load_mail: p3vita keeps 0 there).
@@ -602,6 +712,36 @@ size_t next_difference(const uint8_t* a, const uint8_t* b, size_t i, size_t n) {
 	return i;
 }
 
+// The first block of the battles' graph (region BT: u32 number of blocks and,
+// for each, u32 size and the bytes) whose size differs.
+std::string battle_blocks_difference(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+	auto sizes = [](const std::vector<uint8_t>& v) {
+		std::vector<uint32_t> out;
+		size_t at = 4;
+		const uint32_t n = v.size() >= 4 ? get<uint32_t>(v.data(), 0) : 0;
+		for (uint32_t i = 0; i < n && at + 4 <= v.size(); ++i) {
+			out.push_back(get<uint32_t>(v.data(), at));
+			at += 4 + out.back();
+		}
+		return out;
+	};
+	const std::vector<uint32_t> x = sizes(a);
+	const std::vector<uint32_t> y = sizes(b);
+	std::string text = "BT: " + std::to_string(x.size()) + " blocks in p3vita and " + std::to_string(y.size()) +
+		" in the game";
+	for (size_t i = 0; i < x.size() || i < y.size(); ++i) {
+		const uint32_t p = i < x.size() ? x[i] : 0;
+		const uint32_t q = i < y.size() ? y[i] : 0;
+		if (p != q) {
+			char tail[96];
+			std::snprintf(tail, sizeof(tail), "; block %zu: 0x%x bytes in p3vita and 0x%x in the game", i, p, q);
+			text += tail;
+			break;
+		}
+	}
+	return text;
+}
+
 int compare(const State& ours, const State& game, int& budget, const std::string& title, bool only_loaded = false) {
 	int differences = 0;
 	bool header = false;
@@ -628,6 +768,9 @@ int compare(const State& ours, const State& game, int& budget, const std::string
 		if (a.size() != b.size()) {
 			report(name + ": tamaño " + std::to_string(a.size()) + " en p3vita y " + std::to_string(b.size()) +
 				" en el juego");
+			if (name == "BT") {
+				report(battle_blocks_difference(a, b));
+			}
 			continue;
 		}
 		for (size_t i = 0; i < a.size(); ++i) {
@@ -665,6 +808,8 @@ int main(int argc, char** argv) {
 	bool convoys = true;
 	bool storms = true;
 	bool pirates = false;
+	bool disband = true;
+	bool battles = false;
 	std::string load;
 	std::string cpr;
 	uint32_t only = 0;
@@ -687,6 +832,10 @@ int main(int argc, char** argv) {
 			storms = false;
 		} else if (arg == "--pirates") {
 			pirates = true;
+		} else if (arg == "--no-disband") {
+			disband = false;
+		} else if (arg == "--battles") {
+			battles = true;
 		} else if (arg == "--fix-game-bugs") {
 			// What the fixes to the game's bugs change (game_fixes.hpp): the
 			// differences then show where a fix acts.
@@ -754,6 +903,8 @@ int main(int argc, char** argv) {
 		sailing->set_convoys(convoys);
 		sailing->set_storms(storms);
 		sailing->set_pirates(pirates);
+		sailing->set_pirate_disbanding(disband);
+		sailing->set_battles(battles || pirates);
 		g_sailing = sailing.get();
 		registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
 			sailing->update_ships();
@@ -781,6 +932,9 @@ int main(int argc, char** argv) {
 		}
 		if (!continuous) {
 			// Las rutas de los barcos las da Sailing después de leer la partida.
+			if (sailing) {
+				sailing->load_battles();  // 0x611AE0 (battle/battle_save.cpp)
+			}
 			State loaded = game;
 			loaded.erase("Q");
 			const int d = compare(dump_save(save, loaded), loaded, budget, "carga de " + load + ":", true);

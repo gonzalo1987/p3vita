@@ -396,10 +396,7 @@ void write_ships(Writer& w, const SaveGame& save) {
 		const GameMemory<0x18>& p = *save.pirates[i];
 		chunks(w, p,
 			{{0x8, 2}, {0xA, 2}, {0xC, 2}, {0xE, 1}, {0xF, 1}, {0x10, 2}, {0x12, 2}, {0x14, 1}, {0x15, 1}, {0x16, 2}});
-		const std::vector<uint8_t>& map = save.opaque.pirate_maps[i];
-		w.u8(map.empty() ? 0 : 0x7F);
-		w.bytes(map);  // 0x4F9680
-		w.bytes(save.opaque.pirate_records[i]);
+		w.bytes(pirate_nest_bytes(save, i));  // The map (0x4F9680) and the pool.
 	}
 }
 
@@ -691,8 +688,7 @@ std::vector<uint8_t> write_savegame(SaveGame& save) {
 	// 0x611950: the battles, as they were read (fixed: the padding of the
 	// table at their end at 0, battle_padding).
 	if (save.opaque.battles.empty()) {
-		w.u8(0);
-		w.u32(0);
+		w.bytes(battle_bytes(save.battles));  // Loaded into SaveGame::battles (battle/battle_save.cpp).
 	} else if (fix_game_bugs()) {
 		std::vector<uint8_t> battles = save.opaque.battles;
 		for (size_t p : battle_padding(battles)) {

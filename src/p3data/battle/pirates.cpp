@@ -8,13 +8,17 @@
 // town gets a new course (the rule of piece 2, «Decisions for the user»).
 
 #include <algorithm>
+#include <cstring>
 
+#include "p3data/battle/pirate_nests.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick::alderman_detail {
 // 0x51A470 (town_tick/alderman.cpp): the pirate of a ship.
 uint8_t fn_51a470(const SaveGame& save, int ship);
+// 0x51A750 (town_tick/alderman.cpp): the ship goes up n levels.
+void fn_51a750(SaveGame& save, int ship, uint8_t n);
 }  // namespace p3::data::tick::alderman_detail
 
 namespace p3::data {
@@ -377,6 +381,8 @@ struct GameRandom {
 	}
 };
 
+}  // namespace
+
 // 0x5159C0 (cdecl, n): a town number of StadtDaten.ini that is not a town of
 // the game, a pirate nest or marked in [+0x2F] of the table: the n-th one
 // (modulo how many there are), or 0.
@@ -404,7 +410,6 @@ uint8_t fn_5159c0(const SaveGame& save, uint32_t n) {
 	return count ? free[n % count] : 0;
 }
 
-}  // namespace
 
 // 0x505C90 (thiscall on the ships object, the address of the convoy's link in
 // the list): a new course for a pirate convoy without a route. Returns true if
@@ -430,14 +435,10 @@ uint8_t fn_5159c0(const SaveGame& save, uint32_t n) {
 //   0x3D2; then 0x5172A0 (set_destination) and, if the guide's route is not its
 //   own and the guide is not the first ship, the first ship's hull becomes 1.
 //
-// The disbanding at the nest (0x514B80 and 0x515DA0: the cargo becomes the
-// pirate's money, the ships go to its pool, operation 0x12 for the captains,
-// and the nest's buildings are planned in the pirate's pool of entries, which
-// the savegame reader doesn't keep yet) is not rewritten: like the oracle
-// with --pirates (PIRATE_JUMPS, 0x505FF1), the convoy behaves as if it were not
-// at the nest.
+// At the nest the convoy leaves the list and is disbanded (0x514B80); with
+// set_pirate_disbanding(false), as the oracle with --no-disband (the jump
+// 0x505FF1 → 0x506029 of piece 2), it goes on as if it were elsewhere.
 bool Sailing::fn_505c90(uint16_t index, uint16_t& link) {
-	(void)link;
 	GlobalMemory& g = save_.globals;
 	const uint32_t count = save_.ships.size();
 	GameMemory<0x3C>& c = save_.convoys[index];
@@ -515,8 +516,15 @@ bool Sailing::fn_505c90(uint16_t index, uint16_t& link) {
 			const uint32_t nest = save_.pirates[k]->u8(0xE);
 			const int32_t nx = g.u16(kTownTable + 0x34 * nest + 0x20);
 			const int32_t ny = g.u16(kTownTable + 0x34 * nest + 0x24);
-			// At the nest the game disbands the convoy (0x514B80): not rewritten,
-			// see above; it goes on as if it were elsewhere.
+			if (nx == whole_x(guide) && ny == whole_y(guide) && disband_) {
+				// At the nest: out of the list, the guide out of the list by x, and
+				// disbanded (0x514B80).
+				link = c.u16(0x8);
+				c.u16(0x8) = 0xFFFF;
+				unlink_x(c.u16(0x10));
+				fn_514b80(k, index);
+				return true;
+			}
 			x = nx;
 			y = ny;
 		}
@@ -560,6 +568,171 @@ bool Sailing::fn_505c90(uint16_t index, uint16_t& link) {
 	return false;
 }
 
+// 0x514B80 (on pirate k's object, the convoy): a pirate convoy disbanded at
+// its nest. Each ship leaves the convoy and goes to the head of the pirate's
+// list of ships at the nest ([+0x12], linked by [+0x6]), off the map ([+0x1C],
+// [+0x20] = 0x7FFFFFFF); its cargo is sold (each ware by 0x673A18, a float,
+// truncated, added up over all the ships) and emptied; with less than half
+// its hull it loses its owner ([+0x15D] = 0xFF); under level 2 it goes up one
+// (0x51A750); and if it has a captain (and not in a network game), operation
+// 0x12 is queued, for the convoy's guide (if the guide has a captain), not
+// for the ship (see «Game bugs» in docs/cloud/battles-2.md). Then the convoy
+// is deleted (0x50A3D0), the pirate's [+0x16] grows by the sum / 1000 and
+// 0x515DA0 plans a building of the nest.
+void Sailing::fn_514b80(size_t k, uint16_t convoy) {
+	// 0x673A18 (float): what each ware is worth to the pirates.
+	static constexpr float kWorth[24] = {0.055f, 0.47855f, 0.22005f, 0.174f, 0.1425f, 0.55f, 1.4f, 1.1f, 1.034f,
+		3.3825f, 0.4125f, 0.0275f, 1.278f, 1.12f, 0.44f, 0.278f, 0.44f, 0.22f, 0.855f, 0.0399f, 10.0f, 8.0f, 12.0f,
+		14.0f};
+	GlobalMemory& g = save_.globals;
+	GameMemory<0x18>& p = *save_.pirates[k];
+	const uint32_t count = save_.ships.size();
+	int32_t sum = 0;
+	for (uint16_t i = save_.convoys[convoy].u16(0xA); i < count; i = save_.convoys[convoy].u16(0xA)) {
+		SavedShip& s = save_.ships[i];
+		s.memory.u16(0x8) = 0xFFFF;
+		save_.convoys[convoy].u16(0xA) = s.memory.u16(0x6);
+		s.memory.u16(0x6) = p.u16(0x12);
+		p.u16(0x12) = i;
+		s.memory.s32(0x1C) = 0x7FFFFFFF;
+		s.memory.s32(0x20) = 0x7FFFFFFF;
+		for (int w = 0; w < 24; ++w) {
+			const float amount = float(s.memory.s32(0x54 + 4 * size_t(w)));
+			sum += int32_t(tick::ftol(double(amount) * double(kWorth[w])));
+			s.memory.s32(0x54 + 4 * size_t(w)) = 0;
+		}
+		if ((s.max_health() >> 1) > s.health()) {
+			s.memory.u8(0x15D) = 0xFF;
+		}
+		if (s.memory.u8(0xF) < 2) {
+			tick::alderman_detail::fn_51a750(save_, i, 1);
+		}
+		if (s.captain() < g.u16(global::kCaptainCount) && g.u32(0x6DF31C) == 0) {
+			const uint16_t guide = save_.convoys[convoy].u16(0x10);
+			if (guide < count && save_.ships[guide].captain() < g.u16(global::kCaptainCount)) {
+				uint8_t op[0x14] = {};
+				auto put32 = [&op](size_t o, uint32_t v) { std::memcpy(op + o, &v, 4); };
+				put32(0x0, 0x12);
+				put32(0x4, guide);
+				put32(0x8, 0x32);
+				put32(0xC, 0x32);
+				put32(0x10, 0);
+				tick::enqueue_operation(save_, op, sizeof(op));  // 0x54AA70
+			}
+		}
+	}
+	fn_50a3d0(convoy);
+	p.u16(0x16) = uint16_t(p.u16(0x16) + sum / 1000);
+	fn_515da0(save_, k);
+}
+
+// 0x5062F0: takes a free convoy (0x509AE0 makes 0x20 more when there is
+// none), puts it at the head of `head` and makes `ship` its only ship and
+// guide: owner, the ship's [+0xE], the towns [+0x39], [+0x37], [+0x38], the
+// capacity [+0x10], [+0x18] |= 0x400, then 0x501680 with the mode 2; the wait
+// [+0x16] = 0x100 and the state that of the ship.
+uint16_t Sailing::fn_5062f0(uint16_t& head, uint16_t ship) {
+	GlobalMemory& g = save_.globals;
+	constexpr uint32_t kFreeConvoy = global::kShips + 0xE4;
+	if (g.u16(kFreeConvoy) >= save_.convoy_count()) {
+		tick::ship_ai_detail::fn_509ae0(save_);
+	}
+	const uint16_t index = g.u16(kFreeConvoy);
+	GameMemory<0x3C>& c = save_.convoys[index];
+	g.u16(kFreeConvoy) = c.u16(0x8);
+	c.u16(0x8) = head;
+	head = index;
+	c.u16(0xA) = ship;
+	ShipMemory& s = save_.ships[ship].memory;
+	c.u8(0x0) = s.u8(0x0);
+	c.u8(0x1) = s.u8(0xE);
+	c.u16(0x1C) = s.u8(0x39);
+	c.u8(0x1E) = s.u8(0x37);
+	c.u8(0x1F) = s.u8(0x38);
+	c.u32(0x4) = s.u32(0x10);
+	c.u32(0x18) |= 0x400;
+	s.u16(0x8) = index;
+	tick::ship_ai_detail::fn_501680(save_, index, ship, 2);
+	save_.convoys[index].u16(0x16) = 0x100;
+	save_.convoys[index].u16(0x12) = save_.ships[ship].memory.u16(0x134);
+	return index;
+}
+
+// 0x517170 (on the ship): puts it at the approach point of one of its towns
+// ([+0x39], else [+0x37], else [+0x38], else town 0; the first one that is a
+// town of the game), [+0x3D] |= 0x20.
+void fn_517170(SaveGame& save, uint16_t ship) {
+	ShipMemory& s = save.ships[ship].memory;
+	const GlobalMemory& g = save.globals;
+	const uint32_t towns = g.u32(kTownCount);
+	uint32_t town = s.u8(0x39);
+	if (town >= towns) {
+		town = s.u8(0x37);
+		if (town >= towns) {
+			town = s.u8(0x38) < towns ? s.u8(0x38) : 0;
+		}
+	}
+	s.s32(0x1C) = 0;
+	s.s32(0x20) = 0;
+	const uint32_t number = g.u8(kTownOrder + town);
+	s.u16(0x1E) = g.u16(kTownTable + 0x34 * number + 0x20);
+	s.u8(0x3D) |= 0x20;
+	s.u16(0x22) = g.u16(kTownTable + 0x34 * number + 0x24);
+}
+
+// State 0x11 in port (0x506AF2): out of the list and of its convoy; a human
+// player's ship stays (0x517170 puts it at one of its towns, with no target,
+// hull or sailors); any other is deleted (0x507FB0).
+void Sailing::lost_in_port(uint16_t index, uint16_t& link) {
+	SavedShip& ship = save_.ships[index];
+	ShipMemory& s = ship.memory;
+	link = s.u16(0x6);
+	s.u16(0x6) = 0xFFFF;
+	s.u16(0x8) = 0xFFFF;
+	if (human(ship)) {
+		// 0x44F940: the sea map is told (UI).
+		fn_517170(save_, index);
+		s.u16(0x50) = 0xFFFF;
+		s.u16(0x52) = 0xFFFF;
+		s.s32(0x18) = 0;
+		s.u16(0x40) = 0;
+		return;
+	}
+	fn_507fb0(index);
+}
+
+// State 0x11 at sea (0x507022): out of the list and of the list by x, with no
+// target; deleted (0x507FB0) unless it is a human player's.
+void Sailing::lost_at_sea(uint16_t index, uint16_t& link) {
+	SavedShip& ship = save_.ships[index];
+	ShipMemory& s = ship.memory;
+	link = s.u16(0x6);
+	s.u16(0x6) = 0xFFFF;
+	unlink_x(index);
+	s.u16(0x50) = 0xFFFF;
+	s.u16(0x52) = 0xFFFF;
+	if (human(ship)) {
+		return;
+	}
+	// 0x494990 and 0x4778A0 with 0x17: the UI is told.
+	fn_507fb0(index);
+}
+
+// State 0x12 at sea, a pirate alone (0x507099): out of the list; with hull, a
+// convoy of its own (0x5062F0), which the walk of the convoys moves; without,
+// out of the list by x and deleted.
+void Sailing::pirate_at_sea(uint16_t index, uint16_t& link) {
+	ShipMemory& s = save_.ships[index].memory;
+	link = s.u16(0x6);
+	s.u16(0x6) = 0xFFFF;
+	if (s.s32(0x18) > 0) {
+		fn_5062f0(save_.globals.u16(global::kShips + 0xEC), index);
+		return;
+	}
+	unlink_x(index);
+	fn_507fb0(index);
+}
+
 // 0x507A65, the state 0x12 of a pirate convoy in 0x506720 (§7 of
 // docs/cloud/battles.md): the guide back in the list by x if it is in none;
 // the wait [+0x16] counts down into the guide's [+0x138]; a target (set by
@@ -581,12 +754,31 @@ bool Sailing::pirate_convoy(uint16_t index, uint16_t& link) {
 		save_.ships[c.u16(0x10)].timer() = c.u16(0x16);
 	}
 	const uint16_t flags = c.u16(0x14);
+	bool attack = false;
 	if (flags & 0x40) {
 		c.u16(0x14) = uint16_t(flags & 0xFFBF);
-		// The target set by someone else: the attack (0x50BC40) is for piece 3.
+		// The target set by someone else (the attack of event 0x1E): a
+		// merchant's ship that sails.
+		const uint16_t t = save_.ships[c.u16(0x10)].memory.u16(0x50);
+		if (t < count && save_.ships[t].owner() < save_.merchant_count) {
+			const uint16_t st = save_.ships[t].status();
+			attack = st == kStatusSailing || st == kStatusPursuing;
+		}
 	} else if ((save_.tick() & 3) == 0 && fn_50d9e0(leader)) {
-		fn_515360(leader);  // An attack would follow (0x50BC40): piece 3.
+		attack = fn_515360(leader);
 	}
+	if (attack && battles_) {
+		// 0x507BAE: the target still sails (0x0F): the convoy leaves the list
+		// and attacks (0x50BC40, a sea battle); the walk goes on from the link.
+		const uint16_t t = save_.ships[save_.convoys[index].u16(0x10)].memory.u16(0x50);
+		if (t < count && save_.ships[t].status() == kStatusSailing) {
+			link = save_.convoys[index].u16(0x8);
+			save_.convoys[index].u16(0x8) = 0xFFFF;
+			fn_50bc40(index);
+			return true;
+		}
+	}
+	// Without battles (the rule of piece 2), as if there were no target.
 	if (!save_.ships[c.u16(0x10)].route) {
 		if (fn_505c90(index, link)) {
 			return true;
@@ -595,8 +787,13 @@ bool Sailing::pirate_convoy(uint16_t index, uint16_t& link) {
 	// 0x502110 false is the end of the route (a town battle: piece 6); with the
 	// rule, the same as true.
 	fn_502110(index, 1);
+	if (save_.convoys[index].u16(0x10) >= save_.ships.size()) {
+		// A convoy whose ships have no hull (its pirate went away, 0x514000)
+		// has no guide: the game sorts ship 0xFFFF (0x50D0C0), outside the
+		// ships (see «Game bugs» in docs/cloud/battles-2.md). Not reproduced.
+		return false;
+	}
 	sort_x(save_.convoys[index].u16(0x10));
-	(void)count;
 	return false;
 }
 

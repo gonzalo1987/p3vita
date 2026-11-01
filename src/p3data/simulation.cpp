@@ -71,6 +71,7 @@ void advance_game_tick(SaveGame& save, Sailing& sailing) {
 		tick::fn_633a90(save, int(i));
 	}
 	run_queued_operations(save, sailing);
+	sailing.step_battles();  // The battles' clock (battle/battles.cpp).
 }
 
 void run_queued_operations(SaveGame& save, Sailing& sailing) {
@@ -209,6 +210,22 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x86:  // Quitar los encargos de la Hansa que ya no valen (en 0x536801).
 		tick::fn_53fe20(save);
+		break;
+	case 0x91:  // A ship takes another (0x536B92 → 0x540520; battle/capture.cpp).
+		if (sailing) {
+			sailing->fn_540520(uint16_t(fields[1]), uint16_t(fields[2]));
+		}
+		break;
+	case 0x94:  // The battles take their steps (0x536BBF; battle/battles.cpp).
+		if (sailing) {
+			sailing->fn_536bbf(uint32_t(fields[1]) & 0xFFFF);
+		}
+		break;
+	case 0xB5:  // A pirate convoy leaves the nest (0x536E8C → 0x514D40; battle/pirate_objects.cpp).
+		if (sailing && uint32_t(fields[1]) < 5 && save.pirates[size_t(fields[1])] &&
+			save.globals.u32(global::kShips + 0xC + 4 * uint32_t(fields[1])) != 0) {
+			sailing->fn_514d40(size_t(fields[1]), uint16_t(fields[3]), uint16_t(fields[2]));
+		}
 		break;
 	case 0xB8:  // Network games' sync checks (0x542F10).
 		tick::fn_542f10(save, operation);
