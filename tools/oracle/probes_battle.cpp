@@ -148,6 +148,14 @@ void register_probes_battle(ProbeRegistry& r) {
 		c.eax_mask = 0xFFFF;
 		return probe_sailing()->fn_5063c0(uint16_t(c.args[0]), c.args[1] & 0xFFFF);
 	};
+	// 0x611CD0: thiscall on the battles; returns the slot (al).
+	r[0x611CD0] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		if (!probe_sailing()) {
+			return kBad;
+		}
+		c.eax_mask = 0xFF;
+		return probe_sailing()->fn_611cd0();
+	};
 	// 0x517170: thiscall on a ship.
 	r[0x517170] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
 		const int ship = c.ship(c.ecx);

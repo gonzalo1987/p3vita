@@ -195,6 +195,12 @@ public:
 	void fn_536bbf(uint32_t steps);  // Operation 0x94: the battles take their steps.
 	void fn_612c90(bool network);  // (battles) Operation 0xC8 with 2 if a battle has a human side.
 	void fn_612d20(bool network);  // (battles) Operation 0xC8 with 0 if none has.
+	static constexpr size_t kSeaBattleSize = 0x1E98;
+	static constexpr uint32_t kSeaBattleVtable = 0x67AD44;
+	static constexpr uint32_t kSceneVtable = 0x67AF70;
+	uint8_t fn_611cd0();  // (battles) A new sea battle; its slot or 0xFF.
+	void fn_603a70(size_t block, uint8_t slot);  // The sea battle's constructor.
+	void fn_618f10(size_t block);  // The scene's constructor.
 	uint16_t fn_5063c0(uint16_t target, uint32_t kind);  // (ships object) The pirate of event 0x1E attacks a ship.
 	// 0x5062F0 (ships object): a new convoy led by `ship`, at the head of the
 	// list `head` (not inside SaveGame::convoys: it may grow); its index.

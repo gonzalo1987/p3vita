@@ -425,6 +425,19 @@ With `--battles` the comparison of the steps differs (the battles don't
 move in p3vita yet): save 5, 5 days, 266 equal executor calls and 163
 different (the ones with a battle), as expected until part 4.
 
+## 4. Piece 3, the rewrite (in progress)
+
+`BattleGraph::alloc` (a new block of zeros: the oracle's heap gives zeros,
+the game's operator new doesn't clear) and `normalized()` (the blocks in the
+oracle's walk order; tick_probe dumps `BT` normalized, so p3vita may create
+blocks in any order).
+
+Done, call by call with `--pirates --battles` (saves 4, 5, 6, tut0, tut1,
+tut3, 7 days; 39 s):
+- **0x611CD0** (a new sea battle in the first free slot, the count),
+  **0x603A70** (its constructor), **0x618F10** (the scene's constructor):
+  11 calls of 0x611CD0, 0 differences.
+
 ## Changes to shared files
 
 - `src/p3data/savegame.cpp` (cloud/statistics): one line, at the end of the

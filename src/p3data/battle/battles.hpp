@@ -39,16 +39,32 @@ struct BattleGraph {
 		}
 	}
 
-	uint8_t count() const { return get<uint8_t>(0, 0x404); }
-	// The block of the battle in slot k, or −1.
-	int battle(size_t k) const {
-		const uint32_t p = get<uint32_t>(0, 4 * k);
-		if ((p & 0xF0000000) != kPointer || (p & 0xFFFF) != 0) {
+	// A pointer to `offset` of block `block`, as the graph keeps it.
+	static uint32_t pointer(size_t block, size_t offset = 0) {
+		return kPointer | uint32_t(block) << 16 | uint32_t(offset);
+	}
+	// The block a word points to the start of, or −1.
+	int target(uint32_t word) const {
+		if ((word & 0xF0000000) != kPointer || (word & 0xFFFF) != 0) {
 			return -1;
 		}
-		const size_t b = (p >> 16) & 0xFFF;
+		const size_t b = (word >> 16) & 0xFFF;
 		return b < blocks.size() ? int(b) : -1;
 	}
+	// A new block of `size` bytes, all zero (the oracle's heap gives zeros;
+	// the game's operator new 0x64F7B9 doesn't clear it). Its index.
+	size_t alloc(size_t size) {
+		blocks.emplace_back(size, 0);
+		return blocks.size() - 1;
+	}
+	// The same graph with its blocks in the oracle's order (a walk from block
+	// 0 by offsets, following the pointers to a block's start); blocks no
+	// pointer reaches are left out (freed or lost).
+	BattleGraph normalized() const;
+
+	uint8_t count() const { return get<uint8_t>(0, 0x404); }
+	// The block of the battle in slot k, or −1.
+	int battle(size_t k) const { return target(get<uint32_t>(0, 4 * k)); }
 };
 
 }  // namespace p3::data

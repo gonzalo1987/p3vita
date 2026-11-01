@@ -487,9 +487,10 @@ State dump_save(const SaveGame& save, const State& game) {
 	}
 	if (auto bt = s.find("BT"); bt != s.end()) {
 		std::vector<uint8_t>& b = bt->second.bytes;
+		const BattleGraph graph = save.battles.normalized();  // in the oracle's order
 		b.assign(4, 0);
-		put<uint32_t>(b.data(), 0, uint32_t(save.battles.blocks.size()));
-		for (const std::vector<uint8_t>& block : save.battles.blocks) {
+		put<uint32_t>(b.data(), 0, uint32_t(graph.blocks.size()));
+		for (const std::vector<uint8_t>& block : graph.blocks) {
 			const size_t o = b.size();
 			b.resize(o + 4);
 			put<uint32_t>(b.data(), o, uint32_t(block.size()));
