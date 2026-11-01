@@ -229,6 +229,9 @@ public:
 		uint8_t& side) const;  // Where a segment meets a hull.
 	bool fn_608f70(size_t battle, uint16_t i, uint16_t j);  // Two ships collide.
 	void fn_609ba0(size_t battle, uint16_t i, uint16_t j);  // They collide and may grapple.
+	bool fn_60bc5a(size_t battle, uint16_t item, uint16_t place) const;  // A ship inside an item's circle.
+	void fn_60bcda(size_t battle, uint16_t item, uint16_t place, int32_t a, int32_t minus, uint8_t level);
+	void fn_608850(size_t battle, uint16_t a, uint16_t b);  // (battle, method +0x0) Two items meet.
 	// battle/attack.cpp
 	void fn_50bc40(uint16_t convoy);  // (ships object) A pirate convoy attacks: a sea battle.
 	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.

@@ -518,3 +518,175 @@ void Sailing::fn_609ba0(size_t b, uint16_t i, uint16_t j) {
 }
 
 }  // namespace p3::data
+
+namespace p3::data {
+
+namespace {
+
+// ftol (0x639C28) of the square root (0x63AAE4) of an int: a negative one
+// gives NaN, whose integer indefinite has 0 in its low 32 bits.
+int32_t root(int32_t v) {
+	return v < 0 ? 0 : int32_t(std::sqrt(double(v)));
+}
+
+}  // namespace
+
+// 0x60BC5A (on the battle; an item, a place): whether the ship in the place is
+// inside the item's circle (the centre of its box, radius half its width).
+bool Sailing::fn_60bc5a(size_t b, uint16_t item, uint16_t place) const {
+	const BattleGraph& g = save_.battles;
+	const size_t xs = size_t(g.ptr(b, 0x28)), ys = size_t(g.ptr(b, 0x38));
+	const int32_t x1 = g.get<int16_t>(xs, 4 * size_t(item)), x2 = g.get<int16_t>(xs, 4 * size_t(item) + 2);
+	const int32_t y1 = g.get<int16_t>(ys, 4 * size_t(item)), y2 = g.get<int16_t>(ys, 4 * size_t(item) + 2);
+	const size_t e = battle_entry(b, place);
+	const int32_t dx = int16_t(uint16_t(((x2 + x1) >> 1) - g.get<uint16_t>(e, 0xA)));
+	const int32_t dy = int16_t(uint16_t(((y2 + y1) >> 1) - g.get<uint16_t>(e, 0xE)));
+	const int32_t r = int16_t(uint16_t((x2 - x1) >> 1));
+	return mul(dx, dx) + mul(dy, dy) < mul(r, r);
+}
+
+// 0x60BCDA (on the battle; an item, a place, a, b, a level): the ship in the
+// place marks the item in its 256 directions ([+0x27], the highest level
+// kept): around the item's direction, as wide as the item looks from the
+// ship with a radius of half its width + a − b (or by how far inside it the
+// ship is), the level falling towards the edges. Without a level, by the
+// item's kind: 0x40 (4), 0x20 (5), 0x80 (6). With one, a ship's circle
+// (kind 6) further than twice the radius is left out.
+//
+// The game's loops never end when the width is 0 (a radius of 0) and the
+// level isn't, or when it is 0x100 (see «Game bugs» in
+// docs/cloud/battles-2.md): p3vita stops them.
+void Sailing::fn_60bcda(size_t b, uint16_t item, uint16_t place, int32_t a, int32_t minus, uint8_t level) {
+	BattleGraph& g = save_.battles;
+	const size_t xs = size_t(g.ptr(b, 0x28)), ys = size_t(g.ptr(b, 0x38));
+	const int32_t x1 = g.get<int16_t>(xs, 4 * size_t(item)), x2 = g.get<int16_t>(xs, 4 * size_t(item) + 2);
+	const int32_t y1 = g.get<int16_t>(ys, 4 * size_t(item)), y2 = g.get<int16_t>(ys, 4 * size_t(item) + 2);
+	const size_t e = battle_entry(b, place);
+	const uint8_t kind = g.get<uint8_t>(size_t(g.ptr(b, 0x18)), item);
+	const int32_t r = ((x2 - x1) >> 1) + a - minus;
+	const int32_t dx = ((x2 + x1) >> 1) - g.get<int16_t>(e, 0xA);
+	const int32_t dy = ((y2 + y1) >> 1) - g.get<int16_t>(e, 0xE);
+	const uint8_t dir = fn_6029b0(dx, dy);
+	const int32_t d2 = mul(dx, dx) + mul(dy, dy);
+	if (d2 == 0) {
+		return;
+	}
+	const int32_t d = root(d2);
+	if (level != 0 && 2 * r < d && kind == 6) {
+		return;
+	}
+	int16_t half;
+	if (r < d) {
+		const int32_t rest = root(d2 - mul(r, r));
+		if (rest == 0) {
+			return;  // The game divides by 0 here.
+		}
+		const int32_t q = int32_t(uint32_t(r) << 16) / rest;
+		const int32_t t = q < 0 ? -q : q;
+		const int32_t w = t > 0x10000 ? 0x40 - kAtan[((0x40000000 / t) + 0x80) >> 8] : kAtan[(t + 0x200) >> 10];
+		half = int16_t(q < 0 ? 0x100 - w : w);
+	} else {
+		half = int16_t(r + 0x40 - d);
+		if (half > 0x80) {
+			half = 0x80;
+		}
+	}
+	uint8_t step = level;
+	if (level == 0) {
+		step = kind == 4 ? 0x40 : kind == 5 ? 0x20 : kind == 6 ? 0x80 : 0;
+	}
+	uint16_t acc = 0;
+	uint8_t mark = step;
+	for (int k = 0; k <= half && k < 0x100; ++k) {
+		acc = uint16_t(acc + step);
+		while (int32_t(acc) > half) {
+			if (half <= 0) {
+				return;  // The game never leaves this loop.
+			}
+			--mark;
+			acc = uint16_t(acc - half);
+		}
+		for (const uint8_t at : {uint8_t(dir + k), uint8_t(dir - k)}) {
+			if (g.get<uint8_t>(e, 0x27 + size_t(at)) < mark) {
+				g.set<uint8_t>(e, 0x27 + size_t(at), mark);
+			}
+		}
+	}
+}
+
+// 0x608850 (method +0x0 of the battle; two items): item a, of a ship (kind
+// 0) not out (0x2), meets item b. Another ship (0): of the same team they
+// only collide (0x608F70); of another, once for the pair (lower place
+// first), they collide and may grapple (0x609BA0), or only collide if one
+// is grappling (0x8). The circles of kinds 4, 5 and 6 (another ship's; not
+// for an AI ship without a target, unless [+0x5C] or 0x1) are marked in the
+// ship's directions (0x60BCDA) when it is inside (0x60BC5A); an enemy's only
+// if it wouldn't board it (0x61F02F).
+//
+// Not rewritten yet (not run in the saves): kind 1 (a cannon ball, 0x60A73C
+// and 0x603470), kinds 2 and 3 (a rock and an islet, 0x60B357, 0x61F96F; in
+// the emulator their boxes have no size, see kTownViewHalf).
+void Sailing::fn_608850(size_t b, uint16_t a, uint16_t other) {
+	BattleGraph& g = save_.battles;
+	const size_t kinds = size_t(g.ptr(b, 0x18)), places = size_t(g.ptr(b, 0x1C));
+	if (g.get<uint8_t>(kinds, a) != 0) {
+		return;
+	}
+	const uint16_t pa = g.get<uint16_t>(places, 2 * size_t(a));
+	const size_t ei = battle_entry(b, pa);
+	const uint8_t flags = g.get<uint8_t>(ei, 0x12A);
+	if (flags & 0x2) {
+		return;
+	}
+	auto team = [&](size_t e) { return g.get<uint8_t>(b, 0x559 + size_t(g.get<uint8_t>(e, 0x13D))); };
+	// An AI ship without a target ([+0x128]) only looks round when [+0x5C] or 0x1.
+	auto looks = [&]() {
+		return g.get<uint16_t>(ei, 0x128) != 0xFFFF || g.get<uint8_t>(b, 0x5D + size_t(g.get<uint8_t>(ei, 0x13D))) != 0 ||
+			g.get<uint8_t>(b, 0x5C) != 0 || (g.get<uint8_t>(ei, 0x12A) & 0x1);
+	};
+	switch (g.get<uint8_t>(kinds, other)) {
+	case 0: {
+		const uint16_t pb = g.get<uint16_t>(places, 2 * size_t(other));
+		const size_t ej = battle_entry(b, pb);
+		if (team(ei) == team(ej)) {
+			fn_608f70(b, pa, pb);
+		} else if (pa < pb) {
+			if ((g.get<uint8_t>(ej, 0x12A) | flags) & 0x8) {
+				fn_608f70(b, pa, pb);
+			} else {
+				fn_609ba0(b, pa, pb);
+			}
+		}
+		return;
+	}
+	case 4:
+	case 5:
+		if (looks() && fn_60bc5a(b, other, pa)) {
+			fn_60bcda(b, other, pa, 0x28, 0xC8, 0);
+		}
+		return;
+	case 6: {
+		const uint16_t pb = g.get<uint16_t>(places, 2 * size_t(other));
+		if (pa == pb || !looks()) {
+			return;
+		}
+		const size_t ej = battle_entry(b, pb);
+		const bool same = team(ei) == team(ej);
+		if (!same && fn_61f02f(ei, ej, false)) {
+			return;
+		}
+		if (fn_60bc5a(b, other, pa)) {
+			if (same) {
+				fn_60bcda(b, other, pa, 0x28, 0x168, 0x20);
+			} else {
+				fn_60bcda(b, other, pa, 0xB4, 0x168, 0);
+			}
+		}
+		return;
+	}
+	default:
+		return;
+	}
+}
+
+}  // namespace p3::data

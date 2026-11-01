@@ -527,6 +527,15 @@ tut3, 7 days; 39 s):
   sound (0x443690, UI; it gives none in the emulator) is left out.
   Not wired yet into p3vita's simulation (their caller is the step), so the
   world can't change with them; the world is checked when 0x606CC0 is.
+- **0x608850** (method +0x0 of the battle: two items of the scene meet),
+  **0x60BC5A** (a ship inside an item's circle), **0x60BCDA** (the ship marks
+  the item in its 256 directions, [+0x27] of a scene's ship). 0x608850 is
+  called thousands of times a day: probes with `--max` (saves 5, 6, tut0, 5
+  days, 6000 samples; and from day 2, 20000): 0x608850 5971 + 5987 calls,
+  0x60BC5A 2098 + 1914, 0x60BCDA 1749 + 1616, 0x608F70 356 + 348, 0
+  differences. Not rewritten yet in 0x608850 (not run in the saves): kind 1
+  (a cannon ball: 0x60A73C, 0x603470) and kinds 2 and 3 (a rock, an islet:
+  0x60B357, 0x61F96F; their boxes have no size in the emulator).
 
 So with `--battles`, p3vita starts the automatic sea battles exactly as the
 game. What is left is the battle itself: the step (operation 0x94, method
@@ -681,6 +690,10 @@ Looks like one:
   written, as an index into 0x67AB98. It doesn't happen in the saves (the
   segment goes from the other ship's centre to a point where the hulls
   cross). p3vita starts it at 0 (`fn_608f70`).
+- **0x60BCDA can hang**: its loops never end when the width of the item
+  seen from the ship is 0 (a radius of 0: half the box + a − b = 0) and the
+  level isn't, or when it is 0x100. Not seen in the saves. p3vita stops the
+  loops (`fn_60bcda`), and returns where the game would divide by 0.
 - **0x514B80 queues operation 0x12 (the captain improves) for the convoy's
   guide once per ship that has a captain**, instead of for each ship: the
   guide's captain improves up to n times and the others' never. Probably the
