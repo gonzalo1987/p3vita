@@ -173,18 +173,18 @@ muralla) y la 0x24 (las piezas de muralla pendientes)
   el dibujo de la vista de la ciudad (0x590680, 0x5891C0).
 - De las operaciones que encolan las ciudades se ejecutan la 0x22
   (construir), la 0x27 (materiales), la 0x23 y la 0x24 (murallas); los
-  avisos (0x48), no
+  avisos (0x48) también, como las demás de la simulación
   ([world_tick.md](world_tick.md) §7). Lo que hace el almacén nuevo de un
-  comerciante (0x4FF2D0) está por reescribir.
+  comerciante (0x4FF2D0, recontar su oficina) ya está (`construction.cpp`).
 - Convoyes en reparación en el astillero (lista [0x820], vacía en las 12
   partidas) y los barcos nuevos de jugadores humanos (carta y ventana).
 - Ramas que no se dan en las partidas ni en los estados retocados con los que
   se comprobaron: están marcadas `// Sin comprobar con el oráculo` en el código.
-- Fallos del juego reproducidos tal cual: el administrador de 0x51C360 solo
-  cuenta la primera oficina; 0x5109B0 deja negativo [+0xC]; la granja de grano
-  compara al revés al contratar; 0x524920 escribe fuera de la rejilla con un
-  muelle en la última columna (aquí un `assert`). Su corrección opcional, en
-  el roadmap («Corregir los fallos del juego»).
+- Fallos del juego, reproducidos tal cual con el ajuste apagado y corregidos con
+  `fix_game_bugs()` (roadmap, «Corregir los fallos del juego»): el administrador
+  de 0x51C360 solo cuenta la primera oficina; 0x5109B0 deja negativo [+0xC]; la
+  granja de grano compara al revés al contratar; 0x524920 escribe fuera de la
+  rejilla con un muelle en la última columna (ya sin `assert`).
 
 ## 9. El tick del comerciante (0x4F7BB0) **[código + oráculo]**
 
