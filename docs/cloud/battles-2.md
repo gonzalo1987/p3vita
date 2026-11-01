@@ -570,10 +570,9 @@ tut3, 7 days; 39 s):
   building, maybe a new wreck at the nest, a nest building back). Saves 4,
   5, 6, tut0, tut1, tut3, 7 days: 0x61DBBF 15 + 12 + 2 + 2 calls, 0x61F1BF
   78 + 378 + 156, 0x60C1C9 1 + 4 + 2, 0x515F70 3 + 2, 0 differences. Not
-  rewritten in 0x60C1C9 (not run in the saves): the winner taking the ship
-  over (operation 0x91 at once, 0x540520, and the sides' lists), a side of
-  the player (its messages and window, part 7), the letters (0x4D6530, not
-  rewritten in p3vita).
+  rewritten in 0x60C1C9: a side of the player (its messages and window,
+  part 7), the letters (0x4D6530, not rewritten in p3vita). (The winner
+  taking the ship over came later, below.)
 - **0x61DD4F** (method +0x8 of a scene's ship: it fires; where the ships
   will be, friends in the way, the closest enemy on each side), **0x620F0B**
   (a broadside's damage: guns by distance, captain, fighting, generator),
