@@ -75,6 +75,8 @@ struct ShipEvent {
 	int town;
 };
 
+struct BattleReader;  // battle/battle_save.cpp
+
 class Sailing {
 public:
 	// `map_towns`: las 40 ciudades de scripts/StadtDaten.ini (load_sea_map_towns).
@@ -244,6 +246,9 @@ public:
 	void fn_61f1bf(size_t entry);  // (scene's ship) A round of a boarding.
 	void fn_60c1c9(size_t battle, uint16_t winner, uint16_t taken);  // (battle) A ship taken.
 	void fn_540520(uint16_t winner, uint16_t taken);  // Operation 0x91: a ship takes another.
+	// battle/battle_save.cpp: the battles in the save (piece 5).
+	void load_battles();  // 0x611AE0: SaveGame::opaque::battles into SaveGame::battles.
+	bool fn_604600(size_t battle, BattleReader& in);  // (sea battle, method +0x10) Its record.
 	void fn_611649(size_t battle, uint8_t level);  // (battle) Its music raised.
 	int32_t fn_620f0b(size_t entry, uint8_t side, uint16_t distance);  // (scene's ship) A broadside's damage.
 	uint8_t fn_61f96f(size_t entry, int32_t damage, int16_t sailors, uint8_t side);  // (scene's ship) A hit.
@@ -252,6 +257,7 @@ public:
 	void fn_61a9e0_flee(size_t entry);  // (part of 0x61A9E0) An AI ship decides whether to flee.
 	bool fn_611149(size_t battle, uint8_t side) const;  // (battle) Team 1 may head off.
 	void fn_606cc0(size_t battle, uint16_t steps);  // (sea battle, method +0x14) Its step.
+	bool human_ship_in_battle(size_t battle) const;  // (sea battle) [+0x1E92]: a ship of the player in a side's convoy.
 	// battle/battle_end.cpp: the end of a sea battle.
 	void fn_60d299(size_t battle, bool sailors);  // (sea battle, method +0x1C) The end.
 	void fn_611740(size_t battle, bool free);  // (sea battle, method +0x4) Its destructor.

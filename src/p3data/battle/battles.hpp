@@ -60,6 +60,34 @@ struct BattleGraph {
 		return false;
 	}
 
+	// The blocks that are pages of a sea battle's bits (the page lists
+	// [+0x48], [+0x4C], [+0x50] of a block of 0x1E98 bytes with vtable
+	// 0x67AD44, 0x61A1D0): every word is a mask of bits, a number even when
+	// it looks like a pointer (bit 28 is the heap's first block, 0x10000000).
+	// The oracle's walk leaves them as they are (town_oracle.py, bit_pages).
+	std::vector<bool> bit_pages() const {
+		std::vector<bool> pages(blocks.size(), false);
+		for (size_t b = 0; b < blocks.size(); ++b) {
+			const std::vector<uint8_t>& data = blocks[b];
+			if (data.size() != 0x1E98 || get<uint32_t>(b, 0) != 0x67AD44) {
+				continue;
+			}
+			for (size_t o : {0x48, 0x4C, 0x50}) {
+				const int list = ptr(b, o);
+				if (list < 0) {
+					continue;
+				}
+				for (size_t w = 0; w + 4 <= blocks[size_t(list)].size(); w += 4) {
+					const int page = ptr(size_t(list), w);
+					if (page >= 0) {
+						pages[size_t(page)] = true;
+					}
+				}
+			}
+		}
+		return pages;
+	}
+
 	// A pointer to `offset` of block `block`, as the graph keeps it.
 	static uint32_t pointer(size_t block, size_t offset = 0) {
 		return kPointer | uint32_t(block) << 16 | uint32_t(offset);
@@ -116,5 +144,9 @@ inline uint32_t battle_rand(BattleGraph& g, size_t b) {
 	g.set<uint32_t>(b, 0xADC, x);
 	return x;
 }
+
+// 0x611950: the battles' section of the save from the graph
+// (battle/battle_save.cpp).
+std::vector<uint8_t> battle_bytes(const BattleGraph& g);
 
 }  // namespace p3::data

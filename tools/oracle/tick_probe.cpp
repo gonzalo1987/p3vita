@@ -609,6 +609,10 @@ bool pointer_field(const std::string& name, size_t w, const std::vector<uint8_t>
 		if (!looks_like_pointer(v)) {
 			return false;
 		}
+		// The game's graph, to know the pages of bits (BattleGraph::bit_pages).
+		BattleGraph graph;
+		graph.blocks.clear();
+		std::vector<size_t> starts;
 		size_t at = 4;
 		uint32_t n = 0;
 		std::memcpy(&n, game.data(), std::min<size_t>(4, game.size()));
@@ -616,12 +620,16 @@ bool pointer_field(const std::string& name, size_t w, const std::vector<uint8_t>
 			uint32_t size = 0;
 			std::memcpy(&size, game.data() + at, 4);
 			at += 4;
-			if (w >= at && w < at + size) {
-				const std::vector<uint8_t> block(game.begin() + std::ptrdiff_t(at),
-					game.begin() + std::ptrdiff_t(std::min<size_t>(at + size, game.size())));
-				return !BattleGraph::number_field(block, w - at);
-			}
+			starts.push_back(at);
+			graph.blocks.emplace_back(game.begin() + std::ptrdiff_t(std::min(at, game.size())),
+				game.begin() + std::ptrdiff_t(std::min<size_t>(at + size, game.size())));
 			at += size;
+		}
+		const std::vector<bool> pages = graph.bit_pages();
+		for (size_t k = 0; k < starts.size(); ++k) {
+			if (w >= starts[k] && w < starts[k] + graph.blocks[k].size()) {
+				return !pages[k] && !BattleGraph::number_field(graph.blocks[k], w - starts[k]);
+			}
 		}
 		return true;
 	}
@@ -704,6 +712,36 @@ size_t next_difference(const uint8_t* a, const uint8_t* b, size_t i, size_t n) {
 	return i;
 }
 
+// The first block of the battles' graph (region BT: u32 number of blocks and,
+// for each, u32 size and the bytes) whose size differs.
+std::string battle_blocks_difference(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+	auto sizes = [](const std::vector<uint8_t>& v) {
+		std::vector<uint32_t> out;
+		size_t at = 4;
+		const uint32_t n = v.size() >= 4 ? get<uint32_t>(v.data(), 0) : 0;
+		for (uint32_t i = 0; i < n && at + 4 <= v.size(); ++i) {
+			out.push_back(get<uint32_t>(v.data(), at));
+			at += 4 + out.back();
+		}
+		return out;
+	};
+	const std::vector<uint32_t> x = sizes(a);
+	const std::vector<uint32_t> y = sizes(b);
+	std::string text = "BT: " + std::to_string(x.size()) + " blocks in p3vita and " + std::to_string(y.size()) +
+		" in the game";
+	for (size_t i = 0; i < x.size() || i < y.size(); ++i) {
+		const uint32_t p = i < x.size() ? x[i] : 0;
+		const uint32_t q = i < y.size() ? y[i] : 0;
+		if (p != q) {
+			char tail[96];
+			std::snprintf(tail, sizeof(tail), "; block %zu: 0x%x bytes in p3vita and 0x%x in the game", i, p, q);
+			text += tail;
+			break;
+		}
+	}
+	return text;
+}
+
 int compare(const State& ours, const State& game, int& budget, const std::string& title, bool only_loaded = false) {
 	int differences = 0;
 	bool header = false;
@@ -730,6 +768,9 @@ int compare(const State& ours, const State& game, int& budget, const std::string
 		if (a.size() != b.size()) {
 			report(name + ": tamaño " + std::to_string(a.size()) + " en p3vita y " + std::to_string(b.size()) +
 				" en el juego");
+			if (name == "BT") {
+				report(battle_blocks_difference(a, b));
+			}
 			continue;
 		}
 		for (size_t i = 0; i < a.size(); ++i) {
@@ -891,6 +932,9 @@ int main(int argc, char** argv) {
 		}
 		if (!continuous) {
 			// Las rutas de los barcos las da Sailing después de leer la partida.
+			if (sailing) {
+				sailing->load_battles();  // 0x611AE0 (battle/battle_save.cpp)
+			}
 			State loaded = game;
 			loaded.erase("Q");
 			const int d = compare(dump_save(save, loaded), loaded, budget, "carga de " + load + ":", true);

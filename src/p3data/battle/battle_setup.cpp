@@ -487,13 +487,14 @@ void Sailing::fn_60f479(size_t b) {
 }
 
 // 0x608230 (method +0x18 of a sea battle, arg): if [+0x5C] the end
-// (method +0x1C, 0x60D299: not rewritten yet); else, with arg, the
+// (method +0x1C, 0x60D299, with 1); else, with arg, the
 // formation (method +0x2C, 0x6079D0), the human player's sides (the town
 // view and the battle shown: UI, part 7), and the rocks and islets (0x60F479).
 void Sailing::fn_608230(size_t b, bool arg) {
 	BattleGraph& g = save_.battles;
 	if (g.get<uint8_t>(b, 0x5C) != 0) {
-		return;  // Method +0x1C (0x60D299): part 4, not rewritten yet.
+		fn_60d299(b, true);
+		return;
 	}
 	if (!arg) {
 		return;
@@ -572,8 +573,10 @@ void Sailing::fn_605420(size_t b, uint16_t a, uint16_t d, uint8_t c, uint32_t fl
 	set8(0xAB0, 1);
 	set8(0xAB1, (u16(0x35C) != 0xFF || u16(0x35A) != 0xFE) ? 1 : 0xFF);
 	// 0x1E92: a ship of the player (or of a human in a network game) is in
-	// the battle: the sea map is told (0x457C90, UI) and it goes back to 0.
-	set8(0x1E92, 0);
+	// the battle (human_ship_in_battle): the sea map is told (0x457C90) and
+	// it goes back to 0 only when its window *0x6CBDD8 exists: never in the
+	// simulation (the app does it), as in the oracle.
+	set8(0x1E92, human_ship_in_battle(b) ? 1 : 0);
 	const uint16_t ships_count = count;
 	// The sides: the ships of convoy b65E (or ship A alone) for A.
 	auto weaken = [&]() {

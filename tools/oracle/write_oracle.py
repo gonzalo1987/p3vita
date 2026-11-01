@@ -47,6 +47,8 @@ def prepare_game_object(o):
     if b > 4:
         b = 2
     o.uc.mem_write(GAME + 0x8D4, struct.pack('<III', a, b, c))
+    if getattr(o, 'battles_loaded', False):
+        return  # TownOracle.load already read them (cloud/battles-2, piece 5).
     separators = []
     pos = len(o.save) - 4
     while pos > 0 and len(separators) < 3:

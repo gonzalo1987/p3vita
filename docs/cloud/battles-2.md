@@ -47,6 +47,16 @@ automatic sea battle).
   «distintas»**; by default: 0 «distintas». Not rewritten (not run in the
   saves, listed in §4): what concerns a human side (part 7), cannon balls,
   rocks and islets as obstacles, town battles (the second jump).
+- **Piece 5, the battles in the save (done for sea battles):** the section
+  is read as the game's 0x611AE0 (0x604600, 0x61A880) into
+  `SaveGame::battles` after the load, in the oracle too (its load now calls
+  0x611AE0), and written from it as 0x611950 (0x604220, 0x61A790). Saves 6,
+  7 and tut4 start with their saved battle in both: the world 12 saves × 7
+  days with `--pirates` and by default, 0 «distintas» (three batches each);
+  `write-check.sh` as before; written after 2 days with and without
+  `--pirates` and in the middle of a battle (saves 6, 7 after 3 and 20
+  ticks): the same bytes as the game, and the game reads them back as
+  p3vita (§5).
 - Main (0320701) merged; everything checked again after it. The oracle's
   `HeapReAlloc` now keeps only the old block's requested bytes (the rest
   zero, as `alloc`): the default world after it, 0 «distintas».
@@ -86,12 +96,19 @@ automatic sea battle).
 - **The event 0x1E's attack** (recommendation: whoever owns
   `town_tick/events_rare.cpp` adds the two calls of §2.4, with the pirates
   on).
-- **The battles saved in saves 6, 7 and tut4** (recommendation: piece 5
-  after the step; until then the oracle and p3vita both leave them out, so
-  the world agrees but those three saves run without their battle).
+- **The battles saved in saves 6, 7 and tut4**: done (piece 5, §5); the
+  oracle and p3vita now load them. This changes the other sessions' world
+  checks on those three saves only in region `BT` and, with `--pirates`, in
+  what the battles do (the pirates win in 6 and 7; tut4's battle has a
+  human side and waits for the player's window, operation 0x96 each step).
+- **The sea map's flag [+0x1E92]** (recommendation: the app clears it when
+  it shows the battle): the game sets it when a ship of the player is in the
+  battle and, only if its main window exists, tells the sea map (0x457C90)
+  and clears it. The emulator has no window, so there it stays; p3vita does
+  the same and leaves the telling and the clearing to the app (§5).
 - **What to do next** (recommendation: a task `battles-3` for what part 4
-  leaves (cannon balls and the human side, part 7; town battles, piece 6)
-  and piece 5, the battles in the save).
+  leaves: cannon balls and the human side, part 7 (tut4's battle is the
+  case to start with); town battles, piece 6).
 
 - **The battles' rocks and the town view** (recommendation: give the
   oracle a town view object with the game's `[+0x510]`, once its value is
@@ -640,13 +657,103 @@ tut3, 7 days; 39 s):
   compared then). The probes of §4 again after it (saves 4, 5, 6, tut0,
   tut1, tut3, 7 days): 0 differences.
 
-So with `--battles`, p3vita starts the automatic sea battles exactly as the
+(Written before the step was rewritten:) so with `--battles`, p3vita starts the automatic sea battles exactly as the
 game. What is left is the battle itself: the step (operation 0x94, method
 +0x14, 0x606CC0 and what it calls, about 7 000 instructions) and its end
 (methods +0x4, +0x1C, 0x50BFD0...). Until then `--pirates` can't be
 switched on by default with `--battles` (the battles would never move in
 p3vita), and without `--battles` the first jump of the rule stays.
 
+
+## 5. Piece 5, the battles in the save
+
+### 5.1 Reading: 0x611AE0
+
+`battle/battle_save.cpp`, `Sailing::load_battles`, called at the end of
+`assign_loaded_routes` (the load in the game calls 0x611AE0 in 0x549F40
+after the events; nothing read in between uses the battles). For a version
+above 0x5C and a non-empty section: per battle a kind byte (0 a sea battle):
+a new sea battle in the slot of its order (0x603A70), then 0x604600 (method
++0x10): the battle's own fields (`kBattleFields`), [+0x12] 0xFFFF, the
+countdowns, [+0x14] = [+0x658] + [+0x65A], its arrays (the scene's ships,
+the items per place, next and previous), the sides, the cannon balls' bits
+and their arrays, the islets (kind 3, 5) and rocks (kind 2, 4) as items of
+the scene with their place · 17, its scene's ships (0x61A4E0 with ship 0,
+then the saved fields `kShipFields`; two items each; [+0x13C] whether the
+guns are better close), [+0x1E92] 1, [+0xAB0] 1, [+0xAB1]; then 0x608230
+(method +0x18) without the formation, which now ends the battle when
+[+0x5C] (0x60D299; before it returned). Then the battles object: the count,
+[+0x3FC] 0xFF, [+0x42C], [+0x3FD] 0, the table of ships that met
+(0x612A20 per record), [+0xC44] the graphics clock (0 in the emulator),
+[+0x408] 0, [+0x3FE] 1. `SaveGame::opaque::battles` is cleared.
+
+Not rewritten (none in the 12 saves): a town battle (kind not 0) and saved
+cannon balls (0x602A90, 0x602EF0): then the previous graph is kept and the
+section stays opaque (written back as read). Saves older than 0x5C: p3vita
+reads from 0x82.
+
+The oracle: `load()` ends with `load_battles()` (0x611AE0 on the section,
+found by the separators from the end; `battles_loaded`), so
+`write_oracle.prepare_game_object` doesn't read them a second time.
+`tick_probe --carga` (not continuous) calls `load_battles` before
+comparing. Saves 6, 7, tut4 and 5: «carga: 0 diferencias».
+
+The scale 17 of the saved rocks is the same formula as 0x60F479's with the
+town view's half width (`kTownViewHalf`, 0 in the emulator): evidence that
+the game's town view gives 17 there (see «Decisions», the rocks).
+
+### 5.2 Writing: 0x611950
+
+`battle_bytes(const BattleGraph&)`: the non-empty slots counted, each a kind
+0 and its record as 0x604220 (the fields, the sides, the cannon balls'
+bits, next and previous, the rocks, then 0x61A790 for the scene's ships of
+side 0's list and side 1's), then the records of the table of ships that
+met that have entries (the entries' 8 bytes as in memory).
+`savegame_write.cpp` writes it when `opaque.battles` is empty (one call).
+`p3save write` doesn't build a `Sailing`, so it still copies the section
+read (save 7's 12 bytes of padding, as before); the writer is checked
+through `tick_probe --write`.
+
+### 5.3 What the step needed once the saved battles ran
+
+- **The pages of bits** ([+0x48], [+0x4C], [+0x50] → page list → pages of
+  4 · items bytes, 0x61A1D0): every word is a mask, and bit 28 is
+  0x10000000, the heap's first block (0x1000 bytes): the oracle's walk took
+  it for a pointer (save 6, one block more in BT). Now the oracle
+  (`battle_graph`: `lists`, `pages`), p3vita (`BattleGraph::bit_pages`, in
+  `normalized`) and tick_probe (`pointer_field` for BT) treat those blocks
+  as numbers. tick_probe also says which block of BT differs in size.
+- **The news ticker's window** at the end (0x60D299, the pirates won with a
+  guide that has a captain): 0x469380 on *0x6CC7E8 (none in the emulator:
+  it jumped to 0xE9B). The oracle jumps over it with `--pirates`
+  (`PIRATE_JUMPS`: 0x60EB55 → 0x60EBAC; the tick in the battles object's
+  [+0x408], which p3vita already wrote, is kept).
+- **[+0x1E92], the sea map's flag** (0x605420 and 0x606CC0, before the
+  steps when not over): when set, whether a ship of a side's convoy
+  ([+0x65E], [+0x660]) is the player's or, in a network game, a human
+  merchant's (`human_ship_in_battle`); the sea map is told and the flag
+  cleared only when the window *0x6CBDD8 exists (never in the emulator nor
+  in p3vita's simulation). 0x605420 used to set 0 in p3vita.
+- **Operation 0x96** (0x606CC0, 0x607011): for each human side ([+0x5D] 0)
+  of the player whose battle isn't the one in the window (the battles
+  object's [+0x3FC]): {0x96, [+0x662], the player, 1, 0} (the operation's
+  constructor 0x535740 gives the 0). tut4 queues it every step, before the
+  0xC8 (mode 2) p3vita already queued. The window's own steps ([+0x12E9],
+  [+0x12EA], *0x6CBB10's methods) stay for part 7.
+
+### 5.4 Checks
+
+- The world 12 saves × 7 days with `--pirates` and by default, three
+  batches each: 0 «distintas» (214–289 s a batch).
+- `write-check.sh`: 11 saves 0 different, save 7 its 12 known bytes.
+- `write-after-days.sh 2 6 7 tut4`: 0 different, the same .pst, the reload
+  «carga: 0 diferencias»; the same by hand with `--pirates` after 2 days
+  (saves 6, 7, tut4, 1, 3) and 1 day (7, 2, 4, 5, tut0, tut2): 0 different.
+  No automatic battle is alive at a day's end there, so also after 3 and 20
+  ticks (a scratch copy of the oracle's `main` counting ticks): saves 6 (its
+  battle at 3 and 20 ticks) and 7 (at 3): 0 different, and the game reads
+  p3vita's file back as p3vita («carga: 0 diferencias»).
+- ctest 11/11; the Vita build without errors or warnings.
 
 ## Changes to shared files
 
@@ -744,6 +851,18 @@ p3vita), and without `--battles` the first jump of the rule stays.
   `set_battles(battles || pirates)`. `sailing.hpp`: `set_pirates` turns the
   battles on too. `src/p3data/battle/battles.cpp` (`fn_536bbf`): the step of
   each sea battle (0x606CC0).
+- Piece 5: `src/p3data/savegame_write.cpp` (cloud/statistics), in the
+  battles section, one call: when `save.opaque.battles` is empty,
+  `w.bytes(battle_bytes(save.battles));` (instead of the empty section).
+  `src/p3data/sailing.cpp` (`assign_loaded_routes`): `load_battles();`
+  before `check_loaded_routes();`. `sailing.hpp`: `BattleReader`,
+  `load_battles`, `fn_604600`, `human_ship_in_battle`.
+  `tools/oracle/town_oracle.py`: `READ_BATTLES`, `SEPARATOR_BYTES`,
+  `load_battles()` at the end of `load()`; in `battle_graph` the pages of
+  bits; `PIRATE_JUMPS` + 0x60EB55 → 0x60EBAC. `tools/oracle/write_oracle.py`:
+  `prepare_game_object` skips the battles when `battles_loaded`.
+  `tools/oracle/tick_probe.cpp`: `load_battles` in the `--carga` compare,
+  `battle_blocks_difference`, the pages of bits in `pointer_field`.
 - Declared in my files (not changed): `fn_4f9c80`
   (`town_tick/construction.cpp`), `fn_51a750` (`town_tick/alderman.cpp`).
 
@@ -764,7 +883,8 @@ p3vita), and without `--battles` the first jump of the rule stays.
 - New decision: the battles' rocks depend on the town view (§4,
   «Decisions»).
 - Correction: saves 6, 7 and tut4 have a sea battle saved (pirates against a
-  merchant); the oracle's load and p3vita leave it out today. Piece 5.
+  merchant). Piece 5 (the battles in the save) done for sea battles: read
+  and written as the game, in the oracle too (§5).
 
 ## For the inventory
 
@@ -782,7 +902,10 @@ Part E, «Batallas y encuentros»:
   (0x6113C9, 0x6197F0 and the battle's method +0x0 0x608850 for two scene
   items, the scene ship's method +0x0 0x61A9E0, 3041 instructions, with
   0x6264C0, 0x61F1BF, 0x6271D7...), the end (method +0x1C 0x60D299, +0x4
-  0x611740 → 0x603BC0, 0x50BFD0, 0x60C1C9): to do. Part D: «el ataque al
+  0x611740 → 0x603BC0, 0x50BFD0, 0x60C1C9): rewritten (§4). The save:
+  0x611AE0, 0x604600, 0x61A880, 0x6263D0 (reading), 0x611950, 0x604220,
+  0x61A790, 0x626310 (writing): rewritten for sea battles (§5); town
+  battles and saved cannon balls not. Part D: «el ataque al
   barco 0x5063C0» is done (not connected).
 
 ## Game bugs
@@ -825,6 +948,10 @@ Looks like one:
   seen from the ship is 0 (a radius of 0: half the box + a − b = 0) and the
   level isn't, or when it is 0x100. Not seen in the saves. p3vita stops the
   loops (`fn_60bcda`), and returns where the game would divide by 0.
+- **0x605420 and 0x606CC0 take a side's convoy's first ship without
+  checking the convoy**: for [+0x1E92] they read [+0xA] of convoy [+0x65E]
+  and [+0x660] even when it is 0xFFFF (a ship alone): outside the convoys.
+  p3vita takes no ship then (`human_ship_in_battle`). Not seen in the saves.
 - **0x514B80 queues operation 0x12 (the captain improves) for the convoy's
   guide once per ship that has a captain**, instead of for each ship: the
   guide's captain improves up to n times and the others' never. Probably the
@@ -839,6 +966,8 @@ the world 12 saves × 7 days by default and with `--pirates`, 0 «distintas»
 with the battles: 0 differences (`attack_one` after operation 0x91 was
 rewritten), but `attack_new` with 2 days (the emulator doesn't finish it in
 20 min: six pirates stacked, as `attack`, which runs with 0 days).
+Piece 5 (§5): the sea battles in the save, read and written as the game;
+saves 6, 7 and tut4 start with their battle in the oracle and in p3vita.
 Left: the branches of §4 not run in the saves (cannon balls and the human
 side, rocks and islets, 0x608550, 0x6132C0), the AC8 = 0 branches of the collisions, then
 the other battles (pieces 4–7 of docs/cloud/battles.md).

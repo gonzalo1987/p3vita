@@ -26,11 +26,15 @@ void queue_time_mode(SaveGame& save, uint32_t mode) {
 }  // namespace
 
 BattleGraph BattleGraph::normalized() const {
+	const std::vector<bool> pages = bit_pages();
 	std::vector<int> order{0};
 	std::vector<int> index(blocks.size(), -1);
 	index[0] = 0;
 	for (size_t i = 0; i < order.size(); ++i) {
 		const std::vector<uint8_t>& data = blocks[size_t(order[i])];
+		if (pages[size_t(order[i])]) {
+			continue;
+		}
 		for (size_t o = 0; o + 4 <= data.size(); o += 4) {
 			uint32_t w;
 			std::memcpy(&w, data.data() + o, 4);
@@ -45,7 +49,7 @@ BattleGraph BattleGraph::normalized() const {
 	out.blocks.clear();
 	for (const int b : order) {
 		std::vector<uint8_t> data = blocks[size_t(b)];
-		for (size_t o = 0; o + 4 <= data.size(); o += 4) {
+		for (size_t o = 0; o + 4 <= data.size() && !pages[size_t(b)]; o += 4) {
 			uint32_t w;
 			std::memcpy(&w, data.data() + o, 4);
 			if ((w & 0xF0000000) == kPointer && !number_field(data, o)) {

@@ -6,9 +6,11 @@
 
 #include <array>
 #include <cmath>
+#include <cstring>
 
 #include "p3data/battle/battle_math.hpp"
 #include "p3data/sailing.hpp"
+#include "p3data/town_tick/internal.hpp"
 
 namespace p3::data {
 
@@ -817,13 +819,50 @@ namespace p3::data {
 // side all fled leaves the area when the other can't follow; then the
 // scene's items that meet (0x6197F0).
 //
-// Not rewritten: what concerns a human side (the sea map and the battle
-// window [+0x1E92], [+0x12E9], [+0x12EA], operation 0x96; part 7), the cannon balls (0x603130 for each of
+// First, while not over, the sea map's flag [+0x1E92] (when set: whether a
+// ship of the player is in the battle, human_ship_in_battle; the sea map is
+// told, 0x457C90 with [+0x662], [+0xAD6], [+0xADA], and the flag cleared
+// only when its window *0x6CBDD8 exists: never in the simulation, the app
+// does it).
+//
+// Not rewritten: what concerns a human side (the battle window [+0x12E9],
+// [+0x12EA], operation 0x96; part 7), the cannon balls (0x603130 for each of
 // [+0x668], only from a human side's guns) and 0x608550 (with [+0x12E0] and
 // [+0x66C], not run in the saves).
+// Whether a ship of a side's convoy ([+0x65E], then [+0x660]) is the
+// player's ([0x6DFC14]) or, in a network game ([0x6DFC18]), of a human
+// merchant ([+0x8] 0), as 0x605420 and 0x606CC0 compute [+0x1E92].
+// GAME BUG (reproduced as far as it can be): the game takes the convoy's
+// first ship ([+0xA]) without checking the convoy's index, which is 0xFFFF
+// for a ship alone: it reads outside the convoys; here no ship.
+bool Sailing::human_ship_in_battle(size_t b) const {
+	const BattleGraph& g = save_.battles;
+	const uint32_t ships = save_.globals.u16(global::kShipCount);
+	const uint32_t player = save_.globals.u32(0x6DFC14);
+	const bool network = save_.globals.u32(0x6DFC18) != 0;
+	bool found = false;
+	for (const size_t o : {0x65E, 0x660}) {
+		const uint16_t c = g.get<uint16_t>(b, o);
+		if (c >= save_.convoy_count()) {
+			continue;
+		}
+		for (uint32_t i = save_.convoys[c].u16(0xA); i < ships; i = save_.ships[i].memory.u16(0x6)) {
+			const uint8_t owner = save_.ships[i].memory.u8(0x0);
+			if (owner == player || (network && owner < uint32_t(save_.merchant_count) &&
+				save_.merchants[owner].memory.u16(0x8) == 0)) {
+				found = true;
+			}
+		}
+	}
+	return found;
+}
+
 void Sailing::fn_606cc0(size_t b, uint16_t steps) {
 	BattleGraph& g = save_.battles;
 	auto u8 = [&](size_t o) { return g.get<uint8_t>(b, o); };
+	if (u8(0x5C) == 0 && u8(0x1E92) != 0) {
+		g.set<uint8_t>(b, 0x1E92, human_ship_in_battle(b) ? 1 : 0);
+	}
 	if (steps == 0) {
 		return;
 	}
@@ -855,10 +894,22 @@ void Sailing::fn_606cc0(size_t b, uint16_t steps) {
 			}
 			return;
 		}
+		// A human side ([+0x5D] 0) of the player whose battle isn't the one
+		// in the window (the battles object's [+0x3FC]): operation 0x96 (the
+		// battle [+0x662], the player, 1) to open it.
 		bool automatic = true;
+		const uint32_t player = save_.globals.u32(0x6DFC14);
 		for (size_t i = 0; i < u8(0x558); ++i) {
-			if (u8(0x5D + i) == 0) {
-				automatic = false;  // A human side: part 7 (operation 0x96 and its countdown).
+			if (u8(0x5D + i) != 0) {
+				continue;
+			}
+			automatic = false;
+			const uint16_t owner = g.get<uint16_t>(b, 0x35A + 2 * i);
+			if (owner == player && g.get<uint8_t>(0, 0x3FC) != g.get<uint16_t>(b, 0x662)) {
+				uint8_t op[0x14];
+				const uint32_t fields[5] = {0x96, g.get<uint16_t>(b, 0x662), owner, 1, 0};
+				std::memcpy(op, fields, sizeof(op));
+				tick::enqueue_operation(save_, op, sizeof(op));  // 0x54AA70
 			}
 		}
 		if (automatic) {

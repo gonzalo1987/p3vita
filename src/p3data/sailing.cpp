@@ -261,6 +261,7 @@ void Sailing::assign_loaded_routes() {
 			ship.own_route() = assigned.own;
 		}
 	}
+	load_battles();  // 0x611AE0, in 0x549F40 after the events (battle/battle_save.cpp)
 	check_loaded_routes();  // 0x5048C0, at the end of 0x549F40 (sailing_load.cpp)
 }
 

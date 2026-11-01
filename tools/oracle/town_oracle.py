@@ -196,7 +196,10 @@ STORM_UI_JUMPS = {0x50596F: 0x505983, 0x5059CA: 0x5059E0}
 # A convoy at its nest is disbanded (0x514B80, rewritten in p3vita); with
 # --no-disband it is not (NO_DISBAND_JUMP, 0x505FF1 → 0x506029 in 0x505C90:
 # as if it were elsewhere), as before cloud/battles-2.
-PIRATE_JUMPS = {0x507C0B: 0x507B5F}
+# At a sea battle's end (0x60D299) the news ticker's window (*0x6CC7E8,
+# 0x469380 and 0x469AF0) is jumped over (0x60EB55 → 0x60EBAC); the tick in
+# the battles object's [+0x408] is kept.
+PIRATE_JUMPS = {0x507C0B: 0x507B5F, 0x60EB55: 0x60EBAC}
 NO_DISBAND_JUMP = {0x505FF1: 0x506029}
 # With --pirates, the pirate objects' daily update runs (0x514000, otherwise
 # quiet) and the operation it queues is executed: 0xB5, a convoy leaves the
@@ -207,6 +210,8 @@ PIRATE_WAYPOINTS = 0x448780
 # The battles (docs/cloud/battles-2.md §3): the object of 0x6E55D0 and its
 # heap blocks, recorded as the region BT (TownOracle.battle_graph).
 BATTLES = 0x6E55D0
+READ_BATTLES = 0x611AE0  # thiscall on BATTLES, (data, version) → end
+SEPARATOR_BYTES = b'\xfe\xaf\x00\x00'
 BATTLES_SIZE = 0xC48
 BATTLE_COUNT = BATTLES + 0x404  # u8: slots in use
 BATTLE_POINTER = 0xF0000000  # | block << 16 | offset: a pointer inside the graph
@@ -489,6 +494,26 @@ class TownOracle(SaveOracle):
         _, _, merchants, _ = self.counts()
         player = max((i for i in range(merchants) if self.u16(self.merchant(i) + 8) == 0), default=0)
         self.write_u32(PLAYER, player)
+        self.load_battles()
+
+    def load_battles(self):
+        """The battles of the save (0x611AE0 on 0x6E55D0, the third section
+        from the end; 0x549F40 reads it after the events, and nothing read in
+        between uses it): saves 6, 7 and tut4 start with a sea battle
+        (docs/cloud/battles-2.md §5). Once (write_oracle.prepare_game_object
+        doesn't read it again)."""
+        separators = []
+        pos = len(self.save) - 4
+        while pos > 0 and len(separators) < 3:
+            if self.save[pos:pos + 4] == SEPARATOR_BYTES:
+                separators.append(pos)
+            pos -= 1
+        start, end = separators[2] + 4, separators[1]
+        version = struct.unpack_from('<I', self.save, 0)[0] >> 16
+        got = self.call(READ_BATTLES, [FILE + start, version], ecx=BATTLES) - FILE
+        if got != end:
+            raise RuntimeError(f'the battles end at {got}, not at {end}')
+        self.battles_loaded = True
 
     def setup_imports(self, exe):
         """Las funciones importadas se llaman por la tabla de importaciones, que
@@ -1002,7 +1027,13 @@ class TownOracle(SaveOracle):
         unpack = struct.unpack_from
         sizes = self.sizes
         requested = self.__dict__.get('requested', {})
-        def numbers(data):
+        # The pages of a sea battle's bits (its page lists [+0x48], [+0x4C],
+        # [+0x50]): every word a mask of bits, a number (bit 28 is the heap's
+        # first block). As BattleGraph::bit_pages.
+        lists, pages = set(), set()
+        def numbers(address, data):
+            if address in pages:
+                return range(0, len(data), 4)
             vtable = unpack('<I', data, 0)[0] if len(data) >= 4 else 0
             return BATTLE_NUMBERS.get((len(data), vtable), ())
 
@@ -1010,8 +1041,12 @@ class TownOracle(SaveOracle):
         index = {BATTLES: 0}
         i = 0
         while i < len(blocks):
-            data = blocks[i][1]
-            skip = numbers(data)
+            address, data = blocks[i]
+            if len(data) == 0x1E98 and unpack('<I', data, 0)[0] == 0x67AD44:
+                lists.update(unpack('<I', data, o)[0] for o in (0x48, 0x4C, 0x50))
+            elif address in lists:
+                pages.update(unpack(f'<{len(data) // 4}I', data))
+            skip = numbers(address, data)
             for k, v in enumerate(unpack(f'<{len(data) // 4}I', data)):
                 if 4 * k in skip:
                     continue
@@ -1024,7 +1059,7 @@ class TownOracle(SaveOracle):
         for a, data in blocks:
             words = list(unpack(f'<{len(data) // 4}I', data))
             changed = False
-            skip = numbers(data)
+            skip = numbers(a, data)
             for k, v in enumerate(words):
                 if 4 * k in skip:
                     continue
