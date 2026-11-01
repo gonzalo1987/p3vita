@@ -15,11 +15,12 @@ Cómo leerla:
   de las sesiones en la nube, [cloud/](cloud/).
 - Este documento se queda en español: lo lee el usuario.
 
-## En marcha (31-10-2026)
+## En marcha (01-11-2026)
 
 - Sesión local: la parte B del inventario está hecha salvo la 0x9F y la 0xB5, que van con las batallas. Lo siguiente es la parte C y después la D.
 - No se lanzan más sesiones en la nube: queda poco crédito (66 de 250 el 31-10-2026). Lo que tenga cada sesión al acabar se junta como siempre.
-- Batallas: la pieza 2 está en `main`. Lo siguiente es `tasks/battles-2.md` (el «pool» de los piratas, deshacer el convoy en la guarida y la infraestructura de la pieza 3); todavía no está lanzada.
+- Batallas: `cloud/battles-2` (`tasks/battles-2.md`) está en marcha. Su último commit (31-10-2026, 23:23 UTC) lleva en su rama, sin juntar, el «pool» de los piratas, deshacer el convoy en la guarida (0x514B80), los estados 0x11 y 0x12 y el día de los objetos pirata con la operación 0xB5; le falta la pieza 3, la batalla automática en el mar.
+- `cloud/unchecked-branches` ha arreglado el punto ciego de tick_probe (ver «Herramientas y comprobaciones») y está juntada en `main`.
 
 ## Estado por partes (medido)
 
@@ -372,7 +373,10 @@ Un ajuste (feature flag) **activado por omisión** con el que p3vita corrige los
 
   `world.sh 7` en las 12 partidas: 98 s (antes, 392 s), con las grabaciones idénticas byte a byte
 - [x] Medir el estado de cada parte: `re/emu/sesion5/coverage_parts.py` (la tabla de «Estado por partes», arriba). A diferencia de `callgraph.py`, sigue el cuerpo real de cada función, y además poda los gráficos del asedio (0x62BE90, 0x62C730...) y la ventana del final (0x4220B0). Con `coverage_parts.py RUTA PARTE` lista las entradas más grandes a lo que falta. Pendiente: que siga también las tablas de métodos, como el grafo de las batallas (`re/battles/graph.py` de p3vita-datos)
-- [ ] **El punto ciego de tick_probe**: nunca compara las palabras de 4 bytes que parecen punteros (0x01000000..0x010FFFFF, 0x04000000.., 0x10000000..0x17FFFFFF). En un evento 0x32 empezado, [+0xC..+0xF] vale `01 comerciante 00 01`, así que un comerciante equivocado en [+0xD] no se veía (lo encontró `cloud/unchecked-branches`). Arreglo: no tomar por punteros las palabras de las regiones que no tienen punteros (E, B, W...). Después, repasar `alderman.cpp` ([+0xD] de un encargo empezado con [+0xE] < 0x10)
+- [x] **El punto ciego de tick_probe** (`cloud/unchecked-branches`, [cloud/unchecked-branches.md](cloud/unchecked-branches.md)). Antes no comparaba, en ninguna región, las palabras de 4 bytes que parecen punteros (la pila del oráculo 0x01000000..0x010FFFFF, el fichero 0x04000000.. y el montón 0x10000000..0x17FFFFFF). Eso escondía mucho más que los eventos: justo después de cargar las partidas 3 y tut4, miles de palabras de las rejillas (0x10101010...), cientos de registros de edificios (con el tipo 0x10..0x17 en el byte alto), unos 100 campos de las ciudades, campos de oficinas y comerciantes (nombres, rangos), la plantilla de las empresas, los eventos (`01 comerciante 00 01` de un encargo de calle empezado) y las rutas.
+  - Ahora (`pointer_field` en `tools/oracle/tick_probe.cpp`) solo se saltan los campos que son punteros de verdad: los registros, la rejilla y los nodos de las ciudades, los nombres de los comerciantes, la ruta de los barcos, el ejército y las listas de los asedios, la dirección de cada nodo, el objeto de cada pirata, y los búferes que el lector deja a 0 en las cartas y en los eventos, según el tipo. Todo lo demás se compara.
+  - Comprobado: el mundo entero 7 días en las 12 partidas sigue a 0 diferencias (no escondía ninguna); todos los escenarios de `unchecked.sh` y los de `alderman.cpp` dan las mismas llamadas iguales, y `--fix-game-bugs` las mismas diferencias. Lo de [+0xD] de los encargos empezados en `alderman.cpp` estaba bien. `road_expired` ya no necesita el retoque [+0xE] = 0x20.
+  - [ ] Falta: en los globales (G) y los ejércitos (J) sigue la regla antigua, porque no se conocen todos sus punteros; allí un valor que parezca puntero se sigue saltando. Para quitarla haría falta la lista de los campos de puntero de las dos regiones
 - [ ] Arreglar el modo «solo ciudades» de `town_oracle.py`. Sin `--barcos` (como lo lanza `scripts/tick-probe.sh` sin `P3_SHIPS`) se para en la primera foto con `UC_ERR_READ_UNMAPPED` en las rutas (región Q). Arreglo: grabar Q solo con `--barcos`, o limpiar el [+0x24] de los barcos al cargar sin navegación
 - [ ] Más velocidad para el oráculo (estimaciones en [cloud/oracle-speed.md](cloud/oracle-speed.md)):
   - `regions()` en C: un 25–30 % menos de oráculo;
