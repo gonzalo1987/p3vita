@@ -181,6 +181,7 @@ public:
 	void fn_514000(size_t pirate);  // (pirate object) Its daily update; may queue operation 0xB5.
 	void fn_513ec0(size_t pirate);  // (pirate object) The pirate goes away.
 	void fn_514d40(size_t pirate, uint16_t most, uint16_t strength);  // Operation 0xB5: a convoy leaves the nest.
+	uint16_t fn_5063c0(uint16_t target, uint32_t kind);  // (ships object) The pirate of event 0x1E attacks a ship.
 	// 0x5062F0 (ships object): a new convoy led by `ship`, at the head of the
 	// list `head` (not inside SaveGame::convoys: it may grow); its index.
 	uint16_t fn_5062f0(uint16_t& head, uint16_t ship);

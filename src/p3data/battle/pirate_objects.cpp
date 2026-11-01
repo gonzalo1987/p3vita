@@ -32,7 +32,17 @@ uint32_t fn_52bb00(const SaveGame& save, int town);  // town_tick/facilities.cpp
 }  // namespace facilities_detail
 }  // namespace p3::data::tick
 
+namespace p3::data::tick::events_mayor_detail {
+// town_tick/events_mayor.cpp
+uint16_t fn_507d60(SaveGame& save, uint16_t& out, uint32_t town, uint32_t mode);
+void fn_52a8d0(SaveGame& save, int town, int ship, uint32_t type);
+void fn_509a50(SaveGame& save, int ship);
+}  // namespace p3::data::tick::events_mayor_detail
+
 namespace p3::data {
+
+// battle/pirates.cpp: a free town number for a nest.
+uint8_t fn_5159c0(const SaveGame& save, uint32_t n);
 
 namespace {
 
@@ -487,6 +497,165 @@ void Sailing::fn_514d40(size_t k, uint16_t most, uint16_t strength_arg) {
 		fn_5017f0(convoy);
 	}
 	insert_x(save_.convoys[convoy].u16(0x10), 0xFFFF);
+}
+
+// 0x515EA0 (on pirate k's object, the ship): the ship at the end of the
+// pirate's list [+0xC] (linked by [+0x4]).
+void fn_515ea0(SaveGame& save, size_t k, uint16_t ship) {
+	const uint16_t count = ship_count(save);
+	if (ship >= count) {
+		return;
+	}
+	uint16_t* link = &save.pirates[k]->u16(0xC);
+	while (*link < count) {
+		link = &save.ships[*link].memory.u16(0x4);
+	}
+	*link = ship;
+	save.ships[ship].memory.u16(0x4) = 0xFFFF;
+}
+
+// 0x513D80 (on pirate k's object: a town number, the difficulty, a number):
+// [+0x14] = difficulty & 3, the nest a free town number (0x5159C0), [+0xF] 1
+// for a town of kind 3..5 ([+0x31] of the table) or else number % 3 (0, 2 or
+// 3); a new pool: entry 0 (0x24), difficulty entries 0x30 and three of 0x1B
+// (orientations 0xE0, 0x20, 0xE0); [+0x16] = 1000; difficulty + 1 ships at
+// the nest (0x516170 with strength 40 · difficulty + 50: the first of type 1
+// with a captain, the others of type 1 + two bits of the number, consumed
+// two at a time, without), each with 1 of hull; no convoy and [+0x15] = 0.
+void fn_513d80(SaveGame& save, size_t k, uint32_t town, uint32_t difficulty, uint32_t number) {
+	GameMemory<0x18>& p = *save.pirates[k];
+	const uint32_t n = difficulty & 3;
+	p.u8(0x14) = uint8_t(n);
+	const uint8_t nest = fn_5159c0(save, town);
+	p.u8(0xE) = nest;
+	const uint8_t kind = save.globals.u8(kTownTable + 0x34 * nest + 0x31);
+	if (kind >= 3 && kind <= 5) {
+		p.u8(0xF) = 1;
+	} else {
+		const uint8_t r = uint8_t(number % 3);
+		p.u8(0xF) = r ? uint8_t(r + 1) : 0;
+	}
+	p.u16(0xA) = 0;
+	p.u16(0x8) = 0;
+	p.u32(0x4) = 0;
+	save.pirate_nests[k].pool.clear();
+	fn_513bf0(save, k);
+	for (uint32_t i = n; i > 0; --i) {
+		save.pirate_nests[k].pool[fn_513bf0(save, k)].u8(0x3) = 0x30;
+	}
+	for (uint32_t i = 0; i < 3; ++i) {
+		GameMemory<8>& e = save.pirate_nests[k].pool[fn_513bf0(save, k)];
+		e.u8(0x3) = 0x1B;
+		e.u8(0x7) = (i & 1) ? 0x20 : 0xE0;
+	}
+	p.u16(0x16) = 1000;
+	for (uint32_t i = 0; i <= n; ++i) {
+		const uint32_t strength = 40 * uint32_t(p.u8(0x14)) + 0x32;
+		if (i == 0) {
+			tick::alderman_detail::fn_516170(save, uint32_t(k), 1, true, strength);
+		} else {
+			const uint32_t type = ((number >> 1) & 1) + (number & 1) + 1;
+			tick::alderman_detail::fn_516170(save, uint32_t(k), type, false, strength);
+			number >>= 2;
+		}
+		save.ships[p.u16(0x12)].memory.s32(0x18) = 1;
+	}
+	p.u16(0x10) = 0xFFFF;
+	p.u8(0x15) = 0;
+}
+
+// 0x5063C0 (on the ships object: the target ship, kind): the pirate of event
+// 0x1E attacks a ship. A new pirate ship (0x507D60, out of the lists) of
+// town 0's size (0x52A8D0) of type 0 for kind % 3 = 0, 1 for 1, and for 2 type
+// 3, or 1 if the target is in the shallows (0x673564); full hull, one level
+// (two for kind 2), a name (as 0x509A50), its sailors (0x5185C0), a new captain
+// whose [+0xB] is (kind % 3 + 2) · 0x33, armed with the mean of the merchants'
+// arms (0x515750 with −1). It joins the first pirate (0x515EA0, 0x51A4C0); if
+// there is none, pirate 4 is made (0x513720, 0x513D80 with the tick % 40,
+// the difficulty and town 0's [+0x4] + the tick). It appears at the target's place (or (0x3D2, 0x317) without
+// target) in state 0x12 with the target in [+0x50] and [+0x52], as a convoy of
+// its own (0x5062F0) with no wait and the flag 0x40 (attack at once), in the
+// list by x after the head of the sea list; [+0x136] |= 0xC0. Returns the
+// ship.
+uint16_t Sailing::fn_5063c0(uint16_t target, uint32_t kind) {
+	GlobalMemory& g = save_.globals;
+	const uint16_t count = ship_count(save_);
+	int16_t x = 0x3D2, y = 0x317;
+	if (target < count) {
+		x = save_.ships[target].memory.s16(0x1E);
+		y = save_.ships[target].memory.s16(0x22);
+	}
+	const uint32_t mode = (kind & 0xFFFF) % 3;
+	uint32_t type = 0;
+	if (mode == 1) {
+		type = 1;
+	} else if (mode == 2) {
+		type = 3;
+		if (target < count && fn_50e340(x, y)) {
+			type = 1;
+		}
+	}
+	uint16_t index = 0;
+	tick::events_mayor_detail::fn_507d60(save_, index, 0, 3);
+	tick::events_mayor_detail::fn_52a8d0(save_, 0, index, type);
+	{
+		ShipMemory& s = save_.ships[index].memory;
+		s.s32(0x18) = s.s32(0x14);
+	}
+	tick::alderman_detail::fn_51a750(save_, index, mode < 2 ? 1 : 2);
+	// The name: as 0x509A50 (the game repeats the same sum when the name is
+	// past the list, see «Game bugs»).
+	tick::events_mayor_detail::fn_509a50(save_, index);
+	{
+		ShipMemory& s = save_.ships[index].memory;
+		s.u8(0x3C) |= 1;
+		s.u16(0x40) = uint16_t(fn_5185c0(s));
+	}
+	const uint16_t c = tick::events_detail::fn_5097c0(save_, true);
+	save_.ships[index].memory.u16(0x42) = c;
+	save_.captains[c].u8(0xB) = uint8_t((mode + 2) * 0x33);
+	int32_t strength = -1;
+	fn_515750(save_, index, strength);
+	recalculate_cargo(save_.ships[index]);
+	for (size_t k = 0; k < 5; ++k) {
+		if (g.u32(kPirates + 4 * uint32_t(k)) != 0 && save_.pirates[k]) {
+			fn_515ea0(save_, k, index);
+			save_.ships[index].memory.u8(0x158) = uint8_t(k);  // 0x51A4C0
+			break;
+		}
+		if (k == 4) {
+			GameMemory<0x18>& p = save_.pirates[4].emplace();  // 0x513720
+			p.bytes.fill(0);
+			p.u16(0xC) = 0xFFFF;
+			p.u8(0xE) = 0xFF;
+			p.u8(0xF) = 0xFF;
+			p.u16(0x10) = 0xFFFF;
+			p.u16(0x12) = 0xFFFF;
+			p.u8(0x14) = 0xFF;
+			save_.pirate_nests[4] = PirateNest{};
+			g.u32(kPirates + 4 * 4) = 1;
+			const uint32_t sum = save_.towns[0].memory.u32(0x4) + g.u32(kTick);
+			fn_513d80(save_, 4, g.u32(kTick) % 0x28, save_.settings.u8(0x13), sum);
+			fn_515ea0(save_, 4, index);
+			save_.ships[index].memory.u8(0x158) = 4;
+		}
+	}
+	ShipMemory& s = save_.ships[index].memory;
+	s.u8(0x3D) |= 0x20;
+	s.s16(0x1E) = x;
+	s.u16(0x134) = 0x12;
+	s.u16(0x1C) = 0x7FFF;
+	s.u16(0x20) = 0x7FFF;
+	s.s16(0x22) = y;
+	s.u16(0x50) = target;
+	s.u16(0x52) = target;
+	const uint16_t convoy = fn_5062f0(g.u16(kConvoyHead), index);
+	save_.convoys[convoy].u16(0x16) = 0;
+	save_.convoys[convoy].u8(0x14) |= 0x40;
+	save_.ships[index].memory.u16(0x138) = 0;
+	insert_x(index, save_.sailing_head());
+	save_.ships[index].memory.u8(0x136) |= 0xC0;
+	return index;
 }
 
 }  // namespace p3::data

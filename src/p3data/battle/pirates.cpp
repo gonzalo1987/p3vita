@@ -381,6 +381,8 @@ struct GameRandom {
 	}
 };
 
+}  // namespace
+
 // 0x5159C0 (cdecl, n): a town number of StadtDaten.ini that is not a town of
 // the game, a pirate nest or marked in [+0x2F] of the table: the n-th one
 // (modulo how many there are), or 0.
@@ -408,7 +410,6 @@ uint8_t fn_5159c0(const SaveGame& save, uint32_t n) {
 	return count ? free[n % count] : 0;
 }
 
-}  // namespace
 
 // 0x505C90 (thiscall on the ships object, the address of the convoy's link in
 // the list): a new course for a pirate convoy without a route. Returns true if

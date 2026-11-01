@@ -42,6 +42,11 @@ Scenarios:
                accepted and refused, up to 3; a privateer's ship that goes home
                and one that leaves with the pirates
   retire       each pirate goes away ([+0x15] = 1; 0x514000, 0x513EC0)
+  attack       direct calls of 0x5063C0 (the attack of event 0x1E): kinds 0,
+               1, 2, 5, a target in the shallows, no target; with 0 days
+  attack_one   one call of 0x5063C0 (kind 0), then the days
+  attack_new   the same and then no pirate at all (one is made: 0x513D80);
+               with 0 days
 """
 import argparse
 import os
@@ -55,7 +60,7 @@ from town_oracle import WORLD  # noqa: E402
 SORT_X = 0x50D0C0  # thiscall on the ships object (index): the ship back in its place in the list by x
 PLAN = 0x515DA0
 FUNCTIONS = [0x514B80, 0x515DA0, 0x513BF0, 0x505C90]
-RANGES = {0x514000: 0x514492, 0x514D40: 0x5152EE, 0x513EC0: 0x513FF3, 0x514B80: 0x514D36, 0x515DA0: 0x515E9D, 0x513BF0: 0x513D11, 0x505C90: 0x506270}
+RANGES = {0x5063C0: 0x5066E1, 0x513D80: 0x513EBF, 0x515EA0: 0x515F00, 0x514000: 0x514492, 0x514D40: 0x5152EE, 0x513EC0: 0x513FF3, 0x514B80: 0x514D36, 0x515DA0: 0x515E9D, 0x513BF0: 0x513D11, 0x505C90: 0x506270}
 TOWN_TABLE = 0x6DDB90
 TICK = 0x6DE4B4
 # A call from Python returns to SENTINEL, where the emulation stops before the
@@ -455,7 +460,53 @@ def retire(o):
         print(f'pirate {k} goes away')
 
 
-SCENARIOS = {f.__name__: f for f in (disband, disband_map, plan, lost, alone, guide, daily, leave, retire)}
+ATTACK = 0x5063C0  # thiscall on the ships object (target ship, kind)
+SHALLOWS = (442, 1521)  # a corner inside the first box of 0x673564
+
+
+def attack_one(o):
+    """One call of 0x5063C0 (kind 0) on a ship of a human player at sea."""
+    target = [i for i in walk(o, to.SHIPS + 0xEA) if human(o, i)][:1] or walk(o, to.SHIPS + 0xEA)[:1]
+    direct(o, ATTACK, [target[0], 0], to.SHIPS)
+
+
+def attack(o):
+    """Direct calls of 0x5063C0 (the pirate of event 0x1E): on a ship of a
+    human player at sea with the kinds 0, 1, 2 and 5; kind 2 with the target
+    in the shallows; no target (0xFFFF). Run it with 0 days: six new pirates
+    on one place tangle the list by x (0x50D0C0 never ends)."""
+    target = None
+    for i in walk(o, to.SHIPS + 0xEA):
+        if human(o, i):
+            target = i
+            break
+    if target is None:
+        target = walk(o, to.SHIPS + 0xEA)[0]
+    for kind in (0, 1, 2, 5):
+        direct(o, ATTACK, [target, kind], to.SHIPS)
+    s = o.ship(target)
+    keep = bytes(o.uc.mem_read(s + 0x1C, 8))
+    w32(o, s + 0x1C, SHALLOWS[0] << 16)
+    w32(o, s + 0x20, SHALLOWS[1] << 16)
+    direct(o, ATTACK, [target, 2], to.SHIPS)
+    o.uc.mem_write(s + 0x1C, keep)
+    direct(o, ATTACK, [0xFFFF, 1], to.SHIPS)
+    print(f'target {target}: 0x5063C0 6 times')
+    return target
+
+
+def attack_new(o):
+    """attack, then with no pirate at all (the pointers cleared; pirate 4 is
+    made: 0x513720, 0x513D80) twice. Run it with 0 days: the convoys of the
+    pirates whose pointers were cleared are left without a pirate."""
+    target = attack(o)
+    for k in range(5):
+        w32(o, to.SHIPS + 0xC + 4 * k, 0)
+    direct(o, ATTACK, [target, 0], to.SHIPS)
+    direct(o, ATTACK, [target, 4], to.SHIPS)
+
+
+SCENARIOS = {f.__name__: f for f in (disband, disband_map, plan, lost, alone, guide, daily, leave, retire, attack, attack_new, attack_one)}
 
 
 def main():

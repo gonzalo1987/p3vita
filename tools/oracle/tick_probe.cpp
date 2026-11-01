@@ -313,6 +313,8 @@ void build_save(const State& state, SaveGame& save) {
 	for (size_t i = 0; i < save.pirates.size(); ++i) {
 		if (const Region* z = find(state, "Z" + std::to_string(i)); z && z->bytes.size() == 0x18) {
 			std::memcpy(save.pirates[i].emplace().bytes.data(), z->bytes.data(), 0x18);
+		} else if (z) {
+			save.pirates[i].reset();  // No pirate (an empty region): not the one of an earlier sample.
 		}
 		// The map of the nest, its cells and the pool (battle/pirate_nests.hpp).
 		PirateNest& nest = save.pirate_nests[i];

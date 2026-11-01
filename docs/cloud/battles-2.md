@@ -45,6 +45,14 @@ automatic sea battle).
   days, 0 «distintas»; retouched `daily`, `leave`, `retire`: every reachable
   branch, 0 differences.
 
+- **Part 2: the attack of event 0x1E (rewritten, not connected):** 0x5063C0
+  with 0x513D80 (a new pirate) and 0x515EA0; 0 differences in retouched
+  direct calls (`attack`, `attack_new`, `attack_one`, saves 1, 3, 5, 6, tut0,
+  tut2). Its call is in `events_rare.cpp` (the local session's file): the
+  change is described in §2.4, not made.
+- **Part 2 closed:** the world, 12 saves × 7 days, 0 «distintas» by default
+  (133 + 137 + 119 s) and with `--pirates` (142 + 140 + 127 s).
+
 ## Decisions for the user
 
 - **The grid functions on a nest's map** (recommendation: for
@@ -285,6 +293,60 @@ state 0x12, and the next tick 0x5017F0 finds no ship with hull and leaves
 x (0x50D0C0), outside the ships: the emulator stops there. p3vita stops
 before it (`pirate_convoy`); see «Game bugs».
 
+### 2.4 The attack of event 0x1E: 0x5063C0, 0x513D80, 0x515EA0
+
+Event 0x1E (state 2, and state 3 again on the merchant's ships) calls
+**0x5063C0** (on the ships object: the target ship, a kind; it returns the
+new ship): a new pirate ship (0x507D60 out of the lists, 0x52A8D0 of town
+0's size) of type 0 for kind % 3 = 0, 1 for 1, for 2 type 3 or 1 if the
+target is in the shallows (0x673564, bounds inclusive); full hull; one level
+(two for kind 2, 0x51A750); a name as 0x509A50 does (`fn_509a50`); 0x5185C0
+sailors; a new captain (0x5097C0 with 1) whose `[+0xB]` = (kind % 3 + 2) ·
+0x33; armed by 0x515750 with −1 (the mean of the merchants' arms). It joins
+the first pirate that exists (**0x515EA0**: at the end of its list `[+0xC]`;
+0x51A4C0); with no pirate at all, pirate 4 is made (0x513720: the empty
+object) and **0x513D80**(tick % 40, the difficulty, town 0's `[+0x4]` + the
+tick): `[+0x14]` = difficulty & 3, the nest a free town number (0x5159C0),
+`[+0xF]` 1 for a town of kind 3..5 or number % 3 (0, 2, 3), a new pool (entry
+0, difficulty entries of kind 0x30, three of 0x1B), `[+0x16]` = 1000, and
+difficulty + 1 ships at the nest (0x516170, strength 40 · difficulty + 50,
+the first of type 1 with a captain, the others of type 1 + two bits of the
+number, two at a time, without), each with 1 of hull. The new ship appears at
+the target's place (or (0x3D2, 0x317)) in state 0x12, `[+0x1C]`, `[+0x20]`
+fractions 0x7FFF, the target in `[+0x50]` and `[+0x52]`, as a convoy of its
+own (0x5062F0) with no wait and the flag 0x40 (the attack at once), into the
+list by x from the head of the sea list (0x50CE50), `[+0x136]` |= 0xC0.
+
+p3vita: `Sailing::fn_5063c0`, and `fn_513d80`, `fn_515ea0` in
+`battle/pirate_objects.cpp`; `fn_5159c0` (`pirates.cpp`) is no longer in an
+anonymous namespace. Probe 0x5063C0 (it compares the returned ship).
+
+**Not connected:** the calls are in `src/p3data/town_tick/events_rare.cpp`
+(`fn_4dfd44`, the local session's file). The change for whoever owns it,
+with a `Sailing*` reaching that function:
+- state 2, where it says «Por traducir: el ataque al barco (0x5063C0 con 1…)»:
+  `sailing->fn_5063c0(uint16_t(s), 1);` before `e.u32(0) += 0x200;`
+- state 3, where it says «Por traducir: 0x5063C0 con 0 sobre el barco `s`»:
+  `sailing->fn_5063c0(uint16_t(s), 0);` before the `break`.
+Both only with the pirates on (`set_pirates`), as the oracle with `--pirates`
+(without it, the oracle runs the game's 0x5063C0 too, but the saves never
+reach it).
+
+Checked with retouched direct calls (`retouch_pirates.py`): `attack` (a
+human player's ship at sea, kinds 0, 1, 2, 5, the target moved into the
+shallows, no target; 0 days), `attack_new` (the same, then every pirate
+pointer cleared: pirate 4 is made, twice; 0 days), saves 1, 3, 5, tut2 (and 6,
+tut0): 0 differences (6–8 calls each); `attack_one` (one call, then a day of
+0x506720), saves 1 and 3: 0 differences (256 calls of 0x506720). Every
+branch ran except the name loop's repetition (below) and a failed
+allocation. Six new pirates at the same place, followed by days, tangle the
+list by x so that 0x50D0C0 never ends in the game (saves 1 and 3): an
+artefact of the retouch (one call is fine).
+
+While checking it: tick_probe now empties `SaveGame::pirates[i]` when the
+region `Zi` is empty (before, a pirate deleted in the game stayed in p3vita
+from an earlier sample).
+
 ## Changes to shared files
 
 - `src/p3data/savegame.cpp` (cloud/statistics): one line, at the end of the
@@ -334,6 +396,8 @@ before it (`pirate_convoy`); see «Game bugs».
   `fn_513ec0`, `fn_514d40`.
 - `tools/oracle/town_oracle.py`: `PIRATE_UPDATE`, `PIRATE_OPERATIONS`; with
   `--pirates`, 0x514000 is not quiet and 0xB5 is executed.
+- `tools/oracle/tick_probe.cpp`: an empty region `Zi` resets
+  `SaveGame::pirates[i]`.
 - `src/p3data/convoys_members.cpp`: the pirate branch of `fn_5017f0` and the
   declaration of `fn_5097c0` (`town_tick/events.cpp`).
 - Declared in my files (not changed): `fn_4f9c80`
@@ -361,6 +425,11 @@ Certain:
   arguments in the first call.
 
 Looks like one:
+- **0x5063C0's name loop never ends** when ([0x6DD88E] + [0x6DD890]) % 307
+  is not below the number of names [0x6DDB78]: unlike 0x509A50, it doesn't
+  store the new index inside the loop, so it computes the same value again
+  and again. With the game's list (307 names or more) it can't happen. p3vita
+  calls `fn_509a50`, which goes on.
 - **A convoy of a pirate that goes away** (the pirates switched off in the
   options while a pirate convoy is at sea): its ships lose their hull
   (0x514000) but the convoy stays, without a guide, and 0x507A65 sorts ship
@@ -375,7 +444,8 @@ Looks like one:
 ## Done and left
 
 Done: part 1; of part 2, the disbanding (§2.1), the states 0x11 and 0x12
-and 0x5017F0 (§2.2), the pirate objects' day (§2.3). Left: part 2 (0x5063C0,
-retouched states), part 3 (battle infrastructure) and part 4 (the battle).
+and 0x5017F0 (§2.2), the pirate objects' day (§2.3), the attack of event
+0x1E (§2.4, not connected). Left: part 3 (battle infrastructure) and part 4
+(the battle).
 
 Not built for the Vita yet.

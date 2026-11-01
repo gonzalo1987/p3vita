@@ -140,6 +140,14 @@ void register_probes_battle(ProbeRegistry& r) {
 		probe_sailing()->fn_514d40(size_t(k), uint16_t(c.args[0]), uint16_t(c.args[1]));
 		return std::nullopt;
 	};
+	// 0x5063C0: thiscall on the ships object, the target ship and the kind; returns the new ship (ax).
+	r[0x5063C0] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		if (!probe_sailing()) {
+			return kBad;
+		}
+		c.eax_mask = 0xFFFF;
+		return probe_sailing()->fn_5063c0(uint16_t(c.args[0]), c.args[1] & 0xFFFF);
+	};
 	// 0x517170: thiscall on a ship.
 	r[0x517170] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
 		const int ship = c.ship(c.ecx);
