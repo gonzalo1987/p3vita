@@ -200,6 +200,14 @@ STORM_UI_JUMPS = {0x50596F: 0x505983, 0x5059CA: 0x5059E0}
 # 0x469380 and 0x469AF0) is jumped over (0x60EB55 → 0x60EBAC); the tick in
 # the battles object's [+0x408] is kept.
 PIRATE_JUMPS = {0x507C0B: 0x507B5F, 0x60EB55: 0x60EBAC}
+# The news ticker's window (*0x6CC7E8, 0x469380) opens at once only when no
+# sea battle is open ([0x6E59CC] = 0xFF and [0x6E59CD] = 0, which the battles'
+# reader 0x611AE0 sets at the load); otherwise the message waits ([+0x3EA] =
+# 1). The emulator has no window, so the message always waits (0x46938F →
+# 0x4693A1), as before the oracle read the battles: without it, the player's
+# expired road task (retouch_unchecked.py road_expired) jumped to 0 in
+# 0x4B4E30. Always on, as the window can open from any part.
+WINDOW_JUMPS = {0x46938F: 0x4693A1}
 NO_DISBAND_JUMP = {0x505FF1: 0x506029}
 # With --pirates, the pirate objects' daily update runs (0x514000, otherwise
 # quiet) and the operation it queues is executed: 0xB5, a convoy leaves the
@@ -391,6 +399,8 @@ class TownOracle(SaveOracle):
                 self.uc.mem_write(at, build(at))
             self.uc.mem_write(EXECUTOR_TRAMPOLINE, executor_trampoline(EXECUTOR_TRAMPOLINE))
         self.setup_imports(exe)
+        for address, target in WINDOW_JUMPS.items():
+            self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
         if 0x4D85C0 in self.rest:
             quiet.update(QUIET_EVENTS)
             for address, target in EVENT_JUMPS.items():
