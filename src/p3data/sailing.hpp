@@ -256,6 +256,10 @@ public:
 	void fn_50cb80(uint16_t convoy, uint16_t other, uint32_t value, uint8_t level);  // An event 5.
 	void fn_50c9e0(uint16_t convoy, bool flag);  // A Hanse convoy after its battle.
 	void fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other);  // A convoy after its battle.
+	void fn_4ec864(uint16_t ship, uint8_t other);  // (events) A pirate ship's event after it sank.
+	void fn_4f8d90(uint8_t merchant, bool towns);  // (merchant) Fame down (a ship sunk).
+	bool fn_503b00(uint16_t convoy) const;  // (convoy) The Hanse fleet of its event 0x34.
+	void fn_504970();  // (ships object) The towns' wares on the way again.
 	// battle/attack.cpp
 	void fn_50bc40(uint16_t convoy);  // (ships object) A pirate convoy attacks: a sea battle.
 	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.

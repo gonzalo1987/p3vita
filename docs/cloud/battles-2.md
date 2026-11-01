@@ -599,6 +599,14 @@ tut3, 7 days; 39 s):
   only in the battle's last tick (1 + 4 + 3 + 1 + 1 + 1 of 396 calls), the
   one that reaches 0x50BFD0. The report and letters of the end (0x4D6530),
   the news ticker and the player's window are not rewritten (messages, UI).
+- **0x50BFD0** (each convoy after its battle: going on or broken up, sunk
+  ships deleted, money, fame, [+0x1B]) with **0x4EC864**, **0x4F8D90**,
+  **0x503B00**, **0x504970** (the towns' wares on the way again). Saves 4, 5,
+  6, tut0, tut1, tut3, 7 days: 0x50BFD0 22 calls, 0x611740 11, and **0x606CC0
+  407 calls, all equal**: the whole step and end of an automatic sea battle
+  run as in the game. Not reproduced in 0x50BFD0: the trade routes
+  [+0x132] (0x4D4DD0 on 0x6DD728, not in SaveGame), the Hanse event's list of
+  sunk ships (0x4F3980, 0x4F3AD0), letters and UI.
 - **The recording of BT took numbers for pointers**: at the start of a
   battle the places of the scene's ships are whole, so their 16.16 x
   ([+0x8]) is x · 65536, 0x10xx0000 for x from 4096 on, and the heap gives

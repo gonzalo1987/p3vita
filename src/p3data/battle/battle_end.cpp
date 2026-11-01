@@ -3,9 +3,11 @@
 // the battles object's table of ships that met (0x612BD0, 0x612A20).
 
 #include <array>
+#include <cstring>
 
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/trade.hpp"
 
 namespace p3::data {
 
@@ -432,12 +434,351 @@ void Sailing::fn_50c9e0(uint16_t convoy, bool flag) {
 
 namespace p3::data {
 
+namespace {
+
+constexpr uint32_t kEventHead = 0x6DD744;  // u16
+constexpr uint32_t kEventCount = 0x6DD748;  // u16
+constexpr int16_t kSunkFame = -512;  // 0x672DDE (s16)
+
+}  // namespace
+
+// 0x4EC864 (on the events object; a ship, the other side's owner): the
+// pirate ship's event (0x32 with [+0xC] 2 and the ship at [+0x10]) after
+// the ship sank: [+0xC] 5 if its owner [+0xD] is no merchant; else [+0x16]
+// 1 if that owner sank it and its captain is the event's ([+0x12], [+0x14]:
+// its [+0x2], [+0x3]), otherwise 2.
+void Sailing::fn_4ec864(uint16_t ship, uint8_t other) {
+	GlobalMemory& gl = save_.globals;
+	for (uint32_t i = gl.u16(kEventHead); i < gl.u16(kEventCount); i = save_.events[i].u16(0x4)) {
+		GameMemory<0x18>& e = save_.events[i];
+		if (e.u16(0x6) != 0x32 || e.u8(0xC) != 2 || e.u16(0x10) != ship) {
+			continue;
+		}
+		const uint8_t owner = e.u8(0xD);
+		if (owner >= gl.u16(global::kWorldMerchantCount)) {
+			e.u8(0xC) = 5;
+			return;
+		}
+		uint8_t v = 2;
+		const uint16_t c = save_.ships[ship].memory.u16(0x42);
+		if (owner == other && c < gl.u16(global::kCaptainCount) && save_.captains[c].u8(0x2) == e.u16(0x12) &&
+			save_.captains[c].u8(0x3) == e.u16(0x14)) {
+			v = 1;
+		}
+		e.u8(0x16) = v;
+		return;
+	}
+}
+
+// 0x4F8D90 (on a merchant; a flag): fame − 512 (0x672DDE; at least
+// −0x8000); with the flag each town's [+0x120] (float, 12 bytes apart) of the
+// merchant + its [+0x464].
+void Sailing::fn_4f8d90(uint8_t merchant, bool towns) {
+	MerchantMemory& m = save_.merchants[merchant].memory;
+	const int32_t fame = m.s16(0x16);
+	if (kSunkFame > 0) {
+		m.s16(0x16) = fame < 0x7FFF - kSunkFame ? int16_t(fame + kSunkFame) : int16_t(0x7FFF);
+	} else {
+		m.s16(0x16) = fame + 0x8000 > -kSunkFame ? int16_t(fame + kSunkFame) : int16_t(-0x8000);
+	}
+	if (towns) {
+		for (uint32_t t = 0; t < save_.globals.u32(0x6DE4B0); ++t) {
+			float a, b;
+			std::memcpy(&a, m.bytes.data() + 0x120 + 12 * size_t(t), 4);
+			std::memcpy(&b, m.bytes.data() + 0x464, 4);
+			const float sum = float(double(a) + double(b));
+			std::memcpy(m.bytes.data() + 0x120 + 12 * size_t(t), &sum, 4);
+		}
+	}
+}
+
+// 0x503B00 (on a convoy; its index): whether it is the Hanse fleet of its
+// event (0x34 from phase 7, [+0x16] the convoy).
+bool Sailing::fn_503b00(uint16_t convoy) const {
+	const uint16_t e = save_.convoys[convoy].u16(0x2);
+	if (e >= save_.globals.u16(kEventCount)) {
+		return false;
+	}
+	const GameMemory<0x18>& v = save_.events[e];
+	return v.u16(0x6) == 0x34 && v.u8(0x15) >= 7 && v.u16(0x16) == convoy;
+}
+
+// 0x504970 (on the ships object): each town's wares on the way ([0x670])
+// again: the cargo of the ships at sea ([0xEA]) by their destination [+0x38],
+// and of the convoys in state 0xF ([0xEC]) by theirs [+0x1F].
+void Sailing::fn_504970() {
+	GlobalMemory& gl = save_.globals;
+	const uint32_t towns = gl.u32(0x6DE4B0);
+	for (uint32_t t = 0; t < towns; ++t) {
+		for (int w = 0; w < 24; ++w) {
+			save_.towns[t].in_transit(w) = 0;
+		}
+	}
+	const uint16_t ships = gl.u16(global::kShipCount);
+	auto add = [&](uint32_t town, const ShipMemory& s) {
+		for (int w = 0; w < 24; ++w) {
+			save_.towns[town].in_transit(w) += s.s32(0x54 + 4 * size_t(w));
+		}
+	};
+	for (uint32_t i = gl.u16(global::kShips + 0xEA); i < ships; i = save_.ships[i].memory.u16(0x6)) {
+		const ShipMemory& s = save_.ships[i].memory;
+		if (s.u8(0x38) < towns) {
+			add(s.u8(0x38), s);
+		}
+	}
+	for (uint32_t c = gl.u16(global::kShips + 0xEC); c < save_.convoy_count(); c = save_.convoys[c].u16(0x8)) {
+		const GameMemory<0x3C>& v = save_.convoys[c];
+		if (v.u16(0x12) != 0xF || v.u8(0x1F) >= towns) {
+			continue;
+		}
+		for (uint32_t i = v.u16(0xA); i < ships; i = save_.ships[i].memory.u16(0x6)) {
+			add(v.u8(0x1F), save_.ships[i].memory);
+		}
+	}
+}
+
 // 0x50BFD0 (on the ships object; a convoy, a flag, the other side's owner):
-// the convoy after its battle. Being rewritten (next part).
+// the convoy after its battle (no longer fighting: [+0x14] without 0x20).
+// A convoy of no merchant goes on in state 0x12 ([+0x16] 0xA00) unless it
+// lost its guide for good (0x5017F0); a merchant's convoy is broken up (the
+// flag, a convoy without a guide with a captain, 0x10, or none) or, as the
+// Hanse fleet (0x503B00, state 0x16, its event 0x34 [+0x15] 0xA if broken
+// up or beaten by pirates), or as any other (state 0xF), goes on.
+// - Going on, [+0x1C] 0xFF: of no merchant, its ships without the battle's
+//   marks ([+0x136] & 0xFC, [+0x3C], [+0x39]) lose their trade route
+//   ([+0x132]); the sunk ones (0x4EC864) leave it and are deleted (0x507FB0;
+//   the winner's fame down, 0x4F8D90); the others lose their route (but the
+//   guide) and get state 0x12. A merchant's sunk ships leave it (state
+//   0x11; deleted unless the human player's); the others take its state and
+//   [+0xC]. Then 0x5017F0 (a new guide), at sea ([0xEC], [+0x18] −1, the
+//   guide in the list by x after [0xEA]), or deleted when empty (0x50A3D0).
+// - Broken up: each ship alone at sea ([0xEA], in the list by x), with the
+//   convoy's state; its owner gets the convoy's money [+0x20] if it is his;
+//   without a captain [+0x13D] | 0x10; a merchant's ship heads for its
+//   destination [+0x38] (or its owner's home [+0x19] for an AI merchant's
+//   without one), the rest lose their trade route; the sunk ones as above.
+//   The convoy is deleted (0x50A3D0).
+// The ships lost lower the loser's [+0x1B] (and raise the winner's, at most
+// 250; fame down if the loser is no merchant); the towns' wares on the way
+// again (0x504970) if the winner is a merchant.
+//
+// Not reproduced: the trade routes [+0x132] (0x4D4DD0 on 0x6DD728, which
+// SaveGame does not have), the Hanse event's list of sunk ships (0x4F3980,
+// 0x4F3AD0; p3vita doesn't keep it), the letters (0x4D6530) and the UI.
 void Sailing::fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other) {
-	(void)convoy;
-	(void)flag;
-	(void)other;
+	GlobalMemory& gl = save_.globals;
+	GameMemory<0x3C>& c = save_.convoys[convoy];
+	const uint16_t ships = gl.u16(global::kShipCount);
+	const uint16_t merchants = gl.u16(global::kWorldMerchantCount);
+	const uint16_t captains = gl.u16(global::kCaptainCount);
+	const uint32_t towns = gl.u32(0x6DE4B0);
+	c.u8(0x14) = uint8_t(c.u8(0x14) & 0xDF);
+	uint32_t lost = 0;
+	bool no_guide = true;
+	const uint8_t owner = c.u8(0x0);
+	bool broken = flag != 0;
+	bool going_on = false;
+	if (owner >= merchants) {
+		broken = !fn_5017f0(convoy);
+		c.u16(0x12) = 0x12;
+		c.u16(0x16) = 0xA00;
+	} else {
+		if ((c.u8(0x14) & 0x10) == 0x10 || !fn_5017f0(convoy) || (c.u8(0x14) & 0x10) == 0x10) {
+			broken = true;
+		}
+		if (fn_503b00(convoy)) {
+			GameMemory<0x18>& e = save_.events[c.u16(0x2)];
+			c.u16(0x12) = 0x16;
+			if (broken) {
+				e.u8(0x15) = 0xA;
+				e.u8(0xE) = 3;  // 0x67285C
+			} else if (other >= merchants) {
+				if (e.u8(0xE) == 0) {
+					e.u8(0xE) = 2;  // 0x67285B
+				}
+				e.u8(0x15) = 0xA;
+			}
+			going_on = true;  // The game goes on with the convoy even when broken up.
+		} else {
+			c.u16(0x12) = 0xF;
+		}
+	}
+	auto drop_trade_route = [&](ShipMemory& s) {
+		s.u8(0x136) = uint8_t(s.u8(0x136) & 0xFC);
+		// 0x4D4DD0 on 0x6DD728 when [+0x132] is one: not reproduced.
+		if (s.u16(0x132) < gl.u16(0x6DD72A)) {
+			s.u16(0x132) = 0xFFFF;
+		}
+	};
+	if (going_on || !broken) {
+		c.u16(0x1C) = 0xFF;
+		if (owner >= merchants) {
+			uint16_t* link = &c.u16(0xA);
+			while (*link < ships) {
+				const uint16_t index = *link;
+				SavedShip& ship = save_.ships[index];
+				ShipMemory& s = ship.memory;
+				s.u8(0x136) = uint8_t(s.u8(0x136) & 0xFC);
+				s.u16(0x3C) = 0xFFFF;
+				s.u8(0x39) = 0xFF;
+				if (s.u16(0x132) < gl.u16(0x6DD72A)) {
+					s.u16(0x132) = 0xFFFF;  // 0x4D4DD0: not reproduced.
+				}
+				if (s.s32(0x18) < 1) {
+					fn_4ec864(index, other);
+					*link = s.u16(0x6);
+					if (index == c.u16(0x10)) {
+						no_guide = true;
+					}
+					clear_ship_route(ship);
+					fn_507fb0(index);
+					if (other < merchants) {
+						fn_4f8d90(other, s.u16(0x42) < captains);
+						// A letter (0x4D6530): not rewritten.
+					}
+					++lost;
+				} else {
+					if (index != c.u16(0x10)) {
+						clear_ship_route(ship);
+					} else {
+						no_guide = false;
+					}
+					s.u16(0x134) = 0x12;
+					recalculate_cargo(ship);
+					link = &s.u16(0x6);
+				}
+			}
+			c.u8(0x14) = uint8_t(c.u8(0x14) | 0x2);
+			if (c.u16(0xA) >= ships) {
+				fn_50a3d0(convoy);
+				return;
+			}
+			if (!no_guide) {
+				fn_5017f0(convoy);  // The game asks again only when its guide is still there.
+			}
+		} else {
+			uint16_t* link = &c.u16(0xA);
+			while (*link < ships) {
+				const uint16_t index = *link;
+				SavedShip& ship = save_.ships[index];
+				ShipMemory& s = ship.memory;
+				s.u8(0x39) = 0xFF;
+				s.u16(0x3C) = 0xFFFF;
+				if (s.s32(0x18) < 1) {
+					clear_ship_route(ship);
+					// The Hanse event's list of sunk ships (0x4F3980): not kept in p3vita.
+					*link = s.u16(0x6);
+					s.u16(0x8) = 0xFFFF;
+					s.u16(0x50) = 0xFFFF;
+					s.u16(0x52) = 0xFFFF;
+					s.u16(0x134) = 0x11;
+					if (s.u8(0x0) >= merchants || save_.merchants[s.u8(0x0)].memory.u16(0x8) != 0) {
+						fn_507fb0(index);
+					}
+				} else {
+					if (index != c.u16(0x10)) {
+						clear_ship_route(ship);
+					} else {
+						no_guide = false;
+					}
+					s.u16(0x134) = c.u16(0x12);
+					recalculate_cargo(ship);
+					s.u32(0x30) = c.u32(0xC);
+					link = &s.u16(0x6);
+				}
+			}
+			if (no_guide) {
+				c.u16(0x10) = 0xFFFF;
+			}
+			fn_5017f0(convoy);
+		}
+		c.u16(0x8) = gl.u16(global::kShips + 0xEC);
+		c.u32(0x18) = 0xFFFFFFFF;
+		gl.u16(global::kShips + 0xEC) = convoy;
+		if (c.u16(0x10) < ships) {
+			insert_x(c.u16(0x10), gl.u16(global::kShips + 0xEA));
+			// The player's: 0x44F940 (UI).
+		}
+	} else {
+		// Broken up (0x494A80 on *0x6CE6D0 first: UI).
+		while (c.u16(0xA) < ships) {
+			const uint16_t index = c.u16(0xA);
+			SavedShip& ship = save_.ships[index];
+			ShipMemory& s = ship.memory;
+			c.u16(0xA) = s.u16(0x6);
+			s.u16(0x3C) = 0xFFFF;
+			s.u16(0x8) = 0xFFFF;
+			if (s.s32(0x18) > 0) {
+				if (c.s32(0x20) > 0) {
+					if (c.u8(0x0) >= merchants) {
+						c.u32(0x20) = 0;
+					} else if (s.u8(0x0) == c.u8(0x0)) {
+						save_.merchants[c.u8(0x0)].memory.u32(0x0) += c.u32(0x20);
+						c.u32(0x20) = 0;
+					}
+				}
+				s.u16(0x134) = c.u16(0x12);
+				insert_x(index, gl.u16(global::kShips + 0xEA));
+				recalculate_cargo(ship);
+				s.u8(0x39) = 0xFF;
+				s.u16(0x6) = gl.u16(global::kShips + 0xEA);
+				gl.u16(global::kShips + 0xEA) = index;
+				if (s.u16(0x42) >= captains) {
+					s.u8(0x3D) = uint8_t(s.u8(0x3D) | 0x10);
+					s.u8(0x15C) = 0;
+				}
+				if (s.u8(0x0) < merchants) {
+					const MerchantMemory& m = save_.merchants[s.u8(0x0)].memory;
+					if (m.u16(0x8) != 0 && s.u8(0x38) >= towns) {
+						s.u8(0x38) = m.u8(0x19);
+						s.u8(0x13A) = m.u8(0x19);
+						clear_ship_route(ship);
+					}
+					if (ship.route == nullptr) {
+						if (s.u8(0x38) < towns) {
+							set_destination(ship, s.u8(0x38), 0xFFFF, 0xFFFF);
+						} else {
+							s.u32(0x30) = 0;
+						}
+					} else {
+						s.u32(0x30) = (speed(ship) << 6) / 115 + 4;
+					}
+				} else {
+					drop_trade_route(s);
+				}
+			} else {
+				if (other < merchants && s.u8(0x0) >= merchants) {
+					fn_4f8d90(other, s.u16(0x42) < captains);
+					// A letter (0x4D6530): not rewritten.
+				}
+				fn_4ec864(index, other);
+				s.u16(0x6) = 0xFFFF;
+				if (s.u8(0x0) >= merchants || save_.merchants[s.u8(0x0)].memory.u16(0x8) != 0) {
+					fn_507fb0(index);
+				} else {
+					s.u16(0x134) = 0x11;
+				}
+				++lost;
+			}
+		}
+		fn_50a3d0(convoy);
+	}
+	if (lost > 0) {
+		if (owner < merchants) {
+			MerchantMemory& m = save_.merchants[owner].memory;
+			m.u8(0x1B) = m.u8(0x1B) > lost ? uint8_t(m.u8(0x1B) - lost) : 0;
+		}
+		if (other < merchants) {
+			MerchantMemory& m = save_.merchants[other].memory;
+			m.u8(0x1B) = 0xFAu - m.u8(0x1B) > lost ? uint8_t(m.u8(0x1B) + lost) : 0xFA;
+			if (owner >= merchants) {
+				fn_4f8d90(other, false);
+			}
+		}
+	}
+	if (other < merchants) {
+		fn_504970();
+	}
 }
 
 }  // namespace p3::data

@@ -434,6 +434,23 @@ void register_probes_battle(ProbeRegistry& r) {
 		probe_sailing()->fn_612bd0(uint16_t(c.args[0]), uint16_t(c.args[1]));
 		return std::nullopt;
 	};
+	// 0x50BFD0: thiscall on the ships object (convoy, flag, the other owner).
+	r[0x50BFD0] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		if (!probe_sailing() || c.args[0] >= save.convoys.size()) {
+			return kBad;
+		}
+		probe_sailing()->fn_50bfd0(uint16_t(c.args[0]), uint8_t(c.args[1]), uint8_t(c.args[2]));
+		return std::nullopt;
+	};
+	r[0x611740] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int b = battle_block(c.ecx);
+		if (!probe_sailing() || b < 0) {
+			return kBad;
+		}
+		probe_sailing()->fn_611740(size_t(b), (c.args[0] & 1) != 0);
+		c.eax_mask = 0;
+		return 0;
+	};
 	// 0x605420: thiscall on a sea battle (ship A, ship D, a byte, a flag).
 	r[0x605420] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
 		const int battle = battle_block(c.ecx);
