@@ -72,6 +72,19 @@ enum class GameText {
 	SpeedFast,
 	SpeedVeryFast,
 	SpeedSlowdown,
+	// The sea battle's boarding messages (0x60C1C9), which the game writes
+	// into the battle ([+0x1310]): the simulation uses them raw (raw()).
+	BattleBoardingCaptured,  // «\c\f3_Boarding battle ... The crew of the "%s" has captured %s "%s" %s.»
+	BattleBoardingLost,  // «... Your ship "%s" lost the boarding fight against %s "%s" %s.»
+	BattleSeizurePlundered,  // «\c\f3_Seizure ... The crew of the "%s" has plundered %s "%s" %s.»
+	BattleSeizureWasPlundered,  // «... Your ship "%s" was plundered by %s "%s" %s.»
+	BattleOfMerchant,  // «of %s %s» (first name, family name)
+	BattleOfPirate,  // «of the pirate %s %s»
+	BattleOfUnknownPirate,  // «of the unknown pirate»
+	BattleTakenSnaikka,  // The 4 ship types as the one taken («the snaikka»...; 0x6A171C).
+	BattleTakenHulk = BattleTakenSnaikka + 3,
+	BattleWinnerSnaikka,  // The 4 ship types as the winner («the snaikke»...; 0x6A175C).
+	BattleWinnerHulk = BattleWinnerSnaikka + 3,
 	Count
 };
 
@@ -86,6 +99,13 @@ public:
 	// The text in UTF-8, without the game's control codes (\f1_, \c, \l, \r...);
 	// "\n" stays as a line break.
 	const std::string& get(GameText id) const { return texts_[size_t(id)]; }
+	// The text as the executable has it: Windows-1252 bytes with the game's
+	// control codes, as the game copies it into its memory.
+	const std::string& raw(GameText id) const { return raw_[size_t(id)]; }
+	// The game's sprintf (0x64D410) on raw texts: %s with the bytes of
+	// `args` in order, %% and the positional %$N$s of the Spanish texts (the
+	// N-th argument); nothing collapsed or trimmed.
+	static std::string sprintf_raw(const std::string& text, const std::vector<std::string>& args);
 	// The text with its printf specifiers (%s, %d, %u, %i, %%; and the
 	// positional %$N$d of some texts) replaced by `args` in order (missing
 	// ones: empty), and runs of spaces collapsed.
@@ -99,6 +119,7 @@ public:
 
 private:
 	std::array<std::string, size_t(GameText::Count)> texts_;
+	std::array<std::string, size_t(GameText::Count)> raw_;
 	std::string build_;
 };
 

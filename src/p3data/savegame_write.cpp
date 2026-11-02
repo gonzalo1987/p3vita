@@ -599,20 +599,6 @@ std::vector<size_t> battle_padding(const std::vector<uint8_t>& b) {
 	return p == b.size() ? padding : std::vector<size_t>();
 }
 
-// UTF-8 to Latin-1, as the game keeps the names (latin1_to_utf8 undone).
-std::string utf8_to_latin1(const std::string& s) {
-	std::string out;
-	for (size_t i = 0; i < s.size(); ++i) {
-		const uint8_t c = uint8_t(s[i]);
-		if (c >= 0xC0 && c < 0xE0 && i + 1 < s.size()) {
-			out.push_back(char(((c & 0x1F) << 6) | (uint8_t(s[++i]) & 0x3F)));
-		} else {
-			out.push_back(char(c));
-		}
-	}
-	return out;
-}
-
 // 0x511C60: the names. The 40 town names go as "A"; each list of names
 // written by the players, its 20 slots (the game puts a 0 in the last byte
 // of each slot of 24 bytes before copying it: 23 characters at most) and

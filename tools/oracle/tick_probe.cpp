@@ -13,6 +13,8 @@
 // town_oracle.py.
 // --fix-game-bugs: with the fixes to the game's bugs (game_fixes.hpp), off by default.
 // --storms (on by default now) is still accepted.
+// --exe PATH: the game's executable whose texts the battles write into their memory (Sailing::set_texts);
+// by default the Patrician3.exe next to the --cpr file, the oracle's English one.
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
 // ella, así que una diferencia apunta a esa función. Con --continuo el estado
@@ -56,6 +58,7 @@
 #include <memory>
 
 #include "p3data/game_fixes.hpp"
+#include "p3data/game_texts.hpp"
 #include "p3data/navigation.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
@@ -817,6 +820,7 @@ int main(int argc, char** argv) {
 	int budget = 60;
 	std::string write_path;  // --write: the save of the state reached (savegame_write.hpp).
 	std::string pst_path;  // --pst: with --carga, an uncompressed .pst read after it (statistics.hpp).
+	std::string exe_path;  // --exe: the game's texts (by default next to the CPR).
 	for (int i = 2; i < argc; ++i) {
 		const std::string arg = argv[i];
 		if (arg == "--continuo") {
@@ -853,6 +857,8 @@ int main(int argc, char** argv) {
 			write_path = argv[++i];
 		} else if (arg == "--pst" && i + 1 < argc) {
 			pst_path = argv[++i];
+		} else if (arg == "--exe" && i + 1 < argc) {
+			exe_path = argv[++i];
 		}
 	}
 	ProbeRegistry registry;
@@ -893,6 +899,7 @@ int main(int argc, char** argv) {
 	std::unique_ptr<CprArchive> archive;
 	std::unique_ptr<NavData> nav;
 	std::unique_ptr<Sailing> sailing;
+	std::unique_ptr<GameTexts> texts;
 	std::deque<std::vector<uint8_t>> pending_sail;  // Órdenes de zarpar que esperan a 537670.
 	if (!cpr.empty()) {
 		archive = CprArchive::open(cpr, &error);
@@ -908,6 +915,15 @@ int main(int argc, char** argv) {
 		sailing->set_pirates(pirates);
 		sailing->set_pirate_disbanding(disband);
 		sailing->set_battles(battles || pirates);
+		if (exe_path.empty()) {
+			const size_t slash = cpr.find_last_of('/');
+			exe_path = (slash == std::string::npos ? std::string() : cpr.substr(0, slash + 1)) + "Patrician3.exe";
+		}
+		texts = GameTexts::load(exe_path, &error);
+		if (!texts) {
+			std::fprintf(stderr, "%s: %s (the battles' messages are left out)\n", exe_path.c_str(), error.c_str());
+		}
+		sailing->set_texts(texts.get());
 		g_sailing = sailing.get();
 		registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
 			sailing->update_ships();
@@ -966,6 +982,7 @@ int main(int argc, char** argv) {
 	std::vector<std::array<uint16_t, 2>> expeditions;
 	std::vector<std::string> ship_names;  // Tampoco los nombres de barco.
 	std::array<std::vector<std::string>, 2> first_names;  // Nor the first names.
+	std::vector<std::string> family_names;  // Nor the family names.
 	std::vector<std::vector<uint8_t>> town_templates;  // Ni las plantillas de las ciudades nuevas.
 	if (archive) {
 		SaveGame scripts;
@@ -973,11 +990,13 @@ int main(int argc, char** argv) {
 		expeditions = scripts.expeditions;
 		ship_names = scripts.ship_names;
 		first_names = scripts.first_names;
+		family_names = scripts.family_names;
 		town_templates = scripts.town_templates;
 		if (continuous && load.empty()) {
 			save.expeditions = expeditions;
 			save.ship_names = ship_names;
 			save.first_names = first_names;
+			save.family_names = family_names;
 			save.town_templates = town_templates;
 		}
 	}
@@ -1058,6 +1077,7 @@ int main(int argc, char** argv) {
 			save.expeditions = expeditions;
 			save.ship_names = ship_names;
 			save.first_names = first_names;
+			save.family_names = family_names;
 			save.town_templates = town_templates;
 		}
 		save.queued_operations.clear();

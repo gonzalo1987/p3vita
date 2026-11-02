@@ -826,7 +826,9 @@ namespace p3::data {
 // does it).
 //
 // Not rewritten: what concerns a human side (the battle window [+0x12E9],
-// [+0x12EA], operation 0x96; part 7), the cannon balls (0x603130 for each of
+// [+0x12EA]: 0x606E67 and 0x606FD3 open it, *0x6CBB10's 0x41D9B0, which
+// p3vita doesn't have yet, part 7; the oracle jumps over both, as
+// BATTLE_WINDOW_JUMPS), the cannon balls (0x603130 for each of
 // [+0x668], only from a human side's guns) and 0x608550 (with [+0x12E0] and
 // [+0x66C], not run in the saves).
 // Whether a ship of a side's convoy ([+0x65E], then [+0x660]) is the
@@ -896,7 +898,8 @@ void Sailing::fn_606cc0(size_t b, uint16_t steps) {
 		}
 		// A human side ([+0x5D] 0) of the player whose battle isn't the one
 		// in the window (the battles object's [+0x3FC]): operation 0x96 (the
-		// battle [+0x662], the player, 1) to open it.
+		// battle [+0x662], the player, 1), which hands the player's sides to
+		// the computer (fn_60fec9, battles.cpp).
 		bool automatic = true;
 		const uint32_t player = save_.globals.u32(0x6DFC14);
 		for (size_t i = 0; i < u8(0x558); ++i) {

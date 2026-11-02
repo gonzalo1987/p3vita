@@ -208,12 +208,33 @@ PIRATE_JUMPS = {0x507C0B: 0x507B5F, 0x60EB55: 0x60EBAC}
 # expired road task (retouch_unchecked.py road_expired) jumped to 0 in
 # 0x4B4E30. Always on, as the window can open from any part.
 WINDOW_JUMPS = {0x46938F: 0x4693A1}
+# The battle's question to the player («Steer manually»; in Spanish «¿Quieres
+# dirigir manualmente a los barcos en la batalla naval?», 0x41D9B0 on
+# *0x6CBB10), which the emulator doesn't have, as p3vita (part 7 of the
+# battles). With --pirates: at a battle's setup (0x605420), a human side of
+# the player always takes the path of a player busy with another battle
+# window (0x60659B -> 0x606BAE: operation 0x96 with 1, so the computer fights
+# it); a step never opens the window of a battle that asks for it ([+0x12E9]
+# 1, from a save: 0x606E7E -> 0x606EA5, 0x606FEA -> 0x607011), nor does a
+# boarding with a human side of the player (0x60CA4E -> 0x60CA6F), skipping
+# the window's writes too.
+BATTLE_WINDOW_JUMPS = {0x60659B: 0x606BAE, 0x606E7E: 0x606EA5, 0x606FEA: 0x607011, 0x60CA4E: 0x60CA6F}
 NO_DISBAND_JUMP = {0x505FF1: 0x506029}
+# 0x50D0C0 (thiscall on the ships object, a ship): the ship back in its place
+# in the list by x. A pirate convoy left without a guide (its guide taken in a
+# sea battle, or its pirate gone) sorts ship 0xFFFF in 0x507A65 (0x507B68),
+# outside the ships: in Windows it reads whatever memory is there, in the
+# emulator zeros, which make the list a ring and the sort never ends. With
+# --pirates the call returns at once for a ship that doesn't exist, as
+# p3vita leaves it out (pirate_convoy in battle/pirates.cpp).
+SORT_X = 0x50D0C0
 # With --pirates, the pirate objects' daily update runs (0x514000, otherwise
 # quiet) and the operation it queues is executed: 0xB5, a convoy leaves the
 # nest (0x514D40).
 PIRATE_UPDATE = 0x514000
-PIRATE_OPERATIONS = (0xB5,)
+# Operation 0x96 (0x60FEC9) hands a merchant's sides of a battle to the
+# computer: the battles' setup and step queue it for the player's human sides.
+PIRATE_OPERATIONS = (0xB5, 0x96)
 PIRATE_WAYPOINTS = 0x448780
 # The battles (docs/cloud/battles-2.md §3): the object of 0x6E55D0 and its
 # heap blocks, recorded as the region BT (TownOracle.battle_graph).
@@ -230,6 +251,10 @@ HEAP_BEGIN, HEAP_END = 0x1000_0000, 0x1800_0000
 # places are whole and a block can start at 0x10xx0000), a sea battle's
 # generator. As BattleGraph::number_field.
 BATTLE_NUMBERS = {(0x164, 0x67B0D4): (0x8, 0xC, 0x14, 0x18, 0x1C), (0x1E98, 0x67AD44): (0xADC,)}
+# A sea battle's scene's arrays of numbers (0x61A1D0): bytes [+0x18], u16
+# [+0x1C] and the free list [+0x24], and the items' boxes [+0x28], [+0x2C],
+# [+0x30], [+0x38], [+0x3C], [+0x40] (x1, x2 and y1, y2 per item).
+SCENE_NUMBER_ARRAYS = (0x18, 0x1C, 0x24, 0x28, 0x2C, 0x30, 0x38, 0x3C, 0x40)
 # With --pirates, after each tick with battles the oracle executes operation
 # 0x94 with BATTLE_STEPS steps (the clock rule of docs/oracle.md: the game's
 # real-time driver 0x612DB0 queues it with the steps of the real clock, about
@@ -385,6 +410,8 @@ class TownOracle(SaveOracle):
                 self.uc.hook_add(UC_HOOK_CODE, self._convoy, begin=CONVOY_DISPATCH, end=CONVOY_DISPATCH)
                 if self.pirates:
                     jumps = dict(PIRATE_JUMPS if disband else {**PIRATE_JUMPS, **NO_DISBAND_JUMP})
+                    jumps.update(BATTLE_WINDOW_JUMPS)
+                    self.uc.hook_add(UC_HOOK_CODE, self._sort_x_guard, begin=SORT_X, end=SORT_X)
                     for address, target in jumps.items():
                         self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
                 if storms:
@@ -465,6 +492,13 @@ class TownOracle(SaveOracle):
 
     def _jump(self, uc, address, size, target):
         uc.reg_write(UC_X86_REG_EIP, target)
+
+    def _sort_x_guard(self, uc, address, size, user_data):
+        # SORT_X with a ship that doesn't exist returns at once (ret 4).
+        esp = uc.reg_read(UC_X86_REG_ESP)
+        if self.u16(esp + 4) >= self.u16(SHIPS + 0xF4):
+            uc.reg_write(UC_X86_REG_ESP, esp + 8)
+            uc.reg_write(UC_X86_REG_EIP, self.u32(esp))
 
     def _rand(self, uc, address, size, user_data):
         # rand() de MSVC (0x639C03): el estado es por hilo y en el emulador no
@@ -1037,9 +1071,11 @@ class TownOracle(SaveOracle):
         unpack = struct.unpack_from
         sizes = self.sizes
         requested = self.__dict__.get('requested', {})
-        # The pages of a sea battle's bits (its page lists [+0x48], [+0x4C],
-        # [+0x50]): every word a mask of bits, a number (bit 28 is the heap's
-        # first block). As BattleGraph::bit_pages.
+        # The blocks of numbers only of a sea battle: the pages of its bits
+        # (its page lists [+0x48], [+0x4C], [+0x50]), every word a mask of bits
+        # (bit 28 is the heap's first block), and the scene's arrays of bytes
+        # and u16 (SCENE_NUMBER_ARRAYS: two coordinates of an item's box can
+        # look like a heap pointer). As BattleGraph::bit_pages.
         lists, pages = set(), set()
         def numbers(address, data):
             if address in pages:
@@ -1054,6 +1090,7 @@ class TownOracle(SaveOracle):
             address, data = blocks[i]
             if len(data) == 0x1E98 and unpack('<I', data, 0)[0] == 0x67AD44:
                 lists.update(unpack('<I', data, o)[0] for o in (0x48, 0x4C, 0x50))
+                pages.update(unpack('<I', data, o)[0] for o in SCENE_NUMBER_ARRAYS)
             elif address in lists:
                 pages.update(unpack(f'<{len(data) // 4}I', data))
             skip = numbers(address, data)

@@ -76,6 +76,7 @@ struct ShipEvent {
 };
 
 struct BattleReader;  // battle/battle_save.cpp
+class GameTexts;  // game_texts.hpp
 
 class Sailing {
 public:
@@ -200,11 +201,18 @@ public:
 	// oracle with --pirates; docs/cloud/battles-2.md §3).
 	static constexpr uint32_t kBattleSteps = 84;
 	void set_battles(bool enabled) { battles_ = enabled; }
+	// The game's texts (from the installation's Patrician3.exe), for the
+	// messages the battles write into their memory ([+0x1310]); without them
+	// those messages are left as they were. tick_probe gives the English
+	// ones, as the oracle's executable; the viewer, the installation's.
+	void set_texts(const GameTexts* texts) { texts_ = texts; }
 	bool battles() const { return battles_; }
 	void step_battles();  // After each tick: operation 0x94 with kBattleSteps when there are battles.
 	void fn_536bbf(uint32_t steps);  // Operation 0x94: the battles take their steps.
 	void fn_612c90(bool network);  // (battles) Operation 0xC8 with 2 if a battle has a human side.
 	void fn_612d20(bool network);  // (battles) Operation 0xC8 with 0 if none has.
+	// Operation 0x96 (sea battle): a merchant's sides to the computer or back to the player.
+	void fn_60fec9(size_t battle, uint16_t merchant, bool automatic);
 	static constexpr size_t kSeaBattleSize = 0x1E98;
 	static constexpr uint32_t kSeaBattleVtable = 0x67AD44;
 	static constexpr uint32_t kSceneVtable = 0x67AF70;
@@ -247,6 +255,10 @@ public:
 	void fn_61dbbf(size_t entry);  // (scene's ship, method +0x4) A target.
 	void fn_61f1bf(size_t entry);  // (scene's ship) A round of a boarding.
 	void fn_60c1c9(size_t battle, uint16_t winner, uint16_t taken);  // (battle) A ship taken.
+	// 0x60C3D6..0x60CA6F: the boarding's message to the player (and window).
+	void boarding_message(size_t battle, uint16_t winner, uint16_t taken, bool attack);
+	// The «of ...» of the owner of a battle's ship (0x60C430..0x60C612).
+	std::string owner_phrase(size_t battle, size_t entry) const;
 	void fn_540520(uint16_t winner, uint16_t taken);  // Operation 0x91: a ship takes another.
 	// battle/battle_save.cpp: the battles in the save (piece 5).
 	void load_battles();  // 0x611AE0: SaveGame::opaque::battles into SaveGame::battles.
@@ -312,6 +324,7 @@ private:
 	bool pirates_ = true;
 	bool disband_ = true;
 	bool battles_ = true;
+	const GameTexts* texts_ = nullptr;
 	std::vector<std::vector<uint32_t>> waypoints_;  // 0x448780 per town ([+0x20], [+0x24] of the navigation)
 	std::vector<bool> has_waypoints_;
 

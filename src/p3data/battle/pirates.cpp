@@ -745,6 +745,14 @@ bool Sailing::pirate_convoy(uint16_t index, uint16_t& link) {
 	const uint32_t count = save_.ships.size();
 	GameMemory<0x3C>& c = save_.convoys[index];
 	const uint16_t leader = c.u16(0x10);
+	if (leader >= count) {
+		// A convoy without a guide (its guide taken in a sea battle, or its
+		// pirate gone): the game goes on with ship 0xFFFF, past the ships
+		// array (whatever memory is there; zeros in the emulator), down to the
+		// sort of 0x50D0C0 (see «Game bugs» in docs/cloud/battles-2.md). Not
+		// reproduced: nothing is done with it.
+		return false;
+	}
 	SavedShip& lead = save_.ships[leader];
 	if (lead.memory.u16(0xA) == 0xFFFF && lead.memory.u16(0xC) == 0xFFFF) {
 		insert_x(leader, 0xFFFF);

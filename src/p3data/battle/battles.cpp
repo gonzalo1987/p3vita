@@ -217,4 +217,83 @@ void Sailing::fn_612d20(bool network) {
 	queue_time_mode(save_, 0);
 }
 
+// Operation 0x96 (0x536C52, and 0x541350 for a direct call): {0x96, slot,
+// merchant, automatic}, thiscall 0x60FEC9(merchant, automatic ≠ 0) on the
+// battle in that slot (nothing if the slot is empty). The merchant's sides
+// are handed to the computer (automatic: [+0x5D + side] = 1) or taken back
+// to be directed by hand (0: for the local player, the battles object's
+// [+0x3FC], the battle in the window, becomes this one). Each step of a
+// battle where the local player has a human side and isn't the window's
+// queues it with 1 (0x607011, fn_606cc0), so a battle the player doesn't
+// direct is fought by the computer, as when the player answers «no» to the
+// battle's question («Do you want to direct the ships by hand?»; p3vita has
+// no battle window yet: part 7). With every human side the merchant's, the
+// battle becomes automatic ([+0xAC8] 1, 0x612D20) or not ([+0xAC8] 0,
+// 0x612C90).
+void Sailing::fn_60fec9(size_t b, uint16_t merchant, bool automatic) {
+	BattleGraph& g = save_.battles;
+	auto u8 = [&](size_t o) { return g.get<uint8_t>(b, o); };
+	auto u16 = [&](size_t o) { return g.get<uint16_t>(b, o); };
+	const size_t sides = u8(0x558);
+	if (save_.globals.u32(0x6DFC14) == merchant) {
+		g.set<uint8_t>(b, 0x12E0, 0);
+		if (!automatic) {
+			g.set<uint8_t>(0, 0x3FC, u8(0x662));
+		} else if (g.get<uint8_t>(0, 0x3FC) == u16(0x662)) {
+			g.set<uint8_t>(0, 0x3FC, 0xFF);
+		}
+	}
+	// Whether a side was counting down ([+0x15C] by side) and none is after.
+	bool counted = false;
+	for (size_t i = 0; i < sides; ++i) {
+		if (u16(0x15C + 2 * i) > 0) {
+			counted = true;
+		}
+	}
+	for (size_t i = 0; i < sides; ++i) {
+		if (u16(0x35A + 2 * i) == merchant) {
+			g.set<uint8_t>(b, 0x5D + i, automatic ? 1 : 0);
+			g.set<uint16_t>(b, 0x15C + 2 * i, 0);
+		}
+	}
+	bool only_merchant = true;
+	for (size_t i = 0; i < sides; ++i) {
+		if (u8(0x5D + i) == 0 && u16(0x35A + 2 * i) != merchant) {
+			only_merchant = false;
+		}
+	}
+	if (only_merchant) {
+		g.set<uint8_t>(b, kAutomatic, automatic ? 1 : 0);
+		if (automatic) {
+			fn_612d20(false);
+		} else {
+			fn_612c90(false);
+		}
+	}
+	for (size_t i = 0; i < sides; ++i) {
+		if (u16(0x15C + 2 * i) > 0) {
+			counted = false;
+		}
+	}
+	if (counted && g.get<uint32_t>(b, 0) == kSeaBattleVtable) {
+		fn_608230(b, true);  // Method +0x18 (a town battle's, 0x600660, isn't rewritten: none in p3vita).
+	}
+	if (automatic) {
+		return;
+	}
+	// By hand: the merchant's ships of both sides (the lists [+0x10] and
+	// [+0x65C], next in [+0xC]) get [+0x24] = [+0x11] and no order ([+0x128]
+	// 0xFFFF).
+	const size_t next = size_t(g.ptr(b, 0xC));
+	for (const size_t head : {size_t(0x10), size_t(0x65C)}) {
+		for (uint16_t k = u16(head); k != 0xFFFF; k = g.get<uint16_t>(next, 2 * size_t(k))) {
+			const size_t e = battle_entry(b, k);
+			if (u16(0x35A + 2 * size_t(g.get<uint8_t>(e, 0x13D))) == merchant) {
+				g.set<uint16_t>(e, 0x24, g.get<uint8_t>(e, 0x11));
+				g.set<uint16_t>(e, 0x128, 0xFFFF);
+			}
+		}
+	}
+}
+
 }  // namespace p3::data

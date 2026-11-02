@@ -2,9 +2,12 @@
 // and the pirates' share of the loot (0x515F70); docs/cloud/battles-2.md §4.
 
 #include <algorithm>
+#include <string>
+#include <vector>
 
 #include "p3data/battle/battle_math.hpp"
 #include "p3data/battle/pirate_nests.hpp"
+#include "p3data/game_texts.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -118,6 +121,121 @@ void fn_515f70(SaveGame& save, size_t k) {
 	}
 }
 
+// The «of ...» of the owner of the ship of a battle's entry (0x60C430..
+// 0x60C612 for the taken ship, 0x60C708..0x60C906 for the winner): when its
+// side is the pirates' team (the bit 1 << team of [+0xAD2]), «of the pirate
+// %s %s» with the pirate's first and family names ([+0x1E90], [+0x1E91])
+// if its side's owner is a pirate with a captain (0xFF) and the guide of its
+// team's convoy ([+0x65E] or [+0x660]) has [+0x18] and a captain, else «of
+// the unknown pirate» (the other way to the named one, method +0x28 with a
+// town [+0x1E98], is a town battle's: 0x611730 is false); otherwise «of %s
+// %s» with the first and family names of the merchant who owns the ship
+// ([+0x0]: [+0x1C], [+0x1D] of his record, 0x5303C0).
+std::string Sailing::owner_phrase(size_t b, size_t e) const {
+	const BattleGraph& g = save_.battles;
+	const size_t side = g.get<uint8_t>(e, 0x13D);
+	const uint8_t team = g.get<uint8_t>(b, 0x559 + side);
+	if (g.get<uint8_t>(b, 0xAD2) & uint8_t(1u << (team & 31))) {
+		if (g.get<uint16_t>(b, 0x35A + 2 * side) == 0xFF) {
+			// The game reads the convoy's guide without checking the convoy's
+			// index (0xFFFF for a ship alone); here no guide then.
+			const uint16_t convoy = g.get<uint16_t>(b, team == 0 ? 0x65E : 0x660);
+			const uint16_t guide = convoy < save_.convoy_count() ? save_.convoys[convoy].u16(0x10) : 0xFFFF;
+			if (guide < save_.globals.u16(global::kShipCount) && save_.ships[guide].memory.u32(0x18) != 0 &&
+				save_.ships[guide].memory.u16(0x42) < save_.captain_count()) {
+				return GameTexts::sprintf_raw(texts_->raw(GameText::BattleOfPirate),
+					{game_first_name(save_, g.get<uint8_t>(b, 0x1E90)), game_family_name(save_, g.get<uint8_t>(b, 0x1E91))});
+			}
+		}
+		return texts_->raw(GameText::BattleOfUnknownPirate);
+	}
+	const uint8_t owner = save_.ships[g.get<uint32_t>(e, 0x4)].memory.u8(0x0);
+	if (owner >= save_.merchants.size()) {
+		// The game reads the record of that index without checking it.
+		return GameTexts::sprintf_raw(texts_->raw(GameText::BattleOfMerchant), {});
+	}
+	const MerchantMemory& m = save_.merchants[owner].memory;
+	return GameTexts::sprintf_raw(texts_->raw(GameText::BattleOfMerchant),
+		{game_first_name(save_, m.u8(0x1C)), game_family_name(save_, m.u8(0x1D))});
+}
+
+// 0x60C3D6..0x60CA6F (in 0x60C1C9): when the local player ([0x6DFC14])
+// owns the winner's side, the message «The crew of the "%s" has captured
+// (attack: Boarding battle) / plundered (Seizure) %s "%s" %s.» with the
+// winner's ship's name ([+0x160]), the taken ship's type as the one taken
+// (0x6A171C), its name and its owner (owner_phrase); else, when the player
+// owns the taken one's side, «Your ship "%s" lost the boarding fight
+// against / was plundered by %s "%s" %s.» with the taken ship's name and
+// the winner's type (0x6A175C), name and owner. Written into the battle's
+// [+0x1310] (sprintf 0x64D410) in the language of the texts (Sailing::
+// set_texts; nothing without them). Then, if the player's side is human
+// ([+0x5D + side] 0), the window's description at [+0x12EC] (the text) and
+// the window (0x41D9B0 on *0x6CBB10, part 7), which p3vita doesn't have yet:
+// as the oracle (BATTLE_WINDOW_JUMPS, 0x60CA4E -> 0x60CA6F) only the case
+// of another window open ([0x6E59CD]: [+0x12E9] 1, later) is kept.
+void Sailing::boarding_message(size_t b, uint16_t winner, uint16_t taken, bool attack) {
+	BattleGraph& g = save_.battles;
+	const size_t w = battle_entry(b, winner), t = battle_entry(b, taken);
+	const uint32_t player = save_.globals.u32(0x6DFC14);
+	const uint8_t wside = g.get<uint8_t>(w, 0x13D), tside = g.get<uint8_t>(t, 0x13D);
+	auto ship = [&](size_t e) -> const ShipMemory& { return save_.ships[g.get<uint32_t>(e, 0x4)].memory; };
+	auto name = [&](size_t e) {
+		std::string s;
+		for (size_t i = 0x160; i < 0x180 && ship(e).u8(i) != 0; ++i) {
+			s += char(ship(e).u8(i));
+		}
+		return s;
+	};
+	uint8_t side;
+	GameText text = GameText::BattleBoardingCaptured;
+	std::vector<std::string> args;
+	if (g.get<uint16_t>(b, 0x35A + 2 * size_t(wside)) == player) {
+		side = wside;
+		if (texts_) {
+			text = attack ? GameText::BattleBoardingCaptured : GameText::BattleSeizurePlundered;
+			args = {name(w), texts_->raw(GameText(int(GameText::BattleTakenSnaikka) + (ship(t).u8(0xE) & 3))), name(t),
+				owner_phrase(b, t)};
+		}
+	} else if (g.get<uint16_t>(b, 0x35A + 2 * size_t(tside)) == player) {
+		side = tside;
+		if (texts_) {
+			text = attack ? GameText::BattleBoardingLost : GameText::BattleSeizureWasPlundered;
+			args = {name(t), texts_->raw(GameText(int(GameText::BattleWinnerSnaikka) + (ship(w).u8(0xE) & 3))), name(w),
+				owner_phrase(b, w)};
+		}
+	} else {
+		return;
+	}
+	if (texts_) {
+		const std::string message = GameTexts::sprintf_raw(texts_->raw(text), args);
+		const size_t room = g.blocks[b].size() > 0x1310 ? g.blocks[b].size() - 0x1310 : 0;
+		for (size_t i = 0; i <= message.size() && i < room; ++i) {
+			g.set<uint8_t>(b, 0x1310 + i, i < message.size() ? uint8_t(message[i]) : 0);
+		}
+	}
+	if (side >= 0xFF || g.get<uint8_t>(b, 0x5D + size_t(side)) != 0) {
+		return;
+	}
+	// The window's description (0x60C9D6..0x60CA34): the text, then fixed
+	// values.
+	g.set<uint32_t>(b, 0x12EC, BattleGraph::pointer(b, 0x1310));
+	g.set<uint8_t>(b, 0x12F0, 1);
+	g.set<uint16_t>(b, 0x12F2, 0);
+	g.set<uint32_t>(b, 0x12F4, 0);
+	g.set<uint8_t>(b, 0x12F8, 0xFF);
+	g.set<uint8_t>(b, 0x12F9, 0);
+	g.set<uint8_t>(b, 0x12FA, 0);
+	g.set<uint8_t>(b, 0x12FB, 0xFF);
+	g.set<uint32_t>(b, 0x12FC, 0x3F3504F4);
+	g.set<uint8_t>(b, 0x1300, 1);
+	g.set<uint16_t>(b, 0x1302, 0);
+	g.set<uint32_t>(b, 0x1304, 0);
+	g.set<uint32_t>(b, 0x1308, 0);
+	if (g.get<uint8_t>(0, 0x3FD) != 0) {
+		g.set<uint8_t>(b, 0x12E9, 1);
+	}
+}
+
 // 0x60C1C9 (on the battle; the winner's place, the taken one's): the ship
 // in the second place is taken by the first's. Both stop grappling and
 // heading anywhere ([+0x8], [+0x128], [+0x24] its heading, [+0x20]); the
@@ -143,6 +261,7 @@ void Sailing::fn_60c1c9(size_t b, uint16_t winner, uint16_t taken) {
 	g.set<uint8_t>(w, 0x148, 0);
 	g.set<uint16_t>(b, 0xAC6, taken);
 	g.set<uint8_t>(b, 0xAC4, 2);
+	boarding_message(b, winner, taken, attack);
 	for (const size_t x : {w, t}) {
 		g.set<uint8_t>(x, 0x12A, uint8_t(g.get<uint8_t>(x, 0x12A) & 0xF7));
 		g.set<uint16_t>(x, 0x128, 0xFFFF);

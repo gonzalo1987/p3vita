@@ -60,17 +60,27 @@ struct BattleGraph {
 		return false;
 	}
 
-	// The blocks that are pages of a sea battle's bits (the page lists
-	// [+0x48], [+0x4C], [+0x50] of a block of 0x1E98 bytes with vtable
-	// 0x67AD44, 0x61A1D0): every word is a mask of bits, a number even when
-	// it looks like a pointer (bit 28 is the heap's first block, 0x10000000).
-	// The oracle's walk leaves them as they are (town_oracle.py, bit_pages).
+	// The blocks of numbers only of a sea battle (a block of 0x1E98 bytes with
+	// vtable 0x67AD44): the pages of its bits (the page lists [+0x48],
+	// [+0x4C], [+0x50], 0x61A1D0), every word a mask of bits (bit 28 is the
+	// heap's first block, 0x10000000); and the scene's arrays of bytes and
+	// u16 [+0x18], [+0x1C], [+0x24] and the items' boxes [+0x28], [+0x2C],
+	// [+0x30], [+0x38], [+0x3C], [+0x40] (x1, x2 and y1, y2 per item: two
+	// coordinates such as 0x0CEA, 0x1028 make a word that looks like a heap
+	// pointer). Numbers even when they look like pointers; the oracle's walk
+	// leaves them as they are (town_oracle.py, pages in battle_graph).
 	std::vector<bool> bit_pages() const {
 		std::vector<bool> pages(blocks.size(), false);
 		for (size_t b = 0; b < blocks.size(); ++b) {
 			const std::vector<uint8_t>& data = blocks[b];
 			if (data.size() != 0x1E98 || get<uint32_t>(b, 0) != 0x67AD44) {
 				continue;
+			}
+			for (size_t o : {0x18, 0x1C, 0x24, 0x28, 0x2C, 0x30, 0x38, 0x3C, 0x40}) {
+				const int array = ptr(b, o);
+				if (array >= 0) {
+					pages[size_t(array)] = true;
+				}
 			}
 			for (size_t o : {0x48, 0x4C, 0x50}) {
 				const int list = ptr(b, o);

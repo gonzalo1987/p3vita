@@ -1763,6 +1763,7 @@ int main(int argc, char** argv) {
 	if (nav) {
 		sailing = std::make_unique<Sailing>(save, *nav, load_sea_map_towns(*archive));
 		sailing->assign_loaded_routes();
+		sailing->set_texts(game_texts.get());  // The battles' messages in the installation's language.
 	}
 	size_t fleet_index = 0;  // Barco del jugador al que se dan las órdenes en el mapa del mar.
 	int game_speed = kNormalSpeed;

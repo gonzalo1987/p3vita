@@ -186,4 +186,18 @@ std::string latin1_to_utf8(std::string_view text) {
 	return out;
 }
 
+// UTF-8 to Latin-1, as the game keeps the names (latin1_to_utf8 undone).
+std::string utf8_to_latin1(std::string_view s) {
+	std::string out;
+	for (size_t i = 0; i < s.size(); ++i) {
+		const uint8_t c = uint8_t(s[i]);
+		if (c >= 0xC0 && c < 0xE0 && i + 1 < s.size()) {
+			out.push_back(char(((c & 0x1F) << 6) | (uint8_t(s[++i]) & 0x3F)));
+		} else {
+			out.push_back(char(c));
+		}
+	}
+	return out;
+}
+
 }  // namespace p3::data

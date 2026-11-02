@@ -221,6 +221,14 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			sailing->fn_536bbf(uint32_t(fields[1]) & 0xFFFF);
 		}
 		break;
+	case 0x96:  // A merchant's sides of a battle to the computer or back (0x536C52 → 0x60FEC9; battle/battles.cpp).
+		if (sailing && uint32_t(fields[1]) < 0x100) {
+			const int battle = save.battles.battle(uint32_t(fields[1]));
+			if (battle >= 0) {
+				sailing->fn_60fec9(size_t(battle), uint16_t(fields[2]), fields[3] != 0);
+			}
+		}
+		break;
 	case 0xB5:  // A pirate convoy leaves the nest (0x536E8C → 0x514D40; battle/pirate_objects.cpp).
 		if (sailing && uint32_t(fields[1]) < 5 && save.pirates[size_t(fields[1])] &&
 			save.globals.u32(global::kShips + 0xC + 4 * uint32_t(fields[1])) != 0) {

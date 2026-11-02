@@ -492,6 +492,10 @@ struct SaveGame {
 	// them (0x5121C0 with 0x5128D0), in Latin-1: 0x512A60 gives one, and
 	// 0x4F69B0 uses the length of a merchant's. Empty if not read.
 	std::array<std::vector<std::string>, 2> first_names;
+	// The family names (scripts/NamenFamilien.txt: [0x6DDB76] of them, the
+	// families and then the pirates), split and kept in the same way: 0x512AE0
+	// gives one. Empty if not read.
+	std::vector<std::string> family_names;
 	// What p3vita keeps only to write the save (savegame_write.hpp).
 	SaveOpaque opaque;
 	// The daily statistics (statistics.hpp) and whether advance_game_tick
@@ -531,5 +535,14 @@ NameLists load_name_lists(const CprArchive& archive);
 // 0x512AE0): índice en la lista de su sexo y, pasado su final, en los nombres
 // escritos por el jugador que guarda la partida.
 std::string merchant_name(const SaveGame& save, const NameLists& names, int merchant);
+
+// 0x512A60 (on the names object 0x6DDAA0): a first name by index (bit 7, a
+// woman's), in Latin-1 as the game holds it: from the game's list
+// (SaveGame::first_names), then the 20 written by the players
+// (SaveGame::custom_names), and past them the list's first name.
+std::string game_first_name(const SaveGame& save, uint8_t index);
+// 0x512AE0: a family name by index in the same way (SaveGame::family_names,
+// then the players' third list).
+std::string game_family_name(const SaveGame& save, uint8_t index);
 
 }  // namespace p3::data

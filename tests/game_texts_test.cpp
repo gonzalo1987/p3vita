@@ -36,6 +36,13 @@ int main() {
 		"positional arguments");
 	check(GameTexts::format("%d%% of %s", {"50"}) == "50% of", "%% and a missing argument");
 
+	check(GameTexts::sprintf_raw("\\c\\f3_The crew of the \"%s\" has captured %s \"%s\" %s.",
+			  {"Viking", "the cog", "Thor", "of  x"}) == "\\c\\f3_The crew of the \"Viking\" has captured the cog \"Thor\" of  x.",
+		"raw: codes and spaces kept");
+	check(GameTexts::sprintf_raw("%$3$s \"%$4$s\" %$1$s %s", {"a", "b", "c", "d"}) == "c \"d\" a a",
+		"raw: positional arguments don't move the next one");
+	check(GameTexts::sprintf_raw("%s 100%%", {}) == " 100%", "raw: %% and a missing argument");
+
 	if (failures == 0) {
 		std::printf("game_texts_test: all correct\n");
 	}

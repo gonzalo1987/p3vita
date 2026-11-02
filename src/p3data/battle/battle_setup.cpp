@@ -6,10 +6,12 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 
 #include "p3data/battle/battle_math.hpp"
 #include "p3data/sailing.hpp"
+#include "p3data/town_tick/internal.hpp"
 
 namespace p3::data {
 
@@ -785,8 +787,34 @@ void Sailing::fn_605420(size_t b, uint16_t a, uint16_t d, uint8_t c, uint32_t fl
 	}
 	if (u8(0xAC8) != 0) {
 		fn_608230(b, true);
+		return;
 	}
-	// Otherwise the human sides' messages and window: part 7.
+	// The local player's human sides (0x60651F..0x606C12; [+0x5D + i] 0,
+	// owner [0x6DFC14]). In the game, when the player directs no battle
+	// ([0x6E59CC] 0xFF) and no battle window is open ([0x6E59CD] 0), the
+	// battle's question opens: the message «%s "%s" is being attacked by
+	// ...» (or «is attacking») written into [+0x1310], the window's
+	// description at [+0x12EC] (its buttons 0x6B2BC0, «Steer manually»; in
+	// the Spanish exe «¿Quieres dirigir manualmente a los barcos en la
+	// batalla naval?») and the window (0x41D9B0 on *0x6CBB10) with [+0x12E9]
+	// 0, [0x6E59CD] 1 and [+0x12EA] 1: part 7. Otherwise (0x606BAE) the
+	// player is busy with another battle, and this one goes to the computer
+	// at once: operation 0x96 {0x96, [+0x662], player, 1, 0} (fn_60fec9,
+	// battles.cpp) and the side's count [+0x15C] 0xFFFF (the step waits until
+	// the operation runs). p3vita has no battle window yet, so it always
+	// takes this path; the oracle too (BATTLE_WINDOW_JUMPS, 0x60659B →
+	// 0x606BAE).
+	const uint32_t player = gl.u32(0x6DFC14);
+	for (size_t i = 0; i < u8(0x558); ++i) {
+		if (u16(0x35A + 2 * i) != player || u8(0x5D + i) != 0) {
+			continue;
+		}
+		uint8_t op[0x14];
+		const uint32_t fields[5] = {0x96, u16(0x662), player, 1, 0};
+		std::memcpy(op, fields, sizeof(op));
+		tick::enqueue_operation(save_, op, sizeof(op));  // 0x54AA70
+		set16(0x15C + 2 * i, 0xFFFF);
+	}
 }
 
 }  // namespace p3::data

@@ -30,7 +30,9 @@ const Build kBuilds[] = {
 			0x6C0BD8, 0x6C0BDC, 0x6C0BE0, 0x6C0BE4, 0x6C0BE8, 0x6C0BEC, 0x6C0BF0, 0x6C0BF4, 0x6C0BF8, 0x6C0BFC,
 			0x6C0CC4, 0x6C0CC8, 0x6C0CCC, 0x6C0CD0, 0x699880, 0x69988C, 0x699894, 0x6998A0, 0x6998AC, 0x6C1ECC,
 			0x6C1ED0, 0x6C1ED4, 0x6C1EB8, 0x6C2560, 0x6C1E90, 0x69DA34, 0x699914, 0x699940, 0x6B28C8, 0x6A1238,
-			0x6A123C, 0x6A1240, 0x6A1244, 0x69A934, 0x69A938, 0x69A93C, 0x69A940, 0x69A944, 0x69A948, 0x69A94C}},
+			0x6A123C, 0x6A1240, 0x6A1244, 0x69A934, 0x69A938, 0x69A93C, 0x69A940, 0x69A944, 0x69A948, 0x69A94C,
+			0x6A1D78, 0x6A1D7C, 0x6AA178, 0x6AA17C, 0x6A16E4, 0x6A16F0, 0x6A16F8, 0x6A171C, 0x6A1720, 0x6A1724,
+			0x6A1728, 0x6A175C, 0x6A1760, 0x6A1764, 0x6A1768}},
 	{0x3F8814FA, "Spanish",
 		{0x6A9CBC, 0x6A9D24, 0x6A9C44, 0x6A9C48, 0x6A9C4C, 0x6A9C50, 0x6A9C54, 0x6A9C5C, 0x6A9C60, 0x6A9C64,
 			0x6A9C68, 0x6A9C6C, 0x6A9C70, 0x6A9C30, 0x6A9C34, 0x6A9C38, 0x6A9C3C, 0x6A9C40, 0x6A9C08, 0x69EAA0,
@@ -40,7 +42,9 @@ const Build kBuilds[] = {
 			0x6C0D98, 0x6C0D9C, 0x6C0DA0, 0x6C0DA4, 0x6C0DA8, 0x6C0DAC, 0x6C0DB0, 0x6C0DB4, 0x6C0DB8, 0x6C0DBC,
 			0x6C0E80, 0x6C0E84, 0x6C0E88, 0x6C0E8C, 0x698D10, 0x698D1C, 0x698D2C, 0x698D3C, 0x698D48, 0x6C249C,
 			0x6C24A0, 0x6C24A4, 0x6C2488, 0x6C2C08, 0x6C2460, 0x69D4B4, 0x698DCC, 0x698DFC, 0x6B32B0, 0x6A0F88,
-			0x6A0F8C, 0x6A0F90, 0x6A0F94, 0x69A04C, 0x69A050, 0x69A054, 0x69A058, 0x69A05C, 0x69A060, 0x69A064}},
+			0x6A0F8C, 0x6A0F90, 0x6A0F94, 0x69A04C, 0x69A050, 0x69A054, 0x69A058, 0x69A05C, 0x69A060, 0x69A064,
+			0x6A1CA0, 0x6A1CA4, 0x6AA780, 0x6AA784, 0x6A15B4, 0x6A15C0, 0x6A15C8, 0x6A15EC, 0x6A15F0, 0x6A15F4,
+			0x6A15F8, 0x6A162C, 0x6A1630, 0x6A1634, 0x6A1638}},
 };
 
 uint32_t u32(const std::vector<uint8_t>& d, size_t o) {
@@ -222,9 +226,54 @@ std::unique_ptr<GameTexts> GameTexts::parse(const std::vector<uint8_t>& exe, std
 		while (end < exe.size() && end - text < kMaxText && exe[end] != 0) {
 			++end;
 		}
-		texts->texts_[i] = clean_game_text(std::string(exe.begin() + long(text), exe.begin() + long(end)));
+		texts->raw_[i] = std::string(exe.begin() + long(text), exe.begin() + long(end));
+		texts->texts_[i] = clean_game_text(texts->raw_[i]);
 	}
 	return texts;
+}
+
+std::string GameTexts::sprintf_raw(const std::string& text, const std::vector<std::string>& args) {
+	std::string out;
+	size_t next = 0;
+	for (size_t i = 0; i < text.size(); ++i) {
+		if (text[i] != '%' || i + 1 >= text.size()) {
+			out += text[i];
+			continue;
+		}
+		if (text[i + 1] == '%') {
+			out += '%';
+			++i;
+			continue;
+		}
+		size_t j = i + 1;
+		size_t index = next;
+		bool positional = false;
+		if (text[j] == '$') {
+			size_t k = j + 1;
+			size_t n = 0;
+			while (k < text.size() && is_digit(text[k])) {
+				n = n * 10 + size_t(text[k] - '0');
+				++k;
+			}
+			if (k < text.size() && text[k] == '$' && n > 0) {
+				index = n - 1;
+				j = k + 1;
+				positional = true;
+			}
+		}
+		if (j < text.size() && text[j] == 's') {
+			if (index < args.size()) {
+				out += args[index];
+			}
+			if (!positional) {
+				++next;
+			}
+			i = j;
+			continue;
+		}
+		out += text[i];
+	}
+	return out;
 }
 
 std::string GameTexts::format(const std::string& text, const std::vector<std::string>& args) {

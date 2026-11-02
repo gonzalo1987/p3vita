@@ -65,5 +65,7 @@ private:
 std::string normalize_path(std::string_view path);
 
 std::string latin1_to_utf8(std::string_view text);
+// UTF-8 to Latin-1, as the game keeps the names (latin1_to_utf8 undone).
+std::string utf8_to_latin1(std::string_view text);
 
 }  // namespace p3::data

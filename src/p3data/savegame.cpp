@@ -1318,6 +1318,13 @@ void load_game_scripts(const CprArchive& archive, SaveGame& save) {
 			}
 		}
 	}
+	save.family_names.clear();
+	if (const CprEntry* entry = archive.find("scripts/NamenFamilien.txt")) {
+		std::vector<uint8_t> data;
+		if (archive.read(*entry, data)) {
+			save.family_names = split_game_names(data, globals.u16(0x6DDB76));
+		}
+	}
 	load_save_scripts(archive, save);  // For write_savegame (savegame_write.hpp).
 	finish_load(save);  // The loader's last steps (savegame_load.hpp).
 	// Las plantillas de mapa de las ciudades nuevas (0x4F9B40).
@@ -1415,6 +1422,35 @@ std::string merchant_name(const SaveGame& save, const NameLists& names, int merc
 	const std::string first = pick(m.male() ? 0 : 1, m.first_name() & 0x7F);
 	const std::string family = pick(2, m.family_name());
 	return first.empty() ? family : family.empty() ? first : first + " " + family;
+}
+
+namespace {
+
+// 0x512A60 and 0x512AE0 on one list: the game's names (count of them), then
+// the 20 written by the players (its offsets table has count + 20 entries),
+// and past them the start of its buffer, the list's first name.
+std::string game_name(const std::vector<std::string>& names, uint32_t count, const std::vector<std::string>& custom,
+	uint32_t i) {
+	if (i >= count + 20) {
+		return names.empty() ? std::string() : names[0];  // Not checked with the oracle.
+	}
+	if (i < count) {
+		return i < names.size() ? names[i] : std::string();
+	}
+	// Not checked with the oracle.
+	return i - count < custom.size() ? utf8_to_latin1(custom[i - count]) : std::string();
+}
+
+}  // namespace
+
+std::string game_first_name(const SaveGame& save, uint8_t index) {
+	const size_t list = (index & 0x80) ? 1 : 0;
+	return game_name(save.first_names[list], save.globals.u16(list ? 0x6DDB72 : 0x6DDB70), save.custom_names[list],
+		list ? (index & 0x7Fu) : index);
+}
+
+std::string game_family_name(const SaveGame& save, uint8_t index) {
+	return game_name(save.family_names, save.globals.u16(0x6DDB76), save.custom_names[2], index);
 }
 
 }  // namespace p3::data
