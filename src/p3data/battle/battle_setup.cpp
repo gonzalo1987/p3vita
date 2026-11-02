@@ -8,8 +8,10 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <string>
 
 #include "p3data/battle/battle_math.hpp"
+#include "p3data/game_texts.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -505,6 +507,78 @@ void Sailing::fn_608230(size_t b, bool arg) {
 	fn_60f479(b);
 }
 
+// 0x60659B..0x606AF5 (in 0x605420): the battle's message to the local
+// player, who has the human side `side` (team [+0x559 + side]) of a battle
+// of ships a (side 0) and d (side 1). With team 0 the player attacks: «%s
+// "%s" is attacking %s "%s" %s.» with «Your convoy» (the player's convoy
+// [+0x65E] of two ships or more: its first ship [+0xA] has a next [+0x6]) or
+// «Your <a's type>», a's name, «the convoy» (the same test on [+0x660]) or d's
+// type as the one taken (0x6A171C), d's name, and its owner: when team 1 is
+// the pirates' (bit 2 of [+0xAD2]), «of the pirate %s %s» ([+0x1E90],
+// [+0x1E91]) if [+0x35C] is a pirate with a captain (0xFF) and the guide of
+// convoy [+0x660] has a captain, else «of an unknown pirate»; otherwise «of
+// %s %s», the names of d's owner ([+0x0]). With team 1 the player is
+// attacked: «%s "%s" is being attacked by %s "%s" %s.» with «Your convoy»
+// ([+0x660]) or «Your <type>» of the side's ship, its name, «the convoy»
+// ([+0x65E]) or a's type as the winner (0x6A175C), a's name, and its owner
+// (bit 1, [+0x35A] and convoy [+0x65E] for the pirate; the merchant
+// [+0x35A] himself). The game doesn't check the convoys' first ships or the
+// pirate's guide against the number of ships: here none then.
+std::string Sailing::attack_message(size_t b, uint16_t a, uint16_t d, size_t side) const {
+	const BattleGraph& g = save_.battles;
+	const uint32_t ships = save_.globals.u16(global::kShipCount);
+	auto raw = [&](GameText t, uint32_t plus = 0) { return texts_->raw(GameText(int(t) + int(plus))); };
+	auto name = [&](uint16_t s) {
+		std::string out;
+		for (size_t i = 0x160; i < 0x180 && save_.ships[s].memory.u8(i) != 0; ++i) {
+			out += char(save_.ships[s].memory.u8(i));
+		}
+		return out;
+	};
+	auto type = [&](uint16_t s) { return uint32_t(save_.ships[s].memory.u8(0xE) & 3); };
+	auto convoy = [&](size_t o) {
+		const uint16_t c = g.get<uint16_t>(b, o);
+		if (c >= save_.convoy_count()) {
+			return false;
+		}
+		const uint16_t first = save_.convoys[c].u16(0xA);
+		return first < ships && save_.ships[first].memory.u16(0x6) < ships;
+	};
+	auto pirate = [&](size_t owner, size_t convoy_field) {
+		if (g.get<uint16_t>(b, owner) == 0xFF) {
+			const uint16_t c = g.get<uint16_t>(b, convoy_field);
+			const uint16_t guide = c < save_.convoy_count() ? save_.convoys[c].u16(0x10) : 0xFFFF;
+			if (guide < ships && save_.ships[guide].memory.u16(0x42) < save_.captain_count()) {
+				return GameTexts::sprintf_raw(raw(GameText::BattleOfPirate),
+					{game_first_name(save_, g.get<uint8_t>(b, 0x1E90)), game_family_name(save_, g.get<uint8_t>(b, 0x1E91))});
+			}
+		}
+		return raw(GameText::BattleOfAnUnknownPirate);
+	};
+	auto merchant = [&](uint32_t owner) {
+		if (owner >= save_.merchants.size()) {
+			return GameTexts::sprintf_raw(raw(GameText::BattleOfMerchant), {});
+		}
+		const MerchantMemory& m = save_.merchants[owner].memory;
+		return GameTexts::sprintf_raw(raw(GameText::BattleOfMerchant),
+			{game_first_name(save_, m.u8(0x1C)), game_family_name(save_, m.u8(0x1D))});
+	};
+	const uint8_t pirates = g.get<uint8_t>(b, 0xAD2);
+	if (g.get<uint8_t>(b, 0x559 + side) == 0) {
+		const std::string owner = (pirates & 2) ? pirate(0x35C, 0x660) : merchant(save_.ships[d].memory.u8(0x0));
+		return GameTexts::sprintf_raw(raw(GameText::BattleAttacking),
+			{convoy(0x65E) ? raw(GameText::BattleYourConvoy) : raw(GameText::BattleYourSnaikka, type(a)), name(a),
+				convoy(0x660) ? raw(GameText::BattleTheConvoyAttacked) : raw(GameText::BattleTakenSnaikka, type(d)), name(d),
+				owner});
+	}
+	const std::string owner = (pirates & 1) ? pirate(0x35A, 0x65E) : merchant(g.get<uint16_t>(b, 0x35A));
+	const uint16_t mine = side == 0 ? a : d;
+	return GameTexts::sprintf_raw(raw(GameText::BattleAttacked),
+		{convoy(0x660) ? raw(GameText::BattleYourConvoy) : raw(GameText::BattleYourSnaikka, type(mine)), name(mine),
+			convoy(0x65E) ? raw(GameText::BattleTheConvoyAttacking) : raw(GameText::BattleWinnerSnaikka, type(a)), name(a),
+			owner});
+}
+
 // 0x605420 (on a sea battle: ship A, ship D, a byte, a flag; its automatic
 // path, docs/cloud/battles-2-605420.md): the owners and sides, the middle,
 // the two convoys, which side is human; the ships of each side counted and
@@ -804,10 +878,16 @@ void Sailing::fn_605420(size_t b, uint16_t a, uint16_t d, uint8_t c, uint32_t fl
 	// the operation runs). p3vita has no battle window yet, so it always
 	// takes this path; the oracle too (BATTLE_WINDOW_JUMPS, 0x60659B →
 	// 0x606BAE).
+	// (The game tests [+0x5D] at the side's team, [+0x559 + i], which is the
+	// side itself in a sea battle.) For the viewer, the message the window
+	// would have shown goes to the player's messages (attack_message).
 	const uint32_t player = gl.u32(0x6DFC14);
 	for (size_t i = 0; i < u8(0x558); ++i) {
-		if (u16(0x35A + 2 * i) != player || u8(0x5D + i) != 0) {
+		if (u16(0x35A + 2 * i) != player || u8(0x5D + size_t(u8(0x559 + i))) != 0) {
 			continue;
+		}
+		if (texts_) {
+			player_messages_.push_back(attack_message(b, a, d, i));
 		}
 		uint8_t op[0x14];
 		const uint32_t fields[5] = {0x96, u16(0x662), player, 1, 0};

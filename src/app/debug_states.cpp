@@ -1,6 +1,8 @@
 #include "debug_states.hpp"
 
 #include <algorithm>
+#include <cstring>
+#include <vector>
 
 #include "p3data/game_memory.hpp"
 #include "p3data/hanse_tasks.hpp"
@@ -79,6 +81,61 @@ bool election_tomorrow(SaveGame& save) {
 	return false;
 }
 
+// A pirate attack on the player's first ship, as event_attack of
+// tools/oracle/retouch_pirates.py: the ship, in port, is ordered to sail to
+// the last town (or the first; operation 0x00, run after the first tick); the
+// last event of the queue becomes an event 0x1E (0x4DFD44) in state 2 at the
+// ship's town, due in two days, when the ship is at sea; and event 0x1E's
+// radius [0x6DD89C] is the largest. Then the pirates attack the ship
+// (0x5063C0) and a sea battle against the player starts.
+bool pirate_attack(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	constexpr uint32_t kEventHead = 0x6DD73C + 0x8;
+	constexpr uint32_t kEventCount = 0x6DD73C + 0xC;
+	constexpr uint32_t kPirateRange = 0x6DD89C;
+	const uint16_t ship = save.merchants[size_t(save.player)].memory.u16(0xE);
+	if (ship >= save.ships.size() || save.ships[ship].town() >= save.towns.size()) {
+		return false;
+	}
+	const uint8_t town = save.ships[ship].town();
+	const uint32_t target = town + 1u == save.towns.size() ? 0u : uint32_t(save.towns.size() - 1);
+	const uint32_t fields[5] = {0x00, ship, target, 0, 0};
+	std::vector<uint8_t> op(sizeof(fields));
+	std::memcpy(op.data(), fields, sizeof(fields));
+	save.queued_operations.push_back(op);
+	// The last event of the queue, out of it and at its head with its new
+	// tick; 0x4D8DD0 puts it in its place.
+	const uint32_t count = std::min<uint32_t>(g.u16(kEventCount), uint32_t(save.events.size()));
+	uint16_t* link = &g.u16(kEventHead);
+	uint16_t* last = nullptr;
+	for (size_t walked = 0; *link < count && walked < count; ++walked) {
+		last = link;
+		link = &save.events[*link].u16(4);
+	}
+	if (!last) {
+		return false;
+	}
+	const uint16_t i = *last;
+	GameMemory<0x18>& e = save.events[i];
+	*last = e.u16(4);
+	e.u16(4) = g.u16(kEventHead);
+	g.u16(kEventHead) = i;
+	const uint32_t now = g.u32(global::kWorldTick);
+	e.u32(0) = now + 0x200;
+	e.u16(6) = 0x1E;
+	e.u32(8) = 0;
+	e.u32(0xC) = now + 0x100000;  // Still going.
+	e.u8(0x10) = 2;
+	e.u8(0x11) = town;
+	e.u16(0x12) = 0;
+	e.u8(0x14) = 1;
+	e.u8(0x15) = 3;  // Attacks left.
+	e.u8(0x16) = 0;
+	g.u16(kPirateRange) = 0xFFFF;
+	tick::events_detail::fn_4d8dd0(save);
+	return true;
+}
+
 }  // namespace
 
 const char kDebugStatesHelp[] =
@@ -88,7 +145,9 @@ const char kDebugStatesHelp[] =
 	"  materials   road materials in the player's first ship (12 loads)\n"
 	"  level4      three tasks done: the player can stand for election\n"
 	"  alderman    the player is the Alderman\n"
-	"  election-tomorrow  the election of the Alderman at the start of the next day\n";
+	"  election-tomorrow  the election of the Alderman at the start of the next day\n"
+	"  pirate-attack  the player's first ship sails and pirates attack it two days\n"
+	"              later (event 0x1E): a sea battle against the player\n";
 
 bool apply_debug_states(SaveGame& save, const std::string& states, std::string& error) {
 	if (save.player < 0 || size_t(save.player) >= save.merchants.size()) {
@@ -121,6 +180,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "election-tomorrow") {
 			if (!election_tomorrow(save)) {
 				error = "the save has no election (event 0x20)";
+				return false;
+			}
+		} else if (state == "pirate-attack") {
+			if (!pirate_attack(save)) {
+				error = "the player's first ship isn't in a town, or the save has no events";
 				return false;
 			}
 		} else if (state == "alderman") {

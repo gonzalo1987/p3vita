@@ -212,6 +212,7 @@ void Sailing::boarding_message(size_t b, uint16_t winner, uint16_t taken, bool a
 		for (size_t i = 0; i <= message.size() && i < room; ++i) {
 			g.set<uint8_t>(b, 0x1310 + i, i < message.size() ? uint8_t(message[i]) : 0);
 		}
+		player_messages_.push_back(message);  // For the viewer (take_player_messages).
 	}
 	if (side >= 0xFF || g.get<uint8_t>(b, 0x5D + size_t(side)) != 0) {
 		return;

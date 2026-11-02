@@ -13,6 +13,8 @@
 // town_oracle.py.
 // --fix-game-bugs: with the fixes to the game's bugs (game_fixes.hpp), off by default.
 // --storms (on by default now) is still accepted.
+// --messages: print the messages p3vita has for the player after each call (Sailing::take_player_messages),
+// with the game's control codes as they are.
 // --exe PATH: the game's executable whose texts the battles write into their memory (Sailing::set_texts);
 // by default the Patrician3.exe next to the --cpr file, the oracle's English one.
 //
@@ -821,6 +823,7 @@ int main(int argc, char** argv) {
 	std::string write_path;  // --write: the save of the state reached (savegame_write.hpp).
 	std::string pst_path;  // --pst: with --carga, an uncompressed .pst read after it (statistics.hpp).
 	std::string exe_path;  // --exe: the game's texts (by default next to the CPR).
+	bool print_messages = false;  // --messages
 	for (int i = 2; i < argc; ++i) {
 		const std::string arg = argv[i];
 		if (arg == "--continuo") {
@@ -859,6 +862,8 @@ int main(int argc, char** argv) {
 			pst_path = argv[++i];
 		} else if (arg == "--exe" && i + 1 < argc) {
 			exe_path = argv[++i];
+		} else if (arg == "--messages") {
+			print_messages = true;
 		}
 	}
 	ProbeRegistry registry;
@@ -1082,6 +1087,13 @@ int main(int argc, char** argv) {
 		}
 		save.queued_operations.clear();
 		const std::optional<uint32_t> ours = fn->second(save, call);
+		if (sailing) {
+			for (const std::string& message : sailing->take_player_messages()) {
+				if (print_messages) {
+					std::printf("message (tick %u): %s\n", unsigned(call.tick), message.c_str());
+				}
+			}
+		}
 		if (continuous && call.function == 0x5315C0) {
 			countdown_pending = true;
 			countdown_tick = call.tick;

@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <map>
 #include <memory>
 #include <string>
@@ -1462,6 +1463,60 @@ void draw_end_window(SDL_Renderer* renderer, TextRenderer& title, TextRenderer& 
 	text.draw(hint, box.x + (width - text.measure(hint)) / 2, box.y + height - 8 - text.line_height(), kDimColor);
 }
 
+// The game's messages to the player in a window (Sailing::take_player_messages:
+// the battle's question when a battle against the player starts, the
+// boarding's message), one after another: the game's text, its first line
+// («Batalla naval:», «Abordaje»...) as the title.
+struct MessageWindow {
+	bool open = false;
+	std::string title;
+	std::string text;
+	std::deque<std::string> pending;  // Raw texts of the game, still to show.
+
+	void next() {
+		open = !pending.empty();
+		if (!open) {
+			return;
+		}
+		const std::string clean = clean_game_text(pending.front());
+		pending.pop_front();
+		const size_t line = clean.find('\n');
+		title = clean.substr(0, line);
+		text = line == std::string::npos ? std::string() : clean.substr(line + 1);
+		const size_t first = text.find_first_not_of('\n');
+		const size_t last = text.find_last_not_of('\n');
+		text = first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
+	}
+	void push(const std::string& raw) {
+		pending.push_back(raw);
+		if (!open) {
+			next();
+		}
+	}
+};
+
+void draw_message_window(SDL_Renderer* renderer, TextRenderer& title, TextRenderer& text, const MessageWindow& w) {
+	const int width = 620;
+	const std::vector<std::string> lines = wrap_text(text, w.text, width - 40);
+	const int height = 40 + title.line_height() + 16 + int(lines.size()) * text.line_height() + 24 +
+		text.line_height() + 8;
+	const SDL_Rect box = {(kScreenWidth - width) / 2, (kScreenHeight - height) / 2, width, height};
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 240);
+	SDL_RenderFillRect(renderer, &box);
+	SDL_SetRenderDrawColor(renderer, 190, 150, 90, 255);
+	SDL_RenderDrawRect(renderer, &box);
+	int y = box.y + 20;
+	title.draw(w.title, box.x + (width - title.measure(w.title)) / 2, y, kTextColor);
+	y += title.line_height() + 16;
+	for (const std::string& line : lines) {
+		text.draw(line, box.x + 20, y, kTextColor);
+		y += text.line_height();
+	}
+	const std::string hint = w.pending.empty() ? "X: continuar" : "X: siguiente";
+	text.draw(hint, box.x + (width - text.measure(hint)) / 2, box.y + height - 8 - text.line_height(), kDimColor);
+}
+
 int stick_speed(Sint16 value) {
 	if (std::abs(value) < kStickDeadZone) {
 		return 0;
@@ -1551,12 +1606,14 @@ struct Options {
 	const char* debug_state = nullptr;
 	const char* fix_game_bugs = nullptr;  // on|off: overrides the settings file
 	const char* exe = nullptr;
+	const char* save = nullptr;  // The save to start from (in the archive), instead of kStartSave.
 };
 
 void print_usage() {
 	std::printf(
 		"usage: p3vita [DATA_DIR] [--cpr FILE] [--steps STEPS] [--screenshot FILE.png]\n"
 		"              [--debug-state STATES] [--exe Patrician3.exe] [--fix-game-bugs on|off]\n"
+		"              [--save missav/N.pat]\n"
 		"\n"
 		"Shows the towns of Patrician III. DATA_DIR is the folder with p2arch0_eng.cpr\n"
 		"(and p2arch0_spa.cpr for the Spanish version, optional); by default data/ and\n"
@@ -1590,6 +1647,7 @@ int parse_options(int argc, char** argv, Options& options) {
 			: arg == "--debug-state" ? &options.debug_state
 			: arg == "--fix-game-bugs" ? &options.fix_game_bugs
 			: arg == "--exe" ? &options.exe
+			: arg == "--save" ? &options.save
 			: nullptr;
 		if (arg == "--help" || arg == "-h") {
 			print_usage();
@@ -1699,7 +1757,7 @@ int main(int argc, char** argv) {
 	MarketUi market;
 	HanseUi hanse;  // The Hanse panel (Square in a town).
 	SaveGame save;
-	const bool has_save = load_savegame(*archive, kStartSave, save) && !save.towns.empty();
+	const bool has_save = load_savegame(*archive, options.save ? options.save : kStartSave, save) && !save.towns.empty();
 	if (options.debug_state) {
 		std::string error;
 		if (!has_save || !p3::app::apply_debug_states(save, options.debug_state, error)) {
@@ -1747,6 +1805,7 @@ int main(int argc, char** argv) {
 	const HanseContext hanse_context{town_names, names, regions, game_texts.get()};
 	g_texts = game_texts.get();
 	EndWindow end_window;  // When the player is elected Alderman.
+	MessageWindow messages;  // The game's messages to the player (a battle...).
 	Selection selection;
 	if (has_save) {
 		for (size_t i = 0; i < save.towns.size(); ++i) {
@@ -1976,6 +2035,9 @@ int main(int argc, char** argv) {
 			ticks_run = ticks;
 			for (int i = 0; i < ticks; ++i) {
 				advance_game_tick(save, *sailing);
+				for (const std::string& message : sailing->take_player_messages()) {
+					messages.push(message);
+				}
 				for (const ShipEvent& event : sailing->events()) {
 					const SavedShip& ship = save.ships[size_t(event.ship)];
 					if (ship.owner() != save.player) {
@@ -2071,6 +2133,13 @@ int main(int argc, char** argv) {
 						break;
 					}
 				}
+				if (messages.open) {
+					// So does the window of the game's messages: the next one, or closed.
+					if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A || event.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
+						messages.next();
+						break;
+					}
+				}
 				if (in_hanse && hanse_button(event.cbutton.button)) {
 					break;
 				}
@@ -2146,6 +2215,10 @@ int main(int argc, char** argv) {
 				}
 				if (end_window.open && (event.key.keysym.sym == SDLK_RETURN || event.key.keysym.sym == SDLK_ESCAPE)) {
 					end_window.open = false;
+					break;
+				}
+				if (messages.open && (event.key.keysym.sym == SDLK_RETURN || event.key.keysym.sym == SDLK_ESCAPE)) {
+					messages.next();
 					break;
 				}
 				if (in_hanse) {
@@ -2415,6 +2488,9 @@ int main(int argc, char** argv) {
 			SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
 			SDL_RenderDrawRect(renderer, &box);
 			small_text->draw(notice, box.x + padding, box.y + padding / 2, kTextColor);
+		}
+		if (messages.open && text && small_text) {
+			draw_message_window(renderer, *text, *small_text, messages);
 		}
 		if (end_window.open && text && small_text) {
 			draw_end_window(renderer, *text, *small_text, end_window, hanse_context);

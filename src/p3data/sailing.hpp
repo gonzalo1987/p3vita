@@ -206,6 +206,16 @@ public:
 	// those messages are left as they were. tick_probe gives the English
 	// ones, as the oracle's executable; the viewer, the installation's.
 	void set_texts(const GameTexts* texts) { texts_ = texts; }
+	// The messages the game shows the player in a window, as the
+	// executable's raw texts (with the game's control codes): the battle's
+	// question when a battle against the player starts (the attack, 0x605420)
+	// and the boarding's message (0x60C1C9). Only with the texts; nothing in
+	// the game's memory. The viewer takes them after each tick.
+	std::vector<std::string> take_player_messages() {
+		std::vector<std::string> out;
+		out.swap(player_messages_);
+		return out;
+	}
 	bool battles() const { return battles_; }
 	void step_battles();  // After each tick: operation 0x94 with kBattleSteps when there are battles.
 	void fn_536bbf(uint32_t steps);  // Operation 0x94: the battles take their steps.
@@ -231,6 +241,9 @@ public:
 	void fn_60f479(size_t battle);  // (sea battle) The rocks and islets.
 	void fn_608230(size_t battle, bool arg);  // (sea battle, method +0x18)
 	void fn_605420(size_t battle, uint16_t a, uint16_t d, uint8_t c, uint32_t flag);  // (sea battle) Its setup.
+	// 0x60659B..0x606AF5: the battle's message to the player on a side
+	// (ships a and d), the raw text.
+	std::string attack_message(size_t battle, uint16_t a, uint16_t d, size_t side) const;
 	// battle/battle_step.cpp: the step of a battle.
 	const ShipMemory& scene_ship(size_t entry) const;  // The ship of a scene's ship.
 	size_t scene_battle(size_t entry) const;  // Its battle.
@@ -325,6 +338,7 @@ private:
 	bool disband_ = true;
 	bool battles_ = true;
 	const GameTexts* texts_ = nullptr;
+	std::vector<std::string> player_messages_;
 	std::vector<std::vector<uint32_t>> waypoints_;  // 0x448780 per town ([+0x20], [+0x24] of the navigation)
 	std::vector<bool> has_waypoints_;
 

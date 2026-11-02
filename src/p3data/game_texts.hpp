@@ -85,6 +85,15 @@ enum class GameText {
 	BattleTakenHulk = BattleTakenSnaikka + 3,
 	BattleWinnerSnaikka,  // The 4 ship types as the winner («the snaikke»...; 0x6A175C).
 	BattleWinnerHulk = BattleWinnerSnaikka + 3,
+	// The battle's question to the player (0x605420, 0x60659B..0x606AF5).
+	BattleAttacking,  // «\c\f3_Sea battle ... %s "%s" is attacking %s "%s" %s.» (the player attacks)
+	BattleAttacked,  // «... %s "%s" is being attacked by %s "%s" %s.» (the player is attacked)
+	BattleOfAnUnknownPirate,  // «of an unknown pirate»
+	BattleYourSnaikka,  // «Your snaikka»... (0x6A1784, filled at start by 0x46BFC0 in the English exe)
+	BattleYourHulk = BattleYourSnaikka + 3,
+	BattleYourConvoy,  // «Your convoy» (0x6A1794)
+	BattleTheConvoyAttacking,  // «the convoy» that attacks the player (0x6A179C)
+	BattleTheConvoyAttacked,  // «the convoy» the player attacks (0x6A17A0)
 	Count
 };
 
