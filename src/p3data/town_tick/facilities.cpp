@@ -44,6 +44,7 @@
 
 #include <cassert>
 
+#include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -522,7 +523,15 @@ void fn_5083b0(SaveGame& save, int town, int32_t work) {
 	ship.health() = ship.max_health();
 	ship.status() = 5;
 	ship.timer() = 0;
-	// 0x4D6530: aviso a los comerciantes (no se traduce).
+	{
+		// The letter 0x00 to the ship's owner (0x50847B..0x5084A5): [+0x5] the
+		// town, u16 [+0x8] the ship, [+0xA] its type.
+		Letter letter(0x00);
+		letter.entry.u8(5) = uint8_t(town);
+		letter.entry.u16(8) = index;
+		letter.entry.u16(0xA) = ship.memory.u8(0xE);
+		send_letter(save, ship.owner(), letter);
+	}
 	t.u16(0x81C) = ship.next_in_list();
 	ship.next_in_list() = save.globals.u16(kDockedHead);
 	save.globals.u16(kDockedHead) = index;
@@ -701,7 +710,18 @@ void fn_51ff30(SaveGame& save, int town, uint32_t workers) {
 				free_record(st, index);
 				break;
 			}
-			// 0x4D6530: aviso al dueño (no se traduce).
+			{
+				// The letter 0x03 to the record's owner (0x5202C1..0x5202EF; after
+				// the cases that free it or give it to the town, 0xFF: nobody):
+				// [+0x5] the town's [+0x2C0], u16 [+0x8] its type (0xFF when
+				// freed), [+0xA] the record.
+				const BuildingRecord& done = save.towns[size_t(town)].records[index];
+				Letter letter(0x03);
+				letter.entry.u8(5) = t.u8(0x2C0);
+				letter.entry.u16(8) = done.type;
+				letter.entry.u16(0xA) = index;
+				send_letter(save, done.owner, letter);
+			}
 		} else if (r.type <= 0x38) {
 			switch (kTownCompletion[r.type]) {
 			case kTownFree:

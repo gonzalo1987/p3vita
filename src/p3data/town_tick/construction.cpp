@@ -13,6 +13,7 @@
 #include <cassert>
 #include <cstring>
 
+#include "p3data/mail.hpp"
 #include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -1168,6 +1169,18 @@ void fn_4f8560(SaveGame& save, int merchant, uint32_t town, int32_t amount) {
 	m.u32(0x468) |= bit;
 	m.s32(0x4BC) += amount;
 	m.s32(0) -= amount;
+	{
+		// The guild's entry in the chronicle (the letter 0x0C, 0x4F85F6..
+		// 0x4F8639): [+0x5] the town, u16 [+0x8] the merchant, [+0xA] his
+		// title (0x4F9430), [+0xC] his rank at home, [+0xE] 0.
+		Letter letter(0x0C);
+		letter.entry.u8(5) = uint8_t(town);
+		letter.entry.u16(8) = uint16_t(merchant);
+		letter.entry.u16(0xA) = merchants_detail::fn_4f9430(save, merchant);
+		letter.entry.u16(0xC) = m.u8(0x39C + m.u8(0x19));
+		letter.entry.u16(0xE) = 0;
+		send_letter(save, kLetterToChronicle, letter);
+	}
 	for (uint32_t k = 0; k < 0x64; k += 4) {
 		g.u32(kExplored + k) |= m.u32(0x4D8 + k);
 	}
@@ -2073,7 +2086,30 @@ void fn_522c70(SaveGame& save, int town, uint32_t owner, uint32_t kind) {
 			if (sum > cap) {
 				sum = cap;
 			}
-			// (Al jugador humano, una carta: 0x4D6530; no se reproduce.)
+			{
+				// To a human owner with something to pay, the letter 0x2F
+				// (0x5236A1..0x523702): [+0x5] the town's [+0x2C0]; u16 [+0x8] his
+				// [+0x1C] << 8 | [+0x1D]; [+0xA] the same of the mayor, or of the
+				// town's bytes [0x6D4 + k], [0x6D8 + k] (k = (−1 − mayor) & 3)
+				// when he isn't a merchant; [+0xC] the sum.
+				const uint16_t owner = om.u16(0x2C4);
+				const MerchantMemory& pm = save.merchants[owner < save.merchants.size() ? owner : 0].memory;
+				if (pm.u16(0x8) == 0 && sum > 0) {
+					Letter letter(0x2F);
+					letter.entry.u8(5) = t.u8(0x2C0);
+					letter.entry.u16(8) = uint16_t((pm.u8(0x1C) << 8) + pm.u8(0x1D));
+					const uint8_t mayor = t.u8(0x6F1);
+					if (mayor < g.u16(global::kWorldMerchantCount)) {
+						const MerchantMemory& mm = save.merchants[mayor].memory;
+						letter.entry.u16(0xA) = uint16_t((mm.u8(0x1C) << 8) + mm.u8(0x1D));
+					} else {
+						const size_t k = size_t(uint32_t(-1 - int32_t(mayor)) & 3);
+						letter.entry.u16(0xA) = uint16_t((t.u8(0x6D4 + k) << 8) + t.u8(0x6D8 + k));
+					}
+					letter.entry.u16(0xC) = uint16_t(sum);
+					send_letter(save, owner, letter);
+				}
+			}
 			const int32_t amount = sum * 100;
 			if (amount <= 0) {
 				continue;

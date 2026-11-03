@@ -30,6 +30,20 @@ Scenarios:
              0x0A), the 16 at their end without marks in the towns (the
              result 0x4B; kind 15 the punishment) and kinds 3 and 9 with two
              marks (failed: 0x4A). Record 4d85c0
+  hulk       the player's home town ready for the hulk (its level [0x827]
+             −1, [0x810] high, [0x2C8] 0, [0x76C] | 0x20000) and an event
+             0x06 in the next tick: the letter 0x81 to every merchant.
+             Record 4d85c0
+  wall_bill  the player's home town without a merchant mayor, its store
+             full and a single pending wall piece, which the player pays
+             (operation 0x24, 0x522C70): the offices' shares, with the
+             letter 0x2F to the player. Record 535760, 0 days
+  convoy_fees direct calls of 0x50A580 (a convoy ends at its destination)
+             on two AI convoys with 2 ships or more, at their destination
+             town ([+0x1C] = [+0x1F], [+0x1E] another one): the first led by
+             the player ([+0x0]: the others pay, the letter 0x31 to him), the
+             second with its last ship the player's (he pays: 0x32). Record
+             50a580, 0 days
 """
 import argparse
 import os
@@ -146,7 +160,70 @@ def commission(o, rec):
     print(f'{len(cases)} events 0x05 of the player {m} (home {home}), other merchant {other}')
 
 
-SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, commission)}
+def hulk(o, rec):
+    import retouch as rt
+    m = o.u32(to.PLAYER)
+    t = o.u8(o.merchant(m) + 0x19)
+    a = o.town(t)
+    w8(o, a + 0x827, 0xFF)
+    w32(o, a + 0x810, 0x7FFFFFFF)
+    w32(o, a + 0x2C8, 0)
+    w32(o, a + 0x76C, o.u32(a + 0x76C) | 0x20000)
+    i, e = rt.events(o)[-1]
+    w16(o, e + 6, 6)
+    rt.move_event(o, i, e, o.u32(WORLD + 0x14) + 1)
+    print(f'town {t} ready for the hulk; event {i} 0x06 in the next tick')
+
+
+def wall_bill(o, rec):
+    import retouch_unchecked as ru
+    m = o.u32(to.PLAYER)
+    t = o.u8(o.merchant(m) + 0x19)
+    a = o.town(t)
+    w8(o, a + 0x6F1, 0xFF)
+    pending = ru.records(o, t, 0x766)
+    print(f'town {t}: {len(pending)} pending pieces, first {pending[:3]}')
+    if not pending:
+        return
+    ru.store(o, t)
+    w32(o, a + 0x700, 50000000)
+    w32(o, o.merchant(m), 50000000)
+    first = pending[0]
+    w16(o, o.u32(a + 0x75C) + 8 * first[0] + 4, 0xFFFF)
+    ru.operation(o, 0x24, m, t, 0 if first[4] == 0x36 else 1)
+    print(f'pending now {ru.records(o, t, 0x766)}')
+
+
+def convoy_fees(o, rec):
+    towns, _, merchants, ships = o.counts()
+    m = o.u32(to.PLAYER)
+    convoys = o.u32(to.SHIPS + 8)
+    count = o.u16(to.SHIPS + 0xF6)
+    chosen = []
+    for c in range(count):
+        a = convoys + 0x3C * c
+        members, s = [], o.u16(a + 0xA)
+        while s < ships and len(members) < 50:
+            members.append(s)
+            s = o.u16(o.ship(s) + 6)
+        if len(members) >= 2 and o.u8(a) < merchants and o.u8(a) != m and o.u8(a + 0x1F) < towns:
+            chosen.append((c, a, members))
+        if len(chosen) == 2:
+            break
+    print(f'convoys {[c for c, _, _ in chosen]}')
+    for k, (c, a, members) in enumerate(chosen):
+        t = o.u8(a + 0x1F)
+        w16(o, a + 0x1C, t)
+        w8(o, a + 0x1E, (t + 1) % towns)
+        if k == 0:
+            w8(o, a, m)
+        else:
+            w8(o, o.ship(members[-1]), m)
+        import retouch_unchecked as ru
+        ru.direct(o, 0x50A580, [c], ecx=to.SHIPS)
+
+
+SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, commission, hulk, wall_bill, convoy_fees)}
 
 
 def main():

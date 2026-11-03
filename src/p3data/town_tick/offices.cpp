@@ -39,6 +39,7 @@
 
 #include <cstring>
 
+#include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -977,8 +978,11 @@ void fn_4fff20(SaveGame& save, int office, uint32_t day_of_year) {
 	}
 	if (o.u16(0x2F0) != 0) {
 		if (--o.u16(0x2F0) == 0) {
-			// Termina la obra. 0x4D6530 (mensaje 0x60 a los comerciantes con la
-			// ciudad) no se traduce.
+			// The works end: the letter 0x60 to the owner (0x50025D..0x500280),
+			// [+0x5] the town [+0x2C6].
+			Letter letter(0x60);
+			letter.entry.u8(5) = o.u8(0x2C6);
+			send_letter(save, o.u16(0x2C4), letter);
 			o.u16(0x2EC) = uint16_t(o.u16(0x2EC) + 50);
 			o.u16(0x2EE) = uint16_t(o.u16(0x2EE) - 50);
 		}

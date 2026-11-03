@@ -269,6 +269,15 @@ doesn't have.
   task, event 0x05 (`events_big.cpp`, 0x4E5B84: 0x19 or 0x0A at the start
   by the kind, 0x4A failed, 0x4B the result: the pay / 500, the ware and
   loads, or the punishment's town and days), and 0x21 of event 0x16.
+- The towns and convoys: 0x00 (a ship launched: [+0x5] the town, u16
+  [+0x8] the ship, [+0xA] its type), 0x03 (works done: the town's [+0x2C0],
+  u16 the record's type and the record, to its owner; nobody when the
+  record was freed or given to the town), 0x60 (an office ready), 0x35 (a
+  famine, to the chronicle), 0x81 (the hulk, to each merchant), 0x0C (the
+  guild, to the chronicle: the merchant, his title and rank), 0x2F (a
+  town wall's bill: the payer's and the mayor's names, the sum), 0x32 and
+  0x31 (a convoy's fees at its destination: the fee or the total, the
+  guide's [+0x15E], the leader's rank and names).
 - The sea battles (`battle/`):
   - 0x60D299 (`battle_end.cpp`): the report, a letter 0x29 to each side of
     the computer: [+0x5] the merchant's home town, the buffer the text of

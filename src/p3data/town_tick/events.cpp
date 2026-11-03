@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "p3data/mail.hpp"
 #include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -1579,6 +1580,13 @@ void fn_4e2144(SaveGame& save) {
 				continue;
 			}
 			if (t.u32(0x810) > uint32_t(kPortLevels[next + 4 * int32_t(k)]) * 2800) {
+				if (next == 0 && k == 3 && t.u32(0x2C8) == 0 && (t.u32(0x76C) & 0x20000)) {
+					// The shipyard can build the hulk: the letter 0x81 to every
+					// merchant (0x4E2264..0x4E22A8), [+0x5] the town.
+					Letter letter(0x81);
+					letter.entry.u8(5) = uint8_t(i);
+					send_letter(save, kLetterToEach, letter);
+				}
 				t.u8(0x824 + k) = uint8_t(next);
 			}
 		}

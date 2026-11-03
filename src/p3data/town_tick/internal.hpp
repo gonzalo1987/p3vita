@@ -274,6 +274,10 @@ void fn_542f10(SaveGame& save, const uint8_t* operation);
 // (0x521900), torres (0x523830, 0x523D70) y murallas (0x522B20).
 // Y los materiales: 0x27 (0x535BBC: la ciudad los recibe) y 0x23 (0x535B12:
 // la muralla de un lado, 0x522B20).
+namespace merchants_detail {
+// merchants.cpp: 0x4F9430, a merchant's title (by his money and fame).
+uint8_t fn_4f9430(const SaveGame& save, int merchant);
+}  // namespace merchants_detail
 namespace construction_detail {
 void fn_53ce30(SaveGame& save, const uint8_t* operation);
 void fn_535bbc(SaveGame& save, const uint8_t* operation);

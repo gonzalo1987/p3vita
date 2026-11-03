@@ -29,6 +29,7 @@
 
 #include <cmath>
 
+#include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -388,8 +389,20 @@ void Sailing::fn_50a580(uint16_t convoy) {
 		const uint8_t days = tick::ship_trade_detail::fn_531b70(save_, c.u8(0x1E), town);
 		const uint32_t distance = uint32_t(tick::ftol(std::sqrt(double(int32_t(uint32_t(days) * 20)))));
 		uint32_t total = 0;  // [esp+0x14]: lo que cobra el dueño.
-		// El [+0x15E] del que guía, el rango y el nombre del dueño solo van al
-		// mensaje (0x4D6530, que no se traduce).
+		// The letters (0x50A76F..0x50A808): the guide's [+0x15E] (0xFFFF
+		// without one), and the leader's rank at home << 8 | [+0x1A] and
+		// [+0x1C] << 8 | [+0x1D] (1 and 0 when he isn't a merchant). One
+		// letter for all, as in the game: 0x31 keeps the [+0xA], [+0xC] of
+		// the last 0x32.
+		const uint16_t guide = c.u16(0x10);
+		const uint16_t guide_name = guide < ship_count(save_) ? save_.ships[guide].memory.u16(0x15E) : 0xFFFF;
+		uint16_t leader_rank = 1, leader_name = 0;
+		if (uint16_t(c.u8(0x0)) < merchant_count(save_)) {
+			const MerchantMemory& lm = save_.merchants[c.u8(0x0)].memory;
+			leader_rank = uint16_t((lm.u8(0x39C + lm.u8(0x19)) << 8) + lm.u8(0x1A));
+			leader_name = uint16_t((lm.u8(0x1C) << 8) + lm.u8(0x1D));
+		}
+		Letter letter;
 		while (c.u16(0xA) < ship_count(save_)) {
 			const uint16_t first = c.u16(0xA);
 			const uint8_t owner = save_.ships[first].memory.u8(0x0);
@@ -420,14 +433,34 @@ void Sailing::fn_50a580(uint16_t convoy) {
 			payer.s32(0x0) = sub(payer.s32(0x0), fee);
 			payer.s32(0x4BC) = add(payer.s32(0x4BC), fee);
 			total += fee;
-			// Si el que paga es un jugador humano ([+0x8] = 0), mensaje 0x32 (0x4D6530).
+			if (payer.u16(0x8) == 0) {
+				// The letter 0x32 to the human payer (0x50A92C..0x50A966): [+0x5]
+				// the destination [+0x1F], u16 [+0x8] the fee, [+0xA] the guide's
+				// name, [+0xC] and [+0xE] the leader's.
+				letter.entry.u8(4) = 0x32;
+				letter.entry.u8(5) = c.u8(0x1F);
+				letter.entry.u16(8) = uint16_t(fee);
+				letter.entry.u16(0xA) = guide_name;
+				letter.entry.u16(0xC) = leader_rank;
+				letter.entry.u16(0xE) = leader_name;
+				send_letter(save_, owner, letter);
+			}
 		}
 		if (uint16_t(c.u8(0x0)) < merchant_count(save_)) {
 			fn_4f9050(save_, c.u8(0x0), foreign, 1);
 			MerchantMemory& leader = save_.merchants[c.u8(0x0)].memory;
 			leader.s32(0x0) = add(leader.s32(0x0), total);
 			leader.s32(0x4C8) = add(leader.s32(0x4C8), total);
-			// Si el dueño es un jugador humano, mensaje 0x31 (0x4D6530).
+			if (leader.u16(0x8) == 0) {
+				// The letter 0x31 to the human leader (0x50A9D8..0x50AA02):
+				// [+0x5] the destination, u16 [+0x8] the total, [+0xE] the
+				// guide's name.
+				letter.entry.u8(4) = 0x31;
+				letter.entry.u8(5) = c.u8(0x1F);
+				letter.entry.u16(8) = uint16_t(total);
+				letter.entry.u16(0xE) = guide_name;
+				send_letter(save_, c.u8(0x0), letter);
+			}
 		}
 	} else {
 		while (c.u16(0xA) < ship_count(save_)) {

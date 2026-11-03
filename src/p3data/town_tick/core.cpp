@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -183,11 +184,14 @@ void fn_527d40(SaveGame& save, int town) {
 		t.u8(0x2C3) = 0x50;
 		if (!(t.u32(0x2C8) & 0x1000)) {
 			t.u32(0x2C8) |= 0x1000;
-			// Después el juego avisa a los comerciantes (0x4D6530, mensaje 0x35)
-			// y, de mayor a menor, a cada humano ([+8] == 0) de esta ciudad
-			// natal ([+0x19]): carta (0x548CA0) y, al jugador, la ventana de
-			// la hambruna (0x469380, 0x469AF0 sobre la interfaz *0x6CC7E8). No
-			// es simulación: no se traduce.
+			// The famine in the chronicle (the letter 0x35, 0x527F2F..0x527F53:
+			// [+0x5] the town's [+0x2C0]). Then, from the last to the first,
+			// each human ([+0x8] == 0) of this home town ([+0x19]) gets a
+			// message (0x548CA0) and the player the famine's window (0x469380,
+			// 0x469AF0 on *0x6CC7E8): the interface.
+			Letter letter(0x35);
+			letter.entry.u8(5) = t.u8(0x2C0);
+			send_letter(save, kLetterToChronicle, letter);
 		}
 	}
 }

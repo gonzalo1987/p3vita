@@ -141,7 +141,9 @@ change.
   and the sea battles (14: `battle_end.cpp` 7, `capture.cpp` 5,
   `pirate_objects.cpp`, `ship_step.cpp`; the report 0x29 with the game's
   texts), `merchants.cpp` (4 more: 0x5E, 0x5F, 0x6D, 0x82) and
-  `events_big.cpp` (4: event 0x05 and 0x16). 71 left.
+  `events_big.cpp` (4: event 0x05 and 0x16), and the small files
+  (`facilities.cpp`, `offices.cpp`, `core.cpp`, `events.cpp`,
+  `construction.cpp`, `convoys_members.cpp`: 9). 62 left.
 - [ ] **10 in functions p3vita names but skips whole**: the mission
   interpreter 0x4ECF64 (5; three with a letter the script builds), the
   alderman's notification 0x5299F0 (2), the convoy's automatic route

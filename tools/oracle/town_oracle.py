@@ -304,6 +304,11 @@ MAIL_CALLS = (
     # events_big.cpp: a merchant's task, event 0x05 (0x4E5B84: 0x19 or 0x0A,
     # 0x4A, 0x4B), and event 0x16 (0x4E8234: 0x21).
     0x4E5D4D, 0x4E5F2A, 0x4E6286, 0x4E8613,
+    # facilities.cpp (0x00 launching, 0x03 works done), offices.cpp (0x60),
+    # core.cpp (0x35 famine), events.cpp (0x81 the hulk), construction.cpp
+    # (0x0C the guild, 0x2F the town wall's bill), convoys_members.cpp (0x32,
+    # 0x31 a convoy's fees).
+    0x5084A5, 0x5202EF, 0x500280, 0x527F53, 0x4E22A8, 0x4F8639, 0x523702, 0x50A966, 0x50AA02,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is
