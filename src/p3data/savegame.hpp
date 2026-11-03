@@ -421,8 +421,8 @@ struct SaveGame {
 	// [0x6DD736]): entradas de 16 bytes con u8 [+0x0] día, u8 [+0x1] mes, u16
 	// [+0x2] año, u8 [+0x4] tipo y u16 [+0x6] siguiente; la lista de cada
 	// comerciante empieza en su u16 [+0xA]. El evento 0x16 (0x4E8234) mira en
-	// él los avisos 0x21 y 0x22 del jugador. Los avisos nuevos (0x4D6530) no se
-	// apuntan: es la interfaz.
+	// él los avisos 0x21 y 0x22 del jugador. New letters are added by
+	// send_letter (0x4D6530, src/p3data/mail.cpp).
 	std::vector<GameMemory<0x10>> mail;
 	// The 16-byte heap record of each letter of types 0x3C..0x40 and 0x71
 	// (the game keeps it apart, pointer in [+0x8]; for 0x71, [+0x4] is the

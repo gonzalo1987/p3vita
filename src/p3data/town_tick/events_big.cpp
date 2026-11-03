@@ -31,8 +31,9 @@
 // 0x6DD730, un 0x21 o 0x22 aún vigente: entonces solo se aplaza el evento).
 //   [+0x8], [+0xA], [+0xC] u16 semillas del aviso; [+0xE] u8 contador 1..8
 //
-// Los avisos (0x4D6530, 0x548CA0) y sus textos (0x51A850, 0x51A880) no se
-// traducen. Lo que el despachador hace con cada uno, en events_big().
+// The letters (0x4D6530) are sent (src/p3data/mail.cpp); the ticker lines
+// (0x548CA0) are the interface's. Lo que el despachador hace con cada uno,
+// en events_big().
 
 #include <cassert>
 #include <cstring>

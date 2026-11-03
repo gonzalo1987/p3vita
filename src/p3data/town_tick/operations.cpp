@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "p3data/game_fixes.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -512,8 +513,8 @@ void fn_535866(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 // [+0x0]) was born less than 279 days ago: a free record (0x5097C0) at the
 // head of the list with [+0x2] the first name, [+0x3] his surname, [+0x4]
 // the birth tick, [+0x8..+0xB] the 4 bytes and [+0xF] = 0xFF; [+0x36] counts
-// the children. The letter 0x7A to a human father is not reproduced. Queued
-// by 0x4F69B0 (in event 0x03; still to be rewritten in events_towns.cpp).
+// the children. A human father gets the letter 0x7A. Queued by 0x4F69B0 (in
+// event 0x03, events_towns.cpp).
 void fn_53fea0(SaveGame& save, const uint8_t* operation) {
 	const GlobalMemory& g = save.globals;
 	const uint8_t merchant = operation[4];
@@ -541,6 +542,14 @@ void fn_53fea0(SaveGame& save, const uint8_t* operation) {
 	c.u32(4) = now;
 	std::memcpy(c.bytes.data() + 8, operation + 6, 4);
 	c.u8(0xF) = 0xFF;
+	if (m.u16(0x8) == 0) {
+		// The letter 0x7A to the human father (0x53FFC7..0x53FFF4): [+0x5]
+		// his home town, u16 [+0x8] the child's first name.
+		Letter letter(0x7A);
+		letter.entry.u8(5) = m.u8(0x19);
+		letter.entry.u16(8) = operation[5];
+		send_letter(save, merchant, letter);
+	}
 }
 
 // Operation 0x65 (0x53DD70): {0x65, u32 merchant}: the merchant goes
@@ -559,9 +568,9 @@ void fn_53dd70(SaveGame& save, const uint8_t* operation) {
 // (events_towns.cpp, fn_4e7c74) on that day (the low byte of the tick, also
 // in the operation, set to 0) with [+0x8] the tick, [+0xC] the u16 and
 // [+0xE..+0x15] the 8 bytes ([+0x15] the merchant). If [+0x11] is a merchant,
-// the marks of his letters are cleared (0x4D6FD0); the letter itself is not
-// reproduced. Queued by the mission interpreter (0x4D6C90) and the interface:
-// the branch of event 0x16 that would queue it for the AI is dead code.
+// the marks of his letters are cleared (0x4D6FD0) and he gets the letter
+// 0x33. Queued by the mission interpreter (0x4D6C90) and the interface: the
+// branch of event 0x16 that would queue it for the AI is dead code.
 void fn_53da90(SaveGame& save, const uint8_t* operation) {
 	uint32_t tick = field(operation, 4);
 	if (save.globals.u32(global::kWorldTick) >= tick) {
@@ -576,13 +585,28 @@ void fn_53da90(SaveGame& save, const uint8_t* operation) {
 	const uint8_t merchant = operation[0x11];
 	if (merchant < save.globals.u16(global::kWorldMerchantCount)) {
 		events_towns_detail::fn_4d6fd0(save, save.merchants[merchant].memory.u16(0xA));
+		// The letter 0x33 to him (0x53DB58..0x53DBC7): [+0x5] the operation's
+		// [+0xE], u16 [+0x8] his home town, [+0xA] the operation's [+0xC] << 8
+		// + [+0xD], [+0xC] the wedding's day << 8 + month − 1 and [+0xE] its
+		// year (0x5311D0 on the tick without its low byte).
+		Letter letter(0x33);
+		letter.entry.u8(5) = operation[0xE];
+		letter.entry.u16(8) = save.merchants[merchant].memory.u8(0x19);
+		letter.entry.u16(0xA) = uint16_t((operation[0xC] << 8) + operation[0xD]);
+		uint8_t day = 0;
+		uint8_t month = 0;
+		uint16_t year = 0;
+		events_mayor_detail::fn_5311d0(tick, day, month, year);
+		letter.entry.u16(0xC) = uint16_t((day << 8) + month - 1);
+		letter.entry.u16(0xE) = year;
+		send_letter(save, merchant, letter);
 	}
 }
 
 // La operación 0x13 (0x538C40): {0x13, u32 barco, u32 capitán}: el capitán
 // del barco de un jugador humano se retira: el evento 0x27 (events_towns.cpp,
 // fn_4ddc00) en el tick siguiente con el barco y el capitán, y [+0xE] del
-// capitán a 1 (se está retirando). La carta 0x52 al dueño no se reproduce. La
+// capitán a 1 (se está retirando). A human owner gets the letter 0x52. La
 // encola 0x4DCEA0 (en el evento 0x03) para los barcos de los jugadores
 // humanos; a los de la IA les crea el evento directamente.
 void fn_538c40(SaveGame& save, const uint8_t* operation) {
@@ -597,6 +621,25 @@ void fn_538c40(SaveGame& save, const uint8_t* operation) {
 	e.u32(8) = ship;
 	e.u32(0xC) = captain;
 	save.captains[captain].u8(0xE) = 1;
+	const ShipMemory& sh = save.ships[ship].memory;
+	const uint8_t owner = sh.u8(0);
+	if (owner >= g.u16(global::kWorldMerchantCount) || save.merchants[owner].memory.u16(0x8) != 0) {
+		return;
+	}
+	// The letter 0x52 to the human owner (0x538CFB..0x538D76): [+0x5] the
+	// ship's town [+0x39] (his home town [+0x19] if it is no town), u16
+	// [+0x8], [+0xA] the captain's first name and surname, [+0xC] the ship's
+	// name [+0x15E], [+0xE] the owner's names ([+0x1C] << 8 + [+0x1D]).
+	const MerchantMemory& m = save.merchants[owner].memory;
+	const CaptainMemory& c = save.captains[captain];
+	Letter letter(0x52);
+	const uint8_t town = sh.u8(0x39);
+	letter.entry.u8(5) = town < g.u32(global::kWorldTownCount) ? town : m.u8(0x19);
+	letter.entry.u16(8) = c.u8(2);
+	letter.entry.u16(0xA) = c.u8(3);
+	letter.entry.u16(0xC) = sh.u16(0x15E);
+	letter.entry.u16(0xE) = uint16_t((m.u8(0x1C) << 8) + m.u8(0x1D));
+	send_letter(save, owner, letter);
 }
 
 // La operación 0x7D (en 0x5366A0): {0x7D, u32 tick, 12 bytes}: un incendio
@@ -687,9 +730,8 @@ void fn_53fca0(SaveGame& save, const uint8_t* operation) {
 // La operación 0x67 (0x53DDF0): {0x67, u32 administrador, u32 comerciante,
 // u32 ciudad, u8 habilidad}: si el administrador sigue en la oficina del
 // comerciante en la ciudad ([+0x2F2]), su habilidad [+0xA] pasa a ser la de
-// la operación y su sueldo [+0xC] = habilidad / 43 · 20 + 10 (0x4FE160). La
-// carta al comerciante (0x4D6530, con el sueldo y 0x500F10) no se reproduce.
-// La encola 0x4DCEA0 (en el evento 0x03).
+// la operación y su sueldo [+0xC] = habilidad / 43 · 20 + 10 (0x4FE160). The
+// merchant gets the letter 0x7C. La encola 0x4DCEA0 (en el evento 0x03).
 void fn_53ddf0(SaveGame& save, const uint8_t* operation) {
 	const GlobalMemory& g = save.globals;
 	const uint32_t administrator = field(operation, 4);
@@ -706,6 +748,17 @@ void fn_53ddf0(SaveGame& save, const uint8_t* operation) {
 	CaptainMemory& c = save.captains[administrator];
 	c.u8(0xA) = operation[0x10];
 	c.u16(0xC) = uint16_t(c.u8(0xA) / 43 * 20 + 10);
+	// The letter 0x7C to the merchant (0x53DE9D..0x53DED7): [+0x5] the town,
+	// u16 [+0x8] the office's wages (0x500F10: the administrator's [+0xC]
+	// plus the office's u16 [+0x2D2]), [+0xA], [+0xC] the administrator's
+	// first name and surname.
+	const OfficeMemory& o = save.offices[size_t(office)].memory;
+	Letter letter(0x7C);
+	letter.entry.u8(5) = operation[0xC];
+	letter.entry.u16(8) = uint16_t(c.u16(0xC) + o.u16(0x2D2));
+	letter.entry.u16(0xA) = c.u8(2);
+	letter.entry.u16(0xC) = c.u8(3);
+	send_letter(save, int32_t(merchant), letter);
 }
 
 // La operación 0x48 (0x53B010): {0x48, u32 tick, u32 [+0x8], u8 ciudad, u8

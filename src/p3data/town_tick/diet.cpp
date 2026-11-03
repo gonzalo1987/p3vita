@@ -16,13 +16,17 @@
 // ninguno; en el 0x34, desde la fase 2, [+0x8] u32 una lista de avisos del
 // juego, [+0xC], [+0xD] la posición de los piratas y [+0xE]), u32 [+0x10]
 // un plazo, u8 [+0x14] la ciudad, u8 [+0x15] la fase (0..10), u16 [+0x16] el
-// convoy de la flota. Las cartas, avisos y ventanas no se reproducen (la
-// lista de [+0x8] del 0x34, 0x4F3980..0x4F3CE0, solo sirve para la carta
-// final).
+// convoy de la flota. The letters 0x48 (phase 0), 0x4C (phase 2) and 0x5C
+// (phase 5) are sent as in the game (src/p3data/mail.cpp). Not reproduced:
+// the notices and windows to the player (0x548CA0 with kind 0x2A and
+// 0x469380, 0x469AF0, phase 1 of the 0x24) and the final letter 0x3D of
+// the 0x34 (0x4F3AF0, with the list of [+0x8], 0x4F3980..0x4F3CE0: the
+// mission interpreter's kind of letter, still to be rewritten).
 
 #include <cstring>
 #include <vector>
 
+#include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -53,6 +57,7 @@ constexpr uint32_t kTick = global::kWorldTick;
 constexpr uint32_t kTownIds = 0x6DE4B8;  // u8 por ciudad: su número de StadtDaten.ini.
 constexpr uint32_t kTownTable = 0x6DDB90;  // 0x34 bytes por número: [+0x20], [+0x24] x, y en el mapa.
 constexpr uint32_t kAldermanBusy = 0x6DF31C;  // u32
+constexpr uint32_t kHanseTown = 0x6DE52E;  // u8 ([+0x8E] of the world): the town of the Hanse's leader.
 constexpr uint32_t kFreeConvoy = global::kShips + 0xE4;  // u16 primer convoy libre.
 constexpr uint32_t kDockedHead = global::kShips + 0xE8;  // u16 lista de barcos en puerto.
 constexpr uint32_t kSeaHead = global::kShips + 0xEA;  // u16 (0x6DD88A)
@@ -328,7 +333,33 @@ int disband(SaveGame& save, Event& e, uint32_t town) {
 		}
 	}
 	if (town < town_count(save)) {
-		save.towns[town].memory.u32(0x2C8) &= ~0x600u;
+		// The letter 0x5C to each human merchant (0x4E128F..0x4E1371):
+		// [+0x5] the Hanse town, u16 [+0xC] the event's town + 0x100 if it
+		// was protected ([0x2C8] & 0x200), u16 [+0x8], [+0xA] the merchant's
+		// names [+0x1C], [+0x1D], u16 [+0xE] his ships in the fleet's convoy.
+		TownMemory& t = save.towns[town].memory;
+		Letter letter(0x5C);
+		letter.entry.u8(5) = g.u8(kHanseTown);
+		letter.entry.u16(0xC) = uint16_t(town + ((t.u32(0x2C8) & 0x200) ? 0x100 : 0));
+		t.u32(0x2C8) &= ~0x600u;
+		for (uint32_t m = 0; m < merchant_count(save); ++m) {
+			const MerchantMemory& mm = save.merchants[m].memory;
+			if (mm.u16(8) != 0) {
+				continue;
+			}
+			letter.entry.u16(8) = mm.u8(0x1C);
+			letter.entry.u16(0xA) = mm.u8(0x1D);
+			uint16_t ships = 0;
+			if (convoy < convoy_count(save)) {
+				for (uint32_t s = save.convoys[convoy].u16(0xA); s < ship_count(save); s = save.ships[s].memory.u16(0x6)) {
+					if (save.ships[s].memory.u8(0) == m) {
+						++ships;
+					}
+				}
+			}
+			letter.entry.u16(0xE) = ships;
+			send_letter(save, int32_t(m), letter);
+		}
 	}
 	if (convoy >= convoy_count(save)) {
 		return 0;  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
@@ -414,10 +445,45 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 		for (uint32_t k = 0; k < 8; ++k) {
 			e.u8(0x8 + k) = k < take ? uint8_t(list[k].merchant) : 0xFF;
 		}
+		// The letter 0x48 to each human merchant, whether he takes part or
+		// not (0x4E0BC6..0x4E0CEE): [+0x5] the Hanse town, [+0xB] the
+		// mission (0 for 0x23, 1 for 0x24, 2 for 0x34), [+0xC] the event's
+		// town, and for the 0x34 [+0xE], [+0xF] the names of the captain of
+		// the first ship with a captain of the pirates (as phase 2's: the
+		// game ends both loops setting the pirate index, edx, to 0xFFFF);
+		// then for each merchant [+0x8] his rank at home, [+0x9], [+0xA]
+		// his names and [+0xD] how many times he is in the list.
+		Letter letter(0x48);
+		letter.entry.u8(5) = g.u8(kHanseTown);
+		if (type == 0x34) {
+			letter.entry.u8(0xB) = 2;
+			bool found = false;
+			for (uint32_t k = 0; k < save.pirates.size() && k < 5 && !found; ++k) {
+				if (!save.pirates[k]) {
+					continue;
+				}
+				for (uint32_t s = save.pirates[k]->u16(0xC); s < ship_count(save); s = save.ships[s].memory.u16(0x4)) {
+					const uint16_t captain = save.ships[s].memory.u16(0x42);
+					if (captain < g.u16(global::kCaptainCount)) {
+						letter.entry.u8(0xE) = save.captains[captain].u8(2);
+						letter.entry.u8(0xF) = save.captains[captain].u8(3);
+						found = true;
+						break;
+					}
+				}
+			}
+		} else {
+			letter.entry.u8(0xB) = uint8_t(type - 0x23);
+		}
+		letter.entry.u8(0xC) = e.u8(0x14);
 		for (uint32_t m = 0; m < merchant_count(save); ++m) {
-			if (save.merchants[m].memory.u16(8) != 0) {
+			const MerchantMemory& mm = save.merchants[m].memory;
+			if (mm.u16(8) != 0) {
 				continue;
 			}
+			letter.entry.u8(8) = mm.u8(0x39C + mm.u8(0x19));
+			letter.entry.u8(9) = mm.u8(0x1C);
+			letter.entry.u8(0xA) = mm.u8(0x1D);
 			uint8_t seen = 0;
 			for (uint32_t k = 0; k < 8; ++k) {
 				if (e.u8(0x8 + k) != m) {
@@ -429,6 +495,8 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 					++seen;
 				}
 			}
+			letter.entry.u8(0xD) = seen;
+			send_letter(save, int32_t(m), letter);
 		}
 		return 1;
 	}
@@ -448,17 +516,31 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 	case 2: {
 		// Los que participan pierden reputación en las ciudades de la Hansa
 		// (0x4F8CA0), una vez por cada vez que salen en la lista, y la lista
-		// se vacía.
+		// se vacía. Each gets the letter 0x4C (0x4E0E57..0x4E0F4C): [+0x5]
+		// the Hanse town, [+0xB] the mission (as 0x48's), [+0xC] the event's
+		// town, [+0x8] his rank at home, [+0x9], [+0xA] his names and [+0xD]
+		// how many times he was in the list.
+		Letter letter(0x4C);
+		letter.entry.u8(5) = g.u8(kHanseTown);
+		letter.entry.u8(0xB) = type == 0x34 ? 2 : uint8_t(type - 0x23);
+		letter.entry.u8(0xC) = e.u8(0x14);
 		for (uint32_t k = 0; k < 8; ++k) {
 			const uint8_t m = e.u8(0x8 + k);
 			if (m < merchant_count(save)) {
 				fn_4f8ca0(save, m, 0xFF);
+				const MerchantMemory& mm = save.merchants[m].memory;
+				letter.entry.u8(8) = mm.u8(0x39C + mm.u8(0x19));
+				letter.entry.u8(9) = mm.u8(0x1C);
+				letter.entry.u8(0xA) = mm.u8(0x1D);
+				letter.entry.u8(0xD) = 1;
 				for (uint32_t j = k + 1; j < 8; ++j) {
 					if (e.u8(0x8 + j) == m) {
+						++letter.entry.u8(0xD);
 						e.u8(0x8 + j) = 0xFF;
 						fn_4f8ca0(save, m, 0xFF);
 					}
 				}
+				send_letter(save, m, letter);
 			}
 			e.u8(0x8 + k) = 0xFF;
 		}

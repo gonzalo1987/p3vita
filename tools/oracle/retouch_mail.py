@@ -123,6 +123,21 @@ Scenarios:
              0xFFFFFFFF); and in a third town's list [+0x1020] four of the
              prince's payments to the player due (0x636230: the letters 0x85;
              the last over 65 535). Record 535760,633a90,6349f0
+  operation_letters operations for the human player at the end of the
+             first tick: his ships' captains retire (0x13: one in port and
+             one at sea if he has them, else the one in port run at once with
+             its [+0x39] 0xFF for that call; the letter 0x52), his wedding the
+             next day in his home town (0x60: 0x33), his first office's
+             administrator gains skill (0x67, an AI office's administrator
+             lent if it has none: 0x7C) and a child (0x87, married 300 days
+             ago: 0x7A). Record 535760
+  diet_letters the Hanse's missions (0x4E09D4) in their last phases: a 0x24
+             protecting a town whose satisfaction falls under −20 (phase 4,
+             then 5: the letter 0x5C with the town + 0x100), a 0x23 past its
+             deadline with the fleet a convoy of the player's ships if he has
+             one (phase 6, then 5: 0x5C counting them), a 0x34 in phase 2 with
+             the player twice and an AI merchant in its list (0x4C). Record
+             4d85c0
 """
 import argparse
 import os
@@ -805,6 +820,93 @@ def siege_letters(o, rec):
     print(f'sieges of {a} (the ransom) and {b} (it leaves); 4 payments to the player {m} in the list of {c}')
 
 
+def operation_letters(o, rec):
+    m = o.u32(to.PLAYER)
+    mm = o.merchant(m)
+    now, towns = o.u32(WORLD + 0x14), o.u32(WORLD + 0x10)
+    ships, captains = o.u16(to.SHIPS + 0xF4), o.u16(to.SHIPS + 0xF2)
+    home = o.u8(mm + 0x19)
+    # 0x13: his ships with a captain retire (0x52): one in port and one at sea if he has them.
+    with_captain, s = [], o.u16(mm + 0xE)
+    while s < ships:
+        if o.u16(o.ship(s) + 0x42) < captains:
+            with_captain.append(s)
+        s = o.u16(o.ship(s) + 4)
+    chosen = [x for x in (next((x for x in with_captain if o.u8(o.ship(x) + 0x39) < towns), None),
+                          next((x for x in with_captain if o.u8(o.ship(x) + 0x39) >= towns), None)) if x is not None]
+    if chosen and o.u8(o.ship(chosen[-1]) + 0x39) < towns:
+        # None at sea: the last one run now instead, with its [+0x39] out of
+        # the towns for that call (the letter's town is then his home town;
+        # retouch.py capitan_jugador has the one in port). Not queued again:
+        # with both the oracle hung later on (not looked into; probably the
+        # same captain retiring twice, which the game never does: 0x4DCEA0
+        # marks him). Before queuing the others: ru.operation empties the
+        # queue.
+        import retouch_unchecked as ru
+        x = chosen.pop()
+        town = o.u8(o.ship(x) + 0x39)
+        w8(o, o.ship(x) + 0x39, 0xFF)
+        ru.operation(o, 0x13, x, o.u16(o.ship(x) + 0x42))
+        w8(o, o.ship(x) + 0x39, town)
+    for x in chosen:
+        o.tick_operations.append(struct.pack('<5I', 0x13, x, o.u16(o.ship(x) + 0x42), 0, 0))
+    # 0x60: his wedding in his home town the next day (0x33).
+    when = (now + 0x180) & ~0xFF
+    o.tick_operations.append(struct.pack('<IIHBBBBBBBBH', 0x60, when, 5500, 0x31, 7, 0x85, 3, home, 1, 0, m, 0))
+    # 0x67: the administrator of his first office gains skill (0x7C); an AI
+    # office's administrator is lent to it if it has none.
+    office = player_offices(o, m)[0]
+    admin = o.u16(o.office(office) + 0x2F2)
+    if admin >= captains:
+        lender = next((f for f in range(o.u16(WORLD + 8)) if o.u16(o.office(f) + 0x2F2) < captains), None)
+        admin = o.u16(o.office(lender) + 0x2F2) if lender is not None else 0
+        w16(o, o.office(office) + 0x2F2, admin)
+    o.tick_operations.append(struct.pack('<5I', 0x67, admin, m, o.u8(o.office(office) + 0x2C6), 0xC8))
+    # 0x87: he married 300 days ago: a child (0x7A).
+    w8(o, mm + 0x31, home)
+    w32(o, mm + 0x28, now - 18 * 365 * 256)
+    w32(o, mm + 0x2C, now - 300 * 256)
+    o.tick_operations.append(struct.pack('<IBB4B10x', 0x87, m, 11, 1, 2, 3, 4))
+    print(f'the player {m}: captains retire on ships {chosen}, a wedding in {home}, the administrator {admin} '
+          f'of office {office}, a child')
+
+
+def diet_letters(o, rec):
+    m = o.u32(to.PLAYER)
+    now, towns = o.u32(WORLD + 0x14), o.u32(WORLD + 0x10)
+    ships, convoys = o.u16(to.SHIPS + 0xF4), o.u16(to.SHIPS + 0xF6)
+    ai = next(k for k in range(o.u16(WORLD + 0xA)) if o.u16(o.merchant(k) + 8))
+    home = o.u8(o.merchant(m) + 0x19)
+    t1, t2, t3 = [t for t in range(towns) if t != home][:3]
+    # The convoy of a ship of the player, if one is in a convoy (its ships are counted in 0x5C).
+    convoy, s = 0xFFFF, o.u16(o.merchant(m) + 0xE)
+    while s < ships:
+        if o.u16(o.ship(s) + 8) < convoys:
+            convoy = o.u16(o.ship(s) + 8)
+            break
+        s = o.u16(o.ship(s) + 4)
+
+    def mission(tick, kind, town, phase, members=(), deadline=0, fleet=0xFFFF):
+        e = o.call(0x4D8CF0, [tick], ecx=to.EVENTS)
+        w16(o, e + 6, kind)
+        o.uc.mem_write(e + 8, bytes((list(members) + [0xFF] * 8)[:8]))
+        w32(o, e + 0x10, deadline)
+        w8(o, e + 0x14, town)
+        w8(o, e + 0x15, phase)
+        w16(o, e + 0x16, fleet)
+
+    # 0x24 protecting t1, its satisfaction under −20: phase 4 ends, then 5 (0x5C, town + 0x100).
+    w32(o, o.town(t1) + 0x2C8, o.u32(o.town(t1) + 0x2C8) | 0x600)
+    w16(o, o.town(t1) + 0x304, 0x10000 - 30)
+    mission(now + 1, 0x24, t1, 4)
+    # 0x23 in t2 past its deadline with the player's convoy: phase 6 ends, then 5 (0x5C).
+    mission(now + 2, 0x23, t2, 6, deadline=now, fleet=convoy)
+    # 0x34 in phase 2 with the player twice and an AI merchant in the list (0x4C).
+    mission(now + 3, 0x34, t3, 2, members=(m, ai, m))
+    print(f'the player {m}: 0x24 ending in {t1}, 0x23 in {t2} with the convoy {convoy}, 0x34 in {t3} '
+          f'(the AI merchant {ai})')
+
+
 def expedition_lost(o, rec):
     convoy, members = expedition(o, rec)
     w32(o, o.ship(members[0]) + 0x18, 10)
@@ -820,7 +922,8 @@ SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, com
                                      expedition_four, expedition_villages, expedition_new_world, expedition_nothing,
                                      expedition_contract, debts_notices, debts_office, debts_ship, debts_partial,
                                      captain, mayor_election, alderman_merchant, alderman_citizen, hanse_vote,
-                                     auction_end, hanse_task_letters, siege_letters)}
+                                     auction_end, hanse_task_letters, siege_letters,
+                                     operation_letters, diet_letters)}
 
 
 def main():

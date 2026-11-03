@@ -37,8 +37,9 @@
 // [0x6DE52E] u8 su ciudad (solo para el aviso); [0x6DF31C] u32 (si es 0,
 // 0x4F75F0 llama a 0x5326E0, la candidatura a Gobernador, en alderman.cpp).
 //
-// No se traducen los avisos (0x4D6530, 0x548CA0), la interfaz (0x6CC7E8) ni
-// los gráficos de la ciudad (0x6E51AC): no cambian la simulación. Las ramas
+// The letters (0x4D6530) are sent (src/p3data/mail.cpp). Not reproduced:
+// the ticker lines (0x548CA0), the interface (0x6CC7E8) and the town's
+// graphics (0x6E51AC), which don't change the simulation. Las ramas
 // que no salen en las 12 partidas (alderman, alcalde, rangos 6 y 7, cónyuge,
 // barco de la ciudad, sin barcos ni oficinas...) se han comprobado con
 // estados retocados al azar.

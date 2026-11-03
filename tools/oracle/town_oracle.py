@@ -343,6 +343,13 @@ MAIL_CALLS = (
     # 0x6A of 0x633DB0 (0x6345D3) is only reached with a convoy, from the
     # battle in a town (0x5FEAC9): it stays quiet.
     0x628A52, 0x629A2B, 0x629F63, 0x6364E9,
+    # operations.cpp: a captain retires (operation 0x13, 0x538C40: 0x52), a
+    # wedding arranged (0x60, 0x53DA90: 0x33), a manager's progress (0x67,
+    # 0x53DDF0: 0x7C), a child born (0x87, 0x53FEA0: 0x7A).
+    0x538D76, 0x53DBC7, 0x53DED7, 0x53FFF4,
+    # diet.cpp: the Hanse's missions (0x4E09D4): 0x48 in phase 0, 0x4C in
+    # phase 2, 0x5C when the fleet disbands.
+    0x4E0CEE, 0x4E0F4C, 0x4E1371,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is

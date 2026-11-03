@@ -1153,7 +1153,7 @@ void fn_4f8c70(SaveGame& save, int merchant, uint32_t town) {
 // ciudad la primera vez (bit de la ciudad en [+0x468]; sin [0x6DE52A]):
 // [+0x4BC] lo suma, lo que ha marcado ([+0x4D8], 0x64 bytes) pasa al global
 // 0x6DF278 (0x534920) y el segundo componente de su reputación sube
-// [+0x464]. La carta (0x4D6530) no se reproduce.
+// [+0x464]. The news 0x0C goes to the chronicle (0x4D6530).
 void fn_4f8560(SaveGame& save, int merchant, uint32_t town, int32_t amount) {
 	GlobalMemory& g = save.globals;
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;

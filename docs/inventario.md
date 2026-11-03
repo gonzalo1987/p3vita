@@ -128,7 +128,7 @@ change.
   records the buffers as region `LB`; scenarios `grow` and `promotion` of
   `tools/oracle/retouch_mail.py`). Connected: the merchant's tick 0x4F7BB0
   (0x0F, 0x10, 0x11, 0x06).
-- [ ] **The 97 calls in functions p3vita has rewritten** (today skipped,
+- [x] **The 97 calls in functions p3vita has rewritten** (before skipped,
   «A letter (0x4D6530): not rewritten» / «no se traduce»): `events_rare.cpp`
   21, `events_towns.cpp` 14, `events_mayor.cpp` 9, `merchants.cpp` 8,
   `battle_end.cpp` 7 (the battle report 0x29 of 0x60D299, built in
@@ -153,8 +153,9 @@ change.
   `alderman.cpp` (6: a Hanse task started, expired and done) and
   `sieges.cpp` (4: the news 0x38 and 0x53, the prince's payment 0x85; the
   fifth, 0x6A of 0x633DB0, is in its convoy branch, reached only from the
-  battle in a town 0x5FEAC9, so it goes with that battle).
-  7 left (`operations.cpp` 4, `diet.cpp` 3).
+  battle in a town 0x5FEAC9, so it goes with that battle) and
+  `operations.cpp` (4: 0x52, 0x33, 0x7C, 0x7A) and `diet.cpp` (3: the
+  Hanse's missions, 0x48, 0x4C, 0x5C). **All 97 done** but that 0x6A.
 - [ ] **10 in functions p3vita names but skipped whole** (8 left): the mission
   interpreter 0x4ECF64 (5; three with a letter the script builds), the
   alderman's notification 0x5299F0 (2, done with events_mayor.cpp), the convoy's automatic route

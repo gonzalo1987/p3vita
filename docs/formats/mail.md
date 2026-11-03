@@ -418,6 +418,30 @@ doesn't have.
   the roadmap). The 0x6A of 0x633DB0 (0x6345D3) is in its convoy branch,
   reached only from the battle in a town (0x5FEAC9): it goes with that
   battle.
+- The operations (`operations.cpp`): a captain retires (0x13, 0x538C40:
+  0x52 to the ship's human owner: [+0x5] the ship's town [+0x39], or his
+  home town if it is no town; u16 [+0x8], [+0xA] the captain's first name
+  and surname, [+0xC] the ship's name [+0x15E], [+0xE] the owner's names
+  [+0x1C] << 8 + [+0x1D]), a wedding arranged (0x60, 0x53DA90: 0x33 to the
+  merchant: [+0x5] the operation's [+0xE], u16 [+0x8] his home town, [+0xA]
+  the operation's [+0xC] << 8 + [+0xD], [+0xC] the wedding's day << 8 +
+  month − 1, [+0xE] its year), a manager's progress (0x67, 0x53DDF0: 0x7C:
+  [+0x5] the town, u16 [+0x8] the office's wages (0x500F10: the
+  administrator's [+0xC] + the office's u16 [+0x2D2]), [+0xA], [+0xC] the
+  administrator's names) and a child (0x87, 0x53FEA0: 0x7A to a human
+  father: [+0x5] his home town, u16 [+0x8] the child's first name).
+- The Hanse's missions (`diet.cpp`, 0x4E09D4), all with [+0x5] the Hanse
+  town ([0x6DE52E]): 0x48 in phase 0 to each human merchant ([+0xB] the
+  mission: 0 for 0x23, 1 for 0x24, 2 for 0x34; [+0xC] the town; for the
+  0x34 [+0xE], [+0xF] the names of the first pirates' ship's captain; per
+  merchant [+0x8] his rank at home, [+0x9], [+0xA] his names, [+0xD] how
+  many times he is in the list), 0x4C in phase 2 to each merchant of the
+  list (the same fields), 0x5C when the fleet disbands, to each human
+  merchant (u16 [+0xC] the town + 0x100 if it was protected, u16 [+0x8],
+  [+0xA] his names, [+0xE] his ships in the fleet's convoy). Phase 1 of the
+  0x24 also writes a ticker line (0x548CA0, kind 0x2A) and opens a window
+  for the player; the 0x34's final letter 0x3D (0x4F3AF0) is the mission
+  interpreter's kind, still to be rewritten.
 
 ## Appendix A. The 154 calls
 
