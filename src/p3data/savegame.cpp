@@ -1453,13 +1453,13 @@ std::string game_name(const std::vector<std::string>& names, uint32_t count, con
 
 }  // namespace
 
-std::string game_first_name(const SaveGame& save, uint8_t index) {
+std::string game_first_name(const SaveGame& save, uint32_t index) {
 	const size_t list = (index & 0x80) ? 1 : 0;
 	return game_name(save.first_names[list], save.globals.u16(list ? 0x6DDB72 : 0x6DDB70), save.custom_names[list],
 		list ? (index & 0x7Fu) : index);
 }
 
-std::string game_family_name(const SaveGame& save, uint8_t index) {
+std::string game_family_name(const SaveGame& save, uint32_t index) {
 	return game_name(save.family_names, save.globals.u16(0x6DDB76), save.custom_names[2], index);
 }
 

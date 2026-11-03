@@ -541,9 +541,9 @@ std::string merchant_name(const SaveGame& save, const NameLists& names, int merc
 // woman's), in Latin-1 as the game holds it: from the game's list
 // (SaveGame::first_names), then the 20 written by the players
 // (SaveGame::custom_names), and past them the list's first name.
-std::string game_first_name(const SaveGame& save, uint8_t index);
+std::string game_first_name(const SaveGame& save, uint32_t index);
 // 0x512AE0: a family name by index in the same way (SaveGame::family_names,
 // then the players' third list).
-std::string game_family_name(const SaveGame& save, uint8_t index);
+std::string game_family_name(const SaveGame& save, uint32_t index);
 
 }  // namespace p3::data

@@ -141,6 +141,14 @@ Scenarios:
              one (phase 6, then 5: 0x5C counting them), a 0x34 in phase 2 with
              the player twice and an AI merchant in its list (0x4C). Record
              4d85c0
+  all_letters three letters of each type with a letter text (but those
+             with a buffer or record) sent to the player at once with the
+             game's 0x4D6530 (run with --letters all), their fields small
+             random values (LETTERS_SEED; small bytes, small u16, and small
+             u16 with a random s32 at [+0xC]), and for the types p3vita
+             composes, more with real fields (real_fields): for
+             scripts/letters-check.sh on the save the game writes (--write),
+             0 days
 """
 import argparse
 import os
@@ -910,6 +918,83 @@ def diet_letters(o, rec):
           f'(the AI merchant {ai})')
 
 
+# The types with a letter text (0x47F3B0's table 0x48664C) but no buffer or record.
+NO_TEXT = (0x06, 0x08, 0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x1C, 0x23, 0x35, 0x38, 0x39, 0x3A, 0x3C, 0x40, 0x44,
+           0x45, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5F, 0x71, 0x72)
+WITH_BUFFER = (0x29, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x47, 0x63, 0x71, 0x83)
+LETTER_TYPES = [t for t in range(0x86) if t not in NO_TEXT and t not in WITH_BUFFER]
+
+
+def real_fields(t, rnd, towns, ships, captains):
+    """Letters of type t with the fields [+0x8..+0xF] a real one has (from the
+    code that sends it), for the types p3vita composes (letters.cpp): they
+    reach the branches the small random fields miss and stay in range (out of
+    range the game reads past its tables and composes whatever it finds)."""
+    def h(*v):
+        return struct.pack('<4H', *v)
+    if t == 0x00:  # a ship launched: [+0xA] the ship's type (4: a convoy)
+        return [h(0, kind, 0, 0) for kind in range(5)]
+    if t == 0x01:  # a repair: the type (4: a convoy), the condition, the bill
+        return [struct.pack('<HHi', kind, rnd.randrange(101), rnd.randrange(1, 20000)) for kind in range(5)]
+    if t == 0x02:
+        # No repair (operation 0x03, 0x52AE8A): the ship's name number [+0x15E]
+        # (past the 300 names: a type's word), its type (4: in a convoy), the
+        # bill. Without a bill the game names a ship by that number (a bug):
+        # below the number of ships, so that it is one.
+        return [struct.pack('<HHi', name, kind, bill) for name, kind, bill in
+                ((rnd.randrange(ships), 0, 0), (rnd.randrange(ships), 1, -rnd.randrange(1, 9000)),
+                 (rnd.randrange(300), 2, rnd.randrange(1, 9000)), (300 + rnd.randrange(4), 3, rnd.randrange(1, 9000)),
+                 (0xFFFF, rnd.randrange(4), rnd.randrange(1, 9000)), (rnd.randrange(300), 4, rnd.randrange(1, 9000)))]
+    if t == 0x03:  # works done: the building 0..0x38
+        return [h(b, 0, 0, 0) for b in sorted(rnd.sample(range(0x39), 8)) + [0x38]]
+    if t in (0x04, 0x05):  # a captain hired, leaving: the captain, his ship
+        return [h(rnd.randrange(captains), rnd.randrange(ships), 0, 0) for _ in range(4)]
+    if t == 0x07:  # back from a route: a ship name (0x8000: a convoy), the family and first names, the profit
+        return [struct.pack('<HBBi', name, rnd.randrange(86), first, profit) for name, first, profit in
+                ((rnd.randrange(300), rnd.randrange(80), 0),
+                 (0x8000 | rnd.randrange(300), rnd.randrange(80), rnd.randrange(1, 9000)),
+                 (rnd.randrange(300), 0x80 | rnd.randrange(80), -rnd.randrange(1, 9000)))]
+    if t == 0x0A:  # a charge: the names, the reason 5..8 (events_big.cpp, start_letter)
+        return [h(rnd.randrange(80), rnd.randrange(86), reason, 0) for reason in (5, 6, 7, 8)]
+    if t == 0x0B:  # a Hanse vote (events_mayor.cpp): the town, kind << 8 | reason, the votes for and against
+        return [h(rnd.randrange(towns) if kind or rnd.randrange(2) else 0xFF, kind << 8 | rnd.randrange(7), yes, no)
+                for kind in range(6) for yes, no in ((3, 9), (9, 3))]
+    return []
+
+
+def all_letters(o, rec):
+    import random
+    import retouch_unchecked as ru
+    m = o.u32(to.PLAYER)
+    mm = o.merchant(m)
+    for k in (0x38, 0x39, 0x3A):
+        w8(o, mm + k, 0)  # every class kept forever
+    rnd = random.Random(int(os.environ.get('LETTERS_SEED', '1')))
+    towns, _, _, ships = o.counts()
+    captains = o.u16(0x6DD892)
+    letter = o.alloc(0x10)
+    sent = 0
+    for t in LETTER_TYPES:
+        # Three letters of each type, their fields [+0x8..+0xF]: small bytes;
+        # small u16; small u16 at [+0x8] and [+0xA] and a random s32 at [+0xC]
+        # (a bill, a profit or a loss). Then those of real_fields.
+        letters = []
+        for variant in range(3):
+            if variant == 0:
+                letters.append(bytes(rnd.randrange(4) for _ in range(8)))
+            elif variant == 1:
+                letters.append(struct.pack('<4H', *(rnd.randrange(4) for _ in range(4))))
+            else:
+                letters.append(struct.pack('<2Hi', rnd.randrange(4), rnd.randrange(4), rnd.randrange(-50000, 50000)))
+        letters += real_fields(t, rnd, towns, ships, captains)
+        for fields in letters:
+            body = bytes([0, 0x80, 0xFF, 0xFF, t, rnd.randrange(towns), 0xFF, 0xFF]) + fields
+            o.uc.mem_write(letter, body)
+            ru.direct(o, 0x4D6530, [m, letter], ecx=to.MAIL)
+            sent += 1
+    print(f'{sent} letters of {len(LETTER_TYPES)} types sent to the player {m}')
+
+
 def expedition_lost(o, rec):
     convoy, members = expedition(o, rec)
     w32(o, o.ship(members[0]) + 0x18, 10)
@@ -926,7 +1011,7 @@ SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, com
                                      expedition_contract, debts_notices, debts_office, debts_ship, debts_partial,
                                      captain, mayor_election, alderman_merchant, alderman_citizen, hanse_vote,
                                      auction_end, hanse_task_letters, siege_letters,
-                                     operation_letters, diet_letters)}
+                                     operation_letters, diet_letters, all_letters)}
 
 
 def main():

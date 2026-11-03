@@ -4,12 +4,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "p3data/cpr.hpp"
 #include "p3data/font.hpp"
 #include "p3data/game_fixes.hpp"
+#include "p3data/game_texts.hpp"
+#include "p3data/letters.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/lz.hpp"
 #include "p3data/savegame.hpp"
@@ -29,6 +33,8 @@ int usage() {
 		"       p3save <archivo.cpr> <partida> write <out.pat> [<out.raw>]\n"
 		"       (--fix-game-bugs anywhere: with the fixes to the game's bugs, game_fixes.hpp)\n"
 		"       p3save compress <in> <out>\n"
+		"       p3save texts-cache <Patrician3.exe> <cache>\n"
+		"       p3save <archivo.cpr> <partida> letters <Patrician3.exe> [merchant]\n"
 		"\n"
 		"Sin más argumentos, lista las ciudades de la partida (p. ej. missav/1.pat).\n"
 		"Con el número de una ciudad, muestra su almacén, producción y consumo.\n"
@@ -36,7 +42,12 @@ int usage() {
 		"write saves it again as the game does (version 0x85; with <out.raw>, also uncompressed),\n"
 		"and the .pst of its statistics next to <out.pat>.\n"
 		"<partida> is read from the archive or, if it isn't there, from the disk.\n"
-		"compress compresses any file as the game does (lz_compress).\n");
+		"compress compresses any file as the game does (lz_compress).\n"
+		"texts-cache writes the viewer's texts' cache of the exe and checks that it reads back the same.\n"
+		"letters prints the letters of the merchant's chain (by default the player's) as\n"
+		"p3vita composes them (letters.hpp) with the exe's texts: entry, type and the\n"
+		"text in hex; - without a text, ? for a type not rewritten yet\n"
+		"(tools/oracle/letter_oracle.py prints the game's).\n");
 	return 2;
 }
 
@@ -208,6 +219,29 @@ int main(int argc, char** argv) {
 		std::fclose(f);
 		return write_file(argv[3], lz_compress(data.data(), data.size())) ? 0 : 1;
 	}
+	if (argc == 4 && std::strcmp(argv[1], "texts-cache") == 0) {
+		// The viewer's texts' cache: read from the exe, written, read back and compared.
+		std::string error;
+		std::unique_ptr<GameTexts> texts = GameTexts::load(argv[2], &error);
+		if (!texts) {
+			std::fprintf(stderr, "%s\n", error.c_str());
+			return 1;
+		}
+		if (!texts->save_cache(argv[3])) {
+			std::fprintf(stderr, "can't write %s\n", argv[3]);
+			return 1;
+		}
+		std::unique_ptr<GameTexts> cached = GameTexts::load_cache(argv[3], &error);
+		if (!cached) {
+			std::fprintf(stderr, "can't read the cache back: %s\n", error.c_str());
+			return 1;
+		}
+		size_t addresses = 0;
+		const bool same = texts->same_as(*cached, &addresses);
+		std::printf("%s build: %s cache (%zu texts by address)\n", texts->build().c_str(),
+			same ? "same texts from the" : "DIFFERENT texts from the", addresses);
+		return same ? 0 : 1;
+	}
 	if (argc < 3 || argc > 6) {
 		return usage();
 	}
@@ -237,6 +271,39 @@ int main(int argc, char** argv) {
 	if (!load_any_savegame(*archive, argv[2], save, &error)) {
 		std::fprintf(stderr, "%s\n", error.c_str());
 		return 1;
+	}
+	if (command == "letters") {
+		if (argc < 5) {
+			return usage();
+		}
+		std::unique_ptr<GameTexts> texts = GameTexts::load(argv[4], &error);
+		if (!texts) {
+			std::fprintf(stderr, "%s\n", error.c_str());
+			return 1;
+		}
+		const int merchant = argc > 5 ? std::atoi(argv[5]) : save.player;
+		if (merchant < 0 || size_t(merchant) >= save.merchants.size()) {
+			std::fprintf(stderr, "no merchant %d\n", merchant);
+			return 1;
+		}
+		size_t seen = 0;
+		for (uint16_t i = save.merchants[size_t(merchant)].memory.u16(0xA); i < save.mail.size() && seen < save.mail.size();
+			 i = save.mail[i].u16(6), ++seen) {
+			const uint8_t type = save.mail[i].u8(4);
+			std::printf("%u\t0x%02x\t", unsigned(i), unsigned(type));
+			if (!letter_has_text(type)) {
+				std::printf("-\n");
+			} else if (!letter_type_rewritten(type)) {
+				std::printf("?\n");
+			} else {
+				const std::optional<std::string> text = compose_letter(save, *texts, i);
+				for (unsigned char ch : text ? *text : std::string()) {
+					std::printf("%02x", unsigned(ch));
+				}
+				std::printf("\n");
+			}
+		}
+		return 0;
 	}
 	if (command == "write") {
 		if (argc < 5) {

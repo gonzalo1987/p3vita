@@ -22,6 +22,7 @@ add_library(p3data STATIC
 	game_texts.cpp
 	hanse_tasks.cpp
 	image.cpp
+	letters.cpp
 	lz.cpp
 	mail.cpp
 	navigation.cpp

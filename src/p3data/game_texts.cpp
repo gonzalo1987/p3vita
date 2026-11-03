@@ -1,5 +1,6 @@
 #include "p3data/game_texts.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -159,11 +160,23 @@ bool is_digit(char c) {
 	return c >= '0' && c <= '9';
 }
 
+// The texts by address (GameTexts::raw_at): {english, spanish}; with the bit
+// kDirect the string is at the address, without it the address holds a
+// pointer to it.
+struct AddressPair {
+	uint32_t english;
+	uint32_t spanish;
+};
+const AddressPair kTextAddresses[] = {
+#include "p3data/game_text_addresses.inc"
+};
+constexpr uint32_t kDirect = 0x80000000;
+
 // The texts' cache (GameTexts::save_cache): "P3TX", u32 version, u32 the
 // build's PE time stamp, u32 a hash of p3vita's slots for that build, u32 the
 // number of texts, and each text as u32 size and its raw bytes.
 constexpr char kCacheMagic[4] = {'P', '3', 'T', 'X'};
-constexpr uint32_t kCacheVersion = 1;
+constexpr uint32_t kCacheVersion = 2;
 
 const Build* find_build(uint32_t time_stamp) {
 	for (const Build& b : kBuilds) {
@@ -174,14 +187,22 @@ const Build* find_build(uint32_t time_stamp) {
 	return nullptr;
 }
 
-// FNV-1a of the build's slots: a cache made with other slots is not used.
+// FNV-1a of the build's slots and texts by address: a cache made with other
+// ones is not used.
 uint32_t slots_hash(const Build& build) {
 	uint32_t hash = 2166136261u;
-	for (uint32_t slot : build.slots) {
+	auto add = [&](uint32_t v) {
 		for (int k = 0; k < 4; ++k) {
-			hash ^= (slot >> (8 * k)) & 0xFF;
+			hash ^= (v >> (8 * k)) & 0xFF;
 			hash *= 16777619u;
 		}
+	};
+	for (uint32_t slot : build.slots) {
+		add(slot);
+	}
+	const bool spanish = std::strcmp(build.name, "Spanish") == 0;
+	for (const AddressPair& pair : kTextAddresses) {
+		add(spanish ? pair.spanish : pair.english);
 	}
 	return hash;
 }
@@ -295,7 +316,38 @@ std::unique_ptr<GameTexts> GameTexts::parse(const std::vector<uint8_t>& exe, std
 		texts->raw_[i] = std::string(exe.begin() + long(text), exe.begin() + long(end));
 		texts->texts_[i] = clean_game_text(texts->raw_[i]);
 	}
+	// The texts by address: one that can't be found stays empty.
+	for (const AddressPair& pair : kTextAddresses) {
+		const uint32_t va = texts->spanish_ ? pair.spanish : pair.english;
+		const size_t at = sections.offset(va & ~kDirect);
+		const size_t text = !at ? 0 : (va & kDirect) ? at : sections.offset(u32(exe, at));
+		std::string raw;
+		if (text) {
+			size_t end = text;
+			while (end < exe.size() && end - text < kMaxText && exe[end] != 0) {
+				++end;
+			}
+			raw.assign(exe.begin() + long(text), exe.begin() + long(end));
+		}
+		texts->by_address_.emplace_back(pair.english & ~kDirect, std::move(raw));
+	}
+	std::sort(texts->by_address_.begin(), texts->by_address_.end());
 	return texts;
+}
+
+bool GameTexts::same_as(const GameTexts& other, size_t* addresses) const {
+	if (addresses) {
+		*addresses = by_address_.size();
+	}
+	return build_ == other.build_ && time_stamp_ == other.time_stamp_ && spanish_ == other.spanish_ &&
+		texts_ == other.texts_ && raw_ == other.raw_ && by_address_ == other.by_address_;
+}
+
+const std::string& GameTexts::raw_at(uint32_t english) const {
+	static const std::string kNone;
+	const auto it = std::lower_bound(by_address_.begin(), by_address_.end(), english,
+		[](const std::pair<uint32_t, std::string>& entry, uint32_t key) { return entry.first < key; });
+	return it != by_address_.end() && it->first == english ? it->second : kNone;
 }
 
 bool GameTexts::save_cache(const std::string& path) const {
@@ -309,6 +361,12 @@ bool GameTexts::save_cache(const std::string& path) const {
 	put_u32(out, slots_hash(*build));
 	put_u32(out, uint32_t(kCount));
 	for (const std::string& text : raw_) {
+		put_u32(out, uint32_t(text.size()));
+		out.insert(out.end(), text.begin(), text.end());
+	}
+	put_u32(out, uint32_t(by_address_.size()));
+	for (const auto& [address, text] : by_address_) {
+		put_u32(out, address);
 		put_u32(out, uint32_t(text.size()));
 		out.insert(out.end(), text.begin(), text.end());
 	}
@@ -361,6 +419,21 @@ std::unique_ptr<GameTexts> GameTexts::load_cache(const std::string& path, std::s
 		texts->raw_[i] = std::string(data.begin() + long(pos + 4), data.begin() + long(pos + 4 + size));
 		texts->texts_[i] = clean_game_text(texts->raw_[i]);
 		pos += 4 + size;
+	}
+	const size_t by_address = pos + 4 <= data.size() ? u32(data, pos) : 0;
+	if (by_address != sizeof(kTextAddresses) / sizeof(kTextAddresses[0])) {
+		return fail("made for another version");
+	}
+	pos += 4;
+	for (size_t i = 0; i < by_address; ++i) {
+		const uint32_t address = u32(data, pos);
+		const size_t size = u32(data, pos + 4);
+		if (pos + 8 + size > data.size() || size > kMaxText) {
+			return fail("cut short");
+		}
+		texts->by_address_.emplace_back(address,
+			std::string(data.begin() + long(pos + 8), data.begin() + long(pos + 8 + size)));
+		pos += 8 + size;
 	}
 	texts->build_ = build->name;
 	texts->spanish_ = std::strcmp(build->name, "Spanish") == 0;

@@ -630,6 +630,67 @@ The game sends a letter or notice with 0x4D6530 on the mailbox 0x6DD730 from 154
 - **Saving and loading the new letters** (2026-11-03): `scripts/write-after-days.sh 8` in the 12 saves, 0 bytes different from the game's writer and the game's reload of p3vita's `.pat` and `.pst` equal (the elections' 0x47 with its buffer in tut1 and tut3, the battle reports 0x29 in tut4). For the letters only retouched states reach, the new `scripts/write-scenario.sh SCENARIO DAYS SAVES` (`retouch_mail.py --write OUT`: at the end the game saves the state reached): the recording call by call, then the game (`write_oracle.py`) and p3vita (`p3save write`) load that save and write it again, compared byte for byte, and the game reloads p3vita's file. Not the first save against p3vita's: a load recomputes fields such as the price thresholds (t2, t3 of ware 19 in four towns differed), so a save written from memory after a day isn't what a load and a save give. Checked: `expedition` (tut0..tut4) and `expedition_four` (tut0, tut1, tut3, tut4: the report 0x63 without its final 0), `siege_letters` (save 1), 0 bytes different and the reload equal.
 - **Which calls run**: with `P3_MAIL_STATS=1` the oracle prints at the end, to stderr, every call to 0x4D6530 by its address, «(quiet)» when it was silenced (the scratchpad's `stats.sh` runs the 12 saves).
 
+## The letters' texts: the composer, in English and Spanish (2026-11-03)
+
+The letter window composes each letter's text with 0x47F3B0 (a header with
+the town and the date, then a case per type of the table 0x48664C;
+[formats/mail.md](formats/mail.md) §4). p3vita's is `compose_letter`
+(`src/p3data/letters.cpp`), with the game's texts by their address
+(`GameTexts::raw_at`, the table `game_text_addresses.inc`). Types done so far
+(`letter_type_rewritten`): 0x00..0x05, 0x07, 0x0A, 0x0B and those with a
+buffer (0x29, 0x47, 0x63, 0x83), plus the 28 without a text.
+
+- **`tools/oracle/letter_oracle.py`** runs the game's composer on a fake
+  window whose list row points at each letter of the player's chain (the row
+  as 0x47C520 makes it: entry, type, [+0x5], unread, the date «DD.MM.YYYY»),
+  takes the text when it is complete (0x48654B: buffer in eax, length in
+  esi) and jumps to the composer's exit (0x4865E5). `p3save CPR SAVE letters
+  EXE` prints p3vita's; `compare_letters.py` compares them by type (equal,
+  different, not rewritten, failed in the game: the game's composer reading
+  a bad pointer). `scripts/letters-check.sh [SAVES | x.raw]` does it all.
+- **The Spanish exe** (`tools/oracle/spanish_exe.py`, `letter_oracle.py
+  --spanish`, `P3_EXE_SPA` in `letters-check.sh`): the Spanish composer is
+  not the English one with other texts: some cases have code of their own
+  (0x03 picks «Nuevo » by the building's gender, a table the English exe
+  lacks; 0x0B passes its arguments in another order, for its `%$N$s`). The
+  world is still loaded with the English exe; `SpanishExe` makes a second
+  emulator with the Spanish exe mapped, copies the English one's heap as it
+  is and the game's globals moved to the Spanish layout (`STATE_RUNS`:
+  +0x21FA4 from 0x6DD5BC, +0x21FA8 from 0x6DD628, +0x21FA0 from 0x6DE3D4,
+  and two words of the initialized data), and hooks the Spanish addresses of
+  malloc, free, new, delete, rand and the queue (`CODE`). Both come from an
+  alignment of the two exes' whole code that pairs the addresses each
+  instruction uses (`re/emu/sesion5/mail/s4/data_map.py`, outside the
+  repository); `CODE` was checked byte by byte (the CRT's functions are in
+  another order: malloc is +0x410, the rest +0x530). `reads_outside` lists
+  what the Spanish code read of the globals not copied before writing it:
+  nothing (the CRT's sprintf reads only what it writes). The towns' names
+  stay the English archive's in both.
+- **`retouch_mail.py all_letters`** (with `--letters all --write OUT`): three
+  letters of each type with a text and random small fields, and for the
+  types p3vita composes more with the fields a real letter has
+  (`real_fields`, from each sender: the reasons 5..8 of a charge, the six
+  Hanse votes rejected and carried, buildings, ship types with the convoy,
+  captains and ships in range). The small random fields often fall out of a
+  table's range (a ship type 770, a captain 514): the game then composes
+  whatever its memory holds past the table, which can't be matched, and the
+  game's reads past each table differ between the English and the Spanish
+  exe.
+- Checked: the 12 saves, every rewritten type equal in English and Spanish;
+  `all_letters` in save 3 with seeds 1..5, every rewritten type equal in
+  both languages but the out-of-range fields (each checked: the reason, the
+  town, the ship type or the captain past its table) and the English
+  blockade rejected (a game bug: the game prints the address of the town's
+  name where p3vita writes «?»).
+- On the way: 0x0A's reason table (0x6B4A0C) has its texts at 5..7 (0..4
+  fall on other data), which the alignment missed (it counts a table's
+  texts from its first element); the ship names past both lists (0x512B20)
+  give a type's word («cog», «nao»), not nothing; the Spanish table of
+  0x02's types has no convoy (roadmap, «Corregir los fallos del juego»).
+- **The viewer's texts' cache** keeps the texts by address too (version 2);
+  `p3save texts-cache EXE CACHE` writes it and checks that it reads back the
+  same (both exes: 805 texts by address).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

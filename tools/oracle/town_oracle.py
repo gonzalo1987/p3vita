@@ -674,11 +674,13 @@ class TownOracle(SaveOracle):
             raise RuntimeError(f'the battles end at {got}, not at {end}')
         self.battles_loaded = True
 
-    def setup_imports(self, exe):
+    def setup_imports(self, exe, constructors=(0x64F005, 0x64F034, 0x64F066, 0x64F098)):
         """Las funciones importadas se llaman por la tabla de importaciones, que
         en el emulador tiene lo que trae el fichero (la dirección relativa del
         nombre de cada función): se reserva esa zona y se pone un gancho en cada
-        una. Las que no se hacen aquí paran la emulación con su nombre."""
+        una. Las que no se hacen aquí paran la emulación con su nombre.
+        `constructors`: the CString allocators' static constructors to run
+        (none for spanish_exe.SpanishExe, which copies them already built)."""
         data = open(exe, 'rb').read()
         pe = struct.unpack_from('<I', data, 0x3C)[0]
         optional_size = struct.unpack_from('<H', data, pe + 20)[0]
@@ -714,7 +716,7 @@ class TownOracle(SaveOracle):
         # Los constructores estáticos de los repartidores de memoria de los
         # CString (CFixedAlloc de 0x50, 0x90, 0x110 y 0x210 bytes), que el CRT
         # ejecuta al arrancar.
-        for f in (0x64F005, 0x64F034, 0x64F066, 0x64F098):
+        for f in constructors:
             self.call(f, [])
 
     def _import(self, uc, address, size, user_data):

@@ -217,6 +217,9 @@ public:
 	// of p3vita) or a build p3vita doesn't know.
 	bool save_cache(const std::string& path) const;
 	static std::unique_ptr<GameTexts> load_cache(const std::string& path, std::string* error = nullptr);
+	// Whether both hold the same build and texts (the cache's check: p3save
+	// texts-cache); the number of texts by address in `addresses`.
+	bool same_as(const GameTexts& other, size_t* addresses = nullptr) const;
 
 	// The text in UTF-8, without the game's control codes (\f1_, \c, \l, \r...);
 	// "\n" stays as a line break.
@@ -224,6 +227,10 @@ public:
 	// The text as the executable has it: Windows-1252 bytes with the game's
 	// control codes, as the game copies it into its memory.
 	const std::string& raw(GameText id) const { return raw_[size_t(id)]; }
+	// A text by its address in the English exe (a slot, or the string itself),
+	// read from this build at its own address (game_text_addresses.inc: the
+	// texts of the letters' composer...); empty if it isn't in the table.
+	const std::string& raw_at(uint32_t english) const;
 	// The game's sprintf (0x64D410) on raw texts: %s (and %d, %i, %u, %c, with
 	// the number or the character already written by the caller) with the bytes of `args` in
 	// order, %% and the positional %$N$s of the Spanish texts (the N-th
@@ -246,6 +253,7 @@ public:
 private:
 	std::array<std::string, size_t(GameText::Count)> texts_;
 	std::array<std::string, size_t(GameText::Count)> raw_;
+	std::vector<std::pair<uint32_t, std::string>> by_address_;  // Sorted by the English address.
 	std::string build_;
 	uint32_t time_stamp_ = 0;  // The build's PE time stamp.
 	bool spanish_ = false;

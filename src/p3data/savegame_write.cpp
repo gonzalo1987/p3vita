@@ -734,8 +734,11 @@ bool load_statistics_file(const std::vector<uint8_t>* pst, SaveGame& save) {
 	return read_statistics(raw.data(), raw.size(), save);
 }
 
+// The game's town names table (0x6DDA00) in the language of the archive: the
+// Spanish one when p2arch0_spa.cpr is mounted (as the Spanish game reads its
+// own), else the English one.
 void load_save_scripts(const CprArchive& archive, SaveGame& save) {
-	for (const char* path : {"scripts/NamenStaedte_eng.txt", "scripts/NamenStaedte_spa.txt", "scripts/NamenStaedte.txt"}) {
+	for (const char* path : {"scripts/NamenStaedte_spa.txt", "scripts/NamenStaedte_eng.txt", "scripts/NamenStaedte.txt"}) {
 		if (const CprEntry* entry = archive.find(path)) {
 			std::vector<uint8_t> data;
 			if (archive.read(*entry, data)) {
