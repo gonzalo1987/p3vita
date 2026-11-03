@@ -1112,7 +1112,10 @@ class TownOracle(SaveOracle):
                     continue
                 if HEAP_BEGIN <= v < HEAP_END or v == BATTLES or BATTLES < v < BATTLES + BATTLES_SIZE:
                     for lo, hi, j in spans:
-                        if lo <= v < hi:
+                        # A block of 0 bytes (an array without items: a sea
+                        # battle's [+0x664] and [+0x668] in save 7) has
+                        # lo == hi: a pointer to its start is converted too.
+                        if lo <= v < hi or v == lo:
                             words[k] = BATTLE_POINTER | j << 16 | (v - lo)
                             changed = True
                             break
