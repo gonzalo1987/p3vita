@@ -6,7 +6,11 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include <string>
+#include <vector>
+
 #include "p3data/game_memory.hpp"
+#include "p3data/letters.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/savegame.hpp"
 
@@ -114,10 +118,71 @@ void sending() {
 	check(!save.mail_records[head] && save.mail_buffers[head].empty(), "released: no record, no buffer");
 }
 
+// Operations 0x6E and 0x6F (0x4D69D0, 0x4D6A50; checked with retouch_mail.py
+// read_delete), and the new letters' queue for the viewer.
+void reading_and_deleting() {
+	SaveGame save = world();
+	save.player = 0;
+	for (uint8_t type : {0x11, 0x00, 0x29}) {
+		Letter letter(type);
+		if (type == 0x29) {
+			letter.entry.u32(0xC) = 2;
+			letter.buffer = {1, 2};
+		}
+		send_letter(save, 0, letter);  // Entries 0, 1, 2; the chain 2, 1, 0.
+	}
+	send_letter(save, 2, Letter(0x00));  // Entry 3, merchant 2's.
+	send_letter(save, kLetterToChronicle, Letter(0x06));  // Entry 4.
+	const std::vector<uint16_t> fresh = take_new_letters(save);
+	check(fresh.size() == 3 && fresh[0] == 0 && fresh[2] == 2, "the player's new letters, oldest first");
+	check(take_new_letters(save).empty(), "taken once");
+
+	mark_letter_read(save, 0, 1);
+	check((save.mail[1].u8(1) & 0x80) == 0, "0x6E: read");
+	mark_letter_read(save, 0, 3);
+	mark_letter_read(save, -1, 0);
+	mark_letter_read(save, 0, 999);
+	check((save.mail[3].u8(1) & 0x80) && (save.mail[0].u8(1) & 0x80), "0x6E: not in his chain, nothing");
+
+	delete_letter(save, 0, 1);  // The middle one.
+	check(save.mail[2].u16(6) == 0, "0x6F: the chain skips it");
+	check(save.globals.u16(kMailFree) == 1 && save.mail[1].u16(6) == 5 && save.mail[1].u8(4) == 0xFF,
+		"0x6F: at the head of the free list, released");
+	delete_letter(save, 0, 2);  // The head, with its buffer.
+	check(save.merchants[0].memory.u16(0xA) == 0 && save.mail_buffers[2].empty(), "0x6F: the head, its buffer freed");
+	delete_letter(save, 0, 3);  // Merchant 2's.
+	check(save.merchants[2].memory.u16(0xA) == 3 && save.mail[3].u8(4) == 0x00, "0x6F: another chain, nothing");
+	delete_letter(save, -2, 4);
+	check(save.globals.u16(kMailChronicle) == 0xFFFF && save.globals.u16(kMailFree) == 4, "0x6F: the chronicle");
+}
+
+// A letter's text as the game's text box reads it (0x462540).
+void text_codes() {
+	const std::string raw = std::string("\n\\r\\f3_L\xFC" "beck,  1. 4. 1362\n\n\\l\\cHanse_tag\n\\l\\dYou owe 12\\C.\r\nX") +
+		'\0' + "after";
+	const std::vector<LetterParagraph> p = letter_paragraphs(raw);
+	check(p.size() == 6, "a paragraph per line");
+	check(p[1].align == LetterParagraph::Right && p[1].font == 3 && p[1].text == "L\xC3\xBC" "beck,  1. 4. 1362",
+		"\\r, \\f3_ and Windows-1252 to UTF-8");
+	check(p[2].align == LetterParagraph::Right && p[2].text.empty(), "the alignment stays");
+	check(p[3].align == LetterParagraph::Center && p[3].text == std::string("Hanse") + kLetterSoftHyphen + "tag",
+		"\\l\\c: centred, the soft hyphen");
+	check(p[4].align == LetterParagraph::Left && p[4].text == std::string("You owe 12") + kLetterCoin + ".",
+		"\\d out, the coin, the carriage return out");
+	check(p[5].text == "X", "a 0 ends the text");
+	check(p[0].picture < 0 && p[2].picture < 0 && p[5].picture < 0, "no picture");
+	const std::vector<LetterParagraph> news = letter_paragraphs("\\c\\f3_1. 4. 1362\n\n\\l\\f0_News\n\n\\c\\t16063_ ");
+	check(news.size() == 5 && news[4].picture == 16063 && news[4].text == " " && news[4].align == LetterParagraph::Center &&
+			news[3].picture < 0 && news[2].font == 0 && news[0].font == 3,
+		"the chronicle's ornament, \\t16063_; the fonts");
+}
+
 }  // namespace
 
 int main() {
 	sending();
+	reading_and_deleting();
+	text_codes();
 	if (failures) {
 		std::fprintf(stderr, "%d failures\n", failures);
 		return EXIT_FAILURE;

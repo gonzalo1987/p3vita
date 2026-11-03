@@ -35,6 +35,7 @@ int usage() {
 		"       p3save compress <in> <out>\n"
 		"       p3save texts-cache <Patrician3.exe> <cache>\n"
 		"       p3save <archivo.cpr> <partida> letters <Patrician3.exe> [merchant]\n"
+		"       p3save <archivo.cpr> <partida> chronicle <Patrician3.exe>\n"
 		"\n"
 		"Sin más argumentos, lista las ciudades de la partida (p. ej. missav/1.pat).\n"
 		"Con el número de una ciudad, muestra su almacén, producción y consumo.\n"
@@ -47,7 +48,9 @@ int usage() {
 		"letters prints the letters of the merchant's chain (by default the player's) as\n"
 		"p3vita composes them (letters.hpp) with the exe's texts: entry, type and the\n"
 		"text in hex; - without a text, ? for a type not rewritten yet\n"
-		"(tools/oracle/letter_oracle.py prints the game's).\n");
+		"(tools/oracle/letter_oracle.py prints the game's).\n"
+		"chronicle prints the chronicle (the news of the list -2) as p3vita composes it, in\n"
+		"hex (tools/oracle/chronicle_oracle.py prints the game's).\n");
 	return 2;
 }
 
@@ -271,6 +274,31 @@ int main(int argc, char** argv) {
 	if (!load_any_savegame(*archive, argv[2], save, &error)) {
 		std::fprintf(stderr, "%s\n", error.c_str());
 		return 1;
+	}
+	if (command == "chronicle") {
+		if (argc < 5) {
+			return usage();
+		}
+		std::unique_ptr<GameTexts> texts = GameTexts::load(argv[4], &error);
+		if (!texts) {
+			std::fprintf(stderr, "%s\n", error.c_str());
+			return 1;
+		}
+		for (unsigned char ch : compose_chronicle(save, *texts)) {
+			std::printf("%02x", unsigned(ch));
+		}
+		// What showing it writes (chronicle_viewed): the merchants' [+0x1C] changed.
+		SaveGame viewed = save;
+		chronicle_viewed(viewed, *texts);
+		std::printf("\nchanged");
+		for (size_t m = 0; m < save.merchants.size(); ++m) {
+			const uint8_t v = viewed.merchants[m].memory.u8(0x1C);
+			if (v != save.merchants[m].memory.u8(0x1C)) {
+				std::printf(" %zu:0x%02x", m, unsigned(v));
+			}
+		}
+		std::printf("\n");
+		return 0;
 	}
 	if (command == "letters") {
 		if (argc < 5) {

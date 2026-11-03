@@ -169,15 +169,20 @@ change.
 - [ ] **The other methods** the simulation uses: 0x4D6FD0 (done, operation
   0x60), 0x4D6780 (done, the old letters), 0x4D7AC0 (the 0x5F check of
   0x4F7510), 0x4D64B0 (reset), and the ones of the player's operations and
-  the mission interpreter: 0x4D69D0 (operation 0x6E, read), 0x4D6A50 (0x6F,
-  0x75 and event 0x13, delete), 0x4D6AF0 (0x70, the settings), 0x4D7960
+  the mission interpreter: 0x4D69D0 (operation 0x6E, read: done, the
+  viewer's mailbox), 0x4D6A50 (0x6F, done; 0x75 and event 0x13 use it too,
+  still to come), 0x4D6AF0 (0x70, the settings), 0x4D7960
   (0x71, repair), 0x4D74C0 (0x55), 0x4D7340 (0x54), 0x4D7870 (0x76),
   0x4D7900 (0x52), 0x4D7030, 0x4D7720, 0x4D7770, 0x4D75D0. Dead code:
   0x4D6930, 0x4D7140, 0x4D7200, 0x4D73F0.
-- [ ] **The interface**: the list (0x47D570, titles 0x6A52D0), each
-  letter's text (0x47F3B0, a switch on the 134 types, about 28 KB), the
-  chronicle (0x47DD40, the −2 list), the answers (0x4D6C90: operations
-  0x60, 0x72, 0x74, 0x75, 0x77, 0x8C). With the game's texts.
+- [ ] **The interface**: done on 2026-11-03 with the game's texts and
+  checked against the game in both languages: the list (0x47C520, 0x47D570,
+  titles 0x6A52D0, tabs 0x6B2DD8), each letter's text (0x47F3B0, all the
+  types but the offers 0x1E/0x1F and the two pictures 0x46, 0x6E), the
+  chronicle (0x47DD40, the −2 list), the new letter's line (0x4D7B10) and the
+  text box's codes (0x462540), in the viewer's mailbox. Left: the answers
+  (0x4D6C90: operations 0x60, 0x72, 0x74, 0x75, 0x77, 0x8C, the letters'
+  buttons), with the player's actions.
 - [ ] **The other channel, 0x548CA0** (60 calls, 47 in rewritten
   functions): the ticker lines for the local player («%s interrupts trade
   journey.», «Your ship %s has sunk.»...), composed in 0x5483D0 by kind

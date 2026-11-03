@@ -1,6 +1,7 @@
 #include "p3data/letters.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
@@ -1948,6 +1949,465 @@ std::optional<std::string> compose_letter(const SaveGame& save, const GameTexts&
 		return std::nullopt;
 	}
 	return c.out;
+}
+
+namespace {
+
+// 0x47DD40 with, in `named`, the merchants whose first name it takes with
+// 0x4F6420 (which writes their [+0x1C]).
+std::string chronicle(const SaveGame& save, const GameTexts& t, std::vector<uint32_t>* named) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t merchants = g.u16(global::kWorldMerchantCount);
+	const uint32_t count = std::min<uint32_t>(g.u16(kMailCount), uint32_t(save.mail.size()));
+	auto raw = [&](uint32_t english) -> const std::string& { return t.raw_at(english); };
+	auto table = [&](uint32_t base, uint32_t k) -> const std::string& { return t.raw_at(base + 4 * k); };
+	auto print = [](const std::string& format, const std::vector<std::string>& args) {
+		return GameTexts::sprintf_raw(format, args);
+	};
+	// The title: today's date with the month's short name (0x6C11D0, 0x6C0D04).
+	std::string local = print(raw(0x6C11D0), {num(g.u8(global::kWorldDay)), table(0x6C0D04, g.u8(global::kWorldMonth)),
+												num(g.u16(global::kWorldYear))});
+	std::string out = "\\c\\f2_" + local + "\n\\l";
+	// The date of the last header: no real date at first.
+	uint32_t last_day = 0x2C;
+	uint32_t last_month = 0x2D;
+	uint32_t last_year = 0x2D;
+	bool first_header = true;
+	// The game follows the list without a limit of steps.
+	for (uint32_t i = g.u16(kMailChronicle), left = count; i < count && left > 0; i = save.mail[i].u16(6), --left) {
+		const GameMemory<0x10>& e = save.mail[i];
+		const Composer c{save, t, e, uint16_t(i), {}, {}};
+		const uint32_t day = e.u8(0);
+		const uint32_t month = e.u8(1) & 0x1Fu;
+		const uint32_t year = e.u16(2);
+		if (day != last_day || month != last_month || year != last_year) {
+			last_day = day;
+			last_month = month;
+			last_year = year;
+			local = print(raw(0x6B9C90), {num(day), num(month + 1), num(year)});  // «%u. %u. %u», in the local buffer
+			if (!first_header) {
+				out += "\n\n";
+			}
+			first_header = false;
+			out += "\\c\\f3_" + local;
+		}
+		out += "\n\n\\l\\f0_";
+		// A merchant of the news (0x5303C0) and his names (0x4F6420, 0x4F6450).
+		auto merchant = [&](uint32_t m) { return c.merchant(int(m)); };
+		auto first_of = [&](uint32_t m) {
+			if (named && m < save.merchants.size()) {
+				named->push_back(m);
+			}
+			return c.merchant_first(merchant(m));
+		};
+		auto family_of = [&](uint32_t m) { return c.merchant_family(merchant(m)); };
+		auto sex_of = [&](uint32_t m) -> uint32_t { return merchant(m) ? merchant(m)->u8(0x1A) : 0u; };
+		const std::string town5 = c.town(e.u8(5));
+		// Each case makes the local buffer's text, appended after it; some
+		// append to the text directly first. A case that leaves the local buffer
+		// as it was appends the previous sprintf again (the date's, or the last
+		// news's): the game's.
+		switch (e.u8(4)) {
+		case 0x06: {  // A promotion (0x47EB0A).
+			const uint32_t m = e.u16(0xC);
+			if (m >= merchants) {
+				break;
+			}
+			const uint32_t sex = sex_of(m);
+			const std::string family = family_of(m);
+			const std::string first = first_of(m);
+			const std::string& title = table(0x6A0608, e.u16(0xA) + sex * 8);
+			// The Spanish code passes the town before the title (its %$6$s, %$5$s).
+			local = print(table(0x6B3274, sex & 1), {table(0x6C0F08, sex & 1), table(0x69EF2C, e.u16(0xE) % 14), first,
+														family, c.spanish() ? town5 : title, c.spanish() ? title : town5});
+			break;
+		}
+		case 0x0B:  // An extraordinary Hanse day (0x47EFAF).
+			local = print(raw(0x6B8AB8), {c.town(e.u16(8))});
+			break;
+		case 0x0C: {  // A guild entry (0x47EBAD).
+			const uint32_t m = e.u16(8);
+			if (m >= merchants) {
+				local.clear();
+				break;
+			}
+			const uint32_t sex = sex_of(m);
+			const std::string family = family_of(m);
+			const std::string first = first_of(m);
+			local = print(raw(0x6B3678), {table(0x6C0EF8, sex & 1), table(0x69EE48, e.u16(0xA)),
+											 table(0x6A0608, e.u16(0xC) + sex * 8), first, family, town5});
+			break;
+		}
+		case 0x0D: {  // A new office (0x47EC37): [+0xE] his title (low 4 bits) and rank.
+			const uint32_t m = e.u16(8);
+			if (m >= merchants) {
+				local.clear();
+				break;
+			}
+			const uint32_t f = e.u16(0xE);
+			const uint32_t sex = sex_of(m);
+			const std::string family = family_of(m);
+			const std::string first = first_of(m);
+			local = print(raw(sex ? 0x6B37C0 : 0x6B37C4),
+				{table(0x69EE48, (f & 0xF) % 14), table(0x6A0608, ((f & 0xFF) >> 4 & 7) + sex * 8), first, family, town5,
+					num(e.u16(0xA))});
+			break;
+		}
+		case 0x0E: {  // A move (0x47DFF8): from [+0xA] to [+0x5]; a new company with no old town.
+			const uint32_t m = e.u16(8);
+			if (m >= merchants) {
+				break;
+			}
+			const uint32_t f = e.u16(0xC);
+			const uint32_t from = e.u16(0xA);
+			const uint32_t sex = sex_of(m);
+			if (from >= g.u32(global::kWorldTownCount)) {
+				local = print(raw(0x6C1254), {family_of(m), town5});
+				break;
+			}
+			const std::string family = family_of(m);
+			const std::string first = first_of(m);
+			local = print(raw(sex ? 0x6B3848 : 0x6B384C), {table(0x69EE48, (f >> 3) % 14),
+															  table(0x6A0608, (f & 7) + sex * 8), first, family,
+															  c.town(from), town5});
+			break;
+		}
+		case 0x1C: {  // A discovery (0x47E150): the names the merchant's [+0xE8], [+0xE4] point at.
+			const uint32_t m = e.u8(8);
+			if (m >= merchants) {
+				break;
+			}
+			const MerchantMemory* mm = merchant(m);
+			const uint32_t sex = sex_of(m);
+			const uint32_t rank = mm ? mm->u8(0x39C + mm->u8(0x19)) : 0;
+			local = print(raw(e.u8(9) < 0x1E ? 0x6C12AC : 0x6C12F8),
+				{table(0x6C0EF8, sex), table(0x69EE48, tick::merchants_detail::fn_4f9430(save, int(m))),
+					table(0x6A0608, rank + sex * 8), c.merchant_first(mm), c.merchant_family(mm)});
+			break;
+		}
+		case 0x23: {  // A wedding (0x47ED50), the merchant the man or the woman.
+			const uint32_t m = e.u16(8);
+			const MerchantMemory* mm = merchant(m);
+			const std::string family = family_of(m);
+			const std::string first = first_of(m);
+			const std::string home = c.town(mm ? mm->u8(0x18) : 0);
+			const std::string spouse_first = c.first(e.u8(0xB));
+			const std::string spouse_family = c.family(e.u8(0xA));
+			const std::string spouse_town = c.town(e.u16(0xC));
+			const std::string age = num(e.u16(0xE));
+			local = sex_of(m) ? print(raw(0x6B54A0), {town5, first, family, home, age, spouse_first, spouse_family, spouse_town})
+							  : print(raw(0x6B54A0), {town5, spouse_first, spouse_family, spouse_town, age, first, family, home});
+			break;
+		}
+		case 0x2A: {  // A pirate's win or loss (0x47E262): [+0xF] the ships lost.
+			const uint32_t sex = e.u8(8) != 0;
+			const uint8_t lost = e.u8(0xF);
+			std::vector<std::string> args = {table(0x6C0EF8, sex), table(0x69EE48, e.u8(9)),
+				table(0x6A0608, e.u8(0xA) + sex * 8), c.first(e.u8(0xB)), c.family(e.u8(0xC)), c.first(e.u8(0xD)),
+				c.family(e.u8(0xE))};
+			uint32_t format = 0x6C14CC;
+			if (lost == 0) {
+				format = 0x6C14C4;
+			} else if (lost == 0xFF) {
+				format = 0x6AA184;
+			} else if (lost == 1) {
+				format = 0x6C14C8;
+			} else {
+				args.push_back(num(lost));
+			}
+			local = print(raw(format), args);
+			break;
+		}
+		case 0x35:  // A famine (0x47E466): appended as it is, nothing after it.
+			out += raw(0x6C138C) + town5 + raw(0x6C1390);
+			local.clear();
+			break;
+		case 0x36:  // A town wall (0x47E5B0).
+			local = print(raw(0x6C13CC), {town5});
+			break;
+		case 0x38: {  // A siege's end (0x47E5D6): [+0xA] the money (0xFFFFFFFF: beaten back), [+0xE] buildings.
+			const std::string days = num(e.u16(8));
+			if (e.u16(0xA) == 0xFFFF && e.u16(0xC) == 0xFFFF) {
+				local = print(raw(0x6B6C44), {days, town5});
+				break;
+			}
+			const std::string money = std::to_string(int32_t((uint32_t(e.u16(0xC)) << 16) + e.u16(0xA)));
+			// The Spanish code passes the days first (its texts have %$N$).
+			if (e.u16(0xE) != 0) {
+				local = c.spanish() ? print(raw(0x6B6C40), {days, town5, money, num(e.u16(0xE))})
+									: print(raw(0x6B6C40), {town5, days, money, num(e.u16(0xE))});
+			} else {
+				local = c.spanish() ? print(raw(0x6B6C48), {days, town5, money}) : print(raw(0x6B6C48), {town5, days, money});
+			}
+			break;
+		}
+		case 0x39:  // A pirate attack beaten off (0x47E694), or a lair not taken.
+			if (e.u8(0xD) == 0) {
+				out += print(raw(0x6B6D34), {town5, town5});
+				if (e.u8(0xA) == 0xFF && e.u8(0xB) == 0xFF) {
+					out += raw(0x6B6D40);
+				} else {
+					const bool man = e.u8(0xA) <= 0x7F;
+					out += print(raw(man ? 0x6B6D38 : 0x6B6D3C), {table(0x69EF2C, e.u8(8)),
+																	  table(man ? 0x6A0738 : 0x6A0718, e.u8(9)),
+																	  c.first(e.u8(0xA)), c.family(e.u8(0xB))});
+				}
+				local.clear();
+			} else {
+				const bool man = e.u8(0xA) <= 0x7F;
+				local = print(raw(man ? 0x6AA1B8 : 0x6AA1BC), {table(0x69EE48, e.u8(8)), table(man ? 0x6A0628 : 0x6A0608, e.u8(9)),
+																   c.first(e.u8(0xA)), c.family(e.u8(0xB)),
+																   c.first(e.u8(0xC)), c.family(e.u8(0xD))});
+			}
+			break;
+		case 0x3A: {  // A town plundered by pirates (0x47E8A2), or a lair destroyed ([+0xC] & 0x80).
+			const uint8_t f = e.u8(0xC);
+			const bool man = e.u8(0xD) <= 0x7F;
+			if (!(f & 0x80)) {
+				local = print(raw(0x6B6E0C), {town5, num(e.u32(8))});
+				if (e.u8(0xD) == 0xFF || e.u8(0xE) == 0xFF) {
+					break;
+				}
+				out += local;
+				local = print(raw(man ? 0x6B6E10 : 0x6B6E14), {table(0x69EF2C, f >> 4 & 7),
+																   table(man ? 0x6A0628 : 0x6A0608, f & 0xF),
+																   c.first(e.u8(0xD)), c.family(e.u8(0xE))});
+			} else {
+				local = print(raw(man ? 0x6AA1B0 : 0x6AA1B4),
+					{table(0x69EE48, f >> 4 & 7), table(man ? 0x6A0628 : 0x6A0608, f & 0xF), c.first(e.u8(0xD)),
+						c.family(e.u8(0xE)), c.first(e.u8(0xB)), c.family(e.u8(0xF)), num(e.u32(8) & 0xFFFFFF)});
+			}
+			break;
+		}
+		case 0x53:  // A siege starts (0x47EADD).
+			local = print(raw(0x6B8860), {town5, num(e.u16(8))});
+			break;
+		case 0x55:  // A mayor's election (0x47EE65).
+			local = print(raw(0x6B7304), {town5, c.first(e.u16(8)), c.family(e.u16(0xA)), num(e.u16(0xC)), num(e.u16(0xE))});
+			break;
+		case 0x56: {  // A new country found (0x47EFD6); the town by the merchant's index (unused by the text).
+			const uint32_t m = e.u16(8);
+			const uint32_t sex = sex_of(m);
+			const std::string family = family_of(m);
+			const std::string first = first_of(m);
+			local = print(raw(0x6B88C8), {table(c.spanish() ? 0x6C0EF8 : 0x6C0ED8, sex), table(0x69EE48, e.u16(0xA) % 14),
+											 table(0x6A0608, (e.u8(0xC) & 7) + sex * 8), first, family, c.town(m)});
+			break;
+		}
+		case 0x57: {  // A new Alderman (0x47EEBC).
+			const uint32_t sex = e.u8(9);
+			local = print(raw(sex ? 0x6B8A68 : 0x6B8A6C), {table(0x69EE48, e.u8(0xA)), table(0x6A0608, e.u8(0xD) + sex * 8),
+															  c.first(e.u8(0xB)), c.family(e.u8(0xC)), c.town(e.u8(8)),
+															  town5});
+			break;
+		}
+		case 0x58:  // The plague (0x47F070).
+			local = print(raw(0x6B8B60), {town5});
+			break;
+		case 0x59:  // A town's fire (0x47F095).
+			local = print(raw(0x6B8BE0), {town5});
+			break;
+		case 0x6F: {  // A Hanse task done (0x47F0BB): «%s %s %s %s %s» and what he did, by [+0x8].
+			const bool man = e.u8(0xA) <= 0x7F;
+			const uint8_t f = e.u8(9);
+			// The adjective from 0x69EE38 by [+0x9] % 31 (his title + rank << 5): four
+			// slots before the adjectives' table, and the rank added, a game bug
+			// (fixed: 0x69EE48 by the title).
+			const std::string& adjective = fix_game_bugs() ? table(0x69EE48, f & 0x1F) : table(0x69EE38, f % 31);
+			local = print(raw(0x6B9C9C), {raw(man ? 0x69C038 : 0x69C03C), adjective, table(0x6A0608, (f >> 5) + (man ? 8 : 0)),
+											 c.first(e.u8(0xA)), c.family(e.u8(0xB))});
+			out += local;
+			switch (e.u8(8) & 0x7F) {
+			case 0:
+				local = print(raw(0x6AB73C), {c.town(e.u8(0xE))});
+				break;
+			case 1:
+				local = print(raw(0x6AB740), {c.town(e.u8(0xE)), c.town(e.u8(0xF))});
+				break;
+			case 2:
+				// The pirate's family name from [+0xE], his first name's: a game bug
+				// (0x4EC354 puts it in [+0xF]; fixed).
+				local = print(raw(0x6AB748), {c.first(e.u8(0xE)), c.family(e.u8(fix_game_bugs() ? 0xF : 0xE))});
+				break;
+			case 3:
+				local = print(raw(0x6AB744), {});
+				break;
+			case 4:
+				local = print(raw(0x6AB74C), {c.town(e.u8(0xE))});
+				break;
+			default:
+				break;  // The names again.
+			}
+			break;
+		}
+		case 0x7B: {  // A monument (0x47F234).
+			out += print(table(0x6B1D6C, e.u16(0xA) >> 7u), {table(0x69EF2C, e.u16(8)), c.first(e.u16(0xA)), c.family(e.u16(0xC))});
+			local = print(raw(0x6B1D74), {town5});
+			break;
+		}
+		default:  // No line (0x47E4C0).
+			local.clear();
+			break;
+		}
+		out += local;
+		out += "\n\n\\c\\t16063_";
+	}
+	out += ' ';
+	return out;
+}
+
+}  // namespace
+
+std::string compose_chronicle(const SaveGame& save, const GameTexts& texts) {
+	return chronicle(save, texts, nullptr);
+}
+
+void chronicle_viewed(SaveGame& save, const GameTexts& texts) {
+	std::vector<uint32_t> named;
+	chronicle(save, texts, &named);
+	for (const uint32_t m : named) {
+		MerchantMemory& mm = save.merchants[m].memory;
+		mm.u8(0x1C) = mm.u8(0x1A) ? uint8_t(mm.u8(0x1C) & 0x7F) : uint8_t(mm.u8(0x1C) | 0x80);
+	}
+}
+
+std::vector<uint16_t> letter_rows(const SaveGame& save, uint8_t tab) {
+	std::vector<uint16_t> rows;
+	if (save.player < 0 || size_t(save.player) >= save.merchants.size()) {
+		return rows;
+	}
+	const uint32_t count = std::min<uint32_t>(save.globals.u16(kMailCount), uint32_t(save.mail.size()));
+	// 0x47C520 counts the chain first and stops after that many rows.
+	for (uint32_t i = save.merchants[size_t(save.player)].memory.u16(0xA), left = count; i < count && left > 0;
+		 i = save.mail[i].u16(6), --left) {
+		if (letter_class(save.mail[i].u8(4)) == tab) {
+			rows.push_back(uint16_t(i));
+		}
+	}
+	return rows;
+}
+
+LetterRow letter_row(const SaveGame& save, const GameTexts& texts, uint16_t entry) {
+	LetterRow row;
+	if (entry >= save.mail.size()) {
+		return row;
+	}
+	const GameMemory<0x10>& e = save.mail[entry];
+	const Composer c{save, texts, e, entry, {}, {}};
+	row.town = c.town(e.u8(5));
+	row.date = c.row_date();
+	row.unread = (e.u8(1) & 0x80) != 0;
+	const uint8_t type = e.u8(4);
+	if (type >= 0x3C && type <= 0x40) {
+		if (entry < save.mail_buffers.size()) {
+			const std::vector<uint8_t>& b = save.mail_buffers[entry];
+			row.title.assign(b.begin(), std::find(b.begin(), b.end(), uint8_t(0)));
+		}
+	} else if (type < 0x86) {
+		row.title = texts.raw_at(0x6A52D0 + 4u * type);
+	}
+	return row;
+}
+
+const std::string& letter_tab_name(const GameTexts& texts, uint8_t tab) {
+	return texts.raw_at(0x6B2DD8 + 4u * (tab & 3));
+}
+
+bool letter_notice_wanted(const SaveGame& save, uint16_t entry) {
+	if (entry >= save.mail.size() || save.player < 0 || size_t(save.player) >= save.merchants.size()) {
+		return false;
+	}
+	const uint8_t cls = letter_class(save.mail[entry].u8(4));
+	const uint8_t bits = save.merchants[size_t(save.player)].memory.u8(0x26);
+	return cls >= 1 && cls <= 3 && (bits & (8u << (cls - 1))) != 0;
+}
+
+std::string letter_notice(const SaveGame& save, const GameTexts& texts, uint16_t entry) {
+	if (entry >= save.mail.size()) {
+		return std::string();
+	}
+	const uint8_t cls = letter_class(save.mail[entry].u8(4));
+	if (cls < 1 || cls > 3) {
+		return std::string();
+	}
+	return GameTexts::sprintf_raw(texts.raw_at(0x6A4570 + 4u * (cls - 1)), {letter_row(save, texts, entry).title});
+}
+
+std::vector<LetterParagraph> letter_paragraphs(const std::string& raw) {
+	std::vector<LetterParagraph> paragraphs(1);
+	LetterParagraph::Align align = LetterParagraph::Left;
+	uint8_t font = 0;
+	auto digits_and_underscore = [&](size_t j) {
+		while (j < raw.size() && raw[j] >= '0' && raw[j] <= '9') {
+			++j;
+		}
+		return j < raw.size() && raw[j] == '_' ? j + 1 : j;
+	};
+	for (size_t i = 0; i < raw.size() && raw[i] != 0; ++i) {
+		const uint8_t c = uint8_t(raw[i]);
+		LetterParagraph& p = paragraphs.back();
+		if (c == '\n') {
+			LetterParagraph next;
+			next.align = align;
+			next.font = font;
+			paragraphs.push_back(next);
+			continue;
+		}
+		if (c == '\r') {
+			continue;
+		}
+		if (c == '_') {
+			p.text += kLetterSoftHyphen;
+			continue;
+		}
+		if (c != '\\' || i + 1 >= raw.size()) {
+			append_cp1252(p.text, c);
+			continue;
+		}
+		const char code = raw[i + 1];
+		switch (code) {
+		case 'l':
+		case 'r':
+		case 'c':
+			align = code == 'l' ? LetterParagraph::Left : code == 'r' ? LetterParagraph::Right : LetterParagraph::Center;
+			p.align = align;
+			++i;
+			break;
+		case 'f': {
+			const size_t end = digits_and_underscore(i + 2);
+			font = uint8_t(std::atoi(raw.substr(i + 2, end - (i + 2)).c_str()));
+			if (p.text.empty()) {
+				p.font = font;
+			}
+			i = end - 1;
+			break;
+		}
+		case 't':
+		case 'h':
+			p.picture = std::atoi(raw.substr(i + 2, digits_and_underscore(i + 2) - (i + 2)).c_str());
+			i = digits_and_underscore(i + 2) - 1;
+			break;
+		case 'd':
+			++i;  // The drop cap: the letter after it stays.
+			break;
+		case 'C':
+			p.text += kLetterCoin;
+			++i;
+			break;
+		case 'B':
+			p.text += kLetterBarrel;
+			++i;
+			break;
+		case 'L':
+			p.text += kLetterLoad;
+			++i;
+			break;
+		default:
+			append_cp1252(p.text, c);  // A backslash the box shows as it is.
+			break;
+		}
+	}
+	return paragraphs;
 }
 
 }  // namespace p3::data

@@ -925,6 +925,47 @@ WITH_BUFFER = (0x29, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x47, 0x63, 0x71, 0x83)
 LETTER_TYPES = [t for t in range(0x86) if t not in NO_TEXT and t not in WITH_BUFFER]
 
 
+def read_delete(o, rec):
+    """Operations 0x6E (a letter read: 0x4D69D0) and 0x6F (a letter deleted:
+    0x4D6A50), which the letter window queues: on the player's letters (the
+    head, one in the middle, one with a buffer), on the chronicle (−2 and −1),
+    and on letters they don't reach (another merchant's chain, past the
+    mailbox, a negative merchant for 0x6E)."""
+    m = o.u32(to.PLAYER)
+    mm = o.merchant(m)
+    count = o.u16(to.MAIL + 6)
+    base = o.u32(to.MAIL)
+
+    def entry(i):
+        return base + 16 * i
+
+    def chain(head):
+        out = []
+        while head < count and len(out) < count:
+            out.append(head)
+            head = o.u16(entry(head) + 6)
+        return out
+
+    mine, news = chain(o.u16(mm + 0xA)), chain(o.u16(to.MAIL + 8))
+    if len(mine) < 6:
+        raise SystemExit(f'the player has only {len(mine)} letters')
+    for i in mine[:6]:
+        w8(o, entry(i) + 1, o.u8(entry(i) + 1) | 0x80)  # unread
+    other = next(k for k in range(o.counts()[2]) if k != m)
+    with_buffer = next((i for i in mine[3:] if o.u8(entry(i) + 4) in (0x29, 0x47, 0x63, 0x83, 0x3C, 0x3D, 0x3E, 0x3F,
+                                                                       0x40, 0x71)), mine[5])
+    ops = [(0x6E, m, mine[0]), (0x6E, m, mine[2]), (0x6E, m, news[0] if news else count), (0x6E, m, count),
+           (0x6E, m, count + 5), (0x6E, other, mine[1]), (0x6E, -1, mine[1]), (0x6E, -2, mine[1]),
+           (0x6F, m, mine[1]), (0x6F, m, mine[0]), (0x6F, m, with_buffer), (0x6F, other, mine[4]),
+           (0x6F, m, count), (0x6F, m, news[0] if news else count)]
+    if len(news) >= 3:
+        ops += [(0x6F, -2, news[0]), (0x6F, -1, news[2])]
+    for op, who, i in ops:
+        o.tick_operations.append(struct.pack('<IiIII', op, who, i, 0, 0))
+    print(f'the player {m}: {len(mine)} letters, the chronicle {len(news)}; the letter with a buffer {with_buffer} '
+          f'(type {o.u8(entry(with_buffer) + 4):#x}); {len(ops)} operations')
+
+
 def real_fields(t, rnd, towns, ships, captains, merchants=30):
     """Letters of type t with the fields [+0x8..+0xF] a real one has (from the
     code that sends it), for the types p3vita composes (letters.cpp): they
@@ -1221,6 +1262,77 @@ def all_letters(o, rec):
     print(f'{sent} letters of {len(LETTER_TYPES)} types sent to the player {m}')
 
 
+def all_news(o, rec):
+    """The chronicle's 21 cases (0x47DD40) and their branches: news sent to −2
+    with fields that reach each branch (a man and a woman, a merchant past the
+    merchants, the pirates' wins and losses, the siege's three ends, the Hanse
+    tasks' five kinds and one past them...), a few of the types without a line,
+    and LETTERS_SEED random ones of each case."""
+    import random
+    import retouch_unchecked as ru
+    towns, _, merchants, ships = o.counts()
+    rnd = random.Random(int(os.environ.get('LETTERS_SEED', '1')))
+    man = next(k for k in range(merchants) if o.u8(o.merchant(k) + 0x1A) != 0)
+    woman = next((k for k in range(merchants) if o.u8(o.merchant(k) + 0x1A) == 0), man)
+    # The bit 0x80 of [+0x1C] the other way round, for the chronicle's 0x4F6420 to write it.
+    w8(o, o.merchant(man) + 0x1C, o.u8(o.merchant(man) + 0x1C) | 0x80)
+    w8(o, o.merchant(woman) + 0x1C, o.u8(o.merchant(woman) + 0x1C) & 0x7F)
+    letter = o.alloc(0x10)
+    news = []
+
+    def b(*v):
+        return bytes(v) + bytes(8 - len(v))
+
+    def h(*v):
+        return struct.pack('<4H', *(list(v) + [0] * (4 - len(v))))
+
+    for m in (man, woman):
+        news += [(0x06, h(1, 3, m, 5)), (0x06, h(2, 7, m, 20)), (0x0C, h(m, 4, 2)), (0x0D, h(m, 3, 0, 0x35)),
+                 (0x0E, h(m, 2, 0x1D)), (0x0E, h(m, 0xFFFF, 0x0A)), (0x1C, b(m, 5)), (0x1C, b(m, 0x20)),
+                 (0x23, h(m, 3 | 5 << 8, 2, 17)), (0x56, h(m, 9, 3))]
+    news += [(0x06, h(1, 3, merchants + 2, 5)), (0x0C, h(merchants, 1, 1)), (0x0D, h(merchants + 1, 1, 0, 0x11)),
+             (0x0E, h(merchants, 1, 1)), (0x1C, b(min(merchants + 1, 255), 3))]
+    for sex in (0, 1):
+        for lost in (0, 0xFF, 1, 3):
+            news.append((0x2A, b(sex, 4, 3, 7, 9, 11, 13, lost)))
+        news.append((0x57, b(rnd.randrange(towns), sex, 5, 6, 8, 4)))
+    news += [(0x0B, h(rnd.randrange(towns))), (0x35, b()), (0x36, b()), (0x53, h(1250)), (0x58, b()), (0x59, b()),
+             (0x38, struct.pack('<HHHH', 19, 0xFFFF, 0xFFFF, 0)), (0x38, struct.pack('<HIH', 23, 74000, 6)),
+             (0x38, struct.pack('<HIH', 8, 3_000_000_000, 0)),
+             (0x39, b(2, 3, 0xFF, 0xFF, 0, 0)), (0x39, b(2, 3, 9, 4, 0, 0)), (0x39, b(2, 3, 0x88, 4, 0, 0)),
+             (0x39, b(5, 4, 9, 4, 6, 1)), (0x39, b(5, 4, 0x88, 4, 6, 1)),
+             (0x3A, struct.pack('<I4B', 12000, 0x25, 9, 4, 0)), (0x3A, struct.pack('<I4B', 12000, 0x25, 0x88, 4, 0)),
+             (0x3A, struct.pack('<I4B', 12000, 0x25, 0xFF, 4, 0)), (0x3A, struct.pack('<I4B', 0x01009C40, 0xA5, 9, 4, 2)),
+             (0x3A, struct.pack('<I4B', 50000, 0xC3, 0x88, 4, 2)),
+             (0x55, h(4, 6, 40, 119)), (0x7B, h(5, 12, 7)), (0x7B, h(3, 0x84, 7)),
+             (0x08, b(1, 2)), (0x0F, b(3)), (0x72, h(1, 2))]
+    for kind in (0, 1, 2, 3, 4, 5, 0x82):
+        for first in (6, 0x86):
+            news.append((0x6F, b(kind, 3 + (5 << 5), first, 9, 2, 3, rnd.randrange(towns), rnd.randrange(towns))))
+    # Random ones with small fields (0..3, also the u16 ones: a town, a table's
+    # index or a name past its table makes the game read garbage and crash).
+    for _ in range(int(os.environ.get('NEWS_RANDOM', '2'))):
+        for t in (0x06, 0x0B, 0x0C, 0x0D, 0x0E, 0x1C, 0x23, 0x2A, 0x38, 0x39, 0x3A, 0x53, 0x55, 0x56, 0x57, 0x6F, 0x7B):
+            m = rnd.choice((man, woman))
+            fields = bytes(rnd.randrange(4) for _ in range(8))
+            if t in (0x06, 0x0B, 0x0C, 0x0D, 0x0E, 0x23, 0x38, 0x53, 0x55, 0x56, 0x7B):
+                fields = h(*(rnd.randrange(4) for _ in range(4)))
+            if t == 0x06:
+                fields = fields[:4] + struct.pack('<H', m) + fields[6:]
+            elif t in (0x0C, 0x0D, 0x0E, 0x23, 0x56):
+                fields = struct.pack('<H', m) + fields[2:]
+            elif t == 0x1C:
+                fields = bytes([m]) + fields[1:]
+            elif t == 0x57:
+                fields = fields[:1] + bytes([rnd.randrange(2)]) + fields[2:]  # the sex: the titles' half
+            news.append((t, fields))
+    for t, fields in news:
+        body = bytes([0, 0x80, 0xFF, 0xFF, t, rnd.randrange(towns), 0xFF, 0xFF]) + fields
+        o.uc.mem_write(letter, body)
+        ru.direct(o, 0x4D6530, [0xFFFFFFFE, letter], ecx=to.MAIL)
+    print(f'{len(news)} news sent to the chronicle (the man {man}, the woman {woman})')
+
+
 def expedition_lost(o, rec):
     convoy, members = expedition(o, rec)
     w32(o, o.ship(members[0]) + 0x18, 10)
@@ -1237,7 +1349,7 @@ SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, com
                                      expedition_contract, debts_notices, debts_office, debts_ship, debts_partial,
                                      captain, mayor_election, alderman_merchant, alderman_citizen, hanse_vote,
                                      auction_end, hanse_task_letters, siege_letters,
-                                     operation_letters, diet_letters, all_letters)}
+                                     operation_letters, diet_letters, all_letters, read_delete, all_news)}
 
 
 def main():

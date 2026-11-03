@@ -56,6 +56,9 @@ CODE = {
     0x47F3B0: 0x47F450,  # the letters' composer
     0x48654B: 0x486639,  # its text complete (letter_oracle.DONE)
     0x4865E5: 0x4866D3,  # its exit without a text (letter_oracle.EXIT)
+    0x47DD40: 0x47DDE0,  # the chronicle (chronicle_oracle.py)
+    0x47E57B: 0x47E61B,  # its text complete (chronicle_oracle.DONE)
+    0x47E599: 0x47E639,  # its end, freeing the text (chronicle_oracle.EXIT)
 }
 TEXT_INITIALIZERS = (0x46BE60, 0x46C0A0)  # English 0x46BD80, 0x46BFC0
 # What the Spanish emulator skips, as the English oracle's QUIET: address: bytes popped.

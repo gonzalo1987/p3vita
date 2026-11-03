@@ -142,8 +142,8 @@ the RNG of the senders (rand() calls that build the letters).
 | 0x4D6680 | filter and store for one merchant | 0x4D6530 | — |
 | 0x4D6780 | remove a merchant's old letters (kept time by class, above) | 0x47C54D (UI), 0x4DDA6E (event 0x03), 0x4F5EAE (operation 0x65), 0x536B36 (operation 0x71), 0x54737B (real-time loop) | `events_towns.cpp` (with a game bug fixed behind `fix_game_bugs`) |
 | 0x4D6930 | copy an entry into a 0x14-byte view | none | — |
-| 0x4D69D0 | mark a letter read (clear 0x80 of [+0x1]) if it is in the merchant's chain | operation 0x6E (0x536AD4) | — |
-| 0x4D6A50 | delete a letter (merchant ≥ 0: from its chain; negative: from the chronicle) | event 0x13 (0x4E7A14: 0x4E7B6C, 0x4E7B80), operation 0x6F (0x536AEE), operation 0x75 (0x53ECB0: 0x53ED5E, 0x53EDDA) | — |
+| 0x4D69D0 | mark a letter read (clear 0x80 of [+0x1]) if it is in the merchant's chain (at most `count` steps; nothing for a negative merchant) | operation 0x6E (0x536AD4) | `mark_letter_read` |
+| 0x4D6A50 | delete a letter (merchant ≥ 0: from its chain; negative: from the chronicle): unlinked, put at the head of the free list, released (0x51AAB0) | event 0x13 (0x4E7A14: 0x4E7B6C, 0x4E7B80), operation 0x6F (0x536AEE), operation 0x75 (0x53ECB0: 0x53ED5E, 0x53EDDA) | `delete_letter` |
 | 0x4D6AF0 | a merchant's letter settings: 8 bytes to [+0x38..+0x3F] and [+0x26] | operation 0x70 (0x536B0F) | — |
 | 0x4D6B40 | grow by 200 | 0x4D6530, 0x4D6680, 0x4D7140, 0x4D73F0 | — |
 | 0x4D6C50 → 0x4D6C90 | the player answers a letter (a button of the letter window, pushed at 0x486550): by type, queues operation 0x75, 0x72, 0x60, 0x74, 0x8C or 0x77 | interface | — |
@@ -159,7 +159,7 @@ the RNG of the senders (rand() calls that build the letters).
 | 0x4D7900 | the 0x71 letter for a town still valid (its record's [+0x4] after today) | mission interpreter (0x4F19E0), operation 0x52 (0x53C2C0), the interface (0x5A7xxx, 17 calls) | — |
 | 0x4D7960 | repair the chains: a letter reached twice is cut off (0xFFFF), the chronicle and the free list too | operation 0x71 (0x536B28) | — |
 | 0x4D7AC0 | whether a chain has a 0x5F letter with [+0xA] equal to a rank | 0x4F7559 (0x4F7510) | named in `merchants.cpp` |
-| 0x4D7B10 | the new-letter notification (above) | 0x4D6680 | — (interface) |
+| 0x4D7B10 | the new-letter notification (above) | 0x4D6680 | `SaveGame::new_player_letters`, `take_new_letters`; the line in the viewer (`letter_notice`) |
 | 0x4D7D50 | the player's unread letters with bit 0x40 (network) to the interface | 0x548C6E | — (interface) |
 
 The simulation also reads the entries directly: event 0x16 (0x4E849D, the
@@ -173,9 +173,28 @@ operation 0xBC), and 0x526BB9. The interface: 0x4135C0,
 
 ## 4. The interface's texts
 
-- **The list** (0x47D570): one row per letter, with the town name (table
-  0x6DDA00) and the title (pointer table 0x6A52D0 by type; for 0x3C..0x40,
-  the letter's own buffer [+0xC]); unread rows in another colour.
+- **The list** (0x47C520 fills it, 0x47D570 draws it): the window has four
+  tabs ([+0xD4], their names the table 0x6B2DD8: 0 «Public news», the
+  chronicle; 1..3 «Official letters», «Personal letters», «Trade
+  information»; the Spanish exe repeats tab 1's name for tab 0). 0x47C520
+  first removes the local player's old letters (0x4D6780), then makes a
+  0x14-byte row for each letter of his chain whose class (0x6C0198) is the
+  tab's, in the chain's order: u16 entry, type, [+0x5], unread (the month's
+  bit 0x80), and the date «DD.MM.YYYY». Each row shows the town name (table
+  0x6DDA00 by [+0x5], the index-as-number bug), the date and the title
+  (pointer table 0x6A52D0 by type, 0x86 entries; for 0x3C..0x40, the first
+  string of the letter's buffer [+0xC]); unread rows in another colour
+  (black, the read ones brown); a type from 0x86 on is not drawn.
+- **The text box** (0x462540, the codes of every text the game lays out):
+  `\l`, `
+`, `\c` set the alignment (1 left, 2 right, 3 centre) from there
+  on, kept across lines; `N_` a font (atoi); `\d` followed by a capital
+  letter draws that letter as a drop cap (from the pictures 0x6CC3D4) and
+  indents the first lines; `	`, `\C`, `\L`, `\B`, `\h` are pictures in the
+  line (`	N_`, `\hN_` by number; `\C` the coin, `\B` a barrel, `\L` a
+  load); `_` marks where a word may be split (a '-' at the end of the line,
+  otherwise taken out). p3vita: `letter_paragraphs` (`letters.hpp`) and the
+  viewer's `wrap_letter`.
 - **A letter** (0x47F3B0, called from 0x47CD46, 0x47DD29, 0x486AD0): a
   switch on the type at 0x47F5EA (table 0x48664C, types 0..0x85; 0x4865E5
   is the default, no text) composes the body from text pointers of the exe
@@ -183,14 +202,42 @@ operation 0xBC), and 0x526BB9. The interface: 0x4135C0,
   rule, `\d` paragraph, `\f1_` font, `\C` the currency sign, `\B` a bale...)
   and the letter's fields. About 28 KB of code. Classes 0 and 3 start with
   another font byte. Its per-type case and longest text are in appendix B.
-- **The chronicle** (0x47DD40, called from 0x424504): walks the −2 list from
-  [+0x8], writes a header for each date (format 0x6C11D0 with the month
-  names 0x6C0D04) and one line per letter: a switch at 0x47DFF1 (index
-  0x47F320, table 0x47F2C8, types 6..0x7B; 0x47E4C0 default). The types
-  that only go to −2 (class 4 news: promotions, guild entries, offices,
-  moves, harvests, sieges, plague, fire, elections...) have no letter text
-  and are only read here.
-- **New letter**: 0x4D7B10, above.
+- **The chronicle** (0x47DD40 on the letter window 0x6CC960, called from
+  the main panel's button 0x424504): one buffer of 0x100 + 0x100 bytes per
+  news, «\c\f2_» and the title with today's date (0x6C11D0 with the month
+  names 0x6C0D04) and «\n\l»; then the −2 list from [+0x8]: when a news's
+  date (day, month & 0x1F, year) is not the last header's, «\n\n» (not
+  before the first) and «\c\f3_» with the date «%u. %u. %u» (0x6B9C90);
+  then «\n\n\l\f0_», the news's line and the ornament
+  «\n\n\c\t16063_» (a picture); a space and a 0 at the end, and the text
+  window (0x41D9B0 on *0x6CBB10) shows it. The line: a switch at 0x47DFF1
+  (index 0x47F320, table 0x47F2C8, types 6..0x7B; the others and 0x47E4C0, an
+  empty line). 21 cases (0x06, 0x0B, 0x0C, 0x0D, 0x0E, 0x1C, 0x23, 0x2A, 0x35,
+  0x36, 0x38, 0x39, 0x3A, 0x53, 0x55..0x59, 0x6F, 0x7B) sprintf into one local
+  buffer and the common end (0x47E4C5) appends it; some append text directly
+  first (0x35, 0x39, 0x3A, 0x6F, 0x7B), and some leave the buffer as it was
+  when the merchant is past the merchants (0x06, 0x0E, 0x1C: the previous
+  sprintf, the date's or the last news's, comes again). The merchants' names
+  come from 0x4F6420 (which sets the bit 0x80 of [+0x1C] by [+0x1A]) and
+  0x4F6450, except 0x1C's, from the pointers they leave in [+0xE8] and
+  [+0xE4]. The titles are 0x6A0608 by rank + [+0x1A]·8 (men in the second
+  half), the adjectives 0x69EE48 and 0x69EF2C, the articles 0x6C0EF8 (and
+  0x6C0ED8, lowercase, for 0x56). The Spanish exe (0x47DDE0) has the same
+  code but three cases: 0x06 passes the town before the title, 0x38 the days
+  before the town, 0x56 the capitalized articles. p3vita: `compose_chronicle`,
+  `chronicle_viewed`; checked with `chronicle_oracle.py` (docs/oracle.md,
+  «The mailbox window»). The types that only go to −2 (class 4 news) have no
+  letter text and are only read here.
+- **New letter**: 0x4D7B10, above: «Official writing: %s», «Personal letter:
+  %s», «Trading information: %s» (0x6A4570..0x6A4578) with the title, as the
+  list's (0x3C..0x40: the letter's buffer).
+- **What showing a letter changes**: the composer's cases that write into
+  the save (the loan dates of 0x12 and 0x26; 0x4F6420's bit in 0x21/0x22:
+  `letter_viewed`), and the chronicle's 0x4F6420 (`chronicle_viewed`); the
+  window queues 0x6E for the letter shown. The composer's common end: the
+  sprintf case appends its local buffer (0x48651F), the cases that wrote
+  into the text directly end at 0x486513, and the length is ready at
+  0x486518..0x48654B (the oracle's DONE).
 
 For p3vita's viewer, these templates have to be read from the exe of the
 installation (`GameTexts`), each with its slot in the English and Spanish
@@ -256,7 +303,17 @@ doesn't have.
   pointers ([+0x8]; [+0xC] of a record) and the buffers and records apart:
   `SaveGame::mail_buffers` and `SaveGame::mail_records`, as long as
   `SaveGame::mail`. 0x4D6780 (`events_towns.cpp`) releases with
-  `release_letter`. 0x4D7B10 (the interface's notice) is not reproduced.
+  `release_letter`. 0x4D7B10 (the interface's notice) leaves the entries of
+  the local player's new letters in `SaveGame::new_player_letters` (not
+  saved; `take_new_letters`). Reading and deleting: `mark_letter_read`
+  (0x4D69D0) and `delete_letter` (0x4D6A50), operations 0x6E and 0x6F of
+  `run_operation`; `expire_letters` (0x4D6780) for the window.
+- The viewer's mailbox (`src/app/main.cpp`, `MailUi`): the window's four
+  tabs, the list of `letter_rows`/`letter_row`, the letter of
+  `compose_letter` (with `letter_viewed`) or the chronicle of
+  `compose_chronicle` (with `chronicle_viewed`) laid out from
+  `letter_paragraphs`; picking a letter queues 0x6E, Square 0x6F, as the
+  game's window. The new letter's line, `letter_notice`.
 - The oracle runs 0x4D6530 only from the connected calls (`MAIL_CALLS` in
   `tools/oracle/town_oracle.py`) and records the buffers as region `LB`
   ([oracle.md](../oracle.md), «The mailbox: sending letters»); scenarios in

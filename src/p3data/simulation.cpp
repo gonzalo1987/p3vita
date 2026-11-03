@@ -3,6 +3,7 @@
 
 #include <cstring>
 
+#include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/town_tick/votes.hpp"
 
@@ -170,6 +171,12 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x8E:  // Un asedio: el ejército sitiador (0x536A67, 0x633AF0).
 		tick::fn_536a67(save, operation);
+		break;
+	case 0x6E:  // The player has read a letter (0x536AC7 → 0x4D69D0): {0x6E, merchant, entry}.
+		mark_letter_read(save, fields[1], uint32_t(fields[2]));
+		break;
+	case 0x6F:  // The player deletes a letter (0x536AE1 → 0x4D6A50): {0x6F, merchant, entry}.
+		delete_letter(save, fields[1], uint32_t(fields[2]));
 		break;
 	case 0x65:  // An AI merchant goes bankrupt (0x53DD70, 0x4F5D80).
 		tick::fn_53dd70(save, operation);

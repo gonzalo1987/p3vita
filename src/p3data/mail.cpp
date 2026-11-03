@@ -9,6 +9,10 @@
 
 namespace p3::data {
 
+namespace tick::events_towns_detail {
+void fn_4d6780(SaveGame& save, int32_t merchant);  // town_tick/events_towns.cpp
+}
+
 namespace {
 
 // The class of each letter type (0x6C0198). Past 0x87 the table runs into
@@ -106,8 +110,9 @@ uint16_t store(SaveGame& save, const Letter& letter) {
 // (*0x6E51AC). In a network game it marks the letters of the other human
 // players with 0x40 in the month (for the network); for the local player,
 // when no battle window is open, the sound and the line «Official writing:
-// %s»... by the merchant's [+0x26]. Nothing of it is reproduced: p3vita is
-// not a network game, and the viewer finds the unread letters itself.
+// %s»... by the merchant's [+0x26]. p3vita is not a network game: the entry
+// of a letter stored for the local player goes to SaveGame::new_player_letters,
+// and the viewer gives the notice (letters.hpp, letter_notice).
 
 // 0x4D6680 (on the mailbox, with a merchant and the letter): a human merchant
 // ([+0x8] == 0) keeps it if its class lets it through: class 1 with the
@@ -147,6 +152,9 @@ void store_for(SaveGame& save, uint32_t merchant, const Letter& letter) {
 	const uint16_t index = store(save, letter);
 	save.mail[index].u16(6) = m.u16(0xA);
 	m.u16(0xA) = index;
+	if (int32_t(merchant) == save.player) {
+		save.new_player_letters.push_back(index);  // The interface's notice (0x4D7B10, above).
+	}
 }
 
 }  // namespace
@@ -229,6 +237,57 @@ bool has_rank_letter(const SaveGame& save, uint32_t index, uint32_t rank) {
 		index = e.u16(6);
 	}
 	return false;
+}
+
+void mark_letter_read(SaveGame& save, int32_t merchant, uint32_t entry) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t count = g.u16(kMailCount);
+	if (entry >= count || merchant < 0 || merchant >= int32_t(g.u16(global::kWorldMerchantCount)) ||
+		size_t(merchant) >= save.merchants.size()) {
+		return;
+	}
+	// The game follows the chain for at most `count` steps.
+	uint32_t i = save.merchants[size_t(merchant)].memory.u16(0xA);
+	for (uint32_t left = count; i < count && i < save.mail.size() && left > 0; --left) {
+		if (i == entry) {
+			save.mail[i].u8(1) &= 0x7F;
+			return;
+		}
+		i = save.mail[i].u16(6);
+	}
+}
+
+void delete_letter(SaveGame& save, int32_t merchant, uint32_t entry) {
+	GlobalMemory& g = save.globals;
+	const uint32_t count = g.u16(kMailCount);
+	if (entry >= count || merchant >= int32_t(g.u16(global::kWorldMerchantCount)) ||
+		(merchant >= 0 && size_t(merchant) >= save.merchants.size())) {
+		return;
+	}
+	// The link to follow: the chronicle's head for a negative merchant, else
+	// the merchant's [+0xA]. The game follows the chain without a limit.
+	uint16_t* link = merchant < 0 ? &g.u16(kMailChronicle) : &save.merchants[size_t(merchant)].memory.u16(0xA);
+	for (size_t steps = 0; *link < count && *link < save.mail.size() && steps <= save.mail.size(); ++steps) {
+		if (*link == entry) {
+			GameMemory<0x10>& e = save.mail[entry];
+			*link = e.u16(6);
+			e.u16(6) = g.u16(kMailFree);
+			g.u16(kMailFree) = uint16_t(entry);
+			release_letter(save, entry);
+			return;
+		}
+		link = &save.mail[*link].u16(6);
+	}
+}
+
+void expire_letters(SaveGame& save, int32_t merchant) {
+	tick::events_towns_detail::fn_4d6780(save, merchant);
+}
+
+std::vector<uint16_t> take_new_letters(SaveGame& save) {
+	std::vector<uint16_t> letters;
+	letters.swap(save.new_player_letters);
+	return letters;
 }
 
 void release_letter(SaveGame& save, size_t index) {

@@ -55,6 +55,29 @@ void send_letter(SaveGame& save, int32_t merchant, const Letter& letter);
 // [+0xA]) has a letter 0x5F with u16 [+0xA] equal to `rank`.
 bool has_rank_letter(const SaveGame& save, uint32_t index, uint32_t rank);
 
+// 0x4D69D0 (on the mailbox; operation 0x6E, which the letter window queues
+// when the player picks a letter): clears the «unread» bit 0x80 of entry
+// `entry`'s month if it is in the chain of `merchant` (a merchant's index;
+// nothing for a negative one, an entry past the mailbox or one not in it).
+void mark_letter_read(SaveGame& save, int32_t merchant, uint32_t entry);
+
+// 0x4D6A50 (on the mailbox; operation 0x6F from the letter window, event
+// 0x13, operation 0x75): takes entry `entry` out of the chain of `merchant`
+// (a negative one: the chronicle), puts it at the head of the free list and
+// releases it (0x51AAB0). Nothing if it isn't there.
+void delete_letter(SaveGame& save, int32_t merchant, uint32_t entry);
+
+// 0x4D6780 (on the mailbox): removes a merchant's letters kept longer than
+// their class's setting allows (town_tick/events_towns.cpp, fn_4d6780). The
+// letter window calls it for the local player each time it fills its list
+// (0x47C520), the game's save for every merchant.
+void expire_letters(SaveGame& save, int32_t merchant);
+
+// The local player's (save.player) new letters, as 0x4D6680 stores them:
+// their entries, oldest first, for the viewer's notice (the game's 0x4D7B10,
+// «Official writing: %s»...: see letters.hpp, letter_notice). Emptied.
+std::vector<uint16_t> take_new_letters(SaveGame& save);
+
 // 0x51AAB0 on entry `index`: frees its buffer and record and empties it (day
 // and month 0, year 0xFFFF, type 0xFF, [+0x5] 0, payload 0; the link stays).
 void release_letter(SaveGame& save, size_t index);

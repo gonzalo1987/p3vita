@@ -261,6 +261,15 @@ void put_u32(std::vector<uint8_t>& out, uint32_t v) {
 
 }  // namespace
 
+void append_cp1252(std::string& out, uint8_t c) {
+	if (c >= 0x80 && c < 0xA0) {
+		const uint16_t u = kCp1252[c - 0x80];
+		append_utf8(out, u ? u : '?');
+	} else {
+		append_utf8(out, c);
+	}
+}
+
 std::string clean_game_text(const std::string& raw) {
 	std::string out;
 	for (size_t i = 0; i < raw.size(); ++i) {
@@ -287,12 +296,7 @@ std::string clean_game_text(const std::string& raw) {
 			out += '\\';
 			continue;
 		}
-		if (c >= 0x80 && c < 0xA0) {
-			const uint16_t u = kCp1252[c - 0x80];
-			append_utf8(out, u ? u : '?');
-		} else {
-			append_utf8(out, c);
-		}
+		append_cp1252(out, c);
 	}
 	const size_t first = out.find_first_not_of(' ');
 	const size_t last = out.find_last_not_of(' ');

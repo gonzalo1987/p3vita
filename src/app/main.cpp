@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <map>
 #include <memory>
@@ -25,6 +26,8 @@
 #include "p3data/game_texts.hpp"
 #include "p3data/hanse_tasks.hpp"
 #include "p3data/image.hpp"
+#include "p3data/letters.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/navigation.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/sailing.hpp"
@@ -224,8 +227,10 @@ std::unique_ptr<GameTexts> load_game_texts(const char* exe, const char* cpr, con
 #define BTN_SQUARE "\x03"
 #define BTN_TRIANGLE "\x04"
 
-bool button_byte(char c) {
-	return c >= 1 && c <= 4;
+// The bytes TextRenderer draws as a symbol: the buttons above and the signs
+// of the game's letters (letters.hpp: kLetterCoin, kLetterBarrel, kLetterLoad).
+bool symbol_byte(char c) {
+	return c >= 1 && c <= 7;
 }
 
 // The Vita's rear touchpad (an indirect touch device; the screen is direct) is
@@ -251,17 +256,17 @@ public:
 
 	~TextRenderer() { SDL_DestroyTexture(texture_); }
 
-	// The width of the text, the buttons' symbols included.
+	// The width of the text, the symbols included.
 	int measure(const std::string& text) const {
 		int width = 0;
 		size_t start = 0;
 		for (size_t i = 0; i <= text.size(); ++i) {
-			if (i == text.size() || button_byte(text[i])) {
+			if (i == text.size() || symbol_byte(text[i])) {
 				if (i > start) {
 					width += font_->measure(text.substr(start, i - start));
 				}
 				if (i < text.size()) {
-					width += button_width();
+					width += symbol_width(text[i]);
 				}
 				start = i + 1;
 			}
@@ -274,7 +279,7 @@ public:
 		SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
 		size_t start = 0;
 		for (size_t i = 0; i <= text.size(); ++i) {
-			if (i < text.size() && !button_byte(text[i])) {
+			if (i < text.size() && !symbol_byte(text[i])) {
 				continue;
 			}
 			if (i > start) {
@@ -287,22 +292,24 @@ public:
 				x += font_->measure(part);
 			}
 			if (i < text.size()) {
-				draw_button_symbol(text[i], x, y);
-				x += button_width();
+				draw_symbol(text[i], x, y);
+				x += symbol_width(text[i]);
 			}
 			start = i + 1;
 		}
 	}
 
 private:
-	int button_width() const { return font_->line_height() + 2; }
+	// A button's symbol is about as wide as the line is high; a letter's sign, narrower.
+	int symbol_width(char c) const { return c <= 4 ? font_->line_height() + 2 : font_->line_height() * 2 / 3 + 2; }
 
-	// The symbol in a square of about the text's height, in the PlayStation's
-	// colours, its lines two pixels thick.
-	void draw_button_symbol(char c, int x, int y) {
+	// The symbol in a square of about the text's height: the buttons in the
+	// PlayStation's colours, their lines two pixels thick; the letters' coin
+	// (a gold disc), barrel and load (a sack), small and filled.
+	void draw_symbol(char c, int x, int y) {
 		const int h = font_->line_height();
 		const int size = h * 3 / 5;
-		const int left = x + (button_width() - size) / 2;
+		const int left = x + (symbol_width(c) - size) / 2;
 		const int top = y + (h - size) / 2;
 		const int right = left + size - 1;
 		const int bottom = top + size - 1;
@@ -311,6 +318,10 @@ private:
 			SDL_RenderDrawLine(renderer_, x1, y1, x2, y2);
 			SDL_RenderDrawLine(renderer_, x1 + 1, y1, x2 + 1, y2);
 		};
+		if (c >= 5) {
+			draw_sign(c, left, top, size);
+			return;
+		}
 		switch (c) {
 		case 1:  // Cross, blue.
 			SDL_SetRenderDrawColor(renderer_, 124, 178, 232, 255);
@@ -348,6 +359,42 @@ private:
 			line(left, bottom, right, bottom);
 			SDL_RenderDrawLine(renderer_, left, bottom - 1, right, bottom - 1);
 			break;
+		}
+	}
+
+	// The game draws \C, \B and \L of its texts as small pictures.
+	void draw_sign(char c, int left, int top, int size) {
+		if (c == 5) {  // The coin: a gold disc with a darker rim.
+			const float r = size / 2.0f;
+			const float cx = left + r - 0.5f;
+			for (int k = 0; k < size; ++k) {
+				const float dy = float(k) - r + 0.5f;
+				const int half = int(std::lround(std::sqrt(std::max(0.0f, r * r - dy * dy))));
+				SDL_SetRenderDrawColor(renderer_, 236, 190, 60, 255);
+				SDL_RenderDrawLine(renderer_, int(cx) - half + 1, top + k, int(cx) + half - 1, top + k);
+				SDL_SetRenderDrawColor(renderer_, 150, 105, 25, 255);
+				SDL_RenderDrawPoint(renderer_, int(cx) - half, top + k);
+				SDL_RenderDrawPoint(renderer_, int(cx) + half, top + k);
+			}
+			return;
+		}
+		const int w = size * 3 / 4;
+		const SDL_Rect body = {left + (size - w) / 2, top, w, size};
+		if (c == 6) {  // A barrel: brown staves and two dark hoops.
+			SDL_SetRenderDrawColor(renderer_, 160, 105, 55, 255);
+			SDL_RenderFillRect(renderer_, &body);
+			SDL_SetRenderDrawColor(renderer_, 70, 45, 25, 255);
+			SDL_RenderDrawRect(renderer_, &body);
+			SDL_RenderDrawLine(renderer_, body.x, top + size / 3, body.x + w - 1, top + size / 3);
+			SDL_RenderDrawLine(renderer_, body.x, top + size * 2 / 3, body.x + w - 1, top + size * 2 / 3);
+		} else {  // A load: a pale sack tied at the top.
+			const SDL_Rect sack = {body.x, top + size / 4, w, size - size / 4};
+			SDL_SetRenderDrawColor(renderer_, 205, 185, 140, 255);
+			SDL_RenderFillRect(renderer_, &sack);
+			SDL_SetRenderDrawColor(renderer_, 110, 90, 60, 255);
+			SDL_RenderDrawRect(renderer_, &sack);
+			SDL_RenderDrawLine(renderer_, body.x + w / 2, top, body.x + w / 2, top + size / 4);
+			SDL_RenderDrawLine(renderer_, body.x + w / 4, top + size / 4, body.x + w * 3 / 4, top + size / 4);
 		}
 	}
 
@@ -1735,6 +1782,285 @@ void draw_message_window(SDL_Renderer* renderer, TextRenderer& title, TextRender
 	text.draw(hint, box.x + (width - text.measure(hint)) / 2, box.y + height - 8 - text.line_height(), kDimColor);
 }
 
+void draw_panel_box(SDL_Renderer* renderer, const SDL_Rect& box, Uint8 alpha = 235) {
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 30, 22, 14, alpha);
+	SDL_RenderFillRect(renderer, &box);
+	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+	SDL_RenderDrawRect(renderer, &box);
+}
+
+// The mailbox (Circle in a town or on the sea map, or the menu): the game's
+// letter window (0x47C520, 0x47D570, 0x47F3B0) with its four tabs: 0 the
+// chronicle («Public news», 0x47DD40), 1..3 the letters of each class. The
+// list on the left, the letter on the right. Picking a letter marks it read
+// (operation 0x6E) and Square deletes it (0x6F); the executor runs them after
+// the next tick, as in the game, so the screen hides a letter whose deletion
+// is queued and shows as read one whose reading is.
+struct MailUi {
+	bool open = false;
+	int tab = 1;
+	int row = 0;  // The selected row of the list.
+	int first = 0;  // The first row shown.
+	int scroll = 0;  // The text's, in pixels.
+	uint16_t selected = 0xFFFF;  // The entry of the selected row (the rows move when a letter comes).
+	uint16_t shown = 0xFFFF;  // The entry whose text is in `lines`.
+	int shown_tab = -1;
+	std::vector<std::pair<LetterParagraph::Align, std::string>> lines;  // Wrapped, UTF-8 (kOrnament: a picture).
+	bool stale = true;  // `lines` to be made again (another letter, language or font).
+	uint16_t chronicle_head = 0xFFFF;  // The chronicle's newest news when it was made.
+};
+
+// A line of the mailbox that is one of the game's pictures (the chronicle's
+// ornament between two news): drawn as a short rule.
+constexpr char kOrnament = '\x1E';
+
+// Where everything goes, shared by the drawing and the touch screen.
+struct MailLayout {
+	static constexpr int kPadding = 8;
+	static constexpr int kListWidth = 360;
+	SDL_Rect panel{};
+	std::array<SDL_Rect, 4> tabs{};
+	SDL_Rect list{};
+	int row_height = 0;
+	int rows = 0;  // Rows in a page.
+	SDL_Rect text{};  // The letter (the whole width in the chronicle).
+	SDL_Rect delete_button{};
+	SDL_Rect close_button{};
+
+	MailLayout(int line_height, bool chronicle) {
+		panel = {kPadding, kBarHeight + 4, kScreenWidth - 2 * kPadding, kScreenHeight - kBarHeight - 12};
+		const int tab_height = line_height + 10;
+		const int tab_width = (panel.w - 5 * kPadding) / 4;
+		for (int k = 0; k < 4; ++k) {
+			tabs[size_t(k)] = {panel.x + kPadding + k * (tab_width + kPadding), panel.y + kPadding, tab_width, tab_height};
+		}
+		const int top = panel.y + kPadding + tab_height + 6;
+		const int button_height = line_height + 10;
+		const int bottom = panel.y + panel.h - kPadding;
+		const int buttons_y = bottom - button_height;
+		row_height = 2 * line_height + 6;
+		list = {panel.x + kPadding, top, kListWidth, buttons_y - 6 - top};
+		rows = std::max(1, list.h / row_height);
+		const int button_width = (kListWidth - kPadding) / 2;
+		delete_button = {list.x, buttons_y, button_width, button_height};
+		close_button = {list.x + button_width + kPadding, buttons_y, kListWidth - button_width - kPadding, button_height};
+		const int text_x = chronicle ? panel.x + kPadding : list.x + kListWidth + 12;
+		text = {text_x, top, panel.x + panel.w - kPadding - text_x, bottom - top};
+		if (chronicle) {
+			text.h = buttons_y - 6 - top;
+			close_button.x = panel.x + panel.w - kPadding - close_button.w;
+		}
+	}
+
+	int row_at(int x, int y) const {
+		if (!inside(list, x, y)) {
+			return -1;
+		}
+		const int row = (y - list.y) / row_height;
+		return row < rows ? row : -1;
+	}
+	int tab_at(int x, int y) const {
+		for (int k = 0; k < 4; ++k) {
+			if (inside(tabs[size_t(k)], x, y)) {
+				return k;
+			}
+		}
+		return -1;
+	}
+};
+
+// A paragraph of a letter (letter_paragraphs) in lines that fit in `width`
+// pixels: at the spaces, or inside a word at one of its soft hyphens, with a
+// '-', as the game's text box does; the soft hyphens taken out. An empty
+// paragraph is an empty line.
+std::vector<std::string> wrap_letter(const TextRenderer& text, const std::string& s, int width) {
+	auto plain = [](std::string w) {
+		w.erase(std::remove(w.begin(), w.end(), kLetterSoftHyphen), w.end());
+		return w;
+	};
+	std::vector<std::string> lines;
+	std::string line;
+	bool empty_line = true;  // No word on `line` yet.
+	size_t pos = 0;
+	while (pos <= s.size()) {
+		size_t next = s.find(' ', pos);
+		if (next == std::string::npos) {
+			next = s.size();
+		}
+		std::string word = s.substr(pos, next - pos);
+		pos = next + 1;
+		while (true) {
+			const std::string joined = empty_line ? plain(word) : line + " " + plain(word);
+			if (text.measure(joined) <= width) {
+				line = joined;
+				empty_line = false;
+				break;
+			}
+			// The longest start of the word up to a soft hyphen that fits with its '-'.
+			size_t cut = std::string::npos;
+			for (size_t k = word.find(kLetterSoftHyphen); k != std::string::npos;
+				 k = word.find(kLetterSoftHyphen, k + 1)) {
+				const std::string head = plain(word.substr(0, k)) + "-";
+				if (text.measure(empty_line ? head : line + " " + head) <= width) {
+					cut = k;
+				}
+			}
+			if (cut != std::string::npos) {
+				lines.push_back((empty_line ? "" : line + " ") + plain(word.substr(0, cut)) + "-");
+				word = word.substr(cut + 1);
+			} else if (!empty_line) {
+				lines.push_back(line);
+			} else {
+				line = plain(word);  // Too long for a line: as it is.
+				empty_line = false;
+				break;
+			}
+			line.clear();
+			empty_line = true;
+		}
+	}
+	lines.push_back(line);
+	return lines;
+}
+
+// The tab's name, from the game. The Spanish exe repeats «Notificaciones
+// oficiales» for the chronicle's tab (a bug of its text, fixed with
+// fix_game_bugs()).
+std::string mail_tab_name(int tab) {
+	if (!g_texts) {
+		static const char* const kSpanish[4] = {"Noticias públicas", "Escritos oficiales", "Cartas personales",
+			"Información comercial"};
+		static const char* const kEnglish[4] = {"Public news", "Official letters", "Personal letters", "Trade information"};
+		return tr(kSpanish[tab], kEnglish[tab]);
+	}
+	if (tab == 0 && fix_game_bugs() && letter_tab_name(*g_texts, 0) == letter_tab_name(*g_texts, 1)) {
+		return tr("Noticias públicas", "Public news");
+	}
+	return clean_game_text(letter_tab_name(*g_texts, uint8_t(tab)));
+}
+
+// Whether the operation `op` for the player's letter `entry` is still in the queue.
+bool queued_letter_operation(const SaveGame& save, uint32_t op, uint16_t entry) {
+	for (const std::vector<uint8_t>& q : save.queued_operations) {
+		uint32_t f[3] = {};
+		std::memcpy(f, q.data(), std::min(q.size(), sizeof(f)));
+		if (f[0] == op && int32_t(f[1]) == save.player && f[2] == entry) {
+			return true;
+		}
+	}
+	return false;
+}
+
+OperationBytes letter_operation(uint32_t op, int32_t merchant, uint16_t entry) {
+	OperationBytes bytes{};
+	const uint32_t f[3] = {op, uint32_t(merchant), entry};
+	std::memcpy(bytes.data(), f, sizeof(f));
+	return bytes;
+}
+
+// The rows of a tab of letters: those whose deletion isn't queued.
+std::vector<uint16_t> mail_rows(const SaveGame& save, int tab) {
+	std::vector<uint16_t> rows = letter_rows(save, uint8_t(tab));
+	rows.erase(std::remove_if(rows.begin(), rows.end(),
+				   [&](uint16_t e) { return queued_letter_operation(save, 0x6F, e); }),
+		rows.end());
+	return rows;
+}
+
+void draw_mailbox(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, const MailUi& ui,
+	const std::vector<uint16_t>& rows) {
+	const bool chronicle = ui.tab == 0;
+	const MailLayout layout(text.line_height(), chronicle);
+	draw_panel_box(renderer, layout.panel, 250);
+	for (int k = 0; k < 4; ++k) {
+		const SDL_Rect& r = layout.tabs[size_t(k)];
+		SDL_SetRenderDrawColor(renderer, k == ui.tab ? 120 : 55, k == ui.tab ? 90 : 42, k == ui.tab ? 45 : 26, 230);
+		SDL_RenderFillRect(renderer, &r);
+		SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+		SDL_RenderDrawRect(renderer, &r);
+		const std::string name = mail_tab_name(k);
+		text.draw(name, r.x + (r.w - text.measure(name)) / 2, r.y + 5, k == ui.tab ? kTextColor : kDimColor);
+	}
+	if (!chronicle) {
+		if (rows.empty()) {
+			text.draw(tr("No hay cartas.", "No letters."), layout.list.x + 4, layout.list.y + 4, kDimColor);
+		}
+		for (int i = 0; i < layout.rows && ui.first + i < int(rows.size()); ++i) {
+			const int index = ui.first + i;
+			const uint16_t entry = rows[size_t(index)];
+			const int y = layout.list.y + i * layout.row_height;
+			if (index == ui.row) {
+				const SDL_Rect selected = {layout.list.x - 2, y, layout.list.w + 4, layout.row_height - 4};
+				SDL_SetRenderDrawColor(renderer, 120, 90, 45, 160);
+				SDL_RenderFillRect(renderer, &selected);
+			}
+			const LetterRow row = g_texts ? letter_row(save, *g_texts, entry) : LetterRow();
+			const bool unread = (save.mail[entry].u8(1) & 0x80) && !queued_letter_operation(save, 0x6E, entry);
+			// The unread ones in another colour, as the game (0x47D8E0): bright, the read ones dimmer.
+			const SDL_Color title_color = unread ? SDL_Color{255, 214, 120, 255} : kDimColor;
+			std::string title = clean_game_text(row.title);
+			while (!title.empty() && text.measure(title) > layout.list.w - 8) {
+				title.pop_back();
+				while (!title.empty() && (uint8_t(title.back()) & 0xC0) == 0x80) {
+					title.pop_back();  // Never half a UTF-8 character.
+				}
+			}
+			text.draw(title, layout.list.x + 4, y + 2, title_color);
+			const std::string detail = row.date + "  " + clean_game_text(row.town);
+			text.draw(detail, layout.list.x + 12, y + 2 + text.line_height(), unread ? kTextColor : SDL_Color{150, 140, 120, 255});
+			if (unread) {
+				const SDL_Rect dot = {layout.list.x + layout.list.w - 10, y + 8, 6, 6};
+				SDL_SetRenderDrawColor(renderer, 255, 214, 120, 255);
+				SDL_RenderFillRect(renderer, &dot);
+			}
+		}
+		if (int(rows.size()) > layout.rows) {
+			const int pages = (int(rows.size()) + layout.rows - 1) / layout.rows;
+			const std::string page = std::to_string(ui.first / layout.rows + 1) + "/" + std::to_string(pages);
+			text.draw(page, layout.list.x + layout.list.w - text.measure(page), layout.delete_button.y - text.line_height() - 4,
+				kDimColor);
+		}
+		draw_button(renderer, text, layout.delete_button, tr(BTN_SQUARE " Borrar", BTN_SQUARE " Delete"));
+	}
+	draw_button(renderer, text, layout.close_button, tr(BTN_CIRCLE " Cerrar", BTN_CIRCLE " Close"));
+	// The letter (or the chronicle), clipped to its box and scrolled.
+	SDL_Rect clip = layout.text;
+	SDL_RenderSetClipRect(renderer, &clip);
+	int y = layout.text.y + 2 - ui.scroll;
+	for (const auto& [align, line] : ui.lines) {
+		if (line.size() == 1 && line[0] == kOrnament) {
+			// The ornament: a rule with a diamond in the middle.
+			const int cx = layout.text.x + layout.text.w / 2;
+			const int cy = y + text.line_height() / 2;
+			SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+			SDL_RenderDrawLine(renderer, cx - 90, cy, cx - 8, cy);
+			SDL_RenderDrawLine(renderer, cx + 8, cy, cx + 90, cy);
+			for (int k = 0; k <= 4; ++k) {
+				SDL_RenderDrawLine(renderer, cx - 4 + k, cy - k, cx + 4 - k, cy - k);
+				SDL_RenderDrawLine(renderer, cx - 4 + k, cy + k, cx + 4 - k, cy + k);
+			}
+		} else if (y + text.line_height() >= layout.text.y && y < layout.text.y + layout.text.h) {
+			const int w = text.measure(line);
+			const int x = align == LetterParagraph::Right ? layout.text.x + layout.text.w - 4 - w
+				: align == LetterParagraph::Center ? layout.text.x + (layout.text.w - w) / 2
+				: layout.text.x + 4;
+			text.draw(line, x, y, kTextColor);
+		}
+		y += text.line_height();
+	}
+	SDL_RenderSetClipRect(renderer, nullptr);
+	const int height = int(ui.lines.size()) * text.line_height() + 4;
+	if (height > layout.text.h) {
+		// Where in the text: a thin bar on the right.
+		const int bar = std::max(20, layout.text.h * layout.text.h / height);
+		const int at = layout.text.y + (layout.text.h - bar) * ui.scroll / std::max(1, height - layout.text.h);
+		const SDL_Rect thumb = {layout.text.x + layout.text.w - 3, at, 3, bar};
+		SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+		SDL_RenderFillRect(renderer, &thumb);
+	}
+}
+
 int stick_speed(Sint16 value) {
 	if (std::abs(value) < kStickDeadZone) {
 		return 0;
@@ -1766,7 +2092,7 @@ struct MenuUi {
 };
 
 // The rows of the main screen, in order.
-enum MainRow { kRowContinue, kRowSave, kRowLoad, kRowOptions, kRowQuit, kMainRows };
+enum MainRow { kRowContinue, kRowMailbox, kRowSave, kRowLoad, kRowOptions, kRowQuit, kMainRows };
 enum OptionRow { kRowFixGameBugs, kRowLanguage, kOptionRows };
 
 int menu_rows(MenuScreen screen) {
@@ -1868,14 +2194,6 @@ std::array<std::string, 2> menu_question(const MenuUi& menu, const std::vector<s
 	}
 }
 
-void draw_panel_box(SDL_Renderer* renderer, const SDL_Rect& box, Uint8 alpha = 235) {
-	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(renderer, 30, 22, 14, alpha);
-	SDL_RenderFillRect(renderer, &box);
-	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
-	SDL_RenderDrawRect(renderer, &box);
-}
-
 void draw_menu(SDL_Renderer* renderer, TextRenderer& text, const MenuUi& menu, const p3::app::AppSettings& settings,
 	const std::vector<std::string>& town_names) {
 	const MenuLayout layout(text.line_height(), menu.screen);
@@ -1902,13 +2220,15 @@ void draw_menu(SDL_Renderer* renderer, TextRenderer& text, const MenuUi& menu, c
 		std::string detail;
 		switch (menu.screen) {
 		case MenuScreen::Main: {
-			static const GameText kTexts[kMainRows] = {GameText::ButtonContinue, GameText::MenuSaveGame,
+			static const GameText kTexts[kMainRows] = {GameText::ButtonContinue, GameText::Count, GameText::MenuSaveGame,
 				GameText::MenuLoadGame, GameText::MenuOptions, GameText::QuitGame};
-			static const char* const kFallbacks[kMainRows] = {"Continuar", "Guardar partida", "Cargar partida",
+			static const char* const kFallbacks[kMainRows] = {"Continuar", "Buzón", "Guardar partida", "Cargar partida",
 				"Opciones", "Salir del juego"};
-			static const char* const kEnglishFallbacks[kMainRows] = {"Continue", "Save game", "Load game", "Options",
+			static const char* const kEnglishFallbacks[kMainRows] = {"Continue", "Mailbox", "Save game", "Load game", "Options",
 				"Quit"};
-			label = game_text(kTexts[i], tr(kFallbacks[i], kEnglishFallbacks[i]));
+			// The mailbox is the viewer's own entry (the game opens it from its panel).
+			label = kTexts[i] == GameText::Count ? tr(kFallbacks[i], kEnglishFallbacks[i])
+												 : game_text(kTexts[i], tr(kFallbacks[i], kEnglishFallbacks[i]));
 			break;
 		}
 		case MenuScreen::Save:
@@ -2198,13 +2518,21 @@ int main(int argc, char** argv) {
 	size_t fleet_index = 0;  // Barco del jugador al que se dan las órdenes en el mapa del mar.
 	int game_speed = kNormalSpeed;
 	Uint32 clock = app_ticks();  // Hasta dónde se ha convertido el tiempo real en ticks.
-	// Aviso que se ve unos segundos bajo la barra superior.
-	std::string notice;
-	Uint32 notice_until = 0;
+	// The notices under the top bar, each for a few seconds: the viewer's own
+	// (an order, a ship that arrives) and the game's lines (a new letter); the
+	// last kNotices, the newest at the bottom.
+	constexpr size_t kNotices = 4;
+	std::deque<std::pair<std::string, Uint32>> notices;
 	auto notify = [&](const std::string& message) {
-		notice = message;
-		notice_until = app_ticks() + kMessageTime;
+		if (!notices.empty() && notices.back().first == message) {
+			notices.pop_back();  // The same again: only once, for longer.
+		}
+		notices.emplace_back(message, app_ticks() + kMessageTime);
+		while (notices.size() > kNotices) {
+			notices.pop_front();
+		}
 	};
+	MailUi mail;  // The mailbox.
 	auto fleet_ship = [&]() -> int {
 		const std::vector<int> fleet = player_fleet(save);
 		return fleet.empty() ? -1 : fleet[fleet_index % fleet.size()];
@@ -2310,7 +2638,8 @@ int main(int argc, char** argv) {
 		reload = true;
 		keep_camera = false;
 		clock = app_ticks();
-		notice.clear();
+		notices.clear();
+		mail = MailUi();
 		return true;
 	};
 	// Options: another language. The archive (with or without the Spanish
@@ -2359,7 +2688,31 @@ int main(int argc, char** argv) {
 		live = LiveTown();
 		reload = true;
 		keep_camera = true;
+		mail.stale = true;  // The letter again, in the new language.
 		return true;
+	};
+	// The mailbox opens (as 0x47C520 fills its list: the player's old letters
+	// go first) on the tab it had, at its first row.
+	auto open_mailbox = [&]() {
+		if (!has_save || save.player < 0 || !small_text) {
+			return;
+		}
+		expire_letters(save, save.player);
+		mail.open = true;
+		mail.row = 0;
+		mail.selected = 0xFFFF;
+		mail.first = 0;
+		mail.stale = true;
+		market.open = false;
+		hanse.open = false;
+	};
+	auto mail_tab = [&](int tab) {
+		expire_letters(save, save.player);
+		mail.tab = (tab + 4) % 4;
+		mail.row = 0;
+		mail.selected = 0xFFFF;
+		mail.first = 0;
+		mail.stale = true;
 	};
 	auto open_menu = [&](MenuScreen screen, int row) {
 		menu.screen = screen;
@@ -2406,6 +2759,11 @@ int main(int argc, char** argv) {
 		case MenuScreen::Main:
 			if (menu.row == kRowContinue) {
 				menu.screen = MenuScreen::Closed;
+			} else if (menu.row == kRowMailbox) {
+				if (has_save && save.player >= 0) {
+					menu.screen = MenuScreen::Closed;
+					open_mailbox();
+				}
 			} else if (menu.row == kRowSave) {
 				if (has_save && save.player >= 0) {
 					open_menu(MenuScreen::Save, 0);
@@ -2513,6 +2871,70 @@ int main(int argc, char** argv) {
 		const bool in_hanse = hanse.open && !trading && selection.mode == Mode::Saved && save.player >= 0 && small_text;
 		const HanseView hanse_now = in_hanse ? hanse_view(save, town_index, hanse.page) : HanseView();
 		const bool in_menu = menu.open() && small_text;
+		// The mailbox, over the town or the sea map.
+		const bool in_mail = mail.open && has_save && save.player >= 0 && small_text &&
+			(selection.mode == Mode::Saved || selection.mode == Mode::Sea);
+		const MailLayout mail_layout(small_text ? small_text->line_height() : 20, mail.tab == 0);
+		const std::vector<uint16_t> mail_list = in_mail && mail.tab != 0 ? mail_rows(save, mail.tab) : std::vector<uint16_t>();
+		auto mail_select = [&](int row) {
+			if (mail_list.empty()) {
+				return;
+			}
+			mail.row = std::clamp(row, 0, int(mail_list.size()) - 1);
+			mail.selected = mail_list[size_t(mail.row)];
+		};
+		auto mail_scroll = [&](int pixels) { mail.scroll += pixels; };  // Kept in range when drawn.
+		// Square: delete the letter shown (operation 0x6F, as the game's window).
+		auto mail_delete = [&]() {
+			if (mail.tab != 0 && mail.row < int(mail_list.size())) {
+				queue_operation(save, letter_operation(0x6F, save.player, mail_list[size_t(mail.row)]));
+				mail.selected = 0xFFFF;  // The same row: the next letter.
+			}
+		};
+		// With the mailbox open every button but Start is its own.
+		auto mail_button = [&](Uint8 button) {
+			const int line = small_text ? small_text->line_height() : 20;
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN: {
+				const int step = button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1;
+				if (mail.tab == 0) {
+					mail_scroll(step * line);
+				} else {
+					mail_select(mail.row + step);
+				}
+				return true;
+			}
+			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: {
+				const int step = button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1;
+				if (mail.tab == 0) {
+					mail_scroll(step * (mail_layout.text.h - line));
+				} else {
+					mail.first = std::max(0, mail.first + step * mail_layout.rows);
+					mail_select(mail.row + step * mail_layout.rows);
+				}
+				return true;
+			}
+			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+				mail_tab(mail.tab + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1));
+				return true;
+			case SDL_CONTROLLER_BUTTON_BACK:  // Select: the next tab.
+				mail_tab(mail.tab + 1);
+				return true;
+			case SDL_CONTROLLER_BUTTON_X:  // Square.
+				mail_delete();
+				return true;
+			case SDL_CONTROLLER_BUTTON_B:  // Circle.
+				mail.open = false;
+				return true;
+			case SDL_CONTROLLER_BUTTON_START:
+				return false;
+			default:
+				return true;
+			}
+		};
 		auto hanse_select = [&](int step) {
 			const int rows = hanse_now.rows(hanse.page);
 			hanse.row = rows > 0 ? (hanse.row + rows + step) % rows : 0;
@@ -2644,6 +3066,13 @@ int main(int argc, char** argv) {
 					}
 				}
 			}
+			// The new letters (0x4D7B10): «Carta personal: Botadura»... as the
+			// game's line, for the classes the player's settings ([+0x26]) want.
+			for (const uint16_t entry : take_new_letters(save)) {
+				if (g_texts && letter_notice_wanted(save, entry)) {
+					notify(clean_game_text(letter_notice(save, *g_texts, entry)));
+				}
+			}
 			// The election of the Alderman (event 0x20): its result. The game also
 			// shows a window and, for the player, the video `eldermann` (pending).
 			const uint32_t election = alderman_election_tick(save);
@@ -2726,6 +3155,9 @@ int main(int argc, char** argv) {
 						break;
 					}
 				}
+				if (in_mail && mail_button(event.cbutton.button)) {
+					break;
+				}
 				if (in_hanse && hanse_button(event.cbutton.button)) {
 					break;
 				}
@@ -2759,8 +3191,12 @@ int main(int argc, char** argv) {
 						open_hanse(true);
 					}
 					break;
-				case SDL_CONTROLLER_BUTTON_B:  // Círculo: cierra el mercado.
-					market.open = false;
+				case SDL_CONTROLLER_BUTTON_B:  // Circle: closes the market; otherwise, in a town or at sea, the mailbox.
+					if (market.open) {
+						market.open = false;
+					} else if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
+						open_mailbox();
+					}
 					break;
 				case SDL_CONTROLLER_BUTTON_BACK:
 					// Select: siguiente barco del puerto, velocidad del juego en el mar o vista de plantilla.
@@ -2823,10 +3259,33 @@ int main(int argc, char** argv) {
 						break;
 					}
 				}
+				if (in_mail) {
+					// Keyboard: the arrows, Page Up/Down, Tab the next tab, Delete or D, B or Escape to close.
+					const SDL_Keycode key = event.key.keysym.sym;
+					const Uint8 button = key == SDLK_UP ? SDL_CONTROLLER_BUTTON_DPAD_UP
+						: key == SDLK_DOWN ? SDL_CONTROLLER_BUTTON_DPAD_DOWN
+						: key == SDLK_LEFT ? SDL_CONTROLLER_BUTTON_DPAD_LEFT
+						: key == SDLK_RIGHT ? SDL_CONTROLLER_BUTTON_DPAD_RIGHT
+						: key == SDLK_PAGEUP ? SDL_CONTROLLER_BUTTON_LEFTSHOULDER
+						: key == SDLK_PAGEDOWN ? SDL_CONTROLLER_BUTTON_RIGHTSHOULDER
+						: key == SDLK_TAB ? SDL_CONTROLLER_BUTTON_BACK
+						: key == SDLK_DELETE || key == SDLK_d ? SDL_CONTROLLER_BUTTON_X
+						: key == SDLK_b || key == SDLK_ESCAPE ? SDL_CONTROLLER_BUTTON_B
+						: SDL_CONTROLLER_BUTTON_INVALID;
+					if (button != Uint8(SDL_CONTROLLER_BUTTON_INVALID)) {
+						mail_button(button);
+					}
+					break;
+				}
 				switch (event.key.keysym.sym) {
 				case SDLK_h:
 					if (selection.mode == Mode::Saved) {
 						open_hanse(true);
+					}
+					break;
+				case SDLK_b:  // The mailbox.
+					if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
+						open_mailbox();
 					}
 					break;
 				case SDLK_PAGEUP:
@@ -2896,7 +3355,8 @@ int main(int argc, char** argv) {
 					(trading && inside(MarketLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
 					(in_hanse && inside(HanseLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
 					(in_menu && (inside(MenuLayout(small_text->line_height(), menu.screen).panel, touch_start.x, touch_start.y) ||
-						menu.ask != MenuAsk::None));
+						menu.ask != MenuAsk::None)) ||
+					(in_mail && inside(mail_layout.panel, touch_start.x, touch_start.y));
 				break;
 			case SDL_FINGERMOTION:
 				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
@@ -2905,11 +3365,30 @@ int main(int argc, char** argv) {
 				if (!touch_on_panel) {
 					camera_x -= int(event.tfinger.dx * kScreenWidth);
 					camera_y -= int(event.tfinger.dy * kScreenHeight);
+				} else if (in_mail && !in_menu && inside(mail_layout.text, touch_start.x, touch_start.y)) {
+					mail_scroll(-int(event.tfinger.dy * kScreenHeight));  // Dragging the letter moves it.
 				}
 				break;
 			case SDL_FINGERUP:
+				if (in_mail && !in_menu && touch_on_panel && touch_moved < kTapDistance) {
+					const int x = touch_start.x;
+					const int y = touch_start.y;
+					const int tab = mail_layout.tab_at(x, y);
+					const int row = mail.tab != 0 ? mail_layout.row_at(x, y) : -1;
+					if (tab >= 0) {
+						mail_tab(tab);
+					} else if (inside(mail_layout.close_button, x, y)) {
+						mail.open = false;
+					} else if (mail.tab != 0 && inside(mail_layout.delete_button, x, y)) {
+						mail_delete();
+					} else if (row >= 0 && mail.first + row < int(mail_list.size())) {
+						mail_select(mail.first + row);
+					}
+					touch_on_panel = false;
+					break;
+				}
 				// En el mapa del mar, tocar una ciudad la elige.
-				if (selection.mode == Mode::Sea && sea && touch_moved < kTapDistance) {
+				if (selection.mode == Mode::Sea && sea && touch_moved < kTapDistance && !(in_mail && touch_on_panel)) {
 					const int town = sea->town_at(save, camera_x + touch_start.x, camera_y + touch_start.y);
 					if (town >= 0) {
 						selection.saved_index = size_t(town);
@@ -3011,15 +3490,19 @@ int main(int argc, char** argv) {
 			return int((controller && SDL_GameControllerGetButton(controller, button)) ||
 				(script && script->held(button)));
 		};
-		if (controller) {
+		if (controller && in_mail) {
+			// In the mailbox both sticks move the letter.
+			mail_scroll(stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY)) +
+				stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY)));
+		} else if (controller) {
 			camera_x += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX));
 			camera_y += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY));
 		}
-		if (!trading && !in_hanse) {
+		if (!trading && !in_hanse && !in_mail) {
 			camera_x += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) - pad(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
 			camera_y += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_DOWN) - pad(SDL_CONTROLLER_BUTTON_DPAD_UP));
 		}
-		if (!trading && !in_hanse) {
+		if (!trading && !in_hanse && !in_mail) {
 			const Uint8* keys = SDL_GetKeyboardState(nullptr);
 			camera_x += kPadSpeed * (keys[SDL_SCANCODE_RIGHT] - keys[SDL_SCANCODE_LEFT]);
 			camera_y += kPadSpeed * (keys[SDL_SCANCODE_DOWN] - keys[SDL_SCANCODE_UP]);
@@ -3047,14 +3530,34 @@ int main(int argc, char** argv) {
 		}
 		if (text) {
 			std::vector<std::string> right_texts;
-			if (trading || in_hanse) {
+			if (in_mail) {
+				right_texts = mail.tab == 0
+					? std::vector<std::string>{tr("L/R: página   Select: pestaña   " BTN_CIRCLE " cerrar",
+												   "L/R: page   Select: tab   " BTN_CIRCLE " close"),
+						  tr("Select: pestaña   " BTN_CIRCLE " cerrar", "Select: tab   " BTN_CIRCLE " close")}
+					: std::vector<std::string>{tr("L/R: página   Select: pestaña   " BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar",
+												   "L/R: page   Select: tab   " BTN_SQUARE " delete   " BTN_CIRCLE " close"),
+						  tr("Select: pestaña   " BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar",
+							  "Select: tab   " BTN_SQUARE " delete   " BTN_CIRCLE " close"),
+						  tr(BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar", BTN_SQUARE " delete   " BTN_CIRCLE " close")};
+			} else if (trading || in_hanse) {
 				const std::string money = format_money(save.merchants[size_t(save.player)].money()) + tr(" monedas", " coins");
 				right_texts = {merchant_name(save, names, save.player) + ": " + money, money};
 			} else if (at_sea) {
-				right_texts = {tr("L/R: ciudad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", "L/R: town   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter"),
+				right_texts = {tr("L/R: ciudad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar   " BTN_CIRCLE " buzón",
+								   "L/R: town   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter   " BTN_CIRCLE " mailbox"),
+					tr(BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar   " BTN_CIRCLE " buzón",
+						BTN_CROSS " set sail   " BTN_TRIANGLE " enter   " BTN_CIRCLE " mailbox"),
+					tr("L/R: ciudad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", "L/R: town   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter"),
 					tr(BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", BTN_CROSS " set sail   " BTN_TRIANGLE " enter")};
 			} else if (selection.mode == Mode::Saved) {
-				right_texts = {tr("L/R: ciudad   " BTN_TRIANGLE " mapa   " BTN_CROSS " mercado   " BTN_SQUARE " Hansa",
+				right_texts = {tr("L/R: ciudad   " BTN_TRIANGLE " mapa   " BTN_CROSS " mercado   " BTN_SQUARE " Hansa   " BTN_CIRCLE " buzón",
+								   "L/R: town   " BTN_TRIANGLE " map   " BTN_CROSS " market   " BTN_SQUARE " Hanse   " BTN_CIRCLE " mailbox"),
+					tr(BTN_TRIANGLE " mapa   " BTN_CROSS " mercado   " BTN_SQUARE " Hansa   " BTN_CIRCLE " buzón",
+						BTN_TRIANGLE " map   " BTN_CROSS " market   " BTN_SQUARE " Hanse   " BTN_CIRCLE " mailbox"),
+					tr(BTN_TRIANGLE " mapa  " BTN_CROSS " mercado  " BTN_SQUARE " Hansa  " BTN_CIRCLE " buzón",
+						BTN_TRIANGLE " map  " BTN_CROSS " market  " BTN_SQUARE " Hanse  " BTN_CIRCLE " mailbox"),
+					tr("L/R: ciudad   " BTN_TRIANGLE " mapa   " BTN_CROSS " mercado   " BTN_SQUARE " Hansa",
 								   "L/R: town   " BTN_TRIANGLE " map   " BTN_CROSS " market   " BTN_SQUARE " Hanse"),
 					tr(BTN_TRIANGLE " mapa   " BTN_CROSS " mercado   " BTN_SQUARE " Hansa", BTN_TRIANGLE " map   " BTN_CROSS " market   " BTN_SQUARE " Hanse"),
 					tr(BTN_TRIANGLE " mapa  " BTN_CROSS " mercado  " BTN_SQUARE " Hansa", BTN_TRIANGLE " map  " BTN_CROSS " market  " BTN_SQUARE " Hanse"),
@@ -3087,16 +3590,92 @@ int main(int argc, char** argv) {
 		if (trading) {
 			draw_market(renderer, *small_text, save, town_index, market);
 		}
-		if (small_text && !notice.empty() && !SDL_TICKS_PASSED(app_ticks(), notice_until)) {
+		if (in_mail && mail.open) {
+			// After this frame's ticks and operations: the rows now, the selected
+			// letter kept by its entry, and its text made once (the game's
+			// composer, which may change the save: letter_viewed) and marked
+			// read (0x6E) when it is shown.
+			const std::vector<uint16_t> rows = mail.tab != 0 ? mail_rows(save, mail.tab) : std::vector<uint16_t>();
+			const MailLayout layout(small_text->line_height(), mail.tab == 0);
+			const auto at = std::find(rows.begin(), rows.end(), mail.selected);
+			mail.row = at != rows.end() ? int(at - rows.begin()) : std::clamp(mail.row, 0, std::max(0, int(rows.size()) - 1));
+			mail.selected = rows.empty() ? 0xFFFF : rows[size_t(mail.row)];
+			mail.first = std::clamp(mail.first, std::max(0, mail.row - layout.rows + 1), mail.row);
+			const uint16_t entry = mail.tab == 0 ? 0xFFFE : mail.selected;
+			// The chronicle again when a news comes (a new head of its list).
+			const uint16_t news = save.globals.u16(kMailChronicle);
+			if (mail.tab == 0 && news != mail.chronicle_head) {
+				mail.stale = true;
+			}
+			if (mail.stale || entry != mail.shown || mail.tab != mail.shown_tab) {
+				if (entry != mail.shown || mail.tab != mail.shown_tab) {
+					mail.scroll = 0;
+				}
+				mail.lines.clear();
+				mail.chronicle_head = news;
+				std::string raw;
+				bool from_game = false;  // The game's text (Windows-1252, codes); else the viewer's (UTF-8).
+				if (!g_texts && (mail.tab == 0 || entry != 0xFFFF)) {
+					raw = tr("Para leer las cartas hace falta el Patrician3.exe del juego en la carpeta de datos.",
+						"The letters need the game's Patrician3.exe in the data folder.");
+				} else if (mail.tab == 0) {
+					raw = compose_chronicle(save, *g_texts);
+					chronicle_viewed(save, *g_texts);
+					from_game = true;
+				} else if (entry == 0xFFFF) {
+					raw.clear();
+				} else if (std::optional<std::string> letter = compose_letter(save, *g_texts, entry)) {
+					raw = *letter;
+					letter_viewed(save, entry);
+					from_game = true;
+				} else {
+					raw = tr("(Esta carta aún no se puede mostrar.)", "(This letter can't be shown yet.)");
+				}
+				for (const LetterParagraph& p : letter_paragraphs(raw)) {
+					if (from_game && p.picture >= 0 && p.text.find_first_not_of(' ') == std::string::npos) {
+						mail.lines.emplace_back(p.align, std::string(1, kOrnament));  // The game's picture.
+						continue;
+					}
+					const std::string& s = from_game ? p.text : raw;  // The viewer's own texts are UTF-8 already.
+					for (const std::string& line : wrap_letter(*small_text, s, layout.text.w - 12)) {
+						mail.lines.emplace_back(p.align, line);
+					}
+					if (!from_game) {
+						break;
+					}
+				}
+				if (entry < save.mail.size() && (save.mail[entry].u8(1) & 0x80) &&
+					!queued_letter_operation(save, 0x6E, entry)) {
+					queue_operation(save, letter_operation(0x6E, save.player, entry));
+				}
+				mail.shown = entry;
+				mail.shown_tab = mail.tab;
+				mail.stale = false;
+			}
+			const int height = int(mail.lines.size()) * small_text->line_height() + 4;
+			mail.scroll = std::clamp(mail.scroll, 0, std::max(0, height - layout.text.h));
+			draw_mailbox(renderer, *small_text, save, mail, rows);
+		}
+		if (small_text) {
+			// The notices still in time, one under another (with the mailbox
+			// open, at the bottom on the right, under its letter).
 			const int padding = 8;
-			const SDL_Rect box = {8, kBarHeight + 6, small_text->measure(notice) + 2 * padding,
-				small_text->line_height() + padding};
-			SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-			SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
-			SDL_RenderFillRect(renderer, &box);
-			SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
-			SDL_RenderDrawRect(renderer, &box);
-			small_text->draw(notice, box.x + padding, box.y + padding / 2, kTextColor);
+			const int box_height = small_text->line_height() + padding;
+			while (!notices.empty() && SDL_TICKS_PASSED(app_ticks(), notices.front().second)) {
+				notices.pop_front();
+			}
+			int y = in_mail && mail.open ? kScreenHeight - 18 - int(notices.size()) * (box_height + 2) : kBarHeight + 6;
+			for (const auto& [line, until] : notices) {
+				const int width = small_text->measure(line) + 2 * padding;
+				const SDL_Rect box = {in_mail && mail.open ? kScreenWidth - 18 - width : 8, y, width, box_height};
+				SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+				SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
+				SDL_RenderFillRect(renderer, &box);
+				SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+				SDL_RenderDrawRect(renderer, &box);
+				small_text->draw(line, box.x + padding, box.y + padding / 2, kTextColor);
+				y += box.h + 2;
+			}
 		}
 		if (messages.open && text && small_text) {
 			draw_message_window(renderer, *text, *small_text, messages);

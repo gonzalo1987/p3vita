@@ -7,6 +7,7 @@
 // each known build (the address of its pointer), never the texts.
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -261,5 +262,9 @@ private:
 
 // The control codes out and Windows-1252 to UTF-8 (exposed for the tests).
 std::string clean_game_text(const std::string& raw);
+
+// A Windows-1252 byte (the game's texts) appended in UTF-8 ('?' for the
+// five bytes the code page leaves undefined).
+void append_cp1252(std::string& out, uint8_t c);
 
 }  // namespace p3::data

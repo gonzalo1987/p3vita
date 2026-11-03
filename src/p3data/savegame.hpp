@@ -438,6 +438,9 @@ struct SaveGame {
 	// [+0x0] bytes at the game's [+0xC] for 0x3C..0x40 and 0x71. Same size as
 	// `mail`; empty for the other letters. In tick_probe, region LB.
 	std::vector<std::vector<uint8_t>> mail_buffers;
+	// Not saved: the entries of the letters stored for the local player since
+	// the viewer last looked (take_new_letters, mail.hpp), for its notice.
+	std::vector<uint16_t> new_player_letters;
 	// Matriz n × n del mundo (*[0x6DE50C], [+0x6C] de 0x6DE4A0; 0x531B70 la
 	// lee): lo que se tarda de una ciudad a otra, en dieciseisavos de día a la
 	// velocidad de una snaikka (0x516930; 0x516AB0 lo pasa a días).

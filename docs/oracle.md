@@ -725,6 +725,55 @@ and 0x26, the women's bit of 0x4F6420).
   `p3save texts-cache EXE CACHE` writes it and checks that it reads back the
   same (both exes: 805 texts by address).
 
+## The mailbox window: reading, deleting and the chronicle (2026-11-03)
+
+The viewer's mailbox is the game's letter window (0x47C520 fills its list,
+0x47D570 draws it; [formats/mail.md](formats/mail.md) §4). What it changes
+in the game goes through the game's own code, checked here:
+
+- **Operations 0x6E and 0x6F** (0x536AC7 → 0x4D69D0, a letter read: clears
+  the month's 0x80 if the entry is in the merchant's chain; 0x536AE1 →
+  0x4D6A50, a letter deleted: out of the merchant's chain, or of the
+  chronicle for a negative merchant, to the head of the free list, released):
+  `mark_letter_read` and `delete_letter` in `mail.cpp`, in `run_operation`
+  and in `OPERATIONS`. Scenario `retouch_mail.py read_delete` (16 operations:
+  the player's head letter, one in the middle, one with a buffer; the
+  chronicle with −2 and −1; another merchant's, past the mailbox, a negative
+  merchant for 0x6E): every call of 0x535760 equal in saves 1, 3, 5, 7 and
+  tut4. The world 7 days in the 12 saves stays 0 different (nothing in the
+  simulation queues them).
+- **The chronicle** (0x47DD40; Spanish 0x47DDE0, the same code 0xA0 further
+  on): `tools/oracle/chronicle_oracle.py` runs it on the loaded world, takes
+  the buffer when it is complete (0x47E57B) and jumps to its end (0x47E599),
+  past the text window (0x41D9B0 on *0x6CBB10); `--spanish` through
+  `SpanishExe` (its `CODE` has the three addresses). It also prints the
+  merchants whose [+0x1C] the composition changed (0x4F6420). p3vita's is
+  `compose_chronicle` and `chronicle_viewed` (`letters.cpp`), `p3save CPR SAVE
+  chronicle EXE`; `compare_chronicle.py` compares news by news and
+  `scripts/chronicle-check.sh` does it all (`re/emu/sesion5/mail/s5/cc.sh`
+  with this machine's paths). The texts' Spanish slots came from an alignment
+  of the two functions (`s5/chron_texts.py`, `letter_texts.py` for a switch
+  through an index table), into `game_text_addresses.inc`.
+- Checked: the 12 saves, the same bytes in English and in Spanish (1,140
+  news; the merchants' [+0x1C] unchanged in both, a load already leaves them
+  as 0x4F6420 does). The cases and branches the saves don't reach, with the
+  new `retouch_mail.py all_news` (`--letters all --write`, then
+  chronicle-check on the written save; `s5/news.sh SAVE SEEDS`): the 21 cases
+  with a man and a woman, a merchant past the merchants (the cases that then
+  append the local buffer as it was), the pirates' four results, the siege's
+  three ends (a sum over 2³¹ printed as a negative %i), the attacks beaten
+  off and the lairs, the Hanse tasks' five kinds and one past them, and small
+  random fields of each case: saves 1 and 3, seeds 1..5, the same bytes in
+  both languages. Random fields out of range (a town or a title past its
+  table, the 0x57's sex above 1) make the game read garbage and stop: the
+  scenario keeps them small.
+- On the way: the Spanish code differs in three cases: the promotion 0x06
+  passes the town before the title (its text has %$6$s, %$5$s), the siege's
+  0x38 passes the days before the town, and the new country 0x56 takes the
+  capitalized articles (0x6C1418) where the English takes the lowercase ones
+  (0x6C0ED8). Two game bugs (the 0x6F's adjective and the pirate's family
+  name), in the roadmap.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:
