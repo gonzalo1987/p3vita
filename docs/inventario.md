@@ -150,8 +150,11 @@ change.
   the impounding, the feast, the wedding, the fires, a new office, a captain)
   and `events_mayor.cpp` (9, the elections, the Hanse vote and the auctions,
   plus the 2 of the Alderman's notice 0x5299F0, rewritten now) and
-  `alderman.cpp` (6: a Hanse task started, expired and done).
-  12 left.
+  `alderman.cpp` (6: a Hanse task started, expired and done) and
+  `sieges.cpp` (4: the news 0x38 and 0x53, the prince's payment 0x85; the
+  fifth, 0x6A of 0x633DB0, is in its convoy branch, reached only from the
+  battle in a town 0x5FEAC9, so it goes with that battle).
+  7 left (`operations.cpp` 4, `diet.cpp` 3).
 - [ ] **10 in functions p3vita names but skipped whole** (8 left): the mission
   interpreter 0x4ECF64 (5; three with a letter the script builds), the
   alderman's notification 0x5299F0 (2, done with events_mayor.cpp), the convoy's automatic route

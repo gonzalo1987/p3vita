@@ -42,9 +42,11 @@
 //   [+0x61C]  u8 (si no es 0, tras el rescate o la retirada se llama a 0x634C50)
 //   [+0x62C]  u8 fracción de brea gastada (en 1/256)
 //
-// No se traducen los mensajes (0x51A850, 0x4D6530, 0x51A880) ni lo de los
-// gráficos (0x6E51AC, [+0x77], los objetos [+0x1F8], [+0x574], [+0x5DC]...):
-// no cambian la simulación.
+// The letters (0x4D6530) are sent as in the game (src/p3data/mail.cpp): the
+// news 0x38 and 0x53 to the chronicle and the prince's payment 0x85. Not
+// reproduced: the windows to the player (0x469380, 0x469AF0) and the
+// graphics (0x6E51AC, [+0x77], the objects [+0x1F8], [+0x574], [+0x5DC]...),
+// which don't change the simulation.
 
 #include <algorithm>
 #include <array>
@@ -53,6 +55,7 @@
 #include <vector>
 
 #include "p3data/game_fixes.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -449,8 +452,10 @@ void fn_634c50(SaveGame& save, int siege, bool paid) {
 // mercancías 0..19 de kWareValue, de 200 en 200 unidades, hasta 20000 en
 // total). `amount` es el dinero que paga (solo lo apunta 0x529F90, como
 // gasto 8) y `offices` las oficinas que ha mirado. Devuelve si ha pagado
-// algo; entonces [+0x0] pasa a ser hoy. (Con convoy, desde la interfaz
-// 0x5FEAC9, las mercancías van a sus barcos: no se traduce.)
+// algo; entonces [+0x0] pasa a ser hoy. (With a convoy, from the battle in a
+// town 0x5FE7E0 (0x5FEAC9), the wares go to its ships and the convoy's
+// owner gets the letter 0x6A (0x634576..0x6345D3): not rewritten, it goes
+// with that battle; from here, convoy 0xFFFF, it is never reached.)
 bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices) {
 	SiegeMemory& s = save.sieges[size_t(siege)];
 	GlobalMemory& g = save.globals;
@@ -627,7 +632,18 @@ void fn_6281f0(SaveGame& save, int siege) {
 			uint32_t amount = 0;
 			uint16_t offices = 0;
 			fn_633db0(save, a.u8(0x5D3), amount, offices);
-			// Mensaje a los comerciantes (0x4D6530): no se traduce.
+			// The news 0x38 to the chronicle (0x6289FA..0x628A52), whether the
+			// town paid or not: [+0x5] the town, u16 [+0x8] the siege's days
+			// (today − [+0x584] + 1, in 16 bits), u32 [+0xA] the money paid
+			// (0x633DB0's first argument: as two u16), u16 [+0xE] the groups
+			// [+0x6E].
+			Letter letter(0x38);
+			letter.entry.u8(5) = a.u8(0x5D3);
+			letter.entry.u16(8) = uint16_t((g.u32(kTick) >> 8) - a.u16(0x584) + 1);
+			letter.entry.u16(0xA) = uint16_t(amount);
+			letter.entry.u16(0xC) = uint16_t(amount >> 16);
+			letter.entry.u16(0xE) = a.u8(0x6E);
+			send_letter(save, kLetterToChronicle, letter);
 			if (a.u8(0x61C) != 0) {
 				fn_634c50(save, a.u8(0x5D3), true);
 			}
@@ -891,7 +907,15 @@ void fn_6281f0(SaveGame& save, int siege) {
 			a.u8(0x78) = 1;
 			t.u32(0x2C8) &= ~0x10u;
 			a.u16(0x3A) = uint16_t(a.u16(0x6A) * 2);
-			// Mensaje a los comerciantes (0x4D6530): no se traduce.
+			// The news 0x38 to the chronicle (0x6299D1..0x629A2B), as the
+			// ransom's with u32 [+0xA] 0xFFFFFFFF (nothing paid: they left).
+			Letter letter(0x38);
+			letter.entry.u8(5) = a.u8(0x5D3);
+			letter.entry.u16(8) = uint16_t((g.u32(kTick) >> 8) - a.u16(0x584) + 1);
+			letter.entry.u16(0xA) = 0xFFFF;
+			letter.entry.u16(0xC) = 0xFFFF;
+			letter.entry.u16(0xE) = a.u8(0x6E);
+			send_letter(save, kLetterToChronicle, letter);
 			for (size_t k = 0; k < 4; ++k) {
 				t.u16(0x300 + 2 * k) = uint16_t(t.u16(0x300 + 2 * k) + 0x14);
 			}
@@ -1148,7 +1172,20 @@ void fn_636230(SaveGame& save, int siege) {
 				MerchantMemory& merchant = save.merchants[node.u8(0x5)].memory;
 				merchant.u32(0x0) += pay;
 				merchant.u32(0x4B8) += pay;
-				// Mensaje al comerciante (0x4D6530): no se traduce.
+				// The prince's letter 0x85 to the merchant (0x63648A..0x6364E9):
+				// [+0x5] his home town ([+0x19]), u16 [+0x8] 1 if the town didn't
+				// pay the ransom ([+0x9] 0), u16 [+0xA] the payment's low 16 bits
+				// (the letter's text reads only those, 0x484650: a payment over
+				// 65 535 shows wrong, a game bug; with fix_game_bugs() the high
+				// half goes to [+0xC], 0 in the game, and the viewer reads u32).
+				Letter letter(0x85);
+				letter.entry.u8(5) = merchant.u8(0x19);
+				letter.entry.u16(8) = node.u8(0x9) == 0 ? 1 : 0;
+				letter.entry.u16(0xA) = uint16_t(pay);
+				if (fix_game_bugs()) {
+					letter.entry.u16(0xC) = uint16_t(pay >> 16);
+				}
+				send_letter(save, node.u8(0x5), letter);
 			} else {
 				const uint16_t countdown = s.u16(0x1018);
 				s.u16(0x1018) = countdown > 0x19A ? uint16_t(countdown - 0x19A) : 1;
@@ -1229,9 +1266,10 @@ void fn_635740(SaveGame& save, int siege) {
 //   Al final, la fuerza de cada bando ([+0x57C], [+0x580] con los objetivos),
 //   el objetivo (0x62E810), [+0x5D4] y el bit 0x10 de la situación de la
 //   ciudad.
-// No se reproducen la ventana al jugador (si es su ciudad natal o es su
-// alcalde: 0x469380 y 0x469AF0), la carta a todos (0x4D6530, tipo 0x53), ni
-// los gráficos (los objetos [+0x5DC..] y, si es la ciudad que se ve, 0x62C730).
+// Not reproduced: the window to the player (his home town or he is its
+// mayor: 0x469380 and 0x469AF0) and the graphics (the objects [+0x5DC..]
+// and, for the town in view, 0x62C730). The news 0x53 to the chronicle is
+// sent.
 void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag) {
 	SiegeExtras& ex = save.siege_extras[size_t(siege)];
 	SiegeArmyMemory& a = *ex.army;
@@ -1270,6 +1308,19 @@ void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 	}
 	if (a.u16(0x21E) < 3) {
 		a.u16(0x21E) = 3;
+	}
+	{
+		// The news 0x53 to the chronicle (0x629F0E..0x629F63): [+0x5] the
+		// town, u16 [+0x8] five times the troops of the types 0..3 (u16
+		// [+0x21E + 4·k], summed in 16 bits).
+		uint16_t troops = 0;
+		for (size_t k = 0; k < 4; ++k) {
+			troops = uint16_t(troops + a.u16(0x21E + 4 * k));
+		}
+		Letter letter(0x53);
+		letter.entry.u8(5) = a.u8(0x5D3);
+		letter.entry.u16(8) = uint16_t(troops * 5);
+		send_letter(save, kLetterToChronicle, letter);
 	}
 	uint16_t targets = 0;
 	if (side == 0xFF) {

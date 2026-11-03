@@ -337,6 +337,12 @@ MAIL_CALLS = (
     # started (0x4EBF54: 0x80 the road, 0x6E and 0x84 the pirate nest) and
     # done (0x4EC354: 0x6F to the chronicle and to the merchant).
     0x4EB32B, 0x4EC18F, 0x4EC230, 0x4EC2B2, 0x4EC4FC, 0x4EC51C,
+    # sieges.cpp: the siege's news to the chronicle, 0x38 when the town pays
+    # the ransom (0x6281F0: 0x628A52) or the army leaves (0x629A2B), 0x53 a
+    # new army (0x629C60), and the prince's payment 0x85 (0x636230). The
+    # 0x6A of 0x633DB0 (0x6345D3) is only reached with a convoy, from the
+    # battle in a town (0x5FEAC9): it stays quiet.
+    0x628A52, 0x629A2B, 0x629F63, 0x6364E9,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is

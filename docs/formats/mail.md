@@ -405,6 +405,19 @@ doesn't have.
   kind, | 0x80 when his [+0x37] reaches 4), both with [+0x5] the Hanse
   town, [+0x9] his title + rank << 5, [+0xA], [+0xB] his names, [+0xC],
   [+0xD] the Alderman's, [+0xE], [+0xF] the task's places by kind.
+- The sieges (`sieges.cpp`): the news 0x38 to the chronicle when the town
+  pays the ransom (0x6281F0, 0x628A52, whether it paid anything or not:
+  [+0x5] the town, u16 [+0x8] the siege's days + 1 (today − the army's
+  [+0x584] + 1), u32 [+0xA] the money paid, as two u16, u16 [+0xE] the
+  groups [+0x6E]) or when the army leaves (0x629A2B: the same with [+0xA]
+  0xFFFFFFFF); 0x53 a new army (0x629C60: [+0x5] the town, u16 [+0x8] five
+  times its troops of the types 0..3); the prince's payment 0x85 (0x636230,
+  to the merchant of the due node of the siege's list [+0x1020]: [+0x5] his
+  home town, u16 [+0x8] 1 if the town didn't pay its ransom, u16 [+0xA] the
+  payment's low 16 bits, all that the letter's text reads: a game bug, in
+  the roadmap). The 0x6A of 0x633DB0 (0x6345D3) is in its convoy branch,
+  reached only from the battle in a town (0x5FEAC9): it goes with that
+  battle.
 
 ## Appendix A. The 154 calls
 
@@ -519,7 +532,7 @@ type's class (§2).
 | p3data/town_tick/sieges.cpp | 0x6281F0 | 0x628A52 | 0x38 | Siege | 4 | -2 (chronicle) |  |
 | p3data/town_tick/sieges.cpp | 0x6281F0 | 0x629A2B | 0x38 | Siege | 4 | -2 (chronicle) |  |
 | p3data/town_tick/sieges.cpp | 0x629C60 | 0x629F63 | 0x53 | Siege | 4 | -2 (chronicle) |  |
-| p3data/town_tick/sieges.cpp | 0x633DB0 | 0x6345D3 | 0x6A | Plundered | 2 | one merchant |  |
+| p3data/town_tick/sieges.cpp | 0x633DB0 | 0x6345D3 | 0x6A | Plundered | 2 | one merchant | only in the convoy branch, from the battle in a town (0x5FEAC9) |
 | p3data/town_tick/sieges.cpp | 0x636230 | 0x6364E9 | 0x85 | Prince | 1 | one merchant |  |
 | — a trade route ends (0x503230, 0x518860) | 0x4D5200 | 0x4D55F9 | 0x07 | Ship trade | 3 | one merchant |  |
 | — battle in a town (method) | 0x5FE7E0 | 0x5FEA54 | 0x3B | Outrigger | 1 | one merchant | battle in a town |

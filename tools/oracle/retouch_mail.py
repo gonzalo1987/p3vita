@@ -116,6 +116,13 @@ Scenarios:
              road and the pirate nest not started (0x4EBF54: 0x80; 0x6E and
              0x84) and the pirate ship hunted, done (0x4EC354: 0x6F to the
              chronicle and to him). Record 4d85c0,535760, 2 days
+  siege_letters two sieges (operations 0x8E run at once: the news 0x53 of
+             0x629C60), the first army retouched to collect the ransom in
+             its next tick (0x6281F0: the news 0x38 with the money) and the
+             second one besieger against 20 defenders (it leaves: 0x38 with
+             0xFFFFFFFF); and in a third town's list [+0x1020] four of the
+             prince's payments to the player due (0x636230: the letters 0x85;
+             the last over 65 535). Record 535760,633a90,6349f0
 """
 import argparse
 import os
@@ -756,6 +763,48 @@ def hanse_task_letters(o, rec):
     print(f'the player {m} gets the tasks {sorted(k for k in tasks if k in (1, 2, 3))}')
 
 
+def siege_letters(o, rec):
+    import retouch as rt
+    import retouch_unchecked as ru
+    towns = o.counts()[0]
+    m = o.u32(to.PLAYER)
+    ready = [i for i in range(towns) if rt.siege_ready(o, i)]
+    a, b = ready[0], ready[1]
+    for t, kind, r in ((a, 1, 0x80), (b, 2, 0x31)):
+        ru.operation(o, 0x8E, t, kind, r, 1)  # 0x629C60: the news 0x53
+    # a: the ransom in its army's next tick (0x633DB0, the news 0x38 with the money).
+    army = o.u32(ru.siege_object(o, a) + 8)
+    w16(o, army + 0x42, 0)
+    w16(o, army + 0x3C, (o.u16(army + 0x68) >> 1) + 1)
+    w32(o, ru.siege_object(o, a), 0)
+    w32(o, o.town(a) + 0x700, 12345)
+    # b: one besieger against many defenders: the army leaves (the news 0x38, 0xFFFFFFFF).
+    army = o.u32(ru.siege_object(o, b) + 8)
+    for f in (0x42, 0x3C, 0x3A):
+        w16(o, army + f, 0)
+    w8(o, army + 0x78, 0)
+    w8(o, army + 0x79, 0)
+    w32(o, army, 0x10000)
+    w32(o, army + 0x21C, 0x10000)
+    for k in range(1, 5):
+        w32(o, army + 0x21C + 4 * k, 0)
+    w8(o, o.town(b) + 0x998, 20)
+    # c: the prince's payments due (0x636230, the letters 0x85 to the player):
+    # for no town, for a town that paid its ransom, for one that didn't, and
+    # one over 65 535 (the letter keeps its low 16 bits).
+    c = next(i for i in range(towns) if i not in (a, b))
+    other = next(i for i in range(towns) if i not in (a, b, c))
+    nodes = ((bytes([3, 4, 5, 6, 7]), 0xFF, 0), (bytes([9, 8, 7, 6, 5]), other, 1), (bytes([2, 2, 2, 2, 2]), other, 0),
+             (bytes([255] * 5), 0xFF, 0))
+    head = 0
+    for wares, town, paid in reversed(nodes):
+        node = o.alloc(0x14)
+        o.uc.mem_write(node, wares + bytes([m, town, 1, 1, paid, 0, 0]) + struct.pack('<II', 0, head))
+        head = node
+    w32(o, ru.siege_object(o, c) + 0x1020, head)
+    print(f'sieges of {a} (the ransom) and {b} (it leaves); 4 payments to the player {m} in the list of {c}')
+
+
 def expedition_lost(o, rec):
     convoy, members = expedition(o, rec)
     w32(o, o.ship(members[0]) + 0x18, 10)
@@ -771,7 +820,7 @@ SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, com
                                      expedition_four, expedition_villages, expedition_new_world, expedition_nothing,
                                      expedition_contract, debts_notices, debts_office, debts_ship, debts_partial,
                                      captain, mayor_election, alderman_merchant, alderman_citizen, hanse_vote,
-                                     auction_end, hanse_task_letters)}
+                                     auction_end, hanse_task_letters, siege_letters)}
 
 
 def main():
