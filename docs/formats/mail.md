@@ -228,6 +228,54 @@ operation 0xBC), and 0x526BB9. The interface: 0x4135C0,
   `chronicle_viewed`; checked with `chronicle_oracle.py` (docs/oracle.md,
   «The mailbox window»). The types that only go to −2 (class 4 news) have no
   letter text and are only read here.
+- **The letters with a picture**, 0x46 (a map's pieces, from the mission
+  interpreter) and 0x6E (a pirate nest to destroy, from 0x4EBF54): the
+  composer's cases (0x4826C3, 0x484D7A; Spanish 0x4827AE, 0x484E65) free the
+  window's last picture ([+0xB8], 0x4BB490), keep the new one there and write
+  only «\n\n\c\h%u_» (0x6B9D1C, 0x6B9D84) with its number: the handle of a
+  texture of the graphics library (sgl, `ddraw_Dll.dll`; the exe calls it
+  through the table at 0x6DA820 + 0x88.., each slot named by the record
+  before its name, «sgl_SetRenderDest»...). 0x51AC60 (Spanish 0x51B110),
+  thiscall on the letter, makes it:
+  - the parchment TEX21004 (`images/Expedition/gefärbte_Karte.tga`, 100 ×
+    100, 32 bits with alpha 115..225) gives the piece's size W × H; a new
+    memory texture of 3W × 3H (`sgl_CreateMemoryTexture(w, h, 3)`: 32 bits,
+    flags 3 | 0x40, so blend mode 1);
+  - the sea map's texture (the sea map window *0x6CBDD8 + 0xBC: TEX16036,
+    `images/Vollansichtskarte.bmp`, 8 bits) copied into it through a sepia
+    palette: for each entry (B, G, R, A) s = (B + G + R) / 3, c = s >> 1, B =
+    t(c), G = t(s), R = t(c + s), A kept, with t(x) = x + ((x >> 1) & 0x3F)
+    from 0x80 on, x − ((0x80 − x) >> 1) below, kept in 0..255; the window
+    centred on u16 [+0xC], [+0xE] (the place, in the map's pixels), moved
+    inside x 0x44..0x91C, y 0x42..0x6C7 (signed: x0 below 0x44 goes to 0x44,
+    else x0 + 3W past 0x91C goes to 0x91C − 3W; y the same), the place kept;
+  - with the clipping off (`sgl_Set2dClippingMode(0)`) and the constant
+    colour 0xFFFFFFFF (`sgl_SetConstantColor`), the parchment drawn
+    (`sgl_DrawBitmapRect(sx, sy, dx, dy, w, h)`) over each piece of 3 × 3
+    whose bit (3·row + column) is in u16 [+0xA];
+  - the cross, TEX30033's frame 7 (`images/Animationen_Seekarte/KreuzTP.bmp`,
+    18 × 18 at (126, 0), colour key 0xff000000: black not drawn), centred on
+    the place (falls back to odd locals if the texture has no frame 7);
+  - the pieces not in [+0xA] cleared to 0 (transparent; a cross there goes
+    with them), the state restored and the texture returned.
+  The pirate nest's letter has [+0xA] = 0xFFFF (all nine) and the place of
+  a town's arrival point. How the library draws (read in `ddraw_Dll.dll`):
+  `sgl_DrawBitmapRect` calls the destination texture's method +0x3C
+  (0x5014740 → 0x5014050), which picks a blitter in the ASSEG section by the
+  source's blend mode [+0x37], its flags [+0x34] and the constant colour; a
+  texture with flags & 3 = 3 (or 0x8000) and the colour 0xFFFFFFFF takes mode
+  4, an alpha blend; flags & 7 = 7 (a colour key) mode 1, a copy of the
+  pixels other than the key (the load sets the alpha of the others to 0xFF,
+  0x5013250). At start the library patches its blitters for MMX (0x508D1E1:
+  bit 0x800000 of the CPU's features) and SSE (0x2000000): the alpha blend
+  is then 0x508DDC9 / 0x508DEBA, per channel s' = s · c >> 8 (c the constant
+  colour's channel), d + (s' − d) · a' >> 8 (arithmetic) with a' the
+  source's s' alpha, the alpha blended too (the plain code, 0x508D890, gives
+  d·(255 − a') >> 8 + a'·s >> 8 and alpha 0xFF). The picture's own flags
+  (3 | 0x40) give mode 4 too when the window draws it under the colour
+  0xFFFFFFFF, so the cleared pieces don't show (the text box's drawing of
+  `\h` wasn't followed to the call). Not read either: what the library
+  leaves in a BMP palette's fourth byte (the file's is 0); p3vita takes 0xFF.
 - **New letter**: 0x4D7B10, above: «Official writing: %s», «Personal letter:
   %s», «Trading information: %s» (0x6A4570..0x6A4578) with the title, as the
   list's (0x3C..0x40: the letter's buffer).
@@ -364,6 +412,12 @@ interpreter's 0x4ED0C6, 0x4EDEDA.
   `compose_chronicle` (with `chronicle_viewed`) laid out from
   `letter_paragraphs`; picking a letter queues 0x6E, Square 0x6F, as the
   game's window. The new letter's line, `letter_notice`.
+- The letters with a picture (§4): `compose_letter` writes the number
+  `kLetterMapPicture` (letters.hpp) where the game writes its texture's
+  handle; `letter_map_picture` (`letter_picture.hpp`) is 0x51AC60 on RGBA
+  images (the game's sepia, window, MMX alpha blend, cross and cleared
+  pieces), and the viewer draws it at the line of `\h` (`made_picture`).
+  `p3save CPR SAVE letter-picture ENTRY OUT.png` writes it.
 - The oracle runs 0x4D6530 only from the connected calls (`MAIL_CALLS` in
   `tools/oracle/town_oracle.py`) and records the buffers as region `LB`
   ([oracle.md](../oracle.md), «The mailbox: sending letters»); scenarios in
@@ -800,7 +854,7 @@ are cut at the next case, so some neighbours share it).
 | 0x43 | Plunder | 2 | option [+0x39] | 0x4E02B6 | 0x48269B | \cPlundering in %s. \l Your trading office in %s was completely plundered by an angry m… |
 | 0x44 | — | 4 | forever | — | none (default) |  |
 | 0x45 | — | 4 | forever | 0x4EDFED, 0x41B16D (UI) | none (default) |  |
-| 0x46 | Map | 2 | forever | 0x4EDFED | 0x4826C3 |  |
+| 0x46 | Map | 2 | forever | 0x4EDFED | 0x4826C3 | \n\n\c\h%u_ (the picture of 0x51AC60, §4) |
 | 0x47 | Elections | 1 | option [+0x38] | 0x5294F7, 0x529CA0 (−1) | 0x48116F |  |
 | 0x48 | Boycott | 1 | option [+0x38] | 0x4E0CEE | 0x482705 |  Ensure your ship joins the hunt convoy by %u. %u. %u at the latest. The convoy will sh… |
 | 0x49 | Town Guard | 1 | option [+0x38] | — | 0x482C57 | , your share of the costs for town guards last month came to  |
@@ -840,7 +894,7 @@ are cut at the next case, so some neighbours share it).
 | 0x6B | Council Meeting | 1 | option [+0x38] | 0x4E9F8F, 0x4E9FBD | 0x484899 | an extra tax of %u\C will be levied to fill the town's coffers. A demand will shortly b… |
 | 0x6C | Extra Tax | 1 | option [+0x38] | 0x4EAE01 | 0x4849C0 | As you did not have enough money you are required to pay the shortfall in the next 7 days. |
 | 0x6D | Alderman | 1 | option [+0x38] | 0x4F7827 | 0x484AE8 | ,  The Hanseatic League council has long been observing your meteoric rise in establish… |
-| 0x6E | Pirate hideaway | 1 | option [+0x38] | 0x4EC230 | 0x484D7A |  |
+| 0x6E | Pirate hideaway | 1 | option [+0x38] | 0x4EC230 | 0x484D7A | \n\n\c\h%u_ (the picture of 0x51AC60, §4) |
 | 0x6F | Reputation | 1 | option [+0x38] | 0x4EC4FC (−2), 0x4EC51C | 0x484DC9 | Your intervention has ensured completion of the overland trade route between %s and %s. |
 | 0x70 | Unsuccessful | 1 | option [+0x38] | 0x4EB32B | 0x484DC9 | Your intervention has ensured completion of the overland trade route between %s and %s. |
 | 0x71 | — | 4 | until record [+0x4] | — | none (default) |  |

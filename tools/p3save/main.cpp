@@ -13,6 +13,7 @@
 #include "p3data/font.hpp"
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_texts.hpp"
+#include "p3data/letter_picture.hpp"
 #include "p3data/letters.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/lz.hpp"
@@ -20,6 +21,7 @@
 #include "p3data/savegame_write.hpp"
 #include "p3data/lz_compress.hpp"
 #include "p3data/wares.hpp"
+#include "stb_image_write.h"
 
 using namespace p3::data;
 
@@ -36,6 +38,7 @@ int usage() {
 		"       p3save texts-cache <Patrician3.exe> <cache>\n"
 		"       p3save <archivo.cpr> <partida> letters <Patrician3.exe> [merchant]\n"
 		"       p3save <archivo.cpr> <partida> chronicle <Patrician3.exe>\n"
+		"       p3save <archivo.cpr> <partida> letter-picture <entry> <out.png>\n"
 		"       p3save <archivo.cpr> <partida> ticker <Patrician3.exe> <ticker_oracle.py's output>\n"
 		"\n"
 		"Sin más argumentos, lista las ciudades de la partida (p. ej. missav/1.pat).\n"
@@ -51,7 +54,9 @@ int usage() {
 		"text in hex; - without a text, ? for a type not rewritten yet\n"
 		"(tools/oracle/letter_oracle.py prints the game's).\n"
 		"chronicle prints the chronicle (the news of the list -2) as p3vita composes it, in\n"
-		"hex (tools/oracle/chronicle_oracle.py prints the game's).\n");
+		"hex (tools/oracle/chronicle_oracle.py prints the game's).\n"
+		"letter-picture writes the picture of the letter 0x46 or 0x6E at that entry of the\n"
+		"mailbox (letter_picture.hpp, 0x51AC60) as a PNG.\n");
 	return 2;
 }
 
@@ -328,6 +333,34 @@ int main(int argc, char** argv) {
 			}
 		}
 		std::printf("\n");
+		return 0;
+	}
+	if (command == "letter-picture") {
+		if (argc < 6) {
+			return usage();
+		}
+		const size_t entry = size_t(std::strtoul(argv[4], nullptr, 0));
+		Image picture;
+		if (entry >= save.mail.size() || !letter_map_picture(*archive, save.mail[entry], picture)) {
+			std::fprintf(stderr, "no picture for the entry %zu\n", entry);
+			return 1;
+		}
+		FILE* out = std::fopen(argv[5], "wb");
+		const bool written = out && stbi_write_png_to_func(
+										[](void* file, void* data, int size) {
+											std::fwrite(data, 1, size_t(size), static_cast<FILE*>(file));
+										},
+										out, picture.width, picture.height, 4, picture.rgba.data(), picture.width * 4);
+		if (out) {
+			std::fclose(out);
+		}
+		if (!written) {
+			std::fprintf(stderr, "can't write %s\n", argv[5]);
+			return 1;
+		}
+		const GameMemory<0x10>& e = save.mail[entry];
+		std::printf("entry %zu, type %#04x: pieces %#06x, place (%u, %u); %d x %d in %s\n", entry, e.u8(4), e.u16(0xA),
+			e.u16(0xC), e.u16(0xE), picture.width, picture.height, argv[5]);
 		return 0;
 	}
 	if (command == "letters") {

@@ -314,6 +314,7 @@ bool letter_type_rewritten(uint8_t type) {
 	case 0x41:
 	case 0x42:
 	case 0x43:
+	case 0x46:
 	case 0x47:
 	case 0x48:
 	case 0x49:
@@ -345,6 +346,7 @@ bool letter_type_rewritten(uint8_t type) {
 	case 0x6B:
 	case 0x6C:
 	case 0x6D:
+	case 0x6E:
 	case 0x6F:
 	case 0x70:
 	case 0x73:
@@ -1939,6 +1941,14 @@ std::optional<std::string> compose_letter(const SaveGame& save, const GameTexts&
 			break;
 		}
 		break;
+	case 0x46:  // A map's pieces (0x4826C3).
+	case 0x6E:  // A pirate nest to destroy (0x484D7A).
+		// The window frees the picture of the last letter (0x4BB490 on its
+		// [+0xB8]) and 0x51AC60 makes this one's (letter_map_picture); the text
+		// is only the picture, «\n\n\c\h%u_» with its number. (0x6E also
+		// keeps [+0x5] in a local nobody reads.)
+		c.format(type == 0x46 ? 0x6B9D1C : 0x6B9D84, {num(uint32_t(kLetterMapPicture))});
+		break;
 	case 0x2B:  // Too late (0x4811CA): [+0xC], the names [+0x8], [+0xA].
 		c.format(0x6B5BAC, {num(e.u16(0xC)), c.first(e.u16(8)), c.family(e.u16(0xA))});
 		break;
@@ -2467,6 +2477,7 @@ std::vector<LetterParagraph> letter_paragraphs(const std::string& raw) {
 		case 't':
 		case 'h':
 			p.picture = std::atoi(raw.substr(i + 2, digits_and_underscore(i + 2) - (i + 2)).c_str());
+			p.made_picture = code == 'h';
 			i = digits_and_underscore(i + 2) - 1;
 			break;
 		case 'd':

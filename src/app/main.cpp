@@ -26,6 +26,7 @@
 #include "p3data/game_texts.hpp"
 #include "p3data/hanse_tasks.hpp"
 #include "p3data/image.hpp"
+#include "p3data/letter_picture.hpp"
 #include "p3data/letters.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/navigation.hpp"
@@ -1809,11 +1810,38 @@ struct MailUi {
 	std::vector<std::pair<LetterParagraph::Align, std::string>> lines;  // Wrapped, UTF-8 (kOrnament: a picture).
 	bool stale = true;  // `lines` to be made again (another letter, language or font).
 	uint16_t chronicle_head = 0xFFFF;  // The chronicle's newest news when it was made.
+	// The picture the window makes for the letter shown (0x46, 0x6E: the map
+	// of letter_map_picture), drawn at the line kPictureLine.
+	std::shared_ptr<SDL_Texture> picture;
+	int picture_width = 0;
+	int picture_height = 0;
 };
 
 // A line of the mailbox that is one of the game's pictures (the chronicle's
 // ornament between two news): drawn as a short rule.
 constexpr char kOrnament = '\x1E';
+// The line where the letter's own picture (MailUi::picture) starts; empty
+// lines under it keep its height.
+constexpr char kPictureLine = '\x1D';
+
+// The picture of a letter 0x46 or 0x6E (letter_map_picture) as a texture.
+std::shared_ptr<SDL_Texture> letter_picture_texture(SDL_Renderer* renderer, const CprArchive& archive,
+	const GameMemory<0x10>& letter, int& width, int& height) {
+	Image image;
+	if (!letter_map_picture(archive, letter, image)) {
+		return nullptr;
+	}
+	SDL_Texture* texture =
+		SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, image.width, image.height);
+	if (!texture) {
+		return nullptr;
+	}
+	SDL_UpdateTexture(texture, nullptr, image.rgba.data(), image.width * 4);
+	SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);  // The pieces not shown are transparent.
+	width = image.width;
+	height = image.height;
+	return std::shared_ptr<SDL_Texture>(texture, SDL_DestroyTexture);
+}
 
 // Where everything goes, shared by the drawing and the touch screen.
 struct MailLayout {
@@ -2029,7 +2057,15 @@ void draw_mailbox(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sa
 	SDL_RenderSetClipRect(renderer, &clip);
 	int y = layout.text.y + 2 - ui.scroll;
 	for (const auto& [align, line] : ui.lines) {
-		if (line.size() == 1 && line[0] == kOrnament) {
+		if (line.size() == 1 && line[0] == kPictureLine) {
+			if (ui.picture) {
+				const int x = align == LetterParagraph::Right ? layout.text.x + layout.text.w - 4 - ui.picture_width
+					: align == LetterParagraph::Center ? layout.text.x + (layout.text.w - ui.picture_width) / 2
+					: layout.text.x + 4;
+				const SDL_Rect where = {x, y, ui.picture_width, ui.picture_height};
+				SDL_RenderCopy(renderer, ui.picture.get(), nullptr, &where);
+			}
+		} else if (line.size() == 1 && line[0] == kOrnament) {
 			// The ornament: a rule with a diamond in the middle.
 			const int cx = layout.text.x + layout.text.w / 2;
 			const int cy = y + text.line_height() / 2;
@@ -3618,6 +3654,7 @@ int main(int argc, char** argv) {
 					mail.scroll = 0;
 				}
 				mail.lines.clear();
+				mail.picture.reset();
 				mail.chronicle_head = news;
 				std::string raw;
 				bool from_game = false;  // The game's text (Windows-1252, codes); else the viewer's (UTF-8).
@@ -3638,6 +3675,21 @@ int main(int argc, char** argv) {
 					raw = tr("(Esta carta aún no se puede mostrar.)", "(This letter can't be shown yet.)");
 				}
 				for (const LetterParagraph& p : letter_paragraphs(raw)) {
+					if (from_game && p.made_picture && p.picture == kLetterMapPicture && entry < save.mail.size()) {
+						// The picture the game's window makes for this letter (0x51AC60),
+						// and empty lines of its height.
+						if (!mail.picture) {
+							mail.picture = letter_picture_texture(renderer, *archive, save.mail[entry], mail.picture_width,
+								mail.picture_height);
+						}
+						if (mail.picture) {
+							mail.lines.emplace_back(p.align, std::string(1, kPictureLine));
+							for (int h = small_text->line_height(); h < mail.picture_height; h += small_text->line_height()) {
+								mail.lines.emplace_back(p.align, std::string());
+							}
+							continue;
+						}
+					}
 					if (from_game && p.picture >= 0 && p.text.find_first_not_of(' ') == std::string::npos) {
 						mail.lines.emplace_back(p.align, std::string(1, kOrnament));  // The game's picture.
 						continue;

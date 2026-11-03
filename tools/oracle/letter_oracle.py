@@ -26,13 +26,20 @@ import town_oracle as to  # noqa: E402
 COMPOSER = 0x47F3B0
 DONE = 0x48654B  # The text is complete: eax the buffer, esi its length.
 EXIT = 0x4865E5  # The composer's exit for a type without text: frees the buffers.
+# 0x51AC60 (thiscall on the letter) makes the picture of the letters 0x46 and
+# 0x6E through the graphics library, which the emulator hasn't: stubbed. It
+# returns p3vita's number for the picture (kLetterMapPicture, letters.hpp),
+# where the game returns its texture's handle; the window's [+0xB8] keeps it
+# and the next picture frees it first (0x4BB490): cleared before each letter.
+PICTURE = 0x51AC60
+MAP_PICTURE = 1
 
 
 def compose_all(o, merchant, types=None, run=None):
     """The letters of the merchant's chain in `o` (the English oracle), composed
     by `run` (o itself, or a spanish_exe.SpanishExe made from it)."""
     from unicorn import UC_HOOK_CODE
-    from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ESI, UC_X86_REG_EIP
+    from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESI, UC_X86_REG_ESP
     run = run or o
     code = run.code if run is not o else (lambda a: a)
     uc = run.uc
@@ -53,8 +60,17 @@ def compose_all(o, merchant, types=None, run=None):
         captured['text'] = bytes(uc.mem_read(buffer, length))
         uc.reg_write(UC_X86_REG_EIP, code(EXIT))
 
+    def picture(uc, address, size, user_data):
+        captured['picture'] = uc.reg_read(UC_X86_REG_ECX)
+        esp = uc.reg_read(UC_X86_REG_ESP)
+        uc.reg_write(UC_X86_REG_EAX, MAP_PICTURE)
+        uc.reg_write(UC_X86_REG_ESP, esp + 4)
+        uc.reg_write(UC_X86_REG_EIP, struct.unpack('<I', uc.mem_read(esp, 4))[0])
+
     uc.hook_add(UC_HOOK_CODE, done, begin=code(DONE), end=code(DONE))
     uc.ctl_remove_cache(code(DONE), code(DONE) + 1)
+    uc.hook_add(UC_HOOK_CODE, picture, begin=code(PICTURE), end=code(PICTURE))
+    uc.ctl_remove_cache(code(PICTURE), code(PICTURE) + 1)
     mail, count = o.u32(to.MAIL), o.u16(to.MAIL + 6)
     out = []
     index, seen = o.u16(o.merchant(merchant) + 0xA), 0
@@ -69,9 +85,13 @@ def compose_all(o, merchant, types=None, run=None):
                    f'{year // 10 % 10}{year % 10}'.encode()
             uc.mem_write(rows, struct.pack('<HHHH', index, kind, entry[5], entry[1] >> 7) + date + bytes(2))
             uc.mem_write(window + 0xD2, struct.pack('<H', 0))
+            uc.mem_write(window + 0xB8, bytes(4))
             captured.clear()
             try:
                 run.call(code(COMPOSER), [], ecx=window)
+                if 'picture' in captured and captured['picture'] != mail + 16 * index:
+                    print(f'entry {index}: the picture made for {captured["picture"]:#x}, not the letter',
+                          file=sys.stderr)
                 out.append((index, kind, captured.get('text')))
             except RuntimeError:
                 out.append((index, kind, False))  # The game's composer failed (a bad pointer from the fields).

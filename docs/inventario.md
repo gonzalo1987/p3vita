@@ -178,7 +178,8 @@ change.
 - [ ] **The interface**: done on 2026-11-03 with the game's texts and
   checked against the game in both languages: the list (0x47C520, 0x47D570,
   titles 0x6A52D0, tabs 0x6B2DD8), each letter's text (0x47F3B0, all the
-  types but the offers 0x1E/0x1F and the two pictures 0x46, 0x6E), the
+  types but the offers 0x1E/0x1F; with the picture of 0x46 and 0x6E,
+  0x51AC60, since 2026-11-04), the
   chronicle (0x47DD40, the −2 list), the new letter's line (0x4D7B10) and the
   text box's codes (0x462540), in the viewer's mailbox. Left: the answers
   (0x4D6C90: operations 0x60, 0x72, 0x74, 0x75, 0x77, 0x8C, the letters'

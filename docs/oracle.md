@@ -639,10 +639,26 @@ the town and the date, then a case per type of the table 0x48664C;
 (`GameTexts::raw_at`, the table `game_text_addresses.inc`). **Every type
 with a text is done** (`letter_type_rewritten`) but the offers 0x1E/0x1F
 (they need the world's offers list [0x6DE584] and operation 0x5F, a
-player's action) and the two pictures 0x46 and 0x6E (0x51AC60 makes an
-image and the text is only «\n\n\c\h<its number>_»: the viewer's). Some
-cases change the save when shown (`letter_viewed`: the loan dates of 0x12
-and 0x26, the women's bit of 0x4F6420).
+player's action). Some cases change the save when shown (`letter_viewed`:
+the loan dates of 0x12 and 0x26, the women's bit of 0x4F6420).
+
+- **The two letters with a picture** (2026-11-04), 0x46 and 0x6E: their
+  text is only «\n\n\c\h%u_» with the number of the texture 0x51AC60 makes
+  through the graphics library (what it draws: [formats/mail.md](formats/mail.md)
+  §4). The emulator has no graphics library: before, the game's composer
+  «failed» on them. `letter_oracle.py` now stubs 0x51AC60 (`PICTURE`, also
+  in `SpanishExe`'s `CODE`): it returns p3vita's `kLetterMapPicture` (1) and
+  checks that it got the letter's entry; the fake window's [+0xB8] (the last
+  picture, which the next one frees through the library) is cleared before
+  each letter. Checked: `all_letters` in save 3 (three of each, the same
+  bytes in both languages), a real pirate nest's letter
+  (`retouch_mail.py hanse_task_letters`, `re/emu/sesion5/mail/s6/nest.sh`),
+  and the 12 saves again (24 comparisons equal). The picture itself
+  (`letter_map_picture`) is p3vita's reading of 0x51AC60 and the library's
+  blitters, without an oracle: a test with made-up images
+  (`tests/mail_test.cpp`, values worked out by hand from the code) and the
+  same pixels as a separate Python version from the game's files; the viewer
+  draws it (`s6/shot.sh`, the scenario's save loaded from a slot).
 
 - Found on the way, all in `extra_texts.txt` (`re/emu/sesion5/mail/s3`):
   the alignment missed tables whose first element isn't a text (0x0A's

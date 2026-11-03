@@ -10,6 +10,8 @@
 #include <vector>
 
 #include "p3data/game_memory.hpp"
+#include "p3data/image.hpp"
+#include "p3data/letter_picture.hpp"
 #include "p3data/letters.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/savegame.hpp"
@@ -197,6 +199,89 @@ void text_codes() {
 		"the chronicle's ornament, \\t16063_; the fonts");
 }
 
+
+// The picture of the letters 0x46 and 0x6E (0x51AC60), on made-up images:
+// the values worked out by hand from the game's code.
+void map_picture() {
+	auto pixel = [](Image& image, int x, int y) { return &image.rgba[(size_t(y) * size_t(image.width) + size_t(x)) * 4]; };
+	auto set = [&](Image& image, int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+		uint8_t* p = pixel(image, x, y);
+		p[0] = r;
+		p[1] = g;
+		p[2] = b;
+		p[3] = a;
+	};
+	auto is = [&](Image& image, int x, int y, int r, int g, int b, int a) {
+		const uint8_t* p = pixel(image, x, y);
+		return p[0] == r && p[1] == g && p[2] == b && p[3] == a;
+	};
+	Image map{0x91C, 0x6C7, {}};
+	map.rgba.resize(size_t(map.width) * size_t(map.height) * 4);
+	for (size_t i = 0; i < map.rgba.size(); i += 4) {
+		map.rgba[i] = map.rgba[i + 1] = map.rgba[i + 2] = 100;
+		map.rgba[i + 3] = 255;
+	}
+	set(map, 0x44, 0x42, 255, 255, 255, 255);
+	set(map, 1050, 750, 0, 0, 0, 255);
+	Image piece{100, 100, std::vector<uint8_t>(100 * 100 * 4)};
+	for (size_t i = 0; i < piece.rgba.size(); i += 4) {
+		piece.rgba[i] = 200;
+		piece.rgba[i + 1] = 100;
+		piece.rgba[i + 2] = 50;
+		piece.rgba[i + 3] = 128;
+	}
+	Image cross{144, 18, std::vector<uint8_t>(144 * 18 * 4)};
+	for (size_t i = 3; i < cross.rgba.size(); i += 4) {
+		cross.rgba[i] = 255;
+	}
+	set(cross, 126 + 9, 9, 200, 0, 0, 255);
+	set(cross, 126, 0, 10, 20, 30, 255);
+	set(cross, 125, 9, 50, 50, 50, 255);  // Frame 6: not drawn.
+
+	GameMemory<0x10> letter{};
+	letter.u8(4) = 0x46;
+	letter.u16(0xA) = 1 << 4;  // The centre piece only.
+	letter.u16(0xC) = 1200;
+	letter.u16(0xE) = 900;
+	Image out = letter_map_picture(letter, map, piece, cross);
+	check(out.width == 300 && out.height == 300, "3 x 3 pieces of 100 x 100");
+	// Grey 100: s 100, red tone(150) = 161, green tone(100) = 86, blue
+	// tone(50) = 11; then the parchment (199, 99, 49, a' 127).
+	check(is(out, 120, 120, 179, 92, 29, 191), "a piece: sepia under the parchment");
+	check(is(out, 100, 101, 161 + (38 * 127 >> 8), 92, 11 + (38 * 127 >> 8), 191), "the same at the piece's corner");
+	// The map's black at (1050, 750), the window's corner: tone(0) = 0.
+	check(is(out, 0, 0, 0, 0, 0, 0) && is(out, 299, 299, 0, 0, 0, 0) && is(out, 99, 150, 0, 0, 0, 0),
+		"the other pieces cleared");
+	check(is(out, 150, 150, 200, 0, 0, 255) && is(out, 141, 141, 10, 20, 30, 255), "the cross on the place, opaque");
+	check(is(out, 141, 150, 179, 92, 29, 191) && is(out, 150, 141, 179, 92, 29, 191),
+		"its black not drawn, nor the frame before it");
+
+	// By the map's top left corner: the window moves, the cross keeps the place.
+	letter.u16(0xA) = 0xFFFF;
+	letter.u16(0xC) = 0x44 + 20;
+	letter.u16(0xE) = 0x42 + 30;
+	out = letter_map_picture(letter, map, piece, cross);
+	// White: s 255, (tone(382), tone(255), tone(127)) = (255, 255, 127).
+	check(is(out, 0, 0, 255 - 28, 255 - 78, 127 - 39, 191), "the window from (0x44, 0x42)");
+	check(is(out, 20, 30, 200, 0, 0, 255) && is(out, 11, 21, 10, 20, 30, 255), "the cross at the place");
+	// By the bottom right one; the cross half outside is clipped.
+	letter.u16(0xC) = 2330;
+	letter.u16(0xE) = 1730;
+	out = letter_map_picture(letter, map, piece, cross);
+	check(is(out, 298, 295, 200, 0, 0, 255) && is(out, 289, 286, 10, 20, 30, 255), "the window up to (0x91C, 0x6C7)");
+	letter.u16(0xC) = 0xFFFF;
+	letter.u16(0xE) = 0;
+	out = letter_map_picture(letter, map, piece, cross);
+	check(out.width == 300 && is(out, 299, 0, 179, 92, 29, 191), "the cross far outside");
+	check(letter_map_picture(letter, Image{100, 100, std::vector<uint8_t>(100 * 100 * 4)}, piece, cross).width == 0,
+		"a map too small: no picture");
+
+	const std::vector<LetterParagraph> p = letter_paragraphs("\n\\r\\f3_Visby,  1. 4. 1362\n\n\\l\n\n\\c\\h1_ ");
+	check(p.size() == 6 && p[5].picture == kLetterMapPicture && p[5].made_picture && p[5].align == LetterParagraph::Center,
+		"\\h: a picture made for the letter");
+	check(!letter_paragraphs("\\c\\t16063_ ")[0].made_picture, "\\t: one of the game's graphics");
+}
+
 }  // namespace
 
 int main() {
@@ -204,6 +289,7 @@ int main() {
 	reading_and_deleting();
 	ticker_queue();
 	text_codes();
+	map_picture();
 	if (failures) {
 		std::fprintf(stderr, "%d failures\n", failures);
 		return EXIT_FAILURE;

@@ -107,8 +107,19 @@ struct LetterParagraph {
 	Align align = Left;
 	uint8_t font = 0;
 	int picture = -1;  // The last picture's number (the chronicle's ornament: 16063).
+	// Whether that picture is \hN_, one made for the letter (kLetterMapPicture),
+	// rather than \tN_, one of the game's graphics by its TEX number.
+	bool made_picture = false;
 	std::string text;
 };
 std::vector<LetterParagraph> letter_paragraphs(const std::string& raw);
+
+// The picture's number in the text of the letters 0x46 (a map) and 0x6E (a
+// pirate nest): the game writes there the handle of the texture 0x51AC60
+// made for it (sgl_CreateMemoryTexture's, which depends on the textures the
+// game has made before), p3vita this number; the viewer makes the picture
+// with letter_map_picture (letter_picture.hpp), and the letter oracle's stub
+// of 0x51AC60 returns this number.
+constexpr int kLetterMapPicture = 1;
 
 }  // namespace p3::data
