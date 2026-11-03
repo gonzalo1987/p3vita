@@ -1029,6 +1029,34 @@ def ticker_ships(o, rec):
     print(f'the player\'s ships {sent} sail to the next towns')
 
 
+def ship_sunk(o, rec):
+    """A ship of the player sinks at sea (0x506CF2: 0x519D90's letter 0x1B,
+    0x519E87, and the ticker line 0x16): two of his ships alone in port sail
+    to the next town, the ticks go on until they are at sea, then their hull
+    is left at 4 (the sea wears 1 every 4 ticks); with two, the second loses
+    its captain (one sinks with its captain, if it had one, one without)."""
+    towns = o.counts()[0]
+    ships = [s for s, _ in player_ships(o)[:2]]
+    if not ships:
+        raise SystemExit('the player has no ship alone in port')
+    for s in ships:
+        t = o.u8(o.ship(s) + 0x39)
+        op = o.alloc(20)
+        o.uc.mem_write(op, struct.pack('<IIIii', 0, s, (t + 1) % towns, 0, 0))
+        o.call(to.SET_SAIL, [], ecx=op)
+    for _ in range(512):
+        if all(o.u16(o.ship(s) + 0x134) == 0xF for s in ships):
+            break
+        o.advance_tick()
+    at_sea = [s for s in ships if o.u16(o.ship(s) + 0x134) == 0xF]
+    for s in at_sea:
+        w32(o, o.ship(s) + 0x18, 4)
+    captains = [o.u16(o.ship(s) + 0x42) for s in at_sea]
+    if len(at_sea) > 1:
+        w16(o, o.ship(at_sea[1]) + 0x42, 0xFFFF)
+    print(f'the player\'s ships {at_sea} at sea with a hull of 4 (captains {captains}, the second one\'s taken)')
+
+
 def ticker_shipyard(o, rec):
     """Direct calls to the shipyard's work (with FUNCS 5083b0,508aa0; days 0:
     the ships' lists are retouched): a ship of the player in his town's
@@ -1440,7 +1468,7 @@ SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, com
                                      captain, mayor_election, alderman_merchant, alderman_citizen, hanse_vote,
                                      auction_end, hanse_task_letters, siege_letters,
                                      operation_letters, diet_letters, all_letters, read_delete, all_news, ticker_lines,
-                                     ticker_ships, ticker_shipyard)}
+                                     ticker_ships, ticker_shipyard, ship_sunk)}
 
 
 def main():

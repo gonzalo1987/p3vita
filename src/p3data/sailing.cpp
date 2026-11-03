@@ -1002,8 +1002,36 @@ void Sailing::sink(SavedShip& ship, uint16_t index, uint16_t& link) {
 	if (merchant(ship)) {
 		ship.memory.u16(0x50) = kNoIndex;
 		ship.memory.u16(0x52) = kNoIndex;
-		// 0x519D90 only tells the interface; to a human owner, the ticker line
-		// «Your ship X has sunk.» (0x506D78: kind 0x16, the ship's name [+0x15E]).
+		// 0x519D90: to a human owner the letter 0x1B («What a tragic lost: X
+		// sank...», 0x519E87): [+0x5] his home town; u16 [+0x8] the ship's
+		// type & 3 + its x ([+0x1E]) << 2; u16 [+0xA] its y ([+0x22]) & 0x7FF
+		// + the captain's [+0x2] << 11; u16 [+0xC] its name [+0x15E] & 0x3FFF
+		// + (the captain's [+0x2] & 0xE0) << 9; [+0xE] the captain's [+0x3]
+		// (0xFF without a captain); [+0xF] the sailors [+0x40]. The sums in 16
+		// bits, as the game.
+		if (human(ship)) {
+			const MerchantMemory& owner = save_.merchants[ship.owner()].memory;
+			Letter letter(0x1B);
+			letter.entry.u8(5) = owner.u8(0x19);
+			letter.entry.u16(8) = uint16_t((ship.memory.u8(0xE) & 3) + (ship.memory.u16(0x1E) << 2));
+			uint16_t y = ship.memory.u16(0x22) & 0x7FF;
+			uint16_t name = ship.memory.u16(0x15E) & 0x3FFF;
+			const uint16_t captain = ship.memory.u16(0x42);
+			if (captain < save_.globals.u16(global::kCaptainCount) && captain < save_.captains.size()) {
+				const uint8_t first = save_.captains[captain].u8(2);
+				y = uint16_t(y + (first << 11));
+				name = uint16_t(name + ((first & 0xE0u) << 9));
+				letter.entry.u8(0xE) = save_.captains[captain].u8(3);
+			} else {
+				letter.entry.u8(0xE) = 0xFF;
+			}
+			letter.entry.u16(0xA) = y;
+			letter.entry.u16(0xC) = name;
+			letter.entry.u8(0xF) = ship.memory.u8(0x40);
+			send_letter(save_, ship.owner(), letter);
+		}
+		// Then the ticker line «Your ship X has sunk.» (0x506D78: kind 0x16, the
+		// ship's name [+0x15E]).
 		if (human(ship)) {
 			send_ticker(save_, ship.owner(), 0x16, ship.memory.u16(0x15E));
 		}

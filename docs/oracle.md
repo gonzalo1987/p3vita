@@ -808,9 +808,19 @@ The game's other messages to the player, the ticker lines of 0x548CA0
   `s5/probe_tk.py`, which prints a recording's last `TK`). `PLAYER_RANK=N`
   gives the player that rank in every town before a `retouch_mail.py`
   scenario. Not reached by a scenario: the end of the game (0xC), the famine
-  (0x19), a ship of the player sunk (0x16), a convoy of his (3, 0x22), the
-  auction's announcement; their code is a line each, next to the letters
-  that are checked.
+  (0x19), a convoy of his (3, 0x22), the auction's announcement; their code
+  is a line each, next to the letters that are checked.
+- **A ship of the player sunk** (0x506CF2): 0x519D90, which p3vita skipped,
+  sends a human owner the letter 0x1B (rewritten in `Sailing::sink`, its call
+  0x519E87 in `MAIL_CALLS`), then the ticker line 0x16. New scenario
+  `retouch_mail.py ship_sunk` (two of his ships sail, at sea their hull left
+  at 4, the second without its captain): saves 1 and 3, every call equal
+  (the letters 0x1B and the lines 0x16; one ship sinks with its captain, two
+  without), the letters' texts equal in English and Spanish (the scenario's
+  save, `--write`, through `letters-check.sh`; `s5/sunk.sh`,
+  `s5/sunk_text.sh`), and `write-scenario.sh ship_sunk 1` in saves 1 and 3:
+  0 bytes different, the reload equal. The world 7 days in the 12 saves, 0
+  different.
 
 ## The game's static initializers (2026-11-03)
 

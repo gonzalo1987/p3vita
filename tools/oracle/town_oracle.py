@@ -364,6 +364,9 @@ MAIL_CALLS = (
     # diet.cpp: the Hanse's missions (0x4E09D4): 0x48 in phase 0, 0x4C in
     # phase 2, 0x5C when the fleet disbands.
     0x4E0CEE, 0x4E0F4C, 0x4E1371,
+    # sailing.cpp: a human owner's ship sunk (0x519D90 from the ships'
+    # update 0x506D3D: 0x1B).
+    0x519E87,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is

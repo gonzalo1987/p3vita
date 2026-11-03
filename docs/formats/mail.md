@@ -252,13 +252,18 @@ the operations' executor, the battles' methods); 2 are in an interface
 window (0x419EB0, from 0x410A02: letters 0x45 and 0x21 to the local player,
 built with rand()).
 
-- **97** are in functions p3vita has rewritten (`fn_XXXXXX`), which skip the
-  letter today (comments «A letter (0x4D6530): not rewritten» or «no se
-  traduce»).
-- **10** are in functions p3vita names but skips whole: the mission
+- **97** are in functions p3vita has rewritten (`fn_XXXXXX`), which skipped
+  the letter when this inventory was made (comments «A letter (0x4D6530): not
+  rewritten» or «no se traduce»). All are connected now but the 0x6A of
+  0x633DB0 (only from the battle in a town).
+- **10** were in functions p3vita named but skipped whole: the mission
   interpreter 0x4ECF64 (5, three with a letter built by the script), the
   alderman's notification 0x5299F0 (2), the convoy's automatic route
-  0x503230, the sinking message 0x519D90 and 0x4F3AF0.
+  0x503230, the sinking message 0x519D90 and 0x4F3AF0. 0x5299F0 and
+  0x519D90 are rewritten and connected now (2026-11-03, 2026-11-04).
+- On 2026-11-04, **99** of the 154 are connected (appendix A, «Connected»);
+  the other 55 are the 0x6A above, the 7 left of this group and the 47
+  below, which go with the subsystems they belong to.
 - **47** are in events and operations p3vita doesn't have yet. Events 0x09,
   0x0C, 0x0F, 0x10, 0x11, 0x17, 0x18 and 0x28 are created only by player
   actions (operations from the interface) or by the mission interpreter;
@@ -575,7 +580,7 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | p3data/convoys.cpp (named) | 0x503230 | 0x5035CD | 0x07 | Ship trade | 3 | one merchant |  | |
 | p3data/convoys_members.cpp | 0x50A580 | 0x50A966 | 0x32 | Convoy | 1 | one merchant |  | yes |
 | p3data/convoys_members.cpp | 0x50A580 | 0x50AA02 | 0x31 | Convoy | 1 | one merchant |  | yes |
-| p3data/sailing.cpp (named) | 0x519D90 | 0x519E87 | 0x1B | Sank | 2 | one merchant |  | |
+| p3data/sailing.cpp | 0x519D90 | 0x519E87 | 0x1B | Sank | 2 | one merchant | rewritten in Sailing::sink (2026-11-04) | yes |
 | p3data/town_tick/alderman.cpp | 0x4EB0EB | 0x4EB32B | 0x70 | Unsuccessful | 1 | one merchant |  | yes |
 | p3data/town_tick/alderman.cpp | 0x4EBF54 | 0x4EC18F | 0x80 | Overland trade | 1 | one merchant |  | yes |
 | p3data/town_tick/alderman.cpp | 0x4EBF54 | 0x4EC230 | 0x6E | Pirate hideaway | 1 | one merchant |  | yes |
@@ -663,7 +668,7 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | p3data/town_tick/sieges.cpp | 0x6281F0 | 0x628A52 | 0x38 | Siege | 4 | -2 (chronicle) |  | yes |
 | p3data/town_tick/sieges.cpp | 0x6281F0 | 0x629A2B | 0x38 | Siege | 4 | -2 (chronicle) |  | yes |
 | p3data/town_tick/sieges.cpp | 0x629C60 | 0x629F63 | 0x53 | Siege | 4 | -2 (chronicle) |  | yes |
-| p3data/town_tick/sieges.cpp | 0x633DB0 | 0x6345D3 | 0x6A | Plundered | 2 | one merchant | only in the convoy branch, from the battle in a town (0x5FEAC9) | yes |
+| p3data/town_tick/sieges.cpp | 0x633DB0 | 0x6345D3 | 0x6A | Plundered | 2 | one merchant | only in the convoy branch, from the battle in a town (0x5FEAC9) | |
 | p3data/town_tick/sieges.cpp | 0x636230 | 0x6364E9 | 0x85 | Prince | 1 | one merchant |  | yes |
 | — a trade route ends (0x503230, 0x518860) | 0x4D5200 | 0x4D55F9 | 0x07 | Ship trade | 3 | one merchant |  | |
 | — battle in a town (method) | 0x5FE7E0 | 0x5FEA54 | 0x3B | Outrigger | 1 | one merchant | battle in a town | |
