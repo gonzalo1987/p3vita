@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "p3data/game_fixes.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -88,9 +89,6 @@ constexpr uint32_t kWorldFlag8A = 0x6DE52A;
 constexpr uint32_t kAldermanBusy = 0x6DF31C;  // u32 (ver merchants.cpp)
 constexpr uint32_t kOperations = 0x6DF2F0;  // u32 del objeto de las operaciones encoladas
 constexpr uint32_t kOperationCount = 0x6DF346;  // u16 operaciones encoladas ([+0x56] de 0x6DF2F0)
-// Buzón de los mensajes a los comerciantes (0x6DD730): u16 [+0x6] su número.
-constexpr uint32_t kMailCount = 0x6DD736;
-constexpr uint32_t kMailFree = 0x6DD734;  // u16 the mailbox's first free letter
 // Del mundo: [+0x84] u32 tick y [+0x88] u8 ciudad de la próxima fiesta (0x5316E0).
 constexpr uint32_t kFeastTick = global::kWorld + 0x84;
 constexpr uint32_t kFeastTown = global::kWorld + 0x88;
@@ -332,21 +330,6 @@ uint32_t fn_4db4e0(SaveGame& save, uint16_t event) {
 
 // --- Evento 0x03: cada 10 días ---
 
-// How long each type of letter is kept (0x6C0198): 1 to 3, by the
-// merchant's settings [+0x38], [+0x39], [+0x3A]; 4, fixed by type; 0, not at
-// all. Past 0x87 the table runs into other data, which gives no 1 to 4.
-constexpr uint8_t kLetterKind[0x88] = {
-	2, 3, 3, 2, 2, 2, 4, 3, 2, 4, 1, 1, 4, 4, 4, 4, 4, 3, 2, 1, 1, 2, 2, 2,
-	2, 1, 2, 2, 4, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 3, 2, 2, 2, 2, 1, 1, 1, 1,
-	2, 1, 1, 2, 2, 4, 1, 1, 4, 4, 4, 1, 4, 1, 2, 3, 4, 1, 1, 2, 4, 4, 2, 1,
-	1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 3, 2, 1, 2, 1, 4,
-	2, 2, 2, 3, 1, 1, 3, 3, 3, 3, 2, 1, 1, 1, 1, 1, 1, 4, 4, 2, 2, 2, 1, 1,
-	1, 2, 2, 1, 2, 1, 1, 2, 1, 2, 1, 2, 1, 1, 0, 0,
-};
-// The keeping times of those settings (0x6C0220: never, 40, 20, 10, 5 days,
-// none; past 5 the table runs into text).
-constexpr uint32_t kLetterKeep[10] = {0xFFFFFFFF, 0x2800, 0x1400, 0xA00, 0x500, 0, 1702323527, 1650811506,
-	540702049, 1701604449};
 // First day of each month (0x672D78; the game masks the month with 0x7F).
 constexpr uint16_t kLetterMonth[16] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365, 0, 31, 28};
 
@@ -355,7 +338,7 @@ constexpr uint16_t kLetterMonth[16] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 2
 // older than their keeping time go back to the mailbox's free list ([+0x4]),
 // emptied (0x51AAB0, which also frees what hangs from them on the heap). The
 // age: from the letter's date (day [+0x0] from 1, month [+0x1], year
-// [+0x2]); the keeping time by type (kLetterKind): the merchant's setting,
+// [+0x2]); the keeping time by type (letter_class): the merchant's setting,
 // or fixed: never for 0x46, 7 days for 0x11, 0x0F and 0x10, 28 days for
 // 0x72, never for the other fixed ones; 0x71 is kept until the tick [+0x4]
 // of its heap record (SaveGame::mail_records). A letter of type 0x86 or more cuts the chain where it is (the link
@@ -373,7 +356,7 @@ void fn_4d6780(SaveGame& save, int32_t merchant) {
 	const uint32_t count = g.u16(kMailCount);
 	const uint32_t now = g.u32(kTick);
 	auto setting = [&](size_t o) {
-		return m.u8(o) < 10 ? kLetterKeep[m.u8(o)] : 0;  // Past 9, sin comprobar con el oráculo.
+		return letter_keep(m.u8(o));  // Past 9, sin comprobar con el oráculo.
 	};
 	uint16_t* link = &m.u16(0xA);
 	uint32_t index = *link;
@@ -388,7 +371,7 @@ void fn_4d6780(SaveGame& save, int32_t merchant) {
 		const uint32_t written = date << 8;
 		const uint32_t age = now > written ? now - written : 0;
 		uint32_t keep = 0;
-		switch (type < 0x88 ? kLetterKind[type] : 0) {
+		switch (letter_class(type)) {
 		case 1:
 			keep = setting(0x38);
 			break;
@@ -415,15 +398,7 @@ void fn_4d6780(SaveGame& save, int32_t merchant) {
 		if (age > keep) {
 			const uint16_t removed = *link;
 			*link = letter.u16(6);
-			letter.u8(0) = 0;
-			letter.u8(1) = 0;
-			letter.u16(2) = 0xFFFF;
-			letter.u8(4) = 0xFF;
-			letter.u8(5) = 0;
-			std::memset(letter.bytes.data() + 8, 0, 8);
-			if (index < save.mail_records.size()) {
-				save.mail_records[index].reset();  // 0x51AAB0 frees it.
-			}
+			release_letter(save, index);  // 0x51AAB0, which also frees its buffer and record.
 			letter.u16(6) = g.u16(kMailFree);
 			g.u16(kMailFree) = removed;
 		} else {

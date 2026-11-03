@@ -61,6 +61,7 @@
 
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_texts.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/navigation.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
@@ -308,6 +309,22 @@ void build_save(const State& state, SaveGame& save) {
 			}
 		}
 	}
+	if (const Region* lb = find(state, "LB")) {
+		// The letters' buffers: u16 letter, u32 size and the bytes, for each.
+		save.mail_buffers.assign(save.mail.size(), {});
+		const std::vector<uint8_t>& b = lb->bytes;
+		for (size_t o = 0; o + 6 <= b.size();) {
+			const uint16_t i = get<uint16_t>(b.data(), o);
+			const uint32_t n = get<uint32_t>(b.data(), o + 2);
+			if (o + 6 + n > b.size()) {
+				break;
+			}
+			if (i < save.mail_buffers.size()) {
+				save.mail_buffers[i].assign(b.begin() + std::ptrdiff_t(o + 6), b.begin() + std::ptrdiff_t(o + 6 + n));
+			}
+			o += 6 + n;
+		}
+	}
 	if (const Region* y = find(state, "Y")) {
 		save.town_travel = y->bytes;
 	}
@@ -447,6 +464,22 @@ State dump_save(const SaveGame& save, const State& game) {
 				b.resize(o + 0x12);
 				put<uint16_t>(b.data(), o, uint16_t(i));
 				std::memcpy(b.data() + o + 2, save.mail_records[i]->bytes.data(), 0x10);
+			}
+		}
+	}
+	if (s.count("LB")) {
+		std::vector<uint8_t>& b = s["LB"].bytes;
+		b.clear();
+		for (size_t i = 0; i < save.mail_buffers.size() && i < save.mail.size(); ++i) {
+			const uint8_t kind = save.mail[i].u8(4);
+			const bool record = save.mail_records.size() > i && save.mail_records[i] && letter_has_record(kind);
+			if (letter_has_buffer(kind) || record) {
+				const std::vector<uint8_t>& data = save.mail_buffers[i];
+				const size_t o = b.size();
+				b.resize(o + 6 + data.size());
+				put<uint16_t>(b.data(), o, uint16_t(i));
+				put<uint32_t>(b.data(), o + 2, uint32_t(data.size()));
+				std::copy(data.begin(), data.end(), b.begin() + std::ptrdiff_t(o + 6));
 			}
 		}
 	}

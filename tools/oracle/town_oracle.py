@@ -18,6 +18,11 @@ El estado son copias de la memoria del juego, por regiones:
          16 primeros bytes de cada nodo, en orden
   E      cola de eventos (*0x6DD73C, tantos registros de 0x18 como [0x6DD748])
   B      buzón de los avisos (*0x6DD730, tantas entradas de 16 bytes como [0x6DD736])
+  L      the 16-byte heap record of each letter of types 0x3C..0x40 and 0x71
+         ([+0x8]): u16 letter and the 16 bytes
+  LB     the heap buffer of each letter: types 0x29, 0x47, 0x63 and 0x83
+         ([+0x8], [+0xC] bytes) and 0x3C..0x40 and 0x71 ([+0xC], record
+         [+0x0] bytes): u16 letter, u32 size and the bytes
   Y      tiempos de viaje entre ciudades ([+0x6C] del mundo, n × n bytes)
   V      convoyes (*0x6DD7A8, tantos registros de 0x3C como [0x6DD896])
   Q      rutas de los barcos: por cada barco con [+0x24], u16 barco, u32 nº de
@@ -51,6 +56,7 @@ uso: python3 town_oracle.py <Patrician3.exe> <partida.raw> <salida.probe> <días
        [--desde DÍA] [--max N] [--semilla S] [--cpr p2arch0_eng.cpr] [--barcos DATOS [--sin-ia] [--sin-convoyes]
        [--sin-comerciantes] [--resto PIEZAS | --sin-resto] [--operaciones CÓDIGOS] [--no-storms]
        [--no-pirates] [--no-disband] [--no-statistics]] [--pst FILE] [--write OUT]
+       [--letters connected|all|none]
 La función 51ba10 graba los ticks de ciudad enteros.
 
 Con --cpr (o si DATOS/scripts tiene los ficheros), la carga crea también el
@@ -271,6 +277,18 @@ QUIET = {
     0x613920: 4,  # escena del puerto (0x6E6220)
     0x4D6530: 8,  # mensaje a uno o varios comerciantes (buzón 0x6DD730)
 }
+# Sending a letter (0x4D6530 on the mailbox 0x6DD730, docs/formats/mail.md)
+# runs only from the calls p3vita has connected (`letters='connected'`, the
+# default): from the others it is silenced as above, so that the world stays
+# comparable while the calls are connected group by group. `--letters all`
+# lets every call through, `none` silences them all (as before 2026-11-03).
+MAIL_SEND = 0x4D6530
+MAIL_CALLS = (
+    # The merchant's tick (0x4F7BB0, merchants.cpp): letters 0x0F, 0x10, 0x11
+    # to the merchant and 0x06 (a promotion) to the chronicle.
+    0x4F7CB0, 0x4F7CF6, 0x4F7D33, 0x4F82D9,
+)
+MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # Con barcos, además (ver sail_oracle.py):
 QUIET_SHIPS = {
     0x44F940: 4,  # avisa a la interfaz de que un barco del jugador ha cambiado
@@ -372,9 +390,10 @@ def executor_trampoline(at):
 class TownOracle(SaveOracle):
     def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True, rest=(), cpr=None,
                  operations=OPERATIONS, storms=True, pirates=True, statistics=False, last_steps=True,
-                 disband=True, battles=False):
+                 disband=True, battles=False, letters='connected'):
         self.pirates = pirates and navdata is not None and convoys
         self.battles = self.pirates  # `battles` is kept for older scripts.
+        self.letters = letters
         if self.pirates:
             operations = tuple(operations) + PIRATE_OPERATIONS
         super().__init__(exe, save, navdata)
@@ -441,6 +460,9 @@ class TownOracle(SaveOracle):
         self.uc.mem_write(TRAMPOLINE, bytes([0xFF, 0x74, 0x24, 0x04, 0xE8]) + call + bytes([0xC2, 0x04, 0x00]))
 
     def _quiet(self, uc, address, size, user_data):
+        if address == MAIL_SEND and self.letters != 'none':
+            if self.letters == 'all' or self.u32(uc.reg_read(UC_X86_REG_ESP)) in MAIL_SITES:
+                return  # the game's 0x4D6530 runs
         if address == ENQUEUE:
             op = bytes(uc.mem_read(self._arg(0), OPERATION_SIZE))
             self.queued.append(op)
@@ -962,6 +984,22 @@ class TownOracle(SaveOracle):
                 letter_records.append(struct.pack('<H', i))
                 letter_records.append(bytes(read(pointer, 0x10)))
         out['L'] = (0, b''.join(letter_records))
+        # The heap buffer of each letter that has one: u16 letter, u32 size
+        # and the bytes (tick_probe compares them with SaveGame::mail_buffers).
+        letter_buffers = []
+        for i in range(len(letters) // 0x10):
+            kind = letters[0x10 * i + 4]
+            pointer, size = unpack('<II', letters, 0x10 * i + 8)
+            if kind in (0x29, 0x47, 0x63, 0x83):
+                data = bytes(read(pointer, size)) if pointer and size else b''
+            elif (0x3C <= kind <= 0x40 or kind == 0x71) and pointer:
+                n = unpack('<I', read(pointer, 4))[0]
+                data = bytes(read(size, n)) if size and n else b''
+            else:
+                continue
+            letter_buffers.append(struct.pack('<HI', i, len(data)))
+            letter_buffers.append(data)
+        out['LB'] = (0, b''.join(letter_buffers))
         times = gu32(WORLD + 0x6C)
         out['Y'] = (times, block(times, towns * towns if times else 0))
         convoys = gu32(SHIPS + 8)
@@ -1362,6 +1400,9 @@ def main():
     p.add_argument('--cpr', help='archivo de datos (p2arch0_eng.cpr) del que leer scripts/Namen*.txt')
     p.add_argument('--write', metavar='OUT', help='at the end, the uncompressed .pat the game writes for the state '
                    'reached (write_oracle.py)')
+    p.add_argument('--letters', choices=('connected', 'all', 'none'), default='connected',
+                   help='which calls to 0x4D6530 (send a letter) run: the ones p3vita has connected (MAIL_CALLS), '
+                   'all or none')
     p.add_argument('--operaciones', default=','.join(f'{x:x}' for x in OPERATIONS),
                    help='con --barcos, códigos (hex) de las operaciones encoladas que se ejecutan')
     a = p.parse_args()
@@ -1373,7 +1414,8 @@ def main():
         rest = [int(x, 16) for x in a.resto.split(',') if x]
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
                    not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], not a.no_storms,
-                   not a.no_pirates, not a.no_statistics, disband=not a.no_disband, battles=a.battles)
+                   not a.no_pirates, not a.no_statistics, disband=not a.no_disband, battles=a.battles,
+                   letters=a.letters)
     o.load()
     if a.pst:
         # The .pst next to the save (uncompressed), as 0x5476E0 reads it.

@@ -648,7 +648,7 @@ void set_event_date(GameMemory<0x18>& e, uint32_t tick) {
 // 16 bytes y tantos como el primer u32 de esos: el juego los guarda aparte
 // (punteros en [+0x8], y en [+0xC] los segundos); aquí los punteros quedan a 0
 // and the 16 bytes go to SaveGame::mail_records; the rest goes to
-// SaveOpaque::mail_extras, for write_savegame.
+// SaveGame::mail_buffers.
 void load_mail(Reader r, SaveGame& out) {
 	GlobalMemory& g = out.globals;
 	const uint32_t version = r.u32() & 0xFFFF;
@@ -658,7 +658,7 @@ void load_mail(Reader r, SaveGame& out) {
 	g.u16(0x6DD73A) = version >= 2 ? r.u16() : 0;
 	out.mail.assign(g.u16(0x6DD736), GameMemory<0x10>());
 	out.mail_records.assign(out.mail.size(), std::nullopt);
-	out.opaque.mail_extras.assign(out.mail.size(), {});
+	out.mail_buffers.assign(out.mail.size(), {});
 	for (size_t i = 0; i < out.mail.size(); ++i) {
 		GameMemory<0x10>& m = out.mail[i];
 		r.to(m, 0, 8);
@@ -668,13 +668,13 @@ void load_mail(Reader r, SaveGame& out) {
 			m.u32(8) = 0;
 			const size_t start = r.position();
 			r.skip(m.u32(0xC));
-			out.opaque.mail_extras[i] = r.since(start);  // Kept for write_savegame.
+			out.mail_buffers[i] = r.since(start);
 		} else if ((type >= 0x3C && type <= 0x40) || type == 0x71) {
 			GameMemory<0x10>& record = out.mail_records[i].emplace();
 			r.to(record, 0, 0x10);
 			const size_t start = r.position();
 			r.skip(record.u32(0));
-			out.opaque.mail_extras[i] = r.since(start);  // Kept for write_savegame.
+			out.mail_buffers[i] = r.since(start);
 		} else {
 			r.to(m, 8, 8);
 		}

@@ -119,11 +119,15 @@ the chronicle (merchant −2, always). A letter to a merchant of the computer
 is dropped, so in the saves only the player's chain and the chronicle
 change.
 
-- [ ] **0x4D6530 itself** and what it calls: 0x4D6680 (the filter and the
+- [x] **0x4D6530 itself** and what it calls: 0x4D6680 (the filter and the
   chain), 0x4D6B40 (growing by 200), 0x51AB20 / 0x51AAB0 (copy and release
   with the buffers of types 0x29, 0x47, 0x63, 0x83 and the records of
   0x3C..0x40 and 0x71). 0x4D7B10 is the interface's notification (sound and
-  a line), nothing in the oracle.
+  a line), nothing in the oracle. Done on 2026-11-03 (`src/p3data/mail.cpp`;
+  the oracle runs it only from the connected calls, `MAIL_CALLS`, and
+  records the buffers as region `LB`; scenarios `grow` and `promotion` of
+  `tools/oracle/retouch_mail.py`). Connected: the merchant's tick 0x4F7BB0
+  (0x0F, 0x10, 0x11, 0x06).
 - [ ] **The 97 calls in functions p3vita has rewritten** (today skipped,
   «A letter (0x4D6530): not rewritten» / «no se traduce»): `events_rare.cpp`
   21, `events_towns.cpp` 14, `events_mayor.cpp` 9, `merchants.cpp` 8,

@@ -62,7 +62,7 @@ size_t take_free_notice(SaveGame& save) {
 	save.globals.u16(kMailFree) = save.mail[index].u16(6);
 	save.mail[index] = GameMemory<0x10>();
 	save.mail_records[index].reset();
-	save.opaque.mail_extras[index].clear();
+	save.mail_buffers[index].clear();
 	return index;
 }
 
@@ -218,7 +218,7 @@ int main(int argc, char** argv) {
 			std::memset(record.bytes.data(), 0x5A, 0x10);
 			record.u32(0) = 3;
 			record.u32(4) = g.u32(global::kWorldTick) + 1000;
-			save.opaque.mail_extras[index] = {0x5A, 0x5A, 0x5A};
+			save.mail_buffers[index] = {0x5A, 0x5A, 0x5A};
 		} else {
 			std::memcpy(&n.u8(8), pattern(8, notice.type).data(), 8);
 		}
@@ -245,8 +245,8 @@ int main(int argc, char** argv) {
 		GameMemory<0x10>& n = save.mail[index];
 		set_notice_day(n, today - 3);
 		n.u8(4) = type;
-		save.opaque.mail_extras[index] = pattern(type == 0x63 ? 5 : 0, type);
-		n.u32(0xC) = uint32_t(save.opaque.mail_extras[index].size());
+		save.mail_buffers[index] = pattern(type == 0x63 ? 5 : 0, type);
+		n.u32(0xC) = uint32_t(save.mail_buffers[index].size());
 		n.u16(6) = g.u16(kMailFree);
 		g.u16(kMailFree) = uint16_t(index);
 	}

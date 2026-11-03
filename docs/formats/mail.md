@@ -243,6 +243,27 @@ and 0x506B6A, docking 0x519C90, arriving 0x516CC0, the battles' setup
 interpreter, the automatic routes (0x4D5200, 0x503230) and events p3vita
 doesn't have.
 
+## 7. In p3vita
+
+- `src/p3data/mail.hpp`, `mail.cpp`: `send_letter` (0x4D6530 with 0x4D6680),
+  the growth (0x4D6B40), the copy (0x51AB20) and `release_letter` (0x51AAB0),
+  `letter_class` (0x6C0198) and `letter_keep` (0x6C0220). A sender builds a
+  `Letter` (the 16 bytes as 0x51A850 leaves them, plus its buffer or
+  record) and calls `send_letter`. p3vita keeps 0 where the game keeps
+  pointers ([+0x8]; [+0xC] of a record) and the buffers and records apart:
+  `SaveGame::mail_buffers` and `SaveGame::mail_records`, as long as
+  `SaveGame::mail`. 0x4D6780 (`events_towns.cpp`) releases with
+  `release_letter`. 0x4D7B10 (the interface's notice) is not reproduced.
+- The oracle runs 0x4D6530 only from the connected calls (`MAIL_CALLS` in
+  `tools/oracle/town_oracle.py`) and records the buffers as region `LB`
+  ([oracle.md](../oracle.md), «The mailbox: sending letters»); scenarios in
+  `tools/oracle/retouch_mail.py`; `tests/mail_test.cpp`.
+- Connected so far: the merchant's tick 0x4F7BB0 (`merchants.cpp`): 0x0F,
+  0x10, 0x11 (the week's accounts, to a human merchant: the home town in
+  [+0x5], two u32 amounts in [+0x8] and [+0xC]) and 0x06 (a promotion in the
+  home town, to the chronicle: [+0x5] the town, u16 [+0x8] the old rank,
+  [+0xA] the new one, [+0xC] the merchant, [+0xE] his title, 0x4F9430).
+
 ## Appendix A. The 154 calls
 
 «p3vita file»: where p3vita has the function (`fn_XXXXXX`), or only names it

@@ -326,11 +326,6 @@ struct SaveOpaque {
 	// SaveGame::pirate_nests (live state).
 	std::array<std::vector<uint8_t>, 5> pirate_maps;
 	std::array<std::vector<uint8_t>, 5> pirate_records;
-	// For each notice of SaveGame::mail, the bytes the file has after it that
-	// the simulation doesn't use: the [+0xC] bytes of its buffer for the types
-	// 0x29, 0x47, 0x63 and 0x83; for 0x3C..0x40 and 0x71, the [+0x0] bytes
-	// that follow its 16-byte record (SaveGame::mail_records, live state).
-	std::vector<std::vector<uint8_t>> mail_extras;
 	// For each event of SaveGame::events, what follows the records: [+0x12]
 	// entries of 4 bytes (type 0x1B) or the node list of type 0x34 (with
 	// [+0x15] >= 7 and a list: 4 bytes a node, 0x7F before each next one and
@@ -434,6 +429,12 @@ struct SaveGame {
 	// tick until which the letter is kept, 0x4D6780). Same size as `mail`;
 	// empty for the other letters. In tick_probe, region L.
 	std::vector<std::optional<GameMemory<0x10>>> mail_records;
+	// The heap buffer of each letter (mail.hpp): the [+0xC] bytes at the
+	// game's [+0x8] for the types 0x29, 0x47, 0x63 and 0x83 (the battle
+	// report, the election, the expedition, the impounding); the record's
+	// [+0x0] bytes at the game's [+0xC] for 0x3C..0x40 and 0x71. Same size as
+	// `mail`; empty for the other letters. In tick_probe, region LB.
+	std::vector<std::vector<uint8_t>> mail_buffers;
 	// Matriz n × n del mundo (*[0x6DE50C], [+0x6C] de 0x6DE4A0; 0x531B70 la
 	// lee): lo que se tarda de una ciudad a otra, en dieciseisavos de día a la
 	// velocidad de una snaikka (0x516930; 0x516AB0 lo pasa a días).

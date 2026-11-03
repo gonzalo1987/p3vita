@@ -63,3 +63,9 @@ target_link_libraries(game_texts_test PRIVATE p3data)
 target_compile_options(game_texts_test PRIVATE -Wall -Wextra)
 
 add_test(NAME game_texts COMMAND game_texts_test)
+
+add_executable(mail_test mail_test.cpp)
+target_link_libraries(mail_test PRIVATE p3data)
+target_compile_options(mail_test PRIVATE -Wall -Wextra)
+
+add_test(NAME mail COMMAND mail_test)

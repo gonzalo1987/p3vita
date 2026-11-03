@@ -414,18 +414,18 @@ bool notice_with_block(uint8_t type) {
 // the types with a buffer, the pointer, [+0xC] and the [+0xC] bytes of the
 // buffer; for the types with a record, the 16 bytes of the record
 // (SaveGame::mail_records, which the simulation changes) and its [+0x0] bytes
-// (SaveOpaque::mail_extras, as read); for the others, [+0x8..+0xF].
+// (SaveGame::mail_buffers); for the others, [+0x8..+0xF].
 void write_mail(Writer& w, const SaveGame& save) {
 	const GlobalMemory& g = save.globals;
 	w.u32(0xAFFE0005);
 	for (uint32_t a : {kMailCount, kMailFree, kMailbox + 0x8, kMailbox + 0xA}) {
 		w.from(g, a, 2);
 	}
-	// `n` bytes of what was read (zeros past its end: only if the state has
-	// changed a size the file had).
+	// `n` bytes of the letter's buffer (zeros past its end: only if the
+	// buffer is shorter than its size says).
 	auto kept = [&](size_t i, size_t n) {
 		static const std::vector<uint8_t> kNone;
-		const std::vector<uint8_t>& extras = i < save.opaque.mail_extras.size() ? save.opaque.mail_extras[i] : kNone;
+		const std::vector<uint8_t>& extras = i < save.mail_buffers.size() ? save.mail_buffers[i] : kNone;
 		for (size_t k = 0; k < n; ++k) {
 			w.u8(k < extras.size() ? extras[k] : 0);
 		}

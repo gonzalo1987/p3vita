@@ -47,6 +47,7 @@
 #include <vector>
 
 #include "p3data/game_fixes.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/statistics.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -455,8 +456,28 @@ void fn_4f7bb0(SaveGame& save, int merchant) {
 		}
 		const uint32_t balance = m.u32(0x488) - m.u32(0x480) - m.u32(0x490) - m.u32(0x4A8) - m.u32(0x4D0);
 		m.u32(0x0) += balance;
-		// Al jugador humano se le avisa del balance (0x4D6530, mensajes 0xF,
-		// 0x10 y 0x11): no se traduce.
+		// A human merchant gets the week's accounts by letter (0x4D6530), each
+		// with the home town in [+0x5]: 0x0F with [+0x490] and [+0x480] if
+		// either is above 0, 0x10 with [+0x488] and [+0x4D0], 0x11 (the taxes)
+		// with [+0x4A8] − [+0x4D4] and [+0x4D4] if [+0x4A8] is.
+		if (m.u16(8) == 0) {
+			auto accounts = [&](uint8_t type, uint32_t first, uint32_t second) {
+				Letter letter(type);
+				letter.entry.u8(5) = m.u8(0x19);
+				letter.entry.u32(8) = first;
+				letter.entry.u32(0xC) = second;
+				send_letter(save, int32_t(id & 0xFFFF), letter);
+			};
+			if (m.s32(0x490) > 0 || m.s32(0x480) > 0) {
+				accounts(0x0F, m.u32(0x490), m.u32(0x480));
+			}
+			if (m.s32(0x488) > 0 || m.s32(0x4D0) > 0) {
+				accounts(0x10, m.u32(0x488), m.u32(0x4D0));
+			}
+			if (m.s32(0x4A8) > 0) {
+				accounts(0x11, m.u32(0x4A8) - m.u32(0x4D4), m.u32(0x4D4));
+			}
+		}
 		m.u32(0x480) = 0;
 		m.u32(0x490) = 0;
 		m.u32(0x488) = 0;
@@ -584,11 +605,23 @@ void fn_4f7bb0(SaveGame& save, int merchant) {
 		// El día 1 de cada mes, el rango en la ciudad natal.
 		const uint8_t before = m.u8(0x39C + m.u8(0x19));
 		fn_4f75f0(save, merchant, m.u8(0x19));
-		// Si el jugador humano asciende (a un rango < 6), se le avisa
-		// (0x4D6530 con 0x4F9430, 0x548CA0), la interfaz lo enseña (0x6CC7E8:
-		// 0x469380, 0x469AF0) y la ciudad lo dibuja (0x6E51AC: 0x5308A0,
-		// 0x590680, 0x5891C0): no se traduce.
-		(void)before;
+		// If a human merchant goes up (to a rank below 6), the chronicle gets
+		// the letter 0x06 (0x4D6530 to −2): the home town, the ranks before
+		// and after, the merchant and his title (0x4F9430). The message to
+		// the player (0x548CA0), the window (0x6CC7E8: 0x469380, 0x469AF0) and
+		// the town's drawing (0x6E51AC: 0x5308A0, 0x590680, 0x5891C0) are the
+		// interface.
+		const uint8_t home = m.u8(0x19);
+		const uint8_t after = m.u8(0x39C + home);
+		if (m.u16(8) == 0 && before < after && after < 6) {
+			Letter letter(0x06);
+			letter.entry.u8(5) = home;
+			letter.entry.u16(8) = before;
+			letter.entry.u16(0xA) = after;
+			letter.entry.u16(0xC) = uint16_t(id);
+			letter.entry.u16(0xE) = merchants_detail::fn_4f9430(save, merchant);
+			send_letter(save, kLetterToChronicle, letter);
+		}
 	}
 	// Cada día, el rango en otras dos ciudades (enfrentadas en el orden).
 	uint32_t other = (uint32_t(save.globals.u16(global::kWorldDayOfYear)) + (id & 0xFFFF)) % towns;

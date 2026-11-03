@@ -23,6 +23,7 @@ add_library(p3data STATIC
 	hanse_tasks.cpp
 	image.cpp
 	lz.cpp
+	mail.cpp
 	navigation.cpp
 	prices.cpp
 	sailing.cpp
