@@ -613,6 +613,8 @@ void start_letter(SaveGame& save, const Event& e, const MerchantMemory& m) {
 		break;
 	}
 	send_letter(save, e.u8(0x8), letter);
+	// «You have been accused of a crime in X.» (0x4E5D6A: kind 0x1B, the town [+0xB]).
+	send_ticker(save, e.u8(0x8), 0x1B, e.u8(0xB));
 }
 
 // 0x4E5B84 (evento 0x05, con su índice): el encargo del comerciante [+0x8].
@@ -827,6 +829,8 @@ uint32_t fn_4e5b84(SaveGame& save, uint16_t event) {
 			}  // Else sin comprobar con el oráculo (the game reads past the merchants).
 		}
 		send_letter(save, e.u8(0x8), letter);
+		// «Your sentence is being announced in X.» (0x4E62A3: kind 0x1C, the town [+0xB]).
+		send_ticker(save, e.u8(0x8), 0x1C, e.u8(0xB));
 	}
 	switch (e.u8(0x11)) {
 	case 1: {

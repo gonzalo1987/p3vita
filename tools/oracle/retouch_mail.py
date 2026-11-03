@@ -966,6 +966,96 @@ def read_delete(o, rec):
           f'(type {o.u8(entry(with_buffer) + 4):#x}); {len(ops)} operations')
 
 
+def ticker_lines(o, rec):
+    """Ticker lines (0x548CA0, region TK) that reach the player only in the
+    phases that summon the ranks from 4 on: the player of rank 6 in every
+    town; at the next day's start a Hanse vote about his home town (event
+    0x21 in phase 0: 0x4DC2E8), the Alderman's election (0x20 in phase 0:
+    0x4DBD14), a council in his home town (0x2E: 0x4E9B90) and the diet's
+    blockade of another town (0x24 in phase 1: 0x4E0DB4)."""
+    m = o.u32(to.PLAYER)
+    mm = o.merchant(m)
+    towns = o.counts()[0]
+    for t in range(towns):
+        w8(o, mm + 0x39C + t, 6)
+    home = o.u8(mm + 0x19)
+    other = (home + 1) % towns
+    day = (o.u32(WORLD + 0x14) + 0x100) & ~0xFF
+    e = new_event(o, day, 0x21)
+    w8(o, e + 8, o.u8(0x6DE52E))
+    w8(o, e + 9, home)
+    new_event(o, day, 0x20)
+    e = new_event(o, day, 0x2E)
+    w32(o, e + 8, 20000)
+    w8(o, e + 0xC, home)
+    w8(o, e + 0xD, 0)
+    w8(o, e + 0x16, m)
+    e = o.call(0x4D8CF0, [day + 1], ecx=to.EVENTS)
+    w16(o, e + 6, 0x24)
+    o.uc.mem_write(e + 8, bytes([0xFF] * 8))
+    w32(o, e + 0x10, 0)
+    w8(o, e + 0x14, other)
+    w8(o, e + 0x15, 1)
+    w16(o, e + 0x16, 0xFFFF)
+    print(f'the player {m} of rank 6; at {day:#x} a Hanse vote about {home}, the Alderman\'s election, a council '
+          f'in {home} and the diet blockading {other}')
+
+
+def player_ships(o):
+    """The player's ships in port, not in a convoy, as (ship, town)."""
+    towns, _, _, ships = o.counts()
+    convoys = o.u16(to.SHIPS + 0xF6)
+    out, s = [], o.u16(o.merchant(o.u32(to.PLAYER)) + 0xE)
+    while s < ships:
+        a = o.ship(s)
+        if o.u16(a + 0x134) == 0 and o.u8(a + 0x39) < towns and o.u16(a + 8) >= convoys:
+            out.append((s, o.u8(a + 0x39)))
+        s = o.u16(a + 4)
+    return out
+
+
+def ticker_ships(o, rec):
+    """The ticker lines of the player's ships alone (0x548CA0, region TK):
+    each of his ships in port ordered to the next town (operation 0x00,
+    0x537670): they dock there («The snaikka X has docked in Y.», kind 5,
+    0x519D72)."""
+    towns = o.counts()[0]
+    sent = []
+    for s, t in player_ships(o)[:4]:
+        op = o.alloc(20)
+        o.uc.mem_write(op, struct.pack('<IIIii', 0, s, (t + 1) % towns, 0, 0))
+        o.call(to.SET_SAIL, [], ecx=op)
+        sent.append(s)
+    print(f'the player\'s ships {sent} sail to the next towns')
+
+
+def ticker_shipyard(o, rec):
+    """Direct calls to the shipyard's work (with FUNCS 5083b0,508aa0; days 0:
+    the ships' lists are retouched): a ship of the player in his town's
+    building list [0x81C], 10 short of its hull (0x5083B0: «Launch in X»,
+    kind 6, 0x508514), and two in its repair list [0x81E], one in state 6
+    («Repairs completed in X», kind 7) and one in 7 («Ship improvements
+    completed in X.», 0xA) (0x508AA0: 0x508BC5)."""
+    import retouch_unchecked as ru
+    ships = player_ships(o)
+    if len(ships) < 3:
+        raise SystemExit(f'the player has {len(ships)} ships alone in port')
+    (s0, t), (s1, _), (s2, _) = ships[:3]
+    a = o.town(t)
+    for s, status in ((s0, 0), (s1, 6), (s2, 7)):
+        sa = o.ship(s)
+        w32(o, sa + 0x18, o.s32(sa + 0x14) - 10)
+        w8(o, sa + 0x136, 0)
+        w16(o, sa + 0x134, status)
+        w16(o, sa + 6, 0xFFFF)
+    w16(o, a + 0x81C, s0)
+    w16(o, o.ship(s1) + 6, s2)
+    w16(o, a + 0x81E, s1)
+    ru.direct(o, 0x5083B0, [t, 1000], ecx=to.SHIPS)
+    ru.direct(o, 0x508AA0, [t, 1000], ecx=to.SHIPS)
+    print(f'in town {t}: the player\'s ship {s0} launched, {s1} and {s2} repaired')
+
+
 def real_fields(t, rnd, towns, ships, captains, merchants=30):
     """Letters of type t with the fields [+0x8..+0xF] a real one has (from the
     code that sends it), for the types p3vita composes (letters.cpp): they
@@ -1349,7 +1439,8 @@ SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, com
                                      expedition_contract, debts_notices, debts_office, debts_ship, debts_partial,
                                      captain, mayor_election, alderman_merchant, alderman_citizen, hanse_vote,
                                      auction_end, hanse_task_letters, siege_letters,
-                                     operation_letters, diet_letters, all_letters, read_delete, all_news)}
+                                     operation_letters, diet_letters, all_letters, read_delete, all_news, ticker_lines,
+                                     ticker_ships, ticker_shipyard)}
 
 
 def main():
@@ -1374,6 +1465,12 @@ def main():
         f.write(b'P3PROBE1')
         rec = to.Recorder(o, functions, f, 1 << 30)
         rec.active = True
+        if os.environ.get('PLAYER_RANK'):
+            # The player's rank in every town (the Hanse days, the votes and
+            # the councils summon the ranks from 4 on: their ticker lines).
+            pm = o.merchant(o.u32(to.PLAYER))
+            for t in range(o.counts()[0]):
+                w8(o, pm + 0x39C + t, int(os.environ['PLAYER_RANK']))
         SCENARIOS[a.scenario](o, rec)
         for _ in range(a.days * 256):
             o.advance_tick()

@@ -538,9 +538,13 @@ void fn_5083b0(SaveGame& save, int town, int32_t work) {
 	if (ship.owner() < merchant_count(save)) {
 		MerchantMemory& m = save.merchants[ship.owner()].memory;
 		m.u16(0x478) = uint16_t(m.u16(0x478) + 1);  // Barcos construidos.
-		// Si el dueño es un jugador humano: carta (0x548CA0) y, si es el
-		// jugador, la ventana del barco nuevo (0x469380 y 0x469AF0, que puede
-		// encolar una operación). Sin traducir: no pasa en las 12 partidas.
+		// Si el dueño es un jugador humano: the ticker line «Launch in X»
+		// (0x508514: kind 6, the ship) y, si es el jugador, la ventana del
+		// barco nuevo (0x469380 y 0x469AF0, que puede encolar una operación;
+		// the interface's, not reproduced).
+		if (m.u16(8) == 0) {
+			send_ticker(save, ship.owner(), 6, index);
+		}
 	}
 	// 0x613920: escena del puerto (no se traduce).
 }
@@ -571,7 +575,12 @@ void fn_508aa0(SaveGame& save, int town, int32_t work) {
 			ship.health() = ship.max_health();
 			*link = ship.next_in_list();
 			// Si el dueño es un jugador humano y la orden no tiene los bits 0 y
-			// 1: carta (0x548CA0, no se traduce).
+			// 1: the ticker line «Repairs completed in X» (state 6, kind 7) or
+			// «Ship improvements completed in X.» (kind 0xA) (0x508BC5, the ship).
+			if (ship.owner() < merchant_count(save) && save.merchants[ship.owner()].memory.u16(8) == 0 &&
+				!(ship.orders() & 3)) {
+				send_ticker(save, ship.owner(), ship.status() == 6 ? 7 : 0xA, index);
+			}
 			ship.status() = 5;
 			ship.timer() = 0;
 			ship.next_in_list() = save.globals.u16(kDockedHead);

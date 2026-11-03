@@ -23,6 +23,7 @@
 // comprobar con el oráculo» no ha salido ni en esas pruebas. Los convoyes de
 // los piratas no se mueven en el oráculo (ver convoys.cpp).
 
+#include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -244,13 +245,17 @@ bool Sailing::fn_502110(int convoy, uint32_t every_32) {
 			return false;
 		}
 		// Solo en las pruebas sintéticas: se para en el mar (y, si es de un
-		// jugador humano, se le avisa con 0x548CA0).
+		// jugador humano, the ticker line «Convoy X reaches its destination.»,
+		// 0x5029E3: kind 3, the guide).
 		for (uint32_t i = c.u16(0xA); i < ship_count(save_); i = save_.ships[i].next_in_list()) {
 			SavedShip& s = save_.ships[i];
 			s.notices() |= 0x80;
 			s.dx() = 0;
 			s.dy() = 0;
 			s.speed() = 0;
+		}
+		if (c.u8(0x0) < merchant_count(save_) && save_.merchants[c.u8(0x0)].kind() == 0) {
+			send_ticker(save_, c.u8(0x0), 3, c.u16(0x10));
 		}
 		return true;
 	}
@@ -262,8 +267,11 @@ bool Sailing::fn_502110(int convoy, uint32_t every_32) {
 	if (lead.raid()) {
 		// Solo en las pruebas sintéticas (ataque a una ciudad: solo los piratas).
 		if ((situation & 0x4000000) == 0x4000000) {
-			// Antes, si es de un jugador humano, un mensaje (0x548CA0). El juego
-			// devuelve el byte bajo de every_32.
+			// Antes, si es de un jugador humano, the ticker line (0x502639: kind
+			// 3, the guide). El juego devuelve el byte bajo de every_32.
+			if (c.u8(0x0) < merchant_count(save_) && save_.merchants[c.u8(0x0)].kind() == 0) {
+				send_ticker(save_, c.u8(0x0), 3, c.u16(0x10));
+			}
 			return (every_32 & 0xFF) != 0;
 		}
 		c.u8(0x1E) = uint8_t(town);
@@ -309,9 +317,10 @@ bool Sailing::fn_502110(int convoy, uint32_t every_32) {
 		set_destination(lead, 0xFF, 0x220, 0x368);
 	} else if (!ai_merchant(save_, c.u8(0x0)) && (c.u16(0x14) & 2)) {
 		// Jugador humano, todos sus barcos: con ruta automática, 0x4D5900 (el
-		// oráculo se la salta); si iba a esta ciudad, mensaje (0x548CA0) y
-		// pierde las órdenes de ruta.
+		// oráculo se la salta); si iba a esta ciudad, the ticker line (0x50285C:
+		// kind 3, the guide) y pierde las órdenes de ruta.
 		if (lead.destination() == uint32_t(town)) {
+			send_ticker(save_, c.u8(0x0), 3, c.u16(0x10));
 			lead.orders() &= 0xFC;
 		}
 	} else {

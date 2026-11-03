@@ -312,6 +312,13 @@ void build_save(const State& state, SaveGame& save) {
 			}
 		}
 	}
+	if (const Region* tk = find(state, "TK")) {
+		// The ticker lines sent to the local player: u8 kind, u16 argument.
+		save.player_ticker.clear();
+		for (size_t o = 0; o + 3 <= tk->bytes.size(); o += 3) {
+			save.player_ticker.push_back({tk->bytes[o], get<uint16_t>(tk->bytes.data(), o + 1)});
+		}
+	}
 	if (const Region* lb = find(state, "LB")) {
 		// The letters' buffers: u16 letter, u32 size and the bytes, for each.
 		save.mail_buffers.assign(save.mail.size(), {});
@@ -468,6 +475,19 @@ State dump_save(const SaveGame& save, const State& game) {
 				put<uint16_t>(b.data(), o, uint16_t(i));
 				std::memcpy(b.data() + o + 2, save.mail_records[i]->bytes.data(), 0x10);
 			}
+		}
+	}
+	if (s.count("TK")) {
+		std::vector<uint8_t>& b = s["TK"].bytes;
+		b.clear();
+		for (const SaveGame::TickerLine& line : save.player_ticker) {
+			if (line.text != 0 || line.interface) {
+				continue;  // The game's own lines, and those of its interface: not in the oracle.
+			}
+			const size_t o = b.size();
+			b.resize(o + 3);
+			b[o] = line.kind;
+			put<uint16_t>(b.data(), o + 1, line.e);
 		}
 	}
 	if (s.count("LB")) {

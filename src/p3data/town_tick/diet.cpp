@@ -26,6 +26,7 @@
 #include <cstring>
 #include <vector>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -504,6 +505,21 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 		// La flota (con un barco en el 0x23 y en caza en el 0x34).
 		if (type != 0x34) {
 			t.u32(0x2C8) |= 0x400;
+		}
+		if (type == 0x24) {
+			// The ticker line «The Hanseatic League is blockading X» (kind 0x2A,
+			// the town [+0x14]) to the local player (0x4E0DB4); in a network game
+			// once per human merchant, but always to merchant 0 (0x4E0D86: a game
+			// bug; the line itself shows only with fix_game_bugs, compose_ticker).
+			if (g.u32(0x6DFC18) != 0) {
+				for (uint32_t m = 0; m < g.u16(global::kWorldMerchantCount) && m < save.merchants.size(); ++m) {
+					if (save.merchants[m].memory.u16(8) == 0) {
+						send_ticker(save, fix_game_bugs() ? m : 0, 0x2A, uint16_t(town));
+					}
+				}
+			} else {
+				send_ticker(save, g.u32(0x6DFC14), 0x2A, uint16_t(town));
+			}
 		}
 		const uint16_t head = g.u16(kEventHead);
 		const uint16_t convoy = fn_50ac40(save, town, head, type != 0x23, type == 0x34);

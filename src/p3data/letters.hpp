@@ -78,6 +78,17 @@ std::string compose_chronicle(const SaveGame& save, const GameTexts& texts);
 // calls it when it shows the chronicle, as the game.
 void chronicle_viewed(SaveGame& save, const GameTexts& texts);
 
+// The game's ticker line (0x5483D0 on the real-time object 0x6DF2F0, which
+// 0x548CA0 calls for the local player): the text of `kind` (0..0x2A) with its
+// argument `e` (a ship, a town or a number, by kind), raw; an empty text
+// when the game shows an empty line (a ship past the ships...), nullopt when
+// it shows nothing (12 kinds have no line in this build; 0x2A, «The
+// Hanseatic League is blockading %s», only while the game isn't running: a
+// game bug, shown with fix_game_bugs()).
+std::optional<std::string> compose_ticker(const SaveGame& save, const GameTexts& texts, uint8_t kind, uint16_t e);
+// The same for a line of the queue (take_ticker), also the game's own lines.
+std::optional<std::string> compose_ticker(const SaveGame& save, const GameTexts& texts, const SaveGame::TickerLine& line);
+
 // A letter's text as the game's text box reads it (0x462540): paragraphs
 // (at each '\n'; a 0 byte ends the text) with the alignment set by the codes
 // \l (left), \r (right) and \c (centre), which stays for the next ones, in

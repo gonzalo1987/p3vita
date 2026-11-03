@@ -156,6 +156,26 @@ void reading_and_deleting() {
 	check(save.globals.u16(kMailChronicle) == 0xFFFF && save.globals.u16(kMailFree) == 4, "0x6F: the chronicle");
 }
 
+// The ticker lines' queue (0x548CA0): the local player's only, not the kinds
+// without a line, the argument of a fixed text as 0, the game's own lines.
+void ticker_queue() {
+	SaveGame save = world();
+	save.player = 2;
+	send_ticker(save, 2, 0x16, 7);  // Sunk: kept.
+	send_ticker(save, 0, 0x16, 7);  // Another merchant.
+	send_ticker(save, 2, 0x13, 4);  // The plague: no line.
+	send_ticker(save, 0x10002, 0x0C, 9);  // The merchant's low 16 bits; a fixed text.
+	send_ticker_text(save, 2, 0x6C34CC, 3);
+	send_ticker_interface(save, 2, 0x10, 5);
+	const std::vector<SaveGame::TickerLine> lines = take_ticker(save);
+	check(lines.size() == 4, "four lines for the player");
+	check(lines[0].kind == 0x16 && lines[0].e == 7 && !lines[0].text && !lines[0].interface, "a line");
+	check(lines[1].kind == 0x0C && lines[1].e == 0, "a fixed text's argument as 0");
+	check(lines[2].text == 0x6C34CC && lines[2].e == 3, "the game's own line");
+	check(lines[3].interface && lines[3].e == 0, "an interface's line");
+	check(take_ticker(save).empty(), "taken once");
+}
+
 // A letter's text as the game's text box reads it (0x462540).
 void text_codes() {
 	const std::string raw = std::string("\n\\r\\f3_L\xFC" "beck,  1. 4. 1362\n\n\\l\\cHanse_tag\n\\l\\dYou owe 12\\C.\r\nX") +
@@ -182,6 +202,7 @@ void text_codes() {
 int main() {
 	sending();
 	reading_and_deleting();
+	ticker_queue();
 	text_codes();
 	if (failures) {
 		std::fprintf(stderr, "%d failures\n", failures);

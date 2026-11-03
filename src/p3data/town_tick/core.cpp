@@ -192,6 +192,13 @@ void fn_527d40(SaveGame& save, int town) {
 			Letter letter(0x35);
 			letter.entry.u8(5) = t.u8(0x2C0);
 			send_letter(save, kLetterToChronicle, letter);
+			// «Starvation in your hometown» (0x527F9E: kind 0x19).
+			for (uint32_t m = save.merchants.size(); m-- > 0;) {
+				if (m < save.globals.u16(global::kWorldMerchantCount) && save.merchants[m].memory.u8(0x19) == t.u8(0x2C0) &&
+					save.merchants[m].memory.u16(8) == 0) {
+					send_ticker(save, m, 0x19, 0);
+				}
+			}
 		}
 	}
 }

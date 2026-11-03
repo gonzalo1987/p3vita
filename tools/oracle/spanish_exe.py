@@ -59,6 +59,9 @@ CODE = {
     0x47DD40: 0x47DDE0,  # the chronicle (chronicle_oracle.py)
     0x47E57B: 0x47E61B,  # its text complete (chronicle_oracle.DONE)
     0x47E599: 0x47E639,  # its end, freeing the text (chronicle_oracle.EXIT)
+    0x5483D0: 0x5488A0,  # the ticker line (ticker_oracle.py)
+    0x5487BA: 0x548C8A,  # its line handed to the interface (ticker_oracle.SHOWN)
+    0x5487C5: 0x548C95,  # past the interface's call (ticker_oracle.SKIP)
 }
 TEXT_INITIALIZERS = (0x46BE60, 0x46C0A0)  # English 0x46BD80, 0x46BFC0
 # What the Spanish emulator skips, as the English oracle's QUIET: address: bytes popped.

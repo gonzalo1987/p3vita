@@ -724,7 +724,8 @@ void fn_4dbbd0(SaveGame& save) {
 			if (rank >= 4) {
 				e.u8(0x14) |= uint8_t(1u << (humans & 31));
 				weight += rank < 6 ? 1 : rank == 6 ? 2 : 3;
-				// 0x548CA0: carta al jugador (no se traduce).
+				// The ticker line «Hanse Day in X» (0x4DBD14: kind 0xD, the Hanse town).
+				send_ticker(save, m, 0xD, save.globals.u8(0x6DE52E));
 			}
 			++humans;
 		}
@@ -888,7 +889,8 @@ uint32_t fn_4dc1f0(SaveGame& save, uint16_t event) {
 				continue;
 			}
 			e.u8(0x16) |= uint8_t(1u << (voters & 31));
-			// 0x548CA0: carta al jugador (no se traduce).
+			// The ticker line «Hanse Day in X» (0x4DC2E8: kind 0xD, the Hanse town).
+			send_ticker(save, m, 0xD, save.globals.u8(0x6DE52E));
 			++voters;
 			weight += rank < 6 ? 1 : rank == 6 ? 2 : 3;  // El 6, sin comprobar con el oráculo.
 		}
@@ -1695,8 +1697,24 @@ uint32_t fn_4e2cd4(SaveGame& save, uint16_t event) {
 			return 1;
 		}
 		t.u16(0x9A2) = g.u16(kEventHead);
-		// Aviso a los jugadores humanos de [+0x16] (0x548CA0 o la interfaz,
-		// 0x42B4C0): no se traduce.
+		// To each human merchant of [+0x16] (a bit per human, in order): with
+		// [0x6DFC1C] = 1 the ticker line «Tomorrow there will be an auction in
+		// X.» (0x4E2F5C: kind 1, the town [+0x15]); otherwise the game writes
+		// «An auction begins in X tomorrow.» (0x6C34CC) to its interface itself
+		// (0x42B4C0), whoever the merchant (in single player, the player).
+		for (uint32_t m = 0, bit = 1; m < g.u16(global::kWorldMerchantCount) && m < save.merchants.size(); ++m) {
+			if (save.merchants[m].memory.u16(8) != 0) {
+				continue;
+			}
+			if (e.u8(0x16) & bit) {
+				if (g.u32(0x6DFC1C) == 1) {
+					send_ticker(save, m, 1, e.u8(0x15));
+				} else {
+					send_ticker_text(save, m, 0x6C34CC, e.u8(0x15));
+				}
+			}
+			bit = (bit + bit) & 0xFF;
+		}
 		e.u8(0x14) = 3;
 		e.u32(0) += 0x100;
 		e.u8(0x0) = 0;

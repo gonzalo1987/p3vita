@@ -12,6 +12,7 @@
 
 #include "p3data/battle/battle_math.hpp"
 #include "p3data/game_texts.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -641,7 +642,15 @@ void Sailing::fn_605420(size_t b, uint16_t a, uint16_t d, uint8_t c, uint32_t fl
 		set8(0xAC8, 1);
 	} else {
 		set8(0xAC8, 0);
-		// 0x548CA0, the messages to the human sides (UI).
+		// The ticker lines to the human sides (0x6056F7, 0x60572E): «The X is
+		// attacking.» (kind 0xE, the attacker's guide) to side 0's merchant,
+		// «The X is being attacked.» (0xB, the defender's) to side 1's.
+		if (!u8(0x5D)) {
+			send_ticker(save_, u16(0x35A), 0xE, a);
+		}
+		if (!u8(0x5E) && u16(0x35A) != u16(0x35C)) {
+			send_ticker(save_, u16(0x35C), 0xB, d);
+		}
 		if (gl.u32(0x6DFC18) == 0) {
 			fn_612c90(false);
 		}

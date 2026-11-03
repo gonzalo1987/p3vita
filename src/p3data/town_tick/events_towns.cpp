@@ -180,8 +180,8 @@ namespace events_towns_detail {
 // [+0xC] what was taken; u16 [+0x8] the ship's name [+0x15E]. With money
 // enough, always (0x4F6618); with the office, to a human merchant
 // (0x4F66FA); with a ship, always (0x4F68A3); with part of it in money and
-// nothing else, to a human merchant (0x4F6818). The ticker lines (0x548CA0,
-// kind 0x15) are the interface's.
+// nothing else, to a human merchant (0x4F6818); after the last two, the
+// ticker line (0x548CA0, kind 0x15, the town).
 void fn_4f6570(SaveGame& save, int merchant, int32_t& amount, uint8_t me, uint8_t town) {
 	MerchantMemory& m = merchant_of(save, uint32_t(merchant));
 	TownMemory& t = town_of(save, town);
@@ -236,6 +236,7 @@ void fn_4f6570(SaveGame& save, int merchant, int32_t& amount, uint8_t me, uint8_
 			}
 			if (m.u16(8) == 0) {
 				send_letter(save, me, letter);
+				send_ticker(save, me, 0x15, town);  // «Some of your goods have been impounded in X.» (0x4F66FF)
 			}
 			return;
 		}
@@ -280,6 +281,7 @@ void fn_4f6570(SaveGame& save, int merchant, int32_t& amount, uint8_t me, uint8_
 	}
 	if (paid > 0 && m.u16(8) == 0) {
 		send_letter(save, me, letter);
+		send_ticker(save, me, 0x15, town);  // The same line (0x4F6833: kind 0x15, the town).
 	}
 }
 

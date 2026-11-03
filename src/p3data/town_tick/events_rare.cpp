@@ -270,7 +270,11 @@ uint32_t fn_4e4a44(SaveGame& save, uint16_t event) {
 	const bool no_limit = index > 0x12 || kGoalLimit[index] == 0;
 	const uint32_t limit = no_limit ? 0 : kGoalLimit[index];
 	const uint32_t start = g.u32(kStartTick);
+	// The end: the ticker line «The predetermined playing time has elapsed.»
+	// to the local player (kind 0xC, before each of the 9 ends: 0x4E4C53...)
+	// and [0x6DFC04] = 0 (the end window, the interface's).
 	const auto game_over = [&]() {
+		send_ticker(save, g.u32(0x6DFC14), 0xC, 0);
 		g.u32(kGameOver) = 0;
 		return 0u;
 	};
@@ -313,6 +317,7 @@ uint32_t fn_4e4a44(SaveGame& save, uint16_t event) {
 					++k;
 				}
 				if (k != n) {
+					send_ticker(save, g.u32(0x6DFC14), 0xC, 0);
 					g.u32(kGameOver) = 0;
 					keep = false;
 					break;
@@ -1482,6 +1487,9 @@ uint32_t fn_4ea594(SaveGame& save) {
 				break;
 			}
 			send_letter(save, kLetterToEach, letter);
+			// «X has disobeyed the orders of the Hanseatic League.» to the
+			// leader (0x4EA7A5: kind 0x21, [+0x12] as a town).
+			send_ticker(save, leader, 0x21, e.u8(0x12));
 			return 1;
 		}
 		const bool exempt = e.u8(0xC) == 6 || e.u8(0x13) == 5 || e.u8(0x13) == 6;
@@ -1885,7 +1893,9 @@ uint32_t fn_4e9a94(SaveGame& save) {
 			}
 			const uint32_t rank = mm.u8(0x39C + town);
 			if (rank >= 4) {
-				// El aviso al jugador (0x548CA0) no se traduce.
+				// «A meeting of the town council is taking place in X.» (0x4E9B90:
+				// kind 0x20, the town).
+				send_ticker(save, m, 0x20, uint16_t(town));
 				const uint8_t votes = e.u8(0xF);
 				e.u8(0xF) = uint8_t(rank == 4 ? votes - 1 : rank == 5 ? votes - 2 : votes - 3);
 				e.u8(0x13) = uint8_t(e.u8(0x13) | uint8_t(1u << (human & 31)));
@@ -3598,6 +3608,7 @@ void Sailing::fn_502b20(int convoy, uint32_t departure) {
 		return previous < 0 ? save_.convoys[size_t(convoy)].u16(0xA) : save_.ships[size_t(previous)].memory.u16(0x6);
 	};
 	bool dated = false;  // A ship seen before (the first loss is dated a day ago).
+	uint32_t lost = 0;  // The ships sunk ([esp+0x24]).
 	while (link() < count) {
 		const uint16_t index = link();
 		SavedShip& s = save_.ships[index];
@@ -3626,6 +3637,7 @@ void Sailing::fn_502b20(int convoy, uint32_t departure) {
 		s.memory.u16(0x50) = 0xFFFF;
 		s.memory.u16(0x52) = 0xFFFF;
 		s.status() = kShipSunk;
+		++lost;
 		// The loss, a letter 0x34 to a human owner (0x502C53..0x502CDF):
 		// [+0x5] his home town (0 without a merchant); u16 [+0x8] the ship's
 		// name [+0x15E], [+0xA] its [+0xE]; u32 [+0xC] when it sank: a day
@@ -3645,6 +3657,10 @@ void Sailing::fn_502b20(int convoy, uint32_t departure) {
 		if (merchant && save_.merchants[owner].memory.u16(8) == 0) {
 			send_letter(save_, owner, letter);
 		}  // Without a merchant the game reads through a null pointer (sin comprobar con el oráculo).
+	}
+	if (lost > 0) {
+		// «N of your ships have been sunk whilst on expedition.» (0x502D20: kind 0x1D).
+		send_ticker(save_, owner, 0x1D, uint16_t(lost));
 	}
 	if (save_.convoys[size_t(convoy)].u16(0xA) >= count) {
 		fn_50a3d0(last);
@@ -3686,7 +3702,11 @@ void Sailing::fn_502b20(int convoy, uint32_t departure) {
 	// El dueño de ahora (0x5017F0 puede haberlo cambiado; el dinero ha ido al de antes).
 	const uint8_t now = save_.convoys[size_t(convoy)].u8(0);
 	if (now < g.u16(global::kWorldMerchantCount)) {
-		// Antes, a un jugador humano, un mensaje (0x548CA0).
+		// To a human owner, the ticker line «Convoy X returns from an
+		// expedition.» (0x502E63: kind 4, the guide).
+		if (save_.merchants[now].memory.u16(8) == 0) {
+			send_ticker(save_, now, 4, save_.convoys[size_t(convoy)].u16(0x10));
+		}
 		tick::events_rare_detail::add_reputation(save_.merchants[now].memory, tick::events_rare_detail::kReputationBack);
 	}
 }

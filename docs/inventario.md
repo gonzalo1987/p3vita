@@ -183,11 +183,15 @@ change.
   text box's codes (0x462540), in the viewer's mailbox. Left: the answers
   (0x4D6C90: operations 0x60, 0x72, 0x74, 0x75, 0x77, 0x8C, the letters'
   buttons), with the player's actions.
-- [ ] **The other channel, 0x548CA0** (60 calls, 47 in rewritten
+- [x] **The other channel, 0x548CA0** (60 calls, 47 in rewritten
   functions): the ticker lines for the local player («%s interrupts trade
   journey.», «Your ship %s has sunk.»...), composed in 0x5483D0 by kind
   (0..0x2A). It doesn't touch the simulation (only the real-time object
-  0x6DF2F0 and the interface); the oracle silences it.
+  0x6DF2F0 and the interface). Done on 2026-11-04 ([formats/mail.md](formats/mail.md)
+  §6): the composer (`compose_ticker`, checked in both languages) and every
+  call with a line in rewritten code (`send_ticker`); the oracle records the
+  player's as region `TK`. Left with their functions: 0x518860, 0x503230,
+  0x4D5200, 0x508E69, 0x5FBFE0, 0x4E3EC2, 0x4E7C3D, the mission interpreter.
 
 ## Orden propuesto
 

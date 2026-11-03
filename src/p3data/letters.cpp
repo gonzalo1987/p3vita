@@ -14,6 +14,7 @@ namespace {
 
 constexpr uint32_t kTownIds = 0x6DE4B8;  // u8 per town index: its number (scripts/StadtDaten.ini).
 constexpr uint32_t kShipNameCount = 0x6DDB78;  // u16 [+0xD8] of the names object; [+0xDA] after it.
+constexpr uint32_t kShipCount = 0x6DD894;  // u16 [+0xF4] of the ships object 0x6DD7A0: the ships.
 
 // The types of the composer's default case (0x4865E5): no letter text.
 constexpr uint8_t kNoText[] = {0x06, 0x08, 0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x1C, 0x23, 0x35, 0x38, 0x39, 0x3A,
@@ -2269,6 +2270,87 @@ void chronicle_viewed(SaveGame& save, const GameTexts& texts) {
 		MerchantMemory& mm = save.merchants[m].memory;
 		mm.u8(0x1C) = mm.u8(0x1A) ? uint8_t(mm.u8(0x1C) & 0x7F) : uint8_t(mm.u8(0x1C) | 0x80);
 	}
+}
+
+std::optional<std::string> compose_ticker(const SaveGame& save, const GameTexts& t, uint8_t kind, uint16_t e) {
+	// 0x5483D0's cases by kind (the byte table 0x548834 into 0x5487E8).
+	static constexpr uint8_t kCase[0x2B] = {0, 1, 2, 3, 4, 5, 6, 6, 7, 18, 6, 8, 18, 1, 8, 2, 18, 2, 18, 2, 2, 1, 9, 2,
+		2, 18, 2, 1, 1, 10, 2, 2, 1, 1, 11, 12, 13, 14, 2, 2, 15, 16, 17};
+	// Cases 11..15: the trade route's texts (0x6B04F4 by 6, 7, 8, 10, 11).
+	static constexpr uint8_t kRouteText[5] = {6, 7, 8, 10, 11};
+	const GameMemory<0x10> none;
+	const Composer c{save, t, none, 0, {}, {}};
+	const GlobalMemory& g = save.globals;
+	const uint32_t ships = std::min<uint32_t>(g.u16(kShipCount), uint32_t(save.ships.size()));
+	const uint32_t towns = g.u32(global::kWorldTownCount);
+	auto raw = [&](uint32_t english) -> const std::string& { return t.raw_at(english); };
+	auto print = [](const std::string& format, const std::vector<std::string>& args) {
+		return GameTexts::sprintf_raw(format, args);
+	};
+	auto ship = [&](uint32_t s) -> const ShipMemory& { return save.ships[s].memory; };
+	const std::string& by_kind = t.raw_at(0x6B28A8 + 4u * kind);
+	switch (kind <= 0x2A ? kCase[kind] : 18) {
+	case 0:  // A ship's captain stops its trade route; past the ships, the text as it is («%s ...»).
+		return e < ships ? print(raw(0x6B23F0), {c.ship_name(e)}) : raw(0x6B28A8);
+	case 1:  // A town's (0x6DDA00 by e).
+		return print(by_kind, {c.town(e)});
+	case 2:
+		return std::nullopt;
+	case 3:  // A convoy docked in its town ([+0x39]), or at its destination.
+		if (e >= ships) {
+			return std::string();
+		}
+		if (ship(e).u8(0x39) < towns) {
+			return print(raw(0x6B28BC), {raw(0x6C3638), c.ship_name(e), c.town(ship(e).u8(0x39))});
+		}
+		return print(raw(0x6B28B4), {c.ship_name(e)});
+	case 4:  // A convoy back from an expedition (past the ships, the name is a buffer of the
+			 // real-time object, 0x6DFC8A: not reproduced, empty).
+		return print(raw(0x6B28B8), {e < ships ? c.ship_name(e) : std::string()});
+	case 5:  // A ship docked in [+0x38], «The snaikka X ...» by its type.
+		if (e >= ships || ship(e).u8(0x38) >= towns) {
+			return std::string();
+		}
+		return print(raw(0x6B28BC), {t.raw_at(0x6C0E38 + 4u * (ship(e).u8(0xE) & 3)), c.ship_name(e),
+										c.town(ship(e).u8(0x38))});
+	case 6:  // The ship's town ([+0x39]).
+		return e < ships ? print(by_kind, {c.town(ship(e).u8(0x39))}) : std::string();
+	case 7:
+		return e < ships ? print(raw(0x6B28C8), {c.ship_name(e)}) : std::string();
+	case 8:  // The ship's name.
+		return e < ships ? print(by_kind, {c.ship_name(e)}) : std::string();
+	case 9:  // A ship sunk: a name of the ship names' lists (0x512B20).
+		return print(raw(0x6B2900), {c.list_ship_name(e)});
+	case 10:  // Ships lost on an expedition.
+		return e < 2 ? raw(0x6C3594) : print(raw(0x6B291C), {num(e)});
+	case 11:
+	case 12:
+	case 13:
+	case 14:
+	case 15:  // A trade route's ship.
+		return e < ships ? print(t.raw_at(0x6B04F4 + 4u * kRouteText[kCase[kind] - 11]), {c.ship_name(e)})
+						 : std::string();
+	case 16:  // A land transport: from the town in the low byte to the high byte's.
+		return towns ? print(raw(0x6B294C), {c.town((e & 0xFFu) % towns), c.town((e >> 8u) % towns)}) : std::string();
+	case 17:
+		// The Hanse's blockade: 0x548766 shows it only while [+0x928] of the
+		// real-time object is set, which is when the game isn't running (the
+		// calls then wait in [+0x948]): during the game, never. A game bug
+		// (the test the other way round); fixed.
+		if (!fix_game_bugs() || !towns) {
+			return std::nullopt;
+		}
+		return print(raw(0x6B2950), {c.town(e % towns)});
+	default:  // The kind's text as it is (0x548798).
+		return by_kind;
+	}
+}
+
+std::optional<std::string> compose_ticker(const SaveGame& save, const GameTexts& t, const SaveGame::TickerLine& line) {
+	if (line.text != 0) {
+		return GameTexts::sprintf_raw(t.raw_at(line.text), {table_town(save, line.e)});
+	}
+	return compose_ticker(save, t, line.kind, line.e);
 }
 
 std::vector<uint16_t> letter_rows(const SaveGame& save, uint8_t tab) {

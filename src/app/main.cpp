@@ -3042,27 +3042,20 @@ int main(int argc, char** argv) {
 					if (ship.owner() != save.player) {
 						continue;
 					}
+					// With the game's texts the game's own ticker lines tell these
+					// (docked, at its destination, sunk: take_ticker below); without
+					// them, the viewer's.
 					if (event.kind == ShipEvent::Arrived) {
-						const std::string there = town_name(save, town_names, event.town);
-						if (g_texts) {
-							// The game's «The %s has reached its destination.», with the town.
-							std::string reached = g_texts->format(GameText::ReachedDestination, {ship.name()});
-							if (!reached.empty() && reached.back() == '.') {
-								reached.pop_back();
-							}
-							notify(reached + ": " + there + ".");
-						} else {
-							notify(ship.name() + tr(" ha llegado a ", " has reached ") + there + ".");
+						if (!g_texts) {
+							notify(ship.name() + tr(" ha llegado a ", " has reached ") + town_name(save, town_names, event.town) + ".");
 						}
 						// En el mapa del mar queda elegida la ciudad: Triángulo entra en ella.
 						if (selection.mode == Mode::Sea && event.ship == fleet_ship()) {
 							selection.saved_index = size_t(event.town);
 						}
-					} else if (event.kind == ShipEvent::Stopped) {
-						notify(ship.name() + tr(" se ha detenido en el mar.", " has stopped at sea."));
-					} else {
-						notify(g_texts ? ship.name() + ": " + g_texts->get(GameText::Sunk)
-									   : ship.name() + tr(" se ha hundido.", " has sunk."));
+					} else if (!g_texts) {
+						notify(event.kind == ShipEvent::Stopped ? ship.name() + tr(" se ha detenido en el mar.", " has stopped at sea.")
+															   : ship.name() + tr(" se ha hundido.", " has sunk."));
 					}
 				}
 			}
@@ -3071,6 +3064,19 @@ int main(int argc, char** argv) {
 			for (const uint16_t entry : take_new_letters(save)) {
 				if (g_texts && letter_notice_wanted(save, entry)) {
 					notify(clean_game_text(letter_notice(save, *g_texts, entry)));
+				}
+			}
+			// The game's ticker lines (0x548CA0 → 0x5483D0): «Tu barco X se ha
+			// hundido.»..., with the game's texts; an empty one isn't shown.
+			for (const SaveGame::TickerLine& line : take_ticker(save)) {
+				if (!g_texts) {
+					continue;
+				}
+				if (const std::optional<std::string> ticker = compose_ticker(save, *g_texts, line)) {
+					const std::string shown = clean_game_text(*ticker);
+					if (!shown.empty()) {
+						notify(shown);
+					}
 				}
 			}
 			// The election of the Alderman (event 0x20): its result. The game also

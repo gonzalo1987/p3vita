@@ -5,6 +5,7 @@
 
 #include "p3data/mail.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 namespace p3::data {
@@ -282,6 +283,40 @@ void delete_letter(SaveGame& save, int32_t merchant, uint32_t entry) {
 
 void expire_letters(SaveGame& save, int32_t merchant) {
 	tick::events_towns_detail::fn_4d6780(save, merchant);
+}
+
+void send_ticker(SaveGame& save, uint32_t merchant, uint8_t kind, uint16_t e) {
+	// The kinds 0x5483D0 shows nothing for (its case 0x5487C5).
+	static constexpr uint8_t kSilent[] = {0x02, 0x0F, 0x11, 0x13, 0x14, 0x17, 0x18, 0x1A, 0x1E, 0x1F, 0x26, 0x27};
+	if (save.player < 0 || (merchant & 0xFFFF) != uint32_t(save.player) ||
+		std::find(std::begin(kSilent), std::end(kSilent), kind) != std::end(kSilent)) {
+		return;
+	}
+	// The kinds whose line is a fixed text (its case 0x548798): the argument
+	// isn't kept (0), as the oracle records them.
+	static constexpr uint8_t kFixed[] = {0x09, 0x0C, 0x10, 0x12, 0x19};
+	const bool fixed = std::find(std::begin(kFixed), std::end(kFixed), kind) != std::end(kFixed);
+	save.player_ticker.push_back({kind, fixed ? uint16_t(0) : e});
+}
+
+void send_ticker_text(SaveGame& save, uint32_t merchant, uint32_t english, uint16_t town) {
+	if (save.player >= 0 && merchant == uint32_t(save.player)) {
+		save.player_ticker.push_back({0, town, english});
+	}
+}
+
+void send_ticker_interface(SaveGame& save, uint32_t merchant, uint8_t kind, uint16_t e) {
+	const size_t before = save.player_ticker.size();
+	send_ticker(save, merchant, kind, e);
+	if (save.player_ticker.size() > before) {
+		save.player_ticker.back().interface = true;
+	}
+}
+
+std::vector<SaveGame::TickerLine> take_ticker(SaveGame& save) {
+	std::vector<SaveGame::TickerLine> lines;
+	lines.swap(save.player_ticker);
+	return lines;
 }
 
 std::vector<uint16_t> take_new_letters(SaveGame& save) {

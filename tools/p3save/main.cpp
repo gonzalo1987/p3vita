@@ -36,6 +36,7 @@ int usage() {
 		"       p3save texts-cache <Patrician3.exe> <cache>\n"
 		"       p3save <archivo.cpr> <partida> letters <Patrician3.exe> [merchant]\n"
 		"       p3save <archivo.cpr> <partida> chronicle <Patrician3.exe>\n"
+		"       p3save <archivo.cpr> <partida> ticker <Patrician3.exe> <ticker_oracle.py's output>\n"
 		"\n"
 		"Sin más argumentos, lista las ciudades de la partida (p. ej. missav/1.pat).\n"
 		"Con el número de una ciudad, muestra su almacén, producción y consumo.\n"
@@ -274,6 +275,35 @@ int main(int argc, char** argv) {
 	if (!load_any_savegame(*archive, argv[2], save, &error)) {
 		std::fprintf(stderr, "%s\n", error.c_str());
 		return 1;
+	}
+	if (command == "ticker") {
+		// The pairs of tools/oracle/ticker_oracle.py's output (kind, argument),
+		// with p3vita's lines in the same format.
+		if (argc < 6) {
+			return usage();
+		}
+		std::unique_ptr<GameTexts> texts = GameTexts::load(argv[4], &error);
+		std::FILE* in = std::fopen(argv[5], "r");
+		if (!texts || !in) {
+			std::fprintf(stderr, "%s\n", texts ? argv[5] : error.c_str());
+			return 1;
+		}
+		unsigned kind = 0;
+		unsigned e = 0;
+		char line_text[8192];
+		while (std::fgets(line_text, sizeof(line_text), in) && std::sscanf(line_text, "%x %u", &kind, &e) == 2) {
+			const std::optional<std::string> line = compose_ticker(save, *texts, uint8_t(kind), uint16_t(e));
+			std::printf("0x%02x\t%u\t", kind, e);
+			if (!line) {
+				std::printf("-");
+			}
+			for (unsigned char ch : line.value_or(std::string())) {
+				std::printf("%02x", unsigned(ch));
+			}
+			std::printf("\n");
+		}
+		std::fclose(in);
+		return 0;
 	}
 	if (command == "chronicle") {
 		if (argc < 5) {

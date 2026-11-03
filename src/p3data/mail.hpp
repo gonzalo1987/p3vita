@@ -73,6 +73,29 @@ void delete_letter(SaveGame& save, int32_t merchant, uint32_t entry);
 // (0x47C520), the game's save for every merchant.
 void expire_letters(SaveGame& save, int32_t merchant);
 
+// 0x548CA0 (on the real-time object 0x6DF2F0): a ticker line for `merchant`,
+// shown only to the local player (save.player): its kind and argument go to
+// SaveGame::player_ticker, unless the kind has no line (0x5483D0 shows nothing
+// for 12 kinds); for the 5 kinds of a fixed text the argument is kept as 0
+// (the oracle's region TK the same). The rest of 0x548CA0 is the
+// interface's (the view moved to
+// the ship or the town: its arguments a, b, c, not kept).
+void send_ticker(SaveGame& save, uint32_t merchant, uint8_t kind, uint16_t e);
+
+// A line the game writes to its interface itself (0x42B4C0, not through
+// 0x548CA0): the text at `english` (GameTexts::raw_at) with the town `town`,
+// for the local player.
+void send_ticker_text(SaveGame& save, uint32_t merchant, uint32_t english, uint16_t town);
+
+// A ticker line the game sends only while its interface exists (the window
+// object *0x6CC7E8: the promotion's): as send_ticker, marked so that the
+// comparisons with the oracle, which has no interface, leave it out.
+void send_ticker_interface(SaveGame& save, uint32_t merchant, uint8_t kind, uint16_t e);
+
+// The ticker lines sent to the local player, oldest first (compose_ticker,
+// letters.hpp, makes their text). Emptied.
+std::vector<SaveGame::TickerLine> take_ticker(SaveGame& save);
+
 // The local player's (save.player) new letters, as 0x4D6680 stores them:
 // their entries, oldest first, for the viewer's notice (the game's 0x4D7B10,
 // «Official writing: %s»...: see letters.hpp, letter_notice). Emptied.

@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -843,6 +844,9 @@ bool Sailing::sail(SavedShip& ship, uint16_t index) {
 	ship.own_route() = 0;
 	ship.arrival_tick() = 0;
 	ship.notices() |= kNoticeRoute;
+	if (human(ship)) {
+		send_ticker(save_, ship.owner(), 8, index);  // «The X has reached its destination.» (0x5170D1)
+	}
 	events_.push_back({ShipEvent::Stopped, index, -1});
 	return true;
 }
@@ -998,7 +1002,11 @@ void Sailing::sink(SavedShip& ship, uint16_t index, uint16_t& link) {
 	if (merchant(ship)) {
 		ship.memory.u16(0x50) = kNoIndex;
 		ship.memory.u16(0x52) = kNoIndex;
-		// 0x519D90 y el mensaje al jugador solo avisan.
+		// 0x519D90 only tells the interface; to a human owner, the ticker line
+		// «Your ship X has sunk.» (0x506D78: kind 0x16, the ship's name [+0x15E]).
+		if (human(ship)) {
+			send_ticker(save_, ship.owner(), 0x16, ship.memory.u16(0x15E));
+		}
 	}
 	events_.push_back({ShipEvent::Sunk, index, -1});
 }
@@ -1021,6 +1029,12 @@ void Sailing::dock(SavedShip& ship, uint16_t index) {
 				town.in_transit(w) = 0;
 			}
 		}
+	}
+	// A human owner's ship alone (not in a convoy, without the bit 1 of
+	// [+0x136]): the ticker line «The snaikka X has docked in Y.» (0x519D72:
+	// 0x548CA0 with kind 5 and the ship).
+	if (human(ship) && !(ship.memory.u8(0x136) & 1) && ship.memory.u16(8) >= save_.convoy_count()) {
+		send_ticker(save_, ship.owner(), 5, index);
 	}
 	ship.timer() = 0;
 	events_.push_back({ShipEvent::Arrived, index, ship.town()});

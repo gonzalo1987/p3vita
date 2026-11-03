@@ -441,6 +441,20 @@ struct SaveGame {
 	// Not saved: the entries of the letters stored for the local player since
 	// the viewer last looked (take_new_letters, mail.hpp), for its notice.
 	std::vector<uint16_t> new_player_letters;
+	// Not saved: the ticker lines sent to the local player since the viewer
+	// last looked (0x548CA0: send_ticker, take_ticker in mail.hpp), the kind
+	// and its argument; in tick_probe, region TK.
+	struct TickerLine {
+		uint8_t kind = 0;
+		uint16_t e = 0;
+		// Not 0: a line the game writes to its interface itself, without
+		// 0x548CA0: the text (by its English address) with the town `e`.
+		uint32_t text = 0;
+		// Sent only while the game's interface exists (its window *0x6CC7E8):
+		// the oracle, without it, never sends these.
+		bool interface = false;
+	};
+	std::vector<TickerLine> player_ticker;
 	// Matriz n × n del mundo (*[0x6DE50C], [+0x6C] de 0x6DE4A0; 0x531B70 la
 	// lee): lo que se tarda de una ciudad a otra, en dieciseisavos de día a la
 	// velocidad de una snaikka (0x516930; 0x516AB0 lo pasa a días).

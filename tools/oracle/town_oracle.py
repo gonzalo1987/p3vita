@@ -23,6 +23,9 @@ El estado son copias de la memoria del juego, por regiones:
   LB     the heap buffer of each letter: types 0x29, 0x47, 0x63 and 0x83
          ([+0x8], [+0xC] bytes) and 0x3C..0x40 and 0x71 ([+0xC], record
          [+0x0] bytes): u16 letter, u32 size and the bytes
+  TK     the ticker lines sent to the local player since the start (0x548CA0,
+         silenced, with the merchant = *0x6DFC14 and a kind that has a line):
+         u8 kind and u16 argument each (0 for a kind of a fixed text)
   Y      tiempos de viaje entre ciudades ([+0x6C] del mundo, n × n bytes)
   V      convoyes (*0x6DD7A8, tantos registros de 0x3C como [0x6DD896])
   Q      rutas de los barcos: por cada barco con [+0x24], u16 barco, u32 nº de
@@ -289,6 +292,12 @@ QUIET = {
 # comparable while the calls are connected group by group. `--letters all`
 # lets every call through, `none` silences them all (as before 2026-11-03).
 MAIL_SEND = 0x4D6530
+# The ticker lines (0x548CA0 on the real-time object, docs/formats/mail.md §6):
+# silenced, but recorded (region TK) when they go to the local player and
+# their kind has a line (0x5483D0 shows nothing for these).
+TICKER_SEND = 0x548CA0
+TICKER_SILENT = (0x02, 0x0F, 0x11, 0x13, 0x14, 0x17, 0x18, 0x1A, 0x1E, 0x1F, 0x26, 0x27)
+TICKER_FIXED = (0x09, 0x0C, 0x10, 0x12, 0x19)  # a fixed text: the argument recorded as 0
 MAIL_CALLS = (
     # The merchant's tick (0x4F7BB0, merchants.cpp): letters 0x0F, 0x10, 0x11
     # to the merchant and 0x06 (a promotion) to the chronicle.
@@ -559,6 +568,13 @@ class TownOracle(SaveOracle):
                 MAIL_STATS[ret - 5] = MAIL_STATS.get(ret - 5, 0) + 1
             if self.letters == 'all' or ret in MAIL_SITES:
                 return  # the game's 0x4D6530 runs
+        if address == TICKER_SEND:
+            # The ticker line (silenced, the interface's): what the local player
+            # would see, for tick_probe (region TK, SaveGame::player_ticker).
+            kind = self._arg(4) & 0xFF
+            if self._arg(0) & 0xFFFF == self.u32(PLAYER) and kind not in TICKER_SILENT:
+                e = 0 if kind in TICKER_FIXED else self._arg(5) & 0xFFFF
+                self.__dict__.setdefault('ticker', []).append(struct.pack('<BH', kind, e))
         if address == ENQUEUE:
             op = bytes(uc.mem_read(self._arg(0), OPERATION_SIZE))
             self.queued.append(op)
@@ -1116,6 +1132,7 @@ class TownOracle(SaveOracle):
             letter_buffers.append(struct.pack('<HI', i, len(data)))
             letter_buffers.append(data)
         out['LB'] = (0, b''.join(letter_buffers))
+        out['TK'] = (0, b''.join(self.__dict__.get('ticker', [])))
         times = gu32(WORLD + 0x6C)
         out['Y'] = (times, block(times, towns * towns if times else 0))
         convoys = gu32(SHIPS + 8)

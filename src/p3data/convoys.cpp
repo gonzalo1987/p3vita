@@ -18,6 +18,7 @@
 // quietos: sus ataques acaban en batallas, que no se reproducen (el oráculo
 // tampoco las ejecuta).
 
+#include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -131,9 +132,11 @@ void Sailing::update_convoys() {
 					tick::ship_ai_detail::fn_519ba0(save_, leader)) {
 					// 0x503230: la ruta automática del convoy; no se reproduce.
 				} else {
-					// Deja la ruta automática (y avisa al jugador, 0x548CA0).
+					// Deja la ruta automática, and the ticker line «X's trade route is
+					// interrupted» (0x507283: kind 0x22, the convoy's guide).
 					lead.notices() |= 0x800;
 					lead.orders() &= 0xFC;
+					send_ticker(save_, lead.owner(), 0x22, convoy(index).u16(0x10));
 				}
 			}
 			GameMemory<0x3C>& now = convoy(index);
@@ -271,7 +274,12 @@ void Sailing::update_convoys() {
 						int32_t& money = save_.merchants[owner].memory.s32(0x0);
 						money = int32_t(uint32_t(money) + uint32_t(c.s32(0x20)));
 					}
-					// A un jugador humano sin ruta automática, un mensaje (0x548CA0).
+					// To a human owner whose guide hasn't the bit 1 of [+0x136], the
+					// ticker line «the convoy X has docked in Y.» (0x50777C: kind 3,
+					// the guide).
+					if (save_.merchants[owner].kind() == 0 && !(save_.ships[c.u16(0x10)].memory.u8(0x136) & 1)) {
+						send_ticker(save_, owner, 3, c.u16(0x10));
+					}
 				}
 				c.s32(0x20) = 0;
 				save_.ships[c.u16(0x10)].timer() = 0;

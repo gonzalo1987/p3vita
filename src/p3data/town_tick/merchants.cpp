@@ -661,6 +661,10 @@ void fn_4f7bb0(SaveGame& save, int merchant) {
 			letter.entry.u16(0xC) = uint16_t(id);
 			letter.entry.u16(0xE) = merchants_detail::fn_4f9430(save, merchant);
 			send_letter(save, kLetterToChronicle, letter);
+			// «Increase in social standing» (0x4F831A: kind 0x10), only while
+			// the interface's window object exists (*0x6CC7E8): a line of the
+			// interface, which the oracle never sees.
+			send_ticker_interface(save, merchant, 0x10, 0);
 		}
 	}
 	// Cada día, el rango en otras dos ciudades (enfrentadas en el orden).

@@ -774,6 +774,44 @@ in the game goes through the game's own code, checked here:
   (0x6C0ED8). Two game bugs (the 0x6F's adjective and the pirate's family
   name), in the roadmap.
 
+## The ticker lines (2026-11-04)
+
+The game's other messages to the player, the ticker lines of 0x548CA0
+([formats/mail.md](formats/mail.md) §6), which compose their text in
+0x5483D0(kind, e). Two checks:
+
+- **The text**: `tools/oracle/ticker_oracle.py` calls 0x5483D0 on the
+  real-time object for every kind 0..0x2A with arguments from the loaded
+  world (the player's ships and others in port and at sea, one past the
+  ships, towns and one past them, small numbers, a land transport's two
+  towns), takes the CString it hands to the interface (0x5487BA) and skips
+  the interface (to 0x5487C5); `--spanish` through `SpanishExe` (0x5488A0,
+  +0x4D0). p3vita's is `compose_ticker` (`letters.cpp`), `p3save ... ticker
+  EXE PAIRS`; `compare_ticker.py` and `scripts/ticker-check.sh`
+  (`re/emu/sesion5/mail/s5/tc.sh`). The 12 saves, every pair the same in
+  English and in Spanish (348 to 396 pairs each, 9 to 12 failing in the game:
+  a town past the names' table). The texts' Spanish slots from the
+  alignment of the two functions (`s5/chron_texts.py` with CASES=19).
+- **The calls**: the oracle still silences 0x548CA0 but records the calls
+  for the local player whose kind has a line as the region `TK` (u8 kind and
+  u16 argument each, since the start; the argument 0 for a fixed text), and
+  tick_probe compares it with `SaveGame::player_ticker` in every call. The
+  world 7 days in the 12 saves, 0 different (a line in tut4); the scenarios
+  `retouch_mail.py` `commission` (32 lines: 0x1B, 0x1C), `hanse_task` (0x21),
+  `debts_office`, `debts_partial` (0x15), the new `ticker_lines` (the player
+  of rank 6 in every town, then a Hanse vote, the Alderman's election, a
+  council and the diet's blockade at the next day's start: 0xD, 0x20, 0x2A),
+  `ticker_ships` (his ships sail to the next town: 5, and 8 in tut4) and
+  `ticker_shipyard` (direct calls: 6, 7, 0xA), `expedition` and
+  `expedition_lost` in the tutorials (4, 0x1D), and `retouch_pirates.py
+  event_attack` (0xB), every call equal (`s5/tk.sh`, `s5/tkshow.sh` with
+  `s5/probe_tk.py`, which prints a recording's last `TK`). `PLAYER_RANK=N`
+  gives the player that rank in every town before a `retouch_mail.py`
+  scenario. Not reached by a scenario: the end of the game (0xC), the famine
+  (0x19), a ship of the player sunk (0x16), a convoy of his (3, 0x22), the
+  auction's announcement; their code is a line each, next to the letters
+  that are checked.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

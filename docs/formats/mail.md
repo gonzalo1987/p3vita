@@ -276,22 +276,60 @@ script could not resolve were read by hand (Note).
 
 The other channel. `0x548CA0(merchant, a, b, c, kind, e)` (thiscall on the
 real-time object 0x6DF2F0, ret 0x18) only acts for the local player
-([+0x924]): while a window is open it queues up to 8 messages at [+0x948];
-otherwise it composes a line of the **ticker** in 0x5483D0 (a switch on the
-kind, 0..0x2A, index 0x548834, table 0x5487E8: «%s interrupts trade
-journey.», «Convoy %s reaches its destination.», «Your ship %s has sunk.»,
-«Your land transport from %s has reached %s.», «The Hanseatic League is
-blockading %s»...) and can move the town view to the ship or the town
-(0x5308A0 with 0 only looks the office up). It changes nothing of the
-simulation: only the real-time object's fields and the interface. The
-oracle silences it (`QUIET`) and p3vita skips it.
+([+0x924], the merchant's low 16 bits compared). While [+0x928] is set (the
+game isn't running yet: a load, a start; 0 during a game) it keeps up to 8
+calls in [+0x948] (10 bytes each, one per merchant: a second call for the
+same merchant is dropped; nothing with a = 1) and 0x549094 sends them again
+later. Otherwise it composes the **ticker** line with 0x5483D0(kind, e) and,
+with a ≠ 0xFF and [+0x92C] = 1, moves the town view to the ship or the town
+(0x548860 with a, b, c). Only `kind` and `e` make the text. It changes
+nothing of the simulation: only the real-time object's fields and the
+interface.
 
-60 calls (the kind is the fifth argument): 47 in functions p3vita has
-rewritten (the end of the game 0x4E4A44 alone has 9, the convoys 0x502110
-and 0x506B6A, docking 0x519C90, arriving 0x516CC0, the battles' setup
-0x605420 and 0x5FBFE0, the diet 0x4E09D4...), the rest in the mission
-interpreter, the automatic routes (0x4D5200, 0x503230) and events p3vita
-doesn't have.
+**0x5483D0** (index 0x548834, table 0x5487E8, 19 cases; Spanish 0x5488A0,
+the same code 0x4D0 further on) formats a CString (0x64DF80) and hands it to
+the interface (0x42B4C0 on *0x6CBB40, at 0x5487BA):
+
+| Kinds | Line |
+|---|---|
+| 0x00 | «The %s's captain interrupts his trade journey.» with ship e's name; past the ships the text «%s interrupts trade journey.» as it is |
+| 0x01, 0x0D, 0x15, 0x1B, 0x1C, 0x20, 0x21 | 0x6B28A8[kind] with town e (0x6DDA00 by e: the index-as-number bug) |
+| 0x03 | ship e docked ([+0x39] a town): «%s %s has docked in %s.» with «the convoy», its name, the town; at sea «Convoy %s reaches its destination.» |
+| 0x04 | «Convoy %s returns from an expedition.» (past the ships, a buffer of the real-time object, 0x6DFC8A) |
+| 0x05 | ship e with a town in [+0x38]: «%s %s has docked in %s.» with «The snaikka»... by its type, its name, that town |
+| 0x06, 0x07, 0x0A | 0x6B28A8[kind] with the town of ship e ([+0x39]): launch, repairs, improvements |
+| 0x08, 0x0B, 0x0E | ship e's name: «The %s has reached its destination.», «... is being attacked.», «... is attacking.» |
+| 0x16 | «Your ship %s has sunk.» with name e of the ship names' lists (0x512B20) |
+| 0x1D | «On an expedition one of your ships has sunk.» (e < 2), or «%u of your ships have been sunk whilst on expedition.» |
+| 0x22..0x25, 0x28 | a trade route's (0x6B04F4 by 6, 7, 8, 10, 11) with ship e's name |
+| 0x29 | «Your land transport from %s has reached %s.» with the towns e & 0xFF and e >> 8 (each % the towns) |
+| 0x2A | «The Hanseatic League is blockading %s» only while [+0x928] is set: during a game, **never** (a game bug: the test is the wrong way round) |
+| 0x09, 0x0C, 0x10, 0x12, 0x19 | 0x6B28A8[kind] as it is: «It's your Birthday today!...», «The predetermined playing time has elapsed.», «Increase in social standing», «A message has been received.», «Starvation in your hometown» |
+| 0x02, 0x0F, 0x11, 0x13, 0x14, 0x17, 0x18, 0x1A, 0x1E, 0x1F, 0x26, 0x27 | nothing (the plague, the fire, a wedding, a feast...: their windows tell them) |
+
+The 60 calls (the kind is the fifth argument; `re/emu/sesion5/mail/s5/ticker_calls.txt`):
+47 in functions p3vita has. The ones with a line are connected (2026-11-04):
+docking 0x519D72 (5), the end of a voyage at sea 0x5170D1 (8), a ship sunk
+0x506D78 (0x16), a convoy docked 0x50777C and the three of 0x502110 (3), a
+trade route interrupted 0x507283 (0x22), the expedition's return 0x502D20
+(0x1D) and 0x502E63 (4), the shipyard's launch 0x508514 (6) and repairs
+0x508BC5 (7 or 0xA by the ship's state), the battle's setup 0x6056F7 (0xE)
+and 0x60572E (0xB), the Hanse days 0x4DBD14 and 0x4DC2E8 (0xD), the auction
+0x4E2F5C (1), the diet's blockade 0x4E0DB4 and 0x4E0D86 (0x2A; in a network
+game the latter always to merchant 0: a game bug), the end of the game (0xC,
+9 calls of 0x4E4A44), a merchant's task 0x4E5D6A (0x1B) and 0x4E62A3 (0x1C),
+the town council 0x4E9B90 (0x20), the Hanse leader 0x4EA7A5 (0x21), the
+impounding 0x4F6833 (0x15, two paths), the famine 0x527F9E (0x19) and the
+promotion 0x4F831A (0x10: only while the interface's window object
+*0x6CC7E8 exists, so the oracle never sends it). The auction's announcement
+has two ways: with [0x6DFC1C] = 1 the line of 0x548CA0; otherwise the game
+writes «An auction begins in %s tomorrow.» (0x6C34CC) to its interface
+itself. Without a line, not connected: 0x4DC03C, 0x4E25A0, 0x4E811C,
+0x4E93DC, 0x4E99E2, 0x4EB34B/7EC/8C6, 0x4EC53C, 0x5291C4, 0x531A43, 0x52D256.
+Left with their functions: 0x518860 (3, the automatic routes), 0x503230 and
+0x4D5200 (routes), 0x508E69 (the convoys' repairs), 0x5FBFE0 (2, the battle
+in a town), 0x4E3EC2 (the land transport), 0x4E7C3D, and the mission
+interpreter's 0x4ED0C6, 0x4EDEDA.
 
 ## 7. In p3vita
 
@@ -308,6 +346,13 @@ doesn't have.
   saved; `take_new_letters`). Reading and deleting: `mark_letter_read`
   (0x4D69D0) and `delete_letter` (0x4D6A50), operations 0x6E and 0x6F of
   `run_operation`; `expire_letters` (0x4D6780) for the window.
+- The ticker lines (§6): `send_ticker` (0x548CA0 for the local player: the
+  kind and its argument, 0 for a fixed text; nothing for the kinds without a
+  line) into `SaveGame::player_ticker`, `send_ticker_text` (the game's own
+  line of the auction) and `send_ticker_interface` (the promotion's, which
+  needs the interface) for the lines the oracle can't see; `take_ticker` for
+  the viewer, and `compose_ticker` (letters.hpp, 0x5483D0) for the text.
+  tick_probe compares the queue with the oracle's region `TK`.
 - The viewer's mailbox (`src/app/main.cpp`, `MailUi`): the window's four
   tabs, the list of `letter_rows`/`letter_row`, the letter of
   `compose_letter` (with `letter_viewed`) or the chronicle of
@@ -453,7 +498,7 @@ doesn't have.
     it: [+0x8], [+0x9] his names, [+0xA], [+0xB] the winner's, [+0xD] the
     building's type, u16 [+0xE] the price / 100), 0x7F to the winner (his
     and the owner's names, the type, the price / 100) or 0x7E to the owner
-    when unsold. Appendix A has 0x7D only for 0x4E3598: it is 0x76 or 0x7D.
+    when unsold (appendix A had 0x7D only for 0x4E3598: it is 0x76 or 0x7D).
 - The Hanse tasks of a merchant (`alderman.cpp`): started (0x4EBF54), the
   road 0x80 ([+0x5] the Hanse town; [+0x8], [+0x9] the Alderman's names,
   0x5333C0; [+0xA], [+0xB] the towns, [+0xC] the merchant, [+0xD] the
@@ -507,164 +552,166 @@ doesn't have.
 
 «p3vita file»: where p3vita has the function (`fn_XXXXXX`), or only names it
 («named»); «—» with what it is when p3vita doesn't have it. «Class» is the
-type's class (§2).
+type's class (§2). «Connected»: p3vita sends that letter (`send_letter`) and
+the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
+99 of the 154 on 2026-11-04).
 
-| p3vita file | Function | Call | Type | Title (English exe) | Class | To | Note |
-|---|---|---|---|---|---|---|---|
-| p3data/battle/battle_end.cpp | 0x50BFD0 | 0x50C274 | 0x54 | Pirates | 4 | one merchant |  |
-| p3data/battle/battle_end.cpp | 0x50BFD0 | 0x50C326 | 0x2A | Pirates | 2 | -2 (chronicle) |  |
-| p3data/battle/battle_end.cpp | 0x50BFD0 | 0x50C853 | 0x54 | Pirates | 4 | one merchant |  |
-| p3data/battle/battle_end.cpp | 0x60D299 | 0x60DD93 | 0x29 | Naval battle | 2 | one merchant |  |
-| p3data/battle/battle_end.cpp | 0x60D299 | 0x60EB42 | 0x2A | Pirates | 2 | -2 (chronicle) |  |
-| p3data/battle/battle_end.cpp | 0x60D299 | 0x60EC1B | 0x72 | — | 4 | side 0 ([+0x35A]) | after the report |
-| p3data/battle/battle_end.cpp | 0x60D299 | 0x60EC83 | 0x72 | — | 4 | side 1 ([+0x35C]) | after the report |
-| p3data/battle/capture.cpp | 0x540520 | 0x540A8C | 0x54 | Pirates | 4 | one merchant |  |
-| p3data/battle/capture.cpp | 0x540520 | 0x540DDF | 0x30 | Captured | 2 | one merchant |  |
-| p3data/battle/capture.cpp | 0x60C1C9 | 0x60C31B | 0x2A | Pirates | 2 | -2 (chronicle) |  |
-| p3data/battle/capture.cpp | 0x60C1C9 | 0x60C383 | 0x54 | Pirates | 4 | one merchant |  |
-| p3data/battle/capture.cpp | 0x60C1C9 | 0x60D189 | 0x30 | Captured | 2 | one merchant |  |
-| p3data/battle/pirate_objects.cpp | 0x514D40 | 0x514F79 | 0x2A | Pirates | 2 | -2 (chronicle) |  |
-| p3data/battle/ship_step.cpp | 0x61F96F | 0x61FC80 | 0x2A | Pirates | 2 | -2 (chronicle) | letter at [ebp-0x24] |
-| p3data/convoys.cpp (named) | 0x503230 | 0x5035CD | 0x07 | Ship trade | 3 | one merchant |  |
-| p3data/convoys_members.cpp | 0x50A580 | 0x50A966 | 0x32 | Convoy | 1 | one merchant |  |
-| p3data/convoys_members.cpp | 0x50A580 | 0x50AA02 | 0x31 | Convoy | 1 | one merchant |  |
-| p3data/sailing.cpp (named) | 0x519D90 | 0x519E87 | 0x1B | Sank | 2 | one merchant |  |
-| p3data/town_tick/alderman.cpp | 0x4EB0EB | 0x4EB32B | 0x70 | Unsuccessful | 1 | one merchant |  |
-| p3data/town_tick/alderman.cpp | 0x4EBF54 | 0x4EC18F | 0x80 | Overland trade | 1 | one merchant |  |
-| p3data/town_tick/alderman.cpp | 0x4EBF54 | 0x4EC230 | 0x6E | Pirate hideaway | 1 | one merchant |  |
-| p3data/town_tick/alderman.cpp | 0x4EBF54 | 0x4EC2B2 | 0x84 | Order | 1 | one merchant |  |
-| p3data/town_tick/alderman.cpp | 0x4EC354 | 0x4EC4FC | 0x6F | Reputation | 1 | -2 (chronicle) |  |
-| p3data/town_tick/alderman.cpp | 0x4EC354 | 0x4EC51C | 0x6F | Reputation | 1 | one merchant |  |
-| p3data/town_tick/construction.cpp | 0x4F8560 | 0x4F8639 | 0x0C | Guild entry | 4 | -2 (chronicle) |  |
-| p3data/town_tick/construction.cpp | 0x522C70 | 0x523702 | 0x2F | City wall | 1 | one merchant |  |
-| p3data/town_tick/core.cpp | 0x527D40 | 0x527F53 | 0x35 | Famine | 4 | -2 (chronicle) |  |
-| p3data/town_tick/diet.cpp | 0x4E09D4 | 0x4E0CEE | 0x48 | Boycott | 1 | one merchant |  |
-| p3data/town_tick/diet.cpp | 0x4E09D4 | 0x4E0F4C | 0x4C | Boycott | 1 | one merchant |  |
-| p3data/town_tick/diet.cpp | 0x4E09D4 | 0x4E1371 | 0x5C | Boycott ended | 1 | one merchant |  |
-| p3data/town_tick/diet.cpp (named) | 0x4F3AF0 | 0x4F3C99 | 0x3D | Writing | 1 | one merchant |  |
-| p3data/town_tick/events.cpp | 0x4E2144 | 0x4E22A8 | 0x81 | Hulk | 2 | -1 (each merchant) |  |
-| p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4EDDEB | script |  |  | one merchant | mission interpreter: letter built by the script (ebx) |
-| p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4EDE69 | script |  |  | one merchant | mission interpreter: letter built by the script (ebx) |
-| p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4EDEAA | script |  |  | one merchant | mission interpreter: letter built by the script (ebx) |
-| p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4EDFED | 0x45/0x46 |  |  | one merchant | mission interpreter: 0x45 + (flag & 1) |
-| p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4F2A67 | 0x22 | Proposal | 2 | one merchant |  |
-| p3data/town_tick/events_big.cpp | 0x4E5B84 | 0x4E5D4D | 0x19 | Indictment | 1 | one merchant |  |
-| p3data/town_tick/events_big.cpp | 0x4E5B84 | 0x4E5F2A | 0x4A | Acquitted | 1 | one merchant |  |
-| p3data/town_tick/events_big.cpp | 0x4E5B84 | 0x4E6286 | 0x4B | Verdict | 1 | one merchant |  |
-| p3data/town_tick/events_big.cpp | 0x4E8234 | 0x4E8613 | 0x21 | Suitor | 2 | one merchant |  |
-| p3data/town_tick/events_mayor.cpp | 0x4DC1F0 | 0x4DC53D | 0x0B | Hanse Day | 1 | one merchant |  |
-| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E32E9 | 0x2C/0x2D |  |  | one merchant | auction: 0x2C + (buyer is the owner) |
-| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E3378 | 0x5D | Auctioned | 2 | one merchant |  |
-| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E33FC | 0x2E | Keep | 1 | one merchant |  |
-| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E3598 | 0x7D | Bought | 1 | one merchant |  |
-| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E363A | 0x7F | Bought | 2 | one merchant |  |
-| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E36B3 | 0x7E | Kept | 1 | one merchant |  |
-| p3data/town_tick/events_mayor.cpp | 0x528E60 | 0x5294F7 | 0x47 | Elections | 1 | one merchant |  |
-| p3data/town_tick/events_mayor.cpp | 0x528E60 | 0x5295BD | 0x55 | Lord Mayor | 4 | -2 (chronicle) |  |
-| p3data/town_tick/events_mayor.cpp (named) | 0x5299F0 | 0x529CA0 | 0x47 | Elections | 1 | -1 (each merchant) |  |
-| p3data/town_tick/events_mayor.cpp (named) | 0x5299F0 | 0x529D8A | 0x57 | Hanse Day | 4 | -2 (chronicle) |  |
-| p3data/town_tick/events_rare.cpp | 0x4DFD44 | 0x4E0065 | 0x41 | Pirate Hunt | 1 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x4DFD44 | 0x4E00CF | 0x42 | Hunt ended | 1 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x4DFD44 | 0x4E02B6 | 0x43 | Plunder | 2 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x4E6A54 | 0x4E79A3 | 0x63 | Expedition | 3 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x4E9094 | 0x4E9389 | 0x58 | Plague | 4 | -2 (chronicle) |  |
-| p3data/town_tick/events_rare.cpp | 0x4E9A94 | 0x4E9F8F | 0x6B | Council Meeting | 1 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x4E9A94 | 0x4E9FBD | 0x6B | Council Meeting | 1 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EA72B | 0x77 | Hanse Day | 1 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EA77F | 0x77 | Hanse Day | 1 | -1 (each merchant) |  |
-| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EA825 | 0x77 | Hanse Day | 1 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EA8B0 | 0x77 | Hanse Day | 1 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EA979 | 0x77 | Hanse Day | 1 | -1 (each merchant) |  |
-| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EAB45 | 0x78 | Hanse Day | 1 | -1 (each merchant) |  |
-| p3data/town_tick/events_rare.cpp | 0x4EAB94 | 0x4EAE01 | 0x6C | Extra Tax | 1 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x4EC934 | 0x4ECAEC | 0x73 | Theft | 2 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x4ECB14 | 0x4ECDAE | 0x7B | Monument | 1 | -2 (chronicle) |  |
-| p3data/town_tick/events_rare.cpp | 0x4ECB14 | 0x4ECDBF | 0x7B | Monument | 1 | -1 (each merchant) |  |
-| p3data/town_tick/events_rare.cpp | 0x502B20 | 0x502CDF | 0x34 | Loss | 2 | one merchant |  |
-| p3data/town_tick/events_rare.cpp | 0x52D0B0 | 0x52D1E7 | 0x1C | Discovery | 4 | -1 (each merchant) |  |
-| p3data/town_tick/events_rare.cpp | 0x52D0B0 | 0x52D1F8 | 0x1C | Discovery | 4 | -2 (chronicle) |  |
-| p3data/town_tick/events_rare.cpp | 0x5319D0 | 0x531B46 | 0x56 | Discovery | 4 | -2 (chronicle) |  |
-| p3data/town_tick/events_towns.cpp | 0x4DB4E0 | 0x4DB5BE | 0x26 | Repayment | 2 | one merchant |  |
-| p3data/town_tick/events_towns.cpp | 0x4DB4E0 | 0x4DB652 | 0x79 | Repayment | 2 | one merchant |  |
-| p3data/town_tick/events_towns.cpp | 0x4DB4E0 | 0x4DB6C7 | 0x12 | Maturity | 2 | one merchant |  |
-| p3data/town_tick/events_towns.cpp | 0x4E23A4 | 0x4E2570 | 0x24 | Festival | 2 | one merchant |  |
-| p3data/town_tick/events_towns.cpp | 0x4E7C74 | 0x4E7DA1 | 0x23 | Marriage | 4 | -2 (chronicle) |  |
-| p3data/town_tick/events_towns.cpp | 0x4E7C74 | 0x4E80E5 | 0x25 | Dowry | 2 | one merchant |  |
-| p3data/town_tick/events_towns.cpp | 0x4E9564 | 0x4E998A | 0x59 | Fire | 4 | -2 (chronicle) |  |
-| p3data/town_tick/events_towns.cpp | 0x4F6570 | 0x4F6618 | 0x13 | Impound | 1 | one merchant |  |
-| p3data/town_tick/events_towns.cpp | 0x4F6570 | 0x4F66FA | 0x13 | Impound | 1 | one merchant |  |
-| p3data/town_tick/events_towns.cpp | 0x4F6570 | 0x4F6818 | 0x13 | Impound | 1 | one merchant |  |
-| p3data/town_tick/events_towns.cpp | 0x4F6570 | 0x4F68A3 | 0x13 | Impound | 1 | one merchant |  |
-| p3data/town_tick/events_towns.cpp | 0x500C30 | 0x500E8F | 0x75 | Fire | 2 | one merchant |  |
-| p3data/town_tick/events_towns.cpp | 0x5308A0 | 0x530C53 | 0x0D | Opening | 4 | -2 (chronicle) |  |
-| p3data/town_tick/events_towns.cpp | 0x538A80 | 0x538C16 | 0x4D | Captain | 2 | one merchant |  |
-| p3data/town_tick/facilities.cpp | 0x5083B0 | 0x5084A5 | 0x00 | Launching | 2 | one merchant |  |
-| p3data/town_tick/facilities.cpp | 0x51FF30 | 0x5202EF | 0x03 | Completion | 2 | one merchant |  |
-| p3data/town_tick/merchants.cpp | 0x4F7510 | 0x4F75AD | 0x5E | Reputation | 1 | one merchant |  |
-| p3data/town_tick/merchants.cpp | 0x4F7510 | 0x4F75C2 | 0x5F | ? | 4 | one merchant |  |
-| p3data/town_tick/merchants.cpp | 0x4F75F0 | 0x4F7827 | 0x6D | Alderman | 1 | one merchant |  |
-| p3data/town_tick/merchants.cpp | 0x4F75F0 | 0x4F793D | 0x82 | Permission | 1 | one merchant |  |
-| p3data/town_tick/merchants.cpp | 0x4F7BB0 | 0x4F7CB0 | 0x0F | Dump | 4 | one merchant |  |
-| p3data/town_tick/merchants.cpp | 0x4F7BB0 | 0x4F7CF6 | 0x10 | Dump | 4 | one merchant |  |
-| p3data/town_tick/merchants.cpp | 0x4F7BB0 | 0x4F7D33 | 0x11 | Tax Bill | 3 | one merchant |  |
-| p3data/town_tick/merchants.cpp | 0x4F7BB0 | 0x4F82D9 | 0x06 | Promotion | 4 | -2 (chronicle) |  |
-| p3data/town_tick/offices.cpp | 0x4FFF20 | 0x500280 | 0x60 | Office ready | 2 | one merchant |  |
-| p3data/town_tick/operations.cpp | 0x538C40 | 0x538D76 | 0x52 | Captain | 2 | one merchant |  |
-| p3data/town_tick/operations.cpp | 0x53DA90 | 0x53DBC7 | 0x33 | Marriage | 2 | one merchant |  |
-| p3data/town_tick/operations.cpp | 0x53DDF0 | 0x53DED7 | 0x7C | Manager | 2 | one merchant |  |
-| p3data/town_tick/operations.cpp | 0x53FEA0 | 0x53FFF4 | 0x7A | Baby boom | 2 | one merchant |  |
-| p3data/town_tick/sieges.cpp | 0x6281F0 | 0x628A52 | 0x38 | Siege | 4 | -2 (chronicle) |  |
-| p3data/town_tick/sieges.cpp | 0x6281F0 | 0x629A2B | 0x38 | Siege | 4 | -2 (chronicle) |  |
-| p3data/town_tick/sieges.cpp | 0x629C60 | 0x629F63 | 0x53 | Siege | 4 | -2 (chronicle) |  |
-| p3data/town_tick/sieges.cpp | 0x633DB0 | 0x6345D3 | 0x6A | Plundered | 2 | one merchant | only in the convoy branch, from the battle in a town (0x5FEAC9) |
-| p3data/town_tick/sieges.cpp | 0x636230 | 0x6364E9 | 0x85 | Prince | 1 | one merchant |  |
-| — a trade route ends (0x503230, 0x518860) | 0x4D5200 | 0x4D55F9 | 0x07 | Ship trade | 3 | one merchant |  |
-| — battle in a town (method) | 0x5FE7E0 | 0x5FEA54 | 0x3B | Outrigger | 1 | one merchant | battle in a town |
-| — battle in a town (method) | 0x5FE7E0 | 0x5FEEAA | 0x39/0x3A |  |  | -2 (chronicle) | battle in a town |
-| — battle in a town (method) | 0x5FE7E0 | 0x5FF55F | 0x29 | Naval battle | 2 | one merchant | battle in a town: report buffer |
-| — event 0x09 | 0x4E2824 | 0x4E2941 | 0x08 | Good harvest | 2 | one merchant |  |
-| — event 0x09 | 0x4E2824 | 0x4E299D | 0x09 | Harvest failure | 4 | -2 (chronicle) |  |
-| — event 0x09 | 0x4E2824 | 0x4E2A9E | 0x08 | Good harvest | 2 | one merchant |  |
-| — event 0x09 | 0x4E2824 | 0x4E2B04 | 0x09 | Harvest failure | 4 | -2 (chronicle) |  |
-| — event 0x0C | 0x4E38B4 | 0x4E3B4B | 0x67 | Return | 3 | one merchant |  |
-| — event 0x0C | 0x4E38B4 | 0x4E3C6E | 0x68 | Ambush | 3 | one merchant |  |
-| — event 0x0C | 0x4E38B4 | 0x4E3CFC | 0x67 | Return | 3 | one merchant |  |
-| — event 0x0C | 0x4E38B4 | 0x4E3D43 | 0x69 | Fled | 3 | one merchant |  |
-| — event 0x0C | 0x4E38B4 | 0x4E3E95 | 0x66 | Arrived | 3 | one merchant |  |
-| — event 0x0F | 0x4E5664 | 0x4E5925 | 0x74 | Broken in | 2 | one merchant |  |
-| — event 0x0F | 0x4E5664 | 0x4E594D | 0x74 | Broken in | 2 | one merchant |  |
-| — event 0x0F | 0x4E5664 | 0x4E5AFF | 0x20 | Robbed | 2 | one merchant |  |
-| — event 0x0F | 0x4E5664 | 0x4E5B1E | 0x15 | Burglary | 2 | one merchant |  |
-| — event 0x10 | 0x4E63E4 | 0x4E65CC | 0x18 | Traveller | 2 | one merchant |  |
-| — event 0x10 | 0x4E63E4 | 0x4E6691 | 0x18 | Traveller | 2 | one merchant |  |
-| — event 0x11 | 0x4E6744 | 0x4E6878 | 0x5B | Dishonoured | 2 | one merchant |  |
-| — event 0x11 | 0x4E6744 | 0x4E6987 | 0x5A | Fulfilled | 3 | one merchant |  |
-| — event 0x17 | 0x4E8684 | 0x4E87CF | 0x22 | Proposal | 2 | one merchant |  |
-| — event 0x18 | 0x4E8804 | 0x4E8975 | 0x62 | Dividend | 2 | one merchant |  |
-| — event 0x18 | 0x4E8804 | 0x4E8A49 | 0x28 | Dividend | 2 | one merchant |  |
-| — event 0x18 | 0x4E8804 | 0x4E8AD2 | 0x27 | Dividend | 3 | one merchant |  |
-| — event 0x28 | 0x4DDF40 | 0x4DE32B | 0x51 | Captain | 2 | one merchant |  |
-| — event 0x28 | 0x4DDF40 | 0x4DE394 | 0x50 | Captain | 2 | one merchant |  |
-| — event 0x28 | 0x4DDF40 | 0x4DE485 | 0x4E | Captain | 2 | one merchant |  |
-| — interface (a window, from 0x410A02) | 0x419EB0 | 0x41B16D | 0x45 | — | 4 | player (0x6DFC14) | interface window 0x419EB0 (rand) |
-| — interface (a window, from 0x410A02) | 0x419EB0 | 0x41B4D3 | 0x21 | Suitor | 2 | player (0x6DFC14) | interface window 0x419EB0 (rand) |
-| — new game (0x541DC4, 0x5425D1, 0x542B9D) | 0x530470 | 0x530625 | 0x0E | Move | 4 | -2 (chronicle) |  |
-| — operation 0x03 | 0x52ACD0 | 0x52AEDD | 0x02 | No repair | 3 | one merchant |  |
-| — operation 0x06 | 0x537EE0 | 0x537FC6 | 0x04 | New captain | 2 | one merchant |  |
-| — operation 0x2F | 0x52B110 | 0x52B288 | 0x14 | Annulment | 1 | one merchant |  |
-| — operation 0x3D | 0x53A620 | 0x53A794 | 0x1A | Order | 2 | one merchant |  |
-| — operation 0x3E | 0x53A810 | 0x53A910 | 0x0E | Move | 4 | -2 (chronicle) |  |
-| — operation 0x4A | 0x53B1F0 | 0x53B40C | 0x78 | Hanse Day | 1 | -1 (each merchant) |  |
-| — operation 0x53 | 0x53C840 | 0x53C9B5 | 0x17 | Traveller | 2 | one merchant |  |
-| — operation 0x5F (0x53DA30) | 0x5338A0 | 0x533C9B | 0x1E | Memo | 2 | one merchant |  |
-| — operation 0x5F (0x53DA30) | 0x5338A0 | 0x533CB5 | 0x1F | Offer | 2 | one merchant |  |
-| — operation 0x72 | 0x53EAC0 | 0x53EBC8 | 0x2B | It's a pity | 2 | one merchant |  |
-| — operation 0x77 | 0x53EEC0 | 0x53F6D6 | 0x83 | Impounding | 2 | one merchant |  |
-| — operation 0x8B | 0x635B80 | 0x635C9F | 0x64 | Prince | 1 | one merchant |  |
-| — operation 0x8C | 0x635CD0 | 0x635DA9 | 0x65 | Prince | 1 | one merchant |  |
-| — operation 0x8F | 0x540240 | 0x5402BF | 0x38 | Siege | 4 | -2 (chronicle) |  |
-| — operation 0x8F | 0x540240 | 0x5403DB | 0x37 | Extra tax | 1 | one merchant |  |
-| — operation 0x90 (0x540490) | 0x634660 | 0x63477B | 0x38 | Siege | 4 | -2 (chronicle) |  |
+| p3vita file | Function | Call | Type | Title (English exe) | Class | To | Note | Connected |
+|---|---|---|---|---|---|---|---|---|
+| p3data/battle/battle_end.cpp | 0x50BFD0 | 0x50C274 | 0x54 | Pirates | 4 | one merchant |  | yes |
+| p3data/battle/battle_end.cpp | 0x50BFD0 | 0x50C326 | 0x2A | Pirates | 2 | -2 (chronicle) |  | yes |
+| p3data/battle/battle_end.cpp | 0x50BFD0 | 0x50C853 | 0x54 | Pirates | 4 | one merchant |  | yes |
+| p3data/battle/battle_end.cpp | 0x60D299 | 0x60DD93 | 0x29 | Naval battle | 2 | one merchant |  | yes |
+| p3data/battle/battle_end.cpp | 0x60D299 | 0x60EB42 | 0x2A | Pirates | 2 | -2 (chronicle) |  | yes |
+| p3data/battle/battle_end.cpp | 0x60D299 | 0x60EC1B | 0x72 | — | 4 | side 0 ([+0x35A]) | after the report | yes |
+| p3data/battle/battle_end.cpp | 0x60D299 | 0x60EC83 | 0x72 | — | 4 | side 1 ([+0x35C]) | after the report | yes |
+| p3data/battle/capture.cpp | 0x540520 | 0x540A8C | 0x54 | Pirates | 4 | one merchant |  | yes |
+| p3data/battle/capture.cpp | 0x540520 | 0x540DDF | 0x30 | Captured | 2 | one merchant |  | yes |
+| p3data/battle/capture.cpp | 0x60C1C9 | 0x60C31B | 0x2A | Pirates | 2 | -2 (chronicle) |  | yes |
+| p3data/battle/capture.cpp | 0x60C1C9 | 0x60C383 | 0x54 | Pirates | 4 | one merchant |  | yes |
+| p3data/battle/capture.cpp | 0x60C1C9 | 0x60D189 | 0x30 | Captured | 2 | one merchant |  | yes |
+| p3data/battle/pirate_objects.cpp | 0x514D40 | 0x514F79 | 0x2A | Pirates | 2 | -2 (chronicle) |  | yes |
+| p3data/battle/ship_step.cpp | 0x61F96F | 0x61FC80 | 0x2A | Pirates | 2 | -2 (chronicle) | letter at [ebp-0x24] | yes |
+| p3data/convoys.cpp (named) | 0x503230 | 0x5035CD | 0x07 | Ship trade | 3 | one merchant |  | |
+| p3data/convoys_members.cpp | 0x50A580 | 0x50A966 | 0x32 | Convoy | 1 | one merchant |  | yes |
+| p3data/convoys_members.cpp | 0x50A580 | 0x50AA02 | 0x31 | Convoy | 1 | one merchant |  | yes |
+| p3data/sailing.cpp (named) | 0x519D90 | 0x519E87 | 0x1B | Sank | 2 | one merchant |  | |
+| p3data/town_tick/alderman.cpp | 0x4EB0EB | 0x4EB32B | 0x70 | Unsuccessful | 1 | one merchant |  | yes |
+| p3data/town_tick/alderman.cpp | 0x4EBF54 | 0x4EC18F | 0x80 | Overland trade | 1 | one merchant |  | yes |
+| p3data/town_tick/alderman.cpp | 0x4EBF54 | 0x4EC230 | 0x6E | Pirate hideaway | 1 | one merchant |  | yes |
+| p3data/town_tick/alderman.cpp | 0x4EBF54 | 0x4EC2B2 | 0x84 | Order | 1 | one merchant |  | yes |
+| p3data/town_tick/alderman.cpp | 0x4EC354 | 0x4EC4FC | 0x6F | Reputation | 1 | -2 (chronicle) |  | yes |
+| p3data/town_tick/alderman.cpp | 0x4EC354 | 0x4EC51C | 0x6F | Reputation | 1 | one merchant |  | yes |
+| p3data/town_tick/construction.cpp | 0x4F8560 | 0x4F8639 | 0x0C | Guild entry | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/construction.cpp | 0x522C70 | 0x523702 | 0x2F | City wall | 1 | one merchant |  | yes |
+| p3data/town_tick/core.cpp | 0x527D40 | 0x527F53 | 0x35 | Famine | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/diet.cpp | 0x4E09D4 | 0x4E0CEE | 0x48 | Boycott | 1 | one merchant |  | yes |
+| p3data/town_tick/diet.cpp | 0x4E09D4 | 0x4E0F4C | 0x4C | Boycott | 1 | one merchant |  | yes |
+| p3data/town_tick/diet.cpp | 0x4E09D4 | 0x4E1371 | 0x5C | Boycott ended | 1 | one merchant |  | yes |
+| p3data/town_tick/diet.cpp (named) | 0x4F3AF0 | 0x4F3C99 | 0x3D | Writing | 1 | one merchant |  | |
+| p3data/town_tick/events.cpp | 0x4E2144 | 0x4E22A8 | 0x81 | Hulk | 2 | -1 (each merchant) |  | yes |
+| p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4EDDEB | script |  |  | one merchant | mission interpreter: letter built by the script (ebx) | |
+| p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4EDE69 | script |  |  | one merchant | mission interpreter: letter built by the script (ebx) | |
+| p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4EDEAA | script |  |  | one merchant | mission interpreter: letter built by the script (ebx) | |
+| p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4EDFED | 0x45/0x46 |  |  | one merchant | mission interpreter: 0x45 + (flag & 1) | |
+| p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4F2A67 | 0x22 | Proposal | 2 | one merchant |  | |
+| p3data/town_tick/events_big.cpp | 0x4E5B84 | 0x4E5D4D | 0x19 | Indictment | 1 | one merchant |  | yes |
+| p3data/town_tick/events_big.cpp | 0x4E5B84 | 0x4E5F2A | 0x4A | Acquitted | 1 | one merchant |  | yes |
+| p3data/town_tick/events_big.cpp | 0x4E5B84 | 0x4E6286 | 0x4B | Verdict | 1 | one merchant |  | yes |
+| p3data/town_tick/events_big.cpp | 0x4E8234 | 0x4E8613 | 0x21 | Suitor | 2 | one merchant |  | yes |
+| p3data/town_tick/events_mayor.cpp | 0x4DC1F0 | 0x4DC53D | 0x0B | Hanse Day | 1 | -1 (each merchant) | corrected 2026-11-04: it was «one merchant» | yes |
+| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E32E9 | 0x2C/0x2D |  |  | one merchant | auction: 0x2C + (buyer is the owner) | yes |
+| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E3378 | 0x5D | Auctioned | 2 | one merchant |  | yes |
+| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E33FC | 0x2E | Keep | 1 | one merchant |  | yes |
+| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E3598 | 0x76 or 0x7D | Auctioned off / Bought | 1 | one merchant | 0x7D when he bought it himself (corrected 2026-11-04) | yes |
+| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E363A | 0x7F | Bought | 2 | one merchant |  | yes |
+| p3data/town_tick/events_mayor.cpp | 0x4E2CD4 | 0x4E36B3 | 0x7E | Kept | 1 | one merchant |  | yes |
+| p3data/town_tick/events_mayor.cpp | 0x528E60 | 0x5294F7 | 0x47 | Elections | 1 | one merchant |  | yes |
+| p3data/town_tick/events_mayor.cpp | 0x528E60 | 0x5295BD | 0x55 | Lord Mayor | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/events_mayor.cpp (named) | 0x5299F0 | 0x529CA0 | 0x47 | Elections | 1 | -1 (each merchant) |  | yes |
+| p3data/town_tick/events_mayor.cpp (named) | 0x5299F0 | 0x529D8A | 0x57 | Hanse Day | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4DFD44 | 0x4E0065 | 0x41 | Pirate Hunt | 1 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4DFD44 | 0x4E00CF | 0x42 | Hunt ended | 1 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4DFD44 | 0x4E02B6 | 0x43 | Plunder | 2 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4E6A54 | 0x4E79A3 | 0x63 | Expedition | 3 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4E9094 | 0x4E9389 | 0x58 | Plague | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4E9A94 | 0x4E9F8F | 0x6B | Council Meeting | 1 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4E9A94 | 0x4E9FBD | 0x6B | Council Meeting | 1 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EA72B | 0x77 | Hanse Day | 1 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EA77F | 0x77 | Hanse Day | 1 | -1 (each merchant) |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EA825 | 0x77 | Hanse Day | 1 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EA8B0 | 0x77 | Hanse Day | 1 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EA979 | 0x77 | Hanse Day | 1 | -1 (each merchant) |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4EA594 | 0x4EAB45 | 0x78 | Hanse Day | 1 | -1 (each merchant) |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4EAB94 | 0x4EAE01 | 0x6C | Extra Tax | 1 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4EC934 | 0x4ECAEC | 0x73 | Theft | 2 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4ECB14 | 0x4ECDAE | 0x7B | Monument | 1 | -2 (chronicle) |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x4ECB14 | 0x4ECDBF | 0x7B | Monument | 1 | -1 (each merchant) |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x502B20 | 0x502CDF | 0x34 | Loss | 2 | one merchant |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x52D0B0 | 0x52D1E7 | 0x1C | Discovery | 4 | -1 (each merchant) |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x52D0B0 | 0x52D1F8 | 0x1C | Discovery | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/events_rare.cpp | 0x5319D0 | 0x531B46 | 0x56 | Discovery | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x4DB4E0 | 0x4DB5BE | 0x26 | Repayment | 2 | one merchant |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x4DB4E0 | 0x4DB652 | 0x79 | Repayment | 2 | one merchant |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x4DB4E0 | 0x4DB6C7 | 0x12 | Maturity | 2 | one merchant |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x4E23A4 | 0x4E2570 | 0x24 | Festival | 2 | one merchant |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x4E7C74 | 0x4E7DA1 | 0x23 | Marriage | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x4E7C74 | 0x4E80E5 | 0x25 | Dowry | 2 | one merchant |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x4E9564 | 0x4E998A | 0x59 | Fire | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x4F6570 | 0x4F6618 | 0x13 | Impound | 1 | one merchant |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x4F6570 | 0x4F66FA | 0x13 | Impound | 1 | one merchant |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x4F6570 | 0x4F6818 | 0x13 | Impound | 1 | one merchant |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x4F6570 | 0x4F68A3 | 0x13 | Impound | 1 | one merchant |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x500C30 | 0x500E8F | 0x75 | Fire | 2 | one merchant |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x5308A0 | 0x530C53 | 0x0D | Opening | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/events_towns.cpp | 0x538A80 | 0x538C16 | 0x4D | Captain | 2 | one merchant |  | yes |
+| p3data/town_tick/facilities.cpp | 0x5083B0 | 0x5084A5 | 0x00 | Launching | 2 | one merchant |  | yes |
+| p3data/town_tick/facilities.cpp | 0x51FF30 | 0x5202EF | 0x03 | Completion | 2 | one merchant |  | yes |
+| p3data/town_tick/merchants.cpp | 0x4F7510 | 0x4F75AD | 0x5E | Reputation | 1 | one merchant |  | yes |
+| p3data/town_tick/merchants.cpp | 0x4F7510 | 0x4F75C2 | 0x5F | ? | 4 | one merchant |  | yes |
+| p3data/town_tick/merchants.cpp | 0x4F75F0 | 0x4F7827 | 0x6D | Alderman | 1 | one merchant |  | yes |
+| p3data/town_tick/merchants.cpp | 0x4F75F0 | 0x4F793D | 0x82 | Permission | 1 | one merchant |  | yes |
+| p3data/town_tick/merchants.cpp | 0x4F7BB0 | 0x4F7CB0 | 0x0F | Dump | 4 | one merchant |  | yes |
+| p3data/town_tick/merchants.cpp | 0x4F7BB0 | 0x4F7CF6 | 0x10 | Dump | 4 | one merchant |  | yes |
+| p3data/town_tick/merchants.cpp | 0x4F7BB0 | 0x4F7D33 | 0x11 | Tax Bill | 3 | one merchant |  | yes |
+| p3data/town_tick/merchants.cpp | 0x4F7BB0 | 0x4F82D9 | 0x06 | Promotion | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/offices.cpp | 0x4FFF20 | 0x500280 | 0x60 | Office ready | 2 | one merchant |  | yes |
+| p3data/town_tick/operations.cpp | 0x538C40 | 0x538D76 | 0x52 | Captain | 2 | one merchant |  | yes |
+| p3data/town_tick/operations.cpp | 0x53DA90 | 0x53DBC7 | 0x33 | Marriage | 2 | one merchant |  | yes |
+| p3data/town_tick/operations.cpp | 0x53DDF0 | 0x53DED7 | 0x7C | Manager | 2 | one merchant |  | yes |
+| p3data/town_tick/operations.cpp | 0x53FEA0 | 0x53FFF4 | 0x7A | Baby boom | 2 | one merchant |  | yes |
+| p3data/town_tick/sieges.cpp | 0x6281F0 | 0x628A52 | 0x38 | Siege | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/sieges.cpp | 0x6281F0 | 0x629A2B | 0x38 | Siege | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/sieges.cpp | 0x629C60 | 0x629F63 | 0x53 | Siege | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/sieges.cpp | 0x633DB0 | 0x6345D3 | 0x6A | Plundered | 2 | one merchant | only in the convoy branch, from the battle in a town (0x5FEAC9) | yes |
+| p3data/town_tick/sieges.cpp | 0x636230 | 0x6364E9 | 0x85 | Prince | 1 | one merchant |  | yes |
+| — a trade route ends (0x503230, 0x518860) | 0x4D5200 | 0x4D55F9 | 0x07 | Ship trade | 3 | one merchant |  | |
+| — battle in a town (method) | 0x5FE7E0 | 0x5FEA54 | 0x3B | Outrigger | 1 | one merchant | battle in a town | |
+| — battle in a town (method) | 0x5FE7E0 | 0x5FEEAA | 0x39/0x3A |  |  | -2 (chronicle) | battle in a town | |
+| — battle in a town (method) | 0x5FE7E0 | 0x5FF55F | 0x29 | Naval battle | 2 | one merchant | battle in a town: report buffer | |
+| — event 0x09 | 0x4E2824 | 0x4E2941 | 0x08 | Good harvest | 2 | one merchant |  | |
+| — event 0x09 | 0x4E2824 | 0x4E299D | 0x09 | Harvest failure | 4 | -2 (chronicle) |  | |
+| — event 0x09 | 0x4E2824 | 0x4E2A9E | 0x08 | Good harvest | 2 | one merchant |  | |
+| — event 0x09 | 0x4E2824 | 0x4E2B04 | 0x09 | Harvest failure | 4 | -2 (chronicle) |  | |
+| — event 0x0C | 0x4E38B4 | 0x4E3B4B | 0x67 | Return | 3 | one merchant |  | |
+| — event 0x0C | 0x4E38B4 | 0x4E3C6E | 0x68 | Ambush | 3 | one merchant |  | |
+| — event 0x0C | 0x4E38B4 | 0x4E3CFC | 0x67 | Return | 3 | one merchant |  | |
+| — event 0x0C | 0x4E38B4 | 0x4E3D43 | 0x69 | Fled | 3 | one merchant |  | |
+| — event 0x0C | 0x4E38B4 | 0x4E3E95 | 0x66 | Arrived | 3 | one merchant |  | |
+| — event 0x0F | 0x4E5664 | 0x4E5925 | 0x74 | Broken in | 2 | one merchant |  | |
+| — event 0x0F | 0x4E5664 | 0x4E594D | 0x74 | Broken in | 2 | one merchant |  | |
+| — event 0x0F | 0x4E5664 | 0x4E5AFF | 0x20 | Robbed | 2 | one merchant |  | |
+| — event 0x0F | 0x4E5664 | 0x4E5B1E | 0x15 | Burglary | 2 | one merchant |  | |
+| — event 0x10 | 0x4E63E4 | 0x4E65CC | 0x18 | Traveller | 2 | one merchant |  | |
+| — event 0x10 | 0x4E63E4 | 0x4E6691 | 0x18 | Traveller | 2 | one merchant |  | |
+| — event 0x11 | 0x4E6744 | 0x4E6878 | 0x5B | Dishonoured | 2 | one merchant |  | |
+| — event 0x11 | 0x4E6744 | 0x4E6987 | 0x5A | Fulfilled | 3 | one merchant |  | |
+| — event 0x17 | 0x4E8684 | 0x4E87CF | 0x22 | Proposal | 2 | one merchant |  | |
+| — event 0x18 | 0x4E8804 | 0x4E8975 | 0x62 | Dividend | 2 | one merchant |  | |
+| — event 0x18 | 0x4E8804 | 0x4E8A49 | 0x28 | Dividend | 2 | one merchant |  | |
+| — event 0x18 | 0x4E8804 | 0x4E8AD2 | 0x27 | Dividend | 3 | one merchant |  | |
+| — event 0x28 | 0x4DDF40 | 0x4DE32B | 0x51 | Captain | 2 | one merchant |  | |
+| — event 0x28 | 0x4DDF40 | 0x4DE394 | 0x50 | Captain | 2 | one merchant |  | |
+| — event 0x28 | 0x4DDF40 | 0x4DE485 | 0x4E | Captain | 2 | one merchant |  | |
+| — interface (a window, from 0x410A02) | 0x419EB0 | 0x41B16D | 0x45 | — | 4 | player (0x6DFC14) | interface window 0x419EB0 (rand) | |
+| — interface (a window, from 0x410A02) | 0x419EB0 | 0x41B4D3 | 0x21 | Suitor | 2 | player (0x6DFC14) | interface window 0x419EB0 (rand) | |
+| — new game (0x541DC4, 0x5425D1, 0x542B9D) | 0x530470 | 0x530625 | 0x0E | Move | 4 | -2 (chronicle) |  | |
+| — operation 0x03 | 0x52ACD0 | 0x52AEDD | 0x02 | No repair | 3 | one merchant |  | |
+| — operation 0x06 | 0x537EE0 | 0x537FC6 | 0x04 | New captain | 2 | one merchant |  | |
+| — operation 0x2F | 0x52B110 | 0x52B288 | 0x14 | Annulment | 1 | one merchant |  | |
+| — operation 0x3D | 0x53A620 | 0x53A794 | 0x1A | Order | 2 | one merchant |  | |
+| — operation 0x3E | 0x53A810 | 0x53A910 | 0x0E | Move | 4 | -2 (chronicle) |  | |
+| — operation 0x4A | 0x53B1F0 | 0x53B40C | 0x78 | Hanse Day | 1 | -1 (each merchant) |  | |
+| — operation 0x53 | 0x53C840 | 0x53C9B5 | 0x17 | Traveller | 2 | one merchant |  | |
+| — operation 0x5F (0x53DA30) | 0x5338A0 | 0x533C9B | 0x1E | Memo | 2 | one merchant |  | |
+| — operation 0x5F (0x53DA30) | 0x5338A0 | 0x533CB5 | 0x1F | Offer | 2 | one merchant |  | |
+| — operation 0x72 | 0x53EAC0 | 0x53EBC8 | 0x2B | It's a pity | 2 | one merchant |  | |
+| — operation 0x77 | 0x53EEC0 | 0x53F6D6 | 0x83 | Impounding | 2 | one merchant |  | |
+| — operation 0x8B | 0x635B80 | 0x635C9F | 0x64 | Prince | 1 | one merchant |  | |
+| — operation 0x8C | 0x635CD0 | 0x635DA9 | 0x65 | Prince | 1 | one merchant |  | |
+| — operation 0x8F | 0x540240 | 0x5402BF | 0x38 | Siege | 4 | -2 (chronicle) |  | |
+| — operation 0x8F | 0x540240 | 0x5403DB | 0x37 | Extra tax | 1 | one merchant |  | |
+| — operation 0x90 (0x540490) | 0x634660 | 0x63477B | 0x38 | Siege | 4 | -2 (chronicle) |  | |
 
 ## Appendix B. The types
 
