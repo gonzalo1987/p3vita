@@ -18,7 +18,8 @@ Cómo leerla:
 ## En marcha (02-11-2026)
 
 - Las sesiones en la nube se acabaron: el crédito se agotó y todas las ramas `cloud/*` están juntas en `main`. Sus notas siguen en [cloud/](cloud/).
-- Hecho (03-11-2026): un barco del jugador atacado ya no se queda parado. Su batalla la lucha el ordenador, como en el juego cuando el jugador no la dirige (la operación 0x96), y los avisos del abordaje se escriben con los textos del juego (abajo, pieza 3). En el visor salen ya el aviso del ataque y los del abordaje, en español (sin commit todavía). Lo siguiente: el resultado de la batalla, que el juego manda por carta (el parte de 0x60D299), y la batalla en el mapa del mar.
+- Hecho (03-11-2026): un barco del jugador atacado ya no se queda parado. Su batalla la lucha el ordenador, como en el juego cuando el jugador no la dirige (la operación 0x96), y los avisos del abordaje se escriben con los textos del juego (abajo, pieza 3). En el visor salen ya el aviso del ataque y los del abordaje, en español. Lo siguiente: el resultado de la batalla, que el juego manda por carta (el parte de 0x60D299), y la batalla en el mapa del mar.
+- En marcha (03-11-2026): **el buzón de cartas y avisos** (fase 4, «Guardar las cartas y avisos nuevos…»), con el parte de la batalla. Hecho el inventario ([formats/mail.md](formats/mail.md)); lo siguiente, reescribir el envío de cartas y conectar las llamadas.
 - Después: la parte C del inventario y luego la D. La parte B está hecha salvo la 0x9F y la 0xB5, que van con las batallas.
 - Lo que queda en español en el repositorio (menos este documento) se pasa al inglés poco a poco, al tocar cada fichero.
 
@@ -185,6 +186,18 @@ La lista cerrada, sacada del ejecutable y no de lo que sale en las partidas, est
 - [x] Los tres pasos del final del cargador del juego (en 0x549F40): registrar los nombres de barco (0x5131B0), revisar la ruta de cada barco (0x5048C0, 0x517C10) y revisar las rutas comerciales (0x4D60B0). `tick_probe --carga` da 0 diferencias en las 12 partidas y en estados retocados ([cloud/statistics.md](cloud/statistics.md))
 - [ ] El comercio con el kontor (operación 0x1B)
 - [ ] Guardar las cartas y avisos nuevos en el buzón de cada comerciante como el juego (0x4D6530). El buzón ya se lee de la partida (`SaveGame::mail`, con los registros de las cartas antiguas en `SaveGame::mail_records`), y las cartas caducadas ya se quitan (0x4D6780). Pero las nuevas no se guardan, y la simulación lo consulta: el evento 0x16 no repite un aviso que siga vigente (42 días), así que sin esto llega antes de tiempo. Hacerlo junto con las cartas de la interfaz
+  - [x] **El inventario** (03-11-2026; [formats/mail.md](formats/mail.md) con las tablas, resumen en [inventario.md](inventario.md), parte F):
+    - el juego manda cartas desde **154 sitios** (84 funciones): 152 de la simulación y 2 de una ventana de la interfaz. Son 117 tipos de carta distintos, de los 134 que hay (0x00..0x85); cada tipo tiene su título («Naval battle», «Pirates», «Elections»…) y su texto en el exe;
+    - **solo se guardan las cartas de los comerciantes humanos** (en las partidas, el jugador) y las de la **crónica**, la lista de noticias para todos (el comerciante −2: ascensos, fiestas, asedios, la peste, las elecciones…). Las cartas a la IA se tiran. Cada tipo tiene una clase (escrito oficial, carta personal, información comercial, aviso), y los ajustes del jugador dicen si la recibe y cuántos días la guarda (siempre, 40, 20, 10 o 5 días, o no recibirla);
+    - de las 154, **97 están en funciones que p3vita ya reescribió** (hoy se las salta), 10 en funciones que p3vita nombra pero se salta enteras (el intérprete de misiones, el aviso del Gobernador, la ruta automática del convoy, el hundimiento) y 47 en eventos y operaciones del jugador que p3vita aún no tiene;
+    - el parte de la batalla (0x29) lleva su texto en un búfer aparte, como las cartas 0x47 (elecciones), 0x63 (expedición) y 0x83 (embargo); las 0x3C..0x40 y 0x71 (de las misiones) llevan un registro con su búfer;
+    - además de mandar, el buzón tiene otros 20 métodos: marcar leída, borrar, los ajustes de avisos, responder a una carta (aceptar o rechazar una oferta), reparar las cadenas… Los usan operaciones del jugador (0x6E, 0x6F, 0x70, 0x71, 0x52, 0x54, 0x55, 0x75, 0x76), el evento 0x13 y el intérprete de misiones;
+    - la interfaz: la lista (0x47D570), el texto de cada carta (0x47F3B0, un `switch` por tipo de unos 28 KB) y la crónica (0x47DD40);
+    - **el otro canal, 0x548CA0** (60 sitios): las líneas de aviso al jugador («%s interrumpe su viaje comercial», «Tu barco %s se ha hundido»…), 43 clases. No toca la simulación, solo la interfaz.
+  - [ ] Reescribir 0x4D6530 y lo que llama; que el oráculo deje de callarla y grabe los búferes de las cartas
+  - [ ] Conectar las 97 llamadas de lo ya reescrito, por grupos (primero las batallas, con el parte de 0x60D299), comprobando cada grupo con el oráculo
+  - [ ] Guardar y cargar las cartas nuevas
+  - [ ] El buzón en el visor, con los textos del juego en español
 
 ### Llegar a Gobernador
 

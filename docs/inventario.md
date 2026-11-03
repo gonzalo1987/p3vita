@@ -105,6 +105,62 @@ interfaz o un hueco:
 - [ ] **La vista de la ciudad y los gráficos** (0x599040 y los métodos de *0x6E51AC, 0x62C730 en el asedio...): ver el roadmap, fase 2, «La ciudad viva en pantalla»
 - [ ] **Las acciones del jugador**: el resto de los 193 códigos de operación los encola la interfaz (comprar, vender, construir, contratar...). Van con la interfaz (fase 5)
 
+## F. The mailbox: letters and notices
+
+Inventoried on 2026-11-03 ([formats/mail.md](formats/mail.md), with the
+tables). The game sends a letter with 0x4D6530 (on the mailbox 0x6DD730)
+from **154 calls in 84 functions**. 152 are reached from the simulation
+(advance_time, the operations' executor, the battles' methods) and 2 from
+an interface window (0x419EB0: letters 0x45 and 0x21 to the local player,
+built with rand()). The letter is copied, with its buffers, into the chain
+of each **human** merchant the player's settings let it through (classes
+1..4 by type, table 0x6C0198; the merchant's bytes [+0x38..+0x3A]), or into
+the chronicle (merchant −2, always). A letter to a merchant of the computer
+is dropped, so in the saves only the player's chain and the chronicle
+change.
+
+- [ ] **0x4D6530 itself** and what it calls: 0x4D6680 (the filter and the
+  chain), 0x4D6B40 (growing by 200), 0x51AB20 / 0x51AAB0 (copy and release
+  with the buffers of types 0x29, 0x47, 0x63, 0x83 and the records of
+  0x3C..0x40 and 0x71). 0x4D7B10 is the interface's notification (sound and
+  a line), nothing in the oracle.
+- [ ] **The 97 calls in functions p3vita has rewritten** (today skipped,
+  «A letter (0x4D6530): not rewritten» / «no se traduce»): `events_rare.cpp`
+  21, `events_towns.cpp` 14, `events_mayor.cpp` 9, `merchants.cpp` 8,
+  `battle_end.cpp` 7 (the battle report 0x29 of 0x60D299, built in
+  0x60D5FA..0x60DD93, the 0x2A news, the 0x72 letters, the 0x54 ones of
+  0x50BFD0), `alderman.cpp` 6, `capture.cpp` 5, `sieges.cpp` 5,
+  `events_big.cpp` 4, `operations.cpp` 4, `diet.cpp` 3, `facilities.cpp` 2,
+  `construction.cpp` 2, `convoys_members.cpp` 2, `core.cpp`, `offices.cpp`,
+  `events.cpp`, `pirate_objects.cpp`, `ship_step.cpp`.
+- [ ] **10 in functions p3vita names but skips whole**: the mission
+  interpreter 0x4ECF64 (5; three with a letter the script builds), the
+  alderman's notification 0x5299F0 (2), the convoy's automatic route
+  0x503230, the sinking message 0x519D90, 0x4F3AF0.
+- [ ] **47 in events and operations p3vita doesn't have**: events 0x09,
+  0x0C, 0x0F, 0x10, 0x11, 0x17, 0x18 and 0x28 (created only by player
+  actions or the mission interpreter), the player's operations 0x03, 0x06,
+  0x2F, 0x3D, 0x3E, 0x4A, 0x53, 0x5F, 0x72, 0x77, 0x8B, 0x8C, 0x8F, 0x90,
+  the town battle (0x5FE7E0, 3), a new game (0x530470) and the end of a
+  trade route (0x4D5200). They go with those subsystems (E).
+- [ ] **The other methods** the simulation uses: 0x4D6FD0 (done, operation
+  0x60), 0x4D6780 (done, the old letters), 0x4D7AC0 (the 0x5F check of
+  0x4F7510), 0x4D64B0 (reset), and the ones of the player's operations and
+  the mission interpreter: 0x4D69D0 (operation 0x6E, read), 0x4D6A50 (0x6F,
+  0x75 and event 0x13, delete), 0x4D6AF0 (0x70, the settings), 0x4D7960
+  (0x71, repair), 0x4D74C0 (0x55), 0x4D7340 (0x54), 0x4D7870 (0x76),
+  0x4D7900 (0x52), 0x4D7030, 0x4D7720, 0x4D7770, 0x4D75D0. Dead code:
+  0x4D6930, 0x4D7140, 0x4D7200, 0x4D73F0.
+- [ ] **The interface**: the list (0x47D570, titles 0x6A52D0), each
+  letter's text (0x47F3B0, a switch on the 134 types, about 28 KB), the
+  chronicle (0x47DD40, the −2 list), the answers (0x4D6C90: operations
+  0x60, 0x72, 0x74, 0x75, 0x77, 0x8C). With the game's texts.
+- [ ] **The other channel, 0x548CA0** (60 calls, 47 in rewritten
+  functions): the ticker lines for the local player («%s interrupts trade
+  journey.», «Your ship %s has sunk.»...), composed in 0x5483D0 by kind
+  (0..0x2A). It doesn't touch the simulation (only the real-time object
+  0x6DF2F0 and the interface); the oracle silences it.
+
 ## Orden propuesto
 
 1. A: los eventos que p3vita ya crea (empezando por la dieta, 0x4E09D4).
