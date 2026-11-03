@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "p3data/game_memory.hpp"
+#include "p3data/game_texts.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/savegame.hpp"
 
@@ -363,6 +364,16 @@ const NavData* event_navigation();
 // convoy no vuelve al mapa.
 void set_event_sailing(Sailing* sailing);
 Sailing* event_sailing();
+// events_rare.cpp: the game's texts for the letters the simulation composes
+// (the expedition's report, the elections...): the installation's, through
+// the event queue's Sailing; empty without them. letter_text gives one raw,
+// as the executable has it.
+const GameTexts* letter_texts();
+std::string letter_text(GameText id);
+// The name of the town `town` (an index) as the letters take it from the
+// table 0x6DDA00 (SaveOpaque::town_names), which goes by town number: a game
+// bug, the index is used; with fix_game_bugs(), the town's number.
+std::string letter_town_name(const SaveGame& save, uint32_t town);
 
 // ship_ai.cpp: los manejadores de 0x506720 para un barco de la lista de
 // barcos en puerto en los estados 0 (0x5067D0), 4 (0x506A19) y 5 (0x506B6A).

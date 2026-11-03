@@ -147,11 +147,13 @@ change.
   pirate hunt, the plague, the council, the Hanse leader's task and meeting,
   the extra tax, the theft, the monument and the expedition, with its report
   0x63 in the game's texts) and `events_towns.cpp` (14: the debts' notices and
-  the impounding, the feast, the wedding, the fires, a new office, a captain).
-  27 left.
-- [ ] **10 in functions p3vita names but skips whole**: the mission
+  the impounding, the feast, the wedding, the fires, a new office, a captain)
+  and `events_mayor.cpp` (9, the elections, the Hanse vote and the auctions,
+  plus the 2 of the Alderman's notice 0x5299F0, rewritten now).
+  18 left.
+- [ ] **10 in functions p3vita names but skipped whole** (8 left): the mission
   interpreter 0x4ECF64 (5; three with a letter the script builds), the
-  alderman's notification 0x5299F0 (2), the convoy's automatic route
+  alderman's notification 0x5299F0 (2, done with events_mayor.cpp), the convoy's automatic route
   0x503230, the sinking message 0x519D90, 0x4F3AF0.
 - [ ] **47 in events and operations p3vita doesn't have**: events 0x09,
   0x0C, 0x0F, 0x10, 0x11, 0x17, 0x18 and 0x28 (created only by player

@@ -368,6 +368,32 @@ doesn't have.
     below the number of merchants, a game bug); a captain's progress 0x4D
     (0x538A80, to a human owner: [+0x5] the ship's town, u16 [+0x8], [+0xA]
     the captain's names, [+0xC] the ship's name, [+0xE] his new [+0xC]).
+- The elections, the Hanse and the auctions (`events_mayor.cpp`; with
+  [0x6DE52A] the elections' letters are not written):
+  - the mayor's election (0x528E60): 0x47 to each human merchant of the
+    town ([+0x5] the town; the buffer «\cLord Mayor's election in <town>»,
+    a line «\l%s %s:\n\c%u votes\n» per candidate, «Therefore, <mayor> has
+    been elected as Lord Mayor.» and its 0) and the news 0x55 (u16 [+0x8],
+    [+0xA] the mayor's names, [+0xC] his votes, [+0xE] all the votes);
+  - the Alderman's (0x5299F0, from 0x4DBBD0): 0x47 to each merchant
+    («\cHanseatic conference in <town>», «\l%s %s from %s:\n\c%u votes\n»
+    per candidate, «Therefore <Alderman> has been elected.» and two 0
+    bytes) and the news 0x57 ([+0x8] his home town, [+0x9] his [+0x1A],
+    [+0xA] his title, [+0xB], [+0xC] his names, [+0xD] his rank; a
+    citizen's from his town's council slots);
+  - the Hanse vote's result 0x0B (0x4DC1F0, to each merchant: [+0x5] the
+    event's [+0x8]; u16 [+0x8] [+0x9], [+0xA] [+0xE] << 8 + [+0xA], [+0xC],
+    [+0xE] the votes [+0x12], [+0x13]);
+  - the auctions' end (0x4E2CD4): of a ship, 0x2C to a human owner (0x2D if
+    he bought it himself: [+0x8], [+0x9] the winner's names, u16 [+0xA] the
+    ship's name, [+0xC] the price · 9 / 10, [+0xE] the price / 10), 0x5D to
+    the winner (u16 [+0x8] the seller's names, [+0xA] the ship's name,
+    [+0xC] its type, [+0xE] the price / 10) or 0x2E to the owner when
+    unsold; of a building, 0x76 to its merchant owner (0x7D if he bought
+    it: [+0x8], [+0x9] his names, [+0xA], [+0xB] the winner's, [+0xD] the
+    building's type, u16 [+0xE] the price / 100), 0x7F to the winner (his
+    and the owner's names, the type, the price / 100) or 0x7E to the owner
+    when unsold. Appendix A has 0x7D only for 0x4E3598: it is 0x76 or 0x7D.
 
 ## Appendix A. The 154 calls
 

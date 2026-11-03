@@ -46,8 +46,8 @@
 //   [+0x15] u8 ciudad   [+0x16] u8 jugadores avisados   [+0x17] u8 el que más puja
 //   (empieza con el número de la ciudad)
 //
-// No se traducen los avisos y cartas (0x548CA0, 0x4D6530 y sus textos: el de
-// la elección del alcalde, 0x5299F0 el del alderman), las ventanas
+// The letters (0x4D6530) are sent, with the texts of the elections' (the
+// mayor's, 0x528E60, and the Alderman's, 0x5299F0). No se traducen los avisos (0x548CA0), las ventanas
 // (0x469380, 0x469AF0, 0x42B4C0, 0x5499F0) ni la interfaz (0x5C6xxx).
 //
 // Comprobado con el oráculo (town_oracle.py --barcos --cpr --resto 4d85c0) en
@@ -59,6 +59,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -432,12 +433,67 @@ void fn_528e60(SaveGame& save, int town) {
 		// Al jugador humano, la carta (0x548CA0) y, si es el jugador, la
 		// ventana (0x469380 y 0x469AF0): no se traducen.
 	}
-	if (g.u8(kWorldFlag8A) == 0 && mayor < count) {
-		// El aviso a los comerciantes con los candidatos y sus votos
-		// (0x4D6530) no se traduce; para su texto, el juego llama a 0x4F6420
-		// sobre el alcalde, que cambia el bit 7 de su [+0x1C].
+	if (g.u8(kWorldFlag8A) != 0) {
+		return;
+	}
+	// The election's letter 0x47 (0x529237..0x5294F7) to each human merchant
+	// whose home town it is: [+0x5] the town, its buffer the text «\cLord
+	// Mayor's election in <town>», the votes of each candidate («\l%s %s:\n\c%u
+	// votes\n», his first and family names) and «Therefore, <the mayor> has
+	// been elected as Lord Mayor.». A merchant's first name is the one 0x4F6420
+	// keeps in his [+0xE8] (the game calls it on the mayor, which changes the
+	// bit 7 of his [+0x1C]); a citizen's, from the town's [+0x6D4], [+0x6D8].
+	// The town's name comes from the table by number with the index (a game
+	// bug, letter_town_name).
+	auto names = [&](uint8_t c, uint8_t& first, uint8_t& family) {
+		if (c < count) {
+			first = merchant_of(save, c).u8(0x1C);
+			family = merchant_of(save, c).u8(0x1D);
+		} else {
+			const uint32_t j = uint8_t(~c) & 3;
+			first = t.u8(0x6D4 + j);
+			family = t.u8(0x6D8 + j);
+		}
+	};
+	std::string text = letter_text(GameText::MayorElectionIn) + letter_town_name(save, t.u8(0x2C0)) +
+		letter_text(GameText::MayorElectionVotes);
+	for (uint32_t k = 0; k < 4; ++k) {
+		uint8_t first = 0;
+		uint8_t family = 0;
+		names(candidates[k], first, family);
+		text += GameTexts::sprintf_raw(letter_text(GameText::MayorElectionCandidate),
+			{game_first_name(save, first), game_family_name(save, family), std::to_string(uint32_t(votes[k]))});
+	}
+	text += letter_text(GameText::MayorElectionTherefore);
+	if (mayor < count) {
 		fn_4f6420(save, mayor);
 	}
+	uint8_t first = 0;
+	uint8_t family = 0;
+	names(mayor, first, family);
+	text += game_first_name(save, first) + " " + game_family_name(save, family) +
+		letter_text(GameText::MayorElectionElected);
+	text += '\0';
+	Letter letter(0x47);
+	letter.entry.u8(5) = t.u8(0x2C0);
+	letter.entry.u32(0xC) = uint32_t(text.size());
+	letter.buffer.assign(text.begin(), text.end());
+	for (uint32_t i = 0; i < count; ++i) {
+		const MerchantMemory& m = merchant_of(save, i);
+		if (m.u16(8) == 0 && m.u8(0x19) == t.u8(0x2C0)) {
+			send_letter(save, int32_t(i), letter);
+		}
+	}
+	// The news 0x55 to the chronicle (0x529523..0x5295BD): [+0x5] the town;
+	// u16 [+0x8], [+0xA] the mayor's first and family names, [+0xC] his
+	// votes, [+0xE] all the votes.
+	Letter news(0x55);
+	news.entry.u8(5) = t.u8(0x2C0);
+	news.entry.u16(8) = first;
+	news.entry.u16(0xA) = family;
+	news.entry.u16(0xC) = uint16_t(best);
+	news.entry.u16(0xE) = uint16_t(votes[0] + votes[1] + votes[2] + votes[3]);
+	send_letter(save, kLetterToChronicle, news);
 }
 
 // 0x4DBB00 (evento 0x02): el día de la elección ([+0x8], con la fecha en
@@ -476,7 +532,7 @@ void fn_4dbb00(SaveGame& save) {
 // población) y los comerciantes de esas ciudades con [+0x37] >= 4, por su
 // reputación (0x4F73D0). `town[k]` es la ciudad del candidato y `merchant[k]`
 // el comerciante o 0xFF. El juego da también el título, el rango y el nombre
-// de cada uno, que solo usa el aviso (0x5299F0): no se traducen.
+// de cada uno, que la simulación no usa: no se traducen.
 void fn_529700(const SaveGame& save, uint8_t town[4], uint8_t merchant[4]) {
 	const GlobalMemory& g = save.globals;
 	const uint32_t count = merchant_count(save);
@@ -550,6 +606,82 @@ void fn_529700(const SaveGame& save, uint8_t town[4], uint8_t merchant[4]) {
 		town[k] = uint8_t(towns[k]);
 		merchant[k] = uint8_t(merchants[k]);
 	}
+}
+
+// 0x5299F0 (cdecl, from 0x4DBBD0 with the event's candidates [+0x8..+0xB],
+// their votes [+0xC..+0xF], the conference's town [+0x17] and the new
+// Alderman's town [0x6DE52E]): the result of the Alderman's election. The
+// letter 0x47 to each merchant: [+0x5] the conference's town, its buffer
+// the text «\cHanseatic conference in <town>», each candidate's votes («\l%s
+// %s from %s:\n\c%u votes\n»: a merchant's names and home town, bit 7 of the
+// candidate, or the names of the citizen mayor of the candidate town) and
+// «Therefore <the Alderman> has been elected.», ending with two 0 bytes
+// (both counted); the towns' names from the table by number with the index
+// (a game bug, letter_town_name). Then the news 0x57 to the chronicle:
+// [+0x5] the conference's town; [+0x8] the Alderman's home town, [+0x9] his
+// [+0x1A], [+0xA] his title (0x4F9430), [+0xB], [+0xC] his names, [+0xD]
+// his rank at home; for a citizen, the Alderman's town, 1, and the
+// councillor's [+0x6E0], [+0x6D4], [+0x6D8], [+0x6E4] there.
+void fn_5299f0(SaveGame& save, const uint8_t candidates[4], const uint8_t votes[4], uint8_t town,
+	uint8_t alderman_town) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t count = merchant_count(save);
+	std::string text = letter_text(GameText::ConferenceIn) + letter_town_name(save, town) +
+		letter_text(GameText::ConferenceVotes);
+	for (uint32_t k = 0; k < 4; ++k) {
+		const uint8_t c = candidates[k];
+		uint8_t first;
+		uint8_t family;
+		uint8_t home;
+		if (c & 0x80) {
+			const MerchantMemory& m = merchant_of(save, c & 0x7F);
+			first = m.u8(0x1C);
+			family = m.u8(0x1D);
+			home = m.u8(0x19);
+		} else {
+			const TownMemory& t = town_of(save, c);
+			const uint32_t j = uint8_t(~t.u8(0x6F1)) & 3;
+			first = t.u8(0x6D4 + j);
+			family = t.u8(0x6D8 + j);
+			home = c;
+		}
+		text += GameTexts::sprintf_raw(letter_text(GameText::ConferenceCandidate),
+			{game_first_name(save, first), game_family_name(save, family), letter_town_name(save, home),
+				std::to_string(uint32_t(votes[k]))});
+	}
+	text += letter_text(GameText::ConferenceTherefore);
+	const uint32_t alderman = g.u8(kAlderman);
+	const TownMemory& at = town_of(save, alderman_town);
+	const uint32_t j = uint8_t(0xFF - alderman) & 3;
+	const bool merchant = alderman < count;
+	const uint8_t first = merchant ? merchant_of(save, alderman).u8(0x1C) : at.u8(0x6D4 + j);
+	const uint8_t family = merchant ? merchant_of(save, alderman).u8(0x1D) : at.u8(0x6D8 + j);
+	text += game_first_name(save, first) + " " + game_family_name(save, family) +
+		letter_text(GameText::ConferenceElected);
+	text += '\0';
+	text += '\0';
+	Letter letter(0x47);
+	letter.entry.u8(5) = town;
+	letter.entry.u32(0xC) = uint32_t(text.size());
+	letter.buffer.assign(text.begin(), text.end());
+	send_letter(save, kLetterToEach, letter);
+	Letter news(0x57);
+	news.entry.u8(5) = town;
+	if (merchant) {
+		const MerchantMemory& m = merchant_of(save, alderman);
+		news.entry.u8(8) = m.u8(0x19);
+		news.entry.u8(9) = m.u8(0x1A);
+		news.entry.u8(0xA) = merchants_detail::fn_4f9430(save, int(alderman));
+		news.entry.u8(0xD) = m.u8(0x39C + m.u8(0x19));
+	} else {
+		news.entry.u8(8) = alderman_town;
+		news.entry.u8(9) = 1;
+		news.entry.u8(0xA) = at.u8(0x6E0 + j);
+		news.entry.u8(0xD) = at.u8(0x6E4 + j);
+	}
+	news.entry.u8(0xB) = first;
+	news.entry.u8(0xC) = family;
+	send_letter(save, kLetterToChronicle, news);
 }
 
 // 0x4DBBD0 (evento 0x20): la elección del alderman, por fases según el byte
@@ -713,7 +845,16 @@ void fn_4dbbd0(SaveGame& save) {
 	for (uint32_t i = 0; i < town_count(save); ++i) {
 		fn_529f20(save, int(i));
 	}
-	// 0x5299F0: el aviso con los candidatos y sus votos (no se traduce).
+	{
+		const Event& head = save.events[g.u16(kEventHead)];
+		uint8_t candidates[4];
+		uint8_t votes[4];
+		for (uint32_t k = 0; k < 4; ++k) {
+			candidates[k] = head.u8(0x8 + k);
+			votes[k] = head.u8(0xC + k);
+		}
+		fn_5299f0(save, candidates, votes, head.u8(0x17), g.u8(kAldermanTown));
+	}
 	Event& ev = save.events[g.u16(kEventHead)];
 	ev.u32(0) += 0x16D00;
 	ev.u8(0x17) = g.u8(kAldermanTown);
@@ -803,7 +944,18 @@ uint32_t fn_4dc1f0(SaveGame& save, uint16_t event) {
 		e.u32(0) += 1;
 		return 1;
 	}
-	// 0x4D6530: aviso con el resultado (no se traduce).
+	// The result, the letter 0x0B to each merchant (0x4DC4F1..0x4DC53D): [+0x5]
+	// the event's [+0x8]; u16 [+0x8] its [+0x9], [+0xA] [+0xE] << 8 + [+0xA],
+	// [+0xC] the votes [+0x12], [+0xE] the votes [+0x13].
+	{
+		Letter letter(0x0B);
+		letter.entry.u8(5) = e.u8(0x8);
+		letter.entry.u16(8) = e.u8(0x9);
+		letter.entry.u16(0xA) = uint16_t((e.u8(0xE) << 8) + e.u8(0xA));
+		letter.entry.u16(0xC) = e.u8(0x12);
+		letter.entry.u16(0xE) = e.u8(0x13);
+		send_letter(save, kLetterToEach, letter);
+	}
 	if (e.u8(0x12) <= e.u8(0x13)) {
 		return 0;
 	}
@@ -1649,12 +1801,62 @@ uint32_t fn_4e2cd4(SaveGame& save, uint16_t event) {
 			if (e.u16(0x8) < g.u16(kShipCount)) {
 				const uint16_t ship = e.u16(0x8);
 				e.u16(0x8) = 0xFFFF;
-				if (winner < merchant_count(save)) {
-					// Avisos al antiguo dueño y al ganador (0x4D6530): no se traducen.
+				const uint32_t count = merchant_count(save);
+				const uint8_t owner = ship_of(save, ship).u8(0x0);
+				Letter letter;
+				letter.entry.u8(5) = e.u8(0x15);
+				if (winner < count) {
+					// The letters (0x4E3230..0x4E3378): 0x2C to a human owner
+					// (0x2D if he won it himself): [+0x8], [+0x9] the winner's
+					// names, u16 [+0xA] the ship's name, [+0xC] the price · 9 /
+					// 10, [+0xE] the price / 10. Then 0x5D to the winner if he
+					// isn't the owner: u16 [+0x8] the seller's names ([+0x1C]
+					// << 8 + [+0x1D]; without one, from the tick and the ship),
+					// [+0xA] the ship's name, [+0xC] its type, [+0xE] the price
+					// / 10.
+					const ShipMemory& s = ship_of(save, ship);
+					uint16_t seller;
+					if (owner < count) {
+						const MerchantMemory& w = merchant_of(save, winner);
+						const MerchantMemory& o = merchant_of(save, owner);
+						letter.entry.u8(4) = uint8_t(0x2C + (owner == winner ? 1 : 0));
+						letter.entry.u8(8) = w.u8(0x1C);
+						letter.entry.u8(9) = w.u8(0x1D);
+						letter.entry.u16(0xA) = s.u16(0x15E);
+						letter.entry.u16(0xC) = uint16_t(price90);
+						letter.entry.u16(0xE) = uint16_t(price / 10);
+						if (o.u16(8) == 0) {
+							send_letter(save, owner, letter);
+						}
+						seller = uint16_t((o.u8(0x1C) << 8) + o.u8(0x1D));
+					} else {
+						// Sin comprobar con el oráculo.
+						const uint32_t tick = g.u32(kTick);
+						seller = uint16_t((((tick + ship) << 8) & 0x3F00) + (tick & 0x3F));
+					}
+					if (owner != winner) {
+						letter.entry.u8(4) = 0x5D;
+						letter.entry.u16(8) = seller;
+						letter.entry.u16(0xA) = s.u16(0x15E);
+						letter.entry.u16(0xC) = s.u8(0xE) & 3;
+						letter.entry.u16(0xE) = uint16_t(price / 10);
+						send_letter(save, winner, letter);
+					}
 					fn_509250(save, ship, winner, price90, price, e.u8(0x15));
 				} else {
-					// Sin comprobar con el oráculo. Aviso al dueño (0x4D6530).
+					// Sin comprobar con el oráculo. Unsold: the letter 0x2E to the
+					// owner (0x4E33B2..0x4E33FC): u16 [+0x8], [+0xA] his names,
+					// [+0xC] the ship's name (the game doesn't look whether the
+					// owner is a merchant).
 					ShipMemory& s = ship_of(save, ship);
+					if (owner < count) {
+						const MerchantMemory& o = merchant_of(save, owner);
+						letter.entry.u8(4) = 0x2E;
+						letter.entry.u16(8) = o.u8(0x1C);
+						letter.entry.u16(0xA) = o.u8(0x1D);
+						letter.entry.u16(0xC) = s.u16(0x15E);
+						send_letter(save, owner, letter);
+					}
 					s.u8(0x3C) |= 0x20;
 					s.u16(0x134) = 0;
 				}
@@ -1685,12 +1887,54 @@ uint32_t fn_4e2cd4(SaveGame& save, uint16_t event) {
 		if ((e.u16(0x8) & 0x7FFF) < st.memory.u16(0x776)) {
 			const uint32_t record = e.u16(0x8) & 0x7FFF;
 			e.u16(0x8) = 0xFFFF;
-			if (winner < merchant_count(save)) {
-				// Avisos al antiguo dueño y al ganador (0x4D6530): no se traducen.
+			const uint32_t count = merchant_count(save);
+			const uint8_t owner = st.records[record].owner;
+			Letter letter;
+			letter.entry.u8(5) = e.u8(0x15);
+			if (winner < count) {
+				// The letters (0x4E34FD..0x4E363A): to a merchant owner 0x76
+				// (0x7D if he won it himself): [+0x8], [+0x9] his names,
+				// [+0xA], [+0xB] the winner's (0x76), [+0xD] the building's
+				// type, u16 [+0xE] the price / 100. Then 0x7F to the winner if
+				// he isn't the owner: [+0x8], [+0x9] his names, [+0xA],
+				// [+0xB] the owner's, [+0xD], [+0xE] the same.
+				const MerchantMemory& w = merchant_of(save, winner);
+				letter.entry.u8(0xD) = st.records[record].type;
+				letter.entry.u16(0xE) = uint16_t(price / 100);
+				if (owner < count) {
+					const MerchantMemory& o = merchant_of(save, owner);
+					letter.entry.u8(8) = o.u8(0x1C);
+					letter.entry.u8(9) = o.u8(0x1D);
+					if (owner != winner) {
+						letter.entry.u8(4) = 0x76;
+						letter.entry.u8(0xA) = w.u8(0x1C);
+						letter.entry.u8(0xB) = w.u8(0x1D);
+					} else {
+						letter.entry.u8(4) = 0x7D;
+					}
+					send_letter(save, owner, letter);
+				}
+				if (owner != winner) {
+					letter.entry.u8(4) = 0x7F;
+					letter.entry.u8(8) = w.u8(0x1C);
+					letter.entry.u8(9) = w.u8(0x1D);
+					if (owner < count) {
+						letter.entry.u8(0xA) = merchant_of(save, owner).u8(0x1C);
+						letter.entry.u8(0xB) = merchant_of(save, owner).u8(0x1D);
+					}  // Sin comprobar con el oráculo (else the game reads past the merchants).
+					send_letter(save, winner, letter);
+				}
 				fn_5256f0(save, int(town), record, winner, price, price90);
+			} else if (owner < count) {
+				// Unsold: the letter 0x7E to the owner (0x4E366F..0x4E36B3):
+				// [+0x8], [+0x9] his names.
+				const MerchantMemory& o = merchant_of(save, owner);
+				letter.entry.u8(4) = 0x7E;
+				letter.entry.u8(8) = o.u8(0x1C);
+				letter.entry.u8(9) = o.u8(0x1D);
+				send_letter(save, owner, letter);
 			}
-			// Si no, aviso al dueño (0x4D6530): no se traduce. 0x5C6740,
-			// 0x5C6BA0: interfaz.
+			// 0x5C6740, 0x5C6BA0: interfaz.
 		}
 		const uint16_t n = st.memory.u16(0x776);
 		if ((e.u16(0x8) & 0x7FFF) >= n) {

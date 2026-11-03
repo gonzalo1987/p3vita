@@ -163,6 +163,18 @@ enum class GameText {
 	WareSword,  // The 4 weapons after the 20 trade wares («sword», «bow», «crossbow», «carbine»; 0x6C0C00).
 	WareCarbine = WareSword + 3,
 	ShipUnnamed,  // The name of a ship without one, by type (0x512B20; «snaikka»...; 0x6C0CB4).
+	// The letters 0x47 of the elections (0x6B72DC..0x6B7300): the mayor's
+	// (0x528E60) and the Alderman's at the Hanseatic conference (0x5299F0).
+	MayorElectionIn,  // «\cLord Mayor's election in »
+	MayorElectionVotes,  // «\n\l\nThe votes cast are divided as follows among the councillors ...:\n\n»
+	MayorElectionCandidate,  // «\l%s %s:\n\c%u votes\n» (first name, family name, votes)
+	MayorElectionTherefore,  // «\l\nTherefore, »
+	MayorElectionElected,  // « has been elected as Lord Mayor.»
+	ConferenceIn,  // «\cHanseatic conference in »
+	ConferenceVotes,  // «\n\l\nThe Lord Mayors standing for election got the following number of votes:\n\n»
+	ConferenceTherefore,  // «\l\nTherefore »
+	ConferenceElected,  // « has been elected.»
+	ConferenceCandidate,  // «\l%s %s from %s:\n\c%u votes\n» (names, town, votes)
 	Count
 };
 

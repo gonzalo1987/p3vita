@@ -17,6 +17,8 @@
 // with the game's control codes as they are.
 // --exe PATH: the game's executable whose texts the battles write into their memory (Sailing::set_texts);
 // by default the Patrician3.exe next to the --cpr file, the oracle's English one.
+// --names SAVE.raw: the players' names (SaveGame::custom_names) of that save for each call (without
+// --continuo the recording doesn't have them; the letters' texts use them).
 //
 // Por omisión cada llamada empieza desde el estado del juego justo antes de
 // ella, así que una diferencia apunta a esa función. Con --continuo el estado
@@ -68,6 +70,7 @@
 #include "p3data/savegame_write.hpp"
 #include "p3data/statistics.hpp"
 #include "p3data/seamap.hpp"
+#include "p3data/town_tick/internal.hpp"
 #include "probe_registry.hpp"
 
 using namespace p3::data;
@@ -810,6 +813,21 @@ int compare(const State& ours, const State& game, int& budget, const std::string
 			if (name == "BT") {
 				report(battle_blocks_difference(a, b));
 			}
+			if (name == "LB" && std::getenv("P3_SHOW_LB")) {
+				// The letters' buffers as text (u16 letter, u32 size, bytes), to see
+				// how the composed texts differ.
+				for (const auto* v : {&a, &b}) {
+					std::printf("    LB of %s:\n", v == &a ? "p3vita" : "the game");
+					for (size_t o = 0; o + 6 <= v->size();) {
+						uint32_t n = 0;
+						std::memcpy(&n, v->data() + o + 2, 4);
+						const size_t end = std::min(v->size(), o + 6 + n);
+						std::printf("      %u: %s\n", unsigned((*v)[o] | (*v)[o + 1] << 8),
+							std::string(v->begin() + long(o + 6), v->begin() + long(end)).c_str());
+						o = end;
+					}
+				}
+			}
 			continue;
 		}
 		for (size_t i = 0; i < a.size(); ++i) {
@@ -856,6 +874,7 @@ int main(int argc, char** argv) {
 	std::string write_path;  // --write: the save of the state reached (savegame_write.hpp).
 	std::string pst_path;  // --pst: with --carga, an uncompressed .pst read after it (statistics.hpp).
 	std::string exe_path;  // --exe: the game's texts (by default next to the CPR).
+	std::string names_path;  // --names: a save whose players' names (SaveGame::custom_names) each call gets.
 	bool print_messages = false;  // --messages
 	for (int i = 2; i < argc; ++i) {
 		const std::string arg = argv[i];
@@ -895,6 +914,8 @@ int main(int argc, char** argv) {
 			pst_path = argv[++i];
 		} else if (arg == "--exe" && i + 1 < argc) {
 			exe_path = argv[++i];
+		} else if (arg == "--names" && i + 1 < argc) {
+			names_path = argv[++i];
 		} else if (arg == "--messages") {
 			print_messages = true;
 		}
@@ -963,6 +984,9 @@ int main(int argc, char** argv) {
 		}
 		sailing->set_texts(texts.get());
 		g_sailing = sailing.get();
+		// The event queue's Sailing for every probe (the letters' texts, the
+		// expeditions' return), not only those that set it.
+		tick::set_event_sailing(sailing.get());
 		registry[0x506720] = [&](SaveGame&, const ProbeCall&) -> std::optional<uint32_t> {
 			sailing->update_ships();
 			return std::nullopt;
@@ -1022,6 +1046,17 @@ int main(int argc, char** argv) {
 	std::array<std::vector<std::string>, 2> first_names;  // Nor the first names.
 	std::vector<std::string> family_names;  // Nor the family names.
 	std::vector<std::string> town_names;  // Nor the town names by number (the table 0x6DDA00).
+	std::array<std::vector<std::string>, 3> custom_names;  // Nor the players' names (--names).
+	if (!names_path.empty()) {
+		std::ifstream f(names_path, std::ios::binary);
+		const std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+		SaveGame named;
+		if (parse_savegame(data.data(), data.size(), named, &error)) {
+			custom_names = named.custom_names;
+		} else {
+			std::fprintf(stderr, "%s: %s\n", names_path.c_str(), error.c_str());
+		}
+	}
 	std::vector<std::vector<uint8_t>> town_templates;  // Ni las plantillas de las ciudades nuevas.
 	if (archive) {
 		SaveGame scripts;
@@ -1038,6 +1073,7 @@ int main(int argc, char** argv) {
 			save.first_names = first_names;
 			save.family_names = family_names;
 			save.opaque.town_names = town_names;
+			save.custom_names = custom_names;
 			save.town_templates = town_templates;
 		}
 	}
@@ -1120,6 +1156,9 @@ int main(int argc, char** argv) {
 			save.first_names = first_names;
 			save.family_names = family_names;
 			save.opaque.town_names = town_names;
+			if (!names_path.empty()) {
+				save.custom_names = custom_names;
+			}
 			save.town_templates = town_templates;
 		}
 		save.queued_operations.clear();

@@ -2334,25 +2334,12 @@ constexpr int16_t kReputationNewWorld = 2560;  // 0x672DD2: el primero de los 10
 constexpr int16_t kReputationBack = 51;  // 0x672DD0: la vuelta de la expedición (0x502B20).
 constexpr uint32_t kArtilleryBase = 9;  // Byte bajo de 0x672CC8 (la primera pieza de 0x5182B0).
 
-// The expedition's report (the letter 0x63) and its contracts: the game's
-// texts as the executable has them (the installation's, through the event
-// queue's Sailing; empty without them).
-const GameTexts* report_texts() {
-	const Sailing* sailing = event_sailing();
-	return sailing ? sailing->texts() : nullptr;
-}
-
-std::string report_text(GameText id) {
-	const GameTexts* texts = report_texts();
-	return texts ? texts->raw(id) : std::string();
-}
-
 // A ware's name (0x6C0BB0, by ware: the 20 trade wares and the 4 weapons).
 std::string ware_text(uint32_t ware) {
 	if (ware < 20) {
-		return report_text(GameText(int(GameText::WareGrain) + int(ware)));
+		return letter_text(GameText(int(GameText::WareGrain) + int(ware)));
 	}
-	return ware < 24 ? report_text(GameText(int(GameText::WareSword) + int(ware - 20))) : std::string();
+	return ware < 24 ? letter_text(GameText(int(GameText::WareSword) + int(ware - 20))) : std::string();
 }
 
 // A place of the new world (0x6B1F20, by a world object's [+0x4]). Past the
@@ -2360,7 +2347,7 @@ std::string ware_text(uint32_t ware) {
 // of the Indian villages; they only use this table through 0x52C6C0, whose
 // contracts are only for the trading posts).
 std::string place_text(uint32_t place) {
-	return place < 30 ? report_text(GameText(int(GameText::ExpeditionPlace0) + int(place))) : std::string();
+	return place < 30 ? letter_text(GameText(int(GameText::ExpeditionPlace0) + int(place))) : std::string();
 }
 
 // 0x5311D0 with the year too ((tick >> 8) / 365 into a u16).
@@ -2832,15 +2819,15 @@ uint8_t fn_52c6c0(SaveGame& save, uint32_t object, uint16_t convoy, uint16_t mod
 				uint16_t year = 0;
 				report_date(order.u32(0xC), day, month, year);
 				const std::string place = place_text(g.u8(base + 4));
-				const std::string what = report_text(buys != 0 ? GameText::ContractBuy : GameText::ContractSell);
+				const std::string what = letter_text(buys != 0 ? GameText::ContractBuy : GameText::ContractSell);
 				const std::string amount_text = std::to_string(int32_t(order.u32(0x4)));
 				const std::string price_text = std::to_string(int32_t(order.u32(0x8)));
 				const std::string d = std::to_string(day), mo = std::to_string(month), y = std::to_string(year);
-				const GameTexts* texts = report_texts();
+				const GameTexts* texts = letter_texts();
 				const std::vector<std::string> args = texts && texts->spanish()
 					? std::vector<std::string>{place, d, mo, y, amount_text, "B", ware_text(ware), price_text, what}
 					: std::vector<std::string>{place, what, amount_text, "B", ware_text(ware), d, mo, y, price_text};
-				*text += GameTexts::sprintf_raw(report_text(GameText::ContractPromised), args);
+				*text += GameTexts::sprintf_raw(letter_text(GameText::ContractPromised), args);
 			}
 		}
 		return created;
@@ -2931,15 +2918,15 @@ uint8_t fn_52c6c0(SaveGame& save, uint32_t object, uint16_t convoy, uint16_t mod
 		uint8_t month = 0;
 		uint16_t year = 0;
 		report_date(order.u32(0xC), day, month, year);
-		std::string line = GameTexts::sprintf_raw(report_text(GameText::ContractTraded),
+		std::string line = GameTexts::sprintf_raw(letter_text(GameText::ContractTraded),
 			{std::to_string(amount / 200), "B", ware_text(ware), std::to_string(int32_t(order.u32(0x8))),
-				place_text(g.u8(base + 4)), report_text(buys ? GameText::ContractSold : GameText::ContractBought)});
+				place_text(g.u8(base + 4)), letter_text(buys ? GameText::ContractSold : GameText::ContractBought)});
 		if (order.u32(0x4) != 0) {
-			line += GameTexts::sprintf_raw(report_text(GameText::ContractMustDeliver),
+			line += GameTexts::sprintf_raw(letter_text(GameText::ContractMustDeliver),
 				{std::to_string(int32_t(order.u32(0x4))), "B", std::to_string(day), std::to_string(month),
 					std::to_string(year)});
 		} else {
-			line += report_text(GameText::ContractMet);
+			line += letter_text(GameText::ContractMet);
 		}
 		*text += line;
 	}
@@ -3072,17 +3059,17 @@ uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t poi
 		// (\L), the ware, the rounded price of one and the total.
 		std::string& t = *trades;
 		if (g.u8(base + 5) < 2) {
-			t += report_text(GameText::ExpeditionIn);
+			t += letter_text(GameText::ExpeditionIn);
 			t += place_text(g.u8(base + 4));
-			t += report_text((point & 1) ? GameText::ExpeditionTransactionTook : GameText::ExpeditionTransactionMade);
+			t += letter_text((point & 1) ? GameText::ExpeditionTransactionTook : GameText::ExpeditionTransactionMade);
 		} else {
-			t += report_text(GameText::ExpeditionIndianTribe);
-			t += report_text(GameText::ExpeditionTransactionMade);
+			t += letter_text(GameText::ExpeditionIndianTribe);
+			t += letter_text(GameText::ExpeditionTransactionMade);
 		}
 		auto line = [&](GameText id, int32_t amount, int32_t money, bool barrel, uint32_t ware) {
 			const int32_t units = barrel ? amount / 200 : amount / 2000;
 			const int32_t price = ((units >> 1) + money) / units;
-			t += GameTexts::sprintf_raw(report_text(id), {std::to_string(uint32_t(units)), barrel ? "B" : "L",
+			t += GameTexts::sprintf_raw(letter_text(id), {std::to_string(uint32_t(units)), barrel ? "B" : "L",
 				ware_text(ware), std::to_string(uint32_t(price)), std::to_string(uint32_t(money))});
 		};
 		for (uint32_t side = 0; side < 2; ++side) {
@@ -3164,7 +3151,7 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 	uint8_t empty = 0;
 	bool signed_contract = false;
 	std::string trades;
-	std::string contracts = report_text(GameText::ContractsHeader);
+	std::string contracts = letter_text(GameText::ContractsHeader);
 	for (uint32_t k = 0; k < 4; ++k) {
 		const MapPoint p = convoy_point(c, k);
 		if (p.x >= 0x7FFF) {
@@ -3199,7 +3186,7 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 		}
 	}
 	if (!signed_contract) {
-		contracts += report_text(GameText::ContractNoNew);
+		contracts += letter_text(GameText::ContractNoNew);
 	}
 	bool storm = false;  // [esp+0x12]
 	bool pirates = false;  // [esp+0x13]
@@ -3296,7 +3283,7 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 		text += s;
 		size += uint32_t(s.size());
 	};
-	add(report_text(GameText::ExpeditionLedBy));
+	add(letter_text(GameText::ExpeditionLedBy));
 	const uint16_t guide = c.u16(0x10);
 	if (guide < ship_count(save)) {
 		std::string name;
@@ -3306,17 +3293,16 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 		}
 		add(name);
 	} else {
-		add(report_text(GameText::ShipUnnamed));  // Sin comprobar con el oráculo (0x512B20 with 0xFFFF).
+		add(letter_text(GameText::ShipUnnamed));  // Sin comprobar con el oráculo (0x512B20 with 0xFFFF).
 	}
-	add(report_text(GameText::ExpeditionReturned));
+	add(letter_text(GameText::ExpeditionReturned));
 	// A game bug: the town names' table 0x6DDA00 goes by town number and the
 	// game takes it by the town's index (as when saving, savegame_write.cpp):
 	// the report names another town when they differ. Fixed: by the town's
 	// number (0x6DE4B8).
 	const uint32_t town = c.u8(0x1F) < town_count(save) ? c.u8(0x1F) : c.u8(0x1E) % town_count(save);
-	const uint32_t named = fix_game_bugs() ? save.globals.u8(kTownIds + town) : town;
-	add(named < save.opaque.town_names.size() ? save.opaque.town_names[named] : std::string());
-	add(report_text(GameText::ExpeditionDot));
+	add(letter_town_name(save, town));
+	add(letter_text(GameText::ExpeditionDot));
 	const uint32_t end_money = c.u32(0x20);
 	if (sailing) {
 		sailing->fn_502b20(int(convoy), e.u32(0xC));
@@ -3326,7 +3312,7 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 	}
 	if (found == 0) {
 		if (empty != 0) {
-			add(report_text(GameText::ExpeditionNoCentres));
+			add(letter_text(GameText::ExpeditionNoCentres));
 		}
 	} else {
 		// The trading posts found go to the front (0x4E7258..0x4E72AF).
@@ -3356,38 +3342,38 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 		};
 		switch (valid) {
 		case 4:
-			add(report_text(GameText::ExpeditionTwoNew));
+			add(letter_text(GameText::ExpeditionTwoNew));
 			add(place_text(places[0]));
 			comma();
 			add(place_text(places[1]));
 			comma();
 			add(place_text(places[2]));
-			add(report_text(GameText::ExpeditionAnd));
+			add(letter_text(GameText::ExpeditionAnd));
 			add(place_text(places[3]));
-			add(report_text(GameText::ExpeditionFour));
-			add(report_text(GameText::ExpeditionOpportunities));
+			add(letter_text(GameText::ExpeditionFour));
+			add(letter_text(GameText::ExpeditionOpportunities));
 			break;
 		case 3:
-			add(report_text(GameText::ExpeditionTwoNew));
+			add(letter_text(GameText::ExpeditionTwoNew));
 			add(place_text(places[0]));
 			comma();
 			add(place_text(places[1]));
-			add(report_text(GameText::ExpeditionAnd));
+			add(letter_text(GameText::ExpeditionAnd));
 			add(place_text(places[2]));
-			add(report_text(GameText::ExpeditionThree));
-			add(report_text(GameText::ExpeditionOpportunities));
+			add(letter_text(GameText::ExpeditionThree));
+			add(letter_text(GameText::ExpeditionOpportunities));
 			break;
 		case 2:
-			add(report_text(GameText::ExpeditionTwoNew));
+			add(letter_text(GameText::ExpeditionTwoNew));
 			add(place_text(places[0]));
-			add(report_text(GameText::ExpeditionAnd));
+			add(letter_text(GameText::ExpeditionAnd));
 			add(place_text(places[1]));
-			add(report_text(GameText::ExpeditionCouldBeDiscovered));
+			add(letter_text(GameText::ExpeditionCouldBeDiscovered));
 			break;
 		case 1:
-			add(report_text(GameText::ExpeditionDiscoveryOf));
+			add(letter_text(GameText::ExpeditionDiscoveryOf));
 			add(place_text(places[0]));
-			add(report_text(GameText::ExpeditionDiscoveryEnd));
+			add(letter_text(GameText::ExpeditionDiscoveryEnd));
 			break;
 		default:
 			break;
@@ -3395,26 +3381,26 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 		if (found > valid) {
 			// The Indian villages (0x4E7641..0x4E7743); the last text's
 			// pointer (0x6B9634) goes to zeroed data in both builds: nothing.
-			add(report_text(GameText::ExpeditionNewWorld));
+			add(letter_text(GameText::ExpeditionNewWorld));
 			const uint32_t villages = uint32_t(found - valid);
 			if (villages == 1) {
-				add(report_text(GameText::ExpeditionOneVillage));
+				add(letter_text(GameText::ExpeditionOneVillage));
 			} else if (villages == 2) {
-				add(report_text(GameText::ExpeditionTwoVillages));
+				add(letter_text(GameText::ExpeditionTwoVillages));
 			} else {
-				add(report_text(GameText::ExpeditionFoundInNewWorld));
-				add(report_text(villages == 3 ? GameText::ExpeditionThree : GameText::ExpeditionFour));
-				add(report_text(GameText::ExpeditionVillagesFound));
+				add(letter_text(GameText::ExpeditionFoundInNewWorld));
+				add(letter_text(villages == 3 ? GameText::ExpeditionThree : GameText::ExpeditionFour));
+				add(letter_text(GameText::ExpeditionVillagesFound));
 			}
 		}
 	}
 	// The voyage's mishap, then the trades, the contracts and it.
 	std::string mishap;
 	if (storm) {
-		mishap = report_text(GameText::ExpeditionStorm);
+		mishap = letter_text(GameText::ExpeditionStorm);
 	} else if (pirates) {
-		mishap = loss == 0 ? report_text(GameText::ExpeditionPiratesFailed)
-		                   : GameTexts::sprintf_raw(report_text(GameText::ExpeditionPiratesStole), {std::to_string(int32_t(loss))});
+		mishap = loss == 0 ? letter_text(GameText::ExpeditionPiratesFailed)
+		                   : GameTexts::sprintf_raw(letter_text(GameText::ExpeditionPiratesStole), {std::to_string(int32_t(loss))});
 	}
 	add(trades);
 	add(contracts);
@@ -3424,7 +3410,7 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 		// take with him on his voyage. He returns with <money> .» (the
 		// captain of the guide after 0x502B20; the format «%u\C», 0x6C02F4
 		// and 0x6C02FC, the same in both builds).
-		add(report_text(GameText::ExpeditionGivenCaptain));
+		add(letter_text(GameText::ExpeditionGivenCaptain));
 		const uint16_t lead = save.convoys[convoy].u16(0x10);
 		if (lead < ship_count(save) && save.ships[lead].captain() < save.globals.u16(kCaptainCount)) {
 			const CaptainMemory& cap = save.captains[save.ships[lead].captain()];
@@ -3434,9 +3420,9 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 			add(" ");
 		}
 		add(std::to_string(start_money) + "\\C");
-		add(report_text(GameText::ExpeditionTakeWith));
+		add(letter_text(GameText::ExpeditionTakeWith));
 		add(std::to_string(end_money) + "\\C");
-		add(report_text(GameText::ExpeditionEnd));
+		add(letter_text(GameText::ExpeditionEnd));
 	}
 	text += '\0';
 	++size;
@@ -3565,6 +3551,21 @@ void set_event_sailing(Sailing* sailing) {
 
 Sailing* event_sailing() {
 	return g_event_sailing;
+}
+
+const GameTexts* letter_texts() {
+	const Sailing* sailing = event_sailing();
+	return sailing ? sailing->texts() : nullptr;
+}
+
+std::string letter_text(GameText id) {
+	const GameTexts* texts = letter_texts();
+	return texts ? texts->raw(id) : std::string();
+}
+
+std::string letter_town_name(const SaveGame& save, uint32_t town) {
+	const uint32_t named = fix_game_bugs() ? save.globals.u8(kTownIds + town) : town;
+	return named < save.opaque.town_names.size() ? save.opaque.town_names[named] : std::string();
 }
 
 }  // namespace p3::data::tick

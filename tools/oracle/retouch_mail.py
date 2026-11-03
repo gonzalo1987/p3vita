@@ -92,6 +92,25 @@ Scenarios:
   captain    the operation 0x12 for the player's first ship with a captain
              (+60 to his skills; 0x538A80): if his [+0xC] rises, the letter
              0x4D. Record 535760
+  mayor_election direct calls of 0x528E60 (the mayor's election) in the
+             player's home town (the letter 0x47 with its text reaches him)
+             and in the next town; the news 0x55. Record 528e60, 0 days
+  alderman_merchant, alderman_citizen: the save's event 0x20 (the
+             Alderman's election, 0x4DBBD0) in its last step a day later,
+             with an AI merchant, a town with a citizen mayor, another town
+             and the player as candidates; an AI merchant or the citizen wins
+             (the player never: becoming Alderman ends the game): 0x5299F0's
+             letter 0x47 to each merchant and the news 0x57. Record 4d85c0, 2
+             days
+  hanse_vote an event 0x21 (the Hanse's vote, 0x4DC1F0) in its last step,
+             the proposal failing: the letter 0x0B to each merchant
+  auction_end auctions (events 0x36 and 0x0A, 0x4E2CD4) in their last step
+             in the next ticks: a building of the player won by an AI
+             merchant (0x76), by himself (0x7D) and unsold (0x7E), an AI
+             merchant's won by the player (0x7F), the player's ships (in
+             port, in no convoy) won by the AI merchant (0x2C), by himself
+             (0x2D) and unsold (0x2E), and an AI ship won by the player
+             (0x5D). Record 4d85c0
 """
 import argparse
 import os
@@ -609,6 +628,115 @@ def captain(o, rec):
     print(f'operation 0x12 for the player\'s ship {s} (captain {o.u16(o.ship(s) + 0x42)})')
 
 
+def mayor_election(o, rec):
+    import retouch_unchecked as ru
+    m = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(m) + 0x19)
+    w8(o, 0x6DE52A, 0)
+    for t in (home, (home + 1) % o.counts()[0]):
+        ru.direct(o, 0x528E60, [], ecx=o.town(t))
+        print(f'election in town {t}: the mayor {o.u8(o.town(t) + 0x6F1)}')
+
+
+def alderman_vote(o, merchant_wins):
+    import retouch as rt
+    towns, _, merchants, _ = o.counts()
+    m = o.u32(to.PLAYER)
+    found = [(i, a) for i, a in rt.events(o) if o.u16(a + 6) == 0x20]
+    if not found:
+        print('no event 0x20')
+        return
+    i, a = found[0]
+    citizen = next(t for t in range(towns) if o.u8(o.town(t) + 0x6F1) >= merchants)
+    other = next(t for t in range(towns) if t != citizen)
+    ai = next(k for k in range(merchants) if k != m and o.u16(o.merchant(k) + 8))
+    # The player among the candidates but never the winner: becoming Alderman
+    # ends the game (its window, 0x5499F0).
+    candidates = [0x80 | ai, citizen, other, 0x80 | m]
+    votes = [20, 5, 3, 1] if merchant_wins else [5, 20, 3, 1]
+    for k in range(4):
+        w8(o, a + 8 + k, candidates[k])
+        w8(o, a + 0xC + k, votes[k])
+        w8(o, a + 0x10 + k, 0)
+    now = o.u32(WORLD + 0x14)
+    rt.move_event(o, i, a, ((now + 0x100) & ~0xFF) | 0xFE)
+    print(f'event 0x20 ends a day later: candidates {candidates}, votes {votes}')
+
+
+def alderman_merchant(o, rec):
+    alderman_vote(o, True)
+
+
+def alderman_citizen(o, rec):
+    alderman_vote(o, False)
+
+
+def hanse_vote(o, rec):
+    m = o.u32(to.PLAYER)
+    now = o.u32(WORLD + 0x14)
+    e = new_event(o, ((now + 1) & ~0xFF) + 0xF0 if (now & 0xFF) < 0xF0 else now + 0x100, 0x21)
+    w8(o, e + 8, o.u8(0x6DE52E))
+    w8(o, e + 9, o.u8(o.merchant(m) + 0x19))
+    w8(o, e + 0xA, 2)
+    w8(o, e + 0xE, 4)
+    w8(o, e + 0x12, 3)
+    w8(o, e + 0x13, 9)
+    print(f'an event 0x21 in its last step (the proposal fails 3 to 9): the letter 0x0B to each merchant')
+
+
+def auction_end(o, rec):
+    towns, _, merchants, ships = o.counts()
+    m = o.u32(to.PLAYER)
+    now = o.u32(WORLD + 0x14)
+    ai = next(k for k in range(merchants) if k != m and o.u16(o.merchant(k) + 8) and o.u16(o.merchant(k) + 0xC) < o.u16(WORLD + 8)
+              and o.u16(o.merchant(k) + 0xE) < ships)
+    cases = []
+
+    def first_record(merchant):
+        for f in (player_offices(o, merchant)):
+            r = o.u16(o.office(f) + 0x2CE)
+            t = o.u8(o.office(f) + 0x2C6)
+            if r < o.u16(o.town(t) + 0x776):
+                return t, r
+        return None
+
+    def ships_of(merchant):
+        # Ships in port and in no convoy: selling one in a convoy (0x509250)
+        # is a branch p3vita doesn't reproduce yet (events_mayor.cpp).
+        convoys = o.u16(to.SHIPS + 0xF6)
+        out, s = [], o.u16(o.merchant(merchant) + 0xE)
+        while s < ships and len(out) < 8:
+            if o.u16(o.ship(s) + 8) >= convoys and o.u16(o.ship(s) + 0x134) < 0xC:
+                out.append(s)
+            s = o.u16(o.ship(s) + 4)
+        return out
+
+    mine = first_record(m)
+    theirs = first_record(ai)
+    if mine:
+        cases += [('b', mine, ai), ('b', mine, m), ('b', mine, 0xFF)]  # 0x76 to him; 0x7D; 0x7E
+    if theirs:
+        cases.append(('b', theirs, m))  # 0x7F to him
+    my_ships, their_ships = ships_of(m), ships_of(ai)
+    for s, winner in zip(my_ships, (ai, m, 0xFF)):  # 0x2C; 0x2D; 0x2E
+        cases.append(('s', (o.u8(o.ship(s) + 0x39) % towns, s), winner))
+    if their_ships:
+        cases.append(('s', (o.u8(o.ship(their_ships[0]) + 0x39) % towns, their_ships[0]), m))  # 0x5D to him
+    for k, (kind, (town, item), winner) in enumerate(cases):
+        e = new_event(o, now + 1 + k, 0x36 if kind == 'b' else 0x0A)
+        w16(o, e + 8, item)
+        w16(o, e + 0xA, 0xFFFF)
+        w16(o, e + 0xC, 0xFFFF)
+        w16(o, e + 0xE, 12345)
+        w16(o, e + 0x10, 100)
+        w16(o, e + 0x12, 0)
+        w8(o, e + 0x14, 7)
+        w8(o, e + 0x15, town)
+        w8(o, e + 0x16, 0)
+        w8(o, e + 0x17, winner)
+    print(f'auctions ending (kind, (town, item), winner): {cases}; the player {m}, the AI merchant {ai}')
+
+
 def expedition_lost(o, rec):
     convoy, members = expedition(o, rec)
     w32(o, o.ship(members[0]) + 0x18, 10)
@@ -623,7 +751,8 @@ SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, com
                                      pirate_hunt, council, hanse_task, hanse_task_ai, expedition, expedition_lost,
                                      expedition_four, expedition_villages, expedition_new_world, expedition_nothing,
                                      expedition_contract, debts_notices, debts_office, debts_ship, debts_partial,
-                                     captain)}
+                                     captain, mayor_election, alderman_merchant, alderman_citizen, hanse_vote,
+                                     auction_end)}
 
 
 def main():
