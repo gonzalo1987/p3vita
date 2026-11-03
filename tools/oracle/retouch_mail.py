@@ -44,6 +44,42 @@ Scenarios:
              the player ([+0x0]: the others pay, the letter 0x31 to him), the
              second with its last ship the player's (he pays: 0x32). Record
              50a580, 0 days
+  pirate_hunt events 0x1E (0x4DFD44) of the player in the next ticks: state
+             3 with a ship (the letter 0x41), state 3 with his [+0x1B] 4 up
+             (0x42 and 4000), state 4 in the town of his first office with
+             its last ware high (0x43). Record 4d85c0
+  council    two votes of the council (event 0x2E, 0x4E9A94) ending at the
+             day's last tick: in the player's home town with him as mayor
+             (proposal 0, passes: the extra tax, event 0x31, a day later, with
+             the letters 0x6C), and in the next town with an AI mayor and the
+             player asked (proposal 3, fails): the letters 0x6B. Record
+             4d85c0, 2 days
+  hanse_task the player leads the Hanse ([0x6DE52D]; the meeting in his home
+             town): events 0x30 (0x4EA594) in the first phase (kinds 0, 2, 5,
+             7: the letter 0x77 to each merchant or to him), the second
+             (kinds 1 and 5: the reminder, not for 5) and the third (kind 3
+             fails; kind 4 with [+0xC] 6 is exempt). Record 4d85c0
+  hanse_task_ai an AI merchant leads the Hanse: events 0x30 of the kinds 0,
+             2 (the captain of a pirate object, 0x515AE0) and 1 in the first
+             phase (0x77 to each merchant), then the meeting a day later
+             (0x78). Record 4d85c0, 2 days
+  expedition the save's first event 0x12 (an expedition, 0x4E6A54) arrives
+             in the next tick, the convoy the player's, its second ship with a
+             hull of 10 (it sinks: 0x34 from 0x502B20) and the world's
+             [+0x89] at 0 (the first to reach the new world: 0x56 from
+             0x5319D0). Only the tutorials have one. Record 4d85c0
+  expedition_lost the same with its only (first) ship sunk too (no report)
+             and its first point at the first of Expeditionen.dat
+  expedition_four, expedition_villages, expedition_new_world,
+  expedition_nothing, expedition_contract: the expedition (the convoy and
+             its ships the player's) with its route points at the places of
+             world objects not found yet: 4 trading posts with [+0x38] 2
+             (a contract) and the arrival's tick chosen for pirates that
+             steal; a village and 3 posts, pirates that fail, wine and iron
+             goods loaded (sold to the village); 3 villages and a post; no
+             object (nothing found); 2 posts with a contract of the player
+             each, signed before by calling 0x52C6C0 (traded with). The
+             report 0x63 with the texts of 0x4E6A54, 0x52BFE0 and 0x52C6C0
 """
 import argparse
 import os
@@ -223,7 +259,277 @@ def convoy_fees(o, rec):
         ru.direct(o, 0x50A580, [c], ecx=to.SHIPS)
 
 
-SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, commission, hulk, wall_bill, convoy_fees)}
+def new_event(o, tick, kind):
+    """A new event of `kind` at `tick` (0x4D8CF0); its address."""
+    e = o.call(0x4D8CF0, [tick], ecx=to.EVENTS)
+    w16(o, e + 6, kind)
+    return e
+
+
+def player_offices(o, m):
+    """The player's offices (his chain from [+0xC], next [+0x2C8])."""
+    out, i = [], o.u16(o.merchant(m) + 0xC)
+    while i < o.u16(WORLD + 8):
+        out.append(i)
+        i = o.u16(o.office(i) + 0x2C8)
+    return out
+
+
+def pirate_hunt(o, rec):
+    m = o.u32(to.PLAYER)
+    ma = o.merchant(m)
+    home = o.u8(ma + 0x19)
+    now = o.u32(WORLD + 0x14)
+    seen = o.u8(ma + 0x1B)
+    if seen < 4:
+        w8(o, ma + 0x1B, 4)
+        seen = 4
+    office = player_offices(o, m)[0]
+    town = o.u8(o.office(office) + 0x2C6)
+    w32(o, o.office(office) + 4 + 4 * 23, 1000)  # the last ware: enough for the pirates
+    for k, (state, place, ship, before) in enumerate(((3, home, 0x0123, 0), (3, home, 0xFFFF, seen - 4),
+                                                      (4, town, 0xFFFF, 0))):
+        e = new_event(o, now + 1 + k, 0x1E)
+        # State 4 doesn't move the event's tick: with [+0x8] or [+0xC] still
+        # ahead (keep) the queue would run it again in the same tick forever.
+        until = now if state == 4 else now + 0x10000
+        w32(o, e + 8, until)
+        w32(o, e + 0xC, until)
+        w8(o, e + 0x10, state)
+        w8(o, e + 0x11, place)
+        w16(o, e + 0x12, ship)
+        w8(o, e + 0x14, 5)
+        w8(o, e + 0x15, 3)
+        w8(o, e + 0x16, m)
+        w8(o, e + 0x17, before)
+    print(f'events 0x1E of the player {m}: state 3 in {home} (0x41, then 0x42 with [+0x1B] {seen}), '
+          f'state 4 in {town} (his office {office}: 0x43)')
+
+
+def council(o, rec):
+    towns, _, merchants, _ = o.counts()
+    m = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(m) + 0x19)
+    other = next(i for i in range(merchants) if i != m)
+    second = (home + 1) % towns
+    w8(o, o.town(home) + 0x6F1, m)
+    w8(o, o.town(second) + 0x6F1, other)
+    now = o.u32(WORLD + 0x14)
+    last = now | 0xFF  # the day's last tick: the vote ends
+    for k, (town, proposal, asked, yes, no, tax) in enumerate(((home, 0, other, 10, 2, 0), (second, 3, m, 3, 8, 7))):
+        e = new_event(o, last + 0x100 * k, 0x2E)
+        w32(o, e + 8, 20000)
+        w8(o, e + 0xC, town)
+        w8(o, e + 0xD, proposal)
+        w8(o, e + 0xE, 0)
+        w8(o, e + 0xF, 0)
+        w8(o, e + 0x10, yes)
+        w8(o, e + 0x11, no)
+        w8(o, e + 0x14, tax)
+        w8(o, e + 0x16, asked)
+    print(f'council votes: in {home} (the player {m} mayor, proposal 0 passes: the extra tax a day later), '
+          f'in {second} (mayor {other}, the player asked, proposal 3 fails)')
+
+
+def hanse_leader(o, m, town):
+    w8(o, 0x6DE52D, m)
+    w8(o, 0x6DE52E, town)
+
+
+def first_pirate(o):
+    return next(k for k in range(5) if o.u32(to.SHIPS + 0xC + 4 * k))
+
+
+def hanse_task(o, rec):
+    m = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(m) + 0x19)
+    hanse_leader(o, m, home)
+    now = o.u32(WORLD + 0x14)
+    pirate = first_pirate(o)
+    cases = ((0, 0, 1), (0, 2, 1), (0, 5, 1), (0, 7, 1), (0xA00, 1, 1), (0x1500, 3, 1), (0xA00, 5, 1), (0x1500, 4, 6))
+    for k, (ago, kind, c) in enumerate(cases):
+        e = new_event(o, now + 1 + k, 0x30)
+        w32(o, e + 8, now - ago)
+        w8(o, e + 0xC, c)
+        w8(o, e + 0x12, 3 + k)
+        w8(o, e + 0x13, kind)
+        w8(o, e + 0x14, pirate + 5 if kind == 2 else 0x41 + k)
+        w8(o, e + 0x15, 0x21 + k)
+    print(f'the player {m} leads the Hanse (meeting in {home}); events 0x30 (days ago, kind, [+0xC]): {cases}')
+
+
+def hanse_task_ai(o, rec):
+    towns, _, merchants, _ = o.counts()
+    m = o.u32(to.PLAYER)
+    leader = o.u8(0x6DE52D)
+    if leader >= merchants or o.u16(o.merchant(leader) + 8) == 0:
+        leader = next(i for i in range(merchants) if i != m and o.u16(o.merchant(i) + 8))
+    town = o.u8(0x6DE52E) if o.u8(0x6DE52E) < towns else 0
+    hanse_leader(o, leader, town)
+    now = o.u32(WORLD + 0x14)
+    pirate = first_pirate(o)
+    for k, kind in enumerate((0, 2, 1)):
+        e = new_event(o, now + 1 + k, 0x30)
+        w32(o, e + 8, now)
+        w8(o, e + 0xC, 1 if k else 0)
+        w8(o, e + 0x12, 3 + k)
+        w8(o, e + 0x13, kind)
+        w8(o, e + 0x14, pirate if kind == 2 else 0x41 + k)
+        w8(o, e + 0x15, 0x21 + k)
+    print(f'the AI merchant {leader} leads the Hanse (meeting in {town}); events 0x30 of the kinds 0, 2 '
+          f'(pirate object {pirate}), 1')
+
+
+def expedition(o, rec):
+    import retouch as rt
+    ships = o.counts()[3]
+    found = [(i, a) for i, a in rt.events(o) if o.u16(a + 6) == 0x12]
+    print(f'events 0x12: {[(i, o.u32(a), o.u16(a + 8), o.u16(a + 0xA)) for i, a in found]}')
+    if not found:
+        return
+    i, a = found[0]
+    convoy = o.u32(to.SHIPS + 8) + 0x3C * o.u16(a + 8)
+    members, s = [], o.u16(convoy + 0xA)
+    while s < ships and len(members) < 50:
+        members.append(s)
+        s = o.u16(o.ship(s) + 6)
+    if len(members) > 1:
+        w32(o, o.ship(members[1]) + 0x18, 10)  # a ship that sinks on the way: the letter 0x34
+    print(f'convoy owner {o.u8(convoy)}, guide {o.u16(convoy + 0x10)}, ships\' owners {[o.u8(o.ship(s)) for s in members]}')
+    w8(o, convoy, o.u32(to.PLAYER))  # the player's, and its ships: the letters reach him
+    for s in members:
+        w8(o, o.ship(s), o.u32(to.PLAYER))
+    w8(o, o.merchant(o.u32(to.PLAYER)) + 0x3A, 0)  # and he keeps the trading information (class 3: 0x63)
+    w8(o, WORLD + 0x89, 0)  # nobody has reached the new world: the news 0x56 (0x5319D0)
+    w16(o, a + 0xA, 4)
+    rt.move_event(o, i, a, o.u32(WORLD + 0x14) + 1)
+    print(f'convoy {o.u16(a + 8)} of {o.u8(convoy)} arrives in the next tick; ships {members}')
+    return convoy, members
+
+
+def game_rolls(seed, draws):
+    """The game's generator (0x46C320..0x46C380) seeded with `seed`: the
+    values of the draws (n, ...)."""
+    out = []
+    for n in draws:
+        x = (0xA205B063 - seed * 0x44BF19B3) & 0xFFFFFFFF
+        seed = (x >> 1) | ((x & 1) << 31)
+        out.append(seed % n)
+    return out
+
+
+def expedition_to(o, objects, mode=None, pirates=None, cargo=()):
+    """The save's first expedition arrives with its route points at the
+    places of the world objects `objects` (not found yet, their tick 0: the
+    point has to be the place), its [+0x38] `mode` (2: contracts), the
+    arrival's tick chosen for the pirates (None: neither pirates nor storm;
+    'stole', 'failed') and (ware, amount) loaded on its first ship."""
+    import retouch as rt
+    ships = o.counts()[3]
+    found = [(i, a) for i, a in rt.events(o) if o.u16(a + 6) == 0x12]
+    if not found:
+        print('no event 0x12')
+        return None
+    i, a = found[0]
+    m = o.u32(to.PLAYER)
+    convoy = o.u32(to.SHIPS + 8) + 0x3C * o.u16(a + 8)
+    members, s = [], o.u16(convoy + 0xA)
+    while s < ships and len(members) < 50:
+        members.append(s)
+        s = o.u16(o.ship(s) + 6)
+    w8(o, convoy, m)
+    for s in members:
+        w8(o, o.ship(s), m)
+    w8(o, o.merchant(m) + 0x3A, 0)
+    for k in range(4):
+        if k < len(objects):
+            b = 0x6DEFB0 + 0x2C * objects[k]
+            place = o.u8(b + 4)
+            x, y = o.u16(0x673858 + 4 * place), o.u16(0x673858 + 4 * place + 2)
+            w8(o, b + 6, 0xFF)
+            w32(o, b + 8, 0)
+        else:
+            x, y = 1, 1  # nowhere
+        w16(o, convoy + 0x24 + 4 * k, x)
+        w16(o, convoy + 0x26 + 4 * k, y)
+        w8(o, convoy + 0x34 + k, 3)
+    if mode is not None:
+        w16(o, convoy + 0x38, mode)
+    for ware, amount in cargo:
+        w32(o, o.ship(members[0]) + 0x54 + 4 * ware, amount)
+    w16(o, a + 0xA, 4)
+    now = o.u32(WORLD + 0x14)
+    for d in range(1, 4000):
+        r = game_rolls(now + d, [11] + [0x4CCC] * len(members) + [11])
+        if (pirates is None and r[0] <= 8) or (pirates == 'stole' and r[0] == 10 and r[-1] == 10) or \
+                (pirates == 'failed' and r[0] == 10 and r[-1] <= 5):
+            break
+    rt.move_event(o, i, a, now + d)
+    print(f'convoy {o.u16(a + 8)} of {m} arrives in {d} ticks (pirates: {pirates}); ships {members}; objects {objects}')
+    return convoy, members
+
+
+def expedition_four(o, rec):
+    expedition_to(o, [0, 1, 2, 3], mode=2, pirates='stole')
+
+
+def expedition_villages(o, rec):
+    expedition_to(o, [12, 4, 5, 6], pirates='failed', cargo=((7, 4000), (12, 4000)))
+
+
+def expedition_new_world(o, rec):
+    expedition_to(o, [12, 13, 14, 7], cargo=((7, 4000),))
+
+
+def expedition_nothing(o, rec):
+    expedition_to(o, [])
+
+
+def expedition_contract(o, rec):
+    got = expedition_to(o, [0, 1], mode=2)
+    if not got:
+        return
+    convoy, members = got
+    index = (convoy - o.u32(to.SHIPS + 8)) // 0x3C
+    m = o.u32(to.PLAYER)
+    # Contracts of the player at the objects 0 and 1, signed before (0x52C6C0
+    # called here with may_create, on a CString of the oracle's): the
+    # arrival trades with them. The ships bring half of what one that buys
+    # asks for (it goes on) and all of the other's (it is met), and the
+    # convoy has money for one that sells.
+    text = o.alloc(4)
+    o.write_u32(text, o.u32(to.EMPTY_CSTRING))
+    for k, b in enumerate((0x6DEFB0, 0x6DEFB0 + 0x2C)):
+        o.call(0x52C6C0, [index, 0, text, 2, 1, 0], ecx=b)
+        head = o.u32(b + 0x24)
+        n = o.u32(head)
+        while n != head and o.u16(n + 8) != m:
+            n = o.u32(n)
+        if n == head:
+            print(f'no contract at object {k}')
+            continue
+        side, buys, amount = o.u8(n + 0xA), o.u8(n + 0xB), o.u32(n + 0xC)
+        ware = o.u8(b + 2 + side) if buys else o.u8(b + side)
+        if buys:
+            w32(o, o.ship(members[0]) + 0x54 + 4 * ware, 200 * (amount // 2 if k == 0 else amount))
+        print(f'contract at object {k}: side {side}, buys {buys}, ware {ware}, {amount} barrels')
+    w32(o, convoy + 0x20, 10000000)
+
+
+def expedition_lost(o, rec):
+    convoy, members = expedition(o, rec)
+    w32(o, o.ship(members[0]) + 0x18, 10)
+    points = o.u32(0x6DF2E0)  # Expeditionen.dat: u16 x, u16 y each
+    w16(o, convoy + 0x24, o.u16(points))
+    w16(o, convoy + 0x26, o.u16(points + 2))
+    print(f'its first ship sinks too; its first point at the first of Expeditionen.dat '
+          f'({o.u16(points)}, {o.u16(points + 2)})')
+
+
+SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, commission, hulk, wall_bill, convoy_fees,
+                                     pirate_hunt, council, hanse_task, hanse_task_ai, expedition, expedition_lost,
+                                     expedition_four, expedition_villages, expedition_new_world, expedition_nothing,
+                                     expedition_contract)}
 
 
 def main():

@@ -309,6 +309,16 @@ MAIL_CALLS = (
     # (0x0C the guild, 0x2F the town wall's bill), convoys_members.cpp (0x32,
     # 0x31 a convoy's fees).
     0x5084A5, 0x5202EF, 0x500280, 0x527F53, 0x4E22A8, 0x4F8639, 0x523702, 0x50A966, 0x50AA02,
+    # events_rare.cpp: the pirate hunt of event 0x1E (0x4DFD44: 0x41, 0x42,
+    # 0x43), the plague (0x4E9094: 0x58), the council (0x4E9A94: 0x6B x2),
+    # the Hanse Day's task (0x4EA594: 0x77 x5, 0x78), the extra tax
+    # (0x4EAB94: 0x6C), the theft (0x4EC934: 0x73), the monument (0x4ECB14:
+    # 0x7B x2), the expedition's report (0x4E6A54: 0x63, with its text), its
+    # losses (0x502B20: 0x34) and discoveries (0x52D0B0: 0x1C x2; 0x5319D0:
+    # 0x56).
+    0x4E0065, 0x4E00CF, 0x4E02B6, 0x4E9389, 0x4E9F8F, 0x4E9FBD, 0x4EA72B, 0x4EA77F, 0x4EA825, 0x4EA8B0,
+    0x4EA979, 0x4EAB45, 0x4EAE01, 0x4ECAEC, 0x4ECDAE, 0x4ECDBF, 0x502CDF, 0x52D1E7, 0x52D1F8, 0x531B46,
+    0x4E79A3,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is
@@ -349,6 +359,14 @@ EVENT_JUMPS = {
     0x62B239: 0x62B261,
     0x4ECD3E: 0x4ECD71,  # 0x4ECB14 (evento 0x38): el monumento, si es la ciudad que se ve (0x590680)
     0x4E0DB9: 0x4E0E13,  # 0x4E09D4 (evento 0x24, fase 1): la ventana (*0x6CC7E8, 0x469380 y 0x469AF0)
+}
+# Functions that read a local before writing it (a game bug: the value is
+# whatever an earlier call left on the stack). p3vita takes it as 0, which is
+# what the oracle's stack had until the letters (0x4D6530) ran real code
+# deeper in it; so their locals (the size, below the return address) are set
+# to 0 at their entry.
+ZEROED_FRAMES = {
+    0x4F5A20: 0x44,  # the best rent [esp+0x2C] (town_tick/events.cpp, fn_4f5a20)
 }
 # Los mensajes llevan textos (CString de MFC, sprintf del CRT) que usan unas
 # pocas funciones de KERNEL32: se hacen aquí (ver TownOracle.setup_imports).
@@ -482,6 +500,8 @@ class TownOracle(SaveOracle):
         self.setup_imports(exe)
         for address, target in WINDOW_JUMPS.items():
             self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
+        for address, size in ZEROED_FRAMES.items():
+            self.uc.hook_add(UC_HOOK_CODE, self._zero_frame, begin=address, end=address, user_data=size)
         if 0x4D85C0 in self.rest:
             quiet.update(QUIET_EVENTS)
             for address, target in EVENT_JUMPS.items():
@@ -552,6 +572,10 @@ class TownOracle(SaveOracle):
 
     def _jump(self, uc, address, size, target):
         uc.reg_write(UC_X86_REG_EIP, target)
+
+    def _zero_frame(self, uc, address, size, frame):
+        # ZEROED_FRAMES: the function's locals start at 0.
+        uc.mem_write(uc.reg_read(UC_X86_REG_ESP) - frame, bytes(frame))
 
     def _sort_x_guard(self, uc, address, size, user_data):
         # SORT_X with a ship that doesn't exist returns at once (ret 4).

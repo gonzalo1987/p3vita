@@ -49,8 +49,9 @@ void fn_517fe0(SaveGame& save, int ship, uint32_t ware, int32_t amount, int32_t 
 int32_t fn_52d4f0(SaveGame& save, uint32_t object, uint32_t side, int32_t& cargo, uint8_t flag);
 int32_t fn_52d6b0(const SaveGame& save, uint32_t object, uint32_t side, int32_t amount, uint8_t flag);
 uint8_t fn_52c6c0(SaveGame& save, uint32_t object, uint16_t convoy, uint16_t mode, uint8_t may_create,
-	uint8_t deliver);
-uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t point, uint16_t mode, uint8_t first);
+	uint8_t deliver, std::string* text);
+uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t point, uint16_t mode, uint8_t first,
+	std::string* trades, std::string* contracts);
 
 }  // namespace p3::data::tick::events_rare_detail
 
@@ -247,7 +248,7 @@ void register_probes_events_rare(ProbeRegistry& r) {
 		}
 		c.eax_mask = 0xFF;
 		return rd::fn_52bfe0(s, uint32_t(object), uint16_t(c.args[0]), c.args[1], uint16_t(c.args[4]),
-			uint8_t(c.args[5]));
+			uint8_t(c.args[5]), nullptr, nullptr);  // The texts (the game's CStrings) aren't compared.
 	};
 	r[0x52C6C0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		const int object = world_object(c.ecx);
@@ -256,7 +257,7 @@ void register_probes_events_rare(ProbeRegistry& r) {
 		}
 		c.eax_mask = 0xFF;
 		return rd::fn_52c6c0(s, uint32_t(object), uint16_t(c.args[0]), uint16_t(c.args[3]), uint8_t(c.args[4]),
-			uint8_t(c.args[5]));
+			uint8_t(c.args[5]), nullptr);
 	};
 	r[0x52D4F0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		// La carga es la de una mercancía de un barco.

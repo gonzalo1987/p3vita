@@ -206,6 +206,8 @@ public:
 	// those messages are left as they were. tick_probe gives the English
 	// ones, as the oracle's executable; the viewer, the installation's.
 	void set_texts(const GameTexts* texts) { texts_ = texts; }
+	// The same texts for the event queue's letters (the expedition's report).
+	const GameTexts* texts() const { return texts_; }
 	// The messages the game shows the player in a window, as the
 	// executable's raw texts (with the game's control codes): the battle's
 	// question when a battle against the player starts (the attack, 0x605420)

@@ -301,6 +301,48 @@ doesn't have.
     share of a plunder 0x30 (the captain's names, the plundered ship's
     owner's [+0x1C], [+0x1D] or the two ships & 0x3F, u16 [+0xC] the share,
     [+0xE] the guide's [+0x15E] << 2 + the ship's type).
+- The rare events (`events_rare.cpp`):
+  - event 0x1E, the pirates before a town (0x4DFD44): 0x41 (state 3: [+0x5]
+    the merchant's home town; u16 [+0x8] the town, [+0xA] the ship's name
+    [+0x15E], [+0xC], [+0xE] his names), 0x42 (the same with [+0xA] the
+    reward 4000) and 0x43 (state 4, to each human owner of an office there:
+    [+0x5] his home town, u16 [+0x8] the town);
+  - the plague 0x58 (0x4E9094, chronicle: [+0x5] and u16 [+0x8] the town);
+    the council's vote 0x6B (0x4E9A94, to the mayor and to [+0x16]: [+0x5]
+    the town; u32 [+0x8] the event's [+0x8], or for the proposal 3 u16
+    [+0x8] the head tax << 8 + the proposed one; u16 [+0xC] votes for << 8 +
+    against, [+0xE] the proposal); the extra tax 0x6C (0x4EAB94, to each
+    office's owner: [+0x5] the town, u32 [+0x8] his share | 0x80000000 with
+    debts, u32 [+0xC] the tax); the theft 0x73 (0x4EC934: [+0x5] the town,
+    u16 [+0x8], [+0xA], [+0xC] ware << 8 + loads, 0xFFFF unused, [+0xE] his
+    names); the monument 0x7B (0x4ECB14, chronicle and each merchant: [+0x5]
+    the town, u16 [+0x8] the mayor's title, [+0xA], [+0xC] his names);
+  - the Hanse leader's task, event 0x30 (0x4EA594): 0x77 ([+0x5] the
+    meeting's town; [+0x8] [+0x12], [+0x9] the kind, [+0xA]/[+0xB] by kind,
+    [+0xC], [+0xD] the leader's names for the kinds 5..7, [+0xE] 0 the task, 1
+    the reminder, 2 the failure) to each merchant or to the leader, and the
+    meeting 0x78 to each merchant ([+0x8], [+0x9] its day and month, [+0xA],
+    [+0xB], [+0xC] from the new event 0x21, [+0xD] the leader's title,
+    [+0xE], [+0xF] his names; without a leader, a councillor's);
+  - the expedition (event 0x12): 0x34 for each ship lost (0x502B20: [+0x5]
+    the owner's home town, u16 [+0x8] the ship's name, [+0xA] its [+0xE],
+    u32 [+0xC] when it sank), 0x1C for each place found (0x52D0B0, each
+    merchant and the chronicle: [+0x5] the guide's [+0x13A] % towns, [+0x8]
+    the owner, [+0x9] the place, [+0xA], [+0xB] the captain's names,
+    [+0xC..+0xF] the object's [+0x0..+0x3]), 0x56 the first in the new
+    world (0x5319D0, chronicle: [+0x5] home town, u16 [+0x8] the owner,
+    [+0xA] his title, [+0xC] his rank at home) and **the report 0x63**
+    (0x4E6A54, to the convoy's owner if human: [+0x5] his home town, the
+    buffer the text): the header (the guide's name and the town it heads
+    for), the places found or none, the Indian villages, the trades of
+    0x52BFE0 («\nIn <place> the following transaction was made:» and a line
+    per ware sold or bought), the contracts of 0x52C6C0 («\nContracts:», a
+    contract traded, a new one, or «No new contracts have been signed.»),
+    the storm or the pirates, and the money the captain took and brought
+    back. Three game bugs show in it (the roadmap): the «, » between the
+    places isn't counted (the copy loses the last 2 or 4 bytes, the final 0
+    with them), the town's name comes from the table by number with the
+    index, and the bought lines count barrels or loads by the last ware.
 
 ## Appendix A. The 154 calls
 

@@ -143,7 +143,10 @@ change.
   texts), `merchants.cpp` (4 more: 0x5E, 0x5F, 0x6D, 0x82) and
   `events_big.cpp` (4: event 0x05 and 0x16), and the small files
   (`facilities.cpp`, `offices.cpp`, `core.cpp`, `events.cpp`,
-  `construction.cpp`, `convoys_members.cpp`: 9). 62 left.
+  `construction.cpp`, `convoys_members.cpp`: 9) and `events_rare.cpp` (21: the
+  pirate hunt, the plague, the council, the Hanse leader's task and meeting,
+  the extra tax, the theft, the monument and the expedition, with its report
+  0x63 in the game's texts). 41 left.
 - [ ] **10 in functions p3vita names but skips whole**: the mission
   interpreter 0x4ECF64 (5; three with a letter the script builds), the
   alderman's notification 0x5299F0 (2), the convoy's automatic route

@@ -114,6 +114,55 @@ enum class GameText {
 	BattleReportPlundered,  // «%s %s: %d%%, plundered\n» (0x6AA180)
 	BattleShipSnaikka,  // The 4 ship types, bare («snaikka»...; 0x6A174C).
 	BattleShipHulk = BattleShipSnaikka + 3,
+	// The report of an expedition (event 0x12, 0x4E6A54; the letter 0x63),
+	// 0x6B95E0..0x6B9630 in the English exe.
+	ExpeditionLedBy,  // «\n\lThe convoy led by the »
+	ExpeditionReturned,  // « has success_fully returned from an expe_dition and is now heading for »
+	ExpeditionDot,  // «.»
+	ExpeditionDiscoveryOf,  // « The disco_very of »
+	ExpeditionDiscoveryEnd,  // « has brought about new and profi_table possi_bili_ties of trade.»
+	ExpeditionIn,  // «\nIn »
+	ExpeditionTransactionMade,  // « the following transaction was made:\n»
+	ExpeditionTransactionTook,  // « the following transaction took place:\n»
+	ExpeditionSold,  // «%u\%c %s sold at %u\C (total: %u\C)\n»
+	ExpeditionBought,  // «%u\%c %s bought at %u\C (total: %u\C)\n»
+	ExpeditionGivenCaptain,  // «\nYou have given your captain »
+	ExpeditionTakeWith,  // « to take with him on his voyage. He returns with »
+	ExpeditionEnd,  // « .»
+	ExpeditionIndianTribe,  // «\nWith the Indian tribe»
+	ExpeditionNoCentres,  // «\nNo new trading centres could be made accessible.»
+	ExpeditionTwoNew,  // «\nYou owe to the trained eyes of your lookout ... namely »
+	ExpeditionAnd,  // « and »
+	ExpeditionCouldBeDiscovered,  // «, could be discovered.\n»
+	ExpeditionNewWorld,  // «\nAfter the strains of a long journey to the new world »
+	ExpeditionOneVillage,  // «an Indian village could be discovered that is interested in ...\n»
+	ExpeditionTwoVillages,  // «two Indian villages could be discovered that are interested in ...\n»
+	// 0x6B1750..0x6B1794: more of the expedition, and its contracts (0x52C6C0).
+	ExpeditionOpportunities,  // « where new and lucrative trade opportunities have been discovered.\n»
+	ExpeditionFoundInNewWorld,  // «were found in the new world »
+	ExpeditionVillagesFound,  // « where indian villages interested in trading have been discovered.\n»
+	ExpeditionThree,  // « three»
+	ExpeditionFour,  // « four»
+	ContractPromised,  // «A trader in %s has promised to %s %d\%c %s by %d.%d.%d at a price of %d\C.\n »
+	ContractBuy,  // «buy»
+	ContractSell,  // «sell»
+	ContractNoNew,  // «No new contracts have been signed.\n»
+	ContractsHeader,  // «\nContracts:\n»
+	ContractTraded,  // «%$1$d\%$2$c %$3$s was %$6$s at a price of %$4$d\C in %$5$s.»
+	ContractBought,  // «bought»
+	ContractSold,  // «sold»
+	ExpeditionStorm,  // «The expedition has been caught by a storm.\n»
+	ExpeditionPiratesFailed,  // «The expedition has been unsuccessfully attacked by pirates.\n»
+	ExpeditionPiratesStole,  // «The expedition was successfully attacked by pirates. %d\C has been stolen.\n»
+	ContractMustDeliver,  // « %d\%c must be delivered by %d.%d.%d. to complete the Contract.\n»
+	ContractMet,  // « The quantity required by the contract was therefore met.\n»
+	// The 30 places of the new world an expedition can find (0x6B1F20, by the
+	// world object's [+0x4]: «Bordeaux»... «Tobruk»).
+	ExpeditionPlace0,
+	ExpeditionPlace29 = ExpeditionPlace0 + 29,
+	WareSword,  // The 4 weapons after the 20 trade wares («sword», «bow», «crossbow», «carbine»; 0x6C0C00).
+	WareCarbine = WareSword + 3,
+	ShipUnnamed,  // The name of a ship without one, by type (0x512B20; «snaikka»...; 0x6C0CB4).
 	Count
 };
 
@@ -131,8 +180,8 @@ public:
 	// The text as the executable has it: Windows-1252 bytes with the game's
 	// control codes, as the game copies it into its memory.
 	const std::string& raw(GameText id) const { return raw_[size_t(id)]; }
-	// The game's sprintf (0x64D410) on raw texts: %s (and %d, %i, %u, with
-	// the number already written by the caller) with the bytes of `args` in
+	// The game's sprintf (0x64D410) on raw texts: %s (and %d, %i, %u, %c, with
+	// the number or the character already written by the caller) with the bytes of `args` in
 	// order, %% and the positional %$N$s of the Spanish texts (the N-th
 	// argument); nothing collapsed or trimmed.
 	static std::string sprintf_raw(const std::string& text, const std::vector<std::string>& args);
@@ -146,11 +195,15 @@ public:
 
 	// «English GOG 1.1», «Spanish»...
 	const std::string& build() const { return build_; }
+	// Whether it is the Spanish build: its code passes the arguments of a few
+	// texts in another order, to fit the sentence (ContractPromised, 0x52D487).
+	bool spanish() const { return spanish_; }
 
 private:
 	std::array<std::string, size_t(GameText::Count)> texts_;
 	std::array<std::string, size_t(GameText::Count)> raw_;
 	std::string build_;
+	bool spanish_ = false;
 };
 
 // The control codes out and Windows-1252 to UTF-8 (exposed for the tests).

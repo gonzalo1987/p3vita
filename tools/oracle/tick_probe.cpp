@@ -1021,6 +1021,7 @@ int main(int argc, char** argv) {
 	std::vector<std::string> ship_names;  // Tampoco los nombres de barco.
 	std::array<std::vector<std::string>, 2> first_names;  // Nor the first names.
 	std::vector<std::string> family_names;  // Nor the family names.
+	std::vector<std::string> town_names;  // Nor the town names by number (the table 0x6DDA00).
 	std::vector<std::vector<uint8_t>> town_templates;  // Ni las plantillas de las ciudades nuevas.
 	if (archive) {
 		SaveGame scripts;
@@ -1029,12 +1030,14 @@ int main(int argc, char** argv) {
 		ship_names = scripts.ship_names;
 		first_names = scripts.first_names;
 		family_names = scripts.family_names;
+		town_names = scripts.opaque.town_names;
 		town_templates = scripts.town_templates;
 		if (continuous && load.empty()) {
 			save.expeditions = expeditions;
 			save.ship_names = ship_names;
 			save.first_names = first_names;
 			save.family_names = family_names;
+			save.opaque.town_names = town_names;
 			save.town_templates = town_templates;
 		}
 	}
@@ -1116,6 +1119,7 @@ int main(int argc, char** argv) {
 			save.ship_names = ship_names;
 			save.first_names = first_names;
 			save.family_names = family_names;
+			save.opaque.town_names = town_names;
 			save.town_templates = town_templates;
 		}
 		save.queued_operations.clear();

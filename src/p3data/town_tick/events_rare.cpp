@@ -3,8 +3,8 @@
 // Lo que hace el despachador (0x4D85C0) con cada uno tras su manejador: los
 // tipos 0x0E, 0x12, 0x1C, 0x1E, 0x1F, 0x25, 0x26, 0x2E, 0x30, 0x32 y 0x38 deciden por lo que
 // devuelve el manejador (0: quitarlo, 1: llevarlo a su sitio por su tick ya
-// cambiado); el 0x31, el 0x33 y el 0x35 se quitan siempre. Los avisos (0x548CA0, 0x4D6530, las
-// ventanas de *0x6CC7E8 y *0x6CBB40) no se traducen.
+// cambiado); el 0x31, el 0x33 y el 0x35 se quitan siempre. Los avisos (0x548CA0, las
+// ventanas de *0x6CC7E8 y *0x6CBB40) no se traducen; the letters (0x4D6530) are sent (mail.cpp).
 //
 //   0x0E  el final de la partida: el objetivo [+0x8] (1..6) con el plazo
 //         [+0xA] (años o habitantes, 0x4E55FC). Al cumplirse o acabarse,
@@ -72,12 +72,16 @@
 // [+0x840 + 16·k] instalaciones ([+0x4] u16 trabajadores, [+0x8] u16;
 // el 0x1F mira si pasa de 950), [+0x9A0] u16.
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstring>
 #include <utility>
 #include <vector>
 
+#include "p3data/game_fixes.hpp"
+#include "p3data/game_texts.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -89,7 +93,11 @@ namespace events_detail {
 void fn_4d8dd0(SaveGame& save);
 uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick);
 int16_t fn_4f73d0(const SaveGame& save, int merchant);
+bool fn_4fe150(const CaptainMemory& c);
 }  // namespace events_detail
+namespace events_mayor_detail {
+void fn_5311d0(uint32_t tick, uint8_t& day, uint8_t& month);
+}  // namespace events_mayor_detail
 namespace merchants_detail {
 uint8_t fn_4f9430(const SaveGame& save, int merchant);
 }  // namespace merchants_detail
@@ -180,6 +188,26 @@ uint8_t pirate_u8(const SaveGame& save, uint32_t k, size_t offset) {
 
 uint16_t pirate_u16(const SaveGame& save, uint32_t k, size_t offset) {
 	return save.pirates[k] ? save.pirates[k]->u16(offset) : 0;
+}
+
+// 0x515AE0 (on the pirate object `k`, with two outputs): the names of the
+// captain of its first ship (the chain from [+0xC], next [+0x4]) with a
+// captain ([+0x42]) that 0x4FE150 accepts: his [+0x2] in `first` and [+0x3]
+// in `family`, and true. With none, 0x2D and the number of family names
+// ([0x6DDB74]), and false.
+bool fn_515ae0(const SaveGame& save, uint32_t k, uint8_t& first, uint8_t& family) {
+	const GlobalMemory& g = save.globals;
+	for (uint32_t s = pirate_u16(save, k, 0xC); s < ship_count(save); s = save.ships[s].memory.u16(4)) {
+		const uint16_t c = save.ships[s].memory.u16(0x42);
+		if (c < g.u16(kCaptainCount) && events_detail::fn_4fe150(save.captains[c])) {
+			first = save.captains[c].u8(2);
+			family = save.captains[c].u8(3);
+			return true;
+		}
+	}
+	first = 0x2D;
+	family = g.u8(0x6DDB74);
+	return false;
 }
 
 // x, y en el mapa de la ciudad `town` (tabla de StadtDaten.ini por su número).
@@ -473,8 +501,15 @@ uint32_t fn_4e9094(SaveGame& save) {
 		return 0;
 	}
 	if ((t.u32(0x2C8) & 8) == 0) {
-		// Los avisos (0x4D6530 a los comerciantes, 0x548CA0 y la ventana
-		// 0x469380/0x469AF0 al jugador si es su ciudad) no se traducen.
+		// The news 0x58 to the chronicle (0x4E9355..0x4E9389): [+0x5] and
+		// u16 [+0x8] the town ([+0x2C0]). Then, if it is the local player's
+		// home town, the notices to each human merchant (0x548CA0 with kind
+		// 0x13, and the window 0x469380/0x469AF0 to the local player): the
+		// interface's.
+		Letter letter(0x58);
+		letter.entry.u8(5) = t.u8(0x2C0);
+		letter.entry.u16(8) = t.u8(0x2C0);
+		send_letter(save, kLetterToChronicle, letter);
 		t.u32(0x2C8) |= 8;
 	}
 	return 1;
@@ -493,8 +528,8 @@ uint32_t fn_4e9094(SaveGame& save) {
 // la ciudad tiene el bit 0x100 de [0x76C] (y no el 0x40 de [0x2C8]), una
 // queja a la Hansa: un evento 0x30 al día siguiente, de gravedad 5 −
 // impuesto / 50000 (al menos 1), con el que preside la primera ciudad con el
-// bit 0x40 (su alcalde de la IA o, sin alcalde comerciante, un concejal). Las
-// cartas (0x4D6530) no se reproducen. Se quita siempre.
+// bit 0x40 (su alcalde de la IA o, sin alcalde comerciante, un concejal).
+// Each payer gets the letter 0x6C. Se quita siempre.
 void fn_4eab94(SaveGame& save) {
 	GlobalMemory& g = save.globals;
 	const uint32_t amount = head_event(save).u32(0x8);
@@ -528,6 +563,13 @@ void fn_4eab94(SaveGame& save) {
 		}
 		MerchantMemory& m = save.merchants[owner].memory;
 		m.u32(0x4BC) += share;
+		// The letter 0x6C to the owner (0x4EAC80..0x4EAE01): [+0x5] the town,
+		// u32 [+0xC] the tax, u32 [+0x8] his share, with the bit 0x80000000
+		// when he couldn't pay it all (debts).
+		Letter letter(0x6C);
+		letter.entry.u8(5) = town;
+		letter.entry.u32(0xC) = amount;
+		letter.entry.u32(8) = share;
 		const int32_t money = m.s32(0);
 		bool paid = false;
 		if (money > 0) {
@@ -558,7 +600,9 @@ void fn_4eab94(SaveGame& save) {
 			d.u32(0xC) = g.u32(kTick);
 			d.u8(0xC) = 0;
 			d.u8(0x14) = t.u8(0x2C0);
+			letter.entry.u32(8) |= 0x80000000;
 		}
+		send_letter(save, int32_t(owner), letter);
 		complaint |= m.u8(0x19) != town && owner != t.u8(0x6F1) && (t.u32(0x76C) & 0x100);
 		o = next;
 	}
@@ -832,8 +876,8 @@ bool fn_4e1e54(SaveGame& save, uint16_t event) {
 // esté (0x4FCFE0 del punto 1, o del 2 con piezas pendientes en [0x766]),
 // espera; después el monumento pasa a ser del alcalde ([+0x2]), con la
 // variante [+0x7] (tick + ciudad + comerciante) % 3, 3 más con rango > 7
-// (0x4F9430). Los gráficos (0x590680 si es la ciudad que se ve) y las cartas
-// no se reproducen. Devuelve si sigue (con el tick ya cambiado). Comprobado
+// (0x4F9430), and the news 0x7B. Los gráficos (0x590680 si es la ciudad que
+// se ve) no se reproducen. Devuelve si sigue (con el tick ya cambiado). Comprobado
 // con estados retocados (`retouch.py monumento`: esperar a la muralla, el
 // monumento y otro comerciante que ya no es alcalde).
 bool fn_4ecb14(SaveGame& save, uint16_t event) {
@@ -882,6 +926,17 @@ bool fn_4ecb14(SaveGame& save, uint16_t event) {
 	if (merchants_detail::fn_4f9430(save, merchant) > 7) {
 		r.param = uint8_t(r.param + 3);
 	}
+	// The news 0x7B (0x4ECD71..0x4ECDBF), to the chronicle and to each
+	// merchant: [+0x5] the town; u16 [+0x8] the mayor's title (0x4F9430),
+	// [+0xA] his [+0x1C], [+0xC] his [+0x1D].
+	const MerchantMemory& m = save.merchants[merchant].memory;
+	Letter letter(0x7B);
+	letter.entry.u8(5) = uint8_t(town);
+	letter.entry.u16(8) = merchants_detail::fn_4f9430(save, merchant);
+	letter.entry.u16(0xA) = m.u8(0x1C);
+	letter.entry.u16(0xC) = m.u8(0x1D);
+	send_letter(save, kLetterToChronicle, letter);
+	send_letter(save, kLetterToEach, letter);
 	return false;
 }
 
@@ -1003,7 +1058,7 @@ uint32_t fn_4dfd44(SaveGame& save, uint16_t event) {
 		return 1;
 	}
 	case 3: {
-		// Sin comprobar con el oráculo. [+0x16] es aquí un comerciante (el
+		// Checked with retouch_mail.py pirate_hunt (0x41, 0x42). [+0x16] es aquí un comerciante (el
 		// estado 2 deja en él el índice del barco).
 		e.u32(0) += 0x129;
 		const uint32_t m = e.u8(0x16);
@@ -1012,12 +1067,30 @@ uint32_t fn_4dfd44(SaveGame& save, uint16_t event) {
 		}
 		MerchantMemory& mm = save.merchants[m].memory;
 		if (e.u16(0x12) < 0xFFFF) {
-			// Aviso 0x41 al comerciante (0x4D6530): no se traduce.
+			// The letter 0x41 to the merchant (0x4E0026..0x4E0065): [+0x5]
+			// his home town [+0x19]; u16 [+0x8] the town [+0x11], [+0xA]
+			// [+0x12] (the ship's [+0x15E]), [+0xC] his [+0x1C], [+0xE] his
+			// [+0x1D].
+			Letter letter(0x41);
+			letter.entry.u8(5) = mm.u8(0x19);
+			letter.entry.u16(8) = e.u8(0x11);
+			letter.entry.u16(0xA) = e.u16(0x12);
+			letter.entry.u16(0xC) = mm.u8(0x1C);
+			letter.entry.u16(0xE) = mm.u8(0x1D);
+			send_letter(save, int32_t(m), letter);
 			e.u16(0x12) = 0xFFFF;
 			e.u8(0x17) = mm.u8(0x1B);
 		}
 		if (int32_t(e.u8(0x17)) + 4 <= int32_t(mm.u8(0x1B))) {
-			// Aviso 0x42 (no se traduce) y 4000 de dinero.
+			// The letter 0x42 (0x4E008B..0x4E00CF: as 0x41 with u16 [+0xA]
+			// the reward, 4000) and 4000 of money.
+			Letter letter(0x42);
+			letter.entry.u8(5) = mm.u8(0x19);
+			letter.entry.u16(8) = e.u8(0x11);
+			letter.entry.u16(0xA) = 0xFA0;
+			letter.entry.u16(0xC) = mm.u8(0x1C);
+			letter.entry.u16(0xE) = mm.u8(0x1D);
+			send_letter(save, int32_t(m), letter);
 			mm.u32(0) += 0xFA0;
 			mm.u32(0x4C8) += 0xFA0;
 			return 0;
@@ -1044,7 +1117,7 @@ uint32_t fn_4dfd44(SaveGame& save, uint16_t event) {
 		return keep ? 1 : 0;
 	}
 	case 4: {
-		// Sin comprobar con el oráculo. Las oficinas de los jugadores humanos
+		// Checked with retouch_mail.py pirate_hunt (0x43). Las oficinas de los jugadores humanos
 		// en la ciudad le dan sus mercancías y armas.
 		e.u32(0xC) = 0;
 		static constexpr uint8_t kSmall[24] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};  // 0x672C14
@@ -1065,7 +1138,13 @@ uint32_t fn_4dfd44(SaveGame& save, uint16_t event) {
 					of.u32(0x124 + 4 * k) = 0;
 				}
 				if (last) {
-					// Aviso 0x43 al dueño (no se traduce).
+					// The letter 0x43 to the owner (0x4E0278..0x4E02B6):
+					// [+0x5] his home town [+0x19], u16 [+0x8] the town
+					// [+0x11]; the rest as the constructor leaves it.
+					Letter letter(0x43);
+					letter.entry.u8(5) = save.merchants[owner].memory.u8(0x19);
+					letter.entry.u16(8) = e.u8(0x11);
+					send_letter(save, int32_t(owner), letter);
 					const uint8_t left = e.u8(0x15);
 					e.u8(0x15) = uint8_t(left - 1);
 					if (left < 2) {
@@ -1077,6 +1156,14 @@ uint32_t fn_4dfd44(SaveGame& save, uint16_t event) {
 				}
 			}
 			o = next;
+		}
+		// A game bug: this state doesn't move the event's tick, so if it is
+		// still in force (keep) the queue runs it again in the same tick,
+		// forever (seen with a retouched state, retouch_mail.py pirate_hunt).
+		// Fixed: the event ends, as it does in the game when it isn't in force
+		// any more (the usual way here).
+		if (fix_game_bugs()) {
+			return 0;
 		}
 		return keep ? 1 : 0;
 	}
@@ -1319,8 +1406,10 @@ void fn_4f91c0(SaveGame& save, int merchant) {
 // queda en [+0x8] + 0x1500 con el byte bajo a 0) y, pasados, se quita y el
 // jefe pierde reputación (0x4F91C0) salvo con [+0xC] == 6 o los tipos 5 y 6.
 // Sin jefe humano (tipos < 5): un día después de [+0x8] crea el evento 0x21
-// de la reunión (a 10 días, ajustado con 0x4D9FC0) y se quita. Los avisos no
-// se traducen.
+// de la reunión (a 10 días, ajustado con 0x4D9FC0) y se quita.
+// The letters: 0x77 (the task, to each merchant or to the leader) and 0x78
+// (the meeting, to each merchant); the ticker line of the first notice
+// (0x548CA0, kind 0x21) is the interface's.
 uint32_t fn_4ea594(SaveGame& save) {
 	GlobalMemory& g = save.globals;
 	Event& e = head_event(save);
@@ -1330,12 +1419,26 @@ uint32_t fn_4ea594(SaveGame& save) {
 	const uint32_t leader = g.u8(kHanseLeader);
 	const bool human = leader < merchant_count(save) && save.merchants[leader].memory.u16(8) == 0;
 	if (human) {
-		// Sin comprobar con el oráculo.
+		// Checked with retouch_mail.py hanse_task (the three phases and the kinds 0, 2, 5, 7).
+		const MerchantMemory& lm = save.merchants[leader].memory;
 		if (e.u32(0) < e.u32(8) + 0xA00) {
 			e.u32(0) = e.u32(8) + 0xA00;
-			if (e.u8(0x13) == 2) {
-				// El primer objeto pirata que exista (*0x6DD7AC; con ninguno, el
-				// juego llamaría a 0x515AE0 con un puntero nulo).
+			// The task's letter 0x77 (0x4EA610..0x4EA77F): [+0x5] the
+			// meeting's town; [+0x8] [+0x12], [+0x9] the kind [+0x13], [+0xE]
+			// 0, and by the kind: 0 [+0xA] [+0x14]; 2 [+0xA] 0x19; 5 and 6
+			// [+0xA] [+0x14], [+0xB] [+0x15], [+0xC], [+0xD] the leader's
+			// [+0x1C], [+0x1D], to the leader alone; 7 the same, to each
+			// merchant; the others to each merchant as they are.
+			Letter letter(0x77);
+			letter.entry.u8(5) = g.u8(kHanseTown);
+			letter.entry.u8(8) = e.u8(0x12);
+			letter.entry.u8(9) = e.u8(0x13);
+			switch (e.u8(0x13)) {
+			case 0:
+				letter.entry.u8(0xA) = e.u8(0x14);
+				break;
+			case 2:
+				// El primer objeto pirata que exista (*0x6DD7AC).
 				e.u8(0x14) = uint8_t(e.u8(0x14) % 5);
 				if (g.u32(kPirates + 4 * uint32_t(e.u8(0x14))) == 0) {
 					for (uint8_t i = 0; i < 5; ++i) {
@@ -1345,17 +1448,68 @@ uint32_t fn_4ea594(SaveGame& save) {
 						}
 					}
 				}
+				// A game bug (0x4EA6A8): the test is the wrong way round.
+				// With the pirate object the family name of its captain
+				// (0x515AE0, as without a human leader below) is never asked
+				// and [+0xA] is 0x19; with no pirate object at all, the game
+				// calls 0x515AE0 on a null pointer (it would crash; here
+				// [+0xA] stays 0). Fixed: the captain's family name, and 0x19
+				// without a pirate object.
+				if (fix_game_bugs()) {
+					const uint32_t k = e.u8(0x14);
+					if (g.u32(kPirates + 4 * k) != 0) {
+						uint8_t first = 0;
+						fn_515ae0(save, k, first, letter.entry.u8(0xA));
+					} else {
+						letter.entry.u8(0xA) = 0x19;
+					}
+				} else if (g.u32(kPirates + 4 * uint32_t(e.u8(0x14))) != 0) {
+					letter.entry.u8(0xA) = 0x19;
+				}
+				break;
+			case 5:
+			case 6:
+				letter.entry.u8(0xA) = e.u8(0x14);
+				letter.entry.u8(0xB) = e.u8(0x15);
+				letter.entry.u8(0xC) = lm.u8(0x1C);
+				letter.entry.u8(0xD) = lm.u8(0x1D);
+				send_letter(save, int32_t(leader), letter);
+				return 1;
+			case 7:
+				letter.entry.u8(0xA) = e.u8(0x14);
+				letter.entry.u8(0xB) = e.u8(0x15);
+				letter.entry.u8(0xC) = lm.u8(0x1C);
+				letter.entry.u8(0xD) = lm.u8(0x1D);
+				break;
+			default:
+				break;
 			}
+			send_letter(save, kLetterToEach, letter);
 			return 1;
 		}
+		const bool exempt = e.u8(0xC) == 6 || e.u8(0x13) == 5 || e.u8(0x13) == 6;
 		if (e.u32(0) < e.u32(8) + 0x1400) {
+			if (!exempt) {
+				// The reminder 0x77 to the leader (0x4EA7EE..0x4EA825): [+0x5]
+				// the meeting's town, [+0xE] 1.
+				Letter letter(0x77);
+				letter.entry.u8(5) = g.u8(kHanseTown);
+				letter.entry.u8(0xE) = 1;
+				send_letter(save, int32_t(leader), letter);
+			}
 			e.u32(0) = e.u32(8) + 0x1500;
 			e.u8(0) = 0;
 			return 1;
 		}
-		if (e.u8(0xC) == 6 || e.u8(0x13) == 5 || e.u8(0x13) == 6) {
+		if (exempt) {
 			return 0;
 		}
+		// The task failed, 0x77 to the leader (0x4EA879..0x4EA8B0): [+0x5]
+		// the meeting's town, [+0xE] 2.
+		Letter letter(0x77);
+		letter.entry.u8(5) = g.u8(kHanseTown);
+		letter.entry.u8(0xE) = 2;
+		send_letter(save, int32_t(leader), letter);
 		fn_4f91c0(save, int(leader));
 		return 0;
 	}
@@ -1363,7 +1517,28 @@ uint32_t fn_4ea594(SaveGame& save) {
 		return 0;  // Sin comprobar con el oráculo.
 	}
 	if (e.u32(0) < e.u32(8) + 0x100) {
-		e.u32(0) = e.u32(8) + 0x100;  // Sin comprobar con el oráculo.
+		// Checked with retouch_mail.py hanse_task_ai (kinds 0, 1, 2). The task's letter 0x77 to each
+		// merchant (0x4EA909..0x4EA979): [+0x5] the meeting's town, [+0x8]
+		// [+0x12], [+0x9] the kind, [+0xE] 0; for the kind 0 [+0xA] [+0x14],
+		// for the kind 2 [+0xA] the family name of the captain of the
+		// pirate object [+0x14] (0x515AE0; the game doesn't check the
+		// object: a missing one or [+0x14] from 5 on would read a null or
+		// wrong pointer; here [+0xA] stays 0).
+		Letter letter(0x77);
+		letter.entry.u8(5) = g.u8(kHanseTown);
+		letter.entry.u8(8) = e.u8(0x12);
+		letter.entry.u8(9) = e.u8(0x13);
+		if (e.u8(0x13) == 0) {
+			letter.entry.u8(0xA) = e.u8(0x14);
+		} else if (e.u8(0x13) == 2) {
+			const uint32_t k = e.u8(0x14);
+			if (k < 5 && g.u32(kPirates + 4 * k) != 0) {
+				uint8_t first = 0;
+				fn_515ae0(save, k, first, letter.entry.u8(0xA));
+			}
+		}
+		send_letter(save, kLetterToEach, letter);
+		e.u32(0) = e.u32(8) + 0x100;
 		return 1;
 	}
 	uint32_t tick = g.u32(kTick) + 0xA00;
@@ -1384,7 +1559,34 @@ uint32_t fn_4ea594(SaveGame& save) {
 	for (uint32_t k = 0xF; k <= 0x16; ++k) {
 		p.u8(k) = 0;
 	}
-	// El aviso de la reunión (0x5311D0, 0x4F9430, 0x4D6530) no se traduce.
+	// The meeting's letter 0x78 to each merchant (0x4EAA54..0x4EAB45):
+	// [+0x5] the meeting's town; [+0x8] the day and [+0x9] the month of the
+	// new event (0x5311D0); [+0xA] its [+0x9]; [+0xB] its [+0xE] << 4 + its
+	// [+0xA]; for the kind 0 [+0xC] its [+0xC]; [+0xD] the leader's title
+	// (0x4F9430), [+0xE], [+0xF] his [+0x1C], [+0x1D]. Without a leader, the
+	// title and names of the councillor ((0xFF − the mayor [+0x6F1]) & 3) of
+	// the meeting's town ([+0x6E0], [+0x6D4], [+0x6D8]).
+	Letter letter(0x78);
+	letter.entry.u8(5) = g.u8(kHanseTown);
+	if (leader < merchant_count(save)) {
+		const MerchantMemory& lm = save.merchants[leader].memory;
+		letter.entry.u8(0xE) = lm.u8(0x1C);
+		letter.entry.u8(0xF) = lm.u8(0x1D);
+		letter.entry.u8(0xD) = merchants_detail::fn_4f9430(save, int(leader));
+	} else {
+		const TownMemory& t = save.towns[g.u8(kHanseTown)].memory;
+		const uint32_t k = uint8_t(0xFF - t.u8(0x6F1)) & 3;
+		letter.entry.u8(0xE) = t.u8(0x6D4 + k);
+		letter.entry.u8(0xF) = t.u8(0x6D8 + k);
+		letter.entry.u8(0xD) = t.u8(0x6E0 + k);
+	}
+	events_mayor_detail::fn_5311d0(p.u32(0), letter.entry.u8(8), letter.entry.u8(9));
+	letter.entry.u8(0xA) = p.u8(9);
+	letter.entry.u8(0xB) = uint8_t((p.u8(0xE) << 4) + p.u8(0xA));
+	if (p.u8(0xA) == 0) {
+		letter.entry.u8(0xC) = p.u8(0xC);
+	}
+	send_letter(save, kLetterToEach, letter);
 	return 0;
 }
 
@@ -1655,7 +1857,8 @@ void fn_522b20(SaveGame& save, int town, uint32_t side) {
 // voto, a favor ([+0x10]) o en contra ([+0x11]). Al acabar el día, si ganan
 // los de a favor, se hace lo propuesto: 0 un evento 0x31 un día después, 1
 // la muralla (0x522B20 por el lado 1 o el 2), 2 [+0x9A0] += 10, 3 0x52A150.
-// Los avisos no se traducen.
+// The result goes by letter (0x6B) to the mayor and to [+0x16]; the notice
+// to a voting player (0x548CA0) is the interface's.
 uint32_t fn_4e9a94(SaveGame& save) {
 	GlobalMemory& g = save.globals;
 	const uint32_t t8 = g.u32(kTick) & 0xFF;
@@ -1788,7 +1991,32 @@ uint32_t fn_4e9a94(SaveGame& save) {
 	if (t8 < (e.u32(0) & 0xFF)) {
 		return 1;
 	}
-	// El resultado: los avisos al alcalde y a [+0x16] no se traducen.
+	// The result, the letter 0x6B (0x4E9EE8..0x4E9FBD) to the mayor
+	// [+0x6F1] and to [+0x16] if it isn't him (each if it is a merchant):
+	// [+0x5] the town; for the proposal 3, u16 [+0x8] the town's [+0x6F8]
+	// << 8 + [+0x14], else u32 [+0x8] the event's [+0x8]; u16 [+0xC] the
+	// votes for << 8 + against, [+0xE] the proposal.
+	{
+		const uint32_t mayor = t.u8(0x6F1);
+		const uint32_t asked = e.u8(0x16);
+		if (mayor < merchant_count(save) || asked < merchant_count(save)) {
+			Letter letter(0x6B);
+			letter.entry.u8(5) = e.u8(0xC);
+			if (e.u8(0xD) == 3) {
+				letter.entry.u16(8) = uint16_t((t.u8(0x6F8) << 8) + e.u8(0x14));  // Checked with retouch_mail.py council.
+			} else {
+				letter.entry.u32(8) = e.u32(8);
+			}
+			letter.entry.u16(0xC) = uint16_t((e.u8(0x10) << 8) + e.u8(0x11));
+			letter.entry.u16(0xE) = e.u8(0xD);
+			if (mayor < merchant_count(save)) {
+				send_letter(save, int32_t(mayor), letter);
+			}
+			if (asked < merchant_count(save) && asked != mayor) {
+				send_letter(save, int32_t(asked), letter);
+			}
+		}
+	}
 	if (e.u8(0x10) <= e.u8(0x11)) {
 		return 0;
 	}
@@ -2109,6 +2337,41 @@ constexpr int16_t kReputationNewWorld = 2560;  // 0x672DD2: el primero de los 10
 constexpr int16_t kReputationBack = 51;  // 0x672DD0: la vuelta de la expedición (0x502B20).
 constexpr uint32_t kArtilleryBase = 9;  // Byte bajo de 0x672CC8 (la primera pieza de 0x5182B0).
 
+// The expedition's report (the letter 0x63) and its contracts: the game's
+// texts as the executable has them (the installation's, through the event
+// queue's Sailing; empty without them).
+const GameTexts* report_texts() {
+	const Sailing* sailing = event_sailing();
+	return sailing ? sailing->texts() : nullptr;
+}
+
+std::string report_text(GameText id) {
+	const GameTexts* texts = report_texts();
+	return texts ? texts->raw(id) : std::string();
+}
+
+// A ware's name (0x6C0BB0, by ware: the 20 trade wares and the 4 weapons).
+std::string ware_text(uint32_t ware) {
+	if (ware < 20) {
+		return report_text(GameText(int(GameText::WareGrain) + int(ware)));
+	}
+	return ware < 24 ? report_text(GameText(int(GameText::WareSword) + int(ware - 20))) : std::string();
+}
+
+// A place of the new world (0x6B1F20, by a world object's [+0x4]). Past the
+// 30 names the game reads the bytes after the table as pointers (an object
+// of the Indian villages; they only use this table through 0x52C6C0, whose
+// contracts are only for the trading posts).
+std::string place_text(uint32_t place) {
+	return place < 30 ? report_text(GameText(int(GameText::ExpeditionPlace0) + int(place))) : std::string();
+}
+
+// 0x5311D0 with the year too ((tick >> 8) / 365 into a u16).
+void report_date(uint32_t tick, uint8_t& day, uint8_t& month, uint16_t& year) {
+	events_mayor_detail::fn_5311d0(tick, day, month);
+	year = uint16_t((int32_t(tick) >> 8) / 365);
+}
+
 // Generador de números del juego (0x46C320 crea, 0x46C340 siembra, 0x46C380
 // da el siguiente módulo n), como en events.cpp (0x0D). Va en la pila.
 struct GameRandom {
@@ -2245,7 +2508,7 @@ void fn_4f8bd0(SaveGame& save, int merchant) {
 // 0x5319D0 (sobre el mundo, con el convoy): la primera expedición que llega
 // a uno de los 100 primeros puntos de Expeditionen.dat ([+0x89] del mundo a
 // 0): su dueño gana reputación (0x4F8B50) y [+0x89] pasa a 1. El mensaje al
-// jugador, su ventana (*0x6CC7E8) y el aviso a los comerciantes no se traducen.
+// jugador y su ventana (*0x6CC7E8) no se traducen; the news 0x56 goes to the chronicle.
 void fn_5319d0(SaveGame& save, int convoy) {
 	GlobalMemory& g = save.globals;
 	if (g.u8(kNewWorld) != 0) {
@@ -2257,6 +2520,18 @@ void fn_5319d0(SaveGame& save, int convoy) {
 		fn_4f8b50(save, owner);
 	}
 	g.u8(kNewWorld) = 1;
+	// The news 0x56 to the chronicle (0x531AB7..0x531B46): [+0x5] the
+	// owner's home town [+0x19]; u16 [+0x8] the owner, [+0xA] his title
+	// (0x4F9430), [+0xC] his rank in his home town ([+0x39C + town]).
+	if (owner < save.merchants.size()) {
+		const MerchantMemory& m = save.merchants[owner].memory;
+		Letter letter(0x56);
+		letter.entry.u8(5) = m.u8(0x19);
+		letter.entry.u16(8) = owner;
+		letter.entry.u16(0xA) = merchants_detail::fn_4f9430(save, owner);
+		letter.entry.u16(0xC) = m.u8(0x39C + m.u8(0x19));
+		send_letter(save, kLetterToChronicle, letter);
+	}
 }
 
 // 0x52BE90 (sobre el objeto `object` de los 15 del mundo): ¿está el punto
@@ -2304,8 +2579,8 @@ bool fn_52be90(const SaveGame& save, uint32_t object, MapPoint p, uint8_t near) 
 // 0x52D0B0 (sobre el objeto del mundo, con el convoy): si nadie lo ha
 // encontrado aún ([+0x6] no es un comerciante) y el convoy tiene un guía con
 // capitán, el dueño del convoy lo encuentra: [+0x6] = dueño, [+0x8] = tick, y
-// gana reputación (0x4F8BD0). Los avisos (0x4D6530, 0x548CA0 y la ventana
-// *0x6CC7E8 de un jugador humano) no se traducen. Devuelve si lo ha encontrado.
+// gana reputación (0x4F8BD0); the news 0x1C to each merchant and the chronicle. Los
+// avisos (0x548CA0 y la ventana *0x6CC7E8 de un jugador humano) no se traducen. Devuelve si lo ha encontrado.
 bool fn_52d0b0(SaveGame& save, uint32_t object, uint16_t convoy) {
 	GlobalMemory& g = save.globals;
 	const uint32_t base = object_base(object);
@@ -2325,6 +2600,22 @@ bool fn_52d0b0(SaveGame& save, uint32_t object, uint16_t convoy) {
 	if (owner < save.merchants.size()) {
 		fn_4f8bd0(save, owner);
 	}
+	// The news 0x1C, to each merchant and to the chronicle
+	// (0x52D18A..0x52D1F8): [+0x5] the guide's [+0x13A] % the towns; [+0x8]
+	// the owner, [+0x9] the object's [+0x4], [+0xA] and [+0xB] the captain's
+	// names [+0x2] and [+0x3], [+0xC..+0xF] the object's [+0x0..+0x3].
+	const CaptainMemory& cap = save.captains[save.ships[leader].captain()];
+	Letter letter(0x1C);
+	letter.entry.u8(5) = uint8_t(save.ships[leader].memory.u8(0x13A) % town_count(save));
+	letter.entry.u8(8) = owner;
+	letter.entry.u8(9) = g.u8(base + 4);
+	letter.entry.u8(0xA) = cap.u8(2);
+	letter.entry.u8(0xB) = cap.u8(3);
+	for (uint32_t k = 0; k < 4; ++k) {
+		letter.entry.u8(0xC + k) = g.u8(base + k);
+	}
+	send_letter(save, kLetterToEach, letter);
+	send_letter(save, kLetterToChronicle, letter);
 	return true;
 }
 
@@ -2477,10 +2768,11 @@ int32_t fn_52d6b0(const SaveGame& save, uint32_t object, uint32_t side, int32_t 
 // [+lado], a un precio fijo. Con encargo: si compra y `deliver`, los barcos
 // le entregan lo que llevan de esa mercancía; si vende y sin `deliver`, los
 // barcos le compran lo que les cabe y pueden pagar. El encargo cumplido se
-// quita. Los textos (CString de `text`, 0x5311D0) no se traducen. Devuelve
-// si lo ha creado.
+// quita. What was traded and the new contract go into `text` (the game's
+// CString, for the expedition's report; nothing with nullptr). Devuelve si
+// lo ha creado.
 uint8_t fn_52c6c0(SaveGame& save, uint32_t object, uint16_t convoy, uint16_t mode, uint8_t may_create,
-	uint8_t deliver) {
+	uint8_t deliver, std::string* text) {
 	GlobalMemory& g = save.globals;
 	const uint32_t base = object_base(object);
 	if (g.u8(base + 4) >= 0x7F) {
@@ -2532,6 +2824,28 @@ uint8_t fn_52c6c0(SaveGame& save, uint32_t object, uint16_t convoy, uint16_t mod
 			list.push_back(order);
 			++g.u32(base + 0x28);
 			++g.u16(base + 0x1C);
+			if (text) {
+				// The new contract (0x52CF48..0x52D03A): «A trader in %s has
+				// promised to %s %d\%c %s by %d.%d.%d at a price of %d\C.»
+				// with the place, buy or sell, the barrels, the ware, the
+				// deadline and the price. The Spanish build passes them in
+				// another order (0x52D487: the place, the date, the barrels,
+				// the ware, the price, «unidad comprada» or «vendida»).
+				uint8_t day = 0;
+				uint8_t month = 0;
+				uint16_t year = 0;
+				report_date(order.u32(0xC), day, month, year);
+				const std::string place = place_text(g.u8(base + 4));
+				const std::string what = report_text(buys != 0 ? GameText::ContractBuy : GameText::ContractSell);
+				const std::string amount_text = std::to_string(int32_t(order.u32(0x4)));
+				const std::string price_text = std::to_string(int32_t(order.u32(0x8)));
+				const std::string d = std::to_string(day), mo = std::to_string(month), y = std::to_string(year);
+				const GameTexts* texts = report_texts();
+				const std::vector<std::string> args = texts && texts->spanish()
+					? std::vector<std::string>{place, d, mo, y, amount_text, "B", ware_text(ware), price_text, what}
+					: std::vector<std::string>{place, what, amount_text, "B", ware_text(ware), d, mo, y, price_text};
+				*text += GameTexts::sprintf_raw(report_text(GameText::ContractPromised), args);
+			}
 		}
 		return created;
 	}
@@ -2539,6 +2853,8 @@ uint8_t fn_52c6c0(SaveGame& save, uint32_t object, uint16_t convoy, uint16_t mod
 	const uint32_t side = order.u8(0x2);
 	const bool buys = order.u8(0x3) != 0;
 	bool done = false;
+	uint32_t delivered[2] = {0, 0};  // [esp+0x40]: what the ships gave it, by side
+	int32_t taken[2] = {0, 0};  // [esp+0x50]: what they took from it
 	if (buys && deliver != 0) {
 		const uint8_t ware = g.u8(base + 2 + side);
 		for (uint32_t s = c.u16(0xA); s < ship_count(save) && !done;) {
@@ -2557,6 +2873,7 @@ uint8_t fn_52c6c0(SaveGame& save, uint32_t object, uint16_t convoy, uint16_t mod
 					c.u32(0x20) += money;
 					m.u32(0x4B0) += money;
 					cargo = int32_t(uint32_t(cargo) - q);
+					delivered[side & 1] += q;
 					order.u32(0x4) -= units;
 					if (order.u32(0x4) == 0) {
 						done = true;
@@ -2602,7 +2919,33 @@ uint8_t fn_52c6c0(SaveGame& save, uint32_t object, uint16_t convoy, uint16_t mod
 		if (order.u32(0x4) == 0) {
 			done = true;
 		}
+		taken[side & 1] += amount;
 		share_out(save, c, ware, amount, cost, nullptr);
+	}
+	if (text && (delivered[0] || delivered[1] || taken[0] || taken[1])) {
+		// The contract's trade (0x52CDA9..0x52CF1B): «%$1$d\%$2$c %$3$s was
+		// %$6$s at a price of %$4$d\C in %$5$s.» with the barrels (the amount
+		// / 200 whatever the ware), the ware, the price, the place and «sold»
+		// (the object buys) or «bought», then what is left to deliver by the
+		// deadline or «The quantity required by the contract was therefore
+		// met.».
+		const int32_t amount = buys ? int32_t(delivered[side & 1]) : taken[side & 1];
+		const uint8_t ware = buys ? g.u8(base + 2 + side) : g.u8(base + side);
+		uint8_t day = 0;
+		uint8_t month = 0;
+		uint16_t year = 0;
+		report_date(order.u32(0xC), day, month, year);
+		std::string line = GameTexts::sprintf_raw(report_text(GameText::ContractTraded),
+			{std::to_string(amount / 200), "B", ware_text(ware), std::to_string(int32_t(order.u32(0x8))),
+				place_text(g.u8(base + 4)), report_text(buys ? GameText::ContractSold : GameText::ContractBought)});
+		if (order.u32(0x4) != 0) {
+			line += GameTexts::sprintf_raw(report_text(GameText::ContractMustDeliver),
+				{std::to_string(int32_t(order.u32(0x4))), "B", std::to_string(day), std::to_string(month),
+					std::to_string(year)});
+		} else {
+			line += report_text(GameText::ContractMet);
+		}
+		*text += line;
 	}
 	if (done) {
 		list.erase(list.begin() + std::ptrdiff_t(found));
@@ -2622,9 +2965,12 @@ uint8_t fn_52c6c0(SaveGame& save, uint32_t object, uint16_t convoy, uint16_t mod
 // [+0x0], la mitad del sitio si tiene también el 2; el 2 para [+0x1]; y otra
 // vez [+0x0]), hasta lo que tiene el objeto ([+0xC], [+0x10], que bajan) y
 // el dinero del convoy ([+0x20]). Lo vendido suma al [+0x20] del convoy y al
-// [+0x4B0] del dueño; lo comprado resta del [+0x20] y suma al [+0x4B4]. Los
-// textos no se traducen. Devuelve si 0x52C6C0 ha creado un encargo.
-uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t point, uint16_t mode, uint8_t first) {
+// [+0x4B0] del dueño; lo comprado resta del [+0x20] y suma al [+0x4B4]. For
+// the expedition's report, what was sold and bought goes into `trades` and
+// the contracts into `contracts` (the game's CStrings; nothing with
+// nullptr). Devuelve si 0x52C6C0 ha creado un encargo.
+uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t point, uint16_t mode, uint8_t first,
+	std::string* trades, std::string* contracts) {
 	GlobalMemory& g = save.globals;
 	const uint32_t base = object_base(object);
 	if (g.u8(base + 4) >= 0x7F) {
@@ -2633,7 +2979,14 @@ uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t poi
 	GameMemory<0x3C>& c = save.convoys[convoy];
 	const uint8_t owner = c.u8(0);
 	MerchantMemory& m = save.merchants[owner < merchant_count(save) ? owner : 0].memory;
-	fn_52c6c0(save, object, convoy, mode, 0, 1);
+	// What the ships sold and bought, by side ([esp+0x38], [esp+0x40],
+	// [esp+0x48], [esp+0x50]: the amounts and the money).
+	int32_t sold[2] = {0, 0};
+	int32_t earned[2] = {0, 0};
+	int32_t bought[2] = {0, 0};
+	int32_t spent[2] = {0, 0};
+	uint32_t last_ware = 0;  // [esp+0x1C]: the ware of the last pass that got past its bit
+	fn_52c6c0(save, object, convoy, mode, 0, 1, contracts);
 	const uint8_t flag = mode == 1 ? 1 : 0;
 	for (uint32_t s = c.u16(0xA); s < ship_count(save);) {
 		SavedShip& ship = save.ships[s];
@@ -2646,9 +2999,12 @@ uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t poi
 				}
 				int32_t& cargo = ship.cargo(ware);
 				if (cargo > 0) {
+					const int32_t before = cargo;
 					const int32_t money = fn_52d4f0(save, object, side, cargo, flag);
 					c.u32(0x20) += uint32_t(money);
 					m.u32(0x4B0) += uint32_t(money);
+					sold[side] = int32_t(uint32_t(sold[side]) + uint32_t(before) - uint32_t(cargo));
+					earned[side] = int32_t(uint32_t(earned[side]) + uint32_t(money));
 				} else {
 					cargo = 0;
 				}
@@ -2657,7 +3013,7 @@ uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t poi
 		}
 		s = next;
 	}
-	const uint8_t created = fn_52c6c0(save, object, convoy, mode, first, 0);
+	const uint8_t created = fn_52c6c0(save, object, convoy, mode, first, 0, contracts);
 	int32_t free = 0;
 	for (uint32_t s = c.u16(0xA); s < ship_count(save);) {
 		SavedShip& ship = save.ships[s];
@@ -2677,6 +3033,7 @@ uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t poi
 			continue;
 		}
 		const uint8_t ware = g.u8(base + side);
+		last_ware = ware;
 		if (ware >= 0x18) {
 			continue;
 		}
@@ -2698,6 +3055,8 @@ uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t poi
 		c.s32(0x20) = int32_t(uint32_t(c.s32(0x20)) - uint32_t(cost));
 		m.u32(0x4B4) += uint32_t(cost);
 		g.s32(base + 0xC + 4 * side) = int32_t(uint32_t(g.s32(base + 0xC + 4 * side)) - uint32_t(amount));
+		bought[side] = int32_t(uint32_t(bought[side]) + uint32_t(amount));
+		spent[side] = int32_t(uint32_t(spent[side]) + uint32_t(cost));
 		share_out(save, c, ware, amount, cost, &free);
 	}
 	for (uint32_t s = c.u16(0xA); s < ship_count(save);) {
@@ -2707,6 +3066,51 @@ uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t poi
 			recalculate_cargo(ship);
 		}
 		s = next;
+	}
+	if (trades && (sold[0] || sold[1] || bought[0] || bought[1])) {
+		// The trades (0x52C4D2..0x52C687): «\nIn <place>» and «the following
+		// transaction was made:» (took place: odd points), or «\nWith the
+		// Indian tribe» for a village (its [+0x5] from 2 on); then a line
+		// «%u\%c %s sold at %u\C (total: %u\C)» for each ware sold and
+		// «... bought at ...» for each bought: the barrels (\B) or loads
+		// (\L), the ware, the rounded price of one and the total.
+		std::string& t = *trades;
+		if (g.u8(base + 5) < 2) {
+			t += report_text(GameText::ExpeditionIn);
+			t += place_text(g.u8(base + 4));
+			t += report_text((point & 1) ? GameText::ExpeditionTransactionTook : GameText::ExpeditionTransactionMade);
+		} else {
+			t += report_text(GameText::ExpeditionIndianTribe);
+			t += report_text(GameText::ExpeditionTransactionMade);
+		}
+		auto line = [&](GameText id, int32_t amount, int32_t money, bool barrel, uint32_t ware) {
+			const int32_t units = barrel ? amount / 200 : amount / 2000;
+			const int32_t price = ((units >> 1) + money) / units;
+			t += GameTexts::sprintf_raw(report_text(id), {std::to_string(uint32_t(units)), barrel ? "B" : "L",
+				ware_text(ware), std::to_string(uint32_t(price)), std::to_string(uint32_t(money))});
+		};
+		for (uint32_t side = 0; side < 2; ++side) {
+			if (sold[side] > 0) {
+				const uint8_t ware = g.u8(base + 2 + side);
+				const bool barrel = kBarrelWare[ware];
+				if ((barrel ? sold[side] / 200 : sold[side] / 2000) == 0) {
+					// Sin comprobar con el oráculo. A game bug: less than a
+					// barrel or a load sold, and the game divides by 0.
+					continue;
+				}
+				line(GameText::ExpeditionSold, sold[side], earned[side], barrel, ware);
+			}
+		}
+		for (uint32_t side = 0; side < 2; ++side) {
+			// A game bug: barrels or loads by the last ware looked at, not
+			// by this side's (the same when both are of a kind). Fixed: by
+			// this side's ware.
+			const uint32_t kind = fix_game_bugs() ? g.u8(base + side) : last_ware;
+			const bool barrel = kind < 24 && kBarrelWare[kind];
+			if (bought[side] > 0 && (barrel ? bought[side] / 200 : bought[side] / 2000) > 0) {
+				line(GameText::ExpeditionBought, bought[side], spent[side], barrel, g.u8(base + side));
+			}
+		}
 	}
 	return created;
 }
@@ -2725,8 +3129,8 @@ uint8_t fn_52bfe0(SaveGame& save, uint32_t object, uint16_t convoy, uint32_t poi
 // [+0x38] a 0) y, con el generador del juego sembrado con el tick, 1 de cada
 // 11 veces piratas (daño según la artillería [+0x120] de los barcos y quizá
 // se llevan dinero del convoy) y otra 1 de cada 11 una tormenta. Al final el
-// convoy vuelve al mapa (0x502B20) y el evento se quita. Los textos y el
-// mensaje a un jugador humano no se traducen.
+// convoy vuelve al mapa (0x502B20) y el evento se quita. A human owner gets
+// the report by letter (0x63), with what was found, traded and signed.
 uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 	Event& e = save.events[event];
 	const uint32_t convoy = e.u16(8);
@@ -2752,6 +3156,19 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 	const int merchant = c.u8(0) < merchant_count(save) ? int(c.u8(0)) : -1;
 	const uint8_t near = c.u16(0x38) == 0 ? 1 : 0;
 	uint8_t first = 1;  // Byte bajo de [esp+0x3C]: hasta que se crea un encargo.
+	// For the report (the letter 0x63): the convoy's money before trading
+	// ([esp+0x44]), the places found ([esp+0x48..+0x4B]: the [+0x4] of the
+	// trading posts, 0xFF a village, by the order they were found), how many
+	// were found and how many points found nothing, whether a contract was
+	// signed, and the three CStrings: the trades, the contracts and the
+	// voyage's mishap.
+	const uint32_t start_money = c.u32(0x20);
+	uint8_t places[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+	uint8_t found = 0;
+	uint8_t empty = 0;
+	bool signed_contract = false;
+	std::string trades;
+	std::string contracts = report_text(GameText::ContractsHeader);
 	for (uint32_t k = 0; k < 4; ++k) {
 		const MapPoint p = convoy_point(c, k);
 		if (p.x >= 0x7FFF) {
@@ -2760,21 +3177,37 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 		if (merchant >= 0 && fn_4f93c0(save, merchant, int16_t(p.x), int16_t(p.y), near)) {
 			fn_5319d0(save, int(convoy));
 		}
+		bool here = false;
 		for (uint32_t i = 0; i < kWorldObjectCount; ++i) {
 			if (!fn_52be90(save, i, p, near)) {
 				continue;
 			}
+			here = true;
 			if (merchant >= 0) {
 				fn_4f9400(save, merchant, i);
 			}
-			// Los objetos encontrados (de los tipos 0 y 1, su [+0x4]) solo van al mensaje.
-			fn_52d0b0(save, i, uint16_t(convoy));
-			if (fn_52bfe0(save, i, uint16_t(convoy), k, c.u16(0x38), first)) {
+			if (fn_52d0b0(save, i, uint16_t(convoy))) {
+				if (save.globals.u8(object_base(i) + 5) < 2) {
+					places[found & 3] = save.globals.u8(object_base(i) + 4);
+				}
+				++found;
+			}
+			if (fn_52bfe0(save, i, uint16_t(convoy), k, c.u16(0x38), first, &trades, &contracts)) {
 				first = 0;
+				signed_contract = true;
 			}
 			break;
 		}
+		if (!here) {
+			++empty;
+		}
 	}
+	if (!signed_contract) {
+		contracts += report_text(GameText::ContractNoNew);
+	}
+	bool storm = false;  // [esp+0x12]
+	bool pirates = false;  // [esp+0x13]
+	uint32_t loss = 0;  // [esp+0x14]: what the pirates took
 	// El desgaste del viaje: 640 de casco por día.
 	uint32_t elapsed = e.u32(0) - e.u32(0xC);
 	if (near) {
@@ -2807,6 +3240,7 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 		const uint64_t power = uint64_t(average - kArtilleryBase) * 0x3456700u;
 		const int64_t q = int64_t(power) / 5;
 		const uint32_t defence = uint32_t(ftol64(std::sqrt(double(q)))) + 0xAF0;
+		pirates = true;
 		for (uint32_t s = c.u16(0xA); s < ship_count(save); s = save.ships[s].next_in_list()) {
 			SavedShip& ship = save.ships[s];
 			const uint32_t k = r.next(0x4CCC) + 0x4CCC;
@@ -2821,7 +3255,6 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 		}
 		// Y a veces se llevan dinero del convoy (con poca artillería, más a menudo).
 		const uint32_t roll2 = r.next(11);
-		uint32_t loss = 0;
 		if ((roll2 > 9 || (roll2 > 5 && average < 12)) && c.s32(0x20) > 5000) {
 			const int32_t v = int32_t(c.u32(0x20) * 2500u);
 			const uint32_t root = uint32_t(ftol64(std::sqrt(double(v))));
@@ -2843,11 +3276,181 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 				hull = 0;
 			}
 		}
+		storm = true;
 	}
 	// Los que quedan vuelven (con casco o sin ninguno, que se hunden).
-	if (Sailing* sailing = event_sailing()) {
+	Sailing* sailing = event_sailing();
+	bool alive = false;
+	for (uint32_t s = c.u16(0xA); s < ship_count(save) && !alive; s = save.ships[s].next_in_list()) {
+		alive = save.ships[s].health() > 0;
+	}
+	if (!alive) {
+		if (sailing) {
+			sailing->fn_502b20(int(convoy), e.u32(0xC));
+		}
+		return 0;
+	}
+	// The report, the letter 0x63 to a human owner (0x4E70E0..0x4E79A3): its
+	// buffer (4000 bytes in the game) is the text; [+0xC] the bytes the game
+	// counts. «\n\lThe convoy led by the <guide's name> has successfully
+	// returned from an expedition and is now heading for <town>.».
+	std::string text;
+	uint32_t size = 0;
+	auto add = [&](const std::string& s) {
+		text += s;
+		size += uint32_t(s.size());
+	};
+	add(report_text(GameText::ExpeditionLedBy));
+	const uint16_t guide = c.u16(0x10);
+	if (guide < ship_count(save)) {
+		std::string name;
+		const ShipMemory& sm = save.ships[guide].memory;
+		for (size_t i = 0x160; i < 0x180 && sm.u8(i) != 0; ++i) {
+			name += char(sm.u8(i));
+		}
+		add(name);
+	} else {
+		add(report_text(GameText::ShipUnnamed));  // Sin comprobar con el oráculo (0x512B20 with 0xFFFF).
+	}
+	add(report_text(GameText::ExpeditionReturned));
+	// A game bug: the town names' table 0x6DDA00 goes by town number and the
+	// game takes it by the town's index (as when saving, savegame_write.cpp):
+	// the report names another town when they differ. Fixed: by the town's
+	// number (0x6DE4B8).
+	const uint32_t town = c.u8(0x1F) < town_count(save) ? c.u8(0x1F) : c.u8(0x1E) % town_count(save);
+	const uint32_t named = fix_game_bugs() ? save.globals.u8(kTownIds + town) : town;
+	add(named < save.opaque.town_names.size() ? save.opaque.town_names[named] : std::string());
+	add(report_text(GameText::ExpeditionDot));
+	const uint32_t end_money = c.u32(0x20);
+	if (sailing) {
 		sailing->fn_502b20(int(convoy), e.u32(0xC));
 	}
+	if (merchant < 0 || save.merchants[size_t(merchant)].memory.u16(8) != 0) {
+		return 0;
+	}
+	if (found == 0) {
+		if (empty != 0) {
+			add(report_text(GameText::ExpeditionNoCentres));
+		}
+	} else {
+		// The trading posts found go to the front (0x4E7258..0x4E72AF).
+		uint8_t valid = 0;
+		for (uint32_t k = 0; k < 4; ++k) {
+			if (places[k] < 0x1E) {
+				++valid;
+				continue;
+			}
+			for (uint32_t j = k + 1; j < 4; ++j) {
+				if (places[j] < 0x1E) {
+					places[k] = places[j];
+					places[j] = 0xFF;
+					++valid;
+					break;
+				}
+			}
+		}
+		// A game bug: the «, » between the places is written without being
+		// counted, so the letter's copy (0x51AB20, [+0xC] bytes) loses the
+		// text's last 2 or 4 bytes (its final 0 among them). Fixed: counted.
+		auto comma = [&]() {
+			text += ", ";
+			if (fix_game_bugs()) {
+				size += 2;
+			}
+		};
+		switch (valid) {
+		case 4:
+			add(report_text(GameText::ExpeditionTwoNew));
+			add(place_text(places[0]));
+			comma();
+			add(place_text(places[1]));
+			comma();
+			add(place_text(places[2]));
+			add(report_text(GameText::ExpeditionAnd));
+			add(place_text(places[3]));
+			add(report_text(GameText::ExpeditionFour));
+			add(report_text(GameText::ExpeditionOpportunities));
+			break;
+		case 3:
+			add(report_text(GameText::ExpeditionTwoNew));
+			add(place_text(places[0]));
+			comma();
+			add(place_text(places[1]));
+			add(report_text(GameText::ExpeditionAnd));
+			add(place_text(places[2]));
+			add(report_text(GameText::ExpeditionThree));
+			add(report_text(GameText::ExpeditionOpportunities));
+			break;
+		case 2:
+			add(report_text(GameText::ExpeditionTwoNew));
+			add(place_text(places[0]));
+			add(report_text(GameText::ExpeditionAnd));
+			add(place_text(places[1]));
+			add(report_text(GameText::ExpeditionCouldBeDiscovered));
+			break;
+		case 1:
+			add(report_text(GameText::ExpeditionDiscoveryOf));
+			add(place_text(places[0]));
+			add(report_text(GameText::ExpeditionDiscoveryEnd));
+			break;
+		default:
+			break;
+		}
+		if (found > valid) {
+			// The Indian villages (0x4E7641..0x4E7743); the last text's
+			// pointer (0x6B9634) goes to zeroed data in both builds: nothing.
+			add(report_text(GameText::ExpeditionNewWorld));
+			const uint32_t villages = uint32_t(found - valid);
+			if (villages == 1) {
+				add(report_text(GameText::ExpeditionOneVillage));
+			} else if (villages == 2) {
+				add(report_text(GameText::ExpeditionTwoVillages));
+			} else {
+				add(report_text(GameText::ExpeditionFoundInNewWorld));
+				add(report_text(villages == 3 ? GameText::ExpeditionThree : GameText::ExpeditionFour));
+				add(report_text(GameText::ExpeditionVillagesFound));
+			}
+		}
+	}
+	// The voyage's mishap, then the trades, the contracts and it.
+	std::string mishap;
+	if (storm) {
+		mishap = report_text(GameText::ExpeditionStorm);
+	} else if (pirates) {
+		mishap = loss == 0 ? report_text(GameText::ExpeditionPiratesFailed)
+		                   : GameTexts::sprintf_raw(report_text(GameText::ExpeditionPiratesStole), {std::to_string(int32_t(loss))});
+	}
+	add(trades);
+	add(contracts);
+	add(mishap);
+	if (start_money > 0 || end_money > 0) {
+		// «\nYou have given your captain <first and family name> <money> to
+		// take with him on his voyage. He returns with <money> .» (the
+		// captain of the guide after 0x502B20; the format «%u\C», 0x6C02F4
+		// and 0x6C02FC, the same in both builds).
+		add(report_text(GameText::ExpeditionGivenCaptain));
+		const uint16_t lead = save.convoys[convoy].u16(0x10);
+		if (lead < ship_count(save) && save.ships[lead].captain() < save.globals.u16(kCaptainCount)) {
+			const CaptainMemory& cap = save.captains[save.ships[lead].captain()];
+			add(game_first_name(save, cap.u8(2)));
+			add(" ");
+			add(game_family_name(save, cap.u8(3)));
+			add(" ");
+		}
+		add(std::to_string(start_money) + "\\C");
+		add(report_text(GameText::ExpeditionTakeWith));
+		add(std::to_string(end_money) + "\\C");
+		add(report_text(GameText::ExpeditionEnd));
+	}
+	text += '\0';
+	++size;
+	Letter letter(0x63);
+	letter.entry.u8(5) = save.merchants[size_t(merchant)].memory.u8(0x19);
+	letter.entry.u32(0xC) = size;
+	letter.buffer.assign(text.begin(), text.begin() + std::ptrdiff_t(std::min<size_t>(size, text.size())));
+	// Past 4000 bytes the game would write beyond its buffer (sin comprobar
+	// con el oráculo: a report that long is not seen).
+	send_letter(save, save.convoys[convoy].u8(0), letter);
 	return 0;
 }
 
@@ -2859,8 +3462,8 @@ uint32_t fn_4e6a54(SaveGame& save, uint16_t event) {
 // cantidad [+0x10 + k] en cargas o barriles, se lleva hasta tres: lo que
 // haya en la oficina, como mucho esa cantidad (si hay menos, [+0x10 + k]
 // pasa a lo que había), y lo pone en el mercado de la ciudad. Sin oficina,
-// nada. La carta al comerciante (0x4D6530, tipo 0x73, con lo robado) no se
-// reproduce. El despachador lo quita siempre.
+// nada. The merchant gets the letter 0x73 with what was taken. El
+// despachador lo quita siempre.
 void fn_4ec934(SaveGame& save, uint16_t event) {
 	Event& e = save.events[event];
 	const uint32_t town = e.u8(0xF);
@@ -2870,6 +3473,15 @@ void fn_4ec934(SaveGame& save, uint16_t event) {
 	}
 	TownMemory& t = save.towns[town].memory;
 	OfficeMemory& o = save.offices[size_t(office)].memory;
+	// The letter 0x73 to the merchant if something was taken
+	// (0x4EC9B7..0x4ECAEC): [+0x5] the town; u16 [+0x8], [+0xA], [+0xC] each
+	// ware taken << 8 + the loads or barrels (0xFFFF the unused ones); u16
+	// [+0xE] his [+0x1C] << 8 | [+0x1D].
+	Letter letter(0x73);
+	letter.entry.u8(5) = e.u8(0xF);
+	std::memset(letter.entry.bytes.data() + 8, 0xFF, 8);
+	const MerchantMemory& m = save.merchants[e.u8(0xE)].memory;
+	letter.entry.u16(0xE) = uint16_t((m.u8(0x1C) << 8) + m.u8(0x1D));
 	uint32_t stolen = 0;
 	for (uint32_t k = 0; k < 6 && stolen < 3; ++k) {
 		const uint32_t ware = e.u8(0x8 + k);
@@ -2888,8 +3500,12 @@ void fn_4ec934(SaveGame& save, uint16_t event) {
 			t.s32(0x4 + 4 * ware) += amount;
 		}
 		if (e.u8(0x10 + k) > 0) {
+			letter.entry.u16(8 + 2 * stolen) = uint16_t((ware << 8) + e.u8(0x10 + k));
 			++stolen;
 		}
+	}
+	if (stolen > 0) {
+		send_letter(save, e.u8(0xE), letter);
 	}
 }
 
@@ -2970,10 +3586,9 @@ namespace p3::data {
 // 0x5098B0) y quita el bit 0x10 de [+0x14]. El dueño cobra [+0x20] (que
 // vuelve a 0), [+0x38] pasa a 0xFFFF y el convoy navega hacia su origen
 // [+0x1E] (la ruta del guía, 0x5172A0; [+0x1F]; 0x501BE0; el guía entra en
-// la lista por x, 0x50CE50). El dueño gana 51 de reputación. Los avisos
-// (0x4D6530, 0x548CA0) no se traducen.
+// la lista por x, 0x50CE50). El dueño gana 51 de reputación. Each sunk ship
+// goes by letter (0x34) to a human owner; the ticker line (0x548CA0) is the interface's.
 void Sailing::fn_502b20(int convoy, uint32_t departure) {
-	(void)departure;  // Solo para los avisos (cuándo se hundió cada barco).
 	GlobalMemory& g = save_.globals;
 	const uint32_t count = g.u16(global::kShipCount);
 	const uint16_t captains = g.u16(global::kCaptainCount);
@@ -2985,6 +3600,7 @@ void Sailing::fn_502b20(int convoy, uint32_t departure) {
 	auto link = [&]() -> uint16_t& {
 		return previous < 0 ? save_.convoys[size_t(convoy)].u16(0xA) : save_.ships[size_t(previous)].memory.u16(0x6);
 	};
+	bool dated = false;  // A ship seen before (the first loss is dated a day ago).
 	while (link() < count) {
 		const uint16_t index = link();
 		SavedShip& s = save_.ships[index];
@@ -2995,6 +3611,7 @@ void Sailing::fn_502b20(int convoy, uint32_t departure) {
 			s.status() = kShipSailing;
 			s.raid() = 0;
 			previous = index;
+			dated = true;
 			continue;
 		}
 		GameMemory<0x3C>& c = save_.convoys[size_t(convoy)];
@@ -3012,6 +3629,25 @@ void Sailing::fn_502b20(int convoy, uint32_t departure) {
 		s.memory.u16(0x50) = 0xFFFF;
 		s.memory.u16(0x52) = 0xFFFF;
 		s.status() = kShipSunk;
+		// The loss, a letter 0x34 to a human owner (0x502C53..0x502CDF):
+		// [+0x5] his home town (0 without a merchant); u16 [+0x8] the ship's
+		// name [+0x15E], [+0xA] its [+0xE]; u32 [+0xC] when it sank: a day
+		// before today for the first ship if no ship came before it, else
+		// the departure + (index + 10) · (today − departure) / (ships + 10).
+		Letter letter(0x34);
+		letter.entry.u8(5) = merchant ? save_.merchants[owner].memory.u8(0x19) : 0;
+		const uint32_t since = g.u32(global::kWorldTick) - departure;
+		if (dated) {
+			letter.entry.u32(0xC) = (uint32_t(index) + 10) * since / (count + 10) + departure;
+		} else {
+			dated = true;
+			letter.entry.u32(0xC) = since - 0x100 + departure;
+		}
+		letter.entry.u16(8) = s.memory.u16(0x15E);
+		letter.entry.u16(0xA) = s.memory.u8(0xE);
+		if (merchant && save_.merchants[owner].memory.u16(8) == 0) {
+			send_letter(save_, owner, letter);
+		}  // Without a merchant the game reads through a null pointer (sin comprobar con el oráculo).
 	}
 	if (save_.convoys[size_t(convoy)].u16(0xA) >= count) {
 		fn_50a3d0(last);
