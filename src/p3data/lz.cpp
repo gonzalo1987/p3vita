@@ -52,8 +52,9 @@ private:
 
 }  // namespace
 
-bool lz_decompress(const uint8_t* blob, size_t blob_size, uint8_t* out, size_t capacity, size_t& produced,
-	std::string* error) {
+// With `prefix`, a blob bigger than `capacity` is decoded only up to it.
+static bool decompress(const uint8_t* blob, size_t blob_size, uint8_t* out, size_t capacity, size_t& produced,
+	std::string* error, bool prefix) {
 	produced = 0;
 	if (blob_size < 4) {
 		return fail(error, "bloque LZ sin cabecera");
@@ -65,7 +66,10 @@ bool lz_decompress(const uint8_t* blob, size_t blob_size, uint8_t* out, size_t c
 		return true;
 	}
 	if (n < 0) {
-		const size_t count = size_t(-int64_t(n));
+		size_t count = size_t(-int64_t(n));
+		if (prefix && count > capacity) {
+			count = capacity;
+		}
 		if (count > blob_size - 4 || count > capacity) {
 			return fail(error, "bloque LZ almacenado fuera de límites");
 		}
@@ -75,12 +79,13 @@ bool lz_decompress(const uint8_t* blob, size_t blob_size, uint8_t* out, size_t c
 	}
 
 	const size_t total = size_t(n);
-	if (total > capacity) {
+	if (total > capacity && !prefix) {
 		return fail(error, "bloque LZ mayor que el búfer de salida");
 	}
+	const size_t wanted = total < capacity ? total : capacity;
 	BitReader bits(blob + 4, blob_size - 4);
 	size_t o = 0;
-	while (o < total) {
+	while (o < wanted) {
 		uint32_t is_match = 0;
 		if (!bits.get(1, is_match)) {
 			return fail(error, kTruncated);
@@ -119,12 +124,22 @@ bool lz_decompress(const uint8_t* blob, size_t blob_size, uint8_t* out, size_t c
 			return fail(error, "referencia LZ fuera del bloque");
 		}
 		// Byte a byte: si la distancia es menor que la longitud, repite el patrón.
-		for (const size_t end = o + size_t(length); o < end; ++o) {
+		const size_t end = o + size_t(length) < wanted ? o + size_t(length) : wanted;
+		for (; o < end; ++o) {
 			out[o] = out[o - distance];
 		}
 	}
-	produced = total;
+	produced = wanted;
 	return true;
+}
+
+bool lz_decompress(const uint8_t* blob, size_t blob_size, uint8_t* out, size_t capacity, size_t& produced,
+	std::string* error) {
+	return decompress(blob, blob_size, out, capacity, produced, error, false);
+}
+
+bool lz_decompress_prefix(const uint8_t* blob, size_t blob_size, uint8_t* out, size_t capacity, size_t& produced) {
+	return decompress(blob, blob_size, out, capacity, produced, nullptr, true);
 }
 
 bool lz_decompress_file(const uint8_t* data, size_t size, std::vector<uint8_t>& out, std::string* error) {

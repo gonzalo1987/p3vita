@@ -74,6 +74,11 @@ void advance_game_tick(SaveGame& save, Sailing& sailing) {
 	sailing.step_battles();  // The battles' clock (battle/battles.cpp).
 }
 
+void use_sailing(Sailing& sailing) {
+	tick::set_event_navigation(&sailing.nav());
+	tick::set_event_sailing(&sailing);
+}
+
 void run_queued_operations(SaveGame& save, Sailing& sailing) {
 	std::vector<std::vector<uint8_t>> operations;
 	operations.swap(save.queued_operations);

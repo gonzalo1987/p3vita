@@ -11,6 +11,11 @@ struct AppSettings {
 	// original game's bugs. On by default; off, the game behaves like the
 	// original, bugs included.
 	bool fix_game_bugs = true;
+	// The language of the game's texts and data: Spanish (by default: the
+	// Spanish archive p2arch0_spa.cpr mounted on the English one, and the
+	// Spanish Patrician3.exe) or English (the English archive alone and the
+	// English exe).
+	bool spanish = true;
 };
 
 // ux0:data/p3vita/p3vita-settings.txt on the Vita; on the PC, in the data

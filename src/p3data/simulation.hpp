@@ -47,6 +47,12 @@ void town_tick(SaveGame& save, int town);
 // Un tick completo.
 void advance_game_tick(SaveGame& save, Sailing& sailing);
 
+// The Sailing (and its navigation) the event queue and the town ticks use.
+// advance_game_tick sets it in the middle of each tick, so what runs before
+// that in the tick would still see the old one: call it when a new Sailing
+// replaces the old one (another game loaded).
+void use_sailing(Sailing& sailing);
+
 // Ejecuta las operaciones encoladas y vacía la cola.
 void run_queued_operations(SaveGame& save, Sailing& sailing);
 

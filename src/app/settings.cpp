@@ -8,6 +8,7 @@ namespace {
 
 constexpr const char* kFileName = "p3vita-settings.txt";
 constexpr const char* kFixGameBugs = "fix_game_bugs";
+constexpr const char* kLanguage = "language";
 
 std::string trim(const std::string& s) {
 	const size_t first = s.find_first_not_of(" \t\r\n");
@@ -63,6 +64,8 @@ AppSettings load_settings(const std::string& path) {
 		const std::string value = trim(line.substr(equals + 1));
 		if (key == kFixGameBugs) {
 			parse_bool(value, settings.fix_game_bugs);
+		} else if (key == kLanguage && (value == "es" || value == "en")) {
+			settings.spanish = value == "es";
 		}
 	}
 	std::fclose(file);
@@ -77,6 +80,8 @@ bool save_settings(const std::string& path, const AppSettings& settings) {
 	std::fprintf(file, "# p3vita settings\n");
 	std::fprintf(file, "# fix_game_bugs: 1 fixes the original game's bugs, 0 behaves like the original\n");
 	std::fprintf(file, "%s = %d\n", kFixGameBugs, settings.fix_game_bugs ? 1 : 0);
+	std::fprintf(file, "# language: es (Spanish) or en (English)\n");
+	std::fprintf(file, "%s = %s\n", kLanguage, settings.spanish ? "es" : "en");
 	return std::fclose(file) == 0;
 }
 

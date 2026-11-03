@@ -175,6 +175,29 @@ enum class GameText {
 	ConferenceTherefore,  // «\l\nTherefore »
 	ConferenceElected,  // « has been elected.»
 	ConferenceCandidate,  // «\l%s %s from %s:\n\c%u votes\n» (names, town, votes)
+	// The menus and the saved games, for the viewer: the game's options panel
+	// in a game (0x69AE20..0x69AE50 in the English exe), its main menu, its
+	// buttons and its dialog of saved games (0x69B15C..0x69B170).
+	SettingOn,  // «on» (Spanish «Sí»)
+	SettingOff,  // «off» («No»)
+	MenuSaveGame,  // «Save game»
+	MenuLoadGame,  // «Load game»
+	MenuOptions,  // «Options»
+	QuitAsk,  // «Do you really want»
+	QuitAskGame,  // «to quit the game?»
+	QuitGame,  // The main menu's «Leave» (Spanish «Salir del juego»)
+	ButtonOk,  // «OK»
+	ButtonContinue,  // «Continue»
+	ButtonCancel,  // «Cancel»
+	ButtonBack,  // «Back»
+	DeleteSavegame,  // «Delete savegame»
+	DeleteAsk,  // «Do you really want to»
+	DeleteAskSavegame,  // «delete this savegame?»
+	OverwriteAsk,  // «Do you really want to overwrite»
+	OverwriteAskSavegame,  // «the savegame '%s'?»
+	LoadingGame,  // «Loading game...» (Spanish «Iniciando partida...»)
+	LoadDamaged,  // «This save game appears to be damaged» (Spanish «No se puede cargar la partida.»)
+	LoadDamagedCannot,  // «and can't be loaded.» («El fichero está dañado.»)
 	Count
 };
 

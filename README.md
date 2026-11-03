@@ -74,7 +74,10 @@ Para probarlo en la consola (con HENkaku o Enso):
 3. Copia también `Patrician3.exe` de la misma instalación a `ux0:data/p3vita/`:
    los textos de la interfaz salen de él (el de la versión española, para
    tenerlos en español; también vale el inglés de GOG 1.1). Sin él, el visor usa
-   sus propios textos.
+   sus propios textos. Para poder elegir el inglés en las opciones, copia
+   además el `Patrician3.exe` de la versión inglesa con el nombre
+   `Patrician3_eng.exe` (el español puede llamarse `Patrician3.exe` o
+   `Patrician3_spa.exe`).
 
 De momento es un visor de ciudades en el que ya se puede comerciar y navegar.
 Arranca en Lübeck tal como empieza la partida de 1300 (`missav/1.pat`), con el
@@ -82,7 +85,9 @@ comerciante del jugador (Georg Stromberg, 30 000 monedas) y su Snaikka en el
 puerto. El tiempo pasa como en el juego a velocidad normal (un día por minuto)
 y la fecha se ve en la barra. La cruceta o el stick izquierdo mueven la
 cámara, arrastrar con el dedo desplaza el mapa, L y R cambian de ciudad y
-Start abre las opciones (corregir los fallos del juego, salir). Triángulo alterna entre la ciudad y el **mapa del mar**, con las
+Start abre el menú: continuar, guardar y cargar la partida (8 ranuras, en
+`ux0:data/p3vita/savegames/`), las opciones (corregir los fallos del juego y el
+idioma, español o inglés) y salir; mientras está abierto, el juego se detiene. Triángulo alterna entre la ciudad y el **mapa del mar**, con las
 ciudades y los barcos (tu barco lleva una marca; tocar una ciudad la elige y
 Triángulo entra en ella). En el mapa del mar, X manda tu barco a la ciudad
 elegida: sale del puerto, navega por la ruta del juego (se dibuja su

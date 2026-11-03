@@ -37,6 +37,7 @@
 #include "p3data/wares.hpp"
 #include "debug_states.hpp"
 #include "script.hpp"
+#include "savegames.hpp"
 #include "settings.hpp"
 
 using namespace p3::data;
@@ -100,9 +101,12 @@ void show_error(SDL_Window* window, const std::string& message) {
 	}
 }
 
-// `cpr_file` (--cpr): the English archive itself; the language one is mounted
-// if it is in the same folder.
-std::unique_ptr<CprArchive> open_archive(const char* dir_override, const char* cpr_file, std::string& tried) {
+// `cpr_file` (--cpr): the English archive itself; for Spanish (`spanish`)
+// the language one is mounted if it is in the same folder. `mounted_spanish`
+// says whether the archive has the Spanish one (mounted, or alone).
+std::unique_ptr<CprArchive> open_archive(const char* dir_override, const char* cpr_file, std::string& tried,
+	bool spanish, bool& mounted_spanish) {
+	mounted_spanish = false;
 	if (cpr_file) {
 		tried += std::string("\n") + cpr_file;
 		auto archive = CprArchive::open(cpr_file);
@@ -110,8 +114,10 @@ std::unique_ptr<CprArchive> open_archive(const char* dir_override, const char* c
 			const std::string path = cpr_file;
 			const size_t slash = path.find_last_of('/');
 			const std::string dir = slash == std::string::npos ? "" : path.substr(0, slash + 1);
-			if (path.substr(dir.size()) != kLanguageArchive) {
-				archive->mount(dir + kLanguageArchive);  // Optional.
+			if (path.substr(dir.size()) == kLanguageArchive) {
+				mounted_spanish = true;
+			} else if (spanish) {
+				mounted_spanish = archive->mount(dir + kLanguageArchive);  // Optional.
 			}
 		}
 		return archive;
@@ -130,15 +136,62 @@ std::unique_ptr<CprArchive> open_archive(const char* dir_override, const char* c
 	for (const std::string& dir : dirs) {
 		tried += "\n" + dir;
 		if (auto archive = CprArchive::open(dir + kBaseArchive)) {
-			archive->mount(dir + kLanguageArchive);  // Opcional.
+			if (spanish) {
+				mounted_spanish = archive->mount(dir + kLanguageArchive);  // Opcional.
+			}
 			return archive;
 		}
 		// Sin la base, el archivo español solo también sirve para ver las ciudades.
 		if (auto archive = CprArchive::open(dir + kLanguageArchive)) {
+			mounted_spanish = true;
 			return archive;
 		}
 	}
 	return nullptr;
+}
+
+// The game's interface texts in a language (game_texts.hpp): from --exe (`exe`)
+// or, in the data folder (or next to --cpr), Patrician3_spa.exe or
+// Patrician3_eng.exe and Patrician3.exe: the first of that language's build
+// (`matching`), or else the first that loads, or nullptr.
+std::unique_ptr<GameTexts> load_game_texts(const char* exe, const char* cpr, const char* data_dir, bool spanish,
+	bool& matching) {
+	std::vector<std::string> dirs;
+	if (cpr) {
+		const std::string path = cpr;
+		const size_t slash = path.find_last_of('/');
+		dirs.push_back(slash == std::string::npos ? "" : path.substr(0, slash + 1));
+	} else if (data_dir) {
+		const std::string dir = data_dir;
+		dirs.push_back(dir + (dir.empty() || dir.back() == '/' ? "" : "/"));
+	} else {
+		dirs.assign(std::begin(kDataDirs), std::end(kDataDirs));
+	}
+	std::vector<std::string> paths;
+	if (exe) {
+		paths.push_back(exe);
+	}
+	for (const std::string& dir : dirs) {
+		paths.push_back(dir + (spanish ? "Patrician3_spa.exe" : "Patrician3_eng.exe"));
+		paths.push_back(dir + "Patrician3.exe");
+		paths.push_back(dir + (spanish ? "Patrician3_eng.exe" : "Patrician3_spa.exe"));
+	}
+	matching = false;
+	std::unique_ptr<GameTexts> first;
+	for (const std::string& path : paths) {
+		std::unique_ptr<GameTexts> texts = GameTexts::load(path);
+		if (!texts) {
+			continue;
+		}
+		if (texts->spanish() == spanish) {
+			matching = true;
+			return texts;
+		}
+		if (!first) {
+			first = std::move(texts);
+		}
+	}
+	return first;
 }
 
 // Texto de la interfaz con una fuente del juego subida como textura.
@@ -1530,71 +1583,218 @@ void show_loading(SDL_Renderer* renderer) {
 	SDL_RenderPresent(renderer);
 }
 
-// The settings screen (Start on the Vita, Escape on the PC): the fixes to
-// the game's bugs (p3data/game_fixes.hpp) and quitting the viewer.
-struct SettingsUi {
-	bool open = false;
-	int row = 0;  // 0: fix the game's bugs, 1: quit
+// The menu (Start on the Vita, Escape on the PC), with the game's texts: go
+// on, save and load the game (the slots of savegames.hpp), the options (the
+// fixes to the game's bugs) and quitting. The game stops while it is open.
+enum class MenuScreen { Closed, Main, Save, Load, Options };
+// A question over the menu: overwrite a slot, delete it, quit.
+enum class MenuAsk { None, Overwrite, Delete, Quit };
+
+struct MenuUi {
+	MenuScreen screen = MenuScreen::Closed;
+	int row = 0;
+	MenuAsk ask = MenuAsk::None;
+	std::array<p3::app::SlotInfo, p3::app::kSaveSlots> slots{};
+
+	bool open() const { return screen != MenuScreen::Closed; }
+	bool slot_screen() const { return screen == MenuScreen::Save || screen == MenuScreen::Load; }
 };
 
-constexpr int kSettingsRows = 2;
+// The rows of the main screen, in order.
+enum MainRow { kRowContinue, kRowSave, kRowLoad, kRowOptions, kRowQuit, kMainRows };
+enum OptionRow { kRowFixGameBugs, kRowLanguage, kOptionRows };
 
-struct SettingsLayout {
-	static constexpr int kWidth = 560;
+int menu_rows(MenuScreen screen) {
+	switch (screen) {
+	case MenuScreen::Main:
+		return kMainRows;
+	case MenuScreen::Save:
+	case MenuScreen::Load:
+		return p3::app::kSaveSlots;
+	case MenuScreen::Options:
+		return kOptionRows;
+	default:
+		return 0;
+	}
+}
+
+// Where everything goes: the panel, its rows, the buttons at its foot (for
+// the touch screen: delete and back in the slots' screens, back in the
+// options) and the question's box with its two buttons.
+struct MenuLayout {
 	static constexpr int kPadding = 10;
 	SDL_Rect panel{};
 	int header_y = 0;
 	int rows_y = 0;
 	int row_height = 0;
-	explicit SettingsLayout(int line_height) {
-		row_height = 2 * line_height + 8;
-		const int height = kPadding * 3 + line_height + kSettingsRows * row_height + line_height;
-		panel = {(kScreenWidth - kWidth) / 2, (kScreenHeight - height) / 2, kWidth, height};
+	int rows = 0;
+	SDL_Rect delete_button{};
+	SDL_Rect back_button{};
+	SDL_Rect ask_box{};
+	SDL_Rect ok_button{};
+	SDL_Rect cancel_button{};
+
+	MenuLayout(int line_height, MenuScreen screen) {
+		rows = menu_rows(screen);
+		row_height = screen == MenuScreen::Options ? 2 * line_height + 8 : line_height + 10;
+		const bool buttons = screen != MenuScreen::Main;
+		const int width = screen == MenuScreen::Main ? 360 : 600;
+		const int button_height = line_height + 10;
+		const int height = kPadding * 3 + line_height + rows * row_height + (buttons ? button_height + kPadding : 0);
+		panel = {(kScreenWidth - width) / 2, (kScreenHeight - height) / 2, width, height};
 		header_y = panel.y + kPadding;
 		rows_y = header_y + line_height + kPadding;
+		const int buttons_y = rows_y + rows * row_height + kPadding;
+		const int button_width = (width - 3 * kPadding) / 2;
+		back_button = {panel.x + panel.w - kPadding - button_width, buttons_y, button_width, button_height};
+		delete_button = {panel.x + kPadding, buttons_y, button_width, button_height};
+		const int ask_width = 560;
+		const int ask_height = 4 * line_height + 4 * kPadding + button_height;
+		ask_box = {(kScreenWidth - ask_width) / 2, (kScreenHeight - ask_height) / 2, ask_width, ask_height};
+		const int ask_buttons_y = ask_box.y + ask_box.h - kPadding - button_height;
+		const int ask_button_width = (ask_width - 3 * kPadding) / 2;
+		ok_button = {ask_box.x + kPadding, ask_buttons_y, ask_button_width, button_height};
+		cancel_button = {ask_box.x + 2 * kPadding + ask_button_width, ask_buttons_y, ask_button_width, button_height};
 	}
+
 	int row_at(int x, int y) const {
 		if (x < panel.x || x >= panel.x + panel.w || y < rows_y) {
 			return -1;
 		}
 		const int row = (y - rows_y) / row_height;
-		return row < kSettingsRows ? row : -1;
+		return row < rows ? row : -1;
 	}
 };
 
-void draw_settings(SDL_Renderer* renderer, TextRenderer& text, const SettingsUi& ui,
-	const p3::app::AppSettings& settings) {
-	const SettingsLayout layout(text.line_height());
-	const SDL_Rect& panel = layout.panel;
-	const int left = panel.x + SettingsLayout::kPadding;
-	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 235);
-	SDL_RenderFillRect(renderer, &panel);
-	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
-	SDL_RenderDrawRect(renderer, &panel);
-	text.draw("Opciones", left, layout.header_y, kTextColor);
-	const std::string close = "Círculo: cerrar";
-	text.draw(close, panel.x + panel.w - SettingsLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
+// «13 de mayo de 1300 - Lübeck»: what a slot holds.
+std::string slot_description(const p3::app::SlotInfo& slot, const std::vector<std::string>& town_names) {
+	if (slot.damaged) {
+		return game_text(GameText::LoadDamaged, "No se puede cargar la partida.");
+	}
+	std::string text = game_date(slot.day, slot.month, slot.year);
+	if (slot.town_number >= 0 && slot.town_number < int(town_names.size())) {
+		text += " - " + town_names[size_t(slot.town_number)];
+	}
+	return text;
+}
 
-	const std::string rows[kSettingsRows][2] = {
-		{std::string("Corregir los fallos del juego: ") + (settings.fix_game_bugs ? "Sí" : "No"),
-			settings.fix_game_bugs ? "Con «No», el juego hace lo mismo que el original, fallos incluidos."
-								   : "Ahora se comporta como el original, fallos incluidos."},
-		{"Salir del juego", ""},
-	};
-	for (int i = 0; i < kSettingsRows; ++i) {
+std::string slot_label(const MenuUi& menu, int slot, const std::vector<std::string>& town_names) {
+	const p3::app::SlotInfo& info = menu.slots[size_t(slot)];
+	return std::to_string(slot + 1) + ". " + (info.used ? slot_description(info, town_names) : std::string("(vacía)"));
+}
+
+// The question's two lines, as the game has them.
+std::array<std::string, 2> menu_question(const MenuUi& menu, const std::vector<std::string>& town_names) {
+	switch (menu.ask) {
+	case MenuAsk::Overwrite: {
+		const std::string slot = slot_description(menu.slots[size_t(menu.row)], town_names);
+		return {game_text(GameText::OverwriteAsk, "¿Seguro que deseas sobrescribir"),
+			g_texts ? g_texts->format(GameText::OverwriteAskSavegame, {slot}) : "la partida guardada '" + slot + "'?"};
+	}
+	case MenuAsk::Delete:
+		return {game_text(GameText::DeleteAsk, "¿Seguro que quieres"),
+			game_text(GameText::DeleteAskSavegame, "borrar esta partida?")};
+	case MenuAsk::Quit:
+		return {game_text(GameText::QuitAsk, "¿Seguro que deseas"),
+			game_text(GameText::QuitAskGame, "abandonar la partida?")};
+	default:
+		return {"", ""};
+	}
+}
+
+void draw_panel_box(SDL_Renderer* renderer, const SDL_Rect& box, Uint8 alpha = 235) {
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 30, 22, 14, alpha);
+	SDL_RenderFillRect(renderer, &box);
+	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+	SDL_RenderDrawRect(renderer, &box);
+}
+
+void draw_menu(SDL_Renderer* renderer, TextRenderer& text, const MenuUi& menu, const p3::app::AppSettings& settings,
+	const std::vector<std::string>& town_names) {
+	const MenuLayout layout(text.line_height(), menu.screen);
+	const SDL_Rect& panel = layout.panel;
+	const int left = panel.x + MenuLayout::kPadding;
+	draw_panel_box(renderer, panel);
+	const std::string title = menu.screen == MenuScreen::Save ? game_text(GameText::MenuSaveGame, "Guardar partida")
+		: menu.screen == MenuScreen::Load ? game_text(GameText::MenuLoadGame, "Cargar partida")
+		: menu.screen == MenuScreen::Options ? game_text(GameText::MenuOptions, "Opciones")
+		: std::string(kTitle);
+	text.draw(title, left, layout.header_y, kTextColor);
+	const std::string hint = menu.screen == MenuScreen::Main ? "Círculo: cerrar" : "Círculo: atrás";
+	text.draw(hint, panel.x + panel.w - MenuLayout::kPadding - text.measure(hint), layout.header_y, kDimColor);
+
+	for (int i = 0; i < layout.rows; ++i) {
 		const int y = layout.rows_y + i * layout.row_height;
-		if (i == ui.row) {
+		if (i == menu.row) {
 			const SDL_Rect selected = {panel.x + 4, y - 2, panel.w - 8, layout.row_height - 4};
 			SDL_SetRenderDrawColor(renderer, 120, 90, 45, 160);
 			SDL_RenderFillRect(renderer, &selected);
 		}
-		text.draw(rows[i][0], left, y, kTextColor);
-		if (!rows[i][1].empty()) {
-			text.draw(rows[i][1], left + 12, y + text.line_height(), kDimColor);
+		std::string label;
+		std::string detail;
+		switch (menu.screen) {
+		case MenuScreen::Main: {
+			static const GameText kTexts[kMainRows] = {GameText::ButtonContinue, GameText::MenuSaveGame,
+				GameText::MenuLoadGame, GameText::MenuOptions, GameText::QuitGame};
+			static const char* const kFallbacks[kMainRows] = {"Continuar", "Guardar partida", "Cargar partida",
+				"Opciones", "Salir del juego"};
+			label = game_text(kTexts[i], kFallbacks[i]);
+			break;
+		}
+		case MenuScreen::Save:
+		case MenuScreen::Load:
+			label = slot_label(menu, i, town_names);
+			break;
+		case MenuScreen::Options:
+			if (i == kRowFixGameBugs) {
+				label = std::string("Corregir los fallos del juego: ") +
+					(settings.fix_game_bugs ? game_text(GameText::SettingOn, "Sí") : game_text(GameText::SettingOff, "No"));
+				detail = settings.fix_game_bugs ? "Con «No», el juego hace lo mismo que el original, fallos incluidos."
+												: "Ahora se comporta como el original, fallos incluidos.";
+			} else {
+				label = std::string("Idioma: ") + (settings.spanish ? "Español" : "English");
+				detail = "Los textos y los nombres del juego en ese idioma.";
+			}
+			break;
+		default:
+			break;
+		}
+		const bool empty_slot = menu.slot_screen() && !menu.slots[size_t(i)].used;
+		text.draw(label, left, y, empty_slot ? kDimColor : kTextColor);
+		if (!detail.empty()) {
+			text.draw(detail, left + 12, y + text.line_height(), kDimColor);
 		}
 	}
-	text.draw("X: cambiar o elegir", left, layout.rows_y + kSettingsRows * layout.row_height + 4, kDimColor);
+	if (menu.slot_screen()) {
+		draw_button(renderer, text, layout.delete_button,
+			"Cuadrado: " + game_text(GameText::DeleteSavegame, "Borrar partida"));
+	}
+	if (menu.screen != MenuScreen::Main) {
+		draw_button(renderer, text, layout.back_button, "Círculo: " + game_text(GameText::ButtonBack, "Atrás"));
+	}
+
+	if (menu.ask != MenuAsk::None) {
+		const std::array<std::string, 2> question = menu_question(menu, town_names);
+		draw_panel_box(renderer, layout.ask_box, 255);
+		int y = layout.ask_box.y + 2 * MenuLayout::kPadding;
+		for (const std::string& line : question) {
+			text.draw(line, layout.ask_box.x + (layout.ask_box.w - text.measure(line)) / 2, y, kTextColor);
+			y += text.line_height();
+		}
+		draw_button(renderer, text, layout.ok_button, "X: " + game_text(GameText::ButtonOk, "OK"));
+		draw_button(renderer, text, layout.cancel_button, "Círculo: " + game_text(GameText::ButtonCancel, "Cancelar"));
+	}
+}
+
+// A black screen with a line in the middle (loading a game).
+void show_loading_text(SDL_Renderer* renderer, TextRenderer* text, const std::string& line) {
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+	SDL_RenderClear(renderer);
+	if (text) {
+		text->draw(line, (kScreenWidth - text->measure(line)) / 2, kScreenHeight / 2, kTextColor);
+	}
+	SDL_RenderPresent(renderer);
 }
 
 // The command line (only on the PC: the Vita starts the viewer without one).
@@ -1619,11 +1819,16 @@ void print_usage() {
 		"(and p2arch0_spa.cpr for the Spanish version, optional); by default data/ and\n"
 		"the current folder. --cpr gives the English archive itself. The interface\n"
 		"texts come from the game's Patrician3.exe (English GOG 1.1 or Spanish), next\n"
-		"to the archive or given with --exe; without it, the viewer's own.\n"
+		"to the archive or given with --exe; without it, the viewer's own. The\n"
+		"language (an option: Spanish by default) chooses the Spanish archive mounted\n"
+		"or not, and the exe of that language among Patrician3_spa.exe or\n"
+		"Patrician3_eng.exe and Patrician3.exe.\n"
 		"\n"
-		"--fix-game-bugs on|off overrides the setting of the same name (the fixes to\n"
-		"the original game's bugs; on by default), which the settings screen (Start, or\n"
-		"Escape on the PC) keeps in p3vita-settings.txt in the data folder.\n"
+		"The menu (Start, or Escape on the PC) saves and loads the game in 8 slots\n"
+		"(savegames/ in the data folder: slotN.pat and slotN.pst, as the game writes\n"
+		"them) and has the options. --fix-game-bugs on|off overrides the option of the\n"
+		"same name (the fixes to the original game's bugs; on by default), which is\n"
+		"kept in p3vita-settings.txt in the data folder.\n"
 		"\n"
 		"With --steps or --screenshot it runs without a window: it plays the steps,\n"
 		"saves the screen into FILE.png at the end and quits.\n"
@@ -1729,8 +1934,17 @@ int main(int argc, char** argv) {
 	}
 	show_loading(renderer);
 
+	// The settings: the file, then the command line; scripted runs don't save them.
+	const std::string settings_file = p3::app::settings_path(options.data_dir);
+	p3::app::AppSettings settings = p3::app::load_settings(settings_file);
+	if (options.fix_game_bugs) {
+		settings.fix_game_bugs = std::string(options.fix_game_bugs) == "on";
+	}
+	p3::data::set_fix_game_bugs(settings.fix_game_bugs);
+
 	std::string tried;
-	auto archive = open_archive(options.data_dir, options.cpr, tried);
+	bool spanish_mounted = false;
+	auto archive = open_archive(options.data_dir, options.cpr, tried, settings.spanish, spanish_mounted);
 	const std::vector<int> template_ids = archive ? list_town_ids(*archive) : std::vector<int>{};
 	if (template_ids.empty()) {
 		const std::string message = archive
@@ -1745,7 +1959,7 @@ int main(int argc, char** argv) {
 
 	auto view = std::make_unique<TownView>(renderer, *archive);
 	std::unique_ptr<SeaMapView> sea;  // Se carga la primera vez que se abre.
-	const std::vector<std::string> town_names = load_town_names(*archive);
+	std::vector<std::string> town_names = load_town_names(*archive);
 	std::unique_ptr<TextRenderer> text;
 	std::unique_ptr<TextRenderer> small_text;
 	if (auto font = FontAtlas::load(*archive, kUiFont, kUiFontHeight)) {
@@ -1757,7 +1971,7 @@ int main(int argc, char** argv) {
 	MarketUi market;
 	HanseUi hanse;  // The Hanse panel (Square in a town).
 	SaveGame save;
-	const bool has_save = load_savegame(*archive, options.save ? options.save : kStartSave, save) && !save.towns.empty();
+	bool has_save = load_savegame(*archive, options.save ? options.save : kStartSave, save) && !save.towns.empty();
 	if (options.debug_state) {
 		std::string error;
 		if (!has_save || !p3::app::apply_debug_states(save, options.debug_state, error)) {
@@ -1769,40 +1983,19 @@ int main(int argc, char** argv) {
 	// To tell the player the result of each election of the Alderman.
 	int last_alderman = alderman(save);
 	uint32_t last_election = alderman_election_tick(save);
-	const std::vector<int> regions = load_town_regions(*archive);
-	const NameLists names = load_name_lists(*archive);
-	// The game's interface texts, from the executable of the installation
-	// (--exe, or Patrician3.exe next to the archive).
-	std::unique_ptr<GameTexts> game_texts;
-	{
-		std::vector<std::string> paths;
-		if (options.exe) {
-			paths.push_back(options.exe);
-		} else if (options.cpr) {
-			const std::string cpr = options.cpr;
-			const size_t slash = cpr.find_last_of('/');
-			paths.push_back((slash == std::string::npos ? "" : cpr.substr(0, slash + 1)) + "Patrician3.exe");
-		} else if (options.data_dir) {
-			const std::string dir = options.data_dir;
-			paths.push_back(dir + (dir.empty() || dir.back() == '/' ? "" : "/") + "Patrician3.exe");
-		} else {
-			for (const char* dir : kDataDirs) {
-				paths.push_back(std::string(dir) + "Patrician3.exe");
-			}
-		}
-		std::string error;
-		for (const std::string& path : paths) {
-			if ((game_texts = GameTexts::load(path, &error))) {
-				break;
-			}
-		}
+	std::vector<int> regions = load_town_regions(*archive);
+	NameLists names = load_name_lists(*archive);
+	// The game's interface texts, from the executable of the language (--exe,
+	// or in the data folder: see load_game_texts).
+	bool texts_matching = false;
+	std::unique_ptr<GameTexts> game_texts =
+		load_game_texts(options.exe, options.cpr, options.data_dir, settings.spanish, texts_matching);
 #ifndef __vita__
-		if (!game_texts && options.exe) {
-			std::fprintf(stderr, "--exe: %s; the viewer's own texts\n", error.c_str());
-		}
-#endif
+	if (!game_texts && options.exe) {
+		std::fprintf(stderr, "--exe: can't read %s; the viewer's own texts\n", options.exe);
 	}
-	const HanseContext hanse_context{town_names, names, regions, game_texts.get()};
+#endif
+	HanseContext hanse_context{town_names, names, regions, game_texts.get()};
 	g_texts = game_texts.get();
 	EndWindow end_window;  // When the player is elected Alderman.
 	MessageWindow messages;  // The game's messages to the player (a battle...).
@@ -1879,15 +2072,235 @@ int main(int argc, char** argv) {
 	bool reload = true;
 	bool keep_camera = false;
 	LiveTown live;  // The saved town on screen (Mode::Saved).
-	// The settings: the file, then the command line; scripted runs don't save them.
-	const std::string settings_file = p3::app::settings_path(options.data_dir);
-	p3::app::AppSettings settings = p3::app::load_settings(settings_file);
-	if (options.fix_game_bugs) {
-		settings.fix_game_bugs = std::string(options.fix_game_bugs) == "on";
-	}
-	p3::data::set_fix_game_bugs(settings.fix_game_bugs);
-	SettingsUi settings_ui;
 	bool running = true;
+	MenuUi menu;  // Start: the menu (saving and loading, the options, quitting).
+	const std::string saves_dir = p3::app::savegames_dir(options.data_dir);  // The player's saved games.
+	// Saves the game in play in the slot (as the game: it expires the old
+	// letters and updates the settings first).
+	auto save_game = [&](int slot) {
+		std::string error;
+		if (!p3::app::save_slot(saves_dir, slot, save, error)) {
+#ifndef __vita__
+			std::fprintf(stderr, "%s\n", error.c_str());
+#endif
+			notify("No se puede guardar la partida.");
+			return false;
+		}
+		notify("Partida guardada.");
+		return true;
+	};
+	// Replaces the game in play with the slot's: a new Sailing for it, and
+	// what the viewer keeps of the old one forgotten; the town on screen is
+	// the player's home town. On a failure the game in play stays.
+	auto load_game = [&](int slot) {
+		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, "Iniciando partida..."));
+		SaveGame loaded;
+		std::string error;
+		if (!p3::app::load_slot(*archive, saves_dir, slot, loaded, error) || loaded.towns.empty()) {
+#ifndef __vita__
+			std::fprintf(stderr, "%s\n", error.c_str());
+#endif
+			notify(game_text(GameText::LoadDamaged, "No se puede cargar la partida.") + " " +
+				game_text(GameText::LoadDamagedCannot, "El fichero está dañado."));
+			return false;
+		}
+		sailing.reset();  // It refers to the game it was made for.
+		save = std::move(loaded);
+		has_save = true;
+		if (!nav) {
+			nav = NavData::load(*archive);
+		}
+		if (nav) {
+			sailing = std::make_unique<Sailing>(save, *nav, load_sea_map_towns(*archive));
+			sailing->assign_loaded_routes();
+			sailing->set_texts(game_texts.get());
+			use_sailing(*sailing);
+		}
+		last_alderman = alderman(save);
+		last_election = alderman_election_tick(save);
+		market = MarketUi();
+		hanse = HanseUi();
+		messages = MessageWindow();
+		end_window = EndWindow();
+		fleet_index = 0;
+		live = LiveTown();
+		selection.mode = Mode::Saved;
+		const int home = save.player >= 0 ? save.merchants[size_t(save.player)].hometown() : 0;
+		selection.saved_index = size_t(home) < save.towns.size() ? size_t(home) : 0;
+		reload = true;
+		keep_camera = false;
+		clock = app_ticks();
+		notice.clear();
+		return true;
+	};
+	// Options: another language. The archive (with or without the Spanish
+	// one), the fonts, the names and the game's texts again, as at the start;
+	// the game in play stays as it is. Not if that language's files are
+	// missing (its archive, or its exe when the game's texts are in use).
+	int language_change = -1;  // 1 Spanish, 0 English, at the start of the next frame.
+	auto switch_language = [&](bool spanish) {
+		std::string tried_again;
+		bool mounted = false;
+		std::unique_ptr<CprArchive> next = open_archive(options.data_dir, options.cpr, tried_again, spanish, mounted);
+		if (!next || mounted != spanish) {
+			notify(spanish ? "Para el español falta p2arch0_spa.cpr en la carpeta de datos."
+						   : "Para el inglés falta p2arch0_eng.cpr en la carpeta de datos.");
+			return false;
+		}
+		bool matching = false;
+		std::unique_ptr<GameTexts> texts = load_game_texts(options.exe, options.cpr, options.data_dir, spanish, matching);
+		if (game_texts && !matching) {
+			notify(spanish ? "Para el español falta su Patrician3.exe (o Patrician3_spa.exe) en la carpeta de datos."
+						   : "Para el inglés falta su Patrician3.exe, como Patrician3_eng.exe, en la carpeta de datos.");
+			return false;
+		}
+		show_loading(renderer);
+		view.reset();  // It reads from the old archive.
+		sea.reset();
+		archive = std::move(next);
+		view = std::make_unique<TownView>(renderer, *archive);
+		town_names = load_town_names(*archive);
+		regions = load_town_regions(*archive);
+		names = load_name_lists(*archive);
+		if (auto font = FontAtlas::load(*archive, kUiFont, kUiFontHeight)) {
+			text = std::make_unique<TextRenderer>(renderer, std::move(font));
+		}
+		if (auto font = FontAtlas::load(*archive, kUiFont, kSmallFontHeight)) {
+			small_text = std::make_unique<TextRenderer>(renderer, std::move(font));
+		}
+		game_texts = std::move(texts);
+		g_texts = game_texts.get();
+		hanse_context.texts = game_texts.get();
+		if (sailing) {
+			sailing->set_texts(game_texts.get());
+		}
+		live = LiveTown();
+		reload = true;
+		keep_camera = true;
+		return true;
+	};
+	auto open_menu = [&](MenuScreen screen, int row) {
+		menu.screen = screen;
+		menu.row = row;
+		menu.ask = MenuAsk::None;
+		if (menu.slot_screen()) {
+			for (int i = 0; i < p3::app::kSaveSlots; ++i) {
+				menu.slots[size_t(i)] = p3::app::read_slot_info(saves_dir, i);
+			}
+		}
+	};
+	// Circle: from a screen to the main one (on its row), from the main one out.
+	auto menu_back = [&]() {
+		if (menu.screen == MenuScreen::Main) {
+			menu.screen = MenuScreen::Closed;
+			return;
+		}
+		open_menu(MenuScreen::Main, menu.screen == MenuScreen::Save ? kRowSave
+				: menu.screen == MenuScreen::Load                    ? kRowLoad
+																	 : kRowOptions);
+	};
+	// X: the selected row, or the question's OK.
+	auto menu_act = [&]() {
+		const int slot = std::clamp(menu.row, 0, p3::app::kSaveSlots - 1);
+		const bool used = menu.slots[size_t(slot)].used;
+		const MenuAsk ask = menu.ask;
+		menu.ask = MenuAsk::None;
+		if (ask == MenuAsk::Overwrite) {
+			if (save_game(slot)) {
+				menu.screen = MenuScreen::Closed;
+			}
+			return;
+		}
+		if (ask == MenuAsk::Delete) {
+			p3::app::delete_slot(saves_dir, slot);
+			open_menu(menu.screen, slot);  // The list again.
+			return;
+		}
+		if (ask == MenuAsk::Quit) {
+			running = false;
+			return;
+		}
+		switch (menu.screen) {
+		case MenuScreen::Main:
+			if (menu.row == kRowContinue) {
+				menu.screen = MenuScreen::Closed;
+			} else if (menu.row == kRowSave) {
+				if (has_save && save.player >= 0) {
+					open_menu(MenuScreen::Save, 0);
+				}
+			} else if (menu.row == kRowLoad) {
+				open_menu(MenuScreen::Load, 0);
+			} else if (menu.row == kRowOptions) {
+				open_menu(MenuScreen::Options, 0);
+			} else {
+				menu.ask = MenuAsk::Quit;
+			}
+			break;
+		case MenuScreen::Save:
+			if (used) {
+				menu.ask = MenuAsk::Overwrite;
+			} else if (save_game(slot)) {
+				menu.screen = MenuScreen::Closed;
+			}
+			break;
+		case MenuScreen::Load:
+			if (used && load_game(slot)) {
+				menu.screen = MenuScreen::Closed;
+			}
+			break;
+		case MenuScreen::Options:
+			if (menu.row == kRowFixGameBugs) {
+				settings.fix_game_bugs = !settings.fix_game_bugs;
+				p3::data::set_fix_game_bugs(settings.fix_game_bugs);
+				if (!script && !p3::app::save_settings(settings_file, settings)) {
+					std::fprintf(stderr, "can't save %s\n", settings_file.c_str());
+				}
+			} else {
+				language_change = settings.spanish ? 0 : 1;
+			}
+			break;
+		default:
+			break;
+		}
+	};
+	// Square in the slots' screens: delete the selected one (after asking).
+	auto menu_delete = [&]() {
+		if (menu.slot_screen() && menu.slots[size_t(std::clamp(menu.row, 0, p3::app::kSaveSlots - 1))].used) {
+			menu.ask = MenuAsk::Delete;
+		}
+	};
+	// With the menu open, every button is its own.
+	auto menu_button = [&](Uint8 button) {
+		if (menu.ask != MenuAsk::None) {
+			if (button == SDL_CONTROLLER_BUTTON_A) {
+				menu_act();
+			} else if (button == SDL_CONTROLLER_BUTTON_B || button == SDL_CONTROLLER_BUTTON_START) {
+				menu.ask = MenuAsk::None;
+			}
+			return;
+		}
+		const int rows = menu_rows(menu.screen);
+		switch (button) {
+		case SDL_CONTROLLER_BUTTON_DPAD_UP:
+		case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+			menu.row = (menu.row + rows + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1)) % rows;
+			break;
+		case SDL_CONTROLLER_BUTTON_A:
+			menu_act();
+			break;
+		case SDL_CONTROLLER_BUTTON_X:  // Square.
+			menu_delete();
+			break;
+		case SDL_CONTROLLER_BUTTON_B:
+			menu_back();
+			break;
+		case SDL_CONTROLLER_BUTTON_START:
+			menu.screen = MenuScreen::Closed;
+			break;
+		default:
+			break;
+		}
+	};
 	int camera_x = 0;
 	int camera_y = 0;
 	// Toque en curso: dónde empezó y cuánto se ha movido el dedo.
@@ -1901,43 +2314,23 @@ int main(int argc, char** argv) {
 				break;
 			}
 		}
+		if (language_change >= 0) {
+			const bool spanish = language_change == 1;
+			language_change = -1;
+			if (switch_language(spanish)) {
+				settings.spanish = spanish;
+				if (!script && !p3::app::save_settings(settings_file, settings)) {
+					std::fprintf(stderr, "can't save %s\n", settings_file.c_str());
+				}
+			}
+		}
 		// El mercado solo existe en las ciudades de la partida, con el jugador cargado.
 		const bool trading = market.open && selection.mode == Mode::Saved && save.player >= 0 && small_text;
 		const int town_index = int(selection.saved_index);
 		// The Hanse panel, in the save's towns like the market (never both open).
 		const bool in_hanse = hanse.open && !trading && selection.mode == Mode::Saved && save.player >= 0 && small_text;
 		const HanseView hanse_now = in_hanse ? hanse_view(save, town_index, hanse.page) : HanseView();
-		const bool in_settings = settings_ui.open && small_text;
-		auto settings_act = [&]() {
-			if (settings_ui.row == 0) {
-				settings.fix_game_bugs = !settings.fix_game_bugs;
-				p3::data::set_fix_game_bugs(settings.fix_game_bugs);
-				if (!script && !p3::app::save_settings(settings_file, settings)) {
-					std::fprintf(stderr, "can't save %s\n", settings_file.c_str());
-				}
-			} else {
-				running = false;
-			}
-		};
-		// With the settings open, every button is theirs.
-		auto settings_button = [&](Uint8 button) {
-			switch (button) {
-			case SDL_CONTROLLER_BUTTON_DPAD_UP:
-			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-				settings_ui.row = (settings_ui.row + kSettingsRows + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1)) %
-					kSettingsRows;
-				break;
-			case SDL_CONTROLLER_BUTTON_A:
-				settings_act();
-				break;
-			case SDL_CONTROLLER_BUTTON_B:
-			case SDL_CONTROLLER_BUTTON_START:
-				settings_ui.open = false;
-				break;
-			default:
-				break;
-			}
-		};
+		const bool in_menu = menu.open() && small_text;
 		auto hanse_select = [&](int step) {
 			const int rows = hanse_now.rows(hanse.page);
 			hanse.row = rows > 0 ? (hanse.row + rows + step) % rows : 0;
@@ -2025,7 +2418,9 @@ int main(int argc, char** argv) {
 
 		// Pasa el tiempo: los ticks que caben en el tiempo real transcurrido.
 		int ticks_run = 0;
-		if (sailing) {
+		if (sailing && in_menu) {
+			clock = app_ticks();  // The game stops while the menu is open.
+		} else if (sailing) {
 			const GameSpeed& speed = kGameSpeeds[game_speed];
 			const Uint32 now = app_ticks();
 			const Uint32 elapsed = now - clock;
@@ -2122,8 +2517,8 @@ int main(int argc, char** argv) {
 				}
 				break;
 			case SDL_CONTROLLERBUTTONDOWN:
-				if (in_settings) {
-					settings_button(event.cbutton.button);
+				if (in_menu) {
+					menu_button(event.cbutton.button);
 					break;
 				}
 				if (end_window.open) {
@@ -2198,17 +2593,18 @@ int main(int argc, char** argv) {
 						change_step(event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1);
 					}
 					break;
-				case SDL_CONTROLLER_BUTTON_START:  // The settings (and quitting).
-					settings_ui = {true, 0};
+				case SDL_CONTROLLER_BUTTON_START:  // The menu.
+					open_menu(MenuScreen::Main, kRowContinue);
 					break;
 				}
 				break;
 			case SDL_KEYDOWN:
-				if (in_settings) {
+				if (in_menu) {
 					const SDL_Keycode key = event.key.keysym.sym;
-					settings_button(key == SDLK_UP ? SDL_CONTROLLER_BUTTON_DPAD_UP
+					menu_button(key == SDLK_UP ? SDL_CONTROLLER_BUTTON_DPAD_UP
 						: key == SDLK_DOWN ? SDL_CONTROLLER_BUTTON_DPAD_DOWN
 						: key == SDLK_RETURN || key == SDLK_c ? SDL_CONTROLLER_BUTTON_A
+						: key == SDLK_DELETE || key == SDLK_d ? SDL_CONTROLLER_BUTTON_X
 						: key == SDLK_ESCAPE ? SDL_CONTROLLER_BUTTON_B
 						: SDL_CONTROLLER_BUTTON_INVALID);
 					break;
@@ -2297,7 +2693,7 @@ int main(int argc, char** argv) {
 					if (market.open) {
 						market.open = false;
 					} else {
-						settings_ui = {true, 0};  // The settings (and quitting).
+						open_menu(MenuScreen::Main, kRowContinue);
 					}
 					break;
 				}
@@ -2308,7 +2704,8 @@ int main(int argc, char** argv) {
 				touch_on_panel =
 					(trading && inside(MarketLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
 					(in_hanse && inside(HanseLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
-					(in_settings && inside(SettingsLayout(small_text->line_height()).panel, touch_start.x, touch_start.y));
+					(in_menu && (inside(MenuLayout(small_text->line_height(), menu.screen).panel, touch_start.x, touch_start.y) ||
+						menu.ask != MenuAsk::None));
 				break;
 			case SDL_FINGERMOTION:
 				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
@@ -2327,13 +2724,30 @@ int main(int argc, char** argv) {
 						selection.saved_index = size_t(town);
 					}
 				}
-				if (in_settings && touch_moved < kTapDistance) {
-					const int row = SettingsLayout(small_text->line_height()).row_at(touch_start.x, touch_start.y);
-					if (row >= 0) {
-						settings_ui.row = row;
-						settings_act();
-					} else if (!touch_on_panel) {
-						settings_ui.open = false;  // A tap outside closes it.
+				if (in_menu && touch_moved < kTapDistance) {
+					const MenuLayout layout(small_text->line_height(), menu.screen);
+					const int x = touch_start.x;
+					const int y = touch_start.y;
+					const int row = layout.row_at(x, y);
+					if (menu.ask != MenuAsk::None) {
+						if (inside(layout.ok_button, x, y)) {
+							menu_act();
+						} else if (inside(layout.cancel_button, x, y)) {
+							menu.ask = MenuAsk::None;
+						}
+					} else if (menu.screen != MenuScreen::Main && inside(layout.back_button, x, y)) {
+						menu_back();
+					} else if (menu.slot_screen() && inside(layout.delete_button, x, y)) {
+						menu_delete();
+					} else if (row >= 0) {
+						// In the slots' screens the first tap chooses and the second acts.
+						const bool act = !menu.slot_screen() || row == menu.row;
+						menu.row = row;
+						if (act) {
+							menu_act();
+						}
+					} else if (!inside(layout.panel, x, y)) {
+						menu_back();  // A tap outside goes back.
 					}
 				} else if (touch_on_panel && in_hanse && touch_moved < kTapDistance) {
 					const HanseLayout layout(small_text->line_height());
@@ -2495,8 +2909,8 @@ int main(int argc, char** argv) {
 		if (end_window.open && text && small_text) {
 			draw_end_window(renderer, *text, *small_text, end_window, hanse_context);
 		}
-		if (in_settings) {  // The options, on top of everything.
-			draw_settings(renderer, *small_text, settings_ui, settings);
+		if (in_menu) {  // The menu, on top of everything.
+			draw_menu(renderer, *small_text, menu, settings, town_names);
 		}
 		if (script && !script->screenshot().empty()) {
 			std::string error;
