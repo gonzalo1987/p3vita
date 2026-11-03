@@ -236,6 +236,12 @@ void fn_5311d0(uint32_t tick, uint8_t& day, uint8_t& month) {
 	day = uint8_t(uint8_t(d) - start + 1);
 }
 
+// The same with its third output, the year (a u16).
+void fn_5311d0(uint32_t tick, uint8_t& day, uint8_t& month, uint16_t& year) {
+	fn_5311d0(tick, day, month);
+	year = uint16_t((int32_t(tick) >> 8) / 365);
+}
+
 // 0x4F9360 (sobre el comerciante): ¿se presenta a alcalde? El jugador humano
 // según su [+0x118]; los de la IA, si no tienen [+0x8] & 4 (y lo apuntan en
 // [+0x118]).

@@ -146,7 +146,9 @@ change.
   `construction.cpp`, `convoys_members.cpp`: 9) and `events_rare.cpp` (21: the
   pirate hunt, the plague, the council, the Hanse leader's task and meeting,
   the extra tax, the theft, the monument and the expedition, with its report
-  0x63 in the game's texts). 41 left.
+  0x63 in the game's texts) and `events_towns.cpp` (14: the debts' notices and
+  the impounding, the feast, the wedding, the fires, a new office, a captain).
+  27 left.
 - [ ] **10 in functions p3vita names but skips whole**: the mission
   interpreter 0x4ECF64 (5; three with a letter the script builds), the
   alderman's notification 0x5299F0 (2), the convoy's automatic route

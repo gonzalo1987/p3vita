@@ -80,6 +80,18 @@ Scenarios:
              object (nothing found); 2 posts with a contract of the player
              each, signed before by calling 0x52C6C0 (traded with). The
              report 0x63 with the texts of 0x4E6A54, 0x52BFE0 and 0x52C6C0
+  debts_notices events 0x01 (0x4DB4E0) with [+0x12] (only the notices):
+             the player owes (0x12), he is repaid (0x26, [+0xC] a tick with
+             its low byte 0) and the notice 0x79 to him as the creditor
+  debts_office, debts_ship, debts_partial: the player owes 5000 to a town
+             (an event 0x01 in the next tick; 0x4F6570): without money and
+             with beer in his office there (0x13 by the office), without
+             money and with beer on his ship in that port and his office
+             there empty (by the ship), and with 1000 in a town where he
+             has neither (part of it in money). Record 4d85c0
+  captain    the operation 0x12 for the player's first ship with a captain
+             (+60 to his skills; 0x538A80): if his [+0xC] rises, the letter
+             0x4D. Record 535760
 """
 import argparse
 import os
@@ -516,6 +528,87 @@ def expedition_contract(o, rec):
     w32(o, convoy + 0x20, 10000000)
 
 
+def debt_event(o, tick, amount, creditor, debtor, town, notice=0, due=0, extra=(0, 0)):
+    e = new_event(o, tick, 0x01)
+    w32(o, e + 8, amount)
+    w32(o, e + 0xC, due)
+    w8(o, e + 0x10, creditor)
+    w8(o, e + 0x11, debtor)
+    w8(o, e + 0x12, notice)
+    w8(o, e + 0x14, town)
+    w8(o, e + 0x15, extra[0])
+    w8(o, e + 0x17, extra[1])
+    return e
+
+
+def debts_notices(o, rec):
+    m = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(m) + 0x19)
+    now = o.u32(WORLD + 0x14)
+    debt_event(o, now + 1, 12345, 0xFF, m, home, notice=1, due=now + 0x1234)  # 0x12 to the debtor
+    debt_event(o, now + 2, 23456, m, 0xFF, home, notice=1, due=(now + 0x2000) & ~0xFF)  # 0x26: repaid
+    debt_event(o, now + 3, 0x31234, m, 0xFF, home, notice=1, due=now + 0x3001, extra=(0x15, 0x27))  # 0x79
+    print(f'events 0x01 with [+0x12]: the player {m} owes; he is repaid; a notice 0x79 to him')
+
+
+def player_debt(o, town, money, amount):
+    m = o.u32(to.PLAYER)
+    w32(o, o.merchant(m), money)
+    debt_event(o, o.u32(WORLD + 0x14) + 1, amount, 0xFF, m, town)
+    print(f'the player {m} with {money} owes {amount} to the town {town}')
+
+
+def debts_office(o, rec):
+    m = o.u32(to.PLAYER)
+    office = player_offices(o, m)[0]
+    w32(o, o.office(office) + 4 + 4 * 3, 4000)  # beer: something to sell
+    player_debt(o, o.u8(o.office(office) + 0x2C6), 0, 5000)
+
+
+def debts_ship(o, rec):
+    m = o.u32(to.PLAYER)
+    ships = o.counts()[3]
+    s = o.u16(o.merchant(m) + 0xE)
+    while s < ships and o.u16(o.ship(s) + 0x134) >= 0xC:
+        s = o.u16(o.ship(s) + 4)
+    if s >= ships:
+        print('no ship of the player in a port')
+        return
+    town = o.u8(o.ship(s) + 0x39)
+    for office in player_offices(o, m):
+        if o.u8(o.office(office) + 0x2C6) == town:
+            for w in range(24):
+                w32(o, o.office(office) + 4 + 4 * w, 0)
+    w32(o, o.ship(s) + 0x54 + 4 * 3, 4000)
+    print(f'ship {s} in town {town} with beer')
+    player_debt(o, town, 0, 5000)
+
+
+def debts_partial(o, rec):
+    towns, _, _, ships = o.counts()
+    m = o.u32(to.PLAYER)
+    busy = {o.u8(o.office(f) + 0x2C6) for f in player_offices(o, m)}
+    s = o.u16(o.merchant(m) + 0xE)
+    while s < ships:
+        busy.add(o.u8(o.ship(s) + 0x39))
+        s = o.u16(o.ship(s) + 4)
+    town = next(t for t in range(towns) if t not in busy)
+    player_debt(o, town, 1000, 5000)
+
+
+def captain(o, rec):
+    m = o.u32(to.PLAYER)
+    ships, captains = o.counts()[3], o.u16(to.SHIPS + 0xF2)
+    s = o.u16(o.merchant(m) + 0xE)
+    while s < ships and o.u16(o.ship(s) + 0x42) >= captains:
+        s = o.u16(o.ship(s) + 4)
+    if s >= ships:
+        print('no ship of the player with a captain')
+        return
+    o.tick_operations.append(struct.pack('<5I', 0x12, s, 60, 60, 0))
+    print(f'operation 0x12 for the player\'s ship {s} (captain {o.u16(o.ship(s) + 0x42)})')
+
+
 def expedition_lost(o, rec):
     convoy, members = expedition(o, rec)
     w32(o, o.ship(members[0]) + 0x18, 10)
@@ -529,7 +622,8 @@ def expedition_lost(o, rec):
 SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, commission, hulk, wall_bill, convoy_fees,
                                      pirate_hunt, council, hanse_task, hanse_task_ai, expedition, expedition_lost,
                                      expedition_four, expedition_villages, expedition_new_world, expedition_nothing,
-                                     expedition_contract)}
+                                     expedition_contract, debts_notices, debts_office, debts_ship, debts_partial,
+                                     captain)}
 
 
 def main():

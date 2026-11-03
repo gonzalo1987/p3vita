@@ -95,9 +95,6 @@ uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick);
 int16_t fn_4f73d0(const SaveGame& save, int merchant);
 bool fn_4fe150(const CaptainMemory& c);
 }  // namespace events_detail
-namespace events_mayor_detail {
-void fn_5311d0(uint32_t tick, uint8_t& day, uint8_t& month);
-}  // namespace events_mayor_detail
 namespace merchants_detail {
 uint8_t fn_4f9430(const SaveGame& save, int merchant);
 }  // namespace merchants_detail
@@ -2368,8 +2365,7 @@ std::string place_text(uint32_t place) {
 
 // 0x5311D0 with the year too ((tick >> 8) / 365 into a u16).
 void report_date(uint32_t tick, uint8_t& day, uint8_t& month, uint16_t& year) {
-	events_mayor_detail::fn_5311d0(tick, day, month);
-	year = uint16_t((int32_t(tick) >> 8) / 365);
+	events_mayor_detail::fn_5311d0(tick, day, month, year);
 }
 
 // Generador de números del juego (0x46C320 crea, 0x46C340 siembra, 0x46C380

@@ -174,12 +174,22 @@ namespace events_towns_detail {
 // ciudad la mercancía de su oficina en ella (de la 23 a la 0) o, si no tiene
 // nada en la oficina, la de su primer barco que esté en la ciudad (estado <
 // 0xC) que dé algo sin pasar de 65000 en total. Lo que sobra vuelve a su
-// dinero. `amount` queda con lo que falta. No se traducen los mensajes.
+// dinero. `amount` queda con lo que falta. Each way of paying sends the
+// letter 0x13 (the impounding) to `me`: [+0x5] the town; [+0xA] 0 money, 1
+// the office's wares, 2 a ship's cargo; [+0xB] 1 when it is all paid; u32
+// [+0xC] what was taken; u16 [+0x8] the ship's name [+0x15E]. With money
+// enough, always (0x4F6618); with the office, to a human merchant
+// (0x4F66FA); with a ship, always (0x4F68A3); with part of it in money and
+// nothing else, to a human merchant (0x4F6818). The ticker lines (0x548CA0,
+// kind 0x15) are the interface's.
 void fn_4f6570(SaveGame& save, int merchant, int32_t& amount, uint8_t me, uint8_t town) {
 	MerchantMemory& m = merchant_of(save, uint32_t(merchant));
 	TownMemory& t = town_of(save, town);
-	uint32_t paid = 0;  // [esp+0x30]
-	uint8_t sold = 0;  // [esp+0x2E] (el objeto del mensaje, 0x51A850, lo deja a 0)
+	Letter letter(0x13);  // [esp+0x24]: the letter's fields are the state
+	letter.entry.u8(5) = town;
+	uint32_t& paid = letter.entry.u32(0xC);  // [esp+0x30]
+	uint8_t& sold = letter.entry.u8(0xA);  // [esp+0x2E]
+	uint8_t& settled = letter.entry.u8(0xB);  // [esp+0x2F]
 	if (amount <= 0) {
 		return;
 	}
@@ -187,11 +197,16 @@ void fn_4f6570(SaveGame& save, int merchant, int32_t& amount, uint8_t me, uint8_
 	if (money > 0) {
 		if (money >= amount) {
 			m.s32(0) = int32_t(uint32_t(money) - uint32_t(amount));
+			paid = uint32_t(amount);
+			settled = 1;
 			amount = 0;
+			send_letter(save, me, letter);
 			return;
 		}
 		amount = int32_t(uint32_t(amount) - uint32_t(money));
-		paid = uint32_t(money) & 0xFFFF;
+		// A game bug: only the money's low 16 bits go into the letter.
+		// Fixed: all of it.
+		paid = fix_game_bugs() ? uint32_t(money) : uint32_t(money) & 0xFFFF;
 		m.s32(0) = 0;
 	}
 	const int office = facilities_detail::fn_5308a0(save, me, town);
@@ -215,9 +230,14 @@ void fn_4f6570(SaveGame& save, int merchant, int32_t& amount, uint8_t me, uint8_
 		if (sold == 1) {
 			if (amount <= 0) {
 				m.s32(0) = int32_t(uint32_t(m.s32(0)) - uint32_t(amount));
+				paid += uint32_t(amount);
+				settled = 1;
 				amount = 0;
 			}
-			return;  // (con un jugador humano, mensajes)
+			if (m.u16(8) == 0) {
+				send_letter(save, me, letter);
+			}
+			return;
 		}
 	}
 	for (uint32_t s = m.u16(0xE); s < ship_count(save); s = ship_of(save, s).u16(4)) {
@@ -246,16 +266,21 @@ void fn_4f6570(SaveGame& save, int merchant, int32_t& amount, uint8_t me, uint8_
 		}
 		if (sold == 2) {
 			if (amount <= 0) {
+				paid += uint32_t(amount);
+				settled = 1;
 				m.s32(0) = int32_t(uint32_t(m.s32(0)) - uint32_t(amount));
 				amount = 0;
 			}
-			// (mensaje)
+			letter.entry.u16(8) = ship.u16(0x15E);
+			send_letter(save, me, letter);
 			ship_ai_detail::fn_517770(save, int(s), 4);
 			recalculate_cargo(save.ships[s]);  // 0x5182B0
 			return;
 		}
 	}
-	(void)paid;  // (con un jugador humano y algo cobrado, mensajes)
+	if (paid > 0 && m.u16(8) == 0) {
+		send_letter(save, me, letter);
+	}
 }
 
 // 0x4DB4E0 (evento 0x01): la deuda [+0x8] del comerciante [+0x11] con el
@@ -275,18 +300,58 @@ uint32_t fn_4db4e0(SaveGame& save, uint16_t event) {
 	}
 	const uint32_t merchants = merchant_count(save);
 	if (e.u8(0x12) != 0) {
-		// Comprobado solo con estados retocados.
+		// Comprobado solo con estados retocados. The notices (the letter
+		// [esp+0x14], 0x4DB567..0x4DB6C7): [+0x5] the town [+0x14], u16
+		// [+0x8] the amount's low half; 0x26 and 0x12 with the date of the
+		// tick [+0xC] (day [+0xE], month [+0xC], u16 year [+0xA]); 0x79 with
+		// u8 [+0xC] the amount's bits 16 and 17 << 6 | [+0x15], [+0xD]
+		// [+0x17], u16 [+0xA] the event's index, [+0xE], [+0xF] the
+		// creditor's names.
+		Letter letter;
+		letter.entry.u8(5) = e.u8(0x14);
+		letter.entry.u16(8) = e.u16(8);
+		auto date = [&]() {
+			uint8_t day = 0;
+			uint8_t month = 0;
+			uint16_t year = 0;
+			events_mayor_detail::fn_5311d0(e.u32(0xC), day, month, year);
+			letter.entry.u8(0xE) = day;
+			letter.entry.u8(0xC) = month;
+			letter.entry.u16(0xA) = year;
+		};
 		if (e.u8(0x11) < merchants) {
-			e.u8(0x12) = 0;  // (con un jugador humano, mensaje)
+			// The debtor's notice 0x12, to him if human.
+			if (merchant_of(save, e.u8(0x11)).u16(8) == 0) {
+				letter.entry.u8(4) = 0x12;
+				date();
+				send_letter(save, e.u8(0x11), letter);
+			}
+			e.u8(0x12) = 0;
 		} else {
 			const uint32_t creditor = e.u8(0x10);
 			if (creditor >= merchants) {
 				return 0;  // El juego no lo mira (0x5303C0 no comprueba el índice).
 			}
+			MerchantMemory& c = merchant_of(save, creditor);
 			if (e.u8(0xC) == 0) {
-				MerchantMemory& c = merchant_of(save, creditor);
+				// Repaid: the letter 0x26 to a human creditor.
+				if (c.u16(8) == 0) {
+					letter.entry.u8(4) = 0x26;
+					date();
+					send_letter(save, int32_t(creditor), letter);
+				}
 				c.s32(0) = int32_t(uint32_t(c.s32(0)) + e.u32(8));
 				return 0;
+			}
+			if (c.u16(8) == 0) {
+				// The letter 0x79 to a human creditor.
+				letter.entry.u8(4) = 0x79;
+				letter.entry.u16(0xA) = save.globals.u16(kEventHead);
+				letter.entry.u8(0xC) = uint8_t(((int32_t(e.u32(8)) >> 10) & 0xC0) | e.u8(0x15));
+				letter.entry.u8(0xD) = e.u8(0x17);
+				letter.entry.u8(0xE) = c.u8(0x1C);
+				letter.entry.u8(0xF) = c.u8(0x1D);
+				send_letter(save, int32_t(creditor), letter);
 			}
 			e.u8(0x12) = 0;
 		}
@@ -449,7 +514,7 @@ void fn_504970(SaveGame& save) {
 // gana `add9` en [+0x9] y `add_ab` en [+0xA] y [+0xB] (el juego usa [+0xC] de
 // la operación para los dos), sin pasar del tope de 0x673B34 que le toca por
 // los bits 0-1, 2-3 y 4-5 de su número; y su [+0xC] se recalcula (0x4FE190).
-// No se traduce el mensaje al jugador si [+0xC] sube.
+// If [+0xC] rises, a human owner gets the letter 0x4D.
 void fn_538a80(SaveGame& save, uint32_t ship, uint8_t add9, uint8_t add_ab) {
 	static constexpr uint8_t kCaps[4] = {0xFA, 0xC8, 0xFA, 0x96};  // 0x673B34
 	if (ship >= ship_count(save)) {
@@ -468,7 +533,24 @@ void fn_538a80(SaveGame& save, uint32_t ship, uint8_t add9, uint8_t add_ab) {
 	raise(9, add9, kCaps[index & 3]);
 	raise(0xA, add_ab, kCaps[(index >> 2) & 3]);
 	raise(0xB, add_ab, kCaps[(index >> 4) & 3]);
+	const uint16_t before = c.u16(0xC);
 	events_detail::fn_4fe190(c);
+	const ShipMemory& s = ship_of(save, ship);
+	const uint32_t owner = s.u8(0);
+	if (c.u16(0xC) <= before || owner >= merchant_count(save) || merchant_of(save, owner).u16(8) != 0) {
+		return;
+	}
+	// The captain got better: the letter 0x4D to a human owner
+	// (0x538B97..0x538C16): [+0x5] the ship's town [+0x39] (if it is one, else
+	// the owner's home town); u16 [+0x8], [+0xA] the captain's names, [+0xC]
+	// the ship's name [+0x15E], [+0xE] the captain's new [+0xC].
+	Letter letter(0x4D);
+	letter.entry.u8(5) = s.u8(0x39) < town_count(save) ? s.u8(0x39) : merchant_of(save, owner).u8(0x19);
+	letter.entry.u16(8) = c.u8(2);
+	letter.entry.u16(0xA) = c.u8(3);
+	letter.entry.u16(0xC) = s.u16(0x15E);
+	letter.entry.u16(0xE) = c.u16(0xC);
+	send_letter(save, int32_t(owner), letter);
 }
 
 // 0x4DCEA0 (thiscall sobre la cola, con el evento 0x03 de la cabeza): los
@@ -922,8 +1004,8 @@ int32_t fn_5004c0(SaveGame& save, int office, uint16_t n) {
 // 100: c, las mercancías de la fiesta (0x6734E8) que su oficina tiene para
 // todos; la oficina gasta para habitantes · (c · k / 6, de 2 a 99) / 100
 // invitados (al menos 5; 0x5004C0); con c > 1 la ciudad apunta la fiesta; y
-// su reputación sube c / 2 (0x4F8EB0). La carta 0x24 (0x4D6530) y, con c >=
-// 2 y [+0x10] != 0, el mensaje y la ventana no se reproducen.
+// su reputación sube c / 2 (0x4F8EB0), y the letter 0x24. Con c >=
+// 2 y [+0x10] != 0, el mensaje (0x548CA0) y la ventana no se reproducen.
 void fn_4e23a4(SaveGame& save, uint16_t event) {
 	const Event& e = save.events[event];
 	const int office = facilities_detail::fn_5308a0(save, e.u16(8), e.u16(0xC));
@@ -967,6 +1049,15 @@ void fn_4e23a4(SaveGame& save, uint16_t event) {
 		town_of(save, town).u32(0x2D0) = save.globals.u32(kTick);
 	}
 	fn_4f8eb0(save, int(merchant), town, count >> 1);
+	// The letter 0x24 (0x4E2543..0x4E2570): [+0x5] the town; u16 [+0x8] the
+	// event's [+0x10], [+0xA] the guests paid for, [+0xC] the reputation
+	// gained.
+	Letter letter(0x24);
+	letter.entry.u8(5) = e.u8(0xC);
+	letter.entry.u16(8) = e.u16(0x10);
+	letter.entry.u16(0xA) = uint16_t(spent);
+	letter.entry.u16(0xC) = uint16_t(count >> 1);
+	send_letter(save, int32_t(merchant), letter);
 }
 
 // 0x4DCA90: una plaga (operación 0x7C) en una ciudad al azar sin [0x2C8] & 8,
@@ -1140,7 +1231,8 @@ constexpr uint8_t kDowry[12][2] = {{0, 0xFF}, {0, 0xFF}, {0, 0xFF}, {0, 0xFF}, {
 // 170 / its price, at most a quarter of the hold), whole barrels or loads,
 // minimum crew and hold (0x5182B0). Then the event becomes the wedding feast
 // (an event 0x07 for the merchant in his home town with [+0x10] = 0) and
-// stays. The letters and the window are not reproduced. Returns whether it
+// stays. The letters 0x23 (the chronicle) and 0x25 (the dowry) go; the
+// ticker line and the window are not reproduced. Returns whether it
 // stays.
 bool fn_4e7c74(SaveGame& save, uint16_t event) {
 	const uint32_t merchant = save.events[event].u8(0x15);
@@ -1160,6 +1252,19 @@ bool fn_4e7c74(SaveGame& save, uint16_t event) {
 	m.u8(0x31) = e.u8(0x12);
 	m.u8(0x32) = e.u8(0x13);
 	m.u8(0x33) = e.u8(0x14);
+	// The wedding's news 0x23 to the chronicle (0x4E7D10..0x4E7DA1): [+0x5]
+	// his home town; u16 [+0x8] the merchant, [+0xA] [+0x10] << 8 + [+0x11],
+	// [+0xC] [+0x12], [+0xE] an age in years, the low byte: the bride's
+	// ([+0xC] days) if the merchant's [+0x1A] is set, else his own (from his
+	// [+0x10]).
+	Letter letter(0x23);
+	letter.entry.u8(5) = m.u8(0x19);
+	letter.entry.u16(8) = e.u8(0x15);
+	letter.entry.u16(0xA) = uint16_t((e.u8(0x10) << 8) + e.u8(0x11));
+	letter.entry.u16(0xC) = e.u8(0x12);
+	letter.entry.u16(0xE) = m.u8(0x1A) != 0 ? uint8_t(int32_t(e.u16(0xC)) / 365)
+	                                        : uint8_t((now - m.u32(0x10)) / 0x16D00);
+	send_letter(save, kLetterToChronicle, letter);
 	int32_t fleet = 0;
 	for (uint32_t s = m.u16(0xE); s < ship_count(save); s = ship_of(save, s).u16(4)) {
 		fleet += ship_of(save, s).s32(0x10) / 40000;
@@ -1178,7 +1283,9 @@ bool fn_4e7c74(SaveGame& save, uint16_t event) {
 		ShipMemory& s = ship_of(save, index);
 		s.s32(0x18) = s.s32(0x14) >> 5;
 		s.s32(0x18) = ((int32_t(e.u8(0x13)) - int32_t(e.u8(0x14))) * 3 + 0x17) * s.s32(0x18);
-		auto load = [&](uint32_t w, int32_t value, int32_t most) {
+		// Each load also goes into the dowry letter's u16 [+0xC + 2·c] (the
+		// first sets it, the second adds): in barrels, the loads as 10 each.
+		auto load = [&](uint32_t w, int32_t value, int32_t most) -> uint16_t {
 			int32_t amount = int32_t(ftol(double(float(value)) / double(ware_base_price(int(w)))));
 			if (amount < 100) {
 				amount = 0;
@@ -1186,23 +1293,36 @@ bool fn_4e7c74(SaveGame& save, uint16_t event) {
 				amount = most;
 			}
 			const int32_t unit = kFineUnit[w] ? 200 : 2000;
-			s.s32(0x54 + 4 * w) = amount / unit * unit;
+			const int32_t units = amount / unit;
+			s.s32(0x54 + 4 * w) = units * unit;
+			return uint16_t(unit == 200 ? units : uint16_t(units) * 10);
 		};
+		uint16_t& carried = letter.entry.u16(0xC + 2 * size_t(c));
 		const uint32_t first = e.u8(0xE) & 0xF;
 		const int32_t room = recalculate_cargo(save.ships[index]);
 		if (room <= 0) {
 			s.s32(0x54 + 4 * first) = 0;  // Sin comprobar con el oráculo.
+			carried = 0;
 		} else {
-			load(first, ((int32_t(index) & 0xF) + 0xF) * 170, s.s32(0x10) >> 1);
+			carried = load(first, ((int32_t(index) & 0xF) + 0xF) * 170, s.s32(0x10) >> 1);
 		}
 		uint32_t second = e.u8(0xE) >> 4;
 		if (second == first) {
 			second = first == 0xC ? 3 : 0xC;
 		}
-		load(second, (int32_t(now & 0xF) + 0xF) * 170, s.s32(0x10) >> 2);
+		carried = uint16_t(carried + load(second, (int32_t(now & 0xF) + 0xF) * 170, s.s32(0x10) >> 2));
 		s.u16(0x40) = kMinCrew[s.u8(0xE) & 3];
 		recalculate_cargo(save.ships[index]);
 	}
+	// The dowry 0x25 to the merchant (0x4E7DB1, 0x4E80D5..0x4E80E5): the same
+	// letter with [+0x5] the town [+0x12], u16 [+0x8], [+0xA] the two ships'
+	// types (0xFF none) and [+0xC], [+0xE] their cargo (above; without the
+	// ship, as for 0x23).
+	letter.entry.u8(4) = 0x25;
+	letter.entry.u8(5) = save.events[event].u8(0x12);
+	letter.entry.u16(8) = dowry[0];
+	letter.entry.u16(0xA) = dowry[1];
+	send_letter(save, int32_t(merchant), letter);
 	Event& feast = save.events[event];
 	feast.u16(6) = 7;
 	feast.u32(8) = merchant;
@@ -1225,8 +1345,8 @@ constexpr uint8_t kFlammable[0x39] = {0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
 // mercancías que más hay (en empate, la de índice menor; si hay menos de
 // tres, la que menos): un tercio de lo que se pierde de la tercera, la
 // mitad de lo que queda de la segunda y el resto de la primera, en unidades
-// enteras (cargas o barriles; como mucho 200 y lo que hay). La carta 0x75 al
-// comerciante no se reproduce.
+// enteras (cargas o barriles; como mucho 200 y lo que hay). The owner gets
+// the letter 0x75 with what was lost.
 void fn_500c30(SaveGame& save, int office) {
 	OfficeMemory& o = save.offices[size_t(office)].memory;
 	const int32_t stores = o.u16(0x2EC);
@@ -1258,6 +1378,12 @@ void fn_500c30(SaveGame& save, int office) {
 			top[k] = w;
 		}
 	}
+	// The letter 0x75 (0x500E4C..0x500E8F) keeps the three wares in u16 [+0x8],
+	// [+0xA], [+0xC] (top[0..2]): each becomes ware << 8 + the units lost, or
+	// 0xFF00 if none; with something lost it goes to the owner with [+0x5]
+	// the town and u16 [+0xE] his [+0x1C] << 8 + [+0x1D].
+	Letter letter(0x75);
+	bool lost = false;
 	for (int k = 2; k >= 0; --k) {
 		const uint32_t w = top[k];
 		int32_t share = loss / (k + 1);
@@ -1270,10 +1396,21 @@ void fn_500c30(SaveGame& save, int office) {
 			units = 0xC8;
 		}
 		const int32_t amount = units * unit;
+		letter.entry.u16(8 + 2 * k) = uint16_t((w << 8) + uint8_t(units));
 		if (amount > 0) {
 			o.s32(4 + 4 * w) -= amount;
 			loss -= amount;
+			lost = true;
+		} else {
+			letter.entry.u16(8 + 2 * k) = 0xFF00;
 		}
+	}
+	if (lost) {
+		const uint16_t owner = o.u16(0x2C4);
+		const MerchantMemory& m = merchant_of(save, owner);
+		letter.entry.u8(5) = o.u8(0x2C6);
+		letter.entry.u16(0xE) = uint16_t((m.u8(0x1C) << 8) + m.u8(0x1D));
+		send_letter(save, owner, letter);
 	}
 }
 
@@ -1294,7 +1431,7 @@ void fn_500c30(SaveGame& save, int office) {
 // las torres pierde 51 de vida (con más de 50) o 1, y con 0 se borra
 // (0x521240). Sin nada que extender ni que arda, la ciudad pierde el bit
 // 0x8000 de [0x2C8] y se quita; si no, lo tiene (con el aviso 0x59 la primera
-// vez, que no se reproduce) y vuelve. Los gráficos de la ciudad que se ve no
+// vez: the news to the chronicle) y vuelve. Los gráficos de la ciudad que se ve no
 // se reproducen. Devuelve si sigue.
 bool fn_4e9564(SaveGame& save, uint16_t event) {
 	const uint32_t town = save.events[event].u8(0x12);
@@ -1388,6 +1525,16 @@ bool fn_4e9564(SaveGame& save, uint16_t event) {
 	if (e.u16(0xE) <= e.u16(0xC) && t.u16(0x76A) == 0xFFFF) {
 		t.u32(0x2C8) &= ~0x8000u;
 		return false;
+	}
+	if (!(t.u32(0x2C8) & 0x8000)) {
+		// The first time, the news 0x59 to the chronicle (0x4E9957..0x4E998A):
+		// [+0x5] and u16 [+0x8] the town ([+0x2C0]). Then, if it is the local
+		// player's home town, the notices to each human merchant (0x548CA0,
+		// kind 0x14) and the window: the interface's.
+		Letter letter(0x59);
+		letter.entry.u8(5) = t.u8(0x2C0);
+		letter.entry.u16(8) = t.u8(0x2C0);
+		send_letter(save, kLetterToChronicle, letter);
 	}
 	t.u32(0x2C8) |= 0x8000;
 	return true;
@@ -1752,7 +1899,7 @@ void fn_4febd0(OfficeMemory& o, bool has_offices) {
 // la ciudad o, si no la tiene, una nueva de la lista de libres ([0x6DE51E];
 // si no queda, 0x20 más o 0x40 si no había ninguna), al principio de las
 // listas del comerciante ([+0xC]) y de la ciudad ([0x784]), con [0x2C0] = el
-// tick. Devuelve su índice, o -1. No se traduce lo de la interfaz (mensaje,
+// tick, and the news 0x0D. Devuelve su índice, o -1. No se traduce lo de la interfaz (mensaje,
 // lista de ciudades del jugador *0x6CBDD8, escena del puerto *0x6E51AC).
 int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town) {
 	const int existing = facilities_detail::fn_5308a0(save, merchant, town);
@@ -1794,6 +1941,32 @@ int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town) {
 	o.u16(0x2CA) = t.u16(0x784);
 	t.u16(0x784) = index;
 	o.u32(0x2C0) = g.u32(kTick);
+	// The news 0x0D (0x530B2F..0x530C53): [+0x5] the town; u16 [+0x8] the
+	// merchant, [+0xA] how many offices he has, [+0xC] how many the town has
+	// (each count stops past the towns' or the merchants' number), [+0xE]
+	// his rank at home << 4 + his title & 0xF (0x4F9430). To the chronicle,
+	// for a human merchant or without the world's [+0x8A]; and only if the
+	// new office's index is not below the number of merchants (it looks like
+	// a game bug: an office's index taken for a merchant's; the news of the
+	// offices with low indices is never written). Fixed: whatever the index.
+	auto chain = [&](uint32_t first, size_t link, uint32_t cap) {
+		uint16_t n = 0;
+		for (uint32_t i = first; i < g.u16(kOfficeCount); i = save.offices[i].memory.u16(link)) {
+			if (n++ > cap) {
+				break;
+			}
+		}
+		return n;
+	};
+	Letter letter(0x0D);
+	letter.entry.u8(5) = uint8_t(town);
+	letter.entry.u16(8) = uint16_t(merchant);
+	letter.entry.u16(0xA) = chain(m.u16(0xC), 0x2C8, town_count(save));
+	letter.entry.u16(0xE) = uint16_t((m.u8(0x39C + m.u8(0x19)) << 4) + (merchants_detail::fn_4f9430(save, int(merchant)) & 0xF));
+	letter.entry.u16(0xC) = chain(t.u16(0x784), 0x2CA, merchant_count(save));
+	if ((fix_game_bugs() || index >= merchant_count(save)) && (m.u16(8) == 0 || g.u8(global::kWorld + 0x8A) == 0)) {
+		send_letter(save, kLetterToChronicle, letter);  // Sin comprobar con el oráculo (con index < merchants).
+	}
 	return index;
 }
 

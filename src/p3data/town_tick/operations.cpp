@@ -20,6 +20,7 @@ uint16_t fn_507d60(SaveGame& save, uint16_t& out, uint32_t town, uint32_t mode);
 }  // namespace events_mayor_detail
 namespace events_towns_detail {
 bool fn_52a360(SaveGame& save, int town, uint32_t merchant_arg, uint32_t type_arg, uint8_t force);
+void fn_538a80(SaveGame& save, uint32_t ship, uint8_t add9, uint8_t add_ab);
 }  // namespace events_towns_detail
 namespace events_rare_detail {
 void fn_52a150(SaveGame& save, int town, uint8_t rate);
@@ -183,28 +184,10 @@ void fn_539c60(SaveGame& save, const uint8_t* operation) {
 // capitán del barco mejora: sus habilidades [+9] (más a), [+0xA] y [+0xB]
 // (más b las dos), cada una con un tope según los bits del índice del
 // capitán (0x673B34: 250, 200, 250, 150) y sin dar la vuelta; y su salario
-// se recalcula (0x4FE190). Al jugador humano, si sube, una carta (0x4D6530;
-// no se reproduce).
+// se recalcula (0x4FE190). If it rises, a human owner gets the letter 0x4D.
+// The same as 0x4DCEA0 runs it (events_towns.cpp).
 void fn_538a80(SaveGame& save, const uint8_t* operation) {
-	static constexpr uint8_t kSkillCap[4] = {250, 200, 250, 150};
-	const uint32_t ship = field(operation, 4);
-	if (ship >= save.globals.u16(global::kShipCount)) {
-		return;  // Sin comprobar con el oráculo.
-	}
-	const uint16_t c = save.ships[ship].captain();
-	if (c >= save.globals.u16(global::kCaptainCount)) {
-		return;  // Sin comprobar con el oráculo.
-	}
-	CaptainMemory& cap = save.captains[c];
-	auto raise = [&](size_t o, uint8_t add, uint8_t top) {
-		const uint8_t old = cap.u8(o);
-		const uint8_t v = uint8_t(old + add);
-		cap.u8(o) = v > top || v < old ? top : v;
-	};
-	raise(0x9, operation[8], kSkillCap[c & 3]);
-	raise(0xA, operation[0xC], kSkillCap[(c >> 2) & 3]);
-	raise(0xB, operation[0xC], kSkillCap[(c >> 4) & 3]);
-	events_detail::fn_4fe190(cap);
+	events_towns_detail::fn_538a80(save, field(operation, 4), operation[8], operation[0xC]);
 }
 
 // La operación 0x64 (en 0x5363EE): {0x64, 16 bytes, …, u16 [+0x12] plazo}:

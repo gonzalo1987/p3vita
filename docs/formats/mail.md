@@ -343,6 +343,31 @@ doesn't have.
     places isn't counted (the copy loses the last 2 or 4 bytes, the final 0
     with them), the town's name comes from the table by number with the
     index, and the bought lines count barrels or loads by the last ware.
+- The towns' events (`events_towns.cpp`):
+  - a debt, event 0x01 (0x4DB4E0), in its notice mode ([+0x12]): 0x12 to a
+    human debtor and 0x26 to a human creditor repaid ([+0x5] the town, u16
+    [+0x8] the amount's low half, the date of the tick [+0xC]: day [+0xE],
+    month [+0xC], u16 year [+0xA]), or 0x79 to the creditor (u8 [+0xC] the
+    amount's bits 16 and 17 << 6 | [+0x15], [+0xD] [+0x17], u16 [+0xA] the
+    event's index, [+0xE], [+0xF] his names);
+  - the impounding 0x13 (0x4F6570, the letter is its state: [+0x5] the town,
+    [+0xA] 0 money, 1 the office's wares, 2 a ship's cargo, [+0xB] all paid,
+    u32 [+0xC] what was taken, only the money's low 16 bits when it paid a
+    part, u16 [+0x8] the ship's name);
+  - the feast 0x24 (0x4E23A4: [+0x5] the town; u16 [+0x8] the event's
+    [+0x10], [+0xA] the guests paid for, [+0xC] the reputation gained); the
+    wedding 0x23 to the chronicle (0x4E7C74: [+0x5] the home town; u16 [+0x8]
+    the merchant, [+0xA], [+0xC] from the event, [+0xE] an age) and the dowry
+    0x25 (the same letter with [+0x5] the town, u16 [+0x8], [+0xA] the ships'
+    types, [+0xC], [+0xE] their cargo in barrels);
+  - the town's fire 0x59 (0x4E9564, chronicle, the first time) and a burnt
+    store 0x75 (0x500C30: u16 [+0x8], [+0xA], [+0xC] ware << 8 + units lost
+    or 0xFF00, [+0xE] the owner's names); a new office 0x0D (0x5308A0,
+    chronicle: u16 [+0x8] the merchant, [+0xA] his offices, [+0xC] the
+    town's, [+0xE] rank << 4 + title; only when the office's index is not
+    below the number of merchants, a game bug); a captain's progress 0x4D
+    (0x538A80, to a human owner: [+0x5] the ship's town, u16 [+0x8], [+0xA]
+    the captain's names, [+0xC] the ship's name, [+0xE] his new [+0xC]).
 
 ## Appendix A. The 154 calls
 

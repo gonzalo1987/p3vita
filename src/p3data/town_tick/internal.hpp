@@ -340,6 +340,13 @@ uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick);
 int events_big(SaveGame& save, uint16_t event, uint16_t type);  // 0x2c, 0x5, 0x16
 int events_towns(SaveGame& save, uint16_t event, uint16_t type);  // 0x3, 0x1, 0x2a, 0x2b, 0x27
 int events_mayor(SaveGame& save, uint16_t event, uint16_t type);  // 0x2, 0xa, 0x36, 0x20, 0x21
+// events_mayor.cpp: 0x5311D0 (on the world), a tick's date: the day of the
+// month (from 1), the month (from 1) and the year ((tick >> 8) / 365), as
+// the letters carry it.
+namespace events_mayor_detail {
+void fn_5311d0(uint32_t tick, uint8_t& day, uint8_t& month);
+void fn_5311d0(uint32_t tick, uint8_t& day, uint8_t& month, uint16_t& year);
+}  // namespace events_mayor_detail
 // diet.cpp: las misiones que aprueba la dieta de la Hansa (eventos 0x23,
 // 0x24 y 0x34, 0x4E09D4) con su flota (0x50AC40). Devuelve 1 si el evento
 // sigue (con el tick ya cambiado) o 0 si se quita.
