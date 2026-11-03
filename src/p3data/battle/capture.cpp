@@ -8,6 +8,7 @@
 #include "p3data/battle/battle_math.hpp"
 #include "p3data/battle/pirate_nests.hpp"
 #include "p3data/game_texts.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -25,6 +26,10 @@ void fn_5098b0(SaveGame& save, uint16_t& captain);  // town_tick/events_rare.cpp
 }  // namespace p3::data::tick::events_rare_detail
 
 namespace p3::data {
+
+namespace tick::merchants_detail {
+uint8_t fn_4f9430(const SaveGame& save, int merchant);  // town_tick/merchants.cpp: a merchant's title
+}  // namespace tick::merchants_detail
 
 using namespace battle_math;
 
@@ -251,13 +256,47 @@ void Sailing::boarding_message(size_t b, uint16_t winner, uint16_t taken, bool a
 // winner's team, when [+0xAD2] is it + 1, raises [+0x1E94] >> 10 to 10.
 //
 // When the winner attacks it (0x6212FB with the flag) it takes it over
-// instead (operation 0x91, 0x540520). Not rewritten: a side of the player
-// (its messages and window, part 7) and the letters (0x4D6530, not
-// rewritten in p3vita).
+// instead (operation 0x91, 0x540520). The letters (0x4D6530): a pirate's
+// ship with a captain taken over (0x2A, 0x54) and the share of the loot
+// (0x30). Not rewritten: a side of the player (its window, part 7).
 void Sailing::fn_60c1c9(size_t b, uint16_t winner, uint16_t taken) {
 	BattleGraph& g = save_.battles;
 	const size_t w = battle_entry(b, winner), t = battle_entry(b, taken);
 	const bool attack = fn_6212fb(w, t, true);
+	{
+		// 0x60C252..0x60C397: a pirate's ship with a captain taken over: the
+		// news 0x2A for everybody (the winner's merchant: home town, [+0x1A],
+		// title, rank at home, [+0x1C], [+0x1D]; the captain's two names) and
+		// the letter 0x54 to the winner's merchant (the captain's names, the
+		// captain, the ship; [+0xE] still the second name, [+0xF] 0).
+		const uint32_t ws = g.get<uint32_t>(w, 0x4), ts = g.get<uint32_t>(t, 0x4);
+		const uint16_t captain = save_.ships[ts].memory.u16(0x42);
+		if (save_.ships[ts].memory.u8(0x0) == 0xFF && attack &&
+			captain < save_.globals.u16(global::kCaptainCount)) {
+			const CaptainMemory& c = save_.captains[captain];
+			const uint8_t owner = save_.ships[ws].memory.u8(0x0);
+			Letter letter(0x2A);
+			if (owner < save_.merchants.size()) {
+				const MerchantMemory& m = save_.merchants[owner].memory;
+				letter.entry.u8(5) = m.u8(0x19);
+				letter.entry.u8(8) = m.u8(0x1A);
+				letter.entry.u8(9) = tick::merchants_detail::fn_4f9430(save_, owner);
+				letter.entry.u8(0xA) = m.u8(0x39C + m.u8(0x19));
+				letter.entry.u8(0xB) = m.u8(0x1C);
+				letter.entry.u8(0xC) = m.u8(0x1D);
+			}  // Else sin comprobar con el oráculo (the game reads past the merchants).
+			letter.entry.u8(0xD) = c.u8(2);
+			letter.entry.u8(0xE) = c.u8(3);
+			letter.entry.u8(0xF) = 0;
+			send_letter(save_, kLetterToChronicle, letter);
+			letter.entry.u8(4) = 0x54;
+			letter.entry.u8(5) = 0;
+			letter.entry.u16(8) = uint16_t((c.u8(2) << 8) + c.u8(3));
+			letter.entry.u16(0xA) = captain;
+			letter.entry.u16(0xC) = uint16_t(ts);
+			send_letter(save_, owner, letter);
+		}
+	}
 	g.set<uint8_t>(t, 0x148, 0);
 	g.set<uint8_t>(w, 0x148, 0);
 	g.set<uint16_t>(b, 0xAC6, taken);
@@ -401,7 +440,31 @@ void Sailing::fn_60c1c9(size_t b, uint16_t winner, uint16_t taken) {
 				fame = int32_t(fame) + 0x8000 > -int32_t(kLootFame) ? int16_t(fame + kLootFame) : int16_t(-0x8000);
 			}
 			m.s16(0x16) = fame;
-			// A letter to the merchant (0x4D6530, not rewritten in p3vita).
+			if (worth != 0) {
+				// 0x60D0C8..0x60D189: the letter 0x30 to that merchant: the
+				// guide's captain's names (the second | 0x80), the plundered
+				// ship's owner's [+0x1C], [+0x1D] (a pirate's: the two places'
+				// ship & 0x3F), the share, and the guide's [+0x15E] << 2 plus
+				// the plundered ship's type.
+				const CaptainMemory& c = save_.captains[gs.u16(0x42)];
+				Letter letter(0x30);
+				letter.entry.u8(5) = m.u8(0x19);
+				letter.entry.u8(8) = c.u8(2);
+				letter.entry.u8(9) = uint8_t(c.u8(3) | 0x80);
+				if (mt.u8(0x0) != 0xFF) {
+					if (mt.u8(0x0) < save_.merchants.size()) {
+						const MerchantMemory& o = save_.merchants[mt.u8(0x0)].memory;
+						letter.entry.u8(0xA) = o.u8(0x1C);
+						letter.entry.u8(0xB) = o.u8(0x1D);
+					}  // Else sin comprobar con el oráculo.
+				} else {
+					letter.entry.u8(0xA) = uint8_t(g.get<uint8_t>(w, 0x4) & 0x3F);
+					letter.entry.u8(0xB) = uint8_t(g.get<uint8_t>(t, 0x4) & 0x3F);
+				}
+				letter.entry.u16(0xC) = uint16_t(worth);
+				letter.entry.u16(0xE) = uint16_t((gs.u16(0x15E) << 2) + (mt.u8(0xE) & 3));
+				send_letter(save_, owner, letter);
+			}
 		}
 	}
 	if (worth >= 5000) {
@@ -460,7 +523,8 @@ void share_crew(ShipMemory& a, ShipMemory& t) {
 // 0x1420, w's convoy, no trade route [+0x136], the sailors shared, [+0x3A]
 // 0xFFFF.
 //
-// Not reproduced: the letters (0x4D6530), the UI (0x494990, 0x4778A0), the
+// The letters (0x4D6530): 0x54 for each captain of a pirate's ship, 0x30
+// with the share. Not reproduced: the UI (0x494990, 0x4778A0), the
 // Hanse event's lists of ships (0x4F3980/0x4F3AD0, not kept in p3vita) and
 // so its [+0xE] mark by a captain's place.
 void Sailing::fn_540520(uint16_t wi, uint16_t ti) {
@@ -574,7 +638,17 @@ void Sailing::fn_540520(uint16_t wi, uint16_t ti) {
 		}
 		T.u16(0x134) = 0x14;
 		while (T.u16(0x42) < captains) {
-			// A letter to the winner about the captain of a pirate (0x4D6530): not rewritten.
+			if (T.u8(0x0) >= merchants) {
+				// 0x540A1C..0x540A8C: the letter 0x54 to the winner's merchant
+				// about the pirate's captain (his names, him, the ship).
+				const CaptainMemory& c = save_.captains[T.u16(0x42)];
+				Letter letter(0x54);
+				letter.entry.u8(5) = 0;
+				letter.entry.u16(8) = uint16_t((c.u8(2) << 8) + c.u8(3));
+				letter.entry.u16(0xA) = T.u16(0x42);
+				letter.entry.u16(0xC) = ti;
+				send_letter(save_, W.u8(0x0), letter);
+			}
 			tick::events_rare_detail::fn_5098b0(save_, T.u16(0x42));
 		}
 		T.u32(0x1C) = W.u32(0x1C);
@@ -609,7 +683,30 @@ void Sailing::fn_540520(uint16_t wi, uint16_t ti) {
 			m.u32(0x4B8) += uint32_t(pay);
 			const int32_t f = m.s16(0x16);
 			m.s16(0x16) = f < 0x7FFF - kLootFame ? int16_t(f + kLootFame) : int16_t(0x7FFF);
-			// A letter (0x4D6530) when paid: not rewritten.
+			if (pay > 0) {
+				// 0x540D3E..0x540DDF: the letter 0x30 to that merchant, as in
+				// 0x60C1C9 but the second name without 0x80 and, for a
+				// pirate's ship (an owner past the merchants), the two ships
+				// & 0x3F.
+				// Sin comprobar con el oráculo (a privateer that takes a ship
+				// over; retouch_mail.py privateer reaches the plunder's, 0x60D189).
+				const CaptainMemory& c = save_.captains[gs.u16(0x42)];
+				Letter letter(0x30);
+				letter.entry.u8(5) = m.u8(0x19);
+				letter.entry.u8(8) = c.u8(2);
+				letter.entry.u8(9) = c.u8(3);
+				if (T.u8(0x0) < merchants) {
+					const MerchantMemory& o = save_.merchants[T.u8(0x0)].memory;
+					letter.entry.u8(0xA) = o.u8(0x1C);
+					letter.entry.u8(0xB) = o.u8(0x1D);
+				} else {
+					letter.entry.u8(0xA) = uint8_t(wi & 0x3F);
+					letter.entry.u8(0xB) = uint8_t(ti & 0x3F);
+				}
+				letter.entry.u16(0xC) = uint16_t(pay);
+				letter.entry.u16(0xE) = uint16_t((gs.u16(0x15E) << 2) + (T.u8(0xE) & 3));
+				send_letter(save_, gs.u8(0x15D), letter);
+			}
 		}
 		T.u16(0x4) = W.u16(0x4);
 		W.u16(0x4) = ti;

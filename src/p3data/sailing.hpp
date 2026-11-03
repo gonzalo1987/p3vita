@@ -270,6 +270,8 @@ public:
 	void fn_60c1c9(size_t battle, uint16_t winner, uint16_t taken);  // (battle) A ship taken.
 	// 0x60C3D6..0x60CA6F: the boarding's message to the player (and window).
 	void boarding_message(size_t battle, uint16_t winner, uint16_t taken, bool attack);
+	// The letters 0x54 (and the news 0x2A) of a pirate ship with a captain sunk or kept (0x50BFD0).
+	void pirate_letters(uint16_t merchant, uint16_t ship, uint16_t captain, bool news);
 	// The «of ...» of the owner of a battle's ship (0x60C430..0x60C612).
 	std::string owner_phrase(size_t battle, size_t entry) const;
 	void fn_540520(uint16_t winner, uint16_t taken);  // Operation 0x91: a ship takes another.
@@ -279,6 +281,7 @@ public:
 	void fn_611649(size_t battle, uint8_t level);  // (battle) Its music raised.
 	int32_t fn_620f0b(size_t entry, uint8_t side, uint16_t distance);  // (scene's ship) A broadside's damage.
 	uint8_t fn_61f96f(size_t entry, int32_t damage, int16_t sailors, uint8_t side);  // (scene's ship) A hit.
+	void sunk_pirate_news(size_t entry);  // The news when a pirate's ship with a captain sinks (0x61F96F).
 	void fn_61dd4f(size_t entry, bool flag);  // (scene's ship, method +0x8) It fires.
 	void fn_61a9e0(size_t entry, uint8_t wind);  // (scene's ship, method +0x0) Its sub-step.
 	void fn_61a9e0_flee(size_t entry);  // (part of 0x61A9E0) An AI ship decides whether to flee.

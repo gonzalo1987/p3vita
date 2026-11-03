@@ -16,6 +16,11 @@ Scenarios:
              component of his reputation at 20 in every town and 10 000 000
              in money: his tick of that day raises him to rank 2 and sends
              the letter 0x06 to the chronicle
+  privateer  retouch_pirates.py's event_attack (pirates attack a ship of the
+             human player), then every pirate's ship becomes a privateer of
+             the player ([+0x15D]): the shares of their plunders and
+             take-overs (0x60C1C9, operation 0x91) go to the player with the
+             letter 0x30. Record 4d85c0,506720,535760
 """
 import argparse
 import os
@@ -67,7 +72,21 @@ def promotion(o, rec):
         wf(o, ma + 0x124 + 12 * i, 20.0)
 
 
-SCENARIOS = {f.__name__: f for f in (grow, promotion)}
+def privateer(o, rec):
+    import retouch_pirates as rp
+    rp.event_attack(o)
+    player = o.u32(to.PLAYER)
+    merchants, ships = o.counts()[2], o.counts()[3]
+    n = 0
+    for i in range(ships):
+        s = o.ship(i)
+        if o.u8(s) == 0xFF and o.u8(s + 0x15D) >= merchants:
+            w8(o, s + 0x15D, player)
+            n += 1
+    print(f'{n} pirate ships are privateers of the player {player}')
+
+
+SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer)}
 
 
 def main():

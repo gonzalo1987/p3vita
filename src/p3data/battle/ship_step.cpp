@@ -11,10 +11,15 @@
 #include <cstdlib>
 
 #include "p3data/battle/battle_math.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/trade.hpp"
 
 namespace p3::data {
+
+namespace tick::merchants_detail {
+uint8_t fn_4f9430(const SaveGame& save, int merchant);  // town_tick/merchants.cpp: a merchant's title
+}  // namespace tick::merchants_detail
 
 using namespace battle_math;
 
@@ -542,6 +547,44 @@ int32_t Sailing::fn_620f0b(size_t e, uint8_t side, uint16_t distance) {
 	return d == 0 ? 1 : int32_t(d);
 }
 
+// 0x61FAC8..0x61FC80: a pirate's ship (owner 0xFF) with a captain sinks
+// and the other side ([+0x35A] by 1 − [+0x13D]) isn't a pirate: the news 0x2A
+// for everybody, with that side's merchant (home town, [+0x1A], title,
+// rank at home 0x4F3760, [+0x1C], [+0x1D]; one past the merchants: the
+// world's [+0x8E], 0, 0, 0, 0xFF, 0xFF) and the captain's two names.
+void Sailing::sunk_pirate_news(size_t e) {
+	BattleGraph& g = save_.battles;
+	const size_t b = scene_battle(e);
+	const ShipMemory& s = save_.ships[g.get<uint32_t>(e, 0x4)].memory;
+	if (s.u8(0x0) != 0xFF) {
+		return;
+	}
+	const int32_t other = 1 - int32_t(g.get<uint8_t>(e, 0x13D));
+	const uint16_t m = g.get<uint16_t>(b, size_t(0x35A + 2 * other));
+	if (m == 0xFF || s.u16(0x42) >= save_.globals.u16(global::kCaptainCount)) {
+		return;
+	}
+	const CaptainMemory& c = save_.captains[s.u16(0x42)];
+	Letter letter(0x2A);
+	if (m < save_.globals.u16(global::kWorldMerchantCount)) {
+		const MerchantMemory& mm = save_.merchants[m].memory;
+		letter.entry.u8(5) = mm.u8(0x19);
+		letter.entry.u8(8) = mm.u8(0x1A);
+		letter.entry.u8(9) = tick::merchants_detail::fn_4f9430(save_, m);
+		letter.entry.u8(0xA) = mm.u8(0x39C + mm.u8(0x19));
+		letter.entry.u8(0xB) = mm.u8(0x1C);
+		letter.entry.u8(0xC) = mm.u8(0x1D);
+	} else {
+		letter.entry.u8(5) = save_.globals.u8(0x6DE52E);  // Sin comprobar con el oráculo.
+		letter.entry.u8(0xB) = 0xFF;
+		letter.entry.u8(0xC) = 0xFF;
+	}
+	letter.entry.u8(0xD) = c.u8(2);
+	letter.entry.u8(0xE) = c.u8(3);
+	letter.entry.u8(0xF) = 0;
+	send_letter(save_, kLetterToChronicle, letter);
+}
+
 // 0x61F96F (on a scene's ship; damage, sailors lost or −1, the guns' side
 // or 0): a hit. Nothing once the battle is over ([+0x5C]). Sailors lost by
 // the damage against the hull (the battle's generator; fractions in
@@ -552,7 +595,8 @@ int32_t Sailing::fn_620f0b(size_t e, uint8_t side, uint16_t distance) {
 // either at random) and the sailors (the captain too when all). 2 if sunk,
 // 1 if a gun was lost, else 0.
 //
-// A message when a pirate ship sinks (0x4D6530) is not rewritten in p3vita.
+// When a pirate's ship with a captain sinks, the news for everybody
+// (sunk_pirate_news).
 uint8_t Sailing::fn_61f96f(size_t e, int32_t damage, int16_t sailors, uint8_t side) {
 	BattleGraph& g = save_.battles;
 	const size_t b = scene_battle(e);
@@ -578,6 +622,7 @@ uint8_t Sailing::fn_61f96f(size_t e, int32_t damage, int16_t sailors, uint8_t si
 	if (!(g.get<uint8_t>(e, 0x12A) & 0x6) && damage > 0) {
 		s.u16(0x3C) = uint16_t(s.u16(0x3C) | 0x100);
 		if (damage >= s.s32(0x18)) {
+			sunk_pirate_news(e);
 			s.u32(0x18) = 0;
 			g.set<uint8_t>(e, 0x12A, 0x4);
 			g.set<uint8_t>(b, 0xAC4, 1);

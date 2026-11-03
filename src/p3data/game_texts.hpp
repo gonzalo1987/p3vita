@@ -94,6 +94,26 @@ enum class GameText {
 	BattleYourConvoy,  // «Your convoy» (0x6A1794)
 	BattleTheConvoyAttacking,  // «the convoy» that attacks the player (0x6A179C)
 	BattleTheConvoyAttacked,  // «the convoy» the player attacks (0x6A17A0)
+	// The report of a sea battle (0x60D299, 0x6A2240..0x6A2278), sent to each
+	// side of the computer as a letter 0x29: the result for each side...
+	BattleReportPutToFlight,  // «\l\f1_You have put the attackers to flight!\n»
+	BattleReportDefeatedEnemy,  // «... You have defeated the enemy!»
+	BattleReportEscaped,  // «... You were defeated by the attacker, but managed to escape!»
+	BattleReportLost,  // «... You lost the sea battle!»
+	BattleReportAttackSucceeded,  // «... Your attack was successful!»
+	BattleReportEnemyEscaped,  // «... Your enemy escaped!»
+	BattleReportAttackFled,  // «... Your attack was a failure! Your ships were defeated and had to flee!»
+	BattleReportAttackLost,  // «... Your attack was a total failure! You lost the sea battle!»
+	BattleReportOwnShips,  // «\n\f0_Own ships:\n\f1_»
+	BattleReportCapturedShips,  // «\n\f0_Captured ships:\n\f1_»
+	BattleReportEnemyShips,  // «\n\f0_Enemy ships:\n\f1_»
+	BattleReportShip,  // «%s %s: %d%%\n» (type, name, hull)
+	BattleReportSunk,  // «%s %s: sunk\n»
+	BattleReportCaptured,  // «%s %s: %d%%, captured\n»
+	BattleReportFled,  // «%s %s: %d%%, fled\n»
+	BattleReportPlundered,  // «%s %s: %d%%, plundered\n» (0x6AA180)
+	BattleShipSnaikka,  // The 4 ship types, bare («snaikka»...; 0x6A174C).
+	BattleShipHulk = BattleShipSnaikka + 3,
 	Count
 };
 
@@ -111,9 +131,10 @@ public:
 	// The text as the executable has it: Windows-1252 bytes with the game's
 	// control codes, as the game copies it into its memory.
 	const std::string& raw(GameText id) const { return raw_[size_t(id)]; }
-	// The game's sprintf (0x64D410) on raw texts: %s with the bytes of
-	// `args` in order, %% and the positional %$N$s of the Spanish texts (the
-	// N-th argument); nothing collapsed or trimmed.
+	// The game's sprintf (0x64D410) on raw texts: %s (and %d, %i, %u, with
+	// the number already written by the caller) with the bytes of `args` in
+	// order, %% and the positional %$N$s of the Spanish texts (the N-th
+	// argument); nothing collapsed or trimmed.
 	static std::string sprintf_raw(const std::string& text, const std::vector<std::string>& args);
 	// The text with its printf specifiers (%s, %d, %u, %i, %%; and the
 	// positional %$N$d of some texts) replaced by `args` in order (missing

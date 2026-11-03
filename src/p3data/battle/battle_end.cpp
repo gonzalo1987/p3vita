@@ -5,11 +5,17 @@
 #include <array>
 #include <cstring>
 
+#include "p3data/game_texts.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
 namespace p3::data {
+
+namespace tick::merchants_detail {
+uint8_t fn_4f9430(const SaveGame& save, int merchant);  // town_tick/merchants.cpp: a merchant's title
+}  // namespace tick::merchants_detail
 
 namespace {
 
@@ -95,8 +101,11 @@ void Sailing::fn_612bd0(uint16_t a, uint16_t b) {
 // tick, unless the loser is the player). Then [+0x130E] the flag, the battle
 // over ([+0x5C]) and [+0x15C] 1 (automatic) or 250.
 //
-// The report and the letters (0x4D6530), the news ticker and the player's
-// window are not rewritten (messages, UI; part 7).
+// The report goes as a letter 0x29 (0x4D6530) to each side of the computer
+// (a human side gets the battle's window: part 7), a pirate's win makes the
+// news (a letter 0x2A to the chronicle), and the letters 0x72 tell each side
+// what it sank, took and plundered. The news ticker and the window are the
+// interface.
 void Sailing::fn_60d299(size_t b, bool sailors) {
 	BattleGraph& g = save_.battles;
 	auto u8 = [&](size_t o) { return g.get<uint8_t>(b, o); };
@@ -136,8 +145,8 @@ void Sailing::fn_60d299(size_t b, bool sailors) {
 			}
 		}
 	}
+	uint32_t sides = u8(0x558);  // With the ones added below (0x60D420..0x60D5F4).
 	if (u8(0x12E8) == 0) {
-		uint32_t sides = u8(0x558);
 		for (const auto& [convoy_at, side_at, team] :
 			{std::array<size_t, 3>{0x65E, 0x35A, 0}, std::array<size_t, 3>{0x660, 0x35C, 1}}) {
 			if (u16(convoy_at) >= convoys || u16(side_at) == 0xFE) {
@@ -159,32 +168,121 @@ void Sailing::fn_60d299(size_t b, bool sailors) {
 			}
 		}
 	}
-	// The report's counts (by the side each ship started on).
+	// The report (0x60D5FA..0x60DB2F): a line per ship with a hull (side
+	// 0's list, then side 1's), by the side it started on ([+0x142]): its
+	// type, name and hull in % in the game's texts (0x6A226C..0x6A2278,
+	// 0x6AA180); a ship taken over gets «captured» there and a plain line in
+	// the other side's «captured ships». The counts: ships, kept (not sunk
+	// nor taken) and kept that were boarded ([+0x12A] & 0x60), and sunk,
+	// taken and plundered; the music by the ship's end.
+	auto text = [&](GameText id) { return texts_ ? texts_->raw(id) : std::string(); };
+	auto ship_line = [&](GameText id, uint32_t s) {
+		const ShipMemory& m = save_.ships[s].memory;
+		std::string name;
+		for (size_t i = 0x160; i < 0x180 && m.u8(i) != 0; ++i) {
+			name += char(m.u8(i));
+		}
+		const std::string type = text(GameText(int(GameText::BattleShipSnaikka) + (m.u8(0xE) & 3)));
+		const int32_t hull = m.s32(0x14) != 0 ? m.s32(0x18) * 100 / m.s32(0x14) : 0;
+		return GameTexts::sprintf_raw(text(id), {type, name, std::to_string(hull)});
+	};
+	std::string lines[2], taken_lines[2];  // [the side it started on]
 	uint8_t on[2] = {0, 0}, kept[2] = {0, 0}, kept_taken[2] = {0, 0};
+	uint16_t sunk[2] = {0, 0}, taken[2] = {0, 0}, plundered[2] = {0, 0};
 	const size_t next = size_t(g.ptr(b, 0xC));
 	for (const size_t head : {size_t(0x10), size_t(0x65C)}) {
 		for (uint16_t k = u16(head); k != 0xFFFF; k = g.get<uint16_t>(next, 2 * size_t(k))) {
 			const size_t e = battle_entry(b, k);
+			const uint32_t s = g.get<uint32_t>(e, 0x4);
 			if (scene_ship(e).u32(0x14) == 0) {
 				continue;
 			}
 			const uint8_t fl = g.get<uint8_t>(e, 0x12A);
 			const size_t first = g.get<uint8_t>(e, 0x142) == 0 ? 0 : 1;
+			std::string line, taken_line;
 			int32_t worth = 0x32;
+			uint8_t end = 0;
 			if (fl & 0x4) {
+				line = ship_line(GameText::BattleReportSunk, s);
 				worth = 0x64;
+				end = 0x4;
 			} else if (g.get<uint8_t>(e, 0x13D) != g.get<uint8_t>(e, 0x142)) {
+				line = ship_line(GameText::BattleReportCaptured, s);
+				taken_line = ship_line(GameText::BattleReportShip, s);
 				worth = 0xC8;
+				end = 0x8;
 			} else {
+				if (fl & 0x2) {
+					line = ship_line(GameText::BattleReportFled, s);
+				} else if (fl & 0x40) {
+					line = ship_line(GameText::BattleReportPlundered, s);
+					end = 0x40;
+				} else {
+					line = ship_line(GameText::BattleReportShip, s);
+				}
 				++kept[first];
 				if (g.get<uint8_t>(e, 0x12A) & 0x60) {
 					++kept_taken[first];
 				}
 			}
 			++on[first];
+			lines[first] += line;
+			taken_lines[first] += taken_line;
 			if (u8(0xAD2) == (first == 0 ? 2 : 1)) {
 				music(g, b, worth);
 			}
+			if (end == 0x4) {
+				++sunk[first];
+			} else if (end == 0x8) {
+				++taken[first];
+			} else if (end == 0x40) {
+				++plundered[first];
+			}
+		}
+	}
+	// The two reports (0x60DB2F..0x60DCB9), for the team 0 and the team 1:
+	// the result, «Own ships:» and the team's lines, «Captured ships:» and
+	// the other team's ships it took (if any), «Enemy ships:» and the other
+	// team's lines. The result: if side 1 has no ship with sailors (it lost),
+	// whether it escaped (twice its kept ships without the boarded ones are
+	// more than its ships); else, whether side 0 fled.
+	std::string report[2];
+	if (!sailors) {
+		const bool escaped = 2 * (int32_t(kept[1]) - int32_t(kept_taken[1])) > int32_t(on[1]);
+		report[0] = text(escaped ? GameText::BattleReportEnemyEscaped : GameText::BattleReportAttackSucceeded);
+		report[1] = text(escaped ? GameText::BattleReportEscaped : GameText::BattleReportLost);
+	} else {
+		const bool fled = 2 * (int32_t(kept[0]) - int32_t(kept_taken[0])) > int32_t(on[0]);
+		report[0] = text(fled ? GameText::BattleReportAttackFled : GameText::BattleReportAttackLost);
+		report[1] = text(fled ? GameText::BattleReportPutToFlight : GameText::BattleReportDefeatedEnemy);
+	}
+	for (size_t t = 0; t < 2; ++t) {
+		report[t] += text(GameText::BattleReportOwnShips);
+		report[t] += lines[t];
+		if (!taken_lines[1 - t].empty()) {
+			report[t] += text(GameText::BattleReportCapturedShips);
+			report[t] += taken_lines[1 - t];
+		}
+		report[t] += text(GameText::BattleReportEnemyShips);
+		report[t] += lines[1 - t];
+	}
+	// The letters 0x29 (0x60DD01..0x60DD93), if side 0 had a ship: to each
+	// side of the computer ([+0x5D]), with its team's report (without the
+	// final 0; the size a u16) and its merchant's home town in [+0x5]. A
+	// human side gets the battle's window instead (part 7).
+	const uint16_t merchants = save_.globals.u16(global::kWorldMerchantCount);
+	if (on[0] != 0) {
+		for (uint32_t k = 0; k < sides; ++k) {
+			const uint16_t m = u16(0x35A + 2 * size_t(k));
+			if (m >= merchants || u8(0x5D + size_t(k)) == 0) {
+				continue;
+			}
+			Letter letter(0x29);
+			letter.entry.u8(5) = save_.merchants[m].memory.u8(0x19);
+			const std::string& body = report[u8(0x559 + size_t(k)) == 0 ? 0 : 1];
+			letter.entry.u32(0xC) = uint32_t(body.size() & 0xFFFF);
+			letter.buffer.assign(body.begin(), body.end());
+			send_letter(save_, m, letter);
 		}
 	}
 	const size_t loser = sailors ? 0 : 1;  // The side whose ships are counted as lost.
@@ -195,7 +293,7 @@ void Sailing::fn_60d299(size_t b, bool sailors) {
 		news = true;
 	} else {
 		const uint16_t m = u16(0x35C - 2 * size_t(sailors ? 1 : 0));
-		if (m < save_.globals.u16(global::kWorldMerchantCount) && save_.merchants[m].memory.u16(0x8) == 0) {
+		if (m < merchants && save_.merchants[m].memory.u16(0x8) == 0) {
 			news = true;
 		}
 	}
@@ -215,11 +313,49 @@ void Sailing::fn_60d299(size_t b, bool sailors) {
 		}
 		if (guide < save_.ships.size() && save_.ships[guide].memory.u32(0x18) != 0 &&
 			save_.ships[guide].memory.u16(0x42) < save_.globals.u16(global::kCaptainCount)) {
-			// A letter to everyone (0x4D6530) and the news ticker: not rewritten.
-			if (save_.globals.u32(kPlayer) != u16(0x35C - 2 * winner)) {
+			// The news for everybody (0x60EAC1..0x60EB42): a pirate beat the
+			// loser's merchant: his home town, [+0x1A], title (0x4F9430), rank
+			// at home, [+0x1C], [+0x1D], the battle's [+0x1E90], [+0x1E91] and
+			// the ships lost. The window (0x469380, 0x469AF0) is the interface.
+			const uint16_t m = u16(0x35C - 2 * winner);
+			if (m < merchants) {
+				const MerchantMemory& lm = save_.merchants[m].memory;
+				Letter letter(0x2A);
+				letter.entry.u8(5) = lm.u8(0x19);
+				letter.entry.u8(8) = lm.u8(0x1A);
+				letter.entry.u8(9) = tick::merchants_detail::fn_4f9430(save_, m);
+				letter.entry.u8(0xA) = lm.u8(0x39C + lm.u8(0x19));
+				letter.entry.u8(0xB) = lm.u8(0x1C);
+				letter.entry.u8(0xC) = lm.u8(0x1D);
+				letter.entry.u8(0xD) = u8(0x1E90);
+				letter.entry.u8(0xE) = u8(0x1E91);
+				letter.entry.u8(0xF) = uint8_t(lost);
+				send_letter(save_, kLetterToChronicle, letter);
+			}  // else: sin comprobar con el oráculo (the game reads past the merchants).
+			if (save_.globals.u32(kPlayer) != m) {
 				g.set<uint32_t>(0, 0x408, tick);
 			}
 		}
+	}
+	// The letters 0x72 (0x60EBB6..0x60EC83): to each side's merchant (not a
+	// pirate), how many of the other side's ships were sunk, taken and
+	// plundered, if any, with the other side's merchant.
+	for (size_t side = 0; side < 2; ++side) {
+		const uint16_t m = u16(0x35A + 2 * side), other = u16(0x35A + 2 * (1 - side));
+		const size_t o = 1 - side;
+		if (m == 0xFF || (sunk[o] == 0 && taken[o] == 0 && plundered[o] == 0)) {
+			continue;
+		}
+		// Side 0 (the attacker, 0x60EC1B) is a merchant only when a merchant
+		// attacks (the Hanse fleet, the player's battle: part 7): sin
+		// comprobar con el oráculo; side 1 (0x60EC83), checked.
+		Letter letter(0x72);
+		letter.entry.u8(5) = 0;
+		letter.entry.u16(8) = other;
+		letter.entry.u16(0xA) = sunk[o];
+		letter.entry.u16(0xC) = taken[o];
+		letter.entry.u16(0xE) = plundered[o];
+		send_letter(save_, m, letter);
 	}
 	g.set<uint8_t>(b, 0x130E, sailors ? 1 : 0);
 	g.set<uint16_t>(b, 0x130C, stay);
@@ -492,6 +628,37 @@ void Sailing::fn_4f8d90(uint8_t merchant, bool towns) {
 	}
 }
 
+// The letters of 0x50BFD0 when a merchant's convoy sinks or keeps a pirate
+// ship with a captain: 0x54 to the merchant (in [+0x5] the world's [+0x8E];
+// u16 [+0x8] the captain's names, [+0x2] << 8 | [+0x3]; [+0xA] the captain;
+// [+0xC] the ship) and, when it sank, the news 0x2A for everybody: the
+// merchant's home town, [+0x1A], title (0x4F9430), rank at home, [+0x1C],
+// [+0x1D], the captain's two names and 0.
+void Sailing::pirate_letters(uint16_t merchant, uint16_t ship, uint16_t captain, bool news) {
+	const CaptainMemory& c = save_.captains[captain];
+	Letter letter(0x54);
+	letter.entry.u8(5) = save_.globals.u8(0x6DE52E);
+	letter.entry.u16(8) = uint16_t((c.u8(2) << 8) + c.u8(3));
+	letter.entry.u16(0xA) = captain;
+	letter.entry.u16(0xC) = ship;
+	send_letter(save_, merchant, letter);
+	if (!news) {
+		return;
+	}
+	const MerchantMemory& m = save_.merchants[merchant].memory;
+	letter.entry.u8(4) = 0x2A;
+	letter.entry.u8(5) = m.u8(0x19);
+	letter.entry.u8(8) = m.u8(0x1A);
+	letter.entry.u8(9) = tick::merchants_detail::fn_4f9430(save_, merchant);
+	letter.entry.u8(0xA) = m.u8(0x39C + m.u8(0x19));
+	letter.entry.u8(0xB) = m.u8(0x1C);
+	letter.entry.u8(0xC) = m.u8(0x1D);
+	letter.entry.u8(0xD) = c.u8(2);
+	letter.entry.u8(0xE) = c.u8(3);
+	letter.entry.u8(0xF) = 0;
+	send_letter(save_, kLetterToChronicle, letter);
+}
+
 // 0x503B00 (on a convoy; its index): whether it is the Hanse fleet of its
 // event (0x34 from phase 7, [+0x16] the convoy).
 bool Sailing::fn_503b00(uint16_t convoy) const {
@@ -634,7 +801,13 @@ void Sailing::fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other) {
 					fn_507fb0(index);
 					if (other < merchants) {
 						fn_4f8d90(other, s.u16(0x42) < captains);
-						// A letter (0x4D6530): not rewritten.
+						if (s.u16(0x42) < captains) {
+							// 0x50C211..0x50C326: the letter 0x54 to the winner
+							// and the news 0x2A for everybody (pirate_letters).
+							// Sin comprobar con el oráculo (no save nor scenario
+							// reaches it; 0x50C853 checks the 0x54).
+							pirate_letters(other, index, s.u16(0x42), true);
+						}
 					}
 					++lost;
 				} else {
@@ -749,7 +922,9 @@ void Sailing::fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other) {
 			} else {
 				if (other < merchants && s.u8(0x0) >= merchants) {
 					fn_4f8d90(other, s.u16(0x42) < captains);
-					// A letter (0x4D6530): not rewritten.
+					if (s.u16(0x42) < captains) {
+						pirate_letters(other, index, s.u16(0x42), false);  // 0x50C7EC..0x50C853
+					}
 				}
 				fn_4ec864(index, other);
 				s.u16(0x6) = 0xFFFF;

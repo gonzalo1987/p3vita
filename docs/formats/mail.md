@@ -263,6 +263,29 @@ doesn't have.
   [+0x5], two u32 amounts in [+0x8] and [+0xC]) and 0x06 (a promotion in the
   home town, to the chronicle: [+0x5] the town, u16 [+0x8] the old rank,
   [+0xA] the new one, [+0xC] the merchant, [+0xE] his title, 0x4F9430).
+- The sea battles (`battle/`):
+  - 0x60D299 (`battle_end.cpp`): the report, a letter 0x29 to each side of
+    the computer: [+0x5] the merchant's home town, the buffer the text of
+    its team (the result, «Own ships:» and the team's lines, «Captured
+    ships:» and the other team's ships it took, «Enemy ships:» and the
+    other team's lines; each line «type name: hull%» with «, captured»,
+    «, fled», «, plundered» or «sunk»), without the final 0. A pirate's win
+    (its guide with a captain) makes the news 0x2A in the chronicle with the
+    loser: [+0x5] home town, [+0x8] [+0x1A], [+0x9] title, [+0xA] rank at
+    home, [+0xB] [+0x1C], [+0xC] [+0x1D], [+0xD] and [+0xE] the battle's
+    [+0x1E90] and [+0x1E91], [+0xF] the ships lost (0xFF: none, but some
+    boarded). Then 0x72 to each side's merchant (not a pirate) about the
+    other side: u16 [+0x8] its merchant, [+0xA] sunk, [+0xC] taken, [+0xE]
+    plundered.
+  - 0x50BFD0 (`battle_end.cpp`, `Sailing::pirate_letters`), 0x60C1C9 and
+    operation 0x91 (`capture.cpp`), 0x514D40 (`pirate_objects.cpp`) and
+    0x61F96F (`ship_step.cpp`, `Sailing::sunk_pirate_news`): 0x54 to the
+    merchant who sank or took a pirate's captain (u16 [+0x8] the captain's
+    names, [+0xA] the captain, [+0xC] the ship), the news 0x2A of the same
+    layout as above with the captain's names in [+0xD], [+0xE], and the
+    share of a plunder 0x30 (the captain's names, the plundered ship's
+    owner's [+0x1C], [+0x1D] or the two ships & 0x3F, u16 [+0xC] the share,
+    [+0xE] the guide's [+0x15E] << 2 + the ship's type).
 
 ## Appendix A. The 154 calls
 

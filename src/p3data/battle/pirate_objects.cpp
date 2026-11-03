@@ -5,6 +5,7 @@
 
 #include <cstring>
 
+#include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -40,6 +41,10 @@ void fn_509a50(SaveGame& save, int ship);
 }  // namespace p3::data::tick::events_mayor_detail
 
 namespace p3::data {
+
+namespace tick::merchants_detail {
+uint8_t fn_4f9430(const SaveGame& save, int merchant);  // town_tick/merchants.cpp: a merchant's title
+}  // namespace tick::merchants_detail
 
 // battle/pirates.cpp: a free town number for a nest.
 uint8_t fn_5159c0(const SaveGame& save, uint32_t n);
@@ -335,8 +340,9 @@ void Sailing::fn_514000(size_t k) {
 // target or wait; the convoy is the pirates' in state 0x12 (mode 2) and goes
 // into the list (0x501BE0, 0x50AAE0).
 //
-// The privateer that goes home: a message to every merchant (0x4D6530, UI)
-// about an AI merchant chosen at random (the generator seeded with the tick);
+// The privateer that goes home: the news for everybody (a letter 0x2A,
+// 0x4D6530) about an AI merchant chosen at random (the generator seeded with
+// the tick);
 // one time in 10 an event 5 in 0x300 ticks (0x4D8CF0: [+0x8] the privateer's
 // merchant, [+0x9] and [+0xB] its home town, [+0xA] the AI merchant chosen,
 // [+0x10] 4, [+0x16] the ship's [+0x15E]); then the ship stops (0x516840),
@@ -384,7 +390,24 @@ void Sailing::fn_514d40(size_t k, uint16_t most, uint16_t strength_arg) {
 					++pick;
 				}
 			}
-			// 0x4D6530: the message (with 0x4F9430 of that merchant), UI.
+			if (pick < save_.merchants.size()) {  // Else sin comprobar con el oráculo (the game reads past them).
+				// 0x514EF0..0x514F79: the news 0x2A for everybody about that
+				// merchant (home town, [+0x1A], title, rank at home, [+0x1C],
+				// [+0x1D]) and the ship's captain's two names, then 0.
+				const MerchantMemory& pm = save_.merchants[pick].memory;
+				const CaptainMemory& c = save_.captains[captain];
+				Letter letter(0x2A);
+				letter.entry.u8(5) = pm.u8(0x19);
+				letter.entry.u8(8) = pm.u8(0x1A);
+				letter.entry.u8(9) = tick::merchants_detail::fn_4f9430(save_, pick);
+				letter.entry.u8(0xA) = pm.u8(0x39C + pm.u8(0x19));
+				letter.entry.u8(0xB) = pm.u8(0x1C);
+				letter.entry.u8(0xC) = pm.u8(0x1D);
+				letter.entry.u8(0xD) = c.u8(2);
+				letter.entry.u8(0xE) = c.u8(3);
+				letter.entry.u8(0xF) = 0;
+				send_letter(save_, kLetterToChronicle, letter);
+			}
 			if (r.next(10) == 0) {
 				GameMemory<0x18>& e = save_.events[tick::events_detail::fn_4d8cf0(save_, g.u32(kTick) + 0x300)];
 				const uint8_t merchant = s.u8(0x15D);

@@ -113,6 +113,7 @@ Con --sin-ia, los barcos como en sail_oracle.py: en puerto solo los estados
 ejecutan.
 """
 import argparse
+import atexit
 import ctypes
 import os
 import struct
@@ -287,8 +288,32 @@ MAIL_CALLS = (
     # The merchant's tick (0x4F7BB0, merchants.cpp): letters 0x0F, 0x10, 0x11
     # to the merchant and 0x06 (a promotion) to the chronicle.
     0x4F7CB0, 0x4F7CF6, 0x4F7D33, 0x4F82D9,
+    # The end of a sea battle (0x60D299, battle/battle_end.cpp): the report
+    # 0x29 to each side of the computer, a pirate's win to the chronicle
+    # (0x2A) and the letters 0x72.
+    0x60DD93, 0x60EB42, 0x60EC1B, 0x60EC83,
+    # The rest of the sea battles: a convoy after its battle (0x50BFD0,
+    # battle_end.cpp: 0x54 and the news 0x2A of a pirate's captain), the
+    # boarding (0x60C1C9, capture.cpp: 0x2A, 0x54, the share 0x30), the
+    # take-over (operation 0x91, 0x540520: 0x54, 0x30), the privateer going
+    # home (0x514D40, pirate_objects.cpp: 0x2A) and a pirate's ship sunk
+    # (0x61F96F, ship_step.cpp: 0x2A).
+    0x50C274, 0x50C326, 0x50C853, 0x60C31B, 0x60C383, 0x60D189, 0x540A8C, 0x540DDF, 0x514F79, 0x61FC80,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
+# With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is
+# counted by its call address and printed to stderr at the end (whether it
+# ran or was silenced).
+MAIL_STATS = {} if os.environ.get('P3_MAIL_STATS') else None
+
+
+def _print_mail_stats():
+    if MAIL_STATS:
+        print('letters by call: ' + ' '.join(f'{c:#x}{"" if c in MAIL_CALLS else "(quiet)"}:{n}'
+                                             for c, n in sorted(MAIL_STATS.items())), file=sys.stderr)
+
+
+atexit.register(_print_mail_stats)
 # Con barcos, además (ver sail_oracle.py):
 QUIET_SHIPS = {
     0x44F940: 4,  # avisa a la interfaz de que un barco del jugador ha cambiado
@@ -461,7 +486,10 @@ class TownOracle(SaveOracle):
 
     def _quiet(self, uc, address, size, user_data):
         if address == MAIL_SEND and self.letters != 'none':
-            if self.letters == 'all' or self.u32(uc.reg_read(UC_X86_REG_ESP)) in MAIL_SITES:
+            ret = self.u32(uc.reg_read(UC_X86_REG_ESP))
+            if MAIL_STATS is not None:
+                MAIL_STATS[ret - 5] = MAIL_STATS.get(ret - 5, 0) + 1
+            if self.letters == 'all' or ret in MAIL_SITES:
                 return  # the game's 0x4D6530 runs
         if address == ENQUEUE:
             op = bytes(uc.mem_read(self._arg(0), OPERATION_SIZE))
