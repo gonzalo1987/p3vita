@@ -122,7 +122,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from save_oracle import (EXPEDITIONS, FILE, SENTINEL, SEPARATOR, SHIPS, STACK, STACK_SIZE, TOWN_TABLE, WORLD,  # noqa: E402
                          SaveOracle)
-from unicorn import UC_HOOK_CODE  # noqa: E402
+from unicorn import UC_HOOK_CODE, UcError  # noqa: E402
 from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESP  # noqa: E402
 
 TOWN_TICK = 0x51BA10
@@ -215,6 +215,11 @@ PIRATE_JUMPS = {0x507C0B: 0x507B5F, 0x60EB55: 0x60EBAC}
 # expired road task (retouch_unchecked.py road_expired) jumped to 0 in
 # 0x4B4E30. Always on, as the window can open from any part.
 WINDOW_JUMPS = {0x46938F: 0x4693A1}
+# Two of the CRT's static initializers fill tables of text pointers at start
+# (0x6A0BC8.., among them the monument letter's adjectives 0x6A0C18, and
+# 0x6A1778.., the battles' «Your snaikka»...): only constant stores, so the
+# oracle runs them (GameTexts reads them as well, static_slots).
+TEXT_INITIALIZERS = (0x46BD80, 0x46BFC0)
 # The battle's question to the player («Steer manually»; in Spanish «¿Quieres
 # dirigir manualmente a los barcos en la batalla naval?», 0x41D9B0 on
 # *0x6CBB10), which the emulator doesn't have, as p3vita (part 7 of the
@@ -529,6 +534,8 @@ class TownOracle(SaveOracle):
                 self.uc.mem_write(at, build(at))
             self.uc.mem_write(EXECUTOR_TRAMPOLINE, executor_trampoline(EXECUTOR_TRAMPOLINE))
         self.setup_imports(exe)
+        for f in TEXT_INITIALIZERS:
+            self.call(f, [])
         for address, target in WINDOW_JUMPS.items():
             self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
         for address, size in ZEROED_FRAMES.items():
@@ -723,7 +730,7 @@ class TownOracle(SaveOracle):
         dll, name = self.imports.get(address, ('?', f'{address:#x}'))
         a = self._arg
         if name == 'lstrlenA':
-            result, pop = (len(self.cstring(a(0))) if a(0) else 0), 4
+            result, pop = self._lstrlen(a(0)), 4
         elif name in ('InterlockedIncrement', 'InterlockedDecrement'):
             result = (self.u32(a(0)) + (1 if name == 'InterlockedIncrement' else -1)) & 0xFFFFFFFF
             self.write_u32(a(0), result)
@@ -785,6 +792,20 @@ class TownOracle(SaveOracle):
         else:
             raise RuntimeError(f'función importada sin hacer: {dll}!{name}')
         self._returns(uc, result, pop)
+
+    def _lstrlen(self, p):
+        """Windows' lstrlenA: 0 for a pointer it can't read (it catches the
+        fault), and below 0x10000 nothing is mapped in a Windows process (the
+        emulator has the page of fs:0 at 0). The game's sprintf (0x64D410)
+        measures, in a first pass, each conversion's argument in the order
+        the conversions come, not by their %$N$: with «%$2$s ... %$1$i» it
+        measures the number as a string (docs/oracle.md, «The letters' texts»)."""
+        if p < 0x10000:
+            return 0
+        try:
+            return len(self.cstring(p))
+        except UcError:
+            return 0
 
     def game_file(self, path):
         """Un fichero de los datos del juego: de DATOS (--barcos) o del archivo (--cpr)."""

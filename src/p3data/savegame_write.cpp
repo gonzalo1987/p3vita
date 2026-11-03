@@ -623,8 +623,8 @@ void write_names(Writer& w, const SaveGame& save) {
 }
 
 // 0x5125E0: the town names of the file, each up to a byte below 0x20.
-std::vector<std::string> split_town_names(const std::vector<uint8_t>& data) {
-	std::vector<std::string> names(40);
+std::vector<std::string> split_town_names(const std::vector<uint8_t>& data, size_t count = 40) {
+	std::vector<std::string> names(count);
 	size_t p = 0;
 	for (std::string& name : names) {
 		while (p < data.size() && data[p] >= 0x20) {
@@ -742,7 +742,10 @@ void load_save_scripts(const CprArchive& archive, SaveGame& save) {
 		if (const CprEntry* entry = archive.find(path)) {
 			std::vector<uint8_t> data;
 			if (archive.read(*entry, data)) {
-				save.opaque.town_names = split_town_names(data);
+				// 40 names, 40 guilds, 40 taverns (0x512730).
+				std::vector<std::string> lines = split_town_names(data, 120);
+				save.opaque.town_names.assign(lines.begin(), lines.begin() + 40);
+				save.opaque.town_taverns.assign(lines.begin() + 80, lines.end());
 				return;
 			}
 		}

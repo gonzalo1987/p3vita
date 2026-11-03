@@ -57,6 +57,7 @@ CODE = {
     0x48654B: 0x486639,  # its text complete (letter_oracle.DONE)
     0x4865E5: 0x4866D3,  # its exit without a text (letter_oracle.EXIT)
 }
+TEXT_INITIALIZERS = (0x46BE60, 0x46C0A0)  # English 0x46BD80, 0x46BFC0
 # What the Spanish emulator skips, as the English oracle's QUIET: address: bytes popped.
 SKIPPED = {CODE[to.ENQUEUE]: 4, CODE[0x548CA0]: 0x18}
 BSS = 0x6CB000  # The Spanish exe's data without contents in the file starts here.
@@ -118,6 +119,8 @@ class SpanishExe(to.TownOracle):
         uc.hook_add(UC_HOOK_CODE, self._rand, begin=CODE[to.RAND], end=CODE[to.RAND])
         self.setup_imports(exe, constructors=())
         self.tls = dict(english.tls)
+        for f in TEXT_INITIALIZERS:  # The Spanish exe's town_oracle.TEXT_INITIALIZERS.
+            self.call(f, [])
         # Reads of the Spanish globals that were not copied (below the runs)
         # before the code wrote them (the CRT's sprintf writes and reads its
         # own there): what the English oracle may hold and the copy misses.

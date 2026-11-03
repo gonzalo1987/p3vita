@@ -344,6 +344,9 @@ struct SaveOpaque {
 	// The 40 town names of scripts/NamenStaedte_eng.txt (0x5125E0), by town
 	// number, in Latin-1 (the table 0x6DDA00). Read by load_game_scripts.
 	std::vector<std::string> town_names;
+	// The same file's 40 taverns' names after its 40 guilds' (the table
+	// 0x6DD8C0, by town number after a load: 0x512730).
+	std::vector<std::string> town_taverns;
 };
 
 // The statistics for the graphs of the game: the object 0x6DFC90, filled

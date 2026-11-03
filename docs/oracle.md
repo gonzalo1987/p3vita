@@ -636,9 +636,32 @@ The letter window composes each letter's text with 0x47F3B0 (a header with
 the town and the date, then a case per type of the table 0x48664C;
 [formats/mail.md](formats/mail.md) §4). p3vita's is `compose_letter`
 (`src/p3data/letters.cpp`), with the game's texts by their address
-(`GameTexts::raw_at`, the table `game_text_addresses.inc`). Types done so far
-(`letter_type_rewritten`): 0x00..0x05, 0x07, 0x0A, 0x0B and those with a
-buffer (0x29, 0x47, 0x63, 0x83), plus the 28 without a text.
+(`GameTexts::raw_at`, the table `game_text_addresses.inc`). **Every type
+with a text is done** (`letter_type_rewritten`) but the offers 0x1E/0x1F
+(they need the world's offers list [0x6DE584] and operation 0x5F, a
+player's action) and the two pictures 0x46 and 0x6E (0x51AC60 makes an
+image and the text is only «\n\n\c\h<its number>_»: the viewer's). Some
+cases change the save when shown (`letter_viewed`: the loan dates of 0x12
+and 0x26, the women's bit of 0x4F6420).
+
+- Found on the way, all in `extra_texts.txt` (`re/emu/sesion5/mail/s3`):
+  the alignment missed tables whose first element isn't a text (0x0A's
+  reasons, 0x19's kinds 9..15), took slots loaded by their address for
+  strings (0x6B48EC, 0x6C3054), and paired some texts one slot off (0x1B)
+  or with another text (0x07's convoy, 0x78's reasons); the Spanish code
+  differs in 0x03, 0x0B, 0x12, 0x1A, 0x27, 0x78 (the order of its
+  arguments, or code of its own); 0x63ADD0 is strcpy, not strcat.
+- **Two static initializers** (0x46BD80, 0x46BFC0; Spanish 0x46BE60,
+  0x46C0A0) fill tables of text pointers at start: the monument's and the
+  ranks' adjectives (0x6A0C18, 0x6A0C54), the battles' «Your snaikka»...
+  The oracle now runs them (`TEXT_INITIALIZERS`, also in `SpanishExe`) and
+  `GameTexts` reads their stores (`static_slots`). The world 7 days stays
+  0 different.
+- **The game's sprintf with %$N$** gives a conversion without `$` the
+  argument of its place among all the conversions, the positional ones
+  counted (checked in the emulator, `s4/sprintf_test.py`):
+  `GameTexts::sprintf_raw` did otherwise (its test said so; it had never
+  been checked against the game).
 
 - **`tools/oracle/letter_oracle.py`** runs the game's composer on a fake
   window whose list row points at each letter of the player's chain (the row
@@ -676,17 +699,28 @@ buffer (0x29, 0x47, 0x63, 0x83), plus the 28 without a text.
   whatever its memory holds past the table, which can't be matched, and the
   game's reads past each table differ between the English and the Spanish
   exe.
-- Checked: the 12 saves, every rewritten type equal in English and Spanish;
-  `all_letters` in save 3 with seeds 1..5, every rewritten type equal in
-  both languages but the out-of-range fields (each checked: the reason, the
-  town, the ship type or the captain past its table) and the English
-  blockade rejected (a game bug: the game prints the address of the town's
-  name where p3vita writes «?»).
+- Checked: the 12 saves, every letter equal in English and Spanish (none
+  left not rewritten); `all_letters` in save 3 with seeds 1..5, every type
+  equal in both languages but the out-of-range fields (each checked: a
+  reason, town, building, month, ship type, captain or merchant past its
+  table, where the game composes «(null)» or whatever follows the table),
+  the English blockade rejected (a game bug: the game prints the address of
+  the town's name where p3vita writes «?») and 0x42's null slot (a game
+  bug: the emulator copies its page 0, Windows would crash).
 - On the way: 0x0A's reason table (0x6B4A0C) has its texts at 5..7 (0..4
   fall on other data), which the alignment missed (it counts a table's
   texts from its first element); the ship names past both lists (0x512B20)
   give a type's word («cog», «nao»), not nothing; the Spanish table of
   0x02's types has no convoy (roadmap, «Corregir los fallos del juego»).
+- **`lstrlenA` as Windows has it** (`TownOracle._lstrlen`): the game's
+  sprintf (0x64D410, its own, through the static buffer 0x6D84E0) makes a
+  first pass that measures each conversion's argument in the order the
+  conversions come, not by their `%$N$`, so a Spanish text with «%$2$s ...
+  %$1$i» measures the number as a string. Windows' lstrlenA returns 0 for a
+  pointer it can't read (and nothing is mapped below 0x10000); the oracle
+  read the memory and stopped (numbers from 4096 up; below, the emulator's
+  page 0). Now it returns 0 as Windows: the Spanish loan letters (0x12) that
+  «failed in the game» compose, and the world 7 days stays 0 different.
 - **The viewer's texts' cache** keeps the texts by address too (version 2);
   `p3save texts-cache EXE CACHE` writes it and checks that it reads back the
   same (both exes: 805 texts by address).

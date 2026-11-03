@@ -925,7 +925,7 @@ WITH_BUFFER = (0x29, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x47, 0x63, 0x71, 0x83)
 LETTER_TYPES = [t for t in range(0x86) if t not in NO_TEXT and t not in WITH_BUFFER]
 
 
-def real_fields(t, rnd, towns, ships, captains):
+def real_fields(t, rnd, towns, ships, captains, merchants=30):
     """Letters of type t with the fields [+0x8..+0xF] a real one has (from the
     code that sends it), for the types p3vita composes (letters.cpp): they
     reach the branches the small random fields miss and stay in range (out of
@@ -959,6 +959,232 @@ def real_fields(t, rnd, towns, ships, captains):
     if t == 0x0B:  # a Hanse vote (events_mayor.cpp): the town, kind << 8 | reason, the votes for and against
         return [h(rnd.randrange(towns) if kind or rnd.randrange(2) else 0xFF, kind << 8 | rnd.randrange(7), yes, no)
                 for kind in range(6) for yes, no in ((3, 9), (9, 3))]
+    if t == 0x11:  # the weekly bill: the taxes, the property tax (u32)
+        return [struct.pack('<II', a, b) for a, b in
+                ((rnd.randrange(1, 5000), rnd.randrange(1, 3000)), (0, rnd.randrange(1, 3000)), (rnd.randrange(1, 5000), 0))]
+    if t == 0x12:  # a loan due: the amount, the year, the month (0 or 1..12) and the day (up to past its month's end)
+        return [h(rnd.randrange(1, 30000), 1300 + rnd.randrange(60), m, d) for m, d in
+                ((0, 5), (2, 29), (4, 31), (12, 32), (rnd.randrange(1, 13), rnd.randrange(1, 29)))]
+    if t == 0x13:  # an impounding: a ship's name number, kind 0..2, settled or not, the amount (u32)
+        return [struct.pack('<HBBI', rnd.randrange(300), kind, settled, rnd.randrange(1, 90000))
+                for kind in range(3) for settled in (0, 1)]
+    if t == 0x14:  # an order cancelled: what is paid back (s32), day << 2 | type, year · 12 + month
+        return [struct.pack('<iBBH', paid, 0, rnd.randrange(1, 29) << 2 | rnd.randrange(4),
+                            (1300 + rnd.randrange(60)) * 12 + rnd.randrange(12)) for paid in (rnd.randrange(9000), -1)]
+    if t == 0x15:  # a burglary: family, first name, the wares' bits, their value, the gold
+        return [struct.pack('<BBHHH', rnd.randrange(86), rnd.randrange(80), wares, value, gold) for wares, value, gold in
+                ((0, 0, 0), (0, 0, rnd.randrange(1, 900)), (rnd.randrange(1, 0x10000), rnd.randrange(1, 900), 0),
+                 (rnd.randrange(1, 0x10000), rnd.randrange(1, 900), rnd.randrange(1, 900)), (0x10000 >> 1, 5, 7))]
+    if t == 0x16:  # a burglary failed: the names
+        return [h(rnd.randrange(80), rnd.randrange(86), 0, 0) for _ in range(2)]
+    if t == 0x17:  # a traveller: the town to, month << 5 | day, the pay, the ship (in range or not)
+        return [h(rnd.randrange(towns), rnd.randrange(1, 13) << 5 | rnd.randrange(1, 29), rnd.randrange(1, 900), ship)
+                for ship in (rnd.randrange(ships), ships + 3)]
+    if t == 0x19:
+        # A task's charge (events_big.cpp, start_letter): the names, the kind
+        # (0..4, 9..15; 5..8 go as 0x0A), a town, and a ship's name number
+        # (kind 3: a merchant's names).
+        return [struct.pack('<BBBBH2x', rnd.randrange(80), rnd.randrange(86), kind, rnd.randrange(towns),
+                            rnd.randrange(80) | rnd.randrange(86) << 8 if kind == 3 else rnd.randrange(300))
+                for kind in (0, 1, 2, 3, 4, 9, 10, 11, 12, 13, 14, 15)]
+    if t == 0x1A:  # a transport order: family, first, the ware, the amount, months << 5 | day
+        return [struct.pack('<BBHHH', rnd.randrange(86), rnd.randrange(80), ware, rnd.randrange(1, 90),
+                            rnd.randrange(30) << 5 | rnd.randrange(1, 29)) for ware in (rnd.randrange(24), 0, 3, 23)]
+    if t == 0x1B:  # a ship sunk: place << 2 | type, first << 11, its name, its captain's family (0xFF: none), sailors
+        return [struct.pack('<HHHBB', rnd.randrange(64) << 2 | kind, rnd.randrange(32) << 11 | rnd.randrange(0x800),
+                            rnd.randrange(300), family, rnd.randrange(1, 60))
+                for kind in range(4) for family in (rnd.randrange(86), 0xFF)]
+    if t == 0x1D:
+        return [h(0, 0, 0, 0)]
+    if t == 0x24:  # a feast: the guests, the result 0..3
+        return [h(0, rnd.randrange(1, 300), k, 0) for k in range(4)]
+    if t == 0x25:  # a dowry: two ships' types (the second 0..3 or none: 4) and their goods
+        return [h(a, b, ga, gb) for a, b, ga, gb in
+                ((rnd.randrange(4), rnd.randrange(4), rnd.randrange(1, 90), rnd.randrange(1, 90)),
+                 (rnd.randrange(4), rnd.randrange(4), 0, rnd.randrange(1, 90)),
+                 (rnd.randrange(4), rnd.randrange(4), rnd.randrange(1, 90), 0), (rnd.randrange(4), 4, 0, 0))]
+    if t == 0x26:  # a loan repaid: the amount, the year, the month (0 or 1..12), the day
+        return [h(rnd.randrange(1, 30000), 1300 + rnd.randrange(60), m, d) for m, d in
+                ((0, 5), (2, 29), (rnd.randrange(1, 13), rnd.randrange(1, 29)))]
+    if t == 0x27:  # a company's value: the merchant, the shares, the change (s32)
+        return [struct.pack('<HHi', rnd.randrange(merchants), rnd.randrange(1, 100), change)
+                for change in (rnd.randrange(1, 30000), -rnd.randrange(1, 30000), 0)]
+    if t == 0x28:  # a dividend not paid: two amounts, a tick
+        return [struct.pack('<HHI', rnd.randrange(1, 9000), rnd.randrange(1, 9000), rnd.randrange(1 << 24))]
+    if t == 0x2A:  # a pirate's news: sex, adjective, rank 0..7, names, the pirate's names, the outcome
+        return [bytes([sex, rnd.randrange(5), rnd.randrange(8), rnd.randrange(80), rnd.randrange(86), rnd.randrange(80),
+                       rnd.randrange(86), outcome]) for sex, outcome in ((0, 0), (1, 0xFF), (1, 1), (0, 3))]
+    if t == 0x2C:  # a ship auctioned: the buyer's names, the ship's name, the price, the fee
+        return [struct.pack('<BBHHH', rnd.randrange(80), rnd.randrange(86), rnd.randrange(300), rnd.randrange(1, 60000),
+                            rnd.randrange(1, 3000))]
+    if t == 0x2D:  # the player bought his own ship: its name, the price, the fee
+        return [h(0, rnd.randrange(300), rnd.randrange(1, 60000), rnd.randrange(1, 3000))]
+    if t == 0x2E:  # the ship not sold: its name
+        return [h(0, 0, rnd.randrange(300), 0)]
+    if t == 0x2F:  # the wall's bill: family, first (| 0x80: a lady), the mayor's family and first, the amount / 100
+        return [bytes([rnd.randrange(86), rnd.randrange(80) | lady, rnd.randrange(86), rnd.randrange(80)]) +
+                struct.pack('<HH', rnd.randrange(1, 600), 0) for lady in (0, 0x80)]
+    if t == 0x30:  # a pirate's share: the captain's first and family (| 0x80), the victim's, the share, name << 2 | type
+        return [bytes([rnd.randrange(80), rnd.randrange(86) | plunder, rnd.randrange(80) | woman, rnd.randrange(86)]) +
+                struct.pack('<HH', rnd.randrange(1, 20000), rnd.randrange(300) << 2 | rnd.randrange(4))
+                for plunder, woman in ((0, 0), (0x80, 0x80))]
+    if t == 0x31:  # an escort's bonus: the bonus, the orlog ship's name
+        return [h(rnd.randrange(1, 9000), 0, 0, rnd.randrange(300))]
+    if t == 0x32:  # a convoy's arrival: the sum, sex, rank, the leader's family and first
+        return [struct.pack('<HHBBBB', rnd.randrange(1, 9000), 0, sex, rnd.randrange(8), rnd.randrange(86),
+                            rnd.randrange(80)) for sex in (0, 1)]
+    if t == 0x33:  # a wedding: the town, family, first, month 0..11, day, year
+        return [struct.pack('<HBBBBH', rnd.randrange(towns), rnd.randrange(86), rnd.randrange(80), rnd.randrange(12),
+                            rnd.randrange(1, 29), 1300 + rnd.randrange(60))]
+    if t == 0x34:  # a ship lost on the expedition: its name, its type, the tick
+        return [struct.pack('<HHI', rnd.randrange(300), rnd.randrange(4),
+                            ((1300 + rnd.randrange(60)) * 365 + rnd.randrange(365)) << 8 | rnd.randrange(256))]
+    if t == 0x36:  # the wall's extension: first (past 0x80 a woman's), family, the sum's high and low halves
+        return [h(first, rnd.randrange(86), rnd.randrange(2), rnd.randrange(65536))
+                for first in (rnd.randrange(80), 0x80 | rnd.randrange(1, 80))]
+    if t == 0x37:  # a special tax (u32)
+        return [struct.pack('<II', rnd.randrange(1, 90000), 0)]
+    if t == 0x3B:  # a coward: 0/1, the names
+        return [h(k, rnd.randrange(80), rnd.randrange(86), 0) for k in (0, 1)]
+    if t == 0x41:  # a pirate hunt: the town, the ship's name, first (past 0x7F a woman's), family
+        return [h(rnd.randrange(towns), rnd.randrange(300), first, rnd.randrange(86))
+                for first in (rnd.randrange(80), 0x80 | rnd.randrange(80))]
+    if t == 0x42:  # the hunt ended: the town, the reward, the names
+        return [h(rnd.randrange(towns), rnd.randrange(1, 9000), rnd.randrange(80), rnd.randrange(86))]
+    if t == 0x43:  # an office plundered: the town
+        return [h(rnd.randrange(towns), 0, 0, 0)]
+    if t == 0x48:  # a Hanse mission: rank, first, family, kind 0..2, the town, ships, the leader's first and family
+        return [bytes([rnd.randrange(8), rnd.randrange(80) | woman, rnd.randrange(86), kind, rnd.randrange(towns), ships,
+                       rnd.randrange(80), rnd.randrange(86)])
+                for kind in range(3) for ships, woman in ((0, 0), (1, 0x80), (2, 0))]
+    if t == 0x4A:  # an acquittal: family, first (| 0x80), the names [+0xA], [+0xB], the town, the charge 0..8
+        return [bytes([rnd.randrange(86), rnd.randrange(80) | (0x80 if charge & 1 else 0), rnd.randrange(86),
+                       rnd.randrange(80)]) + struct.pack('<HH', rnd.randrange(towns), charge) for charge in range(10)]
+    if t == 0x4B:  # a verdict: the sentence 0..2, a first name, fine / ware / town, amount, charge 0..9, names, town
+        out = []
+        for charge in range(10):
+            sentence = charge % 3
+            a = (rnd.randrange(1, 200), rnd.randrange(20), rnd.randrange(towns))[sentence]
+            out.append(bytes([sentence, rnd.randrange(80), a & 0xFF, rnd.randrange(1, 60), charge, rnd.randrange(80),
+                              rnd.randrange(86), rnd.randrange(towns) if charge < 3 else rnd.randrange(86)]))
+        return out
+    if t in (0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52):
+        # A captain's letters: his first and family names (u16), a ship's
+        # name or the player's first name [+0xC], a wage or the player's
+        # family [+0xE] (as bytes: [+0xE], [+0xF] the player's family and first).
+        if t in (0x4F, 0x51):  # [+0xE] a family name (u16)
+            return [h(rnd.randrange(80) | k, rnd.randrange(86) | k, rnd.randrange(80), rnd.randrange(86)) for k in (0, 1)]
+        return [h(rnd.randrange(80) | k, rnd.randrange(86) | k, rnd.randrange(300), rnd.randrange(80) << 8 | rnd.randrange(86))
+                for k in (0, 1)]
+    if t in (0x5A, 0x5B):  # a delivery: a bonus per unit, the ware, the amount, family, first (| 0x80)
+        return [struct.pack('<HHHBB', bonus, ware, rnd.randrange(1, 90), rnd.randrange(86), rnd.randrange(80) | woman)
+                for bonus, ware, woman in ((rnd.randrange(1, 50), 0, 0), (0, 3, 0x80), (rnd.randrange(1, 50), 23, 0))]
+    if t == 0x5C:  # a boycott ended: first (past 0x7F a woman's), family, the town (+ 0x100: a blockade), a ship lent
+        return [h(first, rnd.randrange(86), town, lent) for first, town, lent in
+                ((rnd.randrange(80), rnd.randrange(towns), 0), (0x80 | rnd.randrange(80), 0x100 | rnd.randrange(towns), 1))]
+    if t == 0x5D:  # a ship bought at an auction: family, first, its name, its type, the price / 10
+        return [struct.pack('<BBHHH', rnd.randrange(86), rnd.randrange(80), rnd.randrange(300), rnd.randrange(4),
+                            rnd.randrange(1, 6000))]
+    if t == 0x5E:
+        return [h(0, 0, 0, 0)]
+    if t == 0x60:
+        return [h(0, 0, 0, 0)]
+    if t in (0x64, 0x65):  # the prince: five amounts (some 0), the day, the month 1..12, a flag
+        return [bytes([rnd.randrange(30) * (k & 1), rnd.randrange(30) * (k >> 1 & 1), rnd.randrange(30) * (k >> 2 & 1),
+                       rnd.randrange(30) * (k >> 3 & 1), rnd.randrange(30) * (k >> 4 & 1), rnd.randrange(1, 29),
+                       rnd.randrange(1, 13), rnd.choice((0, 0xFE))]) for k in (1, 2, 3, 0x1F, 0x15, 0x0E, 0x10)]
+    if t in (0x66, 0x67, 0x68):  # cart convoys: two towns (the same, for 0x68's other text)
+        a = rnd.randrange(towns)
+        return [h(a, rnd.randrange(towns), 0, 0), h(a, a, 0, 0)]
+    if t == 0x69:
+        return [h(0, 0, 0, 0)]
+    if t == 0x6A:  # a town plundered: the captain's first and family, the town, the ship's name, the share (s32)
+        return [bytes([rnd.randrange(80), rnd.randrange(86), rnd.randrange(towns), rnd.randrange(256)]) +
+                struct.pack('<i', rnd.randrange(1, 90000))]
+    if t == 0x6B:  # the council: an amount or the new and old tax rates, the votes against and for, the proposal 0..3
+        return [struct.pack('<IBBH', amount, against, yes, proposal) for proposal in range(4) for against, yes in ((2, 7), (7, 2))
+                for amount in ((rnd.randrange(1, 9000),) if proposal == 0 else (rnd.randrange(1, 9) | rnd.randrange(1, 9) << 8,))]
+    if t == 0x6C:  # the extra tax: the player's part (sign bit: a shortfall), the total
+        return [struct.pack('<II', part, rnd.randrange(1, 90000)) for part in (rnd.randrange(1, 9000), 0x80000000 | rnd.randrange(1, 9000))]
+    if t in (0x73, 0x75):  # a theft or fire: three amount | ware << 8 (0x1800: none), family, first
+        def lost():
+            return rnd.randrange(1, 50) | rnd.randrange(24) << 8
+        return [struct.pack('<HHHBB', a, b, c, rnd.randrange(86), rnd.randrange(80))
+                for a, b, c in ((lost(), lost(), lost()), (0x1800, lost(), 0xFFFF), (0x1800, 0x1800, 0x1800))]
+    if t == 0x74:  # a break-in: family, first (| 0x80), rank (+ 0x100: hired), the culprit's family (| 0x8000), first, rank, adjective
+        return [bytes([rnd.randrange(86), rnd.randrange(80) | woman, rnd.randrange(8), hired, rnd.randrange(86),
+                       rnd.randrange(80) | (0x80 if hired else 0), rnd.randrange(8), rnd.randrange(5)])
+                for woman, hired in ((0, 0), (0x80, 1))]
+    if t == 0x80:  # an overland route: the Alderman's first (| 0x80) and family, two towns, a merchant, the day, year · 12 + month
+        return [bytes([rnd.randrange(80) | woman, rnd.randrange(86), rnd.randrange(towns), rnd.randrange(towns),
+                       rnd.randrange(merchants), rnd.randrange(1, 29)]) +
+                struct.pack('<H', (1300 + rnd.randrange(60)) * 12 + rnd.randrange(12)) for woman in (0, 0x80)]
+    if t == 0x82:  # a respected trader: the adjective, the rank, first (| 0x80), family
+        return [h(rnd.randrange(10), rnd.randrange(8), rnd.randrange(80) | woman, rnd.randrange(86)) for woman in (0, 0x80)]
+    if t == 0x84:  # a Hanse order: adjective, rank, family, first (| 0x80), the day, month 0..11, the year
+        return [bytes([rnd.randrange(10), rnd.randrange(8), rnd.randrange(86), rnd.randrange(80) | woman,
+                       rnd.randrange(1, 29), rnd.randrange(12)]) + struct.pack('<H', 1300 + rnd.randrange(60))
+                for woman in (0, 0x80)]
+    if t in (0x76, 0x7D, 0x7E, 0x7F):  # a building at an auction: first (| 0x80), family, the other's names, the building, the price
+        return [bytes([rnd.randrange(80) | woman, rnd.randrange(86), rnd.randrange(80), rnd.randrange(86), 0,
+                       rnd.randrange(0x39)]) + struct.pack('<H', rnd.randrange(1, 900)) for woman in (0, 0x80)]
+    if t == 0x6D:  # the council's invitation: the Alderman's adjective, first (| 0x80), family; the mayor's adjective, first, family
+        return [bytes([rnd.randrange(5), rnd.randrange(80) | a, rnd.randrange(86), rnd.randrange(10), rnd.randrange(80) | m,
+                       rnd.randrange(86), 0, 0]) for a, m in ((0, 0), (0x80, 0x80))]
+    if t in (0x6F, 0x70):  # a Hanse task: the task (| 0x80 candidacy), first (| 0x80), family, the Alderman's first and family, two towns or names
+        return [bytes([task | cand, 0, rnd.randrange(80) | woman, rnd.randrange(86), rnd.randrange(80) | alder,
+                       rnd.randrange(86), rnd.randrange(towns), rnd.randrange(towns)])
+                for task, cand, woman, alder in ((0, 0, 0, 0), (1, 0x80, 0x80, 0x80), (2, 0, 0, 0), (3, 0x80, 0, 0), (4, 0, 0x80, 0))]
+    if t == 0x77:  # the Hanse leader: a town (or past them), the issue, names, closing 0..3, first (| 0x80), family, kind 0..2
+        return [bytes([town, issue, rnd.randrange(24) if issue == 0 else rnd.randrange(86), rnd.randrange(86) | closing << 8 & 0,
+                       rnd.randrange(80) | woman, rnd.randrange(86), kind, 0])
+                for kind, issue, town, closing, woman in ((0, 0, rnd.randrange(towns), 0, 0), (0, 1, rnd.randrange(towns), 1, 0),
+                                                          (0, 2, rnd.randrange(towns), 2, 0), (0, 3, rnd.randrange(towns), 3, 0),
+                                                          (0, 4, rnd.randrange(towns), 0, 0), (0, 0, 0xFE, 1, 0),
+                                                          (0, 5, rnd.randrange(towns), 0, 0x80), (0, 6, rnd.randrange(towns), 0, 0),
+                                                          (1, 0, 0, 0, 0), (2, 0, 0, 0, 0))]
+    if t == 0x78:  # a Hanse Day: day, month 1..12, a town, subject << 4 | reason, a ware, adjective, first (| 0x80), family
+        return [bytes([rnd.randrange(1, 29), rnd.randrange(1, 13), rnd.randrange(towns), subject << 4 | reason,
+                       rnd.randrange(24), rnd.randrange(5), rnd.randrange(80) | woman, rnd.randrange(86)])
+                for subject, reason, woman in ((0, 0, 0), (1, 0, 0x80), (2, 1, 0), (3, 2, 0), (4, 3, 0x80), (5, 4, 0),
+                                               (1, 5, 0), (2, 6, 0))]
+    if t == 0x79:  # a debtor: the debt's low half, an event (none), rank | high bits, his family, the player's first (| 0x80) and family
+        return [struct.pack('<HHBBBB', rnd.randrange(65536), 0xFFFF, rnd.randrange(8) | high << 6, rnd.randrange(86),
+                            rnd.randrange(80) | woman, rnd.randrange(86)) for high, woman in ((0, 0), (3, 0x80), (1, 0))]
+    if t == 0x7A:  # a child: its first name (| 0x80 a girl)
+        return [h(rnd.randrange(80) | girl, 0, 0, 0) for girl in (0, 0x80)]
+    if t == 0x7B:  # a monument: the adjective, the first name (| 0x80 a woman), the family name
+        return [h(rnd.randrange(5), rnd.randrange(80) | woman, rnd.randrange(86), 0) for woman in (0, 0x80)]
+    if t == 0x7C:  # a manager's experience
+        return [h(rnd.randrange(1, 9), 0, 0, 0)]
+    if t == 0x81:
+        return [h(0, 0, 0, 0)]
+    if t == 0x85:  # the prince's payment: the text, the payment's low and high halves
+        return [h(k, rnd.randrange(65536), 0, 0) for k in range(2)]  # 2 texts (the 3rd slot is null)
+    if t == 0x61:  # an office's capacity
+        return [h(rnd.randrange(1, 900), 0, 0, 0)]
+    if t == 0x62:  # the company's value (event 0x18): family | first << 8 or 0xFFFF, the rise's halves, the shares
+        return [h(holder, rnd.randrange(3), rnd.randrange(65536), rnd.randrange(1, 100))
+                for holder in (0xFFFF, rnd.randrange(80) << 8 | rnd.randrange(86), (0x80 | rnd.randrange(80)) << 8 | rnd.randrange(86))]
+    if t == 0x49:  # the guards' bill: the mayor's first (past 0x7F a woman's) and family, the share (s32)
+        return [struct.pack('<HHi', first, rnd.randrange(86), rnd.randrange(-500, 9000))
+                for first in (rnd.randrange(80), 0x80 | rnd.randrange(80))]
+    if t == 0x4C:  # a mission not joined: rank, first, family, kind 0..2, the town, ships
+        return [bytes([rnd.randrange(8), rnd.randrange(80) | woman, rnd.randrange(86), kind, rnd.randrange(towns), ships,
+                       0, 0]) for kind, woman, ships in ((0, 0, 0), (1, 0x80, 0), (2, 0, 1), (2, 0x80, 3))]
+    if t == 0x2B:  # too late: the names, an amount
+        return [h(rnd.randrange(80), rnd.randrange(86), rnd.randrange(1, 9000), 0)]
+    if t == 0x20:  # a burglary in an office: the wares' bits, the goods destroyed, the gold stolen
+        return [h(0, wares, goods, gold) for wares, goods, gold in
+                ((0, 0, 0), (0, 0, rnd.randrange(1, 9000)), (rnd.randrange(1, 0x10000), rnd.randrange(1, 90), 0),
+                 (rnd.randrange(1, 0x10000), rnd.randrange(1, 90), rnd.randrange(1, 9000)))]
+    if t == 0x21:  # a suitor: the go-between's names, the sum, the offer's last day of the year
+        return [h(rnd.randrange(80), rnd.randrange(86), rnd.randrange(1, 9000), day) for day in (rnd.randrange(365), 360)]
+    if t == 0x22:  # a proposal: the go-between's names, a town, the other's names, the dowry, a day
+        return [bytes([rnd.randrange(80), rnd.randrange(86), 0, rnd.randrange(256), rnd.randrange(80) | sex,
+                       rnd.randrange(86), rnd.randrange(256), rnd.randrange(28)]) for sex in (0, 0x80)]
+    if t == 0x18:  # the traveller's thanks: 0..3, an amount, the town
+        return [h(k, rnd.randrange(1, 900), rnd.randrange(towns), 0) for k in range(3)]  # 3 texts (the 4th slot is null)
     return []
 
 
@@ -970,7 +1196,7 @@ def all_letters(o, rec):
     for k in (0x38, 0x39, 0x3A):
         w8(o, mm + k, 0)  # every class kept forever
     rnd = random.Random(int(os.environ.get('LETTERS_SEED', '1')))
-    towns, _, _, ships = o.counts()
+    towns, _, merchants, ships = o.counts()
     captains = o.u16(0x6DD892)
     letter = o.alloc(0x10)
     sent = 0
@@ -986,7 +1212,7 @@ def all_letters(o, rec):
                 letters.append(struct.pack('<4H', *(rnd.randrange(4) for _ in range(4))))
             else:
                 letters.append(struct.pack('<2Hi', rnd.randrange(4), rnd.randrange(4), rnd.randrange(-50000, 50000)))
-        letters += real_fields(t, rnd, towns, ships, captains)
+        letters += real_fields(t, rnd, towns, ships, captains, merchants)
         for fields in letters:
             body = bytes([0, 0x80, 0xFF, 0xFF, t, rnd.randrange(towns), 0xFF, 0xFF]) + fields
             o.uc.mem_write(letter, body)

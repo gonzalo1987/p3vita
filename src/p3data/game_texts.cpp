@@ -160,6 +160,20 @@ bool is_digit(char c) {
 	return c >= '0' && c <= '9';
 }
 
+// The static initializers that fill tables of text pointers at start (the
+// CRT runs them before the game; in the file those slots are 0): English
+// 0x46BD80 (0x6A0BC8...) and 0x46BFC0 (0x6A1778...), and the Spanish exe's.
+// Their code is only «mov eax, [m]», «mov [m], eax», «mov dword [m], imm»
+// and a ret: static_slots reads the slots they set.
+struct Initializers {
+	uint32_t time_stamp;
+	uint32_t starts[2];
+};
+constexpr Initializers kInitializers[] = {
+	{0x3F544D3C, {0x46BD80, 0x46BFC0}},
+	{0x3F8814FA, {0x46BE60, 0x46C0A0}},
+};
+
 // The texts by address (GameTexts::raw_at): {english, spanish}; with the bit
 // kDirect the string is at the address, without it the address holds a
 // pointer to it.
@@ -176,7 +190,39 @@ constexpr uint32_t kDirect = 0x80000000;
 // build's PE time stamp, u32 a hash of p3vita's slots for that build, u32 the
 // number of texts, and each text as u32 size and its raw bytes.
 constexpr char kCacheMagic[4] = {'P', '3', 'T', 'X'};
-constexpr uint32_t kCacheVersion = 2;
+constexpr uint32_t kCacheVersion = 3;
+
+// The slots the build's static initializers set, and the pointer each gets.
+std::vector<std::pair<uint32_t, uint32_t>> static_slots(const std::vector<uint8_t>& exe, const Sections& sections,
+	uint32_t time_stamp) {
+	std::vector<std::pair<uint32_t, uint32_t>> out;
+	for (const Initializers& init : kInitializers) {
+		if (init.time_stamp != time_stamp) {
+			continue;
+		}
+		for (uint32_t start : init.starts) {
+			size_t p = sections.offset(start);
+			uint32_t eax = 0;
+			for (int n = 0; p && n < 200 && p + 10 <= exe.size(); ++n) {
+				const uint8_t op = exe[p];
+				if (op == 0xA1) {  // mov eax, [m]
+					const size_t from = sections.offset(u32(exe, p + 1));
+					eax = from ? u32(exe, from) : 0;
+					p += 5;
+				} else if (op == 0xA3) {  // mov [m], eax
+					out.emplace_back(u32(exe, p + 1), eax);
+					p += 5;
+				} else if (op == 0xC7 && exe[p + 1] == 0x05) {  // mov dword [m], imm
+					out.emplace_back(u32(exe, p + 2), u32(exe, p + 6));
+					p += 10;
+				} else {
+					break;  // the ret (or something this reader doesn't know)
+				}
+			}
+		}
+	}
+	return out;
+}
 
 const Build* find_build(uint32_t time_stamp) {
 	for (const Build& b : kBuilds) {
@@ -316,12 +362,22 @@ std::unique_ptr<GameTexts> GameTexts::parse(const std::vector<uint8_t>& exe, std
 		texts->raw_[i] = std::string(exe.begin() + long(text), exe.begin() + long(end));
 		texts->texts_[i] = clean_game_text(texts->raw_[i]);
 	}
-	// The texts by address: one that can't be found stays empty.
+	// The texts by address: one that can't be found stays empty; a slot with
+	// a null pointer gives «(null)», as the game's sprintf prints it for %s;
+	// a slot a static initializer sets, its pointer (static_slots).
+	const std::vector<std::pair<uint32_t, uint32_t>> initialized = static_slots(exe, sections, build->time_stamp);
 	for (const AddressPair& pair : kTextAddresses) {
 		const uint32_t va = texts->spanish_ ? pair.spanish : pair.english;
 		const size_t at = sections.offset(va & ~kDirect);
-		const size_t text = !at ? 0 : (va & kDirect) ? at : sections.offset(u32(exe, at));
-		std::string raw;
+		uint32_t pointer = at && !(va & kDirect) ? u32(exe, at) : 0;
+		for (const auto& [slot, value] : initialized) {
+			if (!(va & kDirect) && slot == va) {
+				pointer = value;
+			}
+		}
+		const bool null_slot = at && !(va & kDirect) && pointer == 0;
+		const size_t text = !at || null_slot ? 0 : (va & kDirect) ? at : sections.offset(pointer);
+		std::string raw = null_slot ? "(null)" : "";
 		if (text) {
 			size_t end = text;
 			while (end < exe.size() && end - text < kMaxText && exe[end] != 0) {
@@ -474,9 +530,12 @@ std::string GameTexts::sprintf_raw(const std::string& text, const std::vector<st
 			if (index < args.size()) {
 				out += args[index];
 			}
-			if (!positional) {
-				++next;
-			}
+			// The game's sprintf gives a conversion without %$N$ the argument
+			// of its place among all the conversions, the positional ones
+			// included (checked in the emulator: «(%$2$s) %$1$s %d00 %s %s»
+			// takes the third, fourth and fifth).
+			++next;
+			(void)positional;
 			i = j;
 			continue;
 		}
