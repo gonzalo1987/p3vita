@@ -37,12 +37,13 @@
 // La guarida pirata (tipo 3) espera a que un barco del comerciante se
 // acerque (los piratas se refuerzan con barcos nuevos, 0x5144A0) y llegue a
 // ella. Por reescribir: el principio del tipo 0 (crea la ciudad, 0x531D50) y
-// el ataque a la guarida (una batalla). Los avisos (0x4D6530, 0x548CA0) y las
+// el ataque a la guarida (una batalla). The letters (0x4D6530) are sent; los avisos (0x548CA0) y las
 // ventanas del jugador no cambian la simulación.
 
 #include <cstring>
 
 #include "p3data/game_fixes.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -588,9 +589,76 @@ uint16_t fn_4ec694(const SaveGame& save, uint32_t merchant) {
 	return 0xFFFF;
 }
 
+// 0x5333C0 (on the world, with two outputs): the Alderman's ([0x6DE52D])
+// first and family names; for a citizen, those of the councillor of his town
+// ([0x6DE52E]: [+0x6D4 + j], [+0x6D8 + j]) with j = (~Alderman) & 3, or 0
+// when that town's mayor is a merchant.
+void fn_5333c0(const SaveGame& save, uint8_t& first, uint8_t& family) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t alderman = g.u8(0x6DE52D);
+	const uint32_t count = g.u16(kMerchantCount);
+	if (alderman < count) {
+		first = save.merchants[alderman].memory.u8(0x1C);
+		family = save.merchants[alderman].memory.u8(0x1D);
+		return;
+	}
+	const TownMemory& t = save.towns[g.u8(kHanseTown)].memory;
+	const uint32_t j = t.u8(0x6F1) < count ? 0 : uint8_t(~alderman) & 3;
+	first = t.u8(0x6D4 + j);
+	family = t.u8(0x6D8 + j);
+}
+
+// The letters about a Hanse task of a merchant, 0x70 (expired, 0x4EB16B..)
+// and 0x6F (done, 0x4EC372..): [+0x5] the Hanse town; [+0x8] the task's kind
+// [+0xC]; [+0x9] the merchant's title (0x4F9430) + his rank at home << 5;
+// [+0xA], [+0xB] his names; [+0xC], [+0xD] the Alderman's (for a citizen,
+// the councillor (~Alderman) & 3 of the Hanse town; unlike 0x5333C0 the game
+// doesn't look at that town's mayor here); [+0xE], [+0xF] by kind: 0 the new
+// town [+0x16]; 1 the road's towns [+0x10], [+0x11]; 2 [+0x12], [+0x14]; 3
+// [+0x11]; 4 [+0x12].
+void hanse_task_letter(const SaveGame& save, Letter& letter, const GameMemory<0x18>& e, uint32_t merchant) {
+	const GlobalMemory& g = save.globals;
+	const MerchantMemory& m = save.merchants[merchant].memory;
+	letter.entry.u8(5) = g.u8(kHanseTown);
+	letter.entry.u8(9) = uint8_t(merchants_detail::fn_4f9430(save, int(merchant)) + (m.u8(0x39C + m.u8(0x19)) << 5));
+	letter.entry.u8(0xA) = m.u8(0x1C);
+	letter.entry.u8(0xB) = m.u8(0x1D);
+	const uint32_t alderman = g.u8(0x6DE52D);
+	if (alderman < g.u16(kMerchantCount)) {
+		letter.entry.u8(0xC) = save.merchants[alderman].memory.u8(0x1C);
+		letter.entry.u8(0xD) = save.merchants[alderman].memory.u8(0x1D);
+	} else {
+		const TownMemory& t = save.towns[g.u8(kHanseTown)].memory;
+		const uint32_t j = uint8_t(~alderman) & 3;
+		letter.entry.u8(0xC) = t.u8(0x6D4 + j);
+		letter.entry.u8(0xD) = t.u8(0x6D8 + j);
+	}
+	switch (e.u8(0xC)) {
+	case 0:
+		letter.entry.u8(0xE) = e.u8(0x16);
+		break;
+	case 1:
+		letter.entry.u8(0xE) = e.u8(0x10);
+		letter.entry.u8(0xF) = e.u8(0x11);
+		break;
+	case 2:
+		letter.entry.u8(0xE) = e.u8(0x12);
+		letter.entry.u8(0xF) = e.u8(0x14);
+		break;
+	case 3:
+		letter.entry.u8(0xE) = e.u8(0x11);
+		break;
+	case 4:
+		letter.entry.u8(0xE) = e.u8(0x12);
+		break;
+	default:
+		break;
+	}
+}
+
 // 0x4EBF54 (sobre la cola de eventos, con el índice del evento): empieza el
-// encargo ([+0xF] = 1) y le pone el plazo según el tipo. Los avisos al
-// comerciante (0x4D6530, con su fecha de 0x5311D0) no se reescriben.
+// encargo ([+0xF] = 1) y le pone el plazo según el tipo, con las cartas al
+// comerciante: 0x80 (the road), 0x6E and 0x84 (the pirate nest).
 void fn_4ebf54(SaveGame& save, uint32_t index) {
 	GlobalMemory& g = save.globals;
 	GameMemory<0x18>& e = save.events[index];
@@ -643,15 +711,58 @@ void fn_4ebf54(SaveGame& save, uint32_t index) {
 		if (!found) {
 			e.u32(8) = now + 0x26C00;  // Checked with the oracle: scenario task_branches (saves 3 and 5).
 		}
+		// The letter 0x80 to the merchant (0x4EC115..0x4EC18F): [+0x5] the
+		// Hanse town; [+0x8], [+0x9] the Alderman's names (0x5333C0); [+0xA],
+		// [+0xB] the two towns, [+0xC] the merchant; [+0xD] the deadline's
+		// day and u16 [+0xE] its year · 12 + month − 1.
+		Letter letter(0x80);
+		letter.entry.u8(5) = g.u8(kHanseTown);
+		fn_5333c0(save, letter.entry.u8(8), letter.entry.u8(9));
+		letter.entry.u8(0xA) = e.u8(0x10);
+		letter.entry.u8(0xB) = e.u8(0x11);
+		letter.entry.u8(0xC) = e.u8(0xD);
+		uint8_t day = 0;
+		uint8_t month = 0;
+		uint16_t year = 0;
+		events_mayor_detail::fn_5311d0(e.u32(8), day, month, year);
+		letter.entry.u8(0xD) = day;
+		letter.entry.u16(0xE) = uint16_t(year * 12 + month - 1);
+		send_letter(save, e.u8(0xD), letter);
 		break;
 	}
 	case 2:
 		e.u32(8) = (now + 0x1E00) | 0xFF;
 		break;
-	case 3:
+	case 3: {
 		e.u32(8) = (now + 0x1E00) | 0xFF;
 		e.u16(0x14) = 0xFFFF;
+		// The letters 0x6E and 0x84 to the merchant (0x4EC1AD..0x4EC2B2): 0x6E
+		// with [+0x5] the Hanse town, u16 [+0x8] 0, [+0xA] 0xFFFF, [+0xC],
+		// [+0xE] the nest's x, y (the towns' table by the number [+0x11]);
+		// then the same letter as 0x84 with u16 [+0x8] his rank at home << 8 +
+		// his title, [+0xA] his [+0x1C] << 8 + [+0x1D], and the deadline:
+		// [+0xC] its day, [+0xD] its month − 1, u16 [+0xE] its year.
+		Letter letter(0x6E);
+		letter.entry.u8(5) = g.u8(kHanseTown);
+		letter.entry.u16(0xA) = 0xFFFF;
+		letter.entry.u16(0xC) = uint16_t(g.u32(kTownTable + 0x20 + 0x34 * uint32_t(e.u8(0x11))));
+		letter.entry.u16(0xE) = uint16_t(g.u32(kTownTable + 0x24 + 0x34 * uint32_t(e.u8(0x11))));
+		send_letter(save, e.u8(0xD), letter);
+		const uint32_t merchant = save.events[index].u8(0xD);
+		const MerchantMemory& m = save.merchants[merchant].memory;
+		letter.entry.u8(4) = 0x84;
+		letter.entry.u16(8) = uint16_t((m.u8(0x39C + m.u8(0x19)) << 8) + merchants_detail::fn_4f9430(save, int(merchant)));
+		letter.entry.u16(0xA) = uint16_t((m.u8(0x1C) << 8) + m.u8(0x1D));
+		uint8_t day = 0;
+		uint8_t month = 0;
+		uint16_t year = 0;
+		events_mayor_detail::fn_5311d0(save.events[index].u32(8), day, month, year);
+		letter.entry.u8(0xC) = day;
+		letter.entry.u8(0xD) = uint8_t(month - 1);
+		letter.entry.u16(0xE) = year;
+		send_letter(save, int32_t(merchant), letter);
 		break;
+	}
 	case 4: {
 		// Los habitantes que debe tener: los de 16 bits de ahora + 2000, en
 		// centenas.
@@ -666,14 +777,29 @@ void fn_4ebf54(SaveGame& save, uint32_t index) {
 }
 
 // 0x4EC354 (sobre la cola de eventos: el evento de la cabeza): el encargo
-// cumplido. El comerciante sube su [+0x37] (2 si ha fundado una ciudad); los
-// avisos no se reescriben.
+// cumplido. El comerciante sube su [+0x37] (2 si ha fundado una ciudad), and
+// the letter 0x6F (hanse_task_letter; [+0x8] with 0x80 when [+0x37] reaches
+// 4) goes to the chronicle and to a human merchant; the ticker line (0x548CA0)
+// is the interface's.
 void fn_4ec354(SaveGame& save) {
 	const GameMemory<0x18>& e = save.events[save.globals.u16(kEventHead)];
-	MerchantMemory& m = save.merchants[e.u8(0xD)].memory;
-	++m.u8(0x37);
+	const uint32_t merchant = e.u8(0xD);
+	MerchantMemory& m = save.merchants[merchant].memory;
+	Letter letter(0x6F);
+	letter.entry.u8(8) = e.u8(0xC);
+	if (++m.u8(0x37) == 4) {
+		letter.entry.u8(8) |= 0x80;
+	}
+	hanse_task_letter(save, letter, e, merchant);
 	if (e.u8(0xC) == 0) {
-		++m.u8(0x37);  // Checked with the oracle: scenario new_town_market (saves 3 and 5).
+		// Checked with the oracle: scenario new_town_market (saves 3 and 5).
+		if (++m.u8(0x37) == 4) {
+			letter.entry.u8(8) |= 0x80;
+		}
+	}
+	send_letter(save, kLetterToChronicle, letter);
+	if (m.u16(8) == 0) {
+		send_letter(save, int32_t(merchant), letter);
 	}
 }
 
@@ -1067,6 +1193,11 @@ uint32_t fn_4eb0eb(SaveGame& save) {
 		const uint32_t merchant = e->u8(0xD);
 		fn_4f9170(save, int(merchant));
 		if (save.merchants[merchant].memory.u16(8) == 0) {
+			// The letter 0x70 to him (0x4EB16B..0x4EB32B: hanse_task_letter,
+			// [+0x8] the kind), sent after what the kind does below.
+			Letter letter(0x70);
+			letter.entry.u8(8) = e->u8(0xC);
+			hanse_task_letter(save, letter, *e, merchant);
 			switch (e->u8(0xC)) {
 			case 1: {
 				// Un encargo nuevo igual, con la ciudad [+0x10] en [+0xD].
@@ -1102,8 +1233,9 @@ uint32_t fn_4eb0eb(SaveGame& save) {
 			default:
 				break;
 			}
-			// Los avisos (0x4D6530, 0x548CA0) y, si es el jugador, la
-			// ventana (0x469380, 0x469AF0): no se reescriben.
+			send_letter(save, save.events[g.u16(kEventHead)].u8(0xD), letter);
+			// The ticker line (0x548CA0) and, for the player, the window
+			// (0x469380, 0x469AF0): the interface's.
 		}
 		e->u8(0xC) = 5;
 		e->u32(0) = g.u32(kTick) + 0x1C00;

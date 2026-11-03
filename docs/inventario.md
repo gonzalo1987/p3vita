@@ -149,8 +149,9 @@ change.
   0x63 in the game's texts) and `events_towns.cpp` (14: the debts' notices and
   the impounding, the feast, the wedding, the fires, a new office, a captain)
   and `events_mayor.cpp` (9, the elections, the Hanse vote and the auctions,
-  plus the 2 of the Alderman's notice 0x5299F0, rewritten now).
-  18 left.
+  plus the 2 of the Alderman's notice 0x5299F0, rewritten now) and
+  `alderman.cpp` (6: a Hanse task started, expired and done).
+  12 left.
 - [ ] **10 in functions p3vita names but skipped whole** (8 left): the mission
   interpreter 0x4ECF64 (5; three with a letter the script builds), the
   alderman's notification 0x5299F0 (2, done with events_mayor.cpp), the convoy's automatic route

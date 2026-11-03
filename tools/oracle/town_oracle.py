@@ -333,6 +333,10 @@ MAIL_CALLS = (
     # and the Alderman's (0x5299F0: 0x47 with its text, 0x57).
     0x4DC53D, 0x4E32E9, 0x4E3378, 0x4E33FC, 0x4E3598, 0x4E363A, 0x4E36B3, 0x5294F7, 0x5295BD, 0x529CA0,
     0x529D8A,
+    # alderman.cpp: a Hanse task of a merchant expired (0x4EB0EB: 0x70),
+    # started (0x4EBF54: 0x80 the road, 0x6E and 0x84 the pirate nest) and
+    # done (0x4EC354: 0x6F to the chronicle and to the merchant).
+    0x4EB32B, 0x4EC18F, 0x4EC230, 0x4EC2B2, 0x4EC4FC, 0x4EC51C,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is

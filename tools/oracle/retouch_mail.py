@@ -111,6 +111,11 @@ Scenarios:
              port, in no convoy) won by the AI merchant (0x2C), by himself
              (0x2D) and unsold (0x2E), and an AI ship won by the player
              (0x5D). Record 4d85c0
+  hanse_task_letters the Hanse tasks of an AI merchant's candidacy
+             (retouch_unchecked.candidacy_tasks) given to the player: the
+             road and the pirate nest not started (0x4EBF54: 0x80; 0x6E and
+             0x84) and the pirate ship hunted, done (0x4EC354: 0x6F to the
+             chronicle and to him). Record 4d85c0,535760, 2 days
 """
 import argparse
 import os
@@ -737,6 +742,20 @@ def auction_end(o, rec):
     print(f'auctions ending (kind, (town, item), winner): {cases}; the player {m}, the AI merchant {ai}')
 
 
+def hanse_task_letters(o, rec):
+    import retouch as rt
+    import retouch_unchecked as ru
+    m = o.u32(to.PLAYER)
+    tasks = ru.candidacy_tasks(o, rt.ai_with_office(o)[0])
+    if 1 in tasks:  # the road, not started: 0x80
+        ru.set_task(o, tasks[1], merchant=m, started=0, at=1)
+    if 3 in tasks:  # the pirate nest, not started: 0x6E and 0x84
+        ru.set_task(o, tasks[3], merchant=m, started=0, at=2)
+    if 2 in tasks:  # a pirate ship hunted ([+0x16] = 1): done, 0x6F to him too
+        ru.set_task(o, tasks[2], merchant=m, started=1, deadline=0x3000, f16=1, at=3)
+    print(f'the player {m} gets the tasks {sorted(k for k in tasks if k in (1, 2, 3))}')
+
+
 def expedition_lost(o, rec):
     convoy, members = expedition(o, rec)
     w32(o, o.ship(members[0]) + 0x18, 10)
@@ -752,7 +771,7 @@ SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, com
                                      expedition_four, expedition_villages, expedition_new_world, expedition_nothing,
                                      expedition_contract, debts_notices, debts_office, debts_ship, debts_partial,
                                      captain, mayor_election, alderman_merchant, alderman_citizen, hanse_vote,
-                                     auction_end)}
+                                     auction_end, hanse_task_letters)}
 
 
 def main():

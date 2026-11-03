@@ -394,6 +394,17 @@ doesn't have.
     building's type, u16 [+0xE] the price / 100), 0x7F to the winner (his
     and the owner's names, the type, the price / 100) or 0x7E to the owner
     when unsold. Appendix A has 0x7D only for 0x4E3598: it is 0x76 or 0x7D.
+- The Hanse tasks of a merchant (`alderman.cpp`): started (0x4EBF54), the
+  road 0x80 ([+0x5] the Hanse town; [+0x8], [+0x9] the Alderman's names,
+  0x5333C0; [+0xA], [+0xB] the towns, [+0xC] the merchant, [+0xD] the
+  deadline's day, u16 [+0xE] its year · 12 + month − 1) or the pirate nest
+  0x6E (u16 [+0xA] 0xFFFF, [+0xC], [+0xE] the nest's x, y) and 0x84 (u16
+  [+0x8] his rank << 8 + title, [+0xA] his names, [+0xC] day, [+0xD] month
+  − 1, u16 [+0xE] year of the deadline); expired 0x70 (0x4EB0EB) and done
+  0x6F (0x4EC354, to the chronicle and to a human merchant; [+0x8] the
+  kind, | 0x80 when his [+0x37] reaches 4), both with [+0x5] the Hanse
+  town, [+0x9] his title + rank << 5, [+0xA], [+0xB] his names, [+0xC],
+  [+0xD] the Alderman's, [+0xE], [+0xF] the task's places by kind.
 
 ## Appendix A. The 154 calls
 

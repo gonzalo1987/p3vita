@@ -624,6 +624,7 @@ The game sends a letter or notice with 0x4D6530 on the mailbox 0x6DD730 from 154
   - **`tick_probe --names SAVE.raw`**: the players' own names (`SaveGame::custom_names`) are in the save, not in the recording; without `--continuo` each call gets them from that save (`rm.sh`, `rp.sh` and `ret2f.sh` pass it). A letter that names the player needs it;
   - `P3_SHOW_LB=1` makes tick_probe print both sides' letters' buffers as text when the region `LB` differs in size (`re/emu/sesion5/mail/showlb.sh`);
   - becoming Alderman ends the game (the window 0x5499F0): a scenario that makes the player win the election stops the oracle there.
+- **The Hanse tasks** (2026-11-03, `alderman.cpp`, 6 calls): a task started (0x4EBF54: 0x80 the road, with the Alderman's names from 0x5333C0, rewritten; 0x6E and 0x84 the pirate nest), expired (0x4EB0EB: 0x70) and done (0x4EC354: 0x6F to the chronicle and to a human merchant). Checked: the world 7 days in the 12 saves, 0 different; `retouch.py` `encargo_nuevo`, `encargo_cumplido`, `encargo_vencido`, `jugador_coge`, `jugador_vencido` and the new `retouch_mail.py hanse_task_letters` (saves 3 and 5), every call equal.
 - **Which calls run**: with `P3_MAIL_STATS=1` the oracle prints at the end, to stderr, every call to 0x4D6530 by its address, «(quiet)» when it was silenced (the scratchpad's `stats.sh` runs the 12 saves).
 
 ## The game's static initializers (2026-11-03)
