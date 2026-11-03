@@ -6,7 +6,10 @@ p3vita doesn't know the retouch).
 
 usage: python3 retouch_mail.py <Patrician3.exe> <save.raw> <out.probe> <days> <scenario>
        --barcos DATA --cpr p2arch0_eng.cpr [--functions F,F...] [--letters connected|all|none]
-By default it records 4f7bb0 (the merchant's tick).
+       [--write OUT]
+By default it records 4f7bb0 (the merchant's tick). With --write OUT, at the
+end the game saves the state reached (write_oracle.py): OUT the uncompressed
+.pat, OUT.pat compressed and OUT.pst (scripts/write-scenario.sh).
 
 Scenarios:
   grow       the mailbox without free entries (its free head [0x6DD734] =
@@ -937,6 +940,8 @@ def main():
     p.add_argument('--cpr', required=True)
     p.add_argument('--functions', default=','.join(f'{x:x}' for x in FUNCTIONS))
     p.add_argument('--letters', choices=('connected', 'all', 'none'), default='connected')
+    p.add_argument('--write', metavar='OUT', help='at the end, the save the game writes: OUT uncompressed, OUT.pat '
+                   'compressed, OUT.pst')
     a = p.parse_args()
     functions = [int(x, 16) for x in a.functions.split(',') if x]
     o = to.TownOracle(a.exe, open(a.save, 'rb').read(), 1, a.barcos, rest=list(to.REST), cpr=a.cpr,
@@ -953,6 +958,11 @@ def main():
     print(f'{rec.count} samples in {a.out}')
     print(f'mailbox: {o.u16(to.MAIL + 6)} entries, free head {o.u16(to.MAIL + 4)}, '
           f'chronicle head {o.u16(to.MAIL + 8)}')
+    if a.write:
+        from write_oracle import prepare_game_object, write_files
+        prepare_game_object(o)
+        write_files(o, a.write, a.write + '.pat')
+        print(f'save written in {a.write} ({a.write}.pat, {a.write}.pst)')
 
 
 if __name__ == '__main__':

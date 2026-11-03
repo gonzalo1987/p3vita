@@ -73,6 +73,9 @@ in `savegame.cpp`, `write_mail` in `savegame_write.cpp`): u32 0xAFFE0005
 u16 [+0xA] (version ≥ 2), then each entry: its first 8 bytes and the payload
 (8 bytes and [+0xC] bytes of buffer; the 16-byte record and record[+0x0]
 bytes of buffer; or 8 bytes). The reader allocates exactly `count` entries.
+p3vita writes and reads the new letters as the game, buffers included
+(checked: `scripts/write-after-days.sh` in the 12 saves and
+`scripts/write-scenario.sh` with the expedition's report; docs/oracle.md).
 
 ## 2. Sending a letter: 0x4D6530
 
