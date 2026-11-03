@@ -103,6 +103,13 @@ class SaveOracle:
             node = self.alloc(0x18)
             self.uc.mem_write(node, struct.pack('<II', node, node))
             self.uc.mem_write(WORLD + 0xB10 + i * 0x2C + 0x24, struct.pack('<II', node, 0))
+        # The world's constructor (0x52F520, one of the CRT's static
+        # initializers, which the oracle doesn't run) leaves [+0x88], [+0x8B]
+        # and [+0x8F] at 0xFF. The reader writes [+0x8B] and [+0x8F] again,
+        # not [+0x88], the town of the AI's next feast (0x5316E0): with it
+        # the AI's feasts never happen, as in the game.
+        for offset in (0x88, 0x8B, 0x8F):
+            self.uc.mem_write(WORLD + offset, b'\xff')
         self.set_difficulty(1)
         if navdata:
             self.setup_navigation(navdata)

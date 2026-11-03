@@ -192,7 +192,17 @@ struct Chunk {
 };
 
 // Cabecera del mundo (0x52FB60) en el objeto del mundo (0x6DE4A0).
+//
+// Before it, what the world's constructor (0x52F520, one of the static
+// initializers the CRT runs at the game's start) leaves and nothing else
+// writes: [+0x88] = 0xFF, the town of the AI's next feast (its tick [+0x84]
+// stays 0). The save doesn't have them, and neither the reader nor the reset
+// of a game (0x530230) writes them; only the feast (0x5316E0) does, after
+// holding one, which needs [+0x88] to be a town. So in the game the AI's
+// feasts never happen (a possible game bug, left as it is even with
+// fix_game_bugs: see the roadmap, «Corregir los fallos del juego»).
 void load_world_header(Reader r, GlobalMemory& g) {
+	g.u8(global::kWorld + 0x88) = 0xFF;
 	auto to = [&](uint32_t offset, size_t n) {
 		for (size_t i = 0; i < n; ++i) {
 			g.u8(global::kWorld + offset + uint32_t(i)) = r.u8();
