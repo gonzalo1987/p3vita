@@ -140,7 +140,8 @@ change.
   Connected (2026-11-03): the merchant's tick (4: 0x0F, 0x10, 0x11, 0x06)
   and the sea battles (14: `battle_end.cpp` 7, `capture.cpp` 5,
   `pirate_objects.cpp`, `ship_step.cpp`; the report 0x29 with the game's
-  texts). 79 left.
+  texts), `merchants.cpp` (4 more: 0x5E, 0x5F, 0x6D, 0x82) and
+  `events_big.cpp` (4: event 0x05 and 0x16). 71 left.
 - [ ] **10 in functions p3vita names but skips whole**: the mission
   interpreter 0x4ECF64 (5; three with a letter the script builds), the
   alderman's notification 0x5299F0 (2), the convoy's automatic route

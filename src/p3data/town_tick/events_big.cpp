@@ -37,6 +37,7 @@
 #include <cassert>
 #include <cstring>
 
+#include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::tick {
@@ -565,6 +566,54 @@ void fn_4f8f10(SaveGame& save, int merchant, uint32_t town, uint32_t kind) {
 	v = float(double(v) - double(kDrop[c]));
 }
 
+// The letter at the start of a merchant's task (event 0x05, 0x4E5C0E..
+// 0x4E5D4D), to a human merchant [+0x8]: [+0x5] the town [+0xB]; by the kind
+// [+0x10] (0x4E638C): 0, 1, 4: 0x19 with his [+0x1C], [+0x1D] in [+0x8],
+// [+0x9], the kind in [+0xA] and the town [+0x9] in [+0xB]; 2, 9..12: the
+// same with [+0xB] the town [+0xB] and u16 [+0xC] the event's [+0x16]; 3:
+// as 0, 1, 4 with the [+0x1C], [+0x1D] of the merchant [+0xA] (the town
+// [+0x9] as one if [+0xA] isn't) in [+0xC], [+0xD]; 5..8: 0x0A with u16
+// [+0x8], [+0xA], [+0xC] his [+0x1C], [+0x1D] and the kind; 13..15: as 0, 1,
+// 4 with u16 [+0xC] the event's [+0x16].
+void start_letter(SaveGame& save, const Event& e, const MerchantMemory& m) {
+	if (m.u16(0x8) != 0) {
+		return;
+	}
+	const uint8_t kind = e.u8(0x10);
+	Letter letter(0x19);
+	letter.entry.u8(5) = e.u8(0xB);
+	switch (kind) {
+	case 5:
+	case 6:
+	case 7:
+	case 8:
+		letter.entry.u8(4) = 0x0A;
+		letter.entry.u16(8) = m.u8(0x1C);
+		letter.entry.u16(0xA) = m.u8(0x1D);
+		letter.entry.u16(0xC) = kind;
+		break;
+	default:
+		letter.entry.u8(8) = m.u8(0x1C);
+		letter.entry.u8(9) = m.u8(0x1D);
+		letter.entry.u8(0xA) = kind;
+		letter.entry.u8(0xB) = e.u8(0x9);
+		if (kind == 2 || (kind >= 9 && kind <= 12)) {
+			letter.entry.u8(0xB) = e.u8(0xB);
+			letter.entry.u16(0xC) = e.u16(0x16);
+		} else if (kind >= 13) {
+			letter.entry.u16(0xC) = e.u16(0x16);
+		} else if (kind == 3) {
+			const uint8_t who = e.u8(0xA) < merchant_count(save) ? e.u8(0xA) : e.u8(0x9);
+			if (who < merchant_count(save)) {
+				letter.entry.u8(0xC) = save.merchants[who].memory.u8(0x1C);
+				letter.entry.u8(0xD) = save.merchants[who].memory.u8(0x1D);
+			}  // Else sin comprobar con el oráculo (the game reads past the merchants).
+		}
+		break;
+	}
+	send_letter(save, e.u8(0x8), letter);
+}
+
 // 0x4E5B84 (evento 0x05, con su índice): el encargo del comerciante [+0x8].
 // Devuelve 1 si el evento sigue (recolocado) y 0 si se quita.
 uint32_t fn_4e5b84(SaveGame& save, uint16_t event) {
@@ -582,6 +631,7 @@ uint32_t fn_4e5b84(SaveGame& save, uint16_t event) {
 		if (e.u8(0x10) > 15) {
 			return 0;  // Comprobado solo con estados retocados.
 		}
+		start_letter(save, e, m);
 		if (g.u8(kOperations) & 0xC) {
 			// Comprobado solo con estados retocados.
 			if (g.u32(kOperations2C) == 0) {
@@ -622,8 +672,23 @@ uint32_t fn_4e5b84(SaveGame& save, uint16_t event) {
 		}
 	}
 	if (marks >= 2 || (marks == 1 && e.u16(0x12) <= 0x4E20)) {
-		// Fallido: al humano, un aviso (no se traduce). Comprobado solo con
-		// estados retocados.
+		// Failed (comprobado solo con estados retocados): a human merchant
+		// gets the letter 0x4A (0x4E5E8B..0x4E5F2A): [+0x5] the town [+0xB];
+		// u16 [+0x8] his [+0x1C] << 8 | [+0x1D]; [+0xA] the same of the
+		// merchant [+0xA] for the kind 3, else 0; [+0xC] the town [+0x9];
+		// [+0xE] the kind, or 2 from the kind 9 on.
+		if (m.u16(0x8) == 0) {
+			Letter letter(0x4A);
+			letter.entry.u8(5) = e.u8(0xB);
+			letter.entry.u16(8) = uint16_t((m.u8(0x1C) << 8) + m.u8(0x1D));
+			if (e.u8(0x10) == 3) {
+				const MerchantMemory& o = save.merchants[e.u8(0xA) < merchant_count(save) ? e.u8(0xA) : 0].memory;
+				letter.entry.u16(0xA) = uint16_t((o.u8(0x1C) << 8) + o.u8(0x1D));
+			}
+			letter.entry.u16(0xC) = e.u8(0x9);
+			letter.entry.u16(0xE) = e.u8(0x10) < 9 ? e.u8(0x10) : 2;
+			send_letter(save, e.u8(0x8), letter);
+		}
 		return 0;
 	}
 
@@ -694,6 +759,7 @@ uint32_t fn_4e5b84(SaveGame& save, uint16_t event) {
 		pay = 0x1F3B9B0;
 	}
 	uint32_t amount = uint32_t(pay);
+	uint32_t paid_ware = days;  // ebx in the game: the days, or the ware paid in.
 	if (e.u8(0x11) == 1) {
 		// Si a su ciudad natal le falta una mercancía ([0x2C8] & 0x20000, la
 		// mercancía en los bits 18..22), la paga en ella si su oficina de la
@@ -711,6 +777,7 @@ uint32_t fn_4e5b84(SaveGame& save, uint16_t event) {
 				// En las partidas, la oficina nunca tiene bastante: comprobado solo
 				// con estados retocados.
 				uint32_t& stock = save.offices[size_t(office)].memory.u32(0x4 + 4 * ware);
+				paid_ware = ware;
 				if (stock >= units) {
 					e.u8(0x11) = 2;
 					stock -= units;
@@ -719,7 +786,47 @@ uint32_t fn_4e5b84(SaveGame& save, uint16_t event) {
 			}
 		}
 	}
-	// Al humano, el aviso del resultado (no se traduce).
+	if (m.u16(0x8) == 0) {
+		// A human merchant gets the result, the letter 0x4B (0x4E61AF..
+		// 0x4E6286): [+0x5] the town [+0xB]; [+0x8] the state − 1; by the
+		// state, 1: u16 [+0xA] the pay / 500; 2: [+0xA] the ware, [+0xB] the
+		// loads; 3: [+0xA] the town [+0x9], [+0xB] the days; then [+0xC] the
+		// kind, [+0xD], [+0xE] his [+0x1C], [+0x1D], and [+0xF] the town [+0x9]
+		// (kinds 0 and 1) or, for the kind 3, the merchant [+0xA] (or the
+		// town [+0x9] as one) with his [+0x1C] in [+0x9] and [+0x1D] here.
+		Letter letter(0x4B);
+		letter.entry.u8(5) = e.u8(0xB);
+		letter.entry.u8(8) = uint8_t(e.u8(0x11) - 1);
+		switch (e.u8(0x11)) {
+		case 1:
+			letter.entry.s16(0xA) = int16_t(int32_t(amount) / 500);
+			break;
+		case 2:
+			letter.entry.u8(0xA) = uint8_t(paid_ware);
+			letter.entry.u8(0xB) = uint8_t(amount);
+			break;
+		case 3:
+			letter.entry.u8(0xA) = e.u8(0x9);
+			letter.entry.u8(0xB) = uint8_t(paid_ware);
+			break;
+		default:
+			break;
+		}
+		const uint8_t kind = e.u8(0x10);
+		letter.entry.u8(0xC) = kind;
+		letter.entry.u8(0xD) = m.u8(0x1C);
+		letter.entry.u8(0xE) = m.u8(0x1D);
+		if (kind == 0 || kind == 1) {
+			letter.entry.u8(0xF) = e.u8(0x9);
+		} else if (kind == 3) {
+			const uint8_t who = e.u8(0xA) < merchant_count(save) ? e.u8(0xA) : e.u8(0x9);
+			if (who < merchant_count(save)) {
+				letter.entry.u8(9) = save.merchants[who].memory.u8(0x1C);
+				letter.entry.u8(0xF) = save.merchants[who].memory.u8(0x1D);
+			}  // Else sin comprobar con el oráculo (the game reads past the merchants).
+		}
+		send_letter(save, e.u8(0x8), letter);
+	}
 	switch (e.u8(0x11)) {
 	case 1: {
 		// El evento pasa a ser el 0x01 que le paga dentro de 20 días.
@@ -837,12 +944,24 @@ void fn_4e8234(SaveGame& save, uint16_t event) {
 				break;
 			}
 		}
-		// El aviso 0x21 al jugador (0x4D6530, no se traduce) con el contador 1..8.
+		// The letter 0x21 to the player (0x4E8560..0x4E8613) with the counter
+		// c (1..8): [+0x5] [+0x8]·c % the towns, u16 [+0x8] [+0xA]·c % the
+		// first names [0x6DDB70], [+0xA] [+0xC]·c % the family names
+		// [0x6DDB74], [+0xC] 1000 · ((tick & 7) · [+0x8] % 6 + 3), [+0xE] the
+		// day of the year + 14.
 		uint8_t& counter = e.u8(0xE);
 		++counter;
 		if (counter > 8) {
 			counter = 1;
 		}
+		const uint32_t c = counter;
+		Letter letter(0x21);
+		letter.entry.u8(5) = uint8_t((uint32_t(e.u16(0x8)) * c) % g.u32(global::kWorldTownCount));
+		letter.entry.u16(8) = uint16_t((uint32_t(e.u16(0xA)) * c) % g.u16(0x6DDB70));
+		letter.entry.u16(0xA) = uint16_t((uint32_t(e.u16(0xC)) * c) % g.u16(0x6DDB74));
+		letter.entry.u16(0xC) = uint16_t(1000 * (((tick & 7) * uint32_t(e.u16(0x8))) % 6 + 3));
+		letter.entry.u16(0xE) = uint16_t(g.u32(global::kWorldDayOfYear) + 0xE);
+		send_letter(save, int32_t(i), letter);
 	}
 	const uint32_t year_start = uint32_t(g.u16(global::kWorldYear)) * 365 * 256;
 	if (year_start > e.u32(0x0)) {

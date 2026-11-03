@@ -218,6 +218,19 @@ void send_letter(SaveGame& save, int32_t merchant, const Letter& sent) {
 	// the merchants (sin comprobar con el oráculo; no caller does it).
 }
 
+bool has_rank_letter(const SaveGame& save, uint32_t index, uint32_t rank) {
+	const uint32_t count = save.globals.u16(kMailCount);
+	// The game follows the chain without a limit of steps.
+	for (uint32_t left = count; index < count && index < save.mail.size() && left > 0; --left) {
+		const GameMemory<0x10>& e = save.mail[index];
+		if (e.u8(4) == 0x5F && e.u16(0xA) == rank) {
+			return true;
+		}
+		index = e.u16(6);
+	}
+	return false;
+}
+
 void release_letter(SaveGame& save, size_t index) {
 	GameMemory<0x10>& e = save.mail[index];
 	e.u8(0) = 0;

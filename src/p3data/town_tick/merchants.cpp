@@ -333,20 +333,28 @@ uint8_t fn_4f9430(const SaveGame& save, int merchant) {
 	return money >= 200 ? 7 : 6;
 }
 
-// 0x4F7510: al jugador humano que no asciende en su ciudad natal por el valor
-// de la compañía le avisa (mensajes 0x5E y 0x5F con el rango `rank`, 0x4D6530)
-// si no tiene ya ese aviso en el buzón (0x4D7AC0 sobre 0x6DD730). Nada de esto
-// cambia la simulación: solo comprueba las condiciones. `me` es el comerciante
-// (el dueño de su primera oficina).
+// 0x4F7510: a human merchant who doesn't go up in his home town for want of
+// the company's value gets the letters 0x5E and 0x5F (0x4D6530) to `me`
+// (the owner of his first office), unless his chain already has a 0x5F of
+// that rank (0x4D7AC0): [+0x5] the home town, u16 [+0x8] `me`, [+0xA] the
+// rank, [+0xC] and [+0xE] his [+0x1C] and [+0x1D].
 void fn_4f7510(SaveGame& save, int merchant, uint32_t me, uint32_t town, uint32_t rank) {
 	const MerchantMemory& m = save.merchants[size_t(merchant)].memory;
-	(void)me;
-	(void)rank;
 	if (town != m.u8(0x19) || m.u16(0x8) != 0) {
 		return;
 	}
-	// El buzón de los avisos (0x4D7AC0 sobre 0x6DD730, que SaveGame no tiene)
-	// y los avisos 0x5E y 0x5F no se traducen.
+	if (has_rank_letter(save, m.u16(0xA), rank)) {
+		return;
+	}
+	Letter letter(0x5E);
+	letter.entry.u8(5) = m.u8(0x19);
+	letter.entry.u16(8) = uint16_t(me);
+	letter.entry.u16(0xA) = uint16_t(rank);
+	letter.entry.u16(0xC) = m.u8(0x1C);
+	letter.entry.u16(0xE) = m.u8(0x1D);
+	send_letter(save, int32_t(me), letter);
+	letter.entry.u8(4) = 0x5F;
+	send_letter(save, int32_t(me), letter);
 }
 
 // 0x4F75F0: rango del comerciante en una ciudad (lo llama 0x4F7BB0 con la
@@ -395,7 +403,29 @@ void fn_4f75f0(SaveGame& save, int merchant, uint32_t town) {
 			// La candidatura (alderman.cpp): encola los encargos de la Hansa.
 			fn_5326e0(save);
 		}
-		// Al jugador humano, el aviso 0x6D (con 0x4F9430 y [0x6DE52E]): no se traduce.
+		if (m.u16(0x8) == 0) {
+			// A human merchant gets the letter 0x6D (0x4F778D..0x4F7827), to
+			// `me`: [+0x5] the world's [+0x8E]; if [+0x8D] isn't a merchant,
+			// [+0x8] 4 and [+0x9], [+0xA] the bytes [0x6D4 + k] and [0x6D8 +
+			// k] of the town [+0x8E] (k = (−1 − [+0x8D]) & 3); then his
+			// title (0x4F9430), [+0x1C] and [+0x1D].
+			Letter letter(0x6D);
+			const uint8_t town8e = save.globals.u8(global::kWorld + 0x8E);
+			const uint8_t other = save.globals.u8(global::kWorld + 0x8D);
+			letter.entry.u8(5) = town8e;
+			if (other >= save.globals.u16(global::kWorldMerchantCount)) {
+				const size_t k = size_t(uint32_t(-1 - int32_t(other)) & 3);
+				letter.entry.u8(8) = 4;
+				if (town8e < save.towns.size()) {
+					letter.entry.u8(9) = save.towns[town8e].memory.u8(0x6D4 + k);
+					letter.entry.u8(0xA) = save.towns[town8e].memory.u8(0x6D8 + k);
+				}  // Else sin comprobar con el oráculo (the game reads past the towns).
+			}
+			letter.entry.u8(0xB) = merchants_detail::fn_4f9430(save, merchant);
+			letter.entry.u8(0xC) = m.u8(0x1C);
+			letter.entry.u8(0xD) = m.u8(0x1D);
+			send_letter(save, int32_t(me), letter);
+		}
 		return;
 	}
 	const bool rights = (m.u32(0x468) & (1u << (town & 31))) != 0;
@@ -418,9 +448,18 @@ void fn_4f75f0(SaveGame& save, int merchant, uint32_t town) {
 		}
 		m.u8(0x39C + town) = uint8_t(rank + 1);
 		if (rank == 0 && town != m.u8(0x19) && m.u16(0x8) == 0) {
-			// El jugador humano asciende a comerciante fuera de su ciudad
-			// natal: se cuenta y se le avisa (0x82, con 0x4F9430; no se traduce).
+			// A human merchant who goes up to trader outside his home town:
+			// counted, and the letter 0x82 to `me` (0x4F78CE..0x4F793D): [+0x5]
+			// the town, u16 [+0x8] his title, [+0xA] his rank at home, [+0xC]
+			// and [+0xE] his [+0x1C] and [+0x1D].
 			m.u8(0x24) = uint8_t(m.u8(0x24) + 1);
+			Letter letter(0x82);
+			letter.entry.u8(5) = uint8_t(town);
+			letter.entry.u16(8) = merchants_detail::fn_4f9430(save, merchant);
+			letter.entry.u16(0xA) = m.u8(0x39C + m.u8(0x19));
+			letter.entry.u16(0xC) = m.u8(0x1C);
+			letter.entry.u16(0xE) = m.u8(0x1D);
+			send_letter(save, int32_t(me), letter);
 		}
 		return;
 	case 6:

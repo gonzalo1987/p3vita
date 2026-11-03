@@ -21,6 +21,15 @@ Scenarios:
              the player ([+0x15D]): the shares of their plunders and
              take-overs (0x60C1C9, operation 0x91) go to the player with the
              letter 0x30. Record 4d85c0,506720,535760
+  reputation as promotion, with rank 4, no money and the third component
+             of his reputation at 100 (and his letters 0x5F turned into
+             0x5E): the company's value is too low for rank 5, so 0x4F7510
+             sends the letters 0x5E and 0x5F
+  commission events 0x05 (a merchant's task, 0x4E5B84) of the human player
+             in the next tick: the 16 kinds starting (the letter 0x19 or
+             0x0A), the 16 at their end without marks in the towns (the
+             result 0x4B; kind 15 the punishment) and kinds 3 and 9 with two
+             marks (failed: 0x4A). Record 4d85c0
 """
 import argparse
 import os
@@ -86,7 +95,58 @@ def privateer(o, rec):
     print(f'{n} pirate ships are privateers of the player {player}')
 
 
-SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer)}
+def reputation(o, rec):
+    promotion(o, rec)
+    m = o.u32(to.PLAYER)
+    ma = o.merchant(m)
+    w8(o, ma + 0x39C + o.u8(ma + 0x19), 4)
+    w32(o, ma, 0)
+    for i in range(o.u32(WORLD + 0x10)):
+        wf(o, ma + 0x124 + 12 * i, 100.0)
+    # A letter 0x5F already in his chain stops them (0x4D7AC0): those become 0x5E.
+    mail, count = o.u32(to.MAIL), o.u16(to.MAIL + 6)
+    i, n = o.u16(ma + 0xA), 0
+    while i < count and n < count:
+        if o.u8(mail + 16 * i + 4) == 0x5F:
+            w8(o, mail + 16 * i + 4, 0x5E)
+        i, n = o.u16(mail + 16 * i + 6), n + 1
+
+
+def commission(o, rec):
+    import retouch as rt
+    towns, _, merchants, _ = o.counts()
+    m = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(m) + 0x19)
+    other = next(i for i in range(merchants) if i != m)
+    queue = rt.events(o)
+    now = o.u32(WORLD + 0x14)
+    cases = [(kind, 0, 0) for kind in range(16)] + [(kind, 1, 0) for kind in range(16)] + [(3, 1, 2), (9, 1, 2)]
+    assert len(queue) > len(cases) + 8
+    for k, (kind, state, marks) in enumerate(cases):
+        i, a = queue[-1 - k]
+        town_b = (home + 1 + k) % towns
+        w16(o, a + 6, 5)
+        w8(o, a + 8, m)
+        w8(o, a + 9, (home + 2 + k) % towns)
+        w8(o, a + 0xA, other)
+        w8(o, a + 0xB, town_b)
+        w8(o, a + 0x10, kind)
+        w8(o, a + 0x11, state)
+        w16(o, a + 0x12, 0x5000)
+        w16(o, a + 0x14, 0x1234 + 0x111 * k)
+        w16(o, a + 0x16, 0x77 + k)
+        for j in range(4):  # the marks of 0x4E5E1E: the town [+0xB]'s slots, then [+0x9]'s
+            for t, n in ((town_b, marks), ((home + 2 + k) % towns, 0)):
+                slot = o.town(t) + 0x6DC + j
+                if j < n:
+                    w8(o, slot, m)
+                elif o.u8(slot) == m:
+                    w8(o, slot, 0xFF)
+        rt.move_event(o, i, a, now + 1)
+    print(f'{len(cases)} events 0x05 of the player {m} (home {home}), other merchant {other}')
+
+
+SCENARIOS = {f.__name__: f for f in (grow, promotion, privateer, reputation, commission)}
 
 
 def main():

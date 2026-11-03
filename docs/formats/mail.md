@@ -263,6 +263,12 @@ doesn't have.
   [+0x5], two u32 amounts in [+0x8] and [+0xC]) and 0x06 (a promotion in the
   home town, to the chronicle: [+0x5] the town, u16 [+0x8] the old rank,
   [+0xA] the new one, [+0xC] the merchant, [+0xE] his title, 0x4F9430).
+- The merchant's rank (`merchants.cpp`): 0x5E and 0x5F (0x4F7510; not if
+  his chain has a 0x5F of that rank, `has_rank_letter`), 0x6D (the
+  candidacy) and 0x82 (rights in another town) of 0x4F75F0; a merchant's
+  task, event 0x05 (`events_big.cpp`, 0x4E5B84: 0x19 or 0x0A at the start
+  by the kind, 0x4A failed, 0x4B the result: the pay / 500, the ware and
+  loads, or the punishment's town and days), and 0x21 of event 0x16.
 - The sea battles (`battle/`):
   - 0x60D299 (`battle_end.cpp`): the report, a letter 0x29 to each side of
     the computer: [+0x5] the merchant's home town, the buffer the text of

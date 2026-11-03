@@ -51,6 +51,10 @@ struct Letter {
 // the head of their chain.
 void send_letter(SaveGame& save, int32_t merchant, const Letter& letter);
 
+// 0x4D7AC0 (on the mailbox): whether the chain from `index` (a merchant's
+// [+0xA]) has a letter 0x5F with u16 [+0xA] equal to `rank`.
+bool has_rank_letter(const SaveGame& save, uint32_t index, uint32_t rank);
+
 // 0x51AAB0 on entry `index`: frees its buffer and record and empties it (day
 // and month 0, year 0xFFFF, type 0xFF, [+0x5] 0, payload 0; the link stays).
 void release_letter(SaveGame& save, size_t index);
