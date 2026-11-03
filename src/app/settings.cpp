@@ -30,20 +30,24 @@ void parse_bool(const std::string& text, bool& value) {
 
 }  // namespace
 
-std::string settings_path(const char* data_dir) {
+std::string data_folder(const char* data_dir) {
 #ifdef __vita__
 	(void)data_dir;
-	return std::string("ux0:data/p3vita/") + kFileName;
+	return "ux0:data/p3vita/";
 #else
 	if (data_dir && *data_dir) {
 		std::string dir = data_dir;
 		if (dir.back() != '/' && dir.back() != '\\') {
 			dir += '/';
 		}
-		return dir + kFileName;
+		return dir;
 	}
-	return kFileName;
+	return "";
 #endif
+}
+
+std::string settings_path(const char* data_dir) {
+	return data_folder(data_dir) + kFileName;
 }
 
 // C stdio rather than <fstream>: iostreams add about 300 KB to the Vita's VPK.

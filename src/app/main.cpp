@@ -62,6 +62,14 @@ std::string game_text(GameText id, const std::string& fallback) {
 	return g_texts ? g_texts->get(id) : fallback;
 }
 
+// The language chosen in the options (settings.hpp): the viewer's own texts,
+// those the game doesn't have, in Spanish or in English.
+bool g_spanish = true;
+
+std::string tr(const char* spanish, const char* english) {
+	return g_spanish ? spanish : english;
+}
+
 constexpr int kScreenWidth = 960;
 constexpr int kScreenHeight = 544;
 constexpr char kTitle[] = "Patrician III";
@@ -153,9 +161,18 @@ std::unique_ptr<CprArchive> open_archive(const char* dir_override, const char* c
 // The game's interface texts in a language (game_texts.hpp): from --exe (`exe`)
 // or, in the data folder (or next to --cpr), Patrician3_spa.exe or
 // Patrician3_eng.exe and Patrician3.exe: the first of that language's build
-// (`matching`), or else the first that loads, or nullptr.
+// (`matching`), or else the first that loads, or nullptr. Without --exe, the
+// language's cache in the viewer's folder (`cache_dir`) first: made from the
+// exe the first time, it saves reading the 3 MB of the exe at each start.
 std::unique_ptr<GameTexts> load_game_texts(const char* exe, const char* cpr, const char* data_dir, bool spanish,
-	bool& matching) {
+	bool& matching, const std::string& cache_dir) {
+	const std::string cache = cache_dir + (spanish ? "p3vita-texts-es.bin" : "p3vita-texts-en.bin");
+	if (!exe) {
+		if (std::unique_ptr<GameTexts> cached = GameTexts::load_cache(cache); cached && cached->spanish() == spanish) {
+			matching = true;
+			return cached;
+		}
+	}
 	std::vector<std::string> dirs;
 	if (cpr) {
 		const std::string path = cpr;
@@ -185,6 +202,11 @@ std::unique_ptr<GameTexts> load_game_texts(const char* exe, const char* cpr, con
 		}
 		if (texts->spanish() == spanish) {
 			matching = true;
+			if (!exe && !texts->save_cache(cache)) {
+#ifndef __vita__
+				std::fprintf(stderr, "can't write %s\n", cache.c_str());
+#endif
+			}
 			return texts;
 		}
 		if (!first) {
@@ -192,6 +214,26 @@ std::unique_ptr<GameTexts> load_game_texts(const char* exe, const char* cpr, con
 		}
 	}
 	return first;
+}
+
+// The Vita's buttons in the viewer's texts: a byte that TextRenderer draws as
+// the button's symbol, in its colour (the game's font has none). Macros, to
+// be joined to the literals ("\x01" followed by a letter would be one escape).
+#define BTN_CROSS "\x01"
+#define BTN_CIRCLE "\x02"
+#define BTN_SQUARE "\x03"
+#define BTN_TRIANGLE "\x04"
+
+bool button_byte(char c) {
+	return c >= 1 && c <= 4;
+}
+
+// The Vita's rear touchpad (an indirect touch device; the screen is direct) is
+// of no use in this game: its touches are ignored. On the PC, the mouse's and
+// the scripts' touches have no device and pass.
+bool rear_touch(SDL_TouchID id) {
+	const SDL_TouchDeviceType type = SDL_GetTouchDeviceType(id);
+	return type == SDL_TOUCH_DEVICE_INDIRECT_ABSOLUTE || type == SDL_TOUCH_DEVICE_INDIRECT_RELATIVE;
 }
 
 // Texto de la interfaz con una fuente del juego subida como textura.
@@ -209,19 +251,106 @@ public:
 
 	~TextRenderer() { SDL_DestroyTexture(texture_); }
 
-	int measure(const std::string& text) const { return font_->measure(text); }
+	// The width of the text, the buttons' symbols included.
+	int measure(const std::string& text) const {
+		int width = 0;
+		size_t start = 0;
+		for (size_t i = 0; i <= text.size(); ++i) {
+			if (i == text.size() || button_byte(text[i])) {
+				if (i > start) {
+					width += font_->measure(text.substr(start, i - start));
+				}
+				if (i < text.size()) {
+					width += button_width();
+				}
+				start = i + 1;
+			}
+		}
+		return width;
+	}
 	int line_height() const { return font_->line_height(); }
 
 	void draw(const std::string& text, int x, int y, SDL_Color color) {
 		SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
-		for (const FontAtlas::Quad& q : font_->layout(text, x, y)) {
-			const SDL_Rect src = {q.src_x, q.src_y, q.width, q.height};
-			const SDL_Rect dst = {q.dst_x, q.dst_y, q.width, q.height};
-			SDL_RenderCopy(renderer_, texture_, &src, &dst);
+		size_t start = 0;
+		for (size_t i = 0; i <= text.size(); ++i) {
+			if (i < text.size() && !button_byte(text[i])) {
+				continue;
+			}
+			if (i > start) {
+				const std::string part = text.substr(start, i - start);
+				for (const FontAtlas::Quad& q : font_->layout(part, x, y)) {
+					const SDL_Rect src = {q.src_x, q.src_y, q.width, q.height};
+					const SDL_Rect dst = {q.dst_x, q.dst_y, q.width, q.height};
+					SDL_RenderCopy(renderer_, texture_, &src, &dst);
+				}
+				x += font_->measure(part);
+			}
+			if (i < text.size()) {
+				draw_button_symbol(text[i], x, y);
+				x += button_width();
+			}
+			start = i + 1;
 		}
 	}
 
 private:
+	int button_width() const { return font_->line_height() + 2; }
+
+	// The symbol in a square of about the text's height, in the PlayStation's
+	// colours, its lines two pixels thick.
+	void draw_button_symbol(char c, int x, int y) {
+		const int h = font_->line_height();
+		const int size = h * 3 / 5;
+		const int left = x + (button_width() - size) / 2;
+		const int top = y + (h - size) / 2;
+		const int right = left + size - 1;
+		const int bottom = top + size - 1;
+		SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+		auto line = [&](int x1, int y1, int x2, int y2) {
+			SDL_RenderDrawLine(renderer_, x1, y1, x2, y2);
+			SDL_RenderDrawLine(renderer_, x1 + 1, y1, x2 + 1, y2);
+		};
+		switch (c) {
+		case 1:  // Cross, blue.
+			SDL_SetRenderDrawColor(renderer_, 124, 178, 232, 255);
+			line(left, top, right - 1, bottom);
+			line(right - 1, top, left, bottom);
+			break;
+		case 2: {  // Circle, red.
+			SDL_SetRenderDrawColor(renderer_, 255, 102, 102, 255);
+			const float cx = (left + right) / 2.0f;
+			const float cy = (top + bottom) / 2.0f;
+			for (const float r : {size / 2.0f, size / 2.0f - 1.0f}) {
+				constexpr int kSteps = 24;
+				for (int k = 0; k < kSteps; ++k) {
+					const float a1 = 6.2831853f * float(k) / kSteps;
+					const float a2 = 6.2831853f * float(k + 1) / kSteps;
+					SDL_RenderDrawLine(renderer_, int(std::lround(cx + r * std::cos(a1))),
+						int(std::lround(cy + r * std::sin(a1))), int(std::lround(cx + r * std::cos(a2))),
+						int(std::lround(cy + r * std::sin(a2))));
+				}
+			}
+			break;
+		}
+		case 3: {  // Square, pink.
+			SDL_SetRenderDrawColor(renderer_, 255, 105, 248, 255);
+			const SDL_Rect outer = {left, top, size, size};
+			const SDL_Rect inner = {left + 1, top + 1, size - 2, size - 2};
+			SDL_RenderDrawRect(renderer_, &outer);
+			SDL_RenderDrawRect(renderer_, &inner);
+			break;
+		}
+		default:  // Triangle, green.
+			SDL_SetRenderDrawColor(renderer_, 64, 226, 160, 255);
+			line((left + right) / 2, top, left, bottom);
+			line((left + right) / 2, top, right - 1, bottom);
+			line(left, bottom, right, bottom);
+			SDL_RenderDrawLine(renderer_, left, bottom - 1, right, bottom - 1);
+			break;
+		}
+	}
+
 	SDL_Renderer* renderer_;
 	std::unique_ptr<FontAtlas> font_;
 	SDL_Texture* texture_ = nullptr;
@@ -538,31 +667,34 @@ SDL_Point focus_point(const TownView& view, const SaveGame& save, const Selectio
 	return {view.width() / 2, view.height() / 2};
 }
 
-// Monedas con separador de miles: 30.000.
+// Monedas con separador de miles: 30.000 (30,000 in English).
 std::string format_money(int64_t value) {
 	std::string digits = std::to_string(value < 0 ? -value : value);
 	for (int i = int(digits.size()) - 3; i > 0; i -= 3) {
-		digits.insert(size_t(i), ".");
+		digits.insert(size_t(i), g_spanish ? "." : ",");
 	}
 	return value < 0 ? "-" + digits : digits;
 }
 
 constexpr const char* kMonthNames[12] = {"enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
 	"septiembre", "octubre", "noviembre", "diciembre"};
+constexpr const char* kEnglishMonthNames[12] = {"January", "February", "March", "April", "May", "June", "July",
+	"August", "September", "October", "November", "December"};
 
 std::string month_name(int month) {
-	return g_texts ? g_texts->month(month) : kMonthNames[((month % 12) + 12) % 12];
+	const int m = ((month % 12) + 12) % 12;
+	return g_texts ? g_texts->month(month) : g_spanish ? kMonthNames[m] : kEnglishMonthNames[m];
 }
 
-// «13 de mayo»
+// «13 de mayo», «13 May»
 std::string day_and_month(int day, int month) {
-	return std::to_string(day) + " de " + month_name(month);
+	return std::to_string(day) + (g_spanish ? " de " : " ") + month_name(month);
 }
 
 // A date as the game writes it («13 de mayo de 1300», «13. May 1300»).
 std::string game_date(int day, int month, int year) {
 	if (!g_texts) {
-		return day_and_month(day, month) + " de " + std::to_string(year);
+		return day_and_month(day, month) + (g_spanish ? " de " : " ") + std::to_string(year);
 	}
 	std::string date = g_texts->format(GameText::Date, {std::to_string(day), month_name(month), std::to_string(year)});
 	date.erase(std::remove(date.begin(), date.end(), '"'), date.end());  // The text ends in a quote.
@@ -571,7 +703,7 @@ std::string game_date(int day, int month, int year) {
 
 std::string town_name(const SaveGame& save, const std::vector<std::string>& names, int town) {
 	const int id = save.towns[size_t(town)].town_id();
-	return id < int(names.size()) ? names[size_t(id)] : "Ciudad " + std::to_string(id);
+	return id < int(names.size()) ? names[size_t(id)] : tr("Ciudad ", "Town ") + std::to_string(id);
 }
 
 std::string bar_title(const SaveGame& save, const std::vector<std::string>& names,
@@ -580,14 +712,15 @@ std::string bar_title(const SaveGame& save, const std::vector<std::string>& name
 		const std::string date = game_date(save.day(), save.month(), save.year());
 		const std::string name = town_name(save, names, int(selection.saved_index));
 		if (selection.mode == Mode::Sea) {
-			return date + " - Mapa del mar - " + name;
+			return date + tr(" - Mapa del mar - ", " - Sea map - ") + name;
 		}
 		const std::string citizens = format_money(save.towns[selection.saved_index].citizens());
 		return date + " - " + name + " - " +
-			(g_texts ? g_texts->format(GameText::Inhabitants, {citizens}) : citizens + " habitantes");
+			(g_texts ? g_texts->format(GameText::Inhabitants, {citizens}) : citizens + tr(" habitantes", " inhabitants"));
 	}
-	return "Plantilla " + std::to_string(template_ids[selection.template_index]) +
-		(selection.mode == Mode::Designer ? " - todos los edificios del diseñador" : " - solo el terreno");
+	return tr("Plantilla ", "Template ") + std::to_string(template_ids[selection.template_index]) +
+		(selection.mode == Mode::Designer ? tr(" - todos los edificios del diseñador", " - every building of the designer")
+										  : tr(" - solo el terreno", " - the terrain only"));
 }
 
 // Barra de texto a lo ancho de la pantalla: el título a la izquierda y, a la
@@ -614,17 +747,18 @@ void draw_bar(SDL_Renderer* renderer, TextRenderer& text, int top, const std::st
 // máximo por fotograma; lo que pase de ahí se pierde, como en el juego.
 struct GameSpeed {
 	const char* name;
+	const char* english;
 	Uint32 ms_per_tick;
 	int max_ticks;
 };
 constexpr GameSpeed kGameSpeeds[] = {
-	{"ralentizada", 3515, 8},  // La de la tecla Pausa del juego.
-	{"muy lenta", 468, 8},
-	{"lenta", 351, 8},
-	{"normal", 234, 8},  // Un día por minuto.
-	{"rápida", 117, 8},
-	{"muy rápida", 78, 8},
-	{"avance rápido", 2, 256},  // F12 del juego.
+	{"ralentizada", "slowed down", 3515, 8},  // La de la tecla Pausa del juego.
+	{"muy lenta", "very slow", 468, 8},
+	{"lenta", "slow", 351, 8},
+	{"normal", "normal", 234, 8},  // Un día por minuto.
+	{"rápida", "fast", 117, 8},
+	{"muy rápida", "very fast", 78, 8},
+	{"avance rápido", "fast forward", 2, 256},  // F12 del juego.
 };
 constexpr int kGameSpeedCount = int(sizeof(kGameSpeeds) / sizeof(kGameSpeeds[0]));
 
@@ -633,7 +767,7 @@ constexpr int kGameSpeedCount = int(sizeof(kGameSpeeds) / sizeof(kGameSpeeds[0])
 std::string speed_name(int speed) {
 	static constexpr GameText kNames[] = {GameText::SpeedSlowdown, GameText::SpeedVerySlow, GameText::SpeedSlow,
 		GameText::SpeedNormal, GameText::SpeedFast, GameText::SpeedVeryFast};
-	return g_texts && speed < 6 ? g_texts->get(kNames[speed]) : kGameSpeeds[speed].name;
+	return g_texts && speed < 6 ? g_texts->get(kNames[speed]) : tr(kGameSpeeds[speed].name, kGameSpeeds[speed].english);
 }
 constexpr int kNormalSpeed = 3;
 
@@ -656,21 +790,21 @@ std::string ship_activity(const SaveGame& save, const std::vector<std::string>& 
 	const std::string there = ship.destination() < count ? town_name(save, names, ship.destination()) : "";
 	switch (ship.status()) {
 	case kShipDocked:
-		return "en el puerto de " + here;
+		return tr("en el puerto de ", "in the port of ") + here;
 	case kShipWaiting:
-		return "esperando en " + here;
+		return tr("esperando en ", "waiting in ") + here;
 	case kShipLeaving:
-		return "saliendo de " + here + (there.empty() ? "" : " hacia " + there);
+		return tr("saliendo de ", "leaving ") + here + (there.empty() ? "" : tr(" hacia ", " for ") + there);
 	case kShipArriving:
-		return "entrando en el puerto de " + here;
+		return tr("entrando en el puerto de ", "entering the port of ") + here;
 	case kShipSailing: {
 		if (!ship.route) {
-			return game_text(GameText::AtSea, "sin rumbo en el mar");
+			return game_text(GameText::AtSea, tr("sin rumbo en el mar", "at sea"));
 		}
-		std::string text = there.empty() ? "navegando" : "navegando hacia " + there;
+		std::string text = there.empty() ? tr("navegando", "sailing") : tr("navegando hacia ", "sailing to ") + there;
 		if (ship.arrival_tick() > save.tick()) {
 			const GameDate date = date_from_tick(ship.arrival_tick());
-			text += ", llegada prevista el " + day_and_month(date.day, date.month);
+			text += tr(", llegada prevista el ", ", expected on ") + day_and_month(date.day, date.month);
 		}
 		return text;
 	}
@@ -688,11 +822,11 @@ std::string unit_name(WareUnit unit, int count) {
 	const bool one = count == 1;
 	switch (unit) {
 	case WareUnit::Barrel:
-		return one ? "barril" : "barriles";
+		return one ? tr("barril", "barrel") : tr("barriles", "barrels");
 	case WareUnit::Load:
-		return one ? "carga" : "cargas";
+		return one ? tr("carga", "load") : tr("cargas", "loads");
 	default:
-		return one ? "pieza" : "piezas";
+		return one ? tr("pieza", "piece") : tr("piezas", "pieces");
 	}
 }
 
@@ -779,7 +913,7 @@ int32_t trade_amount(const SaveGame& save, int ship, const MarketUi& ui, bool bu
 
 std::string step_text(const MarketUi& ui) {
 	const int step = kTradeSteps[ui.step];
-	return step > 0 ? amount_label(step, kWares[size_t(ui.ware)].unit) : "todo";
+	return step > 0 ? amount_label(step, kWares[size_t(ui.ware)].unit) : tr("todo", "all");
 }
 
 void trade(SaveGame& save, int town, MarketUi& ui, bool buying) {
@@ -788,12 +922,12 @@ void trade(SaveGame& save, int town, MarketUi& ui, bool buying) {
 	const std::string name = ware_name(ui.ware);
 	ui.message_until = app_ticks() + kMessageTime;
 	if (ship < 0) {
-		ui.message = "No tienes ningún barco en este puerto.";
+		ui.message = tr("No tienes ningún barco en este puerto.", "You have no ship in this port.");
 		return;
 	}
 	// Sin mercado los precios del juego son 0: no se deja comerciar.
 	if (!save.towns[size_t(town)].has_market()) {
-		ui.message = "Esta ciudad no tiene mercado.";
+		ui.message = tr("Esta ciudad no tiene mercado.", "This town has no market.");
 		return;
 	}
 	const int32_t amount = trade_amount(save, ship, ui, buying);
@@ -801,17 +935,19 @@ void trade(SaveGame& save, int town, MarketUi& ui, bool buying) {
 									  : sell_from_ship(save, ship, town, ui.ware, amount, save.trade_difficulty);
 	const SavedTown& market = save.towns[size_t(town)];
 	if (result.amount > 0) {
-		ui.message = std::string(buying ? "Compra: " : "Venta: ") + amount_text(result.amount, ware.unit) + " de " +
-			name + " por " + format_money(result.price) + " monedas.";
+		ui.message = g_spanish ? std::string(buying ? "Compra: " : "Venta: ") + amount_text(result.amount, ware.unit) +
+				" de " + name + " por " + format_money(result.price) + " monedas."
+							   : std::string(buying ? "Bought " : "Sold ") + amount_text(result.amount, ware.unit) +
+				" of " + name + " for " + format_money(result.price) + " coins.";
 	} else if (!buying) {
-		ui.message = "No llevas " + name + " en la bodega.";
+		ui.message = g_spanish ? "No llevas " + name + " en la bodega." : "There is no " + name + " in the hold.";
 	} else if (int32_t(market.stock(size_t(ui.ware))) < ware_scale(ware.unit)) {
-		ui.message = "La ciudad no tiene " + name + ".";
+		ui.message = g_spanish ? "La ciudad no tiene " + name + "." : "The town has no " + name + ".";
 	} else if (save.merchants[size_t(save.player)].money() <
 		buy_price(ui.ware, market.market(ui.ware), ware_scale(ware.unit))) {
-		ui.message = game_text(GameText::NotEnoughMoney, "No tienes dinero suficiente.");
+		ui.message = game_text(GameText::NotEnoughMoney, tr("No tienes dinero suficiente.", "Not enough money!"));
 	} else {
-		ui.message = "No queda sitio en la bodega.";
+		ui.message = tr("No queda sitio en la bodega.", "There is no room left in the hold.");
 	}
 }
 
@@ -899,19 +1035,20 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 		std::snprintf(capacity, sizeof(capacity), "%.1f", (ship->capacity() - ship->equipment()) / 2000.0);
 		const std::string hold = g_texts
 			? std::string(used) + " / " + g_texts->format(GameText::AmountLoadsDecimal, {capacity})
-			: std::string(used) + " de " + capacity + " cargas";
+			: std::string(used) + tr(" de ", " of ") + capacity + tr(" cargas", " loads");
 		text.draw(ship->name() + " (" + ship_type_name(ship->type()) + "): " + hold, left, layout.header_y, kTextColor);
 	} else {
-		text.draw("No tienes ningún barco en este puerto.", left, layout.header_y, kDimColor);
+		text.draw(tr("No tienes ningún barco en este puerto.", "You have no ship in this port."), left, layout.header_y,
+			kDimColor);
 	}
-	const std::string close = "Círculo: cerrar";
+	const std::string close = tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close");
 	text.draw(close, panel.x + panel.w - MarketLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
 
-	text.draw(game_text(GameText::MarketGoods, "Mercancía"), left, layout.titles_y, kDimColor);
-	right(game_text(GameText::MarketTown, "Ciudad"), 0, layout.titles_y, kDimColor);
-	right(game_text(GameText::MarketBuy, "Compra"), 1, layout.titles_y, kDimColor);
-	right(game_text(GameText::MarketSell, "Venta"), 2, layout.titles_y, kDimColor);
-	right(game_text(GameText::MarketShip, "Bodega"), 3, layout.titles_y, kDimColor);
+	text.draw(game_text(GameText::MarketGoods, tr("Mercancía", "Goods")), left, layout.titles_y, kDimColor);
+	right(game_text(GameText::MarketTown, tr("Ciudad", "Town")), 0, layout.titles_y, kDimColor);
+	right(game_text(GameText::MarketBuy, tr("Compra", "Buy")), 1, layout.titles_y, kDimColor);
+	right(game_text(GameText::MarketSell, tr("Venta", "Sell")), 2, layout.titles_y, kDimColor);
+	right(game_text(GameText::MarketShip, tr("Bodega", "Ship")), 3, layout.titles_y, kDimColor);
 	for (int w = 0; w < kTradeWareCount; ++w) {
 		const WareInfo& ware = kWares[size_t(w)];
 		const int y = layout.rows_y + w * MarketLayout::kRowHeight;
@@ -925,7 +1062,7 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 		const int32_t sell = sell_price(w, town.market(w), unit, save.trade_difficulty);
 		auto amount = [&](int n) {
 			return g_texts ? amount_label(n, ware.unit)
-						   : std::to_string(n) + (ware.unit == WareUnit::Barrel ? " barr." : " cargas");
+						   : std::to_string(n) + (ware.unit == WareUnit::Barrel ? tr(" barr.", " barr.") : tr(" cargas", " loads"));
 		};
 		text.draw(ware_label(w), left, y, kTextColor);
 		right(amount(units(int32_t(town.stock(size_t(w))), ware.unit)), 0, y, kTextColor);
@@ -947,18 +1084,19 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 		const TradeResult sell =
 			quote_sell(save, ship_index, town_index, ui.ware, trade_amount(save, ship_index, ui, false),
 				save.trade_difficulty);
-		footer = buy.amount > 0 ? "Comprar " + amount_text(buy.amount, selected_unit) + ": " +
-				format_money(buy.price) + " monedas"
-								: "No se puede comprar";
+		footer = buy.amount > 0 ? tr("Comprar ", "Buy ") + amount_text(buy.amount, selected_unit) + ": " +
+				format_money(buy.price) + tr(" monedas", " coins")
+								: tr("No se puede comprar", "Nothing to buy");
 		if (sell.amount > 0) {
-			footer += "    vender " + std::to_string(units(sell.amount, selected_unit)) + ": " + format_money(sell.price);
+			footer += tr("    vender ", "    sell ") + std::to_string(units(sell.amount, selected_unit)) + ": " +
+				format_money(sell.price);
 		}
 	}
 	text.draw(footer, left, layout.footer_y, kTextColor);
-	draw_button(renderer, text, layout.step_button, "Izq./Der.: " + step_text(ui));
+	draw_button(renderer, text, layout.step_button, tr("Izq./Der.: ", "Left/Right: ") + step_text(ui));
 	if (ship) {
-		draw_button(renderer, text, layout.buy_button, "X: comprar");
-		draw_button(renderer, text, layout.sell_button, "Cuadrado: vender");
+		draw_button(renderer, text, layout.buy_button, tr(BTN_CROSS " comprar", BTN_CROSS " buy"));
+		draw_button(renderer, text, layout.sell_button, tr(BTN_SQUARE " vender", BTN_SQUARE " sell"));
 	}
 }
 
@@ -1040,7 +1178,8 @@ HanseView hanse_view(const SaveGame& save, int town, int page) {
 
 // Name of a town by its number in StadtDaten.ini (not its index in the save).
 std::string numbered_town_name(const std::vector<std::string>& names, int number) {
-	return number >= 0 && number < int(names.size()) ? names[size_t(number)] : "la ciudad " + std::to_string(number);
+	return number >= 0 && number < int(names.size()) ? names[size_t(number)]
+													  : tr("la ciudad ", "town ") + std::to_string(number);
 }
 
 std::string full_date(uint32_t tick) {
@@ -1049,28 +1188,33 @@ std::string full_date(uint32_t tick) {
 }
 
 std::string index_town_name(const SaveGame& save, const HanseContext& c, int town) {
-	return town < int(save.towns.size()) ? town_name(save, c.town_names, town) : "la ciudad " + std::to_string(town);
+	return town < int(save.towns.size()) ? town_name(save, c.town_names, town)
+										 : tr("la ciudad ", "town ") + std::to_string(town);
 }
 
 // One line for a task: what to do.
 std::string hanse_task_text(const SaveGame& save, const HanseTask& t, const HanseContext& c) {
 	switch (HanseTaskType(t.type)) {
 	case HanseTaskType::FoundTown:
-		return "Fundar una ciudad nueva: " + numbered_town_name(c.town_names, t.data[4]);
+		return tr("Fundar una ciudad nueva: ", "Found a new town: ") + numbered_town_name(c.town_names, t.data[4]);
 	case HanseTaskType::Road:
-		return "Carretera entre " + index_town_name(save, c, t.data[0]) + " y " + index_town_name(save, c, t.data[1]);
+		return tr("Carretera entre ", "Road between ") + index_town_name(save, c, t.data[0]) + tr(" y ", " and ") +
+			index_town_name(save, c, t.data[1]);
 	case HanseTaskType::PirateShip: {
 		const size_t ship = size_t(t.data[0] | t.data[1] << 8);
-		return ship < save.ships.size() ? "Cazar el barco pirata " + save.ships[ship].name()
-										: "Cazar un barco pirata";
+		return ship < save.ships.size() ? tr("Cazar el barco pirata ", "Hunt the pirate ship ") + save.ships[ship].name()
+										: tr("Cazar un barco pirata", "Hunt a pirate ship");
 	}
 	case HanseTaskType::PirateNest:
-		return "Acabar con la guarida pirata de " + numbered_town_name(c.town_names, t.data[1]);
+		return tr("Acabar con la guarida pirata de ", "Destroy the pirate hideaway near ") +
+			numbered_town_name(c.town_names, t.data[1]);
 	case HanseTaskType::GrowTown:
-		return "Que " + index_town_name(save, c, t.data[2]) + " llegue a " + format_money(t.data[0] | t.data[1] << 8) +
-			" habitantes";
+		return g_spanish ? "Que " + index_town_name(save, c, t.data[2]) + " llegue a " +
+				format_money(t.data[0] | t.data[1] << 8) + " habitantes"
+						 : "Let " + index_town_name(save, c, t.data[2]) + " reach " +
+				format_money(t.data[0] | t.data[1] << 8) + " inhabitants";
 	default:
-		return "Encargo anulado";
+		return tr("Encargo anulado", "Task cancelled");
 	}
 }
 
@@ -1150,18 +1294,23 @@ std::string hanse_progress_text(const SaveGame& save, const HanseTask& t, const 
 	switch (HanseTaskType(t.type)) {
 	case HanseTaskType::FoundTown:
 		return t.started && t.data[6] < save.towns.size()
-			? "Se cumple cuando " + town_name(save, c.town_names, t.data[6]) + " tenga mercado."
-			: "La ciudad se funda al empezar el encargo.";
+			? (g_spanish ? "Se cumple cuando " + town_name(save, c.town_names, t.data[6]) + " tenga mercado."
+						 : "Done when " + town_name(save, c.town_names, t.data[6]) + " has a market.")
+			: tr("La ciudad se funda al empezar el encargo.", "The town is founded when the task starts.");
 	case HanseTaskType::Road:
-		return "Tramos hechos: " + std::to_string(v.road.sections - v.road.sections_left) + " de " +
-			std::to_string(v.road.sections) + " (" + std::to_string(v.road.percent()) + " %).";
+		return tr("Tramos hechos: ", "Sections built: ") + std::to_string(v.road.sections - v.road.sections_left) +
+			tr(" de ", " of ") + std::to_string(v.road.sections) + " (" + std::to_string(v.road.percent()) + " %).";
 	case HanseTaskType::PirateShip:
-		return "Hunde el barco pirata (las batallas aún no están en p3vita).";
+		return tr("Hunde el barco pirata (las batallas aún no están en p3vita).",
+			"Sink the pirate ship (the battles aren't in p3vita yet).");
 	case HanseTaskType::PirateNest:
-		return t.data[2] == 0 ? "Acerca un barco a la guarida." : "Ataca la guarida (las batallas aún no están).";
+		return t.data[2] == 0 ? tr("Acerca un barco a la guarida.", "Take a ship to the hideaway.")
+							  : tr("Ataca la guarida (las batallas aún no están).",
+								  "Attack the hideaway (the battles aren't there yet).");
 	case HanseTaskType::GrowTown:
-		return t.data[2] < save.towns.size() ? "Habitantes ahora: " + format_money(save.towns[t.data[2]].citizens()) + "."
-											 : "";
+		return t.data[2] < save.towns.size()
+			? tr("Habitantes ahora: ", "Inhabitants now: ") + format_money(save.towns[t.data[2]].citizens()) + "."
+			: "";
 	default:
 		return "";
 	}
@@ -1174,16 +1323,16 @@ std::string candidate_name(const SaveGame& save, const HanseContext& c, const El
 	}
 	if (candidate.merchant) {
 		const SavedMerchant& m = save.merchants[size_t(candidate.index)];
-		std::string name = merchant_name(save, c.names, candidate.index) + " de " +
+		std::string name = merchant_name(save, c.names, candidate.index) + tr(" de ", " from ") +
 			index_town_name(save, c, m.hometown());
-		return candidate.index == save.player ? name + " (tú)" : name;
+		return candidate.index == save.player ? name + tr(" (tú)", " (you)") : name;
 	}
-	return "El alcalde de " + index_town_name(save, c, candidate.index);
+	return tr("El alcalde de ", "The mayor of ") + index_town_name(save, c, candidate.index);
 }
 
 std::string road_amount_text(int amount) {
 	const uint32_t n = kRoadAmounts[size_t(amount)];
-	return n == 0xFFFFFFFF ? "todo" : std::to_string(n);
+	return n == 0xFFFFFFFF ? tr("todo", "all") : std::to_string(n);
 }
 
 // A text in lines that fit in `width` pixels (the game's texts are long and
@@ -1271,14 +1420,15 @@ void hanse_act(SaveGame& save, int town, HanseUi& ui, const HanseView& v, const 
 	ui.message_until = app_ticks() + kMessageTime;
 	if (ui.page == 1) {
 		if (!v.can_vote) {
-			ui.message = v.election != 0xFFFF ? "No puedes votar (o ya has votado)." : "Hoy no hay elección.";
+			ui.message = v.election != 0xFFFF ? tr("No puedes votar (o ya has votado).", "You can't vote (or you have voted).")
+											  : tr("Hoy no hay elección.", "There is no election today.");
 		} else if (ui.row < 4 && v.candidates[size_t(ui.row)].index >= 0) {
 			queue_operation(save, vote_operation(uint32_t(save.player), uint32_t(ui.row)));
 			std::string name = candidate_name(save, c, v.candidates[size_t(ui.row)]);
-			if (name.compare(0, 3, "El ") == 0) {
-				name[0] = 'e';
+			if (name.compare(0, 3, "El ") == 0 || name.compare(0, 4, "The ") == 0) {
+				name[0] = char(std::tolower(uint8_t(name[0])));
 			}
-			ui.message = "Has votado por " + name + ".";
+			ui.message = tr("Has votado por ", "You voted for ") + name + ".";
 		}
 		return;
 	}
@@ -1286,7 +1436,7 @@ void hanse_act(SaveGame& save, int town, HanseUi& ui, const HanseView& v, const 
 		const HanseTask t = hanse_task(save, v.offered[size_t(ui.row)]);
 		queue_operation(save, take_task_operation(uint32_t(save.player), t.event));
 		ui.briefing = true;  // Once started (its deadline changes when it starts).
-		ui.message = "Has aceptado el encargo.";
+		ui.message = tr("Has aceptado el encargo.", "You have taken the task.");
 		ui.row = 0;
 		return;
 	}
@@ -1294,7 +1444,8 @@ void hanse_act(SaveGame& save, int town, HanseUi& ui, const HanseView& v, const 
 		const int k = ui.row;
 		const uint16_t needed = v.road.needed(k);
 		if (needed == 0 || v.available[size_t(k)] <= 0) {
-			ui.message = needed == 0 ? "Ya no hace falta más." : "No tienes en esta ciudad.";
+			ui.message = needed == 0 ? tr("Ya no hace falta más.", "No more is needed.")
+									 : tr("No tienes en esta ciudad.", "You have none in this town.");
 			return;
 		}
 		const uint16_t amount = road_window_amount(kRoadAmounts[size_t(ui.amount)], uint32_t(v.available[size_t(k)]),
@@ -1302,10 +1453,12 @@ void hanse_act(SaveGame& save, int town, HanseUi& ui, const HanseView& v, const 
 		queue_operation(save, road_materials_operation(v.task, amount, uint8_t(town), uint8_t(save.player),
 			kRoadWares[size_t(k)]));
 		const WareInfo& ware = kWares[kRoadWares[size_t(k)]];
-		ui.message = "Entregas " + amount_label(amount, ware.unit) + " de " + ware_name(kRoadWares[size_t(k)]) + ".";
+		ui.message = tr("Entregas ", "You deliver ") + amount_label(amount, ware.unit) + tr(" de ", " of ") +
+			ware_name(kRoadWares[size_t(k)]) + ".";
 		return;
 	}
-	ui.message = v.level == 0 ? "Aún no eres candidato." : "No hay nada que hacer aquí.";
+	ui.message = v.level == 0 ? tr("Aún no eres candidato.", "You are not a candidate yet.")
+							  : tr("No hay nada que hacer aquí.", "There is nothing to do here.");
 }
 
 // The Alderman: a merchant, or a citizen of the town [0x6DE52E].
@@ -1315,7 +1468,8 @@ std::string alderman_name(const SaveGame& save, const NameLists& names, const st
 		return merchant_name(save, names, chief);
 	}
 	const int town = save.globals.u8(0x6DE52E);
-	return town < int(save.towns.size()) ? "un ciudadano de " + town_name(save, town_names, town) : "un ciudadano";
+	return town < int(save.towns.size()) ? tr("un ciudadano de ", "a citizen of ") + town_name(save, town_names, town)
+										 : tr("un ciudadano", "a citizen");
 }
 
 void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, const HanseUi& ui,
@@ -1331,33 +1485,41 @@ void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save
 	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
 	SDL_RenderDrawRect(renderer, &panel);
 
-	text.draw(ui.page == 1 ? c.text(GameText::ElectionTitle, "Elección del Gobernador") : "La Hansa", left,
-		layout.header_y, kTextColor);
-	const std::string close =
-		std::string(ui.page == 1 ? "Select: encargos" : "Select: elección") + "   Círculo: cerrar";
+	text.draw(ui.page == 1 ? c.text(GameText::ElectionTitle, tr("Elección del Gobernador", "Election of Alderman"))
+						   : tr("La Hansa", "The Hanse"),
+		left, layout.header_y, kTextColor);
+	const std::string close = (ui.page == 1 ? tr("Select: encargos", "Select: tasks") : tr("Select: elección", "Select: election")) +
+		tr("   " BTN_CIRCLE " cerrar", "   " BTN_CIRCLE " close");
 	text.draw(close, panel.x + panel.w - HanseLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
 
 	// The Alderman, the election and the player's candidacy.
 	std::vector<std::pair<std::string, SDL_Color>> info;
-	info.push_back({"Gobernador: " + alderman_name(save, c.names, c.town_names), kTextColor});
+	info.push_back({tr("Gobernador: ", "Alderman: ") + alderman_name(save, c.names, c.town_names), kTextColor});
 	if (const uint32_t election = alderman_election_tick(save)) {
-		info.push_back({(v.election != 0xFFFF ? "Elección: hoy, " : "Próxima elección: ") + full_date(election),
+		info.push_back({(v.election != 0xFFFF ? tr("Elección: hoy, ", "Election: today, ")
+											  : tr("Próxima elección: ", "Next election: ")) + full_date(election),
 			kTextColor});
 	}
 	if (v.is_alderman) {
-		info.push_back({"¡Eres Gobernador de la Hansa!", kTextColor});
+		info.push_back({tr("¡Eres Gobernador de la Hansa!", "You are the Alderman of the Hanseatic League!"), kTextColor});
 	} else if (v.level == 0) {
 		const std::vector<int> mayor = mayor_towns(save, save.player);
-		info.push_back({"No eres candidato a Gobernador.", kDimColor});
-		info.push_back({mayor.empty() ? "Hace falta ser alcalde de una ciudad." : "Alcalde de " +
-			town_name(save, c.town_names, mayor[0]) + ".", kDimColor});
-		info.push_back({"Reputación para optar: " + std::to_string(candidacy_reputation(save, save.player)) + " de " +
-			std::to_string(kCandidacyReputation) + ".", kDimColor});
+		info.push_back({tr("No eres candidato a Gobernador.", "You are not a candidate for Alderman."), kDimColor});
+		info.push_back({mayor.empty() ? tr("Hace falta ser alcalde de una ciudad.", "You have to be the mayor of a town.")
+									  : tr("Alcalde de ", "Mayor of ") + town_name(save, c.town_names, mayor[0]) + ".",
+			kDimColor});
+		info.push_back({tr("Reputación para optar: ", "Reputation to stand: ") +
+				std::to_string(candidacy_reputation(save, save.player)) + tr(" de ", " of ") +
+				std::to_string(kCandidacyReputation) + ".",
+			kDimColor});
 	} else if (v.level <= 3) {
-		info.push_back({"Candidato a Gobernador: " + std::to_string(v.level - 1) + " de 3 encargos cumplidos.",
+		info.push_back({g_spanish ? "Candidato a Gobernador: " + std::to_string(v.level - 1) + " de 3 encargos cumplidos."
+								  : "Candidate for Alderman: " + std::to_string(v.level - 1) + " of 3 tasks done.",
 			kTextColor});
 	} else {
-		info.push_back({"Has cumplido los encargos: puedes presentarte a la elección.", kTextColor});
+		info.push_back({tr("Has cumplido los encargos: puedes presentarte a la elección.",
+							"You have done the tasks: you can stand for election."),
+			kTextColor});
 	}
 	for (size_t i = 0; i < info.size() && i < size_t(HanseLayout::kInfoLines); ++i) {
 		text.draw(info[i].first, left, layout.info_y + int(i) * lh, info[i].second);
@@ -1386,17 +1548,18 @@ void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save
 		const bool today = v.election != 0xFFFF;
 		std::string intro;
 		if (v.can_vote) {
-			intro = c.text(GameText::VotePrompt, "Elige un candidato y vota.");
+			intro = c.text(GameText::VotePrompt, tr("Elige un candidato y vota.", "Choose a candidate and cast your vote."));
 		} else if (today) {
-			intro = c.text(GameText::CandidatesIntro, "Se presentan a la elección:");
+			intro = c.text(GameText::CandidatesIntro, tr("Se presentan a la elección:", "Standing for election:"));
 		} else if (const uint32_t tick = alderman_election_tick(save)) {
 			const GameDate date = date_from_tick(tick);
 			const int place = save.globals.u8(0x6DE52E);
 			intro = c.texts ? c.texts->format(GameText::Nominated, {std::to_string(date.day), c.texts->month(date.month),
 								  std::to_string(date.year), index_town_name(save, c, place)})
-							: "Candidatos para la próxima elección:";
+							: tr("Candidatos para la próxima elección:", "Candidates for the next election:");
 		}
-		text.draw(today ? "Candidatos y votos de hoy:" : "Candidatos:", left, layout.title_y, kDimColor);
+		text.draw(today ? tr("Candidatos y votos de hoy:", "Candidates and today's votes:") : tr("Candidatos:", "Candidates:"),
+			left, layout.title_y, kDimColor);
 		for (size_t k = 0; k < v.candidates.size(); ++k) {
 			const int y = layout.rows_y + int(k) * HanseLayout::kRowHeight;
 			if (v.can_vote && int(k) == ui.row) {
@@ -1404,13 +1567,14 @@ void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save
 			}
 			text.draw(candidate_name(save, c, v.candidates[k]), left, y, kTextColor);
 			if (today && v.candidates[k].index >= 0) {
-				const std::string votes = std::to_string(v.candidates[k].votes) + " votos";
+				const std::string votes = std::to_string(v.candidates[k].votes) + tr(" votos", " votes");
 				text.draw(votes, panel.x + panel.w - HanseLayout::kPadding - text.measure(votes), y, kDimColor);
 			}
 		}
 		draw_lines(intro, layout.detail_y, kDimColor);
 	} else if (v.task == 0xFFFF && !v.offered.empty()) {
-		text.draw(c.text(GameText::TasksChoose, "Encargos de la Hansa (elige uno):"), left, layout.title_y, kDimColor);
+		text.draw(c.text(GameText::TasksChoose, tr("Encargos de la Hansa (elige uno):", "The Hanse's tasks (choose one):")),
+			left, layout.title_y, kDimColor);
 		for (size_t i = 0; i < v.offered.size(); ++i) {
 			const int y = layout.rows_y + int(i) * HanseLayout::kRowHeight;
 			if (int(i) == ui.row) {
@@ -1421,12 +1585,13 @@ void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save
 		}
 		if (ui.row < int(v.offered.size())) {
 			const HanseTask t = hanse_task(save, v.offered[size_t(ui.row)]);
-			const int y = draw_lines("Plazo: hasta el " + full_date(t.deadline) + ".", layout.detail_y, kTextColor);
+			const int y = draw_lines(tr("Plazo: hasta el ", "Deadline: ") + full_date(t.deadline) + ".", layout.detail_y,
+				kTextColor);
 			draw_lines(hanse_task_description(save, t, c), y, kDimColor);
 		}
 	} else if (v.task != 0xFFFF) {
 		const HanseTask t = hanse_task(save, v.task);
-		text.draw("Tu encargo: " + hanse_task_text(save, t, c), left, layout.title_y, kTextColor);
+		text.draw(tr("Tu encargo: ", "Your task: ") + hanse_task_text(save, t, c), left, layout.title_y, kTextColor);
 		if (v.road_here) {
 			static constexpr int kColumns[2] = {390, 590};  // Right edges.
 			auto right = [&](const std::string& s, int column, int y, SDL_Color color) {
@@ -1443,10 +1608,10 @@ void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save
 				text.draw(ware_label(kRoadWares[size_t(k)]), left, y, enabled ? kTextColor : kDimColor);
 				auto amount = [&](int n) {
 					return g_texts ? amount_label(n, ware.unit)
-								   : std::to_string(n) + (ware.unit == WareUnit::Barrel ? " barr." : " cargas");
+								   : std::to_string(n) + (ware.unit == WareUnit::Barrel ? tr(" barr.", " barr.") : tr(" cargas", " loads"));
 				};
-				right("falta " + amount(needed), 0, y, enabled ? kTextColor : kDimColor);
-				right("tienes " + amount(v.available[size_t(k)]), 1, y, enabled ? kTextColor : kDimColor);
+				right(tr("falta ", "needed ") + amount(needed), 0, y, enabled ? kTextColor : kDimColor);
+				right(tr("tienes ", "you have ") + amount(v.available[size_t(k)]), 1, y, enabled ? kTextColor : kDimColor);
 			}
 		} else if (ui.briefing) {
 			// No rows: what the Hanse says when the player takes it.
@@ -1459,11 +1624,11 @@ void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save
 				y += lh;
 			}
 		}
-		int y = draw_lines("Plazo: hasta el " + full_date(t.deadline) + ".", layout.detail_y, kTextColor);
+		int y = draw_lines(tr("Plazo: hasta el ", "Deadline: ") + full_date(t.deadline) + ".", layout.detail_y, kTextColor);
 		y = draw_lines(hanse_progress_text(save, t, v, c), y, kTextColor);
 		if (HanseTaskType(t.type) == HanseTaskType::Road && !v.road_here && t.data[2] > 0) {
-			draw_lines("Lleva los materiales a " + town_name(save, c.town_names, t.data[0]) + " o a " +
-				town_name(save, c.town_names, t.data[1]) + ".", y, kDimColor);
+			draw_lines(tr("Lleva los materiales a ", "Take the materials to ") + town_name(save, c.town_names, t.data[0]) +
+				tr(" o a ", " or to ") + town_name(save, c.town_names, t.data[1]) + ".", y, kDimColor);
 		}
 	} else if (v.level >= 1 && v.level <= 3 && c.texts) {
 		draw_lines(c.texts->get(GameText::NoTasks), layout.title_y, kDimColor);
@@ -1475,13 +1640,13 @@ void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save
 	}
 	if (ui.page == 1) {
 		if (v.can_vote) {
-			draw_button(renderer, text, layout.act_button, "X: votar");
+			draw_button(renderer, text, layout.act_button, tr(BTN_CROSS " votar", BTN_CROSS " vote"));
 		}
 	} else if (v.road_here) {
-		draw_button(renderer, text, layout.amount_button, "Izq./Der.: " + road_amount_text(ui.amount));
-		draw_button(renderer, text, layout.act_button, "X: entregar");
+		draw_button(renderer, text, layout.amount_button, tr("Izq./Der.: ", "Left/Right: ") + road_amount_text(ui.amount));
+		draw_button(renderer, text, layout.act_button, tr(BTN_CROSS " entregar", BTN_CROSS " deliver"));
 	} else if (v.task == 0xFFFF && !v.offered.empty()) {
-		draw_button(renderer, text, layout.act_button, "X: aceptar el encargo");
+		draw_button(renderer, text, layout.act_button, tr(BTN_CROSS " aceptar el encargo", BTN_CROSS " take the task"));
 	}
 }
 
@@ -1504,7 +1669,7 @@ void draw_end_window(SDL_Renderer* renderer, TextRenderer& title, TextRenderer& 
 	SDL_RenderFillRect(renderer, &box);
 	SDL_SetRenderDrawColor(renderer, 190, 150, 90, 255);
 	SDL_RenderDrawRect(renderer, &box);
-	const std::string heading = c.text(GameText::AldermanOffice, "Gobernador de la Hansa");
+	const std::string heading = c.text(GameText::AldermanOffice, tr("Gobernador de la Hansa", "Alderman's office"));
 	int y = box.y + 20;
 	title.draw(heading, box.x + (width - title.measure(heading)) / 2, y, kTextColor);
 	y += title.line_height() + 16;
@@ -1512,7 +1677,7 @@ void draw_end_window(SDL_Renderer* renderer, TextRenderer& title, TextRenderer& 
 		text.draw(line, box.x + (width - text.measure(line)) / 2, y, kTextColor);
 		y += text.line_height();
 	}
-	const std::string hint = "X: continuar";
+	const std::string hint = tr(BTN_CROSS " continuar", BTN_CROSS " continue");
 	text.draw(hint, box.x + (width - text.measure(hint)) / 2, box.y + height - 8 - text.line_height(), kDimColor);
 }
 
@@ -1566,7 +1731,7 @@ void draw_message_window(SDL_Renderer* renderer, TextRenderer& title, TextRender
 		text.draw(line, box.x + 20, y, kTextColor);
 		y += text.line_height();
 	}
-	const std::string hint = w.pending.empty() ? "X: continuar" : "X: siguiente";
+	const std::string hint = w.pending.empty() ? tr(BTN_CROSS " continuar", BTN_CROSS " continue") : tr(BTN_CROSS " siguiente", BTN_CROSS " next");
 	text.draw(hint, box.x + (width - text.measure(hint)) / 2, box.y + height - 8 - text.line_height(), kDimColor);
 }
 
@@ -1669,7 +1834,7 @@ struct MenuLayout {
 // «13 de mayo de 1300 - Lübeck»: what a slot holds.
 std::string slot_description(const p3::app::SlotInfo& slot, const std::vector<std::string>& town_names) {
 	if (slot.damaged) {
-		return game_text(GameText::LoadDamaged, "No se puede cargar la partida.");
+		return game_text(GameText::LoadDamaged, tr("No se puede cargar la partida.", "This save game appears to be damaged"));
 	}
 	std::string text = game_date(slot.day, slot.month, slot.year);
 	if (slot.town_number >= 0 && slot.town_number < int(town_names.size())) {
@@ -1680,7 +1845,7 @@ std::string slot_description(const p3::app::SlotInfo& slot, const std::vector<st
 
 std::string slot_label(const MenuUi& menu, int slot, const std::vector<std::string>& town_names) {
 	const p3::app::SlotInfo& info = menu.slots[size_t(slot)];
-	return std::to_string(slot + 1) + ". " + (info.used ? slot_description(info, town_names) : std::string("(vacía)"));
+	return std::to_string(slot + 1) + ". " + (info.used ? slot_description(info, town_names) : tr("(vacía)", "(empty)"));
 }
 
 // The question's two lines, as the game has them.
@@ -1688,15 +1853,16 @@ std::array<std::string, 2> menu_question(const MenuUi& menu, const std::vector<s
 	switch (menu.ask) {
 	case MenuAsk::Overwrite: {
 		const std::string slot = slot_description(menu.slots[size_t(menu.row)], town_names);
-		return {game_text(GameText::OverwriteAsk, "¿Seguro que deseas sobrescribir"),
-			g_texts ? g_texts->format(GameText::OverwriteAskSavegame, {slot}) : "la partida guardada '" + slot + "'?"};
+		return {game_text(GameText::OverwriteAsk, tr("¿Seguro que deseas sobrescribir", "Do you really want to overwrite")),
+			g_texts ? g_texts->format(GameText::OverwriteAskSavegame, {slot})
+					: tr("la partida guardada '", "the savegame '") + slot + "'?"};
 	}
 	case MenuAsk::Delete:
-		return {game_text(GameText::DeleteAsk, "¿Seguro que quieres"),
-			game_text(GameText::DeleteAskSavegame, "borrar esta partida?")};
+		return {game_text(GameText::DeleteAsk, tr("¿Seguro que quieres", "Do you really want to")),
+			game_text(GameText::DeleteAskSavegame, tr("borrar esta partida?", "delete this savegame?"))};
 	case MenuAsk::Quit:
-		return {game_text(GameText::QuitAsk, "¿Seguro que deseas"),
-			game_text(GameText::QuitAskGame, "abandonar la partida?")};
+		return {game_text(GameText::QuitAsk, tr("¿Seguro que deseas", "Do you really want")),
+			game_text(GameText::QuitAskGame, tr("abandonar la partida?", "to quit the game?"))};
 	default:
 		return {"", ""};
 	}
@@ -1716,12 +1882,13 @@ void draw_menu(SDL_Renderer* renderer, TextRenderer& text, const MenuUi& menu, c
 	const SDL_Rect& panel = layout.panel;
 	const int left = panel.x + MenuLayout::kPadding;
 	draw_panel_box(renderer, panel);
-	const std::string title = menu.screen == MenuScreen::Save ? game_text(GameText::MenuSaveGame, "Guardar partida")
-		: menu.screen == MenuScreen::Load ? game_text(GameText::MenuLoadGame, "Cargar partida")
-		: menu.screen == MenuScreen::Options ? game_text(GameText::MenuOptions, "Opciones")
+	const std::string title = menu.screen == MenuScreen::Save ? game_text(GameText::MenuSaveGame, tr("Guardar partida", "Save game"))
+		: menu.screen == MenuScreen::Load ? game_text(GameText::MenuLoadGame, tr("Cargar partida", "Load game"))
+		: menu.screen == MenuScreen::Options ? game_text(GameText::MenuOptions, tr("Opciones", "Options"))
 		: std::string(kTitle);
 	text.draw(title, left, layout.header_y, kTextColor);
-	const std::string hint = menu.screen == MenuScreen::Main ? "Círculo: cerrar" : "Círculo: atrás";
+	const std::string hint = menu.screen == MenuScreen::Main ? tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")
+															 : tr(BTN_CIRCLE " atrás", BTN_CIRCLE " back");
 	text.draw(hint, panel.x + panel.w - MenuLayout::kPadding - text.measure(hint), layout.header_y, kDimColor);
 
 	for (int i = 0; i < layout.rows; ++i) {
@@ -1739,7 +1906,9 @@ void draw_menu(SDL_Renderer* renderer, TextRenderer& text, const MenuUi& menu, c
 				GameText::MenuLoadGame, GameText::MenuOptions, GameText::QuitGame};
 			static const char* const kFallbacks[kMainRows] = {"Continuar", "Guardar partida", "Cargar partida",
 				"Opciones", "Salir del juego"};
-			label = game_text(kTexts[i], kFallbacks[i]);
+			static const char* const kEnglishFallbacks[kMainRows] = {"Continue", "Save game", "Load game", "Options",
+				"Quit"};
+			label = game_text(kTexts[i], tr(kFallbacks[i], kEnglishFallbacks[i]));
 			break;
 		}
 		case MenuScreen::Save:
@@ -1748,13 +1917,16 @@ void draw_menu(SDL_Renderer* renderer, TextRenderer& text, const MenuUi& menu, c
 			break;
 		case MenuScreen::Options:
 			if (i == kRowFixGameBugs) {
-				label = std::string("Corregir los fallos del juego: ") +
-					(settings.fix_game_bugs ? game_text(GameText::SettingOn, "Sí") : game_text(GameText::SettingOff, "No"));
-				detail = settings.fix_game_bugs ? "Con «No», el juego hace lo mismo que el original, fallos incluidos."
-												: "Ahora se comporta como el original, fallos incluidos.";
+				label = tr("Corregir los fallos del juego: ", "Fix the game's bugs: ") +
+					(settings.fix_game_bugs ? game_text(GameText::SettingOn, tr("Sí", "on"))
+											: game_text(GameText::SettingOff, tr("No", "off")));
+				detail = settings.fix_game_bugs
+					? tr("Con «No», el juego hace lo mismo que el original, fallos incluidos.",
+						"Off, the game does as the original, bugs included.")
+					: tr("Ahora se comporta como el original, fallos incluidos.", "Now it behaves like the original, bugs included.");
 			} else {
-				label = std::string("Idioma: ") + (settings.spanish ? "Español" : "English");
-				detail = "Los textos y los nombres del juego en ese idioma.";
+				label = tr("Idioma: ", "Language: ") + (settings.spanish ? "Español" : "English");
+				detail = tr("Los textos y los nombres del juego en ese idioma.", "The game's texts and names in that language.");
 			}
 			break;
 		default:
@@ -1768,10 +1940,11 @@ void draw_menu(SDL_Renderer* renderer, TextRenderer& text, const MenuUi& menu, c
 	}
 	if (menu.slot_screen()) {
 		draw_button(renderer, text, layout.delete_button,
-			"Cuadrado: " + game_text(GameText::DeleteSavegame, "Borrar partida"));
+			tr(BTN_SQUARE " ", BTN_SQUARE " ") + game_text(GameText::DeleteSavegame, tr("Borrar partida", "Delete savegame")));
 	}
 	if (menu.screen != MenuScreen::Main) {
-		draw_button(renderer, text, layout.back_button, "Círculo: " + game_text(GameText::ButtonBack, "Atrás"));
+		draw_button(renderer, text, layout.back_button,
+			tr(BTN_CIRCLE " ", BTN_CIRCLE " ") + game_text(GameText::ButtonBack, tr("Atrás", "Back")));
 	}
 
 	if (menu.ask != MenuAsk::None) {
@@ -1782,8 +1955,9 @@ void draw_menu(SDL_Renderer* renderer, TextRenderer& text, const MenuUi& menu, c
 			text.draw(line, layout.ask_box.x + (layout.ask_box.w - text.measure(line)) / 2, y, kTextColor);
 			y += text.line_height();
 		}
-		draw_button(renderer, text, layout.ok_button, "X: " + game_text(GameText::ButtonOk, "OK"));
-		draw_button(renderer, text, layout.cancel_button, "Círculo: " + game_text(GameText::ButtonCancel, "Cancelar"));
+		draw_button(renderer, text, layout.ok_button, std::string(BTN_CROSS " ") + game_text(GameText::ButtonOk, "OK"));
+		draw_button(renderer, text, layout.cancel_button,
+			tr(BTN_CIRCLE " ", BTN_CIRCLE " ") + game_text(GameText::ButtonCancel, tr("Cancelar", "Cancel")));
 	}
 }
 
@@ -1936,11 +2110,13 @@ int main(int argc, char** argv) {
 
 	// The settings: the file, then the command line; scripted runs don't save them.
 	const std::string settings_file = p3::app::settings_path(options.data_dir);
+	const std::string data_dir = p3::app::data_folder(options.data_dir);  // The viewer's own files.
 	p3::app::AppSettings settings = p3::app::load_settings(settings_file);
 	if (options.fix_game_bugs) {
 		settings.fix_game_bugs = std::string(options.fix_game_bugs) == "on";
 	}
 	p3::data::set_fix_game_bugs(settings.fix_game_bugs);
+	g_spanish = settings.spanish;
 
 	std::string tried;
 	bool spanish_mounted = false;
@@ -1948,9 +2124,11 @@ int main(int argc, char** argv) {
 	const std::vector<int> template_ids = archive ? list_town_ids(*archive) : std::vector<int>{};
 	if (template_ids.empty()) {
 		const std::string message = archive
-			? std::string("El archivo CPR no contiene mapas de ciudad.")
-			: "No se encuentran los datos del juego. Copia p2arch0_eng.cpr (y p2arch0_spa.cpr para la "
-			  "versión española) en:" + tried;
+			? tr("El archivo CPR no contiene mapas de ciudad.", "The CPR archive has no town maps.")
+			: tr("No se encuentran los datos del juego. Copia p2arch0_eng.cpr (y p2arch0_spa.cpr para la "
+				 "versión española) en:",
+				  "The game's data can't be found. Copy p2arch0_eng.cpr (and p2arch0_spa.cpr for the Spanish "
+				  "version) to:") + tried;
 		show_error(window, message);
 		SDL_Quit();
 		return 1;
@@ -1989,7 +2167,7 @@ int main(int argc, char** argv) {
 	// or in the data folder: see load_game_texts).
 	bool texts_matching = false;
 	std::unique_ptr<GameTexts> game_texts =
-		load_game_texts(options.exe, options.cpr, options.data_dir, settings.spanish, texts_matching);
+		load_game_texts(options.exe, options.cpr, options.data_dir, settings.spanish, texts_matching, data_dir);
 #ifndef __vita__
 	if (!game_texts && options.exe) {
 		std::fprintf(stderr, "--exe: can't read %s; the viewer's own texts\n", options.exe);
@@ -2035,7 +2213,7 @@ int main(int argc, char** argv) {
 	auto order_sail = [&]() {
 		const int index = fleet_ship();
 		if (!sailing || index < 0) {
-			notify("No tienes ningún barco.");
+			notify(tr("No tienes ningún barco.", "You have no ship."));
 			return;
 		}
 		const SavedShip& ship = save.ships[size_t(index)];
@@ -2043,25 +2221,27 @@ int main(int argc, char** argv) {
 		const std::string there = town_name(save, town_names, town);
 		const Sailing::SailCheck check = ship.status() < 4 ? sailing->sail_check(ship) : Sailing::SailCheck::Ok;
 		if ((ship.status() == kShipDocked || ship.status() == kShipWaiting) && ship.town() == town) {
-			notify(ship.name() + " ya está en " + there + ".");
+			notify(ship.name() + tr(" ya está en ", " is already in ") + there + ".");
 		} else if (check == Sailing::SailCheck::FewSailors) {
-			notify(game_text(GameText::SailNoCrew, "Faltan marineros para zarpar."));
+			notify(game_text(GameText::SailNoCrew, tr("Faltan marineros para zarpar.", "Not enough sailors to set sail.")));
 		} else if (check == Sailing::SailCheck::Tired) {
-			notify(game_text(GameText::SailMutiny, "La tripulación necesita descansar."));
+			notify(game_text(GameText::SailMutiny, tr("La tripulación necesita descansar.", "The crew needs a rest.")));
 		} else if (check == Sailing::SailCheck::Overloaded) {
-			notify(game_text(GameText::SailOverloaded, "Lleva más carga de la que cabe en la bodega."));
+			notify(game_text(GameText::SailOverloaded,
+				tr("Lleva más carga de la que cabe en la bodega.", "The ship is overloaded.")));
 		} else if (check == Sailing::SailCheck::Damaged) {
-			notify(game_text(GameText::SailDamaged, "El casco está demasiado dañado para zarpar sin capitán."));
+			notify(game_text(GameText::SailDamaged, tr("El casco está demasiado dañado para zarpar sin capitán.",
+				"The hull is too damaged to sail without a captain.")));
 		} else if (check == Sailing::SailCheck::PortClosed) {
-			notify("El puerto está bloqueado.");
+			notify(tr("El puerto está bloqueado.", "The port is blockaded."));
 		} else if (check != Sailing::SailCheck::Ok) {
-			notify(ship.name() + " no puede zarpar ahora.");
+			notify(ship.name() + tr(" no puede zarpar ahora.", " can't set sail now."));
 		} else {
-			const char* verb = ship.status() == kShipSailing ? " pone rumbo a "
-				: ship.status() == kShipLeaving && ship.town() == town ? " vuelve a "
-				: " zarpa hacia ";
+			const std::string verb = ship.status() == kShipSailing ? tr(" pone rumbo a ", " heads for ")
+				: ship.status() == kShipLeaving && ship.town() == town ? tr(" vuelve a ", " goes back to ")
+				: tr(" zarpa hacia ", " sets sail for ");
 			if (!sailing->set_sail(index, town)) {
-				notify(ship.name() + " no puede zarpar ahora.");
+				notify(ship.name() + tr(" no puede zarpar ahora.", " can't set sail now."));
 			} else {
 				notify(ship.name() + verb + there + ".");
 			}
@@ -2083,25 +2263,25 @@ int main(int argc, char** argv) {
 #ifndef __vita__
 			std::fprintf(stderr, "%s\n", error.c_str());
 #endif
-			notify("No se puede guardar la partida.");
+			notify(tr("No se puede guardar la partida.", "The game can't be saved."));
 			return false;
 		}
-		notify("Partida guardada.");
+		notify(tr("Partida guardada.", "Game saved."));
 		return true;
 	};
 	// Replaces the game in play with the slot's: a new Sailing for it, and
 	// what the viewer keeps of the old one forgotten; the town on screen is
 	// the player's home town. On a failure the game in play stays.
 	auto load_game = [&](int slot) {
-		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, "Iniciando partida..."));
+		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
 		SaveGame loaded;
 		std::string error;
 		if (!p3::app::load_slot(*archive, saves_dir, slot, loaded, error) || loaded.towns.empty()) {
 #ifndef __vita__
 			std::fprintf(stderr, "%s\n", error.c_str());
 #endif
-			notify(game_text(GameText::LoadDamaged, "No se puede cargar la partida.") + " " +
-				game_text(GameText::LoadDamagedCannot, "El fichero está dañado."));
+			notify(game_text(GameText::LoadDamaged, tr("No se puede cargar la partida.", "This save game appears to be damaged")) +
+				" " + game_text(GameText::LoadDamagedCannot, tr("El fichero está dañado.", "and can't be loaded.")));
 			return false;
 		}
 		sailing.reset();  // It refers to the game it was made for.
@@ -2148,7 +2328,8 @@ int main(int argc, char** argv) {
 			return false;
 		}
 		bool matching = false;
-		std::unique_ptr<GameTexts> texts = load_game_texts(options.exe, options.cpr, options.data_dir, spanish, matching);
+		std::unique_ptr<GameTexts> texts =
+			load_game_texts(options.exe, options.cpr, options.data_dir, spanish, matching, data_dir);
 		if (game_texts && !matching) {
 			notify(spanish ? "Para el español falta su Patrician3.exe (o Patrician3_spa.exe) en la carpeta de datos."
 						   : "Para el inglés falta su Patrician3.exe, como Patrician3_eng.exe, en la carpeta de datos.");
@@ -2170,6 +2351,7 @@ int main(int argc, char** argv) {
 		}
 		game_texts = std::move(texts);
 		g_texts = game_texts.get();
+		g_spanish = spanish;
 		hanse_context.texts = game_texts.get();
 		if (sailing) {
 			sailing->set_texts(game_texts.get());
@@ -2381,7 +2563,7 @@ int main(int argc, char** argv) {
 				sea = std::make_unique<SeaMapView>(renderer, *archive);
 			}
 			if (!sea->ok()) {
-				show_error(window, "No se encuentra el mapa del mar.");
+				show_error(window, tr("No se encuentra el mapa del mar.", "The sea map can't be found."));
 				break;
 			}
 			const SDL_Point focus = sea->town_center(save, selection.saved_index);
@@ -2448,16 +2630,17 @@ int main(int argc, char** argv) {
 							}
 							notify(reached + ": " + there + ".");
 						} else {
-							notify(ship.name() + " ha llegado a " + there + ".");
+							notify(ship.name() + tr(" ha llegado a ", " has reached ") + there + ".");
 						}
 						// En el mapa del mar queda elegida la ciudad: Triángulo entra en ella.
 						if (selection.mode == Mode::Sea && event.ship == fleet_ship()) {
 							selection.saved_index = size_t(event.town);
 						}
 					} else if (event.kind == ShipEvent::Stopped) {
-						notify(ship.name() + " se ha detenido en el mar.");
+						notify(ship.name() + tr(" se ha detenido en el mar.", " has stopped at sea."));
 					} else {
-						notify(g_texts ? ship.name() + ": " + g_texts->get(GameText::Sunk) : ship.name() + " se ha hundido.");
+						notify(g_texts ? ship.name() + ": " + g_texts->get(GameText::Sunk)
+									   : ship.name() + tr(" se ha hundido.", " has sunk."));
 					}
 				}
 			}
@@ -2469,7 +2652,8 @@ int main(int argc, char** argv) {
 				const bool same = alderman(save) == last_alderman;
 				last_alderman = alderman(save);
 				if (last_alderman == save.player) {
-					notify(same ? "Sigues siendo Gobernador de la Hansa." : "¡Has sido elegido Gobernador de la Hansa!");
+					notify(same ? tr("Sigues siendo Gobernador de la Hansa.", "You are still the Alderman of the Hanseatic League.")
+								: tr("¡Has sido elegido Gobernador de la Hansa!", "You have been elected Alderman of the Hanseatic League!"));
 					if (!same) {
 						// The end window, with the game's text (0x5299F0 gives title and
 						// rank too; here only the name) and the player's votes.
@@ -2483,11 +2667,14 @@ int main(int argc, char** argv) {
 						end_window.text = game_texts
 							? game_texts->format(GameText::Elected, {"", "", merchant_name(save, names, save.player), "",
 								  home, std::to_string(votes)})
-							: "¡Has sido elegido Gobernador de la Hansa por " + std::to_string(votes) + " votos!";
+							: g_spanish ? "¡Has sido elegido Gobernador de la Hansa por " + std::to_string(votes) + " votos!"
+										: "You have been elected Alderman of the Hanseatic League by " + std::to_string(votes) +
+									" votes!";
 						end_window.open = true;
 					}
 				} else {
-					notify(std::string(same ? "Elección de Gobernador: sigue " : "Nuevo Gobernador de la Hansa: ") +
+					notify((same ? tr("Elección de Gobernador: sigue ", "Election of Alderman: still ")
+								 : tr("Nuevo Gobernador de la Hansa: ", "New Alderman of the Hanseatic League: ")) +
 						alderman_name(save, names, town_names) + ".");
 				}
 			}
@@ -2507,6 +2694,10 @@ int main(int argc, char** argv) {
 		bool next_debug_view = false;  // Select: vistas de las plantillas de ciudad.
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
+			if ((event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP) &&
+				rear_touch(event.tfinger.touchId)) {
+				continue;
+			}
 			switch (event.type) {
 			case SDL_QUIT:
 				running = false;
@@ -2857,31 +3048,35 @@ int main(int argc, char** argv) {
 		if (text) {
 			std::vector<std::string> right_texts;
 			if (trading || in_hanse) {
-				const std::string money = format_money(save.merchants[size_t(save.player)].money()) + " monedas";
+				const std::string money = format_money(save.merchants[size_t(save.player)].money()) + tr(" monedas", " coins");
 				right_texts = {merchant_name(save, names, save.player) + ": " + money, money};
 			} else if (at_sea) {
-				right_texts = {"L/R: ciudad   X: zarpar   Triángulo: entrar", "X: zarpar   Triángulo: entrar"};
+				right_texts = {tr("L/R: ciudad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", "L/R: town   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter"),
+					tr(BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", BTN_CROSS " set sail   " BTN_TRIANGLE " enter")};
 			} else if (selection.mode == Mode::Saved) {
-				right_texts = {"L/R: ciudad   Triángulo: mapa   X: mercado   Cuadrado: Hansa",
-					"Triángulo: mapa   X: mercado   Cuadrado: Hansa", "Triángulo: mapa  X: mercado  Cuadrado: Hansa",
-					"X: mercado   Cuadrado: Hansa",
-					"Triángulo: mapa   X: mercado"};
+				right_texts = {tr("L/R: ciudad   " BTN_TRIANGLE " mapa   " BTN_CROSS " mercado   " BTN_SQUARE " Hansa",
+								   "L/R: town   " BTN_TRIANGLE " map   " BTN_CROSS " market   " BTN_SQUARE " Hanse"),
+					tr(BTN_TRIANGLE " mapa   " BTN_CROSS " mercado   " BTN_SQUARE " Hansa", BTN_TRIANGLE " map   " BTN_CROSS " market   " BTN_SQUARE " Hanse"),
+					tr(BTN_TRIANGLE " mapa  " BTN_CROSS " mercado  " BTN_SQUARE " Hansa", BTN_TRIANGLE " map  " BTN_CROSS " market  " BTN_SQUARE " Hanse"),
+					tr(BTN_CROSS " mercado   " BTN_SQUARE " Hansa", BTN_CROSS " market   " BTN_SQUARE " Hanse"),
+					tr(BTN_TRIANGLE " mapa   " BTN_CROSS " mercado", BTN_TRIANGLE " map   " BTN_CROSS " market")};
 			} else {
-				right_texts = {"L/R: ciudad   Triángulo: mapa   X: mercado", "Triángulo: mapa   X: mercado"};
+				right_texts = {tr("L/R: ciudad   " BTN_TRIANGLE " mapa   " BTN_CROSS " mercado", "L/R: town   " BTN_TRIANGLE " map   " BTN_CROSS " market"),
+					tr(BTN_TRIANGLE " mapa   " BTN_CROSS " mercado", BTN_TRIANGLE " map   " BTN_CROSS " market")};
 			}
 			draw_bar(renderer, *text, 0, bar_title(save, town_names, template_ids, selection), right_texts);
 		}
 		// En el mapa del mar, abajo: el barco al que se dan las órdenes y la velocidad del juego.
 		if (at_sea && small_text) {
-			std::string ship_text = "No tienes ningún barco.";
+			std::string ship_text = tr("No tienes ningún barco.", "You have no ship.");
 			if (course_ship >= 0) {
 				const SavedShip& ship = save.ships[size_t(course_ship)];
 				ship_text = ship.name() + " (" + ship_type_name(ship.type()) + "): " + ship_activity(save, town_names, ship);
 			}
 			const std::string speed = g_texts ? g_texts->get(GameText::GameSpeed) + ": " + speed_name(game_speed)
-											  : std::string("velocidad ") + speed_name(game_speed);
+											  : tr("velocidad ", "speed ") + speed_name(game_speed);
 			draw_bar(renderer, *small_text, kScreenHeight - kBarHeight, ship_text,
-				{"Cuadrado: barco   Select: " + speed, "Select: " + speed, speed});
+				{tr(BTN_SQUARE " barco   Select: ", BTN_SQUARE " ship   Select: ") + speed, "Select: " + speed, speed});
 		}
 		if (in_hanse) {
 			// After this frame's ticks and operations: what the panel shows now.

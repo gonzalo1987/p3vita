@@ -159,6 +159,39 @@ bool is_digit(char c) {
 	return c >= '0' && c <= '9';
 }
 
+// The texts' cache (GameTexts::save_cache): "P3TX", u32 version, u32 the
+// build's PE time stamp, u32 a hash of p3vita's slots for that build, u32 the
+// number of texts, and each text as u32 size and its raw bytes.
+constexpr char kCacheMagic[4] = {'P', '3', 'T', 'X'};
+constexpr uint32_t kCacheVersion = 1;
+
+const Build* find_build(uint32_t time_stamp) {
+	for (const Build& b : kBuilds) {
+		if (b.time_stamp == time_stamp) {
+			return &b;
+		}
+	}
+	return nullptr;
+}
+
+// FNV-1a of the build's slots: a cache made with other slots is not used.
+uint32_t slots_hash(const Build& build) {
+	uint32_t hash = 2166136261u;
+	for (uint32_t slot : build.slots) {
+		for (int k = 0; k < 4; ++k) {
+			hash ^= (slot >> (8 * k)) & 0xFF;
+			hash *= 16777619u;
+		}
+	}
+	return hash;
+}
+
+void put_u32(std::vector<uint8_t>& out, uint32_t v) {
+	for (int k = 0; k < 4; ++k) {
+		out.push_back(uint8_t(v >> (8 * k)));
+	}
+}
+
 }  // namespace
 
 std::string clean_game_text(const std::string& raw) {
@@ -245,6 +278,7 @@ std::unique_ptr<GameTexts> GameTexts::parse(const std::vector<uint8_t>& exe, std
 	auto texts = std::make_unique<GameTexts>();
 	texts->build_ = build->name;
 	texts->spanish_ = std::strcmp(build->name, "Spanish") == 0;
+	texts->time_stamp_ = build->time_stamp;
 	for (size_t i = 0; i < kCount; ++i) {
 		const size_t slot = sections.offset(build->slots[i]);
 		const size_t text = slot ? sections.offset(u32(exe, slot)) : 0;
@@ -261,6 +295,76 @@ std::unique_ptr<GameTexts> GameTexts::parse(const std::vector<uint8_t>& exe, std
 		texts->raw_[i] = std::string(exe.begin() + long(text), exe.begin() + long(end));
 		texts->texts_[i] = clean_game_text(texts->raw_[i]);
 	}
+	return texts;
+}
+
+bool GameTexts::save_cache(const std::string& path) const {
+	const Build* build = find_build(time_stamp_);
+	if (!build) {
+		return false;
+	}
+	std::vector<uint8_t> out(kCacheMagic, kCacheMagic + 4);
+	put_u32(out, kCacheVersion);
+	put_u32(out, time_stamp_);
+	put_u32(out, slots_hash(*build));
+	put_u32(out, uint32_t(kCount));
+	for (const std::string& text : raw_) {
+		put_u32(out, uint32_t(text.size()));
+		out.insert(out.end(), text.begin(), text.end());
+	}
+	// Written apart and then put in place: a cut write leaves no half cache.
+	const std::string temporary = path + ".tmp";
+	std::FILE* file = std::fopen(temporary.c_str(), "wb");
+	if (!file) {
+		return false;
+	}
+	const bool written = std::fwrite(out.data(), 1, out.size(), file) == out.size();
+	if (std::fclose(file) != 0 || !written) {
+		std::remove(temporary.c_str());
+		return false;
+	}
+	std::remove(path.c_str());  // The Vita's rename doesn't replace.
+	return std::rename(temporary.c_str(), path.c_str()) == 0;
+}
+
+std::unique_ptr<GameTexts> GameTexts::load_cache(const std::string& path, std::string* error) {
+	auto fail = [&](const char* message) -> std::unique_ptr<GameTexts> {
+		if (error) {
+			*error = path + ": " + message;
+		}
+		return nullptr;
+	};
+	std::FILE* file = std::fopen(path.c_str(), "rb");
+	if (!file) {
+		return fail("can't open");
+	}
+	std::vector<uint8_t> data;
+	uint8_t buffer[1 << 14];
+	for (size_t n; (n = std::fread(buffer, 1, sizeof(buffer), file)) > 0;) {
+		data.insert(data.end(), buffer, buffer + n);
+	}
+	std::fclose(file);
+	if (data.size() < 20 || std::memcmp(data.data(), kCacheMagic, 4) != 0 || u32(data, 4) != kCacheVersion) {
+		return fail("not a cache of the texts");
+	}
+	const Build* build = find_build(u32(data, 8));
+	if (!build || u32(data, 12) != slots_hash(*build) || u32(data, 16) != kCount) {
+		return fail("made for another version");
+	}
+	auto texts = std::make_unique<GameTexts>();
+	size_t pos = 20;
+	for (size_t i = 0; i < kCount; ++i) {
+		const size_t size = u32(data, pos);
+		if (pos + 4 + size > data.size() || size > kMaxText) {
+			return fail("cut short");
+		}
+		texts->raw_[i] = std::string(data.begin() + long(pos + 4), data.begin() + long(pos + 4 + size));
+		texts->texts_[i] = clean_game_text(texts->raw_[i]);
+		pos += 4 + size;
+	}
+	texts->build_ = build->name;
+	texts->spanish_ = std::strcmp(build->name, "Spanish") == 0;
+	texts->time_stamp_ = build->time_stamp;
 	return texts;
 }
 

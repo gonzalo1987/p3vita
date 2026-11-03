@@ -77,7 +77,9 @@ Para probarlo en la consola (con HENkaku o Enso):
    sus propios textos. Para poder elegir el inglés en las opciones, copia
    además el `Patrician3.exe` de la versión inglesa con el nombre
    `Patrician3_eng.exe` (el español puede llamarse `Patrician3.exe` o
-   `Patrician3_spa.exe`).
+   `Patrician3_spa.exe`). La primera vez que arranca con cada idioma, el visor
+   saca del exe los textos que usa y los guarda en un fichero pequeño
+   (`p3vita-texts-es.bin`, `p3vita-texts-en.bin`); después lee solo ese fichero.
 
 De momento es un visor de ciudades en el que ya se puede comerciar y navegar.
 Arranca en Lübeck tal como empieza la partida de 1300 (`missav/1.pat`), con el
@@ -87,7 +89,9 @@ y la fecha se ve en la barra. La cruceta o el stick izquierdo mueven la
 cámara, arrastrar con el dedo desplaza el mapa, L y R cambian de ciudad y
 Start abre el menú: continuar, guardar y cargar la partida (8 ranuras, en
 `ux0:data/p3vita/savegames/`), las opciones (corregir los fallos del juego y el
-idioma, español o inglés) y salir; mientras está abierto, el juego se detiene. Triángulo alterna entre la ciudad y el **mapa del mar**, con las
+idioma, español o inglés) y salir; mientras está abierto, el juego se detiene.
+Las pistas de la pantalla muestran los botones con sus símbolos (✕, ○, □, △) y
+el panel táctil trasero no se usa. Triángulo alterna entre la ciudad y el **mapa del mar**, con las
 ciudades y los barcos (tu barco lleva una marca; tocar una ciudad la elige y
 Triángulo entra en ella). En el mapa del mar, X manda tu barco a la ciudad
 elegida: sale del puerto, navega por la ruta del juego (se dibuja su

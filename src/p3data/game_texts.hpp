@@ -209,6 +209,15 @@ public:
 	// The same from the executable's bytes.
 	static std::unique_ptr<GameTexts> parse(const std::vector<uint8_t>& exe, std::string* error = nullptr);
 
+	// A small file with the texts read (save_cache), so that the next start
+	// reads it instead of the 3 MB of the executable (load_cache): the build's
+	// time stamp, a hash of p3vita's slots for it and each raw text. Made from
+	// the player's own executable; load_cache gives nullptr (and `error`) if
+	// the file isn't such a cache, or was made for other slots (another version
+	// of p3vita) or a build p3vita doesn't know.
+	bool save_cache(const std::string& path) const;
+	static std::unique_ptr<GameTexts> load_cache(const std::string& path, std::string* error = nullptr);
+
 	// The text in UTF-8, without the game's control codes (\f1_, \c, \l, \r...);
 	// "\n" stays as a line break.
 	const std::string& get(GameText id) const { return texts_[size_t(id)]; }
@@ -238,6 +247,7 @@ private:
 	std::array<std::string, size_t(GameText::Count)> texts_;
 	std::array<std::string, size_t(GameText::Count)> raw_;
 	std::string build_;
+	uint32_t time_stamp_ = 0;  // The build's PE time stamp.
 	bool spanish_ = false;
 };
 
