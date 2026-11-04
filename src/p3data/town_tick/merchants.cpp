@@ -779,7 +779,7 @@ void fn_4f68d0(SaveGame& save, MerchantMemory& m, uint32_t tick, uint32_t a1, ui
 // ones in use (back to 0 after that divisor); and he stops being mayor of his
 // home town (game bugs, all three fixed with fix_game_bugs(): see below). His
 // ships, offices and buildings stay. The records for the
-// graphs (0x54E1F0, 0x54E170: heap, from [0x6DFCAC]) are not reproduced.
+// graphs (0x54E1F0, 0x54E170: heap, from [0x6DFCAC]) are rewritten too (statistics.cpp).
 void fn_4f5d80(SaveGame& save, int merchant) {
 	GlobalMemory& g = save.globals;
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;

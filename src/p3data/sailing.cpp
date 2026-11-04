@@ -62,7 +62,7 @@ constexpr uint16_t kNoticeMoved = 0x2000;  // Cambia la parte entera de la posic
 // Contadores u16 del objeto de los barcos (0x6DD7A0) que 0x506720 pone a 0
 // al empezar y cuenta en cada tick: barcos del jugador en la lista de puerto
 // (estados 0 a 3) y en el mar (0x0F), y convoyes del jugador en puerto y en
-// el mar (los cuenta el recorrido de los convoyes, que no se reproduce).
+// el mar (these two are counted by the convoys' walk, convoys.cpp).
 constexpr uint32_t kPlayerShipsInPort = global::kShips + 0x100;
 constexpr uint32_t kPlayerShipsAtSea = global::kShips + 0x102;
 constexpr uint32_t kPlayerConvoysInPort = global::kShips + 0x104;
