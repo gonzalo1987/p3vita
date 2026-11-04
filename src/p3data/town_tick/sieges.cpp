@@ -1694,6 +1694,26 @@ void fn_633af0(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 
 using namespace sieges_detail;
 
+// 0x632690 (on the besieging army): the pitch it uses against the
+// defenders, min(defenders of types 1..3, besiegers of type 0) · 40, if it
+// still attacks ([+0x78] = 0) and has arrived ([+0x42] = 0). The army's tick
+// (0x6281F0) has the same inline.
+static uint32_t fn_632690(const SiegeArmyMemory& a) {
+	if (a.u8(0x78) != 0 || a.u16(0x42) != 0) {
+		return 0;
+	}
+	const uint32_t sum = uint32_t(a.u16(0x23E)) + a.u16(0x23A) + a.u16(0x236);
+	return std::min<uint32_t>(sum, a.u16(0x21E)) * 40;
+}
+
+uint32_t fn_636920(const SaveGame& save, int siege) {
+	const SiegeExtras& ex = save.siege_extras[size_t(siege)];
+	if (!ex.army) {
+		return 0;
+	}
+	return fn_632690(*ex.army) + fn_6326e0(save, siege);
+}
+
 // 0x6349F0 (sobre el asedio de la ciudad, en los ticks con t & 7 == 7, tras
 // su tick): las listas del mes (día 1, 0x635220), las entregas (días 8 y 22,
 // 0x635440), los pagos (0x636230) y, cada 7 días sin asedio, la venta

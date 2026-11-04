@@ -6,14 +6,14 @@ namespace p3::data {
 
 namespace {
 
-// Bits del campo 0x2C8 de la ciudad.
-constexpr uint32_t kCrisisFlags = 0x4000A10;  // Asedio, bloqueo, piratas o puerto helado.
+// Bits of the town's field 0x2C8.
+constexpr uint32_t kCrisisFlags = 0x4000A10;  // Siege, blockade, pirates or frozen port.
 constexpr uint32_t kFireFlag = 0x8000;
 constexpr uint32_t kFamineFlag = 0x1000;
 constexpr uint32_t kPlagueFlag = 0x8;
-constexpr uint32_t kArmedFlags = 0x810;  // Doblan la demanda de armas.
-// Mercancías con más demanda en cada situación, un bit por mercancía (0x672920..0x67292C).
-constexpr uint32_t kCrisisWares = 0x8FF;  // De grano a vino, y madera.
+constexpr uint32_t kArmedFlags = 0x810;  // They double the demand for weapons.
+// Wares in more demand in each situation, a bit per ware (0x672920..0x67292C).
+constexpr uint32_t kCrisisWares = 0x8FF;  // From grain to wine, and timber.
 constexpr uint32_t kFireWares = 0x8FF;
 constexpr uint32_t kFamineWares = 0xFF;
 constexpr uint32_t kPlagueWares = 0x7F;
@@ -29,7 +29,7 @@ std::array<PriceThresholds, kWareCount> compute_price_thresholds(const Threshold
 
 	uint32_t demand = 0;
 	int32_t t1_days = 14;
-	int32_t materials = 1;  // Factor de los materiales de construcción.
+	int32_t materials = 1;  // Factor of the building materials.
 	if (in.flags & kCrisisFlags) {
 		demand = kCrisisWares;
 		t1_days = 28;
@@ -42,7 +42,7 @@ std::array<PriceThresholds, kWareCount> compute_price_thresholds(const Threshold
 		demand = kPlagueWares;
 	}
 
-	// t0 y t1 en días de consumo: 7 (14 con más demanda) y t1_days más.
+	// t0 and t1 in days of consumption: 7 (14 with more demand) and t1_days more.
 	for (int w = 0; w < kBricks; ++w, demand >>= 1) {
 		const int32_t t0_days = demand & 1 ? 14 : 7;
 		at(w, 0) = t0_days;
@@ -60,7 +60,11 @@ std::array<PriceThresholds, kWareCount> compute_price_thresholds(const Threshold
 		at(w, 1) *= consumption;
 	}
 
-	// Cosecha: de septiembre a diciembre se acepta más grano y vino.
+	// During a siege, the pitch its army uses (0x5281A0).
+	at(kPitch, 0) = int32_t(uint32_t(at(kPitch, 0)) + 7 * in.siege_pitch);
+	at(kPitch, 1) = int32_t(uint32_t(at(kPitch, 1)) + 14 * in.siege_pitch);
+
+	// Harvest: from September to December more grain and wine are taken.
 	static constexpr int kHarvestDivisor[4][2] = {{3, 20}, {3, 10}, {1, 5}, {1, 10}};
 	if (in.month >= 8 && in.month <= 11) {
 		const int* f = kHarvestDivisor[in.month - 8];
@@ -68,7 +72,7 @@ std::array<PriceThresholds, kWareCount> compute_price_thresholds(const Threshold
 		at(kWine, 1) += at(kWine, 1) * f[0] / f[1];
 	}
 
-	// Materiales de construcción.
+	// Building materials.
 	at(kBricks, 0) += 80000 * materials;
 	at(kPitch, 0) += 1800;
 	at(kTimber, 0) += 42000;
@@ -80,7 +84,7 @@ std::array<PriceThresholds, kWareCount> compute_price_thresholds(const Threshold
 	at(kTools, 0) += 2000 * materials;
 	at(kTools, 1) += 4000 * materials;
 
-	// Armas: según los habitantes, el consumo y la producción de cada una.
+	// Weapons: by the inhabitants, the consumption and the production of each.
 	int32_t armed = int32_t(in.citizens) * 10 / 200;
 	if (in.flags & kArmedFlags) {
 		armed *= 2;
@@ -116,8 +120,8 @@ std::array<PriceThresholds, kWareCount> compute_price_thresholds(const Threshold
 		at(kBricks, 3) = 3 * at(kBricks, 1);
 	}
 
-	// Mínimos: un umbral por encima del anterior y al menos 5, 10, 15 y 20
-	// barriles (o cargas) de separación.
+	// Minimums: each threshold over the one before and at least 5, 10, 15 and
+	// 20 barrels (or loads) apart.
 	for (int w = 0; w < kTradeWareCount; ++w) {
 		const int32_t minimum = kWares[size_t(w)].unit == WareUnit::Load ? 10000 : 1000;
 		if (at(w, 0) < minimum) {

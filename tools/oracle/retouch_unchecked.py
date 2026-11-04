@@ -537,6 +537,63 @@ def office_town(o, m):
     return o.u8(o.office(first) + 0x2C6)
 
 
+def office_ops(o):
+    """Operations 0x5D (0x5362AE) and 0x21 (0x53CE30 with `request`), which
+    only the interface queues; both can make a merchant open an office
+    (0x51B890). In the town of an AI merchant's office: another AI merchant
+    without one there opens one with 0x5D, with a ship docked there carrying
+    some bricks and timber (0x4F5450 takes from it what the town doesn't
+    give); 0x5D again (he has one now: nothing); 0x5D with the merchant and
+    with the town out of the world. A third merchant with 0x21 and the type
+    0x2C: first with the town's market empty (0x51F3A0 refuses: nothing), then
+    from the market alone. 0x21 with the types 0x57 (the fisherman, 5, on a
+    site cell), 0x29 (a tower, 0x33), 0x2F (0x35) and 0x70 (not in the table
+    0x672FC0: nothing)."""
+    m, t = construction_merchant(o)
+    a = o.town(t)
+    towns, _, merchants, _ = o.counts()
+    others = [x for x in rt.ai_with_office(o) if facilities_office(o, x, t) is None and merchant_ships(o, x)]
+    other, third = others[0], others[1]
+    ship = merchant_ships(o, other)[0]
+    sx, sy = o.u8(a + 0x800), o.u8(a + 0x801)
+    print(f'town {t}: merchant {other} (ship {ship}) and merchant {third} without an office there; statue ({sx}, {sy})')
+
+    def request(owner, x, y, kind, param=0):
+        operation(o, 0x21, owner, t, x, y, kind, param, 0, 0, fmt='<IBBBBBBBB')
+
+    def offices():
+        return f'offices: {other} {facilities_office(o, other, t)}, {third} {facilities_office(o, third, t)}'
+
+    def during(o):
+        w32(o, o.merchant(other), 50000000)
+        w32(o, o.merchant(third), 50000000)
+        s = o.ship(ship)
+        w8(o, s + 0x39, t)
+        w16(o, s + 0x134, 1)
+        w32(o, s + 0x54 + 4 * 0x13, 3 * 2000)
+        w32(o, s + 0x54 + 4 * 0xB, 2 * 2000)
+        store(o, t)
+        operation(o, 0x5D, other, t)
+        print(f'{offices()}; ship bricks {o.u32(s + 0x54 + 4 * 0x13)}, timber {o.u32(s + 0x54 + 4 * 0xB)}')
+        operation(o, 0x5D, other, t)
+        operation(o, 0x5D, merchants, t)
+        operation(o, 0x5D, third, towns)
+        store(o, t, 0)
+        request(third, 0, 0, 0x2C)
+        print(offices())
+        store(o, t)
+        request(third, 0, 0, 0x2C)
+        print(offices())
+        x, y = sx + 4, sy
+        set_cell(o, t, x, y, 0x0E)
+        request(0xFF, x, y, 0x57)
+        request(0xFF, sx - 4, sy, 0x29)
+        request(0xFF, sx, sy + 4, 0x2F)
+        request(0xFF, sx, sy - 4, 0x70)
+        print(f'works {len(records(o, t, 0x762))}')
+    return during
+
+
 def site_search(o):
     """Direct calls in town 0: 0x4F9C80 for every type from the statue (but
     0x34 and 0x35, whose mask the game leaves unset: see construction.cpp),
@@ -1809,6 +1866,36 @@ def siege_gates(o):
     return during
 
 
+def siege_pitch(o):
+    """A siege made with the game's code (operation 0x8E) retouched so that
+    its army has arrived ([+0x42] = 0), has ammunition and attacks a gate
+    0x34, against a town with defenders of types 1..3 ([0x999..0x99B]): while
+    the town is besieged (bit 0x10 of [+0x2C8]) its price thresholds
+    (0x528070) add 7 and 14 times the pitch of 0x636920 (0x632690 and
+    0x6326E0) to pitch's first two."""
+    towns = o.counts()[0]
+    ready = [i for i in range(towns) if rt.siege_ready(o, i)]
+    t = ready[0]
+    a = o.town(t)
+    s = siege_object(o, t)
+    base = o.u32(a + 0x75C)
+
+    def during(o):
+        operation(o, 0x8E, t, 1, 0x80, 0)
+        army = o.u32(s + 8)
+        w16(o, army + 0x42, 0)
+        w8(o, army + 0x78, 0)
+        w32(o, army + 0x4, 0x30000)
+        for k, n in ((1, 3), (2, 2), (3, 1)):
+            w8(o, a + 0x998 + k, n)
+        gate = o.u32(army + 0x244 + 4 * o.u8(army + 0x6D))
+        if gate < o.u16(a + 0x776):
+            w8(o, base + 8 * gate + 3, 0x34)
+        print(f'siege of town {t}: army {army:#x}, gate {gate}, besiegers of type 0 {o.u16(army + 0x21E)}, '
+              f'flags {o.u32(a + 0x2C8):#x}')
+    return during
+
+
 def side_gates(o, t):
     """The first three gates of the side the army attacks in town t (as
     0x629C60 finds them) and the town's wall pieces (0x36) of [0x768]."""
@@ -2039,6 +2126,11 @@ SCENARIOS = {
         '@6353ad', '@6355c5']),
     'siege_fixes': Scenario(siege_fixes, [0x535760], 0, []),
     'siege_gates': Scenario(siege_gates, [0x535760], 0, ['@62a3ba', '@62a49f']),
+    'office_ops': Scenario(office_ops, [0x535760], 0, [
+        '@51b91b', '@51b9a8', '@51b8f7>51b9ff', '@51b915>51b9ff', '@5362bc>537025', '@5362cd>537025', '@53ce59',
+        '@53cec7', '@53ce93>53cef2']),
+    'siege_pitch': Scenario(siege_pitch, [0x535760, 0x528070, 0x6281F0], 1, ['@5281b1', '@63692e', '@6326cc',
+                                                                             '@63276a']),
 }
 
 

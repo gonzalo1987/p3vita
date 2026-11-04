@@ -23,6 +23,9 @@ namespace p3::data::tick {
 namespace events_rare_detail {
 void fn_522b20(SaveGame& save, int town, uint32_t side);
 }  // namespace events_rare_detail
+namespace events_towns_detail {
+int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town);
+}  // namespace events_towns_detail
 
 namespace construction_detail {
 
@@ -2183,19 +2186,95 @@ void fn_535b12(SaveGame& save, const uint8_t* operation) {
 	events_rare_detail::fn_522b20(save, int(fields[2]), fields[1]);
 }
 
+// 0x51B890 (on the town, with the merchant `merchant`): the merchant opens
+// an office in the town (operations 0x5D and 0x21 with the type 0x2C, both
+// queued by the interface). If he has none there and can build the type 0
+// (0x51F3A0), the town's market gives what he lacks of each material
+// ([+0x20] of the costs, in loads or barrels), the rest of what it needs
+// ([+0x0] − [+0x20]) comes out of his ships docked there (0x4F5450, if he
+// has any of it there), he pays [+0x34] (also added to his [+0x4C0]) and
+// gets the office (0x5308A0 with create = 1).
+void fn_51b890(SaveGame& save, int town, uint16_t merchant) {
+	if (merchant >= save.globals.u16(global::kWorldMerchantCount)) {
+		return;
+	}
+	const uint32_t at = save.towns[size_t(town)].memory.u8(0x2C0);
+	if (facilities_detail::fn_5308a0(save, merchant, at) >= 0) {
+		return;
+	}
+	GameMemory<0x44> s{};
+	s.u16(0x3C) = 0;
+	s.u16(0x3E) = merchant;
+	if (!fn_51f3a0(save, town, s)) {
+		return;
+	}
+	static constexpr uint32_t kMaterials[4] = {0x13, 0xB, 0xC, 0x11};
+	for (size_t k = 0; k < 4; ++k) {
+		const uint32_t ware = kMaterials[k];
+		const uint32_t unit = kWareUnit[ware] != 0 ? 200 : 2000;  // 0x672C14
+		TownMemory& t = save.towns[size_t(town)].memory;
+		t.u32(4 + 4 * ware) -= s.u32(0x20 + 4 * k) * unit;
+		int32_t own = int32_t((s.u32(4 * k) - s.u32(0x20 + 4 * k)) * unit);
+		if (s.s32(0x10 + 4 * k) > 0) {
+			fn_4f5450(save, merchant, ware, at, own);
+		}
+		if (t.s32(4 + 4 * ware) < 0) {
+			t.s32(4 + 4 * ware) = 0;
+		}
+	}
+	MerchantMemory& m = save.merchants[merchant].memory;
+	m.u32(0x0) -= s.u32(0x34);
+	m.u32(0x4C0) += s.u32(0x34);
+	events_towns_detail::fn_5308a0_create(save, merchant, at);
+}
+
+// Operation 0x5D (0x5362AE): {0x5D, u32 merchant, u32 town}: the merchant
+// opens an office in the town (0x51B890). Only the interface could queue it
+// (nothing in Patrician3.exe writes the code 0x5D before queuing).
+void fn_5362ae(SaveGame& save, const uint8_t* operation) {
+	uint32_t fields[3];
+	std::memcpy(fields, operation, sizeof(fields));
+	if (fields[1] >= save.globals.u16(global::kWorldMerchantCount) ||
+		fields[2] >= save.globals.u32(global::kWorldTownCount)) {
+		return;
+	}
+	fn_51b890(save, int(fields[2]), uint16_t(fields[1]));
+}
+
 // 0x53CE30 (la operación 0x22, construir; 0x21 con `request`): {0x22,
 // [+4] u8 dueño, [+5] u8 ciudad, [+6] x, [+7] y, [+8] tipo, [+9] parámetro}.
 // Según el tipo: hasta 0x2F, 0x521900; 0x30..0x33, las torres (0x523830);
-// 0x34 y 0x35, 0x523D70; 0x36..0x39, la muralla de ese lado (0x522B20). La
-// 0x21 (solo desde la interfaz) no se reproduce.
-void fn_53ce30(SaveGame& save, const uint8_t* operation) {
+// 0x34 y 0x35, 0x523D70; 0x36..0x39, la muralla de ese lado (0x522B20).
+// The operation 0x21 (`request`, queued by the town view 0x590840) gives the
+// type the interface's way: 0x2C opens an office (0x51B890, the owner as
+// the merchant); any other is looked up in the table 0x672FC0 from its end
+// and becomes its index there (nothing if it isn't there).
+void fn_53ce30(SaveGame& save, const uint8_t* operation, bool request) {
 	const uint8_t owner = operation[4];
 	const uint32_t town = operation[5];
 	const uint8_t x = operation[6];
 	const uint8_t y = operation[7];
-	const uint8_t type = operation[8];
+	uint8_t type = operation[8];
 	if (town >= save.globals.u32(global::kWorldTownCount)) {
 		return;  // Checked with the oracle: scenario build_ops (saves 3 and 5).
+	}
+	if (request) {
+		if (type == 0x2C) {
+			fn_51b890(save, int(town), owner);
+			return;
+		}
+		static constexpr uint8_t kRequested[0x36] = {0x2C, 0x1B, 0x0B, 0x08, 0x5D, 0x57, 0x58, 0x5B, 0x59, 0x53, 0x56,
+			0x64, 0x5A, 0x5E, 0x60, 0x55, 0x5C, 0x63, 0x62, 0x61, 0x54, 0x51, 0x51, 0x51, 0x50, 0x50, 0x50, 0x2A, 0x2A,
+			0x2A, 0x66, 0x04, 0x03, 0x0B, 0x07, 0x00, 0x02, 0x05, 0x09, 0x33, 0x52, 0x65, 0x67, 0x68, 0x69, 0x37, 0x01,
+			0x5F, 0x29, 0x29, 0x29, 0x29, 0x2F, 0x2F};  // 0x672FC0
+		int j = 0x35;
+		while (j >= 0 && kRequested[j] != type) {
+			--j;
+		}
+		if (j < 0) {
+			return;
+		}
+		type = uint8_t(j);
 	}
 	if (type < 0x30) {
 		fn_521900(save, int(town), owner, x, y, type, operation[9]);

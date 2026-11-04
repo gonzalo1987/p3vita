@@ -280,7 +280,10 @@ namespace merchants_detail {
 uint8_t fn_4f9430(const SaveGame& save, int merchant);
 }  // namespace merchants_detail
 namespace construction_detail {
-void fn_53ce30(SaveGame& save, const uint8_t* operation);
+// The operations 0x22 and, with `request`, 0x21 (0x53CE30); 0x5D (0x5362AE):
+// a merchant opens an office (0x51B890).
+void fn_53ce30(SaveGame& save, const uint8_t* operation, bool request);
+void fn_5362ae(SaveGame& save, const uint8_t* operation);
 void fn_535bbc(SaveGame& save, const uint8_t* operation);
 void fn_535b12(SaveGame& save, const uint8_t* operation);
 void fn_535b44(SaveGame& save, const uint8_t* operation);
@@ -311,6 +314,10 @@ void fn_52d7d0(SaveGame& save, int object);
 // Sobre SaveGame::sieges[ciudad].
 void fn_6349f0(SaveGame& save, int town);
 void fn_633a90(SaveGame& save, int town);
+// sieges.cpp: 0x636920 (on a town's siege object): the pitch its besieging
+// army uses each tick (0x632690 + 0x6326E0), 0 without an army. The price
+// thresholds (0x528070) add it during the siege.
+uint32_t fn_636920(const SaveGame& save, int siege);
 // sieges.cpp: la operación 0x8E, un asedio a una ciudad (en 0x536A67:
 // 0x633AF0 crea el ejército sitiador y 0x629C60 lo prepara).
 void fn_536a67(SaveGame& save, const uint8_t* operation);

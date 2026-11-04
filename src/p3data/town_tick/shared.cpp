@@ -91,6 +91,12 @@ void fn_528070(SaveGame& save, int town, bool compute) {
 		}
 		in.month = save.globals.u8(global::kWorldMonth);
 		in.brickworks = t.u16(0x968);
+		// 0x52819A: with the siege objects (*0x6DF270) and the town besieged,
+		// the pitch of its siege object [+0x2C0] (0x636920).
+		const uint8_t index = t.u8(0x2C0);
+		if (!save.sieges.empty() && (in.flags & 0x10) && index < save.siege_extras.size()) {
+			in.siege_pitch = fn_636920(save, index);
+		}
 		thresholds = compute_price_thresholds(in, thresholds);
 	} else {
 		for (size_t w = 0; w < size_t(kTradeWareCount) - 1; ++w) {

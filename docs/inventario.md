@@ -72,21 +72,67 @@ Ya se reproducen: 0x00, 0x0A, 0x12, 0x13, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x
 0x29, 0x2C, 0x37, 0x38, 0x3B, 0x46, 0x48, 0x4B, 0x60, 0x61, 0x64, 0x65, 0x67, 0x78, 0x79,
 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86, 0x87, 0x8E y 0xB8.
 
-## C. Llamadas desde lo reescrito a funciones que p3vita no nombra
+## C. Calls from rewritten code to functions p3vita doesn't name
 
-De `callgraph_olvidadas.tsv` (70 llamadas), quitando los accesos de 16 a 32
-bytes que p3vita hace en línea (0x5303B0, 0x46C330, 0x4F3630..0x4F3680,
-0x621750...) y los manejadores de eventos (A y D). Revisar una a una si son
-interfaz o un hueco:
+From `callgraph_olvidadas.tsv` (70 calls), without the 16..32-byte accessors
+p3vita does inline (0x5303B0, 0x46C330, 0x4F3630..0x4F3680, 0x621750...) and
+the event handlers (A and D). **Reviewed one by one** (2026-11-04); two were
+gaps, rewritten and checked, and one is a gap of a player's action, left in
+the roadmap:
 
-- [ ] el tick del asedio (0x6281F0) → 0x62BE90, 0x62DD70, 0x62E970 y 0x58CFB0, y 0x632780 → 0x62DD70: leen la vista de la ciudad; casi seguro gráficos
-- [ ] la candidatura (0x531D50) → 0x46F560 (109 KB debajo) y 0x545CB0
-- [ ] el final de la partida (0x4E4A44) → 0x4220B0 (la ventana, interfaz)
-- [ ] 0x4EC354 → 0x5E94B0; 0x4EAFE4 → 0x4B9650; 0x4EBF54 → 0x5333C0
-- [ ] 0x5462F0 → 0x546450
-- [ ] la operación 0x22 (0x53CE30) → 0x51B890 (también la operación 0x5D)
-- [ ] 0x4FA1D0 → 0x503DB0 y 0x503D80; la muralla (0x522B20) → 0x503D50 y 0x503D40
-- [ ] 0x528070 → 0x636920; 0x4E6A54 y 0x509A50 → 0x512B20; 0x4D6780 → 0x51AAB0; 0x509250 → 0x513720; 0x52C6C0 → 0x52DE10 y 0x52DE40; 0x508AA0 → 0x51A3A0
+- [x] **Gap, done:** 0x528070 → 0x636920. During a siege (bit 0x10 of
+  [+0x2C8], with the siege objects in place) the price thresholds add the
+  pitch the besieging army uses each tick (0x636920 on the town's siege
+  object: 0x632690, defenders of types 1..3 against besiegers of type 0, · 40,
+  and 0x6326E0, 400 against a gate 0x34/0x35) to pitch: t0 += 7·X, t1 += 14·X
+  (`thresholds.cpp`, `ThresholdInputs::siege_pitch`; `sieges.cpp`
+  `fn_636920`). Not when a save is loaded (*0x6DF270 doesn't exist yet).
+  Scenario `retouch_unchecked.py siege_pitch`.
+- [x] **Gap, done:** 0x53CE30 → 0x51B890, and operation 0x5D (0x5362AE) →
+  0x51B890: a merchant opens an office in a town (the costs of the type 0 by
+  0x51F3A0, what he lacks from the town's market, the rest from his docked
+  ships by 0x4F5450, the payment, 0x5308A0 with create = 1). 0x53CE30 calls it
+  only for the operation 0x21 (`request`, queued by the town view 0x590840)
+  with the type 0x2C; 0x21 maps any other type through the table 0x672FC0.
+  Nothing in the exe writes the code 0x5D before queuing: only the interface
+  could. Both operations are now in `run_operation` (`construction.cpp`
+  `fn_51b890`, `fn_5362ae`, `fn_53ce30` with `request`). Scenario
+  `retouch_unchecked.py office_ops`.
+- [ ] **Gap, a player's action (roadmap, phase 5):** 0x509250 → 0x513720 is in
+  the branch of 0x509250 with a winner that isn't a merchant, which p3vita
+  doesn't rewrite: the ship joins the nearest pirate object or makes one
+  (0x513720, 0x513D80), enters it (0x515EA0), gets a destination (0x5172A0)
+  and is left without owner in state 2. Only the operation 0x4E (0x53B850, a
+  player's ship turns pirate; queued by the window 0x5D5430) and the mission
+  interpreter (0x4ECF64, at 0x4F2121) call it so; the auctions (0x4E2CD4) only
+  sell to merchants.
+- [x] Interface: the siege's graphics. 0x6281F0 → 0x62BE90, 0x62DD70,
+  0x62E970, 0x58CFB0 and 0x632780 → 0x62DD70 run only with [+0x77] of the
+  army (the town view open; 0x6284DA, 0x628792, 0x628882, 0x6329B5...;
+  0x62E970 checks it itself). With it they write fields of the army
+  ([+0x5A0], [+0x10], [+0x12]...): roadmap, phase 2, «El asedio en la vista».
+- [x] Interface: founding a town (0x531D50) → 0x46F560 grows a table of 12
+  bytes per town in an interface object (*0x6CC940, made at 0x424E2C; the
+  «109 KB below» were the table's error: the function ends at 0x46F676).
+  0x545CB0 copies a town (0x9F8 bytes) when the towns' array grows, as
+  `towns.resize` does.
+- [x] Interface: the end of the game (0x4E4A44) → 0x4220B0, on *0x6CBB30: the
+  merchants' ranking of the end window (0x4220D0, with 0x4F9430 and 0x4F73D0);
+  it writes only its own object. Roadmap, phase 5.
+- [x] Interface: 0x4EC354 → 0x5E94B0 and 0x4EAFE4 → 0x4B9650 redraw the
+  rectangle of the task window (*0x6E558C) on the screen manager 0x6DA5F0.
+- [x] Done before: 0x4EBF54 → 0x5333C0 (the letter 0x80, `alderman.cpp`; its
+  other call, 0x4ED61F, is in the mission interpreter), 0x4E6A54 and 0x509A50
+  → 0x512B20 (a ship's name: the letter 0x63 and `fn_509a50`), 0x4D6780 →
+  0x51AAB0 (part D).
+- [x] Inline in p3vita: 0x4FA1D0 → 0x503DB0, 0x503D80 and 0x522B20 → 0x503D50,
+  0x503D40 (the heap list of the wall's pieces, local to 0x522B20: a
+  `std::vector`); 0x52C6C0 → 0x52DE10, 0x52DE40 (a node of a world object's
+  list: `world_object_lists`); 0x508AA0 → 0x51A3A0 (a ship's index from its
+  address).
+- [x] Not a call: 0x5462F0 → 0x546450. 0x546420, right after 0x5462F0, is the
+  static initializer of the network object 0x6DF2F0 (its constructor
+  0x546450; see oracle.md, «The game's static initializers»).
 
 ## D. Lo que marca el propio código
 

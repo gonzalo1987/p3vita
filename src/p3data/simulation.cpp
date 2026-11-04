@@ -112,8 +112,11 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x1F:  // Un punto de la ruta de expedición de un convoy (0x539C60).
 		tick::fn_539c60(save, operation);
 		break;
+	case 0x21:  // Build, the interface's request (0x53CE30): the type by the table 0x672FC0, or an office.
+		tick::construction_detail::fn_53ce30(save, operation, true);
+		break;
 	case 0x22:  // Construir (0x53CE30): las obras de las ciudades y de los comerciantes.
-		tick::construction_detail::fn_53ce30(save, operation);
+		tick::construction_detail::fn_53ce30(save, operation, false);
 		break;
 	case 0x23:  // Empezar la muralla de un lado (0x535B12).
 		tick::construction_detail::fn_535b12(save, operation);
@@ -153,6 +156,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x4B:  // Un candidato coge un encargo de la Hansa (0x53B440).
 		tick::fn_53b440(save, operation);
+		break;
+	case 0x5D:  // A merchant opens an office (0x5362AE, 0x51B890).
+		tick::construction_detail::fn_5362ae(save, operation);
 		break;
 	case 0x60:  // A merchant's wedding is arranged: event 0x15 (0x53DA90).
 		tick::fn_53da90(save, operation);

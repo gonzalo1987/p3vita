@@ -165,9 +165,10 @@ de [0x490] (P3Modding: «weird prods»):
   t2 = 2·t1 y t3 = 3·t1.
 - Mínimos (20 mercancías): t0 ≥ m y t_i ≥ (i + 1)·m, cada umbral por encima del
   anterior (si no, anterior + m), con m = 1000 por barriles y 10000 por cargas.
-- No reproducido: durante un asedio, t0/t1 de la brea suben 7/14 veces el
-  consumo de brea del asedio (0x636920, solo si existe el objeto del asedio en
-  0x6df270, que al cargar aún no existe).
+- During a siege (bit 0x10 of [0x2C8]), pitch's t0/t1 rise by 7/14 times the
+  pitch the siege uses (0x636920), only if the siege objects at 0x6df270
+  exist: never when a save is loaded, so only in the town tick
+  (`ThresholdInputs::siege_pitch`, since 2026-11-04).
 
 Cobertura de las partidas de `missav/`: hay crisis, hambruna y los meses 8–10;
 no hay incendio, peste sola ni diciembre.

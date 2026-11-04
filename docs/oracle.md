@@ -838,6 +838,36 @@ The game's other messages to the player, the ticker lines of 0x548CA0
   0 bytes different, the reload equal. The world 7 days in the 12 saves, 0
   different.
 
+## Part C of the inventory (2026-11-04)
+
+The calls from rewritten code to functions p3vita didn't name
+([inventario.md](inventario.md), part C), reviewed one by one. Two gaps,
+each checked with a new scenario of `retouch_unchecked.py` (saves 3 and 5,
+`tools/oracle/unchecked.sh`):
+
+- **`siege_pitch`**: a siege made with the game's code (operation 0x8E)
+  retouched so that its army has arrived ([+0x42] = 0), has ammunition and
+  attacks a gate 0x34, against a town with defenders of types 1..3; one day,
+  recording 0x535760, 0x528070 and 0x6281F0. With p3vita as it was, one call
+  to 0x528070 differed in each save, in pitch's thresholds ([+0x5E0..+0x5EC]:
+  the game had 7 · 640 more in t0 in save 3, 640 = 6 defenders · 40 + 400 of
+  the gate); with 0x636920 the 24 calls are equal, and the 512 and 768 calls to
+  0x6281F0 too. The targets `@5281b1`, `@63692e`, `@6326cc`, `@63276a` are
+  hit. `siege_branches` had checked 0x6326E0 only with direct calls, without
+  the town tick after them.
+- **`office_ops`**: in the town of an AI merchant's office, operation 0x5D
+  for another AI merchant without an office there and with a ship docked
+  there carrying some bricks and timber (0x4F5450 takes them all), 0x5D again
+  (he has one: nothing), 0x5D with the merchant and with the town out of the
+  world; 0x21 with the type 0x2C for a third merchant, first with the town's
+  market empty (0x51F3A0 refuses), then with it full; 0x21 with the types
+  0x57 (→ 5, the fisherman, on a site cell), 0x29 (→ 0x33), 0x2F (→ 0x35)
+  and 0x70 (not in 0x672FC0). The 10 operations equal; the 9 targets hit.
+
+0x53CE30 took a `request` argument for 0x21; `build_ops`, `siege_ops`,
+`siege_gates` and `siege_branches` were repeated (equal), and the world 7
+days in the 12 saves: 0 different.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:
