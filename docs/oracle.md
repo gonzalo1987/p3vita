@@ -1028,6 +1028,33 @@ action, phase 5). And a limit of the targets: an edge `@A>B` can't be seen
 when B is the instruction right after A (the jump table of 0x4DDC00 at
 0x4DDCF5); then an `@B` target does.
 
+## Part D: the unchecked branches of events_mayor.cpp (2026-11-04)
+
+31 marks: 28 checked with 4 new scenarios, 3 not reproduced or unreachable
+(explained in the code). Only comments changed in the simulation.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `alderman_hanse_votes` | the Alderman's election (0x4DBBD0, phase 0, the event at the head) with every Hanse town's mayor a merchant but one's and two merchants with [+0x37] = 4: that town of 3000 (the least half the most − 1); then three citizens' towns of 17, 20 and 21 (the most 0x40, the least 0x10); the Hanse's vote (0x4DC1F0) with the player's rank 6 (a weight of 2) and in phase 5 with [+0x15] = 2 (retouched: phase 0 leaves it at 0) | 1, 3, 5, 7 | 4 calls equal, 5 of 5 targets |
+| `ship_making_branches` | 0x507D60 in the modes 0, 1, 3 and 4 and with no free slot (0x40 more, zeroed as the oracle's heap); 0x52A8D0 with a level below 0 and an extra size past the most; 0x4F4400 with [+0x470] at 0; 0x509250 selling a big ship to a merchant whose home has [0x2C8] & 1 | 1, 3, 5, 7 | 9 calls equal, 9 of 9 |
+| `auction_phases` | the queue with auctions at the tick: phase 0 with a town out (retouched: the game makes them with a town); phase 2 with only [+0xC] (a ship, a building) and with nothing; phase 7 with a town out (retouched), a ship without owner sold to the player (the seller's name from the tick in his letter 0x5D), unsold, and a building's auction going on with its second building; phase 9 | 3, 5, 7 (in 1 no AI office has two buildings) | the queue's call equal, 9 of 9 |
+| `building_sale_branches` | 0x4F4550 (an AI bid) for houses of classes 1 and 2 with one of the class in the works list, for a fisherman (category 2) with [0x2CC] at 2000, with the town's offices and without; 0x5256F0 for a building whose owner has no office there, the third of a list (the walk takes more than a step) and to a buyer without an office (0x5308A0 makes one) | 3, 5, 7 | 7 calls equal, 6 of 6 |
+
+With details broken on purpose the comparison caught them: the clamp
+0x10 of the least (with the towns of 17, 20, 21: their shares of the
+votes), the rank 6's weight, the new ships' state after the table grows,
+the mode 3, the ship's size cap, the bid's factor, the sold ship's base
+and the seller's name. Not every detail shows in the state: with a single
+town among the candidates its weight is the whole one whatever the least
+is, and the shares are floors of about 38 votes, so the clamps of the most
+and of the least only show in states like the one chosen.
+
+Not reproduced: the eleventh of a merchant's ship lists (0x4F5900; it isn't
+saved and nothing in the simulation fills one), and a ship sold with a trade
+route (0x509250 → 0x4D4DD0 on the routes object, which no save has: phase
+6). Unreachable: a building's buyer letter with an owner who isn't a
+merchant (0x4DAB00 only puts merchants' buildings on sale).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

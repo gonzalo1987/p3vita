@@ -3158,6 +3158,246 @@ def captain_retire_branches(o):
     return during
 
 
+# --- events_mayor.cpp: elections, the Hanse's votes and the auctions ---
+
+ALDERMAN, ALDERMAN_TOWN = 0x6DE52D, HANSE_TOWN
+FREE_SHIP = to.SHIPS + 0xE2  # u16: the first free ship slot
+
+
+def hanse_towns(o):
+    return [t for t in range(o.counts()[0]) if o.u32(o.town(t) + 0x2C8) & 0x40]
+
+
+def alderman_hanse_votes(o):
+    """The Alderman's election (event 0x20, 0x4DBBD0) in its phase 0, with
+    the event at the head of the queue, every Hanse town's mayor a merchant
+    but one's and two merchants with [+0x37] = 4 (so the candidates are the
+    Alderman's town, that town and the two merchants), the town with 3000
+    inhabitants (the least as big as the most: half of it − 1); then no
+    merchant and three citizens' towns of 17, 20 and 21 (the most under
+    0x40: 0x40; the least under 0x20: 0x10, which gives the town of 17 a
+    weight of 4 where 0x11 would give 0). The Hanse's vote (event 0x21, 0x4DC1F0) with the
+    player's rank at home 6 (his vote weighs 2) and, in phase 5, with
+    [+0x15] = 2 (the abstentions: phase 0 leaves it at 0)."""
+    towns, _, merchants, _ = o.counts()
+    now = o.u32(WORLD + 0x14)
+    player = o.u32(to.PLAYER)
+    (i20, e20), = events_of(o, 0x20)
+    hanse = hanse_towns(o)
+    mayors = {t: o.u8(o.town(t) + 0x6F1) for t in hanse}
+    people = {t: o.u32(o.town(t) + 0x2D4) for t in hanse}
+    ais = [m for m in range(merchants) if o.u16(o.merchant(m) + 8)]
+    progress = {m: o.u8(o.merchant(m) + 0x37) for m in ais}
+    hanse_ais = [m for m in ais if o.u8(o.merchant(m) + 0x19) in hanse]
+    alderman_town = o.u8(ALDERMAN_TOWN)
+    print(f'Hanse towns {hanse}, Alderman {o.u8(ALDERMAN)} of town {alderman_town}; merchants of Hanse towns '
+          f'{hanse_ais[:6]}')
+    day = (now & ~0xFF) - 0x100
+    rt.move_event(o, i20, e20, day)
+
+    def during(o):
+        for t in hanse:
+            w8(o, o.town(t) + 0x6F1, ais[0])
+        for m in ais:
+            w8(o, o.merchant(m) + 0x37, 0)
+        for m in hanse_ais[:2]:
+            w8(o, o.merchant(m) + 0x37, 4)
+        lone = next(t for t in hanse if t != alderman_town)
+        w8(o, o.town(lone) + 0x6F1, 0xFC)
+        w32(o, o.town(lone) + 0x2D4, 3000)
+        w32(o, e20, day)
+        direct(o, 0x4DBBD0, [], ecx=to.EVENTS)
+        print(f'one town of 3000: {bytes(o.uc.mem_read(e20, 0x18)).hex()}')
+        w8(o, o.town(lone) + 0x6F1, ais[0])
+        for m in ais:
+            w8(o, o.merchant(m) + 0x37, 0)
+        citizens = [t for t in hanse if t != alderman_town][:4 if alderman_town >= towns else 3]
+        for t, n in zip(citizens, (17, 20, 21, 22)):
+            w8(o, o.town(t) + 0x6F1, 0xFC)
+            w32(o, o.town(t) + 0x2D4, n)
+        w32(o, e20, day)
+        direct(o, 0x4DBBD0, [], ecx=to.EVENTS)
+        print(f'case B ({citizens}): {bytes(o.uc.mem_read(e20, 0x18)).hex()}')
+        for t in hanse:
+            w8(o, o.town(t) + 0x6F1, mayors[t])
+            w32(o, o.town(t) + 0x2D4, people[t])
+        for m in ais:
+            w8(o, o.merchant(m) + 0x37, progress[m])
+        home = o.u8(o.merchant(player) + 0x19)
+        w8(o, o.merchant(player) + 0x39C + home, 6)
+        outside = next(t for t in range(towns) if t not in hanse)
+        i21, e21 = new_event_at(o, day - 0x100, 0x21, b8=o.u8(HANSE_TOWN), b9=outside, bA=2, bB=1, bC=0, bD=0, bE=4,
+                                bF=0, d10=0, d14=0)
+        direct(o, 0x4DC1F0, [i21], ecx=to.EVENTS)
+        w32(o, e21, day - 0x100 + 5)
+        w8(o, e21 + 0x15, 2)
+        direct(o, 0x4DC1F0, [i21], ecx=to.EVENTS)
+        print(f'the vote: {bytes(o.uc.mem_read(e21, 0x18)).hex()}')
+    return during
+
+
+def ship_making_branches(o):
+    """New ships and their sale, direct calls: 0x507D60 in the modes 0 (at
+    the shipyard), 1 (in port), 3 and 4 (out of the lists), and with no free
+    slot (0x40 more); 0x52A8D0 with the yard's level below 0 (a hulk where
+    the town can't make them) and with [0x828 + type] past the type's most;
+    0x4F4400 (an AI bid for a ship) with the merchant's [+0x470] at 0; and
+    0x509250 selling a big ship to a merchant whose home town has [0x2C8] &
+    1 (the next town without it is his ship's base)."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    ais = rt.ai_with_office(o)
+    m, w = ais[0], ais[1]
+    home_w = o.u8(o.merchant(w) + 0x19)
+    big = next(s for x in ais[2:] for s in merchant_ships(o, x) if o.u8(o.ship(s) + 0xE) & 3 >= 2
+               and o.u16(o.ship(s) + 8) >= o.u16(CONVOY_COUNT) and o.u16(o.ship(s) + 0x134) < 0xC)
+    small = next(s for s in merchant_ships(o, m) if o.u8(o.ship(s) + 0xE) & 2 == 0)
+    town = o.u8(o.merchant(m) + 0x19)
+    hulkless = next(t for t in range(towns) if o.u8(o.town(t) + 0x827) >= 0x80)
+    _, holder = new_event(o, 0x100000, 0x37, d8=0, dC=0)
+    print(f'merchants {m} and {w} (home {home_w}); big ship {big}, small {small}; town {town}; '
+          f'no hulks in {hulkless}; out in the event at {holder:#x}')
+
+    def during(o):
+        made = []
+        for mode in (0, 1, 3, 4):
+            direct(o, 0x507D60, [holder + 8, town, mode], ecx=to.SHIPS)
+            made.append(o.u16(holder + 8))
+        w16(o, FREE_SHIP, o.u16(to.SHIPS + 0xF4))
+        direct(o, 0x507D60, [holder + 8, town, 1], ecx=to.SHIPS)
+        made.append(o.u16(holder + 8))
+        print(f'new ships {made}; now {o.u16(to.SHIPS + 0xF4)}')
+        direct(o, 0x52A8D0, [o.ship(made[0]), 3], ecx=o.town(hulkless))
+        extra = o.u8(o.town(town) + 0x829)
+        w8(o, o.town(town) + 0x829, 100)
+        direct(o, 0x52A8D0, [o.ship(made[1]), 1], ecx=o.town(town))
+        w8(o, o.town(town) + 0x829, extra)
+        a = o.merchant(m)
+        capacity, wanted = o.u32(a + 0x470), o.u32(a + 0x53C)
+        w32(o, a + 0x470, 0)
+        w32(o, a + 0x53C, 1000)
+        print(f'bid {direct(o, 0x4F4400, [small, town], ecx=a)}')
+        w32(o, a + 0x470, capacity)
+        w32(o, a + 0x53C, wanted)
+        flags = o.u32(o.town(home_w) + 0x2C8)
+        w32(o, o.town(home_w) + 0x2C8, flags | 1)
+        direct(o, 0x509250, [big, w, 9000, 10000, town], ecx=to.SHIPS)
+        w32(o, o.town(home_w) + 0x2C8, flags)
+        print(f'ship {big}: owner {o.u8(o.ship(big))}, base {o.u8(o.ship(big) + 0x13A)}')
+    return during
+
+
+def auction_phases(o):
+    """Auctions (events 0x0A and 0x36, 0x4E2CD4) put at the current tick and
+    the queue called directly: a ship auction in phase 0 with a town out of
+    the world (the event's tick % towns); in phase 2 with only [+0xC] (a
+    ship; a building) and with none (a building: removed); in phase 7 with a
+    town out of the world, sold to the player (the ship has no owner: the
+    seller's name in his letter 0x5D from the tick, 0x4E32FF), unsold, and a building's
+    auction with a second building in [+0xA] (it goes on with it); and a
+    phase 9 (removed). The auctions' ships are made first by the game's
+    phase 0 (not recorded). Saves 3, 5 and 7 (in 1 no AI office has two
+    buildings)."""
+    towns, _, merchants, ships = o.counts()
+    now = o.u32(WORLD + 0x14)
+    ais = rt.ai_with_office(o)
+    made = []
+    for k in range(2):
+        _, e = new_event(o, 0x100000 + k, 0x0A, d8=0xFFFF, wA=0xFFFF, wC=0xFFFF, wE=0, d10=0, b14=0, b15=k, b16=0,
+                         b17=0xFF)
+        o.call(0x4E2CD4, [e], ecx=to.EVENTS)
+        made.append(o.u16(e + 8))
+    for f in range(o.counts()[1]):
+        owner, t = o.u16(o.office(f) + 0x2C4), o.u8(o.office(f) + 0x2C6)
+        if owner in ais and len(office_records(o, t, f)) >= 2:
+            seller, sale_town, recs = owner, t, office_records(o, t, f)
+            break
+    else:
+        raise RuntimeError('no AI office with two buildings')
+    buyer = next(x for x in ais if x != seller)
+    other_ship = merchant_ships(o, ais[0])[0]
+    print(f'auction ships {made}; {seller}\'s buildings {recs[:2]} in town {sale_town}, buyer {buyer}')
+
+    def auction(kind, phase, town, items, winner=0xFF, price=1000):
+        i, e = new_event(o, 0, kind, w8=items[0], wA=items[1], wC=items[2], wE=price, w10=100, w12=0, b14=phase,
+                         b15=town, b16=0, b17=winner)
+        return e
+
+    def during(o):
+        auction(0x0A, 0, towns + 3, (0xFFFF, 0xFFFF, 0xFFFF))
+        auction(0x0A, 2, 0, (0xFFFF, 0xFFFF, other_ship))
+        auction(0x36, 2, sale_town, (0xFFFF, 0xFFFF, recs[0][0]))
+        auction(0x36, 2, sale_town, (0xFFFF, 0xFFFF, 0xFFFF))
+        auction(0x0A, 7, towns + 2, (made[0], 0xFFFF, 0xFFFF), winner=o.u32(to.PLAYER))
+        auction(0x0A, 7, 1, (made[1], 0xFFFF, 0xFFFF))
+        auction(0x36, 7, sale_town, (recs[0][0], recs[1][0], 0xFFFF), winner=buyer)
+        auction(0x0A, 9, 0, (0xFFFF, 0xFFFF, 0xFFFF))
+        direct(o, 0x4D85C0, [now], ecx=to.EVENTS)
+        print(f'ships {made}: owners {[o.u8(o.ship(s)) for s in made]}; buildings {recs[:2]}: owners '
+              f'{[o.u8(record_at(o, sale_town, r) + 2) for r, _, _ in recs[:2]]}')
+    return during
+
+
+def building_sale_branches(o):
+    """The buildings' auctions' pieces, direct calls: 0x4F4550 (an AI bid
+    for a building) for houses of classes 1 and 2 with one of the class in
+    the town's works list [0x762], and for a fisherman (category 2) with the
+    town's [0x2CC] at 2000, with its offices' list and without (the bid as
+    it is); 0x5256F0 (the sale) of a building whose owner has no office in
+    the town (nothing), of one that is the second of its office's list, to
+    a buyer with an office there and to one without (0x5308A0 makes it).
+    The buildings: three businesses of an office's list [+0x2CE] (the third
+    goes first, so the unlinking walks more than a step). Saves 3, 5 and 7."""
+    towns, _, merchants, _ = o.counts()
+    m = rt.ai_with_office(o)[0]
+    t = next(x for x in range(towns) if o.u16(o.town(x) + 0x762) < o.u16(o.town(x) + 0x776)
+             and (o.u8(o.merchant(m) + 0x19) == x or facilities_office(o, m, x) is not None))
+    a = o.town(t)
+    works = o.u16(a + 0x762)
+    target = next(r for r in range(o.u16(a + 0x776)) if o.u8(record_at(o, t, r) + 2) != m
+                  and o.u8(record_at(o, t, r) + 6) == 0 and r != works)
+    ais = rt.ai_with_office(o)
+    for f in range(o.counts()[1]):
+        owner, x = o.u16(o.office(f) + 0x2C4), o.u8(o.office(f) + 0x2C6)
+        firms = rt.records_of(o, x, o.u16(o.office(f) + 0x2CE))
+        buyers = [k for k in ais if k != owner and facilities_office(o, k, x) is not None]
+        if owner < merchants and owner != m and len(firms) >= 3 and buyers:
+            seller, st, recs, buyer = owner, x, firms, buyers[0]
+            break
+    else:
+        raise RuntimeError('no office with three businesses and another AI office in its town')
+    newcomer, stranger = [k for k in ais if k != seller and facilities_office(o, k, st) is None][:2]
+    print(f'merchant {m}, town {t}: works {works}, building {target}; seller {seller} in {st} {recs[:3]}, '
+          f'buyer {buyer}, newcomer {newcomer}, stranger {stranger}')
+
+    def during(o):
+        rec = record_at(o, t, target)
+        kind = o.u8(rec + 3)
+        work_kind = o.u8(record_at(o, t, works) + 3)
+        for house in (0x18, 0x1B):
+            w8(o, rec + 3, house)
+            w8(o, record_at(o, t, works) + 3, house + 1)
+            print(f'class {(house - 0x15) // 3}: {direct(o, 0x4F4550, [target, t, m], ecx=o.merchant(m))}')
+        w8(o, record_at(o, t, works) + 3, work_kind)
+        w8(o, rec + 3, 5)
+        value, offices = o.u32(a + 0x2CC), o.u16(a + 0x784)
+        w32(o, a + 0x2CC, 2000)
+        print(f'fisherman: {direct(o, 0x4F4550, [target, t, m], ecx=o.merchant(m))}')
+        w16(o, a + 0x784, 0xFFFF)
+        print(f'fisherman, no offices: {direct(o, 0x4F4550, [target, t, m], ecx=o.merchant(m))}')
+        w16(o, a + 0x784, offices)
+        w32(o, a + 0x2CC, value)
+        w8(o, rec + 3, kind)
+        first = record_at(o, st, recs[0][0])
+        w8(o, first + 2, stranger)
+        direct(o, 0x5256F0, [recs[0][0], buyer, 1000, 900], ecx=o.town(st))
+        w8(o, first + 2, seller)
+        direct(o, 0x5256F0, [recs[2][0], buyer, 1000, 900], ecx=o.town(st))
+        direct(o, 0x5256F0, [recs[1][0], newcomer, 1000, 900], ecx=o.town(st))
+        print(f'newcomer {newcomer}: office {facilities_office(o, newcomer, st)}')
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -3310,6 +3550,16 @@ SCENARIOS = {
     'captain_retire_branches': Scenario(captain_retire_branches, [0x4D85C0], 0, [
         '@4ddcf5>4ddd46', '@4ddcfc', '@4ddcf5>4ddd7b', '@4ddcf5>4ddde1', '@4ddcf5>4dddc0', '@4ddcf5>4dde2d',
         '@4ddce7>4dde2d', '@509917', '@4ddc27>4dde2d', '@4ddcbf']),
+    # events_mayor.cpp
+    'alderman_hanse_votes': Scenario(alderman_hanse_votes, [0x4DBBD0, 0x4DC1F0], 0, [
+        '@4dbdbc', '@4dbdcc', '@4dbdd8', '@4dc301', '@4dc49f']),
+    'ship_making_branches': Scenario(ship_making_branches, [0x507D60, 0x52A8D0, 0x4F4400, 0x509250], 0, [
+        '@507e87', '@507ee3', '@507f31', '@507f5c', '@507d7c', '@52a8ec', '@52a91b', '@4f44cf', '@5093f7']),
+    'auction_phases': Scenario(auction_phases, [0x4D85C0], 0, [
+        '@4e2d37', '@4e2e35', '@4e2ea7', '@4e2ec1>4e37a3', '@4e3205', '@4e32ff', '@4e33c4', '@4e3709',
+        '@4e2d0d>4e37a3']),
+    'building_sale_branches': Scenario(building_sale_branches, [0x4F4550, 0x5256F0], 0, [
+        '@4f4781', '@4f47e2', '@4f4838', '@4f487e>4f48ff', '@5257cc>5259b8', '@525861>525822']),
 }
 
 
