@@ -417,10 +417,13 @@ void fn_4f75f0(SaveGame& save, int merchant, uint32_t town) {
 			if (other >= save.globals.u16(global::kWorldMerchantCount)) {
 				const size_t k = size_t(uint32_t(-1 - int32_t(other)) & 3);
 				letter.entry.u8(8) = 4;
+				// Out of the towns the game reads past them. Unreachable: the
+				// Hanse's town [+0x8E] is always one (the Gobernador's election
+				// sets it; save 1, at a game's start, has it already).
 				if (town8e < save.towns.size()) {
 					letter.entry.u8(9) = save.towns[town8e].memory.u8(0x6D4 + k);
 					letter.entry.u8(0xA) = save.towns[town8e].memory.u8(0x6D8 + k);
-				}  // Else sin comprobar con el oráculo (the game reads past the towns).
+				}
 			}
 			letter.entry.u8(0xB) = merchants_detail::fn_4f9430(save, merchant);
 			letter.entry.u8(0xC) = m.u8(0x1C);

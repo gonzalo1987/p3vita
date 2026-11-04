@@ -195,7 +195,9 @@ int32_t fn_52f030(const SaveGame& save, uint32_t from, uint32_t to, uint32_t war
 	const int32_t num = int32_t(uint32_t(add(sub(sub(stock_b, limit_b), middle_a), left_a)) * uint32_t(sub(t1b, limit_b)));
 	const int32_t den = add(sub(sub(t1b, limit_b), middle_a), t1a);
 	if (den == 0 || (num == INT32_MIN && den == -1)) {
-		return total;  // Sin comprobar con el oráculo: el juego fallaría (idiv).
+		// Not reproduced: the game fails here (idiv at 0x52F3B7). With the thresholds the game
+		// makes (rising) the divisor is over 0.
+		return total;
 	}
 	const int32_t meet = add(num / den, limit_b);
 	if (meet < stock_b) {
@@ -232,7 +234,7 @@ bool fn_526aa0(SaveGame& save, int town, uint32_t captain) {
 	const uint16_t count = save.globals.u16(global::kCaptainCount);
 	uint16_t* link = &save.towns[size_t(town)].memory.u16(0x82E);
 	if (*link >= count) {
-		return false;  // Sin comprobar con el oráculo.
+		return false;  // Checked with the oracle: scenario ship_trade_branches (saves 1, 3, 5, 7).
 	}
 	for (;;) {
 		const uint32_t i = *link;
@@ -243,7 +245,7 @@ bool fn_526aa0(SaveGame& save, int town, uint32_t captain) {
 			return true;
 		}
 		if (c.u16(0) >= count) {
-			return false;  // Sin comprobar con el oráculo.
+			return false;  // Checked with the oracle: scenario ship_trade_branches (saves 1, 3, 5, 7).
 		}
 		link = &c.u16(0);  // Solo en las pruebas sintéticas: no sale en las 12 partidas.
 	}
@@ -482,7 +484,10 @@ void fn_519920(SaveGame& save, int ship, uint32_t town) {
 			amount[best] = free;
 		}
 		if (t.s32(4 + 4 * best) < amount[best]) {
-			amount[best] = t.s32(4 + 4 * best);  // Sin comprobar con el oráculo (0x52F030 no pide más del almacén).
+			// 0x52F030 doesn't ask for more than the store has with the thresholds the game makes.
+			// Checked with the oracle: scenario ship_trade_branches (saves 1, 3, 5, 7), with
+			// thresholds below 0.
+			amount[best] = t.s32(4 + 4 * best);
 		}
 		amount[best] = round_to_unit(best, amount[best]);
 		const int32_t bought = amount[best];

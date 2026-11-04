@@ -207,7 +207,9 @@ void fn_500f50(const SaveGame& save, int office, uint8_t& x, uint8_t& y, int32_t
 	const SavedTown& st = save.towns[o.u8(0x2C6)];
 	const TownMemory& t = st.memory;
 	if (type >= 0x15) {
-		// Sin comprobar con el oráculo (0x4DEBA0 solo pide empresas).
+		// Only the interface asks for houses (0x41B7B2; 0x4DEBA0 asks for
+		// businesses). Checked with the oracle: scenario site_start_houses
+		// (saves 3, 5, 7), called directly.
 		for (uint32_t r = o.u16(0x2D0); r < t.u16(0x776);) {
 			const BuildingRecord& rec = st.records[r];
 			if (rec.type == type) {
@@ -605,10 +607,12 @@ void start_letter(SaveGame& save, const Event& e, const MerchantMemory& m) {
 			letter.entry.u16(0xC) = e.u16(0x16);
 		} else if (kind == 3) {
 			const uint8_t who = e.u8(0xA) < merchant_count(save) ? e.u8(0xA) : e.u8(0x9);
+			// Out of the merchants the game reads past them. Unreachable: [+0x9] is then a town,
+			// and the merchants (37 in the saves) outnumber the towns (26 at most).
 			if (who < merchant_count(save)) {
 				letter.entry.u8(0xC) = save.merchants[who].memory.u8(0x1C);
 				letter.entry.u8(0xD) = save.merchants[who].memory.u8(0x1D);
-			}  // Else sin comprobar con el oráculo (the game reads past the merchants).
+			}
 		}
 		break;
 	}
@@ -823,10 +827,12 @@ uint32_t fn_4e5b84(SaveGame& save, uint16_t event) {
 			letter.entry.u8(0xF) = e.u8(0x9);
 		} else if (kind == 3) {
 			const uint8_t who = e.u8(0xA) < merchant_count(save) ? e.u8(0xA) : e.u8(0x9);
+			// Out of the merchants the game reads past them. Unreachable: [+0x9] is then a town,
+			// and the merchants (37 in the saves) outnumber the towns (26 at most).
 			if (who < merchant_count(save)) {
 				letter.entry.u8(9) = save.merchants[who].memory.u8(0x1C);
 				letter.entry.u8(0xF) = save.merchants[who].memory.u8(0x1D);
-			}  // Else sin comprobar con el oráculo (the game reads past the merchants).
+			}
 		}
 		send_letter(save, e.u8(0x8), letter);
 		// «Your sentence is being announced in X.» (0x4E62A3: kind 0x1C, the town [+0xB]).

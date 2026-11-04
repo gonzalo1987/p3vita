@@ -116,7 +116,7 @@ void Sailing::update_convoys() {
 				++g.u16(kPlayerConvoysInPort);
 			}
 			if (c.u8(0x14) & 0x10) {
-				fn_50a580(index);  // Sin comprobar con el oráculo.
+				fn_50a580(index);  // Checked with the oracle: scenario convoy_states (saves 1, 3, 5, 7).
 				continue;
 			}
 			if (ai(lead)) {
@@ -126,8 +126,9 @@ void Sailing::update_convoys() {
 					lead.timer() = 0x200;
 				}
 			} else if (lead.orders() & 1) {
-				// Sin comprobar con el oráculo: los jugadores no tienen convoyes
-				// en las 12 partidas.
+				// The players have no convoys in the 12 saves. Checked with the oracle: scenario
+				// convoy_states (saves 1, 3, 5, 7): without trade routes, the route is interrupted
+				// (the automatic route, 0x503230, goes with the trade routes, phase 6).
 				if (lead.memory.u16(0x132) < g.u16(kRouteCount) && tick::ship_ai_detail::fn_519c40(save_, leader) &&
 					tick::ship_ai_detail::fn_519ba0(save_, leader)) {
 					// 0x503230: la ruta automática del convoy; no se reproduce.
@@ -159,7 +160,7 @@ void Sailing::update_convoys() {
 					if (ai(ship)) {
 						ship.destination() = convoy(index).u8(0x1F);
 						if (ship.destination() != ship.town()) {
-							fn_519b50(save_, i);  // Sin comprobar con el oráculo.
+							fn_519b50(save_, i);  // Checked with the oracle: scenario convoy_states (saves 1, 3, 5, 7).
 						} else {
 							fn_509f80(i);  // Sale del convoy: el enlace ya apunta al siguiente.
 							continue;
@@ -307,9 +308,9 @@ void Sailing::update_convoys() {
 			break;
 		}
 		case 0x4: {
-			// 0x5075FC: al astillero de su ciudad: sale de la lista y entra en
-			// la de convoyes de la ciudad ([0x820]) con el estado 6. Sin
-			// comprobar con el oráculo.
+			// 0x5075FC: al astillero de su ciudad: sale de la lista y entra en la de convoyes de la
+			// ciudad ([0x820]) con el estado 6. Checked with the oracle: scenario convoy_states
+			// (saves 1, 3, 5, 7): with a town and without.
 			if (c.u16(0x1C) >= save_.towns.size()) {
 				c.u16(0x12) = kShipSailing;
 				previous = index;
@@ -329,11 +330,11 @@ void Sailing::update_convoys() {
 			break;
 		}
 		case 0x9:
-			fn_503930(index);  // 0x507852. Sin comprobar con el oráculo.
+			fn_503930(index);  // 0x507852. Checked with the oracle: scenario convoy_states (saves 1, 3, 5, 7).
 			previous = index;
 			break;
 		case 0xA:
-			// 0x507865. Sin comprobar con el oráculo.
+			// 0x507865. Checked with the oracle: scenario convoy_states (saves 1, 3, 5, 7).
 			if (c.u16(0x16) != 0) {
 				--c.u16(0x16);
 			}
@@ -403,8 +404,11 @@ void Sailing::update_convoys() {
 			break;
 		}
 		default:
-			// 0x507C7F: en cualquier otro estado, todos los barcos dejan el
-			// convoy y se borra. Sin comprobar con el oráculo.
+			// 0x507C7F: en cualquier otro estado, todos los barcos dejan el convoy y se borra.
+			// Checked with the oracle: scenario convoy_states (saves 1, 3, 5, 7), with the state 5.
+			// 0x509F80 only takes ships out in the states 0..5, 0xF and 0x12: with another state
+			// here the game would loop forever; in a game only 5 comes (a convoy in 6 or 0x14 is
+			// out of this list).
 			do {
 				fn_509f80(convoy(index).u16(0xA));
 			} while (convoy(index).u16(0xA) < ships);

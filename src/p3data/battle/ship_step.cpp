@@ -575,7 +575,9 @@ void Sailing::sunk_pirate_news(size_t e) {
 		letter.entry.u8(0xB) = mm.u8(0x1C);
 		letter.entry.u8(0xC) = mm.u8(0x1D);
 	} else {
-		letter.entry.u8(5) = save_.globals.u8(0x6DE52E);  // Sin comprobar con el oráculo.
+		// Unreachable: a side's owner is its ships' (battle_setup.cpp), a
+		// merchant or 0xFF.
+		letter.entry.u8(5) = save_.globals.u8(0x6DE52E);
 		letter.entry.u8(0xB) = 0xFF;
 		letter.entry.u8(0xC) = 0xFF;
 	}

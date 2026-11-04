@@ -1055,6 +1055,195 @@ route (0x509250 → 0x4D4DD0 on the routes object, which no save has: phase
 6). Unreachable: a building's buyer letter with an owner who isn't a
 merchant (0x4DAB00 only puts merchants' buildings on sale).
 
+## Part D: the unchecked branches of events_rare.cpp (2026-11-04)
+
+66 marks (and one more written over two lines in 0x4E4A44), in two parts:
+the events 0x0E, 0x1C, 0x1E, 0x1F, 0x25, 0x26, 0x30, 0x31, 0x38 and 0x4DB100
+first, then the council 0x2E, the Hanse's tasks (0x532C50, 0x4EAFE4) and the
+expeditions (0x4E6A54). 62 checked with 5 new scenarios, 3 unreachable and 1
+where the game fails (explained in the code). One branch of p3vita was
+wrong and is fixed (below); the rest, only comments. New for the oracle:
+`probes_unchecked.cpp` repeats 0x4DB100 (a building out of the auctions),
+and the scenarios' block hooks follow 0x4E9A94 (for an edge whose second
+block is the next instruction).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `game_end_branches` | the end of the game (0x4E4A44, called on one event record rewritten each time, with the game's start [0x6DE4AC] chosen for the branch): the goal 1 (rank 4) with the limit passed, the player at rank 4, an AI merchant at rank 4 with the settings' [+0xD] at 0 (not counted: a month after the tick of the event record of index the merchants' number), clamped to the limit, with 20 merchants and without a limit; the goal 2 (a mayor) and 3 (the Hanse's head) the same way, with an AI mayor or head not counted, no event 2 in the queue and the first event 0x20 of the array; the goals 4 and 5 before and at the limit; the goal 6 under and over the people (town 0 gets 70000 more: the saves have under 70000); a goal 7 | 1, 3, 5, 7 | 25 calls equal, 32 of 32 targets |
+| `siege_fire_branches` | the queue called directly with the siege's fires 0x25 (a wall piece in works, a cell with no piece, burnt out with an empty burning list and with one without it) and 0x26 (a town out, the types 0x28, 0x32 and 0x33, a merchant's building without his office in the town and with it but not in its lists, one in works, one of type 0x29 with a merchant's owner, one of no merchant out of [0x764], a town with [0x2C8] & 0x8000, burnt out and not in the burning list), the tax 0x31 of a town out and the monuments 0x38 (a town out, a merchant out, another 0x38 of the mayor later in the queue, the town's first 0x2D a merchant's); 0x4DB100 with a town out, a record out, an auction with another lot (kept) and alone (removed); the plague 0x4E9094 of a town out and with the tick & 0x7F the next office's (the administrator leaves, 0x5098B0; the first free captain given to the office if it had none) | 1, 3, 5, 7 | 12 calls equal (0x4DB100 also inside the fires), 27 of 27 |
+| `council_task_branches` | 0x4E9A94 (event 0x2E at the head; the world's tick with its low byte 0 shares the votes, 0xFF with the event's counts them): a town out; the extra tax recent, with the share between 10 and 90, over 90 and under 10; the wall with [+0x15], with works pending, and without them and with [0x78C] = [0x78E] (0x4FAC70); [0x9A0] with [0x2C8] & 0x10 and the weight between, under 100 and over 0x398; the tax per head under and over the town's rate; a proposal 4; passed: the extra tax (an event 0x31), the wall's side 2 (the point 1 out of the grid: 0x522B20), [0x9A0] under 0x8000 and at it, the tax per head (0x52A150). 0x532C50 (on a new event) past the queue, of another kind, with the merchant the count; the kind 1 with a town out and with [0x76C] & 0x8000; the kind 2 with a ship out, not in state 0x12, without a captain, with the captain's names and another first or family name; the kind 3 with the object 5 and a missing one; the kind 4 with a town out; a kind 5. 0x4EAFE4 (the event 0x32 at the head, no merchant, [+0xE] 0x3F): two AI merchants with [+0x37] 2 (the lowest gets it), and none | 1, 3, 5, 7 | 37 calls equal (0x532C50 also inside 0x4EAFE4), 36 of 36 |
+| `expedition_branches` | 0x4E6A54 (event 0x12) on a new event with a convoy out of the table, and the save's expedition arriving as the player's (the report 0x63 reaches him) without a guide (0x512B20 with 0xFFFF) | 7, tut0, tut1, tut3, tut4 (the saves with an expedition under way) | 2 calls equal, 2 of 2 |
+| `pirate_event_branches` | 0x4DFD44 (event 0x1E): the state 0 over without and with [0x2C8] & 0x600 (the state 4), the state 1 going on and over with a mood of −20 (the town's [0x2C6] back), the state 2 over and a state 5; 0x4E0334 (event 0x1F, its first slot the town): before March, the kinds 4 (six low moods), 2 (a pirate object of 600) and 1 (a business over 950 with 200 workers) with the other kinds' conditions emptied, and the operation 0x84 with every Hanse town's mayor the player but the last one's, an AI merchant; 0x4EA594 (event 0x30 at the head) without a task tick, and of kind 5 with an AI head | 3, 5, 7 (save 1 has no world records: the kind 1 needs one) | 12 calls equal, 15 of 15 |
+
+With details broken on purpose the comparison caught each one: the goal
+1's clamp, the goal 2 without the settings' test, the life of a wall piece
+in works, the empty auction not removed, the administrator kept, a merchant
+without an office going on, the bit 0x8000 skipped, the later 0x38 not
+seen (its town has a monument, so the event would have gone on), the
+town's [0x6F0] and [0x2C6] of event 0x1E, the kind 2's pirate in the
+operation 0x84 (the queued operations are compared), the kind 5 of
+event 0x30, the recent extra tax, the wall's 9/10 with [+0x15], the double
+people with the bit 0x10, the passed tax per head and [0x9A0] at 0x8000, the
+family name in 0x532C50, the task's new tick in 0x4EAFE4, the name of an
+expedition without a guide in the report (the letter's text is compared)
+and a convoy out going on. The older scenarios through the file again
+(`re/emu/sesion8/old_rare.sh`: `retouch.py` `impuesto`, `monumento`,
+`incendio` and `retouch_mail.py` `pirate_hunt`, `council`, `hanse_task`,
+`hanse_task_ai` in saves 3 and 5, the seven `expedition*` in tut0 and
+tut1): equal.
+
+Found on the way:
+- **p3vita had the operation 0x84's mayor the other way round** (0x4E0834,
+  fixed): the pirates' season looks, from a random town, for the first one
+  with [0x2C8] & 0x40 whose mayor isn't human, a citizen or an AI merchant
+  (its names go in the operation); p3vita took the first human mayor and
+  skipped the AI ones. In the saves those mayors are citizens, so the world
+  didn't show it. With every such town a human's the game would loop
+  forever, which can't happen in a game (a merchant can only be the mayor
+  of his home town, 0x528CF0). The scenario's first version did that and
+  hung the oracle (a loop inside Unicorn: `re/emu/sesion8/one.sh` runs one
+  save with `timeout -s KILL`).
+- 0x4E4A44 without a limit (the index 14, 15 or past 18) reads an
+  uninitialized local ([esp+0x10]); the scenario zeroes the function's
+  frame at its entry (as `ZEROED_FRAMES` does for 0x4F5A20), which is
+  p3vita's 0. With the goal 3 and no event 0x20 in the array the game would
+  read the address 0: the Gobernador's election never leaves the queue.
+- Unreachable: an office without a merchant in a town's list (event 0x31: a
+  freed office leaves it; the game doesn't check and would write past the
+  merchants), and a fire 0x26 on a record past the count (the siege's
+  groups are the town's buildings; the game would read the address 0).
+- The game's end window (0x469380, 0x469AF0 and the ranking 0x4220B0 on
+  *0x6CBB30) runs in the oracle without trouble; it only writes the
+  interface's objects.
+- An expedition's convoy without a guide when it arrives: the report takes
+  the guide's name from 0x512B20 with 0xFFFF, which gives the text of
+  [0x6C0CB4] (p3vita's `GameText::ShipUnnamed`); in a game a convoy always
+  has one. Unreachable: a sunk ship of an expedition convoy without a
+  merchant (0x502B20 reads through a null pointer; the convoys 0x501680
+  makes have no expedition route). The game fails: a sale of less than a
+  barrel or a load divides by 0 (`idiv` at 0x52C5B6; in the roadmap's
+  bugs), which p3vita skips.
+
+## Part D: the unchecked branches of the mail, events_big.cpp, merchants.cpp and the ships' trade and AI (2026-11-04)
+
+17 marks: 11 checked with 4 new scenarios, 5 unreachable and 1 where the
+game fails (explained in the code). Only comments changed in the
+simulation. New probes in `probes_unchecked.cpp`: 0x4D6530 (sending a
+letter without a buffer; the letter in scratch globals, and the date the
+game writes back into it) and 0x500F50 (where to start looking for a site).
+To let a direct call of 0x4D6530 run, the scenario adds its trampoline's
+return address to the oracle's `MAIL_SITES` (the connected calls).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `mail_branches` | 0x4D6530: a letter of type 0x86 to the chronicle (which keeps any type), to a merchant past the merchants, to −3 (the owners of the offices of a town where the player has one: he keeps it; no caller of the game sends to −3), and to the chronicle with the free list's head past the entries (0x4D6B40 brings it down to the count and grows the mailbox) | 1, 3, 5, 7 | 4 calls equal, 4 of 4 targets |
+| `site_start_houses` | 0x500F50 with house types (only the interface's 0x41B7B2 asks for them): the office with the most houses of a type, n 0 (the second) and 5 (the last), and a type it hasn't | 3, 5, 7 (save 1's offices have no houses in their lists) | 3 calls equal, 2 of 2 |
+| `ship_trade_branches` | 0x526AA0 on a town without captains and with one that doesn't have the captain; 0x519920 with the ware 0 of the ship's town at 2000 and thresholds below 0, so that 0x52F030 asks for more than the store has (cut to it) | 1, 3, 5, 7 | 3 calls equal, 3 of 3 |
+| `ship_ai_branches` | 0x519BA0 on an AI ship that may sail, in the states 11 to 15; 0x501BE0 with the convoy's guide in the state 1 and another ship's [+0x138] over the convoy's [+0x16]; a tick of the world with the player's first ship in port in the state 4, recording the ships' update 0x506720 (its handler 0x506A19 counts the player's ships, [0x6DD8A0]) | 1, 3, 5, 7 | 7 calls equal (8 in save 7), 3 of 3 |
+
+With details broken on purpose the comparison caught them: the 0x86 type
+let through (a letter of type 0x86 to the player isn't kept anyway: its
+class is 0, so the scenario sends it to the chronicle), the town's offices
+not written to, the free head not brought down, the counter of the houses
+(with three of a type, save 5), the cut to the store, the captain not found,
+the state 12, the convoy's wait and the player's ships in port.
+
+Unreachable: a letter's merchant out of range in 0x4D6680 (the offices of a
+town's list always have one), a negative code other than −1..−3 (no caller),
+the court letters of events_big.cpp with neither [+0xA] nor [+0x9] a merchant
+([+0x9] is then a town: 37 merchants in the saves, 26 towns at most) and the
+letter 0x6D of merchants.cpp with the Hanse's town [+0x8E] out of the towns.
+The game fails: 0x52F030's `idiv` at 0x52F3B7 with a divisor of 0 or
+INT_MIN / −1 (with the rising thresholds the game makes, the divisor is over
+0).
+
+## Part D: the unchecked branches of sailing.cpp (2026-11-04)
+
+6 marks: 5 checked with 3 new scenarios, 1 not reproduced (a ship with a
+trade route [+0x132]: 0x507FB0 releases it with 0x4D4DD0 on the routes'
+object 0x6DD728, which no save has; phase 6). New: `Sailing::fn_50b030`
+(a public door to the chase, `pursue`) and the probes of 0x50B030 and
+0x507FB0 in `probes_unchecked.cpp`; `retouch_unchecked.py --first-arrival`
+(hidden: another process runs a copy of the world to find which ship arrives
+first, as two oracles don't fit in one process).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `ship_delete_branches` | 0x507FB0 on a ship out of the table, the first of the free list, and a pirate's ship (out of the pirates' lists) | 1, 3, 5, 7 | 3 calls equal, 3 of 3 targets |
+| `pursue_branches` | 0x50B030 on an AI ship at sea: in the state 0x11; raiding a ship in port, one in the state 0x13 and one far away; not raiding, a merchant's ship; in the state 0x16 a pirate convoy's ship out of the list by x (far away, so that only that test drops it) and a pirate far away (kept); near a raiding ship (20, 10 away) a cog at the ticks & 7 1 and 0 (the new heading), a snaikka at 0 and a cog in the shallows. Not the battle when it catches it (0x50B250: the battles' piece 4) | 3, 5, 7 (in save 1 no pirate is in the list by x) | 11 calls equal, 11 of 11 |
+| `raid_arrival` | the AI ship at sea that arrives first (found by `--first-arrival`), raiding ([+0x15C]), its port closed ([0x2C8] & 0x200): the ships' update 0x506720 tick by tick until it arrives (0x506E19: first of the sea's list again, without a town; 0x50BA80 finds no Hanse fleet) | 3, 5, 7 (in save 1 another ship enters that port first) | 6, 36 and 6 calls equal, 1 of 1 |
+
+With details broken on purpose the comparison caught them: the pirate's
+ship left in its pirate's list, a free ship deleted again, the route kept
+when the raided ship is in port, the target dropped in the state 0x16, the
+shallows' rectangle, the pirate out of the list by x (alone: with the state
+0x16's broken too, the two give the same) and the raiding ship not put back
+at the head of the sea's list.
+
+## Part D: the unchecked branches of the convoys (2026-11-05)
+
+14 marks in `convoys.cpp`, `convoys_sea.cpp`, `convoys_port.cpp` and
+`convoys_members.cpp` (and the state 4's, written over two lines): 10 checked
+with 2 new scenarios, 3 unreachable, 1 not reproduced. Only comments changed.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `convoy_states` | a tick of the world recording the ships' update 0x506720, with AI convoys in port (waiting, put in the state 0) with [+0x14] & 0x10 (disbanded), led by a ship given to the player with its trade route's bit (no routes: interrupted), and with another destination (it sails: 0x519B50 for each AI ship, a destination unlike their [+0x13B]); convoys in the main list put in the states 4 (with the town 0 and without a town), 9, 0xA ([+0x16] 5) and 5 (a state the switch doesn't take: disbanded) | 1, 3, 5, 7 | 1 call equal, 8 of 8 targets |
+| `convoy_ship_branches` | 0x50A580 with a convoy out of the table; 0x502110 with a convoy at sea whose guide has no hull (0x5017F0); 0x501EB0 with a convoy in port whose second ship has no sailors (it leaves the convoy) | 1, 3, 5, 7 | 3 calls equal, 3 of 3 |
+
+With details broken on purpose the comparison caught them: the disbanding
+by the bit 0x10, the player's ship's notice, 0x519B50 (only once the
+destination differs from the ships' [+0x13B]: before, it changed nothing),
+the state 0xA's countdown, the state 5's disbanding, the new guide and the
+ship without sailors. The first version put a convoy at sea in the state
+0xC: 0x509F80 takes ships out only in the states 0..5, 0xF and 0x12, so the
+«any other state» branch (0x507C7F) loops forever with any other state, in
+the game as in p3vita; in a game only the state 5 gets there (the convoys in
+6 and 0x14 are out of the list).
+
+Unreachable: a convoy's route index past its points at the end of the route
+(`convoys_sea.cpp`), a pirates' convoy at a closed port (they returned
+before), and the check after the loop of 0x503B50 (the loop returns first).
+Not reproduced: the node a sunk ship adds to the diet mission's list (event
+0x34, [+0x8]), which p3vita doesn't keep.
+
+## Part D: the unchecked branches of the battles (2026-11-05)
+
+The last 8 marks of part D, in `battle/`: 2 checked with a new scenario,
+6 unreachable. Part D is closed: no «sin comprobar con el oráculo» is left.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `battle_branches` | the operation 0x91 (0x540520) of a pirate convoy's ship, its guide a privateer of the player, taking an AI merchant's ship at sea (out of the sea's list first, as in a battle: the player gets its worth and the letter 0x30); 0x50BFD0 on a pirate convoy (out of the list of convoys at sea and its guide out of the list by x first, as at a battle's start) with a sunk ship with a captain, beaten by the player; 0x509250 selling the player's ship to no merchant (it turns pirate) with a town out | 3, 5, 7 (save 1 has no pirate convoy of two ships) | 3 calls equal, 4 of 4 targets |
+
+With the letter 0x30's amount broken on purpose the comparison caught it
+(the letter is compared). The scenario's first versions hung the oracle in
+0x504970 (the towns' wares on the way): the taken ship still in a port's
+list, and then the convoy still in the list of those at sea, which
+0x50BFD0 puts it back into, made a ring of a list; a battle takes them out
+first (0x50BC40).
+
+Found: **the letters about a pirate captain sunk by a merchant's convoy are
+never sent** (0x50C1C7..0x50C20B, a game bug): 0x50BFD0 deletes the sunk
+ship (0x507FB0, which frees its captain: [+0x42] 0xFFFF) and only then looks
+at its captain, so the letter 0x54 and the news 0x2A never go out and
+0x4F8D90 always gets «no captain». Seen in the oracle (the ship deleted, the
+jump at 0x50C20B taken). Fixed behind `fix_game_bugs()` (the user's
+decision): the captain the ship had, looked at before 0x507FB0, as the
+broken-up convoy's path does (0x50C7EC). With `tick_probe --fix-game-bugs`
+(`re/emu/sesion8/uc_fix.sh battle_branches:3`) the call of 0x50BFD0 differs
+there: the player's reputation in the towns (0x4F8D90 with a captain) and
+the letters; without it, equal.
+
+Unreachable: the side a pirate beats past the merchants (`battle_end.cpp`)
+and the side that takes a pirate's ship (`capture.cpp`): pirates don't fight
+each other and a side's owner is its ships' (`battle_setup.cpp`), a merchant
+or 0xFF; a plundered ship's owner neither 0xFF nor a merchant
+(`capture.cpp`); the privateer's random merchant past the merchants
+(`pirate_objects.cpp`: a random AI's index plus the humans at or before
+it); and the news of a sunk pirate with a side past the merchants but not
+0xFF (`ship_step.cpp`).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

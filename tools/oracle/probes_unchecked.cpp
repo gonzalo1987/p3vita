@@ -4,6 +4,7 @@
 
 #include <optional>
 
+#include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "probe_registry.hpp"
 
@@ -78,6 +79,20 @@ namespace p3::data::tick::events_towns_detail {
 uint16_t fn_50e000(SaveGame& save, uint16_t& type, uint32_t strength, uint32_t town_arg, uint32_t merchant_arg);
 
 }  // namespace p3::data::tick::events_towns_detail
+
+// What events_big.cpp exposes for them (where to look for a site).
+namespace p3::data::tick::events_big_detail {
+
+void fn_500f50(const SaveGame& save, int office, uint8_t& x, uint8_t& y, int32_t n, uint8_t type);
+
+}  // namespace p3::data::tick::events_big_detail
+
+// What events_rare.cpp exposes for them (a building out of the auctions).
+namespace p3::data::tick::events_rare_detail {
+
+void fn_4db100(SaveGame& save, uint32_t town, uint16_t record);
+
+}  // namespace p3::data::tick::events_rare_detail
 
 namespace p3::probe {
 
@@ -334,6 +349,68 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		const uint16_t index = tick::events_towns_detail::fn_50e000(s, type, c.args[1], c.args[2], c.args[3]);
 		s.globals.u16(c.args[0]) = type;
 		return index;
+	};
+	r[0x4DB100] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the event queue (town, record): the building out of the
+		// first auction of buildings (event 0x36) that has it.
+		tick::events_rare_detail::fn_4db100(s, c.args[0] & 0xFF, uint16_t(c.args[1]));
+		return std::nullopt;
+	};
+	r[0x500F50] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the office (&x, &y, n, type): where to start looking for
+		// a site; x and y in scratch globals.
+		const int office = c.office(c.ecx);
+		if (office < 0 || !in_globals(c, c.args[0]) || !in_globals(c, c.args[1])) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		uint8_t x = s.globals.u8(c.args[0]);
+		uint8_t y = s.globals.u8(c.args[1]);
+		tick::events_big_detail::fn_500f50(s, office, x, y, int32_t(c.args[2]), uint8_t(c.args[3]));
+		s.globals.u8(c.args[0]) = x;
+		s.globals.u8(c.args[1]) = y;
+		return std::nullopt;
+	};
+	r[0x50B030] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the ships object (the ship): its chase; returns al.
+		data::Sailing* sailing = probe_sailing();
+		if (!sailing) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		c.eax_mask = 0xFF;
+		return sailing->fn_50b030(uint16_t(c.args[0])) ? 1 : 0;
+	};
+	r[0x507FB0] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the ships object (the ship): deletes it.
+		data::Sailing* sailing = probe_sailing();
+		if (!sailing) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		sailing->fn_507fb0(uint16_t(c.args[0]));
+		return std::nullopt;
+	};
+	r[0x4D6530] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the mailbox (merchant or code, &letter): a letter without
+		// a buffer or a record, in scratch globals. The game writes the date
+		// into the caller's letter when it sends it.
+		if (!in_globals(c, c.args[1]) || !in_globals(c, c.args[1] + 0xF)) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		Letter letter;
+		for (uint32_t k = 0; k < 0x10; ++k) {
+			letter.entry.u8(k) = s.globals.u8(c.args[1] + k);
+		}
+		const int32_t merchant = int32_t(c.args[0]);
+		send_letter(s, merchant, letter);
+		if (letter.type() < 0x86 && merchant < int32_t(s.globals.u16(global::kWorldMerchantCount))) {
+			s.globals.u8(c.args[1]) = s.globals.u8(global::kWorldDay);
+			s.globals.u8(c.args[1] + 1) = uint8_t(s.globals.u8(global::kWorldMonth) | 0x80);
+			s.globals.u16(c.args[1] + 2) = s.globals.u16(global::kWorldYear);
+		}
+		return std::nullopt;
 	};
 }
 

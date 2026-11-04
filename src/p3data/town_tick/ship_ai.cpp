@@ -325,7 +325,7 @@ bool fn_519ba0(const SaveGame& save, int ship) {
 	if (m.u16(0x42) < save.globals.u16(global::kCaptainCount) && m.s32(0x14) > 5 * m.s32(0x18)) {
 		return false;
 	}
-	// Los estados de 12 a 14: sin comprobar con el oráculo.
+	// The states 12 to 14 checked with the oracle: scenario ship_ai_branches (saves 1, 3, 5, 7).
 	const uint16_t status = m.u16(0x134);
 	if (status == 7 || status == 9 || (status >= 12 && status <= 14) || status >= 0x11) {
 		return false;
@@ -477,7 +477,7 @@ void fn_501be0(SaveGame& save, int convoy) {
 		}
 		if (c.u16(0x12) == 1) {
 			if (c.u16(0x16) < m.u16(0x138)) {
-				c.u16(0x16) = m.u16(0x138);  // Sin comprobar con el oráculo.
+				c.u16(0x16) = m.u16(0x138);  // Checked with the oracle: scenario ship_ai_branches (saves 1, 3, 5, 7).
 			}
 		} else {
 			m.u16(0x138) = c.u16(0x16);
@@ -780,7 +780,7 @@ bool fn_506a19(SaveGame& save, int ship, uint16_t* link) {
 	GlobalMemory& g = save.globals;
 	ShipMemory& m = save.ships[size_t(ship)].memory;
 	if (m.u8(0x0) == g.u32(global::kPlayer)) {
-		++g.u16(kPlayerInPort);  // Sin comprobar con el oráculo.
+		++g.u16(kPlayerInPort);  // Checked with the oracle: scenario ship_ai_branches (saves 1, 3, 5, 7).
 	}
 	m.u16(0x138) = 0;
 	const uint16_t self = *link;

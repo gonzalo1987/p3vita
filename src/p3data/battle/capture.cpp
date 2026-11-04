@@ -276,6 +276,8 @@ void Sailing::fn_60c1c9(size_t b, uint16_t winner, uint16_t taken) {
 			const CaptainMemory& c = save_.captains[captain];
 			const uint8_t owner = save_.ships[ws].memory.u8(0x0);
 			Letter letter(0x2A);
+			// Past the merchants the game reads past them. Unreachable: the
+			// side that takes a pirate's ship is a merchant's.
 			if (owner < save_.merchants.size()) {
 				const MerchantMemory& m = save_.merchants[owner].memory;
 				letter.entry.u8(5) = m.u8(0x19);
@@ -284,7 +286,7 @@ void Sailing::fn_60c1c9(size_t b, uint16_t winner, uint16_t taken) {
 				letter.entry.u8(0xA) = m.u8(0x39C + m.u8(0x19));
 				letter.entry.u8(0xB) = m.u8(0x1C);
 				letter.entry.u8(0xC) = m.u8(0x1D);
-			}  // Else sin comprobar con el oráculo (the game reads past the merchants).
+			}
 			letter.entry.u8(0xD) = c.u8(2);
 			letter.entry.u8(0xE) = c.u8(3);
 			letter.entry.u8(0xF) = 0;
@@ -452,11 +454,12 @@ void Sailing::fn_60c1c9(size_t b, uint16_t winner, uint16_t taken) {
 				letter.entry.u8(8) = c.u8(2);
 				letter.entry.u8(9) = uint8_t(c.u8(3) | 0x80);
 				if (mt.u8(0x0) != 0xFF) {
+					// Unreachable otherwise: a ship's owner is a merchant or 0xFF.
 					if (mt.u8(0x0) < save_.merchants.size()) {
 						const MerchantMemory& o = save_.merchants[mt.u8(0x0)].memory;
 						letter.entry.u8(0xA) = o.u8(0x1C);
 						letter.entry.u8(0xB) = o.u8(0x1D);
-					}  // Else sin comprobar con el oráculo.
+					}
 				} else {
 					letter.entry.u8(0xA) = uint8_t(g.get<uint8_t>(w, 0x4) & 0x3F);
 					letter.entry.u8(0xB) = uint8_t(g.get<uint8_t>(t, 0x4) & 0x3F);
@@ -684,12 +687,11 @@ void Sailing::fn_540520(uint16_t wi, uint16_t ti) {
 			const int32_t f = m.s16(0x16);
 			m.s16(0x16) = f < 0x7FFF - kLootFame ? int16_t(f + kLootFame) : int16_t(0x7FFF);
 			if (pay > 0) {
-				// 0x540D3E..0x540DDF: the letter 0x30 to that merchant, as in
-				// 0x60C1C9 but the second name without 0x80 and, for a
-				// pirate's ship (an owner past the merchants), the two ships
-				// & 0x3F.
-				// Sin comprobar con el oráculo (a privateer that takes a ship
-				// over; retouch_mail.py privateer reaches the plunder's, 0x60D189).
+				// 0x540D3E..0x540DDF: the letter 0x30 to that merchant, as in 0x60C1C9 but the
+				// second name without 0x80 and, for a pirate's ship (an owner past the merchants),
+				// the two ships & 0x3F. A privateer that takes a ship over. Checked with the
+				// oracle: scenario battle_branches (saves 3, 5, 7), the operation 0x91
+				// (retouch_mail.py privateer reaches the plunder's, 0x60D189).
 				const CaptainMemory& c = save_.captains[gs.u16(0x42)];
 				Letter letter(0x30);
 				letter.entry.u8(5) = m.u8(0x19);

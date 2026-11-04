@@ -390,7 +390,9 @@ void Sailing::fn_514d40(size_t k, uint16_t most, uint16_t strength_arg) {
 					++pick;
 				}
 			}
-			if (pick < save_.merchants.size()) {  // Else sin comprobar con el oráculo (the game reads past them).
+			// Unreachable otherwise (the game would read past the merchants):
+			// pick is a random AI's index plus the humans at or before it.
+			if (pick < save_.merchants.size()) {
 				// 0x514EF0..0x514F79: the news 0x2A for everybody about that
 				// merchant (home town, [+0x1A], title, rank at home, [+0x1C],
 				// [+0x1D]) and the ship's captain's two names, then 0.
@@ -618,7 +620,9 @@ GameMemory<0x18>& fn_513720(SaveGame& save, size_t k) {
 void fn_509250_pirates(SaveGame& save, Sailing* sailing, uint16_t ship, uint32_t town) {
 	GlobalMemory& g = save.globals;
 	if (town >= g.u32(global::kWorldTownCount)) {
-		return;  // Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario battle_branches (saves 3, 5, 7), 0x509250 called
+		// directly (the operation 0x4E gets its town from the interface).
+		return;
 	}
 	constexpr uint32_t kTownIds = 0x6DE4B8;  // u8 per town: its number in StadtDaten.ini
 	const uint32_t row = kTownTable + 0x34 * uint32_t(g.u8(kTownIds + town));

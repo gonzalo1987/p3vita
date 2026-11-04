@@ -98,7 +98,7 @@ bool Sailing::fn_502110(int convoy, uint32_t every_32) {
 	const uint16_t old_x = lead.memory.u16(0x1E);
 	const uint16_t old_y = lead.memory.u16(0x22);
 	if (lead.health() <= 0) {
-		// Sin comprobar con el oráculo: reorganiza el convoy (convoys_members.cpp).
+		// A new guide (convoys_members.cpp). Checked with the oracle: scenario convoy_ship_branches (saves 1, 3, 5, 7).
 		fn_5017f0(convoy);
 	}
 	GameMemory<0x3C>& c = save_.convoys[size_t(convoy)];
@@ -153,8 +153,8 @@ bool Sailing::fn_502110(int convoy, uint32_t every_32) {
 				// El juego añade al principio de la lista del evento ([+0x8]) un
 				// nodo de 8 bytes (0x4F3980, 0x4F3AD0): {siguiente, u8 2 (de
 				// 0x672856), u8 dueño, u16 [+0x15E] del barco}. Esas listas no
-				// existen en p3vita (la lectura de la partida las descarta): no
-				// se reproduce (sin comprobar con el oráculo).
+				// existen en p3vita (la lectura de la partida las descarta): not
+				// reproduced (the diet's mission, event 0x34).
 			}
 		}
 		if (index == c.u16(0x10)) {
@@ -231,7 +231,9 @@ bool Sailing::fn_502110(int convoy, uint32_t every_32) {
 	if (town < 0 || uint32_t(town) >= town_count(save_)) {
 		// Sin ciudad en el último punto.
 		if (lead.route_index() != route.size()) {
-			return true;  // Sin comprobar con el oráculo (al pasar el último punto, [+0x34] = número).
+			// Unreachable: at the end of the route the index is the number of
+			// points ([+0x34] = point + 1, and point < number).
+			return true;
 		}
 		// Se queda sin ruta (a diferencia de 0x516840, [+0x2] no cambia).
 		lead.set_route(nullptr);
@@ -313,7 +315,8 @@ bool Sailing::fn_502110(int convoy, uint32_t every_32) {
 	// Solo en las pruebas sintéticas: el puerto está cerrado (bloqueo o asedio,
 	// o 0x400 y ruta automática); se queda fuera, sin ruta.
 	if (c.u8(0x0) >= merchant_count(save_)) {
-		// Nunca (sin comprobar con el oráculo): los piratas ya han vuelto antes.
+		// Unreachable: the pirates' convoys returned before, at the end of the
+		// route (above).
 		set_destination(lead, 0xFF, 0x220, 0x368);
 	} else if (!ai_merchant(save_, c.u8(0x0)) && (c.u16(0x14) & 2)) {
 		// Jugador humano, todos sus barcos: con ruta automática, 0x4D5900 (el

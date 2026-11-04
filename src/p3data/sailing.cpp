@@ -687,8 +687,10 @@ bool Sailing::pursue(SavedShip& ship) {
 		ship.target() = kNoIndex;
 		return false;
 	}
-	// Sin comprobar con el oráculo (ningún barco persigue a otro en las 12
-	// partidas): de aquí en adelante.
+	// No ship chases another in the 12 saves (the Hanse fleet does in
+	// retouch.py dieta). From here on, checked with the oracle: scenario
+	// pursue_branches (saves 3, 5, 7), but for the battle when it catches it
+	// (below).
 	const uint16_t status = ship.status();
 	if (status != 0x16 && status != kShipSailing && status != 0x10) {
 		ship.target() = kNoIndex;
@@ -751,6 +753,10 @@ bool Sailing::pursue(SavedShip& ship) {
 		set_destination(ship, kNoTown, x, y);
 	}
 	return false;
+}
+
+bool Sailing::fn_50b030(uint16_t index) {
+	return index < save_.ships.size() && pursue(save_.ships[index]);
 }
 
 // Un tick de un barco que navega (0x516CC0). Devuelve false si ha llegado a
@@ -861,7 +867,8 @@ void Sailing::arrive(SavedShip& ship, uint16_t index, uint16_t& link) {
 			// Piratas ante un puerto bloqueado: sale de las listas y, salvo
 			// que 0x50BA80 (con la cola de eventos y los convoyes, que no se
 			// reproduce) lo una a otro ataque, vuelve el primero de la lista
-			// del mar. Sin comprobar con el oráculo.
+			// del mar. Checked with the oracle: scenario raid_arrival (saves
+			// 3, 5, 7; 0x50BA80 finds no Hanse fleet there).
 			unlink_x(index);
 			link = ship.next_in_list();
 			ship.next_in_list() = kNoIndex;
@@ -911,7 +918,7 @@ void Sailing::fn_507fb0(uint16_t index) {
 	GlobalMemory& g = save_.globals;
 	const uint32_t count = g.u16(global::kShipCount);
 	if (index >= count) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario ship_delete_branches (saves 1, 3, 5, 7).
 	}
 	SavedShip& ship = save_.ships[index];
 	ShipMemory& s = ship.memory;
@@ -920,11 +927,13 @@ void Sailing::fn_507fb0(uint16_t index) {
 	s.u16(0x42) = 0xFFFF;
 	unlink_x(index);
 	if (s.u16(0x132) < g.u16(0x6DD72A)) {  // The trade routes' count ([+0x2] of 0x6DD728).
-		s.u16(0x132) = 0xFFFF;  // Sin comprobar con el oráculo.
+		// Not reproduced: the game releases the route first (0x4D4DD0 on the
+		// trade routes' object 0x6DD728, phase 6); no save has one.
+		s.u16(0x132) = 0xFFFF;
 	}
 	for (uint32_t i = g.u16(global::kShips + 0xE2); i < count; i = save_.ships[i].memory.u16(6)) {
 		if (i == index) {
-			return;  // Sin comprobar con el oráculo.
+			return;  // Checked with the oracle: scenario ship_delete_branches (saves 1, 3, 5, 7).
 		}
 	}
 	s.u16(0x134) = 0xFF;
@@ -942,7 +951,7 @@ void Sailing::fn_507fb0(uint16_t index) {
 		s.u8(0) = 0xFF;
 		tick::events_mayor_detail::fn_4f5900(save_, owner);
 	} else {
-		// Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario ship_delete_branches (saves 1, 3, 5, 7): a pirate's ship.
 		for (auto& pirate : save_.pirates) {
 			if (!pirate) {
 				continue;

@@ -14,7 +14,8 @@
 // con llamadas al código del juego sobre convoyes cambiados a propósito (sin
 // guía, guía sin marineros, ciudad cerrada, dueño humano o pirata, flags del
 // mundo, todos los bits de [+0x4D8] del comerciante puestos, 40 ticks en el
-// estado 9...). Lo que queda «Sin comprobar con el oráculo» se dice en cada sitio.
+// estado 9...). The rest was checked in part D of the inventory (retouch_unchecked.py),
+// or each place says why it can't be.
 
 #include <cstring>
 
@@ -208,9 +209,8 @@ bool Sailing::fn_501eb0(int convoy) {
 	while (i < ship_count(save_)) {
 		ShipMemory& m = save_.ships[i].memory;
 		if (!fn_519ba0(save_, int(i))) {
-			// Sin comprobar con el oráculo (no sale en las 12 partidas y
-			// depende de 0x509F80, de convoys_members.cpp): no puede zarpar y
-			// sale del convoy.
+			// It can't sail and leaves the convoy (0x509F80). Checked with the oracle: scenario
+			// convoy_ship_branches (saves 1, 3, 5, 7).
 			m.u8(0x3C) |= 0x40;
 			m.u8(0x38) = m.u8(0x39);
 			const uint32_t self = i;
@@ -295,7 +295,7 @@ void Sailing::fn_503b50(int convoy) {
 		}
 	}
 	if (!ok) {
-		return;  // Sin comprobar con el oráculo (no puede pasar).
+		return;  // Unreachable: the loop above returns first.
 	}
 	auto put32 = [&op](size_t o, uint32_t v) { std::memcpy(op + o, &v, 4); };
 	auto put16 = [&op](size_t o, uint16_t v) { std::memcpy(op + o, &v, 2); };

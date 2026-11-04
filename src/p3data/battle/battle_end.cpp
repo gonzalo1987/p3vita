@@ -5,6 +5,7 @@
 #include <array>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_texts.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
@@ -341,6 +342,9 @@ void Sailing::fn_60d299(size_t b, bool sailors) {
 			// at home, [+0x1C], [+0x1D], the battle's [+0x1E90], [+0x1E91] and
 			// the ships lost. The window (0x469380, 0x469AF0) is the interface.
 			const uint16_t m = u16(0x35C - 2 * winner);
+			// Past the merchants the game reads past them. Unreachable: the
+			// side a pirate beats is a merchant's (pirates don't fight each
+			// other; a side's owner is its ships', a merchant or 0xFF).
 			if (m < merchants) {
 				const MerchantMemory& lm = save_.merchants[m].memory;
 				Letter letter(0x2A);
@@ -354,7 +358,7 @@ void Sailing::fn_60d299(size_t b, bool sailors) {
 				letter.entry.u8(0xE) = u8(0x1E91);
 				letter.entry.u8(0xF) = uint8_t(lost);
 				send_letter(save_, kLetterToChronicle, letter);
-			}  // else: sin comprobar con el oráculo (the game reads past the merchants).
+			}
 			if (save_.globals.u32(kPlayer) != m) {
 				g.set<uint32_t>(0, 0x408, tick);
 			}
@@ -821,15 +825,20 @@ void Sailing::fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other) {
 						no_guide = true;
 					}
 					clear_ship_route(ship);
+					const uint16_t captain = s.u16(0x42);  // Before 0x507FB0 frees him.
 					fn_507fb0(index);
 					if (other < merchants) {
-						fn_4f8d90(other, s.u16(0x42) < captains);
-						if (s.u16(0x42) < captains) {
-							// 0x50C211..0x50C326: the letter 0x54 to the winner
-							// and the news 0x2A for everybody (pirate_letters).
-							// Sin comprobar con el oráculo (no save nor scenario
-							// reaches it; 0x50C853 checks the 0x54).
-							pirate_letters(other, index, s.u16(0x42), true);
+						// A game bug: 0x507FB0 has just freed the captain ([+0x42] 0xFFFF),
+						// so the game always gives 0x4F8D90 «no captain» and never sends
+						// the letter 0x54 to the winner and the news 0x2A for everybody
+						// (0x50C211..0x50C326, pirate_letters; unreachable in the game:
+						// checked with the oracle, scenario battle_branches, saves 3, 5,
+						// 7: the ship deleted, the letters skipped). Fixed: the captain
+						// the ship had, as the convoy broken up does (0x50C7EC, below).
+						const uint16_t seen = fix_game_bugs() ? captain : s.u16(0x42);
+						fn_4f8d90(other, seen < captains);
+						if (seen < captains) {
+							pirate_letters(other, index, seen, true);
 						}
 					}
 					++lost;

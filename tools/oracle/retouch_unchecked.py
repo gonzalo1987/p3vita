@@ -76,6 +76,8 @@ RANGES = [
     (0x51FF30, 0x520507),  # the works advance
     (0x510AA0, 0x510C4B),  # what the weaponsmith makes
     (0x4D4400, 0x4D4985),  # an office business's average costs
+    (0x4E9A94, 0x4EA0A8),  # the council's vote (event 0x2E)
+    (0x526AA0, 0x526AF3),  # a captain out of a town's list
 ]
 
 
@@ -3398,6 +3400,1006 @@ def building_sale_branches(o):
     return during
 
 
+# events_rare.cpp
+GOAL_LIMIT = (0x16D00, 0x2DA00, 0x44700, 0x5B400, 0x72100, 0x88E00, 0x9FB00, 0xB6800, 0xCD500, 0xE4200, 0x156300,
+              0x1C8400, 0x2AC600, 0x474A00, 0, 0, 0x11170, 0x186A0, 0x30D40)  # the goals' limits (0x4E4A7C)
+MONTH_DAYS = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)  # 0x672D94
+START_TICK = WORLD + 0xC  # u32: the game's first tick
+GAME_OVER = 0x6DFC04  # u32: the end of the game (0x4E4A44) sets it to 0
+MONTH = WORLD + 1  # u8
+
+
+def first_event_of(o, kind):
+    """The first record of the event array (not the queue's order) of the kind."""
+    base = o.u32(to.EVENTS)
+    return next(k for k in range(o.u16(EVENT_COUNT)) if o.u16(base + 0x18 * k + 6) == kind)
+
+
+def game_end_branches(o):
+    """The end of the game (event 0x0E, 0x4E4A44, called directly on one
+    event record rewritten for each call: the goal [+0x8], the limit's index
+    [+0xA], its tick and the game's start [0x6DE4AC] chosen for the branch).
+    The goal 1 (rank 4 in one's home town) with the limit passed, the
+    player at rank 4, an AI merchant at rank 4 with the settings' [+0xD] at 0
+    (he doesn't count: a month later, the tick of the event record of index
+    the number of merchants), the same clamped to the limit, with 20
+    merchants (the record 0x14) and without a limit (index 14: the game's
+    uninitialized local, 0 here as in p3vita: the frame zeroed); the goal 2
+    (a mayor) with the limit passed, the player a mayor, an AI mayor that
+    doesn't count (a tick after the first event 2 of the queue), clamped,
+    without a limit (index 15), with 20 merchants and with no event 2; the
+    goal 3 (the Hanse's head) with the limit passed, the player its head, an
+    AI head that doesn't count (a tick after the first event 0x20 of the
+    array, clamped), without a limit (index 0x20) and with 20 merchants; the
+    goals 4 and 5 (the limit) before and at it; the goal 6 (the towns'
+    people) under and over it (the saves have less than 70000: town 0 gets
+    70000 more); and a goal 7 (none)."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    settings = o.u32(to.SETTINGS_POINTER)
+    ai = next(m for m in range(0x14, merchants) if o.u16(o.merchant(m) + 8))
+    people = sum(o.u32(o.town(t) + 0x2D4) for t in range(towns))
+    o.uc.hook_add(UC_HOOK_CODE, o._zero_frame, begin=0x4E4A44, end=0x4E4A44, user_data=0x30)
+    o.uc.ctl_remove_cache(0x4E4A44, 0x4E4A45)
+    print(f'player {player}, AI merchant {ai}, settings [+0xD] {o.u8(settings + 0xD)}, people {people}')
+
+    def during(o):
+        now = o.u32(WORLD + 0x14)
+        _, e = new_event(o, 0x10000, 0x0E)
+        events = o.u32(to.EVENTS)
+        old = {a: o.u8(a) for a in (settings + 0xD, ALDERMAN, o.town(0) + 0x6F1)}
+        old_start, old_over = o.u32(START_TICK), o.u32(GAME_OVER)
+        ranks = [o.merchant(m) + 0x39C + o.u8(o.merchant(m) + 0x19) for m in (player, ai)]
+        old_ranks = [o.u8(a) for a in ranks]
+        for a in ranks:
+            w8(o, a, 3)
+        L = GOAL_LIMIT
+
+        def goal(what, kind, index, tick, first):
+            w16(o, e + 8, kind)
+            w16(o, e + 0xA, index)
+            w32(o, e, tick)
+            w32(o, START_TICK, first)
+            w32(o, GAME_OVER, 1)
+            r = direct(o, 0x4E4A44, [e], ecx=to.EVENTS)
+            print(f'{what}: goal {kind}, limit {index}: {r}, tick {o.u32(e):#x}, [0x6DFC04] {o.u32(GAME_OVER)}')
+
+        def count20(what, kind):
+            w16(o, WORLD + 0xA, 0x14)
+            goal(what, kind, 13, now, now)
+            w16(o, WORLD + 0xA, merchants)
+
+        # Goal 1: rank 4.
+        goal('passed', 1, 0, now, now - L[0])
+        w8(o, ranks[0], 4)
+        goal('the player at rank 4', 1, 13, now, now)
+        w8(o, ranks[0], 3)
+        w8(o, ranks[1], 4)
+        w8(o, settings + 0xD, 0)
+        goal('an AI merchant at rank 4', 1, 13, now, now)
+        new = (MONTH_DAYS[o.u8(MONTH)] << 8) + o.u32(events + 0x18 * merchants) & 0xFFFFFFFF
+        goal('clamped', 1, 0, new - 2, new - 1 - L[0])
+        count20('20 merchants', 1)
+        goal('no limit', 1, 14, now, now - 0x100)
+        # Goal 2: a mayor.
+        goal('passed', 2, 0, now, now - L[0])
+        w8(o, o.town(0) + 0x6F1, ai)
+        goal('an AI mayor', 2, 13, now, now)
+        w8(o, settings + 0xD, old[settings + 0xD])
+        w8(o, o.town(0) + 0x6F1, player)
+        goal('the player a mayor', 2, 13, now, now)
+        w8(o, o.town(0) + 0x6F1, old[o.town(0) + 0x6F1])
+        tick2 = next(o.u32(a) for _, a in rt.events(o) if o.u16(a + 6) == 2)
+        goal('clamped', 2, 0, tick2 - 1, tick2 - L[0])
+        goal('no limit', 2, 15, now, now - 0x100000)
+        count20('20 merchants', 2)
+        twos = [a for _, a in rt.events(o) if o.u16(a + 6) == 2]
+        for a in twos:
+            w16(o, a + 6, 0x7F)
+        goal('no event 2', 2, 13, now, now)
+        for a in twos:
+            w16(o, a + 6, 2)
+        # Goal 3: the Hanse's head.
+        goal('passed', 3, 0, now, now - L[0])
+        w8(o, ALDERMAN, player)
+        goal('the player the head', 3, 13, now, now)
+        w8(o, ALDERMAN, ai)
+        w8(o, settings + 0xD, 0)
+        tick20 = o.u32(events + 0x18 * first_event_of(o, 0x20))
+        goal('an AI head, clamped', 3, 0, tick20 - 1, tick20 - L[0])
+        w8(o, settings + 0xD, old[settings + 0xD])
+        w8(o, ALDERMAN, old[ALDERMAN])
+        goal('no limit', 3, 0x20, now, now - 0x100000)
+        count20('20 merchants', 3)
+        # Goals 4 and 5: the limit; 6: the towns' people; 7: none.
+        goal('before', 4, 13, now, now)
+        goal('passed', 4, 0, now, now - L[0])
+        goal('before', 5, 13, now, now)
+        goal('passed', 5, 0, now, now - L[0])
+        goal('fewer people', 6, 16, now, now)
+        w32(o, o.town(0) + 0x2D4, o.u32(o.town(0) + 0x2D4) + GOAL_LIMIT[16])
+        goal('more people', 6, 16, now, now)
+        w32(o, o.town(0) + 0x2D4, o.u32(o.town(0) + 0x2D4) - GOAL_LIMIT[16])
+        goal('no goal', 7, 13, now, now)
+        for a, v in zip(ranks, old_ranks):
+            w8(o, a, v)
+        w32(o, START_TICK, old_start)
+        w32(o, GAME_OVER, old_over)
+    return during
+
+
+BUILD_DAYS = 0x672BB4  # u8 per building type: the days of works
+
+
+def free_captain(o):
+    """Takes the first captain out of the free list ([0x6DD880], linked by
+    [+0x0]) and returns him."""
+    c = o.u16(to.SHIPS + 0xE0)
+    w16(o, to.SHIPS + 0xE0, o.u16(o.u32(to.SHIPS) + 0x10 * c))
+    return c
+
+
+def siege_fire_branches(o):
+    """The rare events that go through the queue (0x4D85C0, called directly
+    with new events at the tick), then 0x4DB100 and the plague (0x4E9094)
+    called directly. The siege's fires 0x25: the first time on a wall
+    piece in works (100 less what is left of them), on a cell with no wall
+    piece, and burnt out with an empty burning list [0x76A] and with one
+    that doesn't hold it. The fires 0x26: a town out; buildings of the types
+    0x28, 0x32 and 0x33 (nothing); a merchant's without an office in the town
+    (0x5308A0 gives 0) and with one but not in its lists; a town's
+    building in works; one of type 0x29 with a merchant's owner (looked for
+    in the town's list [0x764]); one of no merchant not in [0x764] (looked
+    for twice); a town with [0x2C8] & 0x8000; and burnt out, not in the
+    burning list. The tax 0x31 of a town out. The monuments 0x38 of a town
+    out, of a merchant out, of a mayor with another event 0x38 later in the
+    queue (in a town with a monument), and in a town whose first building 0x2D in [0x764] is a
+    merchant's (no monument). Then 0x4DB100 with a town out, a record out,
+    and a building in an auction 0x36 with another lot (kept) and alone
+    (the auction removed). And the plague 0x4E9094 (its event at the head)
+    of a town out, and in a town whose first office has an administrator
+    (the first free captain, if it has none) when the tick & 0x7F is the
+    next office's: the administrator leaves (0x5098B0)."""
+    towns, offices, merchants, _ = o.counts()
+    now = o.u32(WORLD + 0x14)
+    days = lambda kind: o.u8(BUILD_DAYS + kind)
+    rec = lambda t, r: record_at(o, t, r)
+    kind = lambda t, r: o.u8(rec(t, r) + 3)
+    city = lambda t: [r for r, _, _ in rt.records_of(o, t, o.u16(o.town(t) + 0x764))]
+    outside = lambda t: [r for r in range(o.u16(o.town(t) + 0x776)) if r not in set(city(t))]
+    plain = lambda t, r: kind(t, r) not in (0x28, 0x29, 0x32, 0x33)
+    used = set()
+
+    def pick(test):
+        t = next(x for x in range(towns) if x not in used and test(x))
+        used.add(t)
+        return t
+    # T1: a wall piece and two buildings of the town with days of works.
+    t1 = pick(lambda t: any(days(kind(t, r)) for r, _, _ in rt.records_of(o, t, o.u16(o.town(t) + 0x768)))
+              and len([r for r in city(t) if plain(t, r) and days(kind(t, r))]) >= 2)
+    wall = next(r for r, _, _ in rt.records_of(o, t1, o.u16(o.town(t1) + 0x768)) if days(kind(t1, r)))
+    works, twenty_nine = [r for r in city(t1) if plain(t1, r) and days(kind(t1, r))][:2]
+    # T2: six buildings of the town, one out of its list [0x764], a merchant with an office and one without.
+    m_in = lambda t: next((m for m in rt.ai_with_office(o) if facilities_office(o, m, t) is not None), None)
+    m_out = lambda t: next((m for m in rt.ai_with_office(o) if facilities_office(o, m, t) is None), None)
+    t2 = pick(lambda t: len([r for r in city(t) if plain(t, r)]) >= 6 and o.u16(o.town(t) + 0x76A) == 0xFFFF
+              and any(plain(t, r) for r in outside(t)) and m_in(t) is not None and m_out(t) is not None)
+    c2 = [r for r in city(t2) if plain(t2, r)][:6]
+    held = next(r for r in outside(t2) if plain(t2, r))
+    # T3: a burning list of one building; T4: the auctions; T5, T6: the monuments; TP: the plague.
+    t3 = pick(lambda t: len([r for r in city(t) if plain(t, r)]) >= 2)
+    burning, other = [r for r in city(t3) if plain(t3, r)][:2]
+    t4 = pick(lambda t: len(city(t)) >= 3)
+    lots = city(t4)[:3]
+    monuments = lambda t: [r for r in city(t) if kind(t, r) == 0x2D]
+    t5 = pick(lambda t: monuments(t) and o.u8(rec(t, monuments(t)[0]) + 2) >= merchants)
+    t6 = pick(lambda t: monuments(t))
+    tp = pick(lambda t: len(town_offices(o, t)) >= 2)
+    ais = rt.ai_with_office(o)
+    m5, m6 = ais[0], ais[1]
+    print(f'T1 {t1} (wall {wall}, works {works}, 0x29 {twenty_nine}), T2 {t2} ({c2}, held {held}, merchants with '
+          f'an office {m_in(t2)}, without {m_out(t2)}), T3 {t3} ({burning}, {other}), T4 {t4} {lots}, T5 {t5}, '
+          f'T6 {t6}, TP {tp}; mayors {m5}, {m6}')
+    # The retouches.
+    w8(o, rec(t1, wall) + 6, 10)
+    w8(o, rec(t1, works) + 6, 10)
+    w8(o, rec(t1, twenty_nine) + 2, m5)
+    w8(o, rec(t1, twenty_nine) + 3, 0x29)
+    w8(o, rec(t1, twenty_nine) + 6, 0)  # 0x29 has no days of works: the game would divide by 0
+    for r, k in zip(c2, (0x28, 0x32, 0x33)):
+        w8(o, rec(t2, r) + 3, k)
+    w8(o, rec(t2, c2[3]) + 2, m_out(t2))
+    w8(o, rec(t2, c2[4]) + 2, m_in(t2))
+    w8(o, rec(t2, held) + 2, 0xFF)
+    unlink_record(o, t3, burning)
+    w16(o, o.town(t3) + 0x76A, burning)
+    w32(o, o.town(t3) + 0x2C8, o.u32(o.town(t3) + 0x2C8) | 0x8000)
+    w8(o, o.town(t5) + 0x6F1, m5)
+    w8(o, o.town(t6) + 0x6F1, m6)
+    w8(o, rec(t6, monuments(t6)[0]) + 2, m6)
+    first = o.u16(o.town(tp) + 0x784)
+    after = o.u16(o.office(first) + 0x2CA)
+    if o.u16(o.office(first) + 0x2F2) >= o.u16(to.SHIPS + 0xF2):
+        w16(o, o.office(first) + 0x2F2, free_captain(o))
+    print(f'TP office {first} (next {after}): administrator {o.u16(o.office(first) + 0x2F2)}')
+
+    def during(o):
+        def fire(k, t, r, first, life=0, x=None, y=0):
+            if x is None:
+                x, y = (o.u8(rec(t, r)), o.u8(rec(t, r) + 1)) if t < towns else (0, 0)
+            new_event_at(o, now, k, w8=r, wA=life, wC=x, wE=y, b10=t, b11=first)
+        fire(0x25, t1, wall, 1)
+        fire(0x25, t2, c2[5], 1, x=0x100)
+        fire(0x25, t2, c2[5], 0)
+        fire(0x25, t3, other, 0)
+        fire(0x26, towns, 0, 1)
+        for r in c2[:5]:
+            fire(0x26, t2, r, 1)
+        fire(0x26, t2, held, 1)
+        fire(0x26, t1, works, 1)
+        fire(0x26, t1, twenty_nine, 1)
+        fire(0x26, t3, other, 0, life=50)
+        fire(0x26, t2, c2[5], 0)
+        new_event_at(o, now, 0x31, d8=10000, bC=towns)
+        new_event_at(o, now, 0x38, b8=towns, b9=0)
+        new_event_at(o, now, 0x38, b8=t5, b9=merchants)
+        new_event_at(o, now, 0x38, b8=t5, b9=m5)
+        new_event_at(o, now + 0x10000, 0x38, b8=t5, b9=m5)
+        new_event_at(o, now, 0x38, b8=t6, b9=m6)
+        direct(o, 0x4D85C0, [now], ecx=to.EVENTS)
+        print(f'T1 burning list {[r for r, _, _ in rt.records_of(o, t1, o.u16(o.town(t1) + 0x76A))]}')
+        # 0x4DB100.
+        new_event_at(o, now + 0x10000, 0x36, w8=lots[0] | 0x8000, wA=lots[1] | 0x8000, wC=0xFFFF, b15=t4)
+        _, alone = new_event_at(o, now + 0x10000, 0x36, w8=lots[2] | 0x8000, wA=0xFFFF, wC=0xFFFF, b15=t4)
+        direct(o, 0x4DB100, [towns, lots[0]], ecx=to.EVENTS)
+        direct(o, 0x4DB100, [t4, o.u16(o.town(t4) + 0x776)], ecx=to.EVENTS)
+        direct(o, 0x4DB100, [t4, lots[0]], ecx=to.EVENTS)
+        direct(o, 0x4DB100, [t4, lots[2]], ecx=to.EVENTS)
+        print(f'the lone auction: kind {o.u16(alone + 6):#x}')
+        # The plague.
+        for k, (t, at) in enumerate(((towns, 0x100), (tp, 0x200))):
+            i, a = new_event(o, 0x30000, 0x1C, b8=1, b9=1, bA=1, bB=1, dC=now + 0x30000, w10=0, w12=0x7FF0, b16=t)
+            rt.move_event(o, i, a, (now & ~0xFF) - at + 0x10)
+            tick = (now & ~0x7F) | (after & 0x7F)
+            w32(o, WORLD + 0x14, tick)
+            print(f'plague in {t} at {tick:#x}: {direct(o, 0x4E9094, [], ecx=to.EVENTS)}')
+            w32(o, WORLD + 0x14, now)
+        print(f'TP office {first}: administrator {o.u16(o.office(first) + 0x2F2)}')
+    return during
+
+
+SEASON_WARES = (1, 5, 7, 9, 0xC, 0xE, 0x12)  # the wares the pirates' season looks at (0x4E0334)
+
+
+def pirate_event_branches(o):
+    """The pirates' events, direct calls. 0x4DFD44 (event 0x1E, on one event
+    record rewritten for each call): the state 0 over (the town's [0x6F0] to
+    0xFF) without [0x2C8] & 0x600 and with it and the other classes' moods
+    over −10 (the state 4); the state 1 going on, and over with [0x2C8] &
+    0x600 and a mood of −20 (the town's [0x2C6] back, the bit 0x2000000
+    off); the state 2 over; and a state 5. 0x4E0334 (event 0x1F, the save's,
+    with its first slot the town): before March (day 30); a town of six very
+    low moods (kind 4); one of high moods with a pirate object of 600 (kind
+    2); one with a business of more than 950 ([0x848 + 16·k]) and 200 of its
+    workers (kind 1) when every town with [0x2C8] & 0x40 but the last has the
+    player for mayor and that one an AI merchant (the operation 0x84 skips
+    the human mayors and takes the AI one's names). The day 100 and, but for the
+    kind 1, no business over 950 and no ware short ([0x430 + 4·w]), so that
+    the kind stays. 0x4EA594 (event 0x30 at the head): with no task tick
+    [+0x8] and, with an AI merchant the Hanse's head, of kind 5. Saves 3, 5
+    and 7 (save 1 has no world records)."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    now = o.u32(WORLD + 0x14)
+    (i1f, e1f), = events_of(o, 0x1F)
+    plain = [t for t in range(towns) if not o.u32(o.town(t) + 0x2C8) & 0x40]
+    hanse = [t for t in range(towns) if o.u32(o.town(t) + 0x2C8) & 0x40]
+    ta, tb, tc = plain[:3]
+    ai = next(m for m in range(merchants) if o.u16(o.merchant(m) + 8))
+    pirate = next(o.u32(PIRATES + 4 * k) for k in range(5) if o.u32(PIRATES + 4 * k))
+    records = o.u16(RECORD_COUNT)
+    if not records:
+        raise RuntimeError('no world records (the businesses): the kind 1 needs one')
+    record = lambda r: o.u32(WORLD_RECORDS) + 0x14 * r
+    others = sum(o.u16(record(r) + 4) for r in range(1, records) if o.u8(record(r) + 6) == 4)
+    workers = max(200, others // 19 + 1)
+    print(f'towns {ta}, {tb}, {tc}; with [0x2C8] & 0x40 {hanse}; AI merchant {ai}; the event 0x1F {i1f}; '
+          f'businesses 4 elsewhere {others}, here {workers}')
+
+    def keep(fields, saved):
+        """Writes (address, size, value) and returns the old ones to put back."""
+        for a, size, v in fields:
+            saved.append((a, size, (o.u8, o.u16, o.u32)[(1, 2, 4).index(size)](a)))
+            (w8, w16, w32)[(1, 2, 4).index(size)](o, a, v)
+        return saved
+
+    def restore(saved):
+        for a, size, v in reversed(saved):
+            (w8, w16, w32)[(1, 2, 4).index(size)](o, a, v)
+
+    def during(o):
+        # Event 0x1E.
+        _, e = new_event(o, 0x10000, 0x1E)
+        ta_flags = o.u32(o.town(ta) + 0x2C8)
+
+        def pirates(what, state, over, flags=0, moods=(0, 0, 0)):
+            saved = keep([(o.town(ta) + 0x2C8, 4, (ta_flags & ~0x600) | flags), (o.town(ta) + 0x6F0, 1, 3)] +
+                         [(o.town(ta) + 0x308 + 2 * k, 2, v & 0xFFFF) for k, v in enumerate(moods)], [])
+            tick = now - 1 if over else now + 0x1000
+            for a, v in ((e + 8, tick), (e + 0xC, tick)):
+                w32(o, a, v)
+            for a, v in ((e + 0x10, state), (e + 0x11, ta), (e + 0x14, 5), (e + 0x15, 2), (e + 0x16, 0xFF),
+                         (e + 0x17, 0)):
+                w8(o, a, v)
+            w16(o, e + 0x12, 0x1234)
+            r = direct(o, 0x4DFD44, [e], ecx=to.EVENTS)
+            print(f'{what}: state {state}: {r}, now state {o.u8(e + 0x10)}, town [0x6F0] {o.u8(o.town(ta) + 0x6F0):#x}, '
+                  f'[0x2C6] {o.u16(o.town(ta) + 0x2C6):#x}, [0x2C8] {o.u32(o.town(ta) + 0x2C8):#x}')
+            restore(saved)
+        pirates('over, no 0x600', 0, True)
+        pirates('over, the pirates win', 0, True, 0x200)
+        pirates('going on', 1, False)
+        saved = keep([(o.town(ta) + 0x2C6, 2, o.u16(o.town(ta) + 0x2C6))], [])
+        pirates('over, a mood of -20', 1, True, 0x2000200, (0, 0, -20))
+        restore(saved)
+        pirates('over', 2, True)
+        pirates('no state', 5, False)
+        # Event 0x1F.
+
+        def season(what, town, day=100):
+            saved = keep([(DAY, 2, day)] + [(e1f + 8 + k, 1, 0xFF) for k in range(8)] +
+                         [(e1f + 0x10 + k, 1, 0x11 + k) for k in range(8)], [])
+            w8(o, e1f + 8, town)
+            r = direct(o, 0x4E0334, [i1f], ecx=to.EVENTS)
+            print(f'{what}: {r}, tick {o.u32(e1f):#x}, last event {[hex(o.u16(a + 6)) for _, a in events_of(o, 0x1E)]}')
+            w16(o, DAY, saved[0][2])
+
+        def quiet(t, keep_business=None):
+            a = o.town(t)
+            fields = [(a + 0x430 + 4 * w, 4, 0) for w in SEASON_WARES]
+            fields += [(a + 0x848 + 16 * k, 2, 0) for k in range(4, 0x15) if k != keep_business]
+            return keep(fields, [])
+        season('before March', ta, day=30)
+        saved = quiet(tb)
+        keep([(o.town(tb) + 0x300 + 2 * k, 2, 0xFFE0) for k in (0, 1, 2, 4, 5, 6)], saved)
+        season('kind 4', tb)
+        restore(saved)
+        saved = quiet(tb)
+        keep([(o.town(tb) + 0x300 + 2 * k, 2, 30) for k in range(3)] + [(pirate + 0x16, 2, 600)], saved)
+        season('kind 2', tb)
+        restore(saved)
+        saved = quiet(tc, 4)
+        keep([(o.town(tc) + 0x848 + 16 * 4, 2, 1000), (record(0) + 4, 2, workers), (record(0) + 6, 1, 4),
+              (record(0) + 7, 1, o.u8(o.town(tc) + 0x2C0))] + [(o.town(t) + 0x6F1, 1, player) for t in hanse[:-1]] +
+             [(o.town(hanse[-1]) + 0x6F1, 1, ai)], saved)
+        season('kind 1, human mayors but one', tc)
+        restore(saved)
+        # Event 0x30.
+        for k, (task, head) in enumerate(((0, 0xFC), (now, ai))):
+            i, a = new_event(o, 0x20000, 0x30, d8=task, bC=0, b12=0, b13=5, b14=0, b15=0)
+            rt.move_event(o, i, a, now - 0x100 * (k + 1))
+            old = o.u8(ALDERMAN)
+            w8(o, ALDERMAN, head)
+            print(f'0x30 with task {task:#x}, head {head}: {direct(o, 0x4EA594, [], ecx=to.EVENTS)}')
+            w8(o, ALDERMAN, old)
+    return during
+
+
+def set_fields(o, fields):
+    """Writes (address, size, value) and returns the old values (restore_fields puts them back)."""
+    saved = []
+    for a, size, v in fields:
+        k = (1, 2, 4).index(size)
+        saved.append((a, size, (o.u8, o.u16, o.u32)[k](a)))
+        (w8, w16, w32)[k](o, a, v)
+    return saved
+
+
+def restore_fields(o, saved):
+    for a, size, v in reversed(saved):
+        (w8, w16, w32)[(1, 2, 4).index(size)](o, a, v)
+
+
+def council_task_branches(o):
+    """Direct calls. The council's vote 0x4E9A94 (its event 0x2E at the head;
+    the world's tick with its low byte 0, the votes shared, or 0xFF with the
+    event's, the count): of a town out; the extra tax (proposal 0) with a
+    recent one ([0x6F8]) and the share between 10 and 90, over 90 (nothing
+    paid) and under 10 (a million); the wall (1) with [+0x15], with works
+    pending, and with none and [0x78C] = [0x78E] (0x4FAC70); [0x9A0] (2)
+    with [0x2C8] & 0x10 and the weight between, under 100 and over 0x398;
+    the tax per head (3) under and over the town's rate; a proposal 4. Then
+    the count, the proposals passed: the extra tax (an event 0x31 a day
+    later), the wall with the point 1 out of the grid (the side 2, 0x522B20),
+    [0x9A0] under 0x8000 and at it, the tax per head (0x52A150). Whether a
+    Hanse task still stands, 0x532C50 (on a new event): past the queue, an
+    event of another kind, a task with the merchant [+0xD] the number of
+    merchants; the kind 1 with a town out and one with [0x76C] & 0x8000; the
+    kind 2 with a ship out, not a pirate's (0x12), without a captain, with
+    the captain's names and with another first or family name; the kind 3
+    with the object 5 and a missing one; the kind 4 with a town out; a kind
+    5. And 0x4EAFE4 (the event 0x32 at the head) of no merchant, with [+0xE]
+    at 0x3F: given to the AI merchants with [+0x37] 1..3 (two of them set
+    to 2), and with none."""
+    towns, _, merchants, ships = o.counts()
+    now = o.u32(WORLD + 0x14)
+    captains = o.u16(to.SHIPS + 0xF2)
+    inside = lambda t, i: (o.u8(o.town(t) + 0x7B0 + 2 * i) < o.u32(o.town(t) + 0x7A8)
+                           and o.u8(o.town(t) + 0x7B1 + 2 * i) < o.u32(o.town(t) + 0x7AC))
+    tc = next(t for t in range(towns) if inside(t, 2))
+    a = o.town(tc)
+    people = o.u32(a + 0x2D4)
+    ais = [m for m in range(merchants) if o.u16(o.merchant(m) + 8)]
+    s = merchant_ships(o, o.u32(to.PLAYER))[0]
+    c = next(k for k in range(captains) if o.u8(o.u32(to.SHIPS) + 0x10 * k + 2) != 0)
+    first, family = o.u8(o.u32(to.SHIPS) + 0x10 * c + 2), o.u8(o.u32(to.SHIPS) + 0x10 * c + 3)
+    missing = next(k for k in range(5) if not o.u32(PIRATES + 4 * k))
+    print(f'council in {tc} ({people} people, [0x766] {o.u16(a + 0x766)} of {o.u16(a + 0x776)}, [0x78C] '
+          f'{o.u16(a + 0x78C)}, [0x78E] {o.u16(a + 0x78E)}, rate {o.u8(a + 0x6F8)}); ship {s}, captain {c} '
+          f'({first}, {family}); no pirate object {missing}')
+
+    def during(o):
+        i, e = new_event(o, 0x20000, 0x2E)
+        rt.move_event(o, i, e, now - 0x100)
+        day = now & ~0xFF
+
+        def vote(what, proposal, amount=0, flag=0, rate=0, result=False, town=tc, fields=()):
+            saved = set_fields(o, [(WORLD + 0x14, 4, day - 1 if result else day)] + list(fields))
+            w32(o, e, day - 1 if result else day)
+            w32(o, e + 8, amount)
+            for k, v in ((0xC, town), (0xD, proposal), (0xE, 0), (0xF, 0), (0x10, 5 if result else 0),
+                         (0x11, 1 if result else 0), (0x12, 0), (0x13, 0), (0x14, rate), (0x15, flag), (0x16, 0xFF)):
+                w8(o, e + k, v)
+            r = direct(o, 0x4E9A94, [], ecx=to.EVENTS)
+            print(f'{what}: {r}, for {o.u8(e + 0xE)}, against {o.u8(e + 0xF)}; [0x9A0] {o.u16(a + 0x9A0):#x}, '
+                  f'[0x766] {o.u16(a + 0x766)}, rate {o.u8(a + 0x6F8)}')
+            restore_fields(o, saved[:1])
+            return saved[1:]
+        vote('a town out', 0, town=towns)
+        recent = (day & ~0xFF) | o.u8(a + 0x6F8)
+        restore_fields(o, vote('the tax, recent', 0, 30000, fields=[(a + 0x6F8, 4, recent), (a + 0x6F4, 4, 20000)]))
+        old = o.u8(a + 0x6F8)
+        restore_fields(o, vote('the tax, nothing', 0, 0, fields=[(a + 0x6F8, 4, old)]))
+        restore_fields(o, vote('the tax, a million', 0, 1000000, fields=[(a + 0x6F8, 4, old)]))
+        vote('the wall, [+0x15]', 1, flag=1)
+        restore_fields(o, vote('the wall, works', 1, fields=[(a + 0x766, 2, 0)]))
+        restore_fields(o, vote('the wall, nothing pending', 1, fields=[
+            (a + 0x766, 2, 0xFFFF), (a + 0x78C, 2, o.u16(a + 0x78E))]))
+        between = (2 * people + 0x200 - 500) // 203
+        restore_fields(o, vote('[0x9A0], 0x10', 2, fields=[(a + 0x2C8, 4, o.u32(a + 0x2C8) | 0x10), (a + 0x9A0, 2, between)]))
+        restore_fields(o, vote('[0x9A0], under 100', 2, fields=[(a + 0x2C8, 4, o.u32(a + 0x2C8) & ~0x10),
+                                                                 (a + 0x9A0, 2, (people + 0x200) // 203 + 2)]))
+        restore_fields(o, vote('[0x9A0], over 0x398', 2, fields=[(a + 0x2C8, 4, o.u32(a + 0x2C8) & ~0x10),
+                                                                  (a + 0x9A0, 2, 0)]))
+        restore_fields(o, vote('per head, under', 3, rate=5, fields=[(a + 0x6F8, 1, 10)]))
+        restore_fields(o, vote('per head, over', 3, rate=12, fields=[(a + 0x6F8, 1, 10)]))
+        vote('a proposal 4', 4)
+        vote('passed: the tax', 0, 50000, result=True)
+        print(f'events 0x31: {[(i, hex(o.u32(x))) for i, x in events_of(o, 0x31)]}')
+        restore_fields(o, vote('passed: the wall', 1, result=True, fields=[(a + 0x7B2, 1, 0xFF)]))
+        vote('passed: [0x9A0]', 2, result=True, fields=[(a + 0x9A0, 2, 100)])
+        vote('passed: [0x9A0] at 0x8000', 2, result=True, fields=[(a + 0x9A0, 2, 0x8000)])
+        vote('passed: per head', 3, rate=7, result=True)
+        # 0x532C50 on a new event.
+        j, t = new_event(o, 0x30000, 0x32, bD=0xFF)
+
+        def stands(what, fields=(), index=None):
+            saved = set_fields(o, list(fields))
+            r = direct(o, 0x532C50, [j if index is None else index], ecx=WORLD) & 0xFF
+            print(f'stands, {what}: {r}')
+            restore_fields(o, saved)
+        stands('past the queue', index=o.u16(EVENT_COUNT))
+        stands('another kind', [(t + 6, 2, 0x31)])
+        stands('the merchant the count', [(t + 0xD, 1, merchants)])
+        stands('kind 1, a town out', [(t + 0xC, 1, 1), (t + 0x10, 1, towns)])
+        stands('kind 1, 0x8000', [(t + 0xC, 1, 1), (t + 0x10, 1, tc), (a + 0x76C, 4, o.u32(a + 0x76C) | 0x8000)])
+        ship = [(o.ship(s) + 0x134, 2, 0x12), (o.ship(s) + 0x42, 2, c)]
+        kind2 = [(t + 0xC, 1, 2), (t + 0x10, 2, s), (t + 0x12, 2, first), (t + 0x14, 2, family)]
+        stands('kind 2, a ship out', kind2 + [(t + 0x10, 2, ships)])
+        stands('kind 2, not a pirate', kind2 + ship + [(o.ship(s) + 0x134, 2, 0)])
+        stands('kind 2, no captain', kind2 + ship + [(o.ship(s) + 0x42, 2, captains)])
+        stands('kind 2, the names', kind2 + ship)
+        stands('kind 2, another first name', kind2 + ship + [(t + 0x12, 2, first ^ 1)])
+        stands('kind 2, another family name', kind2 + ship + [(t + 0x14, 2, family ^ 1)])
+        stands('kind 3, the object 5', [(t + 0xC, 1, 3), (t + 0x10, 1, 5)])
+        stands('kind 3, a missing object', [(t + 0xC, 1, 3), (t + 0x10, 1, missing)])
+        stands('kind 4, a town out', [(t + 0xC, 1, 4), (t + 0x12, 1, towns)])
+        stands('kind 5', [(t + 0xC, 1, 5)])
+        # 0x4EAFE4 with the event 0x32 at the head.
+        for k, willing in enumerate((ais[1:3], [])):
+            n, h = new_event(o, 0x30000, 0x32, bC=0, bD=0xFF, bE=0x3F, bF=1, b14=0xEE)
+            rt.move_event(o, n, h, now - 0x200 * (k + 1))
+            saved = set_fields(o, [(o.merchant(m) + 0x37, 1, 2 if m in willing else 0) for m in ais])
+            r = direct(o, 0x4EAFE4, [], ecx=to.EVENTS)
+            print(f'0x4EAFE4 with {willing}: {r}, merchant {o.u8(h + 0xD)}, tick {o.u32(h):#x}')
+            restore_fields(o, saved)
+    return during
+
+
+def expedition_branches(o):
+    """The expeditions' event 0x12 (0x4E6A54, called directly): a new one
+    with a convoy out of the table (nothing), and the save's expedition
+    arriving, the player's (convoy and ships, as retouch_mail.py
+    expedition does: the report 0x63 reaches him), without a guide ([+0x10]
+    0xFFFF: its name from 0x512B20 with 0xFFFF). Saves with an expedition
+    under way: 7 and the tutorials."""
+    found = events_of(o, 0x12)
+    if not found:
+        raise RuntimeError('no expedition under way (event 0x12)')
+    (i, a), ships, player = found[0], o.counts()[3], o.u32(to.PLAYER)
+    convoy = o.u32(to.SHIPS + 8) + 0x3C * o.u16(a + 8)
+    members, s = [], o.u16(convoy + 0xA)
+    while s < ships and len(members) < 50:
+        members.append(s)
+        s = o.u16(o.ship(s) + 6)
+    print(f'expedition {i}: convoy {o.u16(a + 8)} of {o.u8(convoy)}, guide {o.u16(convoy + 0x10)}, ships {members}')
+    w8(o, convoy, player)
+    for s in members:
+        w8(o, o.ship(s), player)
+    w8(o, o.merchant(player) + 0x3A, 0)  # he keeps the trading information (class 3: 0x63)
+    w16(o, convoy + 0x10, 0xFFFF)
+    w16(o, a + 0xA, 4)
+
+    def during(o):
+        _, e = new_event(o, 0x30000, 0x12, w8=o.u16(CONVOY_COUNT), wA=4)
+        print(f'a convoy out: {direct(o, 0x4E6A54, [e], ecx=to.EVENTS)}')
+        print(f'the expedition without a guide: {direct(o, 0x4E6A54, [a], ecx=to.EVENTS)}')
+    return during
+
+
+SCRATCH_LETTER = SCRATCH + 0xC0  # a letter's 0x10 bytes (0x4D6530)
+
+
+def mail_branches(o):
+    """Sending a letter, 0x4D6530 (called directly with the letter in
+    scratch globals; the oracle lets the call run as it does the connected
+    ones): of type 0x86 to the chronicle (which keeps any type: nothing),
+    to a merchant past the merchants
+    (nothing), to −3 (the owners of the offices of the town [+0x5]: a town
+    with an office of the player, who keeps it), and to the chronicle (−2)
+    with the free list's head past the entries (0x4D6B40 grows the mailbox
+    and brings the head down to the count first)."""
+    merchants, player = o.counts()[2], o.u32(to.PLAYER)
+    t = next(o.u8(o.office(f) + 0x2C6) for f in rt.merchant_offices(o, player))
+    print(f'the player {player} has an office in {t}')
+
+    def during(o):
+        at = _trampolines.get((0x4D6530, 2, False), TRAMPOLINES + 0x40 * len(_trampolines))
+        to.MAIL_SITES.add(at + 4 * 2 + 5)
+
+        def send(what, merchant, kind, town=0xFF):
+            o.uc.mem_write(SCRATCH_LETTER, bytes([0, 0x80, 0xFF, 0xFF, kind, town, 0xFF, 0xFF]) + bytes(range(1, 9)))
+            direct(o, 0x4D6530, [merchant & 0xFFFFFFFF, SCRATCH_LETTER], ecx=MAILBOX)
+            print(f'{what}: free {o.u16(MAILBOX + 4)}, count {o.u16(MAILBOX + 6)}, chronicle {o.u16(MAILBOX + 8)}, '
+                  f'the player\'s first {o.u16(o.merchant(player) + 0xA)}, the letter {o.u32(SCRATCH_LETTER):#x}')
+        send('type 0x86 to the chronicle', -2, 0x86)
+        send('a merchant out', merchants, 0x06)
+        send('to the town', -3, 0x06, t)
+        w16(o, MAILBOX + 4, 0xFFFF)
+        send('the chronicle, the free head past', -2, 0x06)
+    return during
+
+
+def site_start_houses(o):
+    """0x500F50 (where to start looking for a site; called directly on an
+    office, x and y in scratch globals) with house types (0x15 on), which
+    only the interface asks for (0x41B7B2): the office with the most houses
+    of a type in its list [0x2D0] (two or more), n = 0 (the second) and n = 5
+    (the last one), and
+    a type it doesn't have (x and y as they were)."""
+    towns, offices, merchants, _ = o.counts()
+    best = None  # (count, office, town, houses, type)
+    for f in range(offices):
+        t = o.u8(o.office(f) + 0x2C6)
+        if o.u16(o.office(f) + 0x2C4) >= merchants or t >= towns:
+            continue
+        houses = [(r, o.u8(record_at(o, t, r) + 3)) for r, _, _ in rt.records_of(o, t, o.u16(o.office(f) + 0x2D0))]
+        kinds = [k for _, k in houses]
+        for k in set(kinds):
+            if k >= 0x15 and kinds.count(k) >= 2 and (best is None or kinds.count(k) > best[0]):
+                best = (kinds.count(k), f, t, houses, k)
+    if best is None:
+        raise RuntimeError('no office with two houses of a type')
+    _, f, t, houses, kind = best
+    kinds = [k for _, k in houses]
+    other = next(k for k in range(0x15, 0x29) if k not in kinds)
+    print(f'office {f} in {t}: houses {houses}; type {kind:#x}, another {other:#x}')
+
+    def during(o):
+        for n, k in ((0, kind), (5, kind), (0, other)):
+            w8(o, SCRATCH_X, 0x11)
+            w8(o, SCRATCH_Y, 0x22)
+            direct(o, 0x500F50, [SCRATCH_X, SCRATCH_Y, n, k], ecx=o.office(f))
+            print(f'type {k:#x}, n {n}: ({o.u8(SCRATCH_X)}, {o.u8(SCRATCH_Y)})')
+    return during
+
+
+def ship_trade_branches(o):
+    """Direct calls. 0x526AA0 (a captain out of a town's list) on a town
+    with an empty list and with a captain who isn't in it. 0x519920 (an AI
+    ship buys what to take to a town) with the ware 0 of its town at 2000 and
+    thresholds below 0 (−400000..−100000), which no game has: 0x52F030 then
+    asks for more than the store has, and the purchase is cut to it; the
+    other wares' thresholds over their stores (0x52F030 gives 0), and the
+    destination with nothing of the ware and its thresholds 0 at 500000 and
+    1 at 1000000 (the margin positive)."""
+    towns, _, merchants, ships = o.counts()
+    captains = o.u16(to.SHIPS + 0xF2)
+    empty = next(t for t in range(towns) if o.u16(o.town(t) + 0x82E) >= captains)
+    listed = next(t for t in range(towns) if o.u16(o.town(t) + 0x82E) < captains)
+    head = o.u16(o.town(listed) + 0x82E)
+    s = next(k for k in range(ships) if o.u8(o.ship(k)) < merchants and o.u16(o.merchant(o.u8(o.ship(k))) + 8)
+             and o.u16(o.ship(k) + 0x134) in (0, 1, 2, 3) and o.u8(o.ship(k) + 0x39) < towns)
+    here = o.u8(o.ship(s) + 0x39)
+    there = next(t for t in range(towns) if t != here)
+    print(f'captains: town {empty} without, town {listed} with {head} first; ship {s} of '
+          f'{o.u8(o.ship(s))} in {here}, to {there}')
+
+    def during(o):
+        print(f'0x526AA0, empty: {direct(o, 0x526AA0, [0], ecx=o.town(empty)) & 0xFF}')
+        # A captain not in the list: the list walked to its end.
+        chain, c = [], head
+        while c < captains and len(chain) < 64:
+            chain.append(c)
+            c = o.u16(o.u32(to.SHIPS) + 0x10 * c)
+        stranger = next(k for k in range(captains) if k not in chain)
+        print(f'0x526AA0, {stranger} not in {chain[:8]}: {direct(o, 0x526AA0, [stranger], ecx=o.town(listed)) & 0xFF}')
+        a, b = o.town(here), o.town(there)
+        fields = [(a + 4, 4, 2000)] + [(a + 0x4F0 + 4 * k, 4, (-400000 + 100000 * k) & 0xFFFFFFFF) for k in range(4)]
+        for w in range(1, 24):
+            fields += [(a + 0x4F0 + 16 * w, 4, 100000000), (a + 0x4F4 + 16 * w, 4, 100000000)]
+        fields += [(b + 4, 4, 0), (b + 0x670, 4, 0), (b + 0x310, 4, 0), (b + 0xC4, 4, 0), (b + 0x64, 4, 0),
+                   (b + 0x4F0, 4, 500000), (b + 0x4F4, 4, 1000000)]
+        set_fields(o, fields)
+        direct(o, 0x519920, [there], ecx=o.ship(s))
+        print(f'0x519920: the town has {o.u32(a + 4)} of ware 0 left, the ship {o.u32(o.ship(s) + 0x54)}')
+    return during
+
+
+def ship_ai_branches(o):
+    """0x519BA0 (may the ship sail?) called directly on an AI ship that may,
+    in the states 11 to 15 (12..14 can't); 0x501BE0 (a convoy recalculated)
+    called directly with its guide in the state 1 and another ship with a
+    [+0x138] over the convoy's [+0x16] (it takes it); and a tick of the
+    world with the player's first ship in port in the state 4 (to the repair
+    yard: 0x506A19 counts the player's ships, [0x6DD8A0]), recording the
+    ships' update 0x506720."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    docked = lambda k: o.u16(o.ship(k) + 0x134) in (0, 1, 2, 3, 5) and o.u8(o.ship(k) + 0x39) < towns
+    able = next(k for k in range(ships) if o.u8(o.ship(k)) < merchants and o.u16(o.merchant(o.u8(o.ship(k))) + 8)
+                and docked(k) and direct(o, 0x519BA0, [], ecx=o.ship(k)) & 0xFF)
+    for c in range(o.u16(CONVOY_COUNT)):
+        a = convoy_at(o, c)
+        guide, members, s = o.u16(a + 0x10), [], o.u16(a + 0xA)
+        while s < ships and len(members) < 50:
+            members.append(s)
+            s = o.u16(o.ship(s) + 6)
+        if guide < ships and len(members) >= 2:
+            break
+    else:
+        raise RuntimeError('no convoy of two ships with a guide')
+    other = next(k for k in members if k != guide)
+    mine = next(k for k in merchant_ships(o, player) if docked(k))
+    print(f'ship {able} may sail; convoy {c} led by {guide}, ships {members}; the player\'s ship {mine} in '
+          f'{o.u8(o.ship(mine) + 0x39)}, state {o.u16(o.ship(mine) + 0x134)}')
+
+    def during(o):
+        state = o.u16(o.ship(able) + 0x134)
+        for k in range(11, 16):
+            w16(o, o.ship(able) + 0x134, k)
+            print(f'0x519BA0 in the state {k}: {direct(o, 0x519BA0, [], ecx=o.ship(able)) & 0xFF}')
+        w16(o, o.ship(able) + 0x134, state)
+        a = convoy_at(o, c)
+        w16(o, o.ship(guide) + 0x134, 1)
+        w16(o, o.ship(other) + 0x138, o.u16(a + 0x16) + 0x100)
+        direct(o, 0x501BE0, [], ecx=a)
+        print(f'convoy {c}: state {o.u16(a + 0x12)}, [+0x16] {o.u16(a + 0x16):#x}')
+        w16(o, o.ship(mine) + 0x134, 4)
+        count = o.u16(to.SHIPS + 0x100)
+        o.advance_tick()
+        print(f'the player\'s ship {mine}: state {o.u16(o.ship(mine) + 0x134)}; [0x6DD8A0] {count} → '
+              f'{o.u16(to.SHIPS + 0x100)}')
+    return during
+
+
+def ship_delete_branches(o):
+    """0x507FB0 (a ship deleted; called directly on the ships object): a
+    ship out of the table, the first of the free list [0xE2] (nothing more),
+    and a pirate's ship (not a merchant's: out of the pirates' lists, the
+    yard lists searched from town 5)."""
+    ships = o.counts()[3]
+    free = o.u16(FREE_SHIP)
+    if free >= ships:
+        raise RuntimeError('no free ship slot')
+    k, pirate_ship = next((k, s) for k, _ in pirates(o) for s in pirate_ships(o, k))
+    print(f'free slot {free}; pirate {k}\'s ship {pirate_ship} (convoy {o.u16(o.ship(pirate_ship) + 8)}, state '
+          f'{o.u16(o.ship(pirate_ship) + 0x134):#x})')
+
+    def during(o):
+        for s in (ships, free, pirate_ship):
+            direct(o, 0x507FB0, [s], ecx=to.SHIPS)
+            print(f'0x507FB0 on {s}: free {o.u16(FREE_SHIP)}, pirate {k}\'s first {o.u16(o.u32(PIRATES + 4 * k) + 0xC)}')
+    return during
+
+
+def pursue_branches(o):
+    """The chase 0x50B030 (called directly on the ships object) of an AI
+    ship at sea, its target [+0x3A] and fields set for each call: in the
+    state 0x11; raiding ([+0x15C]) a ship in port, one in the state 0x13
+    and one at sea far away; not raiding, a merchant's ship at sea, and in
+    the state 0x16 a pirate convoy's ship that isn't in the list by x and a
+    pirate far away (it keeps it); and near (20, 10 away) a raiding ship at
+    sea: a cog at a tick & 7 of 1 and of 0 (the new heading, 0x5172A0), a
+    snaikka at 0, and a cog in the shallows (it gives up). The calls near
+    come first, so that the ship has a route to lose. Not the battle
+    (under 0x190: 0x50B250, which p3vita hasn't)."""
+    towns, _, merchants, ships = o.counts()
+    convoys = o.u16(CONVOY_COUNT)
+    state = lambda s: o.u16(o.ship(s) + 0x134)
+    at_sea = [s for s in range(ships) if state(s) == 0xF and o.u16(o.ship(s) + 8) >= convoys
+              and o.u8(o.ship(s)) < merchants and not o.u8(o.ship(s) + 0x15C)]
+    chaser, target = at_sea[0], at_sea[1]
+    docked = next(s for s in range(ships) if state(s) in (0, 1, 2, 3, 5) and o.u8(o.ship(s) + 0x39) < towns)
+    loose = next(s for k, _ in pirates(o) for s in pirate_ships(o, k)
+                 if o.u16(o.ship(s) + 0xA) >= ships and o.u16(o.ship(s) + 0xC) >= ships)
+    listed = next((s for k, _ in pirates(o) for s in pirate_ships(o, k)
+                   if o.u16(o.ship(s) + 0xA) < ships or o.u16(o.ship(s) + 0xC) < ships), None)
+    reach = o.u32(to.SHIPS + 0xFC) & 0xFFFF
+    if reach < 500 or listed is None:
+        raise RuntimeError(f'the chase reaches {reach}, a pirate in the list by x {listed}')
+    print(f'chaser {chaser}, target at sea {target}, in port {docked}, a pirate out of the list {loose} (state '
+          f'{state(loose):#x}, at {o.u16(o.ship(loose) + 0x1E)}, {o.u16(o.ship(loose) + 0x22)}), in it '
+          f'{listed}; reach {reach}')
+
+    def during(o):
+        c, t = o.ship(chaser), o.ship(target)
+        now = o.u32(WORLD + 0x14)
+
+        def chase(what, aim, fields=(), tick=None):
+            saved = set_fields(o, [(c + 0x3A, 2, aim)] + list(fields) +
+                               ([(WORLD + 0x14, 4, (now & ~7) | tick)] if tick is not None else []))
+            r = direct(o, 0x50B030, [chaser], ecx=to.SHIPS) & 0xFF
+            print(f'{what}: {r}, target {o.u16(c + 0x3A):#x}, route {o.u32(c + 0x24) != 0}')
+            restore_fields(o, saved)
+        near = [(c + 0x1C, 4, o.u32(t + 0x1C) + (20 << 16)), (c + 0x20, 4, o.u32(t + 0x20) + (10 << 16)),
+                (t + 0x15C, 1, 1)]
+        shallows = [(c + 0x1C, 4, 500 << 16), (c + 0x20, 4, 1600 << 16), (t + 0x1C, 4, 520 << 16),
+                    (t + 0x20, 4, 1610 << 16), (t + 0x15C, 1, 1), (c + 0xE, 1, 2)]
+        chase('in the state 0x11', target, [(c + 0x134, 2, 0x11)])
+        chase('near, a cog, tick 1', target, near + [(c + 0xE, 1, 2)], tick=1)
+        chase('near, a cog, tick 0', target, near + [(c + 0xE, 1, 2)], tick=0)
+        chase('raiding a ship in port', docked, [(c + 0x15C, 1, 1)])
+        chase('raiding a ship in the state 0x13', target, [(c + 0x15C, 1, 1), (t + 0x134, 2, 0x13),
+                                                          (t + 0x39, 1, 0xFF)])
+        chase('raiding a ship far away', target, [(c + 0x15C, 1, 1), (t + 0x39, 1, 0xFF)])
+        chase('a merchant\'s ship', target)
+        chase('in the state 0x16, a pirate out of the list by x, far away', loose, [
+            (c + 0x134, 2, 0x16), (c + 0x1C, 4, o.u32(o.ship(loose) + 0x1C) + (1000 << 16)),
+            (c + 0x20, 4, o.u32(o.ship(loose) + 0x20))])
+        chase('in the state 0x16, a pirate far away', listed, [(c + 0x134, 2, 0x16)])
+        chase('near, a snaikka, tick 0', target, near + [(c + 0xE, 1, 0)], tick=0)
+        chase('a cog in the shallows', target, shallows)
+    return during
+
+
+def convoy_states(o):
+    """The merchants' convoys in the ships' update (0x506720, a tick of the
+    world recorded), each AI convoy put in a state (those in port, waiting in
+    the state 1, put in the 0): in port (0) with [+0x14]
+    & 0x10 (disbanded, 0x50A580); in port led by a ship given to the player
+    with its trade route's bit ([+0x136] & 1, no routes: it is interrupted);
+    in port with its guide's destination another town (it sails: 0x519B50
+    for each AI ship); 4 with its town [+0x1C] (0) and without one; 9 (0x503930);
+    0xA with [+0x16] 5; and 5, a state the switch doesn't take (every ship
+    leaves it, 0x509F80, and it is deleted; with any other such state
+    0x509F80 takes none out and the game loops forever)."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    ai = lambda m: m < merchants and o.u16(o.merchant(m) + 8)
+    found = []
+    for c in range(o.u16(CONVOY_COUNT)):
+        a = convoy_at(o, c)
+        lead = o.u16(a + 0x10)
+        if lead < ships and ai(o.u8(a)) and o.u16(a + 0xA) < ships:
+            found.append((o.u16(a + 0x12), c))
+    in_port = [c for st, c in found if st in (0, 1)]  # 1: waiting in port; put in the state 0
+    others = [c for st, c in found if st in (2, 3, 0xF)] + in_port[3:]  # in the main list (not a yard's)
+    if len(in_port) < 3 or len(others) < 5:
+        raise RuntimeError(f'AI convoys: {found}')
+    print(f'convoys in port {in_port[:3]}, others {others[:5]}')
+    c1, c2, c3 = in_port[:3]
+    c4, c5, c6, c7 = others[:4]
+    c8 = in_port[3] if len(in_port) > 3 else others[4]
+
+    def during(o):
+        a = {c: convoy_at(o, c) for c in (c1, c2, c3, c4, c5, c6, c7, c8)}
+        for c in (c1, c2, c3):
+            w16(o, a[c] + 0x12, 0)
+        w8(o, a[c1] + 0x14, o.u8(a[c1] + 0x14) | 0x10)
+        lead2 = o.ship(o.u16(a[c2] + 0x10))
+        w8(o, lead2, player)
+        w8(o, lead2 + 0x136, o.u8(lead2 + 0x136) | 1)
+        lead3 = o.ship(o.u16(a[c3] + 0x10))
+        members, s = set(), o.u16(a[c3] + 0xA)
+        while s < ships:
+            members.add(o.u8(o.ship(s) + 0x13B))
+            s = o.u16(o.ship(s) + 6)
+        there = next(t for t in range(towns) if t != o.u8(lead3 + 0x39) and t not in members)
+        w8(o, a[c3] + 0x1F, there)
+        w8(o, lead3 + 0x38, there)
+        for c, st in ((c4, 4), (c5, 4), (c6, 9), (c7, 0xA), (c8, 5)):
+            w16(o, a[c] + 0x12, st)
+        w16(o, a[c4] + 0x1C, 0)
+        w16(o, a[c5] + 0x1C, 0xFF)
+        w16(o, a[c7] + 0x16, 5)
+        o.advance_tick()
+        print('after: ' + ', '.join(f'{c}: state {o.u16(convoy_at(o, c) + 0x12):#x}, first {o.u16(convoy_at(o, c) + 0xA)}'
+                                    for c in (c1, c2, c3, c4, c5, c6, c7, c8)))
+    return during
+
+
+def convoy_ship_branches(o):
+    """Direct calls: 0x50A580 (a convoy disbanded) with a convoy out of the
+    table; 0x502110 (a convoy's tick at sea) with its guide without hull (a
+    new guide, 0x5017F0); and 0x501EB0 (a convoy starts leaving port) with
+    one of its ships without sailors (it can't sail: it leaves the convoy,
+    0x509F80)."""
+    towns, _, merchants, ships = o.counts()
+    count = o.u16(CONVOY_COUNT)
+    found = {}
+    for c in range(count):
+        a = convoy_at(o, c)
+        lead, s, ms = o.u16(a + 0x10), o.u16(a + 0xA), []
+        while s < ships and len(ms) < 50:
+            ms.append(s)
+            s = o.u16(o.ship(s) + 6)
+        if lead < ships and o.u8(a) < merchants and len(ms) >= 2:
+            found.setdefault(o.u16(a + 0x12), []).append((c, lead, [m for m in ms if m != lead]))
+    at_sea = found.get(0xF, [None])[0]
+    able = next((x for x in found.get(1, []) if direct(o, 0x519BA0, [], ecx=o.ship(x[1])) & 0xFF
+                 and direct(o, 0x519C40, [], ecx=o.ship(x[1])) & 0xFF), None)
+    if at_sea is None or able is None:
+        raise RuntimeError(f'convoys by state: {sorted((k, len(v)) for k, v in found.items())}')
+    print(f'at sea: convoy {at_sea[0]} led by {at_sea[1]}; in port: convoy {able[0]} led by {able[1]}, '
+          f'ship {able[2][0]} without sailors')
+
+    def during(o):
+        direct(o, 0x50A580, [count], ecx=to.SHIPS)
+        c, lead, _ = at_sea
+        w32(o, o.ship(lead) + 0x18, 0)
+        print(f'0x502110: {direct(o, 0x502110, [0], ecx=convoy_at(o, c)) & 0xFF}, '
+              f'guide {o.u16(convoy_at(o, c) + 0x10)}')
+        c, lead, rest = able
+        w16(o, o.ship(rest[0]) + 0x40, 0)
+        print(f'0x501EB0: {direct(o, 0x501EB0, [], ecx=convoy_at(o, c)) & 0xFF}, '
+              f'ship {rest[0]} in convoy {o.u16(o.ship(rest[0]) + 8)}')
+    return during
+
+
+def battle_branches(o):
+    """Pieces of the battles' ends, run directly: the operation 0x91 (a ship
+    takes another, 0x540520) of a pirate's ship whose convoy's guide is a
+    privateer of the player ([+0x15D]) taking an AI merchant's ship at sea,
+    out of the sea's list first as in a battle (the player gets its worth and
+    the letter 0x30); 0x50BFD0 (a convoy after its
+    battle) on a pirate convoy one of whose ships, with a captain, sank,
+    beaten by the player (the convoy and its guide out of the lists first, as
+    at a battle's start): the ship is deleted (0x507FB0, which frees its
+    captain) before its captain is looked at, so the letters 0x54 and 0x2A
+    are never sent (a game bug); and 0x509250 (a ship sold) to no merchant (0xFF: it turns
+    pirate) with a town out (nothing more)."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    captains = o.u16(to.SHIPS + 0xF2)
+    pirate_convoys = []
+    for c in range(o.u16(CONVOY_COUNT)):
+        a = convoy_at(o, c)
+        guide, s, ms = o.u16(a + 0x10), o.u16(a + 0xA), []
+        while s < ships and len(ms) < 50:
+            ms.append(s)
+            s = o.u16(o.ship(s) + 6)
+        if o.u8(a) >= merchants and guide < ships and len(ms) >= 2:
+            pirate_convoys.append((c, guide, ms))
+    if len(pirate_convoys) < 2:
+        raise RuntimeError(f'pirate convoys of two ships: {pirate_convoys}')
+    (c1, g1, ms1), (c2, g2, ms2) = pirate_convoys[:2]
+    taker = next(s for s in ms1 if s != g1)
+    target = next(s for s in range(ships) if o.u8(o.ship(s)) < merchants and o.u16(o.merchant(o.u8(o.ship(s))) + 8)
+                  and o.u16(o.ship(s) + 8) >= o.u16(CONVOY_COUNT) and o.u16(o.ship(s) + 0x134) == 0xF)
+    sunk = next(s for s in ms2 if s != g2)
+    sold = next(s for s in merchant_ships(o, player))
+    print(f'pirate convoy {c1} (guide {g1}): {taker} takes {target}; pirate convoy {c2}: {sunk} sinks; the player\'s '
+          f'{sold} turns pirate')
+
+    def during(o):
+        if o.u16(o.ship(g1) + 0x42) >= captains:
+            w16(o, o.ship(g1) + 0x42, free_captain(o))
+        w8(o, o.ship(g1) + 0x15D, player)
+        # In a battle both ships are out of their lists (0x50BC40): the target out of the sea's.
+        link = to.SHIPS + 0xEA
+        while o.u16(link) != target:
+            link = o.ship(o.u16(link)) + 6
+        w16(o, link, o.u16(o.ship(target) + 6))
+        w16(o, o.ship(target) + 6, 0xFFFF)
+        operation(o, 0x91, taker, target)
+        print(f'the player\'s money {o.u32(o.merchant(player))}, ship {target}\'s owner {o.u8(o.ship(target)):#x}')
+        if o.u16(o.ship(sunk) + 0x42) >= captains:
+            w16(o, o.ship(sunk) + 0x42, free_captain(o))
+        w32(o, o.ship(sunk) + 0x18, 0)
+        # As at a battle's start (0x50BC40): the convoy out of the list of those at sea ([0xEC], next
+        # [+0x8]) and its guide out of the list by x (0x50D040), where 0x50BFD0 puts them back.
+        link, steps = to.SHIPS + 0xEC, 0
+        while o.u16(link) != c2 and o.u16(link) < o.u16(CONVOY_COUNT) and steps < 200:
+            link, steps = convoy_at(o, o.u16(link)) + 8, steps + 1
+        if o.u16(link) == c2:
+            w16(o, link, o.u16(convoy_at(o, c2) + 8))
+            w16(o, convoy_at(o, c2) + 8, 0xFFFF)
+        direct(o, 0x50D040, [g2], ecx=to.SHIPS)
+        direct(o, 0x50BFD0, [c2, 0, player], ecx=to.SHIPS)
+        print(f'convoy {c2}: state {o.u16(convoy_at(o, c2) + 0x12):#x}; ship {sunk} state {o.u16(o.ship(sunk) + 0x134):#x}')
+        direct(o, 0x509250, [sold, 0xFF, 0, 0, towns], ecx=to.SHIPS)
+        print(f'the player\'s ship {sold}: owner {o.u8(o.ship(sold)):#x}')
+    return during
+
+
+def first_arrival(o):
+    """For raid_arrival, in a process of its own: runs the world tick by tick
+    until an AI merchant's ship at sea out of a convoy arrives at its
+    destination, and prints «first arrival TICKS SHIP TOWN» if no other ship
+    arrived there or entered its port (states 2, 3) before it."""
+    towns, _, merchants, ships = o.counts()
+    convoys = o.u16(CONVOY_COUNT)
+    sea = {s: o.u8(o.ship(s) + 0x38) for s in range(ships) if o.u16(o.ship(s) + 0x134) == 0xF
+           and o.u16(o.ship(s) + 8) >= convoys and o.u8(o.ship(s)) < merchants
+           and o.u16(o.merchant(o.u8(o.ship(s))) + 8) and o.u8(o.ship(s) + 0x38) < towns}
+    arrived = []  # (tick, ship, town)
+    for k in range(1, 600):
+        o.advance_tick()
+        for x in range(ships):
+            st, town = o.u16(o.ship(x) + 0x134), o.u8(o.ship(x) + 0x39)
+            if ((x in sea and (st != 0xF or town != 0xFF)) or st in (2, 3)) and all(x != y for _, y, _ in arrived):
+                arrived.append((k, x, town))
+        first = next(((k2, x, t2) for k2, x, t2 in arrived if x in sea), None)
+        if first:
+            ticks, s, t = first
+            if t == sea[s] and not any(t2 == t and x != s for _, x, t2 in arrived):
+                print(f'first arrival {ticks} {s} {t}')
+            else:
+                print(f'others before: {arrived}')
+            return
+
+
+def raid_arrival(o):
+    """A raiding ship ([+0x15C]) arrives at a port closed by [0x2C8] & 0x200
+    and without 0x4000000 (0x506E19): out of the lists, first of the sea's
+    again, its town 0xFF (0x50BA80, the Hanse fleet's battle, finds no fleet).
+    The AI ship at sea that arrives first (found running another copy of the
+    world) gets the flag and its destination the closed port; the world runs
+    tick by tick until it arrives, recording the ships' update 0x506720."""
+    # Which ship arrives first: another process runs a copy of the world on
+    # (the oracle is deterministic; two oracles don't fit in one process).
+    import subprocess
+    a = o.scenario_args
+    out = subprocess.run([sys.executable, os.path.abspath(__file__), a.exe, a.save, os.devnull, 'raid_arrival',
+                          '--barcos', a.barcos, '--cpr', a.cpr, '--first-arrival'], capture_output=True, text=True)
+    line = [x for x in out.stdout.splitlines() if x.startswith('first arrival')]
+    if not line:
+        raise RuntimeError(f'the copy of the world found no arrival: {out.stdout[-500:]} {out.stderr[-500:]}')
+    ticks, s, t = (int(x) for x in line[0].split()[2:5])
+    print(f'ship {s} of {o.u8(o.ship(s))} arrives at {t} in {ticks} ticks')
+
+    def during(o):
+        a = o.town(t)
+        w32(o, a + 0x2C8, (o.u32(a + 0x2C8) | 0x200) & ~0x4000000)
+        w8(o, o.ship(s) + 0x15C, 1)
+        for k in range(ticks):
+            o.advance_tick()
+        print(f'after {k + 1} ticks: ship {s} state {o.u16(o.ship(s) + 0x134):#x}, town {o.u8(o.ship(s) + 0x39):#x}, '
+              f'the sea\'s first {o.u16(to.SHIPS + 0xEA)}')
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -3560,6 +4562,57 @@ SCENARIOS = {
         '@4e2d0d>4e37a3']),
     'building_sale_branches': Scenario(building_sale_branches, [0x4F4550, 0x5256F0], 0, [
         '@4f4781', '@4f47e2', '@4f4838', '@4f487e>4f48ff', '@5257cc>5259b8', '@525861>525822']),
+    # events_rare.cpp
+    'game_end_branches': Scenario(game_end_branches, [0x4E4A44], 0, [
+        '@4e4cd9', '@4e4c16', '@4e4bb7>4e4bc8', '@4e4c07>4e4c0c', '@4e4c09', '@4e4b90>4e4bd6', '@4e4b50',
+        '@4e4f7f', '@4e4e0d', '@4e4dd4>4e4ef8', '@4e4f49', '@4e4f70>4e4f75', '@4e4f72', '@4e4f5e>4e4f75',
+        '@4e4da4>4e4f15', '@4e4f47', '@4e51a1', '@4e50b5', '@4e506a>4e5078', '@4e5178', '@4e519c',
+        '@4e4a76>4e4b50', '@4e518e>4e4c0c', '@4e5043>4e5085', '@4e5256', '@4e5265', '@4e5357', '@4e5366', '@4e53af',
+        '@4e54d0', '@4e54e9', '@4e4b63>4e55e2']),
+    'siege_fire_branches': Scenario(siege_fire_branches, [0x4D85C0, 0x4DB100, 0x4E9094], 0, [
+        '@4e1c90', '@4e1cc3>4e1e48', '@4e1d51>4e1e48', '@4e1d7f', '@4e1e76>4e2133', '@4e1eba>4e2133',
+        '@4e1ec2>4e2133', '@4e1eca>4e2133', '@4e1f20>4e2133', '@4e1f67>4e2133', '@4e1ff5', '@4e1f07>4e1f86',
+        '@4e1fcd', '@4e1fba>4e2133', '@4e202c>4e2133', '@4e20ee>4e2133', '@4eabe4>4eafbd', '@4ecb4d>4ecdd5',
+        '@4ecb72>4ecdd5', '@4ecbdd>4ecdc4', '@4ecc45>4ecdc4', '@4db11b>4db210', '@4db141>4db210',
+        '@4db1df>4db210', '@4db1e1', '@4e90d7>4e948e', '@4e925c']),
+    'pirate_event_branches': Scenario(pirate_event_branches, [0x4DFD44, 0x4E0334, 0x4EA594], 0, [
+        '@4dfe0e', '@4dfe1b>4e00e8', '@4dfe4d', '@4dfe7b', '@4dfe84', '@4dfe47>4e00e8', '@4dfeac>4e00e8',
+        '@4dfdf0>4e00e8', '@4e0399', '@4e048d', '@4e04e3', '@4e05a1', '@4e0889', '@4ea5c7>4eab5b',
+        '@4ea8f1>4eab5b']),
+    'council_task_branches': Scenario(council_task_branches, [0x4E9A94, 0x532C50, 0x4EAFE4], 0, [
+        '@4e9ae1>4ea093', '@4e9c16', '@4e9c62', '@4e9c6e', '@4e9c97>4e9d73', '@4e9cad', '@4e9ce8', '@4e9d31',
+        '@4e9d59', '4e9d6b>4e9d73', '@4e9d9e', '@4e9dcb', '@4e9ddd', '@4e9bef>4ea093', '@4e9ff6', '@4ea064',
+        '@4ea07c', '@4ea07a>4ea093', '@4ea088', '@532c67>532ccc', '@532c79>532ccc', '@532c84>532ccc',
+        '@532cde>532d24', '@532cfe>532d24', '@532d37>532d24', '@532d55>532d24', '@532d62>532d24', '@532d8b',
+        '@532d7e>532d96', '@532d89>532d96', '@532da6', '@532dbf', '@532de8', '@532c8e>532ccc', '@4eb070',
+        '@4eb0a8']),
+    'expedition_branches': Scenario(expedition_branches, [0x4E6A54], 0, ['@4e6a7f>4e79f1', '@4e7142']),
+    # mail.cpp
+    'mail_branches': Scenario(mail_branches, [0x4D6530], 0, ['@4d653e>4d6670', '@4d6553>4d6670', '@4d65fc',
+                                                            '@4d6b66']),
+    # events_big.cpp
+    'site_start_houses': Scenario(site_start_houses, [0x500F50], 0, ['@500f79>501355', '@501399>5013ae']),
+    # ship_trade.cpp
+    'ship_trade_branches': Scenario(ship_trade_branches, [0x526AA0, 0x519920], 0, [
+        '@526ab7>526ada', '526ad3>526ada', '@519a37']),
+    # ship_ai.cpp
+    'ship_ai_branches': Scenario(ship_ai_branches, [0x519BA0, 0x501BE0, 0x506720], 0, [
+        '@519c03>519c38', '@501d8b', '@506a27']),
+    # sailing.cpp
+    'ship_delete_branches': Scenario(ship_delete_branches, [0x507FB0], 0, [
+        '@507fd8>5083a0', '@5080ed>5083a0', '@50817b']),
+    'pursue_branches': Scenario(pursue_branches, [0x50B030], 0, [
+        '@50b083', '@50b0b8', '@50b0ed', '@50b189', '@50b11a', '@50b13c', '@50b183>50b221', '@50b1f4>50b221',
+        '@50b1f6', '@50b1c0>50b1ed', '@50b22b']),
+    'raid_arrival': Scenario(raid_arrival, [0x506720], 0, ['@506e19']),
+    # convoys.cpp
+    'convoy_states': Scenario(convoy_states, [0x506720], 0, [
+        '@5071d4', '@507255', '@507300', '@50760c', '@50761e', '@507854', '@50786e', '@507c7f']),
+    'convoy_ship_branches': Scenario(convoy_ship_branches, [0x50A580, 0x502110, 0x501EB0], 0, [
+        '@50a5ad>50aac3', '@502186', '@501fd2']),
+    # battle/
+    'battle_branches': Scenario(battle_branches, [0x535760, 0x540520, 0x50BFD0, 0x509250], 0, [
+        '@540d3e', '@50c1fb', '@50c20b>50c33c', '@5095f7>5097a1']),
 }
 
 
@@ -3645,10 +4698,16 @@ def main():
     p.add_argument('--days', type=int)
     p.add_argument('--functions')
     p.add_argument('--seed', type=int, default=1)
+    p.add_argument('--first-arrival', action='store_true', help=argparse.SUPPRESS)
     p.add_argument('--write', metavar='OUT', help='at the end, the save the game writes: OUT uncompressed, OUT.pat '
                    'compressed, OUT.pst (scripts/write-scenario.sh with RETOUCH=unchecked)')
     a = p.parse_args()
     o = to.TownOracle(a.exe, open(a.save, 'rb').read(), a.seed, a.barcos, rest=list(to.REST), cpr=a.cpr)
+    o.scenario_args = a  # a scenario may run another copy of the world (raid_arrival)
+    if a.first_arrival:
+        o.load()
+        first_arrival(o)
+        return
     if a.scenario == 'inspect':
         o.load()
         inspect(o)

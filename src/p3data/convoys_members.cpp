@@ -347,7 +347,7 @@ void Sailing::fn_509f80(uint16_t ship) {
 void Sailing::fn_50a580(uint16_t convoy) {
 	GlobalMemory& g = save_.globals;
 	if (convoy >= convoy_count(save_)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario convoy_ship_branches (saves 1, 3, 5, 7).
 	}
 	GameMemory<0x3C>& c = save_.convoys[convoy];
 	uint32_t foreign = 0;  // [esp+0x10]: barcos ajenos.

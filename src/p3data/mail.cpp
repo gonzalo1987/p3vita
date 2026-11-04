@@ -51,7 +51,7 @@ void grow(SaveGame& save) {
 	GlobalMemory& g = save.globals;
 	uint16_t count = g.u16(kMailCount);
 	if (count < g.u16(kMailFree)) {
-		g.u16(kMailFree) = count;  // Sin comprobar con el oráculo.
+		g.u16(kMailFree) = count;  // Checked with the oracle: scenario mail_branches (saves 1, 3, 5, 7).
 	}
 	save.mail.resize(count);
 	for (int k = 0; k < 200; ++k) {
@@ -123,7 +123,10 @@ uint16_t store(SaveGame& save, const Letter& letter) {
 // of the merchant's chain ([+0xA]).
 void store_for(SaveGame& save, uint32_t merchant, const Letter& letter) {
 	if (merchant >= save.merchants.size()) {
-		return;  // Sin comprobar con el oráculo (an office's owner out of range: the game reads past the merchants).
+		// Unreachable: store_for gets a merchant send_letter has checked, each
+		// merchant, or the owner of an office of a town's list, which always has
+		// one (a freed office leaves it). The game would read past the merchants.
+		return;
 	}
 	MerchantMemory& m = save.merchants[merchant].memory;
 	if (m.u16(8) != 0) {
@@ -191,11 +194,11 @@ Letter::Letter(uint8_t type) : Letter() {
 void send_letter(SaveGame& save, int32_t merchant, const Letter& sent) {
 	GlobalMemory& g = save.globals;
 	if (sent.type() >= 0x86) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario mail_branches (saves 1, 3, 5, 7).
 	}
 	const int32_t merchants = g.u16(global::kWorldMerchantCount);
 	if (merchant >= merchants) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario mail_branches (saves 1, 3, 5, 7).
 	}
 	Letter letter = sent;
 	letter.entry.u8(0) = g.u8(global::kWorldDay);
@@ -210,7 +213,9 @@ void send_letter(SaveGame& save, int32_t merchant, const Letter& sent) {
 			store_for(save, uint32_t(i), letter);
 		}
 	} else if (merchant == kLetterToTown) {
-		// Sin comprobar con el oráculo (no caller sends to −3).
+		// No caller of the game sends to −3. Checked with the oracle: scenario mail_branches (saves
+		// 1, 3, 5, 7), called directly. The game doesn't check the town (it would read past the
+		// towns).
 		const uint8_t town = letter.entry.u8(5);
 		if (town >= save.towns.size()) {
 			return;
@@ -224,7 +229,7 @@ void send_letter(SaveGame& save, int32_t merchant, const Letter& sent) {
 		store_for(save, uint32_t(merchant), letter);
 	}
 	// Another negative code: the game takes it as a merchant and reads before
-	// the merchants (sin comprobar con el oráculo; no caller does it).
+	// the merchants. Unreachable: no caller does it.
 }
 
 bool has_rank_letter(const SaveGame& save, uint32_t index, uint32_t rank) {
