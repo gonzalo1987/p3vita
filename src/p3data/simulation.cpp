@@ -242,6 +242,14 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			sailing->fn_536bbf(uint32_t(fields[1]) & 0xFFFF);
 		}
 		break;
+	case 0x9F:  // Ships join a sea battle: its music level (0x536CD5 → 0x611309; battle/battle_end.cpp).
+		if (uint32_t(fields[1]) < 0xFF) {
+			const int battle = save.battles.battle(uint32_t(fields[1]));
+			if (battle >= 0) {
+				fn_611309(save.battles, size_t(battle), uint16_t(fields[2]));
+			}
+		}
+		break;
 	case 0x96:  // A merchant's sides of a battle to the computer or back (0x536C52 → 0x60FEC9; battle/battles.cpp).
 		if (sailing && uint32_t(fields[1]) < 0x100) {
 			const int battle = save.battles.battle(uint32_t(fields[1]));

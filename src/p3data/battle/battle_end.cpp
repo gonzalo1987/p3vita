@@ -33,6 +33,29 @@ void music(BattleGraph& g, size_t b, int32_t worth) {
 
 }  // namespace
 
+// 0x611309 (on a sea battle, a count; operation 0x9F): unless [+0xAD2] = 3,
+// the music level [+0x1E94] goes down as at a ship's end once for each bit
+// set in `ships`, with the factor 950/1000 for bit 0 and each next one the
+// square of the one before (/1000, rounded). The game's loop compares the
+// bit with `ships` in 16 bits, so with bit 15 set it never ends (it would
+// need 32768 ships: the chase 0x50B250 queues the number of ships that
+// join); after bit 15 nothing changes, so here it stops.
+void fn_611309(BattleGraph& g, size_t b, uint16_t ships) {
+	if (g.get<uint8_t>(b, 0xAD2) == 3) {
+		return;
+	}
+	uint32_t factor = 950;
+	for (uint32_t bit = 1; bit <= 0x8000; bit <<= 1) {
+		if (ships & bit) {
+			music(g, b, int32_t(1000 - factor));
+		}
+		if (uint16_t(bit << 1) > ships) {
+			return;
+		}
+		factor = (factor * factor + 500) / 1000;
+	}
+}
+
 // 0x612A20 (on the battles object; two ships, a value): ship j and the value
 // in ship i's list of the table [+0xC30] (records of 12 bytes: the list, its
 // room and its count; [+0xC34] records, grown by hundreds; each list grown

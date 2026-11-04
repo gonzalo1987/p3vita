@@ -159,4 +159,8 @@ inline uint32_t battle_rand(BattleGraph& g, size_t b) {
 // (battle/battle_save.cpp).
 std::vector<uint8_t> battle_bytes(const BattleGraph& g);
 
+// 0x611309 (on the sea battle of block b): ships join it (operation 0x9F):
+// its music level [+0x1E94] goes down (battle/battle_end.cpp).
+void fn_611309(BattleGraph& g, size_t b, uint16_t ships);
+
 }  // namespace p3::data

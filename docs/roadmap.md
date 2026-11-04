@@ -31,7 +31,8 @@ Cómo leerla:
 - Hecho (03-11-2026): un barco del jugador atacado ya no se queda parado. Su batalla la lucha el ordenador, como en el juego cuando el jugador no la dirige (la operación 0x96), y los avisos del abordaje se escriben con los textos del juego (abajo, pieza 3). En el visor salen ya el aviso del ataque y los del abordaje, en español. Queda la batalla en el mapa del mar.
 - Hecho (03 y 04-11-2026): **el buzón de cartas y avisos** (fase 4, «El buzón»): el envío de cartas (99 de las 154 llamadas conectadas; las otras 55 están en partes del juego aún sin reescribir), guardarlas y cargarlas, el texto de cada carta, la crónica y las líneas de aviso en inglés y en español, el parte de la batalla, la pantalla del buzón en el visor y las dos cartas con imagen. Y cargas más ligeras en la Vita (fase 5: el mapa del mar y las ciudades).
 - Hecho (04-11-2026): **la parte C del inventario**, revisada llamada a llamada ([inventario.md](inventario.md)). Salieron dos huecos, ya reescritos y comprobados: la brea que suben los umbrales de precio durante un asedio (0x636920) y abrir una oficina (0x51B890, con las operaciones 0x5D y 0x21 de la interfaz). Otro hueco era una acción del jugador, también hecha después: un barco suyo que se hace pirata (operación 0x4E). Lo demás era interfaz o código que p3vita ya hace en línea.
-- Lo siguiente: la parte D del inventario; después, un hito jugable en la Vita. La parte B está hecha salvo la 0x9F y la 0xB5, que van con las batallas.
+- Hecho (04-11-2026): **la parte B del inventario, entera**. Faltaba la 0x9F (barcos que se unen a una batalla en el mar); la 0xB5 ya estaba hecha.
+- Lo siguiente: la parte D del inventario; después, un hito jugable en la Vita.
 - Lo que queda en español en el repositorio (menos este documento) se pasa al inglés poco a poco, al tocar cada fichero.
 
 ## Estado por partes (medido)
@@ -171,9 +172,9 @@ La lista cerrada, sacada del ejecutable y no de lo que sale en las partidas, est
 - las 363 llamadas a 0x54AA70, la función que encola (`callgraph_encolar.tsv`).
 
 - [x] A: los eventos que p3vita creaba y no atendía (0x23, 0x24, 0x34, 0x25, 0x26, 0x27, 0x31 y 0x38)
-- [ ] B: las operaciones que encola la simulación. Hechas todas salvo:
-  - [ ] 0x9F, que va con la batalla en el mar (pieza 3 de las batallas);
-  - [ ] 0xB5, una flota pirata que sale de su guarida. Solo la encola la actualización de los objetos piratas (0x514000), que aún no se ejecuta (pieza 2).
+- [x] B: las operaciones que encola la simulación. Hechas todas (la lista, en el inventario):
+  - [x] 0xB5, una flota pirata que sale de su guarida (con la pieza 2 de las batallas, en `cloud/battles-2`);
+  - [x] 0x9F (04-11-2026): barcos que se unen a una batalla en el mar. Su manejador, 0x611309, baja el nivel de música de la batalla ([+0x1E94]) una vez por cada bit del número de barcos, salvo si [+0xAD2] vale 3. Solo la encola la persecución (0x50B250, pieza 4 de las batallas), que p3vita aún no tiene, así que hasta entonces no llega sola. Escenario `battle_join` de `retouch_unchecked.py`, sobre la batalla con la que empiezan las partidas 6, 7 y tut4: las 7 operaciones iguales, también al guardar la partida. Fallo del juego, inalcanzable en la práctica: con el bit 15 (32 768 barcos o más) su bucle no termina nunca.
 - [ ] Los tipos de evento que p3vita todavía no atiende:
   - solo los crean el intérprete de misiones, la interfaz o las acciones del jugador: 0x09 (0x4ECF64), 0x0C (operación 0x3A), 0x0F (0x4F), 0x10 (0x53), 0x11 (0x3D), 0x13 (0x5F), 0x14 (0xA4), 0x17 (0x72), 0x18 (0x2B) y 0x2D (0x35);
   - sin creador encontrado: 0x0B (0x4E37F4) y 0x29 (0x4DDE70); también 0x28 (0x4DDF40), cuyo único creador, 0x538DA0, es código muerto.
@@ -308,7 +309,7 @@ El plan, por piezas, cada una detrás de su ajuste hasta comprobarla:
    - [ ] **las rocas dependen de la vista de la ciudad**: 0x60F479 multiplica sus cajas por la mitad del ancho de la vista de la ciudad (*0x6E51AC, interfaz), que el emulador no tiene; ahí valen 0, y p3vita hace lo mismo (`kTownViewHalf`). El oráculo y p3vita coinciden entre sí, pero no con el juego. Recomendación de la sesión: dar al oráculo una vista de la ciudad con el `[+0x510]` del juego cuando se sepa su valor, y usar el mismo en p3vita;
    - [ ] **el aviso al mapa del mar** ([+0x1E92]): el juego lo pone cuando un barco del jugador está en la batalla y solo lo borra si tiene ventana principal. En la simulación se queda puesto. Propuesta de la sesión: que lo borre el visor al enseñar la batalla (va con la parte 7). Pendiente de explicárselo mejor al usuario;
    - la operación 0x9F, sin hacer.
-4. [ ] Las otras batallas en el mar: la persecución que alcanza al barco (0x50B250, también la operación 0x99) y la flota de la Hansa en una ciudad protegida (0x50BA80).
+4. [ ] Las otras batallas en el mar: la persecución que alcanza al barco (0x50B250, también la operación 0x99) y la flota de la Hansa en una ciudad protegida (0x50BA80). La operación 0x9F que encola la persecución ya está hecha: al conectarla, añadirla a las que ejecuta el oráculo (`OPERATIONS` de `town_oracle.py`).
 5. [x] Las batallas en la partida guardada, las del mar ([cloud/battles-2.md](cloud/battles-2.md) §5): leer como 0x611AE0 (0x604600, 0x61A880) y escribir como 0x611950 (0x604220, 0x61A790), en p3vita y también en el oráculo, que antes no las leía. **Tres partidas tienen una batalla guardada**, todas de piratas contra un comerciante: la 6 y la 7 (3 barcos, automáticas) y tut4 (4 barcos, con un lado humano: espera la ventana del jugador, la operación 0x96 en cada paso). Las tres empiezan ya con su batalla. Comprobado: escritas tras 1–2 días, con y sin piratas, y en mitad de una batalla (partida 6 a los 3 y 20 ticks, la 7 a los 3), los mismos bytes que el juego, y el juego vuelve a leer lo que escribe p3vita igual que p3vita. Faltan las batallas en las ciudades y las balas de cañón guardadas.
 6. [ ] La batalla en una ciudad (los piratas contra una ciudad y la guarida pirata):
    - 41 funciones (0x5FBFE0, 0x621770, 0x5FE7E0, 0x624950...);

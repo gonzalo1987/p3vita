@@ -710,6 +710,35 @@ def player_pirate_lists(o):
     return during
 
 
+def battle_join(o):
+    """Operation 0x9F (0x536CD5 → 0x611309; queued by the chase 0x50B250,
+    which p3vita doesn't have yet): ships join a sea battle and its music
+    level [+0x1E94] goes down once per bit of their number. On the battle
+    the save starts with (saves 6, 7, tut4): 1 ship, 0x2D, 0x7FFF (the 15
+    bits; with bit 15 the game's loop never ends) and 0; a slot without a
+    battle; the slot 0xFF; and the battle with [+0xAD2] = 3 (nothing)."""
+    slots = [k for k in range(0xFF) if o.u32(to.BATTLES + 4 * k)]
+    if not slots:
+        raise RuntimeError('no sea battle in this save')
+    k = slots[0]
+    b = o.u32(to.BATTLES + 4 * k)
+    empty = next(x for x in range(0xFF) if not o.u32(to.BATTLES + 4 * x))
+    print(f'battle of slot {k} at {b:#x}: [+0xAD2] {o.u8(b + 0xAD2)}, [+0x1E94] {o.u16(b + 0x1E94):#x}')
+
+    def during(o):
+        for ships in (1, 0x2D, 0x7FFF, 0):
+            operation(o, 0x9F, k, ships)
+            print(f'{ships:#x} ships: [+0x1E94] {o.u16(b + 0x1E94):#x}')
+        operation(o, 0x9F, empty, 3)
+        operation(o, 0x9F, 0xFF, 3)
+        side = o.u8(b + 0xAD2)
+        w8(o, b + 0xAD2, 3)
+        operation(o, 0x9F, k, 0x2D)
+        w8(o, b + 0xAD2, side)
+        print(f'with [+0xAD2] = 3: [+0x1E94] {o.u16(b + 0x1E94):#x}')
+    return during
+
+
 def site_search(o):
     """Direct calls in town 0: 0x4F9C80 for every type from the statue (but
     0x34 and 0x35, whose mask the game leaves unset: see construction.cpp),
@@ -2245,6 +2274,8 @@ SCENARIOS = {
     'office_ops': Scenario(office_ops, [0x535760], 0, [
         '@51b91b', '@51b9a8', '@51b8f7>51b9ff', '@51b915>51b9ff', '@5362bc>537025', '@5362cd>537025', '@53ce59',
         '@53cec7', '@53ce93>53cef2']),
+    'battle_join': Scenario(battle_join, [0x535760], 0, ['@61131b', '@611332', '@611315>6113b7', '@536cec>537025',
+                                                          '@536cdd>537025']),
     'player_pirate': Scenario(player_pirate, [0x535760, 0x506720], 1, [
         '@53b91a', '@5095fd', '@5096a4>509706', '@509783', '@53b9d7', '@53b914>53ba2f', '@53b89f>53ba2f']),
     'player_pirate_lists': Scenario(player_pirate_lists, [0x535760], 0, ['@4f5960', '@4f595e>4f5976']),

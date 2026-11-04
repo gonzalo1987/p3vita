@@ -911,6 +911,18 @@ of p3data's file has 0 differences. (After `player_pirate_lists` the lists
 are left empty but for the bit 0x8000; lists with ships in a save were
 already checked by `write_retouch.cpp`, merchant 1.)
 
+Then the last operation of part B, **0x9F** (0x536CD5 → 0x611309: ships join
+a sea battle and its music level [+0x1E94] goes down once per bit of their
+number; queued only by the chase 0x50B250, not rewritten yet). Scenario
+**`battle_join`** on the sea battle saves 6, 7 and tut4 start with: 1, 0x2D,
+0x7FFF and 0 ships, a slot without a battle, slot 0xFF and the battle with
+[+0xAD2] = 3. The 7 operations equal in the three saves (region BT), the 5
+targets hit; with the factor 950 changed to 951 on purpose, two calls
+differed in [+0x1E94]. The save after it (`write-scenario.sh`,
+`RETOUCH=unchecked`): the same bytes, the reload equal; the world 7 days in
+the 12 saves, 0 different. When the chase is rewritten, 0x9F goes into the
+oracle's `OPERATIONS`.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:
