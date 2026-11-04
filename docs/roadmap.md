@@ -6,6 +6,16 @@ reimplementación del motor que lee los datos originales del juego (versión GOG
 
 Cada fase termina en un hito que se puede comprobar a simple vista.
 
+**El motor respeta fielmente el modo original.** Todo lo que decide qué pasa
+en la partida (la simulación y las órdenes que encola la interfaz) se
+reescribe idéntico al juego, byte a byte, comprobado contra el propio juego en
+el emulador ([oracle.md](oracle.md)). Las correcciones de los fallos del juego
+van aparte, detrás de un ajuste que se puede apagar («Corregir los fallos del
+juego»). Así p3vita puede cargar y guardar las partidas del original, y al
+final de todo, jugar en red con él (fase 7). Lo que se ve, en cambio, se
+adapta a la pantalla de la Vita y se comprueba a ojo, con los gráficos y los
+textos del juego.
+
 Cómo leerla:
 - `[x]` hecho y comprobado; `[ ]` pendiente.
 - «(en marcha: `cloud/…`)»: lo está haciendo una sesión en la nube; todavía no está en `main`.
@@ -409,7 +419,8 @@ Un ajuste (feature flag) **activado por omisión** con el que p3vita corrige los
 - [x] Dificultad de comercio de la partida
 - [x] Mapa del mar: mandar el barco del jugador a una ciudad, verlo navegar con su ruta y comerciar al llegar
 - [x] Revisado con capturas en el PC lo que faltaba por confirmar en la Vita: los edificios de la partida, la barra de texto (cabe, con tildes), el panel del mercado (cabe; también el táctil), el mapa del mar y la navegación (ruta, llegada prevista, aviso al llegar). Falta verlo en la Vita
-- [ ] Rehacer la interfaz para 960×544 (16:9) con soporte táctil
+- [ ] Rehacer la interfaz para 960×544 (16:9) con soporte táctil. Las pantallas se adaptan a la Vita y se comprueban a ojo frente al juego original (capturas del juego en el PC), con sus gráficos y textos; las órdenes que encolan, en cambio, contra el juego como siempre
+- [ ] Más adelante, cuando el juego esté más avanzado: mejoras de manejo pensadas para la Vita (táctil, botones, tamaño de letra, accesos rápidos), sin cambiar lo que hace el motor
 - [ ] Los nombres de las ciudades en el mapa del mar se ven blandos. Se dibujan con stb_truetype (suavizado, sin ajustar las letras a los píxeles) en marrón oscuro y sin contorno sobre un fondo con textura. Comparar con una captura del juego original (letra, tamaño, color, contorno, suavizado) e igualarlo
 - [x] **Cargas más ligeras en la Vita** (04-11-2026, probado en la Vita por el usuario). El mapa del mar (`Vollansichtskarte.bmp`, 2400 × 1800 en 256 colores) se descodificaba con stb_image y se copiaba dos veces (unos 17 MB cada vez) tras una pantalla negra de casi un segundo; ahora se traduce por su paleta en una sola pasada directamente en la textura (`decode_bmp8`, `image.hpp`), por trozos de 240 filas, la primera vez que se pulsa Triángulo: la ciudad se queda en pantalla con «Cargando el mapa del mar...» hasta que está (cargarlo de fondo mientras se está en la ciudad la hacía ir a tirones, y se descartó). Las ciudades ya no pasan por una pantalla negra: volver a la misma sin cambios no rehace nada, la plantilla no se vuelve a leer de la tarjeta, y la textura de cada trozo de dibujo se busca por su baldosa y no por el nombre de su fichero (era lo más caro). La imagen de las cartas 0x46/0x6E lee del CPR solo las filas del mapa que necesita (`CprArchive::read_range`). Se probó convertir el mapa a PNG: ocupa un 30 % menos, pero descodificarlo cuesta de 3 a 7 veces más
 - [ ] Una franja en los bordes de arriba y abajo del mapa del mar (parte de `Vollansichtskarte.bmp` que el juego seguramente tapa con su interfaz): parar la cámara antes
@@ -448,6 +459,17 @@ Un ajuste (feature flag) **activado por omisión** con el que p3vita corrige los
 - [x] Las estadísticas diarias (0x54DE90, `src/p3data/statistics.cpp`), con 0x54E170 y 0x54E1F0 (las de un comerciante) y 0x54DDF0. No son solo para las gráficas: cada día ponen a cero contadores de las ciudades y de los comerciantes. Encendidas por omisión en p3vita (`SaveGame::record_statistics`) y en el oráculo (regiones S0..S4; `--no-statistics` las apaga): el mundo entero 7 días en las 12 partidas, 0 diferencias. Hacen el oráculo un 25–37 % más lento. Se guardan en el `.pst`
   - [x] las dos llamadas de la quiebra de un comerciante (operación 0x65, `fn_4f5d80` en `merchants.cpp`): 0x54E1F0 en 0x4F5DA5 y 0x54E170 en 0x4F5F8E, puestas al juntar `cloud/unchecked-branches` (ca3adbd). Las operaciones 0xA7 (0x541D70) y 0xB3 (0x542A30) también llaman a 0x54E170, pero p3vita aún no las tiene
 - [ ] Vídeos Bink (FFmpeg) y audio MP3
+
+## Fase 7: multijugador con el juego original (al final de todo)
+
+La razón de fondo para reescribir el motor idéntico al original: si p3vita se comporta byte a byte como el juego, una Vita podría jugar en red con el juego original en un PC. El juego está pensado para algo así: las acciones del jugador no cambian la partida directamente, son órdenes que van a una cola y ejecuta la simulación, que es como suelen funcionar estos multijugadores (cada máquina ejecuta la misma simulación y solo se mandan las órdenes).
+
+- [ ] La simulación entera idéntica al juego (no solo lo que sale en las partidas de prueba): las batallas, las rutas automáticas, las misiones… Un solo byte distinto y las dos partidas se separan
+- [ ] Todas las acciones del jugador como las mismas órdenes que encola el juego, comprobadas contra él
+- [ ] La red del juego: usa una biblioteca propia de Ascaron, `Schnelltransfer.dll`, sobre TCP/IP normal (Winsock: buscar partidas en la red local, unirse por IP, mandar y recibir mensajes; sus funciones `Network_*`). Hay que estudiar su protocolo y los mensajes de la partida en red del juego (qué manda y cuándo), y reescribirlos con los sockets de la Vita
+- [ ] En una partida en red, el ajuste de corregir los fallos del juego apagado siempre (las correcciones cambian el comportamiento y separarían las partidas)
+- [ ] Los números con decimales iguales en la Vita (ARM) que en el PC (x86). Hoy lo están en todo lo comprobado (`-ffp-contract=off`); las comprobaciones con el oráculo son la garantía
+- [ ] Probarlo: una Vita y el juego original en un PC en la misma red
 
 ## Herramientas y comprobaciones
 
