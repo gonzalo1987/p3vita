@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "p3data/aim.hpp"
@@ -422,8 +423,10 @@ public:
 		items_.clear();
 		width_ = 0;
 		height_ = 0;
-		for (const TownSprite& sprite : build_town_sprites(town, tiles_)) {
-			SDL_Texture* texture = atlas_texture(sprite.tile->atlas);
+		const std::vector<TownSprite> sprites = build_town_sprites(town, tiles_);
+		items_.reserve(sprites.size());
+		for (const TownSprite& sprite : sprites) {
+			SDL_Texture* texture = tile_texture(sprite.tile);
 			if (!texture) {
 				continue;
 			}
@@ -458,6 +461,17 @@ private:
 		SDL_Rect dst;
 	};
 
+	// A tile's atlas texture, kept by the tile (tiles_ doesn't change, so its
+	// pointers stay): looking it up by the atlas's path for each sprite took
+	// most of a town's preparation, about 0.2 s on the Vita with the rest.
+	SDL_Texture* tile_texture(const TileDef* tile) {
+		auto it = tile_textures_.find(tile);
+		if (it != tile_textures_.end()) {
+			return it->second;
+		}
+		return tile_textures_[tile] = atlas_texture(tile->atlas);
+	}
+
 	// Los atlas se decodifican y suben una sola vez, y se comparten entre ciudades.
 	SDL_Texture* atlas_texture(const std::string& path) {
 		auto it = atlases_.find(path);
@@ -485,6 +499,7 @@ private:
 	const CprArchive& archive_;
 	TileSet tiles_;
 	std::map<std::string, SDL_Texture*> atlases_;
+	std::unordered_map<const TileDef*, SDL_Texture*> tile_textures_;
 	std::vector<Item> items_;
 	int width_ = 0;
 	int height_ = 0;
@@ -514,13 +529,25 @@ SDL_Texture* load_texture(SDL_Renderer* renderer, const CprArchive& archive, con
 	return texture;
 }
 
+// How many of the sea map's rows load a frame (SeaMapView::step) while the
+// town waits for it with its notice.
+constexpr int kSeaMapRowsPerFrame = 240;
+
 // Mapa del mar: la imagen del juego con las ciudades y los barcos de la
 // partida, en las mismas coordenadas que guarda la partida.
+//
+// The map's image (an 8-bit BMP of 2400 × 1800) goes into its texture some
+// rows at a time (step): read from the archive and decoded through its
+// palette straight into the texture (decode_bmp8), while the town stays on
+// screen with a notice (all at once it was about a second of black screen on
+// the Vita; loading it in the background while the player was in the town
+// made the town lag). Another kind of image is loaded whole at the start
+// (load_texture).
 class SeaMapView {
 public:
 	SeaMapView(SDL_Renderer* renderer, const CprArchive& archive)
-		: renderer_(renderer), towns_(load_sea_map_towns(archive)) {
-		map_ = load_texture(renderer, archive, kSeaMapImage, &width_, &height_);
+		: renderer_(renderer), archive_(archive), towns_(load_sea_map_towns(archive)) {
+		start_map();
 		symbols_ = load_texture(renderer, archive, kTownSymbols);
 		marker_ = load_texture(renderer, archive, kShipMarker, &marker_width_, &marker_height_);
 		for (size_t i = 0; i < ships_.size(); ++i) {
@@ -540,6 +567,44 @@ public:
 	bool ok() const { return map_ && !towns_.empty(); }
 	int width() const { return width_; }
 	int height() const { return height_; }
+
+	// Whether the map's image is all in its texture (or failed: ok() is false).
+	bool ready() const { return !map_entry_ || next_row_ >= bmp_.height; }
+
+	// Up to `rows` more rows of the map's image, in the file's order.
+	void step(int rows) {
+		if (ready()) {
+			return;
+		}
+		const int n = std::min(rows, bmp_.height - next_row_);
+		// The file's rows [next_row_, next_row_ + n): the image's last ones first
+		// in a bottom-up BMP.
+		const int y0 = bmp_.bottom_up ? bmp_.height - next_row_ - n : next_row_;
+		const uint32_t offset = bmp_.pixels + uint32_t(next_row_) * bmp_.stride;
+		const SDL_Rect rect = {0, y0, bmp_.width, n};
+		void* pixels = nullptr;
+		int pitch = 0;
+		if (!archive_.read_range(*map_entry_, offset, uint32_t(n) * bmp_.stride, chunk_) ||
+			SDL_LockTexture(map_, &rect, &pixels, &pitch) != 0) {
+			SDL_DestroyTexture(map_);
+			map_ = nullptr;
+			map_entry_ = nullptr;
+			return;
+		}
+		decode_bmp8(bmp_, chunk_.data(), offset, 0, y0, bmp_.width, n, static_cast<uint8_t*>(pixels), size_t(pitch));
+		SDL_UnlockTexture(map_);
+		next_row_ += n;
+		if (ready()) {
+			chunk_ = std::vector<uint8_t>();
+		}
+	}
+
+	// The rest of the map's image at once.
+	void finish() {
+		while (!ready()) {
+			step(kSeaMapRowsPerFrame);
+		}
+	}
 
 	// Centro del símbolo de una ciudad de la partida.
 	SDL_Point town_center(const SaveGame& save, size_t town) const {
@@ -635,8 +700,34 @@ public:
 	}
 
 private:
+	// The map's texture, empty: an 8-bit BMP is filled by step; another image
+	// is loaded whole now.
+	void start_map() {
+		map_entry_ = archive_.find(kSeaMapImage);
+		std::vector<uint8_t> head;
+		if (map_entry_ && archive_.read_range(*map_entry_, 0, std::min<uint32_t>(map_entry_->size, 2048), head) &&
+			parse_bmp8(head.data(), head.size(), bmp_) &&
+			map_entry_->size >= uint64_t(bmp_.pixels) + uint64_t(bmp_.stride) * uint64_t(bmp_.height)) {
+			map_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, bmp_.width,
+				bmp_.height);
+			if (map_) {
+				SDL_SetTextureBlendMode(map_, SDL_BLENDMODE_BLEND);
+				width_ = bmp_.width;
+				height_ = bmp_.height;
+				return;
+			}
+		}
+		map_entry_ = nullptr;
+		map_ = load_texture(renderer_, archive_, kSeaMapImage, &width_, &height_);
+	}
+
 	SDL_Renderer* renderer_;
+	const CprArchive& archive_;
 	std::vector<SeaMapTown> towns_;
+	const CprEntry* map_entry_ = nullptr;  // While the map's image loads by steps.
+	Bmp8 bmp_;
+	int next_row_ = 0;  // The file's next row to load.
+	std::vector<uint8_t> chunk_;
 	SDL_Texture* map_ = nullptr;
 	SDL_Texture* symbols_ = nullptr;
 	SDL_Texture* marker_ = nullptr;
@@ -665,21 +756,35 @@ class LiveTown {
 public:
 	bool load(const CprArchive& archive, const SaveGame& save, size_t index, const std::vector<int>& regions,
 		std::string& error) {
-		index_ = index;
-		loaded_ = false;
 		if (index >= save.towns.size()) {
+			loaded_ = false;
 			error = "the save has no town " + std::to_string(index);
 			return false;
 		}
+		if (loaded_ && index == index_) {
+			return true;  // Its template is already here (another game or language: a new LiveTown).
+		}
+		index_ = index;
+		key_ = 0;
+		drawn_ = false;
 		loaded_ = load_saved_town_template(archive, save.towns[index], regions, base_, &error);
 		return loaded_;
+	}
+
+	// Whether the town `index` was drawn last and its buildings haven't changed since.
+	bool drawn(const SaveGame& save, size_t index) const {
+		return loaded_ && drawn_ && index == index_ && !changed(save);
 	}
 
 	// The town as it is now.
 	void draw(const SaveGame& save, const TileSet& tiles, TownMap& out) {
 		place_saved_town(base_, save, index_, tiles, out);
 		key_ = drawn_buildings_key(save.towns[index_]);
+		drawn_ = true;
 	}
+
+	// The view shows something else (a template map): draw it again next time.
+	void forget_drawn() { drawn_ = false; }
 
 	// Whether its buildings have changed since the last draw.
 	bool changed(const SaveGame& save) const {
@@ -690,6 +795,7 @@ private:
 	SavedTownTemplate base_;
 	size_t index_ = 0;
 	bool loaded_ = false;
+	bool drawn_ = false;  // The view holds this town's drawing (TownView::show).
 	uint64_t key_ = 0;
 };
 
@@ -2569,6 +2675,11 @@ int main(int argc, char** argv) {
 		}
 	};
 	MailUi mail;  // The mailbox.
+	// Triangle in a town before the sea map is loaded: the town stays, with a
+	// notice, while it loads (from the frame after the notice is on screen).
+	bool sea_wanted = false;
+	bool sea_notice_shown = false;
+	std::string sea_notice;  // Its notice, as shown.
 	auto fleet_ship = [&]() -> int {
 		const std::vector<int> fleet = player_fleet(save);
 		return fleet.empty() ? -1 : fleet[fleet_index % fleet.size()];
@@ -2676,6 +2787,8 @@ int main(int argc, char** argv) {
 		clock = app_ticks();
 		notices.clear();
 		mail = MailUi();
+		sea_wanted = false;
+		sea_notice_shown = false;
 		return true;
 	};
 	// Options: another language. The archive (with or without the Spanish
@@ -3015,10 +3128,34 @@ int main(int argc, char** argv) {
 		};
 		auto select_ware = [&](int step) { market.ware = (market.ware + kTradeWareCount + step) % kTradeWareCount; };
 		auto change_step = [&](int step) { market.step = (market.step + kTradeStepCount + step) % kTradeStepCount; };
+		// Triangle asked for the sea map: it loads now, some rows a frame
+		// (SeaMapView::step), the town and the notice on screen; then to the sea.
+		if (sea_wanted && sea_notice_shown) {
+			if (!sea) {
+				sea = std::make_unique<SeaMapView>(renderer, *archive);
+			} else if (!sea->ready()) {
+				sea->step(kSeaMapRowsPerFrame);
+			}
+		}
+		sea_notice_shown = sea_wanted;
+		if (sea_wanted && sea && sea->ready()) {
+			sea_wanted = false;
+			sea_notice_shown = false;
+			notices.erase(std::remove_if(notices.begin(), notices.end(),
+							  [&](const std::pair<std::string, Uint32>& n) { return n.first == sea_notice; }),
+				notices.end());
+			if (selection.mode == Mode::Saved) {
+				selection.mode = Mode::Sea;
+				reload = true;
+			}
+		}
 		if (reload && selection.mode == Mode::Sea) {
 			if (!sea) {
-				show_loading(renderer);
 				sea = std::make_unique<SeaMapView>(renderer, *archive);
+			}
+			if (!sea->ready()) {
+				show_loading(renderer);
+				sea->finish();
 			}
 			if (!sea->ok()) {
 				show_error(window, tr("No se encuentra el mapa del mar.", "The sea map can't be found."));
@@ -3030,23 +3167,33 @@ int main(int argc, char** argv) {
 			reload = false;
 		}
 		if (reload) {
-			show_loading(renderer);
+			// A town of the game takes a few milliseconds (its graphics are
+			// decoded once): the last screen stays meanwhile, no black one; the
+			// same town unchanged is already drawn.
+			if (selection.mode != Mode::Saved) {
+				show_loading(renderer);
+			}
 			TownMap town;
 			std::string error;
 			bool loaded = false;
+			bool drawn = false;
 			if (selection.mode == Mode::Saved) {
-				loaded = live.load(*archive, save, selection.saved_index, regions, error);
-				if (loaded) {
+				drawn = live.drawn(save, selection.saved_index);
+				loaded = drawn || live.load(*archive, save, selection.saved_index, regions, error);
+				if (loaded && !drawn) {
 					live.draw(save, view->tiles(), town);
 				}
 			} else {
 				loaded = load_template(*archive, template_ids, selection, town, error);
+				live.forget_drawn();
 			}
 			if (!loaded) {
 				show_error(window, error);
 				break;
 			}
-			view->show(town);
+			if (!drawn) {
+				view->show(town);
+			}
 			if (!keep_camera) {
 				const SDL_Point focus = focus_point(*view, save, selection);
 				camera_x = focus.x - kScreenWidth / 2;
@@ -3501,6 +3648,15 @@ int main(int argc, char** argv) {
 			continue;
 		}
 		if (next_mode && has_save) {
+			if (selection.mode == Mode::Saved && (!sea || !sea->ready())) {
+				// The sea map isn't loaded yet: the town stays while it loads.
+				if (!sea_wanted) {
+					sea_notice = tr("Cargando el mapa del mar...", "Loading the sea map...");
+					notify(sea_notice);
+				}
+				sea_wanted = true;
+				continue;
+			}
 			// Entre la ciudad elegida y el mapa del mar; desde una plantilla, a la ciudad.
 			selection.mode = selection.mode == Mode::Saved ? Mode::Sea : Mode::Saved;
 			reload = true;

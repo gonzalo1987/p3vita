@@ -15,17 +15,17 @@ Cómo leerla:
   de las sesiones en la nube, [cloud/](cloud/).
 - Este documento se queda en español: lo lee el usuario.
 
-## En marcha (02-11-2026)
+## En marcha (04-11-2026)
 
 - Las sesiones en la nube se acabaron: el crédito se agotó y todas las ramas `cloud/*` están juntas en `main`. Sus notas siguen en [cloud/](cloud/).
-- Hecho (03-11-2026): un barco del jugador atacado ya no se queda parado. Su batalla la lucha el ordenador, como en el juego cuando el jugador no la dirige (la operación 0x96), y los avisos del abordaje se escriben con los textos del juego (abajo, pieza 3). En el visor salen ya el aviso del ataque y los del abordaje, en español. Lo siguiente: el resultado de la batalla, que el juego manda por carta (el parte de 0x60D299), y la batalla en el mapa del mar.
-- En marcha (03-11-2026): **el buzón de cartas y avisos** (fase 4, «Guardar las cartas y avisos nuevos…»), con el parte de la batalla. Hecho el inventario ([formats/mail.md](formats/mail.md)); lo siguiente, reescribir el envío de cartas y conectar las llamadas.
-- Después: la parte C del inventario y luego la D. La parte B está hecha salvo la 0x9F y la 0xB5, que van con las batallas.
+- Hecho (03-11-2026): un barco del jugador atacado ya no se queda parado. Su batalla la lucha el ordenador, como en el juego cuando el jugador no la dirige (la operación 0x96), y los avisos del abordaje se escriben con los textos del juego (abajo, pieza 3). En el visor salen ya el aviso del ataque y los del abordaje, en español. Queda la batalla en el mapa del mar.
+- Hecho (03 y 04-11-2026): **el buzón de cartas y avisos** (fase 4, «El buzón»): el envío de cartas (99 de las 154 llamadas conectadas; las otras 55 están en partes del juego aún sin reescribir), guardarlas y cargarlas, el texto de cada carta, la crónica y las líneas de aviso en inglés y en español, el parte de la batalla, la pantalla del buzón en el visor y las dos cartas con imagen. Y cargas más ligeras en la Vita (fase 5: el mapa del mar y las ciudades).
+- Lo siguiente: la parte C del inventario y luego la D; después, un hito jugable en la Vita. La parte B está hecha salvo la 0x9F y la 0xB5, que van con las batallas.
 - Lo que queda en español en el repositorio (menos este documento) se pasa al inglés poco a poco, al tocar cada fichero.
 
 ## Estado por partes (medido)
 
-Cuánto código del juego tiene p3vita en cada parte de la simulación, medido el 01-11-2026 sobre `main` (con `cloud/battles-2` ya junta) con `re/emu/sesion5/coverage_parts.py` (Python de Windows; para repetirlo: `python coverage_parts.py RUTA/p3vita/src`).
+Cuánto código del juego tiene p3vita en cada parte de la simulación, medido el 04-11-2026 sobre `main` (tras el buzón; la medida anterior, del 01-11-2026, daba casi lo mismo: un 79 % de toda la simulación) con `re/emu/sesion5/coverage_parts.py` (Python de Windows; para repetirlo: `python coverage_parts.py RUTA/p3vita/src`).
 
 Cómo se mide:
 - Para cada parte se toman sus funciones de entrada del juego y todo lo que cuelga de ellas, sin la interfaz.
@@ -43,22 +43,23 @@ Cómo se mide:
 | Barcos: navegación, IA y convoyes (0x506720) | 152 | 62 | 35 (57 %) | 22 (36 %) | 4 (7 %) |
 | Lo diario, tareas programadas y objetos del mundo | 12 | 2 | 2 (97 %) | 0 (3 %) | 0 (0 %) |
 | Asedios (0x6349F0, 0x633A90) | 28 | 15 | 13 (89 %) | 2 (11 %) | 0 (0 %) |
-| Cola de eventos (0x4D85C0) | 415 | 193 | 156 (81 %) | 25 (13 %) | 13 (6 %) |
+| Cola de eventos (0x4D85C0) | 415 | 193 | 157 (81 %) | 24 (12 %) | 12 (6 %) |
 | Operaciones que encola la simulación | 172 | 72 | 56 (78 %) | 15 (21 %) | 1 (1 %) |
-| Camino a Gobernador | 223 | 93 | 70 (76 %) | 20 (22 %) | 2 (2 %) |
+| Camino a Gobernador | 223 | 93 | 71 (77 %) | 19 (21 %) | 2 (2 %) |
 | Cargar partida (0x549F40) | 103 | 42 | 6 (15 %) | 34 (81 %) | 2 (5 %) |
 | Guardar partida (0x549CC0) | 38 | 11 | 0 (0 %) | 10 (96 %) | 0 (4 %) |
 | Tormentas (0x5053C0) | 4 | 5 | 5 (97 %) | 0 (3 %) | 0 (0 %) |
-| Batallas y encuentros | 58 | 32 | 11 (35 %) | 19 (59 %) | 2 (6 %) |
-| Guiones de misiones (0x4ECF64, 0x511270) | 73 | 23 | 4 (18 %) | 7 (32 %) | 11 (50 %) |
-| **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | 228 (79 %) | 42 (15 %) | 17 (6 %) |
+| Batallas y encuentros | 58 | 32 | 11 (36 %) | 19 (59 %) | 2 (6 %) |
+| Guiones de misiones (0x4ECF64, 0x511270) | 73 | 23 | 4 (18 %) | 7 (32 %) | 11 (49 %) |
+| **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | 229 (80 %) | 41 (14 %) | 16 (6 %) |
 
 Notas:
 - **Barcos**: los piratas ya están enteros (pieza 2 de las batallas, encendidos por omisión), también los objetos piratas (0x514000 → 0x513EC0) y la guarida (0x515DA0 → 0x513BF0). Lo que falta son sobre todo las rutas comerciales (0x4D5200, 0x52ACD0, 0x4D4C90...).
 - **Cola de eventos**: lo que falta son los tipos que p3vita aún no atiende (0x4E5664, 0x4E38B4, 0x4DDF40, 0x4E7A14...).
 - **Cargar y guardar partida**: aunque en la tabla salgan como «nombrado», están hechos e idénticos al juego en las 12 partidas. `savegame.cpp` y `savegame_write.cpp` los reescriben por estructuras y no con funciones `fn_`, y algunas direcciones (0x504230, los barcos) ni siquiera salen en los comentarios, así que la medida se queda corta.
 - **Batallas**: la fila se queda muy corta, porque las batallas van sobre todo por tablas de métodos, que este grafo no sigue: no cuenta el paso de la batalla (0x606CC0 y lo que cuelga, unas 7000 instrucciones), que ya está reescrito. Su estudio, que sí las sigue ([cloud/battles.md](cloud/battles.md)), cuenta sin la interfaz 249 funciones (148 KB) en el mar y 41 (50 KB) en las ciudades. Está hecha la batalla automática en el mar (empezar, cada paso y acabar) y guardarla y cargarla; faltan el lado humano, las balas de cañón, las rocas como obstáculos y las batallas en las ciudades.
-- **Todo el ejecutable**, con la interfaz y las batallas: p3vita reescribe un 11 % (`coverage.py`). La mayor parte del resto es interfaz.
+- **El buzón casi no mueve la tabla**: lo que mandaba las cartas desde la simulación ya contaba (las llamadas a 0x4D6530 se conectaron sobre funciones ya reescritas), y lo nuevo de estos días (el compositor de las cartas 0x47F3B0, la crónica 0x47DD40, las líneas de aviso 0x5483D0, la ventana del buzón) es código de la interfaz del juego, que esta medida deja fuera a propósito.
+- **Todo el ejecutable**, con la interfaz y las batallas (`coverage.py`, 04-11-2026): p3vita reescribe un 13,7 % con los nombres de las funciones del juego (`fn_XXXXXX`; el 01-11-2026 era un 11 %) y nombra otro 10,3 % en comentarios. Se queda corta: el compositor de las cartas, la crónica y las líneas de aviso (unos 30 KB) están reescritos con nombres propios (`compose_letter`...) y solo cuentan como nombrados. La mayor parte del resto es interfaz.
 
 ## Fase 1: entorno y datos
 
@@ -410,6 +411,7 @@ Un ajuste (feature flag) **activado por omisión** con el que p3vita corrige los
 - [x] Revisado con capturas en el PC lo que faltaba por confirmar en la Vita: los edificios de la partida, la barra de texto (cabe, con tildes), el panel del mercado (cabe; también el táctil), el mapa del mar y la navegación (ruta, llegada prevista, aviso al llegar). Falta verlo en la Vita
 - [ ] Rehacer la interfaz para 960×544 (16:9) con soporte táctil
 - [ ] Los nombres de las ciudades en el mapa del mar se ven blandos. Se dibujan con stb_truetype (suavizado, sin ajustar las letras a los píxeles) en marrón oscuro y sin contorno sobre un fondo con textura. Comparar con una captura del juego original (letra, tamaño, color, contorno, suavizado) e igualarlo
+- [x] **Cargas más ligeras en la Vita** (04-11-2026, probado en la Vita por el usuario). El mapa del mar (`Vollansichtskarte.bmp`, 2400 × 1800 en 256 colores) se descodificaba con stb_image y se copiaba dos veces (unos 17 MB cada vez) tras una pantalla negra de casi un segundo; ahora se traduce por su paleta en una sola pasada directamente en la textura (`decode_bmp8`, `image.hpp`), por trozos de 240 filas, la primera vez que se pulsa Triángulo: la ciudad se queda en pantalla con «Cargando el mapa del mar...» hasta que está (cargarlo de fondo mientras se está en la ciudad la hacía ir a tirones, y se descartó). Las ciudades ya no pasan por una pantalla negra: volver a la misma sin cambios no rehace nada, la plantilla no se vuelve a leer de la tarjeta, y la textura de cada trozo de dibujo se busca por su baldosa y no por el nombre de su fichero (era lo más caro). La imagen de las cartas 0x46/0x6E lee del CPR solo las filas del mapa que necesita (`CprArchive::read_range`). Se probó convertir el mapa a PNG: ocupa un 30 % menos, pero descodificarlo cuesta de 3 a 7 veces más
 - [ ] Una franja en los bordes de arriba y abajo del mapa del mar (parte de `Vollansichtskarte.bmp` que el juego seguramente tapa con su interfaz): parar la cámara antes
 - [x] El panel de la Hansa para el camino a Gobernador (fase 4, «Llegar a Gobernador»: lo hecho y lo que falta)
 - [ ] Los textos de la interfaz del juego. No están en el CPR, que solo tiene los nombres de ciudades, personas y barcos: están dentro de `Patrician3.exe`, en el idioma de cada instalación (el exe español es otro, de 2003). `src/p3data/game_texts.cpp` los lee al arrancar del exe de la instalación (reconoce el inglés de GOG 1.1 y el español) y en p3vita solo guarda dónde está cada texto, nunca el texto (`tests/game_texts_test.cpp`). En la Vita hay que copiar el exe a `ux0:data/p3vita/` (README).

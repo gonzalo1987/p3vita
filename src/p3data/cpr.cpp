@@ -158,6 +158,16 @@ bool CprArchive::read(const CprEntry& entry, std::vector<uint8_t>& out) const {
 		std::fread(out.data(), 1, out.size(), f) == out.size();
 }
 
+bool CprArchive::read_range(const CprEntry& entry, uint32_t offset, uint32_t size, std::vector<uint8_t>& out) const {
+	if (entry.file >= files_.size() || offset > entry.size || size > entry.size - offset) {
+		return false;
+	}
+	out.resize(size);
+	std::FILE* f = files_[entry.file].get();
+	return std::fseek(f, long(entry.offset) + long(offset), SEEK_SET) == 0 &&
+		std::fread(out.data(), 1, out.size(), f) == out.size();
+}
+
 std::string normalize_path(std::string_view path) {
 	std::string key(path);
 	for (char& c : key) {

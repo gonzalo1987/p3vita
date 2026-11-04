@@ -41,6 +41,9 @@ public:
 	const CprEntry* find(std::string_view path) const;
 
 	bool read(const CprEntry& entry, std::vector<uint8_t>& out) const;
+	// Only `size` bytes of the entry from `offset` (the CPR doesn't compress:
+	// a part of a big file without reading it all); false past its end.
+	bool read_range(const CprEntry& entry, uint32_t offset, uint32_t size, std::vector<uint8_t>& out) const;
 
 private:
 	struct FileCloser {

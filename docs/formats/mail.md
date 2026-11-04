@@ -417,7 +417,9 @@ interpreter's 0x4ED0C6, 0x4EDEDA.
   handle; `letter_map_picture` (`letter_picture.hpp`) is 0x51AC60 on RGBA
   images (the game's sepia, window, MMX alpha blend, cross and cleared
   pieces), and the viewer draws it at the line of `\h` (`made_picture`).
-  `p3save CPR SAVE letter-picture ENTRY OUT.png` writes it.
+  From the archive it reads only the window's rows of the sea map (an 8-bit
+  BMP: `parse_bmp8`, `decode_bmp8`, `CprArchive::read_range`), not the whole
+  4.3 MB. `p3save CPR SAVE letter-picture ENTRY OUT.png` writes it.
 - The oracle runs 0x4D6530 only from the connected calls (`MAIL_CALLS` in
   `tools/oracle/town_oracle.py`) and records the buffers as region `LB`
   ([oracle.md](../oracle.md), «The mailbox: sending letters»); scenarios in

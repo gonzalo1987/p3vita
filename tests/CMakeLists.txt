@@ -69,3 +69,9 @@ target_link_libraries(mail_test PRIVATE p3data)
 target_compile_options(mail_test PRIVATE -Wall -Wextra)
 
 add_test(NAME mail COMMAND mail_test)
+
+add_executable(image_test image_test.cpp)
+target_link_libraries(image_test PRIVATE p3data)
+target_compile_options(image_test PRIVATE -Wall -Wextra)
+
+add_test(NAME image COMMAND image_test)
