@@ -900,7 +900,7 @@ void Sailing::arrive(SavedShip& ship, uint16_t index, uint16_t& link) {
 // not reproduced) and set to 0xFFFF. If it is already in the free list
 // [0xE2], nothing else. Then state 0xFF; out of its owner's list ([+0xE]) and
 // out of the owner's 11 ship lists ([+0x60C] counts, [+0x624] heap arrays:
-// 0x4F5900, not reproduced when they hold ships); a ship of no merchant
+// 0x4F5900); a ship of no merchant
 // leaves the lists of the 5 pirates (0x515F00); owner 0xFF, [+0x4] = 0xFFFF.
 // It leaves the first list it is in: in port ([0xE8]), at sea ([0xEA]) or
 // the two shipyard lists of a town ([0x81C], [0x81E]; for a ship of no
@@ -938,12 +938,9 @@ void Sailing::fn_507fb0(uint16_t index) {
 				link = &save_.ships[*link].memory.u16(4);
 			}
 		}
+		const uint8_t owner = s.u8(0);
 		s.u8(0) = 0xFF;
-		for (size_t k = 0; k < 11; ++k) {
-			if (m.u16(0x60C + 2 * k) & 0x7FFF) {
-				// Sin comprobar con el oráculo: the heap array is not in SaveGame.
-			}
-		}
+		tick::events_mayor_detail::fn_4f5900(save_, owner);
 	} else {
 		// Sin comprobar con el oráculo.
 		for (auto& pirate : save_.pirates) {

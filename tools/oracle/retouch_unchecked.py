@@ -6,7 +6,7 @@ tick_probe repeats each recorded call from the game's state just before it
 (without --continuo: p3vita doesn't know the retouch).
 
 usage: python3 retouch_unchecked.py <Patrician3.exe> <save.raw> <out.probe> <scenario>
-       --barcos DATA --cpr p2arch0_eng.cpr [--days N] [--functions F,F...] [--seed S]
+       --barcos DATA --cpr p2arch0_eng.cpr [--days N] [--functions F,F...] [--seed S] [--write OUT]
        python3 retouch_unchecked.py --list
 
 A scenario changes the state after the load and may make direct calls to game
@@ -591,6 +591,122 @@ def office_ops(o):
         request(0xFF, sx, sy + 4, 0x2F)
         request(0xFF, sx, sy - 4, 0x70)
         print(f'works {len(records(o, t, 0x762))}')
+    return during
+
+
+def captain_at(o, c):
+    return o.u32(to.SHIPS) + 0x10 * c
+
+
+def player_pirate_setup(o):
+    """The player's first ship in port (state 0, not in a convoy) left without
+    its captain, who goes to the head of the town's list of captains
+    ([0x82E], next [+0x0]): (ship, town, captain)."""
+    towns, _, _, ships = o.counts()
+    convoys = o.u16(to.SHIPS + 0xF6)
+    s = o.u16(o.merchant(o.u32(to.PLAYER)) + 0xE)
+    while s < ships:
+        a = o.ship(s)
+        if o.u16(a + 0x134) == 0 and o.u8(a + 0x39) < towns and o.u16(a + 8) >= convoys:
+            break
+        s = o.u16(a + 4)
+    else:
+        raise RuntimeError('the player has no ship in port')
+    a = o.ship(s)
+    t, c = o.u8(a + 0x39), o.u16(a + 0x42)
+    captains = o.u16(to.SHIPS + 0xF2)
+    if c < captains:
+        w16(o, a + 0x42, 0xFFFF)
+        w16(o, captain_at(o, c), o.u16(o.town(t) + 0x82E))
+        w16(o, o.town(t) + 0x82E, c)
+    elif o.u16(o.town(t) + 0x82E) < captains:
+        c = o.u16(o.town(t) + 0x82E)  # the ship has none: one already in the town's list
+    else:
+        # The head of another town's list, moved to this one.
+        u = next(u for u in range(towns) if o.u16(o.town(u) + 0x82E) < captains)
+        c = o.u16(o.town(u) + 0x82E)
+        w16(o, o.town(u) + 0x82E, o.u16(captain_at(o, c)))
+        w16(o, captain_at(o, c), 0xFFFF)
+        w16(o, o.town(t) + 0x82E, c)
+    print(f'ship {s} of the player {o.u32(to.PLAYER)} in town {t}: its captain {c} to the town\'s list; '
+          f'pirates {[k for k, _ in pirates(o)]}')
+    return s, t, c
+
+
+def player_pirate(o):
+    """Operation 0x4E (0x53B850, which only the interface queues): a player's
+    ship turns pirate. The player's first ship in port without its captain,
+    who is put in the town's list: 0x4E with him (the ship joins the pirate
+    nearest to the town: 0x509250 with no winner, 0x4F5900, 0x515EA0, 0x5172A0
+    to the town's first waypoint); the same again (the ship is no longer a
+    merchant's: refused); before them, with a captain not in the town's list
+    (0x526AA0 refuses). Then a day with the ships, the new pirate among them."""
+    s, t, c = player_pirate_setup(o)
+    towns, _, _, _ = o.counts()
+
+    def during(o):
+        operation(o, 0x4E, (c + 1) % o.u16(to.SHIPS + 0xF2), s, 30, t)
+        operation(o, 0x4E, c, s, 30, (t + 1) % towns)
+        a = o.ship(s)
+        print(f'ship {s}: owner {o.u8(a):#x}, state {o.u16(a + 0x134)}, captain {o.u16(a + 0x42)}, '
+              f'sailors {o.u16(a + 0x40)}, [+0x159] {o.u8(a + 0x159)}, [+0x4C] {o.u32(a + 0x4C):#x}')
+        operation(o, 0x4E, c, s, 30, t)
+    return during
+
+
+def player_pirate_new(o):
+    """Operation 0x4E as in player_pirate, with no pirate object (the five
+    pointers set to 0): the game makes one in slot 0 (0x513720, 0x513D80 with
+    its nest and ships) and the ship joins it. Only the operation."""
+    s, t, c = player_pirate_setup(o)
+    for k in range(5):
+        w32(o, PIRATES + 4 * k, 0)
+
+    def during(o):
+        operation(o, 0x4E, c, s, 30, t)
+        print(f'pirates now {[k for k, _ in pirates(o)]}; ship {s} owner {o.u8(o.ship(s)):#x}')
+    return during
+
+
+def merchant_lists(o, m):
+    """{list: (length word, [u16])} of merchant m's ship lists not empty."""
+    a, out = o.merchant(m), {}
+    for k in range(11):
+        word, pointer = o.u16(a + 0x60C + 2 * k), o.u32(a + 0x624 + 4 * k)
+        n = word & 0x7FFF
+        out[k] = (word, list(struct.unpack(f'<{n}H', bytes(o.uc.mem_read(pointer, 2 * n)))) if n and pointer else [])
+    return {k: v for k, v in out.items() if v[0]}
+
+
+def player_pirate_lists(o):
+    """player_pirate with the player's ship lists filled (the u16 arrays at
+    [+0x624 + 4·k], lengths in [+0x60C + 2·k]; empty in every save): list 0
+    with the ship, list 3 with an AI ship (not his: out), the ship and another
+    of his (kept), with the bit 0x8000; list 9 with the ship twice. Operation
+    0x4E (0x509250 → 0x4F5900), then 0x0A on his other ship (0x507FB0 →
+    0x4F5900)."""
+    s, t, c = player_pirate_setup(o)
+    _, _, merchants, ships = o.counts()
+    p = o.u32(to.PLAYER)
+    pm = o.merchant(p)
+    second = next(x for x in merchant_ships(o, p) if x != s)
+    ai = next(x for x in range(ships) if o.u8(o.ship(x)) < merchants and o.u8(o.ship(x)) != p)
+
+    def put(k, values, high=0):
+        a = o.alloc(2 * len(values) + 4)
+        o.uc.mem_write(a, struct.pack(f'<{len(values)}H', *values))
+        w32(o, pm + 0x624 + 4 * k, a)
+        w16(o, pm + 0x60C + 2 * k, len(values) | high)
+    put(0, [s])
+    put(3, [ai, s, second], 0x8000)
+    put(9, [s, s])
+    print(f'lists of the player {p}: {merchant_lists(o, p)} (ship {s}, his other ship {second}, AI ship {ai})')
+
+    def during(o):
+        operation(o, 0x4E, c, s, 30, t)
+        print(f'after 0x4E: {merchant_lists(o, p)}')
+        operation(o, 0x0A, second, p)
+        print(f'after 0x0A: {merchant_lists(o, p)}; ship {second} state {o.u16(o.ship(second) + 0x134):#x}')
     return during
 
 
@@ -2129,6 +2245,10 @@ SCENARIOS = {
     'office_ops': Scenario(office_ops, [0x535760], 0, [
         '@51b91b', '@51b9a8', '@51b8f7>51b9ff', '@51b915>51b9ff', '@5362bc>537025', '@5362cd>537025', '@53ce59',
         '@53cec7', '@53ce93>53cef2']),
+    'player_pirate': Scenario(player_pirate, [0x535760, 0x506720], 1, [
+        '@53b91a', '@5095fd', '@5096a4>509706', '@509783', '@53b9d7', '@53b914>53ba2f', '@53b89f>53ba2f']),
+    'player_pirate_lists': Scenario(player_pirate_lists, [0x535760], 0, ['@4f5960', '@4f595e>4f5976']),
+    'player_pirate_new': Scenario(player_pirate_new, [0x535760], 0, ['@5096a6', '@5096fd', '@509783']),
     'siege_pitch': Scenario(siege_pitch, [0x535760, 0x528070, 0x6281F0], 1, ['@5281b1', '@63692e', '@6326cc',
                                                                              '@63276a']),
 }
@@ -2216,6 +2336,8 @@ def main():
     p.add_argument('--days', type=int)
     p.add_argument('--functions')
     p.add_argument('--seed', type=int, default=1)
+    p.add_argument('--write', metavar='OUT', help='at the end, the save the game writes: OUT uncompressed, OUT.pat '
+                   'compressed, OUT.pst (scripts/write-scenario.sh with RETOUCH=unchecked)')
     a = p.parse_args()
     o = to.TownOracle(a.exe, open(a.save, 'rb').read(), a.seed, a.barcos, rest=list(to.REST), cpr=a.cpr)
     if a.scenario == 'inspect':
@@ -2239,6 +2361,11 @@ def main():
         f.write(b'E')
     print(f'{rec.count} samples in {a.out}')
     blocks.report(s.targets)
+    if a.write:
+        from write_oracle import prepare_game_object, write_files
+        prepare_game_object(o)
+        write_files(o, a.write, a.write + '.pat')
+        print(f'save written in {a.write} ({a.write}.pat, {a.write}.pst)')
 
 
 if __name__ == '__main__':

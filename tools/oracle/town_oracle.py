@@ -8,6 +8,8 @@ El estado son copias de la memoria del juego, por regiones:
   G      globales de 0x6DD000 a 0x6E0000 (mundo 0x6DE4A0, barcos 0x6DD7A0...)
   A      ajustes de la partida (*0x6CC3E8, 0x4C bytes)
   T O M  ciudades (0x9F8), oficinas (0x44C) y comerciantes (0x650)
+  ML     the merchants' ship lists that aren't empty (u16 arrays at [+0x624 + 4·k]):
+         u16 merchant, u8 list, u16 length and its u16s (empty in the saves)
   P C    barcos (0x180) y capitanes (16)
   W      registros de 0x14 bytes del mundo (*0x6DE510, tantos como [0x6DE4A6])
   X      objetos de asedio de cada ciudad (*0x6DF270, 0x1024)
@@ -1072,6 +1074,19 @@ class TownOracle(SaveOracle):
         out['O'] = (first_office, block(first_office, offices * 0x44C))
         first_merchant = gu32(WORLD + 0x78)
         out['M'] = (first_merchant, block(first_merchant, merchants * 0x650))
+        # The merchants' 11 ship lists (u16 arrays at [+0x624 + 4·k], their
+        # lengths the 15 low bits of [+0x60C + 2·k]): for each one not empty,
+        # u16 merchant, u8 list, u16 length and its u16s (tick_probe:
+        # SaveOpaque::merchant_lists). Empty in the saves.
+        lists = []
+        merchant_block = out['M'][1]
+        for i in range(merchants):
+            for k in range(11):
+                n = unpack('<H', merchant_block, 0x650 * i + 0x60C + 2 * k)[0] & 0x7FFF
+                pointer = unpack('<I', merchant_block, 0x650 * i + 0x624 + 4 * k)[0]
+                if n and pointer:
+                    lists.append(struct.pack('<HBH', i, k, n) + bytes(read(pointer, 2 * n)))
+        out['ML'] = (0, b''.join(lists))
         first_ship = gu32(SHIPS + 4)
         ship_block = block(first_ship, ships * 0x180)
         out['P'] = (first_ship, ship_block)

@@ -37,9 +37,23 @@
 
 namespace p3::data {
 class Sailing;
+// battle/pirate_objects.cpp: the end of 0x509250 for a winner that isn't a
+// merchant (0x5095EB): the ship goes to the pirate object nearest to the
+// town, or to a new one (its route with `sailing`).
+void fn_509250_pirates(SaveGame& save, Sailing* sailing, uint16_t ship, uint32_t town);
 }  // namespace p3::data
 
 namespace p3::data::tick {
+namespace events_mayor_detail {
+// events_mayor.cpp: 0x4F5900 (on the merchant), out of his ship lists go
+// the ships that are no longer his; 0x509250, a ship sold (or, with a winner
+// that isn't a merchant, turned pirate).
+void fn_4f5900(SaveGame& save, int merchant);
+void fn_509250(SaveGame& save, Sailing* sailing, uint32_t ship, uint32_t winner, int32_t price90, int32_t price,
+	uint32_t town);
+}  // namespace events_mayor_detail
+// operations.cpp: the operation 0x4E (0x53B850), a player's ship turns pirate.
+void fn_53b850(SaveGame& save, Sailing* sailing, const uint8_t* operation);
 
 // --- Utilidades comunes (shared.cpp) ---
 

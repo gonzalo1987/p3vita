@@ -587,6 +587,79 @@ void fn_513d80(SaveGame& save, size_t k, uint32_t town, uint32_t difficulty, uin
 	p.u8(0x15) = 0;
 }
 
+// A new pirate object in slot k (operator new and its constructor 0x513720):
+// [+0xC], [+0x10], [+0x12] 0xFFFF, [+0xE], [+0xF], [+0x14] 0xFF, the rest 0,
+// no map nor pool; its pointer in the ships object (here 1).
+GameMemory<0x18>& fn_513720(SaveGame& save, size_t k) {
+	GameMemory<0x18>& p = save.pirates[k].emplace();
+	p.bytes.fill(0);
+	p.u16(0xC) = 0xFFFF;
+	p.u8(0xE) = 0xFF;
+	p.u8(0xF) = 0xFF;
+	p.u16(0x10) = 0xFFFF;
+	p.u16(0x12) = 0xFFFF;
+	p.u8(0x14) = 0xFF;
+	save.pirate_nests[k] = PirateNest{};
+	save.globals.u32(kPirates + 4 * uint32_t(k)) = 1;
+	return p;
+}
+
+// 0x5095EB, the end of 0x509250 for a winner that isn't a merchant (the
+// operation 0x4E: a player's ship turns pirate; also the mission
+// interpreter): with the town in the world, the ship joins the pirate whose
+// nest ([+0xE], a number of StadtDaten.ini) is nearest to the town (squared
+// distance of the table's [+0x20], [+0x24], the first on a tie) or, with no
+// pirate, a new one in slot 0 (0x513720; 0x513D80 with the ship % 40, the
+// difficulty and the tick + the ship + the town), at the end of its list
+// (0x515EA0; unlike 0x5063C0 the ship's [+0x158] stays). Its course: the
+// first waypoint round the town (0x448780, [+0x24] of the navigation) in
+// pixels (0x5172A0 without a town). Then [+0x3D] |= 4, [+0x138] = 0, no
+// owner and state 2.
+void fn_509250_pirates(SaveGame& save, Sailing* sailing, uint16_t ship, uint32_t town) {
+	GlobalMemory& g = save.globals;
+	if (town >= g.u32(global::kWorldTownCount)) {
+		return;  // Sin comprobar con el oráculo.
+	}
+	constexpr uint32_t kTownIds = 0x6DE4B8;  // u8 per town: its number in StadtDaten.ini
+	const uint32_t row = kTownTable + 0x34 * uint32_t(g.u8(kTownIds + town));
+	const uint32_t tx = g.u32(row + 0x20);
+	const uint32_t ty = g.u32(row + 0x24);
+	uint32_t chosen = 0xFF;
+	int32_t best = 0x7FFFFFFF;
+	for (uint32_t k = 0; k < 5; ++k) {
+		if (g.u32(kPirates + 4 * k) == 0 || !save.pirates[k]) {
+			continue;
+		}
+		const uint32_t nest = kTownTable + 0x34 * uint32_t(save.pirates[k]->u8(0xE));
+		const uint32_t dx = uint32_t(g.u16(nest + 0x20)) - tx;
+		const uint32_t dy = uint32_t(g.u16(nest + 0x24)) - ty;
+		const int32_t d = int32_t(dy * dy + dx * dx);
+		if (d < best) {
+			chosen = k;
+			best = d;
+		}
+	}
+	if (chosen >= 5) {
+		fn_513720(save, 0);
+		fn_513d80(save, 0, ship % 0x28, save.settings.u8(0x13), g.u32(kTick) + ship + town);
+		chosen = 0;
+	}
+	fn_515ea0(save, chosen, ship);
+	SavedShip& s = save.ships[ship];
+	if (sailing) {
+		const std::vector<uint32_t>& points = sailing->waypoints(int(town));
+		// The game reads the first one even if there were none (never in the saves).
+		const uint32_t p = points.empty() ? 0 : points[0];
+		const int16_t x = NavData::to_pixel(int16_t(p & 0xFFFF));
+		const int16_t y = NavData::to_pixel(int16_t(p >> 16));
+		sailing->set_destination(s, 0xFFFF, x, y);
+	}
+	s.memory.u8(0x3D) |= 4;
+	s.memory.u16(0x138) = 0;
+	s.memory.u8(0x0) = 0xFF;
+	s.memory.u16(0x134) = 2;
+}
+
 // 0x5063C0 (on the ships object: the target ship, kind): the pirate of event
 // 0x1E attacks a ship. A new pirate ship (0x507D60, out of the lists) of
 // town 0's size (0x52A8D0) of type 0 for kind % 3 = 0, 1 for 1, and for 2 type
@@ -647,16 +720,7 @@ uint16_t Sailing::fn_5063c0(uint16_t target, uint32_t kind) {
 			break;
 		}
 		if (k == 4) {
-			GameMemory<0x18>& p = save_.pirates[4].emplace();  // 0x513720
-			p.bytes.fill(0);
-			p.u16(0xC) = 0xFFFF;
-			p.u8(0xE) = 0xFF;
-			p.u8(0xF) = 0xFF;
-			p.u16(0x10) = 0xFFFF;
-			p.u16(0x12) = 0xFFFF;
-			p.u8(0x14) = 0xFF;
-			save_.pirate_nests[4] = PirateNest{};
-			g.u32(kPirates + 4 * 4) = 1;
+			fn_513720(save_, 4);
 			const uint32_t sum = save_.towns[0].memory.u32(0x4) + g.u32(kTick);
 			fn_513d80(save_, 4, g.u32(kTick) % 0x28, save_.settings.u8(0x13), sum);
 			fn_515ea0(save_, 4, index);

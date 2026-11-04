@@ -1451,11 +1451,53 @@ int32_t fn_4f4550(const SaveGame& save, int merchant, uint32_t record, uint32_t 
 	return int32_t((a * uint32_t(value)) / b);
 }
 
+// 0x4F5900 (on the merchant): out of his 11 ship lists ([+0x60C + 2·k] the
+// counts, bit 0x8000 kept; the u16 arrays at [+0x624 + 4·k], in p3vita
+// SaveOpaque::merchant_lists) go the ships that are no longer his (owner
+// [+0x0] ≠ merchant): each is replaced by the list's last one. The game keeps
+// 11 lists; the save has 10 (the eleventh's array isn't in SaveGame).
+void fn_4f5900(SaveGame& save, int merchant) {
+	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
+	for (size_t k = 0; k < 11; ++k) {
+		const uint16_t word = m.u16(0x60C + 2 * k);
+		uint16_t n = word & 0x7FFF;
+		std::vector<uint16_t>* list = nullptr;
+		if (k < 10 && size_t(merchant) < save.opaque.merchant_lists.size()) {
+			list = &save.opaque.merchant_lists[size_t(merchant)][k];
+		}
+		if (n == 0) {
+			continue;  // In the 12 saves every list is empty, and nothing p3vita runs fills them.
+		}
+		if (!list || list->size() < n) {
+			continue;  // Sin comprobar con el oráculo: an array p3vita doesn't have (left as it is).
+		}
+		// No save has a ship in these lists. Checked with the oracle: scenario
+		// player_pirate_lists (saves 3, 5 and 7; through 0x509250 and 0x507FB0).
+		for (uint16_t i = 0; i < n;) {
+			const uint16_t s = (*list)[i];
+			if (s < save.ships.size() && save.ships[s].memory.u8(0x0) == uint8_t(merchant)) {
+				++i;
+				continue;
+			}
+			--n;
+			(*list)[i] = (*list)[n];
+		}
+		if (list && list->size() > n) {
+			list->resize(n);
+		}
+		m.u16(0x60C + 2 * k) = uint16_t(n | (word & 0x8000));
+	}
+}
+
 // 0x509250 (sobre el objeto de los barcos): vende el barco al comerciante
 // `winner` por `price` (el antiguo dueño cobra `price90`): pasa a su lista,
 // con la ciudad natal (la siguiente sin [0x2C8] & 1 para los grandes) como
 // base [+0x13A] y sin órdenes; el de la subasta (estado 0x0C) queda en puerto.
-void fn_509250(SaveGame& save, uint32_t ship, uint32_t winner, int32_t price90, int32_t price, uint32_t town) {
+// With a winner that isn't a merchant (the operation 0x4E, a player's ship
+// turning pirate) the ship goes to the pirates of the town `town`
+// (fn_509250_pirates, battle/pirate_objects.cpp; its route with `sailing`).
+void fn_509250(SaveGame& save, Sailing* sailing, uint32_t ship, uint32_t winner, int32_t price90, int32_t price,
+	uint32_t town) {
 	GlobalMemory& g = save.globals;
 	if (ship >= ship_count(save)) {
 		return;
@@ -1467,7 +1509,8 @@ void fn_509250(SaveGame& save, uint32_t ship, uint32_t winner, int32_t price90, 
 	const uint32_t count = merchant_count(save);
 	const uint8_t previous = s.u8(0x0);
 	if (previous < count) {
-		// Sin comprobar con el oráculo: los barcos subastados no tienen dueño.
+		// The auctioned ships have no owner; a player's ship turning pirate does.
+		// Checked with the oracle: scenario player_pirate (saves 1, 3, 5 and 7).
 		MerchantMemory& m = merchant_of(save, previous);
 		const uint16_t ships = g.u16(kShipCount);
 		uint16_t* link = &m.u16(0xE);
@@ -1484,15 +1527,12 @@ void fn_509250(SaveGame& save, uint32_t ship, uint32_t winner, int32_t price90, 
 	}
 	// 0x494990 y 0x4778A0: avisos a la interfaz (el oráculo los salta).
 	if (s.u8(0x0) < count) {
-		// Sin comprobar con el oráculo. 0x4F5900 quita además el barco de las
-		// listas del antiguo dueño de [+0x60C] y [+0x624] (punteros que p3vita
-		// no tiene): no se traduce.
+		const uint8_t owner = s.u8(0x0);
 		s.u8(0x0) = 0xFF;
+		fn_4f5900(save, owner);
 	}
 	if (winner >= count) {
-		// El barco vuelve a la ciudad sin dueño (0x535760, 0x513D80,
-		// 0x515EA0, 0x5172A0): no se traduce; 0x4E2CD4 solo vende a
-		// comerciantes.
+		fn_509250_pirates(save, sailing, uint16_t(ship), town);
 		return;
 	}
 	s.u8(0x0) = uint8_t(winner);
@@ -1860,7 +1900,7 @@ uint32_t fn_4e2cd4(SaveGame& save, uint16_t event) {
 						letter.entry.u16(0xE) = uint16_t(price / 10);
 						send_letter(save, winner, letter);
 					}
-					fn_509250(save, ship, winner, price90, price, e.u8(0x15));
+					fn_509250(save, event_sailing(), ship, winner, price90, price, e.u8(0x15));
 				} else {
 					// Sin comprobar con el oráculo. Unsold: the letter 0x2E to the
 					// owner (0x4E33B2..0x4E33FC): u16 [+0x8], [+0xA] his names,

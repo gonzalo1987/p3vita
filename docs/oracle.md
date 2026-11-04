@@ -868,6 +868,49 @@ each checked with a new scenario of `retouch_unchecked.py` (saves 3 and 5,
 `siege_gates` and `siege_branches` were repeated (equal), and the world 7
 days in the 12 saves: 0 different.
 
+The third gap, a player's action, came right after (the operation 0x4E, a
+player's ship turns pirate, with the branch of 0x509250 for a winner that
+isn't a merchant and 0x4F5900):
+
+- **`player_pirate`**: the player's first ship in port left without its
+  captain, who goes to the head of the town's list of captains ([0x82E]; if
+  the ship had none, one already in that list or the head of another town's).
+  The operation 0x4E with a captain not in the list (0x526AA0 refuses), with
+  him (the ship joins the nearest pirate), and again (the ship is no longer a
+  merchant's: refused); then a day recording 0x535760 and 0x506720. Saves 1,
+  3, 5 and 7: every call equal, the 7 targets hit. With two details broken on
+  purpose (the days of [+0x4C], the waypoint) the call differed in [+0x48],
+  [+0x4C] and the route (region Q), so the comparison sees them.
+- **`player_pirate_new`**: the same with the five pirate pointers at 0: the
+  game makes a pirate in slot 0 (0x513720, 0x513D80 with its nest and
+  ships). Saves 1, 3 and 5: equal.
+
+0x509250 now takes the `Sailing` (the auction passes the event queue's,
+the probe `probe_sailing()`); `retouch_mail.py auction_end` (the ship
+auctions) and `retouch.py desguace` (0x507FB0, now with 0x4F5900) in saves 1,
+3, 5 and 7 equal; the world 7 days in the 12 saves, 0 different.
+
+The merchants' ship lists are empty in every save, so for 0x4F5900 the oracle
+records a new region `ML` (each list not empty: u16 merchant, u8 list, u16
+length and its u16s, read through the merchant's [+0x624 + 4·k]), which
+tick_probe loads into `SaveOpaque::merchant_lists` before each call and
+compares after it. Scenario **`player_pirate_lists`**: as `player_pirate`,
+with three of the player's lists filled (the ship; an AI ship, the ship and
+another of his, with the bit 0x8000; the ship twice), 0x4E and then 0x0A on
+his other ship (0x507FB0 → 0x4F5900). Saves 3, 5 and 7: equal, both paths of
+0x4F5900 hit; with its condition inverted on purpose both calls differed in
+M and in ML.
+
+The save after these states, with `scripts/write-scenario.sh` (new:
+`RETOUCH=unchecked` runs a scenario of `retouch_unchecked.py`, which got
+`--write`): `player_pirate` (1 day; saves 1, 3, 5, 7), `player_pirate_new`
+(1, 3, 5), `player_pirate_lists` (3, 5, 7), `office_ops` (3, 5) and
+`siege_pitch` (1 day; 3, 5). In every one the game and p3data load the save
+the game wrote and write it again with the same bytes, and the game's reload
+of p3data's file has 0 differences. (After `player_pirate_lists` the lists
+are left empty but for the bit 0x8000; lists with ships in a save were
+already checked by `write_retouch.cpp`, merchant 1.)
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

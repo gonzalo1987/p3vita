@@ -157,6 +157,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x4B:  // Un candidato coge un encargo de la Hansa (0x53B440).
 		tick::fn_53b440(save, operation);
 		break;
+	case 0x4E:  // A player's ship turns pirate (0x53B850; 0x509250 with no winner).
+		tick::fn_53b850(save, sailing, operation);
+		break;
 	case 0x5D:  // A merchant opens an office (0x5362AE, 0x51B890).
 		tick::construction_detail::fn_5362ae(save, operation);
 		break;

@@ -76,9 +76,8 @@ Ya se reproducen: 0x00, 0x0A, 0x12, 0x13, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x
 
 From `callgraph_olvidadas.tsv` (70 calls), without the 16..32-byte accessors
 p3vita does inline (0x5303B0, 0x46C330, 0x4F3630..0x4F3680, 0x621750...) and
-the event handlers (A and D). **Reviewed one by one** (2026-11-04); two were
-gaps, rewritten and checked, and one is a gap of a player's action, left in
-the roadmap:
+the event handlers (A and D). **Reviewed one by one** (2026-11-04); three
+were gaps, rewritten and checked (one of them a player's action):
 
 - [x] **Gap, done:** 0x528070 → 0x636920. During a siege (bit 0x10 of
   [+0x2C8], with the siege objects in place) the price thresholds add the
@@ -98,14 +97,18 @@ the roadmap:
   could. Both operations are now in `run_operation` (`construction.cpp`
   `fn_51b890`, `fn_5362ae`, `fn_53ce30` with `request`). Scenario
   `retouch_unchecked.py office_ops`.
-- [ ] **Gap, a player's action (roadmap, phase 5):** 0x509250 → 0x513720 is in
-  the branch of 0x509250 with a winner that isn't a merchant, which p3vita
-  doesn't rewrite: the ship joins the nearest pirate object or makes one
-  (0x513720, 0x513D80), enters it (0x515EA0), gets a destination (0x5172A0)
-  and is left without owner in state 2. Only the operation 0x4E (0x53B850, a
-  player's ship turns pirate; queued by the window 0x5D5430) and the mission
-  interpreter (0x4ECF64, at 0x4F2121) call it so; the auctions (0x4E2CD4) only
-  sell to merchants.
+- [x] **Gap, a player's action, done:** 0x509250 → 0x513720 is in the branch
+  of 0x509250 with a winner that isn't a merchant, which p3vita didn't
+  rewrite: the ship joins the pirate whose nest is nearest to the town or
+  makes one in slot 0 (0x513720, 0x513D80), enters it (0x515EA0), gets a
+  course to the town's first waypoint (0x5172A0) and is left without owner in
+  state 2. Only the operation 0x4E (0x53B850, a player's ship turns pirate;
+  queued by the window 0x5D5430) and the mission interpreter (0x4ECF64, at
+  0x4F2121) call it so; the auctions (0x4E2CD4) only sell to merchants. Now
+  rewritten with the operation 0x4E (`operations.cpp` `fn_53b850`,
+  `pirate_objects.cpp` `fn_509250_pirates`) and 0x4F5900, the merchant's ship
+  lists (`events_mayor.cpp`, also in 0x507FB0). Scenarios
+  `retouch_unchecked.py player_pirate` and `player_pirate_new`.
 - [x] Interface: the siege's graphics. 0x6281F0 → 0x62BE90, 0x62DD70,
   0x62E970, 0x58CFB0 and 0x632780 → 0x62DD70 run only with [+0x77] of the
   army (the town view open; 0x6284DA, 0x628792, 0x628882, 0x6329B5...;

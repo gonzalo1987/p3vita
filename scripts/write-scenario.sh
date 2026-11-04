@@ -12,7 +12,8 @@
 #
 # usage: scripts/write-scenario.sh SCENARIO DAYS [SAVES...]   (by default 1 3 5)
 # FUNCS (default 4d85c0,535760) are the functions recorded. Needs the same as
-# scripts/write-reload.sh.
+# scripts/write-reload.sh. With RETOUCH=unchecked the scenario is one of
+# tools/oracle/retouch_unchecked.py instead.
 cd "$(dirname "$0")/.."
 : "${P3_EXE:?missing P3_EXE (path of Patrician3.exe)}"
 : "${P3_CPR:?missing P3_CPR (path of p2arch0_eng.cpr)}"
@@ -28,9 +29,15 @@ for s in "${saves[@]}"; do
 	(
 		r="$tmp/$s-$scenario-w"
 		[ -f "$tmp/$s.raw" ] || "$build/tools/p3save/p3save" "$P3_CPR" "missav/$s.pat" raw "$tmp/$s.raw" >/dev/null
-		python3 tools/oracle/retouch_mail.py "$P3_EXE" "$tmp/$s.raw" "$r.probe" "$days" "$scenario" \
-			--functions "${FUNCS:-4d85c0,535760}" --barcos "$P3_SHIPS" --cpr "$P3_CPR" --write "$r-game.raw" \
-			>"$r.log" 2>&1
+		if [ "${RETOUCH:-mail}" = unchecked ]; then
+			python3 tools/oracle/retouch_unchecked.py "$P3_EXE" "$tmp/$s.raw" "$r.probe" "$scenario" --days "$days" \
+				--functions "${FUNCS:-4d85c0,535760}" --barcos "$P3_SHIPS" --cpr "$P3_CPR" --write "$r-game.raw" \
+				>"$r.log" 2>&1
+		else
+			python3 tools/oracle/retouch_mail.py "$P3_EXE" "$tmp/$s.raw" "$r.probe" "$days" "$scenario" \
+				--functions "${FUNCS:-4d85c0,535760}" --barcos "$P3_SHIPS" --cpr "$P3_CPR" --write "$r-game.raw" \
+				>"$r.log" 2>&1
+		fi
 		"$build/tools/oracle/tick_probe" "$r.probe" --cpr "$P3_CPR" --names "$tmp/$s.raw" --max 8 >"$r.txt" 2>&1
 		rm -f "$r.probe"
 	) &

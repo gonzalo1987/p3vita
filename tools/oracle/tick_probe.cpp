@@ -312,6 +312,26 @@ void build_save(const State& state, SaveGame& save) {
 			}
 		}
 	}
+	if (const Region* ml = find(state, "ML")) {
+		// The merchants' ship lists not empty: u16 merchant, u8 list, u16
+		// length and its u16s (SaveOpaque::merchant_lists; the eleventh list,
+		// which the save doesn't have, can't go there).
+		save.opaque.merchant_lists.assign(save.merchants.size(), {});
+		const std::vector<uint8_t>& b = ml->bytes;
+		for (size_t o = 0; o + 5 <= b.size();) {
+			const uint16_t i = get<uint16_t>(b.data(), o);
+			const uint8_t k = b[o + 2];
+			const uint16_t n = get<uint16_t>(b.data(), o + 3);
+			if (i < save.opaque.merchant_lists.size() && k < 10) {
+				std::vector<uint16_t>& list = save.opaque.merchant_lists[i][k];
+				list.resize(n);
+				for (uint16_t j = 0; j < n && o + 5 + 2 * j + 2 <= b.size(); ++j) {
+					list[j] = get<uint16_t>(b.data(), o + 5 + 2 * size_t(j));
+				}
+			}
+			o += 5 + 2 * size_t(n);
+		}
+	}
 	if (const Region* tk = find(state, "TK")) {
 		// The ticker lines sent to the local player: u8 kind, u16 argument.
 		save.player_ticker.clear();
@@ -474,6 +494,31 @@ State dump_save(const SaveGame& save, const State& game) {
 				b.resize(o + 0x12);
 				put<uint16_t>(b.data(), o, uint16_t(i));
 				std::memcpy(b.data() + o + 2, save.mail_records[i]->bytes.data(), 0x10);
+			}
+		}
+	}
+	if (s.count("ML")) {
+		// As the oracle: each list with a length ([+0x60C + 2·k] & 0x7FFF).
+		std::vector<uint8_t>& b = s["ML"].bytes;
+		b.clear();
+		for (size_t i = 0; i < save.merchants.size(); ++i) {
+			for (size_t k = 0; k < 11; ++k) {
+				const uint16_t n = save.merchants[i].memory.u16(0x60C + 2 * k) & 0x7FFF;
+				const std::vector<uint16_t>* list = nullptr;
+				if (k < 10 && i < save.opaque.merchant_lists.size()) {
+					list = &save.opaque.merchant_lists[i][k];
+				}
+				if (n == 0 || !list || list->size() < n) {
+					continue;  // An array p3vita doesn't have: missing from the region, so it differs.
+				}
+				const size_t o = b.size();
+				b.resize(o + 5 + 2 * size_t(n));
+				put<uint16_t>(b.data(), o, uint16_t(i));
+				b[o + 2] = uint8_t(k);
+				put<uint16_t>(b.data(), o + 3, n);
+				for (uint16_t j = 0; j < n; ++j) {
+					put<uint16_t>(b.data(), o + 5 + 2 * size_t(j), (*list)[j]);
+				}
 			}
 		}
 	}

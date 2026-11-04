@@ -27,7 +27,6 @@ void fn_509a50(SaveGame& save, int ship);
 int32_t fn_4da860(const SaveGame& save, uint32_t ship);
 int32_t fn_4f4400(const SaveGame& save, int merchant, uint32_t ship, uint32_t town);
 int32_t fn_4f4550(const SaveGame& save, int merchant, uint32_t record, uint32_t town, uint32_t me);
-void fn_509250(SaveGame& save, uint32_t ship, uint32_t winner, int32_t price90, int32_t price, uint32_t town);
 void fn_5256f0(SaveGame& save, int town, uint32_t record, uint32_t winner, int32_t price, int32_t price90);
 uint32_t fn_4e2cd4(SaveGame& save, uint16_t event);
 
@@ -162,7 +161,7 @@ void register_probes_events_mayor(ProbeRegistry& r) {
 		return uint32_t(md::fn_4f4550(s, c.merchant(c.ecx), c.args[0], c.args[1], c.args[2]));
 	};
 	r[0x509250] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
-		md::fn_509250(s, c.args[0], c.args[1], int32_t(c.args[2]), int32_t(c.args[3]), c.args[4]);
+		md::fn_509250(s, probe_sailing(), c.args[0], c.args[1], int32_t(c.args[2]), int32_t(c.args[3]), c.args[4]);
 		return std::nullopt;
 	};
 	r[0x5256F0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {

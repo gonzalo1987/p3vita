@@ -9,6 +9,7 @@
 #include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/trade.hpp"
 
 namespace p3::data::tick {
 
@@ -38,6 +39,12 @@ void fn_4d6fd0(SaveGame& save, uint32_t index);
 namespace merchants_detail {
 void fn_4f5d80(SaveGame& save, int merchant);
 }  // namespace merchants_detail
+namespace ship_trade_detail {
+bool fn_526aa0(SaveGame& save, int town, uint32_t captain);
+}  // namespace ship_trade_detail
+namespace ship_ai_detail {
+int32_t fn_5184f0(SaveGame& save, int ship);
+}  // namespace ship_ai_detail
 
 namespace {
 
@@ -973,6 +980,60 @@ void fn_5051e0(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	if (sailing) {
 		sailing->insert_x(index, 0xFFFFFFFF);
 	}
+}
+
+// The operation 0x4E (0x53B850): {0x4E, u32 [+4] captain, u32 [+8] ship,
+// u32 [+0xC] sailors, u32 [+0x10] town}: a player's ship turns pirate (the
+// window 0x5D5430 queues it). The ship must be a merchant's (without
+// [+0x8] & 4), docked in a town (state ≤ 1), without a captain, and the
+// captain in that town's list (0x526AA0 takes him out). It gets the captain,
+// the merchant's [+0x16] goes up by 0x672DD8 (256, at most 0x7FFF), the ship
+// goes to the pirates (0x509250 with no winner, price 0), takes on sailors
+// (0x5184F0's, at most [+0xC] + 1), its cargo is counted (0x5182B0), its
+// pirate town [+0x159] is [+0x10] (0x51A820) and [+0x4C] = the tick + (180 +
+// rand % 180) days (the generator 0x46C320 seeded with the tick).
+void fn_53b850(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
+	uint32_t f[5];
+	std::memcpy(f, operation, sizeof(f));
+	GlobalMemory& g = save.globals;
+	if (f[2] >= g.u16(global::kShipCount)) {
+		return;
+	}
+	ShipMemory& s = save.ships[f[2]].memory;
+	const uint32_t merchants = g.u16(global::kWorldMerchantCount);
+	const uint32_t towns = g.u32(global::kWorldTownCount);
+	if (s.u8(0x0) >= merchants || s.u16(0x134) > 1 || s.u16(0x42) < g.u16(global::kCaptainCount) ||
+		s.u8(0x39) >= towns) {
+		return;
+	}
+	if ((save.merchants[s.u8(0x0)].memory.u8(0x8) & 4) == 4) {
+		return;
+	}
+	if (!ship_trade_detail::fn_526aa0(save, s.u8(0x39), f[1])) {
+		return;
+	}
+	s.u16(0x42) = uint16_t(f[1]);
+	MerchantMemory& m = save.merchants[s.u8(0x0)].memory;
+	constexpr int32_t kChange = 0x100;  // 0x672DD8 (s16)
+	const int32_t r = m.s16(0x16);
+	if (kChange > 0) {
+		m.s16(0x16) = r < 0x7FFF - kChange ? int16_t(r + kChange) : int16_t(0x7FFF);
+	} else {
+		m.s16(0x16) = r + 0x8000 > -kChange ? int16_t(r + kChange) : int16_t(-0x8000);
+	}
+	events_mayor_detail::fn_509250(save, sailing, f[2], 0xFFFF, 0, 0, s.u8(0x39));
+	const uint32_t hire = uint32_t(ship_ai_detail::fn_5184f0(save, int(f[2])));
+	if (hire > f[3] + 1) {
+		s.u16(0x40) = uint16_t(s.u16(0x40) + uint16_t(f[3]) + 1);
+	} else {
+		s.u16(0x40) = uint16_t(s.u16(0x40) + hire);
+	}
+	recalculate_cargo(save.ships[f[2]]);
+	s.u8(0x159) = f[4] < towns && s.u8(0x0) >= merchants ? uint8_t(f[4]) : 0xFF;  // 0x51A820
+	const uint32_t tick = g.u32(global::kWorldTick);
+	uint32_t x = 0xA205B063u - tick * 0x44BF19B3u;  // 0x46C350
+	x = (x & 1) ? (x >> 1) | 0x80000000u : x >> 1;
+	s.u32(0x4C) = tick + ((x % 0xB4 + 0xB4) << 8);
 }
 
 }  // namespace p3::data::tick
