@@ -64,6 +64,21 @@ void fn_5462f0(SaveGame& save, int town, uint32_t k);
 
 }  // namespace p3::data::tick::new_town_detail
 
+// What events.cpp exposes for them (the sale of a building).
+namespace p3::data::tick::events_detail {
+
+void fn_4dafe0(const SaveGame& save, uint32_t town, uint32_t record, uint32_t& tick, int32_t& price);
+void fn_4dab00(SaveGame& save, uint32_t town_arg, uint32_t record_arg);
+
+}  // namespace p3::data::tick::events_detail
+
+// What events_towns.cpp exposes for them (a ship given to a merchant).
+namespace p3::data::tick::events_towns_detail {
+
+uint16_t fn_50e000(SaveGame& save, uint16_t& type, uint32_t strength, uint32_t town_arg, uint32_t merchant_arg);
+
+}  // namespace p3::data::tick::events_towns_detail
+
 namespace p3::probe {
 
 using namespace p3::data;
@@ -285,6 +300,40 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		}
 		ad::fn_5144a0(s, uint32_t(k), c.args[0] & 0xFFFF);
 		return std::nullopt;
+	};
+	namespace ed = tick::events_detail;
+	r[0x4DAFE0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the event queue (town, record, &price, &tick): is the
+		// building on sale? The two outputs in scratch globals.
+		if (!in_globals(c, c.args[2]) || !in_globals(c, c.args[3])) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		uint32_t tick = 0;
+		int32_t price = 0;
+		ed::fn_4dafe0(s, c.args[0], c.args[1], tick, price);
+		s.globals.u32(c.args[2]) = uint32_t(price);
+		s.globals.u32(c.args[3]) = tick;
+		return std::nullopt;
+	};
+	r[0x4DAB00] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the event queue (town, record): the building on sale.
+		ed::fn_4dab00(s, c.args[0], c.args[1]);
+		return std::nullopt;
+	};
+	r[0x50E000] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the ship object (&type, strength, town, merchant): a ship
+		// given to the merchant; the type (u16, changed for a crayer) in a
+		// scratch global. Returns the ship's index.
+		if (!in_globals(c, c.args[0])) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		uint16_t type = s.globals.u16(c.args[0]);
+		c.eax_mask = 0xFFFF;
+		const uint16_t index = tick::events_towns_detail::fn_50e000(s, type, c.args[1], c.args[2], c.args[3]);
+		s.globals.u16(c.args[0]) = type;
+		return index;
 	};
 }
 

@@ -2212,6 +2212,952 @@ def records_at(o, t, r):
     return rec[0], rec[1], rec[2], rec[3], rec[6]
 
 
+# --- operations.cpp: the small operations of the executor ---
+
+CONVOY_TABLE = 0x6DD7A8  # pointer to the convoys (0x3C bytes each)
+CONVOY_COUNT = to.SHIPS + 0xF6  # u16
+SPECIAL_SHIPS = 0x6DD7C0  # 16 entries of 12 bytes: u16 ship first
+EVENT_COUNT = to.EVENTS + 0xC  # u16: records of the event queue
+
+
+def convoy_at(o, c):
+    return o.u32(CONVOY_TABLE) + 0x3C * c
+
+
+def operation_guards(o):
+    """The checks of the small operations that the simulation always queues
+    with valid values, run with the executor (the interface or a network
+    game could send others): 0x7B with a town out of the world, with the
+    slot 6 and with the slot 4 (the jump for 3..5); 0x7A with each town out
+    and with a town whose [0x83F] is already a merchant; 0x37, 0x87, 0x61
+    and 0x81 with a merchant out of the world; 0x61 with a price over the
+    merchant's money; 0x2C with a town out; 0x38 less than 40 days ahead;
+    0x7C on a day already past (the plague at the start of the next day);
+    0x7F and 0x60 with a tick that isn't to come; 0x80 with a queue of 0x80
+    records (save 5's; in the others the count is lowered for the call);
+    0xB8 of kind 5 (nothing) and of kind 0 (with the pirates' ships'
+    places); 0x78 with the 16 entries of [0x6DD7C0] in use; and last 0x7E
+    with 18 towns without the bit 0x40 (the list of towns goes past [+0x17],
+    into the next record)."""
+    towns, _, merchants, ships = o.counts()
+    m = rt.ai_with_office(o)[0]
+    now, day = o.u32(WORLD + 0x14), o.u16(WORLD + 4)
+    t = office_town(o, m)
+    print(f'merchant {m} (town {t}), day {day}, event records {o.u16(EVENT_COUNT):#x}, '
+          f'special ships {[o.u16(SPECIAL_SHIPS + 12 * k) for k in range(16)]}')
+
+    def during(o):
+        operation(o, 0x7B, 0x44332211, 0x6655, 0, towns)
+        operation(o, 0x7B, 0x44332211, 0x6655, 0, t | (6 << 8))
+        operation(o, 0x7B, 0x44332211, 0x6655, 0, t | (4 << 8))
+        operation(o, 0x7A, towns, 1, 0x1234, 0x55)
+        operation(o, 0x7A, 1, towns, 0x1234, 0x55)
+        town = o.town(2)
+        old = o.u8(town + 0x83F)
+        w8(o, town + 0x83F, m or 1)
+        operation(o, 0x7A, 2, 3, 0x1234, 0x55)
+        w8(o, town + 0x83F, old)
+        operation(o, 0x37, merchants, t, 100)
+        operation(o, 0x2C, 1, m, towns, 1)
+        operation(o, 0x38, now + 0x100, 1)
+        operation(o, 0x7C, 0x50454031, now + 0x900, o.u32(o.town(4) + 0x2D4) // 40 << 16, (day - 1) | (4 << 16),
+                  fmt='<IIIII')
+        operation(o, 0x7F, 0, 1, 2, now)
+        count = o.u16(EVENT_COUNT)
+        w16(o, EVENT_COUNT, min(count, 0x80))
+        operation(o, 0x80, 0, 0x1234, 0x5678)
+        w16(o, EVENT_COUNT, count)
+        operation(o, 0x87, merchants, 0x0403020F)
+        operation(o, 0x60, now, 0, 0, 0)
+        operation(o, 0x61, merchants, now + 0x100, t, 0)
+        operation(o, 0x61, m, now + 0x100, t, (o.u32(o.merchant(m)) + 1) & 0xFFFFFFFF)
+        operation(o, 0x81, merchants, 1, 0x100, 0)
+        operation(o, 0xB8, 5, 0)
+        operation(o, 0xB8, 0, 0)
+        entries = [o.u16(SPECIAL_SHIPS + 12 * k) for k in range(16)]
+        for k in range(16):
+            if entries[k] >= ships:
+                w16(o, SPECIAL_SHIPS + 12 * k, 0)
+        operation(o, 0x78, 1, 2, 300, 400)
+        for k in range(16):
+            w16(o, SPECIAL_SHIPS + 12 * k, entries[k])
+        flags = [o.u8(o.town(i) + 0x2C8) for i in range(towns)]
+        cleared = 0
+        for i in range(towns):
+            if flags[i] & 0x40 and cleared < 18 - sum(1 for f in flags if not f & 0x40):
+                w8(o, o.town(i) + 0x2C8, flags[i] & ~0x40)
+                cleared += 1
+        listed = sum(1 for i in range(towns) if not o.u8(o.town(i) + 0x2C8) & 0x40)
+        assert listed > 16, listed
+        seasons = {i for i, a in rt.events(o) if o.u16(a + 6) == 0x1F}
+        operation(o, 0x7E, 0x12340008, 0x56780010, 0x9ABC0018, 0xDEF00020)
+        index = next(i for i, a in rt.events(o) if o.u16(a + 6) == 0x1F and i not in seasons)
+        a = o.u32(to.EVENTS) + 0x18 * index
+        print(f'0x7E with {listed} towns: event {index} of {o.u16(EVENT_COUNT)}: '
+              f'{bytes(o.uc.mem_read(a, 0x18)).hex()} | next {bytes(o.uc.mem_read(a + 0x18, 4)).hex()}')
+        for i in range(towns):
+            w8(o, o.town(i) + 0x2C8, flags[i])
+    return during
+
+
+def operation_convoys(o):
+    """Operations 0x1E (0x539B50, a convoy leaves on an expedition) and 0x1F
+    (0x539C60, a point of its route), which the AI's convoys queue for
+    convoys that can sail: each with a convoy out of the table, with the
+    convoy's leading ship out of the world, and in port with a leading ship
+    that can't sail (0x519BA0: its [+0x3F] at 0); then 0x1E asking for more
+    money than the owner has (1000: he gives it all) and again with the
+    owner in debt (−500: nothing), and a 0x1F."""
+    _, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    n = o.u16(CONVOY_COUNT)
+
+    def can_sail(c):
+        lead = o.u16(convoy_at(o, c) + 0x10)
+        return lead < ships and o.call(0x519BA0, [], ecx=o.ship(lead)) & 0xFF
+
+    c = next(c for c in range(n) if o.u16(convoy_at(o, c) + 0x12) < 0xF and o.u8(convoy_at(o, c)) < merchants
+             and o.u8(convoy_at(o, c)) != player and can_sail(c))
+    a = convoy_at(o, c)
+    lead, owner = o.u16(a + 0x10), o.u8(a)
+    print(f'{n} convoys; convoy {c}: owner {owner}, lead {lead}, state {o.u16(a + 0x12):#x}; '
+          f'[0x6DE52B] {o.u8(0x6DE52B):#x}')
+
+    def ops(convoy):
+        operation(o, 0x1E, 5000, convoy, 0x10, fmt='<IIHH')
+        operation(o, 0x1F, convoy, 1, 100, 200, 3, fmt='<IHHHHB')
+
+    def during(o):
+        ops(n)
+        w16(o, a + 0x10, 0xFFFF)
+        ops(c)
+        w16(o, a + 0x10, lead)
+        ship = o.ship(lead)
+        condition = o.u8(ship + 0x3F)
+        w8(o, ship + 0x3F, 0)
+        ops(c)
+        w8(o, ship + 0x3F, condition)
+        w32(o, o.merchant(owner), 1000)
+        operation(o, 0x1E, 5000, c, 0x10, fmt='<IIHH')
+        print(f'owner {o.s32(o.merchant(owner))}, convoy [+0x20] {o.u32(a + 0x20)}, state {o.u16(a + 0x12):#x}')
+        w32(o, o.merchant(owner), -500)
+        operation(o, 0x1E, 5000, c, 0x20, fmt='<IIHH')
+        print(f'owner {o.s32(o.merchant(owner))}, convoy [+0x20] {o.u32(a + 0x20)}')
+        operation(o, 0x1F, c, 2, 300, 400, 5, fmt='<IHHHHB')
+    return during
+
+
+def operation_loans(o):
+    """Operation 0x29 (0x539DC0, a loan: event 0x01), which the merchants'
+    tick queues with the town's money-lender as the lender: with a town out
+    of the world; with an AI merchant as the lender without the amount; and
+    with him having it (0x4F8FE0: he pays it and his reputation in the town
+    goes up): the tavern's slot 1 (< 3) with the kind 2, and the slot 4 (the
+    jump for 3..5) with the kind 9 (taken as 4)."""
+    towns, _, merchants, _ = o.counts()
+    ais = rt.ai_with_office(o)
+    lender, borrower = ais[0], ais[1]
+    t = office_town(o, lender)
+    fmt = '<IIB3sHBBBBBB'
+
+    def loan(town, amount, kind, slot, who=borrower):
+        operation(o, 0x29, 0x04030201, 0x05, b'\x06\x07\x08', amount, 4, 0x09, lender, who, town,
+                  (slot << 4) | kind, fmt=fmt)
+
+    def show():
+        m = o.merchant(lender)
+        print(f'lender {lender}: money {o.s32(m)}, reputation in {t} '
+              f'{struct.unpack("<f", o.uc.mem_read(m + 0x120 + 12 * t, 4))[0]}; '
+              f'borrower {borrower}: {o.s32(o.merchant(borrower))}; tavern [0x9CA..] '
+              f'{[o.u16(o.town(t) + 0x9CA + 6 * k) for k in range(6)]}')
+
+    def during(o):
+        loan(towns, 1000, 2, 7)
+        w32(o, o.merchant(lender), 100)
+        loan(t, 1000, 2, 7)
+        w32(o, o.merchant(lender), 1000000)
+        for k in range(6):
+            w16(o, o.town(t) + 0x9CA + 6 * k, 0x100 + k)
+        show()
+        loan(t, 1000, 2, 1)
+        show()
+        loan(t, 2500, 9, 4, who=0xFF)
+        show()
+    return during
+
+
+def office_records(o, t, f):
+    """(record, x, y) of the buildings in the lists [+0x2D0] and [+0x2CE] of
+    office f in town t."""
+    return rt.records_of(o, t, o.u16(o.office(f) + 0x2D0)) + rt.records_of(o, t, o.u16(o.office(f) + 0x2CE))
+
+
+def operation_sale(o):
+    """Operation 0x28 (0x53D190, a merchant puts a building on sale), which
+    the AI of a merchant in debt queues for a building of his: with a town
+    and with a merchant out of the world; for a merchant without an office in
+    the town; in a town with the bit 0x10 of [0x2C8], the building's cell
+    without the bit 0x80 (nothing) and with it (the auction, 0x4DAB00); and
+    a cell with no building of his nor of the town (x = 0x100: the office is
+    recounted, 0x4FF2D0). Saves 3, 5 and 7 (in 1 no AI office has a
+    building in those lists)."""
+    towns, offices, merchants, _ = o.counts()
+    for f in range(offices):
+        m, t = o.u16(o.office(f) + 0x2C4), o.u8(o.office(f) + 0x2C6)
+        if m < merchants and o.u16(o.merchant(m) + 8) and office_records(o, t, f):
+            break
+    else:
+        raise RuntimeError('no AI office with a building in its lists')
+    r, x, y = office_records(o, t, f)[0]
+    other = next(k for k in rt.ai_with_office(o) if facilities_office(o, k, t) is None)
+    a = o.town(t)
+    cell = grid_at(o, t, x, y)
+    print(f'merchant {m}, office {f} in town {t} ([0x2C8] {o.u32(a + 0x2C8):#x}): record {r} at ({x}, {y}), '
+          f'cell {o.u8(cell):#x}; merchant {other} without an office there')
+
+    def during(o):
+        operation(o, 0x28, towns, m, x, y)
+        operation(o, 0x28, t, merchants, x, y)
+        operation(o, 0x28, t, other, x, y)
+        flags, value = o.u8(a + 0x2C8), o.u8(cell)
+        w8(o, a + 0x2C8, flags | 0x10)
+        w8(o, cell, value & 0x7F)
+        operation(o, 0x28, t, m, x, y)
+        w8(o, cell, value | 0x80)
+        operation(o, 0x28, t, m, x, y)
+        w8(o, cell, value)
+        w8(o, a + 0x2C8, flags)
+        operation(o, 0x28, t, m, 0x100, y)
+        print(f'auctions: {[i for i, e in rt.events(o) if o.u16(e + 6) == 0x36]}')
+    return during
+
+
+# --- events.cpp: the event queue and what hangs from it ---
+
+DAY = WORLD + 4  # u16: the day of the year
+WORLD_FLAG_8A = 0x6DE52A  # u8: with it the AI doesn't buy nor build
+ALDERMAN_BUSY = 0x6DF31C  # u32
+NETWORK = 0x6DF2F0  # u32: the operations object's mode ([+0x0] & 0xE: a network game)
+EVENT_FREE = to.EVENTS + 0xA  # u16: the first free record
+SCRATCH_PRICE, SCRATCH_TICK = SCRATCH + 0xE0, SCRATCH + 0xE4
+
+
+def events_of(o, kind):
+    return [(i, a) for i, a in rt.events(o) if o.u16(a + 6) == kind]
+
+
+def event_queue_branches(o):
+    """The event queue (0x4D85C0, called directly) and the grain event
+    (0x4DB330): an event 0x37 (a merchant may trade again in a town: the bit
+    of [+0x608] cleared; 0x4E62F6 makes it); an event 0x04 of a merchant out
+    of the world (0x4DFC94: removed); a grain event 0x00 with [0x6DF31C]
+    (0x4DB330 gives 0: removed) and in a network game ([0x6DF2F0] & 0xC: the
+    operation 0x83 instead); and last the queue without a free record
+    (0x4D8CF0 reserves 0x80 more) when the operation 0x83 adds an event."""
+    towns, _, merchants, _ = o.counts()
+    m = rt.ai_with_office(o)[0]
+    t = 3
+    w32(o, o.merchant(m) + 0x608, o.u32(o.merchant(m) + 0x608) | (1 << t))
+
+    def during(o):
+        now = o.u32(WORLD + 0x14)
+        new_event(o, 0, 0x37, d8=t, dC=m)
+        new_event(o, 0, 0x04, w8=merchants)
+        direct(o, 0x4D85C0, [now], ecx=to.EVENTS)
+        print(f'[+0x608] of merchant {m}: {o.u32(o.merchant(m) + 0x608):#x}')
+        _, grain = new_event(o, 0x1000, 0x00, d8=now + 0x1000, dC=5000, b10=2)
+        for address, value in ((ALDERMAN_BUSY, 1), (NETWORK, o.u32(NETWORK) | 4)):
+            old = o.u32(address)
+            w32(o, address, value)
+            print(f'0x4DB330 with [{address:#x}] = {value:#x}: {direct(o, 0x4DB330, [grain], ecx=to.EVENTS)}')
+            w32(o, address, old)
+        count = o.u16(EVENT_COUNT)
+        w16(o, EVENT_FREE, count)
+        operation(o, 0x83, now + 0x2000, 1000, 2)
+        print(f'event records {count:#x} → {o.u16(EVENT_COUNT):#x}, free {o.u16(EVENT_FREE):#x}')
+    return during
+
+
+def ai_debt_branches(o):
+    """The AI of a merchant (event 0x04), direct calls: 0x4F42B0 in a network
+    game ([0x6DF2F0] & 0xE: the best human merchant's reputation); 0x4F9580
+    with a town out of the world and with a reputation over 32758; 0x4F4A20,
+    0x4F4B40 and 0x4F4E50 with [0x6DE52A] (the last gives 15000); 0x4F4A20
+    for a merchant with the bit 4 of [+0x8]; 0x4F4E50 for a merchant under
+    −50000 with houses in an office: 0x4F5A20 looks at them (nothing chosen:
+    the rent it compares with starts at 0, see events.cpp) and, with nothing
+    of his on sale (0x4DB220), he goes bankrupt (operation 0x65 queued); and
+    again with one of his buildings in an auction: the loan of 50000
+    (operation 0x29). Saves 3, 5 and 7 (in 1 no AI merchant has houses)."""
+    towns, _, merchants, _ = o.counts()
+    ais = rt.ai_with_office(o)
+    for m in ais:
+        houses = [(f, rt.records_of(o, office_town_of(o, f), o.u16(o.office(f) + 0x2D0)))
+                  for f in rt.merchant_offices(o, m)]
+        houses = [(f, h) for f, h in houses if h]
+        if houses:
+            break
+    else:
+        raise RuntimeError('no AI merchant with houses')
+    f, h = houses[0]
+    t = office_town_of(o, f)
+    other = next(x for x in ais if x != m)
+    on_sale = o.call(0x4DB220, [m], ecx=to.EVENTS) & 0xFF
+    print(f'merchant {m}: houses {h[:3]} of office {f} in town {t}; anything on sale: {on_sale}')
+    a = o.merchant(m)
+    rep = a + 0x2FC + 4 * t
+
+    def during(o):
+        old = o.u32(NETWORK)
+        w32(o, NETWORK, old | 2)
+        direct(o, 0x4F42B0, [], ecx=a)
+        w32(o, NETWORK, old)
+        direct(o, 0x4F9580, [towns], ecx=a)
+        value = o.u32(rep)
+        o.uc.mem_write(rep, struct.pack('<f', 40000.0))
+        print(f'0x4F9580 at 40000: {direct(o, 0x4F9580, [t], ecx=a) & 0xFFFF:#x}')
+        w32(o, rep, value)
+        w8(o, WORLD_FLAG_8A, 1)
+        for target in (0x4F4A20, 0x4F4B40, 0x4F4E50):
+            direct(o, target, [m], ecx=a)
+        w8(o, WORLD_FLAG_8A, 0)
+        flags = o.u8(o.merchant(other) + 8)
+        w8(o, o.merchant(other) + 8, flags | 4)
+        direct(o, 0x4F4A20, [other], ecx=o.merchant(other))
+        w8(o, o.merchant(other) + 8, flags)
+        w32(o, a, -60000)
+        o.tick_operations = []
+        direct(o, 0x4F4E50, [m], ecx=a)
+        print(f'queued: {[op[:4].hex() for op in o.tick_operations]}')
+        new_event(o, 0x1000, 0x36, w8=h[0][0], wA=0xFFFF, wC=0xFFFF, wE=0x1000, d10=0, b14=1, b15=t, b16=0, b17=0xFF)
+        o.tick_operations = []
+        direct(o, 0x4F4E50, [m], ecx=a)
+        print(f'queued: {[op[:8].hex() for op in o.tick_operations]}')
+    return during
+
+
+def office_town_of(o, f):
+    return o.u8(o.office(f) + 0x2C6)
+
+
+def sale_branches(o):
+    """Putting a building on sale (0x4DAB00, operation 0x28) and the
+    queue's 0x4DAFE0 and 0x4DAF10: direct calls with a town and with a
+    record out of the world (the interface's operation 0x3C calls 0x4DAB00
+    with no check); the operation 0x28 on a merchant's building (a new
+    auction, phase 1) and again on it (on sale already: 0x4DAFE0 with the
+    phase-1 wait); with the byte [+0xD] of the settings at 0, on a second
+    building (added to that auction); on a building of a town with an
+    auction in phase 2 (added to it); on one whose owner lacks the town's
+    bit in [+0x468]; and 0x4DAB00 on a record of the town that isn't a
+    merchant's. Saves 3, 5 and 7."""
+    towns, offices, merchants, _ = o.counts()
+    found = []
+    for f in range(offices):
+        m, t = o.u16(o.office(f) + 0x2C4), o.u8(o.office(f) + 0x2C6)
+        if m >= merchants or not o.u16(o.merchant(m) + 8) or t in [x[1] for x in found]:
+            continue
+        if not o.u32(o.merchant(m) + 0x468) & (1 << (t & 31)):
+            continue
+        recs = office_records(o, t, f)
+        if len(recs) >= (3 if not found else 1):
+            found.append((m, t, recs))
+        if len(found) == 2:
+            break
+    else:
+        raise RuntimeError('no two AI offices with buildings')
+    (m, t, recs), (m2, t2, recs2) = found
+    n = o.u16(o.town(t) + 0x776)
+    base = o.u32(o.town(t) + 0x75C)
+    town_building = next(r for r in range(n) if o.u8(base + 8 * r + 2) >= merchants)
+    settings = o.u32(to.SETTINGS_POINTER)
+    print(f'merchant {m} in town {t}: {recs[:3]}; merchant {m2} in town {t2}: {recs2[:1]}; '
+          f'town building {town_building}; settings [+0xD] {o.u8(settings + 0xD)}')
+
+    def sale(town, merchant, record):
+        operation(o, 0x28, town, merchant, record[1], record[2])
+
+    def during(o):
+        now = o.u32(WORLD + 0x14)
+        direct(o, 0x4DAF10, [towns, 0, 0], ecx=to.EVENTS)
+        direct(o, 0x4DAF10, [t, n, 0], ecx=to.EVENTS)
+        direct(o, 0x4DAFE0, [towns, 0, SCRATCH_PRICE, SCRATCH_TICK], ecx=to.EVENTS)
+        direct(o, 0x4DAFE0, [t, n, SCRATCH_PRICE, SCRATCH_TICK], ecx=to.EVENTS)
+        direct(o, 0x4DAB00, [towns, 0], ecx=to.EVENTS)
+        direct(o, 0x4DAB00, [t, n], ecx=to.EVENTS)
+        sale(t, m, recs[0])
+        sale(t, m, recs[0])
+        direct(o, 0x4DAFE0, [t, recs[0][0], SCRATCH_PRICE, SCRATCH_TICK], ecx=to.EVENTS)
+        print(f'record {recs[0][0]} on sale: price {o.s32(SCRATCH_PRICE)}, tick {o.u32(SCRATCH_TICK):#x}')
+        value = o.u8(settings + 0xD)
+        w8(o, settings + 0xD, 0)
+        sale(t, m, recs[1])
+        w8(o, settings + 0xD, value)
+        new_event(o, 0x1000, 0x36, w8=0xFFFF, wA=0xFFFF, wC=0xFFFF, wE=0x1000, d10=0, b14=2, b15=t2, b16=0, b17=0xFF)
+        sale(t2, m2, recs2[0])
+        direct(o, 0x4DAB00, [t, town_building], ecx=to.EVENTS)
+        bits = o.u32(o.merchant(m) + 0x468)
+        w32(o, o.merchant(m) + 0x468, bits & ~(1 << (t & 31)))
+        sale(t, m, recs[2])
+        w32(o, o.merchant(m) + 0x468, bits)
+        for i, e in events_of(o, 0x36):
+            print(f'auction {i}: {bytes(o.uc.mem_read(e, 0x18)).hex()}')
+    return during
+
+
+def ice_storm_branches(o):
+    """The ice and the winter storms (event 0x0D), direct calls with the day
+    of the year changed for each: 0x4E45C4 on day 0x3A (the ice of every town
+    cleared); on day 0x30 with town 0's ice at 1 (it melts below 0: 0); on
+    day 0x10 with the game's speed 3 and 4 ([+0x4] of the settings) and town
+    0's level going up (the days closed scaled by 0x66DE7C). 0x4E43E4 on day
+    10 with one of the 16 ships of [0x6DD7C0] where its storm would go
+    (found first, not recorded, with the same rand state): it looks for
+    another place."""
+    _, _, _, ships = o.counts()
+    day = o.u16(DAY)
+    settings = o.u32(to.SETTINGS_POINTER)
+    town = o.town(0)
+    w16(o, DAY, 10)
+    point = None
+    for seed in range(1, 20000):
+        o.rand_state = seed
+        queued, recorded = len(o.tick_operations), len(o.queued)
+        direct(o, 0x4E43E4, [])
+        storms = [op for op in o.tick_operations[queued:] if struct.unpack_from('<II', op) == (0x78, 2)]
+        del o.tick_operations[queued:]
+        del o.queued[recorded:]
+        if storms:
+            point = struct.unpack_from('<ii', storms[0], 0xC)
+            break
+    if point is None:
+        raise RuntimeError('no winter storm')
+    w16(o, DAY, day)
+    slot = next(k for k in range(16) if o.u16(SPECIAL_SHIPS + 12 * k) >= ships)
+    ship = 0
+    print(f'day {day}, speed {o.s32(settings + 4)}; the storm of seed {seed} at {point}: ship {ship} in slot {slot}')
+
+    def during(o):
+        w16(o, DAY, 0x3A)
+        direct(o, 0x4E45C4, [])
+        w16(o, DAY, 0x30)
+        w32(o, town + 0x9B8, 1)
+        direct(o, 0x4E45C4, [])
+        speed = o.s32(settings + 4)
+        for value in (3, 4):
+            w16(o, DAY, 0x10)
+            w32(o, town + 0x9B8, 0x5FF)
+            w8(o, town + 0x9BD, 4)
+            w32(o, settings + 4, value)
+            direct(o, 0x4E45C4, [])
+            print(f'speed {value}: [0x9C0] {o.u32(town + 0x9C0):#x}, [0x9BD] {o.u8(town + 0x9BD):#x}')
+        w32(o, settings + 4, speed)
+        w16(o, DAY, 10)
+        w16(o, SPECIAL_SHIPS + 12 * slot, ship)
+        w16(o, o.ship(ship) + 0x1E, point[0])
+        w16(o, o.ship(ship) + 0x22, point[1])
+        o.rand_state = seed
+        queued = len(o.tick_operations)
+        direct(o, 0x4E43E4, [])
+        print(f'with the ship there: {[op[:0x14].hex() for op in o.tick_operations[queued:]]}')
+        w16(o, DAY, day)
+    return during
+
+
+def jobs_captains(o):
+    """The people looking for work in the taverns (event 0x19, 0x4E8E24) and
+    the captains (event 0x08, 0x4E2634), direct calls on their events:
+    0x4E8E24 with 70 people (61..90: the next look in people + 0x40 ticks),
+    with [0x6DF31C], with [0x6DE52A] and with no more merchants than towns
+    (the count lowered for the call); 0x4E2634 with every tavern empty but
+    town 0's (fewer than 3 towns with a good captain: a new one with 0x526A50
+    and 1, so 0x4FDF50 not young) and [+0xC] of the event at 0x1A (→ 3)."""
+    towns = o.counts()[0]
+    (_, jobs), = events_of(o, 0x19)
+    (_, taverns), = events_of(o, 0x08)
+    slots = [o.town(t) + base + 6 * k for t in range(towns) for base in (0x9CA, 0x9DC) for k in range(3)]
+    for k, a in enumerate(slots):
+        w16(o, a, 0x100 + k if k < 70 else 0)
+    print(f'{towns} towns: 70 people of {len(slots)} slots')
+
+    def during(o):
+        direct(o, 0x4E8E24, [jobs], ecx=to.EVENTS)
+        for address, value, size in ((ALDERMAN_BUSY, 1, 4), (WORLD_FLAG_8A, 1, 1), (WORLD + 0xA, towns, 2)):
+            old = (o.u32, o.u8, o.u16)[(4, 1, 2).index(size)](address)
+            (w32, w8, w16)[(4, 1, 2).index(size)](o, address, value)
+            direct(o, 0x4E8E24, [jobs], ecx=to.EVENTS)
+            (w32, w8, w16)[(4, 1, 2).index(size)](o, address, old)
+        for t in range(1, towns):
+            w16(o, o.town(t) + 0x82E, 0xFFFF)
+        w32(o, taverns + 0xC, 0x1A)
+        direct(o, 0x4E2634, [taverns], ecx=to.EVENTS)
+        print(f'event 0x08: {bytes(o.uc.mem_read(taverns, 0x18)).hex()}')
+    return during
+
+
+# --- events_towns.cpp: the towns' events ---
+
+MAILBOX = 0x6DD730
+OFFICE_FREE = WORLD + 0x7E  # u16: the first free office (linked by [+0x2C8])
+SCRATCH_TYPE = SCRATCH + 0xE8
+
+
+def rand_step(state):
+    """MSVC's rand() (0x639C03): (new state, value)."""
+    state = (state * 0x343FD + 0x269EC3) & 0xFFFFFFFF
+    return state, (state >> 16) & 0x7FFF
+
+
+def new_event_at(o, tick, kind, **fields):
+    """new_event at an absolute tick."""
+    return new_event(o, (tick - o.u32(WORLD + 0x14)) & 0xFFFFFFFF, kind, **fields)
+
+
+def record_at(o, t, r):
+    return o.u32(o.town(t) + 0x75C) + 8 * r
+
+
+def unlink_record(o, t, r):
+    """Takes record r out of whichever list of town t holds it (the town's
+    heads [0x762..0x76A] and its offices' [+0x2CE] and [+0x2D0])."""
+    a = o.town(t)
+    n = o.u16(a + 0x776)
+    heads = [a + h for h in range(0x762, 0x76C, 2)]
+    for f in range(o.counts()[1]):
+        if o.u8(o.office(f) + 0x2C6) == t and o.u16(o.office(f) + 0x2C4) < o.counts()[2]:
+            heads += [o.office(f) + 0x2CE, o.office(f) + 0x2D0]
+    for link in heads:
+        steps = n
+        while o.u16(link) < n and steps:
+            if o.u16(link) == r:
+                w16(o, link, o.u16(record_at(o, t, r) + 4))
+                w16(o, record_at(o, t, r) + 4, 0xFFFF)
+                return link
+            link = record_at(o, t, o.u16(link)) + 4
+            steps -= 1
+    raise RuntimeError(f'record {r} of town {t} in no list')
+
+
+FLAMMABLE_TYPES = set(range(4, 0x1F)) | {0x29, 0x2C}
+
+
+def debt_mail_branches(o):
+    """Debts (event 0x01, 0x4DB4E0, called directly on new events), the
+    mailbox (0x4D6780) and operation 0x12: a debt of an AI merchant without
+    money nor an office in the town, with a ship there carrying 20 loads of
+    each of four wares (0x4F6570 sells the cargo while the total stays under
+    65000: the rest is skipped); a debt whose debtor is out of the world
+    (a merchant as the creditor); 0x4D6780 for a merchant out of the world
+    and for the player with an old letter of type 0x90 in his chain (the
+    chain is cut there and, removed, the free list is lost); the operation
+    0x12 for a ship out of the world and for one without a captain."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    debtor = ship = town = None
+    for m in rt.ai_with_office(o):
+        for s in merchant_ships(o, m):
+            t = o.u8(o.ship(s) + 0x39)
+            if t < towns and o.u16(o.ship(s) + 0x134) < 0xC and facilities_office(o, m, t) is None:
+                debtor, ship, town = m, s, t
+                break
+        if debtor is not None:
+            break
+    a = o.ship(ship)
+    for w in (9, 10, 12, 13):
+        w32(o, a + 0x54 + 4 * w, 40000)
+    w32(o, o.merchant(debtor), 0)
+    chain, i = [], o.u16(o.merchant(player) + 0xA)
+    while i < o.u16(MAILBOX + 6) and len(chain) < 3:
+        chain.append(i)
+        i = o.u16(o.u32(MAILBOX) + 0x10 * i + 6)
+    letter = o.u32(MAILBOX) + 0x10 * chain[1]
+    w8(o, letter + 4, 0x90)
+    w16(o, letter + 2, o.u16(letter + 2) - 2)  # two years older
+    bare = next(s for s in range(ships) if o.u16(o.ship(s) + 0x42) >= o.u16(to.SHIPS + 0xF2))
+    print(f'debtor {debtor}, ship {ship} in town {town}; the player\'s letters {chain}; ship {bare} has no captain')
+
+    def during(o):
+        now = o.u32(WORLD + 0x14)
+        _, e = new_event(o, 0x1000, 0x01, d8=1000000, dC=now & ~0xFF, b10=0xFF, b11=debtor, b12=0, b13=0, b14=town,
+                         b15=0, b16=0, b17=0)
+        direct(o, 0x4DB4E0, [e], ecx=to.EVENTS)
+        _, e = new_event(o, 0x1000, 0x01, d8=1000, dC=now & ~0xFF, b10=0, b11=merchants, b12=0, b13=0, b14=town,
+                         b15=0, b16=0, b17=0)
+        direct(o, 0x4DB4E0, [e], ecx=to.EVENTS)
+        direct(o, 0x4D6780, [merchants], ecx=MAILBOX)
+        direct(o, 0x4D6780, [player], ecx=MAILBOX)
+        print(f'mail free head {o.u16(MAILBOX + 4):#x}, the player\'s head {o.u16(o.merchant(player) + 0xA):#x}')
+        operation(o, 0x12, ships, 8, 0, 8)
+        operation(o, 0x12, bare, 8, 0, 8)
+    return during
+
+
+def fire_branches(o):
+    """Fires (event 0x1D, 0x4E9564; the queue called directly), each in a
+    town: the nearest building, of an office's list, with the record's owner
+    a merchant without an office there (the fire stops); the same with the
+    owner 0xFF (looked for in the town's list [0x764]: not there, it stops);
+    the player's store (0x1E) burns (0x500C30); and a town whose burning list
+    [0x76A] has a tower 0x32 (skipped) and a building with [+0x6] 0x40
+    (− 0x33). Saves 3, 5 and 7 (in 1 the player has no store)."""
+    towns, offices, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    store = None
+    for f in range(offices):
+        if o.u16(o.office(f) + 0x2C4) != player:
+            continue
+        t = o.u8(o.office(f) + 0x2C6)
+        r = next((r for r, _, _ in rt.records_of(o, t, o.u16(o.office(f) + 0x2CE))
+                  if o.u8(record_at(o, t, r) + 3) == 0x1E), None)
+        if r is not None:
+            store = (t, r)
+            break
+    if store is None:
+        raise RuntimeError('the player has no store')
+    used = {store[0]}
+    burning = []  # (town, record, office)
+    for f in range(offices):
+        m, t = o.u16(o.office(f) + 0x2C4), o.u8(o.office(f) + 0x2C6)
+        if m >= merchants or m == player or t in used:
+            continue
+        r = next((r for r, _, _ in rt.records_of(o, t, o.u16(o.office(f) + 0x2CE))
+                  if o.u8(record_at(o, t, r) + 3) in FLAMMABLE_TYPES), None)
+        if r is not None:
+            burning.append((t, r, m))
+            used.add(t)
+        if len(burning) == 2:
+            break
+    (ta, ra, ma), (tb, rb, _) = burning
+    other = next(x for x in rt.ai_with_office(o) if facilities_office(o, x, ta) is None)
+    w8(o, record_at(o, ta, ra) + 2, other)
+    w8(o, record_at(o, tb, rb) + 2, 0xFF)
+    td = next(t for t in range(towns) if t not in used and any(
+        o.u8(record_at(o, t, r) + 3) == 0x32 for r in range(o.u16(o.town(t) + 0x776))))
+    tower = next(r for r in range(o.u16(o.town(td) + 0x776)) if o.u8(record_at(o, td, r) + 3) == 0x32)
+    plain = next(r for r, _, _ in rt.records_of(o, td, o.u16(o.town(td) + 0x764))
+                 if o.u8(record_at(o, td, r) + 3) not in (0x32, 0x33))
+    for r in (tower, plain):
+        unlink_record(o, td, r)
+    w16(o, record_at(o, td, tower) + 4, plain)
+    w8(o, record_at(o, td, plain) + 6, 0x40)
+    w16(o, o.town(td) + 0x76A, tower)
+    print(f'fires: town {ta} record {ra} (owner now {other}), town {tb} record {rb} (owner 0xFF), the store {store}; '
+          f'town {td}: burning {tower} (tower) and {plain}')
+
+    def during(o):
+        now = o.u32(WORLD + 0x14)
+        tick = now & ~0x38
+        for t, r in ((ta, ra), (tb, rb), store):
+            rec = record_at(o, t, r)
+            new_event_at(o, tick, 0x1D, d8=tick, wC=0, wE=5, b10=o.u8(rec), b11=o.u8(rec + 1), b12=t, b13=0,
+                         d14=0)
+        new_event_at(o, tick, 0x1D, d8=tick, wC=0, wE=0, b10=0, b11=0, b12=td, b13=0, d14=0)
+        direct(o, 0x4D85C0, [now], ecx=to.EVENTS)
+        print(f'town {td}: [0x76A] {o.u16(o.town(td) + 0x76A)}, record {plain} [+0x6] {o.u8(record_at(o, td, plain) + 6):#x}')
+    return during
+
+
+def wedding_feast_branches(o):
+    """Weddings (event 0x15, 0x4E7C74) and feasts (event 0x07, 0x4E23A4) put
+    at the current tick and the queue called directly: a wedding of a
+    merchant out of the world; of one whose [+0x28] has passed; of one whose
+    [+0x13] is over his fleet (0); of the AI merchant with the biggest fleet
+    (a hold 480000 bigger) in a town with [0x2C8] & 1, in a network game
+    ([0x6DF2F0] & 2: [+0x138] = 0x15): his cog becomes a crayer (0x50E000).
+    The player's feasts: in a town without his office; in one with it, with
+    his reputation there −100 and 100 inhabitants (k below 0 and fewer than 5
+    guests). Then 0x50E000 with a strength (the interface's and the new
+    game's: artillery and levels) and 0x531470: on a town out of the world,
+    and (through 0x5316E0, the town's feast) with an office of no merchant in
+    the town's list."""
+    towns, offices, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    now = o.u32(WORLD + 0x14)
+
+    def fleet(m):
+        return sum(o.s32(o.ship(s) + 0x10) // 40000 for s in merchant_ships(o, m))
+    ai = [m for m in range(merchants) if o.u16(o.merchant(m) + 8) and not o.u8(o.merchant(m) + 8) & 4]
+    big = max(ai, key=fleet)
+    other, third = [m for m in ai if m != big][:2]
+    river = next(t for t in range(towns) if o.u32(o.town(t) + 0x2C8) & 1)
+    for m in (big, third):
+        w32(o, o.merchant(m) + 0x28, 0xFFFFFFFF)
+    w32(o, o.merchant(other) + 0x28, now)
+    first = o.u16(o.merchant(big) + 0xE)
+    w32(o, o.ship(first) + 0x10, o.u32(o.ship(first) + 0x10) + 480000)
+    homes = {o.u8(o.merchant(m) + 0x19) for m in (big, third, player)}
+    mine = [office_town_of(o, f) for f in rt.merchant_offices(o, player)]
+    feast_town = next((t for t in mine if t not in homes and t != river), next(t for t in mine if t != river))
+    away = next(t for t in range(towns) if t not in mine)
+    rep = o.merchant(player) + 0x2FC + 4 * feast_town
+    o.uc.mem_write(rep, struct.pack('<f', -100.0))
+    t5 = next(t for t in range(towns) if t not in homes and o.u16(o.town(t) + 0x784) < offices and t != feast_town)
+    office5 = o.u16(o.town(t5) + 0x784)
+    print(f'big {big} (fleet {fleet(big)}) in {river}, other {other}, third {third}; feasts in {away} and {feast_town}; '
+          f'town {t5} with office {office5}')
+
+    def wedding(m, town, age=5500, wares=0xFF, b13=1):
+        new_event(o, 0, 0x15, d8=now, wC=age, bE=wares, bF=7, b10=0x85, b11=3, b12=town, b13=b13, b14=0, b15=m,
+                  w16=0)
+
+    def during(o):
+        wedding(merchants, 0)
+        wedding(other, 0)
+        wedding(third, o.u8(o.merchant(third) + 0x19), b13=200)
+        wedding(big, river)
+        new_event(o, 0, 0x07, d8=player, dC=away, d10=2)
+        new_event(o, 0, 0x07, d8=player, dC=feast_town, d10=2)
+        people = o.u32(o.town(feast_town) + 0x2D4)
+        w32(o, o.town(feast_town) + 0x2D4, 100)
+        network = o.u32(NETWORK)
+        w32(o, NETWORK, network | 2)
+        direct(o, 0x4D85C0, [now], ecx=to.EVENTS)
+        w32(o, NETWORK, network)
+        w32(o, o.town(feast_town) + 0x2D4, people)
+        s = o.u16(o.merchant(big) + 0xE)
+        print(f'big\'s new ship {s}: type {o.u8(o.ship(s) + 0xE)}, [+0x138] {o.u16(o.ship(s) + 0x138):#x}')
+        for kind, strength, town in ((1, 0x50, o.u8(o.merchant(player) + 0x19)), (2, 400, feast_town)):
+            w16(o, SCRATCH_TYPE, kind)
+            direct(o, 0x50E000, [SCRATCH_TYPE, strength, town, player], ecx=to.SHIPS)
+        direct(o, 0x531470, [towns], ecx=WORLD)
+        owner = o.u16(o.office(office5) + 0x2C4)
+        w16(o, o.office(office5) + 0x2C4, 0xFFFF)
+        w8(o, WORLD + 0x88, t5)
+        w32(o, WORLD + 0x84, now - 1)
+        o.tick_operations = []
+        direct(o, 0x5316E0, [], ecx=WORLD)
+        print(f'the feast of town {t5}: {[op.hex() for op in o.tick_operations]}')
+        w16(o, o.office(office5) + 0x2C4, owner)
+    return during
+
+
+def free_office(o, f):
+    """Office f leaves its merchant's and its town's lists and goes to the
+    head of the free list (as when a merchant goes bankrupt)."""
+    m, t = o.u16(o.office(f) + 0x2C4), o.u8(o.office(f) + 0x2C6)
+    for link, next_field in ((o.merchant(m) + 0xC, 0x2C8), (o.town(t) + 0x784, 0x2CA)):
+        while o.u16(link) != f:
+            link = o.office(o.u16(link)) + next_field
+        w16(o, link, o.u16(o.office(f) + next_field))
+    w16(o, o.office(f) + 0x2C4, 0xFFFF)
+    w16(o, o.office(f) + 0x2C8, o.u16(OFFICE_FREE))
+    w16(o, OFFICE_FREE, f)
+
+
+def event03_branches(o):
+    """The event 0x03's pieces, direct calls with the event at the head of
+    the queue: 0x4DDA40 with [0x6DF31C], with no more merchants than towns
+    (the count lowered) and with [0x6DE52A]; 0x4DCEA0 with the player's
+    administrators at skill 0xF0 (+0x2B overflows: no operation 0x67; his
+    ships' captains young and none of the phase, and the rand state chosen
+    so that the first draw lets it through); 0x4DCBF0 with every town on
+    fire ([0x2C8] & 0x8000); 0x4DE790 (event 0x2B at the head) with
+    [0x6DF31C] and a town of 10 million; and an office whose index is under
+    the number of merchants freed and opened again (operation 0x5D,
+    0x5308A0: the news 0x0D isn't written)."""
+    towns, offices, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    now = o.u32(WORLD + 0x14)
+    (i03, e03), = events_of(o, 0x03)
+    (i2b, e2b), = events_of(o, 0x2B)
+    captains = o.u16(to.SHIPS + 0xF2)
+    used = set()
+    for s in merchant_ships(o, player):
+        c = o.u16(o.ship(s) + 0x42)
+        if c < captains:
+            used.add(c & 7)
+            w32(o, o.u32(to.SHIPS) + 0x10 * c + 4, now - 365 * 256)
+    phase = next(p for p in range(8) if p not in used)
+    w32(o, e03 + 0x10, (phase - 1) & 7 if phase else 7)
+    admin = next(c for c in range(phase, captains, 8))
+    w8(o, o.u32(to.SHIPS) + 0x10 * admin + 0xA, 0xF0)
+    for f in rt.merchant_offices(o, player):
+        w16(o, o.office(f) + 0x2F2, admin)
+    seed = next(s for s in range(1, 100000) if rand_step(s)[1] & 0x3FF < 0x1B3)
+    low = next(f for f in range(merchants) if o.u16(o.office(f) + 0x2C4) < merchants
+               and o.u16(o.merchant(o.u16(o.office(f) + 0x2C4)) + 8))
+    m, t = rt.ai_with_office(o)[0], None
+    t = next(x for x in range(towns) if facilities_office(o, m, x) is None)
+    print(f'phase {phase}, administrator {admin}, seed {seed}; office {low} freed; merchant {m} opens one in {t}')
+
+    def head(i, a):
+        rt.move_event(o, i, a, now - 0x100)
+
+    def during(o):
+        head(i2b, e2b)
+        busy = o.u32(ALDERMAN_BUSY)
+        people = o.u32(o.town(0) + 0x2D4)
+        w32(o, o.town(0) + 0x2D4, 10000000)
+        w32(o, ALDERMAN_BUSY, 1)
+        direct(o, 0x4DE790, [], ecx=to.EVENTS)
+        w32(o, ALDERMAN_BUSY, busy)
+        w32(o, o.town(0) + 0x2D4, people)
+        head(i03, e03)
+        o.rand_state = seed
+        direct(o, 0x4DCEA0, [], ecx=to.EVENTS)
+        for address, value, size in ((ALDERMAN_BUSY, 1, 4), (WORLD + 0xA, towns, 2), (WORLD_FLAG_8A, 1, 1)):
+            k = (4, 2, 1).index(size)
+            old = (o.u32, o.u16, o.u8)[k](address)
+            (w32, w16, w8)[k](o, address, value)
+            direct(o, 0x4DDA40, [], ecx=to.EVENTS)
+            (w32, w16, w8)[k](o, address, old)
+        flags = [o.u32(o.town(x) + 0x2C8) for x in range(towns)]
+        for x in range(towns):
+            w32(o, o.town(x) + 0x2C8, flags[x] | 0x8000)
+        direct(o, 0x4DCBF0, [], ecx=to.EVENTS)
+        for x in range(towns):
+            w32(o, o.town(x) + 0x2C8, flags[x])
+        free_office(o, low)
+        w32(o, o.merchant(m), 50000000)
+        store(o, t)
+        operation(o, 0x5D, m, t)
+        print(f'merchant {m}: office {facilities_office(o, m, t)} in town {t}')
+    return during
+
+
+def child_names(o):
+    """A child of a married AI merchant (0x4F69B0, direct calls), who may
+    have (length of his first name % 3) + 2 children: with 2 and with 3
+    already (so that the length decides) and his first name (0x512A60) one
+    written by the players (the player's own and the index 85: 80 men's
+    names, then the players' 20) or one past them (110: the list's first
+    name); then with a sister born a year ago whose name the first draw of
+    rand() gives (> 0x7F, a woman's: the next one is looked for among the
+    women's names, 0x4F6B22; the rand state chosen for it)."""
+    now = o.u32(WORLD + 0x14)
+    m = rt.ai_with_office(o)[0]
+    a = o.merchant(m)
+    w8(o, a + 0x31, o.u8(a + 0x19))
+    w32(o, a + 0x28, now - 18 * 365 * 256)
+    w32(o, a + 0x2C, now - 300 * 256)
+    w8(o, a + 0x36, 0)
+    w16(o, a + 0x34, 0xFFFF)
+    men = o.u16(0x6DDB70)
+    seed = next(s for s in range(1, 100000) if rand_step(s)[1] & 0xFF > 0x7F)
+    name = rand_step(seed)[1] & 0xFF
+    sister = o.call(0x5097C0, [1], ecx=to.SHIPS) & 0xFFFF
+    c = o.u32(to.SHIPS) + 0x10 * sister
+    w16(o, c, 0xFFFF)
+    w8(o, c + 2, name)
+    w32(o, c + 4, now - 365 * 256)
+    print(f'merchant {m}: {men} men\'s names; seed {seed} draws {name:#x}; the sister {sister}')
+
+    def during(o):
+        own = o.u8(o.merchant(o.u32(to.PLAYER)) + 0x1C)
+        for first in (own, men + 5, men + 30):
+            for children in (2, 3):
+                w8(o, a + 0x1C, first)
+                w8(o, a + 0x36, children)
+                o.tick_operations = []
+                print(f'first name {first}, {children} children: {direct(o, 0x4F69B0, [m], ecx=a) & 0xFF}')
+        w16(o, a + 0x34, sister)
+        w8(o, a + 0x36, 1)
+        o.rand_state = seed
+        o.tick_operations = []
+        print(f'with the sister: {direct(o, 0x4F69B0, [m], ecx=a) & 0xFF}, {[op[:10].hex() for op in o.tick_operations]}')
+    return during
+
+
+def yard_branches(o):
+    """Ships ordered at a shipyard (operation 0x2C, 0x52A360), in a town with
+    one and materials: an AI merchant's order with the yard's level for the
+    type below 0; a cog (type 2) with the town's [0x2C8] & 1; with the
+    shipyard's bit 0x20000 of [0x76C] off (0x52B2C0 refuses); without money
+    and not forced; and the player's order (the default name of the type)."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    t = next(x for x in range(towns) if o.u32(o.town(x) + 0x76C) & 0x20000 and not o.u32(o.town(x) + 0x2C8) & 1
+             and all(o.u8(o.town(x) + 0x824 + k) < 0x80 for k in (1, 2)))
+    a = o.town(t)
+    rt.yard_materials(o, t, 150)
+    m = rt.ai_with_office(o)[0]
+    print(f'town {t}: yard levels {[o.u8(a + 0x824 + k) for k in range(4)]}; merchant {m}, the player {player}')
+
+    def order(kind, who, force):
+        operation(o, 0x2C, kind, who, t, force)
+
+    def during(o):
+        level = o.u8(a + 0x825)
+        w8(o, a + 0x825, 0xFF)
+        order(1, m, 1)
+        w8(o, a + 0x825, level)
+        flags = o.u32(a + 0x2C8)
+        w32(o, a + 0x2C8, flags | 1)
+        order(2, m, 1)
+        w32(o, a + 0x2C8, flags)
+        bits = o.u32(a + 0x76C)
+        w32(o, a + 0x76C, bits & ~0x20000)
+        order(1, m, 1)
+        w32(o, a + 0x76C, bits)
+        money = o.u32(o.merchant(m))
+        w32(o, o.merchant(m), 0)
+        order(1, m, 0)
+        w32(o, o.merchant(m), money)
+        w32(o, o.merchant(player), 10000000)
+        order(1, player, 0)
+        s = o.u16(o.merchant(player) + 0xE)
+        print(f'the player\'s new ship {s}: [+0x15E] {o.u16(o.ship(s) + 0x15E):#x}, '
+              f'{bytes(o.uc.mem_read(o.ship(s) + 0x160, 8))}')
+    return during
+
+
+def captain_retire_branches(o):
+    """AI captains retiring (event 0x27, 0x4DDC00; the queue called directly
+    with the events at the current tick), by the ship's state: 0 (leaves it),
+    4 leading a convoy (waits 0x20), 5 (leaves it), 7 with the captain
+    already in the free list (0x5098B0 gives 0xFFFF), 12, 8 (the shipyard
+    freed), 9 (waits 0x40), 10 and 0x15 (nothing); a captain out of the
+    world; and a ship whose captain isn't the event's: the game looks at the
+    first ship of each merchant from the last, and finds him in the
+    player's (the last merchant; if his first ship has no captain it gets
+    one, as otherwise the game loops for ever). The AI ships in port get a
+    captain made by the game (0x5097C0) if they have none."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    captains = o.u16(to.SHIPS + 0xF2)
+    convoys = o.u16(CONVOY_COUNT)
+
+    def leads(s):
+        c = o.u16(o.ship(s) + 8)
+        return c < convoys and o.u16(convoy_at(o, c) + 0x10) == s
+    ai = [m for m in range(merchants) if o.u16(o.merchant(m) + 8)]
+    pool = [s for m in ai for s in merchant_ships(o, m) if o.u8(o.ship(s) + 0x39) < towns and not leads(s)
+            and o.u16(o.ship(s) + 0x134) not in (0x11, 0x12)][:10]
+    for s in pool:
+        if o.u16(o.ship(s) + 0x42) >= o.u16(to.SHIPS + 0xF2):
+            w16(o, o.ship(s) + 0x42, o.call(0x5097C0, [0], ecx=to.SHIPS) & 0xFFFF)  # a captain of the game's
+    captains = o.u16(to.SHIPS + 0xF2)
+    lead = next(convoy_at(o, c) for c in range(convoys) if o.u8(convoy_at(o, c)) < merchants
+                and o.u8(convoy_at(o, c)) != player and o.u16(convoy_at(o, c) + 0x10) < ships
+                and o.u16(o.ship(o.u16(convoy_at(o, c) + 0x10)) + 0x42) < captains)
+    lead = o.u16(lead + 0x10)
+    states = [0, 5, 7, 12, 8, 9, 10, 0x15]
+    chosen = pool[:len(states)]
+    first = o.u16(o.merchant(player) + 0xE)
+    if o.u16(o.ship(first) + 0x42) >= captains:
+        w16(o, o.ship(first) + 0x42, o.call(0x5097C0, [0], ecx=to.SHIPS) & 0xFFFF)
+        captains = o.u16(to.SHIPS + 0xF2)
+    wanted = o.u16(o.ship(first) + 0x42)
+    print(f'ships {list(zip(chosen, states))}, convoy lead {lead}; the player\'s first ship {first}, captain {wanted}')
+
+    def during(o):
+        now = o.u32(WORLD + 0x14)
+        for s, state in zip(chosen, states):
+            w16(o, o.ship(s) + 0x134, state)
+            new_event(o, 0, 0x27, d8=s, dC=o.u16(o.ship(s) + 0x42))
+        seven = chosen[states.index(7)]
+        c = o.u16(o.ship(seven) + 0x42)
+        w16(o, o.u32(to.SHIPS) + 0x10 * c, o.u16(to.SHIPS + 0xE0))
+        w16(o, to.SHIPS + 0xE0, c)
+        w16(o, o.ship(lead) + 0x134, 4)
+        new_event(o, 0, 0x27, d8=lead, dC=o.u16(o.ship(lead) + 0x42))
+        new_event(o, 0, 0x27, d8=chosen[0], dC=captains)
+        new_event(o, 0, 0x27, d8=chosen[1], dC=wanted)
+        direct(o, 0x4D85C0, [now], ecx=to.EVENTS)
+        print(f'captains now: {[(s, o.u16(o.ship(s) + 0x42)) for s in chosen + [lead, first]]}')
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -2321,6 +3267,49 @@ SCENARIOS = {
     'siege_sale': Scenario(siege_sale, [0x535760, 0x4DAF10], 0, ['@633ae7', '@4dafc7']),
     'siege_pitch': Scenario(siege_pitch, [0x535760, 0x528070, 0x6281F0], 1, ['@5281b1', '@63692e', '@6326cc',
                                                                              '@63276a']),
+    # operations.cpp
+    'operation_guards': Scenario(operation_guards, [0x535760], 0, [
+        '@5365f5>537025', '@53663a>537025', '@536640', '@53657b>537025', '@536584>537025', '@5365b1>537025',
+        '@535e12>537025', '@535c7b>537025', '@535e4c>537025', '@53664f', '@5366f3>537025', '@53675f>537025',
+        '@53fecd>54000a', '@53dac4>53dbcd', '@53dc01>53dc75', '@53dc15>53dc75', '@53fa91>53faf8',
+        '@542f42>54346e', '@5433e3', '@5051fe']),
+    'operation_convoys': Scenario(operation_convoys, [0x535760], 0, [
+        '@539b5f>539c52', '@539b85>539c52', '@539bac>539c52', '@539c6f>539ce1', '@539c91>539ce1',
+        '@539cb4>539ce1', '@539c2a']),
+    'operation_loans': Scenario(operation_loans, [0x535760], 0, [
+        '@539dd0>539f28', '@539e01>539f28', '@539e81>539e88', '@539ea1', '@539ee5', '@4f8fe0']),
+    'operation_sale': Scenario(operation_sale, [0x535760], 0, [
+        '@53d1a4>53d2a6', '@53d1b8>53d2a6', '@53d1ec>53d2a6', '@53d228>53d2a6', '@53d224', '@53d294',
+        '@53d28f']),
+    # events.cpp
+    'event_queue_branches': Scenario(event_queue_branches, [0x4D85C0, 0x4DB330, 0x535760], 0, [
+        '@4d89d2', '@4dfcb7', '@4db37b', '@4db48d', '@4d8d01']),
+    'ai_debt_branches': Scenario(ai_debt_branches, [0x4F42B0, 0x4F9580, 0x4F4A20, 0x4F4B40, 0x4F4E50], 0, [
+        '@4f4303>4f4322', '@4f958b>4f95b7', '@4f95a1', '@4f4a44>4f4b30', '@4f4a4e>4f4b30', '@4f4b60>4f4e46',
+        '@4f4e69', '@4f5bea', '@4f4ebc', '@4db2d4', '@4f4ed3']),
+    'sale_branches': Scenario(sale_branches, [0x535760, 0x4DAF10, 0x4DAFE0, 0x4DAB00], 0, [
+        '@4daf24', '@4daf49', '@4db011>4db0f7', '@4db032>4db0f7', '@4dab21>4daefe', '@4dab48>4daefe', '@4db0c4',
+        '@4dab66>4daefe', '@4dac3c>4dad70', '@4dacdf>4dad70', '@4dab8d>4daefe', '@4dabb2>4daefe']),
+    'ice_storm_branches': Scenario(ice_storm_branches, [0x4E45C4, 0x4E43E4], 0, [
+        '@4e46be', '@4e475a', '@4e4847', '@4e4547>4e443a']),
+    'jobs_captains': Scenario(jobs_captains, [0x4E8E24, 0x4E2634], 0, [
+        '@4e8ebe', '@4e8f02', '@4e8f17>4e9040', '@4e8ef3>4e9040', '@4e26e0', '@4fe104', '@4e27c9']),
+    # events_towns.cpp
+    'debt_mail_branches': Scenario(debt_mail_branches, [0x4DB4E0, 0x4D6780, 0x535760], 0, [
+        '@4f679f>4f67c0', '@4db6e0>4db5cc', '@4d6798>4d690e', '@4d6800', '@538aab>538c2c', '@538aca>538c2c']),
+    'fire_branches': Scenario(fire_branches, [0x4D85C0], 0, [
+        '@4e975f>4e977d', '@4e97c4>4e9811', '@4e9827', '@4e9863>4e98df', '@4e9898']),
+    'wedding_feast_branches': Scenario(wedding_feast_branches, [0x4D85C0, 0x50E000, 0x531470, 0x5316E0], 0, [
+        '@4e7cb2>4e81d2', '@4e7cd6>4e81d2', '@4e7dff', '@50e066', '@50e144', '@4e23f3>4e260a', '@4e2447', '@4e24fc',
+        '@50e09b', '@5314cb>531583', '@531518>53156c']),
+    'event03_branches': Scenario(event03_branches, [0x4DE790, 0x4DCEA0, 0x4DDA40, 0x4DCBF0, 0x535760], 0, [
+        '@4de8af>4de9b2', '@4dd25a>4dd298', '@4ddabb>4ddbf9', '@4ddad1>4ddbf9', '@4ddb7f>4ddbf9', '@4dcc3d>4dcd7b',
+        '@530c2c>530c58']),
+    'child_names': Scenario(child_names, [0x4F69B0], 0, ['@512ac3', '@512ab9', '@4f6b22']),
+    'yard_branches': Scenario(yard_branches, [0x535760], 0, ['@52a3ab', '@52a3c8', '@52a3ed', '@52a413', '@52a723']),
+    'captain_retire_branches': Scenario(captain_retire_branches, [0x4D85C0], 0, [
+        '@4ddcf5>4ddd46', '@4ddcfc', '@4ddcf5>4ddd7b', '@4ddcf5>4ddde1', '@4ddcf5>4dddc0', '@4ddcf5>4dde2d',
+        '@4ddce7>4dde2d', '@509917', '@4ddc27>4dde2d', '@4ddcbf']),
 }
 
 

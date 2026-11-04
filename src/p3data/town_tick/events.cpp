@@ -21,7 +21,7 @@
 // (capitanes en las tabernas, 0x4E2634), 0x0D (estación, hielo y tormentas,
 // 0x4E4984), 0x19 (capitanes y administradores que buscan trabajo,
 // 0x4E8E24), 0x1A (0x4F6C10 de cada comerciante), 0x1B (solo sin programa:
-// se quita) y 0x22 (pedidos de mercancía, 0x4DB7C0); 0x37 sin comprobar.
+// se quita) y 0x22 (pedidos de mercancía, 0x4DB7C0); 0x37: scenario event_queue_branches (saves 1, 3, 5, 7).
 // Los demás tipos, por grupos, también comprobados: events_big.cpp (0x2C, la
 // IA construye empresas; 0x05, encargos; 0x16), events_towns.cpp (0x03,
 // cada 10 días; 0x01, deudas; 0x2A y 0x2B, oficinas y barcos de la IA),
@@ -163,9 +163,10 @@ uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick) {
 	GlobalMemory& g = save.globals;
 	const uint16_t free = g.u16(kEventFree);
 	if (free >= g.u16(kEventCount)) {
-		// Sin comprobar con el oráculo (en las partidas siempre queda alguno
-		// libre). El juego copia los `free` primeros registros a un array nuevo
-		// de memoria sin inicializar (aquí, a 0) y enlaza los nuevos como libres.
+		// Checked with the oracle: scenario event_queue_branches (saves 1, 3, 5, 7) (in the saves
+		// there is always a free one). The game copies the `free` first records
+		// to a new array of uninitialized memory (here 0, as the oracle's heap)
+		// and links the new ones as free.
 		const uint16_t count = uint16_t(g.u16(kEventCount) + 0x80);
 		g.u16(kEventCount) = count;
 		std::vector<Event> events(count);
@@ -247,7 +248,7 @@ void fn_4f42b0(SaveGame& save, int merchant) {
 	if ((save.globals.u32(kOperations) & 0xE) == 0) {
 		best = fn_4f73d0(save, int(save.globals.u32(global::kPlayer)));
 	} else {
-		// Sin comprobar con el oráculo.
+		// A network game. Checked with the oracle: scenario ai_debt_branches (saves 3, 5, 7).
 		for (uint32_t i = 0; i < merchant_count(save); ++i) {
 			if (save.merchants[i].memory.u16(8) == 0) {
 				const int32_t v = fn_4f73d0(save, int(i));
@@ -440,10 +441,10 @@ bool fn_633ae0(const SaveGame& save, uint32_t town) {
 int32_t fn_4daf10(const SaveGame& save, uint32_t town, uint32_t record, bool flag) {
 	town &= 0xFF;
 	if (town >= town_count(save)) {
-		return -1;  // Sin comprobar con el oráculo.
+		return -1;  // Checked with the oracle: scenario sale_branches (saves 3, 5, 7).
 	}
 	if (uint16_t(record) >= save.towns[town].memory.u16(0x776)) {
-		return -1;  // Sin comprobar con el oráculo.
+		return -1;  // Checked with the oracle: scenario sale_branches (saves 3, 5, 7).
 	}
 	const int32_t value = merchants_detail::fn_51f220(save, int(town), record & 0xFFFF);
 	int32_t price;
@@ -468,7 +469,7 @@ void fn_4dafe0(const SaveGame& save, uint32_t town, uint32_t record, uint32_t& t
 	tick = 0xFFFFFFFF;
 	town &= 0xFF;
 	if (town >= town_count(save) || uint16_t(record) >= save.towns[town].memory.u16(0x776)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle (each): scenario sale_branches (saves 3, 5, 7).
 	}
 	const GlobalMemory& g = save.globals;
 	const uint32_t count = g.u16(kEventCount);
@@ -485,7 +486,7 @@ void fn_4dafe0(const SaveGame& save, uint32_t town, uint32_t record, uint32_t& t
 			if (e.u8(0x14) <= 2) {
 				tick += 0x100;
 				if (e.u8(0x14) == 1) {
-					tick += e.u16(0xE);  // Sin comprobar con el oráculo.
+					tick += e.u16(0xE);  // Checked with the oracle: scenario sale_branches (saves 3, 5, 7).
 				}
 			}
 			price = fn_4daf10(save, town, record, (e.u16(8 + 2 * k) >> 15) & 1);
@@ -511,26 +512,28 @@ void fn_4dab00(SaveGame& save, uint32_t town_arg, uint32_t record_arg) {
 	GlobalMemory& g = save.globals;
 	const uint32_t town = town_arg & 0xFF;
 	if (town >= town_count(save)) {
-		return;  // Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario sale_branches (saves 3, 5, 7) (the interface's operation
+		// 0x3C, 0x535ECA, doesn't check it).
+		return;
 	}
 	const SavedTown& st = save.towns[town];
 	const uint32_t records = st.memory.u16(0x776);
 	const uint16_t record = uint16_t(record_arg);
 	if (record >= records) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario sale_branches (saves 3, 5, 7).
 	}
 	uint32_t tick;
 	int32_t price;
 	fn_4dafe0(save, town_arg, record_arg, tick, price);
 	if (price != -1) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle (on sale already): scenario sale_branches (saves 3, 5, 7).
 	}
 	const BuildingRecord& b = st.records[record];
 	if (b.owner >= merchant_count(save)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario sale_branches (saves 3, 5, 7).
 	}
 	if (!(save.merchants[b.owner].memory.u32(0x468) & (1u << (town & 31)))) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario sale_branches (saves 3, 5, 7).
 	}
 	const bool fine = st.grid[size_t(st.memory.u32(0x7AC)) * b.x + b.y] & 0x80;
 	const uint32_t now = g.u32(kTick);
@@ -552,12 +555,12 @@ void fn_4dab00(SaveGame& save, uint32_t town_arg, uint32_t record_arg) {
 	const uint32_t soon = (now | 0xFF) + 0x301;
 	for (; i < count && save.events[i].u32(0) < soon; i = save.events[i].u16(4)) {
 		if (save.settings.u8(0xD) == 0 && add(save.events[i], 1)) {
-			return;  // Sin comprobar con el oráculo.
+			return;  // Checked with the oracle: scenario sale_branches (saves 3, 5, 7).
 		}
 	}
 	for (; i < count && save.events[i].u32(0) <= now + 0x3200; i = save.events[i].u16(4)) {
 		if (add(save.events[i], 2)) {
-			return;  // Sin comprobar con el oráculo.
+			return;  // Checked with the oracle: scenario sale_branches (saves 3, 5, 7).
 		}
 	}
 	// Los días (desde hoy) que ya tienen una subasta acabando cerca: 0.
@@ -606,7 +609,10 @@ void fn_4dab00(SaveGame& save, uint32_t town_arg, uint32_t record_arg) {
 	for (;;) {
 		int32_t day = int32_t(e.u16(0xE)) + 5;
 		if (day >= 0x190) {
-			break;  // Sin comprobar con el oráculo.
+			// Unreachable: an auction ending on day 0x17C or later blocks nothing,
+			// so the last blocked day is 0x17B + 5 = 0x180 and six free days
+			// from 0x181 always stop the search by day 0x186.
+			break;
 		}
 		int32_t left = 6;
 		while (left > 0 && free_day[size_t(day)] != 0) {
@@ -621,8 +627,8 @@ void fn_4dab00(SaveGame& save, uint32_t town_arg, uint32_t record_arg) {
 	e.u16(0xE) = uint16_t(e.u16(0xE) << 8);
 }
 
-// 0x4DB220 (thiscall sobre la cola): ¿hay en venta (evento 0x36) algún
-// edificio del comerciante `owner`? Sin comprobar con el oráculo.
+// 0x4DB220 (thiscall on the queue): is any building of merchant `owner` on
+// sale (in an event 0x36)? Checked with the oracle: scenario ai_debt_branches (saves 3, 5, 7).
 bool fn_4db220(const SaveGame& save, uint16_t owner) {
 	const GlobalMemory& g = save.globals;
 	for (uint32_t i = g.u16(kEventHead); i < g.u16(kEventCount); i = save.events[i].u16(4)) {
@@ -681,7 +687,11 @@ bool fn_4f5a20(SaveGame& save, int merchant, uint32_t me) {
 			// by rent per unit as the game meant.
 			const bool first = fix_game_bugs() && best_units == 0 && u > 0;
 			if (first || lhs < rhs || (lhs == rhs && value < best_value)) {
-				best_record = record;  // Sin comprobar con el oráculo.
+				// With the setting off, unreachable: the best rent and units start at
+				// 0 (the oracle zeroes the game's locals, ZEROED_FRAMES), so neither
+				// 0 < 0 nor value < 0 (unsigned) holds. With it on, the fix (seen with
+				// tick_probe --fix-game-bugs in tut0).
+				best_record = record;
 				best_rent = r;
 				best_units = u;
 				best_value = value;
@@ -713,7 +723,7 @@ bool fn_4f5a20(SaveGame& save, int merchant, uint32_t me) {
 			choose(record, rent, units, value);
 		}
 		for (uint32_t record = o.u16(0x2D0); record < records; record = t.records[record].next) {
-			// Sin comprobar con el oráculo.
+			// The houses. Checked with the oracle: scenario ai_debt_branches (saves 3, 5, 7).
 			uint32_t tick;
 			int32_t price;
 			fn_4dafe0(save, town, record, tick, price);
@@ -728,7 +738,7 @@ bool fn_4f5a20(SaveGame& save, int merchant, uint32_t me) {
 	if (best_value == 0) {
 		return false;
 	}
-	// Sin comprobar con el oráculo.
+	// Only with fix_game_bugs() (nothing is chosen with it off: see above).
 	const BuildingRecord& b = save.towns[best_town].records[best_record];
 	Operation op;
 	op.u32(0, 0x28);
@@ -748,7 +758,8 @@ bool fn_4f5a20(SaveGame& save, int merchant, uint32_t me) {
 void fn_4f4e50(SaveGame& save, int merchant, uint32_t me) {
 	MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	if (save.globals.u8(kWorldFlag8A)) {
-		m.s32(0) = int32_t(uint32_t(m.s32(0)) + 0x3A98);  // Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario ai_debt_branches (saves 3, 5, 7).
+		m.s32(0) = int32_t(uint32_t(m.s32(0)) + 0x3A98);
 		return;
 	}
 	if (save.globals.u32(kAldermanBusy) != 0) {
@@ -758,7 +769,8 @@ void fn_4f4e50(SaveGame& save, int merchant, uint32_t me) {
 	op.u32(0, 0x29);
 	uint16_t word = 0;  // [esp+0x14]: el u16 de [+0xC]
 	if (m.s32(0) < -50000) {
-		// Sin comprobar con el oráculo.
+		// Checked with the oracle (bankrupt, and the loan with a building on
+		// sale): scenario ai_debt_branches (saves 3, 5, 7).
 		if (!fn_4f5a20(save, merchant, me) && !fn_4db220(save, uint16_t(me & 0xFF))) {
 			op.u32(0, 0x65);
 			op.u32(4, me & 0xFF);
@@ -790,11 +802,11 @@ void fn_4f4e50(SaveGame& save, int merchant, uint32_t me) {
 // ([+0x2FC + 4·ciudad], truncada; 0x7FFF por encima de 32758; 0 si no existe).
 int16_t fn_4f9580(const SaveGame& save, int merchant, uint32_t town) {
 	if (town >= town_count(save)) {
-		return 0;  // Sin comprobar con el oráculo.
+		return 0;  // Checked with the oracle: scenario ai_debt_branches (saves 3, 5, 7).
 	}
 	const float rep = save.merchants[size_t(merchant)].memory.f32(0x2FC + 4 * town);
 	if (as_float(0x46FFEC00) < rep) {  // 0x672F58
-		return 0x7FFF;  // Sin comprobar con el oráculo.
+		return 0x7FFF;  // Checked with the oracle: scenario ai_debt_branches (saves 3, 5, 7).
 	}
 	return int16_t(ftol32(rep));
 }
@@ -829,7 +841,7 @@ int32_t fn_51b7e0(const SaveGame& save, int town, int merchant) {
 void fn_4f4a20(SaveGame& save, int merchant, uint32_t me) {
 	const MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	if (save.globals.u8(kWorldFlag8A) || (m.u8(8) & 4)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle (each): scenario ai_debt_branches (saves 3, 5, 7).
 	}
 	uint32_t town = 100;
 	float best = 1.0f;
@@ -870,7 +882,7 @@ void fn_4f4b40(SaveGame& save, int merchant, uint32_t me) {
 	const MerchantMemory& m = save.merchants[size_t(merchant)].memory;
 	Operation op;
 	if (save.globals.u8(kWorldFlag8A)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario ai_debt_branches (saves 3, 5, 7).
 	}
 	int32_t best = 0x62;
 	op.u8(4, uint8_t(me));
@@ -990,7 +1002,7 @@ uint32_t fn_4f4940(SaveGame& save, int merchant, uint32_t day, uint16_t event) {
 uint32_t fn_4dfc94(SaveGame& save, uint16_t event) {
 	const uint32_t merchant = save.events[event].u16(8);
 	if (merchant >= merchant_count(save)) {
-		return 0;  // Sin comprobar con el oráculo.
+		return 0;  // Checked with the oracle: scenario event_queue_branches (saves 1, 3, 5, 7).
 	}
 	const uint16_t kind = save.merchants[merchant].memory.u16(8);
 	if (kind == 0) {
@@ -1141,7 +1153,7 @@ void fn_4e45c4(SaveGame& save) {
 		bool grow = false;
 		if (day > 0x39) {
 			if (day < 0x14D) {
-				// Sin comprobar con el oráculo.
+				// Day 0x3A. Checked with the oracle: scenario ice_storm_branches (saves 1, 3, 5, 7).
 				t.u32(0x9B8) = 0;
 				t.u32(0x9C0) = 0;
 				t.u8(0x9C4) &= 0xFB;
@@ -1156,7 +1168,7 @@ void fn_4e45c4(SaveGame& save) {
 			const uint32_t melt = (v - uint32_t(d)) / 3;
 			t.s32(0x9B8) = int32_t(t.u32(0x9B8) - melt);
 			if (t.s32(0x9B8) < 0) {
-				t.u32(0x9B8) = 0;  // Sin comprobar con el oráculo.
+				t.u32(0x9B8) = 0;  // Checked with the oracle: scenario ice_storm_branches (saves 1, 3, 5, 7).
 			}
 		}
 		if (grow) {
@@ -1189,7 +1201,8 @@ void fn_4e45c4(SaveGame& save) {
 			t.u32(0x9C0) = r.next(100) + north * 4 + 0x100;
 			const int32_t speed = save.settings.s32(4);
 			if (speed > 2 && speed < 5) {
-				// Sin comprobar con el oráculo: según la velocidad del juego (0x66DE7C).
+				// By the game's speed (0x66DE7C). Checked with the oracle (speeds 3
+				// and 4): scenario ice_storm_branches (saves 1, 3, 5, 7).
 				static constexpr uint32_t kSpeeds[8] = {0x78, 0x5A, 0x3C, 0x1E, 0x14, 0x384, 0, 0x1000000};
 				uint32_t days = t.u32(0x9C0) >> 8;
 				if (uint8_t(days) != 0) {
@@ -1378,7 +1391,7 @@ void fn_4e43e4(SaveGame& save) {
 			const int16_t px = int16_t(x + 0x44);
 			const int16_t py = int16_t(y + 0x44);
 			if (ship_slot_near(save, px, py)) {
-				continue;  // Sin comprobar con el oráculo.
+				continue;  // Checked with the oracle: scenario ice_storm_branches (saves 1, 3, 5, 7).
 			}
 			const uint32_t length = storm_length(save);
 			enqueue_storm(save, 2, length, px, py);
@@ -1460,7 +1473,9 @@ void fn_4e8ca4(SaveGame& save, uint8_t* out, const TownMemory& town) {
 		out[3] = uint8_t((game_rand(save) & 0x1F) + 6);
 		break;
 	default:
-		pay = 0;  // Sin comprobar con el oráculo.
+		// Unreachable: 0x4E8E24, the only caller, passes the kinds 0..5
+		// (rand() % 0x600 & 0x700 is at most 0x500).
+		pay = 0;
 		out[3] = 0;
 		break;
 	}
@@ -1499,25 +1514,27 @@ void fn_4e8e24(SaveGame& save, uint16_t event) {
 			room = 0xC;
 		}
 	} else if (people > 0x3C) {
-		e.u32(0) = base + uint32_t(people) + 0x40;  // Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario jobs_captains (saves 1, 3, 5, 7).
+		e.u32(0) = base + uint32_t(people) + 0x40;
 		if (room > 8) {
 			room = 8;
 		}
 	} else {
 		e.u32(0) = base + uint32_t(people) + 0x10;
 		if (room > 0x78 - people) {
-			room = 0x78 - people;  // Sin comprobar con el oráculo.
+			// Unreachable: room is at most 0x34 and 0x78 − people at least 0x3C.
+			room = 0x78 - people;
 		}
 	}
 	if (merchant_count(save) <= town_count(save)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle (the count lowered): scenario jobs_captains (saves 1, 3, 5, 7).
 	}
 	if (g.u32(kAldermanBusy) != 0) {
-		e.u8(8) = 0;  // Sin comprobar con el oráculo.
+		e.u8(8) = 0;  // Checked with the oracle: scenario jobs_captains (saves 1, 3, 5, 7).
 		return;
 	}
 	if (g.u8(kWorldFlag8A)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario jobs_captains (saves 1, 3, 5, 7).
 	}
 	op.u32(0, 0x7B);
 	auto offer = [&](uint32_t kind_town) {
@@ -1636,7 +1653,7 @@ void fn_4fdf50(SaveGame& save, CaptainMemory& c, uint32_t index, bool young) {
 	uint32_t left = 600 - c.u8(9);
 	c.u8(0xA) = float_low_byte(float(double(float(double(uint32_t(index - tick8)))) * double(as_float(0x451A41EC))));
 	if (c.u8(0xA) > left) {
-		c.u8(0xA) = uint8_t(left);  // Sin comprobar con el oráculo.
+		c.u8(0xA) = uint8_t(left);  // Unreachable: left is 600 − [+0x9] ≥ 345, [+0xA] a byte.
 	}
 	left -= c.u8(0xA);
 	c.u8(0xB) = float_low_byte(float(double(float(double(uint32_t(day - index)))) * double(as_float(0x4640E4CD))));
@@ -1650,7 +1667,7 @@ void fn_4fdf50(SaveGame& save, CaptainMemory& c, uint32_t index, bool young) {
 		c.u16(0xC) = 0;
 		c.u8(8) = uint8_t(int32_t(c.u8(8)) % 11);
 	} else {
-		fn_4fe190(c);  // Sin comprobar con el oráculo.
+		fn_4fe190(c);  // Checked with the oracle (0x526A50 with 1): scenario jobs_captains (saves 1, 3, 5, 7).
 	}
 }
 
@@ -1764,7 +1781,7 @@ void fn_4e2634(SaveGame& save, uint16_t event) {
 	}
 	Event& e = save.events[event];
 	if (good < 3) {
-		// Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario jobs_captains (saves 1, 3, 5, 7).
 		e.u32(0x14) = (e.u32(0x14) + 3) % 0x17 + 1;
 		uint32_t t = 0;
 		for (uint32_t k = 0; k < 0x28; ++k) {
@@ -1793,7 +1810,7 @@ void fn_4e2634(SaveGame& save, uint16_t event) {
 	uint32_t t = ev.u32(8) % towns;
 	ev.u32(0xC) = (ev.u32(0xC) + 3) % 0x1D;
 	if (ev.u32(0xC) == 0) {
-		ev.u32(0xC) = 3;  // Sin comprobar con el oráculo.
+		ev.u32(0xC) = 3;  // Checked with the oracle: scenario jobs_captains (saves 1, 3, 5, 7).
 	} else if (ev.u32(0xC) == 0x14) {
 		ev.u32(0xC) = 2;
 	}
@@ -1825,7 +1842,7 @@ uint32_t fn_4db330(SaveGame& save, uint16_t event) {
 		}
 	}
 	if (g.u32(kAldermanBusy) != 0) {
-		return 0;  // Sin comprobar con el oráculo.
+		return 0;  // Checked with the oracle: scenario event_queue_branches (saves 1, 3, 5, 7).
 	}
 	int32_t stock = 0;
 	int32_t use = 0;
@@ -1858,7 +1875,8 @@ uint32_t fn_4db330(SaveGame& save, uint16_t event) {
 	}
 	save.events[event].u8(0x10) = uint8_t(index[game_rand(save) & 3]);
 	if (g.u8(kOperations) & 0xC) {
-		// Sin comprobar con el oráculo (partidas en red): operación 0x83.
+		// A network game: the operation 0x83. Checked with the oracle: scenario
+		// event_queue_branches (saves 1, 3, 5, 7).
 		Event& ev = save.events[event];
 		Operation op;
 		op.u32(0, 0x83);
@@ -1926,7 +1944,9 @@ void fn_4db7c0(SaveGame& save, uint16_t event) {
 			const float f = float(base);
 			int32_t price = ftol32(double(f) * double(as_float(kWareValueBits[w])) * double(as_float(0x3C23D70A)));
 			if (price < 1) {
-				price = 1;  // Sin comprobar con el oráculo.
+				// Unreachable: the smallest price of these wares is 63 (ware 3:
+				// 183 · 25 · 8 · 0.174 / 100; the values of 0x673A18 are constants).
+				price = 1;
 			}
 			int32_t amount;
 			if (count >= 5) {
@@ -2041,7 +2061,7 @@ void fn_4d85c0(SaveGame& save, uint32_t tick) {
 			break;
 		case 0x37: {
 			// Vuelve a dejar comerciar al comerciante [+0xC] en la ciudad [+0x8].
-			// Sin comprobar con el oráculo.
+			// Checked with the oracle: scenario event_queue_branches (saves 1, 3, 5, 7).
 			MerchantMemory& m = save.merchants[e.u32(0xC)].memory;
 			m.u32(0x608) &= ~(1u << (e.u32(8) & 31));
 			next = kRemove;

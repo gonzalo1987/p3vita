@@ -936,6 +936,98 @@ the whole price before). `siege_branches`, `siege_ops`, `siege_gates`,
 `siege_pitch`, `retouch.py subasta`, `subasta_ajuste` and `asedio` equal;
 the world 7 days in the 12 saves, 0 different.
 
+## Part D: the unchecked branches of operations.cpp (2026-11-04)
+
+The last block of part D, the branches marked «Sin comprobar con el
+oráculo», file by file (`ENCARGO_SIN_COMPROBAR.md`). `operations.cpp` had
+30 (one more than the count, written «sin comprobar» in lowercase): all
+checked with four new scenarios of `retouch_unchecked.py`, operations run
+with the game's executor while recording 0x535760, each branch a target
+(`@A>B` for the early returns). Only comments changed in the simulation.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `operation_guards` | 0x7B with a town out, the slot 6 and the slot 4 (the jump for 3..5); 0x7A with each town out and a town whose [0x83F] is a merchant; 0x37, 0x87, 0x61 and 0x81 with a merchant out; 0x61 with a price over the money; 0x2C with a town out; 0x38 less than 40 days ahead; 0x7C on a past day; 0x7F and 0x60 with a tick not to come; 0x80 with a queue of 0x80 records (save 5's own; the others lowered for the call); 0xB8 of kinds 5 and 0 (the pirates' ships); 0x78 with the 16 entries of [0x6DD7C0] in use; 0x7E with 18 towns without the bit 0x40 | 1, 3, 5, 7 | 21 calls equal in each, 20 of 20 targets |
+| `operation_convoys` | 0x1E and 0x1F with a convoy out of the table, its leading ship out, and in port with a leading ship that can't sail ([+0x3F] = 0); 0x1E asking for more than the owner has (1000) and with the owner in debt (−500: nothing) | 1, 3, 5, 7 | 9 calls equal, 7 of 7 |
+| `operation_loans` | 0x29 with a town out, an AI merchant lending without the amount, and lending (0x4F8FE0: his reputation in the town) with the tavern's slots 1 and 4 and the kinds 2 and 9 (→ 4) | 1, 3, 5, 7 | 4 calls equal, 6 of 6 |
+| `operation_sale` | 0x28 with a town and a merchant out, a merchant without an office in the town, the bit 0x10 of [0x2C8] with the building's cell without the bit 0x80 and with it (the auction), and a cell with no building (0x4FF2D0) | 3, 5, 7 (in save 1 no AI office has a building in its lists) | 6 calls equal, 7 of 7 |
+
+With four details broken on purpose (0x7E not writing past [+0x17], the
+0x1E taking 1 from an owner in debt, the 0x29 kind 9 taken as 3, the 0x28
+cell test the other way round) the comparison caught each one (the next
+event record, the owner's money and the convoy's [+0x20], the lender's
+reputation [+0x120 + 12·town], the two calls with the bit 0x10). The old
+`retouch.py` scenarios of these operations (`eventos_op`, `temporada`,
+`red`, `subasta`, `fiesta`, `boda`, `hijo`, `propuestas`) again in saves 3
+and 5: equal.
+
+Found on the way:
+- **0x7E doesn't look how many towns fit** (0x53F91E..0x53F941; certain,
+  seen in the oracle): the towns without the bit 0x40 of [0x2C8] go to
+  [+0x8 + k] of the new event 0x1F with no limit, so from the 17th on they
+  overwrite the next record of the queue (its tick), or go past the
+  queue's heap block if the record is the last one (save 5: record 0x7F of
+  0x80; p3vita can't write there). It doesn't happen in a game: 12 of the
+  24 towns lack the bit and at most 2 more can be founded.
+- **0x28 doesn't look whether the cell is in the grid** (0x53D213, only in
+  a town with the bit 0x10 of [0x2C8]): the AI always sends its own
+  building's cell, so only the interface or a network game could read past
+  the grid. p3vita doesn't read there.
+- The marks undercount: 15 more «sin comprobar con el oráculo» are written
+  in lowercase inside other sentences (most where the game reads past a
+  table), in the files still to do and in `merchants.cpp`.
+
+## Part D: the unchecked branches of events.cpp and events_towns.cpp (2026-11-04)
+
+`events.cpp` had 43 marks: 36 checked with 5 new scenarios, 7 unreachable
+(explained in the code). `events_towns.cpp` had 45 (and its header, which
+described the convention): 40 checked with 7 new scenarios, 5 unreachable.
+Only comments changed in the simulation. New for the oracle:
+`probes_unchecked.cpp` repeats 0x4DAFE0 (its price and tick in scratch
+globals), 0x4DAB00 and 0x50E000 (the type in a scratch global);
+`unchecked.sh` passes tick_probe the save's players' names (`--names`, as
+`ret2f.sh` does), which the first names written by the players need. With
+that, every older scenario of `retouch_unchecked.py` again in its saves:
+the same as before (the two known exceptions: `housing`'s target never
+reached, `siege_fixes`'s call different on purpose); the world 7 days in the
+12 saves, 0 different.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `event_queue_branches` | the queue called directly with an event 0x37 (a merchant may trade again in a town; made by 0x4E62F6) and an event 0x04 of a merchant out of the world; the grain event 0x00 with [0x6DF31C] and in a network game (operation 0x83); the queue without a free record (0x4D8CF0 reserves 0x80 more: the new ones zeroed, as the oracle's heap) | 1, 3, 5, 7 | 4 calls equal, 5 of 5 targets |
+| `ai_debt_branches` | 0x4F42B0 in a network game; 0x4F9580 with a town out and a reputation over 32758; 0x4F4A20, 0x4F4B40 and 0x4F4E50 with [0x6DE52A]; 0x4F4A20 for a merchant with [+0x8] & 4; 0x4F4E50 under −50000 with houses (0x4F5A20 looks at them), with nothing on sale (bankrupt, operation 0x65) and with a building in an auction (0x4DB220: the loan) | 3, 5, 7 | 9 calls equal, 11 of 11 |
+| `sale_branches` | 0x4DAF10, 0x4DAFE0 and 0x4DAB00 with a town and a record out; operation 0x28 twice on a building (on sale already: the phase-1 wait), on a second one with the settings' [+0xD] at 0 (added to the auction), on a town with an auction in phase 2 (added), on a building whose owner lacks the town's bit; 0x4DAB00 on a record of no merchant | 3, 5, 7 | 20 calls equal, 12 of 12 |
+| `ice_storm_branches` | 0x4E45C4 on day 0x3A, on day 0x30 with an ice of 1 (melts below 0) and on day 0x10 with the speeds 3 and 4 and a level going up; 0x4E43E4 with a ship of [0x6DD7C0] where its storm would go (found first with the same rand state, not recorded) | 1, 3, 5, 7 | 5 calls equal, 4 of 4 |
+| `jobs_captains` | 0x4E8E24 with 70 people, with [0x6DF31C], with [0x6DE52A], with no more merchants than towns (the count lowered); 0x4E2634 with every tavern but one empty (a new captain, 0x526A50 with 1: 0x4FDF50 not young) and [+0xC] at 0x1A | 1, 3, 5, 7 | 5 calls equal, 7 of 7 |
+| `debt_mail_branches` | a debt paid with a ship's cargo past 65000; a debt of a debtor out of the world; 0x4D6780 for a merchant out and with an old letter of type 0x90 in the player's chain (cut; the free list lost); operation 0x12 for a ship out and one without a captain | 1, 3, 5, 7 | 6 calls equal, 6 of 6 |
+| `fire_branches` | four fires: the nearest building's owner a merchant without an office there; its owner 0xFF (not in the town's list); the player's store (0x500C30); a burning list with a tower 0x32 and a building with [+0x6] 0x40 | 3, 5, 7 (in 1 the player has no store) | the queue's call equal, 5 of 5 |
+| `wedding_feast_branches` | weddings of a merchant out, of one whose [+0x28] passed, of one whose [+0x13] is over his fleet, and of the biggest fleet in a town with [0x2C8] & 1 in a network game (a crayer, [+0x138] = 0x15); the player's feasts in a town without his office and with his reputation −100 and 100 inhabitants; 0x50E000 with a strength (the interface's and the new game's); 0x531470 on a town out and, through 0x5316E0, with an office of no merchant | 1, 3, 5, 7 | 6 calls equal, 11 of 11 |
+| `event03_branches` | 0x4DE790 with [0x6DF31C]; 0x4DCEA0 with the player's administrators at 0xF0 (+0x2B overflows; the rand state and the phase chosen); 0x4DDA40 with [0x6DF31C], no more merchants than towns and [0x6DE52A]; 0x4DCBF0 with every town on fire; an office under the number of merchants freed and opened again (operation 0x5D: no news 0x0D) | 1, 3, 5, 7 | 11 calls equal (0x4DCEA0 and 0x4DCBF0 also inside 0x4DDA40), 7 of 7 |
+| `child_names` | 0x4F69B0 with 2 and 3 children and the first name the player's own, the players' index 85 and past them (110); with a sister whose name the first rand() gives (> 0x7F: a woman's) | 1, 3, 5, 7 | 7 calls equal, 3 of 3 |
+| `yard_branches` | operation 0x2C with the yard's level below 0, a cog in a town with [0x2C8] & 1, the shipyard's bit off, no money without force, and the player's order | 1, 3, 5, 7 | 5 calls equal, 5 of 5 |
+| `captain_retire_branches` | events 0x27 with the ship in the states 0, 4 leading a convoy, 5, 7 (its captain already free: 0x5098B0), 12, 8, 9, 10 and 0x15; a captain out; a ship whose captain isn't the event's (found in the player's first ship) | 1, 3, 5, 7 | the queue's call equal, 10 of 10 |
+
+With details broken on purpose the comparison caught each one: the new
+event records' links, the event 0x37's bit, the phase-1 wait, the ice's
+speed table, the event 0x08's 3, the 65000 cap, the letters' chain, the
+tower, the guests, the captain already free, the first names' lengths and
+the player's ship's name. Two didn't change anything and couldn't: a fleet
+of 0 or 1 gives the same dowry.
+
+Unreachable (explained in the code): in `events.cpp`, an auction's search
+past day 0x190 (nothing blocks a day past 0x180), the best building of
+0x4F5A20 with the setting off (the uninitialized rent is 0, as the oracle's
+zeroed frame), the person's kind over 5 in 0x4E8CA4, the room over
+0x78 − people in 0x4E8E24, a new captain's [+0xA] over what is left, and an
+order's price under 1 (63 at least); in `events_towns.cpp`, a letter setting
+past 9, a 0x71 without its record, a feast's share over 0x63, a dowry ship
+without room and the event 0x03 without merchants. Found on the way: the
+interface's operation 0x3C (0x535ECA, putting a building on sale) calls
+0x4DAB00 with no check of its own; p3vita doesn't run it yet (a player's
+action, phase 5). And a limit of the targets: an edge `@A>B` can't be seen
+when B is the instruction right after A (the jump table of 0x4DDC00 at
+0x4DDCF5); then an `@B` target does.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

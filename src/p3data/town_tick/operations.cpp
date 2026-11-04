@@ -62,15 +62,15 @@ uint16_t half(const uint8_t* operation, size_t offset) {
 // 0xF), su guía puede zarpar (0x519BA0); si no, −1.
 int expedition_convoy(const SaveGame& save, uint16_t convoy) {
 	if (convoy >= save.globals.u16(kConvoyCount)) {
-		return -1;  // Sin comprobar con el oráculo.
+		return -1;  // Checked with the oracle (0x1E and 0x1F): scenario operation_convoys (saves 1, 3, 5, 7).
 	}
 	const GameMemory<0x3C>& c = save.convoys[convoy];
 	const uint16_t lead = c.u16(0x10);
 	if (lead >= save.globals.u16(global::kShipCount)) {
-		return -1;  // Sin comprobar con el oráculo.
+		return -1;  // Checked with the oracle (0x1E and 0x1F): scenario operation_convoys (saves 1, 3, 5, 7).
 	}
 	if (c.u16(0x12) < 0xF && !ship_ai_detail::fn_519ba0(save, lead)) {
-		return -1;  // Sin comprobar con el oráculo.
+		return -1;  // Checked with the oracle (0x1E and 0x1F): scenario operation_convoys (saves 1, 3, 5, 7).
 	}
 	return convoy;
 }
@@ -92,7 +92,7 @@ void fn_5365e3(SaveGame& save, const uint8_t* operation) {
 	const uint32_t town = f & 0xFF;
 	const uint32_t slot = (f >> 8) & 7;
 	if (town >= save.globals.u32(global::kWorldTownCount) || slot >= 6) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle (both, and the slot 4): scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	std::memcpy(save.towns[town].memory.bytes.data() + 0x9C6 + 6 * slot, operation + 4, 6);
 }
@@ -118,12 +118,12 @@ void fn_536570(SaveGame& save, const uint8_t* operation) {
 	const uint32_t b = field(operation, 8);
 	const uint32_t towns = save.globals.u32(global::kWorldTownCount);
 	if (a >= towns || b >= towns) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle (each town): scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	TownMemory& t = save.towns[a].memory;
 	const uint8_t current = t.u8(0x83F);
 	if (current != 0 && current < save.globals.u16(global::kWorldMerchantCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	t.u8(0x83F) = 0xFF;
 	t.u32(0x838) = field(operation, 0xC);
@@ -160,7 +160,9 @@ void fn_539b50(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		MerchantMemory& m = save.merchants[owner].memory;
 		const int32_t has = m.s32(0);
 		if (money > has) {
-			money = has > 0 ? has : 0;  // Sin comprobar con el oráculo.
+			// Checked with the oracle (has > 0 and < 0): scenario operation_convoys (saves 1, 3, 5,
+			// 7).
+			money = has > 0 ? has : 0;
 		}
 		m.s32(0) = has - money;
 		if (save.globals.u8(kExpeditionMark) < 0x76) {
@@ -246,14 +248,14 @@ void fn_539dc0(SaveGame& save, const uint8_t* operation) {
 	GlobalMemory& g = save.globals;
 	const uint32_t town = operation[0x12];
 	if (town >= g.u32(global::kWorldTownCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_loans (saves 1, 3, 5, 7).
 	}
 	const uint32_t merchants = g.u16(global::kWorldMerchantCount);
 	const uint8_t lender = operation[0x10];
 	const uint8_t borrower = operation[0x11];
 	const uint16_t amount = half(operation, 0xC);
 	if (lender < merchants && save.merchants[lender].memory.s32(0) < int32_t(amount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_loans (saves 1, 3, 5, 7).
 	}
 	const uint32_t tick = g.u32(global::kWorldTick);
 	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick + operation[0xE] * 0x700u)];
@@ -270,7 +272,8 @@ void fn_539dc0(SaveGame& save, const uint8_t* operation) {
 	e.u8(0x17) = operation[0xB];
 	const uint32_t slot = operation[0x13] >> 4;
 	if (slot < 6) {
-		save.towns[town].memory.u16(0x9CA + 6 * slot) = 0;  // Sin comprobar con el oráculo.
+		// Checked with the oracle (slots 1 and 4): scenario operation_loans (saves 1, 3, 5, 7).
+		save.towns[town].memory.u16(0x9CA + 6 * slot) = 0;
 	}
 	if (borrower < merchants) {
 		MerchantMemory& m = save.merchants[borrower].memory;
@@ -278,7 +281,8 @@ void fn_539dc0(SaveGame& save, const uint8_t* operation) {
 	}
 	if (lender < merchants) {
 		const uint32_t kind = operation[0x13] & 0xF;
-		fn_4f8fe0(save, lender, town, kind > 4 ? 4 : kind, amount);  // Sin comprobar con el oráculo.
+		// A merchant lends (kinds 2 and 9): checked with the oracle, scenario operation_loans (saves 1, 3, 5, 7).
+		fn_4f8fe0(save, lender, town, kind > 4 ? 4 : kind, amount);
 	}
 }
 
@@ -289,7 +293,7 @@ void fn_539dc0(SaveGame& save, const uint8_t* operation) {
 void fn_535e04(SaveGame& save, const uint8_t* operation) {
 	const uint32_t merchant = field(operation, 4);
 	if (merchant >= save.globals.u16(global::kWorldMerchantCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	construction_detail::fn_4f8560(save, int(merchant), field(operation, 8), int32_t(field(operation, 0xC)));
 }
@@ -301,7 +305,7 @@ void fn_535e04(SaveGame& save, const uint8_t* operation) {
 void fn_535c70(SaveGame& save, const uint8_t* operation) {
 	const uint32_t town = field(operation, 0xC);
 	if (town >= save.globals.u32(global::kWorldTownCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	events_towns_detail::fn_52a360(save, int(town), operation[8], operation[4], operation[0x10]);
 }
@@ -316,7 +320,7 @@ void fn_535e3b(SaveGame& save, const uint8_t* operation) {
 	const GlobalMemory& g = save.globals;
 	const uint32_t tick = field(operation, 4);
 	if (tick < g.u32(global::kWorldTick) + 0x2800) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	const uint32_t town = field(operation, 8) % g.u32(global::kWorldTownCount);
 	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick)];
@@ -334,7 +338,8 @@ void fn_536642(SaveGame& save, const uint8_t* operation) {
 	const uint16_t day = half(operation, 0x10);
 	uint32_t tick;
 	if (day < g.u16(global::kWorldDayOfYear)) {
-		tick = (g.u32(global::kWorldTick) | 0xFF) + 1;  // Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
+		tick = (g.u32(global::kWorldTick) | 0xFF) + 1;
 	} else {
 		tick = (uint32_t(g.u16(global::kWorldYear)) * 365 + day) << 8;
 	}
@@ -433,7 +438,7 @@ void fn_542f10(SaveGame& save, const uint8_t* operation) {
 		}
 		return;
 	case 5:
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	default:
 		break;
 	}
@@ -492,7 +497,8 @@ void fn_542f10(SaveGame& save, const uint8_t* operation) {
 			continue;
 		}
 		for (uint32_t s = pirate->u16(0xC); s < ships; s = save.ships[s].memory.u16(4)) {
-			places += save.ships[s].memory.u32(0x20) + save.ships[s].memory.u32(0x1C);  // Sin comprobar con el oráculo.
+			// Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
+			places += save.ships[s].memory.u32(0x20) + save.ships[s].memory.u32(0x1C);
 		}
 	}
 	out.u32(0xC, places);
@@ -526,7 +532,7 @@ void fn_53fea0(SaveGame& save, const uint8_t* operation) {
 	const GlobalMemory& g = save.globals;
 	const uint8_t merchant = operation[4];
 	if (merchant >= g.u16(global::kWorldMerchantCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	MerchantMemory& m = save.merchants[merchant].memory;
 	const uint32_t now = g.u32(global::kWorldTick);
@@ -581,7 +587,7 @@ void fn_53dd70(SaveGame& save, const uint8_t* operation) {
 void fn_53da90(SaveGame& save, const uint8_t* operation) {
 	uint32_t tick = field(operation, 4);
 	if (save.globals.u32(global::kWorldTick) >= tick) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	tick &= 0xFFFFFF00;
 	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, tick)];
@@ -671,7 +677,7 @@ void fn_5366a0(SaveGame& save, const uint8_t* operation) {
 void fn_5366e8(SaveGame& save, const uint8_t* operation) {
 	const uint32_t tick = field(operation, 0x10);
 	if (tick <= save.globals.u32(global::kWorldTick)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	for (size_t k = 0; k < 3; ++k) {
 		const uint32_t town = field(operation, 4 + 4 * k);
@@ -695,7 +701,9 @@ void fn_5366e8(SaveGame& save, const uint8_t* operation) {
 void fn_536756(SaveGame& save, const uint8_t* operation) {
 	const uint32_t record = fix_game_bugs() ? field(operation, 4) : 0x80;
 	if (save.globals.u16(kEventCount) <= record) {
-		return;  // Sin comprobar con el oráculo.
+		// Checked with the oracle (save 5's queue has 0x80 records): scenario operation_guards (saves
+		// 1, 3, 5, 7).
+		return;
 	}
 	GameMemory<0x18>& e = save.events[record];
 	if (e.u16(6) != 5) {
@@ -818,17 +826,19 @@ void fn_53d190(SaveGame& save, const uint8_t* operation) {
 	const uint32_t town = field(operation, 4);
 	const uint32_t merchant = field(operation, 8);
 	if (town >= g.u32(global::kWorldTownCount) || merchant >= g.u16(global::kWorldMerchantCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle (each): scenario operation_sale (saves 3, 5, 7).
 	}
 	const int office = facilities_detail::fn_5308a0(save, merchant & 0xFFFF, town & 0xFFFF);
 	if (office < 0) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_sale (saves 3, 5, 7).
 	}
 	const SavedTown& st = save.towns[town];
 	const uint32_t x = field(operation, 0xC);
 	const uint32_t y = field(operation, 0x10);
 	if (st.memory.u8(0x2C8) & 0x10) {
-		// Sin comprobar con el oráculo (el juego no mira si la celda cae en la rejilla).
+		// Checked with the oracle (the cell with the bit 0x80 and without it): scenario operation_sale (saves 3, 5, 7).
+		// The game doesn't look whether the cell is in the grid (it reads past
+		// it); p3vita doesn't read there.
 		const size_t cell = size_t(st.memory.u32(0x7AC) * x + y);
 		if (cell >= st.grid.size() || !(st.grid[cell] & 0x80)) {
 			return;
@@ -844,7 +854,7 @@ void fn_53d190(SaveGame& save, const uint8_t* operation) {
 			}
 		}
 	}
-	fn_4ff2d0(save, office);  // Sin comprobar con el oráculo.
+	fn_4ff2d0(save, office);  // Checked with the oracle: scenario operation_sale (saves 3, 5, 7).
 }
 
 // La operación 0x7E (0x53F8B0): {0x7E, 4 u32 al azar}: la temporada de
@@ -873,7 +883,10 @@ void fn_53f8b0(SaveGame& save, const uint8_t* operation) {
 		}
 		const size_t at = size_t(index) * 0x18 + 8 + k++;
 		if (at < save.events.size() * 0x18) {
-			save.events[at / 0x18].u8(at % 0x18) = uint8_t(i);  // Pasado [+0x17], sin comprobar con el oráculo.
+			// Past [+0x17], into the next record: checked with the oracle, scenario operation_guards (saves 1, 3, 5, 7)
+			// (18 towns; in save 5 the record is the last one and the game writes
+			// past its heap block, which p3vita can't).
+			save.events[at / 0x18].u8(at % 0x18) = uint8_t(i);
 		}
 	}
 	GameMemory<0x18>& e = save.events[index];
@@ -905,12 +918,12 @@ void fn_53f8b0(SaveGame& save, const uint8_t* operation) {
 void fn_53dbf0(SaveGame& save, const uint8_t* operation) {
 	const uint32_t merchant = field(operation, 4);
 	if (merchant >= save.globals.u16(global::kWorldMerchantCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	MerchantMemory& m = save.merchants[merchant].memory;
 	const uint32_t price = field(operation, 0x10);
 	if (m.u32(0) < price) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, field(operation, 8))];
 	e.u16(6) = 7;
@@ -931,7 +944,7 @@ void fn_53fa80(SaveGame& save, const uint8_t* operation) {
 	GlobalMemory& g = save.globals;
 	const uint32_t merchant = field(operation, 4);
 	if (merchant >= g.u16(global::kWorldMerchantCount)) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	const uint32_t tick = g.u32(global::kWorldTick);
 	const uint32_t when = ((field(operation, 0xC) + tick + 0x100) & 0xFFFFFF00) | 0x80;
@@ -963,7 +976,7 @@ void fn_5051e0(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		}
 	}
 	if (slot < 0) {
-		return;  // Sin comprobar con el oráculo.
+		return;  // Checked with the oracle: scenario operation_guards (saves 1, 3, 5, 7).
 	}
 	const uint32_t e = kSpecial + 12 * uint32_t(slot);
 	g.u16(e + 8) = operation[4];
