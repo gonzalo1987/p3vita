@@ -36,8 +36,8 @@
 // dos ciudades (construction.cpp, 0x521900).
 // La guarida pirata (tipo 3) espera a que un barco del comerciante se
 // acerque (los piratas se refuerzan con barcos nuevos, 0x5144A0) y llegue a
-// ella. Por reescribir: el principio del tipo 0 (crea la ciudad, 0x531D50) y
-// el ataque a la guarida (una batalla). The letters (0x4D6530) are sent; los avisos (0x548CA0) y las
+// ella. Not rewritten yet: the attack on the nest (a battle: the battles'
+// piece 6). The letters (0x4D6530) are sent; los avisos (0x548CA0) y las
 // ventanas del jugador no cambian la simulación.
 
 #include <cstring>

@@ -438,7 +438,9 @@ void fn_51e8d0(SaveGame& save, int town, uint32_t map) {
 	t.u16(0x792) = 0;
 	const std::vector<uint8_t>* file = map < save.town_templates.size() ? &save.town_templates[map] : nullptr;
 	if (!file || file->size() < 0x6C) {
-		// Por reescribir (0x4F99B0): sin plantilla. Las 28 del juego existen.
+		// Without the template file 0x4F9B40 makes a map with 0x4F99B0: never
+		// with the game's data (its 28 exist). For the new game (roadmap,
+		// «Partida nueva desde cero»).
 		return;
 	}
 	const uint8_t* data = file->data();
@@ -563,8 +565,10 @@ void fn_5458d0(SaveGame& save, int town, bool flag, uint32_t wares, uint32_t oth
 	}
 	t.u16(0x9A0) = 10;
 	if (flag) {
-		// Por reescribir: 0x545CE0 y 0x545F50 (una ciudad que ya existe). Al
-		// fundar, `flag` es 0.
+		// With `flag`, 0x545CE0 and 0x545F50: only a new game sets it (0x544E50,
+		// operation 0xAF with [+0xF] = 1; roadmap, «Partida nueva desde cero»).
+		// Founding a town during a game (the Hanse's task, the window 0x41B290)
+		// leaves it at 0.
 		return;
 	}
 	std::memset(t.bytes.data() + 0x998, 0, 4);
@@ -696,8 +700,9 @@ void fn_531d50(SaveGame& save, const GameMemory<0x10>& rec) {
 	fn_545890(save, int(index), rec.u8(0xF) != 0);
 	fn_5458d0(save, int(index), rec.u8(0xF) != 0, rec.u32(0x4), rec.u32(0x8));
 	if ((rec.u32(0x0) & 0x40) == 0x40) {
-		// Por reescribir: la elección de su alcalde (0x532063..0x5321C5). Al
-		// fundar la ciudad la situación es 0.
+		// The election of its mayor (0x532063..0x5321C5), for a Hanse town of
+		// a new game (0x544E50; roadmap, «Partida nueva desde cero»). Founding
+		// a town during a game the situation is 0.
 	}
 	if (rec.u8(0xF) == 0) {
 		const uint16_t e = events_detail::fn_4d8cf0(save, g.u32(kTick) + 0xB400);

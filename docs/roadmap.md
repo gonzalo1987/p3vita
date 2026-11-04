@@ -101,7 +101,7 @@ Notas:
 - [x] Partidas guardadas leídas ([formats/savegame.md](formats/savegame.md)): edificios, objetos fijos y plantilla de cada ciudad
 - [x] Ciudades tal como empiezan (`missav/1.pat`, año 1300), con el estilo de su región
 - [x] Comerciantes (dinero, nombre, cuál es el jugador), oficinas y barcos (posición, carga, bodega) de las partidas, comprobados con el oráculo
-- [ ] Partida nueva desde cero: `stadtplatz*.tow` y la generación de las casas (función sin localizar)
+- [ ] Partida nueva desde cero: `stadtplatz*.tow` y la generación de las casas. Localizado el 04-11-2026 (parte D del inventario): 0x547F4F siembra el generador con la hora y monta el mundo con 0x544E50, que crea cada ciudad con la operación 0xAF (0x536E3A → 0x531D50, la misma función que funda una ciudad del encargo de la Hansa) con [+0xF] = 1, y encola también las 0xB1 y 0xB3. Lo que falta de 0x531D50 para eso: con [+0xF] = 1, 0x545CE0 y 0x545F50 en 0x5458D0; la elección del alcalde de las ciudades de la Hansa (situación con 0x40: 0x532063..0x5321C5); y 0x4F99B0, el mapa que hace 0x4F9B40 si falta la plantilla (con los datos del juego no pasa). Están marcados en `new_town.cpp`
 - [ ] Dibujar los kontors (las oficinas ya se leen), los andamios de las obras y los bordes de calle de las celdas 0x81
 - [ ] Partidas de la versión 0x4D (`missav/0100–0204.pat`)
 - [ ] Variantes de los tiles: sombras, nieve y andamios
@@ -190,7 +190,7 @@ La lista cerrada, sacada del ejecutable y no de lo que sale en las partidas, est
   - el resto: interfaz (los gráficos del asedio, la tabla de ciudades de 0x46F560, la clasificación de la ventana del final, el redibujado de la ventana de encargos), ya hecho (0x5333C0, 0x512B20, 0x51AAB0) o en línea en p3vita (las listas del montón, el índice de un barco); 0x5462F0 → 0x546450 no era una llamada.
   Comprobado: los escenarios de construcción y de asedio que ya había, iguales; el mundo entero 7 días en las 12 partidas, 0 diferencias; la Vita compila.
 - [ ] D: lo que marca el propio código:
-  - [ ] «Por reescribir» (14). Ya están 0x4FF2D0, el almacén nuevo (tipo 0x1E) de un comerciante con oficina, que recuenta su oficina, y 0x51FAB0 construyendo de golpe (`construction.cpp`; `cloud/unchecked-branches`);
+  - [x] «Por reescribir» (revisados el 04-11-2026). Un hueco, ya reescrito: 0x633AE0 («¿hay un asedio en marcha?», que usa el precio de venta de un edificio) decía siempre que no; ahora mira al ejército (0x629C30). Escenario `siege_sale`: iguales, el precio a la mitad durante el asedio. Los demás van con la partida nueva (arriba, fase 2), con las batallas, con el intérprete de misiones o con las acciones del jugador; dos estaban viejos (ya hechos). Lo que hay en cada uno, en el inventario
   - [ ] «no se reproduce» (115): repasar que ninguno toque el estado;
   - [ ] «Sin comprobar con el oráculo»: **quedan 250**. Hechas las 213 de los 11 ficheros del tick de ciudad (alderman, construction, new_town, facilities, offices, businesses, population, merchants, diet, grid y sieges; [cloud/unchecked-branches.md](cloud/unchecked-branches.md)):
     - 188 comprobadas con el oráculo, con 42 escenarios de `tools/oracle/retouch_unchecked.py`, que se lanzan con `tools/oracle/unchecked.sh`;

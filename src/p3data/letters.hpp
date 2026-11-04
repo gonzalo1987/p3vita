@@ -19,7 +19,8 @@ namespace p3::data {
 // codes, 0 bytes inside included, as the window gets it) for the local player
 // (save.player); nullopt for the types without a letter text (the composer's
 // default case: news for the chronicle, the mission interpreter's records...)
-// and for a type not rewritten yet (letter_type_rewritten).
+// and for a type not rewritten yet (letter_type_rewritten: all but the
+// offers 0x1E/0x1F, which only operation 0x5F, a player's action, sends).
 std::optional<std::string> compose_letter(const SaveGame& save, const GameTexts& texts, uint16_t entry);
 
 // What the game's composer writes into the save when it shows a letter: a

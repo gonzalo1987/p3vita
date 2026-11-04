@@ -2041,6 +2041,44 @@ def siege_pitch(o):
     return during
 
 
+def siege_sale(o):
+    """A building's sale price (0x4DAF10, direct calls) in a town besieged
+    with the game's code (operation 0x8E): halved while the siege goes on
+    (0x633AE0 → 0x629C30 on its army). With the army besieging; without
+    besiegers of type 0; retreating ([+0x3A]) but not yet down to [+0x6A]
+    (besieging) and past it (not); with the flag (60 %, no siege check);
+    and a building of a town without a siege."""
+    towns = o.counts()[0]
+    ready = [i for i in range(towns) if rt.siege_ready(o, i)]
+    t = ready[0]
+    other = next(i for i in range(towns) if i != t and records(o, i, 0x764))
+    s = siege_object(o, t)
+    r = records(o, t, 0x764)[0][0]
+    r2 = records(o, other, 0x764)[0][0]
+
+    def during(o):
+        operation(o, 0x8E, t, 1, 0x80, 0)
+        army = o.u32(s + 8)
+        price = lambda town, rec, flag=0: direct(o, 0x4DAF10, [town, rec, flag], ecx=to.EVENTS)
+        print(f'siege of town {t}, army {army:#x}: [+0x3A] {o.u16(army + 0x3A)}, [+0x6A] {o.u16(army + 0x6A)}, '
+              f'[+0x21E] {o.u16(army + 0x21E)}')
+        print(f'besieged: {price(t, r)}')
+        troops = o.u16(army + 0x21E)
+        w16(o, army + 0x21E, 0)
+        print(f'no besiegers of type 0: {price(t, r)}')
+        w16(o, army + 0x21E, troops)
+        retreat, low = o.u16(army + 0x3A), o.u16(army + 0x6A)
+        w16(o, army + 0x3A, 5)
+        w16(o, army + 0x6A, 2)
+        print(f'retreating, still besieging: {price(t, r)}')
+        w16(o, army + 0x6A, 5)
+        print(f'retreating, done: {price(t, r)}')
+        w16(o, army + 0x3A, retreat)
+        w16(o, army + 0x6A, low)
+        print(f'with the flag: {price(t, r, 1)}; town {other} without a siege: {price(other, r2)}')
+    return during
+
+
 def side_gates(o, t):
     """The first three gates of the side the army attacks in town t (as
     0x629C60 finds them) and the town's wall pieces (0x36) of [0x768]."""
@@ -2280,6 +2318,7 @@ SCENARIOS = {
         '@53b91a', '@5095fd', '@5096a4>509706', '@509783', '@53b9d7', '@53b914>53ba2f', '@53b89f>53ba2f']),
     'player_pirate_lists': Scenario(player_pirate_lists, [0x535760], 0, ['@4f5960', '@4f595e>4f5976']),
     'player_pirate_new': Scenario(player_pirate_new, [0x535760], 0, ['@5096a6', '@5096fd', '@509783']),
+    'siege_sale': Scenario(siege_sale, [0x535760, 0x4DAF10], 0, ['@633ae7', '@4dafc7']),
     'siege_pitch': Scenario(siege_pitch, [0x535760, 0x528070, 0x6281F0], 1, ['@5281b1', '@63692e', '@6326cc',
                                                                              '@63276a']),
 }

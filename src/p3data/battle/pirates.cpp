@@ -426,7 +426,7 @@ uint8_t fn_5159c0(const SaveGame& save, uint32_t n) {
 //   with the flag 0x40 in [0x2C8] (counted from the guide's captain, the world
 //   and the guide), or, if it is already there, to a free town number
 //   (0x5159C0). Home: to its pirate's nest (0x51A470, [+0xE] of the pirate); at
-//   the nest it is disbanded (0x514B80; not rewritten yet, see below), else the
+//   the nest it is disbanded (0x514B80, below), else the
 //   wait [+0x138] grows 0x700. Otherwise: to the ship it saw ([+0x52]) if that
 //   sails, is not at a town and not in the shallows; or to a waypoint of a
 //   town (0x448780: the guide's [+0x159] if it is a town, else one at random)

@@ -47,6 +47,9 @@ bool fn_4f9c80(const SaveGame& save, int town, uint8_t& x, uint8_t& y, uint32_t 
 namespace merchants_detail {
 int32_t fn_51f220(const SaveGame& save, int town, uint32_t record);
 }  // namespace merchants_detail
+namespace sieges_detail {
+bool fn_629c30(const SaveGame& save, int siege);  // sieges.cpp: does the army still besiege?
+}  // namespace sieges_detail
 namespace ship_trade_detail {
 uint16_t fn_5269a0(const SaveGame& save, int town, uint16_t owner);
 }  // namespace ship_trade_detail
@@ -421,14 +424,13 @@ void fn_4f5130(SaveGame& save, int merchant) {
 	}
 }
 
-// 0x633AE0 (thiscall sobre el asedio de la ciudad): ¿hay un asedio en
-// marcha? Con [+0x8] = 0 (siempre, en las partidas), no.
+// 0x633AE0 (on the town's siege object): is a siege going on? Without an
+// army ([+0x8] = 0), no; with one, whether it still besieges (0x629C30).
 bool fn_633ae0(const SaveGame& save, uint32_t town) {
-	if (town >= save.sieges.size() || save.sieges[town].u32(8) == 0) {
+	if (town >= save.sieges.size() || save.sieges[town].u32(8) == 0 || !save.siege_extras[town].army) {
 		return false;
 	}
-	// Por traducir: 0x629C30 sobre el objeto de [+0x8] (no sale en las partidas).
-	return false;
+	return sieges_detail::fn_629c30(save, int(town));
 }
 
 // 0x4DAF10 (thiscall sobre la cola): precio de venta del edificio `record`
@@ -446,13 +448,13 @@ int32_t fn_4daf10(const SaveGame& save, uint32_t town, uint32_t record, bool fla
 	const int32_t value = merchants_detail::fn_51f220(save, int(town), record & 0xFFFF);
 	int32_t price;
 	if (flag) {
-		// Sin comprobar con el oráculo.
+		// Checked with the oracle: scenario siege_sale (saves 3 and 5, direct calls).
 		price = int32_t(uint32_t(value) * 6 + 5) / 10;
 		return price - price % 100;
 	}
 	price = int32_t(uint32_t(value) * 4 + 5) / 10;
 	if (fn_633ae0(save, town)) {
-		price >>= 1;  // Sin comprobar con el oráculo.
+		price >>= 1;  // Checked with the oracle: scenario siege_sale (saves 3 and 5, direct calls).
 	}
 	return price - price % 100;
 }

@@ -923,6 +923,19 @@ differed in [+0x1E94]. The save after it (`write-scenario.sh`,
 the 12 saves, 0 different. When the chase is rewritten, 0x9F goes into the
 oracle's `OPERATIONS`.
 
+## Part D of the inventory (2026-11-04)
+
+The marks «Por reescribir» of the code, reviewed. One gap: 0x633AE0 (is a
+siege going on?) said «no» whenever the town's siege object had an army; now
+0x629C30 on the army, as the game. Scenario **`siege_sale`** (saves 3 and 5):
+a siege made with the game's code and direct calls to 0x4DAF10 (a building's
+sale price) with the army besieging, without besiegers of type 0, retreating
+before and after [+0x6A], with the flag (60 %) and in a town without a
+siege: the 6 calls equal (the price halved while it besieges; p3vita gave
+the whole price before). `siege_branches`, `siege_ops`, `siege_gates`,
+`siege_pitch`, `retouch.py subasta`, `subasta_ajuste` and `asedio` equal;
+the world 7 days in the 12 saves, 0 different.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

@@ -676,8 +676,8 @@ uint32_t fn_51fab0(SaveGame& save, int town, uint8_t type, bool immediate) {
 	if (immediate) {
 		// Builds at once, as the town (0xFF): 0x521900 for the types < 0x30
 		// (its result), 0x523830 up to 0x33 and 0x522C70 for the rest (no type
-		// with a site gets there). Only the interface and 0x545F50 (a town that
-		// already exists, not rewritten yet) call with it; the town's works
+		// with a site gets there). Only the interface and 0x545F50 (a town of a
+		// new game: roadmap, «Partida nueva desde cero») call with it; the town's works
 		// (0x51D870) and the event 0x2F always call with 0.
 		// Checked with the oracle: scenario site_search (saves 3 and 5, direct calls).
 		if (type < 0x30) {
