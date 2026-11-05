@@ -533,6 +533,120 @@ void fn_4fc1d0(Grid& g, int32_t x, int32_t y, uint32_t cls) {
 
 }  // namespace
 
+// 0x4FB580 (town_class1, with whether the town view shows the town): the
+// streets planned (cells 0x82 and 0x83) become built ones (0x81), at most 16:
+// first the town's middle ([+0x5C], [+0x5D] of town_class1: the town's [0x800],
+// [0x801]), then ring by ring around it (each ring's four sides, x up, y up by
+// 2, x down and y down by 2, cut to the grid; a side cut at the grid's edge is
+// skipped) until no side is left. Returns how many. With the view each one is
+// redrawn (0x590680: interface).
+uint32_t fn_4fb580(SaveGame& save, int town) {
+	SavedTown& st = save.towns[size_t(town)];
+	Grid g(st);
+	const int32_t cx = st.memory.u8(0x800);
+	const int32_t cy = st.memory.u8(0x801);
+	uint32_t built = 0;
+	{
+		const int64_t i = g.at(cx, cy);
+		const uint8_t c = g.get(i);
+		if (c == 0x82 || c == 0x83) {
+			g.set(i, 0x81);
+			built = 1;
+		}
+	}
+	// One cell of a side: true when it was the 16th.
+	auto take = [&](int64_t i) {
+		const uint8_t c = g.get(i);
+		if (c != 0x82 && c != 0x83) {
+			return false;
+		}
+		g.set(i, 0x81);
+		return ++built >= 0x10;
+	};
+	const int32_t first_row = cy - 1;
+	int32_t ring = 1;
+	int32_t row = first_row;
+	for (;;) {
+		int32_t y = row;
+		int32_t x = cx - (first_row & ring & 1) - (ring >> 1);
+		int32_t along = ring;  // The sides along x.
+		int32_t across = ring;  // The sides along y (by 2).
+		bool right = true;  // y up: x + ring inside.
+		bool left = true;  // y down: x inside.
+		bool down = true;  // x down: y + 2 · ring inside.
+		bool up = true;  // x up: y inside.
+		if (x + ring >= g.w) {
+			right = false;
+			along = g.w - x - 1;
+		}
+		if (x < 0) {
+			left = false;
+			along += x;
+			x = 0;
+		}
+		if (y + 2 * ring >= g.h) {
+			down = false;
+			across = (g.h - y - 1) >> 1;
+		}
+		if (y < 0) {
+			up = false;
+			across += (y - 1) / 2;
+			y &= 1;
+		}
+		int64_t i = g.at(x, y);
+		if (up) {
+			for (int32_t n = along; n > 0; --n) {
+				if (take(i)) {
+					return built;
+				}
+				++x;
+				i += g.h;
+			}
+		} else {
+			x += along;
+			i = g.at(x, y);
+		}
+		if (right) {
+			for (int32_t n = across; n > 0; --n) {
+				if (take(i)) {
+					return built;
+				}
+				y += 2;
+				i += 2;
+			}
+		} else {
+			y += 2 * across;
+			i = g.at(x, y);
+		}
+		if (down) {
+			for (int32_t n = along; n > 0; --n) {
+				if (take(i)) {
+					return built;
+				}
+				--x;
+				i -= g.h;
+			}
+		} else {
+			x -= along;
+			i = g.at(x, y);
+		}
+		if (left) {
+			for (int32_t n = across; n > 0; --n) {
+				if (take(i)) {
+					return built;
+				}
+				y -= 2;
+				i -= 2;
+			}
+		}
+		++ring;
+		--row;
+		if (!left && !right && !up && !down) {
+			return built;
+		}
+	}
+}
+
 // 0x4FB9C0 (town_class1): pone en (x, y) un edificio de tipo `type` si la
 // celda tiene los bits de su clase (0x672F84): los tipos 3 y 5, su clase de
 // celda; la estatua (0x2D), una celda 0x13, que pasa a 0x8B y nada más; los

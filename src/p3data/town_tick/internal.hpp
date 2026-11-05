@@ -125,6 +125,9 @@ void fn_4fbd60(SaveGame& save, int town, uint32_t x, uint32_t y);
 void fn_4fd830(SaveGame& save, int town, uint32_t x, uint32_t y, uint32_t type);
 void fn_4fd680(SaveGame& save, int town);
 void fn_4facd0(SaveGame& save, int town, uint32_t x, uint32_t y, uint32_t type, uint32_t param);
+// 0x4FB580 (grid.cpp): up to 16 streets planned become built ones, ring by
+// ring from the town's middle; how many.
+uint32_t fn_4fb580(SaveGame& save, int town);
 void fn_4fbff0(SaveGame& save, int town, int32_t x, int32_t y, uint32_t cls);
 void fn_4fc130(SaveGame& save, int town, int32_t x);
 
@@ -341,6 +344,12 @@ namespace construction_detail {
 // a merchant opens an office (0x51B890).
 void fn_53ce30(SaveGame& save, const uint8_t* operation, bool request);
 void fn_5362ae(SaveGame& save, const uint8_t* operation);
+// The operation 0x26 (0x535BAD → 0x53CF50): a merchant demolishes a building of
+// his; 0x51F050 (on the town): a record back to the free list.
+void fn_53cf50(SaveGame& save, const uint8_t* operation);
+void fn_51f050(SaveGame& save, int town, uint32_t record);
+// The operation 0x25 (0x535B7B → 0x5244F0 on the town, with the merchant): streets.
+void fn_5244f0(SaveGame& save, int town, uint32_t merchant);
 void fn_535bbc(SaveGame& save, const uint8_t* operation);
 void fn_535b12(SaveGame& save, const uint8_t* operation);
 void fn_535b44(SaveGame& save, const uint8_t* operation);

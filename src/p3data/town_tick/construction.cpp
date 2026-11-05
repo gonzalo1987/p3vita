@@ -26,6 +26,9 @@ void fn_522b20(SaveGame& save, int town, uint32_t side);
 namespace events_towns_detail {
 int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town);
 }  // namespace events_towns_detail
+namespace events_detail {
+void fn_4dafe0(const SaveGame& save, uint32_t town, uint32_t record, uint32_t& tick, int32_t& price);  // events.cpp
+}  // namespace events_detail
 
 namespace construction_detail {
 
@@ -2239,6 +2242,187 @@ void fn_5362ae(SaveGame& save, const uint8_t* operation) {
 		return;
 	}
 	fn_51b890(save, int(fields[2]), uint16_t(fields[1]));
+}
+
+// 0x51F050 (on the town, a record): the record back to the head of the free
+// list [0x760], emptied (x, y, owner and type 0xFF, the works and the param
+// 0), unless it is out of the records, the free list's head already, or still
+// linked from a record's [+0x4].
+void fn_51f050(SaveGame& save, int town, uint32_t record) {
+	SavedTown& st = save.towns[size_t(town)];
+	TownMemory& t = st.memory;
+	const uint32_t count = t.u16(0x776);
+	if (record >= count || record >= st.records.size() || t.u16(0x760) == record) {
+		return;
+	}
+	for (uint32_t k = 0; k < count && k < st.records.size(); ++k) {
+		if (st.records[k].next == record) {
+			return;
+		}
+	}
+	BuildingRecord& r = st.records[record];
+	r.x = 0xFF;
+	r.y = 0xFF;
+	r.owner = 0xFF;
+	r.type = 0xFF;
+	r.next = t.u16(0x760);
+	r.pending = 0;
+	r.param = 0;
+	t.u16(0x760) = uint16_t(record);
+}
+
+// The operation 0x26 (0x535BAD → 0x53CF50): {0x26, u32 town, u32 merchant,
+// u32 x, u32 y}: the merchant demolishes his building at (x, y). He needs an
+// office in the town (0x5308A0); with the bit 0x10 of the town's [0x2C8], the
+// cell has to have its bit 0x80. The building is looked for in his office's
+// lists [+0x2D0] and [+0x2CE] and then in the town's works [0x762]; not on
+// sale (0x4DAFE0). It leaves its list and the grid (0x4FACD0), the office is
+// counted again (0x4FF2D0; also when nothing is found), a business (type <
+// 0x15) costs him 1 of reputation in the town, and the record is freed
+// (0x51F050). The town view, if it shows the town, is redrawn (0x599040:
+// interface).
+void fn_53cf50(SaveGame& save, const uint8_t* operation) {
+	uint32_t f[5];
+	std::memcpy(f, operation, sizeof(f));
+	const uint32_t town = f[1];
+	const uint32_t merchant = f[2];
+	if (town >= save.globals.u32(global::kWorldTownCount) || merchant >= save.globals.u16(global::kWorldMerchantCount)) {
+		return;
+	}
+	const int office = facilities_detail::fn_5308a0(save, merchant, town);
+	if (office < 0) {
+		return;
+	}
+	SavedTown& st = save.towns[size_t(town)];
+	TownMemory& t = st.memory;
+	const uint32_t x = f[3];
+	const uint32_t y = f[4];
+	if (t.u8(0x2C8) & 0x10) {
+		const int64_t i = int64_t(t.s32(0x7AC)) * int64_t(x) + int64_t(y);
+		const uint8_t cell = i >= 0 && i < int64_t(st.grid.size()) ? st.grid[size_t(i)] : 0;
+		if (!(cell & 0x80)) {
+			return;
+		}
+	}
+	const uint32_t count = t.u16(0x776);
+	OfficeMemory& o = save.offices[size_t(office)].memory;
+	uint16_t* lists[3] = {&o.u16(0x2D0), &o.u16(0x2CE), &t.u16(0x762)};
+	uint16_t* link = nullptr;
+	for (uint16_t* head : lists) {
+		for (uint16_t* l = head; *l < count && *l < st.records.size(); l = &st.records[*l].next) {
+			const BuildingRecord& r = st.records[*l];
+			if (r.x == x && r.y == y) {
+				link = l;
+				break;
+			}
+		}
+		if (link) {
+			break;
+		}
+	}
+	if (!link) {
+		fn_4ff2d0(save, office);
+		return;
+	}
+	const uint32_t record = *link;
+	uint32_t tick = 0;
+	int32_t price = 0;
+	events_detail::fn_4dafe0(save, town & 0xFF, record, tick, price);
+	if (tick != 0xFFFFFFFF) {
+		return;  // On sale.
+	}
+	BuildingRecord& r = st.records[record];
+	*link = r.next;
+	r.next = 0xFFFF;
+	fn_4facd0(save, int(town), x, y, r.type, r.param);
+	fn_4ff2d0(save, office);
+	if (st.records[record].type < 0x15) {
+		// 0x4F8D70 (on the merchant, the town's byte): his reputation there − 1.
+		MerchantMemory& m = save.merchants[merchant].memory;
+		const uint32_t at = 0x120 + 12 * (town & 0xFF);
+		m.f32(at) = float(double(m.f32(at)) - double(1.0f));
+	}
+	fn_51f050(save, int(town), record);
+}
+
+// The operation 0x25 (0x535B7B: {0x25, u32 town, u32 merchant} → 0x5244F0 on
+// the town, with the merchant): the build window's «build street» (0x4797C0,
+// the mayor). What a street (the building type 2) costs (0x51F3A0): without
+// it, or without an office in the town, nothing. His reputation for building
+// (0x4F8A50), he pays the cost ([+0x4C0]) and his office (and his ships, 0x500A70)
+// gives the materials it needs; the town's store loses what was missing (not
+// below 0). A street record goes into the works (0x51F100, 0x5254C0; x, y and
+// owner 0xFF, its days, param 0xFF), and up to 16 planned streets become built
+// ones (0x4FB580), counted in [0x790] ([0x792] its most). Without a merchant the
+// town would build it, but 0x51F3A0 refuses an owner that isn't one.
+void fn_5244f0(SaveGame& save, int town, uint32_t merchant) {
+	TownMemory& t = save.towns[size_t(town)].memory;
+	GameMemory<0x44> s;
+	s.u16(0x3C) = 2;
+	if (merchant < save.globals.u16(global::kWorldMerchantCount)) {
+		s.u16(0x3E) = uint16_t(merchant);
+		if (!fn_51f3a0(save, town, s)) {
+			return;
+		}
+		const int office = facilities_detail::fn_5308a0(save, s.u32(0x3E), t.u8(0x2C0));
+		if (office < 0) {
+			return;
+		}
+		int32_t bricks = int32_t(s.u32(0x0) * uint32_t(kLoad));
+		int32_t timber = int32_t(s.u32(0x4) * uint32_t(kLoad));
+		int32_t tools = int32_t(s.u32(0x8) * uint32_t(kBarrel));
+		int32_t hemp = int32_t(s.u32(0xC) * uint32_t(kLoad));
+		const int owner = int(s.u16(0x3E));
+		fn_4f8a50(save, owner, t.u8(0x2C0), false);
+		MerchantMemory& m = save.merchants[size_t(owner)].memory;
+		m.s32(0) = int32_t(uint32_t(m.s32(0)) - s.u32(0x34));
+		m.s32(0x4C0) = int32_t(uint32_t(m.s32(0x4C0)) + s.u32(0x34));
+		if (bricks > 0) {
+			fn_500a70(save, office, 0x13, bricks);
+		}
+		if (timber > 0) {
+			fn_500a70(save, office, 0xB, timber);
+		}
+		if (tools > 0) {
+			fn_500a70(save, office, 0xC, tools);
+		}
+		if (hemp > 0) {
+			fn_500a70(save, office, 0x11, hemp);
+		}
+	} else {
+		s.u16(0x3E) = 0xFF;
+		if (!fn_51f3a0(save, town, s)) {
+			return;
+		}
+	}
+	// What was missing, out of the town's store.
+	static constexpr uint32_t kStore[4] = {0x50, 0x30, 0x34, 0x48};  // bricks, timber, tools, hemp
+	static constexpr int32_t kUnit[4] = {kLoad, kLoad, kBarrel, kLoad};
+	for (size_t k = 0; k < 4; ++k) {
+		const int32_t missing = int32_t(s.u32(0x20 + 4 * k) * uint32_t(kUnit[k]));
+		if (missing > 0) {
+			t.s32(kStore[k]) = int32_t(uint32_t(t.s32(kStore[k])) - uint32_t(missing));
+			if (t.s32(kStore[k]) < 0) {
+				t.s32(kStore[k]) = 0;
+			}
+		}
+	}
+	const uint16_t r = fn_51f100(save, town);
+	{
+		BuildingRecord& rec = save.towns[size_t(town)].records[r];
+		rec.x = 0xFF;
+		rec.y = 0xFF;
+		rec.owner = 0xFF;
+		rec.type = 2;
+		rec.next = 0xFFFF;
+		rec.pending = kBuildDays[2];
+		rec.param = 0xFF;
+	}
+	fn_5254c0(save, town, r);
+	t.u16(0x790) = uint16_t(t.u16(0x790) + fn_4fb580(save, town));
+	if (t.u16(0x790) > t.u16(0x792)) {
+		t.u16(0x792) = t.u16(0x790);
+	}
 }
 
 // 0x53CE30 (la operación 0x22, construir; 0x21 con `request`): {0x22,

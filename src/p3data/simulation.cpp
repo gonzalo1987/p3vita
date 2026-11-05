@@ -223,6 +223,14 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x24:  // La siguiente pieza de muralla pendiente (0x535B44, 0x522C70).
 		tick::construction_detail::fn_535b44(save, operation);
 		break;
+	case 0x25:  // Streets: {0x25, town, merchant} (0x535B7B → 0x5244F0; town_tick/construction.cpp).
+		if (uint32_t(fields[1]) < save.globals.u32(global::kWorldTownCount)) {
+			tick::construction_detail::fn_5244f0(save, int(fields[1]), uint32_t(fields[2]));
+		}
+		break;
+	case 0x26:  // A merchant demolishes a building of his (0x535BAD → 0x53CF50; town_tick/construction.cpp).
+		tick::construction_detail::fn_53cf50(save, operation);
+		break;
 	case 0x27:  // Materiales para las obras de una ciudad (0x535BBC).
 		tick::construction_detail::fn_535bbc(save, operation);
 		break;

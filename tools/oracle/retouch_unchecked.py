@@ -6370,6 +6370,138 @@ def lender_shares(o):
     return during
 
 
+# --- Building: demolish (0x26), streets (0x25) and the build window ---
+
+def record_at(o, t, r):
+    """The address of town t's building record r ([0x75C], 8 bytes each)."""
+    return o.u32(o.town(t) + 0x75C) + 8 * r
+
+
+def build_player_ops(o):
+    """Operations 0x26 (0x53CF50, a merchant demolishes a building of his)
+    and 0x25 (0x5244F0, streets, with 0x4FB580). Demolishing, for a merchant
+    with buildings in his office's lists: a town and a merchant out, a
+    merchant without an office there, a cell with nothing (the office
+    recounted), the town's bit 0x10 with the cell without and with its bit
+    0x80 (the building put on sale first, 0x28: refused), a business (his
+    reputation − 1), a house, one moved into the town's works [0x762]
+    (found in the third list). Streets: a town and a merchant out (the town's
+    way: refused), no office there, short of money, rich with his office
+    holding part of the materials, 40 planned
+    streets around the middle (16 built), none planned (the rings walk the
+    whole grid)."""
+    towns, offices, merchants, _ = o.counts()
+    for f in range(offices):
+        m, t = o.u16(o.office(f) + 0x2C4), o.u8(o.office(f) + 0x2C6)
+        recs = office_records(o, t, f) if m < merchants else []
+        if any(o.u8(record_at(o, t, r) + 3) < 0x15 for r, _, _ in recs) and \
+                any(0x15 <= o.u8(record_at(o, t, r) + 3) < 0x1E for r, _, _ in recs):
+            break
+    else:
+        raise RuntimeError('no office with a business and a house')
+    other = next(k for k in range(merchants) if facilities_office(o, k, t) is None)
+    a = o.town(t)
+    M = o.merchant(m)
+
+    def kind(r):
+        return o.u8(record_at(o, t, r) + 3)
+
+    business = next((r, x, y) for r, x, y in recs if kind(r) < 0x15)
+    houses = [(r, x, y) for r, x, y in recs if 0x15 <= kind(r) < 0x1E]
+    print(f'merchant {m}, office {f} in town {t}: {len(recs)} buildings; merchant {other} without an office there')
+
+    def state(what):
+        rep = struct.unpack('<f', bytes(o.uc.mem_read(M + 0x120 + 12 * t, 4)))[0]
+        print(f'  {what}: buildings {len(office_records(o, t, f))}, works {len(rt.records_of(o, t, o.u16(a + 0x762)))}, '
+              f'free {o.u16(a + 0x760)}, reputation {rep:.3f}, money {o.s32(M)}, streets {o.u16(a + 0x790)}/{o.u16(a + 0x792)}')
+
+    def during(o):
+        r, x, y = business
+        operation(o, 0x26, towns, m, x, y)
+        operation(o, 0x26, t, merchants, x, y)
+        operation(o, 0x26, t, other, x, y)
+        operation(o, 0x26, t, m, 0x100, y)
+        state('nothing there')
+        cell = grid_at(o, t, x, y)
+        flags, value = o.u8(a + 0x2C8), o.u8(cell)
+        w8(o, a + 0x2C8, flags | 0x10)
+        w8(o, cell, value & 0x7F)
+        operation(o, 0x26, t, m, x, y)
+        w8(o, cell, value | 0x80)
+        operation(o, 0x28, t, m, x, y)
+        operation(o, 0x26, t, m, x, y)
+        state('on sale')
+        w8(o, cell, value)
+        w8(o, a + 0x2C8, flags)
+        r, x, y = next((r, x, y) for r, x, y in office_records(o, t, f) if kind(r) < 0x15 and (r, x, y) != business)\
+            if sum(1 for q, _, _ in office_records(o, t, f) if kind(q) < 0x15) > 1 else business
+        operation(o, 0x26, t, m, x, y)
+        state(f'a business ({r}) demolished')
+        r, x, y = houses[0]
+        operation(o, 0x26, t, m, x, y)
+        state(f'a house ({r}) demolished')
+        if len(houses) > 1:
+            # Another house moved from his office's lists into the town's works.
+            r, x, y = houses[1]
+            for head in (o.office(f) + 0x2D0, o.office(f) + 0x2CE):
+                link = head
+                while o.u16(link) < o.u16(a + 0x776) and o.u16(link) != r:
+                    link = record_at(o, t, o.u16(link)) + 4
+                if o.u16(link) == r:
+                    w16(o, link, o.u16(record_at(o, t, r) + 4))
+                    w16(o, record_at(o, t, r) + 4, o.u16(a + 0x762))
+                    w16(o, a + 0x762, r)
+                    break
+            operation(o, 0x26, t, m, x, y)
+            state(f'a house ({r}) in the works demolished')
+        # Streets.
+        operation(o, 0x25, towns, m)
+        operation(o, 0x25, t, merchants)
+        operation(o, 0x25, t, other)
+        # Streets still to make ([0x790] < [0x792]; in the saves all are done).
+        w16(o, a + 0x792, o.u16(a + 0x790) + 40)
+        money = o.s32(M)
+        w32(o, M, 10)
+        operation(o, 0x25, t, m)
+        state('short of money')
+        w32(o, M, 5000000)
+        b = o.office(f)
+        for ware, n in ((0x13, 3 * 2000), (0xB, 1 * 2000 + 500), (0xC, 0)):
+            w32(o, b + 4 + 4 * ware, n)
+        for ware in (0x13, 0xB, 0xC, 0x11):
+            w32(o, a + 4 + 4 * ware, 200 * 2000)
+        mx, my = o.u8(a + 0x800), o.u8(a + 0x801)
+        g, h = o.u32(a + 0x80C), o.u32(a + 0x7AC)
+        planned = 0
+        for dx in range(-6, 7):
+            for dy in range(-12, 13):
+                c = g + h * (mx + dx) + my + dy
+                if planned < 40 and o.u8(c) in (0x81,) and (dx + dy) % 3 == 0:
+                    w8(o, c, 0x82 if planned % 2 else 0x83)
+                    planned += 1
+        print(f'  {planned} streets planned around ({mx}, {my})')
+        operation(o, 0x25, t, m)
+        state('rich, the streets planned')
+        operation(o, 0x25, t, m)
+        operation(o, 0x25, t, m)
+        state('again (none left nearby)')
+        # Three planned streets only, the middle and two corners: the rings
+        # walk the whole grid, cut at its edges.
+        gw = o.s32(a + 0x7A8)
+        cells = bytearray(o.uc.mem_read(g, gw * h))
+        for i, c in enumerate(cells):
+            if c in (0x82, 0x83):
+                cells[i] = 0x81
+        for x, y in ((mx, my), (1, 2), (gw - 2, h - 3)):
+            cells[h * x + y] = 0x82
+        o.uc.mem_write(g, bytes(cells))
+        w16(o, a + 0x792, o.u16(a + 0x790) + 20)
+        operation(o, 0x25, t, m)
+        state('three planned streets: the middle and two corners')
+        w32(o, M, money)
+    return during
+
+
 def player_op_text(*args):
     """player_ops's output as text."""
     import subprocess
@@ -6656,6 +6788,11 @@ SCENARIOS = {
         '@4e89c4', '@4e8a19', '@4e8a59', '@4e8a57>4e8a62', '@4e8945', '@4e8aa5', '@4e8af5', '@4e8b22',
         '@4e8b20>4e8b43', '@4e8b3d', '@4e8ba5', '@4e8bad>4e8b40', '@4e8bb4', '@4e8c30', '@4e8c1a', '@4e8c1f',
         '@4e8c2b', '@4e8c4a']),
+    'build_player_ops': Scenario(build_player_ops, [0x535760], 0, [
+        '@53cf68>53d112', '@53cf7c>53d112', '@53cfb0>53d112', '@53cfea>53d112', '@53d050', '@53d084>53d112',
+        '@53d0f1', '@53d0ef>53d10a', '@53d012', '@51f095', '@524639', '@52452e>524770', '@524551>524770',
+        '@5245ed', '@524769', '@4fb5bc', '@4fb6f1>4fb8da', '@4fb60c', '@4fb629', '@4fb64d', '@4fb66a',
+        '@4fb70b', '@4fb80d', '@4fb826']),
 }
 
 

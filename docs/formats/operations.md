@@ -93,7 +93,7 @@ an action of the interface; 0x54 and 0x55 go with letters), others may be dead.
 | Group | Codes | Done in p3vita |
 |-|-|-|
 | simulation | 37: the ones the simulation queues (inventory, part B) | all 37 |
-| player | 105: queued by the interface | 38: 0x00..0x0A, 0x0C, 0x15..0x1D, 0x20, 0x21, 0x29..0x2B, 0x2D..0x2F, 0x3B, 0x3F, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x6E, 0x6F |
+| player | 105: queued by the interface | 40: 0x00..0x0A, 0x0C, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x3B, 0x3F, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x6E, 0x6F |
 | battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 0x91, 0x94, 0x96, 0x9F |
 | network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | the five that do nothing |
 | new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | — |
@@ -145,8 +145,8 @@ feast window): the handler is the same and is done.
 | 0x22 | simulation | build (0x53CE30) | the towns' works, the AI; the interface 0x4797C0, 0x419EB0 | 0x535AFC → 0x53CE30 |  | yes | read |
 | 0x23 | simulation | start a side of the town wall (0x522B20) | 0x51D870; 0x419EB0 | 0x535B12 → 0x522B20 |  | yes | read |
 | 0x24 | simulation | the next wall piece (0x522C70; the book: «Build Town Wall») | 0x51D870; 0x4797C0, 0x419EB0 | 0x535B44 → 0x522C70 |  | yes | read |
-| 0x25 | player | build a road (0x5244F0, with 0x51F3A0) | construction window 0x4797C0 | 0x535B7B → 0x5244F0 |  |  | book, read |
-| 0x26 | player | demolish a building (0x53CF50: 0x51F1F0, 0x4FF2D0, 0x4FACD0, the town view 0x599040) | 0x5AFC50 | 0x535BAD → 0x53CF50 | 3, 784 B |  | book, read |
+| 0x25 | player | streets: {0x25, town, merchant}: what a street (type 2) costs (0x51F3A0: streets still to make, [0x790] < [0x792]), with an office in the town; his reputation (0x4F8A50), he pays, his office and ships give the materials (0x500A70), the town's store what is missing; a street record into the works and up to 16 planned streets built (0x4FB580, ring by ring from the town's middle) into [0x790] (0x5244F0, `construction.cpp`) | build window 0x4797C0 («build street») | 0x535B7B → 0x5244F0 |  | yes | read |
+| 0x26 | player | demolish: {0x26, town, merchant, x, y}: his building at (x, y) in his office's lists or the town's works, with an office there, not on sale (0x4DAFE0); out of the grid (0x4FACD0), the office recounted, a business costs 1 of reputation, the record freed (0x51F050) (0x53CF50, `construction.cpp`) | 0x5AFC50 | 0x535BAD → 0x53CF50 |  | yes | read |
 | 0x27 | simulation | materials for a town's works (0x535BBC) | 0x51D870 | 0x535BBC |  | yes | read |
 | 0x28 | simulation | a merchant puts a building on sale (0x53D190) | 0x4F5A20; the mission interpreter | 0x535C2D → 0x53D190 |  | yes | read |
 | 0x29 | player | a loan: {0x29, the terms: u32 the repayment, u8 the weekly interest (tenths of %), the borrower's rank and names, u16 the amount, u8 the weeks, the low byte of the loan's tick, u8 lender, borrower (0xFF: the moneylender or a townsman), town, slot << 4 | kind}: the event 0x01, the town's slot emptied, the lender pays it (0x539DC0, `operations.cpp`) | moneylender: taking one 0x5B5A00 (the terms of 0x51CE80), granting one 0x5B6000 (0x51D160, the kind chosen, 0x51D270); the merchants' tick 0x4F4E50 | 0x535C3C → 0x539DC0 |  | yes | read |

@@ -1478,6 +1478,20 @@ the earlier batches' scenarios as before. The viewer without a window
 taken and paid off, one granted with a very high interest, the loans granted,
 an AI merchant's shares bought.
 
+## The player's actions: demolishing and streets (2026-11-05)
+
+The engine of two of the build window's operations (the window itself is left
+for the next session): 0x26 (0x53CF50, demolish, with 0x51F050 and 0x4F8D70) and
+0x25 (0x5244F0, streets, with 0x4FB580), in `construction.cpp` and `grid.cpp`; both
+in `OPERATIONS`.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `build_player_ops` | demolishing, for a merchant with a business and a house: a town and a merchant out, no office, a cell with nothing, the town's bit 0x10 with the cell without and with its bit 0x80 (the building put on sale first: refused), a business, a house, one moved into the town's works; streets: a town and a merchant out, no office, short of money, rich (his office with part of the materials), with the town's planned streets (16 built a call), and three planned streets only (the middle and two corners: the rings walk the whole grid, cut at its edges) | 3, 5, 7 | 16–18 operations equal; 22 of 24 targets (the street without an office is refused by 0x51F3A0 first; the 16th street on the ring's first side) |
+
+Save 1 has no office with a business and a house. Broken on purpose and caught:
+the 16 streets as 15 (3 calls). The world 7 days in the 12 saves, 0 different.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:
