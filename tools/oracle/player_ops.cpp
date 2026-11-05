@@ -9,6 +9,8 @@
 //        player_ops vote PLAYER CHOICE
 //        player_ops buy STEP TOWN_UNITS WARE CAPACITY USED SHIP PLAYER TOWN
 //        player_ops sell STEP SHIP_UNITS WARE SHIP PLAYER TOWN
+//        player_ops hire-sailors SHIP AMOUNT | dismiss-sailors SHIP AMOUNT
+//        player_ops hire-captain CAPTAIN SHIP TOWN | dismiss-captain SHIP
 // (STEP 1, 5, 50, or 0 for all; «none» when the window sends nothing)
 
 #include <cstdio>
@@ -49,6 +51,14 @@ int main(int argc, char** argv) {
 			uint8_t(number(argv[5])), uint8_t(number(argv[6])));
 	} else if (what == "vote" && argc == 4) {
 		op = vote_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])));
+	} else if (what == "hire-sailors" && argc == 4) {
+		op = hire_sailors_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])));
+	} else if (what == "dismiss-sailors" && argc == 4) {
+		op = dismiss_sailors_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])));
+	} else if (what == "hire-captain" && argc == 5) {
+		op = hire_captain_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])), uint32_t(number(argv[4])));
+	} else if (what == "dismiss-captain" && argc == 3) {
+		op = dismiss_captain_operation(uint32_t(number(argv[2])));
 	} else if ((what == "buy" && argc == 10) || (what == "sell" && argc == 8)) {
 		const bool buy = what == "buy";
 		const int ware = int(number(argv[4]));

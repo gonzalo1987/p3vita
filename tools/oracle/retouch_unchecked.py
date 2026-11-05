@@ -4585,6 +4585,110 @@ def trade_branches(o):
     return during
 
 
+def town_captain(o, t):
+    """A captain at the head of town t's list ([0x82E], next [+0x0]); if the
+    list is empty, the head of another town's list moved there."""
+    towns, _, _, _ = o.counts()
+    captains = o.u16(to.SHIPS + 0xF2)
+    if o.u16(o.town(t) + 0x82E) >= captains:
+        u = next(u for u in range(towns) if o.u16(o.town(u) + 0x82E) < captains)
+        c = o.u16(o.town(u) + 0x82E)
+        w16(o, o.town(u) + 0x82E, o.u16(captain_at(o, c)))
+        w16(o, captain_at(o, c), 0xFFFF)
+        w16(o, o.town(t) + 0x82E, c)
+    return o.u16(o.town(t) + 0x82E)
+
+
+def crew_ops(o):
+    """Operations 0x04 (0x537C20), 0x05 (0x537DD0), 0x06 (0x537EE0) and 0x07
+    (0x538000), with the viewer's bytes, on the player's first ship in port.
+    Hiring sailors: 5; 1000 (cut to the room, 0x5184F0); 5 with a quota of 2
+    in the town ([+0xF0 + town] of the merchant); with 1 unemployed in the
+    town (0x4F6CA0 gives 0); with the ship's owner 0xFF and 3 unemployed (no
+    quota: the town's unemployed to 0); in a convoy (its [+0x18]); a ship
+    without sailors and with a captain, and without either; at sea; a ship
+    out. Dismissing sailors: 3 of them, all of them exactly, more than it has,
+    with a low morale (it goes below 0), with none, at sea. The captain: the
+    ship's captain dismissed (to the town's list, 0x526B00), dismissed again
+    (none), hired back from the list (the letter 0x04), one not in the list,
+    a town out (a ship without a captain hires one first); the ship made the
+    guide of a convoy (the game's 0x509B90, as operation 0x15) dismissing its
+    captain (the convoy breaks up, 0x50A580)."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    towns, _, _, ships = o.counts()
+    print(f'ship {s} of the player {m} in town {t}: sailors {o.u16(a + 0x40)}, captain {o.u16(a + 0x42)}')
+
+    def run(*args):
+        run_bytes(o, player_op(*args))
+        print(f'  {args}: sailors {o.u16(a + 0x40)}, morale {o.u16(a + 0x3E):#x}, captain {o.u16(a + 0x42)}, '
+              f'unemployed {o.u32(o.town(t) + 0x2E4)}, quota {o.u8(o.merchant(m) + 0xF0 + t)}')
+
+    def during(o):
+        w32(o, o.town(t) + 0x2E4, 200)
+        w8(o, o.merchant(m) + 0xF0 + t, 100)
+        run('hire-sailors', s, 5)
+        run('hire-sailors', s, 1000)
+        run('dismiss-sailors', s, 40)
+        w8(o, o.merchant(m) + 0xF0 + t, 2)
+        run('hire-sailors', s, 5)
+        w8(o, o.merchant(m) + 0xF0 + t, 100)
+        w32(o, o.town(t) + 0x2E4, 1)
+        run('hire-sailors', s, 5)
+        w32(o, o.town(t) + 0x2E4, 3)
+        w8(o, a, 0xFF)
+        run('hire-sailors', s, 20)
+        w8(o, a, m)
+        w32(o, o.town(t) + 0x2E4, 200)
+        convoy = o.u16(a + 8)
+        w16(o, a + 8, 0)
+        run('hire-sailors', s, 2)
+        w16(o, a + 8, convoy)
+        w16(o, a + 0x3E, 0x4000)
+        run('dismiss-sailors', s, 3)
+        run('dismiss-sailors', s, o.u16(a + 0x40))
+        run('hire-sailors', s, 10)
+        w16(o, a + 0x3E, 10)
+        run('dismiss-sailors', s, 4)
+        run('dismiss-sailors', s, 100)
+        run('dismiss-sailors', s, 1)
+        run('hire-sailors', s, 8)
+        if o.u16(a + 0x42) >= o.u16(to.SHIPS + 0xF2):
+            run('hire-captain', town_captain(o, t), s, t)
+        run('dismiss-captain', s)
+        c = o.u16(o.town(t) + 0x82E)
+        run('dismiss-captain', s)
+        run('dismiss-sailors', s, 100)
+        run('hire-sailors', s, 6)
+        run('hire-captain', (c + 1) % o.u16(to.SHIPS + 0xF2), s, t)
+        run('hire-captain', c, s, towns)
+        run('hire-captain', c, s, t)
+        run('dismiss-sailors', s, 100)
+        run('hire-sailors', s, 6)
+        state = o.u16(a + 0x134)
+        w16(o, a + 0x134, 4)
+        run('dismiss-sailors', s, 1)
+        run('dismiss-captain', s)
+        w16(o, a + 0x134, state)
+        w8(o, a + 0x39, 0xFF)
+        run('hire-sailors', s, 1)
+        w8(o, a + 0x39, t)
+        run('hire-sailors', ships, 1)
+        # What 0x519C40 asks of a convoy's guide: 20 sailors, guns (7 pieces of
+        # the type 1: [+0x120] 70), a captain (it has one).
+        w16(o, a + 0x40, 25)
+        for i in range(7):
+            w8(o, a + 0x13C + i, 1)
+        direct(o, 0x5182B0, [], ecx=a)
+        direct(o, 0x509B90, [s, 0, 5, t], ecx=to.SHIPS)
+        k = o.u16(a + 8)
+        print(f'  convoy {k} guided by {o.u16(o.u32(to.SHIPS + 8) + 0x3C * k + 0x10)}')
+        run('dismiss-captain', s)
+        print(f'  the ship\'s convoy {o.u16(a + 8)}')
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -4804,6 +4908,10 @@ SCENARIOS = {
         '@537480>5375fc', '@53748e>5375fc', '@5374c4>5375fc', '@5374fa', '@537518', '@537534', '@537502>5375fc',
         '@537589', '@52f3f5', '@52f4c6', '@52f4ac', '@52f4f0>52f509', '@5375ae>5375fc', '@5375b0',
         '@537366>53744b', '@53739c>53744b', '@5373b7', '@5373c2']),
+    'crew_ops': Scenario(crew_ops, [0x535760], 0, [
+        '@537c66', '@537cad', '@537cd7', '@537ce9', '@537cfb', '@537d31', '@537d5d', '@537d95', '@537c54>537dc7',
+        '@4f6cc1', '@4f6cd9', '@4f6bf7', '@4f6c03', '@537dfe>537ed3', '@537e0c>537ed3', '@537e42', '@537e6c',
+        '@537eb8>537ec0', '@537eba', '@537f76', '@537f74>537fcb', '@538038>5380fb', '@53807f', '@5380f0']),
 }
 
 

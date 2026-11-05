@@ -1278,6 +1278,22 @@ the copied file's date, so a file put back with it isn't rebuilt by make
 The world 7 days in the 12 saves, 0 different; the old scenarios of
 `retouch_player.py` (`take_road`, `give_road`, `vote_self`, `diet_yes`), equal.
 
+## The player's actions: the crew and the captain (2026-11-05)
+
+Operations 0x04 (0x537C20, with 0x4F6CA0 and 0x4F6BD0), 0x05 (0x537DD0), 0x06
+(0x537EE0) and 0x07 (0x538000, with 0x526B00), in `town_tick/ship_operations.cpp`;
+their windows' bytes in `player_actions.cpp` (`player_ops hire-sailors`,
+`dismiss-sailors`, `hire-captain`, `dismiss-captain`). The letter 0x04 of 0x537EE0
+(0x537FC6) joins the oracle's `MAIL_CALLS`.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `crew_ops` | the viewer's bytes on the player's first ship in port: hiring 5, 1000 (cut to the room), with a quota of 2, with 1 unemployed (0x4F6CA0 gives 0), with the owner 0xFF and 3 unemployed, in a convoy, without sailors with and without a captain, at sea, a ship out; dismissing 3, all, more than it has, with a low morale, none, at sea; the captain dismissed, again (none), hired back (the letter), one not in the list, a town out, in the state 4; the ship made a convoy's guide (the game's 0x509B90, after 25 sailors and 7 guns) dismissing its captain (0x50A580) | 1, 3, 5, 7 | 28–29 calls equal, 24 of 24 targets |
+
+With the morale's drop divided by the sailors instead of the sailors + 1 and
+the quota not lowered, the comparison caught both (8 calls). The world 7 days in
+the 12 saves, 0 different.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

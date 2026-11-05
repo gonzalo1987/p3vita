@@ -58,4 +58,17 @@ OperationBytes market_operation(uint32_t code, int32_t amount, int ware, int shi
 std::optional<OperationBytes> market_buy_operation(const SaveGame& save, int ship, int town, int ware, uint32_t step);
 std::optional<OperationBytes> market_sell_operation(const SaveGame& save, int ship, int town, int ware, uint32_t step);
 
+// --- A ship's crew and captain ---
+// 0x04 (0x5D4C10): {0x04, ship ([+0x1C30]), amount (the number typed in the
+// window, atoi)}: hire sailors.
+OperationBytes hire_sailors_operation(uint32_t ship, uint32_t amount);
+// 0x05 (the ship's window 0x493ED0): {0x05, ship, amount ([+0x2060])}:
+// dismiss sailors.
+OperationBytes dismiss_sailors_operation(uint32_t ship, uint32_t amount);
+// 0x06 (0x5D4870): {0x06, captain ([+0x1C34]), ship ([+0x1C30]), town
+// ([+0x1BFC])}: hire a captain of the town's list.
+OperationBytes hire_captain_operation(uint32_t captain, uint32_t ship, uint32_t town);
+// 0x07 (0x493ED0): {0x07, ship}: dismiss the ship's captain.
+OperationBytes dismiss_captain_operation(uint32_t ship);
+
 }  // namespace p3::data

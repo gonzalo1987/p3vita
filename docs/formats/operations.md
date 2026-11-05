@@ -62,7 +62,7 @@ an action of the interface; 0x54 and 0x55 go with letters), others may be dead.
 | Group | Codes | Done in p3vita |
 |-|-|-|
 | simulation | 37: the ones the simulation queues (inventory, part B) | all 37 |
-| player | 105: queued by the interface | 13: 0x00, 0x01, 0x02, 0x0A, 0x21, 0x29, 0x3B, 0x3F, 0x4B, 0x4E, 0x5D, 0x6E, 0x6F |
+| player | 105: queued by the interface | 17: 0x00..0x02, 0x04..0x07, 0x0A, 0x21, 0x29, 0x3B, 0x3F, 0x4B, 0x4E, 0x5D, 0x6E, 0x6F |
 | battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 0x91, 0x94, 0x96, 0x9F |
 | network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | the five that do nothing |
 | new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | — |
@@ -81,10 +81,10 @@ feast window): the handler is the same and is done.
 | 0x01 | player | sell from a ship to the town: {1, s32 amount, u16 ware, u16 ship, u16 player, u16 town}; it doesn't check that the ship is in the town; statistics 0x4F8690 (`trade.cpp` `fn_537340`; savegame.md §12.3) | market 0x4A8CF0 (mode 1, a ship and the town); 0x40EEB0 | 0x53578C → 0x537340 |  | yes | read |
 | 0x02 | player | buy for a ship from the town: the same fields; the ship in the town, the limit by the store, the hold and the money (0x52F3E0); statistics 0x4F8840 (`trade.cpp` `fn_537450`) | market 0x4A8CF0 (mode 1) | 0x53579B → 0x537450 |  | yes | read |
 | 0x03 | player | repair a docked ship at the town's shipyard (0x52ACD0 on the town; letter 0x02 «No repair») | shipyard window 0x5F8F50 | 0x5357AA → 0x52ACD0 | 2, 992 B |  | book, read |
-| 0x04 | player | hire sailors for a docked ship (up to the free room, 0x5184F0; from the town's unemployed, 0x4F6CA0, 0x4F6BD0) | 0x5D4C10 | 0x53580C → 0x537C20 | 3, 560 B |  | book, read |
-| 0x05 | player | dismiss sailors: the ship's [+0x40] goes down by the amount, to the town's [+0x2E4]/[+0x2D4]; the morale [+0x3E] drops; hold again (0x5182B0) | ship window 0x493ED0 | 0x53581B → 0x537DD0 | 1, 272 B |  | read |
-| 0x06 | player | hire a captain from the town's list (0x526AA0) for a ship; letter 0x04 «New captain» (the book says «Dismiss Captain») | 0x5D4870 | 0x53582A → 0x537EE0 | 1, 288 B |  | read (mail.md) |
-| 0x07 | player | dismiss a docked ship's captain to the town's list ([+0x82E], 0x526B00); morale −2560/(sailors+1); a convoy's guide: the convoy (0x50A580) | ship window 0x493ED0 | 0x535839 → 0x538000 | 2, 320 B |  | read |
+| 0x04 | player | hire sailors: {0x04, ship, amount}: a ship in a town, up to its room (0x5184F0) and what the town lets its owner hire (0x4F6CA0: his quota [+0xF0 + town], at most the unemployed less one), the quota down (0x4F6BD0); the first sailors set the morale's high byte (4 with a captain, 3 without); out of the town's unemployed [+0x2E4], [+0x2D4] (`town_tick/ship_operations.cpp`) | 0x5D4C10 (the amount typed, atoi) | 0x53580C → 0x537C20 |  | yes | read |
+| 0x05 | player | dismiss sailors: {0x05, ship, amount}: a ship in port with sailors; to the town's unemployed; all if asked for more (morale 0), otherwise the morale [+0x3E] down by amount · 2560 / (sailors + 1), not below 0 | ship window 0x493ED0 | 0x53581B → 0x537DD0 |  | yes | read |
+| 0x06 | player | hire a captain: {0x06, captain, ship, town}: out of the town's list (0x526AA0), the ship's captain before him into his link, the letter 0x04 «New captain»; it doesn't look whether the ship is in port or has one | 0x5D4870 | 0x53582A → 0x537EE0 |  | yes | read |
+| 0x07 | player | dismiss the captain: {0x07, ship}: a ship in port; the captain to the town's list (0x526B00), the owner's [+0x1F] to 0, the morale −2560 / (sailors + 1), [+0x3C] |= 0x202; a convoy it guides breaks up (0x50A580) | ship window 0x493ED0 | 0x535839 → 0x538000 |  | yes | read |
 | 0x08 | player | move wares between a ship [+0x8] and the owner's office in its town (0x5308A0, 0x5180C0, 0x4FF6F0) | market 0x4A8CF0 (mode 0, a ship and the office) | 0x535848 → 0x538100 | 3, 688 B |  | read |
 | 0x09 | player | move wares between a ship or convoy and the office, several wares at once (457 instructions) | 0x4A8CF0 (through the jump at 0x4A930D) | 0x535857 → 0x538210 | 1, 1.2 KB |  | guess |
 | 0x0A | player | a ship is deleted (0x507FB0) | 0x4768B0 | 0x535866 → 0x507FB0 |  | yes | read |

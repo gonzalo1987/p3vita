@@ -1,6 +1,7 @@
 #include "p3data/player_actions.hpp"
 
 #include <cstring>
+#include <initializer_list>
 
 #include "p3data/game_memory.hpp"
 
@@ -101,6 +102,32 @@ std::optional<OperationBytes> market_sell_operation(const SaveGame& save, int sh
 		return std::nullopt;
 	}
 	return market_operation(0x01, amount, ware, ship, uint16_t(save.player), town);
+}
+
+static OperationBytes words_operation(std::initializer_list<uint32_t> words) {
+	OperationBytes op{};
+	size_t at = 0;
+	for (const uint32_t w : words) {
+		std::memcpy(op.data() + at, &w, 4);
+		at += 4;
+	}
+	return op;
+}
+
+OperationBytes hire_sailors_operation(uint32_t ship, uint32_t amount) {
+	return words_operation({0x04, ship, amount});
+}
+
+OperationBytes dismiss_sailors_operation(uint32_t ship, uint32_t amount) {
+	return words_operation({0x05, ship, amount});
+}
+
+OperationBytes hire_captain_operation(uint32_t captain, uint32_t ship, uint32_t town) {
+	return words_operation({0x06, captain, ship, town});
+}
+
+OperationBytes dismiss_captain_operation(uint32_t ship) {
+	return words_operation({0x07, ship});
 }
 
 }  // namespace p3::data

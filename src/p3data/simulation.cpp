@@ -109,6 +109,18 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		}
 		break;
 	}
+	case 0x04:  // Hire sailors (0x53580C → 0x537C20; town_tick/ship_operations.cpp).
+		tick::fn_537c20(save, operation);
+		break;
+	case 0x05:  // Dismiss sailors (0x53581B → 0x537DD0).
+		tick::fn_537dd0(save, operation);
+		break;
+	case 0x06:  // Hire a captain from the town's list (0x53582A → 0x537EE0).
+		tick::fn_537ee0(save, operation);
+		break;
+	case 0x07:  // Dismiss a ship's captain (0x535839 → 0x538000).
+		tick::fn_538000(save, sailing, operation);
+		break;
 	case 0x0A:  // A ship is deleted (0x535866, 0x507FB0).
 		tick::fn_535866(save, sailing, operation);
 		break;

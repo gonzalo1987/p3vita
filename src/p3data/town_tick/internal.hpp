@@ -54,6 +54,11 @@ void fn_509250(SaveGame& save, Sailing* sailing, uint32_t ship, uint32_t winner,
 }  // namespace events_mayor_detail
 // operations.cpp: the operation 0x4E (0x53B850), a player's ship turns pirate.
 void fn_53b850(SaveGame& save, Sailing* sailing, const uint8_t* operation);
+// ship_operations.cpp: the player's operations on a ship's crew and captain.
+void fn_537c20(SaveGame& save, const uint8_t* operation);  // 0x04 hire sailors.
+void fn_537dd0(SaveGame& save, const uint8_t* operation);  // 0x05 dismiss sailors.
+void fn_537ee0(SaveGame& save, const uint8_t* operation);  // 0x06 hire a captain.
+void fn_538000(SaveGame& save, Sailing* sailing, const uint8_t* operation);  // 0x07 dismiss the captain.
 
 // --- Utilidades comunes (shared.cpp) ---
 
