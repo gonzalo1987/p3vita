@@ -4764,6 +4764,252 @@ def repair_ops(o):
     return during
 
 
+WINDOW_SHIPS = to.SENTINEL + 0xF80  # the copier of 0x504AC0's list (probes_unchecked.cpp kWindowShips)
+FPU_POP = to.SENTINEL + 0xF70  # fstp st(0); ret
+
+
+def window_ships_copier(o):
+    """The copier at WINDOW_SHIPS (stdcall: merchant, town, mode, 0): 0x504AC0
+    on the ships' object, and its list (a u16 count and the ships, at most
+    126) copied into SCRATCH, so that the state holds it (the game's list is
+    on the heap); a count 0 for no list. tick_probe's probe makes p3vita's."""
+    code = bytes([0x56, 0x57])  # push esi; push edi
+    code += bytes([0xFF, 0x74, 0x24, 0x18]) * 4  # the four arguments
+    code += bytes([0xB9]) + struct.pack('<I', to.SHIPS)  # mov ecx, the ships' object
+    code += bytes([0xE8]) + struct.pack('<i', 0x504AC0 - (WINDOW_SHIPS + len(code) + 5))
+    code += bytes([0x85, 0xC0])  # test eax, eax
+    copy = bytes([0x0F, 0xB7, 0x08])  # movzx ecx, word [eax]
+    copy += bytes([0x83, 0xF9, 0x7E, 0x76, 0x05])  # cmp ecx, 126; jbe +5
+    copy += bytes([0xB9]) + struct.pack('<I', 0x7E)  # mov ecx, 126
+    copy += bytes([0x41, 0x89, 0xC6])  # inc ecx; mov esi, eax
+    copy += bytes([0xBF]) + struct.pack('<I', SCRATCH)  # mov edi, SCRATCH
+    copy += bytes([0xFC, 0xF3, 0x66, 0xA5])  # cld; rep movsw
+    empty = bytes([0x66, 0xC7, 0x05]) + struct.pack('<IH', SCRATCH, 0)  # mov word [SCRATCH], 0
+    copy += bytes([0xEB, len(empty)])  # jmp past the empty case
+    code += bytes([0x74, len(copy)]) + copy + empty  # jz the empty case
+    code += bytes([0x5F, 0x5E, 0xC2, 0x10, 0x00])  # pop edi; pop esi; ret 0x10
+    assert len(code) <= 0x80
+    o.uc.mem_write(WINDOW_SHIPS, code)
+    o.uc.mem_write(FPU_POP, bytes([0xDD, 0xD8, 0xC3]))
+
+
+def snippet(o, begin, end, esi):
+    """The game's code [begin, end) with esi (a window), on a stack of its own;
+    eax at the end."""
+    from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ESI, UC_X86_REG_ESP, UC_X86_REG_FPCW
+    uc = o.uc
+    uc.reg_write(UC_X86_REG_ESP, to.STACK + to.STACK_SIZE - 0x2000)
+    uc.reg_write(UC_X86_REG_ESI, esi)
+    uc.reg_write(UC_X86_REG_FPCW, 0x27F)
+    uc.emu_start(begin, end)
+    return uc.reg_read(UC_X86_REG_EAX)
+
+
+def town_captains(o, t, n):
+    """At least n captains at the head of town t's list ([0x82E], next
+    [+0x0]), taken from the heads of other towns' lists; their indices."""
+    towns = o.counts()[0]
+    count = o.u16(to.SHIPS + 0xF2)
+    chain = []
+    c = o.u16(o.town(t) + 0x82E)
+    while c < count:
+        chain.append(c)
+        c = o.u16(captain_at(o, c))
+    for u in range(towns):
+        if len(chain) >= n:
+            break
+        if u == t or o.u16(o.town(u) + 0x82E) >= count:
+            continue
+        c = o.u16(o.town(u) + 0x82E)
+        w16(o, o.town(u) + 0x82E, o.u16(captain_at(o, c)))
+        w16(o, captain_at(o, c), o.u16(o.town(t) + 0x82E))
+        w16(o, o.town(t) + 0x82E, c)
+        chain.insert(0, c)
+    return chain
+
+
+def ship_windows(o):
+    """What the player's windows list and offer (player_actions.hpp), the
+    game's functions recorded and repeated with p3vita's: 0x504AC0 (through
+    the copier WINDOW_SHIPS) in its modes 0 (the tavern's sailors), 1 (the
+    shipyard's repairs) and 3 (the tavern's captains) on the player's first
+    ship in port: as loaded, marked [+0x136] & 1, in the state 2, damaged and
+    whole, without a captain, made a convoy's guide (0x509B90) with another
+    ship of his and without captain chained into the convoy, its flags and
+    state, the members damaged or not; a merchant out of the world. The
+    tavern's captain 0x5269A0: one kept for the player behind a busy one, one
+    kept for no one, none free, an empty list. 0x4F6CA0 with 1, 3 and 200
+    unemployed and quotas 2 and 100. The tavern's window run as the game: its
+    roll (0x5CC479, with the oracle's rand()) and its count
+    (0x5D03A5..0x5D03ED) under and over 50, compared with player_ops
+    tavern-sailors (MISMATCH if they differ). Then the viewer's
+    bytes with the window's choices: hiring the offered captain for the
+    listed ship and the shown number of sailors, dismissing all of them with
+    the slider, the repair of the convoy (0x1D)."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    towns, _, merchants, ships = o.counts()
+    captains = o.u16(to.SHIPS + 0xF2)
+    print(f'ship {s} of the player {m} in town {t}: captain {o.u16(a + 0x42)}, sailors {o.u16(a + 0x40)}')
+    window_ships_copier(o)
+
+    def lists(what):
+        got = []
+        for mode in (0, 1, 3):
+            direct(o, WINDOW_SHIPS, [m, t, mode, 0])
+            n = o.u16(SCRATCH)
+            got.append([o.u16(SCRATCH + 2 + 2 * k) for k in range(min(n, 126))])
+        print(f'  {what}: sailors {got[0]}, repairs {got[1]}, captains {got[2]}')
+
+    def offered(what):
+        c = direct(o, 0x5269A0, [m], ecx=o.town(t)) & 0xFFFF
+        print(f'  {what}: the tavern offers the captain {c:#x}')
+        return c
+
+    def allowed(what):
+        n = direct(o, 0x4F6CA0, [t], ecx=o.merchant(m)) & 0xFF
+        print(f'  {what}: 0x4F6CA0 allows {n}')
+        return n
+
+    def tavern(what):
+        """The tavern's window as the game runs it: the roll, then the count."""
+        window = o.alloc(0x2200)
+        w32(o, window + 0x1BFC, t)
+        snippet(o, 0x5CC479, 0x5CC4AC, window)
+        o.call(FPU_POP, [])
+        r = struct.unpack('<f', bytes(o.uc.mem_read(window + 0x1CA0, 4)))[0]
+        bits = o.u32(window + 0x1CA0)
+        shown = snippet(o, 0x5D03A5, 0x5D03F3, window)  # up to the next text, eax kept
+        n = direct(o, 0x4F6CA0, [t], ecx=o.merchant(m)) & 0xFF
+        rand_value = round(r * 32768)
+        out = player_op_text('tavern-sailors', n, rand_value)
+        mine = f'{bits:08x} {shown}'
+        print(f'  {what}: the roll {r} ({bits:08x}), 0x4F6CA0 {n}, shown {shown}; p3vita {out}'
+              + ('' if out == mine else '  MISMATCH'))
+        return shown
+
+    def during(o):
+        lists('as loaded')
+        hull = o.s32(a + 0x14)
+        w32(o, a + 0x18, hull // 2)
+        lists('half its hull')
+        w8(o, a + 0x136, o.u8(a + 0x136) | 1)
+        lists('marked [+0x136] & 1')
+        w8(o, a + 0x136, o.u8(a + 0x136) & 0xFE)
+        state = o.u16(a + 0x134)
+        w16(o, a + 0x134, 2)
+        lists('in the state 2')
+        w16(o, a + 0x134, 1)
+        lists('in the state 1')
+        w16(o, a + 0x134, state)
+        w32(o, a + 0x18, hull)
+        lists('whole')
+        captain = o.u16(a + 0x42)
+        w16(o, a + 0x42, 0xFFFF)
+        lists('without a captain')
+        # The tavern's captain.
+        chain = town_captains(o, t, 3)
+        print(f'  the town\'s captains {chain[:4]}')
+        for c in chain:
+            w8(o, captain_at(o, c) + 0x8, 0)
+            w8(o, captain_at(o, c) + 0xF, 0xFF)
+        offered('all free, kept for no one')
+        w8(o, captain_at(o, chain[0]) + 0x8, 0x21)
+        offered('the first busy')
+        w8(o, captain_at(o, chain[1]) + 0xF, m)
+        w8(o, captain_at(o, chain[0]) + 0xF, m)
+        offered('the second kept for the player, the first busy too')
+        w8(o, captain_at(o, chain[1]) + 0xF, (m + 1) % merchants)
+        w8(o, captain_at(o, chain[0]) + 0xF, 0xFF)
+        offered('the second kept for another merchant')
+        for c in chain:
+            w8(o, captain_at(o, c) + 0x8, 0x40)
+        offered('none free')
+        for c in chain:
+            w8(o, captain_at(o, c) + 0x8, 0)
+        head = o.u16(o.town(t) + 0x82E)
+        w16(o, o.town(t) + 0x82E, 0xFFFF)
+        offered('an empty list')
+        w16(o, o.town(t) + 0x82E, head)
+        hired = offered('the list back')
+        # The sailors the tavern lets him hire.
+        for unemployed, quota in ((1, 100), (3, 2), (200, 30), (200, 100)):
+            w32(o, o.town(t) + 0x2E4, unemployed)
+            w8(o, o.merchant(m) + 0xF0 + t, quota)
+            allowed(f'{unemployed} unemployed, quota {quota}')
+            tavern(f'{unemployed} unemployed, quota {quota}')
+        # The viewer's bytes with the window's choices.
+        listed = []
+        direct(o, WINDOW_SHIPS, [m, t, 3, 0])
+        listed = [o.u16(SCRATCH + 2 + 2 * k) for k in range(o.u16(SCRATCH))]
+        if listed and hired < captains:
+            run_bytes(o, player_op('hire-captain', hired, listed[0], t))
+            print(f'  hired the captain {hired:#x} for {listed[0]}: its captain {o.u16(o.ship(listed[0]) + 0x42):#x}')
+        lists('the captain hired')
+        shown = tavern('before hiring')
+        run_bytes(o, player_op('hire-sailors', s, shown))
+        print(f'  hired {shown}: sailors {o.u16(a + 0x40)}')
+        run_bytes(o, player_op('dismiss-sailors', s, o.u16(a + 0x40)))
+        print(f'  dismissed all: sailors {o.u16(a + 0x40)}')
+        # A convoy guided by the ship (0x509B90, as operation 0x15), with
+        # another ship of the player without a captain chained into it.
+        if o.u16(a + 0x42) >= captains:
+            w16(o, a + 0x42, captain)
+        w16(o, a + 0x40, 25)
+        for i in range(7):
+            w8(o, a + 0x13C + i, 1)
+        direct(o, 0x5182B0, [], ecx=a)
+        direct(o, 0x509B90, [s, 0, 5, t], ecx=to.SHIPS)
+        k = o.u16(a + 8)
+        c = o.u32(to.SHIPS + 8) + 0x3C * k
+        print(f'  convoy {k}: guide {o.u16(c + 0x10)}, first {o.u16(c + 0xA)}, flags {o.u8(c + 0x14):#x}, '
+              f'state {o.u16(c + 0x12)}')
+        other = next(x for x in range(ships) if x != s and o.u8(o.ship(x)) < merchants)
+        b = o.ship(other)
+        saved = (o.u8(b), o.u16(b + 0x42), o.u16(b + 6), o.u16(a + 6), o.s32(b + 0x18))
+        w8(o, b, m)
+        w16(o, b + 0x42, 0xFFFF)
+        w16(o, b + 6, 0xFFFF)
+        w16(o, a + 6, other)
+        w32(o, b + 0x18, o.s32(b + 0x14))
+        lists(f'a convoy with the ship {other}, whole')
+        w32(o, b + 0x18, o.s32(b + 0x14) // 2)
+        lists(f'the ship {other} damaged')
+        flags = o.u8(c + 0x14)
+        w8(o, c + 0x14, flags ^ 2)
+        lists('the convoy\'s flag 2 changed')
+        w8(o, c + 0x14, flags | 2)
+        w16(o, c + 0x12, 2)
+        lists('the convoy in the state 2')
+        w16(o, c + 0x12, 0)
+        lists('the convoy in the state 0')
+        w16(o, b + 0x42, o.u16(a + 0x42))
+        lists(f'the ship {other} with a captain')
+        w8(o, a + 0x136, o.u8(a + 0x136) | 1)
+        lists('the guide marked [+0x136] & 1')
+        w8(o, a + 0x136, o.u8(a + 0x136) & 0xFE)
+        w8(o, b, saved[0])
+        w16(o, b + 0x42, saved[1])
+        w16(o, b + 6, saved[2])
+        w16(o, a + 6, saved[3])
+        w32(o, b + 0x18, saved[4])
+        w32(o, a + 0x18, hull // 2)
+        lists('the convoy alone, its guide damaged')
+        run_bytes(o, player_op('repair-convoy', k))
+        print(f'  the convoy repaired: its state {o.u16(c + 0x12)}')
+        direct(o, WINDOW_SHIPS, [merchants, t, 0, 0])
+        print(f'  a merchant out of the world: {o.u16(SCRATCH)} ships')
+    return during
+
+
+def player_op_text(*args):
+    """player_ops's output as text."""
+    import subprocess
+    out = subprocess.run([PLAYER_OPS, *[str(a) for a in args]], check=True, capture_output=True, text=True)
+    return out.stdout.strip()
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -4991,6 +5237,12 @@ SCENARIOS = {
         '@52ad16', '@52ad51', '@52adf8', '@52add0', '@52ae21', '@52ae4d', '@52ae8a', '@52aeb6', '@52af01', '@52af5d',
         '@52af85', '@52aa17', '@52aa52', '@52aa59', '@52aa6d', '@52aa89', '@52aa90', '@5357b9>537025',
         '@5357da>537025', '@5357e8>537025', '@5399bb>539b24', '@5399dd>539b24', '@5399ec>539b24', '@5399f2']),
+    'ship_windows': Scenario(ship_windows, [0x535760, WINDOW_SHIPS, 0x5269A0, 0x4F6CA0], 0, [
+        '@504ad9', '@504b71', '@504b67>504b81', '@504b6f>504b81', '@504bd7>504c62', '@504c0c>504c62',
+        '@504c13>504c62', '@504c29>504c53', '@504c36>504c62', '@504c47>504c62', '@504c51>504c62', '@504c53',
+        '@504d3e>504de8', '@504d5c>504de8', '@504d62', '@504d95>504de8', '@504dc5', '@504dc3>504dd5',
+        '@5269d3>5269e1', '@5269df>526a42', '@526a1f>526a26', '@526a24>526a42', '@526a37',
+        '@4f6cc1', '@4f6cd7>4f6cdb', '@4f6cd9', '@5cc479', '@5d03d6', '@5d03d4>5d03ed']),
 }
 
 

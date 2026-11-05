@@ -12,10 +12,14 @@
 //        player_ops hire-sailors SHIP AMOUNT | dismiss-sailors SHIP AMOUNT
 //        player_ops hire-captain CAPTAIN SHIP TOWN | dismiss-captain SHIP
 //        player_ops repair SHIP | repair-convoy CONVOY
-// (STEP 1, 5, 50, or 0 for all; «none» when the window sends nothing)
+//        player_ops tavern-sailors ALLOWED RAND
+// (STEP 1, 5, 50, or 0 for all; «none» when the window sends nothing;
+// tavern-sailors prints the tavern's roll, its float's bits, and the
+// sailors it shows, from what 0x4F6CA0 allows and the game's rand() value)
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 #include "p3data/hanse_tasks.hpp"
@@ -64,6 +68,14 @@ int main(int argc, char** argv) {
 		op = repair_operation(uint32_t(number(argv[2])));
 	} else if (what == "repair-convoy" && argc == 3) {
 		op = repair_convoy_operation(uint32_t(number(argv[2])));
+	} else if (what == "tavern-sailors" && argc == 4) {
+		// The roll of the tavern's window from the game's rand() value (its
+		// float's bits) and the sailors it says there are.
+		const float roll = tavern_roll_of(uint32_t(number(argv[3])));
+		uint32_t bits;
+		std::memcpy(&bits, &roll, 4);
+		std::printf("%08x %u\n", bits, tavern_sailors_shown(uint8_t(number(argv[2])), roll));
+		return 0;
 	} else if ((what == "buy" && argc == 10) || (what == "sell" && argc == 8)) {
 		const bool buy = what == "buy";
 		const int ware = int(number(argv[4]));

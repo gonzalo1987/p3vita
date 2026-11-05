@@ -61,6 +61,11 @@ void fn_537c20(SaveGame& save, const uint8_t* operation);  // 0x04 hire sailors.
 void fn_537dd0(SaveGame& save, const uint8_t* operation);  // 0x05 dismiss sailors.
 void fn_537ee0(SaveGame& save, const uint8_t* operation);  // 0x06 hire a captain.
 void fn_538000(SaveGame& save, Sailing* sailing, const uint8_t* operation);  // 0x07 dismiss the captain.
+// What the windows read too (player_actions.cpp): the sailors the merchant
+// may hire in a town (0x4F6CA0) and what repairing a ship or its convoy
+// costs (0x52A950).
+uint8_t fn_4f6ca0(const SaveGame& save, const MerchantMemory& m, uint32_t town);
+int32_t fn_52a950(const SaveGame& save, int town, int ship);
 
 // --- Utilidades comunes (shared.cpp) ---
 

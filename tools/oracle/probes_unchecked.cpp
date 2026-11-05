@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "p3data/mail.hpp"
+#include "p3data/player_actions.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "probe_registry.hpp"
 
@@ -132,6 +133,11 @@ int town_class1(const ProbeCall& c, uint32_t address) {
 bool in_globals(const ProbeCall& c, uint32_t address) {
 	return c.locate(address).kind == Location::Global;
 }
+
+constexpr uint32_t kScratch = 0x6DFF00;
+// The oracle's copier of 0x504AC0's list, in its sentinel page
+// (retouch_unchecked.py WINDOW_SHIPS: SENTINEL + 0xF80).
+constexpr uint32_t kWindowShips = 0x03000F80;
 
 }  // namespace
 
@@ -397,6 +403,29 @@ void register_probes_unchecked(ProbeRegistry& r) {
 			return std::nullopt;
 		}
 		sailing->fn_507fb0(uint16_t(c.args[0]));
+		return std::nullopt;
+	};
+	// The player's windows (player_actions.hpp): what they list and offer
+	// (the tavern's captain, 0x5269A0, is probes_ship_trade.cpp's).
+	r[0x4F6CA0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the merchant (town): the sailors he may hire there; returns al.
+		const int merchant = c.merchant(c.ecx);
+		if (merchant < 0) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		c.eax_mask = 0xFF;
+		return tick::fn_4f6ca0(s, s.merchants[size_t(merchant)].memory, c.args[0]);
+	};
+	r[kWindowShips] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// The oracle's copier (retouch_unchecked.py WINDOW_SHIPS): 0x504AC0
+		// (merchant, town, mode, 0) and its list (a u16 count and the ships)
+		// copied into the scratch globals 0x6DFF00, at most 126 ships.
+		const std::vector<uint16_t> list = window_ships(s, int(c.args[0]), int(c.args[1]), ShipListMode(c.args[2]));
+		s.globals.u16(kScratch) = uint16_t(list.size());
+		for (size_t k = 0; k < list.size() && k < 126; ++k) {
+			s.globals.u16(kScratch + 2 + 2 * uint32_t(k)) = list[k];
+		}
 		return std::nullopt;
 	};
 	r[0x4D6530] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {

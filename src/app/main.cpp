@@ -407,10 +407,47 @@ private:
 };
 
 // Mapa de una ciudad listo para dibujar: los trozos de sprite con su textura.
+// The town's buildings the player goes into, as in the game by clicking on
+// them: the Market Hall (building type 0x23, «stadtkontor», .let type 0x00),
+// the tavern (0x24, «kneipe», 0x02), the shipyard (0x2E, «werft», 0x01) and
+// the repair dock (0x01, «repwerft», 0x1B) (savegame.md §8.1); their names,
+// the game's (0x6A57C8 + 4 · the building's type).
+enum class Place { None, MarketHall, Tavern, Shipyard, Ship };
+
+struct PlaceInfo {
+	uint32_t let_type;
+	Place place;
+	GameText name;
+	const char* spanish;
+	const char* english;
+};
+
+constexpr PlaceInfo kPlaces[] = {
+	{0x00, Place::MarketHall, GameText::BuildingMarketHall, "Lonja", "Market Hall"},
+	{0x02, Place::Tavern, GameText::BuildingTavern, "Taberna", "Tavern"},
+	{0x01, Place::Shipyard, GameText::BuildingShipyard, "Astillero", "Shipyard"},
+	{0x1B, Place::Shipyard, GameText::BuildingRepairDock, "Muelle", "Repair Dock"},
+};
+
+const PlaceInfo* place_of(uint32_t let_type) {
+	for (const PlaceInfo& p : kPlaces) {
+		if (p.let_type == let_type) {
+			return &p;
+		}
+	}
+	return nullptr;
+}
+
 class TownView {
 public:
 	TownView(SDL_Renderer* renderer, const CprArchive& archive)
-		: renderer_(renderer), archive_(archive), tiles_(load_tileset(archive)) {}
+		: renderer_(renderer), archive_(archive), tiles_(load_tileset(archive)) {
+		for (const auto& [id, tile] : tiles_) {
+			if (place_of(tile.type)) {
+				places_by_atlas_[tile.atlas].push_back(&tile);
+			}
+		}
+	}
 
 	~TownView() {
 		for (auto& [path, texture] : atlases_) {
@@ -432,14 +469,16 @@ public:
 				continue;
 			}
 			items_.push_back({texture, {sprite.src_x, sprite.src_y, sprite.width, sprite.height},
-				{sprite.dst_x, sprite.dst_y, sprite.width, sprite.height}});
+				{sprite.dst_x, sprite.dst_y, sprite.width, sprite.height}, sprite.tile});
 			width_ = std::max(width_, sprite.dst_x + sprite.width);
 			height_ = std::max(height_, sprite.dst_y + sprite.height);
 		}
 	}
 
 	// Dibuja lo que cae dentro de la pantalla con la cámara en (camera_x, camera_y).
-	void draw(int camera_x, int camera_y) {
+	// The building of the .let type `highlight` (one of kPlaces) is drawn once
+	// more on top, added, so that it glows (the one the cursor points at).
+	void draw(int camera_x, int camera_y, int highlight = -1) {
 		const SDL_Rect screen = {camera_x, camera_y, kScreenWidth, kScreenHeight};
 		for (const Item& item : items_) {
 			if (!SDL_HasIntersection(&item.dst, &screen)) {
@@ -450,6 +489,60 @@ public:
 			dst.y -= camera_y;
 			SDL_RenderCopy(renderer_, item.texture, &item.src, &dst);
 		}
+		if (highlight < 0) {
+			return;
+		}
+		for (const Item& item : items_) {
+			if (!item.tile || int(item.tile->type) != highlight || !SDL_HasIntersection(&item.dst, &screen)) {
+				continue;
+			}
+			SDL_Rect dst = item.dst;
+			dst.x -= camera_x;
+			dst.y -= camera_y;
+			SDL_SetTextureBlendMode(item.texture, SDL_BLENDMODE_ADD);
+			SDL_SetTextureColorMod(item.texture, 110, 95, 60);
+			SDL_RenderCopy(renderer_, item.texture, &item.src, &dst);
+			SDL_SetTextureColorMod(item.texture, 255, 255, 255);
+			SDL_SetTextureBlendMode(item.texture, SDL_BLENDMODE_BLEND);
+		}
+	}
+
+	// The .let type of the building of kPlaces under the town's pixel (x, y)
+	// (the front one, where its picture isn't transparent), or -1.
+	int place_at(int x, int y) const {
+		for (auto it = items_.rbegin(); it != items_.rend(); ++it) {
+			const Item& item = *it;
+			if (!item.tile || x < item.dst.x || y < item.dst.y || x >= item.dst.x + item.dst.w ||
+				y >= item.dst.y + item.dst.h) {
+				continue;
+			}
+			const auto mask = masks_.find(item.tile);
+			if (mask == masks_.end()) {
+				continue;
+			}
+			const int mx = item.src.x - item.tile->src_x + (x - item.dst.x);
+			const int my = item.src.y - item.tile->src_y + (y - item.dst.y);
+			if (mx >= 0 && my >= 0 && mx < mask->second.width && my < mask->second.height &&
+				mask->second.opaque[size_t(my) * size_t(mask->second.width) + size_t(mx)]) {
+				return int(item.tile->type);
+			}
+		}
+		return -1;
+	}
+
+	// Where the building of that .let type is drawn (in the town's pixels).
+	SDL_Rect bounds(int let_type) const {
+		SDL_Rect r{0, 0, 0, 0};
+		for (const Item& item : items_) {
+			if (item.tile && int(item.tile->type) == let_type) {
+				if (r.w == 0) {
+					r = item.dst;
+				} else {
+					SDL_UnionRect(&r, &item.dst, &r);
+				}
+			}
+		}
+		return r;
 	}
 
 	int width() const { return width_; }
@@ -460,6 +553,14 @@ private:
 		SDL_Texture* texture;
 		SDL_Rect src;
 		SDL_Rect dst;
+		const TileDef* tile;
+	};
+	// Where a building of kPlaces is opaque (alpha ≥ 128), one byte per pixel
+	// of its tile's rectangle in the atlas: made when its atlas is decoded.
+	struct Mask {
+		int width = 0;
+		int height = 0;
+		std::vector<uint8_t> opaque;
 	};
 
 	// A tile's atlas texture, kept by the tile (tiles_ doesn't change, so its
@@ -487,6 +588,24 @@ private:
 			return texture = nullptr;
 		}
 		apply_magenta_key(image);
+		if (const auto places = places_by_atlas_.find(path); places != places_by_atlas_.end()) {
+			for (const TileDef* tile : places->second) {
+				Mask& mask = masks_[tile];
+				mask.width = tile->width;
+				mask.height = tile->height;
+				mask.opaque.assign(size_t(tile->width) * size_t(tile->height), 0);
+				for (int y = 0; y < tile->height; ++y) {
+					for (int x = 0; x < tile->width; ++x) {
+						const int ax = tile->src_x + x;
+						const int ay = tile->src_y + y;
+						if (ax < image.width && ay < image.height) {
+							mask.opaque[size_t(y) * size_t(tile->width) + size_t(x)] =
+								image.rgba[(size_t(ay) * size_t(image.width) + size_t(ax)) * 4 + 3] >= 128;
+						}
+					}
+				}
+			}
+		}
 		texture = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, image.width,
 			image.height);
 		if (texture) {
@@ -501,6 +620,8 @@ private:
 	TileSet tiles_;
 	std::map<std::string, SDL_Texture*> atlases_;
 	std::unordered_map<const TileDef*, SDL_Texture*> tile_textures_;
+	std::map<std::string, std::vector<const TileDef*>> places_by_atlas_;  // The tiles of kPlaces, by atlas.
+	std::unordered_map<const TileDef*, Mask> masks_;
 	std::vector<Item> items_;
 	int width_ = 0;
 	int height_ = 0;
@@ -1278,7 +1399,379 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 	}
 }
 
-// --- The Hanse panel: the path to Alderman («Gobernador») ---
+// --- The windows of the town's places and of the ship ---
+// The tavern (0x5CD540: hiring sailors, 0x5D4C10, and a captain, 0x5D4870),
+// the shipyard's repairs (0x5F8F50) and the ship's window (0x493ED0:
+// dismissing sailors and the captain), listing and sending what the game's
+// windows do (player_actions.hpp), with the game's texts. The viewer runs
+// the operation at once, as it does with the market.
+
+struct PlaceUi {
+	Place open = Place::None;
+	int let_type = -1;  // The building that opened it: its name.
+	int row = 0;
+	int amount = 0;  // The sailors to hire or to dismiss.
+	size_t ship = 0;  // Among the ships the row's list offers.
+	float roll = 0;  // The tavern's roll when it opened (tavern_roll).
+	std::string message;
+	Uint32 message_until = 0;
+};
+
+// What a window shows now, made from the save each frame (also for the touch screen).
+struct PlaceView {
+	std::string title;
+	std::vector<std::pair<std::string, SDL_Color>> lines;  // Of the selected row.
+	std::vector<std::pair<std::string, bool>> rows;  // Label and whether it can be done.
+	std::vector<uint16_t> ships;  // The selected row's list (Select: the next one).
+	int ship = -1;  // The chosen one.
+	int max_amount = -1;  // The amount goes from 0 to this (-1: the row has none).
+	uint16_t captain = 0xFFFF;  // The tavern's captain.
+	std::string act;  // The act button's label, if not the row's.
+};
+
+std::vector<std::string> wrap_text(const TextRenderer& text, const std::string& s, int width);
+
+// The first letter in upper case (the game's «dismiss sailors» as a button).
+std::string capitalized(std::string s) {
+	if (!s.empty()) {
+		s[0] = char(std::toupper(uint8_t(s[0])));  // ASCII only: the Spanish ones are capitalized already.
+	}
+	return s;
+}
+
+std::string place_name(int let_type) {
+	const PlaceInfo* p = place_of(uint32_t(let_type));
+	return p ? game_text(p->name, tr(p->spanish, p->english)) : "";
+}
+
+std::string ship_label(const SavedShip& ship) {
+	return ship.name() + " (" + ship_type_name(ship.type()) + ")";
+}
+
+// The hull left, in % (the ship's window).
+int hull_percent(const SavedShip& ship) {
+	return ship.max_health() > 0 ? int(int64_t(ship.health()) * 100 / ship.max_health()) : 0;
+}
+
+std::string captain_name(const SaveGame& save, uint16_t captain) {
+	const CaptainInfo c = captain_info(save, captain);
+	return clean_game_text(game_first_name(save, c.first_name) + " " + game_family_name(save, c.family_name));
+}
+
+PlaceView place_view(const SaveGame& save, int town, PlaceUi& ui) {
+	PlaceView v;
+	const int player = save.player;
+	auto choose = [&](std::vector<uint16_t> ships) {
+		v.ships = std::move(ships);
+		v.ship = v.ships.empty() ? -1 : int(v.ships[ui.ship % v.ships.size()]);
+	};
+	auto chosen_line = [&](const std::vector<std::string>& none) {
+		if (v.ship >= 0) {
+			v.lines.push_back({game_text(GameText::TavernChosenShip, tr("Barco elegido:", "Chosen ship:")) + " " +
+					ship_label(save.ships[size_t(v.ship)]) + (v.ships.size() > 1 ? tr("   (Select: otro)", "   (Select: another)") : ""),
+				kTextColor});
+		} else {
+			for (const std::string& line : none) {
+				if (!line.empty()) {
+					v.lines.push_back({line, kDimColor});
+				}
+			}
+		}
+	};
+	switch (ui.open) {
+	case Place::Tavern: {
+		v.title = place_name(ui.let_type);
+		v.rows = {{game_text(GameText::TavernHireSailors, tr("Contratar marineros", "Hire sailors")), true},
+			{game_text(GameText::TavernHireCaptain, tr("Contratar capitán", "Hire captain")), true}};
+		ui.row = std::clamp(ui.row, 0, 1);
+		const std::string no_ship = game_text(GameText::TavernNoShip, tr("No tienes barcos adecuados en el puerto",
+			"You have no ship in port"));
+		if (ui.row == 0) {
+			choose(window_ships(save, player, town, ShipListMode::Sailors));
+			const uint32_t shown = tavern_sailors(save, player, town, ui.roll);
+			chosen_line({no_ship, game_text(GameText::TavernNoShipForSailors, "")});
+			v.lines.push_back({game_text(GameText::TavernThereAre, tr("Hay", "There are")) + " " + std::to_string(shown) + " " +
+					game_text(GameText::TavernSailorsIn, tr("marineros en la taberna.", "sailors in the tavern.")),
+				kTextColor});
+			if (v.ship >= 0) {
+				v.max_amount = int(shown);
+				v.lines.push_back({game_text(GameText::TavernHowMany, tr("¿A cuántos quieres contratar?",
+					"How many do you want to hire?")), kTextColor});
+			}
+			v.rows[0].second = v.ship >= 0 && shown > 0;
+		} else {
+			choose(window_ships(save, player, town, ShipListMode::Captains));
+			v.captain = tavern_captain(save, town, uint16_t(player));
+			if (v.captain != 0xFFFF) {
+				const CaptainInfo c = captain_info(save, v.captain);
+				v.lines.push_back({game_text(GameText::TavernCaptain, tr("Capitán", "Captain")) + " " +
+						captain_name(save, v.captain) + " " +
+						game_text(GameText::TavernOffersService, tr(": te ofrece sus servicios.", "offers his service to you.")),
+					kTextColor});
+				v.lines.push_back({game_text(GameText::TavernAge, tr("Edad:", "Age:")) + " " + std::to_string(c.age), kTextColor});
+				// The game draws the three skills as pictures; these words are the viewer's.
+				v.lines.push_back({tr("Comercio ", "Trading ") + std::to_string(c.trading) + tr(", navegación ", ", sailing ") +
+						std::to_string(c.sailing) + tr(", combate ", ", fighting ") + std::to_string(c.fighting) + tr(" (de 5)", " (of 5)"),
+					kTextColor});
+				v.lines.push_back({game_text(GameText::TavernDemands, tr("Te pide", "He demands")) + " " +
+						format_money(c.wage) + " " + game_text(GameText::TavernDailyWage, tr("como sueldo diario.", "as daily wage.")),
+					kTextColor});
+			} else {
+				v.lines.push_back({tr("No hay ningún capitán en la taberna.", "There is no captain in the tavern."), kDimColor});
+			}
+			chosen_line({no_ship});
+			v.rows[1].second = v.ship >= 0 && v.captain != 0xFFFF;
+		}
+		break;
+	}
+	case Place::Shipyard: {
+		v.act = game_text(GameText::ShipyardRepair, tr("Reparar", "Repair"));
+		v.title = place_name(ui.let_type) + " - " + v.act;
+		const std::vector<uint16_t> ships = window_ships(save, player, town, ShipListMode::Repairs);
+		v.lines.push_back({game_text(GameText::ShipyardRepairsHere, tr("Encargos de reparación en este astillero:",
+			"For repairs at this shipyard")), kTextColor});
+		for (const uint16_t s : ships) {
+			const SavedShip& ship = save.ships[s];
+			const bool convoy = ship.convoy() < save.globals.u16(global::kShips + 0xF6);
+			v.rows.push_back({(convoy ? game_text(GameText::ShipyardConvoy, tr("Convoy", "Convoy")) + " " + ship.name()
+									  : ship_label(ship)) + ": " + std::to_string(hull_percent(ship)) + " %",
+				true});
+		}
+		ui.row = std::clamp(ui.row, 0, std::max(0, int(ships.size()) - 1));
+		if (ships.empty()) {
+			v.lines.push_back({game_text(GameText::ShipyardNoShips, tr("No hay barcos disponibles en el puerto.",
+				"are no further ships available.")), kDimColor});
+		} else {
+			v.ship = ships[size_t(ui.row)];
+			const std::string cost = format_money(repair_cost(save, town, v.ship));
+			v.lines.push_back({g_texts ? g_texts->format(GameText::ShipyardRepairCost, {cost})
+									   : tr("Los costes de reparación ascienden a ", "The cost of repairs amounts to ") + cost + ".",
+				kTextColor});
+		}
+		break;
+	}
+	case Place::Ship: {
+		std::vector<uint16_t> ships;
+		for (const int s : player_ships_in(save, town)) {
+			ships.push_back(uint16_t(s));
+		}
+		choose(std::move(ships));
+		if (v.ship < 0) {
+			v.title = tr("Barco", "Ship");
+			v.lines.push_back({tr("No tienes ningún barco en este puerto.", "You have no ship in this port."), kDimColor});
+			break;
+		}
+		const SavedShip& ship = save.ships[size_t(v.ship)];
+		v.title = ship_label(ship) + (v.ships.size() > 1 ? tr("   (Select: otro)", "   (Select: another)") : "");
+		const std::string captain_word = game_text(GameText::ShipCaptain, tr("Capitán", "Captain"));
+		if (ship.captain() < save.globals.u16(global::kCaptainCount)) {
+			v.lines.push_back({captain_word + ": " + captain_name(save, ship.captain()) + " (" +
+					std::to_string(captain_info(save, ship.captain()).age) + tr(" años)", " years)"),
+				kTextColor});
+		} else {
+			v.lines.push_back({captain_word + ": " + tr("ninguno", "none"), kDimColor});
+		}
+		v.lines.push_back({game_text(GameText::TavernSailors, tr("Marineros", "Sailors")) + ": " +
+				std::to_string(ship.sailors()), kTextColor});
+		v.lines.push_back({tr("Casco: ", "Hull: ") + std::to_string(hull_percent(ship)) + " %", kTextColor});
+		const bool docked = ship_window_open(save, v.ship);
+		if (!docked) {
+			v.lines.push_back({tr("Solo se puede con el barco atracado.", "Only with the ship docked."), kDimColor});
+		}
+		v.rows = {{capitalized(game_text(GameText::ShipDismissSailors, tr("Despedir marineros", "Dismiss sailors"))),
+					  docked && ship.sailors() > 0},
+			{capitalized(game_text(GameText::ShipDismissCaptain, tr("Despedir capitán", "Dismiss captain"))),
+				can_dismiss_captain(save, v.ship)}};
+		ui.row = std::clamp(ui.row, 0, 1);
+		if (ui.row == 0 && docked) {
+			v.max_amount = ship.sailors();
+		}
+		break;
+	}
+	default:
+		break;
+	}
+	if (v.max_amount >= 0) {
+		ui.amount = std::clamp(ui.amount, 0, v.max_amount);  // As the windows keep it (0x5D4CF8, 0x494049).
+	}
+	return v;
+}
+
+// Disposición de las ventanas de los lugares, compartida por el dibujo y el táctil.
+struct PlaceLayout {
+	static constexpr int kWidth = 600;
+	static constexpr int kPadding = 10;
+	static constexpr int kRowHeight = 22;
+	static constexpr int kMaxRows = 6;
+	SDL_Rect panel{};
+	int header_y = 0;
+	int rows_y = 0;
+	int footer_y = 0;
+	SDL_Rect minus_button{};
+	SDL_Rect plus_button{};
+	SDL_Rect act_button{};
+
+	explicit PlaceLayout(int line_height) {
+		const int button_height = line_height + 6;
+		panel = {kScreenWidth - kWidth - 8, kBarHeight + 4, kWidth, kScreenHeight - kBarHeight - 12};
+		header_y = panel.y + kPadding;
+		rows_y = header_y + line_height + 8;
+		const int button_y = panel.y + panel.h - kPadding - button_height;
+		footer_y = button_y - line_height - 6;
+		const int inner = kWidth - 2 * kPadding;
+		minus_button = {panel.x + kPadding, button_y, 60, button_height};
+		plus_button = {minus_button.x + minus_button.w + 8 + 120 + 8, button_y, 60, button_height};
+		act_button = {plus_button.x + plus_button.w + 8, button_y, panel.x + kPadding + inner - (plus_button.x + plus_button.w + 8),
+			button_height};
+	}
+
+	// The amount's box, between − and +.
+	SDL_Rect amount_box() const {
+		return {minus_button.x + minus_button.w + 8, minus_button.y, 120, minus_button.h};
+	}
+
+	int row_at(int x, int y, int rows) const {
+		if (x < panel.x || x >= panel.x + panel.w || y < rows_y || y >= rows_y + kMaxRows * kRowHeight) {
+			return -1;
+		}
+		const int row = (y - rows_y) / kRowHeight;
+		return row < rows ? row : -1;
+	}
+};
+
+void draw_place(SDL_Renderer* renderer, TextRenderer& text, const PlaceUi& ui, const PlaceView& v) {
+	const PlaceLayout layout(text.line_height());
+	const SDL_Rect& panel = layout.panel;
+	const int left = panel.x + PlaceLayout::kPadding;
+	const int width = panel.w - 2 * PlaceLayout::kPadding;
+	const int lh = text.line_height();
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
+	SDL_RenderFillRect(renderer, &panel);
+	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+	SDL_RenderDrawRect(renderer, &panel);
+	text.draw(v.title, left, layout.header_y, kTextColor);
+	const std::string close = tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close");
+	text.draw(close, panel.x + panel.w - PlaceLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
+
+	// The rows (the shipyard's ships scroll with the selection).
+	const int first = std::max(0, ui.row - PlaceLayout::kMaxRows + 1);
+	for (int i = first; i < int(v.rows.size()) && i < first + PlaceLayout::kMaxRows; ++i) {
+		const int y = layout.rows_y + (i - first) * PlaceLayout::kRowHeight;
+		if (i == ui.row) {
+			const SDL_Rect box = {panel.x + 2, y - 1, panel.w - 4, PlaceLayout::kRowHeight};
+			SDL_SetRenderDrawColor(renderer, 110, 80, 40, 230);
+			SDL_RenderFillRect(renderer, &box);
+		}
+		text.draw(v.rows[size_t(i)].first, left, y, v.rows[size_t(i)].second ? kTextColor : kDimColor);
+	}
+	// What it says, right under its rows.
+	int y = layout.rows_y + std::min(int(v.rows.size()), PlaceLayout::kMaxRows) * PlaceLayout::kRowHeight + 10;
+	for (const auto& [line, color] : v.lines) {
+		for (const std::string& part : wrap_text(text, line, width)) {
+			if (y + lh > layout.footer_y) {
+				break;
+			}
+			text.draw(part, left, y, color);
+			y += lh;
+		}
+	}
+	if (!ui.message.empty() && !SDL_TICKS_PASSED(app_ticks(), ui.message_until)) {
+		text.draw(ui.message, left, layout.footer_y, kTextColor);
+	}
+	if (v.max_amount >= 0) {
+		draw_button(renderer, text, layout.minus_button, "-");
+		draw_button(renderer, text, layout.plus_button, "+");
+		const SDL_Rect box = layout.amount_box();
+		draw_button(renderer, text, box, std::to_string(ui.amount));
+	}
+	const bool can = ui.row < int(v.rows.size()) && v.rows[size_t(ui.row)].second && (v.max_amount < 0 || ui.amount > 0);
+	if (ui.row < int(v.rows.size())) {
+		draw_button(renderer, text, layout.act_button,
+			std::string(BTN_CROSS " ") + (v.act.empty() ? v.rows[size_t(ui.row)].first : v.act));
+		if (!can) {
+			const SDL_Rect& r = layout.act_button;
+			SDL_SetRenderDrawColor(renderer, 30, 22, 14, 150);
+			SDL_RenderFillRect(renderer, &r);
+		}
+	}
+}
+
+// X or the act button: what the selected row sends, as the game's window
+// builds it, run at once (the queue, as the market does).
+void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
+	ui.message_until = app_ticks() + kMessageTime;
+	if (ui.row >= int(v.rows.size()) || !v.rows[size_t(ui.row)].second || (v.max_amount >= 0 && ui.amount <= 0)) {
+		ui.message = tr("Ahora no se puede.", "It can't be done now.");
+		return;
+	}
+	std::optional<OperationBytes> op;
+	const int ship = v.ship;
+	const SavedShip* s = ship >= 0 ? &save.ships[size_t(ship)] : nullptr;
+	const int sailors = s ? s->sailors() : 0;
+	const uint16_t captain = s ? s->captain() : 0xFFFF;
+	if (ui.open == Place::Tavern && ui.row == 0) {
+		op = hire_sailors_operation(uint32_t(ship), uint32_t(ui.amount));
+	} else if (ui.open == Place::Tavern) {
+		op = hire_captain_operation(v.captain, uint32_t(ship), uint32_t(town));
+	} else if (ui.open == Place::Shipyard) {
+		op = repair_window_operation(save, ship);
+	} else if (ui.open == Place::Ship && ui.row == 0) {
+		op = dismiss_sailors_operation(uint32_t(ship), uint32_t(ui.amount));
+	} else if (ui.open == Place::Ship) {
+		op = dismiss_captain_operation(uint32_t(ship));
+	}
+	if (!op || !s) {
+		return;
+	}
+	if (sailing) {
+		queue_operation(save, *op);
+		run_queued_operations(save, *sailing);
+	} else {
+		run_operation(save, nullptr, op->data());
+	}
+	const std::string name = s->name();
+	if (ui.open == Place::Tavern && ui.row == 0) {
+		const int n = s->sailors() - sailors;
+		ui.message = g_spanish ? "Contratas " + std::to_string(n) + " marineros para el " + name + "."
+							   : "You hire " + std::to_string(n) + " sailors for the " + name + ".";
+		ui.amount = 0;
+	} else if (ui.open == Place::Tavern) {
+		ui.message = s->captain() != captain ? tr("El nuevo capitán sube a bordo del ", "The new captain boards the ") + name + "."
+											 : tr("El capitán no ha subido a bordo.", "The captain hasn't come on board.");
+	} else if (ui.open == Place::Shipyard) {
+		ui.message = s->status() == 4 ? name + tr(" entra en el astillero.", " goes into the shipyard.")
+									  : tr("No se ha podido reparar (mira el buzón).", "It couldn't be repaired (see the mailbox).");
+	} else if (ui.row == 0) {
+		const int n = sailors - s->sailors();
+		ui.message = g_spanish ? "Despides a " + std::to_string(n) + " marineros." : "You dismiss " + std::to_string(n) + " sailors.";
+		ui.amount = 0;  // The slider back to 0 (0x49419D).
+	} else {
+		ui.message = s->captain() != captain ? tr("Has despedido al capitán.", "You have dismissed the captain.")
+											 : tr("El capitán sigue a bordo.", "The captain is still on board.");
+	}
+}
+
+// The ship's card at the bottom left of a town, as the game's side panel: the
+// player's ship in its port (tap it, or Select, for its window).
+SDL_Rect ship_card_rect(TextRenderer& text, const std::string& label) {
+	const int padding = 8;
+	const int w = text.measure(label) + 2 * padding;
+	const int h = text.line_height() + padding;
+	return {8, kScreenHeight - h - 8, w, h};
+}
+
+std::string ship_card_label(const SaveGame& save, int town) {
+	const std::vector<int> ships = player_ships_in(save, town);
+	if (ships.empty()) {
+		return "";
+	}
+	std::string label = tr("Barco: ", "Ship: ") + ship_label(save.ships[size_t(ships[0])]);
+	if (ships.size() > 1) {
+		label += " +" + std::to_string(ships.size() - 1);
+	}
+	return label;
+}
 // What the game shows in its Hanse task window (0x5E87D0) and its road
 // window (0x5F2A20), and the operations they queue (0x4B and 0x3B, built in
 // p3data/hanse_tasks.cpp); see docs/cloud/alderman-viewer.md. The game's own
@@ -2634,6 +3127,7 @@ int main(int argc, char** argv) {
 	}
 	MarketUi market;
 	HanseUi hanse;  // The Hanse panel (Square in a town).
+	PlaceUi place;  // The town's places (the tavern, the shipyard) and the ship's window.
 	SaveGame save;
 	bool has_save = load_savegame(*archive, options.save ? options.save : kStartSave, save) && !save.towns.empty();
 	if (options.debug_state) {
@@ -2799,6 +3293,7 @@ int main(int argc, char** argv) {
 		last_election = alderman_election_tick(save);
 		market = MarketUi();
 		hanse = HanseUi();
+		place = PlaceUi();
 		messages = MessageWindow();
 		end_window = EndWindow();
 		fleet_index = 0;
@@ -2878,6 +3373,7 @@ int main(int argc, char** argv) {
 		mail.stale = true;
 		market.open = false;
 		hanse.open = false;
+		place.open = Place::None;
 	};
 	auto mail_tab = [&](int tab) {
 		expire_letters(save, save.player);
@@ -3043,10 +3539,80 @@ int main(int argc, char** argv) {
 		// The Hanse panel, in the save's towns like the market (never both open).
 		const bool in_hanse = hanse.open && !trading && selection.mode == Mode::Saved && save.player >= 0 && small_text;
 		const HanseView hanse_now = in_hanse ? hanse_view(save, town_index, hanse.page) : HanseView();
+		// The window of a place or of the ship, in the save's towns (never with
+		// the market or the Hanse panel).
+		const bool in_place = place.open != Place::None && !trading && !in_hanse && selection.mode == Mode::Saved &&
+			save.player >= 0 && small_text;
+		const PlaceView place_now = in_place ? place_view(save, town_index, place) : PlaceView();
 		const bool in_menu = menu.open() && small_text;
 		// The mailbox, over the town or the sea map.
 		const bool in_mail = mail.open && has_save && save.player >= 0 && small_text &&
 			(selection.mode == Mode::Saved || selection.mode == Mode::Sea);
+		// The building in the middle of the screen, the buttons' cursor (as the
+		// game's mouse pointer): X goes into it.
+		const bool town_free = selection.mode == Mode::Saved && has_save && save.player >= 0 && !trading && !in_hanse &&
+			!in_place && !in_mail && !in_menu;
+		const int hover = town_free ? view->place_at(camera_x + kScreenWidth / 2, camera_y + kScreenHeight / 2) : -1;
+		// Goes into a place: the Market Hall is the market; the tavern rolls its
+		// rand() as the game's window does each time it opens (0x5CC479).
+		auto open_place = [&](Place p, int let_type) {
+			if (p == Place::MarketHall) {
+				market.open = true;
+				hanse.open = false;
+				place.open = Place::None;
+				return;
+			}
+			place = PlaceUi();
+			place.open = p;
+			place.let_type = let_type;
+			if (p == Place::Tavern) {
+				place.roll = tavern_roll(save);
+			}
+			market.open = false;
+			hanse.open = false;
+		};
+		// With a window open the pad, L, R, X, Circle and Select are its own.
+		auto place_button = [&](Uint8 button) {
+			const int rows = int(place_now.rows.size());
+			auto add_amount = [&](int step) {
+				place.amount = std::clamp(place.amount + step, 0, std::max(0, place_now.max_amount));
+			};
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+				if (rows > 0) {
+					place.row = (place.row + rows + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1)) % rows;
+				}
+				place.amount = 0;
+				if (place.open == Place::Tavern) {
+					place.ship = 0;  // The other row's list.
+				}
+				return true;
+			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+				add_amount(button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1);
+				return true;
+			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+				add_amount(button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -10 : 10);
+				return true;
+			case SDL_CONTROLLER_BUTTON_A:
+				place_act(save, sailing.get(), town_index, place, place_now);
+				return true;
+			case SDL_CONTROLLER_BUTTON_B:
+				place.open = Place::None;
+				return true;
+			case SDL_CONTROLLER_BUTTON_BACK:  // Select: the next ship of the list.
+				place.ship++;
+				place.amount = 0;
+				return true;
+			case SDL_CONTROLLER_BUTTON_Y:
+			case SDL_CONTROLLER_BUTTON_START:
+				return false;  // The sea map and the menu, as always.
+			default:
+				return true;
+			}
+		};
 		const MailLayout mail_layout(small_text ? small_text->line_height() : 20, mail.tab == 0);
 		const std::vector<uint16_t> mail_list = in_mail && mail.tab != 0 ? mail_rows(save, mail.tab) : std::vector<uint16_t>();
 		auto mail_select = [&](int row) {
@@ -3374,6 +3940,9 @@ int main(int argc, char** argv) {
 				if (in_hanse && hanse_button(event.cbutton.button)) {
 					break;
 				}
+				if (in_place && place_button(event.cbutton.button)) {
+					break;
+				}
 				switch (event.cbutton.button) {
 				case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
 					town_step = -1;
@@ -3384,12 +3953,14 @@ int main(int argc, char** argv) {
 				case SDL_CONTROLLER_BUTTON_Y:  // Triángulo en la Vita.
 					next_mode = true;
 					break;
-				case SDL_CONTROLLER_BUTTON_A:  // X en la Vita: abre el mercado y compra; en el mar, zarpar.
+				case SDL_CONTROLLER_BUTTON_A:
+					// X en la Vita: en el mercado, compra; en la ciudad, entra en el
+					// edificio del centro de la pantalla (o el mercado); en el mar, zarpar.
 					if (trading) {
 						trade(save, sailing.get(), town_index, market, true);
 					} else if (selection.mode == Mode::Saved) {
-						market.open = true;
-						hanse.open = false;
+						const PlaceInfo* p = hover >= 0 ? place_of(uint32_t(hover)) : nullptr;
+						open_place(p ? p->place : Place::MarketHall, hover);
 					} else if (selection.mode == Mode::Sea) {
 						order_sail();
 					}
@@ -3412,11 +3983,16 @@ int main(int argc, char** argv) {
 					}
 					break;
 				case SDL_CONTROLLER_BUTTON_BACK:
-					// Select: siguiente barco del puerto, velocidad del juego en el mar o vista de plantilla.
+					// Select: siguiente barco del puerto, velocidad del juego en el mar,
+					// en la ciudad la ventana del barco del jugador (si tiene uno en
+					// su puerto) o vista de plantilla.
 					if (trading) {
 						market.ship++;
 					} else if (selection.mode == Mode::Sea) {
 						game_speed = (game_speed + 1) % kGameSpeedCount;
+					} else if (selection.mode == Mode::Saved && has_save && save.player >= 0 &&
+						!player_ships_in(save, town_index).empty()) {
+						open_place(Place::Ship, -1);
 					} else {
 						next_debug_view = true;
 					}
@@ -3469,6 +4045,23 @@ int main(int argc, char** argv) {
 						: key == SDLK_TAB ? SDL_CONTROLLER_BUTTON_BACK
 						: SDL_CONTROLLER_BUTTON_INVALID;
 					if (button != Uint8(SDL_CONTROLLER_BUTTON_INVALID) && hanse_button(button)) {
+						break;
+					}
+				}
+				if (in_place) {
+					// Keyboard: the arrows, Page Up/Down ±10, C or Enter to act, Tab the next ship, Escape to close.
+					const SDL_Keycode key = event.key.keysym.sym;
+					const Uint8 button = key == SDLK_UP ? SDL_CONTROLLER_BUTTON_DPAD_UP
+						: key == SDLK_DOWN ? SDL_CONTROLLER_BUTTON_DPAD_DOWN
+						: key == SDLK_LEFT ? SDL_CONTROLLER_BUTTON_DPAD_LEFT
+						: key == SDLK_RIGHT ? SDL_CONTROLLER_BUTTON_DPAD_RIGHT
+						: key == SDLK_PAGEUP ? SDL_CONTROLLER_BUTTON_LEFTSHOULDER
+						: key == SDLK_PAGEDOWN ? SDL_CONTROLLER_BUTTON_RIGHTSHOULDER
+						: key == SDLK_c || key == SDLK_RETURN ? SDL_CONTROLLER_BUTTON_A
+						: key == SDLK_ESCAPE ? SDL_CONTROLLER_BUTTON_B
+						: key == SDLK_TAB ? SDL_CONTROLLER_BUTTON_BACK
+						: SDL_CONTROLLER_BUTTON_INVALID;
+					if (button != Uint8(SDL_CONTROLLER_BUTTON_INVALID) && place_button(button)) {
 						break;
 					}
 				}
@@ -3530,6 +4123,10 @@ int main(int argc, char** argv) {
 				case SDLK_RETURN:
 					if (selection.mode == Mode::Sea) {
 						order_sail();
+					} else if (selection.mode == Mode::Saved && !trading && has_save) {
+						// As X: the building in the middle of the screen, or the market.
+						const PlaceInfo* p = hover >= 0 ? place_of(uint32_t(hover)) : nullptr;
+						open_place(p ? p->place : Place::MarketHall, hover);
 					}
 					break;
 				case SDLK_PLUS:  // Como en el juego: + más rápido, - más lento.
@@ -3567,6 +4164,7 @@ int main(int argc, char** argv) {
 				touch_on_panel =
 					(trading && inside(MarketLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
 					(in_hanse && inside(HanseLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
+					(in_place && inside(PlaceLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
 					(in_menu && (inside(MenuLayout(small_text->line_height(), menu.screen).panel, touch_start.x, touch_start.y) ||
 						menu.ask != MenuAsk::None)) ||
 					(in_mail && inside(mail_layout.panel, touch_start.x, touch_start.y));
@@ -3642,7 +4240,36 @@ int main(int argc, char** argv) {
 					} else if (row >= 0) {
 						hanse.row = row;
 					}
-				} else if (touch_on_panel && touch_moved < kTapDistance) {
+				} else if (touch_on_panel && in_place && touch_moved < kTapDistance) {
+					const PlaceLayout layout(small_text->line_height());
+					const int x = touch_start.x;
+					const int y = touch_start.y;
+					const int first = std::max(0, place.row - PlaceLayout::kMaxRows + 1);
+					const int row = layout.row_at(x, y, int(place_now.rows.size()) - first);
+					if (place_now.max_amount >= 0 && inside(layout.minus_button, x, y)) {
+						place.amount = std::max(0, place.amount - 1);
+					} else if (place_now.max_amount >= 0 && inside(layout.plus_button, x, y)) {
+						place.amount = std::min(place_now.max_amount, place.amount + 1);
+					} else if (inside(layout.act_button, x, y)) {
+						place_act(save, sailing.get(), town_index, place, place_now);
+					} else if (row >= 0 && first + row != place.row) {
+						place.row = first + row;
+						place.amount = 0;
+						if (place.open == Place::Tavern) {
+							place.ship = 0;
+						}
+					}
+				} else if (!touch_on_panel && touch_moved < kTapDistance && selection.mode == Mode::Saved && has_save &&
+					save.player >= 0 && small_text && !in_menu && !in_mail && !messages.open && !end_window.open) {
+					// A tap in the town: the ship's card, or a building to go into, as in the game.
+					const std::string card = ship_card_label(save, town_index);
+					const int building = view->place_at(camera_x + touch_start.x, camera_y + touch_start.y);
+					if (!card.empty() && inside(ship_card_rect(*small_text, card), touch_start.x, touch_start.y)) {
+						open_place(Place::Ship, -1);
+					} else if (const PlaceInfo* p = building >= 0 ? place_of(uint32_t(building)) : nullptr) {
+						open_place(p->place, building);
+					}
+				} else if (touch_on_panel && trading && touch_moved < kTapDistance) {
 					const MarketLayout layout(small_text->line_height());
 					const int row = layout.row_at(touch_start.x, touch_start.y);
 					if (inside(layout.step_button, touch_start.x, touch_start.y)) {
@@ -3668,10 +4295,12 @@ int main(int argc, char** argv) {
 				selection.template_index = (selection.template_index + count + size_t(town_step)) % count;
 			}
 			market.ship = 0;
+			place.open = Place::None;
 			reload = true;
 			continue;
 		}
 		if (next_mode && has_save) {
+			place.open = Place::None;
 			if (selection.mode == Mode::Saved && (!sea || !sea->ready())) {
 				// The sea map isn't loaded yet: the town stays while it loads.
 				if (!sea_wanted) {
@@ -3720,11 +4349,11 @@ int main(int argc, char** argv) {
 			camera_x += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX));
 			camera_y += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY));
 		}
-		if (!trading && !in_hanse && !in_mail) {
+		if (!trading && !in_hanse && !in_mail && !in_place) {
 			camera_x += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) - pad(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
 			camera_y += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_DOWN) - pad(SDL_CONTROLLER_BUTTON_DPAD_UP));
 		}
-		if (!trading && !in_hanse && !in_mail) {
+		if (!trading && !in_hanse && !in_mail && !in_place) {
 			const Uint8* keys = SDL_GetKeyboardState(nullptr);
 			camera_x += kPadSpeed * (keys[SDL_SCANCODE_RIGHT] - keys[SDL_SCANCODE_LEFT]);
 			camera_y += kPadSpeed * (keys[SDL_SCANCODE_DOWN] - keys[SDL_SCANCODE_UP]);
@@ -3748,7 +4377,44 @@ int main(int argc, char** argv) {
 			sea->draw(save, small_text.get(), town_names, camera_x, camera_y, selection.saved_index,
 				course_ship >= 0 ? &save.ships[size_t(course_ship)] : nullptr);
 		} else {
-			view->draw(camera_x, camera_y);
+			// The building under the cursor now (after this frame's camera): glowing, with its name.
+			const bool free_now = selection.mode == Mode::Saved && has_save && save.player >= 0 && !market.open &&
+				!hanse.open && place.open == Place::None && !mail.open && !menu.open();
+			const int pointed = free_now ? view->place_at(camera_x + kScreenWidth / 2, camera_y + kScreenHeight / 2) : -1;
+			view->draw(camera_x, camera_y, pointed);
+			if (free_now && small_text) {
+				// The cursor: a small cross in the middle of the screen, light on dark.
+				const int cx = kScreenWidth / 2;
+				const int cy = kScreenHeight / 2;
+				SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+				SDL_SetRenderDrawColor(renderer, 30, 20, 10, 255);
+				const SDL_Rect dark[] = {{cx - 8, cy - 2, 17, 5}, {cx - 2, cy - 8, 5, 17}};
+				SDL_RenderFillRects(renderer, dark, 2);
+				SDL_SetRenderDrawColor(renderer, 255, 236, 190, 255);
+				const SDL_Rect light[] = {{cx - 7, cy - 1, 15, 3}, {cx - 1, cy - 7, 3, 15}};
+				SDL_RenderFillRects(renderer, light, 2);
+				SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+			}
+			if (pointed >= 0 && small_text) {
+				const SDL_Rect b = view->bounds(pointed);
+				const std::string name = place_name(pointed);
+				const int padding = 6;
+				const int w = small_text->measure(name) + 2 * padding;
+				const int h = small_text->line_height() + padding;
+				const SDL_Rect box = {std::clamp(b.x + b.w / 2 - camera_x - w / 2, 4, kScreenWidth - w - 4),
+					std::clamp(b.y - camera_y - h - 2, kBarHeight + 2, kScreenHeight - h - 4), w, h};
+				draw_panel_box(renderer, box);
+				small_text->draw(name, box.x + padding, box.y + padding / 2, kTextColor);
+			}
+			const std::string card = selection.mode == Mode::Saved && has_save && save.player >= 0 && !in_mail &&
+					!in_menu && small_text
+				? ship_card_label(save, town_index)
+				: "";
+			if (!card.empty()) {
+				const SDL_Rect box = ship_card_rect(*small_text, card);
+				draw_panel_box(renderer, box);
+				small_text->draw(card, box.x + 8, box.y + 4, kTextColor);
+			}
 		}
 		if (text) {
 			std::vector<std::string> right_texts;
@@ -3762,7 +4428,7 @@ int main(int argc, char** argv) {
 						  tr("Select: pestaña   " BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar",
 							  "Select: tab   " BTN_SQUARE " delete   " BTN_CIRCLE " close"),
 						  tr(BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar", BTN_SQUARE " delete   " BTN_CIRCLE " close")};
-			} else if (trading || in_hanse) {
+			} else if (trading || in_hanse || place.open != Place::None) {
 				const std::string money = format_money(save.merchants[size_t(save.player)].money()) + tr(" monedas", " coins");
 				right_texts = {merchant_name(save, names, save.player) + ": " + money, money};
 			} else if (at_sea) {
@@ -3773,18 +4439,16 @@ int main(int argc, char** argv) {
 					tr("L/R: ciudad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", "L/R: town   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter"),
 					tr(BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", BTN_CROSS " set sail   " BTN_TRIANGLE " enter")};
 			} else if (selection.mode == Mode::Saved) {
-				right_texts = {tr("L/R: ciudad   " BTN_TRIANGLE " mapa   " BTN_CROSS " mercado   " BTN_SQUARE " Hansa   " BTN_CIRCLE " buzón",
-								   "L/R: town   " BTN_TRIANGLE " map   " BTN_CROSS " market   " BTN_SQUARE " Hanse   " BTN_CIRCLE " mailbox"),
-					tr(BTN_TRIANGLE " mapa   " BTN_CROSS " mercado   " BTN_SQUARE " Hansa   " BTN_CIRCLE " buzón",
-						BTN_TRIANGLE " map   " BTN_CROSS " market   " BTN_SQUARE " Hanse   " BTN_CIRCLE " mailbox"),
-					tr(BTN_TRIANGLE " mapa  " BTN_CROSS " mercado  " BTN_SQUARE " Hansa  " BTN_CIRCLE " buzón",
-						BTN_TRIANGLE " map  " BTN_CROSS " market  " BTN_SQUARE " Hanse  " BTN_CIRCLE " mailbox"),
-					tr("L/R: ciudad   " BTN_TRIANGLE " mapa   " BTN_CROSS " mercado   " BTN_SQUARE " Hansa",
-								   "L/R: town   " BTN_TRIANGLE " map   " BTN_CROSS " market   " BTN_SQUARE " Hanse"),
-					tr(BTN_TRIANGLE " mapa   " BTN_CROSS " mercado   " BTN_SQUARE " Hansa", BTN_TRIANGLE " map   " BTN_CROSS " market   " BTN_SQUARE " Hanse"),
-					tr(BTN_TRIANGLE " mapa  " BTN_CROSS " mercado  " BTN_SQUARE " Hansa", BTN_TRIANGLE " map  " BTN_CROSS " market  " BTN_SQUARE " Hanse"),
-					tr(BTN_CROSS " mercado   " BTN_SQUARE " Hansa", BTN_CROSS " market   " BTN_SQUARE " Hanse"),
-					tr(BTN_TRIANGLE " mapa   " BTN_CROSS " mercado", BTN_TRIANGLE " map   " BTN_CROSS " market")};
+				// X: the building under the cursor, or the market.
+				const int pointed = view->place_at(camera_x + kScreenWidth / 2, camera_y + kScreenHeight / 2);
+				const std::string x = BTN_CROSS " " + (pointed >= 0 ? place_name(pointed) : tr("mercado", "market"));
+				const std::string ship = !ship_card_label(save, town_index).empty() ? tr("   Select: barco", "   Select: ship") : "";
+				const std::string l = tr("L/R: ciudad   ", "L/R: town   ");
+				const std::string map = tr(BTN_TRIANGLE " mapa   ", BTN_TRIANGLE " map   ");
+				const std::string hanse_mail = tr("   " BTN_SQUARE " Hansa   " BTN_CIRCLE " buzón", "   " BTN_SQUARE " Hanse   " BTN_CIRCLE " mailbox");
+				const std::string hanse_only = tr("   " BTN_SQUARE " Hansa", "   " BTN_SQUARE " Hanse");
+				right_texts = {l + map + x + hanse_mail + ship, map + x + hanse_mail + ship, map + x + hanse_mail,
+					map + x + hanse_only, x + hanse_only, map + x, x};
 			} else {
 				right_texts = {tr("L/R: ciudad   " BTN_TRIANGLE " mapa   " BTN_CROSS " mercado", "L/R: town   " BTN_TRIANGLE " map   " BTN_CROSS " market"),
 					tr(BTN_TRIANGLE " mapa   " BTN_CROSS " mercado", BTN_TRIANGLE " map   " BTN_CROSS " market")};
@@ -3811,6 +4475,12 @@ int main(int argc, char** argv) {
 		}
 		if (trading) {
 			draw_market(renderer, *small_text, save, town_index, market);
+		}
+		if (place.open != Place::None && selection.mode == Mode::Saved && has_save && save.player >= 0 && small_text &&
+			!market.open && !hanse.open) {
+			// After this frame's ticks and operations: what the window shows now.
+			const PlaceView view_now = place_view(save, town_index, place);
+			draw_place(renderer, *small_text, place, view_now);
 		}
 		if (in_mail && mail.open) {
 			// After this frame's ticks and operations: the rows now, the selected

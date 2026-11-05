@@ -199,6 +199,40 @@ enum class GameText {
 	LoadingGame,  // «Loading game...» (Spanish «Iniciando partida...»)
 	LoadDamaged,  // «This save game appears to be damaged» (Spanish «No se puede cargar la partida.»)
 	LoadDamagedCannot,  // «and can't be loaded.» («El fichero está dañado.»)
+	// The tavern's window (0x5CD540; its texts 0x69D8A8.. in the English exe,
+	// 0x580 lower in the Spanish one): hiring sailors and a captain.
+	TavernHireSailors,  // «Hire sailors»
+	TavernHireCaptain,  // «Hire captain»
+	TavernOffersService,  // «offers his service to you.» (Spanish «: te ofrece sus servicios.»)
+	TavernAge,  // «Age:»
+	TavernDemands,  // «He demands»
+	TavernDailyWage,  // «as daily wage.»
+	TavernNoShip,  // «You have no ship in port»
+	TavernChosenShip,  // «Chosen ship:»
+	TavernThereAre,  // «There are»
+	TavernSailorsIn,  // «sailors in the tavern.»
+	TavernHowMany,  // «How many do you want to hire?»
+	TavernNoShipForSailors,  // «on which you can hire sailors.» («debes tener uno fondeado para poder contratar marineros.»)
+	TavernCaptain,  // «Captain» (the tavern's people, 0x69C9E0)
+	TavernSailors,  // «Sailors»
+	// The ship's window (0x493ED0).
+	ShipDismissSailors,  // «dismiss sailors»
+	ShipDismissCaptain,  // «dismiss captain»
+	ShipCaptain,  // «Captain»
+	// The shipyard's repairs (0x5F8F50; 0x6A5CB0.. in the English exe).
+	ShipyardRepair,  // «Repair»
+	ShipyardExecute,  // «Execute»
+	ShipyardRepairsHere,  // «For repairs at this shipyard» («Encargos de reparación en este astillero:»)
+	ShipyardConvoy,  // «Convoy»
+	ShipyardRepairCost,  // «\c\f1_The cost of repairs amounts to %i\C.»
+	ShipyardNoShips,  // «are no further ships available.» («No hay barcos disponibles en el puerto.»)
+	// The buildings' names (0x6A57C8 + 4 · the building's type in the English exe).
+	BuildingRepairDock,  // 0x01 «Repair Dock» (Spanish «Muelle»)
+	BuildingTownHall,  // 0x20 «Town Hall»
+	BuildingMarketHall,  // 0x23 «Market Hall» («Lonja»)
+	BuildingTavern,  // 0x24 «Tavern»
+	BuildingLender,  // 0x25 «Lender's House» («Prestamista»)
+	BuildingShipyard,  // 0x2E «Shipyard»
 	Count
 };
 

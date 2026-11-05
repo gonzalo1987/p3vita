@@ -1313,6 +1313,38 @@ and the rate above 20 goes up again; both fixed behind `fix_game_bugs()` (with
 and, at the level 25, the price). The world 7 days in the 12 saves, 0
 different.
 
+## The player's actions: the ship's windows in the viewer (2026-11-05)
+
+The viewer's tavern, shipyard and ship's window queue the operations of the
+sections above; what decides their bytes is what each window lists and offers,
+rewritten in `player_actions.cpp`: the ships of 0x504AC0 (`window_ships`, its
+modes 0, the tavern's sailors; 1, the shipyard's repairs; 3, the ships that can
+hire a captain), the tavern's captain (0x5269A0, already in `ship_trade.cpp`),
+the sailors it says there are (0x4F6CA0, or above 50 a number from the roll
+the window takes with `rand()` when it opens, 0x5CC479: `tavern_sailors`,
+`tavern_roll`) and the repair's operation (0x03, or 0x1D for a ship in a
+convoy, 0x5F9327). The game's list is on the heap, so the scenario calls
+0x504AC0 through a copier in the oracle's sentinel page (`WINDOW_SHIPS`,
+SENTINEL + 0xF80) that copies it into the scratch globals 0x6DFF00, and
+tick_probe's probe at that address writes p3vita's there; 0x4F6CA0 has a
+probe of its own. The oracle replaces `rand()` (`_rand`), so the roll isn't a
+recorded call: the scenario runs the window's own code (0x5CC479..0x5CC4AC,
+then 0x5D03A5..0x5D03F3) and compares the roll's float and the number shown
+with `player_ops tavern-sailors`.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `ship_windows` | the three lists on the player's first ship in port: as loaded, marked [+0x136] & 1, in the states 1 and 2, damaged and whole, without and with a captain; made a convoy's guide (0x509B90) with another ship of his chained in without a captain, the convoy's flag 2 and its states, its members damaged or not, the guide marked; a merchant out of the world. The tavern's captain: all free, the first busy, one kept for the player behind a busy one, one kept for another merchant, none free, an empty list. 0x4F6CA0 with 1, 3 and 200 unemployed and quotas 2, 30 and 100, and the tavern's count under and over 50. Then the viewer's bytes with the window's choices: the offered captain hired for the listed ship, the shown number of sailors hired, all of them dismissed, the convoy repaired | 1, 3, 5, 7 | 76 calls equal (50 lists, 15 of 0x4F6CA0, 7 of 0x5269A0, 4 operations), 29 of 29 targets, the tavern's count equal |
+
+Broken on purpose and caught: the convoy's state in the repairs' list (≤ 2
+instead of ≤ 1): 1 call different in saves 1 and 5. The world 7 days in the
+12 saves, 0 different; `trade_window`, `trade_branches`, `crew_ops` and
+`repair_ops` as before. The viewer without a window (save 1, Lübeck, with
+`--debug-state damaged,tavern-captain`): 15 sailors hired of the 17 shown (the
+ship's room), 3 dismissed, a captain hired (the letter «Contratación») and
+dismissed, the ship repaired for 2,476 coins (the state 4); touching the
+tavern and the shipyard opens them.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

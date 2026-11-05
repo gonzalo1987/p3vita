@@ -36,6 +36,7 @@ int usage() {
 		"       (--fix-game-bugs anywhere: with the fixes to the game's bugs, game_fixes.hpp)\n"
 		"       p3save compress <in> <out>\n"
 		"       p3save texts-cache <Patrician3.exe> <cache>\n"
+		"       p3save texts <Patrician3.exe> [FIRST]\n"
 		"       p3save <archivo.cpr> <partida> letters <Patrician3.exe> [merchant]\n"
 		"       p3save <archivo.cpr> <partida> chronicle <Patrician3.exe>\n"
 		"       p3save <archivo.cpr> <partida> letter-picture <entry> <out.png>\n"
@@ -49,6 +50,7 @@ int usage() {
 		"<partida> is read from the archive or, if it isn't there, from the disk.\n"
 		"compress compresses any file as the game does (lz_compress).\n"
 		"texts-cache writes the viewer's texts' cache of the exe and checks that it reads back the same.\n"
+		"texts prints the game's texts p3vita reads from the exe (game_texts.hpp), from FIRST on.\n"
 		"letters prints the letters of the merchant's chain (by default the player's) as\n"
 		"p3vita composes them (letters.hpp) with the exe's texts: entry, type and the\n"
 		"text in hex; - without a text, ? for a type not rewritten yet\n"
@@ -227,6 +229,20 @@ int main(int argc, char** argv) {
 		}
 		std::fclose(f);
 		return write_file(argv[3], lz_compress(data.data(), data.size())) ? 0 : 1;
+	}
+	if ((argc == 3 || argc == 4) && std::strcmp(argv[1], "texts") == 0) {
+		// The texts p3vita reads from the exe (GameText), from FIRST on: index and text.
+		std::string error;
+		std::unique_ptr<GameTexts> texts = GameTexts::load(argv[2], &error);
+		if (!texts) {
+			std::fprintf(stderr, "%s\n", error.c_str());
+			return 1;
+		}
+		const int first = argc == 4 ? std::atoi(argv[3]) : 0;
+		for (int i = first; i < int(GameText::Count); ++i) {
+			std::printf("%d\t%s\n", i, texts->get(GameText(i)).c_str());
+		}
+		return 0;
 	}
 	if (argc == 4 && std::strcmp(argv[1], "texts-cache") == 0) {
 		// The viewer's texts' cache: read from the exe, written, read back and compared.

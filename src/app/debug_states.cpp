@@ -136,6 +136,48 @@ bool pirate_attack(SaveGame& save) {
 	return true;
 }
 
+// The player's ships in port, with half their hull (for the shipyard's repairs).
+void damage_ships(SaveGame& save) {
+	for (SavedShip& ship : save.ships) {
+		if (ship.docked() && ship.owner() == save.player) {
+			ship.health() = ship.max_health() / 2;
+		}
+	}
+}
+
+// A captain in the tavern of the town of the player's first ship in port:
+// the head of its list ([0x82E], next [+0x0]) or, if empty, another town's
+// head moved there; free ([+0x8] 0) and kept for no one ([+0xF] 0xFF).
+bool tavern_captain(SaveGame& save) {
+	const uint16_t count = save.globals.u16(global::kCaptainCount);
+	int town = -1;
+	for (const SavedShip& ship : save.ships) {
+		if (ship.docked() && ship.owner() == save.player && ship.town() < save.towns.size()) {
+			town = ship.town();
+			break;
+		}
+	}
+	if (town < 0) {
+		return false;
+	}
+	uint16_t& head = save.towns[size_t(town)].memory.u16(0x82E);
+	for (size_t u = 0; head >= count && u < save.towns.size(); ++u) {
+		uint16_t& other = save.towns[u].memory.u16(0x82E);
+		if (int(u) != town && other < count) {
+			const uint16_t c = other;
+			other = save.captains[c].u16(0);
+			save.captains[c].u16(0) = head;
+			head = c;
+		}
+	}
+	if (head >= count) {
+		return false;
+	}
+	save.captains[head].u8(0x8) = 0;
+	save.captains[head].u8(0xF) = 0xFF;
+	return true;
+}
+
 }  // namespace
 
 const char kDebugStatesHelp[] =
@@ -147,7 +189,9 @@ const char kDebugStatesHelp[] =
 	"  alderman    the player is the Alderman\n"
 	"  election-tomorrow  the election of the Alderman at the start of the next day\n"
 	"  pirate-attack  the player's first ship sails and pirates attack it two days\n"
-	"              later (event 0x1E): a sea battle against the player\n";
+	"              later (event 0x1E): a sea battle against the player\n"
+	"  damaged     the player's ships in port with half their hull (the shipyard)\n"
+	"  tavern-captain  a free captain in the tavern of the player's first ship's town\n";
 
 bool apply_debug_states(SaveGame& save, const std::string& states, std::string& error) {
 	if (save.player < 0 || size_t(save.player) >= save.merchants.size()) {
@@ -190,6 +234,13 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "alderman") {
 			save.globals.u8(kAlderman) = uint8_t(save.player);
 			save.globals.u8(kAldermanTown) = m.u8(0x19);
+		} else if (state == "damaged") {
+			damage_ships(save);
+		} else if (state == "tavern-captain") {
+			if (!tavern_captain(save)) {
+				error = "the player has no ship in port, or no town has a captain";
+				return false;
+			}
 		} else {
 			error = "unknown debugging state \"" + state + "\"";
 			return false;

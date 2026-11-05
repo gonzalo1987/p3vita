@@ -32,18 +32,6 @@ uint32_t word(const uint8_t* operation, size_t offset) {
 	return v;
 }
 
-// 0x4F6CA0 (on the merchant, town): the sailors the merchant may hire in the
-// town: his quota there ([+0xF0 + town]) but at most the town's unemployed
-// sailors ([+0x2E4]) less one; none if fewer than 2.
-uint8_t fn_4f6ca0(const SaveGame& save, const MerchantMemory& m, uint32_t town) {
-	const int32_t n = save.towns[town].memory.s32(0x2E4) - 1;
-	if (n < 1) {
-		return 0;
-	}
-	const uint8_t quota = m.u8(0xF0 + town);
-	return int32_t(quota) >= n ? uint8_t(n) : quota;
-}
-
 // 0x4F6BD0 (on the merchant, town, amount): the quota goes down by the
 // sailors hired (to 0 at least).
 void fn_4f6bd0(const SaveGame& save, MerchantMemory& m, uint32_t town, uint32_t amount) {
@@ -70,6 +58,19 @@ void fn_526b00(SaveGame& save, int town, uint16_t& field) {
 }
 
 }  // namespace
+
+// 0x4F6CA0 (on the merchant, town): the sailors the merchant may hire in the
+// town: his quota there ([+0xF0 + town]) but at most the town's unemployed
+// sailors ([+0x2E4]) less one; none if fewer than 2. The tavern's window
+// shows it too (player_actions.cpp).
+uint8_t fn_4f6ca0(const SaveGame& save, const MerchantMemory& m, uint32_t town) {
+	const int32_t n = save.towns[town].memory.s32(0x2E4) - 1;
+	if (n < 1) {
+		return 0;
+	}
+	const uint8_t quota = m.u8(0xF0 + town);
+	return int32_t(quota) >= n ? uint8_t(n) : quota;
+}
 
 namespace diet_detail {
 void fn_4f9120(SaveGame& save, uint32_t merchant, uint32_t town, uint32_t hull);
