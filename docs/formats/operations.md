@@ -82,6 +82,18 @@ second otherwise; the office's side (0x4AA7C0) has its stock / 200 or / 2000 and
   (0x4D9620: his company's new shares, then his holdings; 0x5B66C0: 0x2B). The lists of
   the debts, the loans granted and the shares are 0x18-byte or 12-byte entries on the
   heap; the window calls 0x51CE80, 0x51D160 and 0x4D9320 every frame on their pages.
+- **The build window** (the side menu SIDEMENU_BUILD, *0x6CC95C; 2026-11-05) has five
+  categories ([+0x104C]: housing, public, fortifications, two groups of businesses) whose
+  buttons 0x47AB20 fills with building types; choosing one (0x47A833) asks 0x51F3A0 for its
+  costs. The streets, the well and the wall have buttons of their own (0x4797C0): 0x25
+  {town, player}, 0x22 {player, town, x, y from 0x5250D0, 0x28, 0} and 0x24 {player, town,
+  the next piece is a gate}; the others are placed in the town view, which asks 0x47B8C0
+  whether the building fits the cell under the cursor (the tint [+0xC6CC]) and queues 0x21
+  (0x590840) with the picture the window asked for (0x5928A0: the houses' and the
+  warehouse's orientation by what fits, the gate under the pitch shoot). 0x47B830 marks
+  where it fits. The player's own building's window (0x5AF5C0) demolishes it (0x26, after
+  «Do you really want to demolish this building?») or auctions it (0x28, after the
+  question with the reserve price, 0x5AFC50), both through 0x5AFD80.
 
 Not found: 0x3C, 0x4C, 0x54, 0x55, 0x5C, 0x5D, 0x8F, 0x99, 0xA6, 0xAE, 0xB2, 0xB6 and
 0xBD have no queuing site with a constant code. Some are surely queued with a
@@ -141,14 +153,14 @@ feast window): the handler is the same and is done.
 | 0x1E | simulation | a convoy leaves on an expedition (0x539B50) | 0x503B50; 0x5B9210 | 0x535ACF → 0x539B50 |  | yes | read |
 | 0x1F | simulation | a point of a convoy's expedition route (0x539C60) | 0x503B50; 0x5B9210 | 0x535ADE → 0x539C60 |  | yes | read |
 | 0x20 | player | a docked convoy (state 0) waits for ships to another destination: {0x20, convoy, destination, u16 days}: its [+0x1F], [+0x16] = days << 8, the state 1, and its ships wait as long (0x539CF0, `convoys_members.cpp`) | not found with its code (0x40EEB0, 0x4237D0 by the table) | 0x535AED → 0x539CF0 |  | yes | read |
-| 0x21 | player | build, from the town view (0x53CE30 with the table 0x672FC0) | town view 0x590840 | 0x535AFC → 0x53CE30 |  | yes | read |
-| 0x22 | simulation | build (0x53CE30) | the towns' works, the AI; the interface 0x4797C0, 0x419EB0 | 0x535AFC → 0x53CE30 |  | yes | read |
+| 0x21 | player | build, from the town view: {0x21, u8 player, town, x, y, the building's picture (0x672FC0), the parameter (the houses' and the warehouse's orientation, a gate's), zeros}; the handler takes the picture back to its type from the end of 0x672FC0, 0x2C opens an office (0x53CE30, `construction.cpp`; the bytes, `player_actions.cpp` `place_operation`) | town view 0x590840 (when the picture's tint says it fits: 0x47B8C0 of the build window) | 0x535AFC → 0x53CE30 |  | yes | read |
+| 0x22 | simulation | build (0x53CE30) | the towns' works, the AI; the build window 0x4797C0 (the well: {0x22, u8 player, town, x, y from 0x5250D0, 0x28, 0}), 0x419EB0 | 0x535AFC → 0x53CE30 |  | yes | read |
 | 0x23 | simulation | start a side of the town wall (0x522B20) | 0x51D870; 0x419EB0 | 0x535B12 → 0x522B20 |  | yes | read |
-| 0x24 | simulation | the next wall piece (0x522C70; the book: «Build Town Wall») | 0x51D870; 0x4797C0, 0x419EB0 | 0x535B44 → 0x522C70 |  | yes | read |
+| 0x24 | simulation | the next wall piece (0x522C70; the book: «Build Town Wall») | 0x51D870; the build window 0x4797C0 («build piece of wall»: {0x24, player, town, the next piece is a gate}), 0x419EB0 | 0x535B44 → 0x522C70 |  | yes | read |
 | 0x25 | player | streets: {0x25, town, merchant}: what a street (type 2) costs (0x51F3A0: streets still to make, [0x790] < [0x792]), with an office in the town; his reputation (0x4F8A50), he pays, his office and ships give the materials (0x500A70), the town's store what is missing; a street record into the works and up to 16 planned streets built (0x4FB580, ring by ring from the town's middle) into [0x790] (0x5244F0, `construction.cpp`) | build window 0x4797C0 («build street») | 0x535B7B → 0x5244F0 |  | yes | read |
-| 0x26 | player | demolish: {0x26, town, merchant, x, y}: his building at (x, y) in his office's lists or the town's works, with an office there, not on sale (0x4DAFE0); out of the grid (0x4FACD0), the office recounted, a business costs 1 of reputation, the record freed (0x51F050) (0x53CF50, `construction.cpp`) | 0x5AFC50 | 0x535BAD → 0x53CF50 |  | yes | read |
+| 0x26 | player | demolish: {0x26, town, merchant, x, y}: his building at (x, y) in his office's lists or the town's works, with an office there, not on sale (0x4DAFE0); out of the grid (0x4FACD0), the office recounted, a business costs 1 of reputation, the record freed (0x51F050) (0x53CF50, `construction.cpp`) | the player's building's window 0x5AF5C0 («demolish»: the question 0x5AF731, then 0x5AFD80 with its flag 0) | 0x535BAD → 0x53CF50 |  | yes | read |
 | 0x27 | simulation | materials for a town's works (0x535BBC) | 0x51D870 | 0x535BBC |  | yes | read |
-| 0x28 | simulation | a merchant puts a building on sale (0x53D190) | 0x4F5A20; the mission interpreter | 0x535C2D → 0x53D190 |  | yes | read |
+| 0x28 | simulation | a merchant puts a building on sale (0x53D190) | 0x4F5A20; the mission interpreter; the player's building's window (auction: 0x5AFC50's question with the reserve price 0x4DAF10, then 0x5AFD80: {0x28, town, merchant, x, y}) | 0x535C2D → 0x53D190 |  | yes | read |
 | 0x29 | player | a loan: {0x29, the terms: u32 the repayment, u8 the weekly interest (tenths of %), the borrower's rank and names, u16 the amount, u8 the weeks, the low byte of the loan's tick, u8 lender, borrower (0xFF: the moneylender or a townsman), town, slot << 4 | kind}: the event 0x01, the town's slot emptied, the lender pays it (0x539DC0, `operations.cpp`) | moneylender: taking one 0x5B5A00 (the terms of 0x51CE80), granting one 0x5B6000 (0x51D160, the kind chosen, 0x51D270); the merchants' tick 0x4F4E50 | 0x535C3C → 0x539DC0 |  | yes | read |
 | 0x2A | player | pay off a loan before it falls due: {0x2A, merchant, event}: the record (0x4D8DB0) a loan whose debtor is the merchant: he pays its [+0x8], a creditor merchant gets it, both become 0xFF (0x539F30, `operations.cpp`) | moneylender 0x5B5B90 (the debts of 0x4D9100) | 0x535C4B → 0x539F30 |  | yes | read |
 | 0x2B | player | company shares bought or sold: {0x2B, u8 company, shares, seller, buyer (0xFF: the pool), u32 price, u32 what the player owns}: the events 0x18, at most 45 % sold by the owner; their dividends each quarter (event 0x18, 0x4E8804) (0x4D98F0, `operations.cpp`) | moneylender 0x5B6400 (buy: the list 0x4D9320), 0x5B66C0 (sell: 0x4D9620) | 0x535C5A → 0x4D98F0 |  | yes | read |

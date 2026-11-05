@@ -30,6 +30,9 @@
 //        player_ops upgrade SHIP LEVEL | rename SHIP NAME (one line per operation)
 //        player_ops loan TERMS (32 hex digits: the window's terms, take out or grant)
 //        player_ops pay-off PLAYER LOAN | shares ENTRY (24 hex digits: an entry of the shares' lists)
+//        player_ops build PLAYER TOWN X Y CATALOG KEY (the town view's 0x21, from the window's picture)
+//        player_ops street TOWN PLAYER | well PLAYER TOWN X Y | wall PLAYER TOWN NEXT_TYPE
+//        player_ops demolish TOWN MERCHANT X Y | auction TOWN MERCHANT X Y
 // (STEP 1, 5, 50, or 0 for all; «none» when the window sends nothing;
 // tavern-sailors prints the tavern's roll, its float's bits, and the
 // sailors it shows, from what 0x4F6CA0 allows and the game's rand() value)
@@ -203,6 +206,22 @@ int main(int argc, char** argv) {
 			return usage();
 		}
 		op = shares_operation(entry);
+	} else if (what == "build" && argc == 8) {
+		// The town view's 0x21 from the picture the window asked for (its key).
+		const BuildGhost ghost{uint8_t(number(argv[6])), uint32_t(number(argv[7]))};
+		op = build_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])), uint8_t(number(argv[4])),
+			uint8_t(number(argv[5])), ghost.catalog, build_param(ghost));
+	} else if (what == "street" && argc == 4) {
+		op = street_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])));
+	} else if (what == "well" && argc == 6) {
+		op = well_bytes(uint32_t(number(argv[2])), uint32_t(number(argv[3])), uint8_t(number(argv[4])),
+			uint8_t(number(argv[5])));
+	} else if (what == "wall" && argc == 5) {
+		op = wall_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])), int(number(argv[4])));
+	} else if ((what == "demolish" || what == "auction") && argc == 6) {
+		const uint32_t w[4] = {uint32_t(number(argv[2])), uint32_t(number(argv[3])), uint32_t(number(argv[4])),
+			uint32_t(number(argv[5]))};
+		op = what == "demolish" ? demolish_operation(w[0], w[1], w[2], w[3]) : auction_operation(w[0], w[1], w[2], w[3]);
 	} else if (what == "rename" && argc == 4) {
 		for (const OperationBytes& o : rename_operations(uint32_t(number(argv[2])), argv[3])) {
 			for (const uint8_t b : o) {

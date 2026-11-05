@@ -1492,6 +1492,48 @@ in `OPERATIONS`.
 Save 1 has no office with a business and a house. Broken on purpose and caught:
 the 16 streets as 15 (3 calls). The world 7 days in the 12 saves, 0 different.
 
+## The player's actions: the build window (2026-11-05)
+
+What the game's build window (the side menu SIDEMENU_BUILD, *0x6CC95C) and the town
+view decide, read whole and rewritten in `player_actions.cpp`: the menu of its five
+categories (0x47AB20, `build_menu`), what choosing a building does (0x47A833..0x47AB13:
+0x51F3A0's costs and the buttons of the streets, the well and the wall, `build_choice`),
+whether a building fits a cell (0x47B8C0 with 0x4FD020, `fn_47b8c0`: it may turn the
+pitch shoot's type into 0x34 or 0x35 by the gate, and asks the town view for the
+building's picture, whose key carries the 0x21's parameter), the marks of where it fits
+(0x47B830: 0x4FD5E0, 0x4FD4A0, 0x4FD0D0, 0x5241E0, `build_marks`; they clear the town's
+[0x7A4], the grid's «changed» flag, as the game), the bytes of the town view's 0x21
+(0x590840, `place_operation`), of the window's buttons 0x22, 0x24, 0x25, and of the
+player's building's window 0x26 and 0x28 (0x5AF5C0, 0x5AFD80; 0x5AFC50 is the auction's
+question, not the demolishing's). The window's tabs (`build_tabs`) keep a state from
+frame to frame in the game; p3vita gives the state they settle in (interface only).
+
+The windows aren't in the emulator, so three copiers in the oracle's sentinel page run
+the game's functions on a window of their own (`BUILD_MENU`, `BUILD_FITS`, `BUILD_MARKS`:
+SENTINEL + 0x200, + 0x280, + 0x300): the buttons' methods return at once, the menu gets
+a town view of its own for the call (*0x6E51AC), 0x4C7780 (a button's text) and 0x58CC90
+are skipped and 0x5928A0 (the town view's picture) is a stub that keeps its picture and
+key in the scratch globals; the marks' map (one byte per cell, at y · [0x7A8] + x) is
+summed by a hook (the cells, and the sums of their indices, squares and cubes). The
+probes of `probes_unchecked.cpp` make p3vita's. `player_ops build`, `street`, `well`,
+`wall`, `demolish`, `auction` give the viewer's bytes.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `build_menus` | the menu: housing with the player's office, in a town without the bits 0xE0 (not the mayor; the mayor without and with buildings), where he has none (no rank: the reputation's text; a rank; the mayor), a town out; public buildings for the mayor with the town's bits [0x76C] one by one and for another player; fortifications for another player (category 3), for the mayor without the bit 0x10, with it and the wall pending or not, with the list's types changed (3 port and 6 gate weapons, a gate) and only walls; the businesses by their productivity (400, 401, 1000) in the categories 3, 4, 7 and −1. 0x51F3A0 for the window's types (the office, streets, well, warehouse, houses, the towers, the pitch shoot, the wall's pieces). The marks of every type 0..0x38, the office where he has none, the towers and gates with the list changed, and in a siege | 1, 3, 5, 7 | 36 menus, 15 costs and 73 marks equal; 68 of 68 targets |
+| `build_places` | whether each type 0..0x37 fits where it seems to and beside it; the fixed points of the office, the repair dock and the shipyard; a house and the warehouse with each orientation that fits (both: the town's [0x774] above 0 and not); a sawmill in a siege inside and outside the walls; the port and gate cannons on their towers; the gate bombard beside each gate and on one; the pitch shoot on each kind of gate (the window's type following it), with the gate's kind changed and in works; a town and a type out. Then the viewer's bytes run by the game: the 0x21 of houses each way, the warehouse, businesses, public buildings, each tower and the pitch shoot, the office where he has none; the well (its cell from 0x5250D0), the streets, the next wall piece, demolishing and auctioning one of his buildings (or works) | 1, 3, 5, 7 | 259–274 checks of 0x47B8C0 and 21–24 operations equal; 37 of 37 targets |
+
+A game bug seen here (roadmap, «Corregir los fallos del juego»): a building whose
+footprint or surroundings reach past the grid's edge (a fisherman's house at x = 1 in
+save 1, which 0x47B8C0 accepts) is written past the grid: the column x = −1 falls before
+the grid's block, which in the emulator's heap is the town's building records (record
+104's parameter and record 105's cell became 0xEB, 0xEF, 0xEF). p3vita writes only inside
+the grid, so the scenario builds away from the edges. Broken on purpose and caught: the
+businesses' productivity ≥ 400 instead of > 400 (4 menus), the office's marks 4 · 3
+instead of 3 · 4 (2 marks), a house that fits both ways facing 0xE0 with the town's
+[0x774] at 0 (11 checks in save 3, whose town has it at 0). The scenarios of the earlier
+batches as before; the world 7 days in the 12 saves, 0 different.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

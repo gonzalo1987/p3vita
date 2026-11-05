@@ -6502,6 +6502,437 @@ def build_player_ops(o):
     return during
 
 
+BUILD_MENU = to.SENTINEL + 0x200  # the copier of the build window's menu 0x47AB20 (probes_unchecked.cpp kBuildMenu)
+BUILD_FITS = to.SENTINEL + 0x280  # of whether a building fits a cell, 0x47B8C0 (kBuildFits)
+BUILD_MARKS = to.SENTINEL + 0x300  # of where it fits, 0x47B830 (kBuildMarks)
+BUILD_RET4 = to.SENTINEL + 0x380  # ret 4: the methods of the window's buttons
+TOWN_VIEW = 0x6E51AC  # *: the town view, which the emulator hasn't
+BUILD_COST = SCRATCH + 0x80  # 0x51F3A0's 0x44 bytes
+# 0x672FC0: the town view's picture of each building type.
+BUILD_CATALOG = bytes.fromhex('2c1b0b085d57585b595356645a5e60555c636261545151515050502a2a2a6604030b07000205093352'
+                              '656768693701' '5f29292929' '2f2f2e2f2f')
+# 0x672F84: each type's class.
+BUILD_CLASS = (3, 7, 0, 0, 4, 0, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 10, 3,
+               2, 3, 0, 0, 3, 0, 5, 3, 2, 2, 3, 6, 7, 6, 6, 6, 6, 6, 6, 8, 9, 8, 9)
+# The cell class (& 0x3F) some types fit (0x47B8C0).
+BUILD_CELL = {0x03: 0x1D, 0x05: 0x0E, 0x1F: 0x19, 0x20: 0x1B, 0x21: 0x14, 0x22: 0x1A, 0x23: 0x16, 0x24: 0x17,
+              0x25: 0x15, 0x27: 0x18, 0x2F: 0x0F, 0x30: 0x1C}
+
+
+def build_copiers(o):
+    """The copiers of the build window (stdcall), on a window of their own
+    (its buttons' methods all ret 4) and, for the menu, a town view of their
+    own (*0x6E51AC set during the call): BUILD_MENU (town, category):
+    0x47AB20, its 8 types ([+0xC74]) into SCRATCH, the category it shows
+    ([+0x104C]) and the reputation's text ([+0x1060]) after; BUILD_FITS
+    (town, x, y, type): 0x47B8C0 with the window's type, al and the type after
+    into SCRATCH, SCRATCH + 4, and the picture it asks the town view for
+    (0x5928A0, stubbed here: its picture and key) into SCRATCH + 0x10, + 0x14
+    (−1 if none); BUILD_MARKS (town, type): 0x47B830, summed into SCRATCH by a
+    hook (how many cells, the sums of their indices, squares and cubes, and
+    whether there is a map) and the map freed. The buttons' texts (0x4C7780)
+    and the town view's picture (0x58CC90) are skipped."""
+    from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_EIP, UC_X86_REG_ESP
+    win, view, vtable = o.alloc(0x1200), o.alloc(0xC330), o.alloc(0x400)
+    o.uc.mem_write(BUILD_RET4, bytes([0xC2, 0x04, 0x00]))
+    o.uc.mem_write(vtable, struct.pack('<I', BUILD_RET4) * 0x100)
+    o.uc.mem_write(win, struct.pack('<I', vtable) * (0x1200 // 4))
+
+    def call(at, code, target):
+        return bytes([0xE8]) + struct.pack('<i', target - (at + len(code) + 5))
+
+    def put(at, code):
+        assert len(code) <= 0x80
+        o.uc.mem_write(at, code)
+
+    at = BUILD_MENU
+    code = bytes([0x8B, 0x44, 0x24, 0x04, 0xA3]) + struct.pack('<I', view + 0xC324)  # the view's town
+    code += bytes([0x8B, 0x44, 0x24, 0x08, 0xA3]) + struct.pack('<I', win + 0x104C)  # the category
+    code += bytes([0xC7, 0x05]) + struct.pack('<II', TOWN_VIEW, view)
+    code += bytes([0xB9]) + struct.pack('<I', win)
+    code += call(at, code, 0x47AB20)
+    code += bytes([0xC7, 0x05]) + struct.pack('<II', TOWN_VIEW, 0)
+    code += bytes([0x56, 0x57, 0xBE]) + struct.pack('<I', win + 0xC74) + bytes([0xBF]) + struct.pack('<I', SCRATCH)
+    code += bytes([0xB9]) + struct.pack('<I', 8) + bytes([0xFC, 0xF3, 0xA5, 0x5F, 0x5E])  # rep movsd
+    code += bytes([0xA1]) + struct.pack('<I', win + 0x104C) + bytes([0xA3]) + struct.pack('<I', SCRATCH + 0x20)
+    code += bytes([0xA1]) + struct.pack('<I', win + 0x1060) + bytes([0xA3]) + struct.pack('<I', SCRATCH + 0x24)
+    put(at, code + bytes([0xC2, 0x08, 0x00]))
+
+    at = BUILD_FITS
+    code = bytes([0x8B, 0x44, 0x24, 0x10, 0xA3]) + struct.pack('<I', win + 0x1070)  # the window's type
+    code += bytes([0xC7, 0x05]) + struct.pack('<II', SCRATCH + 0x10, 0xFFFFFFFF)
+    code += bytes([0xC7, 0x05]) + struct.pack('<II', SCRATCH + 0x14, 0xFFFFFFFF)
+    code += bytes([0xFF, 0x74, 0x24, 0x0C]) * 3  # town, x, y
+    code += bytes([0xB9]) + struct.pack('<I', win)
+    code += call(at, code, 0x47B8C0)
+    code += bytes([0x25]) + struct.pack('<I', 0xFF) + bytes([0xA3]) + struct.pack('<I', SCRATCH)
+    code += bytes([0xA1]) + struct.pack('<I', win + 0x1070) + bytes([0xA3]) + struct.pack('<I', SCRATCH + 4)
+    put(at, code + bytes([0xC2, 0x10, 0x00]))
+
+    at = BUILD_MARKS
+    code = bytes([0x8B, 0x44, 0x24, 0x08, 0xA3]) + struct.pack('<I', win + 0x1070)
+    code += bytes([0xFF, 0x74, 0x24, 0x04, 0xB9]) + struct.pack('<I', win)  # the town
+    code += call(at, code, 0x47B830)
+    summary = at + len(code)
+    code += bytes([0x90, 0x85, 0xC0, 0x74, 0x09, 0x50])  # nop (the hook); test eax, eax; jz; push eax
+    code += call(at, code, 0x64F7E2)  # operator delete
+    put(at, code + bytes([0x83, 0xC4, 0x04, 0xC2, 0x08, 0x00]))
+
+    def skip(n):
+        def f(uc, address, size, data):
+            esp = uc.reg_read(UC_X86_REG_ESP)
+            uc.reg_write(UC_X86_REG_EIP, o.u32(esp))
+            uc.reg_write(UC_X86_REG_ESP, esp + 4 + 4 * n)
+        return f
+
+    def picture(uc, address, size, data):
+        esp = uc.reg_read(UC_X86_REG_ESP)
+        w32(o, SCRATCH + 0x10, o.u32(esp + 4))
+        w32(o, SCRATCH + 0x14, o.u32(esp + 8))
+        uc.reg_write(UC_X86_REG_EAX, 0)
+        uc.reg_write(UC_X86_REG_EIP, o.u32(esp))
+        uc.reg_write(UC_X86_REG_ESP, esp + 16)
+
+    def marks(uc, address, size, data):
+        eax, esp = uc.reg_read(UC_X86_REG_EAX), uc.reg_read(UC_X86_REG_ESP)
+        a = o.town(o.u32(esp + 4))
+        sums = [0, 0, 0, 0]
+        if eax:
+            for i, b in enumerate(bytes(uc.mem_read(eax, o.s32(a + 0x7A8) * o.s32(a + 0x7AC)))):
+                if b:
+                    sums = [sums[0] + 1, sums[1] + i, sums[2] + i * i, sums[3] + i * i * i]
+        for k in range(4):
+            w32(o, SCRATCH + 4 * k, sums[k])
+        w32(o, SCRATCH + 0x10, 1 if eax else 0)
+
+    for address, f in ((0x4C7780, skip(1)), (0x58CC90, skip(1)), (0x5928A0, picture), (summary, marks)):
+        o.uc.hook_add(UC_HOOK_CODE, f, begin=address, end=address)
+        o.uc.ctl_remove_cache(address, address + 1)
+
+
+def build_menu_of(o, t, category, what):
+    direct(o, BUILD_MENU, [t, category])
+    types = [hex(s32_of(o.u32(SCRATCH + 4 * k))) for k in range(8) if s32_of(o.u32(SCRATCH + 4 * k)) >= 0]
+    print(f'  {what}: category {s32_of(category)} -> {s32_of(o.u32(SCRATCH + 0x20))}: {types}'
+          f'{", the reputation text" if o.u32(SCRATCH + 0x24) else ""}')
+    return types
+
+
+def build_fits_at(o, t, x, y, kind, what=''):
+    """0x47B8C0 through BUILD_FITS: (fits, the window's type after, the picture, its key)."""
+    direct(o, BUILD_FITS, [t, x, y, kind])
+    got = o.u32(SCRATCH) & 0xFF, s32_of(o.u32(SCRATCH + 4)), o.u32(SCRATCH + 0x10), o.u32(SCRATCH + 0x14)
+    if what:
+        print(f'  {what}: type {kind:#x} at ({x}, {y}): fits {got[0]}, type {got[1]:#x}, picture {got[2]:#x} {got[3]:#x}')
+    return got
+
+
+def build_marks_of(o, t, kind, what=''):
+    direct(o, BUILD_MARKS, [t, kind])
+    got = [o.u32(SCRATCH + 4 * k) for k in range(5)]
+    print(f'  marks of {kind:#x}{" " + what if what else ""}: {got[0]} cells{"" if got[4] else ", no map"}')
+    return got
+
+
+def build_town(o):
+    """The player, his home town (with his office there, or the first town
+    of an office of his) and a town where he has none."""
+    p = o.u32(to.PLAYER)
+    towns = o.counts()[0]
+    t = o.u8(o.merchant(p) + 0x19)
+    f = facilities_office(o, p, t)
+    if f is None:
+        t = office_town(o, p)
+        f = facilities_office(o, p, t)
+    other = next(k for k in range(towns) if facilities_office(o, p, k) is None)
+    print(f'player {p}: office {f} in town {t}; no office in town {other}')
+    return p, t, f, other
+
+
+def fortifications(o, t):
+    """[(record address, type, pending)] of the town's fortification list [0x768]."""
+    a = o.town(t)
+    return [(record_at(o, t, r), kind, pending) for r, _, _, _, kind, pending in records(o, t, 0x768)]
+
+
+def build_menus(o):
+    """The build window's menu (0x47AB20 through BUILD_MENU), its costs
+    (0x51F3A0) and its marks of where each type fits (0x47B830 through
+    BUILD_MARKS). The menu: housing with the player's office, in a town
+    without the bits 0xE0 (not the mayor, the mayor without and with
+    buildings), and where he has none (no rank: the reputation's text; a
+    rank; the mayor); public buildings for the mayor with the town's bits
+    [0x76C] one by one (the first four missing, then the tavern, the repair
+    dock, the church; the hospital group with 0x200, 0x400, 0x1000) and for
+    another player; fortifications for another player (category 3) and the
+    mayor without the bit 0x10, with it, with the list's types changed (3
+    port bombards and cannons, 6 gate ones, a gate) and the wall pending or
+    not; the businesses by the productivity (400 and 401) in the categories
+    3, 4, 7 and −1. The costs of the window's types; the marks of every type,
+    with the list changed and in a siege."""
+    p, t, f, t2 = build_town(o)
+    a, a2 = o.town(t), o.town(t2)
+    rank_at = o.merchant(p) + 0x39C + t2
+
+    def during(o):
+        build_copiers(o)
+        flags, mayor, bits, wall = o.u32(a + 0x2C8), o.u8(a + 0x6F1), o.u32(a + 0x76C), o.u16(a + 0x766)
+        flags2, mayor2, rank = o.u32(a2 + 0x2C8), o.u8(a2 + 0x6F1), o.u8(rank_at)
+        build_menu_of(o, t, 0, 'with his office')
+        w32(o, a + 0x2C8, flags & ~0xE0)
+        w8(o, a + 0x6F1, (p + 1) & 0xFF)
+        build_menu_of(o, t, 0, 'no bits 0xE0, not the mayor')
+        w8(o, a + 0x6F1, p)
+        w32(o, a + 0x76C, 0)
+        build_menu_of(o, t, 0, 'the mayor, nothing built')
+        w32(o, a + 0x76C, bits)
+        build_menu_of(o, t, 0, 'the mayor')
+        w32(o, a + 0x2C8, flags)
+        w32(o, a2 + 0x2C8, flags2 | 0x40)
+        w8(o, a2 + 0x6F1, (p + 1) & 0xFF)
+        w8(o, rank_at, 0)
+        build_menu_of(o, t2, 0, 'no office, no rank')
+        w8(o, rank_at, 1)
+        build_menu_of(o, t2, 0, 'no office, a rank')
+        w8(o, rank_at, 0)
+        w8(o, a2 + 0x6F1, p)
+        build_menu_of(o, t2, 0, 'no office, the mayor')
+        w8(o, rank_at, rank)
+        w8(o, a2 + 0x6F1, mayor2)
+        w32(o, a2 + 0x2C8, flags2)
+        build_menu_of(o, o.counts()[0], 0, 'a town out (the first)')
+        for value in (0, 0x10, 0x11, 0x13, 0x17, 0x0F, 0x1F, 0x3F, 0x5F, 0x7F, 0x27F, 0x67F, 0x127F, 0x7FFF):
+            w32(o, a + 0x76C, value)
+            build_menu_of(o, t, 1, f'the mayor, [0x76C] {value:#x}')
+        w8(o, a + 0x6F1, (p + 1) & 0xFF)
+        for value in (0x210, 0x7FFF):
+            w32(o, a + 0x76C, value)
+            build_menu_of(o, t, 1, f'not the mayor, [0x76C] {value:#x}')
+        w32(o, a + 0x76C, bits)
+        build_menu_of(o, t, 2, 'not the mayor')
+        w8(o, a + 0x6F1, p)
+        forts = fortifications(o, t)
+        types = [kind for _, kind, _ in forts]
+        print(f'  fortifications: {[hex(k) for k in types]}, pending walls from {wall}')
+        w32(o, a + 0x76C, bits & ~0x10)
+        build_menu_of(o, t, 2, 'the mayor, no bit 0x10')
+        w32(o, a + 0x76C, bits | 0x10)
+        for pending in (0xFFFF, o.u16(a + 0x768)):
+            w16(o, a + 0x766, pending)
+            build_menu_of(o, t, 2, f'the mayor, pending walls {pending:#x}')
+        pattern = (0x30, 0x31, 0x30, 0x32, 0x33, 0x32, 0x32, 0x32, 0x32, 0x37)
+        for at, kind in zip((r for r, _, _ in forts), pattern):
+            w8(o, at + 3, kind)
+        build_menu_of(o, t, 2, 'the mayor, the list changed')
+        for at, _, _ in forts:
+            w8(o, at + 3, 0x36)
+        build_menu_of(o, t, 2, 'the mayor, only walls')
+        for at, kind, _ in forts:
+            w8(o, at + 3, kind)
+        w16(o, a + 0x766, wall)
+        w32(o, a + 0x76C, bits)
+        w8(o, a + 0x6F1, mayor)
+        saved = bytes(o.uc.mem_read(a + 0x888, 0x110))
+        for k in range(17):
+            w16(o, a + 0x888 + 0x10 * k, 400 + (k % 2))
+        for category in (3, 4, 7, 0xFFFFFFFF):
+            build_menu_of(o, t, category, 'productivity 400 and 401')
+        for k in range(17):
+            w16(o, a + 0x888 + 0x10 * k, 1000)
+        build_menu_of(o, t, 3, 'productivity 1000')
+        build_menu_of(o, t, 4, 'productivity 1000')
+        o.uc.mem_write(a + 0x888, saved)
+        # The costs of the window's types.
+        for town, kind in [(t2, 0), (t, 2), (t, 0x28), (t, 0x1E), (t, 0x15), (t, 0x1B), (t, 0x30), (t, 0x31),
+                           (t, 0x32), (t, 0x33), (t, 0x34), (t, 0x35), (t, 0x36), (t, 0x37), (t, 0x38)]:
+            o.uc.mem_write(BUILD_COST, bytes(0x44))
+            w16(o, BUILD_COST + 0x3C, kind)
+            w16(o, BUILD_COST + 0x3E, p)
+            can = direct(o, 0x51F3A0, [BUILD_COST], ecx=o.town(town)) & 0xFF
+            print(f'  0x51F3A0 type {kind:#x} in {town}: {can}, why not {o.u8(BUILD_COST + 0x43)}, '
+                  f'cost {o.s32(BUILD_COST + 0x34)}')
+        # The marks.
+        for kind in range(0x39):
+            build_marks_of(o, t, kind)
+        build_marks_of(o, t2, 0, 'no office')
+        for at, kind in zip((r for r, _, _ in forts), pattern):
+            w8(o, at + 3, kind)
+        if forts:
+            w8(o, forts[-1][0] + 3, 0x38)
+            w8(o, forts[-1][0] + 6, 0)
+        for kind in range(0x30, 0x37):
+            build_marks_of(o, t, kind, 'the list changed')
+        for at, kind, pending in forts:
+            w8(o, at + 3, kind)
+            w8(o, at + 6, pending)
+        w32(o, a + 0x2C8, flags | 0x10)
+        for kind in (4, 5, 6, 0x0B, 0x15, 0x1E, 0x26, 0x30):
+            build_marks_of(o, t, kind, 'in a siege')
+        w32(o, a + 0x2C8, flags)
+    return during
+
+
+def grid_bytes(o, t):
+    a = o.town(t)
+    w, h = o.s32(a + 0x7A8), o.s32(a + 0x7AC)
+    return bytes(o.uc.mem_read(o.u32(a + GRID), w * h)), h
+
+
+def build_candidates(o, t, kind, most=3):
+    """Cells to try a type at: up to `most` where it seems to fit (spread over
+    the grid) and two beside them."""
+    data, h = grid_bytes(o, t)
+    cls = BUILD_CLASS[kind]
+
+    def seems(c):
+        if kind in BUILD_CELL:
+            return c & 0x3F == BUILD_CELL[kind]
+        if 0x15 <= kind <= 0x1E:
+            return c & 0xA1 == 0xA1 or c & 0xA2 == 0xA2
+        if kind in (0x26, 0x29, 0x2A, 0x2B, 0x2C):
+            m = (1 << cls) | 0xA0
+            return c & m == m
+        m = (1 << cls) | 0x20
+        return cls < 6 and c & m == m
+    good = [i for i, c in enumerate(data) if seems(c)]
+    pick = [good[k * (len(good) - 1) // max(most - 1, 1)] for k in range(most)] if good else []
+    pick = list(dict.fromkeys(pick))
+    near = [i + 1 for i in pick[:2]] + ([len(data) // 2] if not pick else [])
+    return [(i // h, i % h) for i in pick + near if 0 <= i < len(data)]
+
+
+def build_places(o):
+    """Whether each building type fits a cell (0x47B8C0 through BUILD_FITS) and
+    the viewer's bytes of the town view and the window run by the game. For
+    each type (0..0x37): cells where it seems to fit and beside them; the
+    fixed points; the houses with one orientation, the other, both (the
+    town's [0x774] above 0 and not); a business in a siege inside and outside
+    the walls; the towers on their towers, the gate bombard beside a gate and
+    on one, the pitch shoot on each kind of gate, in works, the window's type
+    following the gate; a town out. Then the viewer's bytes: the 0x21 of a
+    house each way, the warehouse, a business, a public building, the towers
+    and the pitch shoot where they fit, the office where he has none; the
+    well (0x22, its cell from 0x5250D0), the streets (0x25), the next wall
+    piece (0x24), demolishing (0x26) and auctioning (0x28) one of his
+    buildings."""
+    p, t, f, t2 = build_town(o)
+    a, a2 = o.town(t), o.town(t2)
+    gw, gh = o.s32(a + 0x7A8), o.s32(a + 0x7AC)
+    print(f'town {t}: {gw} · {gh} cells at {o.u32(a + GRID):#x}, {o.u16(a + 0x776)} records at {o.u32(a + 0x75C):#x}')
+
+    def during(o):
+        build_copiers(o)
+        w32(o, o.merchant(p), 50000000)
+        store(o, t)
+        store(o, t2)
+        w32(o, a + 0x700, 50000000)
+        for kind in range(0x38):
+            for x, y in build_candidates(o, t, kind):
+                build_fits_at(o, t, x, y, kind)
+        for kind, at in ((0, 0x802), (1, 0x80A), (0x2E, 0x808)):
+            for town in (t, t2):
+                x, y = o.u8(o.town(town) + at), o.u8(o.town(town) + at + 1)
+                build_fits_at(o, town, x, y, kind, f'the fixed point in {town}')
+                build_fits_at(o, town, x, (y + 1) & 0xFF, kind, 'beside it')
+        build_fits_at(o, o.counts()[0], 1, 1, 6, 'a town out')
+        build_fits_at(o, t, 1, 1, 0x40, 'a type out')
+        data, h = grid_bytes(o, t)
+        houses = {}
+        for i, c in enumerate(data):
+            r = (1 if c & 0xA1 == 0xA1 else 0) + (2 if c & 0xA2 == 0xA2 else 0)
+            houses.setdefault(r, (i // h, i % h))
+        side = o.u8(a + 0x774)
+        for r, (x, y) in sorted(houses.items()):
+            for value in ((1, 0xFF) if r == 3 else (side,)):
+                w8(o, a + 0x774, value)
+                build_fits_at(o, t, x, y, 0x18, f'a house, orientations {r}, [0x774] {value:#x}')
+                build_fits_at(o, t, x, y, 0x1E, f'the warehouse, orientations {r}')
+        w8(o, a + 0x774, side)
+        flags = o.u32(a + 0x2C8)
+        w32(o, a + 0x2C8, flags | 0x10)
+        inside = [(i // h, i % h) for i, c in enumerate(data) if c & 0xB0 == 0xB0][:2]
+        outside = [(i // h, i % h) for i, c in enumerate(data) if c & 0xB0 == 0x30][:2]
+        for x, y in inside + outside:
+            build_fits_at(o, t, x, y, 0x0B, 'a sawmill in a siege')
+        w32(o, a + 0x2C8, flags)
+        forts = records(o, t, 0x768)
+        for kind, on in ((0x31, 0x30), (0x33, 0x32)):
+            for r in [r for r in forts if r[4] == on][:2]:
+                build_fits_at(o, t, r[1], r[2], kind, f'on a {on:#x}')
+        gates = [r for r in forts if r[4] in (0x37, 0x38, 0x34, 0x35)]
+        for r in gates[:4]:
+            sign = 1 if r[4] in (0x38, 0x35) else -1
+            for x, y in ((r[1] + sign, r[2] + 2), (r[1] - 3 * sign, r[2] - 6)):
+                build_fits_at(o, t, x & 0xFF, y & 0xFF, 0x32, f'beside the gate {r[4]:#x} at ({r[1]}, {r[2]})')
+        for r in [r for r in forts if r[4] == 0x32][:1]:
+            build_fits_at(o, t, r[1], r[2], 0x32, 'on a gate bombard')
+        for r in [r for r in forts if r[4] in (0x37, 0x38)][:4]:
+            for kind in (0x34, 0x35):
+                build_fits_at(o, t, r[1], r[2], kind, f'on the gate {r[4]:#x}, pending {r[5]}')
+            at = record_at(o, t, r[0])
+            w8(o, at + 3, 0x38 if r[4] == 0x37 else 0x37)
+            build_fits_at(o, t, r[1], r[2], 0x34, 'its kind changed')
+            w8(o, at + 6, 5)
+            build_fits_at(o, t, r[1], r[2], 0x35, 'in works')
+            w8(o, at + 3, r[4])
+            w8(o, at + 6, r[5])
+        # The viewer's bytes: each building at a cell where it fits now, with
+        # the picture the window got when it was chosen unless 0x47B8C0 asked
+        # for another; away from the grid's edges, where the game writes past
+        # the grid (roadmap, «Corregir los fallos del juego»).
+        def build_at(kind, cells, what):
+            for x, y in cells:
+                if not (4 <= x < gw - 4 and 8 <= y < gh - 4):
+                    continue
+                got = build_fits_at(o, t, x, y, kind, f'to build: {what}')
+                if got[0]:
+                    catalog = got[2] & 0xFF if got[2] != 0xFFFFFFFF else BUILD_CATALOG[got[1]]
+                    key = got[3] if got[2] != 0xFFFFFFFF else (0x20 if kind == 0x1E else 0x200000)
+                    run_bytes(o, player_op('build', p, t, x, y, catalog, key))
+                    return x, y
+            return None
+        data, h = grid_bytes(o, t)
+        for r, kind in ((1, 0x1B), (2, 0x18), (3, 0x1E)):
+            build_at(kind, [(i // h, i % h) for i, c in enumerate(data)
+                            if (1 if c & 0xA1 == 0xA1 else 0) + (2 if c & 0xA2 == 0xA2 else 0) == r][5:40],
+                     f'orientations {r}')
+        for kind in (0x15, 0x06, 0x0B, 0x04, 0x05, 0x26, 0x2B, 0x29, 0x2C, 0x30):
+            build_at(kind, build_candidates(o, t, kind, 12), 'where it seems to fit')
+        forts = records(o, t, 0x768)
+        build_at(0x31, [(r[1], r[2]) for r in forts if r[4] == 0x30], 'on a port bombard')
+        gates = [r for r in forts if r[4] in (0x37, 0x38)]
+        build_at(0x32, [((r[1] + (1 if r[4] == 0x38 else -1)) & 0xFF, r[2] + 2) for r in gates], 'beside a gate')
+        build_at(0x33, [(r[1], r[2]) for r in records(o, t, 0x768) + records(o, t, 0x762) if r[4] == 0x32],
+                 'on a gate bombard')
+        for kind in (0x34, 0x35):
+            build_at(kind, [(r[1], r[2]) for r in records(o, t, 0x768) if r[4] in (0x37, 0x38) and r[5] == 0],
+                     'on a gate')
+        x, y = o.u8(a2 + 0x802), o.u8(a2 + 0x803)
+        got = build_fits_at(o, t2, x, y, 0, 'the office')
+        if got[0]:
+            run_bytes(o, player_op('build', p, t2, x, y, BUILD_CATALOG[0], 0))
+        w8(o, SCRATCH_X, 0)
+        w8(o, SCRATCH_Y, 0)
+        direct(o, 0x5250D0, [SCRATCH_X, SCRATCH_Y], ecx=a)
+        run_bytes(o, player_op('well', p, t, o.u8(SCRATCH_X), o.u8(SCRATCH_Y)))
+        w16(o, a + 0x792, o.u16(a + 0x790) + 5)
+        run_bytes(o, player_op('street', t, p))
+        pending = records(o, t, 0x766)
+        if pending:
+            run_bytes(o, player_op('wall', p, t, pending[0][4]))
+        # His buildings, or else his works.
+        mine = office_records(o, t, f) + [(r[0], r[1], r[2]) for r in records(o, t, 0x762) if r[3] == p]
+        print(f'  his buildings and works: {mine[:6]}')
+        if mine:
+            r, x, y = mine[0]
+            run_bytes(o, player_op('demolish', t, p, x, y))
+        if len(mine) > 1:
+            r, x, y = mine[1]
+            run_bytes(o, player_op('auction', t, p, x, y))
+        print(f'  his buildings now {len(office_records(o, t, f))}, works {len(records(o, t, 0x762))}')
+    return during
+
+
 def player_op_text(*args):
     """player_ops's output as text."""
     import subprocess
@@ -6793,6 +7224,21 @@ SCENARIOS = {
         '@53d0f1', '@53d0ef>53d10a', '@53d012', '@51f095', '@524639', '@52452e>524770', '@524551>524770',
         '@5245ed', '@524769', '@4fb5bc', '@4fb6f1>4fb8da', '@4fb60c', '@4fb629', '@4fb64d', '@4fb66a',
         '@4fb70b', '@4fb80d', '@4fb826']),
+    'build_menus': Scenario(build_menus, [0x535760, 0x51F3A0, BUILD_MENU, BUILD_MARKS], 0, [
+        '@47abc7', '@47ad24', '@47abd9', '@47ac7d', '@47accb', '@47ad03', '@47ad4d', '@47ad78', '@47ad89',
+        '@47ad9a', '@47ada7', '@47adbc', '@47adcc', '@47ade5', '@47ae06', '@47ae17', '@47ae23', '@47b108',
+        '@47aee4', '@47aef7', '@47af0a', '@47af14', '@47af22', '@47af3d', '@47af7a', '@47afbf', '@47b006',
+        '@47b04c', '@47b0a0', '@47b155', '@47b1e5', '@47b84e', '@47b866', '@47b886', '@47b8a0', '@47b8b2',
+        '@4fd169', '@4fd17e', '@4fd187', '@4fd1f5', '@4fd211', '@4fd223', '@4fd23a', '@4fd251', '@4fd268',
+        '@4fd27f', '@4fd296', '@4fd2ad', '@4fd2c4', '@4fd2db', '@4fd2ef', '@4fd312', '@4fd326', '@4fd332',
+        '@4fd33e', '@4fd352', '@4fd366', '@4fd38c', '@4fd4fb', '@4fd561', '@4fd618', '@524248', '@524288',
+        '@52427b', '@524317', '@5243cd', '@52445f', '@524494']),
+    'build_places': Scenario(build_places, [0x535760, BUILD_FITS, 0x5250D0], 0, [
+        '@47b927', '@47b959', '@47b965', '@47b97e', '@47b98a', '@47b9c3', '@47b9e0', '@47b9f7', '@47ba4b',
+        '@47ba54', '@47ba6c', '@47ba95', '@47ba9e', '@47bacf', '@47bb00', '@47bb31', '@47bb62', '@47bb93',
+        '@47bbc4', '@47bbf5', '@47bc26', '@47bc57', '@47bc88', '@47bca5', '@47bcbc', '@47bced', '@47bd83',
+        '@47bd56', '@47bdbd', '@47bdde', '@47bf2b', '@47be37', '@47be90', '@47bef7', '@47bf34', '@47bf9b',
+        '@47bd39']),
 }
 
 

@@ -152,6 +152,12 @@ constexpr uint32_t kConvoySummary = 0x03000E00;
 // Its copiers of the moneylender's lists (LENDER_LISTS: SENTINEL + 0xC00 +
 // 0x50·k): 0x4D9100, 0x4D9210, 0x4D9320, 0x4D9620.
 constexpr uint32_t kLenderLists = 0x03000C00;
+// Its copiers of the build window (BUILD_MENU, BUILD_FITS, BUILD_MARKS): its
+// menu 0x47AB20, whether a building fits 0x47B8C0 and its marks 0x47B830, on a
+// window of their own.
+constexpr uint32_t kBuildMenu = 0x03000200;
+constexpr uint32_t kBuildFits = 0x03000280;
+constexpr uint32_t kBuildMarks = 0x03000300;
 
 // A loan's terms (16 bytes) or an entry in the scratch globals.
 template <size_t N>
@@ -611,6 +617,56 @@ void register_probes_unchecked(ProbeRegistry& r) {
 			return std::nullopt;
 		};
 	}
+	// The build window's copiers (stdcall), the window's player [0x6DFC14]:
+	// the menu (town, category): the 8 types in [SCRATCH], the category it
+	// shows in [+0x20], the reputation's text in [+0x24]; whether it fits
+	// (town, x, y, type): al in [SCRATCH], the window's type after in [+0x4],
+	// the picture asked for (0x5928A0's picture and key) in [+0x10], [+0x14]
+	// or −1; the marks (town, type): how many cells, the sums of their
+	// indices, of their squares and cubes (mod 2^32), and whether there is a
+	// map, in [SCRATCH .. +0x14].
+	r[kBuildMenu] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const BuildMenu menu = build_menu(s, int(c.args[0]), s.globals.u32(global::kPlayer), int(c.args[1]));
+		for (uint32_t k = 0; k < 8; ++k) {
+			s.globals.s32(kScratch + 4 * k) = menu.types[k];
+		}
+		s.globals.s32(kScratch + 0x20) = menu.category;
+		s.globals.u32(kScratch + 0x24) = menu.reputation_text ? 1 : 0;
+		return std::nullopt;
+	};
+	r[kBuildFits] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		int type = int(c.args[3]);
+		BuildGhost ghost{0xFF, 0xFFFFFFFF};
+		const bool fits = fn_47b8c0(s, c.args[0], uint8_t(c.args[1]), uint8_t(c.args[2]), type, ghost);
+		s.globals.u32(kScratch) = fits ? 1 : 0;
+		s.globals.s32(kScratch + 4) = type;
+		s.globals.u32(kScratch + 0x10) = ghost.key == 0xFFFFFFFF && ghost.catalog == 0xFF
+			? 0xFFFFFFFF : uint32_t(int32_t(int8_t(ghost.catalog)));
+		s.globals.u32(kScratch + 0x14) = ghost.key;
+		return std::nullopt;
+	};
+	r[kBuildMarks] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		if (c.args[0] >= s.towns.size()) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		const std::vector<uint8_t> map = build_marks(s, c.args[0], int(c.args[1]));
+		uint32_t sums[4] = {0, 0, 0, 0};
+		for (size_t i = 0; i < map.size(); ++i) {
+			if (map[i]) {
+				const uint32_t k = uint32_t(i);
+				sums[0] += 1;
+				sums[1] += k;
+				sums[2] += k * k;
+				sums[3] += k * k * k;
+			}
+		}
+		for (uint32_t k = 0; k < 4; ++k) {
+			s.globals.u32(kScratch + 4 * k) = sums[k];
+		}
+		s.globals.u32(kScratch + 0x10) = map.empty() ? 0 : 1;
+		return std::nullopt;
+	};
 	// 0x4E8804 (thiscall on the event queue, run directly on its head): an event 0x18.
 	r[0x4E8804] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		const uint16_t head = s.globals.u16(0x6DD744);

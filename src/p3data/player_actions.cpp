@@ -17,7 +17,13 @@ bool ship_order_cost(const SaveGame& save, int town, uint32_t type, uint32_t mer
 }  // namespace p3::data::tick::events_towns_detail
 namespace p3::data::tick::events_detail {
 int16_t fn_4f9580(const SaveGame& save, int merchant, uint32_t town);  // events.cpp
+int32_t fn_4daf10(const SaveGame& save, uint32_t town, uint32_t record, bool flag);  // events.cpp
+void fn_4dafe0(const SaveGame& save, uint32_t town, uint32_t record, uint32_t& tick, int32_t& price);  // events.cpp
 }  // namespace p3::data::tick::events_detail
+namespace p3::data::tick::construction_detail {
+bool fn_51f3a0(SaveGame& save, int town, GameMemory<0x44>& s);  // construction.cpp
+void fn_5250d0(const SaveGame& save, int town, uint8_t& x, uint8_t& y);  // construction.cpp
+}  // namespace p3::data::tick::construction_detail
 
 namespace p3::data {
 
@@ -1272,6 +1278,728 @@ uint32_t next_dividend_tick(const SaveGame& save) {
 			return tick;
 		}
 	}
+}
+
+// --- Building ---
+
+namespace {
+
+// 0x672FC0: the town view's picture of each building type.
+constexpr uint8_t kBuildCatalog[0x39] = {0x2C, 0x1B, 0x0B, 0x08, 0x5D, 0x57, 0x58, 0x5B, 0x59, 0x53, 0x56, 0x64, 0x5A,
+	0x5E, 0x60, 0x55, 0x5C, 0x63, 0x62, 0x61, 0x54, 0x51, 0x51, 0x51, 0x50, 0x50, 0x50, 0x2A, 0x2A, 0x2A, 0x66, 0x04,
+	0x03, 0x0B, 0x07, 0x00, 0x02, 0x05, 0x09, 0x33, 0x52, 0x65, 0x67, 0x68, 0x69, 0x37, 0x01, 0x5F, 0x29, 0x29, 0x29,
+	0x29, 0x2F, 0x2F, 0x2E, 0x2F, 0x2F};
+// 0x672F84 (s8): the class of each building type; 0x672F74 and 0x672F64: the
+// footprint of each class, its cells one way (the inner walk of the marks)
+// and the other (the outer one).
+constexpr int8_t kBuildClass[0x39] = {3, 7, 0, 0, 4, 0, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 10, 10, 3, 2, 3, 0, 0, 3, 0, 5, 3, 2, 2, 3, 6, 7, 6, 6, 6, 6, 6, 6, 8, 9, 8, 9};
+constexpr int8_t kClassWidth[16] = {3, 2, 4, 3, 5, 1, 2, 6, 6, 2, 4, 5, 3, 1, 1, 1};
+constexpr int8_t kClassDepth[16] = {2, 3, 3, 4, 4, 1, 2, 4, 2, 6, 6, 5, 3, 1, 1, 1};
+// 0x66EF58: the group of each business (types 4..0x14): 0 the window's
+// category 3, otherwise its category 4.
+constexpr uint8_t kBusinessGroup[0x15] = {1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0};
+
+// The town's record r (0x51F1F0: none from [0x776] on).
+const BuildingRecord* town_record(const SavedTown& st, uint32_t r) {
+	return r < st.memory.u16(0x776) && r < st.records.size() ? &st.records[r] : nullptr;
+}
+
+// The grid's cell (x, y): [0x80C][x · [0x7AC] + y] (0 out of it; the game
+// doesn't look).
+uint8_t grid_cell(const SavedTown& st, int64_t x, int64_t y) {
+	const int64_t i = int64_t(st.memory.s32(0x7AC)) * x + y;
+	return i >= 0 && size_t(i) < st.grid.size() ? st.grid[size_t(i)] : 0;
+}
+
+// 0x4FD020 (on town_class1: type, x, y, flag): for the houses and the
+// warehouse, which orientations fit the cell (1: its bits 0xA1, 2: 0xA2);
+// for the others, whether the cell has the class's bit and 0x20 (and 0x80,
+// inside the walls, with the flag); a class from 6 on never fits.
+uint32_t fn_4fd020(const SavedTown& st, uint32_t type, uint8_t x, uint8_t y, bool flag) {
+	const uint8_t c = grid_cell(st, x, y);
+	if (type >= 0x15 && type <= 0x1E) {
+		return ((c & 0xA1) == 0xA1 ? 1u : 0u) + ((c & 0xA2) == 0xA2 ? 2u : 0u);
+	}
+	const int8_t cls = type < 0x39 ? kBuildClass[type] : 0;
+	if (cls >= 6) {
+		return 0;
+	}
+	uint8_t mask = uint8_t((1u << cls) | 0x20u);
+	if (flag) {
+		mask |= 0x80;
+	}
+	return (c & mask) == mask ? 1u : 0u;
+}
+
+// The marks' footprint (0x4FD1A8, 0x4FD3B4...): from the cell (x, y) of the
+// map (y · w + x), `outer` times `inner` cells: each inner step goes up a row
+// to (x + parity, y − 1), each outer one to (x + parity − 1, y − 1). Out of the
+// map (the game would write past it) nothing.
+void mark_footprint(std::vector<uint8_t>& map, int64_t w, int64_t x, int64_t y, int inner, int outer) {
+	int64_t row = y * w + x;
+	int64_t parity = y & 1;
+	for (int o = 0; o < outer; ++o) {
+		int64_t at = row;
+		int64_t p = parity;
+		for (int i = 0; i < inner; ++i) {
+			if (at >= 0 && size_t(at) < map.size()) {
+				map[size_t(at)] = 1;
+			}
+			at += p - w;
+			p = (p - 1) & 1;
+		}
+		row += parity - w - 1;
+		parity = (parity - 1) & 1;
+	}
+}
+
+void mark(std::vector<uint8_t>& map, int64_t i) {
+	if (i >= 0 && size_t(i) < map.size()) {
+		map[size_t(i)] = 1;
+	}
+}
+
+// A tower's four cells (0x524317..0x52433E): (x, y), (x, y − 1), the one at its
+// side and (x, y − 2).
+void mark_tower(std::vector<uint8_t>& map, int64_t w, const BuildingRecord& r) {
+	int64_t i = int64_t(r.y) * w + r.x;
+	mark(map, i);
+	i -= w;
+	mark(map, i);
+	mark(map, (r.y & 1) ? i + 1 : i - 1);
+	mark(map, i - w);
+}
+
+// The town's fortification list ([0x768], next [+0x4]).
+template <typename F>
+void each_fortification(const SavedTown& st, F f) {
+	const uint32_t count = st.memory.u16(0x776);
+	for (uint32_t i = st.memory.u16(0x768); i < count && i < st.records.size();) {
+		const BuildingRecord& r = st.records[i];
+		i = r.next;
+		if (f(r)) {
+			return;
+		}
+	}
+}
+
+// 0x5241E0 (on the town, a type from 0x31): the towers' and the pitch shoot's
+// marks. Only the gate bombard's clears [0x7A4].
+std::vector<uint8_t> fn_5241e0(SaveGame& save, uint32_t town, int type) {
+	SavedTown& st = save.towns[town];
+	TownMemory& t = st.memory;
+	const int64_t w = t.s32(0x7A8);
+	std::vector<uint8_t> map(size_t(uint32_t(t.s32(0x7AC)) * uint32_t(w)), 0);
+	if (type == 0x32) {
+		// Beside each gate, two sites: (x ∓ 1, y + 2) and (x ± 3, y − 6), the
+		// sign by its side (0x37 or 0x34, 0x38 or 0x35). The game keeps them on
+		// its stack, room for 24.
+		std::vector<std::pair<int64_t, int64_t>> sites;
+		each_fortification(st, [&](const BuildingRecord& r) {
+			if (r.type == 0x38 || r.type == 0x35) {
+				sites.push_back({int64_t(r.x) + 1, int64_t(r.y) + 2});
+				sites.push_back({int64_t(r.x) - 3, int64_t(r.y) - 6});
+			} else if (r.type == 0x37 || r.type == 0x34) {
+				sites.push_back({int64_t(r.x) - 1, int64_t(r.y) + 2});
+				sites.push_back({int64_t(r.x) + 3, int64_t(r.y) - 6});
+			}
+			return false;
+		});
+		// A wall piece on a site gets the marks, and the site goes (the last in
+		// its place).
+		each_fortification(st, [&](const BuildingRecord& r) {
+			if (r.type != 0x36) {
+				return false;
+			}
+			for (size_t k = 0; k < sites.size(); ++k) {
+				if (sites[k].first == r.x && sites[k].second == r.y) {
+					mark_tower(map, w, r);
+					sites[k] = sites.back();
+					sites.pop_back();
+					break;
+				}
+			}
+			return false;
+		});
+		t.u32(0x7A4) = 0;
+	} else if (type <= 0x33) {
+		// The port cannon on a port bombard, the gate cannon on a gate bombard.
+		each_fortification(st, [&](const BuildingRecord& r) {
+			if (r.type == type - 1) {
+				mark_tower(map, w, r);
+			}
+			return false;
+		});
+	} else if (type == 0x34 || type == 0x35) {
+		// The gates not in works: a strip of 6 · 2 cells along each.
+		each_fortification(st, [&](const BuildingRecord& r) {
+			if (r.pending != 0) {
+				return false;
+			}
+			if (r.type == 0x37) {
+				int64_t e = int64_t(r.y) * w + r.x - 1;
+				for (int64_t k = 0; k < 6; ++k) {
+					++e;
+					mark(map, e);
+					e += ((int64_t(r.y) + k) & 1) - w - 1;
+					mark(map, e);
+				}
+			} else if (r.type == 0x38) {
+				int64_t e = int64_t(r.y) * w + r.x + 1;
+				for (int64_t k = 0; k < 6; ++k) {
+					--e;
+					mark(map, e);
+					e += ((int64_t(r.y) + k) & 1) - w;
+					mark(map, e);
+				}
+			}
+			return false;
+		});
+	}
+	return map;
+}
+
+// 0x4FD0D0 (on town_class1: type, flag): the cells whose bits fit the type
+// (by the case of 0x4FD460), each with its class's footprint; the shipyard and
+// the repair dock at their fixed points. A class from 0x10 on: nothing, and
+// [0x7A4] untouched; the types of the case 0 (the streets, the well...):
+// nothing.
+std::vector<uint8_t> fn_4fd0d0(SaveGame& save, uint32_t town, int type, bool flag) {
+	SavedTown& st = save.towns[town];
+	TownMemory& t = st.memory;
+	const int8_t cls = type >= 0 && type < 0x39 ? kBuildClass[type] : 0;
+	if (cls >= 0x10) {
+		return {};
+	}
+	const int64_t w = t.s32(0x7A8);
+	const int64_t h = t.s32(0x7AC);
+	std::vector<uint8_t> map(size_t(uint32_t(w) * uint32_t(h)), 0);
+	t.u32(0x7A4) = 0;
+	const int inner = kClassWidth[cls];
+	const int outer = kClassDepth[cls];
+	uint32_t mask = 0;
+	uint32_t value = 0;
+	auto cell_class = [&](uint32_t v) {
+		mask = 0x3F;
+		value = v;
+	};
+	switch (type) {
+	case 0x01:
+	case 0x2E:
+		// 0x4FD17E: the repair dock's or the shipyard's fixed point.
+		if (type == 0x2E) {
+			mark_footprint(map, w, t.u8(0x808), t.u8(0x809), inner, outer);
+		} else {
+			mark_footprint(map, w, t.u8(0x80A), t.u8(0x80B), inner, outer);
+		}
+		return map;
+	case 0x03: cell_class(0x1D); break;
+	case 0x05: cell_class(0x0E); break;
+	case 0x1F: cell_class(0x19); break;
+	case 0x20: cell_class(0x1B); break;
+	case 0x21: cell_class(0x14); break;
+	case 0x22: cell_class(0x1A); break;
+	case 0x23: cell_class(0x16); break;
+	case 0x24: cell_class(0x17); break;
+	case 0x25: cell_class(0x15); break;
+	case 0x27: cell_class(0x18); break;
+	case 0x2F: cell_class(0x0F); break;
+	case 0x30: cell_class(0x1C); break;
+	case 0x26:
+	case 0x29:
+	case 0x2A:
+	case 0x2B:
+	case 0x2C:
+		mask = value = (1u << cls) | 0xA0u;
+		break;
+	case 0x2D:
+	case 0x34:
+	case 0x35:
+		// 0x4FD366: the arguments as they are, the type the mask and the flag
+		// the value.
+		mask = uint32_t(type);
+		value = flag ? 1 : 0;
+		break;
+	default:
+		if (type == 0x04 || (type >= 0x06 && type <= 0x14)) {
+			mask = value = (1u << cls) | 0x20u | (flag ? 0x80u : 0u);
+			break;
+		}
+		return {};  // 0x4FD169: the case 0.
+	}
+	for (size_t i = st.grid.size(); i-- > 0;) {
+		if ((st.grid[i] & mask) == value) {
+			mark_footprint(map, w, int64_t(i) / h, int64_t(i) % h, inner, outer);
+		}
+	}
+	return map;
+}
+
+}  // namespace
+
+uint8_t build_catalog(int type) {
+	return type >= 0 && type < 0x39 ? kBuildCatalog[type] : 0;
+}
+
+BuildMenu build_menu(const SaveGame& save, int town_arg, uint32_t player, int category) {
+	BuildMenu menu;
+	menu.types.fill(-1);
+	menu.category = category;
+	const uint32_t towns = save.globals.u32(global::kWorldTownCount);
+	const uint32_t town = uint32_t(town_arg) < towns ? uint32_t(town_arg) : 0;  // The view's town [+0xC324].
+	const SavedTown& st = save.towns[town];
+	const TownMemory& t = st.memory;
+	const bool mayor = t.u8(0x6F1) == player;
+	const uint32_t bits = t.u32(0x76C);
+	size_t n = 0;
+	auto add = [&](int32_t type) {
+		if (n < menu.types.size()) {
+			menu.types[n++] = type;
+		}
+	};
+	// The businesses of a group (0x47B123, 0x47B1AD): their productivity there
+	// over 400, up to 8 buttons.
+	auto businesses = [&](bool second) {
+		for (int type = 4; type < 0x15 && n < 8; ++type) {
+			if ((kBusinessGroup[type] != 0) == second && t.u16(0x888 + 0x10 * uint32_t(type - 4)) > 400) {
+				add(type);
+			}
+		}
+	};
+	switch (uint32_t(category)) {
+	case kBuildHousing: {
+		if ((t.u32(0x2C8) & 0xE0) == 0 && (!mayor || bits == 0)) {
+			break;
+		}
+		if (tick::facilities_detail::fn_5308a0(save, player, town) >= 0) {
+			add(0x1E);
+			add(0x1B);
+			add(0x18);
+			add(0x15);
+			break;
+		}
+		const uint32_t merchants = save.globals.u16(global::kWorldMerchantCount);
+		const MerchantMemory& m = save.merchants[player < merchants ? player : 0].memory;
+		if (m.u8(0x39C + town) != 0 || mayor) {
+			add(0);  // «trading office».
+		} else {
+			menu.reputation_text = true;
+		}
+		break;
+	}
+	case kBuildPublic: {
+		const bool walls = (bits & 0x10) != 0;
+		if (walls) {
+			add(2);
+			add(0x28);
+		}
+		if (mayor) {
+			if (!(bits & 0x1)) {
+				add(0x23);
+			} else if (!(bits & 0x2)) {
+				add(0x20);
+			} else if (!(bits & 0x4)) {
+				add(3);
+			} else if (!(bits & 0x8)) {
+				add(0x21);
+			} else if (walls) {
+				if (!(bits & 0x20)) {
+					add(0x24);
+				}
+				if (!(bits & 0x40)) {
+					add(0x01);
+				}
+				if ((bits & 0x27F) == 0x7F) {
+					add(0x1F);
+				}
+			}
+		}
+		if (bits & 0x200) {
+			if ((bits & 0x600) == 0x200) {
+				add(0x2A);
+			}
+			if (!(bits & 0x1000)) {
+				add(0x2B);
+			}
+			add(0x29);
+			add(0x2C);
+		}
+		break;
+	}
+	case kBuildFortifications:
+		if (!mayor) {
+			menu.category = kBuildRaw;
+			businesses(false);
+			break;
+		}
+		if (bits & 0x10) {
+			uint8_t port = 0;  // 0x30 and 0x31.
+			uint8_t gate = 0;  // 0x32 and 0x33.
+			uint32_t have = 0;
+			each_fortification(st, [&](const BuildingRecord& r) {
+				switch (r.type) {
+				case 0x30: have |= 1; ++port; break;
+				case 0x31: ++port; break;
+				case 0x32: have |= 2; ++gate; break;
+				case 0x33: ++gate; break;
+				case 0x37:
+				case 0x38: have |= 4; break;
+				default: break;
+				}
+				return false;
+			});
+			if (port < 3) {
+				add(0x30);
+			}
+			if (have & 1) {
+				add(0x31);
+			}
+			if (gate < 6) {
+				add(0x32);
+			}
+			if (have & 2) {
+				add(0x33);
+			}
+			if (have & 4) {
+				add(0x34);
+			}
+		}
+		if (t.u16(0x766) < t.u16(0x776)) {
+			add(0x36);  // «Town wall»: its pieces pending.
+		}
+		break;
+	case kBuildRaw:
+		businesses(false);
+		break;
+	default:
+		menu.category = kBuildCrafts;
+		businesses(true);
+		break;
+	}
+	return menu;
+}
+
+std::array<bool, 5> build_tabs(const SaveGame& save, int town_arg, uint32_t player) {
+	std::array<bool, 5> tabs{};
+	const uint32_t towns = save.globals.u32(global::kWorldTownCount);
+	const uint32_t town = uint32_t(town_arg) < towns ? uint32_t(town_arg) : 0;
+	const TownMemory& t = save.towns[town].memory;
+	const bool mayor = t.u8(0x6F1) == player;
+	const bool office = tick::facilities_detail::fn_5308a0(save, player, town) >= 0;
+	const uint32_t bits = t.u32(0x76C);
+	if (t.u32(0x2C8) & 0xE0) {
+		tabs = {true, office || mayor, mayor, office, office};
+	} else if (mayor) {
+		tabs = {office || bits != 0, true, (bits & 0x8) != 0, office, office};
+	} else if (bits & 0x100) {
+		tabs = {true, office, false, office, office};
+	}
+	return tabs;
+}
+
+BuildChoice build_choice(SaveGame& save, int town, uint32_t player, int type) {
+	BuildChoice c;
+	c.type = type;
+	c.cost.u16(0x3C) = uint16_t(type);
+	c.cost.u16(0x3E) = uint16_t(player);
+	const SavedTown& st = save.towns[size_t(town)];
+	const TownMemory& t = st.memory;
+	if (type < 0x36) {
+		c.can = tick::construction_detail::fn_51f3a0(save, town, c.cost);
+		if (type == 2) {
+			c.action = BuildAction::Street;
+			c.button = c.can && t.u16(0x792) > t.u16(0x790);
+		} else if (type == 0x28) {
+			c.action = BuildAction::Well;
+			c.button = c.can && int32_t(t.u8(0x789)) * 500 < t.s32(0x2D4);
+		} else {
+			c.action = c.can ? BuildAction::Place : BuildAction::None;
+		}
+		return c;
+	}
+	// The wall: the next piece pending ([0x766]); without one, the window
+	// shows a whole side's cost (0x5226C0) and its button sends nothing.
+	const BuildingRecord* r = town_record(st, t.u16(0x766));
+	if (!r) {
+		return c;
+	}
+	c.type = r->type;
+	c.cost.u16(0x3C) = r->type;
+	c.can = tick::construction_detail::fn_51f3a0(save, town, c.cost);
+	c.action = BuildAction::Wall;
+	c.button = c.can && !(t.u32(0x2C8) & 0x10);
+	return c;
+}
+
+bool fn_47b8c0(const SaveGame& save, uint32_t town, uint8_t x, uint8_t y, int& type, BuildGhost& ghost) {
+	if (town >= save.globals.u32(global::kWorldTownCount)) {
+		return false;
+	}
+	const SavedTown& st = save.towns[town];
+	const TownMemory& t = st.memory;
+	const uint8_t cell = grid_cell(st, x, y);
+	// Outside the walls while the town is besieged.
+	const bool outside = (t.u32(0x2C8) & 0x10) && cell < 0x80;
+	if (uint32_t(type) > 0x35) {
+		return false;
+	}
+	auto cell_is = [&](uint8_t v) { return (cell & 0x3F) == v; };
+	// The houses' and the warehouse's orientation by what fits: both, the
+	// town's [0x774] > 0 picks 0xE0 ([0x67792F]), otherwise 0x20 ([0x677929]).
+	auto orientation = [&](uint32_t r) -> uint32_t {
+		return (r == 3 && t.s8(0x774) > 0) || r == 2 ? 0xE0 : 0x20;
+	};
+	// A fortification of `kind` at (x, y).
+	auto tower_at = [&](uint8_t kind) {
+		bool found = false;
+		each_fortification(st, [&](const BuildingRecord& r) {
+			found = r.type == kind && r.x == x && r.y == y;
+			return found;
+		});
+		return found;
+	};
+	switch (type) {
+	case 0x00: return x == t.u8(0x802) && y == t.u8(0x803);
+	case 0x01: return x == t.u8(0x80A) && y == t.u8(0x80B);
+	case 0x03: return cell_is(0x1D);
+	case 0x05: return cell_is(0x0E);
+	case 0x1F: return cell_is(0x19);
+	case 0x20: return cell_is(0x1B);
+	case 0x21: return cell_is(0x14);
+	case 0x22: return cell_is(0x1A);
+	case 0x23: return cell_is(0x16);
+	case 0x24: return cell_is(0x17);
+	case 0x25: return cell_is(0x15);
+	case 0x27: return cell_is(0x18);
+	case 0x2F: return cell_is(0x0F);
+	case 0x30: return cell_is(0x1C);
+	case 0x26:
+	case 0x29:
+	case 0x2A:
+	case 0x2B:
+	case 0x2C:
+		return fn_4fd020(st, uint32_t(type), x, y, true) == 1;
+	case 0x2E: return x == t.u8(0x808) && y == t.u8(0x809);
+	case 0x1E: {
+		const uint32_t r = fn_4fd020(st, 0x1E, x, y, true);
+		ghost = {kBuildCatalog[0x1E], orientation(r)};
+		return r != 0;
+	}
+	case 0x31: return tower_at(0x30);
+	case 0x33: return tower_at(0x32);
+	case 0x32: {
+		// Not on a gate bombard; on one of the two sites beside a gate.
+		bool fits = false;
+		bool taken = false;
+		each_fortification(st, [&](const BuildingRecord& r) {
+			const int rx = r.x;
+			const int ry = r.y;
+			if (r.type == 0x32 && r.x == x && r.y == y) {
+				taken = true;
+				return true;
+			}
+			if (r.type == 0x37 || r.type == 0x34) {
+				if (rx - 1 == x) {
+					fits = fits || ry + 2 == y;
+				} else if (rx + 3 == x && ry - 6 == y) {
+					fits = true;
+				}
+			} else if (r.type == 0x38 || r.type == 0x35) {
+				if (rx + 1 == x) {
+					fits = fits || ry + 2 == y;
+				} else if (rx - 3 == x && ry - 6 == y) {
+					fits = true;
+				}
+			}
+			return false;
+		});
+		return fits && !taken;
+	}
+	case 0x34:
+	case 0x35: {
+		// A gate not in works: the window's type follows the gate (0x37: 0x34,
+		// 0x38: 0x35), with its picture by the gate's orientation.
+		bool found = false;
+		each_fortification(st, [&](const BuildingRecord& r) {
+			if (r.pending != 0 || (r.type != 0x37 && r.type != 0x38) || r.x != x || r.y != y) {
+				return false;
+			}
+			found = true;
+			const int wanted = r.type == 0x38 ? 0x35 : 0x34;
+			if (wanted != type) {
+				type = wanted;
+				ghost = {kBuildCatalog[wanted], uint32_t(r.param) << 16};
+			}
+			return true;
+		});
+		return found;
+	}
+	default:
+		break;
+	}
+	if (type == 0x04 || (type >= 0x06 && type <= 0x14)) {
+		return !outside && fn_4fd020(st, uint32_t(type), x, y, false) != 0;
+	}
+	if (type >= 0x15 && type <= 0x1D) {
+		const uint32_t r = fn_4fd020(st, uint32_t(type), x, y, true);
+		ghost = {kBuildCatalog[type], orientation(r) << 16};
+		return r != 0;
+	}
+	return false;  // The streets, the well and the monument (0x2D) aren't placed.
+}
+
+BuildGhost build_ghost(const SaveGame& save, uint32_t player, int type) {
+	BuildGhost g;
+	g.catalog = build_catalog(type);
+	if (g.catalog == 0x2C) {
+		const uint32_t merchants = save.globals.u16(global::kWorldMerchantCount);
+		const MerchantMemory& m = save.merchants[player < merchants ? player : 0].memory;
+		const uint8_t rank = m.u8(0x39C + m.u8(0x19));  // 0x4F74F0.
+		g.key = rank < 4 ? rank : (rank > 4 ? 4 : 3);
+	} else if (type == 0x1F || g.catalog == 0x29) {
+		g.key = 0;
+	} else if (type == 0x1E) {
+		g.key = 0x20;
+	} else {
+		g.key = 0x20u << 16;  // [0x677929] << 16, also the pitch shoot's.
+	}
+	return g;
+}
+
+uint8_t build_param(const BuildGhost& ghost) {
+	switch (ghost.catalog) {
+	case 0x2A:
+	case 0x50:
+	case 0x51:
+	case 0x2F:
+		return uint8_t(ghost.key >> 16);
+	case 0x66:
+		return uint8_t(ghost.key);
+	default:
+		return 0;
+	}
+}
+
+OperationBytes build_operation(uint32_t player, uint32_t town, uint8_t x, uint8_t y, uint8_t catalog, uint8_t param) {
+	OperationBytes op{};
+	op[0] = 0x21;
+	op[4] = uint8_t(player);
+	op[5] = uint8_t(town);
+	op[6] = x;
+	op[7] = y;
+	op[8] = catalog;
+	op[9] = param;
+	return op;
+}
+
+std::optional<OperationBytes> place_operation(const SaveGame& save, uint32_t player, uint32_t town, uint8_t x,
+	uint8_t y, int& type, BuildGhost& ghost) {
+	if (!fn_47b8c0(save, town, x, y, type, ghost)) {
+		return std::nullopt;
+	}
+	return build_operation(player, town, x, y, ghost.catalog, build_param(ghost));
+}
+
+OperationBytes street_operation(uint32_t town, uint32_t player) {
+	return words_operation({0x25, town, player});
+}
+
+OperationBytes well_bytes(uint32_t player, uint32_t town, uint8_t x, uint8_t y) {
+	OperationBytes op{};
+	op[0] = 0x22;
+	op[4] = uint8_t(player);
+	op[5] = uint8_t(town);
+	op[6] = x;
+	op[7] = y;
+	op[8] = 0x28;
+	return op;
+}
+
+OperationBytes well_operation(const SaveGame& save, uint32_t town, uint32_t player) {
+	uint8_t x = 0;
+	uint8_t y = 0;
+	tick::construction_detail::fn_5250d0(save, int(town), x, y);
+	return well_bytes(player, town, x, y);
+}
+
+OperationBytes wall_operation(uint32_t player, uint32_t town, int next_type) {
+	return words_operation({0x24, player, town, next_type != 0x36 ? 1u : 0u});
+}
+
+std::vector<uint8_t> build_marks(SaveGame& save, uint32_t town, int type) {
+	SavedTown& st = save.towns[town];
+	TownMemory& t = st.memory;
+	if (type == 0) {
+		// 0x4FD5E0: the office at its fixed point.
+		const int64_t w = t.s32(0x7A8);
+		std::vector<uint8_t> map(size_t(uint32_t(w) * uint32_t(t.s32(0x7AC))), 0);
+		t.u32(0x7A4) = 0;
+		mark_footprint(map, w, t.u8(0x802), t.u8(0x803), 3, 4);
+		return map;
+	}
+	if (type >= 0x15 && type <= 0x1E) {
+		// 0x4FD4A0: each orientation that fits.
+		const int64_t w = t.s32(0x7A8);
+		const int64_t h = t.s32(0x7AC);
+		std::vector<uint8_t> map(size_t(uint32_t(w) * uint32_t(h)), 0);
+		t.u32(0x7A4) = 0;
+		for (size_t i = st.grid.size(); i-- > 0;) {
+			const uint8_t c = st.grid[i];
+			if ((c & 0xA1) == 0xA1) {
+				mark_footprint(map, w, int64_t(i) / h, int64_t(i) % h, 3, 2);
+			}
+			if ((c & 0xA2) == 0xA2) {
+				mark_footprint(map, w, int64_t(i) / h, int64_t(i) % h, 2, 3);
+			}
+		}
+		return map;
+	}
+	if (type < 0x31) {
+		return fn_4fd0d0(save, town, type, (t.u32(0x2C8) & 0x10) && type != 5);
+	}
+	return fn_5241e0(save, town, type);
+}
+
+bool can_demolish(const SaveGame& save, uint32_t town, uint32_t record) {
+	if (town >= save.towns.size()) {
+		return false;
+	}
+	const SavedTown& st = save.towns[town];
+	const BuildingRecord* r = town_record(st, record);
+	if (!r) {
+		return false;
+	}
+	if ((st.memory.u32(0x2C8) & 0x10) && grid_cell(st, r->x, r->y) < 0x80) {
+		return false;
+	}
+	uint32_t tick = 0;
+	int32_t price = 0;
+	tick::events_detail::fn_4dafe0(save, town, record, tick, price);
+	return tick == 0xFFFFFFFF;
+}
+
+OperationBytes demolish_operation(uint32_t town, uint32_t merchant, uint32_t x, uint32_t y) {
+	return words_operation({0x26, town, merchant, x, y});
+}
+
+bool can_auction(const SaveGame& save, uint32_t town, uint32_t merchant, uint32_t record) {
+	if (!can_demolish(save, town, record) || merchant >= save.merchants.size()) {
+		return false;
+	}
+	const SavedTown& st = save.towns[town];
+	return st.records[record].pending == 0 && (save.merchants[merchant].memory.u32(0x468) & (1u << (town & 31))) &&
+		(st.memory.u32(0x76C) & 0x2000);
+}
+
+int32_t auction_reserve_price(const SaveGame& save, uint32_t town, uint32_t record) {
+	const SavedTown& st = save.towns[town];
+	const BuildingRecord* r = town_record(st, record);
+	return r ? tick::events_detail::fn_4daf10(save, town, record, (grid_cell(st, r->x, r->y) >> 7) != 0) : 0;
+}
+
+OperationBytes auction_operation(uint32_t town, uint32_t merchant, uint32_t x, uint32_t y) {
+	return words_operation({0x28, town, merchant, x, y});
 }
 
 }  // namespace p3::data

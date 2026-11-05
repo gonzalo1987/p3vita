@@ -387,4 +387,152 @@ bool can_buy_shares(const SaveGame& save, const ShareEntry& entry);
 // first tick of the next quarter after now.
 uint32_t next_dividend_tick(const SaveGame& save);
 
+// --- Building: the build window (the side menu SIDEMENU_BUILD, *0x6CC95C;
+// 0x4797C0 and its neighbours) and the town view's placing (0x590840) ---
+//
+// The building types are the town's records' ones (0x00..0x38; their names,
+// 0x6A57C8 + 4 · type, but the office's, «trading office»); the town view
+// works with each type's picture, 0x672FC0[type] (build_catalog).
+
+// The window's five categories ([+0x104C], its tabs [+0xAC + 0xE8 · k]).
+enum BuildCategory : int {
+	kBuildHousing = 0,  // The warehouse and the houses, or the office.
+	kBuildPublic = 1,  // Streets, the well and the public buildings.
+	kBuildFortifications = 2,  // The mayor's: towers, gate weapons, the wall.
+	kBuildRaw = 3,  // The businesses of the first group (0x66EF58 = 0: farms...).
+	kBuildCrafts = 4,  // Those of the second group.
+};
+// 0x47AB20 (on the window, in the town the view shows, for the player
+// [0x6DFC14]): the menu's buttons for a category, their building types
+// ([+0xC74], up to 8):
+// - housing: in a town without the bits 0xE0 of [0x2C8] only for the mayor
+//   with something built ([0x76C] ≠ 0); with an office there (0x5308A0) the
+//   warehouse 0x1E and the houses 0x1B, 0x18, 0x15; without one, the office
+//   (type 0) if he has a rank there (his [+0x39C + town]) or is the mayor,
+//   otherwise nothing and the text «You are not yet able to build a trading
+//   office...» ([+0x1060]);
+// - public: with the town's bit 0x10 of [0x76C], the streets (2) and the well
+//   (0x28); for the mayor the first missing of 0x23, 0x20, 3, 0x21 or, with all
+//   of them and the bit 0x10, 0x24, 1 (each if missing) and 0x1F (with
+//   [0x76C] & 0x27F = 0x7F); with the bit 0x200, 0x2A ([0x76C] & 0x600 =
+//   0x200), 0x2B (if missing), 0x29 and 0x2C;
+// - fortifications, the mayor's (otherwise the category becomes 3): with the
+//   bit 0x10, by the fortification list [0x768] the port bombard 0x30 (fewer
+//   than 3 of 0x30/0x31), the port cannon 0x31 (with a 0x30), the gate bombard
+//   0x32 (fewer than 6 of 0x32/0x33), the gate cannon 0x33 (with a 0x32), the
+//   pitch shoot 0x34 (with a gate 0x37/0x38); and the wall 0x36 with pieces
+//   pending ([0x766] < [0x776]);
+// - businesses: the types 4..0x14 of the group (0x66EF58) whose productivity
+//   in the town ([0x888 + 0x10 · (type − 4)], u16) is over 400, up to 8; a
+//   category over 3 becomes 4.
+struct BuildMenu {
+	int category = 0;  // The one the window shows after it ([+0x104C]).
+	std::array<int32_t, 8> types{};  // −1: empty.
+	bool reputation_text = false;
+};
+BuildMenu build_menu(const SaveGame& save, int town, uint32_t player, int category);
+// Which tabs the window enables (read in its frame, 0x479F80..0x47A3E0; the
+// game keeps their state from frame to frame, this is the state they settle
+// in): housing, public, fortifications, the two groups of businesses.
+std::array<bool, 5> build_tabs(const SaveGame& save, int town, uint32_t player);
+// 0x672FC0: the town view's picture of each building type (what the 0x21
+// carries).
+uint8_t build_catalog(int type);
+
+// Choosing a building of the menu (0x47A833..0x47AB13): its costs (0x51F3A0's
+// 0x44 bytes, [+0x1118]: [+0x00..] the bricks, timber, tools and hemp it
+// needs, [+0x10..] what the player has there, [+0x20..] what is bought, [+0x30]
+// their price, [+0x34] the whole cost, [+0x38] the days / 5, [+0x40] the
+// money, [+0x41] the materials, [+0x42] whether he may, [+0x43] why not) and
+// what the window does with it: the streets (2) and the well (0x28) get a
+// button of their own («build street», [+0xC94]: with the cost and planned
+// streets left, [0x792] > [0x790]; the well's [+0xD7C]: with the cost and
+// [0x789] · 500 < the inhabitants [0x2D4]); the wall (0x36 or more) builds
+// the next piece pending (its type [0x766]'s, «build piece of wall» [+0xE64]:
+// with the cost and the town not besieged, the bit 0x10 of [0x2C8]); any
+// other is placed in the town if 0x51F3A0 allows it.
+enum class BuildAction { None, Place, Street, Well, Wall };
+struct BuildChoice {
+	int type = -1;  // [+0x1070]: for the wall, the next piece's type.
+	GameMemory<0x44> cost;
+	bool can = false;  // 0x51F3A0.
+	BuildAction action = BuildAction::None;
+	bool button = false;  // The street's, the well's or the wall's button enabled.
+};
+BuildChoice build_choice(SaveGame& save, int town, uint32_t player, int type);
+
+// 0x47B8C0 (on the window: town, x, y): whether the building of the window's
+// type ([+0x1070], `type`) fits the cell (x, y): the office, the repair dock
+// and the shipyard at their fixed points; a business (with 0x4FD020, not out
+// of the walls while the town is besieged); the houses and the warehouse in
+// either orientation (0x4FD020: 1, 2 or both, then the town's [0x774] > 0
+// picks 0xE0); most public buildings by the cell's class (& 0x3F); the towers
+// by the fortification list, and the pitch shoot on a gate (0x37 or 0x38, not
+// in works), which turns the window's type into 0x34 or 0x35 by the gate. The
+// town view's picture it then asks for (0x5928A0 with the picture and a key,
+// 0x58CC90) is `ghost` (unchanged when it asks for none): the key's
+// orientation is the 0x21's parameter.
+struct BuildGhost {
+	uint8_t catalog = 0;
+	uint32_t key = 0;
+};
+bool fn_47b8c0(const SaveGame& save, uint32_t town, uint8_t x, uint8_t y, int& type, BuildGhost& ghost);
+// The picture the window asks for when the building is chosen (0x47A969..
+// 0x47A9FF): the office's with the player's rank in his home town (0x4F74F0),
+// the church's (0), the warehouse's (0x20), the towers' (0), the pitch
+// shoot's and the others' (0x20 << 16).
+BuildGhost build_ghost(const SaveGame& save, uint32_t player, int type);
+// The 0x21's parameter from the picture (0x590840): the houses' orientation
+// (0x54E5A0: the key >> 16), the warehouse's (its key), a gate's (the key >>
+// 16); 0 for the others.
+uint8_t build_param(const BuildGhost& ghost);
+
+// The town view's 0x21 (0x590840, when the picture's tint says it fits): {0x21,
+// u8 player, town, x, y, the picture, the parameter} and zeros. The handler
+// (0x53CE30) takes the picture back to its type from the end of 0x672FC0.
+OperationBytes build_operation(uint32_t player, uint32_t town, uint8_t x, uint8_t y, uint8_t catalog, uint8_t param);
+// The whole placing of the building `type` at (x, y) with the picture it got
+// when chosen: whether it fits (fn_47b8c0) and the 0x21; `type` may change
+// (the pitch shoot), and so may `ghost`.
+std::optional<OperationBytes> place_operation(const SaveGame& save, uint32_t player, uint32_t town, uint8_t x,
+	uint8_t y, int& type, BuildGhost& ghost);
+
+// The window's own buttons (0x4797C0): «build street» {0x25, u32 town, u32
+// player}; the well {0x22, u8 player, town, x, y from 0x5250D0, 0x28, 0};
+// «build piece of wall» {0x24, u32 player, u32 town, u32 the next piece is a
+// gate (its type ≠ 0x36)}; the rest zeros.
+OperationBytes street_operation(uint32_t town, uint32_t player);
+OperationBytes well_operation(const SaveGame& save, uint32_t town, uint32_t player);
+OperationBytes well_bytes(uint32_t player, uint32_t town, uint8_t x, uint8_t y);
+OperationBytes wall_operation(uint32_t player, uint32_t town, int next_type);
+
+// 0x47B830 (on the window, the town): where the window's type fits, as the
+// town view marks it (0x59D5E0): a map of the grid's cells, one byte per cell
+// at y · [0x7A8] + x (the grid itself is x · [0x7AC] + y), 1 on each cell of
+// the footprint of a building that fits there: the office at its fixed point
+// (0x4FD5E0), the houses and the warehouse in each orientation that fits
+// (0x4FD4A0), the others by their cells' class (0x4FD0D0, with the cells
+// inside the walls while the town is besieged, but for the fisherman), the
+// towers and the pitch shoot by the fortification list (0x5241E0). Empty for
+// the streets and the well. Like the game, it clears the town's [0x7A4] (the
+// grid changed since).
+std::vector<uint8_t> build_marks(SaveGame& save, uint32_t town, int type);
+
+// --- The player's building (the window 0x5AF5C0: 0x5AFEE0 finds it at the
+// cell, in his offices' lists [+0x2D0] or the town's works [0x762]) ---
+// «Demolish» ([+0xAC]): not on sale (0x4DAFE0) and, in a besieged town (the bit
+// 0x10 of [0x2C8]), inside the walls (the cell's bit 0x80); its question «Do
+// you really want to demolish this building?» (0x5AF731), then {0x26, u32
+// town, u32 merchant, u32 x, u32 y} (0x5AFD80).
+bool can_demolish(const SaveGame& save, uint32_t town, uint32_t record);
+OperationBytes demolish_operation(uint32_t town, uint32_t merchant, uint32_t x, uint32_t y);
+// «Auction» ([+0x194]): as demolish, finished (0x51D6F0 gives 0: here, not in
+// works), the player with the guild's licence in the town ([+0x468] bit
+// town) and the town's guild hall ([0x76C] & 0x2000); its question with the
+// reserve price (0x5AFC50: 0x4DAF10 with the cell's bit 0x80), then {0x28,
+// u32 town, u32 merchant, u32 x, u32 y}.
+bool can_auction(const SaveGame& save, uint32_t town, uint32_t merchant, uint32_t record);
+int32_t auction_reserve_price(const SaveGame& save, uint32_t town, uint32_t record);
+OperationBytes auction_operation(uint32_t town, uint32_t merchant, uint32_t x, uint32_t y);
+
 }  // namespace p3::data
