@@ -447,6 +447,17 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		sailing->fn_507fb0(uint16_t(c.args[0]));
 		return std::nullopt;
 	};
+	r[0x518750] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on a ship: whether its menu's «Pirate» can be pressed (can_turn_pirate); returns al.
+		const int ship = c.ship(c.ecx);
+		data::Sailing* sailing = probe_sailing();
+		if (ship < 0 || !sailing) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		c.eax_mask = 0xFF;
+		return can_turn_pirate(s, *sailing, ship) ? 1 : 0;
+	};
 	// The player's windows (player_actions.hpp): what they list and offer
 	// (the tavern's captain, 0x5269A0, is probes_ship_trade.cpp's).
 	r[0x4F6CA0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {

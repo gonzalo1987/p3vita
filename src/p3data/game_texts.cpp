@@ -204,7 +204,12 @@ constexpr uint32_t kDirect = 0x80000000;
 // build's PE time stamp, u32 a hash of p3vita's slots for that build, u32 the
 // number of texts, and each text as u32 size and its raw bytes.
 constexpr char kCacheMagic[4] = {'P', '3', 'T', 'X'};
-constexpr uint32_t kCacheVersion = 3;
+constexpr uint32_t kCacheVersion = 4;  // 4: with the buttons' tooltips (the string table, GameTexts::resource).
+
+// The tooltips read from the string table: 20000.. (the scripts' «ToolTip=»; 20062 the last).
+constexpr uint32_t kTooltipFirst = 20000;
+constexpr uint32_t kTooltipCount = 64;
+constexpr uint32_t kResourceKey = GameTexts::kResourceKey;
 
 // The slots the build's static initializers set, and the pointer each gets.
 std::vector<std::pair<uint32_t, uint32_t>> static_slots(const std::vector<uint8_t>& exe, const Sections& sections,
@@ -271,6 +276,57 @@ void put_u32(std::vector<uint8_t>& out, uint32_t v) {
 	for (int k = 0; k < 4; ++k) {
 		out.push_back(uint8_t(v >> (8 * k)));
 	}
+}
+
+// String `id` of the exe's string table (the resources' RT_STRING, blocks of 16: block id / 16 + 1, the first
+// language), in Windows-1252 ('?' for what it hasn't); empty if it isn't there.
+std::string resource_string(const std::vector<uint8_t>& exe, const Sections& sections, uint32_t id) {
+	const size_t pe = u32(exe, 0x3C);
+	const uint32_t rva = u32(exe, pe + 24 + 96 + 8 * 2);  // The data directory's resource table.
+	const size_t base = rva ? sections.offset(sections.base + rva) : 0;
+	if (!base) {
+		return "";
+	}
+	// A directory's entry with that id (the high bit of its offset: another directory).
+	auto find = [&](size_t dir, uint32_t want) -> uint32_t {
+		const size_t count = size_t(u16(exe, base + dir + 12)) + u16(exe, base + dir + 14);
+		for (size_t k = 0; k < count && base + dir + 16 + 8 * k + 8 <= exe.size(); ++k) {
+			if (u32(exe, base + dir + 16 + 8 * k) == want) {
+				return u32(exe, base + dir + 16 + 8 * k + 4);
+			}
+		}
+		return 0;
+	};
+	const uint32_t types = find(0, 6);  // RT_STRING
+	const uint32_t block = types & 0x80000000 ? find(types & 0x7FFFFFFF, id / 16 + 1) : 0;
+	if (!(block & 0x80000000)) {
+		return "";
+	}
+	const size_t languages = base + (block & 0x7FFFFFFF);
+	if (u16(exe, languages + 12) + u16(exe, languages + 14) == 0) {
+		return "";
+	}
+	const uint32_t leaf = u32(exe, languages + 16 + 4);
+	size_t p = sections.offset(sections.base + u32(exe, base + (leaf & 0x7FFFFFFF)));
+	if (!p) {
+		return "";
+	}
+	for (uint32_t k = 0; k < id % 16 && p + 2 <= exe.size(); ++k) {
+		p += 2 + 2 * size_t(u16(exe, p));
+	}
+	std::string out;
+	const size_t n = u16(exe, p);
+	for (size_t k = 0; k < n && p + 4 + 2 * k <= exe.size(); ++k) {
+		const uint16_t c = u16(exe, p + 2 + 2 * k);
+		uint8_t b = c < 0x100 && !(c >= 0x80 && c < 0xA0) ? uint8_t(c) : '?';
+		for (int j = 0; j < 32 && c >= 0x100; ++j) {
+			if (kCp1252[j] == c) {
+				b = uint8_t(0x80 + j);
+			}
+		}
+		out += char(b);
+	}
+	return out;
 }
 
 }  // namespace
@@ -405,6 +461,11 @@ std::unique_ptr<GameTexts> GameTexts::parse(const std::vector<uint8_t>& exe, std
 		}
 		texts->by_address_.emplace_back(pair.english & ~kDirect, std::move(raw));
 	}
+	// The buttons' tooltips: the strings kTooltipFirst.. of the exe's string table (resources, RT_STRING), in
+	// Windows-1252 as the other texts (the scripts' «ToolTip=20028»...).
+	for (uint32_t id = kTooltipFirst; id < kTooltipFirst + kTooltipCount; ++id) {
+		texts->by_address_.emplace_back(kResourceKey | id, resource_string(exe, sections, id));
+	}
 	std::sort(texts->by_address_.begin(), texts->by_address_.end());
 	return texts;
 }
@@ -495,7 +556,8 @@ std::unique_ptr<GameTexts> GameTexts::load_cache(const std::string& path, std::s
 		pos += 4 + size;
 	}
 	const size_t by_address = pos + 4 <= data.size() ? u32(data, pos) : 0;
-	if (by_address != sizeof(kTextAddresses) / sizeof(kTextAddresses[0])) {
+	// The texts by address and the tooltips of the string table (parse).
+	if (by_address != sizeof(kTextAddresses) / sizeof(kTextAddresses[0]) + kTooltipCount) {
 		return fail("made for another version");
 	}
 	pos += 4;

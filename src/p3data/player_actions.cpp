@@ -24,6 +24,15 @@ namespace p3::data::tick::construction_detail {
 bool fn_51f3a0(SaveGame& save, int town, GameMemory<0x44>& s);  // construction.cpp
 void fn_5250d0(const SaveGame& save, int town, uint8_t& x, uint8_t& y);  // construction.cpp
 }  // namespace p3::data::tick::construction_detail
+namespace p3::data::tick::merchants_detail {
+uint32_t fn_517f70(const SaveGame& save, int ship);  // town_tick/merchants.cpp: the crew's daily wage
+}  // namespace p3::data::tick::merchants_detail
+namespace p3::data {
+uint32_t fn_5185c0(const ShipMemory& s);  // battle/pirate_objects.cpp: the most sailors a ship takes
+}  // namespace p3::data
+namespace p3::data::convoys_sea_detail {
+int fn_517260(const Sailing& sailing, uint16_t x, uint16_t y);  // convoys_sea.cpp: the town at a point, or -1
+}  // namespace p3::data::convoys_sea_detail
 
 namespace p3::data {
 
@@ -490,6 +499,100 @@ bool can_dismiss_captain(const SaveGame& save, int ship) {
 	}
 	const ShipMemory& s = save.ships[size_t(ship)].memory;
 	return s.u16(0x42) < save.globals.u16(global::kCaptainCount) && s.u16(0x134) != 0x12 && s.u8(0x15C) == 0;
+}
+
+uint32_t ship_daily_wage(const SaveGame& save, int ship) {
+	return tick::merchants_detail::fn_517f70(save, ship);
+}
+
+uint32_t ship_most_sailors(const SaveGame& save, int ship) {
+	return fn_5185c0(save.ships[size_t(ship)].memory);
+}
+
+int32_t ship_shipyard_days(const SaveGame& save, int ship) {
+	// 0x493E3E: only in the states 6 and 7, with the town it is in (0x52AAD0 with 0).
+	const SavedShip& s = save.ships[size_t(ship)];
+	if ((s.status() != 6 && s.status() != 7) || s.town() >= save.towns.size()) {
+		return 0;
+	}
+	return tick::fn_52aad0(save, s.town(), ship, 0);
+}
+
+int32_t ship_days_to_go(const SaveGame& save, int ship) {
+	const SavedShip& s = save.ships[size_t(ship)];
+	const uint16_t state = s.status();
+	if (state != 2 && state != 3 && state != 0xF && state != 0x10) {
+		return 0;
+	}
+	const int32_t now = int32_t(save.tick());
+	const int32_t arrival = int32_t(s.arrival_tick());
+	return arrival > now ? (arrival - now) >> 8 : 0;
+}
+
+std::array<int32_t, 24> ship_cargo_prices(const SaveGame& save, int ship) {
+	std::array<int32_t, 24> out{};
+	const SavedShip& s = save.ships[size_t(ship)];
+	for (int w = 0; w < 24; ++w) {
+		// fld [+0xB4 + 4w]; fmul 200.0f, 2000.0f or 10.0f; fadd 0.5f; __ftol. The product of the float and the
+		// whole factor and the half are exact in a double, as in the x87.
+		const double factor = w >= 20 ? 10.0 : kInBarrels[w] ? 200.0 : 2000.0;
+		out[size_t(w)] = int32_t(double(s.average_price(w)) * factor + 0.5);
+	}
+	return out;
+}
+
+FirepowerBalls firepower_balls(int32_t firepower) {
+	FirepowerBalls out;
+	const int32_t v = firepower - 9;  // [0x672CC8], a byte
+	if (firepower == 0 || v < 0) {
+		return out;  // 0: none; under 9 the game's sqrt gives a NaN, whose counts are negative: none drawn.
+	}
+	// fild; fmul 1.4f; fstp qword; sqrt; fadd 1.0; fstp float; fld; fadd st, st; ftol.
+	const double root = std::sqrt(double(float(v)) * double(1.4f));
+	const float f = float(root + 1.0);
+	const int32_t n = int32_t(double(f) + double(f));
+	const float half = float(n) / 2.0f;
+	out.big = int32_t(half / 5.0f);
+	if (out.big >= 5) {
+		out.big = 5;
+		return out;
+	}
+	const float rest = half - float(5 * out.big);
+	out.small = int32_t(rest);
+	out.half = !(double(rest - float(out.small)) < 0.5);
+	return out;
+}
+
+bool can_turn_pirate(const SaveGame& save, const Sailing& sailing, int ship) {
+	const GlobalMemory& g = save.globals;
+	const uint16_t ships = g.u16(global::kShipCount);
+	const ShipMemory& s = save.ships[size_t(ship)].memory;
+	const uint16_t convoy = s.u16(0x8);
+	if (convoy >= ships) {
+		if (s.u16(0x50) < ships || s.u16(0x52) < ships || s.u16(0x134) != 0xF) {
+			return false;
+		}
+	} else {
+		if (convoy >= save.convoys.size()) {
+			return false;  // The game reads past its convoys there.
+		}
+		const GameMemory<0x3C>& c = save.convoys[convoy];
+		const uint16_t guide = c.u16(0x10);
+		if (guide >= ships || guide >= save.ships.size()) {
+			return false;
+		}
+		const ShipMemory& gs = save.ships[guide].memory;
+		if (gs.u16(0x50) < ships || gs.u16(0x52) < ships || c.u8(0x0) != s.u8(0x0) || c.u16(0x12) != 0xF ||
+			!(c.u8(0x14) & 2)) {
+			return false;
+		}
+	}
+	// 0x5187CE: the ship's own point (the high words of [+0x1C] and [+0x20]).
+	return convoys_sea_detail::fn_517260(sailing, s.u16(0x1E), s.u16(0x22)) < 0;
+}
+
+OperationBytes pirate_operation(uint32_t ship, bool pirate) {
+	return words_operation({0x0D, ship, pirate ? 1u : 0u});
 }
 
 int32_t repair_cost(const SaveGame& save, int town, int ship) {
@@ -2057,6 +2160,27 @@ int32_t auction_reserve_price(const SaveGame& save, uint32_t town, uint32_t reco
 
 OperationBytes auction_operation(uint32_t town, uint32_t merchant, uint32_t x, uint32_t y) {
 	return words_operation({0x28, town, merchant, x, y});
+}
+
+OperationBytes letter_settings_operation(uint32_t player, const std::array<uint8_t, 3>& days, bool event_sound,
+	uint8_t notices) {
+	// 0x535740 clears the buffer; 0x4096DB writes the u16 player, the three days ([+0xCD..+0xCF] of the window),
+	// the event sound ([+0xC8] != 0) and the notices ([+0xCC]).
+	OperationBytes bytes{};
+	const uint32_t code = 0x70;
+	std::memcpy(bytes.data(), &code, 4);
+	const uint16_t who = uint16_t(player);
+	std::memcpy(bytes.data() + 4, &who, 2);
+	bytes[6] = days[0];
+	bytes[7] = days[1];
+	bytes[8] = days[2];
+	bytes[9] = event_sound ? 1 : 0;
+	bytes[0xE] = notices;
+	return bytes;
+}
+
+OperationBytes letters_check_operation(uint32_t player, bool repair) {
+	return words_operation({0x71, player, repair ? 1u : 0u});
 }
 
 }  // namespace p3::data

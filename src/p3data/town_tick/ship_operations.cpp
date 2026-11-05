@@ -386,6 +386,50 @@ void fn_537ee0(SaveGame& save, const uint8_t* operation) {
 	ship_ai_detail::fn_517770(save, int(index), 2);
 }
 
+// 0x5386C0 (operation 0x0D, 0x5358D5): {0x0D, ship, flag}, the ship menu's «Pirate» / «Civil» (0x494244: the
+// flag 1 while the ship's [+0x15C] is 0). A ship out of a convoy, only sailing (the state 0xF): with the flag,
+// [+0x3D] |= 0x18, [+0x15C] = 1 and [+0x136] = 0; without it, [+0x3D] |= 0x10 and [+0x15C] = 0. In a convoy the
+// convoy's [+0x18] |= 0x1000 and then, without the flag, each of its ships (from the convoy's [+0xA], along
+// their [+0x6]) [+0x3C] |= 0x1000 and [+0x15C] = 0; with it, only for a convoy of the ship's owner, sailing
+// ([+0x12] 0xF) and with its flag 2, each ship [+0x3C] |= 0x1000 and [+0x15C] = 1.
+void fn_5386c0(SaveGame& save, const uint8_t* operation) {
+	uint32_t f[3];
+	std::memcpy(f, operation, sizeof(f));
+	GlobalMemory& g = save.globals;
+	const uint16_t ships = g.u16(global::kShipCount);
+	if (f[1] >= ships || f[1] >= save.ships.size()) {
+		return;
+	}
+	ShipMemory& s = save.ships[f[1]].memory;
+	const uint16_t convoy = s.u16(0x8);
+	if (convoy >= g.u16(global::kShips + 0xF6) || convoy >= save.convoys.size()) {
+		if (s.u16(0x134) != 0xF) {
+			return;
+		}
+		if (f[2] != 0) {
+			s.u8(0x3D) |= 0x18;
+			s.u8(0x15C) = 1;
+			s.u8(0x136) = 0;
+		} else {
+			s.u8(0x3D) |= 0x10;
+			s.u8(0x15C) = 0;
+		}
+		return;
+	}
+	GameMemory<0x3C>& c = save.convoys[convoy];
+	c.u32(0x18) |= 0x1000;
+	if (f[2] != 0 && (c.u8(0x0) != s.u8(0x0) || c.u16(0x12) != 0xF || !(c.u8(0x14) & 2))) {
+		return;
+	}
+	// The game walks the chain without a limit; past the ships it stops.
+	for (uint32_t k = c.u16(0xA), steps = 0; k < ships && k < save.ships.size() && steps <= save.ships.size(); ++steps) {
+		ShipMemory& m = save.ships[k].memory;
+		m.u16(0x3C) |= 0x1000;
+		m.u8(0x15C) = f[2] != 0 ? 1 : 0;
+		k = m.u16(0x6);
+	}
+}
+
 // 0x538000 (operation 0x07): {0x07, ship}: a ship in port dismisses its
 // captain, who goes to the town's list (0x526B00); its owner's [+0x1F] to 0;
 // the morale changes by −2560 / (sailors + 1) (to 0 if it goes negative);

@@ -33,6 +33,8 @@
 //        player_ops build PLAYER TOWN X Y CATALOG KEY (the town view's 0x21, from the window's picture)
 //        player_ops street TOWN PLAYER | well PLAYER TOWN X Y | wall PLAYER TOWN NEXT_TYPE
 //        player_ops demolish TOWN MERCHANT X Y | auction TOWN MERCHANT X Y
+//        player_ops letters PLAYER DAYS1 DAYS2 DAYS3 EVENT_SOUND NOTICES | letters-check PLAYER REPAIR
+//        player_ops pirate SHIP FLAG (the ship menu's «Pirate» 1, «Civil» 0)
 // (STEP 1, 5, 50, or 0 for all; «none» when the window sends nothing;
 // tavern-sailors prints the tavern's roll, its float's bits, and the
 // sailors it shows, from what 0x4F6CA0 allows and the game's rand() value)
@@ -222,6 +224,15 @@ int main(int argc, char** argv) {
 		const uint32_t w[4] = {uint32_t(number(argv[2])), uint32_t(number(argv[3])), uint32_t(number(argv[4])),
 			uint32_t(number(argv[5]))};
 		op = what == "demolish" ? demolish_operation(w[0], w[1], w[2], w[3]) : auction_operation(w[0], w[1], w[2], w[3]);
+	} else if (what == "letters" && argc == 8) {
+		// The letters' settings window's 0x70 on closing (0x4096DB).
+		const std::array<uint8_t, 3> days = {uint8_t(number(argv[3])), uint8_t(number(argv[4])), uint8_t(number(argv[5]))};
+		op = letter_settings_operation(uint32_t(number(argv[2])), days, number(argv[6]) != 0, uint8_t(number(argv[7])));
+	} else if (what == "pirate" && argc == 4) {
+		// The ship menu's «Pirate» / «Civil» (0x494244).
+		op = pirate_operation(uint32_t(number(argv[2])), number(argv[3]) != 0);
+	} else if (what == "letters-check" && argc == 4) {
+		op = letters_check_operation(uint32_t(number(argv[2])), number(argv[3]) != 0);
 	} else if (what == "rename" && argc == 4) {
 		for (const OperationBytes& o : rename_operations(uint32_t(number(argv[2])), argv[3])) {
 			for (const uint8_t b : o) {

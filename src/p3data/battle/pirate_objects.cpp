@@ -81,12 +81,17 @@ uint16_t ship_count(const SaveGame& save) {
 	return save.globals.u16(global::kShipCount);
 }
 
+}  // namespace
+
 // 0x5185C0 (on the ship): the sailors it can take, level [+0xF] · the loads
-// of its type + capacity / 2000, at least 20.
+// of its type + capacity / 2000, at least 20 (also the side panel's ship
+// menu, player_actions.cpp).
 uint32_t fn_5185c0(const ShipMemory& s) {
 	const int32_t n = int32_t(s.u8(0xF)) * kLoadsPerLevel[s.u8(0xE) & 3] + s.s32(0x10) / 2000;
 	return uint32_t(n) < 20 ? 20 : uint32_t(n);
 }
+
+namespace {
 
 // 0x517770 (on the ship, flags): [+0x3C] |= flags and, in a convoy, its [+0x18] too.
 void fn_517770(SaveGame& save, ShipMemory& s, uint16_t flags) {

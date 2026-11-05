@@ -125,20 +125,44 @@ left and right; only where you have an office), the loans you granted, and buy
 and sell company shares. X with no building in the middle opens the market.
 Touching a building of yours opens its window: demolish it or auction it, with
 the game's questions. Square opens the Hanse's panel (the way to Alderman) and
-Circle the mailbox.
+Circle the messages.
 
 **The side panel** on the right is the game's: the town's minimap (touch or
 drag on it to move the view), its row of icons (the ship list, the game's
-speed, the mailbox, building, leaving the town for the sea map and the menu)
-and its four ship buttons (your ships in port and at sea, your convoys in port
-and at sea: each touch goes to the next one; one in port opens its window, in
-its town, with its captain, sailors and hull, dismissing sailors or the
-captain, and the convoys as the game's convoy window offers them: forming a
-private or a public convoy, its destination with left and right, joining a
-convoy of the town, and leaving or disbanding the one it is in). The tab on its
-border folds it and unfolds it. With the buttons, Select goes onto it: left and
-right go along its icons and ship buttons, up and down between both rows, X
-does it, Circle or Select leave it.
+speed, the messages, building, leaving the town for the sea map and the menu),
+its four ship buttons (your ships in port and at sea, your convoys in port and
+at sea: each touch goes to the next one) and, under them, the room of its
+menus. The tab on its border folds it and unfolds it. With the buttons, Select
+goes onto it: left and right go along its icons and ship buttons, up and down
+between both rows, X does it, Circle or Select leave it. While a finger is on a
+button, or the pad points at it, its tooltip (the game's) shows. The top bar is
+the game's too: the inhabitants, the town, your money, the date and the
+hourglass, which opens the chronicle.
+
+**The ship menu** (a ship button, or a ship of the ship list) has the game's six
+pages, by its buttons or with L and R: the goods (the hold's barrel, each ware
+with its average price; drag the list to move it), the crew (morale, the
+weekly wage, the sailors with the least and the most it takes; dismissing
+sailors and the captain, his skills), the deck (its pieces in their slots), the
+convoys as the game's convoy window offers them (forming a private or a public
+convoy, its destination with left and right, joining a convoy of the town,
+showing it, and leaving or disbanding the one it is in) and the trade route
+(not yet). Up and down choose a row, left and right the amount, X does it. Its header says where the ship
+is or where it goes and in how many days, its speed, hull, crew and firepower.
+The crew's «Pirate» button stays off until the battles in the towns.
+
+**The messages** (the panel's scroll, or Circle): the public news, the official
+and personal letters and the trade information, by the game's buttons or left
+and right; touching a letter, or X, opens it on a parchment over the town (up
+and down go through them, L and R through its text, Square deletes it). Select opens the letters'
+settings, as the game's: how long each kind is kept, its notice and sound, and
+the events' sound (up and down choose, left and right or X change, Circle closes
+it, which sends them to the game).
+
+**On the sea map** the panel stays: the sea's minimap (touch or drag to move the
+map), the ship buttons (a ship at sea is chosen and centred; one in port takes
+you to its town), the chosen ship's menu (Square takes the next ship) and the
+messages.
 
 **Building** (the panel's hammer): the game's build menu with its five
 categories (houses and warehouses, public buildings, military ones for the

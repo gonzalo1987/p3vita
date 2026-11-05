@@ -1534,6 +1534,53 @@ instead of 3 · 4 (2 marks), a house that fits both ways facing 0xE0 with the to
 [0x774] at 0 (11 checks in save 3, whose town has it at 0). The scenarios of the earlier
 batches as before; the world 7 days in the 12 saves, 0 different.
 
+## The player's actions: the side panel (2026-11-06)
+
+What the game's side panel queues and decides (the ship menu SIDEMENU_SHIP, `CSideMenu_Ship`, and the
+messages SIDEMENU_INFOS with the letters' settings window; read in `re/emu/sesion14/ship_menu_notes.md`),
+rewritten literally; the three operations are in `OPERATIONS`:
+- 0x70 (0x536AFB → 0x4D6AF0, `mail.cpp`, `set_letter_settings`): the letters' settings window (0x408F50)
+  queues it on closing (0x4096DB): the merchant (u16, compared unsigned with the merchants' count), the days
+  each class of letters is kept, the event sound and zeros to his [+0x38..+0x3F], the notices to his [+0x26];
+- 0x71 (0x536B1C): with its [+0x8] (the settings window's 0x71 {player, 1}, 0x409735), 0x4D7960 repairs the
+  letters' chains (`repair_letter_chains`: each merchant's chain and the chronicle's are walked marking their
+  letters; a letter reached a second time cuts the link to it; the free list ends at a letter already marked,
+  its link set to the count; a free list's head over the count first becomes the count); then 0x4D6780
+  removes the merchant's old letters. The letter window queues 0x71 {player, 0} once a tick while it is open
+  (0x47CD83), and the viewer does the same;
+- 0x0D (0x5358D5 → 0x5386C0, `town_tick/ship_operations.cpp`): the crew page's «Pirate» / «Civil»
+  (0x494244: {ship, [+0x15C] == 0}): a ship out of a convoy and sailing (0xF) gets [+0x3D] |= 0x18,
+  [+0x15C] = 1 and [+0x136] = 0, or with «Civil» [+0x3D] |= 0x10 and [+0x15C] = 0; in a convoy, the convoy's
+  [+0x18] |= 0x1000 and its ships' [+0x3C] |= 0x1000 and [+0x15C] (with «Pirate» only for a convoy of the
+  ship's owner, sailing and with its flag 2);
+- 0x518750 (`can_turn_pirate`, `player_actions.cpp`): whether the button can be pressed: a sailing ship not
+  pursued ([+0x50], [+0x52]), out of a convoy or in one of its owner's that is sailing with its flag 2 and
+  whose guide isn't pursued, and away from the towns (0x517260 at its point).
+
+What the ship menu shows (`player_actions.cpp`): the crew's daily wage (0x517F70, already rewritten for the
+merchants' tick; the page writes seven times it), the most sailors (0x5185C0, the pirates'), the days at
+the shipyard (0x52AAD0, the shipyard's), the days to go ((arrival − tick) >> 8, 0x492C2B), the cargo's
+prices (0x5187F0) and the firepower's cannonballs (0x4901C0). The last two are only shown: they have
+`tests/ship_menu_test.cpp` as a guard, not the oracle. The probe of 0x518750 is in `probes_unchecked.cpp`;
+`player_ops letters`, `letters-check` and `pirate` give the viewer's bytes.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `letter_ops` | four letters sent to the player (one of each class and an old one, 0x4D6530 called directly); the viewer's 0x70 three times with the window's values (days 0..5, the event sound, the notices); 0x70 for a merchant out; 0x71 with 0 (the old letter and the class 5 removed) and with 1 on a sound mailbox; then 0x71 with 1 after breaking the chains: the player's last letter linked back to his first (a loop) and to the chronicle's first, the free list's head over the count and on a letter of his chain; 0x71 for a merchant out | 1, 3, 5, 7 | 4 calls of 0x4D6530 and 11 operations equal; 11 of 11 targets |
+| `pirate_ops` | 0x518750 on a ship sailing alone, pursued ([+0x50], then [+0x52]), docked, on its town's point; on a sailing convoy's guide and member with its flag 2 and without, of another owner, not sailing, its guide pursued; then the viewer's 0x0D with 1 and 0 on the convoy's guide and on the free ship, 0x0D on the convoy of another owner, not sailing, without the flag 2, on a docked ship and on a ship out | 1, 3, 5, 7 | 10 calls of 0x518750 and 10 operations equal; 19 of 19 targets |
+| `pirate_sailing` | a day of ships after «Pirate» on the first three ships sailing out of a convoy (the ship update 0x506720 with their [+0x15C] at 1) | 1, 3, 7 | 256 calls of 0x506720 equal. In save 5 the emulator stops at 0x58D048 (the town view's geometry): a raiding ship attacks a town, the battle in a town (the battles' piece 6) |
+
+Broken on purpose and caught (2026-11-06): the free list's end set to 0xFFFF instead of the count (1
+operation of 0x71 in save 3) and «Pirate»'s [+0x3D] |= 0x08 instead of 0x18 (1 operation of 0x0D). The viewer
+leaves «Pirate» off (`kPirateModeReady` in `main.cpp`): a pirate ship of the player raids towns (piece 6)
+and ships (piece 7), which p3vita doesn't have yet. The scenarios of the earlier batches as before; the
+world 7 days in the 12 saves, 0 different.
+
+The buttons' tooltips are the exe's string table (Windows resources, RT_STRING 20000..20062, the scripts'
+«ToolTip=»; `GameTexts::resource`, the texts' cache version 4; `re/emu/sesion14/rsrc_strings.py` lists
+them): read the same from the English and the Spanish exe, and the cache gives them back the same
+(`p3save texts-cache`).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

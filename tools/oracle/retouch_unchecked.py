@@ -6502,6 +6502,190 @@ def build_player_ops(o):
     return during
 
 
+def letter_ops(o):
+    """Operations 0x70 (0x536AFB → 0x4D6AF0: a merchant's letter settings, which the letters' settings
+    window 0x408F50 queues on closing) and 0x71 (0x536B1C: with its [+0x8], 0x4D7960 repairs the letters'
+    chains; then 0x4D6780 removes the old ones). Four letters sent to the player (one of each class and
+    an old one, 0x4D6530 called directly); the viewer's bytes (player_ops letters, letters-check) for the
+    player with the window's values (the days of each class 0..5, the event sound, the notices); 0x70 for a
+    merchant out; 0x71 with 0 and with 1 on the mailbox as it is; then 0x71 with 1 after breaking the
+    chains: the player's last letter linked back to his first (a loop), to the chronicle's first, the free
+    list's head over the count, the free list's head on a letter of his chain; and 0x71 for a merchant
+    out."""
+    merchants, player = o.counts()[2], o.u32(to.PLAYER)
+    M = o.merchant(player)
+
+    def link_of(e):
+        return o.u32(MAILBOX) + 0x10 * e + 6
+
+    def chain(head):
+        out, e, count = [], o.u16(head), o.u16(MAILBOX + 6)
+        while e < count and len(out) <= count:
+            out.append(e)
+            e = o.u16(link_of(e))
+        return out
+
+    def state(what):
+        print(f'  {what}: free {o.u16(MAILBOX + 4)}, count {o.u16(MAILBOX + 6)}, chronicle {o.u16(MAILBOX + 8)}, '
+              f'the player\'s {chain(M + 0xA)[:12]}, settings {bytes(o.uc.mem_read(M + 0x38, 8)).hex()} '
+              f'{o.u8(M + 0x26):#x}')
+
+    def during(o):
+        at = _trampolines.get((0x4D6530, 2, False), TRAMPOLINES + 0x40 * len(_trampolines))
+        to.MAIL_SITES.add(at + 4 * 2 + 5)
+        kinds = {}
+        for kind in range(0x86):
+            kinds.setdefault(o.u8(0x6C0198 + kind), kind)
+        day, month, year = o.u8(0x6DE4A0), o.u8(0x6DE4A1), o.u16(0x6DE4A2)
+        for c, old in ((1, False), (2, False), (3, False), (1, True)):
+            if c in kinds:
+                y = year - 1 if old else year
+                o.uc.mem_write(SCRATCH_LETTER, bytes([day, 0x80 | month, y & 0xFF, y >> 8, kinds[c], 0, 0xFF, 0xFF])
+                               + bytes(8))
+                direct(o, 0x4D6530, [player, SCRATCH_LETTER], ecx=MAILBOX)
+        state('four letters sent')
+        saved = bytes(o.uc.mem_read(M + 0x38, 8)), o.u8(M + 0x26)
+        for days, sound, notices in (((1, 2, 3), 1, 0x2D), ((0, 0, 0), 0, 0x3F), ((4, 1, 5), 1, 0x12)):
+            run_bytes(o, player_op('letters', player, *days, sound, notices))
+            state(f'settings {days}, sound {sound}, notices {notices:#x}')
+        operation(o, 0x70, merchants)
+        run_bytes(o, player_op('letters-check', player, 0))
+        state('0x71 with 0 (the old letter and the class 5 removed)')
+        o.uc.mem_write(M + 0x38, saved[0])
+        w8(o, M + 0x26, saved[1])
+        run_bytes(o, player_op('letters-check', player, 1))
+        state('0x71 with 1, nothing to repair')
+        mine = chain(M + 0xA)
+        if len(mine) >= 2:
+            last = link_of(mine[-1])
+            end = o.u16(last)
+            w16(o, last, mine[0])
+            run_bytes(o, player_op('letters-check', player, 1))
+            state('his last letter linked back to his first')
+            mine = chain(M + 0xA)
+            last = link_of(mine[-1])
+            end = o.u16(last)
+            if o.u16(MAILBOX + 8) < o.u16(MAILBOX + 6):
+                w16(o, last, o.u16(MAILBOX + 8))
+                run_bytes(o, player_op('letters-check', player, 1))
+                state('his last letter linked to the chronicle\'s first')
+                w16(o, last, end)
+        free = o.u16(MAILBOX + 4)
+        w16(o, MAILBOX + 4, o.u16(MAILBOX + 6) + 3)
+        operation(o, 0x71, player, 1)
+        state('the free list\'s head over the count')
+        mine = chain(M + 0xA)
+        if mine and free < o.u16(MAILBOX + 6):
+            w16(o, MAILBOX + 4, mine[0])
+            operation(o, 0x71, player, 1)
+            state('the free list\'s head on his first letter')
+        w16(o, MAILBOX + 4, free)
+        operation(o, 0x71, merchants, 1)
+        state('0x71 for a merchant out')
+    return during
+
+
+def pirate_ops(o):
+    """0x518750 (whether a ship's menu lets it turn pirate: called directly on ships) and the operation 0x0D
+    (0x5358D5 → 0x5386C0, the menu's «Pirate» / «Civil»). 0x518750 on a ship sailing (0xF) out of a convoy,
+    pursued ([+0x50], then [+0x52]), docked, on a town's point; on a sailing convoy's guide and member with
+    the convoy's flag 2 and without, of another owner, not sailing. Then 0x0D with 1 and 0 on the free
+    sailing ship, on a docked one, on the convoy (its flag 2, another owner, not sailing) and on a ship out
+    (the viewer's bytes, player_ops pirate)."""
+    towns, _, merchants, ships = o.counts()
+    convoys = o.u16(to.SHIPS + 0xF6)
+
+    def ship_state(s):
+        return o.u16(o.ship(s) + 0x134)
+
+    free = [s for s in range(ships) if ship_state(s) == 0xF and o.u16(o.ship(s) + 8) >= convoys]
+    docked = next(s for s in range(ships) if ship_state(s) == 0 and o.u16(o.ship(s) + 8) >= convoys)
+    if not free:
+        raise RuntimeError('no ship sailing out of a convoy')
+    s = free[0]
+    a = o.ship(s)
+    # A convoy: one sailing if the save has it, else the free ship's own made one by hand (its [+0x8], the
+    # convoy's guide [+0x10], owner, state [+0x12] and flags [+0x14]).
+    sailing_convoys = [c for c in range(convoys) if o.u16(convoy_at(o, c) + 0x12) == 0xF and o.u16(convoy_at(o, c) + 0x10) < ships]
+    print(f'ship {s} sailing alone, ship {docked} docked; convoys sailing {sailing_convoys[:4]}')
+
+    def during(o):
+        def ask(what, k):
+            r = direct(o, 0x518750, [], ecx=o.ship(k)) & 0xFF
+            print(f'  0x518750 {what} (ship {k}): {r}')
+        ask('sailing alone', s)
+        old = o.u16(a + 0x50), o.u16(a + 0x52)
+        w16(o, a + 0x50, 0)
+        ask('pursued at [+0x50]', s)
+        w16(o, a + 0x50, old[0])
+        w16(o, a + 0x52, 0)
+        ask('pursued at [+0x52]', s)
+        w16(o, a + 0x52, old[1])
+        ask('docked', docked)
+        xy = bytes(o.uc.mem_read(a + 0x1C, 8))
+        o.uc.mem_write(a + 0x1C, bytes(o.uc.mem_read(o.ship(docked) + 0x1C, 8)))
+        ask('on its town\'s point', s)
+        o.uc.mem_write(a + 0x1C, xy)
+        if sailing_convoys:
+            c = sailing_convoys[0]
+            C = convoy_at(o, c)
+            guide = o.u16(C + 0x10)
+            member = o.u16(o.ship(guide) + 6)
+            flags, owner, state = o.u8(C + 0x14), o.u8(C), o.u16(C + 0x12)
+            w8(o, C + 0x14, flags | 2)
+            ask('a sailing convoy\'s guide, its flag 2', guide)
+            if member < ships and o.u16(o.ship(member) + 8) == c:
+                ask('its member', member)
+            pursued = o.u16(o.ship(guide) + 0x50)
+            w16(o, o.ship(guide) + 0x50, 0)
+            ask('its guide pursued', guide)
+            w16(o, o.ship(guide) + 0x50, pursued)
+            w8(o, C + 0x14, flags & ~2)
+            ask('without the flag 2', guide)
+            w8(o, C + 0x14, flags | 2)
+            w8(o, C, (owner + 1) % merchants)
+            ask('of another owner', guide)
+            w8(o, C, owner)
+            w16(o, C + 0x12, 0x10)
+            ask('not sailing', guide)
+            w16(o, C + 0x12, state)
+            for flag in (1, 0):
+                run_bytes(o, player_op('pirate', guide, flag))
+            w8(o, C, (owner + 1) % merchants)
+            operation(o, 0x0D, guide, 1)
+            w8(o, C, owner)
+            w16(o, C + 0x12, 0x10)
+            operation(o, 0x0D, guide, 1)
+            operation(o, 0x0D, guide, 0)
+            w16(o, C + 0x12, state)
+            w8(o, C + 0x14, flags & ~2)
+            operation(o, 0x0D, guide, 1)
+            w8(o, C + 0x14, flags)
+        for flag in (1, 0):
+            run_bytes(o, player_op('pirate', s, flag))
+            print(f'  0x0D {flag}: [+0x3D] {o.u8(a + 0x3D):#x}, [+0x15C] {o.u8(a + 0x15C)}, [+0x136] {o.u8(a + 0x136)}')
+        operation(o, 0x0D, docked, 1)
+        operation(o, 0x0D, ships, 1)
+    return during
+
+
+def pirate_sailing(o):
+    """A day of ships after the ship menu's «Pirate» (0x0D with 1, the viewer's bytes) on the first ships
+    sailing out of a convoy (the ship update 0x506720 with their [+0x15C] at 1), and «Civil» on the last of
+    them half a day later is left to the queue: only the first operations run here."""
+    _, _, _, ships = o.counts()
+    convoys = o.u16(to.SHIPS + 0xF6)
+    free = [s for s in range(ships) if o.u16(o.ship(s) + 0x134) == 0xF and o.u16(o.ship(s) + 8) >= convoys][:3]
+    if not free:
+        raise RuntimeError('no ship sailing out of a convoy')
+    print(f'ships {free} turn pirate')
+
+    def during(o):
+        for s in free:
+            run_bytes(o, player_op('pirate', s, 1))
+    return during
+
+
 BUILD_MENU = to.SENTINEL + 0x200  # the copier of the build window's menu 0x47AB20 (probes_unchecked.cpp kBuildMenu)
 BUILD_FITS = to.SENTINEL + 0x280  # of whether a building fits a cell, 0x47B8C0 (kBuildFits)
 BUILD_MARKS = to.SENTINEL + 0x300  # of where it fits, 0x47B830 (kBuildMarks)
@@ -7224,6 +7408,14 @@ SCENARIOS = {
         '@53d0f1', '@53d0ef>53d10a', '@53d012', '@51f095', '@524639', '@52452e>524770', '@524551>524770',
         '@5245ed', '@524769', '@4fb5bc', '@4fb6f1>4fb8da', '@4fb60c', '@4fb629', '@4fb64d', '@4fb66a',
         '@4fb70b', '@4fb80d', '@4fb826']),
+    'pirate_ops': Scenario(pirate_ops, [0x535760, 0x518750], 0, [
+        '@5386ff', '@538706', '@53871b', '@5386f9>5387fc', '@538729', '@53876b', '@5387cc', '@5387a5>5387fc',
+        '@5387ac>5387fc', '@5387b2>5387fc', '@5386d5>5387fc', '@518765>518777', '@51876b>518777', '@518775>5187ce',
+        '@5187b1>518777', '@5187bf>518777', '@5187c6>518777', '@5187cc>518777', '@5187e4']),
+    'pirate_sailing': Scenario(pirate_sailing, [0x535760, 0x506720], 1, ['@538706']),
+    'letter_ops': Scenario(letter_ops, [0x535760, 0x4D6530], 0, [
+        '@4d6b01', '@4d6aff>4d6b35', '@536b23', '@536b21>536b2d', '@4d79b7', '@4d79e9', '@4d79f0', '@4d7a43',
+        '@4d7a30', '@4d7a7e', '@4d7a6b']),
     'build_menus': Scenario(build_menus, [0x535760, 0x51F3A0, BUILD_MENU, BUILD_MARKS], 0, [
         '@47abc7', '@47ad24', '@47abd9', '@47ac7d', '@47accb', '@47ad03', '@47ad4d', '@47ad78', '@47ad89',
         '@47ad9a', '@47ada7', '@47adbc', '@47adcc', '@47ade5', '@47ae06', '@47ae17', '@47ae23', '@47b108',

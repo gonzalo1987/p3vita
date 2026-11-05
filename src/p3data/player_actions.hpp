@@ -17,6 +17,8 @@
 
 namespace p3::data {
 
+class Sailing;
+
 using OperationBytes = std::array<uint8_t, 0x14>;
 
 // Adds the operation to the queue (SaveGame::queued_operations). The game
@@ -199,6 +201,35 @@ CaptainInfo captain_info(const SaveGame& save, uint16_t captain);
 // [+0x15C] is 0 (0x4940DB..0x494102).
 bool ship_window_open(const SaveGame& save, int ship);
 bool can_dismiss_captain(const SaveGame& save, int ship);
+
+// What the side panel's ship menu (CSideMenu_Ship; re/emu/sesion14/ship_menu_notes.md) shows of a ship of
+// the player: its crew's daily wage (0x517F70; the crew page writes 7 times it, a week's), the most sailors
+// it can take (0x5185C0), the days it still spends at the shipyard in the states 6 and 7 (0x52AAD0 with 0),
+// the days to its destination at sea (0x492C2B: in the states 2, 3, 0xF and 0x10, ([+0x48] − the tick) >> 8)
+// and the price it shows of each of its 24 cargo slots (0x5187F0: the average price · 200 or 2000, · 10 for
+// the weapons, + 0.5, truncated).
+uint32_t ship_daily_wage(const SaveGame& save, int ship);
+uint32_t ship_most_sailors(const SaveGame& save, int ship);
+int32_t ship_shipyard_days(const SaveGame& save, int ship);
+int32_t ship_days_to_go(const SaveGame& save, int ship);
+std::array<int32_t, 24> ship_cargo_prices(const SaveGame& save, int ship);
+// Its firepower as the menu's cannonballs (0x4901C0): with f = sqrt((firepower − 9) · 1.4) + 1 (as a float)
+// and n = trunc(2 f) / 2, ftol(n / 5) big balls, at most 5; under 5, also trunc(n − 5 · big) small ones and
+// half a small one if what is left is at least 0.5. Nothing with 0 or under 9 (the game's sqrt of a negative).
+struct FirepowerBalls {
+	int big = 0;
+	int small = 0;
+	bool half = false;
+};
+FirepowerBalls firepower_balls(int32_t firepower);
+// Its crew page's «Pirate» / «Civil» (0x492A70, 0x494244): shown with a captain; «Pirate» while the ship's
+// [+0x15C] is 0 and its state isn't 0x12, «Civil» otherwise; pressed, 0x0D {ship, [+0x15C] == 0}. It can be
+// pressed (0x518750) for a ship whose [+0x8] is past the ships' count (the game compares the convoy with
+// it), not pursued ([+0x50] and [+0x52] past the ships) and sailing (0xF); in a convoy, if its guide isn't
+// pursued and the convoy is the ship's owner's, sailing ([+0x12] 0xF) and with its flag 2; and then only away
+// from the towns (0x517260 at the ship's point: no town).
+bool can_turn_pirate(const SaveGame& save, const Sailing& sailing, int ship);
+OperationBytes pirate_operation(uint32_t ship, bool pirate);
 
 // The shipyard's repair (0x5F8F50): what it costs (0x52A950: the ship, or
 // all the ships of its convoy) and what it sends: 0x1D with its convoy for a
@@ -540,5 +571,18 @@ OperationBytes demolish_operation(uint32_t town, uint32_t merchant, uint32_t x, 
 bool can_auction(const SaveGame& save, uint32_t town, uint32_t merchant, uint32_t record);
 int32_t auction_reserve_price(const SaveGame& save, uint32_t town, uint32_t record);
 OperationBytes auction_operation(uint32_t town, uint32_t merchant, uint32_t x, uint32_t y);
+
+// --- The letters: the side panel's messages (SIDEMENU_INFOS, the letter window *0x6CC960) and its letters'
+// settings window (0x408F50, «Configuration of letters») ---
+//
+// The settings window shows the player's [+0x38..+0x3A] (how long each class of letters is kept: 0 never
+// deleted, 1..4 deleted after 40, 20, 10, 5 days, 5 not received; 0x6C1058), [+0x26] (each class's
+// notices: 1, 2, 4 play a sound, 8, 0x10, 0x20 show a line) and [+0x3B] (the event sound); on closing it
+// queues 0x70 {u16 player, the three days, the event sound, zeros, [+0xE] the notices} (0x4096DB) and then
+// 0x71 {player, 1} (0x409735). The letter window queues 0x71 {player, 0} once a tick while it is open
+// (0x47CD83: when the tick's low byte isn't the one it last saw).
+OperationBytes letter_settings_operation(uint32_t player, const std::array<uint8_t, 3>& days, bool event_sound,
+	uint8_t notices);
+OperationBytes letters_check_operation(uint32_t player, bool repair);
 
 }  // namespace p3::data

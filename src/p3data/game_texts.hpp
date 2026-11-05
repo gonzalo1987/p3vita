@@ -299,6 +299,10 @@ public:
 	// read from this build at its own address (game_text_addresses.inc: the
 	// texts of the letters' composer...); empty if it isn't in the table.
 	const std::string& raw_at(uint32_t english) const;
+	// A string of the exe's string table by its number (its resources; the buttons' tooltips 20000..20063, as
+	// the scripts' «ToolTip=» give them), raw (Windows-1252); empty if it isn't there.
+	static constexpr uint32_t kResourceKey = 0x20000000;  // Their keys among the texts by address.
+	const std::string& resource(uint32_t id) const { return raw_at(kResourceKey | id); }
 	// The game's sprintf (0x64D410) on raw texts: %s (and %d, %i, %u, %c, with
 	// the number or the character already written by the caller) with the bytes of `args` in
 	// order, %% and the positional %$N$s of the Spanish texts (the N-th

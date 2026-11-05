@@ -73,6 +73,20 @@ void delete_letter(SaveGame& save, int32_t merchant, uint32_t entry);
 // (0x47C520), the game's save for every merchant.
 void expire_letters(SaveGame& save, int32_t merchant);
 
+// 0x4D6AF0 (on the mailbox; operation 0x70, 0x536AFB, which the letters' settings window 0x408F50 queues
+// on closing): the 8 `bytes` to the merchant's [+0x38..+0x3F] (the days each class of letters is kept,
+// the indices of 0x6C0220, then the window's «event sound» and zeros) and `notices` to his [+0x26] (the
+// sound and the line of each class), for a merchant under the count.
+void set_letter_settings(SaveGame& save, uint32_t merchant, const uint8_t* bytes, uint8_t notices);
+
+// 0x4D7960 (on the mailbox; operation 0x71 with its [+0x8] set, after the settings' 0x70): repairs the
+// chains. Each merchant's chain and the chronicle's are walked marking their letters; one reached a second
+// time cuts the link to it (0xFFFF); the free list ends (its link set to the count) at a letter already
+// marked. The free list's head over the count first becomes the count. The operation 0x71 then removes
+// the merchant's old letters (expire_letters); the letter window queues it with 0 once a tick while it is
+// open (0x47CD83).
+void repair_letter_chains(SaveGame& save);
+
 // 0x548CA0 (on the real-time object 0x6DF2F0): a ticker line for `merchant`,
 // shown only to the local player (save.player): its kind and argument go to
 // SaveGame::player_ticker, unless the kind has no line (0x5483D0 shows nothing

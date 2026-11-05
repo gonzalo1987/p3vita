@@ -891,6 +891,7 @@ public:
 	bool ok() const { return map_ && !towns_.empty(); }
 	int width() const { return width_; }
 	int height() const { return height_; }
+	SDL_Texture* texture() const { return map_; }  // The whole map (the side panel's minimap of the sea).
 
 	// Whether the map's image is all in its texture (or failed: ok() is false).
 	bool ready() const { return !map_entry_ || next_row_ >= bmp_.height; }
@@ -1213,17 +1214,17 @@ std::string bar_title(const SaveGame& save, const std::vector<std::string>& name
 // Barra de texto a lo ancho de la pantalla: el título a la izquierda y, a la
 // derecha, el primero de los textos que quepa.
 void draw_bar(SDL_Renderer* renderer, TextRenderer& text, int top, const std::string& title,
-	const std::vector<std::string>& right_texts) {
+	const std::vector<std::string>& right_texts, int width = kScreenWidth) {
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
-	const SDL_Rect bar = {0, top, kScreenWidth, kBarHeight};
+	const SDL_Rect bar = {0, top, width, kBarHeight};
 	SDL_RenderFillRect(renderer, &bar);
 	const int y = top + (kBarHeight - text.line_height()) / 2;
 	text.draw(title, kBarMargin, y, kTextColor);
-	const int room = kScreenWidth - 4 * kBarMargin - text.measure(title);
+	const int room = width - 4 * kBarMargin - text.measure(title);
 	for (const std::string& right : right_texts) {
 		if (text.measure(right) <= room) {
-			text.draw(right, kScreenWidth - kBarMargin - text.measure(right), y, kDimColor);
+			text.draw(right, width - kBarMargin - text.measure(right), y, kDimColor);
 			break;
 		}
 	}
@@ -2853,33 +2854,18 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 		break;
 	}
 	case Place::Ship: {
-		std::vector<uint16_t> ships;
-		for (const int s : player_ships_in(save, town)) {
-			ships.push_back(uint16_t(s));
-		}
-		choose(std::move(ships));
-		if (v.ship < 0) {
-			v.title = tr("Barco", "Ship");
-			v.lines.push_back({tr("No tienes ningún barco en este puerto.", "You have no ship in this port."), kDimColor});
+		// The side panel's ship menu (its crew and convoy pages): `ui.ship` is
+		// the ship itself. Rows 0 and 1 the crew page's (dismiss sailors, the
+		// captain), from 2 on the convoy's.
+		if (ui.ship >= save.ships.size() || save.player < 0 || save.ships[ui.ship].owner() != save.player ||
+			!save.ships[ui.ship].in_use()) {
 			break;
 		}
+		v.ship = int(ui.ship);
+		v.ships = {uint16_t(ui.ship)};
 		const SavedShip& ship = save.ships[size_t(v.ship)];
-		v.title = ship_label(ship) + (v.ships.size() > 1 ? tr("   (Select: otro)", "   (Select: another)") : "");
-		const std::string captain_word = game_text(GameText::ShipCaptain, tr("Capitán", "Captain"));
-		if (ship.captain() < save.globals.u16(global::kCaptainCount)) {
-			v.lines.push_back({captain_word + ": " + captain_name(save, ship.captain()) + " (" +
-					std::to_string(captain_info(save, ship.captain()).age) + tr(" años)", " years)"),
-				kTextColor});
-		} else {
-			v.lines.push_back({captain_word + ": " + tr("ninguno", "none"), kDimColor});
-		}
-		v.lines.push_back({game_text(GameText::TavernSailors, tr("Marineros", "Sailors")) + ": " +
-				std::to_string(ship.sailors()), kTextColor});
-		v.lines.push_back({tr("Casco: ", "Hull: ") + std::to_string(hull_percent(ship)) + " %", kTextColor});
+		v.title = ship_label(ship);
 		const bool docked = ship_window_open(save, v.ship);
-		if (!docked) {
-			v.lines.push_back({tr("Solo se puede con el barco atracado.", "Only with the ship docked."), kDimColor});
-		}
 		v.rows = {{capitalized(game_text(GameText::ShipDismissSailors, tr("Despedir marineros", "Dismiss sailors"))),
 					  docked && ship.sailors() > 0},
 			{capitalized(game_text(GameText::ShipDismissCaptain, tr("Despedir capitán", "Dismiss captain"))),
@@ -3307,7 +3293,13 @@ constexpr const char* kPanelShipFiles[kPanelShipButtons] = {"images/b_schiffe_an
 	"images/b_konvoi_anker.tga", "images/b_konvoi_see.tga"};
 
 // What the menus' room shows.
-enum class PanelMenu { None, Build, ShipList };
+enum class PanelMenu { None, Build, ShipList, Ship, Messages };
+
+// The ship menu's pages (SIDEMENU_SHIP: its buttons in the game's order, the
+// convoy's showing the convoy's ships when the ship is in one, as the game's
+// «show convoy» takes the place of «form convoy»).
+enum class ShipPage { Goods, Crew, Deck, Convoy, LeaveConvoy, TradeRoute, Count };
+constexpr int kShipPages = int(ShipPage::Count);
 
 struct SidePanel {
 	bool folded = false;
@@ -3335,6 +3327,14 @@ struct SidePanel {
 	uint64_t marks_key = 0;
 	// The ship list: the row chosen.
 	int list_row = 0;
+	// The ship menu (SIDEMENU_SHIP): the ship it shows, its page, the first
+	// cargo row shown, and its crew and convoy pages' state (as the flat
+	// windows': open = Place::Ship, ship = the ship, the row, the amount, the
+	// message).
+	int ship = -1;
+	ShipPage ship_page = ShipPage::Goods;
+	int cargo_first = 0;
+	PlaceUi ship_ui;
 };
 
 constexpr int kShipListRows = 6;  // Two lines each in the room.
@@ -3350,6 +3350,39 @@ struct PanelArt {
 	SDL_Texture* ships[kPanelShipButtons] = {};
 	int ship_width[kPanelShipButtons] = {};  // Of each frame (three side by side).
 	int ship_height[kPanelShipButtons] = {};
+	// The ship menu's ([SIDEMENUSHIP0] of sidemenu.ini, textures.ini): its
+	// page buttons (schiffinfo0001.tga: 7 columns, 4 rows), the morale's faces
+	// and the wage's coins (moral_heuer.tga), the barrel of its hold and its
+	// mask (fass0002/0003), the captain's skills (bonus.tga), the deck
+	// (schiffsdeck.tga), each type's faded ship (backpic_*.bmp) and the list
+	// icons of frames_listen/.
+	SDL_Texture* ship_buttons = nullptr;
+	SDL_Texture* morale = nullptr;
+	SDL_Texture* barrel = nullptr;
+	SDL_Texture* barrel_mask = nullptr;
+	SDL_Texture* bonus = nullptr;
+	SDL_Texture* deck = nullptr;
+	SDL_Texture* backpics[4] = {};
+	enum Icon { Anchor, Sailing, Sunk, Repair, Knots, Hull, Crew, Captain, Weapons, BigBall, SmallBall, Barrel, Bale,
+		HandWeapons, Offered, Auction, Upgrade, Fleet, IconCount };
+	SDL_Texture* list_icons[IconCount] = {};
+	int icon_width[IconCount] = {};
+	int icon_height[IconCount] = {};
+	// The messages' (SIDEMENU_INFOS): their buttons (briefe0001.tga, TEX20018: 32 · 28, three a row) and the
+	// letter's parchment (dialogparchment/Papier.tga, TEX16001: its rolls, edges and middle) with its seal.
+	SDL_Texture* letters = nullptr;
+	SDL_Texture* paper = nullptr;
+	SDL_Texture* seal = nullptr;
+	// The game's top bar (screenGame.ini ObenLinks / ObenRechts: HauptscreenA1280.bmp and HauptscreenB800.bmp),
+	// its inhabitants' and buildings' icons (einwohner_haus_TP.tga, TEX16033: 36 · 28, the man and the house),
+	// the money's coins (frames_konto/konto0001.tga, the first frame of its button) and the hourglass, the
+	// chronicle's button, with its 32 frames (frames_sanduhr/sanduhr00*.tga).
+	SDL_Texture* bar_left = nullptr;
+	SDL_Texture* bar_right = nullptr;
+	SDL_Texture* people = nullptr;
+	SDL_Texture* coins = nullptr;
+	static constexpr int kHourglassFrames = 32;
+	SDL_Texture* hourglass[kHourglassFrames] = {};
 
 	PanelArt(SDL_Renderer* renderer, const CprArchive& archive) {
 		icons = load_texture(renderer, archive, "images/menu01.tga");
@@ -3362,13 +3395,70 @@ struct PanelArt {
 			ships[k] = load_texture(renderer, archive, kPanelShipFiles[k], &ship_width[k], &ship_height[k]);
 			ship_width[k] /= 3;
 		}
+		ship_buttons = load_texture(renderer, archive, "images/sidemenu/schiffinfo0001.tga");
+		morale = load_texture(renderer, archive, "images/sidemenu/moral_heuer.tga");
+		barrel = load_texture(renderer, archive, "images/sidemenu/fass0002.tga");
+		barrel_mask = load_texture(renderer, archive, "images/sidemenu/fass0003.tga");
+		bonus = load_texture(renderer, archive, "images/sidemenu/bonus.tga");
+		deck = load_texture(renderer, archive, "images/sidemenu/schiffsdeck.tga");
+		// By type (snaikka, craier, cog, hulk: schnigge, kraier, kogge, holk).
+		static constexpr const char* kBackpics[4] = {"images/sidemenu/backpic_schnigge01.bmp",
+			"images/sidemenu/backpic_kraier01.bmp", "images/sidemenu/backpic_kogge01.bmp",
+			"images/sidemenu/backpic_holk01.bmp"};
+		for (int k = 0; k < 4; ++k) {
+			backpics[k] = load_texture(renderer, archive, kBackpics[k]);
+			if (backpics[k]) {
+				SDL_SetTextureBlendMode(backpics[k], SDL_BLENDMODE_MOD);  // White leaves the parchment as it is.
+			}
+		}
+		static constexpr const char* kIcons[IconCount] = {"anker0001.tga", "aufsee0001.tga", "schiff_weg0001.tga",
+			"reparatur.tga", "knoten0001.tga", "schiffszustand0001.tga", "crew0002.tga", "kaptain0001.tga",
+			"bewaffnung0002.tga", "kanonenkugel0001.tga", "kanonenkugel0002.tga", "fass0001.tga", "ballen0001.tga",
+			"waffen.tga", "angeboten.tga", "gilde.tga", "ausbau.tga", "orlogg0001.tga"};
+		for (int k = 0; k < IconCount; ++k) {
+			list_icons[k] = load_texture(renderer, archive, (std::string("images/frames_listen/") + kIcons[k]).c_str(),
+				&icon_width[k], &icon_height[k]);
+		}
+		letters = load_texture(renderer, archive, "images/briefe0001.tga");
+		paper = load_texture(renderer, archive, "images/dialogparchment/Papier.tga");
+		seal = load_texture(renderer, archive, "images/dialogparchment/Siegel_mit_Kogge.tga");
+		bar_left = load_texture(renderer, archive, "images/HauptscreenA1280.bmp");
+		bar_right = load_texture(renderer, archive, "images/HauptscreenB800.bmp");
+		people = load_texture(renderer, archive, "images/einwohner_haus_TP.tga");
+		coins = load_texture(renderer, archive, "images/frames_konto/konto0001.tga");
+		for (int k = 0; k < kHourglassFrames; ++k) {
+			char path[64];
+			std::snprintf(path, sizeof(path), "images/frames_sanduhr/sanduhr00%02d.tga", k + 1);
+			hourglass[k] = load_texture(renderer, archive, path);
+		}
 	}
 	~PanelArt() {
-		for (SDL_Texture* t : {icons, bar, plank, wood, parchment, build_tabs, ships[0], ships[1], ships[2], ships[3]}) {
+		for (SDL_Texture* t : {icons, bar, plank, wood, parchment, build_tabs, ships[0], ships[1], ships[2], ships[3],
+				 ship_buttons, morale, barrel, barrel_mask, bonus, deck, backpics[0], backpics[1], backpics[2], backpics[3],
+				 letters, paper, seal, bar_left, bar_right, people, coins}) {
 			if (t) {
 				SDL_DestroyTexture(t);
 			}
 		}
+		for (SDL_Texture* t : hourglass) {
+			if (t) {
+				SDL_DestroyTexture(t);
+			}
+		}
+		for (SDL_Texture* t : list_icons) {
+			if (t) {
+				SDL_DestroyTexture(t);
+			}
+		}
+	}
+	// A list icon at (x, y) with its own size; its width (0 without it).
+	int icon(SDL_Renderer* renderer, Icon k, int x, int y) const {
+		if (!list_icons[k]) {
+			return 0;
+		}
+		const SDL_Rect dst = {x, y, icon_width[k], icon_height[k]};
+		SDL_RenderCopy(renderer, list_icons[k], nullptr, &dst);
+		return icon_width[k];
 	}
 	PanelArt(const PanelArt&) = delete;
 	PanelArt& operator=(const PanelArt&) = delete;
@@ -3473,12 +3563,13 @@ struct PanelState {
 	int ship_counts[kPanelShipButtons] = {};
 };
 
-PanelState panel_state(const SaveGame& save) {
+PanelState panel_state(const SaveGame& save, bool at_sea = false) {
 	PanelState s;
 	for (int k = 0; k < kPanelShipButtons; ++k) {
 		s.ship_counts[k] = int(panel_ships(save, k).size());
 	}
 	s.icon_enabled[int(PanelIcon::ShipList)] = !player_fleet(save).empty();
+	s.icon_enabled[int(PanelIcon::Build)] = !at_sea;  // Building is in the towns.
 	return s;
 }
 
@@ -3496,6 +3587,72 @@ bool minimap_place(const PanelLayout& layout, const TownView& view, SDL_Rect& ds
 	return true;
 }
 
+// On the sea map the minimap is the sea's (the game's minimap of its navigation chart): the whole map fitted
+// to the minimap's height, in its middle, and the screen's pixels per map pixel.
+bool sea_minimap_place(const PanelLayout& layout, const SeaMapView& sea, SDL_Rect& dst, double& scale) {
+	if (!sea.texture() || sea.width() <= 0 || sea.height() <= 0) {
+		return false;
+	}
+	scale = std::min(double(layout.map.w) / sea.width(), double(layout.map.h) / sea.height());
+	const int w = int(sea.width() * scale);
+	const int h = int(sea.height() * scale);
+	dst = {layout.map.x + (layout.map.w - w) / 2, layout.map.y + (layout.map.h - h) / 2, w, h};
+	return true;
+}
+
+// The sea map's pixel under a point of its minimap.
+bool minimap_sea_point(const PanelLayout& layout, const SeaMapView& sea, int x, int y, SDL_Point& out) {
+	SDL_Rect dst;
+	double scale = 0;
+	if (!sea_minimap_place(layout, sea, dst, scale) || !inside(layout.map, x, y)) {
+		return false;
+	}
+	out = {int((x - dst.x) / scale), int((y - dst.y) / scale)};
+	return true;
+}
+
+// The minimap of the sea (as the manual's legend: the player's ships and convoys white, the others' grey,
+// the pirates black; the towns blue with an office of his, red without), with the part on screen framed.
+void draw_sea_minimap(SDL_Renderer* renderer, const PanelLayout& layout, const SeaMapView& sea, const SaveGame& save,
+	const SDL_Rect& camera) {
+	SDL_Rect dst;
+	double px = 0;
+	if (!sea_minimap_place(layout, sea, dst, px)) {
+		return;
+	}
+	SDL_RenderCopy(renderer, sea.texture(), nullptr, &dst);
+	auto at = [&](int x, int y) { return SDL_Point{dst.x + int(x * px), dst.y + int(y * px)}; };
+	for (size_t i = 0; i < save.towns.size(); ++i) {
+		bool office = false;
+		for (const SavedOffice& o : save.offices) {
+			office |= o.used() && o.owner() == save.player && o.town() == i;
+		}
+		const SDL_Point c = sea.town_center(save, i);
+		const SDL_Point p = at(c.x, c.y);
+		SDL_SetRenderDrawColor(renderer, office ? 40 : 200, office ? 90 : 30, office ? 230 : 20, 255);
+		for (int k = 0; k <= 3; ++k) {
+			SDL_RenderDrawLine(renderer, p.x - 3 + k, p.y - k, p.x + 3 - k, p.y - k);
+			SDL_RenderDrawLine(renderer, p.x - 3 + k, p.y + k, p.x + 3 - k, p.y + k);
+		}
+	}
+	for (const SavedShip& s : save.ships) {
+		if (!s.in_use() || (s.status() != kShipSailing && s.status() != kShipPirate)) {
+			continue;
+		}
+		const SDL_Point p = at(s.x() >> 16, s.y() >> 16);
+		const bool mine = s.owner() == save.player;
+		const bool pirate = s.status() == kShipPirate;
+		SDL_SetRenderDrawColor(renderer, mine ? 255 : pirate ? 0 : 150, mine ? 255 : pirate ? 0 : 150,
+			mine ? 255 : pirate ? 0 : 150, 255);
+		const SDL_Rect r = mine || pirate ? SDL_Rect{p.x - 1, p.y - 1, 3, 3} : SDL_Rect{p.x, p.y, 2, 2};
+		SDL_RenderFillRect(renderer, &r);
+	}
+	const SDL_Rect frame = {dst.x + int(camera.x * px), dst.y + int(camera.y * px), std::max(2, int(camera.w * px)),
+		std::max(2, int(camera.h * px))};
+	SDL_SetRenderDrawColor(renderer, 255, 255, 255, 230);
+	SDL_RenderDrawRect(renderer, &frame);
+}
+
 // The town's pixel under a point of the minimap.
 bool minimap_town_point(const PanelLayout& layout, const TownView& view, int x, int y, SDL_Point& out) {
 	SDL_Rect dst;
@@ -3510,7 +3667,8 @@ bool minimap_town_point(const PanelLayout& layout, const TownView& view, int x, 
 // The panel. `camera` is the town's part of the screen in the town's pixels
 // (its frame on the minimap).
 void draw_side_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SidePanel& ui,
-	const PanelState& state, const TownView* view, const SDL_Rect& camera) {
+	const PanelState& state, const TownView* view, const SDL_Rect& camera, const SeaMapView* sea = nullptr,
+	const SaveGame* save = nullptr) {
 	const PanelLayout layout(ui.folded);
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 	// The border, cut to the screen's height, and its tab: an arrow out
@@ -3536,7 +3694,9 @@ void draw_side_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 	SDL_RenderFillRect(renderer, &layout.map);
 	SDL_Rect dst;
 	double px = 0;  // Minimap pixels per town pixel.
-	if (view && minimap_place(layout, *view, dst, px)) {
+	if (sea && save) {
+		draw_sea_minimap(renderer, layout, *sea, *save, camera);
+	} else if (view && minimap_place(layout, *view, dst, px)) {
 		SDL_RenderCopy(renderer, view->minimap(), nullptr, &dst);
 		if (ui.menu == PanelMenu::Build && ui.build_type >= 0 && !ui.marks.empty()) {
 			// Where the chosen building fits, also on the minimap (to find it).
@@ -3563,7 +3723,8 @@ void draw_side_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 	draw_picture(renderer, art.plank, layout.plank);
 	for (int k = 0; k < kPanelIcons; ++k) {
 		const bool lit = ui.focus == k || (k == int(PanelIcon::Build) && ui.menu == PanelMenu::Build) ||
-			(k == int(PanelIcon::ShipList) && ui.menu == PanelMenu::ShipList);
+			(k == int(PanelIcon::ShipList) && ui.menu == PanelMenu::ShipList) ||
+			(k == int(PanelIcon::Messages) && ui.menu == PanelMenu::Messages);
 		const int row = !state.icon_enabled[k] ? 3 : lit ? 2 : 0;
 		const SDL_Rect src = {kPanelIconColumn[k] * 32, row * 32, 32, 32};
 		draw_picture(renderer, art.icons, layout.icons[k], &src);
@@ -3590,6 +3751,53 @@ void draw_side_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 	// The menus' room: the game's wood when no menu is open, its parchment
 	// under a menu.
 	draw_picture(renderer, ui.menu == PanelMenu::None ? art.wood : art.parchment, layout.room);
+}
+
+// The top bar's hourglass, the chronicle's button (as the game's, at the bar's right end).
+constexpr SDL_Rect kHourglassButton = {kScreenWidth - 38, 1, 34, 28};
+
+// The game's top bar (screenGame.ini; the manual's «Barra de información»): its wood (HauptscreenA1280 and
+// B800, squeezed to the viewer's bar), from the left the inhabitants (the man) with their number, the town
+// (on the sea map, the one chosen), the money (the coins) and, at the right end, the date and the hourglass
+// that opens the chronicle, turning while the time runs. The viewer's button hints go in what is left.
+void draw_top_bar(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const std::string& citizens,
+	const std::string& place, const std::string& money, const std::string& date, int hourglass_frame,
+	const std::vector<std::string>& hints) {
+	// The right piece (its carved post on its left) as wide as the date and the hourglass need.
+	const int right_w = std::max(kScreenWidth * 284 / 1280, kScreenWidth - (kHourglassButton.x - 4 - text.measure(date)) + 26);
+	const SDL_Rect a = {0, 0, kScreenWidth - right_w, kBarHeight};
+	const SDL_Rect b = {a.w, 0, right_w, kBarHeight};
+	draw_picture(renderer, art.bar_left, a);
+	draw_picture(renderer, art.bar_right, b);
+	const SDL_Color ink = {35, 20, 5, 255};
+	const int y = (kBarHeight * 30 / 42 - text.line_height()) / 2 + 1;  // On the wood, above its carved edge.
+	int x = 6;
+	if (!citizens.empty()) {
+		const SDL_Rect src = {0, 0, 36, 28};
+		draw_picture(renderer, art.people, {x, 1, 30, 23}, &src);
+		x += 32;
+		text.draw(citizens, x, y, ink);
+		x += text.measure(citizens) + 14;
+	}
+	text.draw(place, x, y, ink);
+	x += text.measure(place) + 14;
+	if (!money.empty()) {
+		draw_picture(renderer, art.coins, {x, 0, 18, 28});
+		x += 20;
+		text.draw(money, x, y, ink);
+		x += text.measure(money) + 14;
+	}
+	SDL_Texture* glass = art.hourglass[((hourglass_frame % PanelArt::kHourglassFrames) + PanelArt::kHourglassFrames) %
+		PanelArt::kHourglassFrames];
+	draw_picture(renderer, glass, kHourglassButton);
+	const int date_x = kHourglassButton.x - 4 - text.measure(date);
+	text.draw(date, date_x, y, ink);
+	for (const std::string& hint : hints) {
+		if (x + text.measure(hint) <= date_x - 14) {
+			text.draw(hint, date_x - 14 - text.measure(hint), y, SDL_Color{90, 60, 30, 255});
+			break;
+		}
+	}
 }
 
 // The ship list's rows in the room (two lines each), from the first shown.
@@ -3855,6 +4063,628 @@ void draw_build_room(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 			text.draw(act, layout.act_button.x + (layout.act_button.w - text.measure(act)) / 2,
 				layout.act_button.y + (layout.act_button.h - text.line_height()) / 2, dim);
 		}
+	}
+}
+
+// --- The ship menu in the panel's room (the game's SIDEMENU_SHIP, CSideMenu_Ship; what it shows is read
+// in re/emu/sesion14/ship_menu_notes.md): its page buttons, the header with its hold's barrel, and the
+// pages: the goods, the crew, the deck, the convoys and the trade route. What the crew and convoy pages
+// offer and send are the ship's window's and the convoy window's (place_view's Place::Ship and
+// place_act, checked with the game). ---
+
+constexpr SDL_Color kParchmentInk = {40, 25, 10, 255};
+constexpr SDL_Color kParchmentDim = {110, 85, 60, 255};
+constexpr SDL_Color kParchmentRed = {150, 20, 10, 255};
+
+// The column of each page's button in schiffinfo0001.tga (show convoy, form convoy, leave convoy, trade
+// route, goods, crew, deck; the deck's is 40 wide).
+int ship_page_column(ShipPage page, bool in_convoy) {
+	switch (page) {
+	case ShipPage::Goods: return 4;
+	case ShipPage::Crew: return 5;
+	case ShipPage::Deck: return 6;
+	case ShipPage::Convoy: return in_convoy ? 0 : 1;
+	case ShipPage::LeaveConvoy: return 2;
+	default: return 3;
+	}
+}
+
+bool ship_in_convoy(const SaveGame& save, int ship) {
+	const uint16_t convoy = save.ships[size_t(ship)].convoy();
+	return convoy < save.globals.u16(global::kShips + 0xF6) && convoy < save.convoys.size();
+}
+
+// What can be chosen (0x48A9A2..0x48AA9A): in a convoy (without its flag 0x10) leaving or disbanding it,
+// unless the state has the bits 0x14, and showing it; otherwise forming one only in port (the states 0
+// and 1). The trade routes (the game's button, with a captain and out of a convoy) aren't in p3vita yet
+// (phase 6).
+bool ship_page_enabled(const SaveGame& save, int ship, ShipPage page) {
+	const SavedShip& s = save.ships[size_t(ship)];
+	const bool in_convoy = ship_in_convoy(save, ship) && !(save.convoys[s.convoy()].u8(0x14) & 0x10);
+	switch (page) {
+	case ShipPage::LeaveConvoy: return in_convoy && (s.status() & 0x14) != 0x14;
+	case ShipPage::Convoy: return ship_in_convoy(save, ship) || s.status() == 0 || s.status() == 1;
+	case ShipPage::TradeRoute: return false;
+	default: return true;
+	}
+}
+
+// The ships of a convoy, from its first ([+0xA]) along [+0x6] (as 0x5386C0 walks them).
+std::vector<int> convoy_ships(const SaveGame& save, int convoy) {
+	std::vector<int> out;
+	uint16_t s = save.convoys[size_t(convoy)].u16(0xA);
+	while (s < save.ships.size() && out.size() < 64) {
+		out.push_back(int(s));
+		s = save.ships[s].next_in_list();
+	}
+	return out;
+}
+
+struct ShipMenuLayout {
+	SDL_Rect pages[kShipPages] = {};
+	int top = 0;  // Where the pages' content starts.
+	int line = 0;
+	SDL_Rect barrel{};
+	int cargo_y = 0;  // The goods page's rows.
+	int cargo_row = 0;
+	int cargo_rows = 0;
+	int deck_y = 0;
+	// The crew page: the sailors to dismiss (minus, the amount, plus, the button) and the captain's button.
+	SDL_Rect minus_button{};
+	SDL_Rect amount_box{};
+	SDL_Rect plus_button{};
+	SDL_Rect sailors_button{};
+	SDL_Rect captain_button{};
+	SDL_Rect pirate_button{};  // «Pirate» / «Civil», beside it (0x492A70).
+	// The convoy pages: their rows, the destination's minus and plus, and the act button.
+	static constexpr int kConvoyRows = 4;
+	SDL_Rect convoy_rows[kConvoyRows] = {};
+	SDL_Rect dest_minus{};
+	SDL_Rect dest_plus{};
+	SDL_Rect act_button{};
+
+	ShipMenuLayout(const SDL_Rect& room, int line_height) {
+		int x = room.x + 6;
+		for (int k = 0; k < kShipPages; ++k) {
+			const int w = k == int(ShipPage::Deck) ? 45 : 36;
+			pages[k] = {x, room.y + 4, w, 36};
+			x += w + 5;
+		}
+		top = room.y + 46;
+		line = line_height;
+		barrel = {room.x + room.w - 74 - 34, top, 74, 65};
+		cargo_row = line + 2;
+		cargo_y = top + 4 * line + 4;
+		cargo_rows = std::max(1, (room.y + room.h - 4 - cargo_y) / cargo_row);
+		deck_y = top + 4 * line + 18;
+		const int button_h = line + 10;
+		const int sy = top + 2 * line + 14;
+		minus_button = {room.x + 8, sy, 34, button_h};
+		amount_box = {minus_button.x + minus_button.w + 2, sy, 44, button_h};
+		plus_button = {amount_box.x + amount_box.w + 2, sy, 34, button_h};
+		sailors_button = {room.x + 8, sy + button_h + 4, room.w - 16, button_h};
+		captain_button = {room.x + 8, room.y + room.h - button_h - 6, (room.w - 22) * 3 / 5, button_h};
+		pirate_button = {captain_button.x + captain_button.w + 6, captain_button.y,
+			room.x + room.w - 8 - (captain_button.x + captain_button.w + 6), button_h};
+		for (int k = 0; k < kConvoyRows; ++k) {
+			convoy_rows[k] = {room.x + 8, top + line + 6 + k * (line + 10), room.w - 16, line + 8};
+		}
+		act_button = {room.x + 8, room.y + room.h - button_h - 6, room.w - 16, button_h};
+		dest_minus = {room.x + 8, act_button.y - button_h - 6, 34, button_h};
+		dest_plus = {room.x + room.w - 8 - 34, dest_minus.y, 34, button_h};
+	}
+
+	int page_at(int x, int y) const {
+		for (int k = 0; k < kShipPages; ++k) {
+			if (inside(pages[k], x, y)) {
+				return k;
+			}
+		}
+		return -1;
+	}
+	int convoy_row_at(int x, int y) const {
+		for (int k = 0; k < kConvoyRows; ++k) {
+			if (inside(convoy_rows[k], x, y)) {
+				return k;
+			}
+		}
+		return -1;
+	}
+};
+
+// «%u day(s)» of the status line (0x490CA5, 0x490DCC).
+std::string days_text(int32_t days) {
+	return std::to_string(days) + " " +
+		(days == 1 ? exe_text(0x699928, "día", "day") : exe_text(0x699920, "días", "days"));
+}
+
+// The status line (0x490C70, by the ship's state; the table 0x490F60): its icon and text.
+std::pair<PanelArt::Icon, std::string> ship_status_line(const SaveGame& save, int ship_index) {
+	const SavedShip& ship = save.ships[size_t(ship_index)];
+	const size_t towns = save.towns.size();
+	auto town_of = [&](uint8_t t) { return t < towns ? window_town_name(save, t) : std::string(); };
+	const uint16_t state = ship.status();
+	auto at_sea = [&](int s) {
+		// 0x490DC5: the days (with a speed) and the destination, or «at sea».
+		const SavedShip& d = save.ships[size_t(s)];
+		std::string text = d.speed() != 0 ? days_text(ship_days_to_go(save, s)) + " " : "";
+		text += d.destination() < towns ? town_of(d.destination()) : exe_text(0x699914, "En el mar", "at sea");
+		return std::make_pair(PanelArt::Sailing, text);
+	};
+	switch (state) {
+	case 0: case 1: case 4: case 5: case 0xE:
+		return {PanelArt::Anchor, town_of(ship.town())};
+	case 2: case 3: case 0x12: case 0x15:
+		return at_sea(ship_index);
+	case 6: case 7:
+		return {state == 6 ? PanelArt::Repair : PanelArt::Upgrade,
+			days_text(ship_shipyard_days(save, ship_index)) + " " + town_of(ship.town())};
+	case 8: case 9:
+		return {PanelArt::Fleet, town_of(ship.town())};
+	case 0xA: case 0xB: case 0x16:
+		return {PanelArt::Fleet, exe_text(0x6B0D88, "Flota de la Liga Hanseática", "Hanseatic League Fleet")};
+	case 0xC:
+		return {PanelArt::Auction, exe_text(0x699A14, "Subasta", "Auction")};
+	case 0xD:
+		return {PanelArt::Offered, exe_text(0x699A08, "Ofertas", "Offered")};
+	case 0xF: case 0x10: {
+		// In a convoy at sea: its guide's (0x490D5B), or «at sea» without a route.
+		int s = ship_index;
+		if (ship_in_convoy(save, ship_index) && save.convoys[ship.convoy()].u16(0x10) < save.ships.size()) {
+			s = save.convoys[ship.convoy()].u16(0x10);
+		}
+		if (!save.ships[size_t(s)].route) {
+			return {PanelArt::Sailing, exe_text(0x699914, "En el mar", "at sea")};
+		}
+		return at_sea(s);
+	}
+	case 0x11:
+		return {PanelArt::Sunk, exe_text(0x699940, "hundido", "Sunk")};
+	case 0x13:
+		return {PanelArt::Sailing, exe_text(0x6999A0, "Expedición", "Expedition")};
+	case 0x14:
+		return {PanelArt::Sailing, exe_text(0x6999FC, "Batalla naval", "Sea battle")};
+	default:
+		return {PanelArt::Anchor, ""};
+	}
+}
+
+// A text cut to `width`, a whole UTF-8 character at a time.
+std::string cut_text(const TextRenderer& text, std::string s, int width) {
+	while (!s.empty() && text.measure(s) > width) {
+		while (!s.empty() && (uint8_t(s.back()) & 0xC0) == 0x80) {
+			s.pop_back();
+		}
+		if (!s.empty()) {
+			s.pop_back();
+		}
+	}
+	return s;
+}
+
+// The crew page's «Pirate» or «Civil» (0x492A5C..0x492A88).
+std::string ship_pirate_label(const SavedShip& ship) {
+	return ship.raid() == 0 && ship.status() != kShipPirate ? exe_text(0x69C98C, "Pirata", "Pirate")
+															  : exe_text(0x6999EC, "Civil", "Civil");
+}
+
+// The header (0x4916E0): its name and type, the status line, the knots and the hull, the crew (with the
+// captain's star) and the firepower's cannonballs, and the barrel of the hold with its capacity, the hold
+// used (red) and the equipment (yellow), in loads.
+void draw_ship_header(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
+	int ship_index, const ShipMenuLayout& layout, const SDL_Rect& room, bool barrel) {
+	const SavedShip& ship = save.ships[size_t(ship_index)];
+	const int left = room.x + 8;
+	const int width = (barrel ? layout.barrel.x : room.x + room.w) - left - 4;
+	const int line = layout.line;
+	int y = layout.top;
+	text.draw(cut_text(text, barrel ? ship.name() : ship_label(ship), width), left, y, kParchmentInk);
+	y += line;
+	const auto [status_icon, status] = ship_status_line(save, ship_index);
+	int x = left + art.icon(renderer, status_icon, left, y) + 3;
+	text.draw(cut_text(text, status, left + width - x), x, y, kParchmentInk);
+	y += line;
+	// The knots ([+0x30] >> 4) and the hull (red under 40 %, 0x491E80).
+	const int hull = ship.max_health() > 0 ? std::max(0, int(int64_t(ship.health()) * 100 / ship.max_health())) : 0;
+	x = left + art.icon(renderer, PanelArt::Knots, left, y) + 2;
+	const std::string knots = std::to_string(ship.speed() >> 4);
+	text.draw(knots, x, y, kParchmentInk);
+	x += text.measure(knots) + 10;
+	x += art.icon(renderer, PanelArt::Hull, x, y) + 2;
+	text.draw(std::to_string(hull), x, y, hull < 40 ? kParchmentRed : kParchmentInk);
+	y += line;
+	// The crew, the captain if it has one, the sailors; the firepower ([+0x120]) as cannonballs (0x4901C0).
+	x = left + art.icon(renderer, PanelArt::Crew, left, y);
+	if (ship.captain() < save.globals.u16(global::kCaptainCount)) {
+		x += art.icon(renderer, PanelArt::Captain, x, y);
+	}
+	const std::string sailors = std::to_string(ship.sailors());
+	text.draw(sailors, x + 2, y, kParchmentInk);
+	x += text.measure(sailors) + 10;
+	const int32_t firepower = ship.memory.s32(0x120);
+	if (firepower > 0) {
+		x += art.icon(renderer, PanelArt::Weapons, x, y) + 2;
+		const FirepowerBalls balls = firepower_balls(firepower);
+		for (int k = 0; k < balls.big; ++k) {
+			x += art.icon(renderer, PanelArt::BigBall, x, y + 3);
+		}
+		for (int k = 0; k < balls.small; ++k) {
+			x += art.icon(renderer, PanelArt::SmallBall, x, y + 3);
+		}
+		if (balls.half && art.list_icons[PanelArt::SmallBall]) {
+			const int w = art.icon_width[PanelArt::SmallBall];
+			const int h = art.icon_height[PanelArt::SmallBall];
+			const SDL_Rect src = {0, 0, w / 2, h};
+			const SDL_Rect dst = {x, y + 3, w / 2, h};
+			SDL_RenderCopy(renderer, art.list_icons[PanelArt::SmallBall], &src, &dst);
+		}
+	}
+	if (!barrel) {
+		return;
+	}
+	// The barrel: from its top, what is free, the equipment and the hold used (0x491A3D..0x491B36), each
+	// a part of the mask's height by the capacity.
+	const SDL_Rect& b = layout.barrel;
+	draw_picture(renderer, art.barrel, b);
+	const int32_t capacity = ship.capacity();
+	const int32_t used = ship.used();  // A ship of the player's as it is (0x48F0E0; another's would be blurred and cut).
+	int32_t equipment = ship.equipment();
+	if (equipment % 200) {
+		equipment += 200 - equipment % 200;  // A whole load (0x48F07E).
+	}
+	if (capacity > 0 && art.barrel_mask) {
+		int mask_w = 0;
+		int mask_h = 0;
+		SDL_QueryTexture(art.barrel_mask, nullptr, nullptr, &mask_w, &mask_h);
+		const SDL_Rect mask = {b.x + (b.w - mask_w) / 2 - 8, b.y, mask_w, mask_h};
+		int cargo_px = int(double(used) / double(capacity) * mask.h);
+		int equip_px = int(double(equipment) / double(capacity) * mask.h);
+		cargo_px = std::min(cargo_px, mask.h);
+		equip_px = std::min(equip_px, mask.h - cargo_px);
+		auto band = [&](int from, int h, SDL_Color c) {
+			if (h <= 0) {
+				return;
+			}
+			const SDL_Rect src = {0, from, mask_w, h};
+			const SDL_Rect dst = {mask.x, mask.y + from, mask_w, h};
+			SDL_SetTextureColorMod(art.barrel_mask, c.r, c.g, c.b);
+			SDL_SetTextureAlphaMod(art.barrel_mask, 150);
+			SDL_RenderCopy(renderer, art.barrel_mask, &src, &dst);
+			SDL_SetTextureColorMod(art.barrel_mask, 255, 255, 255);
+			SDL_SetTextureAlphaMod(art.barrel_mask, 255);
+		};
+		band(mask.h - cargo_px - equip_px, equip_px, {0xFF, 0xD4, 0x25, 255});  // WeaponsCrewColor
+		band(mask.h - cargo_px, cargo_px, {0xD1, 0x00, 0x00, 255});  // GoodsColor
+	}
+	// Its numbers in barrels (/ 200, 0x491BA6..0x491C48): the capacity (in red if the hold used and the
+	// equipment pass it), the hold used and the equipment.
+	const int nx = room.x + room.w - 6;
+	const bool over = ship.used() + equipment > capacity;
+	const std::string numbers[3] = {std::to_string(capacity / 200), std::to_string(used / 200),
+		std::to_string(uint32_t(equipment) / 200)};
+	const SDL_Color colors[3] = {over ? kParchmentRed : kParchmentInk, kParchmentRed, {150, 110, 0, 255}};
+	for (int k = 0; k < 3; ++k) {
+		text.draw(numbers[k], nx - text.measure(numbers[k]), b.y + 2 + k * (line + 2), colors[k]);
+	}
+}
+
+// The goods page (0x48F510): each cargo slot not empty, in barrels, loads or pieces, its ware and the price
+// it shows (0x5187F0), from the first shown; then the packets and the travellers.
+void draw_ship_goods(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
+	int ship_index, const ShipMenuLayout& layout, const SDL_Rect& room, int first) {
+	const SavedShip& ship = save.ships[size_t(ship_index)];
+	const std::array<int32_t, 24> prices = ship_cargo_prices(save, ship_index);
+	struct Row {
+		PanelArt::Icon icon;
+		std::string amount;
+		std::string name;
+		std::string price;
+	};
+	std::vector<Row> rows;
+	for (int w = 0; w < 24; ++w) {
+		const int32_t units = ship.cargo(w);
+		if (units == 0) {
+			continue;
+		}
+		const bool barrels = w < 20 && kWares[size_t(w)].unit == WareUnit::Barrel;
+		const int32_t shown = w >= 20 ? units / 10 : barrels ? units / 200 : units / 2000;
+		const std::string name = w < 20 ? ware_label(w)
+			: (g_texts ? g_texts->get(GameText(int(GameText::WareSword) + (w - 20))) : std::string());
+		rows.push_back({barrels || w >= 20 ? PanelArt::Barrel : PanelArt::Bale, std::to_string(shown), name,
+			format_money(prices[size_t(w)])});
+	}
+	if (ship.extra_loads()) {
+		const int n = ship.extra_loads();
+		rows.push_back({PanelArt::Bale, std::to_string(n),
+			n == 1 ? exe_text(0x699C8C, "fardo", "Packet") : exe_text(0x699C90, "fardos", "Packets"), ""});
+	}
+	if (ship.memory.u8(0x157)) {
+		const int n = ship.memory.u8(0x157);
+		rows.push_back({PanelArt::Crew, std::to_string(n),
+			n == 1 ? exe_text(0x69C9E8, "Viajero", "Traveller") : exe_text(0x6B2C90, "Viajero", "Traveller"), ""});
+	}
+	const int left = room.x + 8;
+	if (rows.empty()) {
+		text.draw(tr("La bodega está vacía.", "The hold is empty."), left, layout.cargo_y, kParchmentDim);
+		return;
+	}
+	for (int k = 0; k < layout.cargo_rows && first + k < int(rows.size()); ++k) {
+		const Row& r = rows[size_t(first + k)];
+		const int y = layout.cargo_y + k * layout.cargo_row;
+		art.icon(renderer, r.icon, left, y);
+		text.draw(r.amount, left + 62 - text.measure(r.amount), y, kParchmentInk);
+		text.draw(cut_text(text, r.name, 120), left + 68, y, kParchmentInk);
+		text.draw(r.price, room.x + room.w - 8 - text.measure(r.price), y, kParchmentDim);
+	}
+	if (first > 0 || first + layout.cargo_rows < int(rows.size())) {
+		// More above or below: the pad or a drag moves the list.
+		const std::string more = std::to_string(first + 1) + "-" +
+			std::to_string(std::min(int(rows.size()), first + layout.cargo_rows)) + "/" + std::to_string(rows.size());
+		text.draw(more, room.x + room.w - 8 - text.measure(more), layout.cargo_y - layout.line - 2, kParchmentDim);
+	}
+}
+
+// How many rows the goods page has (the cargo slots not empty, the packets, the travellers).
+int ship_goods_rows(const SaveGame& save, int ship_index) {
+	const SavedShip& ship = save.ships[size_t(ship_index)];
+	int n = 0;
+	for (int w = 0; w < 24; ++w) {
+		n += ship.cargo(w) != 0 ? 1 : 0;
+	}
+	return n + (ship.extra_loads() ? 1 : 0) + (ship.memory.u8(0x157) ? 1 : 0);
+}
+
+// A greyed button that can't be pressed (the game's disabled row).
+void draw_disabled_button(SDL_Renderer* renderer, TextRenderer& text, const SDL_Rect& r, const std::string& label) {
+	SDL_SetRenderDrawColor(renderer, 120, 100, 80, 160);
+	SDL_RenderFillRect(renderer, &r);
+	text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - text.line_height()) / 2, kParchmentDim);
+}
+
+void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
+	const SidePanel& ui, const PlaceView& actions, bool can_pirate) {
+	const PanelLayout panel(ui.folded);
+	const SDL_Rect& room = panel.room;
+	const ShipMenuLayout layout(room, text.line_height());
+	const int ship_index = ui.ship;
+	const SavedShip& ship = save.ships[size_t(ship_index)];
+	const bool in_convoy = ship_in_convoy(save, ship_index);
+	// The ship type's faded picture at the room's bottom (0x48D820).
+	if (art.backpics[ship.type() & 3]) {
+		const SDL_Rect dst = {room.x, room.y + room.h - 160, 260, 160};
+		SDL_RenderCopy(renderer, art.backpics[ship.type() & 3], nullptr, &dst);
+	}
+	// The page buttons (normal, pressed, lit, disabled).
+	for (int k = 0; k < kShipPages; ++k) {
+		const ShipPage page = ShipPage(k);
+		const bool enabled = ship_page_enabled(save, ship_index, page);
+		const int row = !enabled ? 3 : page == ui.ship_page ? 2 : 0;
+		const int column = ship_page_column(page, in_convoy);
+		const SDL_Rect src = {column * 32, row * 32, column == 6 ? 40 : 32, 32};
+		draw_picture(renderer, art.ship_buttons, layout.pages[k], &src);
+	}
+	const int left = room.x + 8;
+	const int line = layout.line;
+	const PlaceUi& act = ui.ship_ui;  // Its results go to the viewer's notices (ship_act).
+	switch (ui.ship_page) {
+	case ShipPage::Goods:
+		draw_ship_header(renderer, text, art, save, ship_index, layout, room, true);
+		draw_ship_goods(renderer, text, art, save, ship_index, layout, room, ui.cargo_first);
+		break;
+	case ShipPage::Crew: {
+		// 0x48DF90: the morale (the high byte of [+0x3E], 0..4) with the sailors, the least and the most;
+		// the wage of a week; the name; the hand weapons; the sailors to dismiss; the captain.
+		int y = layout.top;
+		const int morale = std::clamp(int(int8_t(ship.memory.u8(0x3F))), 0, 4);
+		static constexpr SDL_Point kFaces[6] = {{0, 0}, {0, 32}, {32, 0}, {32, 32}, {64, 0}, {64, 32}};
+		const SDL_Rect face = {kFaces[morale].x, kFaces[morale].y, 32, 32};
+		draw_picture(renderer, art.morale, {left - 2, y - 4, 30, 30}, &face);
+		static constexpr uint8_t kLeast[4] = {5, 8, 10, 12};  // 0x673660
+		const std::string crew = std::to_string(ship.sailors()) + " (" + std::to_string(kLeast[ship.type() & 3]) + " - " +
+			std::to_string(ship_most_sailors(save, ship_index)) + ")";
+		text.draw(crew, left + 30, y + 2, kParchmentInk);
+		const SDL_Rect coins = {kFaces[5].x, kFaces[5].y, 32, 32};
+		const std::string wage =
+			std::to_string(7 * ship_daily_wage(save, ship_index)) + " (" + exe_text(0x699C78, "Semana", "Week") + ")";
+		const int wx = room.x + room.w - 8 - text.measure(wage);
+		draw_picture(renderer, art.morale, {wx - 31, y - 4, 30, 30}, &coins);
+		text.draw(wage, wx, y + 2, kParchmentInk);
+		y += line + 10;
+		text.draw(cut_text(text, ship.name(), room.w - 80), left, y, kParchmentInk);
+		const std::string hand = std::to_string(ship.hand_weapons());
+		const int hx = room.x + room.w - 8 - text.measure(hand);
+		text.draw(hand, hx, y, kParchmentInk);
+		art.icon(renderer, PanelArt::HandWeapons, hx - 28, y);
+		// The sailors to dismiss.
+		const bool rows = actions.rows.size() >= 2;
+		const bool can_dismiss = rows && actions.rows[0].second;
+		const std::string amount = std::to_string(act.row == 0 ? act.amount : 0);
+		if (can_dismiss) {
+			draw_button(renderer, text, layout.minus_button, "-");
+			draw_button(renderer, text, layout.plus_button, "+");
+		} else {
+			draw_disabled_button(renderer, text, layout.minus_button, "-");
+			draw_disabled_button(renderer, text, layout.plus_button, "+");
+		}
+		SDL_SetRenderDrawColor(renderer, 245, 235, 205, 255);
+		SDL_RenderFillRect(renderer, &layout.amount_box);
+		text.draw(amount, layout.amount_box.x + (layout.amount_box.w - text.measure(amount)) / 2,
+			layout.amount_box.y + (layout.amount_box.h - line) / 2, kParchmentInk);
+		const std::string dismiss = rows ? actions.rows[0].first : tr("Despedir marineros", "Dismiss sailors");
+		if (can_dismiss && act.row == 0 && act.amount > 0) {
+			draw_button(renderer, text, layout.sailors_button, BTN_CROSS + std::string(" ") + dismiss);
+		} else {
+			draw_disabled_button(renderer, text, layout.sailors_button, dismiss);
+		}
+		if (act.row == 0 && can_dismiss) {
+			const SDL_Rect frame = {layout.minus_button.x - 2, layout.minus_button.y - 2, layout.sailors_button.w + 4,
+				layout.sailors_button.y + layout.sailors_button.h - layout.minus_button.y + 4};
+			SDL_SetRenderDrawColor(renderer, 120, 80, 30, 255);
+			SDL_RenderDrawRect(renderer, &frame);
+		}
+		// The captain: his three skills (bonus.tga: trading, sailing, fighting; / 50, as the tavern's),
+		// «Captain» with his names and «(age Years)», and dismissing him.
+		y = layout.sailors_button.y + layout.sailors_button.h + 6;
+		if (ship.captain() < save.globals.u16(global::kCaptainCount)) {
+			const CaptainInfo c = captain_info(save, ship.captain());
+			static constexpr SDL_Point kSkills[3] = {{0, 0}, {16, 0}, {0, 16}};
+			const int values[3] = {c.trading, c.sailing, c.fighting};
+			int x = left;
+			for (int k = 0; k < 3; ++k) {
+				const SDL_Rect src = {kSkills[k].x, kSkills[k].y, 16, 16};
+				draw_picture(renderer, art.bonus, {x, y + 1, 16, 16}, &src);
+				text.draw(std::to_string(values[k]), x + 18, y, kParchmentInk);
+				x += 46;
+			}
+			y += line + 2;
+			const std::string who = exe_text(0x6999D4, "Capitán", "Captain") + " " + captain_name(save, ship.captain()) +
+				" (" + std::to_string(c.age) + " " + exe_text(0x6999E0, "Años", "Years") + ")";
+			for (const std::string& l : wrap_text(text, who, room.w - 16)) {
+				if (y + line > layout.captain_button.y) {
+					break;
+				}
+				text.draw(l, left, y, kParchmentInk);
+				y += line;
+			}
+			const std::string label = rows ? actions.rows[1].first : "";
+			if (rows && actions.rows[1].second) {
+				draw_button(renderer, text, layout.captain_button, (act.row == 1 ? BTN_CROSS " " : "") + label);
+			} else {
+				draw_disabled_button(renderer, text, layout.captain_button, label);
+			}
+			if (act.row == 1) {
+				const SDL_Rect frame = {layout.captain_button.x - 2, layout.captain_button.y - 2, layout.captain_button.w + 4,
+					layout.captain_button.h + 4};
+				SDL_SetRenderDrawColor(renderer, 120, 80, 30, 255);
+				SDL_RenderDrawRect(renderer, &frame);
+			}
+			// «Pirate» while [+0x15C] is 0 and the state isn't 0x12, «Civil» otherwise (0x492A5C); only at sea (0x518750).
+			const std::string pirate = ship_pirate_label(ship);
+			if (can_pirate) {
+				draw_button(renderer, text, layout.pirate_button, (act.row == 2 ? BTN_CROSS " " : "") + pirate);
+			} else {
+				draw_disabled_button(renderer, text, layout.pirate_button, pirate);
+			}
+			if (act.row == 2) {
+				const SDL_Rect frame = {layout.pirate_button.x - 2, layout.pirate_button.y - 2, layout.pirate_button.w + 4,
+					layout.pirate_button.h + 4};
+				SDL_SetRenderDrawColor(renderer, 120, 80, 30, 255);
+				SDL_RenderDrawRect(renderer, &frame);
+			}
+		} else {
+			text.draw(exe_text(0x6999D4, "Capitán", "Captain") + ": " + tr("ninguno", "none"), left, y, kParchmentDim);
+			y += line;
+		}
+		if (!ship_window_open(save, ship_index)) {
+			text.draw(tr("Solo con el barco atracado.", "Only with the ship docked."), left, y, kParchmentDim);
+		}
+		break;
+	}
+	case ShipPage::Deck: {
+		// 0x48E700 → 0x495210: the deck (frame 5 of schiffsdeck.tga) and its 24 slots in two rows of 12, 17
+		// pixels apart from its 13th pixel: the slots k with k % 4 < 2 on the upper line (DeckTopLine 36),
+		// standing up from it, the others on the lower one (DeckBottomLine 60), hanging down; a piece of
+		// type t is the frame 6 + t above and 12 + t below, an empty slot (0xFF) the placeholder (frame 18).
+		draw_ship_header(renderer, text, art, save, ship_index, layout, room, false);
+		static constexpr SDL_Rect kFrames[19] = {{0, 0, 32, 12}, {32, 0, 192, 12}, {224, 0, 32, 12}, {45, 124, 26, 22},
+			{0, 0, 0, 0}, {0, 26, 248, 96}, {130, 128, 20, 52}, {109, 128, 20, 52}, {217, 128, 32, 52}, {184, 128, 32, 52},
+			{151, 128, 32, 52}, {88, 128, 20, 52}, {130, 181, 20, 52}, {109, 181, 20, 52}, {217, 181, 32, 52},
+			{184, 181, 32, 52}, {151, 181, 32, 52}, {88, 181, 20, 52}, {7, 123, 17, 34}};
+		const SDL_Rect deck = {room.x + 6, layout.deck_y, 248, 96};
+		draw_picture(renderer, art.deck, deck, &kFrames[5]);
+		const int step = (deck.w - 0x42) / 12 + 2;
+		for (int upper = 1; upper >= 0; --upper) {
+			int x = deck.x + 13;
+			const int anchor = deck.y + (upper ? 36 : 60);
+			for (int k = upper ? 0 : 2; k < 24; k += (k & 1) ? 3 : 1) {
+				const uint8_t type = ship.artillery(k);
+				const SDL_Rect* f = type < 6 ? &kFrames[(upper ? 6 : 12) + type] : type == 0xFF ? &kFrames[18] : nullptr;
+				if (f) {
+					const SDL_Rect dst = {x, upper ? anchor - f->h : anchor, f->w, f->h};
+					draw_picture(renderer, art.deck, dst, f);
+				}
+				x += step;
+			}
+		}
+		break;
+	}
+	case ShipPage::Convoy:
+		if (in_convoy) {
+			// «Show convoy»: its ships, the guide first with the captain's star (0x48CF50's list).
+			const int convoy = ship.convoy();
+			text.draw(convoy_label(save, convoy), left, layout.top, kParchmentInk);
+			int y = layout.top + line + 4;
+			const uint16_t guide = save.convoys[size_t(convoy)].u16(0x10);
+			for (const int s : convoy_ships(save, convoy)) {
+				if (y + line > room.y + room.h - 4) {
+					break;
+				}
+				const SavedShip& m = save.ships[size_t(s)];
+				int x = left;
+				if (s == guide) {
+					x += art.icon(renderer, PanelArt::Captain, x, y) + 2;
+				}
+				std::string label = ship_label(m);
+				if (m.owner() != save.player && m.owner() < save.merchants.size()) {
+					label += " - " + tr("otro comerciante", "another merchant");
+				}
+				text.draw(cut_text(text, label, room.x + room.w - 8 - x), x, y, m.owner() == save.player ? kParchmentInk : kParchmentDim);
+				y += line + 2;
+			}
+			break;
+		}
+		[[fallthrough]];
+	case ShipPage::LeaveConvoy: {
+		// The convoy window's choices (0x40C170) or its question (0x494DC0): the rows from 2 of the ship's
+		// actions, the selected one lit, the public's destination with minus and plus, and its button.
+		text.draw(ui.ship_page == ShipPage::LeaveConvoy ? tr("Convoy", "Convoy") : tr("Formar convoy", "Form convoy"), left,
+			layout.top, kParchmentInk);
+		int k = 0;
+		for (size_t r = 2; r < actions.rows.size() && k < ShipMenuLayout::kConvoyRows; ++r, ++k) {
+			const SDL_Rect& rr = layout.convoy_rows[k];
+			if (int(r) == act.row) {
+				SDL_SetRenderDrawColor(renderer, 120, 80, 30, 70);
+				SDL_RenderFillRect(renderer, &rr);
+			}
+			text.draw(cut_text(text, actions.rows[r].first, rr.w - 8), rr.x + 4, rr.y + 4,
+				actions.rows[r].second ? kParchmentInk : kParchmentDim);
+		}
+		int y = layout.convoy_rows[0].y + k * (line + 10) + 4;
+		for (const auto& [l, color] : actions.lines) {
+			for (const std::string& w : wrap_text(text, l, room.w - 16)) {
+				if (y + line > layout.act_button.y - 2) {
+					break;
+				}
+				text.draw(w, left, y, color.r > 200 ? kParchmentInk : kParchmentDim);
+				y += line;
+			}
+		}
+		const bool selected = act.row >= 2 && act.row < int(actions.rows.size());
+		if (selected && actions.amount_choice && actions.max_amount >= 0) {
+			// The public convoy's destination: minus and plus round it.
+			const SDL_Rect& minus = layout.dest_minus;
+			const SDL_Rect& plus = layout.dest_plus;
+			draw_button(renderer, text, minus, "-");
+			draw_button(renderer, text, plus, "+");
+			const std::string town = cut_text(text, actions.amount_label, plus.x - minus.x - minus.w - 8);
+			text.draw(town, (minus.x + minus.w + plus.x - text.measure(town)) / 2, minus.y + (minus.h - line) / 2,
+				kParchmentInk);
+		}
+		if (selected) {
+			const std::string label = actions.rows[size_t(act.row)].first;
+			if (actions.rows[size_t(act.row)].second) {
+				draw_button(renderer, text, layout.act_button, BTN_CROSS + std::string(" ") + cut_text(text, label, room.w - 50));
+			} else {
+				draw_disabled_button(renderer, text, layout.act_button, cut_text(text, label, room.w - 30));
+			}
+		}
+		break;
+	}
+	default:
+		draw_ship_header(renderer, text, art, save, ship_index, layout, room, true);
+		text.draw(tr("Las rutas comerciales aún no están.", "The trade routes aren't there yet."), left, layout.cargo_y,
+			kParchmentDim);
+		break;
 	}
 }
 
@@ -4525,7 +5355,22 @@ struct MailUi {
 	std::shared_ptr<SDL_Texture> picture;
 	int picture_width = 0;
 	int picture_height = 0;
+	// In the side panel: whether the letter's parchment is open over the town
+	// (the chronicle's always is), and the letters' settings window
+	// (0x408F50): open, its row, and what it shows (the player's [+0x38..+0x3A],
+	// [+0x26] and [+0x3B] when it opened).
+	bool letter_open = false;
+	bool options = false;
+	int options_row = 0;
+	std::array<uint8_t, 3> option_days{};
+	uint8_t option_notices = 0;
+	bool option_event_sound = false;
+	int last_check = -1;  // The tick's low byte of the last 0x71 queued while it is open (0x47CD83).
 };
+
+// The letters' settings window's rows (0x408F50): for each class its days, its
+// notice and its sound, then the event sound.
+constexpr int kMailOptionRows = 10;
 
 // A line of the mailbox that is one of the game's pictures (the chronicle's
 // ornament between two news): drawn as a short rule.
@@ -4553,11 +5398,15 @@ std::shared_ptr<SDL_Texture> letter_picture_texture(SDL_Renderer* renderer, cons
 	return std::shared_ptr<SDL_Texture>(texture, SDL_DestroyTexture);
 }
 
-// Where everything goes, shared by the drawing and the touch screen.
+// Where everything goes, shared by the drawing and the touch screen. On the
+// whole screen (the sea map), or in the side panel (the game's SIDEMENU_INFOS):
+// its six buttons (the four tabs, the letters' settings and delete) and the
+// list in the panel's room, the letter on a parchment over the town.
 struct MailLayout {
 	static constexpr int kPadding = 8;
 	static constexpr int kListWidth = 360;
-	SDL_Rect panel{};
+	bool in_panel = false;
+	SDL_Rect panel{};  // On the whole screen, the window; in the panel, the parchment.
 	std::array<SDL_Rect, 4> tabs{};
 	SDL_Rect list{};
 	int row_height = 0;
@@ -4565,6 +5414,30 @@ struct MailLayout {
 	SDL_Rect text{};  // The letter (the whole width in the chronicle).
 	SDL_Rect delete_button{};
 	SDL_Rect close_button{};
+	SDL_Rect options_button{};  // In the panel only.
+	SDL_Rect title{};  // In the panel: the tab's name over the list.
+
+	// In the side panel's room (`room`), with the parchment over the town on its left.
+	MailLayout(int line_height, const SDL_Rect& room) : in_panel(true) {
+		for (int k = 0; k < 6; ++k) {
+			const SDL_Rect r = {room.x + 4 + 42 * k, room.y + 4, 40, 35};
+			if (k < 4) {
+				tabs[size_t(k)] = r;
+			} else if (k == 4) {
+				options_button = r;
+			} else {
+				delete_button = r;
+			}
+		}
+		title = {room.x + 8, room.y + 44, room.w - 16, line_height};
+		row_height = line_height + 4;
+		list = {room.x + 6, title.y + line_height + 4, room.w - 12, 0};
+		list.h = room.y + room.h - 4 - list.y;
+		rows = std::max(1, list.h / row_height);
+		panel = {12, kBarHeight + 10, g_town_right - 24, kScreenHeight - kBarHeight - 20};
+		text = {panel.x + 40, panel.y + 62, panel.w - 80, panel.h - 62 - 58};
+		close_button = {panel.x + panel.w / 2 - 70, panel.y + panel.h - 52, 140, line_height + 10};
+	}
 
 	MailLayout(int line_height, bool chronicle) {
 		panel = {kPadding, kBarHeight + 4, kScreenWidth - 2 * kPadding, kScreenHeight - kBarHeight - 12};
@@ -4805,6 +5678,301 @@ void draw_mailbox(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sa
 		SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
 		SDL_RenderFillRect(renderer, &thumb);
 	}
+}
+
+// The game's parchment (dialogparchment/Papier.tga, TEX16001) stretched over `r`: its rolls with their
+// ends at the top and the bottom, its edges and its middle (a nine-piece frame of its 32-pixel tiles).
+void draw_scroll(SDL_Renderer* renderer, SDL_Texture* paper, const SDL_Rect& r) {
+	if (!paper) {
+		draw_panel_box(renderer, r);
+		return;
+	}
+	const int x0 = r.x, x1 = r.x + 38, x2 = r.x + r.w - 38;
+	const int y0 = r.y, y1 = r.y + 64, y2 = r.y + r.h - 64;
+	auto piece = [&](int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh) {
+		if (dw <= 0 || dh <= 0) {
+			return;
+		}
+		const SDL_Rect src = {sx, sy, sw, sh};
+		const SDL_Rect dst = {dx, dy, dw, dh};
+		SDL_RenderCopy(renderer, paper, &src, &dst);
+	};
+	piece(0, 0, 38, 64, x0, y0, 38, 64);  // The top roll's end and the paper's corner.
+	piece(38, 0, 96, 64, x1, y0, x2 - x1, 64);
+	piece(134, 0, 38, 64, x2, y0, 38, 64);
+	piece(6, 64, 32, 96, x0 + 6, y1, 32, y2 - y1);  // The edges and the middle.
+	piece(38, 64, 96, 96, x1, y1, x2 - x1, y2 - y1);
+	piece(134, 64, 32, 96, x2, y1, 32, y2 - y1);
+	piece(0, 160, 38, 64, x0, y2, 38, 64);  // The bottom roll.
+	piece(38, 160, 96, 64, x1, y2, x2 - x1, 64);
+	piece(134, 160, 38, 64, x2, y2, 38, 64);
+}
+
+// The letter's or the chronicle's lines (MailUi::lines) in `box`, scrolled, in `color`.
+void draw_letter_lines(SDL_Renderer* renderer, TextRenderer& text, const MailUi& ui, const SDL_Rect& box, SDL_Color color,
+	SDL_Color rule) {
+	SDL_Rect clip = box;
+	SDL_RenderSetClipRect(renderer, &clip);
+	int y = box.y + 2 - ui.scroll;
+	for (const auto& [align, line] : ui.lines) {
+		if (line.size() == 1 && line[0] == kPictureLine) {
+			if (ui.picture) {
+				const int x = align == LetterParagraph::Right ? box.x + box.w - 4 - ui.picture_width
+					: align == LetterParagraph::Center ? box.x + (box.w - ui.picture_width) / 2
+					: box.x + 4;
+				const SDL_Rect where = {x, y, ui.picture_width, ui.picture_height};
+				SDL_RenderCopy(renderer, ui.picture.get(), nullptr, &where);
+			}
+		} else if (line.size() == 1 && line[0] == kOrnament) {
+			const int cx = box.x + box.w / 2;
+			const int cy = y + text.line_height() / 2;
+			SDL_SetRenderDrawColor(renderer, rule.r, rule.g, rule.b, 255);
+			SDL_RenderDrawLine(renderer, cx - 90, cy, cx - 8, cy);
+			SDL_RenderDrawLine(renderer, cx + 8, cy, cx + 90, cy);
+			for (int k = 0; k <= 4; ++k) {
+				SDL_RenderDrawLine(renderer, cx - 4 + k, cy - k, cx + 4 - k, cy - k);
+				SDL_RenderDrawLine(renderer, cx - 4 + k, cy + k, cx + 4 - k, cy + k);
+			}
+		} else if (y + text.line_height() >= box.y && y < box.y + box.h) {
+			const int w = text.measure(line);
+			const int x = align == LetterParagraph::Right ? box.x + box.w - 4 - w
+				: align == LetterParagraph::Center ? box.x + (box.w - w) / 2
+				: box.x + 4;
+			text.draw(line, x, y, color);
+		}
+		y += text.line_height();
+	}
+	SDL_RenderSetClipRect(renderer, nullptr);
+	const int height = int(ui.lines.size()) * text.line_height() + 4;
+	if (height > box.h) {
+		const int bar = std::max(20, box.h * box.h / height);
+		const int at = box.y + (box.h - bar) * ui.scroll / std::max(1, height - box.h);
+		const SDL_Rect thumb = {box.x + box.w - 3, at, 3, bar};
+		SDL_SetRenderDrawColor(renderer, rule.r, rule.g, rule.b, 255);
+		SDL_RenderFillRect(renderer, &thumb);
+	}
+}
+
+// A frame of briefe0001.tga (TEX20018, 32 · 28 each): 0..11 three a row, 12..15 the delete button's four
+// (its disabled one the fourth), 16..18 the settings'.
+void draw_letter_button(SDL_Renderer* renderer, const PanelArt& art, const SDL_Rect& dst, int frame) {
+	const SDL_Rect src = frame < 12 ? SDL_Rect{(frame % 3) * 32, (frame / 3) * 28, 32, 28}
+		: frame < 16              ? SDL_Rect{(frame - 12) * 32, 112, 32, 28}
+								  : SDL_Rect{(frame - 16) * 32, 140, 32, 28};
+	draw_picture(renderer, art.letters, dst, &src);
+}
+
+// The letters' settings window's text by its address (0x6C0F34...), or the viewer's.
+std::string letter_option_text(uint32_t english, const char* spanish, const char* fallback) {
+	return exe_text(english, spanish, fallback);
+}
+
+// The messages in the side panel (the game's SIDEMENU_INFOS, *0x6CC960): its six buttons (the public news,
+// the official letters, the personal letters, the trade information, the letters' settings and delete:
+// briefe0001.tga's frames 0, 3, 6, 9, 16, 12, lit + 2), the tab's name and its letters, one a row (the
+// unread ones darker, as the game's black and brown, 0x47D8E0). The letter or the chronicle goes on a
+// parchment over the town (draw_mail_parchment).
+void draw_mail_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
+	const MailUi& ui, const std::vector<uint16_t>& rows, const MailLayout& layout) {
+	static constexpr int kFrames[4] = {0, 3, 6, 9};
+	for (int k = 0; k < 4; ++k) {
+		draw_letter_button(renderer, art, layout.tabs[size_t(k)], kFrames[k] + (k == ui.tab ? 2 : 0));
+	}
+	draw_letter_button(renderer, art, layout.options_button, ui.options ? 18 : 16);
+	const bool can_delete = ui.tab != 0 && ui.row < int(rows.size());
+	draw_letter_button(renderer, art, layout.delete_button, can_delete ? 12 : 15);
+	text.draw(cut_text(text, mail_tab_name(ui.tab), layout.title.w), layout.title.x, layout.title.y, kParchmentInk);
+	if (ui.tab == 0) {
+		text.draw(tr("(sobre la ciudad)", "(over the town)"), layout.list.x + 2, layout.list.y, kParchmentDim);
+		return;
+	}
+	if (rows.empty()) {
+		text.draw(tr("No hay cartas.", "No letters."), layout.list.x + 2, layout.list.y, kParchmentDim);
+	}
+	for (int i = 0; i < layout.rows && ui.first + i < int(rows.size()); ++i) {
+		const int index = ui.first + i;
+		const uint16_t entry = rows[size_t(index)];
+		const SDL_Rect r = {layout.list.x, layout.list.y + i * layout.row_height, layout.list.w, layout.row_height};
+		if (index == ui.row) {
+			SDL_SetRenderDrawColor(renderer, 120, 80, 30, ui.letter_open ? 90 : 50);
+			SDL_RenderFillRect(renderer, &r);
+		}
+		const LetterRow row = g_texts ? letter_row(save, *g_texts, entry) : LetterRow();
+		const bool unread = (save.mail[entry].u8(1) & 0x80) && !queued_letter_operation(save, 0x6E, entry);
+		const std::string date = row.date.size() >= 5 ? row.date.substr(0, 5) : row.date;  // «DD.MM».
+		const int dw = text.measure(date);
+		text.draw(cut_text(text, clean_game_text(row.title), r.w - dw - 12), r.x + 2, r.y + 2,
+			unread ? SDL_Color{10, 5, 0, 255} : SDL_Color{130, 95, 60, 255});
+		text.draw(date, r.x + r.w - 2 - dw, r.y + 2, kParchmentDim);
+	}
+	if (int(rows.size()) > layout.rows) {
+		const std::string more = std::to_string(ui.first + 1) + "-" +
+			std::to_string(std::min(int(rows.size()), ui.first + layout.rows)) + "/" + std::to_string(rows.size());
+		text.draw(more, layout.title.x + layout.title.w - text.measure(more), layout.title.y, kParchmentDim);
+	}
+}
+
+// What the letters' settings window shows of one row (0x409840..0x4099E0): the class's name with its days
+// (0x6C1058: never deleted .. deleted at once), its notice and its sound, the event sound.
+std::string mail_option_label(const MailUi& ui, int row) {
+	if (row == kMailOptionRows - 1) {
+		return letter_option_text(0x6C0FD0, "Notificación de sucesos", "event sound") + ": " +
+			(ui.option_event_sound ? letter_option_text(0x6C0FD4, "Activo", "play") : "-");
+	}
+	const int c = row / 3;
+	const std::string name = letter_option_text(0x6C0FB8 + 4 * uint32_t(c), "", "");
+	switch (row % 3) {
+	case 0: return name + ": " + letter_option_text(0x6C1058 + 4 * uint32_t(ui.option_days[size_t(c)]), "", "");
+	case 1: return letter_option_text(0x6C0FC8, "Mostrar aviso", "show notice");
+	default: return letter_option_text(0x6C0FCC, "Reproducir sonido", "play sound");
+	}
+}
+
+// Where a row of the letters' settings goes on the parchment.
+SDL_Rect mail_option_row(const MailLayout& layout, int line, int row) {
+	return {layout.text.x, layout.text.y + 2 * line + 6 + row * (line + 6), layout.text.w, line + 4};
+}
+
+// The parchment over the town: the letter (or the chronicle), or the letters' settings window.
+void draw_mail_parchment(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const MailUi& ui,
+	const MailLayout& layout) {
+	draw_scroll(renderer, art.paper, layout.panel);
+	const SDL_Color rule = {120, 90, 50, 255};
+	if (ui.options) {
+		// The settings (0x409840): its title, then each class, its days with minus and plus and its two
+		// boxes; «When news arrive...»; the event sound. The selected row is lit.
+		const std::string title = letter_option_text(0x6C0F34, "Configuración de las notificaciones", "Configuration of letters");
+		text.draw(title, layout.text.x + (layout.text.w - text.measure(title)) / 2, layout.text.y - 4, kParchmentInk);
+		const int line = text.line_height();
+		text.draw(letter_option_text(0x6C0FC4, "Cuando lleguen...", "When news arrive..."), layout.text.x + 4,
+			layout.text.y + line, kParchmentDim);
+		for (int row = 0; row < kMailOptionRows; ++row) {
+			const SDL_Rect r = mail_option_row(layout, line, row);
+			const int y = r.y + 2;
+			if (row == ui.options_row) {
+				SDL_SetRenderDrawColor(renderer, 120, 80, 30, 70);
+				SDL_RenderFillRect(renderer, &r);
+			}
+			const bool box = row == kMailOptionRows - 1 || row % 3 != 0;
+			int x = layout.text.x + (box && row != kMailOptionRows - 1 ? 28 : 4);
+			if (box) {
+				const int c = row / 3;
+				const bool on = row == kMailOptionRows - 1 ? ui.option_event_sound
+					: (ui.option_notices >> (row % 3 == 1 ? 3 + c : c)) & 1;
+				const SDL_Rect check = {x, y + 2, line - 4, line - 4};
+				SDL_SetRenderDrawColor(renderer, 245, 235, 205, 255);
+				SDL_RenderFillRect(renderer, &check);
+				SDL_SetRenderDrawColor(renderer, 90, 60, 30, 255);
+				SDL_RenderDrawRect(renderer, &check);
+				if (on) {
+					SDL_RenderDrawLine(renderer, check.x + 3, check.y + check.h / 2, check.x + check.w / 2, check.y + check.h - 3);
+					SDL_RenderDrawLine(renderer, check.x + check.w / 2, check.y + check.h - 3, check.x + check.w - 3, check.y + 3);
+				}
+				x += check.w + 8;
+			}
+			text.draw(mail_option_label(ui, row), x, y, kParchmentInk);
+			if (row % 3 == 0 && row != kMailOptionRows - 1) {
+				// Its arrows (the game's buttons 0x728 and 0x9E0, off at the ends).
+				const int d = ui.option_days[size_t(row / 3)];
+				text.draw("<", r.x + r.w - 46, y, d > 0 ? kParchmentInk : kParchmentDim);
+				text.draw(">", r.x + r.w - 18, y, d < 5 ? kParchmentInk : kParchmentDim);
+			}
+		}
+		draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Aceptar", "Accept"));
+		return;
+	}
+	draw_letter_lines(renderer, text, ui, layout.text, kParchmentInk, rule);
+	draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Cerrar", "Close"));
+}
+
+// --- The tooltips of the side panel's and the top bar's buttons (the scripts' «ToolTip=», the strings
+// 20000.. of the exe's string table, GameTexts::resource): on the Vita, while a finger is on the button
+// (before it is lifted) or the pad points at it (Select). ---
+
+std::string tooltip_text(uint32_t id) {
+	return g_texts ? clean_game_text(g_texts->resource(id)) : std::string();
+}
+
+// The tooltip of what is at (x, y), and where it is; 0 if nothing there has one.
+uint32_t panel_tooltip(const SidePanel& side, const SaveGame& save, int line, bool messages, bool build_menu, int x,
+	int y, SDL_Rect& where) {
+	auto hit = [&](const SDL_Rect& r) {
+		if (inside(r, x, y)) {
+			where = r;
+			return true;
+		}
+		return false;
+	};
+	if (hit(kHourglassButton)) {
+		return 20046;  // Chronicle
+	}
+	const PanelLayout panel(side.folded);
+	if (side.folded) {
+		return 0;
+	}
+	static constexpr uint32_t kIcons[kPanelIcons] = {20027, 20001, 20008, 20002, 20026, 20000};
+	for (int k = 0; k < kPanelIcons; ++k) {
+		if (hit(panel.icons[k])) {
+			return kIcons[k];
+		}
+	}
+	for (int k = 0; k < kPanelShipButtons; ++k) {
+		if (hit(panel.ships[k])) {
+			return 20004 + uint32_t(k);  // Ships in port, at sea, convoys in port, at sea.
+		}
+	}
+	if (side.menu == PanelMenu::Ship && side.ship >= 0 && size_t(side.ship) < save.ships.size()) {
+		const ShipMenuLayout layout(panel.room, line);
+		static constexpr uint32_t kPages[kShipPages] = {20028, 20029, 20030, 20031, 20032, 20034};
+		for (int k = 0; k < kShipPages; ++k) {
+			if (hit(layout.pages[k])) {
+				return k == int(ShipPage::Convoy) && ship_in_convoy(save, side.ship) ? 20033 : kPages[k];
+			}
+		}
+	}
+	if (messages) {
+		const MailLayout layout(line, panel.room);
+		for (int k = 0; k < 4; ++k) {
+			if (hit(layout.tabs[size_t(k)])) {
+				return 20009 + uint32_t(k);
+			}
+		}
+		if (hit(layout.options_button)) {
+			return 20013;
+		}
+		if (hit(layout.delete_button)) {
+			return 20014;
+		}
+	}
+	if (build_menu) {
+		const BuildRoomLayout layout(panel.room, line);
+		static constexpr uint32_t kTabs[5] = {20019, 20020, 20041, 20021, 20022};
+		for (int k = 0; k < 5; ++k) {
+			if (hit(layout.tabs[k])) {
+				return kTabs[k];
+			}
+		}
+	}
+	return 0;
+}
+
+// The tooltip's box: to the left of a button of the panel, under one of the top bar.
+void draw_tooltip(SDL_Renderer* renderer, TextRenderer& text, const std::string& tip, const SDL_Rect& where) {
+	if (tip.empty()) {
+		return;
+	}
+	const int w = text.measure(tip) + 12;
+	const int h = text.line_height() + 6;
+	const bool bar = where.y < kBarHeight;
+	SDL_Rect box = bar ? SDL_Rect{where.x + where.w - w, where.y + where.h + 4, w, h}
+		: SDL_Rect{where.x - w - 6, where.y + (where.h - h) / 2, w, h};
+	box.x = std::clamp(box.x, 4, kScreenWidth - w - 4);
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 250, 240, 200, 245);  // The game's yellowish tooltip.
+	SDL_RenderFillRect(renderer, &box);
+	SDL_SetRenderDrawColor(renderer, 60, 40, 20, 255);
+	SDL_RenderDrawRect(renderer, &box);
+	text.draw(tip, box.x + 6, box.y + 3, SDL_Color{20, 12, 4, 255});
 }
 
 int stick_speed(Sint16 value) {
@@ -5204,7 +6372,6 @@ int main(int argc, char** argv) {
 	auto view = std::make_unique<TownView>(renderer, *archive);
 	auto panel_art = std::make_unique<PanelArt>(renderer, *archive);
 	SidePanel side;  // The side panel.
-	int pending_ship = -1;  // A ship button's ship in port elsewhere: its window, once its town is on screen.
 	std::unique_ptr<SeaMapView> sea;  // Se carga la primera vez que se abre.
 	std::vector<std::string> town_names = load_town_names(*archive);
 	g_town_names = &town_names;
@@ -5462,9 +6629,16 @@ int main(int argc, char** argv) {
 		mail.selected = 0xFFFF;
 		mail.first = 0;
 		mail.stale = true;
+		mail.letter_open = mail.tab == 0;  // In the side panel: the list first, the chronicle on its parchment.
+		mail.options = false;
+		mail.last_check = -1;
 		market.open = false;
 		hanse.open = false;
 		place.open = Place::None;
+		if (selection.mode == Mode::Saved || (selection.mode == Mode::Sea && sea && panel_art)) {
+			side.menu = PanelMenu::Messages;  // The side panel's messages (SIDEMENU_INFOS).
+			side.focus = -1;
+		}
 	};
 	auto mail_tab = [&](int tab) {
 		expire_letters(save, save.player);
@@ -5473,6 +6647,41 @@ int main(int argc, char** argv) {
 		mail.selected = 0xFFFF;
 		mail.first = 0;
 		mail.stale = true;
+		mail.letter_open = mail.tab == 0;
+		mail.options = false;
+	};
+	// The letters' settings window (0x408F50): it opens with the player's settings, and on closing queues
+	// them (0x70) and the check of his letters (0x71 with 1), as the game.
+	auto mail_options = [&](bool open) {
+		if (save.player < 0 || size_t(save.player) >= save.merchants.size()) {
+			return;
+		}
+		const MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+		if (open) {
+			mail.options = true;
+			mail.options_row = 0;
+			mail.option_days = {m.u8(0x38), m.u8(0x39), m.u8(0x3A)};
+			mail.option_notices = m.u8(0x26);
+			mail.option_event_sound = m.u8(0x3B) != 0;
+			return;
+		}
+		if (mail.options) {
+			mail.options = false;
+			queue_operation(save, letter_settings_operation(uint32_t(save.player), mail.option_days, mail.option_event_sound,
+				mail.option_notices));
+			queue_operation(save, letters_check_operation(uint32_t(save.player), true));
+		}
+	};
+	// A row of the settings changed: the days of its class one more or less (0..5), or its box.
+	auto mail_option_change = [&](int row, int step) {
+		if (row == kMailOptionRows - 1) {
+			mail.option_event_sound = !mail.option_event_sound;
+		} else if (row % 3 == 0) {
+			uint8_t& d = mail.option_days[size_t(row / 3)];
+			d = uint8_t(std::clamp(int(d) + step, 0, 5));
+		} else {
+			mail.option_notices ^= uint8_t(1u << (row % 3 == 1 ? 3 + row / 3 : row / 3));
+		}
 	};
 	auto open_menu = [&](MenuScreen screen, int row) {
 		menu.screen = screen;
@@ -5606,6 +6815,8 @@ int main(int argc, char** argv) {
 	// Toque en curso: dónde empezó y cuánto se ha movido el dedo.
 	SDL_Point touch_start = {0, 0};
 	int touch_moved = 0;
+	float touch_scroll = 0;  // A drag on a list of the side panel, not yet a whole row.
+	bool finger_down = false;  // A finger on the screen now (the tooltip of the button under it).
 	bool touch_on_panel = false;
 	bool touch_on_side = false;  // It started on the side panel.
 	bool touch_building = false;  // It places the building chosen in the build menu.
@@ -5645,12 +6856,23 @@ int main(int argc, char** argv) {
 			SDL_StopTextInput();
 		}
 		const bool in_menu = menu.open() && small_text;
+		// In a town the messages are the side panel's: another of its menus closes them.
+		if (mail.open && (selection.mode == Mode::Saved || (selection.mode == Mode::Sea && sea && panel_art)) &&
+			side.menu != PanelMenu::Messages) {
+			mail_options(false);
+			mail.open = false;
+		}
 		// The mailbox, over the town or the sea map.
 		const bool in_mail = mail.open && has_save && save.player >= 0 && small_text &&
 			(selection.mode == Mode::Saved || selection.mode == Mode::Sea);
 		// The side panel (the game's, on the right) in the save's towns; the
 		// town takes the screen on its left.
-		const bool panel_shown = selection.mode == Mode::Saved && has_save && save.player >= 0 && small_text && panel_art;
+		const bool panel_shown = (selection.mode == Mode::Saved || (selection.mode == Mode::Sea && sea)) && has_save &&
+			save.player >= 0 && small_text && panel_art;
+		const bool sea_panel = panel_shown && selection.mode == Mode::Sea;  // On the sea map: its minimap and the ships.
+		if (sea_panel && side.menu == PanelMenu::Build) {
+			side.menu = PanelMenu::None;
+		}
 		const PanelLayout panel_layout(side.folded);
 		const int town_width = panel_shown ? panel_layout.town_right : kScreenWidth;
 		g_town_right = town_width;
@@ -5758,7 +6980,11 @@ int main(int argc, char** argv) {
 				return true;
 			}
 		};
-		const MailLayout mail_layout(small_text ? small_text->line_height() : 20, mail.tab == 0);
+		// In a town the messages are the side panel's (its room and a parchment over the town).
+		const bool mail_in_panel = in_mail && panel_shown && side.menu == PanelMenu::Messages;
+		const bool mail_parchment = mail_in_panel && (mail.letter_open || mail.options || mail.tab == 0);
+		const MailLayout mail_layout = mail_in_panel ? MailLayout(small_text->line_height(), panel_layout.room)
+													 : MailLayout(small_text ? small_text->line_height() : 20, mail.tab == 0);
 		const std::vector<uint16_t> mail_list = in_mail && mail.tab != 0 ? mail_rows(save, mail.tab) : std::vector<uint16_t>();
 		auto mail_select = [&](int row) {
 			if (mail_list.empty()) {
@@ -5775,8 +7001,98 @@ int main(int argc, char** argv) {
 				mail.selected = 0xFFFF;  // The same row: the next letter.
 			}
 		};
+		// The messages closed in the side panel (the settings sent, if they were open).
+		auto close_mail = [&]() {
+			mail_options(false);
+			mail.open = false;
+			if (side.menu == PanelMenu::Messages) {
+				side.menu = PanelMenu::None;
+			}
+		};
+		// In the side panel: the settings window's buttons; the list's (Up and Down a letter, which opens,
+		// Left and Right the tabs, L and R the letter's pages, X opens it, Square deletes it, Select the
+		// settings, Circle closes the letter and then the messages).
+		auto mail_panel_button = [&](Uint8 button) {
+			const int line = small_text->line_height();
+			if (mail.options) {
+				switch (button) {
+				case SDL_CONTROLLER_BUTTON_DPAD_UP:
+				case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+					mail.options_row = (mail.options_row + kMailOptionRows + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1)) %
+						kMailOptionRows;
+					return true;
+				case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+				case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+					mail_option_change(mail.options_row, button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1);
+					return true;
+				case SDL_CONTROLLER_BUTTON_A:
+					mail_option_change(mail.options_row, 1);
+					return true;
+				case SDL_CONTROLLER_BUTTON_B:
+				case SDL_CONTROLLER_BUTTON_BACK:
+					mail_options(false);
+					return true;
+				case SDL_CONTROLLER_BUTTON_START:
+					return false;
+				default:
+					return true;
+				}
+			}
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN: {
+				const int step = button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1;
+				if (mail.tab == 0) {
+					mail_scroll(step * line);
+				} else {
+					mail_select(mail.row + step);
+					mail.letter_open = !mail_list.empty();
+				}
+				return true;
+			}
+			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: {
+				const int step = button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1;
+				if (mail_parchment) {
+					mail_scroll(step * (mail_layout.text.h - line));
+				} else {
+					mail.first = std::max(0, mail.first + step * mail_layout.rows);
+					mail_select(mail.row + step * mail_layout.rows);
+				}
+				return true;
+			}
+			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+				mail_tab(mail.tab + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1));
+				return true;
+			case SDL_CONTROLLER_BUTTON_A:
+				mail_select(mail.row);
+				mail.letter_open = mail.tab == 0 || !mail_list.empty();
+				return true;
+			case SDL_CONTROLLER_BUTTON_BACK:  // Select: the letters' settings.
+				mail_options(true);
+				return true;
+			case SDL_CONTROLLER_BUTTON_X:  // Square.
+				mail_delete();
+				return true;
+			case SDL_CONTROLLER_BUTTON_B:  // Circle.
+				if (mail.letter_open && mail.tab != 0) {
+					mail.letter_open = false;
+				} else {
+					close_mail();
+				}
+				return true;
+			case SDL_CONTROLLER_BUTTON_START:
+				return false;
+			default:
+				return true;
+			}
+		};
 		// With the mailbox open every button but Start is its own.
 		auto mail_button = [&](Uint8 button) {
+			if (mail_in_panel) {
+				return mail_panel_button(button);
+			}
 			const int line = small_text ? small_text->line_height() : 20;
 			switch (button) {
 			case SDL_CONTROLLER_BUTTON_DPAD_UP:
@@ -5912,8 +7228,15 @@ int main(int argc, char** argv) {
 				break;
 			}
 			const SDL_Point focus = sea->town_center(save, selection.saved_index);
-			camera_x = focus.x - kScreenWidth / 2;
+			const int sea_width = has_save && panel_art && save.player >= 0 ? PanelLayout(side.folded).town_right : kScreenWidth;
+			camera_x = focus.x - sea_width / 2;
 			camera_y = focus.y - kScreenHeight / 2;
+			// The panel's room: the chosen ship's menu, as the game shows it for the ship selected.
+			if (has_save && save.player >= 0 && (side.menu == PanelMenu::None || side.menu == PanelMenu::Build) &&
+				fleet_ship() >= 0) {
+				side.menu = PanelMenu::Ship;
+				side.ship = fleet_ship();
+			}
 			reload = false;
 		}
 		if (reload) {
@@ -5989,6 +7312,36 @@ int main(int argc, char** argv) {
 			}
 		}
 		const bool placing = build_choice_now && build_choice_now->action == BuildAction::Place && town_free;
+		// The ship menu (SIDEMENU_SHIP): its ship, while it is still the player's; what its crew and convoy
+		// pages offer (the ship's window's rows: 0 and 1 the crew's, from 2 the convoy's).
+		PlaceView ship_now;
+		bool ship_pirate_ok = false;  // Its crew page's «Pirate» / «Civil» can be pressed (0x518750).
+		if (sea_panel && side.menu == PanelMenu::Ship && fleet_ship() >= 0) {
+			side.ship = fleet_ship();  // On the sea map the menu is the chosen ship's (Square, the ship buttons).
+		}
+		if (side.menu == PanelMenu::Ship) {
+			const bool valid = side.ship >= 0 && size_t(side.ship) < save.ships.size() && save.player >= 0 &&
+				save.ships[size_t(side.ship)].in_use() && save.ships[size_t(side.ship)].owner() == save.player;
+			if (!valid || !panel_shown) {
+				side.menu = PanelMenu::None;
+				side.ship = -1;
+			} else {
+				if (!ship_page_enabled(save, side.ship, side.ship_page)) {
+					side.ship_page = ShipPage::Goods;
+				}
+				side.ship_ui.open = Place::Ship;
+				side.ship_ui.ship = size_t(side.ship);
+				ship_now = place_view(save, town_index, side.ship_ui);
+				// «Pirate» makes the ship raid: a town it reaches is attacked (the battle in a town, the battles'
+				// piece 6, which p3vita hasn't yet: seen with the scenario pirate_sailing in save 5), and it may attack
+				// ships (piece 7). Until then the viewer shows it off; 0x0D and 0x518750 are rewritten and checked.
+				constexpr bool kPirateModeReady = false;
+				ship_pirate_ok = kPirateModeReady && sailing && can_turn_pirate(save, *sailing, side.ship);
+				const int rows = ship_goods_rows(save, side.ship);
+				const ShipMenuLayout ship_layout(panel_layout.room, small_text->line_height());
+				side.cargo_first = std::clamp(side.cargo_first, 0, std::max(0, rows - ship_layout.cargo_rows));
+			}
+		}
 		// The finger at the town's pixel (x, y) puts the building there: on the
 		// cell under it if it fits there, otherwise on the nearest cell around
 		// where it fits (the game's cell is the building's front one, so a touch
@@ -6143,16 +7496,86 @@ int main(int argc, char** argv) {
 				return false;
 			}
 		};
-		// A ship button chose a ship in port in another town: now on screen, its window.
-		if (pending_ship >= 0 && selection.mode == Mode::Saved && size_t(pending_ship) < save.ships.size()) {
-			const std::vector<int> here = player_ships_in(save, town_index);
-			const auto at = std::find(here.begin(), here.end(), pending_ship);
-			if (at != here.end() && int(selection.saved_index) == town_index) {
-				open_place(Place::Ship, -1);
-				place.ship = size_t(at - here.begin());
+		// The ship menu's page: its first row (the crew's or the convoy's) and amount.
+		auto ship_page = [&](ShipPage page) {
+			if (side.ship < 0 || !ship_page_enabled(save, side.ship, page)) {
+				return;
 			}
-			pending_ship = -1;
-		}
+			side.ship_page = page;
+			side.ship_ui.row = page == ShipPage::Crew ? 0 : page == ShipPage::Convoy || page == ShipPage::LeaveConvoy ? 2 : 0;
+			side.ship_ui.amount = 0;
+		};
+		// Its action: the selected row of the ship's window (place_act, as the game's window sends it).
+		auto ship_act = [&]() {
+			if (side.menu != PanelMenu::Ship || side.ship < 0) {
+				return;
+			}
+			if (side.ship_page == ShipPage::Crew && side.ship_ui.row == 2) {
+				// «Pirate» / «Civil»: 0x0D {ship, [+0x15C] == 0} (0x494244), run at once.
+				if (ship_pirate_ok) {
+					run_operations(save, sailing.get(), {pirate_operation(uint32_t(side.ship), save.ships[size_t(side.ship)].raid() == 0)});
+				}
+				return;
+			}
+			const bool crew = side.ship_page == ShipPage::Crew && side.ship_ui.row < 2;
+			const bool convoy = (side.ship_page == ShipPage::Convoy || side.ship_page == ShipPage::LeaveConvoy) &&
+				side.ship_ui.row >= 2 && !(side.ship_page == ShipPage::Convoy && ship_in_convoy(save, side.ship));
+			if (crew || convoy) {
+				place_act(save, sailing.get(), town_index, side.ship_ui, ship_now);
+				if (!side.ship_ui.message.empty()) {
+					notify(side.ship_ui.message);  // As the game's lines, over the town.
+					side.ship_ui.message.clear();
+				}
+			}
+		};
+		// Its buttons while it is open: L and R the pages, Up and Down the rows (the goods page's list),
+		// Left and Right the amount (the sailors to dismiss, the public convoy's destination), X does it,
+		// Circle closes it.
+		auto ship_button = [&](Uint8 button) {
+			const int rows = int(ship_now.rows.size());
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+				for (int k = 1; k < kShipPages; ++k) {
+					const int p = (int(side.ship_page) + kShipPages + (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -k : k)) % kShipPages;
+					if (ship_page_enabled(save, side.ship, ShipPage(p))) {
+						ship_page(ShipPage(p));
+						break;
+					}
+				}
+				return true;
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN: {
+				const int step = button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1;
+				if (side.ship_page == ShipPage::Goods) {
+					side.cargo_first += step;  // Clamped next frame.
+				} else if (side.ship_page == ShipPage::Crew) {
+					const bool captain = save.ships[size_t(side.ship)].captain() < save.globals.u16(global::kCaptainCount);
+					side.ship_ui.row = std::clamp(side.ship_ui.row + step, 0, captain ? 2 : 1);
+					side.ship_ui.amount = 0;
+				} else if (side.ship_page == ShipPage::Convoy && !ship_in_convoy(save, side.ship) && rows > 2) {
+					side.ship_ui.row = 2 + (side.ship_ui.row - 2 + step + (rows - 2)) % (rows - 2);
+					side.ship_ui.amount = 0;
+				}
+				return true;
+			}
+			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+				if (ship_now.max_amount >= 0) {
+					side.ship_ui.amount = std::clamp(side.ship_ui.amount + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1), 0,
+						ship_now.max_amount);
+				}
+				return true;
+			case SDL_CONTROLLER_BUTTON_A:
+				ship_act();
+				return true;
+			case SDL_CONTROLLER_BUTTON_B:
+				side.menu = PanelMenu::None;
+				return true;
+			default:
+				return false;
+			}
+		};
 
 		// Pasa el tiempo: los ticks que caben en el tiempo real transcurrido.
 		if (sailing && in_menu) {
@@ -6247,6 +7670,15 @@ int main(int argc, char** argv) {
 			}
 			last_election = election;
 		}
+		// While the letter window is open the game queues 0x71 {player, 0} once a tick (0x47CD83: when the
+		// tick's low byte isn't the one it last saw): the player's old letters removed (0x4D6780).
+		if (in_mail && mail.open && sailing && save.player >= 0) {
+			const int t = int(save.tick() & 0xFF);
+			if (t != mail.last_check) {
+				queue_operation(save, letters_check_operation(uint32_t(save.player), false));
+				mail.last_check = t;
+			}
+		}
 
 		// The living town: when the simulation changes the buildings of the town
 		// on screen, it is drawn again, with the camera where it was.
@@ -6265,20 +7697,35 @@ int main(int argc, char** argv) {
 			const SavedShip& ship = save.ships[size_t(chosen)];
 			const uint16_t status = ship.status();
 			const bool at_sea = status == kShipLeaving || status == kShipArriving || status == kShipSailing || status == 0x10;
+			// Its menu in the panel (the game's ship menu); the sea map's chosen ship too.
+			if (side.ship != chosen) {
+				side.ship_ui = PlaceUi();
+				side.cargo_first = 0;
+			}
+			side.menu = PanelMenu::Ship;
+			side.ship = chosen;
+			const std::vector<int> fleet = player_fleet(save);
+			const auto at = std::find(fleet.begin(), fleet.end(), chosen);
+			if (at != fleet.end()) {
+				fleet_index = size_t(at - fleet.begin());
+			}
 			if (!at_sea) {
-				pending_ship = chosen;
-				if (ship.town() != town_index && ship.town() < save.towns.size()) {
+				// In its town (from the sea map, into it).
+				if (ship.town() < save.towns.size() && (ship.town() != town_index || selection.mode == Mode::Sea)) {
 					selection.saved_index = ship.town();
 					market.open = false;
 					place.open = Place::None;
-					reload = true;
+					if (selection.mode == Mode::Sea) {
+						next_mode = true;
+					} else {
+						reload = true;
+					}
 				}
+			} else if (selection.mode == Mode::Sea) {
+				// On the sea map: it is chosen there, in the middle of the map's part.
+				camera_x = (ship.x() >> 16) - town_width / 2;
+				camera_y = (ship.y() >> 16) - kScreenHeight / 2;
 			} else {
-				const std::vector<int> fleet = player_fleet(save);
-				const auto at = std::find(fleet.begin(), fleet.end(), chosen);
-				if (at != fleet.end()) {
-					fleet_index = size_t(at - fleet.begin());
-				}
 				next_mode = true;
 			}
 		};
@@ -6295,7 +7742,11 @@ int main(int argc, char** argv) {
 						speed_name(game_speed));
 					break;
 				case PanelIcon::Messages:
-					open_mailbox();
+					if (side.menu == PanelMenu::Messages && mail.open) {
+						close_mail();
+					} else {
+						open_mailbox();
+					}
 					break;
 				case PanelIcon::Build:
 					side.menu = side.menu == PanelMenu::Build ? PanelMenu::None : PanelMenu::Build;
@@ -6400,6 +7851,10 @@ int main(int argc, char** argv) {
 					break;
 				}
 				if (side.menu == PanelMenu::Build && panel_shown && town_free && build_button(event.cbutton.button)) {
+					break;
+				}
+				if (side.menu == PanelMenu::Ship && panel_shown && town_free && side.focus < 0 &&
+					ship_button(event.cbutton.button)) {
 					break;
 				}
 				if (side.menu == PanelMenu::ShipList && panel_shown && town_free && side.focus < 0) {
@@ -6658,7 +8113,9 @@ int main(int argc, char** argv) {
 			case SDL_FINGERDOWN:
 				touch_start = {int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight)};
 				touch_moved = 0;
-				touch_on_side = panel_shown && !in_menu && !in_mail && !messages.open && !end_window.open &&
+				touch_scroll = 0;
+				finger_down = true;
+				touch_on_side = panel_shown && !in_menu && (!in_mail || mail_in_panel) && !messages.open && !end_window.open &&
 					inside(panel_layout.panel, touch_start.x, touch_start.y);
 				touch_on_panel = touch_on_side ||
 					(trading && inside(MarketLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
@@ -6666,7 +8123,7 @@ int main(int argc, char** argv) {
 					(in_place && inside(PlaceLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
 					(in_menu && (inside(MenuLayout(small_text->line_height(), menu.screen).panel, touch_start.x, touch_start.y) ||
 						menu.ask != MenuAsk::None)) ||
-					(in_mail && inside(mail_layout.panel, touch_start.x, touch_start.y));
+					(in_mail && (!mail_in_panel || mail_parchment) && inside(mail_layout.panel, touch_start.x, touch_start.y));
 				// Placing a building: the finger puts it on the cell it touches.
 				touch_building = placing && !touch_on_side && !in_menu && !in_mail && touch_start.x < town_width &&
 					touch_start.y >= kBarHeight;
@@ -6685,9 +8142,22 @@ int main(int argc, char** argv) {
 					place_at(camera_x + int(event.tfinger.x * kScreenWidth), camera_y + int(event.tfinger.y * kScreenHeight));
 				} else if (touch_on_side) {
 					SDL_Point at;
-					if (!side.folded && inside(panel_layout.map, touch_start.x, touch_start.y) &&
-						minimap_town_point(panel_layout, *view, int(event.tfinger.x * kScreenWidth),
-							int(event.tfinger.y * kScreenHeight), at)) {
+					if (!side.folded && side.menu == PanelMenu::Ship && side.ship_page == ShipPage::Goods &&
+						inside(panel_layout.room, touch_start.x, touch_start.y)) {
+						// Dragging the goods page's list moves it a row at a time.
+						touch_scroll -= event.tfinger.dy * kScreenHeight;
+						const float row = float(small_text->line_height() + 2);
+						for (; touch_scroll >= row; touch_scroll -= row) {
+							++side.cargo_first;
+						}
+						for (; touch_scroll <= -row; touch_scroll += row) {
+							--side.cargo_first;
+						}
+					} else if (!side.folded && inside(panel_layout.map, touch_start.x, touch_start.y) &&
+						(sea_panel ? minimap_sea_point(panel_layout, *sea, int(event.tfinger.x * kScreenWidth),
+										 int(event.tfinger.y * kScreenHeight), at)
+								   : minimap_town_point(panel_layout, *view, int(event.tfinger.x * kScreenWidth),
+										 int(event.tfinger.y * kScreenHeight), at))) {
 						camera_x = at.x - town_width / 2;
 						camera_y = at.y - kScreenHeight / 2;
 					}
@@ -6699,6 +8169,20 @@ int main(int argc, char** argv) {
 				}
 				break;
 			case SDL_FINGERUP:
+				finger_down = false;
+				if (touch_moved < kTapDistance && !in_menu && !messages.open && !end_window.open && has_save &&
+					save.player >= 0 && (selection.mode == Mode::Saved || selection.mode == Mode::Sea) &&
+					inside(kHourglassButton, touch_start.x, touch_start.y)) {
+					// The top bar's hourglass: the chronicle (the messages' public news).
+					touch_building = false;
+					touch_on_side = false;
+					touch_on_panel = false;
+					if (!mail.open) {
+						open_mailbox();
+					}
+					mail_tab(0);
+					break;
+				}
 				if (touch_building) {
 					touch_building = false;  // It stays where the finger left it.
 					touch_on_panel = false;
@@ -6720,7 +8204,7 @@ int main(int argc, char** argv) {
 					} else if (side.folded) {
 						// Folded, only its tab.
 					} else if (const int icon = panel_layout.icon_at(x, y); icon >= 0) {
-						if (panel_state(save).icon_enabled[icon]) {
+						if (panel_state(save, sea_panel).icon_enabled[icon]) {
 							side_act(icon);
 						}
 					} else if (const int ship = panel_layout.ship_at(x, y); ship >= 0) {
@@ -6752,9 +8236,112 @@ int main(int argc, char** argv) {
 						} else if (inside(room.act_button, x, y)) {
 							build_act();
 						}
-					} else if (minimap_town_point(panel_layout, *view, x, y, at)) {
+					} else if (mail_in_panel && inside(panel_layout.room, x, y)) {
+						// The messages: a tab, the settings, delete, or a letter (it opens).
+						const int tab = mail_layout.tab_at(x, y);
+						const int row = mail.tab != 0 ? mail_layout.row_at(x, y) : -1;
+						if (tab >= 0) {
+							mail_options(false);
+							mail_tab(tab);
+						} else if (inside(mail_layout.options_button, x, y)) {
+							mail_options(!mail.options);
+						} else if (inside(mail_layout.delete_button, x, y)) {
+							mail_delete();
+						} else if (row >= 0 && mail.first + row < int(mail_list.size())) {
+							mail_options(false);
+							mail_select(mail.first + row);
+							mail.letter_open = true;
+						}
+					} else if (side.menu == PanelMenu::Ship && side.ship >= 0 && inside(panel_layout.room, x, y)) {
+						// The ship menu: its page buttons, the crew page's and the convoy pages' buttons and rows.
+						const ShipMenuLayout room(panel_layout.room, small_text->line_height());
+						const int page = room.page_at(x, y);
+						auto again = [&]() { ship_now = place_view(save, town_index, side.ship_ui); };
+						if (page >= 0) {
+							ship_page(ShipPage(page));
+						} else if (side.ship_page == ShipPage::Crew) {
+							if (inside(room.minus_button, x, y) || inside(room.plus_button, x, y)) {
+								if (side.ship_ui.row != 0) {
+									side.ship_ui.row = 0;
+									side.ship_ui.amount = 0;
+								}
+								const int most = ship_window_open(save, side.ship) ? save.ships[size_t(side.ship)].sailors() : 0;
+								side.ship_ui.amount =
+									std::clamp(side.ship_ui.amount + (inside(room.minus_button, x, y) ? -1 : 1), 0, most);
+							} else if (inside(room.sailors_button, x, y) && side.ship_ui.row == 0) {
+								ship_act();
+							} else if (inside(room.captain_button, x, y)) {
+								side.ship_ui.row = 1;
+								side.ship_ui.amount = 0;
+								again();
+								ship_act();
+							} else if (inside(room.pirate_button, x, y) &&
+								save.ships[size_t(side.ship)].captain() < save.globals.u16(global::kCaptainCount)) {
+								side.ship_ui.row = 2;
+								ship_act();
+							}
+						} else if (side.ship_page == ShipPage::Convoy || side.ship_page == ShipPage::LeaveConvoy) {
+							const int row = room.convoy_row_at(x, y);
+							const bool destination = ship_now.amount_choice && ship_now.max_amount >= 0;
+							if (row >= 0 && 2 + row < int(ship_now.rows.size()) && 2 + row != side.ship_ui.row) {
+								side.ship_ui.row = 2 + row;
+								side.ship_ui.amount = 0;
+							} else if (destination && (inside(room.dest_minus, x, y) || inside(room.dest_plus, x, y))) {
+								side.ship_ui.amount = std::clamp(side.ship_ui.amount + (inside(room.dest_minus, x, y) ? -1 : 1), 0,
+									ship_now.max_amount);
+							} else if (inside(room.act_button, x, y)) {
+								ship_act();
+							}
+						}
+					} else if (sea_panel ? minimap_sea_point(panel_layout, *sea, x, y, at)
+										 : minimap_town_point(panel_layout, *view, x, y, at)) {
 						camera_x = at.x - town_width / 2;
 						camera_y = at.y - kScreenHeight / 2;
+					}
+					break;
+				}
+				if (mail_in_panel && !in_menu && touch_moved < kTapDistance) {
+					// The parchment over the town: its button, the settings' rows; a tap on the town outside it
+					// closes it.
+					const int x = touch_start.x;
+					const int y = touch_start.y;
+					touch_on_panel = false;
+					if (!mail_parchment || !inside(mail_layout.panel, x, y)) {
+						if (mail_parchment && x < town_width && y >= kBarHeight) {
+							mail_options(false);
+							if (mail.tab != 0) {
+								mail.letter_open = false;
+							} else {
+								close_mail();
+							}
+						}
+						break;
+					}
+					if (inside(mail_layout.close_button, x, y)) {
+						if (mail.options) {
+							mail_options(false);
+						} else if (mail.tab != 0) {
+							mail.letter_open = false;
+						} else {
+							close_mail();
+						}
+					} else if (mail.options) {
+						for (int row = 0; row < kMailOptionRows; ++row) {
+							const SDL_Rect r = mail_option_row(mail_layout, small_text->line_height(), row);
+							if (inside(r, x, y)) {
+								mail.options_row = row;
+								// The days: their arrows on the right (the left one less, the right one more).
+								const bool days = row % 3 == 0 && row != kMailOptionRows - 1;
+								if (days && x >= r.x + r.w - 56) {
+									mail_option_change(row, x >= r.x + r.w - 28 ? 1 : -1);  // Its arrows.
+								} else if (days) {
+									const uint8_t d = mail.option_days[size_t(row / 3)];
+									mail.option_days[size_t(row / 3)] = uint8_t((d + 1) % 6);  // Its name: the next one.
+								} else {
+									mail_option_change(row, 1);
+								}
+							}
+						}
 					}
 					break;
 				}
@@ -6961,7 +8548,7 @@ int main(int argc, char** argv) {
 		}
 		const int view_width = at_sea ? sea->width() : view->width();
 		const int view_height = at_sea ? sea->height() : view->height();
-		camera_x = std::clamp(camera_x, 0, std::max(0, view_width - (at_sea ? kScreenWidth : town_width)));
+		camera_x = std::clamp(camera_x, 0, std::max(0, view_width - town_width));  // The panel's part isn't the view's.
 		camera_y = std::clamp(camera_y, 0, std::max(0, view_height - kScreenHeight));
 
 		SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -6970,6 +8557,18 @@ int main(int argc, char** argv) {
 		if (at_sea) {
 			sea->draw(save, small_text.get(), town_names, camera_x, camera_y, selection.saved_index,
 				course_ship >= 0 ? &save.ships[size_t(course_ship)] : nullptr);
+			if (panel_shown) {
+				// The side panel on the sea map: the sea's minimap, the icons, the ship buttons and the
+				// chosen ship's menu.
+				draw_side_panel(renderer, *small_text, *panel_art, side, panel_state(save, true), nullptr,
+					{camera_x, camera_y, town_width, kScreenHeight}, sea.get(), &save);
+				if (side.menu == PanelMenu::ShipList && !side.folded) {
+					draw_ship_list(renderer, *small_text, save, town_names, side);
+				}
+				if (side.menu == PanelMenu::Ship && side.ship >= 0 && !side.folded) {
+					draw_ship_menu(renderer, *small_text, *panel_art, save, side, ship_now, ship_pirate_ok);
+				}
+			}
 		} else {
 			// The building under the cursor now (after this frame's camera): glowing, with its name.
 			const bool free_now = selection.mode == Mode::Saved && has_save && save.player >= 0 && !market.open &&
@@ -7034,11 +8633,21 @@ int main(int argc, char** argv) {
 					draw_build_room(renderer, *small_text, *panel_art, side, build_now, build_tabs_now,
 						build_choice_now ? &*build_choice_now : nullptr, side.cell_x >= 0, build_fits_now);
 				}
+				if (side.menu == PanelMenu::Ship && side.ship >= 0 && !side.folded) {
+					draw_ship_menu(renderer, *small_text, *panel_art, save, side, ship_now, ship_pirate_ok);
+				}
 			}
 		}
 		if (text) {
 			std::vector<std::string> right_texts;
-			if (in_mail) {
+			if (in_mail && mail_in_panel) {
+				// The side panel's messages: the tabs with Left and Right, the settings with Select.
+				right_texts = mail.options
+					? std::vector<std::string>{tr(BTN_CROSS " cambiar   " BTN_CIRCLE " aceptar", BTN_CROSS " change   " BTN_CIRCLE " accept")}
+					: std::vector<std::string>{tr("Select: ajustes   " BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar",
+												   "Select: settings   " BTN_SQUARE " delete   " BTN_CIRCLE " close"),
+						  tr(BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar", BTN_SQUARE " delete   " BTN_CIRCLE " close")};
+			} else if (in_mail) {
 				right_texts = mail.tab == 0
 					? std::vector<std::string>{tr("L/R: página   Select: pestaña   " BTN_CIRCLE " cerrar",
 												   "L/R: page   Select: tab   " BTN_CIRCLE " close"),
@@ -7073,7 +8682,21 @@ int main(int argc, char** argv) {
 				right_texts = {tr("L/R: ciudad   " BTN_TRIANGLE " mapa   " BTN_CROSS " mercado", "L/R: town   " BTN_TRIANGLE " map   " BTN_CROSS " market"),
 					tr(BTN_TRIANGLE " mapa   " BTN_CROSS " mercado", BTN_TRIANGLE " map   " BTN_CROSS " market")};
 			}
-			draw_bar(renderer, *text, 0, bar_title(save, town_names, template_ids, selection), right_texts);
+			if (has_save && save.player >= 0 && panel_art && small_text &&
+				(selection.mode == Mode::Saved || selection.mode == Mode::Sea)) {
+				// The game's top bar; its hourglass turns while the time runs (the menu stops it).
+				const SavedTown& here = save.towns[selection.saved_index];
+				const std::string place = selection.mode == Mode::Sea
+					? tr("Mapa del mar - ", "Sea map - ") + town_name(save, town_names, int(selection.saved_index))
+					: town_name(save, town_names, int(selection.saved_index));
+				const int frame = in_menu ? 0 : int(app_ticks() / 90);
+				draw_top_bar(renderer, *small_text, *panel_art,
+					selection.mode == Mode::Saved ? format_money(here.citizens()) : std::string(), place,
+					format_money(save.merchants[size_t(save.player)].money()), game_date(save.day(), save.month(), save.year()),
+					frame, right_texts);
+			} else {
+				draw_bar(renderer, *text, 0, bar_title(save, town_names, template_ids, selection), right_texts);
+			}
 		}
 		// En el mapa del mar, abajo: el barco al que se dan las órdenes y la velocidad del juego.
 		if (at_sea && small_text) {
@@ -7085,7 +8708,8 @@ int main(int argc, char** argv) {
 			const std::string speed = g_texts ? g_texts->get(GameText::GameSpeed) + ": " + speed_name(game_speed)
 											  : tr("velocidad ", "speed ") + speed_name(game_speed);
 			draw_bar(renderer, *small_text, kScreenHeight - kBarHeight, ship_text,
-				{tr(BTN_SQUARE " barco   Select: ", BTN_SQUARE " ship   Select: ") + speed, "Select: " + speed, speed});
+				{tr(BTN_SQUARE " barco   Select: ", BTN_SQUARE " ship   Select: ") + speed, "Select: " + speed, speed},
+				town_width);
 		}
 		if (in_hanse) {
 			// After this frame's ticks and operations: what the panel shows now.
@@ -7108,12 +8732,18 @@ int main(int argc, char** argv) {
 			// composer, which may change the save: letter_viewed) and marked
 			// read (0x6E) when it is shown.
 			const std::vector<uint16_t> rows = mail.tab != 0 ? mail_rows(save, mail.tab) : std::vector<uint16_t>();
-			const MailLayout layout(small_text->line_height(), mail.tab == 0);
+			const bool in_panel = mail_in_panel && side.menu == PanelMenu::Messages;
+			const MailLayout layout = in_panel ? MailLayout(small_text->line_height(), PanelLayout(side.folded).room)
+											   : MailLayout(small_text->line_height(), mail.tab == 0);
 			const auto at = std::find(rows.begin(), rows.end(), mail.selected);
 			mail.row = at != rows.end() ? int(at - rows.begin()) : std::clamp(mail.row, 0, std::max(0, int(rows.size()) - 1));
 			mail.selected = rows.empty() ? 0xFFFF : rows[size_t(mail.row)];
 			mail.first = std::clamp(mail.first, std::max(0, mail.row - layout.rows + 1), mail.row);
-			const uint16_t entry = mail.tab == 0 ? 0xFFFE : mail.selected;
+			if (in_panel && rows.empty() && mail.tab != 0) {
+				mail.letter_open = false;
+			}
+			// In the side panel a letter is made (and marked read) only once its parchment is open.
+			const uint16_t entry = mail.tab == 0 ? 0xFFFE : in_panel && !mail.letter_open ? 0xFFFF : mail.selected;
 			// The chronicle again when a news comes (a new head of its list).
 			const uint16_t news = save.globals.u16(kMailChronicle);
 			if (mail.tab == 0 && news != mail.chronicle_head) {
@@ -7182,7 +8812,32 @@ int main(int argc, char** argv) {
 			}
 			const int height = int(mail.lines.size()) * small_text->line_height() + 4;
 			mail.scroll = std::clamp(mail.scroll, 0, std::max(0, height - layout.text.h));
-			draw_mailbox(renderer, *small_text, save, mail, rows);
+			if (in_panel) {
+				if (!side.folded) {
+					draw_mail_panel(renderer, *small_text, *panel_art, save, mail, rows, layout);
+				}
+				if (mail.letter_open || mail.options || mail.tab == 0) {
+					draw_mail_parchment(renderer, *small_text, *panel_art, mail, layout);
+				}
+			} else {
+				draw_mailbox(renderer, *small_text, save, mail, rows);
+			}
+		}
+		if (small_text && has_save && save.player >= 0 && !in_menu && panel_shown) {
+			// A button's tooltip: under the finger before it is lifted, or the one the pad points at.
+			SDL_Rect where{};
+			uint32_t tip = 0;
+			if (finger_down && touch_moved < kTapDistance) {
+				tip = panel_tooltip(side, save, small_text->line_height(), mail_in_panel, side.menu == PanelMenu::Build &&
+					side.build_type < 0, touch_start.x, touch_start.y, where);
+			} else if (side.focus >= 0 && !side.folded) {
+				const PanelLayout focus_panel(side.folded);
+				where = side.focus < kPanelIcons ? focus_panel.icons[side.focus] : focus_panel.ships[side.focus - kPanelIcons];
+				tip = panel_tooltip(side, save, small_text->line_height(), false, false, where.x + 1, where.y + 1, where);
+			}
+			if (tip) {
+				draw_tooltip(renderer, *small_text, tooltip_text(tip), where);
+			}
 		}
 		if (small_text) {
 			// The notices still in time, one under another (with the mailbox
@@ -7192,10 +8847,11 @@ int main(int argc, char** argv) {
 			while (!notices.empty() && SDL_TICKS_PASSED(app_ticks(), notices.front().second)) {
 				notices.pop_front();
 			}
-			int y = in_mail && mail.open ? kScreenHeight - 18 - int(notices.size()) * (box_height + 2) : kBarHeight + 6;
+			const bool mail_full = in_mail && mail.open && !mail_in_panel;  // The whole-screen mailbox (the sea map).
+			int y = mail_full ? kScreenHeight - 18 - int(notices.size()) * (box_height + 2) : kBarHeight + 6;
 			for (const auto& [line, until] : notices) {
 				const int width = small_text->measure(line) + 2 * padding;
-				const SDL_Rect box = {in_mail && mail.open ? kScreenWidth - 18 - width : 8, y, width, box_height};
+				const SDL_Rect box = {mail_full ? kScreenWidth - 18 - width : 8, y, width, box_height};
 				SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 				SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
 				SDL_RenderFillRect(renderer, &box);

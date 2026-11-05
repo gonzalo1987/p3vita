@@ -83,6 +83,7 @@ const char kStepsHelp[] =
 	"  frames:N     N frames without input (time passes at the game's speed)\n"
 	"  days:N       N frames of fast forward, one game day (256 ticks) each\n"
 	"  tap:X:Y      touch the screen at (X, Y) and let go\n"
+	"  touch:X:Y    put a finger on the screen at (X, Y); lift:X:Y lifts it there\n"
 	"  cell:X:Y     center the camera on the town's cell (X, Y)\n"
 	"  text:TEXT    type TEXT (an SDL_TEXTINPUT, as the keyboard gives it)\n"
 	"  shot:FILE    save the screen as a PNG\n";
@@ -117,12 +118,12 @@ std::unique_ptr<InputScript> InputScript::parse(const std::string& steps, std::s
 				error = "wrong number in step \"" + text + "\"";
 				return nullptr;
 			}
-		} else if ((head == "tap" || head == "cell") && colon != std::string::npos) {
+		} else if ((head == "tap" || head == "cell" || head == "touch" || head == "lift") && colon != std::string::npos) {
 			const size_t second = rest.find(':');
-			step.kind = head == "tap" ? Kind::Tap : Kind::Cell;
+			step.kind = head == "tap" ? Kind::Tap : head == "touch" ? Kind::Touch : head == "lift" ? Kind::Lift : Kind::Cell;
 			step.x = second == std::string::npos ? -1 : number(rest.substr(0, second));
 			step.y = second == std::string::npos ? -1 : number(rest.substr(second + 1));
-			const bool off_screen = step.kind == Kind::Tap && (step.x >= kScreenWidth || step.y >= kScreenHeight);
+			const bool off_screen = step.kind != Kind::Cell && (step.x >= kScreenWidth || step.y >= kScreenHeight);
 			if (step.x < 0 || step.y < 0 || off_screen) {
 				error = "wrong position in step \"" + text + "\"" + (off_screen ? " (the screen is 960x544)" : "");
 				return nullptr;
@@ -204,6 +205,10 @@ void InputScript::start_frame() {
 		break;
 	case Kind::Tap:
 		push_finger(progress_ == 0 ? SDL_FINGERDOWN : SDL_FINGERUP, step.x, step.y);
+		break;
+	case Kind::Touch:
+	case Kind::Lift:
+		push_finger(step.kind == Kind::Touch ? SDL_FINGERDOWN : SDL_FINGERUP, step.x, step.y);
 		break;
 	case Kind::Cell:
 		look_x_ = step.x;

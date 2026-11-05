@@ -44,7 +44,7 @@ public:
 	Uint32 now() const { return Uint32(frame_) * kScriptFrameMs; }
 
 private:
-	enum class Kind { Press, Hold, Frames, Days, Shot, Tap, Cell, Text };
+	enum class Kind { Press, Hold, Frames, Days, Shot, Tap, Cell, Text, Touch, Lift };
 	struct Step {
 		Kind kind = Kind::Press;
 		SDL_GameControllerButton button = SDL_CONTROLLER_BUTTON_INVALID;

@@ -290,6 +290,57 @@ void expire_letters(SaveGame& save, int32_t merchant) {
 	tick::events_towns_detail::fn_4d6780(save, merchant);
 }
 
+void set_letter_settings(SaveGame& save, uint32_t merchant, const uint8_t* bytes, uint8_t notices) {
+	// The merchant compared unsigned with the u16 count [0x6DE4AA] (0x4D6AFD).
+	if (merchant >= save.globals.u16(global::kWorldMerchantCount) || merchant >= save.merchants.size()) {
+		return;
+	}
+	MerchantMemory& m = save.merchants[merchant].memory;
+	for (int k = 0; k < 8; ++k) {
+		m.u8(0x38 + size_t(k)) = bytes[k];
+	}
+	m.u8(0x26) = notices;
+}
+
+void repair_letter_chains(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	const uint16_t count = g.u16(kMailCount);
+	std::vector<uint8_t> seen(count, 0);  // operator new and memset of [+0x6] bytes.
+	if (count < g.u16(kMailFree)) {
+		g.u16(kMailFree) = count;
+	}
+	auto next = [&](uint16_t entry) -> uint16_t* {
+		return entry < save.mail.size() ? &save.mail[entry].u16(6) : nullptr;
+	};
+	// Each merchant's chain from his [+0xA], then the chronicle's from [+0x8]: a letter reached a second time
+	// cuts the link to it (0xFFFF).
+	auto walk = [&](uint16_t* link) {
+		while (link && *link < count) {
+			if (seen[*link]) {
+				*link = 0xFFFF;
+				return;
+			}
+			seen[*link] = 1;
+			link = next(*link);
+		}
+	};
+	const uint16_t merchants = g.u16(global::kWorldMerchantCount);
+	for (uint32_t m = 0; m < merchants && m < save.merchants.size(); ++m) {
+		walk(&save.merchants[m].memory.u16(0xA));
+	}
+	walk(&g.u16(kMailChronicle));
+	// The free list: a letter already in a chain ends it there (its link becomes the count, 0x4D7A7E).
+	uint16_t* link = &g.u16(kMailFree);
+	while (link && *link < count) {
+		if (seen[*link]) {
+			*link = count;
+			return;
+		}
+		seen[*link] = 1;
+		link = next(*link);
+	}
+}
+
 void send_ticker(SaveGame& save, uint32_t merchant, uint8_t kind, uint16_t e) {
 	// The kinds 0x5483D0 shows nothing for (its case 0x5487C5).
 	static constexpr uint8_t kSilent[] = {0x02, 0x0F, 0x11, 0x13, 0x14, 0x17, 0x18, 0x1A, 0x1E, 0x1F, 0x26, 0x27};

@@ -61,6 +61,7 @@ void fn_537c20(SaveGame& save, const uint8_t* operation);  // 0x04 hire sailors.
 void fn_537dd0(SaveGame& save, const uint8_t* operation);  // 0x05 dismiss sailors.
 void fn_537ee0(SaveGame& save, const uint8_t* operation);  // 0x06 hire a captain.
 void fn_538000(SaveGame& save, Sailing* sailing, const uint8_t* operation);  // 0x07 dismiss the captain.
+void fn_5386c0(SaveGame& save, const uint8_t* operation);  // 0x0D a ship's «Pirate» / «Civil».
 // The shipyard's: 0x0C upgrade a ship (0x508660), 0x2D and 0x2E its name
 // (0x53CCE0), 0x2F cancel a ship ordered (0x535CB9 → 0x52B110).
 void fn_508660(SaveGame& save, uint32_t ship, uint32_t levels);

@@ -124,6 +124,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x07:  // Dismiss a ship's captain (0x535839 → 0x538000).
 		tick::fn_538000(save, sailing, operation);
 		break;
+	case 0x0D:  // A ship's «Pirate» / «Civil» from its menu (0x5358D5 → 0x5386C0; town_tick/ship_operations.cpp).
+		tick::fn_5386c0(save, operation);
+		break;
 	case 0x08:  // Wares between a ship and its owner's office (0x535848 → 0x538100; trade.cpp).
 		fn_538100(save, operation);
 		break;
@@ -306,6 +309,18 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x6F:  // The player deletes a letter (0x536AE1 → 0x4D6A50): {0x6F, merchant, entry}.
 		delete_letter(save, fields[1], uint32_t(fields[2]));
+		break;
+	case 0x70: {  // A merchant's letter settings (0x536AFB → 0x4D6AF0): u16 [+4] merchant, [+6..+0xD], [+0xE].
+		uint16_t merchant = 0;
+		std::memcpy(&merchant, operation + 4, 2);
+		set_letter_settings(save, merchant, operation + 6, operation[0xE]);
+		break;
+	}
+	case 0x71:  // The letters checked (0x536B1C): with [+8], the chains repaired (0x4D7960); the old ones removed (0x4D6780).
+		if (fields[2] != 0) {
+			repair_letter_chains(save);
+		}
+		expire_letters(save, fields[1]);
 		break;
 	case 0x65:  // An AI merchant goes bankrupt (0x53DD70, 0x4F5D80).
 		tick::fn_53dd70(save, operation);
