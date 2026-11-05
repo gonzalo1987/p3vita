@@ -508,6 +508,11 @@ struct SaveGame {
 	// tal como los parte el juego (0x5128D0), en Latin-1: 0x509A50 copia uno
 	// al [+0x160] de cada barco nuevo. Vacío si no se ha leído.
 	std::vector<std::string> ship_names;
+	// The ship names the players write during the game (the names object's
+	// second list, [0x6DDB7A] − [0x6DDB78] of them, after the game's: 0x512D40
+	// adds one, 0x512FC0 lengthens the last), in Latin-1. Empty after a load
+	// (0x5121C0 drops the save's); the game writes them in the save (0x511C60).
+	std::vector<std::string> player_ship_names;
 	// Men's and women's first names (scripts/NamenMaenner.txt and
 	// NamenFrauen.txt, [0x6DDB70] and [0x6DDB72] of them) as the game splits
 	// them (0x5121C0 with 0x5128D0), in Latin-1: 0x512A60 gives one, and

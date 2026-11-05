@@ -42,6 +42,13 @@ void fn_538100(SaveGame& save, const uint8_t* operation);  // 0x08
 void fn_538210(SaveGame& save, const uint8_t* operation);
 TradeResult fn_53d2b0(SaveGame& save, uint8_t* operation);  // 0x58, sell from the office.
 TradeResult fn_53d3c0(SaveGame& save, uint8_t* operation);  // 0x59, buy for the office.
+// A convoy's trade: 0x19 sells (`sell`) and 0x1A buys with the merchant's
+// ships of a convoy in the town ({code, s32 amount, u16 ware, u16 convoy, u16
+// merchant, u16 town}); 0x1B moves wares between them and his office there
+// ({0x1B, s32 amount, u16 convoy, u16 ware, u16 merchant, u8 direction: 1
+// from the office, 0 into it}).
+TradeResult fn_539300(SaveGame& save, const uint8_t* operation, bool sell);
+void fn_5396b0(SaveGame& save, const uint8_t* operation);
 
 // The same handlers on an operation made here (for the tests and the
 // oracle's trade comparison, compare_save): buy for the ship `amount` of a

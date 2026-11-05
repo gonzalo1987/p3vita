@@ -10,6 +10,8 @@ El estado son copias de la memoria del juego, por regiones:
   T O M  ciudades (0x9F8), oficinas (0x44C) y comerciantes (0x650)
   ML     the merchants' ship lists that aren't empty (u16 arrays at [+0x624 + 4·k]):
          u16 merchant, u8 list, u16 length and its u16s (empty in the saves)
+  SN     the ship names the players wrote (the names object 0x6DDAA0's second
+         list: its buffer [+0xB8] up to the offset [+0xCC][n] of its n names)
   P C    barcos (0x180) y capitanes (16)
   W      registros de 0x14 bytes del mundo (*0x6DE510, tantos como [0x6DE4A6])
   X      objetos de asedio de cada ciudad (*0x6DF270, 0x1024)
@@ -138,7 +140,8 @@ EXECUTOR = 0x535760  # ejecuta una operación encolada (thiscall sobre ella)
 EXECUTOR_MAGIC = 0x504F3350  # «P3OP»: tras la operación en la pila, la marca de las llamadas del oráculo
 OPERATIONS = (0x00, 0x01, 0x02, 0x08, 0x09, 0x0A, 0x12, 0x13, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x28, 0x29, 0x2C, 0x37, 0x38, 0x3B, 0x3F, 0x46, 0x48, 0x4B, 0x60, 0x61, 0x64,
               0x65, 0x67, 0x6E, 0x6F, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86,
-              0x87, 0x8E, 0xB8, 0x58, 0x59)  # las que se ejecutan por omisión
+              0x87, 0x8E, 0xB8, 0x58, 0x59,
+              0x0C, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x20, 0x2D, 0x2E, 0x2F)  # las que se ejecutan por omisión
 UPDATE_DATE = 0x5310D0
 RAND = 0x639C03
 MERGE_TOWN_FLAGS = 0x5348B0  # la carga lo llama con 0x6DF278 tras leer el mundo
@@ -286,6 +289,7 @@ DOCKED_STATES = (0, 1, 2, 3, 4, 5)
 QUIET = {
     0x548CA0: 0x18,  # mensaje al jugador
     0x613920: 4,  # escena del puerto (0x6E6220)
+    0x6141D0: 8,  # the port scene shows another town (operations 0x16, 0x17)
     0x4D6530: 8,  # mensaje a uno o varios comerciantes (buzón 0x6DD730)
 }
 # Sending a letter (0x4D6530 on the mailbox 0x6DD730, docs/formats/mail.md)
@@ -350,8 +354,9 @@ MAIL_CALLS = (
     0x4DC53D, 0x4E32E9, 0x4E3378, 0x4E33FC, 0x4E3598, 0x4E363A, 0x4E36B3, 0x5294F7, 0x5295BD, 0x529CA0,
     0x529D8A,
     # The player's operations (town_tick/ship_operations.cpp): a new captain
-    # (0x537EE0: 0x04), no repair (0x52ACD0: 0x02).
-    0x537FC6, 0x52AEDD,
+    # (0x537EE0: 0x04), no repair (0x52ACD0: 0x02), a ship's order cancelled
+    # (0x52B110: 0x14).
+    0x537FC6, 0x52AEDD, 0x52B288,
     # alderman.cpp: a Hanse task of a merchant expired (0x4EB0EB: 0x70),
     # started (0x4EBF54: 0x80 the road, 0x6E and 0x84 the pirate nest) and
     # done (0x4EC354: 0x6F to the chronicle and to the merchant).
@@ -1090,6 +1095,16 @@ class TownOracle(SaveOracle):
                 if n and pointer:
                     lists.append(struct.pack('<HBH', i, k, n) + bytes(read(pointer, 2 * n)))
         out['ML'] = (0, b''.join(lists))
+        # The ship names the players wrote (SaveGame::player_ship_names): the
+        # texts of the names object's second list, each with its 0 (empty
+        # after a load; operations 0x2D and 0x2E add them).
+        names = b''
+        offsets = gu32(NAMES + 0xCC)
+        n = (gu16(NAMES + 0xDA) - gu16(NAMES + 0xD8)) & 0xFFFF
+        if offsets and n:
+            end = unpack('<H', read(offsets + 2 * n, 2))[0]
+            names = bytes(block(gu32(NAMES + 0xB8), end))
+        out['SN'] = (0, names)
         first_ship = gu32(SHIPS + 4)
         ship_block = block(first_ship, ships * 0x180)
         out['P'] = (first_ship, ship_block)

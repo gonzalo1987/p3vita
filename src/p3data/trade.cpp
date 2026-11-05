@@ -590,6 +590,214 @@ TradeResult fn_53d3c0(SaveGame& save, uint8_t* op) {
 	return {amount, price};
 }
 
+// --- A convoy's trade (docs/formats/operations.md: 0x19, 0x1A, 0x1B) ---
+
+namespace {
+
+constexpr uint32_t kConvoyCount = global::kShips + 0xF6;  // u16 (0x6DD896)
+
+}  // namespace
+
+// 0x539300 (operations 0x19 and 0x1A, thiscall on the operation: 1 to sell,
+// 0 to buy): {code, s32 amount, u16 ware, u16 convoy, u16 merchant, u16
+// town}: the merchant's ships of a convoy in the town ([+0x1C]) trade with its
+// market, one after another from the convoy's first ([+0xA], next [+0x6]).
+// Selling: each gives what it has up to what is left (0x5182B0, its [+0x3C]
+// |= 4); then all of it is paid at once with the store before the sale
+// (0x52E1D0) and the merchant's sales (0x4F8690). Buying, with money: at most
+// the merchant's ships' room (0x5182B0, counting only the positive) and the
+// store; then each ship buys what fits of what is left, cut down to the money
+// (its room · the money, in 32 bits, / the price, rounded down to the ware's
+// unit, until it can pay: no more ships after that), with the purchases'
+// statistics (0x4F8840), the store down, the cargo and its average (0x517FE0).
+// The convoy's notices [+0x18] |= 4. No ban ([+0x608]) is looked at.
+TradeResult fn_539300(SaveGame& save, const uint8_t* op, bool sell) {
+	const uint16_t convoy = op_u16(op, 0xA);
+	const uint16_t ware = op_u16(op, 8);
+	const uint16_t merchant = op_u16(op, 0xC);
+	if (convoy >= save.globals.u16(kConvoyCount) || ware >= 0x18 || merchant >= save.globals.u16(global::kWorldMerchantCount)) {
+		return {};
+	}
+	MerchantMemory& m = save.merchants[merchant].memory;  // 0x5303C0
+	GameMemory<0x3C>& c = save.convoys[convoy];
+	const uint16_t town = c.u16(0x1C);
+	if (town != op_u16(op, 0xE)) {
+		return {};
+	}
+	int32_t& store = save.towns[town].memory.s32(4 + 4 * size_t(ware));
+	const uint16_t ships = save.globals.u16(global::kShipCount);
+	int32_t amount = op_s32(op, 4);
+	int32_t total = 0;
+	if (sell) {
+		for (uint32_t i = c.u16(0xA); i < ships && amount > 0; i = save.ships[i].memory.u16(0x6)) {
+			ShipMemory& s = save.ships[i].memory;
+			if (uint16_t(s.u8(0)) != merchant) {
+				continue;
+			}
+			int32_t& cargo = s.s32(0x54 + 4 * size_t(ware));
+			if (cargo > amount) {
+				cargo -= amount;
+				total += amount;
+				amount = 0;
+			} else {
+				amount -= cargo;
+				total += cargo;
+				cargo = 0;
+			}
+			recalculate_cargo(save.ships[i]);
+			s.u8(0x3C) |= 4;
+		}
+		const int32_t price = tick::game_sell_price(save, ware, town, total);  // 0x52E1D0
+		tick::offices_detail::fn_4f8690(save, merchant, town, ware, price, total, false);
+		m.u32(0) += uint32_t(price);
+		store += total;
+		c.u32(0x18) |= 4;
+		return {total, price};
+	}
+	if (m.s32(0) <= 0) {
+		return {};
+	}
+	int32_t room_sum = 0;
+	for (uint32_t i = c.u16(0xA); i < ships; i = save.ships[i].memory.u16(0x6)) {
+		if (uint16_t(save.ships[i].memory.u8(0)) == merchant) {
+			const int32_t room = recalculate_cargo(save.ships[i]);
+			if (room > 0) {
+				room_sum += room;
+			}
+		}
+	}
+	if (room_sum < amount) {
+		amount = room_sum;
+	}
+	if (amount > store) {
+		amount = store;
+	}
+	TradeResult result;
+	bool more = true;
+	for (uint32_t i = c.u16(0xA); i < ships && more; i = save.ships[i].memory.u16(0x6)) {
+		SavedShip& ship = save.ships[i];
+		if (uint16_t(ship.memory.u8(0)) != merchant) {
+			continue;
+		}
+		int32_t room = recalculate_cargo(ship);
+		if (amount < room) {
+			room = amount;
+			more = false;
+		}
+		if (room <= 0) {
+			continue;
+		}
+		int32_t price = tick::game_buy_price(save, ware, town, room);  // 0x52E430
+		while (price > m.s32(0)) {
+			more = false;
+			room = int32_t(uint32_t(m.s32(0)) * uint32_t(room)) / price;  // imul (32 bits), idiv
+			room = round_to_unit(ware, room);
+			price = tick::game_buy_price(save, ware, town, room);
+		}
+		room = round_to_unit(ware, room);
+		if (room <= 0 || price < 0) {
+			continue;
+		}
+		tick::offices_detail::fn_4f8840(save, merchant, town, ware, price, room, false);
+		m.u32(0) -= uint32_t(price);
+		store -= room;
+		tick::events_rare_detail::fn_517fe0(save, int(i), ware, room, price);
+		amount -= room;
+		recalculate_cargo(ship);
+		c.u32(0x18) |= 4;
+		result.amount += room;
+		result.price += price;
+	}
+	return result;
+}
+
+// 0x5396B0 (operation 0x1B): {0x1B, s32 amount (its sign dropped), u16
+// convoy, u16 ware, u16 merchant, u8 direction}: wares between the merchant's
+// ships of a convoy and his office in its town ([+0x1C], 0x5308A0). Direction
+// 0: from the ships, one after another, each giving all it has until what is
+// left fits (0x4FF6F0 at the ship's average price; 0x5182B0, [+0x3C] |= 4).
+// Otherwise from the office (at most its stock; nothing if empty) into the
+// ships with room for a unit at least (200 or 2000): the last one takes all
+// that is left, the others what fits in whole units (0x5180C0 at the office's
+// average price; 0x5182B0, [+0x3C] |= 4), the stock down by as much.
+void fn_5396b0(SaveGame& save, const uint8_t* op) {
+	const uint16_t convoy = op_u16(op, 8);
+	const uint16_t ware = op_u16(op, 0xA);
+	const uint16_t merchant = op_u16(op, 0xC);
+	if (convoy >= save.globals.u16(kConvoyCount) || ware >= 0x18 || merchant >= save.globals.u16(global::kWorldMerchantCount)) {
+		return;
+	}
+	const GameMemory<0x3C>& c = save.convoys[convoy];
+	const int office = tick::facilities_detail::fn_5308a0(save, merchant, c.u16(0x1C));
+	if (office < 0) {
+		return;
+	}
+	OfficeMemory& o = save.offices[size_t(office)].memory;
+	int32_t amount = op_s32(op, 4);
+	if (amount < 0) {
+		amount = int32_t(0u - uint32_t(amount));
+	}
+	const uint16_t ships = save.globals.u16(global::kShipCount);
+	if (op[0xE] == 0) {
+		for (uint32_t i = c.u16(0xA); i < ships; i = save.ships[i].memory.u16(0x6)) {
+			SavedShip& ship = save.ships[i];
+			ShipMemory& s = ship.memory;
+			if (uint16_t(s.u8(0)) != merchant) {
+				continue;
+			}
+			int32_t& cargo = s.s32(0x54 + 4 * size_t(ware));
+			if (cargo >= amount) {
+				cargo -= amount;
+				fn_4ff6f0(o, ware, amount, s.f32(0xB4 + 4 * size_t(ware)));
+				recalculate_cargo(ship);
+				s.u8(0x3C) |= 4;
+				return;
+			}
+			amount -= cargo;
+			fn_4ff6f0(o, ware, cargo, s.f32(0xB4 + 4 * size_t(ware)));
+			cargo = 0;
+			recalculate_cargo(ship);
+			s.u8(0x3C) |= 4;
+		}
+		return;
+	}
+	int32_t& stock = o.s32(4 + 4 * size_t(ware));
+	if (stock == 0) {
+		return;
+	}
+	const int32_t unit = kInBarrels[ware] ? 200 : 2000;
+	if (amount > stock) {
+		amount = stock;
+	}
+	for (uint32_t i = c.u16(0xA); i < ships;) {
+		SavedShip& ship = save.ships[i];
+		const uint32_t next = ship.memory.u16(0x6);
+		if (uint16_t(ship.memory.u8(0)) == merchant) {
+			int32_t room = recalculate_cargo(ship);
+			if (room < 0) {
+				room = 0;
+			}
+			if (room >= unit) {
+				const float price = o.f32(0x3B8 + 4 * size_t(ware));
+				if (room >= amount) {
+					fn_5180c0(save, int(i), ware, amount, price);
+					recalculate_cargo(ship);
+					ship.memory.u8(0x3C) |= 4;
+					stock -= amount;
+					return;
+				}
+				const int32_t n = room / unit * unit;
+				fn_5180c0(save, int(i), ware, n, price);
+				amount -= n;
+				recalculate_cargo(ship);
+				ship.memory.u8(0x3C) |= 4;
+				stock -= n;
+			}
+		}
+		i = next;
+	}
+}
+
 namespace {
 
 std::array<uint8_t, 0x14> trade_operation(uint32_t code, int ship, int town, int ware, int32_t amount) {

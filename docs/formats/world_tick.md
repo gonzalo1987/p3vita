@@ -223,6 +223,9 @@ queues each one: [operations.md](operations.md). Algunos:
 | 0x01, 0x02 | 0x537340, 0x537450 | vender, comprar |
 | 0x03..0x07, 0x1D | 0x52ACD0, 0x537C20, 0x537DD0, 0x537EE0, 0x538000, 0x539990 | the player's ship: repair it (or its convoy), hire and dismiss sailors, hire a captain from the tavern and dismiss him (`town_tick/ship_operations.cpp`; operations.md) |
 | 0x08, 0x09, 0x58, 0x59 | 0x538100, 0x538210, 0x53D2B0, 0x53D3C0 | the player's office: wares and artillery between a ship and the office, the office sells to the town and buys from it (`trade.cpp`; operations.md) |
+| 0x15..0x18, 0x1C, 0x20 | 0x509B90, 0x50A580, 0x539270, 0x509D10, 0x535A70, 0x539CF0 | the player's convoys: create one, disband it, a ship leaves it (its guide disbands it), a ship joins it, it sets sail, a docked convoy waits for ships to another destination (`convoys_members.cpp`, `simulation.cpp`; operations.md) |
+| 0x19, 0x1A, 0x1B | 0x539300, 0x5396B0 | a convoy sells to the town and buys from it, wares between a convoy and its owner's office (`trade.cpp`) |
+| 0x0C, 0x2D, 0x2E, 0x2F | 0x508660, 0x53CCE0, 0x52B110 | the shipyard: upgrade a ship, its name (in pieces of 12, with the names object), cancel a ship ordered (`town_tick/ship_operations.cpp`) |
 | 0x22 | 0x53CE30 | construir: {0x22, u8 dueño, u8 ciudad, x, y, tipo, parámetro}; hasta 0x2F, 0x521900 (con la rejilla, `town_tick/grid.cpp`); 0x30..0x33, las torres (0x523830); 0x34 y 0x35, 0x523D70; 0x36..0x39, la muralla (0x522B20). La 0x21 (interfaz) es lo mismo con otra búsqueda del tipo |
 | 0x23 | 0x535B12 | {0x23, u32 lado, u32 ciudad}: empieza la muralla de ese lado (0x522B20) |
 | 0x24 | 0x522C70 | {0x24, u32 dueño, u32 ciudad, u32 clase (0 tramos, 1 las demás)}: la siguiente pieza de muralla pendiente ([0x766]) que se pueda pagar (0x51F3A0; el dueño, un comerciante con oficina en la ciudad) pasa a las obras; con la última, el cierre de la muralla (`construction.cpp`, `grid.cpp`) |

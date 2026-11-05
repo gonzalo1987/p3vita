@@ -1,5 +1,6 @@
 #include "p3data/player_actions.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <initializer_list>
 
@@ -10,6 +11,9 @@
 namespace p3::data::tick::ship_trade_detail {
 uint16_t fn_5269a0(const SaveGame& save, int town, uint16_t owner);  // ship_trade.cpp
 }  // namespace p3::data::tick::ship_trade_detail
+namespace p3::data::tick::events_towns_detail {
+bool ship_order_cost(const SaveGame& save, int town, uint32_t type, uint32_t merchant, int32_t& cost);  // events_towns.cpp
+}  // namespace p3::data::tick::events_towns_detail
 
 namespace p3::data {
 
@@ -385,6 +389,11 @@ std::vector<uint16_t> window_ships(const SaveGame& save, int merchant, int town,
 				list.push_back(uint16_t(i));
 			}
 			break;
+		case ShipListMode::Upgrades:  // 0x504C88
+			if (convoy >= convoys && s.u16(0x134) <= 1 && s.u8(0xF) < 2 && !(s.u8(0x136) & 1)) {
+				list.push_back(uint16_t(i));
+			}
+			break;
 		case ShipListMode::Captains:  // 0x504D09
 			if (s.u16(0x134) > 1) {
 				break;
@@ -486,6 +495,346 @@ OperationBytes repair_window_operation(const SaveGame& save, int ship) {
 		return repair_convoy_operation(convoy);
 	}
 	return repair_operation(uint32_t(ship));
+}
+
+// --- The shipyard's other pages ---
+
+OperationBytes order_ship_operation(uint32_t type, uint32_t player, uint32_t town) {
+	return words_operation({0x2C, type, player, town, 0});
+}
+
+bool ship_order_cost(const SaveGame& save, int town, uint32_t type, int merchant, int32_t& cost) {
+	cost = 0;
+	if (town < 0 || size_t(town) >= save.towns.size() || merchant < 0 || size_t(merchant) >= save.merchants.size() ||
+		type > 3) {
+		return false;
+	}
+	return tick::events_towns_detail::ship_order_cost(save, town, type, uint32_t(merchant), cost);
+}
+
+std::vector<uint16_t> shipyard_orders(const SaveGame& save, int town) {
+	std::vector<uint16_t> list;
+	if (town < 0 || size_t(town) >= save.towns.size()) {
+		return list;
+	}
+	const uint16_t ships = save.globals.u16(global::kShipCount);
+	for (uint32_t i = save.towns[size_t(town)].memory.u16(0x81C); i < ships && list.size() < ships;
+		 i = save.ships[i].memory.u16(0x6)) {
+		list.push_back(uint16_t(i));
+	}
+	return list;
+}
+
+bool can_cancel_order(const SaveGame& save, int ship) {
+	return ship >= 0 && size_t(ship) < save.ships.size() && save.ships[size_t(ship)].memory.s32(0x18) <= 0 &&
+		int(save.ships[size_t(ship)].memory.u8(0)) == save.player;
+}
+
+OperationBytes cancel_order_operation(uint32_t player, uint32_t town, uint32_t ship) {
+	return words_operation({0x2F, player, town, ship});
+}
+
+bool upgrade_cost(const SaveGame& save, int town, int ship, int level, ShipUpgrade& out) {
+	out = ShipUpgrade();
+	if (town < 0 || size_t(town) >= save.towns.size() || ship < 0 || size_t(ship) >= save.ships.size()) {
+		return false;
+	}
+	const int levels = level - int(save.ships[size_t(ship)].memory.u8(0xF));
+	return tick::fn_52b670(save, town, out, uint32_t(ship), uint32_t(levels));
+}
+
+OperationBytes upgrade_operation(uint32_t ship, uint32_t level) {
+	return words_operation({0x0C, ship, level});
+}
+
+std::vector<OperationBytes> rename_operations(uint32_t ship, const std::string& name) {
+	std::vector<OperationBytes> ops;
+	size_t at = 0;
+	do {
+		OperationBytes op{};
+		const uint32_t code = at == 0 ? 0x2D : 0x2E;
+		std::memcpy(op.data(), &code, 4);
+		const size_t n = std::min<size_t>(12, name.size() - at);
+		std::memcpy(op.data() + 4, name.data() + at, n);
+		std::memcpy(op.data() + 0x10, &ship, 4);
+		ops.push_back(op);
+		at += n;
+	} while (at < name.size());
+	return ops;
+}
+
+// --- Convoys ---
+
+namespace {
+
+constexpr uint32_t kConvoyHeadGlobal = global::kShips + 0xEC;  // u16 the first convoy (0x6DD88C)
+constexpr uint8_t kJoinSailors[4] = {5, 8, 10, 12};  // 0x673660
+
+bool can_guide(const SaveGame& save, uint16_t ship) {
+	return ship < save.ships.size() && tick::ship_ai_detail::fn_519c40(save, ship);
+}
+
+// 0x5039F0 (on the convoy: ship), as convoys_members.cpp has it.
+bool event_convoy_takes(const SaveGame& save, const GameMemory<0x3C>& c, uint16_t ship) {
+	if (c.u16(0x1C) >= save.globals.u32(global::kWorldTownCount) || (c.u16(0x12) != 9 && c.u16(0x12) != 0xA) ||
+		c.u16(0x2) >= save.globals.u16(0x6DD748) || c.u16(0x2) >= save.events.size() ||
+		ship >= save.globals.u16(global::kShipCount)) {
+		return false;
+	}
+	const GameMemory<0x18>& e = save.events[c.u16(0x2)];
+	const uint16_t type = e.u16(0x6);
+	if ((type != 0x34 && type != 0x23 && type != 0x24) || e.u8(0x15) != 2) {
+		return false;
+	}
+	const ShipMemory& s = save.ships[ship].memory;
+	if (s.u8(0x39) != e.u8(0x14) || s.u16(0x134) > 1) {
+		return false;
+	}
+	return type != 0x34 || s.s32(0x120) >= 72;
+}
+
+bool any_big(const SaveGame& save, const std::vector<uint16_t>& selected) {
+	for (const uint16_t s : selected) {
+		if (save.ships[s].memory.u8(0xE) >= 2) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool valid_selection(const SaveGame& save, const std::vector<uint16_t>& selected) {
+	for (const uint16_t s : selected) {
+		if (s >= save.ships.size()) {
+			return false;
+		}
+	}
+	return !selected.empty();
+}
+
+}  // namespace
+
+std::vector<int32_t> convoy_choices(const SaveGame& save, const std::vector<uint16_t>& selected) {
+	std::vector<int32_t> choices;
+	if (!valid_selection(save, selected) || save.player < 0 || size_t(save.player) >= save.merchants.size()) {
+		return choices;
+	}
+	const uint8_t town = save.ships[selected[0]].memory.u8(0x39);
+	const uint32_t towns = save.globals.u32(global::kWorldTownCount);
+	bool guide = false;
+	for (const uint16_t s : selected) {
+		guide = guide || can_guide(save, s);
+	}
+	if (guide) {
+		choices.push_back(kPrivateConvoy);
+		const MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+		const bool licence = town < save.towns.size() && (save.towns[town].memory.u8(0x2C8) & 0x80)
+			? (m.u32(0x468) & (1u << (town & 31))) != 0
+			: m.u32(0x468) != 0;
+		if (licence) {
+			choices.push_back(kPublicConvoy);
+		}
+	}
+	bool fit = false;  // For a convoy open to others (0x40C2C3..0x40C2FF).
+	for (const uint16_t s : selected) {
+		const ShipMemory& m = save.ships[s].memory;
+		if (!(m.u16(0x40) < kJoinSailors[m.u8(0xE) & 3]) && int32_t(uint32_t(m.s32(0x18)) * 5u) > m.s32(0x14)) {
+			fit = true;
+			break;
+		}
+	}
+	const bool big = any_big(save, selected);
+	const uint16_t convoys = save.globals.u16(kConvoyCountGlobal);
+	for (uint32_t c = save.globals.u16(kConvoyHeadGlobal); c < convoys && c < save.convoys.size(); c = save.convoys[c].u16(0x8)) {
+		const GameMemory<0x3C>& r = save.convoys[c];
+		const uint16_t state = r.u16(0x12);
+		if (r.u16(0x1C) != town || (state != 0 && state != 1 && state != 9 && state != 0xA)) {
+			continue;
+		}
+		const bool open = !(r.u8(0x14) & 2);
+		if (!(open && fit) && !event_convoy_takes(save, r, selected[0]) && (open || int(r.u8(0)) != save.player)) {
+			continue;
+		}
+		if (big && r.u8(0x1F) < towns && (save.towns[r.u8(0x1F)].memory.u8(0x2C8) & 1)) {
+			continue;
+		}
+		choices.push_back(int32_t(c));
+	}
+	return choices;
+}
+
+OperationBytes create_convoy_bytes(uint32_t guide, bool is_public, uint32_t destination) {
+	return words_operation({0x15, guide, is_public ? 0u : 1u, 5, destination & 0xFF});
+}
+
+std::vector<OperationBytes> create_convoy_operations(const SaveGame& save, const std::vector<uint16_t>& selected,
+	bool single, bool is_public, uint32_t destination) {
+	std::vector<OperationBytes> ops;
+	if (!valid_selection(save, selected)) {
+		return ops;
+	}
+	uint32_t guide = selected[0];
+	if (!single) {
+		guide = 0xFFFFFFFF;
+		int32_t best = -1;
+		for (const uint16_t s : selected) {
+			if (can_guide(save, s) && best < save.ships[s].memory.s32(0x120)) {
+				best = save.ships[s].memory.s32(0x120);
+				guide = s;
+			}
+		}
+	}
+	ops.push_back(create_convoy_bytes(guide, is_public, destination));
+	if (!single) {
+		for (const uint16_t s : selected) {
+			if (s != guide) {
+				ops.push_back(words_operation({0x18, guide, s}));
+			}
+		}
+	}
+	return ops;
+}
+
+std::vector<uint8_t> public_convoy_towns(const SaveGame& save, const std::vector<uint16_t>& selected) {
+	std::vector<uint8_t> towns;
+	if (!valid_selection(save, selected)) {
+		return towns;
+	}
+	const uint8_t here = save.ships[selected[0]].memory.u8(0x39);
+	const bool big = any_big(save, selected);
+	for (uint32_t t = 0; t < save.globals.u32(global::kWorldTownCount) && t < save.towns.size(); ++t) {
+		if (t != here && !(big && (save.towns[t].memory.u8(0x2C8) & 1))) {
+			towns.push_back(uint8_t(t));
+		}
+	}
+	return towns;
+}
+
+std::vector<OperationBytes> join_convoy_operations(const SaveGame& save, uint32_t convoy, const std::vector<uint16_t>& selected) {
+	std::vector<OperationBytes> ops;
+	if (convoy >= save.convoys.size()) {
+		return ops;
+	}
+	const uint32_t guide = save.convoys[convoy].u16(0x10);
+	for (const uint16_t s : selected) {
+		ops.push_back(words_operation({0x18, guide, s}));
+	}
+	return ops;
+}
+
+OperationBytes leave_convoy_bytes(uint32_t ship, uint32_t convoy, bool guide, bool convoy_selected) {
+	if (convoy_selected || guide) {
+		return words_operation({0x16, convoy & 0xFFFF});
+	}
+	return words_operation({0x17, ship & 0xFFFF});
+}
+
+OperationBytes leave_convoy_operation(const SaveGame& save, uint16_t ship, bool convoy_selected) {
+	const uint16_t convoy = save.ships[ship].memory.u16(0x8);
+	const bool guide = convoy < save.convoys.size() && save.convoys[convoy].u16(0x10) == ship;
+	return leave_convoy_bytes(ship, convoy, guide, convoy_selected);
+}
+
+int32_t market_convoy_units(const SaveGame& save, int convoy, int ware) {
+	const uint16_t ships = save.globals.u16(global::kShipCount);
+	int32_t sum = 0;
+	for (uint32_t i = save.convoys[size_t(convoy)].u16(0xA); i < ships; i = save.ships[i].memory.u16(0x6)) {
+		const ShipMemory& s = save.ships[i].memory;
+		if (int(s.u8(0)) == save.player) {
+			sum += s.s32(0x54 + 4 * size_t(ware));
+		}
+	}
+	return ware < 20 ? sum / unit_of(ware) : sum;
+}
+
+int32_t market_convoy_used(const SaveGame& save, int convoy) {
+	const uint16_t ships = save.globals.u16(global::kShipCount);
+	int32_t used = 0;
+	for (uint32_t i = save.convoys[size_t(convoy)].u16(0xA); i < ships; i = save.ships[i].memory.u16(0x6)) {
+		const ShipMemory& s = save.ships[i].memory;
+		if (int(s.u8(0)) != save.player) {
+			continue;
+		}
+		used += s.s32(0x118) + s.s32(0x11C);
+		const int32_t rest = s.s32(0x11C) % 200;
+		if (rest != 0) {
+			used = used - rest + 200;
+		}
+	}
+	return used / 200;
+}
+
+int32_t market_convoy_capacity(const SaveGame& save, int convoy) {
+	const uint16_t ships = save.globals.u16(global::kShipCount);
+	int32_t capacity = 0;
+	for (uint32_t i = save.convoys[size_t(convoy)].u16(0xA); i < ships; i = save.ships[i].memory.u16(0x6)) {
+		const ShipMemory& s = save.ships[i].memory;
+		if (int(s.u8(0)) == save.player) {
+			capacity += s.s32(0x10);
+		}
+	}
+	return capacity;
+}
+
+namespace {
+
+bool valid_convoy(const SaveGame& save, int convoy, int ware) {
+	return convoy >= 0 && uint32_t(convoy) < save.globals.u16(kConvoyCountGlobal) && size_t(convoy) < save.convoys.size() &&
+		ware >= 0 && ware < kTradeWareCount && save.convoys[size_t(convoy)].u16(0x1C) < save.towns.size();
+}
+
+}  // namespace
+
+std::optional<OperationBytes> convoy_buy_operation(const SaveGame& save, int convoy, int ware, uint32_t step) {
+	if (!valid_convoy(save, convoy, ware)) {
+		return std::nullopt;
+	}
+	const int town = save.convoys[size_t(convoy)].u16(0x1C);
+	const int32_t amount = market_buy_amount(step, market_town_units(save, town, ware), ware,
+		market_convoy_capacity(save, convoy), market_convoy_used(save, convoy));
+	if (amount == 0) {
+		return std::nullopt;
+	}
+	return market_operation(0x1A, amount, ware, convoy, uint16_t(save.player), town);
+}
+
+std::optional<OperationBytes> convoy_sell_operation(const SaveGame& save, int convoy, int ware, uint32_t step) {
+	if (!valid_convoy(save, convoy, ware)) {
+		return std::nullopt;
+	}
+	const int32_t amount = market_sell_amount(step, market_convoy_units(save, convoy, ware), ware);
+	if (amount == 0) {
+		return std::nullopt;
+	}
+	return market_operation(0x19, amount, ware, convoy, uint16_t(save.player), save.convoys[size_t(convoy)].u16(0x1C));
+}
+
+std::optional<OperationBytes> office_to_convoy_operation(const SaveGame& save, int convoy, int ware, uint32_t step) {
+	if (!valid_convoy(save, convoy, ware)) {
+		return std::nullopt;
+	}
+	const int office = player_office(save, save.convoys[size_t(convoy)].u16(0x1C));
+	if (office < 0) {
+		return std::nullopt;
+	}
+	const int32_t amount = market_buy_amount(step, market_office_units(save, office, ware), ware,
+		market_convoy_capacity(save, convoy), market_convoy_used(save, convoy));
+	if (amount == 0) {
+		return std::nullopt;
+	}
+	OperationBytes op = market_operation(0x1B, amount, convoy, ware, uint16_t(save.player), 0);
+	op[0xE] = 1;
+	return op;
+}
+
+std::optional<OperationBytes> convoy_to_office_operation(const SaveGame& save, int convoy, int ware, uint32_t step) {
+	if (!valid_convoy(save, convoy, ware) || player_office(save, save.convoys[size_t(convoy)].u16(0x1C)) < 0) {
+		return std::nullopt;
+	}
+	const int32_t amount = market_sell_amount(step, market_convoy_units(save, convoy, ware), ware);
+	if (amount == 0) {
+		return std::nullopt;
+	}
+	return market_operation(0x1B, amount, convoy, ware, uint16_t(save.player), 0);
 }
 
 }  // namespace p3::data

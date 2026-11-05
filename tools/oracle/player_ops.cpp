@@ -20,6 +20,14 @@
 //        player_ops artillery STEP UNITS TYPE TOWN SHIP FROM_SHIP
 //        player_ops weapons-to-ship STEP OFFICE_UNITS WARE CAPACITY USED SHIP PLAYER TOWN PIECES
 //        player_ops weapons-to-office STEP SHIP_UNITS WARE SHIP PLAYER
+//        player_ops create-convoy SHIP PUBLIC DESTINATION | join-convoy GUIDE SHIP
+//        player_ops leave-convoy SHIP CONVOY GUIDE CONVOY_SELECTED
+//        player_ops convoy-buy STEP TOWN_UNITS WARE CAPACITY USED CONVOY PLAYER TOWN
+//        player_ops convoy-sell STEP CONVOY_UNITS WARE CONVOY PLAYER TOWN
+//        player_ops office-to-convoy STEP OFFICE_UNITS WARE CAPACITY USED CONVOY PLAYER
+//        player_ops convoy-to-office STEP CONVOY_UNITS WARE CONVOY PLAYER
+//        player_ops order-ship TYPE PLAYER TOWN | cancel-order PLAYER TOWN SHIP
+//        player_ops upgrade SHIP LEVEL | rename SHIP NAME (one line per operation)
 // (STEP 1, 5, 50, or 0 for all; «none» when the window sends nothing;
 // tavern-sailors prints the tavern's roll, its float's bits, and the
 // sailors it shows, from what 0x4F6CA0 allows and the game's rand() value)
@@ -122,6 +130,57 @@ int main(int argc, char** argv) {
 			return 0;
 		}
 		op = *made;
+	} else if (what == "create-convoy" && argc == 5) {
+		// One ship selected (the window's [+0xB4] = [+0xBC]): it guides.
+		op = create_convoy_bytes(uint32_t(number(argv[2])), number(argv[3]) != 0, uint32_t(number(argv[4])));
+	} else if (what == "join-convoy" && argc == 4) {
+		const uint32_t w[3] = {0x18, uint32_t(number(argv[2])), uint32_t(number(argv[3]))};
+		std::memcpy(op.data(), w, sizeof(w));
+	} else if (what == "leave-convoy" && argc == 6) {
+		op = leave_convoy_bytes(uint32_t(number(argv[2])), uint32_t(number(argv[3])), number(argv[4]) != 0,
+			number(argv[5]) != 0);
+	} else if ((what == "convoy-buy" || what == "office-to-convoy") && (argc == 10 || argc == 9)) {
+		// As buying: the source's units (the town's or the office's), the
+		// convoy's capacity and what it holds (the window's 0x4AA4A0).
+		const int ware = int(number(argv[4]));
+		const int32_t amount = market_buy_amount(uint32_t(number(argv[2])), int32_t(std::strtol(argv[3], nullptr, 0)),
+			ware, int32_t(std::strtol(argv[5], nullptr, 0)), int32_t(std::strtol(argv[6], nullptr, 0)));
+		if (amount == 0) {
+			std::printf("none\n");
+			return 0;
+		}
+		if (what == "convoy-buy" && argc == 10) {  // CONVOY PLAYER TOWN
+			op = market_operation(0x1A, amount, ware, int(number(argv[7])), uint16_t(number(argv[8])), int(number(argv[9])));
+		} else if (what == "office-to-convoy" && argc == 9) {  // CONVOY PLAYER
+			op = market_operation(0x1B, amount, int(number(argv[7])), ware, uint16_t(number(argv[8])), 0);
+			op[0xE] = 1;
+		} else {
+			return usage();
+		}
+	} else if ((what == "convoy-sell" && argc == 8) || (what == "convoy-to-office" && argc == 7)) {
+		const int ware = int(number(argv[4]));
+		const int32_t amount = market_sell_amount(uint32_t(number(argv[2])), int32_t(std::strtol(argv[3], nullptr, 0)), ware);
+		if (amount == 0) {
+			std::printf("none\n");
+			return 0;
+		}
+		op = what == "convoy-sell"  // CONVOY PLAYER TOWN
+			? market_operation(0x19, amount, ware, int(number(argv[5])), uint16_t(number(argv[6])), int(number(argv[7])))
+			: market_operation(0x1B, amount, int(number(argv[5])), ware, uint16_t(number(argv[6])), 0);  // CONVOY PLAYER
+	} else if (what == "order-ship" && argc == 5) {
+		op = order_ship_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])), uint32_t(number(argv[4])));
+	} else if (what == "cancel-order" && argc == 5) {
+		op = cancel_order_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])), uint32_t(number(argv[4])));
+	} else if (what == "upgrade" && argc == 4) {
+		op = upgrade_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])));
+	} else if (what == "rename" && argc == 4) {
+		for (const OperationBytes& o : rename_operations(uint32_t(number(argv[2])), argv[3])) {
+			for (const uint8_t b : o) {
+				std::printf("%02x", b);
+			}
+			std::printf("\n");
+		}
+		return 0;
 	} else if (what == "tavern-sailors" && argc == 4) {
 		// The roll of the tavern's window from the game's rand() value (its
 		// float's bits) and the sailors it says there are.

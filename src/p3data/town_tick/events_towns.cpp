@@ -2215,6 +2215,15 @@ bool ship_order_possible(const SaveGame& save, int town, uint32_t type, uint32_t
 	return fn_52b2c0(save, town, order, type, merchant);
 }
 
+// 0x52B2C0 for the shipyard's page (player_actions.cpp): whether it can be
+// ordered and its cost [+0x50].
+bool ship_order_cost(const SaveGame& save, int town, uint32_t type, uint32_t merchant, int32_t& cost) {
+	ShipOrder order{};
+	const bool ok = fn_52b2c0(save, town, order, type, merchant);
+	cost = order.cost;
+	return ok;
+}
+
 // Los nombres de los barcos nuevos de un jugador humano, por tipo (0x6C0CB4).
 constexpr const char* kDefaultShipNames[4] = {"snaikka", "crayer", "cog", "hulk"};
 

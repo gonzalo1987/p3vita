@@ -602,8 +602,11 @@ std::vector<size_t> battle_padding(const std::vector<uint8_t>& b) {
 // 0x511C60: the names. The 40 town names go as "A"; each list of names
 // written by the players, its 20 slots (the game puts a 0 in the last byte
 // of each slot of 24 bytes before copying it: 23 characters at most) and
-// '#'; then the ship names of the save, which the loader undoes (0x5121C0
-// at the end of the load): u16 0 and u16 0.
+// '#'; then the ship names the players wrote during the game (the names
+// object's second list; none after a load, which the loader undoes, 0x5121C0
+// at its end): u16 their number ([0x6DDB7A] − [0x6DDB78]) and, with a table
+// of them (one was added), u16 their bytes and their texts each with its 0;
+// without one, u16 0.
 void write_names(Writer& w, const SaveGame& save) {
 	for (int i = 0; i < 40; ++i) {
 		w.u8('A');
@@ -618,8 +621,19 @@ void write_names(Writer& w, const SaveGame& save) {
 		}
 		w.u8('#');
 	}
-	w.u16(0);
-	w.u16(0);
+	const uint16_t count = uint16_t(save.globals.u16(0x6DDB7A) - save.globals.u16(0x6DDB78));
+	w.u16(count);
+	if (save.globals.u16(0x6DDB7C) == 0) {
+		w.u16(0);  // No table yet ([+0xCC] null; its capacity [+0xDC] is 0 until the first name).
+		return;
+	}
+	std::string text;
+	for (size_t k = 0; k < count && k < save.player_ship_names.size(); ++k) {
+		text += save.player_ship_names[k];
+		text.push_back(0);
+	}
+	w.u16(uint16_t(text.size()));
+	w.bytes(reinterpret_cast<const uint8_t*>(text.data()), text.size());
 }
 
 // 0x5125E0: the town names of the file, each up to a byte below 0x20.

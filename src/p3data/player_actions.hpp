@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "p3data/savegame.hpp"
@@ -149,6 +150,9 @@ enum class ShipListMode : uint32_t {
 	// its guide when the convoy ([+0x14] & 2) is docked ([+0x12] ≤ 1) and one
 	// of its ships is damaged.
 	Repairs = 1,
+	// The shipyard's upgrades (0x5FA320): in the town, out of a convoy,
+	// docked, below the level 2 ([+0xF]), not marked [+0x136] & 1.
+	Upgrades = 2,
 	// The tavern's captains (0x5D4870): in the town, docked; out of a convoy,
 	// without a captain; the guide of a convoy (not marked [+0x136] & 1)
 	// stands for the convoy's ships of the merchant without a captain.
@@ -202,5 +206,89 @@ bool can_dismiss_captain(const SaveGame& save, int ship);
 // with the ship otherwise.
 int32_t repair_cost(const SaveGame& save, int town, int ship);
 OperationBytes repair_window_operation(const SaveGame& save, int ship);
+
+// --- The shipyard's other pages (0x5F8F50) ---
+// Order a ship (0x5F9570): {0x2C, type ([+0xC80]), the player, town
+// ([+0xCB8]), 0}; whether the merchant can order it there and what it costs
+// (0x52B2C0, which the page shows).
+OperationBytes order_ship_operation(uint32_t type, uint32_t player, uint32_t town);
+bool ship_order_cost(const SaveGame& save, int town, uint32_t type, int merchant, int32_t& cost);
+// The ships ordered at the town's shipyard (its list [+0x81C], next [+0x6]);
+// the page lists them all. Cancel one (0x5F9B00): {0x2F, the player, town,
+// ship}, only if its work hasn't started ([+0x18] ≤ 0; otherwise the page
+// says «Work is already being done on this ship.» and sends nothing).
+std::vector<uint16_t> shipyard_orders(const SaveGame& save, int town);
+bool can_cancel_order(const SaveGame& save, int ship);
+OperationBytes cancel_order_operation(uint32_t player, uint32_t town, uint32_t ship);
+// Upgrade a ship (0x5FA320): the ships of 0x504AC0's mode 2 (in the town,
+// out of a convoy, docked, below the level 2, not marked [+0x136] & 1); the
+// level to reach goes from its level [+0xF] + 1 to 2 ([+0xC88]), and that
+// level is what it sends: {0x0C, ship ([+0xC84]), level} (0x508660 adds
+// that many levels, cut down to the level 2: the difference). What it costs
+// (0x52B670 with the difference), in the game's 0x44 bytes: [+0x00..] the
+// timber, pitch and tools the player has there, [+0x0C..] used, [+0x18..]
+// bought, [+0x24..] their prices, [+0x30] the total, [+0x34] the days
+// (without the repair's), [+0x38] the hold left in loads, [+0x3C] the loads
+// it takes, [+0x40], [+0x41] the slots; and whether it can be done.
+using ShipUpgrade = GameMemory<0x44>;
+bool upgrade_cost(const SaveGame& save, int town, int ship, int level, ShipUpgrade& out);
+OperationBytes upgrade_operation(uint32_t ship, uint32_t level);
+// Rename a ship (0x5FABE0, the ships of 0x504AC0's mode 0): the name in
+// pieces of 12 characters, the first with 0x2D and the others with 0x2E:
+// {code, the piece (its 0 after it, if shorter), ship ([+0xC84])}.
+std::vector<OperationBytes> rename_operations(uint32_t ship, const std::string& name);
+
+// --- Convoys (the ship's panel: the convoy window 0x40C170, 0x494B80,
+// 0x494AF0, 0x494DC0) ---
+// What the window offers for the ships the player selected (in the town of
+// the first): kPrivateConvoy if one of them can guide a convoy (0x519C40),
+// then kPublicConvoy if the player has the guild's licence ([+0x468]: in a
+// town with the bit 0x80 of [0x2C8], that town's bit; otherwise any), then
+// each convoy of the town (state 0, 1, 9 or 0xA) the ships may join: one
+// open to others, if one of the ships has its sailors (0x673660) and more
+// than a fifth of its hull; one of an event (0x5039F0 for the first ship);
+// or a convoy of one owner, the player's. Not a convoy whose destination
+// takes no big ships (the bit 1 of [0x2C8]) if one of the ships is big (type
+// ≥ 2). Empty: «Convoy cannot be formed».
+constexpr int32_t kPrivateConvoy = -1;
+constexpr int32_t kPublicConvoy = -2;
+std::vector<int32_t> convoy_choices(const SaveGame& save, const std::vector<uint16_t>& selected);
+// A new convoy (0x494B80): {0x15, its guide, 1 (private) or 0 (public), 5,
+// the destination (0 if private)}. With one ship selected ([+0xB4] =
+// [+0xBC]) the guide is that ship; with several, the first of the most
+// firepower [+0x120] that can guide, and then each of the others joins it
+// ({0x18, guide, ship}).
+std::vector<OperationBytes> create_convoy_operations(const SaveGame& save, const std::vector<uint16_t>& selected,
+	bool single, bool is_public, uint32_t destination);
+OperationBytes create_convoy_bytes(uint32_t guide, bool is_public, uint32_t destination);
+// The destinations a public convoy may take (0x40CA8E): the towns but its
+// own and, with a big ship, those with the bit 1 of [0x2C8].
+std::vector<uint8_t> public_convoy_towns(const SaveGame& save, const std::vector<uint16_t>& selected);
+// Joining a convoy (0x494AF0): {0x18, the convoy's guide [+0x10], ship} for
+// each selected ship.
+std::vector<OperationBytes> join_convoy_operations(const SaveGame& save, uint32_t convoy, const std::vector<uint16_t>& selected);
+// Leaving (0x494DC0, the answer 0x4950D0): with the convoy selected, or a
+// ship that guides it, {0x16, its convoy}: «Should the convoy %s be
+// disbanded?»; with another ship of it, {0x17, ship}: «Should the ship %s
+// leave the convoy?».
+OperationBytes leave_convoy_operation(const SaveGame& save, uint16_t ship, bool convoy_selected);
+OperationBytes leave_convoy_bytes(uint32_t ship, uint32_t convoy, bool guide, bool convoy_selected);
+
+// --- The market window with a convoy (its modes 4 and 3) ---
+// What the window keeps of the convoy (0x4AA4A0): of the player's ships in
+// it, each ware's units (the cargo summed, / 200 or / 2000), what they hold
+// in steps of 200 (each ship's [+0x118] + [+0x11C] rounded up to 200) and
+// their capacity [+0x10].
+int32_t market_convoy_units(const SaveGame& save, int convoy, int ware);
+int32_t market_convoy_used(const SaveGame& save, int convoy);
+int32_t market_convoy_capacity(const SaveGame& save, int convoy);
+// Mode 4 (a convoy and the town, as mode 1): 0x1A buying and 0x19 selling,
+// {code, amount, u16 ware, u16 convoy, u16 player, u16 town}.
+std::optional<OperationBytes> convoy_buy_operation(const SaveGame& save, int convoy, int ware, uint32_t step);
+std::optional<OperationBytes> convoy_sell_operation(const SaveGame& save, int convoy, int ware, uint32_t step);
+// Mode 3 (a convoy and the office, as mode 0): 0x1B {0x1B, amount, u16
+// convoy, u16 ware, u16 player, u8 direction: 1 from the office}.
+std::optional<OperationBytes> office_to_convoy_operation(const SaveGame& save, int convoy, int ware, uint32_t step);
+std::optional<OperationBytes> convoy_to_office_operation(const SaveGame& save, int convoy, int ware, uint32_t step);
 
 }  // namespace p3::data

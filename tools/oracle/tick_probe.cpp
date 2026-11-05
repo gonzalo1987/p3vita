@@ -332,6 +332,19 @@ void build_save(const State& state, SaveGame& save) {
 			o += 5 + 2 * size_t(n);
 		}
 	}
+	if (const Region* sn = find(state, "SN")) {
+		// The ship names the players wrote: their texts, each with its 0.
+		save.player_ship_names.clear();
+		const std::vector<uint8_t>& b = sn->bytes;
+		for (size_t o = 0; o < b.size();) {
+			size_t e = o;
+			while (e < b.size() && b[e] != 0) {
+				++e;
+			}
+			save.player_ship_names.emplace_back(reinterpret_cast<const char*>(b.data() + o), e - o);
+			o = e + 1;
+		}
+	}
 	if (const Region* tk = find(state, "TK")) {
 		// The ticker lines sent to the local player: u8 kind, u16 argument.
 		save.player_ticker.clear();
@@ -494,6 +507,19 @@ State dump_save(const SaveGame& save, const State& game) {
 				b.resize(o + 0x12);
 				put<uint16_t>(b.data(), o, uint16_t(i));
 				std::memcpy(b.data() + o + 2, save.mail_records[i]->bytes.data(), 0x10);
+			}
+		}
+	}
+	if (s.count("SN")) {
+		// As the oracle: the names with a table ([0x6DDB7C], the names object's
+		// [+0xDC]), each with its 0.
+		std::vector<uint8_t>& b = s["SN"].bytes;
+		b.clear();
+		const size_t n = uint16_t(save.globals.u16(0x6DDB7A) - save.globals.u16(0x6DDB78));
+		if (save.globals.u16(0x6DDB7C) != 0) {
+			for (size_t k = 0; k < n && k < save.player_ship_names.size(); ++k) {
+				b.insert(b.end(), save.player_ship_names[k].begin(), save.player_ship_names[k].end());
+				b.push_back(0);
 			}
 		}
 	}

@@ -5329,6 +5329,628 @@ def office_artillery(o):
     return during
 
 
+# --- The convoys (operations 0x15..0x1C, 0x20) and the shipyard's pages ---
+
+CONVOY_CHOICES = to.SENTINEL + 0xE80  # the copier of 0x40C170's choices (probes_unchecked.cpp kConvoyChoices)
+CONVOY_SUMMARY = to.SENTINEL + 0xE00  # the copier of 0x4AA4A0's convoy (probes_unchecked.cpp kConvoySummary)
+
+
+def s32_of(v):
+    return struct.unpack('<i', struct.pack('<I', v & 0xFFFFFFFF))[0]
+
+
+def convoy_copiers(o):
+    """The copiers at CONVOY_CHOICES (stdcall: ship) and CONVOY_SUMMARY
+    (stdcall: convoy), each on a window of its own that the game's code
+    fills: the convoy window's choices (0x40C170, with the ship alone
+    selected: its town [+0x1534] and «big» [+0x1535], which convoy_choices
+    sets first), a u32 count and the choices into SCRATCH; and what the
+    market window keeps of a convoy in its mode 4 (0x4AA4A0 forced, its
+    redraw 0x4AA2A0 skipped): its 24 wares' units, what it holds [+0x5E8] and
+    its capacity [+0x738], 26 u32 into SCRATCH. tick_probe's probes make
+    p3vita's. Returns the choices' window."""
+    from unicorn.x86_const import UC_X86_REG_EIP, UC_X86_REG_ESP
+    win, sel, market = o.alloc(0x1640), o.alloc(4), o.alloc(0x900)
+    w32(o, win + 0x1538, sel)
+    w32(o, win + 0x153C, 1)
+    w32(o, market + 0xF0, 4)
+    code = bytes([0x56, 0x57, 0x8B, 0x44, 0x24, 0x0C])  # push esi; push edi; mov eax, [esp+0xC]
+    code += bytes([0x66, 0xA3]) + struct.pack('<I', sel)  # mov [sel], ax
+    code += bytes([0xB9]) + struct.pack('<I', win)  # mov ecx, win
+    code += bytes([0xE8]) + struct.pack('<i', 0x40C170 - (CONVOY_CHOICES + len(code) + 5))
+    code += bytes([0x8B, 0x0D]) + struct.pack('<I', win + 0x1530)  # mov ecx, [win+0x1530]
+    code += bytes([0x89, 0x0D]) + struct.pack('<I', SCRATCH)  # mov [SCRATCH], ecx
+    code += bytes([0x83, 0xF9, 0x3F, 0x76, 0x05, 0xB9]) + struct.pack('<I', 0x3F)  # cmp ecx, 63; jbe; mov ecx, 63
+    code += bytes([0x8B, 0x35]) + struct.pack('<I', win + 0x152C)  # mov esi, [win+0x152C]
+    code += bytes([0xBF]) + struct.pack('<I', SCRATCH + 4)  # mov edi, SCRATCH+4
+    code += bytes([0xFC, 0xF3, 0xA5, 0x5F, 0x5E, 0xC2, 0x04, 0x00])  # cld; rep movsd; pop edi; pop esi; ret 4
+    assert len(code) <= 0x80
+    o.uc.mem_write(CONVOY_CHOICES, code)
+    code = bytes([0x56, 0x57, 0x8B, 0x44, 0x24, 0x0C])
+    code += bytes([0xA3]) + struct.pack('<I', market + 0xF4)  # mov [market+0xF4], eax
+    code += bytes([0x6A, 0x01, 0xB9]) + struct.pack('<I', market)  # push 1; mov ecx, market
+    code += bytes([0xE8]) + struct.pack('<i', 0x4AA4A0 - (CONVOY_SUMMARY + len(code) + 5))
+    code += bytes([0xBE]) + struct.pack('<I', market + 0x588)  # mov esi, market+0x588
+    code += bytes([0xBF]) + struct.pack('<I', SCRATCH)  # mov edi, SCRATCH
+    code += bytes([0xB9]) + struct.pack('<I', 25)  # mov ecx, 25
+    code += bytes([0xFC, 0xF3, 0xA5])  # cld; rep movsd
+    code += bytes([0xA1]) + struct.pack('<I', market + 0x738)  # mov eax, [market+0x738]
+    code += bytes([0xA3]) + struct.pack('<I', SCRATCH + 0x64)  # mov [SCRATCH+0x64], eax
+    code += bytes([0x5F, 0x5E, 0xC2, 0x04, 0x00])
+    assert len(code) <= 0x80
+    o.uc.mem_write(CONVOY_SUMMARY, code)
+
+    def skip(uc, address, size, data):
+        esp = uc.reg_read(UC_X86_REG_ESP)
+        uc.reg_write(UC_X86_REG_EIP, o.u32(esp))
+        uc.reg_write(UC_X86_REG_ESP, esp + 4)
+    o.uc.hook_add(UC_HOOK_CODE, skip, begin=0x4AA2A0, end=0x4AA2A0)
+    o.uc.ctl_remove_cache(0x4AA2A0, 0x4AA2A1)
+    return win
+
+
+def convoy_choices(o, win, s, what):
+    """The convoy window's choices for the ship s alone (CONVOY_CHOICES)."""
+    a = o.ship(s)
+    w8(o, win + 0x1534, o.u8(a + 0x39))
+    w8(o, win + 0x1535, 1 if o.u8(a + 0xE) >= 2 else 0)
+    w32(o, win + 0x152C, 0)
+    w32(o, win + 0x1530, 0)
+    direct(o, CONVOY_CHOICES, [s])
+    got = [s32_of(o.u32(SCRATCH + 4 + 4 * k)) for k in range(min(o.u32(SCRATCH), 63))]
+    print(f'  {what}: the convoy window offers {got}')
+    return got
+
+
+def convoy_summary(o, k):
+    """What the market window keeps of the convoy k (CONVOY_SUMMARY): its
+    units, what it holds (steps of 200) and its capacity."""
+    direct(o, CONVOY_SUMMARY, [k])
+    return [s32_of(o.u32(SCRATCH + 4 * w)) for w in range(24)], s32_of(o.u32(SCRATCH + 0x60)), s32_of(o.u32(SCRATCH + 0x64))
+
+
+def make_guide(o, s, t):
+    """The ship s fit to guide a convoy (0x519C40): a captain (hired from the
+    town's list), 25 sailors, 7 small guns (firepower 70), its whole hull."""
+    a = o.ship(s)
+    if o.u16(a + 0x42) >= o.u16(to.SHIPS + 0xF2):
+        run_bytes(o, player_op('hire-captain', town_captain(o, t), s, t))
+    w16(o, a + 0x40, 25)
+    o.uc.mem_write(a + 0x13C, bytes([1] * 7 + [0xFF] * 17))
+    w32(o, a + 0x18, o.s32(a + 0x14))
+    w8(o, a + 0x15C, 0)
+    direct(o, 0x5182B0, [], ecx=a)
+
+
+def docked_ships(o, owner=None, town=None, exclude=(), most=0):
+    """The ships of the docked list ([0x6DD888], next [+0x6]) in the state 0
+    (up to `most`) and out of a convoy, of `owner` (None: any merchant) in
+    `town` (None: any)."""
+    _, _, merchants, ships = o.counts()
+    out, x = [], o.u16(to.SHIPS + 0xE8)
+    while x < ships:
+        b = o.ship(x)
+        if (x not in exclude and o.u16(b + 0x134) <= most and o.u16(b + 8) >= o.u16(CONVOY_COUNT) and
+                (o.u8(b) == owner if owner is not None else o.u8(b) < merchants) and
+                (town is None or o.u8(b + 0x39) == town)):
+            out.append(x)
+        x = o.u16(b + 6)
+    return out
+
+
+def convoy_line(o, k, what):
+    c = convoy_at(o, k)
+    ships = o.counts()[3]
+    members, x = [], o.u16(c + 0xA)
+    while x < ships and len(members) < 20:
+        members.append(x)
+        x = o.u16(o.ship(x) + 6)
+    print(f'  {what}: convoy {k} owner {o.u8(c)} guide {o.u16(c + 0x10)} ships {members} state {o.u16(c + 0x12):#x} '
+          f'flags {o.u16(c + 0x14):#x} town {o.u16(c + 0x1C)} dest {o.u8(c + 0x1F)} wait {o.u16(c + 0x16):#x}')
+
+
+def convoy_ops(o):
+    """The player's convoys (docs/formats/operations.md): the convoy window's
+    choices (0x40C170, through CONVOY_CHOICES) and the viewer's bytes
+    (player_ops create-convoy, join-convoy, leave-convoy) on the player's
+    first ship in port s, made fit to guide (make_guide), and another of his
+    ships b in its town (none in save 1). The choices: as loaded, fit to
+    guide, with and without the guild's licence [+0x468] (the town with and
+    without its bit 0x80). 0x15 (0x509B90): a private convoy, again (nothing:
+    in a convoy already); 0x18 (0x509D10): b joins, an AI ship can't (one
+    owner); 0x17 (0x539270): b leaves, the guide disbands it; a public convoy
+    to another town (it waits 5 days), and 0x18 into it: b with few sailors,
+    with a sixth of its hull, waiting longer than the convoy (state 1), in
+    another town, into a convoy with the bit 0x10, a big ship with the bit 4
+    and to a town that takes no big ships, an AI ship (it may, if fit), b
+    itself; the convoy in the state 9 of an event 0x23 (0x5039F0, the event's
+    merchant byte, 0x4F8D20 on the merchant: 0.1 more reputation in the
+    towns with the bit 0x40), of 0x34 (the firepower), in the phase 1, and in the
+    state 0xA. 0x16 (0x5359B1): a convoy out; 0x17 with a ship out and one
+    out of a convoy. 0x20 (0x539CF0): a docked convoy to another town, to
+    the same, waiting already, to a town out, in a town out, a convoy out.
+    0x1C (0x535A70): the convoy sails, a convoy out."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    towns, _, merchants, ships = o.counts()
+    win = convoy_copiers(o)
+    others = docked_ships(o, m, t, (s,))
+    print(f'ship {s} of the player {m} in town {t}; his other ships there {others}')
+
+    def run(*args):
+        op = player_op(*args)
+        print(f'  {args}: {op.hex()}')
+        run_bytes(o, op)
+
+    def join(guide, x, what):
+        run('join-convoy', guide, x)
+        print(f'    {what}: ship {x} in convoy {o.u16(o.ship(x) + 8)}')
+
+    def far_town(big_ok=True):
+        return next(u for u in range(towns) if u != t and (big_ok or not o.u32(o.town(u) + 0x2C8) & 1))
+
+    def during(o):
+        w32(o, o.merchant(m), 10000000)
+        convoy_choices(o, win, s, 'as loaded')
+        make_guide(o, s, t)
+        convoy_choices(o, win, s, 'fit to guide')
+        mm, ta = o.merchant(m), o.town(t)
+        licence, flags = o.u32(mm + 0x468), o.u32(ta + 0x2C8)
+        w32(o, ta + 0x2C8, flags | 0x80)
+        w32(o, mm + 0x468, licence | 1 << (t & 31))
+        convoy_choices(o, win, s, 'the licence of the town')
+        w32(o, mm + 0x468, (licence | 1 << ((t + 1) & 31)) & ~(1 << (t & 31)))
+        convoy_choices(o, win, s, 'a licence of another town')
+        w32(o, ta + 0x2C8, flags & ~0x80)
+        convoy_choices(o, win, s, 'the same, the town without its bit 0x80')
+        w32(o, mm + 0x468, 0)
+        convoy_choices(o, win, s, 'no licence')
+        w32(o, mm + 0x468, licence)
+        w32(o, ta + 0x2C8, flags)
+        # A private convoy.
+        run('create-convoy', s, 0, 0)
+        k = o.u16(a + 8)
+        convoy_line(o, k, 'private')
+        run('create-convoy', s, 0, 0)
+        ai = docked_ships(o, None, None, (s,), 1)
+        ai = [x for x in ai if o.u8(o.ship(x)) != m]
+        x = ai[0]
+        home, x_state, x_wait = o.u8(o.ship(x) + 0x39), o.u16(o.ship(x) + 0x134), o.u16(o.ship(x) + 0x138)
+        w8(o, o.ship(x) + 0x39, t)
+        w16(o, o.ship(x) + 0x134, 0)
+        w16(o, o.ship(x) + 0x138, 0)
+        convoy_choices(o, win, x, f'an AI ship {x} of {o.u8(o.ship(x))}')
+        join(s, x, 'an AI ship into the private convoy')
+        w8(o, o.ship(x) + 0x39, home)
+        if others:
+            b = others[0]
+            convoy_choices(o, win, b, f'the player\'s ship {b}')
+            join(s, b, 'the player\'s')
+            convoy_line(o, k, 'with b')
+            run('leave-convoy', b, k, 0, 0)
+            convoy_line(o, k, 'b left')
+            join(s, b, 'b again')
+        run('leave-convoy', s, k, 1, 0)
+        print(f'  disbanded: s in {o.u16(a + 8)}, state {o.u16(a + 0x134)}')
+        # A public convoy.
+        far = far_town(False)
+        run('create-convoy', s, 1, far)
+        k = o.u16(a + 8)
+        c = convoy_at(o, k)
+        convoy_line(o, k, f'public to {far}')
+        if others:
+            b = others[0]
+            bb = o.ship(b)
+            sailors, hull = o.u16(bb + 0x40), o.s32(bb + 0x18)
+            w16(o, bb + 0x40, 1)
+            join(s, b, 'few sailors')
+            w16(o, bb + 0x40, max(sailors, 12))
+            w32(o, bb + 0x18, o.s32(bb + 0x14) // 6)
+            join(s, b, 'a sixth of its hull')
+            w32(o, bb + 0x18, o.s32(bb + 0x14))
+            w16(o, bb + 0x134, 1)
+            w16(o, bb + 0x138, o.u16(c + 0x16) + 1)
+            join(s, b, 'waiting longer than the convoy')
+            w16(o, bb + 0x134, 0)
+            w16(o, bb + 0x138, 0)
+            w8(o, bb + 0x39, (t + 1) % towns)
+            join(s, b, 'in another town')
+            w8(o, bb + 0x39, t)
+            w16(o, c + 0x14, o.u16(c + 0x14) | 0x10)
+            join(s, b, 'the convoy\'s bit 0x10')
+            w16(o, c + 0x14, o.u16(c + 0x14) & ~0x10)
+            kind = o.u8(bb + 0xE)
+            w8(o, bb + 0xE, 2)
+            w16(o, c + 0x14, o.u16(c + 0x14) | 4)
+            join(s, b, 'big, the convoy\'s bit 4')
+            w16(o, c + 0x14, o.u16(c + 0x14) & ~4)
+            fa = o.town(far)
+            w32(o, fa + 0x2C8, o.u32(fa + 0x2C8) | 1)
+            convoy_choices(o, win, b, 'big, to a town of no big ships')
+            join(s, b, 'big, to a town of no big ships')
+            w32(o, fa + 0x2C8, o.u32(fa + 0x2C8) & ~1)
+            w8(o, bb + 0xE, kind)
+            convoy_choices(o, win, b, 'b, the public convoy')
+            w16(o, bb + 0x134, 1)
+            w16(o, bb + 0x138, o.u16(c + 0x16))
+            join(s, b, 'waiting as long')
+            convoy_line(o, k, 'with b')
+        xx = o.ship(x)
+        saved = (o.u8(xx + 0x39), o.u16(xx + 0x40), o.s32(xx + 0x18))
+        w8(o, xx + 0x39, t)
+        w16(o, xx + 0x40, 30)
+        w32(o, xx + 0x18, o.s32(xx + 0x14))
+        convoy_choices(o, win, x, f'the AI ship {x}, the public convoy')
+        join(s, x, 'the AI ship into the public convoy')
+        if o.u16(xx + 8) >= o.u16(CONVOY_COUNT):
+            w8(o, xx + 0x39, saved[0])
+            w16(o, xx + 0x134, x_state)
+            w16(o, xx + 0x138, x_wait)
+        w16(o, xx + 0x40, saved[1])
+        w32(o, xx + 0x18, saved[2])
+        convoy_line(o, k, 'public, at last')
+        # The convoy of an event (states 9 and 0xA, 0x5039F0).
+        e = 0  # a record of the queue, restored after
+        record = bytes(o.uc.mem_read(o.u32(to.EVENTS) + 0x18 * e, 0x18))
+        r = o.u32(to.EVENTS) + 0x18 * e
+        last = o.town(towns - 1)
+        lflags = o.u32(last + 0x2C8)
+        w32(o, last + 0x2C8, lflags | 0x40)
+        state, link = o.u16(c + 0x12), o.u16(c + 2)
+        w16(o, c + 2, e)
+        y = others[0] if others else x
+        yy = o.ship(y)
+        w8(o, yy + 0x39, t)
+        for kind, phase, cstate in ((0x23, 2, 9), (0x34, 2, 9), (0x24, 1, 9), (0x24, 2, 9), (0x23, 2, 0xA)):
+            if o.u16(yy + 8) < o.u16(CONVOY_COUNT):
+                w16(o, c + 0x12, 1)
+                operation(o, 0x17, y)
+            w16(o, yy + 0x134, 0)
+            w16(o, yy + 0x138, 0)
+            w16(o, c + 0x12, cstate)
+            w16(o, a + 0x134, cstate)  # 0x501BE0 takes the convoy's state from its guide's
+            w16(o, r + 6, kind)
+            w8(o, r + 0x14, t)
+            w8(o, r + 0x15, phase)
+            o.uc.mem_write(r + 8, bytes([0xFF, o.u8(yy), 0xFF, o.u8(yy), 0, 0, 0, 0]))
+            w16(o, yy + 0x40, max(o.u16(yy + 0x40), 30))
+            w32(o, yy + 0x18, o.s32(yy + 0x14))
+            rep = struct.unpack('<f', bytes(o.uc.mem_read(o.merchant(o.u8(yy)) + 0x120 + 12 * (towns - 1), 4)))[0]
+            join(s, y, f'an event {kind:#x} in the phase {phase}, the convoy\'s state {cstate:#x}')
+            rep2 = struct.unpack('<f', bytes(o.uc.mem_read(o.merchant(o.u8(yy)) + 0x120 + 12 * (towns - 1), 4)))[0]
+            print(f'    the event\'s bytes {bytes(o.uc.mem_read(r + 8, 8)).hex()}, the reputation in the last town {rep} -> {rep2}')
+        o.uc.mem_write(r, record)
+        w16(o, c + 0x12, state)
+        w16(o, a + 0x134, state)
+        w16(o, c + 2, link)
+        w32(o, last + 0x2C8, lflags)
+        # 0x17, 0x16 by hand.
+        operation(o, 0x17, ships)
+        operation(o, 0x17, docked_ships(o, None, None, (s,), 1)[0])
+        operation(o, 0x16, o.u16(CONVOY_COUNT))
+        operation(o, 0x17, s)
+        print(f'  0x17 for the guide: s in {o.u16(a + 8)}')
+        if others:
+            run('create-convoy', others[-1], 0, 0)
+            print(f'  ship {others[-1]}, which can not guide: in {o.u16(o.ship(others[-1]) + 8)}')
+        # 0x20 on a docked convoy, 0x1C.
+        run('create-convoy', s, 0, 0)
+        k = o.u16(a + 8)
+        c = convoy_at(o, k)
+        w16(o, c + 0x12, 0)
+        w16(o, a + 0x134, 0)
+        operation(o, 0x20, k, far, 3)
+        convoy_line(o, k, f'0x20 to {far}')
+        w16(o, c + 0x12, 0)
+        operation(o, 0x20, k, far, 4)
+        convoy_line(o, k, '0x20 to the same')
+        w16(o, c + 0x12, 1)
+        operation(o, 0x20, k, (far + 1) % towns, 4)
+        convoy_line(o, k, '0x20 waiting already')
+        w16(o, c + 0x12, 0)
+        operation(o, 0x20, k, towns, 4)
+        town = o.u16(c + 0x1C)
+        w16(o, c + 0x1C, 0xFF)
+        operation(o, 0x20, k, (far + 2) % towns, 4)
+        w16(o, c + 0x1C, town)
+        operation(o, 0x20, o.u16(CONVOY_COUNT), far, 4)
+        convoy_line(o, k, 'after the 0x20 out')
+        w16(o, c + 0x12, 1)
+        w16(o, a + 0x134, 1)
+        operation(o, 0x1C, k | 0x900 << 16, far, 0, 0)
+        convoy_line(o, k, '0x1C')
+        print(f'  the guide: state {o.u16(a + 0x134):#x}, destination {o.u8(a + 0x38)}')
+        operation(o, 0x1C, o.u16(CONVOY_COUNT) | 0x900 << 16, far, 0, 0)
+    return during
+
+
+def convoy_trade(o):
+    """A convoy's trade (0x1A, 0x19: 0x539300; 0x1B: 0x5396B0): the player's
+    first ship in port guides a private convoy with up to two of his other
+    ships in its town (in save 1 he has none: the convoy is its guide), in a town
+    where he has an office (0x5D if none). What the market window keeps of
+    the convoy (0x4AA4A0, CONVOY_SUMMARY) and the viewer's bytes from it
+    (player_ops convoy-buy, convoy-sell, office-to-convoy, convoy-to-office)
+    with each step, beer (barrels) and grain (loads). By hand: an AI ship
+    chained into the convoy (it doesn't trade); buying more than the room and
+    the store, short of money (each ship cut down), without money, a ware,
+    convoy and merchant out, the convoy in another town than the operation's;
+    selling more than the cargo, 0; 0x1B from the ships more than they have
+    (each gives all), into them with the first one's room under a unit, the
+    office empty, without an office."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    towns, _, merchants, ships = o.counts()
+    convoy_copiers(o)
+    others = docked_ships(o, m, t, (s,))[:2]
+    print(f'ship {s} of the player {m} in town {t}; his other ships there {others}')
+
+    def queue(op, what, k):
+        print(f'{what}: {op.hex() if op else "nothing"}')
+        if op:
+            run_bytes(o, op)
+            units, used, cap = convoy_summary(o, k)
+            print(f'  beer {units[BEER]}, grain {units[GRAIN]}, holds {used}/{cap // 200}; money {o.s32(o.merchant(m))}, '
+                  f'store beer {o.s32(o.town(t) + 4 + 4 * BEER)} grain {o.s32(o.town(t) + 4 + 4 * GRAIN)}')
+
+    def by_hand(code, amount, ware, k, town, who=None):
+        operation(o, code, amount & 0xFFFFFFFF, ware | k << 16, (m if who is None else who) | town << 16)
+
+    def office_hand(amount, k, ware, direction, who=None):
+        operation(o, 0x1B, amount & 0xFFFFFFFF, k | ware << 16, (m if who is None else who) | direction << 16)
+
+    def during(o):
+        w32(o, o.merchant(m), 50000000)
+        if facilities_office(o, m, t) is None:
+            store(o, t)
+            operation(o, 0x5D, m, t)
+        f = facilities_office(o, m, t)
+        b = o.office(f)
+        make_guide(o, s, t)
+        run_bytes(o, player_op('create-convoy', s, 0, 0))
+        k = o.u16(a + 8)
+        for x in others:
+            run_bytes(o, player_op('join-convoy', s, x))
+        convoy_line(o, k, 'the convoy')
+        units, used, cap = convoy_summary(o, k)
+        print(f'  the window: units {units[:6]}, holds {used}, capacity {cap}')
+        for ware in (BEER, GRAIN):
+            w32(o, o.town(t) + 4 + 4 * ware, 90 * (200 if IN_BARRELS[ware] else 2000) + 150)
+            for step in (1, 5, 50, 0):
+                units, used, cap = convoy_summary(o, k)
+                tu = cdiv(o.s32(o.town(t) + 4 + 4 * ware), 200 if IN_BARRELS[ware] else 2000)
+                queue(player_op('convoy-buy', step, tu, ware, cap, used, k, m, t), f'buy {ware} by {step}', k)
+            for step in (1, 5, 50, 0):
+                units = convoy_summary(o, k)[0]
+                queue(player_op('convoy-sell', step, units[ware], ware, k, m, t), f'sell {ware} by {step}', k)
+        for ware, n in ((BEER, 45 * 200 + 33), (GRAIN, 14 * 2000 + 500)):
+            w32(o, b + 4 + 4 * ware, n)
+            o.uc.mem_write(b + 0x3B8 + 4 * ware, struct.pack('<f', 4.5 if ware == BEER else 38.25))
+        for ware in (BEER, GRAIN):
+            for step in (1, 5, 50, 0):
+                units, used, cap = convoy_summary(o, k)
+                ou = cdiv(o.s32(b + 4 + 4 * ware), 200 if IN_BARRELS[ware] else 2000)
+                queue(player_op('office-to-convoy', step, ou, ware, cap, used, k, m), f'office to convoy {ware} by {step}', k)
+            for step in (1, 5, 50, 0):
+                units = convoy_summary(o, k)[0]
+                queue(player_op('convoy-to-office', step, units[ware], ware, k, m), f'convoy to office {ware} by {step}', k)
+        # 0x539300's branches.
+        c = convoy_at(o, k)
+        ai = [x for x in docked_ships(o, None, None, (s,), 1) if o.u8(o.ship(x)) != m][0]
+        xa = o.ship(ai)
+        saved = (o.u16(xa + 6), o.u16(xa + 8), o.u8(xa + 0x39), o.u16(c + 0xA))
+        w16(o, xa + 6, o.u16(c + 0xA))
+        w16(o, c + 0xA, ai)
+        w16(o, xa + 8, k)
+        w8(o, xa + 0x39, t)
+        by_hand(0x1A, 3 * 200, BEER, k, t)
+        convoy_line(o, k, f'with the AI ship {ai} chained in: its beer {o.s32(xa + 0x54 + 4 * BEER)}')
+        by_hand(0x19, 2 * 200, BEER, k, t)
+        w16(o, xa + 6, saved[0])
+        w16(o, xa + 8, saved[1])
+        w8(o, xa + 0x39, saved[2])
+        w16(o, c + 0xA, saved[3])
+        w32(o, o.town(t) + 4 + 4 * BEER, 5000 * 200)
+        by_hand(0x1A, 4000 * 200, BEER, k, t)
+        convoy_line(o, k, f'more than the room: beer {convoy_summary(o, k)[0][BEER]}')
+        by_hand(0x19, 1000 * 200, BEER, k, t)
+        w32(o, o.town(t) + 4 + 4 * GRAIN, 3 * 2000 + 700)
+        by_hand(0x1A, 20 * 2000, GRAIN, k, t)
+        by_hand(0x19, 1000 * 2000, GRAIN, k, t)
+        w32(o, o.town(t) + 4 + 4 * BEER, 200 * 200)
+        for money in (900, 5000, 0, -100):
+            w32(o, o.merchant(m), money & 0xFFFFFFFF)
+            by_hand(0x1A, 60 * 200, BEER, k, t)
+            print(f'  with {money}: beer {convoy_summary(o, k)[0][BEER]}, money {o.s32(o.merchant(m))}')
+        w32(o, o.merchant(m), 50000000)
+        by_hand(0x1A, 200, 0x18, k, t)
+        by_hand(0x1A, 200, BEER, o.u16(CONVOY_COUNT), t)
+        by_hand(0x1A, 200, BEER, k, t, merchants)
+        by_hand(0x1A, 200, BEER, k, (t + 1) % towns)
+        by_hand(0x19, 0, BEER, k, t)
+        by_hand(0x19, 1000 * 200, BEER, k, t)
+        # 0x5396B0's branches.
+        w32(o, b + 4 + 4 * BEER, 30 * 200 + 50)
+        office_hand(-(25 * 200), k, BEER, 1)
+        convoy_line(o, k, f'0x1B 25 barrels in (sign dropped): beer {convoy_summary(o, k)[0][BEER]}')
+        office_hand(1000 * 200, k, BEER, 0)
+        print(f'  0x1B all out: office beer {o.s32(b + 4 + 4 * BEER)}')
+        first = o.ship(o.u16(c + 0xA))
+        beer = o.s32(first + 0x54 + 4 * BEER)
+        room = s32_of(direct(o, 0x5182B0, [], ecx=first))
+        w32(o, first + 0x54 + 4 * BEER, beer + max(0, room - 1100) // 200 * 200)
+        direct(o, 0x5182B0, [], ecx=first)
+        w32(o, b + 4 + 4 * GRAIN, 9 * 2000 + 300)
+        office_hand(9 * 2000 + 300, k, GRAIN, 1)
+        print(f'  0x1B the first ship\'s room under a load: office grain {o.s32(b + 4 + 4 * GRAIN)}')
+        w32(o, first + 0x54 + 4 * BEER, beer)
+        room = s32_of(direct(o, 0x5182B0, [], ecx=first))
+        w32(o, first + 0x54 + 4 * BEER, beer + max(0, room - 3100) // 200 * 200)
+        direct(o, 0x5182B0, [], ecx=first)
+        w32(o, b + 4 + 4 * GRAIN, 9 * 2000 + 300)
+        office_hand(9 * 2000 + 300, k, GRAIN, 1)
+        print(f'  0x1B the first ship\'s room for a load: office grain {o.s32(b + 4 + 4 * GRAIN)}')
+        w32(o, first + 0x54 + 4 * BEER, beer)
+        direct(o, 0x5182B0, [], ecx=first)
+        w32(o, b + 4 + 4 * GRAIN, 0)
+        office_hand(2000, k, GRAIN, 1)
+        office_hand(2000, k, 0x18, 1)
+        office_hand(2000, o.u16(CONVOY_COUNT), GRAIN, 1)
+        office_hand(2000, k, GRAIN, 1, merchants)
+        other = next(x for x in range(merchants) if x != m and facilities_office(o, x, t) is None)
+        office_hand(2000, k, GRAIN, 0, other)
+    return during
+
+
+def ship_name(o, s):
+    """A ship's name [+0x160]."""
+    return bytes(o.uc.mem_read(o.ship(s) + 0x160, 32)).split(bytes(1))[0]
+
+
+def shipyard_ops(o):
+    """The shipyard's other pages: order a ship (0x2C, the viewer's bytes) in
+    a town with a shipyard, cancel it (0x2F, 0x52B110: nine tenths back, the
+    letter 0x14, the ship deleted), one whose work started (the letter, −1),
+    another merchant's, a ship not ordered, a town out. Upgrade (0x52B670 on
+    SCRATCH and 0x0C, 0x508660): the list (0x504AC0 mode 2, WINDOW_SHIPS); the
+    player's first ship in port by 1, 2 and 3 levels; with the timber,
+    pitch and tools in his office and ships, short of the town's timber, short
+    of money, at the level 2 (cleared), of no merchant, a ship out; the
+    viewer's bytes to the level 1 and then 2; at sea, the level 2. Rename
+    (0x2D, 0x2E: 0x53CCE0 and the names object 0x512D40, 0x512FC0, 0x512B20):
+    the viewer's bytes for a short name, a long one (0x2E onto the last name),
+    one of the game's names, the long one again (its first piece a new name),
+    the short one again (one of the players'), a 0x2E alone on
+    a ship whose name isn't the last (a new name from its index's, and with
+    12 characters the ship's number's bytes), on a ship of the type's name
+    (0x7FFF − type), and 40 names more (the tables grow); the names object's
+    counts after each."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    towns, _, merchants, ships = o.counts()
+    window_ships_copier(o)
+    yard = next(u for u in [t] + list(range(towns)) if o.u32(o.town(u) + 0x76C) & 0x20000 and o.u8(o.town(u) + 0x824) < 0x80)
+    N = 0x6DDAA0
+    print(f'ship {s} of the player {m} in town {t}; a shipyard in {yard}')
+
+    def names(what):
+        print(f'  {what}: names {o.u16(N + 0xD8)}..{o.u16(N + 0xDA)}, table {o.u16(N + 0xDC)}, buffer {o.s32(N + 0xE0)}, '
+              f'last {o.u32(N + 0xE4)}; ship {s} name {ship_name(o, s)} '
+              f'index {o.u16(a + 0x15E):#x}')
+
+    def orders(what):
+        out, x = [], o.u16(o.town(yard) + 0x81C)
+        while x < o.counts()[3] and len(out) < 20:
+            out.append(x)
+            x = o.u16(o.ship(x) + 6)
+        print(f'  {what}: orders {out}, money {o.s32(o.merchant(m))}')
+        return out
+
+    def cost(levels, what, ship=s, town=None):
+        ok = direct(o, 0x52B670, [SCRATCH, ship, levels], ecx=o.town(t if town is None else town)) & 0xFF
+        v = [s32_of(o.u32(SCRATCH + 4 * k)) for k in range(16)]
+        print(f'  {what}: {ok}, have {v[0:3]} use {v[3:6]} buy {v[6:9]} prices {v[9:12]} cost {v[12]} days {v[13]} '
+              f'hold {v[14]} loads {v[15]} slots {o.u8(SCRATCH + 0x40)} {o.u8(SCRATCH + 0x41)}')
+
+    def rename(ship, name):
+        for line in player_op_text('rename', ship, name).splitlines():
+            run_bytes(o, bytes.fromhex(line))
+
+    def during(o):
+        w32(o, o.merchant(m), 5000000)
+        # Order and cancel (the shipyard's town with the materials, 0x52B2C0).
+        for ware in (0xB, 8, 0xC, 0x11, 0xF):
+            w32(o, o.town(yard) + 4 + 4 * ware, 200 * (200 if IN_BARRELS[ware] else 2000))
+        run_bytes(o, player_op('order-ship', 0, m, yard))
+        run_bytes(o, player_op('order-ship', 1, m, yard))
+        first = orders('two ordered')
+        if first:
+            run_bytes(o, player_op('cancel-order', m, yard, first[-1]))
+            orders('the last cancelled')
+            w32(o, o.ship(first[0]) + 0x18, 500)
+            run_bytes(o, player_op('cancel-order', m, yard, first[0]))
+            orders('the first, its work started')
+            w32(o, o.ship(first[0]) + 0x18, 0)
+            operation(o, 0x2F, (m + 1) % merchants, yard, first[0])
+            operation(o, 0x2F, m, yard, s)
+            operation(o, 0x2F, m, towns, first[0])
+            operation(o, 0x2F, m, yard, ships)
+            operation(o, 0x2F, merchants, yard, first[0])
+            run_bytes(o, player_op('cancel-order', m, yard, first[0]))
+            orders('the first cancelled')
+        # Upgrade.
+        direct(o, WINDOW_SHIPS, [m, t, 2, 0])
+        print(f'  the upgrade list: {[o.u16(SCRATCH + 2 + 2 * k) for k in range(o.u16(SCRATCH))]}')
+        w8(o, a + 0xF, 0)
+        w32(o, a + 0x18, o.s32(a + 0x14) * 3 // 4)
+        for levels in (1, 2, 3, 0):
+            cost(levels, f'{levels} levels')
+        f = facilities_office(o, m, t)
+        if f is not None:
+            for ware, n in ((TIMBER, 3 * 2000 + 500), (0xF, 1 * 200), (0xC, 0)):
+                w32(o, o.office(f) + 4 + 4 * ware, n)
+        w32(o, a + 0x54 + 4 * 0xC, 2 * 200 + 40)
+        cost(2, 'with his own wares')
+        timber = o.s32(o.town(t) + 4 + 4 * TIMBER)
+        w32(o, o.town(t) + 4 + 4 * TIMBER, 0)
+        cost(2, 'the town without timber')
+        w32(o, o.town(t) + 4 + 4 * TIMBER, timber)
+        w32(o, o.merchant(m), 100)
+        cost(1, 'short of money')
+        w32(o, o.merchant(m), 5000000)
+        w8(o, a + 0xF, 2)
+        cost(1, 'at the level 2')
+        w8(o, a + 0xF, 0)
+        owner = o.u8(a)
+        w8(o, a, 0xFF)
+        cost(1, 'of no merchant')
+        w8(o, a, owner)
+        cost(1, 'a ship out', ships)
+        run_bytes(o, player_op('upgrade', s, 1))
+        print(f'  upgraded to 1: level {o.u8(a + 0xF)}, state {o.u16(a + 0x134)}, repairing {o.u16(o.town(t) + 0x81E)}, '
+              f'hull {o.s32(a + 0x18)}/{o.s32(a + 0x14)}, cap {o.s32(a + 0x10)}, money {o.s32(o.merchant(m))}')
+        w16(o, a + 0x134, 0)
+        run_bytes(o, player_op('upgrade', s, 2))
+        print(f'  state 7 again: level {o.u8(a + 0xF)}')
+        others = docked_ships(o, m, t, (s,))
+        if others:
+            b = o.ship(others[0])
+            w8(o, b + 0xF, 0)
+            run_bytes(o, player_op('upgrade', others[0], 2))
+            print(f'  ship {others[0]} to 2: level {o.u8(b + 0xF)}, state {o.u16(b + 0x134)}')
+        operation(o, 0x0C, s, 0)
+        operation(o, 0x0C, ships, 1)
+        # Rename.
+        names('as loaded')
+        rename(s, 'Seeadler')
+        names('a short name')
+        rename(s, 'Koenigin der Ostsee')
+        names('a long name')
+        base = bytes(o.uc.mem_read(o.call(0x512B20, [5], ecx=N), 32)).split(bytes(1))[0].decode('latin-1')
+        rename(s, base)
+        names(f'a name of the game\'s, {base}')
+        rename(s, 'Koenigin der Ostsee')
+        names('the long name again (its first piece is a new name)')
+        rename(s, 'Seeadler')
+        names('the short name again (one of the players\' names)')
+        other = (docked_ships(o, m, None, (s,)) or docked_ships(o, None, None, (s,), 1))[0]
+        operation(o, 0x2E, *struct.unpack('<3I', b' von Danzig\0'), other)
+        names(f'0x2E alone on ship {other}: {ship_name(o, other)}')
+        operation(o, 0x2E, *struct.unpack('<3I', b'ABCDEFGHIJKL'), other)
+        names(f'0x2E of 12 on ship {other}: {ship_name(o, other)}')
+        w16(o, o.ship(other) + 0x15E, 0x7FFF - (o.u8(o.ship(other) + 0xE) & 3))
+        operation(o, 0x2E, *struct.unpack('<3I', b' II\0\0\0\0\0\0\0\0\0'), other)
+        names(f'0x2E on a type\'s name: {ship_name(o, other)}')
+        for n in range(40):
+            rename(s, f'Kogge {n:02d} aus Wisby')
+        names('40 names more')
+        operation(o, 0x2D, *struct.unpack('<3I', b'Hansa\0\0\0\0\0\0\0'), ships)
+    return during
+
+
 def player_op_text(*args):
     """player_ops's output as text."""
     import subprocess
@@ -5581,6 +6203,24 @@ SCENARIOS = {
         '@53838e>5383c0', '@538395>5383c4', '@5383f9>538665', '@538458>538665', '@5384a9>538509', '@5384cc',
         '@5384d8', '@538522', '@538541', '@53854e>538604', '@53856b', '@538596', '@5385ba>5385e5', '@53864e',
         '@538625>538658']),
+    'convoy_ops': Scenario(convoy_ops, [0x535760, CONVOY_CHOICES], 0, [
+        '@509d87', '@509d8b>509f6c', '@509d93', '@509da5>509f6c', '@509db4>509f6c', '@509dcc>509f6c', '@509ddc>509f6c',
+        '@509deb>509f6c', '@509e1c>509f6c', '@509e43>509f6c', '@509e50', '@509ea4', '@509f1d', '@509f5d', '@503a5e',
+        '@503a62>503ab3', '@503a9a', '@4f8d55', '@5392c1', '@5392c9', '@539280>5392fe', '@53929b>5392fe',
+        '@5359bf>537025', '@5359da', '@539d48', '@539d2d>539dae', '@539d34>539dae', '@539d11>539dae',
+        '@539d3e>539dae', '@539d00>539dae', '@535aa5', '@535ab4', '@535a7f>537025', '@509bbf>509d06', '@509bf0>509d06',
+        '@509c60', '@509c71', '@40c1c5', '@40c249', '@40c255', '@40c279', '@40c3e2']),
+    'convoy_trade': Scenario(convoy_trade, [0x535760, CONVOY_SUMMARY], 0, [
+        '@5393ea', '@5393fc', '@5393e0>53941b', '@539431', '@539484>53969f', '@5394e0', '@5394f0', '@53954b',
+        '@53957c', '@53966b', '@53936d>53969f', '@539318>53969f', '@539323>53969f', '@539334>53969f', '@5397ce',
+        '@539780', '@539816>53992f', '@53988d>5398dd', '@5398fb', '@539893', '@539714>53992f', '@5396c4>53992f',
+        '@5396cf>53992f', '@5396e0>53992f', '@4aa5cd']),
+    'shipyard_ops': Scenario(shipyard_ops, [0x535760, 0x52B670, WINDOW_SHIPS], 0, [
+        '@52b23f', '@52b235', '@52b177>52b28d', '@52b1b7>52b28d', '@52b1ab>52b28d', '@52b156>52b28d', '@535cc4>537025',
+        '@52b6ed', '@52b70a', '@52b71e', '@52b814', '@52b895', '@52b89e', '@52b8d4', '@52ba35', '@52b6bf', '@52b68f',
+        '@50874b', '@508702>508a88', '@508684>508a88', '@508678>508a88', '@508953', '@53cd24', '@53cd6f', '@53cd73',
+        '@53ccff>53ce21', '@512e03', '@512e1e', '@512e46', '@512e56', '@512e74', '@512ec1', '@512edb', '@512ff1',
+        '@504cda']),
 }
 
 

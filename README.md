@@ -116,11 +116,17 @@ touch pad isn't used.
 to the middle of the screen (it glows and shows its name, the game's) and press
 X. The Market Hall is the market; your office (drawn where you have one)
 opens the market with the office; the tavern hires sailors and captains; the
-shipyard and the repair dock repair your ships. X with no building in the
-middle opens the market. Your ship in the port has a card at the bottom left
-(touch it, or press Select) with its window: its captain, sailors and hull, and
-dismissing sailors or the captain. Square opens the Hanse's panel (the way to
-Alderman) and Circle the mailbox.
+repair dock repairs your ships, and the shipyard has five pages (L and R, or
+touching its title): repair, order a ship, cancel an order, upgrade a ship and
+rename one (left and right go through the game's names; Square types another,
+with the Vita's keyboard, and X ends it). X with no building in the middle
+opens the market. Your ship in the port has a card at the bottom left (touch
+it, or press Select) with its window: its captain, sailors and hull,
+dismissing sailors or the captain, and the convoys as the game's convoy window
+offers them: forming a private or a public convoy (its destination with left
+and right), joining a convoy of the town, and leaving or disbanding the one it
+is in. Square opens the Hanse's panel (the way to Alderman) and Circle the
+mailbox.
 
 In a building's window, up and down choose the row, left and right the amount
 (L and R, ten at a time), X does it, Select takes the next ship and Circle
@@ -130,11 +136,12 @@ window lists and sends is the game's (`src/p3data/player_actions.hpp`).
 **The market**: the stock, the price of buying and selling a unit and what your
 ship carries. Up and down choose the ware, left and right the amount (1, 5, 50
 or all, as the game's window), X buys, Square sells, Select takes the next ship
-in the port and Circle closes it. A row and the buttons at its foot can be
-touched too. The prices, the limits (store, hold and money) and the average
-price of the cargo are the game's. In a town where you have an office, L and
-R go through what is traded: ship and town, office and town, ship and office,
-and the ship's weapons and pieces with the office.
+in the port (or convoy of yours: it trades with your ships in it) and Circle
+closes it. A row and the buttons at its foot can be touched too. The prices,
+the limits (store, hold and money) and the average price of the cargo are the
+game's. In a town where you have an office, L and R go through what is traded:
+ship (or convoy) and town, office and town, ship (or convoy) and office, and the
+ship's weapons and pieces with the office.
 
 Triangle switches between the town and the **sea map**, with the towns and the
 ships (yours has a mark; touching a town chooses it and Triangle goes into it).

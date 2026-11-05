@@ -61,11 +61,23 @@ void fn_537c20(SaveGame& save, const uint8_t* operation);  // 0x04 hire sailors.
 void fn_537dd0(SaveGame& save, const uint8_t* operation);  // 0x05 dismiss sailors.
 void fn_537ee0(SaveGame& save, const uint8_t* operation);  // 0x06 hire a captain.
 void fn_538000(SaveGame& save, Sailing* sailing, const uint8_t* operation);  // 0x07 dismiss the captain.
+// The shipyard's: 0x0C upgrade a ship (0x508660), 0x2D and 0x2E its name
+// (0x53CCE0), 0x2F cancel a ship ordered (0x535CB9 → 0x52B110).
+void fn_508660(SaveGame& save, uint32_t ship, uint32_t levels);
+void fn_53cce0(SaveGame& save, const uint8_t* operation);
+void fn_535cb9(SaveGame& save, Sailing* sailing, const uint8_t* operation);
 // What the windows read too (player_actions.cpp): the sailors the merchant
 // may hire in a town (0x4F6CA0) and what repairing a ship or its convoy
 // costs (0x52A950).
 uint8_t fn_4f6ca0(const SaveGame& save, const MerchantMemory& m, uint32_t town);
 int32_t fn_52a950(const SaveGame& save, int town, int ship);
+// 0x52B670 (on the town: &out, ship, levels): what upgrading the ship
+// `levels` levels costs in the town's shipyard, in the game's 0x44 bytes
+// (player_actions.hpp, ShipUpgrade); whether it can be done.
+bool fn_52b670(const SaveGame& save, int town, GameMemory<0x44>& out, uint32_t ship, uint32_t levels);
+// 0x52AAD0 (on the town: ship, flag): the days repairing the ship (or its
+// convoy) takes there; the shipyard's page shows them.
+int32_t fn_52aad0(const SaveGame& save, int town, int ship, uint32_t flag);
 
 // --- Utilidades comunes (shared.cpp) ---
 
@@ -430,6 +442,8 @@ bool fn_519c40(const SaveGame& save, int ship);  // ¿Puede guiar un convoy?
 void fn_509ae0(SaveGame& save);  // Más convoyes libres si no quedan.
 void fn_501be0(SaveGame& save, int convoy);  // Recalcula el convoy a partir de sus barcos.
 void fn_501680(SaveGame& save, int convoy, uint16_t ship, uint16_t mode);  // Convoy nuevo guiado por `ship`.
+// 0x509B90 (ships object): the docked ship founds a convoy (operation 0x15 too).
+void fn_509b90(SaveGame& save, uint32_t ship, uint32_t immediate, uint32_t wait_days, uint32_t destination);
 void fn_535400(SaveGame& save, uint32_t town, uint32_t merchant);
 }  // namespace ship_ai_detail
 

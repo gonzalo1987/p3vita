@@ -172,6 +172,14 @@ public:
 	void fn_509f80(uint16_t ship);  // (objeto de los barcos) Saca el barco de su convoy.
 	void fn_50a580(uint16_t convoy);  // (objeto de los barcos) Deshace el convoy.
 	void fn_50a3d0(uint16_t convoy);  // (objeto de los barcos) Borra el convoy.
+	// The player's convoy operations (docs/formats/operations.md), also in
+	// convoys_members.cpp: a ship joins the convoy of `member` (0x509D10,
+	// operation 0x18), a ship leaves its convoy or, its guide, disbands it
+	// (0x539270, operation 0x17), a docked convoy waits for ships to a
+	// destination (0x539CF0, operation 0x20).
+	void fn_509d10(uint32_t member, uint32_t ship);
+	void fn_539270(const uint8_t* operation);
+	void fn_539cf0(const uint8_t* operation);
 	// convoys_port.cpp: el convoy en puerto.
 	bool fn_501eb0(int convoy);
 	void fn_503b50(int convoy);

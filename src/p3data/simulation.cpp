@@ -144,12 +144,59 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x0A:  // A ship is deleted (0x535866, 0x507FB0).
 		tick::fn_535866(save, sailing, operation);
 		break;
+	case 0x0C:  // Upgrade a ship in its town's shipyard (0x5358BB → 0x508660; town_tick/ship_operations.cpp).
+		tick::fn_508660(save, uint32_t(fields[1]), uint32_t(fields[2]));
+		break;
 	case 0x12:  // El capitán de un barco mejora (0x538A80).
 		tick::fn_538a80(save, operation);
 		break;
 	case 0x13:  // El capitán de un barco de un jugador humano se retira: el evento 0x27 (0x538C40).
 		tick::fn_538c40(save, operation);
 		break;
+	case 0x15:  // Create a convoy (0x53598F → 0x509B90; town_tick/ship_ai.cpp): {0x15, ship, immediate, days, destination}.
+		tick::ship_ai_detail::fn_509b90(save, uint32_t(fields[1]), uint32_t(fields[2]), uint32_t(fields[3]), uint32_t(fields[4]));
+		break;
+	case 0x16:  // Disband a convoy (0x5359B1 → 0x50A580; convoys_members.cpp): {0x16, convoy}.
+		// Then the port scene is redrawn if it shows the convoy's town ([+0x1C]
+		// read before: 0x6141D0 on 0x6E6220, UI).
+		if (sailing && uint32_t(fields[1]) < save.globals.u16(global::kShips + 0xF6)) {
+			sailing->fn_50a580(uint16_t(fields[1]));
+		}
+		break;
+	case 0x17:  // A ship leaves its convoy, or its guide disbands it (0x535A16 → 0x539270; convoys_members.cpp).
+		if (sailing) {
+			sailing->fn_539270(operation);
+		}
+		break;
+	case 0x18:  // A ship joins a convoy (0x535A25 → 0x509D10; convoys_members.cpp): {0x18, a ship of it, ship}.
+		if (sailing) {
+			sailing->fn_509d10(uint32_t(fields[1]), uint32_t(fields[2]));
+		}
+		break;
+	case 0x19:  // A convoy sells to the town (0x535A3F → 0x539300; trade.cpp).
+	case 0x1A:  // A convoy buys from the town (0x535A50 → 0x539300).
+		fn_539300(save, operation, fields[0] == 0x19);
+		break;
+	case 0x1B:  // Wares between a convoy and its owner's office (0x535A61 → 0x5396B0; trade.cpp).
+		fn_5396b0(save, operation);
+		break;
+	case 0x1C: {  // A convoy sets sail (0x535A70): {0x1C, u16 convoy, u16 wait, town, x, y}.
+		uint16_t convoy, wait;
+		std::memcpy(&convoy, operation + 4, 2);
+		std::memcpy(&wait, operation + 6, 2);
+		if (convoy >= save.globals.u16(global::kShips + 0xF6)) {
+			break;
+		}
+		// Its guide [+0x10] in [+4], and 0x537670 on the operation.
+		GameMemory<0x3C>& c = save.convoys[convoy];
+		if (sailing) {
+			sailing->set_sail(c.u16(0x10), fields[2], fields[3], fields[4]);
+		}
+		if (c.u16(0x16) < wait) {
+			c.u16(0x16) = wait;
+		}
+		break;
+	}
 	case 0x1D:  // Repair a convoy (0x535AC0 → 0x539990; town_tick/ship_operations.cpp).
 		tick::fn_539990(save, operation);
 		break;
@@ -158,6 +205,11 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x1F:  // Un punto de la ruta de expedición de un convoy (0x539C60).
 		tick::fn_539c60(save, operation);
+		break;
+	case 0x20:  // A docked convoy waits for ships to a destination (0x535AED → 0x539CF0; convoys_members.cpp).
+		if (sailing) {
+			sailing->fn_539cf0(operation);
+		}
 		break;
 	case 0x21:  // Build, the interface's request (0x53CE30): the type by the table 0x672FC0, or an office.
 		tick::construction_detail::fn_53ce30(save, operation, true);
@@ -179,6 +231,13 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x29:  // Un préstamo: el evento 0x01 (0x539DC0).
 		tick::fn_539dc0(save, operation);
+		break;
+	case 0x2D:  // A ship's name, its first 12 characters (0x535CAA → 0x53CCE0; town_tick/ship_operations.cpp).
+	case 0x2E:  // The next 12 characters of a ship's name (0x535CAA → 0x53CCE0).
+		tick::fn_53cce0(save, operation);
+		break;
+	case 0x2F:  // Cancel a ship ordered at a town's shipyard (0x535CB9 → 0x52B110; town_tick/ship_operations.cpp).
+		tick::fn_535cb9(save, sailing, operation);
 		break;
 	case 0x2C:  // Un barco encargado al astillero de una ciudad (0x535C70, 0x52A360).
 		tick::fn_535c70(save, operation);

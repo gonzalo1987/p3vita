@@ -178,6 +178,54 @@ bool tavern_captain(SaveGame& save) {
 	return true;
 }
 
+// The player's first ship docked out of a convoy, fit to guide one
+// (0x519C40): a captain of its town's list (or another town's), 25 sailors,
+// 7 small guns (firepower 70) and its whole hull.
+bool convoy_leader(SaveGame& save) {
+	const uint16_t count = save.globals.u16(global::kCaptainCount);
+	const uint16_t convoys = save.globals.u16(global::kShips + 0xF6);
+	for (size_t i = 0; i < save.ships.size(); ++i) {
+		SavedShip& ship = save.ships[i];
+		if (!ship.docked() || ship.owner() != save.player || ship.town() >= save.towns.size() || ship.convoy() < convoys) {
+			continue;
+		}
+		ShipMemory& s = ship.memory;
+		for (size_t u = 0; u < save.towns.size() && s.u16(0x42) >= count; ++u) {
+			uint16_t& head = save.towns[(ship.town() + u) % save.towns.size()].memory.u16(0x82E);
+			if (head < count) {
+				const uint16_t c = head;
+				head = save.captains[c].u16(0);
+				save.captains[c].u16(0) = 0xFFFF;
+				s.u16(0x42) = c;
+			}
+		}
+		s.u16(0x40) = 25;
+		for (size_t k = 0; k < 24; ++k) {
+			s.u8(0x13C + k) = k < 7 ? 1 : 0xFF;
+		}
+		s.s32(0x18) = s.s32(0x14);
+		s.u8(0x15C) = 0;
+		recalculate_cargo(ship);
+		return s.u16(0x42) < count;
+	}
+	return false;
+}
+
+// The town of the player's first ship in port with 100 units of each of the
+// shipyard's materials: timber, cloth, tools, hemp and pitch.
+bool shipyard_materials(SaveGame& save) {
+	for (const SavedShip& ship : save.ships) {
+		if (ship.docked() && ship.owner() == save.player && ship.town() < save.towns.size()) {
+			static constexpr int kWares[5][2] = {{0xB, 2000}, {8, 200}, {0xC, 200}, {0x11, 2000}, {0xF, 200}};
+			for (const auto& w : kWares) {
+				save.towns[ship.town()].memory.s32(4 + 4 * size_t(w[0])) = 100 * w[1];
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
 }  // namespace
 
 const char kDebugStatesHelp[] =
@@ -191,7 +239,9 @@ const char kDebugStatesHelp[] =
 	"  pirate-attack  the player's first ship sails and pirates attack it two days\n"
 	"              later (event 0x1E): a sea battle against the player\n"
 	"  damaged     the player's ships in port with half their hull (the shipyard)\n"
-	"  tavern-captain  a free captain in the tavern of the player's first ship's town\n";
+	"  tavern-captain  a free captain in the tavern of the player's first ship's town\n"
+	"  convoy-leader  the player's first ship in port fit to guide a convoy\n"
+	"  shipyard-materials  100 units of each shipyard material in that ship's town\n";
 
 bool apply_debug_states(SaveGame& save, const std::string& states, std::string& error) {
 	if (save.player < 0 || size_t(save.player) >= save.merchants.size()) {
@@ -236,6 +286,16 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			save.globals.u8(kAldermanTown) = m.u8(0x19);
 		} else if (state == "damaged") {
 			damage_ships(save);
+		} else if (state == "shipyard-materials") {
+			if (!shipyard_materials(save)) {
+				error = "the player has no ship in port";
+				return false;
+			}
+		} else if (state == "convoy-leader") {
+			if (!convoy_leader(save)) {
+				error = "the player has no ship in port out of a convoy, or no town has a captain";
+				return false;
+			}
 		} else if (state == "tavern-captain") {
 			if (!tavern_captain(save)) {
 				error = "the player has no ship in port, or no town has a captain";

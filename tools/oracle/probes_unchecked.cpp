@@ -138,6 +138,10 @@ constexpr uint32_t kScratch = 0x6DFF00;
 // The oracle's copier of 0x504AC0's list, in its sentinel page
 // (retouch_unchecked.py WINDOW_SHIPS: SENTINEL + 0xF80).
 constexpr uint32_t kWindowShips = 0x03000F80;
+// Its copiers of the convoy window's choices (0x40C170) and of the market
+// window's convoy (0x4AA4A0) (CONVOY_CHOICES, CONVOY_SUMMARY).
+constexpr uint32_t kConvoyChoices = 0x03000E80;
+constexpr uint32_t kConvoySummary = 0x03000E00;
 
 }  // namespace
 
@@ -427,6 +431,58 @@ void register_probes_unchecked(ProbeRegistry& r) {
 			s.globals.u16(kScratch + 2 + 2 * uint32_t(k)) = list[k];
 		}
 		return std::nullopt;
+	};
+	r[kConvoyChoices] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// The oracle's copier (retouch_unchecked.py CONVOY_CHOICES; stdcall:
+		// ship): the convoy window's choices for that ship alone (0x40C170), a
+		// u32 count and the choices (−1, −2, convoys) in the scratch globals,
+		// at most 63.
+		if (c.args[0] >= s.ships.size()) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		const std::vector<int32_t> choices = convoy_choices(s, {uint16_t(c.args[0])});
+		s.globals.u32(kScratch) = uint32_t(choices.size());
+		for (size_t k = 0; k < choices.size() && k < 63; ++k) {
+			s.globals.s32(kScratch + 4 + 4 * uint32_t(k)) = choices[k];
+		}
+		return std::nullopt;
+	};
+	r[kConvoySummary] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// The oracle's copier (CONVOY_SUMMARY; stdcall: convoy): what the market
+		// window keeps of the convoy in its mode 4 (0x4AA4A0): the 24 wares'
+		// units, what it holds ([+0x5E8]) and its capacity ([+0x738]), 26 u32
+		// in the scratch globals.
+		if (c.args[0] >= s.convoys.size()) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		const int convoy = int(c.args[0]);
+		for (int w = 0; w < 24; ++w) {
+			s.globals.s32(kScratch + 4 * uint32_t(w)) = market_convoy_units(s, convoy, w);
+		}
+		s.globals.s32(kScratch + 0x60) = market_convoy_used(s, convoy);
+		s.globals.s32(kScratch + 0x64) = market_convoy_capacity(s, convoy);
+		return std::nullopt;
+	};
+	r[0x52B670] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		// thiscall on the town (&out in scratch globals, ship, levels): what
+		// upgrading the ship costs (0x44 bytes) and whether it can be done.
+		const int town = c.town(c.ecx);
+		if (town < 0 || !in_globals(c, c.args[0]) || !in_globals(c, c.args[0] + 0x43)) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		GameMemory<0x44> out;
+		for (uint32_t k = 0; k < 0x44; ++k) {
+			out.u8(k) = s.globals.u8(c.args[0] + k);
+		}
+		const bool ok = tick::fn_52b670(s, town, out, c.args[1], c.args[2]);
+		for (uint32_t k = 0; k < 0x44; ++k) {
+			s.globals.u8(c.args[0] + k) = out.u8(k);
+		}
+		c.eax_mask = 0xFF;
+		return ok ? 1 : 0;
 	};
 	r[0x4D6530] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		// thiscall on the mailbox (merchant or code, &letter): a letter without

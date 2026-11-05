@@ -63,6 +63,8 @@ Uint32 app_ticks() {
 // nullptr: then the viewer's own, in Spanish. Texts the game doesn't have
 // (the Vita's buttons, the viewer's own messages) are always the viewer's.
 const GameTexts* g_texts = nullptr;
+// The towns' names of the archive (load_town_names), for the windows.
+const std::vector<std::string>* g_town_names = nullptr;
 
 std::string game_text(GameText id, const std::string& fallback) {
 	return g_texts ? g_texts->get(id) : fallback;
@@ -985,6 +987,12 @@ std::string town_name(const SaveGame& save, const std::vector<std::string>& name
 	return id < int(names.size()) ? names[size_t(id)] : tr("Ciudad ", "Town ") + std::to_string(id);
 }
 
+// A town's name in the windows (by its index in the save).
+std::string window_town_name(const SaveGame& save, int town) {
+	static const std::vector<std::string> none;
+	return town_name(save, g_town_names ? *g_town_names : none, town);
+}
+
 std::string bar_title(const SaveGame& save, const std::vector<std::string>& names,
 	const std::vector<int>& template_ids, const Selection& selection) {
 	if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
@@ -1178,10 +1186,63 @@ std::vector<int> player_ships_in(const SaveGame& save, int town) {
 	return ships;
 }
 
-// Barco con el que se comercia ahora, o -1.
+// What the market trades with, as the game's side panel selects it (0x492430):
+// one of the player's ships in port out of a convoy, or a convoy in the town
+// with ships of his (the market window's modes 4 and 3: 0x4AA4A0 counts only
+// his ships). Select goes through them.
+struct MarketEntry {
+	int ship = -1;  // A ship alone, or the convoy's guide.
+	int convoy = -1;
+};
+
+std::vector<MarketEntry> market_entries(const SaveGame& save, int town) {
+	std::vector<MarketEntry> entries;
+	const uint16_t convoys = save.globals.u16(global::kShips + 0xF6);
+	for (const int s : player_ships_in(save, town)) {
+		const uint16_t convoy = save.ships[size_t(s)].convoy();
+		if (convoy >= convoys || convoy >= save.convoys.size()) {
+			entries.push_back({s, -1});
+		} else if (std::none_of(entries.begin(), entries.end(), [&](const MarketEntry& e) { return e.convoy == convoy; })) {
+			entries.push_back({int(save.convoys[convoy].u16(0x10)), int(convoy)});
+		}
+	}
+	return entries;
+}
+
+MarketEntry market_entry(const SaveGame& save, int town, const MarketUi& ui) {
+	const std::vector<MarketEntry> entries = market_entries(save, town);
+	return entries.empty() ? MarketEntry() : entries[ui.ship % entries.size()];
+}
+
+// Barco con el que se comercia ahora (solo, fuera de un convoy), o -1.
 int market_ship(const SaveGame& save, int town, const MarketUi& ui) {
-	const std::vector<int> ships = player_ships_in(save, town);
-	return ships.empty() ? -1 : ships[ui.ship % ships.size()];
+	const MarketEntry e = market_entry(save, town, ui);
+	return e.convoy < 0 ? e.ship : -1;
+}
+
+// The convoy the market trades with now, or -1.
+int market_convoy(const SaveGame& save, int town, const MarketUi& ui) {
+	return market_entry(save, town, ui).convoy;
+}
+
+// A convoy's name, as the game's: «Convoy» and its guide's name.
+std::string convoy_label(const SaveGame& save, int convoy) {
+	const uint16_t guide = save.convoys[size_t(convoy)].u16(0x10);
+	return game_text(GameText::ShipyardConvoy, tr("Convoy", "Convoy")) + " " +
+		(guide < save.ships.size() ? save.ships[guide].name() : std::string("?"));
+}
+
+// What the player's ships of a convoy carry of a ware (internal units).
+int64_t convoy_cargo(const SaveGame& save, int convoy, int ware) {
+	int64_t sum = 0;
+	const uint16_t ships = save.globals.u16(global::kShipCount);
+	for (uint32_t i = save.convoys[size_t(convoy)].u16(0xA); i < ships && i < save.ships.size();
+		 i = save.ships[i].memory.u16(0x6)) {
+		if (save.ships[i].owner() == save.player) {
+			sum += save.ships[i].cargo(size_t(ware));
+		}
+	}
+	return sum;
 }
 
 // The operation the market window would send now (0x02 or 0x01), as the
@@ -1219,8 +1280,29 @@ std::string capitalized(std::string s);
 // weapons, 0x09 for the hand weapons and the pieces). L and R go through them
 // in a town where the player has an office.
 
-std::vector<int> market_modes(const SaveGame& save, int town) {
-	return save.player >= 0 && player_office(save, town) >= 0 ? std::vector<int>{1, 2, 0, 5} : std::vector<int>{1};
+// With a convoy chosen: 4 (the convoy and the town) and, with an office, 2
+// and 3 (the convoy and the office); there are no ship's weapons for a convoy.
+std::vector<int> market_modes(const SaveGame& save, int town, const MarketUi& ui) {
+	const bool office = save.player >= 0 && player_office(save, town) >= 0;
+	if (market_convoy(save, town, ui) >= 0) {
+		return office ? std::vector<int>{4, 2, 3} : std::vector<int>{4};
+	}
+	return office ? std::vector<int>{1, 2, 0, 5} : std::vector<int>{1};
+}
+
+// The mode that fits what is chosen: a convoy's for a convoy (1 and 5 → 4,
+// 0 → 3) and a ship's for a ship (4 → 1, 3 → 0).
+void fit_market_mode(const SaveGame& save, int town, MarketUi& ui) {
+	const bool convoy = market_convoy(save, town, ui) >= 0;
+	if (convoy && (ui.mode == 1 || ui.mode == 5)) {
+		ui.mode = 4;
+	} else if (convoy && ui.mode == 0) {
+		ui.mode = 3;
+	} else if (!convoy && ui.mode == 4) {
+		ui.mode = 1;
+	} else if (!convoy && ui.mode == 3) {
+		ui.mode = 0;
+	}
 }
 
 int market_rows(const MarketUi& ui) {
@@ -1230,11 +1312,16 @@ int market_rows(const MarketUi& ui) {
 std::string market_mode_name(int mode) {
 	const std::string ship = game_text(GameText::MarketShip, tr("Barco", "Ship"));
 	const std::string office = game_text(GameText::Office, tr("Oficina", "Office"));
+	const std::string convoy = game_text(GameText::ShipyardConvoy, tr("Convoy", "Convoy"));
 	switch (mode) {
 	case 2:
 		return office + " <-> " + game_text(GameText::MarketTown, tr("Ciudad", "Town"));
 	case 0:
 		return ship + " <-> " + office;
+	case 4:
+		return convoy + " <-> " + game_text(GameText::MarketTown, tr("Ciudad", "Town"));
+	case 3:
+		return convoy + " <-> " + office;
 	case 5:
 		return game_text(GameText::ShipWeapons, tr("Armas de barco", "Ship's weapons"));
 	default:
@@ -1267,10 +1354,18 @@ std::string arsenal_row_name(int row) {
 std::optional<OperationBytes> office_operation(const SaveGame& save, int town, const MarketUi& ui, bool first) {
 	const int office = player_office(save, town);
 	const int ship = market_ship(save, town, ui);
+	const uint32_t step = kMarketSteps[size_t(ui.step)];
+	if (office >= 0 && ui.mode == 3) {
+		const int convoy = market_convoy(save, town, ui);
+		if (convoy < 0) {
+			return std::nullopt;
+		}
+		return first ? office_to_convoy_operation(save, convoy, ui.ware, step)
+					 : convoy_to_office_operation(save, convoy, ui.ware, step);
+	}
 	if (office < 0 || (ui.mode != 2 && ship < 0)) {
 		return std::nullopt;
 	}
-	const uint32_t step = kMarketSteps[size_t(ui.step)];
 	if (ui.mode == 2) {
 		return first ? office_buy_operation(save, town, ui.ware, step) : office_sell_operation(save, town, ui.ware, step);
 	}
@@ -1298,7 +1393,8 @@ void office_trade(SaveGame& save, Sailing* sailing, int town, MarketUi& ui, bool
 		ui.message = tr("No tienes oficina en esta ciudad.", "You have no office in this town.");
 		return;
 	}
-	if (ui.mode != 2 && ship < 0) {
+	const int convoy = market_convoy(save, town, ui);
+	if (ui.mode != 2 && ship < 0 && convoy < 0) {
 		ui.message = tr("No tienes ningún barco en este puerto.", "You have no ship in this port.");
 		return;
 	}
@@ -1307,12 +1403,15 @@ void office_trade(SaveGame& save, Sailing* sailing, int town, MarketUi& ui, bool
 		ui.message = tr("No hay nada que pasar.", "There is nothing to move.");
 		return;
 	}
-	// What can change: the ware or weapon in the office and the ship, the
-	// ship's pieces and hand weapons, the money.
+	// What can change: the ware or weapon in the office and the ship (or the
+	// convoy's ships of the player), the ship's pieces and hand weapons, the money.
 	auto snapshot = [&]() {
 		std::array<int64_t, 4> v{};
 		const OfficeMemory& o = save.offices[size_t(office)].memory;
-		if (ui.mode == 5 && ui.ware >= 4) {
+		if (ui.mode == 3) {
+			v[0] = o.s32(4 + 4 * size_t(ui.ware));
+			v[1] = convoy_cargo(save, convoy, ui.ware);
+		} else if (ui.mode == 5 && ui.ware >= 4) {
 			v[0] = ship_artillery_count(save, ship, ui.ware - 5);
 		} else {
 			const int ware = ui.mode == 5 ? 0x14 + ui.ware : ui.ware;
@@ -1350,9 +1449,64 @@ void office_trade(SaveGame& save, Sailing* sailing, int town, MarketUi& ui, bool
 		const int64_t moved = after[1] - before[1];
 		const std::string amount = ui.mode == 5 ? std::to_string(std::abs(moved))
 												: amount_text(int32_t(std::abs(moved)), kWares[size_t(ui.ware)].unit);
+		const bool to_convoy = ui.mode == 3;
 		ui.message = moved == 0 ? tr("No se ha podido.", "It couldn't be done.")
-			: g_spanish ? (moved > 0 ? "Al barco: " : "A la oficina: ") + amount + " de " + what + "."
-						: (moved > 0 ? "To the ship: " : "To the office: ") + amount + " of " + what + ".";
+			: g_spanish ? (moved > 0 ? (to_convoy ? "Al convoy: " : "Al barco: ") : "A la oficina: ") + amount + " de " + what + "."
+						: (moved > 0 ? (to_convoy ? "To the convoy: " : "To the ship: ") : "To the office: ") + amount + " of " +
+					what + ".";
+	}
+}
+
+// The market in the mode 4 (a convoy and the town): 0x1A buying and 0x19
+// selling, as the game's window builds them from what it keeps of the convoy
+// (0x4AA4A0); what it did, from the convoy's cargo and the money.
+std::optional<OperationBytes> convoy_market_operation(const SaveGame& save, int town, const MarketUi& ui, bool buying) {
+	const int convoy = market_convoy(save, town, ui);
+	if (convoy < 0) {
+		return std::nullopt;
+	}
+	const uint32_t step = kMarketSteps[size_t(ui.step)];
+	return buying ? convoy_buy_operation(save, convoy, ui.ware, step) : convoy_sell_operation(save, convoy, ui.ware, step);
+}
+
+void convoy_trade(SaveGame& save, Sailing* sailing, int town, MarketUi& ui, bool buying) {
+	ui.message_until = app_ticks() + kMessageTime;
+	const int convoy = market_convoy(save, town, ui);
+	const std::string name = ware_name(ui.ware);
+	if (convoy < 0) {
+		ui.message = tr("No tienes ningún barco en este puerto.", "You have no ship in this port.");
+		return;
+	}
+	if (!save.towns[size_t(town)].has_market()) {
+		ui.message = tr("Esta ciudad no tiene mercado.", "This town has no market.");
+		return;
+	}
+	const std::optional<OperationBytes> op = convoy_market_operation(save, town, ui, buying);
+	if (!op) {
+		ui.message = buying ? tr("No se puede comprar.", "Nothing to buy.")
+							: (g_spanish ? "El convoy no lleva " + name + "." : "The convoy carries no " + name + ".");
+		return;
+	}
+	const int64_t cargo = convoy_cargo(save, convoy, ui.ware);
+	const int32_t money = save.merchants[size_t(save.player)].money();
+	if (sailing) {
+		queue_operation(save, *op);
+		run_queued_operations(save, *sailing);
+	} else {
+		run_operation(save, nullptr, op->data());
+	}
+	const int32_t amount = int32_t(std::abs(convoy_cargo(save, convoy, ui.ware) - cargo));
+	const int32_t price = std::abs(save.merchants[size_t(save.player)].money() - money);
+	const WareUnit unit = kWares[size_t(ui.ware)].unit;
+	if (amount == 0) {
+		ui.message = buying && save.merchants[size_t(save.player)].money() <= 0
+			? game_text(GameText::NotEnoughMoney, tr("No tienes dinero suficiente.", "Not enough money!"))
+			: tr("No se ha podido.", "It couldn't be done.");
+	} else {
+		ui.message = g_spanish ? std::string(buying ? "Compra: " : "Venta: ") + amount_text(amount, unit) + " de " + name +
+				" por " + format_money(price) + " monedas."
+							   : std::string(buying ? "Bought " : "Sold ") + amount_text(amount, unit) + " of " + name +
+				" for " + format_money(price) + " coins.";
 	}
 }
 
@@ -1361,6 +1515,10 @@ void office_trade(SaveGame& save, Sailing* sailing, int town, MarketUi& ui, bool
 // (without the sea, Sailing, only this operation). What it did is told by the
 // ship's cargo and the owner's money before and after.
 void trade(SaveGame& save, Sailing* sailing, int town, MarketUi& ui, bool buying) {
+	if (ui.mode == 4) {
+		convoy_trade(save, sailing, town, ui, buying);
+		return;
+	}
 	if (ui.mode != 1) {
 		office_trade(save, sailing, town, ui, buying);
 		return;
@@ -1472,7 +1630,7 @@ void draw_office_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGa
 
 void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, int town_index,
 	const MarketUi& ui) {
-	if (ui.mode != 1) {
+	if (ui.mode != 1 && ui.mode != 4) {
 		draw_office_market(renderer, text, save, town_index, ui);
 		return;
 	}
@@ -1481,7 +1639,8 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 	const SDL_Rect& panel = layout.panel;
 	const int left = panel.x + MarketLayout::kPadding;
 	const int ship_index = market_ship(save, town_index, ui);
-	const SavedShip* ship = ship_index >= 0 ? &save.ships[size_t(ship_index)] : nullptr;
+	const int convoy = ui.mode == 4 ? market_convoy(save, town_index, ui) : -1;
+	const SavedShip* ship = ship_index >= 0 && convoy < 0 ? &save.ships[size_t(ship_index)] : nullptr;
 	const WareUnit selected_unit = kWares[size_t(ui.ware)].unit;
 
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -1503,6 +1662,16 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 			? std::string(used) + " / " + g_texts->format(GameText::AmountLoadsDecimal, {capacity})
 			: std::string(used) + tr(" de ", " of ") + capacity + tr(" cargas", " loads");
 		text.draw(ship->name() + " (" + ship_type_name(ship->type()) + "): " + hold, left, layout.header_y, kTextColor);
+	} else if (convoy >= 0) {
+		// What the window keeps of the convoy (0x4AA4A0): the player's ships' hold.
+		char used[32];
+		char capacity[32];
+		std::snprintf(used, sizeof(used), "%.1f", market_convoy_used(save, convoy) / 10.0);
+		std::snprintf(capacity, sizeof(capacity), "%.1f", market_convoy_capacity(save, convoy) / 2000.0);
+		const std::string hold = g_texts
+			? std::string(used) + " / " + g_texts->format(GameText::AmountLoadsDecimal, {capacity})
+			: std::string(used) + tr(" de ", " of ") + capacity + tr(" cargas", " loads");
+		text.draw(convoy_label(save, convoy) + ": " + hold, left, layout.header_y, kTextColor);
 	} else {
 		text.draw(tr("No tienes ningún barco en este puerto.", "You have no ship in this port."), left, layout.header_y,
 			kDimColor);
@@ -1534,8 +1703,8 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 		right(amount(units(int32_t(town.stock(size_t(w))), ware.unit)), 0, y, kTextColor);
 		right(buy ? std::to_string(buy) : "-", 1, y, kTextColor);
 		right(std::to_string(sell), 2, y, kTextColor);
-		if (ship) {
-			const int n = units(ship->cargo(size_t(w)), ware.unit);
+		if (ship || convoy >= 0) {
+			const int n = units(int32_t(ship ? ship->cargo(size_t(w)) : convoy_cargo(save, convoy, w)), ware.unit);
 			right(n ? amount(n) : "-", 3, y, n ? kTextColor : kDimColor);
 		}
 	}
@@ -1557,12 +1726,37 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 			footer += tr("    vender ", "    sell ") + std::to_string(units(sell.amount, selected_unit)) + ": " +
 				format_money(sell.price);
 		}
+	} else if (!show_message && convoy >= 0) {
+		// What the window would send (its price is the game's when it runs).
+		auto amount_of = [&](bool buying) {
+			int32_t n = 0;
+			if (const std::optional<OperationBytes> op = convoy_market_operation(save, town_index, ui, buying)) {
+				std::memcpy(&n, op->data() + 4, 4);
+			}
+			return n;
+		};
+		const int32_t buy = amount_of(true);
+		const int32_t sell = amount_of(false);
+		footer = buy > 0 ? tr("Comprar ", "Buy ") + amount_text(buy, selected_unit) : tr("No se puede comprar", "Nothing to buy");
+		if (sell > 0) {
+			footer += tr("    vender ", "    sell ") + amount_text(sell, selected_unit);
+		}
 	}
 	text.draw(footer, left, layout.footer_y, kTextColor);
 	draw_button(renderer, text, layout.step_button, tr("Izq./Der.: ", "Left/Right: ") + step_text(ui));
 	if (ship) {
 		draw_button(renderer, text, layout.buy_button, tr(BTN_CROSS " comprar", BTN_CROSS " buy"));
 		draw_button(renderer, text, layout.sell_button, tr(BTN_SQUARE " vender", BTN_SQUARE " sell"));
+	} else if (convoy >= 0) {
+		// The buttons, dimmed when the window sends nothing.
+		for (const bool buying : {true, false}) {
+			const SDL_Rect& r = buying ? layout.buy_button : layout.sell_button;
+			draw_button(renderer, text, r, buying ? tr(BTN_CROSS " comprar", BTN_CROSS " buy") : tr(BTN_SQUARE " vender", BTN_SQUARE " sell"));
+			if (!convoy_market_operation(save, town_index, ui, buying)) {
+				SDL_SetRenderDrawColor(renderer, 30, 22, 14, 150);
+				SDL_RenderFillRect(renderer, &r);
+			}
+		}
 	}
 }
 
@@ -1576,7 +1770,8 @@ void draw_office_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGa
 	const int left = panel.x + MarketLayout::kPadding;
 	const int office = player_office(save, town_index);
 	const int ship_index = market_ship(save, town_index, ui);
-	const SavedShip* ship = ship_index >= 0 ? &save.ships[size_t(ship_index)] : nullptr;
+	const int convoy = ui.mode == 3 ? market_convoy(save, town_index, ui) : -1;
+	const SavedShip* ship = ship_index >= 0 && ui.mode != 3 ? &save.ships[size_t(ship_index)] : nullptr;
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
 	SDL_RenderFillRect(renderer, &panel);
@@ -1586,10 +1781,12 @@ void draw_office_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGa
 		text.draw(s, panel.x + MarketLayout::kColumns[column] - text.measure(s), y, color);
 	};
 	std::string header = market_mode_name(ui.mode);
-	if (ui.mode != 2) {
+	if (ui.mode == 3) {
+		header += convoy >= 0 ? ": " + convoy_label(save, convoy) : "";
+	} else if (ui.mode != 2) {
 		header += ship ? ": " + ship->name() : tr(": ningún barco en el puerto", ": no ship in the port");
 	}
-	text.draw(header, left, layout.header_y, ship || ui.mode == 2 ? kTextColor : kDimColor);
+	text.draw(header, left, layout.header_y, ship || convoy >= 0 || ui.mode == 2 ? kTextColor : kDimColor);
 	const std::string close = tr("L/R   " BTN_CIRCLE " cerrar", "L/R   " BTN_CIRCLE " close");
 	text.draw(close, panel.x + panel.w - MarketLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
 	const std::string office_word = game_text(GameText::Office, tr("Oficina", "Office"));
@@ -1601,7 +1798,9 @@ void draw_office_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGa
 		right(office_word, 3, layout.titles_y, kDimColor);
 	} else {
 		right(office_word, 1, layout.titles_y, kDimColor);
-		right(game_text(GameText::MarketShip, tr("Bodega", "Ship")), 3, layout.titles_y, kDimColor);
+		right(ui.mode == 3 ? game_text(GameText::ShipyardConvoy, tr("Convoy", "Convoy"))
+						   : game_text(GameText::MarketShip, tr("Bodega", "Ship")),
+			3, layout.titles_y, kDimColor);
 	}
 	const OfficeMemory* o = office >= 0 ? &save.offices[size_t(office)].memory : nullptr;
 	for (int r = 0; r < market_rows(ui); ++r) {
@@ -1640,7 +1839,11 @@ void draw_office_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGa
 			right(o ? amount(o->s32(4 + 4 * size_t(r))) : "-", 3, y, kTextColor);
 		} else {
 			right(o ? amount(o->s32(4 + 4 * size_t(r))) : "-", 1, y, kTextColor);
-			right(ship ? amount(ship->cargo(r)) : "-", 3, y, kTextColor);
+			if (convoy >= 0) {
+				right(amount(int32_t(convoy_cargo(save, convoy, r))), 3, y, kTextColor);
+			} else {
+				right(ship ? amount(ship->cargo(r)) : "-", 3, y, kTextColor);
+			}
 		}
 	}
 	if (!ui.message.empty() && !SDL_TICKS_PASSED(app_ticks(), ui.message_until)) {
@@ -1658,6 +1861,9 @@ void draw_office_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGa
 	if (ui.mode == 2) {
 		button(layout.buy_button, tr(BTN_CROSS " comprar", BTN_CROSS " buy"), true);
 		button(layout.sell_button, tr(BTN_SQUARE " vender", BTN_SQUARE " sell"), false);
+	} else if (convoy >= 0) {
+		button(layout.buy_button, tr(BTN_CROSS " al convoy", BTN_CROSS " to the convoy"), true);
+		button(layout.sell_button, tr(BTN_SQUARE " a la oficina", BTN_SQUARE " to the office"), false);
 	} else if (ship) {
 		button(layout.buy_button, tr(BTN_CROSS " al barco", BTN_CROSS " to the ship"), true);
 		button(layout.sell_button, tr(BTN_SQUARE " a la oficina", BTN_SQUARE " to the office"), false);
@@ -1678,9 +1884,18 @@ struct PlaceUi {
 	int amount = 0;  // The sailors to hire or to dismiss.
 	size_t ship = 0;  // Among the ships the row's list offers.
 	float roll = 0;  // The tavern's roll when it opened (tavern_roll).
+	// The shipyard's page (the repair dock has only the first): 0 repair, 1
+	// order a ship, 2 cancel an order, 3 upgrade, 4 rename.
+	int page = 0;
+	// The name being written (Latin-1) on the rename page, and whether the
+	// text input is on (Square: the Vita's keyboard, the PC's).
+	std::string name;
+	bool typing = false;
 	std::string message;
 	Uint32 message_until = 0;
 };
+
+constexpr int kShipyardPages = 5;
 
 // What a window shows now, made from the save each frame (also for the touch screen).
 struct PlaceView {
@@ -1690,9 +1905,42 @@ struct PlaceView {
 	std::vector<uint16_t> ships;  // The selected row's list (Select: the next one).
 	int ship = -1;  // The chosen one.
 	int max_amount = -1;  // The amount goes from 0 to this (-1: the row has none).
+	// The amount is a choice (a destination, a level, a name), 0 too, shown
+	// as `amount_label`.
+	bool amount_choice = false;
+	std::string amount_label;
 	uint16_t captain = 0xFFFF;  // The tavern's captain.
 	std::string act;  // The act button's label, if not the row's.
+	// What each row does, where the rows aren't fixed: the convoy window's
+	// choices (kPrivateConvoy, kPublicConvoy, a convoy to join), kLeaveConvoy,
+	// kDisbandConvoy; the shipyard's pages' items (a ship type, a ship).
+	std::vector<int32_t> codes;
 };
+
+constexpr int32_t kLeaveConvoy = -3;
+constexpr int32_t kDisbandConvoy = -4;
+constexpr int32_t kNoConvoy = -5;
+
+// A game's text in lines, without the empty ones (its codes are cleaned).
+std::vector<std::string> text_lines(const std::string& s) {
+	std::vector<std::string> lines;
+	size_t at = 0;
+	while (at <= s.size()) {
+		const size_t end = std::min(s.find('\n', at), s.size());
+		std::string line = s.substr(at, end - at);
+		const size_t first = line.find_first_not_of(" \t");
+		if (first != std::string::npos) {
+			lines.push_back(line.substr(first));
+		}
+		at = end + 1;
+	}
+	return lines;
+}
+
+// A game's text formatted, or the fallback.
+std::string game_format(GameText id, const std::vector<std::string>& args, const std::string& fallback) {
+	return g_texts ? g_texts->format(id, args) : fallback;
+}
 
 std::vector<std::string> wrap_text(const TextRenderer& text, const std::string& s, int width);
 
@@ -1721,6 +1969,138 @@ int hull_percent(const SavedShip& ship) {
 std::string captain_name(const SaveGame& save, uint16_t captain) {
 	const CaptainInfo c = captain_info(save, captain);
 	return clean_game_text(game_first_name(save, c.first_name) + " " + game_family_name(save, c.family_name));
+}
+
+std::string full_date(uint32_t tick);
+
+// The shipyard's pages 1 to 4 (0x5F8F50): order a ship (0x5F9570, 0x2C),
+// cancel an order (0x5F9B00, 0x2F), upgrade a ship (0x5FA320, 0x0C) and
+// rename one (0x5FABE0, 0x2D/0x2E), with what each lists and costs
+// (player_actions.hpp).
+void shipyard_page_view(const SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	const int player = save.player;
+	static const char* kPages[kShipyardPages][2] = {{"", ""}, {"Construir barco", "Build a ship"}, {"", ""}, {"", ""}, {"", ""}};
+	const GameText titles[kShipyardPages] = {GameText::ShipyardRepair, GameText::ShipyardRepair,
+		GameText::ShipyardCancelContract, GameText::ShipyardUpgradeShip, GameText::ShipyardChangeName};
+	const std::string page = ui.page == 1 ? tr(kPages[1][0], kPages[1][1])
+		: game_text(titles[ui.page], ui.page == 2 ? tr("Cancelar contrato", "Cancel contract")
+								   : ui.page == 3 ? tr("Mejorar barco", "Upgrade ship") : tr("Cambiar nombre", "Change name"));
+	v.title = place_name(ui.let_type) + " - " + page + "   (L/R)";
+	auto clamp_row = [&]() { ui.row = std::clamp(ui.row, 0, std::max(0, int(v.rows.size()) - 1)); };
+	switch (ui.page) {
+	case 1: {  // Order a ship: the four types, what each costs (0x52B2C0).
+		v.act = game_text(GameText::ShipyardExecute, tr("Ejecutar", "Execute"));
+		for (uint32_t type = 0; type < 4; ++type) {
+			int32_t cost = 0;
+			const bool ok = ship_order_cost(save, town, type, player, cost);
+			v.rows.push_back({ship_type_name(int(type)) + (cost > 0 ? ": " + format_money(cost) : std::string()), ok});
+			v.codes.push_back(int32_t(type));
+		}
+		clamp_row();
+		int32_t cost = 0;
+		ship_order_cost(save, town, uint32_t(ui.row), player, cost);
+		v.lines.push_back({game_format(GameText::ShipyardTotalCost, {format_money(cost)},
+							   tr("El coste total asciende a ", "The total cost amounts to ") + format_money(cost) + "."),
+			v.rows[size_t(ui.row)].second ? kTextColor : kDimColor});
+		break;
+	}
+	case 2: {  // The orders of the shipyard (its list [+0x81C]).
+		v.act = game_text(GameText::ShipyardCancelContract, tr("Cancelar contrato", "Cancel contract"));
+		for (const uint16_t s : shipyard_orders(save, town)) {
+			const SavedShip& ship = save.ships[s];
+			std::string label = ship_type_name(ship.type()) + " " + ship.name();
+			if (ship.owner() == player) {
+				label += tr(" (tuyo)", " (yours)");
+			}
+			v.rows.push_back({label, can_cancel_order(save, s)});
+			v.codes.push_back(int32_t(s));
+		}
+		clamp_row();
+		if (v.rows.empty()) {
+			v.lines.push_back({game_text(GameText::ShipyardNoOrders, tr("No se encargaron barcos en este astillero.",
+				"No ships were commissioned at this shipyard.")), kDimColor});
+			break;
+		}
+		const SavedShip& ship = save.ships[size_t(v.codes[size_t(ui.row)])];
+		// [+0x4C]: when it was ordered (the letter 0x14's «Your order of ...»).
+		v.lines.push_back({tr("Encargado el ", "Ordered on ") + full_date(ship.memory.u32(0x4C)), kTextColor});
+		if (ship.owner() == player) {
+			const GameText note = v.rows[size_t(ui.row)].second ? GameText::ShipyardCancelAsk : GameText::ShipyardWorkStarted;
+			for (const std::string& line : text_lines(game_text(note, ""))) {
+				v.lines.push_back({line, note == GameText::ShipyardCancelAsk ? kTextColor : kDimColor});
+			}
+		}
+		break;
+	}
+	case 3: {  // Upgrade: the ships of 0x504AC0's mode 2, the level to reach and its cost (0x52B670).
+		v.act = game_text(GameText::ShipyardUpgradeShip, tr("Mejorar barco", "Upgrade ship"));
+		std::vector<uint16_t> ships = window_ships(save, player, town, ShipListMode::Upgrades);
+		for (const uint16_t s : ships) {
+			const SavedShip& ship = save.ships[s];
+			v.rows.push_back({ship_label(ship) + " - " + game_text(GameText::ShipyardLevel, tr("Nivel", "Level")) + " " +
+					std::to_string(ship.memory.u8(0xF)),
+				true});
+			v.codes.push_back(int32_t(s));
+		}
+		clamp_row();
+		if (v.rows.empty()) {
+			v.lines.push_back({game_text(GameText::ShipyardNoShips, tr("No hay barcos disponibles en el puerto.",
+				"are no further ships available.")), kDimColor});
+			break;
+		}
+		const int ship = v.codes[size_t(ui.row)];
+		const int level = save.ships[size_t(ship)].memory.u8(0xF);
+		v.max_amount = std::max(0, 1 - level);  // To the level + 1 .. 2.
+		v.amount_choice = true;
+		const int target = level + 1 + std::clamp(ui.amount, 0, v.max_amount);
+		v.amount_label = game_text(GameText::ShipyardNewLevel, tr("Nivel", "Level")) + " " + std::to_string(target);
+		ShipUpgrade cost;
+		const bool ok = upgrade_cost(save, town, ship, target, cost);
+		v.rows[size_t(ui.row)].second = ok;
+		v.lines.push_back({game_text(GameText::ShipyardMaterials, tr("Material necesario", "Raw material requirement")) +
+				" (" + game_text(GameText::ShipyardInStock, tr("existencias", "in stock")) + " / " +
+				game_text(GameText::ShipyardBuy, tr("comprar", "buy")) + "):",
+			kTextColor});
+		static constexpr int kWaresUsed[3] = {0xB, 0xF, 0xC};
+		for (size_t k = 0; k < 3; ++k) {
+			v.lines.push_back({ware_name(kWaresUsed[k]) + ": " + std::to_string(cost.s32(0xC + 4 * k)) + " / " +
+					std::to_string(cost.s32(0x18 + 4 * k)) + " (" + format_money(cost.s32(0x24 + 4 * k)) + ")",
+				kTextColor});
+		}
+		v.lines.push_back({game_format(GameText::ShipyardTotalCost, {format_money(cost.s32(0x30))},
+							   tr("El coste total asciende a ", "The total cost amounts to ") + format_money(cost.s32(0x30)) + ".") +
+				"  " + std::to_string(cost.s32(0x34)) + tr(" días", " days"),
+			ok ? kTextColor : kDimColor});
+		break;
+	}
+	default: {  // Rename: the ships of 0x504AC0's mode 0; the name typed or one of the game's.
+		v.act = game_text(GameText::ShipyardChangeName, tr("Cambiar nombre", "Change name"));
+		for (const uint16_t s : window_ships(save, player, town, ShipListMode::Sailors)) {
+			v.rows.push_back({ship_label(save.ships[s]), true});
+			v.codes.push_back(int32_t(s));
+		}
+		clamp_row();
+		if (v.rows.empty()) {
+			v.lines.push_back({game_text(GameText::ShipyardNoShips, tr("No hay barcos disponibles en el puerto.",
+				"are no further ships available.")), kDimColor});
+			break;
+		}
+		v.max_amount = std::max(0, int(save.ship_names.size()) - 1);
+		v.amount_choice = true;
+		const std::string suggested =
+			save.ship_names.empty() ? std::string() : save.ship_names[size_t(std::clamp(ui.amount, 0, v.max_amount))];
+		v.amount_label = "<>";
+		const std::string name = ui.name.empty() ? suggested : ui.name;
+		v.lines.push_back({game_text(GameText::ShipyardNewName, tr("Nuevo nombre", "New name")) + ": " +
+				clean_game_text(name) + (ui.typing ? "_" : ""),
+			kTextColor});
+		v.lines.push_back({ui.typing ? tr("Escribe el nombre; X para acabar.", "Type the name; X to finish.")
+									 : tr(BTN_SQUARE " escribir otro;  Izq./Der.: los del juego", BTN_SQUARE " type another;  Left/Right: the game's"),
+			kDimColor});
+		v.rows[size_t(ui.row)].second = !name.empty();
+		break;
+	}
+	}
 }
 
 PlaceView place_view(const SaveGame& save, int town, PlaceUi& ui) {
@@ -1790,8 +2170,14 @@ PlaceView place_view(const SaveGame& save, int town, PlaceUi& ui) {
 		break;
 	}
 	case Place::Shipyard: {
+		// The shipyard's pages (the repair dock only repairs): L and R.
+		ui.page = ui.let_type == 0x01 ? (ui.page % kShipyardPages + kShipyardPages) % kShipyardPages : 0;
+		if (ui.page != 0) {
+			shipyard_page_view(save, town, ui, v);
+			break;
+		}
 		v.act = game_text(GameText::ShipyardRepair, tr("Reparar", "Repair"));
-		v.title = place_name(ui.let_type) + " - " + v.act;
+		v.title = place_name(ui.let_type) + " - " + v.act + (ui.let_type == 0x01 ? "   (L/R)" : "");
 		const std::vector<uint16_t> ships = window_ships(save, player, town, ShipListMode::Repairs);
 		v.lines.push_back({game_text(GameText::ShipyardRepairsHere, tr("Encargos de reparación en este astillero:",
 			"For repairs at this shipyard")), kTextColor});
@@ -1847,9 +2233,67 @@ PlaceView place_view(const SaveGame& save, int town, PlaceUi& ui) {
 					  docked && ship.sailors() > 0},
 			{capitalized(game_text(GameText::ShipDismissCaptain, tr("Despedir capitán", "Dismiss captain"))),
 				can_dismiss_captain(save, v.ship)}};
-		ui.row = std::clamp(ui.row, 0, 1);
+		v.codes = {0, 0};
+		// The convoys (the ship's panel: the convoy window 0x40C170, 0x494DC0),
+		// the ship alone selected.
+		const uint16_t convoy = ship.convoy();
+		if (convoy < save.globals.u16(global::kShips + 0xF6) && convoy < save.convoys.size()) {
+			const bool guide = save.convoys[convoy].u16(0x10) == v.ship;
+			// The %s: the guide's name (0x494EDE) or the ship's.
+			const uint16_t guide_ship = save.convoys[convoy].u16(0x10);
+			const std::vector<std::string> ask = text_lines(game_format(guide ? GameText::ConvoyDisbandAsk : GameText::ConvoyLeaveAsk,
+				{guide_ship < save.ships.size() && guide ? save.ships[guide_ship].name() : ship.name()},
+				guide ? tr("Deshacer convoy\n¿Quieres separar los barcos del convoy?", "Disband convoy\nShould the convoy be disbanded?")
+					  : tr("Abandonar convoy\n¿Quieres que tu barco abandone el convoy?", "Leave convoy\nShould the ship leave the convoy?")));
+			v.rows.push_back({ask.empty() ? std::string() : ask[0], true});
+			v.codes.push_back(guide ? kDisbandConvoy : kLeaveConvoy);
+			if (ui.row == 2) {
+				for (size_t k = 1; k < ask.size(); ++k) {
+					v.lines.push_back({ask[k], kTextColor});
+				}
+			}
+		} else {
+			const std::vector<int32_t> choices = convoy_choices(save, {uint16_t(v.ship)});
+			for (const int32_t c : choices) {
+				std::string label;
+				if (c == kPrivateConvoy) {
+					label = game_text(GameText::ConvoyFormPrivate, tr("Formar convoy privado", "Form private convoy"));
+				} else if (c == kPublicConvoy) {
+					label = game_text(GameText::ConvoyFormPublic, tr("Formar convoy público", "Form public convoy"));
+				} else {
+					const uint16_t guide = save.convoys[size_t(c)].u16(0x10);
+					const std::string name = guide < save.ships.size() ? save.ships[guide].name() : std::string("?");
+					label = game_format(GameText::ConvoyJoin, {name}, tr("Unirse al convoy ", "Join convoy ") + name);
+				}
+				v.rows.push_back({label, true});
+				v.codes.push_back(c);
+			}
+			if (choices.empty()) {
+				v.rows.push_back({game_text(GameText::ConvoyFormPrivate, tr("Formar convoy privado", "Form private convoy")), false});
+				v.codes.push_back(kNoConvoy);
+				if (ui.row == 2) {
+					const std::vector<std::string> why = text_lines(game_text(GameText::ConvoyCannotForm,
+						tr("No es posible formar un convoy\nNo has seleccionado una nave capitana apropiada.",
+							"Convoy cannot be formed\nYou have not chosen a suitable convoy leader.")));
+					for (const std::string& line : why) {
+						v.lines.push_back({line, kDimColor});
+					}
+				}
+			}
+		}
+		ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
 		if (ui.row == 0 && docked) {
 			v.max_amount = ship.sailors();
+		}
+		if (v.codes[size_t(ui.row)] == kPublicConvoy) {
+			// Its destination (0x40CA8E): the towns but this one (and, with a big
+			// ship, those that take them).
+			const std::vector<uint8_t> towns = public_convoy_towns(save, {uint16_t(v.ship)});
+			v.max_amount = std::max(0, int(towns.size()) - 1);
+			v.amount_choice = true;
+			const int k = std::clamp(ui.amount, 0, v.max_amount);
+			v.amount_label = towns.empty() ? "-" : window_town_name(save, towns[size_t(k)]);
+			v.lines.push_back({tr("Destino: ", "Destination: ") + v.amount_label, kTextColor});
 		}
 		break;
 	}
@@ -1948,9 +2392,10 @@ void draw_place(SDL_Renderer* renderer, TextRenderer& text, const PlaceUi& ui, c
 		draw_button(renderer, text, layout.minus_button, "-");
 		draw_button(renderer, text, layout.plus_button, "+");
 		const SDL_Rect box = layout.amount_box();
-		draw_button(renderer, text, box, std::to_string(ui.amount));
+		draw_button(renderer, text, box, v.amount_choice ? v.amount_label : std::to_string(ui.amount));
 	}
-	const bool can = ui.row < int(v.rows.size()) && v.rows[size_t(ui.row)].second && (v.max_amount < 0 || ui.amount > 0);
+	const bool can = ui.row < int(v.rows.size()) && v.rows[size_t(ui.row)].second &&
+		(v.max_amount < 0 || v.amount_choice || ui.amount > 0);
 	if (ui.row < int(v.rows.size())) {
 		draw_button(renderer, text, layout.act_button,
 			std::string(BTN_CROSS " ") + (v.act.empty() ? v.rows[size_t(ui.row)].first : v.act));
@@ -1962,12 +2407,128 @@ void draw_place(SDL_Renderer* renderer, TextRenderer& text, const PlaceUi& ui, c
 	}
 }
 
+// The operations a window sends, queued in their order and run at once (as
+// the game runs its queue before the next tick).
+void run_operations(SaveGame& save, Sailing* sailing, const std::vector<OperationBytes>& ops) {
+	for (const OperationBytes& op : ops) {
+		if (sailing) {
+			queue_operation(save, op);
+		} else {
+			run_operation(save, nullptr, op.data());
+		}
+	}
+	if (sailing) {
+		run_queued_operations(save, *sailing);
+	}
+}
+
+// The ship's window's convoy rows (the convoy window's choices, or leaving
+// and disbanding), with the ship alone selected.
+void ship_convoy_act(SaveGame& save, Sailing* sailing, PlaceUi& ui, const PlaceView& v) {
+	const int32_t code = v.codes[size_t(ui.row)];
+	const uint16_t ship = uint16_t(v.ship);
+	std::vector<OperationBytes> ops;
+	uint8_t destination = 0;
+	if (code == kPrivateConvoy || code == kPublicConvoy) {
+		if (code == kPublicConvoy) {
+			const std::vector<uint8_t> towns = public_convoy_towns(save, {ship});
+			if (towns.empty()) {
+				return;
+			}
+			destination = towns[size_t(std::clamp(ui.amount, 0, int(towns.size()) - 1))];
+		}
+		ops = create_convoy_operations(save, {ship}, true, code == kPublicConvoy, destination);
+	} else if (code >= 0) {
+		ops = join_convoy_operations(save, uint32_t(code), {ship});
+	} else if (code == kLeaveConvoy || code == kDisbandConvoy) {
+		ops = {leave_convoy_operation(save, ship, false)};
+	}
+	run_operations(save, sailing, ops);
+	const uint16_t convoy = save.ships[ship].convoy();
+	const bool in_convoy = convoy < save.globals.u16(global::kShips + 0xF6);
+	const std::string name = save.ships[ship].name();
+	if (code == kPublicConvoy && in_convoy) {
+		std::string text;
+		for (const std::string& line : text_lines(game_format(GameText::ConvoyPublicLeaving,
+				 {convoy_label(save, convoy), "5", window_town_name(save, destination)},
+				 tr("El convoy público zarpará en 5 días hacia ", "The public convoy will leave in 5 days for ") +
+					 window_town_name(save, destination) + "."))) {
+			text += (text.empty() ? "" : " ") + line;
+		}
+		ui.message = text;
+	} else if ((code == kPrivateConvoy || code >= 0) && in_convoy) {
+		ui.message = g_spanish ? "El " + name + " va ahora en convoy." : "The " + name + " is in a convoy now.";
+	} else if ((code == kLeaveConvoy || code == kDisbandConvoy) && !in_convoy) {
+		ui.message = code == kDisbandConvoy ? tr("El convoy se ha deshecho.", "The convoy is disbanded.")
+											: (g_spanish ? "El " + name + " ha dejado el convoy." : "The " + name + " has left the convoy.");
+	} else {
+		ui.message = tr("No se ha podido.", "It couldn't be done.");
+	}
+	ui.amount = 0;
+}
+
+// The shipyard's pages 1 to 4: what the selected row sends.
+void shipyard_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
+	const int32_t code = v.codes[size_t(ui.row)];
+	const int32_t money = save.merchants[size_t(save.player)].money();
+	switch (ui.page) {
+	case 1: {
+		const size_t orders = shipyard_orders(save, town).size();
+		run_operations(save, sailing, {order_ship_operation(uint32_t(code), uint32_t(save.player), uint32_t(town))});
+		ui.message = shipyard_orders(save, town).size() > orders
+			? ship_type_name(code) + game_text(GameText::ShipyardOrdered, tr(": contrato de construcción aceptado.", " was ordered."))
+			: tr("No se ha podido encargar.", "It couldn't be ordered.");
+		break;
+	}
+	case 2: {
+		const size_t orders = shipyard_orders(save, town).size();
+		run_operations(save, sailing, {cancel_order_operation(uint32_t(save.player), uint32_t(town), uint32_t(code))});
+		ui.message = shipyard_orders(save, town).size() < orders
+			? (g_spanish ? "Contrato cancelado: te devuelven " : "Contract cancelled: you get back ") +
+				format_money(save.merchants[size_t(save.player)].money() - money) + tr(" monedas.", " coins.")
+			: tr("No se ha podido cancelar.", "It couldn't be cancelled.");
+		ui.row = 0;
+		break;
+	}
+	case 3: {
+		const int level = save.ships[size_t(code)].memory.u8(0xF) + 1 + std::max(0, ui.amount);
+		run_operations(save, sailing, {upgrade_operation(uint32_t(code), uint32_t(std::min(level, 2)))});
+		ui.message = save.ships[size_t(code)].status() == 7
+			? (g_spanish ? "El " + save.ships[size_t(code)].name() + " entra en el astillero."
+						 : "The " + save.ships[size_t(code)].name() + " goes into the shipyard.")
+			: tr("No se ha podido mejorar.", "It couldn't be upgraded.");
+		ui.amount = 0;
+		ui.row = 0;
+		break;
+	}
+	default: {
+		std::string name = ui.name;
+		if (name.empty() && !save.ship_names.empty()) {
+			name = save.ship_names[size_t(std::clamp(ui.amount, 0, int(save.ship_names.size()) - 1))];
+		}
+		run_operations(save, sailing, rename_operations(uint32_t(code), name));
+		ui.message = (g_spanish ? "Ahora se llama " : "Now it is called ") + save.ships[size_t(code)].name() + ".";
+		ui.name.clear();
+		break;
+	}
+	}
+}
+
 // X or the act button: what the selected row sends, as the game's window
 // builds it, run at once (the queue, as the market does).
 void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
 	ui.message_until = app_ticks() + kMessageTime;
-	if (ui.row >= int(v.rows.size()) || !v.rows[size_t(ui.row)].second || (v.max_amount >= 0 && ui.amount <= 0)) {
+	if (ui.row >= int(v.rows.size()) || !v.rows[size_t(ui.row)].second ||
+		(v.max_amount >= 0 && !v.amount_choice && ui.amount <= 0)) {
 		ui.message = tr("Ahora no se puede.", "It can't be done now.");
+		return;
+	}
+	if (ui.open == Place::Ship && ui.row >= 2) {
+		ship_convoy_act(save, sailing, ui, v);
+		return;
+	}
+	if (ui.open == Place::Shipyard && ui.page != 0) {
+		shipyard_act(save, sailing, town, ui, v);
 		return;
 	}
 	std::optional<OperationBytes> op;
@@ -3384,6 +3945,7 @@ int main(int argc, char** argv) {
 	auto view = std::make_unique<TownView>(renderer, *archive);
 	std::unique_ptr<SeaMapView> sea;  // Se carga la primera vez que se abre.
 	std::vector<std::string> town_names = load_town_names(*archive);
+	g_town_names = &town_names;
 	std::unique_ptr<TextRenderer> text;
 	std::unique_ptr<TextRenderer> small_text;
 	if (auto font = FontAtlas::load(*archive, kUiFont, kUiFontHeight)) {
@@ -3803,6 +4365,9 @@ int main(int argc, char** argv) {
 		// El mercado solo existe en las ciudades de la partida, con el jugador cargado.
 		const bool trading = market.open && selection.mode == Mode::Saved && save.player >= 0 && small_text;
 		const int town_index = int(selection.saved_index);
+		if (trading) {
+			fit_market_mode(save, town_index, market);  // A convoy chosen or no longer there (Select, the operations).
+		}
 		// The Hanse panel, in the save's towns like the market (never both open).
 		const bool in_hanse = hanse.open && !trading && selection.mode == Mode::Saved && save.player >= 0 && small_text;
 		const HanseView hanse_now = in_hanse ? hanse_view(save, town_index, hanse.page) : HanseView();
@@ -3811,6 +4376,10 @@ int main(int argc, char** argv) {
 		const bool in_place = place.open != Place::None && !trading && !in_hanse && selection.mode == Mode::Saved &&
 			save.player >= 0 && small_text;
 		const PlaceView place_now = in_place ? place_view(save, town_index, place) : PlaceView();
+		if (!in_place && place.typing) {
+			place.typing = false;
+			SDL_StopTextInput();
+		}
 		const bool in_menu = menu.open() && small_text;
 		// The mailbox, over the town or the sea map.
 		const bool in_mail = mail.open && has_save && save.player >= 0 && small_text &&
@@ -3847,7 +4416,31 @@ int main(int argc, char** argv) {
 			const int rows = int(place_now.rows.size());
 			auto add_amount = [&](int step) {
 				place.amount = std::clamp(place.amount + step, 0, std::max(0, place_now.max_amount));
+				place.name.clear();  // The rename page: back to the game's names.
 			};
+			const bool pages = place.open == Place::Shipyard && place.let_type == 0x01;
+			const bool renaming = pages && place.page == 4;
+			if (place.typing) {
+				// Writing a ship's name: X or Circle end it.
+				if (button == SDL_CONTROLLER_BUTTON_A || button == SDL_CONTROLLER_BUTTON_B) {
+					place.typing = false;
+					SDL_StopTextInput();
+				}
+				return true;
+			}
+			if (pages && (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) {
+				place.page += button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1;
+				place.page = (place.page + kShipyardPages) % kShipyardPages;
+				place.row = 0;
+				place.amount = 0;
+				place.name.clear();
+				return true;
+			}
+			if (renaming && button == SDL_CONTROLLER_BUTTON_X) {
+				place.typing = true;
+				SDL_StartTextInput();
+				return true;
+			}
 			switch (button) {
 			case SDL_CONTROLLER_BUTTON_DPAD_UP:
 			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
@@ -3993,7 +4586,7 @@ int main(int argc, char** argv) {
 		};
 		// L and R in the market: the next mode, where the player has an office.
 		auto market_mode_step = [&](int step) {
-			const std::vector<int> modes = market_modes(save, town_index);
+			const std::vector<int> modes = market_modes(save, town_index, market);
 			if (modes.size() < 2) {
 				return false;
 			}
@@ -4306,7 +4899,27 @@ int main(int argc, char** argv) {
 					break;
 				}
 				break;
+			case SDL_TEXTINPUT:
+				// A ship's name being written (the shipyard's rename page), in Latin-1
+				// as the game's names; 20 characters at most.
+				if (place.typing) {
+					place.name += utf8_to_latin1(event.text.text);
+					if (place.name.size() > 20) {
+						place.name.resize(20);
+					}
+				}
+				break;
 			case SDL_KEYDOWN:
+				if (place.typing) {
+					const SDL_Keycode key = event.key.keysym.sym;
+					if (key == SDLK_BACKSPACE && !place.name.empty()) {
+						place.name.pop_back();
+					} else if (key == SDLK_RETURN || key == SDLK_ESCAPE) {
+						place.typing = false;
+						SDL_StopTextInput();
+					}
+					break;
+				}
 				if (in_menu) {
 					const SDL_Keycode key = event.key.keysym.sym;
 					menu_button(key == SDLK_UP ? SDL_CONTROLLER_BUTTON_DPAD_UP
@@ -4352,6 +4965,7 @@ int main(int argc, char** argv) {
 						: key == SDLK_c || key == SDLK_RETURN ? SDL_CONTROLLER_BUTTON_A
 						: key == SDLK_ESCAPE ? SDL_CONTROLLER_BUTTON_B
 						: key == SDLK_TAB ? SDL_CONTROLLER_BUTTON_BACK
+						: key == SDLK_v || key == SDLK_n ? SDL_CONTROLLER_BUTTON_X
 						: SDL_CONTROLLER_BUTTON_INVALID;
 					if (button != Uint8(SDL_CONTROLLER_BUTTON_INVALID) && place_button(button)) {
 						break;
@@ -4538,10 +5152,24 @@ int main(int argc, char** argv) {
 					const int y = touch_start.y;
 					const int first = std::max(0, place.row - PlaceLayout::kMaxRows + 1);
 					const int row = layout.row_at(x, y, int(place_now.rows.size()) - first);
-					if (place_now.max_amount >= 0 && inside(layout.minus_button, x, y)) {
+					const bool pages = place.open == Place::Shipyard && place.let_type == 0x01;
+					if (place.typing) {
+						place.typing = false;  // A tap ends the writing.
+						SDL_StopTextInput();
+					} else if (pages && y >= layout.panel.y && y < layout.rows_y && x >= layout.panel.x &&
+						x < layout.panel.x + layout.panel.w) {
+						// The title: the page before (its left half) or after.
+						place.page += x < layout.panel.x + layout.panel.w / 2 ? -1 : 1;
+						place.page = (place.page + kShipyardPages) % kShipyardPages;
+						place.row = 0;
+						place.amount = 0;
+						place.name.clear();
+					} else if (place_now.max_amount >= 0 && inside(layout.minus_button, x, y)) {
 						place.amount = std::max(0, place.amount - 1);
+						place.name.clear();
 					} else if (place_now.max_amount >= 0 && inside(layout.plus_button, x, y)) {
 						place.amount = std::min(place_now.max_amount, place.amount + 1);
+						place.name.clear();
 					} else if (inside(layout.act_button, x, y)) {
 						place_act(save, sailing.get(), town_index, place, place_now);
 					} else if (row >= 0 && first + row != place.row) {

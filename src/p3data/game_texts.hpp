@@ -237,6 +237,35 @@ enum class GameText {
 	Office,  // «Office» («Oficina»)
 	ShipWeapons,  // «Ship's weapons» («Armas de barco»; the armoury's, 0x6AA33C)
 	HandWeapons,  // «Hand weapons» («Armas de mano»)
+	// The convoy window (0x40C170, 0x494DC0; 0x699xxx in the English exe,
+	// 0xAE4 lower in the Spanish one).
+	ConvoyFormPrivate,  // «Form private convoy»
+	ConvoyFormPublic,  // «Form public convoy»
+	ConvoyJoin,  // «Join convoy %s»
+	ConvoyDisbandAsk,  // «Disband convoy ... Should the convoy %s be disbanded?» (with the window's codes)
+	ConvoyLeaveAsk,  // «Leave convoy ... Should the ship %s leave the convoy?»
+	ConvoyCannotForm,  // «Convoy cannot be formed ... You have not chosen a suitable convoy leader...»
+	ConvoyPublicLeaving,  // «The public convoy %s will be leaving in %u days with the destination %s.»
+	// The shipyard's other pages (0x6A5CB0.. in the English exe, 0xC8 higher in the Spanish one).
+	ShipyardCancelContract,  // «Cancel contract»
+	ShipyardUpgradeShip,  // «Upgrade ship»
+	ShipyardChangeName,  // «Change name»
+	ShipyardMaterials,  // «Raw material requirement»
+	ShipyardInStock,  // «in stock»
+	ShipyardBuy,  // «buy»
+	ShipyardCosts,  // «Costs»
+	ShipyardTotalCost,  // «Total cost amounts to %i» (with the window's codes)
+	ShipyardOrdered,  // « was ordered.»
+	ShipyardCompletion,  // «Completion is on »
+	ShipyardTrader,  // «Trader»
+	ShipyardType,  // «Type»
+	ShipyardNewName,  // «New name»
+	ShipyardCancelAsk,  // «...The raw materials and 10% of wage costs will be retained!...cancel this order?»
+	ShipyardWorkStarted,  // «Note ... Work is already being done on this ship.»
+	ShipyardForUpgrade,  // «For an upgrade at this shipyard»
+	ShipyardNoOrders,  // «No ships were commissioned at this shipyard.»
+	ShipyardNewLevel,  // «New upgrade level»
+	ShipyardLevel,  // «Level»
 	Count
 };
 

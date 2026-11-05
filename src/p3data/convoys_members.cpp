@@ -28,6 +28,7 @@
 // barcos y comerciantes cambiados al azar (agents/members/synth_members.py).
 
 #include <cmath>
+#include <cstring>
 
 #include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
@@ -507,6 +508,182 @@ void Sailing::fn_50a3d0(uint16_t convoy) {
 	c.u16(0x8) = free;
 	g.u16(kConvoyFree) = convoy;
 	c.u16(0x12) = 0xFF;
+}
+
+// --- The player's convoy operations (docs/formats/operations.md) ---
+
+namespace {
+
+// 0x673660: the sailors a ship needs to join a convoy open to others, by type.
+constexpr uint8_t kJoinSailors[4] = {5, 8, 10, 12};
+// 0x672CC8: the first piece's firepower (9); an expedition of event 0x34 asks
+// for 8 times as much (0x503A9A).
+constexpr int32_t kFirstFirepower = 9;
+
+// 0x5039F0 (on the convoy, the ship): whether the ship may join the convoy in
+// the state 9 or 0xA of an event ([+0x2]) of the types 0x34, 0x23 or 0x24 in
+// its phase 2 ([+0x15]) for the town [+0x14]: the convoy in a town, the ship
+// in that town, docked (state ≤ 1) and, for 0x34, with a firepower [+0x120] of
+// 72 at least.
+bool fn_5039f0(const SaveGame& save, const GameMemory<0x3C>& c, uint32_t ship) {
+	if (c.u16(0x1C) >= town_count(save) || (c.u16(0x12) != 9 && c.u16(0x12) != 0xA) ||
+		c.u16(0x2) >= save.globals.u16(0x6DD748) || c.u16(0x2) >= save.events.size() || uint16_t(ship) >= ship_count(save)) {
+		return false;
+	}
+	const GameMemory<0x18>& event = save.events[c.u16(0x2)];
+	const uint16_t type = event.u16(0x6);
+	if ((type != 0x34 && type != 0x23 && type != 0x24) || event.u8(0x15) != 2) {
+		return false;
+	}
+	const ShipMemory& s = save.ships[uint16_t(ship)].memory;
+	if (s.u8(0x39) != event.u8(0x14) || s.u16(0x134) > 1) {
+		return false;
+	}
+	return type != 0x34 || s.s32(0x120) >= kFirstFirepower * 8;
+}
+
+// 0x4F8D20 (on the merchant): his reputation goes up 0.1 in every town with
+// the bit 0x40 of [0x2C8], from the last town down.
+void fn_4f8d20(SaveGame& save, MerchantMemory& m) {
+	for (uint32_t k = town_count(save); int32_t(k) > 0; --k) {
+		if (save.towns[k - 1].memory.u8(0x2C8) & 0x40) {
+			float& reputation = m.f32(0x120 + 12 * size_t(k - 1));
+			reputation = float(double(reputation) + double(k0_1));
+		}
+	}
+}
+
+}  // namespace
+
+// 0x509D10 (ships object: member, ship): the ship joins the convoy of the
+// ship `member`. A convoy of one owner ([+0x14] & 2) takes only his ships;
+// one open to others takes a ship with its sailors (0x673660) and a fifth of
+// its hull at least. Not with a ship in a convoy already, nor into a convoy
+// with the bit 0x10, nor a big ship (type ≥ 2) into one with the bit 4 or to
+// a destination [+0x1F] with the bit 1 of [0x2C8] (no big ships); the ship in
+// the convoy's town, docked (state 0, or 1 waiting no longer than the convoy
+// [+0x16]); a convoy in the state 9 asks 0x5039F0. The ship leaves the
+// docked list, goes first in the convoy (its [+0x3C] |= 0x60, the orders
+// [+0x136] & 0xFC), without route (0x516840) and out of the list by x
+// (0x50D040); the convoy again (0x501BE0) with its notices [+0x18] all set.
+// In the states 9 and 0xA (an event's convoy): [+0x138] 0, 0x4F8D20 on the
+// owner, and the owner's byte in the event's [+0x8..+0xF] to 0xFF.
+void Sailing::fn_509d10(uint32_t member, uint32_t ship) {
+	const uint16_t ships = ship_count(save_);
+	if (member >= ships || ship >= ships) {
+		return;
+	}
+	const ShipMemory& a = save_.ships[member].memory;
+	ShipMemory& s = save_.ships[ship].memory;
+	const uint16_t convoy = a.u16(0x8);
+	if (convoy >= convoy_count(save_)) {
+		return;
+	}
+	GameMemory<0x3C>& c = save_.convoys[convoy];
+	const uint16_t flags = c.u16(0x14);
+	if ((flags & 2) == 2) {
+		if (c.u8(0x0) != s.u8(0x0)) {
+			return;
+		}
+	} else if (s.u16(0x40) < kJoinSailors[s.u8(0xE) & 3] || int32_t(uint32_t(s.s32(0x18)) * 5u) < s.s32(0x14)) {
+		return;
+	}
+	if (s.u16(0x8) < convoy_count(save_) || (flags & 0x10) || ((flags & 4) && s.u8(0xE) >= 2) ||
+		uint16_t(s.u8(0x39)) != c.u16(0x1C)) {
+		return;
+	}
+	if ((s.u8(0xE) & 2) && c.u8(0x1F) < town_count(save_) && (save_.towns[c.u8(0x1F)].memory.u8(0x2C8) & 1)) {
+		return;
+	}
+	const uint16_t state = s.u16(0x134);
+	if (state != 0 && (state != 1 || s.u16(0x138) > c.u16(0x16))) {
+		return;
+	}
+	if (c.u16(0x12) == 9 && !fn_5039f0(save_, c, ship)) {
+		return;
+	}
+	uint16_t* link = &save_.globals.u16(kDockedHead);
+	while (*link != ship) {
+		if (*link >= ships) {
+			return;
+		}
+		link = &save_.ships[*link].memory.u16(0x6);
+	}
+	*link = s.u16(0x6);
+	s.u16(0x6) = c.u16(0xA);
+	c.u16(0xA) = uint16_t(ship);
+	s.u16(0x8) = convoy;
+	s.u8(0x3C) |= 0x60;
+	s.u8(0x136) &= 0xFC;
+	clear_ship_route(save_.ships[ship]);  // 0x516840 (with 0x44F940 for the player's ship: the sea map, UI)
+	// 0x44F940 again for the player's ship (the sea map, UI).
+	unlink_x(uint16_t(ship));  // 0x50D040
+	tick::ship_ai_detail::fn_501be0(save_, convoy);
+	c.u32(0x18) = 0xFFFFFFFF;
+	if (c.u16(0x12) == 9 || c.u16(0x12) == 0xA) {
+		s.u16(0x138) = 0;
+		if (s.u8(0x0) < save_.merchants.size()) {
+			fn_4f8d20(save_, save_.merchants[s.u8(0x0)].memory);  // 0x5303C0 doesn't look.
+		}
+		if (c.u16(0x2) < save_.events.size()) {  // 0x4D8DB0 doesn't look either.
+			GameMemory<0x18>& event = save_.events[c.u16(0x2)];
+			for (size_t k = 0; k < 8; ++k) {
+				if (event.u8(0x8 + k) == s.u8(0x0)) {
+					event.u8(0x8 + k) = 0xFF;
+					break;
+				}
+			}
+		}
+	}
+}
+
+// 0x539270 (operation 0x17): {0x17, ship}: a ship in a convoy leaves it
+// (0x509F80); its guide disbands the convoy (0x50A580). Then the port scene
+// is redrawn if it shows the convoy's town (0x6141D0 on 0x6E6220, UI).
+void Sailing::fn_539270(const uint8_t* operation) {
+	uint32_t ship;
+	std::memcpy(&ship, operation + 4, 4);
+	if (ship >= ship_count(save_)) {
+		return;
+	}
+	const uint16_t convoy = save_.ships[ship].memory.u16(0x8);
+	if (convoy >= convoy_count(save_)) {
+		return;
+	}
+	if (save_.convoys[convoy].u16(0x10) == ship) {
+		fn_50a580(convoy);
+	} else {
+		fn_509f80(uint16_t(ship));
+	}
+}
+
+// 0x539CF0 (operation 0x20): {0x20, convoy, destination (its low byte), u16
+// days}: a docked convoy (state 0) in a town, to another destination, waits
+// (state 1) the days for ships to go there: its [+0x1F], its [+0x16] = days
+// << 8, and each of its ships waits as long ([+0x3C] |= 0x20, [+0x138],
+// state 1).
+void Sailing::fn_539cf0(const uint8_t* operation) {
+	uint32_t convoy, destination;
+	std::memcpy(&convoy, operation + 4, 4);
+	std::memcpy(&destination, operation + 8, 4);
+	if (convoy >= convoy_count(save_) || destination >= town_count(save_)) {
+		return;
+	}
+	GameMemory<0x3C>& c = save_.convoys[convoy];
+	if (c.u8(0x1F) == destination || c.u16(0x12) != 0 || c.u16(0x1C) >= town_count(save_)) {
+		return;
+	}
+	c.u8(0x1F) = operation[8];
+	uint16_t days;
+	std::memcpy(&days, operation + 0xC, 2);
+	c.u16(0x16) = uint16_t(days << 8);
+	c.u16(0x12) = 1;
+	for (uint32_t i = c.u16(0xA); i < ship_count(save_); i = save_.ships[i].memory.u16(0x6)) {
+		ShipMemory& m = save_.ships[i].memory;
+		m.u16(0x3C) |= 0x20;
+		m.u16(0x138) = c.u16(0x16);
+		m.u16(0x134) = 1;
+	}
 }
 
 }  // namespace p3::data

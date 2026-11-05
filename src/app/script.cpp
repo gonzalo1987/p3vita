@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #ifndef __vita__
@@ -83,6 +84,7 @@ const char kStepsHelp[] =
 	"  days:N       N frames of fast forward, one game day (256 ticks) each\n"
 	"  tap:X:Y      touch the screen at (X, Y) and let go\n"
 	"  cell:X:Y     center the camera on the town's cell (X, Y)\n"
+	"  text:TEXT    type TEXT (an SDL_TEXTINPUT, as the keyboard gives it)\n"
 	"  shot:FILE    save the screen as a PNG\n";
 
 std::unique_ptr<InputScript> InputScript::parse(const std::string& steps, std::string& error) {
@@ -104,6 +106,9 @@ std::unique_ptr<InputScript> InputScript::parse(const std::string& steps, std::s
 		const std::string rest = colon == std::string::npos ? "" : text.substr(colon + 1);
 		if (head == "shot" && colon != std::string::npos && !rest.empty()) {
 			step.kind = Kind::Shot;
+			step.file = rest;
+		} else if (head == "text" && colon != std::string::npos && !rest.empty()) {
+			step.kind = Kind::Text;
 			step.file = rest;
 		} else if ((head == "frames" || head == "days") && colon != std::string::npos) {
 			step.kind = head == "frames" ? Kind::Frames : Kind::Days;
@@ -204,6 +209,14 @@ void InputScript::start_frame() {
 		look_x_ = step.x;
 		look_y_ = step.y;
 		break;
+	case Kind::Text: {
+		// Typed text (as SDL's keyboard, or the Vita's, gives it).
+		SDL_Event event{};
+		event.type = SDL_TEXTINPUT;
+		std::strncpy(event.text.text, step.file.c_str(), sizeof(event.text.text) - 1);
+		SDL_PushEvent(&event);
+		break;
+	}
 	}
 	if (++progress_ >= length) {
 		progress_ = 0;

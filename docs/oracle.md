@@ -1386,6 +1386,61 @@ the player's kontor drawn and pointed at, the office's market (mode 2) buying
 5 barrels of beer, the ship taking them (mode 0) and giving 1 back, the mode
 5's rows; the world 7 days in the 12 saves, 0 different.
 
+## The player's actions: the shipyard and the convoys (2026-11-05)
+
+The third batch of the player's actions (`ENCARGO_ACCIONES_JUGADOR_3.md`, item 1):
+the convoys 0x15 (0x509B90, already there), 0x16, 0x17 (0x539270), 0x18 (0x509D10
+with 0x5039F0 and 0x4F8D20), 0x1C and 0x20 (0x539CF0) in `convoys_members.cpp` and
+`simulation.cpp`; a convoy's trade 0x19, 0x1A (0x539300) and 0x1B (0x5396B0) in
+`trade.cpp`; the shipyard's 0x0C (0x508660 with 0x52B670 and 0x52AAD0), 0x2D, 0x2E
+(0x53CCE0 with the names object's 0x512D40, 0x512FC0, 0x512B20) and 0x2F (0x52B110)
+in `town_tick/ship_operations.cpp`; their windows' bytes and what they offer in
+`player_actions.cpp` (`player_ops create-convoy`, `join-convoy`, `leave-convoy`,
+`convoy-buy`, `convoy-sell`, `office-to-convoy`, `convoy-to-office`, `order-ship`,
+`cancel-order`, `upgrade`, `rename`). All in `OPERATIONS`; the letter 0x14 of
+0x52B110 (0x52B288) in `MAIL_CALLS`; the port scene 0x6141D0 (0x16, 0x17) in `QUIET`.
+
+New for the oracle:
+- two copiers in the sentinel page, as `WINDOW_SHIPS`: `CONVOY_CHOICES` (the game's
+  convoy window 0x40C170 on a window of its own, with the ship alone selected: its
+  choices into the scratch globals) and `CONVOY_SUMMARY` (the market window's
+  0x4AA4A0 in its mode 4, its redraw 0x4AA2A0 skipped: the convoy's units, what it
+  holds and its capacity); tick_probe's probes make p3vita's (`convoy_choices`,
+  `market_convoy_*`), and a probe of 0x52B670 (its 0x44 bytes in the scratch globals);
+- the region `SN`: the ship names the players write (the names object's second list,
+  on the heap: its buffer up to the offset of its last name), so that tick_probe
+  rebuilds `SaveGame::player_ship_names` before each call; without it p3vita's
+  list went out of step with the game's and the names object's buffer size
+  ([0x6DDB80]) came out different.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `convoy_ops` | the player's first ship in port made fit to guide; the convoy window's choices as loaded, fit, with and without the guild's licence (the town with and without the bit 0x80); the viewer's bytes: a private convoy (and again: in one already), an AI ship into it (one owner), another ship of his into it, out of it (0x17), the guide disbanding it; a public convoy to another town and, into it, a ship with few sailors, a sixth of its hull, waiting longer, in another town, the bit 0x10, a big ship with the bit 4 and to a town of no big ships, an AI ship; the convoy of an event (states 9 and 0xA, events 0x23, 0x34, 0x24 in the phases 1 and 2: 0x5039F0, 0x4F8D20, the event's merchant byte); 0x16 and 0x17 with things out; 0x20 to another town, the same, waiting already, a town out, the convoy's town out, a convoy out; 0x1C | 1, 3, 5, 7 | 39–40 operations and 11 choices equal; 42 of 42 targets (34 in save 1, where the player has one ship) |
+| `convoy_trade` | a private convoy of the player's ships (one in save 1) and his office; the viewer's bytes from the game's own summary of the convoy (0x4AA4A0): buying and selling beer and grain with each step, office to convoy and back; by hand: an AI ship chained in (it doesn't trade), more than the room and the store, short of money (900, 5000, 0, −100), a ware, convoy and merchant out, another town; 0x1B both ways, the first ship's room under a load and for one load, the office empty, no office | 1, 3, 5, 7 | 53–57 operations and 65–67 summaries equal; 25 of 25 targets |
+| `shipyard_ops` | two ships ordered (0x2C, the viewer's bytes) and cancelled (0x2F: refunded, its work started, another merchant's, not ordered, a town out); the upgrade list (0x504AC0 mode 2); 0x52B670 for 1, 2, 3 and 0 levels, with his own timber, pitch and tools, the town without timber, short of money, at the level 2, of no merchant, a ship out; 0x0C to the levels 1 and 2 and with things out; rename: a short name, a long one (0x2E onto the last name), a game's name, the long one again, the short one again (one of the players'), 0x2E alone (a new name from the index's, with 12 characters taking the ship's number's bytes), on a type's name, and 40 names more (the tables grow) | 1, 3, 5, 7 | 105–106 operations and 10 costs equal; 35 of 35 targets |
+
+Broken on purpose and caught: 0x20's days shifted 7 bits instead of 8 (1 call),
+a convoy's sale paid with the store after it (8–10 calls), the names' buffer
+grown 0x10 bytes before its end instead of 0x18 (1 call). Two readings of
+mine corrected by the comparison: 0x4F8D20 does walk every town (its loop
+goes back to 0x4F8D3D, before the two subtractions: no game bug there), and
+0x52B670's days include the repair's (0x52AAD0 with 1).
+
+The save after the renames (`re/emu/sesion11/names_write.sh`: the game's
+`--write` after `shipyard_ops` and `tick_probe --write` from the state the
+comparison ends in): the names' section is the same bytes (45 names; the file
+851 bytes longer in both). That state has neither the header's [0x50..0x5B] nor
+the events' extras, so those differ with any scenario (`office_trade` too).
+
+The viewer without a window (`re/emu/sesion11/yard_shots.sh`): save 1 with
+`--debug-state convoy-leader` (a private convoy formed and disbanded, the AI's
+public convoy joined, the market with it, mode 4); save 1 with
+`--debug-state shipyard-materials` (a snaikka ordered, its order cancelled with
+the letter «Anulación», the ship renamed with a typed name, upgraded); save 5
+(the player's convoy in the market, modes 4 and 3). The world 7 days in the 12
+saves, 0 different; `trade_check.sh`, 0 different; the scenarios of the earlier
+batches, as before.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:
