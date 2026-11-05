@@ -114,7 +114,8 @@ touch pad isn't used.
 
 **In a town**, as in the game, you go into its buildings: touch one, or bring it
 to the middle of the screen (it glows and shows its name, the game's) and press
-X. The Market Hall is the market; the tavern hires sailors and captains; the
+X. The Market Hall is the market; your office (drawn where you have one)
+opens the market with the office; the tavern hires sailors and captains; the
 shipyard and the repair dock repair your ships. X with no building in the
 middle opens the market. Your ship in the port has a card at the bottom left
 (touch it, or press Select) with its window: its captain, sailors and hull, and
@@ -131,7 +132,9 @@ ship carries. Up and down choose the ware, left and right the amount (1, 5, 50
 or all, as the game's window), X buys, Square sells, Select takes the next ship
 in the port and Circle closes it. A row and the buttons at its foot can be
 touched too. The prices, the limits (store, hold and money) and the average
-price of the cargo are the game's.
+price of the cargo are the game's. In a town where you have an office, L and
+R go through what is traded: ship and town, office and town, ship and office,
+and the ship's weapons and pieces with the office.
 
 Triangle switches between the town and the **sea map**, with the towns and the
 ships (yours has a mark; touching a town chooses it and Triangle goes into it).

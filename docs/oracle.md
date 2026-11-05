@@ -1345,6 +1345,47 @@ ship's room), 3 dismissed, a captain hired (the letter «Contratación») and
 dismissed, the ship repaired for 2,476 coins (the state 4); touching the
 tavern and the shipyard opens them.
 
+## The player's actions: the office (2026-11-05)
+
+Operations 0x08 (0x538100, with 0x5180C0 and 0x4FF6F0: the cargo and the office
+with their average prices), 0x58 (0x53D2B0) and 0x59 (0x53D3C0, with 0x5007A0),
+in `trade.cpp`, run by `run_operation` and in the oracle's `OPERATIONS`; their
+bytes in `player_actions.cpp` (the market window's modes 0 and 2, read in
+0x4A8CF0: the window keeps two sides and the ship goes on the first one in
+the modes 0 and 5; `player_ops office-to-ship`, `ship-to-office`,
+`office-buy`, `office-sell`). The window's office side (0x4AA7C0) is computed
+in the scenario as the viewer does and compared with the game's own, run on a
+window of its own (its redraw 0x4AA2A0 skipped).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `office_trade` | the player's office in the town of his first ship in port (0x5D if he has none) with beer and grain; the viewer's bytes: the office buys and sells beer and grain with each step, the ship takes from it and gives to it with each step; by hand: 0x08 with a ship out, a ware out, the ship in the shipyard, an owner without an office there, a negative amount, the hold full, more than the office and the ship have, swords (pieces of 10) both ways; 0x58 and 0x59 with a ware out, 0 and a negative amount, no office; 0x58 with more than the stock and the office's town out; 0x59 with more than the store (barrels and loads rounded), 300 coins (0x52F3E0), none, a store of 0 into an empty stock | 1, 3, 5, 7 | 50–55 calls equal, 34 of 34 targets, the window's office side equal |
+
+Broken on purpose and caught: the swords rounded to 20 instead of 10 (1 call,
+saves 1 and 5; with 25 swords both gave 20, so the scenario moves 37). The
+owner of an office that isn't a merchant (0x53D322) can't happen: 0x5308A0
+finds the office by its owner. The world 7 days in the 12 saves, 0 different;
+`trade_check.sh` (24,000 trades), 0 different; the other scenarios of the
+player's actions as before.
+
+Then operation 0x09 (0x538210, `trade.cpp`): the ship's artillery and hand
+weapons with the office, read whole and rewritten literally (its two walks,
+its unsigned compares, a big piece in the slot 23 that clears the slot 24,
+i.e. the hand weapons' low byte); its bytes are the market window's mode 5
+(rows 4..10; rows 0..3 send 0x08 for the weapons), with the window's counts
+(0x4A8B3C, 0x4A8B7E) and a game bug of its weapons rows reproduced
+(`player_ops artillery`, `weapons-to-ship`, `weapons-to-office`).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `office_artillery` | the office with pieces of each type (one weight not a multiple), hand weapons and weapons (no crossbows), the ship with free slots and two marked 7; the viewer's bytes: each type and the hand weapons to the ship and back, the weapons both ways (the crossbows: the bug's 0x09 of hand weapons); by hand: a town out, a ship out, the shipyard, another town, no office, hand weapons from the ship more and fewer than it has and to it with the hold full, small pieces fewer than it has (an even slot before a 6 skipped), a big piece in the slot 23, to the ship more than the office has and than its room, fewer than the slots marked 7 and than the free pairs, a convoy's guide without and with the convoy's flag 2 | 1, 3, 5, 7 | 62–63 calls equal, 27 of 27 targets |
+
+Broken on purpose and caught: the small pieces not filling the slots marked 7
+first (1 call, saves 1 and 5). The viewer without a window (save 1, Lübeck):
+the player's kontor drawn and pointed at, the office's market (mode 2) buying
+5 barrels of beer, the ship taking them (mode 0) and giving 1 back, the mode
+5's rows; the world 7 days in the 12 saves, 0 different.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

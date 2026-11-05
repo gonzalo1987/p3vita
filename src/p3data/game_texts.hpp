@@ -233,6 +233,10 @@ enum class GameText {
 	BuildingTavern,  // 0x24 «Tavern»
 	BuildingLender,  // 0x25 «Lender's House» («Prestamista»)
 	BuildingShipyard,  // 0x2E «Shipyard»
+	// The player's office in the market window (the ship's panel's «%s <-> %s», 0x48AD01).
+	Office,  // «Office» («Oficina»)
+	ShipWeapons,  // «Ship's weapons» («Armas de barco»; the armoury's, 0x6AA33C)
+	HandWeapons,  // «Hand weapons» («Armas de mano»)
 	Count
 };
 

@@ -45,7 +45,11 @@ Found by hand, where the code is computed:
   0x4A9690): 1 a ship and the town (buying 0x02, selling 0x01), 4 a convoy and the
   town (0x1A, 0x19), 2 the office and the town (0x59, 0x58), 0 a ship and the
   office (0x08) and 3 a convoy and the office (0x1B), both with a direction byte in
-  [+0xE]; 5 is another path (0x09). The amount: the step (1, 5, 50 or all) clamped
+  [+0xE]; 5 moves the ship's weapons with the office: rows 0..3 the weapons (0x08, in pieces of 10), rows 4..10
+the hand weapons and the six pieces (0x09, the type row − 5). The window keeps two sides, each a ware's
+units, what it holds and its room: the ship goes on the first side in the modes 0 and 5 (0x4AA9D0), on the
+second otherwise; the office's side (0x4AA7C0) has its stock / 200 or / 2000 and, in mode 2, its room
+[+0x2EC] · 2000 (0x4A97B6); in mode 2 the window's [+0xF4] is the merchant. The amount: the step (1, 5, 50 or all) clamped
   by what the window keeps of the town and the ship (`player_actions.hpp`).
 - **The tavern** keeps an operation that the town prepares (0x526B40 on the town,
   into the window's [+0x2154]) and queues it as it is (0x5D5970) when the player
@@ -62,7 +66,7 @@ an action of the interface; 0x54 and 0x55 go with letters), others may be dead.
 | Group | Codes | Done in p3vita |
 |-|-|-|
 | simulation | 37: the ones the simulation queues (inventory, part B) | all 37 |
-| player | 105: queued by the interface | 19: 0x00..0x07, 0x0A, 0x1D, 0x21, 0x29, 0x3B, 0x3F, 0x4B, 0x4E, 0x5D, 0x6E, 0x6F |
+| player | 105: queued by the interface | 23: 0x00..0x0A, 0x1D, 0x21, 0x29, 0x3B, 0x3F, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x6E, 0x6F |
 | battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 0x91, 0x94, 0x96, 0x9F |
 | network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | the five that do nothing |
 | new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | — |
@@ -85,8 +89,8 @@ feast window): the handler is the same and is done.
 | 0x05 | player | dismiss sailors: {0x05, ship, amount}: a ship in port with sailors; to the town's unemployed; all if asked for more (morale 0), otherwise the morale [+0x3E] down by amount · 2560 / (sailors + 1), not below 0 | ship window 0x493ED0 | 0x53581B → 0x537DD0 |  | yes | read |
 | 0x06 | player | hire a captain: {0x06, captain, ship, town}: out of the town's list (0x526AA0), the ship's captain before him into his link, the letter 0x04 «New captain»; it doesn't look whether the ship is in port or has one | 0x5D4870 | 0x53582A → 0x537EE0 |  | yes | read |
 | 0x07 | player | dismiss the captain: {0x07, ship}: a ship in port; the captain to the town's list (0x526B00), the owner's [+0x1F] to 0, the morale −2560 / (sailors + 1), [+0x3C] |= 0x202; a convoy it guides breaks up (0x50A580) | ship window 0x493ED0 | 0x535839 → 0x538000 |  | yes | read |
-| 0x08 | player | move wares between a ship [+0x8] and the owner's office in its town (0x5308A0, 0x5180C0, 0x4FF6F0) | market 0x4A8CF0 (mode 0, a ship and the office) | 0x535848 → 0x538100 | 3, 688 B |  | read |
-| 0x09 | player | move wares between a ship or convoy and the office, several wares at once (457 instructions) | 0x4A8CF0 (through the jump at 0x4A930D) | 0x535857 → 0x538210 | 1, 1.2 KB |  | guess |
+| 0x08 | player | wares between a ship and its owner's office in its town: {0x08, s32 amount (its sign dropped), u16 ship, u16 ware, u16 (the player), u8 direction}: a ship out of the shipyard (state < 4); direction 1 from the office into the ship, at most the hold's room (0x5182B0) and the stock, at the office's average price (0x5180C0: the cargo rounded to its unit); 0 from the ship, at most its cargo, at the ship's average (0x4FF6F0); the notice 4 (`trade.cpp` `fn_538100`) | market 0x4A8CF0 (mode 0, a ship and the office: the ship on the window's first side, 0x4AA9D0; the office 0x4AA7C0) | 0x535848 → 0x538100 |  | yes | read |
+| 0x09 | player | artillery between a ship and its owner's office in its town: {0x09, u32 piece type, u32 town (low byte; the bit 31 for from the ship), u32 ship, u32 count}: the ship's 24 slots [+0x13C] (0..5 a type, 0xFF free, 6 the second half of a big piece: a weight of 2000 or more, 0x672CB4; 7 free for small pieces, filled first), the office's weight of each type [+0x124 + 4 · type]; a type of 6 or more moves the hand weapons ([+0x154] of the ship, [+0x2BC] of the office) by the room / 10; from a convoy's guide without its flag 2, nothing; counts compared unsigned (`trade.cpp` `fn_538210`) | market 0x4A8CF0 (mode 5: rows 4..10, the type row − 5; rows 0..3 are the weapons, 0x08) | 0x535857 → 0x538210 |  | yes | read |
 | 0x0A | player | a ship is deleted (0x507FB0) | 0x4768B0 | 0x535866 → 0x507FB0 |  | yes | read |
 | 0x0B | player | a ship's list of stops: allocates the merchant's [+0xEC] (0x40 entries) and sails (0x519BA0, 0x517260, 0x537670); most of what is left below is interface | sea map 0x44FB40, 0x451EB0 (code in ebx), 0x455B50, 0x45A6B0 | 0x5358AC → 0x538DE0 | 121, 55.3 KB |  | guess |
 | 0x0C | player | a shipyard action on a ship (0x508660, 334 instructions) | shipyard window 0x5FA320 | 0x5358BB → 0x508660 | 3, 2.6 KB |  | guess |
@@ -104,7 +108,7 @@ feast window): the handler is the same and is done.
 | 0x18 | player | a ship joins a convoy (0x509D10) | convoy window 0x494AF0 (code in edi) | 0x535A25 → 0x509D10 | 3, 912 B |  | guess |
 | 0x19 | player | sell from a convoy to the town ({0x19, …, u16 ware [+0x8], u16 convoy [+0xA], u16 merchant [+0xC]}; same handler as 0x1A, 0x539300) | market 0x4A8CF0 (mode 4, a convoy and the town); also 0x43D030 | 0x535A3F → 0x539300 | 1, 944 B |  | read |
 | 0x1A | player | buy for a convoy from the town (0x539300) | market 0x4A8CF0 (mode 4) | 0x535A50 → 0x539300 | 1, 944 B |  | read |
-| 0x1B | player | move wares between a convoy [+0x8] and the office (the book: «Move Wares») | market 0x4A8CF0 (mode 3, a convoy and the office); the mission interpreter | 0x535A61 → 0x5396B0 | 3, 1.1 KB |  | read |
+| 0x1B | player | move wares between a convoy [+0x8] and the office (the book: «Move Wares») | market 0x4A8CF0 (mode 3, a convoy and the office); the mission interpreter | 0x535A61 → 0x5396B0 | 1, 736 B |  | read |
 | 0x1C | player | a convoy sets sail (0x537670 for its guide) | 0x5492D0 (at 0x5493BF) | 0x535A70 → 0x537670 |  |  | read |
 | 0x1D | player | repair a convoy: {0x1D, convoy}: its state [+0x12] to 4, the owner of its first ship pays the cost (0x52A950) without checks, the reputation for the damage (0x4F9120) | shipyard window 0x5F8F50 («whole convoy») | 0x535AC0 → 0x539990 |  | yes | read |
 | 0x1E | simulation | a convoy leaves on an expedition (0x539B50) | 0x503B50; 0x5B9210 | 0x535ACF → 0x539B50 |  | yes | read |
@@ -154,7 +158,7 @@ feast window): the handler is the same and is done.
 | 0x4A | player | the Hanse tasks window's other buttons (developers' tools; letter 0x78 «Hanse Day») | Hanse tasks window 0x5E87D0 | 0x536084 → 0x53B1F0 | 1, 592 B |  | read (alderman-viewer.md) |
 | 0x4B | player | take a Hanse task (0x53B440) | Hanse tasks window 0x5E87D0 (through the jump at 0x5E8A5A) | 0x536093 → 0x53B440 |  | yes | read |
 | 0x4C | unused | something of a merchant in a town (0x535400) | not found | 0x5360A2 → 0x53B4D0 | 1, 272 B |  | guess |
-| 0x4D | player | move wares between a convoy or ship and an office (0x4FF6F0, 0x5180C0) | 0x5D6FC0 | 0x5360B1 → 0x53B5E0 | 3, 1.0 KB |  | guess |
+| 0x4D | player | move wares between a convoy or ship and an office (0x4FF6F0, 0x5180C0) | 0x5D6FC0 | 0x5360B1 → 0x53B5E0 | 1, 624 B |  | guess |
 | 0x4E | player | a player's ship turns pirate (0x53B850) | 0x5D5430 | 0x5360C0 → 0x53B850 |  | yes | read |
 | 0x4F | player | an event in a town (0x4D8CF0, an office 0x5308A0) | 0x5D68E0 | 0x5360CF → 0x53BA40 | 1, 592 B |  | guess |
 | 0x50 | player | something with a ship or convoy and an office (0x526300) | 0x5ECAB0 | 0x5360DE → 0x53BC90 | 2, 1.1 KB |  | guess |
@@ -165,12 +169,12 @@ feast window): the handler is the same and is done.
 | 0x55 | player | pay for a letter 0x45/0x46 (0x4D74C0) | not found (letter answers?) | 0x536129 → 0x4D74C0 | 1, 272 B |  | read (mail.md) |
 | 0x56 | player | something in an office (0x5308A0) | 0x5ECAB0 | 0x536177 → 0x53CAF0 | 1, 496 B |  | guess |
 | 0x57 | player | something in a town (inline, 0x536186) | 0x5ECAB0 | 0x536186 |  |  | guess |
-| 0x58 | player | sell from the office to the town (0x53D2B0: 0x52E1D0, statistics 0x4F8690) | market 0x4A8CF0 (mode 2, the office and the town) | 0x5361E2 → 0x53D2B0 | 1, 272 B |  | read |
-| 0x59 | player | buy for the office from the town (0x53D3C0: 0x52E430, 0x52F3E0, 0x5007A0, statistics 0x4F8840) | market 0x4A8CF0 (mode 2) | 0x5361F1 → 0x53D3C0 | 3, 656 B |  | read |
+| 0x58 | player | sell from the office to the town: {0x58, s32 amount, u16 ware, u16 merchant, u16 (the player), u16 town}: the merchant's office there (0x5308A0), at most its stock, if its town [+0x2C6] is one; the price with the store before the sale (0x52E1D0), statistics 0x4F8690; no ban looked at (`trade.cpp` `fn_53d2b0`) | market 0x4A8CF0 (mode 2, the office and the town; [+0xF4] the merchant) | 0x5361E2 → 0x53D2B0 |  | yes | read |
+| 0x59 | player | buy for the office from the town: the same fields; at most the store (rounded to the unit) and the money (0x52E430, 0x52F3E0), the office's average (0x5007A0), its town's store down, statistics 0x4F8840 (`trade.cpp` `fn_53d3c0`) | market 0x4A8CF0 (mode 2: the town's units, the office's room [+0x2EC] · 2000) | 0x5361F1 → 0x53D3C0 |  | yes | read |
 | 0x5A | player | something in an office (0x5308A0, 0x5303B0) | 0x5A0C30 | 0x536200 → 0x5308A0, 0x5303B0 | 1, 16 B |  | guess |
 | 0x5B | player | a captain or administrator (0x530400) | 0x41ED90, 0x5DC2A0, 0x5DCDB0 | 0x536290 → 0x53D5C0 | 1, 272 B |  | guess |
 | 0x5C | unused | something in an office (0x5308A0) | not found | 0x53629F → 0x53D6D0 | 1, 704 B |  | guess |
-| 0x5D | player | open an office (0x5362AE, 0x51B890) | not found (the town view?) | 0x5362AE → 0x51B890 |  | yes | read |
+| 0x5D | player | open an office (0x5362AE, 0x51B890) | none found: not a literal anywhere, nor in the tavern's stored operations (0x55, 0x4C); the player opens an office by building it (0x21 with the type 0x2C) | 0x5362AE → 0x51B890 |  | yes | read |
 | 0x5E | player | an office's administrator (0x5098B0, 0x5097C0) | 0x5DC2A0 | 0x5362F5 → 0x53D990 | 1, 160 B |  | guess |
 | 0x5F | player | the letters 0x1E «Memo» / 0x1F «Offer» (0x5338A0) | 0x5BB9D0 | 0x536304 → 0x53DA30 | 4, 1.3 KB |  | read (mail.md) |
 | 0x60 | simulation | a wedding (0x53DA90) | event 0x16 (dead), letter answers 0x4D6C90 | 0x536313 → 0x53DA90 |  | yes | read |
@@ -194,9 +198,9 @@ feast window): the handler is the same and is done.
 | 0x72 | player | answer a letter: «It's a pity» (letter 0x2B; 0x53EAC0) | letter answers 0x4D6C90 | 0x536B43 → 0x53EAC0 | 1, 368 B |  | read (mail.md) |
 | 0x73 | unused | nothing (0x537025) |  | — |  |  | read |
 | 0x74 | player | answer a letter (0x53EC30) | letter answers 0x4D6C90 | 0x536B56 → 0x53EC30 | 1, 128 B |  | read (mail.md) |
-| 0x75 | player | answer a letter (0x53ECB0, deletes it 0x4D6A50) | letter answers 0x4D6C90 | 0x536B65 → 0x53ECB0 | 5, 2.1 KB |  | read (mail.md) |
+| 0x75 | player | answer a letter (0x53ECB0, deletes it 0x4D6A50) | letter answers 0x4D6C90 | 0x536B65 → 0x53ECB0 | 4, 2.0 KB |  | read (mail.md) |
 | 0x76 | player | remove a letter 0x71 (0x4D7870) | 0x5D8100 | 0x536B74 → 0x53EDF0 | 2, 352 B |  | read (mail.md) |
-| 0x77 | player | answer a letter: the impounding (letter 0x83; a ship 0x507D60) | letter answers 0x4D6C90, 0x47F3B0 | 0x536B83 → 0x53EEC0 | 3, 2.7 KB |  | read (mail.md) |
+| 0x77 | player | answer a letter: the impounding (letter 0x83; a ship 0x507D60) | letter answers 0x4D6C90, 0x47F3B0 | 0x536B83 → 0x53EEC0 | 2, 2.5 KB |  | read (mail.md) |
 | 0x78 | simulation | a new ship in [0x6DD7C0] (0x5051E0) | 0x4E3F44, 0x4E43E4 | 0x53651F → 0x5051E0 |  | yes | read |
 | 0x79 | simulation | the Hanse diet: a byte per town (0x536535) | 0x4DC800 | 0x536535 |  | yes | read |
 | 0x7A | simulation | the Hanse diet: a town's [0x834..0x83F] (0x536570) | 0x4DC6B0 | 0x536570 |  | yes | read |

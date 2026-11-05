@@ -3,6 +3,7 @@
 #include <cstring>
 #include <initializer_list>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -109,6 +110,204 @@ std::optional<OperationBytes> market_sell_operation(const SaveGame& save, int sh
 		return std::nullopt;
 	}
 	return market_operation(0x01, amount, ware, ship, uint16_t(save.player), town);
+}
+
+int player_office(const SaveGame& save, int town) {
+	if (save.player < 0 || town < 0 || uint32_t(town) >= save.globals.u32(global::kWorldTownCount)) {
+		return -1;
+	}
+	return tick::facilities_detail::fn_5308a0(save, uint32_t(save.player), uint32_t(town));
+}
+
+int32_t market_office_units(const SaveGame& save, int office, int ware) {
+	const int32_t stock = save.offices[size_t(office)].memory.s32(4 + 4 * size_t(ware));
+	return ware < 20 ? stock / unit_of(ware) : stock / 10;
+}
+
+int32_t market_office_used(const SaveGame& save, int office) {
+	const OfficeMemory& o = save.offices[size_t(office)].memory;
+	int32_t used = 0;
+	for (size_t w = 0; w < 24; ++w) {
+		used += o.s32(4 + 4 * w);
+	}
+	used += o.s32(0x2E8);
+	if (used % 200 != 0) {
+		used = used - used % 200 + 200;
+	}
+	return used / 200;
+}
+
+int32_t market_office_capacity(const SaveGame& save, int office) {
+	return int32_t(save.offices[size_t(office)].memory.u16(0x2EC)) * 2000;
+}
+
+std::optional<OperationBytes> office_to_ship_operation(const SaveGame& save, int ship, int ware, uint32_t step) {
+	if (ship < 0 || size_t(ship) >= save.ships.size() || ware < 0 || ware >= kTradeWareCount) {
+		return std::nullopt;
+	}
+	const int office = player_office(save, save.ships[size_t(ship)].memory.u8(0x39));
+	if (office < 0) {
+		return std::nullopt;
+	}
+	const int32_t amount = market_buy_amount(step, market_office_units(save, office, ware), ware,
+		save.ships[size_t(ship)].memory.s32(0x10), market_ship_used(save, ship));
+	if (amount == 0) {
+		return std::nullopt;
+	}
+	OperationBytes op = market_operation(0x08, amount, ship, ware, uint16_t(save.player), 0);
+	op[0xE] = 1;
+	return op;
+}
+
+std::optional<OperationBytes> ship_to_office_operation(const SaveGame& save, int ship, int ware, uint32_t step) {
+	if (ship < 0 || size_t(ship) >= save.ships.size() || ware < 0 || ware >= kTradeWareCount ||
+		player_office(save, save.ships[size_t(ship)].memory.u8(0x39)) < 0) {
+		return std::nullopt;
+	}
+	const int32_t amount = market_sell_amount(step, market_ship_units(save, ship, ware), ware);
+	if (amount == 0) {
+		return std::nullopt;
+	}
+	return market_operation(0x08, amount, ship, ware, uint16_t(save.player), 0);
+}
+
+std::optional<OperationBytes> office_buy_operation(const SaveGame& save, int town, int ware, uint32_t step) {
+	const int office = player_office(save, town);
+	if (office < 0 || ware < 0 || ware >= kTradeWareCount) {
+		return std::nullopt;
+	}
+	const int32_t amount = market_buy_amount(step, market_town_units(save, town, ware), ware,
+		market_office_capacity(save, office), market_office_used(save, office));
+	if (amount == 0) {
+		return std::nullopt;
+	}
+	return market_operation(0x59, amount, ware, save.player, uint16_t(save.player), town);
+}
+
+std::optional<OperationBytes> office_sell_operation(const SaveGame& save, int town, int ware, uint32_t step) {
+	const int office = player_office(save, town);
+	if (office < 0 || ware < 0 || ware >= kTradeWareCount) {
+		return std::nullopt;
+	}
+	const int32_t amount = market_sell_amount(step, market_office_units(save, office, ware), ware);
+	if (amount == 0) {
+		return std::nullopt;
+	}
+	return market_operation(0x58, amount, ware, save.player, uint16_t(save.player), town);
+}
+
+static OperationBytes words_operation(std::initializer_list<uint32_t> words);
+
+namespace {
+
+constexpr int32_t kPieceWeight[6] = {1000, 1000, 2000, 2000, 2000, 1000};  // 0x672CB4
+
+// A row's count: the step (1, 5, 50) or all, at most all (0x4A90E1..0x4A9118).
+int32_t row_count(uint32_t step, int32_t all) {
+	int32_t n = step != 0 ? int32_t(step) : all;
+	return n > all ? all : n;
+}
+
+}  // namespace
+
+int32_t weapons_to_ship_pieces(uint32_t step, int32_t office_units, int32_t capacity, int32_t used) {
+	int32_t n = row_count(step, office_units);
+	const int32_t room = capacity - used * 200;
+	if (n * 10 > room) {
+		n = room / 10;  // It can be negative: the window sends it (0x538100 drops the sign).
+	}
+	return n;
+}
+
+int32_t ship_artillery_count(const SaveGame& save, int ship, int type) {
+	const ShipMemory& s = save.ships[size_t(ship)].memory;
+	if (type < 0) {
+		return s.u16(0x154);
+	}
+	int32_t n = 0;
+	for (size_t i = 0; i < 24; ++i) {
+		n += s.u8(0x13C + i) == type;
+	}
+	return n;
+}
+
+int32_t office_artillery_count(const SaveGame& save, int office, int type) {
+	const OfficeMemory& o = save.offices[size_t(office)].memory;
+	return type < 0 ? o.s32(0x2BC) : o.s32(0x124 + 4 * size_t(type)) / kPieceWeight[type];
+}
+
+OperationBytes artillery_bytes(int type, int town, int ship, uint32_t count, bool from_ship) {
+	return words_operation({0x09, uint32_t(type), uint32_t(town) | (from_ship ? 0x80000000u : 0u), uint32_t(ship), count});
+}
+
+std::optional<OperationBytes> weapons_to_ship_bytes(uint32_t step, int32_t office_units, int ware, int32_t capacity,
+	int32_t used, int ship, uint16_t player, int town, int32_t pieces) {
+	const int32_t n = weapons_to_ship_pieces(step, office_units, capacity, used);
+	if (n == 0) {
+		if (fix_game_bugs()) {
+			return std::nullopt;
+		}
+		const int32_t c = row_count(step, pieces);
+		if (c == 0) {
+			return std::nullopt;
+		}
+		return artillery_bytes(ware - 0x14 - 5, town, ship, uint32_t(c), false);
+	}
+	OperationBytes op = market_operation(0x08, n * 10, ship, ware, player, 0);
+	op[0xE] = 1;
+	return op;
+}
+
+std::optional<OperationBytes> weapons_to_office_bytes(uint32_t step, int32_t ship_units, int ware, int ship, uint16_t player) {
+	const int32_t n = row_count(step, ship_units);
+	if (n == 0) {
+		return std::nullopt;  // The game's bug reads fields nothing writes (assumed 0): nothing either way.
+	}
+	return market_operation(0x08, n * 10, ship, ware, player, 0);
+}
+
+std::optional<OperationBytes> artillery_row_bytes(uint32_t step, int32_t units, int type, int town, int ship, bool from_ship) {
+	const int32_t n = row_count(step, units);
+	if (n == 0) {
+		return std::nullopt;
+	}
+	return artillery_bytes(type, town, ship, uint32_t(n), from_ship);
+}
+
+std::optional<OperationBytes> weapons_to_ship_operation(const SaveGame& save, int ship, int ware, uint32_t step) {
+	if (ship < 0 || size_t(ship) >= save.ships.size() || ware < 0x14 || ware > 0x17) {
+		return std::nullopt;
+	}
+	const int town = save.ships[size_t(ship)].memory.u8(0x39);
+	const int office = player_office(save, town);
+	if (office < 0) {
+		return std::nullopt;
+	}
+	return weapons_to_ship_bytes(step, market_office_units(save, office, ware), ware, save.ships[size_t(ship)].memory.s32(0x10),
+		market_ship_used(save, ship), ship, uint16_t(save.player), town, ship_artillery_count(save, ship, ware - 0x14 + 2));
+}
+
+std::optional<OperationBytes> weapons_to_office_operation(const SaveGame& save, int ship, int ware, uint32_t step) {
+	if (ship < 0 || size_t(ship) >= save.ships.size() || ware < 0x14 || ware > 0x17 ||
+		player_office(save, save.ships[size_t(ship)].memory.u8(0x39)) < 0) {
+		return std::nullopt;
+	}
+	return weapons_to_office_bytes(step, save.ships[size_t(ship)].memory.s32(0x54 + 4 * size_t(ware)) / 10, ware, ship,
+		uint16_t(save.player));
+}
+
+std::optional<OperationBytes> artillery_operation(const SaveGame& save, int ship, int type, uint32_t step, bool from_ship) {
+	if (ship < 0 || size_t(ship) >= save.ships.size() || type < -1 || type > 5) {
+		return std::nullopt;
+	}
+	const int town = save.ships[size_t(ship)].memory.u8(0x39);
+	const int office = player_office(save, town);
+	if (office < 0) {
+		return std::nullopt;
+	}
+	return artillery_row_bytes(step,
+		from_ship ? ship_artillery_count(save, ship, type) : office_artillery_count(save, office, type), type, town, ship,
+		from_ship);
 }
 
 static OperationBytes words_operation(std::initializer_list<uint32_t> words) {

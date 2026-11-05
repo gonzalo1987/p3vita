@@ -59,6 +59,62 @@ OperationBytes market_operation(uint32_t code, int32_t amount, int ware, int shi
 std::optional<OperationBytes> market_buy_operation(const SaveGame& save, int ship, int town, int ware, uint32_t step);
 std::optional<OperationBytes> market_sell_operation(const SaveGame& save, int ship, int town, int ware, uint32_t step);
 
+// --- The market window with the player's office ---
+// The window keeps two sides, each a ware's units, what it holds and its
+// room: in mode 0 the ship (0x4AA9D0, which writes the first side in the
+// modes 0 and 5) and the office (0x4AA7C0); in mode 2 the town (0x4AAB10) and
+// the office, its room its [+0x2EC] · 2000 (0x4A97B6). The office's units are
+// its stock / 200 or / 2000 (the weapons / 10); what it holds, all its stock
+// and its [+0x2E8] rounded up to 200, in steps of 200.
+int32_t market_office_units(const SaveGame& save, int office, int ware);
+int32_t market_office_used(const SaveGame& save, int office);
+int32_t market_office_capacity(const SaveGame& save, int office);
+// Mode 0 (a ship and the office, 0x4A921F..0x4A93F0): 0x08 {0x08, amount,
+// u16 ship, u16 ware, u16 player, u8 direction}. From the office into the
+// ship (direction 1) as buying (the office's units, the ship's room); from
+// the ship (0) as selling. std::nullopt when the window sends nothing (or
+// the player has no office in the ship's town).
+std::optional<OperationBytes> office_to_ship_operation(const SaveGame& save, int ship, int ware, uint32_t step);
+std::optional<OperationBytes> ship_to_office_operation(const SaveGame& save, int ship, int ware, uint32_t step);
+// Mode 2 (the office and the town): 0x59 buying for the office (the town's
+// units, the office's room) and 0x58 selling from it (the office's units),
+// {code, amount, u16 ware, u16 merchant ([+0xF4]), u16 player, u16 town}.
+std::optional<OperationBytes> office_buy_operation(const SaveGame& save, int town, int ware, uint32_t step);
+std::optional<OperationBytes> office_sell_operation(const SaveGame& save, int town, int ware, uint32_t step);
+// The player's office in a town (0x5308A0), or -1.
+int player_office(const SaveGame& save, int town);
+
+// Mode 5 (a ship and the office: the weapons and the artillery,
+// 0x4A8F0C..0x4A91B6), 11 rows. Rows 0..3 are the weapons, the wares
+// 0x14..0x17 (0x69854C), sent as 0x08 in pieces of 10: from the office its
+// units (stock / 10) cut to the ship's room (its capacity less what it holds,
+// in steps of 200, / 10); from the ship its units (cargo / 10). Rows 4..10
+// send 0x09 with the type row − 5 (row 4, 0xFFFFFFFF, the hand weapons
+// [+0x154]) and the count of the side it leaves: the ship's hand weapons and
+// its slots of each type (0x4A8B3C), the office's [+0x2BC] and each type's
+// weight / its piece's (0x4A8B7E).
+int32_t weapons_to_ship_pieces(uint32_t step, int32_t office_units, int32_t capacity, int32_t used);
+int32_t ship_artillery_count(const SaveGame& save, int ship, int type);  // type −1: the hand weapons.
+int32_t office_artillery_count(const SaveGame& save, int office, int type);
+// {0x09, type, town | (from the ship: 0x80000000), ship, count}.
+OperationBytes artillery_bytes(int type, int town, int ship, uint32_t count, bool from_ship);
+// The weapons rows (ware 0x14..0x17). A game bug: with nothing to move, the
+// window jumps into the artillery rows with the weapon's row (0x4A8F99,
+// 0x4A903A) and, from the office, sends 0x09 with the type row − 5 (the hand
+// weapons) and the count of the ship's pieces of the type row + 2 (its table
+// read 0x1C on); from the ship it would read fields of the window nothing
+// writes (assumed 0: nothing). Fixed behind fix_game_bugs(): nothing.
+std::optional<OperationBytes> weapons_to_ship_operation(const SaveGame& save, int ship, int ware, uint32_t step);
+std::optional<OperationBytes> weapons_to_office_operation(const SaveGame& save, int ship, int ware, uint32_t step);
+// The artillery rows (type −1..5).
+std::optional<OperationBytes> artillery_operation(const SaveGame& save, int ship, int type, uint32_t step, bool from_ship);
+// The same from the window's values (player_ops): PIECES, the ship's pieces of
+// the type row + 2 (the bug's count).
+std::optional<OperationBytes> weapons_to_ship_bytes(uint32_t step, int32_t office_units, int ware, int32_t capacity,
+	int32_t used, int ship, uint16_t player, int town, int32_t pieces);
+std::optional<OperationBytes> weapons_to_office_bytes(uint32_t step, int32_t ship_units, int ware, int ship, uint16_t player);
+std::optional<OperationBytes> artillery_row_bytes(uint32_t step, int32_t units, int type, int town, int ship, bool from_ship);
+
 // --- A ship's crew and captain ---
 // 0x04 (0x5D4C10): {0x04, ship ([+0x1C30]), amount (the number typed in the
 // window, atoi)}: hire sailors.

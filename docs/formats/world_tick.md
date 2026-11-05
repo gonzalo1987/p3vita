@@ -221,6 +221,8 @@ queues each one: [operations.md](operations.md). Algunos:
 |-|-|-|
 | 0x00 | 0x537670 | zarpar ([navigation.md](navigation.md)) |
 | 0x01, 0x02 | 0x537340, 0x537450 | vender, comprar |
+| 0x03..0x07, 0x1D | 0x52ACD0, 0x537C20, 0x537DD0, 0x537EE0, 0x538000, 0x539990 | the player's ship: repair it (or its convoy), hire and dismiss sailors, hire a captain from the tavern and dismiss him (`town_tick/ship_operations.cpp`; operations.md) |
+| 0x08, 0x09, 0x58, 0x59 | 0x538100, 0x538210, 0x53D2B0, 0x53D3C0 | the player's office: wares and artillery between a ship and the office, the office sells to the town and buys from it (`trade.cpp`; operations.md) |
 | 0x22 | 0x53CE30 | construir: {0x22, u8 dueño, u8 ciudad, x, y, tipo, parámetro}; hasta 0x2F, 0x521900 (con la rejilla, `town_tick/grid.cpp`); 0x30..0x33, las torres (0x523830); 0x34 y 0x35, 0x523D70; 0x36..0x39, la muralla (0x522B20). La 0x21 (interfaz) es lo mismo con otra búsqueda del tipo |
 | 0x23 | 0x535B12 | {0x23, u32 lado, u32 ciudad}: empieza la muralla de ese lado (0x522B20) |
 | 0x24 | 0x522C70 | {0x24, u32 dueño, u32 ciudad, u32 clase (0 tramos, 1 las demás)}: la siguiente pieza de muralla pendiente ([0x766]) que se pueda pagar (0x51F3A0; el dueño, un comerciante con oficina en la ciudad) pasa a las obras; con la última, el cierre de la muralla (`construction.cpp`, `grid.cpp`) |

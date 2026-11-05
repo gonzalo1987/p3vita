@@ -13,6 +13,13 @@
 //        player_ops hire-captain CAPTAIN SHIP TOWN | dismiss-captain SHIP
 //        player_ops repair SHIP | repair-convoy CONVOY
 //        player_ops tavern-sailors ALLOWED RAND
+//        player_ops office-to-ship STEP OFFICE_UNITS WARE CAPACITY USED SHIP PLAYER
+//        player_ops ship-to-office STEP SHIP_UNITS WARE SHIP PLAYER
+//        player_ops office-buy STEP TOWN_UNITS WARE CAPACITY USED MERCHANT PLAYER TOWN
+//        player_ops office-sell STEP OFFICE_UNITS WARE MERCHANT PLAYER TOWN
+//        player_ops artillery STEP UNITS TYPE TOWN SHIP FROM_SHIP
+//        player_ops weapons-to-ship STEP OFFICE_UNITS WARE CAPACITY USED SHIP PLAYER TOWN PIECES
+//        player_ops weapons-to-office STEP SHIP_UNITS WARE SHIP PLAYER
 // (STEP 1, 5, 50, or 0 for all; «none» when the window sends nothing;
 // tavern-sailors prints the tavern's roll, its float's bits, and the
 // sailors it shows, from what 0x4F6CA0 allows and the game's rand() value)
@@ -68,6 +75,53 @@ int main(int argc, char** argv) {
 		op = repair_operation(uint32_t(number(argv[2])));
 	} else if (what == "repair-convoy" && argc == 3) {
 		op = repair_convoy_operation(uint32_t(number(argv[2])));
+	} else if ((what == "office-to-ship" && argc == 9) || (what == "office-buy" && argc == 10)) {
+		// As buying: the source's units (the office's or the town's), the
+		// room of the destination (the ship's capacity or the office's).
+		const int ware = int(number(argv[4]));
+		const int32_t amount = market_buy_amount(uint32_t(number(argv[2])), int32_t(std::strtol(argv[3], nullptr, 0)),
+			ware, int32_t(std::strtol(argv[5], nullptr, 0)), int32_t(std::strtol(argv[6], nullptr, 0)));
+		if (amount == 0) {
+			std::printf("none\n");
+			return 0;
+		}
+		if (what == "office-to-ship") {  // SHIP PLAYER
+			op = market_operation(0x08, amount, int(number(argv[7])), ware, uint16_t(number(argv[8])), 0);
+			op[0xE] = 1;
+		} else {  // MERCHANT PLAYER TOWN
+			op = market_operation(0x59, amount, ware, int(number(argv[7])), uint16_t(number(argv[8])), int(number(argv[9])));
+		}
+	} else if ((what == "ship-to-office" && argc == 7) || (what == "office-sell" && argc == 8)) {
+		// As selling: the source's units (the ship's or the office's).
+		const int ware = int(number(argv[4]));
+		const int32_t amount = market_sell_amount(uint32_t(number(argv[2])), int32_t(std::strtol(argv[3], nullptr, 0)), ware);
+		if (amount == 0) {
+			std::printf("none\n");
+			return 0;
+		}
+		op = what == "ship-to-office"  // SHIP PLAYER
+			? market_operation(0x08, amount, int(number(argv[5])), ware, uint16_t(number(argv[6])), 0)
+			: market_operation(0x58, amount, ware, int(number(argv[5])), uint16_t(number(argv[6])), int(number(argv[7])));
+	} else if (what == "artillery" || what == "weapons-to-ship" || what == "weapons-to-office") {
+		// The window's mode 5: a row of the artillery (STEP UNITS TYPE TOWN SHIP
+		// FROM_SHIP) or of the weapons (STEP OFFICE_UNITS WARE CAPACITY USED SHIP
+		// PLAYER TOWN PIECES; STEP SHIP_UNITS WARE SHIP PLAYER).
+		auto n = [&](int k) { return int32_t(std::strtol(argv[k], nullptr, 0)); };
+		std::optional<OperationBytes> made;
+		if (what == "artillery" && argc == 8) {
+			made = artillery_row_bytes(uint32_t(n(2)), n(3), n(4), n(5), n(6), n(7) != 0);
+		} else if (what == "weapons-to-ship" && argc == 11) {
+			made = weapons_to_ship_bytes(uint32_t(n(2)), n(3), n(4), n(5), n(6), n(7), uint16_t(n(8)), n(9), n(10));
+		} else if (what == "weapons-to-office" && argc == 7) {
+			made = weapons_to_office_bytes(uint32_t(n(2)), n(3), n(4), n(5), uint16_t(n(6)));
+		} else {
+			return usage();
+		}
+		if (!made) {
+			std::printf("none\n");
+			return 0;
+		}
+		op = *made;
 	} else if (what == "tavern-sailors" && argc == 4) {
 		// The roll of the tavern's window from the game's rand() value (its
 		// float's bits) and the sailors it says there are.

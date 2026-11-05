@@ -356,7 +356,48 @@ void fixed_objects(const SavedTown& town, const TownFixedPoints& f, const TownMa
 	}
 }
 
+// The kontors (0x521580, savegame.md §8.5): the player's (.let type 0x2C, the
+// variant 0x4F74F0 gives: its params[1]) at the fixed point e[2..3] when one of
+// the town's offices is his, a rival's (0x2D) at e[4..5] when one is another
+// merchant's.
+void kontor_objects(const TownFixedPoints& f, const TownMap& map, const TileIndex& index, const KontorView& kontors,
+	std::vector<Placed>& out) {
+	if (kontors.player_variant >= 0 && in_map(map, f.sites[2], f.sites[3])) {
+		const uint32_t variant = uint32_t(kontors.player_variant);
+		if (const TileDef* tile = index.find(0x2C, [&](const auto& p) { return has(p, 1, variant); })) {
+			out.push_back({f.sites[2], f.sites[3], tile});
+		}
+	}
+	if (kontors.rival && in_map(map, f.sites[4], f.sites[5])) {
+		if (const TileDef* tile = index.find(0x2D, [](const auto&) { return true; })) {
+			out.push_back({f.sites[4], f.sites[5], tile});
+		}
+	}
+}
+
 }  // namespace
+
+KontorView kontor_view(const SaveGame& save, size_t town) {
+	KontorView view;
+	if (town >= save.towns.size()) {
+		return view;
+	}
+	const uint16_t offices = save.globals.u16(global::kWorldOfficeCount);
+	size_t walked = 0;
+	for (uint32_t i = save.towns[town].memory.u16(0x784); i < offices && i < save.offices.size() && walked < kMaxListWalk;
+		 i = save.offices[i].memory.u16(0x2CA), ++walked) {
+		const uint16_t owner = save.offices[i].memory.u16(0x2C4);
+		if (save.player >= 0 && owner == save.player && size_t(owner) < save.merchants.size()) {
+			// 0x4F74F0: the player's rank in his home town, 0..3, or 3 (4) and 4 (more).
+			const MerchantMemory& m = save.merchants[owner].memory;
+			const uint8_t rank = m.u8(0x39C + m.u8(0x19));
+			view.player_variant = rank < 4 ? rank : (rank > 4 ? 4 : 3);
+		} else {
+			view.rival = true;
+		}
+	}
+	return view;
+}
 
 std::vector<int> load_town_regions(const CprArchive& archive) {
 	std::vector<int> regions(40, kFallbackRegion);
@@ -385,7 +426,7 @@ std::vector<int> load_town_regions(const CprArchive& archive) {
 }
 
 size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int region, const TileSet& tiles,
-	const TownMap* editor, TownMap& town) {
+	const TownMap* editor, TownMap& town, const KontorView* kontors) {
 	const TileIndex index(tiles);
 	std::vector<Placed> placed;
 	size_t missing = 0;
@@ -395,6 +436,9 @@ size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int reg
 		building_objects(record, saved, region, merchant_count, index, placed, missing);
 	});
 	fixed_objects(saved, current_fixed_points(saved.memory), town, index, editor, tiles, placed);
+	if (kontors) {
+		kontor_objects(current_fixed_points(saved.memory), town, index, *kontors, placed);
+	}
 
 	// Objetos naturales del mapa (árboles, rocas...), agrupados por huella desde
 	// su celda delantera, para poder quitarlos enteros si un edificio los pisa.
@@ -490,8 +534,14 @@ bool load_saved_town_template(const CprArchive& archive, const SavedTown& saved,
 void place_saved_town(const SavedTownTemplate& base, const SaveGame& save, size_t index, const TileSet& tiles,
 	TownMap& out) {
 	out = base.town;
+	const KontorView kontors = kontor_view(save, index);
 	place_saved_buildings(save.towns[index], save.merchant_count, base.region, tiles,
-		base.has_editor ? &base.editor : nullptr, out);
+		base.has_editor ? &base.editor : nullptr, out, &kontors);
+}
+
+uint64_t drawn_buildings_key(const SaveGame& save, size_t index) {
+	const KontorView kontors = kontor_view(save, index);
+	return drawn_buildings_key(save.towns[index]) * 31 + uint64_t(kontors.player_variant + 1) * 2 + (kontors.rival ? 1 : 0);
 }
 
 bool load_saved_town(const CprArchive& archive, const SaveGame& save, size_t index, const TileSet& tiles,

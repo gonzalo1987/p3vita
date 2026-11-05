@@ -124,6 +124,23 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x07:  // Dismiss a ship's captain (0x535839 → 0x538000).
 		tick::fn_538000(save, sailing, operation);
 		break;
+	case 0x08:  // Wares between a ship and its owner's office (0x535848 → 0x538100; trade.cpp).
+		fn_538100(save, operation);
+		break;
+	case 0x09:  // Artillery between a ship and its owner's office (0x535857 → 0x538210; trade.cpp).
+		fn_538210(save, operation);
+		break;
+	case 0x58:  // The office sells to the town (0x5361E2 → 0x53D2B0; trade.cpp).
+	case 0x59: {  // The office buys from the town (0x5361F1 → 0x53D3C0).
+		uint8_t op[0x14];
+		std::memcpy(op, operation, sizeof(op));  // The handlers write the amount back into it.
+		if (fields[0] == 0x58) {
+			fn_53d2b0(save, op);
+		} else {
+			fn_53d3c0(save, op);
+		}
+		break;
+	}
 	case 0x0A:  // A ship is deleted (0x535866, 0x507FB0).
 		tick::fn_535866(save, sailing, operation);
 		break;

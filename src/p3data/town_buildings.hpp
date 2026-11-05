@@ -24,13 +24,23 @@ std::vector<int> load_town_regions(const CprArchive& archive);
 // (0x521580): the record lists [0x762], [0x764], [0x768] and [0x76A] of its
 // memory, the fixed points [0x7B0..0x80B], the flags [0x76C] and the church
 // [0x7A3]. So whatever the simulation has built since loading is drawn too.
+// The kontors drawn at the fixed points e[2..5] (savegame.md §8.5): the
+// player's variant (0x4F74F0: his rank in his home town, 0..4), -1 without an
+// office of his in the town, and whether another merchant has one.
+struct KontorView {
+	int player_variant = -1;
+	bool rival = false;
+};
+KontorView kontor_view(const SaveGame& save, size_t town);
+
 size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int region, const TileSet& tiles,
-	const TownMap* editor, TownMap& town);
+	const TownMap* editor, TownMap& town, const KontorView* kontors = nullptr);
 
 // A key of everything place_saved_buildings reads from the town: when it
 // changes, the town has to be drawn again (the simulation has built,
-// finished, changed or burnt something).
+// finished, changed or burnt something). With the save, also its kontors.
 uint64_t drawn_buildings_key(const SavedTown& saved);
+uint64_t drawn_buildings_key(const SaveGame& save, size_t index);
 
 // The template of a saved town (its .town, its .editor if there is one, and
 // its region), on which its buildings are placed again whenever they change.

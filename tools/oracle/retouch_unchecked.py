@@ -5003,6 +5003,332 @@ def ship_windows(o):
     return during
 
 
+def office_window(o, f):
+    """What the market window keeps of the office f (0x4AA7C0): each ware's
+    units (/ 200 or / 2000, the weapons / 10), what it holds in steps of 200
+    (all its stock and its [+0x2E8], rounded up to 200) and its room ([+0x2EC]
+    · 2000, 0x4A97B6)."""
+    a = o.office(f)
+    units = [cdiv(o.s32(a + 4 + 4 * w), (200 if IN_BARRELS[w] else 2000) if w < 20 else 10) for w in range(24)]
+    used = sum(o.s32(a + 4 + 4 * w) for w in range(24)) + o.s32(a + 0x2E8)
+    rest = used - cdiv(used, 200) * 200
+    if rest:
+        used = used - rest + 200
+    return units, cdiv(used, 200), o.u16(a + 0x2EC) * 2000
+
+
+def game_office_window(o, t):
+    """The same from the game: 0x4AA7C0 on a window of the player's office in
+    town t (its redraw 0x4AA2A0 skipped): its units [+0x588] and [+0x5E8]."""
+    from unicorn.x86_const import UC_X86_REG_EIP, UC_X86_REG_ESP
+    window = o.alloc(0x900)
+    w32(o, window + 0xF8, t)
+
+    def skip(uc, address, size, data):
+        esp = uc.reg_read(UC_X86_REG_ESP)
+        uc.reg_write(UC_X86_REG_EIP, o.u32(esp))
+        uc.reg_write(UC_X86_REG_ESP, esp + 4)
+    hook = o.uc.hook_add(UC_HOOK_CODE, skip, begin=0x4AA2A0, end=0x4AA2A0)
+    o.uc.ctl_remove_cache(0x4AA2A0, 0x4AA2A1)
+    o.call(0x4AA7C0, [], ecx=window)
+    o.uc.hook_del(hook)
+    return [o.s32(window + 0x588 + 4 * w) for w in range(24)], o.s32(window + 0x5E8)
+
+
+def office_trade(o):
+    """The player's office (operations 0x08, 0x58, 0x59): in the town of his
+    first ship in port, an office (operation 0x5D if he has none) with beer
+    and grain at average prices. The market window as the game computes it
+    (0x4AA7C0, compared with office_window). The viewer's bytes (player_ops):
+    mode 2, the office buys (0x59) and sells (0x58) beer and grain with each
+    step; mode 0, the ship takes from the office and gives to it (0x08) with
+    each step. Then operations made here for the handlers' branches: 0x08 with
+    a ship out, a ware out, the ship in the shipyard, a ship whose owner has
+    no office there, a negative amount, the hold full, more than the office
+    and the ship have, into an empty hold and an empty office, swords (pieces
+    of 10) both ways; 0x58 with a ware out, 0 and a negative amount, no
+    office, more than the stock, the office's town out; 0x59 the same, more
+    than the store (rounded), short of money (0x52F3E0), without money, a
+    store of 0 (an empty stock: 0x5007A0 keeps the average)."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    towns, _, merchants, ships = o.counts()
+    SWORD = 0x14
+
+    def state(what):
+        f = facilities_office(o, m, t)
+        b = o.office(f)
+        print(f'  {what}: office beer {o.s32(b + 4 + 4 * BEER)} at {f32(b + 0x3B8 + 4 * BEER):.4f}, '
+              f'grain {o.s32(b + 4 + 4 * GRAIN)}; ship beer {o.s32(a + 0x54 + 4 * BEER)} at '
+              f'{f32(a + 0xB4 + 4 * BEER):.4f}, grain {o.s32(a + 0x54 + 4 * GRAIN)}; money {o.s32(o.merchant(m))}')
+
+    def queue(op, what):
+        print(f'{what}: {op.hex() if op else "nothing"}')
+        if op:
+            run_bytes(o, op)
+            state(what)
+
+    def by_hand(code, amount, ware, index, last):
+        """0x08 {amount, ship, ware, player, direction}; 0x58, 0x59 {amount, ware, merchant, player, town}."""
+        operation(o, code, amount & 0xFFFFFFFF, index | ware << 16 if code == 8 else ware | index << 16, m | last << 16)
+
+    def f32(address):
+        return struct.unpack('<f', bytes(o.uc.mem_read(address, 4)))[0]
+
+    def during(o):
+        w32(o, o.merchant(m), 50000000)
+        if facilities_office(o, m, t) is None:
+            store(o, t)
+            operation(o, 0x5D, m, t)
+        f = facilities_office(o, m, t)
+        b = o.office(f)
+        print(f'office {f} of the player {m} in town {t}; ship {s}')
+        for ware, n in ((BEER, 30 * 200 + 77), (GRAIN, 12 * 2000 + 900)):
+            w32(o, b + 4 + 4 * ware, n)
+            o.uc.mem_write(b + 0x3B8 + 4 * ware, struct.pack('<f', 3.25 if ware == BEER else 41.5))
+            w32(o, o.town(t) + 4 + 4 * ware, 70 * (200 if IN_BARRELS[ware] else 2000) + 150)
+        mine = office_window(o, f)
+        game = game_office_window(o, t)
+        print(f'  the window: units {mine[0][:4]}, holds {mine[1]}, room {mine[2]}; the game {game[0][:4]}, holds {game[1]}'
+              + ('' if (mine[0], mine[1]) == game else '  MISMATCH'))
+        state('at first')
+        for ware in (BEER, GRAIN):
+            for step in (1, 5, 50, 0):
+                units, used, room = office_window(o, f)
+                tu = cdiv(o.s32(o.town(t) + 4 + 4 * ware), 200 if IN_BARRELS[ware] else 2000)
+                queue(player_op('office-buy', step, tu, ware, room, used, m, m, t), f'office buys {ware} by {step}')
+            for step in (1, 5, 50, 0):
+                units = office_window(o, f)[0]
+                queue(player_op('office-sell', step, units[ware], ware, m, m, t), f'office sells {ware} by {step}')
+        for ware, n in ((BEER, 40 * 200), (GRAIN, 15 * 2000)):
+            w32(o, b + 4 + 4 * ware, n)
+        for ware in (BEER, GRAIN):
+            for step in (1, 5, 50, 0):
+                units = office_window(o, f)[0]
+                queue(player_op('office-to-ship', step, units[ware], ware, o.s32(a + 0x10), window_used(o, s), s, m),
+                      f'office to ship {ware} by {step}')
+            for step in (1, 5, 50, 0):
+                su = cdiv(o.s32(a + 0x54 + 4 * ware), 200 if IN_BARRELS[ware] else 2000)
+                queue(player_op('ship-to-office', step, su, ware, s, m), f'ship to office {ware} by {step}')
+        # 0x08's branches.
+        by_hand(8, 200, BEER, ships, 1)
+        by_hand(8, 200, 0x18, s, 1)
+        w16(o, a + 0x134, 4)
+        by_hand(8, 200, BEER, s, 1)
+        w16(o, a + 0x134, 0)
+        owner = o.u8(a)
+        other = next(x for x in range(merchants) if x != m and facilities_office(o, x, t) is None)
+        w8(o, a, other)
+        by_hand(8, 200, BEER, s, 1)
+        w8(o, a, owner)
+        by_hand(8, -400, BEER, s, 1)
+        state('-400 from the office')
+        timber = o.s32(a + 0x54 + 4 * TIMBER)
+        w32(o, a + 0x54 + 4 * TIMBER, timber + o.s32(a + 0x10) + 4000)
+        direct(o, 0x5182B0, [], ecx=a)
+        by_hand(8, 400, BEER, s, 1)
+        state('the hold full')
+        w32(o, a + 0x54 + 4 * TIMBER, timber)
+        direct(o, 0x5182B0, [], ecx=a)
+        by_hand(8, 1000 * 200, BEER, s, 1)
+        state('more than the office has')
+        by_hand(8, 1000 * 200, BEER, s, 0)
+        state('more than the ship has')
+        by_hand(8, 3 * 200, BEER, s, 1)
+        by_hand(8, 2 * 2000, GRAIN, s, 0)
+        w32(o, b + 4 + 4 * SWORD, 57)
+        o.uc.mem_write(b + 0x3B8 + 4 * SWORD, struct.pack('<f', 12.5))
+        by_hand(8, 37, SWORD, s, 1)
+        by_hand(8, 13, SWORD, s, 0)
+        print(f'  swords: office {o.s32(b + 4 + 4 * SWORD)}, ship {o.s32(a + 0x54 + 4 * SWORD)}')
+        # 0x58's and 0x59's branches.
+        for code in (0x58, 0x59):
+            by_hand(code, 200, 0x18, m, t)
+            by_hand(code, 0, BEER, m, t)
+            by_hand(code, -200, BEER, m, t)
+            by_hand(code, 200, BEER, other, t)
+        by_hand(0x58, 1000 * 200, BEER, m, t)
+        state('the office sells more than it has')
+        w8(o, b + 0x2C6, towns)
+        by_hand(0x58, 200, GRAIN, m, t)
+        w8(o, b + 0x2C6, t)
+        w32(o, o.town(t) + 4 + 4 * BEER, 7 * 200 + 50)
+        w32(o, o.town(t) + 4 + 4 * GRAIN, 3 * 2000 + 700)
+        by_hand(0x59, 20 * 200, BEER, m, t)
+        by_hand(0x59, 20 * 2000, GRAIN, m, t)
+        state('more than the store')
+        w32(o, o.town(t) + 4 + 4 * BEER, 40 * 2000)
+        w32(o, o.merchant(m), 300)
+        by_hand(0x59, 20 * 200, BEER, m, t)
+        state('300 coins')
+        w32(o, o.merchant(m), 0)
+        by_hand(0x59, 20 * 200, BEER, m, t)
+        w32(o, o.merchant(m), 50000000)
+        w32(o, b + 4 + 4 * 2, 0)
+        w32(o, o.town(t) + 4 + 4 * 2, 0)
+        by_hand(0x59, 2000, 2, m, t)
+        print(f'  a store of 0: the office\'s {o.s32(b + 4 + 4 * 2)} at {f32(b + 0x3B8 + 4 * 2)}')
+    return during
+
+
+PIECE_WEIGHT = (1000, 1000, 2000, 2000, 2000, 1000)  # 0x672CB4
+
+
+def office_artillery(o):
+    """Operation 0x09 (0x538210) and the window's mode 5: in the town of the
+    player's first ship in port, his office (0x5D if he has none) with pieces
+    of each type (one with a weight not a multiple of its piece's), hand
+    weapons [+0x2BC] and weapons (the wares 0x14..0x17, a crossbow store of 0);
+    the ship with free slots, two of them marked 7. The viewer's bytes
+    (player_ops artillery, weapons-to-ship, weapons-to-office) with each step:
+    each type and the hand weapons to the ship and back, the weapons both ways
+    (the crossbows, none in the office: the game's bug, a 0x09 of hand weapons
+    counted by the ship's pieces of type 4). Then by hand: a town out, a ship
+    out, the ship in the shipyard, in another town, without an office (its
+    owner changed), hand weapons from the ship more and fewer than it has and
+    to it with the hold full (unsigned: the count itself), small pieces from
+    the ship fewer than it has (an even slot before a 6 skipped), a big piece
+    in the slot 23 (it clears the slot 24, the hand weapons' low byte), big
+    pieces fewer than it has, to the ship more than the office has and than
+    its room, small ones fewer than the slots marked 7, big ones fewer than
+    the free pairs; the ship made a convoy's guide (0x509B90) without the
+    convoy's flag 2 (nothing from it) and with it."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    towns, _, merchants, ships = o.counts()
+
+    def slots():
+        return ''.join('.' if v == 0xFF else str(v) for v in o.uc.mem_read(a + 0x13C, 24))
+
+    def state(what):
+        b = o.office(facilities_office(o, m, t))
+        pieces = [o.s32(b + 0x124 + 4 * k) // PIECE_WEIGHT[k] for k in range(6)]
+        print(f'  {what}: slots {slots()} hand {o.u16(a + 0x154)}; office {pieces} hand {o.s32(b + 0x2BC)}; '
+              f'weapons ship {[o.s32(a + 0x54 + 4 * w) for w in range(0x14, 0x18)]} '
+              f'office {[o.s32(b + 4 + 4 * w) for w in range(0x14, 0x18)]}')
+
+    def ship_pieces(k):
+        return o.u16(a + 0x154) if k < 0 else sum(1 for v in o.uc.mem_read(a + 0x13C, 24) if v == k)
+
+    def office_pieces(k):
+        b = o.office(facilities_office(o, m, t))
+        return o.s32(b + 0x2BC) if k < 0 else cdiv(o.s32(b + 0x124 + 4 * k), PIECE_WEIGHT[k])
+
+    def queue(op, what):
+        print(f'{what}: {op.hex() if op else "nothing"}')
+        if op:
+            run_bytes(o, op)
+            state(what)
+
+    def by_hand(kind, count, town, from_ship, ship=None):
+        operation(o, 9, kind & 0xFFFFFFFF, town | (0x80000000 if from_ship else 0), s if ship is None else ship, count)
+
+    def during(o):
+        w32(o, o.merchant(m), 50000000)
+        if facilities_office(o, m, t) is None:
+            store(o, t)
+            operation(o, 0x5D, m, t)
+        b = o.office(facilities_office(o, m, t))
+        for k in range(6):
+            w32(o, b + 0x124 + 4 * k, 3 * PIECE_WEIGHT[k] + (500 if k == 1 else 0))
+        w32(o, b + 0x2BC, 40)
+        for w, n in zip(range(0x14, 0x18), (57, 30, 0, 12)):
+            w32(o, b + 4 + 4 * w, n)
+        o.uc.mem_write(a + 0x13C, bytes([0xFF] * 24))
+        w8(o, a + 0x13D, 7)
+        w8(o, a + 0x13F, 7)
+        w16(o, a + 0x154, 5)
+        direct(o, 0x5182B0, [], ecx=a)
+        state('at first')
+        for k in range(-1, 6):
+            for step in (1, 5, 0):
+                queue(player_op('artillery', step, office_pieces(k), k, t, s, 0), f'type {k} to the ship by {step}')
+        for w in range(0x14, 0x18):
+            for step in (1, 5, 0):
+                units = cdiv(o.s32(b + 4 + 4 * w), 10)
+                queue(player_op('weapons-to-ship', step, units, w, o.s32(a + 0x10), window_used(o, s), s, m, t,
+                                ship_pieces(w - 0x14 + 2)), f'weapon {w:#x} to the ship by {step}')
+        for k in range(-1, 6):
+            for step in (1, 0):
+                queue(player_op('artillery', step, ship_pieces(k), k, t, s, 1), f'type {k} to the office by {step}')
+        for w in range(0x14, 0x18):
+            for step in (1, 0):
+                units = cdiv(o.s32(a + 0x54 + 4 * w), 10)
+                queue(player_op('weapons-to-office', step, units, w, s, m), f'weapon {w:#x} to the office by {step}')
+        # 0x538210's branches.
+        by_hand(1, 1, towns, False)
+        by_hand(1, 1, t, False, ships)
+        w16(o, a + 0x134, 4)
+        by_hand(1, 1, t, False)
+        w16(o, a + 0x134, 0)
+        by_hand(1, 1, (t + 1) % towns, False)
+        owner = o.u8(a)
+        other = next(x for x in range(merchants) if x != m and facilities_office(o, x, t) is None)
+        w8(o, a, other)
+        by_hand(1, 1, t, False)
+        w8(o, a, owner)
+        w16(o, a + 0x154, 9)
+        by_hand(-1, 20, t, True)
+        state('20 hand weapons from 9')
+        w16(o, a + 0x154, 9)
+        by_hand(-1, 4, t, True)
+        state('4 hand weapons from 9')
+        timber = o.s32(a + 0x54 + 4 * TIMBER)
+        w32(o, a + 0x54 + 4 * TIMBER, timber + o.s32(a + 0x10) + 4000)
+        direct(o, 0x5182B0, [], ecx=a)
+        by_hand(-1, 3, t, False)
+        state('3 hand weapons, the hold full')
+        by_hand(0, 2, t, False)
+        state('2 small pieces, the hold full')
+        w32(o, a + 0x54 + 4 * TIMBER, timber)
+        direct(o, 0x5182B0, [], ecx=a)
+        layout = [0, 1, 0, 6, 2, 6, 1, 0, 0xFF, 7, 0xFF, 7, 0xFF, 0xFF, 0xFF, 0xFF, 3, 6, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2]
+        o.uc.mem_write(a + 0x13C, bytes(layout))
+        w16(o, a + 0x154, 0x105)
+        direct(o, 0x5182B0, [], ecx=a)
+        state('a layout')
+        by_hand(0, 2, t, True)
+        state('2 small pieces of type 0 from the ship')
+        by_hand(2, 1, t, True)
+        state('1 big piece of type 2 from the ship (the slot 23 first)')
+        by_hand(1, 1, t, True)
+        for k in range(6):
+            w32(o, b + 0x124 + 4 * k, 9 * PIECE_WEIGHT[k])
+        by_hand(5, 1, t, False)
+        state('1 small piece, slots marked 7 free')
+        by_hand(4, 1, t, False)
+        state('1 big piece, free pairs')
+        w32(o, b + 0x124 + 4 * 3, 2 * PIECE_WEIGHT[3])
+        by_hand(3, 10, t, False)
+        state('10 big pieces, the office has 2')
+        room = struct.unpack('<i', struct.pack('<I', direct(o, 0x5182B0, [], ecx=a)))[0]
+        w32(o, a + 0x54 + 4 * TIMBER, timber + max(0, room - 3500) // 2000 * 2000)
+        direct(o, 0x5182B0, [], ecx=a)
+        by_hand(1, 10, t, False)
+        state('10 small pieces, room for a few')
+        w32(o, a + 0x54 + 4 * TIMBER, timber)
+        direct(o, 0x5182B0, [], ecx=a)
+        # A convoy guided by the ship (0x509B90): 25 sailors, guns, a captain.
+        captains = o.u16(to.SHIPS + 0xF2)
+        if o.u16(a + 0x42) >= captains:
+            run_bytes(o, player_op('hire-captain', town_captain(o, t), s, t))
+        w16(o, a + 0x40, 25)
+        o.uc.mem_write(a + 0x13C, bytes([1] * 7 + [0xFF] * 17))
+        direct(o, 0x5182B0, [], ecx=a)
+        direct(o, 0x509B90, [s, 0, 5, t], ecx=to.SHIPS)
+        c = o.u32(to.SHIPS + 8) + 0x3C * o.u16(a + 8)
+        flags = o.u8(c + 0x14)
+        w8(o, c + 0x14, flags & ~2)
+        by_hand(1, 2, t, True)
+        state('the convoy without its flag 2')
+        w8(o, c + 0x14, flags | 2)
+        by_hand(1, 2, t, True)
+        state('the convoy with its flag 2')
+    return during
+
+
 def player_op_text(*args):
     """player_ops's output as text."""
     import subprocess
@@ -5243,6 +5569,18 @@ SCENARIOS = {
         '@504d3e>504de8', '@504d5c>504de8', '@504d62', '@504d95>504de8', '@504dc5', '@504dc3>504dd5',
         '@5269d3>5269e1', '@5269df>526a42', '@526a1f>526a26', '@526a24>526a42', '@526a37',
         '@4f6cc1', '@4f6cd7>4f6cdb', '@4f6cd9', '@5cc479', '@5d03d6', '@5d03d4>5d03ed']),
+    'office_trade': Scenario(office_trade, [0x535760], 0, [
+        '@538110>538200', '@53811b>538200', '@53813c>538200', '@53815d>538200', '@53816b', '@53817f', '@538199',
+        '@5381c0', '@5381d2', '@5180ca>5181be', '@518139', '@5180e7', '@51815b', '@51817e', '@51819d',
+        '@4ff6fa>4ff772', '@4ff763', '@4ff70c', '@53d2b9>53d3b1', '@53d2c4>53d3b1', '@53d2e4>53d3b1', '@53d2fb',
+        '@53d30e>53d3b1', '@53d324', '@53d3cd>53d52a', '@53d3d6>53d52a', '@53d3f6>53d52a', '@53d438', '@53d444',
+        '@53d460', '@53d498', '@53d4ba>53d52a', '@5007f4>50080d', '@5007f6']),
+    'office_artillery': Scenario(office_artillery, [0x535760], 0, [
+        '@538226>538679', '@53823d>538679', '@538259>538679', '@53826c>538679', '@53828c>538679', '@5382a1>5384a3',
+        '@5382d8>538679', '@5382e4>538357', '@5382fa>538327', '@5382fc', '@538366>53843c', '@538380>538390',
+        '@53838e>5383c0', '@538395>5383c4', '@5383f9>538665', '@538458>538665', '@5384a9>538509', '@5384cc',
+        '@5384d8', '@538522', '@538541', '@53854e>538604', '@53856b', '@538596', '@5385ba>5385e5', '@53864e',
+        '@538625>538658']),
 }
 
 
