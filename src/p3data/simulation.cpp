@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "p3data/mail.hpp"
+#include "p3data/trade.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/town_tick/votes.hpp"
 
@@ -97,6 +98,17 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			sailing->set_sail(fields[1], fields[2], fields[3], fields[4]);
 		}
 		break;
+	case 0x01:  // Sell from a ship to a town's market (0x53578C → 0x537340; trade.cpp).
+	case 0x02: {  // Buy for a ship from a town's market (0x53579B → 0x537450).
+		uint8_t op[0x14];
+		std::memcpy(op, operation, sizeof(op));  // The handlers write the amount back into it.
+		if (fields[0] == 0x01) {
+			fn_537340(save, op);
+		} else {
+			fn_537450(save, op);
+		}
+		break;
+	}
 	case 0x0A:  // A ship is deleted (0x535866, 0x507FB0).
 		tick::fn_535866(save, sailing, operation);
 		break;

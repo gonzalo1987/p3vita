@@ -406,6 +406,10 @@ bool fn_5067d0(SaveGame& save, int ship, uint16_t* link);
 bool fn_506a19(SaveGame& save, int ship, uint16_t* link);
 bool fn_506b6a(SaveGame& save, int ship, uint16_t* link);
 void fn_518b80(SaveGame& save, int ship, uint32_t arg);  // Un barco de la IA decide qué hacer en puerto.
+// events_rare.cpp: the cargo bought for a ship (also trade.cpp, operation 0x02).
+namespace events_rare_detail {
+void fn_517fe0(SaveGame& save, int ship, uint32_t ware, int32_t amount, int32_t price);
+}  // namespace events_rare_detail
 // ship_ai.cpp: lo que usan también los convoyes (src/p3data/convoys*.cpp).
 namespace ship_ai_detail {
 void fn_517770(SaveGame& save, int ship, uint32_t flags);  // Aviso a la interfaz del barco y de su convoy.

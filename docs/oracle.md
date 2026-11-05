@@ -1244,6 +1244,40 @@ or 0xFF; a plundered ship's owner neither 0xFF nor a merchant
 it); and the news of a sunk pirate with a side past the merchants but not
 0xFF (`ship_step.cpp`).
 
+## The player's actions: buying and selling (2026-11-05)
+
+The first of the player's actions (`ENCARGO_ACCIONES_JUGADOR.md`; the table of
+the codes, [formats/operations.md](formats/operations.md)): operations 0x02
+(0x537450) and 0x01 (0x537340), rewritten literally in `trade.cpp`
+(`fn_537450`, `fn_537340`, with 0x52F3E0 and the merchant's statistics) and
+run by `run_operation`; the viewer queues them with the bytes the market window
+builds (`player_actions.cpp`: the steps 1, 5, 50 and all, clamped by what the
+window keeps of the town, 0x4AAB10, and of the ship, 0x4AA9D0). New for the
+oracle: 0x01 and 0x02 in `OPERATIONS` (`town_oracle.py`), probes of the prices
+0x52E430 and 0x52E1D0 (`probes_unchecked.cpp`), `player_ops buy` and `sell`
+(the market's bytes from the values the window reads), and in
+`retouch_unchecked.py` `player_op` and `run_bytes` (an operation as the viewer
+builds it, run with the game's executor).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `trade_window` | the viewer's bytes: the player's first ship in port, rich, buys beer (barrels) and grain (loads) with each step and sells them back with each step; grain by 50 with room for 3 loads; beer with the hold past its capacity (the window sends −20000; nothing is bought) | 1, 3, 5, 7 | 16 calls equal, 3 of 3 targets |
+| `trade_branches` | operations made by hand: buying in a town out, in another town than the ship's, banned ([+0x608]), more than the store (rounded to barrels and loads), with the hold past its capacity, with 100, 0 and 1 coins, 1100 of beer with a coin less than its price, 40 barrels of a store of 41 with a coin less than the price of 10 (0x52F3E0 climbs barrel by barrel), 0, −200; selling in a town out, banned, more than the cargo, in another town (0x537340 doesn't look) | 1, 3, 5, 7 | 20 calls of 0x535760 and every price call (0x52E430, 0x52E1D0) equal, 18 of 18 targets |
+
+Also `compare_save` (`save_oracle.py`, random trades with the game's handlers
+on every merchant's docked ships), now on the rewritten handlers: 2000 per save
+in the 12 saves, 0 different (`re/emu/sesion9/trade_check.sh`). With details
+broken on purpose the comparison caught them: the sale paid with the store after
+the sale (`trade_window`, 6 calls) and 0x52F3E0 climbing two barrels at a time
+(`trade_branches`, saves 1 and 5; in 3 and 7 both ways end on the same amount).
+Taking a ship's flag 0x517770 (4) away from the sale wasn't seen: the purchase
+before it (0x517FE0) sets the same bit. Careful: PowerShell's `Copy-Item` keeps
+the copied file's date, so a file put back with it isn't rebuilt by make
+(`touch` it).
+
+The world 7 days in the 12 saves, 0 different; the old scenarios of
+`retouch_player.py` (`take_road`, `give_road`, `vote_self`, `diet_yes`), equal.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

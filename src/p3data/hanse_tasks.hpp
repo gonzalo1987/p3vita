@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "p3data/player_actions.hpp"
 #include "p3data/savegame.hpp"
 
 namespace p3::data {
@@ -92,8 +93,7 @@ constexpr std::array<uint32_t, 4> kRoadAmounts = {1, 5, 50, 0xFFFFFFFF};
 uint16_t road_window_amount(uint32_t chosen, uint32_t available, uint16_t needed);
 
 // The operations, byte for byte as the game's UI builds them (0x14 bytes,
-// 0x535740 and then the fields).
-using OperationBytes = std::array<uint8_t, 0x14>;
+// 0x535740 and then the fields; OperationBytes, player_actions.hpp).
 // 0x4B (task window 0x5E87D0): {0x4B, player, event}.
 OperationBytes take_task_operation(uint32_t player, uint16_t event);
 // 0x3B (road window 0x5F2A20): {0x3B, u16 event, u16 amount, u8 town, u8
@@ -122,9 +122,5 @@ std::array<ElectionCandidate, 4> election_candidates(const SaveGame& save, uint1
 // The candidates for the next election as the game's window lists them
 // before it (0x529700): a merchant, or the town whose mayor stands.
 std::array<ElectionCandidate, 4> next_election_candidates(const SaveGame& save);
-
-// Adds the operation to the queue; advance_game_tick runs it after the next
-// tick, as the game runs its queue between two calls to advance_time.
-void queue_operation(SaveGame& save, const OperationBytes& operation);
 
 }  // namespace p3::data

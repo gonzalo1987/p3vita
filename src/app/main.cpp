@@ -31,6 +31,7 @@
 #include "p3data/letters.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/navigation.hpp"
+#include "p3data/player_actions.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/simulation.hpp"
@@ -1015,9 +1016,9 @@ std::string ware_label(int ware) {
 	return name;
 }
 
-// Lo que se compra o vende de cada vez, en barriles o cargas; 0 = todo lo posible.
-constexpr int kTradeSteps[] = {1, 5, 10, 0};
-constexpr int kTradeStepCount = int(sizeof(kTradeSteps) / sizeof(kTradeSteps[0]));
+// What is bought or sold each time, in barrels or loads: the market window's
+// 1, 5, 50 and all (0; kMarketSteps, player_actions.hpp).
+constexpr int kTradeStepCount = int(kMarketSteps.size());
 constexpr Uint32 kMessageTime = 4000;  // Milisegundos que se ve el resultado de una operación.
 
 constexpr const char* kShipTypes[] = {"Snaikka", "Craier", "Kogge", "Holk"};
@@ -1031,7 +1032,7 @@ std::string ship_type_name(int type) {
 struct MarketUi {
 	bool open = false;
 	int ware = 0;  // Fila seleccionada.
-	int step = 0;  // Índice en kTradeSteps.
+	int step = 0;  // Index in kMarketSteps.
 	size_t ship = 0;  // Entre los barcos del jugador atracados en la ciudad.
 	std::string message;
 	Uint32 message_until = 0;
@@ -1055,22 +1056,34 @@ int market_ship(const SaveGame& save, int town, const MarketUi& ui) {
 	return ships.empty() ? -1 : ships[ui.ship % ships.size()];
 }
 
-int32_t trade_amount(const SaveGame& save, int ship, const MarketUi& ui, bool buying) {
-	const WareUnit unit = kWares[size_t(ui.ware)].unit;
-	const int step = kTradeSteps[ui.step];
-	if (step > 0) {
-		return step * ware_scale(unit);
+// The operation the market window would send now (0x02 or 0x01), as the
+// game's window computes its amount.
+std::optional<OperationBytes> trade_operation(const SaveGame& save, int ship, int town, const MarketUi& ui,
+	bool buying) {
+	const uint32_t step = kMarketSteps[size_t(ui.step)];
+	return buying ? market_buy_operation(save, ship, town, ui.ware, step)
+				  : market_sell_operation(save, ship, town, ui.ware, step);
+}
+
+int32_t trade_amount(const SaveGame& save, int ship, int town, const MarketUi& ui, bool buying) {
+	const std::optional<OperationBytes> op = trade_operation(save, ship, town, ui, buying);
+	int32_t amount = 0;
+	if (op) {
+		std::memcpy(&amount, op->data() + 4, 4);
 	}
-	// Todo: el juego ya limita la compra al almacén, la bodega y el dinero.
-	return buying ? 1000 * 1000 * 1000 : save.ships[size_t(ship)].cargo(size_t(ui.ware));
+	return amount;
 }
 
 std::string step_text(const MarketUi& ui) {
-	const int step = kTradeSteps[ui.step];
-	return step > 0 ? amount_label(step, kWares[size_t(ui.ware)].unit) : tr("todo", "all");
+	const uint32_t step = kMarketSteps[size_t(ui.step)];
+	return step > 0 ? amount_label(int(step), kWares[size_t(ui.ware)].unit) : tr("todo", "all");
 }
 
-void trade(SaveGame& save, int town, MarketUi& ui, bool buying) {
+// Buys or sells as the game does: the market window queues the operation and
+// the game runs its queue before the next tick, so the viewer runs it at once
+// (without the sea, Sailing, only this operation). What it did is told by the
+// ship's cargo and the owner's money before and after.
+void trade(SaveGame& save, Sailing* sailing, int town, MarketUi& ui, bool buying) {
 	const int ship = market_ship(save, town, ui);
 	const WareInfo& ware = kWares[size_t(ui.ware)];
 	const std::string name = ware_name(ui.ware);
@@ -1084,9 +1097,20 @@ void trade(SaveGame& save, int town, MarketUi& ui, bool buying) {
 		ui.message = tr("Esta ciudad no tiene mercado.", "This town has no market.");
 		return;
 	}
-	const int32_t amount = trade_amount(save, ship, ui, buying);
-	const TradeResult result = buying ? buy_to_ship(save, ship, town, ui.ware, amount)
-									  : sell_from_ship(save, ship, town, ui.ware, amount, save.trade_difficulty);
+	TradeResult result;
+	if (const std::optional<OperationBytes> op = trade_operation(save, ship, town, ui, buying)) {
+		const SavedShip& s = save.ships[size_t(ship)];
+		const int32_t cargo = s.cargo(size_t(ui.ware));
+		const int32_t money = save.merchants[s.owner()].money();
+		if (sailing) {
+			queue_operation(save, *op);
+			run_queued_operations(save, *sailing);
+		} else {
+			run_operation(save, nullptr, op->data());
+		}
+		result.amount = buying ? s.cargo(size_t(ui.ware)) - cargo : cargo - s.cargo(size_t(ui.ware));
+		result.price = buying ? money - save.merchants[s.owner()].money() : save.merchants[s.owner()].money() - money;
+	}
 	const SavedTown& market = save.towns[size_t(town)];
 	if (result.amount > 0) {
 		ui.message = g_spanish ? std::string(buying ? "Compra: " : "Venta: ") + amount_text(result.amount, ware.unit) +
@@ -1234,9 +1258,9 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 	std::string footer = show_message ? ui.message : "";
 	if (!show_message && ship) {
 		const TradeResult buy =
-			quote_buy(save, ship_index, town_index, ui.ware, trade_amount(save, ship_index, ui, true));
+			quote_buy(save, ship_index, town_index, ui.ware, trade_amount(save, ship_index, town_index, ui, true));
 		const TradeResult sell =
-			quote_sell(save, ship_index, town_index, ui.ware, trade_amount(save, ship_index, ui, false),
+			quote_sell(save, ship_index, town_index, ui.ware, trade_amount(save, ship_index, town_index, ui, false),
 				save.trade_difficulty);
 		footer = buy.amount > 0 ? tr("Comprar ", "Buy ") + amount_text(buy.amount, selected_unit) + ": " +
 				format_money(buy.price) + tr(" monedas", " coins")
@@ -3362,7 +3386,7 @@ int main(int argc, char** argv) {
 					break;
 				case SDL_CONTROLLER_BUTTON_A:  // X en la Vita: abre el mercado y compra; en el mar, zarpar.
 					if (trading) {
-						trade(save, town_index, market, true);
+						trade(save, sailing.get(), town_index, market, true);
 					} else if (selection.mode == Mode::Saved) {
 						market.open = true;
 						hanse.open = false;
@@ -3373,7 +3397,7 @@ int main(int argc, char** argv) {
 				case SDL_CONTROLLER_BUTTON_X:
 					// Cuadrado: vende; en el mar, el siguiente barco del jugador; en la ciudad, the Hanse panel.
 					if (trading) {
-						trade(save, town_index, market, false);
+						trade(save, sailing.get(), town_index, market, false);
 					} else if (selection.mode == Mode::Sea) {
 						fleet_index++;
 					} else if (selection.mode == Mode::Saved) {
@@ -3496,7 +3520,7 @@ int main(int argc, char** argv) {
 				case SDLK_c:
 				case SDLK_v:
 					if (trading) {
-						trade(save, town_index, market, event.key.keysym.sym == SDLK_c);
+						trade(save, sailing.get(), town_index, market, event.key.keysym.sym == SDLK_c);
 					}
 					break;
 				case SDLK_TAB:
@@ -3624,9 +3648,9 @@ int main(int argc, char** argv) {
 					if (inside(layout.step_button, touch_start.x, touch_start.y)) {
 						change_step(1);
 					} else if (inside(layout.buy_button, touch_start.x, touch_start.y)) {
-						trade(save, town_index, market, true);
+						trade(save, sailing.get(), town_index, market, true);
 					} else if (inside(layout.sell_button, touch_start.x, touch_start.y)) {
-						trade(save, town_index, market, false);
+						trade(save, sailing.get(), town_index, market, false);
 					} else if (row >= 0) {
 						market.ware = row;
 					}

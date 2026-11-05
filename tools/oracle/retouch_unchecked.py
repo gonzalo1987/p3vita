@@ -4400,6 +4400,191 @@ def raid_arrival(o):
     return during
 
 
+# --- The player's actions (docs/formats/operations.md) ---
+# The operations the interface queues, run with the game's executor; where
+# the viewer builds them, with its very bytes (player_ops, from P3_BUILD).
+
+PLAYER_OPS = os.path.join(os.environ.get('P3_BUILD', 'build'), 'tools', 'oracle', 'player_ops')
+IN_BARRELS = (0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1)  # 0x672C14
+BEER, GRAIN, TIMBER = 3, 0, 0xB
+
+
+def player_op(*args):
+    """The operation as the viewer builds it (player_ops), or None."""
+    import subprocess
+    out = subprocess.run([PLAYER_OPS, *[str(a) for a in args]], check=True, capture_output=True, text=True)
+    out = out.stdout.strip()
+    return None if out == 'none' else bytes.fromhex(out)
+
+
+def run_bytes(o, op):
+    """An operation given as its 0x14 bytes, run with the game's executor."""
+    operation(o, *struct.unpack('<5I', op))
+
+
+def cdiv(a, b):
+    """C's division (towards 0)."""
+    q = abs(a) // abs(b)
+    return q if (a < 0) == (b < 0) else -q
+
+
+def player_docked_ship(o):
+    """The player's first ship in port (state 0, not in a convoy) in a town
+    with a market: (ship, town)."""
+    towns, _, _, ships = o.counts()
+    convoys = o.u16(to.SHIPS + 0xF6)
+    s = o.u16(o.merchant(o.u32(to.PLAYER)) + 0xE)
+    while s < ships:
+        a = o.ship(s)
+        t = o.u8(a + 0x39)
+        if o.u16(a + 0x134) == 0 and t < towns and o.u16(a + 8) >= convoys and o.u32(o.town(t) + 0x76C) & 0x100:
+            return s, t
+        s = o.u16(a + 4)
+    raise RuntimeError('the player has no ship in port')
+
+
+def window_used(o, s):
+    """The hold the market window says the ship uses, in steps of 200
+    (0x4AA9D0: [+0x118] plus [+0x11C], rounded up by the equipment's rest)."""
+    a = o.ship(s)
+    used = o.s32(a + 0x118) + o.s32(a + 0x11C)
+    rest = o.s32(a + 0x11C) - cdiv(o.s32(a + 0x11C), 200) * 200
+    if rest:
+        used = used - rest + 200
+    return cdiv(used, 200)
+
+
+def window_buy(o, s, t, ware, step):
+    """The viewer's 0x02 for the market window's step (0 = all), from what the
+    window reads of the town (0x4AAB10) and the ship."""
+    unit = 200 if IN_BARRELS[ware] else 2000
+    units = cdiv(o.s32(o.town(t) + 4 + 4 * ware), unit)
+    return player_op('buy', step, units, ware, o.s32(o.ship(s) + 0x10), window_used(o, s), s, o.u32(to.PLAYER), t)
+
+
+def window_sell(o, s, t, ware, step):
+    unit = 200 if IN_BARRELS[ware] else 2000
+    units = cdiv(o.s32(o.ship(s) + 0x54 + 4 * ware), unit)
+    return player_op('sell', step, units, ware, s, o.u32(to.PLAYER), t)
+
+
+def trade_state(o, s, t, ware):
+    a = o.ship(s)
+    return (f'cargo {o.s32(a + 0x54 + 4 * ware)}, store {o.s32(o.town(t) + 4 + 4 * ware)}, '
+            f'money {o.s32(o.merchant(o.u8(a)))}, hold {o.s32(a + 0x118)}+{o.s32(a + 0x11C)}/{o.s32(a + 0x10)}')
+
+
+def trade_window(o):
+    """Operations 0x02 and 0x01 as the viewer queues them (the market window
+    0x4A8CF0 with a ship and the town, its mode 1): the player's first ship
+    in port, rich, buys beer (barrels) and grain (loads) with each step (1,
+    5, 50, all), each clamped by the window to the town's store and the
+    hold's room, and sells them back with each step; then grain with the hold
+    filled with timber but for 3 loads (the window clamps to the room), and
+    beer with the hold past its capacity (the window sends a negative amount:
+    0x537450 buys nothing)."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    print(f'ship {s} of the player {m} in town {t}')
+
+    def queue(op, what):
+        print(f'{what}: {op.hex() if op else "nothing"}')
+        if op:
+            run_bytes(o, op)
+
+    def during(o):
+        w32(o, o.merchant(m), 10000000)
+        for ware in (BEER, GRAIN):
+            w32(o, o.town(t) + 4 + 4 * ware, 70 * (200 if IN_BARRELS[ware] else 2000) + 150)
+            for step in (1, 5, 50, 0):
+                queue(window_buy(o, s, t, ware, step), f'buy {ware} by {step}')
+                print('  ' + trade_state(o, s, t, ware))
+            for step in (1, 5, 50, 0):
+                queue(window_sell(o, s, t, ware, step), f'sell {ware} by {step}')
+                print('  ' + trade_state(o, s, t, ware))
+        room = o.s32(a + 0x10) - o.s32(a + 0x118) - o.s32(a + 0x11C)
+        w32(o, a + 0x54 + 4 * TIMBER, o.s32(a + 0x54 + 4 * TIMBER) + max(0, room // 2000 * 2000 - 3 * 2000))
+        direct(o, 0x5182B0, [], ecx=a)
+        queue(window_buy(o, s, t, GRAIN, 50), 'grain by 50, room for 3 loads')
+        print('  ' + trade_state(o, s, t, GRAIN))
+        w32(o, a + 0x54 + 4 * TIMBER, o.s32(a + 0x54 + 4 * TIMBER) + 10 * 2000)
+        direct(o, 0x5182B0, [], ecx=a)
+        queue(window_buy(o, s, t, BEER, 5), 'beer by 5, the hold past its capacity')
+        print('  ' + trade_state(o, s, t, BEER))
+    return during
+
+
+def trade_branches(o):
+    """Operations 0x02 (0x537450, with 0x52F3E0) and 0x01 (0x537340), made
+    here, on the player's first ship in port. Buying: a town out of the
+    world, another town than the ship's, a town the merchant is banned from
+    ([+0x608]), more beer and grain than the store has (rounded down to
+    barrels and loads), the hold past its capacity (the room < 0), with 100
+    coins (0x52F3E0 cuts it down), with 0 coins, with 1 coin (cut to 0),
+    1100 of beer with a coin less than its price (0x52E430: the amount isn't a
+    barrel, so the loop ends past it), 40 barrels with a coin less than the
+    price of 10 and a store of 41 (the loop climbs barrel by barrel), 0 and
+    −200, and a normal one. Selling: a town out, a banned town,
+    more than the cargo (clamped to it, written back into the operation), in
+    another town than the ship's (0x537340 doesn't look), and a normal one."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    towns, _, _, _ = o.counts()
+    a = o.ship(s)
+    other = (t + 1) % towns
+    print(f'ship {s} of the player {m} in town {t}; other town {other}')
+
+    def trade(code, amount, ware, town):
+        operation(o, code, amount & 0xFFFFFFFF, ware | s << 16, m | town << 16)
+        print(f'  {code:#x} {amount} of {ware} in {town}: {trade_state(o, s, t, ware)}')
+
+    def during(o):
+        w32(o, o.merchant(m), 10000000)
+        for ware in (BEER, GRAIN):
+            w32(o, o.town(t) + 4 + 4 * ware, 40 * 2000)
+        trade(2, 400, BEER, towns)
+        trade(2, 400, BEER, other)
+        bans = o.u32(o.merchant(m) + 0x608)
+        w32(o, o.merchant(m) + 0x608, bans | 1 << (t & 31))
+        trade(2, 400, BEER, t)
+        trade(1, 200, BEER, t)
+        w32(o, o.merchant(m) + 0x608, bans)
+        w32(o, o.town(t) + 4 + 4 * BEER, 3 * 200 + 50)
+        trade(2, 10 * 200, BEER, t)
+        w32(o, o.town(t) + 4 + 4 * GRAIN, 2 * 2000 + 700)
+        trade(2, 10 * 2000, GRAIN, t)
+        for ware in (BEER, GRAIN):
+            w32(o, o.town(t) + 4 + 4 * ware, 40 * 2000)
+        timber = o.s32(a + 0x54 + 4 * TIMBER)
+        w32(o, a + 0x54 + 4 * TIMBER, timber + o.s32(a + 0x10) + 4000)
+        direct(o, 0x5182B0, [], ecx=a)
+        trade(2, 400, BEER, t)
+        w32(o, a + 0x54 + 4 * TIMBER, timber)
+        direct(o, 0x5182B0, [], ecx=a)
+        for money in (100, 0, 1):
+            w32(o, o.merchant(m), money)
+            trade(2, 10 * 200, BEER, t)
+        w32(o, o.merchant(m), direct(o, 0x52E430, [BEER, t, 1100], ecx=0x6DE3D8) - 1)
+        trade(2, 1100, BEER, t)
+        w32(o, o.town(t) + 4 + 4 * BEER, 41 * 200)
+        w32(o, o.merchant(m), direct(o, 0x52E430, [BEER, t, 10 * 200], ecx=0x6DE3D8) - 1)
+        print(f'  prices of 10 and 40 barrels: {direct(o, 0x52E430, [BEER, t, 10 * 200], ecx=0x6DE3D8)}, '
+              f'{direct(o, 0x52E430, [BEER, t, 40 * 200], ecx=0x6DE3D8)}')
+        trade(2, 40 * 200, BEER, t)
+        w32(o, o.town(t) + 4 + 4 * BEER, 40 * 2000)
+        w32(o, o.merchant(m), 10000000)
+        trade(2, 0, BEER, t)
+        trade(2, -200, BEER, t)
+        trade(2, 5 * 200, BEER, t)
+        trade(1, 200, BEER, towns)
+        trade(1, 1000 * 200, BEER, t)
+        trade(2, 5 * 200, BEER, t)
+        trade(1, 2 * 200, BEER, other)
+        trade(1, 200, BEER, t)
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -4613,6 +4798,12 @@ SCENARIOS = {
     # battle/
     'battle_branches': Scenario(battle_branches, [0x535760, 0x540520, 0x50BFD0, 0x509250], 0, [
         '@540d3e', '@50c1fb', '@50c20b>50c33c', '@5095f7>5097a1']),
+    # the player's actions
+    'trade_window': Scenario(trade_window, [0x535760], 0, ['@5375b0', '@5373c2', '@5375ae>5375fc']),
+    'trade_branches': Scenario(trade_branches, [0x535760, 0x52E430, 0x52E1D0], 0, [
+        '@537480>5375fc', '@53748e>5375fc', '@5374c4>5375fc', '@5374fa', '@537518', '@537534', '@537502>5375fc',
+        '@537589', '@52f3f5', '@52f4c6', '@52f4ac', '@52f4f0>52f509', '@5375ae>5375fc', '@5375b0',
+        '@537366>53744b', '@53739c>53744b', '@5373b7', '@5373c2']),
 }
 
 

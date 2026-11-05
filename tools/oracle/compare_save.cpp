@@ -214,9 +214,9 @@ int main(int argc, char** argv) {
 			const int town = std::stoi(f[2]);
 			const int ware = std::stoi(f[3]);
 			const int32_t amount = std::stoi(f[5]);
-			const TradeResult result = kind == "compra"
-				? buy_to_ship(save, ship, town, ware, amount)
-				: sell_from_ship(save, ship, town, ware, amount, TradeDifficulty(std::stoi(f[4])));
+			save.trade_difficulty = TradeDifficulty(std::stoi(f[4]));
+			const TradeResult result = kind == "compra" ? buy_to_ship(save, ship, town, ware, amount)
+														: sell_from_ship(save, ship, town, ware, amount);
 			const SavedShip& s = save.ships.at(size_t(ship));
 			check.field("cantidad", result.amount, f[6]);
 			check.field("precio", result.price, f[7]);

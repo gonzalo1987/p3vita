@@ -35,6 +35,9 @@ SaveGame make_save() {
 	save.towns.push_back(town);
 	save.merchants.resize(1);
 	save.merchants[0].money() = 30000;
+	// What the handlers read of the world (0x537450 and 0x537340).
+	save.globals.u32(global::kWorldTownCount) = 1;
+	save.globals.u16(global::kWorldMerchantCount) = 1;
 	save.player = 0;
 	SavedShip ship;
 	ship.status() = 0;

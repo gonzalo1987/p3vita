@@ -7,33 +7,42 @@
 
 namespace p3::data {
 
-// Comercio entre un barco y el mercado de una ciudad: reproducción de las
-// operaciones 0x02 (comprar, 0x537450) y 0x01 (vender, 0x537340) de
-// Patrician3.exe. Las cantidades van en unidades internas (barril = 200,
-// carga = 2000) y los índices de barco y ciudad son los de la partida.
-// De momento no se apuntan las estadísticas de comercio del comerciante
-// (0x4F8840 y 0x4F8690), que no cambian ni precios ni existencias.
+// Trade between a ship and a town's market: operations 0x02 (buy, 0x537450)
+// and 0x01 (sell, 0x537340) of Patrician3.exe, rewritten literally (by
+// offset) with the merchant's trade statistics (0x4F8840 and 0x4F8690).
+// Amounts in internal units (barrel = 200, load = 2000); ship and town
+// indices as in the save. The viewer queues the operations
+// (player_actions.hpp) and run_operation runs them, as the game's market
+// window and executor do.
 
-// Redondea la carga de cada mercancía a unidades enteras y recalcula la bodega
-// ocupada y el peso del equipo (0x5182B0). Devuelve el espacio libre en
-// unidades internas; puede ser negativo.
+// Rounds the cargo of each ware down to whole units and computes the hold
+// used and the equipment's weight again (0x5182B0). Returns the free room in
+// internal units; it may be negative.
 int32_t recalculate_cargo(SavedShip& ship);
 
 struct TradeResult {
-	int32_t amount = 0;  // Lo comprado o vendido.
-	int32_t price = 0;  // Lo pagado o cobrado.
+	int32_t amount = 0;  // What was bought or sold.
+	int32_t price = 0;  // What was paid or got.
 };
 
-// Compra para el barco `amount` de una mercancía al mercado de la ciudad
-// `town`, en la que tiene que estar atracado. El juego la limita al almacén de
-// la ciudad, a la bodega libre y al dinero del dueño del barco.
+// The handlers, on the operation's 0x14 bytes ({code, s32 amount, u16 ware,
+// u16 ship, u16 (the player), u16 town}). Like the game, they write the
+// amount they clamp back into the operation's [+4]. They return what changed
+// (nothing: {}).
+TradeResult fn_537450(SaveGame& save, uint8_t* operation);  // 0x02, buy for the ship.
+TradeResult fn_537340(SaveGame& save, uint8_t* operation);  // 0x01, sell from the ship.
+
+// The same handlers on an operation made here (for the tests and the
+// oracle's trade comparison, compare_save): buy for the ship `amount` of a
+// ware from the market of `town`, where it has to be docked; the game clamps
+// it to the town's store, the free hold and the owner's money.
 TradeResult buy_to_ship(SaveGame& save, int ship, int town, int ware, int32_t amount);
+// Sell to `town` up to `amount` of the ship's cargo, at the save's trade
+// difficulty.
+TradeResult sell_from_ship(SaveGame& save, int ship, int town, int ware, int32_t amount);
 
-// Vende a la ciudad `town` hasta `amount` de la carga del barco.
-TradeResult sell_from_ship(SaveGame& save, int ship, int town, int ware, int32_t amount,
-	TradeDifficulty difficulty = TradeDifficulty::Normal);
-
-// Lo que harían buy_to_ship y sell_from_ship, sin cambiar nada.
+// What buy_to_ship and sell_from_ship would do now, without changing
+// anything (what the viewer shows before trading).
 TradeResult quote_buy(const SaveGame& save, int ship, int town, int ware, int32_t amount);
 TradeResult quote_sell(const SaveGame& save, int ship, int town, int ware, int32_t amount,
 	TradeDifficulty difficulty = TradeDifficulty::Normal);

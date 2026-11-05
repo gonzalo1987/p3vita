@@ -554,8 +554,13 @@ mín(cantidad, carga), recalcula la bodega, cobra `get_sell_price` con las
 existencias de antes de la venta, apunta estadísticas (0x4f8690) y suma la
 mercancía al almacén de la ciudad.
 
-Las estadísticas no cambian dinero, existencias ni carga, y p3vita aún no las
-reproduce.
+Since 2026-11-05 p3vita runs both as the game does: `fn_537450` and `fn_537340`
+(`trade.cpp`, with the statistics 0x4F8840 and 0x4F8690 and the clamped amount
+written back into the operation), called by `run_operation`; the viewer queues
+them with the amount the market window computes (`player_actions.hpp`,
+[operations.md](operations.md)). Checked: `compare_save` (24 000 random trades in
+the 12 saves) and the scenarios `trade_window` and `trade_branches`
+([../oracle.md](../oracle.md), «The player's actions»).
 
 ## 13. Tabla de nombres (0x511e30)
 

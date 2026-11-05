@@ -136,6 +136,14 @@ bool in_globals(const ProbeCall& c, uint32_t address) {
 }  // namespace
 
 void register_probes_unchecked(ProbeRegistry& r) {
+	// The market's prices, thiscall on the prices' object 0x6DE3D8 (ware,
+	// town, amount): what buying (0x52E430) or selling (0x52E1D0) costs.
+	r[0x52E430] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		return uint32_t(tick::game_buy_price(s, int(c.args[0]), int(c.args[1]), int32_t(c.args[2])));
+	};
+	r[0x52E1D0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		return uint32_t(tick::game_sell_price(s, int(c.args[0]), int(c.args[1]), int32_t(c.args[2])));
+	};
 	namespace ad = tick::alderman_detail;
 	r[0x51A4E0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		// thiscall on the ship (strength, level).

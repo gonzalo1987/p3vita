@@ -304,8 +304,4 @@ std::array<ElectionCandidate, 4> next_election_candidates(const SaveGame& save) 
 	return out;
 }
 
-void queue_operation(SaveGame& save, const OperationBytes& operation) {
-	save.queued_operations.emplace_back(operation.begin(), operation.end());
-}
-
 }  // namespace p3::data
