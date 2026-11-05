@@ -70,5 +70,11 @@ OperationBytes dismiss_sailors_operation(uint32_t ship, uint32_t amount);
 OperationBytes hire_captain_operation(uint32_t captain, uint32_t ship, uint32_t town);
 // 0x07 (0x493ED0): {0x07, ship}: dismiss the ship's captain.
 OperationBytes dismiss_captain_operation(uint32_t ship);
+// 0x03 (the shipyard's window 0x5F8F50): {0x03, ship ([+0xC84])}: repair the
+// ship; with the window's «whole convoy» ([+0xCDF]) it sends 0x1D with the
+// ship's convoy instead.
+OperationBytes repair_operation(uint32_t ship);
+// 0x1D (0x5F8F50, «whole convoy»): {0x1D, the ship's convoy ([+0x8])}.
+OperationBytes repair_convoy_operation(uint32_t convoy);
 
 }  // namespace p3::data

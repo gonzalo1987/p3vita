@@ -130,4 +130,12 @@ OperationBytes dismiss_captain_operation(uint32_t ship) {
 	return words_operation({0x07, ship});
 }
 
+OperationBytes repair_operation(uint32_t ship) {
+	return words_operation({0x03, ship});
+}
+
+OperationBytes repair_convoy_operation(uint32_t convoy) {
+	return words_operation({0x1D, convoy});
+}
+
 }  // namespace p3::data

@@ -4689,6 +4689,81 @@ def crew_ops(o):
     return during
 
 
+def repair_ops(o):
+    """Operation 0x03 (0x5357AA → 0x52ACD0, the cost 0x52A9E0) with the
+    viewer's bytes, on the player's first ship in port: without damage (the
+    letter 0x02), half its hull and rich (pays: the state 4), poor (the letter
+    with the cost), damaged less than the hull / 100 (the least), the town's
+    [+0x818] at 2, 5, 10, 15 and 25 (the five rates); the ship given to an AI
+    merchant in debts (pays anyway) and to no one (free); the ship made the
+    guide of a convoy (0x509B90) rich and poor (the sums over its ships); a
+    ship out, at sea and in the shipyard (state 4: nothing). Operation 0x1D
+    (0x539990, with 0x52A950) on that convoy: its town out, in its town (paid),
+    in the state 4 (nothing), a convoy out."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    _, _, merchants, ships = o.counts()
+    ai = next(x for x in range(merchants) if x != m and o.u16(o.merchant(x) + 8) != 0)
+    hull = o.s32(a + 0x14)
+    print(f'ship {s} of the player {m} (its [+0x8] {o.u16(o.merchant(m) + 8)}) in town {t}: hull {hull}, '
+          f'left {o.s32(a + 0x18)}, capacity {o.s32(a + 0x10)}, the town\'s [+0x818] {struct.unpack("<f", bytes(o.uc.mem_read(o.town(t) + 0x818, 4)))[0]}; '
+          f'AI merchant {ai}')
+
+    def repair(left, money=10000000, who=None):
+        w32(o, a + 0x18, left)
+        w16(o, a + 0x134, 0)
+        w32(o, o.merchant(m if who is None else who), money)
+        run_bytes(o, player_op('repair', s))
+        print(f'  left {left}, money {money}: state {o.u16(a + 0x134)}, money {o.s32(o.merchant(m))}')
+
+    def during(o):
+        repair(hull)
+        repair(hull // 2)
+        repair(hull // 2, 10)
+        repair(hull - 1)
+        level = o.u32(o.town(t) + 0x818)
+        for v in (2.0, 5.0, 10.0, 15.0, 25.0):
+            o.uc.mem_write(o.town(t) + 0x818, struct.pack('<f', v))
+            repair(hull // 3)
+        w32(o, o.town(t) + 0x818, level)
+        w8(o, a, ai)
+        repair(hull // 2, 0, ai)
+        w8(o, a, 0xFF)
+        repair(hull // 2)
+        w8(o, a, m)
+        w16(o, a + 0x40, 25)
+        w16(o, a + 0x134, 0)
+        w32(o, a + 0x18, hull)
+        if o.u16(a + 0x42) >= o.u16(to.SHIPS + 0xF2):
+            run_bytes(o, player_op('hire-captain', town_captain(o, t), s, t))
+        for i in range(7):
+            w8(o, a + 0x13C + i, 1)
+        direct(o, 0x5182B0, [], ecx=a)
+        direct(o, 0x509B90, [s, 0, 5, t], ecx=to.SHIPS)
+        print(f'  convoy {o.u16(a + 8)}')
+        repair(hull // 2)
+        repair(hull // 2, 10)
+        repair(hull)
+        k = o.u16(a + 8)
+        c = o.u32(to.SHIPS + 8) + 0x3C * k
+        w32(o, a + 0x18, hull // 2)
+        towns = o.counts()[0]
+        for convoy, town, state in ((k, towns, 0), (k, t, 0), (k, t, 4), (o.u16(to.SHIPS + 0xF6), t, 0)):
+            w16(o, c + 0x1C, town)
+            w16(o, c + 0x12, state)
+            run_bytes(o, player_op('repair-convoy', convoy))
+            print(f'  convoy {convoy} in {town}, state {state}: now {o.u16(c + 0x12)}, money {o.s32(o.merchant(m))}')
+        w16(o, c + 0x1C, t)
+        run_bytes(o, player_op('repair', ships))
+        w8(o, a + 0x39, 0xFF)
+        run_bytes(o, player_op('repair', s))
+        w8(o, a + 0x39, t)
+        w16(o, a + 0x134, 4)
+        run_bytes(o, player_op('repair', s))
+    return during
+
+
 class Scenario:
     def __init__(self, setup, functions, days, targets):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
@@ -4912,6 +4987,10 @@ SCENARIOS = {
         '@537c66', '@537cad', '@537cd7', '@537ce9', '@537cfb', '@537d31', '@537d5d', '@537d95', '@537c54>537dc7',
         '@4f6cc1', '@4f6cd9', '@4f6bf7', '@4f6c03', '@537dfe>537ed3', '@537e0c>537ed3', '@537e42', '@537e6c',
         '@537eb8>537ec0', '@537eba', '@537f76', '@537f74>537fcb', '@538038>5380fb', '@53807f', '@5380f0']),
+    'repair_ops': Scenario(repair_ops, [0x535760], 0, [
+        '@52ad16', '@52ad51', '@52adf8', '@52add0', '@52ae21', '@52ae4d', '@52ae8a', '@52aeb6', '@52af01', '@52af5d',
+        '@52af85', '@52aa17', '@52aa52', '@52aa59', '@52aa6d', '@52aa89', '@52aa90', '@5357b9>537025',
+        '@5357da>537025', '@5357e8>537025', '@5399bb>539b24', '@5399dd>539b24', '@5399ec>539b24', '@5399f2']),
 }
 
 

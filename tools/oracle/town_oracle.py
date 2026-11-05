@@ -350,8 +350,8 @@ MAIL_CALLS = (
     0x4DC53D, 0x4E32E9, 0x4E3378, 0x4E33FC, 0x4E3598, 0x4E363A, 0x4E36B3, 0x5294F7, 0x5295BD, 0x529CA0,
     0x529D8A,
     # The player's operations (town_tick/ship_operations.cpp): a new captain
-    # (0x537EE0: 0x04).
-    0x537FC6,
+    # (0x537EE0: 0x04), no repair (0x52ACD0: 0x02).
+    0x537FC6, 0x52AEDD,
     # alderman.cpp: a Hanse task of a merchant expired (0x4EB0EB: 0x70),
     # started (0x4EBF54: 0x80 the road, 0x6E and 0x84 the pirate nest) and
     # done (0x4EC354: 0x6F to the chronicle and to the merchant).

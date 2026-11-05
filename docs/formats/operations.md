@@ -62,7 +62,7 @@ an action of the interface; 0x54 and 0x55 go with letters), others may be dead.
 | Group | Codes | Done in p3vita |
 |-|-|-|
 | simulation | 37: the ones the simulation queues (inventory, part B) | all 37 |
-| player | 105: queued by the interface | 17: 0x00..0x02, 0x04..0x07, 0x0A, 0x21, 0x29, 0x3B, 0x3F, 0x4B, 0x4E, 0x5D, 0x6E, 0x6F |
+| player | 105: queued by the interface | 19: 0x00..0x07, 0x0A, 0x1D, 0x21, 0x29, 0x3B, 0x3F, 0x4B, 0x4E, 0x5D, 0x6E, 0x6F |
 | battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 0x91, 0x94, 0x96, 0x9F |
 | network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | the five that do nothing |
 | new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | — |
@@ -80,7 +80,7 @@ feast window): the handler is the same and is done.
 | 0x00 | player | set sail: {0, ship, town, x, y} (`Sailing::set_sail`) | sea map 0x455B50, 0x45A6B0; shipyard 0x5FA000; also 0x509250 (sim, runs it at once) | 0x53577D → 0x537670 |  | yes | read |
 | 0x01 | player | sell from a ship to the town: {1, s32 amount, u16 ware, u16 ship, u16 player, u16 town}; it doesn't check that the ship is in the town; statistics 0x4F8690 (`trade.cpp` `fn_537340`; savegame.md §12.3) | market 0x4A8CF0 (mode 1, a ship and the town); 0x40EEB0 | 0x53578C → 0x537340 |  | yes | read |
 | 0x02 | player | buy for a ship from the town: the same fields; the ship in the town, the limit by the store, the hold and the money (0x52F3E0); statistics 0x4F8840 (`trade.cpp` `fn_537450`) | market 0x4A8CF0 (mode 1) | 0x53579B → 0x537450 |  | yes | read |
-| 0x03 | player | repair a docked ship at the town's shipyard (0x52ACD0 on the town; letter 0x02 «No repair») | shipyard window 0x5F8F50 | 0x5357AA → 0x52ACD0 | 2, 992 B |  | book, read |
+| 0x03 | player | repair: {0x03, ship}: a docked ship into its town's shipyard (0x52ACD0): the cost 0x52A9E0 (the damage, at least hull / 100, · capacity · a rate by the town's [+0x818], / (hull · 2000)), for its whole convoy if in one; free for no merchant, the AI pays always, a human gets the letter 0x02 without damage or money, otherwise pays; the state 4 (`town_tick/ship_operations.cpp`) | shipyard window 0x5F8F50 | 0x5357AA → 0x52ACD0 |  | yes | read |
 | 0x04 | player | hire sailors: {0x04, ship, amount}: a ship in a town, up to its room (0x5184F0) and what the town lets its owner hire (0x4F6CA0: his quota [+0xF0 + town], at most the unemployed less one), the quota down (0x4F6BD0); the first sailors set the morale's high byte (4 with a captain, 3 without); out of the town's unemployed [+0x2E4], [+0x2D4] (`town_tick/ship_operations.cpp`) | 0x5D4C10 (the amount typed, atoi) | 0x53580C → 0x537C20 |  | yes | read |
 | 0x05 | player | dismiss sailors: {0x05, ship, amount}: a ship in port with sailors; to the town's unemployed; all if asked for more (morale 0), otherwise the morale [+0x3E] down by amount · 2560 / (sailors + 1), not below 0 | ship window 0x493ED0 | 0x53581B → 0x537DD0 |  | yes | read |
 | 0x06 | player | hire a captain: {0x06, captain, ship, town}: out of the town's list (0x526AA0), the ship's captain before him into his link, the letter 0x04 «New captain»; it doesn't look whether the ship is in port or has one | 0x5D4870 | 0x53582A → 0x537EE0 |  | yes | read |
@@ -89,7 +89,7 @@ feast window): the handler is the same and is done.
 | 0x09 | player | move wares between a ship or convoy and the office, several wares at once (457 instructions) | 0x4A8CF0 (through the jump at 0x4A930D) | 0x535857 → 0x538210 | 1, 1.2 KB |  | guess |
 | 0x0A | player | a ship is deleted (0x507FB0) | 0x4768B0 | 0x535866 → 0x507FB0 |  | yes | read |
 | 0x0B | player | a ship's list of stops: allocates the merchant's [+0xEC] (0x40 entries) and sails (0x519BA0, 0x517260, 0x537670); most of what is left below is interface | sea map 0x44FB40, 0x451EB0 (code in ebx), 0x455B50, 0x45A6B0 | 0x5358AC → 0x538DE0 | 121, 55.3 KB |  | guess |
-| 0x0C | player | a shipyard action on a ship (0x508660, 334 instructions) | shipyard window 0x5FA320 | 0x5358BB → 0x508660 | 4, 2.9 KB |  | guess |
+| 0x0C | player | a shipyard action on a ship (0x508660, 334 instructions) | shipyard window 0x5FA320 | 0x5358BB → 0x508660 | 3, 2.6 KB |  | guess |
 | 0x0D | player | a ship's flags: [+0x3D] bits 0x18/0x10, [+0x15C] (raiding?), [+0x136]; also its convoy's ships | ship window 0x493ED0 | 0x5358D5 → 0x5386C0 | 1, 320 B |  | guess |
 | 0x0E | player | a ship's [+0x3A] | 0x44FB40 | 0x5358E4 → 0x538800 | 1, 304 B |  | guess |
 | 0x0F | player | two ships swap their captains ([+0x42]) | 0x40EEB0 | 0x5358F3 → 0x517770 |  |  | read |
@@ -106,7 +106,7 @@ feast window): the handler is the same and is done.
 | 0x1A | player | buy for a convoy from the town (0x539300) | market 0x4A8CF0 (mode 4) | 0x535A50 → 0x539300 | 1, 944 B |  | read |
 | 0x1B | player | move wares between a convoy [+0x8] and the office (the book: «Move Wares») | market 0x4A8CF0 (mode 3, a convoy and the office); the mission interpreter | 0x535A61 → 0x5396B0 | 3, 1.1 KB |  | read |
 | 0x1C | player | a convoy sets sail (0x537670 for its guide) | 0x5492D0 (at 0x5493BF) | 0x535A70 → 0x537670 |  |  | read |
-| 0x1D | player | repair a convoy (0x52A950; reputation 0x4F9120) | shipyard window 0x5F8F50 (at 0x5F9168) | 0x535AC0 → 0x539990 | 3, 832 B |  | book |
+| 0x1D | player | repair a convoy: {0x1D, convoy}: its state [+0x12] to 4, the owner of its first ship pays the cost (0x52A950) without checks, the reputation for the damage (0x4F9120) | shipyard window 0x5F8F50 («whole convoy») | 0x535AC0 → 0x539990 |  | yes | read |
 | 0x1E | simulation | a convoy leaves on an expedition (0x539B50) | 0x503B50; 0x5B9210 | 0x535ACF → 0x539B50 |  | yes | read |
 | 0x1F | simulation | a point of a convoy's expedition route (0x539C60) | 0x503B50; 0x5B9210 | 0x535ADE → 0x539C60 |  | yes | read |
 | 0x20 | player | a convoy's state: [+0x1F], [+0x16], [+0x12] and its ships' [+0x3C], [+0x138], [+0x134] | 0x40EEB0, 0x4237D0 | 0x535AED → 0x539CF0 | 1, 208 B |  | guess |

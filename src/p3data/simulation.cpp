@@ -109,6 +109,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		}
 		break;
 	}
+	case 0x03:  // Repair a ship in its town's shipyard (0x5357AA → 0x52ACD0; town_tick/ship_operations.cpp).
+		tick::fn_5357aa(save, operation);
+		break;
 	case 0x04:  // Hire sailors (0x53580C → 0x537C20; town_tick/ship_operations.cpp).
 		tick::fn_537c20(save, operation);
 		break;
@@ -129,6 +132,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x13:  // El capitán de un barco de un jugador humano se retira: el evento 0x27 (0x538C40).
 		tick::fn_538c40(save, operation);
+		break;
+	case 0x1D:  // Repair a convoy (0x535AC0 → 0x539990; town_tick/ship_operations.cpp).
+		tick::fn_539990(save, operation);
 		break;
 	case 0x1E:  // Un convoy sale de expedición (0x539B50).
 		tick::fn_539b50(save, sailing, operation);

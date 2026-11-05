@@ -1294,6 +1294,25 @@ With the morale's drop divided by the sailors instead of the sailors + 1 and
 the quota not lowered, the comparison caught both (8 calls). The world 7 days in
 the 12 saves, 0 different.
 
+## The player's actions: repairs (2026-11-05)
+
+Operations 0x03 (0x5357AA → 0x52ACD0, the cost 0x52A9E0) and 0x1D (0x539990,
+0x52A950), in `town_tick/ship_operations.cpp`; their bytes in
+`player_actions.cpp` (`player_ops repair`, `repair-convoy`). The letter 0x02 of
+0x52ACD0 (0x52AEDD) joins `MAIL_CALLS`.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `repair_ops` | the viewer's bytes on the player's first ship in port: without damage (the letter 0x02), half its hull rich and poor, damaged less than the hull / 100, the town's [+0x818] at 2, 5, 10, 15 and 25 (the five rates), the ship given to an AI merchant in debts and to no one, made a convoy's guide (rich, poor, without damage), a ship out, at sea, in the state 4; 0x1D on that convoy with its town out, in its town, in the state 4, and a convoy out | 1, 3, 5, 7 | 21–22 calls equal, 24 of 24 targets |
+
+Broken on purpose and caught: the rate above 20 and the least damage (2 calls);
+0x1D without the expenses [+0x4AC] (1 call). Seen in the code (roadmap, «Corregir
+los fallos del juego»): the letter 0x01 of a paid repair is built and never sent,
+and the rate above 20 goes up again; both fixed behind `fix_game_bugs()` (with
+`uc_fix.sh repair_ops:3` only the 9 repairs the player pays differ: the mailbox
+and, at the level 25, the price). The world 7 days in the 12 saves, 0
+different.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

@@ -11,6 +11,7 @@
 //        player_ops sell STEP SHIP_UNITS WARE SHIP PLAYER TOWN
 //        player_ops hire-sailors SHIP AMOUNT | dismiss-sailors SHIP AMOUNT
 //        player_ops hire-captain CAPTAIN SHIP TOWN | dismiss-captain SHIP
+//        player_ops repair SHIP | repair-convoy CONVOY
 // (STEP 1, 5, 50, or 0 for all; «none» when the window sends nothing)
 
 #include <cstdio>
@@ -59,6 +60,10 @@ int main(int argc, char** argv) {
 		op = hire_captain_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])), uint32_t(number(argv[4])));
 	} else if (what == "dismiss-captain" && argc == 3) {
 		op = dismiss_captain_operation(uint32_t(number(argv[2])));
+	} else if (what == "repair" && argc == 3) {
+		op = repair_operation(uint32_t(number(argv[2])));
+	} else if (what == "repair-convoy" && argc == 3) {
+		op = repair_convoy_operation(uint32_t(number(argv[2])));
 	} else if ((what == "buy" && argc == 10) || (what == "sell" && argc == 8)) {
 		const bool buy = what == "buy";
 		const int ware = int(number(argv[4]));
