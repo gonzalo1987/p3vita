@@ -1979,6 +1979,63 @@ bool can_demolish(const SaveGame& save, uint32_t town, uint32_t record) {
 	return tick == 0xFFFFFFFF;
 }
 
+int own_building_at(const SaveGame& save, uint32_t town, int x, int y, uint32_t merchant) {
+	if (town >= save.towns.size()) {
+		return -1;
+	}
+	const SavedTown& st = save.towns[town];
+	// Whether the building of record r covers the cell: its footprint walked as
+	// mark_footprint walks it, in cells.
+	auto covers = [&](const BuildingRecord& r) {
+		int inner = 1;
+		int outer = 1;
+		if (r.type >= 0x15 && r.type <= 0x1E) {
+			inner = r.param == 0xE0 ? 2 : 3;  // 0x4FD4A0: 0xA1 (0x20) 3 · 2, 0xA2 (0xE0) 2 · 3.
+			outer = r.param == 0xE0 ? 3 : 2;
+		} else if (r.type < 0x39 && kBuildClass[r.type] < 16) {
+			inner = kClassWidth[kBuildClass[r.type]];
+			outer = kClassDepth[kBuildClass[r.type]];
+		}
+		int row_x = r.x;
+		int row_y = r.y;
+		for (int o = 0; o < outer; ++o) {
+			int cx = row_x;
+			int cy = row_y;
+			for (int i = 0; i < inner; ++i) {
+				if (cx == x && cy == y) {
+					return true;
+				}
+				cx += cy & 1;
+				--cy;
+			}
+			row_x += (row_y & 1) - 1;
+			--row_y;
+		}
+		return false;
+	};
+	auto search = [&](uint32_t head, bool owned) {
+		const uint32_t count = st.memory.u16(0x776);
+		for (uint32_t i = head; i < count && i < st.records.size();) {
+			const BuildingRecord& r = st.records[i];
+			if ((!owned || r.owner == merchant) && covers(r)) {
+				return int(i);
+			}
+			i = r.next;
+		}
+		return -1;
+	};
+	const int office = tick::facilities_detail::fn_5308a0(save, merchant, town);
+	if (office >= 0) {
+		const OfficeMemory& o = save.offices[size_t(office)].memory;
+		for (const uint32_t head : {uint32_t(o.u16(0x2D0)), uint32_t(o.u16(0x2CE))}) {
+			if (const int r = search(head, false); r >= 0) {
+				return r;
+			}
+		}
+	}
+	return search(st.memory.u16(0x762), true);
+}
+
 OperationBytes demolish_operation(uint32_t town, uint32_t merchant, uint32_t x, uint32_t y) {
 	return words_operation({0x26, town, merchant, x, y});
 }

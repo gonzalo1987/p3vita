@@ -525,6 +525,12 @@ std::vector<uint8_t> build_marks(SaveGame& save, uint32_t town, int type);
 // you really want to demolish this building?» (0x5AF731), then {0x26, u32
 // town, u32 merchant, u32 x, u32 y} (0x5AFD80).
 bool can_demolish(const SaveGame& save, uint32_t town, uint32_t record);
+// The merchant's building whose footprint covers the cell (x, y) (its class's,
+// as the marks: the houses and the warehouse by their orientation), among his
+// office's lists in the town ([+0x2D0] the houses and the others, [+0x2CE]
+// the businesses: the game opens a window for each, 0x5AF5C0 and 0x5A2xxx) and
+// his works in the town's [0x762]; its record, or -1.
+int own_building_at(const SaveGame& save, uint32_t town, int x, int y, uint32_t merchant);
 OperationBytes demolish_operation(uint32_t town, uint32_t merchant, uint32_t x, uint32_t y);
 // «Auction» ([+0x194]): as demolish, finished (0x51D6F0 gives 0: here, not in
 // works), the player with the guild's licence in the town ([+0x468] bit

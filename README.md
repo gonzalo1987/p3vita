@@ -122,13 +122,35 @@ rename one (left and right go through the game's names; Square types another,
 with the Vita's keyboard, and X ends it). The moneylender has six pages (L and
 R): take out a loan, pay one off, grant one to a townsman (the interest with
 left and right; only where you have an office), the loans you granted, and buy
-and sell company shares. X with no building in the middle opens the market. Your ship in the port has a card at the bottom left (touch
-it, or press Select) with its window: its captain, sailors and hull,
-dismissing sailors or the captain, and the convoys as the game's convoy window
-offers them: forming a private or a public convoy (its destination with left
-and right), joining a convoy of the town, and leaving or disbanding the one it
-is in. Square opens the Hanse's panel (the way to Alderman) and Circle the
-mailbox.
+and sell company shares. X with no building in the middle opens the market.
+Touching a building of yours opens its window: demolish it or auction it, with
+the game's questions. Square opens the Hanse's panel (the way to Alderman) and
+Circle the mailbox.
+
+**The side panel** on the right is the game's: the town's minimap (touch or
+drag on it to move the view), its row of icons (the ship list, the game's
+speed, the mailbox, building, leaving the town for the sea map and the menu)
+and its four ship buttons (your ships in port and at sea, your convoys in port
+and at sea: each touch goes to the next one; one in port opens its window, in
+its town, with its captain, sailors and hull, dismissing sailors or the
+captain, and the convoys as the game's convoy window offers them: forming a
+private or a public convoy, its destination with left and right, joining a
+convoy of the town, and leaving or disbanding the one it is in). The tab on its
+border folds it and unfolds it. With the buttons, Select goes onto it: left and
+right go along its icons and ship buttons, up and down between both rows, X
+does it, Circle or Select leave it.
+
+**Building** (the panel's hammer): the game's build menu with its five
+categories (houses and warehouses, public buildings, military ones for the
+mayor, and the two groups of businesses the town can produce); L and R, or
+touching them, change the category, up and down and X (or a touch) choose a
+building. Its page shows its costs, the days of works, the materials and why it
+can't be built, as the game's. The streets, the well and the town wall have a
+button of their own; any other building is placed in the town: the areas where
+it fits are marked green (also on the minimap), touch where it goes and drag
+it, green where it fits and red where it doesn't (with the pad, it moves cell
+by cell), and its button or X builds it. Circle goes back to the menu, and
+closes it.
 
 In a building's window, up and down choose the row, left and right the amount
 (L and R, ten at a time), X does it, Select takes the next ship and Circle
@@ -151,9 +173,9 @@ On the sea map X sends your ship to the chosen town: it leaves the port, sails
 the game's route (its course is drawn) and enters the port of destination,
 where it can trade. Square chooses another of your ships and Select changes the
 game's speed (slowed, very slow, slow, normal, fast, very fast and fast
-forward). The bottom bar says what the ship does and when it will arrive. In a
-town where you have no ship, Select goes through the town's template with all
-the designer's buildings (`.editor`) and with the terrain only (`.town`).
+forward). The bottom bar says what the ship does and when it will arrive.
+Without a game loaded, Select goes through the town's template with all the
+designer's buildings (`.editor`) and with the terrain only (`.town`).
 
 On the PC: the arrows, Page Up / Page Down, Enter (go into the building, or set
 sail), E (map), F (templates), M (market), C (buy), V (sell), H (Hanse), B
