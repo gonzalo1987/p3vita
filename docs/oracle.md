@@ -1441,6 +1441,43 @@ the letter «Anulación», the ship renamed with a typed name, upgraded); save 5
 saves, 0 different; `trade_check.sh`, 0 different; the scenarios of the earlier
 batches, as before.
 
+## The player's actions: loans and company shares (2026-11-05)
+
+The fourth batch's first half (`ENCARGO_ACCIONES_JUGADOR_4.md`, item 1): the
+moneylender. Operations 0x2A (0x539F30, a loan paid off) and 0x2B (0x535C5A →
+0x4D98F0 on the event queue, company shares), read whole (the table had them as
+guesses) and rewritten in `operations.cpp`; the event 0x18 they make (0x4E8804,
+the shares and their dividends each quarter, which p3vita didn't attend) in
+`events_towns.cpp`, with its letters 0x62, 0x28, 0x27 in `MAIL_CALLS`; 0x2A and
+0x2B in `OPERATIONS`. What the window decides, in `player_actions.cpp`: the loans
+offered (0x51CE80), the townsmen's requests (0x51D160) and their terms
+(0x51D270, which rolls the game's rand()), the debts and the loans granted
+(0x4D9100, 0x4D9210), the shares on sale (0x4D9320, which may drop a second pool
+of the player's company) and to sell (0x4D9620). The lists are on the heap: four
+copiers in the oracle's sentinel page (`LENDER_LISTS`, SENTINEL + 0xC00 + 0x50·k)
+call each one on the queue, copy its entries into the scratch globals and free
+it; tick_probe's probes make p3vita's. 0x51CE80, 0x51D160 and 0x51D270 have
+probes of their own (the window's buffer in the scratch globals). `player_ops
+loan`, `pay-off`, `shares` give the viewer's bytes.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `lender_loans` | the offers (0x51CE80) as set, with a bad payment history, half the value under 2000 with and without debts, an offer past the limit, the reputation under 0 and over 30, the extra over 2000 and an amount past 65535, a repayment over 65000, slots without weeks or amount; two loans taken (the viewer's bytes) and the debts (0x4D9100); one paid off (the viewer's bytes), a debt to an AI merchant made and paid; 0x2A with an event not a loan, another debtor, a record out; the requests (0x51D160) with the offers still in the buffer (no roll), again (it rolls), none; their terms (0x51D270) with each kind, over 65000, under the rank's floor; a loan granted (the viewer's bytes) and the loans granted (0x4D9210); the day with the loans due | 1, 3, 5, 7 | 308–332 calls equal (13 of 0x51CE80, 4 of 0x51D160, 15 of 0x51D270, the operations, the lists, a day of the queue), 27 of 27 targets |
+| `lender_shares` | the player sells new shares of his company and buys some back; an AI merchant's shares (made here) bought (a holding), again, sold back (the viewer's bytes), fewer than offered, more than held, none left; the owner past 45 % (cut, then nothing); a buyer in debt (compared unsigned: he buys) and short of money; both or neither merchants; a pool with none; the AI's pool bought out (more than it has); the lists with small values and the player's company counted over 100 %; a second pool of his (dropped); then 0x4E8804 on the queue's head: the dividends (the AI's pool, the player's holding grown and not, the player's pool and the AI's holding of it with the player short of money: the debts and the letter 0x28), the offers of the pools and the holdings, a tick past the year's end (the quarters' loop reads past its table), just before the next quarter (clamped), a company out and no shares; and the day | 1, 3, 5, 7 | 34–83 calls of 0x4E8804, 27–51 operations, the lists and a day of the queue equal; 56 or 57 of 57 targets (the new shares cut to what is left over 55 % only in save 3: they depend on the tick's bits) |
+
+Broken on purpose and caught: the interest's +15 as +16 (10 calls of
+0x51CE80), the dividend / 401 (8 of 0x4E8804, 1 of the queue), the owner's cut
+to 44 % (1 operation). The tick of 0x4D9620's new shares is a float's low bits
+(the tick / 1987), as the game. Two game bugs of the shares fixed behind
+`fix_game_bugs()` (roadmap, «Corregir los fallos del juego»): with
+`re/emu/sesion8/uc_fix.sh lender_shares:1,3` only those calls differ (an AI
+merchant in debt no longer buys; the pool bought out gives the buyer what it
+has, for its share of the price; a pool of 4 % offers 4, not 5). The world 7 days in the 12 saves, 0 different;
+the earlier batches' scenarios as before. The viewer without a window
+(`re/emu/sesion12/lender_shots.sh`): save 1 with `--debug-state lender`, a loan
+taken and paid off, one granted with a very high interest, the loans granted,
+an AI merchant's shares bought.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

@@ -286,6 +286,201 @@ void fn_539dc0(SaveGame& save, const uint8_t* operation) {
 	}
 }
 
+// The operation 0x2A (0x535C4B → 0x539F30): {0x2A, u32 merchant, u32 event}:
+// the merchant pays off a loan of his before it falls due (the moneylender's
+// window, 0x5B5B90, which checks first that he has the money). The record
+// (0x4D8DB0) has to be a loan (event 0x01) whose debtor [+0x11] is the
+// merchant: he pays its [+0x8] and the debtor becomes 0xFF; a creditor
+// [+0x10] that is a merchant gets it and becomes 0xFF too. When the event
+// falls due it finds neither and goes (0x4DB4E0).
+void fn_539f30(SaveGame& save, const uint8_t* operation) {
+	const uint32_t index = field(operation, 8);
+	if (index >= save.globals.u16(kEventCount) || index >= save.events.size()) {
+		// 0x4D8DB0 takes the record just past the array too (the index
+		// equal to the count: what the heap has there), which the window
+		// never sends; p3vita does nothing.
+		return;
+	}
+	GameMemory<0x18>& e = save.events[index];
+	const uint32_t merchant = field(operation, 4);
+	if (e.u16(6) != 1 || merchant != e.u8(0x11)) {
+		return;
+	}
+	const uint32_t merchants = save.globals.u16(global::kWorldMerchantCount);
+	if (merchant < merchants) {
+		MerchantMemory& m = save.merchants[merchant].memory;
+		m.s32(0) = int32_t(uint32_t(m.s32(0)) - e.u32(8));
+		e.u8(0x11) = 0xFF;
+	}
+	if (e.u8(0x10) < merchants) {
+		MerchantMemory& c = save.merchants[e.u8(0x10)].memory;
+		c.s32(0) = int32_t(uint32_t(c.s32(0)) + e.u32(8));
+		e.u8(0x10) = 0xFF;
+	}
+}
+
+namespace {
+
+constexpr uint32_t kEventHead = 0x6DD744;  // u16 ([+0x8] of 0x6DD73C)
+
+// The first record of the queue (from its head, next [+0x4]) of an event
+// 0x18 for which `match` holds, or -1 (the game's walks in 0x4D98F0).
+template <typename Match>
+int find_share(const SaveGame& save, Match match) {
+	const uint32_t count = save.globals.u16(kEventCount);
+	for (uint32_t i = save.globals.u16(kEventHead); i < count && i < save.events.size(); i = save.events[i].u16(4)) {
+		if (save.events[i].u16(6) == 0x18 && match(save.events[i])) {
+			return int(i);
+		}
+	}
+	return -1;
+}
+
+}  // namespace
+
+// 0x4D98F0 (thiscall on the event queue, with the operation 0x2B's [+4]:
+// {u8 company, u8 shares, u8 seller, u8 buyer, u32 price}): company shares,
+// as the moneylender's window sends them (0x5B6400, 0x5B66C0: the 12 bytes
+// of an entry of its lists, the last 4 what the player owns, unused here).
+// The shares of a company (its owner, a merchant) are events 0x18 (0x4E8804,
+// events_towns.cpp): [+0x10] the company, [+0x11] who holds them (0xFF: on
+// sale, the company's pool), [+0x12] how many (in %), [+0x13] how many are
+// offered, [+0x8] when they last changed, [+0xC] the company's value when
+// they were bought or last paid. A merchant buys from the pool (the seller
+// not a merchant): the pool loses them, he pays the price ([+0x4BC]) and,
+// unless he is the owner (buying his own back), they join his holding or a
+// new one (its [+0xC] the pool's). A holder sells to the pool (the buyer not a
+// merchant): at most what he holds; the owner sells new ones: at most 45 in
+// all the company's records; he gets the price ([+0x4B8]) and the pool (or a
+// new one, its [+0xC] the owner's [+0x46C], not below 0) gets them.
+void fn_4d98f0(SaveGame& save, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	const uint32_t merchants = g.u16(global::kWorldMerchantCount);
+	const uint8_t company = operation[4];
+	uint8_t shares = operation[5];  // The game writes it back into the operation.
+	const uint8_t seller = operation[6];
+	const uint8_t buyer = operation[7];
+	const uint32_t price = field(operation, 8);
+	const uint32_t now = g.u32(global::kWorldTick);
+	if (buyer < merchants) {
+		if (seller < merchants) {
+			return;
+		}
+		MerchantMemory& b = save.merchants[buyer].memory;
+		// Game bug: the money is compared unsigned, so a buyer in debt (his
+		// money negative) buys. Fixed behind fix_game_bugs(): compared signed.
+		if (fix_game_bugs() ? int64_t(b.s32(0)) < int64_t(price) : uint32_t(b.s32(0)) < price) {
+			return;
+		}
+		const int pool = find_share(save, [&](const GameMemory<0x18>& e) {
+			return e.u8(0x10) == company && e.u8(0x11) == 0xFF;
+		});
+		if (pool < 0) {
+			return;
+		}
+		GameMemory<0x18>& p = save.events[size_t(pool)];
+		if (p.u8(0x12) == 0) {
+			return;
+		}
+		// Game bug: not cut down to what the pool has: the buyer gets `shares`
+		// all the same, shares out of nothing (0x4E8804 offers at least 5 of a
+		// pool with fewer). Fixed behind fix_game_bugs(): cut to the pool's, the
+		// price in proportion.
+		uint32_t paid = price;
+		if (fix_game_bugs() && shares > p.u8(0x12)) {
+			paid = uint32_t(uint64_t(price) * p.u8(0x12) / shares);
+			shares = p.u8(0x12);
+		}
+		p.u8(0x12) = p.u8(0x12) > shares ? uint8_t(p.u8(0x12) - shares) : 0;
+		p.u8(0x13) = p.u8(0x13) >= shares ? uint8_t(p.u8(0x13) - shares) : 0;
+		p.u32(8) = now;
+		const uint32_t value = p.u32(0xC);
+		b.s32(0) = int32_t(uint32_t(b.s32(0)) - paid);
+		b.u32(0x4BC) += paid;
+		if (buyer == company) {
+			return;
+		}
+		const int held = find_share(save, [&](const GameMemory<0x18>& e) {
+			return e.u8(0x10) == company && e.u8(0x11) == buyer;
+		});
+		if (held >= 0) {
+			GameMemory<0x18>& h = save.events[size_t(held)];
+			h.u8(0x12) = uint8_t(h.u8(0x12) + shares);
+			h.u8(0x13) = 0;
+			return;
+		}
+		GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, now + 1)];
+		e.u16(6) = 0x18;
+		e.u32(8) = 0;
+		e.u32(0xC) = value;
+		e.u8(0x10) = company;
+		e.u8(0x11) = buyer;
+		e.u8(0x12) = shares;
+		e.u8(0x13) = 0;
+		return;
+	}
+	if (seller >= merchants) {
+		return;
+	}
+	MerchantMemory& s = save.merchants[seller].memory;
+	uint32_t value = 0;
+	if (seller != company) {
+		const int held = find_share(save, [&](const GameMemory<0x18>& e) {
+			return e.u8(0x11) == seller && e.u8(0x10) == company;
+		});
+		if (held < 0) {
+			return;
+		}
+		GameMemory<0x18>& h = save.events[size_t(held)];
+		if (h.u8(0x12) == 0) {
+			return;
+		}
+		if (h.u8(0x12) < shares) {
+			shares = h.u8(0x12);
+			h.u8(0x12) = 0;
+		} else {
+			h.u8(0x12) = uint8_t(h.u8(0x12) - shares);
+		}
+		h.u8(0x13) = h.u8(0x13) > shares ? uint8_t(h.u8(0x13) - shares) : 0;
+		value = h.u32(0xC);
+		h.u32(8) = now;
+	} else {
+		uint32_t sum = 0;  // All the company's shares.
+		const uint32_t count = g.u16(kEventCount);
+		for (uint32_t i = g.u16(kEventHead); i < count && i < save.events.size(); i = save.events[i].u16(4)) {
+			const GameMemory<0x18>& e = save.events[i];
+			if (e.u16(6) == 0x18 && e.u8(0x10) == company) {
+				sum += e.u8(0x12);
+			}
+		}
+		if (sum >= 0x2D) {
+			return;
+		}
+		if (shares + sum > 0x2D) {
+			shares = uint8_t(0x2D - sum);
+		}
+		value = s.s32(0x46C) > 0 ? s.u32(0x46C) : 0;
+	}
+	s.s32(0) = int32_t(uint32_t(s.s32(0)) + price);
+	s.u32(0x4B8) += price;
+	const int pool = find_share(save, [&](const GameMemory<0x18>& e) {
+		return e.u8(0x10) == company && e.u8(0x11) == 0xFF;
+	});
+	if (pool >= 0) {
+		GameMemory<0x18>& p = save.events[size_t(pool)];
+		p.u8(0x12) = uint8_t(p.u8(0x12) + shares);
+		return;
+	}
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, now + 1)];
+	e.u16(6) = 0x18;
+	e.u32(8) = g.u32(global::kWorldTick);
+	e.u32(0xC) = value;
+	e.u8(0x10) = company;
+	e.u8(0x11) = 0xFF;
+	e.u8(0x12) = shares;
+	e.u8(0x13) = 0;
+}
+
 // La operación 0x37 (en 0x535E04): {0x37, u32 comerciante, u32 ciudad, s32
 // cantidad}: el comerciante paga por la ciudad (0x4F8560, como por el
 // edificio 0x22: la primera vez en cada ciudad). La encola el tick de los

@@ -5951,6 +5951,425 @@ def shipyard_ops(o):
     return during
 
 
+# --- The moneylender: loans (0x29, 0x2A) and company shares (0x2B, event 0x18) ---
+
+LENDER_LISTS = to.SENTINEL + 0xC00  # the copiers of the window's lists (probes_unchecked.cpp kLenderLists)
+LOAN_BUFFER, LOAN_CHANGED = SCRATCH + 0x80, SCRATCH + 0xB8  # the window's 3 terms [+0xF5C] and its flag
+YEAR = 0x6DE4A2  # u16
+
+
+def lender_copiers(o):
+    """The copiers at LENDER_LISTS + 0x50·k (stdcall): 0x4D9100 and 0x4D9210
+    (merchant: the loans he owes and granted), 0x4D9320 and 0x4D9620 (no
+    arguments: the shares on sale and to sell), on the event queue; each
+    puts the count in [SCRATCH] and the list (its 0x18-byte or 12-byte
+    entries, at most 10 or 20) from SCRATCH + 4, and frees it."""
+    for k, (f, merchant, size, most) in enumerate(((0x4D9100, True, 0x18, 10), (0x4D9210, True, 0x18, 10),
+                                                    (0x4D9320, False, 0xC, 20), (0x4D9620, False, 0xC, 20))):
+        at = LENDER_LISTS + 0x50 * k
+        code = bytes([0x56, 0x57, 0x68]) + struct.pack('<I', SCRATCH)  # push esi; push edi; push &count
+        if merchant:
+            code += bytes([0xFF, 0x74, 0x24, 0x10])  # push the merchant
+        code += bytes([0xB9]) + struct.pack('<I', to.EVENTS)  # mov ecx, the queue
+        code += bytes([0xE8]) + struct.pack('<i', f - (at + len(code) + 5))
+        copy = bytes([0x50, 0x89, 0xC6, 0x8B, 0x0D]) + struct.pack('<I', SCRATCH)  # push eax; mov esi, eax; mov ecx, [count]
+        copy += bytes([0x83, 0xF9, most, 0x76, 0x05, 0xB9]) + struct.pack('<I', most)  # at most `most`
+        copy += bytes([0x6B, 0xC9, size, 0xBF]) + struct.pack('<I', SCRATCH + 4) + bytes([0xFC, 0xF3, 0xA4])
+        here = at + len(code) + 4 + len(copy)
+        copy += bytes([0xE8]) + struct.pack('<i', 0x64F7E2 - (here + 5)) + bytes([0x83, 0xC4, 0x04])  # delete; add esp, 4
+        code += bytes([0x85, 0xC0, 0x74, len(copy)]) + copy  # test eax, eax; jz the end
+        code += bytes([0x5F, 0x5E]) + (bytes([0xC2, 0x04, 0x00]) if merchant else bytes([0xC3]))
+        assert len(code) <= 0x50
+        o.uc.mem_write(at, code)
+
+
+def lender_list(o, k, *args):
+    """A list through its copier: (the count, its entries)."""
+    direct(o, LENDER_LISTS + 0x50 * k, list(args))
+    n = o.u32(SCRATCH)
+    size, most = (0x18, 10) if k < 2 else (0xC, 20)
+    return n, [bytes(o.uc.mem_read(SCRATCH + 4 + size * j, size)) for j in range(min(n, most))]
+
+
+def loan_slot(o, t, k, rank, first, family, weeks, amount):
+    """The town's slot k ([0x9C6 + 6·k]: 0..2 the moneylender's offers, 3..5 the townsmen's requests)."""
+    o.uc.mem_write(o.town(t) + 0x9C6 + 6 * k, bytes([rank, first, family, weeks]) + struct.pack('<H', amount))
+
+
+def loan_terms(o, k):
+    return bytes(o.uc.mem_read(LOAN_BUFFER + 0x10 * k, 0x10))
+
+
+def loan_window(o, function, t, what):
+    """0x51CE80 or 0x51D160 on the town, with the window's buffer: (count, the 3 terms)."""
+    n = s32_of(direct(o, function, [LOAN_BUFFER, LOAN_CHANGED], ecx=o.town(t)))
+    got = [loan_terms(o, k) for k in range(3)]
+    print(f'  {what}: {n}, changed {o.u8(LOAN_CHANGED)}: ' + ' '.join(g.hex() for g in got))
+    return n, got
+
+
+def loan_events(o, what):
+    for i, a in rt.events(o):
+        if o.u16(a + 6) == 1:
+            raw = bytes(o.uc.mem_read(a, 0x18))
+            print(f'  {what}: loan {i} at {o.u32(a):#x}: {raw[8:].hex()}')
+
+
+def lender_loans(o):
+    """The moneylender's loans. What it offers (0x51CE80, the town's slots
+    0..2): as set; with a bad payment history ([+0x1E]); half the player's
+    value under 2000 with and without debts ([+0x498]); one that doesn't fit
+    the limit (they stop there); his reputation in the town below 0 and over
+    30; a value giving more than 2000 extra and an amount past 65535; a
+    repayment over 65000; slots without weeks or amount. Taking two (0x29,
+    the viewer's bytes) and the debts (0x4D9100); paying one off (0x2A, the
+    viewer's bytes) and a debt to an AI merchant (0x29 made here); 0x2A with
+    an event that isn't a loan, another debtor, a record out. The townsmen's
+    requests (0x51D160, slots 3..5): the first call with the offers still in
+    the buffer (no roll), again (it rolls), none; their terms (0x51D270) with
+    each kind, a repayment over 65000, one under the rank's floor; granting
+    one (0x29, the viewer's bytes) and the loans granted (0x4D9210); the two
+    loans brought due in the day (event 0x01)."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    M = o.merchant(m)
+    _, _, merchants, _ = o.counts()
+    ai = rt.ai_with_office(o)[0]
+    lender_copiers(o)
+    print(f'ship {s} of the player {m} in town {t}; the AI merchant {ai}')
+
+    def during(o):
+        w32(o, M, 1000000)
+        w32(o, M + 0x46C, 300000)
+        w32(o, M + 0x498, 0)
+        w8(o, M + 0x1E, 0)
+        loan_slot(o, t, 0, 0, 1, 2, 12, 3000)
+        loan_slot(o, t, 1, 0, 3, 4, 26, 9000)
+        loan_slot(o, t, 2, 0, 5, 6, 8, 20000)
+        loan_window(o, 0x51CE80, t, 'offers as set')
+        w8(o, M + 0x1E, 2)
+        loan_window(o, 0x51CE80, t, 'a bad payment history')
+        w8(o, M + 0x1E, 0)
+        w32(o, M + 0x46C, 3000)
+        loan_window(o, 0x51CE80, t, 'half the value under 2000')
+        w32(o, M + 0x46C, 300000)
+        w32(o, M + 0x498, 149000)
+        loan_window(o, 0x51CE80, t, 'debts: the limit 1000')
+        w32(o, M + 0x498, 145000)
+        loan_window(o, 0x51CE80, t, 'the limit 5000: the second doesn\'t fit')
+        w32(o, M + 0x498, 0)
+        reputation = o.u32(M + 0x2FC + 4 * t)
+        for r in (-12.0, 75.0):
+            o.uc.mem_write(M + 0x2FC + 4 * t, struct.pack('<f', r))
+            loan_window(o, 0x51CE80, t, f'reputation {r}')
+        w32(o, M + 0x2FC + 4 * t, reputation)
+        w32(o, M + 0x46C, 2000000)
+        loan_slot(o, t, 2, 0, 5, 6, 8, 64000)
+        loan_window(o, 0x51CE80, t, 'the extra over 2000, an amount past 65535')
+        w32(o, M + 0x46C, 300000)
+        loan_slot(o, t, 2, 0, 5, 6, 40, 60000)
+        loan_window(o, 0x51CE80, t, 'a repayment over 65000')
+        loan_slot(o, t, 0, 0, 1, 2, 0, 3000)
+        loan_slot(o, t, 1, 0, 3, 4, 26, 0)
+        loan_window(o, 0x51CE80, t, 'no weeks, no amount')
+        # Take two, as the window does (it recomputes them every frame).
+        loan_slot(o, t, 0, 0, 1, 2, 12, 3000)
+        loan_slot(o, t, 1, 0, 3, 4, 26, 9000)
+        loan_slot(o, t, 2, 0, 5, 6, 8, 20000)
+        for k in range(2):
+            n, got = loan_window(o, 0x51CE80, t, f'before taking one ({k})')
+            if n > 0:
+                run_bytes(o, player_op('loan', got[0].hex()))
+        loan_events(o, 'taken')
+        n, owed = lender_list(o, 0, m)
+        print(f'  he owes {n}: ' + ' '.join(e.hex() for e in owed))
+        # A debt to an AI merchant (0x29 made here: lender ai, borrower the player).
+        operation(o, 0x29, 2500, 0x30, b'\0\0\0', 2000, 6, 0, ai, m, t, 0x72, fmt='<IIB3sHBBBBBB')
+        n, owed = lender_list(o, 0, m)
+        print(f'  he owes {n}: ' + ' '.join(e.hex() for e in owed))
+        for e in owed:
+            if e[0x10] == 0xFF:  # the moneylender's, with the viewer's bytes
+                run_bytes(o, player_op('pay-off', m, struct.unpack_from('<H', e, 4)[0]))
+                break
+        for e in owed:
+            if e[0x10] == ai:
+                operation(o, 0x2A, (m + 1) % merchants, struct.unpack_from('<H', e, 4)[0])
+                operation(o, 0x2A, m, struct.unpack_from('<H', e, 4)[0])
+                print(f'  the AI merchant\'s money {o.s32(o.merchant(ai))}, the player\'s {o.s32(M)}')
+        other = next(i for i, a in rt.events(o) if o.u16(a + 6) not in (1,))
+        operation(o, 0x2A, m, other)
+        operation(o, 0x2A, m, o.u16(to.EVENTS + 0xC) + 5)
+        n, owed = lender_list(o, 0, m)
+        print(f'  he owes {n} now')
+        # The townsmen's requests and granting one.
+        loan_slot(o, t, 3, 2, 7, 8, 10, 14000)  # just over the rank's floor: the roll may fail
+        loan_slot(o, t, 4, 5, 9, 10, 30, 30000)
+        loan_slot(o, t, 5, 0, 11, 12, 52, 60000)
+        loan_window(o, 0x51CE80, t, 'the offers in the buffer')
+        loan_window(o, 0x51D160, t, 'requests (the first call)')
+        n, got = loan_window(o, 0x51D160, t, 'requests again (it rolls)')
+        loan_window(o, 0x51D160, t, 'requests a third time')
+        for kind in (0, 4, 1, 2):
+            raw = bytearray(loan_terms(o, 1))
+            raw[0xF] = (raw[0xF] & 0xF0) | kind
+            o.uc.mem_write(LOAN_BUFFER + 0x10, bytes(raw))
+            direct(o, 0x51D270, [LOAN_BUFFER + 0x10], cdecl=True)
+            print(f'  kind {kind}: {loan_terms(o, 1).hex()}')
+        direct(o, 0x51D270, [LOAN_BUFFER + 0x20], cdecl=True)
+        print(f'  the 60000: {loan_terms(o, 2).hex()}')
+        raw = bytearray(loan_terms(o, 0))
+        raw[0x5] = 7
+        o.uc.mem_write(LOAN_BUFFER, bytes(raw))
+        direct(o, 0x51D270, [LOAN_BUFFER], cdecl=True)
+        print(f'  under the rank\'s floor: {loan_terms(o, 0).hex()}')
+        if n > 1:
+            run_bytes(o, player_op('loan', loan_terms(o, 1).hex()))
+        n, granted = lender_list(o, 1, m)
+        print(f'  granted {n}: ' + ' '.join(e.hex() for e in granted))
+        for k in (3, 4, 5):
+            loan_slot(o, t, k, 0, 0, 0, 0, 0)
+        loan_window(o, 0x51D160, t, 'no requests')
+        # The taken and the granted loans due in the day.
+        now = o.u32(WORLD + 0x14)
+        for i, a in rt.events(o):
+            if o.u16(a + 6) == 1 and (o.u8(a + 0x10) == m or o.u8(a + 0x11) == m):
+                rt.move_event(o, i, a, now + 0x10)
+        loan_events(o, 'due')
+    return during
+
+
+def share_events(o, what):
+    """The events 0x18 (company shares)."""
+    out = []
+    for i, a in rt.events(o):
+        if o.u16(a + 6) == 0x18:
+            raw = bytes(o.uc.mem_read(a, 0x18))
+            print(f'  {what}: shares {i} at {o.u32(a):#x}: company {raw[0x10]} holder {raw[0x11]} {raw[0x12]}% '
+                  f'offered {raw[0x13]} changed {struct.unpack_from("<I", raw, 8)[0]:#x} '
+                  f'value {struct.unpack_from("<i", raw, 0xC)[0]}')
+            out.append((i, a))
+    return out
+
+
+def lender_shares(o):
+    """Company shares (0x2B, 0x4D98F0) and their dividends (event 0x18,
+    0x4E8804). The player sells new shares of his company (the list to sell,
+    0x4D9620, and by hand), the pool's offered set by hand, he buys some back
+    (the list on sale, 0x4D9320; the viewer's bytes); an AI merchant sells
+    shares of his (made here) and the player buys them (a holding), again
+    (it grows), sells part back (the viewer's bytes), more than he holds (cut
+    down), with none left (nothing); the owner past 45 % (cut down, then
+    nothing); a buyer with a negative balance (compared unsigned: he buys)
+    and short of the price; both or neither merchants; a pool with none; a
+    second pool of the player's company (0x4D9320 drops it). Then the
+    dividends: each event 0x18 moved to the quarter's first tick (before now)
+    with the companies' value grown: the AI's pool and the player's holding
+    (the letter 0x27), the player's pool rich and poor (a debt, the letter
+    0x28, [+0x1E] at 0xFE), the value not grown, a company out and no shares
+    (the event goes); one run on the queue's head with a tick past the
+    year's end (the quarters' loop reads past its table); and the day: the
+    pools and holdings work out what they offer."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    M = o.merchant(m)
+    _, _, merchants, _ = o.counts()
+    # A holding's offer goes by (company + tick) & 3: two AI merchants whose
+    # residues differ from the player's and between them, where they can.
+    now = o.u32(WORLD + 0x14)
+    ais = sorted(rt.ai_with_office(o), key=lambda x: ((x + now) & 3) == ((m + now) & 3))
+    ai = ais[0]
+    ai2 = next((x for x in ais[1:] if (x + now) & 3 != (ai + now) & 3), ais[1])
+    A = o.merchant(ai)
+    lender_copiers(o)
+    print(f'the player {m}; the AI merchants {ai}, {ai2}')
+
+    def shares_op(*entry):
+        operation(o, 0x2B, *struct.unpack('<2I', struct.pack('<4BI', *entry)))
+
+    def lists(what):
+        n, sale = lender_list(o, 2)
+        print(f'  {what}: on sale {n}: ' + ' '.join(e.hex() for e in sale))
+        n, sell = lender_list(o, 3)
+        print(f'  {what}: to sell {n}: ' + ' '.join(e.hex() for e in sell))
+        return sale, sell
+
+    def pool(company, holder=0xFF):
+        return next(((i, a) for i, a in rt.events(o) if o.u16(a + 6) == 0x18 and o.u8(a + 0x10) == company
+                     and o.u8(a + 0x11) == holder), (None, None))
+
+    def during(o):
+        for x in (M, A):
+            w32(o, x, 5000000)
+        w32(o, M + 0x46C, 400000)
+        w32(o, A + 0x46C, 250000)
+        sale, sell = lists('as loaded')
+        if sell and sell[0][1]:
+            run_bytes(o, player_op('shares', sell[0].hex()))
+        shares_op(m, 20, m, 0xFF, 15000)
+        _, p = pool(m)
+        w8(o, p + 0x13, 10)
+        sale, sell = lists('his pool offering 10')
+        for e in sale:
+            if e[0] == m:
+                run_bytes(o, player_op('shares', e.hex()))
+        share_events(o, 'bought back')
+        shares_op(ai, 30, ai, 0xFF, 9000)
+        _, q = pool(ai)
+        w8(o, q + 0x13, 15)
+        sale, sell = lists('the AI\'s pool offering 15')
+        for e in sale:
+            if e[0] == ai:
+                run_bytes(o, player_op('shares', e.hex()))
+        w8(o, q + 0x13, 5)
+        sale, sell = lists('again 5')
+        for e in sale:
+            if e[0] == ai:
+                run_bytes(o, player_op('shares', e.hex()))
+        _, h = pool(ai, m)
+        if h:
+            w8(o, h + 0x13, 10)
+        sale, sell = lists('his holding offering 10')
+        for e in sell[1:]:
+            if e[0] == ai and e[1]:
+                run_bytes(o, player_op('shares', e.hex()))
+        if h:
+            w8(o, h + 0x13, 5)
+            shares_op(ai, 2, m, 0xFF, 1)  # fewer than offered
+        shares_op(ai, 100, m, 0xFF, 1)
+        shares_op(ai, 5, m, 0xFF, 1)
+        share_events(o, 'sold back')
+        shares_op(m, 40, m, 0xFF, 100)
+        shares_op(m, 10, m, 0xFF, 100)
+        w32(o, A, 0xFFFFFFFB)
+        w8(o, q + 0x13, 3)
+        shares_op(m, 3, 0xFF, ai, 50)
+        w32(o, A, 10)
+        shares_op(m, 3, 0xFF, ai, 50)
+        w32(o, A, 5000000)
+        shares_op(m, 3, ai2, ai, 50)
+        shares_op(m, 3, 0xFF, 0xFF, 50)
+        shares_op(ai2, 3, 0xFF, m, 50)
+        w8(o, q + 0x12, 0)
+        shares_op(ai, 3, 0xFF, m, 50)
+        w8(o, q + 0x12, 20)
+        shares_op(ai2, 3, m, 0xFF, 1)  # he holds none of ai2's
+        w8(o, q + 0x13, o.u8(q + 0x12))
+        shares_op(ai, o.u8(q + 0x12) + 2, 0xFF, m, 50)  # more than the pool has: he gets them all the same
+        share_events(o, 'the AI\'s pool bought out')
+        shares_op(ai, 20, ai, 0xFF, 900)
+        w8(o, q + 0x13, 4)
+        # The lists with small values: the AI's 300 (the price), the player's 80
+        # (his new shares' price) and his own shares counted over 100 %.
+        values = o.u32(A + 0x46C), o.u32(M + 0x46C)
+        _, p = pool(m)
+        held, changed = o.u8(p + 0x12), o.u32(p + 8)
+        w32(o, p + 8, 0)  # his pool unchanged for long: new shares to sell
+        offered = o.u8(p + 0x13)
+        w8(o, p + 0x13, 1)
+        for n, (va, vm) in ((10, (300, 80)), (41, (80, 80)), (150, (300, 400000))):
+            w8(o, p + 0x12, n)
+            w32(o, A + 0x46C, va)
+            w32(o, M + 0x46C, vm)
+            lists(f'his pool {n} %, the values {va} and {vm}')
+        w8(o, p + 0x12, held)
+        w8(o, p + 0x13, offered)
+        w32(o, p + 8, changed)
+        w32(o, A + 0x46C, values[0])
+        w32(o, M + 0x46C, values[1])
+        # A second pool of the player's company, offering some: 0x4D9320 drops it.
+        a = direct(o, 0x4D8CF0, [o.u32(WORLD + 0x14) + 0x80], ecx=to.EVENTS)  # the record's address
+        o.uc.mem_write(a + 6, struct.pack('<H', 0x18))
+        o.uc.mem_write(a + 8, struct.pack('<Ii', 0, 100000) + bytes([m, 0xFF, 4, 2]))
+        _, p = pool(m)
+        w8(o, p + 0x13, 1)
+        lists('a second pool of his')
+        share_events(o, 'before the dividends')
+        # Each case on the queue's head, run there (0x4E8804), then back in its
+        # place. The quarter's first tick: the last one before now (so that a
+        # debt goes after it, as it would in the game).
+        now, year = o.u32(WORLD + 0x14), o.u16(YEAR)
+        q0 = max((d + 365 * year) << 8 for d in (0, 90, 181, 273) if (d + 365 * year) << 8 <= now)
+
+        def at(i):
+            return o.u32(to.EVENTS) + 0x18 * i
+
+        def on_head(i, tick, what):
+            rt.move_event(o, i, at(i), 0)
+            w32(o, at(i), tick)
+            r = direct(o, 0x4E8804, [], ecx=to.EVENTS) & 0xFF
+            print(f'  {what}: {r}, tick {o.u32(at(i)):#x}, offered {o.u8(at(i) + 0x13)}, the player {o.s32(M)} '
+                  f'[+0x1E] {o.u8(M + 0x1E)}, the AI {o.s32(A)}')
+            rt.move_event(o, i, at(i), o.u32(at(i)))
+
+        def grown(i, by):
+            w32(o, at(i) + 0xC, o.s32(o.merchant(o.u8(at(i) + 0x10)) + 0x46C) - by)
+
+        ip, iq, ih, ib = pool(m)[0], pool(ai)[0], pool(ai, m)[0], pool(m, ai)[0]
+        if iq is not None:
+            grown(iq, 60000)
+            on_head(iq, q0, "the AI's pool, grown")
+        if ih is not None:
+            grown(ih, 60000)
+            on_head(ih, q0, 'his holding, grown')
+            grown(ih, -5000)
+            on_head(ih, q0, 'his holding, not grown')
+        if ip is not None:
+            grown(ip, 60000)
+            w32(o, M, 200)
+            w8(o, M + 0x1E, 0xFE)
+            on_head(ip, q0, "his pool, he can't pay it all")
+        if ib is not None:
+            grown(ib, 60000)
+            w32(o, M, 0)
+            w8(o, M + 0x1E, 3)
+            on_head(ib, q0, "the AI's holding of his company, he has nothing")
+        w32(o, M, 5000000)
+        loan_events(o, "the dividends' debts")
+        # Other ticks: what the pools and the holdings offer.
+        later = q0 + 0x100
+        if ip is not None:
+            w32(o, at(ip) + 8, now)
+            on_head(ip, later, 'his pool, changed just now')
+            w32(o, at(ip) + 8, 0)
+            value = o.u32(M + 0x46C)
+            w32(o, M + 0x46C, 50)
+            on_head(ip, later, 'his pool, his value 50')
+            w32(o, M + 0x46C, 250000)
+            for n in (20, 4):
+                w8(o, at(ip) + 0x12, n)
+                on_head(ip, later, f'his pool, {n} %')
+            w32(o, M + 0x46C, value)
+        for i, what in ((ih, 'his holding'), (ib, "the AI's holding")):
+            if i is None:
+                continue
+            company = o.merchant(o.u8(at(i) + 0x10))
+            value = o.u32(company + 0x46C)
+            w32(o, company + 0x46C, 50)
+            on_head(i, later, f'{what}, the value 50')
+            w32(o, company + 0x46C, 250000)
+            w8(o, at(i) + 0x12, 30)
+            for c in (250000 * 16, 250000 * 8, 250000 * 2, 1000):
+                w32(o, at(i) + 0xC, c)
+                on_head(i, later, f'{what}, its value {c} (by {(o.u8(at(i) + 0x10) + o.u32(WORLD + 0x14)) & 3})')
+            w32(o, company + 0x46C, value)
+        if iq is not None:
+            on_head(iq, (365 * (year + 1) + 10) << 8, "the AI's pool, a tick past the year")
+            q1 = min((d + 365 * year) << 8 for d in (90, 181, 273, 365) if (d + 365 * year) << 8 > now)
+            on_head(iq, q1 - 0x10, "the AI's pool, just before the next quarter")
+        # One out of the world and one without shares (the event goes).
+        for company, n in ((merchants, 5), (ai2, 0)):
+            i = (direct(o, 0x4D8CF0, [q0], ecx=to.EVENTS) - o.u32(to.EVENTS)) // 0x18  # it returns the record
+            o.uc.mem_write(at(i) + 6, struct.pack('<H', 0x18))
+            o.uc.mem_write(at(i) + 8, struct.pack('<Ii', 0, 0) + bytes([company, 0xFF, n, 0]))
+            on_head(i, q0, f'company {company}, {n} %')
+        # And the day, from the quarter's first tick.
+        for i, a in share_events(o, 'to the quarter'):
+            if o.u8(a + 0x10) < merchants and o.u8(a + 0x12):
+                grown(i, 30000)
+                rt.move_event(o, i, at(i), q0)
+    return during
+
+
 def player_op_text(*args):
     """player_ops's output as text."""
     import subprocess
@@ -6221,6 +6640,22 @@ SCENARIOS = {
         '@50874b', '@508702>508a88', '@508684>508a88', '@508678>508a88', '@508953', '@53cd24', '@53cd6f', '@53cd73',
         '@53ccff>53ce21', '@512e03', '@512e1e', '@512e46', '@512e56', '@512e74', '@512ec1', '@512edb', '@512ff1',
         '@504cda']),
+    'lender_loans': Scenario(lender_loans, [0x535760, 0x51CE80, 0x51D160, 0x51D270, 0x4D85C0] +
+                             [LENDER_LISTS + 0x50 * k for k in range(4)], 1, [
+        '@51cec4', '@51cef0', '@51cf3e', '@51cf4d', '@51cf1b', '@51cf6e>51d13e', '@51cf78>51d13e',
+        '@51cff6>51d14b', '@51d10c>51d14b', '@51d132', '@51d190>51d245', '@51d1c6', '@51d23a', '@51d36c>51d38f',
+        '@51d37d', '@51d39e>51d403', '@51d3b9>51d403', '@51d3e9>51d403', '@51d3eb', '@539f46>539fae',
+        '@539f4d>539fae', '@539f59>539fae', '@539f68', '@539f91', '@539f8f>539fae', '@4d9141', '@4d9251']),
+    'lender_shares': Scenario(lender_shares, [0x535760, 0x4E8804, 0x4D85C0] +
+                              [LENDER_LISTS + 0x50 * k for k in range(4)], 1, [
+        '@4d992f>4d9c4a', '@4d994f>4d9c4a', '@4d995d>4d9c4a', '@4d9996>4d9c4a', '@4d99a3', '@4d99a9', '@4d99b8',
+        '@4d99be', '@4d99f4>4d9c4a', '@4d9a7a', '@4d9a39', '@4d9a9e>4d9c4a', '@4d9acf>4d9c4a', '@4d9afe>4d9c4a',
+        '@4d9b0b', '@4d9b14', '@4d9b23', '@4d9b3b', '@4d9b90>4d9c4a', '@4d9ba8', '@4d9c54', '@4d9c14',
+        '@4d93f7', '@4d9559', '@4d955e', '@4d9592', '@4d95a1', '@4d97c9', '@4d9789', '@4d9793', '@4d97b4',
+        '@4d9875', '@4d9883', '@4e8852>4e8c75', '@4e885d>4e8c75', '@4e8895', '@4e8a60', '@4e88f7', '@4e897f',
+        '@4e89c4', '@4e8a19', '@4e8a59', '@4e8a57>4e8a62', '@4e8945', '@4e8aa5', '@4e8af5', '@4e8b22',
+        '@4e8b20>4e8b43', '@4e8b3d', '@4e8ba5', '@4e8bad>4e8b40', '@4e8bb4', '@4e8c30', '@4e8c1a', '@4e8c1f',
+        '@4e8c2b', '@4e8c4a']),
 }
 
 

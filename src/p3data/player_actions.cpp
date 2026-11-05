@@ -1,6 +1,7 @@
 #include "p3data/player_actions.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <initializer_list>
 
@@ -14,6 +15,9 @@ uint16_t fn_5269a0(const SaveGame& save, int town, uint16_t owner);  // ship_tra
 namespace p3::data::tick::events_towns_detail {
 bool ship_order_cost(const SaveGame& save, int town, uint32_t type, uint32_t merchant, int32_t& cost);  // events_towns.cpp
 }  // namespace p3::data::tick::events_towns_detail
+namespace p3::data::tick::events_detail {
+int16_t fn_4f9580(const SaveGame& save, int merchant, uint32_t town);  // events.cpp
+}  // namespace p3::data::tick::events_detail
 
 namespace p3::data {
 
@@ -835,6 +839,439 @@ std::optional<OperationBytes> convoy_to_office_operation(const SaveGame& save, i
 		return std::nullopt;
 	}
 	return market_operation(0x1B, amount, convoy, ware, uint16_t(save.player), 0);
+}
+
+// --- The moneylender ---
+
+namespace {
+
+constexpr uint32_t kEventQueueHead = 0x6DD744;  // u16 ([+0x8] of the event queue 0x6DD73C)
+constexpr uint32_t kEventQueueCount = 0x6DD748;  // u16 ([+0xC])
+
+uint16_t get16(const uint8_t* p) {
+	uint16_t v;
+	std::memcpy(&v, p, 2);
+	return v;
+}
+
+uint32_t get32(const uint8_t* p) {
+	uint32_t v;
+	std::memcpy(&v, p, 4);
+	return v;
+}
+
+void put16(uint8_t* p, uint16_t v) {
+	std::memcpy(p, &v, 2);
+}
+
+void put32(uint8_t* p, uint32_t v) {
+	std::memcpy(p, &v, 4);
+}
+
+// The records of the event queue from its head (next [+0x4]) while the
+// index is a record, at most as many as there are (the game doesn't count).
+template <typename F>
+void each_event(const SaveGame& save, F f) {
+	const uint32_t count = save.globals.u16(kEventQueueCount);
+	uint32_t i = save.globals.u16(kEventQueueHead);
+	for (uint32_t walked = 0; i < count && i < save.events.size() && walked < count; ++walked) {
+		const uint32_t next = save.events[i].u16(4);
+		f(uint16_t(i));
+		i = next;
+	}
+}
+
+uint32_t merchant_total(const SaveGame& save) {
+	return save.globals.u16(global::kWorldMerchantCount);
+}
+
+bool player_ok(const SaveGame& save) {
+	return save.player >= 0 && uint32_t(save.player) < merchant_total(save) && size_t(save.player) < save.merchants.size();
+}
+
+// The loan events (0x01) whose byte `at` ([+0x10] the lender, [+0x11] the
+// debtor) is the merchant (0x4D9210, 0x4D9100).
+std::vector<uint16_t> loans_of(const SaveGame& save, int merchant, size_t at) {
+	std::vector<uint16_t> list;
+	each_event(save, [&](uint16_t i) {
+		if (save.events[i].u16(6) == 1 && int(save.events[i].u8(at)) == merchant) {
+			list.push_back(i);
+		}
+	});
+	return list;
+}
+
+}  // namespace
+
+int32_t loan_offers(const SaveGame& save, int town, std::array<LoanTerms, 3>& buffer, bool* changed) {
+	bool dummy = false;
+	bool& moved = changed ? *changed : dummy;
+	moved = false;
+	if (!player_ok(save) || town < 0 || size_t(town) >= save.towns.size()) {
+		return 0;
+	}
+	const MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+	if (m.u8(0x1E) != 0) {
+		return -1;
+	}
+	// cdq; sub; sar 1: half his value, rounded towards 0, less his debts.
+	const uint32_t limit = uint32_t(m.s32(0x46C) / 2) - m.u32(0x498);
+	if (limit < 2000) {
+		return -2;
+	}
+	uint32_t bonus = uint32_t(m.s32(0x46C) / 500);
+	if (bonus > 2000) {
+		bonus = 2000;
+	}
+	const TownMemory& t = save.towns[size_t(town)].memory;
+	int32_t reputation = tick::events_detail::fn_4f9580(save, save.player, t.u8(0x2C0));
+	reputation = reputation < 0 ? 0 : reputation > 30 ? 30 : reputation;
+	int32_t count = 0;
+	for (uint32_t k = 0; k < 3; ++k) {
+		const uint8_t weeks = t.u8(0x9C9 + 6 * k);
+		const uint16_t amount = t.u16(0x9CA + 6 * k);
+		if (amount == 0 || weeks == 0) {
+			continue;
+		}
+		uint8_t* o = buffer[size_t(count)].data();
+		o[0xD] = uint8_t(save.player);
+		o[0xC] = 0xFF;
+		o[0xE] = t.u8(0x2C0);
+		o[0xB] = 0;
+		o[0xF] = uint8_t((k << 4) + 2);
+		o[0x5] = m.u8(0x39C + m.u8(0x19));
+		o[0x6] = m.u8(0x1C);
+		o[0x7] = m.u8(0x1D);
+		const uint32_t lent = (uint32_t(amount) + bonus) / 50 * 50;
+		if (uint32_t(get16(o + 8)) != lent) {  // The whole amount against the u16 kept.
+			moved = true;
+			put16(o + 8, uint16_t(lent));
+		}
+		if (lent > limit) {
+			break;
+		}
+		if (o[0xA] != weeks) {
+			moved = true;
+			o[0xA] = weeks;
+		}
+		// fild; fstp (floats); fmul; sqrt of the float as a double; 3000 / it +
+		// 15, less the reputation / 3, to a float; __ftol.
+		const float a = float(int32_t(get16(o + 8)));
+		const float w = float(int32_t(weeks));
+		const float root = float(std::sqrt(double(float(double(w) * double(a)))));
+		const float interest = float(double(3000.0f) / double(root) + double(15.0f) - double(float(reputation)) / double(3.0f));
+		const uint8_t i = uint8_t(tick::ftol(double(interest)));
+		if (o[0x4] != i) {
+			moved = true;
+			o[0x4] = i;
+		}
+		const float rate = float(double(float(int32_t(o[0x4]))) * double(0.001f) + double(1.0f));
+		float repay = float(int32_t(get16(o + 8)));
+		for (uint32_t n = o[0xA]; n > 0; --n) {
+			repay = float(double(repay) * double(rate));
+		}
+		if (repay > 65000.0f) {
+			break;
+		}
+		const uint32_t sum = uint32_t(tick::ftol(double(repay))) & 0xFFFF;
+		if (get32(o) != sum) {
+			moved = true;
+			put32(o, sum);
+		}
+		++count;
+	}
+	return count;
+}
+
+OperationBytes loan_operation(const LoanTerms& terms) {
+	OperationBytes op{};
+	const uint32_t code = 0x29;
+	std::memcpy(op.data(), &code, 4);
+	std::memcpy(op.data() + 4, terms.data(), terms.size());
+	return op;
+}
+
+std::vector<uint16_t> loans_owed(const SaveGame& save, int merchant) {
+	return loans_of(save, merchant, 0x11);
+}
+
+std::vector<uint16_t> loans_granted(const SaveGame& save, int merchant) {
+	return loans_of(save, merchant, 0x10);
+}
+
+bool can_pay_off_here(const SaveGame& save, int town, uint16_t loan) {
+	if (!player_ok(save) || loan >= save.events.size()) {
+		return false;
+	}
+	const uint8_t where = save.events[loan].u8(0x14);
+	if (where < save.globals.u32(global::kWorldTownCount) &&
+		tick::facilities_detail::fn_5308a0(save, uint32_t(save.player), where) >= 0) {
+		return true;
+	}
+	const uint32_t ships = save.globals.u16(global::kShipCount);
+	bool docked = false;  // The game doesn't stop at the first.
+	for (uint32_t s = save.merchants[size_t(save.player)].memory.u16(0xE); s < ships && s < save.ships.size();
+		 s = save.ships[s].memory.u16(0x4)) {
+		const ShipMemory& m = save.ships[s].memory;
+		docked = docked || (!(m.u8(0x136) & 1) && m.u8(0x39) == where && m.u16(0x134) < 4);
+	}
+	return docked || int(where) == town;
+}
+
+OperationBytes pay_off_operation(uint32_t player, uint32_t loan) {
+	return words_operation({0x2A, player, loan & 0xFFFF});
+}
+
+void fn_51d270(LoanTerms& terms, SaveGame* save) {
+	uint8_t* o = terms.data();
+	const float a = float(int32_t(get16(o + 8)));
+	const float w = float(int32_t(o[0xA]));
+	const float product = float(double(w) * double(a));
+	const float root = float(std::sqrt(double(1.0f) / double(product)));
+	const float factor = float(double(root) * double(300.0f) + double(1.2f));
+	const float kind = float(int32_t((o[0xF] & 0xF) + 8));
+	o[0x4] = uint8_t(tick::ftol(double(float(double(kind) * double(factor)))));
+	const float rate = float(double(float(int32_t(o[0x4]))) * double(0.001f) + double(1.0f));
+	float repay = a;
+	for (uint32_t n = o[0xA]; n > 0; --n) {
+		repay = float(double(repay) * double(rate));
+	}
+	// fcomp 65000: above it, 65000; fcomp the amount: below it (C0), 65000 too.
+	if (repay > 65000.0f || repay < a) {
+		put32(o, 0xFDE8);
+	} else {
+		put32(o, uint32_t(tick::ftol(double(repay))) & 0xFFFF);
+	}
+	o[0xB] = 0;
+	if (o[0xD] != 0xFF) {
+		return;
+	}
+	const uint32_t floor = (uint32_t(o[0x5]) + 1) * 5000;
+	const uint32_t sum = get32(o);
+	if (floor >= sum || !save) {
+		return;
+	}
+	const uint32_t steps = (sum - floor + 1250) / 1250;
+	if ((tick::game_rand(*save) & 0x3FF) < steps * 75) {
+		o[0xB] = uint8_t(int32_t(tick::game_rand(*save) & 0xFF) % 78 + 51);
+	}
+}
+
+int32_t loan_requests(const SaveGame& save, int town, std::array<LoanTerms, 3>& buffer, SaveGame* roll, bool* changed) {
+	bool dummy = false;
+	bool& moved = changed ? *changed : dummy;
+	moved = false;
+	if (town < 0 || size_t(town) >= save.towns.size()) {
+		return 0;
+	}
+	const TownMemory& t = save.towns[size_t(town)].memory;
+	int32_t count = 0;
+	for (uint32_t k = 0; k < 3; ++k) {
+		const uint32_t slot = 0x9C6 + 6 * (k + 3);
+		if (t.u16(slot + 4) == 0 || t.u8(slot + 3) == 0) {
+			continue;
+		}
+		uint8_t* o = buffer[size_t(count)].data();
+		o[0xB] = 0;
+		o[0xC] = uint8_t(save.player);
+		o[0xE] = t.u8(0x2C0);
+		o[0xF] = uint8_t((k << 4) + 0x32);
+		if (get16(o + 8) != t.u16(slot + 4)) {
+			put16(o + 8, t.u16(slot + 4));
+			moved = true;
+		}
+		if (o[0xA] != t.u8(slot + 3)) {
+			o[0xA] = t.u8(slot + 3);
+			moved = true;
+		}
+		const uint32_t before = get32(o);
+		fn_51d270(buffer[size_t(count)], roll);
+		if (get32(o) != before) {
+			moved = true;
+		}
+		for (uint32_t b = 0; b < 3; ++b) {  // The rank and the names.
+			if (o[0x5 + b] != t.u8(slot + b)) {
+				o[0x5 + b] = t.u8(slot + b);
+				moved = true;
+			}
+		}
+		o[0xD] = 0xFF;
+		++count;
+	}
+	return count;
+}
+
+OperationBytes grant_loan_operation(SaveGame& save, LoanTerms request, uint32_t kind) {
+	request[0xF] = uint8_t((request[0xF] & 0xF0) | (kind & 0xF));
+	fn_51d270(request, &save);
+	return loan_operation(request);
+}
+
+std::vector<ShareEntry> shares_on_sale(SaveGame& save) {
+	std::vector<ShareEntry> list;
+	if (!player_ok(save)) {
+		return list;
+	}
+	const uint32_t merchants = merchant_total(save);
+	const uint32_t player = uint32_t(save.player);
+	std::vector<int32_t> owns(merchants, 0);
+	owns[player] = 100;
+	bool own_pool = false;
+	uint32_t count = 0;
+	each_event(save, [&](uint16_t i) {
+		GameMemory<0x18>& e = save.events[i];
+		if (e.u16(6) != 0x18) {
+			return;
+		}
+		if (e.u8(0x13) > 0 && e.u8(0x11) == 0xFF && e.u8(0x10) < merchants) {
+			++count;
+			if (e.u8(0x10) == player) {
+				if (!own_pool) {
+					own_pool = true;
+				} else {
+					// A second pool of his company: dropped (counted all the same,
+					// so the game's list ends in an entry it never fills).
+					e.u8(0x10) = 0xFF;
+					e.u8(0x12) = 0;
+				}
+			}
+		}
+		const uint32_t company = e.u8(0x10);
+		if (company >= merchants) {
+			return;
+		}
+		if (company == player) {
+			owns[player] -= e.u8(0x12);
+		} else if (e.u8(0x11) == player) {
+			owns[company] += e.u8(0x12);
+		}
+	});
+	if (count < 1) {
+		return list;
+	}
+	each_event(save, [&](uint16_t i) {
+		const GameMemory<0x18>& e = save.events[i];
+		if (e.u16(6) != 0x18 || e.u8(0x13) == 0 || e.u8(0x11) != 0xFF || e.u8(0x10) >= merchants ||
+			(!own_pool && list.size() >= count)) {
+			return;
+		}
+		ShareEntry entry{};
+		entry[0] = e.u8(0x10);
+		entry[1] = e.u8(0x13);
+		entry[2] = 0xFF;
+		entry[3] = uint8_t(player);
+		const int32_t value = save.merchants[e.u8(0x10)].memory.s32(0x46C);
+		const uint32_t price = value <= 500 ? uint32_t(e.u8(0x13)) * 6
+											: uint32_t(e.u8(0x13)) * (uint32_t(value) / 500 + 1) * 6;
+		put32(entry.data() + 4, price);
+		const int32_t owned = owns[e.u8(0x10)];
+		put32(entry.data() + 8, uint32_t(owned) <= 100 ? uint32_t(owned) : 0);
+		list.push_back(entry);
+	});
+	// A dropped pool's entry is never filled: the heap's zeros in the oracle.
+	list.resize(std::max<size_t>(list.size(), count));
+	return list;
+}
+
+std::vector<ShareEntry> shares_to_sell(const SaveGame& save) {
+	std::vector<ShareEntry> list;
+	if (!player_ok(save)) {
+		return list;
+	}
+	const uint32_t merchants = merchant_total(save);
+	const uint32_t player = uint32_t(save.player);
+	const uint32_t now = save.globals.u32(global::kWorldTick);
+	int32_t own = 100;
+	uint32_t pool_free = 0;  // When his pool may sell again: its last change + 7 days.
+	each_event(save, [&](uint16_t i) {
+		const GameMemory<0x18>& e = save.events[i];
+		if (e.u16(6) != 0x18) {
+			return;
+		}
+		if (e.u8(0x11) == player) {
+			return;  // A holding of his (counted below).
+		}
+		if (e.u8(0x10) == player) {
+			own -= e.u8(0x12);
+			if (e.u8(0x11) == 0xFF) {
+				pool_free = e.u32(8) + 0x700;
+			}
+		}
+	});
+	ShareEntry first{};
+	first[0] = uint8_t(player);
+	first[2] = uint8_t(player);
+	first[3] = 0xFF;
+	put32(first.data() + 8, uint32_t(own));
+	if (uint32_t(own) > 0x37 && pool_free < now) {
+		const MerchantMemory& m = save.merchants[player].memory;
+		// The tick's float / 1987, its low 4 bits / 3 · 5: 0..25.
+		const float f = float(double(float(int64_t(now >> 10))) / double(1987.0f));
+		uint32_t bits;
+		std::memcpy(&bits, &f, 4);
+		const uint32_t n = (bits & 0xF) / 3 * 5;
+		first[1] = uint8_t(n > 0x19 ? 0x19 : n);
+		if (uint32_t(own) - 0x37 < first[1]) {
+			first[1] = uint8_t(own - 0x37);
+		}
+		const int32_t value = m.s32(0x46C);
+		put32(first.data() + 4, value > 100 ? uint32_t(first[1]) * uint32_t(value / 100) : uint32_t(first[1]));
+	}
+	list.push_back(first);
+	each_event(save, [&](uint16_t i) {
+		const GameMemory<0x18>& e = save.events[i];
+		if (e.u16(6) != 0x18 || e.u8(0x11) != player) {
+			return;
+		}
+		ShareEntry entry{};
+		entry[0] = e.u8(0x10);
+		entry[1] = e.u8(0x13);
+		entry[2] = uint8_t(player);
+		entry[3] = 0xFF;
+		put32(entry.data() + 8, e.u8(0x12));
+		uint32_t each = 1000;
+		if (e.u8(0x10) < merchants) {
+			const uint32_t value = save.merchants[e.u8(0x10)].memory.u32(0x46C);
+			each = (value > 100 ? value / 100 : 1) + 1;
+			put32(entry.data() + 4, uint32_t(e.u8(0x13)) * each);
+		} else {
+			put32(entry.data() + 4, uint32_t(entry[1]) * each);
+		}
+		list.push_back(entry);
+	});
+	return list;
+}
+
+OperationBytes shares_operation(const ShareEntry& entry) {
+	OperationBytes op{};
+	const uint32_t code = 0x2B;
+	std::memcpy(op.data(), &code, 4);
+	std::memcpy(op.data() + 4, entry.data(), entry.size());
+	return op;
+}
+
+bool can_buy_shares(const SaveGame& save, const ShareEntry& entry) {
+	if (!player_ok(save)) {
+		return false;
+	}
+	const int32_t money = save.merchants[size_t(save.player)].memory.s32(0);
+	const uint32_t price = get32(entry.data() + 4);
+	return fix_game_bugs() ? int64_t(money) >= int64_t(price) : uint32_t(money) >= price;
+}
+
+uint32_t next_dividend_tick(const SaveGame& save) {
+	const uint32_t now = save.globals.u32(global::kWorldTick);
+	uint32_t year = uint32_t(save.globals.u16(global::kWorldYear)) * 365;
+	for (uint32_t k = 3;; k += 3) {
+		if (k > 9) {
+			k = 0;
+			year += 0x16D;
+		}
+		const uint32_t tick = (uint32_t(tick::kMonthStartTable[k]) + year) << 8;
+		if (tick > now) {
+			return tick;
+		}
+	}
 }
 
 }  // namespace p3::data

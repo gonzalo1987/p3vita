@@ -119,8 +119,10 @@ opens the market with the office; the tavern hires sailors and captains; the
 repair dock repairs your ships, and the shipyard has five pages (L and R, or
 touching its title): repair, order a ship, cancel an order, upgrade a ship and
 rename one (left and right go through the game's names; Square types another,
-with the Vita's keyboard, and X ends it). X with no building in the middle
-opens the market. Your ship in the port has a card at the bottom left (touch
+with the Vita's keyboard, and X ends it). The moneylender has six pages (L and
+R): take out a loan, pay one off, grant one to a townsman (the interest with
+left and right; only where you have an office), the loans you granted, and buy
+and sell company shares. X with no building in the middle opens the market. Your ship in the port has a card at the bottom left (touch
 it, or press Select) with its window: its captain, sailors and hull,
 dismissing sailors or the captain, and the convoys as the game's convoy window
 offers them: forming a private or a public convoy (its destination with left

@@ -2542,6 +2542,175 @@ bool fn_4ddc00(SaveGame& save, uint16_t event) {
 	}
 }
 
+// 0x4E8804 (event 0x18): a merchant's shares of a company (operation 0x2B,
+// 0x4D98F0): [+0x10] the company (its owner), [+0x11] who holds them (0xFF:
+// the company's pool, on sale), [+0x12] how many (in %), [+0x13] how many
+// are offered, [+0x8] when they last changed hands, [+0xC] the company's
+// value ([+0x46C] of its owner) when last paid. On the first tick of a
+// quarter (0x672D78's entries 0, 3, 6, 9, 12) the owner pays a dividend of
+// [+0x12] · the value's growth / 400 ([+0x4BC]) to the holder ([+0x4C8]; the
+// pool's to no one), with the letters 0x62 to the owner and 0x27 to a human
+// holder; if he hasn't the money, what he can't pay becomes a debt (an event
+// 0x01 in 20 days, the letter 0x28 to a human owner, [+0x1E] + 2). Then the
+// event comes back after 0x100 ticks plus the queue head's low byte. Other
+// ticks it works out what is offered: of the pool, when it hasn't changed
+// for 0x15 days or more (from the company's value and town 0's grain), of a
+// holding (from its value, the owner's and the tick); and it comes back
+// after 7 or 3 days or so, at most on the next quarter's first tick. Returns
+// 0 (the event goes) without a company or shares.
+uint32_t fn_4e8804(SaveGame& save, uint16_t event) {
+	GlobalMemory& g = save.globals;
+	Letter letter;  // 0x51A850: one for the three letters.
+	const uint32_t merchants = merchant_count(save);
+	const uint8_t company = save.events[event].u8(0x10);
+	if (company >= merchants || save.events[event].u8(0x12) == 0) {
+		return 0;
+	}
+	const uint32_t tick = save.events[event].u32(0);
+	const uint32_t year = uint32_t(g.u16(global::kWorldYear)) * 365;
+	uint32_t next = 0;
+	for (size_t k = 0; k < 130; k += 3) {  // The game doesn't stop: a tick past the year reads on.
+		next = (uint32_t(kMonthStartTable[k]) + year) << 8;
+		if (next >= tick) {
+			break;
+		}
+	}
+	if (next == tick) {
+		// A quarter's first tick: the dividend.
+		MerchantMemory& owner = merchant_of(save, company);
+		Event& e = save.events[event];
+		const uint32_t before = e.u32(0xC);
+		e.u32(0xC) = owner.u32(0x46C);
+		const int32_t growth = int32_t(owner.u32(0x46C) - before);
+		int32_t dividend = 0;
+		if (growth > 0) {
+			dividend = int32_t(uint32_t(e.u8(0x12)) * uint32_t(growth)) / 400;
+			owner.u32(0x4BC) += uint32_t(dividend);
+			if (owner.s32(0) < dividend) {
+				// He can't pay it: a debt to no one (the event's queue marked as
+				// free while the record is taken).
+				g.u32(kEventBusy) = 0;
+				const uint16_t d = events_detail::fn_4d8cf0(save, g.u32(kTick) + 0x1400);
+				g.u32(kEventBusy) = 1;
+				Event& debt = save.events[d];
+				const Event& head = save.events[g.u16(kEventHead)];
+				debt.u16(6) = 1;
+				debt.u32(8) = uint32_t(dividend);
+				if (owner.s32(0) > 0) {
+					debt.u32(8) = uint32_t(dividend - owner.s32(0));
+					owner.s32(0) = 0;
+				}
+				debt.u8(0x12) = 0;
+				debt.u8(0x15) = 0;
+				debt.u8(0x16) = 0;
+				debt.u8(0x17) = 0;
+				debt.u8(0x13) = 0;
+				debt.u8(0x10) = 0xFF;
+				debt.u8(0x11) = head.u8(0x10);
+				debt.u32(0xC) = g.u32(kTick);
+				debt.u8(0xC) = 0;
+				debt.u8(0x14) = merchant_of(save, head.u8(0x10)).u8(0x19);
+				if (owner.u16(8) == 0) {
+					// 0x28 (0x4E8A49): the dividend and the debt's low halves and when it falls due.
+					letter.entry.u8(4) = 0x28;
+					letter.entry.u8(5) = owner.u8(0x19);
+					letter.entry.u16(8) = uint16_t(dividend);
+					letter.entry.u16(0xA) = debt.u16(8);
+					letter.entry.u32(0xC) = debt.u32(0);
+					send_letter(save, head.u8(0x10), letter);
+				}
+				if (owner.u8(0x1E) < 0xFE) {
+					owner.u8(0x1E) = uint8_t(owner.u8(0x1E) + 2);
+				}
+			} else {
+				owner.s32(0) = int32_t(uint32_t(owner.s32(0)) - uint32_t(dividend));
+				// 0x62 (0x4E8975) to the owner: the holder's names, the growth, the shares.
+				letter.entry.u8(4) = 0x62;
+				letter.entry.u8(5) = owner.u8(0x19);
+				const uint8_t holder = save.events[event].u8(0x11);
+				if (holder < merchants) {
+					const MerchantMemory& h = merchant_of(save, holder);
+					letter.entry.u16(8) = uint16_t((h.u8(0x1C) << 8) + h.u8(0x1D));
+				} else {
+					letter.entry.u16(8) = 0xFFFF;
+				}
+				letter.entry.u16(0xC) = uint16_t(growth);
+				letter.entry.u16(0xA) = uint16_t(growth >> 16);
+				letter.entry.u16(0xE) = save.events[event].u8(0x12);
+				send_letter(save, company, letter);
+			}
+		}
+		Event& h = save.events[g.u16(kEventHead)];  // The game reads the head again.
+		letter.entry.u8(5) = owner.u8(0x19);
+		const uint8_t holder = h.u8(0x11);
+		if (holder < merchants) {
+			MerchantMemory& m = merchant_of(save, holder);
+			m.s32(0) = int32_t(uint32_t(m.s32(0)) + uint32_t(dividend));
+			m.u32(0x4C8) += uint32_t(dividend);
+			if (m.u16(8) == 0) {
+				// 0x27 (0x4E8AD2) to a human holder: the company, the shares, the growth.
+				letter.entry.u8(4) = 0x27;
+				letter.entry.u16(8) = h.u8(0x10);
+				letter.entry.u16(0xA) = h.u8(0x12);
+				letter.entry.u32(0xC) = uint32_t(growth);
+				send_letter(save, holder, letter);
+			}
+		}
+		h.u32(0) += 0x100 + (g.u16(kEventHead) & 0xFF);
+		return 1;
+	}
+	Event& e = save.events[event];
+	if (e.u8(0x11) == 0xFF) {
+		// The pool: what is offered, when it hasn't changed for long enough.
+		const uint32_t since = ((uint32_t(e.u8(4)) & 3) + (g.u16(kEventHead) & 0xF) + (e.u32(8) & 3) + 0x15) << 8;
+		if (since + e.u32(8) < tick) {
+			const int32_t value = merchant_of(save, company).s32(0x46C);
+			if (value <= 100) {
+				e.u8(0x13) = e.u8(0x12);
+			} else {
+				// [0x6DE508] + 4: the first town's grain, as a random number.
+				const int32_t f = int32_t(((town_of(save, 0).u32(4) & 0xF) + 1) * uint32_t(value >> 4));
+				const int32_t n = (int32_t(e.u8(0x12)) / 5 - f / 100000) * 5;
+				if (n < 5) {
+					// Game bug: 5 even from a pool with fewer, which the buyer then
+					// gets all the same (0x4D98F0). Fixed behind fix_game_bugs():
+					// at most what the pool has.
+					e.u8(0x13) = fix_game_bugs() && e.u8(0x12) < 5 ? e.u8(0x12) : 5;
+				} else if (n <= int32_t(e.u8(0x12))) {
+					e.u8(0x13) = uint8_t(n);
+				} else {
+					e.u8(0x13) = e.u8(0x12);
+				}
+			}
+		}
+		e.u32(0) += (e.u32(8) & 0x1F) + 0x700;
+	} else {
+		// A holding: what the moneylender would buy of it.
+		const int32_t value = merchant_of(save, company).s32(0x46C);
+		if (value <= 100) {
+			e.u8(0x13) = 0;
+		} else {
+			const uint8_t shares = e.u8(0x12);
+			int32_t n = int32_t((e.u32(0xC) >> 3) * uint32_t(shares / 5)) / value;
+			n = int32_t(uint32_t(n) * ((uint32_t(company) + g.u32(kTick)) & 3));
+			if (n <= 0) {
+				e.u8(0x13) = 0;
+			} else {
+				n = int32_t(uint32_t(n) * 5);
+				e.u8(0x13) = n > int32_t(shares) ? shares : uint8_t(n);
+				if (e.u8(0x13) > 0x19) {
+					e.u8(0x13) = 0x19;
+				}
+			}
+		}
+		e.u32(0) += ((e.u32(8) & 7) + 3) << 8;
+	}
+	if (e.u32(0) > next) {
+		e.u32(0) = next;
+	}
+	return 1;
+}
+
 }  // namespace events_towns_detail
 
 using namespace events_towns_detail;
@@ -2570,6 +2739,8 @@ int events_towns(SaveGame& save, uint16_t event, uint16_t type) {
 		return fn_4e9564(save, event) ? 1 : 0;  // Un incendio en la ciudad.
 	case 0x15:
 		return fn_4e7c74(save, event) ? 1 : 0;  // A merchant's wedding.
+	case 0x18:
+		return fn_4e8804(save, event) ? 1 : 0;  // Company shares: the dividends.
 	default:
 		return -1;
 	}

@@ -414,7 +414,7 @@ private:
 // the tavern (0x24, «kneipe», 0x02), the shipyard (0x2E, «werft», 0x01) and
 // the repair dock (0x01, «repwerft», 0x1B) (savegame.md §8.1); their names,
 // the game's (0x6A57C8 + 4 · the building's type).
-enum class Place { None, MarketHall, Tavern, Shipyard, Ship, Office };
+enum class Place { None, MarketHall, Tavern, Shipyard, Ship, Office, Lender };
 
 struct PlaceInfo {
 	uint32_t let_type;
@@ -432,6 +432,8 @@ constexpr PlaceInfo kPlaces[] = {
 	// The player's office («spielerkontor», building type 0x00, drawn only
 	// where he has one): the market with the office (0x59AE40 opens the mode 2).
 	{0x2C, Place::Office, GameText::Office, "Oficina", "Office"},
+	// The moneylender (building type 0x25, «darlehensgeber»): loans and company shares.
+	{0x05, Place::Lender, GameText::BuildingLender, "Prestamista", "Lender's House"},
 };
 
 const PlaceInfo* place_of(uint32_t let_type) {
@@ -1893,9 +1895,35 @@ struct PlaceUi {
 	bool typing = false;
 	std::string message;
 	Uint32 message_until = 0;
+	// The moneylender's window: the loans the player owes when it opened plus
+	// those taken there (its [+0xFE4]: more than 2, no more loans); whether he
+	// paid one off (the window drops its list then: one per visit); the
+	// interest's kind to grant a loan (0 very low .. 4 very high, 2 at first).
+	int lender_debts = 0;
+	bool paid_off = false;
+	int lender_kind = 2;
 };
 
 constexpr int kShipyardPages = 5;
+constexpr int kLenderPages = 6;
+
+// How many pages the window has (L/R, or touching its title): the shipyard's
+// and the moneylender's; 0 for the others (the repair dock only repairs).
+int place_pages(const PlaceUi& ui) {
+	if (ui.open == Place::Shipyard && ui.let_type == 0x01) {
+		return kShipyardPages;
+	}
+	return ui.open == Place::Lender ? kLenderPages : 0;
+}
+
+// The next or the previous page, from its first row.
+void turn_page(PlaceUi& ui, int step) {
+	const int pages = place_pages(ui);
+	ui.page = ((ui.page + step) % pages + pages) % pages;
+	ui.row = 0;
+	ui.amount = 0;
+	ui.name.clear();
+}
 
 // What a window shows now, made from the save each frame (also for the touch screen).
 struct PlaceView {
@@ -2103,7 +2131,427 @@ void shipyard_page_view(const SaveGame& save, int town, PlaceUi& ui, PlaceView& 
 	}
 }
 
-PlaceView place_view(const SaveGame& save, int town, PlaceUi& ui) {
+// --- The moneylender (its window 0x5B2B00; what it lists and sends in
+// player_actions.hpp) ---
+
+// One of its texts, by its address in the English exe (game_text_addresses.inc).
+std::string lender_text(uint32_t english, const char* spanish, const char* fallback) {
+	if (g_texts) {
+		const std::string& raw = g_texts->raw_at(english);
+		if (!raw.empty()) {
+			return clean_game_text(raw);
+		}
+	}
+	return tr(spanish, fallback);
+}
+
+// Two pieces of a game's sentence, with one space between them.
+std::string joined(const std::string& a, const std::string& b) {
+	return a.empty() || a.back() == ' ' ? a + b : a + " " + b;
+}
+
+// The first letter in lower case (a game's word inside a sentence; ASCII).
+std::string lowered(std::string s) {
+	if (!s.empty()) {
+		s[0] = char(std::tolower(uint8_t(s[0])));
+	}
+	return s;
+}
+
+// A game's text in one line (its line breaks as spaces).
+std::string one_line(const std::string& s) {
+	std::string out;
+	for (const std::string& line : text_lines(s)) {
+		out += (out.empty() ? "" : " ") + line;
+	}
+	return out;
+}
+
+std::string merchant_name(const SaveGame& save, int merchant) {
+	if (merchant < 0 || size_t(merchant) >= save.merchants.size()) {
+		return "?";
+	}
+	const MerchantMemory& m = save.merchants[size_t(merchant)].memory;
+	return clean_game_text(game_first_name(save, m.u8(0x1C)) + " " + game_family_name(save, m.u8(0x1D)));
+}
+
+// A merchant's or townsman's rank (0x6A0608, «shopkeeper» .. «Alderman»).
+std::string rank_name(int rank) {
+	return lender_text(0x6A0608 + 4 * uint32_t(rank & 7), "", "");
+}
+
+// «2.9»: the weekly interest in tenths of %.
+std::string interest_text(uint8_t tenths) {
+	return std::to_string(tenths / 10) + (g_spanish ? "," : ".") + std::to_string(tenths % 10);
+}
+
+// The interest's kinds to grant a loan («very low» .. «very high»).
+std::string interest_kind(int kind) {
+	static const char* kKinds[5][2] = {{"Muy bajo", "very low"}, {"Bajo", "low"}, {"Normal", "normal"}, {"Alto", "high"},
+		{"Muy alto", "very high"}};
+	const int k = std::clamp(kind, 0, 4);
+	return capitalized(lender_text(0x69C0EC + 4 * uint32_t(k), kKinds[k][0], kKinds[k][1]));
+}
+
+// Its pages: 0 take out a loan, 1 pay one off, 2 grant one, 3 the loans
+// granted, 4 buy company shares, 5 sell them.
+void lender_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	static const uint32_t kTitles[kLenderPages] = {0x69BFE8, 0x69BFEC, 0x69BFF0, 0x69C118, 0x69BFF4, 0x69BFF8};
+	static const char* kFallback[kLenderPages][2] = {{"Contratar préstamo", "Take out loan"},
+		{"Devolver préstamo", "Pay off loan"}, {"Conceder préstamo", "Grant loan"},
+		{"Préstamos concedidos", "Loans granted"}, {"Comprar acciones", "Buy company shares"},
+		{"Vender acciones", "Sell company shares"}};
+	ui.page = ((ui.page % kLenderPages) + kLenderPages) % kLenderPages;
+	v.title = place_name(ui.let_type) + " - " + lender_text(kTitles[ui.page], kFallback[ui.page][0], kFallback[ui.page][1]) +
+		"   (L/R)";
+	const int player = save.player;
+	const int32_t money = save.merchants[size_t(player)].money();
+	auto clamp_row = [&]() { ui.row = std::clamp(ui.row, 0, std::max(0, int(v.rows.size()) - 1)); };
+	auto dim = [&](const std::string& line) {
+		for (const std::string& part : text_lines(line)) {
+			v.lines.push_back({part, kDimColor});
+		}
+	};
+	switch (ui.page) {
+	case 0: {  // Take out a loan (0x51CE80; 0x5B5A00 sends it).
+		v.act = lender_text(0x69BFFC, "Contratar", "Take out");
+		std::array<LoanTerms, 3> offers{};
+		const int32_t n = loan_offers(save, town, offers);
+		if (n == -1) {
+			dim(lender_text(0x69C0A0, "\"Por desgracia no puedo ofrecerte un préstamo debido",
+					"\"Unfortunately, I cannot offer you a loan because") + " " +
+				lender_text(0x69C0A4, "a tu mala fama de pagador.\"", "of your bad payment history.\""));
+			break;
+		}
+		if (n == -2) {
+			const MerchantMemory& m = save.merchants[size_t(player)].memory;
+			const std::string text = lender_text(0x69C0A8, "\"Créeme, me gustaría ayudarte, pero con tus deudas es demasiado arriesgado.\"",
+				"\"Believe me, I would like to help you, but with your debts it is too great a risk.\"");
+			const std::vector<std::string> names = {clean_game_text(game_first_name(save, m.u8(0x1C))),
+				clean_game_text(game_family_name(save, m.u8(0x1D))), window_town_name(save, m.u8(0x19))};
+			dim(one_line(g_texts ? GameTexts::format(text, names) : text));
+			break;
+		}
+		if (n == 0) {
+			dim(lender_text(0x69C114, "\"En este momento no te puedo ofrecer ningún préstamo.\"",
+				"\"At present, I cannot offer you a loan.\""));
+			break;
+		}
+		v.lines.push_back({lender_text(0x69C010, "Están disponibles los siguientes préstamos:", "The following loans are available"),
+			kTextColor});
+		const bool room = ui.lender_debts <= 2;
+		for (int32_t k = 0; k < n; ++k) {
+			const LoanTerms& o = offers[size_t(k)];
+			uint16_t amount;
+			std::memcpy(&amount, o.data() + 8, 2);
+			v.rows.push_back({format_money(amount) + " " + lender_text(0x69C014, "durante un período de", "at") + " " +
+					std::to_string(o[0xA]) + " " + lender_text(0x69C048, "semanas", "weeks"),
+				room});
+			v.codes.push_back(k);
+		}
+		clamp_row();
+		const LoanTerms& o = offers[size_t(ui.row)];
+		uint32_t repay;
+		std::memcpy(&repay, o.data(), 4);
+		v.lines.push_back({capitalized(lender_text(0x69C01C, "La devolución asciende a", "The repayment amounts to")) + " " +
+				format_money(int64_t(repay)) + ".  " + capitalized(lender_text(0x69C020, "Interés semanal", "Weekly interest")) +
+				": " + interest_text(o[0x4]) + " %",
+			kTextColor});
+		if (!room) {
+			dim(lender_text(0x69C108, "\"Deberías devolver este préstamo", "\"You should pay off a loan first") + " " +
+				lender_text(0x69C10C, "antes de solicitar uno nuevo.\"", "before asking for a new one.\""));
+		}
+		break;
+	}
+	case 1: {  // Pay one off (0x5B5B90: 0x2A).
+		v.act = lender_text(0x69C000, "Liquidar", "Pay off");
+		const std::vector<uint16_t> debts = loans_owed(save, player);
+		if (debts.empty()) {
+			dim(lender_text(0x69C0B4, "Roguemos al Señor para que nos conceda una vida libre de deudas.",
+				"Praise God for a debt free life"));
+			break;
+		}
+		v.lines.push_back({lender_text(0x69C024, "Tienes pendientes las siguientes deudas", "You have the following debts outstanding"),
+			kTextColor});
+		for (const uint16_t d : debts) {
+			const GameMemory<0x18>& e = save.events[d];
+			const bool can = !ui.paid_off && can_pay_off_here(save, town, d) && uint32_t(money) >= e.u32(8);
+			v.rows.push_back({format_money(int64_t(e.u32(8))) + " " + lender_text(0x69C028, "en", "in") + " " +
+					window_town_name(save, e.u8(0x14)) + ", " + lender_text(0x69C02C, "a pagar el", "to be paid by") + " " +
+					full_date(e.u32(0)),
+				can});
+			v.codes.push_back(d);
+		}
+		clamp_row();
+		const uint16_t d = uint16_t(v.codes[size_t(ui.row)]);
+		if (ui.paid_off) {
+			dim(tr("Ya has liquidado un préstamo en esta visita.", "You have paid off a loan on this visit already."));
+		} else if (!can_pay_off_here(save, town, d)) {
+			dim(tr("Solo se puede liquidar aquí, donde tengas oficina o un barco en el puerto.",
+				"Only here or where you have an office or a ship in port."));
+		} else if (uint32_t(money) < save.events[d].u32(8)) {
+			dim(lender_text(0x69C0C4, "\"No tienes el oro suficiente para devolver el préstamo.\"",
+				"\"You do not enough cash to pay off the loan.\""));
+		}
+		break;
+	}
+	case 2: {  // Grant one (0x51D160; 0x5B6000 sends it with the interest's kind).
+		v.act = lender_text(0x69C004, "Ofrecer préstamo", "Offer loan");
+		if (player_office(save, town) < 0) {
+			dim(lender_text(0x69C078, "Tienes que residir en esta ciudad", "You have to be resident in this town") + " " +
+				lender_text(0x69C07C, "para poder conceder un préstamo", "in order to be able to grant a loan"));
+			break;
+		}
+		std::array<LoanTerms, 3> requests{};
+		const int32_t n = loan_requests(save, town, requests, nullptr);
+		if (n == 0) {
+			dim(lender_text(0x69C0E4, "Nadie en esta ciudad necesita un préstamo.", "Nobody in this town wants to take a loan."));
+			break;
+		}
+		v.lines.push_back({lender_text(0x69C030, "Puedo contactar con las siguientes personas que desean",
+								"I can arrange for the following parties to be interested") +
+				" " + lender_text(0x69C034, "obtener un préstamo de ti:", "in a loan for you"),
+			kTextColor});
+		for (int32_t k = 0; k < n; ++k) {
+			const LoanTerms& o = requests[size_t(k)];
+			uint16_t amount;
+			std::memcpy(&amount, o.data() + 8, 2);
+			v.rows.push_back({capitalized(rank_name(o[0x5])) + " " + clean_game_text(game_first_name(save, o[0x6])) + " " +
+					clean_game_text(game_family_name(save, o[0x7])) + ": " + format_money(amount) + ", " +
+					std::to_string(o[0xA]) + " " + lender_text(0x69C048, "semanas", "weeks"),
+				int32_t(amount) <= money});
+			v.codes.push_back(k);
+		}
+		clamp_row();
+		LoanTerms o = requests[size_t(ui.row)];
+		o[0xF] = uint8_t((o[0xF] & 0xF0) | uint8_t(ui.lender_kind));
+		fn_51d270(o, nullptr);  // What the window shows; the roll is when it is granted.
+		v.max_amount = 4;
+		v.amount_choice = true;
+		v.amount_label = interest_kind(ui.lender_kind);
+		uint16_t amount;
+		std::memcpy(&amount, o.data() + 8, 2);
+		uint32_t repay;
+		std::memcpy(&repay, o.data(), 4);
+		v.lines.push_back({lender_text(0x69C04C, "¿Cuál debería ser el tipo de interés?", "How high should the interest be?") +
+				"  " + tr("(Izq./Der.)", "(Left/Right)"),
+			kTextColor});
+		auto with = [](std::string text, const std::string& value) {
+			const size_t at = text.find("%1.1f");
+			if (at != std::string::npos) {
+				text.replace(at, 5, value);
+			}
+			return GameTexts::format(text, {});
+		};
+		v.lines.push_back({GameTexts::format(lender_text(0x69C050, "Cantidad prestada: %i", "Amount of loan %i"), {format_money(amount)}) +
+				GameTexts::format(lender_text(0x69C054, ". Plazo de devolución %i semanas", ", term %i weeks"), {std::to_string(o[0xA])}),
+			kTextColor});
+		v.lines.push_back({capitalized(with(lender_text(0x69C058, "Interés: %1.1f%%", "interest: %1.1f%%"), interest_text(o[0x4]))) +
+				GameTexts::format(lender_text(0x69C05C, ". Total a devolver %i", ", repayment sum: %i"), {format_money(int64_t(repay))}),
+			kTextColor});
+		if (int32_t(amount) > money) {
+			dim(lender_text(0x69C080, "Tendrás que pedir tú mismo un préstamo", "Perhaps you should take out a loan yourself") + " " +
+				lender_text(0x69C084, "para poder ofrecer una cantidad así.", "before offering an amount of this size."));
+		}
+		break;
+	}
+	case 3: {  // The loans granted (0x5B62E0, 0x4D9210): nothing to send.
+		const std::vector<uint16_t> granted = loans_granted(save, player);
+		if (granted.empty()) {
+			dim(lender_text(0x69C124, "No has concedido ningún préstamo.", "You have granted no loan."));
+			break;
+		}
+		v.lines.push_back({lender_text(0x69C11C, "Has concedido los siguientes préstamos:", "You have granted the following loans."),
+			kTextColor});
+		for (const uint16_t g : granted) {
+			const GameMemory<0x18>& e = save.events[g];
+			const uint8_t borrower = e.u8(0x11);
+			const std::string who = borrower < save.merchants.size()
+				? merchant_name(save, borrower)
+				: rank_name(e.u8(0x15)) + " " + clean_game_text(game_first_name(save, e.u8(0x16))) + " " +
+					clean_game_text(game_family_name(save, e.u8(0x17)));
+			v.lines.push_back({who + " (" + window_town_name(save, e.u8(0x14)) + "): " + format_money(int64_t(e.u32(8))) + ", " +
+					full_date(e.u32(0)),
+				kTextColor});
+		}
+		break;
+	}
+	case 4: {  // Buy company shares (0x4D9320, every frame; 0x5B6400 sends 0x2B).
+		v.act = lender_text(0x69C008, "Comprar acciones", "Buy shares");
+		const std::vector<ShareEntry> list = shares_on_sale(save);
+		for (size_t k = 0; k < list.size(); ++k) {
+			const ShareEntry& e = list[k];
+			if (e[1] == 0) {
+				continue;  // An entry the game never fills (a dropped pool).
+			}
+			uint32_t price, owns;
+			std::memcpy(&price, e.data() + 4, 4);
+			std::memcpy(&owns, e.data() + 8, 4);
+			std::string label = int(e[0]) == player
+				? one_line(GameTexts::format(lender_text(0x69C06C, "%i%% de tu empresa por %i", "%i%% of your own company for %i"),
+					  {std::to_string(e[1]), format_money(int64_t(price))}))
+				: std::to_string(e[1]) + " % " + merchant_name(save, e[0]) + ", " + lowered(lender_text(0x69C070, "por", "for")) + " " +
+					format_money(int64_t(price));
+			if (owns > 0 && int(e[0]) != player) {
+				label += " " + GameTexts::format(lender_text(0x69C0E8, "(posees el %i%%)", "(owns %i%%)"), {std::to_string(owns)});
+			}
+			v.rows.push_back({label, can_buy_shares(save, e)});
+			v.codes.push_back(int32_t(k));
+		}
+		if (v.rows.empty()) {
+			dim(lender_text(0x69C0B8, "No hay oferta de acciones por el momento.", "No shares are on offer at the moment."));
+			break;
+		}
+		v.lines.push_back({joined(lender_text(0x69C064, "Las acciones de los siguientes negocios están",
+								  "Shares of the following companies are currently"),
+							   lender_text(0x69C068, "actualmente en oferta", "being offered for sale")),
+			kTextColor});
+		clamp_row();
+		break;
+	}
+	default: {  // Sell company shares (0x4D9620; 0x5B66C0 sends 0x2B).
+		v.act = lender_text(0x69C00C, "Vender acciones", "Sell shares");
+		const std::vector<ShareEntry> list = shares_to_sell(save);
+		for (size_t k = 0; k < list.size(); ++k) {
+			const ShareEntry& e = list[k];
+			uint32_t price, owns;
+			std::memcpy(&price, e.data() + 4, 4);
+			std::memcpy(&owns, e.data() + 8, 4);
+			if (k == 0) {
+				v.lines.push_back({lender_text(0x69C088, "Acciones de tu empresa", "Shares of your own company") + ": " +
+						std::to_string(int32_t(owns)) + " %",
+					kTextColor});
+				if (e[1] == 0) {
+					dim(one_line(lender_text(0x69C128, "De momento, a nadie le interesa comprar acciones de tu empresa.",
+						"Nobody is interested in buying shares of your company at the moment.")));
+					continue;
+				}
+				v.rows.push_back({GameTexts::format(lender_text(0x69C0AC, "%i%% de tu propia empresa", "%i%% of your own company"),
+									  {std::to_string(e[1])}) +
+						", " + lowered(lender_text(0x69C070, "por", "for")) + " " + format_money(int64_t(price)),
+					true});
+			} else {
+				// A holding: what he owns and what the moneylender would buy of it.
+				std::string label = merchant_name(save, e[0]) + " " +
+					GameTexts::format(lender_text(0x69C0E8, "(posees el %i%%)", "(owns %i%%)"), {std::to_string(owns)});
+				if (e[1] > 0) {
+					label += ": " + std::to_string(e[1]) + " %, " + lowered(lender_text(0x69C070, "por", "for")) + " " +
+						format_money(int64_t(price));
+				} else if (ui.row == int(v.rows.size())) {
+					const MerchantMemory& m = save.merchants[e[0] < save.merchants.size() ? e[0] : 0].memory;
+					dim(one_line(GameTexts::format(lender_text(0x69C12C, "A nadie le interesa comprar acciones de la empresa de %s %s.",
+														   "Nobody is interested in buying shares of the company of %s %s at the moment."),
+						{clean_game_text(game_first_name(save, m.u8(0x1C))), clean_game_text(game_family_name(save, m.u8(0x1D)))})));
+				}
+				v.rows.push_back({label, e[1] > 0});
+			}
+			v.codes.push_back(int32_t(k));
+		}
+		if (list.size() > 1) {
+			v.lines.push_back({lender_text(0x69C098, "Estaría interesado en las siguientes", "I would be interested in the following shares") +
+					" " + lender_text(0x69C09C, "acciones:", "in your possession"),
+				kTextColor});
+		}
+		clamp_row();
+		break;
+	}
+	}
+}
+
+void run_operations(SaveGame& save, Sailing* sailing, const std::vector<OperationBytes>& ops);
+
+// What the selected row sends, run at once.
+void lender_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
+	const int player = save.player;
+	const int k = v.codes[size_t(ui.row)];
+	switch (ui.page) {
+	case 0: {
+		std::array<LoanTerms, 3> offers{};
+		if (loan_offers(save, town, offers) <= k) {
+			return;
+		}
+		const size_t before = loans_owed(save, player).size();
+		run_operations(save, sailing, {loan_operation(offers[size_t(k)])});
+		if (loans_owed(save, player).size() > before) {
+			++ui.lender_debts;
+			ui.message = one_line(lender_text(0x69C110, "\"Has recibido el préstamo.\"", "\"You have received the loan.\""));
+		} else {
+			ui.message = tr("No se ha podido.", "It couldn't be done.");
+		}
+		break;
+	}
+	case 1: {
+		const uint16_t d = uint16_t(k);
+		const uint32_t owed = save.events[d].u32(8);
+		const uint8_t where = save.events[d].u8(0x14);
+		run_operations(save, sailing, {pay_off_operation(uint32_t(player), d)});
+		ui.paid_off = true;
+		ui.message = GameTexts::format(lender_text(0x69C0BC, "El préstamo de %i", "The loan of %i"), {format_money(int64_t(owed))}) +
+			" " + GameTexts::format(lender_text(0x69C0C0, "ha sido devuelto en %s.", "was paid off in %s."), {window_town_name(save, where)});
+		break;
+	}
+	case 2: {
+		std::array<LoanTerms, 3> requests{};
+		if (loan_requests(save, town, requests, nullptr) <= k) {
+			return;
+		}
+		const size_t before = loans_granted(save, player).size();
+		const OperationBytes op = grant_loan_operation(save, requests[size_t(k)], uint32_t(ui.lender_kind));
+		run_operations(save, sailing, {op});
+		ui.message = loans_granted(save, player).size() > before
+			? tr("Has concedido el préstamo.", "You have granted the loan.")
+			: tr("No se ha podido.", "It couldn't be done.");
+		ui.row = 0;
+		break;
+	}
+	case 4: {
+		const std::vector<ShareEntry> list = shares_on_sale(save);
+		if (size_t(k) >= list.size()) {
+			return;
+		}
+		const ShareEntry e = list[size_t(k)];
+		run_operations(save, sailing, {shares_operation(e)});
+		if (int(e[0]) == player) {
+			const std::vector<ShareEntry> mine = shares_to_sell(save);
+			uint32_t own = 0;
+			if (!mine.empty()) {
+				std::memcpy(&own, mine[0].data() + 8, 4);
+			}
+			const std::string all = own >= 100 ? lender_text(0x69C0DC, "todas", "all") : std::to_string(own) + " %";
+			ui.message = one_line(GameTexts::format(lender_text(0x69C0D4, "Acabas de adquirir %i%% acciones de tu propia empresa. Ahora posees %s las acciones.",
+														"You have just bought back %i%% shares of your own company. You now own %s shares."),
+				{std::to_string(e[1]), all}));
+		} else {
+			const GameDate date = date_from_tick(next_dividend_tick(save));
+			const MerchantMemory& m = save.merchants[e[0]].memory;
+			ui.message = one_line(GameTexts::format(lender_text(0x69C0C8,
+				"Acabas de comprar %i%% acciones de la empresa de %s %s %s. El siguiente dividendo se pagará el %i de %s de %i.",
+				"You have just bought %i%% shares of the company of %s %s %s. The next dividend will be paid on %i. %s %i."),
+				{std::to_string(e[1]), rank_name(m.u8(0x39C + m.u8(0x19))), clean_game_text(game_first_name(save, m.u8(0x1C))),
+					clean_game_text(game_family_name(save, m.u8(0x1D))), std::to_string(date.day),
+					g_texts ? g_texts->month(date.month) : std::to_string(date.month + 1), std::to_string(date.year)}));
+		}
+		break;
+	}
+	case 5: {
+		const std::vector<ShareEntry> list = shares_to_sell(save);
+		if (size_t(k) >= list.size()) {
+			return;
+		}
+		const ShareEntry e = list[size_t(k)];
+		const int32_t money = save.merchants[size_t(player)].money();
+		run_operations(save, sailing, {shares_operation(e)});
+		ui.message = (g_spanish ? "Vendes un " + std::to_string(e[1]) + " % por " : "You sell " + std::to_string(e[1]) + " % for ") +
+			format_money(save.merchants[size_t(player)].money() - money) + tr(" monedas.", " coins.");
+		ui.row = 0;
+		break;
+	}
+	default:
+		break;
+	}
+}
+
+PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	PlaceView v;
 	const int player = save.player;
 	auto choose = [&](std::vector<uint16_t> ships) {
@@ -2297,6 +2745,9 @@ PlaceView place_view(const SaveGame& save, int town, PlaceUi& ui) {
 		}
 		break;
 	}
+	case Place::Lender:
+		lender_view(save, town, ui, v);
+		break;
 	default:
 		break;
 	}
@@ -2386,7 +2837,13 @@ void draw_place(SDL_Renderer* renderer, TextRenderer& text, const PlaceUi& ui, c
 		}
 	}
 	if (!ui.message.empty() && !SDL_TICKS_PASSED(app_ticks(), ui.message_until)) {
-		text.draw(ui.message, left, layout.footer_y, kTextColor);
+		// A long message (the moneylender's) goes up from the footer.
+		const std::vector<std::string> parts = wrap_text(text, ui.message, width);
+		int at = layout.footer_y - lh * (int(parts.size()) - 1);
+		for (const std::string& part : parts) {
+			text.draw(part, left, at, kTextColor);
+			at += lh;
+		}
 	}
 	if (v.max_amount >= 0) {
 		draw_button(renderer, text, layout.minus_button, "-");
@@ -2529,6 +2986,10 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 	}
 	if (ui.open == Place::Shipyard && ui.page != 0) {
 		shipyard_act(save, sailing, town, ui, v);
+		return;
+	}
+	if (ui.open == Place::Lender) {
+		lender_act(save, sailing, town, ui, v);
 		return;
 	}
 	std::optional<OperationBytes> op;
@@ -4408,6 +4869,12 @@ int main(int argc, char** argv) {
 			if (p == Place::Tavern) {
 				place.roll = tavern_roll(save);
 			}
+			if (p == Place::Lender) {
+				// When it opens (0x5B2B00): his debts, and the shares on sale
+				// (0x4D9320, which may drop a second pool of his company).
+				place.lender_debts = int(loans_owed(save, save.player).size());
+				shares_on_sale(save);
+			}
 			market.open = false;
 			hanse.open = false;
 		};
@@ -4418,8 +4885,8 @@ int main(int argc, char** argv) {
 				place.amount = std::clamp(place.amount + step, 0, std::max(0, place_now.max_amount));
 				place.name.clear();  // The rename page: back to the game's names.
 			};
-			const bool pages = place.open == Place::Shipyard && place.let_type == 0x01;
-			const bool renaming = pages && place.page == 4;
+			const bool pages = place_pages(place) > 0;
+			const bool renaming = place.open == Place::Shipyard && pages && place.page == 4;
 			if (place.typing) {
 				// Writing a ship's name: X or Circle end it.
 				if (button == SDL_CONTROLLER_BUTTON_A || button == SDL_CONTROLLER_BUTTON_B) {
@@ -4429,11 +4896,13 @@ int main(int argc, char** argv) {
 				return true;
 			}
 			if (pages && (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) {
-				place.page += button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1;
-				place.page = (place.page + kShipyardPages) % kShipyardPages;
-				place.row = 0;
-				place.amount = 0;
-				place.name.clear();
+				turn_page(place, button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1);
+				return true;
+			}
+			if (place.open == Place::Lender && place.page == 2 &&
+				(button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) {
+				// The interest's kind to grant a loan.
+				place.lender_kind = std::clamp(place.lender_kind + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1), 0, 4);
 				return true;
 			}
 			if (renaming && button == SDL_CONTROLLER_BUTTON_X) {
@@ -5152,18 +5621,18 @@ int main(int argc, char** argv) {
 					const int y = touch_start.y;
 					const int first = std::max(0, place.row - PlaceLayout::kMaxRows + 1);
 					const int row = layout.row_at(x, y, int(place_now.rows.size()) - first);
-					const bool pages = place.open == Place::Shipyard && place.let_type == 0x01;
+					const bool pages = place_pages(place) > 0;
+					const bool kinds = place.open == Place::Lender && place.page == 2;  // The interest's kind.
 					if (place.typing) {
 						place.typing = false;  // A tap ends the writing.
 						SDL_StopTextInput();
 					} else if (pages && y >= layout.panel.y && y < layout.rows_y && x >= layout.panel.x &&
 						x < layout.panel.x + layout.panel.w) {
 						// The title: the page before (its left half) or after.
-						place.page += x < layout.panel.x + layout.panel.w / 2 ? -1 : 1;
-						place.page = (place.page + kShipyardPages) % kShipyardPages;
-						place.row = 0;
-						place.amount = 0;
-						place.name.clear();
+						turn_page(place, x < layout.panel.x + layout.panel.w / 2 ? -1 : 1);
+					} else if (kinds && place_now.max_amount >= 0 &&
+						(inside(layout.minus_button, x, y) || inside(layout.plus_button, x, y))) {
+						place.lender_kind = std::clamp(place.lender_kind + (inside(layout.minus_button, x, y) ? -1 : 1), 0, 4);
 					} else if (place_now.max_amount >= 0 && inside(layout.minus_button, x, y)) {
 						place.amount = std::max(0, place.amount - 1);
 						place.name.clear();

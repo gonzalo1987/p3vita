@@ -226,6 +226,50 @@ bool shipyard_materials(SaveGame& save) {
 	return false;
 }
 
+// The moneylender of the town of the player's first ship in port, busy: three
+// loans on offer (the town's slots 0..2, [0x9C6 + 6·k]: rank, names, weeks,
+// amount) and three townsmen asking for one (3..5); the player worth 300000
+// ([+0x46C]) without debts or a bad payment history; and the first AI
+// merchant's company selling 30 % of shares, 20 of them offered (operation
+// 0x2B, then the pool's [+0x13]).
+bool lender(SaveGame& save) {
+	int town = -1;
+	for (const SavedShip& ship : save.ships) {
+		if (ship.docked() && ship.owner() == save.player && ship.town() < save.towns.size()) {
+			town = ship.town();
+			break;
+		}
+	}
+	if (town < 0) {
+		return false;
+	}
+	static constexpr uint8_t kSlots[6][6] = {{0, 1, 2, 12, 0xB8, 0x0B}, {0, 3, 4, 26, 0x28, 0x23}, {0, 5, 6, 8, 0x20, 0x4E},
+		{2, 7, 8, 10, 0x98, 0x3A}, {5, 9, 10, 30, 0x30, 0x75}, {1, 11, 12, 20, 0x70, 0x17}};
+	TownMemory& t = save.towns[size_t(town)].memory;
+	for (size_t k = 0; k < 6; ++k) {
+		std::memcpy(t.bytes.data() + 0x9C6 + 6 * k, kSlots[k], 6);
+	}
+	MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+	m.s32(0x46C) = 300000;
+	m.s32(0x498) = 0;
+	m.u8(0x1E) = 0;
+	for (size_t ai = 0; ai < save.merchants.size(); ++ai) {
+		if (int(ai) == save.player || save.merchants[ai].memory.u16(8) == 0) {
+			continue;
+		}
+		save.merchants[ai].memory.s32(0x46C) = 50000;
+		uint8_t op[0x14] = {0x2B, 0, 0, 0, uint8_t(ai), 30, uint8_t(ai), 0xFF, 0x28, 0x23};  // price 9000
+		tick::fn_4d98f0(save, op);
+		for (GameMemory<0x18>& e : save.events) {
+			if (e.u16(6) == 0x18 && e.u8(0x10) == ai && e.u8(0x11) == 0xFF) {
+				e.u8(0x13) = 20;
+			}
+		}
+		break;
+	}
+	return true;
+}
+
 }  // namespace
 
 const char kDebugStatesHelp[] =
@@ -241,7 +285,9 @@ const char kDebugStatesHelp[] =
 	"  damaged     the player's ships in port with half their hull (the shipyard)\n"
 	"  tavern-captain  a free captain in the tavern of the player's first ship's town\n"
 	"  convoy-leader  the player's first ship in port fit to guide a convoy\n"
-	"  shipyard-materials  100 units of each shipyard material in that ship's town\n";
+	"  shipyard-materials  100 units of each shipyard material in that ship's town\n"
+	"  lender      loans on offer and asked for in that ship's town, an AI merchant's\n"
+	"              shares on sale (the moneylender)\n";
 
 bool apply_debug_states(SaveGame& save, const std::string& states, std::string& error) {
 	if (save.player < 0 || size_t(save.player) >= save.merchants.size()) {
@@ -294,6 +340,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "convoy-leader") {
 			if (!convoy_leader(save)) {
 				error = "the player has no ship in port out of a convoy, or no town has a captain";
+				return false;
+			}
+		} else if (state == "lender") {
+			if (!lender(save)) {
+				error = "the player has no ship in port";
 				return false;
 			}
 		} else if (state == "tavern-captain") {

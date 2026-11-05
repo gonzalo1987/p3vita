@@ -291,4 +291,100 @@ std::optional<OperationBytes> convoy_sell_operation(const SaveGame& save, int co
 std::optional<OperationBytes> office_to_convoy_operation(const SaveGame& save, int convoy, int ware, uint32_t step);
 std::optional<OperationBytes> convoy_to_office_operation(const SaveGame& save, int convoy, int ware, uint32_t step);
 
+// --- The moneylender (its window, opened at 0x5B2B00 in the town the player
+// looks at: take out a loan, pay one off, grant one, the loans granted, buy
+// and sell company shares) ---
+
+// A loan's terms: an operation 0x29's 16 bytes after its code (0x539DC0): u32
+// [+0x0] the repayment, u8 [+0x4] the weekly interest (in tenths of %), [+0x5]
+// the borrower's rank, [+0x6], [+0x7] his names, u16 [+0x8] the amount, u8
+// [+0xA] the weeks, [+0xB] the low byte of the loan's tick (whether a
+// townsman pays it back), [+0xC] the lender (0xFF: the moneylender), [+0xD]
+// the borrower (0xFF: a townsman), [+0xE] the town, [+0xF] the town's slot << 4
+// | the interest's kind.
+using LoanTerms = std::array<uint8_t, 0x10>;
+// 0x51CE80 (on the town, with the window's buffer [+0xF5C], written in place;
+// the window calls it when it opens and every frame on its page; `changed`,
+// whether a shown field changed): the loans the moneylender offers the
+// player, from the town's
+// slots 0..2 ([0x9C6 + 6·k]: u8 [+0x3] the weeks, u16 [+0x4] the amount): the
+// amount plus his value [+0x46C] / 500 (at most 2000), in fifties, at most half
+// his value less his debts [+0x498]; the interest 3000 / √(weeks · amount) + 15
+// − his reputation in the town (0x4F9580, 0..30) / 3, and the repayment, the
+// amount compounded week by week (at most 65000). They stop at the first that
+// doesn't fit. Returns how many, −1 with a bad payment history ([+0x1E]:
+// «"Unfortunately, I cannot offer you a loan because of your bad payment
+// history."») or −2 when half his value less his debts is under 2000 («with
+// your mountain of debts, it is too great a risk»), 0 without a player.
+int32_t loan_offers(const SaveGame& save, int town, std::array<LoanTerms, 3>& buffer, bool* changed = nullptr);
+// Taking one ({0x29, the offer}, 0x5B5A00): the window lets him while he has
+// at most 2 debts (the loans he owes when it opens, plus the ones taken there).
+OperationBytes loan_operation(const LoanTerms& terms);
+// The loans (events 0x01) in the queue's order, as the window's lists copy
+// them: those the merchant owes (0x4D9100, the debtor [+0x11]; the page to pay
+// off) and those he granted (0x4D9210, the lender [+0x10]). Their indices.
+std::vector<uint16_t> loans_owed(const SaveGame& save, int merchant);
+std::vector<uint16_t> loans_granted(const SaveGame& save, int merchant);
+// Paying one off (0x5B5B90): {0x2A, the player, its index}. The window lets
+// him pay where he has an office or a ship in port (state < 4, not marked
+// [+0x136] & 1) or in its town, and with the money ([+0x8], unsigned: «"You do
+// not enough cash to pay off the loan."»).
+bool can_pay_off_here(const SaveGame& save, int town, uint16_t loan);
+OperationBytes pay_off_operation(uint32_t player, uint32_t loan);
+// Granting one (only where the player has an office: «You have to be resident
+// in this town in order to be able to grant a loan»). 0x51D160 (on the town,
+// with the window's buffer, in place; every frame on its page): the townsmen
+// who want one, the town's slots 3..5 (u8 [+0x0] the rank, [+0x1], [+0x2] the
+// names, [+0x3] the weeks, u16 [+0x4] the amount), the player the lender, the
+// interest's kind 2, with their terms (0x51D270, called before the rank, the
+// names and the borrower 0xFF are written: on the first frame the buffer still
+// holds the offers to take out, so it doesn't roll). Returns how many (0:
+// «Nobody in this town wants to take a loan.»). `roll`: the game's rand() for
+// 0x51D270 (null: no roll, what the viewer shows).
+int32_t loan_requests(const SaveGame& save, int town, std::array<LoanTerms, 3>& buffer, SaveGame* roll,
+	bool* changed = nullptr);
+// 0x51D270 (cdecl, on the terms): the interest ((kind + 8) · (√(1 / (weeks ·
+// amount)) · 300 + 1.2)) and the repayment (compounded; 65000 above that or
+// below the amount); [+0xB] 0 or, for a townsman ([+0xD] 0xFF) to repay more
+// than (rank + 1) · 5000, with rand() & 0x3FF below 75 · ((the excess + 1250)
+// / 1250), (rand() & 0xFF) % 78 + 51: he won't pay it back. The game's
+// rand(): with `save` null it doesn't roll (what the viewer shows); the
+// window rolls every frame on its page, so the viewer rolls once, when the
+// player grants it.
+void fn_51d270(LoanTerms& terms, SaveGame* save);
+// Granting it (0x5B6000, after «How high should the interest be?»: 0 very low
+// .. 4 very high, 2 at first): with the money for the amount (signed:
+// «Perhaps you should take out a loan yourself before offering an amount of
+// this size.»), {0x29, the terms with the kind in the low nibble of [+0xF]},
+// rolled again (0x51D270 with `save`).
+OperationBytes grant_loan_operation(SaveGame& save, LoanTerms request, uint32_t kind);
+
+// Company shares: an entry of the window's lists (12 bytes), the operation
+// 0x2B's after its code (0x4D98F0): u8 the company (its owner), the shares (%),
+// the seller, the buyer (0xFF: the company's pool), u32 the price, u32 what the
+// player owns of that company (%, shown; the handler doesn't read it).
+using ShareEntry = std::array<uint8_t, 0xC>;
+// 0x4D9320 (on the event queue, the player): the pools that offer some
+// ([+0x13] > 0) for him to buy, at 6 · the offered · (the company's value /
+// 500 + 1) (6 · the offered for a value up to 500). It also drops a second pool
+// of the player's company (its [+0x10] 0xFF, [+0x12] 0, which 0x4D98F0 never
+// makes): the window calls it when it opens and every frame on its page.
+std::vector<ShareEntry> shares_on_sale(SaveGame& save);
+// 0x4D9620: what he may sell: first new shares of his own company (with more
+// than 55 % his and his pool unchanged for 7 days: 0 to 25 by the tick, at
+// most down to 55 %, each at his value / 100), then each of his holdings, what
+// the moneylender would buy of it ([+0x13]) at the company's value / 100 + 1
+// each.
+std::vector<ShareEntry> shares_to_sell(const SaveGame& save);
+// {0x2B, the entry}: buying one (0x5B6400, with the money for its price,
+// unsigned) or selling one (0x5B66C0, with some shares in it).
+OperationBytes shares_operation(const ShareEntry& entry);
+// Whether the window lets the player buy it (0x5B6400): his money against its
+// price, compared unsigned as the handler does (a game bug: one in debt
+// buys); with fix_game_bugs(), signed, as the handler then.
+bool can_buy_shares(const SaveGame& save, const ShareEntry& entry);
+// When the next dividend is paid (0x5B6584, the message after buying): the
+// first tick of the next quarter after now.
+uint32_t next_dividend_tick(const SaveGame& save);
+
 }  // namespace p3::data

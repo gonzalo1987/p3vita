@@ -70,6 +70,18 @@ second otherwise; the office's side (0x4AA7C0) has its stock / 200 or / 2000 and
   without work started, «Work is already being done on this ship» otherwise), upgrade
   (0x5FA320: 0x0C with the level to reach, the list 0x504AC0 mode 2) and rename
   (0x5FABE0: the name in pieces of 12, 0x2D and then 0x2E; the list 0x504AC0 mode 0).
+- **The moneylender's window** (opened at 0x5B2B00 in the town the player looks at;
+  2026-11-05) has the pages take out a loan (0x51CE80 on the town: the offers of its slots
+  0..2 as 0x29's 16 bytes; 0x5B5A00 sends one while he has at most 2 debts), pay one off
+  (the loans he owes, 0x4D9100; 0x5B5B90: 0x2A {player, event} where he has an office or a
+  ship in port, or in its town, with the money), grant one (only with an office in the
+  town: 0x51D160, the townsmen of its slots 3..5, then the interest's kind 0..4 and
+  0x51D270, which rolls rand() for whether the townsman pays it back; 0x5B6000: 0x29),
+  the loans granted (0x4D9210), buy company shares (0x4D9320: the pools offering some;
+  0x5B6400: 0x2B with the entry's 12 bytes, with the money for its price) and sell them
+  (0x4D9620: his company's new shares, then his holdings; 0x5B66C0: 0x2B). The lists of
+  the debts, the loans granted and the shares are 0x18-byte or 12-byte entries on the
+  heap; the window calls 0x51CE80, 0x51D160 and 0x4D9320 every frame on their pages.
 
 Not found: 0x3C, 0x4C, 0x54, 0x55, 0x5C, 0x5D, 0x8F, 0x99, 0xA6, 0xAE, 0xB2, 0xB6 and
 0xBD have no queuing site with a constant code. Some are surely queued with a
@@ -81,7 +93,7 @@ an action of the interface; 0x54 and 0x55 go with letters), others may be dead.
 | Group | Codes | Done in p3vita |
 |-|-|-|
 | simulation | 37: the ones the simulation queues (inventory, part B) | all 37 |
-| player | 105: queued by the interface | 36: 0x00..0x0A, 0x0C, 0x15..0x1D, 0x20, 0x21, 0x29, 0x2D..0x2F, 0x3B, 0x3F, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x6E, 0x6F |
+| player | 105: queued by the interface | 38: 0x00..0x0A, 0x0C, 0x15..0x1D, 0x20, 0x21, 0x29..0x2B, 0x2D..0x2F, 0x3B, 0x3F, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x6E, 0x6F |
 | battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 0x91, 0x94, 0x96, 0x9F |
 | network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | the five that do nothing |
 | new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | — |
@@ -137,9 +149,9 @@ feast window): the handler is the same and is done.
 | 0x26 | player | demolish a building (0x53CF50: 0x51F1F0, 0x4FF2D0, 0x4FACD0, the town view 0x599040) | 0x5AFC50 | 0x535BAD → 0x53CF50 | 3, 784 B |  | book, read |
 | 0x27 | simulation | materials for a town's works (0x535BBC) | 0x51D870 | 0x535BBC |  | yes | read |
 | 0x28 | simulation | a merchant puts a building on sale (0x53D190) | 0x4F5A20; the mission interpreter | 0x535C2D → 0x53D190 |  | yes | read |
-| 0x29 | player | a loan (0x539DC0, `operations.cpp`): given (the book: «Grant Loan») | moneylender 0x5B5A00, 0x5B6000 | 0x535C3C → 0x539DC0 |  | yes | read |
-| 0x2A | player | a loan's event record (0x539F30: 0x4D8DB0 on [+0x4]): pay it back? | moneylender 0x5B5B90 | 0x535C4B → 0x539F30 | 3, 1.1 KB |  | guess |
-| 0x2B | player | a loan offer: an event (0x4D98F0 → 0x4D8CF0) | moneylender 0x5B6400, 0x5B66C0 | 0x535C5A → 0x4D98F0 | 1, 896 B |  | guess |
+| 0x29 | player | a loan: {0x29, the terms: u32 the repayment, u8 the weekly interest (tenths of %), the borrower's rank and names, u16 the amount, u8 the weeks, the low byte of the loan's tick, u8 lender, borrower (0xFF: the moneylender or a townsman), town, slot << 4 | kind}: the event 0x01, the town's slot emptied, the lender pays it (0x539DC0, `operations.cpp`) | moneylender: taking one 0x5B5A00 (the terms of 0x51CE80), granting one 0x5B6000 (0x51D160, the kind chosen, 0x51D270); the merchants' tick 0x4F4E50 | 0x535C3C → 0x539DC0 |  | yes | read |
+| 0x2A | player | pay off a loan before it falls due: {0x2A, merchant, event}: the record (0x4D8DB0) a loan whose debtor is the merchant: he pays its [+0x8], a creditor merchant gets it, both become 0xFF (0x539F30, `operations.cpp`) | moneylender 0x5B5B90 (the debts of 0x4D9100) | 0x535C4B → 0x539F30 |  | yes | read |
+| 0x2B | player | company shares bought or sold: {0x2B, u8 company, shares, seller, buyer (0xFF: the pool), u32 price, u32 what the player owns}: the events 0x18, at most 45 % sold by the owner; their dividends each quarter (event 0x18, 0x4E8804) (0x4D98F0, `operations.cpp`) | moneylender 0x5B6400 (buy: the list 0x4D9320), 0x5B66C0 (sell: 0x4D9620) | 0x535C5A → 0x4D98F0 |  | yes | read |
 | 0x2C | simulation | a ship ordered at the shipyard (0x52A360; the book: «Build Ship») | event 0x2B; shipyard window 0x5F9570 | 0x535C70 → 0x52A360 |  | yes | read |
 | 0x2D | player | a ship's name, its first 12 characters: {0x2D, 12 characters, u32 ship} (0x53CCE0: the name in the names object, 0x512D40, its index [+0x15E]; the name [+0x160]; `town_tick/ship_operations.cpp`) | shipyard window 0x5FABE0 (rename), 0x46C420 (a new ship's name) | 0x535CAA → 0x53CCE0 |  | yes | read |
 | 0x2E | player | the next 12 characters of a ship's name (0x53CCE0: at the end of the names object's last name, 0x512FC0, or a new name of its index's and them, 0x512B20 and 0x512D40) | shipyard window 0x5FABE0, 0x46C420 | 0x535CAA → 0x53CCE0 |  | yes | read |

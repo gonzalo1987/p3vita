@@ -14,6 +14,10 @@ namespace p3::data::tick::events_towns_detail {
 // 0x4D6780 (town_tick/events_towns.cpp): expires the old letters of a merchant.
 void fn_4d6780(SaveGame& save, int32_t merchant);
 }  // namespace p3::data::tick::events_towns_detail
+namespace p3::data::tick {
+// 0x4D98F0 (town_tick/operations.cpp): the operation 0x2B, company shares.
+void fn_4d98f0(SaveGame& save, const uint8_t* operation);
+}  // namespace p3::data::tick
 
 namespace {
 
@@ -82,11 +86,82 @@ void old_letters() {
 	set_fix_game_bugs(false);
 }
 
+constexpr uint32_t kEventHead = 0x6DD744;  // u16
+constexpr uint32_t kEventFree = 0x6DD746;  // u16
+constexpr uint32_t kEventCount = 0x6DD748;  // u16
+
+// Two merchants, the buyer 0 with `money`; the event queue with record 0
+// merchant 1's pool of company shares (an event 0x18) holding 4 %, and
+// records 1..3 free.
+SaveGame shares_pool(int32_t money) {
+	SaveGame save;
+	save.globals.u16(global::kWorldMerchantCount) = 2;
+	save.merchants.resize(2);
+	save.merchants[0].memory.s32(0) = money;
+	save.events.assign(4, GameMemory<0x18>());
+	save.globals.u16(kEventCount) = 4;
+	save.globals.u16(kEventHead) = 0;
+	save.globals.u16(kEventFree) = 1;
+	GameMemory<0x18>& pool = save.events[0];
+	pool.u16(4) = 0xFFFF;
+	pool.u16(6) = 0x18;
+	pool.u8(0x10) = 1;
+	pool.u8(0x11) = 0xFF;
+	pool.u8(0x12) = 4;
+	pool.u8(0x13) = 5;
+	for (uint16_t i = 1; i < 4; ++i) {
+		save.events[i].u16(4) = uint16_t(i + 1);
+	}
+	return save;
+}
+
+// Merchant 0 buys `n` of merchant 1's shares for 1000 (operation 0x2B).
+void buy(SaveGame& save, uint8_t n) {
+	const uint8_t op[0x14] = {0x2B, 0, 0, 0, 1, n, 0xFF, 0, 0xE8, 0x03};
+	tick::fn_4d98f0(save, op);
+}
+
+// The holding (an event 0x18 of merchant 1's company held by 0): its shares, or -1.
+int held(const SaveGame& save) {
+	for (const GameMemory<0x18>& e : save.events) {
+		if (e.u16(6) == 0x18 && e.u8(0x10) == 1 && e.u8(0x11) == 0) {
+			return e.u8(0x12);
+		}
+	}
+	return -1;
+}
+
+void company_shares() {
+	// Five bought from a pool with four: the game gives the five (one out
+	// of nothing) for the whole price; fixed, the four for four fifths.
+	set_fix_game_bugs(false);
+	SaveGame save = shares_pool(5000);
+	buy(save, 5);
+	check(held(save) == 5 && save.events[0].u8(0x12) == 0, "off: five shares from a pool of four (the game's bug)");
+	check(save.merchants[0].memory.s32(0) == 4000, "off: the whole price");
+	set_fix_game_bugs(true);
+	save = shares_pool(5000);
+	buy(save, 5);
+	check(held(save) == 4 && save.events[0].u8(0x12) == 0, "on: the pool's four");
+	check(save.merchants[0].memory.s32(0) == 4200, "on: four fifths of the price");
+	// A buyer in debt: the game compares his money unsigned and he buys.
+	set_fix_game_bugs(false);
+	save = shares_pool(-100);
+	buy(save, 2);
+	check(held(save) == 2, "off: a buyer in debt buys (the game's bug)");
+	set_fix_game_bugs(true);
+	save = shares_pool(-100);
+	buy(save, 2);
+	check(held(save) == -1 && save.merchants[0].memory.s32(0) == -100, "on: a buyer in debt doesn't");
+	set_fix_game_bugs(false);
+}
+
 }  // namespace
 
 int main() {
 	check(!fix_game_bugs(), "the library starts with the fixes off");
 	old_letters();
+	company_shares();
 	if (failures == 0) {
 		std::printf("game_fixes_test: all correct\n");
 	}

@@ -229,8 +229,14 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x28:  // Un comerciante pone en venta un edificio (0x53D190, 0x4DAB00).
 		tick::fn_53d190(save, operation);
 		break;
-	case 0x29:  // Un préstamo: el evento 0x01 (0x539DC0).
+	case 0x29:  // A loan: the event 0x01 (0x539DC0).
 		tick::fn_539dc0(save, operation);
+		break;
+	case 0x2A:  // A loan paid off before it falls due (0x535C4B → 0x539F30; town_tick/operations.cpp).
+		tick::fn_539f30(save, operation);
+		break;
+	case 0x2B:  // Company shares bought or sold: events 0x18 (0x535C5A → 0x4D98F0; town_tick/operations.cpp).
+		tick::fn_4d98f0(save, operation);
 		break;
 	case 0x2D:  // A ship's name, its first 12 characters (0x535CAA → 0x53CCE0; town_tick/ship_operations.cpp).
 	case 0x2E:  // The next 12 characters of a ship's name (0x535CAA → 0x53CCE0).

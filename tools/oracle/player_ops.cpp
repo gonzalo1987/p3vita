@@ -28,10 +28,13 @@
 //        player_ops convoy-to-office STEP CONVOY_UNITS WARE CONVOY PLAYER
 //        player_ops order-ship TYPE PLAYER TOWN | cancel-order PLAYER TOWN SHIP
 //        player_ops upgrade SHIP LEVEL | rename SHIP NAME (one line per operation)
+//        player_ops loan TERMS (32 hex digits: the window's terms, take out or grant)
+//        player_ops pay-off PLAYER LOAN | shares ENTRY (24 hex digits: an entry of the shares' lists)
 // (STEP 1, 5, 50, or 0 for all; «none» when the window sends nothing;
 // tavern-sailors prints the tavern's roll, its float's bits, and the
 // sailors it shows, from what 0x4F6CA0 allows and the game's rand() value)
 
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -57,6 +60,19 @@ int usage() {
 
 unsigned long number(const char* s) {
 	return std::strtoul(s, nullptr, 0);
+}
+
+// Hex digits into `out` (exactly 2 · N of them).
+template <size_t N>
+bool hex_bytes(const char* s, std::array<uint8_t, N>& out) {
+	if (std::strlen(s) != 2 * N) {
+		return false;
+	}
+	for (size_t k = 0; k < N; ++k) {
+		const char pair[3] = {s[2 * k], s[2 * k + 1], 0};
+		out[k] = uint8_t(std::strtoul(pair, nullptr, 16));
+	}
+	return true;
 }
 
 }  // namespace
@@ -173,6 +189,20 @@ int main(int argc, char** argv) {
 		op = cancel_order_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])), uint32_t(number(argv[4])));
 	} else if (what == "upgrade" && argc == 4) {
 		op = upgrade_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])));
+	} else if (what == "loan" && argc == 3) {
+		LoanTerms terms{};
+		if (!hex_bytes(argv[2], terms)) {
+			return usage();
+		}
+		op = loan_operation(terms);
+	} else if (what == "pay-off" && argc == 4) {
+		op = pay_off_operation(uint32_t(number(argv[2])), uint32_t(number(argv[3])));
+	} else if (what == "shares" && argc == 3) {
+		ShareEntry entry{};
+		if (!hex_bytes(argv[2], entry)) {
+			return usage();
+		}
+		op = shares_operation(entry);
 	} else if (what == "rename" && argc == 4) {
 		for (const OperationBytes& o : rename_operations(uint32_t(number(argv[2])), argv[3])) {
 			for (const uint8_t b : o) {

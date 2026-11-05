@@ -95,6 +95,13 @@ void fn_4db100(SaveGame& save, uint32_t town, uint16_t record);
 
 }  // namespace p3::data::tick::events_rare_detail
 
+// What events_towns.cpp exposes for them (the dividends of company shares).
+namespace p3::data::tick::events_towns_detail {
+
+uint32_t fn_4e8804(SaveGame& save, uint16_t event);
+
+}  // namespace p3::data::tick::events_towns_detail
+
 namespace p3::probe {
 
 using namespace p3::data;
@@ -142,6 +149,31 @@ constexpr uint32_t kWindowShips = 0x03000F80;
 // window's convoy (0x4AA4A0) (CONVOY_CHOICES, CONVOY_SUMMARY).
 constexpr uint32_t kConvoyChoices = 0x03000E80;
 constexpr uint32_t kConvoySummary = 0x03000E00;
+// Its copiers of the moneylender's lists (LENDER_LISTS: SENTINEL + 0xC00 +
+// 0x50·k): 0x4D9100, 0x4D9210, 0x4D9320, 0x4D9620.
+constexpr uint32_t kLenderLists = 0x03000C00;
+
+// A loan's terms (16 bytes) or an entry in the scratch globals.
+template <size_t N>
+bool scratch_bytes(const ProbeCall& c, uint32_t address) {
+	return in_globals(c, address) && in_globals(c, address + uint32_t(N) - 1);
+}
+
+template <size_t N>
+std::array<uint8_t, N> read_scratch(const SaveGame& s, uint32_t address) {
+	std::array<uint8_t, N> out{};
+	for (size_t k = 0; k < N; ++k) {
+		out[k] = s.globals.u8(address + uint32_t(k));
+	}
+	return out;
+}
+
+template <size_t N>
+void write_scratch(SaveGame& s, uint32_t address, const uint8_t* bytes) {
+	for (size_t k = 0; k < N; ++k) {
+		s.globals.u8(address + uint32_t(k)) = bytes[k];
+	}
+}
 
 }  // namespace
 
@@ -504,6 +536,89 @@ void register_probes_unchecked(ProbeRegistry& r) {
 			s.globals.u16(c.args[1] + 2) = s.globals.u16(global::kWorldYear);
 		}
 		return std::nullopt;
+	};
+	// The moneylender's window (player_actions.hpp): 0x51CE80 and 0x51D160
+	// (thiscall on the town: &buffer of 3 terms, &changed) and 0x51D270 (cdecl:
+	// &terms), with their pointers in the scratch globals.
+	r[0x51CE80] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int town = c.town(c.ecx);
+		if (town < 0 || !scratch_bytes<0x30>(c, c.args[0]) || !in_globals(c, c.args[1])) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		std::array<LoanTerms, 3> buffer;
+		for (uint32_t k = 0; k < 3; ++k) {
+			buffer[k] = read_scratch<0x10>(s, c.args[0] + 0x10 * k);
+		}
+		bool changed = false;
+		const int32_t n = loan_offers(s, town, buffer, &changed);
+		for (uint32_t k = 0; k < 3; ++k) {
+			write_scratch<0x10>(s, c.args[0] + 0x10 * k, buffer[k].data());
+		}
+		s.globals.u8(c.args[1]) = changed ? 1 : 0;
+		return uint32_t(n);
+	};
+	r[0x51D160] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int town = c.town(c.ecx);
+		if (town < 0 || !scratch_bytes<0x30>(c, c.args[0]) || !in_globals(c, c.args[1])) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		std::array<LoanTerms, 3> buffer;
+		for (uint32_t k = 0; k < 3; ++k) {
+			buffer[k] = read_scratch<0x10>(s, c.args[0] + 0x10 * k);
+		}
+		bool changed = false;
+		const int32_t n = loan_requests(s, town, buffer, &s, &changed);
+		for (uint32_t k = 0; k < 3; ++k) {
+			write_scratch<0x10>(s, c.args[0] + 0x10 * k, buffer[k].data());
+		}
+		s.globals.u8(c.args[1]) = changed ? 1 : 0;
+		return uint32_t(n);
+	};
+	r[0x51D270] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		if (!scratch_bytes<0x10>(c, c.args[0])) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		LoanTerms terms = read_scratch<0x10>(s, c.args[0]);
+		fn_51d270(terms, &s);
+		write_scratch<0x10>(s, c.args[0], terms.data());
+		return std::nullopt;
+	};
+	// The copiers of the window's lists (LENDER_LISTS; stdcall: the merchant,
+	// for the first two): a u32 count and the entries in the scratch globals
+	// from +4, at most 10 loans (copies of their 0x18 bytes, the index in
+	// [+0x4]) or 20 shares (12 bytes).
+	for (uint32_t k = 0; k < 4; ++k) {
+		r[kLenderLists + 0x50 * k] = [k](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+			if (k < 2) {
+				const std::vector<uint16_t> loans =
+					k == 0 ? loans_owed(s, int(c.args[0])) : loans_granted(s, int(c.args[0]));
+				s.globals.u32(kScratch) = uint32_t(loans.size());
+				for (size_t n = 0; n < loans.size() && n < 10; ++n) {
+					GameMemory<0x18> copy = s.events[loans[n]];
+					copy.u16(4) = loans[n];
+					write_scratch<0x18>(s, kScratch + 4 + 0x18 * uint32_t(n), copy.bytes.data());
+				}
+				return std::nullopt;
+			}
+			const std::vector<ShareEntry> shares = k == 2 ? shares_on_sale(s) : shares_to_sell(s);
+			s.globals.u32(kScratch) = uint32_t(shares.size());
+			for (size_t n = 0; n < shares.size() && n < 20; ++n) {
+				write_scratch<0xC>(s, kScratch + 4 + 0xC * uint32_t(n), shares[n].data());
+			}
+			return std::nullopt;
+		};
+	}
+	// 0x4E8804 (thiscall on the event queue, run directly on its head): an event 0x18.
+	r[0x4E8804] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const uint16_t head = s.globals.u16(0x6DD744);
+		if (head >= s.events.size()) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		return tick::events_towns_detail::fn_4e8804(s, head);
 	};
 }
 
