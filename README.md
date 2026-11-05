@@ -162,7 +162,7 @@ it, which sends them to the game).
 **On the sea map** the panel stays: the sea's minimap (touch or drag to move the
 map), the ship buttons (a ship at sea is chosen and centred; one in port takes
 you to its town), the chosen ship's menu (Square takes the next ship) and the
-messages.
+messages. Building and leaving the town are off there, as in the game.
 
 **Building** (the panel's hammer): the game's build menu with its five
 categories (houses and warehouses, public buildings, military ones for the

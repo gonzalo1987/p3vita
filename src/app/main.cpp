@@ -3570,6 +3570,8 @@ PanelState panel_state(const SaveGame& save, bool at_sea = false) {
 	}
 	s.icon_enabled[int(PanelIcon::ShipList)] = !player_fleet(save).empty();
 	s.icon_enabled[int(PanelIcon::Build)] = !at_sea;  // Building is in the towns.
+	// «Leave town» (screenGame.ini's BUTTON11): disabled on the sea map, as the game's (seen in the PC game).
+	s.icon_enabled[int(PanelIcon::LeaveTown)] = !at_sea;
 	return s;
 }
 
@@ -7732,6 +7734,9 @@ int main(int argc, char** argv) {
 		// The side panel's icons (0..5) and ship buttons (6..9), tapped or with X.
 		auto side_act = [&](int item) {
 			if (item < kPanelIcons) {
+				if (!panel_state(save, sea_panel).icon_enabled[item]) {
+					return;  // A disabled icon doesn't react, with the pad as with a touch.
+				}
 				switch (PanelIcon(item)) {
 				case PanelIcon::ShipList:
 					side.menu = side.menu == PanelMenu::ShipList ? PanelMenu::None : PanelMenu::ShipList;
@@ -8204,9 +8209,7 @@ int main(int argc, char** argv) {
 					} else if (side.folded) {
 						// Folded, only its tab.
 					} else if (const int icon = panel_layout.icon_at(x, y); icon >= 0) {
-						if (panel_state(save, sea_panel).icon_enabled[icon]) {
-							side_act(icon);
-						}
+						side_act(icon);  // Nothing if it is disabled.
 					} else if (const int ship = panel_layout.ship_at(x, y); ship >= 0) {
 						side_act(kPanelIcons + ship);
 					} else if (side.menu == PanelMenu::ShipList && inside(panel_layout.room, x, y)) {
