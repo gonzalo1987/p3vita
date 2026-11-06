@@ -2,7 +2,8 @@
 
 // The game's statistics window: the side panel's menu SIDEMENU_STATISTIK (vtable 0x66F4C8) and its parchment (the
 // window's class, vtable 0x66FC28), and what each of its entries computes from the statistics (statistics.hpp). As
-// read in re/emu/sesion15/statistics_notes.md; checked against the game with the scenario `statistics_company`.
+// read in re/emu/sesion15/statistics_notes.md; checked against the game with the scenarios `statistics_company`,
+// `statistics_competition`, `statistics_comparison` and `statistics_town_data`.
 // The window keeps its numbers as the game's texts (sprintf «%i», «%.0f») and its graphs' points as floats.
 
 #include <array>
@@ -27,6 +28,14 @@ constexpr int kStatisticsWealth = 12;
 constexpr int kStatisticsShips = 13;
 constexpr int kStatisticsProduction = 14;
 constexpr int kStatisticsSupply = 15;
+// The town data's entries (the manual's «Ciudades»), graphs of one town: its residents by class, how their needs are
+// covered, their quality of life, the export balance, the production and the stock of up to four wares.
+constexpr int kStatisticsPopulation = 0;
+constexpr int kStatisticsRequirement = 1;
+constexpr int kStatisticsQualityOfLife = 2;
+constexpr int kStatisticsExportBalance = 3;
+constexpr int kStatisticsTownDataProduction = 4;
+constexpr int kStatisticsTownDataStock = 5;
 // The town comparison's entries (the manual's «Comparativa de ciudades»): the towns' residents (a table), and the
 // graphs of the residents, the incoming ships, a ware's production and its stock.
 constexpr int kStatisticsResidents = 6;
@@ -79,8 +88,9 @@ struct StatisticsGraph {
 	uint32_t series = 0;  // [+0x2084]: the series filled (4 headers are made before the merchant's object is looked for)
 	uint32_t points = 0;  // [+0x2088]
 	uint32_t missing = 0;  // [+0x208C]: the points with nothing recorded yet (the oldest), 0 for the years
-	// [+0x2080]: each series' points, the oldest first, as the game fills them (before 0x4A5DD0 scales them).
-	std::array<std::vector<float>, 4> values;
+	// [+0x2080]: each series' points, the oldest first, as the game fills them (before 0x4A5DD0 scales them). Up to
+	// 4 series, 5 in the town data's export balance (its zero line after the four wares).
+	std::array<std::vector<float>, 5> values;
 	// The texts beside the graph ([+0x118 + 0x20k], raw), their kinds ([+0xF4 + k]: the icon the draw puts before
 	// them) and labels (the English exe's slots of [+0xFC + 4k], for GameTexts::raw_at).
 	std::vector<std::string> texts;
@@ -91,9 +101,10 @@ struct StatisticsGraph {
 	// The competition's (raw): « » for an empty slot, else the merchant's «F. Family».
 	std::array<std::string, 4> buttons;
 	// Each series' header (its first two u32): the colour ([+0x1F8 + 4k]: the company overview's by the series, the
-	// competition's and the towns' by the slot) and the merchant or the town (0 in the company overview).
-	std::array<uint32_t, 4> colours{};
-	std::array<uint32_t, 4> merchants{};
+	// competition's and the towns' by the slot; 0xFFFFFFFF for the town data's zero line) and the merchant, the town
+	// or the ware (0 in the company overview; the town data's first three entries leave it unset: 0 here).
+	std::array<uint32_t, 5> colours{};
+	std::array<uint32_t, 5> merchants{};
 	// The towns' pages: the title's end (a ware's or a town's name, raw, that the game appends) and the text of the
 	// button [+0x214] (the ware or the town it shows; empty: hidden).
 	std::string title_end;
@@ -172,22 +183,35 @@ struct StatisticsResidents {
 StatisticsResidents statistics_residents(const SaveGame& save, const GameTexts& texts,
 	const std::vector<std::string>& town_names);
 
-// The towns' graphs (0x4A3FA0; for now the comparison's, entries 7..10): one series per town of the choices, in its
-// slot's colour, the oldest point first, along the period's records of the towns (24 weeks or months, or the years:
-// with fewer than 2 the game stops at once; the period 0 is turned into 1 as in the competition): 7 the residents (the
-// four classes), 8 the incoming ships, 9 the single ware's production, 10 its stock (a town missing in a record, 0).
-// Beside them (0x4A2AB0) the largest and the smallest town over all the towns and the period (for the production
-// the smallest above 0), with their values as «%.0f inhabitants», «%.0f ships» or the ware's unit (loads, barrels,
-// pieces); the town buttons the towns' names; 9 and 10 name the ware on the title and the button [+0x214]. Nothing
-// but those texts without a town or a ware of the choices.
+// The towns' graphs (0x4A3FA0), along the period's records of the towns (24 weeks or months, or the years: with fewer
+// than 2 the game stops at once; the period 0 is turned into 1 as in the competition), the oldest point first, a town
+// missing in a record 0. Nothing but the texts beside them without a town of the comparison's four ([+0xB0..+0xB3])
+// or a ware of the four wares ([+0xAC..+0xAF]), on both pages.
+// - The comparison (7..10): one series per town of the choices, in its slot's colour: 7 the residents (the four
+//   classes), 8 the incoming ships, 9 the single ware's production, 10 its stock. Beside them (0x4A2AB0) the largest
+//   and the smallest town over all the towns and the period (for the production the smallest above 0), with their
+//   values as «%.0f inhabitants», «%.0f ships» or the ware's unit (loads, barrels, pieces); the town buttons the
+//   towns' names; 9 and 10 name the ware on the title and the button [+0x214].
+// - The town data (0..5), of the single town ([+0xBD], named on the title and the button [+0x214]): 0 its four
+//   classes' residents; 1 and 2 the three classes' s16 [+0x1F6 + 2k] and [+0x1F0 + 2k] (with a point below 0 every
+//   series raised by it, and a fourth series, colour 0xFFFFFFFF, its zero line); 3 the export balance [+0x120 + 4w],
+//   4 the production and 5 the stock of each ware of the four wares, a series each in its slot's colour (3 with one
+//   more, the zero line: every series raised by the smallest point below 0, else by a tenth of the largest above 0,
+//   else by 100; the game also reads the ware 0's balance for that line before overwriting it, so it counts in the
+//   smallest and the largest). Beside them the newest week's four classes of the town (empty without the record).
+//   Entry 0 also sets the comparison's first town to 0 when it is past the towns (0xFF: «none»), as the game.
 StatisticsGraph statistics_towns(const SaveGame& save, const GameTexts& texts, const std::vector<std::string>& town_names,
-	const StatisticsTownChoices& choices, int entry, int period);
-// The list a town button of the comparison opens (0x49E850, the list in its mode 1, «choose town»): every town not in
-// another slot (with the extra row «none» when one is skipped), with its key (7 the town's [+0x2D4], 8 the newest
-// week's ships, 9 and 10 its production and stock of the single ware: kinds 0..3, the sort button's texts).
+	StatisticsTownChoices& choices, int entry, int period);
+// The list a button of the towns' pages opens (0x49E850): the comparison's town buttons (7..10, the list in its mode
+// 1, «choose town»: every town not in another slot, with the extra row «none» when one is skipped, and its key: 7 the
+// town's [+0x2D4], 8 the newest week's ships, 9 and 10 its production and stock of the single ware: kinds 0..3, the
+// sort button's texts) and the town data's ware buttons (3..5, mode 0, «choose goods»: every ware not in another
+// slot, «none» when one is skipped, no keys). The other entries have none (0..2: an empty list).
 StatisticsChoice statistics_town_choice(const SaveGame& save, const StatisticsTownChoices& choices, int slot, int entry);
 // The list of the comparison's ware button (0x49FC1C, mode 0, «choose goods»): the 24 wares.
 StatisticsChoice statistics_ware_choice();
+// The list of the town data's town button (0x49FB41, mode 1, «choose town»): every town, no keys, no «none».
+StatisticsChoice statistics_town_list(const SaveGame& save);
 // The towns' and wares' sorts by name (0x471FF0 by the window's town names, 0x471F10 by the wares' names 0x6C0BB0;
 // signed chars, or with fix_game_bugs() as a dictionary), as sort_choice_by_name for the merchants.
 void sort_choice_by_name(const SaveGame& save, const GameTexts& texts, const std::vector<std::string>& town_names,

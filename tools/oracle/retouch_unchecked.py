@@ -7137,6 +7137,7 @@ STATS_SLOTS = to.SENTINEL + 0xF40  # of the merchants the window picks when it o
 STATS_TOWNS = to.SENTINEL + 0xF50  # of the towns' graphs, 0x4A3FA0 (kStatsTowns)
 STATS_RESIDENTS = to.SENTINEL + 0xF58  # of the towns' residents (entry 6), 0x4A3BB0 (kStatsResidents)
 STATS_WARES = to.SENTINEL + 0xF60  # of the comparison's ware button's list, in 0x49F350 (kStatsWares)
+STATS_TOWN_LIST = to.SENTINEL + 0xF68  # of the town data's town button's list, in 0x49F350 (kStatsTownList)
 
 
 def fnv1a(data):
@@ -7285,10 +7286,10 @@ def statistics_copiers(o):
 def statistics_reset(o):
     """The copiers' window as 0x4A5DD0 leaves it before an entry's function: its buttons' vtables, no series nor
     texts ([+0x210], [+0x2080..+0x208C] at 0, the count, kinds, labels and texts [+0xF2..+0x1F8) zeroed), an empty
-    title, the series' colours."""
+    title, the series' colours; the list's lists and its sort's kind (which the wares' lists leave as it was) 0."""
     win = o.statistics_window
     o.uc.mem_write(win, struct.pack('<I', o.statistics_vtable) * (0x3000 // 4))
-    for field in (0x210, 0x2080, 0x2084, 0x2088, 0x208C, 0x1074, 0x1088):
+    for field in (0x210, 0x2080, 0x2084, 0x2088, 0x208C, 0x1074, 0x1088, 0x1098):
         w32(o, win + field, 0)
     w32(o, win + 0xFC8, o.statistics_list_vtable)  # the list: its show (+0x120) a plain ret
     o.uc.mem_write(win + 0xF2, bytes(0x1F8 - 0xF2))
@@ -7474,7 +7475,9 @@ def competition_copiers(o):
     bytes [+0x118], the 4 buttons' texts [+0xC28..] in 0x20, the title in 0x40, u16 [+0xC0] after the call, then each
     series' 0x208 bytes (colour, merchant, points).
     STATS_TOWNS (entry, period, wares, towns, single, part): 0x4A3FA0; its view as the competition's with the text of
-    the button [+0x214] (0x20) after the 4 buttons'.
+    the button [+0x214] (0x20) after the 4 buttons', the window's four towns [+0xB0..+0xB3] after the period (the town
+    data's population may change the first), and up to 5 series (the export balance's zero line); the town data's
+    first three entries leave the series' [+0x4] unset (what the heap held): 0 in the view.
     STATS_RESIDENTS (part): 0x4A3BB0 (entry 6); its view: each row of [+0x210] (u32 town, its text as a C string in
     0x3C), u32 [+0x29F0], the title in 0x40.
     STATS_CHOICE (entry, slot, wares, towns, merchants, single, sort, part): 0x49E850(slot) (the list of a town's or
@@ -7485,6 +7488,8 @@ def competition_copiers(o):
     STATS_WARES (sort, part): the window's update from 0x49FC1C to 0x49FCB4 (the ware button's list of the comparison,
     with esi the window and ebp 0), and with sort 1 the list's sort by name 0x471F10; its view: u16 [+0x106C],
     [+0x106E], u32 [+0x108C], the bytes.
+    STATS_TOWN_LIST (sort, part): the same from 0x49FB41 to 0x49FBEB (the town data's town button's list) and the sort
+    0x471FF0; its view: u16 [+0x106C], [+0x106E], u32 [+0x108C], [+0x1088], [+0x1094] − the window, the bytes.
     STATS_SLOTS (wares, towns, merchants, part): the part of 0x49D380 that fixes the first town and ware and fills the
     empty merchant slots (0x49DA61..0x49DB82, with esi the window and its frame); its view, [+0xAC..+0xB7].
     All but the first jump to their code on the heap (the sentinel page's room is short); a hook at the end of the
@@ -7565,6 +7570,21 @@ def competition_copiers(o):
     stub(STATS_WARES, at)
 
     at = o.alloc(0x60)
+    code = bytes([0x53, 0x55, 0x56, 0x57, 0x83, 0xEC, 0x38])  # the update's saved registers and frame
+    code += bytes([0xBE]) + struct.pack('<I', win) + bytes([0x31, 0xED])  # mov esi, the window; xor ebp, ebp
+    code += bytes([0xE9])
+    code += rel(at, code, 0x49FB41)
+    town_list_back = at + len(code)
+    sort = bytes([0xB9]) + struct.pack('<I', win + 0xFC8) + bytes([0xE8])
+    code += bytes([0x83, 0x7C, 0x24, 0x4C, 0x00, 0x74, len(sort) + 4])  # cmp [sort], 0; je view
+    code += sort
+    code += rel(at, code, 0x471FF0)
+    town_list_view = at + len(code)
+    code += bytes([0x90, 0x83, 0xC4, 0x38, 0x5F, 0x5E, 0x5D, 0x5B, 0xC2, 0x08, 0x00])
+    o.uc.mem_write(at, code)
+    stub(STATS_TOWN_LIST, at)
+
+    at = o.alloc(0x60)
     code = bytes([0x53, 0x55, 0x56, 0x57, 0x83, 0xEC, 0x3C])  # the function's saved registers and frame
     for k, field in enumerate((0xAC, 0xB0, 0xB4)):
         code += bytes([0x8B, 0x44, 0x24, 0x50 + 4 * k, 0xA3]) + struct.pack('<I', win + field)
@@ -7589,10 +7609,16 @@ def competition_copiers(o):
             out += o.statistics_names.get(win + 0x214, bytes(0x20))
         out += cstring_at(o, o.u32(win + 0x20C), 0x40)
         out += struct.pack('<H', o.u16(win + 0xC0))
+        if with_choice:
+            out += bytes(o.uc.mem_read(win + 0xB0, 4))
         data = o.u32(win + 0x2080)
+        unset = with_choice and o.u16(win + 0xBE) <= 2  # the town data's 0..2 leave the series' [+0x4] unset
         if data:
-            for s in range(min(series, 4)):
-                out += bytes(o.uc.mem_read(data + 0x208 * s, 8 + 4 * points))
+            for s in range(min(series, 5 if with_choice else 4)):
+                one = bytearray(o.uc.mem_read(data + 0x208 * s, 8 + 4 * points))
+                if unset:
+                    one[4:8] = bytes(4)
+                out += bytes(one)
         return out
 
     def view_of_residents():
@@ -7618,6 +7644,13 @@ def competition_copiers(o):
         merchants = o.u32(win + 0x1074)
         return out + (bytes(o.uc.mem_read(merchants, count)) if merchants and count else b'')
 
+    def view_of_town_list():
+        count = o.u16(win + 0x106E)
+        out = struct.pack('<HHIII', o.u16(win + 0x106C), count, o.u32(win + 0x108C), o.u32(win + 0x1088),
+                          (o.u32(win + 0x1094) - win) & 0xFFFFFFFF)
+        merchants = o.u32(win + 0x1074)
+        return out + (bytes(o.uc.mem_read(merchants, count)) if merchants and count else b'')
+
     def at_esp(offset, view):
         def hook(uc, address, size, data):
             stats_copy(o, view(), o.u32(uc.reg_read(UC_X86_REG_ESP) + offset))
@@ -7634,6 +7667,7 @@ def competition_copiers(o):
     hooks = ((competition_view, at_esp(16, lambda: graph_view(False))), (towns_view, at_esp(24, lambda: graph_view(True))),
              (residents_view, at_esp(4, view_of_residents)), (choice_view, at_esp(32, view_of_choice)),
              (wares_view, at_esp(0x38 + 0x10 + 8, view_of_wares)), (0x49FCB4, back(wares_back, 0, None)),
+             (town_list_view, at_esp(0x38 + 0x10 + 8, view_of_town_list)), (0x49FBEB, back(town_list_back, 0, None)),
              (0x49DB82, back(slots_back, 0x3C + 0x10 + 0x10, lambda: bytes(o.uc.mem_read(win + 0xAC, 12)))))
     for address, f in hooks:
         o.uc.hook_add(UC_HOOK_CODE, f, begin=address, end=address)
@@ -7682,15 +7716,16 @@ def residents_of(o, what):
 
 
 def choice_of(o, entry, slot, slots, sort, what, wares=WINDOW_WARES, towns=WINDOW_TOWNS, ware=0, town=0):
-    """The list of a merchant's (16..18: `slots` the merchants) or a town's button (7..10: `towns`)."""
+    """The list of a merchant's (16..18: `slots` the merchants), a town's (7..10: `towns`) or a ware's button (3..5:
+    `wares`)."""
     statistics_reset(o)
-    w32(o, o.statistics_sort, 0x471FF0 if 7 <= entry <= 10 else 0x4720D0)
+    w32(o, o.statistics_sort, 0x471FF0 if 7 <= entry <= 10 else 0x471F10 if 3 <= entry <= 5 else 0x4720D0)
     direct(o, STATS_CHOICE, [entry, slot, pack_slots(wares), pack_slots(towns), pack_slots(slots), ware | town << 8,
                              sort, 0])
     win = o.statistics_window
     count = o.u16(win + 0x106E)
     listed = list(o.uc.mem_read(o.u32(win + 0x1074), count)) if count else []
-    shown = list(slots) if entry >= 16 else list(towns)
+    shown = list(slots) if entry >= 16 else list(towns) if entry >= 7 else list(wares)
     print(f'  choice {entry} slot {slot} of {shown} sort {sort} {what}: none {o.u32(win + 0x108C)}, {listed}')
 
 
@@ -7700,6 +7735,14 @@ def wares_of(o, sort):
     win = o.statistics_window
     count = o.u16(win + 0x106E)
     print(f'  wares sort {sort}: {list(o.uc.mem_read(o.u32(win + 0x1074), count)) if count else []}')
+
+
+def town_list_of(o, sort):
+    statistics_reset(o)
+    direct(o, STATS_TOWN_LIST, [sort, 0])
+    win = o.statistics_window
+    count = o.u16(win + 0x106E)
+    print(f'  town list sort {sort}: {list(o.uc.mem_read(o.u32(win + 0x1074), count)) if count else []}')
 
 
 def slots_of(o, slots, what, wares=WINDOW_WARES, towns=WINDOW_TOWNS):
@@ -7949,6 +7992,110 @@ def statistics_comparison(o):
                 for sort in (0, 1, 2):
                     choice_of(o, entry, slot, [0xFF] * 4, sort, 'four towns shown', ware=3)
             choice_of(o, entry, 0, [0xFF] * 4, 2, 'one town shown', towns=[2, 0xFF, 0xFF, 0xFF], ware=20)
+    return during
+
+
+def edit_town_records(o, head, edit):
+    """edit(k, t, record) on each town's record (a bytearray of 0x204) of the list from `head` (k from the newest)."""
+    node, k = head, 0
+    while node:
+        n, data, nxt = struct.unpack('<III', bytes(o.uc.mem_read(node, 12)))
+        for t in range(n):
+            r = bytearray(o.uc.mem_read(data + 0x204 * t, 0x204))
+            edit(k, t, r)
+            o.uc.mem_write(data + 0x204 * t, bytes(r))
+        node, k = nxt, k + 1
+    return head
+
+
+def statistics_town_data(o):
+    """The statistics window's town data (Ciudades): the graphs of a town's classes, needs covered, quality of life,
+    export balance, production and stock (0x4A3FA0's handlers 0..3 and their fills, through STATS_TOWNS), the texts
+    beside them (the newest week's classes), the ware buttons' lists (0x49E906 through STATS_CHOICE, sorted by
+    0x471F10) and the town button's list (0x49FB41 through STATS_TOWN_LIST, sorted by 0x471FF0). First without the
+    towns' records; then with weeks (26; the newest and the 8th without the last two towns), months (10) and years
+    (1: it stops; 5; 130), the town data's fields set per town: town 1 nothing below 0 (the needs in three series, the
+    export balance raised by a tenth of its largest), town 2 needs and balances below 0 (the zero lines), town 3 a
+    balance of 0 everywhere (raised by 100), town 4 only the ware 0's balance below 0 (not shown, it still moves the
+    zero line); a class past 2^31 in the newest week; each entry by each period and town; an empty ware slot, no
+    ware, no town; the comparison's first town «none» set to 0 by the population (and kept at the towns' count)."""
+    import random
+    rnd = random.Random(3105)
+    towns = o.counts()[0]
+    print(f'towns {towns}, the town numbers {[o.u8(0x6DE4B8 + t) for t in range(towns)]}')
+
+    def fields(k, t, r):
+        for base in (0x1F0, 0x1F6):
+            for c in range(3):
+                v = rnd.randrange(0, 400)
+                if t == 2 and rnd.randrange(4) == 0:
+                    v = rnd.randrange(-300, 0)
+                struct.pack_into('<h', r, base + 2 * c, v)
+        for w in range(24):
+            if t == 1:
+                v = rnd.randrange(0, 20000)
+            elif t == 3:
+                v = 0
+            elif t == 4:
+                v = rnd.randrange(-9000, 0) if w == 0 else rnd.randrange(0, 5000)
+            else:
+                v = rnd.randrange(-15000, 20000)
+            struct.pack_into('<i', r, 0x120 + 4 * w, v)
+
+    def during(o):
+        statistics_copiers(o)
+        competition_copiers(o)
+        lists = 0x6DFC90 + 0xC  # days, weeks, months, years
+        for k in range(4):
+            w32(o, lists + 4 * k, 0)
+        everyone = list(WINDOW_TOWNS)
+        # Without the towns' records.
+        for entry in range(6):
+            towns_of(o, entry, 1, everyone, 'no records', town=2)
+        towns_of(o, 0, 3, everyone, 'no years', town=2)
+        towns_of(o, 1, 0, everyone, 'period 0, no records', town=2)
+        for entry in (3, 4, 5):
+            for slot in range(4):
+                choice_of(o, entry, slot, [0xFF] * 4, slot & 1, 'the window\'s wares')
+            choice_of(o, entry, 1, [0xFF] * 4, 1, 'one ware', wares=[0xFF, 5, 0xFF, 0xFF])
+            choice_of(o, entry, 0, [0xFF] * 4, 1, 'one ware elsewhere', wares=[0xFF, 5, 0xFF, 0xFF])
+            choice_of(o, entry, 2, [0xFF] * 4, 0, 'the same ware twice', wares=[7, 7, 30, 0xFF])
+        town_list_of(o, 0)
+        town_list_of(o, 1)
+        # Weeks, months and years of records.
+        w32(o, lists + 4, edit_town_records(o, town_records(o, 26, rnd, lambda k: towns - 2 if k in (0, 7) else towns),
+                                            fields))
+        w32(o, lists + 8, edit_town_records(o, town_records(o, 10, rnd, lambda k: towns), fields))
+        w16(o, 0x6DFC92, 26)
+        w16(o, 0x6DFC94, 10)
+        head = o.u32(o.u32(lists + 4) + 4)
+        w32(o, head + 0x204 + 0x1E4, 0x80000005)  # the newest week's town 1: a class past 2^31
+        for entry in range(6):
+            for period in (1, 2):
+                for town in (1, 2, 3, 4, towns - 1):
+                    towns_of(o, entry, period, everyone, 'records', town=town)
+        wares = [0xFF, 5, 0xFF, 20]
+        for entry in (3, 4, 5):
+            towns_of(o, entry, 1, everyone, 'empty slots', wares=wares, town=2)
+            towns_of(o, entry, 1, everyone, 'without the ware 0', wares=[2, 3, 11, 0xFF], town=4)
+        towns_of(o, 4, 1, everyone, 'no ware', wares=[24, 0xFF, 30, 0xFF], town=1)
+        towns_of(o, 2, 1, [0xFF] * 4, 'no town', town=1)
+        towns_of(o, 0, 1, [0xFF, 1, 2, 3], 'the first town none', town=1)
+        towns_of(o, 0, 1, [towns, 0xFF, 1, 0xFF], 'the first town at the count', town=1)
+        towns_of(o, 0, 2, [0xFF, 0xFF, 0xFF, 0xFF], 'no town at all', town=1)
+
+        def years(n):
+            w32(o, lists + 12, edit_town_records(o, town_records(o, n, rnd, lambda k: towns), fields) if n else 0)
+            w16(o, 0x6DFC98, n)
+
+        years(1)
+        towns_of(o, 2, 3, everyone, 'one year: it stops', town=1)
+        years(5)
+        for entry in range(6):
+            towns_of(o, entry, 3, everyone, '5 years', town=2)
+        years(130)
+        towns_of(o, 3, 3, everyone, '130 years', wares=[0, 20, 3, 0xFF], town=1)
+        years(0)
     return during
 
 
@@ -8273,6 +8420,15 @@ SCENARIOS = {
         '@4a2e4c', '@4a2e82', '@4a2b5f', '@4a2b8f',
         '@49e9d2', '@49ea86', '@49eae4', '@49eb36', '@49ebb0', '@49eb94', '@49ebd9', '@49ec7f', '@472059', '@471f79',
         '@49fc1c', '@49da8b', '@49dab0']),
+    'statistics_town_data': Scenario(statistics_town_data, [STATS_TOWNS, STATS_CHOICE, STATS_TOWN_LIST], 0, [
+        '@4a41c0', '@4a41ef', '@4a40db>4a5d34', '@4a4258>4a5d34', '@4a427d>4a5d34',
+        '@4a42c2', '@4a43c4', '@4a44ed', '@4a4659', '@4a458b>4a45ea', '@4a46f9>4a474a',
+        '@4a4d4b', '@4a4d49>4a4d52', '@4a4d86', '@4a4dc9', '@4a4dfb',
+        '@4a4e75', '@4a4eb7', '@4a4ed8', '@4a4f09', '@4a4f59', '@4a4f6b',
+        '@4a5016', '@4a5058', '@4a5079', '@4a50aa', '@4a50fa', '@4a510c',
+        '@4a51db', '@4a5219', '@4a5232', '@4a5262', '@4a5293', '@4a52e7', '@4a5300', '@4a530a',
+        '@4a53c5', '@4a541c', '@4a5457', '@4a54e3', '@4a5537', '@4a5572',
+        '@49e906', '@49e99f', '@49e9ae', '@49fb41', '@472059', '@471f79']),
     'letter_ops': Scenario(letter_ops, [0x535760, 0x4D6530], 0, [
         '@4d6b01', '@4d6aff>4d6b35', '@536b23', '@536b21>536b2d', '@4d79b7', '@4d79e9', '@4d79f0', '@4d7a43',
         '@4d7a30', '@4d7a7e', '@4d7a6b']),

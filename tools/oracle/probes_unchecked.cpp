@@ -178,6 +178,8 @@ constexpr uint32_t kStatsSlots = 0x03000F40;
 constexpr uint32_t kStatsTowns = 0x03000F50;
 constexpr uint32_t kStatsResidents = 0x03000F58;
 constexpr uint32_t kStatsWares = 0x03000F60;
+// The town data's town button's list (STATS_TOWN_LIST): in the window's update, 0x49FB41.
+constexpr uint32_t kStatsTownList = 0x03000F68;
 constexpr size_t kStatsView = 0xC0;
 
 StatisticsMerchants unpack_slots(uint32_t packed) {
@@ -214,8 +216,11 @@ void put_texts(std::vector<uint8_t>& view, size_t at, const std::string* texts, 
 }
 
 // A graph's view as the copiers make it (STATS_GRAPH's, then with the competition and the towns the period after
-// the call and each series' header and points; with the towns, the button [+0x214]'s text after the buttons').
-std::vector<uint8_t> graph_view(const GameTexts& texts, const StatisticsGraph& g, int entry, int period, bool towns) {
+// the call and each series' header and points; with the towns, the button [+0x214]'s text after the buttons' and the
+// window's four towns after the period: `choices`).
+std::vector<uint8_t> graph_view(const GameTexts& texts, const StatisticsGraph& g, int entry, int period,
+	const StatisticsTownChoices* choices) {
+	const bool towns = choices != nullptr;
 	std::vector<uint8_t> view;
 	auto u32 = [&](uint32_t v) {
 		for (int k = 0; k < 4; ++k) {
@@ -246,7 +251,10 @@ std::vector<uint8_t> graph_view(const GameTexts& texts, const StatisticsGraph& g
 	const int now = statistics_competition_period(period);
 	view.push_back(uint8_t(now));
 	view.push_back(uint8_t(now >> 8));
-	for (uint32_t k = 0; k < g.series && k < 4; ++k) {
+	if (towns) {
+		view.insert(view.end(), choices->towns.begin(), choices->towns.end());
+	}
+	for (uint32_t k = 0; k < g.series && k < 5; ++k) {
 		u32(0xFF000000u | g.colours[k]);  // The copier's colours have the alpha.
 		u32(g.merchants[k]);
 		for (uint32_t p = 0; p < g.points; ++p) {
@@ -873,11 +881,12 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		const int entry = int(c.args[0]);
 		const int period = int(c.args[1]);
 		const StatisticsGraph g = statistics_competition(s, *texts, unpack_slots(c.args[2]), entry, period);
-		write_view(s, graph_view(*texts, g, entry, period, false), c.args[3]);
+		write_view(s, graph_view(*texts, g, entry, period, nullptr), c.args[3]);
 		return std::nullopt;
 	};
 	// STATS_TOWNS (entry, period, wares, towns, single, part): 0x4A3FA0 with the window's choices; its view as the
-	// competition's, with the button [+0x214]'s text. The towns' names are the save's by number (the table 0x6DDA00).
+	// competition's, with the button [+0x214]'s text and the window's four towns after the call (entry 0 may change
+	// the first). The towns' names are the save's by number (the table 0x6DDA00).
 	r[kStatsTowns] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		const GameTexts* texts = probe_sailing() ? probe_sailing()->texts() : nullptr;
 		if (!texts) {
@@ -886,9 +895,9 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		}
 		const int entry = int(c.args[0]);
 		const int period = int(c.args[1]);
-		const StatisticsGraph g = statistics_towns(s, *texts, s.opaque.town_names,
-			unpack_choices(c.args[2], c.args[3], c.args[4]), entry, period);
-		write_view(s, graph_view(*texts, g, entry, period, true), c.args[5]);
+		StatisticsTownChoices choices = unpack_choices(c.args[2], c.args[3], c.args[4]);
+		const StatisticsGraph g = statistics_towns(s, *texts, s.opaque.town_names, choices, entry, period);
+		write_view(s, graph_view(*texts, g, entry, period, &choices), c.args[5]);
 		return std::nullopt;
 	};
 	// STATS_RESIDENTS (part): 0x4A3BB0; its view: each row's town and text (0x3C), the total, the title.
@@ -927,7 +936,8 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		const int entry = int(c.args[0]);
 		const int slot = int(c.args[1]);
 		const bool towns = entry >= kStatisticsTownResidents && entry <= kStatisticsTownStock;
-		StatisticsChoice choice = towns
+		const bool wares = entry >= kStatisticsExportBalance && entry <= kStatisticsTownDataStock;
+		StatisticsChoice choice = towns || wares
 			? statistics_town_choice(s, unpack_choices(c.args[2], c.args[3], c.args[5]), slot, entry)
 			: statistics_competition_choice(s, unpack_slots(c.args[4]), slot, entry);
 		if (c.args[6] >= 1) {
@@ -946,7 +956,7 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		put(uint32_t(choice.merchants.size()), 2);
 		put(choice.none ? 1 : 0, 4);
 		put(uint32_t(choice.kind), 4);
-		put((towns ? 0xB0 : 0xB4) + uint32_t(slot), 4);
+		put((wares ? 0xAC : towns ? 0xB0 : 0xB4) + uint32_t(slot), 4);
 		put(1, 1);
 		for (uint8_t m : choice.merchants) {
 			view.push_back(m);
@@ -970,6 +980,25 @@ void register_probes_unchecked(ProbeRegistry& r) {
 			sort_choice_by_name(s, *texts, s.opaque.town_names, choice);
 		}
 		std::vector<uint8_t> view = {uint8_t(choice.mode), 0, uint8_t(choice.merchants.size()), 0, 0, 0, 0, 0};
+		view.insert(view.end(), choice.merchants.begin(), choice.merchants.end());
+		write_view(s, view, c.args[1]);
+		return std::nullopt;
+	};
+	// STATS_TOWN_LIST (sort, part): the town data's town button's list (0x49FB41, and its sort by name 0x471FF0); its
+	// view as STATS_WARES's, with the keys' pointer (null) after the extra row and where the choice goes ([+0xBD]).
+	r[kStatsTownList] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const GameTexts* texts = probe_sailing() ? probe_sailing()->texts() : nullptr;
+		if (!texts) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		StatisticsChoice choice = statistics_town_list(s);
+		if (c.args[0] >= 1) {
+			sort_choice_by_name(s, *texts, s.opaque.town_names, choice);
+		}
+		const uint32_t count = uint32_t(choice.merchants.size());
+		std::vector<uint8_t> view = {uint8_t(choice.mode), 0, uint8_t(count), uint8_t(count >> 8), uint8_t(choice.none), 0,
+			0, 0, 0, 0, 0, 0, 0xBD, 0, 0, 0};
 		view.insert(view.end(), choice.merchants.begin(), choice.merchants.end());
 		write_view(s, view, c.args[1]);
 		return std::nullopt;

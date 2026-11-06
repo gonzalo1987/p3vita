@@ -160,18 +160,19 @@ the events' sound (up and down choose, left and right or X change, Circle closes
 it, which sends them to the game).
 
 **The statistics** (touching the money on the top bar, as in the game): the menu in the panel's room with the
-game's four pages (for now the town comparison, the company overview and the competition: the town data is off) and
-the chosen entry on a parchment over the town: the balance (income and expenditure of the last 4 weeks or 3, 6, 12
-months), the graphs of the company's wealth, its ships and its production (4 weeks, 6 months, 2 years, or the whole
-game after its second year) and the goods' supply in a town of your offices; the competition: the company value,
-loading capacity and popularity of up to four merchants (6 months, 2 years or the whole game), with the averages of
-all of them; and the town comparison: every town's residents, and the residents, ship traffic, production and stock
-of a ware of up to four towns, with the largest and the smallest town. Touch the tabs, the entries and the period's
+game's four pages and the chosen entry on a parchment over the town: the balance (income and expenditure of the last
+4 weeks or 3, 6, 12 months), the graphs of the company's wealth, its ships and its production (4 weeks, 6 months,
+2 years, or the whole game after its second year) and the goods' supply in a town of your offices; the competition:
+the company value, loading capacity and popularity of up to four merchants (6 months, 2 years or the whole game),
+with the averages of all of them; the town comparison: every town's residents, and the residents, ship traffic,
+production and stock of a ware of up to four towns, with the largest and the smallest town; and the town data: a
+town's residents by class, how their needs are covered, their quality of life, and the export balance, production
+and stock of up to four wares, with the classes' residents beside them. Touch the tabs, the entries and the period's
 buttons; with the buttons, up and down choose the entry, L and R the period (or the supply's town), Circle closes
-them. In the competition and the town comparison, a merchant's or town's button under the graph opens the list of
-the others, sorted by name or by the graph's value, to put another one in its place or to leave it empty; the
-production's and the stock's ware button (where «4 weeks» is elsewhere) opens the list of the wares (with the
-buttons: Square goes to the next button, X opens its list).
+them. In the competition and the towns' pages, a merchant's, town's or ware's button under the graph opens the list
+of the others, sorted by name or by the graph's value, to put another one in its place or to leave it empty; the
+comparison's production and stock have a ware button and the town data a town button where «4 weeks» is elsewhere,
+each opening its list (with the buttons: Square goes to the next button, X opens its list).
 
 **On the sea map** the panel stays: the sea's minimap (touch or drag to move the
 map), the ship buttons (a ship at sea is chosen and centred; one in port takes

@@ -1689,6 +1689,53 @@ all equal as above; with `tick_probe --fix-game-bugs` the competition (save 3) d
 where the fixes act. In save 3 itself the game leaves two of the four slots empty at the show (the player is the
 richest): with the fix all four are filled.
 
+## The statistics window: the town data (2026-11-06)
+
+The town data's page (entries 0..5, the manual's «Ciudades»: the graphs of one town, the window's [+0xBD]), rewritten
+in `statistics_window.cpp` (`statistics_towns`; read in `re/emu/sesion15/statistics_notes.md`): 0x4A3FA0's part for
+them, the same start as the comparison's (the period 0 turned into 1; with fewer than 2 years it stops; nothing but
+the texts without a town of the comparison's four [+0xB0..+0xB3] or a ware of the four wares [+0xAC..+0xAF]), the
+texts beside the graphs (the newest week's four classes of the town, «%i», from the weeks' head whatever the period;
+empty without the record or the town in it), the title and the button [+0x214] with the town's name (the table
+0x6DDA00 by the index: the letters' bug again, `statistics_town_name`), and its handlers and fills: 0 (0x4A42C2,
+0x4A4D3A) the four classes' residents (u32, as unsigned floats), four series of which only the colours are set (the
+hidden buttons get the classes' names); 1 and 2 (0x4A43C4, 0x4A4E40 and 0x4A4FE1) the three classes' s16 [+0x1F6 +
+2k] and [+0x1F0 + 2k], with a point below 0 every point raised by the smallest and a fourth series, colour
+0xFFFFFFFF, its zero line (else three series); 3 (0x4A44ED, 0x4A5182) a series per ware of the four slots, in its
+slot's colour, of the export balance [+0x120 + 4w], and one more after them (0xA28 bytes: five), the zero line: every
+series raised by the smallest point below 0, else by a tenth of the largest above 0 ([0x66FD5C] = 0.1f), else by 100,
+and the last overwritten with that height; the game reads the ware 0's balance into the zero line before overwriting
+it, so the ware 0 counts in the smallest and the largest even when it isn't shown; 4 and 5 (0x4A4659, 0x4A54A4 and
+0x4A5386) the production [+0x60 + 4w] and the stock [+0xC0 + 4w] of each ware. The population's fill also sets the
+comparison's first town to 0 when it is past the towns (0xFF, «none» of its list; at the towns' count exactly it is
+kept). The lists: a ware button (0x49E850's handler 1, 0x49E906: mode 0, every ware not in another slot, «none» when
+one is skipped, no keys; sorted by 0x471F10) and the town button (the window's update, 0x49FB41: mode 1, every town,
+no keys, no «none», into [+0xBD]; sorted by 0x471FF0). The first three entries' buttons have no list (0x49E850
+returns 0).
+
+The copiers: `STATS_TOWNS` as before, its view with the window's four towns after the period, up to five series, and
+the series' [+0x4] as 0 for the entries 0..2 (they leave it unset: what the heap held); `STATS_CHOICE` with the
+wares' sort 0x471F10 for the entries 3..5; and a new one, `STATS_TOWN_LIST` (SENTINEL + 0xF68: the window's update
+from 0x49FB41 to 0x49FBEB with esi the window and ebp 0, then the sort 0x471FF0; its view the list's mode, count,
+«none», keys' pointer, where the choice goes and the towns). `statistics_reset` zeroes the list's sort kind [+0x1098]
+too (the wares' lists leave it as it was).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `statistics_town_data` | without the towns' records (empty texts, every point 0, the needs in three series, the export balance raised by 100; no years; the period 0); the ware buttons' lists of each slot of 3..5 unsorted and by name, with one ware shown, with it in another slot, with a ware twice; the town button's list both ways; then 26 weeks (the newest and the 8th without the last two towns), 10 months and 1, 5 and 130 years of records with the town data's fields set per town: town 1 nothing below 0 (three series; the balance raised by a tenth of its largest), town 2 needs and balances below 0 (the zero lines), town 3 a balance of 0 everywhere (raised by 100), town 4 only the ware 0's balance below 0 (shown, and not shown: it still moves the zero line); a class past 2^31 in the newest week; each entry by each period for those towns and the last one; an empty ware slot; no ware; no town; the comparison's first town «none» (set to 0) and at the towns' count (kept) | 1, 3, 5, 7 | 87 graphs, 21 ware lists and 2 town lists equal in each; 48 of 48 targets |
+
+Broken on purpose and caught: the zero line not counted in the smallest and the largest (2 graphs), the needs read
+as unsigned (6 graphs), the comparison's first town set to 0 at the towns' count too (1 graph). The other three
+statistics scenarios, with the copiers changed, all equal as before. The texts (`game_text_addresses.inc`: the
+classes' labels and formats 0x6C1D38.., their names 0x6C1AF8.., and for the viewer the axes' «imp.», «exp.», «max.»,
+«min.» 0x6C2250..0x6C2274, paired by their order: spa_ref.py matched one of them to the wrong slot) printed by
+`stat_texts.sh` in both exes; the English title of the population has no space before the town («population of the
+townLubeck»), the game's own text, given its space behind `fix_game_bugs()` (roadmap, «Corregir los fallos del
+juego»). In the viewer the town data's tab is on: the graphs with the town button where
+«4 weeks» was, the four ware buttons under the export balance, the production and the stock, the classes' legend
+under the others, the zero lines in ink with «max.» and «min.» or «exp.», «0» and «imp.» instead of numbers (as the
+game's axes, 0x4A0190). With it the whole statistics window is done.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

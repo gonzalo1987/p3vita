@@ -3367,13 +3367,29 @@ bool stats_town_graph(int entry) {
 	return entry >= kStatisticsTownResidents && entry <= kStatisticsTownStock;
 }
 
-bool stats_ware_button(int entry) {
-	return entry == kStatisticsTownProduction || entry == kStatisticsTownStock;
+// The town data's graphs (entries 0..5); 3..5 have the four ware buttons.
+bool stats_town_data(int entry) {
+	return entry >= kStatisticsPopulation && entry <= kStatisticsTownDataStock;
 }
 
-// The pages whose graphs have the four buttons (merchants or towns) under them.
+bool stats_town_data_wares(int entry) {
+	return entry >= kStatisticsExportBalance && entry <= kStatisticsTownDataStock;
+}
+
+// The button [+0x214] in the place of «4 weeks» (the slot 4): the comparison's ware (9, 10) and the town data's town.
+bool stats_choice_button(int entry) {
+	return entry == kStatisticsTownProduction || entry == kStatisticsTownStock || stats_town_data(entry);
+}
+
+// The pages whose graphs have the four buttons (merchants, towns or wares) under them.
 bool stats_slot_buttons(int entry) {
-	return stats_competition(entry) || stats_town_graph(entry);
+	return stats_competition(entry) || stats_town_graph(entry) || stats_town_data_wares(entry);
+}
+
+// The graphs without «4 weeks» (the game hides its button and turns the period 0 into 1): the competition's and the
+// towns' pages'.
+bool stats_no_days(int entry) {
+	return stats_competition(entry) || stats_town_graph(entry) || stats_town_data(entry);
 }
 
 constexpr int kShipListRows = 6;  // Two lines each in the room.
@@ -5943,7 +5959,7 @@ void draw_mail_parchment(SDL_Renderer* renderer, TextRenderer& text, const Panel
 // 0): their column and width (rows: normal, pressed, lit, off).
 constexpr int kStatsTabX[kStatisticsPages] = {0, 100, 36, 68};
 constexpr int kStatsTabW[kStatisticsPages] = {36, 36, 32, 32};
-constexpr bool kStatsPageDone[kStatisticsPages] = {false, true, true, true};
+constexpr bool kStatsPageDone[kStatisticsPages] = {true, true, true, true};
 
 struct StatsRoomLayout {
 	SDL_Rect tabs[kStatisticsPages] = {};
@@ -6092,9 +6108,10 @@ std::vector<std::string> stats_town_names() {
 	return out;
 }
 
-// The list a button of the statistics opens, as the game's (0x49E850, 0x49FC1C): a merchant's (the competition),
-// a town's (the comparison's slots) or the ware button's (slot 4), sorted by name (or by the entry's key, with its
-// button), and the extra row (-1: «no trader», «none») when it may empty the slot.
+// The list a button of the statistics opens, as the game's (0x49E850, 0x49FC1C, 0x49FB41): a merchant's (the
+// competition), a town's (the comparison's slots), a ware's (the town data's slots) or the button [+0x214]'s (slot 4:
+// the comparison's ware, the town data's town), sorted by name (or by the entry's key, with its button), and the
+// extra row (-1: «no trader», «none») when it may empty the slot.
 StatisticsChoice stats_choice(const SaveGame& save, const SidePanel& ui) {
 	StatisticsChoice choice;
 	if (ui.stats_choice_slot < 0 || !g_texts) {
@@ -6103,7 +6120,7 @@ StatisticsChoice stats_choice(const SaveGame& save, const SidePanel& ui) {
 	if (stats_competition(ui.stats_entry)) {
 		choice = statistics_competition_choice(save, ui.stats_merchants, ui.stats_choice_slot, ui.stats_entry);
 	} else if (ui.stats_choice_slot == 4) {
-		choice = statistics_ware_choice();
+		choice = stats_town_data(ui.stats_entry) ? statistics_town_list(save) : statistics_ware_choice();
 	} else {
 		choice = statistics_town_choice(save, ui.stats_towns, ui.stats_choice_slot, ui.stats_entry);
 	}
@@ -6210,28 +6227,53 @@ void draw_stats_graph(SDL_Renderer* renderer, TextRenderer& text, const PanelArt
 	SDL_RenderDrawRect(renderer, &plot);
 	// 0x4A5DD0's scale: from the entry's floor up to the largest point, at 0.95 of the height.
 	float top = statistics_scale_floor(entry);
-	for (uint32_t s = 0; s < g.series && s < 4; ++s) {
+	for (uint32_t s = 0; s < g.series && s < 5; ++s) {
 		for (float v : g.values[s]) {
 			top = std::max(top, v);
 		}
 	}
+	auto height_of = [&](float v) { return plot.y + plot.h - 1 - int(float(plot.h) * 0.95f * std::max(0.0f, v) / top); };
+	// The needs, the quality of life and the export balance (the scale's kind 5) have no numbers on the axis: «max.»
+	// and «min.», or «exp.», «0» and «imp.», as the game's axes (0x4A0190), at the zero line (their last series,
+	// colour 0xFFFFFFFF; the needs without one, at the bottom).
+	const bool marked = entry >= kStatisticsRequirement && entry <= kStatisticsExportBalance;
 	for (int k = 1; k <= 4; ++k) {
 		const int y = plot.y + plot.h - int(plot.h * 0.95f * float(k) / 4.0f);
 		SDL_SetRenderDrawColor(renderer, 160, 130, 90, 120);
 		SDL_RenderDrawLine(renderer, plot.x + 1, y, plot.x + plot.w - 2, y);
-		const std::string label = format_money(int64_t(top * float(k) / 4.0f));
-		text.draw(label, plot.x + 4, y - line + 2, kParchmentDim);
+		if (!marked) {
+			const std::string label = format_money(int64_t(top * float(k) / 4.0f));
+			text.draw(label, plot.x + 4, y - line + 2, kParchmentDim);
+		}
+	}
+	if (marked) {
+		const bool zero = g.series >= 1 && g.colours[g.series - 1] == 0xFFFFFFFFu && !g.values[g.series - 1].empty();
+		const int zero_y = zero ? height_of(g.values[g.series - 1][0]) : plot.y + plot.h - 1;
+		const bool exports = entry == kStatisticsExportBalance;
+		text.draw(stats_text(g_texts->raw_at(exports ? 0x6C225C : 0x6C2268)), plot.x + 4, plot.y + 2, kParchmentDim);
+		if (exports) {
+			text.draw("0", plot.x + plot.w - 4 - text.measure("0"), zero_y - line, kParchmentDim);
+			text.draw(stats_text(g_texts->raw_at(0x6C2250)), plot.x + 4, plot.y + plot.h - line - 2, kParchmentDim);
+		} else {
+			text.draw(stats_text(g_texts->raw_at(0x6C2274)), plot.x + 4, std::min(zero_y, plot.y + plot.h - 2) - line,
+				kParchmentDim);
+		}
 	}
 	if (g.points >= 1) {
-		// The recorded points (the oldest `missing` aren't), joined, each with a dot.
+		// The recorded points (the oldest `missing` aren't), joined, each with a dot; the zero line, plain ink.
 		const float step = g.points > 1 ? float(plot.w - 6) / float(g.points - 1) : 0.0f;
-		for (uint32_t s = 0; s < g.series && s < 4; ++s) {
+		for (uint32_t s = 0; s < g.series && s < 5; ++s) {
 			const uint32_t colour = g.colours[s];
+			if (colour == 0xFFFFFFFFu) {
+				if (!g.values[s].empty()) {
+					const int y = height_of(g.values[s][0]);
+					SDL_SetRenderDrawColor(renderer, 70, 45, 20, 255);
+					SDL_RenderDrawLine(renderer, plot.x + 1, y, plot.x + plot.w - 2, y);
+				}
+				continue;
+			}
 			SDL_SetRenderDrawColor(renderer, Uint8(colour >> 16), Uint8(colour >> 8), Uint8(colour), 255);
-			auto at = [&](uint32_t k) {
-				return SDL_Point{plot.x + 3 + int(step * float(k)),
-					plot.y + plot.h - 1 - int(float(plot.h) * 0.95f * std::max(0.0f, g.values[s][k]) / top)};
-			};
+			auto at = [&](uint32_t k) { return SDL_Point{plot.x + 3 + int(step * float(k)), height_of(g.values[s][k])}; };
 			for (uint32_t p = g.missing; p < g.points && p < g.values[s].size(); ++p) {
 				const SDL_Point c = at(p);
 				const SDL_Rect dot = {c.x - 2, c.y - 2, 5, 5};
@@ -6244,17 +6286,19 @@ void draw_stats_graph(SDL_Renderer* renderer, TextRenderer& text, const PanelArt
 			}
 		}
 	}
-	// The series' names under the graph, each with its colour.
+	// The series' names under the graph, each with its colour (the town data's classes: its hidden buttons' texts).
 	int x = plot.x;
+	const bool classes = entry >= kStatisticsPopulation && entry <= kStatisticsQualityOfLife;
 	for (uint32_t s = 0; s < 4; ++s) {
-		if (!g.names[s]) {
+		const std::string raw = classes ? g.buttons[s] : g.names[s] ? g_texts->raw_at(g.names[s]) : std::string();
+		if (raw.empty() || raw == " ") {
 			continue;
 		}
 		const uint32_t colour = kStatisticsColours[s];
 		const SDL_Rect swatch = {x, plot.y + plot.h + 8 + line / 4, line / 2 + 4, line / 2};
 		SDL_SetRenderDrawColor(renderer, Uint8(colour >> 16), Uint8(colour >> 8), Uint8(colour), 255);
 		SDL_RenderFillRect(renderer, &swatch);
-		const std::string name = stats_text(g_texts->raw_at(g.names[s]));
+		const std::string name = stats_text(raw);
 		text.draw(name, swatch.x + swatch.w + 6, plot.y + plot.h + 6, kParchmentInk);
 		x += swatch.w + 6 + text.measure(name) + 18;
 	}
@@ -6367,7 +6411,8 @@ void draw_stats_choice(SDL_Renderer* renderer, TextRenderer& text, const SaveGam
 	const std::vector<int> rows = stats_choice_rows(save, ui);
 	const int slot = ui.stats_choice_slot;
 	const int current = choice.mode == 2 ? ui.stats_merchants[size_t(slot)]
-		: slot == 4						 ? ui.stats_towns.ware
+		: slot == 4						 ? (choice.mode == 1 ? ui.stats_towns.town : ui.stats_towns.ware)
+		: choice.mode == 0				 ? ui.stats_towns.wares[size_t(slot)]
 										 : ui.stats_towns.towns[size_t(slot)];
 	const int columns = layout.choice_columns(int(rows.size()));
 	for (size_t k = 0; k < rows.size() && int(k) < columns * layout.rows_per_column; ++k) {
@@ -6456,29 +6501,37 @@ void draw_stats_window(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 		draw_stats_balance(renderer, text, statistics_balance(save, *g_texts, player, ui.stats_balance_period), layout.body);
 	} else if (entry == kStatisticsResidents) {
 		draw_stats_residents(renderer, text, save, layout.body);
-	} else if (stats_slot_buttons(entry)) {
-		// The competition and the comparison's graphs: no «4 weeks» (the game hides its button and turns that period
-		// into 6 months); in its place, the ware button of the production and the stock.
+	} else if (stats_no_days(entry)) {
+		// The competition's and the towns' graphs: no «4 weeks» (the game hides its button and turns that period into
+		// 6 months); in its place, the button [+0x214]: the comparison's ware of the production and the stock, the
+		// town data's town.
 		static constexpr uint32_t kPeriodText[4] = {0x6C1A38, 0x6C1A3C, 0x6C1A40, 0x6C1A44};
 		const int period = statistics_competition_period(ui.stats_graph_period);
 		for (int k = 1; k < 4; ++k) {
 			draw_stats_toggle(renderer, text, layout.periods[k], stats_text(g_texts->raw_at(kPeriodText[k])),
 				k == period, k < 3 || stats_years_shown(save));
 		}
+		// (The population's change to the choices is kept when the entry is shown: stats_select.)
+		StatisticsTownChoices choices = ui.stats_towns;
 		const StatisticsGraph g = stats_competition(entry)
 			? statistics_competition(save, *g_texts, ui.stats_merchants, entry, period)
-			: statistics_towns(save, *g_texts, stats_town_names(), ui.stats_towns, entry, period);
-		title += stats_text(g.title_end);
-		if (stats_ware_button(entry)) {
-			draw_stats_toggle(renderer, text, layout.periods[0], stats_fit(text, stats_text(g.choice),
+			: statistics_towns(save, *g_texts, stats_town_names(), choices, entry, period);
+		title = stats_text(statistics_title(*g_texts, entry) + g.title_end);  // (Cleaned whole: its space kept.)
+		if (stats_choice_button(entry)) {
+			// (The town data's town is named even when the graph is empty.)
+			const std::string choice = stats_town_data(entry)
+				? statistics_town_name(save, stats_town_names(), ui.stats_towns.town)
+				: g.choice;
+			draw_stats_toggle(renderer, text, layout.periods[0], stats_fit(text, stats_text(choice),
 				layout.periods[0].w - 8), ui.stats_choice_slot == 4 || (ui.stats_choice_slot < 0 && ui.stats_slot == 4), true);
 		}
 		draw_stats_graph(renderer, text, art, g, entry, layout.body);
 		if (ui.stats_choice_slot >= 0) {
 			draw_stats_choice(renderer, text, save, town_names, ui, layout);
 		}
-		// The merchant or town buttons: each slot's colour and its name (empty: none); touching one opens its list.
-		for (int k = 0; k < 4; ++k) {
+		// The merchant, town or ware buttons: each slot's colour and its name (empty: none); touching one opens its
+		// list. (The town data's first three entries have none: the legend names their classes.)
+		for (int k = 0; k < 4 && stats_slot_buttons(entry); ++k) {
 			const SDL_Rect& r = layout.merchants[k];
 			const bool lit = k == ui.stats_choice_slot || (ui.stats_choice_slot < 0 && k == ui.stats_slot);
 			draw_stats_toggle(renderer, text, r, std::string(), lit, true);
@@ -8447,7 +8500,7 @@ int main(int argc, char** argv) {
 				stats_pick_town(step);
 			} else if (side.stats_entry == kStatisticsBalance) {
 				side.stats_balance_period = (side.stats_balance_period + 4 + step) % 4;
-			} else if (stats_slot_buttons(side.stats_entry)) {
+			} else if (stats_no_days(side.stats_entry)) {
 				// 6 months, 2 years and the playing time (with more than a year recorded).
 				const int periods = stats_years_shown(save) ? 3 : 2;
 				const int k = std::min(statistics_competition_period(side.stats_graph_period), periods) - 1;
@@ -8457,16 +8510,24 @@ int main(int argc, char** argv) {
 				side.stats_graph_period = (std::min(side.stats_graph_period, periods - 1) + periods + step) % periods;
 			}
 		};
-		// An entry shown (0x4A5DD0): the competition and the comparison's graphs turn the graphs' period 0 into 1; a
-		// button's list closes.
+		// The buttons an entry has: the four under the graph (0..3) and the one in the place of «4 weeks» (4).
+		auto stats_slot_valid = [&](int entry, int slot) {
+			return slot == 4 ? stats_choice_button(entry) : slot >= 0 && slot < 4 && stats_slot_buttons(entry);
+		};
+		// An entry shown (0x4A5DD0): the competition's and the towns' graphs turn the graphs' period 0 into 1; a
+		// button's list closes; the town data's population sets the comparison's first town past the towns to 0, as the
+		// game's (statistics_towns).
 		auto stats_select = [&](int entry) {
 			side.stats_entry = entry;
 			side.stats_choice_slot = -1;
-			if (stats_slot_buttons(entry)) {
+			if (stats_no_days(entry)) {
 				side.stats_graph_period = statistics_competition_period(side.stats_graph_period);
 			}
-			if (side.stats_slot == 4 && !stats_ware_button(entry)) {
-				side.stats_slot = 0;
+			if (!stats_slot_valid(entry, side.stats_slot)) {
+				side.stats_slot = stats_slot_buttons(entry) ? 0 : 4;
+			}
+			if (entry == kStatisticsPopulation && g_texts) {
+				statistics_towns(save, *g_texts, stats_town_names(), side.stats_towns, entry, side.stats_graph_period);
 			}
 		};
 		// A button's list: opened sorted by name; a row puts its merchant, town or ware in the slot (the extra row:
@@ -8484,10 +8545,14 @@ int main(int argc, char** argv) {
 				const size_t slot = size_t(side.stats_choice_slot);
 				if (stats_competition(side.stats_entry)) {
 					side.stats_merchants[slot] = m < 0 ? 0xFF : uint8_t(m);
+				} else if (slot == 4 && stats_town_data(side.stats_entry)) {
+					side.stats_towns.town = m < 0 ? side.stats_towns.town : uint8_t(m);  // [+0xBD]
 				} else if (slot == 4) {
-					side.stats_towns.ware = m < 0 ? side.stats_towns.ware : uint8_t(m);
+					side.stats_towns.ware = m < 0 ? side.stats_towns.ware : uint8_t(m);  // [+0xBC]
+				} else if (stats_town_data(side.stats_entry)) {
+					side.stats_towns.wares[slot] = m < 0 ? 0xFF : uint8_t(m);  // [+0xAC + slot]
 				} else {
-					side.stats_towns.towns[slot] = m < 0 ? 0xFF : uint8_t(m);
+					side.stats_towns.towns[slot] = m < 0 ? 0xFF : uint8_t(m);  // [+0xB0 + slot]
 				}
 				side.stats_choice_slot = -1;
 			}
@@ -8543,16 +8608,24 @@ int main(int argc, char** argv) {
 			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
 				stats_step_period(button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1);
 				return true;
-			case SDL_CONTROLLER_BUTTON_X:
-				// The competition and the comparison: Square the next merchant or town button (then the ware's), Cross
-				// opens its list.
-				if (!stats_slot_buttons(side.stats_entry)) {
+			case SDL_CONTROLLER_BUTTON_X: {
+				// The competition and the towns' pages: Square the next merchant, town or ware button (then the one in
+				// the place of «4 weeks»), Cross opens its list.
+				const int entry = side.stats_entry;
+				if (!stats_slot_buttons(entry) && !stats_choice_button(entry)) {
 					return false;
 				}
-				side.stats_slot = (side.stats_slot + 1) % (stats_ware_button(side.stats_entry) ? 5 : 4);
+				for (int k = 1; k <= 5; ++k) {
+					const int slot = (side.stats_slot + k) % 5;
+					if (stats_slot_valid(entry, slot)) {
+						side.stats_slot = slot;
+						break;
+					}
+				}
 				return true;
+			}
 			case SDL_CONTROLLER_BUTTON_A:
-				if (!stats_slot_buttons(side.stats_entry)) {
+				if (!stats_slot_valid(side.stats_entry, side.stats_slot)) {
 					return false;
 				}
 				stats_open_choice(side.stats_slot);
@@ -8985,9 +9058,9 @@ int main(int argc, char** argv) {
 					const int x = touch_start.x;
 					const int y = touch_start.y;
 					const int k = sl.period_at(x, y);
-					const int slot = !stats_slot_buttons(side.stats_entry) ? -1
-					: stats_ware_button(side.stats_entry) && inside(sl.periods[0], x, y) ? 4
-																						: sl.merchant_at(x, y);
+					const int slot = stats_choice_button(side.stats_entry) && inside(sl.periods[0], x, y) ? 4
+						: stats_slot_buttons(side.stats_entry)											   ? sl.merchant_at(x, y)
+																										   : -1;
 					if (inside(sl.close_button, x, y)) {
 						side.menu = PanelMenu::None;
 					} else if (slot >= 0) {
@@ -9012,8 +9085,8 @@ int main(int argc, char** argv) {
 						} else {
 							side.stats_choice_slot = -1;
 						}
-					} else if (k >= 1 && stats_slot_buttons(side.stats_entry)) {
-						if (k < 3 || stats_years_shown(save)) {
+					} else if (k >= 0 && stats_no_days(side.stats_entry)) {
+						if (k >= 1 && (k < 3 || stats_years_shown(save))) {
 							side.stats_graph_period = k;
 						}
 					} else if (k >= 0 && side.stats_entry == kStatisticsSupply) {
@@ -9512,10 +9585,17 @@ int main(int argc, char** argv) {
 								   BTN_CROSS " choose   " BTN_SQUARE " order   " BTN_CIRCLE " back"),
 					tr(BTN_CIRCLE " volver", BTN_CIRCLE " back")};
 			} else if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu &&
-				stats_slot_buttons(side.stats_entry)) {
-				right_texts = {stats_competition(side.stats_entry)
+				(stats_slot_buttons(side.stats_entry) || stats_choice_button(side.stats_entry))) {
+				const int entry = side.stats_entry;
+				right_texts = {stats_competition(entry)
 						? tr("L/R: periodo   " BTN_SQUARE " " BTN_CROSS " comerciante   " BTN_CIRCLE " cerrar",
 							  "L/R: period   " BTN_SQUARE " " BTN_CROSS " merchant   " BTN_CIRCLE " close")
+						: stats_town_data_wares(entry)
+						? tr("L/R: periodo   " BTN_SQUARE " " BTN_CROSS " mercancía   " BTN_CIRCLE " cerrar",
+							  "L/R: period   " BTN_SQUARE " " BTN_CROSS " ware   " BTN_CIRCLE " close")
+						: stats_town_data(entry)
+						? tr("L/R: periodo   " BTN_CROSS " ciudad   " BTN_CIRCLE " cerrar",
+							  "L/R: period   " BTN_CROSS " town   " BTN_CIRCLE " close")
 						: tr("L/R: periodo   " BTN_SQUARE " " BTN_CROSS " ciudad   " BTN_CIRCLE " cerrar",
 							  "L/R: period   " BTN_SQUARE " " BTN_CROSS " town   " BTN_CIRCLE " close"),
 					tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")};
