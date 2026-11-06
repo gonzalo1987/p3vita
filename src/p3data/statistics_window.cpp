@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_texts.hpp"
@@ -54,6 +55,46 @@ struct Records {
 
 std::string number(int32_t v) {
 	return std::to_string(v);
+}
+
+// A Latin-1 letter with an accent as its plain letter (ö as o, Ñ as N...), for the alphabetical order of the fix.
+uint8_t plain_letter(uint8_t c) {
+	static constexpr char kUpper[] = "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTs";  // 0xC0..0xDF
+	static constexpr char kLower[] = "aaaaaaaceeeeiiiidnooooo/ouuuuyty";  // 0xE0..0xFF
+	if (c >= 0xC0 && c <= 0xDF) {
+		return c == 0xD7 ? c : uint8_t(kUpper[c - 0xC0]);
+	}
+	if (c >= 0xE0) {
+		return c == 0xF7 ? c : uint8_t(kLower[c - 0xE0]);
+	}
+	return c;
+}
+
+// The window's name orders: the game compares the bytes as signed chars (the lists, 0x4720D0, 0x471FF0, 0x471F10:
+// the letters with an accent before every other) or with strcmp (the residents' table: after every other); with
+// fix_game_bugs(), as a dictionary does, each accented letter as its plain letter (then the bytes, to break ties).
+int compare_names(const std::string& a, const std::string& b, bool game_signed) {
+	const bool fixed = fix_game_bugs();
+	for (int pass = fixed ? 0 : 1; pass < 2; ++pass) {
+		for (size_t k = 0;; ++k) {
+			uint8_t x = k < a.size() ? uint8_t(a[k]) : 0;
+			uint8_t y = k < b.size() ? uint8_t(b[k]) : 0;
+			if (pass == 0) {
+				x = plain_letter(x);
+				y = plain_letter(y);
+			}
+			if (x != y) {
+				if (pass == 1 && game_signed && !fixed) {
+					return static_cast<int8_t>(x) < static_cast<int8_t>(y) ? -1 : 1;
+				}
+				return x < y ? -1 : 1;
+			}
+			if (x == 0) {
+				break;
+			}
+		}
+	}
+	return 0;
 }
 
 }  // namespace
@@ -488,6 +529,17 @@ void statistics_default_merchants(const SaveGame& save, StatisticsMerchants& slo
 			if (!(value > best)) {
 				continue;
 			}
+			if (fix_game_bugs()) {
+				// A merchant already shown is skipped: the slot keeps the best so far (the game empties it, 0xFF, when
+				// the shown one comes after the best: with the player the richest, every empty slot ends empty).
+				bool shown = false;
+				for (size_t j = 0; j < 4; ++j) {
+					shown = shown || (j != k && slots[j] == uint8_t(o.u16(0x0)));
+				}
+				if (shown) {
+					continue;
+				}
+			}
 			slots[k] = uint8_t(o.u16(0x0));
 			for (size_t j = 0; j < 4; ++j) {
 				if (slots[j] == slots[k] && j != k) {
@@ -676,19 +728,8 @@ StatisticsChoice statistics_competition_choice(const SaveGame& save, const Stati
 }
 
 void sort_choice_by_name(const SaveGame& save, StatisticsChoice& choice) {
-	// strcmp with signed chars: a < b, a > b or equal.
-	auto compare = [](const std::string& a, const std::string& b) {
-		for (size_t k = 0;; ++k) {
-			const signed char x = k < a.size() ? static_cast<signed char>(a[k]) : 0;
-			const signed char y = k < b.size() ? static_cast<signed char>(b[k]) : 0;
-			if (x != y) {
-				return x < y ? -1 : 1;
-			}
-			if (x == 0) {
-				return 0;
-			}
-		}
-	};
+	// strcmp with signed chars (with the fix, as a dictionary): a < b, a > b or equal.
+	auto compare = [](const std::string& a, const std::string& b) { return compare_names(a, b, true); };
 	const size_t n = choice.merchants.size();
 	if (n == 0) {
 		return;
@@ -721,10 +762,23 @@ void sort_choice_by_key(StatisticsChoice& choice) {
 	if (n == 0) {
 		return;
 	}
+	// The company value's key is its float's bits, compared as ints: the values below 0 come in the reverse order
+	// (−5000 before −100). With fix_game_bugs(), compared as the floats they are.
+	const bool floats = fix_game_bugs() && choice.mode == 2 && choice.kind == 4;
+	auto smaller = [&](int32_t a, int32_t b) {
+		if (!floats) {
+			return a < b;
+		}
+		float x = 0.0f;
+		float y = 0.0f;
+		std::memcpy(&x, &a, 4);
+		std::memcpy(&y, &b, 4);
+		return x < y;
+	};
 	for (size_t pass = n - 1; pass > 0; --pass) {
 		bool swapped = false;
 		for (size_t i = 0; i < pass; ++i) {
-			if (choice.keys[i] < choice.keys[i + 1]) {
+			if (smaller(choice.keys[i], choice.keys[i + 1])) {
 				std::swap(choice.keys[i], choice.keys[i + 1]);
 				std::swap(choice.merchants[i], choice.merchants[i + 1]);
 				swapped = true;
@@ -746,32 +800,6 @@ constexpr uint32_t kResidentsText = 0x6C1E90;  // «%.0f inhabitants»
 constexpr uint32_t kComparisonTexts = 0x6C1E88;  // + 20 · (entry − 7): the largest's label, the smallest's, 3 formats
 // 0x672C14: the wares counted in barrels (the others, below 20, in loads; 20..23 the weapons, in pieces).
 constexpr uint8_t kBarrelWare[24] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};
-
-int compare_unsigned(const std::string& a, const std::string& b) {
-	for (size_t k = 0;; ++k) {
-		const uint8_t x = k < a.size() ? uint8_t(a[k]) : 0;
-		const uint8_t y = k < b.size() ? uint8_t(b[k]) : 0;
-		if (x != y) {
-			return x < y ? -1 : 1;
-		}
-		if (x == 0) {
-			return 0;
-		}
-	}
-}
-
-int compare_signed(const std::string& a, const std::string& b) {
-	for (size_t k = 0;; ++k) {
-		const signed char x = k < a.size() ? static_cast<signed char>(a[k]) : 0;
-		const signed char y = k < b.size() ? static_cast<signed char>(b[k]) : 0;
-		if (x != y) {
-			return x < y ? -1 : 1;
-		}
-		if (x == 0) {
-			return 0;
-		}
-	}
-}
 
 // The bubble sorts of the list (0x4720D0, 0x471FF0, 0x471F10): a swap when the name is larger, the keys swapped too.
 template <typename Compare>
@@ -1027,7 +1055,7 @@ StatisticsResidents statistics_residents(const SaveGame& save, const GameTexts& 
 			break;
 		}
 		for (uint32_t t = best + 1; t < towns; ++t) {
-			if (residents[t] >= 0 && compare_unsigned(names[t], names[best]) < 0) {
+			if (residents[t] >= 0 && compare_names(names[t], names[best], false) < 0) {
 				best = t;
 			}
 		}
@@ -1167,11 +1195,11 @@ void sort_choice_by_name(const SaveGame& save, const GameTexts& texts, const std
 		sort_choice_by_name(save, choice);
 	} else if (choice.mode == 1) {
 		bubble_sort(choice, [&](uint32_t a, uint32_t b) {
-			return compare_signed(statistics_town_name(save, town_names, a), statistics_town_name(save, town_names, b)) > 0;
+			return compare_names(statistics_town_name(save, town_names, a), statistics_town_name(save, town_names, b), true) > 0;
 		});
 	} else {
 		bubble_sort(choice, [&](uint32_t a, uint32_t b) {
-			return compare_signed(texts.raw_at(kWareNames + 4 * a), texts.raw_at(kWareNames + 4 * b)) > 0;
+			return compare_names(texts.raw_at(kWareNames + 4 * a), texts.raw_at(kWareNames + 4 * b), true) > 0;
 		});
 	}
 }

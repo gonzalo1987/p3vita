@@ -1682,6 +1682,13 @@ copiers changed, again all equal (41 of 41 targets). In the viewer the compariso
 in two columns with its total line, the graphs with their four town buttons, and for the production and the stock
 the ware button where «4 weeks» was; the lists over the graph in up to four columns.
 
+Three more of the window's quirks are fixed behind `fix_game_bugs()` (roadmap, «Corregir los fallos del juego»): the
+competition's empty slots at the show skip a merchant already shown, the alphabetical orders go as a dictionary (an
+accented letter as its plain letter) and the wealth key is compared as a float. With the fix off both scenarios are
+all equal as above; with `tick_probe --fix-game-bugs` the competition (save 3) differs in 4 slot fillings and 9 lists,
+where the fixes act. In save 3 itself the game leaves two of the four slots empty at the show (the player is the
+richest): with the fix all four are filled.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

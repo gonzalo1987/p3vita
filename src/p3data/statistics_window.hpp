@@ -109,7 +109,8 @@ using StatisticsMerchants = std::array<uint8_t, 4>;
 constexpr StatisticsMerchants kNoStatisticsMerchants = {0xFF, 0xFF, 0xFF, 0xFF};
 // When the window opens (0x49D380): an empty slot 0 gets the player; each other empty slot, the merchant whose
 // company value today is the largest, walking the statistics objects in their order. A merchant already shown in
-// another slot empties the slot again (0xFF) when he comes later in that walk than the best so far, as in the game.
+// another slot empties the slot again (0xFF) when he comes later in that walk than the best so far, as in the game;
+// with fix_game_bugs() he is skipped, and the slot keeps the best so far.
 void statistics_default_merchants(const SaveGame& save, StatisticsMerchants& slots);
 // The competition has no «4 weeks» (its button is hidden): the game turns the window's period 0 into 1.
 constexpr int statistics_competition_period(int period) { return period == 0 ? 1 : period; }
@@ -135,8 +136,10 @@ struct StatisticsChoice {
 	int kind = 0;  // [+0x1098]: its sort button's text, 0x6C1190 + 4 · kind (4 wealth, 5 capacity, 6 popularity)
 };
 StatisticsChoice statistics_competition_choice(const SaveGame& save, const StatisticsMerchants& slots, int slot, int entry);
-// The list's sorts: by name (0x4720D0, when it opens: the family names, then the first names, as signed chars) and,
-// with its button, by the key (0x471EA0, the largest first); both bubble sorts that swap only the larger.
+// The list's sorts: by name (0x4720D0, when it opens: the family names, then the first names, as signed chars; with
+// fix_game_bugs(), as a dictionary, an accented letter as its plain letter) and, with its button, by the key
+// (0x471EA0, the largest first; with fix_game_bugs() the company values compared as floats, not as their bits); both
+// bubble sorts that swap only the larger.
 void sort_choice_by_name(const SaveGame& save, StatisticsChoice& choice);
 void sort_choice_by_key(StatisticsChoice& choice);
 // --- The towns' pages: the town data (entries 0..5) and the town comparison (6..10) ---
@@ -158,7 +161,7 @@ void statistics_default_towns(const SaveGame& save, StatisticsTownChoices& choic
 std::string statistics_town_name(const SaveGame& save, const std::vector<std::string>& by_number, uint32_t town);
 
 // Entry 6, the towns' residents (0x4A3BB0): a table of the towns sorted by their names (strcmp, as the window names
-// them), each with its residents of the newest week recorded (the four classes; 0 below 0) or, without weeks, the
+// them; with fix_game_bugs(), as a dictionary), each with its residents of the newest week recorded (the four classes; 0 below 0) or, without weeks, the
 // town's [+0x2D4], as «%.0f inhabitants»; and the total of every town's [+0x2D4] («Total population in the
 // Hanseatic League: %d population»).
 struct StatisticsResidents {
@@ -186,7 +189,7 @@ StatisticsChoice statistics_town_choice(const SaveGame& save, const StatisticsTo
 // The list of the comparison's ware button (0x49FC1C, mode 0, «choose goods»): the 24 wares.
 StatisticsChoice statistics_ware_choice();
 // The towns' and wares' sorts by name (0x471FF0 by the window's town names, 0x471F10 by the wares' names 0x6C0BB0;
-// signed chars), as sort_choice_by_name for the merchants.
+// signed chars, or with fix_game_bugs() as a dictionary), as sort_choice_by_name for the merchants.
 void sort_choice_by_name(const SaveGame& save, const GameTexts& texts, const std::vector<std::string>& town_names,
 	StatisticsChoice& choice);
 
