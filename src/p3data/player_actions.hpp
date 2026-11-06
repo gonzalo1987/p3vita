@@ -585,4 +585,27 @@ OperationBytes letter_settings_operation(uint32_t player, const std::array<uint8
 	uint8_t notices);
 OperationBytes letters_check_operation(uint32_t player, bool repair);
 
+// --- The top bar's buttons (screenGame.ini BUTTON13 «Population» and BUTTON14 «Own buildings»; the game screen's
+// update polls them at 0x423D4A) ---
+//
+// The man opens the citizens' window (*0x6CBA90, the class 0x66ABA0, «CitizenStats»; its update 0x40B570) of the
+// town on screen (the town view's [+0xC324]): each class's residents ([+0x2D8 + 4k]); for the three first, their
+// mood ([+0x300 + 2k] as a float against −10.5, −0.5, 9.5, 19.5 and 29.5: 0 annoyed .. 5 very happy, the texts
+// 0x699C34 + 4 · mood) and an arrow (that value against twice [+0x308 + 2k]: 0 below, 1 above, 2 equal: none), and
+// «Shortage of dwellings!» when a class's residents pass 95 % of its dwellings ([+0x2F8 + 2k]: residents · 100 >
+// dwellings · 95, as ints). Its draw (0x40B860): «Citizens in %s», a row per class («%s :» the class's name
+// 0x6C1AF8 + 4k, «%u (%s) » its residents and mood, the arrow), «There are %u beggars in the town.» and the
+// shortage in red.
+struct CitizenStats {
+	std::array<uint32_t, 4> residents{};  // [+0xAC + 4k]
+	std::array<int16_t, 3> mood{};  // [+0xA4 + 2k]
+	std::array<uint8_t, 3> arrow{};  // [+0xBC + k]
+	bool shortage = false;  // [+0x1AC]
+};
+CitizenStats citizen_stats(const SaveGame& save, uint32_t town);
+// The house's number (0x42B15E): the player's buildings in the town on screen, his office's [+0x2D2] and [+0x2D4]
+// and the office itself (0 without one). Touching the house toggles the town view's [+0x564] (0x59A1E0), the
+// shading of the competition's buildings (the manual, figure 4-4: «Edificios»).
+uint32_t own_building_count(const SaveGame& save, uint32_t merchant, uint32_t town);
+
 }  // namespace p3::data

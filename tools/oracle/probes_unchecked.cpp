@@ -180,6 +180,8 @@ constexpr uint32_t kStatsResidents = 0x03000F58;
 constexpr uint32_t kStatsWares = 0x03000F60;
 // The town data's town button's list (STATS_TOWN_LIST): in the window's update, 0x49FB41.
 constexpr uint32_t kStatsTownList = 0x03000F68;
+// The top bar's man, the citizens' window's update 0x40B570 (CITIZEN_STATS).
+constexpr uint32_t kCitizenStats = 0x03000FC0;
 constexpr size_t kStatsView = 0xC0;
 
 StatisticsMerchants unpack_slots(uint32_t packed) {
@@ -981,6 +983,27 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		}
 		std::vector<uint8_t> view = {uint8_t(choice.mode), 0, uint8_t(choice.merchants.size()), 0, 0, 0, 0, 0};
 		view.insert(view.end(), choice.merchants.begin(), choice.merchants.end());
+		write_view(s, view, c.args[1]);
+		return std::nullopt;
+	};
+	// CITIZEN_STATS (town, part): the citizens' window (0x40B570, player_actions.hpp citizen_stats); its view, the
+	// window's [+0xA4..+0xBF] (the moods, the residents, the arrows) and [+0x1AC] (the shortage).
+	r[kCitizenStats] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const CitizenStats cs = citizen_stats(s, c.args[0]);
+		std::vector<uint8_t> view;
+		for (size_t k = 0; k < 4; ++k) {
+			const uint16_t m = k < 3 ? uint16_t(cs.mood[k]) : 0;
+			view.push_back(uint8_t(m));
+			view.push_back(uint8_t(m >> 8));
+		}
+		for (uint32_t r : cs.residents) {
+			for (int k = 0; k < 4; ++k) {
+				view.push_back(uint8_t(r >> (8 * k)));
+			}
+		}
+		view.insert(view.end(), cs.arrow.begin(), cs.arrow.end());
+		view.push_back(0);
+		view.push_back(cs.shortage ? 1 : 0);
 		write_view(s, view, c.args[1]);
 		return std::nullopt;
 	};

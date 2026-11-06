@@ -132,12 +132,17 @@ drag on it to move the view), its row of icons (the ship list, the game's
 speed, the messages, building, leaving the town for the sea map and the menu),
 its four ship buttons (your ships in port and at sea, your convoys in port and
 at sea: each touch goes to the next one) and, under them, the room of its
-menus. The tab on its border folds it and unfolds it. With the buttons, Select
+menus. The tab on its border folds it and unfolds it; the arrow under the tab
+shows the sea's minimap in the town instead of the town's (off on the sea map,
+as in the game). With the buttons, Select
 goes onto it: left and right go along its icons and ship buttons, up and down
 between both rows, X does it, Circle or Select leave it. While a finger is on a
 button, or the pad points at it, its tooltip (the game's) shows. The top bar is
-the game's too: the inhabitants, the town, your money, the date and the
-hourglass, which opens the chronicle.
+the game's too: the inhabitants (the man: touching it opens the town's citizens
+by class, with their mood, the beggars and the shortage of dwellings), the town,
+your buildings there (the house: touching it shades the competition's buildings,
+and again to undo it), your money, the date and the hourglass, which opens the
+chronicle.
 
 **The ship menu** (a ship button, or a ship of the ship list) has the game's six
 pages, by its buttons or with L and R: the goods (the hold's barrel, each ware

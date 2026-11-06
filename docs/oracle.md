@@ -1736,6 +1736,34 @@ juego»). In the viewer the town data's tab is on: the graphs with the town butt
 under the others, the zero lines in ink with «max.» and «min.» or «exp.», «0» and «imp.» instead of numbers (as the
 game's axes, 0x4A0190). With it the whole statistics window is done.
 
+## The player's actions: the top bar's man and house, the minimap's arrow (2026-11-06)
+
+The side panel's small things (read in `re/emu/sesion16/README.md`). The game screen's update polls the top bar's
+man (BUTTON13, «Population») and house (BUTTON14, «Own buildings») at 0x423D4A. The man shows the citizens' window
+(*0x6CBA90, «CitizenStats»), whose update 0x40B570 is rewritten in `player_actions.cpp` (`citizen_stats`): for the
+town on screen, each class's residents ([+0x2D8 + 4k]); for the three first, the mood (the s16 [+0x300 + 2k] as a
+float against −10.5, −0.5, 9.5, 19.5 and 29.5, each bound included in the lower mood: 0..5), the arrow (that value
+against twice [+0x308 + 2k]: below, above, equal: none) and the shortage of dwellings (residents · 100 >
+[+0x2F8 + 2k] · 95 as signed ints, the product wrapping). The house's number is the player's office's [+0x2D2] +
+[+0x2D4] + 1 in the town (0x42B15E; `own_building_count`); the house itself only toggles the town view's [+0x564]
+(0x59A1E0), which nothing else reads: the viewer shades the competition's buildings, as the manual says. The minimap's
+arrow (SeeTownBtn) is enabled only when the sea map isn't shown (0x42A709) and switches the panel's minimap between the
+town's and the sea's (its class 0x66EAB0 has no touch).
+
+The copier `CITIZEN_STATS` (SENTINEL + 0xFC0; its code on the heap): the update from 0x40B595, past its close button,
+with ebp a zeroed window of its own and the town view *0x6E51AC a fake one with the town in [+0xC324] (put back
+after); the redraw 0x4B9650 skipped by a hook while it runs; its view the window's [+0xA4..+0xBF] and [+0x1AC]
+(probe `kCitizenStats`).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `citizen_window` | every town as it is; then the town 1 with its classes' satisfaction at −11, −10, −1, 0, 9, 10, 19, 20, 29, 30 and the extremes, twice [+0x308 + 2k] below, near and above it; the residents at 95 % of their dwellings, one more, a number whose · 100 wraps below 0, the third class short | 1, 3, 5, 7 | 32 calls equal in each; 11 of 11 targets |
+
+Broken on purpose and caught: the shortage compared as unsigned (1 call, the wrapped number). Seen on the way, the
+town's drawing (0x521580) also draws each office's lists ([+0x2CE], [+0x2D0]) after the town's [0x762], [0x764] and
+[0x768]: the viewer didn't (the merchants' buildings were missing); now it does, and the rival kontor only for an
+office whose merchant hasn't the bit 4 of [+0x8] (0x521761).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

@@ -12,9 +12,12 @@ constexpr int kFallbackRegion = 2;
 constexpr size_t kMaxListWalk = 5000;
 
 // The record lists the game draws (0x521580), in its order: works in progress,
-// the town's buildings, fortifications and what burns. [0x760] (free) and
-// [0x766] (walls still to build) aren't drawn.
-constexpr size_t kDrawnListHeads[] = {0x762, 0x764, 0x768, 0x76A};
+// the town's buildings, fortifications, then each office's in the town (its
+// businesses [+0x2CE] and its houses and the others [+0x2D0], along the town's
+// offices [0x784]: the merchants' buildings, the player's too), and what burns.
+// [0x760] (free) and [0x766] (walls still to build) aren't drawn.
+constexpr size_t kDrawnListHeads[] = {0x762, 0x764, 0x768};
+constexpr size_t kBurningListHead = 0x76A;
 // The fixed points (TownFixedPoints) in the town's memory, as the save has them.
 constexpr size_t kFixedPoints = 0x7B0;
 static_assert(sizeof(TownFixedPoints) == 0x5C, "the fixed points are [0x7B0..0x80B]");
@@ -39,14 +42,20 @@ TownFixedPoints current_fixed_points(const TownMemory& m) {
 
 // Calls visit(record) for each record of the drawn lists, in the game's order.
 template <typename Visit>
-void walk_drawn_records(const SavedTown& saved, Visit visit) {
-	for (const size_t head : kDrawnListHeads) {
+void walk_drawn_records(const SavedTown& saved, const std::vector<uint16_t>& office_heads, Visit visit) {
+	auto walk = [&](size_t first) {
 		size_t walked = 0;
-		for (size_t i = saved.memory.u16(head); i < saved.records.size() && walked < kMaxListWalk;
-			 i = saved.records[i].next, ++walked) {
+		for (size_t i = first; i < saved.records.size() && walked < kMaxListWalk; i = saved.records[i].next, ++walked) {
 			visit(saved.records[i]);
 		}
+	};
+	for (const size_t head : kDrawnListHeads) {
+		walk(saved.memory.u16(head));
 	}
+	for (const uint16_t head : office_heads) {
+		walk(head);
+	}
+	walk(saved.memory.u16(kBurningListHead));
 }
 
 // Tablas copiadas de Patrician3.exe (GOG 1.1); ver docs/formats/savegame.md.
@@ -95,6 +104,7 @@ struct Placed {
 	int x;
 	int y;
 	const TileDef* tile;
+	uint8_t owner = kNoBuildingOwner;  // The record's owner (kRivalOwner: the rival kontor), for the owners' map.
 };
 
 // Tiles por tipo, en el orden por bytes de sus nombres: cuando varios encajan,
@@ -245,7 +255,7 @@ void building_objects(const BuildingRecord& record, const SavedTown& town, int r
 				return p.size() >= 4 && p[1] == piece && p[2] == param;
 			}, region, 3);
 			if (part) {
-				out.push_back({x, y, part});
+				out.push_back({x, y, part, record.owner});
 			} else {
 				missing++;
 			}
@@ -289,7 +299,7 @@ void building_objects(const BuildingRecord& record, const SavedTown& town, int r
 	}
 
 	if (tile) {
-		out.push_back({record.x, record.y, tile});
+		out.push_back({record.x, record.y, tile, record.owner});
 	} else {
 		missing++;
 	}
@@ -370,7 +380,7 @@ void kontor_objects(const TownFixedPoints& f, const TownMap& map, const TileInde
 	}
 	if (kontors.rival && in_map(map, f.sites[4], f.sites[5])) {
 		if (const TileDef* tile = index.find(0x2D, [](const auto&) { return true; })) {
-			out.push_back({f.sites[4], f.sites[5], tile});
+			out.push_back({f.sites[4], f.sites[5], tile, kRivalOwner});
 		}
 	}
 }
@@ -392,11 +402,26 @@ KontorView kontor_view(const SaveGame& save, size_t town) {
 			const MerchantMemory& m = save.merchants[owner].memory;
 			const uint8_t rank = m.u8(0x39C + m.u8(0x19));
 			view.player_variant = rank < 4 ? rank : (rank > 4 ? 4 : 3);
-		} else {
-			view.rival = true;
+		} else if (size_t(owner) < save.merchants.size() && !(save.merchants[owner].memory.u8(0x8) & 4)) {
+			view.rival = true;  // 0x521761: a merchant's office without the bit 4 of his [+0x8].
 		}
 	}
 	return view;
+}
+
+std::vector<uint16_t> office_list_heads(const SaveGame& save, size_t town) {
+	std::vector<uint16_t> heads;
+	if (town >= save.towns.size()) {
+		return heads;
+	}
+	const uint16_t offices = save.globals.u16(global::kWorldOfficeCount);
+	size_t walked = 0;
+	for (uint32_t i = save.towns[town].memory.u16(0x784); i < offices && i < save.offices.size() && walked < kMaxListWalk;
+		 i = save.offices[i].memory.u16(0x2CA), ++walked) {
+		heads.push_back(save.offices[i].memory.u16(0x2CE));
+		heads.push_back(save.offices[i].memory.u16(0x2D0));
+	}
+	return heads;
 }
 
 std::vector<int> load_town_regions(const CprArchive& archive) {
@@ -426,13 +451,14 @@ std::vector<int> load_town_regions(const CprArchive& archive) {
 }
 
 size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int region, const TileSet& tiles,
-	const TownMap* editor, TownMap& town, const KontorView* kontors) {
+	const TownMap* editor, TownMap& town, const KontorView* kontors, std::vector<uint8_t>* owners,
+	const std::vector<uint16_t>& office_heads) {
 	const TileIndex index(tiles);
 	std::vector<Placed> placed;
 	size_t missing = 0;
 
 	// Las listas que dibuja el juego, siguiendo el campo `next` de cada registro.
-	walk_drawn_records(saved, [&](const BuildingRecord& record) {
+	walk_drawn_records(saved, office_heads, [&](const BuildingRecord& record) {
 		building_objects(record, saved, region, merchant_count, index, placed, missing);
 	});
 	fixed_objects(saved, current_fixed_points(saved.memory), town, index, editor, tiles, placed);
@@ -489,17 +515,23 @@ size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int reg
 			layer_owner[at(c.x, c.y)] = int(i);
 		}
 	}
+	if (owners) {
+		owners->assign(cells, kNoBuildingOwner);
+	}
 	for (size_t i = 0; i < placed.size(); ++i) {
 		for (const FootprintCell& c : footprint(placed[i].x, placed[i].y, placed[i].tile->cols, placed[i].tile->rows)) {
 			if (in_map(town, c.x, c.y) && layer_owner[at(c.x, c.y)] == int(i)) {
 				town.objects[at(c.x, c.y)] = {placed[i].tile->id, c.slice};
+				if (owners) {
+					(*owners)[at(c.x, c.y)] = placed[i].owner;
+				}
 			}
 		}
 	}
 	return missing;
 }
 
-uint64_t drawn_buildings_key(const SavedTown& saved) {
+uint64_t drawn_buildings_key(const SavedTown& saved, const std::vector<uint16_t>& office_heads) {
 	// FNV-1a over what place_saved_buildings reads.
 	uint64_t key = 0xCBF29CE484222325ull;
 	auto add = [&](uint32_t value, int bytes) {
@@ -514,7 +546,7 @@ uint64_t drawn_buildings_key(const SavedTown& saved) {
 		add(saved.memory.u8(o), 1);
 	}
 	// The records in drawing order (which list each one is in doesn't change the drawing).
-	walk_drawn_records(saved, [&](const BuildingRecord& r) {
+	walk_drawn_records(saved, office_heads, [&](const BuildingRecord& r) {
 		add(uint32_t(r.x) | uint32_t(r.y) << 8 | uint32_t(r.owner) << 16 | uint32_t(r.type) << 24, 4);
 		add(uint32_t(r.pending != 0) | uint32_t(r.param) << 8, 2);
 	});
@@ -532,16 +564,17 @@ bool load_saved_town_template(const CprArchive& archive, const SavedTown& saved,
 }
 
 void place_saved_town(const SavedTownTemplate& base, const SaveGame& save, size_t index, const TileSet& tiles,
-	TownMap& out) {
+	TownMap& out, std::vector<uint8_t>* owners) {
 	out = base.town;
 	const KontorView kontors = kontor_view(save, index);
 	place_saved_buildings(save.towns[index], save.merchant_count, base.region, tiles,
-		base.has_editor ? &base.editor : nullptr, out, &kontors);
+		base.has_editor ? &base.editor : nullptr, out, &kontors, owners, office_list_heads(save, index));
 }
 
 uint64_t drawn_buildings_key(const SaveGame& save, size_t index) {
 	const KontorView kontors = kontor_view(save, index);
-	return drawn_buildings_key(save.towns[index]) * 31 + uint64_t(kontors.player_variant + 1) * 2 + (kontors.rival ? 1 : 0);
+	return drawn_buildings_key(save.towns[index], office_list_heads(save, index)) * 31 +
+		uint64_t(kontors.player_variant + 1) * 2 + (kontors.rival ? 1 : 0);
 }
 
 bool load_saved_town(const CprArchive& archive, const SaveGame& save, size_t index, const TileSet& tiles,

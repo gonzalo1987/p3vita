@@ -1496,3 +1496,14 @@
 	{0x006C225C, 0x006C2850},
 	{0x006C2268, 0x006C285C},
 	{0x006C2274, 0x006C2868},
+	// The top bar's man, the citizens' window (0x40B860): «Citizens in %s» (0x40B901), «There are %u beggars in the
+	// town.» (0x40BB8C), «Shortage of dwellings!» (0x40BBE8) and the six moods (0x40BA5B: annoyed .. very happy).
+	{0x00699BC0, 0x006990E8},
+	{0x00699BE8, 0x0069910C},
+	{0x00699CAC, 0x006991E4},
+	{0x00699C34, 0x00699160},
+	{0x00699C38, 0x00699164},
+	{0x00699C3C, 0x00699168},
+	{0x00699C40, 0x0069916C},
+	{0x00699C44, 0x00699170},
+	{0x00699C48, 0x00699174},

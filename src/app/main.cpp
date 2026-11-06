@@ -589,10 +589,12 @@ public:
 
 	const TileSet& tiles() const { return tiles_; }
 
-	void show(const TownMap& town) {
+	// The town's drawing; `owners`, each cell's building owner (place_saved_town; empty for a template map).
+	void show(const TownMap& town, std::vector<uint8_t> owners = {}) {
 		items_.clear();
 		width_ = 0;
 		height_ = 0;
+		owners_ = std::move(owners);
 		const std::vector<TownSprite> sprites = build_town_sprites(town, tiles_);
 		items_.reserve(sprites.size());
 		for (const TownSprite& sprite : sprites) {
@@ -600,8 +602,10 @@ public:
 			if (!texture) {
 				continue;
 			}
+			const size_t cell = size_t(sprite.cell_y) * size_t(town.width) + size_t(sprite.cell_x);
+			const uint8_t owner = sprite.object && cell < owners_.size() ? owners_[cell] : kNoBuildingOwner;
 			items_.push_back({texture, {sprite.src_x, sprite.src_y, sprite.width, sprite.height},
-				{sprite.dst_x, sprite.dst_y, sprite.width, sprite.height}, sprite.tile});
+				{sprite.dst_x, sprite.dst_y, sprite.width, sprite.height}, sprite.tile, owner});
 			width_ = std::max(width_, sprite.dst_x + sprite.width);
 			height_ = std::max(height_, sprite.dst_y + sprite.height);
 		}
@@ -610,8 +614,10 @@ public:
 
 	// Dibuja lo que cae dentro de la pantalla con la cámara en (camera_x, camera_y).
 	// The building of the .let type `highlight` (one of kPlaces) is drawn once
-	// more on top, added, so that it glows (the one the cursor points at).
-	void draw(int camera_x, int camera_y, int highlight = -1) {
+	// more on top, added, so that it glows (the one the cursor points at). With
+	// `player` >= 0, the competition's buildings shaded (the top bar's house, the
+	// manual's figure 4-4): another merchant's (below `merchants`) and the rival kontor.
+	void draw(int camera_x, int camera_y, int highlight = -1, int player = -1, int merchants = 0) {
 		const SDL_Rect screen = {camera_x, camera_y, kScreenWidth, kScreenHeight};
 		for (const Item& item : items_) {
 			if (!SDL_HasIntersection(&item.dst, &screen)) {
@@ -620,7 +626,15 @@ public:
 			SDL_Rect dst = item.dst;
 			dst.x -= camera_x;
 			dst.y -= camera_y;
+			const bool rival = player >= 0 && (item.owner == kRivalOwner ||
+				(item.owner != kNoBuildingOwner && int(item.owner) < merchants && int(item.owner) != player));
+			if (rival) {
+				SDL_SetTextureColorMod(item.texture, 105, 105, 115);
+			}
 			SDL_RenderCopy(renderer_, item.texture, &item.src, &dst);
+			if (rival) {
+				SDL_SetTextureColorMod(item.texture, 255, 255, 255);
+			}
 		}
 		if (highlight < 0) {
 			return;
@@ -687,6 +701,7 @@ private:
 		SDL_Rect src;
 		SDL_Rect dst;
 		const TileDef* tile;
+		uint8_t owner;  // Its cell's building owner (kNoBuildingOwner: the ground, nature, the town's fixed objects).
 	};
 	// Where a building of kPlaces is opaque (alpha ≥ 128), one byte per pixel
 	// of its tile's rectangle in the atlas: made when its atlas is decoded.
@@ -820,6 +835,7 @@ private:
 	std::map<std::string, std::vector<const TileDef*>> tiles_by_atlas_;  // Every tile, by atlas.
 	std::unordered_map<const TileDef*, uint32_t> tile_colors_;  // Their average colours (RGBA32 words).
 	SDL_Texture* minimap_ = nullptr;
+	std::vector<uint8_t> owners_;  // Each cell's building owner (show()).
 	int map_columns_ = 0;
 	int map_rows_ = 0;
 	std::map<std::string, SDL_Texture*> atlases_;
@@ -1103,9 +1119,9 @@ public:
 		return loaded_ && drawn_ && index == index_ && !changed(save);
 	}
 
-	// The town as it is now.
-	void draw(const SaveGame& save, const TileSet& tiles, TownMap& out) {
-		place_saved_town(base_, save, index_, tiles, out);
+	// The town as it is now (and each cell's building owner).
+	void draw(const SaveGame& save, const TileSet& tiles, TownMap& out, std::vector<uint8_t>* owners = nullptr) {
+		place_saved_town(base_, save, index_, tiles, out, owners);
 		key_ = drawn_buildings_key(save, index_);
 		drawn_ = true;
 	}
@@ -3356,6 +3372,14 @@ struct SidePanel {
 	// The towns' pages' choices ([+0xAC..+0xBD]): the comparison's four towns and its ware (the slot 4 of the
 	// buttons: the ware button [+0x214]).
 	StatisticsTownChoices stats_towns;
+	// The minimap's arrow (screenGame.ini BUTTON10, «Change map»; off on the sea map, 0x42A709): in a town, the
+	// sea's minimap instead of the town's (only shown, as the game's: 0x66EAB0 handles no touch).
+	bool sea_minimap = false;
+	// The top bar's house (BUTTON14, «Own buildings»; 0x59A1E0 toggles the town view's [+0x564]): the competition's
+	// buildings shaded in the town (the manual's figure 4-4).
+	bool shade_rivals = false;
+	// The top bar's man (BUTTON13, «Population»): the citizens' window (*0x6CBA90) open.
+	bool citizens = false;
 };
 
 bool stats_competition(int entry) {
@@ -3437,6 +3461,8 @@ struct PanelArt {
 	SDL_Texture* bar_right = nullptr;
 	SDL_Texture* people = nullptr;
 	SDL_Texture* coins = nullptr;
+	// The minimap's arrow (bttn_schiffskarte.bmp, TEX13: 19 · 70, frames neutral, pressed, off, hover).
+	SDL_Texture* map_switch = nullptr;
 	static constexpr int kHourglassFrames = 32;
 	SDL_Texture* hourglass[kHourglassFrames] = {};
 
@@ -3483,6 +3509,7 @@ struct PanelArt {
 		bar_right = load_texture(renderer, archive, "images/HauptscreenB800.bmp");
 		people = load_texture(renderer, archive, "images/einwohner_haus_TP.tga");
 		coins = load_texture(renderer, archive, "images/frames_konto/konto0001.tga");
+		map_switch = load_texture(renderer, archive, "images/bttn_schiffskarte.bmp");
 		for (int k = 0; k < kHourglassFrames; ++k) {
 			char path[64];
 			std::snprintf(path, sizeof(path), "images/frames_sanduhr/sanduhr00%02d.tga", k + 1);
@@ -3492,7 +3519,7 @@ struct PanelArt {
 	~PanelArt() {
 		for (SDL_Texture* t : {icons, bar, plank, wood, parchment, build_tabs, ships[0], ships[1], ships[2], ships[3],
 				 ship_buttons, morale, barrel, barrel_mask, bonus, deck, backpics[0], backpics[1], backpics[2], backpics[3],
-				 letters, paper, seal, bar_left, bar_right, people, coins}) {
+				 letters, paper, seal, bar_left, bar_right, people, coins, map_switch}) {
 			if (t) {
 				SDL_DestroyTexture(t);
 			}
@@ -3526,6 +3553,7 @@ struct PanelLayout {
 	SDL_Rect panel{};  // Its border and inside.
 	SDL_Rect bar{};  // The border.
 	SDL_Rect tab{};  // Folding and unfolding it.
+	SDL_Rect map_switch{};  // The minimap's arrow (the game's 19 · 70, on the border under the tab).
 	SDL_Rect map{};  // The minimap.
 	SDL_Rect plank{};
 	SDL_Rect icons[kPanelIcons] = {};
@@ -3539,6 +3567,7 @@ struct PanelLayout {
 		panel = {x, top, kScreenWidth - x, kScreenHeight - top};
 		bar = {x, top, kPanelBar, kScreenHeight - top};
 		tab = {x + 1, top + 56, kPanelBar - 2, 72};
+		map_switch = {x + 2, top + 134, kPanelBar - 4, 70};
 		town_right = x;
 		const int inside = x + kPanelBar;
 		map = {inside, top, kPanelInner, kPanelMapHeight};
@@ -3706,6 +3735,9 @@ void draw_sea_minimap(SDL_Renderer* renderer, const PanelLayout& layout, const S
 		const SDL_Rect r = mine || pirate ? SDL_Rect{p.x - 1, p.y - 1, 3, 3} : SDL_Rect{p.x, p.y, 2, 2};
 		SDL_RenderFillRect(renderer, &r);
 	}
+	if (camera.w <= 0) {
+		return;  // In a town (the minimap's arrow): no part of the sea map on the screen.
+	}
 	const SDL_Rect frame = {dst.x + int(camera.x * px), dst.y + int(camera.y * px), std::max(2, int(camera.w * px)),
 		std::max(2, int(camera.h * px))};
 	SDL_SetRenderDrawColor(renderer, 255, 255, 255, 230);
@@ -3747,14 +3779,20 @@ void draw_side_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 	if (ui.folded) {
 		return;
 	}
+	// The minimap's arrow: off on the sea map (0x42A709), lit while the town shows the sea's minimap.
+	if (art.map_switch) {
+		const int frame = !view ? 2 : ui.sea_minimap ? 1 : 0;
+		const SDL_Rect src = {0, frame * 70, 19, 70};
+		draw_picture(renderer, art.map_switch, layout.map_switch, &src);
+	}
 	// The minimap: the town's cells, fitted to the panel's width, with the part
-	// on the screen framed.
+	// on the screen framed; on the sea map, or in a town with the arrow, the sea's.
 	SDL_SetRenderDrawColor(renderer, 20, 14, 8, 255);
 	SDL_RenderFillRect(renderer, &layout.map);
 	SDL_Rect dst;
 	double px = 0;  // Minimap pixels per town pixel.
-	if (sea && save) {
-		draw_sea_minimap(renderer, layout, *sea, *save, camera);
+	if (sea && save && (!view || ui.sea_minimap)) {
+		draw_sea_minimap(renderer, layout, *sea, *save, view ? SDL_Rect{0, 0, 0, 0} : camera);
 	} else if (view && minimap_place(layout, *view, dst, px)) {
 		SDL_RenderCopy(renderer, view->minimap(), nullptr, &dst);
 		if (ui.menu == PanelMenu::Build && ui.build_type >= 0 && !ui.marks.empty()) {
@@ -3814,16 +3852,21 @@ void draw_side_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 
 // The top bar's hourglass, the chronicle's button (as the game's, at the bar's right end).
 constexpr SDL_Rect kHourglassButton = {kScreenWidth - 38, 1, 34, 28};
-// The top bar's money, the statistics' button (screenGame.ini's, ToolTip 20045): where the bar drew it last.
+// The top bar's money, the statistics' button (screenGame.ini's, ToolTip 20045): where the bar drew it last. And
+// its man (BUTTON13, «Population», 20024: the citizens' window) and house (BUTTON14, «Own buildings», 20025: the
+// competition's buildings shaded).
 SDL_Rect g_money_button{};
+SDL_Rect g_people_button{};
+SDL_Rect g_house_button{};
 
 // The game's top bar (screenGame.ini; the manual's «Barra de información»): its wood (HauptscreenA1280 and
 // B800, squeezed to the viewer's bar), from the left the inhabitants (the man) with their number, the town
-// (on the sea map, the one chosen), the money (the coins) and, at the right end, the date and the hourglass
-// that opens the chronicle, turning while the time runs. The viewer's button hints go in what is left.
+// (on the sea map, the one chosen), the player's buildings there (the house), the money (the coins) and, at the
+// right end, the date and the hourglass that opens the chronicle, turning while the time runs. The viewer's
+// button hints go in what is left.
 void draw_top_bar(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const std::string& citizens,
-	const std::string& place, const std::string& money, const std::string& date, int hourglass_frame,
-	const std::vector<std::string>& hints) {
+	const std::string& place, const std::string& houses, const std::string& money, const std::string& date,
+	int hourglass_frame, const std::vector<std::string>& hints) {
 	// The right piece (its carved post on its left) as wide as the date and the hourglass need.
 	const int right_w = std::max(kScreenWidth * 284 / 1280, kScreenWidth - (kHourglassButton.x - 4 - text.measure(date)) + 26);
 	const SDL_Rect a = {0, 0, kScreenWidth - right_w, kBarHeight};
@@ -3833,7 +3876,10 @@ void draw_top_bar(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& ar
 	const SDL_Color ink = {35, 20, 5, 255};
 	const int y = (kBarHeight * 30 / 42 - text.line_height()) / 2 + 1;  // On the wood, above its carved edge.
 	int x = 6;
+	g_people_button = {};
+	g_house_button = {};
 	if (!citizens.empty()) {
+		g_people_button = {x - 4, 0, 32 + text.measure(citizens) + 8, kBarHeight};
 		const SDL_Rect src = {0, 0, 36, 28};
 		draw_picture(renderer, art.people, {x, 1, 30, 23}, &src);
 		x += 32;
@@ -3842,6 +3888,14 @@ void draw_top_bar(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& ar
 	}
 	text.draw(place, x, y, ink);
 	x += text.measure(place) + 14;
+	if (!houses.empty()) {
+		g_house_button = {x - 4, 0, 32 + text.measure(houses) + 8, kBarHeight};
+		const SDL_Rect src = {36, 0, 36, 28};  // TEX16033's frame 3, the house.
+		draw_picture(renderer, art.people, {x, 1, 30, 23}, &src);
+		x += 32;
+		text.draw(houses, x, y, ink);
+		x += text.measure(houses) + 14;
+	}
 	g_money_button = {};
 	if (!money.empty()) {
 		g_money_button = {x - 4, 0, 20 + text.measure(money) + 8, kBarHeight};
@@ -6555,6 +6609,66 @@ void draw_stats_window(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 	draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Cerrar", "Close"));
 }
 
+// --- The citizens' window (the top bar's man, «Population»: the game's «CitizenStats», 0x40B570 and its draw
+// 0x40B860; player_actions.hpp citizen_stats), on a parchment over the town. ---
+
+struct CitizensLayout {
+	SDL_Rect panel{};
+	SDL_Rect inner{};
+	SDL_Rect close_button{};
+	explicit CitizensLayout(int line_height) {
+		const int w = std::min(520, g_town_right - 40);
+		const int h = 9 * (line_height + 6) + 120;
+		panel = {(g_town_right - w) / 2, kBarHeight + 30, w, h};
+		inner = {panel.x + 44, panel.y + 52, panel.w - 88, panel.h - 52 - 50};
+		close_button = {panel.x + panel.w / 2 - 70, panel.y + panel.h - 48, 140, line_height + 10};
+	}
+};
+
+void draw_citizens_window(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
+	uint32_t town) {
+	if (!g_texts || town >= save.towns.size()) {
+		return;
+	}
+	const CitizensLayout layout(text.line_height());
+	draw_scroll(renderer, art.paper, layout.panel);
+	const CitizenStats cs = citizen_stats(save, town);
+	const int line = text.line_height() + 8;
+	// «Citizens in %s» with the town's name as the window takes it (0x6DDA00 by the index: the letters' bug).
+	const std::string title = stats_text(GameTexts::sprintf_raw(g_texts->raw_at(0x699BC0),
+		{statistics_town_name(save, stats_town_names(), town)}));
+	text.draw(title, layout.inner.x + (layout.inner.w - text.measure(title)) / 2, layout.inner.y, kParchmentInk);
+	int y = layout.inner.y + 2 * line;
+	const int value_x = layout.inner.x + layout.inner.w * 45 / 100;
+	for (size_t k = 0; k < 3; ++k) {
+		// «%s :» the class's name; «%u (%s) » its residents and mood; the arrow (up: above twice [+0x308 + 2k]).
+		text.draw(stats_text(g_texts->raw_at(0x6C1AF8 + 4 * uint32_t(k))) + " :", layout.inner.x, y, kParchmentInk);
+		const std::string value = std::to_string(cs.residents[k]) + " (" +
+			stats_text(g_texts->raw_at(0x699C34 + 4 * uint32_t(cs.mood[k]))) + ")";
+		text.draw(value, value_x, y, kParchmentInk);
+		if (cs.arrow[k] != 2) {
+			const bool up = cs.arrow[k] == 1;
+			const int ax = value_x + text.measure(value) + 14;
+			const int ay = y + text.line_height() / 2;
+			SDL_SetRenderDrawColor(renderer, up ? 30 : 170, up ? 120 : 30, up ? 30 : 20, 255);
+			for (int i = 0; i < 7; ++i) {
+				const int yy = up ? ay - 3 + i : ay + 3 - i;
+				SDL_RenderDrawLine(renderer, ax - i, yy, ax + i, yy);
+			}
+		}
+		y += line;
+	}
+	y += line / 2;
+	const std::string beggars = stats_text(GameTexts::sprintf_raw(g_texts->raw_at(0x699BE8),
+		{std::to_string(cs.residents[3])}));
+	text.draw(beggars, layout.inner.x, y, kParchmentInk);
+	if (cs.shortage) {
+		y += line;
+		text.draw(stats_text(g_texts->raw_at(0x699CAC)), layout.inner.x, y, SDL_Color{170, 20, 10, 255});
+	}
+	draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Cerrar", "Close"));
+}
+
 // --- The tooltips of the side panel's and the top bar's buttons (the scripts' «ToolTip=», the strings
 // 20000.. of the exe's string table, GameTexts::resource): on the Vita, while a finger is on the button
 // (before it is lifted) or the pad points at it (Select). ---
@@ -6579,9 +6693,18 @@ uint32_t panel_tooltip(const SidePanel& side, const SaveGame& save, int line, bo
 	if (hit(g_money_button)) {
 		return 20045;  // Statistics
 	}
+	if (hit(g_people_button)) {
+		return 20024;  // Population
+	}
+	if (hit(g_house_button)) {
+		return 20025;  // Own buildings
+	}
 	const PanelLayout panel(side.folded);
 	if (side.folded) {
 		return 0;
+	}
+	if (hit(panel.map_switch)) {
+		return 20023;  // Change map
 	}
 	static constexpr uint32_t kIcons[kPanelIcons] = {20027, 20001, 20008, 20002, 20026, 20000};
 	for (int k = 0; k < kPanelIcons; ++k) {
@@ -7135,6 +7258,7 @@ int main(int argc, char** argv) {
 	// Triangle in a town before the sea map is loaded: the town stays, with a
 	// notice, while it loads (from the frame after the notice is on screen).
 	bool sea_wanted = false;
+	bool sea_switch = true;  // Whether to go to the sea map once loaded (not for the minimap's arrow).
 	bool sea_notice_shown = false;
 	std::string sea_notice;  // Its notice, as shown.
 	auto fleet_ship = [&]() -> int {
@@ -7246,6 +7370,7 @@ int main(int argc, char** argv) {
 		notices.clear();
 		mail = MailUi();
 		sea_wanted = false;
+		sea_switch = true;
 		sea_notice_shown = false;
 		return true;
 	};
@@ -7891,10 +8016,11 @@ int main(int argc, char** argv) {
 			notices.erase(std::remove_if(notices.begin(), notices.end(),
 							  [&](const std::pair<std::string, Uint32>& n) { return n.first == sea_notice; }),
 				notices.end());
-			if (selection.mode == Mode::Saved) {
+			if (selection.mode == Mode::Saved && sea_switch) {
 				selection.mode = Mode::Sea;
 				reload = true;
 			}
+			sea_switch = true;
 		}
 		if (reload && selection.mode == Mode::Sea) {
 			if (!sea) {
@@ -7928,6 +8054,7 @@ int main(int argc, char** argv) {
 				show_loading(renderer);
 			}
 			TownMap town;
+			std::vector<uint8_t> owners;
 			std::string error;
 			bool loaded = false;
 			bool drawn = false;
@@ -7935,7 +8062,7 @@ int main(int argc, char** argv) {
 				drawn = live.drawn(save, selection.saved_index);
 				loaded = drawn || live.load(*archive, save, selection.saved_index, regions, error);
 				if (loaded && !drawn) {
-					live.draw(save, view->tiles(), town);
+					live.draw(save, view->tiles(), town, &owners);
 				}
 			} else {
 				loaded = load_template(*archive, template_ids, selection, town, error);
@@ -7946,7 +8073,7 @@ int main(int argc, char** argv) {
 				break;
 			}
 			if (!drawn) {
-				view->show(town);
+				view->show(town, std::move(owners));
 			}
 			if (!keep_camera) {
 				// In the middle of the town's part of the screen (left of the side panel).
@@ -8365,8 +8492,9 @@ int main(int argc, char** argv) {
 		// on screen, it is drawn again, with the camera where it was.
 		if (selection.mode == Mode::Saved && live.changed(save)) {
 			TownMap town;
-			live.draw(save, view->tiles(), town);
-			view->show(town);
+			std::vector<uint8_t> owners;
+			live.draw(save, view->tiles(), town, &owners);
+			view->show(town, std::move(owners));
 		}
 
 		int town_step = 0;
@@ -8692,6 +8820,10 @@ int main(int argc, char** argv) {
 				if (side.menu == PanelMenu::Build && panel_shown && town_free && build_button(event.cbutton.button)) {
 					break;
 				}
+				if (side.citizens && selection.mode == Mode::Saved && event.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
+					side.citizens = false;  // The citizens' window: Circle closes it.
+					break;
+				}
 				if (stats_open && side.focus < 0 && stats_button(event.cbutton.button)) {
 					break;
 				}
@@ -8997,6 +9129,7 @@ int main(int argc, char** argv) {
 							--side.cargo_first;
 						}
 					} else if (!side.folded && inside(panel_layout.map, touch_start.x, touch_start.y) &&
+						(sea_panel || !side.sea_minimap) &&
 						(sea_panel ? minimap_sea_point(panel_layout, *sea, int(event.tfinger.x * kScreenWidth),
 										 int(event.tfinger.y * kScreenHeight), at)
 								   : minimap_town_point(panel_layout, *view, int(event.tfinger.x * kScreenWidth),
@@ -9039,6 +9172,7 @@ int main(int argc, char** argv) {
 						if (mail.open) {
 							close_mail();
 						}
+						side.citizens = false;
 						side.menu = PanelMenu::Statistics;
 						side.folded = false;
 						side.focus = -1;
@@ -9048,6 +9182,35 @@ int main(int argc, char** argv) {
 						statistics_default_merchants(save, side.stats_merchants);
 					statistics_default_towns(save, side.stats_towns);
 						side.stats_choice_slot = -1;
+					}
+					break;
+				}
+				if (touch_moved < kTapDistance && !in_menu && !messages.open && !end_window.open && has_save &&
+					save.player >= 0 && selection.mode == Mode::Saved && !trading && !in_hanse && !in_place &&
+					(inside(g_people_button, touch_start.x, touch_start.y) ||
+						inside(g_house_button, touch_start.x, touch_start.y))) {
+					// The top bar's man: the citizens' window; its house: the competition's buildings shaded.
+					touch_building = false;
+					touch_on_side = false;
+					touch_on_panel = false;
+					if (inside(g_people_button, touch_start.x, touch_start.y)) {
+						side.citizens = !side.citizens;
+						if (side.citizens && side.menu == PanelMenu::Statistics) {
+							side.menu = PanelMenu::None;
+						}
+					} else {
+						side.shade_rivals = !side.shade_rivals;
+					}
+					break;
+				}
+				if (side.citizens && small_text && selection.mode == Mode::Saved && touch_moved < kTapDistance &&
+					inside(CitizensLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) {
+					// The citizens' window: its button closes it.
+					touch_building = false;
+					touch_on_side = false;
+					touch_on_panel = false;
+					if (inside(CitizensLayout(small_text->line_height()).close_button, touch_start.x, touch_start.y)) {
+						side.citizens = false;
 					}
 					break;
 				}
@@ -9123,6 +9286,18 @@ int main(int argc, char** argv) {
 						side.focus = -1;
 					} else if (side.folded) {
 						// Folded, only its tab.
+					} else if (inside(panel_layout.map_switch, x, y)) {
+						// The minimap's arrow (off on the sea map): the town's or the sea's minimap; the sea map
+						// loads first if it isn't yet (as Triangle, with its notice, staying in the town).
+						if (!sea_panel) {
+							side.sea_minimap = !side.sea_minimap;
+							if (side.sea_minimap && (!sea || !sea->ready()) && !sea_wanted) {
+								sea_notice = tr("Cargando el mapa del mar...", "Loading the sea map...");
+								notify(sea_notice);
+								sea_wanted = true;
+								sea_switch = false;
+							}
+						}
 					} else if (const int icon = panel_layout.icon_at(x, y); icon >= 0) {
 						side_act(icon);  // Nothing if it is disabled.
 					} else if (const int ship = panel_layout.ship_at(x, y); ship >= 0) {
@@ -9225,7 +9400,7 @@ int main(int argc, char** argv) {
 							}
 						}
 					} else if (sea_panel ? minimap_sea_point(panel_layout, *sea, x, y, at)
-										 : minimap_town_point(panel_layout, *view, x, y, at)) {
+										 : !side.sea_minimap && minimap_town_point(panel_layout, *view, x, y, at)) {
 						camera_x = at.x - town_width / 2;
 						camera_y = at.y - kScreenHeight / 2;
 					}
@@ -9420,6 +9595,7 @@ int main(int argc, char** argv) {
 					notify(sea_notice);
 				}
 				sea_wanted = true;
+				sea_switch = true;
 				continue;
 			}
 			// Entre la ciudad elegida y el mapa del mar; desde una plantilla, a la ciudad.
@@ -9511,7 +9687,8 @@ int main(int argc, char** argv) {
 			const int pointed = free_now && side.menu != PanelMenu::Build
 				? view->place_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2)
 				: -1;
-			view->draw(camera_x, camera_y, pointed);
+			view->draw(camera_x, camera_y, pointed, side.shade_rivals && save.player >= 0 ? save.player : -1,
+				int(save.merchant_count));
 			if (placing && side.cell_x >= 0) {
 				// After this frame's touches: whether it fits where it is now.
 				int type = side.build_type;
@@ -9560,7 +9737,7 @@ int main(int argc, char** argv) {
 			}
 			if (panel_shown) {
 				draw_side_panel(renderer, *small_text, *panel_art, side, panel_state(save), view.get(),
-					{camera_x, camera_y, town_width, kScreenHeight});
+					{camera_x, camera_y, town_width, kScreenHeight}, sea && sea->ready() ? sea.get() : nullptr, &save);
 				if (side.menu == PanelMenu::ShipList && !side.folded) {
 					draw_ship_list(renderer, *small_text, save, town_names, side);
 				}
@@ -9575,6 +9752,9 @@ int main(int argc, char** argv) {
 					draw_stats_room(renderer, *small_text, *panel_art, side);
 					draw_stats_window(renderer, *small_text, *panel_art, save, town_names, side);
 				}
+			}
+			if (side.citizens && selection.mode == Mode::Saved && has_save && small_text && panel_art && save.player >= 0) {
+				draw_citizens_window(renderer, *small_text, *panel_art, save, uint32_t(selection.saved_index));
 			}
 		}
 		if (text) {
@@ -9654,6 +9834,9 @@ int main(int argc, char** argv) {
 				const int frame = in_menu ? 0 : int(app_ticks() / 90);
 				draw_top_bar(renderer, *small_text, *panel_art,
 					selection.mode == Mode::Saved ? format_money(here.citizens()) : std::string(), place,
+					selection.mode == Mode::Saved
+						? std::to_string(own_building_count(save, uint32_t(save.player), uint32_t(selection.saved_index)))
+						: std::string(),
 					format_money(save.merchants[size_t(save.player)].money()), game_date(save.day(), save.month(), save.year()),
 					frame, right_texts);
 			} else {

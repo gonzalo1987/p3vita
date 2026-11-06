@@ -8099,6 +8099,104 @@ def statistics_town_data(o):
     return during
 
 
+CITIZEN_STATS = to.SENTINEL + 0xFC0  # of the citizens' window's update, 0x40B570 (probes_unchecked.cpp kCitizenStats)
+
+
+def citizen_copier(o):
+    """The copier at CITIZEN_STATS (stdcall: town, part): the citizens' window's update 0x40B570 (the top bar's man)
+    from 0x40B595, past its close button, with ebp a window of its own (zeroed before each call, as a window that
+    has shown nothing yet: the update writes what changed) and the town view *0x6E51AC a fake one whose [+0xC324] is
+    the town (put back after); its redraw 0x4B9650 skipped by a hook. Its view: the window's [+0xA4..+0xBF] (the
+    moods, the residents, the arrows) and [+0x1AC] (the shortage of dwellings)."""
+    from unicorn.x86_const import UC_X86_REG_EIP, UC_X86_REG_ESP
+    win, view = o.alloc(0x200), o.alloc(0xC400)
+    saved = o.alloc(4)
+    o.citizen_window = win
+    o.citizen_active = False
+    at = o.alloc(0x80)
+    code = bytes([0x8B, 0x44, 0x24, 0x04, 0xA3]) + struct.pack('<I', view + 0xC324)  # the town
+    code += bytes([0xA1]) + struct.pack('<I', 0x6E51AC) + bytes([0xA3]) + struct.pack('<I', saved)
+    code += bytes([0xC7, 0x05]) + struct.pack('<II', 0x6E51AC, view)
+    call_at = len(code)
+    code += bytes([0xE8, 0, 0, 0, 0])  # call the entry below
+    citizen_view = at + len(code)
+    code += bytes([0x90, 0xA1]) + struct.pack('<I', saved) + bytes([0xA3]) + struct.pack('<I', 0x6E51AC)
+    code += bytes([0xC2, 0x08, 0x00])
+    entry = len(code)
+    code += bytes([0x83, 0xEC, 0x1C, 0x55, 0xBD]) + struct.pack('<I', win)  # sub esp, 0x1C; push ebp; mov ebp, win
+    code += bytes([0xE9]) + struct.pack('<i', 0x40B595 - (at + len(code) + 5))
+    code = bytearray(code)
+    code[call_at + 1:call_at + 5] = struct.pack('<i', entry - (call_at + 5))
+    o.uc.mem_write(at, bytes(code))
+    o.uc.mem_write(CITIZEN_STATS, bytes([0xE9]) + struct.pack('<i', at - (CITIZEN_STATS + 5)))
+
+    def view_hook(uc, address, size, data):
+        stats_copy(o, bytes(o.uc.mem_read(win + 0xA4, 0x1C)) + bytes(o.uc.mem_read(win + 0x1AC, 1)),
+                   o.u32(uc.reg_read(UC_X86_REG_ESP) + 8))
+
+    def redraw(uc, address, size, data):
+        if o.citizen_active:  # 0x4B9650 (thiscall, a rect): the interface's
+            esp = uc.reg_read(UC_X86_REG_ESP)
+            uc.reg_write(UC_X86_REG_EIP, o.u32(esp))
+            uc.reg_write(UC_X86_REG_ESP, esp + 8)
+
+    for address, f in ((citizen_view, view_hook), (0x4B9650, redraw)):
+        o.uc.hook_add(UC_HOOK_CODE, f, begin=address, end=address)
+        o.uc.ctl_remove_cache(address, address + 1)
+
+
+def citizens_of(o, town, what):
+    o.uc.mem_write(o.citizen_window, bytes(0x200))
+    o.citizen_active = True
+    direct(o, CITIZEN_STATS, [town, 0])
+    o.citizen_active = False
+    win = o.citizen_window
+    moods = struct.unpack('<3h', bytes(o.uc.mem_read(win + 0xA4, 6)))
+    residents = struct.unpack('<4I', bytes(o.uc.mem_read(win + 0xAC, 16)))
+    arrows = list(o.uc.mem_read(win + 0xBC, 3))
+    print(f'  citizens of town {town} {what}: {list(residents)}, moods {list(moods)}, arrows {arrows}, shortage '
+          f'{o.u8(win + 0x1AC)}')
+
+
+def citizen_window(o):
+    """The top bar's man, the citizens' window (0x40B570 through CITIZEN_STATS): every town of the save as it is; then
+    a town retouched for each mood's bounds (the satisfaction [+0x300 + 2k] at −11, −10, −1, 0, 9, 10, 19, 20, 29,
+    30, and the extremes), each arrow (twice [+0x308 + 2k] below, equal to and above it) and the shortage of
+    dwellings (the residents at 95 % of [+0x2F8 + 2k] and one more; a number whose · 100 wraps below 0)."""
+    towns = o.counts()[0]
+
+    def during(o):
+        citizen_copier(o)
+        for t in range(towns):
+            citizens_of(o, t, 'as it is')
+        town = o.town(1)
+        bounds = [-11, -10, -1, 0, 9, 10, 19, 20, 29, 30, -32768, 32767]
+        for k in range(0, len(bounds), 3):
+            for c in range(3):
+                value = bounds[k + c] if k + c < len(bounds) else 0
+                w16(o, town + 0x300 + 2 * c, value & 0xFFFF)
+                w16(o, town + 0x308 + 2 * c, ((value // 2) + (c - 1)) & 0xFFFF)  # twice: below, near, above
+            citizens_of(o, 1, f'moods {bounds[k:k + 3]}')
+        for c in range(3):
+            w16(o, town + 0x300 + 2 * c, 8)
+            w16(o, town + 0x308 + 2 * c, 4)  # twice equal: no arrow
+        w16(o, town + 0x2F8, 20)
+        w32(o, town + 0x2D8, 19)  # 1900 against 1900: no shortage
+        w16(o, town + 0x2FA, 1000)
+        w32(o, town + 0x2DC, 10)
+        w16(o, town + 0x2FC, 1000)
+        w32(o, town + 0x2E0, 10)
+        citizens_of(o, 1, 'at 95 %, twice equal')
+        w32(o, town + 0x2D8, 20)  # 2000 against 1900
+        citizens_of(o, 1, 'past 95 %')
+        w32(o, town + 0x2D8, 0x02000000)  # · 100 wraps below 0
+        citizens_of(o, 1, 'wrapped')
+        w32(o, town + 0x2D8, 5)
+        w32(o, town + 0x2E0, 960)  # the third class past 95 % of its 1000
+        citizens_of(o, 1, 'the third class short')
+    return during
+
+
 def player_op_text(*args):
     """player_ops's output as text."""
     import subprocess
@@ -8429,6 +8527,9 @@ SCENARIOS = {
         '@4a51db', '@4a5219', '@4a5232', '@4a5262', '@4a5293', '@4a52e7', '@4a5300', '@4a530a',
         '@4a53c5', '@4a541c', '@4a5457', '@4a54e3', '@4a5537', '@4a5572',
         '@49e906', '@49e99f', '@49e9ae', '@49fb41', '@472059', '@471f79']),
+    'citizen_window': Scenario(citizen_window, [CITIZEN_STATS], 0, [
+        '@40b5db', '@40b629', '@40b627>40b62e', '@40b653', '@40b668', '@40b680', '@40b698', '@40b6b3>40b6ba',
+        '@40b6b5', '@40b6fb', '@40b6ff']),
     'letter_ops': Scenario(letter_ops, [0x535760, 0x4D6530], 0, [
         '@4d6b01', '@4d6aff>4d6b35', '@536b23', '@536b21>536b2d', '@4d79b7', '@4d79e9', '@4d79f0', '@4d7a43',
         '@4d7a30', '@4d7a7e', '@4d7a6b']),

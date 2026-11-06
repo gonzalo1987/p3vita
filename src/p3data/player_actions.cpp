@@ -2183,4 +2183,37 @@ OperationBytes letters_check_operation(uint32_t player, bool repair) {
 	return words_operation({0x71, player, repair ? 1u : 0u});
 }
 
+CitizenStats citizen_stats(const SaveGame& save, uint32_t town) {
+	CitizenStats out;
+	if (town >= save.towns.size()) {
+		return out;
+	}
+	const TownMemory& t = save.towns[town].memory;
+	for (size_t k = 0; k < 4; ++k) {
+		out.residents[k] = t.u32(0x2D8 + 4 * k);
+		if (k == 3) {
+			break;  // The beggars: only their number.
+		}
+		// residents · 100 > dwellings · 95, as signed ints (lea; shl: the product wraps).
+		if (int32_t(out.residents[k] * 100u) > int32_t(uint32_t(t.u16(0x2F8 + 2 * k)) * 95u)) {
+			out.shortage = true;
+		}
+		const int32_t value = t.s16(0x300 + 2 * k);
+		const float v = float(value);  // fild; fstp a float; fcomp the float thresholds
+		out.mood[k] = v <= -10.5f ? 0 : v <= -0.5f ? 1 : v <= 9.5f ? 2 : v <= 19.5f ? 3 : v <= 29.5f ? 4 : 5;
+		const int32_t twice = 2 * int32_t(t.s16(0x308 + 2 * k));
+		out.arrow[k] = value < twice ? 0 : value == twice ? 2 : 1;
+	}
+	return out;
+}
+
+uint32_t own_building_count(const SaveGame& save, uint32_t merchant, uint32_t town) {
+	const int office = tick::facilities_detail::fn_5308a0(save, merchant, town);
+	if (office < 0 || size_t(office) >= save.offices.size()) {
+		return 0;
+	}
+	const OfficeMemory& o = save.offices[size_t(office)].memory;
+	return uint32_t(o.u16(0x2D4)) + o.u16(0x2D2) + 1;
+}
+
 }  // namespace p3::data

@@ -46,11 +46,13 @@ void add_cell_sprites(const TileDef& tile, uint16_t aux, int x, int y, std::vect
 	sprite.height = slice.height;
 	sprite.dst_x = slice_index <= tile.front_slice ? cell_x : cell_x + kTileWidth - slice.width;
 	sprite.dst_y = cell_y + kTileHeight - slice.height;
+	sprite.cell_x = x;
+	sprite.cell_y = y;
 	out.push_back(sprite);
 }
 
 void add_layer(const TownMap& town, const std::vector<TownCell>& layer, const TileSet& tiles,
-	std::vector<TownSprite>& out) {
+	std::vector<TownSprite>& out, bool objects) {
 	for (int y = 0; y < town.height; ++y) {
 		for (int x = 0; x < town.width; ++x) {
 			const TownCell& cell = layer[size_t(y) * size_t(town.width) + size_t(x)];
@@ -59,7 +61,11 @@ void add_layer(const TownMap& town, const std::vector<TownCell>& layer, const Ti
 			}
 			auto it = tiles.find(cell.tile);
 			if (it != tiles.end() && !it->second.is_editor_marker()) {
+				const size_t before = out.size();
 				add_cell_sprites(it->second, cell.aux, x, y, out);
+				for (size_t k = before; k < out.size(); ++k) {
+					out[k].object = objects;
+				}
 			}
 		}
 	}
@@ -201,8 +207,8 @@ bool load_town(const CprArchive& archive, int id, TownMap& out, std::string* err
 
 std::vector<TownSprite> build_town_sprites(const TownMap& town, const TileSet& tiles) {
 	std::vector<TownSprite> sprites;
-	add_layer(town, town.ground, tiles, sprites);
-	add_layer(town, town.objects, tiles, sprites);
+	add_layer(town, town.ground, tiles, sprites, false);
+	add_layer(town, town.objects, tiles, sprites, true);
 	return sprites;
 }
 

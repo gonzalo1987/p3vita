@@ -81,6 +81,9 @@ struct TownSprite {
 	int height = 0;
 	int dst_x = 0;
 	int dst_y = 0;
+	int cell_x = 0;  // The cell it stands on.
+	int cell_y = 0;
+	bool object = false;  // Of the objects' layer (not the ground's).
 };
 
 using TileSet = std::unordered_map<uint16_t, TileDef>;

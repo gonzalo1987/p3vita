@@ -33,13 +33,23 @@ struct KontorView {
 };
 KontorView kontor_view(const SaveGame& save, size_t town);
 
+// With `owners`, each cell's building owner as the objects drawn on it (a record's owner byte: a merchant, or the
+// town at the merchants' count and above; kRivalOwner the rival kontor; kNoBuildingOwner no building), for the
+// viewer's shading of the competition's buildings (the top bar's house).
+constexpr uint8_t kNoBuildingOwner = 0xFF;
+constexpr uint8_t kRivalOwner = 0xFE;
+// `office_heads`: the heads of the town's offices' lists (office_list_heads), drawn after the town's.
 size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int region, const TileSet& tiles,
-	const TownMap* editor, TownMap& town, const KontorView* kontors = nullptr);
+	const TownMap* editor, TownMap& town, const KontorView* kontors = nullptr, std::vector<uint8_t>* owners = nullptr,
+	const std::vector<uint16_t>& office_heads = {});
+// The heads of the record lists of the town's offices (0x521580: along the town's [0x784] and each office's
+// [+0x2CA], its [+0x2CE] and [+0x2D0]), in the game's drawing order.
+std::vector<uint16_t> office_list_heads(const SaveGame& save, size_t town);
 
 // A key of everything place_saved_buildings reads from the town: when it
 // changes, the town has to be drawn again (the simulation has built,
 // finished, changed or burnt something). With the save, also its kontors.
-uint64_t drawn_buildings_key(const SavedTown& saved);
+uint64_t drawn_buildings_key(const SavedTown& saved, const std::vector<uint16_t>& office_heads = {});
 uint64_t drawn_buildings_key(const SaveGame& save, size_t index);
 
 // The template of a saved town (its .town, its .editor if there is one, and
@@ -56,7 +66,7 @@ bool load_saved_town_template(const CprArchive& archive, const SavedTown& saved,
 
 // The template with the buildings of the town `index` of the save as they are now.
 void place_saved_town(const SavedTownTemplate& base, const SaveGame& save, size_t index, const TileSet& tiles,
-	TownMap& out);
+	TownMap& out, std::vector<uint8_t>* owners = nullptr);
 
 // Carga la plantilla de la ciudad `index` de la partida y coloca sus edificios.
 bool load_saved_town(const CprArchive& archive, const SaveGame& save, size_t index, const TileSet& tiles,
