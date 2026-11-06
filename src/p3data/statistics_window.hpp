@@ -27,6 +27,13 @@ constexpr int kStatisticsWealth = 12;
 constexpr int kStatisticsShips = 13;
 constexpr int kStatisticsProduction = 14;
 constexpr int kStatisticsSupply = 15;
+// The town comparison's entries (the manual's «Comparativa de ciudades»): the towns' residents (a table), and the
+// graphs of the residents, the incoming ships, a ware's production and its stock.
+constexpr int kStatisticsResidents = 6;
+constexpr int kStatisticsTownResidents = 7;
+constexpr int kStatisticsShipMovements = 8;
+constexpr int kStatisticsTownProduction = 9;
+constexpr int kStatisticsTownStock = 10;
 // The competition's entries (the manual's «Competencia»): each merchant's company value, loading capacity and
 // popularity.
 constexpr int kStatisticsCompanies = 16;
@@ -84,9 +91,13 @@ struct StatisticsGraph {
 	// The competition's (raw): « » for an empty slot, else the merchant's «F. Family».
 	std::array<std::string, 4> buttons;
 	// Each series' header (its first two u32): the colour ([+0x1F8 + 4k]: the company overview's by the series, the
-	// competition's by the merchant's slot) and the competition's merchant (0 in the company overview).
+	// competition's and the towns' by the slot) and the merchant or the town (0 in the company overview).
 	std::array<uint32_t, 4> colours{};
 	std::array<uint32_t, 4> merchants{};
+	// The towns' pages: the title's end (a ware's or a town's name, raw, that the game appends) and the text of the
+	// button [+0x214] (the ware or the town it shows; empty: hidden).
+	std::string title_end;
+	std::string choice;
 };
 StatisticsGraph statistics_graph(const SaveGame& save, uint32_t merchant, int entry, int period);
 
@@ -115,7 +126,8 @@ StatisticsGraph statistics_competition(const SaveGame& save, const GameTexts& te
 // first, each with its key to sort by. Choosing a row puts its merchant in the slot; the extra row («no trader»,
 // only when another slot shows a merchant) empties it (0xFF).
 struct StatisticsChoice {
-	std::vector<uint8_t> merchants;  // [+0x1074]
+	int mode = 2;  // [+0x106C]: 0 wares, 1 towns, 2 merchants
+	std::vector<uint8_t> merchants;  // [+0x1074]: the merchants, towns or wares
 	// [+0x1088]: the company value's float bits (16), the loading capacity (17), the current week's popularity
 	// (ftol of f[+0xE70], the week ring's first record: 18), compared as signed ints.
 	std::vector<int32_t> keys;
@@ -127,6 +139,60 @@ StatisticsChoice statistics_competition_choice(const SaveGame& save, const Stati
 // with its button, by the key (0x471EA0, the largest first); both bubble sorts that swap only the larger.
 void sort_choice_by_name(const SaveGame& save, StatisticsChoice& choice);
 void sort_choice_by_key(StatisticsChoice& choice);
+// --- The towns' pages: the town data (entries 0..5) and the town comparison (6..10) ---
+//
+// The window's choices for them ([+0xAC..+0xBD]; 0x49E380 sets these at start, the single ones are 0 as the global
+// window): 4 wares (24 or more: none) and 4 towns (the graphs' series), a single ware ([+0xBC]: the comparison's
+// production and stock) and a single town ([+0xBD]: the town data's).
+struct StatisticsTownChoices {
+	std::array<uint8_t, 4> wares = {0, 2, 3, 11};
+	std::array<uint8_t, 4> towns = {0, 1, 2, 3};
+	uint8_t ware = 0;
+	uint8_t town = 0;
+};
+// When the window opens (0x49D380): the first town past the towns becomes the player's home town (0 without a player),
+// the first ware past 23 becomes 0.
+void statistics_default_towns(const SaveGame& save, StatisticsTownChoices& choices);
+// A town's name as the window takes it: the table 0x6DDA00 by the town's index, though after a load the table goes by
+// the town's number (as the letters' bug; the names `by_number`, raw); with fix_game_bugs(), by its number.
+std::string statistics_town_name(const SaveGame& save, const std::vector<std::string>& by_number, uint32_t town);
+
+// Entry 6, the towns' residents (0x4A3BB0): a table of the towns sorted by their names (strcmp, as the window names
+// them), each with its residents of the newest week recorded (the four classes; 0 below 0) or, without weeks, the
+// town's [+0x2D4], as «%.0f inhabitants»; and the total of every town's [+0x2D4] («Total population in the
+// Hanseatic League: %d population»).
+struct StatisticsResidents {
+	std::vector<uint32_t> towns;  // [+0x210]: each row's town (+ 0x40 · row) ...
+	std::vector<std::string> texts;  // ... and its text (+ 4)
+	int32_t total = 0;  // [+0x29F0]
+};
+StatisticsResidents statistics_residents(const SaveGame& save, const GameTexts& texts,
+	const std::vector<std::string>& town_names);
+
+// The towns' graphs (0x4A3FA0; for now the comparison's, entries 7..10): one series per town of the choices, in its
+// slot's colour, the oldest point first, along the period's records of the towns (24 weeks or months, or the years:
+// with fewer than 2 the game stops at once; the period 0 is turned into 1 as in the competition): 7 the residents (the
+// four classes), 8 the incoming ships, 9 the single ware's production, 10 its stock (a town missing in a record, 0).
+// Beside them (0x4A2AB0) the largest and the smallest town over all the towns and the period (for the production
+// the smallest above 0), with their values as «%.0f inhabitants», «%.0f ships» or the ware's unit (loads, barrels,
+// pieces); the town buttons the towns' names; 9 and 10 name the ware on the title and the button [+0x214]. Nothing
+// but those texts without a town or a ware of the choices.
+StatisticsGraph statistics_towns(const SaveGame& save, const GameTexts& texts, const std::vector<std::string>& town_names,
+	const StatisticsTownChoices& choices, int entry, int period);
+// The list a town button of the comparison opens (0x49E850, the list in its mode 1, «choose town»): every town not in
+// another slot (with the extra row «none» when one is skipped), with its key (7 the town's [+0x2D4], 8 the newest
+// week's ships, 9 and 10 its production and stock of the single ware: kinds 0..3, the sort button's texts).
+StatisticsChoice statistics_town_choice(const SaveGame& save, const StatisticsTownChoices& choices, int slot, int entry);
+// The list of the comparison's ware button (0x49FC1C, mode 0, «choose goods»): the 24 wares.
+StatisticsChoice statistics_ware_choice();
+// The towns' and wares' sorts by name (0x471FF0 by the window's town names, 0x471F10 by the wares' names 0x6C0BB0;
+// signed chars), as sort_choice_by_name for the merchants.
+void sort_choice_by_name(const SaveGame& save, const GameTexts& texts, const std::vector<std::string>& town_names,
+	StatisticsChoice& choice);
+
+// The game's «%.Nf» in a format with one conversion (its CRT rounds the half away from zero).
+std::string game_sprintf_float(const std::string& format, double value);
+
 // A merchant's names as his [+0xE8] and [+0xE4] point at them (0x4F6420: the first name from the women's list unless
 // [+0x1A]; 0x4F6450), in Latin-1.
 std::string statistics_first_name(const SaveGame& save, uint32_t merchant);

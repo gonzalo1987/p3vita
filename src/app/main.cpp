@@ -3353,10 +3353,27 @@ struct SidePanel {
 	int stats_choice_slot = -1;
 	bool stats_choice_by_key = false;
 	int stats_choice_row = 0;
+	// The towns' pages' choices ([+0xAC..+0xBD]): the comparison's four towns and its ware (the slot 4 of the
+	// buttons: the ware button [+0x214]).
+	StatisticsTownChoices stats_towns;
 };
 
 bool stats_competition(int entry) {
 	return entry >= kStatisticsCompanies && entry <= kStatisticsPopularity;
+}
+
+// The town comparison's graphs (entries 7..10); 9 and 10 have the ware button.
+bool stats_town_graph(int entry) {
+	return entry >= kStatisticsTownResidents && entry <= kStatisticsTownStock;
+}
+
+bool stats_ware_button(int entry) {
+	return entry == kStatisticsTownProduction || entry == kStatisticsTownStock;
+}
+
+// The pages whose graphs have the four buttons (merchants or towns) under them.
+bool stats_slot_buttons(int entry) {
+	return stats_competition(entry) || stats_town_graph(entry);
 }
 
 constexpr int kShipListRows = 6;  // Two lines each in the room.
@@ -5918,14 +5935,15 @@ void draw_mail_parchment(SDL_Renderer* renderer, TextRenderer& text, const Panel
 // --- The statistics (the game's SIDEMENU_STATISTIK, statistics_window.hpp): the menu in the panel's room (its four
 // pages' tabs, the page's title, its entries) and the window on a parchment over the town (the entry's title, the
 // period's buttons, the balance's table, a graph or Suministro's table; the competition's merchant buttons and their
-// list). Opened by the top bar's money. Done: the company overview (page 2) and the competition (3); the towns' pages'
-// tabs are off. ---
+// list; the town comparison's residents' table, its graphs with their town and ware buttons). Opened by the top
+// bar's money. Done: the town comparison (page 1), the company overview (2) and the competition (3); the town data's
+// tab is off. ---
 
 // The tabs' frames in page_statistiken.tga (sidemenu.ini Button14..17 → textures.ini TEX20034's frames 8, 4, 12,
 // 0): their column and width (rows: normal, pressed, lit, off).
 constexpr int kStatsTabX[kStatisticsPages] = {0, 100, 36, 68};
 constexpr int kStatsTabW[kStatisticsPages] = {36, 36, 32, 32};
-constexpr bool kStatsPageDone[kStatisticsPages] = {false, false, true, true};
+constexpr bool kStatsPageDone[kStatisticsPages] = {false, true, true, true};
 
 struct StatsRoomLayout {
 	SDL_Rect tabs[kStatisticsPages] = {};
@@ -6037,8 +6055,12 @@ struct StatsLayout {
 	int row_h = 0;
 	int rows_top = 0;
 	int rows_per_column = 1;
-	SDL_Rect choice_row(int k) const {
-		const int w = (choice.w - 12) / 2;
+	// The list's columns for n rows (2 to 4) and a row's place.
+	int choice_columns(int n) const {
+		return std::clamp((n + rows_per_column - 1) / rows_per_column, 2, 4);
+	}
+	SDL_Rect choice_row(int k, int columns) const {
+		const int w = (choice.w - 4 - 4 * columns) / columns;
 		return {choice.x + 4 + (k / rows_per_column) * (w + 4), rows_top + (k % rows_per_column) * row_h, w, row_h - 2};
 	}
 	int period_at(int x, int y) const {
@@ -6059,20 +6081,42 @@ struct StatsLayout {
 	}
 };
 
-// The list a competition's merchant button opens, as the game's (0x49E850): its merchants by name (or by the entry's
-// key, with its button) and the extra row «no trader» (-1) when it may empty the slot.
-std::vector<int> stats_choice_rows(const SaveGame& save, const SidePanel& ui) {
-	std::vector<int> rows;
-	if (ui.stats_choice_slot < 0) {
-		return rows;
+// The town names by number as the game holds them (Latin-1, like its other texts), for the statistics' engine.
+std::vector<std::string> stats_town_names() {
+	std::vector<std::string> out;
+	if (g_town_names) {
+		for (const std::string& name : *g_town_names) {
+			out.push_back(utf8_to_latin1(name));
+		}
 	}
-	StatisticsChoice choice =
-		statistics_competition_choice(save, ui.stats_merchants, ui.stats_choice_slot, ui.stats_entry);
-	sort_choice_by_name(save, choice);
+	return out;
+}
+
+// The list a button of the statistics opens, as the game's (0x49E850, 0x49FC1C): a merchant's (the competition),
+// a town's (the comparison's slots) or the ware button's (slot 4), sorted by name (or by the entry's key, with its
+// button), and the extra row (-1: «no trader», «none») when it may empty the slot.
+StatisticsChoice stats_choice(const SaveGame& save, const SidePanel& ui) {
+	StatisticsChoice choice;
+	if (ui.stats_choice_slot < 0 || !g_texts) {
+		return choice;
+	}
+	if (stats_competition(ui.stats_entry)) {
+		choice = statistics_competition_choice(save, ui.stats_merchants, ui.stats_choice_slot, ui.stats_entry);
+	} else if (ui.stats_choice_slot == 4) {
+		choice = statistics_ware_choice();
+	} else {
+		choice = statistics_town_choice(save, ui.stats_towns, ui.stats_choice_slot, ui.stats_entry);
+	}
+	sort_choice_by_name(save, *g_texts, stats_town_names(), choice);
 	if (ui.stats_choice_by_key) {
 		sort_choice_by_key(choice);
 	}
-	rows.assign(choice.merchants.begin(), choice.merchants.end());
+	return choice;
+}
+
+std::vector<int> stats_choice_rows(const SaveGame& save, const SidePanel& ui) {
+	const StatisticsChoice choice = stats_choice(save, ui);
+	std::vector<int> rows(choice.merchants.begin(), choice.merchants.end());
 	if (choice.none) {
 		rows.push_back(-1);
 	}
@@ -6309,29 +6353,74 @@ void draw_stats_choice(SDL_Renderer* renderer, TextRenderer& text, const SaveGam
 	SDL_RenderFillRect(renderer, &layout.choice);
 	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
 	SDL_RenderDrawRect(renderer, &layout.choice);
-	text.draw(stats_text(g_texts->raw_at(0x6C10D0)), layout.choice.x + 6, layout.choice.y + 6, kParchmentInk);
-	const uint32_t sort_text = ui.stats_choice_by_key ? 0x6C10EC : 0x6C1190 + 4 * uint32_t(ui.stats_entry - kStatisticsCompanies + 4);
-	draw_stats_toggle(renderer, text, layout.sort_button, stats_fit(text, stats_text(g_texts->raw_at(sort_text)),
-		layout.sort_button.w - 8), false, true);
+	const StatisticsChoice choice = stats_choice(save, ui);
+	// «choose goods», «choose town», «choose trader» (0x6C10C8 + 4 · mode).
+	text.draw(stats_text(g_texts->raw_at(0x6C10C8 + 4 * uint32_t(choice.mode))), layout.choice.x + 6,
+		layout.choice.y + 6, kParchmentInk);
+	if (!choice.keys.empty()) {
+		// The sort button: what touching it does (by the key, or back to by name).
+		const uint32_t sort_text = ui.stats_choice_by_key ? 0x6C10EC : 0x6C1190 + 4 * uint32_t(choice.kind);
+		draw_stats_toggle(renderer, text, layout.sort_button,
+			stats_fit(text, stats_text(g_texts->raw_at(sort_text)), layout.sort_button.w - 8), false, true);
+	}
+	const std::vector<std::string> names = stats_town_names();
 	const std::vector<int> rows = stats_choice_rows(save, ui);
-	for (size_t k = 0; k < rows.size() && int(k) < 2 * layout.rows_per_column; ++k) {
-		const SDL_Rect r = layout.choice_row(int(k));
+	const int slot = ui.stats_choice_slot;
+	const int current = choice.mode == 2 ? ui.stats_merchants[size_t(slot)]
+		: slot == 4						 ? ui.stats_towns.ware
+										 : ui.stats_towns.towns[size_t(slot)];
+	const int columns = layout.choice_columns(int(rows.size()));
+	for (size_t k = 0; k < rows.size() && int(k) < columns * layout.rows_per_column; ++k) {
+		const SDL_Rect r = layout.choice_row(int(k), columns);
 		const int m = rows[k];
-		const bool lit = int(k) == ui.stats_choice_row || m == ui.stats_merchants[size_t(ui.stats_choice_slot)];
+		const bool lit = int(k) == ui.stats_choice_row || m == current;
 		SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, lit ? 110 : 40);
 		SDL_RenderFillRect(renderer, &r);
 		std::string line;
 		if (m < 0) {
-			line = stats_text(g_texts->raw_at(0x6C1088));
+			line = stats_text(g_texts->raw_at(choice.mode == 2 ? 0x6C1088 : 0x6C1078));  // «no trader», «none»
+		} else if (choice.mode == 0) {
+			line = stats_text(g_texts->raw_at(0x6C0BB0 + 4 * uint32_t(m)));
+		} else if (choice.mode == 1) {
+			line = stats_text(statistics_town_name(save, names, uint32_t(m)));
 		} else {
 			line = stats_text(statistics_first_name(save, uint32_t(m)) + " " + statistics_family_name(save, uint32_t(m)));
 			const int home = save.merchants[size_t(m)].memory.u8(0x19);
 			if (home < int(save.towns.size())) {
-				line += " (" + town_name(save, town_names, home) + ")";
+				line += " (" + stats_text(statistics_town_name(save, names, uint32_t(home))) + ")";
 			}
 		}
 		text.draw(stats_fit(text, line, r.w - 8), r.x + 4, r.y + 2, kParchmentInk);
 	}
+	(void)town_names;
+}
+
+// The towns' residents (entry 6, 0x4A3BB0 and its draw 0x4A0980): the towns by name in two columns, each with its
+// residents, and the total line («Total population in the Hanseatic League:» and «%d %s» with the first entry's
+// button).
+void draw_stats_residents(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, const SDL_Rect& body) {
+	const StatisticsResidents r = statistics_residents(save, *g_texts, stats_town_names());
+	const std::vector<std::string> names = stats_town_names();
+	const int line = text.line_height() + 3;
+	const int per_column = std::max(1, (body.h - 2 * line - 6) / line);
+	const int column_w = (body.w - 20) / 2;
+	for (size_t k = 0; k < r.towns.size() && int(k) < 2 * per_column; ++k) {
+		const int x = body.x + int(k) / per_column * (column_w + 20);
+		const int y = body.y + int(k) % per_column * line;
+		const SDL_Rect band = {x - 2, y, column_w + 4, line - 1};
+		SDL_SetRenderDrawColor(renderer, 230, 255, 255, 40);  // The game's 0x64FFE6CA.
+		SDL_RenderFillRect(renderer, &band);
+		text.draw(stats_text(statistics_town_name(save, names, r.towns[k])), x, y, kParchmentDim);
+		const std::string v = stats_text(r.texts[k]);
+		text.draw(v, x + column_w - text.measure(v), y, kParchmentInk);
+	}
+	const int y = body.y + body.h - line;
+	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
+	SDL_RenderDrawLine(renderer, body.x, y - 4, body.x + body.w, y - 4);
+	text.draw(stats_text(g_texts->raw_at(0x6B0D6C)), body.x, y, kParchmentInk);
+	const std::string total = stats_text(GameTexts::sprintf_raw(g_texts->raw_at(0x6BACA4),
+		{std::to_string(r.total), statistics_button(*g_texts, 0)}));
+	text.draw(total, body.x + body.w - text.measure(total), y, kParchmentInk);
 }
 
 void draw_stats_window(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
@@ -6346,12 +6435,15 @@ void draw_stats_window(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 	std::string title = stats_text(statistics_title(*g_texts, entry));
 	if (entry == kStatisticsSupply) {
 		const int town = stats_supply_town(save, ui);
-		title = GameTexts::format(title, {town >= 0 ? town_name(save, town_names, town) : std::string()});
+		// The town's name as the window takes it (statistics_town_name: by the index, the game's bug, or fixed).
+		const std::string name = town >= 0 ? stats_text(statistics_town_name(save, stats_town_names(), uint32_t(town)))
+										   : std::string();
+		title = GameTexts::format(title, {name});
 		const std::string choose = stats_text(g_texts->raw_at(0x6B0D68));
 		draw_stats_toggle(renderer, text, layout.periods[0], "<", false, town >= 0);
 		draw_stats_toggle(renderer, text, {layout.periods[1].x, layout.periods[1].y,
 			layout.periods[2].x + layout.periods[2].w - layout.periods[1].x, layout.periods[1].h},
-			town >= 0 ? town_name(save, town_names, town) : choose, true, town >= 0);
+			town >= 0 ? name : choose, true, town >= 0);
 		draw_stats_toggle(renderer, text, layout.periods[3], ">", false, town >= 0);
 		if (town >= 0) {
 			draw_stats_supply(renderer, text, art, statistics_supply(save, player, uint32_t(town)), layout.body);
@@ -6362,20 +6454,30 @@ void draw_stats_window(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 				k == ui.stats_balance_period, true);
 		}
 		draw_stats_balance(renderer, text, statistics_balance(save, *g_texts, player, ui.stats_balance_period), layout.body);
-	} else if (stats_competition(entry)) {
-		// The competition: no «4 weeks» (the game hides its button and turns that period into 6 months).
+	} else if (entry == kStatisticsResidents) {
+		draw_stats_residents(renderer, text, save, layout.body);
+	} else if (stats_slot_buttons(entry)) {
+		// The competition and the comparison's graphs: no «4 weeks» (the game hides its button and turns that period
+		// into 6 months); in its place, the ware button of the production and the stock.
 		static constexpr uint32_t kPeriodText[4] = {0x6C1A38, 0x6C1A3C, 0x6C1A40, 0x6C1A44};
 		const int period = statistics_competition_period(ui.stats_graph_period);
 		for (int k = 1; k < 4; ++k) {
 			draw_stats_toggle(renderer, text, layout.periods[k], stats_text(g_texts->raw_at(kPeriodText[k])),
 				k == period, k < 3 || stats_years_shown(save));
 		}
-		const StatisticsGraph g = statistics_competition(save, *g_texts, ui.stats_merchants, entry, period);
+		const StatisticsGraph g = stats_competition(entry)
+			? statistics_competition(save, *g_texts, ui.stats_merchants, entry, period)
+			: statistics_towns(save, *g_texts, stats_town_names(), ui.stats_towns, entry, period);
+		title += stats_text(g.title_end);
+		if (stats_ware_button(entry)) {
+			draw_stats_toggle(renderer, text, layout.periods[0], stats_fit(text, stats_text(g.choice),
+				layout.periods[0].w - 8), ui.stats_choice_slot == 4 || (ui.stats_choice_slot < 0 && ui.stats_slot == 4), true);
+		}
 		draw_stats_graph(renderer, text, art, g, entry, layout.body);
 		if (ui.stats_choice_slot >= 0) {
 			draw_stats_choice(renderer, text, save, town_names, ui, layout);
 		}
-		// The merchant buttons: each slot's colour and «F. Family» (empty: none); touching one opens its list.
+		// The merchant or town buttons: each slot's colour and its name (empty: none); touching one opens its list.
 		for (int k = 0; k < 4; ++k) {
 			const SDL_Rect& r = layout.merchants[k];
 			const bool lit = k == ui.stats_choice_slot || (ui.stats_choice_slot < 0 && k == ui.stats_slot);
@@ -8345,7 +8447,7 @@ int main(int argc, char** argv) {
 				stats_pick_town(step);
 			} else if (side.stats_entry == kStatisticsBalance) {
 				side.stats_balance_period = (side.stats_balance_period + 4 + step) % 4;
-			} else if (stats_competition(side.stats_entry)) {
+			} else if (stats_slot_buttons(side.stats_entry)) {
 				// 6 months, 2 years and the playing time (with more than a year recorded).
 				const int periods = stats_years_shown(save) ? 3 : 2;
 				const int k = std::min(statistics_competition_period(side.stats_graph_period), periods) - 1;
@@ -8355,15 +8457,20 @@ int main(int argc, char** argv) {
 				side.stats_graph_period = (std::min(side.stats_graph_period, periods - 1) + periods + step) % periods;
 			}
 		};
-		// An entry shown (0x4A5DD0): the competition turns the graphs' period 0 into 1; a merchant's list closes.
+		// An entry shown (0x4A5DD0): the competition and the comparison's graphs turn the graphs' period 0 into 1; a
+		// button's list closes.
 		auto stats_select = [&](int entry) {
 			side.stats_entry = entry;
 			side.stats_choice_slot = -1;
-			if (stats_competition(entry)) {
+			if (stats_slot_buttons(entry)) {
 				side.stats_graph_period = statistics_competition_period(side.stats_graph_period);
 			}
+			if (side.stats_slot == 4 && !stats_ware_button(entry)) {
+				side.stats_slot = 0;
+			}
 		};
-		// A merchant button's list: opened sorted by name; a row puts its merchant in the slot («no trader»: empty).
+		// A button's list: opened sorted by name; a row puts its merchant, town or ware in the slot (the extra row:
+		// empty).
 		auto stats_open_choice = [&](int slot) {
 			side.stats_slot = slot;
 			side.stats_choice_slot = slot;
@@ -8374,13 +8481,20 @@ int main(int argc, char** argv) {
 			const std::vector<int> rows = stats_choice_rows(save, side);
 			if (side.stats_choice_slot >= 0 && row >= 0 && row < int(rows.size())) {
 				const int m = rows[size_t(row)];
-				side.stats_merchants[size_t(side.stats_choice_slot)] = m < 0 ? 0xFF : uint8_t(m);
+				const size_t slot = size_t(side.stats_choice_slot);
+				if (stats_competition(side.stats_entry)) {
+					side.stats_merchants[slot] = m < 0 ? 0xFF : uint8_t(m);
+				} else if (slot == 4) {
+					side.stats_towns.ware = m < 0 ? side.stats_towns.ware : uint8_t(m);
+				} else {
+					side.stats_towns.towns[slot] = m < 0 ? 0xFF : uint8_t(m);
+				}
 				side.stats_choice_slot = -1;
 			}
 		};
 		auto stats_button = [&](Uint8 button) {
 			if (side.stats_choice_slot >= 0) {
-				// A merchant's list: Up and Down its rows, Cross picks, Square the sort, Circle closes it.
+				// A button's list: Up and Down its rows, Cross picks, Square the sort, Circle closes it.
 				const int count = int(stats_choice_rows(save, side).size());
 				switch (button) {
 				case SDL_CONTROLLER_BUTTON_DPAD_UP:
@@ -8430,14 +8544,15 @@ int main(int argc, char** argv) {
 				stats_step_period(button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1);
 				return true;
 			case SDL_CONTROLLER_BUTTON_X:
-				// The competition: Square the next merchant button, Cross opens its list.
-				if (!stats_competition(side.stats_entry)) {
+				// The competition and the comparison: Square the next merchant or town button (then the ware's), Cross
+				// opens its list.
+				if (!stats_slot_buttons(side.stats_entry)) {
 					return false;
 				}
-				side.stats_slot = (side.stats_slot + 1) % 4;
+				side.stats_slot = (side.stats_slot + 1) % (stats_ware_button(side.stats_entry) ? 5 : 4);
 				return true;
 			case SDL_CONTROLLER_BUTTON_A:
-				if (!stats_competition(side.stats_entry)) {
+				if (!stats_slot_buttons(side.stats_entry)) {
 					return false;
 				}
 				stats_open_choice(side.stats_slot);
@@ -8858,6 +8973,7 @@ int main(int argc, char** argv) {
 						side.stats_entry = kStatisticsBalance;
 						// The window's show (0x49D380) fills the competition's empty merchant slots.
 						statistics_default_merchants(save, side.stats_merchants);
+					statistics_default_towns(save, side.stats_towns);
 						side.stats_choice_slot = -1;
 					}
 					break;
@@ -8869,7 +8985,9 @@ int main(int argc, char** argv) {
 					const int x = touch_start.x;
 					const int y = touch_start.y;
 					const int k = sl.period_at(x, y);
-					const int slot = stats_competition(side.stats_entry) ? sl.merchant_at(x, y) : -1;
+					const int slot = !stats_slot_buttons(side.stats_entry) ? -1
+					: stats_ware_button(side.stats_entry) && inside(sl.periods[0], x, y) ? 4
+																						: sl.merchant_at(x, y);
 					if (inside(sl.close_button, x, y)) {
 						side.menu = PanelMenu::None;
 					} else if (slot >= 0) {
@@ -8884,15 +9002,17 @@ int main(int argc, char** argv) {
 							side.stats_choice_by_key = !side.stats_choice_by_key;
 							side.stats_choice_row = 0;
 						} else if (inside(sl.choice, x, y)) {
-							for (int r = 0; r < 2 * sl.rows_per_column; ++r) {
-								if (inside(sl.choice_row(r), x, y)) {
+							const int columns = sl.choice_columns(int(stats_choice_rows(save, side).size()));
+							for (int r = 0; r < columns * sl.rows_per_column; ++r) {
+								if (inside(sl.choice_row(r, columns), x, y)) {
 									stats_choose(r);
+									break;
 								}
 							}
 						} else {
 							side.stats_choice_slot = -1;
 						}
-					} else if (k >= 1 && stats_competition(side.stats_entry)) {
+					} else if (k >= 1 && stats_slot_buttons(side.stats_entry)) {
 						if (k < 3 || stats_years_shown(save)) {
 							side.stats_graph_period = k;
 						}
@@ -9392,9 +9512,12 @@ int main(int argc, char** argv) {
 								   BTN_CROSS " choose   " BTN_SQUARE " order   " BTN_CIRCLE " back"),
 					tr(BTN_CIRCLE " volver", BTN_CIRCLE " back")};
 			} else if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu &&
-				stats_competition(side.stats_entry)) {
-				right_texts = {tr("L/R: periodo   " BTN_SQUARE " " BTN_CROSS " comerciante   " BTN_CIRCLE " cerrar",
-								   "L/R: period   " BTN_SQUARE " " BTN_CROSS " merchant   " BTN_CIRCLE " close"),
+				stats_slot_buttons(side.stats_entry)) {
+				right_texts = {stats_competition(side.stats_entry)
+						? tr("L/R: periodo   " BTN_SQUARE " " BTN_CROSS " comerciante   " BTN_CIRCLE " cerrar",
+							  "L/R: period   " BTN_SQUARE " " BTN_CROSS " merchant   " BTN_CIRCLE " close")
+						: tr("L/R: periodo   " BTN_SQUARE " " BTN_CROSS " ciudad   " BTN_CIRCLE " cerrar",
+							  "L/R: period   " BTN_SQUARE " " BTN_CROSS " town   " BTN_CIRCLE " close"),
 					tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")};
 			} else if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu) {
 				right_texts = {tr("L/R: periodo   " BTN_CIRCLE " cerrar", "L/R: period   " BTN_CIRCLE " close"),

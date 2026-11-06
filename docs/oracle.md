@@ -1644,6 +1644,44 @@ viewer the competition's tab is on: the graph with its four merchant buttons und
 over the graph, its sort button, a row puts the merchant in the slot; with the pad Square the next button, X the
 list).
 
+## The statistics window: the town comparison (2026-11-06)
+
+The town comparison's page (entries 6..10), rewritten in `statistics_window.cpp` (read in
+`re/emu/sesion15/statistics_notes.md`): the towns' residents (0x4A3BB0: the newest week's four classes of each town,
+0 below 0, or the towns' [+0x2D4] without weeks; the rows by name, each time the first left with the smallest name by
+strcmp; «%.0f inhabitants»; the total of the towns' [+0x2D4]); the graphs of 0x4A3FA0 for the entries 7..10 (the
+period 0 turned into 1 as in the competition; one series per town of the window's [+0xB0..+0xB3] in its slot's
+colour, along the period's list of the towns' records, a town missing in a record 0: the residents as the four
+classes' u32 sum, the incoming ships [+0x1FC], the production [+0x60 + 4w] and the stock [+0xC0 + 4w] of the ware
+[+0xBC]; nothing but the texts without a town or without a ware in [+0xAC..+0xAF]), with the texts beside them
+(0x4A2AB0: the largest and the smallest town over all the towns and the period's records, the production's smallest
+only above 0, the values in the ware's unit: 2000, 200 or 10, as floats for the production and as ints for the stock;
+the formats «%.0f inhabitants», «%.1f load»..., through `game_sprintf_float` with the CRT's half away from zero); the
+town buttons' list (0x49E850 for 7..10, mode 1: the towns not in another slot, «none» when one is skipped, with the
+keys of 0x49EAE4..0x49ED23) and its sorts (0x471FF0 by the window's town names, signed chars; 0x471EA0); the ware
+button's list (0x49FC1C: the 24 wares, sorted by 0x471F10); and the start of the window's show (0x49DA61: the first
+town past the towns → the player's home town, the first ware past 23 → 0). The towns' names are the table 0x6DDA00
+by the town's index, which after a load goes by the town's number: the letters' bug, here too (in save 3 the towns
+0..3 are named Edinburgh, Newcastle, Scarborough, Boston, the numbers 0..3); reproduced, fixed behind
+`fix_game_bugs()` (`statistics_town_name`).
+
+The copiers of the competition now take the window's choices as u32 arguments (wares, towns, merchants, single)
+and three more join them: `STATS_TOWNS` (SENTINEL + 0xF50: 0x4A3FA0; its view as the competition's with the button
+[+0x214]'s text), `STATS_RESIDENTS` (+ 0xF58: 0x4A3BB0; each row's town and C string, the total, the title; the
+table's scroll bar 0x4311B0 skipped by a hook; the copiers' window grows to 0x3000 bytes: the table writes
+[+0x29F0]) and `STATS_WARES` (+ 0xF60: the window's update from 0x49FC1C to 0x49FCB4 and the sort 0x471F10).
+`STATS_SLOTS` starts at 0x49DA61 and gives [+0xAC..+0xB7]; `STATS_CHOICE` picks the list's name sort by the entry.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `statistics_comparison` | without the towns' records (the residents from the towns, the graphs empty and their texts 0, no years, the lists' keys 0, the wares' list both ways, the window's start fixing a town and a ware past their ends and keeping valid ones); then 26 weeks (more than the points; one without the last two towns), 10 months (fewer) and 1, 5 and 130 years of records made with random values (a class sum past 2^31, productions 0 and below 0, a ware never produced); the residents' table; each entry by each period with all four towns, with an empty slot and the last town, with one; the wares in loads, barrels and pieces (0, 3, 5, 20, 23); without any town, without any ware; the lists of each slot of each entry, unsorted, by name and by key, from a newest week without the last two towns, and with one town shown | 1, 3, 5, 7 | 37 graphs, 2 tables, 56 lists, 2 ware lists and 2 window starts equal in each; 48 of 48 targets |
+
+Broken on purpose and caught: the towns' names by their number (40 lists, 33 graphs, 2 tables), the production's
+smallest counting the zeros (8 graphs), a residents' sum below 0 kept (1 table). The competition's scenario, with the
+copiers changed, again all equal (41 of 41 targets). In the viewer the comparison's tab is on: the residents' table
+in two columns with its total line, the graphs with their four town buttons, and for the production and the stock
+the ware button where «4 weeks» was; the lists over the graph in up to four columns.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

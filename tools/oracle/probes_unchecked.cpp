@@ -173,11 +173,27 @@ constexpr uint32_t kStatsSupply = 0x03000DC0;
 constexpr uint32_t kStatsCompetition = 0x03000EC0;
 constexpr uint32_t kStatsChoice = 0x03000F00;
 constexpr uint32_t kStatsSlots = 0x03000F40;
+// The towns' pages' (STATS_TOWNS, STATS_RESIDENTS, STATS_WARES): 0x4A3FA0, 0x4A3BB0, and the comparison's ware
+// button's list in the window's update.
+constexpr uint32_t kStatsTowns = 0x03000F50;
+constexpr uint32_t kStatsResidents = 0x03000F58;
+constexpr uint32_t kStatsWares = 0x03000F60;
 constexpr size_t kStatsView = 0xC0;
 
 StatisticsMerchants unpack_slots(uint32_t packed) {
 	return {uint8_t(packed), uint8_t(packed >> 8), uint8_t(packed >> 16), uint8_t(packed >> 24)};
 }
+
+// The window's choices of the towns' pages from the copiers' arguments: wares, towns, single (ware | town << 8).
+StatisticsTownChoices unpack_choices(uint32_t wares, uint32_t towns, uint32_t single) {
+	StatisticsTownChoices c;
+	c.wares = unpack_slots(wares);
+	c.towns = unpack_slots(towns);
+	c.ware = uint8_t(single);
+	c.town = uint8_t(single >> 8);
+	return c;
+}
+
 
 // A C string as the game's buffer holds it: its bytes up to `size`, zero-padded (no terminator past `size`).
 void put_text(std::vector<uint8_t>& view, const std::string& text, size_t size) {
@@ -195,6 +211,52 @@ void put_texts(std::vector<uint8_t>& view, size_t at, const std::string* texts, 
 			view[at + slot * k + i] = i < t.size() ? uint8_t(t[i]) : 0;
 		}
 	}
+}
+
+// A graph's view as the copiers make it (STATS_GRAPH's, then with the competition and the towns the period after
+// the call and each series' header and points; with the towns, the button [+0x214]'s text after the buttons').
+std::vector<uint8_t> graph_view(const GameTexts& texts, const StatisticsGraph& g, int entry, int period, bool towns) {
+	std::vector<uint8_t> view;
+	auto u32 = [&](uint32_t v) {
+		for (int k = 0; k < 4; ++k) {
+			view.push_back(uint8_t(v >> (8 * k)));
+		}
+	};
+	u32(g.series);
+	u32(g.points);
+	u32(g.missing);
+	view.push_back(uint8_t(g.texts.size()));
+	view.push_back(uint8_t(g.texts.size() >> 8));
+	for (size_t k = 0; k < 8; ++k) {
+		view.push_back(k < g.kinds.size() ? g.kinds[k] : 0);
+	}
+	for (size_t k = 0; k < 7; ++k) {
+		put_text(view, k < g.labels.size() && g.labels[k] ? texts.raw_at(g.labels[k]) : std::string(), 0x20);
+	}
+	const size_t at = view.size();
+	view.resize(at + 0xE0, 0);
+	put_texts(view, at, g.texts.data(), g.texts.size(), 0x20);
+	for (const std::string& button : g.buttons) {
+		put_text(view, button, 0x20);
+	}
+	if (towns) {
+		put_text(view, g.choice, 0x20);
+	}
+	put_text(view, g.series ? statistics_title(texts, entry) + g.title_end : std::string(), 0x40);
+	const int now = statistics_competition_period(period);
+	view.push_back(uint8_t(now));
+	view.push_back(uint8_t(now >> 8));
+	for (uint32_t k = 0; k < g.series && k < 4; ++k) {
+		u32(0xFF000000u | g.colours[k]);  // The copier's colours have the alpha.
+		u32(g.merchants[k]);
+		for (uint32_t p = 0; p < g.points; ++p) {
+			uint32_t bits = 0;
+			const float v = p < g.values[k].size() ? g.values[k][p] : 0.0f;
+			std::memcpy(&bits, &v, 4);
+			u32(bits);
+		}
+	}
+	return view;
 }
 
 void write_view(SaveGame& s, const std::vector<uint8_t>& view, uint32_t part) {
@@ -799,8 +861,8 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		write_view(s, view, c.args[2]);
 		return std::nullopt;
 	};
-	// STATS_COMPETITION (entry, period, slots, part): 0x4A19C0 with the window's four merchants (a byte each); its
-	// view as STATS_GRAPH's, the buttons' texts the merchants' names, then the period after the call and each
+	// STATS_COMPETITION (entry, period, merchants, part): 0x4A19C0 with the window's four merchants (a byte each);
+	// its view as STATS_GRAPH's, the buttons' texts the merchants' names, then the period after the call and each
 	// series' 0x208 bytes (colour, merchant, points).
 	r[kStatsCompetition] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		const GameTexts* texts = probe_sailing() ? probe_sailing()->texts() : nullptr;
@@ -811,56 +873,67 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		const int entry = int(c.args[0]);
 		const int period = int(c.args[1]);
 		const StatisticsGraph g = statistics_competition(s, *texts, unpack_slots(c.args[2]), entry, period);
+		write_view(s, graph_view(*texts, g, entry, period, false), c.args[3]);
+		return std::nullopt;
+	};
+	// STATS_TOWNS (entry, period, wares, towns, single, part): 0x4A3FA0 with the window's choices; its view as the
+	// competition's, with the button [+0x214]'s text. The towns' names are the save's by number (the table 0x6DDA00).
+	r[kStatsTowns] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const GameTexts* texts = probe_sailing() ? probe_sailing()->texts() : nullptr;
+		if (!texts) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		const int entry = int(c.args[0]);
+		const int period = int(c.args[1]);
+		const StatisticsGraph g = statistics_towns(s, *texts, s.opaque.town_names,
+			unpack_choices(c.args[2], c.args[3], c.args[4]), entry, period);
+		write_view(s, graph_view(*texts, g, entry, period, true), c.args[5]);
+		return std::nullopt;
+	};
+	// STATS_RESIDENTS (part): 0x4A3BB0; its view: each row's town and text (0x3C), the total, the title.
+	r[kStatsResidents] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const GameTexts* texts = probe_sailing() ? probe_sailing()->texts() : nullptr;
+		if (!texts) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		const StatisticsResidents r = statistics_residents(s, *texts, s.opaque.town_names);
 		std::vector<uint8_t> view;
 		auto u32 = [&](uint32_t v) {
 			for (int k = 0; k < 4; ++k) {
 				view.push_back(uint8_t(v >> (8 * k)));
 			}
 		};
-		u32(g.series);
-		u32(g.points);
-		u32(g.missing);
-		view.push_back(uint8_t(g.texts.size()));
-		view.push_back(uint8_t(g.texts.size() >> 8));
-		for (size_t k = 0; k < 8; ++k) {
-			view.push_back(k < g.kinds.size() ? g.kinds[k] : 0);
+		for (size_t k = 0; k < r.towns.size(); ++k) {
+			u32(r.towns[k]);
+			put_text(view, r.texts[k], 0x3C);
 		}
-		for (size_t k = 0; k < 7; ++k) {
-			put_text(view, k < g.labels.size() ? texts->raw_at(g.labels[k]) : std::string(), 0x20);
-		}
-		const size_t at = view.size();
-		view.resize(at + 0xE0, 0);
-		put_texts(view, at, g.texts.data(), g.texts.size(), 0x20);
-		for (const std::string& button : g.buttons) {
-			put_text(view, button, 0x20);
-		}
-		put_text(view, g.series ? statistics_title(*texts, entry) : std::string(), 0x40);
-		const int now = statistics_competition_period(period);
-		view.push_back(uint8_t(now));
-		view.push_back(uint8_t(now >> 8));
-		for (uint32_t k = 0; k < g.series && k < 4; ++k) {
-			u32(0xFF000000u | g.colours[k]);  // The copier's colours have the alpha.
-			u32(g.merchants[k]);
-			for (uint32_t p = 0; p < g.points; ++p) {
-				uint32_t bits = 0;
-				const float v = p < g.values[k].size() ? g.values[k][p] : 0.0f;
-				std::memcpy(&bits, &v, 4);
-				u32(bits);
-			}
-		}
-		write_view(s, view, c.args[3]);
+		u32(uint32_t(r.total));
+		put_text(view, statistics_title(*texts, kStatisticsResidents), 0x40);
+		write_view(s, view, c.args[0]);
 		return std::nullopt;
 	};
-	// STATS_CHOICE (entry, slot, slots, sort, part): the list of a merchant's button (0x49E850) and its sorts; its
-	// view: the list's mode (2) and count, the extra row, the sort's kind, where the choice goes (the slot's byte),
-	// the call's result (1), the merchants and their keys.
+	// STATS_CHOICE (entry, slot, wares, towns, merchants, single, sort, part): the list of a town's (7..10) or a
+	// merchant's (16..18) button (0x49E850) and its sorts; its view: the list's mode and count, the extra row, the
+	// sort's kind, where the choice goes (the slot's byte), the call's result (1), the towns or merchants and their
+	// keys.
 	r[kStatsChoice] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
-		const int slot = int(c.args[1]);
-		StatisticsChoice choice = statistics_competition_choice(s, unpack_slots(c.args[2]), slot, int(c.args[0]));
-		if (c.args[3] >= 1) {
-			sort_choice_by_name(s, choice);
+		const GameTexts* texts = probe_sailing() ? probe_sailing()->texts() : nullptr;
+		if (!texts) {
+			c.skip = true;
+			return std::nullopt;
 		}
-		if (c.args[3] == 2) {
+		const int entry = int(c.args[0]);
+		const int slot = int(c.args[1]);
+		const bool towns = entry >= kStatisticsTownResidents && entry <= kStatisticsTownStock;
+		StatisticsChoice choice = towns
+			? statistics_town_choice(s, unpack_choices(c.args[2], c.args[3], c.args[5]), slot, entry)
+			: statistics_competition_choice(s, unpack_slots(c.args[4]), slot, entry);
+		if (c.args[6] >= 1) {
+			sort_choice_by_name(s, *texts, s.opaque.town_names, choice);
+		}
+		if (c.args[6] == 2) {
 			sort_choice_by_key(choice);
 		}
 		std::vector<uint8_t> view;
@@ -869,11 +942,11 @@ void register_probes_unchecked(ProbeRegistry& r) {
 				view.push_back(uint8_t(v >> (8 * k)));
 			}
 		};
-		put(2, 2);
+		put(uint32_t(choice.mode), 2);
 		put(uint32_t(choice.merchants.size()), 2);
 		put(choice.none ? 1 : 0, 4);
 		put(uint32_t(choice.kind), 4);
-		put(0xB4 + uint32_t(slot), 4);
+		put((towns ? 0xB0 : 0xB4) + uint32_t(slot), 4);
 		put(1, 1);
 		for (uint8_t m : choice.merchants) {
 			view.push_back(m);
@@ -881,14 +954,37 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		for (int32_t key : choice.keys) {
 			put(uint32_t(key), 4);
 		}
-		write_view(s, view, c.args[4]);
+		write_view(s, view, c.args[7]);
 		return std::nullopt;
 	};
-	// STATS_SLOTS (slots, part): the merchants the window picks when it opens (0x49D380); its view, the four bytes.
+	// STATS_WARES (sort, part): the comparison's ware button's list (and its sort by name); its view: the mode (0),
+	// the count, the extra row (none), the wares.
+	r[kStatsWares] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const GameTexts* texts = probe_sailing() ? probe_sailing()->texts() : nullptr;
+		if (!texts) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		StatisticsChoice choice = statistics_ware_choice();
+		if (c.args[0] >= 1) {
+			sort_choice_by_name(s, *texts, s.opaque.town_names, choice);
+		}
+		std::vector<uint8_t> view = {uint8_t(choice.mode), 0, uint8_t(choice.merchants.size()), 0, 0, 0, 0, 0};
+		view.insert(view.end(), choice.merchants.begin(), choice.merchants.end());
+		write_view(s, view, c.args[1]);
+		return std::nullopt;
+	};
+	// STATS_SLOTS (wares, towns, merchants, part): what the window fixes and picks when it opens (0x49D380); its view,
+	// the wares, the towns and the merchants.
 	r[kStatsSlots] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
-		StatisticsMerchants slots = unpack_slots(c.args[0]);
-		statistics_default_merchants(s, slots);
-		write_view(s, std::vector<uint8_t>(slots.begin(), slots.end()), c.args[1]);
+		StatisticsTownChoices choices = unpack_choices(c.args[0], c.args[1], 0);
+		StatisticsMerchants merchants = unpack_slots(c.args[2]);
+		statistics_default_towns(s, choices);
+		statistics_default_merchants(s, merchants);
+		std::vector<uint8_t> view(choices.wares.begin(), choices.wares.end());
+		view.insert(view.end(), choices.towns.begin(), choices.towns.end());
+		view.insert(view.end(), merchants.begin(), merchants.end());
+		write_view(s, view, c.args[3]);
 		return std::nullopt;
 	};
 	// STATS_SUPPLY (town, part): Suministro's draw 0x4A0F10; its view, the window's three arrays of 20 (the office's

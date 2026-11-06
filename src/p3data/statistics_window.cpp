@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_texts.hpp"
 #include "p3data/statistics.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -732,6 +733,446 @@ void sort_choice_by_key(StatisticsChoice& choice) {
 		if (!swapped) {
 			break;
 		}
+	}
+}
+
+// --- The towns' pages ---
+
+namespace {
+
+constexpr uint32_t kTownIds = 0x6DE4B8;  // u8 per town index: its number (StadtDaten.ini)
+constexpr uint32_t kWareNames = 0x6C0BB0;  // + 4 · ware (24)
+constexpr uint32_t kResidentsText = 0x6C1E90;  // «%.0f inhabitants»
+constexpr uint32_t kComparisonTexts = 0x6C1E88;  // + 20 · (entry − 7): the largest's label, the smallest's, 3 formats
+// 0x672C14: the wares counted in barrels (the others, below 20, in loads; 20..23 the weapons, in pieces).
+constexpr uint8_t kBarrelWare[24] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};
+
+int compare_unsigned(const std::string& a, const std::string& b) {
+	for (size_t k = 0;; ++k) {
+		const uint8_t x = k < a.size() ? uint8_t(a[k]) : 0;
+		const uint8_t y = k < b.size() ? uint8_t(b[k]) : 0;
+		if (x != y) {
+			return x < y ? -1 : 1;
+		}
+		if (x == 0) {
+			return 0;
+		}
+	}
+}
+
+int compare_signed(const std::string& a, const std::string& b) {
+	for (size_t k = 0;; ++k) {
+		const signed char x = k < a.size() ? static_cast<signed char>(a[k]) : 0;
+		const signed char y = k < b.size() ? static_cast<signed char>(b[k]) : 0;
+		if (x != y) {
+			return x < y ? -1 : 1;
+		}
+		if (x == 0) {
+			return 0;
+		}
+	}
+}
+
+// The bubble sorts of the list (0x4720D0, 0x471FF0, 0x471F10): a swap when the name is larger, the keys swapped too.
+template <typename Compare>
+void bubble_sort(StatisticsChoice& choice, Compare larger) {
+	const size_t n = choice.merchants.size();
+	if (n == 0) {
+		return;
+	}
+	for (size_t pass = n - 1; pass > 0; --pass) {
+		bool swapped = false;
+		for (size_t i = 0; i < pass; ++i) {
+			if (larger(choice.merchants[i], choice.merchants[i + 1])) {
+				if (i + 1 < choice.keys.size()) {
+					std::swap(choice.keys[i], choice.keys[i + 1]);
+				}
+				std::swap(choice.merchants[i], choice.merchants[i + 1]);
+				swapped = true;
+			}
+		}
+		if (!swapped) {
+			break;
+		}
+	}
+}
+
+// The towns' records of the period's list (the days, weeks, months or years of 0x6DFC90, newest first) and how
+// many points a graph has, how many are missing (not recorded yet).
+struct TownPeriod {
+	const std::vector<TownStatistics>* list = nullptr;
+	uint32_t points = 0;
+	uint32_t missing = 0;
+	bool stop = false;  // The years with fewer than 2: the game returns.
+};
+
+TownPeriod town_period(const SaveGame& save, int period) {
+	const GlobalMemory& g = save.globals;
+	const auto& lists = save.statistics.towns;
+	TownPeriod out;
+	uint32_t available = 0;
+	switch (period) {
+	case 0:
+		out.list = &lists[0];
+		out.points = 30;
+		available = g.u16(kStatistics + 0x0);
+		break;
+	case 1:
+		out.list = &lists[1];
+		out.points = 24;
+		available = g.u16(kStatistics + 0x2);
+		break;
+	case 2:
+		out.list = &lists[2];
+		out.points = 24;
+		available = g.u16(kStatistics + 0x4);
+		break;
+	default:
+		// 0x54E250 counts the years (and keeps the count in [0x6DFC98]).
+		out.list = &lists[3];
+		out.points = std::min<uint32_t>(uint16_t(lists[3].size()), 0x80);
+		out.stop = out.points < 2;
+		return out;
+	}
+	out.missing = available < out.points ? out.points - available : 0;
+	return out;
+}
+
+// 0x4A2AB0: the comparison's texts beside its graph, the largest and the smallest town over every town of the
+// period's records.
+void comparison_texts(const SaveGame& save, const GameTexts& texts, const std::vector<std::string>& names,
+	const StatisticsTownChoices& choices, int entry, int period, StatisticsGraph& out) {
+	const uint32_t i = uint32_t(entry - kStatisticsTownResidents);
+	const auto& lists = save.statistics.towns;
+	const std::vector<TownStatistics>* list = &lists[2];
+	uint32_t n = 24;
+	if (period == 0) {
+		list = &lists[0];
+		n = 31;
+	} else if (period == 1) {
+		list = &lists[1];
+	} else if (period != 2) {
+		const uint32_t years = uint16_t(lists[3].size());
+		if (years >= 1) {
+			list = &lists[3];
+			n = std::min<uint32_t>(years, 0x80);
+		}
+	}
+	const uint8_t ware = choices.ware;
+	int32_t largest = 0;
+	int32_t smallest = list->empty() ? 0 : 0x7FFFFFFF;
+	uint32_t largest_town = 0;
+	uint32_t smallest_town = 0;
+	for (uint32_t k = 0; k < n && k < list->size(); ++k) {
+		const TownStatistics& record = (*list)[k];
+		for (uint32_t t = 0; t < record.size(); ++t) {
+			const GameMemory<0x204>& r = record[t];
+			int32_t v = 0;
+			switch (entry) {
+			case kStatisticsTownResidents:
+				v = int32_t(r.u32(0x1E0) + r.u32(0x1E4) + r.u32(0x1EC) + r.u32(0x1E8));
+				break;
+			case kStatisticsShipMovements:
+				v = r.s32(0x1FC);
+				break;
+			case kStatisticsTownProduction:
+				v = ware < 24 ? r.s32(0x60 + 4 * size_t(ware)) : 0;
+				break;
+			default:
+				v = ware < 24 ? r.s32(0xC0 + 4 * size_t(ware)) : 0;
+				break;
+			}
+			// The production's smallest only above 0.
+			if (v < smallest && (entry != kStatisticsTownProduction || v > 0)) {
+				smallest = v;
+				smallest_town = t;
+			}
+			if (v > largest) {
+				largest = v;
+				largest_town = t;
+			}
+		}
+	}
+	uint32_t kind = 2;  // The format: the entry's third (a plain number or loads), barrels the fourth, pieces the fifth.
+	float high = float(largest);
+	float low = float(smallest);
+	if (entry == kStatisticsTownProduction) {
+		if (smallest == 0x7FFFFFFF) {
+			smallest = 0;
+		}
+		// fild; fstp a float; fld; fdiv the float constant; fstp a float.
+		const double unit = ware >= 20 ? 10.0 : kBarrelWare[ware] ? 200.0 : 2000.0;
+		kind = ware >= 20 ? 4 : kBarrelWare[ware] ? 3 : 2;
+		high = float(double(float(largest)) / unit);
+		low = float(double(float(smallest)) / unit);
+	} else if (entry == kStatisticsTownStock) {
+		const int32_t unit = ware >= 20 ? 10 : kBarrelWare[ware] ? 200 : 2000;
+		kind = ware >= 20 ? 4 : kBarrelWare[ware] ? 3 : 2;
+		high = float(largest / unit);
+		low = float(smallest / unit);
+	}
+	const std::string& format = texts.raw_at(kComparisonTexts + 4 * (kind + 5 * i));
+	out.texts = {statistics_town_name(save, names, largest_town), game_sprintf_float(format, high),
+		statistics_town_name(save, names, smallest_town), game_sprintf_float(format, low)};
+	out.kinds.assign(4, 0);
+	// The second and fourth labels point at a zero byte of the globals (0x6DE3C6): empty.
+	out.labels = {kComparisonTexts + 20 * i, 0, kComparisonTexts + 4 + 20 * i, 0};
+}
+
+}  // namespace
+
+std::string game_sprintf_float(const std::string& format, double value) {
+	const size_t at = format.find('%');
+	if (at == std::string::npos) {
+		return format;
+	}
+	size_t j = at + 1;
+	int digits = 6;
+	if (j < format.size() && format[j] == '.') {
+		digits = 0;
+		for (++j; j < format.size() && format[j] >= '0' && format[j] <= '9'; ++j) {
+			digits = digits * 10 + (format[j] - '0');
+		}
+	}
+	if (j >= format.size() || format[j] != 'f') {
+		return format;
+	}
+	std::string number;
+	if (std::isnan(value) || std::isinf(value)) {
+		number = game_format_float(value);
+	} else {
+		// The exact decimal digits, then the half away from zero at the precision.
+		char exact[512];
+		std::snprintf(exact, sizeof(exact), "%.*f", digits + 40, std::fabs(value));
+		const std::string all(exact);
+		const size_t dot = all.find('.');
+		std::string kept = all.substr(0, dot);
+		if (digits > 0) {
+			kept += "." + all.substr(dot + 1, size_t(digits));
+		}
+		if (all[dot + 1 + size_t(digits)] >= '5') {
+			int k = int(kept.size()) - 1;
+			for (; k >= 0; --k) {
+				if (kept[size_t(k)] == '.') {
+					continue;
+				}
+				if (kept[size_t(k)] == '9') {
+					kept[size_t(k)] = '0';
+				} else {
+					++kept[size_t(k)];
+					break;
+				}
+			}
+			if (k < 0) {
+				kept = "1" + kept;
+			}
+		}
+		number = (std::signbit(value) ? "-" : "") + kept;
+	}
+	return format.substr(0, at) + number + format.substr(j + 1);
+}
+
+std::string statistics_town_name(const SaveGame& save, const std::vector<std::string>& by_number, uint32_t town) {
+	if (fix_game_bugs() && town >= save.globals.u32(global::kWorldTownCount)) {
+		return {};
+	}
+	const uint32_t number = fix_game_bugs() ? save.globals.u8(kTownIds + town) : town;
+	return number < by_number.size() ? by_number[number] : std::string();
+}
+
+void statistics_default_towns(const SaveGame& save, StatisticsTownChoices& choices) {
+	const GlobalMemory& g = save.globals;
+	if (choices.towns[0] >= g.u32(global::kWorldTownCount)) {
+		const uint32_t player = g.u32(global::kPlayer);
+		choices.towns[0] = player < g.u16(global::kWorldMerchantCount) && player < save.merchants.size()
+			? save.merchants[player].memory.u8(0x19)
+			: 0;
+	}
+	if (choices.wares[0] >= 24) {
+		choices.wares[0] = 0;
+	}
+}
+
+StatisticsResidents statistics_residents(const SaveGame& save, const GameTexts& texts,
+	const std::vector<std::string>& town_names) {
+	StatisticsResidents out;
+	const uint32_t towns = std::min<uint32_t>(save.globals.u32(global::kWorldTownCount), uint32_t(save.towns.size()));
+	std::vector<int32_t> residents(towns, 0);
+	const std::vector<TownStatistics>& weeks = save.statistics.towns[1];
+	if (!weeks.empty()) {
+		// The newest week's four classes. (The towns past its record keep what the game's stack held: 0 here.)
+		const TownStatistics& week = weeks.front();
+		for (size_t t = 0; t < week.size() && t < residents.size(); ++t) {
+			const GameMemory<0x204>& r = week[t];
+			const int32_t v = int32_t(r.u32(0x1E0) + r.u32(0x1E4) + r.u32(0x1EC) + r.u32(0x1E8));
+			residents[t] = v < 0 ? 0 : v;
+		}
+	} else {
+		for (uint32_t t = 0; t < towns; ++t) {
+			residents[t] = save.towns[t].memory.s32(0x2D4);
+		}
+	}
+	// The rows by name: each time the first town left with the smallest name (strcmp), then it is used (−1).
+	std::vector<std::string> names(towns);
+	for (uint32_t t = 0; t < towns; ++t) {
+		names[t] = statistics_town_name(save, town_names, t);
+	}
+	const std::string& format = texts.raw_at(kResidentsText);
+	for (uint32_t k = 0; k < towns; ++k) {
+		uint32_t best = 0;
+		while (best < towns && residents[best] < 0) {
+			++best;
+		}
+		if (best >= towns) {
+			break;
+		}
+		for (uint32_t t = best + 1; t < towns; ++t) {
+			if (residents[t] >= 0 && compare_unsigned(names[t], names[best]) < 0) {
+				best = t;
+			}
+		}
+		out.towns.push_back(best);
+		out.texts.push_back(game_sprintf_float(format, double(float(residents[best]))));  // fild; fstp a float
+		residents[best] = -1;
+	}
+	uint32_t total = 0;
+	for (uint32_t t = 0; t < towns; ++t) {
+		total += save.towns[t].memory.u32(0x2D4);
+	}
+	out.total = int32_t(total);
+	return out;
+}
+
+StatisticsGraph statistics_towns(const SaveGame& save, const GameTexts& texts, const std::vector<std::string>& town_names,
+	const StatisticsTownChoices& choices, int entry, int period) {
+	StatisticsGraph out;
+	if (entry < kStatisticsTownResidents || entry > kStatisticsTownStock) {
+		return out;
+	}
+	period = statistics_competition_period(period);  // The towns' graphs have no «4 weeks» either.
+	const TownPeriod p = town_period(save, period);
+	out.points = p.points;
+	out.missing = p.missing;
+	if (p.stop) {
+		return out;
+	}
+	comparison_texts(save, texts, town_names, choices, entry, period, out);
+	const uint32_t towns = save.globals.u32(global::kWorldTownCount);
+	bool any_town = false;
+	bool any_ware = false;
+	for (size_t k = 0; k < 4; ++k) {
+		any_town = any_town || choices.towns[k] < towns;
+		any_ware = any_ware || choices.wares[k] < 24;
+	}
+	if (!any_town || !any_ware) {
+		return out;
+	}
+	if (entry == kStatisticsTownProduction || entry == kStatisticsTownStock) {
+		out.choice = texts.raw_at(kWareNames + 4 * uint32_t(choices.ware));
+		out.title_end = out.choice;
+	}
+	uint32_t s = 0;
+	for (size_t k = 0; k < 4; ++k) {
+		if (choices.towns[k] >= towns) {
+			continue;
+		}
+		out.colours[s] = kStatisticsColours[k];
+		out.merchants[s] = choices.towns[k];
+		out.buttons[k] = statistics_town_name(save, town_names, choices.towns[k]);
+		++s;
+	}
+	out.series = s;
+	const uint8_t ware = choices.ware;
+	for (uint32_t k = 0; k < s; ++k) {
+		out.values[k].assign(out.points, 0.0f);
+	}
+	// Each point from the newest record backwards; past the list's end, 0.
+	for (uint32_t i = 0; i < out.points && i < p.list->size(); ++i) {
+		const TownStatistics& record = (*p.list)[i];
+		for (uint32_t k = 0; k < s; ++k) {
+			const uint32_t t = out.merchants[k];
+			if (t >= record.size()) {
+				continue;
+			}
+			const GameMemory<0x204>& r = record[t];
+			float v = 0.0f;
+			switch (entry) {
+			case kStatisticsTownResidents:  // fild of the u32 as a u64
+				v = float(r.u32(0x1E0) + r.u32(0x1E4) + r.u32(0x1E8) + r.u32(0x1EC));
+				break;
+			case kStatisticsShipMovements:
+				v = float(r.u32(0x1FC));
+				break;
+			case kStatisticsTownProduction:  // fild of the s32
+				v = ware < 24 ? float(r.s32(0x60 + 4 * size_t(ware))) : 0.0f;
+				break;
+			default:
+				v = ware < 24 ? float(r.s32(0xC0 + 4 * size_t(ware))) : 0.0f;
+				break;
+			}
+			out.values[k][out.points - 1 - i] = v;
+		}
+	}
+	return out;
+}
+
+StatisticsChoice statistics_town_choice(const SaveGame& save, const StatisticsTownChoices& choices, int slot, int entry) {
+	StatisticsChoice out;
+	out.mode = 1;
+	if (entry < kStatisticsTownResidents || entry > kStatisticsTownStock) {
+		return out;
+	}
+	const uint32_t towns = std::min<uint32_t>(save.globals.u32(global::kWorldTownCount), uint32_t(save.towns.size()));
+	for (uint32_t t = 0; t < towns; ++t) {
+		bool shown = false;  // In another slot: not listed, and the extra row «none».
+		for (int j = 0; j < 4 && !shown; ++j) {
+			shown = j != slot && choices.towns[size_t(j)] == t;
+		}
+		if (shown) {
+			out.none = true;
+			continue;
+		}
+		out.merchants.push_back(uint8_t(t));
+	}
+	out.kind = entry - kStatisticsTownResidents;
+	const std::vector<TownStatistics>& weeks = save.statistics.towns[1];
+	const uint8_t ware = choices.ware;
+	for (uint8_t t : out.merchants) {
+		int32_t key = 0;
+		if (entry == kStatisticsTownResidents) {
+			key = save.towns[t].memory.s32(0x2D4);
+		} else if (!weeks.empty() && t < weeks.front().size()) {
+			const GameMemory<0x204>& r = weeks.front()[t];
+			key = entry == kStatisticsShipMovements ? r.s32(0x1FC)
+				: entry == kStatisticsTownProduction ? r.s32(0x60 + 4 * size_t(ware))
+													 : r.s32(0xC0 + 4 * size_t(ware));
+		}
+		out.keys.push_back(key);
+	}
+	return out;
+}
+
+StatisticsChoice statistics_ware_choice() {
+	StatisticsChoice out;
+	out.mode = 0;
+	for (uint8_t w = 0; w < 24; ++w) {
+		out.merchants.push_back(w);
+	}
+	return out;
+}
+
+void sort_choice_by_name(const SaveGame& save, const GameTexts& texts, const std::vector<std::string>& town_names,
+	StatisticsChoice& choice) {
+	if (choice.mode == 2) {
+		sort_choice_by_name(save, choice);
+	} else if (choice.mode == 1) {
+		bubble_sort(choice, [&](uint32_t a, uint32_t b) {
+			return compare_signed(statistics_town_name(save, town_names, a), statistics_town_name(save, town_names, b)) > 0;
+		});
+	} else {
+		bubble_sort(choice, [&](uint32_t a, uint32_t b) {
+			return compare_signed(texts.raw_at(kWareNames + 4 * a), texts.raw_at(kWareNames + 4 * b)) > 0;
+		});
 	}
 }
 
