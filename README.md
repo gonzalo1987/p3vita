@@ -160,11 +160,15 @@ the events' sound (up and down choose, left and right or X change, Circle closes
 it, which sends them to the game).
 
 **The statistics** (touching the money on the top bar, as in the game): the menu in the panel's room with the
-game's four pages (for now the company overview: the others are off) and the chosen entry on a parchment over the
-town: the balance (income and expenditure of the last 4 weeks or 3, 6, 12 months), the graphs of the company's
-wealth, its ships and its production (4 weeks, 6 months, 2 years, or the whole game after its second year) and the
-goods' supply in a town of your offices. Touch the tabs, the entries and the period's buttons; with the buttons,
-up and down choose the entry, L and R the period (or the supply's town), Circle closes them.
+game's four pages (for now the company overview and the competition: the towns' two are off) and the chosen entry
+on a parchment over the town: the balance (income and expenditure of the last 4 weeks or 3, 6, 12 months), the
+graphs of the company's wealth, its ships and its production (4 weeks, 6 months, 2 years, or the whole game after
+its second year) and the goods' supply in a town of your offices; and the competition: the company value, loading
+capacity and popularity of up to four merchants (6 months, 2 years or the whole game), with the averages of all of
+them. Touch the tabs, the entries and the period's buttons; with the buttons, up and down choose the entry, L and R
+the period (or the supply's town), Circle closes them. In the competition, a merchant's button under the graph
+opens the list of the others, sorted by name or by the graph's value, to put another one in his place or to leave
+it empty (with the buttons: Square goes to the next merchant's button, X opens its list).
 
 **On the sea map** the panel stays: the sea's minimap (touch or drag to move the
 map), the ship buttons (a ship at sea is chosen and centred; one in port takes

@@ -3345,7 +3345,19 @@ struct SidePanel {
 	int stats_balance_period = 0;
 	int stats_graph_period = 0;
 	int stats_town = -1;
+	// The competition's four merchants ([+0xB4..+0xB7]; the empty ones filled when the statistics open, 0x49D380),
+	// the merchant button the pad points at, and the list one opens (its slot, -1 closed; sorted by name or by the
+	// entry's key; the pad's row).
+	StatisticsMerchants stats_merchants = kNoStatisticsMerchants;
+	int stats_slot = 0;
+	int stats_choice_slot = -1;
+	bool stats_choice_by_key = false;
+	int stats_choice_row = 0;
 };
+
+bool stats_competition(int entry) {
+	return entry >= kStatisticsCompanies && entry <= kStatisticsPopularity;
+}
 
 constexpr int kShipListRows = 6;  // Two lines each in the room.
 
@@ -5905,14 +5917,15 @@ void draw_mail_parchment(SDL_Renderer* renderer, TextRenderer& text, const Panel
 
 // --- The statistics (the game's SIDEMENU_STATISTIK, statistics_window.hpp): the menu in the panel's room (its four
 // pages' tabs, the page's title, its entries) and the window on a parchment over the town (the entry's title, the
-// period's buttons, the balance's table, a graph or Suministro's table). Opened by the top bar's money. Only the
-// company overview (page 2) is done: the other pages' tabs are off. ---
+// period's buttons, the balance's table, a graph or Suministro's table; the competition's merchant buttons and their
+// list). Opened by the top bar's money. Done: the company overview (page 2) and the competition (3); the towns' pages'
+// tabs are off. ---
 
 // The tabs' frames in page_statistiken.tga (sidemenu.ini Button14..17 → textures.ini TEX20034's frames 8, 4, 12,
 // 0): their column and width (rows: normal, pressed, lit, off).
 constexpr int kStatsTabX[kStatisticsPages] = {0, 100, 36, 68};
 constexpr int kStatsTabW[kStatisticsPages] = {36, 36, 32, 32};
-constexpr bool kStatsPageDone[kStatisticsPages] = {false, false, true, false};
+constexpr bool kStatsPageDone[kStatisticsPages] = {false, false, true, true};
 
 struct StatsRoomLayout {
 	SDL_Rect tabs[kStatisticsPages] = {};
@@ -6002,6 +6015,31 @@ struct StatsLayout {
 		body = {inner.x, periods[0].y + bh + 10, inner.w, 0};
 		close_button = {panel.x + panel.w / 2 - 70, panel.y + panel.h - 48, 140, line_height + 10};
 		body.h = close_button.y - 8 - body.y;
+		// The competition's merchant buttons, under its graph and the texts beside it.
+		const int plot_w = body.w - kStatsSideW - 18;
+		const int mw = (body.w - 8 - 3 * 6) / 4;
+		for (int k = 0; k < 4; ++k) {
+			merchants[k] = {body.x + 4 + k * (mw + 6), body.y + body.h - line_height - 8, mw, line_height + 6};
+		}
+		// A merchant button's list, over the graph and its texts: its title and sort button, then the rows in two
+		// columns.
+		choice = {body.x, body.y, body.w, merchants[0].y - 6 - body.y};
+		(void)plot_w;
+		sort_button = {choice.x + choice.w - 230, choice.y + 4, 226, line_height + 6};
+		row_h = line_height + 6;
+		rows_top = choice.y + line_height + 18;
+		rows_per_column = std::max(1, (choice.y + choice.h - rows_top) / row_h);
+	}
+	static constexpr int kStatsSideW = 230;  // The texts beside a graph.
+	SDL_Rect merchants[4] = {};
+	SDL_Rect choice{};
+	SDL_Rect sort_button{};
+	int row_h = 0;
+	int rows_top = 0;
+	int rows_per_column = 1;
+	SDL_Rect choice_row(int k) const {
+		const int w = (choice.w - 12) / 2;
+		return {choice.x + 4 + (k / rows_per_column) * (w + 4), rows_top + (k % rows_per_column) * row_h, w, row_h - 2};
 	}
 	int period_at(int x, int y) const {
 		for (int k = 0; k < 4; ++k) {
@@ -6011,7 +6049,35 @@ struct StatsLayout {
 		}
 		return -1;
 	}
+	int merchant_at(int x, int y) const {
+		for (int k = 0; k < 4; ++k) {
+			if (inside(merchants[k], x, y)) {
+				return k;
+			}
+		}
+		return -1;
+	}
 };
+
+// The list a competition's merchant button opens, as the game's (0x49E850): its merchants by name (or by the entry's
+// key, with its button) and the extra row «no trader» (-1) when it may empty the slot.
+std::vector<int> stats_choice_rows(const SaveGame& save, const SidePanel& ui) {
+	std::vector<int> rows;
+	if (ui.stats_choice_slot < 0) {
+		return rows;
+	}
+	StatisticsChoice choice =
+		statistics_competition_choice(save, ui.stats_merchants, ui.stats_choice_slot, ui.stats_entry);
+	sort_choice_by_name(save, choice);
+	if (ui.stats_choice_by_key) {
+		sort_choice_by_key(choice);
+	}
+	rows.assign(choice.merchants.begin(), choice.merchants.end());
+	if (choice.none) {
+		rows.push_back(-1);
+	}
+	return rows;
+}
 
 void draw_stats_toggle(SDL_Renderer* renderer, TextRenderer& text, const SDL_Rect& r, const std::string& label, bool lit,
 	bool enabled) {
@@ -6098,8 +6164,8 @@ void draw_stats_graph(SDL_Renderer* renderer, TextRenderer& text, const PanelArt
 	SDL_RenderFillRect(renderer, &plot);
 	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
 	SDL_RenderDrawRect(renderer, &plot);
-	// 0x4A5DD0's scale: from 2000 (1000 for Riqueza, kind 2 of 0x66FC0C) up to the largest point, at 0.95 of the height.
-	float top = entry == kStatisticsWealth ? 1000.0f : 2000.0f;
+	// 0x4A5DD0's scale: from the entry's floor up to the largest point, at 0.95 of the height.
+	float top = statistics_scale_floor(entry);
 	for (uint32_t s = 0; s < g.series && s < 4; ++s) {
 		for (float v : g.values[s]) {
 			top = std::max(top, v);
@@ -6116,7 +6182,7 @@ void draw_stats_graph(SDL_Renderer* renderer, TextRenderer& text, const PanelArt
 		// The recorded points (the oldest `missing` aren't), joined, each with a dot.
 		const float step = g.points > 1 ? float(plot.w - 6) / float(g.points - 1) : 0.0f;
 		for (uint32_t s = 0; s < g.series && s < 4; ++s) {
-			const uint32_t colour = kStatisticsColours[s];
+			const uint32_t colour = g.colours[s];
 			SDL_SetRenderDrawColor(renderer, Uint8(colour >> 16), Uint8(colour >> 8), Uint8(colour), 255);
 			auto at = [&](uint32_t k) {
 				return SDL_Point{plot.x + 3 + int(step * float(k)),
@@ -6222,6 +6288,52 @@ void draw_stats_supply(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 	}
 }
 
+// A text cut (by whole UTF-8 letters) to fit `width`.
+std::string stats_fit(TextRenderer& text, std::string s, int width) {
+	while (!s.empty() && text.measure(s) > width) {
+		size_t last = s.size() - 1;  // The last letter's first byte.
+		while (last > 0 && (uint8_t(s[last]) & 0xC0) == 0x80) {
+			--last;
+		}
+		s.resize(last);
+	}
+	return s;
+}
+
+// The list of a competition's merchant button, over the graph (the game's list 0x46F760 in its mode 2): «choose
+// trader», its sort button (what touching it does: by the entry's key, or back to by name), the merchants with
+// their home towns, and «no trader» when it may empty the slot.
+void draw_stats_choice(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save,
+	const std::vector<std::string>& town_names, const SidePanel& ui, const StatsLayout& layout) {
+	SDL_SetRenderDrawColor(renderer, 236, 220, 180, 250);
+	SDL_RenderFillRect(renderer, &layout.choice);
+	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
+	SDL_RenderDrawRect(renderer, &layout.choice);
+	text.draw(stats_text(g_texts->raw_at(0x6C10D0)), layout.choice.x + 6, layout.choice.y + 6, kParchmentInk);
+	const uint32_t sort_text = ui.stats_choice_by_key ? 0x6C10EC : 0x6C1190 + 4 * uint32_t(ui.stats_entry - kStatisticsCompanies + 4);
+	draw_stats_toggle(renderer, text, layout.sort_button, stats_fit(text, stats_text(g_texts->raw_at(sort_text)),
+		layout.sort_button.w - 8), false, true);
+	const std::vector<int> rows = stats_choice_rows(save, ui);
+	for (size_t k = 0; k < rows.size() && int(k) < 2 * layout.rows_per_column; ++k) {
+		const SDL_Rect r = layout.choice_row(int(k));
+		const int m = rows[k];
+		const bool lit = int(k) == ui.stats_choice_row || m == ui.stats_merchants[size_t(ui.stats_choice_slot)];
+		SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, lit ? 110 : 40);
+		SDL_RenderFillRect(renderer, &r);
+		std::string line;
+		if (m < 0) {
+			line = stats_text(g_texts->raw_at(0x6C1088));
+		} else {
+			line = stats_text(statistics_first_name(save, uint32_t(m)) + " " + statistics_family_name(save, uint32_t(m)));
+			const int home = save.merchants[size_t(m)].memory.u8(0x19);
+			if (home < int(save.towns.size())) {
+				line += " (" + town_name(save, town_names, home) + ")";
+			}
+		}
+		text.draw(stats_fit(text, line, r.w - 8), r.x + 4, r.y + 2, kParchmentInk);
+	}
+}
+
 void draw_stats_window(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
 	const std::vector<std::string>& town_names, const SidePanel& ui) {
 	if (!g_texts || save.player < 0) {
@@ -6250,6 +6362,31 @@ void draw_stats_window(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 				k == ui.stats_balance_period, true);
 		}
 		draw_stats_balance(renderer, text, statistics_balance(save, *g_texts, player, ui.stats_balance_period), layout.body);
+	} else if (stats_competition(entry)) {
+		// The competition: no «4 weeks» (the game hides its button and turns that period into 6 months).
+		static constexpr uint32_t kPeriodText[4] = {0x6C1A38, 0x6C1A3C, 0x6C1A40, 0x6C1A44};
+		const int period = statistics_competition_period(ui.stats_graph_period);
+		for (int k = 1; k < 4; ++k) {
+			draw_stats_toggle(renderer, text, layout.periods[k], stats_text(g_texts->raw_at(kPeriodText[k])),
+				k == period, k < 3 || stats_years_shown(save));
+		}
+		const StatisticsGraph g = statistics_competition(save, *g_texts, ui.stats_merchants, entry, period);
+		draw_stats_graph(renderer, text, art, g, entry, layout.body);
+		if (ui.stats_choice_slot >= 0) {
+			draw_stats_choice(renderer, text, save, town_names, ui, layout);
+		}
+		// The merchant buttons: each slot's colour and «F. Family» (empty: none); touching one opens its list.
+		for (int k = 0; k < 4; ++k) {
+			const SDL_Rect& r = layout.merchants[k];
+			const bool lit = k == ui.stats_choice_slot || (ui.stats_choice_slot < 0 && k == ui.stats_slot);
+			draw_stats_toggle(renderer, text, r, std::string(), lit, true);
+			const uint32_t colour = kStatisticsColours[size_t(k)];
+			const SDL_Rect swatch = {r.x + 5, r.y + (r.h - 10) / 2, 14, 10};
+			SDL_SetRenderDrawColor(renderer, Uint8(colour >> 16), Uint8(colour >> 8), Uint8(colour), 255);
+			SDL_RenderFillRect(renderer, &swatch);
+			const std::string name = stats_fit(text, stats_text(g.buttons[size_t(k)]), r.w - 28);
+			text.draw(name, swatch.x + swatch.w + 5, r.y + (r.h - text.line_height()) / 2, kParchmentInk);
+		}
 	} else {
 		static constexpr uint32_t kPeriodText[4] = {0x6C1A38, 0x6C1A3C, 0x6C1A40, 0x6C1A44};
 		for (int k = 0; k < 4; ++k) {
@@ -8208,12 +8345,65 @@ int main(int argc, char** argv) {
 				stats_pick_town(step);
 			} else if (side.stats_entry == kStatisticsBalance) {
 				side.stats_balance_period = (side.stats_balance_period + 4 + step) % 4;
+			} else if (stats_competition(side.stats_entry)) {
+				// 6 months, 2 years and the playing time (with more than a year recorded).
+				const int periods = stats_years_shown(save) ? 3 : 2;
+				const int k = std::min(statistics_competition_period(side.stats_graph_period), periods) - 1;
+				side.stats_graph_period = 1 + (k + periods + step) % periods;
 			} else {
 				const int periods = stats_years_shown(save) ? 4 : 3;
 				side.stats_graph_period = (std::min(side.stats_graph_period, periods - 1) + periods + step) % periods;
 			}
 		};
+		// An entry shown (0x4A5DD0): the competition turns the graphs' period 0 into 1; a merchant's list closes.
+		auto stats_select = [&](int entry) {
+			side.stats_entry = entry;
+			side.stats_choice_slot = -1;
+			if (stats_competition(entry)) {
+				side.stats_graph_period = statistics_competition_period(side.stats_graph_period);
+			}
+		};
+		// A merchant button's list: opened sorted by name; a row puts its merchant in the slot («no trader»: empty).
+		auto stats_open_choice = [&](int slot) {
+			side.stats_slot = slot;
+			side.stats_choice_slot = slot;
+			side.stats_choice_by_key = false;
+			side.stats_choice_row = 0;
+		};
+		auto stats_choose = [&](int row) {
+			const std::vector<int> rows = stats_choice_rows(save, side);
+			if (side.stats_choice_slot >= 0 && row >= 0 && row < int(rows.size())) {
+				const int m = rows[size_t(row)];
+				side.stats_merchants[size_t(side.stats_choice_slot)] = m < 0 ? 0xFF : uint8_t(m);
+				side.stats_choice_slot = -1;
+			}
+		};
 		auto stats_button = [&](Uint8 button) {
+			if (side.stats_choice_slot >= 0) {
+				// A merchant's list: Up and Down its rows, Cross picks, Square the sort, Circle closes it.
+				const int count = int(stats_choice_rows(save, side).size());
+				switch (button) {
+				case SDL_CONTROLLER_BUTTON_DPAD_UP:
+				case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+					if (count > 0) {
+						side.stats_choice_row =
+							(side.stats_choice_row + count + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1)) % count;
+					}
+					return true;
+				case SDL_CONTROLLER_BUTTON_A:
+					stats_choose(side.stats_choice_row);
+					return true;
+				case SDL_CONTROLLER_BUTTON_X:
+					side.stats_choice_by_key = !side.stats_choice_by_key;
+					side.stats_choice_row = 0;
+					return true;
+				case SDL_CONTROLLER_BUTTON_B:
+					side.stats_choice_slot = -1;
+					return true;
+				default:
+					return true;
+				}
+			}
 			switch (button) {
 			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
 			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
@@ -8222,7 +8412,7 @@ int main(int argc, char** argv) {
 						kStatisticsPages;
 					if (kStatsPageDone[page]) {
 						side.stats_page = page;
-						side.stats_entry = kStatisticsPageFirst[size_t(page)];
+						stats_select(kStatisticsPageFirst[size_t(page)]);
 						break;
 					}
 				}
@@ -8232,12 +8422,25 @@ int main(int argc, char** argv) {
 				const int first = kStatisticsPageFirst[size_t(side.stats_page)];
 				const int count = kStatisticsPageFirst[size_t(side.stats_page) + 1] - first;
 				const int step = button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1;
-				side.stats_entry = first + (side.stats_entry - first + count + step) % count;
+				stats_select(first + (side.stats_entry - first + count + step) % count);
 				return true;
 			}
 			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
 			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
 				stats_step_period(button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1);
+				return true;
+			case SDL_CONTROLLER_BUTTON_X:
+				// The competition: Square the next merchant button, Cross opens its list.
+				if (!stats_competition(side.stats_entry)) {
+					return false;
+				}
+				side.stats_slot = (side.stats_slot + 1) % 4;
+				return true;
+			case SDL_CONTROLLER_BUTTON_A:
+				if (!stats_competition(side.stats_entry)) {
+					return false;
+				}
+				stats_open_choice(side.stats_slot);
 				return true;
 			case SDL_CONTROLLER_BUTTON_B:
 				side.menu = PanelMenu::None;
@@ -8653,6 +8856,9 @@ int main(int argc, char** argv) {
 						side.focus = -1;
 						side.stats_page = 2;
 						side.stats_entry = kStatisticsBalance;
+						// The window's show (0x49D380) fills the competition's empty merchant slots.
+						statistics_default_merchants(save, side.stats_merchants);
+						side.stats_choice_slot = -1;
 					}
 					break;
 				}
@@ -8663,8 +8869,33 @@ int main(int argc, char** argv) {
 					const int x = touch_start.x;
 					const int y = touch_start.y;
 					const int k = sl.period_at(x, y);
+					const int slot = stats_competition(side.stats_entry) ? sl.merchant_at(x, y) : -1;
 					if (inside(sl.close_button, x, y)) {
 						side.menu = PanelMenu::None;
+					} else if (slot >= 0) {
+						if (side.stats_choice_slot == slot) {
+							side.stats_choice_slot = -1;
+						} else {
+							stats_open_choice(slot);
+						}
+					} else if (side.stats_choice_slot >= 0) {
+						// A merchant's list: its sort button, a row, or closed by touching elsewhere.
+						if (inside(sl.sort_button, x, y)) {
+							side.stats_choice_by_key = !side.stats_choice_by_key;
+							side.stats_choice_row = 0;
+						} else if (inside(sl.choice, x, y)) {
+							for (int r = 0; r < 2 * sl.rows_per_column; ++r) {
+								if (inside(sl.choice_row(r), x, y)) {
+									stats_choose(r);
+								}
+							}
+						} else {
+							side.stats_choice_slot = -1;
+						}
+					} else if (k >= 1 && stats_competition(side.stats_entry)) {
+						if (k < 3 || stats_years_shown(save)) {
+							side.stats_graph_period = k;
+						}
 					} else if (k >= 0 && side.stats_entry == kStatisticsSupply) {
 						if (k == 0 || k == 3) {
 							stats_pick_town(k == 0 ? -1 : 1);
@@ -8721,9 +8952,9 @@ int main(int argc, char** argv) {
 						const int count = kStatisticsPageFirst[size_t(side.stats_page) + 1] - first;
 						if (tab >= 0 && kStatsPageDone[tab]) {
 							side.stats_page = tab;
-							side.stats_entry = kStatisticsPageFirst[size_t(tab)];
+							stats_select(kStatisticsPageFirst[size_t(tab)]);
 						} else if (row >= 0 && row < count && kStatsPageDone[side.stats_page]) {
-							side.stats_entry = first + row;
+							stats_select(first + row);
 						}
 					} else if (side.menu == PanelMenu::Build && inside(panel_layout.room, x, y)) {
 						const BuildRoomLayout room(panel_layout.room, small_text->line_height());
@@ -9155,7 +9386,17 @@ int main(int argc, char** argv) {
 		}
 		if (text) {
 			std::vector<std::string> right_texts;
-			if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu) {
+			if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu &&
+				side.stats_choice_slot >= 0) {
+				right_texts = {tr(BTN_CROSS " elegir   " BTN_SQUARE " orden   " BTN_CIRCLE " volver",
+								   BTN_CROSS " choose   " BTN_SQUARE " order   " BTN_CIRCLE " back"),
+					tr(BTN_CIRCLE " volver", BTN_CIRCLE " back")};
+			} else if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu &&
+				stats_competition(side.stats_entry)) {
+				right_texts = {tr("L/R: periodo   " BTN_SQUARE " " BTN_CROSS " comerciante   " BTN_CIRCLE " cerrar",
+								   "L/R: period   " BTN_SQUARE " " BTN_CROSS " merchant   " BTN_CIRCLE " close"),
+					tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")};
+			} else if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu) {
 				right_texts = {tr("L/R: periodo   " BTN_CIRCLE " cerrar", "L/R: period   " BTN_CIRCLE " close"),
 					tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")};
 			} else if (in_mail && mail_in_panel) {

@@ -168,7 +168,16 @@ constexpr uint32_t kBuildMarks = 0x03000300;
 constexpr uint32_t kStatsBalance = 0x03000D00;
 constexpr uint32_t kStatsGraph = 0x03000D40;
 constexpr uint32_t kStatsSupply = 0x03000DC0;
+// The competition's (STATS_COMPETITION, STATS_CHOICE, STATS_SLOTS): 0x4A19C0, 0x49E850 with the list's sorts
+// 0x4720D0 and 0x471EA0, and the part of 0x49D380 that picks the merchants.
+constexpr uint32_t kStatsCompetition = 0x03000EC0;
+constexpr uint32_t kStatsChoice = 0x03000F00;
+constexpr uint32_t kStatsSlots = 0x03000F40;
 constexpr size_t kStatsView = 0xC0;
+
+StatisticsMerchants unpack_slots(uint32_t packed) {
+	return {uint8_t(packed), uint8_t(packed >> 8), uint8_t(packed >> 16), uint8_t(packed >> 24)};
+}
 
 // A C string as the game's buffer holds it: its bytes up to `size`, zero-padded (no terminator past `size`).
 void put_text(std::vector<uint8_t>& view, const std::string& text, size_t size) {
@@ -788,6 +797,98 @@ void register_probes_unchecked(ProbeRegistry& r) {
 			}
 		}
 		write_view(s, view, c.args[2]);
+		return std::nullopt;
+	};
+	// STATS_COMPETITION (entry, period, slots, part): 0x4A19C0 with the window's four merchants (a byte each); its
+	// view as STATS_GRAPH's, the buttons' texts the merchants' names, then the period after the call and each
+	// series' 0x208 bytes (colour, merchant, points).
+	r[kStatsCompetition] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const GameTexts* texts = probe_sailing() ? probe_sailing()->texts() : nullptr;
+		if (!texts) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		const int entry = int(c.args[0]);
+		const int period = int(c.args[1]);
+		const StatisticsGraph g = statistics_competition(s, *texts, unpack_slots(c.args[2]), entry, period);
+		std::vector<uint8_t> view;
+		auto u32 = [&](uint32_t v) {
+			for (int k = 0; k < 4; ++k) {
+				view.push_back(uint8_t(v >> (8 * k)));
+			}
+		};
+		u32(g.series);
+		u32(g.points);
+		u32(g.missing);
+		view.push_back(uint8_t(g.texts.size()));
+		view.push_back(uint8_t(g.texts.size() >> 8));
+		for (size_t k = 0; k < 8; ++k) {
+			view.push_back(k < g.kinds.size() ? g.kinds[k] : 0);
+		}
+		for (size_t k = 0; k < 7; ++k) {
+			put_text(view, k < g.labels.size() ? texts->raw_at(g.labels[k]) : std::string(), 0x20);
+		}
+		const size_t at = view.size();
+		view.resize(at + 0xE0, 0);
+		put_texts(view, at, g.texts.data(), g.texts.size(), 0x20);
+		for (const std::string& button : g.buttons) {
+			put_text(view, button, 0x20);
+		}
+		put_text(view, g.series ? statistics_title(*texts, entry) : std::string(), 0x40);
+		const int now = statistics_competition_period(period);
+		view.push_back(uint8_t(now));
+		view.push_back(uint8_t(now >> 8));
+		for (uint32_t k = 0; k < g.series && k < 4; ++k) {
+			u32(0xFF000000u | g.colours[k]);  // The copier's colours have the alpha.
+			u32(g.merchants[k]);
+			for (uint32_t p = 0; p < g.points; ++p) {
+				uint32_t bits = 0;
+				const float v = p < g.values[k].size() ? g.values[k][p] : 0.0f;
+				std::memcpy(&bits, &v, 4);
+				u32(bits);
+			}
+		}
+		write_view(s, view, c.args[3]);
+		return std::nullopt;
+	};
+	// STATS_CHOICE (entry, slot, slots, sort, part): the list of a merchant's button (0x49E850) and its sorts; its
+	// view: the list's mode (2) and count, the extra row, the sort's kind, where the choice goes (the slot's byte),
+	// the call's result (1), the merchants and their keys.
+	r[kStatsChoice] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int slot = int(c.args[1]);
+		StatisticsChoice choice = statistics_competition_choice(s, unpack_slots(c.args[2]), slot, int(c.args[0]));
+		if (c.args[3] >= 1) {
+			sort_choice_by_name(s, choice);
+		}
+		if (c.args[3] == 2) {
+			sort_choice_by_key(choice);
+		}
+		std::vector<uint8_t> view;
+		auto put = [&](uint32_t v, int bytes) {
+			for (int k = 0; k < bytes; ++k) {
+				view.push_back(uint8_t(v >> (8 * k)));
+			}
+		};
+		put(2, 2);
+		put(uint32_t(choice.merchants.size()), 2);
+		put(choice.none ? 1 : 0, 4);
+		put(uint32_t(choice.kind), 4);
+		put(0xB4 + uint32_t(slot), 4);
+		put(1, 1);
+		for (uint8_t m : choice.merchants) {
+			view.push_back(m);
+		}
+		for (int32_t key : choice.keys) {
+			put(uint32_t(key), 4);
+		}
+		write_view(s, view, c.args[4]);
+		return std::nullopt;
+	};
+	// STATS_SLOTS (slots, part): the merchants the window picks when it opens (0x49D380); its view, the four bytes.
+	r[kStatsSlots] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		StatisticsMerchants slots = unpack_slots(c.args[0]);
+		statistics_default_merchants(s, slots);
+		write_view(s, std::vector<uint8_t>(slots.begin(), slots.end()), c.args[1]);
 		return std::nullopt;
 	};
 	// STATS_SUPPLY (town, part): Suministro's draw 0x4A0F10; its view, the window's three arrays of 20 (the office's

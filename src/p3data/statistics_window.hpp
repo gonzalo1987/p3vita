@@ -27,6 +27,11 @@ constexpr int kStatisticsWealth = 12;
 constexpr int kStatisticsShips = 13;
 constexpr int kStatisticsProduction = 14;
 constexpr int kStatisticsSupply = 15;
+// The competition's entries (the manual's «Competencia»): each merchant's company value, loading capacity and
+// popularity.
+constexpr int kStatisticsCompanies = 16;
+constexpr int kStatisticsCapacity = 17;
+constexpr int kStatisticsPopularity = 18;
 
 // An entry's button text and window title, raw (the table 0x6CC830 that 0x46C060 builds at start: the pairs of
 // 0x6C18C8 in the slots 0..14 and 16.., the slot 15 «Goods Supply», «Goods supply in %s»); a page's title (0x6C151C).
@@ -76,8 +81,56 @@ struct StatisticsGraph {
 	std::vector<uint32_t> labels;
 	// The buttons [+0xC28]'s texts: the series' names (slots), 0 for none.
 	std::array<uint32_t, 4> names{};
+	// The competition's (raw): « » for an empty slot, else the merchant's «F. Family».
+	std::array<std::string, 4> buttons;
+	// Each series' header (its first two u32): the colour ([+0x1F8 + 4k]: the company overview's by the series, the
+	// competition's by the merchant's slot) and the competition's merchant (0 in the company overview).
+	std::array<uint32_t, 4> colours{};
+	std::array<uint32_t, 4> merchants{};
 };
 StatisticsGraph statistics_graph(const SaveGame& save, uint32_t merchant, int entry, int period);
+
+// --- The competition (entries 16..18: 0x4A19C0) ---
+//
+// The window's four merchants ([+0xB4..+0xB7]; 0xFF at start, 0x49E380): a slot at or past the merchants' count is
+// empty. Each shown merchant is a series in its slot's colour, and a button with his name that opens the list.
+using StatisticsMerchants = std::array<uint8_t, 4>;
+constexpr StatisticsMerchants kNoStatisticsMerchants = {0xFF, 0xFF, 0xFF, 0xFF};
+// When the window opens (0x49D380): an empty slot 0 gets the player; each other empty slot, the merchant whose
+// company value today is the largest, walking the statistics objects in their order. A merchant already shown in
+// another slot empties the slot again (0xFF) when he comes later in that walk than the best so far, as in the game.
+void statistics_default_merchants(const SaveGame& save, StatisticsMerchants& slots);
+// The competition has no «4 weeks» (its button is hidden): the game turns the window's period 0 into 1.
+constexpr int statistics_competition_period(int period) { return period == 0 ? 1 : period; }
+// The graph: the shown merchants' series (the oldest point first): the company value (only above 0), the loading
+// capacity, the popularity (only above 0), by weeks (24), months (24) or years (all, at most 128: with fewer than 2
+// years recorded the game stops before anything else); the six averages beside it over every statistics object (the
+// current week's record: «%i traders», the company value, ships, loading capacity in loads, offices, businesses; the
+// labels the English exe's slots 0x6C1FCC + 8k).
+StatisticsGraph statistics_competition(const SaveGame& save, const GameTexts& texts, const StatisticsMerchants& slots,
+	int entry, int period);
+
+// The list a merchant's button opens (0x49E850, for the entries 16..18: the list 0x46F760 in its mode 2, «choose
+// trader»): the merchants not shown in the other slots (but those whose [+0x8] has the bit 4), from the last to the
+// first, each with its key to sort by. Choosing a row puts its merchant in the slot; the extra row («no trader»,
+// only when another slot shows a merchant) empties it (0xFF).
+struct StatisticsChoice {
+	std::vector<uint8_t> merchants;  // [+0x1074]
+	// [+0x1088]: the company value's float bits (16), the loading capacity (17), the current week's popularity
+	// (ftol of f[+0xE70], the week ring's first record: 18), compared as signed ints.
+	std::vector<int32_t> keys;
+	bool none = false;  // [+0x108C]
+	int kind = 0;  // [+0x1098]: its sort button's text, 0x6C1190 + 4 · kind (4 wealth, 5 capacity, 6 popularity)
+};
+StatisticsChoice statistics_competition_choice(const SaveGame& save, const StatisticsMerchants& slots, int slot, int entry);
+// The list's sorts: by name (0x4720D0, when it opens: the family names, then the first names, as signed chars) and,
+// with its button, by the key (0x471EA0, the largest first); both bubble sorts that swap only the larger.
+void sort_choice_by_name(const SaveGame& save, StatisticsChoice& choice);
+void sort_choice_by_key(StatisticsChoice& choice);
+// A merchant's names as his [+0xE8] and [+0xE4] point at them (0x4F6420: the first name from the women's list unless
+// [+0x1A]; 0x4F6450), in Latin-1.
+std::string statistics_first_name(const SaveGame& save, uint32_t merchant);
+std::string statistics_family_name(const SaveGame& save, uint32_t merchant);
 
 // --- Suministro (entry 15: its title «Goods supply in %s» with the town; the table is the draw's, 0x4A0F10) ---
 //
@@ -96,6 +149,11 @@ struct SupplyRow {
 	int32_t price = 0;  // the buy price of a barrel or a load (0x52E430 with 200 or 2000)
 };
 std::vector<SupplyRow> statistics_supply(const SaveGame& save, uint32_t merchant, uint32_t town);
+
+// The scale's floor of an entry's graph (0x4A5DD0, [+0x2094], before the largest point raises it): by the entry's
+// kind (0x66FC0C) 2000 for 0 and 1000 for 2, else 2 · 55 for the entry 1 and 2 · (20 + 55) for the entry 2 (the bytes
+// [0x672930] and [0x672980]), else 1.
+float statistics_scale_floor(int entry);
 
 // The parchment's colours of the series (parchment.ini [Parchment1] Farbe0..3, the window's [+0x1F8 + 4k]).
 constexpr std::array<uint32_t, 4> kStatisticsColours = {0xCC0009, 0x7E009B, 0x006700, 0x009CAE};

@@ -389,6 +389,7 @@ StatisticsGraph statistics_graph(const SaveGame& save, uint32_t merchant, int en
 		for (size_t i = 0; i < walked.size(); ++i) {
 			out.values[s][out.points - 1 - i] = walked[i][s];
 		}
+		out.colours[s] = kStatisticsColours[s];
 	}
 	out.series = series;
 	auto text = [&](std::string value, uint8_t kind) {
@@ -433,6 +434,305 @@ StatisticsGraph statistics_graph(const SaveGame& save, uint32_t merchant, int en
 		}
 	}
 	return out;
+}
+
+float statistics_scale_floor(int entry) {
+	static constexpr uint8_t kKind[kStatisticsEntries] = {1, 5, 5, 5, 0, 0, 5, 1, 3, 0, 0, 2, 2, 0, 0, 6, 2, 0, 6, 0, 0,
+		0, 1, 1, 3, 4, 4, 6};  // 0x66FC0C
+	const uint8_t kind = entry >= 0 && entry < kStatisticsEntries ? kKind[entry] : 0xFF;
+	if (kind == 0) {
+		return 2000.0f;
+	}
+	if (kind == 2) {
+		return 1000.0f;
+	}
+	if (entry == 1) {
+		return 110.0f;
+	}
+	if (entry == 2) {
+		return 150.0f;
+	}
+	return 1.0f;
+}
+
+// --- The competition ---
+
+std::string statistics_first_name(const SaveGame& save, uint32_t merchant) {
+	if (merchant >= save.merchants.size()) {
+		return {};
+	}
+	const MerchantMemory& m = save.merchants[merchant].memory;
+	return game_first_name(save, m.u8(0x1A) ? (m.u8(0x1C) & 0x7Fu) : (m.u8(0x1C) | 0x80u));
+}
+
+std::string statistics_family_name(const SaveGame& save, uint32_t merchant) {
+	return merchant < save.merchants.size() ? game_family_name(save, save.merchants[merchant].memory.u8(0x1D))
+											: std::string();
+}
+
+void statistics_default_merchants(const SaveGame& save, StatisticsMerchants& slots) {
+	const GlobalMemory& g = save.globals;
+	const uint16_t count = g.u16(global::kWorldMerchantCount);
+	if (slots[0] >= count) {
+		slots[0] = uint8_t(g.u32(global::kPlayer));
+	}
+	for (size_t k = 1; k < 4; ++k) {
+		if (slots[k] < count) {
+			continue;
+		}
+		float best = -1000000.0f;  // 0xC9742400
+		for (const MerchantStatistics& object : save.statistics.merchants) {
+			const GameMemory<kObjectSize>& o = object.memory;
+			const float value = o.f32(kDays + kRecord * o.u16(0x2));  // Today's company value.
+			if (!(value > best)) {
+				continue;
+			}
+			slots[k] = uint8_t(o.u16(0x0));
+			for (size_t j = 0; j < 4; ++j) {
+				if (slots[j] == slots[k] && j != k) {
+					slots[k] = 0xFF;
+				}
+			}
+			if (slots[k] == o.u16(0x0)) {
+				best = value;
+			}
+		}
+	}
+}
+
+StatisticsGraph statistics_competition(const SaveGame& save, const GameTexts& texts, const StatisticsMerchants& slots,
+	int entry, int period) {
+	StatisticsGraph out;
+	const GlobalMemory& g = save.globals;
+	const uint16_t count = g.u16(global::kWorldMerchantCount);
+	period = statistics_competition_period(period);
+	// The points: 31 days (not reached: the period 0 is gone), 24 weeks or months, or the years recorded (0x54E250
+	// counts the towns' years list, and keeps the count in [0x6DFC98]), at most 128 and at least 2.
+	uint32_t available = 0;
+	switch (period) {
+	case 0:
+		out.points = 31;
+		available = g.u16(kStatistics + 0x0);
+		break;
+	case 1:
+		out.points = 24;
+		available = g.u16(kStatistics + 0x2);
+		break;
+	case 2:
+		out.points = 24;
+		available = g.u16(kStatistics + 0x4);
+		break;
+	default:
+		out.points = std::min<uint32_t>(uint16_t(save.statistics.towns[3].size()), 0x80);
+		available = out.points;
+		if (out.points < 2) {
+			return out;
+		}
+		break;
+	}
+	out.missing = available < out.points ? out.points - available : 0;
+	uint32_t shown = 0;
+	for (uint8_t slot : slots) {
+		shown += slot < count ? 1 : 0;
+	}
+	if (shown == 0) {
+		return out;
+	}
+	out.series = shown;
+	for (std::string& button : out.buttons) {
+		button = " ";
+	}
+
+	// The averages over every statistics object, from its current week's record.
+	int32_t sums[6] = {};
+	for (const MerchantStatistics& object : save.statistics.merchants) {
+		const Records r{object.memory};
+		const size_t W = kWeeks + kRecord * object.memory.u8(0x4);
+		++sums[0];
+		// fld; fmul [0x66FD58] = 1/64; __ftol: the value in 64ths (shifted back after the average).
+		sums[1] = int32_t(uint32_t(sums[1]) + uint32_t(game_ftol(double(r.f32(W + 0x0)) * 0.015625)));
+		sums[2] = int32_t(uint32_t(sums[2]) + object.memory.u16(W + 0x54));
+		sums[3] = int32_t(uint32_t(sums[3]) + uint32_t(int32_t(r.u32(W + 0x50)) >> 3));
+		sums[4] = int32_t(uint32_t(sums[4]) + object.memory.u16(W + 0x5A));
+		sums[5] = int32_t(uint32_t(sums[5]) + object.memory.u16(W + 0x56));
+	}
+	if (sums[0] > 0) {
+		for (int k = 1; k < 6; ++k) {
+			sums[k] /= sums[0];
+		}
+	}
+	sums[1] = int32_t(uint32_t(sums[1]) << 6);
+	sums[3] = int32_t(uint32_t(sums[3]) << 3) / 2000;
+	constexpr uint32_t kCompetitionTexts = 0x6C1FCC;  // (label, format) × 6
+	for (uint32_t k = 0; k < 6; ++k) {
+		out.texts.push_back(GameTexts::sprintf_raw(texts.raw_at(kCompetitionTexts + 4 + 8 * k), {number(sums[k])}));
+		out.kinds.push_back(k == 1 ? 1 : 0);  // [+0xF5] = 1: the coins before the company value
+		out.labels.push_back(kCompetitionTexts + 8 * k);
+	}
+
+	// The series: one per shown merchant, in his slot's colour, the oldest point first.
+	uint32_t s = 0;
+	for (size_t k = 0; k < 4 && s < shown; ++k) {
+		const uint8_t merchant = slots[k];
+		if (merchant >= count) {
+			continue;
+		}
+		out.colours[s] = kStatisticsColours[k];
+		out.merchants[s] = merchant;
+		const std::string first = statistics_first_name(save, merchant);
+		const std::string family = statistics_family_name(save, merchant);
+		out.buttons[k] = first.empty() ? family : std::string(1, first[0]) + ". " + family;
+		std::vector<float>& values = out.values[s];
+		values.assign(out.points, 0.0f);
+		const MerchantStatistics* object = merchant_statistics(save, merchant);
+		if (object) {
+			const Records r{object->memory};
+			auto point = [&](const auto& f32, const auto& s32) -> float {
+				switch (entry) {
+				case kStatisticsCompanies: {
+					const float v = f32(0x0);
+					return v > 0.0f ? v : 0.0f;
+				}
+				case kStatisticsCapacity:
+					return float(s32(0x50));  // fild; fstp
+				case kStatisticsPopularity: {
+					const float v = f32(0x68);
+					return v > 0.0f ? v : 0.0f;
+				}
+				default:
+					return 0.0f;
+				}
+			};
+			if (period == 3) {
+				// From the years' head along their links, at most the object's own years ([+0x6]); the older points 0.
+				const uint32_t n = std::min<uint32_t>(object->memory.u16(0x6), out.points);
+				for (uint32_t i = 0; i < n && i < object->years.size(); ++i) {
+					const GameMemory<0x70>& y = object->years[i];
+					values[out.points - 1 - i] = point([&](size_t o) { return y.f32(o); }, [&](size_t o) { return y.s32(o); });
+				}
+			} else {
+				size_t at = period == 0 ? kDays + kRecord * object->memory.u16(0x2)
+					: period == 1		? kWeeks + kRecord * object->memory.u8(0x4)
+										: kMonths + kRecord * object->memory.u8(0x5);
+				for (uint32_t i = 0; i < out.points; ++i) {
+					values[out.points - 1 - i] =
+						point([&](size_t o) { return r.f32(at + o); }, [&](size_t o) { return int32_t(r.u32(at + o)); });
+					at = r.u32(at + kLink);
+				}
+			}
+		}
+		++s;
+	}
+	return out;
+}
+
+StatisticsChoice statistics_competition_choice(const SaveGame& save, const StatisticsMerchants& slots, int slot,
+	int entry) {
+	StatisticsChoice out;
+	if (entry < kStatisticsCompanies || entry > kStatisticsPopularity) {
+		return out;
+	}
+	const uint16_t count = save.globals.u16(global::kWorldMerchantCount);
+	out.kind = entry - kStatisticsCompanies + 4;
+	for (int m = int(count) - 1; m >= 0; --m) {
+		if (size_t(m) >= save.merchants.size()) {
+			continue;
+		}
+		const MerchantMemory& M = save.merchants[size_t(m)].memory;
+		if (M.u8(0x8) & 4) {
+			continue;
+		}
+		// Shown in another slot (the first slot holding him decides): not listed.
+		int j = 0;
+		while (j < 4 && slots[size_t(j)] != m) {
+			++j;
+		}
+		if (j < 4 && j != slot) {
+			if (entry == kStatisticsPopularity) {
+				out.none = true;
+			}
+			continue;
+		}
+		int32_t key = 0;
+		if (entry == kStatisticsCompanies) {
+			key = M.s32(0x46C);  // The float's bits.
+		} else if (entry == kStatisticsCapacity) {
+			key = M.s32(0x470);
+		} else if (const MerchantStatistics* object = merchant_statistics(save, uint32_t(m))) {
+			key = game_ftol(object->memory.f32(0xE70));
+		}
+		out.keys.push_back(key);
+		out.merchants.push_back(uint8_t(m));
+	}
+	if (entry != kStatisticsPopularity) {
+		for (int j = 0; j < 4; ++j) {
+			if (j != slot && slots[size_t(j)] < count) {
+				out.none = true;
+			}
+		}
+	}
+	return out;
+}
+
+void sort_choice_by_name(const SaveGame& save, StatisticsChoice& choice) {
+	// strcmp with signed chars: a < b, a > b or equal.
+	auto compare = [](const std::string& a, const std::string& b) {
+		for (size_t k = 0;; ++k) {
+			const signed char x = k < a.size() ? static_cast<signed char>(a[k]) : 0;
+			const signed char y = k < b.size() ? static_cast<signed char>(b[k]) : 0;
+			if (x != y) {
+				return x < y ? -1 : 1;
+			}
+			if (x == 0) {
+				return 0;
+			}
+		}
+	};
+	const size_t n = choice.merchants.size();
+	if (n == 0) {
+		return;
+	}
+	for (size_t pass = n - 1; pass > 0; --pass) {
+		bool swapped = false;
+		for (size_t i = 0; i < pass; ++i) {
+			const uint32_t a = choice.merchants[i];
+			const uint32_t b = choice.merchants[i + 1];
+			int c = compare(statistics_family_name(save, a), statistics_family_name(save, b));
+			if (c == 0) {
+				c = compare(statistics_first_name(save, a), statistics_first_name(save, b));
+			}
+			if (c > 0) {
+				if (i + 1 < choice.keys.size()) {
+					std::swap(choice.keys[i], choice.keys[i + 1]);
+				}
+				std::swap(choice.merchants[i], choice.merchants[i + 1]);
+				swapped = true;
+			}
+		}
+		if (!swapped) {
+			break;
+		}
+	}
+}
+
+void sort_choice_by_key(StatisticsChoice& choice) {
+	const size_t n = std::min(choice.merchants.size(), choice.keys.size());
+	if (n == 0) {
+		return;
+	}
+	for (size_t pass = n - 1; pass > 0; --pass) {
+		bool swapped = false;
+		for (size_t i = 0; i < pass; ++i) {
+			if (choice.keys[i] < choice.keys[i + 1]) {
+				std::swap(choice.keys[i], choice.keys[i + 1]);
+				std::swap(choice.merchants[i], choice.merchants[i + 1]);
+				swapped = true;
+			}
+		}
+		if (!swapped) {
+			break;
+		}
+	}
 }
 
 std::vector<int> statistics_supply_towns(const SaveGame& save, uint32_t merchant) {

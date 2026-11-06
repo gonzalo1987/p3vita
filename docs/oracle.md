@@ -1611,6 +1611,39 @@ Broken on purpose and caught: goods sold summed from [+0x18] (20 balances), Riqu
 whose [+0x130] is 0). In the viewer, the top bar's money opens the menu (the company overview, the balance shown, as
 0x49D380); the other pages are left for the next sessions.
 
+## The statistics window: the competition (2026-11-06)
+
+The competition's page (entries 16..18: the merchants' company value, loading capacity and popularity), rewritten
+in `statistics_window.cpp` (read in `re/emu/sesion15/statistics_notes.md`): 0x4A19C0, the graph of the window's four
+merchants ([+0xB4..+0xB7], one series each in its slot's colour, by weeks, months or years: the period 0 is turned
+into 1, its button hidden; with fewer than 2 years of the towns' list, 0x54E250, it stops) and the six averages
+beside it over every statistics object (the current week's record; the value in 64ths, the capacity >> 3 then · 8 /
+2000), with the merchants' names on the four buttons («F. Family», [+0xE8] and [+0xE4]: 0x4F6420, 0x4F6450); the
+part of the window's show 0x49D380 that fills the empty slots (the player in slot 0; the others by today's company
+value, a merchant already shown emptying the slot again when he comes after the best so far); and the list a
+merchant's button opens (0x49E850 with the list 0x46F760 in its mode 2: the merchants without the bit 4 of [+0x8]
+nor in another slot, from the last, with their keys, and the extra row «no trader» when another slot is shown; for
+the popularity, when a merchant was skipped for being shown), sorted by name at its show (0x4720D0: the family
+names then the first names as signed chars) and by the key with its button (0x471EA0: the company value's float
+bits as ints, the capacity, the popularity of the week ring's first record).
+
+Three copiers on statistics_copiers's window: `STATS_COMPETITION` (SENTINEL + 0xEC0; its view as STATS_GRAPH's, with
+the period after the call and each series' colour and merchant), `STATS_CHOICE` (+ 0xF00: 0x49E850 and the sorts; the
+list's show +0x120 a plain ret; its view the list's counts, flags, merchants and keys) and `STATS_SLOTS` (+ 0xF40:
+0x49DAB7..0x49DB82 with esi the window and its frame, a hook at the end going back; its view the four bytes); the
+last two jump to their code on the heap.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `statistics_competition` | without any statistics object (the slots: the player alone; the graphs empty; the period 0 turned into 1; no years; nobody shown); then six merchants' objects made by the game (0x54E170) and filled, today's company values set so that the player (already in slot 0) is the richest and comes after the best so far (every empty slot ends empty, as the game) and so that he isn't; the graphs of the three entries by each period, with fewer weeks and more months recorded than points, a merchant without an object, an empty slot between them, the towns' years 1 (it stops), 5 (an object with only 2 of its own) and 130 (128 points); the lists of each slot and entry, unsorted, by name and by key, with merchants renamed Gutenbach and Gödecke (they differ at «ö»: signed chars) and two Kinski, one with the bit 4 of [+0x8], company values below 0, and with only one merchant shown | 1, 3, 5, 7 | 30 graphs, 45 lists and 6 slot fillings equal in each; 41 of 41 targets |
+
+Broken on purpose and caught: the names compared as unsigned chars (15–24 lists), the slots skipping a shown merchant
+instead of emptying (4 fillings), the colours by the series instead of the slot (2–4 graphs). Seen on the way: in
+these saves the merchants with the bit 4 of [+0x8] (24 of 37 in save 3) are never offered by the lists. In the
+viewer the competition's tab is on: the graph with its four merchant buttons under it (touching one opens its list
+over the graph, its sort button, a row puts the merchant in the slot; with the pad Square the next button, X the
+list).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:
