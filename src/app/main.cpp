@@ -35,6 +35,8 @@
 #include "p3data/prices.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/simulation.hpp"
+#include "p3data/statistics.hpp"
+#include "p3data/statistics_window.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/seamap.hpp"
 #include "p3data/town.hpp"
@@ -3293,7 +3295,7 @@ constexpr const char* kPanelShipFiles[kPanelShipButtons] = {"images/b_schiffe_an
 	"images/b_konvoi_anker.tga", "images/b_konvoi_see.tga"};
 
 // What the menus' room shows.
-enum class PanelMenu { None, Build, ShipList, Ship, Messages };
+enum class PanelMenu { None, Build, ShipList, Ship, Messages, Statistics };
 
 // The ship menu's pages (SIDEMENU_SHIP: its buttons in the game's order, the
 // convoy's showing the convoy's ships when the ship is in one, as the game's
@@ -3335,6 +3337,14 @@ struct SidePanel {
 	ShipPage ship_page = ShipPage::Goods;
 	int cargo_first = 0;
 	PlaceUi ship_ui;
+	// The statistics (SIDEMENU_STATISTIK and its parchment, statistics_window.hpp), opened by the top bar's money:
+	// the page ([+0xB0], 2 at first), the entry the parchment shows ([+0xBE]: the balance when it opens), the
+	// balance's period ([+0xA4]), the graphs' ([+0xC0]) and Suministro's town ([+0x2440]; -1: his home town).
+	int stats_page = 2;
+	int stats_entry = kStatisticsBalance;
+	int stats_balance_period = 0;
+	int stats_graph_period = 0;
+	int stats_town = -1;
 };
 
 constexpr int kShipListRows = 6;  // Two lines each in the room.
@@ -3347,6 +3357,7 @@ struct PanelArt {
 	SDL_Texture* wood = nullptr;
 	SDL_Texture* parchment = nullptr;
 	SDL_Texture* build_tabs = nullptr;  // page_baumenue.tga: the build menu's five categories.
+	SDL_Texture* stats_tabs = nullptr;  // page_statistiken.tga: the statistics' four pages (TEX20034).
 	SDL_Texture* ships[kPanelShipButtons] = {};
 	int ship_width[kPanelShipButtons] = {};  // Of each frame (three side by side).
 	int ship_height[kPanelShipButtons] = {};
@@ -3391,6 +3402,7 @@ struct PanelArt {
 		wood = load_texture(renderer, archive, "images/sidemenu/HauptscreenE.bmp");
 		parchment = load_texture(renderer, archive, "images/sidemenu/Pergamentrolle.bmp");
 		build_tabs = load_texture(renderer, archive, "images/page_baumenue.tga");
+		stats_tabs = load_texture(renderer, archive, "images/page_statistiken.tga");
 		for (int k = 0; k < kPanelShipButtons; ++k) {
 			ships[k] = load_texture(renderer, archive, kPanelShipFiles[k], &ship_width[k], &ship_height[k]);
 			ship_width[k] /= 3;
@@ -3757,6 +3769,8 @@ void draw_side_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 
 // The top bar's hourglass, the chronicle's button (as the game's, at the bar's right end).
 constexpr SDL_Rect kHourglassButton = {kScreenWidth - 38, 1, 34, 28};
+// The top bar's money, the statistics' button (screenGame.ini's, ToolTip 20045): where the bar drew it last.
+SDL_Rect g_money_button{};
 
 // The game's top bar (screenGame.ini; the manual's «Barra de información»): its wood (HauptscreenA1280 and
 // B800, squeezed to the viewer's bar), from the left the inhabitants (the man) with their number, the town
@@ -3783,7 +3797,9 @@ void draw_top_bar(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& ar
 	}
 	text.draw(place, x, y, ink);
 	x += text.measure(place) + 14;
+	g_money_button = {};
 	if (!money.empty()) {
+		g_money_button = {x - 4, 0, 20 + text.measure(money) + 8, kBarHeight};
 		draw_picture(renderer, art.coins, {x, 0, 18, 28});
 		x += 20;
 		text.draw(money, x, y, ink);
@@ -5887,6 +5903,366 @@ void draw_mail_parchment(SDL_Renderer* renderer, TextRenderer& text, const Panel
 	draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Cerrar", "Close"));
 }
 
+// --- The statistics (the game's SIDEMENU_STATISTIK, statistics_window.hpp): the menu in the panel's room (its four
+// pages' tabs, the page's title, its entries) and the window on a parchment over the town (the entry's title, the
+// period's buttons, the balance's table, a graph or Suministro's table). Opened by the top bar's money. Only the
+// company overview (page 2) is done: the other pages' tabs are off. ---
+
+// The tabs' frames in page_statistiken.tga (sidemenu.ini Button14..17 → textures.ini TEX20034's frames 8, 4, 12,
+// 0): their column and width (rows: normal, pressed, lit, off).
+constexpr int kStatsTabX[kStatisticsPages] = {0, 100, 36, 68};
+constexpr int kStatsTabW[kStatisticsPages] = {36, 36, 32, 32};
+constexpr bool kStatsPageDone[kStatisticsPages] = {false, false, true, false};
+
+struct StatsRoomLayout {
+	SDL_Rect tabs[kStatisticsPages] = {};
+	int title_y = 0;
+	SDL_Rect rows[7] = {};
+
+	StatsRoomLayout(const SDL_Rect& room, int line_height) {
+		int x = room.x + 10;
+		for (int k = 0; k < kStatisticsPages; ++k) {
+			const int w = kStatsTabW[k] * 5 / 4;
+			tabs[k] = {x, room.y + 6, w, 40};
+			x += w + 14;
+		}
+		title_y = room.y + 52;
+		for (int k = 0; k < 7; ++k) {  // Under two lines of the page's title.
+			rows[k] = {room.x + 8, title_y + 2 * line_height + 8 + k * (line_height + 10), room.w - 16, line_height + 6};
+		}
+	}
+	int tab_at(int x, int y) const {
+		for (int k = 0; k < kStatisticsPages; ++k) {
+			if (inside(tabs[k], x, y)) {
+				return k;
+			}
+		}
+		return -1;
+	}
+	int row_at(int x, int y) const {
+		for (int k = 0; k < 7; ++k) {
+			if (inside(rows[k], x, y)) {
+				return k;
+			}
+		}
+		return -1;
+	}
+};
+
+std::string stats_text(const std::string& raw) {
+	return clean_game_text(raw);
+}
+
+void draw_stats_room(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SidePanel& ui) {
+	if (!g_texts) {
+		return;
+	}
+	const PanelLayout panel(ui.folded);
+	const StatsRoomLayout layout(panel.room, text.line_height());
+	for (int k = 0; k < kStatisticsPages; ++k) {
+		const int row = !kStatsPageDone[k] ? 3 : k == ui.stats_page ? 2 : 0;
+		const SDL_Rect src = {kStatsTabX[k], row * 32, kStatsTabW[k], 32};
+		draw_picture(renderer, art.stats_tabs, layout.tabs[k], &src);
+	}
+	int y = layout.title_y;
+	for (const std::string& line : wrap_text(text, stats_text(statistics_page_title(*g_texts, ui.stats_page)), panel.room.w - 20)) {
+		text.draw(line, panel.room.x + (panel.room.w - text.measure(line)) / 2, y, kParchmentInk);
+		y += text.line_height();
+	}
+	const int first = kStatisticsPageFirst[size_t(ui.stats_page)];
+	const int count = kStatisticsPageFirst[size_t(ui.stats_page) + 1] - first;
+	for (int k = 0; k < count && k < 7; ++k) {
+		const SDL_Rect& r = layout.rows[k];
+		const bool lit = first + k == ui.stats_entry;
+		SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, lit ? 110 : 45);
+		SDL_RenderFillRect(renderer, &r);
+		const std::string name = stats_text(statistics_button(*g_texts, first + k));
+		text.draw(name, r.x + (r.w - text.measure(name)) / 2, r.y + 3, kStatsPageDone[ui.stats_page] ? kParchmentInk : kParchmentDim);
+	}
+}
+
+// The parchment over the town and its parts.
+struct StatsLayout {
+	SDL_Rect panel{};
+	SDL_Rect inner{};  // Inside the rolls.
+	int title_y = 0;
+	SDL_Rect periods[4] = {};  // The balance's or the graph's period; Suministro: previous, the town's list, next.
+	SDL_Rect body{};
+	SDL_Rect close_button{};
+
+	explicit StatsLayout(int line_height) {
+		panel = {12, kBarHeight + 10, g_town_right - 24, kScreenHeight - kBarHeight - 20};
+		inner = {panel.x + 40, panel.y + 52, panel.w - 80, panel.h - 52 - 50};
+		title_y = inner.y;
+		const int bh = line_height + 8;
+		const int bw = (inner.w - 3 * 8) / 4;
+		for (int k = 0; k < 4; ++k) {
+			periods[k] = {inner.x + k * (bw + 8), title_y + line_height + 8, bw, bh};
+		}
+		body = {inner.x, periods[0].y + bh + 10, inner.w, 0};
+		close_button = {panel.x + panel.w / 2 - 70, panel.y + panel.h - 48, 140, line_height + 10};
+		body.h = close_button.y - 8 - body.y;
+	}
+	int period_at(int x, int y) const {
+		for (int k = 0; k < 4; ++k) {
+			if (inside(periods[k], x, y)) {
+				return k;
+			}
+		}
+		return -1;
+	}
+};
+
+void draw_stats_toggle(SDL_Renderer* renderer, TextRenderer& text, const SDL_Rect& r, const std::string& label, bool lit,
+	bool enabled) {
+	SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, enabled ? (lit ? 140 : 60) : 25);
+	SDL_RenderFillRect(renderer, &r);
+	SDL_SetRenderDrawColor(renderer, 110, 80, 40, enabled ? 255 : 90);
+	SDL_RenderDrawRect(renderer, &r);
+	text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - text.line_height()) / 2,
+		enabled ? kParchmentInk : kParchmentDim);
+}
+
+// Suministro's town: the one chosen, or his home town, or the first of his offices' towns; -1 without any.
+int stats_supply_town(const SaveGame& save, const SidePanel& ui) {
+	const std::vector<int> towns = statistics_supply_towns(save, uint32_t(save.player));
+	if (towns.empty()) {
+		return -1;
+	}
+	const int home = save.merchants[size_t(save.player)].memory.u8(0x19);
+	for (int want : {ui.stats_town, home}) {
+		if (std::find(towns.begin(), towns.end(), want) != towns.end()) {
+			return want;
+		}
+	}
+	return towns.front();
+}
+
+// The graphs' «playing time»: only with more than a year recorded (0x4A5DD0: the years' list and [0x6DFC98] > 1).
+bool stats_years_shown(const SaveGame& save) {
+	return !save.statistics.towns[3].empty() && save.globals.u16(kStatistics + 0x8) > 1;
+}
+
+void draw_stats_balance(SDL_Renderer* renderer, TextRenderer& text, const StatisticsBalance& b, const SDL_Rect& body) {
+	if (!b.found) {
+		return;
+	}
+	// The game's rows (0x4A0C30), in two columns: on the left the company's value (now and at the start, each with
+	// its date), the building and the income; on the right the expenditure and the total. The header «balance»
+	// gives its period's line over both.
+	const int line = text.line_height() + 2;
+	const int column_w = (body.w - 20) / 2;
+	auto value_text = [&](int k) { return k >= 0 && k < 20 ? stats_text(b.texts[size_t(k)]) : std::string(); };
+	text.draw(stats_text(b.period), body.x, body.y, kParchmentInk);
+	const int top = body.y + line + 4;
+	auto header = [&](int column, int at, const std::string& label, const std::string& value) {
+		const int x = body.x + column * (column_w + 20);
+		const int y = top + at * line;
+		text.draw(label, x, y, kParchmentInk);
+		SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
+		SDL_RenderDrawLine(renderer, x, y + line - 2, x + column_w, y + line - 2);
+		text.draw(value, x + column_w - text.measure(value), y, kParchmentInk);
+	};
+	auto row = [&](int column, int at, const std::string& label, const std::string& value) {
+		const int x = body.x + column * (column_w + 20);
+		const int y = top + at * line;
+		const SDL_Rect band = {x - 2, y, column_w + 4, line - 1};
+		SDL_SetRenderDrawColor(renderer, 230, 255, 255, 40);  // The game's 0x64FFE6CA.
+		SDL_RenderFillRect(renderer, &band);
+		text.draw(label, x, y, kParchmentDim);
+		text.draw(value, x + column_w - text.measure(value), y, kParchmentInk);
+	};
+	const std::string value_label = stats_text(balance_label(*g_texts, 1));
+	header(0, 0, value_label, std::string());
+	row(0, 1, "  " + value_text(19), value_text(0));
+	row(0, 2, "  " + value_text(18), value_text(1));
+	row(0, 3, stats_text(balance_label(*g_texts, 3)), value_text(2));
+	row(0, 4, stats_text(balance_label(*g_texts, 4)), value_text(3));
+	header(0, 5, stats_text(balance_label(*g_texts, 5)), std::string());
+	for (int k = 6; k <= 11; ++k) {
+		row(0, k, stats_text(balance_label(*g_texts, k)), value_text(k - 2));
+	}
+	header(1, 0, stats_text(balance_label(*g_texts, 12)), std::string());
+	for (int k = 13; k <= 19; ++k) {
+		row(1, k - 12, stats_text(balance_label(*g_texts, k)), value_text(k - 3));
+	}
+	header(1, 8, stats_text(balance_label(*g_texts, 20)), value_text(17));
+}
+
+void draw_stats_graph(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const StatisticsGraph& g,
+	int entry, const SDL_Rect& body) {
+	const int line = text.line_height();
+	const int side_w = 230;
+	const SDL_Rect plot = {body.x + 4, body.y + 6, body.w - side_w - 18, body.h - 2 * line - 14};
+	SDL_SetRenderDrawColor(renderer, 245, 232, 200, 120);
+	SDL_RenderFillRect(renderer, &plot);
+	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
+	SDL_RenderDrawRect(renderer, &plot);
+	// 0x4A5DD0's scale: from 2000 (1000 for Riqueza, kind 2 of 0x66FC0C) up to the largest point, at 0.95 of the height.
+	float top = entry == kStatisticsWealth ? 1000.0f : 2000.0f;
+	for (uint32_t s = 0; s < g.series && s < 4; ++s) {
+		for (float v : g.values[s]) {
+			top = std::max(top, v);
+		}
+	}
+	for (int k = 1; k <= 4; ++k) {
+		const int y = plot.y + plot.h - int(plot.h * 0.95f * float(k) / 4.0f);
+		SDL_SetRenderDrawColor(renderer, 160, 130, 90, 120);
+		SDL_RenderDrawLine(renderer, plot.x + 1, y, plot.x + plot.w - 2, y);
+		const std::string label = format_money(int64_t(top * float(k) / 4.0f));
+		text.draw(label, plot.x + 4, y - line + 2, kParchmentDim);
+	}
+	if (g.points >= 1) {
+		// The recorded points (the oldest `missing` aren't), joined, each with a dot.
+		const float step = g.points > 1 ? float(plot.w - 6) / float(g.points - 1) : 0.0f;
+		for (uint32_t s = 0; s < g.series && s < 4; ++s) {
+			const uint32_t colour = kStatisticsColours[s];
+			SDL_SetRenderDrawColor(renderer, Uint8(colour >> 16), Uint8(colour >> 8), Uint8(colour), 255);
+			auto at = [&](uint32_t k) {
+				return SDL_Point{plot.x + 3 + int(step * float(k)),
+					plot.y + plot.h - 1 - int(float(plot.h) * 0.95f * std::max(0.0f, g.values[s][k]) / top)};
+			};
+			for (uint32_t p = g.missing; p < g.points && p < g.values[s].size(); ++p) {
+				const SDL_Point c = at(p);
+				const SDL_Rect dot = {c.x - 2, c.y - 2, 5, 5};
+				SDL_RenderFillRect(renderer, &dot);
+				if (p > g.missing) {
+					const SDL_Point a = at(p - 1);
+					SDL_RenderDrawLine(renderer, a.x, a.y, c.x, c.y);
+					SDL_RenderDrawLine(renderer, a.x, a.y - 1, c.x, c.y - 1);
+				}
+			}
+		}
+	}
+	// The series' names under the graph, each with its colour.
+	int x = plot.x;
+	for (uint32_t s = 0; s < 4; ++s) {
+		if (!g.names[s]) {
+			continue;
+		}
+		const uint32_t colour = kStatisticsColours[s];
+		const SDL_Rect swatch = {x, plot.y + plot.h + 8 + line / 4, line / 2 + 4, line / 2};
+		SDL_SetRenderDrawColor(renderer, Uint8(colour >> 16), Uint8(colour >> 8), Uint8(colour), 255);
+		SDL_RenderFillRect(renderer, &swatch);
+		const std::string name = stats_text(g_texts->raw_at(g.names[s]));
+		text.draw(name, swatch.x + swatch.w + 6, plot.y + plot.h + 6, kParchmentInk);
+		x += swatch.w + 6 + text.measure(name) + 18;
+	}
+	// The texts beside it: each label, then its value (with the coins for money, «%» for the averages).
+	int y = body.y + 4;
+	const int sx = body.x + body.w - side_w;
+	for (size_t k = 0; k < g.texts.size(); ++k) {
+		const std::string label = k < g.labels.size() ? stats_text(g_texts->raw_at(g.labels[k])) : std::string();
+		for (const std::string& part : wrap_text(text, label, side_w)) {
+			text.draw(part, sx, y, kParchmentDim);
+			y += line;
+		}
+		std::string value = stats_text(g.texts[k]);
+		const uint8_t kind = k < g.kinds.size() ? g.kinds[k] : 0;
+		if (kind == 4) {
+			value += " %";
+		}
+		const int vw = text.measure(value);
+		int vx = sx + side_w - vw;
+		if (kind == 1) {
+			draw_picture(renderer, art.coins, {vx - 16, y - 2, 13, 20});
+		} else if (kind == 2 || kind == 3) {
+			SDL_Texture* icon = art.list_icons[PanelArt::Bale];
+			draw_picture(renderer, icon, {vx - 20, y, 16, 16});
+		}
+		text.draw(value, vx, y, kParchmentInk);
+		y += line + 6;
+	}
+}
+
+void draw_stats_supply(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art,
+	const std::vector<SupplyRow>& rows, const SDL_Rect& body) {
+	const int line = text.line_height() + 3;
+	const int column_w = (body.w - 20) / 2;
+	const SDL_Color red = {170, 20, 10, 255};
+	static constexpr bool kInBarrels[20] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0};
+	const std::string office = stats_text(g_texts->raw_at(0x6A0468));
+	const std::string hall = stats_text(g_texts->raw_at(0x6A0814));
+	const std::string buy = stats_text(g_texts->raw_at(0x6A0810));
+	for (int column = 0; column < 2; ++column) {
+		const int x = body.x + column * (column_w + 20);
+		const int c1 = x + column_w * 58 / 100;  // The office's, the hall's and the price's right edges.
+		const int c2 = x + column_w * 77 / 100;
+		const int c3 = x + column_w;
+		text.draw(stats_text(g_texts->raw_at(0x6A0464)), x, body.y, kParchmentInk);
+		text.draw(office, c1 - text.measure(office), body.y, kParchmentInk);
+		text.draw(hall, c2 - text.measure(hall), body.y, kParchmentInk);
+		text.draw(buy, c3 - text.measure(buy), body.y, kParchmentInk);
+		SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
+		SDL_RenderDrawLine(renderer, x, body.y + line - 1, c3, body.y + line - 1);
+		for (int k = 0; k < 10; ++k) {
+			const size_t i = size_t(column * 10 + k);
+			if (i >= rows.size()) {
+				break;
+			}
+			const SupplyRow& r = rows[i];
+			const int y = body.y + (k + 1) * line + 2;
+			const int unit = kInBarrels[r.ware] ? 200 : 2000;
+			SDL_Texture* icon = art.list_icons[kInBarrels[r.ware] ? PanelArt::Barrel : PanelArt::Bale];
+			draw_picture(renderer, icon, {x, y, 16, 16});
+			text.draw(ware_name(r.ware), x + 20, y, kParchmentDim);
+			if (r.office / unit > 0 || r.needed > 0) {
+				const std::string v = (r.needed > 0 ? "*" : "") + std::to_string(r.office / unit);
+				text.draw(v, c1 - text.measure(v), y, r.needed > r.office ? red : kParchmentInk);
+			}
+			if (r.town / unit > 0) {
+				const std::string v = std::to_string(r.town / unit);
+				text.draw(v, c2 - text.measure(v), y, kParchmentInk);
+			}
+			if (r.price > 0) {
+				const std::string v = format_money(r.price);
+				text.draw(v, c3 - text.measure(v), y, kParchmentInk);
+			}
+		}
+	}
+}
+
+void draw_stats_window(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
+	const std::vector<std::string>& town_names, const SidePanel& ui) {
+	if (!g_texts || save.player < 0) {
+		return;
+	}
+	const StatsLayout layout(text.line_height());
+	draw_scroll(renderer, art.paper, layout.panel);
+	const int entry = ui.stats_entry;
+	const uint32_t player = uint32_t(save.player);
+	std::string title = stats_text(statistics_title(*g_texts, entry));
+	if (entry == kStatisticsSupply) {
+		const int town = stats_supply_town(save, ui);
+		title = GameTexts::format(title, {town >= 0 ? town_name(save, town_names, town) : std::string()});
+		const std::string choose = stats_text(g_texts->raw_at(0x6B0D68));
+		draw_stats_toggle(renderer, text, layout.periods[0], "<", false, town >= 0);
+		draw_stats_toggle(renderer, text, {layout.periods[1].x, layout.periods[1].y,
+			layout.periods[2].x + layout.periods[2].w - layout.periods[1].x, layout.periods[1].h},
+			town >= 0 ? town_name(save, town_names, town) : choose, true, town >= 0);
+		draw_stats_toggle(renderer, text, layout.periods[3], ">", false, town >= 0);
+		if (town >= 0) {
+			draw_stats_supply(renderer, text, art, statistics_supply(save, player, uint32_t(town)), layout.body);
+		}
+	} else if (entry == kStatisticsBalance) {
+		for (int k = 0; k < 4; ++k) {
+			draw_stats_toggle(renderer, text, layout.periods[k], stats_text(g_texts->raw_at(0x6C1A74 + 4 * uint32_t(k))),
+				k == ui.stats_balance_period, true);
+		}
+		draw_stats_balance(renderer, text, statistics_balance(save, *g_texts, player, ui.stats_balance_period), layout.body);
+	} else {
+		static constexpr uint32_t kPeriodText[4] = {0x6C1A38, 0x6C1A3C, 0x6C1A40, 0x6C1A44};
+		for (int k = 0; k < 4; ++k) {
+			draw_stats_toggle(renderer, text, layout.periods[k], stats_text(g_texts->raw_at(kPeriodText[k])),
+				k == ui.stats_graph_period, k < 3 || stats_years_shown(save));
+		}
+		draw_stats_graph(renderer, text, art, statistics_graph(save, player, entry, ui.stats_graph_period), entry,
+			layout.body);
+	}
+	text.draw(title, layout.inner.x + (layout.inner.w - text.measure(title)) / 2, layout.title_y, kParchmentInk);
+	draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Cerrar", "Close"));
+}
+
 // --- The tooltips of the side panel's and the top bar's buttons (the scripts' «ToolTip=», the strings
 // 20000.. of the exe's string table, GameTexts::resource): on the Vita, while a finger is on the button
 // (before it is lifted) or the pad points at it (Select). ---
@@ -5907,6 +6283,9 @@ uint32_t panel_tooltip(const SidePanel& side, const SaveGame& save, int line, bo
 	};
 	if (hit(kHourglassButton)) {
 		return 20046;  // Chronicle
+	}
+	if (hit(g_money_button)) {
+		return 20045;  // Statistics
 	}
 	const PanelLayout panel(side.folded);
 	if (side.folded) {
@@ -5944,6 +6323,14 @@ uint32_t panel_tooltip(const SidePanel& side, const SaveGame& save, int line, bo
 		}
 		if (hit(layout.delete_button)) {
 			return 20014;
+		}
+	}
+	if (side.menu == PanelMenu::Statistics) {
+		const StatsRoomLayout layout(panel.room, line);
+		for (int k = 0; k < kStatisticsPages; ++k) {
+			if (hit(layout.tabs[k])) {
+				return 20015 + uint32_t(k);  // City data, Municipal comparison, Own company, Competition
+			}
 		}
 	}
 	if (build_menu) {
@@ -7803,6 +8190,62 @@ int main(int argc, char** argv) {
 				return false;
 			}
 		};
+		// The statistics (the top bar's money): Left and Right their pages (the done ones), Up and Down the page's
+		// entries (the parchment shows each), L and R the period (Suministro: the town), Circle closes them.
+		const bool stats_open = side.menu == PanelMenu::Statistics && panel_shown && !side.folded && has_save &&
+			save.player >= 0 && small_text && !trading && !in_hanse && !in_place && !in_mail && !in_menu;
+		auto stats_pick_town = [&](int step) {
+			const std::vector<int> towns = statistics_supply_towns(save, uint32_t(save.player));
+			if (towns.empty()) {
+				return;
+			}
+			const auto it = std::find(towns.begin(), towns.end(), stats_supply_town(save, side));
+			const int i = it == towns.end() ? 0 : int(it - towns.begin());
+			side.stats_town = towns[size_t((i + int(towns.size()) + step) % int(towns.size()))];
+		};
+		auto stats_step_period = [&](int step) {
+			if (side.stats_entry == kStatisticsSupply) {
+				stats_pick_town(step);
+			} else if (side.stats_entry == kStatisticsBalance) {
+				side.stats_balance_period = (side.stats_balance_period + 4 + step) % 4;
+			} else {
+				const int periods = stats_years_shown(save) ? 4 : 3;
+				side.stats_graph_period = (std::min(side.stats_graph_period, periods - 1) + periods + step) % periods;
+			}
+		};
+		auto stats_button = [&](Uint8 button) {
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+				for (int k = 1; k < kStatisticsPages; ++k) {
+					const int page = (side.stats_page + kStatisticsPages + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -k : k)) %
+						kStatisticsPages;
+					if (kStatsPageDone[page]) {
+						side.stats_page = page;
+						side.stats_entry = kStatisticsPageFirst[size_t(page)];
+						break;
+					}
+				}
+				return true;
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN: {
+				const int first = kStatisticsPageFirst[size_t(side.stats_page)];
+				const int count = kStatisticsPageFirst[size_t(side.stats_page) + 1] - first;
+				const int step = button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1;
+				side.stats_entry = first + (side.stats_entry - first + count + step) % count;
+				return true;
+			}
+			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+				stats_step_period(button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1);
+				return true;
+			case SDL_CONTROLLER_BUTTON_B:
+				side.menu = PanelMenu::None;
+				return true;
+			default:
+				return false;
+			}
+		};
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
 			if ((event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP) &&
@@ -7856,6 +8299,9 @@ int main(int argc, char** argv) {
 					break;
 				}
 				if (side.menu == PanelMenu::Build && panel_shown && town_free && build_button(event.cbutton.button)) {
+					break;
+				}
+				if (stats_open && side.focus < 0 && stats_button(event.cbutton.button)) {
 					break;
 				}
 				if (side.menu == PanelMenu::Ship && panel_shown && town_free && side.focus < 0 &&
@@ -8128,7 +8574,8 @@ int main(int argc, char** argv) {
 					(in_place && inside(PlaceLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
 					(in_menu && (inside(MenuLayout(small_text->line_height(), menu.screen).panel, touch_start.x, touch_start.y) ||
 						menu.ask != MenuAsk::None)) ||
-					(in_mail && (!mail_in_panel || mail_parchment) && inside(mail_layout.panel, touch_start.x, touch_start.y));
+					(in_mail && (!mail_in_panel || mail_parchment) && inside(mail_layout.panel, touch_start.x, touch_start.y)) ||
+					(stats_open && inside(StatsLayout(small_text->line_height()).panel, touch_start.x, touch_start.y));
 				// Placing a building: the finger puts it on the cell it touches.
 				touch_building = placing && !touch_on_side && !in_menu && !in_mail && touch_start.x < town_width &&
 					touch_start.y >= kBarHeight;
@@ -8188,6 +8635,50 @@ int main(int argc, char** argv) {
 					mail_tab(0);
 					break;
 				}
+				if (touch_moved < kTapDistance && !in_menu && !messages.open && !end_window.open && has_save &&
+					save.player >= 0 && (selection.mode == Mode::Saved || selection.mode == Mode::Sea) && panel_shown &&
+					!trading && !in_hanse && !in_place && inside(g_money_button, touch_start.x, touch_start.y)) {
+					// The top bar's money: the statistics, as the game's on the company overview with its balance.
+					touch_building = false;
+					touch_on_side = false;
+					touch_on_panel = false;
+					if (side.menu == PanelMenu::Statistics) {
+						side.menu = PanelMenu::None;
+					} else {
+						if (mail.open) {
+							close_mail();
+						}
+						side.menu = PanelMenu::Statistics;
+						side.folded = false;
+						side.focus = -1;
+						side.stats_page = 2;
+						side.stats_entry = kStatisticsBalance;
+					}
+					break;
+				}
+				if (stats_open && touch_moved < kTapDistance &&
+					inside(StatsLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) {
+					// The statistics' parchment: its period's buttons (Suministro: the towns), or closed.
+					const StatsLayout sl(small_text->line_height());
+					const int x = touch_start.x;
+					const int y = touch_start.y;
+					const int k = sl.period_at(x, y);
+					if (inside(sl.close_button, x, y)) {
+						side.menu = PanelMenu::None;
+					} else if (k >= 0 && side.stats_entry == kStatisticsSupply) {
+						if (k == 0 || k == 3) {
+							stats_pick_town(k == 0 ? -1 : 1);
+						}
+					} else if (k >= 0 && side.stats_entry == kStatisticsBalance) {
+						side.stats_balance_period = k;
+					} else if (k >= 0 && (k < 3 || stats_years_shown(save))) {
+						side.stats_graph_period = k;
+					}
+					touch_building = false;
+					touch_on_side = false;
+					touch_on_panel = false;
+					break;
+				}
 				if (touch_building) {
 					touch_building = false;  // It stays where the finger left it.
 					touch_on_panel = false;
@@ -8220,6 +8711,19 @@ int main(int argc, char** argv) {
 								side.list_row = first + k;
 								go_to_ship(fleet[size_t(first + k)]);
 							}
+						}
+					} else if (side.menu == PanelMenu::Statistics && inside(panel_layout.room, x, y)) {
+						// The statistics' menu: a page's tab (the done ones), or an entry of the page.
+						const StatsRoomLayout room(panel_layout.room, small_text->line_height());
+						const int tab = room.tab_at(x, y);
+						const int row = room.row_at(x, y);
+						const int first = kStatisticsPageFirst[size_t(side.stats_page)];
+						const int count = kStatisticsPageFirst[size_t(side.stats_page) + 1] - first;
+						if (tab >= 0 && kStatsPageDone[tab]) {
+							side.stats_page = tab;
+							side.stats_entry = kStatisticsPageFirst[size_t(tab)];
+						} else if (row >= 0 && row < count && kStatsPageDone[side.stats_page]) {
+							side.stats_entry = first + row;
 						}
 					} else if (side.menu == PanelMenu::Build && inside(panel_layout.room, x, y)) {
 						const BuildRoomLayout room(panel_layout.room, small_text->line_height());
@@ -8571,6 +9075,10 @@ int main(int argc, char** argv) {
 				if (side.menu == PanelMenu::Ship && side.ship >= 0 && !side.folded) {
 					draw_ship_menu(renderer, *small_text, *panel_art, save, side, ship_now, ship_pirate_ok);
 				}
+				if (side.menu == PanelMenu::Statistics && !side.folded) {
+					draw_stats_room(renderer, *small_text, *panel_art, side);
+					draw_stats_window(renderer, *small_text, *panel_art, save, town_names, side);
+				}
 			}
 		} else {
 			// The building under the cursor now (after this frame's camera): glowing, with its name.
@@ -8639,11 +9147,18 @@ int main(int argc, char** argv) {
 				if (side.menu == PanelMenu::Ship && side.ship >= 0 && !side.folded) {
 					draw_ship_menu(renderer, *small_text, *panel_art, save, side, ship_now, ship_pirate_ok);
 				}
+				if (side.menu == PanelMenu::Statistics && !side.folded) {
+					draw_stats_room(renderer, *small_text, *panel_art, side);
+					draw_stats_window(renderer, *small_text, *panel_art, save, town_names, side);
+				}
 			}
 		}
 		if (text) {
 			std::vector<std::string> right_texts;
-			if (in_mail && mail_in_panel) {
+			if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu) {
+				right_texts = {tr("L/R: periodo   " BTN_CIRCLE " cerrar", "L/R: period   " BTN_CIRCLE " close"),
+					tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")};
+			} else if (in_mail && mail_in_panel) {
 				// The side panel's messages: the tabs with Left and Right, the settings with Select.
 				right_texts = mail.options
 					? std::vector<std::string>{tr(BTN_CROSS " cambiar   " BTN_CIRCLE " aceptar", BTN_CROSS " change   " BTN_CIRCLE " accept")}

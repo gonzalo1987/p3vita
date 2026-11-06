@@ -2,10 +2,14 @@
 // in its retouched states (tools/oracle/retouch_unchecked.py) or records on
 // their own, so that a difference points at them and not at their caller.
 
+#include <cstring>
 #include <optional>
 
 #include "p3data/mail.hpp"
+#include "p3data/game_texts.hpp"
 #include "p3data/player_actions.hpp"
+#include "p3data/sailing.hpp"
+#include "p3data/statistics_window.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "probe_registry.hpp"
 
@@ -158,6 +162,44 @@ constexpr uint32_t kLenderLists = 0x03000C00;
 constexpr uint32_t kBuildMenu = 0x03000200;
 constexpr uint32_t kBuildFits = 0x03000280;
 constexpr uint32_t kBuildMarks = 0x03000300;
+
+// Its copiers of the statistics window (STATS_BALANCE, STATS_GRAPH): 0x4A2F60 and 0x4A22A0 on a window of their own;
+// the view's part per call (0xC0 bytes), then its FNV-1a and its length.
+constexpr uint32_t kStatsBalance = 0x03000D00;
+constexpr uint32_t kStatsGraph = 0x03000D40;
+constexpr uint32_t kStatsSupply = 0x03000DC0;
+constexpr size_t kStatsView = 0xC0;
+
+// A C string as the game's buffer holds it: its bytes up to `size`, zero-padded (no terminator past `size`).
+void put_text(std::vector<uint8_t>& view, const std::string& text, size_t size) {
+	for (size_t k = 0; k < size; ++k) {
+		view.push_back(k < text.size() ? uint8_t(text[k]) : 0);
+	}
+}
+
+// sprintf's texts one after another into zeroed slots of `slot` bytes from `at`: a longer one runs into the next
+// slot, which the next text then overwrites, as the game's.
+void put_texts(std::vector<uint8_t>& view, size_t at, const std::string* texts, size_t count, size_t slot) {
+	for (size_t k = 0; k < count; ++k) {
+		const std::string& t = texts[k];
+		for (size_t i = 0; i <= t.size() && at + slot * k + i < view.size(); ++i) {
+			view[at + slot * k + i] = i < t.size() ? uint8_t(t[i]) : 0;
+		}
+	}
+}
+
+void write_view(SaveGame& s, const std::vector<uint8_t>& view, uint32_t part) {
+	uint32_t h = 0x811C9DC5;
+	for (uint8_t b : view) {
+		h = (h ^ b) * 0x01000193;
+	}
+	for (size_t k = 0; k < kStatsView; ++k) {
+		const size_t at = kStatsView * part + k;
+		s.globals.u8(kScratch + uint32_t(k)) = at < view.size() ? view[at] : 0;
+	}
+	s.globals.u32(kScratch + 0xC0) = h;
+	s.globals.u32(kScratch + 0xC4) = uint32_t(view.size());
+}
 
 // A loan's terms (16 bytes) or an entry in the scratch globals.
 template <size_t N>
@@ -686,6 +728,85 @@ void register_probes_unchecked(ProbeRegistry& r) {
 			return std::nullopt;
 		}
 		return tick::events_towns_detail::fn_4e8804(s, head);
+	};
+	// The statistics window's copiers (stdcall), the window's merchant [0x6DFC14]: STATS_BALANCE (period, part) and
+	// STATS_GRAPH (entry, period, part): the part `part` (0xC0 bytes) of the window's view in [SCRATCH], its FNV-1a
+	// in [+0xC0] and its length in [+0xC4] (retouch_unchecked.py statistics_copiers; statistics_window.hpp). The
+	// labels and titles are compared as the English exe's texts: without them, skipped.
+	r[kStatsBalance] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const GameTexts* texts = probe_sailing() ? probe_sailing()->texts() : nullptr;
+		if (!texts) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		const StatisticsBalance b = statistics_balance(s, *texts, s.globals.u32(global::kPlayer), int(c.args[0]));
+		std::vector<uint8_t> view(0x2A0, 0);
+		put_texts(view, 0, b.texts.data(), b.texts.size(), 0x20);
+		put_text(view, b.period, 0x40);
+		write_view(s, view, c.args[1]);
+		return std::nullopt;
+	};
+	r[kStatsGraph] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const GameTexts* texts = probe_sailing() ? probe_sailing()->texts() : nullptr;
+		if (!texts) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		const int entry = int(c.args[0]);
+		const StatisticsGraph g = statistics_graph(s, s.globals.u32(global::kPlayer), entry, int(c.args[1]));
+		std::vector<uint8_t> view;
+		auto u32 = [&](uint32_t v) {
+			for (int k = 0; k < 4; ++k) {
+				view.push_back(uint8_t(v >> (8 * k)));
+			}
+		};
+		u32(g.series);
+		u32(g.points);
+		u32(g.missing);
+		view.push_back(uint8_t(g.texts.size()));
+		view.push_back(uint8_t(g.texts.size() >> 8));
+		for (size_t k = 0; k < 8; ++k) {
+			view.push_back(k < g.kinds.size() ? g.kinds[k] : 0);
+		}
+		for (size_t k = 0; k < 7; ++k) {
+			put_text(view, k < g.labels.size() ? texts->raw_at(g.labels[k]) : std::string(), 0x20);
+		}
+		const size_t at = view.size();
+		view.resize(at + 0xE0, 0);
+		put_texts(view, at, g.texts.data(), g.texts.size(), 0x20);
+		for (uint32_t name : g.names) {
+			put_text(view, name ? texts->raw_at(name) : std::string(), 0x20);
+		}
+		// The title: none when the merchant is out (the game returns before it).
+		put_text(view, g.series ? statistics_title(*texts, entry) : std::string(), 0x40);
+		for (uint32_t k = 0; k < g.series && k < 4; ++k) {
+			for (uint32_t p = 0; p < g.points; ++p) {
+				uint32_t bits = 0;
+				const float v = p < g.values[k].size() ? g.values[k][p] : 0.0f;
+				std::memcpy(&bits, &v, 4);
+				u32(bits);
+			}
+		}
+		write_view(s, view, c.args[2]);
+		return std::nullopt;
+	};
+	// STATS_SUPPLY (town, part): Suministro's draw 0x4A0F10; its view, the window's three arrays of 20 (the office's
+	// stock [+0x253C], the town's [+0x24EC], the price [+0x258C]).
+	r[kStatsSupply] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const std::vector<SupplyRow> rows = statistics_supply(s, s.globals.u32(global::kPlayer), c.args[0]);
+		if (rows.empty()) {
+			c.skip = true;  // The game reads through a null office.
+			return std::nullopt;
+		}
+		std::vector<uint8_t> view(0xF0, 0);
+		for (const SupplyRow& row : rows) {
+			const int32_t values[3] = {row.office, row.town, row.price};
+			for (size_t k = 0; k < 3; ++k) {
+				std::memcpy(view.data() + 0x50 * k + 4 * size_t(row.ware), &values[k], 4);
+			}
+		}
+		write_view(s, view, c.args[1]);
+		return std::nullopt;
 	};
 }
 

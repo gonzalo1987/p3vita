@@ -1581,6 +1581,36 @@ The buttons' tooltips are the exe's string table (Windows resources, RT_STRING 2
 them): read the same from the English and the Spanish exe, and the cache gives them back the same
 (`p3save texts-cache`).
 
+## The statistics window: the company overview (2026-11-06)
+
+What the game's statistics window (the side menu SIDEMENU_STATISTIK, vtable 0x66F4C8, and its parchment, vtable
+0x66FC28) computes for the company overview's five entries, rewritten in `statistics_window.cpp` (read in
+`re/emu/sesion15/statistics_notes.md`): the balance (0x4A2F60: 20 texts of the merchant's records summed over the
+last 30 days or 3, 6, 12 months, with the period's dates), the graphs of Riqueza, Barcos and Producción (0x4A22A0,
+with 0x505A10 for the ships: the series' points along the records' links by days, weeks, months or years, how many
+are missing, the texts beside them) and Suministro (the draw 0x4A0F10: the office's and the town's stock and the
+buy price of the 20 wares in a town of his offices). The entries' texts are the table 0x6CC830 that 0x46C060
+builds at start (the pairs of 0x6C18C8, with the slot 15 set apart to «Goods Supply»). The numbers are the game's
+`sprintf` texts: «%.0f» as its CRT (the half away from zero) and __ftol as 0x639C28 (a 64-bit fistp, its low half).
+
+The windows aren't in the emulator, so three copiers (`STATS_BALANCE`, `STATS_GRAPH`, `STATS_SUPPLY`: SENTINEL +
+0xD00, + 0xD40, + 0xDC0) run the functions on a window of their own (its buttons' methods «ret 4», the buttons'
+texts 0x4C7780 kept by a hook, the drawing DLL's functions of 0x4A0F10 «ret», two fonts and the icons faked); a hook
+after the call makes the window's view (the texts, the counts, the labels and series' names as texts, the title,
+the points' floats; Suministro's three arrays) and copies its part, its FNV-1a and its length into the scratch
+globals, which tick_probe compares with the probes of `probes_unchecked.cpp` (the labels and titles as the English
+exe's texts). The oracle runs two static initializers first: the entries' table (0x46C060) and the CRT's float
+conversions (0x639BBE, the first part of _fpmath: without it «%.0f» stops with R6002).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `statistics_company` | without any statistics object (the scenarios' saves have none), with another merchant's only, then the player's made by the game (0x54E170) behind a third merchant's, its rings and 5 years filled (floats integral, halves, fractions, negative and 0; some days with nothing traded); each period of the balance and of the three graphs at several dates (the 30 days back from the 1st, 15th, 20th and 31st, in January, April and December; the months from January and April) and ring positions (30, 31, 0; 22, 23, 0), with fewer days, weeks and months recorded than points and more; his ships one by one sunk, at 0xE, without a captain, with no health, with [+0x130] at 0, then all sunk; the player out of the merchants; Suministro in his offices' towns with a ware his workshops need more of than it holds and one with nothing held | 1, 3, 5, 7 | 25 balances, 67–71 graphs and 1–3 Suministros equal; 48 of 48 targets (save 1: 45, one ship and one office) |
+
+Broken on purpose and caught: goods sold summed from [+0x18] (20 balances), Riqueza's volume of trade without its
+[+0x14] (20 graphs), Suministro's barrels priced as loads (3). Found on the way: __ftol of an infinity is 0 (a ship
+whose [+0x130] is 0). In the viewer, the top bar's money opens the menu (the company overview, the balance shown, as
+0x49D380); the other pages are left for the next sessions.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

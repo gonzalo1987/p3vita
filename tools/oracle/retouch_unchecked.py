@@ -7117,6 +7117,332 @@ def build_places(o):
     return during
 
 
+# --- The statistics window (statistics_window.cpp; re/emu/sesion15/statistics_notes.md) ---
+
+STATS_BALANCE = to.SENTINEL + 0xD00  # the copier of the balance, 0x4A2F60 (probes_unchecked.cpp kStatsBalance)
+STATS_GRAPH = to.SENTINEL + 0xD40  # of the company overview's graphs, 0x4A22A0 (kStatsGraph)
+STATS_RET4 = to.SENTINEL + 0xD80  # ret 4: the methods of the window's buttons
+STATS_RET = to.SENTINEL + 0xD84  # ret: the drawing DLL's functions (cdecl) the draw calls
+STATS_SUPPLY = to.SENTINEL + 0xDC0  # of Suministro's draw, 0x4A0F10 (kStatsSupply)
+# The drawing DLL's functions the draw 0x4A0F10 jumps through (0x4BB330...: jmp [slot]); they are 0 here.
+STATS_DRAW_SLOTS = (0x6DA858, 0x6DA898, 0x6DA8A8, 0x6DA8E0, 0x6DA8EC, 0x6DA9F4, 0x6DAA08, 0x6DAA28)
+STATS_FONTS = 0x6DCD28  # the fonts (0xA8 bytes each): the draw asks the window's two for their size (+0x40)
+STATS_ICONS = (0x6CC37C, 0x6CC380, 0x6CC384)  # *: the coin, barrel and bale icons
+STATS_VIEW = 0xC0  # the bytes of the view each call copies into SCRATCH; then its FNV-1a and its length
+STATS_COLOURS = (0xCC0009, 0x7E009B, 0x006700, 0x009CAE)  # parchment.ini [Parchment1] Farbe0..3
+EMPTY_CSTRING = 0x6C7CCC  # *: an empty CString's data
+
+
+def fnv1a(data):
+    h = 0x811C9DC5
+    for b in data:
+        h = ((h ^ b) * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
+def cstring_at(o, a, limit):
+    """The bytes of the C string at a (at most `limit`), zero-padded to `limit`."""
+    if not a:
+        return bytes(limit)
+    raw = bytes(o.uc.mem_read(a, limit))
+    end = raw.find(b'\0')
+    return (raw if end < 0 else raw[:end]).ljust(limit, b'\0')
+
+
+def statistics_copiers(o):
+    """The copiers of the statistics window (stdcall), on a window of their own (its buttons' methods all ret 4; the
+    buttons' texts, 0x4C7780, kept by a hook): STATS_BALANCE (period, part): 0x4A2F60 with the window's [+0xA4] and
+    [+0xBE] 11; STATS_GRAPH (entry, period, part): 0x4A22A0 with [+0xBE] and [+0xC0]. After the call a hook makes
+    the window's view (the balance: its 0x2A0 bytes of texts [+0x210] and the title [+0x20C] in 0x40; the graphs:
+    u32 [+0x2084], [+0x2088], [+0x208C], u16 [+0xF2], the kinds [+0xF4..+0xFB], the 7 labels' texts [+0xFC..] in
+    0x20 each, the texts' 0xE0 bytes [+0x118], the 4 buttons' texts [+0xC28..] in 0x20, the title in 0x40, then the
+    series' points as floats) and copies its part `part` (0xC0 bytes) into SCRATCH, its FNV-1a into SCRATCH + 0xC0
+    and its length into + 0xC4. statistics_reset before each call puts the window as 0x4A5DD0 leaves it. The game's
+    table of the entries' titles 0x6CC830 (0x46C060) and the CRT's float conversions (0x639BBE) are static
+    initializers': run here."""
+    from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESP
+    win, vtable = o.alloc(0x2800), o.alloc(0x400)
+    o.statistics_window = win
+    o.statistics_names = {}
+    o.uc.mem_write(STATS_RET4, bytes([0xC2, 0x04, 0x00]))
+    o.uc.mem_write(vtable, struct.pack('<I', STATS_RET4) * 0x100)
+    o.statistics_vtable = vtable
+    direct(o, 0x46C060, [])
+    # The CRT's table of the float conversions (_cfltcvt_init, the first part of _fpmath 0x639BA6, a static
+    # initializer the oracle doesn't run): without it sprintf's «%.0f» stops with the runtime error R6002.
+    direct(o, 0x639BBE, [])
+
+    def call(at, code, target):
+        return bytes([0xE8]) + struct.pack('<i', target - (at + len(code) + 5))
+
+    at = STATS_BALANCE
+    code = bytes([0x8B, 0x44, 0x24, 0x04, 0xA3]) + struct.pack('<I', win + 0xA4)  # the period
+    code += bytes([0x66, 0xC7, 0x05]) + struct.pack('<IH', win + 0xBE, 11)
+    code += bytes([0xB9]) + struct.pack('<I', win)
+    code += call(at, code, 0x4A2F60)
+    balance_view = at + len(code)
+    code += bytes([0x90, 0xC2, 0x08, 0x00])
+    assert len(code) <= 0x40
+    o.uc.mem_write(at, code)
+
+    at = STATS_GRAPH
+    code = bytes([0x8B, 0x44, 0x24, 0x04, 0x66, 0xA3]) + struct.pack('<I', win + 0xBE)  # the entry
+    code += bytes([0x8B, 0x44, 0x24, 0x08, 0x66, 0xA3]) + struct.pack('<I', win + 0xC0)  # the period
+    code += bytes([0xB9]) + struct.pack('<I', win)
+    code += call(at, code, 0x4A22A0)
+    graph_view = at + len(code)
+    code += bytes([0x90, 0xC2, 0x0C, 0x00])
+    assert len(code) <= 0x40
+    o.uc.mem_write(at, code)
+
+    # Suministro: the draw 0x4A0F10 (thiscall, a rect) with the town [+0x2440]; its drawing calls do nothing.
+    o.uc.mem_write(STATS_RET, bytes([0xC3]))
+    for slot in STATS_DRAW_SLOTS:
+        w32(o, slot, STATS_RET)
+    for k in range(2):
+        w32(o, STATS_FONTS + 0xA8 * k, vtable)
+    icon = o.alloc(0x40)
+    for slot in STATS_ICONS:
+        w32(o, slot, icon)
+    rect = o.alloc(0x10)
+    o.uc.mem_write(rect, struct.pack('<4i', 100, 100, 500, 500))
+    at = STATS_SUPPLY
+    code = bytes([0x8B, 0x44, 0x24, 0x04, 0xA3]) + struct.pack('<I', win + 0x2440)  # the town
+    code += bytes([0x66, 0xC7, 0x05]) + struct.pack('<IH', win + 0xBE, 15)
+    code += bytes([0x68]) + struct.pack('<I', rect) + bytes([0xB9]) + struct.pack('<I', win)
+    code += call(at, code, 0x4A0F10)
+    supply_view = at + len(code)
+    code += bytes([0x90, 0xC2, 0x08, 0x00])
+    assert len(code) <= 0x40
+    o.uc.mem_write(at, code)
+
+    def view_of_supply():
+        return b''.join(bytes(o.uc.mem_read(win + field, 0x50)) for field in (0x253C, 0x24EC, 0x258C))
+
+    def supply_hook(uc, address, size, data):
+        copy(view_of_supply(), o.u32(uc.reg_read(UC_X86_REG_ESP) + 8))
+
+    o.uc.hook_add(UC_HOOK_CODE, supply_hook, begin=supply_view, end=supply_view)
+    o.uc.ctl_remove_cache(supply_view, supply_view + 1)
+
+    def view_of_balance():
+        texts = o.u32(win + 0x210)
+        out = bytes(o.uc.mem_read(texts, 0x2A0)) if texts else bytes(0x2A0)
+        return out + cstring_at(o, o.u32(win + 0x20C), 0x40)
+
+    def view_of_graph():
+        series, points, missing = o.u32(win + 0x2084), o.u32(win + 0x2088), o.u32(win + 0x208C)
+        count = o.u16(win + 0xF2)
+        out = struct.pack('<IIIH', series, points, missing, count) + bytes(o.uc.mem_read(win + 0xF4, 8))
+        for k in range(7):
+            out += cstring_at(o, o.u32(win + 0xFC + 4 * k), 0x20) if k < count else bytes(0x20)
+        out += bytes(o.uc.mem_read(win + 0x118, 0xE0))
+        for k in range(4):
+            out += o.statistics_names.get(win + 0xC28 + 0xE8 * k, bytes(0x20))
+        out += cstring_at(o, o.u32(win + 0x20C), 0x40)
+        data = o.u32(win + 0x2080)
+        if data:
+            for s in range(min(series, 4)):
+                out += bytes(o.uc.mem_read(data + 0x208 * s + 8, 4 * points))
+        return out
+
+    def copy(view, part):
+        chunk = view[STATS_VIEW * part:STATS_VIEW * (part + 1)].ljust(STATS_VIEW, b'\0')
+        o.uc.mem_write(SCRATCH, chunk + struct.pack('<II', fnv1a(view), len(view)))
+
+    def balance_hook(uc, address, size, data):
+        copy(view_of_balance(), o.u32(uc.reg_read(UC_X86_REG_ESP) + 8))
+
+    def graph_hook(uc, address, size, data):
+        copy(view_of_graph(), o.u32(uc.reg_read(UC_X86_REG_ESP) + 12))
+
+    def button_text(uc, address, size, data):
+        esp = uc.reg_read(UC_X86_REG_ESP)
+        o.statistics_names[uc.reg_read(UC_X86_REG_ECX)] = cstring_at(o, o.u32(esp + 4), 0x20)
+        uc.reg_write(UC_X86_REG_EIP, o.u32(esp))
+        uc.reg_write(UC_X86_REG_ESP, esp + 8)
+
+    for address, f in ((balance_view, balance_hook), (graph_view, graph_hook), (0x4C7780, button_text)):
+        o.uc.hook_add(UC_HOOK_CODE, f, begin=address, end=address)
+        o.uc.ctl_remove_cache(address, address + 1)
+
+
+def statistics_reset(o):
+    """The copiers' window as 0x4A5DD0 leaves it before an entry's function: its buttons' vtables, no series nor
+    texts ([+0x210], [+0x2080..+0x208C] at 0, the count, kinds, labels and texts [+0xF2..+0x1F8) zeroed), an empty
+    title, the series' colours."""
+    win = o.statistics_window
+    o.uc.mem_write(win, struct.pack('<I', o.statistics_vtable) * (0x2800 // 4))
+    for field in (0x210, 0x2080, 0x2084, 0x2088, 0x208C):
+        w32(o, win + field, 0)
+    o.uc.mem_write(win + 0xF2, bytes(0x1F8 - 0xF2))
+    o.uc.mem_write(win + 0x24EC, bytes(0xF0))  # Suministro's numbers: 3 arrays of 20
+    w16(o, win + 0x208, 0)  # the draw's two fonts
+    w16(o, win + 0x20A, 1)
+    w16(o, win + 0xF0, 16)  # a row's height
+    w32(o, win + 0x20C, o.u32(EMPTY_CSTRING))
+    for k in range(4):
+        w32(o, win + 0x1F8 + 4 * k, 0xFF000000 | STATS_COLOURS[k])
+    o.statistics_names.clear()
+
+
+def statistics_balance_of(o, period, what):
+    statistics_reset(o)
+    direct(o, STATS_BALANCE, [period, 0])
+    texts = o.u32(o.statistics_window + 0x210)
+    raw = bytes(o.uc.mem_read(texts, 0x2A0)) if texts else bytes(0x2A0)
+    shown = [raw[0x20 * k:0x20 * k + 0x20].split(b'\0')[0].decode('latin-1') for k in range(20)]
+    title = cstring_at(o, o.u32(o.statistics_window + 0x20C), 0x40).split(b'\0')[0].decode('latin-1')
+    print(f'  balance {period} {what}: {shown[:3]} ... in {shown[9]} out {shown[16]} total {shown[17]}; {title!r}, '
+          f'{shown[18]!r}, {shown[19]!r}')
+
+
+def statistics_graph_of(o, entry, period, what):
+    statistics_reset(o)
+    direct(o, STATS_GRAPH, [entry, period, 0])
+    win = o.statistics_window
+    texts = [cstring_at(o, win + 0x118 + 0x20 * k, 0x20).split(b'\0')[0].decode('latin-1')
+             for k in range(o.u16(win + 0xF2))]
+    print(f'  graph {entry} period {period} {what}: series {o.u32(win + 0x2084)}, points {o.u32(win + 0x2088)}, '
+          f'missing {o.u32(win + 0x208C)}; {texts}')
+
+
+def statistics_supply_of(o, town, what):
+    statistics_reset(o)
+    direct(o, STATS_SUPPLY, [town, 0])
+    win = o.statistics_window
+    office = [o.s32(win + 0x253C + 4 * w) for w in range(20)]
+    print(f'  supply in town {town} {what}: office {office[:8]}, town {[o.s32(win + 0x24EC + 4 * w) for w in range(4)]}'
+          f', prices {[o.s32(win + 0x258C + 4 * w) for w in range(4)]}')
+
+
+def statistics_object(o, merchant):
+    """The merchant's statistics object (the list *0x6DFCAC by its u16 [+0x0]), or 0."""
+    node = o.u32(0x6DFCAC)
+    while node and o.u16(node) != merchant:
+        node = o.u32(node + 0x230C)
+    return node
+
+
+def statistics_fill(o, node, rnd):
+    """Values in every record of the object's rings (days, weeks, months: not the links [+0x6C]) and 5 years made
+    and linked: floats (some integral, some halves and fractions, some negative or 0), ints and u16s."""
+    floats = (0x0, 0x4, 0x10, 0x14, 0x18, 0x48, 0x4C, 0x64, 0x68)
+    ints = (0x8, 0xC, 0x1C, 0x20, 0x24, 0x28, 0x2C, 0x30, 0x34, 0x38, 0x3C, 0x40, 0x44, 0x50, 0x5C, 0x60)
+
+    def record():
+        r = bytearray(0x6C)
+        for f in floats:
+            kind = rnd.randrange(5)
+            v = (rnd.randrange(-500, 200000) if kind < 2 else rnd.randrange(0, 4000) + 0.5 if kind == 2
+                 else rnd.uniform(-1000.0, 90000.0) if kind == 3 else 0.0)
+            struct.pack_into('<f', r, f, v)
+        for f in ints:
+            struct.pack_into('<i', r, f, rnd.randrange(-2000, 60000) if rnd.randrange(6) else 0)
+        for f in (0x54, 0x56, 0x58, 0x5A):
+            struct.pack_into('<H', r, f, rnd.randrange(0, 300))
+        return bytes(r)
+
+    for first, count in ((0x8, 32), (0xE08, 24), (0x1888, 24)):
+        for k in range(count):
+            o.uc.mem_write(node + first + 0x70 * k, record())
+            if k % 7 == 3:
+                # Nothing traded that day: Riqueza's volume of trade at 0.
+                for f in (0x14, 0x18, 0x3C, 0x40):
+                    w32(o, node + first + 0x70 * k + f, 0)
+    head = 0
+    for _ in range(5):
+        year = o.alloc(0x70)
+        o.uc.mem_write(year, record() + struct.pack('<I', head))
+        head = year
+    w32(o, node + 0x2308, head)
+    w16(o, node + 0x6, 5)
+
+
+def statistics_company(o):
+    """The statistics window's company overview: the balance (0x4A2F60 through STATS_BALANCE) and the graphs of
+    Riqueza, Barcos and Producción (0x4A22A0 through STATS_GRAPH, with 0x505A10). First without any statistics
+    object (none in these saves: the daily statistics are off here), then another merchant's only (the list walked
+    to its end), then the player's object made by the game (0x54E170) behind a third merchant's, its records
+    filled with values (some days with nothing traded); each period of both, at several dates
+    (the 30 days back from the 1st, 15th and 31st, in January and December; the months from January and April) and
+    ring positions (the days' at 30 and 31, the months' at 22, 23 and 0), with fewer days, weeks and months recorded
+    than points and more; the player out of the merchants for the graphs; his ships with one sunk, one at 0xE, one
+    without a captain, one with no health, one with its [+0x130] at 0."""
+    import random
+    rnd = random.Random(1306)
+    player = o.u32(to.PLAYER)
+    merchants = o.counts()[2]
+    other = next(m for m in range(merchants) if m != player)
+    ships = [s for s in range(o.counts()[3]) if o.u8(o.ship(s)) == player]
+    print(f'player {player}, other merchant {other}, his ships {ships[:6]}')
+
+    def during(o):
+        statistics_copiers(o)
+        for period in range(4):
+            statistics_balance_of(o, period, 'no object')
+        for entry in (12, 13, 14):
+            statistics_graph_of(o, entry, 0, 'no object')
+        # Another merchant's object only: the list walked to its end.
+        direct(o, 0x54E170, [other], ecx=0x6DFC90)
+        statistics_balance_of(o, 0, 'only another merchant\'s object')
+        statistics_graph_of(o, 12, 0, 'only another merchant\'s object')
+        # The player's, and a third merchant's at the head: his is the second.
+        direct(o, 0x54E170, [player], ecx=0x6DFC90)
+        third = next(m for m in range(merchants) if m not in (player, other))
+        direct(o, 0x54E170, [third], ecx=0x6DFC90)
+        node = statistics_object(o, player)
+        print(f'  the player\'s object {node:#x}, the list\'s head {o.u32(0x6DFCAC):#x}')
+        statistics_fill(o, node, rnd)
+        statistics_fill(o, statistics_object(o, other), rnd)
+        day, month, year = o.u8(0x6DE4A0), o.u8(0x6DE4A1), o.u16(0x6DE4A2)
+        for d, m, cur, mcur, recorded in ((15, 4, 31, 23, (100, 30, 30)), (1, 0, 30, 22, (5, 3, 0)),
+                                          (31, 11, 0, 0, (40, 24, 25)), (1, 3, 7, 5, (29, 23, 23)),
+                                          (20, 0, 12, 1, (31, 25, 24))):
+            w8(o, 0x6DE4A0, d)
+            w8(o, 0x6DE4A1, m)
+            w16(o, node + 0x2, cur)
+            w8(o, node + 0x4, mcur % 24)
+            w8(o, node + 0x5, mcur)
+            for k, v in enumerate(recorded):
+                w16(o, 0x6DFC90 + 2 * k, v)
+            what = f'day {d} month {m}, rings {cur} {mcur}, recorded {recorded}'
+            for period in range(4):
+                statistics_balance_of(o, period, what)
+                for entry in (12, 13, 14):
+                    statistics_graph_of(o, entry, period, what)
+        w8(o, 0x6DE4A0, day)
+        w8(o, 0x6DE4A1, month)
+        w16(o, 0x6DE4A2, year)
+        # His ships: one sunk, one at 0xE, one without a captain, one with no health, one with its [+0x130] at 0.
+        changes = [(0x134, 0x11), (0x134, 0xE), (0x42, 0xFFFF), (0x18, 0), (0x130, 0)]
+        for s, (field, value) in zip(ships, changes):
+            if field in (0x134, 0x42, 0x130):
+                w16(o, o.ship(s) + field, value)
+            else:
+                w32(o, o.ship(s) + field, value)
+            statistics_graph_of(o, 13, 0, f'ship {s} [+{field:#x}] = {value:#x}')
+        for s in ships:
+            w16(o, o.ship(s) + 0x134, 0x11)
+        statistics_graph_of(o, 13, 1, 'all his ships sunk')
+        w32(o, to.PLAYER, merchants)
+        statistics_graph_of(o, 12, 0, 'the player out of the merchants')
+        w32(o, to.PLAYER, player)
+        # Suministro in the towns of his offices; in the first, a ware its workshops need more of than it holds and
+        # one with nothing held but needed.
+        towns = [t for t in range(o.counts()[0]) if facilities_office(o, player, t) is not None]
+        print(f'  his offices\' towns {towns}')
+        for k, t in enumerate(towns[:3]):
+            if k == 0:
+                f = o.office(facilities_office(o, player, t))
+                w32(o, f + 0x4 + 4 * 2, 3000)
+                w32(o, f + 0x64 + 4 * 2, 5000)
+                w32(o, f + 0x4 + 4 * 5, 0)
+                w32(o, f + 0x64 + 4 * 5, 40)
+            statistics_supply_of(o, t, 'his office')
+    return during
+
+
 def player_op_text(*args):
     """player_ops's output as text."""
     import subprocess
@@ -7413,6 +7739,13 @@ SCENARIOS = {
         '@5387ac>5387fc', '@5387b2>5387fc', '@5386d5>5387fc', '@518765>518777', '@51876b>518777', '@518775>5187ce',
         '@5187b1>518777', '@5187bf>518777', '@5187c6>518777', '@5187cc>518777', '@5187e4']),
     'pirate_sailing': Scenario(pirate_sailing, [0x535760, 0x506720], 1, ['@538706']),
+    'statistics_company': Scenario(statistics_company, [STATS_BALANCE, STATS_GRAPH, STATS_SUPPLY], 0, [
+        '@4a3071', '@4a308d', '@4a35b2', '@4a35bd>4a35c2', '@4a35bf', '@4a353b', '@4a354a', '@4a356f', '@4a3580',
+        '@4a3591', '@4a3aaa', '@4a3aba', '@4a3af7', '@4a3b05', '@4a3b0e', '@4a3b1a', '@4a3b26',
+        '@4a2330>4a2a8e', '@4a241a>4a2a72', '@4a244f', '@4a2465', '@4a2496', '@4a24d9', '@4a24cf', '@4a24cd>4a250c',
+        '@4a2567', '@4a269b', '@4a2839', '@4a2849', '@4a2859', '@4a2985', '@4a297f', '@4a29af', '@4a29fd', '@4a2a27',
+        '@505a49', '@505aab', '@505af2', '@505a8d>505b09', '@505a93>505b09', '@505b23',
+        '@4a126b', '@4a1272', '@4a1293', '@4a12f4', '@4a135d', '@4a135b>4a13b3', '@4a13f9']),
     'letter_ops': Scenario(letter_ops, [0x535760, 0x4D6530], 0, [
         '@4d6b01', '@4d6aff>4d6b35', '@536b23', '@536b21>536b2d', '@4d79b7', '@4d79e9', '@4d79f0', '@4d7a43',
         '@4d7a30', '@4d7a7e', '@4d7a6b']),

@@ -159,6 +159,13 @@ settings, as the game's: how long each kind is kept, its notice and sound, and
 the events' sound (up and down choose, left and right or X change, Circle closes
 it, which sends them to the game).
 
+**The statistics** (touching the money on the top bar, as in the game): the menu in the panel's room with the
+game's four pages (for now the company overview: the others are off) and the chosen entry on a parchment over the
+town: the balance (income and expenditure of the last 4 weeks or 3, 6, 12 months), the graphs of the company's
+wealth, its ships and its production (4 weeks, 6 months, 2 years, or the whole game after its second year) and the
+goods' supply in a town of your offices. Touch the tabs, the entries and the period's buttons; with the buttons,
+up and down choose the entry, L and R the period (or the supply's town), Circle closes them.
+
 **On the sea map** the panel stays: the sea's minimap (touch or drag to move the
 map), the ship buttons (a ship at sea is chosen and centred; one in port takes
 you to its town), the chosen ship's menu (Square takes the next ship) and the

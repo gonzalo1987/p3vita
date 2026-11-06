@@ -35,6 +35,7 @@ add_library(p3data STATIC
 	savegame_write.cpp
 	savegame_load.cpp
 	statistics.cpp
+	statistics_window.cpp
 	lz_compress.cpp
 	seamap.cpp
 	simulation.cpp
