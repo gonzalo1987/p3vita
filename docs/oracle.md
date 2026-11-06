@@ -1764,6 +1764,41 @@ town's drawing (0x521580) also draws each office's lists ([+0x2CE], [+0x2D0]) af
 [0x768]: the viewer didn't (the merchants' buildings were missing); now it does, and the rival kontor only for an
 office whose merchant hasn't the bit 4 of [+0x8] (0x521761).
 
+## The battles' piece 4: the chase that catches, the Hanse fleet (2026-11-07)
+
+Two more ways the ships' update starts a sea battle, rewritten in `battle/attack.cpp` and connected (with
+`Sailing::set_battles`, on by default as the pirates):
+- 0x50B250, the chase 0x50B030 under 0x190 away from its target: a new battle (0x611CD0); with a merchant's ship
+  raiding ([+0x15C], not in the state 0x16) that catches a merchant's ship that doesn't, and the player in the game,
+  the operation 0x9F {the battle, the ships near on the player's side} when there are any (the player's: each target
+  [+0x50], [+0x52] of his ships within the chase's reach of the chaser; another's: each of his ships targeting the
+  chaser; each with its convoy's ships); both out of the list by x; each side a battle side (alone: out of the sea,
+  0x505B60, and a convoy of its own, 0x5062F0, in the state 0x12 for a pirate or 0x14 with [+0x14] |= 0x12, and
+  0x20 when it raids; in a convoy: the convoy out of the list of those at sea, its ships out of the list by x and,
+  for a merchant's, [+0x18] |= 0x20, the state 0x14, the ships [+0x3C] |= 0x20, in the state 0x14, without targets,
+  with the guide's route 0x5176C0); both out of the list by x again; the setup 0x605420 between the two ships. The
+  chase then clears [+0x3A] and returns true (the walks go on from their link).
+- 0x50BA80, a raider at a closed port (0x506E46) or a raiding convoy's guide at a town (state 0x14, 0x507975): the
+  first event 0x24 of the queue for its town [+0x39] (only that one: the walk stops after its convoys) and the first
+  convoy of the list at sea in the state 9 there ([+0x1C]), taken out of the list; a new battle (none free: the convoy
+  back at the head, false); the ship without a convoy gets a free one, unlisted, in the state 0x14 (0x509AE0,
+  0x501680 with 0x10); the setup between the ship and the fleet's guide; true. Without a fleet, as before.
+
+The oracle runs the operation 0x9F (`OPERATIONS`); tick_probe has the probe of 0x50BA80 (`probes_battle.cpp`).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `chase_battle` | the chase 0x50B030 called directly under 0x190 away, each case on ships of its own: an AI raider catches an AI merchant's ship, both alone, the player's first ship targeting the chaser (0x9F with 1); two AI convoys' guides, the chaser raiding, the player's ship targeting it by [+0x52]; the player's ship raiding (his own: his ships' targets near and far); an AI ship in the state 0x16 catching a pirate of the list by x | 3, 5, 7 | 4 calls equal in each; 18 of 18 targets |
+| `hanse_fleet` | 0x50BA80 called directly: no event 0x24; an event 0x24 of another town then one of the ship's town without a fleet (false); an AI convoy in the state 9 there against a ship alone (it gets a convoy) and another against a convoy's guide | 1, 3, 5, 7 | 4 calls equal in each; 7 of 7 targets |
+| `raid_fleet` | `raid_arrival` (a raider at a closed port, the world running) with the event 0x24 and a convoy in the state 9 at the town set just before it arrives: the battle against the fleet | 3, 5, 7 | the ships' update equal (6–36 calls); 2 of 2 targets |
+
+Broken on purpose and caught: a lone raider's convoy without its [+0x14] 0x20 (2 chases), a ship against the fleet
+left out of the state 0x14 (1 call of `hanse_fleet`; in `raid_fleet` the battle's setup sets it again). In save 1
+there is no pirate in the list by x nor a single first arrival (as for `pursue_branches` and `raid_arrival`). Not
+reachable here: both functions without a free battle slot (255 battles open). Equal as before: `pursue_branches`,
+`raid_arrival`, `battle_join`, `retouch_pirates.py event_attack` (saves 1, 3, 5, 3 days) and the whole world 7 days
+in the 12 saves.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

@@ -312,6 +312,10 @@ public:
 	void fn_504970();  // (ships object) The towns' wares on the way again.
 	// battle/attack.cpp
 	void fn_50bc40(uint16_t convoy);  // (ships object) A pirate convoy attacks: a sea battle.
+	void fn_50b250(uint16_t chaser, uint16_t target);  // (ships object) A chase catches its target: a sea battle.
+	bool fn_50ba80(uint16_t ship);  // (ships object) Pirates at a town the Hanse fleet guards: a sea battle.
+	uint32_t chase_witnesses(uint16_t chaser);  // 0x50B250's count for the operation 0x9F.
+	void chase_side(uint16_t ship);  // 0x50B250's side of a ship.
 	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.
 	void fn_5176c0(uint16_t ship, uint16_t guide);  // (ship) Takes the guide's route if it has none.
 	void fn_505b60(uint16_t ship);  // (ships object) A ship leaves the sea list.

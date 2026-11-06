@@ -384,11 +384,15 @@ void Sailing::update_convoys() {
 				continue;
 			}
 			if (now.u16(0x12) == 0x14) {
-				// Ataque a una ciudad (0x50BA80 y lo que sigue): solo los
-				// piratas; no se reproduce más allá de sacarlo de las listas.
+				// Raiders at a town (only the pirates): out of the lists; a sea battle against the Hanse fleet when it
+				// guards the town (0x50BA80), else a town battle (0x535400, 0x6130B0: the battles' piece 6, not
+				// rewritten yet).
 				link() = now.u16(0x8);
 				now.u16(0x8) = kNoIndex;
 				unlink_x(lead_index);
+				if (battles_) {
+					fn_50ba80(lead_index);
+				}
 				continue;
 			}
 			// Llega a una ciudad (estado 3): fuera de la lista ordenada por x.

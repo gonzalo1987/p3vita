@@ -217,6 +217,15 @@ void register_probes_battle(ProbeRegistry& r) {
 		c.eax_mask = 0xFF;
 		return probe_sailing()->fn_503ac0(uint16_t(convoy)) ? 1 : 0;
 	};
+	// 0x50BA80: thiscall on the ships object, a ship at a town; returns al (a battle against the Hanse fleet).
+	r[0x50BA80] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
+		const uint16_t ship = uint16_t(c.args[0]);
+		if (!probe_sailing() || ship >= save.ships.size()) {
+			return kBad;
+		}
+		c.eax_mask = 0xFF;
+		return probe_sailing()->fn_50ba80(ship) ? 1 : 0;
+	};
 	// 0x50BC40: thiscall on the ships object, the attacking convoy.
 	r[0x50BC40] = [](SaveGame& save, const ProbeCall& c) -> std::optional<uint32_t> {
 		const uint16_t convoy = uint16_t(c.args[0]);

@@ -678,8 +678,8 @@ void Sailing::update_sailing() {
 	}
 }
 
-// 0x50B030: un barco que navega persigue a [+0x3A]. Devuelve true si ha
-// salido de la lista del mar (al empezar una batalla, que no se reproduce).
+// 0x50B030: a sailing ship chases its [+0x3A]. True when it has left the sea's
+// list (it caught its target: a sea battle, 0x50B250).
 bool Sailing::pursue(SavedShip& ship) {
 	const size_t count = save_.ships.size();
 	const uint16_t target = ship.target();
@@ -688,9 +688,8 @@ bool Sailing::pursue(SavedShip& ship) {
 		return false;
 	}
 	// No ship chases another in the 12 saves (the Hanse fleet does in
-	// retouch.py dieta). From here on, checked with the oracle: scenario
-	// pursue_branches (saves 3, 5, 7), but for the battle when it catches it
-	// (below).
+	// retouch.py dieta). From here on, checked with the oracle: scenarios
+	// pursue_branches and chase_battle (saves 3, 5, 7).
 	const uint16_t status = ship.status();
 	if (status != 0x16 && status != kShipSailing && status != 0x10) {
 		ship.target() = kNoIndex;
@@ -727,9 +726,13 @@ bool Sailing::pursue(SavedShip& ship) {
 		return false;
 	}
 	if (distance < 0x190) {
-		// Lo alcanza: batalla (0x50B250, que saca los barcos de la lista y
-		// devuelve true). No se reproduce: el barco sigue en la lista.
+		// It catches it: a sea battle (0x50B250, both out of their lists), the chase over ([+0x3A] = 0xFFFF), true.
+		// Without the battles (set_battles(false), the rule before the battles' piece 4) it stays in the list.
 		ship.target() = kNoIndex;
+		if (battles_) {
+			fn_50b250(uint16_t(&ship - save_.ships.data()), target);
+			return true;
+		}
 		return false;
 	}
 	if (ship.type() > 1) {
@@ -864,14 +867,16 @@ void Sailing::arrive(SavedShip& ship, uint16_t index, uint16_t& link) {
 	if ((flags & kClosedPort) || ((flags & kClosedToRoutes) && merchant(ship) && (ship.orders() & 1))) {
 		clear_route(ship);
 		if (ship.raid() && !(flags & kRaidBlocked)) {
-			// Piratas ante un puerto bloqueado: sale de las listas y, salvo
-			// que 0x50BA80 (con la cola de eventos y los convoyes, que no se
-			// reproduce) lo una a otro ataque, vuelve el primero de la lista
-			// del mar. Checked with the oracle: scenario raid_arrival (saves
-			// 3, 5, 7; 0x50BA80 finds no Hanse fleet there).
+			// Pirates at a closed port: out of the lists and, unless the Hanse fleet guards the town (0x50BA80: a sea
+			// battle against it), back first in the sea's list. Checked with the oracle: scenarios raid_arrival
+			// (saves 3, 5, 7; no Hanse fleet there) and hanse_fleet_battle.
 			unlink_x(index);
 			link = ship.next_in_list();
 			ship.next_in_list() = kNoIndex;
+			if (battles_ && fn_50ba80(index)) {
+				ship.town() = kNoTown;
+				return;
+			}
 			insert_x(index, save_.sailing_head());
 			ship.next_in_list() = save_.sailing_head();
 			save_.sailing_head() = index;

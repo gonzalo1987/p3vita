@@ -714,7 +714,7 @@ def player_pirate_lists(o):
 
 def battle_join(o):
     """Operation 0x9F (0x536CD5 → 0x611309; queued by the chase 0x50B250,
-    which p3vita doesn't have yet): ships join a sea battle and its music
+    scenario chase_battle): ships join a sea battle and its music
     level [+0x1E94] goes down once per bit of their number. On the battle
     the save starts with (saves 6, 7, tut4): 1 ship, 0x2D, 0x7FFF (the 15
     bits; with bit 15 the game's loop never ends) and 0; a slot without a
@@ -4180,6 +4180,130 @@ def pursue_branches(o):
         chase('in the state 0x16, a pirate far away', listed, [(c + 0x134, 2, 0x16)])
         chase('near, a snaikka, tick 0', target, near + [(c + 0xE, 1, 0)], tick=0)
         chase('a cog in the shallows', target, shallows)
+    return during
+
+
+def chase_battle(o):
+    """The chase 0x50B030 (called directly) that catches its target, under 0x190 away: the sea battle 0x50B250 (the
+    battles' piece 4), each case on ships of its own (a battle changes the lists): an AI ship raiding ([+0x15C])
+    catches an AI merchant's ship, both alone, with the player's first ship targeting the chaser (the operation 0x9F
+    with 1); two AI convoys' guides, the chaser raiding, the player's ship targeting it too by [+0x52]; the player's
+    ship raiding (his own: the count of his ships' targets near the chaser, one near and one far); an AI ship in the
+    state 0x16 (the Hanse's hunt) catching a pirate of the list by x."""
+    towns, _, merchants, ships = o.counts()
+    convoys = o.u16(CONVOY_COUNT)
+    player = o.u32(to.PLAYER)
+    state = lambda s: o.u16(o.ship(s) + 0x134)
+    at_sea = [s for s in range(ships) if state(s) == 0xF and o.u16(o.ship(s) + 8) >= convoys
+              and o.u8(o.ship(s)) < merchants and o.u8(o.ship(s)) != player and not o.u8(o.ship(s) + 0x15C)]
+    guides = [c for c in convoy_list(o, CONVOY_HEAD)
+              if o.u8(o.u32(CONVOYS) + 0x3C * c) < merchants and o.u8(o.u32(CONVOYS) + 0x3C * c) != player
+              and o.u16(o.u32(CONVOYS) + 0x3C * c + 0x10) < ships]
+    mine = []
+    s = o.u16(o.merchant(player) + 0xE)
+    while s < ships:
+        mine.append(s)
+        s = o.u16(o.ship(s) + 4)
+    listed = next((s for k, _ in pirates(o) for s in pirate_ships(o, k)
+                   if o.u16(o.ship(s) + 0xA) < ships or o.u16(o.ship(s) + 0xC) < ships), None)
+    if len(at_sea) < 6 or len(guides) < 2 or not mine or listed is None:
+        raise RuntimeError(f'at sea {len(at_sea)}, convoys {len(guides)}, the player\'s {mine}, a listed pirate {listed}')
+    print(f'at sea {at_sea[:6]}, convoys {guides[:2]}, the player\'s ships {mine}, a listed pirate {listed}')
+
+    def during(o):
+        def caught(what, chaser, target, fields=()):
+            c, t = o.ship(chaser), o.ship(target)
+            set_fields(o, [(c + 0x3A, 2, target), (c + 0x1C, 4, o.u32(t + 0x1C) + (12 << 16)),
+                           (c + 0x20, 4, o.u32(t + 0x20) + (8 << 16))] + list(fields))
+            r = direct(o, 0x50B030, [chaser], ecx=to.SHIPS) & 0xFF
+            print(f'{what}: {r}, the chaser\'s state {o.u16(c + 0x134):#x}, convoy {o.u16(c + 8)}, the target\'s '
+                  f'state {o.u16(t + 0x134):#x}, convoy {o.u16(t + 8)}, queued {[op.hex() for op in o.queued[-1:]]}')
+        p = o.ship(mine[0])
+        set_fields(o, [(p + 0x50, 2, at_sea[0])])
+        caught('a raider catches a merchant, the player\'s ship targeting it', at_sea[0], at_sea[1],
+               [(o.ship(at_sea[0]) + 0x15C, 1, 1)])
+        g0 = o.u16(o.u32(CONVOYS) + 0x3C * guides[0] + 0x10)
+        g1 = o.u16(o.u32(CONVOYS) + 0x3C * guides[1] + 0x10)
+        set_fields(o, [(p + 0x52, 2, g0)])
+        caught('two convoys, the chaser raiding', g0, g1, [(o.ship(g0) + 0x15C, 1, 1), (o.ship(g0) + 0x134, 2, 0xF),
+                                                          (o.ship(g1) + 0x134, 2, 0xF), (o.ship(g1) + 0x39, 1, 0xFF)])
+        raider = mine[-1]
+        r = o.ship(raider)
+        caught('the player\'s ship raiding', raider, at_sea[2], [
+            (r + 0x15C, 1, 1), (r + 0x134, 2, 0xF), (r + 0x39, 1, 0xFF), (r + 0x50, 2, at_sea[2]),
+            (r + 0x52, 2, at_sea[3]), (o.ship(at_sea[3]) + 0x1C, 4, o.u32(o.ship(at_sea[2]) + 0x1C) + (3000 << 16))])
+        caught('the Hanse\'s hunt catches a pirate', at_sea[4], listed, [(o.ship(at_sea[4]) + 0x134, 2, 0x16)])
+    return during
+
+
+def hanse_fleet(o):
+    """0x50BA80 (called directly on a ship of a town): no event 0x24 for its town (false); an event 0x24 of another
+    town and then one of its own with no convoy in the state 9 there (false: only the first of its town is looked
+    at); with an AI convoy of the list in the state 9 at the town (the Hanse fleet), a ship without a convoy (it gets
+    one: a sea battle, true); and a convoy's guide against another fleet (true)."""
+    towns, _, merchants, ships = o.counts()
+    convoys = o.u16(CONVOY_COUNT)
+    player = o.u32(to.PLAYER)
+    at_sea = [s for s in range(ships) if o.u16(o.ship(s) + 0x134) == 0xF and o.u16(o.ship(s) + 8) >= convoys
+              and o.u8(o.ship(s)) < merchants and o.u8(o.ship(s)) != player]
+    guides = [c for c in convoy_list(o, CONVOY_HEAD)
+              if o.u8(o.u32(CONVOYS) + 0x3C * c) < merchants and o.u16(o.u32(CONVOYS) + 0x3C * c + 0x10) < ships]
+    if len(at_sea) < 2 or len(guides) < 3:
+        raise RuntimeError(f'at sea {len(at_sea)}, convoys {len(guides)}')
+    town, other = 2, 4
+    print(f'ships {at_sea[:2]}, convoys {guides[:3]}, town {town}')
+
+    def during(o):
+        def fleet_call(what, ship):
+            w8(o, o.ship(ship) + 0x39, town)
+            r = direct(o, 0x50BA80, [ship], ecx=to.SHIPS) & 0xFF
+            print(f'{what}: {r}, the ship\'s convoy {o.u16(o.ship(ship) + 8)}, state {o.u16(o.ship(ship) + 0x134):#x}')
+        fleet_call('no event 0x24', at_sea[0])
+        new_event(o, 0x100000, 0x24, b14=other)
+        new_event(o, 0x100001, 0x24, b14=town)
+        fleet_call('no fleet there', at_sea[0])
+        c = o.u32(CONVOYS) + 0x3C * guides[0]
+        w16(o, c + 0x12, 9)
+        w16(o, c + 0x1C, town)
+        fleet_call('a ship alone against the fleet', at_sea[0])
+        c = o.u32(CONVOYS) + 0x3C * guides[1]
+        w16(o, c + 0x12, 9)
+        w16(o, c + 0x1C, town)
+        fleet_call('a convoy\'s guide against the fleet', o.u16(o.u32(CONVOYS) + 0x3C * guides[2] + 0x10))
+    return during
+
+
+def raid_fleet(o):
+    """raid_arrival with the Hanse fleet guarding the closed port: an event 0x24 for the town and an AI convoy of the
+    list in the state 9 there, set just before the raider arrives (0x506E46 → 0x50BA80: a sea battle against the
+    fleet instead of going back to the sea's list)."""
+    import subprocess
+    a = o.scenario_args
+    out = subprocess.run([sys.executable, os.path.abspath(__file__), a.exe, a.save, os.devnull, 'raid_arrival',
+                          '--barcos', a.barcos, '--cpr', a.cpr, '--first-arrival'], capture_output=True, text=True)
+    line = [x for x in out.stdout.splitlines() if x.startswith('first arrival')]
+    if not line:
+        raise RuntimeError(f'the copy of the world found no arrival: {out.stdout[-500:]} {out.stderr[-500:]}')
+    ticks, s, t = (int(x) for x in line[0].split()[2:5])
+    merchants, ships = o.counts()[2], o.counts()[3]
+    print(f'ship {s} of {o.u8(o.ship(s))} arrives at {t} in {ticks} ticks')
+
+    def during(o):
+        a = o.town(t)
+        w32(o, a + 0x2C8, (o.u32(a + 0x2C8) | 0x200) & ~0x4000000)
+        w8(o, o.ship(s) + 0x15C, 1)
+        for k in range(ticks - 1):
+            o.advance_tick()
+        new_event(o, 0x100000, 0x24, b14=t)
+        fleet = next(c for c in convoy_list(o, CONVOY_HEAD)
+                     if o.u8(o.u32(CONVOYS) + 0x3C * c) < merchants and o.u16(o.u32(CONVOYS) + 0x3C * c + 0x10) < ships)
+        c = o.u32(CONVOYS) + 0x3C * fleet
+        w16(o, c + 0x12, 9)
+        w16(o, c + 0x1C, t)
+        print(f'the fleet: convoy {fleet}')
+        o.advance_tick()
+        print(f'after {ticks} ticks: ship {s} state {o.u16(o.ship(s) + 0x134):#x}, town {o.u8(o.ship(s) + 0x39):#x}, '
+              f'convoy {o.u16(o.ship(s) + 8)}, the fleet in the list: {fleet in convoy_list(o, CONVOY_HEAD)}')
     return during
 
 
@@ -8409,6 +8533,13 @@ SCENARIOS = {
         '@50b083', '@50b0b8', '@50b0ed', '@50b189', '@50b11a', '@50b13c', '@50b183>50b221', '@50b1f4>50b221',
         '@50b1f6', '@50b1c0>50b1ed', '@50b22b']),
     'raid_arrival': Scenario(raid_arrival, [0x506720], 0, ['@506e19']),
+    # The battles' piece 4 (battle/attack.cpp)
+    'chase_battle': Scenario(chase_battle, [0x50B030], 0, [
+        '@50b274', '@50b2f6', '@50b321', '@50b40c', '@50b500', '@50b59d', '@50b5bc', '@50b627', '@50b66f',
+        '@50b6bc', '@50b79c', '@50b826', '@50b84b', '@50b893', '@50b8d5', '@50b9b8', '@50b9b2>50ba46', '@50ba5e']),
+    'hanse_fleet': Scenario(hanse_fleet, [0x50BA80], 0, [
+        '@50bb2f', '@50bace', '@50bb09', '@50bb56', '@50bbba', '@50bbb8>50bc08', '@50bc08']),
+    'raid_fleet': Scenario(raid_fleet, [0x506720], 0, ['@506e19', '@506e4d>506e7c']),
     # convoys.cpp
     'convoy_states': Scenario(convoy_states, [0x506720], 0, [
         '@5071d4', '@507255', '@507300', '@50760c', '@50761e', '@507854', '@50786e', '@507c7f']),
