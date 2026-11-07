@@ -4,11 +4,13 @@
 
 #include <array>
 #include <cstring>
+#include <optional>
 
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_texts.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
+#include "p3data/statistics_window.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -110,6 +112,137 @@ void Sailing::fn_612bd0(uint16_t a, uint16_t b) {
 	}
 }
 
+// 0x60DDA7..0x60E8C3 (in 0x60D299, for the local player's human side `side`;
+// `sailors`, the method's argument: side 1 has a ship with sailors): the end's
+// message, written into [+0x1310], or nothing (none for a capture,
+// [+0xAC4] 2; the old text stays for [+0xAC4] above 2). By whether the side's
+// team is `sailors` (it won) and how it ended ([+0xAC4]: 0 fled, 1 beaten),
+// with the other ship (the place [+0xAC6]) and its owner's phrase: a pirate
+// («the pirate %s %s», [+0x1E90], [+0x1E91]: when known, else «the unknown
+// pirate»), a merchant («the %s %s %s»: his rank at home, first and family
+// names; by [+0x1A] one of two forms and tables), or, for 0xFE, the nest's
+// texts (copied with their «%s» unfilled: as the game).
+// GAME BUGS (reproduced): the won-and-beaten branch tests the sides' owner
+// at the ship owner's number as a side ([+0x35A + 2 · owner]); a ship's type
+// is the whole byte [+0xE] (beyond 3 the tables' next texts); the attacker's
+// guide (convoy [+0x65E]) is read unchecked (here: none, as unknown).
+std::optional<std::string> Sailing::sea_end_message(size_t b, size_t side, bool sailors) const {
+	const BattleGraph& g = save_.battles;
+	auto u8 = [&](size_t o) { return g.get<uint8_t>(b, o); };
+	auto u16 = [&](size_t o) { return g.get<uint16_t>(b, o); };
+	const uint8_t kind = u8(0xAC4);
+	if (!texts_ || kind == 2) {
+		return std::nullopt;
+	}
+	const uint32_t ships = save_.globals.u16(global::kShipCount);
+	const uint32_t captains = save_.globals.u16(global::kCaptainCount);
+	auto at = [&](uint32_t english) { return texts_->raw_at(english); };
+	auto slot = [&](uint32_t english, uint32_t k) { return texts_->raw_at(english + 4 * k); };
+	const size_t e = battle_entry(b, u16(0xAC6));
+	const uint32_t other = g.get<uint32_t>(e, 0x4);
+	const ShipMemory* os = other < ships ? &save_.ships[other].memory : nullptr;
+	const uint8_t owner = os ? os->u8(0x0) : 0;
+	const uint8_t type = os ? os->u8(0xE) : 0;
+	auto pirate_names = [&](uint32_t format) {
+		return GameTexts::sprintf_raw(at(format),
+			{game_first_name(save_, u8(0x1E90)), game_family_name(save_, u8(0x1E91))});
+	};
+	// A merchant's phrase: «%s %s %s» with his rank at home in a table by
+	// [+0x1A], his first and family names.
+	auto merchant = [&](uint32_t m, uint32_t with_flag, uint32_t table_flag, uint32_t without, uint32_t table) {
+		if (m >= save_.merchants.size()) {
+			return std::string();
+		}
+		const MerchantMemory& mm = save_.merchants[m].memory;
+		const uint8_t rank = mm.u8(0x39C + mm.u8(0x19));
+		// [+0xE8] and [+0xE4]: his first and family names (0x4F6420, 0x4F6450).
+		const bool flag = mm.u8(0x1A) != 0;
+		return GameTexts::sprintf_raw(at(flag ? with_flag : without),
+			{slot(flag ? table_flag : table, rank), statistics_first_name(save_, m), statistics_family_name(save_, m)});
+	};
+	// A pirate's guide is known when it exists (and has a hull) and its
+	// captain does.
+	auto known_guide = [&](uint16_t convoy) {
+		if (convoy >= save_.convoy_count()) {
+			return false;
+		}
+		const uint16_t guide = save_.convoys[convoy].u16(0x10);
+		if (guide >= ships) {
+			return false;
+		}
+		const ShipMemory& s = save_.ships[guide].memory;
+		return s.u32(0x18) != 0 && s.u16(0x42) < captains;
+	};
+	const bool won = u8(0x559 + side) == (sailors ? 1 : 0);
+	if (won) {
+		if (kind == 1) {
+			// 0x60DDEC: «You have beaten %s.»
+			std::string phrase;
+			if (u16(0x35A + 2 * size_t(owner)) == 0xFE) {
+				phrase = at(0x6AA1A8);
+			} else if (u8(0xAD2) & (1u << (1 - (sailors ? 1 : 0)))) {
+				phrase = (owner == 0xFF && u8(0x1E90) != 0xFF && u8(0x1E91) != 0xFF) ? pirate_names(0x6A1714)
+																					: at(0x6A1718);
+			} else {
+				phrase = merchant(owner, 0x6A170C, 0x6A0628, 0x6A1710, 0x6A0608);
+			}
+			return GameTexts::sprintf_raw(at(0x6A1D88), {phrase});
+		}
+		if (kind != 0) {
+			return std::nullopt;
+		}
+		std::string phrase;
+		if (!sailors) {
+			// 0x60E07D: «%s %s has fled.» (the other ship's type, «of ...»)
+			if (owner == 0xFE) {
+				phrase = at(0x6AA1A8);
+			} else if (u8(0xAD2) & 2) {
+				phrase = (owner == 0xFF && known_guide(u16(0x660))) ? pirate_names(0x6A16F0) : at(0x6A16F8);
+			} else {
+				phrase = merchant(owner, 0x6A16E8, 0x6A0738, 0x6A16EC, 0x6A0718);
+			}
+			return GameTexts::sprintf_raw(at(0x6A1D80), {slot(0x6A172C, type), phrase});
+		}
+		// 0x60E334: «%s has fled with %s like a cowardly dog.» («The ...», «his <type>»)
+		if (owner == 0xFE) {
+			phrase = at(0x6AA1A8);
+		} else if (u8(0xAD2) & 1) {
+			phrase = (owner == 0xFF && known_guide(u16(0x65E))) ? pirate_names(0x6A1704) : at(0x6A1708);
+		} else {
+			phrase = merchant(owner, 0x6A16FC, 0x6A0738, 0x6A1700, 0x6A0718);
+		}
+		return GameTexts::sprintf_raw(at(0x6A1D84), {phrase, slot(0x6A173C, type)});
+	}
+	if (kind == 0) {
+		// 0x60E841: the player fled.
+		if (sailors && !(u8(0xAD2) & 2)) {
+			const uint16_t m = u16(0x35A + 2 * size_t(sailors ? 1 : 0));
+			if (m == 0xFE) {
+				return at(0x6AA1A4);
+			}
+			return GameTexts::sprintf_raw(at(0x6A1D8C), {statistics_first_name(save_, m), statistics_family_name(save_, m)});
+		}
+		return at(0x6A1D90);
+	}
+	if (kind != 1) {
+		return std::nullopt;
+	}
+	// 0x60E5E5: «%s has beaten you.» The winning team's guide (side
+	// `sailors`'s convoy) and owner.
+	const size_t winner = sailors ? 1 : 0;
+	const bool guide = known_guide(u16(winner == 0 ? 0x660 : 0x65E));
+	const uint16_t m = u16(0x35A + 2 * winner);
+	std::string phrase;
+	if (m == 0xFE) {
+		phrase = at(0x6AA1AC);
+	} else if (u8(0xAD2) & (1u << winner)) {
+		phrase = (m == 0xFF && guide) ? pirate_names(0x6A1704) : at(0x6A1708);
+	} else {
+		phrase = merchant(m, 0x6A16FC, 0x6A0628, 0x6A1700, 0x6A0608);
+	}
+	return GameTexts::sprintf_raw(at(0x6A1D94), {phrase});
+}
+
 // 0x60D299 (method +0x1C of a sea battle; whether side 1 has a ship with
 // sailors): the end of the battle, once [+0x15C] is 0 or above 0xF000. A
 // third party of the defender's convoy (owners of neither side) may stay
@@ -126,7 +259,7 @@ void Sailing::fn_612bd0(uint16_t a, uint16_t b) {
 // over ([+0x5C]) and [+0x15C] 1 (automatic) or 250.
 //
 // The report goes as a letter 0x29 (0x4D6530) to each side of the computer
-// (a human side gets the battle's window: part 7), a pirate's win makes the
+// (the local player's human side gets the end's window: sea_end_message), a pirate's win makes the
 // news (a letter 0x2A to the chronicle), and the letters 0x72 tell each side
 // what it sank, took and plundered. The news ticker and the window are the
 // interface.
@@ -292,13 +425,36 @@ void Sailing::fn_60d299(size_t b, bool sailors) {
 	}
 	// The letters 0x29 (0x60DD01..0x60DD93), if side 0 had a ship: to each
 	// side of the computer ([+0x5D]), with its team's report (without the
-	// final 0; the size a u16) and its merchant's home town in [+0x5]. A
-	// human side gets the battle's window instead (part 7).
+	// final 0; the size a u16) and its merchant's home town in [+0x5]. The
+	// local player's human side (0x60DDA7..0x60E965), unless it took a ship
+	// ([+0xAC4] 2), gets the end's window instead: its message into [+0x1310]
+	// (sea_end_message), the window's description at [+0x12EC] (no button)
+	// and the window (0x41D9B0 on *0x6CBB10: [+0x12E9] 0, [+0x12EA] 1,
+	// [0x6E59CD] 1; waiting, [+0x12E9] 1, while another one is open).
 	const uint16_t merchants = save_.globals.u16(global::kWorldMerchantCount);
 	if (on[0] != 0) {
+		const uint32_t player = save_.globals.u32(kPlayer);
 		for (uint32_t k = 0; k < sides; ++k) {
 			const uint16_t m = u16(0x35A + 2 * size_t(k));
-			if (m >= merchants || u8(0x5D + size_t(k)) == 0) {
+			if (m >= merchants) {
+				continue;
+			}
+			if (u8(0x5D + size_t(k)) == 0) {
+				if (m != player || u8(0xAC4) == 2) {
+					continue;
+				}
+				if (const std::optional<std::string> message = sea_end_message(b, k, sailors)) {
+					write_battle_text(b, *message);
+				}
+				battle_window_description(b, false);
+				if (g.get<uint8_t>(0, 0x3FD) != 0) {
+					g.set<uint8_t>(b, 0x12E9, 1);
+				} else if (save_.battle_window.present) {
+					open_battle_window(b);
+					g.set<uint8_t>(b, 0x12E9, 0);
+					g.set<uint8_t>(b, 0x12EA, 1);
+					g.set<uint8_t>(0, 0x3FD, 1);
+				}
 				continue;
 			}
 			Letter letter(0x29);

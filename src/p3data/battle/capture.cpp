@@ -180,9 +180,7 @@ std::string Sailing::owner_phrase(size_t b, size_t e) const {
 // [+0x1310] (sprintf 0x64D410) in the language of the texts (Sailing::
 // set_texts; nothing without them). Then, if the player's side is human
 // ([+0x5D + side] 0), the window's description at [+0x12EC] (the text) and
-// the window (0x41D9B0 on *0x6CBB10, part 7), which p3vita doesn't have yet:
-// as the oracle (BATTLE_WINDOW_JUMPS, 0x60CA4E -> 0x60CA6F) only the case
-// of another window open ([0x6E59CD]: [+0x12E9] 1, later) is kept.
+// the window (0x41D9B0 on *0x6CBB10; SaveGame::battle_window).
 void Sailing::boarding_message(size_t b, uint16_t winner, uint16_t taken, bool attack) {
 	BattleGraph& g = save_.battles;
 	const size_t w = battle_entry(b, winner), t = battle_entry(b, taken);
@@ -227,23 +225,20 @@ void Sailing::boarding_message(size_t b, uint16_t winner, uint16_t taken, bool a
 	if (side >= 0xFF || g.get<uint8_t>(b, 0x5D + size_t(side)) != 0) {
 		return;
 	}
-	// The window's description (0x60C9D6..0x60CA34): the text, then fixed
-	// values.
-	g.set<uint32_t>(b, 0x12EC, BattleGraph::pointer(b, 0x1310));
-	g.set<uint8_t>(b, 0x12F0, 1);
-	g.set<uint16_t>(b, 0x12F2, 0);
-	g.set<uint32_t>(b, 0x12F4, 0);
-	g.set<uint8_t>(b, 0x12F8, 0xFF);
-	g.set<uint8_t>(b, 0x12F9, 0);
-	g.set<uint8_t>(b, 0x12FA, 0);
-	g.set<uint8_t>(b, 0x12FB, 0xFF);
-	g.set<uint32_t>(b, 0x12FC, 0x3F3504F4);
-	g.set<uint8_t>(b, 0x1300, 1);
-	g.set<uint16_t>(b, 0x1302, 0);
-	g.set<uint32_t>(b, 0x1304, 0);
-	g.set<uint32_t>(b, 0x1308, 0);
+	// The window's description (0x60C9D6..0x60CA34: the text, no button, as
+	// the end's), then the window: waiting ([+0x12E9] 1) while another one
+	// is open ([0x6E59CD], the battles' [+0x3FD]), else opened (0x60CA4E:
+	// 0x41D9B0, [+0x12E9] 0, [0x6E59CD] 1, [+0x12EA] 1). Without the window
+	// (the checks) it isn't opened, as the oracle (BATTLE_WINDOW_JUMPS,
+	// 0x60CA4E -> 0x60CA6F).
+	battle_window_description(b, false);
 	if (g.get<uint8_t>(0, 0x3FD) != 0) {
 		g.set<uint8_t>(b, 0x12E9, 1);
+	} else if (save_.battle_window.present) {
+		open_battle_window(b);
+		g.set<uint8_t>(b, 0x12E9, 0);
+		g.set<uint8_t>(0, 0x3FD, 1);
+		g.set<uint8_t>(b, 0x12EA, 1);
 	}
 }
 

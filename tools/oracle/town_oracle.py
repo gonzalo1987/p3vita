@@ -267,6 +267,44 @@ BATTLE_WINDOW_JUMPS = {0x60659B: 0x606BAE, 0x606E7E: 0x606EA5, 0x606FEA: 0x60701
 # was at 0x5FF5B6 and goes on at 0x5FF810, the next side (a battle over at its setup reaches it with the
 # player's raider at an undefended town).
 TOWN_END_WINDOW = (0x5FF5B6, 0x5FF770, 0x5FF810)
+# The sea map's battle icon (the battles' piece 7; the user's choice, 2026-11-07: the game's memory as on the PC):
+# when a ship of the player is in a sea battle ([+0x1E92]), the game tells its sea map (*0x6CBDD8, which it always
+# has: 0x457C90 with the battle's slot [+0x662], x [+0xAD6], y [+0xADA]) and clears the flag, at the setup
+# (0x605910) and in each step (0x606E37). The emulator has no sea map: with --pirates the oracle records the icon
+# (sea_map_icons) and goes on at the clear, as p3vita (Sailing::tell_sea_map).
+SEA_MAP_ICON = {0x605910: 0x605939, 0x606E37: 0x606E60}
+# The battles' piece 7: the battles' window (*0x6CBB10, the game's dialog: a battle's question, «Steer manually», and
+# its end). The scenarios of the window's path (TownOracle.use_battle_window) give the emulator a stand-in: an object
+# whose vtable stops the emulator but for its methods +0xC8 (whether open: [+0x48], as the game's 0x4B2200) and
+# +0x118 (closed with the result 0, as 0x41E670), with its result at [+0x5A4]; 0x41D9B0 opens it (an open one closed
+# first; the description copied to [+0x5B8]) and the scenario closes it (close_battle_window: 10, [0x66BDC0], its
+# button; 0 otherwise). Then the sea battles' BATTLE_WINDOW_JUMPS are off and the interface of the human side's path
+# is jumped over (HUMAN_UI_JUMPS: 0x608230's town view, sea map and clouds; [0x6E59CC] is kept). The sound (0x443690
+# on *0x6CBDB8, which the emulator doesn't have: the variants of a sound, played only with the battle on the screen)
+# answers SOUND_VARIANTS (0: the sound off, no rand(); a scenario may switch it on). Region WN: u8 open, u32 result,
+# u32 the sounds' variants (SaveGame::battle_window).
+BATTLE_WINDOW_POINTER = 0x6CBB10
+BATTLE_WINDOW = 0x0510_0000  # its own mapping: the object, the vtable, the two methods and the trap
+BATTLE_WINDOW_VTABLE = BATTLE_WINDOW + 0x1000  # 0x100 entries, all the trap but +0xC8 and +0x118
+BATTLE_WINDOW_IS_OPEN = BATTLE_WINDOW + 0x1800  # mov al, [ecx+0x48]; ret
+BATTLE_WINDOW_CLOSE = BATTLE_WINDOW + 0x1810  # mov byte [ecx+0x48], 0; mov dword [ecx+0x5A4], 0; ret
+BATTLE_WINDOW_TRAP = BATTLE_WINDOW + 0x1F00
+BATTLE_WINDOW_SIZE = 0x2000
+OPEN_WINDOW = 0x41D9B0  # thiscall on the window (a description of 0x20 bytes); ret 4, al
+WINDOW_BUTTON = 10  # [0x66BDC0]: the result of its first button
+SEA_WINDOW_JUMPS = (0x60659B, 0x606E7E, 0x606FEA, 0x60CA4E)
+HUMAN_UI_JUMPS = {0x608296: 0x608307,  # 0x608230: the views; [0x6E59CC] kept
+                  0x611EEA: 0x611F9B,  # 0x611E50 (after a load): the views of the battle put on the screen
+                  0x602D0C: 0x602D7A,  # a ball's constructor on the screen: its sprite
+                  0x6031BF: 0x6032F8}  # a ball landing on the screen: the town view's cell under it (the water's sound)
+# The same where the stack must be put right: address → (where to go on, bytes to drop).
+HUMAN_UI_SKIPS = {0x61030D: (0x610371, 8),  # 0x6102A9 (the player takes a battle): the views, the clouds and rocks
+                  # the animations of the town view (0x590610, 7 arguments) of a ball landing, hitting a ship
+                  # (flames, a splash) and of its smoke (the rand() of each puff runs)
+                  0x603357: (0x60335C, 0x1C), 0x603689: (0x60368E, 0x1C), 0x60372A: (0x60372F, 0x1C),
+                  0x603835: (0x60383A, 0x1C)}
+SOUND_LOOKUP = 0x443690  # thiscall on the sound (*0x6CBDB8), the sound's id; ret 4: its variants
+SOUND_VARIANTS = 0
 TOWN_END_TEXT = 0x1310
 TOWN_END_TEXT_SIZE = 0x200
 NO_DISBAND_JUMP = {0x505FF1: 0x506029}
@@ -284,7 +322,8 @@ SORT_X = 0x50D0C0
 PIRATE_UPDATE = 0x514000
 # Operation 0x96 (0x60FEC9) hands a merchant's sides of a battle to the
 # computer: the battles' setup and step queue it for the player's human sides.
-PIRATE_OPERATIONS = (0xB5, 0x96, 0xB4)  # 0xB4: a new pirate when a nest is destroyed (0x514920)
+PIRATE_OPERATIONS = (0xB5, 0x96, 0xB4,  # 0xB4: a new pirate when a nest is destroyed (0x514920)
+                     0x92, 0x93, 0x95, 0x97, 0x98, 0x9A, 0x9B, 0xA0)  # the player's orders in a battle (piece 7)
 PIRATE_WAYPOINTS = 0x448780
 # The battles (docs/cloud/battles-2.md §3): the object of 0x6E55D0 and its
 # heap blocks, recorded as the region BT (TownOracle.battle_graph).
@@ -303,7 +342,8 @@ HEAP_BEGIN, HEAP_END = 0x1000_0000, 0x1800_0000
 # 00 10 are the heap's first block, 0x10000000), a town battle's ship's map of
 # distances [+0x164] (64 × 64 bytes) too, a battle's generator. As
 # BattleGraph::number_field.
-SCENE_SHIP_NUMBERS = frozenset((0x8, 0xC, 0x14, 0x18, 0x1C, *range(0x24, 0x128, 4)))
+# [+0x20]: its goal's x and y (u16 each, the battles' piece 7: the player's ships' goals such as (0x10A9, 0x1028)).
+SCENE_SHIP_NUMBERS = frozenset((0x8, 0xC, 0x14, 0x18, 0x1C, 0x20, *range(0x24, 0x128, 4)))
 BATTLE_NUMBERS = {(0x164, 0x67B0D4): SCENE_SHIP_NUMBERS, (0x1E98, 0x67AD44): (0xADC,),
                   # a town battle (0x611D80) and its scene's ships (0x5FBFE0)
                   (0x1168, 0x67AAD0): SCENE_SHIP_NUMBERS | frozenset(range(0x164, 0x1164, 4)),
@@ -681,11 +721,17 @@ class TownOracle(SaveOracle):
                     self.uc.hook_add(UC_HOOK_CODE, self._sort_x_guard, begin=SORT_X, end=SORT_X)
                     self.uc.hook_add(UC_HOOK_CODE, self._attack_head, begin=UPDATE_SHIPS_ENTRY, end=UPDATE_SHIPS_ENTRY)
                     self.uc.hook_add(UC_HOOK_CODE, self._nest_attack_head, begin=NEST_TASK_ENTRY, end=NEST_TASK_ENTRY)
+                    self.window_jump_hooks = []
                     for address, target in jumps.items():
-                        self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
+                        h = self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
+                        if address in SEA_WINDOW_JUMPS:
+                            self.window_jump_hooks.append(h)
                     save_at, text_at, _ = TOWN_END_WINDOW
                     self.uc.hook_add(UC_HOOK_CODE, self._town_end_window, begin=save_at, end=save_at)
                     self.uc.hook_add(UC_HOOK_CODE, self._town_end_window, begin=text_at, end=text_at)
+                    self.sea_map_icons = []
+                    for address, target in SEA_MAP_ICON.items():
+                        self.uc.hook_add(UC_HOOK_CODE, self._sea_map_icon, begin=address, end=address, user_data=target)
                 if storms:
                     for address, target in STORM_UI_JUMPS.items():
                         self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
@@ -797,6 +843,81 @@ class TownOracle(SaveOracle):
         uc.mem_write(b + TOWN_END_TEXT, self._town_end_kept)
         uc.reg_write(UC_X86_REG_EIP, next_side)
 
+    def use_battle_window(self, sound_variants=SOUND_VARIANTS):
+        """The stand-in battles' window (BATTLE_WINDOW): the sea battles' question and end take the game's path
+        with a window (the scenarios of the battles' piece 7); the sounds' variants (SOUND_LOOKUP: with any, each
+        sound of the battle on the screen takes the world's rand())."""
+        self.sound_variants = sound_variants
+        uc = self.uc
+        for h in self.window_jump_hooks:
+            uc.hook_del(h)
+        self.window_jump_hooks = []
+        uc.mem_map(BATTLE_WINDOW, BATTLE_WINDOW_SIZE)
+        uc.mem_write(BATTLE_WINDOW_VTABLE, struct.pack('<I', BATTLE_WINDOW_TRAP) * 0x100)
+        self.write_u32(BATTLE_WINDOW_VTABLE + 0xC8, BATTLE_WINDOW_IS_OPEN)
+        self.write_u32(BATTLE_WINDOW_VTABLE + 0x118, BATTLE_WINDOW_CLOSE)
+        uc.mem_write(BATTLE_WINDOW_IS_OPEN, b'\x8a\x41\x48\xc3')
+        uc.mem_write(BATTLE_WINDOW_CLOSE, b'\xc6\x41\x48\x00\xc7\x81\xa4\x05\x00\x00\x00\x00\x00\x00\xc3')
+        uc.mem_write(BATTLE_WINDOW_TRAP, b'\xc3')
+        uc.hook_add(UC_HOOK_CODE, self._battle_window_trap, begin=BATTLE_WINDOW_TRAP, end=BATTLE_WINDOW_TRAP)
+        self.write_u32(BATTLE_WINDOW, BATTLE_WINDOW_VTABLE)
+        self.write_u32(BATTLE_WINDOW_POINTER, BATTLE_WINDOW)
+        uc.hook_add(UC_HOOK_CODE, self._open_window, begin=OPEN_WINDOW, end=OPEN_WINDOW)
+        uc.hook_add(UC_HOOK_CODE, self._sound_variants, begin=SOUND_LOOKUP, end=SOUND_LOOKUP)
+        for address, target in HUMAN_UI_JUMPS.items():
+            uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
+        for address, skip in HUMAN_UI_SKIPS.items():
+            uc.hook_add(UC_HOOK_CODE, self._skip, begin=address, end=address, user_data=skip)
+        uc.ctl_remove_cache(0x400000, 0x680000)
+        self.battle_window = True
+        self.windows_opened = []
+
+    def _skip(self, uc, address, size, skip):
+        target, drop = skip
+        uc.reg_write(UC_X86_REG_ESP, uc.reg_read(UC_X86_REG_ESP) + drop)
+        uc.reg_write(UC_X86_REG_EIP, target)
+
+    def close_battle_window(self, result=0):
+        """The player closes the battles' window: WINDOW_BUTTON with its button, 0 otherwise."""
+        self.uc.mem_write(BATTLE_WINDOW + 0x48, b'\0')
+        self.write_u32(BATTLE_WINDOW + 0x5A4, result)
+
+    def _open_window(self, uc, address, size, user_data):
+        # OPEN_WINDOW on the stand-in: an open one closed first (result 0), the description copied, open; ret 4, al 1.
+        esp = uc.reg_read(UC_X86_REG_ESP)
+        window, desc = uc.reg_read(UC_X86_REG_ECX), self.u32(esp + 4)
+        if window != BATTLE_WINDOW:
+            raise RuntimeError(f'0x41D9B0 on {window:#x}, called from {self.u32(esp) - 5:#x}')
+        if self.u8(window + 0x48):
+            self.write_u32(window + 0x5A4, 0)
+        uc.mem_write(window + 0x5B8, bytes(uc.mem_read(desc, 0x20)))
+        uc.mem_write(window + 0x48, b'\x01')
+        text = bytes(uc.mem_read(self.u32(desc), 0x200)).split(b'\0')[0].decode('latin-1')
+        self.windows_opened.append(text)
+        print(f'battle window: {text!r}')
+        uc.reg_write(UC_X86_REG_EAX, 1)
+        uc.reg_write(UC_X86_REG_ESP, esp + 8)
+        uc.reg_write(UC_X86_REG_EIP, self.u32(esp))
+
+    def _battle_window_trap(self, uc, address, size, user_data):
+        ret = self.u32(uc.reg_read(UC_X86_REG_ESP))
+        raise RuntimeError(f'a virtual method of the battles\' window called from {ret - 6:#x}')
+
+    def _sound_variants(self, uc, address, size, user_data):
+        # SOUND_LOOKUP: the variants of a sound (SOUND_VARIANTS); ret 4.
+        esp = uc.reg_read(UC_X86_REG_ESP)
+        uc.reg_write(UC_X86_REG_EAX, self.sound_variants)
+        uc.reg_write(UC_X86_REG_ESP, esp + 8)
+        uc.reg_write(UC_X86_REG_EIP, self.u32(esp))
+
+    def _sea_map_icon(self, uc, address, size, target):
+        # SEA_MAP_ICON: the sea map's battle icon (the game's 0x457C90), then the flag's clear.
+        b = uc.reg_read(UC_X86_REG_ESI)
+        icon = (self.u16(b + 0x662), struct.unpack('<h', bytes(uc.mem_read(b + 0xAD6, 2)))[0],
+                struct.unpack('<h', bytes(uc.mem_read(b + 0xADA, 2)))[0])
+        self.sea_map_icons.append(icon)
+        uc.reg_write(UC_X86_REG_EIP, target)
+
     def _attack_head(self, uc, address, size, user_data):
         # 0x506720's local list head of a raider's attack (ATTACK_HEAD), only that one.
         uc.mem_write(uc.reg_read(UC_X86_REG_ESP) - 0xC, struct.pack('<I', ATTACK_HEAD))
@@ -870,6 +991,9 @@ class TownOracle(SaveOracle):
             pos -= 1
         start, end = separators[2] + 4, separators[1]
         version = struct.unpack_from('<I', self.save, 0)[0] >> 16
+        # The game's load resets the battles first (0x611840 from 0x54A31B): no battle on the screen ([+0x3FC]
+        # 0xFF; the emulator's 0 would put slot 0 on it while a cannon ball is read, 0x602A90's sprite).
+        self.uc.mem_write(BATTLES + 0x3FC, b'\xff')
         got = self.call(READ_BATTLES, [FILE + start, version], ecx=BATTLES) - FILE
         if got != end:
             raise RuntimeError(f'the battles end at {got}, not at {end}')
@@ -1398,6 +1522,9 @@ class TownOracle(SaveOracle):
             letter_buffers.append(data)
         out['LB'] = (0, b''.join(letter_buffers))
         out['TK'] = (0, b''.join(self.__dict__.get('ticker', [])))
+        if self.__dict__.get('battle_window'):
+            out['WN'] = (BATTLE_WINDOW, struct.pack('<BII', self.u8(BATTLE_WINDOW + 0x48), self.u32(BATTLE_WINDOW + 0x5A4),
+                                                    self.sound_variants))
         times = gu32(WORLD + 0x6C)
         out['Y'] = (times, block(times, towns * towns if times else 0))
         convoys = gu32(SHIPS + 8)

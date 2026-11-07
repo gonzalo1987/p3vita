@@ -29,13 +29,6 @@ uint32_t fighters(const ShipMemory& s) {
 
 
 
-// 0x67AB30: the hull of each type of ship, five corners (x, y) around its centre.
-constexpr int16_t kHull[4][5][2] = {
-	{{-19, -31}, {0, -55}, {19, -31}, {19, 47}, {-19, 47}},
-	{{-21, -36}, {0, -66}, {21, -36}, {19, 55}, {-19, 55}},
-	{{-25, -14}, {0, -54}, {25, -14}, {19, 67}, {-19, 67}},
-	{{-22, -25}, {0, -67}, {22, -25}, {19, 81}, {-19, 81}},
-};
 // 0x67AB88 and 0x67AB90 (s16, by type): the length and the width that turn
 // a blow into a spin; 0x67AB98 (by type and side of the hull): the side's direction.
 constexpr int16_t kTurnLength[4] = {102, 121, 121, 148};
@@ -509,6 +502,7 @@ bool Sailing::fn_608f70(size_t b, uint16_t i, uint16_t j) {
 	uint8_t side_i = 0, side_j = 0;
 	fn_60adbf(b, i, g.get<int16_t>(ej, 0xA), g.get<int16_t>(ej, 0xE), cx, cy, xi, yi, side_i);
 	fn_60adbf(b, j, g.get<int16_t>(ei, 0xA), g.get<int16_t>(ei, 0xE), cx, cy, xj, yj, side_j);
+	battle_sound(b);  // 0x6090FA: the crash's sound 0xEA9C on the screen
 	const bool close = g.get<uint8_t>(b, 0xAC8) != 0;
 	// One ship's blow; `shift` the push's.
 	auto blow = [&](size_t e, int32_t px, int32_t py, uint8_t side, bool halve_sine, int shift) -> uint16_t {
@@ -688,8 +682,8 @@ void Sailing::fn_60bcda(size_t b, uint16_t item, uint16_t place, int32_t a, int3
 // Until 2026-11-07 the emulator had no town view and their boxes no size
 // (see fn_60f479): the saves reached them only then.
 //
-// Not rewritten yet (not run in the saves): kind 1 (a cannon ball, 0x60A73C
-// and 0x603470).
+// A cannon ball (kind 1, 0x608935) that crosses the hull (0x60A73C) hits it
+// (0x603470 with the sides' bits; battle/balls.cpp).
 void Sailing::fn_608850(size_t b, uint16_t a, uint16_t other) {
 	BattleGraph& g = save_.battles;
 	const size_t kinds = size_t(g.ptr(b, 0x18)), places = size_t(g.ptr(b, 0x1C));
@@ -709,6 +703,17 @@ void Sailing::fn_608850(size_t b, uint16_t a, uint16_t other) {
 			g.get<uint8_t>(b, 0x5C) != 0 || (g.get<uint8_t>(ei, 0x12A) & 0x1);
 	};
 	switch (g.get<uint8_t>(kinds, other)) {
+	case 1: {
+		const uint16_t slot = g.get<uint16_t>(places, 2 * size_t(other));
+		const uint8_t hit = fn_60a73c(b, slot, pa);
+		if (hit != 0) {
+			const int ball = g.ptr(size_t(g.ptr(b, 0x668)), 4 * size_t(slot));
+			if (ball >= 0) {
+				fn_603470(size_t(ball), pa, hit);
+			}
+		}
+		return;
+	}
 	case 0: {
 		const uint16_t pb = g.get<uint16_t>(places, 2 * size_t(other));
 		const size_t ej = battle_entry(b, pb);
@@ -746,17 +751,18 @@ void Sailing::fn_608850(size_t b, uint16_t a, uint16_t other) {
 		}
 		const int32_t speed = g.get<int32_t>(ei, 0x1C);
 		g.set<int32_t>(ei, 0x1C, speed - (speed >> (automatic ? 4 : 6)));
-		// When the battle is the one on screen ([0x6E59CC] = [+0x662]) the
-		// sound 0xEAA6, which draws a rand() when the sound has variants: left
-		// out with the interface (no battle is shown yet: piece 7).
+		// On the screen the sound 0xEAA6 (0x608C6B: the world's rand() with
+		// the sound on; battle_sound).
+		battle_sound(b);
 		return;
 	}
 	case 3:
 		// An islet (0x608CFE): it only slows the ship down (and the sound
-		// 0xEAB0 as a rock's).
+		// 0xEAB0 as a rock's, 0x608D44).
 		if (fn_60b357(b, other, pa, nullptr)) {
 			const int32_t speed = g.get<int32_t>(ei, 0x1C);
 			g.set<int32_t>(ei, 0x1C, speed - (speed >> (g.get<uint8_t>(b, 0xAC8) != 0 ? 4 : 6)));
+			battle_sound(b);
 		}
 		return;
 	case 4:
@@ -951,17 +957,17 @@ namespace p3::data {
 // scene's items that meet (0x6197F0).
 //
 // First, while not over, the sea map's flag [+0x1E92] (when set: whether a
-// ship of the player is in the battle, human_ship_in_battle; the sea map is
-// told, 0x457C90 with [+0x662], [+0xAD6], [+0xADA], and the flag cleared
-// only when its window *0x6CBDD8 exists: never in the simulation, the app
-// does it).
+// ship of the player is in the battle, human_ship_in_battle; then the sea
+// map is told and the flag cleared, tell_sea_map).
 //
-// Not rewritten: what concerns a human side (the battle window [+0x12E9],
-// [+0x12EA]: 0x606E67 and 0x606FD3 open it, *0x6CBB10's 0x41D9B0, which
-// p3vita doesn't have yet, part 7; the oracle jumps over both, as
-// BATTLE_WINDOW_JUMPS), the cannon balls (0x603130 for each of
-// [+0x668], only from a human side's guns) and 0x608550 (with [+0x12E0] and
-// [+0x66C], not run in the saves).
+// The battle's window (the battles' piece 7, SaveGame::battle_window): a
+// waiting question or end ([+0x12E9]) opens when no window is open; the
+// player's answer, once the window is closed, is operation 0x96; while his
+// side counts down ([+0x15C]) the battle doesn't step, and at the end of
+// the count an open window closes.
+// After each sub-step a move order held ([+0x12E0]) is sent again
+// (0x608550, battle/orders.cpp); after the ships' sub-steps each cannon
+// ball's (0x603130, battle/balls.cpp).
 // Whether a ship of a side's convoy ([+0x65E], then [+0x660]) is the
 // player's ([0x6DFC14]) or, in a network game ([0x6DFC18]), of a human
 // merchant ([+0x8] 0), as 0x605420 and 0x606CC0 compute [+0x1E92].
@@ -990,16 +996,151 @@ bool Sailing::human_ship_in_battle(size_t b) const {
 	return found;
 }
 
+// 0x605906..0x605939 (the setup) and 0x606E2D..0x606E60 (the step): with
+// the flag [+0x1E92] set and the sea map's window (*0x6CBDD8, which the game
+// always has), the sea map gets the battle's icon (0x457C90: its slot
+// [+0x662], x [+0xAD6], y [+0xADA]; it appends them to its lists) and the
+// flag goes back to 0. The emulator has no sea map: the oracle records the
+// icon and goes on at the clear (SEA_MAP_ICON), as here (the user's choice,
+// 2026-11-07: the game's memory as on the PC). The viewer takes the icons
+// (take_sea_map_icons).
+void Sailing::tell_sea_map(size_t b) {
+	BattleGraph& g = save_.battles;
+	if (g.get<uint8_t>(b, 0x1E92) == 0) {
+		return;
+	}
+	sea_map_icons_.push_back({uint8_t(g.get<uint16_t>(b, 0x662)), g.get<int16_t>(b, 0xAD6), g.get<int16_t>(b, 0xADA)});
+	g.set<uint8_t>(b, 0x1E92, 0);
+}
+
+bool Sailing::battle_window_open() const {
+	return save_.battle_window.present && save_.battle_window.open;
+}
+
+// 0x41E680 (thiscall on the window, the result): when open, its result
+// [+0x5A4] and it hides.
+void Sailing::close_battle_window(uint32_t result) {
+	SaveGame::BattleWindow& w = save_.battle_window;
+	if (w.present && w.open) {
+		w.open = false;
+		w.result = result;
+	}
+}
+
+// 0x41D9B0 (thiscall on the window, a description): an open window is closed
+// first (method +0x118, result 0); then it shows the description (copied to
+// its [+0x5B8]): for the viewer, the battle, its text and its buttons.
+void Sailing::open_battle_window(size_t b) {
+	SaveGame::BattleWindow& w = save_.battle_window;
+	if (!w.present) {
+		return;
+	}
+	close_battle_window(0);
+	const BattleGraph& g = save_.battles;
+	w.open = true;
+	w.battle = uint8_t(g.get<uint16_t>(b, 0x662));
+	w.buttons = g.get<uint16_t>(b, 0x12F2);
+	w.text.clear();
+	for (size_t o = 0x1310; o < g.blocks[b].size() && g.get<uint8_t>(b, o) != 0; ++o) {
+		w.text += char(g.get<uint8_t>(b, o));
+	}
+}
+
+// 0x606B01..0x606B68 (the question) and 0x60E8C6..0x60E92A (the end): the
+// window's description at [+0x12EC]: the text [+0x1310], [+0x4] 1, the
+// buttons ([+0x6] the count, [+0x8] the list: 0x6B2BC0, «Steer manually»),
+// [+0xC] 0xFF, [+0xD] 0, [+0xE] 0, [+0xF] 0xFF, [+0x10] the float 0.7071
+// (first 1.375), [+0x14] 0 for the question and 1 for the end, the rest 0.
+void Sailing::battle_window_description(size_t b, bool question) {
+	BattleGraph& g = save_.battles;
+	g.set<uint32_t>(b, 0x12EC, BattleGraph::pointer(b, 0x1310));
+	g.set<uint8_t>(b, 0x12F0, 1);
+	g.set<uint16_t>(b, 0x12F2, question ? 1 : 0);
+	g.set<uint32_t>(b, 0x12F4, question ? 0x6B2BC0 : 0);
+	g.set<uint8_t>(b, 0x12F8, 0xFF);
+	g.set<uint8_t>(b, 0x12F9, 0);
+	g.set<uint8_t>(b, 0x12FA, 0);
+	g.set<uint8_t>(b, 0x12FB, 0xFF);
+	g.set<uint32_t>(b, 0x12FC, 0x3F3504F4);
+	g.set<uint8_t>(b, 0x1300, question ? 0 : 1);
+	g.set<uint16_t>(b, 0x1302, 0);
+	g.set<uint32_t>(b, 0x1304, 0);
+	g.set<uint32_t>(b, 0x1308, 0);
+}
+
+void Sailing::write_battle_text(size_t b, const std::string& text) {
+	BattleGraph& g = save_.battles;
+	for (size_t k = 0; k <= text.size(); ++k) {
+		g.set<uint8_t>(b, 0x1310 + k, k < text.size() ? uint8_t(text[k]) : 0);
+	}
+}
+
 void Sailing::fn_606cc0(size_t b, uint16_t steps) {
 	BattleGraph& g = save_.battles;
 	auto u8 = [&](size_t o) { return g.get<uint8_t>(b, o); };
-	if (u8(0x5C) == 0 && u8(0x1E92) != 0) {
-		g.set<uint8_t>(b, 0x1E92, human_ship_in_battle(b) ? 1 : 0);
+	const uint32_t player = save_.globals.u32(0x6DFC14);
+	const uint16_t slot = g.get<uint16_t>(b, 0x662);
+	// 0x606E7E, 0x606FEA and 0x6071E9: a battle whose question waits
+	// ([+0x12E9]) opens it when no window is open ([0x6E59CD], the battles'
+	// [+0x3FD]). Without the window (the checks) the game's path never opens
+	// it, as the oracle (BATTLE_WINDOW_JUMPS): nothing is written.
+	auto open_waiting = [&]() {
+		if (g.get<uint8_t>(0, 0x3FD) == 0 && save_.battle_window.present) {
+			open_battle_window(b);
+			g.set<uint8_t>(b, 0x12E9, 0);
+			g.set<uint8_t>(0, 0x3FD, 1);
+			g.set<uint8_t>(b, 0x12EA, 1);
+		}
+	};
+	if (u8(0x5C) == 0) {
+		if (u8(0x1E92) != 0) {
+			g.set<uint8_t>(b, 0x1E92, human_ship_in_battle(b) ? 1 : 0);
+			tell_sea_map(b);
+		}
+		if (u8(0x12E9) != 0) {
+			open_waiting();
+		} else {
+			// 0x606EAA..0x606F8A: the player's side (the last one of his)
+			// still counting down ([+0x15C], neither 0 nor 0xFFFF) with the
+			// window closed (its method +0xC8): the answer, operation 0x96
+			// {0x96, the slot, the player, 0 if closed with its button (its
+			// result [+0x5A4] = [0x66BDC0], 10: the battle goes on the screen,
+			// [0x6E59CC]) or else 1, 0}; no window open any more.
+			size_t side = 0xFF;
+			for (size_t i = 0; i < u8(0x558); ++i) {
+				if (g.get<uint16_t>(b, 0x35A + 2 * i) == player) {
+					side = i;
+				}
+			}
+			const uint16_t left = side != 0xFF ? g.get<uint16_t>(b, 0x15C + 2 * side) : 0;
+			if (left > 0 && left != 0xFFFF && !battle_window_open()) {
+				const bool steer = save_.battle_window.present && save_.battle_window.result == 10;
+				if (steer) {
+					g.set<uint8_t>(0, 0x3FC, uint8_t(slot));
+				}
+				uint8_t op[0x14];
+				const uint32_t fields[5] = {0x96, slot, player, steer ? 0u : 1u, 0};
+				std::memcpy(op, fields, sizeof(op));
+				tick::enqueue_operation(save_, op, sizeof(op));  // 0x54AA70
+				g.set<uint8_t>(0, 0x3FD, 0);
+				g.set<uint8_t>(b, 0x12EA, 0);
+			}
+		}
 	}
 	if (steps == 0) {
 		return;
 	}
+	// 0x606FA1: the battle's window was closed: no window open.
+	if (u8(0x12EA) != 0 && !battle_window_open()) {
+		g.set<uint8_t>(0, 0x3FD, 0);
+		g.set<uint8_t>(b, 0x12EA, 0);
+	}
 	if (u8(0x5C) != 0) {
+		// 0x6071D6: over; a waiting window (the end's) opens; [+0x15C] counts
+		// the steps left before the battle goes (method +0x4, 0x611740).
+		if (u8(0x12E9) != 0) {
+			open_waiting();
+		}
 		const uint16_t left = g.get<uint16_t>(b, 0x15C);
 		if (left <= steps) {
 			g.set<uint16_t>(b, 0x15C, 0);
@@ -1008,21 +1149,34 @@ void Sailing::fn_606cc0(size_t b, uint16_t steps) {
 		}
 		g.set<uint16_t>(b, 0x15C, uint16_t(left - steps));
 	} else {
-		// A side still counting down ([+0x15C] by side): only the player's
-		// count (the window, UI, left out), at most 5 steps; nothing else.
 		bool counting = false;
-		for (size_t i = 0; i < u8(0x558); ++i) {
-			if (g.get<uint16_t>(b, 0x15C + 2 * i) > 0) {
-				counting = true;
+		if (u8(0x12E9) != 0) {
+			open_waiting();  // 0x606FD3, then the sides (0x607011)
+		} else {
+			// 0x6070E0: a side still counting down ([+0x15C] by side): the
+			// player's human sides count at most 5 steps; at the end
+			// (0xFFFE) an open window closes (method +0x118, result 0). The
+			// battle doesn't step.
+			for (size_t i = 0; i < u8(0x558); ++i) {
+				if (g.get<uint16_t>(b, 0x15C + 2 * i) > 0) {
+					counting = true;
+				}
 			}
 		}
-		if (u8(0x12E9) == 0 && counting) {
+		if (counting) {
 			const uint16_t most = steps > 5 ? 5 : steps;
-			const uint32_t player = save_.globals.u32(0x6DFC14);
 			for (size_t i = 0; i < u8(0x558); ++i) {
 				const uint16_t left = g.get<uint16_t>(b, 0x15C + 2 * i);
-				if (g.get<uint16_t>(b, 0x35A + 2 * i) == player && u8(0x5D + i) == 0 && left > 0 && left != 0xFFFF) {
-					g.set<uint16_t>(b, 0x15C + 2 * i, left <= most ? 0xFFFE : uint16_t(left - most));
+				if (g.get<uint16_t>(b, 0x35A + 2 * i) != player || u8(0x5D + i) != 0 || left == 0 || left == 0xFFFF) {
+					continue;
+				}
+				if (left <= most) {
+					g.set<uint16_t>(b, 0x15C + 2 * i, 0xFFFE);
+					if (battle_window_open()) {
+						close_battle_window(0);
+					}
+				} else {
+					g.set<uint16_t>(b, 0x15C + 2 * i, uint16_t(left - most));
 				}
 			}
 			return;
@@ -1032,16 +1186,15 @@ void Sailing::fn_606cc0(size_t b, uint16_t steps) {
 		// battle [+0x662], the player, 1), which hands the player's sides to
 		// the computer (fn_60fec9, battles.cpp).
 		bool automatic = true;
-		const uint32_t player = save_.globals.u32(0x6DFC14);
 		for (size_t i = 0; i < u8(0x558); ++i) {
 			if (u8(0x5D + i) != 0) {
 				continue;
 			}
 			automatic = false;
 			const uint16_t owner = g.get<uint16_t>(b, 0x35A + 2 * i);
-			if (owner == player && g.get<uint8_t>(0, 0x3FC) != g.get<uint16_t>(b, 0x662)) {
+			if (owner == player && g.get<uint8_t>(0, 0x3FC) != slot) {
 				uint8_t op[0x14];
-				const uint32_t fields[5] = {0x96, g.get<uint16_t>(b, 0x662), owner, 1, 0};
+				const uint32_t fields[5] = {0x96, slot, owner, 1, 0};
 				std::memcpy(op, fields, sizeof(op));
 				tick::enqueue_operation(save_, op, sizeof(op));  // 0x54AA70
 			}
@@ -1158,6 +1311,13 @@ void Sailing::fn_606cc0(size_t b, uint16_t steps) {
 				fn_61a9e0(e, u8(0x670));
 			}
 		}
+		// 0x6076CC: each cannon ball's sub-step (0x603130).
+		for (uint16_t k = 0; k < g.get<uint16_t>(b, 0xACC); ++k) {
+			const int ball = g.ptr(size_t(g.ptr(b, 0x668)), 4 * size_t(k));
+			if (ball >= 0) {
+				fn_603130(size_t(ball));
+			}
+		}
 		if (plunder[0] && room[1]) {
 			lost[0] = false;
 		}
@@ -1199,6 +1359,13 @@ void Sailing::fn_606cc0(size_t b, uint16_t steps) {
 		}
 		g.set<uint8_t>(b, 0x5C, over ? 1 : 0);
 		fn_6197f0(b);
+		// 0x6078B8: a move order held ([+0x12E0]) with a selection
+		// ([+0x66C]) is sent again: 0x608550 with the point [+0x12D8],
+		// ([+0x12DC] · 34 + 11) / 22.
+		if (u8(0x12E0) != 0 && g.get<uint32_t>(b, 0x66C) != 0) {
+			const int32_t y = int32_t(uint32_t(g.get<int32_t>(b, 0x12DC)) * 34u + 11u) / 22;
+			fn_608550(b, g.get<uint32_t>(b, 0x12D8), uint32_t(y), true);
+		}
 	}
 }
 

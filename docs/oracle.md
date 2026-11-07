@@ -2098,6 +2098,79 @@ scenario of piece 6 (`town_raids`, `pirate_town_attack`, `convoy_raid`, `town_at
 the battle regressions and re/emu/sesion8/old_battle.sh as before; the world 7 days in the 12 saves, 0 «distintas».
 Scripts in re/emu/sesion20/ (README).
 
+## The battles' piece 7: the battle the player directs, the human side's engine at sea (2026-11-07/08)
+
+What the game does in a battle the player directs, with its addresses, is in re/emu/sesion21/player_battle_notes.md.
+The user's choices: the engine first; the sea map's icon as the game; the sounds' rand() reproduced in the engine; on
+the Vita the question with two buttons and a time bar (the interface, part 3).
+
+**The oracle's stand-in window** (`TownOracle.use_battle_window(sound_variants)`, only in the scenarios of the
+window's path): an object at 0x05100000 put in *0x6CBB10, whose vtable traps every method but +0xC8 (whether open,
+[+0x48], as 0x4B2200) and +0x118 (closed with the result 0); 0x41D9B0 opens it (the description copied to [+0x5B8],
+its text printed) and `close_battle_window(result)` closes it (10, [0x66BDC0], is its button). With it the sea
+battles' `BATTLE_WINDOW_JUMPS` are off; `HUMAN_UI_JUMPS` and `HUMAN_UI_SKIPS` jump over the views (0x608230's town
+view, sea map and clouds; 0x611E50's; a ball's sprite; the cell under a landing ball; 0x6102A9's views; the town
+view's animations of a ball landing, hitting a ship and its smoke, whose rand() still runs); `SOUND_LOOKUP` (0x443690
+on *0x6CBDB8) answers the sounds' variants (0: the sound off). Region WN (u8 open, u32 result, u32 the variants) is
+p3vita's `SaveGame::battle_window`, present only when given (the checks, later the viewer); without it p3vita takes
+the busy path as before (0x606BAE: operation 0x96 with 1). The sea map's icon: `SEA_MAP_ICON` (the oracle records it
+and goes on at the flag's clear), p3vita's `Sailing::tell_sea_map`. The scene ship's [+0x20] (its goal's x, y) is a
+number for the comparison (`SCENE_SHIP_NUMBERS`), and tick_probe names a difference in region BT by its block
+(`battle_place`).
+
+What p3vita does now in a sea battle with a human side, each piece checked against the game:
+- the question and its answer: the setup's window path (0x60659B..0x606BAE: the attack's text into [+0x1310], the
+  description [+0x12EC], or [+0x12E9] when another window is open), the step's window branches (0x606E67..0x607011:
+  the waiting question opened, the answer as operation 0x96 once the window is closed, [0x6E59CC] the slot with its
+  button), the countdown and its close (0x607172), the over path (0x6071D6), 0x608230's human branch, 0x611E50 (a
+  loaded battle put on the screen), 0x6102A9 (taking a battle), 0x6100D9 (giving it back), the boarding's window
+  (0x60CA4E) and operation 0xC8 (`Sailing::set_time_mode`);
+- the orders (battle/orders.cpp): the handlers 0x540F50 (0x92 fire), 0x541050 (0x93 a target), 0x541200 (0x95 a point,
+  with 0x6270C7), 0x541380 (0x97 board or plunder), 0x5414E0 (0x98 the sails), 0x5415E0 (0x9A flee), 0x541700 (0x9B
+  the white flag), 0x536D04 → 0x6116A9 (0xA0 leave); the interface's builders 0x6103E9, 0x610579, 0x610C09, 0x610FD9,
+  0x608360, 0x608550; the step's re-send of a held move order (0x6078B8);
+- the end's window (`Sailing::sea_end_message`, 0x60DDA7..0x60E8C3; 22 new text pairs in game_text_addresses.inc);
+- the cannon balls (battle/balls.cpp): 0x61DD4F's human tail (0x61E628..0x61E8DC), 0x61E8EF, 0x6214CB, 0x6111B9 (a free
+  slot), 0x602A90 (a ball, with the world's rand()), 0x603130 (its sub-step), 0x603470 (a hit, the smoke's rand()),
+  0x60A73C (its way across a hull), 0x608850's kind 1; in the save, 0x602E20 and 0x602EF0 inside 0x604220/0x604600;
+- the sounds (`Sailing::battle_sound`): with the battle on the screen each sound takes one of the world's rand() when
+  it has variants: the broadsides (0x61EF71), a ball landing (0x60330C) and hitting (0x6036A6), the rock (0x608C98),
+  the islet (0x608D71), the crash (0x60911F), the boarding (0x61F213).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `battle_question` | sea battles against the player set up directly: the question opened and its countdown to the end (the step closes the window; 0x96 with 1), closed without its button (1) and with it (0: the battle on the screen, 0xC8 with 2, five steps of 5 sub-steps), a fourth battle while busy, 0x611E50 with and without a battle on the screen, windows waiting ([+0x12E9]), a battle given back (0x6100D9) and one taken (0x6102A9) | 1, 3, 5, 7 | 0x605420 4, 0x606CC0 23, 0x611E50 2, 0x6100D9 1, 0x6102A9 1 in each: all equal; 10 of 10 targets |
+| `battle_question_saved` | tut4's saved battle (the player's human side with no question waiting: 0x611E50 puts it on the screen) | tut4 | 0x606CC0 8, 0x611E50 1: equal; 2 of 2 |
+| `battle_orders` | `player_battle` (below); the builders called directly and their operations run: plunder, capture, neither; the sails 4 and 0; a target; a point, sent and held; the white flag up and down; flee; 0xA0 | 3, 5, 7 | 0x535760 17, 0x606CC0 10, 0x608550 8 and the builders: all equal; 9 of 9 |
+| `battle_end_window` | 0x60D299 called directly on the player's battle with each way it can end (won beating or as he fled, a named or unknown pirate, lost fleeing or beaten, [+0xAC4] 3 and 2, a window open) and against an AI merchant's ship (also side 1 as the nest, 0xFE) | 3, 5, 7 | 0x60D299 15 in each: all equal; 12 of 12 in 3 and 7 (11 in 5) |
+| `battle_balls` | the two ships abeam and still, 40 steps of 84 with the order to fire, the enemy moved away (the balls land), fire again, 20 steps | 3, 4, 5, 6, 7, tut1, tut3 | e.g. save 3: 0x603130 633, 0x60A73C 204, 0x603470 9, 0x6214CB 12: all equal; 6 of 6 in 3, 4, 6, tut1, tut3 (4 in 5 and 7) |
+| `battle_balls_sound` | the same with the sound on | 3, 4, 5, 6, 7, tut1, tut3 | all equal; 3 of 3 in 4, 6, tut1, tut3 (the hit that costs a gun, 0x61F96F's 1, comes by the battle's generator) |
+| `battle_sounds` | the sound on: a rock and an islet (0x619450) round the player's ship and 0x608850 on each, then the pirates' ship alongside and 20 steps (they crash and board) | 3, 4, 5, 6, 7, tut1, tut3 | all equal; 4 of 4 in 4, 5, tut1, tut3; save 5 to the battle's end and destruction (0x608850 22 086, 0x608F70 247, 0x61F1BF 78, 0x606CC0 21) |
+| `battle_balls_save` (wb.sh, 0 days) | the balls in flight (9, 5, 5) written and read back | 3, 5, 7 | the same bytes; the reload 0 differences |
+
+**`battle_sounds` hung** (save 5, under re/emu/sesion18/uc.sh's limit): the battle ends (the player's ship plundered)
+and, when it is destroyed, the game's 0x504970 (the towns' wares on the way, from 0x50BFD0) never ends. The cause was
+the scenarios' `player_battle`: it set the battle up directly (0x611CD0, 0x605420) with the pirate's convoy still in
+the list of the convoys at sea, so at the end 0x50BFD0 put it at the list's head again and made a ring. Now it starts
+the battle as the game's attack does: the convoy out of the list (0x50A4E0, as 0x507BAE), its guide's target set,
+then 0x50BC40 (which also puts both convoys in state 0x14). Its `step` stops once the battle is gone. Two traps found
+on the way: the oracle killed by the limit leaves its recording's last sample half written (Python's buffer), and
+tick_probe then shows a false «distinta» (save 5's last step, its sub-steps' counter as before); and a target in the
+middle of an instruction (`@61f205`, now `@61f213`) is never hit (re/emu/sesion21/trace_during.py and hang_during.py
+found both). Since `player_battle` changed, every scenario that uses it was run again (the table).
+
+For the network game: the sounds' rand() depends on the sound being on. And the boarding's sound (0x61F1BF) takes it
+once per boarding on the PC but every sub-step here: the game keeps in [+0x14A] what the town view returns for it
+(0x595B00 → 0x594AA0: 1 with the view open and one of its 4 sound slots free and not already playing that sound);
+the emulator has the view closed (0), as p3vita. With the interface it should be 1 (roadmap, phase 4, point 7).
+
+Broken on purpose and caught: the boarding's sound left out (save 5: 0x61F1BF 78 of 78 and 16 steps different). With
+all this, every scenario of piece 6 (as listed in «The battles' piece 6, part 5»), the battle regressions
+(`battle_rocks`, `chase_battle`, `hanse_fleet`, `raid_fleet`, `battle_join`, `battle_branches`, `pursue_branches`,
+`raid_arrival`), re/emu/sesion8/old_battle.sh, `town_battle_texts`, `town_symbols` and the town battles' save checks
+(wb.sh) as before; the world 7 days in the 12 saves, 0 «distintas»; write-check (save 7 its 12 known bytes) and
+write-reload, 0; ctest and the Vita build. Scripts in re/emu/sesion21/ (README).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

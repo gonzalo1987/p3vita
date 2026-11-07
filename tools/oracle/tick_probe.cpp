@@ -347,6 +347,15 @@ void build_save(const State& state, SaveGame& save) {
 			o = e + 1;
 		}
 	}
+	if (const Region* wn = find(state, "WN"); wn && wn->bytes.size() >= 5) {
+		// The oracle's stand-in battles' window (the battles' piece 7): u8 open, u32 result.
+		save.battle_window.present = true;
+		save.battle_window.open = wn->bytes[0] != 0;
+		save.battle_window.result = get<uint32_t>(wn->bytes.data(), 1);
+		if (wn->bytes.size() >= 9) {
+			save.battle_window.sound_variants = get<uint32_t>(wn->bytes.data(), 5);
+		}
+	}
 	if (const Region* tk = find(state, "TK")) {
 		// The ticker lines sent to the local player: u8 kind, u16 argument.
 		save.player_ticker.clear();
@@ -548,6 +557,14 @@ State dump_save(const SaveGame& save, const State& game) {
 					put<uint16_t>(b.data(), o + 5 + 2 * size_t(j), (*list)[j]);
 				}
 			}
+		}
+	}
+	if (s.count("WN") && s["WN"].bytes.size() >= 5) {
+		std::vector<uint8_t>& b = s["WN"].bytes;
+		b[0] = save.battle_window.open ? 1 : 0;
+		put<uint32_t>(b.data(), 1, save.battle_window.result);
+		if (b.size() >= 9) {
+			put<uint32_t>(b.data(), 5, save.battle_window.sound_variants);
 		}
 	}
 	if (s.count("TK")) {
@@ -802,6 +819,22 @@ std::string describe(const std::string& region, size_t offset) {
 	return text;
 }
 
+// A place in region BT (u32 number of blocks; each u32 size and its bytes) as its block, the block's size and the
+// offset in it.
+std::string battle_place(const std::vector<uint8_t>& bytes, size_t offset) {
+	size_t o = 4;
+	for (uint32_t k = 0; bytes.size() >= 4 && k < get<uint32_t>(bytes.data(), 0) && o + 4 <= bytes.size(); ++k) {
+		const uint32_t size = get<uint32_t>(bytes.data(), o);
+		if (offset >= o + 4 && offset < o + 4 + size) {
+			char text[96];
+			std::snprintf(text, sizeof(text), "BT block %u (0x%x bytes) +0x%zx", k, size, offset - o - 4);
+			return text;
+		}
+		o += 4 + size;
+	}
+	return describe("BT", offset);
+}
+
 // Con --cpr, p3vita lee también lo de scripts/ (load_game_scripts) y se comparan
 // los números de nombres, la tabla de las ciudades (sin su CString) y el número
 // de puntos de las expediciones.
@@ -937,7 +970,8 @@ int compare(const State& ours, const State& game, int& budget, const std::string
 			const uint32_t vb = w + 4 <= b.size() ? get<uint32_t>(b.data(), w) : b[i];
 			if (!pointer_field(name, w, b, vb)) {
 				char text[160];
-				std::snprintf(text, sizeof(text), "%s: juego %08x, p3vita %08x", describe(name, w).c_str(), vb, va);
+				const std::string place = name == "BT" ? battle_place(b, w) : describe(name, w);
+				std::snprintf(text, sizeof(text), "%s: juego %08x, p3vita %08x", place.c_str(), vb, va);
 				report(text);
 			}
 			i = w + 3;

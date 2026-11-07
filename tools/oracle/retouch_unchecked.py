@@ -4557,6 +4557,532 @@ def battle_rocks(o):
     return during
 
 
+def battle_question(o):
+    """The battles' piece 7: a sea battle's question to the player, with the oracle's stand-in window
+    (TownOracle.use_battle_window). Sea battles set up directly (0x611CD0, 0x605420): a pirate's ship attacks the
+    player's: the question opens (its text in [+0x1310], the description [+0x12EC], the window, [0x6E59CD]); while it
+    is open the step counts the player's side down by at most 5 and the battle doesn't move; at the end of the count
+    (set to 12 first) the step closes the window itself (result 0) and the next step answers 0x96 with 1, which the
+    executor runs (the computer fights it). Then the player's ship attacks an AI merchant's: the question; the window
+    closed without its button: 0x96 with 1. Then another pirate's ship attacks the player's: closed with its button
+    (10): 0x96 with 0 and the battle on the screen ([0x6E59CC]); its operation gives the player his side (0x60FEC9:
+    method +0x18, 0x608230, with the formation and the screen; operation 0xC8 with 2) and five steps of 84 follow,
+    5 sub-steps each with the human side. A fourth battle while the third is on the screen: the busy path (0x96 with
+    1 at once). Last, 0x611E50 (after a load) with the third on the screen (nothing changes) and with none (it goes
+    back on it). Then retouched windows waiting ([+0x12E9]): opened by the step's first look, by its second (the
+    battle's own window seen closed first), and in a battle over. Last, the player gives the third back (0x6100D9)
+    and takes the second (0x6102A9)."""
+    o.use_battle_window()
+    _, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    mine = merchant_ships(o, player)
+    convoys = o.u16(to.SHIPS + 0xF6)
+    # The pirates' ships in their convoys (0x605420 reads their guide's captain unchecked; 0x50BC40 always gives
+    # them one), one per convoy; an AI merchant's ship.
+    pirate, seen = [], set()
+    for s in range(ships):
+        c = o.u16(o.ship(s) + 8)
+        if o.u8(o.ship(s)) == 0xFF and c < convoys and c not in seen and o.u16(o.ship(s) + 0x134) != 0x15:
+            pirate.append(s)
+            seen.add(c)
+    ai = [s for s in range(ships) if o.u8(o.ship(s)) < merchants and o.u16(o.merchant(o.u8(o.ship(s))) + 8)
+          and o.u16(o.ship(s) + 0x134) != 0x15]
+    if not mine or not pirate or not ai:
+        raise RuntimeError(f'the player\'s ships {mine}, pirates {pirate[:4]}, AI ships {ai[:2]}')
+    p = [mine[k % len(mine)] for k in range(4)]
+    pirate = [pirate[k % len(pirate)] for k in range(3)]
+    print(f'the player\'s ships {p}, pirates {pirate[:4]}, an AI ship {ai[0]}')
+
+    def battle(a, d):
+        slot = direct(o, 0x611CD0, [], ecx=to.BATTLES) & 0xFF
+        b = o.u32(to.BATTLES + 4 * slot)
+        o.tick_operations = []
+        direct(o, 0x605420, [a, d, 0, 0], ecx=b)
+        print(f'battle {slot} ({a} against {d}): window open {o.u8(to.BATTLE_WINDOW + 0x48)}, [0x6E59CC] '
+              f'{o.u8(to.BATTLES + 0x3FC):#x}, [0x6E59CD] {o.u8(to.BATTLES + 0x3FD)}, [+0x12E9] {o.u8(b + 0x12E9)}, '
+              f'counts {[o.u16(b + 0x15C + 2 * i) for i in range(o.u8(b + 0x558))]}')
+        return slot, b
+
+    def step(b, n, run=True):
+        o.tick_operations = []
+        direct(o, 0x606CC0, [n], ecx=b)
+        queued = list(o.tick_operations)
+        print(f'  step {n}: counts {[o.u16(b + 0x15C + 2 * i) for i in range(o.u8(b + 0x558))]}, window open '
+              f'{o.u8(to.BATTLE_WINDOW + 0x48)}, [0x6E59CC] {o.u8(to.BATTLES + 0x3FC):#x}, [0x6E59CD] '
+              f'{o.u8(to.BATTLES + 0x3FD)}, [+0xAC8] {o.u8(b + 0xAC8)}, queued {[op.hex() for op in queued]}')
+        if run:
+            for op in queued:
+                if struct.unpack_from('<I', op)[0] == 0x96:
+                    run_bytes(o, op)
+
+    def during(o):
+        s1, b1 = battle(pirate[0], p[0])
+        step(b1, 84)
+        step(b1, 3)
+        w16(o, b1 + 0x15E, 12)
+        step(b1, 84)
+        step(b1, 84)
+        step(b1, 84)
+        step(b1, 84)
+        s2, b2 = battle(p[1], ai[0])
+        step(b2, 84)
+        o.close_battle_window(0)
+        step(b2, 84)
+        s3, b3 = battle(pirate[1], p[2])
+        step(b3, 84)
+        o.close_battle_window(to.WINDOW_BUTTON)
+        step(b3, 84)
+        for _ in range(5):
+            step(b3, 84)
+        s4, b4 = battle(pirate[2], p[3])
+        step(b4, 84)
+        direct(o, 0x611E50, [player], ecx=to.BATTLES)
+        print(f'0x611E50 with battle {s3} on the screen: [0x6E59CC] {o.u8(to.BATTLES + 0x3FC):#x}')
+        w8(o, to.BATTLES + 0x3FC, 0xFF)
+        direct(o, 0x611E50, [player], ecx=to.BATTLES)
+        print(f'0x611E50 with none: [0x6E59CC] {o.u8(to.BATTLES + 0x3FC):#x}')
+        # A window waiting ([+0x12E9] 1, retouched): opened by the step's first look (0x606E7E) ...
+        w8(o, b3 + 0x12E9, 1)
+        step(b3, 84)
+        o.close_battle_window(0)
+        step(b3, 84)
+        # ... by its second, once the battle's own window is seen closed (0x606FA1, then 0x606FEA) ...
+        w8(o, b3 + 0x12E9, 1)
+        w8(o, b3 + 0x12EA, 1)
+        w8(o, to.BATTLES + 0x3FD, 1)
+        step(b3, 84)
+        o.close_battle_window(0)
+        step(b3, 84)
+        # ... and in a battle over (0x6071E9), which then counts its last steps ([+0x15C]).
+        w8(o, b1 + 0x5C, 1)
+        w16(o, b1 + 0x15C, 300)
+        w8(o, b1 + 0x12E9, 1)
+        step(b1, 2)
+        o.close_battle_window(0)
+        step(b1, 2)
+        # The player gives the third back (0x6100D9: he leaves its screen) and takes the second (0x6102A9: the sea
+        # map's battle icon's window), whose operations run; a step of it with the human side.
+        def run_new():
+            queued = list(o.tick_operations)
+            print(f'  queued {[op.hex() for op in queued]}')
+            for op in queued:
+                run_bytes(o, op)
+        o.tick_operations = []
+        direct(o, 0x6100D9, [], ecx=b3)
+        run_new()
+        o.tick_operations = []
+        direct(o, 0x6102A9, [], ecx=b2)
+        run_new()
+        print(f'[0x6E59CC] {o.u8(to.BATTLES + 0x3FC):#x}, battle {s2} human {[o.u8(b2 + 0x5D + i) ^ 1 for i in range(2)]}')
+        step(b2, 84)
+    return during
+
+
+def battle_question_saved(o):
+    """The battles' piece 7: tut4's saved sea battle (a human side of the player: no question waits, [+0x12E9] 0,
+    counts 0), with the oracle's stand-in window: 0x611E50 (after the load) puts it on the screen, so the player
+    directs it at once (the steps don't hand it to the computer); eight steps of 84 with the human side (5 sub-steps
+    each)."""
+    o.use_battle_window()
+    player = o.u32(to.PLAYER)
+    slots = [k for k in range(0xFF) if o.u32(to.BATTLES + 4 * k)]
+    if not slots:
+        raise RuntimeError('no battle in this save')
+    b = o.u32(to.BATTLES + 4 * slots[0])
+    print(f'battle {slots[0]}: owners {[o.u16(b + 0x35A + 2 * i) for i in range(o.u8(b + 0x558))]}, human '
+          f'{[o.u8(b + 0x5D + i) ^ 1 for i in range(o.u8(b + 0x558))]}, [+0x12E9] {o.u8(b + 0x12E9)}, counts '
+          f'{[o.u16(b + 0x15C + 2 * i) for i in range(o.u8(b + 0x558))]}, the player {player}')
+
+    def step(n):
+        o.tick_operations = []
+        direct(o, 0x606CC0, [n], ecx=b)
+        queued = list(o.tick_operations)
+        print(f'  step {n}: counts {[o.u16(b + 0x15C + 2 * i) for i in range(o.u8(b + 0x558))]}, window open '
+              f'{o.u8(to.BATTLE_WINDOW + 0x48)}, [0x6E59CC] {o.u8(to.BATTLES + 0x3FC):#x}, [0x6E59CD] '
+              f'{o.u8(to.BATTLES + 0x3FD)}, [+0x12E9] {o.u8(b + 0x12E9)}, queued {[op.hex() for op in queued]}')
+        for op in queued:
+            if struct.unpack_from('<I', op)[0] == 0x96:
+                run_bytes(o, op)
+
+    def during(o):
+        direct(o, 0x611E50, [player], ecx=to.BATTLES)
+        print(f'0x611E50: [0x6E59CC] {o.u8(to.BATTLES + 0x3FC):#x}')
+        for _ in range(8):
+            step(84)
+    return during
+
+
+def ship_convoy(o, s):
+    """A convoy of its own for a ship alone, as the game gives a battle's ships (0x50BC40, a raider at its town
+    0x506F41): in port as a town's guard ship (0x50CC90), at sea out of the sea's list first (0x505B60) and then
+    0x5062F0."""
+    convoys = o.u16(to.SHIPS + 0xF6)
+    if o.u16(o.ship(s) + 8) < convoys:
+        return
+    if o.u16(o.ship(s) + 0x134) == 0:
+        t = o.u8(o.ship(s) + 0x39)
+        guard = o.u16(o.town(t) + 0x994)
+        w16(o, o.town(t) + 0x994, s)
+        direct(o, 0x50CC90, [t], ecx=to.SHIPS)
+        w16(o, o.town(t) + 0x994, guard)
+        return
+    if o.u16(o.ship(s) + 0x134) == 0xF:
+        direct(o, 0x505B60, [s], ecx=to.SHIPS)
+    head = o.alloc(4)
+    w16(o, head, 0xFFFF)
+    direct(o, 0x5062F0, [head, s], ecx=to.SHIPS)
+
+
+def player_battle(o):
+    """A sea battle the player directs, for the scenarios of the battles' piece 7 (the stand-in window in use): a
+    pirate's ship (the guide of its convoy) attacks the player's first ship (in a convoy of its own) as the game's
+    attack does: the convoy out of the list of those at sea first (0x50A4E0, as 0x507BAE), its target set, then
+    0x50BC40 (the new battle 0x611CD0, its setup 0x605420). The question is answered with its button and the operation
+    run. Returns (slot, battle, step): step(n) runs the step with n steps and the operations 0x96 it queues; the
+    player's side is human and the battle on the screen. (At first the battle was set up directly, the pirate's
+    convoy left in the list: at the battle's end 0x50BFD0 put it at the list's head again, a ring, and the towns'
+    wares on the way, 0x504970, never ended: battle_sounds hung in save 5.)"""
+    _, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    convoys = o.u16(to.SHIPS + 0xF6)
+    mine = merchant_ships(o, player)
+    pirate = next((s for s in range(ships) if o.u8(o.ship(s)) == 0xFF and o.u16(o.ship(s) + 8) < convoys
+                   and o.u16(convoy_at(o, o.u16(o.ship(s) + 8)) + 0x10) == s and o.u16(o.ship(s) + 0x134) != 0x15),
+                  None)
+    if not mine or pirate is None:
+        raise RuntimeError(f'the player\'s ships {mine}, a pirate in a convoy {pirate}')
+    ship_convoy(o, mine[0])
+    convoy = o.u16(o.ship(pirate) + 8)
+    direct(o, 0x50A4E0, [convoy], ecx=to.SHIPS)
+    w16(o, o.ship(pirate) + 0x50, mine[0])
+    direct(o, 0x50BC40, [convoy], ecx=to.SHIPS)
+    slot = next(k for k in range(0xFF) if o.u32(to.BATTLES + 4 * k)
+                and o.u16(o.u32(to.BATTLES + 4 * k) + 0x65E) == convoy)
+    b = o.u32(to.BATTLES + 4 * slot)
+
+    def step(n):
+        if o.u32(to.BATTLES + 4 * slot) != b:
+            return  # the battle ended and is gone (method +0x4)
+        o.tick_operations = []
+        direct(o, 0x606CC0, [n], ecx=b)
+        if o.u32(to.BATTLES + 4 * slot) != b:
+            print(f'  step {n}: the battle ended and is gone')
+            return
+        queued = list(o.tick_operations)
+        print(f'  step {n}: [+0x5C] {o.u8(b + 0x5C)}, [+0xAC8] {o.u8(b + 0xAC8)}, queued {[op.hex() for op in queued]}')
+        for op in queued:
+            if struct.unpack_from('<I', op)[0] in (0x96, 0x95):
+                run_bytes(o, op)
+    step(84)
+    o.close_battle_window(to.WINDOW_BUTTON)
+    step(84)
+    print(f'battle {slot} ({pirate} against {mine[0]}): on the screen {o.u8(to.BATTLES + 0x3FC):#x}, human '
+          f'{[o.u8(b + 0x5D + i) ^ 1 for i in range(o.u8(b + 0x558))]}, {o.u16(b + 0x14)} ships')
+    return slot, b, step
+
+
+def battle_orders(o):
+    """The battles' piece 7: the player's orders in a sea battle he directs (player_battle). The battle's selection
+    ([+0x66C], [+0xAD0]) is his ships and an enemy (the builders leave it out). The interface's builders, called
+    directly, and the operations they queue, run by the executor, with a step after some: 0x6103E9 (plunder,
+    capture, neither: 0x97), 0x610579 (the sails 4 and 0: 0x98), 0x608360 (a target: 0x93; each enemy's sprite a
+    stand-in whose id is its place, put only for the call), 0x608550 (a point: the lines only, then sent, 0x95, and
+    held, which the step sends again each sub-step; then let go), 0x610FD9 (the white flag up and down: 0x9B),
+    0x610C09 (flee: 0x9A); then the operation 0xA0 (the enemy leaves) and a step."""
+    o.use_battle_window()
+    player = o.u32(to.PLAYER)
+
+    def during(o):
+        slot, b, step = player_battle(o)
+        n = o.u16(b + 0x14)
+        entries = [o.u32(o.u32(b + 4) + 4 * k) for k in range(n)]
+        mine = [e for e in entries if o.u16(b + 0x35A + 2 * o.u8(e + 0x13D)) == player]
+        enemy = [e for e in entries if e not in mine]
+        print(f'the player\'s places {[o.u16(e + 0x138) for e in mine]}, the enemy\'s {[o.u16(e + 0x138) for e in enemy]}')
+        selection = mine + enemy[:1]
+        sel = o.alloc(4 * len(selection))
+        for k, e in enumerate(selection):
+            w32(o, sel + 4 * k, e)
+        w32(o, b + 0x66C, sel)
+        w16(o, b + 0xAD0, len(selection))
+
+        def build(fn, args):
+            o.tick_operations = []
+            direct(o, fn, args, ecx=b)
+            queued = list(o.tick_operations)
+            print(f'{fn:#x}{args}: {[op.hex() for op in queued]}')
+            for op in queued:
+                run_bytes(o, op)
+
+        build(0x6103E9, [1, 0])
+        step(84)
+        build(0x6103E9, [0, 1])
+        build(0x6103E9, [0, 0])
+        build(0x610579, [4])
+        step(84)
+        build(0x610579, [0])
+        for k, e in enumerate(enemy):
+            sprite = to.BATTLE_WINDOW + 0x1C00 + 0x20 * k
+            w16(o, sprite + 0x16, o.u16(e + 0x138))
+            w32(o, e + 0x134, sprite)
+        build(0x608360, [o.u16(enemy[0] + 0x138)])
+        for e in enemy:
+            w32(o, e + 0x134, 0)
+        step(84)
+        x, y = struct.unpack('<hh', bytes(o.uc.mem_read(mine[0] + 0xA, 2)) + bytes(o.uc.mem_read(mine[0] + 0xE, 2)))
+        build(0x608550, [(x + 400) & 0xFFFF, (y - 300) & 0xFFFF, 0])
+        build(0x608550, [(x + 400) & 0xFFFF, (y - 300) & 0xFFFF, 1])
+        step(84)
+        build(0x608550, [(x + 400) & 0xFFFF, (y - 300) & 0xFFFF, 0])
+        step(84)
+        build(0x610FD9, [1])
+        step(84)
+        build(0x610FD9, [0])
+        build(0x610C09, [])
+        step(84)
+        operation(o, 0xA0, slot, player)
+        step(84)
+    return during
+
+
+def battle_end_window(o):
+    """The battles' piece 7: the end's window of a sea battle for the player's human side (0x60D299 called
+    directly, 0x60DDA7..0x60E965: its message into [+0x1310], the description, the window). On the battle of
+    player_battle (a pirate's convoy, side 0, against the player's ship, side 1, on the screen): won by beating the
+    pirate (named, unknown), won as he fled (named, unknown: his guide without a captain), lost by fleeing, lost
+    beaten, [+0xAC4] 3 (the old text stays) and 2 (a capture: no window), and once with a window open (it waits).
+    Then the player's ship attacks an AI merchant's (side 0 against side 1, the player's side made human): won by
+    beating him (both forms of [+0x1A]), won as he fled, lost by fleeing (courage), lost beaten, and the side 1's
+    owner 0xFE (the nest's texts). Each call from the battle as it is, with [+0x5C] and [+0x15C] at 0, [+0xAC4] and
+    [+0xAC6] (the other side's ship) set; the window closed before each."""
+    o.use_battle_window()
+    _, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+
+    def during(o):
+        slot, b, step = player_battle(o)
+
+        def places(b, side):
+            n = o.u16(b + 0x14)
+            entries = [o.u32(o.u32(b + 4) + 4 * k) for k in range(n)]
+            return [o.u16(e + 0x138) for e in entries if o.u8(e + 0x13D) == side]
+
+        def end(b, sailors, kind, other, what):
+            o.close_battle_window(0)
+            w8(o, to.BATTLES + 0x3FD, 0)
+            w8(o, b + 0x12E9, 0)
+            w8(o, b + 0x5C, 0)
+            w16(o, b + 0x15C, 0)
+            w8(o, b + 0xAC4, kind)
+            w16(o, b + 0xAC6, other)
+            direct(o, 0x60D299, [sailors], ecx=b)
+            text = bytes(o.uc.mem_read(b + 0x1310, 0x200)).split(b'\0')[0].decode('latin-1')
+            print(f'{what}: window {o.u8(to.BATTLE_WINDOW + 0x48)}, [+0x12E9] {o.u8(b + 0x12E9)}: {text!r}')
+
+        pirates = places(b, 0)
+        print(f'battle {slot}: the pirates\' places {pirates}, the player\'s {places(b, 1)}')
+        guide = o.u16(convoy_at(o, o.u16(b + 0x65E)) + 0x10)
+        end(b, 1, 1, pirates[0], 'won, beaten, a named pirate')
+        names = o.u8(b + 0x1E90)
+        w8(o, b + 0x1E90, 0xFF)
+        end(b, 1, 1, pirates[0], 'won, beaten, the unknown pirate')
+        w8(o, b + 0x1E90, names)
+        end(b, 1, 0, pirates[0], 'won, he fled, a named pirate')
+        captain = o.u16(o.ship(guide) + 0x42)
+        w16(o, o.ship(guide) + 0x42, 0xFFFF)
+        end(b, 1, 0, pirates[0], 'won, he fled, his guide without a captain')
+        w16(o, o.ship(guide) + 0x42, captain)
+        end(b, 0, 0, pirates[0], 'lost, fled')
+        end(b, 0, 1, pirates[0], 'lost, beaten')
+        end(b, 1, 3, pirates[0], '[+0xAC4] 3')
+        end(b, 1, 2, pirates[0], '[+0xAC4] 2')
+        o.close_battle_window(0)
+        w8(o, b + 0x5C, 0)
+        w16(o, b + 0x15C, 0)
+        w8(o, b + 0xAC4, 1)
+        w16(o, b + 0xAC6, pirates[0])
+        w8(o, to.BATTLES + 0x3FD, 1)
+        direct(o, 0x60D299, [1], ecx=b)
+        print(f'a window open: [+0x12E9] {o.u8(b + 0x12E9)}, window {o.u8(to.BATTLE_WINDOW + 0x48)}')
+        # The player against an AI merchant's ship (0x611CD0, 0x605420; the busy path: his side then made human).
+        mine = merchant_ships(o, player)
+        ai = next(s for s in range(ships) if o.u8(o.ship(s)) < merchants and o.u16(o.merchant(o.u8(o.ship(s))) + 8)
+                  and o.u16(o.ship(s) + 0x134) != 0x15 and o.u16(o.ship(s) + 8) >= o.u16(to.SHIPS + 0xF6))
+        def merchant_battle(ship):
+            slot2 = direct(o, 0x611CD0, [], ecx=to.BATTLES) & 0xFF
+            b2 = o.u32(to.BATTLES + 4 * slot2)
+            direct(o, 0x605420, [mine[0], ship, 0, 0], ecx=b2)
+            w8(o, b2 + 0x5D, 0)
+            other = places(b2, 1)
+            m = o.u8(o.ship(ship))
+            print(f'battle {slot2}: the player\'s ship {mine[0]} against {ship} (merchant {m}, [+0x1A] '
+                  f'{o.u8(o.merchant(m) + 0x1A)}), its places {other}')
+            return b2, other
+        b2, other = merchant_battle(ai)
+        end(b2, 0, 1, other[0], 'won, beaten, a merchant')
+        end(b2, 0, 0, other[0], 'won, he fled, a merchant')
+        end(b2, 1, 0, other[0], 'lost, fled: courage')
+        end(b2, 1, 1, other[0], 'lost, beaten by a merchant')
+        owner = o.u16(b2 + 0x35C)
+        w16(o, b2 + 0x35C, 0xFE)
+        end(b2, 1, 0, other[0], 'lost, fled, side 1 is 0xFE')
+        end(b2, 1, 1, other[0], 'lost, beaten, side 1 is 0xFE')
+        w16(o, b2 + 0x35C, owner)
+        # A merchant of the other form ([+0x1A]), if the save has one with a ship.
+        gender = o.u8(o.merchant(o.u8(o.ship(ai))) + 0x1A)
+        ai2 = next((x for x in range(ships) if o.u8(o.ship(x)) < merchants and o.u16(o.merchant(o.u8(o.ship(x))) + 8)
+                    and o.u8(o.merchant(o.u8(o.ship(x))) + 0x1A) != gender and o.u16(o.ship(x) + 0x134) != 0x15),
+                   None)
+        if ai2 is None:
+            print('no merchant of the other form with a ship')
+            return
+        b3, other3 = merchant_battle(ai2)
+        end(b3, 0, 1, other3[0], 'won, beaten, a merchant of the other form')
+        end(b3, 0, 0, other3[0], 'won, he fled, a merchant of the other form')
+        end(b3, 1, 1, other3[0], 'lost, beaten by a merchant of the other form')
+    return during
+
+
+def battle_balls_sound(o):
+    """battle_balls with the sound on (each sound of the battle on the screen takes the world's rand(): the
+    broadsides, the balls landing and hitting, the boardings, the crashes, the rocks)."""
+    during = battle_balls(o)
+    o.sound_variants = 1
+    return during
+
+
+def battle_balls(o):
+    """The battles' piece 7: the cannon balls of a sea battle the player directs (player_battle). The pirates' ship
+    put 300 east of the player's, both heading north and still: each has the other abeam (starboard, port), so the
+    guns fire balls (0x61DD4F's human tail, 0x61E8EF, 0x6214CB with 0x6111B9 and the ball's constructor 0x602A90,
+    which takes the world's rand()) that fly (0x603130) and hit (0x608850's kind 1: 0x60A73C, 0x603470) or land;
+    forty steps of 84 (5 sub-steps each), the player's order to fire after six (operation 0x92: the enemy on
+    his starboard) and after 26 the pirates' ship moved 600 south (the balls in flight land); then the order to fire
+    again (the enemy on his port side) and twenty more."""
+    o.use_battle_window()
+    player = o.u32(to.PLAYER)
+
+    def during(o):
+        slot, b, step = player_battle(o)
+        n = o.u16(b + 0x14)
+        entries = [o.u32(o.u32(b + 4) + 4 * k) for k in range(n)]
+        mine = [e for e in entries if o.u16(b + 0x35A + 2 * o.u8(e + 0x13D)) == player]
+        enemy = [e for e in entries if e not in mine]
+        x, y = o.u16(mine[0] + 0xA), o.u16(mine[0] + 0xE)
+        for k, e in enumerate([mine[0]] + enemy[:1]):
+            w32(o, e + 0x8, ((x + 300 * k) & 0xFFFF) << 16)
+            w32(o, e + 0xC, (y & 0xFFFF) << 16)
+            w8(o, e + 0x11, 0)
+            w16(o, e + 0x24, 0)
+            for off in (0x14, 0x18, 0x1C):
+                w32(o, e + off, 0)
+        print(f'the player\'s ship at {x}, {y}; the pirates\' 300 east; guns '
+              f'{list(bytes(o.uc.mem_read(o.ship(o.u32(mine[0] + 4)) + 0x13C, 24)))}')
+        place = o.u16(mine[0] + 0x138)
+
+        def fire():
+            operation(o, 0x92, slot, 1, place >> 6, 0 if place & 0x20 == 0 else 1 << (place & 0x1F),
+                      1 << (place & 0x1F) if place & 0x20 == 0 else 0, fmt='<IBBBxII')
+        for k in range(40):
+            step(84)
+            if k == 5:
+                fire()  # the enemy east: starboard
+            if k == 25:
+                # The pirates' ship moves 600 south at once: the balls in flight land in the water.
+                for e in enemy[:1]:
+                    w32(o, e + 0xC, o.u32(e + 0xC) + (600 << 16))
+        print(f'balls: slots {o.u16(b + 0xACC)}, in flight '
+              f'{sum(1 for k in range(o.u16(b + 0xACC)) if o.u32(o.u32(b + 0x668) + 4 * k))}')
+        fire()  # the enemy south: port
+        for _ in range(20):
+            step(84)
+    return during
+
+
+def battle_balls_save(o):
+    """The battles' piece 7: battle_balls's start (the ships abeam, still) until balls fly (seven steps of 84 and the
+    player's order to fire), for the save's writer and reader (re/emu/sesion19/wb.sh with 0 days): the cannon balls
+    written (0x602E20) and read back (0x602A90, 0x602EF0, each with the world's rand())."""
+    o.use_battle_window()
+    player = o.u32(to.PLAYER)
+
+    def during(o):
+        slot, b, step = player_battle(o)
+        n = o.u16(b + 0x14)
+        entries = [o.u32(o.u32(b + 4) + 4 * k) for k in range(n)]
+        mine = [e for e in entries if o.u16(b + 0x35A + 2 * o.u8(e + 0x13D)) == player]
+        enemy = [e for e in entries if e not in mine]
+        x, y = o.u16(mine[0] + 0xA), o.u16(mine[0] + 0xE)
+        for k, e in enumerate([mine[0]] + enemy[:1]):
+            w32(o, e + 0x8, ((x + 300 * k) & 0xFFFF) << 16)
+            w32(o, e + 0xC, (y & 0xFFFF) << 16)
+            w8(o, e + 0x11, 0)
+            w16(o, e + 0x24, 0)
+            for off in (0x14, 0x18, 0x1C):
+                w32(o, e + off, 0)
+        place = o.u16(mine[0] + 0x138)
+        for _ in range(7):
+            step(84)
+        operation(o, 0x92, slot, 1, place >> 6, 0 if place & 0x20 == 0 else 1 << (place & 0x1F),
+                  1 << (place & 0x1F) if place & 0x20 == 0 else 0, fmt='<IBBBxII')
+        step(84)
+        print(f'balls in flight: {sum(1 for k in range(o.u16(b + 0xACC)) if o.u32(o.u32(b + 0x668) + 4 * k))}')
+    return during
+
+
+def battle_sounds(o):
+    """The battles' piece 7: the sounds of a sea battle on the screen with the sound on, each taking the world's
+    rand() (player_battle): a rock and an islet made with the game's 0x619450 (kinds 2 and 3) round the player's
+    ship and 0x608850 called on each (their sounds 0xEAA6, 0xEAB0); then the pirates' ship put alongside the
+    player's (45 east, both heading north, still) and twenty steps of 84: they crash (0x608F70: 0xEA9C) and grapple
+    and board (0x61F1BF: 0xEABA)."""
+    o.use_battle_window(sound_variants=1)
+    player = o.u32(to.PLAYER)
+
+    def during(o):
+        slot, b, step = player_battle(o)
+        n = o.u16(b + 0x14)
+        entries = [o.u32(o.u32(b + 4) + 4 * k) for k in range(n)]
+        mine = [e for e in entries if o.u16(b + 0x35A + 2 * o.u8(e + 0x13D)) == player]
+        enemy = [e for e in entries if e not in mine]
+
+        def scene(off):
+            return o.u32(b + off)
+        rock = direct(o, 0x619450, [2, 0, 30000, 30000, 30100, 30100], ecx=b) & 0xFFFF
+        islet = direct(o, 0x619450, [3, 0, 30000, 30000, 30100, 30100], ecx=b) & 0xFFFF
+        e = mine[0]
+        item = next(i for i in range(o.u16(b + 0x54)) if o.u8(scene(0x18) + i) == 0
+                    and o.u16(scene(0x1C) + 2 * i) == o.u16(e + 0x138))
+        sx, sy = o.u16(e + 0xA), o.u16(e + 0xE)
+        for it in (rock, islet):
+            kind = o.u8(scene(0x18) + it)
+            shape = (0x876 if kind == 2 else 0x676) + 8 * o.u16(scene(0x1C) + 2 * it)
+            w16(o, b + shape, 4)
+            w16(o, b + shape + 2, 4)
+            w16(o, scene(0x28) + 4 * it, (sx - 100) & 0xFFFF)
+            w16(o, scene(0x28) + 4 * it + 2, (sx + 100) & 0xFFFF)
+            w16(o, scene(0x38) + 4 * it, (sy - 100) & 0xFFFF)
+            w16(o, scene(0x38) + 4 * it + 2, (sy + 100) & 0xFFFF)
+            w32(o, e + 0x1C, 0x4000)
+            direct(o, 0x608850, [item, it], ecx=b)
+            print(f'item {it} (kind {kind}): speed {o.u32(e + 0x1C):#x}')
+            w16(o, scene(0x28) + 4 * it, 30000)
+            w16(o, scene(0x28) + 4 * it + 2, 30100)
+            w16(o, scene(0x38) + 4 * it, 30000)
+            w16(o, scene(0x38) + 4 * it + 2, 30100)
+        for k, x in enumerate([mine[0]] + enemy[:1]):
+            w32(o, x + 0x8, ((sx + 45 * k) & 0xFFFF) << 16)
+            w32(o, x + 0xC, (sy & 0xFFFF) << 16)
+            w8(o, x + 0x11, 0)
+            w16(o, x + 0x24, 0)
+            for off in (0x14, 0x18, 0x1C):
+                w32(o, x + off, 0)
+        for _ in range(20):
+            step(84)
+        print(f'flags {[o.u8(x + 0x12A) for x in entries]}')
+    return during
+
+
 def town_battle_setup(o):
     """The battles' piece 6: town battles set up directly (0x611D80, then 0x5FBFE0 on the new one) as a raider's
     arrival does (0x506F33): towns 0, 4, 9, 13, 17 and 21 attacked by a pirate convoy's guide (its convoy on side A)
@@ -9478,6 +10004,28 @@ class Scenario:
 EVENTS_FUNCTIONS = [0x4D85C0, 0x4EBF54]
 BUILD_FUNCTIONS = [0x535760, 0x521900, 0x523830, 0x522C70, 0x4F8A50, 0x4F8C70, 0x4F8560, 0x5254C0]
 SCENARIOS = {
+    # The battles' piece 7: the battle the player directs.
+    'battle_question': Scenario(battle_question, [0x605420, 0x606CC0, 0x535760, 0x611CD0, 0x611E50, 0x6100D9,
+                                                  0x6102A9], 0, [
+        '@606b8d', '@607168', '@606f21', '@606f56', '@606bae', '@608296', '@611eb5', '@606e7e', '@606fea',
+        '@6071e9']),
+    'battle_question_saved': Scenario(battle_question_saved, [0x606CC0, 0x535760, 0x611E50], 0, [
+        '@611eb5', '@6071c0']),
+    'battle_orders': Scenario(battle_orders, [0x605420, 0x606CC0, 0x535760, 0x6103E9, 0x610579, 0x608360, 0x608550,
+                                              0x610FD9, 0x610C09], 0, [
+        '@541282', '@5413f6', '@54154b', '@5410c4', '@541653', '@541778', '@541786', '@6116f7', '@6078fa']),
+    'battle_balls': Scenario(battle_balls, [0x606CC0, 0x535760, 0x61E8EF, 0x6214CB, 0x603130, 0x603470, 0x60A73C,
+                                            0x6111B9], 0, [
+        '@61e656', '@61e689', '@60893e', '@60896f', '@6031a6', '@6111e9']),
+    'battle_balls_sound': Scenario(battle_balls_sound, [0x606CC0, 0x535760, 0x61E8EF, 0x6214CB, 0x603130, 0x603470,
+                                                        0x60A73C, 0x6111B9], 0, [
+        '@61ef71', '@60330c', '@6036a6']),
+    'battle_sounds': Scenario(battle_sounds, [0x606CC0, 0x535760, 0x608850, 0x608F70, 0x61F1BF], 0, [
+        '@608c98', '@608d71', '@60911f', '@61f213']),
+    'battle_balls_save': Scenario(battle_balls_save, [0x606CC0, 0x535760], 0, ['@6214cb']),
+    'battle_end_window': Scenario(battle_end_window, [0x605420, 0x606CC0, 0x535760, 0x611CD0, 0x60D299], 0, [
+        '@60dfd9', '@60e016', '@60e53f', '@60e580', '@60e8b0', '@60e7c2', '@60e93b', '@60e94b', '@60e878',
+        '@60e869', '@60e652', '@60e0c0']),
     'candidacy_pirate_index': Scenario(candidacy_pirate_index, [0x5326E0, 0x535760], 1, ['51a48e']),
     'candidacy_no_targets': Scenario(candidacy_no_targets, [0x5326E0, 0x535760], 1,
                                      ['5329dc>532c1f', '532ba2>532c1f']),

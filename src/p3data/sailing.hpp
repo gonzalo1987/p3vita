@@ -1,7 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -227,13 +230,77 @@ public:
 		out.swap(player_messages_);
 		return out;
 	}
+	// The sea map's battle icons: when a ship of the player is in a sea battle ([+0x1E92]) the game tells its sea
+	// map (0x457C90: the battle's slot and place) and clears the flag. The viewer takes them after each tick and
+	// shows each icon while its battle lasts.
+	struct BattleIcon {
+		uint8_t slot;
+		int16_t x, y;
+	};
+	std::vector<BattleIcon> take_sea_map_icons() {
+		std::vector<BattleIcon> out;
+		out.swap(sea_map_icons_);
+		return out;
+	}
 	bool battles() const { return battles_; }
 	void step_battles();  // After each tick: operation 0x94 with kBattleSteps when there are battles.
 	void fn_536bbf(uint32_t steps);  // Operation 0x94: the battles take their steps.
 	void fn_612c90(bool network);  // (battles) Operation 0xC8 with 2 if a battle has a human side.
 	void fn_612d20(bool network);  // (battles) Operation 0xC8 with 0 if none has.
+	// Operation 0xC8 (the real-time loop's 0x546DCF, {0xC8, -1, -1, mode, -1}): the time's mode ([0x6DF2F0 +
+	// 0x92C]): 0 normal; 2 while a battle has a human side, when the world moves at most one tick each 3375 ms
+	// ([0x673CF8]) whatever the speed, with no autosave. Not the world's: the viewer reads it.
+	void set_time_mode(uint32_t mode) { time_mode_ = mode; }
+	uint32_t time_mode() const { return time_mode_; }
 	// Operation 0x96 (sea battle): a merchant's sides to the computer or back to the player.
 	void fn_60fec9(size_t battle, uint16_t merchant, bool automatic);
+	// 0x611E50 (on the battles, the local player): after a load (the game's interface, 0x43C5C7), the battle the
+	// player directs goes on the screen ([+0x3FC]).
+	void fn_611e50(uint8_t player);
+	// 0x6102A9 (method +0x24 of a sea battle): the player takes it (the sea map's battle icon, its window's button).
+	void fn_6102a9(size_t battle);
+	// 0x6100D9 (on a battle): the player gives it back to the computer (he leaves its screen; the town step).
+	void fn_6100d9(size_t battle);
+	// battle/orders.cpp: the player's orders in a battle (the battles' piece 7): operations 0x92 (fire), 0x93 (a
+	// target), 0x95 (a point to head for), 0x97 (board: capture or plunder), 0x98 (the sails), 0x9A (flee), 0x9B
+	// (the white flag), each on its 0x14 bytes; 0xA0 (the enemy, fled, left: «Abandonar») on a battle.
+	void fn_540f50(const uint8_t* op);
+	void fn_541050(const uint8_t* op);
+	void fn_541200(const uint8_t* op);
+	void fn_541380(const uint8_t* op);
+	void fn_5414e0(const uint8_t* op);
+	void fn_5415e0(const uint8_t* op);
+	void fn_541700(const uint8_t* op);
+	void fn_6116a9(size_t battle, uint8_t merchant);
+	void fn_6270c7(size_t entry, uint16_t x, uint16_t y);  // (scene's ship) Its goal and its heading to it.
+	// battle/balls.cpp: the cannon balls (a human side's guns).
+	bool on_screen(size_t battle) const;  // [0x6E59CC] is the battle.
+	void battle_sound(size_t battle);  // A sound on the screen: the world's rand() with the sound on.
+	void set_battle_sound(uint32_t variants) { save_.battle_window.sound_variants = variants; }
+	uint16_t fn_6111b9(size_t battle);  // (battle) A free slot of the balls.
+	void fn_602a90(size_t ball, uint16_t slot, uint16_t tx, uint16_t ty, uint16_t sx, uint16_t sy, int32_t damage,
+		uint8_t byte, size_t battle, uint16_t shooter, uint16_t word);  // The ball's constructor.
+	void ball_gone(size_t ball);  // Out of the battle's lists and the scene.
+	void fn_6214cb(size_t entry, uint16_t x, uint16_t y, int32_t damage, uint8_t side, uint8_t index, uint8_t count,
+		uint8_t heavy);  // (scene's ship) A ball.
+	void fn_61e8ef(size_t entry, uint8_t side, uint16_t x, uint16_t y);  // (scene's ship) A broadside of balls.
+	void fn_603130(size_t ball);  // (ball) Its sub-step.
+	void fn_603470(size_t ball, uint16_t place, uint8_t side);  // (ball) It hits a ship.
+	uint8_t fn_60a73c(size_t battle, uint16_t slot, uint16_t place);  // (battle) Whether a ball crosses a hull.
+	// The interface's builders of the orders, from the battle's selection ([+0x66C], [+0xAD0]): 0x97 (plunder,
+	// capture), 0x98, 0x9A, 0x9B, 0x93 (the target's place), 0x95 (with the lines' and the point's fields), 0x92
+	// (fire), 0xA0 (abandon); the selection set by the viewer.
+	void fn_6103e9(size_t battle, bool plunder, bool capture);
+	void fn_610579(size_t battle, uint8_t sails);
+	void fn_610c09(size_t battle);
+	void fn_610fd9(size_t battle, bool on);
+	void fn_608360(size_t battle, uint16_t target);
+	void fn_608550(size_t battle, uint32_t x, uint32_t y, bool send);
+	void queue_fire(size_t battle);
+	void queue_abandon(size_t battle);
+	void set_battle_selection(size_t battle, const std::vector<uint16_t>& places);
+	std::vector<std::array<uint32_t, 2>> selection_marks(size_t battle, uint8_t skip) const;
+	bool order_room() const;
 	static constexpr size_t kSeaBattleSize = 0x1E98;
 	static constexpr uint32_t kSeaBattleVtable = 0x67AD44;
 	static constexpr uint32_t kSceneVtable = 0x67AF70;
@@ -368,8 +435,20 @@ public:
 	bool fn_611149(size_t battle, uint8_t side) const;  // (battle) Team 1 may head off.
 	void fn_606cc0(size_t battle, uint16_t steps);  // (sea battle, method +0x14) Its step.
 	bool human_ship_in_battle(size_t battle) const;  // (sea battle) [+0x1E92]: a ship of the player in a side's convoy.
+	void tell_sea_map(size_t battle);  // (sea battle) [+0x1E92] set: the sea map's icon, the flag cleared.
+	// The battles' window (SaveGame::battle_window; the game's *0x6CBB10): whether it is open (its method +0xC8),
+	// closed with a result (0x41E680; its method +0x118 closes it with 0; 10 is its button), opened on a battle's
+	// description [+0x12EC] (0x41D9B0). The description (0x20 bytes) with its text [+0x1310]: the question (one
+	// button, 0x6B2BC0 «Steer manually») or the end (none).
+	bool battle_window_open() const;
+	void close_battle_window(uint32_t result = 0);
+	void open_battle_window(size_t battle);
+	void battle_window_description(size_t battle, bool question);
+	void write_battle_text(size_t battle, const std::string& text);  // [+0x1310], as the game's sprintf.
 	// battle/battle_end.cpp: the end of a sea battle.
 	void fn_60d299(size_t battle, bool sailors);  // (sea battle, method +0x1C) The end.
+	// 0x60DDA7..0x60E8C3: the end's message to the local player's human side (nothing: the old text stays).
+	std::optional<std::string> sea_end_message(size_t battle, size_t side, bool sailors) const;
 	void fn_611740(size_t battle, bool free);  // (sea battle, method +0x4) Its destructor.
 	void fn_612a20(uint32_t i, uint32_t j, uint8_t value);  // (battles) Ship j met by ship i.
 	void fn_612bd0(uint16_t a, uint16_t b);  // (battles) Two convoys' ships met.
@@ -422,6 +501,10 @@ public:
 	void set_destination(SavedShip& ship, int town, int x, int y);
 
 private:
+	template <class F>
+	void for_marked(size_t battle, uint8_t group, uint32_t low, uint32_t high, F f);  // battle/orders.cpp
+	template <class F>
+	void queue_marked(size_t battle, uint8_t skip, F bytes);  // battle/orders.cpp
 	bool ai_ = true;
 	bool convoys_ = true;
 	bool storms_ = true;
@@ -430,6 +513,8 @@ private:
 	bool battles_ = true;
 	const GameTexts* texts_ = nullptr;
 	std::vector<std::string> player_messages_;
+	std::vector<BattleIcon> sea_map_icons_;
+	uint32_t time_mode_ = 0;
 	std::vector<std::vector<uint32_t>> waypoints_;  // 0x448780 per town ([+0x20], [+0x24] of the navigation)
 	std::vector<bool> has_waypoints_;
 

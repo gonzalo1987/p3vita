@@ -455,6 +455,22 @@ struct SaveGame {
 		bool interface = false;
 	};
 	std::vector<TickerLine> player_ticker;
+	// Not saved: the game's window for the battles (*0x6CBB10, 0x41D9B0: a battle's question and its end), which
+	// the viewer is. Without it (`present` false: the checks, as the oracle without a window) a battle's question
+	// takes the game's path of a player busy with another window (operation 0x96 with 1: the computer fights it).
+	// In tick_probe, region WN (the oracle's stand-in window, TownOracle.use_battle_window).
+	struct BattleWindow {
+		bool present = false;
+		bool open = false;  // its method +0xC8 ([+0x48])
+		uint32_t result = 0;  // [+0x5A4]: 10 ([0x66BDC0]) closed with its button, 0 closed otherwise
+		uint8_t battle = 0xFF;  // the slot of the battle whose description it shows
+		uint16_t buttons = 0;  // the description's [+0x6]: 1 the question («Steer manually»), 0 the end
+		std::string text;  // what it shows: the battle's [+0x1310] when it opened
+		// The battle sounds' variants (0x443690): with any, each sound of the battle on the screen takes the
+		// world's rand() (Sailing::battle_sound); 0 the sound off.
+		uint32_t sound_variants = 0;
+	};
+	BattleWindow battle_window;
 	// Matriz n × n del mundo (*[0x6DE50C], [+0x6C] de 0x6DE4A0; 0x531B70 la
 	// lee): lo que se tarda de una ciudad a otra, en dieciseisavos de día a la
 	// velocidad de una snaikka (0x516930; 0x516AB0 lo pasa a días).

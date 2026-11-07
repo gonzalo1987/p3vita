@@ -393,6 +393,38 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			}
 		}
 		break;
+	case 0xC8:  // The time's mode (the real-time loop's 0x546DCF): [+0xC], unless -1 (battle/battles.cpp).
+		if (sailing && fields[3] != -1) {
+			sailing->set_time_mode(uint32_t(fields[3]));
+		}
+		break;
+	case 0x92:  // The player's orders in a battle (0x536BA1..0x536CC6; battle/orders.cpp): fire,
+	case 0x93:  // a target,
+	case 0x95:  // a point to head for,
+	case 0x97:  // board (capture or plunder),
+	case 0x98:  // the sails,
+	case 0x9A:  // flee,
+	case 0x9B:  // the white flag.
+		if (sailing) {
+			switch (fields[0]) {
+			case 0x92: sailing->fn_540f50(operation); break;
+			case 0x93: sailing->fn_541050(operation); break;
+			case 0x95: sailing->fn_541200(operation); break;
+			case 0x97: sailing->fn_541380(operation); break;
+			case 0x98: sailing->fn_5414e0(operation); break;
+			case 0x9A: sailing->fn_5415e0(operation); break;
+			default: sailing->fn_541700(operation); break;
+			}
+		}
+		break;
+	case 0xA0:  // The enemy, fled, leaves the battle (0x536D04 → 0x6116A9; battle/orders.cpp): {0xA0, slot, merchant}.
+		if (sailing && uint32_t(fields[1]) < 0xFF) {
+			const int battle = save.battles.battle(uint32_t(fields[1]));
+			if (battle >= 0) {
+				sailing->fn_6116a9(size_t(battle), uint8_t(fields[2]));
+			}
+		}
+		break;
 	case 0xB4:  // A new pirate, when a nest is destroyed (0x536E7D → 0x542E40; battle/town_end.cpp).
 		if (sailing) {
 			sailing->fn_542e40(uint32_t(fields[1]), uint32_t(fields[2]), uint32_t(fields[3]), uint32_t(fields[4]));

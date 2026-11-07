@@ -491,8 +491,11 @@ void Sailing::fn_60f479(size_t b) {
 
 // 0x608230 (method +0x18 of a sea battle, arg): if [+0x5C] the end
 // (method +0x1C, 0x60D299, with 1); else, with arg, the
-// formation (method +0x2C, 0x6079D0), the human player's sides (the town
-// view and the battle shown: UI, part 7), and the rocks and islets (0x60F479).
+// formation (method +0x2C, 0x6079D0), the local player's human sides (the
+// battle goes on the screen, [0x6E59CC] = its slot; and the interface's:
+// the town view centred on [+0xA7C], [+0xA80] and shown, the sea map
+// hidden, the clouds 0x6107B9: the viewer's; the oracle jumps over them,
+// HUMAN_UI_JUMPS), and the rocks and islets (0x60F479).
 void Sailing::fn_608230(size_t b, bool arg) {
 	BattleGraph& g = save_.battles;
 	if (g.get<uint8_t>(b, 0x5C) != 0) {
@@ -503,6 +506,12 @@ void Sailing::fn_608230(size_t b, bool arg) {
 		return;
 	}
 	fn_6079d0(b);
+	const uint32_t player = save_.globals.u32(0x6DFC14);
+	for (size_t i = 0; i < g.get<uint8_t>(b, 0x558); ++i) {
+		if (g.get<uint16_t>(b, 0x35A + 2 * i) == player && g.get<uint8_t>(b, 0x5D + i) == 0) {
+			g.set<uint8_t>(0, 0x3FC, uint8_t(g.get<uint16_t>(b, 0x662)));
+		}
+	}
 	fn_60f479(b);
 }
 
@@ -656,10 +665,10 @@ void Sailing::fn_605420(size_t b, uint16_t a, uint16_t d, uint8_t c, uint32_t fl
 	set8(0xAB0, 1);
 	set8(0xAB1, (u16(0x35C) != 0xFF || u16(0x35A) != 0xFE) ? 1 : 0xFF);
 	// 0x1E92: a ship of the player (or of a human in a network game) is in
-	// the battle (human_ship_in_battle): the sea map is told (0x457C90) and
-	// it goes back to 0 only when its window *0x6CBDD8 exists: never in the
-	// simulation (the app does it), as in the oracle.
+	// the battle (human_ship_in_battle): the sea map is told and the flag
+	// cleared (0x605906..0x605939, tell_sea_map).
 	set8(0x1E92, human_ship_in_battle(b) ? 1 : 0);
+	tell_sea_map(b);
 	const uint16_t ships_count = count;
 	// The sides: the ships of convoy b65E (or ship A alone) for A.
 	auto weaken = [&]() {
@@ -850,11 +859,21 @@ void Sailing::fn_605420(size_t b, uint16_t a, uint16_t d, uint8_t c, uint32_t fl
 	set8(0x670, uint8_t(r));
 	set8(0x671, uint8_t(wind));
 	set8(0x5C, 0);
+	// The pirates' captain: of their convoy's guide. The game doesn't check
+	// the convoy (a pirate's ship alone, which 0x50BC40 never leaves: it
+	// gives the target a convoy and the pirates have theirs): here none.
 	uint16_t captain = 0xFFFF;
+	auto guide_captain = [&](uint16_t convoy) -> uint16_t {
+		if (convoy >= convoys) {
+			return 0xFFFF;
+		}
+		const uint16_t guide = save_.convoys[convoy].u16(0x10);
+		return guide < count ? save_.ships[guide].memory.u16(0x42) : 0xFFFF;
+	};
 	if (u16(0x35A) == 0xFF) {
-		captain = save_.ships[save_.convoys[u16(0x65E)].u16(0x10)].memory.u16(0x42);
+		captain = guide_captain(u16(0x65E));
 	} else if (u16(0x35C) == 0xFF) {
-		captain = save_.ships[save_.convoys[u16(0x660)].u16(0x10)].memory.u16(0x42);
+		captain = guide_captain(u16(0x660));
 	}
 	if (captain < save_.captain_count()) {
 		set8(0x1E90, save_.captains[captain].u8(0x2));
@@ -871,26 +890,42 @@ void Sailing::fn_605420(size_t b, uint16_t a, uint16_t d, uint8_t c, uint32_t fl
 		return;
 	}
 	// The local player's human sides (0x60651F..0x606C12; [+0x5D + i] 0,
-	// owner [0x6DFC14]). In the game, when the player directs no battle
-	// ([0x6E59CC] 0xFF) and no battle window is open ([0x6E59CD] 0), the
-	// battle's question opens: the message «%s "%s" is being attacked by
-	// ...» (or «is attacking») written into [+0x1310], the window's
-	// description at [+0x12EC] (its buttons 0x6B2BC0, «Steer manually»; in
-	// the Spanish exe «¿Quieres dirigir manualmente a los barcos en la
-	// batalla naval?») and the window (0x41D9B0 on *0x6CBB10) with [+0x12E9]
-	// 0, [0x6E59CD] 1 and [+0x12EA] 1: part 7. Otherwise (0x606BAE) the
-	// player is busy with another battle, and this one goes to the computer
-	// at once: operation 0x96 {0x96, [+0x662], player, 1, 0} (fn_60fec9,
-	// battles.cpp) and the side's count [+0x15C] 0xFFFF (the step waits until
-	// the operation runs). p3vita has no battle window yet, so it always
-	// takes this path; the oracle too (BATTLE_WINDOW_JUMPS, 0x60659B →
+	// owner [0x6DFC14]). When the player directs no battle ([0x6E59CC], the
+	// battles' [+0x3FC], 0xFF) and no battle window is open ([0x6E59CD],
+	// [+0x3FD], 0), the battle's question (0x60659B..0x606BAC): the message
+	// «%s "%s" is being attacked by ...» (or «is attacking»; attack_message)
+	// written into [+0x1310], the window's description at [+0x12EC] (its
+	// button 0x6B2BC0, «Steer manually»; in the Spanish exe «¿Quieres dirigir
+	// manualmente a los barcos en la batalla naval?») and the window
+	// (0x41D9B0 on *0x6CBB10) with [+0x12E9] 0, [0x6E59CD] 1 and [+0x12EA] 1
+	// (with a window already open, [+0x12E9] 1: it waits). The side's count
+	// [+0x15C] stays 0xFA: the step counts it down while the question is
+	// open and then takes the answer. Otherwise (0x606BAE) the player is busy
+	// with another battle, and this one goes to the computer at once:
+	// operation 0x96 {0x96, [+0x662], player, 1, 0} (fn_60fec9, battles.cpp)
+	// and the side's count 0xFFFF (the step waits until the operation runs).
+	// Without the window (the checks; SaveGame::battle_window) it always
+	// takes that path, as the oracle (BATTLE_WINDOW_JUMPS, 0x60659B →
 	// 0x606BAE).
 	// (The game tests [+0x5D] at the side's team, [+0x559 + i], which is the
-	// side itself in a sea battle.) For the viewer, the message the window
-	// would have shown goes to the player's messages (attack_message).
+	// side itself in a sea battle.) For the viewer, on that path the message
+	// the window would have shown goes to the player's messages.
 	const uint32_t player = gl.u32(0x6DFC14);
 	for (size_t i = 0; i < u8(0x558); ++i) {
 		if (u16(0x35A + 2 * i) != player || u8(0x5D + size_t(u8(0x559 + i))) != 0) {
+			continue;
+		}
+		if (save_.battle_window.present && g.get<uint8_t>(0, 0x3FC) == 0xFF && g.get<uint8_t>(0, 0x3FD) == 0) {
+			write_battle_text(b, texts_ ? attack_message(b, a, d, i) : std::string());
+			battle_window_description(b, true);
+			if (g.get<uint8_t>(0, 0x3FD) != 0) {
+				set8(0x12E9, 1);
+			} else {
+				open_battle_window(b);
+				set8(0x12E9, 0);
+				g.set<uint8_t>(0, 0x3FD, 1);
+				set8(0x12EA, 1);
+			}
 			continue;
 		}
 		if (texts_) {

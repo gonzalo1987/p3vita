@@ -303,4 +303,71 @@ void Sailing::fn_60fec9(size_t b, uint16_t merchant, bool automatic) {
 	}
 }
 
+// 0x611E50 (on the battles, the local player): with no battle on the
+// screen ([+0x3FC] 0xFF), the last one by slot with a human side ([+0x5D]
+// 0) of the player (in a network game, [0x6DFC18], of anybody) goes on it.
+// Then the interface (the town view on its town, 0x58A310, or its place,
+// 0x589ED0, shown; the sea map hidden; its rocks 0x610379 and clouds
+// 0x6107B9): the viewer's; the oracle jumps over it (HUMAN_UI_JUMPS).
+void Sailing::fn_611e50(uint8_t player) {
+	BattleGraph& g = save_.battles;
+	if (g.get<uint8_t>(0, 0x3FC) != 0xFF) {
+		return;
+	}
+	const bool network = save_.globals.u32(0x6DFC18) != 0;
+	for (size_t k = 0; k < 0xFF; ++k) {
+		const int b = g.battle(k);
+		if (b < 0) {
+			continue;
+		}
+		for (size_t i = 0; i < g.get<uint8_t>(size_t(b), 0x558); ++i) {
+			const bool human = g.get<uint8_t>(size_t(b), 0x5D + i) == 0;
+			if (human && (network || g.get<uint16_t>(size_t(b), 0x35A + 2 * i) == player)) {
+				g.set<uint8_t>(0, 0x3FC, uint8_t(k));
+			}
+		}
+	}
+}
+
+// 0x6102A9 (method +0x24 of a sea battle): the player takes it: operation
+// 0x96 {0x96, the slot, the player, 0, 0} (fn_60fec9: his sides human), the
+// battle on the screen ([0x6E59CC], the battles' [+0x3FC]). Then the
+// interface (the town view centred on [+0xA7C], [+0xA80] and shown, the sea
+// map hidden, a window of 0x6DA5F0 closed, its clouds 0x6107B9 and rocks
+// 0x610379): the viewer's.
+void Sailing::fn_6102a9(size_t b) {
+	BattleGraph& g = save_.battles;
+	const uint32_t player = save_.globals.u32(0x6DFC14);
+	const uint16_t slot = g.get<uint16_t>(b, 0x662);
+	uint8_t op[0x14];
+	const uint32_t fields[5] = {0x96, slot, player, 0, 0};
+	std::memcpy(op, fields, sizeof(op));
+	tick::enqueue_operation(save_, op, sizeof(op));  // 0x54AA70
+	g.set<uint8_t>(0, 0x3FC, uint8_t(slot));
+}
+
+// 0x6100D9 (on a battle): the player gives it back to the computer. Its own
+// window ([+0x12EA]) is closed (hidden if open, method +0x118) and none is
+// open any more ([0x6E59CD]); off the screen ([0x6E59CC] 0xFF); operation
+// 0x96 {0x96, the slot, the player, 1, 0}. Then the sprites of its ships
+// ([+0x134] of each of both lists) and cannon balls ([+0x20] of each of
+// [+0x668]) go from the town view and are cleared (p3vita has none: they
+// stay 0), the sea map is shown and the town view hidden (the viewer's).
+void Sailing::fn_6100d9(size_t b) {
+	BattleGraph& g = save_.battles;
+	if (g.get<uint8_t>(b, 0x12EA) != 0) {
+		g.set<uint8_t>(b, 0x12EA, 0);
+		if (battle_window_open()) {
+			close_battle_window(0);
+		}
+		g.set<uint8_t>(0, 0x3FD, 0);
+	}
+	const uint32_t player = save_.globals.u32(0x6DFC14);
+	g.set<uint8_t>(0, 0x3FC, 0xFF);
+	uint8_t op[0x14];
+	const uint32_t fields[5] = {0x96, g.get<uint16_t>(b, 0x662), player, 1, 0};
+	std::memcpy(op, fields, sizeof(op));
+	tick::enqueue_operation(save_, op, sizeof(op));  // 0x54AA70
+}
+
 }  // namespace p3::data

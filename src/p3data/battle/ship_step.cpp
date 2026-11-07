@@ -339,6 +339,9 @@ struct Boarders {
 void Sailing::fn_61f1bf(size_t e) {
 	BattleGraph& g = save_.battles;
 	const size_t b = scene_battle(e);
+	if (g.get<uint8_t>(e, 0x14A) == 0) {
+		battle_sound(b);  // 0x61F1C8: the boarding's sound 0xEABA on the screen (the first of the pair)
+	}
 	const uint16_t place = g.get<uint16_t>(e, 0x138), other = g.get<uint16_t>(e, 0x128);
 	const size_t t = battle_entry(b, other);
 	if (g.get<uint8_t>(e, 0x26) > 2 || g.get<uint8_t>(t, 0x26) > 2) {
@@ -708,8 +711,11 @@ uint8_t Sailing::fn_61f96f(size_t e, int32_t damage, int16_t sailors, uint8_t si
 // (0x96), its team's mode [+0xACA] one more (0xFF if the target fled), and
 // the music (0x611649: 0xB when it sank, else 9) if the team is [+0xAD2] − 1.
 //
-// Not rewritten: with a human side the guns fire cannon balls (0x61E8EF,
-// part 7).
+// With a human side ([+0xAC8] 0, 0x61E628) each side with a target and
+// loaded fires a broadside of cannon balls at where it will be (0x61E8EF,
+// battle/balls.cpp); and with the order to fire (`flag`) and no target on
+// either side, at the closest enemy (not out) on each side by its heading,
+// only the closer side when both are loaded.
 void Sailing::fn_61dd4f(size_t e, bool flag) {
 	BattleGraph& g = save_.battles;
 	const ShipMemory& s = scene_ship(e);
@@ -742,6 +748,7 @@ void Sailing::fn_61dd4f(size_t e, bool flag) {
 	};
 	int32_t starboard = 0x7FFFFFFF, port = 0x7FFFFFFF;
 	uint16_t starboard_target = 0xFFFF, port_target = 0xFFFF;
+	int32_t starboard_x = 0, starboard_y = 0, port_x = 0, port_y = 0;  // Where each target will be.
 	for (uint16_t k = g.get<uint16_t>(b, team == 0 ? 0x10 : 0x65C); k != 0xFFFF;
 		 k = g.get<uint16_t>(next, 2 * size_t(k))) {
 		if (k == g.get<uint16_t>(e, 0x138)) {
@@ -798,14 +805,69 @@ void Sailing::fn_61dd4f(size_t e, bool flag) {
 			if (d2 < starboard && d2 <= 0x38400) {
 				starboard = d2;
 				starboard_target = k;
+				starboard_x = px;
+				starboard_y = py;
 			}
 		} else if (rel + spread > 0xB7 && rel - spread < 0xC9 && d2 < port && d2 <= 0x38400) {
 			port = d2;
 			port_target = k;
+			port_x = px;
+			port_y = py;
 		}
 	}
 	if (!automatic) {
-		return;  // Not rewritten: cannon balls (0x61E8EF), part 7.
+		// 0x61E628..0x61E8E3.
+		auto broadside = [&](uint8_t side, int32_t x, int32_t y) {
+			fn_61e8ef(e, side, uint16_t(g.get<uint16_t>(e, 0xA) + uint16_t(x)), uint16_t(g.get<uint16_t>(e, 0xE) + uint16_t(y)));
+		};
+		if (port_target != 0xFFFF && g.get<uint8_t>(e, 0x130) == 0) {
+			broadside(0, port_x, port_y);
+		}
+		if (starboard_target != 0xFFFF && g.get<uint8_t>(e, 0x131) == 0) {
+			broadside(1, starboard_x, starboard_y);
+		}
+		if (!flag || port_target != 0xFFFF || starboard_target != 0xFFFF) {
+			return;
+		}
+		for (uint16_t k = g.get<uint16_t>(b, team == 0 ? 0x65C : 0x10); k != 0xFFFF;
+			 k = g.get<uint16_t>(next, 2 * size_t(k))) {
+			const size_t f = battle_entry(b, k);
+			if (g.get<uint8_t>(f, 0x12A) & 0x6) {
+				continue;
+			}
+			const int32_t dx = g.get<int16_t>(f, 0xA) - ex, dy = g.get<int16_t>(f, 0xE) - ey;
+			const int32_t d2 = mul(dy, dy) + mul(dx, dx);
+			const uint8_t rel = uint8_t(fn_6029b0(int16_t(dx), int16_t(dy)) - heading);
+			if (rel < 0x80) {
+				if (d2 < starboard) {
+					starboard = d2;
+					starboard_target = k;
+					starboard_x = dx;
+					starboard_y = dy;
+				}
+			} else if (d2 < port) {
+				port = d2;
+				port_target = k;
+				port_x = dx;
+				port_y = dy;
+			}
+		}
+		if (g.get<uint8_t>(e, 0x130) != 0) {
+			port_target = 0xFFFF;
+		}
+		if (g.get<uint8_t>(e, 0x131) != 0) {
+			starboard_target = 0xFFFF;
+		}
+		if (port_target != 0xFFFF) {
+			if (starboard_target == 0xFFFF || port < starboard) {
+				broadside(0, port_x, port_y);
+				return;
+			}
+		}
+		if (starboard_target != 0xFFFF) {
+			broadside(1, starboard_x, starboard_y);
+		}
+		return;
 	}
 	auto fire = [&](uint16_t target, int32_t d2, uint8_t side, size_t loading) {
 		const int32_t damage = fn_620f0b(e, side, uint16_t(root(d2)));

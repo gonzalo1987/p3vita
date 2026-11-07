@@ -8,8 +8,11 @@
 
 #include "p3data/battle/battle_math.hpp"
 #include "p3data/sailing.hpp"
+#include "p3data/town_tick/internal.hpp"
 
 namespace p3::data {
+
+uint8_t fn_6029b0(int32_t dx, int32_t dy);  // battle_step.cpp
 
 // The bytes of the section, read in order (not ok once past the end).
 struct BattleReader {
@@ -89,10 +92,9 @@ constexpr std::pair<size_t, size_t> kBattleFields[] = {{0x558, 1}, {0x658, 2}, {
 // table of ships that met (0x612A20), [+0xC44] the graphics clock
 // *0x6DCCF8 (0 in the emulator), [+0x408] 0, [+0x3FE] 1.
 //
-// Not rewritten (none in the 12 saves): saved cannon balls ([+0x664] bits;
-// 0x602A90, 0x602EF0, only with a human side, piece 7); with them the section
-// stays as it was read (opaque) and the battles are not loaded. Saves older
-// than version 0x5C neither (p3vita reads from 0x82).
+// The saved cannon balls (only with a human side; the battles' piece 7) are
+// read as the game (0x602A90, 0x602EF0). Saves older than version 0x5C are
+// not (p3vita reads from 0x82).
 void Sailing::load_battles() {
 	std::vector<uint8_t>& bytes = save_.opaque.battles;
 	if (bytes.empty() || save_.version <= 0x5C) {
@@ -227,11 +229,7 @@ bool Sailing::fn_604600(size_t s, In& in) {
 	const size_t bits = g.realloc_at(s, 0x664, size_t(words) * 4);
 	g.realloc_at(s, 0x668, size_t(uint16_t(words << 5)) * 4);
 	for (size_t k = 0; k < words; ++k) {
-		const uint32_t w = in.u32();
-		g.set<uint32_t>(bits, 4 * k, w);
-		if (w != 0) {
-			return false;  // Saved cannon balls: not rewritten.
-		}
+		g.set<uint32_t>(bits, 4 * k, in.u32());
 	}
 	const size_t next = size_t(g.ptr(s, 0xC)), prev = size_t(g.ptr(s, 0x8));
 	for (size_t k = 0; k < places; ++k) {
@@ -307,8 +305,35 @@ bool Sailing::fn_604600(size_t s, In& in) {
 			g.set<uint8_t>(e, 0x13C, 301 * all > 605 * far ? 1 : 0);
 		}
 	}
-	for (size_t k = 0; k < g.get<uint16_t>(s, 0xACC); ++k) {
-		g.set<uint32_t>(size_t(g.ptr(s, 0x668)), 4 * k, 0);
+	// 0x605321..0x6053CC: the cannon balls, one per bit of [+0x664]: a new
+	// ball (0x602A90 with the slot, the point (1, 0), 0, 0xC, 0xFF, 8: it
+	// takes the world's rand() and an item of the scene) and its record
+	// (0x602EF0: its fields; its direction again; its time by another
+	// rand()); a slot without a bit, null.
+	for (uint16_t k = 0; k < g.get<uint16_t>(s, 0xACC); ++k) {
+		const size_t list = size_t(g.ptr(s, 0x668));
+		if (!(g.get<uint32_t>(size_t(g.ptr(s, 0x664)), 4 * size_t(k >> 5)) & (1u << (k & 0x1F)))) {
+			g.set<uint32_t>(list, 4 * size_t(k), 0);
+			continue;
+		}
+		g.blocks.emplace_back(0x38);
+		const size_t ball = g.blocks.size() - 1;
+		fn_602a90(ball, k, 1, 0, 0, 0, 0, 0xC, s, 0xFF, 8);
+		g.set_ptr(list, 4 * size_t(k), int(ball));
+		g.set<uint32_t>(ball, 0x28, BattleGraph::pointer(s));
+		g.set<uint16_t>(ball, 0x2C, k);
+		for (const size_t o : {0x0, 0x2, 0x4, 0x6, 0x8, 0xA}) {
+			g.set<uint16_t>(ball, o, in.u16());
+		}
+		for (const size_t o : {0xC, 0x10, 0x14}) {
+			g.set<uint32_t>(ball, o, in.u32());
+		}
+		g.set<uint8_t>(ball, 0x18, in.u8());
+		g.set<uint32_t>(ball, 0x1C, in.u32());
+		g.set<uint16_t>(ball, 0x24, in.u16());
+		g.set<uint8_t>(ball, 0x30, fn_6029b0(g.get<int32_t>(ball, 0xC), g.get<int32_t>(ball, 0x10)));
+		const int32_t time = int32_t((tick::game_rand(save_) & 0x1F) + 0x60) * g.get<int32_t>(ball, 0x1C);
+		g.set<uint16_t>(ball, 0x32, uint16_t(time / 512));
 	}
 	g.set<uint8_t>(s, 0x1E92, 1);
 	g.set<uint8_t>(s, 0xAB0, 1);
@@ -402,7 +427,30 @@ std::vector<uint8_t> battle_bytes(const BattleGraph& g) {
 				}
 			}
 		}
-		// The cannon balls (0x602E20 for each bit of [+0x664]): none in p3vita's battles.
+		// The cannon balls (0x6045A9..0x6045ED: 0x602E20 for each bit of
+		// [+0x664]): [+0x0] .. [+0xA] (u16), [+0xC], [+0x10], [+0x14], [+0x18]
+		// (u8), [+0x1C], [+0x24] (u16).
+		const int balls = g.ptr(b, 0x668);
+		for (uint16_t k2 = 0; k2 < g.get<uint16_t>(b, 0xACC); ++k2) {
+			if (bits < 0 || !(g.get<uint32_t>(size_t(bits), 4 * size_t(k2 >> 5)) & (1u << (k2 & 0x1F)))) {
+				continue;
+			}
+			const int ball = balls >= 0 ? g.ptr(size_t(balls), 4 * size_t(k2)) : -1;
+			auto field = [&](size_t o, size_t n) {
+				const uint32_t v = ball < 0 ? 0 : n == 1 ? g.get<uint8_t>(size_t(ball), o)
+					: n == 2 ? g.get<uint16_t>(size_t(ball), o) : g.get<uint32_t>(size_t(ball), o);
+				out.put(v, n);
+			};
+			for (const size_t o : {0x0, 0x2, 0x4, 0x6, 0x8, 0xA}) {
+				field(o, 2);
+			}
+			for (const size_t o : {0xC, 0x10, 0x14}) {
+				field(o, 4);
+			}
+			field(0x18, 1);
+			field(0x1C, 4);
+			field(0x24, 2);
+		}
 	}
 	uint32_t records = 0;
 	const int table = g.ptr(0, 0xC30);
