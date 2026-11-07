@@ -4628,6 +4628,328 @@ def town_battle_setup(o):
     return during
 
 
+def town_raids(o):
+    """The battles' piece 6, part 3: town battles that start as in the game. The first 16 ships sailing alone
+    turn raiders (the operation 0x0D with 1, the viewer's bytes, as pirate_sailing) and the world runs: each one
+    that arrives at its town attacks it (0x506F33) and the battle takes its steps (the operation 0x94 → 0x5FD510,
+    the ships' 0x621770, the towers' 0x5FE080...) to its end (0x5FE7E0, 0x602990: part 4). Before, the towns
+    where they go get a guard ship (a merchant's ship in port there, alone, or else in port anywhere, the AI's
+    first, then the player's, in [+0x994], as town_battle_setup), so that side D has ships; the armed ships are
+    taken first, and the first eight unarmed get the guns of the save's first armed ship.
+    (town_battle_setup's battles can't run to their end: its attackers stay in the sea's lists and some attack
+    two towns.)"""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    convoys = o.u16(CONVOY_COUNT)
+    alone = [s for s in range(ships) if o.u16(o.ship(s) + 0x134) == 0xF and o.u16(o.ship(s) + 8) >= convoys]
+    # The armed ones first (they fire at the towers and the guard ships), then the others.
+    free = ([s for s in alone if o.u32(o.ship(s) + 0x120)] + [s for s in alone if not o.u32(o.ship(s) + 0x120)])[:16]
+    if not free:
+        raise RuntimeError('no ship sailing out of a convoy')
+    # The first eight unarmed ones get the guns of the first armed ship of the save ([+0x120] and the slots
+    # [+0x13C..]), so that they fire.
+    model = next((s for s in range(ships) if o.u32(o.ship(s) + 0x120)), None)
+    armed = [s for s in free if not o.u32(o.ship(s) + 0x120)][:8] if model is not None else []
+    print(f'arms: ' + ' '.join(f'{s}:{o.u32(o.ship(s) + 0x120):#x}' for s in free) +
+          f'; the guns of ship {model} to {armed}; destinations {[o.u8(o.ship(s) + 0x38) for s in free]}')
+    guards = []
+    # The AI's ships in port alone, then the player's (a human defender: the operation 0x96 hands it to the
+    # computer, as when the player doesn't direct the battle).
+    docked_all = sorted((x for x in range(ships) if o.u8(o.ship(x)) < merchants and o.u16(o.ship(x) + 0x134) == 0
+                         and o.u16(o.ship(x) + 8) >= convoys), key=lambda x: o.u8(o.ship(x)) == player)
+    for s in free:
+        t = o.u8(o.ship(s) + 0x38)
+        docked = [x for x in docked_all if x not in [g for _, g in guards]]
+        # One in port there, or else anywhere (0x50CC90 takes it out of the list in port to the battle).
+        cand = [x for x in docked if o.u8(o.ship(x) + 0x39) == t] or docked
+        if t < towns and cand and o.u16(o.town(t) + 0x994) >= ships and t not in [u for u, _ in guards]:
+            guards.append((t, cand[0]))
+    print(f'raiders {free}; {len(docked_all)} AI ships in port alone; guard ships {guards}; towns\' guards before '
+          f'{[(t, o.u16(o.town(t) + 0x994)) for t in range(towns) if o.u16(o.town(t) + 0x994) < ships]}')
+
+    def during(o):
+        for t, g in guards:
+            w16(o, o.town(t) + 0x994, g)
+        for s in armed:
+            w32(o, o.ship(s) + 0x120, o.u32(o.ship(model) + 0x120))
+            o.uc.mem_write(o.ship(s) + 0x13C, bytes(o.uc.mem_read(o.ship(model) + 0x13C, 0x18)))
+        for s in free:
+            run_bytes(o, player_op('pirate', s, 1))
+    return during
+
+
+def pirate_town_attack(o):
+    """The battles' piece 6: a pirate convoy at the end of its route at a town attacks it (0x507C0B → 0x507C4C:
+    0x611D80, 0x5FBFE0 against the convoy's [+0x1C]). Pirates' routes seldom end at a town (none in the 12 saves
+    within 7 days): the first two pirate convoys at sea (state 0x12) whose guide has a route of its own ([+0x36])
+    get the last point of that route moved to the approach point of the town nearest the guide, and the guide
+    and its convoy's ships put on that point, going to it ([+0x34] the last, still: [+0x28], [+0x2C] 0); the next
+    tick's 0x502110 ends the route there and the world runs."""
+    towns, _, merchants, ships = o.counts()
+    convoys = o.u16(CONVOY_COUNT)
+    plan = []
+    for c in range(convoys):
+        a = convoy_at(o, c)
+        guide = o.u16(a + 0x10)
+        if (o.u8(a) < merchants or o.u16(a + 0x12) != 0x12 or guide >= ships or len(plan) >= 2
+                or not o.u32(o.ship(guide) + 0x24) or not o.u8(o.ship(guide) + 0x36)):
+            continue
+        gx, gy = o.u16(o.ship(guide) + 0x1E), o.u16(o.ship(guide) + 0x22)
+
+        def d2(t):
+            n = o.u8(0x6DE4B8 + t)
+            return (o.u32(0x6DDB90 + 0x34 * n + 0x20) - gx) ** 2 + (o.u32(0x6DDB90 + 0x34 * n + 0x24) - gy) ** 2
+        town = min((t for t in range(towns) if t != o.u8(a + 0x1E)), key=d2)
+        plan.append((c, guide, town))
+    if not plan:
+        raise RuntimeError('no pirate convoy at sea with a guide on a route of its own')
+    print(f'pirate convoys, guides and towns: {plan}')
+
+    def during(o):
+        for c, guide, town in plan:
+            n = o.u8(0x6DE4B8 + town)
+            ax, ay = o.u32(0x6DDB90 + 0x34 * n + 0x20) & 0xFFFF, o.u32(0x6DDB90 + 0x34 * n + 0x24) & 0xFFFF
+            g = o.ship(guide)
+            route = o.u32(g + 0x24)
+            points, count = o.u32(route), o.u32(route + 4)
+            w16(o, points + 4 * (count - 1), ax)
+            w16(o, points + 4 * (count - 1) + 2, ay)
+            w16(o, g + 0x34, count - 1)
+            s = o.u16(convoy_at(o, c) + 0xA)
+            while s < ships:
+                w32(o, o.ship(s) + 0x1C, ax << 16 | 0x7FFF)
+                w32(o, o.ship(s) + 0x20, ay << 16 | 0x7FFF)
+                s = o.u16(o.ship(s) + 6)
+            w32(o, g + 0x28, 0)
+            w32(o, g + 0x2C, 0)
+            print(f'convoy {c}: guide {guide} at the end of its route ({count} points) on town {town} ({ax}, {ay})')
+    return during
+
+
+def convoy_raid(o):
+    """The battles' piece 6: a raiding convoy at its town attacks it (0x502110 puts it in the state 0x14 on
+    arriving, then 0x507975: without the Hanse fleet, 0x50797E: 0x535400, the battle of the guide's town and owner,
+    0x6130B0 and 0x60234C, or a new one, 0x611D80 and 0x5FBFE0 against the convoy's [+0x1E]). The guides of the
+    first four AI convoys at sea (state 0xF) whose ships are all its owner's raid ([+0x15C] 1) and the world runs
+    until they arrive. (With another owner's ship in the convoy the game's setup hangs: 0x5FCA7A walks past the
+    convoy's list for the attacker's ships.)"""
+    _, _, merchants, ships = o.counts()
+    convoys = o.u16(CONVOY_COUNT)
+    guides = []
+    for c in range(convoys):
+        a = convoy_at(o, c)
+        guide = o.u16(a + 0x10)
+        owners, s = set(), o.u16(a + 0xA)
+        while s < ships and len(owners) < 3:
+            owners.add(o.u8(o.ship(s)))
+            s = o.u16(o.ship(s) + 6)
+        if (o.u8(a) < merchants and o.u16(a + 0x12) == 0xF and guide < ships and owners == {o.u8(a)}
+                and len(guides) < 4):
+            guides.append((c, guide, o.u8(o.ship(guide) + 0x38)))
+    if not guides:
+        raise RuntimeError('no AI convoy at sea')
+    print(f'convoys, guides and destinations: {guides}')
+
+    def during(o):
+        for _, guide, _ in guides:
+            w8(o, o.ship(guide) + 0x15C, 1)
+    return during
+
+
+def town_step_branches(o):
+    """The battles' piece 6, part 3: the branches of the town battle's step that the raids don't reach, on the
+    first town battle of town_raids (the world runs until it starts), by the game's functions called directly on
+    it after placing its first ship:
+    - on the land: next to the first land cell of the battle's map of the water that has water round it, at its
+      corners and middle (0x600770: the cells round it, the hull on them, 0x601C7B, the push off the land);
+    - before each tower standing, 300 below it, heading west (the tower to starboard) and east (to port), loaded:
+      its guns (0x624950) at the tower, once as it is and once with its strength at 1 (it falls: 0x60130B, the
+      event 0x25);
+    - first, the step with [+0x2F1A] set, as a battle read from the save (0x5FD510: the towers' places and items
+      again, every slot, and the map of the water);
+    - its sub-step (0x621770): near the town area's edges aiming at a tower; each rule of an attacker's decision
+      to flee (the sums, its hull and arms retouched) and its hull as at the start; the defender (if any) weak
+      and far from its side's centre; sinking, with and without [+0x15C]; and last out of the area."""
+    during_raids = town_raids(o)
+
+    def battle_of_town():
+        for k in range(o.u8(to.BATTLES + 0x404)):
+            b = o.u32(to.BATTLES + 4 * k)
+            if b and o.u32(b) == 0x67AAA0 and not o.u8(b + 0x5C) and o.u16(b + 0x10) != 0xFFFF:
+                return b
+        return None
+
+    def during(o):
+        during_raids(o)
+        b = None
+        for _ in range(400):
+            o.advance_tick()
+            b = battle_of_town()
+            if b:
+                break
+        if not b:
+            raise RuntimeError('no town battle within 400 ticks')
+        place = o.u16(b + 0x10)
+        e = o.u32(o.u32(b + 4) + 4 * place)
+        print(f'town battle {b:#x} of town {o.u8(b + 0x1E98):#x}: ship place {place} (ship {o.u32(e + 4)}, arms '
+              f'{o.u32(o.ship(o.u32(e + 4)) + 0x120):#x}), towers {[hex(o.u32(b + 0x1EC4 + 4 * k)) for k in range(4)]}')
+
+        def put(x, y, heading=None):
+            w32(o, e + 0x8, (x & 0xFFFF) << 16)
+            w32(o, e + 0xC, (y & 0xFFFF) << 16)
+            if heading is not None:
+                w16(o, e + 0x10, heading << 8)
+        # As read from the save (before the towers fall: then the battle would be over, part 4).
+        w8(o, b + 0x2F1A, 1)
+        direct(o, 0x5FD510, [0x54], ecx=b)
+        print(f'  after the reload: tower places {[hex(o.u16(b + 0x1E9E + 2 * k)) for k in range(4)]}')
+        # The land: the first land cell with water round it.
+        water = bytes(o.uc.mem_read(b + 0x1EE0, 0x1000))
+        cell = next(((x, y) for x in range(1, 63) for y in range(1, 63) if water[x * 64 + y] == 0
+                     and any(water[(x + dx) * 64 + y + dy] for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))), None)
+        if cell:
+            x0, y0 = cell[0] * 0x1100 // 64, cell[1] * 3841 // 64
+            w = 0x1100 // 64
+            h = 3841 // 64
+            for dx, dy in ((0, 0), (w, 0), (0, h), (w, h), (w // 2, h // 2), (-w // 2, h // 2), (w // 2, -h // 2)):
+                put(x0 + dx, y0 + dy, 0x20)
+                w32(o, e + 0x1C, 0x8000)
+                direct(o, 0x600770, [place], ecx=b)
+                print(f'  land cell {cell} +{dx},{dy}: x {o.u32(e + 0x8):#x} y {o.u32(e + 0xC):#x} heading '
+                      f'{o.u16(e + 0x10):#x} speed {o.u32(e + 0x1C):#x}')
+        # The ship's sub-step (0x621770), its state set for each branch; the battle's sums as the step left
+        # them, retouched for the decision to flee.
+        wind = o.u8(b + 0x670)
+
+        def substep(entry, what):
+            w8(o, entry + 0x161, 0)
+            direct(o, 0x621770, [wind], ecx=entry)
+            print(f'  {what}: x {o.u16(entry + 0xA)} y {o.u16(entry + 0xE)} heading {o.u16(entry + 0x10):#x} speed '
+                  f'{o.u32(entry + 0x1C):#x} flags {o.u8(entry + 0x12A):#x} target {o.u16(entry + 0x128):#x}')
+        # Others of the attacker's owner join it (0x60234C): a ship alone (the battle's first ship put on the
+        # entry point of the sea's side first, its circle there: the new ship's place is tried again, 0x6027CC),
+        # then the guide of a convoy all of that owner's ships, if any (one without them would leave the scene's
+        # lists past their end, a case the game never makes).
+        _, _, _, ships = o.counts()
+        convoys = o.u16(CONVOY_COUNT)
+        owner = o.u16(b + 0x35A)
+        inside = {o.u32(o.u32(o.u32(b + 4) + 4 * i) + 4) for i in range(o.u16(b + 0x14))}
+        alone = next((s for s in range(ships) if o.u8(o.ship(s)) == owner and s not in inside
+                      and o.u16(o.ship(s) + 8) >= convoys and o.u16(o.ship(s) + 0x134) in (0, 0xF)), None)
+        guide = None
+        for c in range(convoys):
+            a = convoy_at(o, c)
+            members, s = [], o.u16(a + 0xA)
+            while s < ships and len(members) < 20:
+                members.append(s)
+                s = o.u16(o.ship(s) + 6)
+            if (o.u8(a) == owner and members and all(o.u8(o.ship(m)) == owner for m in members)
+                    and not inside & set(members)):
+                guide = members[0]
+                break
+        ox, oy = struct.unpack('<ii', bytes(o.uc.mem_read(b + 0x1ED8, 8)))
+        if abs(2 * ox) > abs(oy):
+            entry_point = (0x10EC if ox < 0 else 0x14, 0x781)
+        else:
+            entry_point = (0x880, 0xEEE if oy < 0 else 0x14)
+        put(*entry_point, 0x40)
+        w8(o, e + 0x12A, 0)
+        substep(e, f'on the entry point {entry_point}')
+        for s in [x for x in (alone, guide) if x is not None]:
+            direct(o, 0x60234C, [s], ecx=b)
+            n = o.u16(b + 0x14)
+            print(f'  ship {s} joins: ships {o.u16(b + 0x658)} + {o.u16(b + 0x65A)}, joined convoys '
+                  f'{o.u16(b + 0x2F20)}, the last places '
+                  f'{[(o.u16(o.u32(o.u32(b + 4) + 4 * i) + 0xA), o.u16(o.u32(o.u32(b + 4) + 4 * i) + 0xE)) for i in range(max(0, n - 3), n)]}')
+        sums = bytes(o.uc.mem_read(b + 0xA90, 0x30))
+        hull = o.u32(o.ship(o.u32(e + 4)) + 0x18)
+        tower0 = next((k for k in range(4) if o.u32(b + 0x1EC4 + 4 * k)), None)
+        # Near the town area's edges (both low, both high), aiming at a tower (the edges' marks).
+        for x, y in ((0x150, 0x150), (0xF80, 0xD80)):
+            if tower0 is None:
+                break
+            put(x, y, 0x30)
+            w8(o, e + 0x12A, 0)
+            w16(o, e + 0x128, 0xFFFE - tower0)
+            substep(e, f'near the edge {x:#x}, {y:#x}')
+        # The decision to flee (team 0): each rule by the sums (strength [+0xA94] of the enemies, sailors
+        # [+0xA9A], fighters [+0xA9C]) and the ship's hull [+0x18] and arms [+0x120], and the hull as at the start.
+        s = o.ship(o.u32(e + 4))
+        hull_now, arms = o.u32(s + 0x18), o.u32(s + 0x120)
+        rules = (('1st', 0x7FFFFFFF, 0x7FFF, None, None, None), ('2nd', 0x7FFFFFFF, 0, None, None, None),
+                 ('3rd', 0, 0x7FFF, 0, None, None), ('hull', 0, 0, None, 1, None),
+                 ('unarmed', 0, 0x7FFF, 0x7FFF, None, 0), ('none', 0, 0, None, None, None))
+        for name, a94, a9a, a9c, hull_set, arms_set in rules:
+            o.uc.mem_write(b + 0xA90, sums)
+            w32(o, b + 0xA94, a94)
+            w16(o, b + 0xA9A, a9a)
+            if a9c is not None:
+                w16(o, b + 0xA9C, a9c)
+            w32(o, s + 0x18, hull_now if hull_set is None else hull_set)
+            w32(o, s + 0x120, arms if arms_set is None else arms_set)
+            put(0x880, 0x781, 0x10)
+            w8(o, e + 0x12A, 0)
+            w8(o, b + 0xAC9, 1)
+            substep(e, f'the {name} rule to flee')
+        w32(o, s + 0x18, hull_now)
+        w32(o, s + 0x120, arms)
+        o.uc.mem_write(b + 0xA90, sums)
+        w8(o, b + 0xAC9, 0)
+        w32(o, e + 0x144, hull)
+        w8(o, e + 0x12A, 1)
+        substep(e, 'its hull as at the start')
+        # The defender (team 1), if any: weaker than both teams and far from its side's centre; then with tower
+        # 0 fallen.
+        d = o.u16(b + 0x65C)
+        if d != 0xFFFF:
+            f = o.u32(o.u32(b + 4) + 4 * d)
+            w32(o, b + 0xA90, 0x7FFFFFFF)
+            w32(o, b + 0xA94, 0x7FFFFFFF)
+            w32(o, f + 0x8, (o.u32(b + 0xAB8) + 0x300) << 16)
+            w8(o, f + 0x12A, 0)
+            substep(f, 'the defender, weak and far')
+            # The same with tower 0 fallen (the game tests only tower 0): it doesn't flee.
+            strength0 = o.u32(b + 0x1EC4)
+            w32(o, b + 0x1EC4, 0)
+            w32(o, f + 0x8, (o.u32(b + 0xAB8) + 0x300) << 16)
+            w8(o, f + 0x12A, 0)
+            substep(f, 'the defender, weak and far, tower 0 fallen')
+            w32(o, b + 0x1EC4, strength0)
+            o.uc.mem_write(b + 0xA90, sums)
+        # Sinking (0x4): slowing down only with [+0x15C] (0 in the game: a retouch for the branch).
+        flags = o.u8(e + 0x12A)
+        for slow in (0, 1):
+            put(0x880, 0x781, 0x13)
+            w32(o, e + 0x1C, 0x3000)
+            w8(o, e + 0x12A, 0x4)
+            w32(o, e + 0x15C, slow)
+            substep(e, f'sinking, [+0x15C] {slow}')
+        w32(o, e + 0x15C, 0)
+        w8(o, e + 0x12A, flags)
+        # The towers.
+        for k in range(4):
+            if o.u32(b + 0x1EC4 + 4 * k) == 0:
+                continue
+            tx, ty = o.u16(b + 0x1E9E + 2 * k), o.u16(b + 0x1EA6 + 2 * k)
+            for heading, strength in ((0xC0, None), (0x40, None), (0xC0, 1)):
+                if o.u32(b + 0x1EC4 + 4 * k) == 0:
+                    break
+                if strength is not None:
+                    w32(o, b + 0x1EC4 + 4 * k, strength)
+                put(tx, ty + 300, heading)
+                w8(o, e + 0x12A, 0)
+                w8(o, e + 0x130, 0)
+                w8(o, e + 0x131, 0)
+                direct(o, 0x624950, [0], ecx=e)
+                print(f'  tower {k} ({tx}, {ty}) heading {heading:#x}: strength {o.u32(b + 0x1EC4 + 4 * k):#x}, '
+                      f'loading {o.u8(e + 0x130)} {o.u8(e + 0x131)}')
+        # Last, out of the area (out, its items freed).
+        put(5, 0x781, 0x40)
+        w8(o, e + 0x12A, 0)
+        substep(e, 'out of the area')
+    return during
+
+
 def first_arrival(o):
     """For raid_arrival, in a process of its own: runs the world tick by tick
     until an AI merchant's ship at sea out of a convoy arrives at its
@@ -8824,6 +9146,19 @@ SCENARIOS = {
     'town_battle_setup': Scenario(town_battle_setup, [0x611D80, 0x5FBFE0, 0x50CC90], 0, [
         '@5fc158', '@5fc136', '@5fc285', '@5fc2c2', '@5fc3d4', '@5fc69a', '@5fd483', '@5fca3a', '@5fc997',
         '@5fcd80', '@6000a9', '@6000f0']),
+    # Part 3: the town battles' steps (0x5FD510 and what it calls).
+    'town_step_branches': Scenario(town_step_branches, [0x5FD510, 0x600770, 0x601C7B, 0x624950, 0x60130B, 0x621770,
+                                                        0x60234C], 0, [
+        '@6023c1', '@602652', '@6028e1',
+        '@60090b', '@601d85', '@601d8c', '@600a2e', '@6251a0', '@60132e', '@6015f9', '@5fd530',
+        '@623b27', '@623bfe', '@623cdb', '@623db3', '@6228ea', '@62295f', '@6229dc', '@622841', '@622bf3', '@622cac',
+        '@621838', '@6218c3', '@6219e2']),
+    'pirate_town_attack': Scenario(pirate_town_attack, [0x506720, 0x5FD510, 0x611D80, 0x5FBFE0], 3, [
+        '@507c4c']),
+    'convoy_raid': Scenario(convoy_raid, [0x506720, 0x5FD510, 0x611D80, 0x5FBFE0, 0x60234C], 3, [
+        '@50797e']),
+    'town_raids': Scenario(town_raids, [0x5FD510], 2, [
+        '@5fdc1f', '@5fe6be', '@600843', '@6247c6', '@624d7c', '@6252ae', '@625c4d', '@622b09']),
     'statistics_company': Scenario(statistics_company, [STATS_BALANCE, STATS_GRAPH, STATS_SUPPLY], 0, [
         '@4a3071', '@4a308d', '@4a35b2', '@4a35bd>4a35c2', '@4a35bf', '@4a353b', '@4a354a', '@4a356f', '@4a3580',
         '@4a3591', '@4a3aaa', '@4a3aba', '@4a3af7', '@4a3b05', '@4a3b0e', '@4a3b1a', '@4a3b26',
@@ -8962,6 +9297,7 @@ def main():
     p.add_argument('--barcos', metavar='DATA', required=True)
     p.add_argument('--cpr', required=True)
     p.add_argument('--days', type=int)
+    p.add_argument('--ticks', type=int, help='ticks instead of days (a progress line each of the first 32, then every 32)')
     p.add_argument('--functions')
     p.add_argument('--seed', type=int, default=1)
     p.add_argument('--first-arrival', action='store_true', help=argparse.SUPPRESS)
@@ -8990,8 +9326,13 @@ def main():
         rec.active = True
         if callable(during):
             during(o)
-        for _ in range(days * 256):
+        ticks = days * 256 if a.ticks is None else a.ticks
+        import time
+        started = time.time()
+        for t in range(ticks):
             o.advance_tick()
+            if a.ticks is not None and (t < 32 or t % 32 == 31):
+                print(f'tick {t + 1}: {rec.count} samples, {time.time() - started:.0f} s', flush=True)
         f.write(b'E')
     print(f'{rec.count} samples in {a.out}')
     blocks.report(s.targets)

@@ -206,8 +206,9 @@ STORM_UI_JUMPS = {0x50596F: 0x505983, 0x5059CA: 0x5059E0}
 # the navigation object). Their attack on a target (0x507BE9 → 0x50BC40, a
 # sea battle) runs, with the battles' clock (BATTLE_STEPS; the sea battles are
 # rewritten in p3vita, docs/cloud/battles-2.md §4). The end of the route
-# (0x507C0B → a town battle, not rewritten yet) is jumped over: the convoy
-# goes on as if it still sailed.
+# (0x507C0B → 0x507C4C, a town battle) runs since the battles' piece 6, part
+# 3 (2026-11-07); before, it was jumped over (the convoy went on as if it
+# still sailed).
 # The ships in state 0x11 (lost: in port 0x506AF2, at sea 0x507022) and the
 # pirates alone at sea (0x12, 0x507099) go through too.
 # A convoy at its nest is disbanded (0x514B80, rewritten in p3vita); with
@@ -216,7 +217,15 @@ STORM_UI_JUMPS = {0x50596F: 0x505983, 0x5059CA: 0x5059E0}
 # At a sea battle's end (0x60D299) the news ticker's window (*0x6CC7E8,
 # 0x469380 and 0x469AF0) is jumped over (0x60EB55 → 0x60EBAC); the tick in
 # the battles object's [+0x408] is kept.
-PIRATE_JUMPS = {0x507C0B: 0x507B5F, 0x60EB55: 0x60EBAC}
+PIRATE_JUMPS = {0x60EB55: 0x60EBAC}
+# 0x506720's local [esp+0x18] is never initialized: a raider's attack on a
+# town (0x506F41) passes it to 0x5062F0 as the head of a list, so the new
+# convoy's next [+0x8] is whatever the stack held (then the local keeps the
+# battle's slot for the next attack in the same call). At the function's
+# entry the oracle sets it (entry esp − 0xC) to 0xFFFF, as p3vita
+# (Sailing::attack_head_).
+UPDATE_SHIPS_ENTRY = 0x506720
+ATTACK_HEAD = 0xFFFF
 # The news ticker's window (*0x6CC7E8, 0x469380) opens at once only when no
 # sea battle is open ([0x6E59CC] = 0xFF and [0x6E59CD] = 0, which the battles'
 # reader 0x611AE0 sets at the load); otherwise the message waits ([+0x3EA] =
@@ -272,11 +281,16 @@ HEAP_BEGIN, HEAP_END = 0x1000_0000, 0x1800_0000
 # The words of a battle block that are numbers even when they look like a
 # pointer, by (size, vtable): a scene's ship's place and speeds in 16.16 (x ·
 # 65536 can be the address of a heap block: at the start of a battle the
-# places are whole and a block can start at 0x10xx0000), a sea battle's
-# generator. As BattleGraph::number_field.
-BATTLE_NUMBERS = {(0x164, 0x67B0D4): (0x8, 0xC, 0x14, 0x18, 0x1C), (0x1E98, 0x67AD44): (0xADC,),
+# places are whole and a block can start at 0x10xx0000) and its marks of
+# the 256 directions [+0x27] (the words from [+0x24] to [+0x124]: bytes 00 00
+# 00 10 are the heap's first block, 0x10000000), a town battle's ship's map of
+# distances [+0x164] (64 × 64 bytes) too, a battle's generator. As
+# BattleGraph::number_field.
+SCENE_SHIP_NUMBERS = frozenset((0x8, 0xC, 0x14, 0x18, 0x1C, *range(0x24, 0x128, 4)))
+BATTLE_NUMBERS = {(0x164, 0x67B0D4): SCENE_SHIP_NUMBERS, (0x1E98, 0x67AD44): (0xADC,),
                   # a town battle (0x611D80) and its scene's ships (0x5FBFE0)
-                  (0x1168, 0x67AAD0): (0x8, 0xC, 0x14, 0x18, 0x1C), (0x2F24, 0x67AAA0): (0xADC,)}
+                  (0x1168, 0x67AAD0): SCENE_SHIP_NUMBERS | frozenset(range(0x164, 0x1164, 4)),
+                  (0x2F24, 0x67AAA0): (0xADC,)}
 BATTLE_BLOCKS = ((0x1E98, 0x67AD44), (0x2F24, 0x67AAA0))  # a sea battle, a town battle
 # A sea battle's scene's arrays of numbers (0x61A1D0): bytes [+0x18], u16
 # [+0x1C] and the free list [+0x24], and the items' boxes [+0x28], [+0x2C],
@@ -645,6 +659,7 @@ class TownOracle(SaveOracle):
                     jumps = dict(PIRATE_JUMPS if disband else {**PIRATE_JUMPS, **NO_DISBAND_JUMP})
                     jumps.update(BATTLE_WINDOW_JUMPS)
                     self.uc.hook_add(UC_HOOK_CODE, self._sort_x_guard, begin=SORT_X, end=SORT_X)
+                    self.uc.hook_add(UC_HOOK_CODE, self._attack_head, begin=UPDATE_SHIPS_ENTRY, end=UPDATE_SHIPS_ENTRY)
                     for address, target in jumps.items():
                         self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
                 if storms:
@@ -744,6 +759,10 @@ class TownOracle(SaveOracle):
 
     def _jump(self, uc, address, size, target):
         uc.reg_write(UC_X86_REG_EIP, target)
+
+    def _attack_head(self, uc, address, size, user_data):
+        # 0x506720's local list head of a raider's attack (ATTACK_HEAD), only that one.
+        uc.mem_write(uc.reg_read(UC_X86_REG_ESP) - 0xC, struct.pack('<I', ATTACK_HEAD))
 
     def _zero_frame(self, uc, address, size, frame):
         # ZEROED_FRAMES: the function's locals start at 0.

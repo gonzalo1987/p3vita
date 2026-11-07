@@ -482,6 +482,171 @@ void Sailing::fn_600660(size_t b, bool arg) {
 	}
 }
 
+// The town attack of a raider at a town (0x506F33), a raiding convoy's guide
+// at a town (0x50797E) and a pirate convoy's guide at its route's end
+// (0x507C4C, `join` false): unless it ends in the battle of that town and
+// the ship's owner (0x6130B0: the ship, or its convoy, joins it, 0x60234C),
+// a new town battle (0x611D80) set up (0x5FBFE0) with the ship against the
+// town. The slot (0xFF without a free one: the game would use the slot's
+// pointer past the array; nothing here).
+uint8_t Sailing::town_attack(uint16_t ship, uint8_t town, bool join) {
+	const uint8_t owner = save_.ships[ship].memory.u8(0x0);
+	if (join) {
+		const uint8_t running = fn_6130b0(save_.ships[ship].memory.u8(0x39), owner);
+		if (running != 0xFF) {
+			fn_60234c(size_t(save_.battles.battle(running)), ship);
+			return running;
+		}
+	}
+	const uint8_t slot = fn_611d80();
+	if (slot != 0xFF) {
+		fn_5fbfe0(size_t(save_.battles.battle(slot)), ship, town);
+	}
+	return slot;
+}
+
+// 0x6027CC (on a town battle; a place): the start of a ship that joins the
+// battle: at the edge of the town area on the sea's side (by the map file's
+// offset [+0x1ED8] · 2, [+0x1EDC], the larger: x 0x10EC heading 0xC0 or x 0x14
+// heading 0x40 at y 0x781; else y 0xEEE heading 0 or 0x14 heading 0x80 at x
+// 0x880), moved along that edge (by 50, then each time back past the last
+// try: −50 − d or 50 − d) until no circle (item 6, [+0xA78]) of the ships
+// before it covers the point. The game changes the y step by the x step's
+// sign when the y step is 0 or less (it tests dx, not dy): reproduced.
+void Sailing::fn_6027cc(size_t b, uint16_t place) {
+	BattleGraph& g = save_.battles;
+	const int32_t oy = g.get<int32_t>(b, 0x1EDC);
+	const int32_t ox = int32_t(uint32_t(g.get<int32_t>(b, 0x1ED8)) * 2);
+	int32_t x, y, dx, dy;
+	uint8_t heading;
+	if (std::abs(ox) > std::abs(oy)) {
+		x = ox < 0 ? 0x10EC : 0x14;
+		heading = ox < 0 ? 0xC0 : 0x40;
+		y = 0x781;
+		dx = 0;
+		dy = 0x32;
+	} else {
+		x = 0x880;
+		y = oy < 0 ? 0xEEE : 0x14;
+		heading = oy < 0 ? 0x00 : 0x80;
+		dx = 0x32;
+		dy = 0;
+	}
+	const size_t circles = size_t(g.ptr(b, 0xA78));
+	for (int guard = 0; guard < 0x10000; ++guard) {
+		const size_t xs = size_t(g.ptr(b, 0x28)), ys = size_t(g.ptr(b, 0x38));
+		bool free = true;
+		for (uint16_t i = 0; i < place; ++i) {
+			const size_t item = size_t(uint16_t(g.get<uint16_t>(circles, 2 * size_t(i)) * 2));
+			if (g.get<int16_t>(xs, 2 * item) <= x && g.get<int16_t>(xs, 2 * item + 2) >= x &&
+				g.get<int16_t>(ys, 2 * item) <= y && g.get<int16_t>(ys, 2 * item + 2) >= y) {
+				free = false;
+				break;
+			}
+		}
+		if (free) {
+			break;
+		}
+		x += dx;
+		y += dy;
+		if (dx > 0) {
+			dx = -50 - dx;
+		} else if (dx < 0) {
+			dx = 50 - dx;
+		}
+		if (dy > 0) {
+			dy = -50 - dy;
+		} else if (dx < 0) {
+			dy = 50 - dy;
+		}
+	}
+	const size_t e = battle_entry(b, place);
+	g.set<uint16_t>(e, 0xA, uint16_t(x));
+	g.set<uint16_t>(e, 0xE, uint16_t(y));
+	g.set<uint8_t>(e, 0x11, heading);
+}
+
+// 0x60234C (on a town battle; a ship): the ship, or all its convoy's ships
+// of the same owner, joins the battle, on side A (its owner [+0x35A]; another
+// owner's would count for side D's list, but its scene ships are made on side
+// 0 all the same). Its convoy goes on the battle's list of joined convoys
+// [+0x2F1C] ([+0x2F20] of them, realloc). The scene's arrays grow by them
+// (realloc: [+0x4], [+0xA74], [+0xA78], [+0xC], [+0x8]); each new ship at the
+// next place gets its two items (0 and 6), a scene ship of 0x1168 bytes
+// (0x61A4E0 with the place's low byte, vtable 0x67AAD0, [+0x1164] and
+// [+0x1166] 0xFFFF, [+0x127] 0) and its start (0x6027CC); then they go at
+// the head of its team's list ([+0x10] for team 0, else [+0x65C]) and its
+// count ([+0x658], [+0x65A]) grows. No sort.
+void Sailing::fn_60234c(size_t b, uint16_t ship) {
+	BattleGraph& g = save_.battles;
+	const uint16_t ships = uint16_t(save_.ships.size());
+	const uint16_t convoys = save_.convoy_count();
+	const ShipMemory& s = save_.ships[ship].memory;
+	const size_t side = s.u8(0x0) != g.get<uint16_t>(b, 0x35A) ? 1 : 0;
+	const uint8_t team = g.get<uint8_t>(b, 0x559 + side);
+	const uint16_t owner = g.get<uint16_t>(b, 0x35A + 2 * side);
+	const uint16_t convoy = s.u16(0x8);
+	uint32_t joining = 0;
+	if (convoy < convoys) {
+		const uint16_t n = uint16_t(g.get<uint16_t>(b, 0x2F20) + 1);
+		g.set<uint16_t>(b, 0x2F20, n);
+		const size_t list = g.realloc_at(b, 0x2F1C, 2 * size_t(n));
+		g.set<uint16_t>(list, 2 * size_t(n) - 2, convoy);
+		for (uint16_t i = save_.convoys[convoy].u16(0xA); i < ships; i = save_.ships[i].memory.u16(0x6)) {
+			if (save_.ships[i].memory.u8(0x0) == owner) {
+				++joining;
+			}
+		}
+	} else {
+		joining = 1;
+	}
+	const uint16_t total = uint16_t(g.get<uint16_t>(b, 0x658) + g.get<uint16_t>(b, 0x65A) + joining);
+	g.set<uint16_t>(b, 0x14, total);
+	g.realloc_at(b, 0x4, 4 * size_t(total));
+	g.realloc_at(b, 0xA74, 2 * size_t(total));
+	g.realloc_at(b, 0xA78, 2 * size_t(total));
+	g.realloc_at(b, 0xC, 2 * size_t(total));
+	g.realloc_at(b, 0x8, 2 * size_t(total));
+	auto arr = [&](size_t o) { return size_t(g.ptr(b, o)); };
+	uint16_t place = uint16_t(g.get<uint16_t>(b, 0x658) + g.get<uint16_t>(b, 0x65A));
+	// A new scene ship of `x` at `place`, its items and start.
+	auto add = [&](uint16_t x) {
+		g.set<uint16_t>(arr(0xA74), 2 * size_t(place), fn_619450(b, 0, uint8_t(place), 0, 0, 0, 0));
+		g.set<uint16_t>(arr(0xA78), 2 * size_t(place), fn_619450(b, 6, uint8_t(place), 0, 0, 0, 0));
+		const size_t e = g.alloc(0x1168);
+		fn_61a4e0(e, x, b, uint8_t(place), 0);
+		g.set<uint32_t>(e, 0, kTownShipVtable);
+		g.set<uint16_t>(e, 0x1164, 0xFFFF);
+		g.set<uint16_t>(e, 0x1166, 0xFFFF);
+		g.set<uint8_t>(e, 0x127, 0);
+		g.set_ptr(arr(0x4), 4 * size_t(place), int(e));
+	};
+	if (convoy < convoys) {
+		for (uint16_t x = save_.convoys[convoy].u16(0xA); x < ships; x = save_.ships[x].memory.u16(0x6)) {
+			if (save_.ships[x].memory.u8(0x0) != owner) {
+				continue;
+			}
+			add(x);
+			g.set<uint16_t>(arr(0x8), 2 * size_t(place), uint16_t(place - 1));
+			g.set<uint16_t>(arr(0xC), 2 * size_t(place), uint16_t(place + 1));
+			fn_6027cc(b, place);
+			++place;
+		}
+	} else {
+		add(ship);
+		fn_6027cc(b, place);
+	}
+	const size_t head = team == 0 ? 0x10 : 0x65C;
+	const uint16_t old = g.get<uint16_t>(b, head);
+	g.set<uint16_t>(arr(0xC), 2 * size_t(total) - 2, old);
+	g.set<uint16_t>(arr(0x8), 2 * size_t(old), uint16_t(total - 1));
+	const uint16_t first = uint16_t(g.get<uint16_t>(b, 0x658) + g.get<uint16_t>(b, 0x65A));
+	g.set<uint16_t>(b, head, first);
+	g.set<uint16_t>(arr(0x8), 2 * size_t(first), 0xFFFF);
+	const size_t count = team == 0 ? 0x658 : 0x65A;
+	g.set<uint16_t>(b, count, uint16_t(g.get<uint16_t>(b, count) + joining));
+}
+
 // 0x5FBFE0 (on a town battle; the attacking ship, the town): the setup.
 // The town (or nest, 0xFE − k): [+0x1E98], its StadtDaten approach point
 // [+0xAD6], [+0xADA], for a town the map file's two numbers (0x58E760:
@@ -660,8 +825,17 @@ void Sailing::fn_5fbfe0(size_t b, uint16_t ship, uint8_t town) {
 	} else {
 		uint32_t i = save_.convoys[u16(0x65E)].u16(0xA);
 		set32(0xA84, i);
+		uint32_t own = 0;
 		for (; i < ships; i = save_.ships[i].memory.u16(0x6)) {
 			++na;
+			own += save_.ships[i].memory.u8(0x0) == u16(0x35A) ? 1 : 0;
+		}
+		// GAME BUG: with ships of another owner in the convoy, the game's walk
+		// for the attacker's ships (0x5FCA7A) runs past the convoy's list, with
+		// no end test: it hangs or reads past the ships. p3vita (always) counts
+		// only the attacker's ships then.
+		if (own != na) {
+			na = own;
 		}
 	}
 	set16(0x658, uint16_t(na));

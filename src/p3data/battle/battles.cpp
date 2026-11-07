@@ -161,15 +161,20 @@ void Sailing::step_battles() {
 
 // Operation 0x94 (0x536BBF): each battle that runs ([+0x15C] ≠ 0xFFFF) takes
 // `steps` steps (method +0x14: 0x606CC0 for a sea battle, battle_step.cpp;
-// 0x5FD510 for a town battle, not rewritten: none in the saves); then the
-// time mode (0x612D20 in game mode 2, else 0x612C90) and [+0x3FE] = 1.
+// 0x5FD510 for a town battle, town_step.cpp); then the time mode (0x612D20
+// in game mode 2, else 0x612C90) and [+0x3FE] = 1.
 void Sailing::fn_536bbf(uint32_t steps) {
 	BattleGraph& b = save_.battles;
 	for (size_t k = 0; k < b.count(); ++k) {
 		const int battle = b.battle(k);
-		if (battle >= 0 && b.get<uint16_t>(size_t(battle), kRunning) != BattleGraph::kStopped &&
-			b.get<uint32_t>(size_t(battle), 0) == kSeaBattleVtable) {
+		if (battle < 0 || b.get<uint16_t>(size_t(battle), kRunning) == BattleGraph::kStopped) {
+			continue;
+		}
+		const uint32_t vtable = b.get<uint32_t>(size_t(battle), 0);
+		if (vtable == kSeaBattleVtable) {
 			fn_606cc0(size_t(battle), uint16_t(steps));
+		} else if (vtable == kTownBattleVtable) {
+			fn_5fd510(size_t(battle), uint16_t(steps));
 		}
 	}
 	if (save_.globals.u32(kGameMode) == 2) {
@@ -276,7 +281,9 @@ void Sailing::fn_60fec9(size_t b, uint16_t merchant, bool automatic) {
 		}
 	}
 	if (counted && g.get<uint32_t>(b, 0) == kSeaBattleVtable) {
-		fn_608230(b, true);  // Method +0x18 (a town battle's, 0x600660, isn't rewritten: none in p3vita).
+		fn_608230(b, true);  // Method +0x18.
+	} else if (counted && g.get<uint32_t>(b, 0) == kTownBattleVtable) {
+		fn_600660(b, true);
 	}
 	if (automatic) {
 		return;

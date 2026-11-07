@@ -385,13 +385,15 @@ void Sailing::update_convoys() {
 			}
 			if (now.u16(0x12) == 0x14) {
 				// Raiders at a town (only the pirates): out of the lists; a sea battle against the Hanse fleet when it
-				// guards the town (0x50BA80), else a town battle (0x535400, 0x6130B0: the battles' piece 6, not
-				// rewritten yet).
+				// guards the town (0x50BA80), else (0x50797E) 0x535400 for the convoy's owner and town [+0x1C], and
+				// a town battle (the battles' piece 6: the one of the guide's town and owner, 0x6130B0 and
+				// 0x60234C, or a new one against the convoy's [+0x1E], 0x611D80 and 0x5FBFE0).
 				link() = now.u16(0x8);
 				now.u16(0x8) = kNoIndex;
 				unlink_x(lead_index);
-				if (battles_) {
-					fn_50ba80(lead_index);
+				if (battles_ && !fn_50ba80(lead_index)) {
+					tick::ship_ai_detail::fn_535400(save_, now.u16(0x1C), now.u8(0x0));
+					town_attack(lead_index, now.u8(0x1E), true);
 				}
 				continue;
 			}

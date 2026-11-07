@@ -738,8 +738,9 @@ void Sailing::pirate_at_sea(uint16_t index, uint16_t& link) {
 // the wait [+0x16] counts down into the guide's [+0x138]; a target (set by
 // someone else with the flag 0x40 of [+0x14], or every 4 ticks 0x50D9E0 and
 // 0x515360); then, without a route, a new course (0x505C90), and the convoy
-// sails (0x502110 with 1) and is sorted by x. The attack (0x50BC40) and the
-// end of the route (a town battle) follow the rule of piece 2: as if there
+// sails (0x502110 with 1) and is sorted by x, or at the end of its route
+// attacks its town (a town battle, piece 6). Without the battles, the attack
+// (0x50BC40) and the end of the route follow the rule of piece 2: as if there
 // were no target, and as if it still sailed.
 bool Sailing::pirate_convoy(uint16_t index, uint16_t& link) {
 	const uint32_t count = save_.ships.size();
@@ -792,9 +793,26 @@ bool Sailing::pirate_convoy(uint16_t index, uint16_t& link) {
 			return true;
 		}
 	}
-	// 0x502110 false is the end of the route (a town battle: piece 6); with the
-	// rule, the same as true.
-	fn_502110(index, 1);
+	// 0x502110 false is the end of the route (0x507C0B): the convoy leaves the
+	// list of those at sea; without a guide it is deleted (0x50A3D0); else its
+	// guide leaves the list by x and the convoy attacks its town [+0x1C]
+	// ([+0x1E] = [+0x1C]): a new town battle (0x507C4C: 0x611D80, 0x5FBFE0;
+	// the battles' piece 6). The walk goes on from the link. Without the
+	// battles, the rule of piece 2: the same as true.
+	if (!fn_502110(index, 1) && battles_) {
+		GameMemory<0x3C>& at = save_.convoys[index];
+		link = at.u16(0x8);
+		at.u16(0x8) = 0xFFFF;
+		const uint16_t guide = at.u16(0x10);
+		if (guide >= save_.ships.size()) {
+			fn_50a3d0(index);
+			return true;
+		}
+		unlink_x(guide);
+		at.u8(0x1E) = at.u8(0x1C);
+		town_attack(guide, at.u8(0x1C), false);
+		return true;
+	}
 	if (save_.convoys[index].u16(0x10) >= save_.ships.size()) {
 		// A convoy whose ships have no hull (its pirate went away, 0x514000)
 		// has no guide: the game sorts ship 0xFFFF (0x50D0C0), outside the

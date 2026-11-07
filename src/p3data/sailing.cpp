@@ -467,6 +467,7 @@ void Sailing::begin_tick() {
 // it too.
 void Sailing::update_ships() {
 	GlobalMemory& g = save_.globals;
+	attack_head_ = 0xFFFF;  // The local the game never initializes (the oracle's ATTACK_HEAD).
 	g.u16(kPlayerShipsInPort) = 0;
 	g.u16(kPlayerShipsAtSea) = 0;
 	g.u16(kPlayerConvoysInPort) = 0;
@@ -896,7 +897,20 @@ void Sailing::arrive(SavedShip& ship, uint16_t index, uint16_t& link) {
 	link = ship.next_in_list();
 	ship.next_in_list() = kNoIndex;
 	if (ship.raid() && ship.status() == 0x14) {
-		return;  // Ataque pirata a la ciudad (0x5062F0...): no se reproduce.
+		// 0x506F33: a raider at its town attacks it (the battles' piece 6): a
+		// convoy of its own (0x5062F0 at the head of 0x506720's local, never
+		// initialized: attack_head_), 0x535400 for its owner and the town,
+		// again out of the list by x, the convoy's [+0x14] 0x12, and a town
+		// battle (town_attack; the local keeps its slot). Without the battles,
+		// it stays out of the lists, as before.
+		if (battles_) {
+			fn_5062f0(attack_head_, index);
+			tick::ship_ai_detail::fn_535400(save_, ship.town(), ship.owner());
+			unlink_x(index);
+			save_.convoys[attack_head_].u16(0x14) = 0x12;
+			attack_head_ = town_attack(index, uint8_t(ship.town()), true);
+		}
+		return;
 	}
 	ship.notices() |= kNoticeStatus;
 	ship.status() = kShipArriving;

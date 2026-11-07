@@ -137,8 +137,8 @@ size_t Sailing::scene_battle(size_t entry) const {
 
 // 0x6212FB (on a scene's ship, another, a flag): whether to treat the other
 // as an enemy to attack. With the flag, one of a side that isn't team 0
-// ([+0x559 + side]) whose owner is the pirates' (or always, while the battle
-// is not running: method +0x28 is 0 for a sea battle). A human side: the
+// ([+0x559 + side]) whose owner is the pirates' (or always in a town battle,
+// whose method +0x28 is 1; a sea battle's is 0). A human side: the
 // flag 0x80 of [+0x12A]. Otherwise only if its fighters are at least twice
 // the other's sailors, then: the other's team 0 → yes; a pirate other → yes;
 // one taken (0x40), or itself not a pirate → no; else by the team's mode
@@ -150,7 +150,8 @@ bool Sailing::fn_6212fb(size_t e, size_t f, bool flag) const {
 	const uint8_t eside = g.get<uint8_t>(e, 0x13D);
 	const uint8_t fside = g.get<uint8_t>(f, 0x13D);
 	const uint8_t fteam = g.get<uint8_t>(b, 0x559 + size_t(fside));
-	const bool running = false;  // Method +0x28 of a sea battle (0x611730).
+	// Method +0x28 of the battle: 0x611730 (0) for a sea battle, 0x602980 (1) for a town battle.
+	const bool running = g.get<uint32_t>(b, 0) == kTownBattleVtable;
 	if (flag) {
 		if (fteam == 0 || running || g.get<uint16_t>(b, 0x35A + 2 * size_t(fside)) == 0xFF) {
 			return true;
@@ -917,7 +918,11 @@ void Sailing::fn_6197f0(size_t b) {
 			for (uint32_t k = 0; k < 32; ++k) {
 				const size_t now = size_t(g.ptr(size_t(g.ptr(b, 0x50)), 4 * size_t(p)));
 				if (g.get<uint32_t>(now, 4 * size_t(i)) >> k & 1) {
-					fn_608850(b, i, uint16_t(32 * p + k));
+					if (g.get<uint32_t>(b, 0) == kTownBattleVtable) {
+						fn_5ff8e0(b, i, uint16_t(32 * p + k));  // A town battle's method +0x0.
+					} else {
+						fn_608850(b, i, uint16_t(32 * p + k));
+					}
 				}
 			}
 		}

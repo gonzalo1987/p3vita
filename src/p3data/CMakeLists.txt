@@ -13,6 +13,8 @@ add_library(p3data STATIC
 	battle/pirates.cpp
 	battle/storms.cpp
 	battle/town_battle.cpp
+	battle/town_ship_step.cpp
+	battle/town_step.cpp
 	convoys.cpp
 	convoys_members.cpp
 	convoys_port.cpp

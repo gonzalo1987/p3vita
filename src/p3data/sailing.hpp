@@ -247,6 +247,16 @@ public:
 	bool fn_5ffe20(size_t battle, int32_t x, int32_t y) const;  // (town battle) A cell out of the map or not water.
 	void fn_600060(size_t battle);  // (town battle, method +0x2C) The formation.
 	void fn_600660(size_t battle, bool arg);  // (town battle, method +0x18)
+	void fn_60234c(size_t battle, uint16_t ship);  // (town battle) A ship (and its convoy) joins it.
+	void fn_6027cc(size_t battle, uint16_t place);  // (town battle) A joining ship's start.
+	// The town battle of a raider at a town (0x506F33, sailing.cpp), a raiding convoy at a town (0x50797E) and a
+	// pirate convoy at its route's end (0x507C0B): in the battle of that town and owner (0x6130B0, 0x60234C) or
+	// a new one (0x611D80, 0x5FBFE0). The slot.
+	uint8_t town_attack(uint16_t ship, uint8_t town, bool join);
+	// 0x506720's local [esp+0x18], never initialized: the list head 0x5062F0 gets for a raider's convoy at a
+	// town (its first value whatever the stack held; the oracle sets 0xFFFF at the function's entry,
+	// ATTACK_HEAD), then the battle slot of the last attack.
+	uint16_t attack_head_ = 0xFFFF;
 	uint16_t fn_50cc90(uint8_t town);  // (ships) The town's guard ship out to its battle; its convoy.
 	uint32_t fn_515d30(size_t pirate, uint32_t entry) const;  // (pirate) A nest tower's strength.
 	bool fn_515ae0(size_t pirate, uint8_t& first, uint8_t& family) const;  // (pirate) A captain's names.
@@ -260,6 +270,25 @@ public:
 	std::pair<int32_t, int32_t> view_cell_point(int32_t x, int32_t y) const;
 	bool view_point_cell(int32_t px, int32_t py, int32_t& cx, int32_t& cy) const;
 	void fn_618f10(size_t block);  // The scene's constructor.
+	// battle/town_step.cpp: the step of a town battle (piece 6, part 3).
+	void fn_5fd510(size_t battle, uint16_t steps);  // (town battle, method +0x14) Its step.
+	void fn_5fe080(size_t battle, uint8_t tower);  // (town battle) A tower's step.
+	void fn_5ff8e0(size_t battle, uint16_t a, uint16_t b);  // (town battle, method +0x0) Two items meet.
+	void fn_600770(size_t battle, uint16_t place);  // (town battle) A ship on the town's land.
+	uint8_t fn_60114b(size_t battle, int32_t x, int32_t y) const;  // (town battle) Its map of the water.
+	bool fn_601c7b(size_t battle, uint16_t place, uint16_t x, uint16_t y) const;  // A hull on a cell.
+	void fn_60130b(size_t battle, uint8_t tower, int32_t damage);  // (town battle) A tower hit.
+	// battle/town_ship_step.cpp: a town battle's scene ship (0x1168 bytes).
+	void fn_621770(size_t entry, uint8_t wind);  // (method +0x0) Its sub-step.
+	void fn_621770_flee(size_t entry);  // (part of 0x621770) An AI ship decides whether to flee.
+	void fn_6247b0(size_t entry);  // (method +0x4) A target.
+	void fn_624950(size_t entry, bool flag);  // (method +0x8) It fires.
+	void fn_625bf0(size_t entry);  // Its directions marked round the land.
+	void fn_6258a0(size_t entry, uint16_t x, uint16_t y);  // Its map of distances to a point.
+	void fn_625b00(size_t entry, uint16_t& x, uint16_t& y) const;  // The nearest water of its map.
+	uint8_t town_ship_map(size_t entry, uint32_t x, uint32_t y) const;  // Its map of distances at a cell.
+	static constexpr uint32_t kTownBattleVtable = 0x67AAA0;
+	static constexpr uint32_t kTownShipVtable = 0x67AAD0;
 	// battle/battle_setup.cpp: blocks of BattleGraph (save().battles).
 	uint16_t fn_61a1d0(size_t scene);  // (scene) A free item, growing the arrays.
 	uint16_t fn_619450(size_t scene, uint8_t a0, uint8_t a1, uint16_t a2, uint16_t a3, uint16_t a4, uint16_t a5);

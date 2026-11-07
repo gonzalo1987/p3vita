@@ -1883,6 +1883,59 @@ seed. Not reachable: the formation's placing again (side A stands seaward, out o
 reads side A's ships). The world 7 days in the 12 saves: 0 «distintas»; equal as before: `battle_rocks`,
 `chase_battle`, `battle_join`, `battle_branches`.
 
+## The battles' piece 6, part 3: the town battle's step, and three of its starts connected (2026-11-07)
+
+p3vita has the step of a town battle (`battle/town_step.cpp`, `battle/town_ship_step.cpp`): operation 0x94 sends the
+town battles to their method +0x14, 0x5FD510 (with [+0x2F1A], a battle read from a save, its towers' places and
+items and its map of the water again; the teams' sums with the towers; the wind; each ship's method +0x0; each
+tower's step 0x5FE080; the battle over when side A is out, or side D and its towers); the tower's step (0x5FE080:
+the attackers' ship nearest where it will be, within 720, unless a defender stands in the way; its damage by the
+tower's state, the distance and the difficulty; hit at once in an automatic battle, 0x61F96F); the battle's method
++0x0 (0x5FF8E0: a ship on the town's land, 0x600770 with 0x601C7B and 0x60114B, else the sea's 0x608850); a tower
+hit and falling (0x60130B, an event 0x25 for its building). The town battle's scene ships (0x1168 bytes, vtable
+0x67AAD0 = the battle's 0x67AAA0 + 0x30: the «methods +0x30..+0x38» of docs/cloud/battles.md are theirs): +0x0 the
+sub-step 0x621770, +0x4 the target 0x6247B0, +0x8 the guns 0x624950, and the way round the land 0x625BF0 (a map
+of distances to the goal at [+0x164], 64 × 64, 0x6258A0 and 0x625B00; [+0x1164], [+0x1166] the goal's cell). The
+sea battles' shared code reads the class now: 0x6212FB's method +0x28 (1 for a town battle), 0x6197F0's method
++0x0, operation 0x96's method +0x18. Left out, as at sea until piece 7: the human side (the window, [+0x2F18] and
+0x6100D9) and the cannon balls (only fired with a human side: 0x603130, the towers' 0x602A90, 0x60117B, 0x61E8EF).
+
+Connected (p3vita and the oracle), through `Sailing::town_attack`: the raider at its town (0x506F33, `sailing.cpp`:
+a convoy of its own, 0x5062F0; 0x535400; the battle of that town and owner, 0x6130B0 and 0x60234C, or a new one,
+0x611D80 and 0x5FBFE0), the raiding convoy at a town without the Hanse fleet (0x50797E, `convoys.cpp`) and the
+pirate convoy at its route's end at a town (0x507C0B → 0x507C4C, `pirates.cpp`; the oracle's jump over it,
+`PIRATE_JUMPS`, is gone). With them 0x60234C (a ship, or its convoy's owner's ships, join: the scene's arrays
+realloc'ed, new 0x1168-byte ships entering at the sea side's edge, 0x6027CC). Not yet: the attack on the nest of
+the Hanse task of type 3 (`alderman.cpp`, 0x4EBA71: 0x50A4E0, 0x50E280, 0x514530) and the end (part 4: method
++0x1C 0x5FE7E0, method +0x4 0x602990 and the destructor 0x5FB9F0). No save starts a town battle within 7 days, with
+or without the jump (re/emu/sesion18/connect_count.sh).
+
+Two things the comparison needed:
+- 0x506720's local [esp+0x18] is never initialized, and 0x506F41 passes it to 0x5062F0 as a list head: the raider's
+  new convoy's next [+0x8] is whatever the stack held. The oracle sets it to 0xFFFF at the function's entry
+  (`ATTACK_HEAD`, entry esp − 0xC), p3vita the same (`Sailing::attack_head_`), and later it is the last attack's
+  battle slot in both.
+- The scene ships' marks of the directions [+0x27] (and a town ship's map of distances) can hold bytes 00 00 00 10,
+  the word 0x10000000, the heap's first block: the oracle's walk took it for a pointer and put a 0x1000-byte block in
+  BT (0x625BF0 all «distintas» in `town_raids`). They are numbers now in both (`BATTLE_NUMBERS`,
+  `BattleGraph::number_field`: the words from [+0x24] to [+0x124], and [+0x164..+0x1164] of a town ship).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `town_raids` | 16 ships sailing alone turn raiders (the armed first; eight get the guns of the save's first armed ship) and their towns get guard ships (docked ships, the AI's first); 2 days, the steps and what they call recorded | 3, 5, 7 | 0x5FE080 3002 calls, 0x5FF8E0 27 230, 0x621770 3194, 0x625BF0 2823, 0x6258A0 115, 0x6247B0 27: all equal; 0x5FD510 all equal but the 2 calls of each battle's end |
+| `town_step_branches` | on the first town battle of `town_raids`, the game's functions called directly: the step as read from a save; a ship of the owner alone and a convoy of his joining (the first ship on the entry point first: the place tried again); the sub-step near the area's edges aiming at a tower, each rule of an attacker's decision to flee, the defender weak and far (and with tower 0 fallen), sinking with and without [+0x15C]; the ship on the land; before each tower to starboard and to port until it falls; out of the area | 1, 3, 5, 7 | all equal; 24 of 24 targets in save 7 |
+| `town_attack` | `pirate_sailing`'s raiders (the real arrival), now with the ships' update 0x506720 | 5 | 0x506720 300 calls equal; the steps but the end |
+| `pirate_town_attack` | the first two pirate convoys at sea with a route of their own put at its last point, moved to a town's approach point: the route's end attacks the town | 3, 5, 7 | 0x506720 512–768 calls equal, two town battles each; the steps but the ends |
+| `convoy_raid` | the guides of four AI convoys at sea whose ships are all the owner's raid: arriving, they attack | 3, 5 | 0x506720 768 calls equal, three town battles each; the steps but the ends |
+
+Broken on purpose and caught: the land's mark 0xC0 of 0x625BF0 (47 calls) and the sub-step's «near» 0x31A88 (2 calls
+and 2 steps). Game bugs found (roadmap, «Corregir los fallos del juego», «Los de la batalla en una ciudad»), among
+them a hang of the game: a raiding convoy with another owner's ship makes 0x5FCA7A walk past the convoy's list
+(p3vita counts only the attacker's ships then). The world 7 days in the 12 saves: 0 «distintas»; equal as before
+the battle regressions (`battle_rocks`, `chase_battle`, `hanse_fleet`, `raid_fleet`, `battle_join`, `battle_branches`,
+`pursue_branches`, `raid_arrival`, `town_attack`, `town_battle_setup`, re/emu/sesion8/old_battle.sh). Scripts in
+re/emu/sesion18/ (README).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

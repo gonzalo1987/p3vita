@@ -44,15 +44,20 @@ struct BattleGraph {
 	// pointer: in a scene's ship (0x164 bytes, vtable 0x67B0D4; a town
 	// battle's, 0x1168 bytes, vtable 0x67AAD0) its place and speeds in 16.16
 	// ([+0x8], [+0xC], [+0x14], [+0x18], [+0x1C]: x · 65536 can be the address
-	// of a heap block), in a battle (battle_block) its generator [+0xADC]. The oracle's walk leaves them
-	// as they are (town_oracle.py, BATTLE_NUMBERS).
+	// of a heap block) and its marks of the directions [+0x27] (the words from
+	// [+0x24] to [+0x124]: bytes 00 00 00 10 make 0x10000000, the heap's first
+	// block), a town battle's ship's map of distances [+0x164] too, in a
+	// battle (battle_block) its generator [+0xADC]. The oracle's walk leaves
+	// them as they are (town_oracle.py, BATTLE_NUMBERS).
 	static bool number_field(const std::vector<uint8_t>& block, size_t offset) {
 		uint32_t vtable = 0;
 		if (block.size() >= 4) {
 			std::memcpy(&vtable, block.data(), 4);
 		}
-		if ((block.size() == 0x164 && vtable == 0x67B0D4) || (block.size() == 0x1168 && vtable == 0x67AAD0)) {
-			return offset == 0x8 || offset == 0xC || offset == 0x14 || offset == 0x18 || offset == 0x1C;
+		const bool town_ship = block.size() == 0x1168 && vtable == 0x67AAD0;
+		if ((block.size() == 0x164 && vtable == 0x67B0D4) || town_ship) {
+			return offset == 0x8 || offset == 0xC || offset == 0x14 || offset == 0x18 || offset == 0x1C ||
+				(offset >= 0x24 && offset < 0x128) || (town_ship && offset >= 0x164 && offset < 0x1164);
 		}
 		if (battle_block(block.size(), vtable)) {
 			return offset == 0xADC;
