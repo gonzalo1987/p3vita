@@ -52,7 +52,7 @@ constexpr uint32_t kSeaBattleSize = 0x1E98;
 constexpr uint32_t kSceneShipSize = 0x164;
 // The scale of the rocks' and islets' places when read from the save
 // (0x604600 multiplies by 17; 0x60F479, placing new ones, by half the town
-// view's width: see kTownViewHalf in battle_setup.cpp).
+// view's tile width, also 17: see fn_60f479 in battle_setup.cpp).
 constexpr uint32_t kSavedRockScale = 17;
 
 // The fields of a scene's ship in the save, in their order (0x61A880 and

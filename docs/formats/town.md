@@ -8,10 +8,16 @@ documentación de P3Modding no es correcta** (marcados con ⚠).
 
 ## .town
 
-`iso/towns/<id>.town`, 231 450 bytes: cabecera de 10 bytes (`u16 256`,
-`u16 ancho = 128`, `u16 0`, `u16 alto = 226`, `u16 0`), dos capas de
-`128 × 226` celdas de 4 bytes (suelo y objetos) y 16 bytes finales sin
-identificar. Cada celda es `u16 tile` (id de `.let`, 0 = vacía) y `u16 aux`.
+`iso/towns/<id>.town`, 231 450 bytes: a 10-byte header (`u16 256`,
+`u16 width = 128`, `u16 0`, `u16 height = 226`, `u16 0`; the game reads it as
+`u8, u8, u32 width, u32 height`), two layers of `128 × 226` cells of 4 bytes
+(ground and objects) and 16 final bytes: the first 8 unidentified; the last 8,
+two `s32` that a town battle reads (0x58E760, at `width · height · 8 + 0x12`,
+from the map `n | 0x80` of the attacked town: 128–155, and the pirate nests
+251–254; 0 in the templates 0–27). They look like the way to the sea:
+(0, 140), (−82, 0)... Every map is 128 × 226 (the town view's size,
+`SaveGame::TownView`). Each cell is `u16 tile` (a `.let` id, 0 = empty) and
+`u16 aux`.
 
 Los mapas `0..27` son plantillas (`scripts/StadtBild.ini`: "la numeración de
 los mapas corresponde a la de los ficheros town"); varias ciudades comparten

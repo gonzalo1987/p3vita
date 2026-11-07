@@ -325,6 +325,92 @@ bool Sailing::fn_609d40(size_t b, uint16_t i, uint16_t j, int32_t& out_x, int32_
 	return hit;
 }
 
+// 0x60B357 (on the battle; item, place, &side or nullptr): whether the hull of
+// the ship in `place` touches the rock (kind 2: [+0x872 + 8n]) or islet (kind
+// 3: [+0x672 + 8n]) of the scene's item, n its number (the item's place).
+// The obstacle is a diamond in the item's box (x1, x2, y1, y2), its corners
+// left (x1 + 8, ay), top (ax, y1 + 8), right (x2 − 8, by) and bottom (bx,
+// y2 − 8), the box split as the obstacle's width w and height h: ax and ay at
+// h / (w + h) of it, bx and by at w / (w + h) (words, as the game keeps them).
+// The ship's centre inside it is a touch (the side left as it was);
+// otherwise each side of the hull (as 0x609D40) against each side of the
+// diamond, and the first that cross give the side's direction, m · 0x40 −
+// 0x20 for the m-th side from the top (0xE0, 0x20, 0x60, 0xA0).
+bool Sailing::fn_60b357(size_t b, uint16_t item, uint16_t place, uint8_t* side) const {
+	const BattleGraph& g = save_.battles;
+	const size_t kinds = size_t(g.ptr(b, 0x18)), places = size_t(g.ptr(b, 0x1C));
+	const size_t xs = size_t(g.ptr(b, 0x28)), ys = size_t(g.ptr(b, 0x38));
+	const size_t n = g.get<uint16_t>(places, 2 * size_t(item));
+	const size_t shape = (g.get<uint8_t>(kinds, item) == 2 ? 0x876 : 0x676) + 8 * n;
+	const int32_t w = g.get<int16_t>(b, shape), h = g.get<int16_t>(b, shape + 2);
+	const int32_t x1 = g.get<int16_t>(xs, 4 * size_t(item)), x2 = g.get<int16_t>(xs, 4 * size_t(item) + 2);
+	const int32_t y1 = g.get<int16_t>(ys, 4 * size_t(item)), y2 = g.get<int16_t>(ys, 4 * size_t(item) + 2);
+	if (w + h == 0) {
+		return false;  // The game would divide by 0: never, its shapes are at least 2 × 2 (0x67ACFC, 0x67AD20).
+	}
+	const int32_t ax = int16_t(x1 + mul(x2 - x1, h) / (w + h)), bx = int16_t(x1 + mul(x2 - x1, w) / (w + h));
+	const int32_t ay = int16_t(y1 + mul(y2 - y1, h) / (w + h)), by = int16_t(y1 + mul(y2 - y1, w) / (w + h));
+	const int32_t left = int16_t(x1 + 8), right = int16_t(x2 - 8), top = int16_t(y1 + 8), bottom = int16_t(y2 - 8);
+	const size_t e = battle_entry(b, place);
+	const int32_t sx = g.get<int16_t>(e, 0xA), sy = g.get<int16_t>(e, 0xE);
+	if (sx - sy >= left - ay && sx + sy >= left + ay && sx + sy <= right + by && sx - sy <= right - by) {
+		return true;
+	}
+	const uint8_t heading = g.get<uint8_t>(e, 0x11);
+	const int32_t sin = sine(heading), cos = cosine(heading);
+	const uint8_t type = scene_ship(e).u8(0xE);
+	Point d = corner(type, 4, sin, cos);
+	d = {d.x + sx, d.y + sy};
+	int32_t px = 0, py = 0;
+	for (size_t k = 0; k < 5; ++k) {
+		px += d.x;
+		py += d.y;
+		const Point c = corner(type, k, sin, cos);
+		d = {c.x + sx - px, c.y + sy - py};
+		Point q = {left - px, ay - py};
+		for (uint32_t m = 0; m < 4; ++m) {
+			const Point q0 = q;
+			switch (m) {
+			case 0:
+				q = {ax - px, top - py};
+				break;
+			case 1:
+				q = {right - px, by - py};
+				break;
+			case 2:
+				q = {bx - px, bottom - py};
+				break;
+			default:
+				q = {left - px, ay - py};
+				break;
+			}
+			int32_t num = mul(d.x, q0.y) - mul(d.y, q0.x);
+			int32_t den = mul(d.x, q0.y - q.y) - mul(d.y, q0.x - q.x);
+			if (den < 0) {
+				num = -num;
+				den = -den;
+			}
+			if (num > den || num < 0) {
+				continue;
+			}
+			num = mul(q0.x, q.y - q0.y) - mul(q0.y, q.x - q0.x);
+			den = mul(d.x, q.y - q0.y) - mul(d.y, q.x - q0.x);
+			if (den < 0) {
+				num = -num;
+				den = -den;
+			}
+			if (num > den || num < 0) {
+				continue;
+			}
+			if (side) {
+				*side = uint8_t(m * 0x40 - 0x20);
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
 // 0x60ADBF (on the battle; i, x0, y0, x1, y1, &x, &y, &side): where the
 // segment from (x0, y0) to (x1, y1) first meets the hull of the ship in
 // place i, and the side it meets (the corner it starts from); (x1, y1) and
@@ -596,9 +682,13 @@ void Sailing::fn_60bcda(size_t b, uint16_t item, uint16_t place, int32_t a, int3
 // ship's directions (0x60BCDA) when it is inside (0x60BC5A); an enemy's only
 // if it wouldn't board it (0x61F02F).
 //
+// A rock (kind 2) or an islet (3) that the hull touches (0x60B357) slows the
+// ship down; a rock also hits it (0x61F96F), pushes it off and turns it.
+// Until 2026-11-07 the emulator had no town view and their boxes no size
+// (see fn_60f479): the saves reached them only then.
+//
 // Not rewritten yet (not run in the saves): kind 1 (a cannon ball, 0x60A73C
-// and 0x603470), kinds 2 and 3 (a rock and an islet, 0x60B357, 0x61F96F; in
-// the emulator their boxes have no size, see kTownViewHalf).
+// and 0x603470).
 void Sailing::fn_608850(size_t b, uint16_t a, uint16_t other) {
 	BattleGraph& g = save_.battles;
 	const size_t kinds = size_t(g.ptr(b, 0x18)), places = size_t(g.ptr(b, 0x1C));
@@ -632,6 +722,42 @@ void Sailing::fn_608850(size_t b, uint16_t a, uint16_t other) {
 		}
 		return;
 	}
+	case 2: {
+		// A rock (0x60897C): the side starts as the flags' byte (the game's
+		// slot of it on the stack), 0x60B357 writes it when sides cross.
+		uint8_t side = flags;
+		if (!fn_60b357(b, other, pa, &side)) {
+			return;
+		}
+		fn_61f96f(ei, g.get<int32_t>(ei, 0x1C) >> 10, 0, 0);
+		// Pushed off the side and turned from it, by less with a human side.
+		const bool automatic = g.get<uint8_t>(b, 0xAC8) != 0;
+		const int shift = automatic ? 10 : 12;
+		const int32_t push = g.get<int32_t>(ei, 0x1C) >> 4;
+		g.set<int32_t>(ei, 0x8, int32_t(uint32_t(g.get<int32_t>(ei, 0x8)) + uint32_t(mul(push, sine(side)) >> shift)));
+		g.set<int32_t>(ei, 0xC, int32_t(uint32_t(g.get<int32_t>(ei, 0xC)) - uint32_t(mul(push, cosine(side)) >> shift)));
+		const uint8_t heading = g.get<uint8_t>(ei, 0x11);
+		const uint8_t away = uint8_t(heading - side + 0x80);
+		if (away != 0 && away < 0x40) {
+			g.set<uint8_t>(ei, 0x11, uint8_t(heading + (automatic ? 8 : 2)));
+		} else if (away > 0xC0) {
+			g.set<uint8_t>(ei, 0x11, uint8_t(heading - (automatic ? 8 : 2)));
+		}
+		const int32_t speed = g.get<int32_t>(ei, 0x1C);
+		g.set<int32_t>(ei, 0x1C, speed - (speed >> (automatic ? 4 : 6)));
+		// When the battle is the one on screen ([0x6E59CC] = [+0x662]) the
+		// sound 0xEAA6, which draws a rand() when the sound has variants: left
+		// out with the interface (no battle is shown yet: piece 7).
+		return;
+	}
+	case 3:
+		// An islet (0x608CFE): it only slows the ship down (and the sound
+		// 0xEAB0 as a rock's).
+		if (fn_60b357(b, other, pa, nullptr)) {
+			const int32_t speed = g.get<int32_t>(ei, 0x1C);
+			g.set<int32_t>(ei, 0x1C, speed - (speed >> (g.get<uint8_t>(b, 0xAC8) != 0 ? 4 : 6)));
+		}
+		return;
 	case 4:
 	case 5:
 		if (looks() && fn_60bc5a(b, other, pa)) {

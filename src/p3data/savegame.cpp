@@ -6,6 +6,7 @@
 #include <cstring>
 #include <map>
 
+#include "p3data/aim.hpp"
 #include "p3data/lz.hpp"
 #include "p3data/savegame_load.hpp"
 #include "p3data/savegame_write.hpp"
@@ -1233,6 +1234,64 @@ const std::string* ini_text(const IniFile& ini, const std::string& section, cons
 	return k == s->second.end() ? nullptr : &k->second;
 }
 
+// The town view's geometry and hit mask (0x5871xx at start, 0x5894F0) and
+// the ends of the towns' map files (0x58E760): SaveGame::TownView. What the
+// data lacks keeps its value.
+void load_town_view(const CprArchive& archive, SaveGame::TownView& view) {
+	IniFile iso;
+	read_ini(archive, "scripts/iso.ini", iso);
+	const std::string section = "LIGHTNINGVIEW0";
+	auto numbers = [&](const char* key, int32_t* out, size_t count) {
+		const std::string* text = ini_text(iso, section, key);
+		const char* p = text ? text->c_str() : "";
+		for (size_t i = 0; i < count; ++i) {
+			char* end = nullptr;
+			const long value = std::strtol(p, &end, 0);
+			if (end == p) {
+				break;
+			}
+			out[i] = int32_t(value);
+			p = end;
+		}
+	};
+	numbers("TileSize", view.tile, 3);
+	numbers("DownVector", view.down, 2);
+	if (const std::string* detect = ini_text(iso, section, "DetectBitmap")) {
+		IniFile textures;
+		read_ini(archive, "scripts/textures.ini", textures);
+		const std::string* file = ini_text(textures, "TEX" + *detect, "TextureFile");
+		const CprEntry* entry = file ? archive.find(*file) : nullptr;
+		std::vector<uint8_t> data;
+		uint32_t width = 0, height = 0;
+		if (entry && archive.read(*entry, data) &&
+			!decode_aim_indices(data.data(), data.size(), width, height, view.detect_pitch, view.detect)) {
+			view.detect.clear();
+			view.detect_pitch = 0;
+		}
+	}
+	// 0x58E760: the header's u8, u8, u32 width, u32 height; past the two
+	// layers (width · height · 8 bytes) and 8 more, the two s32 if the file
+	// is longer than that offset.
+	for (uint32_t n = 0x80; n < 0x100; ++n) {
+		const std::string path = "iso/towns/" + std::to_string(n) + ".town";
+		const CprEntry* entry = archive.find(path);
+		std::vector<uint8_t> head;
+		if (!entry || !archive.read_range(*entry, 0, 10, head)) {
+			continue;
+		}
+		const uint32_t width = uint32_t(head[2]) | uint32_t(head[3]) << 8 | uint32_t(head[4]) << 16 | uint32_t(head[5]) << 24;
+		const uint32_t height = uint32_t(head[6]) | uint32_t(head[7]) << 8 | uint32_t(head[8]) << 16 | uint32_t(head[9]) << 24;
+		const uint32_t offset = width * height * 8 + 0x12;
+		std::vector<uint8_t> end;
+		if (entry->size > offset && archive.read_range(*entry, offset, 8, end)) {
+			for (size_t k = 0; k < 2; ++k) {
+				view.map_ends[n - 0x80][k] = int32_t(uint32_t(end[4 * k]) | uint32_t(end[4 * k + 1]) << 8 |
+					uint32_t(end[4 * k + 2]) << 16 | uint32_t(end[4 * k + 3]) << 24);
+			}
+		}
+	}
+}
+
 // 0x5128D0: parte una lista de nombres del juego en `count` nombres. Son parte
 // del nombre las letras (bytes >= 'A'), los espacios y los puntos; cualquier
 // otro byte, con los que le siguen por debajo de 'A', termina el nombre. Los
@@ -1349,6 +1408,7 @@ void load_game_scripts(const CprArchive& archive, SaveGame& save) {
 		save.town_templates.emplace_back();
 		archive.read(*entry, save.town_templates.back());
 	}
+	load_town_view(archive, save.town_view);
 	// 0x51E440: la tabla de las ciudades.
 	IniFile towns;
 	read_ini(archive, "scripts/StadtDaten.ini", towns);

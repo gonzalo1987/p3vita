@@ -456,6 +456,59 @@ bool decode_layer(const uint8_t* data, size_t size, Image& out, std::string* err
 
 }  // namespace
 
+bool decode_aim_indices(const uint8_t* data, size_t size, uint32_t& width, uint32_t& height, uint32_t& pitch,
+	std::vector<uint8_t>& indices, std::string* error) {
+	if (size < 4 || std::memcmp(data, "AIM", 3) != 0) {
+		return fail(error, "no es un fichero AIM");
+	}
+	for (size_t pos = 4; pos < size;) {
+		if (size - pos < kChunkHeaderSize) {
+			return fail(error, kTruncated);
+		}
+		const uint32_t chunk_size = read_u32_le(data + pos + 1);
+		if (chunk_size < kChunkHeaderSize || chunk_size > size - pos) {
+			return fail(error, "chunk AIM con tamaño inválido");
+		}
+		if (data[pos] != kRootChunk) {
+			pos += chunk_size;
+			continue;
+		}
+		if (chunk_size < kRootHeaderSize + kChunkHeaderSize) {
+			return fail(error, kTruncated);
+		}
+		const uint8_t* layer = data + pos + kRootHeaderSize;
+		const uint32_t layer_size = read_u32_le(layer + 1);
+		if (layer[0] != 34) {
+			return fail(error, "la capa AIM no es indexada (tipo 34)");
+		}
+		if (layer_size < kChunkHeaderSize || layer_size > chunk_size - kRootHeaderSize) {
+			return fail(error, "capa AIM con tamaño inválido");
+		}
+		ByteReader reader(layer, layer_size);
+		reader.skip(kChunkHeaderSize);
+		uint32_t stride = 0;
+		if (!reader.skip(4) || !reader.u32(width) || !reader.u32(height) || !reader.u32(stride)) {
+			return fail(error, kTruncated);
+		}
+		if (!valid_size(width, height) || stride < width || stride > kMaxDimension) {
+			return fail(error, "dimensiones de imagen indexada inválidas");
+		}
+		uint8_t palette[kPaletteSize];
+		std::vector<uint8_t> rows(size_t(stride) * height);
+		if (!read_lz_block(reader, palette, kPaletteSize, error) ||
+			!read_lz_blocks(reader, rows.data(), rows.size(), error)) {
+			return false;
+		}
+		pitch = (width + 3) & ~3u;
+		indices.assign(size_t(pitch) * height, 0);
+		for (uint32_t y = 0; y < height; ++y) {
+			std::memcpy(indices.data() + size_t(y) * pitch, rows.data() + size_t(y) * stride, width);
+		}
+		return true;
+	}
+	return fail(error, "el fichero AIM no contiene ninguna imagen");
+}
+
 bool decode_aim(const uint8_t* data, size_t size, Image& out, std::string* error) {
 	// La DLL solo compara las tres letras de la firma.
 	if (size < 4 || std::memcmp(data, "AIM", 3) != 0) {

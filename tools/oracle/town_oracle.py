@@ -283,6 +283,39 @@ SCENE_NUMBER_ARRAYS = (0x18, 0x1C, 0x24, 0x28, 0x2C, 0x30, 0x38, 0x3C, 0x40)
 # 84.4 per tick). (Until cloud/battles-2 this needed --battles, and without
 # it the attack 0x507BE9 was jumped over too.)
 BATTLE_STEPS = 84
+# The town view (*0x6E51AC, the interface's class of 0x5871xx–0x59Fxxx), which
+# the game always has and the emulator didn't: the battles read its geometry
+# (a sea battle's rocks, 0x60F479: [+0x510]; a town battle, piece 6: the
+# point → cell 0x58D030 and back 0x58CFB0, and the attacked town's map file,
+# 0x58E760). With the pirates (the battles), the oracle gives it one with what
+# the game puts in it at start (0x5871xx: scripts/iso.ini [LIGHTNINGVIEW0],
+# TileSize → [+0x510], [+0x514], [+0x518]; DownVector → [+0x4D0], [+0x4D4];
+# TownPath and TownFormat → the CStrings [+0x4C4], [+0x4C8]; 0x5894F0 locks
+# the texture DetectBitmap (scripts/textures.ini) as 8-bit palette indices,
+# the hit mask, into [+0xC6D8] with its pitch at [+0xC6E8]) and when it shows
+# a town (0x589DE0, 0x58B680: the map's cells [+0xC314] × [+0xC318] and
+# pixels [+0xC31C] × [+0xC320]; every iso/towns/*.town is 128 × 226), showing
+# none ([+0xC324] = 0xFF, as 0x589DE0 leaves it): the simulation's branches
+# «if the view shows this town» (0x4E1CC9, 0x521A3C, 0x5240F5... about 20)
+# only redraw it, and with 0xFF they go as without a view. Its vtable and its
+# animations' list's ([+0x3F8], an embedded object) stop the emulator: only
+# the interface calls them. The rest is 0, as the page 0 gave before for the
+# fields below 0x1000 (the only one the simulation read: [+0x510] in 0x60F479).
+TOWN_VIEW_POINTER = 0x6E51AC
+TOWN_VIEW = 0x0500_0000  # its own mapping: the object, then the mask, the strings, the vtable and the trap
+TOWN_VIEW_OBJECT_SIZE = 0xD000
+TOWN_VIEW_MASK = TOWN_VIEW + 0xD000
+TOWN_VIEW_STRINGS = TOWN_VIEW + 0xE000
+TOWN_VIEW_VTABLE = TOWN_VIEW + 0xF000  # 0x100 entries, all the trap
+TOWN_VIEW_TRAP = TOWN_VIEW + 0xFF00
+TOWN_VIEW_SIZE = 0x10000
+TOWN_MAP_CELLS = (128, 226)
+# What the game does only with a town view that changes nothing of the world
+# (single player), jumped over as without it: 0x4D7B10 (a letter's
+# announcement on the local player's screen, from 0x4D6530: the game
+# screen's message 0x42BB20 with the view's vtable, a sound; in a network
+# game also the letter's [+0x1] |= 0x40, 0x4D7B76).
+TOWN_VIEW_JUMPS = {0x4D7B34: 0x4D7D33}
 EPILOGUE = 0x5079E8
 DOCKED_STATES = (0, 1, 2, 3, 4, 5)
 
@@ -477,6 +510,66 @@ def read_cpr(path):
     return data, files
 
 
+def lz_decompress(blob, expected):
+    """A block of the game's LZ (src/p3data/lz.cpp): s32 n, 0 empty, −n bytes
+    stored, n bytes compressed in an LSB-first bit stream of literals (1 bit 0,
+    8 bits) and matches (1 bit 1, a 3-bit class c and c + 1 bits of distance,
+    a length of 2 plus fields of 2, 3, 4... bits while a field is all ones)."""
+    n = struct.unpack_from('<i', blob, 0)[0]
+    if n <= 0:
+        return bytes(blob[4:4 - n])[:expected]
+    acc, have, p, out = 0, 0, 4, bytearray()
+
+    def bits(count):
+        nonlocal acc, have, p
+        while have < count:
+            acc |= blob[p] << have
+            p, have = p + 1, have + 8
+        value = acc & ((1 << count) - 1)
+        acc, have = acc >> count, have - count
+        return value
+
+    while len(out) < min(n, expected):
+        if not bits(1):
+            out.append(bits(8))
+            continue
+        c = bits(3)
+        distance = bits(c + 1) + (2 << c) - 1
+        length, width = 2, 2
+        while True:
+            value = bits(width)
+            length += value
+            if value != (1 << width) - 1:
+                break
+            width += 1
+        for _ in range(length):
+            out.append(out[-distance])
+    return bytes(out[:expected])
+
+
+def aim_indices(data):
+    """An AIM of type 34 (8-bit indexed, docs/formats/aim.md §4.1): (width,
+    height, stride, the indices in rows of `stride` bytes), whose rows AIM.dll
+    gives for the encoding 1 (PALETTE8). The root chunk (type 3) holds the
+    layer after its 0x25 bytes."""
+    pos = 4
+    while data[pos] != 3:
+        pos += struct.unpack_from('<I', data, pos + 1)[0]
+    layer = pos + 0x25
+    if data[layer] != 34:
+        raise RuntimeError(f'AIM layer of type {data[layer]}, not 34')
+    width, height, stride = struct.unpack_from('<III', data, layer + 5 + 4)
+    p = layer + 5 + 16
+    size = struct.unpack_from('<I', data, p)[0]
+    p += 4 + size  # the palette
+    indices = bytearray()
+    while len(indices) < stride * height:
+        size = struct.unpack_from('<I', data, p)[0]
+        indices += lz_decompress(data[p + 4:p + 4 + size], min(0x10000, stride * height - len(indices)))
+        p += 4 + size
+    return width, height, stride, bytes(indices)
+
+
 def normalize(path):
     path = path.replace('\\', '/').lower()
     while path.startswith('./'):
@@ -574,6 +667,8 @@ class TownOracle(SaveOracle):
         for address, pop in quiet.items():
             self.skipped[address] = pop
             self.uc.hook_add(UC_HOOK_CODE, self._quiet, begin=address, end=address)
+        if self.pirates:
+            self.setup_town_view()
         self.uc.hook_add(UC_HOOK_CODE, self._rand, begin=RAND, end=RAND)
         # push dword [esp+4]; call 0x51BA10; ret 4
         call = struct.pack('<i', TOWN_TICK - (TRAMPOLINE + 4 + 5))
@@ -715,6 +810,60 @@ class TownOracle(SaveOracle):
             raise RuntimeError(f'the battles end at {got}, not at {end}')
         self.battles_loaded = True
 
+    def setup_town_view(self):
+        """The town view of TOWN_VIEW_POINTER (see TOWN_VIEW), from the game's
+        data: scripts/iso.ini, scripts/textures.ini and the DetectBitmap's AIM
+        (DATOS, which re/emu/sesion6/run.sh fills, or --cpr)."""
+        section = 'LIGHTNINGVIEW0'
+
+        def ini(key, path='scripts/iso.ini', sect=section):
+            value = self.ini_value(path, sect, key)
+            if value is None:
+                raise RuntimeError(f'the town view needs {key} of {path} (DATOS or --cpr)')
+            return value
+
+        def ints(key):
+            return [int(v, 0) for v in ini(key).split()]
+
+        uc, view = self.uc, TOWN_VIEW
+        uc.mem_map(TOWN_VIEW, TOWN_VIEW_SIZE)
+        tile, down = ints('TileSize'), ints('DownVector')
+        uc.mem_write(view + 0x510, struct.pack('<3i', *tile[:3]))
+        uc.mem_write(view + 0x4D0, struct.pack('<2i', *down[:2]))
+        # The CStrings (MFC: the characters after {nRefs, nDataLength,
+        # nAllocLength}; −1 references, a locked string nobody frees).
+        at = TOWN_VIEW_STRINGS
+        for offset, key in ((0x4C4, 'TownPath'), (0x4C8, 'TownFormat')):
+            text = ini(key).encode('latin-1')
+            uc.mem_write(at, struct.pack('<iii', -1, len(text), len(text)) + text + b'\0')
+            self.write_u32(view + offset, at + 12)
+            at += (12 + len(text) + 1 + 3) & ~3
+        width, height = TOWN_MAP_CELLS
+        uc.mem_write(view + 0xC314, struct.pack('<4I', width, height, width * tile[0], (height >> 1) * (tile[1] + 1)))
+        self.write_u32(view + 0xC324, 0xFF)
+        texture = ini('TextureFile', 'scripts/textures.ini', 'TEX' + ini('DetectBitmap'))
+        data = self.game_file(texture)
+        if data is None:
+            raise RuntimeError(f'the town view needs {texture} (DATOS or --cpr)')
+        mask_width, mask_height, stride, indices = aim_indices(data)
+        pitch = (mask_width + 3) & ~3  # PALETTE8's rows (docs/formats/aim.md)
+        for y in range(mask_height):
+            uc.mem_write(TOWN_VIEW_MASK + y * pitch, indices[y * stride:y * stride + mask_width])
+        self.write_u32(view + 0xC6D8, TOWN_VIEW_MASK)
+        self.write_u32(view + 0xC6E8, pitch)
+        uc.mem_write(TOWN_VIEW_VTABLE, struct.pack('<I', TOWN_VIEW_TRAP) * 0x100)
+        uc.mem_write(TOWN_VIEW_TRAP, b'\xc3')  # a block of its own (zeros would run to the mapping's end)
+        self.write_u32(view, TOWN_VIEW_VTABLE)
+        self.write_u32(view + 0x3F8, TOWN_VIEW_VTABLE)
+        uc.hook_add(UC_HOOK_CODE, self._town_view_trap, begin=TOWN_VIEW_TRAP, end=TOWN_VIEW_TRAP)
+        for address, target in TOWN_VIEW_JUMPS.items():
+            uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
+        self.write_u32(TOWN_VIEW_POINTER, view)
+
+    def _town_view_trap(self, uc, address, size, user_data):
+        ret = self.u32(uc.reg_read(UC_X86_REG_ESP))
+        raise RuntimeError(f'a virtual method of the town view (or of its animations) called from {ret - 6:#x}')
+
     def setup_imports(self, exe, constructors=(0x64F005, 0x64F034, 0x64F066, 0x64F098)):
         """Las funciones importadas se llaman por la tabla de importaciones, que
         en el emulador tiene lo que trae el fichero (la dirección relativa del
@@ -823,6 +972,16 @@ class TownOracle(SaveOracle):
         elif name == 'arc_ReleaseFile':
             self.files.pop(a(0), None)
             result, pop = 0, 0
+        elif name == 'arc_Seek':
+            # (handle, position from the start) → the position; the game's
+            # wrapper 0x4027D0 turns its other two modes into this one with
+            # arc_GetPos and arc_FileLength. A town battle's map file (0x58E760).
+            f = self.files.get(a(0))
+            if f:
+                f[1] = a(1)
+            result, pop = a(1) if f else 0, 0
+        elif name == 'arc_GetPos':
+            result, pop = self.files[a(0)][1] if a(0) in self.files else 0, 0
         else:
             raise RuntimeError(f'función importada sin hacer: {dll}!{name}')
         self._returns(uc, result, pop)

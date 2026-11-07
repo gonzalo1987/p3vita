@@ -30,11 +30,6 @@ constexpr uint16_t kShipHalf[8] = {55, 66, 70, 84, 102, 121, 121, 148};
 // 0x67ACFC and 0x67AD20: the shapes (width, height) of the rocks and islets.
 constexpr uint16_t kRock[5][2] = {{2, 2}, {3, 2}, {4, 4}, {6, 4}, {6, 5}};
 constexpr uint16_t kIslet[3][2] = {{4, 4}, {4, 4}, {6, 4}};
-// u16 [*0x6E51AC + 0x510] >> 1: half the width of the town view (UI), by
-// which 0x60F479 multiplies its items' coordinates. There is no town view in
-// the emulator: 0 (see «Decisions for the user» in docs/cloud/battles-2.md).
-constexpr uint32_t kTownViewHalf = 0;
-
 // __ftol (0x639C28) of a double: truncated; NaN and out of range give the
 // x87's integer indefinite (0x8000000000000000), whose low 32 bits are 0.
 int32_t game_ftol(double v) {
@@ -361,12 +356,15 @@ void Sailing::fn_6079d0(size_t b) {
 // box (/34 in x, /17 in y); after 256 failures one fewer. Each placed one
 // is two items of the scene (kinds 2 and 4 for a rock, 3 and 5 for an islet,
 // with its number; the second 200 larger each way), with coordinates times
-// kTownViewHalf.
+// half the town view's tile width (u16 [*0x6E51AC + 0x510] >> 1, sar: 17;
+// SaveGame::TownView. Before 2026-11-07 the emulator had no town view and
+// both took 0). The game keeps it in eax's low word over the view's address,
+// but the coordinates are words: only the low word counts.
 // The unused entries get x = 0xFFFF. (The UI calls 0x5944E0/0x594640 when
 // the battle is the one shown are left out.)
 void Sailing::fn_60f479(size_t b) {
 	BattleGraph& g = save_.battles;
-	const uint32_t half = kTownViewHalf;
+	const uint32_t half = uint32_t(int16_t(uint16_t(save_.town_view.tile[0])) >> 1);
 	auto draw3 = [&](uint32_t m) {
 		const uint32_t r1 = battle_rand(g, b);
 		const uint32_t r2 = battle_rand(g, b);

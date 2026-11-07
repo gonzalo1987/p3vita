@@ -4487,6 +4487,76 @@ def battle_branches(o):
     return during
 
 
+def battle_rocks(o):
+    """A sea battle's ship on a rock (kind 2) and on an islet (kind 3): 0x608850
+    called directly on the battle the save starts with (saves 6 and 7
+    automatic, tut4 with a human side: the shifts by 12 and 6, the turns by 2),
+    the obstacle's diamond (0x60B357) put round the ship first: its centre
+    inside (the side left as the flags' byte), the diamond's nearest corner 10
+    away to the right, left, below and above (the hull crosses a side: the
+    side's direction), and far away (no touch). The ship's heading before the
+    centre-inside calls makes each turn: away 0x10 one way and the other, 0
+    and 0x80 (none); its speed [+0x1C] 0x4000 before each (the rock's damage
+    16, 0x61F96F). The saves' battles have no rock nor islet (their saves
+    keep none): one of each is made first with the game's 0x619450 (kind,
+    number 0, a box far away), the shapes' records 0 sized 4 × 4. The rocks
+    got a size only with the town view (2026-11-07), and the saves never put
+    a ship on one."""
+    slots = [k for k in range(0xFF) if o.u32(to.BATTLES + 4 * k)]
+    if not slots:
+        raise RuntimeError('no sea battle in this save')
+    b = o.u32(to.BATTLES + 4 * slots[0])
+
+    def scene(off):  # the scene's arrays move when it grows (0x61A1D0)
+        return o.u32(b + off)
+
+    def entry(item):
+        return o.u32(o.u32(b + 4) + 4 * o.u16(scene(0x1C) + 2 * item))
+
+    used = o.u16(b + 0x54)
+    ship = next(i for i in range(used) if o.u8(scene(0x18) + i) == 0 and not o.u8(entry(i) + 0x12A) & 0x2)
+    rock = direct(o, 0x619450, [2, 0, 30000, 30000, 30100, 30100], ecx=b) & 0xFFFF
+    islet = direct(o, 0x619450, [3, 0, 30000, 30000, 30100, 30100], ecx=b) & 0xFFFF
+    e = entry(ship)
+    print(f'battle at {b:#x} ([+0xAC8] {o.u8(b + 0xAC8)}): ship item {ship} (entry {e:#x}), rock item {rock}, '
+          f'islet item {islet}')
+
+    def put(item, x1, y1, x2, y2, size=4):
+        kind = o.u8(scene(0x18) + item)
+        shape = (0x876 if kind == 2 else 0x676) + 8 * o.u16(scene(0x1C) + 2 * item)
+        w16(o, b + shape, size)
+        w16(o, b + shape + 2, size)
+        w16(o, scene(0x28) + 4 * item, x1)
+        w16(o, scene(0x28) + 4 * item + 2, x2)
+        w16(o, scene(0x38) + 4 * item, y1)
+        w16(o, scene(0x38) + 4 * item + 2, y2)
+
+    def meet(item, heading=None):
+        if heading is not None:
+            w8(o, e + 0x11, heading)
+        w32(o, e + 0x1C, 0x4000)
+        direct(o, 0x608850, [ship, item], ecx=b)
+        print(f'  heading {o.u8(e + 0x11):#x}, speed {o.u32(e + 0x1C):#x}, x {o.u32(e + 0x8):#x}, '
+              f'y {o.u32(e + 0xC):#x}, flags {o.u8(e + 0x12A):#x}')
+
+    def during(o):
+        for item in (rock, islet):
+            sx, sy = struct.unpack('<hh', bytes(o.uc.mem_read(e + 0xA, 2)) + bytes(o.uc.mem_read(e + 0xE, 2)))
+            flags = o.u8(e + 0x12A)
+            print(f'item {item} (kind {o.u8(scene(0x18) + item)}): the ship at {sx}, {sy}')
+            put(item, sx - 100, sy - 100, sx + 100, sy + 100)
+            for away in (0x10, -0x10, 0, 0x80):
+                meet(item, (flags + 0x80 + away) & 0xFF if away != 0x80 else flags)
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                sx, sy = struct.unpack('<hh', bytes(o.uc.mem_read(e + 0xA, 2)) + bytes(o.uc.mem_read(e + 0xE, 2)))
+                cx, cy = sx + dx * 110, sy + dy * 110  # the nearest corner 10 away
+                put(item, cx - 100, cy - 100, cx + 100, cy + 100)
+                meet(item)
+            put(item, sx + 1000, sy + 1000, sx + 1200, sy + 1200)
+            meet(item)
+    return during
+
+
 def first_arrival(o):
     """For raid_arrival, in a process of its own: runs the world tick by tick
     until an AI merchant's ship at sea out of a convoy arrives at its
@@ -6868,7 +6938,7 @@ BUILD_CELL = {0x03: 0x1D, 0x05: 0x0E, 0x1F: 0x19, 0x20: 0x1B, 0x21: 0x14, 0x22: 
 def build_copiers(o):
     """The copiers of the build window (stdcall), on a window of their own
     (its buttons' methods all ret 4) and, for the menu, a town view of their
-    own (*0x6E51AC set during the call): BUILD_MENU (town, category):
+    own (*0x6E51AC set during the call, the oracle's put back after): BUILD_MENU (town, category):
     0x47AB20, its 8 types ([+0xC74]) into SCRATCH, the category it shows
     ([+0x104C]) and the reputation's text ([+0x1060]) after; BUILD_FITS
     (town, x, y, type): 0x47B8C0 with the window's type, al and the type after
@@ -6892,12 +6962,17 @@ def build_copiers(o):
         o.uc.mem_write(at, code)
 
     at = BUILD_MENU
+    # The oracle's own town view (town_oracle.TOWN_VIEW), put back after: kept
+    # in the slack of the view's block (alloc rounds 0xC330 up to 0xC340), so
+    # the heap stays as it was.
+    saved = view + 0xC330
     code = bytes([0x8B, 0x44, 0x24, 0x04, 0xA3]) + struct.pack('<I', view + 0xC324)  # the view's town
     code += bytes([0x8B, 0x44, 0x24, 0x08, 0xA3]) + struct.pack('<I', win + 0x104C)  # the category
+    code += bytes([0xA1]) + struct.pack('<I', TOWN_VIEW) + bytes([0xA3]) + struct.pack('<I', saved)
     code += bytes([0xC7, 0x05]) + struct.pack('<II', TOWN_VIEW, view)
     code += bytes([0xB9]) + struct.pack('<I', win)
     code += call(at, code, 0x47AB20)
-    code += bytes([0xC7, 0x05]) + struct.pack('<II', TOWN_VIEW, 0)
+    code += bytes([0xA1]) + struct.pack('<I', saved) + bytes([0xA3]) + struct.pack('<I', TOWN_VIEW)
     code += bytes([0x56, 0x57, 0xBE]) + struct.pack('<I', win + 0xC74) + bytes([0xBF]) + struct.pack('<I', SCRATCH)
     code += bytes([0xB9]) + struct.pack('<I', 8) + bytes([0xFC, 0xF3, 0xA5, 0x5F, 0x5E])  # rep movsd
     code += bytes([0xA1]) + struct.pack('<I', win + 0x104C) + bytes([0xA3]) + struct.pack('<I', SCRATCH + 0x20)
@@ -8587,6 +8662,12 @@ SCENARIOS = {
     # battle/
     'battle_branches': Scenario(battle_branches, [0x535760, 0x540520, 0x50BFD0, 0x509250], 0, [
         '@540d3e', '@50c1fb', '@50c20b>50c33c', '@5095f7>5097a1']),
+    # 0x60B357: kind 2 or 3, the centre inside, a side crossed (with or without the side's pointer), no touch;
+    # 0x608850's rock (automatic, human; each turn and none) and islet (automatic, human).
+    'battle_rocks': Scenario(battle_rocks, [0x608850], 0, [
+        '@60b379', '@60b3c2', '@60b679', '@60bc1f', '@60bc1d>60bc33', '@60bc41',
+        '@608996', '@6089cb', '@608abf', '@608be1', '@608bf0', '@608c0d', '@608c1c', '@608bd1>608bff',
+        '@608c01>608c2c', '@608d15', '@608d37', '@608d35>608d3c']),
     # the player's actions
     'trade_window': Scenario(trade_window, [0x535760], 0, ['@5375b0', '@5373c2', '@5375ae>5375fc']),
     'trade_branches': Scenario(trade_branches, [0x535760, 0x52E430, 0x52E1D0], 0, [

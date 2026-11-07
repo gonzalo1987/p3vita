@@ -1802,6 +1802,58 @@ all equal. Not reachable here: both functions without a free battle slot (255 ba
 `raid_arrival`, `battle_join`, `retouch_pirates.py event_attack` (saves 1, 3, 5, 3 days) and the whole world 7 days
 in the 12 saves.
 
+## The town view, and the sea battles' rocks and islets (2026-11-07)
+
+The battles read the town view (*0x6E51AC, the interface's), which the game always has and the emulator didn't: a
+sea battle's rocks and islets (0x60F479 multiplies their boxes by half its tile width `[+0x510]`, which read 0 from
+the emulator's page 0), and a town battle (piece 6) its point → cell 0x58D030 (with 0x58B740), cell → point 0x58CFB0
+and the attacked town's map file 0x58E760. With the pirates (the battles, on by default) `town_oracle.py` gives it one
+(`TOWN_VIEW`, a mapping of its own at 0x05000000) with what the game puts in it:
+- at start (0x5871xx, `scripts/iso.ini` [LIGHTNINGVIEW0]): `TileSize 34 21 0` → [+0x510], [+0x514], [+0x518];
+  `DownVector 17 11` → [+0x4D0], [+0x4D4]; `TownPath`, `TownFormat` → the CStrings [+0x4C4], [+0x4C8]; and the hit
+  mask (0x5894F0 locks the texture `DetectBitmap` 33, `images/module_stadtkarte/detect.aim`, as 8-bit palette indices
+  into [+0xC6D8], its pitch at [+0xC6E8]: a 36 × 23 diamond, 0xFF inside, the neighbours' codes 0x00..0xE0 that
+  0x58B740 reads in the corners);
+- when it shows a town (0x589DE0, 0x58B680): the cells [+0xC314] × [+0xC318] and pixels [+0xC31C] × [+0xC320];
+  every `iso/towns/*.town` is 128 × 226, so it doesn't matter which town is shown;
+- no town shown ([+0xC324] = 0xFF, as 0x589DE0 leaves it): the simulation's branches «if the view shows this town»
+  (0x4E1CC9, 0x521A3C, 0x5240F5... about 20, all found by the loads of *0x6E51AC followed by a null test) only
+  redraw it, and with 0xFF they go as without a view. One that doesn't compare the town, 0x4D7B10 (a letter's
+  announcement on the local player's screen, from 0x4D6530), is jumped over (`TOWN_VIEW_JUMPS`: in a network game
+  it also sets the letter's [+0x1] 0x40);
+- its vtable and its animations' list's ([+0x3F8]) go to a trap that stops the emulator with the caller: only the
+  interface calls them (the battles' calls to the list are behind an animation pointer the oracle never makes).
+The rest is 0, as the page 0 gave for the fields below 0x1000 (the only one the simulation read: [+0x510]).
+0x58E760 runs as the game's code (CString::Format and Archiver.dll: the oracle has `arc_Seek` and `arc_GetPos` now).
+`re/emu/sesion6/run.sh` extracts the files into DATOS. p3vita reads the same (`SaveGame::TownView`, in
+`load_game_scripts`; tick_probe copies it into each sample's save).
+
+Checked: 0x58D030 against a Python reading of it on 124 124 points of the map (and outside it), 0x58CFB0 and back on
+the cells, and 0x59B4B0 + 0x58E760 on the 24 towns against their files (re/emu/sesion17/view_test.py). The town battle
+reads the attacked town's map (its number | 0x80, a nest's by 0x515D20), not the one shown.
+
+With the real width the rocks and islets got their size, and the ships met them: islets in saves 3, 5 and 6 within 7
+days (54, 137 and 84 meetings), rocks in none. p3vita now has the hull on an obstacle (0x60B357: the obstacle's
+diamond in its item's box, split as its width and height; the ship's centre inside it, or a side of the hull crossing a
+side of the diamond, whose direction it gives) and 0x608850's rock (0x61F96F with speed >> 10, pushed off the side by
+(speed >> 4) · sin/cos >> 10 (12 with a human side), turned by 8 (2) away from it, speed − speed >> 4 (6)) and islet
+(only the speed). When the battle is the one shown ([0x6E59CC] = [+0x662]), both play a sound that draws a rand() when
+the sound has variants: left out with the interface (piece 7), a game quirk for the network game.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `battle_rocks` | 0x608850 called directly on the battle the save starts with, a rock and an islet made first (0x619450; the saves' battles have none) and their diamonds put round a ship: its centre inside (the four turns: away 0x10 either way, 0, 0x80), the nearest corner 10 away on each side (a side crossed), and far away | 6, 7 (automatic), tut4 (a human side) | 18 calls equal in each; 18 of 18 targets between them |
+
+Broken on purpose and caught: the side's direction (m · 0x40 − 0x10) and the islet's slowing (speed >> 5): 12 calls
+of 18 in saves 6 and 7, 4 in tut4. The whole world 7 days in the 12 saves: 0 «distintas» (before the rocks were
+rewritten, saves 5 and 6 differed in their battles). Equal as before: `chase_battle`, `hanse_fleet`, `raid_fleet`,
+`pursue_branches`, `raid_arrival` (saves 1, 3, 5, 7), `battle_join` (6, 7, tut4), `battle_branches` (3, 5, 7) and
+`re/emu/sesion8/old_battle.sh`.
+
+A trap of the check (2026-11-07): with tick_probe `--continuo`, functions recorded *inside* another recorded call
+(the battle step's pieces inside the operation 0x94) all come out «distintas», even when the outer call is equal:
+their state isn't comparable there. To check those, tick_probe without `--continuo` (each call from the game's state).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

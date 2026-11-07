@@ -1149,6 +1149,7 @@ int main(int argc, char** argv) {
 		}
 	}
 	std::vector<std::vector<uint8_t>> town_templates;  // Ni las plantillas de las ciudades nuevas.
+	SaveGame::TownView town_view;  // Nor the town view (its defaults without the data).
 	if (archive) {
 		SaveGame scripts;
 		load_game_scripts(*archive, scripts);
@@ -1158,6 +1159,7 @@ int main(int argc, char** argv) {
 		family_names = scripts.family_names;
 		town_names = scripts.opaque.town_names;
 		town_templates = scripts.town_templates;
+		town_view = scripts.town_view;
 		if (continuous && load.empty()) {
 			save.expeditions = expeditions;
 			save.ship_names = ship_names;
@@ -1166,6 +1168,7 @@ int main(int argc, char** argv) {
 			save.opaque.town_names = town_names;
 			save.custom_names = custom_names;
 			save.town_templates = town_templates;
+			save.town_view = town_view;
 		}
 	}
 	std::map<uint32_t, std::pair<int, int>> results;  // función → {bien, mal}
@@ -1251,6 +1254,7 @@ int main(int argc, char** argv) {
 				save.custom_names = custom_names;
 			}
 			save.town_templates = town_templates;
+			save.town_view = town_view;
 		}
 		save.queued_operations.clear();
 		const std::optional<uint32_t> ours = fn->second(save, call);

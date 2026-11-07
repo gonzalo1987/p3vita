@@ -263,6 +263,8 @@ public:
 	void fn_619560(size_t battle, uint16_t item);  // (scene) An item freed.
 	size_t battle_entry(size_t battle, uint16_t place) const;  // The scene's ship in a place.
 	bool fn_609d40(size_t battle, uint16_t i, uint16_t j, int32_t& x, int32_t& y) const;  // Hulls crossing.
+	// A ship's hull on a rock or an islet (item, place; the side's direction, or nullptr).
+	bool fn_60b357(size_t battle, uint16_t item, uint16_t place, uint8_t* side) const;
 	void fn_60adbf(size_t battle, uint16_t i, int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t& x, int32_t& y,
 		uint8_t& side) const;  // Where a segment meets a hull.
 	bool fn_608f70(size_t battle, uint16_t i, uint16_t j);  // Two ships collide.

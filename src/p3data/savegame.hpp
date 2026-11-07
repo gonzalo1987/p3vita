@@ -463,6 +463,29 @@ struct SaveGame {
 	// por su número; las lee 0x4F9B40 al fundar una ciudad): u32 ancho, u32
 	// alto, 0x5C bytes de town_class1 y la rejilla. Las carga load_game_scripts.
 	std::vector<std::vector<uint8_t>> town_templates;
+	// The town view (*0x6E51AC, the interface's), which the battles read: its
+	// geometry as the game sets it at start (0x5871xx, from scripts/iso.ini
+	// [LIGHTNINGVIEW0]; load_game_scripts, and without the file its values)
+	// and for a town's map (0x589DE0: every iso/towns/*.town is 128 × 226),
+	// its hit mask, and what it reads of a town's map file for a town battle.
+	// The oracle gives the emulator the same (town_oracle.py TOWN_VIEW).
+	struct TownView {
+		int32_t tile[3] = {34, 21, 0};  // TileSize: [+0x510], [+0x514], [+0x518]
+		int32_t down[2] = {17, 11};  // DownVector: [+0x4D0], [+0x4D4]
+		uint32_t cells[2] = {128, 226};  // [+0xC314], [+0xC318]
+		// The texture DetectBitmap (scripts/textures.ini) as 8-bit palette
+		// indices, rows of `detect_pitch` bytes ([+0xC6D8], [+0xC6E8]; 0x5894F0):
+		// which neighbour a point of a cell's box belongs to (0x58D030,
+		// 0x58B740). Empty without the data.
+		std::vector<uint8_t> detect;
+		uint32_t detect_pitch = 0;
+		// The two s32 at the end of iso/towns/<n>.town (after the 10 bytes of
+		// header, the two layers and 8 bytes) for n = 0x80..0xFF, by n − 0x80:
+		// what 0x58E760 reads for a town battle ([+0x1ED8], [+0x1EDC]) from the
+		// map n = the town's (0x59B4B0) | 0x80. 0 if the file is missing.
+		std::array<std::array<int32_t, 2>, 0x80> map_ends{};
+	};
+	TownView town_view;
 	// Convoyes (*0x6DD7A8, tantos como [0x6DD896]): registros de 0x3C bytes
 	// enlazados por el u16 [+0x8] en la lista de libres ([0x6DD884]) o en la
 	// de los que existen ([0x6DD88C]). Ver ship_ai.cpp.
