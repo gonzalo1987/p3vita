@@ -279,6 +279,40 @@ enum class GameText {
 	ShipyardNoOrders,  // «No ships were commissioned at this shipyard.»
 	ShipyardNewLevel,  // «New upgrade level»
 	ShipyardLevel,  // «Level»
+	// The town battle's window (piece 6): the game writes these into the battle ([+0x1310]) for a human side of
+	// the local player, at the start (0x5FD102..0x5FD3DD, with the question) and at the end (0x5FF5E8..0x5FF76D);
+	// p3vita composes them for the viewer only (Sailing::take_player_messages). 0x6A1D98.. is 0xD8 lower in the
+	// Spanish exe; 0x6AA194.. 0x608 higher.
+	TownAttacking,  // «\c\f3_Attack on town\n\n\l\f1_%s "%s" attacks the town of %s.\n» (0x6A1770)
+	TownAttacked,  // «... The town of %s is under attack by %s "%s" %s.\n» (0x6A1774)
+	NestAttacking,  // «\c\f3_Pirates' Nest ... %s "%s" attacks the hideout of the pirate %s %s.\n» (0x6AA194)
+	TownEndSaved,  // «... You have beaten off the attackers and saved the town from plundering.» (0x6A1D98)
+	TownEndPutToFlight,  // «... You have put the attackers to flight and have thereby saved the town.»
+	TownEndOutriggerLost,  // «... You have lost your outrigger and can no longer protect the town.»
+	TownEndOutriggerFled,  // «... You fled with your outrigger and left the town to its fate.»
+	TownEndBrokeThrough,  // «... You have broken through the town's defence and relieved the city's bank of %d\C.»
+	TownEndUndefended,  // «... The town is not being defended and you can plunder ... Your booty amounts to %d\C.»
+	TownEndTooWellDefended,  // «... The town's defence was too well prepared for your attack. You failed miserably.»
+	TownEndAttackFled,  // «... Due to your flight, the attack on the town has failed.»
+	TownEndNoArmament,  // «... The captain refuses to attack a town without suitable armament.» (0x6A1DB8)
+	NestEndAshes,  // «... You have reduced the pirates nest to ashes and have liberated %d\C.» (0x6AA198)
+	NestEndPrepared,  // «... The Pirates were well prepared for your attack. You have failed.»
+	NestEndFled,  // «... The attack on the pirates hideaway has been scuppered by your flight.»
+	TownEndRecentlyPlundered,  // «\c\f3_Town Attacked ... only recently been attacked and there is nothing left to plunder.»
+	// A town's event symbols' tooltips, by its [+0x2C8] bit: the town view's (0x4A6290) and the sea map's
+	// (0x452973). 0x69B688.. is 0x7A8 lower in the Spanish exe; 0x6B2A24.. 0xA0C higher.
+	EventFamine,  // «There is famine in the town» (0x1000; 0x69B688)
+	EventWareNeeded,  // «needed», after a ware's name and a space (the sea map's ware symbol, bits 18..22)
+	EventWareNeededOther,  // the same, for the wares with 0 in 0x66E0D4 (the same words in both exes)
+	EventWeapons,  // «Weapons are needed in the city» (0x10000)
+	EventFire,  // «Fire in the town» (0x8000)
+	EventPlague,  // «There is an outbreak of the plague in the city» (0x8)
+	EventPirates,  // «The town is being attacked by pirates» (0x800: a town battle)
+	EventSiege,  // «The town is under siege» (0x10)
+	EventFellowPlayer,  // «The ship of a fellow player is at anchor at the port» (0x69B6A8)
+	EventFrozen,  // «The harbour is frozen solid» (0x4000000; 0x6B2A24)
+	EventBlockade,  // «The harbour is blockaded» (0x200)
+	EventBoycott,  // «The town is being boycotted» (0x400)
 	Count
 };
 

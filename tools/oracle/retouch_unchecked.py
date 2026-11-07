@@ -5134,6 +5134,158 @@ def town_end_branches(o):
     return during
 
 
+def town_start_text(o, b, ship, town):
+    """The game's text of a town battle's question to the local player on a side (0x5FD102..0x5FD3DD, in 0x5FBFE0
+    when the window can open; the oracle takes the busy path, BATTLE_WINDOW_JUMPS), run on its own over the
+    battle just set up: [esp+0x14] the attacker ship's offset, [esp+0x20] the town, esi the battle, ecx the
+    player, eax side A's owner; up to 0x5FD3E0, the text written. Its writes ([+0x1310], [+0x1E90], [+0x1E91])
+    are put back. Returns the text."""
+    from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_ESI, UC_X86_REG_ESP
+    uc = o.uc
+    kept_text, kept_names = bytes(uc.mem_read(b + 0x1310, 0x200)), bytes(uc.mem_read(b + 0x1E90, 2))
+    esp = to.STACK + 0x10_0000 - 0x4000
+    uc.mem_write(esp, bytes(0x40))
+    uc.mem_write(esp + 0x14, struct.pack('<I', ship * 0x180))
+    uc.mem_write(esp + 0x20, struct.pack('<I', town))
+    uc.reg_write(UC_X86_REG_ESP, esp)
+    uc.reg_write(UC_X86_REG_ESI, b)
+    uc.reg_write(UC_X86_REG_ECX, o.u32(to.PLAYER))
+    uc.reg_write(UC_X86_REG_EAX, o.u16(b + 0x35A))
+    uc.emu_start(0x5FD102, 0x5FD3E0, timeout=60 * 1000 * 1000)
+    text = bytes(uc.mem_read(b + 0x1310, 0x200)).split(b'\0')[0].decode('latin-1')
+    uc.mem_write(b + 0x1310, kept_text)
+    uc.mem_write(b + 0x1E90, kept_names)
+    return text
+
+
+def town_battle_texts(o):
+    """The battles' piece 6, part 5: the town battle's window texts that p3vita composes for the viewer only
+    (Sailing::town_attack_message, town_end_message; nothing in memory), against the game's. Town battles set up
+    directly (0x611D80, 0x5FBFE0) with the player on a side: his ship attacks a town with a guard ship; towns with
+    no defence (the battle over at its setup: the end's window, which the game shows); the first pirate's nest;
+    his convoy of two ships (when two of his ships are in port in one town) a town with a guard ship; and he
+    defends as a town's guard ship ([+0x994]) against a pirate convoy's guide and against an AI merchant's ship
+    alone. After each setup, the game's text of the question (town_start_text), printed as «start text». Then
+    0x5FE7E0 called directly on the battles that go on, with the player's side human (the busy path's operation
+    0x96 doesn't run before the tick's end): the end's kinds [+0xAC4] 0, 1, 2 and 3, won and lost (the oracle
+    prints the game's end window, TOWN_END_WINDOW), and once with the player's side the computer's (no window: the
+    letter 0x29; p3vita's viewer text all the same). tick_probe --messages prints p3vita's texts."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    convoys = o.u16(CONVOY_COUNT)
+    mine = merchant_ships(o, player)
+    if not mine:
+        raise RuntimeError('the player has no ship')
+    alone = [s for s in range(ships) if o.u8(o.ship(s)) < merchants and o.u8(o.ship(s)) != player
+             and o.u16(o.ship(s) + 0x134) == 0xF and o.u16(o.ship(s) + 8) >= convoys]
+    pirate_guides = [o.u16(convoy_at(o, c) + 0x10) for c in range(convoys)
+                     if o.u8(convoy_at(o, c)) >= merchants and o.u16(convoy_at(o, c) + 0x10) < ships
+                     and o.u16(convoy_at(o, c) + 0xA) < ships]
+
+    def in_port(t):
+        return [s for s in range(ships) if o.u8(o.ship(s)) < merchants and o.u8(o.ship(s)) != player
+                and o.u16(o.ship(s) + 0x134) == 0 and o.u8(o.ship(s) + 0x39) == t and o.u16(o.ship(s) + 8) >= convoys]
+    guarded = [(t, in_port(t)[0]) for t in range(towns) if in_port(t)]
+    k = next(i for i in range(5) if o.u32(PIRATES + 4 * i))
+    pirate = o.u32(PIRATES + 4 * k)
+    print(f'the player\'s ships {mine[:4]}; towns with an AI ship in port {[t for t, _ in guarded][:8]}; pirate '
+          f'convoy guides {pirate_guides[:3]}; ships alone {alone[:3]}; pirate {k}')
+
+    def attack(town, ship, what):
+        slot = direct(o, 0x611D80, [], ecx=to.BATTLES) & 0xFF
+        b = o.u32(to.BATTLES + 4 * slot)
+        direct(o, 0x5FBFE0, [ship, town], ecx=b)
+        print(f'{what}: town {town:#x} by ship {ship} (owner {o.u8(o.ship(ship)):#x}, convoy {o.u16(o.ship(ship) + 8)}):'
+              f' slot {slot}, owners {o.u16(b + 0x35A):#x} {o.u16(b + 0x35C):#x}, ships {o.u16(b + 0x658)} + '
+              f'{o.u16(b + 0x65A)}, towers {[o.u8(b + 0x1E99 + i) for i in range(4)]}, over {o.u8(b + 0x5C)}')
+        if not o.u8(b + 0x5C):
+            print(f'  start text: {town_start_text(o, b, ship, town)!r}')
+        return b
+
+    def ends(b, side, what):
+        print(f'the ends of {what} (the player on side {side}):')
+        cases = ((0, 0, 0), (0, 1, 0), (0, 2, 0), (0, 3, 0), (1, 0, 0), (1, 1, 0), (1, 3, 0), (0, 1, 1))
+        for lost, kind, computer in cases:
+            w8(o, b + 0xAC4, kind)
+            w8(o, b + 0x5C, 0)
+            w16(o, b + 0x15C, 0)
+            w8(o, b + 0x5D + side, computer)
+            extra = ', the side the computer\'s' if computer else ''
+            print(f'  lost {lost}, [+0xAC4] {kind}{extra}')
+            direct(o, 0x5FE7E0, [lost], ecx=b)
+
+    def own_convoy(s):
+        """A convoy of its own for a ship alone (0x5062F0, as a raider gets at its town, 0x506F41; out of the sea's
+        list first, 0x505B60, else its next [+0x6] would chain another ship into the convoy): the game reads the
+        attacker's convoy [+0x65E] without checking it."""
+        if o.u16(o.ship(s) + 8) >= convoys:
+            if o.u16(o.ship(s) + 0x134) == 0:
+                # In port: out of the docked list with a convoy of its own as a town's guard ship (0x50CC90).
+                t = o.u8(o.ship(s) + 0x39)
+                guard = o.u16(o.town(t) + 0x994)
+                w16(o, o.town(t) + 0x994, s)
+                direct(o, 0x50CC90, [t], ecx=to.SHIPS)
+                w16(o, o.town(t) + 0x994, guard)
+                return
+            if o.u16(o.ship(s) + 0x134) == 0xF:
+                direct(o, 0x505B60, [s], ecx=to.SHIPS)
+            head = o.alloc(4)
+            w16(o, head, 0xFFFF)
+            direct(o, 0x5062F0, [head, s], ecx=to.SHIPS)
+
+    def during(o):
+        battles = []
+        try:
+            s, t = player_docked_ship(o)
+            others = docked_ships(o, player, t, (s,))[:1]
+        except RuntimeError:
+            s, t, others = None, None, []
+        free = [x for x in mine if x != s and x not in others]
+        lone = next((x for x in free if o.u16(o.ship(x) + 0x134) in (0, 0xF)), None)
+        if lone is None:
+            lone, others = (s if s is not None else mine[0]), []
+        own_convoy(lone)
+        # A town with a guard ship (an AI ship in port there), else one with towers.
+        ta = guarded[0][0] if guarded else 0
+        if guarded:
+            w16(o, o.town(ta) + 0x994, guarded[0][1])
+        battles.append((attack(ta, lone, 'the player attacks a town'), 0, f'town {ta:#x}'))
+        # A town with no towers ([0x768] emptied for the call) and no guard ship: the battle over at its setup,
+        # twice (the plunder paid, then not: «recently attacked»).
+        tu = next(x for x in range(1, towns) if x != ta)
+        w32(o, o.u32(to.SIEGES) + 0x1024 * tu, 0)
+        for _ in range(2):
+            saved = set_fields(o, [(o.town(tu) + 0x768, 2, 0xFFFF), (o.town(tu) + 0x994, 2, 0xFFFF)])
+            attack(tu, lone, 'the player attacks an undefended town')
+            restore_fields(o, saved)
+        head = o.u16(pirate + 0xC)
+        if head < ships and o.u16(o.ship(head) + 8) < convoys:
+            w16(o, pirate + 0x10, o.u16(o.ship(head) + 8))
+        battles.append((attack(0xFE - k, lone, 'the player attacks the first pirate\'s nest'), 0, 'the nest'))
+        used = [ta, tu]
+        # His convoy of two ships, if two are in port in one town.
+        if s is not None and others:
+            make_guide(o, s, t)
+            run_bytes(o, player_op('create-convoy', s, 0, 0))
+            run_bytes(o, player_op('join-convoy', s, others[0]))
+            tc = next(x for x in range(towns) if x not in used)
+            used.append(tc)
+            attack(tc, s, 'the player\'s convoy attacks a town')
+        # He defends a town as its guard ship, against a pirate convoy's guide and an AI ship alone (a convoy of its
+        # own).
+        for a in pirate_guides[:1] + alone[:1]:
+            td = next(x for x in range(towns) if x not in used)
+            used.append(td)
+            own_convoy(a)
+            w16(o, o.town(td) + 0x994, lone)
+            b = attack(td, a, 'the player defends a town')
+            if o.u16(b + 0x35C) == player and not o.u8(b + 0x5C):
+                battles.append((b, 1, f'the defence of town {td:#x}'))
+        for b, side, what in battles:
+            ends(b, side, what)
+    return during
+
+
 def nest_attack(o, strong=True):
     """The battles' piece 6: the attack on a nest of the Hanse task of type 3 (its fourth start, 0x4EBA71..
     0x4EBC5E), by the game's way: a task of the candidacy made of type 3 in its phase 1 for the first AI merchant
@@ -9269,6 +9421,48 @@ def citizen_window(o):
     return during
 
 
+def town_symbols(o):
+    """The battles' piece 6, part 5: the town's situation as the local player knows it (0x535300 on the towns'
+    history 0x6DE588), which the sea map's event symbols show: every town as it is; then the player's lag for town 1
+    at 0, 5, 15, 16 and 0xFF (the day wraps modulo 16), with town 1's [+0x2C8] and its history's 16 days retouched
+    (each day a different bit, all the event bits now, and a ware short); the player's slot's table pointer 0 and
+    his slot another merchant's (the day after, for every town)."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    history = 0x6DE588
+    slot = next((k for k in range(8) if o.u8(history + 0xA00 + k) == player), None)
+    if slot is None:
+        raise RuntimeError('the player has no slot in the towns\' history')
+    table = o.u32(history + 0xA08 + 4 * slot)
+    print(f'the player {player}: slot {slot}, table {table:#x}, lags {list(o.uc.mem_read(table, towns))}; day '
+          f'{o.u32(0x6DE4B4) >> 8 & 0xF}')
+
+    def known(t, what):
+        r = direct(o, 0x535300, [t], ecx=history)
+        print(f'  town {t} ({what}): {r:#010x}')
+
+    def during(o):
+        for t in range(towns):
+            known(t, 'as it is')
+        saved = set_fields(o, [(o.town(1) + 0x2C8, 4, o.u32(o.town(1) + 0x2C8)), (table + 1, 1, o.u8(table + 1))] +
+                           [(history + 0x40 + 4 * d, 4, o.u32(history + 0x40 + 4 * d)) for d in range(16)])
+        w32(o, o.town(1) + 0x2C8, 0x4009E18 | 3 << 18)
+        for d in range(16):
+            w32(o, history + 0x40 + 4 * d, (1 << d) | 0x800 | (d % 0x1F) << 18)
+        for lag in (0, 5, 15, 16, 0xFF):
+            w8(o, table + 1, lag)
+            known(1, f'lag {lag}')
+        w32(o, history + 0xA08 + 4 * slot, 0)
+        known(1, 'the table\'s pointer 0')
+        w32(o, history + 0xA08 + 4 * slot, table)
+        w8(o, history + 0xA00 + slot, (player + 1) % merchants)
+        for t in range(towns):
+            known(t, 'no slot')
+        w8(o, history + 0xA00 + slot, player)
+        restore_fields(o, saved)
+    return during
+
+
 def player_op_text(*args):
     """player_ops's output as text."""
     import subprocess
@@ -9588,6 +9782,13 @@ SCENARIOS = {
     'town_battle_setup': Scenario(town_battle_setup, [0x611D80, 0x5FBFE0, 0x50CC90], 0, [
         '@5fc158', '@5fc136', '@5fc285', '@5fc2c2', '@5fc3d4', '@5fc69a', '@5fd483', '@5fca3a', '@5fc997',
         '@5fcd80', '@6000a9', '@6000f0']),
+    # Part 5: what the sea map's town symbols show (the town's situation as the player knows it, 0x535300).
+    'town_symbols': Scenario(town_symbols, [0x535300], 0, ['@53535a', '@535365', '@535380']),
+    # Part 5: the window's texts of a town battle with the player on a side (the viewer's messages).
+    'town_battle_texts': Scenario(town_battle_texts, [0x5FBFE0, 0x5FE7E0], 0, [
+        '@5fd1e1', '@5fd222', '@5fd176', '@5fd2a7', '@5fd30a', '@5fd36d', '@5fd3a0',
+        '@5ff5e8', '@5ff61c', '@5ff630', '@5ff643', '@5ff677', '@5ff69b', '@5ff6bb', '@5ff6e3', '@5ff6ee',
+        '@5ff716', '@5ff72a', '@5ff75b']),
     # Part 3: the town battles' steps (0x5FD510 and what it calls).
     'town_step_branches': Scenario(town_step_branches, [0x5FD510, 0x600770, 0x601C7B, 0x624950, 0x60130B, 0x621770,
                                                         0x60234C], 0, [

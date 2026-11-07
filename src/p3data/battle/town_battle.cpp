@@ -16,6 +16,7 @@
 #include "p3data/battle/battle_math.hpp"
 #include "p3data/battle/pirate_nests.hpp"
 #include "p3data/game_fixes.hpp"
+#include "p3data/game_texts.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -843,7 +844,8 @@ void Sailing::fn_60234c(size_t b, uint16_t ship) {
 // (with the storms near), the steps, and when both sides are the AI's
 // method +0x18 (0x600660). Without ships (or towers and defenders) the
 // battle is over at once (method +0x1C, battle/town_end.cpp). Left out: a
-// human side's texts and battle window (part 7).
+// human side's battle window (part 7); its text goes to the viewer
+// (town_attack_message).
 void Sailing::fn_5fbfe0(size_t b, uint16_t ship, uint8_t town) {
 	BattleGraph& g = save_.battles;
 	GlobalMemory& gl = save_.globals;
@@ -1188,10 +1190,15 @@ void Sailing::fn_5fbfe0(size_t b, uint16_t ship, uint8_t town) {
 	// (0x41D9B0, part 7), or with another battle on screen or its window open
 	// the operation 0x96 {0x96, [+0x662], the player, 1} and the player's
 	// sides' steps 0xFFFF. As the sea battles until part 7 (and the oracle,
-	// TOWN_BATTLE_WINDOW_JUMPS), the second: the computer fights it.
+	// TOWN_BATTLE_WINDOW_JUMPS), the second: the computer fights it. For the
+	// viewer, the window's text goes to the player's messages
+	// (town_attack_message, without the question).
 	const uint32_t player = gl.u32(0x6DFC14);
 	if (player != u16(0x35A) && player != u16(0x35C)) {
 		return;
+	}
+	if (texts_) {
+		player_messages_.push_back(town_attack_message(b, ship, town));
 	}
 	uint8_t op[0x14] = {};
 	const uint32_t fields[5] = {0x96, u16(0x662), player, 1, 0};
@@ -1202,6 +1209,69 @@ void Sailing::fn_5fbfe0(size_t b, uint16_t ship, uint8_t town) {
 			set16(0x15C + 2 * k, 0xFFFF);
 		}
 	}
+}
+
+// 0x5FD102..0x5FD3DD (in 0x5FBFE0, when the battle window can open): the
+// text of the battle's question to the local player, without the question.
+// The player attacks ([+0x35A]; the attacker's ship [esp+0x14] is `ship`):
+// «%s "%s" attacks the town of %s.» with «Your convoy» (side A's convoy
+// [+0x65E] of two ships or more: its first ship [+0xA] has a next [+0x6]) or
+// «Your <type>», the ship's name and the town's name (the table 0x6DDA00 by
+// the town's index, the letters' bug: tick::letter_town_name); at a nest
+// «%s "%s" attacks the hideout of the pirate %s %s.» with the nest's captain
+// ([+0x1E90], [+0x1E91], set by the setup). The player is attacked: «The
+// town of %s is under attack by %s "%s" %s.» with the town, «the convoy» (the
+// same test) or the ship's type as the winner (0x6A175C), its name and «of
+// the pirate %s %s», the captain [+0x42] of the guide [+0x10] of convoy
+// [+0x65E] by the captains' table (0x6DD7A0: [+0x2], [+0x3]), or «of an
+// unknown pirate» (even when the attacker is a merchant's raider). Left out,
+// as the game's busy path writes neither: the game's writes of [+0x1E90] and
+// [+0x1E91] here (0xFF for a town when the player attacks, the captain's when
+// attacked) and of the text into [+0x1310]. The game checks neither the
+// convoy [+0x65E] in the second case nor the first ship or the guide against
+// the number of ships: here «Your <type>» or the type, and the unknown pirate.
+std::string Sailing::town_attack_message(size_t b, uint16_t ship, uint8_t town) const {
+	const BattleGraph& g = save_.battles;
+	const GlobalMemory& gl = save_.globals;
+	const uint32_t ships = gl.u16(global::kShipCount);
+	auto raw = [&](GameText t, uint32_t plus = 0) { return texts_->raw(GameText(int(t) + int(plus))); };
+	auto u8 = [&](size_t o) { return g.get<uint8_t>(b, o); };
+	auto u16 = [&](size_t o) { return g.get<uint16_t>(b, o); };
+	const ShipMemory& s = save_.ships[ship].memory;
+	std::string name;
+	for (size_t i = 0x160; i < 0x180 && s.u8(i) != 0; ++i) {
+		name += char(s.u8(i));
+	}
+	const uint32_t type = s.u8(0xE) & 3;
+	const uint16_t c = u16(0x65E);
+	const bool in_convoy = c < save_.convoy_count();
+	bool two = false;
+	if (in_convoy) {
+		const uint16_t first = save_.convoys[c].u16(0xA);
+		two = first < ships && save_.ships[first].memory.u16(0x6) < ships;
+	}
+	if (gl.u32(0x6DFC14) == u16(0x35A)) {
+		const std::string who = two ? raw(GameText::BattleYourConvoy) : raw(GameText::BattleYourSnaikka, type);
+		const uint8_t at = u8(0x1E98);
+		if (at < gl.u32(0x6DE4B0)) {
+			return GameTexts::sprintf_raw(raw(GameText::TownAttacking), {who, name, tick::letter_town_name(save_, at)});
+		}
+		return GameTexts::sprintf_raw(raw(GameText::NestAttacking),
+			{who, name, game_first_name(save_, u8(0x1E90)), game_family_name(save_, u8(0x1E91))});
+	}
+	std::string pirate = raw(GameText::BattleOfAnUnknownPirate);
+	const uint16_t guide = in_convoy ? save_.convoys[c].u16(0x10) : 0xFFFF;
+	if (guide < ships) {
+		const uint16_t captain = save_.ships[guide].memory.u16(0x42);
+		if (captain < save_.captain_count() && captain < save_.captains.size()) {
+			const CaptainMemory& m = save_.captains[captain];
+			pirate = GameTexts::sprintf_raw(raw(GameText::BattleOfPirate),
+				{game_first_name(save_, m.u8(0x2)), game_family_name(save_, m.u8(0x3))});
+		}
+	}
+	return GameTexts::sprintf_raw(raw(GameText::TownAttacked),
+		{tick::letter_town_name(save_, town), two ? raw(GameText::BattleTheConvoyAttacking) : raw(GameText::BattleWinnerSnaikka, type),
+			name, pirate});
 }
 
 }  // namespace p3::data

@@ -2216,4 +2216,25 @@ uint32_t own_building_count(const SaveGame& save, uint32_t merchant, uint32_t to
 	return uint32_t(o.u16(0x2D4)) + o.u16(0x2D2) + 1;
 }
 
+uint32_t town_situation_known(const SaveGame& save, uint32_t town) {
+	constexpr uint32_t kHistory = 0x6DE588;
+	const GlobalMemory& g = save.globals;
+	if (town >= save.towns.size()) {
+		return 0;
+	}
+	const uint32_t now = save.towns[town].memory.u32(0x2C8) | 0x7E0000;
+	const uint32_t day = ((g.u32(0x6DE4B4) >> 8) & 0xF) + 0x10;
+	const uint32_t player = g.u32(0x6DFC14);
+	uint32_t slot = 0;
+	while (slot < 8 && g.u8(kHistory + 0xA00 + slot) != player) {
+		++slot;
+	}
+	uint32_t index = (day + 1) & 0xF;
+	if (slot < 8 && !save.player_towns[slot].empty()) {
+		const std::vector<uint8_t>& lag = save.player_towns[slot];
+		index = (day - (town < lag.size() ? lag[town] : 0)) & 0xF;
+	}
+	return g.u32(kHistory + 4 * (16 * town + index)) & now;
+}
+
 }  // namespace p3::data

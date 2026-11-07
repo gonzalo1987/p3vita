@@ -608,4 +608,27 @@ CitizenStats citizen_stats(const SaveGame& save, uint32_t town);
 // shading of the competition's buildings (the manual, figure 4-4: «Edificios»).
 uint32_t own_building_count(const SaveGame& save, uint32_t merchant, uint32_t town);
 
+// A town's event symbols (images/Ereignisse/page_glkarte01.bmp, TEX30009: 15 frames of 20 · 20; their tooltips
+// GameText::EventFamine..EventBoycott). The town view shows one for each bit of the town's [+0x2C8] in a row at
+// its top right (0x58BF3A, 0x5892D0: these bits in this order, from the right; the last two share a place) and
+// the sea map one by the town (0x44BFD0) from what the player knows of it (town_situation_known), the first of
+// kSeaMapEvents that is set, 20 pixels right of the shortage symbol.
+struct TownEventSymbol {
+	uint32_t bit;  // In the town's [+0x2C8].
+	int frame;  // Of TEX30009.
+};
+inline constexpr TownEventSymbol kTownViewEvents[8] = {{0x800, 9}, {0x8000, 11}, {0x8, 10}, {0x10, 8}, {0x1000, 6},
+	{0x4000000, 14}, {0x400, 13}, {0x200, 12}};
+inline constexpr TownEventSymbol kSeaMapEvents[7] = {{0x200, 12}, {0x4000000, 14}, {0x400, 13}, {0x10, 8},
+	{0x8000, 11}, {0x8, 10}, {0x800, 9}};
+
+// 0x535300 (on the towns' history 0x6DE588; a town): the town's situation as the local player knows it, which the
+// sea map draws (0x44BFD0: its shortage symbol, the famine 0x1000 (frame 6), or a ware short in bits 18..22 (0x1F
+// none: the ware symbols, images/Ereignisse/Ware_fehlt.bmp, TEX30040), or the weapons 0x10000 (frame 5); and the
+// event symbol, kSeaMapEvents) and its tooltips (0x452973): the town's [+0x2C8] | 0x7E0000 and its entry of the
+// history ([+0x40 · town + 4 · day], 0x535450) of the world's day [0x6DE4B4] >> 8 & 0xF, plus 16, less the
+// player's lag for the town (the byte of his slot's table, SaveGame::player_towns: his slot is the one of
+// [+0xA00..+0xA07] that is the local player), modulo 16; with no slot or table, of the day after.
+uint32_t town_situation_known(const SaveGame& save, uint32_t town);
+
 }  // namespace p3::data

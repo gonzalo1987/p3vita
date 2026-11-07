@@ -30,6 +30,8 @@ struct SeaMapTown {
 	int name_x = 0;  // NamenXPos/YPos.
 	int name_y = 0;
 	bool name_right_aligned = false;  // NameLinksOderRechtsBuendig=r.
+	int event_x = 0;  // EreignisSymbolXPos/YPos: the sea map's shortage symbol, the event symbol 20 to its right.
+	int event_y = 0;
 	int approach_x = 0;  // AnfahrtXPos/YPos: donde atracan los barcos; las rutas empiezan y acaban aquí.
 	int approach_y = 0;
 };

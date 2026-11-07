@@ -5,8 +5,9 @@
 // with operation 0xB4 (0x542E40: a new pirate when the nest is destroyed).
 //
 // Left out, as at sea until piece 7: a human side's window at the end
-// ([+0x1310] and [+0x12EC], 0x41D9B0: only for a side the player directs) and
-// the cannon balls (only fired with a human side).
+// ([+0x1310] and [+0x12EC], 0x41D9B0: for a side the player directs, or a
+// battle over at its setup) and the cannon balls (only fired with a human
+// side). The window's text goes to the viewer (town_end_message).
 
 #include <cstring>
 #include <string>
@@ -280,11 +281,45 @@ void Sailing::fn_5fe7e0(size_t b, bool lost) {
 		report[t] += lines[1 - t];
 	}
 	// The letters 0x29 (0x5FF4C5..0x5FF570) to each side of the computer that is
-	// a merchant; a human side gets the battle's window instead (part 7).
+	// a merchant; a human side gets the battle's window instead (0x5FF575..
+	// 0x5FF809: only the first two sides, of the local player, not the losing
+	// side when both have one owner, not when [+0xAC4] is 2): its text goes to
+	// the viewer (town_end_message), the window and its writes ([+0x1310],
+	// [+0x12EC], [+0x12E9], [+0x12EA], [0x6E59CD]) are part 7. GAME BUG: the
+	// defenders winning a battle that had no attacker leave the loop (0x5FF68A
+	// → 0x5FF829): the sides after them get no letter (roadmap, «Corregir los
+	// fallos del juego»; unreachable). For the viewer, a side of the player that the
+	// computer fought (operation 0x96) also gets the text the window would have.
+	const uint32_t player = gl.u32(0x6DFC14);
+	auto window_side = [&](uint32_t k) {
+		return k < 2 && (u16(0x35A) != u16(0x35C) || u8(0x559 + size_t(k)) == (lost ? 1 : 0)) &&
+			u16(0x35A + 2 * size_t(k)) == player && u8(0xAC4) != 2;
+	};
 	for (uint32_t k = 0; k < sides; ++k) {
 		const uint16_t m = u16(0x35A + 2 * size_t(k));
-		if (m >= merchants || u8(0x5D + size_t(k)) == 0) {
+		if (m >= merchants) {
 			continue;
+		}
+		if (u8(0x5D + size_t(k)) == 0) {
+			if (!window_side(k)) {
+				continue;
+			}
+			if (lost && u8(0x559 + size_t(k)) == 1 && u8(0xAC4) == 3) {
+				break;
+			}
+			if (texts_) {
+				const std::string message = town_end_message(b, k, lost, loot);
+				if (!message.empty()) {
+					player_messages_.push_back(message);
+				}
+			}
+			continue;
+		}
+		if (texts_ && window_side(k)) {
+			const std::string message = town_end_message(b, k, lost, loot);
+			if (!message.empty()) {
+				player_messages_.push_back(message);
+			}
 		}
 		letter.entry.u8(0x4) = 0x29;
 		letter.entry.u8(0x5) = is_town ? town : save_.merchants[m].memory.u8(0x19);
@@ -299,6 +334,54 @@ void Sailing::fn_5fe7e0(size_t b, bool lost) {
 	}
 	g.set<uint8_t>(b, 0x5C, 1);
 	g.set<uint16_t>(b, 0x15C, u8(0xAC8) != 0 ? 1 : 0xFA);
+}
+
+// 0x5FF5B6..0x5FF76D (in 0x5FE7E0, for a human side `side` of the local
+// player): the text of the battle's end window, by whether the side's team
+// ([+0x559 + side]) is the winner (`lost` is the winning team) and the end's
+// kind [+0xAC4] (0 a side fled, 1 sunk or fallen, 3 no attacker or no
+// defence; 2, a capture, has none, nor above 3, where the game shows the old
+// text). The attackers won: «...relieved the city's bank of %d» (a nest: «...
+// reduced the pirates nest to ashes and have liberated %d»), with 3 «The town
+// is not being defended ... %d» when [+0x1E94] (the plunder paid) or «...only
+// recently been attacked...» (the town's texts at a nest too); the defenders
+// won: «...put the attackers to flight...» (0) or «...beaten off the
+// attackers...» (1), none with 3. The side lost: with 3 «The captain refuses
+// to attack a town without suitable armament.»; a defender «You fled with your
+// outrigger...» (0) or «You have lost your outrigger...» (1); an attacker «Due
+// to your flight...» or «The town's defence was too well prepared...» (a
+// nest's own two). The loot is 0x5FE7E0's [esp+0x14].
+std::string Sailing::town_end_message(size_t b, size_t side, bool lost, uint32_t loot) const {
+	const BattleGraph& g = save_.battles;
+	auto u8 = [&](size_t o) { return g.get<uint8_t>(b, o); };
+	const uint8_t kind = u8(0xAC4);
+	if (kind == 2 || kind > 3) {
+		return std::string();
+	}
+	const bool is_town = u8(0x1E98) < save_.globals.u32(kTownCount);
+	const bool won = u8(0x559 + side) == (lost ? 1 : 0);
+	auto raw = [&](GameText t) { return texts_->raw(t); };
+	auto with_loot = [&](GameText t) { return GameTexts::sprintf_raw(raw(t), {std::to_string(int32_t(loot))}); };
+	if (won && !lost) {
+		if (kind == 3) {
+			return g.get<uint16_t>(b, 0x1E94) != 0 ? with_loot(GameText::TownEndUndefended)
+												 : raw(GameText::TownEndRecentlyPlundered);
+		}
+		return with_loot(is_town ? GameText::TownEndBrokeThrough : GameText::NestEndAshes);
+	}
+	if (won) {
+		return kind == 3 ? std::string() : raw(kind == 0 ? GameText::TownEndPutToFlight : GameText::TownEndSaved);
+	}
+	if (kind == 3) {
+		return raw(GameText::TownEndNoArmament);
+	}
+	if (!lost) {
+		return raw(kind == 0 ? GameText::TownEndOutriggerFled : GameText::TownEndOutriggerLost);
+	}
+	if (kind == 0) {
+		return raw(is_town ? GameText::TownEndAttackFled : GameText::NestEndFled);
+	}
+	return raw(is_town ? GameText::TownEndTooWellDefended : GameText::NestEndPrepared);
 }
 
 // 0x602990 (method +0x4 of a town battle; free) → the destructor 0x5FB9F0:

@@ -875,6 +875,86 @@ SDL_Texture* load_texture(SDL_Renderer* renderer, const CprArchive& archive, con
 // town waits for it with its notice.
 constexpr int kSeaMapRowsPerFrame = 240;
 
+// A town's event symbols (TEX30009 of textures.ini: 15 frames of 20 · 20, six a row, the last three in the third
+// row from its second column; player_actions.hpp kTownViewEvents, kSeaMapEvents) and the wares' (TEX30040: 20
+// frames, five a row), the sea map's symbol of a ware short.
+constexpr char kEventSymbols[] = "images/Ereignisse/page_glkarte01.bmp";
+constexpr char kWareSymbols[] = "images/Ereignisse/Ware_fehlt.bmp";
+constexpr int kEventSymbolSize = 20;
+
+SDL_Rect event_symbol_frame(int frame) {
+	if (frame >= 12) {
+		return {(frame - 11) * kEventSymbolSize, 2 * kEventSymbolSize, kEventSymbolSize, kEventSymbolSize};
+	}
+	return {(frame % 6) * kEventSymbolSize, (frame / 6) * kEventSymbolSize, kEventSymbolSize, kEventSymbolSize};
+}
+
+SDL_Rect ware_symbol_frame(int ware) {
+	return {(ware % 5) * kEventSymbolSize, (ware / 5) * kEventSymbolSize, kEventSymbolSize, kEventSymbolSize};
+}
+
+// An event symbol's tooltip (0x4A6290, 0x452973), the game's text (the viewer's in its language without the exe).
+std::string town_event_tooltip(uint32_t bit) {
+	switch (bit) {
+	case 0x800:
+		return game_text(GameText::EventPirates, tr("La ciudad está siendo atacada por piratas.", "The town is being attacked by pirates"));
+	case 0x10:
+		return game_text(GameText::EventSiege, tr("La ciudad está siendo asediada.", "The town is under siege"));
+	case 0x8:
+		return game_text(GameText::EventPlague, tr("Hay una epidemia de peste en la ciudad.", "There is an outbreak of the plague in the city"));
+	case 0x8000:
+		return game_text(GameText::EventFire, tr("Hay un incendio en la ciudad.", "Fire in the town"));
+	case 0x1000:
+		return game_text(GameText::EventFamine, tr("Hay hambruna en la ciudad", "There is famine in the town"));
+	case 0x10000:
+		return game_text(GameText::EventWeapons, tr("Hacen falta más armas en la ciudad.", "Weapons are needed in the city"));
+	case 0x4000000:
+		return game_text(GameText::EventFrozen, tr("Las aguas del puerto están completamente heladas", "The harbour is frozen solid"));
+	case 0x200:
+		return game_text(GameText::EventBlockade, tr("El puerto está bloqueado", "The harbour is blockaded"));
+	case 0x400:
+		return game_text(GameText::EventBoycott, tr("La ciudad está sufriendo un boicot", "The town is being boycotted"));
+	}
+	return std::string();
+}
+
+// The town view's event symbols (0x589360, 0x5892D0): fixed places in a row at the top right of the town's part,
+// from the right one at its edge, then 32 and 39 pixels apart (the last two in one place); twice the game's size
+// for the finger, under the top bar.
+constexpr int kTownEventScale = 2;
+
+SDL_Rect town_event_rect(int slot, int town_right) {
+	const int from_right = slot == 0 ? kEventSymbolSize : 52 + 39 * (std::min(slot, 6) - 1);
+	const int size = kEventSymbolSize * kTownEventScale;
+	return {town_right - 6 - from_right * kTownEventScale, kBarHeight + 8, size, size};
+}
+
+// The town's symbol under (x, y): its bit, or 0.
+uint32_t town_event_at(uint32_t flags, int town_right, int x, int y, SDL_Rect& where) {
+	for (int slot = 7; slot >= 0; --slot) {
+		const SDL_Rect r = town_event_rect(slot, town_right);
+		if ((flags & kTownViewEvents[slot].bit) && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) {
+			where = r;
+			return kTownViewEvents[slot].bit;
+		}
+	}
+	return 0;
+}
+
+// A symbol for each of the town's bits that is set (0x58BF3A: the town's [+0x2C8] as it is).
+void draw_town_events(SDL_Renderer* renderer, SDL_Texture* symbols, uint32_t flags, int town_right) {
+	if (!symbols) {
+		return;
+	}
+	for (int slot = 0; slot < 8; ++slot) {
+		if (flags & kTownViewEvents[slot].bit) {
+			const SDL_Rect src = event_symbol_frame(kTownViewEvents[slot].frame);
+			const SDL_Rect dst = town_event_rect(slot, town_right);
+			SDL_RenderCopy(renderer, symbols, &src, &dst);
+		}
+	}
+}
+
 // Mapa del mar: la imagen del juego con las ciudades y los barcos de la
 // partida, en las mismas coordenadas que guarda la partida.
 //
@@ -891,6 +971,8 @@ public:
 		: renderer_(renderer), archive_(archive), towns_(load_sea_map_towns(archive)) {
 		start_map();
 		symbols_ = load_texture(renderer, archive, kTownSymbols);
+		events_ = load_texture(renderer, archive, kEventSymbols);
+		wares_ = load_texture(renderer, archive, kWareSymbols);
 		marker_ = load_texture(renderer, archive, kShipMarker, &marker_width_, &marker_height_);
 		for (size_t i = 0; i < ships_.size(); ++i) {
 			ships_[i] = load_texture(renderer, archive, kShipSprites[i]);
@@ -898,7 +980,7 @@ public:
 	}
 
 	~SeaMapView() {
-		for (SDL_Texture* texture : {map_, symbols_, marker_}) {
+		for (SDL_Texture* texture : {map_, symbols_, events_, wares_, marker_}) {
 			SDL_DestroyTexture(texture);
 		}
 		for (SDL_Texture* texture : ships_) {
@@ -996,6 +1078,21 @@ public:
 			}
 		}
 
+		// The towns' symbols (0x44BFD0), from what the player knows of each town (town_situation_known): its shortage
+		// and, 20 pixels to its right, its event.
+		for (size_t i = 0; i < save.towns.size(); ++i) {
+			const SeaMapTown& t = towns_[size_t(save.towns[i].town_id())];
+			const TownSymbols s = symbols_of(save, i);
+			SDL_Rect dst = {t.event_x - camera_x, t.event_y - camera_y, kEventSymbolSize, kEventSymbolSize};
+			if (s.shortage_texture) {
+				SDL_RenderCopy(renderer_, s.shortage_texture, &s.shortage, &dst);
+			}
+			dst.x += kEventSymbolSize;
+			if (s.event_bit && events_) {
+				SDL_RenderCopy(renderer_, events_, &s.event, &dst);
+			}
+		}
+
 		if (course && course->route && (course->status() == kShipSailing || course->status() == kShipLeaving)) {
 			std::vector<SDL_Point> line = {{(course->x() >> 16) - camera_x, (course->y() >> 16) - camera_y}};
 			for (size_t i = course->route_index(); i < course->route->size(); ++i) {
@@ -1042,7 +1139,78 @@ public:
 		}
 	}
 
+	// The tooltip of a town's symbol at the map's point (x, y), with a margin for the finger (0x452973: the game's
+	// box is the symbol's), and where the symbol is on the screen; empty if none there.
+	std::string symbol_tooltip_at(const SaveGame& save, int x, int y, int camera_x, int camera_y, SDL_Rect& where) const {
+		constexpr int kMargin = 6;
+		for (size_t i = 0; i < save.towns.size(); ++i) {
+			const SeaMapTown& t = towns_[size_t(save.towns[i].town_id())];
+			const TownSymbols s = symbols_of(save, i);
+			for (int k = 0; k < 2; ++k) {
+				const int sx = t.event_x + k * kEventSymbolSize;
+				const bool there = k == 0 ? s.shortage_texture != nullptr : s.event_bit != 0;
+				if (!there || x < sx - kMargin || x >= sx + kEventSymbolSize + kMargin || y < t.event_y - kMargin ||
+					y >= t.event_y + kEventSymbolSize + kMargin) {
+					continue;
+				}
+				where = {sx - camera_x, t.event_y - camera_y, kEventSymbolSize, kEventSymbolSize};
+				if (k == 1) {
+					return town_event_tooltip(s.event_bit);
+				}
+				if (s.ware < 0) {
+					return town_event_tooltip(s.shortage_bit);
+				}
+				// The ware's name, a space and «needed» (0x452C87; two texts by 0x66E0D4, the same words).
+				static constexpr uint8_t kFirst[20] = {1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0};
+				return game_text(GameText(int(GameText::WareGrain) + s.ware), std::string()) + " " +
+					game_text(kFirst[s.ware] ? GameText::EventWareNeeded : GameText::EventWareNeededOther,
+						tr(": reservas agotadas", "needed"));
+			}
+		}
+		return std::string();
+	}
+
 private:
+	// A town's two symbols on the sea map (0x44BFD0): the shortage, the famine 0x1000 (frame 6), else a ware short
+	// in bits 18..22 (0x1F: none; the wares' symbols), else the weapons 0x10000 (frame 5); and the first event of
+	// kSeaMapEvents that is set.
+	struct TownSymbols {
+		SDL_Texture* shortage_texture = nullptr;
+		SDL_Rect shortage{};
+		uint32_t shortage_bit = 0;
+		int ware = -1;
+		uint32_t event_bit = 0;
+		SDL_Rect event{};
+	};
+	TownSymbols symbols_of(const SaveGame& save, size_t town) const {
+		TownSymbols s;
+		const uint32_t v = town_situation_known(save, uint32_t(town));
+		if (v & 0x1000) {
+			s.shortage_texture = events_;
+			s.shortage = event_symbol_frame(6);
+			s.shortage_bit = 0x1000;
+		} else if ((v & 0x7C0000) != 0x7C0000) {
+			const int ware = int(v >> 18) & 0x1F;
+			if (ware < 20) {
+				s.shortage_texture = wares_;
+				s.shortage = ware_symbol_frame(ware);
+				s.ware = ware;
+			}
+		} else if (v & 0x10000) {
+			s.shortage_texture = events_;
+			s.shortage = event_symbol_frame(5);
+			s.shortage_bit = 0x10000;
+		}
+		for (const TownEventSymbol& e : kSeaMapEvents) {
+			if (v & e.bit) {
+				s.event_bit = e.bit;
+				s.event = event_symbol_frame(e.frame);
+				break;
+			}
+		}
+		return s;
+	}
+
 	// The map's texture, empty: an 8-bit BMP is filled by step; another image
 	// is loaded whole now.
 	void start_map() {
@@ -1073,6 +1241,8 @@ private:
 	std::vector<uint8_t> chunk_;
 	SDL_Texture* map_ = nullptr;
 	SDL_Texture* symbols_ = nullptr;
+	SDL_Texture* events_ = nullptr;  // The towns' event symbols (TEX30009).
+	SDL_Texture* wares_ = nullptr;  // The wares' symbols (TEX30040).
 	SDL_Texture* marker_ = nullptr;
 	std::array<SDL_Texture*, 4> ships_{};
 	int width_ = 0;
@@ -3463,6 +3633,8 @@ struct PanelArt {
 	SDL_Texture* coins = nullptr;
 	// The minimap's arrow (bttn_schiffskarte.bmp, TEX13: 19 · 70, frames neutral, pressed, off, hover).
 	SDL_Texture* map_switch = nullptr;
+	// The town view's event symbols (images/Ereignisse/page_glkarte01.bmp, TEX30009), at its top right.
+	SDL_Texture* events = nullptr;
 	static constexpr int kHourglassFrames = 32;
 	SDL_Texture* hourglass[kHourglassFrames] = {};
 
@@ -3510,6 +3682,7 @@ struct PanelArt {
 		people = load_texture(renderer, archive, "images/einwohner_haus_TP.tga");
 		coins = load_texture(renderer, archive, "images/frames_konto/konto0001.tga");
 		map_switch = load_texture(renderer, archive, "images/bttn_schiffskarte.bmp");
+		events = load_texture(renderer, archive, kEventSymbols);
 		for (int k = 0; k < kHourglassFrames; ++k) {
 			char path[64];
 			std::snprintf(path, sizeof(path), "images/frames_sanduhr/sanduhr00%02d.tga", k + 1);
@@ -3519,7 +3692,7 @@ struct PanelArt {
 	~PanelArt() {
 		for (SDL_Texture* t : {icons, bar, plank, wood, parchment, build_tabs, ships[0], ships[1], ships[2], ships[3],
 				 ship_buttons, morale, barrel, barrel_mask, bonus, deck, backpics[0], backpics[1], backpics[2], backpics[3],
-				 letters, paper, seal, bar_left, bar_right, people, coins, map_switch}) {
+				 letters, paper, seal, bar_left, bar_right, people, coins, map_switch, events}) {
 			if (t) {
 				SDL_DestroyTexture(t);
 			}
@@ -7682,6 +7855,12 @@ int main(int argc, char** argv) {
 		const PanelLayout panel_layout(side.folded);
 		const int town_width = panel_shown ? panel_layout.town_right : kScreenWidth;
 		g_town_right = town_width;
+		// Whether (x, y) is on one of the town view's event symbols (draw_town_events).
+		auto on_town_event = [&](int x, int y) {
+			SDL_Rect where{};
+			return selection.mode == Mode::Saved && has_save && town_index >= 0 && size_t(town_index) < save.towns.size() &&
+				town_event_at(save.towns[size_t(town_index)].memory.u32(0x2C8), town_width, x, y, where) != 0;
+		};
 		if (!panel_shown) {
 			side.focus = -1;
 		}
@@ -8141,10 +8320,10 @@ int main(int argc, char** argv) {
 				side.ship_ui.ship = size_t(side.ship);
 				ship_now = place_view(save, town_index, side.ship_ui);
 				// «Pirate» makes the ship raid: a town it reaches is attacked (the battle in a town, the battles'
-				// piece 6, which p3vita hasn't yet: seen with the scenario pirate_sailing in save 5), and it may attack
-				// ships (piece 7). Until then the viewer shows it off; 0x0D and 0x518750 are rewritten and checked.
-				constexpr bool kPirateModeReady = false;
-				ship_pirate_ok = kPirateModeReady && sailing && can_turn_pirate(save, *sailing, side.ship);
+				// piece 6) and it may attack ships. Until piece 7 the computer fights those battles for the player
+				// (as when he answers no to the battle's question), with the game's texts in the messages window
+				// (the user's choice, 2026-11-07). 0x0D and 0x518750 are rewritten and checked.
+				ship_pirate_ok = sailing && can_turn_pirate(save, *sailing, side.ship);
 				const int rows = ship_goods_rows(save, side.ship);
 				const ShipMenuLayout ship_layout(panel_layout.room, small_text->line_height());
 				side.cargo_first = std::clamp(side.cargo_first, 0, std::max(0, rows - ship_layout.cargo_rows));
@@ -9544,9 +9723,11 @@ int main(int argc, char** argv) {
 						}
 					}
 				} else if (!touch_on_panel && touch_moved < kTapDistance && selection.mode == Mode::Saved && has_save &&
-					save.player >= 0 && small_text && !in_menu && !in_mail && !messages.open && !end_window.open) {
+					save.player >= 0 && small_text && !in_menu && !in_mail && !messages.open && !end_window.open &&
+					!on_town_event(touch_start.x, touch_start.y)) {
 					// A tap in the town: a building to go into, as in the game, or one
-					// of the player's own (demolish it or auction it).
+					// of the player's own (demolish it or auction it); not on an event
+					// symbol, which only shows its tooltip while the finger is on it.
 					const int building = view->place_at(camera_x + touch_start.x, camera_y + touch_start.y);
 					const SDL_Point cell = TownView::cell_at(camera_x + touch_start.x, camera_y + touch_start.y);
 					const int own = own_building_at(save, uint32_t(town_index), cell.x, cell.y, uint32_t(save.player));
@@ -9734,6 +9915,10 @@ int main(int argc, char** argv) {
 					std::clamp(b.y - camera_y - h - 2, kBarHeight + 2, kScreenHeight - h - 4), w, h};
 				draw_panel_box(renderer, box);
 				small_text->draw(name, box.x + padding, box.y + padding / 2, kTextColor);
+			}
+			if (selection.mode == Mode::Saved && has_save && panel_art) {
+				// The town's event symbols (0x58BF3A): one for each bit of its [+0x2C8] that is set, at the top right.
+				draw_town_events(renderer, panel_art->events, save.towns[size_t(town_index)].memory.u32(0x2C8), town_width);
 			}
 			if (panel_shown) {
 				draw_side_panel(renderer, *small_text, *panel_art, side, panel_state(save), view.get(),
@@ -9983,6 +10168,20 @@ int main(int argc, char** argv) {
 			if (tip) {
 				draw_tooltip(renderer, *small_text, tooltip_text(tip), where);
 			}
+		}
+		if (small_text && has_save && !in_menu && finger_down && touch_moved < kTapDistance && touch_start.x < town_width &&
+			touch_start.y >= kBarHeight) {
+			// A town's event symbol's tooltip, under the finger: in the town view (0x4A6290), on the sea map (0x452973).
+			SDL_Rect where{};
+			std::string tip;
+			if (selection.mode == Mode::Saved) {
+				tip = town_event_tooltip(town_event_at(save.towns[size_t(town_index)].memory.u32(0x2C8), town_width,
+					touch_start.x, touch_start.y, where));
+			} else if (selection.mode == Mode::Sea && sea && sea->ready()) {
+				tip = sea->symbol_tooltip_at(save, camera_x + touch_start.x, camera_y + touch_start.y, camera_x, camera_y,
+					where);
+			}
+			draw_tooltip(renderer, *small_text, tip, where);
 		}
 		if (small_text) {
 			// The notices still in time, one under another (with the mailbox

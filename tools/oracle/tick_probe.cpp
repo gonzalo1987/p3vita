@@ -1276,7 +1276,14 @@ int main(int argc, char** argv) {
 		if (sailing) {
 			for (const std::string& message : sailing->take_player_messages()) {
 				if (print_messages) {
-					std::printf("message (tick %u): %s\n", unsigned(call.tick), message.c_str());
+					// On one line: a new line as «\n» (the game's texts have no such pair of their own); with
+					// the call's esp (a call made inside another recorded call has a lower one).
+					std::string line;
+					for (const char c : message) {
+						line += c == '\n' ? std::string("\\n") : std::string(1, c);
+					}
+					std::printf("message (tick %u, %#x, esp %#x): %s\n", unsigned(call.tick), unsigned(call.function),
+						unsigned(call.esp), line.c_str());
 				}
 			}
 		}

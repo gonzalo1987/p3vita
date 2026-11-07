@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "p3data/game_memory.hpp"
 #include "p3data/hanse_tasks.hpp"
+#include "p3data/player_actions.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -134,6 +136,89 @@ bool pirate_attack(SaveGame& save) {
 	g.u16(kPirateRange) = 0xFFFF;
 	tick::events_detail::fn_4d8dd0(save);
 	return true;
+}
+
+// A town battle in Lübeck, the town the viewer opens (the battles' piece 6), as town_end_branches of
+// tools/oracle/retouch_unchecked.py makes a raider arrive: the player's first ship is the town's guard ship
+// ([+0x994]); the first AI merchant's ship sailing alone turns raider (operation 0x0D with 1, 0x5386C0) and gets a
+// route of its own of one point, the town's approach point (StadtDaten.ini AnfahrtXPos/YPos), where it is put: at
+// the next tick it arrives and attacks the town (0x506F33), the player's ship defending it.
+bool town_attack(SaveGame& save) {
+	const uint16_t guard = save.merchants[size_t(save.player)].memory.u16(0xE);
+	uint8_t town = 0xFF;
+	for (size_t i = 0; i < save.towns.size(); ++i) {
+		if (save.towns[i].town_id() == 14) {  // Lübeck (main.cpp kLuebeck)
+			town = uint8_t(i);
+		}
+	}
+	if (town >= save.towns.size() || guard >= save.ships.size()) {
+		return false;
+	}
+	const uint16_t convoys = save.globals.u16(global::kShips + 0xF6);
+	for (size_t i = 0; i < save.ships.size(); ++i) {
+		SavedShip& s = save.ships[i];
+		if (!s.in_use() || s.owner() >= save.merchants.size() || int(s.owner()) == save.player || s.status() != 0xF ||
+			s.convoy() < convoys) {
+			continue;
+		}
+		const uint32_t fields[3] = {0x0D, uint32_t(i), 1};
+		uint8_t op[0x14] = {};
+		std::memcpy(op, fields, sizeof(fields));
+		tick::fn_5386c0(save, op);
+		if (s.memory.u8(0x15C) != 1) {
+			continue;
+		}
+		const uint32_t entry = 0x6DDB90 + 0x34 * uint32_t(save.globals.u8(0x6DE4B8 + town));
+		const int16_t ax = int16_t(save.globals.s32(entry + 0x20));
+		const int16_t ay = int16_t(save.globals.s32(entry + 0x24));
+		// Two points (where it was and the approach point): at the end of a route of one point a raider stays at
+		// sea instead of attacking (Sailing, the route's end).
+		s.set_route(std::make_shared<SeaRoute>(SeaRoute{MapPoint{s.memory.s16(0x1E), s.memory.s16(0x22)}, MapPoint{ax, ay}}));
+		s.town_route = false;
+		s.own_route() = 1;
+		s.route_index() = 1;
+		s.memory.u8(0x38) = town;
+		s.memory.u32(0x1C) = uint32_t(uint16_t(ax)) << 16 | 0x7FFF;
+		s.memory.u32(0x20) = uint32_t(uint16_t(ay)) << 16 | 0x7FFF;
+		s.memory.u32(0x28) = 0;
+		s.memory.u32(0x2C) = 0;
+		save.towns[town].memory.u16(0x994) = guard;
+		return true;
+	}
+	return false;
+}
+
+// The towns' event symbols, to look at them (the battles' piece 6, part 5): Lübeck with the eight bits of the town
+// view's symbols in its [+0x2C8] (player_actions.hpp kTownViewEvents); and for the sea map, from the first other
+// town on, one event of kSeaMapEvents each and as shortage the famine, the ware 3 short (bits 18..22) and the
+// weapons, also in the 16 days of the towns' history (0x6DE588), so that the player knows them whatever his lag.
+// Only for the eyes: the towns aren't really so.
+bool town_events(SaveGame& save) {
+	constexpr uint32_t kHistory = 0x6DE588;
+	constexpr uint32_t kNoWare = 0x7C0000;
+	uint32_t all = 0x1000 | 0x10000;
+	for (const TownEventSymbol& e : kTownViewEvents) {
+		all |= e.bit;
+	}
+	size_t k = 0;
+	for (size_t i = 0; i < save.towns.size(); ++i) {
+		uint32_t& flags = save.towns[i].memory.u32(0x2C8);
+		uint32_t history = 0;
+		if (save.towns[i].town_id() == 14) {  // Lübeck (main.cpp kLuebeck)
+			flags = (flags & ~all) | (all & ~0x10000u);
+			history = flags | kNoWare;
+		} else if (k < 7) {
+			flags = (flags & ~all) | kSeaMapEvents[k].bit | (k == 0 ? 0x1000 : k == 2 ? 0x10000 : 0);
+			history = flags | (k == 1 ? 3u << 18 : kNoWare);
+			++k;
+		} else {
+			continue;
+		}
+		for (uint32_t d = 0; d < 16; ++d) {
+			save.globals.u32(kHistory + 0x40 * uint32_t(i) + 4 * d) = history;
+		}
+	}
+	return k > 0;
 }
 
 // The player's ships in port, with half their hull (for the shipyard's repairs).
@@ -282,6 +367,10 @@ const char kDebugStatesHelp[] =
 	"  election-tomorrow  the election of the Alderman at the start of the next day\n"
 	"  pirate-attack  the player's first ship sails and pirates attack it two days\n"
 	"              later (event 0x1E): a sea battle against the player\n"
+	"  town-attack  an AI raider attacks Lübeck at the next tick, the player's first\n"
+	"              ship its guard ship: a town battle against the player\n"
+	"  town-events  Lübeck with the eight event symbols of the town view, and towns\n"
+	"              with each of the sea map's (only to look at them)\n"
 	"  damaged     the player's ships in port with half their hull (the shipyard)\n"
 	"  tavern-captain  a free captain in the tavern of the player's first ship's town\n"
 	"  convoy-leader  the player's first ship in port fit to guide a convoy\n"
@@ -325,6 +414,16 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "pirate-attack") {
 			if (!pirate_attack(save)) {
 				error = "the player's first ship isn't in a town, or the save has no events";
+				return false;
+			}
+		} else if (state == "town-attack") {
+			if (!town_attack(save)) {
+				error = "the player has no ship, or no AI ship sails alone";
+				return false;
+			}
+		} else if (state == "town-events") {
+			if (!town_events(save)) {
+				error = "the save has no other town than Lübeck";
 				return false;
 			}
 		} else if (state == "alderman") {

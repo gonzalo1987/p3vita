@@ -130,7 +130,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from save_oracle import (EXPEDITIONS, FILE, SENTINEL, SEPARATOR, SHIPS, STACK, STACK_SIZE, TOWN_TABLE, WORLD,  # noqa: E402
                          SaveOracle)
 from unicorn import UC_HOOK_CODE, UcError  # noqa: E402
-from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESP  # noqa: E402
+from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESI, UC_X86_REG_ESP  # noqa: E402
 
 TOWN_TICK = 0x51BA10
 MERCHANT_TICK = 0x4F7BB0  # thiscall sobre el comerciante, con su índice
@@ -259,6 +259,16 @@ TEXT_INITIALIZERS = (0x46BD80, 0x46BFC0)
 BATTLE_WINDOW_JUMPS = {0x60659B: 0x606BAE, 0x606E7E: 0x606EA5, 0x606FEA: 0x607011, 0x60CA4E: 0x60CA6F,
                        # a town battle's setup 0x5FBFE0 (piece 6): the same busy path (0x96 with 1)
                        0x5FD0E7: 0x5FD483}
+# The town battle's end window for a human side of the local player (0x5FE7E0: 0x5FF5B6, past the side's
+# checks; the text written into [+0x1310] at 0x5FF770, then the window's description [+0x12EC], 0x41D9B0 on
+# *0x6CBB10, [+0x12E9], [+0x12EA] and [0x6E59CD]). p3vita composes the text for the viewer only
+# (Sailing::town_end_message) and writes none of it until piece 7, so with --pirates the oracle prints the
+# game's text («town battle end window: ...», to compare with tick_probe --messages), puts [+0x1310] back as it
+# was at 0x5FF5B6 and goes on at 0x5FF810, the next side (a battle over at its setup reaches it with the
+# player's raider at an undefended town).
+TOWN_END_WINDOW = (0x5FF5B6, 0x5FF770, 0x5FF810)
+TOWN_END_TEXT = 0x1310
+TOWN_END_TEXT_SIZE = 0x200
 NO_DISBAND_JUMP = {0x505FF1: 0x506029}
 # 0x50D0C0 (thiscall on the ships object, a ship): the ship back in its place
 # in the list by x. A pirate convoy left without a guide (its guide taken in a
@@ -673,6 +683,9 @@ class TownOracle(SaveOracle):
                     self.uc.hook_add(UC_HOOK_CODE, self._nest_attack_head, begin=NEST_TASK_ENTRY, end=NEST_TASK_ENTRY)
                     for address, target in jumps.items():
                         self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
+                    save_at, text_at, _ = TOWN_END_WINDOW
+                    self.uc.hook_add(UC_HOOK_CODE, self._town_end_window, begin=save_at, end=save_at)
+                    self.uc.hook_add(UC_HOOK_CODE, self._town_end_window, begin=text_at, end=text_at)
                 if storms:
                     for address, target in STORM_UI_JUMPS.items():
                         self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
@@ -770,6 +783,19 @@ class TownOracle(SaveOracle):
 
     def _jump(self, uc, address, size, target):
         uc.reg_write(UC_X86_REG_EIP, target)
+
+    def _town_end_window(self, uc, address, size, user_data):
+        # TOWN_END_WINDOW: keep [+0x1310] at the human side's branch; at the text, print it, put it back, skip
+        # the window.
+        save_at, text_at, next_side = TOWN_END_WINDOW
+        b = uc.reg_read(UC_X86_REG_ESI)
+        if address == save_at:
+            self._town_end_kept = bytes(uc.mem_read(b + TOWN_END_TEXT, TOWN_END_TEXT_SIZE))
+            return
+        text = bytes(uc.mem_read(b + TOWN_END_TEXT, TOWN_END_TEXT_SIZE)).split(b'\0')[0].decode('latin-1')
+        print(f'town battle end window: {text!r}')
+        uc.mem_write(b + TOWN_END_TEXT, self._town_end_kept)
+        uc.reg_write(UC_X86_REG_EIP, next_side)
 
     def _attack_head(self, uc, address, size, user_data):
         # 0x506720's local list head of a raider's attack (ATTACK_HEAD), only that one.

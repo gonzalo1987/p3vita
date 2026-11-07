@@ -1572,8 +1572,8 @@ prices (0x5187F0) and the firepower's cannonballs (0x4901C0). The last two are o
 
 Broken on purpose and caught (2026-11-06): the free list's end set to 0xFFFF instead of the count (1
 operation of 0x71 in save 3) and «Pirate»'s [+0x3D] |= 0x08 instead of 0x18 (1 operation of 0x0D). The viewer
-leaves «Pirate» off (`kPirateModeReady` in `main.cpp`): a pirate ship of the player raids towns (piece 6)
-and ships (piece 7), which p3vita doesn't have yet. The scenarios of the earlier batches as before; the
+left «Pirate» off until 2026-11-07 (piece 6, part 5: on, the user's choice; the player's raids are fought by
+the computer until piece 7). The scenarios of the earlier batches as before; the
 world 7 days in the 12 saves, 0 different.
 
 The buttons' tooltips are the exe's string table (Windows resources, RT_STRING 20000..20062, the scripts'
@@ -2052,6 +2052,51 @@ destination is no town (0x5163F2, with the points: a ship sent back to a point a
 Broken on purpose and caught: a tower's [+0x1EBE] written + 1 (4 bytes of the section), [+0x2F1A] read as 0 (the
 reload). Then, with the final code, every scenario of the piece and the battle regressions again (all equal), the
 world 7 days in the 12 saves (0 «distintas»), ctest and the Vita build.
+
+## The battles' piece 6, part 5: the town battle's window texts, a town as the player knows it (2026-11-07)
+
+The viewer's part of the town battle: nothing of it writes into the game's memory, but what it shows is the game's
+and is checked against the game.
+
+**The window's texts** (`Sailing::town_attack_message`, `town_end_message`, in `take_player_messages`): the start's
+(0x5FD102..0x5FD3DD: the player attacks a town or a nest, or is attacked as a side D) and the end's (0x5FF5B6..
+0x5FF76D, by whether the side's team won and [+0xAC4]: 0 fled, 1 sunk or fallen, 2 a capture, none, 3 no attacker
+or no defence). The game writes them into [+0x1310] only on its window's path (a human side of the local player);
+the oracle takes the busy path at the start (`BATTLE_WINDOW_JUMPS`, as p3vita), and the end's window has no busy
+path: a battle over at its setup (the player's raider at a town with no tower nor guard ship) reaches it. So:
+- at the start, scenario `town_battle_texts` runs the game's fragment on its own after each setup
+  (`town_start_text`: [esp+0x14] the attacker ship's offset, [esp+0x20] the town, esi the battle, ecx the player,
+  eax side A's owner; up to 0x5FD3E0) and puts back what it writes ([+0x1310], [+0x1E90], [+0x1E91]);
+- at the end, the oracle (with --pirates) keeps [+0x1310] at 0x5FF5B6, prints the game's text at 0x5FF770 («town
+  battle end window: ...»), puts [+0x1310] back and goes on at 0x5FF810, the next side (`TOWN_END_WINDOW`):
+  p3vita writes none of the window ([+0x1310], [+0x12EC], [+0x12E9], [+0x12EA], [0x6E59CD]) until piece 7;
+- tick_probe --messages prints p3vita's texts on one line, with each call's esp (an end inside a setup, a battle
+  over at once, is recorded too), and re/emu/sesion20/texts_cmp.py puts both in order.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `town_battle_texts` | town battles set up directly (0x611D80, 0x5FBFE0) with the player on a side: his ship (a convoy of its own first: 0x50CC90 in port, or 0x505B60 and 0x5062F0 at sea, as a raider has; the game reads [+0x65E] unchecked) attacks a town with a guard ship or towers, a town with no tower ([0x768] emptied for the call) nor guard twice (the plunder paid, then «recently attacked»), the first pirate's nest, his convoy of two a town; and he defends as a town's guard ship against a pirate convoy's guide and an AI ship alone; then 0x5FE7E0 on the battles that go on with each [+0xAC4] won and lost, and once with the player's side the computer's | 1, 3, 5, 7 | 0x5FBFE0 and 0x5FE7E0 all equal; the game's texts and p3vita's equal: 22, 29, 29 and 29; 19 of 19 targets in saves 3 and 7 |
+
+Broken on purpose and caught: the outrigger's two texts swapped (4 texts of 29). The Spanish exe's texts (their
+addresses found by hand: 0x6A1D98.. is 0xD8 lower there, 0x6AA194.. 0x608 higher) printed with tick_probe --exe
+(re/emu/sesion20/texts_spa.sh): the game's Spanish words. Two traps of the first version: an AI ship still in the
+sea's list chains its next [+0x6] into its new convoy (the game's walk then counts another owner's ship: the
+known hang of 0x5FCA7A, roadmap); and a convoyless attacker makes the game read convoy 0xFFFF's owner.
+
+**A town as the player knows it** (0x535300 on the towns' history 0x6DE588, `town_situation_known` in
+`player_actions.cpp`; a probe in tick_probe): the sea map's symbols of each town (0x44BFD0) and their tooltips
+(0x452973) come from it: the town's [+0x2C8] | 0x7E0000 and the history's entry of the world's day, plus 16,
+less the player's lag for the town (his slot's table), modulo 16, or the day after without a slot or table.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `town_symbols` | 0x535300 on every town as it is; town 1's [+0x2C8] and history retouched, the player's lag for it 0, 5, 15, 16, 0xFF; his table's pointer 0; his slot another merchant's (every town) | 1, 3, 5, 7 | 54 calls equal in each; 3 of 3 targets |
+
+Broken on purpose and caught: the day after as the day itself (5 calls of 54 in save 3). With all this, every
+scenario of piece 6 (`town_raids`, `pirate_town_attack`, `convoy_raid`, `town_attack`, `town_step_branches`,
+`town_battle_setup`, `town_end_branches`, `nest_fire`, `nest_attack`, `nest_attack_weak`, `nest_attack_branches`),
+the battle regressions and re/emu/sesion8/old_battle.sh as before; the world 7 days in the 12 saves, 0 «distintas».
+Scripts in re/emu/sesion20/ (README).
 
 ## The game's static initializers (2026-11-03)
 

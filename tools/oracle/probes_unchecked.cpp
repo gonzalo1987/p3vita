@@ -994,6 +994,11 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		write_view(s, view, c.args[1]);
 		return std::nullopt;
 	};
+	// 0x535300: thiscall on the towns' history 0x6DE588 (town): the town's situation as the local player knows it
+	// (player_actions.hpp town_situation_known), what the sea map's symbols show.
+	r[0x535300] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		return town_situation_known(s, c.args[0]);
+	};
 	// STATS_TOWN_LIST (sort, part): the town data's town button's list (0x49FB41, and its sort by name 0x471FF0); its
 	// view as STATS_WARES's, with the keys' pointer (null) after the extra row and where the choice goes ([+0xBD]).
 	r[kStatsTownList] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {

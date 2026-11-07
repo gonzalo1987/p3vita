@@ -45,6 +45,10 @@ std::vector<SeaMapTown> load_sea_map_towns(const CprArchive& archive) {
 			town->name_y = number;
 		} else if (key == "NameLinksOderRechtsBuendig") {
 			town->name_right_aligned = !value.empty() && (value[0] == 'r' || value[0] == 'R');
+		} else if (key == "EreignisSymbolXPos") {
+			town->event_x = number;
+		} else if (key == "EreignisSymbolYPos") {
+			town->event_y = number;
 		} else if (key == "AnfahrtXPos") {
 			town->approach_x = number;
 		} else if (key == "AnfahrtYPos") {

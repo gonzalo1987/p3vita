@@ -243,6 +243,11 @@ public:
 	uint8_t fn_611d80();  // (battles) A new town battle; its slot or 0xFF.
 	uint8_t fn_6130b0(uint8_t town, uint8_t owner) const;  // (battles) The running one of a town and attacker.
 	void fn_5fbfe0(size_t battle, uint16_t ship, uint8_t town);  // (town battle) The setup.
+	// 0x5FD102..0x5FD3DD: the town battle's message to the local player on a side (the attacker's ship `ship`),
+	// the raw text; nothing written into the battle. town_end_message: 0x5FF5B6..0x5FF76D, the end's message to
+	// the player's side `side` (empty when the game has none), with the loot of 0x5FE7E0.
+	std::string town_attack_message(size_t battle, uint16_t ship, uint8_t town) const;
+	std::string town_end_message(size_t battle, size_t side, bool lost, uint32_t loot) const;
 	void fn_5ffc10(size_t battle);  // (town battle) Its map of the water.
 	bool fn_5ffe20(size_t battle, int32_t x, int32_t y) const;  // (town battle) A cell out of the map or not water.
 	void fn_600060(size_t battle);  // (town battle, method +0x2C) The formation.
