@@ -57,6 +57,7 @@
 #include "p3data/game_fixes.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/trade.hpp"
 
 namespace p3::data::tick {
 
@@ -452,11 +453,21 @@ void fn_634c50(SaveGame& save, int siege, bool paid) {
 // mercancías 0..19 de kWareValue, de 200 en 200 unidades, hasta 20000 en
 // total). `amount` es el dinero que paga (solo lo apunta 0x529F90, como
 // gasto 8) y `offices` las oficinas que ha mirado. Devuelve si ha pagado
-// algo; entonces [+0x0] pasa a ser hoy. (With a convoy, from the battle in a
-// town 0x5FE7E0 (0x5FEAC9), the wares go to its ships and the convoy's
-// owner gets the letter 0x6A (0x634576..0x6345D3): not rewritten, it goes
-// with that battle; from here, convoy 0xFFFF, it is never reached.)
-bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices) {
+// algo; entonces [+0x0] pasa a ser hoy.
+//
+// With a convoy (the town battle's end 0x5FE7E0, 0x5FEAC9, when the attackers
+// won): the wares go into its ships, from the first one, as long as each has
+// room (its hold [+0x10] − [+0x11C] − [+0x118]); a full ship hands over to the
+// next one and the same office (or, for the town's wares, the whole list
+// again) goes on with it. A merchant's convoy has no limit (0xFFFFFFFF); the
+// offices of the ship's owner are left alone. The town's wares change the
+// ship's average price ([+0xB4]), the offices' don't. Without a next ship the
+// remaining offices are only counted, and the town keeps its wares (a full
+// ship's room left is under a barrel). Then, if the guide's [+0x15D]
+// is a merchant and the guide has a captain, that merchant gets the value of
+// the wares (not the money: the caller gives it to the convoy's owner) and 65
+// of fame (0x672DE4), and, with a share of 65 % of all, the letter 0x6A.
+bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices, uint16_t convoy) {
 	SiegeMemory& s = save.sieges[size_t(siege)];
 	GlobalMemory& g = save.globals;
 	const uint32_t today = g.u32(kTick) >> 8;
@@ -466,10 +477,26 @@ bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices) {
 	}
 	const int town = s.u8(0x4);
 	TownMemory& t = save.towns[size_t(town)].memory;
-	const uint32_t limit = (t.u32(0x2E0) + (t.u32(0x2DC) + t.u32(0x2D8) * 2) * 2) << 4;
+	uint32_t limit = (t.u32(0x2E0) + (t.u32(0x2DC) + t.u32(0x2D8) * 2) * 2) << 4;
 	const int32_t money = t.s32(0x700);
 	amount = money > 0 ? uint32_t(money) : 0;
+	const uint16_t ships = g.u16(global::kShipCount);
+	const bool with_convoy = convoy < save.convoy_count();
+	SavedShip* ship = nullptr;  // edi: the ship that takes the wares.
+	bool full = false, loaded = false;  // [esp+0x13], [esp+0x12]
+	auto room = [](const ShipMemory& m) { return m.u32(0x10) - m.u32(0x11C) - m.u32(0x118); };
 	uint32_t capacity = 20000;  // Sin convoy.
+	if (with_convoy) {
+		// The game takes the first ship without checking it (a battle's convoy has ships).
+		const uint16_t first = save.convoys[convoy].u16(0xA);
+		if (first < ships) {
+			ship = &save.ships[first];
+			if (ship->memory.u8(0x0) < g.u16(global::kWorldMerchantCount)) {
+				limit = 0xFFFFFFFF;
+			}
+			capacity = room(ship->memory);
+		}
+	}
 	// Mercancías de la más valiosa a la menos (inserción; las iguales, en su orden).
 	uint8_t order[20];
 	for (uint8_t w = 0; w < 20; ++w) {
@@ -488,7 +515,13 @@ bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices) {
 	offices = 0;
 	for (uint32_t o = t.u16(0x784); o < g.u16(kOfficeCount);) {
 		OfficeMemory& office = save.offices[o].memory;
-		if (amount + paid < limit && save.merchants[office.u16(0x2C4)].memory.u16(0x8) == 0) {
+		if (with_convoy && !ship) {
+			o = office.u16(0x2CA);  // No ship left: the offices are only counted.
+			++offices;
+			continue;
+		}
+		const bool own = ship && ship->memory.u8(0x0) == office.u16(0x2C4);
+		if (!own && amount + paid < limit && save.merchants[office.u16(0x2C4)].memory.u16(0x8) == 0) {
 			// Con estados retocados: en las partidas no sale un jugador humano
 			// con oficina en una ciudad que pague.
 			for (uint8_t w : order) {
@@ -508,21 +541,43 @@ bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices) {
 				}
 				if (take > capacity) {
 					take = capacity;
+					full = ship != nullptr;
 				}
 				take -= take % 200;
 				if (take == 0) {
 					continue;
 				}
+				if (ship) {
+					ship->memory.u32(0x54 + 4 * size_t(w)) += take;
+				}
 				capacity -= take;
 				office.u32(0x4 + 4 * size_t(w)) -= take;
+				loaded = true;
 				const float taken = float(int64_t(take));
 				paid += uint32_t(ftol(double(taken) * double(ware_value(w))));
 			}
+			if (ship && loaded) {
+				recalculate_cargo(*ship);  // 0x5182B0
+				loaded = false;
+			}
+		}
+		if (ship && full) {
+			// The next ship of the convoy takes over, with the same office.
+			const uint16_t next = ship->memory.u16(0x6);
+			if (next < ships) {
+				loaded = false;
+				full = false;
+				ship = &save.ships[next];
+				capacity = room(ship->memory);
+				continue;
+			}
+			ship = nullptr;
+			full = false;
 		}
 		o = office.u16(0x2CA);
 		++offices;
 	}
-	if (amount + paid < limit) {
+	while (amount + paid < limit) {
 		for (uint8_t w : order) {
 			uint32_t take = t.u32(0x4 + 4 * size_t(w));
 			if (take == 0 || !kBarrelWare[w]) {
@@ -542,15 +597,74 @@ bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices) {
 			}
 			if (take > capacity) {
 				take = capacity;
+				full = ship != nullptr;
 			}
 			take -= take % 200;
 			if (take == 0) {
 				continue;
 			}
+			if (ship) {
+				// The cargo and its average price, as floats stored at each step.
+				ShipMemory& m = ship->memory;
+				const uint32_t old = m.u32(0x54 + 4 * size_t(w));
+				if (old == 0) {
+					m.u32(0xB4 + 4 * size_t(w)) = 0;
+					m.u32(0x54 + 4 * size_t(w)) = take;
+				} else {
+					const uint32_t now = old + take;
+					m.u32(0x54 + 4 * size_t(w)) = now;
+					float& price = m.f32(0xB4 + 4 * size_t(w));
+					price = float(double(float(int32_t(old))) * double(price));
+					price = float(double(price) / double(float(int32_t(now))));
+				}
+			}
+			loaded = true;
 			t.u32(0x4 + 4 * size_t(w)) -= take;
 			capacity -= take;
 			const float taken = float(int64_t(take));
 			paid += uint32_t(ftol(double(taken) * double(ware_value(w))));
+		}
+		if (!ship) {
+			break;
+		}
+		if (loaded) {
+			recalculate_cargo(*ship);  // 0x5182B0 ([esp+0x12] stays set)
+		}
+		// A full ship hands over to the next one, and the whole list goes again
+		// ([esp+0x13] stays set, so after the next one the one after takes over too).
+		if (!full || ship->memory.u16(0x6) >= ships) {
+			break;
+		}
+		loaded = false;
+		ship = &save.ships[ship->memory.u16(0x6)];
+		capacity = room(ship->memory);
+	}
+	if (with_convoy) {
+		// The guide's [+0x15D] (the game reads the guide without checking it).
+		const uint16_t guide = save.convoys[convoy].u16(0x10);
+		const ShipMemory* gs = guide < ships ? &save.ships[guide].memory : nullptr;
+		if (gs && gs->u8(0x15D) < g.u16(global::kWorldMerchantCount) && gs->u16(0x42) < g.u16(global::kCaptainCount)) {
+			MerchantMemory& m = save.merchants[gs->u8(0x15D)].memory;
+			const CaptainMemory& c = save.captains[gs->u16(0x42)];
+			const uint32_t share = uint32_t((uint64_t((amount + paid) * 65) * 0x51EB851Fu) >> 32) >> 5;
+			m.u32(0x0) += paid;
+			m.u32(0x4B8) += paid;
+			constexpr int16_t kRaidFame = 65;  // 0x672DE4 (s16)
+			const int16_t fame = m.s16(0x16);
+			m.s16(0x16) = fame < 0x7FFF - kRaidFame ? int16_t(fame + kRaidFame) : int16_t(0x7FFF);
+			if (share > 0) {
+				// The letter 0x6A (0x634576..0x6345D3): to that merchant, [+0x5] his
+				// home, [+0x8], [+0x9] the captain's names, [+0xA] the town, [+0xB]
+				// the guide's [+0x15E] << 2, u32 [+0xC] the share.
+				Letter letter(0x6A);
+				letter.entry.u8(0x5) = m.u8(0x19);
+				letter.entry.u8(0x8) = c.u8(0x2);
+				letter.entry.u8(0x9) = c.u8(0x3);
+				letter.entry.u8(0xA) = uint8_t(town);
+				letter.entry.u8(0xB) = uint8_t(gs->u8(0x15E) << 2);
+				letter.entry.u32(0xC) = share;
+				send_letter(save, gs->u8(0x15D), letter);
+			}
 		}
 	}
 	if (amount + paid == 0) {

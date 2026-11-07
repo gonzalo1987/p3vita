@@ -332,8 +332,11 @@ void write_world(Writer& w, SaveGame& save) {
 // --- The ships (0x504010) ---
 
 // 0x5177D0 → 0x5162D0: a ship; the free slots, their state, [+0x6] and
-// [+0x137] (from version 0x83).
-void write_ship(Writer& w, const SavedShip& ship) {
+// [+0x137] (from version 0x83). Its own route's flag [+0x36] is written as 0
+// without a route, 1 when its origin or destination is no town (0x5163F2:
+// then the points are written even for a route of the matrix, and the load
+// reads it as the ship's own), else as it is; the points follow when it is 1.
+void write_ship(Writer& w, const SavedShip& ship, uint32_t towns) {
 	const ShipMemory& m = ship.memory;
 	w.from(m, 0x134, 2);
 	if (!ship.in_use()) {
@@ -347,10 +350,13 @@ void write_ship(Writer& w, const SavedShip& ship) {
 		{{0x10, 4}, {0x14, 4}, {0x6, 2}, {0x8, 2}, {0xA, 2}, {0xC, 2}, {0x18, 4}, {0x1C, 4}, {0x20, 4}});
 	const bool has_route = m.u32(0x24) != 0;
 	w.u32(pointer(has_route));
-	chunks(w, m, {{0x28, 4}, {0x2C, 4}, {0x30, 4}, {0x34, 2}, {0x36, 1}, {0x37, 1}, {0x38, 1}, {0x39, 1}});
+	const bool own = has_route && (m.u8(0x37) >= towns || m.u8(0x38) >= towns || ship.own_route());
+	chunks(w, m, {{0x28, 4}, {0x2C, 4}, {0x30, 4}, {0x34, 2}});
+	w.u8(own ? 1 : 0);
+	chunks(w, m, {{0x37, 1}, {0x38, 1}, {0x39, 1}});
 	w.u16_be(m.u16(0x3A));
 	chunks(w, m, {{0x3C, 2}, {0x3E, 2}, {0x40, 2}, {0x42, 2}, {0x44, 4}, {0x48, 4}, {0x4C, 4}, {0x50, 4}});
-	if (has_route && ship.own_route()) {
+	if (own) {
 		const SeaRoute empty;
 		const SeaRoute& route = ship.route ? *ship.route : empty;
 		w.u16(uint16_t(route.size()));
@@ -380,7 +386,7 @@ void write_ships(Writer& w, const SaveGame& save) {
 						 {0xE, 1}, {0xF, 1}});
 	}
 	for (const SavedShip& ship : save.ships) {
-		write_ship(w, ship);
+		write_ship(w, ship, g.u32(global::kWorldTownCount));
 	}
 	for (const GameMemory<0x3C>& convoy : save.convoys) {  // 0x5013D0
 		w.from(convoy, 0, 0x3A);

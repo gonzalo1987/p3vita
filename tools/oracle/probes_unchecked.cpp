@@ -43,23 +43,10 @@ void fn_4f68d0(SaveGame& save, MerchantMemory& m, uint32_t tick, uint32_t a1, ui
 
 }  // namespace p3::data::tick::merchants_detail
 
-// What diet.cpp exposes for them.
-namespace p3::data::tick::diet_detail {
-
-void fn_4f8ca0(SaveGame& save, uint32_t merchant, uint32_t town);
-
-}  // namespace p3::data::tick::diet_detail
-
 // What sieges.cpp exposes for them.
 namespace p3::data::tick::sieges_detail {
 
 void fn_629c60(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag);
-
-}  // namespace p3::data::tick::sieges_detail
-
-namespace p3::data::tick::sieges_detail {
-
-bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices);
 
 }  // namespace p3::data::tick::sieges_detail
 
@@ -473,7 +460,7 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		const int siege = l.kind == Location::Siege && l.offset == 0 ? l.index : -1;
 		uint32_t amount = 0;
 		uint16_t offices = 0;
-		const bool paid = tick::sieges_detail::fn_633db0(s, siege, amount, offices);
+		const bool paid = tick::sieges_detail::fn_633db0(s, siege, amount, offices, uint16_t(c.args[2]));
 		if (in_globals(c, c.args[0]) && in_globals(c, c.args[1])) {
 			s.globals.u32(c.args[0]) = amount;
 			s.globals.u16(c.args[1]) = offices;

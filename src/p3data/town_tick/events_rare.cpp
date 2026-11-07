@@ -79,6 +79,7 @@
 #include <utility>
 #include <vector>
 
+#include "p3data/battle/pirate_nests.hpp"
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_texts.hpp"
 #include "p3data/mail.hpp"
@@ -749,15 +750,22 @@ uint16_t* find_link(SavedTown& st, uint16_t& head, uint16_t record) {
 // [0x76A], con 100 de vida (menos si estaba en obras). Mientras le quede,
 // arde (ver burn). Al acabar: una torre (0x32, 0x33) queda en ruinas (0x36,
 // sin obras, otra vez en [0x768]); lo demás se borra (0x521240). Con una
-// ciudad que no existe (0xFE − k) es la guarida pirata k (0x515C00), de las
-// batallas: por reescribir con ellas. Los gráficos (0x5891C0, 0x599040 y
+// ciudad que no existe, 0xFE − k is pirate k's nest (a tower fallen in its
+// battle, 0x60130B): with that pirate, its tower burns (0x515C00) and the
+// event goes on a tick later while it does. Los gráficos (0x5891C0, 0x599040 y
 // 0x590680 si es la ciudad que se ve) no se reproducen. Devuelve si sigue.
 // Comprobado con estados retocados (`retouch.py incendio`, también el 0x26).
 bool fn_4e1b84(SaveGame& save, uint16_t event) {
 	Event& e = save.events[event];
 	const uint32_t town = e.u8(0x10);
 	if (town >= town_count(save)) {
-		return false;  // Por reescribir con las batallas (0x515C00).
+		const uint32_t k = 0xFE - town;
+		if (k >= 5 || save.globals.u32(kPirates + 4 * k) == 0 || !save.pirates[k] ||
+			!fn_515c00(save, k, e.u16(0xC), e.u16(0xE))) {
+			return false;
+		}
+		e.u32(0x0) += 1;
+		return true;
 	}
 	SavedTown& st = save.towns[town];
 	TownMemory& t = st.memory;

@@ -41,7 +41,9 @@
 // reached as the game's save function does (savegame_write.hpp), and its .pst
 // to OUT.pst, to compare with town_oracle.py --write
 // (tools/oracle/compare_written.py). With --carga and --pst FILE it reads an
-// uncompressed .pst after the save (statistics.hpp).
+// uncompressed .pst after the save (statistics.hpp). With --carga (not
+// --continuo) and --write OUT, the save written back from p3vita's load (its
+// battles loaded by Sailing, unlike p3save write).
 //
 // Con --cpr, las funciones de los barcos que necesitan la navegación (las de
 // los convoyes, la actualización de barcos) se pueden repetir también una a
@@ -1103,14 +1105,27 @@ int main(int argc, char** argv) {
 			}
 		}
 		if (!continuous) {
-			// Las rutas de los barcos las da Sailing después de leer la partida.
+			// The ships' routes, the battles and the routes' check at the end of
+			// the load (0x445010 for the matrix's, 0x611AE0, 0x5048C0), as the
+			// game's load the oracle ran: a ship off its route gets a new one
+			// (the ships back from a town battle, re/emu/sesion19).
 			if (sailing) {
-				sailing->load_battles();  // 0x611AE0 (battle/battle_save.cpp)
+				sailing->assign_loaded_routes();
 			}
 			State loaded = game;
 			loaded.erase("Q");
 			const int d = compare(dump_save(save, loaded), loaded, budget, "carga de " + load + ":", true);
 			std::printf("carga: %d diferencias\n", d);
+			if (!write_path.empty()) {
+				// The save written back from that load (its battles loaded, so
+				// written by battle_bytes: compare with write_oracle.py's).
+				prepare_save(save);
+				const std::vector<uint8_t> raw = write_savegame(save);
+				std::ofstream out(write_path, std::ios::binary);
+				out.write(reinterpret_cast<const char*>(raw.data()), std::streamsize(raw.size()));
+				std::printf("%zu bytes in %s (battles %s)\n", raw.size(), write_path.c_str(),
+					save.opaque.battles.empty() ? "loaded" : "kept as read");
+			}
 			return d ? 1 : 0;
 		}
 		// Con --continuo, la simulación parte de lo que ha leído p3vita.

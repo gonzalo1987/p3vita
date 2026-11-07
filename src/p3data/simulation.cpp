@@ -393,6 +393,11 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			}
 		}
 		break;
+	case 0xB4:  // A new pirate, when a nest is destroyed (0x536E7D → 0x542E40; battle/town_end.cpp).
+		if (sailing) {
+			sailing->fn_542e40(uint32_t(fields[1]), uint32_t(fields[2]), uint32_t(fields[3]), uint32_t(fields[4]));
+		}
+		break;
 	case 0xB5:  // A pirate convoy leaves the nest (0x536E8C → 0x514D40; battle/pirate_objects.cpp).
 		if (sailing && uint32_t(fields[1]) < 5 && save.pirates[size_t(fields[1])] &&
 			save.globals.u32(global::kShips + 0xC + 4 * uint32_t(fields[1])) != 0) {

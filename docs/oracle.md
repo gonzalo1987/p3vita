@@ -1936,6 +1936,123 @@ the battle regressions (`battle_rocks`, `chase_battle`, `hanse_fleet`, `raid_fle
 `pursue_branches`, `raid_arrival`, `town_attack`, `town_battle_setup`, re/emu/sesion8/old_battle.sh). Scripts in
 re/emu/sesion18/ (README).
 
+## The battles' piece 6, part 4: the town battle's end, the nest and its attack, the save (2026-11-07)
+
+p3vita has the end of a town battle (`battle/town_end.cpp`), so a town battle now starts, steps and ends as the
+game's: method +0x1C, 0x5FE7E0 (the step calls it with whether side A has no ship left; the setup without ships with
+1 or 0; method +0x18, 0x600660, with 1 when the battle is over), and method +0x4, 0x602990 → the destructor 0x5FB9F0
+(the sea battle's 0x603BC0 inside finds the slot already empty and only frees the scene's blocks).
+- 0x5FE7E0: the town is no longer attacked ([+0x2C8] without 0x800), [+0x130E] the result, the owners of the
+  attacker's convoy's ships that are no side yet become sides of team 0 (in the arrays only, as at sea). One letter
+  object (0x51A850) serves every letter, so a field one letter leaves stays for the next. Side A won: the coward's
+  letter 0x3B to the defender's merchant when one of his ships fled, and his reputation there down (0x4F8CA0); a town
+  plundered (0x633DB0 with the attacker's convoy; the music by whether it paid, 0x611649 with 0xF, else 0), a nest's
+  loot ((r + 2 · its [+0x16]) · 50, r of the battle's generator); the money to the convoy's owner if a merchant
+  ([+0x0], [+0x4B8]); the news 0x3A to the chronicle. Side A lost: the news 0x39, unless [+0xAC4] is 3 (no attacker).
+  Then the report, as at sea but without the sea's skip of the hull-less ships, the plundered line and the music: the
+  result of each team (0x6A227C..0x6A2294, a nest's 0x6AA1A4..0x6AA1AC, new in `GameText`; the town's name from the
+  table 0x6DDA00 by the town's index, the letters' bug, fixed behind `fix_game_bugs()`), sent as the letter 0x29 to
+  each side of the computer that is a merchant ([+0x5] the town, or his home for a nest). A human side gets the
+  battle's window instead ([+0x1310], [+0x12EC], 0x41D9B0: piece 7).
+- 0x633DB0 (`town_tick/sieges.cpp`) has its convoy now: the wares go into the convoy's ships from the first one while
+  each has room, a full one handing over to the next (the same office goes on with it; the town's whole list again);
+  a merchant's convoy has no limit; the offices of the ship's owner are left alone; the town's wares change the
+  ship's average price, the offices' don't; the guide's [+0x15D] merchant (with a captain) gets the wares' value, 65
+  of fame (0x672DE4) and, with 65 % of the loot, the letter 0x6A.
+- 0x5FB9F0: the slot and the count, the scene's ships (side D's hull 0 at a nest the attackers took), and when the
+  battle ended: maybe an event 5 for the attacker's convoy (0x50CB80, the town as the other side), 0x50BFD0 for the
+  defender's convoy (unless 0xFF), the attacker's and the joined ones ([+0x2F1C], [+0x2F20]); at a nest, 0x514920.
+- 0x514920: the nest's convoy broken up (its ships with a hull back to the nest's list [+0x12], the others deleted),
+  and with no ship back and no tower standing the nest destroyed: [+0x15] 1, operation 0xB4 (0x542E40: a new pirate
+  in the first free slot, 0x513720 or 0x513EC0, and 0x513D80 with two numbers of rand()), the merchants' [+0xE1], its
+  map, and the first event 0x32 of the Hanse task of type 3 against it done ([+0x12] 2).
+- The event 0x25 of a nest (0x4E1B84 → 0x515C00, `town_tick/events_rare.cpp`, `battle/pirate_nests.cpp`): the tower
+  at the cell burns, its damage from 201 to 250 a tick at a time, then it leaves the pool's list (not to the free one).
+
+The oracle: the letters of 0x5FE7E0 (0x5FEA54, 0x5FEEAA, 0x5FF55F) and 0x633DB0's 0x6A (0x6345D3) are in
+`MAIL_CALLS` (until then the oracle kept them quiet, and the first comparison showed only p3vita's letters), and
+operation 0xB4 in `PIRATE_OPERATIONS`. tick_probe has the probes of 0x5FE7E0, 0x602990, 0x5FB9F0, 0x514920 and
+0x515C00, and 0x633DB0's passes its convoy.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `town_raids` | as in part 3, the steps, ends, destructors and convoys after them recorded | 3, 5, 7 (7: 505 ticks) | 0x5FD510 647 calls, 0x5FE7E0 19, 0x5FB9F0 19, 0x50BFD0 34: all equal |
+| `pirate_town_attack` | as in part 3, with the ends | 3, 5, 7 | all equal; save 3 with a town plundered by a pirate convoy (0x633DB0) |
+| `convoy_raid`, `town_attack`, `town_step_branches`, `town_battle_setup` | as in parts 2 and 3 | as before | all equal |
+| `town_end_branches` | on the first town battle of `town_raids` with a defender: another raider of the attacker's owner joins by the game's way (0x506F33 → 0x60234C); 0x5FE7E0 called directly: the attackers win at the town of the player's first office with the player's guard ship fled, a convoy of three ships of two owners nearly full, the player's office and the town with wares and money (and again with every ship nearly full), again at once (no payment, no defender merchant, [+0xAC4] 3), the attackers lose with a ship fled, sunk and taken (the player's report with both sides' taken ships), with [+0xAC4] 3; then 0x602990 with the music's fraction 999 and the joined convoy | 1, 3, 5, 7 | all equal; 30 of 30 targets between them (29 in saves 3 and 7) |
+| `nest_fire` | new events 0x25 at nests: towers 0x30 and 0x31 made of planned buildings, undamaged and at 240 (they burn out), a cell with no tower, an empty pirate slot, a town out of the world; one day | 1, 3, 5, 7 | 0x4D85C0 256 calls, 0x515C00 61–68: all equal; 8 of 8 targets in each |
+
+Broken on purpose and caught: the plunder's fame (65 → 64), the report's taken lines of the other side, 0x515C00's
+limit (250 → 249). A trap: `town_end_branches`'s first version sent the reports with taken ships only to the AI,
+whose letters the mailbox throws away, so a broken report went unseen; the player's side gets it now. The world 7
+days in the 12 saves: 0 «distintas».
+
+The game hangs in the formation (0x600060, roadmap «Corregir los fallos del juego»): seen at tick 511 of
+`town_raids` in save 7, where a new battle is set up once the earlier ones have ended (re/emu/sesion18/hang.sh:
+0x6004C8/0x600622 from 0x600660, from 0x5FBFE0). p3vita never hangs there (the ship's own place, as with the fix).
+Not yet checked here: the end at a nest (below, with the attack on the nest) and a human side (piece 7). Scripts in
+re/emu/sesion19/ (README).
+
+The attack on a nest (the fourth start; `town_tick/alderman.cpp` and `Sailing::nest_attack`, 0x4EBA71..0x4EBC5E): in
+the Hanse task of type 3's phase 1, a merchant's ship at sea standing on the nest makes its convoy leave the sea
+(0x50A4E0, which also says whether it was there: if not, the next ship) or, alone, leaves it with a convoy of its own
+(0x505B60, 0x5062F0), state 0x14, nudged to the nest (0x50E280); it joins the nest's battle when the nest is destroyed
+or its convoy out (0x515D00, 0x6130B0, 0x60234C), else the nest sets up its defence (0x514530: its map from the
+template `iso/towns/stadtplatz<0xFE − ([+0xF] & 3)>.tow`, 251..254, which p3vita now loads too, `town_templates` by
+number; its entries set on it, 0x4F9C80, 0x4FB9C0, 0x4FBDB0; its ships at home in its convoy with their upgrades,
+0x51A4E0; with none, a new one, 0x516170) and a battle starts (0x611D80, 0x5FBFE0). The oracle: the alone ship's list
+head is 0x4EAFE4's local [esp+0x14], written only by the convoy's path, so it holds what the stack held (or an
+earlier ship's convoy in the same look: the first comparison showed it, a convoy whose next was itself); the oracle
+sets it to 0xFFFF at the function's entry (`NEST_ATTACK_HEAD`, entry esp − 0x40), p3vita the same with the head
+kept through the look. tick_probe has the probes of 0x514530, 0x50A4E0 and 0x542E40 (the last skipped: its record
+is in the operations' queue; the executor 0x535760 compares it).
+
+Two things of p3vita that only a town battle shows, fixed: 0x611649 and the boarding's music (0x60CCC5) turn the
+levels 9, 11 and 12 into 14 with method +0x28 (a town battle: the defender's hits at a nest, [+0xAD2] 2, showed it
+in `nest_attack_weak`); and the boarding's message names the taken ship's owner by the nest's captain in a town
+battle at a nest when its side's guide doesn't (0x60C4EC).
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `nest_attack` | a task of the candidacy made of type 3 in its phase 1 for the first AI merchant with three ships sailing alone, the nest moved to the first, the event queue (0x4D85C0) called directly: the first ship alone starts the battle; the second, with a free convoy in its [+0x8] (not at sea), is skipped and the third joins; the attackers armed, the nest's ships at hull 1 and the battle's towers at strength 1; then two days: the nest taken (0x5FE7E0, 0x5FB9F0 with the defenders' hull 0), its towers burning (0x515C00), destroyed (0x514920: operation 0xB4, a new pirate) and the task done (0x4EC354) | 3, 5 | 0x4D85C0 514 calls, 0x5FD510 33 and 21, the setup, the join, the end, the destructor, 0x514920, 0x515C00 100, the executor 0x535760 59 (with operation 0xB4): all equal; 14 of 14 targets |
+| `nest_attack_weak` | the same without the attackers' guns and the nest's weakness: the nest holds | 3, 5 | all equal (after the music's fix); 3 of 3 targets |
+| `nest_attack_branches` | each on a pirate of its own: an AI convoy at sea leaves it and attacks (0x50A4E0); a ship alone against a nest whose convoy is out with no battle there (its ships put in that convoy); one against a nest with no ship at home and no map (the new ship back at the nest, the convoy empty); and in the first battle a boarding called directly with side A's owner the player and the nest's guide sunk | 3, 5 | all equal; 8 of 8 targets |
+
+Broken on purpose and caught: 0x50E280's x for a kind above 4, the boarding's owner at a nest. Not reached: a tower or
+a planned building of the nest with no room on its map (0x514763, 0x5146D1). Equal as before: `nest_branches`,
+`nest_reinforce` (3, 5) and every town battle scenario; the world 7 days in the 12 saves: 0 «distintas».
+
+The town battles in the save (`battle/battle_save.cpp`): each battle's kind in the section (method +0x28: 1 for a
+town battle; the reader 0x611AE0 makes a 0x2F24-byte battle, vtable 0x67AAA0, [+0x2F1C] and [+0x2F20] 0, and calls
+its method +0x10 then +0x18 with 0, 0x600660), its record 0x5FBF30 / 0x5FBEA0 (the town and, for each of the 4 towers,
+[+0x1EC4] u32 and [+0x1EAE], [+0x1EB2], [+0x1EBE]; the reader sets [+0x1E99] 0xA, [+0x2EF8], [+0x2F08] 0, [+0x2F18] 0
+and [+0x2F1A] 1, so the first step makes the towers' places and items and the map of the water again) before a sea
+battle's record (0x604600 makes 0x1168-byte scene ships for a town battle, vtable 0x67AAD0, [+0x1164], [+0x1166]
+0xFFFF, [+0x127] 0, 0x61A4E0 with the place's low byte, and realloc's its arrays; 0x604220). (The writer sets [+0x5E]
+1 first when [+0x2F18] runs: a human side, piece 7.)
+
+The check: `scripts/write-scenario.sh` writes p3data's file with `p3save write`, which builds no Sailing: the battles
+stay as read and their writer isn't exercised (broken on purpose, it stayed equal). So re/emu/sesion19/wb.sh: the
+game writes the save after a scenario, loads it with the navigation and writes it again (town_oracle.py --write; its
+load runs the routes' check 0x5048C0, which write_oracle.py's leaves out), p3vita loads it with its battles and
+routes (`tick_probe --carga`, now with `--write OUT` in its non-continuous mode) and writes it, byte for byte. Two
+things it needed: `tick_probe --carga` (not continuous) now gives the ships their routes as the game's load
+(`assign_loaded_routes`: the matrix's, the battles, then 0x5048C0, where a ship off its route gets a new one; before,
+only the battles: the ships back from a town battle showed as 8 and 18 differences); and p3vita's ship writer wrote
+the own route's flag [+0x36] as it was, while the game writes 0 without a route, 1 when the ship's origin or
+destination is no town (0x5163F2, with the points: a ship sent back to a point after its battle) and else the flag.
+
+| Check | What | Saves | Result |
+|-|-|-|-|
+| wb.sh `town_attack` 1 | the save written with the town battle 22 steps in | 5 | the same bytes; the reload 0 differences |
+| wb.sh `nest_attack` 0, `nest_attack_save` 0 | the nest's battle just started (the nest moved to the ship; the ship moved to the nest) | 3, 5 | the same bytes; 0 differences |
+| wb.sh and ws.sh `town_raids` 1 | after the raids' battles (ships back at sea off their routes) | 3, 5, 7 | the same bytes; 0 differences |
+| write_checks.sh check / reload | scripts/write-check.sh and write-reload.sh | the 12 | 0 different (save 7 its 12 known bytes); the reloads 0 differences |
+
+Broken on purpose and caught: a tower's [+0x1EBE] written + 1 (4 bytes of the section), [+0x2F1A] read as 0 (the
+reload). Then, with the final code, every scenario of the piece and the battle regressions again (all equal), the
+world 7 days in the 12 saves (0 «distintas»), ctest and the Vita build.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

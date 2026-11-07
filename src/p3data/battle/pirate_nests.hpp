@@ -63,4 +63,31 @@ void fn_515da0(SaveGame& save, size_t k);
 // rich loot.
 void fn_515f70(SaveGame& save, size_t k);
 
+// The first part of 0x514530 (on pirate k's object; a Hanse convoy attacks
+// its nest, battle/town_battle.cpp): without a map ([+0x0] 0) its nest gets
+// one, from the template of the number 0xFE − ([+0xF] & 3) (0x4F95C0,
+// 0x4F9B40), and the entries of the list from entry 0 are set on it, each
+// with no damage: the nest (0x24, orientation 0) and the towers (0x30, 0x31,
+// a tower's footprint 0x4FBDB0; one with no room becomes a planned
+// building) round their cells, the planned buildings (0x1B) round the map's
+// anchor [+0x5C], [+0x5D] less (the tick + the entry) & 7 (the tick >> 4 for
+// y) + 4, their orientation 0xE0 for an odd entry and 0x20 for an even one;
+// one with no room goes to the free list.
+void fn_514530_map(SaveGame& save, size_t k);
+
+// 0x515C00 (on pirate k's object; its nest's number 0xFE − k, a cell): a tower
+// of the nest burns (the event 0x25 of a tower fallen in the nest's battle,
+// 0x60130B). The first entry after entry 0 in the list of its pool that is a
+// tower (0x30, 0x31) at the cell: its damage [+0x6] goes to 201 (one up when
+// above 200); below 250 it goes on (true); at 250 it leaves the list (not to
+// the free one: the entry is lost) and the fire is out (false). No such
+// tower: false. (The town number only tells the view whether it shows the
+// nest, for the fire's graphics.)
+bool fn_515c00(SaveGame& save, size_t k, uint32_t x, uint32_t y);
+
+// battle/pirate_objects.cpp: a new pirate object in slot k (0x513720), and
+// its nest and ships (0x513D80: a town number, the difficulty, a number).
+GameMemory<0x18>& fn_513720(SaveGame& save, size_t k);
+void fn_513d80(SaveGame& save, size_t k, uint32_t town, uint32_t difficulty, uint32_t number);
+
 }  // namespace p3::data

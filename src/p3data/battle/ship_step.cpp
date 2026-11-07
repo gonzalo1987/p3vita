@@ -474,9 +474,13 @@ void Sailing::fn_61f1bf(size_t e) {
 namespace p3::data {
 
 // 0x611649 (on the battle; a level): the battle's music [+0x1E94] >> 10
-// raised to the level (method +0x28 of a sea battle is 0: as it is).
+// raised to the level. With method +0x28 (1 for a town battle, 0 for a sea
+// battle) the levels 9, 11 and 12 become 14.
 void Sailing::fn_611649(size_t b, uint8_t level) {
 	BattleGraph& g = save_.battles;
+	if (g.get<uint32_t>(b, 0) == kTownBattleVtable && (level == 9 || level == 11 || level == 12)) {
+		level = 0xE;
+	}
 	const uint16_t v = g.get<uint16_t>(b, 0x1E94);
 	if (level > (v >> 10)) {
 		g.set<uint16_t>(b, 0x1E94, uint16_t((uint32_t(level) << 10) + (v & 0x3FF)));

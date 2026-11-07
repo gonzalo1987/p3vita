@@ -253,6 +253,13 @@ public:
 	// pirate convoy at its route's end (0x507C0B): in the battle of that town and owner (0x6130B0, 0x60234C) or
 	// a new one (0x611D80, 0x5FBFE0). The slot.
 	uint8_t town_attack(uint16_t ship, uint8_t town, bool join);
+	// The attack on a nest of the Hanse task of type 3 (0x4EBA71, alderman.cpp): the ship's convoy (or the ship)
+	// leaves the sea for the nest and joins or starts its battle. False if its convoy isn't at sea. `head`: the
+	// task's look's list head (0xFFFF at first; a convoy that wasn't at sea).
+	bool nest_attack(uint16_t ship, GameMemory<0x18>& task, uint16_t& head);
+	void fn_50e280(uint16_t convoy, uint8_t town);  // (ships) A convoy nudged a pixel by the town's kind.
+	bool fn_515d00(size_t pirate) const;  // (pirate) Its nest destroyed or its convoy out.
+	void fn_514530(size_t pirate);  // (pirate) Its nest's map and defender convoy for an attack.
 	// 0x506720's local [esp+0x18], never initialized: the list head 0x5062F0 gets for a raider's convoy at a
 	// town (its first value whatever the stack held; the oracle sets 0xFFFF at the function's entry,
 	// ATTACK_HEAD), then the battle slot of the last attack.
@@ -287,6 +294,11 @@ public:
 	void fn_6258a0(size_t entry, uint16_t x, uint16_t y);  // Its map of distances to a point.
 	void fn_625b00(size_t entry, uint16_t& x, uint16_t& y) const;  // The nearest water of its map.
 	uint8_t town_ship_map(size_t entry, uint32_t x, uint32_t y) const;  // Its map of distances at a cell.
+	// battle/town_end.cpp: the end of a town battle (piece 6, part 4).
+	void fn_5fe7e0(size_t battle, bool lost);  // (town battle, method +0x1C) The end.
+	void fn_5fb9f0(size_t battle);  // (town battle, method +0x4 0x602990) Its destructor.
+	void fn_514920(size_t pirate);  // (pirate object) Its nest after a town battle.
+	void fn_542e40(uint32_t pirate, uint32_t difficulty, uint32_t town, uint32_t number);  // Operation 0xB4.
 	static constexpr uint32_t kTownBattleVtable = 0x67AAA0;
 	static constexpr uint32_t kTownShipVtable = 0x67AAD0;
 	// battle/battle_setup.cpp: blocks of BattleGraph (save().battles).
@@ -340,6 +352,7 @@ public:
 	// battle/battle_save.cpp: the battles in the save (piece 5).
 	void load_battles();  // 0x611AE0: SaveGame::opaque::battles into SaveGame::battles.
 	bool fn_604600(size_t battle, BattleReader& in);  // (sea battle, method +0x10) Its record.
+	bool fn_5fbf30(size_t battle, BattleReader& in);  // (town battle, method +0x10) Its record.
 	void fn_611649(size_t battle, uint8_t level);  // (battle) Its music raised.
 	int32_t fn_620f0b(size_t entry, uint8_t side, uint16_t distance);  // (scene's ship) A broadside's damage.
 	uint8_t fn_61f96f(size_t entry, int32_t damage, int16_t sailors, uint8_t side);  // (scene's ship) A hit.
@@ -371,6 +384,7 @@ public:
 	void fn_50cfb0(uint16_t ship);  // (ships object) The player's ships stop targeting a ship.
 	void fn_5176c0(uint16_t ship, uint16_t guide);  // (ship) Takes the guide's route if it has none.
 	void fn_505b60(uint16_t ship);  // (ships object) A ship leaves the sea list.
+	bool fn_50a4e0(uint16_t convoy);  // (ships object) A convoy leaves the list of the convoys at sea.
 	uint16_t fn_5063c0(uint16_t target, uint32_t kind);  // (ships object) The pirate of event 0x1E attacks a ship.
 	// 0x5062F0 (ships object): a new convoy led by `ship`, at the head of the
 	// list `head` (not inside SaveGame::convoys: it may grow); its index.

@@ -83,6 +83,27 @@ void Sailing::fn_505b60(uint16_t ship) {
 	}
 }
 
+// 0x50A4E0 (ships object, a convoy): out of the list of the convoys at sea
+// [+0xEC] (false if it isn't there) and its guide out of the list by x
+// (0x50D040). (0x44F940: the sea map is told, UI.)
+bool Sailing::fn_50a4e0(uint16_t convoy) {
+	const uint16_t convoys = save_.convoy_count();
+	uint16_t* link = &save_.globals.u16(global::kShips + 0xEC);
+	while (*link != convoy) {
+		if (*link >= convoys) {
+			return false;
+		}
+		link = &save_.convoys[*link].u16(0x8);
+	}
+	GameMemory<0x3C>& c = save_.convoys[convoy];
+	*link = c.u16(0x8);
+	c.u16(0x8) = 0xFFFF;
+	if (c.u16(0x10) < save_.globals.u16(global::kShipCount)) {
+		unlink_x(c.u16(0x10));
+	}
+	return true;
+}
+
 // 0x50BC40 (ships object, the attacking convoy, out of the list already):
 // the attacker's guide leaves the list by x, the player's ships forget it
 // (0x50CFB0), the convoy goes to state 0x14 and its ships take the guide's

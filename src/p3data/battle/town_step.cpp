@@ -477,7 +477,7 @@ void Sailing::fn_5ff8e0(size_t b, uint16_t a, uint16_t other) {
 // cells) and its map of the water, a town's map file read again (0x58E760).
 //
 // Then as a sea battle's (0x606CC0): over ([+0x5C]), it counts [+0x15C] down
-// by the steps and at 0 ends (method +0x4, 0x602990: piece 6, part 4); while
+// by the steps and at 0 ends (method +0x4, 0x602990: battle/town_end.cpp); while
 // a side counts down ([+0x15C] by side) only the player's count goes on (at
 // most 5 steps), and nothing else; a human side of the player not on screen
 // gets operation 0x96 (to the computer); automatic (both sides the AI's,
@@ -489,7 +489,7 @@ void Sailing::fn_5ff8e0(size_t b, uint16_t a, uint16_t other) {
 // area's 0x880, 0x781), side D with its towers (strength · its state · 22 ·
 // 64 / 96 >> 10 to [+0xA94], the gun to [+0xAA4], its place to the centre);
 // the counter [+0xA8C]; over and [+0x15C] 0 or above 0xF000, the end (method
-// +0x1C, 0x5FE7E0, with whether side A has no ship left: part 4); the wind
+// +0x1C, 0x5FE7E0, with whether side A has no ship left: town_end.cpp); the wind
 // (0x6113C9); each ship's sub-step (method +0x0, 0x621770), side A then
 // side D; each tower's step (0x5FE080); the battle is over when all side A's
 // ships are out, or all side D's and no tower stands ([+0x15C] 0xFFFE the
@@ -549,7 +549,8 @@ void Sailing::fn_5fd510(size_t b, uint16_t steps) {
 		const uint16_t left = u16(0x15C);
 		if (left <= steps) {
 			set16(0x15C, 0);
-			return;  // Method +0x4 (0x602990) with 1: the battle's end and destructor (piece 6, part 4).
+			fn_5fb9f0(b);  // Method +0x4 (0x602990) with 1: the destructor (battle/town_end.cpp).
+			return;
 		}
 		set16(0x15C, uint16_t(left - steps));
 	} else {
@@ -654,8 +655,17 @@ void Sailing::fn_5fd510(size_t b, uint16_t steps) {
 		if (u8(0x5C) == 1) {
 			const uint16_t left = u16(0x15C);
 			if (left == 0 || left > 0xF000) {
-				// Method +0x1C (0x5FE7E0) with whether side A has no ship left:
-				// the battle's end (piece 6, part 4).
+				// Method +0x1C (0x5FE7E0) with whether side A has no ship left
+				// (none, or all fled or sunk): the battle's end (battle/town_end.cpp).
+				bool lost = true;
+				if (u16(0x658) > 0) {
+					for (uint16_t k = u16(0x10); k != 0xFFFF; k = nx(k)) {
+						if (!(g.get<uint8_t>(battle_entry(b, k), 0x12A) & 0x6)) {
+							lost = false;
+						}
+					}
+				}
+				fn_5fe7e0(b, lost);
 				return;
 			}
 		}

@@ -427,7 +427,17 @@ void fn_5311d0(uint32_t tick, uint8_t& day, uint8_t& month, uint16_t& year);
 // sigue (con el tick ya cambiado) o 0 si se quita.
 namespace diet_detail {
 int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing);
+// 0x4F8CA0 (on a merchant, a town): his reputation there down 3 (with no such
+// town, in every Hanse town), [+0x22] down 60 and [+0x1E] down 1.
+void fn_4f8ca0(SaveGame& save, uint32_t merchant, uint32_t town);
 }  // namespace diet_detail
+namespace sieges_detail {
+// 0x633DB0 (on the town's siege object): the town pays a ransom or is
+// plundered (with `convoy`, by a town battle's attackers: the wares go into
+// its ships). Its money in `amount`, the offices looked at in `offices`;
+// whether it paid anything.
+bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices, uint16_t convoy = 0xFFFF);
+}  // namespace sieges_detail
 int events_rare(SaveGame& save, uint16_t event, uint16_t type);  // 0xe, 0x12, 0x1c, 0x1e, 0x1f, 0x25, 0x26, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x35, 0x38, 0x39
 // La navegación que usa la cola de eventos (agua en un punto del mapa,
 // 0x4474D0, para las tormentas). La pone quien la atiende; sin ella, no hay agua.

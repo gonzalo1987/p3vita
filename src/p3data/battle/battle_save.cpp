@@ -49,7 +49,9 @@ struct Out {
 };
 
 constexpr uint32_t kSeaBattleSize = 0x1E98;
+constexpr uint32_t kTownBattleSize = 0x2F24;
 constexpr uint32_t kSceneShipSize = 0x164;
+constexpr uint32_t kTownShipSize = 0x1168;
 // The scale of the rocks' and islets' places when read from the save
 // (0x604600 multiplies by 17; 0x60F479, placing new ones, by half the town
 // view's tile width, also 17: see fn_60f479 in battle_setup.cpp).
@@ -72,22 +74,25 @@ constexpr std::pair<size_t, size_t> kBattleFields[] = {{0x558, 1}, {0x658, 2}, {
 // 0x604600 and 0x61A880: SaveGame::opaque::battles into SaveGame::battles,
 // after the rest of the load (in 0x549F40 it comes after the events; nothing
 // read in between uses it). Each battle (u8 how many; each one a u8 kind: 0
-// a sea battle) gets the slot of its order: a new sea battle (0x603A70),
-// its fields, its arrays ([+0x4] the scene's ships, [+0xA74] and [+0xA78]
+// a sea battle, else a town battle) gets the slot of its order: a new sea
+// battle (0x603A70; a town battle's 0x2F24 bytes with the vtable 0x67AAA0 and
+// [+0x2F1C], [+0x2F20] 0, and first its town's fields, 0x5FBF30), its fields,
+// its arrays ([+0x4] the scene's ships, [+0xA74] and [+0xA78]
 // their items, [+0xC] next, [+0x8] previous; [+0x664] and [+0x668] the cannon
 // balls), the sides, its islets and rocks as items of the scene (their place
 // · 17), its scene's ships (0x61A4E0 with ship 0, then the saved fields; two
 // items each; [+0x13C] whether its guns are better close), [+0x1E92] 1,
 // [+0xAB0] 1, [+0xAB1] 2 for pirates against the Hanse fleet; then method
-// +0x18 without the formation (0x608230: the end if [+0x5C]). Then the
+// +0x18 without the formation (0x608230, a town battle's 0x600660: the end
+// if [+0x5C], which [+0x15C] 1 keeps from doing anything). Then the
 // battles object: the count, [+0x3FC] 0xFF, [+0x42C] and [+0x3FD] 0, the
 // table of ships that met (0x612A20), [+0xC44] the graphics clock
 // *0x6DCCF8 (0 in the emulator), [+0x408] 0, [+0x3FE] 1.
 //
-// Not rewritten (none in the 12 saves): town battles (a kind not 0) and
-// saved cannon balls ([+0x664] bits; 0x602A90, 0x602EF0); with them the
-// section stays as it was read (opaque) and the battles are not loaded.
-// Saves older than version 0x5C neither (p3vita reads from 0x82).
+// Not rewritten (none in the 12 saves): saved cannon balls ([+0x664] bits;
+// 0x602A90, 0x602EF0, only with a human side, piece 7); with them the section
+// stays as it was read (opaque) and the battles are not loaded. Saves older
+// than version 0x5C neither (p3vita reads from 0x82).
 void Sailing::load_battles() {
 	std::vector<uint8_t>& bytes = save_.opaque.battles;
 	if (bytes.empty() || save_.version <= 0x5C) {
@@ -101,15 +106,19 @@ void Sailing::load_battles() {
 	const uint8_t n = in.u8();
 	bool ok = true;
 	for (uint8_t i = 0; i < n && ok && in.ok; ++i) {
-		if (in.u8() != 0) {
-			ok = false;  // A town battle: not rewritten.
-			break;
-		}
-		const size_t s = b.alloc(kSeaBattleSize);
+		const bool town = in.u8() != 0;
+		const size_t s = b.alloc(town ? kTownBattleSize : kSeaBattleSize);
 		fn_603a70(s, i);
+		if (town) {
+			b.set<uint32_t>(s, 0, kTownBattleVtable);
+			b.set<uint32_t>(s, 0x2F1C, 0);
+			b.set<uint16_t>(s, 0x2F20, 0);
+		}
 		b.set<uint32_t>(0, 4 * size_t(i), BattleGraph::pointer(s));
-		ok = fn_604600(s, in);
-		if (ok) {
+		ok = town ? fn_5fbf30(s, in) : fn_604600(s, in);
+		if (ok && town) {
+			fn_600660(s, false);
+		} else if (ok) {
 			fn_608230(s, false);
 		}
 	}
@@ -141,8 +150,35 @@ void Sailing::load_battles() {
 	bytes.clear();
 }
 
+// 0x5FBF30 (method +0x10 of a town battle; the section from its record, the
+// version): the town ([+0x1E98]) and, for each of the 4 towers, its strength
+// [+0x1EC4] (u32), its cell [+0x1EAE], [+0x1EB2] and [+0x1EBE], its state
+// [+0x1E99] 0xA (a slot without a tower too) and [+0x2EF8], [+0x2F08] 0;
+// [+0x2F1A] 1 (its first step makes the towers' places and items and its map
+// of the water again, 0x5FD510) and [+0x2F18] 0; then a sea battle's record
+// (0x604600).
+bool Sailing::fn_5fbf30(size_t s, In& in) {
+	BattleGraph& g = save_.battles;
+	g.set<uint8_t>(s, 0x1E98, in.u8());
+	g.set<uint8_t>(s, 0x2F1A, 1);
+	for (size_t k = 0; k < 4; ++k) {
+		g.set<uint32_t>(s, 0x1EC4 + 4 * k, in.u32());
+		g.set<uint8_t>(s, 0x1EAE + k, in.u8());
+		g.set<uint8_t>(s, 0x1EB2 + k, in.u8());
+		g.set<uint8_t>(s, 0x1EBE + k, in.u8());
+		g.set<uint8_t>(s, 0x1E99 + k, 0xA);
+		g.set<uint32_t>(s, 0x2EF8 + 4 * k, 0);
+		g.set<uint32_t>(s, 0x2F08 + 4 * k, 0);
+	}
+	g.set<uint16_t>(s, 0x2F18, 0);
+	return fn_604600(s, in);
+}
+
 // 0x604600 (method +0x10 of a sea battle; the section from its record, the
 // version, ≥ 0x82 here): see load_battles. False for what isn't rewritten.
+// For a town battle (its method +0x28) the arrays are realloc'ed (the same
+// sizes) and its scene's ships are 0x1168 bytes (vtable 0x67AAD0, [+0x1164]
+// and [+0x1166] 0xFFFF, [+0x127] 0; 0x61A4E0 gets the place's low byte).
 bool Sailing::fn_604600(size_t s, In& in) {
 	BattleGraph& g = save_.battles;
 	g.set<uint8_t>(s, 0x5C, 0);
@@ -228,10 +264,17 @@ bool Sailing::fn_604600(size_t s, In& in) {
 				uint16_t(y2 + 200));
 		}
 	}
+	const bool town = g.get<uint32_t>(s, 0) == kTownBattleVtable;
 	for (const size_t head : {size_t(0x10), size_t(0x65C)}) {
 		for (uint16_t k = g.get<uint16_t>(s, head); k != 0xFFFF; k = g.get<uint16_t>(next, 2 * size_t(k))) {
-			const size_t e = g.alloc(kSceneShipSize);
-			fn_61a4e0(e, 0, s, k, 0);
+			const size_t e = g.alloc(town ? kTownShipSize : kSceneShipSize);
+			fn_61a4e0(e, 0, s, town ? uint16_t(k & 0xFF) : k, 0);
+			if (town) {
+				g.set<uint32_t>(e, 0, kTownShipVtable);
+				g.set<uint16_t>(e, 0x1164, 0xFFFF);
+				g.set<uint16_t>(e, 0x1166, 0xFFFF);
+				g.set<uint8_t>(e, 0x127, 0);
+			}
 			g.set_ptr(size_t(g.ptr(s, 0x4)), 4 * size_t(k), int(e));
 			// 0x61A880 and 0x6263D0.
 			g.set<uint32_t>(e, 0x12C, BattleGraph::pointer(s));
@@ -295,11 +338,26 @@ std::vector<uint8_t> battle_bytes(const BattleGraph& g) {
 		if (g.get<uint32_t>(0, 4 * k) == 0) {
 			continue;
 		}
-		out.u8(0);  // Method +0x28: 0 for a sea battle.
+		// Method +0x28: 0 for a sea battle, 1 for a town battle, whose record
+		// (method +0xC, 0x5FBEA0) starts with its town and, for each of the 4
+		// towers, its strength [+0x1EC4] and [+0x1EAE], [+0x1EB2], [+0x1EBE].
+		// (With its countdown [+0x2F18] running, a human side's, the game
+		// first sets [+0x5E] 1: piece 7.)
+		const bool town = s >= 0 && g.get<uint32_t>(size_t(s), 0) == Sailing::kTownBattleVtable;
+		out.u8(town ? 1 : 0);
 		if (s < 0) {
 			continue;
 		}
 		const size_t b = size_t(s);
+		if (town) {
+			out.u8(g.get<uint8_t>(b, 0x1E98));
+			for (size_t t = 0; t < 4; ++t) {
+				out.u32(g.get<uint32_t>(b, 0x1EC4 + 4 * t));
+				out.u8(g.get<uint8_t>(b, 0x1EAE + t));
+				out.u8(g.get<uint8_t>(b, 0x1EB2 + t));
+				out.u8(g.get<uint8_t>(b, 0x1EBE + t));
+			}
+		}
 		for (const auto& [at, size] : kBattleFields) {
 			out.put(size == 1 ? g.get<uint8_t>(b, at) : size == 2 ? g.get<uint16_t>(b, at) : g.get<uint32_t>(b, at),
 				size);

@@ -44,6 +44,7 @@
 
 #include "p3data/game_fixes.hpp"
 #include "p3data/mail.hpp"
+#include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -1062,9 +1063,9 @@ int32_t nest_distance(const SaveGame& save, const ShipMemory& ship, uint32_t nes
 // guarida (distancia² < 200; las esperas, de 2 a 64 ticks según lo cerca que
 // esté el más cercano) y entonces pasa a la 1, apunta la guarida en su
 // [+0xE1] y los piratas se refuerzan (0x5144A0); 1 espera a que uno llegue
-// justo a la guarida (de 1 a 31 ticks) y la ataca: una batalla (0x6130B0,
-// 0x611D80, 0x5FBFE0), por reescribir; 2 (la guarida destruida, lo pone la
-// batalla) cumplido; 3 o más, fallido. Sin el pirata o con otra guarida, la
+// justo a la guarida (de 1 a 31 ticks) y la ataca (the nest's battle,
+// Sailing::nest_attack); 2 (the nest destroyed: the battle's end sets it,
+// 0x514920) cumplido; 3 o más, fallido. Sin el pirata o con otra guarida, la
 // fase 3.
 uint32_t nest_progress(SaveGame& save, GameMemory<0x18>& e, uint32_t tick) {
 	const GlobalMemory& g = save.globals;
@@ -1121,6 +1122,7 @@ uint32_t nest_progress(SaveGame& save, GameMemory<0x18>& e, uint32_t tick) {
 			}
 		}
 		uint32_t wait = 0x1F;
+		uint16_t head = 0xFFFF;  // 0x4EAFE4's local [esp+0x14] (Sailing::nest_attack).
 		for (uint32_t s = save.merchants[merchant].memory.u16(0xE); s < g.u16(kShipCount);
 			 s = save.ships[s].memory.u16(0x4)) {
 			const ShipMemory& ship = save.ships[s].memory;
@@ -1129,12 +1131,14 @@ uint32_t nest_progress(SaveGame& save, GameMemory<0x18>& e, uint32_t tick) {
 			}
 			const int32_t d2 = nest_distance(save, ship, nest);
 			if (d2 == 0) {
-				// Por reescribir: el barco (o su convoy) ataca la guarida
-				// (estado 0x14, 0x50A4E0/0x505B60, 0x50D040, 0x5062F0,
-				// 0x50E280) y empieza una batalla (0x515D00, 0x6130B0,
-				// 0x60234C o 0x514530, 0x611D80, 0x5FBFE0), que el emulador
-				// no ejecuta; [+0x14] es el barco. El juego vuelve a mirar a
-				// los 64 ticks.
+				// The ship (or its convoy) attacks the nest: it joins or starts
+				// the nest's battle (Sailing::nest_attack, battle/town_battle.cpp;
+				// with the battles on); if its convoy isn't at sea, the next ship.
+				// The game looks again 64 ticks later.
+				Sailing* sailing = event_sailing();
+				if (sailing && sailing->battles() && !sailing->nest_attack(uint16_t(s), e, head)) {
+					continue;
+				}
 				e.u32(0) = tick + 0x40;
 				return 1;
 			}

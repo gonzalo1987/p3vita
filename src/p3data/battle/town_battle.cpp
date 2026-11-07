@@ -14,11 +14,23 @@
 #include <vector>
 
 #include "p3data/battle/battle_math.hpp"
+#include "p3data/battle/pirate_nests.hpp"
 #include "p3data/game_fixes.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
+
+namespace p3::data::tick {
+namespace alderman_detail {
+// town_tick/alderman.cpp
+void fn_516170(SaveGame& save, uint32_t pirate, uint32_t type, bool captain, uint32_t strength);
+void fn_51a4e0(SaveGame& save, int ship, uint32_t strength, uint8_t level);
+}  // namespace alderman_detail
+namespace facilities_detail {
+uint32_t fn_52bb00(const SaveGame& save, int town);  // town_tick/facilities.cpp
+}  // namespace facilities_detail
+}  // namespace p3::data::tick
 
 namespace p3::data {
 
@@ -451,12 +463,20 @@ void Sailing::fn_600060(size_t b) {
 			// The game checks the cell of the scene's ship i, not first + i: side
 			// D's ships are checked at side A's places (0x6005D2, a game bug;
 			// for i at or above side A's count, side D's own from its start, which
-			// don't move: on land the loop never ends). With fix_game_bugs(), its own.
-			const size_t checked = battle_entry(b, uint16_t(fix_game_bugs() ? first + i : i));
-			const int32_t ex = g.get<int16_t>(checked, 0xA), ey = g.get<int16_t>(checked, 0xE);
-			int32_t cx = 0, cy = 0;
-			view_point_cell(ex, (ey * 11) / 17, cx, cy);
-			if (!fn_5ffe20(b, cx, cy)) {
+			// don't move: on land the loop never ends, the game hangs; seen in the
+			// oracle, town_raids, save 7). With fix_game_bugs(), its own; without
+			// it too where the game would hang (p3vita never hangs).
+			auto water = [&](size_t checked) {
+				const int32_t ex = g.get<int16_t>(checked, 0xA), ey = g.get<int16_t>(checked, 0xE);
+				int32_t cx = 0, cy = 0;
+				view_point_cell(ex, (ey * 11) / 17, cx, cy);
+				return fn_5ffe20(b, cx, cy);
+			};
+			bool ok = water(battle_entry(b, uint16_t(fix_game_bugs() ? first + i : i)));
+			if (!ok && !fix_game_bugs() && first != 0 && i >= first) {
+				ok = water(battle_entry(b, uint16_t(first + i)));  // The game hangs here.
+			}
+			if (!ok) {
 				--i;
 				--n;
 			}
@@ -467,14 +487,15 @@ void Sailing::fn_600060(size_t b) {
 }
 
 // 0x600660 (method +0x18 of a town battle; arg): a battle over ([+0x5C]) ends
-// (method +0x1C, 0x5FE7E0, not rewritten yet); else [+0x2F18] 0 and, with
+// (method +0x1C, 0x5FE7E0, with 1); else [+0x2F18] 0 and, with
 // arg, the formation (method +0x2C, 0x600060). (The local player's human
 // side then shows the town (the view and the sea map, 0x6107B9 and
 // [0x6E59CC]): the interface, part 7.)
 void Sailing::fn_600660(size_t b, bool arg) {
 	BattleGraph& g = save_.battles;
 	if (g.get<uint8_t>(b, 0x5C) != 0) {
-		return;  // 0x5FE7E0: the battle's end (piece 6, part 4).
+		fn_5fe7e0(b, true);
+		return;
 	}
 	g.set<uint16_t>(b, 0x2F18, 0);
 	if (arg) {
@@ -503,6 +524,165 @@ uint8_t Sailing::town_attack(uint16_t ship, uint8_t town, bool join) {
 		fn_5fbfe0(size_t(save_.battles.battle(slot)), ship, town);
 	}
 	return slot;
+}
+
+// 0x50E280 (ships object; a convoy, a town's number): the convoy's ships
+// nudged a pixel ([+0x1C], [+0x20] in 16.16) by the town's kind (StadtDaten.ini
+// [+0x31]): x one less for a kind above 4 and one more for 1..3; y one less
+// for 0, 1 and 7 and one more for 3..5.
+void Sailing::fn_50e280(uint16_t convoy, uint8_t town) {
+	const uint8_t kind = save_.globals.u8(kTownTable + 0x34 * uint32_t(town) + 0x31);
+	uint32_t dx = 0, dy = 0;
+	if (kind > 4) {
+		dx = 0xFFFF0000;
+	} else if (kind != 0 && kind < 4) {
+		dx = 0x10000;
+	}
+	if (kind < 2 || kind == 7) {
+		dy = 0xFFFF0000;
+	} else if (kind > 2 && kind < 6) {
+		dy = 0x10000;
+	}
+	if (convoy >= save_.convoy_count()) {
+		return;
+	}
+	const int32_t ships = int32_t(save_.globals.u16(global::kShipCount));
+	for (int32_t s = save_.convoys[convoy].u16(0xA); s < ships; s = save_.ships[size_t(s)].memory.u16(0x6)) {
+		ShipMemory& m = save_.ships[size_t(s)].memory;
+		m.u32(0x1C) += dx;
+		m.u32(0x20) += dy;
+	}
+}
+
+// 0x515D00 (pirate k's object): whether its nest is destroyed ([+0x15] 1) or
+// its convoy is out ([+0x10]).
+bool Sailing::fn_515d00(size_t k) const {
+	const GameMemory<0x18>& p = *save_.pirates[k];
+	return p.u8(0x15) == 1 || p.u16(0x10) < save_.convoy_count();
+}
+
+// 0x514530 (pirate k's object): its nest's defence against a Hanse convoy.
+// Without a map, the map and the entries set on it (fn_514530_map, battle/
+// pirate_nests.cpp). Then, with no convoy out ([+0x10]): the first ship at the
+// nest ([+0x12]; with none, a new one, 0x516170 of type 0 with a captain and
+// the strength [+0x14] · 40 + 100) leaves the nest's list for the nest's
+// place and a convoy of its own (0x5062F0 into [+0x10]); a new one is put
+// back in the nest's list with a quarter of its hull and the convoy left
+// empty. With the convoy (and no new ship), every ship at the nest joins it
+// at its head, with its upgrades (0x51A4E0: the strength ([+0x14] + 1) · its
+// type · 20 + 50, the level of the Hanse town's 0x52BB00).
+//
+// The game computes the new ship's strength in eax after movzx ax: its high
+// half is what eax held, the map's address when the nest had one already (a
+// game bug: roadmap, «Corregir los fallos del juego»); p3vita takes it as 0,
+// as when the map is made in the same call (then eax held the pool's count).
+void Sailing::fn_514530(size_t k) {
+	GameMemory<0x18>& p = *save_.pirates[k];
+	fn_514530_map(save_, k);
+	const uint16_t convoys = save_.convoy_count();
+	const uint16_t ships = save_.globals.u16(global::kShipCount);
+	bool fresh = false;
+	if (p.u16(0x10) >= convoys) {
+		if (p.u16(0x12) >= ships) {
+			tick::alderman_detail::fn_516170(save_, uint32_t(k), 0, true, uint32_t(p.u8(0x14)) * 40 + 100);
+			fresh = true;
+		}
+		const uint16_t first = p.u16(0x12);
+		ShipMemory& s = save_.ships[first].memory;
+		p.u16(0x12) = s.u16(0x6);
+		s.u16(0x6) = 0xFFFF;
+		const uint32_t nest = kTownTable + 0x34 * uint32_t(p.u8(0xE));
+		s.u16(0x1E) = save_.globals.u16(nest + 0x20);
+		s.u16(0x22) = save_.globals.u16(nest + 0x24);
+		fn_5062f0(p.u16(0x10), first);
+		if (fresh) {
+			s.s32(0x18) = s.s32(0x14) >> 2;
+			p.u16(0x12) = first;
+			save_.convoys[p.u16(0x10)].u16(0xA) = 0xFFFF;
+			s.u16(0x8) = 0xFFFF;
+		}
+	}
+	if (p.u16(0x10) >= save_.convoy_count() || fresh) {
+		return;
+	}
+	GameMemory<0x3C>& c = save_.convoys[p.u16(0x10)];
+	while (p.u16(0x12) < ships) {
+		const uint16_t i = p.u16(0x12);
+		ShipMemory& s = save_.ships[i].memory;
+		p.u16(0x12) = s.u16(0x6);
+		s.u16(0x6) = c.u16(0xA);
+		c.u16(0xA) = i;
+		s.u16(0x8) = p.u16(0x10);
+		const uint32_t level = tick::facilities_detail::fn_52bb00(save_, save_.globals.u8(0x6DE52E));
+		tick::alderman_detail::fn_51a4e0(save_, i, (uint32_t(p.u8(0x14)) + 1) * s.u8(0xE) * 20 + 50, uint8_t(level));
+	}
+}
+
+// The attack on a nest (0x4EBA71..0x4EBC5E; the Hanse task of type 3 in its
+// phase 1, town_tick/alderman.cpp, when a ship of the merchant at sea stands
+// on the nest): the ship's convoy leaves the list of the convoys at sea
+// (0x50A4E0; not there: no attack, false) and goes to the state 0x14 ([+0x18]
+// | 0x20, its ships [+0x3C] | 0x20 and the state 0x14; the guide out of the
+// list by x, 0x50D040); a ship alone leaves the sea (0x505B60), gets [+0x3C]
+// | 0x20, the state 0x14 and a convoy of its own (0x5062F0, [+0x14] 0x12). The
+// convoy goes to the nest (0x50E280). If the nest is destroyed or its convoy
+// out (0x515D00), the guide joins the battle of the nest (0xFE − k) and the
+// convoy's owner (0x6130B0, 0x60234C); else (or without one) [+0x14] of the
+// task is the ship, the nest sets up its defence (0x514530) and a new town
+// battle starts against it (0x611D80, 0x5FBFE0 with the guide).
+//
+// A ship alone gets its convoy's list head from a local of 0x4EAFE4 (`head`)
+// that only the convoy's path writes (with the convoy, before 0x50A4E0), so
+// it keeps what the stack held (the oracle sets it to 0xFFFF at the
+// function's entry, NEST_ATTACK_HEAD) or a convoy of an earlier ship of the
+// same look at the task that wasn't at sea.
+bool Sailing::nest_attack(uint16_t ship, GameMemory<0x18>& task, uint16_t& head) {
+	const uint16_t ships = save_.globals.u16(global::kShipCount);
+	ShipMemory& s = save_.ships[ship].memory;
+	uint16_t convoy = s.u16(0x8);
+	if (convoy < save_.convoy_count()) {
+		head = convoy;
+		if (!fn_50a4e0(convoy)) {
+			return false;
+		}
+		GameMemory<0x3C>& c = save_.convoys[convoy];
+		c.u32(0x18) |= 0x20;
+		c.u16(0x12) = 0x14;
+		for (int32_t i = c.u16(0xA); i < int32_t(ships); i = save_.ships[size_t(i)].memory.u16(0x6)) {
+			ShipMemory& m = save_.ships[size_t(i)].memory;
+			m.u16(0x3C) |= 0x20;
+			m.u16(0x134) = 0x14;
+		}
+		if (c.u16(0x10) < ships) {
+			unlink_x(c.u16(0x10));  // Again (0x50A4E0 did it): nothing.
+		}
+	} else {
+		fn_505b60(ship);
+		s.u8(0x3C) |= 0x20;
+		s.u16(0x134) = 0x14;
+		unlink_x(ship);  // Again (0x505B60 did it): nothing.
+		fn_5062f0(head, ship);
+		convoy = head;
+		save_.convoys[convoy].u16(0x14) = 0x12;
+	}
+	const uint8_t k = task.u8(0x10);
+	fn_50e280(convoy, task.u8(0x11));
+	const uint8_t nest = uint8_t(0xFE - k);
+	if (fn_515d00(k)) {
+		const uint8_t running = fn_6130b0(nest, save_.convoys[convoy].u8(0x0));
+		if (running != 0xFF) {
+			fn_60234c(size_t(save_.battles.battle(running)), save_.convoys[convoy].u16(0x10));
+			return true;
+		}
+	}
+	task.u16(0x14) = ship;
+	fn_514530(k);
+	const uint8_t slot = fn_611d80();
+	// Without a free slot the game uses the pointer past the array; nothing here.
+	if (slot != 0xFF) {
+		fn_5fbfe0(size_t(save_.battles.battle(slot)), save_.convoys[convoy].u16(0x10), nest);
+	}
+	return true;
 }
 
 // 0x6027CC (on a town battle; a place): the start of a ship that joins the
@@ -662,7 +842,7 @@ void Sailing::fn_60234c(size_t b, uint16_t ship) {
 // 0x1168 bytes (vtable 0x67AAD0), the town's [+0x2C8] |= 0x800, the wind
 // (with the storms near), the steps, and when both sides are the AI's
 // method +0x18 (0x600660). Without ships (or towers and defenders) the
-// battle is over at once (method +0x1C: not rewritten yet). Left out: a
+// battle is over at once (method +0x1C, battle/town_end.cpp). Left out: a
 // human side's texts and battle window (part 7).
 void Sailing::fn_5fbfe0(size_t b, uint16_t ship, uint8_t town) {
 	BattleGraph& g = save_.battles;
@@ -842,7 +1022,7 @@ void Sailing::fn_5fbfe0(size_t b, uint16_t ship, uint8_t town) {
 	// The battle over at once: [+0x5C], automatic (0x612D20 sees [+0xAC8]: the
 	// game sets it after the call without an attacker, before without a
 	// defender), [+0xAC4] 3, then method +0x1C (0x5FE7E0, with 1 without an
-	// attacker, 0 without a defender: the battle's end, piece 6 part 4).
+	// attacker, 0 without a defender: the battle's end, battle/town_end.cpp).
 	auto over = [&](bool no_attacker) {
 		set8(0x5C, 1);
 		if (!u8(0xAC8)) {
@@ -858,6 +1038,7 @@ void Sailing::fn_5fbfe0(size_t b, uint16_t ship, uint8_t town) {
 	};
 	if (na == 0) {
 		over(true);
+		fn_5fe7e0(b, true);
 		return;
 	}
 	uint32_t nd = 0;
@@ -874,6 +1055,7 @@ void Sailing::fn_5fbfe0(size_t b, uint16_t ship, uint8_t town) {
 	set16(0x65A, uint16_t(nd));
 	if (nd == 0 && u16(0x1E9E) == 0xFFFF) {
 		over(false);
+		fn_5fe7e0(b, false);
 		return;
 	}
 	set16(0x14, uint16_t(na + nd));

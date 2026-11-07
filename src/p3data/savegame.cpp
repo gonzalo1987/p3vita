@@ -1396,17 +1396,15 @@ void load_game_scripts(const CprArchive& archive, SaveGame& save) {
 	}
 	load_save_scripts(archive, save);  // For write_savegame (savegame_write.hpp).
 	finish_load(save);  // The loader's last steps (savegame_load.hpp).
-	// Las plantillas de mapa de las ciudades nuevas (0x4F9B40).
-	save.town_templates.clear();
-	for (unsigned i = 0; i < 100; ++i) {
+	// The map templates (0x4F9B40) by their number: the new towns' (0..27) and
+	// the pirate nests' (251..254, 0x514530); the missing ones empty.
+	save.town_templates.assign(256, {});
+	for (unsigned i = 0; i < 256; ++i) {
 		char path[40];
 		std::snprintf(path, sizeof(path), "iso/towns/stadtplatz%.2u.tow", i);
-		const CprEntry* entry = archive.find(path);
-		if (!entry) {
-			break;
+		if (const CprEntry* entry = archive.find(path)) {
+			archive.read(*entry, save.town_templates[i]);
 		}
-		save.town_templates.emplace_back();
-		archive.read(*entry, save.town_templates.back());
 	}
 	load_town_view(archive, save.town_view);
 	// 0x51E440: la tabla de las ciudades.

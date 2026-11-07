@@ -4950,6 +4950,448 @@ def town_step_branches(o):
     return during
 
 
+def town_end_branches(o):
+    """The battles' piece 6, part 4: the branches of the town battle's end (method +0x1C, 0x5FE7E0) and its
+    destructor (method +0x4, 0x602990 → 0x5FB9F0) that the raids don't reach, by the game's functions called
+    directly on the first town battle of town_raids with a defender ship (else the first one):
+    - first, another lone ship of the attacker's owner at sea turns raider with its route's end put at the
+      battle's town (its approach point): it arrives and joins the battle by the game's way (0x506F33 →
+      0x6130B0, 0x60234C), so that the battle has a joined convoy ([+0x2F1C]);
+    - the attackers win (0x5FE7E0 with 0) at the town of the player's first office (the battle's town
+      retouched), with the player as the defender and his ship fled (the coward's letter 0x3B and 0x4F8CA0),
+      the attacker's convoy made of its guide, another ship of its owner and one of a third merchant (a new
+      side), the guide nearly full (0x633DB0 hands the wares over to the next ships), the player's office and
+      the town with wares and money and their last plunder long ago, and the guide's [+0x15D] the player with
+      a captain (the share's letter 0x6A); then again with every ship of the convoy nearly full (they fill up at
+      the offices, the other offices are only counted, the town keeps its wares);
+    - again at once (the town paid within 14 days: the music 0), with no defender merchant and [+0xAC4] 3;
+    - the attackers lose (0x5FE7E0 with 1): with no defender merchant and an attacker fled (most kept); with the
+      player as the defender, the attackers sunk or taken and the defender taken (his report has both sides'
+      ships taken); with [+0xAC4] 3 (no news);
+    - the destructor with the music's fraction at 999 (the event 5, 0x50CB80) and the joined convoy back on its
+      way (0x50BFD0)."""
+    during_raids = town_raids(o)
+    towns, offices, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+
+    def town_battles():
+        out = []
+        for k in range(o.u8(to.BATTLES + 0x404)):
+            b = o.u32(to.BATTLES + 4 * k)
+            if b and o.u32(b) == 0x67AAA0 and not o.u8(b + 0x5C) and o.u16(b + 0x10) != 0xFFFF:
+                out.append(b)
+        return out
+
+    def entries(b, head):
+        out, k = [], o.u16(b + head)
+        while k != 0xFFFF and len(out) < 64:
+            out.append(o.u32(o.u32(b + 4) + 4 * k))
+            k = o.u16(o.u32(b + 0xC) + 2 * k)
+        return out
+
+    def during(o):
+        during_raids(o)
+        b = first = None
+        for _ in range(400):
+            o.advance_tick()
+            found = town_battles()
+            first = first or (found[0] if found else None)
+            b = next((x for x in found if o.u16(x + 0x65A) > 0), None)
+            if b:
+                break
+        b = b or first
+        if not b:
+            raise RuntimeError('no town battle within 400 ticks')
+        convoys = o.u16(CONVOY_COUNT)
+        town, owner, defender = o.u8(b + 0x1E98), o.u16(b + 0x35A), o.u16(b + 0x35C)
+        a = o.u16(b + 0x65E)
+        guide = o.u16(convoy_at(o, a) + 0xA)
+        print(f'town battle {b:#x} of town {town:#x}: owners {owner:#x} {defender:#x}, ships {o.u16(b + 0x658)} + '
+              f'{o.u16(b + 0x65A)}, convoy {a} guide {guide}')
+        inside = {o.u32(e + 4) for e in entries(b, 0x10) + entries(b, 0x65C)}
+        # A lone ship of the attacker's owner at sea, with a route, raids the battle's town and arrives there.
+        join = next((s for s in range(ships) if o.u8(o.ship(s)) == owner and s not in inside
+                     and o.u16(o.ship(s) + 0x134) == 0xF and o.u16(o.ship(s) + 8) >= convoys
+                     and o.u32(o.ship(s) + 0x24)), None)
+        if join is not None:
+            run_bytes(o, player_op('pirate', join, 1))
+            n = o.u8(0x6DE4B8 + town)
+            ax, ay = o.u32(0x6DDB90 + 0x34 * n + 0x20) & 0xFFFF, o.u32(0x6DDB90 + 0x34 * n + 0x24) & 0xFFFF
+            s = o.ship(join)
+            route = o.u32(s + 0x24)
+            points, count = o.u32(route), o.u32(route + 4)
+            w16(o, points + 4 * (count - 1), ax)
+            w16(o, points + 4 * (count - 1) + 2, ay)
+            w16(o, s + 0x34, count - 1)
+            w8(o, s + 0x38, town)
+            w32(o, s + 0x1C, ax << 16 | 0x7FFF)
+            w32(o, s + 0x20, ay << 16 | 0x7FFF)
+            w32(o, s + 0x28, 0)
+            w32(o, s + 0x2C, 0)
+            for _ in range(20):
+                o.advance_tick()
+                if o.u16(b + 0x2F20) or o.u8(b + 0x5C) or o.u32(to.BATTLES + 4 * o.u16(b + 0x662)) != b:
+                    break
+            print(f'  ship {join} raids town {town:#x}: joined convoys {o.u16(b + 0x2F20)}, over {o.u8(b + 0x5C)}, '
+                  f'ships {o.u16(b + 0x658)} + {o.u16(b + 0x65A)}')
+        if o.u32(to.BATTLES + 4 * o.u16(b + 0x662)) != b or o.u8(b + 0x5C):
+            raise RuntimeError('the battle ended while the ship joined it')
+        side_a, side_d = entries(b, 0x10), entries(b, 0x65C)
+        inside = {o.u32(e + 4) for e in side_a + side_d}
+        # The attackers win at the town of the player's first office.
+        f = o.u16(o.merchant(player) + 0xC)
+        plunder_town = o.u8(o.office(f) + 0x2C6) if f < offices else town
+        others = [s for s in range(ships) if o.u8(o.ship(s)) == owner and s not in inside and s != guide]
+        third = [s for s in range(ships) if o.u8(o.ship(s)) not in (owner, player) and o.u8(o.ship(s)) < merchants
+                 and s not in inside]
+        chain = [guide] + others[:1] + third[:1]
+        nexts = {s: o.u16(o.ship(s) + 6) for s in chain}
+        for x, y in zip(chain, chain[1:] + [0xFFFF]):
+            w16(o, o.ship(x) + 6, y)
+        g = o.ship(guide)
+
+        def nearly_full(s):
+            room = o.u32(o.ship(s) + 0x10) - o.u32(o.ship(s) + 0x11C) - o.u32(o.ship(s) + 0x118)
+            if room > 600:
+                w32(o, o.ship(s) + 0x118, o.u32(o.ship(s) + 0x118) + room - 600)
+            return room
+        room = nearly_full(guide)
+        saved = {k: o.u16(b + k) for k in (0x35C, 0x1E98)}
+        saved_ac4 = o.u8(b + 0xAC4)
+        w8(o, b + 0x1E98, plunder_town)
+        w16(o, b + 0x35C, player)
+        if side_d:
+            w8(o, side_d[0] + 0x12A, o.u8(side_d[0] + 0x12A) | 2)
+        w32(o, o.u32(to.SIEGES) + 0x1024 * plunder_town, 0)
+        w32(o, o.town(plunder_town) + 0x700, 3000)
+        if f < offices:
+            for w in (3, 4, 5, 6, 7, 8, 10):
+                w32(o, o.office(f) + 4 + 4 * w, 3000)
+        captain15d = o.u8(g + 0x15D)
+        w8(o, g + 0x15D, player)
+        if o.u16(g + 0x42) >= o.u16(0x6DD892):
+            w16(o, g + 0x42, 0)
+        print(f'  the attackers win at town {plunder_town:#x} (the player\'s office {f}): convoy {chain}, the guide\'s '
+              f'room {room} → 600, captain {o.u16(g + 0x42)}')
+        direct(o, 0x5FE7E0, [0], ecx=b)
+        # Again, every ship of the convoy nearly full: they fill up at the offices, the other offices are only
+        # counted and the town keeps its wares (a full ship's room left is under a barrel).
+        w8(o, b + 0x5C, 0)
+        w16(o, b + 0x15C, 0)
+        w32(o, o.u32(to.SIEGES) + 0x1024 * plunder_town, 0)
+        if f < offices:
+            for w in (3, 4, 5, 6, 7, 8, 10):
+                w32(o, o.office(f) + 4 + 4 * w, 3000)
+        for s in chain:
+            nearly_full(s)
+        direct(o, 0x5FE7E0, [0], ecx=b)
+        print(f'  again with the convoy nearly full: town wares {[o.u32(o.town(plunder_town) + 4 + 4 * w) for w in (3, 4, 5)]}')
+        for s, n in nexts.items():
+            w16(o, o.ship(s) + 6, n)
+        w8(o, g + 0x15D, captain15d)
+
+        def again(lost, what):
+            w8(o, b + 0x5C, 0)
+            w16(o, b + 0x15C, 0)
+            direct(o, 0x5FE7E0, [lost], ecx=b)
+            print(f'  {what}: [+0x15C] {o.u16(b + 0x15C)}, music {o.u16(b + 0x1E94):#x}, sides {o.u8(b + 0x558)}')
+        w16(o, b + 0x35C, 0xFF)
+        w8(o, b + 0xAC4, 3)
+        again(0, 'again at once, no defender merchant, [+0xAC4] 3')
+        w8(o, b + 0xAC4, 0)
+        flags = {e: o.u8(e + 0x12A) for e in side_a + side_d}
+        taken = {e: o.u8(e + 0x13D) for e in side_a + side_d}
+        w8(o, side_a[0] + 0x12A, 2)
+        again(1, 'the attackers lose, one fled, no defender merchant')
+        # The player as the defender: his report (a letter 0x29, kept) has the ships taken of both sides.
+        w16(o, b + 0x35C, player)
+        w8(o, side_a[0] + 0x12A, 4)
+        if len(side_a) > 1:
+            w8(o, side_a[1] + 0x12A, 0)
+            w8(o, side_a[1] + 0x13D, 1 - o.u8(side_a[1] + 0x142))
+        if side_d:
+            w8(o, side_d[0] + 0x12A, 0)
+            w8(o, side_d[0] + 0x13D, 1 - o.u8(side_d[0] + 0x142))
+        again(1, 'the attackers lose, sunk and taken')
+        w8(o, b + 0xAC4, 3)
+        again(1, 'the attackers lose, [+0xAC4] 3')
+        for e, v in flags.items():
+            w8(o, e + 0x12A, v)
+        for e, v in taken.items():
+            w8(o, e + 0x13D, v)
+        w8(o, b + 0xAC4, saved_ac4)
+        for k, v in saved.items():
+            w16(o, b + k, v)
+        # The destructor, the battle over with the music's fraction at 999, the attackers the winners ([+0x130E]
+        # 0: the game's two branches by it are the same code; the raids' ends take the other one).
+        w8(o, b + 0x5C, 1)
+        w16(o, b + 0x15C, 0)
+        w8(o, b + 0x130E, 0)
+        w16(o, b + 0x1E94, (o.u16(b + 0x1E94) & 0xFC00) | 999)
+        joined = o.u16(b + 0x2F20)
+        direct(o, 0x602990, [1], ecx=b)
+        print(f'  the destructor: {joined} joined convoys, battles {o.u8(to.BATTLES + 0x404)}')
+    return during
+
+
+def nest_attack(o, strong=True):
+    """The battles' piece 6: the attack on a nest of the Hanse task of type 3 (its fourth start, 0x4EBA71..
+    0x4EBC5E), by the game's way: a task of the candidacy made of type 3 in its phase 1 for the first AI merchant
+    with three ships sailing alone, against the first pirate's nest; the event queue (0x4D85C0) called directly at
+    the task's tick with the merchant's ships standing on the nest (the nest's place moved to the first one, as
+    retouch.nest_task):
+    - the first ship alone: it leaves the sea (0x505B60) with a convoy of its own for the nest (0x50E280), the nest
+      gets its map if it has none and its defence (0x514530: its ships in its convoy) and the battle starts
+      (0x611D80, 0x5FBFE0 against 0xFE − k), the task's [+0x14] the ship;
+    - the second one with the convoy of a free slot in its [+0x8] (not at sea: 0x50A4E0 fails, the next ship) and
+      the third one: it joins the battle (0x515D00, the nest's convoy out; 0x6130B0, 0x60234C);
+    then the world runs: the battle steps and ends at the nest (0x5FE7E0, 0x602990 → 0x5FB9F0, 0x514920). With
+    `strong` the attackers get the guns of the save's first armed ship, the nest's ships a hull of 1 and its towers
+    a damage of 199 (and the battle's towers a strength of 1, when 0x514530 made the nest's map and took the
+    damage off): the nest taken, its towers burning (0x515C00) and, with none standing, destroyed (operation 0xB4
+    and the task done); without, the nest keeps its ships and towers."""
+    towns, offices, merchants, ships = o.counts()
+    convoys = o.u16(CONVOY_COUNT)
+    ps = pirates(o)
+    if not ps:
+        raise RuntimeError('no pirate')
+    k, p = ps[0]
+    nest = o.u8(p + 0xE)
+
+    def sailing_alone(m):
+        out, s = [], o.u16(o.merchant(m) + 0xE)
+        while s < ships and len(out) < 64:
+            if o.u16(o.ship(s) + 0x134) == 0xF and o.u16(o.ship(s) + 8) >= convoys:
+                out.append(s)
+            s = o.u16(o.ship(s) + 4)
+        return out
+    m = next((x for x in rt.ai_with_office(o) if len(sailing_alone(x)) >= 3), None)
+    if m is None:
+        raise RuntimeError('no AI merchant with three ships sailing alone')
+    s1, s2, s3 = sailing_alone(m)[:3]
+    tasks = candidacy_tasks(o, rt.ai_with_office(o)[0])
+    task = next(iter(tasks.values()))
+    set_task(o, task, kind=3, merchant=m, started=1, deadline=0x3000, f10=k, f11=nest, f12=1, w14=0xFFFF)
+    model = next((s for s in range(ships) if o.u32(o.ship(s) + 0x120)), None)
+    print(f'pirate {k} nest {nest}: [+0x0] {o.u32(p):#x}, ships at the nest {o.u16(p + 0x12)}, convoy {o.u16(p + 0x10)}, '
+          f'pool {o.u16(p + 8)}; merchant {m}: ships {s1}, {s2}, {s3}; armed model {model}')
+
+    def during(o):
+        i, a = task
+        now = o.u32(WORLD + 0x14)
+        x, y = struct.unpack('<hh', bytes(o.uc.mem_read(o.ship(s1) + 0x1E, 2)) + bytes(o.uc.mem_read(o.ship(s1) + 0x22, 2)))
+        w32(o, to.TOWN_TABLE + 0x34 * nest + 0x20, x)
+        w32(o, to.TOWN_TABLE + 0x34 * nest + 0x24, y)
+        if strong:
+            for s in (s1, s3):
+                if model is not None:
+                    w32(o, o.ship(s) + 0x120, o.u32(o.ship(model) + 0x120))
+                    o.uc.mem_write(o.ship(s) + 0x13C, bytes(o.uc.mem_read(o.ship(model) + 0x13C, 0x18)))
+            n = o.u16(p + 0x12)
+            while n < ships:
+                w32(o, o.ship(n) + 0x18, 1)
+                n = o.u16(o.ship(n) + 6)
+            pool = o.u32(p + 4)
+            for e in range(o.u16(p + 8)):
+                if o.u8(pool + 8 * e + 3) in (0x30, 0x31):
+                    w8(o, pool + 8 * e + 6, 199)
+        rt.move_event(o, i, a, now)
+        direct(o, 0x4D85C0, [now], ecx=to.EVENTS)
+        b = next((o.u32(to.BATTLES + 4 * j) for j in range(o.u8(to.BATTLES + 0x404)) if o.u32(to.BATTLES + 4 * j)
+                  and o.u32(o.u32(to.BATTLES + 4 * j)) == 0x67AAA0 and o.u8(o.u32(to.BATTLES + 4 * j) + 0x1E98) == 0xFE - k),
+                 None)
+        if strong and b:
+            # 0x514530 took the damage off the pool's towers when it made the nest's map: the battle's towers weak.
+            for t in range(4):
+                if o.u32(b + 0x1EC4 + 4 * t):
+                    w32(o, b + 0x1EC4 + 4 * t, 1)
+        print(f'  ship {s1} attacks: task [+0x14] {o.u16(a + 0x14)}, ship state {o.u16(o.ship(s1) + 0x134):#x}, '
+              f'convoy {o.u16(o.ship(s1) + 8)}, nest [+0x0] {o.u32(p):#x} convoy {o.u16(p + 0x10)}, battle {b and hex(b)}'
+              + (f': ships {o.u16(b + 0x658)} + {o.u16(b + 0x65A)}, towers {[o.u8(b + 0x1E99 + t) for t in range(4)]}'
+                 if b else ''))
+        free = o.u16(FREE_CONVOY)
+        kept = o.u16(o.ship(s2) + 8)
+        w16(o, o.ship(s2) + 8, free)
+        for s in (s2, s3):
+            w16(o, o.ship(s) + 0x1E, x)
+            w16(o, o.ship(s) + 0x22, y)
+        rt.move_event(o, i, a, now)
+        direct(o, 0x4D85C0, [now], ecx=to.EVENTS)
+        w16(o, o.ship(s2) + 8, kept)
+        print(f'  ships {s2} (convoy {free}, not at sea) and {s3}: states {o.u16(o.ship(s2) + 0x134):#x} '
+              f'{o.u16(o.ship(s3) + 0x134):#x}; battle ships {b and o.u16(b + 0x658)}, joined {b and o.u16(b + 0x2F20)}')
+    return during
+
+
+def nest_attack_weak(o):
+    return nest_attack(o, strong=False)
+
+
+def nest_attack_save(o):
+    """For the save's check (re/emu/sesion19/wb.sh): as nest_attack's first attack, but the merchant's first ship
+    sailing alone is put on the nest's place (the town table's, which a load reads again from StadtDaten.ini) instead
+    of the nest on it; the battle stays (0 days)."""
+    _, _, _, ships = o.counts()
+    convoys = o.u16(CONVOY_COUNT)
+    k, p = pirates(o)[0]
+    nest = o.u8(p + 0xE)
+    m = s = None
+    for x in rt.ai_with_office(o):
+        s = o.u16(o.merchant(x) + 0xE)
+        while s < ships and not (o.u16(o.ship(s) + 0x134) == 0xF and o.u16(o.ship(s) + 8) >= convoys):
+            s = o.u16(o.ship(s) + 4)
+        if s < ships:
+            m = x
+            break
+    if m is None:
+        raise RuntimeError('no AI merchant with a ship sailing alone')
+    task = next(iter(candidacy_tasks(o, rt.ai_with_office(o)[0]).values()))
+    set_task(o, task, kind=3, merchant=m, started=1, deadline=0x3000, f10=k, f11=nest, f12=1, w14=0xFFFF)
+
+    def during(o):
+        i, a = task
+        now = o.u32(WORLD + 0x14)
+        x = o.u32(to.TOWN_TABLE + 0x34 * nest + 0x20) & 0xFFFF
+        y = o.u32(to.TOWN_TABLE + 0x34 * nest + 0x24) & 0xFFFF
+        w32(o, o.ship(s) + 0x1C, x << 16 | 0x7FFF)
+        w32(o, o.ship(s) + 0x20, y << 16 | 0x7FFF)
+        rt.move_event(o, i, a, now)
+        direct(o, 0x4D85C0, [now], ecx=to.EVENTS)
+        print(f'  ship {s} of {m} at nest {nest} ({x}, {y}) of pirate {k}: state {o.u16(o.ship(s) + 0x134):#x}, '
+              f'battles {o.u8(to.BATTLES + 0x404)}')
+    return during
+
+
+def nest_attack_branches(o):
+    """The battles' piece 6: the attack on a nest's branches that nest_attack doesn't reach, each on a pirate of its
+    own (as many as the save has) with a task of the candidacy made of type 3 in its phase 1, the nest's place
+    moved to the attacker and the event queue (0x4D85C0) called directly:
+    - the guide of the first AI convoy at sea (its ships all its owner's): the convoy leaves the sea (0x50A4E0)
+      in the state 0x14 and attacks;
+    - a ship sailing alone against a nest whose convoy is out ([+0x10] a pirate convoy at sea, 0x515D00) with no
+      battle there: a new one, the nest's ships put in that convoy (0x514530);
+    - a ship sailing alone against a nest with no ship at home and no map ([+0x12] 0xFFFF, [+0x0] 0: the map made
+      in the call, so the new ship's strength is the game's clean one): a new ship (0x516170) with a quarter of
+      its hull back at the nest, its convoy left empty.
+    After the first, a boarding (0x60C1C9) called directly in its battle with side A's owner the player and the
+    nest's convoy's guide sunk: the player's message names the taken ship's owner by the nest's captain."""
+    towns, offices, merchants, ships = o.counts()
+    convoys = o.u16(CONVOY_COUNT)
+    ps = pirates(o)
+    guide = owner1 = None
+    for c in range(convoys):
+        a = convoy_at(o, c)
+        g = o.u16(a + 0x10)
+        owners, s = set(), o.u16(a + 0xA)
+        while s < ships and len(owners) < 3:
+            owners.add(o.u8(o.ship(s)))
+            s = o.u16(o.ship(s) + 6)
+        if o.u8(a) < merchants and o.u16(a + 0x12) == 0xF and g < ships and owners == {o.u8(a)}:
+            guide, owner1 = g, o.u8(a)
+            break
+    lone = []
+    for m in rt.ai_with_office(o):
+        if m == owner1:
+            continue
+        s = o.u16(o.merchant(m) + 0xE)
+        while s < ships and not (o.u16(o.ship(s) + 0x134) == 0xF and o.u16(o.ship(s) + 8) >= convoys):
+            s = o.u16(o.ship(s) + 4)
+        if s < ships:
+            lone.append((m, s))
+    pirate_convoy = next((c for c in range(convoys) if o.u8(convoy_at(o, c)) >= merchants
+                          and o.u16(convoy_at(o, c) + 0x12) == 0x12), None)
+    tasks = list(candidacy_tasks(o, rt.ai_with_office(o)[0]).values())
+    cases = []
+    if guide is not None and len(ps) > 0:
+        cases.append(('convoy', ps[0], owner1, guide))
+    if pirate_convoy is not None and len(ps) > 1 and len(lone) > 0:
+        cases.append(('out', ps[1], lone[0][0], lone[0][1]))
+    if len(ps) > 2 and len(lone) > 1:
+        cases.append(('home', ps[2], lone[1][0], lone[1][1]))
+    for (what, (k, p), m, s), task in zip(cases, tasks):
+        set_task(o, task, kind=3, merchant=m, started=1, deadline=0x3000, f10=k, f11=o.u8(p + 0xE), f12=1,
+                 w14=0xFFFF)
+    print(f'cases {[(w, k, m, s) for w, (k, _), m, s in cases]}; pirate convoy at sea {pirate_convoy}')
+
+    def during(o):
+        now = o.u32(WORLD + 0x14)
+        for (what, (k, p), m, s), (i, a) in zip(cases, tasks):
+            nest = o.u8(p + 0xE)
+            x, y = struct.unpack('<hh', bytes(o.uc.mem_read(o.ship(s) + 0x1E, 2)) + bytes(o.uc.mem_read(o.ship(s) + 0x22, 2)))
+            w32(o, to.TOWN_TABLE + 0x34 * nest + 0x20, x)
+            w32(o, to.TOWN_TABLE + 0x34 * nest + 0x24, y)
+            if what == 'out':
+                w16(o, p + 0x10, pirate_convoy)
+            elif what == 'home':
+                w16(o, p + 0x12, 0xFFFF)
+                w16(o, p + 0x10, 0xFFFF)
+                w32(o, p, 0)
+            rt.move_event(o, i, a, now)
+            direct(o, 0x4D85C0, [now], ecx=to.EVENTS)
+            print(f'  {what}: ship {s} of {m} against pirate {k}: state {o.u16(o.ship(s) + 0x134):#x}, convoy '
+                  f'{o.u16(o.ship(s) + 8)}; the nest\'s convoy {o.u16(p + 0x10)}, at home {o.u16(p + 0x12)}, map '
+                  f'{o.u32(p):#x}; task [+0x14] {o.u16(a + 0x14)}; battles {o.u8(to.BATTLES + 0x404)}')
+            b = next((o.u32(to.BATTLES + 4 * j) for j in range(o.u8(to.BATTLES + 0x404)) if o.u32(to.BATTLES + 4 * j)
+                      and o.u32(o.u32(to.BATTLES + 4 * j)) == 0x67AAA0
+                      and o.u8(o.u32(to.BATTLES + 4 * j) + 0x1E98) == 0xFE - k), None)
+            if what == 'convoy' and b and o.u16(b + 0x65C) != 0xFFFF:
+                # The player's boarding message at the nest (0x60C1C9): side A's owner the player for the call and
+                # the nest's convoy's guide sunk, so the taken ship's owner is named by the nest's captain (method
+                # +0x28 at a nest, 0x60C4EC).
+                player = o.u32(to.PLAYER)
+                owner_a = o.u16(b + 0x35A)
+                g = o.u16(convoy_at(o, o.u16(b + 0x660)) + 0x10)
+                hull = o.u32(o.ship(g) + 0x18)
+                w16(o, b + 0x35A, player)
+                w32(o, o.ship(g) + 0x18, 0)
+                direct(o, 0x60C1C9, [o.u16(b + 0x10), o.u16(b + 0x65C)], ecx=b)
+                text = bytes(o.uc.mem_read(b + 0x1310, 0x100)).split(b'\0')[0].decode('latin-1')
+                print(f'  the player\'s boarding at the nest: {text!r}')
+                w16(o, b + 0x35A, owner_a)
+                w32(o, o.ship(g) + 0x18, hull)
+    return during
+
+
+def nest_fire(o):
+    """The battles' piece 6, part 4: the fire of a nest's tower (the event 0x25 of a tower fallen in the nest's
+    battle, 0x4E1B84 → 0x515C00), with new events at the tick and the world running: on the first pirate with a
+    pool, two of its planned buildings (entries 0x1B of the list from entry 0) made towers 0x30 and 0x31 at
+    cells of their own, one undamaged (it burns from 201 to 250, a tick at a time, and leaves the list) and one
+    at 240 (from 241); a cell of the nest with no tower; a pirate slot with no pirate, if any; and a town out
+    of the world that is no nest (0xFE − town is 5 or more)."""
+    towns = o.counts()[0]
+    now = o.u32(WORLD + 0x14)
+    k = next((i for i in range(5) if o.u32(to.SHIPS + 0xC + 4 * i) and o.u16(o.u32(to.SHIPS + 0xC + 4 * i) + 8)), None)
+    if k is None:
+        raise RuntimeError('no pirate with a pool')
+    p = o.u32(to.SHIPS + 0xC + 4 * k)
+    pool, count = o.u32(p + 4), o.u16(p + 8)
+    chain, i = [], o.u16(pool + 4)
+    while i < count and len(chain) < count:
+        chain.append(i)
+        i = o.u16(pool + 8 * i + 4)
+    planned = [i for i in chain if o.u8(pool + 8 * i + 3) == 0x1B][:2]
+    if len(planned) < 2:
+        raise RuntimeError(f'pirate {k}: fewer than two planned buildings in its pool ({chain})')
+    empty = next((i for i in range(5) if not o.u32(to.SHIPS + 0xC + 4 * i)), None)
+    print(f'pirate {k}: pool {count} entries, list {chain}, towers made of {planned}; empty slot {empty}')
+
+    def during(o):
+        cells = ((10, 20), (11, 21))
+        for (x, y), i, kind, damage in zip(cells, planned, (0x30, 0x31), (0, 240)):
+            e = pool + 8 * i
+            w8(o, e, x)
+            w8(o, e + 1, y)
+            w8(o, e + 3, kind)
+            w8(o, e + 6, damage)
+            new_event_at(o, now, 0x25, w8=i, wA=0, wC=x, wE=y, b10=0xFE - k, b11=1)
+        new_event_at(o, now, 0x25, w8=0, wA=0, wC=12, wE=22, b10=0xFE - k, b11=1)
+        if empty is not None:
+            new_event_at(o, now, 0x25, w8=0, wA=0, wC=10, wE=20, b10=0xFE - empty, b11=1)
+        new_event_at(o, now, 0x25, w8=0, wA=0, wC=10, wE=20, b10=towns, b11=1)
+    return during
+
+
 def first_arrival(o):
     """For raid_arrival, in a process of its own: runs the world tick by tick
     until an AI merchant's ship at sea out of a convoy arrives at its
@@ -9159,6 +9601,27 @@ SCENARIOS = {
         '@50797e']),
     'town_raids': Scenario(town_raids, [0x5FD510], 2, [
         '@5fdc1f', '@5fe6be', '@600843', '@6247c6', '@624d7c', '@6252ae', '@625c4d', '@622b09']),
+    # The fourth start: the attack on a nest of the Hanse task of type 3 (0x4EBA71), the battle to its end.
+    'nest_attack': Scenario(nest_attack, EVENTS_FUNCTIONS + [0x514530, 0x5FBFE0, 0x60234C, 0x5FD510, 0x5FE7E0,
+                                                            0x602990, 0x514920], 2, [
+        '@4ebb20', '@4eba98>4ebca7', '@4ebb9a', '@4ebbd3', '@4ebc02', '@5145c9', '@51486a', '@5fec0e', '@5fbb12',
+        '@5fbe3c', '@514a32', '@514b5f', '@542e40', '@4ec354']),
+    'nest_attack_weak': Scenario(nest_attack_weak, EVENTS_FUNCTIONS + [0x514530, 0x5FBFE0, 0x60234C, 0x5FD510,
+                                                                      0x5FE7E0, 0x602990, 0x514920], 2, [
+        '@4ebb20', '@4ebc02', '@5fee49']),
+    'nest_attack_save': Scenario(nest_attack_save, EVENTS_FUNCTIONS + [0x514530, 0x5FBFE0], 0, ['@4ebb20', '@4ebc02']),
+    'nest_attack_branches': Scenario(nest_attack_branches, EVENTS_FUNCTIONS + [0x514530, 0x5FBFE0, 0x50A4E0,
+                                                                          0x60C1C9], 0, [
+        '@4eba9e', '@4ebb20', '@4ebb9a', '@51484d', '@514797', '@514820', '@514568', '@60c508']),
+    # Part 4: a nest's tower burning (the event 0x25 of a nest, 0x515C00).
+    'nest_fire': Scenario(nest_fire, [0x4D85C0, 0x515C00], 1, [
+        '@4e1bd3', '@4e1baf>4e1e48', '@4e1bbe>4e1e48', '@4e1be0', '@515c6c', '@515c71', '@515cc4', '@515c54']),
+    # Part 4: the town battle's end (0x5FE7E0), the plunder (0x633DB0 with a convoy) and the destructor.
+    'town_end_branches': Scenario(town_end_branches, [0x60234C, 0x5FE7E0, 0x602990, 0x633DB0], 0, [
+        '@6023c1', '@5fe8fb', '@5fe9e0', '@5fead2', '@5feadd', '@5feb0f', '@5feb74', '@5feb86', '@5fedb1',
+        '@5fedc8', '@5fed8d>5feeaf', '@5fefc8', '@5ff01a', '@5ff0bb', '@5ff0fc', '@5ff201', '@5ff2cf', '@5ff303',
+        '@5ff4e6', '@6340a6', '@6340be', '@634163', '@6341a1', '@633f99>6341ba', '@634306', '@634323', '@634400',
+        '@634576', '@5fbc8d', '@5fbd15']),
     'statistics_company': Scenario(statistics_company, [STATS_BALANCE, STATS_GRAPH, STATS_SUPPLY], 0, [
         '@4a3071', '@4a308d', '@4a35b2', '@4a35bd>4a35c2', '@4a35bf', '@4a353b', '@4a354a', '@4a356f', '@4a3580',
         '@4a3591', '@4a3aaa', '@4a3aba', '@4a3af7', '@4a3b05', '@4a3b0e', '@4a3b1a', '@4a3b26',

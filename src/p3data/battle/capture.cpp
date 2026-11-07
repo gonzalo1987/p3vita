@@ -131,9 +131,9 @@ void fn_515f70(SaveGame& save, size_t k) {
 // side is the pirates' team (the bit 1 << team of [+0xAD2]), «of the pirate
 // %s %s» with the pirate's first and family names ([+0x1E90], [+0x1E91])
 // if its side's owner is a pirate with a captain (0xFF) and the guide of its
-// team's convoy ([+0x65E] or [+0x660]) has [+0x18] and a captain, else «of
-// the unknown pirate» (the other way to the named one, method +0x28 with a
-// town [+0x1E98], is a town battle's: 0x611730 is false); otherwise «of %s
+// team's convoy ([+0x65E] or [+0x660]) has [+0x18] and a captain, or else in a
+// town battle (method +0x28) at a pirate's nest ([+0x1E98] out of the towns),
+// else «of the unknown pirate»; otherwise «of %s
 // %s» with the first and family names of the merchant who owns the ship
 // ([+0x0]: [+0x1C], [+0x1D] of his record, 0x5303C0).
 std::string Sailing::owner_phrase(size_t b, size_t e) const {
@@ -151,6 +151,11 @@ std::string Sailing::owner_phrase(size_t b, size_t e) const {
 				return GameTexts::sprintf_raw(texts_->raw(GameText::BattleOfPirate),
 					{game_first_name(save_, g.get<uint8_t>(b, 0x1E90)), game_family_name(save_, g.get<uint8_t>(b, 0x1E91))});
 			}
+		}
+		if (g.get<uint32_t>(b, 0) == kTownBattleVtable && g.get<uint8_t>(b, 0x1E98) >= save_.globals.u32(0x6DE4B0)) {
+			// Checked with the oracle: scenario nest_attack_branches (saves 3 and 5).
+			return GameTexts::sprintf_raw(texts_->raw(GameText::BattleOfPirate),
+				{game_first_name(save_, g.get<uint8_t>(b, 0x1E90)), game_family_name(save_, g.get<uint8_t>(b, 0x1E91))});
 		}
 		return texts_->raw(GameText::BattleOfUnknownPirate);
 	}
@@ -348,9 +353,11 @@ void Sailing::fn_60c1c9(size_t b, uint16_t winner, uint16_t taken) {
 		}
 		save_.ships[taken_ship].memory.u16(0x42) = 0xFFFF;
 		if (uint32_t(wt) + 1 == g.get<uint8_t>(b, 0xAD2)) {
+			// The level 0xC, or 0xE with method +0x28 (a town battle).
 			const uint16_t v = g.get<uint16_t>(b, 0x1E94);
-			if (0xC > (v >> 10)) {  // 0xE when method +0x28, 0 for a sea battle.
-				g.set<uint16_t>(b, 0x1E94, uint16_t((0xC << 10) + (v & 0x3FF)));
+			const uint32_t level = g.get<uint32_t>(b, 0) == kTownBattleVtable ? 0xE : 0xC;
+			if (level > uint32_t(v >> 10)) {
+				g.set<uint16_t>(b, 0x1E94, uint16_t((level << 10) + (v & 0x3FF)));
 			}
 		}
 		return;

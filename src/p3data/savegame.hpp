@@ -459,9 +459,10 @@ struct SaveGame {
 	// lee): lo que se tarda de una ciudad a otra, en dieciseisavos de día a la
 	// velocidad de una snaikka (0x516930; 0x516AB0 lo pasa a días).
 	std::vector<uint8_t> town_travel;
-	// Las plantillas de mapa de una ciudad nueva (iso/towns/stadtplatz%.2u.tow,
-	// por su número; las lee 0x4F9B40 al fundar una ciudad): u32 ancho, u32
-	// alto, 0x5C bytes de town_class1 y la rejilla. Las carga load_game_scripts.
+	// The map templates (iso/towns/stadtplatz%.2u.tow, 256 by their number,
+	// the missing ones empty; 0x4F9B40 reads them for a new town, 0..27, and a
+	// pirate nest's map, 251..254): u32 width, u32 height, 0x5C bytes of
+	// town_class1 and the grid. load_game_scripts loads them.
 	std::vector<std::vector<uint8_t>> town_templates;
 	// The town view (*0x6E51AC, the interface's), which the battles read: its
 	// geometry as the game sets it at start (0x5871xx, from scripts/iso.ini

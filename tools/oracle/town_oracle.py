@@ -226,6 +226,13 @@ PIRATE_JUMPS = {0x60EB55: 0x60EBAC}
 # (Sailing::attack_head_).
 UPDATE_SHIPS_ENTRY = 0x506720
 ATTACK_HEAD = 0xFFFF
+# The same in the event 0x32's handler 0x4EAFE4: the attack on a nest of a
+# ship alone (0x4EBB4A, the Hanse task of type 3) passes its local [esp+0x14]
+# to 0x5062F0 as a list head; only the convoy's path writes it (an earlier
+# ship's convoy that wasn't at sea). At the function's entry the oracle sets
+# it (entry esp − 0x40) to 0xFFFF, as p3vita (Sailing::nest_attack).
+NEST_TASK_ENTRY = 0x4EAFE4
+NEST_ATTACK_HEAD_AT = 0x40
 # The news ticker's window (*0x6CC7E8, 0x469380) opens at once only when no
 # sea battle is open ([0x6E59CC] = 0xFF and [0x6E59CD] = 0, which the battles'
 # reader 0x611AE0 sets at the load); otherwise the message waits ([+0x3EA] =
@@ -267,7 +274,7 @@ SORT_X = 0x50D0C0
 PIRATE_UPDATE = 0x514000
 # Operation 0x96 (0x60FEC9) hands a merchant's sides of a battle to the
 # computer: the battles' setup and step queue it for the player's human sides.
-PIRATE_OPERATIONS = (0xB5, 0x96)
+PIRATE_OPERATIONS = (0xB5, 0x96, 0xB4)  # 0xB4: a new pirate when a nest is destroyed (0x514920)
 PIRATE_WAYPOINTS = 0x448780
 # The battles (docs/cloud/battles-2.md §3): the object of 0x6E55D0 and its
 # heap blocks, recorded as the region BT (TownOracle.battle_graph).
@@ -373,6 +380,10 @@ MAIL_CALLS = (
     # home (0x514D40, pirate_objects.cpp: 0x2A) and a pirate's ship sunk
     # (0x61F96F, ship_step.cpp: 0x2A).
     0x50C274, 0x50C326, 0x50C853, 0x60C31B, 0x60C383, 0x60D189, 0x540A8C, 0x540DDF, 0x514F79, 0x61FC80,
+    # The end of a town battle (0x5FE7E0, battle/town_end.cpp): a coward 0x3B,
+    # the news 0x3A or 0x39 to the chronicle and the report 0x29; the plunder's
+    # share 0x6A (0x633DB0 with a convoy, sieges.cpp).
+    0x5FEA54, 0x5FEEAA, 0x5FF55F, 0x6345D3,
     # merchants.cpp: 0x4F7510 (0x5E, 0x5F), 0x4F75F0 (0x6D, 0x82).
     0x4F75AD, 0x4F75C2, 0x4F7827, 0x4F793D,
     # events_big.cpp: a merchant's task, event 0x05 (0x4E5B84: 0x19 or 0x0A,
@@ -417,9 +428,8 @@ MAIL_CALLS = (
     0x4EB32B, 0x4EC18F, 0x4EC230, 0x4EC2B2, 0x4EC4FC, 0x4EC51C,
     # sieges.cpp: the siege's news to the chronicle, 0x38 when the town pays
     # the ransom (0x6281F0: 0x628A52) or the army leaves (0x629A2B), 0x53 a
-    # new army (0x629C60), and the prince's payment 0x85 (0x636230). The
-    # 0x6A of 0x633DB0 (0x6345D3) is only reached with a convoy, from the
-    # battle in a town (0x5FEAC9): it stays quiet.
+    # new army (0x629C60), and the prince's payment 0x85 (0x636230). (The 0x6A
+    # of 0x633DB0, only with a convoy, goes with the town battle's end above.)
     0x628A52, 0x629A2B, 0x629F63, 0x6364E9,
     # operations.cpp: a captain retires (operation 0x13, 0x538C40: 0x52), a
     # wedding arranged (0x60, 0x53DA90: 0x33), a manager's progress (0x67,
@@ -660,6 +670,7 @@ class TownOracle(SaveOracle):
                     jumps.update(BATTLE_WINDOW_JUMPS)
                     self.uc.hook_add(UC_HOOK_CODE, self._sort_x_guard, begin=SORT_X, end=SORT_X)
                     self.uc.hook_add(UC_HOOK_CODE, self._attack_head, begin=UPDATE_SHIPS_ENTRY, end=UPDATE_SHIPS_ENTRY)
+                    self.uc.hook_add(UC_HOOK_CODE, self._nest_attack_head, begin=NEST_TASK_ENTRY, end=NEST_TASK_ENTRY)
                     for address, target in jumps.items():
                         self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
                 if storms:
@@ -763,6 +774,10 @@ class TownOracle(SaveOracle):
     def _attack_head(self, uc, address, size, user_data):
         # 0x506720's local list head of a raider's attack (ATTACK_HEAD), only that one.
         uc.mem_write(uc.reg_read(UC_X86_REG_ESP) - 0xC, struct.pack('<I', ATTACK_HEAD))
+
+    def _nest_attack_head(self, uc, address, size, user_data):
+        # 0x4EAFE4's local list head of a ship alone attacking a nest (NEST_TASK_ENTRY).
+        uc.mem_write(uc.reg_read(UC_X86_REG_ESP) - NEST_ATTACK_HEAD_AT, struct.pack('<I', ATTACK_HEAD))
 
     def _zero_frame(self, uc, address, size, frame):
         # ZEROED_FRAMES: the function's locals start at 0.

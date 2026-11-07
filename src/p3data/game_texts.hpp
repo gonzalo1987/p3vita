@@ -115,6 +115,19 @@ enum class GameText {
 	BattleReportPlundered,  // «%s %s: %d%%, plundered\n» (0x6AA180)
 	BattleShipSnaikka,  // The 4 ship types, bare («snaikka»...; 0x6A174C).
 	BattleShipHulk = BattleShipSnaikka + 3,
+	// The report of a town battle (0x5FE7E0, 0x6A227C..0x6A2294 and, for a
+	// pirate's nest, 0x6AA1A4..0x6AA1AC): the result for each side, then the
+	// same lists of ships as at sea.
+	TownReportProtected,  // «\l\f1_You have protected the town of %s by putting the attackers to flight.\n»
+	TownReportSaved,  // «... You have beaten the attackers and saved the town of %s from plunder.\n»
+	TownReportPlundered,  // «... The pirates have beaten you and plundered the town of %s.\n»
+	TownReportBrokeThrough,  // «... You have broken through the defence of %s and relieved the city's bank of %d\C.\n»
+	TownReportUndefended,  // «... The town of %s was not defended so you could therefore rob the city's bank of %d\C...»
+	TownReportAttackFled,  // «... Your attack on %s was a failure! Your ships were defeated and had to flee.\n»
+	TownReportAttackLost,  // «... Your attack on %s was a total failure! The town was too well defended.\n»
+	NestReportRuined,  // «... You reduced the hideaway of the pirate %s %s to wreck and ruin and have liberated %d\C.\n»
+	NestReportAttackFled,  // «... Your attack on the pirate %s %s hideout has failed! ... had to flee.\n»
+	NestReportAttackLost,  // «... Your attack on the pirate %s %s hideout was an abject failure! ...\n»
 	// The report of an expedition (event 0x12, 0x4E6A54; the letter 0x63),
 	// 0x6B95E0..0x6B9630 in the English exe.
 	ExpeditionLedBy,  // «\n\lThe convoy led by the »

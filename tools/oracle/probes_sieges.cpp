@@ -13,7 +13,6 @@ uint32_t fn_6326e0(const SaveGame& save, int siege);
 void fn_51d5f0(SaveGame& save, int town, uint32_t k);
 void fn_51d680(SaveGame& save, int town, uint32_t k);
 void fn_634c50(SaveGame& save, int siege, bool paid);
-bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices);
 void fn_6281f0(SaveGame& save, int siege);
 void fn_532290(const SaveGame& save, uint32_t (&stock)[24], uint32_t (&need)[24]);
 void fn_635220(SaveGame& save, int siege);
@@ -100,7 +99,7 @@ void register_probes_sieges(ProbeRegistry& r) {
 		c.eax_mask = 0xFF;
 		uint32_t amount = 0;
 		uint16_t offices = 0;
-		return fn_633db0(s, siege_at(c, c.ecx), amount, offices) ? 1 : 0;
+		return fn_633db0(s, siege_at(c, c.ecx), amount, offices, uint16_t(c.args[2])) ? 1 : 0;
 	};
 	// Sus dos tablas van a la pila del llamador (se comprueban con 0x635220).
 	r[0x532290] = [](SaveGame& s, const ProbeCall&) -> std::optional<uint32_t> {

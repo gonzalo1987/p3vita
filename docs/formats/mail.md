@@ -317,8 +317,8 @@ built with rand()).
   actions (operations from the interface) or by the mission interpreter;
   operations 0x03, 0x06, 0x2F, 0x3D, 0x3E, 0x4A, 0x53, 0x5F, 0x72, 0x77,
   0x8B, 0x8C, 0x8F and 0x90 are player actions; plus the town battle
-  (0x5FE7E0, 3), a new game (0x530470) and a trade route that ends
-  (0x4D5200).
+  (0x5FE7E0, 3: connected on 2026-11-07, `battle/town_end.cpp`), a new game
+  (0x530470) and a trade route that ends (0x4D5200).
 
 Appendix A lists them. «To» is the first argument: one merchant (a register), −1
 (each merchant: in practice the human ones) or −2 (the chronicle). The type
@@ -582,8 +582,10 @@ interpreter's 0x4ED0C6, 0x4EDEDA.
   home town, u16 [+0x8] 1 if the town didn't pay its ransom, u16 [+0xA] the
   payment's low 16 bits, all that the letter's text reads: a game bug, in
   the roadmap). The 0x6A of 0x633DB0 (0x6345D3) is in its convoy branch,
-  reached only from the battle in a town (0x5FEAC9): it goes with that
-  battle.
+  reached only from the battle in a town (0x5FEAC9): connected with it on
+  2026-11-07 (to the guide's [+0x15D] merchant, with a captain: [+0x5] his
+  home, [+0x8], [+0x9] the captain's names, [+0xA] the town, [+0xB] the
+  guide's [+0x15E] << 2, u32 [+0xC] 65 % of the loot).
 - The operations (`operations.cpp`): a captain retires (0x13, 0x538C40:
   0x52 to the ship's human owner: [+0x5] the ship's town [+0x39], or his
   home town if it is no town; u16 [+0x8], [+0xA] the captain's first name
@@ -724,12 +726,12 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | p3data/town_tick/sieges.cpp | 0x6281F0 | 0x628A52 | 0x38 | Siege | 4 | -2 (chronicle) |  | yes |
 | p3data/town_tick/sieges.cpp | 0x6281F0 | 0x629A2B | 0x38 | Siege | 4 | -2 (chronicle) |  | yes |
 | p3data/town_tick/sieges.cpp | 0x629C60 | 0x629F63 | 0x53 | Siege | 4 | -2 (chronicle) |  | yes |
-| p3data/town_tick/sieges.cpp | 0x633DB0 | 0x6345D3 | 0x6A | Plundered | 2 | one merchant | only in the convoy branch, from the battle in a town (0x5FEAC9) | |
+| p3data/town_tick/sieges.cpp | 0x633DB0 | 0x6345D3 | 0x6A | Plundered | 2 | one merchant | only in the convoy branch, from the battle in a town (0x5FEAC9) | yes |
 | p3data/town_tick/sieges.cpp | 0x636230 | 0x6364E9 | 0x85 | Prince | 1 | one merchant |  | yes |
 | — a trade route ends (0x503230, 0x518860) | 0x4D5200 | 0x4D55F9 | 0x07 | Ship trade | 3 | one merchant |  | |
-| — battle in a town (method) | 0x5FE7E0 | 0x5FEA54 | 0x3B | Outrigger | 1 | one merchant | battle in a town | |
-| — battle in a town (method) | 0x5FE7E0 | 0x5FEEAA | 0x39/0x3A |  |  | -2 (chronicle) | battle in a town | |
-| — battle in a town (method) | 0x5FE7E0 | 0x5FF55F | 0x29 | Naval battle | 2 | one merchant | battle in a town: report buffer | |
+| p3data/battle/town_end.cpp | 0x5FE7E0 | 0x5FEA54 | 0x3B | Outrigger | 1 | one merchant | battle in a town | yes |
+| p3data/battle/town_end.cpp | 0x5FE7E0 | 0x5FEEAA | 0x39/0x3A |  |  | -2 (chronicle) | battle in a town | yes |
+| p3data/battle/town_end.cpp | 0x5FE7E0 | 0x5FF55F | 0x29 | Naval battle | 2 | one merchant | battle in a town: report buffer | yes |
 | — event 0x09 | 0x4E2824 | 0x4E2941 | 0x08 | Good harvest | 2 | one merchant |  | |
 | — event 0x09 | 0x4E2824 | 0x4E299D | 0x09 | Harvest failure | 4 | -2 (chronicle) |  | |
 | — event 0x09 | 0x4E2824 | 0x4E2A9E | 0x08 | Good harvest | 2 | one merchant |  | |
