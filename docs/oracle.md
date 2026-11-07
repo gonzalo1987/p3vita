@@ -1788,14 +1788,17 @@ The oracle runs the operation 0x9F (`OPERATIONS`); tick_probe has the probe of 0
 
 | Scenario | What it runs | Saves | Result |
 |-|-|-|-|
-| `chase_battle` | the chase 0x50B030 called directly under 0x190 away, each case on ships of its own: an AI raider catches an AI merchant's ship, both alone, the player's first ship targeting the chaser (0x9F with 1); two AI convoys' guides, the chaser raiding, the player's ship targeting it by [+0x52]; the player's ship raiding (his own: his ships' targets near and far); an AI ship in the state 0x16 catching a pirate of the list by x | 3, 5, 7 | 4 calls equal in each; 18 of 18 targets |
+| `chase_battle` | the chase 0x50B030 called directly under 0x190 away, each case on ships of its own: an AI raider catches an AI merchant's ship, both alone, the player's first ship targeting the chaser (0x9F with 1); two AI convoys' guides, the chaser raiding, the player's ship targeting it by [+0x52]; the player's ship raiding (his own: his ships' targets near and far); an AI ship in the state 0x16 catching a pirate of the list by x (in save 1, where no pirate sails, one put in it alone: the pirate alone's branch; in the others, in its convoy) | 1, 3, 5, 7 | 4 calls equal in each; 19 of 19 targets between them |
 | `hanse_fleet` | 0x50BA80 called directly: no event 0x24; an event 0x24 of another town then one of the ship's town without a fleet (false); an AI convoy in the state 9 there against a ship alone (it gets a convoy) and another against a convoy's guide | 1, 3, 5, 7 | 4 calls equal in each; 7 of 7 targets |
-| `raid_fleet` | `raid_arrival` (a raider at a closed port, the world running) with the event 0x24 and a convoy in the state 9 at the town set just before it arrives: the battle against the fleet | 3, 5, 7 | the ships' update equal (6–36 calls); 2 of 2 targets |
+| `raid_fleet` | `raid_arrival` (a raider at a closed port, the world running) with the event 0x24 and a convoy in the state 9 at the town set just before it arrives: the battle against the fleet | 1, 3, 5, 7 | the ships' update equal (6–36 calls); 2 of 2 targets |
 
 Broken on purpose and caught: a lone raider's convoy without its [+0x14] 0x20 (2 chases), a ship against the fleet
-left out of the state 0x14 (1 call of `hanse_fleet`; in `raid_fleet` the battle's setup sets it again). In save 1
-there is no pirate in the list by x nor a single first arrival (as for `pursue_branches` and `raid_arrival`). Not
-reachable here: both functions without a free battle slot (255 battles open). Equal as before: `pursue_branches`,
+left out of the state 0x14 (1 call of `hanse_fleet`; in `raid_fleet` the battle's setup sets it again). Save 1 has
+no pirate at sea (none in the list by x) and its first AI ship arrives at a town where another arrived before it:
+since 2026-11-07 the scenarios put a pirate in the list by x with the game's insertion (0x50CE50, `pirate_into_x_list`)
+and close the port and make the raider only for the arrival's tick (`arrival_of`), so `chase_battle`, `raid_fleet`
+and the older `pursue_branches` and `raid_arrival` (its far chase now set 1000 away) run in saves 1, 3, 5 and 7,
+all equal. Not reachable here: both functions without a free battle slot (255 battles open). Equal as before: `pursue_branches`,
 `raid_arrival`, `battle_join`, `retouch_pirates.py event_attack` (saves 1, 3, 5, 3 days) and the whole world 7 days
 in the 12 saves.
 

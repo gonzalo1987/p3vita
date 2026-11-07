@@ -142,6 +142,22 @@ def pirate_ships(o, k):
     return out
 
 
+def pirate_into_x_list(o, avoid=()):
+    """For a save where no pirate sails (save 1): a pirate ship out of the list by x (not in `avoid`) put in it at
+    sea in the state 0x12, with the game's own insertion by x (0x50CE50 from the sea's first, as in 0x506E60).
+    Returns it, or None without such a ship."""
+    ships = o.counts()[3]
+    for k, _ in pirates(o):
+        for s in pirate_ships(o, k):
+            if s in avoid or o.u16(o.ship(s) + 0xA) < ships or o.u16(o.ship(s) + 0xC) < ships:
+                continue
+            w16(o, o.ship(s) + 0x134, 0x12)
+            o.call(0x50CE50, [s, o.u16(to.SHIPS + 0xEA)], ecx=to.SHIPS)
+            print(f'pirate ship {s} put in the list by x: [+0xA] {o.u16(o.ship(s) + 0xA)}, [+0xC] {o.u16(o.ship(s) + 0xC)}')
+            return s
+    return None
+
+
 def merchant_ships(o, m):
     out, s, ships = [], o.u16(o.merchant(m) + 0xE), o.counts()[3]
     while s < ships:
@@ -4133,7 +4149,8 @@ def pursue_branches(o):
     sea: a cog at a tick & 7 of 1 and of 0 (the new heading, 0x5172A0), a
     snaikka at 0, and a cog in the shallows (it gives up). The calls near
     come first, so that the ship has a route to lose. Not the battle
-    (under 0x190: 0x50B250, which p3vita hasn't)."""
+    (under 0x190: 0x50B250, scenario chase_battle). In save 1, where no
+    pirate sails, one is put in the list by x for its case."""
     towns, _, merchants, ships = o.counts()
     convoys = o.u16(CONVOY_COUNT)
     state = lambda s: o.u16(o.ship(s) + 0x134)
@@ -4146,8 +4163,8 @@ def pursue_branches(o):
     listed = next((s for k, _ in pirates(o) for s in pirate_ships(o, k)
                    if o.u16(o.ship(s) + 0xA) < ships or o.u16(o.ship(s) + 0xC) < ships), None)
     reach = o.u32(to.SHIPS + 0xFC) & 0xFFFF
-    if reach < 500 or listed is None:
-        raise RuntimeError(f'the chase reaches {reach}, a pirate in the list by x {listed}')
+    if reach < 500:
+        raise RuntimeError(f'the chase reaches {reach}')
     print(f'chaser {chaser}, target at sea {target}, in port {docked}, a pirate out of the list {loose} (state '
           f'{state(loose):#x}, at {o.u16(o.ship(loose) + 0x1E)}, {o.u16(o.ship(loose) + 0x22)}), in it '
           f'{listed}; reach {reach}')
@@ -4172,12 +4189,14 @@ def pursue_branches(o):
         chase('raiding a ship in port', docked, [(c + 0x15C, 1, 1)])
         chase('raiding a ship in the state 0x13', target, [(c + 0x15C, 1, 1), (t + 0x134, 2, 0x13),
                                                           (t + 0x39, 1, 0xFF)])
-        chase('raiding a ship far away', target, [(c + 0x15C, 1, 1), (t + 0x39, 1, 0xFF)])
+        chase('raiding a ship far away', target, [(c + 0x15C, 1, 1), (t + 0x39, 1, 0xFF),
+                                                  (t + 0x1C, 4, o.u32(c + 0x1C) + (1000 << 16))])
         chase('a merchant\'s ship', target)
         chase('in the state 0x16, a pirate out of the list by x, far away', loose, [
             (c + 0x134, 2, 0x16), (c + 0x1C, 4, o.u32(o.ship(loose) + 0x1C) + (1000 << 16)),
             (c + 0x20, 4, o.u32(o.ship(loose) + 0x20))])
-        chase('in the state 0x16, a pirate far away', listed, [(c + 0x134, 2, 0x16)])
+        aim = listed if listed is not None else pirate_into_x_list(o, avoid=(loose,))  # save 1: no pirate sails
+        chase('in the state 0x16, a pirate far away', aim, [(c + 0x134, 2, 0x16)])
         chase('near, a snaikka, tick 0', target, near + [(c + 0xE, 1, 0)], tick=0)
         chase('a cog in the shallows', target, shallows)
     return during
@@ -4189,7 +4208,8 @@ def chase_battle(o):
     catches an AI merchant's ship, both alone, with the player's first ship targeting the chaser (the operation 0x9F
     with 1); two AI convoys' guides, the chaser raiding, the player's ship targeting it too by [+0x52]; the player's
     ship raiding (his own: the count of his ships' targets near the chaser, one near and one far); an AI ship in the
-    state 0x16 (the Hanse's hunt) catching a pirate of the list by x."""
+    state 0x16 (the Hanse's hunt) catching a pirate of the list by x (in save 1, where no pirate sails, one put in it:
+    a pirate alone; in the others, one in its convoy)."""
     towns, _, merchants, ships = o.counts()
     convoys = o.u16(CONVOY_COUNT)
     player = o.u32(to.PLAYER)
@@ -4206,8 +4226,8 @@ def chase_battle(o):
         s = o.u16(o.ship(s) + 4)
     listed = next((s for k, _ in pirates(o) for s in pirate_ships(o, k)
                    if o.u16(o.ship(s) + 0xA) < ships or o.u16(o.ship(s) + 0xC) < ships), None)
-    if len(at_sea) < 6 or len(guides) < 2 or not mine or listed is None:
-        raise RuntimeError(f'at sea {len(at_sea)}, convoys {len(guides)}, the player\'s {mine}, a listed pirate {listed}')
+    if len(at_sea) < 6 or len(guides) < 2 or not mine:
+        raise RuntimeError(f'at sea {len(at_sea)}, convoys {len(guides)}, the player\'s {mine}')
     print(f'at sea {at_sea[:6]}, convoys {guides[:2]}, the player\'s ships {mine}, a listed pirate {listed}')
 
     def during(o):
@@ -4232,7 +4252,8 @@ def chase_battle(o):
         caught('the player\'s ship raiding', raider, at_sea[2], [
             (r + 0x15C, 1, 1), (r + 0x134, 2, 0xF), (r + 0x39, 1, 0xFF), (r + 0x50, 2, at_sea[2]),
             (r + 0x52, 2, at_sea[3]), (o.ship(at_sea[3]) + 0x1C, 4, o.u32(o.ship(at_sea[2]) + 0x1C) + (3000 << 16))])
-        caught('the Hanse\'s hunt catches a pirate', at_sea[4], listed, [(o.ship(at_sea[4]) + 0x134, 2, 0x16)])
+        pirate = listed if listed is not None else pirate_into_x_list(o)  # save 1: no pirate sails
+        caught('the Hanse\'s hunt catches a pirate', at_sea[4], pirate, [(o.ship(at_sea[4]) + 0x134, 2, 0x16)])
     return during
 
 
@@ -4276,24 +4297,23 @@ def hanse_fleet(o):
 def raid_fleet(o):
     """raid_arrival with the Hanse fleet guarding the closed port: an event 0x24 for the town and an AI convoy of the
     list in the state 9 there, set just before the raider arrives (0x506E46 → 0x50BA80: a sea battle against the
-    fleet instead of going back to the sea's list)."""
-    import subprocess
-    a = o.scenario_args
-    out = subprocess.run([sys.executable, os.path.abspath(__file__), a.exe, a.save, os.devnull, 'raid_arrival',
-                          '--barcos', a.barcos, '--cpr', a.cpr, '--first-arrival'], capture_output=True, text=True)
-    line = [x for x in out.stdout.splitlines() if x.startswith('first arrival')]
-    if not line:
-        raise RuntimeError(f'the copy of the world found no arrival: {out.stdout[-500:]} {out.stderr[-500:]}')
-    ticks, s, t = (int(x) for x in line[0].split()[2:5])
+    fleet instead of going back to the sea's list). As raid_arrival, the port closed and the ship a raider only for
+    its arrival's tick when another ship arrived there before it (save 1)."""
+    ticks, s, t, late = arrival_of(o)
     merchants, ships = o.counts()[2], o.counts()[3]
-    print(f'ship {s} of {o.u8(o.ship(s))} arrives at {t} in {ticks} ticks')
+    print(f'ship {s} of {o.u8(o.ship(s))} arrives at {t} in {ticks} ticks{" (others there before)" if late else ""}')
 
     def during(o):
-        a = o.town(t)
-        w32(o, a + 0x2C8, (o.u32(a + 0x2C8) | 0x200) & ~0x4000000)
-        w8(o, o.ship(s) + 0x15C, 1)
+        def close():
+            a = o.town(t)
+            w32(o, a + 0x2C8, (o.u32(a + 0x2C8) | 0x200) & ~0x4000000)
+            w8(o, o.ship(s) + 0x15C, 1)
+        if not late:
+            close()
         for k in range(ticks - 1):
             o.advance_tick()
+        if late:
+            close()
         new_event(o, 0x100000, 0x24, b14=t)
         fleet = next(c for c in convoy_list(o, CONVOY_HEAD)
                      if o.u8(o.u32(CONVOYS) + 0x3C * c) < merchants and o.u16(o.u32(CONVOYS) + 0x3C * c + 0x10) < ships)
@@ -4471,7 +4491,9 @@ def first_arrival(o):
     """For raid_arrival, in a process of its own: runs the world tick by tick
     until an AI merchant's ship at sea out of a convoy arrives at its
     destination, and prints «first arrival TICKS SHIP TOWN» if no other ship
-    arrived there or entered its port (states 2, 3) before it."""
+    arrived there or entered its port (states 2, 3) before it; else «late
+    arrival TICKS SHIP TOWN» (its port closed only for its arrival's tick, the
+    others aren't touched: arrival_retouch)."""
     towns, _, merchants, ships = o.counts()
     convoys = o.u16(CONVOY_COUNT)
     sea = {s: o.u8(o.ship(s) + 0x38) for s in range(ships) if o.u16(o.ship(s) + 0x134) == 0xF
@@ -4489,9 +4511,27 @@ def first_arrival(o):
             ticks, s, t = first
             if t == sea[s] and not any(t2 == t and x != s for _, x, t2 in arrived):
                 print(f'first arrival {ticks} {s} {t}')
+            elif t == sea[s]:
+                print(f'late arrival {ticks} {s} {t}')
+                print(f'others before: {arrived}')
             else:
                 print(f'others before: {arrived}')
             return
+
+
+def arrival_of(o):
+    """The first AI ship's arrival at sea (first_arrival in another process: the oracle is deterministic and two
+    oracles don't fit in one process): (ticks, ship, town, late); late when another ship arrived at that town before
+    it, so that the port must be closed and the ship made a raider only for the tick of its arrival."""
+    import subprocess
+    a = o.scenario_args
+    out = subprocess.run([sys.executable, os.path.abspath(__file__), a.exe, a.save, os.devnull, 'raid_arrival',
+                          '--barcos', a.barcos, '--cpr', a.cpr, '--first-arrival'], capture_output=True, text=True)
+    for x in out.stdout.splitlines():
+        if x.startswith('first arrival') or x.startswith('late arrival'):
+            ticks, s, t = (int(v) for v in x.split()[2:5])
+            return ticks, s, t, x.startswith('late')
+    raise RuntimeError(f'the copy of the world found no arrival: {out.stdout[-500:]} {out.stderr[-500:]}')
 
 
 def raid_arrival(o):
@@ -4499,25 +4539,23 @@ def raid_arrival(o):
     and without 0x4000000 (0x506E19): out of the lists, first of the sea's
     again, its town 0xFF (0x50BA80, the Hanse fleet's battle, finds no fleet).
     The AI ship at sea that arrives first (found running another copy of the
-    world) gets the flag and its destination the closed port; the world runs
-    tick by tick until it arrives, recording the ships' update 0x506720."""
-    # Which ship arrives first: another process runs a copy of the world on
-    # (the oracle is deterministic; two oracles don't fit in one process).
-    import subprocess
-    a = o.scenario_args
-    out = subprocess.run([sys.executable, os.path.abspath(__file__), a.exe, a.save, os.devnull, 'raid_arrival',
-                          '--barcos', a.barcos, '--cpr', a.cpr, '--first-arrival'], capture_output=True, text=True)
-    line = [x for x in out.stdout.splitlines() if x.startswith('first arrival')]
-    if not line:
-        raise RuntimeError(f'the copy of the world found no arrival: {out.stdout[-500:]} {out.stderr[-500:]}')
-    ticks, s, t = (int(x) for x in line[0].split()[2:5])
-    print(f'ship {s} of {o.u8(o.ship(s))} arrives at {t} in {ticks} ticks')
+    world, arrival_of) gets the flag and its destination the closed port; the
+    world runs tick by tick until it arrives, recording the ships' update
+    0x506720. When another ship arrived at that town before it (save 1), both
+    are set only for its arrival's tick."""
+    ticks, s, t, late = arrival_of(o)
+    print(f'ship {s} of {o.u8(o.ship(s))} arrives at {t} in {ticks} ticks{" (others there before)" if late else ""}')
 
     def during(o):
-        a = o.town(t)
-        w32(o, a + 0x2C8, (o.u32(a + 0x2C8) | 0x200) & ~0x4000000)
-        w8(o, o.ship(s) + 0x15C, 1)
+        def close():
+            a = o.town(t)
+            w32(o, a + 0x2C8, (o.u32(a + 0x2C8) | 0x200) & ~0x4000000)
+            w8(o, o.ship(s) + 0x15C, 1)
+        if not late:
+            close()
         for k in range(ticks):
+            if late and k == ticks - 1:
+                close()
             o.advance_tick()
         print(f'after {k + 1} ticks: ship {s} state {o.u16(o.ship(s) + 0x134):#x}, town {o.u8(o.ship(s) + 0x39):#x}, '
               f'the sea\'s first {o.u16(to.SHIPS + 0xEA)}')
@@ -8536,7 +8574,8 @@ SCENARIOS = {
     # The battles' piece 4 (battle/attack.cpp)
     'chase_battle': Scenario(chase_battle, [0x50B030], 0, [
         '@50b274', '@50b2f6', '@50b321', '@50b40c', '@50b500', '@50b59d', '@50b5bc', '@50b627', '@50b66f',
-        '@50b6bc', '@50b79c', '@50b826', '@50b84b', '@50b893', '@50b8d5', '@50b9b8', '@50b9b2>50ba46', '@50ba5e']),
+        '@50b6bc', '@50b79c', '@50b826', '@50b84b', '@50b893', '@50b8d5', '@50b9b8', '@50b9b2>50ba46', '@50b884',
+        '@50ba5e']),
     'hanse_fleet': Scenario(hanse_fleet, [0x50BA80], 0, [
         '@50bb2f', '@50bace', '@50bb09', '@50bb56', '@50bbba', '@50bbb8>50bc08', '@50bc08']),
     'raid_fleet': Scenario(raid_fleet, [0x506720], 0, ['@506e19', '@506e4d>506e7c']),

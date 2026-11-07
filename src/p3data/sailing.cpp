@@ -689,7 +689,7 @@ bool Sailing::pursue(SavedShip& ship) {
 	}
 	// No ship chases another in the 12 saves (the Hanse fleet does in
 	// retouch.py dieta). From here on, checked with the oracle: scenarios
-	// pursue_branches and chase_battle (saves 3, 5, 7).
+	// pursue_branches and chase_battle (saves 1, 3, 5, 7).
 	const uint16_t status = ship.status();
 	if (status != 0x16 && status != kShipSailing && status != 0x10) {
 		ship.target() = kNoIndex;
@@ -869,7 +869,7 @@ void Sailing::arrive(SavedShip& ship, uint16_t index, uint16_t& link) {
 		if (ship.raid() && !(flags & kRaidBlocked)) {
 			// Pirates at a closed port: out of the lists and, unless the Hanse fleet guards the town (0x50BA80: a sea
 			// battle against it), back first in the sea's list. Checked with the oracle: scenarios raid_arrival
-			// (saves 3, 5, 7; no Hanse fleet there) and hanse_fleet_battle.
+			// (no Hanse fleet there), raid_fleet and hanse_fleet (saves 1, 3, 5, 7).
 			unlink_x(index);
 			link = ship.next_in_list();
 			ship.next_in_list() = kNoIndex;
