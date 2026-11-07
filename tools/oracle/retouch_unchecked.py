@@ -4557,6 +4557,77 @@ def battle_rocks(o):
     return during
 
 
+def town_battle_setup(o):
+    """The battles' piece 6: town battles set up directly (0x611D80, then 0x5FBFE0 on the new one) as a raider's
+    arrival does (0x506F33): towns 0, 4, 9, 13, 17 and 21 attacked by a pirate convoy's guide (its convoy on side A)
+    or by an AI merchant's ship alone at sea; towns 2 and 6 with a guard ship put in [+0x994] (an AI merchant's ship
+    in port there: 0x50CC90, side D its new convoy); town 11 by the player's ship (a human side: with no battle
+    window, the busy path, operation 0x96); and the nest of the first pirate (town 0xFE − k) with its ships' convoy
+    as [+0x10] (the defender) and its pool's entry 1 made a tower (kind 0x30, damage 50: 0x515D30). Not
+    reachable: the formation's placing again (0x6003B7: side A stands seaward, out of the town's grid, which the
+    map file's numbers move the other way; side D's check reads side A's ship i, 0x6005D2, so on land its loop
+    would never end)."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    convoys = o.u16(CONVOY_COUNT)
+    pirate_guides = []
+    for c in range(convoys):
+        a = convoy_at(o, c)
+        guide = o.u16(a + 0x10)
+        if o.u8(a) >= merchants and guide < ships and o.u16(a + 0xA) < ships:
+            pirate_guides.append(guide)
+    alone = [s for s in range(ships) if o.u8(o.ship(s)) < merchants and o.u8(o.ship(s)) != player
+             and o.u16(o.ship(s) + 0x134) == 0xF and o.u16(o.ship(s) + 8) >= convoys]
+    mine = merchant_ships(o, player)
+    if len(alone) < 6 or not mine:
+        raise RuntimeError(f'ships alone {alone[:5]}, the player\'s {mine}')
+    if not pirate_guides:  # save 1: no pirate convoy at sea
+        pirate_guides = alone[4:6]
+    plan = [(0, pirate_guides[0]), (4, alone[0]), (9, pirate_guides[-1]), (13, alone[1]), (17, alone[2]),
+            (21, pirate_guides[0])]
+
+    def in_port(t):
+        return [s for s in range(ships) if o.u8(o.ship(s)) < merchants and o.u8(o.ship(s)) != player
+                and o.u16(o.ship(s) + 0x134) == 0 and o.u8(o.ship(s) + 0x39) == t and o.u16(o.ship(s) + 8) >= convoys]
+    guards = []
+    for t in range(towns):
+        if t in (2, 6) or (len(guards) < 2 and t > 6):
+            cand = in_port(t)
+            if cand and len(guards) < 2:
+                guards.append((t, cand[0]))
+    k = next(i for i in range(5) if o.u32(PIRATES + 4 * i))
+    pirate = o.u32(PIRATES + 4 * k)
+    print(f'plan {plan}; guards {guards}; the player\'s ship {mine[0]}; pirate {k}')
+
+    def attack(town, ship):
+        slot = direct(o, 0x611D80, [], ecx=to.BATTLES) & 0xFF
+        b = o.u32(to.BATTLES + 4 * slot)
+        direct(o, 0x5FBFE0, [ship, town], ecx=b)
+        print(f'town {town:#x} by ship {ship} (owner {o.u8(o.ship(ship)):#x}): slot {slot}, ships '
+              f'{o.u16(b + 0x658)} + {o.u16(b + 0x65A)}, towers {[o.u8(b + 0x1E99 + i) for i in range(4)]}, '
+              f'over {o.u8(b + 0x5C)}, automatic {o.u8(b + 0x5D)} {o.u8(b + 0x5E)}, map ends '
+              f'{struct.unpack("<ii", bytes(o.uc.mem_read(b + 0x1ED8, 8)))}')
+        return b
+
+    def during(o):
+        for town, ship in plan:
+            attack(town, ship)
+        for town, guard in guards:
+            w16(o, o.town(town) + 0x994, guard)
+            attack(town, alone[3 + len(guards)])
+        attack(11, mine[0])
+        # The nest: a defender and a tower.
+        head = o.u16(pirate + 0xC)
+        if head < ships and o.u16(o.ship(head) + 8) < convoys:
+            w16(o, pirate + 0x10, o.u16(o.ship(head) + 8))
+        pool = o.u32(pirate + 4)
+        if o.u16(pirate + 8) > 1:
+            w8(o, pool + 8 + 3, 0x30)
+            w8(o, pool + 8 + 6, 50)
+        attack(0xFE - k, alone[1])
+    return during
+
+
 def first_arrival(o):
     """For raid_arrival, in a process of its own: runs the world tick by tick
     until an AI merchant's ship at sea out of a convoy arrives at its
@@ -8744,6 +8815,15 @@ SCENARIOS = {
         '@5387ac>5387fc', '@5387b2>5387fc', '@5386d5>5387fc', '@518765>518777', '@51876b>518777', '@518775>5187ce',
         '@5187b1>518777', '@5187bf>518777', '@5187c6>518777', '@5187cc>518777', '@5187e4']),
     'pirate_sailing': Scenario(pirate_sailing, [0x535760, 0x506720], 1, ['@538706']),
+    # The battles' piece 6: a raider arriving at a town starts a town battle (0x506F33: 0x6130B0, 0x611D80,
+    # the setup 0x5FBFE0), with pirate_sailing's raiders.
+    'town_attack': Scenario(pirate_sailing, [0x611D80, 0x6130B0, 0x5FBFE0, 0x50CC90], 1, [
+        '@506f96', '@506fc9', '@5fbfe0']),
+    # 0x5FBFE0: a town's tower found or not, the guard ship, the nest and its tower, a human side (the busy path),
+    # side A a convoy or a ship alone, side D a convoy, the formation's two axes and its retries.
+    'town_battle_setup': Scenario(town_battle_setup, [0x611D80, 0x5FBFE0, 0x50CC90], 0, [
+        '@5fc158', '@5fc136', '@5fc285', '@5fc2c2', '@5fc3d4', '@5fc69a', '@5fd483', '@5fca3a', '@5fc997',
+        '@5fcd80', '@6000a9', '@6000f0']),
     'statistics_company': Scenario(statistics_company, [STATS_BALANCE, STATS_GRAPH, STATS_SUPPLY], 0, [
         '@4a3071', '@4a308d', '@4a35b2', '@4a35bd>4a35c2', '@4a35bf', '@4a353b', '@4a354a', '@4a356f', '@4a3580',
         '@4a3591', '@4a3aaa', '@4a3aba', '@4a3af7', '@4a3b05', '@4a3b0e', '@4a3b1a', '@4a3b26',

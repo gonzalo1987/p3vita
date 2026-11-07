@@ -240,7 +240,9 @@ TEXT_INITIALIZERS = (0x46BD80, 0x46BFC0)
 # 1, from a save: 0x606E7E -> 0x606EA5, 0x606FEA -> 0x607011), nor does a
 # boarding with a human side of the player (0x60CA4E -> 0x60CA6F), skipping
 # the window's writes too.
-BATTLE_WINDOW_JUMPS = {0x60659B: 0x606BAE, 0x606E7E: 0x606EA5, 0x606FEA: 0x607011, 0x60CA4E: 0x60CA6F}
+BATTLE_WINDOW_JUMPS = {0x60659B: 0x606BAE, 0x606E7E: 0x606EA5, 0x606FEA: 0x607011, 0x60CA4E: 0x60CA6F,
+                       # a town battle's setup 0x5FBFE0 (piece 6): the same busy path (0x96 with 1)
+                       0x5FD0E7: 0x5FD483}
 NO_DISBAND_JUMP = {0x505FF1: 0x506029}
 # 0x50D0C0 (thiscall on the ships object, a ship): the ship back in its place
 # in the list by x. A pirate convoy left without a guide (its guide taken in a
@@ -272,7 +274,10 @@ HEAP_BEGIN, HEAP_END = 0x1000_0000, 0x1800_0000
 # 65536 can be the address of a heap block: at the start of a battle the
 # places are whole and a block can start at 0x10xx0000), a sea battle's
 # generator. As BattleGraph::number_field.
-BATTLE_NUMBERS = {(0x164, 0x67B0D4): (0x8, 0xC, 0x14, 0x18, 0x1C), (0x1E98, 0x67AD44): (0xADC,)}
+BATTLE_NUMBERS = {(0x164, 0x67B0D4): (0x8, 0xC, 0x14, 0x18, 0x1C), (0x1E98, 0x67AD44): (0xADC,),
+                  # a town battle (0x611D80) and its scene's ships (0x5FBFE0)
+                  (0x1168, 0x67AAD0): (0x8, 0xC, 0x14, 0x18, 0x1C), (0x2F24, 0x67AAA0): (0xADC,)}
+BATTLE_BLOCKS = ((0x1E98, 0x67AD44), (0x2F24, 0x67AAA0))  # a sea battle, a town battle
 # A sea battle's scene's arrays of numbers (0x61A1D0): bytes [+0x18], u16
 # [+0x1C] and the free list [+0x24], and the items' boxes [+0x28], [+0x2C],
 # [+0x30], [+0x38], [+0x3C], [+0x40] (x1, x2 and y1, y2 per item).
@@ -1459,7 +1464,7 @@ class TownOracle(SaveOracle):
         i = 0
         while i < len(blocks):
             address, data = blocks[i]
-            if len(data) == 0x1E98 and unpack('<I', data, 0)[0] == 0x67AD44:
+            if len(data) >= 4 and (len(data), unpack('<I', data, 0)[0]) in BATTLE_BLOCKS:
                 lists.update(unpack('<I', data, o)[0] for o in (0x48, 0x4C, 0x50))
                 pages.update(unpack('<I', data, o)[0] for o in SCENE_NUMBER_ARRAYS)
             elif address in lists:

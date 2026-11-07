@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "p3data/navigation.hpp"
@@ -238,6 +239,26 @@ public:
 	static constexpr uint32_t kSceneVtable = 0x67AF70;
 	uint8_t fn_611cd0();  // (battles) A new sea battle; its slot or 0xFF.
 	void fn_603a70(size_t block, uint8_t slot);  // The sea battle's constructor.
+	// battle/town_battle.cpp: the town battles (piece 6).
+	uint8_t fn_611d80();  // (battles) A new town battle; its slot or 0xFF.
+	uint8_t fn_6130b0(uint8_t town, uint8_t owner) const;  // (battles) The running one of a town and attacker.
+	void fn_5fbfe0(size_t battle, uint16_t ship, uint8_t town);  // (town battle) The setup.
+	void fn_5ffc10(size_t battle);  // (town battle) Its map of the water.
+	bool fn_5ffe20(size_t battle, int32_t x, int32_t y) const;  // (town battle) A cell out of the map or not water.
+	void fn_600060(size_t battle);  // (town battle, method +0x2C) The formation.
+	void fn_600660(size_t battle, bool arg);  // (town battle, method +0x18)
+	uint16_t fn_50cc90(uint8_t town);  // (ships) The town's guard ship out to its battle; its convoy.
+	uint32_t fn_515d30(size_t pirate, uint32_t entry) const;  // (pirate) A nest tower's strength.
+	bool fn_515ae0(size_t pirate, uint8_t& first, uint8_t& family) const;  // (pirate) A captain's names.
+	// A town battle's town map (a town's town_class1, a nest's map).
+	struct TownBattleGrid {
+		uint32_t width = 0, height = 0;
+		const std::vector<uint8_t>* cells = nullptr;
+	};
+	TownBattleGrid town_battle_grid(size_t battle) const;
+	// The town view's geometry (0x58CFB0 cell → point, 0x58D030 point → cell; SaveGame::TownView).
+	std::pair<int32_t, int32_t> view_cell_point(int32_t x, int32_t y) const;
+	bool view_point_cell(int32_t px, int32_t py, int32_t& cx, int32_t& cy) const;
 	void fn_618f10(size_t block);  // The scene's constructor.
 	// battle/battle_setup.cpp: blocks of BattleGraph (save().battles).
 	uint16_t fn_61a1d0(size_t scene);  // (scene) A free item, growing the arrays.

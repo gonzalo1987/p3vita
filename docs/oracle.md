@@ -1854,6 +1854,35 @@ A trap of the check (2026-11-07): with tick_probe `--continuo`, functions record
 (the battle step's pieces inside the operation 0x94) all come out «distintas», even when the outer call is equal:
 their state isn't comparable there. To check those, tick_probe without `--continuo` (each call from the game's state).
 
+## The battles' piece 6: the town battle's start (2026-11-07)
+
+With the town view the oracle runs a town battle from its start to its end: in `pirate_sailing` (save 5) an AI
+merchant's raider arrives at a town (0x506F33: 0x6130B0, 0x611D80, the setup 0x5FBFE0), the battle takes its 38 steps
+(0x5FD510 and what it calls) and ends (0x5FE7E0, 0x602990), without a stop and without queuing any of the battle's
+operations (re/emu/sesion17/town_battle.py). For a human side of the local player the oracle takes, as for the sea
+battles, the path of a player with another battle window (`BATTLE_WINDOW_JUMPS`, 0x5FD0E7 → 0x5FD483: operation 0x96
+with 1). The region BT knows the town battle (0x2F24 bytes, vtable 0x67AAA0: its generator [+0xADC] a number, its
+scene's arrays pages) and its scene's ships (0x1168 bytes, vtable 0x67AAD0: as the 0x164-byte ones); p3vita's
+`BattleGraph` the same (`battle_block`).
+
+p3vita (`battle/town_battle.cpp`) has the start: 0x611D80, 0x6130B0 (only the town battles answer their method +0x28),
+the setup 0x5FBFE0 (towers, the guard ship 0x50CC90, a nest's captain 0x515AE0 and towers 0x515D30, the sides in the
+scene, the wind, the steps), its map of the water 0x5FFC10 (with 0x5FFE20 on the town's or nest's grid), the formation
+0x600060 and method +0x18 0x600660; the town view's 0x58CFB0 and 0x58D030 as `view_cell_point`, `view_point_cell`. Not
+connected yet (part 3: the step). tick_probe has the probes of 0x611D80, 0x6130B0, 0x5FBFE0 and 0x50CC90.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `town_attack` | `pirate_sailing`'s raiders: the first arrival at a town starts a town battle | 5 | 3 calls equal; 3 of 3 targets |
+| `town_battle_setup` | 0x611D80 + 0x5FBFE0 directly: six towns by a pirate convoy's guide (an AI ship in save 1) or an AI ship alone; two towns with a guard ship put in [+0x994] (an AI ship in port there; only save 7 has one); town 11 by the player's ship (the busy path, operation 0x96); the first pirate's nest with its ships' convoy as defender and a pool entry made a tower | 1, 3, 5, 7 | 8–10 calls equal in each; 12 of 12 targets in save 7 |
+
+Broken on purpose and caught: a tower's place (· 18) and the formation's step (· 201): every setup. A game bug found
+(roadmap, «Corregir los fallos del juego»): the formation checks side D's ships at side A's places (0x6005D2), fixed
+behind `fix_game_bugs()`; found by making a town's cell land under a ship and setting the town up again with the same
+seed. Not reachable: the formation's placing again (side A stands seaward, out of the town's grid; side D's check
+reads side A's ships). The world 7 days in the 12 saves: 0 «distintas»; equal as before: `battle_rocks`,
+`chase_battle`, `battle_join`, `battle_branches`.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:
