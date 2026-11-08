@@ -477,6 +477,30 @@ void Sailing::queue_fire(size_t b) {
 	});
 }
 
+// The deck page's orders for its one ship (its place): the fire button (0x4942C0: operation 0x92 {0x92, slot,
+// 1, group, high, low}) and the sails' rope (0x48D420: 0x98 {0x98, slot, sails, group, high, low}); the place's
+// bit in the high mask with 0x20, else in the low one.
+void Sailing::queue_one(size_t b, uint16_t place, uint8_t kind, uint8_t value) {
+	uint8_t op[0x14] = {};
+	op[0] = kind;
+	op[4] = uint8_t(save_.battles.get<uint16_t>(b, 0x662));
+	op[5] = value;
+	op[6] = uint8_t(place >> 6);
+	const uint32_t bit = 1u << (place & 0x1F);
+	const uint32_t high = (place & 0x20) ? bit : 0, low = (place & 0x20) ? 0 : bit;
+	std::memcpy(op + 8, &high, 4);
+	std::memcpy(op + 0xC, &low, 4);
+	tick::enqueue_operation(save_, op, sizeof(op));  // 0x54AA70
+}
+
+void Sailing::queue_fire_one(size_t b, uint16_t place) {
+	queue_one(b, place, 0x92, 1);
+}
+
+void Sailing::queue_sails_one(size_t b, uint16_t place, uint8_t sails) {
+	queue_one(b, place, 0x98, sails);
+}
+
 // «Abandonar» (the panel's Beenden button, 0x42D45D; the key, 0x60F2D0):
 // operation 0xA0 {0xA0, the slot, the player}.
 void Sailing::queue_abandon(size_t b) {

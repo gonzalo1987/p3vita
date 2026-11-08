@@ -84,7 +84,17 @@ float sine256(int d) {
 }  // namespace
 
 BattleView::BattleView(SDL_Renderer* renderer, const p3::data::CprArchive& archive, const p3::data::TileSet& tiles)
-	: renderer_(renderer), archive_(archive), tiles_(tiles) {}
+	: renderer_(renderer), archive_(archive), tiles_(tiles) {
+	for (const auto& [id, tile] : tiles_) {
+		tile_ids_[id] = &tile;
+		if (tile.cols > 1 && (tile.type == 0x12 || tile.type == 0x13)) {
+			(tile.type == 0x12 ? rock_tiles_ : islet_tiles_).push_back(&tile);
+		}
+	}
+	auto by_id = [](const p3::data::TileDef* a, const p3::data::TileDef* b) { return a->id < b->id; };
+	std::sort(rock_tiles_.begin(), rock_tiles_.end(), by_id);
+	std::sort(islet_tiles_.begin(), islet_tiles_.end(), by_id);
+}
 
 BattleView::~BattleView() {
 	clear();
@@ -107,6 +117,7 @@ void BattleView::clear() {
 	queue_.clear();
 	ball_ = nullptr;
 	arrow_ = nullptr;
+	pinned_.clear();
 	hits_.clear();
 	order_marked_ = false;
 	cloud_images_.fill(nullptr);
@@ -268,7 +279,8 @@ void BattleView::need(const SaveGame& save, size_t battle) {
 		for (auto it = textures_.begin(); it != textures_.end();) {
 			SDL_Texture* t = it->second;
 			bool used = t == ball_ || t == arrow_ ||
-				std::find(cloud_images_.begin(), cloud_images_.end(), t) != cloud_images_.end();
+				std::find(cloud_images_.begin(), cloud_images_.end(), t) != cloud_images_.end() ||
+				std::find(pinned_.begin(), pinned_.end(), t) != pinned_.end();
 			for (const auto& [path, a] : anims_) {
 				used = used || a->body == t || a->shadow == t;
 			}
@@ -417,6 +429,222 @@ void BattleView::draw_frame(const Anim& a, int dir, int frame, int x, int y, Uin
 	}
 }
 
+// A tile with its front cell (x, y) of the town view's grid, as the town view draws it.
+void BattleView::draw_tile(const p3::data::TileDef* tile, int x, int y, int camera_x, int camera_y, int top) {
+	if (!tile || tile->slices.empty()) {
+		return;
+	}
+	SDL_Texture* t = texture(tile->atlas, true);
+	if (!t) {
+		return;
+	}
+	if (std::find(pinned_.begin(), pinned_.end(), t) == pinned_.end()) {
+		pinned_.push_back(t);
+	}
+	const p3::data::TileSlice& front = tile->slices[std::min(tile->front_slice, tile->slices.size() - 1)];
+	const SDL_Rect src = {tile->src_x, tile->src_y, tile->width, tile->height};
+	const SDL_Rect dst = {p3::data::cell_screen_x(x, y) - front.x - camera_x,
+		top + p3::data::cell_screen_y(y) + p3::data::kTileHeight - front.height - front.y - camera_y, tile->width,
+		tile->height};
+	SDL_RenderCopy(renderer_, t, &src, &dst);
+}
+
+void BattleView::draw_reefs(const SaveGame& save, size_t battle, int camera_x, int camera_y, int top, int view_width,
+	int view_height) {
+	const BattleGraph& g = save.battles;
+	auto pick = [&](const std::vector<const p3::data::TileDef*>& list, int w, int h, int x, int y) {
+		std::vector<const p3::data::TileDef*> fit;
+		for (const p3::data::TileDef* t : list) {
+			if (t->cols == w && t->rows == h) {
+				fit.push_back(t);
+			}
+		}
+		return fit.empty() ? nullptr : fit[size_t(uint32_t(x * y) % fit.size())];
+	};
+	auto visible = [&](int x, int y, int w, int h) {
+		const int c = 2 * x + (y & 1);
+		const int x0 = (c - w + 1) * 17 - camera_x, x1 = (c + h + 1) * 17 - camera_x;
+		const int y0 = top + (y - w - h - 4) * 11 - camera_y, y1 = top + (y + 2) * 11 - camera_y;
+		return x1 >= 0 && x0 <= view_width && y1 >= top && y0 <= top + view_height;
+	};
+	// The ground first (the sand banks, the reefs' feet), then the reefs.
+	for (int pass = 0; pass < 3; ++pass) {
+		const size_t base = pass == 0 ? 0x672 : 0x872;
+		for (int k = 0; k < 0x40; ++k) {
+			const int x = g.get<int16_t>(battle, base + 8 * size_t(k));
+			if (x < 0) {
+				continue;
+			}
+			const int y = g.get<int16_t>(battle, base + 8 * size_t(k) + 2);
+			const int w = g.get<int16_t>(battle, base + 8 * size_t(k) + 4);
+			const int h = g.get<int16_t>(battle, base + 8 * size_t(k) + 6);
+			if (!visible(x, y, w, h)) {
+				continue;
+			}
+			if (pass == 0) {
+				draw_tile(pick(islet_tiles_, w, h, x, y), x, y, camera_x, camera_y, top);
+				continue;
+			}
+			const p3::data::TileDef* rock = pick(rock_tiles_, w, h, x, y);
+			if (pass == 1 && rock && rock->params.size() > 1) {
+				const auto ground = tile_ids_.find(uint16_t(rock->params[1]));
+				if (ground != tile_ids_.end()) {
+					draw_tile(ground->second, x, y, camera_x, camera_y, top);
+				}
+			} else if (pass == 2) {
+				draw_tile(rock, x, y, camera_x, camera_y, top);
+			}
+		}
+	}
+}
+
+void BattleView::draw_minimap(const SaveGame& save, size_t battle, const SDL_Rect& rect, const SDL_Rect& camera) const {
+	const BattleGraph& g = save.battles;
+	const double sx = double(rect.w) / width();
+	const double sy = double(rect.h) / height();
+	SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer_, 46, 70, 112, 255);
+	SDL_RenderFillRect(renderer_, &rect);
+	SDL_SetRenderDrawColor(renderer_, 230, 210, 90, 255);
+	for (const size_t base : {size_t(0x672), size_t(0x872)}) {
+		for (int k = 0; k < 0x40; ++k) {
+			const int x = g.get<int16_t>(battle, base + 8 * size_t(k));
+			if (x < 0) {
+				continue;
+			}
+			const int y = g.get<int16_t>(battle, base + 8 * size_t(k) + 2);
+			const int w = g.get<int16_t>(battle, base + 8 * size_t(k) + 4);
+			const int h = g.get<int16_t>(battle, base + 8 * size_t(k) + 6);
+			const int c = 2 * x + (y & 1);
+			const SDL_Rect r = {rect.x + int((c - w + 1) * 17 * sx), rect.y + int((y - w - h + 1) * 11 * sy),
+				std::max(2, int((w + h) * 17 * sx)), std::max(2, int((w + h) * 11 * sy))};
+			SDL_RenderFillRect(renderer_, &r);
+		}
+	}
+	const int player = save.player;
+	for_each_ship(g, battle, [&](size_t e) {
+		if (g.get<uint8_t>(e, 0x12A) & 0x6) {
+			return;
+		}
+		const uint32_t index = g.get<uint32_t>(e, 0x4);
+		if (index >= save.ships.size()) {
+			return;
+		}
+		const p3::data::SavedShip& ship = save.ships[index];
+		SDL_Color c = {255, 255, 255, 255};
+		if (ship.owner() == player) {
+			c = {40, 90, 255, 255};
+		} else if (ship.status() == 0x12) {
+			c = {40, 40, 40, 255};
+		} else if (ship.owner() < save.merchants.size() && save.merchants[ship.owner()].memory.u16(0x8) == 0) {
+			c = {255, 40, 40, 255};  // Another human's (0x5303C0 [+0x8] 0), as the town view.
+		}
+		const int x = rect.x + int(g.get<int16_t>(e, 0xA) * sx);
+		const int y = rect.y + int(screen_y(g.get<int16_t>(e, 0xE)) * sy);
+		const SDL_Rect dot = {x - 2, y - 2, 5, 5};
+		SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, 255);
+		SDL_RenderFillRect(renderer_, &dot);
+	});
+	const SDL_Rect frame = {rect.x + int(camera.x * sx), rect.y + int(camera.y * sy), std::max(3, int(camera.w * sx)),
+		std::max(3, int(camera.h * sy))};
+	SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 230);
+	SDL_RenderDrawRect(renderer_, &frame);
+}
+
+bool BattleView::minimap_point(const SDL_Rect& rect, int x, int y, SDL_Point& at) {
+	if (x < rect.x || y < rect.y || x >= rect.x + rect.w || y >= rect.y + rect.h) {
+		return false;
+	}
+	at = {int(double(x - rect.x) * width() / rect.w), int(double(y - rect.y) * height() / rect.h)};
+	return true;
+}
+
+// 0x610D69 (on a sea battle; its method +0x28 is 0, not a town's).
+uint16_t BattleView::panel_buttons(const SaveGame& save, size_t battle, int player) {
+	const BattleGraph& g = save.battles;
+	const size_t b = battle;
+	auto side_merchant = [&](size_t e) { return g.get<uint16_t>(b, 0x35A + 2 * size_t(g.get<uint8_t>(e, 0x13D))); };
+	const int sel = g.ptr(b, 0x66C);
+	const size_t chosen = sel >= 0 ? g.get<uint16_t>(b, 0xAD0) : 0;
+	auto chosen_entry = [&](size_t i) { return g.ptr(size_t(sel), 4 * i); };
+	if (chosen > 0 && (chosen_entry(0) < 0 || side_merchant(size_t(chosen_entry(0))) != uint16_t(player))) {
+		return 0;
+	}
+	uint32_t bits = 0x8000;
+	// «Leave»: every ship not his out, fled or sunk (0x27) and none grappling.
+	const int list = g.ptr(b, 0x4);
+	const size_t ships = size_t(g.get<uint16_t>(b, 0x65A)) + g.get<uint16_t>(b, 0x658);
+	for (size_t i = 0; list >= 0 && i < ships; ++i) {
+		const int e = g.ptr(size_t(list), 4 * i);
+		if (e < 0 || side_merchant(size_t(e)) == uint16_t(player)) {
+			continue;
+		}
+		const uint8_t f = g.get<uint8_t>(size_t(e), 0x12A);
+		if ((f & 0x8) || !(f & 0x27)) {
+			bits &= 0x7FFF;
+		}
+	}
+	if (chosen == 0) {
+		return uint16_t(bits);
+	}
+	bits |= 0x3022;
+	const size_t first = size_t(chosen_entry(0));
+	const uint8_t side = g.get<uint8_t>(first, 0x13D);
+	const uint8_t team = g.get<uint8_t>(b, 0x559 + side);
+	// «Flee», as the key (0x60F309): his team isn't 0, [+0xACB] at most 3, and an enemy of the list [+0x10]
+	// without 0x66 (out, sinking, fled, ...).
+	if (team != 0 && g.get<uint8_t>(b, 0xACB) <= 3) {
+		uint16_t k = g.get<uint16_t>(b, 0x10);
+		const int next = g.ptr(b, 0xC);
+		while (k != 0xFFFF && list >= 0) {
+			const int e = g.ptr(size_t(list), 4 * size_t(k));
+			if (e >= 0 && !(g.get<uint8_t>(size_t(e), 0x12A) & 0x66)) {
+				bits |= 0x1;
+				break;
+			}
+			k = next >= 0 ? g.get<uint16_t>(size_t(next), 2 * size_t(k)) : 0xFFFF;
+		}
+	}
+	// «Plunder» and its pair: a side of his whose team is in [+0xAD2].
+	for (size_t i = 0; i < g.get<uint8_t>(b, 0x558); ++i) {
+		if (g.get<uint16_t>(b, 0x35A + 2 * i) == uint16_t(player) &&
+			((1u << g.get<uint8_t>(b, 0x559 + i)) & g.get<uint8_t>(b, 0xAD2))) {
+			bits |= 0x300;
+		}
+	}
+	// «Capture»: the other team has ships.
+	if ((team != 0 ? g.get<uint16_t>(b, 0x658) : g.get<uint16_t>(b, 0x65A)) != 0) {
+		bits |= 0x10;
+	}
+	for (size_t i = 0; i < chosen; ++i) {
+		const int e = chosen_entry(i);
+		if (e < 0) {
+			continue;
+		}
+		const uint8_t f = g.get<uint8_t>(size_t(e), 0x12A);
+		bits = (f & 0x20) ? bits | 0x4 : bits & ~0x2u;
+		bits = (f & 0x1) ? bits | 0x4000 : bits & ~0x2000u;
+		if (g.get<uint8_t>(size_t(e), 0x13E) != 0) {
+			bits = (f & 0x80) ? (bits & ~0x200u) | 0x40 : (bits & ~0x20u) | 0x400;
+		} else {
+			bits &= ~0x220u;
+		}
+	}
+	if (bits & 0x2) {
+		return 0x2;
+	}
+	if (bits & 0x20) {
+		bits &= ~0x40u;
+	}
+	if (bits & 0x200) {
+		bits &= ~0x400u;
+	}
+	if (bits & 0x2000) {
+		bits &= ~0x4000u;
+	}
+	return uint16_t(bits);
+}
+
 int BattleView::ship_at(int x, int y, bool& own) const {
 	constexpr int kFinger = 12;  // Around the picture, for the finger.
 	int best = -1;
@@ -461,6 +689,17 @@ bool BattleView::ship_point(const SaveGame& save, size_t battle, uint16_t place,
 		if (!found && g.get<uint16_t>(e, 0x138) == place) {
 			point = {g.get<int16_t>(e, 0xA), screen_y(g.get<int16_t>(e, 0xE))};
 			found = true;
+		}
+	});
+	return found;
+}
+
+int BattleView::scene_entry(const SaveGame& save, size_t battle, uint16_t place) {
+	const BattleGraph& g = save.battles;
+	int found = -1;
+	for_each_ship(g, battle, [&](size_t e) {
+		if (found < 0 && g.get<uint16_t>(e, 0x138) == place) {
+			found = int(e);
 		}
 	});
 	return found;
@@ -515,6 +754,7 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 	int view_height, uint32_t now, const std::vector<uint16_t>& selection, std::vector<BattleLabel>& labels) {
 	const BattleGraph& g = save.battles;
 	hits_.clear();
+	missing_looks_ = false;
 	const SDL_Rect clip = {0, top, view_width, view_height};
 	SDL_RenderSetClipRect(renderer_, &clip);
 
@@ -529,6 +769,8 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 			}
 		}
 	}
+
+	draw_reefs(save, battle, camera_x, camera_y, top, view_width, view_height);
 
 	// The ships, back to front: each one's shadow, then its picture; a sinking one's two parts.
 	struct Drawn {
@@ -590,6 +832,9 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 		}
 		const int sails = std::min<int>(g.get<uint8_t>(e, 0x26), 4);
 		const Anim* look = ship_look(ship.type() & 3, hull_state(ship), sails);
+		if (!look && !sinking) {
+			missing_looks_ = true;
+		}
 		const int frames = look ? int(look->lcr.directions.size()) : 32;
 		const int frame = ((dir * frames + 128) >> 8) & (frames - 1);
 		ships.push_back({int(ax) - camera_x, top + int(ay) - camera_y, ax, ay, e, look, frame, sinking});
@@ -763,11 +1008,13 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 		const int height = t - ((off * off * t) >> 14) + int(g.get<uint16_t>(bb, 0x34)) * dist / flight;
 		const int sx = x - camera_x;
 		const int sy = top + screen_y(y) - camera_y;
-		const SDL_Rect shadow = {sx - 2, sy - 1, 4, 3};
+		// The game's ball (4 · 4) twice its size, as the viewer's other small pictures: on the Vita's screen it
+		// was hardly seen; its shadow on the water under it.
 		SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-		SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 90);
-		SDL_RenderFillRect(renderer_, &shadow);
-		const SDL_Rect dst = {sx - 2, sy - height - 2, 4, 4};
+		SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 110);
+		const SDL_Rect shadow[2] = {{sx - 3, sy - 1, 7, 3}, {sx - 2, sy - 2, 5, 5}};
+		SDL_RenderFillRects(renderer_, shadow, 2);
+		const SDL_Rect dst = {sx - 4, sy - height - 4, 8, 8};
 		SDL_RenderCopy(renderer_, ball_, nullptr, &dst);
 	}
 

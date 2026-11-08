@@ -335,6 +335,9 @@ public:
 	void fn_608550(size_t battle, uint32_t x, uint32_t y, bool send);
 	void queue_fire(size_t battle);
 	void queue_abandon(size_t battle);
+	// The deck page's (the battle's ship window): fire (0x4942C0) and the sails' rope (0x48D420), one ship's.
+	void queue_fire_one(size_t battle, uint16_t place);
+	void queue_sails_one(size_t battle, uint16_t place, uint8_t sails);
 	void set_battle_selection(size_t battle, const std::vector<uint16_t>& places);
 	std::vector<std::array<uint32_t, 2>> selection_marks(size_t battle, uint8_t skip) const;
 	bool order_room() const;
@@ -544,6 +547,7 @@ private:
 	void for_marked(size_t battle, uint8_t group, uint32_t low, uint32_t high, F f);  // battle/orders.cpp
 	template <class F>
 	void queue_marked(size_t battle, uint8_t skip, F bytes);  // battle/orders.cpp
+	void queue_one(size_t battle, uint16_t place, uint8_t kind, uint8_t value);  // battle/orders.cpp
 	bool ai_ = true;
 	bool convoys_ = true;
 	bool storms_ = true;

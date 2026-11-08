@@ -58,6 +58,8 @@ public:
 	void need(const p3::data::SaveGame& save, size_t battle);
 	void load_step();
 	size_t pending() const { return queue_.size(); }
+	// A ship had no look at all to draw at the last draw (the battle's start, still loading): the viewer's notice.
+	bool missing_looks() const { return missing_looks_; }
 	// Everything freed (the battle left the screen).
 	void clear();
 
@@ -79,6 +81,18 @@ public:
 	// The marker arrow over a chosen ship (markerpfeil01.aim, the manual's blue arrow), for the labels.
 	SDL_Texture* arrow() const { return arrow_; }
 
+	// The side panel's minimap of the battle in `rect`: the sea, the reefs and sand banks (the manual's «islets»,
+	// yellow), each ship a dot of the town view's colour for its owner (0x56C7B0: the local player's blue, a
+	// pirate's dark grey, another human's red, the others' white) and the screen's part (`camera`, the area's
+	// screen pixels) framed.
+	void draw_minimap(const p3::data::SaveGame& save, size_t battle, const SDL_Rect& rect, const SDL_Rect& camera) const;
+	// The area's screen pixels under the minimap's (x, y); false outside it.
+	static bool minimap_point(const SDL_Rect& rect, int x, int y, SDL_Point& at);
+	// The state of the panel's battle buttons (0x610D69): bits 0x1 «Flee» on, 0x2 all the chosen fled, 0x10
+	// «Capture» on, 0x20 all capture, 0x100 «Plunder» on, 0x200 all plunder, 0x1000 «White flag» on, 0x2000 all
+	// with it, 0x8000 «Leave» (the enemy all gone: it takes «Flee»'s place). 0 with a chosen ship not his.
+	static uint16_t panel_buttons(const p3::data::SaveGame& save, size_t battle, int player);
+
 	// Where the camera looks first: the middle of the player's ships in the battle (the area's screen pixels);
 	// false while none is placed (before the battle's first step).
 	static bool player_ships_centre(const p3::data::SaveGame& save, size_t battle, int player, SDL_Point& centre);
@@ -87,6 +101,8 @@ public:
 	static std::vector<uint16_t> player_ships(const p3::data::SaveGame& save, size_t battle, int player);
 	// A ship's place in the area's screen pixels; false if the place has no ship.
 	static bool ship_point(const p3::data::SaveGame& save, size_t battle, uint16_t place, SDL_Point& point);
+	// The scene's ship in that place (its block in the battles' graph), or -1.
+	static int scene_entry(const p3::data::SaveGame& save, size_t battle, uint16_t place);
 	// The sails the pad's up or down asks for (method +0x20's keys, 0x60F3A6, 0x60F41A): the highest of the
 	// selection's sails asked ([+0x148]) plus one, at most 4; or the lowest minus one, at least 0.
 	static uint8_t sails_step(const p3::data::SaveGame& save, size_t battle, bool up);
@@ -134,6 +150,12 @@ private:
 		Uint8 alpha = 255);
 	void smoke(const p3::data::SaveGame& save, size_t battle, float x, float y, uint32_t now);
 	void draw_frame(const Anim& a, int dir, int frame, int x, int y, Uint8 alpha, bool shadow) const;
+	// The battle's reefs ([+0x872 + 8k]: x, y, w, h in the town view's cells, the front one; 0x5944E0: a tile of
+	// type 0x12 of that size, `riffWxH`, over its ground `riffWxH_unten` of type 0x11, its parameter 1) and sand
+	// banks ([+0x672 + 8k]; 0x594640: type 0x13, `sandbank…`, chosen by x · y among those of the size).
+	void draw_reefs(const p3::data::SaveGame& save, size_t battle, int camera_x, int camera_y, int top, int view_width,
+		int view_height);
+	void draw_tile(const p3::data::TileDef* tile, int x, int y, int camera_x, int camera_y, int top);
 	void draw_clouds(const p3::data::SaveGame& save, size_t battle, int camera_x, int camera_y, int top, int view_width,
 		int view_height, uint32_t now);
 	uint32_t next_random();
@@ -152,11 +174,16 @@ private:
 		SDL_Point anchor{};
 	};
 	std::vector<Hit> hits_;  // The ships drawn at the last draw.
+	bool missing_looks_ = false;
 	SDL_Point order_mark_{};  // mark_order's point (the area's screen pixels) and when.
 	uint32_t order_time_ = 0;
 	bool order_marked_ = false;
 	SDL_Texture* ball_ = nullptr;
 	SDL_Texture* arrow_ = nullptr;  // The marker arrow over a chosen ship (markerpfeil01.aim), drawn blue.
+	std::vector<const p3::data::TileDef*> rock_tiles_;  // Type 0x12 (riff…) and 0x13 (sandbank…), by id.
+	std::vector<const p3::data::TileDef*> islet_tiles_;
+	std::map<uint16_t, const p3::data::TileDef*> tile_ids_;
+	std::vector<SDL_Texture*> pinned_;  // The reefs' atlases (kept when the looks are freed).
 	std::array<SDL_Texture*, 6> cloud_images_{};
 	std::vector<Cloud> clouds_;
 	uint32_t clouds_time_ = 0;

@@ -913,6 +913,23 @@ SDL_Texture* load_texture(SDL_Renderer* renderer, const CprArchive& archive, con
 	return texture;
 }
 
+// An AIM of the archive as a texture (its own alpha); nullptr if it fails.
+SDL_Texture* load_aim_texture(SDL_Renderer* renderer, const CprArchive& archive, const char* path) {
+	const CprEntry* entry = archive.find(path);
+	std::vector<uint8_t> data;
+	Image image;
+	if (!entry || !archive.read(*entry, data) || !decode_aim(data.data(), data.size(), image)) {
+		return nullptr;
+	}
+	SDL_Texture* texture =
+		SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, image.width, image.height);
+	if (texture) {
+		SDL_UpdateTexture(texture, nullptr, image.rgba.data(), image.width * 4);
+		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+	}
+	return texture;
+}
+
 // How many of the sea map's rows load a frame (SeaMapView::step) while the
 // town waits for it with its notice.
 constexpr int kSeaMapRowsPerFrame = 240;
@@ -3678,6 +3695,8 @@ struct PanelArt {
 	SDL_Texture* barrel_mask = nullptr;
 	SDL_Texture* bonus = nullptr;
 	SDL_Texture* deck = nullptr;
+	SDL_Texture* battle_buttons = nullptr;  // menu_seeschlacht.tga (TEX16045): the battle's six, 32 · 32 in 4 rows.
+	SDL_Texture* fire = nullptr;  // sidemenu/fire.aim (TEX20037): the deck's fire button, 64 · 64 in 4 frames.
 	SDL_Texture* backpics[4] = {};
 	enum Icon { Anchor, Sailing, Sunk, Repair, Knots, Hull, Crew, Captain, Weapons, BigBall, SmallBall, Barrel, Bale,
 		HandWeapons, Offered, Auction, Upgrade, Fleet, IconCount };
@@ -3722,6 +3741,8 @@ struct PanelArt {
 		barrel_mask = load_texture(renderer, archive, "images/sidemenu/fass0003.tga");
 		bonus = load_texture(renderer, archive, "images/sidemenu/bonus.tga");
 		deck = load_texture(renderer, archive, "images/sidemenu/schiffsdeck.tga");
+		battle_buttons = load_texture(renderer, archive, "images/menu_seeschlacht.tga");
+		fire = load_aim_texture(renderer, archive, "images/sidemenu/fire.aim");
 		// By type (snaikka, craier, cog, hulk: schnigge, kraier, kogge, holk).
 		static constexpr const char* kBackpics[4] = {"images/sidemenu/backpic_schnigge01.bmp",
 			"images/sidemenu/backpic_kraier01.bmp", "images/sidemenu/backpic_kogge01.bmp",
@@ -3757,7 +3778,7 @@ struct PanelArt {
 	}
 	~PanelArt() {
 		for (SDL_Texture* t : {icons, bar, plank, wood, parchment, build_tabs, ships[0], ships[1], ships[2], ships[3],
-				 ship_buttons, morale, barrel, barrel_mask, bonus, deck, backpics[0], backpics[1], backpics[2], backpics[3],
+				 ship_buttons, morale, barrel, barrel_mask, bonus, deck, battle_buttons, fire, backpics[0], backpics[1], backpics[2], backpics[3],
 				 letters, paper, seal, bar_left, bar_right, people, coins, map_switch, events}) {
 			if (t) {
 				SDL_DestroyTexture(t);
@@ -4790,6 +4811,159 @@ int ship_goods_rows(const SaveGame& save, int ship_index) {
 	return n + (ship.extra_loads() ? 1 : 0) + (ship.memory.u8(0x157) ? 1 : 0);
 }
 
+// schiffsdeck.tga's frames (TEX20010): the rope's left end, middle and right end, the ship marking the sails on
+// it, unused, the deck, the guns standing (6..11) and hanging (12..17), and an empty slot's placeholder.
+constexpr SDL_Rect kDeckFrames[19] = {{0, 0, 32, 12}, {32, 0, 192, 12}, {224, 0, 32, 12}, {45, 124, 26, 22},
+	{0, 0, 0, 0}, {0, 26, 248, 96}, {130, 128, 20, 52}, {109, 128, 20, 52}, {217, 128, 32, 52}, {184, 128, 32, 52},
+	{151, 128, 32, 52}, {88, 128, 20, 52}, {130, 181, 20, 52}, {109, 181, 20, 52}, {217, 181, 32, 52},
+	{184, 181, 32, 52}, {151, 181, 32, 52}, {88, 181, 20, 52}, {7, 123, 17, 34}};
+
+// 0x48E700 → 0x495210: the deck (frame 5 of schiffsdeck.tga) and its 24 slots in two rows of 12, 17 pixels apart
+// from its 13th pixel: the slots k with k % 4 < 2 on the upper line (DeckTopLine 36), standing up from it, the
+// others on the lower one (DeckBottomLine 60), hanging down; a piece of type t is the frame 6 + t above and
+// 12 + t below, an empty slot (0xFF) the placeholder (frame 18).
+void draw_deck(SDL_Renderer* renderer, const PanelArt& art, const SavedShip& ship, const SDL_Rect& deck) {
+	draw_picture(renderer, art.deck, deck, &kDeckFrames[5]);
+	const int step = (deck.w - 0x42) / 12 + 2;
+	for (int upper = 1; upper >= 0; --upper) {
+		int x = deck.x + 13;
+		const int anchor = deck.y + (upper ? 36 : 60);
+		for (int k = upper ? 0 : 2; k < 24; k += (k & 1) ? 3 : 1) {
+			const uint8_t type = ship.artillery(k);
+			const SDL_Rect* f = type < 6 ? &kDeckFrames[(upper ? 6 : 12) + type] : type == 0xFF ? &kDeckFrames[18] : nullptr;
+			if (f) {
+				const SDL_Rect dst = {x, upper ? anchor - f->h : anchor, f->w, f->h};
+				draw_picture(renderer, art.deck, dst, f);
+			}
+			x += step;
+		}
+	}
+}
+
+// --- The battle's panel (the battles' piece 7, part 3; the manual's figure 2-3): the side panel's frame with the
+// battle's minimap, the action row on the plank (screenGame.ini Button26..31, menu_seeschlacht.tga; their state
+// 0x610D69, BattleView::panel_buttons; touch only, as the user chose) and, in the menus' room, the deck of the
+// chosen ship (the ship window's in a battle: its header, the fire button, the deck with its guns and the
+// sails' rope).
+enum class BattleButton { SelectAll, Capture, Plunder, Flee, WhiteFlag, Count };
+constexpr int kBattleButtons = int(BattleButton::Count);
+
+// The action row in the panel's icon places: its picture's column in menu_seeschlacht.tga (TEX16045: «Alle
+// selektieren» 0, «Seeschlacht beenden» 32 in Flee's place when the enemy is all gone, «Kapern» 64, «Fliehen» 96,
+// «Plündern» 128, «Aufgeben» 160; rows neutral, pressed, hover, disabled), its tooltip, whether it is on and
+// whether it shows pressed (a check button: all the chosen ships have it).
+struct BattleButtonState {
+	int column = 0;
+	uint32_t tooltip = 0;
+	bool enabled = false;
+	bool checked = false;
+};
+BattleButtonState battle_button_state(BattleButton k, uint16_t bits, bool any_ship) {
+	const bool leave = bits & 0x8000;
+	switch (k) {
+	case BattleButton::SelectAll:
+		return {0, 20048, any_ship, false};
+	case BattleButton::Capture:
+		return {64, 20049, (bits & 0x10) != 0, (bits & 0x20) != 0};
+	case BattleButton::Plunder:
+		return {128, 20050, (bits & 0x100) != 0, (bits & 0x200) != 0};
+	case BattleButton::Flee:
+		return leave ? BattleButtonState{32, 20054, true, false}
+					 : BattleButtonState{96, 20051, (bits & 0x1) != 0, (bits & 0x2) != 0};
+	case BattleButton::WhiteFlag:
+		return {160, 20052, (bits & 0x1000) != 0, (bits & 0x2000) != 0};
+	default:
+		return {};
+	}
+}
+
+// The deck page of the battle's panel in the menus' room: the header (left of the fire button, 64 · 64 at the
+// top right), the deck and, under it, the sails' rope (256 · 12, its marker ship at five places, furled on the
+// left: a ship's sails 0..4).
+struct BattleDeckLayout {
+	ShipMenuLayout ship;
+	SDL_Rect header_room{};
+	SDL_Rect fire{};
+	SDL_Rect deck{};
+	SDL_Rect rope{};
+
+	BattleDeckLayout(const SDL_Rect& room, int line) : ship(room, line) {
+		ship.top = room.y + 8;
+		header_room = {room.x, room.y, room.w - 74, room.h};
+		fire = {room.x + room.w - 72, room.y + 6, 64, 64};
+		deck = {room.x + 6, room.y + 8 + 4 * line + 8, 248, 96};
+		rope = {room.x + 2, deck.y + deck.h + 14, 256, 12};
+	}
+	int sails_x(int sails) const { return rope.x + 32 + sails * 192 / 4; }
+	// The sails asked by a touch on the rope (the nearest of its five places), or -1.
+	int sails_at(int x, int y) const {
+		if (y < rope.y - 14 || y > rope.y + rope.h + 14 || x < rope.x || x > rope.x + rope.w) {
+			return -1;
+		}
+		return std::clamp((x - rope.x - 32 + 24) * 4 / 192, 0, 4);
+	}
+};
+
+void draw_battle_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SidePanel& ui,
+	const SaveGame& save, size_t battle, const p3::app::BattleView& view, const SDL_Rect& camera, int deck_place,
+	uint16_t bits, bool any_ship, int pressed_button, bool fire_pressed) {
+	const PanelLayout layout(ui.folded);
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	const SDL_Rect bar_src = {0, 0, kPanelBar, layout.bar.h};
+	draw_picture(renderer, art.bar, layout.bar, &bar_src);
+	SDL_SetRenderDrawColor(renderer, 60, 38, 18, 230);
+	SDL_RenderFillRect(renderer, &layout.tab);
+	SDL_SetRenderDrawColor(renderer, 190, 150, 90, 255);
+	SDL_RenderDrawRect(renderer, &layout.tab);
+	const int cx = layout.tab.x + layout.tab.w / 2;
+	const int cy = layout.tab.y + layout.tab.h / 2;
+	for (int k = 0; k < 7; ++k) {
+		const int dx = ui.folded ? 3 - k / 2 : -3 + k / 2;
+		SDL_RenderDrawLine(renderer, cx + dx, cy - 6 + k, cx + dx, cy + 6 - k);
+	}
+	if (ui.folded) {
+		return;
+	}
+	view.draw_minimap(save, battle, layout.map, camera);
+	draw_picture(renderer, art.plank, layout.plank);
+	for (int k = 0; k < kBattleButtons; ++k) {
+		const BattleButtonState s = battle_button_state(BattleButton(k), bits, any_ship);
+		const int row = !s.enabled ? 3 : pressed_button == k ? 2 : s.checked ? 1 : 0;
+		const SDL_Rect src = {s.column, row * 32, 32, 32};
+		draw_picture(renderer, art.battle_buttons, layout.icons[k], &src);
+	}
+	draw_picture(renderer, art.wood, layout.room);
+	const int e = deck_place >= 0 ? p3::app::BattleView::scene_entry(save, battle, uint16_t(deck_place)) : -1;
+	if (e < 0) {
+		return;
+	}
+	const BattleGraph& g = save.battles;
+	const uint32_t index = g.get<uint32_t>(size_t(e), 0x4);
+	if (index >= save.ships.size()) {
+		return;
+	}
+	draw_picture(renderer, art.parchment, layout.room);
+	const BattleDeckLayout deck(layout.room, text.line_height());
+	draw_ship_header(renderer, text, art, save, int(index), deck.ship, deck.header_room, false);
+	// The fire button (0x4942C0): on while a side's guns are loaded ([+0x130] or [+0x131] 0) and the ship has
+	// firepower; fire.aim's frames: hover 0, pressed 1, neutral 2, disabled 3.
+	const bool loaded = g.get<uint8_t>(size_t(e), 0x130) == 0 || g.get<uint8_t>(size_t(e), 0x131) == 0;
+	const bool can_fire = loaded && save.ships[index].memory.s32(0x120) != 0;
+	const SDL_Rect fire_src = {64 * (!can_fire ? 3 : fire_pressed ? 1 : 2), 0, 64, 64};
+	draw_picture(renderer, art.fire, deck.fire, &fire_src);
+	draw_deck(renderer, art, save.ships[index], deck.deck);
+	// The rope (frames 0, 1, 2) and its marker (frame 3) at the sails asked ([+0x148]).
+	const SDL_Rect left = {deck.rope.x, deck.rope.y, 32, 12};
+	const SDL_Rect middle = {deck.rope.x + 32, deck.rope.y, 192, 12};
+	const SDL_Rect right = {deck.rope.x + 224, deck.rope.y, 32, 12};
+	draw_picture(renderer, art.deck, left, &kDeckFrames[0]);
+	draw_picture(renderer, art.deck, middle, &kDeckFrames[1]);
+	draw_picture(renderer, art.deck, right, &kDeckFrames[2]);
+	const int sails = std::min<int>(g.get<uint8_t>(size_t(e), 0x148), 4);
+	const SDL_Rect marker = {deck.sails_x(sails) - 13, deck.rope.y - 5, 26, 22};
+	draw_picture(renderer, art.deck, marker, &kDeckFrames[3]);
+}
+
 // A greyed button that can't be pressed (the game's disabled row).
 void draw_disabled_button(SDL_Renderer* renderer, TextRenderer& text, const SDL_Rect& r, const std::string& label) {
 	SDL_SetRenderDrawColor(renderer, 120, 100, 80, 160);
@@ -4936,34 +5110,10 @@ void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& 
 		}
 		break;
 	}
-	case ShipPage::Deck: {
-		// 0x48E700 → 0x495210: the deck (frame 5 of schiffsdeck.tga) and its 24 slots in two rows of 12, 17
-		// pixels apart from its 13th pixel: the slots k with k % 4 < 2 on the upper line (DeckTopLine 36),
-		// standing up from it, the others on the lower one (DeckBottomLine 60), hanging down; a piece of
-		// type t is the frame 6 + t above and 12 + t below, an empty slot (0xFF) the placeholder (frame 18).
+	case ShipPage::Deck:
 		draw_ship_header(renderer, text, art, save, ship_index, layout, room, false);
-		static constexpr SDL_Rect kFrames[19] = {{0, 0, 32, 12}, {32, 0, 192, 12}, {224, 0, 32, 12}, {45, 124, 26, 22},
-			{0, 0, 0, 0}, {0, 26, 248, 96}, {130, 128, 20, 52}, {109, 128, 20, 52}, {217, 128, 32, 52}, {184, 128, 32, 52},
-			{151, 128, 32, 52}, {88, 128, 20, 52}, {130, 181, 20, 52}, {109, 181, 20, 52}, {217, 181, 32, 52},
-			{184, 181, 32, 52}, {151, 181, 32, 52}, {88, 181, 20, 52}, {7, 123, 17, 34}};
-		const SDL_Rect deck = {room.x + 6, layout.deck_y, 248, 96};
-		draw_picture(renderer, art.deck, deck, &kFrames[5]);
-		const int step = (deck.w - 0x42) / 12 + 2;
-		for (int upper = 1; upper >= 0; --upper) {
-			int x = deck.x + 13;
-			const int anchor = deck.y + (upper ? 36 : 60);
-			for (int k = upper ? 0 : 2; k < 24; k += (k & 1) ? 3 : 1) {
-				const uint8_t type = ship.artillery(k);
-				const SDL_Rect* f = type < 6 ? &kFrames[(upper ? 6 : 12) + type] : type == 0xFF ? &kFrames[18] : nullptr;
-				if (f) {
-					const SDL_Rect dst = {x, upper ? anchor - f->h : anchor, f->w, f->h};
-					draw_picture(renderer, art.deck, dst, f);
-				}
-				x += step;
-			}
-		}
+		draw_deck(renderer, art, ship, {room.x + 6, layout.deck_y, 248, 96});
 		break;
-	}
 	case ShipPage::Convoy:
 		if (in_convoy) {
 			// «Show convoy»: its ships, the guide first with the captain's star (0x48CF50's list).
@@ -8224,7 +8374,8 @@ int main(int argc, char** argv) {
 				// (the PC's right button held: 0x608550 with 1, which the step sends again while it is held).
 				if (finger_down && !battle_long && !battle_hold && std::abs(touch_now.x - touch_start.x) < kBattleStill &&
 					std::abs(touch_now.y - touch_start.y) < kBattleStill && !battle_window_up() &&
-					battle_info < 0 && !menu.open() && app_ticks() - battle_touch_ms >= kBattleLongPressMs) {
+					battle_info < 0 && !menu.open() && app_ticks() - battle_touch_ms >= kBattleLongPressMs &&
+					touch_start.x < PanelLayout(side.folded).town_right) {
 					battle_long = true;
 					bool own = false;
 					const int place = battle_view->ship_at(touch_start.x, touch_start.y, own);
@@ -8290,6 +8441,9 @@ int main(int argc, char** argv) {
 				}
 				break;
 			}
+			case SDL_CONTROLLER_BUTTON_BACK:
+				side.folded = !side.folded;  // Select: the panel folded or unfolded.
+				break;
 			case SDL_CONTROLLER_BUTTON_DPAD_UP:
 			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
 				if (!battle_selection.empty()) {
@@ -8342,7 +8496,31 @@ int main(int argc, char** argv) {
 			side.menu = PanelMenu::None;
 		}
 		const PanelLayout panel_layout(side.folded);
-		const int town_width = panel_shown ? panel_layout.town_right : kScreenWidth;
+		// The battle's panel (draw_battle_panel) takes the side panel's place over the battle.
+		const bool battle_panel = in_battle && small_text && panel_art && save.player >= 0;
+		const int town_width = panel_shown || battle_panel ? panel_layout.town_right : kScreenWidth;
+		// Its deck shows the first chosen ship of his, else his first one; its buttons' state (0x610D69).
+		int battle_deck_place = -1;
+		uint16_t battle_bits = 0;
+		bool battle_any_ship = false;
+		if (battle_panel) {
+			const std::vector<uint16_t> own = p3::app::BattleView::player_ships(save, size_t(battle_shown), save.player);
+			battle_any_ship = !own.empty();
+			battle_deck_place = !battle_selection.empty() ? battle_selection.front() : !own.empty() ? own.front() : -1;
+			battle_bits = p3::app::BattleView::panel_buttons(save, size_t(battle_shown), save.player);
+		}
+		// The battle panel's button (or the fire button, kBattleButtons) under a finger that is down, for its look.
+		int battle_button_down = -1;
+		if (battle_panel && finger_down && !side.folded && touch_moved < kTapDistance) {
+			for (int k = 0; k < kBattleButtons; ++k) {
+				if (inside(panel_layout.icons[k], touch_start.x, touch_start.y)) {
+					battle_button_down = k;
+				}
+			}
+			if (inside(BattleDeckLayout(panel_layout.room, small_text->line_height()).fire, touch_start.x, touch_start.y)) {
+				battle_button_down = kBattleButtons;
+			}
+		}
 		g_town_right = town_width;
 		// Whether (x, y) is on one of the town view's event symbols (draw_town_events).
 		auto on_town_event = [&](int x, int y) {
@@ -9824,7 +10002,15 @@ int main(int argc, char** argv) {
 				}
 				if (in_battle && !in_menu) {
 					// The battle's screen: dragging moves its view; a tap or a long press is an order (on lifting
-					// it, and in the frame, kBattleLongPressMs).
+					// it, and in the frame, kBattleLongPressMs). On its panel, the panel's.
+					if (battle_panel && inside(panel_layout.panel, touch_start.x, touch_start.y)) {
+						touch_on_side = true;
+						touch_on_panel = true;
+						touch_building = false;
+						battle_long = true;  // No order from this touch.
+						battle_hold = false;
+						break;
+					}
 					touch_on_side = false;
 					touch_on_panel = false;
 					touch_building = false;
@@ -9855,6 +10041,17 @@ int main(int argc, char** argv) {
 				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
 					std::abs(int(event.tfinger.dy * kScreenHeight));
 				touch_now = {int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight)};
+				if (in_battle && touch_on_side) {
+					// On the battle's minimap, the view goes where the finger is.
+					SDL_Point at;
+					if (!side.folded && inside(panel_layout.map, touch_start.x, touch_start.y) &&
+						p3::app::BattleView::minimap_point(panel_layout.map, int(event.tfinger.x * kScreenWidth),
+							int(event.tfinger.y * kScreenHeight), at)) {
+						camera_x = at.x - town_width / 2;
+						camera_y = at.y - kScreenHeight / 2;
+					}
+					break;
+				}
 				if (in_battle && battle_hold) {
 					// The held order follows the finger (the PC's mouse moved with its right button down, 0x58BF35).
 					const auto p = battle_point(int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight));
@@ -9907,6 +10104,79 @@ int main(int argc, char** argv) {
 						}
 					}
 					touch_on_panel = false;
+					break;
+				}
+				if (in_battle && !in_menu && touch_on_side) {
+					// The battle's panel: its tab folds it; its buttons (on, as the game's panel 0x42D3C9: a check
+					// button turned to the other state), its minimap, the deck's fire button and rope.
+					touch_on_side = false;
+					touch_on_panel = false;
+					battle_long = false;
+					if (touch_moved >= kTapDistance) {
+						break;
+					}
+					const size_t b = size_t(battle_shown);
+					const int tx = touch_start.x, ty = touch_start.y;
+					if (inside(panel_layout.tab, tx, ty)) {
+						side.folded = !side.folded;
+						break;
+					}
+					if (side.folded) {
+						break;
+					}
+					SDL_Point at;
+					if (p3::app::BattleView::minimap_point(panel_layout.map, tx, ty, at)) {
+						camera_x = at.x - town_width / 2;
+						camera_y = at.y - kScreenHeight / 2;
+						break;
+					}
+					for (int k = 0; k < kBattleButtons; ++k) {
+						const BattleButtonState st = battle_button_state(BattleButton(k), battle_bits, battle_any_ship);
+						if (!inside(panel_layout.icons[k], tx, ty) || !st.enabled) {
+							continue;
+						}
+						switch (BattleButton(k)) {
+						case BattleButton::SelectAll:
+							battle_selection = p3::app::BattleView::player_ships(save, b, save.player);
+							sailing->set_battle_selection(b, battle_selection);
+							break;
+						case BattleButton::Capture:
+							sailing->fn_6103e9(b, false, !st.checked);
+							break;
+						case BattleButton::Plunder:
+							sailing->fn_6103e9(b, !st.checked, false);
+							break;
+						case BattleButton::Flee:
+							if (battle_bits & 0x8000) {
+								sailing->queue_abandon(b);  // Leave (Abandonar): operation 0xA0.
+							} else {
+								sailing->fn_610c09(b);
+							}
+							break;
+						case BattleButton::WhiteFlag:
+							sailing->fn_610fd9(b, !st.checked);
+							break;
+						default:
+							break;
+						}
+					}
+					const int e = battle_deck_place >= 0
+						? p3::app::BattleView::scene_entry(save, b, uint16_t(battle_deck_place))
+						: -1;
+					if (e >= 0 && small_text) {
+						const BattleDeckLayout deck(panel_layout.room, small_text->line_height());
+						const BattleGraph& g = save.battles;
+						const uint32_t index = g.get<uint32_t>(size_t(e), 0x4);
+						const bool loaded = g.get<uint8_t>(size_t(e), 0x130) == 0 || g.get<uint8_t>(size_t(e), 0x131) == 0;
+						if (inside(deck.fire, tx, ty) && loaded && index < save.ships.size() &&
+							save.ships[index].memory.s32(0x120) != 0) {
+							sailing->queue_fire_one(b, uint16_t(battle_deck_place));
+						}
+						const int sails = deck.sails_at(tx, ty);
+						if (sails >= 0) {
+							sailing->queue_sails_one(b, uint16_t(battle_deck_place), uint8_t(sails));
+						}
+					}
 					break;
 				}
 				if (in_battle && !in_menu) {
@@ -10485,6 +10755,16 @@ int main(int argc, char** argv) {
 					draw_battle_label(renderer, *small_text, *panel_art, label, battle_view->arrow());
 				}
 			}
+			if (battle_panel) {
+				draw_battle_panel(renderer, *small_text, *panel_art, side, save, size_t(battle_shown), *battle_view,
+					{camera_x, camera_y, town_width, kScreenHeight}, battle_deck_place, battle_bits, battle_any_ship,
+					battle_button_down < kBattleButtons ? battle_button_down : -1, battle_button_down == kBattleButtons);
+				if (battle_button_down >= 0 && battle_button_down < kBattleButtons) {
+					// Its button's tooltip under the finger (the scripts' ToolTip).
+					const BattleButtonState st = battle_button_state(BattleButton(battle_button_down), battle_bits, true);
+					draw_tooltip(renderer, *small_text, tooltip_text(st.tooltip), panel_layout.icons[battle_button_down]);
+				}
+			}
 			// Method +0x20 (0x60EDC6): once the order to go is let go ([+0x12E0] 0), each chosen ship's line is
 			// cleared after this frame ([+0xAE0 + 8 · i] = −1).
 			{
@@ -10496,8 +10776,9 @@ int main(int argc, char** argv) {
 					}
 				}
 			}
-			if (battle_view->pending() > 0 && small_text) {
-				// Its ships' graphics still loading (a sheet a frame): the notice.
+			if (battle_view->missing_looks() && small_text) {
+				// A ship's graphics still loading at the start (a sheet a frame): the notice. Later looks (a new hull
+				// state) load under the old one, without it.
 				const std::string line = tr("Cargando la batalla...", "Loading the battle...");
 				const int w = small_text->measure(line) + 16;
 				const SDL_Rect box = {town_width / 2 - w / 2, kScreenHeight / 2 - 16, w, small_text->line_height() + 8};
