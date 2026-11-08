@@ -21,6 +21,8 @@ constexpr const char* kShipSprites[4] = {"images/Schiffe/page_mschnigge01.tga", 
 constexpr int kShipSpriteWidth = 52;
 constexpr int kShipSpriteHeight = 56;
 constexpr char kShipMarker[] = "images/Schiffe/schiffmarker01.tga";  // 16 × 22 (TEX30008)
+// A sea battle with a ship of the player (0x44AE7F: TEX30034, 45 × 45, centred on the battle's place).
+constexpr char kSeaBattleIcon[] = "images/Animationen_Seekarte/SeaBattle.tga";
 
 // Posiciones de una ciudad en el mapa (scripts/StadtDaten.ini; el juego las
 // guarda en 0x6DDB90 + id · 0x34).

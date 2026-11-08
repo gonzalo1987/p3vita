@@ -27,7 +27,7 @@ public:
 
 	// Whether the button is held down during this frame (the pad moves the camera).
 	bool held(SDL_GameControllerButton button) const;
-	// Ticks to run in this frame on top of the real-time ones (days:N).
+	// Ticks to run in this frame on top of the real-time ones (days:N, ticks:N).
 	int extra_ticks() const { return extra_ticks_; }
 	// File to save the screen into at the end of this frame, or empty.
 	const std::string& screenshot() const { return screenshot_; }
@@ -44,11 +44,12 @@ public:
 	Uint32 now() const { return Uint32(frame_) * kScriptFrameMs; }
 
 private:
-	enum class Kind { Press, Hold, Frames, Days, Shot, Tap, Cell, Text, Touch, Lift };
+	enum class Kind { Press, Hold, Frames, Days, Ticks, Shot, Tap, Cell, Text, Touch, Lift };
 	struct Step {
 		Kind kind = Kind::Press;
 		SDL_GameControllerButton button = SDL_CONTROLLER_BUTTON_INVALID;
 		int count = 1;  // Frames held, frames waited or days.
+		int ticks = 0;  // ticks:N, in one frame.
 		int x = 0;  // Tap position on the screen, or town cell.
 		int y = 0;
 		std::string file;

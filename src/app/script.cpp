@@ -82,6 +82,7 @@ const char kStepsHelp[] =
 	"               frame)\n"
 	"  frames:N     N frames without input (time passes at the game's speed)\n"
 	"  days:N       N frames of fast forward, one game day (256 ticks) each\n"
+	"  ticks:N      one frame of fast forward, N ticks\n"
 	"  tap:X:Y      touch the screen at (X, Y) and let go\n"
 	"  touch:X:Y    put a finger on the screen at (X, Y); lift:X:Y lifts it there\n"
 	"  cell:X:Y     center the camera on the town's cell (X, Y)\n"
@@ -115,6 +116,13 @@ std::unique_ptr<InputScript> InputScript::parse(const std::string& steps, std::s
 			step.kind = head == "frames" ? Kind::Frames : Kind::Days;
 			step.count = number(rest);
 			if (step.count < 0) {
+				error = "wrong number in step \"" + text + "\"";
+				return nullptr;
+			}
+		} else if (head == "ticks" && colon != std::string::npos) {
+			step.kind = Kind::Ticks;
+			step.ticks = number(rest);
+			if (step.ticks < 0) {
 				error = "wrong number in step \"" + text + "\"";
 				return nullptr;
 			}
@@ -199,6 +207,9 @@ void InputScript::start_frame() {
 		break;
 	case Kind::Days:
 		extra_ticks_ = kTicksPerDay;
+		break;
+	case Kind::Ticks:
+		extra_ticks_ = step.ticks;
 		break;
 	case Kind::Shot:
 		screenshot_ = step.file;

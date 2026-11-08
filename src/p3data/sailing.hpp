@@ -277,6 +277,15 @@ public:
 	bool on_screen(size_t battle) const;  // [0x6E59CC] is the battle.
 	void battle_sound(size_t battle);  // A sound on the screen: the world's rand() with the sound on.
 	void set_battle_sound(uint32_t variants) { save_.battle_window.sound_variants = variants; }
+	// The viewer's battle window (SaveGame::battle_window, the game's *0x6CBB10): with it a battle's question and
+	// end take the game's path with a window.
+	void set_battle_window(bool present) { save_.battle_window.present = present; }
+	// The window's battle's countdown for the local player's side (its last one, [+0x15C + 2 · side]: 250 at the
+	// question, 0xFFFE at its end): the question's time bar. 0 without that battle or side.
+	uint16_t battle_question_count() const;
+	// 0x611FC0's text (the window of the sea map's battle icon): «Sea battle», «Own ships:» and the local player's
+	// ships of his team, then «Escort:» and the others; empty without the game's texts or a side of his.
+	std::string battle_info_text(uint8_t slot) const;
 	uint16_t fn_6111b9(size_t battle);  // (battle) A free slot of the balls.
 	void fn_602a90(size_t ball, uint16_t slot, uint16_t tx, uint16_t ty, uint16_t sx, uint16_t sy, int32_t damage,
 		uint8_t byte, size_t battle, uint16_t shooter, uint16_t word);  // The ball's constructor.

@@ -264,7 +264,14 @@ public:
 		}
 	}
 
-	~TextRenderer() { SDL_DestroyTexture(texture_); }
+	~TextRenderer() {
+		SDL_DestroyTexture(texture_);
+		for (SDL_Texture* t : buttons_) {
+			if (t) {
+				SDL_DestroyTexture(t);
+			}
+		}
+	}
 
 	// The width of the text, the symbols included.
 	int measure(const std::string& text) const {
@@ -285,8 +292,11 @@ public:
 	}
 	int line_height() const { return font_->line_height(); }
 
+	// The colour's alpha fades the letters and the buttons' symbols alike (a button that can't be pressed).
 	void draw(const std::string& text, int x, int y, SDL_Color color) {
 		SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
+		SDL_SetTextureAlphaMod(texture_, color.a);
+		alpha_ = color.a;
 		size_t start = 0;
 		for (size_t i = 0; i <= text.size(); ++i) {
 			if (i < text.size() && !symbol_byte(text[i])) {
@@ -313,63 +323,26 @@ private:
 	// A button's symbol is about as wide as the line is high; a letter's sign, narrower.
 	int symbol_width(char c) const { return c <= 4 ? font_->line_height() + 2 : font_->line_height() * 2 / 3 + 2; }
 
-	// The symbol in a square of about the text's height: the buttons in the
-	// PlayStation's colours, their lines two pixels thick; the letters' coin
-	// (a gold disc), barrel and load (a sack), small and filled.
+	// The symbol in a square about the text's height: the buttons in the
+	// PlayStation's colours, smoothed (button_texture), three quarters of the
+	// line high; the letters' coin (a gold disc), barrel and load (a sack),
+	// small and filled.
 	void draw_symbol(char c, int x, int y) {
 		const int h = font_->line_height();
+		if (c <= 4) {
+			const int size = std::max(8, h * 3 / 4);
+			if (SDL_Texture* t = button_texture(c, size)) {
+				const SDL_Rect dst = {x + (symbol_width(c) - size) / 2, y + (h - size) / 2, size, size};
+				SDL_SetTextureAlphaMod(t, alpha_);
+				SDL_RenderCopy(renderer_, t, nullptr, &dst);
+			}
+			return;
+		}
 		const int size = h * 3 / 5;
 		const int left = x + (symbol_width(c) - size) / 2;
 		const int top = y + (h - size) / 2;
-		const int right = left + size - 1;
-		const int bottom = top + size - 1;
 		SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-		auto line = [&](int x1, int y1, int x2, int y2) {
-			SDL_RenderDrawLine(renderer_, x1, y1, x2, y2);
-			SDL_RenderDrawLine(renderer_, x1 + 1, y1, x2 + 1, y2);
-		};
-		if (c >= 5) {
-			draw_sign(c, left, top, size);
-			return;
-		}
-		switch (c) {
-		case 1:  // Cross, blue.
-			SDL_SetRenderDrawColor(renderer_, 124, 178, 232, 255);
-			line(left, top, right - 1, bottom);
-			line(right - 1, top, left, bottom);
-			break;
-		case 2: {  // Circle, red.
-			SDL_SetRenderDrawColor(renderer_, 255, 102, 102, 255);
-			const float cx = (left + right) / 2.0f;
-			const float cy = (top + bottom) / 2.0f;
-			for (const float r : {size / 2.0f, size / 2.0f - 1.0f}) {
-				constexpr int kSteps = 24;
-				for (int k = 0; k < kSteps; ++k) {
-					const float a1 = 6.2831853f * float(k) / kSteps;
-					const float a2 = 6.2831853f * float(k + 1) / kSteps;
-					SDL_RenderDrawLine(renderer_, int(std::lround(cx + r * std::cos(a1))),
-						int(std::lround(cy + r * std::sin(a1))), int(std::lround(cx + r * std::cos(a2))),
-						int(std::lround(cy + r * std::sin(a2))));
-				}
-			}
-			break;
-		}
-		case 3: {  // Square, pink.
-			SDL_SetRenderDrawColor(renderer_, 255, 105, 248, 255);
-			const SDL_Rect outer = {left, top, size, size};
-			const SDL_Rect inner = {left + 1, top + 1, size - 2, size - 2};
-			SDL_RenderDrawRect(renderer_, &outer);
-			SDL_RenderDrawRect(renderer_, &inner);
-			break;
-		}
-		default:  // Triangle, green.
-			SDL_SetRenderDrawColor(renderer_, 64, 226, 160, 255);
-			line((left + right) / 2, top, left, bottom);
-			line((left + right) / 2, top, right - 1, bottom);
-			line(left, bottom, right, bottom);
-			SDL_RenderDrawLine(renderer_, left, bottom - 1, right, bottom - 1);
-			break;
-		}
+		draw_sign(c, left, top, size);
 	}
 
 	// The game draws \C, \B and \L of its texts as small pictures.
@@ -408,9 +381,77 @@ private:
 		}
 	}
 
+	// A button's symbol (1 the cross, 2 the circle, 3 the square, 4 the triangle), in the PlayStation's colours,
+	// drawn once into a texture of `size` pixels and kept: smoothed (each pixel's coverage from 4 × 4 samples),
+	// its lines about a sixth of its size thick.
+	SDL_Texture* button_texture(char c, int size) {
+		SDL_Texture*& kept = buttons_[size_t(c - 1)];
+		if (kept) {
+			return kept;
+		}
+		static constexpr SDL_Color kColors[4] = {{124, 178, 232, 255}, {255, 102, 102, 255}, {255, 105, 248, 255},
+			{64, 226, 160, 255}};
+		const SDL_Color color = kColors[c - 1];
+		const float s = float(size);
+		const float w = std::max(1.6f, s / 6.0f);  // The line's width.
+		const float m = w / 2 + 0.5f;  // The margin, so that the lines' ends stay inside.
+		// The distance from (px, py) to the segment (ax, ay)-(bx, by).
+		auto segment = [](float px, float py, float ax, float ay, float bx, float by) {
+			const float dx = bx - ax, dy = by - ay;
+			const float t = std::clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy), 0.0f, 1.0f);
+			const float qx = ax + t * dx - px, qy = ay + t * dy - py;
+			return std::sqrt(qx * qx + qy * qy);
+		};
+		auto inside = [&](float px, float py) {
+			switch (c) {
+			case 1:
+				return segment(px, py, m, m, s - m, s - m) <= w / 2 || segment(px, py, s - m, m, m, s - m) <= w / 2;
+			case 2: {
+				const float d = std::sqrt((px - s / 2) * (px - s / 2) + (py - s / 2) * (py - s / 2));
+				return d <= s / 2 - 0.5f && d >= s / 2 - 0.5f - w;
+			}
+			case 3: {
+				const float lo = s * 0.12f, hi = s - s * 0.12f;
+				const bool outer = px >= lo && px <= hi && py >= lo && py <= hi;
+				const bool inner = px > lo + w && px < hi - w && py > lo + w && py < hi - w;
+				return outer && !inner;
+			}
+			default: {
+				const float top = m, bottom = s - m - s * 0.06f;
+				return segment(px, py, s / 2, top, m, bottom) <= w / 2 || segment(px, py, s / 2, top, s - m, bottom) <= w / 2 ||
+					segment(px, py, m, bottom, s - m, bottom) <= w / 2;
+			}
+			}
+		};
+		std::vector<uint8_t> rgba(size_t(size * size) * 4);
+		for (int y = 0; y < size; ++y) {
+			for (int x = 0; x < size; ++x) {
+				int hits = 0;
+				for (int sy = 0; sy < 4; ++sy) {
+					for (int sx = 0; sx < 4; ++sx) {
+						hits += inside(float(x) + (float(sx) + 0.5f) / 4, float(y) + (float(sy) + 0.5f) / 4) ? 1 : 0;
+					}
+				}
+				uint8_t* p = &rgba[size_t(y * size + x) * 4];
+				p[0] = color.r;
+				p[1] = color.g;
+				p[2] = color.b;
+				p[3] = uint8_t(hits * 255 / 16);
+			}
+		}
+		kept = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, size, size);
+		if (kept) {
+			SDL_UpdateTexture(kept, nullptr, rgba.data(), size * 4);
+			SDL_SetTextureBlendMode(kept, SDL_BLENDMODE_BLEND);
+		}
+		return kept;
+	}
+
 	SDL_Renderer* renderer_;
 	std::unique_ptr<FontAtlas> font_;
 	SDL_Texture* texture_ = nullptr;
+	std::array<SDL_Texture*, 4> buttons_{};  // The buttons' symbols (button_texture).
+	Uint8 alpha_ = 255;  // The alpha of the text being drawn.
 };
 
 // Mapa de una ciudad listo para dibujar: los trozos de sprite con su textura.
@@ -974,13 +1015,14 @@ public:
 		events_ = load_texture(renderer, archive, kEventSymbols);
 		wares_ = load_texture(renderer, archive, kWareSymbols);
 		marker_ = load_texture(renderer, archive, kShipMarker, &marker_width_, &marker_height_);
+		battle_ = load_texture(renderer, archive, kSeaBattleIcon, &battle_width_, &battle_height_);
 		for (size_t i = 0; i < ships_.size(); ++i) {
 			ships_[i] = load_texture(renderer, archive, kShipSprites[i]);
 		}
 	}
 
 	~SeaMapView() {
-		for (SDL_Texture* texture : {map_, symbols_, events_, wares_, marker_}) {
+		for (SDL_Texture* texture : {map_, symbols_, events_, wares_, marker_, battle_}) {
 			SDL_DestroyTexture(texture);
 		}
 		for (SDL_Texture* texture : ships_) {
@@ -1139,6 +1181,21 @@ public:
 		}
 	}
 
+	// A battle's icon at the map's place (x, y) (0x44AEAE: centred there).
+	void draw_battle(int x, int y, int camera_x, int camera_y) const {
+		if (!battle_) {
+			return;
+		}
+		const SDL_Rect dst = {x - battle_width_ / 2 - camera_x, y - battle_height_ / 2 - camera_y, battle_width_,
+			battle_height_};
+		SDL_RenderCopy(renderer_, battle_, nullptr, &dst);
+	}
+
+	// Whether the map's point (px, py) is on the icon of a battle at (x, y).
+	bool battle_at(int x, int y, int px, int py) const {
+		return std::abs(px - x) <= battle_width_ / 2 && std::abs(py - y) <= battle_height_ / 2;
+	}
+
 	// The tooltip of a town's symbol at the map's point (x, y), with a margin for the finger (0x452973: the game's
 	// box is the symbol's), and where the symbol is on the screen; empty if none there.
 	std::string symbol_tooltip_at(const SaveGame& save, int x, int y, int camera_x, int camera_y, SDL_Rect& where) const {
@@ -1244,11 +1301,14 @@ private:
 	SDL_Texture* events_ = nullptr;  // The towns' event symbols (TEX30009).
 	SDL_Texture* wares_ = nullptr;  // The wares' symbols (TEX30040).
 	SDL_Texture* marker_ = nullptr;
+	SDL_Texture* battle_ = nullptr;  // A battle's icon (TEX30034).
 	std::array<SDL_Texture*, 4> ships_{};
 	int width_ = 0;
 	int height_ = 0;
 	int marker_width_ = 0;
 	int marker_height_ = 0;
+	int battle_width_ = 45;
+	int battle_height_ = 45;
 };
 
 // Qué se ve: una ciudad de la partida de inicio, el mapa del mar, o una
@@ -5613,6 +5673,127 @@ void draw_message_window(SDL_Renderer* renderer, TextRenderer& title, TextRender
 	text.draw(hint, box.x + (width - text.measure(hint)) / 2, box.y + height - 8 - text.line_height(), kDimColor);
 }
 
+// The battles' window (SaveGame::battle_window, the game's dialog *0x6CBB10 opened by 0x41D9B0): a battle's
+// question when one against the player starts (the user's choice: two buttons, «Dirigir manualmente» and «Que
+// luche el ordenador», and a bar of the time left: the player's side's countdown [+0x15C] of 250, which the
+// engine counts down while it is open and at whose end it closes the window), the end's or a boarding's message
+// (no button: «Continuar»), and the window of the sea map's battle icon (0x611FC0). Each button has its own
+// key, as the viewer's other windows: X the first (closing the question with it answers «steer manually»:
+// result 10, the game's button), Circle the last (the computer fights it; or closes). Steering needs the
+// battle's screen (piece 7, part 3: still to do), so until then that button is off.
+constexpr bool kBattleScreen = false;
+
+struct ChoiceBox {
+	std::string title;
+	std::string body;
+	std::vector<std::pair<std::string, bool>> buttons;  // Each label (with its key) and whether it can be pressed.
+	int bar = -1;  // The time bar's part left, in thousandths; -1 without one.
+};
+
+// A game's text as a box's title (its first line) and body (the rest), its empty lines at the ends dropped.
+void split_title(const std::string& raw, ChoiceBox& box) {
+	std::string clean = clean_game_text(raw);
+	const size_t start = clean.find_first_not_of('\n');
+	clean = start == std::string::npos ? std::string() : clean.substr(start);
+	const size_t line = clean.find('\n');
+	box.title = clean.substr(0, line);
+	std::string body = line == std::string::npos ? std::string() : clean.substr(line + 1);
+	const size_t first = body.find_first_not_of('\n');
+	const size_t last = body.find_last_not_of('\n');
+	box.body = first == std::string::npos ? std::string() : body.substr(first, last - first + 1);
+}
+
+struct ChoiceBoxLayout {
+	SDL_Rect box{};
+	SDL_Rect bar{};
+	std::vector<SDL_Rect> buttons;
+	std::vector<std::string> lines;
+	int body_y = 0;
+
+	ChoiceBoxLayout(const TextRenderer& title, const TextRenderer& text, const ChoiceBox& c) {
+		const int width = 640;
+		const std::string& body = c.body;
+		size_t from = 0;
+		while (from <= body.size()) {
+			const size_t end = body.find('\n', from);
+			const std::string paragraph = body.substr(from, end == std::string::npos ? std::string::npos : end - from);
+			const std::vector<std::string> wrapped = wrap_text(text, paragraph, width - 40);
+			if (wrapped.empty()) {
+				lines.emplace_back();
+			}
+			lines.insert(lines.end(), wrapped.begin(), wrapped.end());
+			if (end == std::string::npos) {
+				break;
+			}
+			from = end + 1;
+		}
+		const int button_height = 48;
+		int height = 20 + title.line_height() + 14 + int(lines.size()) * text.line_height() + 18;
+		if (c.bar >= 0) {
+			height += 14 + 14;
+		}
+		height += button_height + 16;
+		box = {(kScreenWidth - width) / 2, std::max(8, (kScreenHeight - height) / 2), width, height};
+		body_y = box.y + 20 + title.line_height() + 14;
+		int y = body_y + int(lines.size()) * text.line_height() + 18;
+		if (c.bar >= 0) {
+			bar = {box.x + 20, y, width - 40, 14};
+			y += 14 + 14;
+		}
+		const int n = std::max(1, int(c.buttons.size()));
+		const int gap = 20;
+		const int button_width = std::min(280, (width - 40 - gap * (n - 1)) / n);
+		const int total = n * button_width + (n - 1) * gap;
+		for (int k = 0; k < int(c.buttons.size()); ++k) {
+			buttons.push_back({box.x + (width - total) / 2 + k * (button_width + gap), y, button_width, button_height});
+		}
+	}
+
+	int button_at(int x, int y) const {
+		for (int k = 0; k < int(buttons.size()); ++k) {
+			if (inside(buttons[size_t(k)], x, y)) {
+				return k;
+			}
+		}
+		return -1;
+	}
+};
+
+void draw_choice_box(SDL_Renderer* renderer, TextRenderer& title, TextRenderer& text, const ChoiceBox& c) {
+	const ChoiceBoxLayout l(title, text, c);
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 240);
+	SDL_RenderFillRect(renderer, &l.box);
+	SDL_SetRenderDrawColor(renderer, 190, 150, 90, 255);
+	SDL_RenderDrawRect(renderer, &l.box);
+	title.draw(c.title, l.box.x + (l.box.w - title.measure(c.title)) / 2, l.box.y + 20, kTextColor);
+	int y = l.body_y;
+	for (const std::string& line : l.lines) {
+		text.draw(line, l.box.x + 20, y, kTextColor);
+		y += text.line_height();
+	}
+	if (c.bar >= 0) {
+		SDL_SetRenderDrawColor(renderer, 60, 45, 28, 255);
+		SDL_RenderFillRect(renderer, &l.bar);
+		const SDL_Rect left = {l.bar.x, l.bar.y, l.bar.w * std::clamp(c.bar, 0, 1000) / 1000, l.bar.h};
+		SDL_SetRenderDrawColor(renderer, 200, 160, 70, 255);
+		SDL_RenderFillRect(renderer, &left);
+		SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
+		SDL_RenderDrawRect(renderer, &l.bar);
+	}
+	for (size_t k = 0; k < c.buttons.size(); ++k) {
+		const SDL_Rect& r = l.buttons[k];
+		const bool enabled = c.buttons[k].second;
+		SDL_SetRenderDrawColor(renderer, enabled ? 90 : 55, enabled ? 65 : 45, enabled ? 35 : 35, 255);
+		SDL_RenderFillRect(renderer, &r);
+		SDL_SetRenderDrawColor(renderer, 190, 150, 90, 255);
+		SDL_RenderDrawRect(renderer, &r);
+		const std::string& label = c.buttons[k].first;
+		text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - text.line_height()) / 2,
+			enabled ? kTextColor : SDL_Color{200, 185, 160, 110});
+	}
+}
+
 void draw_panel_box(SDL_Renderer* renderer, const SDL_Rect& box, Uint8 alpha = 235) {
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 	SDL_SetRenderDrawColor(renderer, 30, 22, 14, alpha);
@@ -7392,6 +7573,16 @@ int main(int argc, char** argv) {
 	g_texts = game_texts.get();
 	EndWindow end_window;  // When the player is elected Alderman.
 	MessageWindow messages;  // The game's messages to the player (a battle...).
+	// The window of a sea map battle icon (ChoiceBox: its battle's slot, or -1); and the sea map's battle icons
+	// (Sailing::take_sea_map_icons, each with its battle's block: it goes when its battle goes, as the game's
+	// destructor drops it, 0x457DF0).
+	int battle_info = -1;
+	struct SeaBattleIcon {
+		uint8_t slot;
+		int16_t x, y;
+		int block;
+	};
+	std::vector<SeaBattleIcon> battle_icons;
 	Selection selection;
 	if (has_save) {
 		for (size_t i = 0; i < save.towns.size(); ++i) {
@@ -7409,6 +7600,7 @@ int main(int argc, char** argv) {
 		sailing = std::make_unique<Sailing>(save, *nav, load_sea_map_towns(*archive));
 		sailing->assign_loaded_routes();
 		sailing->set_texts(game_texts.get());  // The battles' messages in the installation's language.
+		sailing->set_battle_window(true);  // The viewer is the game's battle window (ChoiceBox).
 	}
 	size_t fleet_index = 0;  // Barco del jugador al que se dan las órdenes en el mapa del mar.
 	int game_speed = kNormalSpeed;
@@ -7477,6 +7669,70 @@ int main(int argc, char** argv) {
 		}
 	};
 
+	// The battles' window: open in the engine (the question, an end, a boarding), its box, and its buttons.
+	auto battle_window_up = [&]() { return sailing && save.battle_window.present && save.battle_window.open; };
+	auto steer_label = [&]() { return lender_text(0x6B2BC0, "Dirigir manualmente", "Steer manually"); };
+	auto battle_window_box = [&]() {
+		ChoiceBox box;
+		const SaveGame::BattleWindow& w = save.battle_window;
+		split_title(w.text, box);
+		if (w.buttons > 0) {
+			box.buttons = {{BTN_CROSS " " + steer_label(), kBattleScreen},
+				{BTN_CIRCLE " " + tr("Que luche el ordenador", "Let the computer fight"), true}};
+			const uint16_t left = sailing->battle_question_count();
+			box.bar = left <= 250 ? int(left) * 1000 / 250 : 0;
+		} else {
+			box.buttons = {{BTN_CROSS " " + tr("Continuar", "Continue"), true}};
+		}
+		return box;
+	};
+	// The window of a sea map battle icon (0x611FC0): its button takes the battle (0x6102A9) once it can be steered.
+	auto battle_info_box = [&]() {
+		ChoiceBox box;
+		split_title(sailing ? sailing->battle_info_text(uint8_t(battle_info)) : std::string(), box);
+		if (box.title.empty()) {
+			box.title = tr("Batalla naval", "Sea battle");
+		}
+		box.buttons = {{BTN_CROSS " " + steer_label(), kBattleScreen}, {BTN_CIRCLE " " + tr("Cerrar", "Close"), true}};
+		return box;
+	};
+	auto battle_press = [&](int k) {
+		if (battle_window_up()) {
+			if (save.battle_window.buttons > 0 && k == 0 && !kBattleScreen) {
+				return;
+			}
+			// The question closed with its button (10, [0x66BDC0]) or otherwise; an end or a boarding closed.
+			sailing->close_battle_window(save.battle_window.buttons > 0 && k == 0 ? 10 : 0);
+		} else if (battle_info >= 0) {
+			if (k == 0) {
+				const int b = save.battles.battle(uint8_t(battle_info));
+				if (!kBattleScreen || b < 0) {
+					return;
+				}
+				sailing->fn_6102a9(size_t(b));
+			}
+			battle_info = -1;
+		}
+	};
+	// The pad on the window: X its first button (if it can be pressed), Circle its last (the computer,
+	// «Cerrar»; a window of one button closes with either); the other buttons do nothing while it is open but
+	// Start (the menu). True when it took the button.
+	auto battle_button = [&](Uint8 button) {
+		if (!battle_window_up() && battle_info < 0) {
+			return false;
+		}
+		const ChoiceBox box = battle_window_up() ? battle_window_box() : battle_info_box();
+		const int n = int(box.buttons.size());
+		if (button == SDL_CONTROLLER_BUTTON_A) {
+			if (box.buttons[0].second) {
+				battle_press(0);
+			}
+		} else if (button == SDL_CONTROLLER_BUTTON_B) {
+			battle_press(n - 1);
+		}
+		return button != SDL_CONTROLLER_BUTTON_START && button != SDL_CONTROLLER_BUTTON_INVALID;
+	};
+
 	SDL_GameController* controller = nullptr;
 	bool reload = true;
 	bool keep_camera = false;
@@ -7523,8 +7779,11 @@ int main(int argc, char** argv) {
 			sailing = std::make_unique<Sailing>(save, *nav, load_sea_map_towns(*archive));
 			sailing->assign_loaded_routes();
 			sailing->set_texts(game_texts.get());
+			sailing->set_battle_window(true);
 			use_sailing(*sailing);
 		}
+		battle_icons.clear();
+		battle_info = -1;
 		last_alderman = alderman(save);
 		last_election = alderman_election_tick(save);
 		market = MarketUi();
@@ -8579,6 +8838,15 @@ int main(int argc, char** argv) {
 				for (const std::string& message : sailing->take_player_messages()) {
 					messages.push(message);
 				}
+				for (const Sailing::BattleIcon& icon : sailing->take_sea_map_icons()) {
+					battle_icons.push_back({icon.slot, icon.x, icon.y, save.battles.battle(icon.slot)});
+				}
+				battle_icons.erase(std::remove_if(battle_icons.begin(), battle_icons.end(),
+									   [&](const SeaBattleIcon& icon) { return save.battles.battle(icon.slot) != icon.block; }),
+					battle_icons.end());
+				if (battle_info >= 0 && save.battles.battle(uint8_t(battle_info)) < 0) {
+					battle_info = -1;  // Its battle is over.
+				}
 				for (const ShipEvent& event : sailing->events()) {
 					const SavedShip& ship = save.ships[size_t(event.ship)];
 					if (ship.owner() != save.player) {
@@ -8964,6 +9232,9 @@ int main(int argc, char** argv) {
 					menu_button(event.cbutton.button);
 					break;
 				}
+				if (battle_button(event.cbutton.button)) {
+					break;  // The battles' window, over the others.
+				}
 				if (end_window.open) {
 					// The end window takes X and Circle.
 					if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A || event.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
@@ -9129,6 +9400,15 @@ int main(int argc, char** argv) {
 						: SDL_CONTROLLER_BUTTON_INVALID);
 					break;
 				}
+				{
+					// The battles' window: Enter as X, Escape as Circle.
+					const SDL_Keycode key = event.key.keysym.sym;
+					if (battle_button(key == SDLK_RETURN ? SDL_CONTROLLER_BUTTON_A
+							: key == SDLK_ESCAPE ? SDL_CONTROLLER_BUTTON_B
+							: SDL_CONTROLLER_BUTTON_INVALID)) {
+						break;
+					}
+				}
 				if (end_window.open && (event.key.keysym.sym == SDLK_RETURN || event.key.keysym.sym == SDLK_ESCAPE)) {
 					end_window.open = false;
 					break;
@@ -9268,6 +9548,13 @@ int main(int argc, char** argv) {
 				touch_moved = 0;
 				touch_scroll = 0;
 				finger_down = true;
+				if (battle_window_up() || battle_info >= 0) {
+					// Under the battles' window nothing moves: the touch is the window's.
+					touch_on_side = false;
+					touch_on_panel = true;
+					touch_building = false;
+					break;
+				}
 				touch_on_side = panel_shown && !in_menu && (!in_mail || mail_in_panel) && !messages.open && !end_window.open &&
 					inside(panel_layout.panel, touch_start.x, touch_start.y);
 				touch_on_panel = touch_on_side ||
@@ -9325,6 +9612,18 @@ int main(int argc, char** argv) {
 				break;
 			case SDL_FINGERUP:
 				finger_down = false;
+				if (battle_window_up() || battle_info >= 0) {
+					// A tap on one of the battles' window's buttons.
+					if (touch_moved < kTapDistance && text && small_text) {
+						const ChoiceBox box = battle_window_up() ? battle_window_box() : battle_info_box();
+						const int k = ChoiceBoxLayout(*text, *small_text, box).button_at(touch_start.x, touch_start.y);
+						if (k >= 0 && box.buttons[size_t(k)].second) {
+							battle_press(k);
+						}
+					}
+					touch_on_panel = false;
+					break;
+				}
 				if (touch_moved < kTapDistance && !in_menu && !messages.open && !end_window.open && has_save &&
 					save.player >= 0 && (selection.mode == Mode::Saved || selection.mode == Mode::Sea) &&
 					inside(kHourglassButton, touch_start.x, touch_start.y)) {
@@ -9647,6 +9946,18 @@ int main(int argc, char** argv) {
 					touch_on_panel = false;
 					break;
 				}
+				// On the sea map, a tap on a battle's icon opens its window (0x4511FE → 0x611FC0).
+				if (selection.mode == Mode::Sea && sea && touch_moved < kTapDistance && !(in_mail && touch_on_panel)) {
+					for (const SeaBattleIcon& icon : battle_icons) {
+						if (sea->battle_at(icon.x, icon.y, camera_x + touch_start.x, camera_y + touch_start.y)) {
+							battle_info = icon.slot;
+							break;
+						}
+					}
+					if (battle_info >= 0) {
+						break;
+					}
+				}
 				// En el mapa del mar, tocar una ciudad la elige.
 				if (selection.mode == Mode::Sea && sea && touch_moved < kTapDistance && !(in_mail && touch_on_panel)) {
 					const int town = sea->town_at(save, camera_x + touch_start.x, camera_y + touch_start.y);
@@ -9818,7 +10129,8 @@ int main(int argc, char** argv) {
 			camera_x += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX));
 			camera_y += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY));
 		}
-		if (!trading && !in_hanse && !in_mail && !in_place && side.focus < 0 && side.menu == PanelMenu::None) {
+		if (!trading && !in_hanse && !in_mail && !in_place && side.focus < 0 && side.menu == PanelMenu::None &&
+			!battle_window_up() && battle_info < 0) {  // Nothing moves under the battles' window.
 			camera_x += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) - pad(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
 			camera_y += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_DOWN) - pad(SDL_CONTROLLER_BUTTON_DPAD_UP));
 		}
@@ -9845,6 +10157,9 @@ int main(int argc, char** argv) {
 		if (at_sea) {
 			sea->draw(save, small_text.get(), town_names, camera_x, camera_y, selection.saved_index,
 				course_ship >= 0 ? &save.ships[size_t(course_ship)] : nullptr);
+			for (const SeaBattleIcon& icon : battle_icons) {
+				sea->draw_battle(icon.x, icon.y, camera_x, camera_y);
+			}
 			if (panel_shown) {
 				// The side panel on the sea map: the sea's minimap, the icons, the ship buttons and the
 				// chosen ship's menu.
@@ -9944,7 +10259,10 @@ int main(int argc, char** argv) {
 		}
 		if (text) {
 			std::vector<std::string> right_texts;
-			if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu &&
+			if (battle_window_up() || battle_info >= 0 || messages.open || end_window.open) {
+				// A window over the screen (a battle's, a message, the end): its buttons say what the keys do now,
+				// so the bar's actions, which the keys don't do while it is open, aren't shown.
+			} else if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu &&
 				side.stats_choice_slot >= 0) {
 				right_texts = {tr(BTN_CROSS " elegir   " BTN_SQUARE " orden   " BTN_CIRCLE " volver",
 								   BTN_CROSS " choose   " BTN_SQUARE " order   " BTN_CIRCLE " back"),
@@ -10210,6 +10528,14 @@ int main(int argc, char** argv) {
 		}
 		if (end_window.open && text && small_text) {
 			draw_end_window(renderer, *text, *small_text, end_window, hanse_context);
+		}
+		if (text && small_text) {
+			// The battles' window over the others: the question (or an end), else a battle icon's window.
+			if (battle_window_up()) {
+				draw_choice_box(renderer, *text, *small_text, battle_window_box());
+			} else if (battle_info >= 0) {
+				draw_choice_box(renderer, *text, *small_text, battle_info_box());
+			}
 		}
 		if (in_menu) {  // The menu, on top of everything.
 			draw_menu(renderer, *small_text, menu, settings, town_names);

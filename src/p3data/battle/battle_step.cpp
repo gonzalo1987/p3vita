@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "p3data/battle/battle_math.hpp"
+#include "p3data/game_texts.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -1066,6 +1067,82 @@ void Sailing::battle_window_description(size_t b, bool question) {
 	g.set<uint16_t>(b, 0x1302, 0);
 	g.set<uint32_t>(b, 0x1304, 0);
 	g.set<uint32_t>(b, 0x1308, 0);
+}
+
+uint16_t Sailing::battle_question_count() const {
+	const BattleGraph& g = save_.battles;
+	const int b = g.battle(save_.battle_window.battle);
+	if (b < 0) {
+		return 0;
+	}
+	const uint32_t player = save_.globals.u32(0x6DFC14);
+	uint16_t left = 0;
+	for (size_t i = 0; i < g.get<uint8_t>(size_t(b), 0x558); ++i) {
+		if (g.get<uint16_t>(size_t(b), 0x35A + 2 * i) == player) {
+			left = g.get<uint16_t>(size_t(b), 0x15C + 2 * i);
+		}
+	}
+	return left;
+}
+
+// 0x611FC0 (the battles object's window for a slot, from the sea map's battle
+// icon, 0x4511FE): the team of the local player's first side; for each side
+// of that team the team's list of ships ([+0xA84 + 4 · team], its first ship,
+// then each ship's [+0x6]) gives his ships' names, one a line, after «Sea
+// battle» and «Own ships:» (0x6A16CC, 0x6A16D0 with «%s%s»); with any ship of
+// another owner there, «Escort:» (0x6A16D8) and theirs, the same way. (A
+// team of two sides lists its ships twice: as the game.) The window's button
+// takes the battle (0x6127C0 → 0x6102A9).
+std::string Sailing::battle_info_text(uint8_t slot) const {
+	const BattleGraph& g = save_.battles;
+	const int found = g.battle(slot);
+	if (found < 0 || !texts_) {
+		return std::string();
+	}
+	const size_t b = size_t(found);
+	const uint32_t player = save_.globals.u32(0x6DFC14);
+	const uint32_t ships = save_.globals.u16(global::kShipCount);
+	const size_t sides = g.get<uint8_t>(b, 0x558);
+	size_t first = sides;
+	for (size_t i = 0; i < sides && first == sides; ++i) {
+		if (g.get<uint16_t>(b, 0x35A + 2 * i) == player) {
+			first = i;
+		}
+	}
+	if (first == sides) {
+		return std::string();
+	}
+	const uint8_t team = g.get<uint8_t>(b, 0x559 + first);
+	auto name = [&](uint32_t s) {
+		std::string out;
+		const ShipMemory& m = save_.ships[s].memory;
+		for (size_t i = 0x160; i < 0x180 && m.u8(i) != 0; ++i) {
+			out += char(m.u8(i));
+		}
+		return out;
+	};
+	std::string text = texts_->raw_at(0x6A16CC) + texts_->raw_at(0x6A16D0);
+	bool others = false;
+	auto list = [&](bool own) {
+		for (size_t i = 0; i < sides; ++i) {
+			if (g.get<uint8_t>(b, 0x559 + i) != team) {
+				continue;
+			}
+			for (uint32_t s = g.get<uint32_t>(b, 0xA84 + 4 * size_t(team)); s < ships; s = save_.ships[s].memory.u16(0x6)) {
+				if ((save_.ships[s].memory.u8(0x0) == player) == own) {
+					text += name(s) + "\n";
+				} else if (own) {
+					others = true;
+				}
+			}
+		}
+	};
+	list(true);
+	if (others) {
+		text += texts_->raw_at(0x6A16D8);
+		list(false);
+	}
+	return text;
 }
 
 // Once the description is written (the town battle's 0x5FD44A, 0x5FDF01,
