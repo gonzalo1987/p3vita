@@ -242,8 +242,34 @@ public:
 		out.swap(sea_map_icons_);
 		return out;
 	}
+	// What the game's town view shows of the battle on the screen besides its ships and balls (the sprites it
+	// makes, the interface's; not the world's memory): a shot (0x602A90: the gun's smoke, or a heavy gun's
+	// fire, where the ball starts), a ball landing (0x603130: a splash) and a ball hitting a ship (0x603470:
+	// 0x61F96F's result, 2 an explosion, and the splinters). Kept only with the viewer's battle window (its
+	// screen); the viewer takes them each frame.
+	struct BattleEffect {
+		enum Kind : uint8_t { Shot, Splash, Hit };
+		Kind kind = Shot;
+		uint8_t slot = 0;  // The battle's.
+		int16_t x = 0;  // In the battle's area.
+		int16_t y = 0;
+		uint8_t dir = 0;  // Shot: the ball's direction.
+		bool heavy = false;  // Shot: a heavy gun's.
+		uint8_t result = 0;  // Hit.
+		uint8_t puffs = 0;  // Hit: its splinters.
+	};
+	std::vector<BattleEffect> take_battle_effects() {
+		std::vector<BattleEffect> out;
+		out.swap(battle_effects_);
+		return out;
+	}
 	bool battles() const { return battles_; }
 	void step_battles();  // After each tick: operation 0x94 with kBattleSteps when there are battles.
+	// 0x612DB0, the battles' real-time clock: each frame of the viewer while a battle has a human side (time mode
+	// 2), operation 0x94 with the steps the ms since the last one give (`now` the viewer's ms, `tick_ms` the
+	// chosen speed's tick). With set_real_time_battles, step_battles leaves time mode 2 to it.
+	void fn_612db0(uint32_t now, uint32_t tick_ms);
+	void set_real_time_battles(bool on) { real_time_battles_ = on; }
 	void fn_536bbf(uint32_t steps);  // Operation 0x94: the battles take their steps.
 	void fn_612c90(bool network);  // (battles) Operation 0xC8 with 2 if a battle has a human side.
 	void fn_612d20(bool network);  // (battles) Operation 0xC8 with 0 if none has.
@@ -276,6 +302,7 @@ public:
 	// battle/balls.cpp: the cannon balls (a human side's guns).
 	bool on_screen(size_t battle) const;  // [0x6E59CC] is the battle.
 	void battle_sound(size_t battle);  // A sound on the screen: the world's rand() with the sound on.
+	void battle_effect(size_t battle, BattleEffect effect);  // For the viewer, on the screen (take_battle_effects).
 	void set_battle_sound(uint32_t variants) { save_.battle_window.sound_variants = variants; }
 	// The viewer's battle window (SaveGame::battle_window, the game's *0x6CBB10): with it a battle's question and
 	// end take the game's path with a window.
@@ -525,8 +552,10 @@ private:
 	bool battles_ = true;
 	const GameTexts* texts_ = nullptr;
 	std::vector<std::string> player_messages_;
+	std::vector<BattleEffect> battle_effects_;
 	std::vector<BattleIcon> sea_map_icons_;
 	uint32_t time_mode_ = 0;
+	bool real_time_battles_ = false;  // The viewer's clock drives the battles in time mode 2 (fn_612db0).
 	std::vector<std::vector<uint32_t>> waypoints_;  // 0x448780 per town ([+0x20], [+0x24] of the navigation)
 	std::vector<bool> has_waypoints_;
 

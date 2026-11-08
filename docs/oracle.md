@@ -2214,6 +2214,15 @@ second write, from a file that already has it). With the final code, everything 
 regressions again, all as before; the world 7 days in the 12 saves, 0 «distintas»; write-check, write-reload, ctest
 and the Vita build.
 
+**The battle's screen at sea** (2026-11-08, part 3; the viewer's src/app/battle_view.cpp): what changed in the
+engine is the viewer's and leaves the game's memory as it was. Sailing::fn_612db0 (0x612DB0, the battles'
+real-time clock: operation 0x94 from the ms since [+0xC44]) runs only from the viewer, in time mode 2, and then
+step_battles' rule of 84 steps a tick is off (Sailing::set_real_time_battles; tick_probe and the oracle never set
+it); it reads the real clock, so it isn't checked against the game. Sailing::BattleEffect (a shot, a splash, a hit:
+what the town view would show) is kept only with SaveGame::battle_window present and the battle on the screen.
+Checked after it: the world 7 days in the 12 saves (0 «distintas»), `battle_balls` (3), `battle_sounds` (5) and
+`battle_question` (3), all equal.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

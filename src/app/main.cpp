@@ -43,6 +43,7 @@
 #include "p3data/town_buildings.hpp"
 #include "p3data/trade.hpp"
 #include "p3data/wares.hpp"
+#include "battle_view.hpp"
 #include "debug_states.hpp"
 #include "script.hpp"
 #include "savegames.hpp"
@@ -1497,6 +1498,8 @@ constexpr GameSpeed kGameSpeeds[] = {
 	{"avance rápido", "fast forward", 2, 256},  // F12 del juego.
 };
 constexpr int kGameSpeedCount = int(sizeof(kGameSpeeds) / sizeof(kGameSpeeds[0]));
+// The world's tick while a battle has a human side (time mode 2: [0x673CF8], 0x546729).
+constexpr Uint32 kBattleTickMs = 3375;
 
 // The speed's name: the game's six (its settings window, 0x69A934); fast
 // forward (F12) has none.
@@ -5680,8 +5683,8 @@ void draw_message_window(SDL_Renderer* renderer, TextRenderer& title, TextRender
 // (no button: «Continuar»), and the window of the sea map's battle icon (0x611FC0). Each button has its own
 // key, as the viewer's other windows: X the first (closing the question with it answers «steer manually»:
 // result 10, the game's button), Circle the last (the computer fights it; or closes). Steering needs the
-// battle's screen (piece 7, part 3: still to do), so until then that button is off.
-constexpr bool kBattleScreen = false;
+// battle's screen (piece 7, part 3: battle_view.cpp, a sea battle for now); without it that button is off.
+constexpr bool kBattleScreen = true;
 
 struct ChoiceBox {
 	std::string title;
@@ -5800,6 +5803,46 @@ void draw_panel_box(SDL_Renderer* renderer, const SDL_Rect& box, Uint8 alpha = 2
 	SDL_RenderFillRect(renderer, &box);
 	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
 	SDL_RenderDrawRect(renderer, &box);
+}
+
+// A ship's label on the battle's screen (the manual's figure 2-3: its name above; below, its sailors, the
+// hull's heart and percent, and the firepower's cannonballs as the ship's panel shows them, 0x4901C0), its
+// bottom at the label's point; the player's in a blue box, the others' in a brown one.
+void draw_battle_label(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const p3::app::BattleLabel& label) {
+	const std::string sailors = std::to_string(label.sailors);
+	const std::string hull = std::to_string(std::max(label.hull, 0));
+	const FirepowerBalls balls = firepower_balls(label.firepower);
+	auto icon_w = [&](PanelArt::Icon k) { return art.list_icons[k] ? art.icon_width[k] : 0; };
+	const int balls_w = balls.big * icon_w(PanelArt::BigBall) + balls.small * icon_w(PanelArt::SmallBall) +
+		(balls.half ? icon_w(PanelArt::SmallBall) / 2 : 0);
+	const int stats_w = text.measure(sailors) + 8 + icon_w(PanelArt::Hull) + 2 + text.measure(hull) +
+		(balls_w > 0 ? 8 + balls_w : 0);
+	const int w = std::max(text.measure(label.name), stats_w) + 10;
+	const int line = text.line_height();
+	const SDL_Rect box = {label.x - w / 2, label.y - 2 * line - 4, w, 2 * line + 4};
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, label.own ? 40 : 60, label.own ? 50 : 26, label.own ? 80 : 20, 170);
+	SDL_RenderFillRect(renderer, &box);
+	text.draw(label.name, label.x - text.measure(label.name) / 2, box.y + 1, kTextColor);
+	const int y = box.y + line + 2;
+	int x = label.x - stats_w / 2;
+	text.draw(sailors, x, y, kDimColor);
+	x += text.measure(sailors) + 8;
+	x += art.icon(renderer, PanelArt::Hull, x, y) + 2;
+	text.draw(hull, x, y, label.hull < 40 ? SDL_Color{255, 120, 100, 255} : kDimColor);
+	x += text.measure(hull) + 8;
+	for (int k = 0; k < balls.big; ++k) {
+		x += art.icon(renderer, PanelArt::BigBall, x, y + 3);
+	}
+	for (int k = 0; k < balls.small; ++k) {
+		x += art.icon(renderer, PanelArt::SmallBall, x, y + 3);
+	}
+	if (balls.half && art.list_icons[PanelArt::SmallBall]) {
+		const int bw = art.icon_width[PanelArt::SmallBall];
+		const SDL_Rect src = {0, 0, bw / 2, art.icon_height[PanelArt::SmallBall]};
+		const SDL_Rect dst = {x, y + 3, bw / 2, art.icon_height[PanelArt::SmallBall]};
+		SDL_RenderCopy(renderer, art.list_icons[PanelArt::SmallBall], &src, &dst);
+	}
 }
 
 // The mailbox (Circle in a town or on the sea map, or the menu): the game's
@@ -7531,6 +7574,12 @@ int main(int argc, char** argv) {
 	auto panel_art = std::make_unique<PanelArt>(renderer, *archive);
 	SidePanel side;  // The side panel.
 	std::unique_ptr<SeaMapView> sea;  // Se carga la primera vez que se abre.
+	// The sea battle the player directs, on the screen (made the first time; it reads the archive and the town
+	// view's tiles), the block of the battle it shows (-1: none), and the camera it took over.
+	std::unique_ptr<p3::app::BattleView> battle_view;
+	int battle_shown = -1;
+	SDL_Point battle_saved_camera = {0, 0};
+	bool battle_centre = false;  // The camera goes to the player's ships once they are placed.
 	std::vector<std::string> town_names = load_town_names(*archive);
 	g_town_names = &town_names;
 	std::unique_ptr<TextRenderer> text;
@@ -7601,6 +7650,8 @@ int main(int argc, char** argv) {
 		sailing->assign_loaded_routes();
 		sailing->set_texts(game_texts.get());  // The battles' messages in the installation's language.
 		sailing->set_battle_window(true);  // The viewer is the game's battle window (ChoiceBox).
+		sailing->set_real_time_battles(true);  // In time mode 2 the viewer's clock drives the battles (0x612DB0).
+		sailing->fn_611e50(uint8_t(save.player));  // After a load (0x43C5C7): the battle the player directs on the screen.
 	}
 	size_t fleet_index = 0;  // Barco del jugador al que se dan las órdenes en el mapa del mar.
 	int game_speed = kNormalSpeed;
@@ -7672,12 +7723,17 @@ int main(int argc, char** argv) {
 	// The battles' window: open in the engine (the question, an end, a boarding), its box, and its buttons.
 	auto battle_window_up = [&]() { return sailing && save.battle_window.present && save.battle_window.open; };
 	auto steer_label = [&]() { return lender_text(0x6B2BC0, "Dirigir manualmente", "Steer manually"); };
+	// Whether the battle in that slot can be steered: the battle's screen draws the sea battles for now.
+	auto can_steer = [&](int slot) {
+		const int b = slot >= 0 && slot < 0xFF ? save.battles.battle(size_t(slot)) : -1;
+		return kBattleScreen && b >= 0 && save.battles.get<uint32_t>(size_t(b), 0) == Sailing::kSeaBattleVtable;
+	};
 	auto battle_window_box = [&]() {
 		ChoiceBox box;
 		const SaveGame::BattleWindow& w = save.battle_window;
 		split_title(w.text, box);
 		if (w.buttons > 0) {
-			box.buttons = {{BTN_CROSS " " + steer_label(), kBattleScreen},
+			box.buttons = {{BTN_CROSS " " + steer_label(), can_steer(w.battle)},
 				{BTN_CIRCLE " " + tr("Que luche el ordenador", "Let the computer fight"), true}};
 			const uint16_t left = sailing->battle_question_count();
 			box.bar = left <= 250 ? int(left) * 1000 / 250 : 0;
@@ -7693,12 +7749,13 @@ int main(int argc, char** argv) {
 		if (box.title.empty()) {
 			box.title = tr("Batalla naval", "Sea battle");
 		}
-		box.buttons = {{BTN_CROSS " " + steer_label(), kBattleScreen}, {BTN_CIRCLE " " + tr("Cerrar", "Close"), true}};
+		box.buttons = {{BTN_CROSS " " + steer_label(), can_steer(battle_info)},
+			{BTN_CIRCLE " " + tr("Cerrar", "Close"), true}};
 		return box;
 	};
 	auto battle_press = [&](int k) {
 		if (battle_window_up()) {
-			if (save.battle_window.buttons > 0 && k == 0 && !kBattleScreen) {
+			if (save.battle_window.buttons > 0 && k == 0 && !can_steer(save.battle_window.battle)) {
 				return;
 			}
 			// The question closed with its button (10, [0x66BDC0]) or otherwise; an end or a boarding closed.
@@ -7706,7 +7763,7 @@ int main(int argc, char** argv) {
 		} else if (battle_info >= 0) {
 			if (k == 0) {
 				const int b = save.battles.battle(uint8_t(battle_info));
-				if (!kBattleScreen || b < 0) {
+				if (!can_steer(battle_info) || b < 0) {
 					return;
 				}
 				sailing->fn_6102a9(size_t(b));
@@ -7780,10 +7837,16 @@ int main(int argc, char** argv) {
 			sailing->assign_loaded_routes();
 			sailing->set_texts(game_texts.get());
 			sailing->set_battle_window(true);
+			sailing->set_real_time_battles(true);
+			sailing->fn_611e50(uint8_t(save.player));
 			use_sailing(*sailing);
 		}
 		battle_icons.clear();
 		battle_info = -1;
+		if (battle_view) {
+			battle_view->clear();  // Another game's battle; the next frame takes the new one's.
+		}
+		battle_shown = -1;
 		last_alderman = alderman(save);
 		last_election = alderman_election_tick(save);
 		market = MarketUi();
@@ -7829,6 +7892,8 @@ int main(int argc, char** argv) {
 			return false;
 		}
 		show_loading(renderer);
+		battle_view.reset();  // It reads from the old archive and the old view's tiles.
+		battle_shown = -1;
 		view.reset();  // It reads from the old archive.
 		sea.reset();
 		archive = std::move(next);
@@ -8075,6 +8140,54 @@ int main(int argc, char** argv) {
 				}
 			}
 		}
+		// The sea battle the player directs, on the screen ([0x6E59CC], the battles' [+0x3FC]): it takes the town's
+		// part of the screen and its camera (the battles' piece 7, part 3); its graphics load a sheet a frame.
+		{
+			int on_screen = -1;
+			if (sailing && has_save && save.player >= 0 && kBattleScreen) {
+				const uint8_t slot = save.battles.get<uint8_t>(0, 0x3FC);
+				const int b = slot != 0xFF ? save.battles.battle(slot) : -1;
+				if (b >= 0 && save.battles.get<uint32_t>(size_t(b), 0) == Sailing::kSeaBattleVtable) {
+					on_screen = b;
+				}
+			}
+			if (on_screen != battle_shown) {
+				if (on_screen >= 0) {
+					if (battle_shown < 0) {
+						battle_saved_camera = {camera_x, camera_y};
+					}
+					// The town's windows close: the battle's screen takes the view (as the game's town view, 0x6102A9).
+					market.open = false;
+					hanse.open = false;
+					place.open = Place::None;
+					side.menu = PanelMenu::None;  // The messages close with it (below).
+					side.citizens = false;
+					if (!battle_view) {
+						battle_view = std::make_unique<p3::app::BattleView>(renderer, *archive, view->tiles());
+					}
+					battle_centre = true;
+				} else {
+					if (battle_view) {
+						battle_view->clear();
+					}
+					camera_x = battle_saved_camera.x;
+					camera_y = battle_saved_camera.y;
+				}
+				battle_shown = on_screen;
+			}
+			if (battle_shown >= 0) {
+				battle_view->need(save, size_t(battle_shown));
+				battle_view->load_step();
+				// The camera on the player's ships, once they are placed.
+				SDL_Point c;
+				if (battle_centre && p3::app::BattleView::player_ships_centre(save, size_t(battle_shown), save.player, c)) {
+					camera_x = c.x - kScreenWidth / 2;
+					camera_y = c.y - kScreenHeight / 2;
+					battle_centre = false;
+				}
+			}
+		}
+		const bool in_battle = battle_shown >= 0;
 		// El mercado solo existe en las ciudades de la partida, con el jugador cargado.
 		const bool trading = market.open && selection.mode == Mode::Saved && save.player >= 0 && small_text;
 		const int town_index = int(selection.saved_index);
@@ -8105,8 +8218,9 @@ int main(int argc, char** argv) {
 			(selection.mode == Mode::Saved || selection.mode == Mode::Sea);
 		// The side panel (the game's, on the right) in the save's towns; the
 		// town takes the screen on its left.
+		// (Not yet over a battle: its panel is part 3's.)
 		const bool panel_shown = (selection.mode == Mode::Saved || (selection.mode == Mode::Sea && sea)) && has_save &&
-			save.player >= 0 && small_text && panel_art;
+			save.player >= 0 && small_text && panel_art && !in_battle;
 		const bool sea_panel = panel_shown && selection.mode == Mode::Sea;  // On the sea map: its minimap and the ships.
 		if (sea_panel && side.menu == PanelMenu::Build) {
 			side.menu = PanelMenu::None;
@@ -8126,7 +8240,7 @@ int main(int argc, char** argv) {
 		// The building in the middle of the town's part of the screen, the
 		// buttons' cursor (as the game's mouse pointer): X goes into it.
 		const bool town_free = selection.mode == Mode::Saved && has_save && save.player >= 0 && !trading && !in_hanse &&
-			!in_place && !in_mail && !in_menu;
+			!in_place && !in_mail && !in_menu && !in_battle;
 		const int hover = town_free ? view->place_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2) : -1;
 		// Goes into a place: the Market Hall is the market; the tavern rolls its
 		// rand() as the game's window does each time it opens (0x5CC479).
@@ -8828,15 +8942,24 @@ int main(int argc, char** argv) {
 			clock = app_ticks();  // The game stops while the menu is open.
 		} else if (sailing) {
 			const GameSpeed& speed = kGameSpeeds[game_speed];
+			// While a battle has a human side (time mode 2, operation 0xC8) the real-time loop gives the world at
+			// most one tick each 3375 ms ([0x673CF8], 0x546729), whatever the speed.
+			const bool battle_time = sailing->time_mode() == 2;
+			const Uint32 tick_ms = battle_time ? kBattleTickMs : speed.ms_per_tick;
+			const int max_ticks = battle_time ? 1 : speed.max_ticks;
 			const Uint32 now = app_ticks();
 			const Uint32 elapsed = now - clock;
-			clock = now - elapsed % speed.ms_per_tick;
-			const int ticks =
-				std::min(int(elapsed / speed.ms_per_tick), speed.max_ticks) + (script ? script->extra_ticks() : 0);
-			for (int i = 0; i < ticks; ++i) {
-				advance_game_tick(save, *sailing);
+			clock = now - elapsed % tick_ms;
+			const int ticks = std::min(int(elapsed / tick_ms), max_ticks) + (script ? script->extra_ticks() : 0);
+			// What a step of the world leaves for the viewer: the battles' messages and the sea map's icons.
+			auto after_step = [&]() {
 				for (const std::string& message : sailing->take_player_messages()) {
 					messages.push(message);
+				}
+				// The battle's sprites of the town view (the guns' smoke, the splashes, the hits).
+				const std::vector<Sailing::BattleEffect> effects = sailing->take_battle_effects();
+				if (battle_view && battle_shown >= 0 && save.battles.battle(save.battles.get<uint8_t>(0, 0x3FC)) == battle_shown) {
+					battle_view->add_effects(save, size_t(battle_shown), effects, app_ticks());
 				}
 				for (const Sailing::BattleIcon& icon : sailing->take_sea_map_icons()) {
 					battle_icons.push_back({icon.slot, icon.x, icon.y, save.battles.battle(icon.slot)});
@@ -8847,6 +8970,17 @@ int main(int argc, char** argv) {
 				if (battle_info >= 0 && save.battles.battle(uint8_t(battle_info)) < 0) {
 					battle_info = -1;  // Its battle is over.
 				}
+			};
+			if (battle_time) {
+				// Each frame, as the game's real-time loop: the battles' clock (0x612DB0, its operation 0x94) and
+				// the queued operations (the battles' steps, the player's orders, the answers 0x96, 0xC8).
+				sailing->fn_612db0(now, speed.ms_per_tick);
+				run_queued_operations(save, *sailing);
+				after_step();
+			}
+			for (int i = 0; i < ticks; ++i) {
+				advance_game_tick(save, *sailing);
+				after_step();
 				for (const ShipEvent& event : sailing->events()) {
 					const SavedShip& ship = save.ships[size_t(event.ship)];
 					if (ship.owner() != save.player) {
@@ -9249,6 +9383,9 @@ int main(int argc, char** argv) {
 						break;
 					}
 				}
+				if (in_battle && event.cbutton.button != SDL_CONTROLLER_BUTTON_START) {
+					break;  // The battle's screen: its keys come with its orders (part 2); Start, the menu.
+				}
 				if (in_mail && mail_button(event.cbutton.button)) {
 					break;
 				}
@@ -9417,6 +9554,9 @@ int main(int argc, char** argv) {
 					messages.next();
 					break;
 				}
+				if (in_battle && event.key.keysym.sym != SDLK_ESCAPE) {
+					break;  // The battle's screen: Escape, the menu.
+				}
 				if (in_hanse) {
 					// Keyboard: the arrows, C or Enter to act, H or Escape to close.
 					const SDL_Keycode key = event.key.keysym.sym;
@@ -9555,6 +9695,13 @@ int main(int argc, char** argv) {
 					touch_building = false;
 					break;
 				}
+				if (in_battle && !in_menu) {
+					// The battle's screen: dragging moves its view (its touches' orders, part 2).
+					touch_on_side = false;
+					touch_on_panel = false;
+					touch_building = false;
+					break;
+				}
 				touch_on_side = panel_shown && !in_menu && (!in_mail || mail_in_panel) && !messages.open && !end_window.open &&
 					inside(panel_layout.panel, touch_start.x, touch_start.y);
 				touch_on_panel = touch_on_side ||
@@ -9622,6 +9769,10 @@ int main(int argc, char** argv) {
 						}
 					}
 					touch_on_panel = false;
+					break;
+				}
+				if (in_battle && !in_menu) {
+					touch_on_panel = false;  // A tap on the battle: its orders, part 2.
 					break;
 				}
 				if (touch_moved < kTapDistance && !in_menu && !messages.open && !end_window.open && has_save &&
@@ -10130,7 +10281,8 @@ int main(int argc, char** argv) {
 			camera_y += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY));
 		}
 		if (!trading && !in_hanse && !in_mail && !in_place && side.focus < 0 && side.menu == PanelMenu::None &&
-			!battle_window_up() && battle_info < 0) {  // Nothing moves under the battles' window.
+			!battle_window_up() && battle_info < 0 && !in_battle) {  // Nothing moves under the battles' window.
+			// (On the battle's screen the pad's up and down are the sails: part 2.)
 			camera_x += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) - pad(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
 			camera_y += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_DOWN) - pad(SDL_CONTROLLER_BUTTON_DPAD_UP));
 		}
@@ -10139,22 +10291,41 @@ int main(int argc, char** argv) {
 			camera_x += kPadSpeed * (keys[SDL_SCANCODE_RIGHT] - keys[SDL_SCANCODE_LEFT]);
 			camera_y += kPadSpeed * (keys[SDL_SCANCODE_DOWN] - keys[SDL_SCANCODE_UP]);
 		}
-		const bool at_sea = selection.mode == Mode::Sea && sea;
+		const bool at_sea = selection.mode == Mode::Sea && sea && !in_battle;
 		int look_x = 0;
 		int look_y = 0;
-		if (script && !at_sea && script->look_at(look_x, look_y)) {
+		if (script && !at_sea && !in_battle && script->look_at(look_x, look_y)) {
 			camera_x = cell_screen_x(look_x, look_y) - town_width / 2;
 			camera_y = cell_screen_y(look_y) - kScreenHeight / 2;
 		}
-		const int view_width = at_sea ? sea->width() : view->width();
-		const int view_height = at_sea ? sea->height() : view->height();
+		const int view_width = in_battle ? p3::app::BattleView::width() : at_sea ? sea->width() : view->width();
+		const int view_height = in_battle ? p3::app::BattleView::height() : at_sea ? sea->height() : view->height();
 		camera_x = std::clamp(camera_x, 0, std::max(0, view_width - town_width));  // The panel's part isn't the view's.
 		camera_y = std::clamp(camera_y, 0, std::max(0, view_height - kScreenHeight));
 
 		SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 		SDL_RenderClear(renderer);
 		const int course_ship = fleet_ship();
-		if (at_sea) {
+		if (in_battle) {
+			// The sea battle the player directs: the water, the ships, the balls and the clouds; over each ship
+			// its label (its name; its sailors, hull and guns).
+			std::vector<p3::app::BattleLabel> labels;
+			battle_view->draw(save, size_t(battle_shown), camera_x, camera_y, 0, town_width, kScreenHeight, app_ticks(),
+				labels);
+			if (small_text && panel_art) {
+				for (const p3::app::BattleLabel& label : labels) {
+					draw_battle_label(renderer, *small_text, *panel_art, label);
+				}
+			}
+			if (battle_view->pending() > 0 && small_text) {
+				// Its ships' graphics still loading (a sheet a frame): the notice.
+				const std::string line = tr("Cargando la batalla...", "Loading the battle...");
+				const int w = small_text->measure(line) + 16;
+				const SDL_Rect box = {town_width / 2 - w / 2, kScreenHeight / 2 - 16, w, small_text->line_height() + 8};
+				draw_panel_box(renderer, box);
+				small_text->draw(line, box.x + 8, box.y + 4, kTextColor);
+			}
+		} else if (at_sea) {
 			sea->draw(save, small_text.get(), town_names, camera_x, camera_y, selection.saved_index,
 				course_ship >= 0 ? &save.ships[size_t(course_ship)] : nullptr);
 			for (const SeaBattleIcon& icon : battle_icons) {
@@ -10259,9 +10430,10 @@ int main(int argc, char** argv) {
 		}
 		if (text) {
 			std::vector<std::string> right_texts;
-			if (battle_window_up() || battle_info >= 0 || messages.open || end_window.open) {
+			if (battle_window_up() || battle_info >= 0 || messages.open || end_window.open || in_battle) {
 				// A window over the screen (a battle's, a message, the end): its buttons say what the keys do now,
-				// so the bar's actions, which the keys don't do while it is open, aren't shown.
+				// so the bar's actions, which the keys don't do while it is open, aren't shown. Nor on the battle's
+				// screen, whose keys are its own.
 			} else if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu &&
 				side.stats_choice_slot >= 0) {
 				right_texts = {tr(BTN_CROSS " elegir   " BTN_SQUARE " orden   " BTN_CIRCLE " volver",

@@ -29,6 +29,7 @@ add_library(p3data STATIC
 	hanse_tasks.cpp
 	player_actions.cpp
 	image.cpp
+	lcr.cpp
 	letter_picture.cpp
 	letters.cpp
 	lz.cpp

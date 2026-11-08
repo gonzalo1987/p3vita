@@ -1,4 +1,4 @@
-add_executable(p3vita main.cpp script.cpp debug_states.cpp settings.cpp savegames.cpp)
+add_executable(p3vita main.cpp battle_view.cpp script.cpp debug_states.cpp settings.cpp savegames.cpp)
 
 target_link_libraries(p3vita PRIVATE p3data)
 target_compile_options(p3vita PRIVATE -Wall -Wextra)

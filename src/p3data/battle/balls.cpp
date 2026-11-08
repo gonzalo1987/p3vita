@@ -55,6 +55,16 @@ void Sailing::battle_sound(size_t b) {
 	}
 }
 
+// The town view's sprites of the battle on the screen (the interface's), for the viewer: kept only with its
+// battle window and at most 1024 between two frames.
+void Sailing::battle_effect(size_t b, BattleEffect effect) {
+	if (!save_.battle_window.present || !on_screen(b) || battle_effects_.size() >= 1024) {
+		return;
+	}
+	effect.slot = uint8_t(save_.battles.get<uint16_t>(b, 0x662));
+	battle_effects_.push_back(effect);
+}
+
 // 0x6111B9 (on a battle): a free slot of the cannon balls ([+0x668], null),
 // else 0x20 more ([+0xACC]; the bitmap [+0x664] one word more, [+0xACE];
 // both reallocated, the new ones 0) and the first new one.
@@ -199,7 +209,15 @@ void Sailing::fn_6214cb(size_t e, uint16_t x, uint16_t y, int32_t damage, uint8_
 	const size_t ball = g.blocks.size() - 1;
 	fn_602a90(ball, slot, uint16_t(x + ox), uint16_t(y + oy), uint16_t(g.get<uint16_t>(e, 0xA) + ox),
 		uint16_t(g.get<uint16_t>(e, 0xE) + oy), int32_t(final_damage), 1, b, g.get<uint16_t>(e, 0x138), 8);
-	(void)heavy;
+	// 0x602D3B: on the screen, where the ball starts, a heavy gun's fire (creature 0x12/0x25) or the gun's smoke
+	// (0x12/0x21), in the ball's direction ((d + 8) & 0xF0).
+	BattleEffect shot;
+	shot.kind = BattleEffect::Shot;
+	shot.x = g.get<int16_t>(ball, 0x6);
+	shot.y = g.get<int16_t>(ball, 0xA);
+	shot.dir = g.get<uint8_t>(ball, 0x30);
+	shot.heavy = heavy != 0;
+	battle_effect(b, shot);
 	g.set_ptr(size_t(g.ptr(b, 0x668)), 4 * size_t(slot), int(ball));
 }
 
@@ -292,6 +310,11 @@ void Sailing::fn_603130(size_t ball) {
 	}
 	if ((next > goal && v > 0) || (next < goal && v < 0)) {
 		battle_sound(b);  // 0xEE98 or 0xEA92, by the town view's cell
+		BattleEffect splash;  // 0x603347: the splash (creature 0x12/0 on water; 0x12/0x20 by the cell's class).
+		splash.kind = BattleEffect::Splash;
+		splash.x = g.get<int16_t>(ball, 0x6);
+		splash.y = g.get<int16_t>(ball, 0xA);
+		battle_effect(b, splash);
 		ball_gone(ball);
 		return;
 	}
@@ -352,6 +375,15 @@ void Sailing::fn_603470(size_t ball, uint16_t place, uint8_t side) {
 		for (uint32_t k = uint8_t(puffs); k > 0; --k) {
 			tick::game_rand(save_);
 		}
+		// 0x603656..0x603835: an explosion (creature 0x12/0x11) when 2, else a puff (0x12/0x20), and the
+		// splinters (0x13), each placed by its rand().
+		BattleEffect hit;
+		hit.kind = BattleEffect::Hit;
+		hit.x = g.get<int16_t>(ball, 0x6);
+		hit.y = g.get<int16_t>(ball, 0xA);
+		hit.result = result;
+		hit.puffs = uint8_t(puffs);
+		battle_effect(b, hit);
 	}
 	ball_gone(ball);
 }

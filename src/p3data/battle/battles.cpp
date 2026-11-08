@@ -152,11 +152,59 @@ void Sailing::fn_618f10(size_t block) {
 }
 
 // The clock rule (docs/oracle.md): after each tick with battles, operation
-// 0x94 with kBattleSteps steps, after the tick's other operations.
+// 0x94 with kBattleSteps steps, after the tick's other operations. Not while
+// the viewer's real-time clock drives them (time mode 2, fn_612db0).
 void Sailing::step_battles() {
+	if (real_time_battles_ && time_mode_ == 2) {
+		return;
+	}
 	if (battles_ && save_.battles.count() != 0) {
 		fn_536bbf(kBattleSteps);
 	}
+}
+
+// 0x612DB0 (on the battles; each frame of the real-time loop 0x546620 while
+// its queue has room, 0x54662F): with [+0x3FE] (the last operation 0x94 ran),
+// the ms since the clock [+0xC44] (at most 100 but in a network game, at
+// least 0) make steps = (ms / 40) · 3375 / the chosen tick's ms ([0x6DFBC4];
+// in a network game [0x6DFBC8]; unscaled in the other game modes or with
+// [0x6DFC18]), at most 0x5460 as a u16; with any, operation 0x94 with them
+// and [+0x3FE] 0; the clock = now + steps · 40 − the ms (so the next frame
+// finds it ahead and starts again from now). Its first call, 0x6127C0(0) (the
+// window of the sea map's battle icon), is the viewer's.
+void Sailing::fn_612db0(uint32_t now, uint32_t tick_ms) {
+	BattleGraph& g = save_.battles;
+	if (g.get<uint8_t>(0, 0x3FE) == 0) {
+		return;
+	}
+	int32_t ms = int32_t(now - g.get<uint32_t>(0, 0xC44));
+	const uint32_t mode = save_.globals.u32(kGameMode);
+	if (mode != 1 && ms > 100) {
+		ms = 100;
+	} else if (ms > 100000) {
+		ms = 100000;
+	} else if (ms < 0) {
+		ms = 0;
+	}
+	uint32_t steps = uint32_t(ms / 40);
+	if (mode == 1) {
+		const uint32_t network_ms = save_.globals.u32(0x6DFBC8);
+		steps = network_ms ? (steps & 0xFFFF) * 3375 / network_ms : steps;
+	} else if (mode == 0 && save_.globals.u32(0x6DFC18) == 0) {
+		steps = tick_ms ? (steps & 0xFFFF) * 3375 / tick_ms : steps;
+	}
+	uint16_t n = uint16_t(steps);
+	if (n > 0x5460) {
+		n = 0x5460;
+	}
+	if (n > 0) {
+		uint8_t op[0x14] = {};
+		const uint32_t fields[2] = {0x94, n};
+		std::memcpy(op, fields, sizeof(fields));
+		tick::enqueue_operation(save_, op, sizeof(op));  // 0x54AA70
+		g.set<uint8_t>(0, 0x3FE, 0);
+	}
+	g.set<uint32_t>(0, 0xC44, uint32_t(n) * 40 - uint32_t(ms) + now);
 }
 
 // Operation 0x94 (0x536BBF): each battle that runs ([+0x15C] ≠ 0xFFFF) takes
