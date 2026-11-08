@@ -85,6 +85,7 @@ const char kStepsHelp[] =
 	"  ticks:N      one frame of fast forward, N ticks\n"
 	"  tap:X:Y      touch the screen at (X, Y) and let go\n"
 	"  touch:X:Y    put a finger on the screen at (X, Y); lift:X:Y lifts it there\n"
+	"  move:X:Y     slide the finger that is down to (X, Y) in one motion\n"
 	"  cell:X:Y     center the camera on the town's cell (X, Y)\n"
 	"  text:TEXT    type TEXT (an SDL_TEXTINPUT, as the keyboard gives it)\n"
 	"  shot:FILE    save the screen as a PNG\n";
@@ -126,9 +127,14 @@ std::unique_ptr<InputScript> InputScript::parse(const std::string& steps, std::s
 				error = "wrong number in step \"" + text + "\"";
 				return nullptr;
 			}
-		} else if ((head == "tap" || head == "cell" || head == "touch" || head == "lift") && colon != std::string::npos) {
+		} else if ((head == "tap" || head == "cell" || head == "touch" || head == "lift" || head == "move") &&
+			colon != std::string::npos) {
 			const size_t second = rest.find(':');
-			step.kind = head == "tap" ? Kind::Tap : head == "touch" ? Kind::Touch : head == "lift" ? Kind::Lift : Kind::Cell;
+			step.kind = head == "tap" ? Kind::Tap
+				: head == "touch"     ? Kind::Touch
+				: head == "lift"      ? Kind::Lift
+				: head == "move"      ? Kind::Move
+									  : Kind::Cell;
 			step.x = second == std::string::npos ? -1 : number(rest.substr(0, second));
 			step.y = second == std::string::npos ? -1 : number(rest.substr(second + 1));
 			const bool off_screen = step.kind != Kind::Cell && (step.x >= kScreenWidth || step.y >= kScreenHeight);
@@ -169,11 +175,13 @@ void InputScript::push_button(SDL_GameControllerButton button, bool down) const 
 	SDL_PushEvent(&event);
 }
 
-void InputScript::push_finger(Uint32 type, int x, int y) const {
+void InputScript::push_finger(Uint32 type, int x, int y, int dx, int dy) const {
 	SDL_Event event{};
 	event.type = type;
 	event.tfinger.x = float(x) / kScreenWidth;
 	event.tfinger.y = float(y) / kScreenHeight;
+	event.tfinger.dx = float(dx) / kScreenWidth;
+	event.tfinger.dy = float(dy) / kScreenHeight;
 	event.tfinger.pressure = type == SDL_FINGERUP ? 0.0f : 1.0f;
 	SDL_PushEvent(&event);
 }
@@ -216,10 +224,20 @@ void InputScript::start_frame() {
 		break;
 	case Kind::Tap:
 		push_finger(progress_ == 0 ? SDL_FINGERDOWN : SDL_FINGERUP, step.x, step.y);
+		finger_x_ = step.x;
+		finger_y_ = step.y;
 		break;
 	case Kind::Touch:
 	case Kind::Lift:
 		push_finger(step.kind == Kind::Touch ? SDL_FINGERDOWN : SDL_FINGERUP, step.x, step.y);
+		finger_x_ = step.x;
+		finger_y_ = step.y;
+		break;
+	case Kind::Move:
+		// The finger slides from where it is to (x, y) in one motion.
+		push_finger(SDL_FINGERMOTION, step.x, step.y, step.x - finger_x_, step.y - finger_y_);
+		finger_x_ = step.x;
+		finger_y_ = step.y;
 		break;
 	case Kind::Cell:
 		look_x_ = step.x;

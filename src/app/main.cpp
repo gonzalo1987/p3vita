@@ -1500,6 +1500,9 @@ constexpr GameSpeed kGameSpeeds[] = {
 constexpr int kGameSpeedCount = int(sizeof(kGameSpeeds) / sizeof(kGameSpeeds[0]));
 // The world's tick while a battle has a human side (time mode 2: [0x673CF8], 0x546729).
 constexpr Uint32 kBattleTickMs = 3375;
+// A finger held still this long on the battle's screen is a long press (a ship added or taken out; the held order).
+constexpr Uint32 kBattleLongPressMs = 450;
+constexpr int kBattleStill = 20;  // Pixels a finger held still may wander (each way) for a long press.
 
 // The speed's name: the game's six (its settings window, 0x69A934); fast
 // forward (F12) has none.
@@ -5691,6 +5694,7 @@ struct ChoiceBox {
 	std::string body;
 	std::vector<std::pair<std::string, bool>> buttons;  // Each label (with its key) and whether it can be pressed.
 	int bar = -1;  // The time bar's part left, in thousandths; -1 without one.
+	bool low = false;  // At the screen's bottom (over the battle's screen, so that the battle shows above it).
 };
 
 // A game's text as a box's title (its first line) and body (the rest), its empty lines at the ends dropped.
@@ -5736,7 +5740,8 @@ struct ChoiceBoxLayout {
 			height += 14 + 14;
 		}
 		height += button_height + 16;
-		box = {(kScreenWidth - width) / 2, std::max(8, (kScreenHeight - height) / 2), width, height};
+		box = {(kScreenWidth - width) / 2, c.low ? kScreenHeight - height - 12 : std::max(8, (kScreenHeight - height) / 2),
+			width, height};
 		body_y = box.y + 20 + title.line_height() + 14;
 		int y = body_y + int(lines.size()) * text.line_height() + 18;
 		if (c.bar >= 0) {
@@ -5807,8 +5812,10 @@ void draw_panel_box(SDL_Renderer* renderer, const SDL_Rect& box, Uint8 alpha = 2
 
 // A ship's label on the battle's screen (the manual's figure 2-3: its name above; below, its sailors, the
 // hull's heart and percent, and the firepower's cannonballs as the ship's panel shows them, 0x4901C0), its
-// bottom at the label's point; the player's in a blue box, the others' in a brown one.
-void draw_battle_label(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const p3::app::BattleLabel& label) {
+// bottom at the label's point; the player's in a blue box, the others' in a brown one. Over a chosen ship of
+// his, the manual's blue arrow (markerpfeil01.aim) above its label, pointing at it.
+void draw_battle_label(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const p3::app::BattleLabel& label,
+	SDL_Texture* arrow) {
 	const std::string sailors = std::to_string(label.sailors);
 	const std::string hull = std::to_string(std::max(label.hull, 0));
 	const FirepowerBalls balls = firepower_balls(label.firepower);
@@ -5823,6 +5830,13 @@ void draw_battle_label(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 	SDL_SetRenderDrawColor(renderer, label.own ? 40 : 60, label.own ? 50 : 26, label.own ? 80 : 20, 170);
 	SDL_RenderFillRect(renderer, &box);
+	if (label.selected && arrow) {
+		int aw = 0;
+		int ah = 0;
+		SDL_QueryTexture(arrow, nullptr, nullptr, &aw, &ah);
+		const SDL_Rect dst = {label.x - aw / 2, box.y - ah - 2, aw, ah};
+		SDL_RenderCopy(renderer, arrow, nullptr, &dst);
+	}
 	text.draw(label.name, label.x - text.measure(label.name) / 2, box.y + 1, kTextColor);
 	const int y = box.y + line + 2;
 	int x = label.x - stats_w / 2;
@@ -7580,6 +7594,13 @@ int main(int argc, char** argv) {
 	int battle_shown = -1;
 	SDL_Point battle_saved_camera = {0, 0};
 	bool battle_centre = false;  // The camera goes to the player's ships once they are placed.
+	// The battle's orders by touch (the user's choices, roadmap phase 4 point 7): the ships chosen (their places;
+	// the engine's [+0x66C] follows it), when the finger went down, whether it was held still (a long press: a
+	// ship of his added or taken out, or on the water the held order) and whether the held order goes on.
+	std::vector<uint16_t> battle_selection;
+	Uint32 battle_touch_ms = 0;
+	bool battle_long = false;
+	bool battle_hold = false;
 	std::vector<std::string> town_names = load_town_names(*archive);
 	g_town_names = &town_names;
 	std::unique_ptr<TextRenderer> text;
@@ -7740,6 +7761,7 @@ int main(int argc, char** argv) {
 		} else {
 			box.buttons = {{BTN_CROSS " " + tr("Continuar", "Continue"), true}};
 		}
+		box.low = battle_shown >= 0;  // An end or a boarding over the battle: below it, the ships still show.
 		return box;
 	};
 	// The window of a sea map battle icon (0x611FC0): its button takes the battle (0x6102A9) once it can be steered.
@@ -8117,6 +8139,7 @@ int main(int argc, char** argv) {
 	int camera_y = 0;
 	// Toque en curso: dónde empezó y cuánto se ha movido el dedo.
 	SDL_Point touch_start = {0, 0};
+	SDL_Point touch_now = {0, 0};  // Where the finger is now.
 	int touch_moved = 0;
 	float touch_scroll = 0;  // A drag on a list of the side panel, not yet a whole row.
 	bool finger_down = false;  // A finger on the screen now (the tooltip of the button under it).
@@ -8166,18 +8189,59 @@ int main(int argc, char** argv) {
 						battle_view = std::make_unique<p3::app::BattleView>(renderer, *archive, view->tiles());
 					}
 					battle_centre = true;
+					// At first all his ships in the battle are chosen: a touch on the water sends them.
+					battle_selection = p3::app::BattleView::player_ships(save, size_t(on_screen), save.player);
+					sailing->set_battle_selection(size_t(on_screen), battle_selection);
 				} else {
 					if (battle_view) {
 						battle_view->clear();
 					}
 					camera_x = battle_saved_camera.x;
 					camera_y = battle_saved_camera.y;
+					battle_selection.clear();
 				}
 				battle_shown = on_screen;
+				battle_hold = false;
+				battle_long = false;
 			}
 			if (battle_shown >= 0) {
 				battle_view->need(save, size_t(battle_shown));
 				battle_view->load_step();
+				// The chosen ships that can no longer take orders (out, sunk, sinking, taken) leave the selection.
+				const std::vector<uint16_t> fit = p3::app::BattleView::player_ships(save, size_t(battle_shown), save.player);
+				std::vector<uint16_t> kept;
+				for (const uint16_t place : battle_selection) {
+					if (std::find(fit.begin(), fit.end(), place) != fit.end()) {
+						kept.push_back(place);
+					}
+				}
+				if (kept != battle_selection) {
+					battle_selection = kept;
+					sailing->set_battle_selection(size_t(battle_shown), battle_selection);
+				}
+				// A finger held still on the battle (kBattleLongPressMs): on a ship of his, it is added to the
+				// selection or taken out of it; on the water, with ships chosen, the held order starts there
+				// (the PC's right button held: 0x608550 with 1, which the step sends again while it is held).
+				if (finger_down && !battle_long && !battle_hold && std::abs(touch_now.x - touch_start.x) < kBattleStill &&
+					std::abs(touch_now.y - touch_start.y) < kBattleStill && !battle_window_up() &&
+					battle_info < 0 && !menu.open() && app_ticks() - battle_touch_ms >= kBattleLongPressMs) {
+					battle_long = true;
+					bool own = false;
+					const int place = battle_view->ship_at(touch_start.x, touch_start.y, own);
+					if (place >= 0 && own) {
+						const auto at = std::find(battle_selection.begin(), battle_selection.end(), uint16_t(place));
+						if (at != battle_selection.end()) {
+							battle_selection.erase(at);
+						} else {
+							battle_selection.push_back(uint16_t(place));
+						}
+						sailing->set_battle_selection(size_t(battle_shown), battle_selection);
+					} else if (place < 0 && !battle_selection.empty()) {
+						battle_hold = true;
+						sailing->fn_608550(size_t(battle_shown), uint32_t(camera_x + touch_start.x),
+							uint32_t((camera_y + touch_start.y) * 34 / 22), true);
+					}
+				}
 				// The camera on the player's ships, once they are placed.
 				SDL_Point c;
 				if (battle_centre && p3::app::BattleView::player_ships_centre(save, size_t(battle_shown), save.player, c)) {
@@ -8188,6 +8252,58 @@ int main(int argc, char** argv) {
 			}
 		}
 		const bool in_battle = battle_shown >= 0;
+		// The battle's keys (the user's choices): X fires (operation 0x92, the PC's Space), Triangle chooses all his
+		// ships, L and R the previous or the next of them alone with the view on it (the PC's Tab), up and down
+		// the sails (0x98: the selection's highest asked plus one, or its lowest minus one; the PC's Page Up and
+		// Page Down). Square and Circle do nothing.
+		auto battle_key = [&](Uint8 button) {
+			const size_t b = size_t(battle_shown);
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_A:
+				sailing->queue_fire(b);
+				break;
+			case SDL_CONTROLLER_BUTTON_Y:
+				battle_selection = p3::app::BattleView::player_ships(save, b, save.player);
+				sailing->set_battle_selection(b, battle_selection);
+				break;
+			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: {
+				const std::vector<uint16_t> ships = p3::app::BattleView::player_ships(save, b, save.player);
+				if (ships.empty()) {
+					break;
+				}
+				const int n = int(ships.size());
+				const int step = button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER ? 1 : -1;
+				int k = step > 0 ? 0 : n - 1;
+				if (!battle_selection.empty()) {
+					const auto at = std::find(ships.begin(), ships.end(), battle_selection.front());
+					if (at != ships.end()) {
+						k = (int(at - ships.begin()) + step + n) % n;
+					}
+				}
+				battle_selection = {ships[size_t(k)]};
+				sailing->set_battle_selection(b, battle_selection);
+				SDL_Point p;
+				if (p3::app::BattleView::ship_point(save, b, ships[size_t(k)], p)) {
+					camera_x = p.x - g_town_right / 2;
+					camera_y = p.y - kScreenHeight / 2;
+				}
+				break;
+			}
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+				if (!battle_selection.empty()) {
+					sailing->fn_610579(b, p3::app::BattleView::sails_step(save, b, button == SDL_CONTROLLER_BUTTON_DPAD_UP));
+				}
+				break;
+			default:
+				break;
+			}
+		};
+		// The point of the battle's area under the screen's (x, y): x and y · 34 / 22 (the town view's, 0x587E80).
+		auto battle_point = [&](int x, int y) {
+			return std::array<uint32_t, 2>{uint32_t(camera_x + x), uint32_t((camera_y + y) * 34 / 22)};
+		};
 		// El mercado solo existe en las ciudades de la partida, con el jugador cargado.
 		const bool trading = market.open && selection.mode == Mode::Saved && save.player >= 0 && small_text;
 		const int town_index = int(selection.saved_index);
@@ -9384,7 +9500,8 @@ int main(int argc, char** argv) {
 					}
 				}
 				if (in_battle && event.cbutton.button != SDL_CONTROLLER_BUTTON_START) {
-					break;  // The battle's screen: its keys come with its orders (part 2); Start, the menu.
+					battle_key(event.cbutton.button);  // The battle's screen: its keys; Start, the menu.
+					break;
 				}
 				if (in_mail && mail_button(event.cbutton.button)) {
 					break;
@@ -9555,7 +9672,16 @@ int main(int argc, char** argv) {
 					break;
 				}
 				if (in_battle && event.key.keysym.sym != SDLK_ESCAPE) {
-					break;  // The battle's screen: Escape, the menu.
+					// The battle's screen, keyboard: Space fires, A all the ships, Tab the next, Page Up and Down the
+					// sails (the PC game's); Escape, the menu.
+					const SDL_Keycode key = event.key.keysym.sym;
+					battle_key(key == SDLK_SPACE ? SDL_CONTROLLER_BUTTON_A
+						: key == SDLK_a          ? SDL_CONTROLLER_BUTTON_Y
+						: key == SDLK_TAB        ? SDL_CONTROLLER_BUTTON_RIGHTSHOULDER
+						: key == SDLK_PAGEUP     ? SDL_CONTROLLER_BUTTON_DPAD_UP
+						: key == SDLK_PAGEDOWN   ? SDL_CONTROLLER_BUTTON_DPAD_DOWN
+												 : SDL_CONTROLLER_BUTTON_INVALID);
+					break;
 				}
 				if (in_hanse) {
 					// Keyboard: the arrows, C or Enter to act, H or Escape to close.
@@ -9685,6 +9811,7 @@ int main(int argc, char** argv) {
 				break;
 			case SDL_FINGERDOWN:
 				touch_start = {int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight)};
+				touch_now = touch_start;
 				touch_moved = 0;
 				touch_scroll = 0;
 				finger_down = true;
@@ -9696,10 +9823,14 @@ int main(int argc, char** argv) {
 					break;
 				}
 				if (in_battle && !in_menu) {
-					// The battle's screen: dragging moves its view (its touches' orders, part 2).
+					// The battle's screen: dragging moves its view; a tap or a long press is an order (on lifting
+					// it, and in the frame, kBattleLongPressMs).
 					touch_on_side = false;
 					touch_on_panel = false;
 					touch_building = false;
+					battle_touch_ms = app_ticks();
+					battle_long = false;
+					battle_hold = false;
 					break;
 				}
 				touch_on_side = panel_shown && !in_menu && (!in_mail || mail_in_panel) && !messages.open && !end_window.open &&
@@ -9723,6 +9854,13 @@ int main(int argc, char** argv) {
 			case SDL_FINGERMOTION:
 				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
 					std::abs(int(event.tfinger.dy * kScreenHeight));
+				touch_now = {int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight)};
+				if (in_battle && battle_hold) {
+					// The held order follows the finger (the PC's mouse moved with its right button down, 0x58BF35).
+					const auto p = battle_point(int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight));
+					sailing->fn_608550(size_t(battle_shown), p[0], p[1], true);
+					break;
+				}
 				// Arrastrar desplaza la ciudad con el dedo, salvo sobre el mercado;
 				// sobre el minimapa del panel, la vista va donde está el dedo.
 				if (touch_building) {
@@ -9772,7 +9910,37 @@ int main(int argc, char** argv) {
 					break;
 				}
 				if (in_battle && !in_menu) {
-					touch_on_panel = false;  // A tap on the battle: its orders, part 2.
+					touch_on_panel = false;
+					const int lx = int(event.tfinger.x * kScreenWidth);
+					const int ly = int(event.tfinger.y * kScreenHeight);
+					const size_t b = size_t(battle_shown);
+					if (battle_hold) {
+						// The held order let go where the finger is (0x608550 with 0: the step stops sending it).
+						const auto p = battle_point(lx, ly);
+						sailing->fn_608550(b, p[0], p[1], false);
+						battle_hold = false;
+					} else if (!battle_long && touch_moved < kTapDistance) {
+						// A tap: on a ship of his, it alone is chosen; on an enemy, the chosen ships attack it (0x93);
+						// on the water, they go there (0x95: the PC's right button pressed and let go).
+						bool own = false;
+						const int place = battle_view->ship_at(touch_start.x, touch_start.y, own);
+						if (place >= 0 && own) {
+							battle_selection = {uint16_t(place)};
+							sailing->set_battle_selection(b, battle_selection);
+						} else if (place >= 0 && !battle_selection.empty()) {
+							sailing->fn_608360(b, uint16_t(place));
+							SDL_Point at;
+							if (p3::app::BattleView::ship_point(save, b, uint16_t(place), at)) {
+								battle_view->mark_order(at.x, at.y, app_ticks());
+							}
+						} else if (place < 0 && !battle_selection.empty()) {
+							const auto p = battle_point(touch_start.x, touch_start.y);
+							sailing->fn_608550(b, p[0], p[1], true);
+							sailing->fn_608550(b, p[0], p[1], false);
+							battle_view->mark_order(camera_x + touch_start.x, camera_y + touch_start.y, app_ticks());
+						}
+					}
+					battle_long = false;
 					break;
 				}
 				if (touch_moved < kTapDistance && !in_menu && !messages.open && !end_window.open && has_save &&
@@ -10311,10 +10479,21 @@ int main(int argc, char** argv) {
 			// its label (its name; its sailors, hull and guns).
 			std::vector<p3::app::BattleLabel> labels;
 			battle_view->draw(save, size_t(battle_shown), camera_x, camera_y, 0, town_width, kScreenHeight, app_ticks(),
-				labels);
+				battle_selection, labels);
 			if (small_text && panel_art) {
 				for (const p3::app::BattleLabel& label : labels) {
-					draw_battle_label(renderer, *small_text, *panel_art, label);
+					draw_battle_label(renderer, *small_text, *panel_art, label, battle_view->arrow());
+				}
+			}
+			// Method +0x20 (0x60EDC6): once the order to go is let go ([+0x12E0] 0), each chosen ship's line is
+			// cleared after this frame ([+0xAE0 + 8 · i] = −1).
+			{
+				BattleGraph& g = save.battles;
+				const size_t b = size_t(battle_shown);
+				if (g.get<int32_t>(b, 0xAE0) != -1 && g.get<uint8_t>(b, 0x12E0) == 0) {
+					for (uint16_t i = 0; i < g.get<uint16_t>(b, 0xAD0) && i < 0xF0; ++i) {
+						g.set<int32_t>(b, 0xAE0 + 8 * size_t(i), -1);
+					}
 				}
 			}
 			if (battle_view->pending() > 0 && small_text) {
@@ -10430,10 +10609,14 @@ int main(int argc, char** argv) {
 		}
 		if (text) {
 			std::vector<std::string> right_texts;
-			if (battle_window_up() || battle_info >= 0 || messages.open || end_window.open || in_battle) {
+			if (battle_window_up() || battle_info >= 0 || messages.open || end_window.open) {
 				// A window over the screen (a battle's, a message, the end): its buttons say what the keys do now,
-				// so the bar's actions, which the keys don't do while it is open, aren't shown. Nor on the battle's
-				// screen, whose keys are its own.
+				// so the bar's actions, which the keys don't do while it is open, aren't shown.
+			} else if (in_battle) {
+				// The battle's screen: its own keys.
+				right_texts = {tr(BTN_CROSS " disparar   " BTN_TRIANGLE " todos   L/R: barco   arriba/abajo: velas",
+								   BTN_CROSS " fire   " BTN_TRIANGLE " all   L/R: ship   up/down: sails"),
+					tr(BTN_CROSS " disparar   " BTN_TRIANGLE " todos", BTN_CROSS " fire   " BTN_TRIANGLE " all")};
 			} else if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu &&
 				side.stats_choice_slot >= 0) {
 				right_texts = {tr(BTN_CROSS " elegir   " BTN_SQUARE " orden   " BTN_CIRCLE " volver",

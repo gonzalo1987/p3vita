@@ -44,7 +44,7 @@ public:
 	Uint32 now() const { return Uint32(frame_) * kScriptFrameMs; }
 
 private:
-	enum class Kind { Press, Hold, Frames, Days, Ticks, Shot, Tap, Cell, Text, Touch, Lift };
+	enum class Kind { Press, Hold, Frames, Days, Ticks, Shot, Tap, Cell, Text, Touch, Lift, Move };
 	struct Step {
 		Kind kind = Kind::Press;
 		SDL_GameControllerButton button = SDL_CONTROLLER_BUTTON_INVALID;
@@ -56,7 +56,7 @@ private:
 	};
 
 	void push_button(SDL_GameControllerButton button, bool down) const;
-	void push_finger(Uint32 type, int x, int y) const;
+	void push_finger(Uint32 type, int x, int y, int dx = 0, int dy = 0) const;
 
 	std::vector<Step> steps_;
 	size_t current_ = 0;
@@ -67,6 +67,8 @@ private:
 	std::string screenshot_;
 	int look_x_ = -1;
 	int look_y_ = -1;
+	int finger_x_ = 0;  // Where the finger is (touch, move, lift, tap), for move's motion.
+	int finger_y_ = 0;
 	bool finished_ = false;
 };
 

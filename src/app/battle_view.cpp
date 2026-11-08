@@ -106,6 +106,9 @@ void BattleView::clear() {
 	anims_.clear();
 	queue_.clear();
 	ball_ = nullptr;
+	arrow_ = nullptr;
+	hits_.clear();
+	order_marked_ = false;
 	cloud_images_.fill(nullptr);
 	clouds_.clear();
 	effects_.clear();
@@ -264,7 +267,8 @@ void BattleView::need(const SaveGame& save, size_t battle) {
 	if (freed) {
 		for (auto it = textures_.begin(); it != textures_.end();) {
 			SDL_Texture* t = it->second;
-			bool used = t == ball_ || std::find(cloud_images_.begin(), cloud_images_.end(), t) != cloud_images_.end();
+			bool used = t == ball_ || t == arrow_ ||
+				std::find(cloud_images_.begin(), cloud_images_.end(), t) != cloud_images_.end();
 			for (const auto& [path, a] : anims_) {
 				used = used || a->body == t || a->shadow == t;
 			}
@@ -282,6 +286,10 @@ void BattleView::load_step() {
 	if (!water_[0]) {
 		make_water();
 		ball_ = texture("images/creatures/kanonenkugel01.bmp", true);
+		arrow_ = texture("images/creatures/markerpfeil01.aim", true);
+		if (arrow_) {
+			SDL_SetTextureColorMod(arrow_, 90, 150, 255);  // The manual's blue arrow.
+		}
 		for (int i = 0; i < 6; ++i) {
 			cloud_images_[size_t(i)] = texture("images/creatures/clouds_lokal0" + std::to_string(i + 3) + ".aim", false);
 		}
@@ -298,6 +306,9 @@ void BattleView::load_step() {
 	if (entry && archive_.read(*entry, data) && p3::data::parse_lcr(data.data(), data.size(), a->lcr)) {
 		const bool magenta = a->lcr.key == 0xFFFF00FFu;
 		a->body = texture(a->lcr.image, magenta);
+		if (a->body && a->lcr.key == 0xFF000000u) {
+			SDL_SetTextureBlendMode(a->body, SDL_BLENDMODE_ADD);  // Black is nothing: a fire's or explosion's light.
+		}
 		if (!a->lcr.shadow_image.empty()) {
 			a->shadow = texture(a->lcr.shadow_image, magenta);
 			if (a->shadow) {
@@ -406,6 +417,76 @@ void BattleView::draw_frame(const Anim& a, int dir, int frame, int x, int y, Uin
 	}
 }
 
+int BattleView::ship_at(int x, int y, bool& own) const {
+	constexpr int kFinger = 12;  // Around the picture, for the finger.
+	int best = -1;
+	long nearest = 0;
+	for (const Hit& h : hits_) {
+		if (x < h.rect.x - kFinger || x >= h.rect.x + h.rect.w + kFinger || y < h.rect.y - kFinger ||
+			y >= h.rect.y + h.rect.h + kFinger) {
+			continue;
+		}
+		const long d = long(x - h.anchor.x) * (x - h.anchor.x) + long(y - h.anchor.y) * (y - h.anchor.y);
+		if (best < 0 || d < nearest) {
+			best = h.place;
+			nearest = d;
+			own = h.own;
+		}
+	}
+	return best;
+}
+
+void BattleView::mark_order(int x, int y, uint32_t now) {
+	order_mark_ = {x, y};
+	order_time_ = now;
+	order_marked_ = true;
+}
+
+std::vector<uint16_t> BattleView::player_ships(const SaveGame& save, size_t battle, int player) {
+	const BattleGraph& g = save.battles;
+	std::vector<uint16_t> out;
+	for_each_ship(g, battle, [&](size_t e) {
+		const uint8_t side = g.get<uint8_t>(e, 0x13D);
+		if (g.get<uint16_t>(battle, 0x35A + 2 * size_t(side)) == uint16_t(player) && !(g.get<uint8_t>(e, 0x12A) & 0x6)) {
+			out.push_back(g.get<uint16_t>(e, 0x138));
+		}
+	});
+	return out;
+}
+
+bool BattleView::ship_point(const SaveGame& save, size_t battle, uint16_t place, SDL_Point& point) {
+	const BattleGraph& g = save.battles;
+	bool found = false;
+	for_each_ship(g, battle, [&](size_t e) {
+		if (!found && g.get<uint16_t>(e, 0x138) == place) {
+			point = {g.get<int16_t>(e, 0xA), screen_y(g.get<int16_t>(e, 0xE))};
+			found = true;
+		}
+	});
+	return found;
+}
+
+uint8_t BattleView::sails_step(const SaveGame& save, size_t battle, bool up) {
+	const BattleGraph& g = save.battles;
+	const int sel = g.ptr(battle, 0x66C);
+	const size_t n = g.get<uint16_t>(battle, 0xAD0);
+	uint8_t v = up ? 0 : 4;
+	for (size_t i = 0; sel >= 0 && i < n; ++i) {
+		const int e = g.ptr(size_t(sel), 4 * i);
+		if (e < 0) {
+			continue;
+		}
+		const uint8_t s = g.get<uint8_t>(size_t(e), 0x148);
+		v = up ? std::max(v, s) : std::min(v, s);
+	}
+	if (up && v < 4) {
+		++v;
+	} else if (!up && v > 0) {
+		--v;
+	}
+	return v;
+}
+
 bool BattleView::player_ships_centre(const SaveGame& save, size_t battle, int player, SDL_Point& centre) {
 	const BattleGraph& g = save.battles;
 	int64_t sx = 0;
@@ -431,8 +512,9 @@ bool BattleView::player_ships_centre(const SaveGame& save, size_t battle, int pl
 }
 
 void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int camera_y, int top, int view_width,
-	int view_height, uint32_t now, std::vector<BattleLabel>& labels) {
+	int view_height, uint32_t now, const std::vector<uint16_t>& selection, std::vector<BattleLabel>& labels) {
 	const BattleGraph& g = save.battles;
+	hits_.clear();
 	const SDL_Rect clip = {0, top, view_width, view_height};
 	SDL_RenderSetClipRect(renderer_, &clip);
 
@@ -556,14 +638,24 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 			continue;
 		}
 		int top_y = d.y - 60;
+		const uint8_t side = g.get<uint8_t>(d.entry, 0x13D);
+		const bool own = int(g.get<uint16_t>(battle, 0x35A + 2 * size_t(side))) == player;
+		const uint16_t place = g.get<uint16_t>(d.entry, 0x138);
+		Hit hit;
+		hit.place = place;
+		hit.own = own;
+		hit.anchor = {d.x, d.y};
+		hit.rect = {d.x - 30, d.y - 80, 60, 100};
 		if (d.look) {
 			draw_frame(*d.look, d.frame, 0, d.x, d.y, 255, false);
 			const LcrFrame& f = d.look->lcr.directions[size_t(d.frame)][0];
 			top_y = d.y - (f.anchor_y - f.body.y);
+			hit.rect = {d.x - (f.anchor_x - f.body.x), top_y, f.body.w, f.body.h};
 		}
 		if (g.get<uint8_t>(d.entry, 0x12A) & 0x4) {
-			continue;  // Sinking: no label.
+			continue;  // Sinking: no label, no touch.
 		}
+		hits_.push_back(hit);
 		BattleLabel label;
 		label.x = d.x;
 		label.y = top_y - 2;
@@ -571,9 +663,49 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 		label.sailors = ship.sailors();
 		label.hull = ship.max_health() > 0 ? int(int64_t(ship.health()) * 100 / ship.max_health()) : 0;
 		label.firepower = ship.memory.s32(0x120);
-		const uint8_t side = g.get<uint8_t>(d.entry, 0x13D);
-		label.own = int(g.get<uint16_t>(battle, 0x35A + 2 * size_t(side))) == player;
+		label.own = own;
+		label.selected = own && std::find(selection.begin(), selection.end(), place) != selection.end();
 		labels.push_back(label);
+	}
+
+	// The order lines (0x56DD20, from method +0x20 while [+0xAE0] isn't −1): from where each chosen ship of
+	// the player was when the order to go went ([+0xAE0 + 8 · i], [+0xAE4 + 8 · i], y · 22 / 34) to its point
+	// ([+0x12D8], [+0x12DC]); the game clears them after a frame once the order is let go ([+0x12E0] 0: the
+	// viewer, clear_order_lines). And the marker of the last order (mark_order).
+	const int sel = g.ptr(battle, 0x66C);
+	if (g.get<int32_t>(battle, 0xAE0) != -1 && sel >= 0) {
+		const int tx = int(g.get<uint32_t>(battle, 0x12D8)) - camera_x;
+		const int ty = top + g.get<int32_t>(battle, 0x12DC) - camera_y;
+		SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+		for (uint16_t i = 0; i < g.get<uint16_t>(battle, 0xAD0) && i < 0xF0; ++i) {
+			const int32_t fx = g.get<int32_t>(battle, 0xAE0 + 8 * size_t(i));
+			if (fx == -1) {
+				continue;
+			}
+			const int x0 = fx - camera_x;
+			const int y0 = top + g.get<int32_t>(battle, 0xAE4 + 8 * size_t(i)) - camera_y;
+			SDL_SetRenderDrawColor(renderer_, 255, 245, 200, 160);
+			const int steps = std::max(1, int(std::hypot(double(tx - x0), double(ty - y0)) / 12));
+			for (int k = 0; k < steps; k += 2) {  // Dashes of 12 pixels.
+				SDL_RenderDrawLine(renderer_, x0 + (tx - x0) * k / steps, y0 + (ty - y0) * k / steps,
+					x0 + (tx - x0) * (k + 1) / steps, y0 + (ty - y0) * (k + 1) / steps);
+			}
+		}
+	}
+	if (order_marked_ && now - order_time_ < 900) {
+		const Uint8 a = Uint8(255 - (now - order_time_) * 255 / 900);
+		const int x = order_mark_.x - camera_x;
+		const int y = top + order_mark_.y - camera_y;
+		const int r = 6 + int(now - order_time_) / 60;
+		SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+		SDL_SetRenderDrawColor(renderer_, 255, 245, 200, a);
+		for (int k = 0; k < 24; ++k) {  // A ring that widens and fades, flattened as the water.
+			const double t0 = k * 6.2831853 / 24, t1 = (k + 1) * 6.2831853 / 24;
+			SDL_RenderDrawLine(renderer_, x + int(r * std::cos(t0)), y + int(r * 0.6 * std::sin(t0)),
+				x + int(r * std::cos(t1)), y + int(r * 0.6 * std::sin(t1)));
+		}
+	} else {
+		order_marked_ = false;
 	}
 
 	// The effects: the guns' smoke and fire, the splashes, the hits, the smoke; each once.

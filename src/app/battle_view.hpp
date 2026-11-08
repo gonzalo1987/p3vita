@@ -35,6 +35,7 @@ struct BattleLabel {
 	int hull = 0;  // Percent.
 	int32_t firepower = 0;  // The ship's [+0x120], shown as cannonballs (0x4901C0).
 	bool own = false;  // The local player's.
+	bool selected = false;  // His and chosen: the blue arrow over it.
 };
 
 class BattleView {
@@ -66,13 +67,29 @@ public:
 
 	// The battle on the screen part (0, top) − (view_width, top + view_height), the camera on the area's
 	// (camera_x, camera_y) (screen pixels: x and y · 11 / 17). `now`: the viewer's ms. The ships' labels go to
-	// `labels`, in screen pixels.
+	// `labels`, in screen pixels. `selection`: the places of the ships chosen (a blue arrow over the player's).
 	void draw(const p3::data::SaveGame& save, size_t battle, int camera_x, int camera_y, int top, int view_width,
-		int view_height, uint32_t now, std::vector<BattleLabel>& labels);
+		int view_height, uint32_t now, const std::vector<uint16_t>& selection, std::vector<BattleLabel>& labels);
+
+	// The ship drawn under the screen's (x, y) at the last draw, a finger's width around its picture (the
+	// nearest one's anchor if several): its place in the scene ([+0x138]) and whether it is the player's; -1.
+	int ship_at(int x, int y, bool& own) const;
+	// A marker where an order went (the area's screen pixels), fading for a moment: the touch's answer.
+	void mark_order(int x, int y, uint32_t now);
+	// The marker arrow over a chosen ship (markerpfeil01.aim, the manual's blue arrow), for the labels.
+	SDL_Texture* arrow() const { return arrow_; }
 
 	// Where the camera looks first: the middle of the player's ships in the battle (the area's screen pixels);
 	// false while none is placed (before the battle's first step).
 	static bool player_ships_centre(const p3::data::SaveGame& save, size_t battle, int player, SDL_Point& centre);
+	// The player's ships in the battle that can take orders (not out, sunk or sinking: [+0x12A] & 6), in the
+	// scene's order: their places.
+	static std::vector<uint16_t> player_ships(const p3::data::SaveGame& save, size_t battle, int player);
+	// A ship's place in the area's screen pixels; false if the place has no ship.
+	static bool ship_point(const p3::data::SaveGame& save, size_t battle, uint16_t place, SDL_Point& point);
+	// The sails the pad's up or down asks for (method +0x20's keys, 0x60F3A6, 0x60F41A): the highest of the
+	// selection's sails asked ([+0x148]) plus one, at most 4; or the lowest minus one, at least 0.
+	static uint8_t sails_step(const p3::data::SaveGame& save, size_t battle, bool up);
 
 private:
 	struct Anim {
@@ -128,7 +145,18 @@ private:
 	std::array<SDL_Texture*, 9> water_{};  // The water's 9 frames, each a block of 102 × 66 that tiles.
 	std::map<std::string, std::unique_ptr<Anim>> anims_;  // By path; an entry without its texture didn't load.
 	std::vector<std::string> queue_;  // Animations to load.
+	struct Hit {
+		int place = 0;
+		bool own = false;
+		SDL_Rect rect{};  // On the screen.
+		SDL_Point anchor{};
+	};
+	std::vector<Hit> hits_;  // The ships drawn at the last draw.
+	SDL_Point order_mark_{};  // mark_order's point (the area's screen pixels) and when.
+	uint32_t order_time_ = 0;
+	bool order_marked_ = false;
 	SDL_Texture* ball_ = nullptr;
+	SDL_Texture* arrow_ = nullptr;  // The marker arrow over a chosen ship (markerpfeil01.aim), drawn blue.
 	std::array<SDL_Texture*, 6> cloud_images_{};
 	std::vector<Cloud> clouds_;
 	uint32_t clouds_time_ = 0;

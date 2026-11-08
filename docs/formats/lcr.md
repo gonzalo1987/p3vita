@@ -19,7 +19,7 @@ don't have (they are version 6), so the layout below comes from the files themse
 | 0x00 | u16 | 0x0600 |
 | 0x02 | u16 | the id (not unique: the 8 directions of a sinking ship share one) |
 | 0x04 | u32 | the class: 0x0D a ship's look, 0x0E the cannon ball, 0x12 an effect, 0x13 splinters, 0x14 a cloud, 0x17 a projectile, 0x1C fog... |
-| 0x08 | u32 | the key: 0xFFFF00FF, the images' magenta (FF00FF) is transparent; 0, they have their own alpha (`_tp` images) |
+| 0x08 | u32 | the key: 0xFFFF00FF, the images' magenta (FF00FF) is transparent (the ships, a sinking ship's upper part, a splash); 0xFF000000, black is (an explosion, the fire: the viewer adds them, light on the water); 0, they have their own alpha (`_tp` images, the smoke) |
 | 0x0C | u32 | ? |
 | 0x10 | u32 | ? (a ball's 4000) |
 | 0x14 | u32 | the directions (32 a ship's look, 16 the guns' smoke and fire, 8 the town people, 1 most effects) |

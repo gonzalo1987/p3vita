@@ -40,7 +40,7 @@ struct LcrFrame {
 struct LcrAnim {
 	uint16_t id = 0;
 	uint16_t kind = 0;  // The class: 0x0D a ship's look, 0x12 an effect...
-	uint32_t key = 0;  // 0xFFFF00FF: its images' magenta is transparent; 0: they have their own alpha.
+	uint32_t key = 0;  // 0xFFFF00FF: its images' magenta is transparent; 0xFF000000: black; 0: their own alpha.
 	uint32_t fps = 0;  // Frames per second (0: one frame).
 	// The six words after the head: for an effect, [1, the number the game asks it by with its class, 1, 0,
 	// its last frame, 2] (0x12/0x24 the burning ship's smoke, 0x12/4..7 a sinking ship's upper part...).
