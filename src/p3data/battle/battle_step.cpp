@@ -1068,6 +1068,22 @@ void Sailing::battle_window_description(size_t b, bool question) {
 	g.set<uint32_t>(b, 0x1308, 0);
 }
 
+// Once the description is written (the town battle's 0x5FD44A, 0x5FDF01,
+// 0x5FF7DC; the sea's the same): with a window open ([0x6E59CD], the battles'
+// [+0x3FD]) the battle's waits ([+0x12E9] 1); else 0x41D9B0 opens it,
+// [+0x12E9] 0, [0x6E59CD] 1 and [+0x12EA] 1.
+void Sailing::show_battle_window(size_t b) {
+	BattleGraph& g = save_.battles;
+	if (g.get<uint8_t>(0, 0x3FD) != 0) {
+		g.set<uint8_t>(b, 0x12E9, 1);
+		return;
+	}
+	open_battle_window(b);
+	g.set<uint8_t>(b, 0x12E9, 0);
+	g.set<uint8_t>(0, 0x3FD, 1);
+	g.set<uint8_t>(b, 0x12EA, 1);
+}
+
 void Sailing::write_battle_text(size_t b, const std::string& text) {
 	BattleGraph& g = save_.battles;
 	for (size_t k = 0; k <= text.size(); ++k) {

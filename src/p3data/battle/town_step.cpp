@@ -5,16 +5,20 @@
 // hit (0x60130B). The scene's ships of a town battle (0x1168 bytes, vtable
 // 0x67AAD0) take their sub-step in battle/town_ship_step.cpp.
 //
-// Left out, as in the sea battles until piece 7: what concerns a human side
-// (the battle window [+0x12E9], [+0x12EA], 0x41D9B0; the countdown
-// [+0x2F18] with 0x6100D9; the town's side all out with a human defender)
-// and the cannon balls (only fired with a human side: 0x603130, the towers'
-// 0x602A90, 0x60117B). p3vita hands every human side to the computer
-// (operation 0x96) before the battle's first step, as the oracle does.
+// A human side (the battles' piece 7): the battle window ([+0x12E9],
+// [+0x12EA], 0x41D9B0 with SaveGame::battle_window), the answer, the
+// countdown [+0x2F18] with 0x6100D9, the town's side all out with a human
+// defender, the cannon balls' sub-steps (0x603130) and the re-sent move
+// order (0x608550). Without the window p3vita hands every human side to the
+// computer (operation 0x96) before the battle's first step, as the oracle
+// does. With a human side the towers fire cannon balls (0x602A90 from
+// 0x5FE080) that hit them too (0x60117B in 0x5FF8E0), and the sounds of the
+// battle on the screen take the world's rand() (battle_sound).
 
 #include <cstring>
 
 #include "p3data/battle/battle_math.hpp"
+#include "p3data/game_texts.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -180,7 +184,7 @@ bool Sailing::fn_601c7b(size_t b, uint16_t place, uint16_t x, uint16_t y) const 
 // to the cell's size, gives the push's direction (0x6029B0): its place moved
 // by (speed >> 4 + 0x2000) · sin/cos >> 10 (12 with a human side), turned by
 // 2 (half a unit) away from it within a quarter turn, and its speed down by
-// 1/16 (1/64). (On screen, a sound that draws a rand(): left out.)
+// 1/16 (1/64). On the screen a sound (0xEAB0: the sounds' rand()).
 void Sailing::fn_600770(size_t b, uint16_t place) {
 	BattleGraph& g = save_.battles;
 	const size_t e = battle_entry(b, place);
@@ -249,6 +253,7 @@ void Sailing::fn_600770(size_t b, uint16_t place) {
 	}
 	const int32_t speed = g.get<int32_t>(e, 0x1C);
 	g.set<int32_t>(e, 0x1C, speed - (speed >> (automatic ? 4 : 6)));
+	battle_sound(b);  // 0x6010D2: 0xEAB0 on the screen
 }
 
 // 0x60130B (on a town battle; tower k, a damage): the tower is hit. Above
@@ -258,8 +263,8 @@ void Sailing::fn_600770(size_t b, uint16_t place) {
 // (kind 0x30 or 0x31, up to 4 others counted) and, found, an event 0x25 for
 // it now (0x4D8CF0: [+0x8] 0xFFFF, [+0xA] 0, its cell, the town, [+0x11] 1;
 // in a network game the queue runs, 0x4D85C0); its place [+0x1E9E] 0xFFFF,
-// its strength 0, its item freed and [+0xAC4] 1. (On screen, an animation
-// and a sound that draws a rand(): left out.)
+// its strength 0, its item freed and [+0xAC4] 1. On the screen, before that,
+// an animation (the interface's) and a sound (0xEEAC: the sounds' rand()).
 void Sailing::fn_60130b(size_t b, uint8_t k, int32_t damage) {
 	BattleGraph& g = save_.battles;
 	GlobalMemory& gl = save_.globals;
@@ -318,6 +323,7 @@ void Sailing::fn_60130b(size_t b, uint8_t k, int32_t damage) {
 		have = at(r.next, r);
 		++others;
 	}
+	battle_sound(b);  // 0x601546: 0xEEAC
 	const uint16_t item = g.get<uint16_t>(b, 0x1EB6 + 2 * size_t(k));
 	g.set<uint16_t>(b, 0x1E9E + 2 * size_t(k), 0xFFFF);
 	g.set<int32_t>(b, 0x1EC4 + 4 * size_t(k), 0);
@@ -339,8 +345,8 @@ void Sailing::fn_60130b(size_t b, uint8_t k, int32_t damage) {
 // [+0x12], for a human attacker 0 → · 11/10, 2 → · 19/20, and for a human
 // defender the other way) · 28 (at least 1); loading 0x96; in an automatic
 // battle the target is hit at once (0x61F96F, guns of either side). With a
-// human side the tower fires a cannon ball (0x6111B9, 0x602A90; and a sound
-// on screen): part 7, not rewritten.
+// human side the tower fires a cannon ball toward the aim (0x6111B9,
+// 0x602A90; on the screen a sound).
 void Sailing::fn_5fe080(size_t b, uint8_t k) {
 	BattleGraph& g = save_.battles;
 	const bool automatic = g.get<uint8_t>(b, 0xAC8) != 0;
@@ -406,7 +412,6 @@ void Sailing::fn_5fe080(size_t b, uint8_t k) {
 		aim_x = uint16_t(tx + uint16_t(px));
 		aim_y = uint16_t(ty + uint16_t(py));
 	}
-	(void)aim_y;  // Where a cannon ball would go (part 7).
 	if (aim_x == 0xFFFF) {
 		return;
 	}
@@ -438,20 +443,127 @@ void Sailing::fn_5fe080(size_t b, uint8_t k) {
 	g.set<uint8_t>(b, load, 0x96);
 	if (automatic) {
 		fn_61f96f(battle_entry(b, target), damage, -1, 3);
+		return;
 	}
-	// With a human side: a cannon ball from the tower's side towards the aim (part 7).
+	// 0x5FE6E0: with a human side a cannon ball (a free slot 0x6111B9, 0x602A90:
+	// no ship fired it, word 0x1C) flies from the tower's place moved 0x11 on
+	// each axis toward the aim (the game also takes a square root of that
+	// distance and throws it away), and on the screen a sound (0xEE5C).
+	const uint16_t sx = int32_t(int16_t(aim_x)) >= int32_t(tx) ? uint16_t(tx + 0x11) : uint16_t(tx - 0x11);
+	const uint16_t sy = int32_t(int16_t(aim_y)) >= int32_t(ty) ? uint16_t(ty + 0x11) : uint16_t(ty - 0x11);
+	const uint16_t slot = fn_6111b9(b);
+	g.blocks.emplace_back(0x38);  // A cannon ball (battle/balls.cpp).
+	const size_t ball = g.blocks.size() - 1;
+	fn_602a90(ball, slot, aim_x, aim_y, sx, sy, damage, 1, b, 0xFFFF, 0x1C);
+	g.set_ptr(size_t(g.ptr(b, 0x668)), 4 * size_t(slot), int(ball));
+	battle_sound(b);  // 0x5FE75F: 0xEE5C
+}
+
+// 0x60117B (on a town battle; tower k, a ball's slot, both bytes): whether
+// the ball's way this sub-step (its speed >> 16, one more in its direction;
+// 16 times in an automatic battle) from its place crosses one of the
+// tower's diamond's four sides (its place ± 0x22 on each axis), each side
+// tested as two segments cross (32-bit products, as the game).
+bool Sailing::fn_60117b(size_t b, uint8_t k, uint8_t slot) const {
+	const BattleGraph& g = save_.battles;
+	const size_t ball = size_t(g.ptr(size_t(g.ptr(b, 0x668)), 4 * size_t(slot)));
+	const int32_t bx = g.get<int16_t>(ball, 0x6), by = g.get<int16_t>(ball, 0xA);
+	const int32_t vx = g.get<int32_t>(ball, 0xC), vy = g.get<int32_t>(ball, 0x10);
+	int32_t mx = g.get<int16_t>(ball, 0xE), my = g.get<int16_t>(ball, 0x12);
+	mx += vx > 0 ? 1 : vx < 0 ? -1 : 0;
+	my += vy > 0 ? 1 : vy < 0 ? -1 : 0;
+	if (g.get<uint8_t>(b, 0xAC8) != 0) {
+		mx = int32_t(uint32_t(mx) << 4);
+		my = int32_t(uint32_t(my) << 4);
+	}
+	const int32_t dx = int32_t(g.get<uint16_t>(b, 0x1E9E + 2 * size_t(k))) - bx;
+	const int32_t dy = int32_t(g.get<uint16_t>(b, 0x1EA6 + 2 * size_t(k))) - by;
+	int32_t x1 = dx - 0x22, y1 = dy;
+	for (int side = 0; side < 4; ++side) {
+		const int32_t x0 = x1, y0 = y1;
+		switch (side) {
+		case 0: x1 = dx; y1 = dy - 0x22; break;
+		case 1: x1 = dx + 0x22; y1 = dy; break;
+		case 2: x1 = dx; y1 = dy + 0x22; break;
+		default: x1 = dx - 0x22; y1 = dy; break;
+		}
+		int32_t n = sub32(mul(y0, mx), mul(x0, my));
+		int32_t d = sub32(mul(sub32(y0, y1), mx), mul(sub32(x0, x1), my));
+		if (d < 0) {
+			n = int32_t(0u - uint32_t(n));
+			d = int32_t(0u - uint32_t(d));
+		}
+		if (n > d || n < 0) {
+			continue;
+		}
+		n = sub32(mul(sub32(y1, y0), x0), mul(sub32(x1, x0), y0));
+		d = sub32(mul(sub32(y1, y0), mx), mul(sub32(x1, x0), my));
+		if (d < 0) {
+			n = int32_t(0u - uint32_t(n));
+			d = int32_t(0u - uint32_t(d));
+		}
+		if (n > d || n < 0) {
+			continue;
+		}
+		return true;
+	}
+	return false;
 }
 
 // 0x5FF8E0 (method +0x0 of a town battle; two items): item a, of a ship
 // (kind 0) not out (0x2), meets item b: the town's land (kind 7, the item of
 // the whole area) pushes it off (0x600770); a tower (8) nothing; else as in
-// the sea (0x608850). A tower (8) meeting a cannon ball (1) is hit by it:
-// cannon balls fly only with a human side (part 7), not rewritten.
+// the sea (0x608850). Item a a tower (8) meeting a cannon ball (1) whose way
+// crosses it (0x60117B): the shooter's team ([+0x24], when known) is one
+// more on its mode ([+0xACA]) and the shooter's other balls lose it; the
+// tower is hit (0x60130B with the ball's damage); the music (0xE) when
+// [+0xAD2] is 1; on the screen an animation (the interface's), a sound
+// (0xEEA2) and smoke, damage / 2800 puffs (at least 1, a byte), a rand()
+// each; then the ball goes (0x602DA0) and is freed.
 void Sailing::fn_5ff8e0(size_t b, uint16_t a, uint16_t other) {
 	BattleGraph& g = save_.battles;
 	const size_t kinds = size_t(g.ptr(b, 0x18)), places = size_t(g.ptr(b, 0x1C));
 	if (g.get<uint8_t>(kinds, a) != 0) {
-		return;  // A tower and a cannon ball (0x5FF95C): part 7.
+		if (g.get<uint8_t>(kinds, a) != 8 || g.get<uint8_t>(kinds, other) != 1) {
+			return;
+		}
+		const uint16_t tower = g.get<uint16_t>(places, 2 * size_t(a));
+		const uint16_t slot = g.get<uint16_t>(places, 2 * size_t(other));
+		if (!fn_60117b(b, uint8_t(tower), uint8_t(slot))) {
+			return;
+		}
+		const int list = g.ptr(b, 0x668);
+		const size_t ball = size_t(g.ptr(size_t(list), 4 * size_t(slot)));
+		const uint16_t shooter = g.get<uint16_t>(ball, 0x24);
+		if (shooter != 0xFFFF) {
+			const size_t mode = 0xACA + size_t(g.get<uint8_t>(b, 0x559 + size_t(g.get<uint8_t>(battle_entry(b, shooter), 0x13D))));
+			if (g.get<uint8_t>(b, mode) < 0x7F) {
+				g.set<uint8_t>(b, mode, uint8_t(g.get<uint8_t>(b, mode) + 1));
+			}
+			for (uint16_t k = 0; k < g.get<uint16_t>(b, 0xACC); ++k) {
+				const int other_ball = g.ptr(size_t(list), 4 * size_t(k));
+				if (other_ball >= 0 && g.get<uint16_t>(size_t(other_ball), 0x24) == shooter) {
+					g.set<uint16_t>(size_t(other_ball), 0x24, 0xFFFF);
+				}
+			}
+		}
+		const int32_t damage = g.get<int32_t>(ball, 0x14);
+		fn_60130b(b, uint8_t(tower), damage);
+		if (g.get<uint8_t>(b, 0xAD2) == 1) {
+			fn_611649(b, 0xE);
+		}
+		if (on_screen(b)) {
+			battle_sound(b);  // 0x5FFACC: 0xEEA2
+			uint8_t puffs = uint8_t(damage / 0xAF0);
+			if (puffs == 0) {
+				puffs = 1;
+			}
+			for (; puffs > 0; --puffs) {
+				tick::game_rand(save_);
+			}
+		}
+		ball_gone(ball);
+		return;
 	}
 	const uint16_t pa = g.get<uint16_t>(places, 2 * size_t(a));
 	if (g.get<uint8_t>(battle_entry(b, pa), 0x12A) & 0x2) {
@@ -495,9 +607,12 @@ void Sailing::fn_5ff8e0(size_t b, uint16_t a, uint16_t other) {
 // ships are out, or all side D's and no tower stands ([+0x15C] 0xFFFE the
 // first time); the items that meet (0x6197F0).
 //
-// Left out (part 7): the human side's window, its countdown [+0x2F18]
-// (0x6100D9), the town's human side all out, the cannon balls (0x603130) and
-// 0x608550 ([+0x12E0]).
+// With a human side (piece 7): the window's branches as the sea's (a waiting
+// window opens, the answer as operation 0x96, the count with the window's
+// close; over, a waiting end window opens), the countdown [+0x2F18]
+// (0x6100D9 at its end), the player's defending ships all out at the first
+// tower standing, each cannon ball's sub-step (0x603130) after the towers,
+// and the held move order sent again (0x608550) after each sub-step.
 void Sailing::fn_5fd510(size_t b, uint16_t steps) {
 	BattleGraph& g = save_.battles;
 	GlobalMemory& gl = save_.globals;
@@ -528,24 +643,69 @@ void Sailing::fn_5fd510(size_t b, uint16_t steps) {
 		set8(0x2F1A, 0);
 	}
 	const uint32_t player = gl.u32(kPlayer);
-	if (u8(0x5C) == 0 && u8(0x12E9) == 0) {
-		// The local player's side (the last one): while its count runs the
-		// window decides (part 7); its countdown [+0x2F18] (0x6100D9 at 0,
-		// part 7) is set only with a human side.
-		uint32_t side = 0xFF;
-		for (uint32_t i = 0; i < u8(0x558); ++i) {
-			if (u16(0x35A + 2 * i) == player) {
-				side = i;
-			}
+	// A waiting question or end opens when no window is open (0x5FD6A1,
+	// 0x5FD82B, 0x5FD9FA).
+	auto open_waiting = [&]() {
+		if (g.get<uint8_t>(0, 0x3FD) == 0) {
+			open_battle_window(b);
+			set8(0x12E9, 0);
+			g.set<uint8_t>(0, 0x3FD, 1);
+			set8(0x12EA, 1);
 		}
-		if (side != 0xFF && u16(0x15C + 2 * side) == 0 && u16(0x2F18) != 0) {
-			set16(0x2F18, u16(0x2F18) > steps ? uint16_t(u16(0x2F18) - steps) : 0);
+	};
+	if (u8(0x5C) == 0) {
+		if (u8(0x12E9) != 0) {
+			open_waiting();
+		} else {
+			// 0x5FD6CD: the local player's side (the last one). While its count
+			// runs ([+0x15C], above 0: unlike the sea, also 0xFFFE and 0xFFFF)
+			// and the window is closed (method +0xC8), its answer: operation
+			// 0x96 {0x96, the slot, the player, 0 if closed with its button
+			// (then [0x6E59CC] the slot) or 1}; no window open any more. With
+			// its count 0, the countdown [+0x2F18] (set when the player's
+			// defending ships are all out, below): at its end, 0x6100D9 (the
+			// battle back to the computer).
+			uint32_t side = 0xFF;
+			for (uint32_t i = 0; i < u8(0x558); ++i) {
+				if (u16(0x35A + 2 * i) == player) {
+					side = i;
+				}
+			}
+			if (side != 0xFF && u16(0x15C + 2 * side) > 0) {
+				if (!battle_window_open()) {
+					const bool steer = save_.battle_window.present && save_.battle_window.result == 10;
+					if (steer) {
+						g.set<uint8_t>(0, 0x3FC, uint8_t(u16(0x662)));
+					}
+					uint8_t op[0x14];
+					const uint32_t fields[5] = {0x96, u16(0x662), player, steer ? 0u : 1u, 0};
+					std::memcpy(op, fields, sizeof(op));
+					tick::enqueue_operation(save_, op, sizeof(op));  // 0x54AA70
+					g.set<uint8_t>(0, 0x3FD, 0);
+					set8(0x12EA, 0);
+				}
+			} else if (side != 0xFF && u16(0x2F18) != 0) {
+				if (u16(0x2F18) <= steps) {
+					set16(0x2F18, 0);
+					fn_6100d9(b);
+				} else {
+					set16(0x2F18, uint16_t(u16(0x2F18) - steps));
+				}
+			}
 		}
 	}
 	if (steps == 0) {
 		return;
 	}
+	// 0x5FD7E2: the battle's window was closed: no window open.
+	if (u8(0x12EA) != 0 && !battle_window_open()) {
+		g.set<uint8_t>(0, 0x3FD, 0);
+		set8(0x12EA, 0);
+	}
 	if (u8(0x5C) != 0) {
+		if (u8(0x12E9) != 0) {
+			open_waiting();
+		}
 		const uint16_t left = u16(0x15C);
 		if (left <= steps) {
 			set16(0x15C, 0);
@@ -554,18 +714,34 @@ void Sailing::fn_5fd510(size_t b, uint16_t steps) {
 		}
 		set16(0x15C, uint16_t(left - steps));
 	} else {
+		// A waiting window opens (0x5FD814) and the count is skipped; else a
+		// side counting down: the player's human sides count at most 5 steps,
+		// and at the end (0xFFFE) an open window closes (method +0x118, result
+		// 0); the battle doesn't step.
 		bool counting = false;
-		for (uint32_t i = 0; i < u8(0x558); ++i) {
-			if (u16(0x15C + 2 * i) > 0) {
-				counting = true;
+		if (u8(0x12E9) != 0) {
+			open_waiting();
+		} else {
+			for (uint32_t i = 0; i < u8(0x558); ++i) {
+				if (u16(0x15C + 2 * i) > 0) {
+					counting = true;
+				}
 			}
 		}
-		if (u8(0x12E9) == 0 && counting) {
+		if (counting) {
 			const uint16_t most = steps > 5 ? 5 : steps;
 			for (uint32_t i = 0; i < u8(0x558); ++i) {
 				const uint16_t left = u16(0x15C + 2 * i);
-				if (u16(0x35A + 2 * i) == player && u8(0x5D + i) == 0 && left > 0) {
-					set16(0x15C + 2 * i, left <= most ? 0xFFFE : uint16_t(left - most));
+				if (u16(0x35A + 2 * i) != player || u8(0x5D + i) != 0 || left == 0) {
+					continue;
+				}
+				if (left <= most) {
+					set16(0x15C + 2 * i, 0xFFFE);
+					if (battle_window_open()) {
+						close_battle_window(0);
+					}
+				} else {
+					set16(0x15C + 2 * i, uint16_t(left - most));
 				}
 			}
 			return;
@@ -690,19 +866,47 @@ void Sailing::fn_5fd510(size_t b, uint16_t steps) {
 			if (g.get<uint32_t>(b, 0x1EC4 + 4 * size_t(k)) == 0) {
 				continue;
 			}
-			// With side D's ships all out and side D the local player's human
-			// side, its countdown, text and window (part 7).
+			// 0x5FDE05: at the first tower standing, with side D's ships all out,
+			// no countdown [+0x2F18] yet and side D the local player's human
+			// side: the countdown 0xFA (unless he is side A too) before the
+			// battle goes back to the computer (0x6100D9, above), and once, if
+			// the end's kind is still 0 with a side D ship ([+0xAC6]), the kind
+			// 1 and the end window «You fled with your outrigger and left the
+			// town to its fate.» (0x6A1DA4; or it waits).
+			if (d_out && u16(0x2F18) == 0 && u8(0x5E) == 0 && u16(0x35C) == player) {
+				if (u16(0x35C) != u16(0x35A)) {
+					set16(0x2F18, 0xFA);
+				}
+				if (u8(0xAC4) == 0 && g.get<uint8_t>(battle_entry(b, u16(0xAC6)), 0x13D) == 1) {
+					set8(0xAC4, 1);
+					write_battle_text(b, texts_ ? texts_->raw(GameText::TownEndOutriggerFled) : std::string());
+					battle_window_description(b, false);
+					show_battle_window(b);
+				}
+			}
 			d_out = false;
 			fn_5fe080(b, k);
 		}
-		// The cannon balls [+0x668] (0x603130): only with a human side (part 7).
+		// 0x5FDF55: each cannon ball's sub-step (0x603130, battle/balls.cpp).
+		for (uint16_t k = 0; k < u16(0xACC); ++k) {
+			const int ball = g.ptr(size_t(g.ptr(b, 0x668)), 4 * size_t(k));
+			if (ball >= 0) {
+				fn_603130(size_t(ball));
+			}
+		}
 		const bool over = a_out || d_out;
 		if (u8(0x5C) == 0 && over) {
 			set16(0x15C, 0xFFFE);
 		}
 		set8(0x5C, over ? 1 : 0);
 		fn_6197f0(b);
-		// 0x608550 with [+0x12E0] and [+0xAD0] (not run in the saves; as the sea battles).
+		// 0x5FDFBB: a move order held ([+0x12E0]) with a selection (its count
+		// [+0xAD0]; the sea's tests the pointer) is sent again: 0x608550 with
+		// the point [+0x12D8], ([+0x12DC] · 34 + 11) / 22.
+		if (u8(0x12E0) != 0 && u16(0xAD0) != 0) {
+			const int32_t y = int32_t(uint32_t(g.get<int32_t>(b, 0x12DC)) * 34u + 11u) / 22;
+			fn_608550(b, g.get<uint32_t>(b, 0x12D8), uint32_t(y), true);
+		}
 	}
 }
 

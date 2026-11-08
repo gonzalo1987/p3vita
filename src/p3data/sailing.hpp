@@ -295,6 +295,7 @@ public:
 	void fn_610c09(size_t battle);
 	void fn_610fd9(size_t battle, bool on);
 	void fn_608360(size_t battle, uint16_t target);
+	void fn_6016cb(size_t battle, int32_t cell_x, int32_t cell_y);  // (town battle) 0x93 at a tower (its cell).
 	void fn_608550(size_t battle, uint32_t x, uint32_t y, bool send);
 	void queue_fire(size_t battle);
 	void queue_abandon(size_t battle);
@@ -445,6 +446,8 @@ public:
 	void open_battle_window(size_t battle);
 	void battle_window_description(size_t battle, bool question);
 	void write_battle_text(size_t battle, const std::string& text);  // [+0x1310], as the game's sprintf.
+	void show_battle_window(size_t battle);  // With a window open it waits ([+0x12E9]), else it opens.
+	bool fn_60117b(size_t battle, uint8_t tower, uint8_t slot) const;  // (town battle) A ball's way crosses a tower.
 	// battle/battle_end.cpp: the end of a sea battle.
 	void fn_60d299(size_t battle, bool sailors);  // (sea battle, method +0x1C) The end.
 	// 0x60DDA7..0x60E8C3: the end's message to the local player's human side (nothing: the old text stays).

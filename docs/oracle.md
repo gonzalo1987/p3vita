@@ -2171,6 +2171,49 @@ all this, every scenario of piece 6 (as listed in «The battles' piece 6, part 5
 (wb.sh) as before; the world 7 days in the 12 saves, 0 «distintas»; write-check (save 7 its 12 known bytes) and
 write-reload, 0; ctest and the Vita build. Scripts in re/emu/sesion21/ (README).
 
+**The town battle's human side** (2026-11-08): with that, part 2 (the engine) is whole.
+- The question at the setup (0x5FD0E7..0x5FD481, battle/town_battle.cpp): with no battle on the screen and no
+  window open, [+0x1E90], [+0x1E91] (0xFF at a town the player attacks; the captain of convoy [+0x65E]'s guide when
+  he is attacked, unchecked by the game), the text, the description (as the sea's) and the window; else the busy
+  path as before. 0x600660 (method +0x18) puts the battle on the screen after the formation when the player's first
+  side is human.
+- The step (0x5FD510, battle/town_step.cpp): a waiting window opens (0x5FD6A1, 0x5FD82B, over 0x5FD9FA); the answer
+  (0x5FD6CD: unlike the sea, with the side's count above 0, also 0xFFFE and 0xFFFF); with the count at 0 the
+  countdown [+0x2F18] and at its end 0x6100D9 (0x5FD7C4); the count with the window's close (0x5FD992); at the first
+  tower standing with the player's defending ships all out, the countdown 0xFA and once the end window «You fled
+  with your outrigger...» (0x5FDE05..0x5FDF2E); each ball's sub-step (0x603130) after the towers; the held move
+  order sent again (0x5FDFBB; the selection's count [+0xAD0], not its pointer as the sea's).
+- The end window (0x5FF575..0x5FF809, battle/town_end.cpp): written only with SaveGame::battle_window present
+  (without it the oracle still skips it, TOWN_END_WINDOW, and the text goes to the viewer's messages).
+- The balls: a tower's (0x5FE6E0: from its place moved 0x11 toward the aim, no shooter, word 0x1C; its sound
+  0xEE5C); the town ship's broadsides (0x62542E..0x625899, as the sea's 0x61E628: the aim's offsets kept for the
+  ships and the towers; the order's search includes the towers, stored as k); a ball crossing a tower (0x60117B, the
+  diamond ± 0x22) in 0x5FF8E0: the shooter's team's mode, 0x60130B with its damage, the music, on the screen the
+  sound 0xEEA2 and damage / 2800 puffs with a rand() each; the sounds of a tower falling (0x601546) and of a ship
+  on the land (0x6010D2).
+- The tower target (0x6016CB, battle/orders.cpp): the cell the viewer gives (the oracle skips the town view's
+  0x590960), less the map's ends at a town; operation 0x93 with 0xFFFE − k for every selected ship.
+- The save (battle/battle_save.cpp, savegame_write.cpp): the town battle's writer sets [+0x5E] 1 in the battle when
+  its countdown runs (0x5FBEA6), before its record.
+
+The oracle: with the stand-in window TOWN_WINDOW_JUMPS (0x5FD0E7) and TOWN_END_WINDOW are off; HUMAN_UI_JUMPS has
+0x600660's views (0x6006E9 → 0x600755), HUMAN_UI_SKIPS the town view's animations (0x5FFABC, 0x5FFBD1, 0x601536) and
+0x590960 (0x60171E). tick_probe has a probe of 0x6016CB.
+
+| Scenario | What it runs | Saves | Result |
+|-|-|-|-|
+| `town_battle_window` | town battles set up directly with the player on a side, their steps one step at a time with every gun and tower loading: the question and its count to the end, closed without and with its button (the battle on the screen), a third battle meanwhile (busy), 0x5FE7E0 with each kind and result and with another window open, the waiting end window; his defence against an AI ship without its captain and a pirate's guide, his ships all fled (the countdown, the end window), the countdown at 1 (0x6100D9); retouched waiting windows; an undefended town (over at its setup) | 3, 5, 7 | 0x5FBFE0 6, 0x5FD510 15, 0x5FE7E0 9, 0x6100D9 1, 0x535760 8: all equal; 22 of 22 targets |
+| `town_battle_balls` | he attacks the first town with towers and directs it; his ship (with guns) 300 east of the first tower; 16 steps of 84 with his order to fire, his target the tower (0x93), the order again 600 east, 600 west and 300 west; the battle given back; his defence against a pirate's guide, four steps | 3, 5, 7 | e.g. save 3: 0x5FF8E0 32 347, 0x5FE080 2352, 0x624950 1576, 0x603130 1384, 0x60130B 7: all equal; 7 of 7 |
+| `town_battle_balls_sound` | the same with the sound on and the first tower weak (it falls) | 3, 5, 7 | all equal; 5 of 5 |
+| `town_battle_orders` | he directs a town battle; the selection his ships (and an enemy where there is one); 0x6016CB at the first tower's cell, a cell with no tower, no selection; 0x608550 held and a step (re-sent), let go; the sails | 3, 5, 7 | all equal; 4 of 4 |
+| `town_battle_save` (wb.sh and re/emu/sesion21/wfirst.sh, 0 days) | his defence with his ships all fled and the countdown running (82 at the save) | 3, 5, 7 | the same bytes, the reload 0 differences; the first write's battles section equal (wfirst.sh; its header and events' size differ: the recording has no such parts) |
+
+Broken on purpose and caught: [+0x2F18] 0xF9 (2 steps), the puffs one more (2 calls of 0x5FF8E0 and 2 steps), the
+tower target 0xFFFD − k, the save without 0x5FBEA6's write (caught only by wfirst.sh: wb.sh compares the game's
+second write, from a file that already has it). With the final code, everything listed above for piece 7 and the
+regressions again, all as before; the world 7 days in the 12 saves, 0 «distintas»; write-check, write-reload, ctest
+and the Vita build.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

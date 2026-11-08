@@ -371,6 +371,64 @@ void Sailing::fn_608360(size_t b, uint16_t target) {
 	});
 }
 
+// 0x6016CB (on a town battle; a cell of the town view): a touch on a tower.
+// The game first moves the touched cell to the base cell of what stands there
+// on the town shown (0x590960 on the town view: the viewer's; p3vita takes
+// that cell), less the town map's ends ([+0x1ED8], [+0x1EDC]) at a town (not
+// a nest); the tower k at that cell ([+0x1EAE + k], [+0x1EB2 + k]), or
+// nothing; with a selection ([+0xAD0]), operation 0x93 {0x93, slot, group,
+// u16 0xFFFE − k, high, low} per group of 64 places with a mark, while the
+// queue has room. Unlike the sea's builders every selected ship is marked,
+// of whatever owner and state. (The game leaks its masks' block when no
+// tower is there, and writes past it for a place beyond the battle's
+// groups: here such a place is left out.)
+void Sailing::fn_6016cb(size_t b, int32_t cell_x, int32_t cell_y) {
+	const BattleGraph& g = save_.battles;
+	const size_t groups = size_t(uint8_t((g.get<uint16_t>(b, 0x14) + 0x3F) >> 6));
+	if (g.get<uint16_t>(b, 0xAD0) == 0) {
+		return;
+	}
+	if (g.get<uint8_t>(b, 0x1E98) < save_.globals.u32(0x6DE4B0)) {
+		cell_x -= g.get<int32_t>(b, 0x1ED8);
+		cell_y -= g.get<int32_t>(b, 0x1EDC);
+	}
+	uint8_t k = 0;
+	while (k < 4 && !(uint32_t(g.get<uint8_t>(b, 0x1EAE + k)) == uint32_t(cell_x) &&
+					   uint32_t(g.get<uint8_t>(b, 0x1EB2 + k)) == uint32_t(cell_y))) {
+		++k;
+	}
+	if (k == 4) {
+		return;
+	}
+	std::vector<uint32_t> masks(2 * groups, 0);
+	const int selection = g.ptr(b, 0x66C);
+	for (uint16_t i = 0; selection >= 0 && i < g.get<uint16_t>(b, 0xAD0); ++i) {
+		const int e = g.ptr(size_t(selection), 4 * size_t(i));
+		if (e < 0) {
+			continue;
+		}
+		const uint16_t place = g.get<uint16_t>(size_t(e), 0x138);
+		if (size_t(uint8_t(place >> 5)) < masks.size()) {
+			masks[uint8_t(place >> 5)] |= 1u << (place & 0x1F);
+		}
+	}
+	const uint16_t target = uint16_t(0xFFFE - k);
+	for (size_t group = 0; group < groups; ++group) {
+		const uint32_t low = masks[2 * group], high = masks[2 * group + 1];
+		if ((low == 0 && high == 0) || !order_room()) {
+			continue;
+		}
+		uint8_t op[0x14] = {};
+		op[0] = 0x93;
+		op[4] = uint8_t(g.get<uint16_t>(b, 0x662));
+		op[5] = uint8_t(group);
+		std::memcpy(op + 6, &target, 2);
+		std::memcpy(op + 8, &high, 4);
+		std::memcpy(op + 0xC, &low, 4);
+		tick::enqueue_operation(save_, op, sizeof(op));  // 0x54AA70
+	}
+}
+
 // 0x608550 (on a battle; x, y, send): for each selected ship of the player
 // (index i of the selection) its line to draw ([+0xAE0 + 8·i] its x,
 // [+0xAE4 + 8·i] its y · 22 / 34), the point ([+0x12D8] x, [+0x12DC] y · 22

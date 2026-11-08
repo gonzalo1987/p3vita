@@ -694,6 +694,7 @@ std::vector<uint8_t> write_savegame(SaveGame& save) {
 	// 0x611950: the battles, as they were read (fixed: the padding of the
 	// table at their end at 0, battle_padding).
 	if (save.opaque.battles.empty()) {
+		battles_before_write(save.battles);  // The game changes a battle in memory as it writes it (0x5FBEA6).
 		w.bytes(battle_bytes(save.battles));  // Loaded into SaveGame::battles (battle/battle_save.cpp).
 	} else if (fix_game_bugs()) {
 		std::vector<uint8_t> battles = save.opaque.battles;

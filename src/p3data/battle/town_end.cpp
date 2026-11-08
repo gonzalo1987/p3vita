@@ -283,13 +283,16 @@ void Sailing::fn_5fe7e0(size_t b, bool lost) {
 	// The letters 0x29 (0x5FF4C5..0x5FF570) to each side of the computer that is
 	// a merchant; a human side gets the battle's window instead (0x5FF575..
 	// 0x5FF809: only the first two sides, of the local player, not the losing
-	// side when both have one owner, not when [+0xAC4] is 2): its text goes to
-	// the viewer (town_end_message), the window and its writes ([+0x1310],
-	// [+0x12EC], [+0x12E9], [+0x12EA], [0x6E59CD]) are part 7. GAME BUG: the
-	// defenders winning a battle that had no attacker leave the loop (0x5FF68A
-	// → 0x5FF829): the sides after them get no letter (roadmap, «Corregir los
-	// fallos del juego»; unreachable). For the viewer, a side of the player that the
-	// computer fought (operation 0x96) also gets the text the window would have.
+	// side when both have one owner, not when [+0xAC4] is 2): its text
+	// (town_end_message; above 3 the old text stays) into [+0x1310], the
+	// window's description (no button) and the window, or it waits. Without
+	// the window (the checks; the viewer until part 3) nothing of it is written
+	// (the oracle skips it too, TOWN_END_WINDOW) and the text goes to the
+	// viewer's messages. GAME BUG: the defenders winning a battle that had no
+	// attacker leave the loop (0x5FF68A → 0x5FF829): the sides after them get
+	// no letter (roadmap, «Corregir los fallos del juego»; unreachable). For
+	// the viewer, a side of the player that the computer fought (operation
+	// 0x96) also gets the text the window would have.
 	const uint32_t player = gl.u32(0x6DFC14);
 	auto window_side = [&](uint32_t k) {
 		return k < 2 && (u16(0x35A) != u16(0x35C) || u8(0x559 + size_t(k)) == (lost ? 1 : 0)) &&
@@ -306,6 +309,14 @@ void Sailing::fn_5fe7e0(size_t b, bool lost) {
 			}
 			if (lost && u8(0x559 + size_t(k)) == 1 && u8(0xAC4) == 3) {
 				break;
+			}
+			if (save_.battle_window.present) {
+				if (u8(0xAC4) <= 3) {
+					write_battle_text(b, texts_ ? town_end_message(b, k, lost, loot) : std::string());
+				}
+				battle_window_description(b, false);
+				show_battle_window(b);
+				continue;
 			}
 			if (texts_) {
 				const std::string message = town_end_message(b, k, lost, loot);

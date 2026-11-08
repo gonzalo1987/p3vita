@@ -168,6 +168,7 @@ inline uint32_t battle_rand(BattleGraph& g, size_t b) {
 // 0x611950: the battles' section of the save from the graph
 // (battle/battle_save.cpp).
 std::vector<uint8_t> battle_bytes(const BattleGraph& g);
+void battles_before_write(BattleGraph& g);  // 0x5FBEA6: a town battle's [+0x5E] 1 with [+0x2F18] running.
 
 // 0x611309 (on the sea battle of block b): ships join it (operation 0x9F):
 // its music level [+0x1E94] goes down (battle/battle_end.cpp).

@@ -278,8 +278,9 @@ SEA_MAP_ICON = {0x605910: 0x605939, 0x606E37: 0x606E60}
 # whose vtable stops the emulator but for its methods +0xC8 (whether open: [+0x48], as the game's 0x4B2200) and
 # +0x118 (closed with the result 0, as 0x41E670), with its result at [+0x5A4]; 0x41D9B0 opens it (an open one closed
 # first; the description copied to [+0x5B8]) and the scenario closes it (close_battle_window: 10, [0x66BDC0], its
-# button; 0 otherwise). Then the sea battles' BATTLE_WINDOW_JUMPS are off and the interface of the human side's path
-# is jumped over (HUMAN_UI_JUMPS: 0x608230's town view, sea map and clouds; [0x6E59CC] is kept). The sound (0x443690
+# button; 0 otherwise). Then the battles' BATTLE_WINDOW_JUMPS (the sea's and the town battle's question) and
+# TOWN_END_WINDOW are off and the interface of the human side's path is jumped over (HUMAN_UI_JUMPS: 0x608230's and
+# 0x600660's town view, sea map and clouds; [0x6E59CC] is kept). The sound (0x443690
 # on *0x6CBDB8, which the emulator doesn't have: the variants of a sound, played only with the battle on the screen)
 # answers SOUND_VARIANTS (0: the sound off, no rand(); a scenario may switch it on). Region WN: u8 open, u32 result,
 # u32 the sounds' variants (SaveGame::battle_window).
@@ -293,7 +294,9 @@ BATTLE_WINDOW_SIZE = 0x2000
 OPEN_WINDOW = 0x41D9B0  # thiscall on the window (a description of 0x20 bytes); ret 4, al
 WINDOW_BUTTON = 10  # [0x66BDC0]: the result of its first button
 SEA_WINDOW_JUMPS = (0x60659B, 0x606E7E, 0x606FEA, 0x60CA4E)
+TOWN_WINDOW_JUMPS = (0x5FD0E7,)  # a town battle's question (piece 7: off with the stand-in, as TOWN_END_WINDOW)
 HUMAN_UI_JUMPS = {0x608296: 0x608307,  # 0x608230: the views; [0x6E59CC] kept
+                  0x6006E9: 0x600755,  # 0x600660 (a town battle): the town shown, the sea map, clouds; [0x6E59CC] kept
                   0x611EEA: 0x611F9B,  # 0x611E50 (after a load): the views of the battle put on the screen
                   0x602D0C: 0x602D7A,  # a ball's constructor on the screen: its sprite
                   0x6031BF: 0x6032F8}  # a ball landing on the screen: the town view's cell under it (the water's sound)
@@ -302,7 +305,11 @@ HUMAN_UI_SKIPS = {0x61030D: (0x610371, 8),  # 0x6102A9 (the player takes a battl
                   # the animations of the town view (0x590610, 7 arguments) of a ball landing, hitting a ship
                   # (flames, a splash) and of its smoke (the rand() of each puff runs)
                   0x603357: (0x60335C, 0x1C), 0x603689: (0x60368E, 0x1C), 0x60372A: (0x60372F, 0x1C),
-                  0x603835: (0x60383A, 0x1C)}
+                  0x603835: (0x60383A, 0x1C),
+                  # a town battle's: a ball hitting a tower and its smoke (0x5FF8E0), a tower falling (0x60130B)
+                  0x5FFABC: (0x5FFAC1, 0x1C), 0x5FFBD1: (0x5FFBD6, 0x1C), 0x601536: (0x60153B, 0x1C),
+                  # 0x6016CB (a touch on a tower): the town view's 0x590960 (the touched cell to its building's)
+                  0x60171E: (0x601723, 0xC)}
 SOUND_LOOKUP = 0x443690  # thiscall on the sound (*0x6CBDB8), the sound's id; ret 4: its variants
 SOUND_VARIANTS = 0
 TOWN_END_TEXT = 0x1310
@@ -724,11 +731,12 @@ class TownOracle(SaveOracle):
                     self.window_jump_hooks = []
                     for address, target in jumps.items():
                         h = self.uc.hook_add(UC_HOOK_CODE, self._jump, begin=address, end=address, user_data=target)
-                        if address in SEA_WINDOW_JUMPS:
+                        if address in SEA_WINDOW_JUMPS or address in TOWN_WINDOW_JUMPS:
                             self.window_jump_hooks.append(h)
                     save_at, text_at, _ = TOWN_END_WINDOW
-                    self.uc.hook_add(UC_HOOK_CODE, self._town_end_window, begin=save_at, end=save_at)
-                    self.uc.hook_add(UC_HOOK_CODE, self._town_end_window, begin=text_at, end=text_at)
+                    for at in (save_at, text_at):
+                        self.window_jump_hooks.append(
+                            self.uc.hook_add(UC_HOOK_CODE, self._town_end_window, begin=at, end=at))
                     self.sea_map_icons = []
                     for address, target in SEA_MAP_ICON.items():
                         self.uc.hook_add(UC_HOOK_CODE, self._sea_map_icon, begin=address, end=address, user_data=target)

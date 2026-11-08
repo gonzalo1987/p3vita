@@ -488,10 +488,13 @@ void Sailing::fn_600060(size_t b) {
 }
 
 // 0x600660 (method +0x18 of a town battle; arg): a battle over ([+0x5C]) ends
-// (method +0x1C, 0x5FE7E0, with 1); else [+0x2F18] 0 and, with
-// arg, the formation (method +0x2C, 0x600060). (The local player's human
-// side then shows the town (the view and the sea map, 0x6107B9 and
-// [0x6E59CC]): the interface, part 7.)
+// (method +0x1C, 0x5FE7E0, with 1); else [+0x2F18] 0 and, with arg, the
+// formation (method +0x2C, 0x600060) and, if the local player's first side
+// is human ([+0x5D]), the battle goes on the screen ([0x6E59CC], the
+// battles' [+0x3FC], its slot). Before that the game shows the town
+// (0x58A310, the town view shown, the sea map hidden, a window of 0x6DA5F0
+// closed, the clouds 0x6107B9): the viewer's; the oracle jumps over it
+// (HUMAN_UI_JUMPS).
 void Sailing::fn_600660(size_t b, bool arg) {
 	BattleGraph& g = save_.battles;
 	if (g.get<uint8_t>(b, 0x5C) != 0) {
@@ -499,8 +502,19 @@ void Sailing::fn_600660(size_t b, bool arg) {
 		return;
 	}
 	g.set<uint16_t>(b, 0x2F18, 0);
-	if (arg) {
-		fn_600060(b);
+	if (!arg) {
+		return;
+	}
+	fn_600060(b);
+	const uint32_t player = save_.globals.u32(0x6DFC14);
+	for (size_t k = 0; k < g.get<uint8_t>(b, 0x558); ++k) {
+		if (g.get<uint16_t>(b, 0x35A + 2 * k) != player) {
+			continue;
+		}
+		if (g.get<uint8_t>(b, 0x5D + k) == 0) {
+			g.set<uint8_t>(0, 0x3FC, uint8_t(g.get<uint16_t>(b, 0x662)));
+		}
+		return;
 	}
 }
 
@@ -1186,15 +1200,51 @@ void Sailing::fn_5fbfe0(size_t b, uint16_t ship, uint8_t town) {
 		fn_600660(b, true);
 		return;
 	}
-	// A human side of the local player: the battle's texts and window
-	// (0x41D9B0, part 7), or with another battle on screen or its window open
-	// the operation 0x96 {0x96, [+0x662], the player, 1} and the player's
-	// sides' steps 0xFFFF. As the sea battles until part 7 (and the oracle,
-	// TOWN_BATTLE_WINDOW_JUMPS), the second: the computer fights it. For the
-	// viewer, the window's text goes to the player's messages
-	// (town_attack_message, without the question).
+	// The local player on side A or D (0x5FD0C3; whichever side is human):
+	// with no battle on the screen ([0x6E59CC], the battles' [+0x3FC], 0xFF)
+	// and no window open ([0x6E59CD], [+0x3FD]), the battle's question
+	// (0x5FD102..0x5FD481): [+0x1E90], [+0x1E91] (0xFF at a town when the
+	// player attacks, a nest keeps its captain's; when attacked, the captain
+	// of convoy [+0x65E]'s guide, or 0xFF: the game checks neither the convoy
+	// nor the guide), the text (town_attack_message) into [+0x1310], the
+	// window's description (as the sea's question: «Steer manually») and the
+	// window (or it waits). The side's count [+0x15C] stays 0xFA: the step
+	// counts it down and takes the answer. Otherwise (0x5FD483) the operation
+	// 0x96 {0x96, [+0x662], the player, 1} and the player's sides' counts
+	// 0xFFFF: the computer fights it. Without the window (the checks; the
+	// viewer until part 3) always the second, as the oracle
+	// (BATTLE_WINDOW_JUMPS); for the viewer the window's text then goes to
+	// the player's messages.
 	const uint32_t player = gl.u32(0x6DFC14);
 	if (player != u16(0x35A) && player != u16(0x35C)) {
+		return;
+	}
+	if (save_.battle_window.present && g.get<uint8_t>(0, 0x3FC) == 0xFF && g.get<uint8_t>(0, 0x3FD) == 0) {
+		if (player == u16(0x35A)) {
+			if (u8(0x1E98) < gl.u32(0x6DE4B0)) {
+				set8(0x1E90, 0xFF);
+				set8(0x1E91, 0xFF);
+			}
+		} else {
+			uint16_t captain = 0xFFFF;
+			const uint16_t c = u16(0x65E);
+			if (c < save_.convoy_count()) {
+				const uint16_t guide = save_.convoys[c].u16(0x10);
+				if (guide < gl.u16(global::kShipCount)) {
+					captain = save_.ships[guide].memory.u16(0x42);
+				}
+			}
+			if (captain < save_.captain_count() && captain < save_.captains.size()) {
+				set8(0x1E90, save_.captains[captain].u8(0x2));
+				set8(0x1E91, save_.captains[captain].u8(0x3));
+			} else {
+				set8(0x1E90, 0xFF);
+				set8(0x1E91, 0xFF);
+			}
+		}
+		write_battle_text(b, texts_ ? town_attack_message(b, ship, town) : std::string());
+		battle_window_description(b, true);
+		show_battle_window(b);
 		return;
 	}
 	if (texts_) {

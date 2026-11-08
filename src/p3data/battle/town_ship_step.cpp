@@ -277,10 +277,8 @@ void Sailing::fn_6247b0(size_t e) {
 // tower); and an automatic battle's broadside raises the team's mode first
 // (0xFF if the target ship fled), hits a ship (0x61F96F) or a tower
 // (0x60130B) with the damage (0x620F0B), raises the music by 0xE
-// (0x611649) when the team is [+0xAD2] − 1, and loads (0x96).
-//
-// Not rewritten: with a human side the guns fire cannon balls (0x61E8EF,
-// part 7).
+// (0x611649) when the team is [+0xAD2] − 1, and loads (0x96). With a human
+// side the guns fire cannon balls (0x61E8EF; below, as the sea's).
 void Sailing::fn_624950(size_t e, bool flag) {
 	BattleGraph& g = save_.battles;
 	const ShipMemory& s = scene_ship(e);
@@ -313,6 +311,7 @@ void Sailing::fn_624950(size_t e, bool flag) {
 	};
 	int32_t starboard = 0x7FFFFFFF, port = 0x7FFFFFFF;
 	uint16_t starboard_target = 0xFFFF, port_target = 0xFFFF;
+	int32_t starboard_x = 0, starboard_y = 0, port_x = 0, port_y = 0;  // Where each target is or will be.
 	for (uint16_t k = g.get<uint16_t>(b, team == 0 ? 0x10 : 0x65C); k != 0xFFFF;
 		 k = g.get<uint16_t>(next, 2 * size_t(k))) {
 		if (k == g.get<uint16_t>(e, 0x138)) {
@@ -359,10 +358,14 @@ void Sailing::fn_624950(size_t e, bool flag) {
 			if (d2 < starboard && d2 <= 0x38400) {
 				starboard = d2;
 				starboard_target = k;
+				starboard_x = px;
+				starboard_y = py;
 			}
 		} else if (rel + spread > 0xB7 && rel - spread < 0xC9 && d2 < port && d2 <= 0x38400) {
 			port = d2;
 			port_target = k;
+			port_x = px;
+			port_y = py;
 		}
 	}
 	if (team == 0) {
@@ -381,17 +384,89 @@ void Sailing::fn_624950(size_t e, bool flag) {
 				if (d2 < starboard && d2 <= 0x38400) {
 					starboard = d2;
 					starboard_target = uint16_t(0xFFFE - k);
+					starboard_x = dx;
+					starboard_y = dy;
 				}
 			} else if (rel > 0xB7 && rel < 0xC9) {
 				if (d2 < port && d2 <= 0x38400) {
 					port = d2;
 					port_target = uint16_t(0xFFFE - k);
+					port_x = dx;
+					port_y = dy;
 				}
 			}
 		}
 	}
 	if (!automatic) {
-		return;  // Not rewritten: cannon balls (0x61E8EF), part 7.
+		// 0x62542E..0x625899, as the sea's 0x61E628: each side with a target and
+		// loaded fires a broadside of cannon balls (0x61E8EF, battle/balls.cpp)
+		// at where it is or will be; with the order to fire (`flag`) and no
+		// target on either side, at the closest enemy (not out) on each side by
+		// its heading and, for the attackers, the closest tower standing (its
+		// index k, not 0xFFFE − k, kept as the target: only its place is used),
+		// only the closer side when both are loaded.
+		auto broadside = [&](uint8_t side, int32_t x, int32_t y) {
+			fn_61e8ef(e, side, uint16_t(g.get<uint16_t>(e, 0xA) + uint16_t(x)), uint16_t(g.get<uint16_t>(e, 0xE) + uint16_t(y)));
+		};
+		if (port_target != 0xFFFF && g.get<uint8_t>(e, 0x130) == 0) {
+			broadside(0, port_x, port_y);
+		}
+		if (starboard_target != 0xFFFF && g.get<uint8_t>(e, 0x131) == 0) {
+			broadside(1, starboard_x, starboard_y);
+		}
+		if (!flag || port_target != 0xFFFF || starboard_target != 0xFFFF) {
+			return;
+		}
+		auto closest = [&](uint16_t k, int32_t dx, int32_t dy) {
+			const int32_t d2 = add32(mul(dy, dy), mul(dx, dx));
+			const uint8_t rel = uint8_t(fn_6029b0(int16_t(dx), int16_t(dy)) - heading);
+			if (rel < 0x80) {
+				if (d2 < starboard) {
+					starboard = d2;
+					starboard_target = k;
+					starboard_x = dx;
+					starboard_y = dy;
+				}
+			} else if (d2 < port) {
+				port = d2;
+				port_target = k;
+				port_x = dx;
+				port_y = dy;
+			}
+		};
+		for (uint16_t k = g.get<uint16_t>(b, team == 0 ? 0x65C : 0x10); k != 0xFFFF;
+			 k = g.get<uint16_t>(next, 2 * size_t(k))) {
+			const size_t f = battle_entry(b, k);
+			if (g.get<uint8_t>(f, 0x12A) & 0x6) {
+				continue;
+			}
+			closest(k, g.get<int16_t>(f, 0xA) - ex, g.get<int16_t>(f, 0xE) - ey);
+		}
+		if (team == 0) {
+			for (uint16_t k = 0; k < 4; ++k) {
+				if (g.get<int32_t>(b, 0x1EC4 + 4 * size_t(k)) <= 0) {
+					continue;
+				}
+				closest(k, int32_t(g.get<uint16_t>(b, 0x1E9E + 2 * size_t(k))) - ex,
+					int32_t(g.get<uint16_t>(b, 0x1EA6 + 2 * size_t(k))) - ey);
+			}
+		}
+		if (g.get<uint8_t>(e, 0x130) != 0) {
+			port_target = 0xFFFF;
+		}
+		if (g.get<uint8_t>(e, 0x131) != 0) {
+			starboard_target = 0xFFFF;
+		}
+		if (port_target != 0xFFFF) {
+			if (starboard_target == 0xFFFF || port < starboard) {
+				broadside(0, port_x, port_y);
+				return;
+			}
+		}
+		if (starboard_target != 0xFFFF) {
+			broadside(1, starboard_x, starboard_y);
+		}
+		return;
 	}
 	auto fire = [&](uint16_t target, int32_t d2, uint8_t side, size_t loading) {
 		if (target == 0xFFFF || g.get<uint8_t>(e, loading) != 0) {

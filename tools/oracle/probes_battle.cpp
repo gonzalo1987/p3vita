@@ -608,6 +608,16 @@ void register_probes_battle(ProbeRegistry& r) {
 		probe_sailing()->fn_608360(size_t(b), uint16_t(c.args[0]));
 		return std::nullopt;
 	};
+	// 0x6016CB: thiscall on a town battle (the touched cell x, y; the oracle skips the town view's 0x590960, so they
+	// are the cell p3vita takes).
+	r[0x6016CB] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int b = battle_block(c.ecx);
+		if (!probe_sailing() || b < 0) {
+			return kBad;
+		}
+		probe_sailing()->fn_6016cb(size_t(b), int32_t(c.args[0]), int32_t(c.args[1]));
+		return std::nullopt;
+	};
 	// The cannon balls (battle/balls.cpp). 0x61E8EF: thiscall on a scene's ship (side, x, y).
 	r[0x61E8EF] = [](SaveGame&, const ProbeCall& c) -> std::optional<uint32_t> {
 		const int e = battle_block(c.ecx);

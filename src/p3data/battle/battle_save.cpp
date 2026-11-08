@@ -342,6 +342,22 @@ bool Sailing::fn_604600(size_t s, In& in) {
 	return true;
 }
 
+// 0x5FBEA6 (the town battle's writer, before its record): with its
+// countdown [+0x2F18] running (the local player's defending ships all out,
+// battle/town_step.cpp) the game first sets [+0x5E] 1 in the battle itself:
+// side D is the computer's from then on, in memory too.
+void battles_before_write(BattleGraph& g) {
+	for (size_t k = 0; k < BattleGraph::kSlots; ++k) {
+		const int s = g.target(g.get<uint32_t>(0, 4 * k));
+		if (g.get<uint32_t>(0, 4 * k) == 0 || s < 0 || g.get<uint32_t>(size_t(s), 0) != Sailing::kTownBattleVtable) {
+			continue;
+		}
+		if (g.get<uint16_t>(size_t(s), 0x2F18) != 0) {
+			g.set<uint8_t>(size_t(s), 0x5E, 1);
+		}
+	}
+}
+
 // 0x611950 (on the battles object) with 0x604220 and 0x61A790: the section
 // of the save from SaveGame::battles. Its sea battles in slot order (u8
 // how many, u8 kind 0 and each record: the fields of load_battles, the
@@ -366,8 +382,8 @@ std::vector<uint8_t> battle_bytes(const BattleGraph& g) {
 		// Method +0x28: 0 for a sea battle, 1 for a town battle, whose record
 		// (method +0xC, 0x5FBEA0) starts with its town and, for each of the 4
 		// towers, its strength [+0x1EC4] and [+0x1EAE], [+0x1EB2], [+0x1EBE].
-		// (With its countdown [+0x2F18] running, a human side's, the game
-		// first sets [+0x5E] 1: piece 7.)
+		// (With its countdown [+0x2F18] running the game first sets [+0x5E] 1:
+		// battles_before_write, called before.)
 		const bool town = s >= 0 && g.get<uint32_t>(size_t(s), 0) == Sailing::kTownBattleVtable;
 		out.u8(town ? 1 : 0);
 		if (s < 0) {
