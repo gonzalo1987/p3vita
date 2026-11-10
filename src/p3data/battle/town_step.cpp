@@ -323,6 +323,12 @@ void Sailing::fn_60130b(size_t b, uint8_t k, int32_t damage) {
 		have = at(r.next, r);
 		++others;
 	}
+	// 0x6014D9: on the screen, an explosion (creature 0x12/0x30, `schiffsexplosion`) at the tower.
+	BattleEffect fall;
+	fall.kind = BattleEffect::TowerFall;
+	fall.x = int16_t(g.get<uint16_t>(b, 0x1E9E + 2 * size_t(k)));
+	fall.y = int16_t(g.get<uint16_t>(b, 0x1EA6 + 2 * size_t(k)));
+	battle_effect(b, fall);
 	battle_sound(b);  // 0x601546: 0xEEAC
 	const uint16_t item = g.get<uint16_t>(b, 0x1EB6 + 2 * size_t(k));
 	g.set<uint16_t>(b, 0x1E9E + 2 * size_t(k), 0xFFFF);
@@ -553,11 +559,19 @@ void Sailing::fn_5ff8e0(size_t b, uint16_t a, uint16_t other) {
 			fn_611649(b, 0xE);
 		}
 		if (on_screen(b)) {
+			// 0x5FFA67: a puff (creature 0x12/0x20) at the tower's place as it is now (off the area once fallen),
+			// then the splinters (0x13), each placed by its rand().
+			BattleEffect hit;
+			hit.kind = BattleEffect::TowerHit;
+			hit.x = int16_t(g.get<uint16_t>(b, 0x1E9E + 2 * size_t(tower)));
+			hit.y = int16_t(g.get<uint16_t>(b, 0x1EA6 + 2 * size_t(tower)));
 			battle_sound(b);  // 0x5FFACC: 0xEEA2
 			uint8_t puffs = uint8_t(damage / 0xAF0);
 			if (puffs == 0) {
 				puffs = 1;
 			}
+			hit.puffs = puffs;
+			battle_effect(b, hit);
 			for (; puffs > 0; --puffs) {
 				tick::game_rand(save_);
 			}

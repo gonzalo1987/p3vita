@@ -94,6 +94,7 @@ constexpr int kStickDeadZone = 6000;
 constexpr char kStartSave[] = "missav/1.pat";
 constexpr int kLuebeck = 14;
 constexpr uint8_t kTownHallType = 0x20;
+constexpr uint32_t kWaterTileType = 0xE;  // The water's .let tiles (g_k: frame g, tile k), as the game's 0x60329B.
 // Fuente del texto de la interfaz (Font4 de scripts/ttffonts.ini en la versión española).
 constexpr char kUiFont[] = "fonts/Tiepolo_bold.ttf";
 constexpr float kUiFontHeight = 23;
@@ -636,6 +637,7 @@ public:
 		items_.clear();
 		width_ = 0;
 		height_ = 0;
+		first_object_ = 0;
 		owners_ = std::move(owners);
 		const std::vector<TownSprite> sprites = build_town_sprites(town, tiles_);
 		items_.reserve(sprites.size());
@@ -647,11 +649,85 @@ public:
 			const size_t cell = size_t(sprite.cell_y) * size_t(town.width) + size_t(sprite.cell_x);
 			const uint8_t owner = sprite.object && cell < owners_.size() ? owners_[cell] : kNoBuildingOwner;
 			items_.push_back({texture, {sprite.src_x, sprite.src_y, sprite.width, sprite.height},
-				{sprite.dst_x, sprite.dst_y, sprite.width, sprite.height}, sprite.tile, owner});
+				{sprite.dst_x, sprite.dst_y, sprite.width, sprite.height}, sprite.tile, owner, sprite.cell_y,
+				!sprite.object && sprite.tile->type == kWaterTileType});
+			if (!sprite.object) {
+				first_object_ = items_.size();
+			}
 			width_ = std::max(width_, sprite.dst_x + sprite.width);
 			height_ = std::max(height_, sprite.dst_y + sprite.height);
 		}
+		// Each cell's kind as the game's town view keeps it (its map [+0xC308]: the building or object on it, else
+		// its ground): the .let type of what covers it.
+		cell_types_.assign(size_t(town.width) * size_t(town.height), 0);
+		for (size_t i = 0; i < cell_types_.size(); ++i) {
+			for (const std::vector<TownCell>* layer : {&town.objects, &town.ground}) {
+				if (i >= layer->size() || (*layer)[i].tile == 0) {
+					continue;
+				}
+				const auto it = tiles_.find((*layer)[i].tile);
+				if (it != tiles_.end() && !it->second.is_editor_marker()) {
+					cell_types_[i] = it->second.type;
+					break;
+				}
+			}
+		}
 		make_minimap(town);
+	}
+
+	// The town under a battle at it (BattleTown, the battles' piece 7, part 3), in two parts so that the battle's
+	// ships stand among its buildings: the ground (without the water, which the battle draws animated under it),
+	// then the objects up to a row (the next call goes on from there: `cursor`, from first_object()).
+	void draw_ground(int camera_x, int camera_y, bool skip_water) const {
+		const SDL_Rect screen = {camera_x, camera_y, kScreenWidth, kScreenHeight};
+		for (size_t i = 0; i < first_object_ && i < items_.size(); ++i) {
+			const Item& item = items_[i];
+			if ((skip_water && item.water) || !SDL_HasIntersection(&item.dst, &screen)) {
+				continue;
+			}
+			const SDL_Rect dst = {item.dst.x - camera_x, item.dst.y - camera_y, item.dst.w, item.dst.h};
+			SDL_RenderCopy(renderer_, item.texture, &item.src, &dst);
+		}
+	}
+	size_t first_object() const { return first_object_; }
+	void draw_objects(size_t& cursor, int last_row, int camera_x, int camera_y) const {
+		const SDL_Rect screen = {camera_x, camera_y, kScreenWidth, kScreenHeight};
+		for (; cursor < items_.size() && items_[cursor].row <= last_row; ++cursor) {
+			const Item& item = items_[cursor];
+			if (!SDL_HasIntersection(&item.dst, &screen)) {
+				continue;
+			}
+			const SDL_Rect dst = {item.dst.x - camera_x, item.dst.y - camera_y, item.dst.w, item.dst.h};
+			SDL_RenderCopy(renderer_, item.texture, &item.src, &dst);
+		}
+	}
+	// Whether the cell under the town's pixel (x, y) is a building's (of the town's records: owners_).
+	bool building_at(int x, int y) const {
+		const SDL_Point c = cell_at(x, y);
+		const size_t i = size_t(c.y) * size_t(map_columns_) + size_t(c.x);
+		return c.x >= 0 && c.y >= 0 && c.x < map_columns_ && c.y < map_rows_ && i < owners_.size() &&
+			owners_[i] != kNoBuildingOwner;
+	}
+	// Whether the town's pixel (x, y) is on the water (.let type 0xE, a sand bank 0x13, bare or off the map), by
+	// the cell of its row: rough but quick, for the battle's ripples.
+	bool water_at(int x, int y) const {
+		const int row = y / kRowStep;
+		const int col = (x - (row & 1) * (kTileWidth / 2)) / kTileWidth;
+		if (row < 0 || col < 0 || col >= map_columns_ || row >= map_rows_) {
+			return true;
+		}
+		const size_t i = size_t(row) * size_t(map_columns_) + size_t(col);
+		const uint32_t type = i < cell_types_.size() ? cell_types_[i] : 0;
+		return type == 0 || type == kWaterTileType || type == 0x13;
+	}
+	// The .let type of what covers the cell under the town's pixel (x, y) (0 off the map or bare).
+	uint32_t cell_type_at(int x, int y) const {
+		const SDL_Point c = cell_at(x, y);
+		if (c.x < 0 || c.y < 0 || c.x >= map_columns_ || c.y >= map_rows_) {
+			return 0;
+		}
+		const size_t i = size_t(c.y) * size_t(map_columns_) + size_t(c.x);
+		return i < cell_types_.size() ? cell_types_[i] : 0;
 	}
 
 	// Dibuja lo que cae dentro de la pantalla con la cámara en (camera_x, camera_y).
@@ -744,6 +820,8 @@ private:
 		SDL_Rect dst;
 		const TileDef* tile;
 		uint8_t owner;  // Its cell's building owner (kNoBuildingOwner: the ground, nature, the town's fixed objects).
+		int row = 0;  // The row of the cell it stands on.
+		bool water = false;  // A ground tile of the water (.let type 0xE).
 	};
 	// Where a building of kPlaces is opaque (alpha ≥ 128), one byte per pixel
 	// of its tile's rectangle in the atlas: made when its atlas is decoded.
@@ -885,6 +963,8 @@ private:
 	std::map<std::string, std::vector<const TileDef*>> places_by_atlas_;  // The tiles of kPlaces, by atlas.
 	std::unordered_map<const TileDef*, Mask> masks_;
 	std::vector<Item> items_;
+	size_t first_object_ = 0;  // items_: the ground's, then the objects' row by row (build_town_sprites).
+	std::vector<uint32_t> cell_types_;  // cell_type_at.
 	int width_ = 0;
 	int height_ = 0;
 };
@@ -1390,6 +1470,43 @@ private:
 	size_t index_ = 0;
 	bool loaded_ = false;
 	bool drawn_ = false;  // The view holds this town's drawing (TownView::show).
+	uint64_t key_ = 0;
+};
+
+// The town under a battle at it (the battles' piece 7, part 3): the game's town view shows the attacked town's
+// battle map (0x58A310 → 0x58EB30, load_battle_town_template: its harbour with the open sea before it) with the
+// town's buildings as they are now, moved by the map's offset (the battle's [+0x1ED8], [+0x1EDC]; the view's
+// [+0x528], [+0x52C]). Its template is loaded once; its buildings are placed again when the town's change (a
+// tower falls and burns).
+class BattleTown {
+public:
+	bool load(const CprArchive& archive, const SaveGame& save, size_t index, const std::vector<int>& regions,
+		std::string& error) {
+		if (index >= save.towns.size()) {
+			loaded_ = false;
+			error = "the save has no town " + std::to_string(index);
+			return false;
+		}
+		if (loaded_ && index == index_) {
+			return true;
+		}
+		index_ = index;
+		key_ = 0;
+		loaded_ = load_battle_town_template(archive, save.towns[index], regions, base_, &error);
+		return loaded_;
+	}
+
+	void draw(const SaveGame& save, const TileSet& tiles, int dx, int dy, TownMap& out, std::vector<uint8_t>* owners) {
+		place_saved_town(base_, save, index_, tiles, out, owners, dx, dy);
+		key_ = drawn_buildings_key(save, index_);
+	}
+
+	bool changed(const SaveGame& save) const { return loaded_ && drawn_buildings_key(save, index_) != key_; }
+
+private:
+	SavedTownTemplate base_;
+	size_t index_ = 0;
+	bool loaded_ = false;
 	uint64_t key_ = 0;
 };
 
@@ -4847,6 +4964,11 @@ void draw_deck(SDL_Renderer* renderer, const PanelArt& art, const SavedShip& shi
 // sails' rope).
 enum class BattleButton { SelectAll, Capture, Plunder, Flee, WhiteFlag, Count };
 constexpr int kBattleButtons = int(BattleButton::Count);
+// After them, in the row's sixth place, the town panel's icon to the sea map (menu01.tga; a tooltip of the viewer):
+// leaving the battle's screen gives the battle to the computer, as the PC's view does when another town or the
+// sea map is shown (0x58919F → 0x611FA0 → 0x6100D9). The user's choice; it asks first.
+constexpr int kBattleLeaveIcon = int(PanelIcon::Options);
+constexpr int kBattleLeavePressed = kBattleButtons + 1;  // battle_button_down (kBattleButtons: the fire button).
 
 // The action row in the panel's icon places: its picture's column in menu_seeschlacht.tga (TEX16045: «Alle
 // selektieren» 0, «Seeschlacht beenden» 32 in Flee's place when the enemy is all gone, «Kapern» 64, «Fliehen» 96,
@@ -4905,8 +5027,9 @@ struct BattleDeckLayout {
 };
 
 void draw_battle_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SidePanel& ui,
-	const SaveGame& save, size_t battle, const p3::app::BattleView& view, const SDL_Rect& camera, int deck_place,
-	uint16_t bits, bool any_ship, int pressed_button, bool fire_pressed) {
+	const SaveGame& save, size_t battle, const p3::app::BattleView& view, SDL_Texture* town_minimap,
+	const SDL_Rect& camera, int deck_place,
+	uint16_t bits, bool any_ship, int pressed_button, bool fire_pressed, bool leave_pressed) {
 	const PanelLayout layout(ui.folded);
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 	const SDL_Rect bar_src = {0, 0, kPanelBar, layout.bar.h};
@@ -4924,7 +5047,7 @@ void draw_battle_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 	if (ui.folded) {
 		return;
 	}
-	view.draw_minimap(save, battle, layout.map, camera);
+	view.draw_minimap(save, battle, layout.map, camera, town_minimap);
 	draw_picture(renderer, art.plank, layout.plank);
 	for (int k = 0; k < kBattleButtons; ++k) {
 		const BattleButtonState s = battle_button_state(BattleButton(k), bits, any_ship);
@@ -4932,6 +5055,8 @@ void draw_battle_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 		const SDL_Rect src = {s.column, row * 32, 32, 32};
 		draw_picture(renderer, art.battle_buttons, layout.icons[k], &src);
 	}
+	const SDL_Rect leave_src = {kPanelIconColumn[int(PanelIcon::LeaveTown)] * 32, leave_pressed ? 32 : 0, 32, 32};
+	draw_picture(renderer, art.icons, layout.icons[kBattleLeaveIcon], &leave_src);
 	draw_picture(renderer, art.wood, layout.room);
 	const int e = deck_place >= 0 ? p3::app::BattleView::scene_entry(save, battle, uint16_t(deck_place)) : -1;
 	if (e < 0) {
@@ -7797,6 +7922,10 @@ int main(int argc, char** argv) {
 	// (Sailing::take_sea_map_icons, each with its battle's block: it goes when its battle goes, as the game's
 	// destructor drops it, 0x457DF0).
 	int battle_info = -1;
+	// The battle screen's leave icon tapped: its window asks whether the computer is to fight on; then the sea
+	// map once the screen has closed (battle_to_sea).
+	bool battle_leave = false;
+	bool battle_to_sea = false;
 	struct SeaBattleIcon {
 		uint8_t slot;
 		int16_t x, y;
@@ -7894,10 +8023,16 @@ int main(int argc, char** argv) {
 	// The battles' window: open in the engine (the question, an end, a boarding), its box, and its buttons.
 	auto battle_window_up = [&]() { return sailing && save.battle_window.present && save.battle_window.open; };
 	auto steer_label = [&]() { return lender_text(0x6B2BC0, "Dirigir manualmente", "Steer manually"); };
-	// Whether the battle in that slot can be steered: the battle's screen draws the sea battles for now.
+	// Whether the battle in that slot can be steered: the battle's screen draws the sea battles and those at a
+	// town (not yet a pirate nest's).
 	auto can_steer = [&](int slot) {
 		const int b = slot >= 0 && slot < 0xFF ? save.battles.battle(size_t(slot)) : -1;
-		return kBattleScreen && b >= 0 && save.battles.get<uint32_t>(size_t(b), 0) == Sailing::kSeaBattleVtable;
+		if (!kBattleScreen || b < 0) {
+			return false;
+		}
+		const uint32_t vtable = save.battles.get<uint32_t>(size_t(b), 0);
+		return vtable == Sailing::kSeaBattleVtable ||
+			(vtable == Sailing::kTownBattleVtable && save.battles.get<uint8_t>(size_t(b), 0x1E98) < save.towns.size());
 	};
 	auto battle_window_box = [&]() {
 		ChoiceBox box;
@@ -7925,6 +8060,36 @@ int main(int argc, char** argv) {
 			{BTN_CIRCLE " " + tr("Cerrar", "Close"), true}};
 		return box;
 	};
+	// The leave icon's window: the title of the game's battle window (0x611FC0, «Sea battle:» without its colon),
+	// and the question.
+	auto battle_leave_box = [&]() {
+		ChoiceBox box;
+		if (battle_shown >= 0 && sailing) {
+			split_title(sailing->battle_info_text(uint8_t(save.battles.get<uint16_t>(size_t(battle_shown), 0x662))), box);
+		}
+		while (!box.title.empty() && (box.title.back() == ':' || box.title.back() == ' ')) {
+			box.title.pop_back();
+		}
+		if (box.title.empty()) {
+			box.title = tr("Batalla naval", "Sea battle");
+		}
+		// A battle at a town has no sea map icon in the game (its setup doesn't tell the map, 0x605906): once
+		// given back it can't be taken again (the user's choice: as the PC), and the window says so.
+		if (battle_shown >= 0 && p3::app::BattleView::at_town(save, size_t(battle_shown))) {
+			box.body = tr("¿Dejas que el ordenador siga con la batalla? Ya no podrás volver a dirigirla.",
+				"Leave the battle to the computer? You won't be able to steer it again.");
+		} else {
+			box.body = tr("¿Dejas que el ordenador siga con la batalla?", "Leave the battle to the computer?");
+		}
+		box.buttons = {{BTN_CROSS " " + tr("Que luche el ordenador", "Let the computer fight"), true},
+			{BTN_CIRCLE " " + tr("Seguir dirigiéndola", "Keep steering it"), true}};
+		box.low = true;
+		return box;
+	};
+	auto battle_popup = [&]() { return battle_window_up() || battle_info >= 0 || battle_leave; };
+	auto popup_box = [&]() {
+		return battle_window_up() ? battle_window_box() : battle_info >= 0 ? battle_info_box() : battle_leave_box();
+	};
 	auto battle_press = [&](int k) {
 		if (battle_window_up()) {
 			if (save.battle_window.buttons > 0 && k == 0 && !can_steer(save.battle_window.battle)) {
@@ -7941,16 +8106,22 @@ int main(int argc, char** argv) {
 				sailing->fn_6102a9(size_t(b));
 			}
 			battle_info = -1;
+		} else if (battle_leave) {
+			if (k == 0 && battle_shown >= 0) {
+				sailing->fn_6100d9(size_t(battle_shown));  // 0x611FA0: the battle on the screen given back.
+				battle_to_sea = true;
+			}
+			battle_leave = false;
 		}
 	};
 	// The pad on the window: X its first button (if it can be pressed), Circle its last (the computer,
 	// «Cerrar»; a window of one button closes with either); the other buttons do nothing while it is open but
 	// Start (the menu). True when it took the button.
 	auto battle_button = [&](Uint8 button) {
-		if (!battle_window_up() && battle_info < 0) {
+		if (!battle_popup()) {
 			return false;
 		}
-		const ChoiceBox box = battle_window_up() ? battle_window_box() : battle_info_box();
+		const ChoiceBox box = popup_box();
 		const int n = int(box.buttons.size());
 		if (button == SDL_CONTROLLER_BUTTON_A) {
 			if (box.buttons[0].second) {
@@ -7966,6 +8137,18 @@ int main(int argc, char** argv) {
 	bool reload = true;
 	bool keep_camera = false;
 	LiveTown live;  // The saved town on screen (Mode::Saved).
+	BattleTown battle_town;  // The town's battle map under the battle on the screen at a town.
+	const bool debug_weak_towers =
+		options.debug_state && std::string(options.debug_state).find("weak-towers") != std::string::npos;
+	int battle_town_index = -1;  // That town, while its battle map is shown; −1.
+	// The town under that battle: where a ball splashes (0x60329B: a cell of the water, .let type 0xE, or a sand
+	// bank, 0x13; a puff on anything else); its drawing's parts are added where it is drawn.
+	p3::app::BattleTownLayer battle_town_layer;
+	battle_town_layer.splash = [&](int x, int y) {
+		const uint32_t type = view->cell_type_at(x, y);
+		return type == 0 || type == kWaterTileType || type == 0x13;
+	};
+	battle_town_layer.water = [&](int x, int y) { return view->water_at(x, y); };
 	bool running = true;
 	MenuUi menu;  // Start: the menu (saving and loading, the options, quitting).
 	const std::string saves_dir = p3::app::savegames_dir(options.data_dir);  // The player's saved games.
@@ -8313,18 +8496,48 @@ int main(int argc, char** argv) {
 				}
 			}
 		}
-		// The sea battle the player directs, on the screen ([0x6E59CC], the battles' [+0x3FC]): it takes the town's
-		// part of the screen and its camera (the battles' piece 7, part 3); its graphics load a sheet a frame.
+		// The battle the player directs, on the screen ([0x6E59CC], the battles' [+0x3FC]): it takes the town's
+		// part of the screen and its camera (the battles' piece 7, part 3); its graphics load a sheet a frame. At a
+		// town, the town view shows the town's battle map under it (BattleTown).
+		auto show_battle_town = [&](size_t b) {
+			TownMap map;
+			std::vector<uint8_t> owners;
+			battle_town.draw(save, view->tiles(), save.battles.get<int32_t>(b, 0x1ED8), save.battles.get<int32_t>(b, 0x1EDC),
+				map, &owners);
+			view->show(map, std::move(owners));
+			live.forget_drawn();
+		};
 		{
 			int on_screen = -1;
 			if (sailing && has_save && save.player >= 0 && kBattleScreen) {
 				const uint8_t slot = save.battles.get<uint8_t>(0, 0x3FC);
 				const int b = slot != 0xFF ? save.battles.battle(slot) : -1;
-				if (b >= 0 && save.battles.get<uint32_t>(size_t(b), 0) == Sailing::kSeaBattleVtable) {
+				const uint32_t vtable = b >= 0 ? save.battles.get<uint32_t>(size_t(b), 0) : 0;
+				if (vtable == Sailing::kSeaBattleVtable || vtable == Sailing::kTownBattleVtable) {
 					on_screen = b;
 				}
 			}
 			if (on_screen != battle_shown) {
+				// The town's battle map: shown with a battle at a town; the town again when it goes.
+				int town_now = -1;
+				if (on_screen >= 0 && p3::app::BattleView::at_town(save, size_t(on_screen))) {
+					const uint8_t town = save.battles.get<uint8_t>(size_t(on_screen), 0x1E98);
+					std::string error;
+					if (town < save.towns.size() && battle_town.load(*archive, save, town, regions, error)) {
+						show_battle_town(size_t(on_screen));
+						town_now = town;
+						if (debug_weak_towers) {
+							p3::app::weaken_towers(save, size_t(on_screen));
+						}
+					} else if (town < save.towns.size()) {
+						std::fprintf(stderr, "the battle map: %s\n", error.c_str());
+					}
+				}
+				if (battle_town_index >= 0 && town_now < 0 && selection.mode == Mode::Saved) {
+					reload = true;  // The town view shows the town again, the camera where it was.
+					keep_camera = true;
+				}
+				battle_town_index = town_now;
 				if (on_screen >= 0) {
 					if (battle_shown < 0) {
 						battle_saved_camera = {camera_x, camera_y};
@@ -8373,8 +8586,8 @@ int main(int argc, char** argv) {
 				// selection or taken out of it; on the water, with ships chosen, the held order starts there
 				// (the PC's right button held: 0x608550 with 1, which the step sends again while it is held).
 				if (finger_down && !battle_long && !battle_hold && std::abs(touch_now.x - touch_start.x) < kBattleStill &&
-					std::abs(touch_now.y - touch_start.y) < kBattleStill && !battle_window_up() &&
-					battle_info < 0 && !menu.open() && app_ticks() - battle_touch_ms >= kBattleLongPressMs &&
+					std::abs(touch_now.y - touch_start.y) < kBattleStill && !battle_popup() && !menu.open() &&
+					app_ticks() - battle_touch_ms >= kBattleLongPressMs &&
 					touch_start.x < PanelLayout(side.folded).town_right) {
 					battle_long = true;
 					bool own = false;
@@ -8400,6 +8613,17 @@ int main(int argc, char** argv) {
 					camera_y = c.y - kScreenHeight / 2;
 					battle_centre = false;
 				}
+			}
+		}
+		if (battle_to_sea) {
+			// The battle given back from its leave icon: once its screen has closed, the sea map (the PC's view
+			// leaving it for the sea map).
+			battle_to_sea = false;
+			battle_leave = false;
+			if (battle_shown < 0 && selection.mode == Mode::Saved) {
+				selection.mode = Mode::Sea;
+				reload = true;
+				keep_camera = false;
 			}
 		}
 		const bool in_battle = battle_shown >= 0;
@@ -8519,6 +8743,9 @@ int main(int argc, char** argv) {
 			}
 			if (inside(BattleDeckLayout(panel_layout.room, small_text->line_height()).fire, touch_start.x, touch_start.y)) {
 				battle_button_down = kBattleButtons;
+			}
+			if (inside(panel_layout.icons[kBattleLeaveIcon], touch_start.x, touch_start.y)) {
+				battle_button_down = kBattleLeavePressed;
 			}
 		}
 		g_town_right = town_width;
@@ -9253,7 +9480,8 @@ int main(int argc, char** argv) {
 				// The battle's sprites of the town view (the guns' smoke, the splashes, the hits).
 				const std::vector<Sailing::BattleEffect> effects = sailing->take_battle_effects();
 				if (battle_view && battle_shown >= 0 && save.battles.battle(save.battles.get<uint8_t>(0, 0x3FC)) == battle_shown) {
-					battle_view->add_effects(save, size_t(battle_shown), effects, app_ticks());
+					battle_view->add_effects(save, size_t(battle_shown), effects, app_ticks(),
+						battle_town_index >= 0 ? &battle_town_layer : nullptr);
 				}
 				for (const Sailing::BattleIcon& icon : sailing->take_sea_map_icons()) {
 					battle_icons.push_back({icon.slot, icon.x, icon.y, save.battles.battle(icon.slot)});
@@ -9364,8 +9592,10 @@ int main(int argc, char** argv) {
 		}
 
 		// The living town: when the simulation changes the buildings of the town
-		// on screen, it is drawn again, with the camera where it was.
-		if (selection.mode == Mode::Saved && live.changed(save)) {
+		// on screen, it is drawn again, with the camera where it was (under a battle at a town, its battle map).
+		if (battle_town_index >= 0 && battle_shown >= 0 && battle_town.changed(save)) {
+			show_battle_town(size_t(battle_shown));
+		} else if (selection.mode == Mode::Saved && live.changed(save) && battle_town_index < 0) {
 			TownMap town;
 			std::vector<uint8_t> owners;
 			live.draw(save, view->tiles(), town, &owners);
@@ -9993,7 +10223,7 @@ int main(int argc, char** argv) {
 				touch_moved = 0;
 				touch_scroll = 0;
 				finger_down = true;
-				if (battle_window_up() || battle_info >= 0) {
+				if (battle_popup()) {
 					// Under the battles' window nothing moves: the touch is the window's.
 					touch_on_side = false;
 					touch_on_panel = true;
@@ -10045,7 +10275,8 @@ int main(int argc, char** argv) {
 					// On the battle's minimap, the view goes where the finger is.
 					SDL_Point at;
 					if (!side.folded && inside(panel_layout.map, touch_start.x, touch_start.y) &&
-						p3::app::BattleView::minimap_point(panel_layout.map, int(event.tfinger.x * kScreenWidth),
+						p3::app::BattleView::minimap_point(save, size_t(battle_shown), panel_layout.map,
+							int(event.tfinger.x * kScreenWidth),
 							int(event.tfinger.y * kScreenHeight), at)) {
 						camera_x = at.x - town_width / 2;
 						camera_y = at.y - kScreenHeight / 2;
@@ -10094,10 +10325,10 @@ int main(int argc, char** argv) {
 				break;
 			case SDL_FINGERUP:
 				finger_down = false;
-				if (battle_window_up() || battle_info >= 0) {
+				if (battle_popup()) {
 					// A tap on one of the battles' window's buttons.
 					if (touch_moved < kTapDistance && text && small_text) {
-						const ChoiceBox box = battle_window_up() ? battle_window_box() : battle_info_box();
+						const ChoiceBox box = popup_box();
 						const int k = ChoiceBoxLayout(*text, *small_text, box).button_at(touch_start.x, touch_start.y);
 						if (k >= 0 && box.buttons[size_t(k)].second) {
 							battle_press(k);
@@ -10125,9 +10356,13 @@ int main(int argc, char** argv) {
 						break;
 					}
 					SDL_Point at;
-					if (p3::app::BattleView::minimap_point(panel_layout.map, tx, ty, at)) {
+					if (p3::app::BattleView::minimap_point(save, size_t(battle_shown), panel_layout.map, tx, ty, at)) {
 						camera_x = at.x - town_width / 2;
 						camera_y = at.y - kScreenHeight / 2;
+						break;
+					}
+					if (inside(panel_layout.icons[kBattleLeaveIcon], tx, ty)) {
+						battle_leave = true;
 						break;
 					}
 					for (int k = 0; k < kBattleButtons; ++k) {
@@ -10204,10 +10439,23 @@ int main(int argc, char** argv) {
 								battle_view->mark_order(at.x, at.y, app_ticks());
 							}
 						} else if (place < 0 && !battle_selection.empty()) {
-							const auto p = battle_point(touch_start.x, touch_start.y);
-							sailing->fn_608550(b, p[0], p[1], true);
-							sailing->fn_608550(b, p[0], p[1], false);
-							battle_view->mark_order(camera_x + touch_start.x, camera_y + touch_start.y, app_ticks());
+							// At a town: on a tower, the chosen ships attack it (the PC's right button on its
+							// building, 0x595564: 0x6016CB with its cell on the battle map); on another building
+							// nothing (0x6016CB finds no tower there).
+							const int ax = camera_x + touch_start.x, ay = camera_y + touch_start.y;
+							const int tower = battle_town_index >= 0 ? p3::app::BattleView::tower_at(save, b, ax, ay) : -1;
+							if (tower >= 0) {
+								const BattleGraph& g = save.battles;
+								sailing->fn_6016cb(b, int32_t(g.get<uint8_t>(b, 0x1EAE + size_t(tower))) + g.get<int32_t>(b, 0x1ED8),
+									int32_t(g.get<uint8_t>(b, 0x1EB2 + size_t(tower))) + g.get<int32_t>(b, 0x1EDC));
+								battle_view->mark_order(g.get<uint16_t>(b, 0x1E9E + 2 * size_t(tower)),
+									p3::app::BattleView::screen_y(g.get<uint16_t>(b, 0x1EA6 + 2 * size_t(tower))), app_ticks());
+							} else if (battle_town_index < 0 || !view->building_at(ax, ay)) {
+								const auto p = battle_point(touch_start.x, touch_start.y);
+								sailing->fn_608550(b, p[0], p[1], true);
+								sailing->fn_608550(b, p[0], p[1], false);
+								battle_view->mark_order(ax, ay, app_ticks());
+							}
 						}
 					}
 					battle_long = false;
@@ -10719,7 +10967,7 @@ int main(int argc, char** argv) {
 			camera_y += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY));
 		}
 		if (!trading && !in_hanse && !in_mail && !in_place && side.focus < 0 && side.menu == PanelMenu::None &&
-			!battle_window_up() && battle_info < 0 && !in_battle) {  // Nothing moves under the battles' window.
+			!battle_popup() && !in_battle) {  // Nothing moves under the battles' window.
 			// (On the battle's screen the pad's up and down are the sails: part 2.)
 			camera_x += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) - pad(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
 			camera_y += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_DOWN) - pad(SDL_CONTROLLER_BUTTON_DPAD_UP));
@@ -10736,8 +10984,12 @@ int main(int argc, char** argv) {
 			camera_x = cell_screen_x(look_x, look_y) - town_width / 2;
 			camera_y = cell_screen_y(look_y) - kScreenHeight / 2;
 		}
-		const int view_width = in_battle ? p3::app::BattleView::width() : at_sea ? sea->width() : view->width();
-		const int view_height = in_battle ? p3::app::BattleView::height() : at_sea ? sea->height() : view->height();
+		const int view_width = in_battle ? p3::app::BattleView::width(save, size_t(battle_shown))
+			: at_sea                     ? sea->width()
+										 : view->width();
+		const int view_height = in_battle ? p3::app::BattleView::height(save, size_t(battle_shown))
+			: at_sea                      ? sea->height()
+										  : view->height();
 		camera_x = std::clamp(camera_x, 0, std::max(0, view_width - town_width));  // The panel's part isn't the view's.
 		camera_y = std::clamp(camera_y, 0, std::max(0, view_height - kScreenHeight));
 
@@ -10748,8 +11000,12 @@ int main(int argc, char** argv) {
 			// The sea battle the player directs: the water, the ships, the balls and the clouds; over each ship
 			// its label (its name; its sailors, hull and guns).
 			std::vector<p3::app::BattleLabel> labels;
+			size_t town_cursor = view->first_object();
+			p3::app::BattleTownLayer town_layer = battle_town_layer;
+			town_layer.ground = [&](int x, int y) { view->draw_ground(x, y, true); };
+			town_layer.objects = [&](int x, int y, int last_row) { view->draw_objects(town_cursor, last_row, x, y); };
 			battle_view->draw(save, size_t(battle_shown), camera_x, camera_y, 0, town_width, kScreenHeight, app_ticks(),
-				battle_selection, labels);
+				battle_selection, labels, battle_town_index >= 0 ? &town_layer : nullptr);
 			if (small_text && panel_art) {
 				for (const p3::app::BattleLabel& label : labels) {
 					draw_battle_label(renderer, *small_text, *panel_art, label, battle_view->arrow());
@@ -10757,8 +11013,15 @@ int main(int argc, char** argv) {
 			}
 			if (battle_panel) {
 				draw_battle_panel(renderer, *small_text, *panel_art, side, save, size_t(battle_shown), *battle_view,
+					battle_town_index >= 0 ? view->minimap() : nullptr,
 					{camera_x, camera_y, town_width, kScreenHeight}, battle_deck_place, battle_bits, battle_any_ship,
-					battle_button_down < kBattleButtons ? battle_button_down : -1, battle_button_down == kBattleButtons);
+					battle_button_down < kBattleButtons ? battle_button_down : -1, battle_button_down == kBattleButtons,
+					battle_button_down == kBattleLeavePressed);
+				if (battle_button_down == kBattleLeavePressed) {
+					// The game's tooltip of that icon is «Weigh anchor» (20026), which misleads here: the viewer's own.
+					draw_tooltip(renderer, *small_text, tr("Dejar la batalla al ordenador", "Leave the battle to the computer"),
+						panel_layout.icons[kBattleLeaveIcon]);
+				}
 				if (battle_button_down >= 0 && battle_button_down < kBattleButtons) {
 					// Its button's tooltip under the finger (the scripts' ToolTip).
 					const BattleButtonState st = battle_button_state(BattleButton(battle_button_down), battle_bits, true);
@@ -10890,7 +11153,7 @@ int main(int argc, char** argv) {
 		}
 		if (text) {
 			std::vector<std::string> right_texts;
-			if (battle_window_up() || battle_info >= 0 || messages.open || end_window.open) {
+			if (battle_popup() || messages.open || end_window.open) {
 				// A window over the screen (a battle's, a message, the end): its buttons say what the keys do now,
 				// so the bar's actions, which the keys don't do while it is open, aren't shown.
 			} else if (in_battle) {
@@ -11171,6 +11434,8 @@ int main(int argc, char** argv) {
 				draw_choice_box(renderer, *text, *small_text, battle_window_box());
 			} else if (battle_info >= 0) {
 				draw_choice_box(renderer, *text, *small_text, battle_info_box());
+			} else if (battle_leave) {
+				draw_choice_box(renderer, *text, *small_text, battle_leave_box());
 			}
 		}
 		if (in_menu) {  // The menu, on top of everything.

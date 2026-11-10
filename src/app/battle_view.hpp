@@ -1,18 +1,22 @@
 #pragma once
 
-// The sea battle on the screen (the battles' piece 7, part 3): what the game's
-// town view draws when the battle the player directs is shown without a town
-// (the battle's method +0x20, 0x60ED39): the water, the ships with their
-// shadows (0x62018B, the town view's ship sprites 0x56B140), a sinking ship
-// and the smoke of a burning one (0x62018B), the cannon balls (0x6038C0), the
-// guns' smoke and fire, the splashes and the hits (the engine's
-// Sailing::BattleEffect), and the clouds of the wind (0x6107B9). The ships'
-// labels are handed to the viewer, which has the fonts.
+// The battle on the screen (the battles' piece 7, part 3): what the game's
+// town view draws when the battle the player directs is shown (the battle's
+// method +0x20, 0x60ED39): the water with its ripples (the view's [+0x5A0]),
+// the ships with their shadows (0x62018B, the town view's ship sprites
+// 0x56B140), a sinking ship and the smoke of a burning one (0x62018B), the
+// cannon balls (0x6038C0), the guns' smoke and fire, the splashes, the hits
+// and their splinters (the engine's Sailing::BattleEffect), and the clouds of
+// the wind (0x6107B9). A battle at a town (its method +0x20,
+// 0x6018DB, then the sea's) is drawn over the town's battle map, which the
+// viewer's town view draws (BattleTownLayer), with its towers' smoke and fire.
+// The ships' labels are handed to the viewer, which has the fonts.
 
 #include <SDL.h>
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -38,6 +42,19 @@ struct BattleLabel {
 	bool selected = false;  // His and chosen: the blue arrow over it.
 };
 
+// The town under a battle at a town: the viewer's town view showing the town's battle map (the town's harbour
+// with the open sea before it, its buildings as they are now). Its parts are drawn by the viewer: the ground (the
+// battle's water, animated, goes under it), then its objects row by row among the ships (the town view's
+// order); `splash` says whether a ball falling at the area's screen pixel (x, y) splashes (the cell's kind
+// water or sand bank, 0x60329B) or raises a puff; `minimap`, the town view's minimap of the battle map.
+struct BattleTownLayer {
+	std::function<void(int camera_x, int camera_y)> ground;
+	std::function<void(int camera_x, int camera_y, int last_row)> objects;  // Up to that row, from the last call's.
+	std::function<bool(int x, int y)> splash;
+	std::function<bool(int x, int y)> water;  // Whether the area's screen pixel is the water's (for the ripples).
+	SDL_Texture* minimap = nullptr;
+};
+
 class BattleView {
 public:
 	BattleView(SDL_Renderer* renderer, const p3::data::CprArchive& archive, const p3::data::TileSet& tiles);
@@ -45,12 +62,21 @@ public:
 	BattleView(const BattleView&) = delete;
 	BattleView& operator=(const BattleView&) = delete;
 
-	// The battle's area (ship_step.cpp: 0x2200 × 0x1E04), on the screen with y · 11 / 17 as the town view.
+	// The battle's area (ship_step.cpp: 0x2200 × 0x1E04 at sea; at a town 0x1100 × 0xF02, the town view's whole
+	// map: 0x5FFC10's item 7), on the screen with y · 11 / 17 as the town view.
 	static constexpr int kAreaWidth = 0x2200;
 	static constexpr int kAreaHeight = 0x1E04;
+	static constexpr int kTownAreaWidth = 0x1100;
+	static constexpr int kTownAreaHeight = 0xF02;
 	static int screen_y(int y) { return y * 11 / 17; }
-	static int width() { return kAreaWidth; }
-	static int height() { return screen_y(kAreaHeight); }
+	// Whether the battle is at a town (its class's vtable 0x67AAA0; at sea 0x67AD44).
+	static bool at_town(const p3::data::SaveGame& save, size_t battle);
+	static int width(const p3::data::SaveGame& save, size_t battle) {
+		return at_town(save, battle) ? kTownAreaWidth : kAreaWidth;
+	}
+	static int height(const p3::data::SaveGame& save, size_t battle) {
+		return screen_y(at_town(save, battle) ? kTownAreaHeight : kAreaHeight);
+	}
 
 	// The animations the battle needs now (its ships' looks, each type and hull state with its five sails; the
 	// effects; a sinking ship's), added to what is to load; load_step decodes one each call (a frame), so that a
@@ -63,34 +89,43 @@ public:
 	// Everything freed (the battle left the screen).
 	void clear();
 
-	// The engine's effects of this frame (Sailing::take_battle_effects): those of the battle shown.
+	// The engine's effects of this frame (Sailing::take_battle_effects): those of the battle shown (`town`: the
+	// town under a battle at a town, for where a ball splashes).
 	void add_effects(const p3::data::SaveGame& save, size_t battle, const std::vector<p3::data::Sailing::BattleEffect>& effects,
-		uint32_t now);
+		uint32_t now, const BattleTownLayer* town = nullptr);
 
 	// The battle on the screen part (0, top) − (view_width, top + view_height), the camera on the area's
 	// (camera_x, camera_y) (screen pixels: x and y · 11 / 17). `now`: the viewer's ms. The ships' labels go to
 	// `labels`, in screen pixels. `selection`: the places of the ships chosen (a blue arrow over the player's).
+	// `town`: a battle at a town, the town under it.
 	void draw(const p3::data::SaveGame& save, size_t battle, int camera_x, int camera_y, int top, int view_width,
-		int view_height, uint32_t now, const std::vector<uint16_t>& selection, std::vector<BattleLabel>& labels);
+		int view_height, uint32_t now, const std::vector<uint16_t>& selection, std::vector<BattleLabel>& labels,
+		const BattleTownLayer* town = nullptr);
 
 	// The ship drawn under the screen's (x, y) at the last draw, a finger's width around its picture (the
 	// nearest one's anchor if several): its place in the scene ([+0x138]) and whether it is the player's; -1.
 	int ship_at(int x, int y, bool& own) const;
+	// A town battle's standing tower whose picture is under the area's screen pixel (x, y) (the nearest one's
+	// place if several): its k (its cell [+0x1EAE + k], [+0x1EB2 + k]), or -1.
+	static int tower_at(const p3::data::SaveGame& save, size_t battle, int x, int y);
 	// A marker where an order went (the area's screen pixels), fading for a moment: the touch's answer.
 	void mark_order(int x, int y, uint32_t now);
 	// The marker arrow over a chosen ship (markerpfeil01.aim, the manual's blue arrow), for the labels.
 	SDL_Texture* arrow() const { return arrow_; }
 
 	// The side panel's minimap of the battle in `rect`: the sea, the reefs and sand banks (the manual's «islets»,
-	// yellow), each ship a dot of the town view's colour for its owner (0x56C7B0: the local player's blue, a
-	// pirate's dark grey, another human's red, the others' white) and the screen's part (`camera`, the area's
-	// screen pixels) framed.
-	void draw_minimap(const p3::data::SaveGame& save, size_t battle, const SDL_Rect& rect, const SDL_Rect& camera) const;
+	// yellow), or at a town the minimap of its battle map (`town`), each ship a dot of the town view's colour for
+	// its owner (0x56C7B0: the local player's blue, a pirate's dark grey, another human's red, the others' white)
+	// and the screen's part (`camera`, the area's screen pixels) framed.
+	void draw_minimap(const p3::data::SaveGame& save, size_t battle, const SDL_Rect& rect, const SDL_Rect& camera,
+		SDL_Texture* town = nullptr) const;
 	// The area's screen pixels under the minimap's (x, y); false outside it.
-	static bool minimap_point(const SDL_Rect& rect, int x, int y, SDL_Point& at);
+	static bool minimap_point(const p3::data::SaveGame& save, size_t battle, const SDL_Rect& rect, int x, int y,
+		SDL_Point& at);
 	// The state of the panel's battle buttons (0x610D69): bits 0x1 «Flee» on, 0x2 all the chosen fled, 0x10
 	// «Capture» on, 0x20 all capture, 0x100 «Plunder» on, 0x200 all plunder, 0x1000 «White flag» on, 0x2000 all
-	// with it, 0x8000 «Leave» (the enemy all gone: it takes «Flee»'s place). 0 with a chosen ship not his.
+	// with it, 0x8000 «Leave» (the enemy all gone: it takes «Flee»'s place). 0 with a chosen ship not his. At a
+	// town never «Flee», «Plunder» nor «Leave».
 	static uint16_t panel_buttons(const p3::data::SaveGame& save, size_t battle, int player);
 
 	// Where the camera looks first: the middle of the player's ships in the battle (the area's screen pixels);
@@ -134,6 +169,24 @@ private:
 		std::string lower;
 		uint32_t smoke = 0;  // When it smoked last.
 	};
+	// A tower of a town battle (0x6018DB, the four of [+0x1EC4 + 4k]): its next puff of smoke and its fire.
+	struct TowerFire {
+		uint32_t next_smoke = 0;
+		int level = 0;  // 0 none, 1 small, 2 middling.
+		uint32_t start = 0;
+	};
+	// A splinter of a hit (class 0x13, `brocken_a`/`_b`: a piece of wood turning, its 8 frames of 16 · 16; 0x580520
+	// lets it drift a few pixels a second, its speed shaken at random): in the area's screen pixels.
+	struct Splinter {
+		float x = 0;
+		float y = 0;
+		float vx = 0;
+		float vy = 0;
+		uint32_t start = 0;
+		uint32_t life = 0;
+		int image = 0;
+		int frame = 0;
+	};
 	struct Cloud {
 		float x = 0;  // In the area's screen pixels.
 		float y = 0;
@@ -158,6 +211,17 @@ private:
 	void draw_tile(const p3::data::TileDef* tile, int x, int y, int camera_x, int camera_y, int top);
 	void draw_clouds(const p3::data::SaveGame& save, size_t battle, int camera_x, int camera_y, int top, int view_width,
 		int view_height, uint32_t now);
+	// The towers' smoke and fire (0x6018DB), by their strength.
+	void draw_towers(const p3::data::SaveGame& save, size_t battle, int camera_x, int camera_y, int top, uint32_t now);
+	void add_splinters(float x, float y, int count, uint32_t now);
+	void draw_splinters(int camera_x, int camera_y, int top, uint32_t now);
+	// The ripples (the town view's [+0x5A0]: a height map of the screen, 0x59EDF0 drops a point of 0xFF that spreads
+	// and bends the water): here a cell each kRippleCell pixels over the screen's part and a margin, moved with the
+	// camera; drops at the area's screen pixels; stepped at a steady pace; drawn as light and shade on the crests,
+	// at a town only on its water.
+	void ripple_drop(int x, int y, int strength);
+	void ripple_step(int camera_x, int camera_y, int view_width, int view_height, uint32_t now, const BattleTownLayer* town);
+	void ripple_draw(int camera_x, int camera_y, int top);
 	uint32_t next_random();
 
 	SDL_Renderer* renderer_;
@@ -190,6 +254,25 @@ private:
 	std::vector<Effect> effects_;
 	std::map<size_t, Sinking> sinking_;  // By the scene's ship.
 	std::map<size_t, uint32_t> burning_;  // By the scene's ship: when it smokes next (0x620CDE).
+	std::array<TowerFire, 4> towers_{};
+	std::array<SDL_Texture*, 2> splinter_images_{};
+	std::vector<Splinter> splinters_;
+	static constexpr int kRippleCell = 4;
+	static constexpr int kRippleMargin = 8;  // Cells beyond the screen's part each way.
+	int ripple_w_ = 0;
+	int ripple_h_ = 0;
+	int ripple_x_ = 0;  // The field's first cell (the area's screen pixels / kRippleCell).
+	int ripple_y_ = 0;
+	std::vector<int16_t> ripple_now_;
+	std::vector<int16_t> ripple_last_;
+	std::vector<uint8_t> ripple_water_;  // 1 where the field may move (the water).
+	std::vector<uint32_t> ripple_pixels_;
+	SDL_Texture* ripple_texture_ = nullptr;
+	uint32_t ripple_time_ = 0;
+	bool ripple_masked_ = false;  // ripple_water_ made for the field's place.
+	std::map<size_t, SDL_FPoint> last_place_;  // By the scene's ship: where it was at the last draw (its bow's drops).
+	std::map<size_t, int> sink_frame_;  // By the scene's ship: the upper part's frame that dropped last.
+	bool bow_side_ = false;  // The bow's drop goes to one side, then the other (0x56DA48: the clock's parity).
 	uint32_t random_ = 12345;  // The viewer's own: the game's sprites take the world's rand() (left out of the engine).
 };
 

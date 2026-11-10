@@ -245,10 +245,11 @@ public:
 	// What the game's town view shows of the battle on the screen besides its ships and balls (the sprites it
 	// makes, the interface's; not the world's memory): a shot (0x602A90: the gun's smoke, or a heavy gun's
 	// fire, where the ball starts), a ball landing (0x603130: a splash) and a ball hitting a ship (0x603470:
-	// 0x61F96F's result, 2 an explosion, and the splinters). Kept only with the viewer's battle window (its
-	// screen); the viewer takes them each frame.
+	// 0x61F96F's result, 2 an explosion, and the splinters); in a town battle, a ball hitting a tower (0x5FFA52:
+	// a puff at the tower and its splinters) and a tower falling (0x6014D9: an explosion). Kept only with the
+	// viewer's battle window (its screen); the viewer takes them each frame.
 	struct BattleEffect {
-		enum Kind : uint8_t { Shot, Splash, Hit };
+		enum Kind : uint8_t { Shot, Splash, Hit, TowerHit, TowerFall };
 		Kind kind = Shot;
 		uint8_t slot = 0;  // The battle's.
 		int16_t x = 0;  // In the battle's area.
@@ -256,7 +257,7 @@ public:
 		uint8_t dir = 0;  // Shot: the ball's direction.
 		bool heavy = false;  // Shot: a heavy gun's.
 		uint8_t result = 0;  // Hit.
-		uint8_t puffs = 0;  // Hit: its splinters.
+		uint8_t puffs = 0;  // Hit, TowerHit: its splinters.
 	};
 	std::vector<BattleEffect> take_battle_effects() {
 		std::vector<BattleEffect> out;

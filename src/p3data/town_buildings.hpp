@@ -39,9 +39,11 @@ KontorView kontor_view(const SaveGame& save, size_t town);
 constexpr uint8_t kNoBuildingOwner = 0xFF;
 constexpr uint8_t kRivalOwner = 0xFE;
 // `office_heads`: the heads of the town's offices' lists (office_list_heads), drawn after the town's.
+// `dx`, `dy`: everything placed moved by that many cells (a town battle's map, whose cells are the town's moved by
+// the map file's two numbers: the town view's [+0x528], [+0x52C], 0x590680); what falls off the map is left out.
 size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int region, const TileSet& tiles,
 	const TownMap* editor, TownMap& town, const KontorView* kontors = nullptr, std::vector<uint8_t>* owners = nullptr,
-	const std::vector<uint16_t>& office_heads = {});
+	const std::vector<uint16_t>& office_heads = {}, int dx = 0, int dy = 0);
 // The heads of the record lists of the town's offices (0x521580: along the town's [0x784] and each office's
 // [+0x2CA], its [+0x2CE] and [+0x2D0]), in the game's drawing order.
 std::vector<uint16_t> office_list_heads(const SaveGame& save, size_t town);
@@ -63,10 +65,17 @@ struct SavedTownTemplate {
 
 bool load_saved_town_template(const CprArchive& archive, const SavedTown& saved, const std::vector<int>& regions,
 	SavedTownTemplate& out, std::string* error = nullptr);
+// The template of the town's battle map, which the game's town view shows in a battle at the town (0x58A310 →
+// 0x58EB30: its map number | 0x80, iso/towns/128.town to 155.town and their .editor): its harbour with the open
+// sea before it. Its cells are the town's moved by the file's last two numbers (SaveGame::TownView::map_ends,
+// the battle's [+0x1ED8], [+0x1EDC]).
+bool load_battle_town_template(const CprArchive& archive, const SavedTown& saved, const std::vector<int>& regions,
+	SavedTownTemplate& out, std::string* error = nullptr);
 
-// The template with the buildings of the town `index` of the save as they are now.
+// The template with the buildings of the town `index` of the save as they are now (moved by `dx`, `dy` cells on
+// a battle map).
 void place_saved_town(const SavedTownTemplate& base, const SaveGame& save, size_t index, const TileSet& tiles,
-	TownMap& out, std::vector<uint8_t>* owners = nullptr);
+	TownMap& out, std::vector<uint8_t>* owners = nullptr, int dx = 0, int dy = 0);
 
 // Carga la plantilla de la ciudad `index` de la partida y coloca sus edificios.
 bool load_saved_town(const CprArchive& archive, const SaveGame& save, size_t index, const TileSet& tiles,

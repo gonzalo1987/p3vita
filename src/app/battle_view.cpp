@@ -38,6 +38,21 @@ constexpr char kBurning[] = "iso/lcr/brandrauch.lcr";  // 0x12/0x24, a burning o
 constexpr const char* kGunSmoke[3] = {"iso/lcr/kanonenqualm.lcr", "iso/lcr/kanonenqualm_b.lcr",
 	"iso/lcr/kanonenqualm_c.lcr"};
 constexpr const char* kGunFire[3] = {"iso/lcr/KanoneFeuer.lcr", "iso/lcr/KanoneFeuer2.lcr", "iso/lcr/KanoneFeuer3.lcr"};
+// A town battle's: a tower's fire (0x12/0xB0 at levels 1 and 2, 0x601BC6: `feuer_klein`, `feuer_mittel`; the game
+// has a third, `feuer`, for the town's fires) and a tower falling (0x12/0x30, 0x6014EE).
+constexpr const char* kTowerFire[2] = {"iso/lcr/feuer_klein.lcr", "iso/lcr/feuer_mittel.lcr"};
+constexpr char kTowerFall[] = "iso/lcr/schiffsexplosion.lcr";
+// The splinters' pictures (class 0x13: `brocken_a.lcr`, `brocken_b.lcr`; their head has another layout, so the
+// viewer takes the pictures' 8 cells of 16 · 16, a piece turning, at their 15 frames a second).
+constexpr const char* kSplinterImages[2] = {"images/creatures/_X_p_brocken_a.aim", "images/creatures/_X_p_brocken_b.aim"};
+constexpr int kSplinterSize = 16;
+constexpr int kSplinterFrames = 8;
+constexpr uint32_t kSplinterFps = 15;
+constexpr size_t kMaxSplinters = 300;
+// The ripples' pace and strengths (by eye: the game's map is of bytes, a drop 0xFF).
+constexpr uint32_t kRippleStepMs = 30;
+constexpr int kSinkDrop = 2400;
+constexpr int kBowDrop = 900;
 
 // A sinking ship's parts (0x12/4..7 the upper one with its shadow, 0x12/0x40..0x43 the lower one; by type), in
 // 8 directions (the game's variant (d + 16) >> 5 & 7, plus 1: north, then clockwise).
@@ -100,6 +115,10 @@ BattleView::~BattleView() {
 	clear();
 }
 
+bool BattleView::at_town(const SaveGame& save, size_t battle) {
+	return save.battles.get<uint32_t>(battle, 0) == p3::data::Sailing::kTownBattleVtable;
+}
+
 void BattleView::clear() {
 	for (auto& [path, t] : textures_) {
 		if (t) {
@@ -125,6 +144,22 @@ void BattleView::clear() {
 	effects_.clear();
 	sinking_.clear();
 	burning_.clear();
+	towers_ = {};
+	splinter_images_.fill(nullptr);
+	splinters_.clear();
+	if (ripple_texture_) {
+		SDL_DestroyTexture(ripple_texture_);
+		ripple_texture_ = nullptr;
+	}
+	ripple_w_ = 0;
+	ripple_h_ = 0;
+	ripple_now_.clear();
+	ripple_last_.clear();
+	ripple_water_.clear();
+	ripple_pixels_.clear();
+	ripple_masked_ = false;
+	last_place_.clear();
+	sink_frame_.clear();
 }
 
 uint32_t BattleView::next_random() {
@@ -244,6 +279,11 @@ void BattleView::need(const SaveGame& save, size_t battle) {
 		want(kGunSmoke[k]);
 		want(kGunFire[k]);
 	}
+	if (at_town(save, battle)) {
+		want(kTowerFire[0]);
+		want(kTowerFire[1]);
+		want(kTowerFall);
+	}
 	const BattleGraph& g = save.battles;
 	std::vector<std::string> looks;
 	for_each_ship(g, battle, [&](size_t e) {
@@ -280,6 +320,7 @@ void BattleView::need(const SaveGame& save, size_t battle) {
 			SDL_Texture* t = it->second;
 			bool used = t == ball_ || t == arrow_ ||
 				std::find(cloud_images_.begin(), cloud_images_.end(), t) != cloud_images_.end() ||
+				std::find(splinter_images_.begin(), splinter_images_.end(), t) != splinter_images_.end() ||
 				std::find(pinned_.begin(), pinned_.end(), t) != pinned_.end();
 			for (const auto& [path, a] : anims_) {
 				used = used || a->body == t || a->shadow == t;
@@ -304,6 +345,9 @@ void BattleView::load_step() {
 		}
 		for (int i = 0; i < 6; ++i) {
 			cloud_images_[size_t(i)] = texture("images/creatures/clouds_lokal0" + std::to_string(i + 3) + ".aim", false);
+		}
+		for (size_t i = 0; i < splinter_images_.size(); ++i) {
+			splinter_images_[i] = texture(kSplinterImages[i], true);
 		}
 		return;
 	}
@@ -380,7 +424,7 @@ void BattleView::smoke(const SaveGame& save, size_t battle, float x, float y, ui
 }
 
 void BattleView::add_effects(const SaveGame& save, size_t battle, const std::vector<BattleEffect>& effects,
-	uint32_t now) {
+	uint32_t now, const BattleTownLayer* town) {
 	const uint16_t slot = save.battles.get<uint16_t>(battle, 0x662);
 	for (const BattleEffect& e : effects) {
 		if (e.slot != slot) {
@@ -394,10 +438,21 @@ void BattleView::add_effects(const SaveGame& save, size_t battle, const std::vec
 				now);
 			break;
 		case BattleEffect::Splash:
-			spawn(kSplash, 0, x, y, now);
+			// 0x60329B: on a cell of the water or a sand bank a splash, on anything else a puff (0x12/0x20).
+			spawn(!town || !town->splash || town->splash(int(x), int(y)) ? kSplash : kPuff, 0, x, y, now);
 			break;
 		case BattleEffect::Hit:
 			spawn(e.result == 2 ? kExplosion : kPuff, 0, x, y, now);
+			add_splinters(x, y, e.puffs, now);
+			break;
+		case BattleEffect::TowerHit:
+			if (e.x >= 0) {  // Off the area (0xFFFF) once the hit made it fall: the game's puff is out of sight.
+				spawn(kPuff, 0, x, y, now);
+				add_splinters(x, y, e.puffs, now);
+			}
+			break;
+		case BattleEffect::TowerFall:
+			spawn(kTowerFall, 0, x, y, now);
 			break;
 		}
 	}
@@ -498,15 +553,22 @@ void BattleView::draw_reefs(const SaveGame& save, size_t battle, int camera_x, i
 	}
 }
 
-void BattleView::draw_minimap(const SaveGame& save, size_t battle, const SDL_Rect& rect, const SDL_Rect& camera) const {
+void BattleView::draw_minimap(const SaveGame& save, size_t battle, const SDL_Rect& rect, const SDL_Rect& camera,
+	SDL_Texture* town) const {
 	const BattleGraph& g = save.battles;
-	const double sx = double(rect.w) / width();
-	const double sy = double(rect.h) / height();
+	const double sx = double(rect.w) / width(save, battle);
+	const double sy = double(rect.h) / height(save, battle);
 	SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 	SDL_SetRenderDrawColor(renderer_, 46, 70, 112, 255);
 	SDL_RenderFillRect(renderer_, &rect);
+	if (town) {
+		SDL_RenderCopy(renderer_, town, nullptr, &rect);  // The battle map's (the town view's area, whole).
+	}
 	SDL_SetRenderDrawColor(renderer_, 230, 210, 90, 255);
 	for (const size_t base : {size_t(0x672), size_t(0x872)}) {
+		if (town) {
+			break;
+		}
 		for (int k = 0; k < 0x40; ++k) {
 			const int x = g.get<int16_t>(battle, base + 8 * size_t(k));
 			if (x < 0) {
@@ -551,18 +613,20 @@ void BattleView::draw_minimap(const SaveGame& save, size_t battle, const SDL_Rec
 	SDL_RenderDrawRect(renderer_, &frame);
 }
 
-bool BattleView::minimap_point(const SDL_Rect& rect, int x, int y, SDL_Point& at) {
+bool BattleView::minimap_point(const SaveGame& save, size_t battle, const SDL_Rect& rect, int x, int y, SDL_Point& at) {
 	if (x < rect.x || y < rect.y || x >= rect.x + rect.w || y >= rect.y + rect.h) {
 		return false;
 	}
-	at = {int(double(x - rect.x) * width() / rect.w), int(double(y - rect.y) * height() / rect.h)};
+	at = {int(double(x - rect.x) * width(save, battle) / rect.w), int(double(y - rect.y) * height(save, battle) / rect.h)};
 	return true;
 }
 
-// 0x610D69 (on a sea battle; its method +0x28 is 0, not a town's).
+// 0x610D69: a town battle's method +0x28 is 1 (0x602980), and then «Leave», «Flee» and «Plunder» are left out
+// (no fleeing a town nor leaving its battle).
 uint16_t BattleView::panel_buttons(const SaveGame& save, size_t battle, int player) {
 	const BattleGraph& g = save.battles;
 	const size_t b = battle;
+	const bool town = at_town(save, battle);
 	auto side_merchant = [&](size_t e) { return g.get<uint16_t>(b, 0x35A + 2 * size_t(g.get<uint8_t>(e, 0x13D))); };
 	const int sel = g.ptr(b, 0x66C);
 	const size_t chosen = sel >= 0 ? g.get<uint16_t>(b, 0xAD0) : 0;
@@ -570,11 +634,11 @@ uint16_t BattleView::panel_buttons(const SaveGame& save, size_t battle, int play
 	if (chosen > 0 && (chosen_entry(0) < 0 || side_merchant(size_t(chosen_entry(0))) != uint16_t(player))) {
 		return 0;
 	}
-	uint32_t bits = 0x8000;
+	uint32_t bits = town ? 0 : 0x8000;
 	// «Leave»: every ship not his out, fled or sunk (0x27) and none grappling.
 	const int list = g.ptr(b, 0x4);
 	const size_t ships = size_t(g.get<uint16_t>(b, 0x65A)) + g.get<uint16_t>(b, 0x658);
-	for (size_t i = 0; list >= 0 && i < ships; ++i) {
+	for (size_t i = 0; !town && list >= 0 && i < ships; ++i) {
 		const int e = g.ptr(size_t(list), 4 * i);
 		if (e < 0 || side_merchant(size_t(e)) == uint16_t(player)) {
 			continue;
@@ -593,7 +657,7 @@ uint16_t BattleView::panel_buttons(const SaveGame& save, size_t battle, int play
 	const uint8_t team = g.get<uint8_t>(b, 0x559 + side);
 	// «Flee», as the key (0x60F309): his team isn't 0, [+0xACB] at most 3, and an enemy of the list [+0x10]
 	// without 0x66 (out, sinking, fled, ...).
-	if (team != 0 && g.get<uint8_t>(b, 0xACB) <= 3) {
+	if (!town && team != 0 && g.get<uint8_t>(b, 0xACB) <= 3) {
 		uint16_t k = g.get<uint16_t>(b, 0x10);
 		const int next = g.ptr(b, 0xC);
 		while (k != 0xFFFF && list >= 0) {
@@ -606,7 +670,7 @@ uint16_t BattleView::panel_buttons(const SaveGame& save, size_t battle, int play
 		}
 	}
 	// «Plunder» and its pair: a side of his whose team is in [+0xAD2].
-	for (size_t i = 0; i < g.get<uint8_t>(b, 0x558); ++i) {
+	for (size_t i = 0; !town && i < g.get<uint8_t>(b, 0x558); ++i) {
 		if (g.get<uint16_t>(b, 0x35A + 2 * i) == uint16_t(player) &&
 			((1u << g.get<uint8_t>(b, 0x559 + i)) & g.get<uint8_t>(b, 0xAD2))) {
 			bits |= 0x300;
@@ -659,6 +723,33 @@ int BattleView::ship_at(int x, int y, bool& own) const {
 			best = h.place;
 			nearest = d;
 			own = h.own;
+		}
+	}
+	return best;
+}
+
+int BattleView::tower_at(const SaveGame& save, size_t battle, int x, int y) {
+	if (!at_town(save, battle)) {
+		return -1;
+	}
+	const BattleGraph& g = save.battles;
+	int best = -1;
+	long nearest = 0;
+	for (size_t k = 0; k < 4; ++k) {
+		const int tx = g.get<uint16_t>(battle, 0x1E9E + 2 * k);
+		if (tx == 0xFFFF || g.get<int32_t>(battle, 0x1EC4 + 4 * k) == 0) {
+			continue;
+		}
+		const int ty = screen_y(g.get<uint16_t>(battle, 0x1EA6 + 2 * k));
+		// Its picture about its place (the place is 2 rows above its cell, on its body): 40 each side, 70 above
+		// and its cell below, a finger's width more.
+		if (x < tx - 40 || x > tx + 40 || y < ty - 70 || y > ty + 2 * p3::data::kRowStep + p3::data::kTileHeight) {
+			continue;
+		}
+		const long d = long(x - tx) * (x - tx) + long(y - ty) * (y - ty);
+		if (best < 0 || d < nearest) {
+			best = int(k);
+			nearest = d;
 		}
 	}
 	return best;
@@ -751,7 +842,8 @@ bool BattleView::player_ships_centre(const SaveGame& save, size_t battle, int pl
 }
 
 void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int camera_y, int top, int view_width,
-	int view_height, uint32_t now, const std::vector<uint16_t>& selection, std::vector<BattleLabel>& labels) {
+	int view_height, uint32_t now, const std::vector<uint16_t>& selection, std::vector<BattleLabel>& labels,
+	const BattleTownLayer* town) {
 	const BattleGraph& g = save.battles;
 	hits_.clear();
 	missing_looks_ = false;
@@ -770,7 +862,20 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 		}
 	}
 
-	draw_reefs(save, battle, camera_x, camera_y, top, view_width, view_height);
+	if (town) {
+		// The town's battle map over the water: its ground, then (below) its buildings among the ships.
+		if (town->ground) {
+			town->ground(camera_x, camera_y - top);
+		}
+	} else {
+		draw_reefs(save, battle, camera_x, camera_y, top, view_width, view_height);
+	}
+	// The town's objects (its buildings, trees...) up to a row of its cells: those behind a ship before it.
+	auto town_rows = [&](int last_row) {
+		if (town && town->objects) {
+			town->objects(camera_x, camera_y - top, last_row);
+		}
+	};
 
 	// The ships, back to front: each one's shadow, then its picture; a sinking one's two parts.
 	struct Drawn {
@@ -830,6 +935,20 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 				next = now + uint32_t(1200 * int64_t(std::max(ship.health(), 0)) / ship.max_health()) + 200;
 			}
 		}
+		if (!sinking && !(flags & 0x4)) {
+			// 0x56DA6F: a ship that moves drops a ripple by its bow each frame, to one side and then the other (by
+			// the clock's parity), farther out the faster it goes.
+			const auto last = last_place_.find(e);
+			if (last != last_place_.end()) {
+				const float moved = std::hypot(ax - last->second.x, ay - last->second.y);
+				if (moved > 0.05f) {
+					const float fx = sine256(dir), fy = -sine256(dir + 0x40) * 11.0f / 17.0f;
+					const float side = (bow_side_ ? 1.0f : -1.0f) * (5.0f + std::min(moved * 6.0f, 8.0f));
+					ripple_drop(int(ax + fx * 22.0f - fy * side), int(ay + fy * 22.0f + fx * side), kBowDrop);
+				}
+			}
+			last_place_[e] = {ax, ay};
+		}
 		const int sails = std::min<int>(g.get<uint8_t>(e, 0x26), 4);
 		const Anim* look = ship_look(ship.type() & 3, hull_state(ship), sails);
 		if (!look && !sinking) {
@@ -842,7 +961,16 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 	for (auto it = sinking_.begin(); it != sinking_.end();) {
 		it = present.count(it->first) ? std::next(it) : sinking_.erase(it);
 	}
+	for (auto it = sink_frame_.begin(); it != sink_frame_.end();) {
+		it = present.count(it->first) ? std::next(it) : sink_frame_.erase(it);
+	}
 	std::sort(ships.begin(), ships.end(), [](const Drawn& a, const Drawn& b) { return a.y < b.y; });
+	bow_side_ = !bow_side_;
+	for (auto it = last_place_.begin(); it != last_place_.end();) {
+		it = present.count(it->first) ? std::next(it) : last_place_.erase(it);
+	}
+	ripple_step(camera_x, camera_y, view_width, view_height, now, town);
+	ripple_draw(camera_x, camera_y, top);
 	for (const Drawn& d : ships) {
 		if (d.sinking) {
 			if (const Anim* upper = anim(d.sinking->upper)) {
@@ -860,6 +988,9 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 	for (const Drawn& d : ships) {
 		const uint32_t index = g.get<uint32_t>(d.entry, 0x4);
 		const p3::data::SavedShip& ship = save.ships[index];
+		// The town's rows whose cells are wholly behind the ship's place (a cell's diamond is 21 high, rows 11
+		// apart).
+		town_rows((int(d.ay) - p3::data::kTileHeight) / p3::data::kRowStep);
 		if (d.sinking) {
 			// Its lower part, then its upper part, each once at its frames per second; while the upper one's
 			// first 10 frames play, two puffs of smoke (0x620944; a frame of the viewer each 50 ms at most).
@@ -871,6 +1002,22 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 				}
 				const uint32_t fps = std::max<uint32_t>(a->lcr.fps, 1);
 				const size_t frame = size_t((now - s.start) * fps / 1000);
+				// 0x6203D1: each new frame of the upper part up to 0xC drops ripples: its middle first, then
+				// circles of 0x40 points (the sine tables 0x67AF88, 0x67B388), wider each frame.
+				auto drop_frame = sink_frame_.find(d.entry);
+				if (part == &s.upper && frame <= 0xC &&
+					(drop_frame == sink_frame_.end() || drop_frame->second != int(frame))) {
+					sink_frame_[d.entry] = int(frame);
+					if (frame == 0) {
+						ripple_drop(int(d.ax), int(d.ay), kSinkDrop);
+					} else {
+						const float r = 4.0f + 4.0f * float(frame);
+						for (int k = 0; k < 0x40; k += 2) {
+							ripple_drop(int(d.ax + r * sine256(k * 4)), int(d.ay - r * sine256(k * 4 + 0x40) * 11.0f / 17.0f),
+								kSinkDrop / 2);
+						}
+					}
+				}
 				if (frame < a->lcr.directions[0].size()) {
 					draw_frame(*a, 0, int(frame), d.x, d.y, 255, false);
 				}
@@ -911,6 +1058,11 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 		label.own = own;
 		label.selected = own && std::find(selection.begin(), selection.end(), place) != selection.end();
 		labels.push_back(label);
+	}
+
+	town_rows(1 << 20);  // The rest of the town.
+	if (town) {
+		draw_towers(save, battle, camera_x, camera_y, top, now);
 	}
 
 	// The order lines (0x56DD20, from method +0x20 while [+0xAE0] isn't −1): from where each chosen ship of
@@ -980,6 +1132,8 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 		++it;
 	}
 
+	draw_splinters(camera_x, camera_y, top, now);
+
 	// The cannon balls (0x6038C0): drawn ahead of their place by their speed, raised by their arc.
 	const int list = g.ptr(battle, 0x668);
 	const size_t slots = g.get<uint16_t>(battle, 0xACC);
@@ -1020,6 +1174,227 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 
 	draw_clouds(save, battle, camera_x, camera_y, top, view_width, view_height, now);
 	SDL_RenderSetClipRect(renderer_, nullptr);
+}
+
+// 0x6018DB (a town battle's method +0x20, before the sea's): for each standing tower ([+0x1EC4 + 4k] its
+// strength, [+0x1E9E + 2k], [+0x1EA6 + 2k] its place in the area), at 391000 / 3 or less a puff of the burning
+// smoke (0x12/0x24) about it each 200 + 1200 · strength / 196000 ms (the game's first wait is a wrapped number
+// that its next frame brings down to that), drifting with the wind; below 196000 / 3, a fire on it (0x12/0xB0)
+// of level 2 − strength · 6 / 196000: 1 small, 2 middling (a fire of another level replaces it; none at 0).
+void BattleView::draw_towers(const SaveGame& save, size_t battle, int camera_x, int camera_y, int top, uint32_t now) {
+	const BattleGraph& g = save.battles;
+	for (size_t k = 0; k < towers_.size(); ++k) {
+		TowerFire& t = towers_[k];
+		const int32_t strength = g.get<int32_t>(battle, 0x1EC4 + 4 * k);
+		const int x = g.get<uint16_t>(battle, 0x1E9E + 2 * k);
+		const int y = g.get<uint16_t>(battle, 0x1EA6 + 2 * k);
+		if (strength == 0) {
+			t.level = 0;
+			continue;
+		}
+		const float ax = float(x);
+		const float ay = float(screen_y(y));
+		if (int64_t(strength) * 3 <= 0x5FB40) {
+			if (int32_t(now - t.next_smoke) >= 0) {
+				smoke(save, battle, ax, ay, now);
+				t.next_smoke = now + 200 + uint32_t(int64_t(strength) * 1200 / 196000);
+			}
+		}
+		const int level = int64_t(strength) * 3 < 0x2FDA0 ? 2 - int(int64_t(strength) * 6 / 196000) : 0;
+		if (level != t.level) {
+			t.level = level;
+			t.start = now;
+		}
+		if (t.level == 0) {
+			continue;
+		}
+		if (const Anim* a = anim(kTowerFire[t.level - 1])) {
+			const uint32_t fps = std::max<uint32_t>(a->lcr.fps, 1);
+			const size_t n = std::max<size_t>(a->lcr.directions[0].size(), 1);
+			const size_t frame = size_t(uint64_t(now - t.start) * fps / 1000) % n;  // It burns on.
+			draw_frame(*a, 0, int(frame), x - camera_x, top + int(ay) - camera_y, 255, false);
+		}
+	}
+}
+
+// A hit's splinters (0x603656.., 0x5FFB7F: each 0x590610 of class 0x13 with a rand()): its picture `_a` or `_b`
+// and its first frame at random (0x5803B0), a speed of rand() % 64 − 32 and rand() % 44 − 22 tenths of a pixel a
+// second (0x580520: position + speed · ms / 10000), shaken a little each frame; it floats 3 to 6 s (by eye; the
+// game's life isn't known), fading at the end.
+void BattleView::add_splinters(float x, float y, int count, uint32_t now) {
+	for (int i = 0; i < count && splinters_.size() < kMaxSplinters; ++i) {
+		Splinter p;
+		p.x = x;
+		p.y = y;
+		p.vx = float(int(next_random() % 64) - 32) / 10.0f;
+		p.vy = float(int(next_random() % 44) - 22) / 10.0f;
+		p.start = now;
+		p.life = 3000 + next_random() % 3000;
+		p.image = int(next_random() % 2);
+		p.frame = int(next_random() % kSplinterFrames);
+		splinters_.push_back(p);
+	}
+}
+
+void BattleView::draw_splinters(int camera_x, int camera_y, int top, uint32_t now) {
+	for (auto it = splinters_.begin(); it != splinters_.end();) {
+		const uint32_t age = now - it->start;
+		if (age >= it->life) {
+			it = splinters_.erase(it);
+			continue;
+		}
+		SDL_Texture* t = splinter_images_[size_t(it->image)];
+		if (t) {
+			const float sec = float(age) / 1000.0f;
+			const int x = int(it->x + it->vx * sec) - camera_x;
+			const int y = top + int(it->y + it->vy * sec) - camera_y;
+			const int frame = (it->frame + int(uint64_t(age) * kSplinterFps / 1000)) % kSplinterFrames;
+			const SDL_Rect src = {0, frame * kSplinterSize, kSplinterSize, kSplinterSize};
+			const SDL_Rect dst = {x - kSplinterSize / 2, y - kSplinterSize / 2, kSplinterSize, kSplinterSize};
+			const uint32_t left = it->life - age;
+			SDL_SetTextureAlphaMod(t, Uint8(left < 800 ? left * 255 / 800 : 255));
+			SDL_RenderCopy(renderer_, t, &src, &dst);
+			SDL_SetTextureAlphaMod(t, 255);
+		}
+		++it;
+	}
+}
+
+void BattleView::ripple_drop(int x, int y, int strength) {
+	const int cx = x / kRippleCell - ripple_x_;
+	const int cy = y / kRippleCell - ripple_y_;
+	if (cx < 1 || cy < 1 || cx >= ripple_w_ - 1 || cy >= ripple_h_ - 1) {
+		return;
+	}
+	const size_t i = size_t(cy) * size_t(ripple_w_) + size_t(cx);
+	if (!ripple_water_.empty() && !ripple_water_[i]) {
+		return;
+	}
+	ripple_now_[i] = int16_t(std::clamp(int(ripple_now_[i]) + strength, -12000, 12000));
+}
+
+void BattleView::ripple_step(int camera_x, int camera_y, int view_width, int view_height, uint32_t now,
+	const BattleTownLayer* town) {
+	const int w = view_width / kRippleCell + 2 * kRippleMargin + 1;
+	const int h = view_height / kRippleCell + 2 * kRippleMargin + 1;
+	const int fx = camera_x / kRippleCell - kRippleMargin;
+	const int fy = camera_y / kRippleCell - kRippleMargin;
+	if (w != ripple_w_ || h != ripple_h_) {
+		ripple_w_ = w;
+		ripple_h_ = h;
+		ripple_x_ = fx;
+		ripple_y_ = fy;
+		ripple_now_.assign(size_t(w) * size_t(h), 0);
+		ripple_last_.assign(size_t(w) * size_t(h), 0);
+		ripple_pixels_.assign(size_t(w) * size_t(h), 0);
+		ripple_masked_ = false;
+		if (ripple_texture_) {
+			SDL_DestroyTexture(ripple_texture_);
+		}
+		ripple_texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, w, h);
+		if (ripple_texture_) {
+			SDL_SetTextureBlendMode(ripple_texture_, SDL_BLENDMODE_BLEND);
+			SDL_SetTextureScaleMode(ripple_texture_, SDL_ScaleModeLinear);
+		}
+		ripple_time_ = now;
+	}
+	if (fx != ripple_x_ || fy != ripple_y_) {
+		// The camera moved: the field goes with the area (what leaves it is lost).
+		const int dx = fx - ripple_x_, dy = fy - ripple_y_;
+		for (std::vector<int16_t>* f : {&ripple_now_, &ripple_last_}) {
+			std::vector<int16_t> moved(f->size(), 0);
+			for (int y = 0; y < h; ++y) {
+				const int sy = y + dy;
+				if (sy < 0 || sy >= h) {
+					continue;
+				}
+				for (int x = 0; x < w; ++x) {
+					const int sx = x + dx;
+					if (sx >= 0 && sx < w) {
+						moved[size_t(y) * size_t(w) + size_t(x)] = (*f)[size_t(sy) * size_t(w) + size_t(sx)];
+					}
+				}
+			}
+			f->swap(moved);
+		}
+		ripple_x_ = fx;
+		ripple_y_ = fy;
+		ripple_masked_ = false;
+	}
+	if (!ripple_masked_) {
+		ripple_water_.clear();
+		if (town && town->water) {
+			ripple_water_.assign(size_t(w) * size_t(h), 0);
+			for (int y = 0; y < h; ++y) {
+				for (int x = 0; x < w; ++x) {
+					ripple_water_[size_t(y) * size_t(w) + size_t(x)] = town->water(
+						(ripple_x_ + x) * kRippleCell + kRippleCell / 2, (ripple_y_ + y) * kRippleCell + kRippleCell / 2)
+						? 1
+						: 0;
+				}
+			}
+		}
+		ripple_masked_ = true;
+	}
+	// The classic spread: each cell the half of its four neighbours' sum less its value of the step before, a
+	// sixteenth lost each step; nothing on the land.
+	int steps = 0;
+	while (now - ripple_time_ >= kRippleStepMs && steps < 4) {
+		ripple_time_ += kRippleStepMs;
+		++steps;
+		for (int y = 1; y < h - 1; ++y) {
+			for (int x = 1; x < w - 1; ++x) {
+				const size_t i = size_t(y) * size_t(w) + size_t(x);
+				if (!ripple_water_.empty() && !ripple_water_[i]) {
+					ripple_last_[i] = 0;
+					continue;
+				}
+				int v = ((int(ripple_now_[i - 1]) + ripple_now_[i + 1] + ripple_now_[i - size_t(w)] +
+							 ripple_now_[i + size_t(w)]) >>
+							1) -
+					ripple_last_[i];
+				v -= v >> 4;
+				ripple_last_[i] = int16_t(std::clamp(v, -12000, 12000));
+			}
+		}
+		ripple_now_.swap(ripple_last_);
+	}
+	if (now - ripple_time_ > 4 * kRippleStepMs) {
+		ripple_time_ = now;  // Far behind (a slow frame): it doesn't catch up.
+	}
+}
+
+void BattleView::ripple_draw(int camera_x, int camera_y, int top) {
+	if (!ripple_texture_ || ripple_w_ < 3 || ripple_h_ < 3) {
+		return;
+	}
+	// The slope towards the light (up and left): light on a crest's near side, shade on its far one.
+	const int w = ripple_w_, h = ripple_h_;
+	bool any = false;
+	for (int y = 0; y < h; ++y) {
+		for (int x = 0; x < w; ++x) {
+			const size_t i = size_t(y) * size_t(w) + size_t(x);
+			uint32_t px = 0;
+			if (x > 0 && y > 0 && x < w - 1 && y < h - 1) {
+				const int d = (int(ripple_now_[i - 1]) - ripple_now_[i + 1]) + (int(ripple_now_[i - size_t(w)]) - ripple_now_[i + size_t(w)]);
+				if (d > 12) {
+					px = uint32_t(std::min(170, d / 3)) << 24 | 0xFFFFFF;  // RGBA32 words: alpha high, white.
+					any = true;
+				} else if (d < -12) {
+					px = uint32_t(std::min(90, -d / 5)) << 24 | 0x302010;
+					any = true;
+				}
+			}
+			ripple_pixels_[i] = px;
+		}
+	}
+	if (!any) {
+		return;
+	}
+	SDL_UpdateTexture(ripple_texture_, nullptr, ripple_pixels_.data(), w * 4);
+	const SDL_Rect dst = {ripple_x_ * kRippleCell - camera_x + kRippleCell / 2, top + ripple_y_ * kRippleCell - camera_y +
+		kRippleCell / 2, w * kRippleCell, h * kRippleCell};
+	SDL_RenderCopy(renderer_, ripple_texture_, nullptr, &dst);
 }
 
 // The clouds of the wind (the battle's [+0x670] direction, [+0x671] strength; the game makes them with

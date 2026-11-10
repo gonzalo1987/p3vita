@@ -305,8 +305,9 @@ void building_objects(const BuildingRecord& record, const SavedTown& town, int r
 	}
 }
 
+// (`dx`, `dy`: where the editor's cells are, on a battle map: see place_saved_buildings.)
 void fixed_objects(const SavedTown& town, const TownFixedPoints& f, const TownMap& map, const TileIndex& index,
-	const TownMap* editor, const TileSet& tiles, std::vector<Placed>& out) {
+	const TownMap* editor, const TileSet& tiles, std::vector<Placed>& out, int dx, int dy) {
 	// Los puntos sin uso valen 0xFF y caen fuera del mapa.
 	auto valid = [&](uint8_t x, uint8_t y) { return in_map(map, x, y); };
 
@@ -328,8 +329,8 @@ void fixed_objects(const SavedTown& town, const TownFixedPoints& f, const TownMa
 				continue;
 			}
 			const TileDef* crane = default_crane;
-			if (editor && in_map(*editor, x, y)) {
-				auto it = tiles.find(editor->objects[size_t(y) * size_t(editor->width) + size_t(x)].tile);
+			if (editor && in_map(*editor, x + dx, y + dy)) {
+				auto it = tiles.find(editor->objects[size_t(y + dy) * size_t(editor->width) + size_t(x + dx)].tile);
 				if (it != tiles.end() && it->second.type == kTileCrane) {
 					crane = &it->second;
 				}
@@ -452,7 +453,7 @@ std::vector<int> load_town_regions(const CprArchive& archive) {
 
 size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int region, const TileSet& tiles,
 	const TownMap* editor, TownMap& town, const KontorView* kontors, std::vector<uint8_t>* owners,
-	const std::vector<uint16_t>& office_heads) {
+	const std::vector<uint16_t>& office_heads, int dx, int dy) {
 	const TileIndex index(tiles);
 	std::vector<Placed> placed;
 	size_t missing = 0;
@@ -461,9 +462,13 @@ size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int reg
 	walk_drawn_records(saved, office_heads, [&](const BuildingRecord& record) {
 		building_objects(record, saved, region, merchant_count, index, placed, missing);
 	});
-	fixed_objects(saved, current_fixed_points(saved.memory), town, index, editor, tiles, placed);
+	fixed_objects(saved, current_fixed_points(saved.memory), town, index, editor, tiles, placed, dx, dy);
 	if (kontors) {
 		kontor_objects(current_fixed_points(saved.memory), town, index, *kontors, placed);
+	}
+	for (Placed& p : placed) {
+		p.x += dx;
+		p.y += dy;
 	}
 
 	// Objetos naturales del mapa (árboles, rocas...), agrupados por huella desde
@@ -553,22 +558,36 @@ uint64_t drawn_buildings_key(const SavedTown& saved, const std::vector<uint16_t>
 	return key;
 }
 
-bool load_saved_town_template(const CprArchive& archive, const SavedTown& saved, const std::vector<int>& regions,
+namespace {
+
+bool load_town_template(const CprArchive& archive, const SavedTown& saved, int map, const std::vector<int>& regions,
 	SavedTownTemplate& out, std::string* error) {
-	if (!load_town(archive, saved.template_map(), out.town, error)) {
+	if (!load_town(archive, map, out.town, error)) {
 		return false;
 	}
-	out.has_editor = load_town(archive, saved.template_map(), out.editor, nullptr, true);
+	out.has_editor = load_town(archive, map, out.editor, nullptr, true);
 	out.region = saved.town_id() < int(regions.size()) ? regions[size_t(saved.town_id())] : kFallbackRegion;
 	return true;
 }
 
+}  // namespace
+
+bool load_saved_town_template(const CprArchive& archive, const SavedTown& saved, const std::vector<int>& regions,
+	SavedTownTemplate& out, std::string* error) {
+	return load_town_template(archive, saved, saved.template_map(), regions, out, error);
+}
+
+bool load_battle_town_template(const CprArchive& archive, const SavedTown& saved, const std::vector<int>& regions,
+	SavedTownTemplate& out, std::string* error) {
+	return load_town_template(archive, saved, saved.template_map() | 0x80, regions, out, error);
+}
+
 void place_saved_town(const SavedTownTemplate& base, const SaveGame& save, size_t index, const TileSet& tiles,
-	TownMap& out, std::vector<uint8_t>* owners) {
+	TownMap& out, std::vector<uint8_t>* owners, int dx, int dy) {
 	out = base.town;
 	const KontorView kontors = kontor_view(save, index);
 	place_saved_buildings(save.towns[index], save.merchant_count, base.region, tiles,
-		base.has_editor ? &base.editor : nullptr, out, &kontors, owners, office_list_heads(save, index));
+		base.has_editor ? &base.editor : nullptr, out, &kontors, owners, office_list_heads(save, index), dx, dy);
 }
 
 uint64_t drawn_buildings_key(const SaveGame& save, size_t index) {

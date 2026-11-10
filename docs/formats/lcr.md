@@ -18,7 +18,7 @@ don't have (they are version 6), so the layout below comes from the files themse
 |-|-|-|
 | 0x00 | u16 | 0x0600 |
 | 0x02 | u16 | the id (not unique: the 8 directions of a sinking ship share one) |
-| 0x04 | u32 | the class: 0x0D a ship's look, 0x0E the cannon ball, 0x12 an effect, 0x13 splinters, 0x14 a cloud, 0x17 a projectile, 0x1C fog... |
+| 0x04 | u32 | the class: 0x0D a ship's look, 0x0E the cannon ball, 0x12 an effect, 0x13 splinters, 0x14 a cloud, 0x17 a projectile, 0x1C fog, 0x1E a ship's pennant... |
 | 0x08 | u32 | the key: 0xFFFF00FF, the images' magenta (FF00FF) is transparent (the ships, a sinking ship's upper part, a splash); 0xFF000000, black is (an explosion, the fire: the viewer adds them, light on the water); 0, they have their own alpha (`_tp` images, the smoke) |
 | 0x0C | u32 | ? |
 | 0x10 | u32 | ? (a ball's 4000) |
@@ -58,3 +58,22 @@ its shadow's rectangle at (x + shadow x − anchor x, y + shadow y − anchor y)
 is (d · 32 + 128) >> 8 & 31 (0x56C99F). Shadows: the cog has its own for hull states 0 and 3
 (`_X_Kogge_Schaden00_Segel00_Shadow.aim`...), the others one per sails or per state; the looks of states 1 and 2
 reuse them.
+
+## Other battle creatures (2026-11-10, the battles' piece 7, part 3)
+
+- **Splinters**, class 0x13 (`brocken_a.lcr`, `brocken_b.lcr`, pictures `images/creatures/_X_p_brocken_a.aim`,
+  `_b`: 16 · 128, eight cells of 16 · 16, a piece of wood turning, 15 frames a second). Their head goes on
+  differently after the shadow's name (a count of 9 and records that aren't the layout above), so the viewer
+  takes the picture's cells. The class's init (0x5803B0) picks `_a` or `_b` by rand() among those of the detail
+  level, its speed rand() % 64 − 32 and rand() % 44 − 22; its update (0x580520) moves it by speed · ms / 10000
+  pixels, the speed shaken at random: the pieces float where the hit was.
+- **A ship's pennant**, class 0x1E (`faehnchen.lcr`, `_X_faehnchen.aim`: 32 directions of a small grey flag,
+  7 frames a second). Each ship's town view sprite makes one (0x56CA0B) at its place moved by a point per
+  direction from the view's table 0x6E1860 + 24 · type ([+4]: 8 bytes a direction), filled at load (not found
+  yet). Its update (0x568EA0) turns it to the wind's direction (the view's [+0x598]) and steps its frames
+  faster with a stronger wind ([+0x599]: a frame's time less its [+0x599] / 20). (The battles' notes once
+  took it for the bow wave.)
+- **Waves**, class 0x12 number 0x50 (`welle_a`, `_b`, `_c`, black is nothing: added light), and the sinking
+  ship's whirlpool, number 0x51 (`schiffuntergangstrudel.lcr`, `_X_bodenschiffuntergangpage.aim`). Who asks
+  for them wasn't looked at. The town view's ripples (a sinking ship's foam, a ship's wake) aren't creatures but
+  its height map [+0x5A0] (0x5986A0, 0x59EDF0).

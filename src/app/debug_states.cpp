@@ -371,12 +371,23 @@ const char kDebugStatesHelp[] =
 	"              ship its guard ship: a town battle against the player\n"
 	"  town-events  Lübeck with the eight event symbols of the town view, and towns\n"
 	"              with each of the sea map's (only to look at them)\n"
+	"  weak-towers  the towers of a town battle weakened when its screen opens: smoke\n"
+	"              and fire (only to look at them)\n"
 	"  damaged     the player's ships in port with half their hull (the shipyard)\n"
 	"  tavern-captain  a free captain in the tavern of the player's first ship's town\n"
 	"  convoy-leader  the player's first ship in port fit to guide a convoy\n"
 	"  shipyard-materials  100 units of each shipyard material in that ship's town\n"
 	"  lender      loans on offer and asked for in that ship's town, an AI merchant's\n"
 	"              shares on sale (the moneylender)\n";
+
+void weaken_towers(SaveGame& save, size_t battle) {
+	static constexpr int32_t kStrength[4] = {120000, 50000, 25000, 9000};
+	for (size_t k = 0; k < 4; ++k) {
+		if (save.battles.get<int32_t>(battle, 0x1EC4 + 4 * k) > kStrength[k]) {
+			save.battles.set<int32_t>(battle, 0x1EC4 + 4 * k, kStrength[k]);
+		}
+	}
+}
 
 bool apply_debug_states(SaveGame& save, const std::string& states, std::string& error) {
 	if (save.player < 0 || size_t(save.player) >= save.merchants.size()) {
@@ -429,6 +440,8 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "alderman") {
 			save.globals.u8(kAlderman) = uint8_t(save.player);
 			save.globals.u8(kAldermanTown) = m.u8(0x19);
+		} else if (state == "weak-towers") {
+			// The viewer weakens them when the battle's screen opens (weaken_towers).
 		} else if (state == "damaged") {
 			damage_ships(save);
 		} else if (state == "shipyard-materials") {

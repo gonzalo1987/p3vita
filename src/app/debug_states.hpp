@@ -17,4 +17,8 @@ bool apply_debug_states(p3::data::SaveGame& save, const std::string& states, std
 
 extern const char kDebugStatesHelp[];
 
+// weak-towers: a town battle's towers with less strength each (from the first's smoke alone to the fourth's
+// middling fire, 0x6018DB), when the viewer opens its screen. Only for the eyes.
+void weaken_towers(p3::data::SaveGame& save, size_t battle);
+
 }  // namespace p3::app
