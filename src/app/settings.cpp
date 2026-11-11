@@ -1,6 +1,10 @@
 #include "settings.hpp"
 
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+#include "p3data/cpr.hpp"
 
 namespace p3::app {
 
@@ -9,6 +13,18 @@ namespace {
 constexpr const char* kFileName = "p3vita-settings.txt";
 constexpr const char* kFixGameBugs = "fix_game_bugs";
 constexpr const char* kLanguage = "language";
+// The new game window's choices, as P2.CFG's [SPIELEINST] keys (the names in UTF-8).
+constexpr const char* kFirstName = "new_game_first_name";
+constexpr const char* kFamilyName = "new_game_family_name";
+constexpr const char* kFemale = "new_game_female";
+constexpr const char* kHome = "new_game_home_town";
+constexpr const char* kYear = "new_game_year";
+constexpr const char* kLevel = "new_game_level";
+constexpr const char* kGoal = "new_game_goal";
+constexpr const char* kGoalTime = "new_game_goal_time";
+constexpr const char* kSpeed = "new_game_speed";
+constexpr const char* kProduction = "new_game_production";
+constexpr const char* kDetails = "new_game_details";
 
 std::string trim(const std::string& s) {
 	const size_t first = s.find_first_not_of(" \t\r\n");
@@ -70,9 +86,41 @@ AppSettings load_settings(const std::string& path) {
 			parse_bool(value, settings.fix_game_bugs);
 		} else if (key == kLanguage && (value == "es" || value == "en")) {
 			settings.spanish = value == "es";
+		} else if (key == kFirstName) {
+			settings.new_game.first_name = p3::data::utf8_to_latin1(value);
+		} else if (key == kFamilyName) {
+			settings.new_game.family_name = p3::data::utf8_to_latin1(value);
+		} else if (key == kFemale) {
+			parse_bool(value, settings.new_game.female);
+		} else if (key == kHome) {
+			settings.new_game.home = uint32_t(std::strtol(value.c_str(), nullptr, 10));
+		} else if (key == kYear) {
+			settings.new_game.year = uint32_t(std::strtol(value.c_str(), nullptr, 10));
+		} else if (key == kLevel) {
+			settings.new_game.level = uint32_t(std::strtol(value.c_str(), nullptr, 10));
+		} else if (key == kGoal) {
+			settings.new_game.goal = uint32_t(std::strtol(value.c_str(), nullptr, 10));
+		} else if (key == kGoalTime) {
+			settings.new_game.goal_time = uint32_t(std::strtol(value.c_str(), nullptr, 10));
+		} else if (key == kSpeed) {
+			settings.new_game.speed = uint32_t(std::strtol(value.c_str(), nullptr, 10));
+		} else if (key == kProduction) {
+			settings.new_game.production = std::strtol(value.c_str(), nullptr, 10) != 0 ? 1 : 0;
+		} else if (key == kDetails) {
+			// «1|1|1|1|1|1|1|2», as P2.CFG's DETAILS.
+			const char* p = value.c_str();
+			for (uint8_t& d : settings.new_game.details) {
+				d = uint8_t(std::strtol(p, nullptr, 10));
+				const char* bar = std::strchr(p, '|');
+				if (!bar) {
+					break;
+				}
+				p = bar + 1;
+			}
 		}
 	}
 	std::fclose(file);
+	p3::data::clamp_new_game_choices(settings.new_game, 0);
 	return settings;
 }
 
@@ -86,6 +134,20 @@ bool save_settings(const std::string& path, const AppSettings& settings) {
 	std::fprintf(file, "%s = %d\n", kFixGameBugs, settings.fix_game_bugs ? 1 : 0);
 	std::fprintf(file, "# language: es (Spanish) or en (English)\n");
 	std::fprintf(file, "%s = %s\n", kLanguage, settings.spanish ? "es" : "en");
+	const p3::data::NewGameChoices& g = settings.new_game;
+	std::fprintf(file, "# the new game window's last choices\n");
+	std::fprintf(file, "%s = %s\n", kFirstName, p3::data::latin1_to_utf8(g.first_name).c_str());
+	std::fprintf(file, "%s = %s\n", kFamilyName, p3::data::latin1_to_utf8(g.family_name).c_str());
+	std::fprintf(file, "%s = %d\n", kFemale, g.female ? 1 : 0);
+	std::fprintf(file, "%s = %u\n", kHome, unsigned(g.home));
+	std::fprintf(file, "%s = %u\n", kYear, unsigned(g.year));
+	std::fprintf(file, "%s = %u\n", kLevel, unsigned(g.level));
+	std::fprintf(file, "%s = %u\n", kGoal, unsigned(g.goal));
+	std::fprintf(file, "%s = %u\n", kGoalTime, unsigned(g.goal_time));
+	std::fprintf(file, "%s = %u\n", kSpeed, unsigned(g.speed));
+	std::fprintf(file, "%s = %u\n", kProduction, unsigned(g.production));
+	std::fprintf(file, "%s = %u|%u|%u|%u|%u|%u|%u|%u\n", kDetails, g.details[0], g.details[1], g.details[2],
+		g.details[3], g.details[4], g.details[5], g.details[6], g.details[7]);
 	return std::fclose(file) == 0;
 }
 

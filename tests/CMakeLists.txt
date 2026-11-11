@@ -81,3 +81,9 @@ target_link_libraries(ship_menu_test PRIVATE p3data)
 target_compile_options(ship_menu_test PRIVATE -Wall -Wextra)
 
 add_test(NAME ship_menu COMMAND ship_menu_test)
+
+add_executable(new_game_test new_game_test.cpp)
+target_link_libraries(new_game_test PRIVATE p3data)
+target_compile_options(new_game_test PRIVATE -Wall -Wextra)
+
+add_test(NAME new_game COMMAND new_game_test)

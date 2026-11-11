@@ -51,10 +51,14 @@
 #include "script.hpp"
 #include "savegames.hpp"
 #include "settings.hpp"
+#include "new_game_window.hpp"
 #include "start_screen.hpp"
+#include "text_renderer.hpp"
 
 using namespace p3::data;
 using p3::app::InputScript;
+using p3::app::symbol_byte;
+using p3::app::TextRenderer;
 
 namespace {
 
@@ -235,20 +239,6 @@ std::unique_ptr<GameTexts> load_game_texts(const char* exe, const char* cpr, con
 	return first;
 }
 
-// The Vita's buttons in the viewer's texts: a byte that TextRenderer draws as
-// the button's symbol, in its colour (the game's font has none). Macros, to
-// be joined to the literals ("\x01" followed by a letter would be one escape).
-#define BTN_CROSS "\x01"
-#define BTN_CIRCLE "\x02"
-#define BTN_SQUARE "\x03"
-#define BTN_TRIANGLE "\x04"
-
-// The bytes TextRenderer draws as a symbol: the buttons above and the signs
-// of the game's letters (letters.hpp: kLetterCoin, kLetterBarrel, kLetterLoad).
-bool symbol_byte(char c) {
-	return c >= 1 && c <= 7;
-}
-
 // The Vita's rear touchpad (an indirect touch device; the screen is direct) is
 // of no use in this game: its touches are ignored. On the PC, the mouse's and
 // the scripts' touches have no device and pass.
@@ -256,209 +246,6 @@ bool rear_touch(SDL_TouchID id) {
 	const SDL_TouchDeviceType type = SDL_GetTouchDeviceType(id);
 	return type == SDL_TOUCH_DEVICE_INDIRECT_ABSOLUTE || type == SDL_TOUCH_DEVICE_INDIRECT_RELATIVE;
 }
-
-// Texto de la interfaz con una fuente del juego subida como textura.
-class TextRenderer {
-public:
-	TextRenderer(SDL_Renderer* renderer, std::unique_ptr<FontAtlas> font) : renderer_(renderer), font_(std::move(font)) {
-		const Image& image = font_->image();
-		texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, image.width,
-			image.height);
-		if (texture_) {
-			SDL_UpdateTexture(texture_, nullptr, image.rgba.data(), image.width * 4);
-			SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
-		}
-	}
-
-	~TextRenderer() {
-		SDL_DestroyTexture(texture_);
-		for (SDL_Texture* t : buttons_) {
-			if (t) {
-				SDL_DestroyTexture(t);
-			}
-		}
-	}
-
-	// The width of the text, the symbols included.
-	int measure(const std::string& text) const {
-		int width = 0;
-		size_t start = 0;
-		for (size_t i = 0; i <= text.size(); ++i) {
-			if (i == text.size() || symbol_byte(text[i])) {
-				if (i > start) {
-					width += font_->measure(text.substr(start, i - start));
-				}
-				if (i < text.size()) {
-					width += symbol_width(text[i]);
-				}
-				start = i + 1;
-			}
-		}
-		return width;
-	}
-	int line_height() const { return font_->line_height(); }
-
-	// The colour's alpha fades the letters and the buttons' symbols alike (a button that can't be pressed).
-	void draw(const std::string& text, int x, int y, SDL_Color color) {
-		SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
-		SDL_SetTextureAlphaMod(texture_, color.a);
-		alpha_ = color.a;
-		size_t start = 0;
-		for (size_t i = 0; i <= text.size(); ++i) {
-			if (i < text.size() && !symbol_byte(text[i])) {
-				continue;
-			}
-			if (i > start) {
-				const std::string part = text.substr(start, i - start);
-				for (const FontAtlas::Quad& q : font_->layout(part, x, y)) {
-					const SDL_Rect src = {q.src_x, q.src_y, q.width, q.height};
-					const SDL_Rect dst = {q.dst_x, q.dst_y, q.width, q.height};
-					SDL_RenderCopy(renderer_, texture_, &src, &dst);
-				}
-				x += font_->measure(part);
-			}
-			if (i < text.size()) {
-				draw_symbol(text[i], x, y);
-				x += symbol_width(text[i]);
-			}
-			start = i + 1;
-		}
-	}
-
-private:
-	// A button's symbol is about as wide as the line is high; a letter's sign, narrower.
-	int symbol_width(char c) const { return c <= 4 ? font_->line_height() + 2 : font_->line_height() * 2 / 3 + 2; }
-
-	// The symbol in a square about the text's height: the buttons in the
-	// PlayStation's colours, smoothed (button_texture), three quarters of the
-	// line high; the letters' coin (a gold disc), barrel and load (a sack),
-	// small and filled.
-	void draw_symbol(char c, int x, int y) {
-		const int h = font_->line_height();
-		if (c <= 4) {
-			const int size = std::max(8, h * 3 / 4);
-			if (SDL_Texture* t = button_texture(c, size)) {
-				const SDL_Rect dst = {x + (symbol_width(c) - size) / 2, y + (h - size) / 2, size, size};
-				SDL_SetTextureAlphaMod(t, alpha_);
-				SDL_RenderCopy(renderer_, t, nullptr, &dst);
-			}
-			return;
-		}
-		const int size = h * 3 / 5;
-		const int left = x + (symbol_width(c) - size) / 2;
-		const int top = y + (h - size) / 2;
-		SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-		draw_sign(c, left, top, size);
-	}
-
-	// The game draws \C, \B and \L of its texts as small pictures.
-	void draw_sign(char c, int left, int top, int size) {
-		if (c == 5) {  // The coin: a gold disc with a darker rim.
-			const float r = size / 2.0f;
-			const float cx = left + r - 0.5f;
-			for (int k = 0; k < size; ++k) {
-				const float dy = float(k) - r + 0.5f;
-				const int half = int(std::lround(std::sqrt(std::max(0.0f, r * r - dy * dy))));
-				SDL_SetRenderDrawColor(renderer_, 236, 190, 60, 255);
-				SDL_RenderDrawLine(renderer_, int(cx) - half + 1, top + k, int(cx) + half - 1, top + k);
-				SDL_SetRenderDrawColor(renderer_, 150, 105, 25, 255);
-				SDL_RenderDrawPoint(renderer_, int(cx) - half, top + k);
-				SDL_RenderDrawPoint(renderer_, int(cx) + half, top + k);
-			}
-			return;
-		}
-		const int w = size * 3 / 4;
-		const SDL_Rect body = {left + (size - w) / 2, top, w, size};
-		if (c == 6) {  // A barrel: brown staves and two dark hoops.
-			SDL_SetRenderDrawColor(renderer_, 160, 105, 55, 255);
-			SDL_RenderFillRect(renderer_, &body);
-			SDL_SetRenderDrawColor(renderer_, 70, 45, 25, 255);
-			SDL_RenderDrawRect(renderer_, &body);
-			SDL_RenderDrawLine(renderer_, body.x, top + size / 3, body.x + w - 1, top + size / 3);
-			SDL_RenderDrawLine(renderer_, body.x, top + size * 2 / 3, body.x + w - 1, top + size * 2 / 3);
-		} else {  // A load: a pale sack tied at the top.
-			const SDL_Rect sack = {body.x, top + size / 4, w, size - size / 4};
-			SDL_SetRenderDrawColor(renderer_, 205, 185, 140, 255);
-			SDL_RenderFillRect(renderer_, &sack);
-			SDL_SetRenderDrawColor(renderer_, 110, 90, 60, 255);
-			SDL_RenderDrawRect(renderer_, &sack);
-			SDL_RenderDrawLine(renderer_, body.x + w / 2, top, body.x + w / 2, top + size / 4);
-			SDL_RenderDrawLine(renderer_, body.x + w / 4, top + size / 4, body.x + w * 3 / 4, top + size / 4);
-		}
-	}
-
-	// A button's symbol (1 the cross, 2 the circle, 3 the square, 4 the triangle), in the PlayStation's colours,
-	// drawn once into a texture of `size` pixels and kept: smoothed (each pixel's coverage from 4 × 4 samples),
-	// its lines about a sixth of its size thick.
-	SDL_Texture* button_texture(char c, int size) {
-		SDL_Texture*& kept = buttons_[size_t(c - 1)];
-		if (kept) {
-			return kept;
-		}
-		static constexpr SDL_Color kColors[4] = {{124, 178, 232, 255}, {255, 102, 102, 255}, {255, 105, 248, 255},
-			{64, 226, 160, 255}};
-		const SDL_Color color = kColors[c - 1];
-		const float s = float(size);
-		const float w = std::max(1.6f, s / 6.0f);  // The line's width.
-		const float m = w / 2 + 0.5f;  // The margin, so that the lines' ends stay inside.
-		// The distance from (px, py) to the segment (ax, ay)-(bx, by).
-		auto segment = [](float px, float py, float ax, float ay, float bx, float by) {
-			const float dx = bx - ax, dy = by - ay;
-			const float t = std::clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy), 0.0f, 1.0f);
-			const float qx = ax + t * dx - px, qy = ay + t * dy - py;
-			return std::sqrt(qx * qx + qy * qy);
-		};
-		auto inside = [&](float px, float py) {
-			switch (c) {
-			case 1:
-				return segment(px, py, m, m, s - m, s - m) <= w / 2 || segment(px, py, s - m, m, m, s - m) <= w / 2;
-			case 2: {
-				const float d = std::sqrt((px - s / 2) * (px - s / 2) + (py - s / 2) * (py - s / 2));
-				return d <= s / 2 - 0.5f && d >= s / 2 - 0.5f - w;
-			}
-			case 3: {
-				const float lo = s * 0.12f, hi = s - s * 0.12f;
-				const bool outer = px >= lo && px <= hi && py >= lo && py <= hi;
-				const bool inner = px > lo + w && px < hi - w && py > lo + w && py < hi - w;
-				return outer && !inner;
-			}
-			default: {
-				const float top = m, bottom = s - m - s * 0.06f;
-				return segment(px, py, s / 2, top, m, bottom) <= w / 2 || segment(px, py, s / 2, top, s - m, bottom) <= w / 2 ||
-					segment(px, py, m, bottom, s - m, bottom) <= w / 2;
-			}
-			}
-		};
-		std::vector<uint8_t> rgba(size_t(size * size) * 4);
-		for (int y = 0; y < size; ++y) {
-			for (int x = 0; x < size; ++x) {
-				int hits = 0;
-				for (int sy = 0; sy < 4; ++sy) {
-					for (int sx = 0; sx < 4; ++sx) {
-						hits += inside(float(x) + (float(sx) + 0.5f) / 4, float(y) + (float(sy) + 0.5f) / 4) ? 1 : 0;
-					}
-				}
-				uint8_t* p = &rgba[size_t(y * size + x) * 4];
-				p[0] = color.r;
-				p[1] = color.g;
-				p[2] = color.b;
-				p[3] = uint8_t(hits * 255 / 16);
-			}
-		}
-		kept = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, size, size);
-		if (kept) {
-			SDL_UpdateTexture(kept, nullptr, rgba.data(), size * 4);
-			SDL_SetTextureBlendMode(kept, SDL_BLENDMODE_BLEND);
-		}
-		return kept;
-	}
-
-	SDL_Renderer* renderer_;
-	std::unique_ptr<FontAtlas> font_;
-	SDL_Texture* texture_ = nullptr;
-	std::array<SDL_Texture*, 4> buttons_{};  // The buttons' symbols (button_texture).
-	Uint8 alpha_ = 255;  // The alpha of the text being drawn.
-};
 
 // Mapa de una ciudad listo para dibujar: los trozos de sprite con su textura.
 // The town's buildings the player goes into, as in the game by clicking on
@@ -7947,6 +7734,29 @@ int main(int argc, char** argv) {
 	bool start_open = !options.save && !options.debug_state && (!script || options.start_screen);
 	std::unique_ptr<p3::app::StartScreen> start_screen;  // Made the first time it shows.
 	int start_lit = int(p3::app::StartEntry::Single);  // The entry lit (the buttons').
+	// The «Game settings» window, between «Single player» and the game
+	// (new_game_window.hpp): open over the start screen; its choices (the last
+	// ones, kept in the settings file as the game in P2.CFG), the map
+	// (Standard24), the control the buttons point at, the one under the finger
+	// and the name field being written with what it held before.
+	std::unique_ptr<p3::app::NewGameWindow> new_game_window;  // Made the first time it opens.
+	bool new_game_open = false;
+	p3::data::NewGameWindowState new_game_state;
+	new_game_state.choices = settings.new_game;
+	GameMap new_game_map;
+	bool new_game_map_read = false;
+	int new_game_focus = int(p3::app::NewGameControl::Start);
+	int new_game_pressed = -1;
+	int new_game_typing = -1;
+	std::string new_game_name_before;
+	// Its home town's window (the map), opened by the home town's button: the
+	// town the panel is for and the one under the finger; the 40 towns' places
+	// on the sea map (StadtDaten.ini), read once.
+	std::unique_ptr<p3::app::HomeTownWindow> home_town_window;
+	bool home_town_open = false;
+	int home_town_cursor = -1;
+	int home_town_pressed = -1;
+	std::vector<SDL_Point> home_town_places;
 	bool has_save = !start_open &&
 		load_savegame(*archive, options.save ? options.save : kStartSave, save) && !save.towns.empty();
 	if (options.debug_state) {
@@ -8255,6 +8065,7 @@ int main(int argc, char** argv) {
 		sea_switch = true;
 		sea_notice_shown = false;
 		start_open = false;  // From the start screen, the game begins.
+		new_game_open = false;
 	};
 	// Replaces the game in play with the slot's: a new Sailing for it, and
 	// what the viewer keeps of the old one forgotten (forget_game). On a
@@ -8353,6 +8164,9 @@ int main(int argc, char** argv) {
 		view.reset();  // It reads from the old archive.
 		sea.reset();
 		start_screen.reset();  // Its book is the language's.
+		new_game_window.reset();  // It reads from the old archive.
+		home_town_window.reset();
+		new_game_map_read = false;
 		spanish_mounted = mounted;
 		archive = std::move(next);
 		view = std::make_unique<TownView>(renderer, *archive);
@@ -8615,31 +8429,467 @@ int main(int argc, char** argv) {
 			menu_back();  // A tap outside goes back.
 		}
 	};
-	// The start screen (the game's main menu): the book, the entry under the
-	// finger or the buttons' (Up and Down; X chooses), and over it the load
-	// menu's slots. «Single player» starts a new game, «Load game» opens the
-	// slots, «Exit» quits; the others aren't in p3vita yet (a notice).
-	auto start_choose = [&](int entry) {
-		switch (p3::app::StartEntry(entry)) {
-		case p3::app::StartEntry::Single: {
-			// The new game window comes next (roadmap, phase 2): for now the game's
-			// defaults, with 1.pat's settings (the test saves', as p3save newgame).
-			static const char kSettings[] =
-				"14050000050000000f00010c01030000000000000000000000010d0514050901012f50500301014cfc6265636b"
-				"00000000000000000000000000008000000000000000000000000000000000";
-			SettingsMemory game_settings;
-			for (size_t i = 0; i < SettingsMemory::kSize; ++i) {
-				game_settings.u8(i) = uint8_t(std::strtoul(std::string(kSettings + 2 * i, 2).c_str(), nullptr, 16));
+	// --- The «Game settings» window (new_game_window.hpp), over the start screen. ---
+	using NewGameControl = p3::app::NewGameControl;
+	using HomeTownWindow = p3::app::HomeTownWindow;
+	p3::app::NewGameTexts new_game_texts;  // In the language, made when it opens.
+	auto make_new_game_texts = [&]() {
+		p3::app::NewGameTexts t;
+		t.title = game_text(GameText::NewGameTitle, tr("Configuración del juego", "Game settings"));
+		t.first_name = game_text(GameText::NewGameFirstName, tr("Nombre del mercader", "First name of trader"));
+		t.surname = game_text(GameText::NewGameSurname, tr("Apellido", "Surname of trader"));
+		t.gender = game_text(GameText::NewGameGender, tr("Género", "Gender"));
+		t.world_map = game_text(GameText::NewGameWorldMap, tr("Mapa", "World map"));
+		t.home_town = game_text(GameText::NewGameHomeTown, tr("Ciudad", "Home town"));
+		t.year = game_text(GameText::NewGameStartingYear, tr("Año de inicio", "Starting year"));
+		t.level = game_text(GameText::NewGameLevel, tr("Nivel de dificultad", "Level of difficulty"));
+		t.objective = game_text(GameText::NewGameObjective, tr("Condiciones del objetivo", "Objective conditions"));
+		t.speed = game_text(GameText::GameSpeed, tr("Velocidad del juego", "Game speed"));
+		t.male = game_text(GameText::NewGameMale, tr("Masculino", "male"));
+		t.female = game_text(GameText::NewGameFemale, tr("Femenino", "female"));
+		t.standard_map = game_text(GameText::NewGameStandardMap, tr("Mapa original", "Standard Map"));
+		t.details = game_text(GameText::NewGameDetails, tr("Detalles", "Details"));
+		static constexpr const char* kLevels[5][2] = {{"Mercader", "Shopkeeper"}, {"Maestro mercader", "Trader"},
+			{"Patrono", "Merchant"}, {"Consejero", "Councillor"}, {"Patricio", "Patrician"}};
+		for (size_t k = 0; k < t.levels.size(); ++k) {
+			t.levels[k] = game_text(GameText(int(GameText::LevelShopkeeper) + int(k)), tr(kLevels[k][0], kLevels[k][1]));
+		}
+		static constexpr const char* kGoals[8][2] = {{"Ninguno", "none"}, {"Consejero", "Councillor"},
+			{"Alcalde", "Lord Mayor"}, {"Gobernador", "Alderman"}, {"Máxima puntuación", "Balance of points"},
+			{"Riqueza", "Balance of wealth"}, {"Valor total", "Wealth"}, {"Capacidad", "Capacity"}};
+		for (size_t k = 0; k < t.goals.size(); ++k) {
+			t.goals[k] = game_text(GameText(int(GameText::GoalNone) + int(k)), tr(kGoals[k][0], kGoals[k][1]));
+		}
+		t.hanse_population = game_text(GameText::GoalHansePopulation, tr("Población total", "Hanse population"));
+		for (size_t k = 0; k < t.speeds.size(); ++k) {
+			// The window's speeds (0 very slow .. 4 very fast, 5 slowdown) in speed_name's order.
+			t.speeds[k] = speed_name(k == 5 ? 0 : int(k) + 1);
+		}
+		t.back = game_text(GameText::ButtonBack, tr("Atrás", "Back"));
+		t.start = game_text(GameText::NewGameStart, tr("Jugar", "Start"));
+		return t;
+	};
+	// What the window shows. In this part (the roadmap's (c)) the names, the
+	// sex, the home town, the year, «Back» and «Start» can be used; the map (the only one,
+	// Standard24), the level, the details, the goal, its time and the speed show
+	// their values, dimmed (part (d)).
+	auto new_game_view = [&]() {
+		p3::app::NewGameWindow::View v;
+		const NewGameChoices& c = new_game_state.choices;
+		v.choices = &c;
+		v.texts = &new_game_texts;
+		v.home_town = latin1_to_utf8(game_map_town_name(new_game_map, c.home));
+		for (int k = 0; k < p3::app::kNewGameControls; ++k) {
+			const NewGameControl control = NewGameControl(k);
+			const NewGameBall ball = p3::app::new_game_ball(control);
+			v.shown[size_t(k)] = ball == NewGameBall::Count || new_game_ball_shown(c, ball);
+			bool on = false;
+			switch (control) {
+			case NewGameControl::FirstName:
+			case NewGameControl::FamilyName:
+			case NewGameControl::HomeTown:
+			case NewGameControl::Back:
+				on = true;
+				break;
+			case NewGameControl::Start:
+				on = !c.first_name.empty() && !c.family_name.empty();  // 0x49A906..
+				break;
+			case NewGameControl::GenderLeft:
+			case NewGameControl::GenderRight:
+			case NewGameControl::YearMinus:
+			case NewGameControl::YearPlus:
+				on = new_game_ball_enabled(c, ball);
+				break;
+			default:
+				break;
 			}
-			std::memset(game_settings.bytes.data() + 0x3C, 0, 0x10);
-			NewGamePlayer player;
-			player.first_name = "Georg";  // The window's defaults (0x6BA648, 0x6BA61C).
-			player.family_name = "Strohmberg";
-			if (new_game(game_settings, player)) {
+			v.enabled[size_t(k)] = on;
+		}
+		v.focus = new_game_focus;
+		v.pressed = new_game_pressed;
+		v.typing = new_game_typing;
+		return v;
+	};
+	// The names, written with the keyboard (the Vita's, SDL_StartTextInput):
+	// it starts empty; an empty name isn't taken (the one before stays).
+	auto new_game_name = [&](int control) -> std::string& {
+		return control == int(NewGameControl::FirstName) ? new_game_state.choices.first_name
+														 : new_game_state.choices.family_name;
+	};
+	auto new_game_end_typing = [&]() {
+		if (new_game_typing < 0) {
+			return;
+		}
+		std::string& name = new_game_name(new_game_typing);
+		if (name.empty()) {
+			name = new_game_name_before;
+		}
+		new_game_typing = -1;
+		SDL_StopTextInput();
+	};
+	auto new_game_start_typing = [&](int control) {
+		new_game_end_typing();
+		new_game_typing = control;
+		new_game_name_before = new_game_name(control);
+		new_game_name(control).clear();
+		SDL_StartTextInput();
+	};
+	// The choices kept for the next time (as the game in P2.CFG, 0x499BE0, on
+	// «Back» and «Start»).
+	auto keep_new_game_choices = [&]() {
+		settings.new_game = new_game_state.choices;
+		if (!script && !p3::app::save_settings(settings_file, settings)) {
+			std::fprintf(stderr, "can't save %s\n", settings_file.c_str());
+		}
+	};
+	auto open_new_game = [&]() {
+		if (!new_game_map_read) {
+			std::string error;
+			if (!load_game_map(*archive, "maps/Standard24.gmf", new_game_map, &error)) {
+#ifndef __vita__
+				std::fprintf(stderr, "%s\n", error.c_str());
+#endif
+				notify(tr("No se puede empezar la partida.", "The game can't be started."));
+				return;
+			}
+			new_game_map_read = true;
+		}
+		if (!new_game_window) {
+			new_game_window = std::make_unique<p3::app::NewGameWindow>(renderer, *archive, kScreenWidth, kScreenHeight);
+		}
+		if (!new_game_window->ok()) {
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return;
+		}
+		// A home town that isn't a Hanse town: the one before the next (as the
+		// map's choice does, 0x4991AC).
+		NewGameChoices& c = new_game_state.choices;
+		if (c.home >= new_game_map.count) {
+			c.home = 0;
+		}
+		c.home = previous_hanse_town(new_game_map, next_hanse_town(new_game_map, c.home));
+		new_game_texts = make_new_game_texts();
+		new_game_open = true;
+		new_game_focus = int(NewGameControl::Start);
+		new_game_pressed = -1;
+	};
+	// The home town's window opens on the home town.
+	auto open_home_town = [&]() {
+		if (!home_town_window) {
+			home_town_window = std::make_unique<p3::app::HomeTownWindow>(renderer, *archive, kScreenWidth, kScreenHeight);
+		}
+		if (!home_town_window->ok()) {
+			return;
+		}
+		if (home_town_places.empty()) {
+			for (const SeaMapTown& town : load_sea_map_towns(*archive)) {
+				home_town_places.push_back({town.symbol_x, town.symbol_y});
+			}
+		}
+		home_town_cursor = int(new_game_state.choices.home);
+		home_town_pressed = -1;
+		home_town_open = true;
+	};
+	// A control used (tapped, or X on it): a name field opens the keyboard, a
+	// ball does what the game's does, the home town's button opens its map, «Back» goes back to the book and «Start»
+	// starts the game with the window's settings over what the game held (the
+	// game in play's, or the start's).
+	auto new_game_press = [&](int control) {
+		const p3::app::NewGameWindow::View v = new_game_view();
+		if (control < 0 || control >= p3::app::kNewGameControls || !v.shown[size_t(control)] ||
+			!v.enabled[size_t(control)]) {
+			return;
+		}
+		const NewGameControl k = NewGameControl(control);
+		if (k == NewGameControl::FirstName || k == NewGameControl::FamilyName) {
+			new_game_start_typing(control);
+			return;
+		}
+		new_game_end_typing();
+		if (const NewGameBall ball = p3::app::new_game_ball(k); ball != NewGameBall::Count) {
+			press_new_game_ball(new_game_state, ball);
+		} else if (k == NewGameControl::HomeTown) {
+			open_home_town();
+		} else if (k == NewGameControl::Back) {
+			keep_new_game_choices();
+			new_game_open = false;
+		} else if (k == NewGameControl::Start) {
+			keep_new_game_choices();
+			const NewGameChoices& c = new_game_state.choices;
+			const SettingsMemory before = has_save ? save.settings : initial_game_settings();
+			if (new_game(new_game_settings(c, new_game_map, before), new_game_player(c))) {
+				new_game_open = false;
 				start_open = false;
+			}
+		}
+	};
+	// The rows the buttons go through (Up and Down), by their first control;
+	// Left and Right press a row's balls or go between «Back» and «Start».
+	static constexpr NewGameControl kNewGameRows[] = {NewGameControl::FirstName, NewGameControl::FamilyName,
+		NewGameControl::GenderLeft, NewGameControl::Map, NewGameControl::HomeTown, NewGameControl::YearMinus,
+		NewGameControl::LevelMinus, NewGameControl::Details, NewGameControl::GoalLeft, NewGameControl::TimeMinus,
+		NewGameControl::SpeedMinus, NewGameControl::Back};
+	constexpr int kNewGameRowCount = int(sizeof(kNewGameRows) / sizeof(kNewGameRows[0]));
+	auto new_game_row = [&](int control) {
+		int row = 0;
+		for (int r = 0; r < kNewGameRowCount; ++r) {
+			if (control >= int(kNewGameRows[r])) {
+				row = r;
+			}
+		}
+		return row;
+	};
+	auto new_game_button = [&](Uint8 button) {
+		if (new_game_typing >= 0) {
+			if (button == SDL_CONTROLLER_BUTTON_A || button == SDL_CONTROLLER_BUTTON_B) {
+				new_game_end_typing();
+			}
+			return;
+		}
+		const p3::app::NewGameWindow::View v = new_game_view();
+		const int row = new_game_row(new_game_focus);
+		const int first = int(kNewGameRows[row]);
+		const bool balls = p3::app::new_game_ball(NewGameControl(first)) != NewGameBall::Count;
+		switch (button) {
+		case SDL_CONTROLLER_BUTTON_DPAD_UP:
+		case SDL_CONTROLLER_BUTTON_DPAD_DOWN: {
+			// The next row with something that can be used.
+			const int step = button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1;
+			for (int r = row + step; r >= 0 && r < kNewGameRowCount; r += step) {
+				const int c = int(kNewGameRows[r]);
+				const int last = r + 1 < kNewGameRowCount ? int(kNewGameRows[r + 1]) : p3::app::kNewGameControls;
+				bool usable = false;
+				for (int k = c; k < last; ++k) {
+					usable = usable || (v.shown[size_t(k)] && v.enabled[size_t(k)]);
+				}
+				if (usable) {
+					new_game_focus = c == int(NewGameControl::Back) ? int(NewGameControl::Start) : c;
+					break;
+				}
 			}
 			break;
 		}
+		case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+		case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: {
+			const bool right = button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+			if (balls) {
+				new_game_press(first + (right ? 1 : 0));
+			} else if (first == int(NewGameControl::Back)) {
+				new_game_focus = int(right ? NewGameControl::Start : NewGameControl::Back);
+			}
+			break;
+		}
+		case SDL_CONTROLLER_BUTTON_A:
+			if (!balls) {
+				new_game_press(new_game_focus);
+			}
+			break;
+		case SDL_CONTROLLER_BUTTON_B:
+			new_game_press(int(NewGameControl::Back));
+			break;
+		case SDL_CONTROLLER_BUTTON_START:
+			new_game_press(int(NewGameControl::Start));
+			break;
+		default:
+			break;
+		}
+	};
+	auto new_game_frame = [&]() {
+		SDL_Event event;
+		while (SDL_PollEvent(&event)) {
+			if ((event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP) &&
+				rear_touch(event.tfinger.touchId)) {
+				continue;
+			}
+			const int x = int(event.tfinger.x * kScreenWidth);
+			const int y = int(event.tfinger.y * kScreenHeight);
+			switch (event.type) {
+			case SDL_QUIT:
+				running = false;
+				break;
+			case SDL_CONTROLLERDEVICEADDED:
+				if (!controller) {
+					controller = SDL_GameControllerOpen(event.cdevice.which);
+				}
+				break;
+			case SDL_CONTROLLERBUTTONDOWN:
+				new_game_button(event.cbutton.button);
+				break;
+			case SDL_FINGERDOWN:
+			case SDL_FINGERMOTION:
+				new_game_pressed = new_game_window->control_at(x, y, new_game_view());
+				break;
+			case SDL_FINGERUP: {
+				const int k = new_game_window->control_at(x, y, new_game_view());
+				const int pressed = new_game_pressed;
+				new_game_pressed = -1;
+				if (k >= 0 && k == pressed) {
+					new_game_focus = p3::app::new_game_ball(NewGameControl(k)) != NewGameBall::Count
+						? int(kNewGameRows[new_game_row(k)])
+						: k;
+					new_game_press(k);
+				} else if (k < 0) {
+					new_game_end_typing();
+				}
+				break;
+			}
+			case SDL_TEXTINPUT:
+				// A name being written, in Latin-1 as the game's names; 23 characters
+				// at most (what the game keeps, 0x536D90).
+				if (new_game_typing >= 0) {
+					std::string& name = new_game_name(new_game_typing);
+					name += utf8_to_latin1(event.text.text);
+					if (name.size() > 23) {
+						name.resize(23);
+					}
+				}
+				break;
+			case SDL_KEYDOWN:
+				if (new_game_typing >= 0) {
+					const SDL_Keycode key = event.key.keysym.sym;
+					std::string& name = new_game_name(new_game_typing);
+					if (key == SDLK_BACKSPACE && !name.empty()) {
+						name.pop_back();
+					} else if (key == SDLK_RETURN || key == SDLK_ESCAPE) {
+						new_game_end_typing();
+					}
+				}
+				break;
+			default:
+				break;
+			}
+		}
+		// The Vita's keyboard closed: its text came in its events.
+		if (new_game_typing >= 0 && SDL_HasScreenKeyboardSupport() && !SDL_IsScreenKeyboardShown(window)) {
+			new_game_end_typing();
+		}
+		if (!new_game_open || !start_open || !running) {
+			return;
+		}
+		new_game_window->draw(renderer, new_game_view());
+		if (text && !notices.empty()) {
+			if (app_ticks() > notices.front().second) {
+				notices.pop_front();
+			} else {
+				const int w = text->measure(notices.front().first);
+				text->draw(notices.front().first, (kScreenWidth - w) / 2, kScreenHeight - 2 * text->line_height(),
+					SDL_Color{255, 255, 255, 255});
+			}
+		}
+		if (script && !script->screenshot().empty()) {
+			std::string error;
+			if (p3::app::save_screenshot(renderer, kScreenWidth, kScreenHeight, script->screenshot(), error)) {
+				std::printf("%s\n", script->screenshot().c_str());
+			} else {
+				std::fprintf(stderr, "%s\n", error.c_str());
+				screenshot_failed = true;
+			}
+		}
+		SDL_RenderPresent(renderer);
+	};
+	// The home town's window: the town under the cursor shows its panel; a tap
+	// on a town puts the cursor on it, a second one on a Hanse town (or X)
+	// chooses it (the game: the hover and the click, 0x49BFE0); Left and Right
+	// go through the Hanse towns; Circle goes back without choosing (the game:
+	// Esc or the right button).
+	HomeTownWindow::Texts home_town_texts;
+	auto home_town_view = [&]() {
+		HomeTownWindow::View v;
+		v.map = &new_game_map;
+		v.places = &home_town_places;
+		v.texts = &home_town_texts;
+		v.cursor = home_town_cursor;
+		v.pressed = home_town_pressed;
+		return v;
+	};
+	auto home_town_choose = [&](int town) {
+		if (town >= 0 && uint32_t(town) < new_game_map.count && (new_game_map.flags[size_t(town)] & 0x40)) {
+			new_game_state.choices.home = uint32_t(town);
+			home_town_open = false;
+		}
+	};
+	auto home_town_frame = [&]() {
+		home_town_texts.hanse = game_text(GameText::HomeTownHanse, tr("Ciudad de", "Hanseatic Town"));
+		home_town_texts.office = game_text(GameText::HomeTownOffice, tr("Oficina comercial de", "Hanseatic trading office"));
+		home_town_texts.station = game_text(GameText::HomeTownStation, tr("Estación comercial de", "Hanseatic trading station"));
+		home_town_texts.effective = game_text(GameText::HomeTownEffective, tr("Producción alta", "effective"));
+		home_town_texts.normal = game_text(GameText::HomeTownNormal, tr("media", "normal"));
+		home_town_texts.hint = tr("Elige tu residencia tocando dos veces una de las ciudades hanseáticas.",
+			"Choose your home town by tapping one of the Hanseatic towns twice.");
+		for (size_t k = 0; k < home_town_texts.wares.size(); ++k) {
+			home_town_texts.wares[k] = ware_name(int(k));
+		}
+		SDL_Event event;
+		while (SDL_PollEvent(&event)) {
+			if ((event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP) &&
+				rear_touch(event.tfinger.touchId)) {
+				continue;
+			}
+			const int x = int(event.tfinger.x * kScreenWidth);
+			const int y = int(event.tfinger.y * kScreenHeight);
+			switch (event.type) {
+			case SDL_QUIT:
+				running = false;
+				break;
+			case SDL_CONTROLLERBUTTONDOWN: {
+				const Uint8 button = event.cbutton.button;
+				const uint32_t from = home_town_cursor >= 0 ? uint32_t(home_town_cursor) : new_game_state.choices.home;
+				if (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_UP) {
+					home_town_cursor = int(previous_hanse_town(new_game_map, from));
+				} else if (button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT || button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+					home_town_cursor = int(next_hanse_town(new_game_map, from));
+				} else if (button == SDL_CONTROLLER_BUTTON_A) {
+					home_town_choose(home_town_cursor);
+				} else if (button == SDL_CONTROLLER_BUTTON_B) {
+					home_town_open = false;
+				}
+				break;
+			}
+			case SDL_FINGERDOWN:
+			case SDL_FINGERMOTION:
+				home_town_pressed = home_town_window->town_at(x, y, home_town_view());
+				break;
+			case SDL_FINGERUP: {
+				const int town = home_town_window->town_at(x, y, home_town_view());
+				const int pressed = home_town_pressed;
+				home_town_pressed = -1;
+				if (town >= 0 && town == pressed) {
+					if (town == home_town_cursor) {
+						home_town_choose(town);
+					} else {
+						home_town_cursor = town;
+					}
+				}
+				break;
+			}
+			default:
+				break;
+			}
+		}
+		if (!home_town_open || !running) {
+			return;
+		}
+		home_town_window->draw(renderer, home_town_view());
+		if (script && !script->screenshot().empty()) {
+			std::string error;
+			if (p3::app::save_screenshot(renderer, kScreenWidth, kScreenHeight, script->screenshot(), error)) {
+				std::printf("%s\n", script->screenshot().c_str());
+			} else {
+				std::fprintf(stderr, "%s\n", error.c_str());
+				screenshot_failed = true;
+			}
+		}
+		SDL_RenderPresent(renderer);
+	};
+	// The start screen (the game's main menu): the book, the entry under the
+	// finger or the buttons' (Up and Down; X chooses), and over it the load
+	// menu's slots. «Single player» opens the «Game settings» window, «Load
+	// game» the slots, «Exit» quits; the others aren't in p3vita yet (a notice).
+	auto start_choose = [&](int entry) {
+		switch (p3::app::StartEntry(entry)) {
+		case p3::app::StartEntry::Single:
+			open_new_game();
+			break;
 		case p3::app::StartEntry::Load:
 			open_menu(MenuScreen::Load, 0);
 			break;
@@ -8751,7 +9001,13 @@ int main(int argc, char** argv) {
 			}
 		}
 		if (start_open) {
-			start_frame();
+			if (new_game_open && home_town_open) {
+				home_town_frame();
+			} else if (new_game_open) {
+				new_game_frame();
+			} else {
+				start_frame();
+			}
 			continue;
 		}
 		if (language_change >= 0) {

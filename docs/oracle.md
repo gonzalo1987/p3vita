@@ -2276,6 +2276,22 @@ p3vita only grew existing ones: no save starts without them); the queued 0xC4's 
 0xB3's (0x544E50 uses one operation buffer for all, 0x535740). 0xB0 writes the names object (SaveOpaque::town_names),
 which the oracle doesn't record. With it the world 7 days in the 12 saves (0 «distintas») and the Vita build.
 
+### The new game window's settings (2026-11-11)
+
+What the «Game settings» window writes when «Start» is pressed (0x499291..0x499505: the settings over what
+*0x6CC3E8 held; 0x49958D..0x499842: the player's ships by the last detail, the sex, the names) is UI code the oracle
+doesn't run; p3vita's `new_game_settings` and `new_game_player` (new_game.hpp) were read from it and checked two ways:
+- `tests/new_game_test.cpp` (ctest `new_game`, no game data): with the choices that give missav/1.pat's settings
+  (1300, the speed 5, no goal, level 0 with every detail 1, the map's productions, home 9) the whole 0x4C bytes come
+  out as 1.pat's (its byte 8 as the game loads it, 14), the bytes the window writes spoiled first; another set of
+  choices byte by byte; the goal's branches; the level from the details (0x498EFD), the Hanse towns round the map
+  (0x544E00, 0x544E30), P2.CFG's limits (0x497C31..), every ball's rule and state (0x498760, 0x499AF0, 0x49A2D0), the
+  wares of the home town's panel (0x49C410). Breaking [0xD] (3, a game of one player) on purpose fails it.
+- `re/emu/sesion24/ngw.sh player "--seed 7 --year 1340 --home 18 --female --first Margarethe --family Hildebrandt
+  --level 3 --start 1 --speed 2 --goal 3 --goal-time 5" "..."`: `p3save newgame --window` builds the settings and the
+  player from those choices, writes the settings for the oracle (`--settings-from`), and both new games' .pat are equal
+  (950 334 bytes, 0 different).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

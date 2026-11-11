@@ -340,6 +340,25 @@ enum class GameText {
 	YearsOne,  // «1 year» .. «10 years».
 	YearsTen = YearsOne + 9,
 	MainMenu,  // «Main menu» (the game's options window: back to its main menu)
+	// The new game window's other texts: the sex («Gender», «male», «female»: 0x69B360..), the start button
+	// («Start», 0x69B294, the window for a game of one player), the map's button («World map», 0x6B2D4C; its name:
+	// «Standard Map», «Random Map», 0x6AEF28) and the population goal («Hanse population», 0x6B2D3C).
+	NewGameGender,
+	NewGameMale,
+	NewGameFemale,
+	NewGameStart,
+	NewGameWorldMap,
+	NewGameStandardMap,
+	NewGameRandomMap,
+	GoalHansePopulation,
+	// The home town's window (the map, 0x49BC00): the towns' kinds before the name («Hanseatic Town »,
+	// «Hanseatic trading office », «Hanseatic trading station ») and the productions' columns («effective»,
+	// «normal»; 0x6AEE34..0x6AEE44; its hint, 0x6AEE48, speaks of the mouse: the viewer has its own).
+	HomeTownHanse,
+	HomeTownOffice,
+	HomeTownStation,
+	HomeTownEffective,
+	HomeTownNormal,
 	Count
 };
 

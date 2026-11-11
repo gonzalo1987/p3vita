@@ -1,0 +1,240 @@
+#pragma once
+
+// The viewer's text: a font of the game (FontAtlas) put in a texture, with the
+// Vita's buttons and the letters' signs drawn as small pictures among the words.
+
+#include <SDL.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "p3data/font.hpp"
+#include "p3data/image.hpp"
+
+// The Vita's buttons in the viewer's texts: a byte that TextRenderer draws as
+// the button's symbol, in its colour (the game's font has none). Macros, to
+// be joined to the literals ("\x01" followed by a letter would be one escape).
+#define BTN_CROSS "\x01"
+#define BTN_CIRCLE "\x02"
+#define BTN_SQUARE "\x03"
+#define BTN_TRIANGLE "\x04"
+
+namespace p3::app {
+
+using p3::data::FontAtlas;
+using p3::data::Image;
+
+// The bytes TextRenderer draws as a symbol: the buttons above and the signs
+// of the game's letters (letters.hpp: kLetterCoin, kLetterBarrel, kLetterLoad).
+inline bool symbol_byte(char c) {
+	return c >= 1 && c <= 7;
+}
+
+// The interface's text in a font of the game, uploaded as a texture.
+class TextRenderer {
+public:
+	TextRenderer(SDL_Renderer* renderer, std::unique_ptr<FontAtlas> font) : renderer_(renderer), font_(std::move(font)) {
+		const Image& image = font_->image();
+		texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, image.width,
+			image.height);
+		if (texture_) {
+			SDL_UpdateTexture(texture_, nullptr, image.rgba.data(), image.width * 4);
+			SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
+		}
+	}
+
+	~TextRenderer() {
+		SDL_DestroyTexture(texture_);
+		for (SDL_Texture* t : buttons_) {
+			if (t) {
+				SDL_DestroyTexture(t);
+			}
+		}
+	}
+
+	// The width of the text, the symbols included.
+	int measure(const std::string& text) const {
+		int width = 0;
+		size_t start = 0;
+		for (size_t i = 0; i <= text.size(); ++i) {
+			if (i == text.size() || symbol_byte(text[i])) {
+				if (i > start) {
+					width += font_->measure(text.substr(start, i - start));
+				}
+				if (i < text.size()) {
+					width += symbol_width(text[i]);
+				}
+				start = i + 1;
+			}
+		}
+		return width;
+	}
+	int line_height() const { return font_->line_height(); }
+
+	// The colour's alpha fades the letters and the buttons' symbols alike (a button that can't be pressed).
+	void draw(const std::string& text, int x, int y, SDL_Color color) {
+		SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
+		SDL_SetTextureAlphaMod(texture_, color.a);
+		alpha_ = color.a;
+		size_t start = 0;
+		for (size_t i = 0; i <= text.size(); ++i) {
+			if (i < text.size() && !symbol_byte(text[i])) {
+				continue;
+			}
+			if (i > start) {
+				const std::string part = text.substr(start, i - start);
+				for (const FontAtlas::Quad& q : font_->layout(part, x, y)) {
+					const SDL_Rect src = {q.src_x, q.src_y, q.width, q.height};
+					const SDL_Rect dst = {q.dst_x, q.dst_y, q.width, q.height};
+					SDL_RenderCopy(renderer_, texture_, &src, &dst);
+				}
+				x += font_->measure(part);
+			}
+			if (i < text.size()) {
+				draw_symbol(text[i], x, y);
+				x += symbol_width(text[i]);
+			}
+			start = i + 1;
+		}
+	}
+
+private:
+	// A button's symbol is about as wide as the line is high; a letter's sign, narrower.
+	int symbol_width(char c) const { return c <= 4 ? font_->line_height() + 2 : font_->line_height() * 2 / 3 + 2; }
+
+	// The symbol in a square about the text's height: the buttons in the
+	// PlayStation's colours, smoothed (button_texture), three quarters of the
+	// line high; the letters' coin (a gold disc), barrel and load (a sack),
+	// small and filled.
+	void draw_symbol(char c, int x, int y) {
+		const int h = font_->line_height();
+		if (c <= 4) {
+			const int size = std::max(8, h * 3 / 4);
+			if (SDL_Texture* t = button_texture(c, size)) {
+				const SDL_Rect dst = {x + (symbol_width(c) - size) / 2, y + (h - size) / 2, size, size};
+				SDL_SetTextureAlphaMod(t, alpha_);
+				SDL_RenderCopy(renderer_, t, nullptr, &dst);
+			}
+			return;
+		}
+		const int size = h * 3 / 5;
+		const int left = x + (symbol_width(c) - size) / 2;
+		const int top = y + (h - size) / 2;
+		SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+		draw_sign(c, left, top, size);
+	}
+
+	// The game draws \C, \B and \L of its texts as small pictures.
+	void draw_sign(char c, int left, int top, int size) {
+		if (c == 5) {  // The coin: a gold disc with a darker rim.
+			const float r = size / 2.0f;
+			const float cx = left + r - 0.5f;
+			for (int k = 0; k < size; ++k) {
+				const float dy = float(k) - r + 0.5f;
+				const int half = int(std::lround(std::sqrt(std::max(0.0f, r * r - dy * dy))));
+				SDL_SetRenderDrawColor(renderer_, 236, 190, 60, 255);
+				SDL_RenderDrawLine(renderer_, int(cx) - half + 1, top + k, int(cx) + half - 1, top + k);
+				SDL_SetRenderDrawColor(renderer_, 150, 105, 25, 255);
+				SDL_RenderDrawPoint(renderer_, int(cx) - half, top + k);
+				SDL_RenderDrawPoint(renderer_, int(cx) + half, top + k);
+			}
+			return;
+		}
+		const int w = size * 3 / 4;
+		const SDL_Rect body = {left + (size - w) / 2, top, w, size};
+		if (c == 6) {  // A barrel: brown staves and two dark hoops.
+			SDL_SetRenderDrawColor(renderer_, 160, 105, 55, 255);
+			SDL_RenderFillRect(renderer_, &body);
+			SDL_SetRenderDrawColor(renderer_, 70, 45, 25, 255);
+			SDL_RenderDrawRect(renderer_, &body);
+			SDL_RenderDrawLine(renderer_, body.x, top + size / 3, body.x + w - 1, top + size / 3);
+			SDL_RenderDrawLine(renderer_, body.x, top + size * 2 / 3, body.x + w - 1, top + size * 2 / 3);
+		} else {  // A load: a pale sack tied at the top.
+			const SDL_Rect sack = {body.x, top + size / 4, w, size - size / 4};
+			SDL_SetRenderDrawColor(renderer_, 205, 185, 140, 255);
+			SDL_RenderFillRect(renderer_, &sack);
+			SDL_SetRenderDrawColor(renderer_, 110, 90, 60, 255);
+			SDL_RenderDrawRect(renderer_, &sack);
+			SDL_RenderDrawLine(renderer_, body.x + w / 2, top, body.x + w / 2, top + size / 4);
+			SDL_RenderDrawLine(renderer_, body.x + w / 4, top + size / 4, body.x + w * 3 / 4, top + size / 4);
+		}
+	}
+
+	// A button's symbol (1 the cross, 2 the circle, 3 the square, 4 the triangle), in the PlayStation's colours,
+	// drawn once into a texture of `size` pixels and kept: smoothed (each pixel's coverage from 4 × 4 samples),
+	// its lines about a sixth of its size thick.
+	SDL_Texture* button_texture(char c, int size) {
+		SDL_Texture*& kept = buttons_[size_t(c - 1)];
+		if (kept) {
+			return kept;
+		}
+		static constexpr SDL_Color kColors[4] = {{124, 178, 232, 255}, {255, 102, 102, 255}, {255, 105, 248, 255},
+			{64, 226, 160, 255}};
+		const SDL_Color color = kColors[c - 1];
+		const float s = float(size);
+		const float w = std::max(1.6f, s / 6.0f);  // The line's width.
+		const float m = w / 2 + 0.5f;  // The margin, so that the lines' ends stay inside.
+		// The distance from (px, py) to the segment (ax, ay)-(bx, by).
+		auto segment = [](float px, float py, float ax, float ay, float bx, float by) {
+			const float dx = bx - ax, dy = by - ay;
+			const float t = std::clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy), 0.0f, 1.0f);
+			const float qx = ax + t * dx - px, qy = ay + t * dy - py;
+			return std::sqrt(qx * qx + qy * qy);
+		};
+		auto inside = [&](float px, float py) {
+			switch (c) {
+			case 1:
+				return segment(px, py, m, m, s - m, s - m) <= w / 2 || segment(px, py, s - m, m, m, s - m) <= w / 2;
+			case 2: {
+				const float d = std::sqrt((px - s / 2) * (px - s / 2) + (py - s / 2) * (py - s / 2));
+				return d <= s / 2 - 0.5f && d >= s / 2 - 0.5f - w;
+			}
+			case 3: {
+				const float lo = s * 0.12f, hi = s - s * 0.12f;
+				const bool outer = px >= lo && px <= hi && py >= lo && py <= hi;
+				const bool inner = px > lo + w && px < hi - w && py > lo + w && py < hi - w;
+				return outer && !inner;
+			}
+			default: {
+				const float top = m, bottom = s - m - s * 0.06f;
+				return segment(px, py, s / 2, top, m, bottom) <= w / 2 || segment(px, py, s / 2, top, s - m, bottom) <= w / 2 ||
+					segment(px, py, m, bottom, s - m, bottom) <= w / 2;
+			}
+			}
+		};
+		std::vector<uint8_t> rgba(size_t(size * size) * 4);
+		for (int y = 0; y < size; ++y) {
+			for (int x = 0; x < size; ++x) {
+				int hits = 0;
+				for (int sy = 0; sy < 4; ++sy) {
+					for (int sx = 0; sx < 4; ++sx) {
+						hits += inside(float(x) + (float(sx) + 0.5f) / 4, float(y) + (float(sy) + 0.5f) / 4) ? 1 : 0;
+					}
+				}
+				uint8_t* p = &rgba[size_t(y * size + x) * 4];
+				p[0] = color.r;
+				p[1] = color.g;
+				p[2] = color.b;
+				p[3] = uint8_t(hits * 255 / 16);
+			}
+		}
+		kept = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, size, size);
+		if (kept) {
+			SDL_UpdateTexture(kept, nullptr, rgba.data(), size * 4);
+			SDL_SetTextureBlendMode(kept, SDL_BLENDMODE_BLEND);
+		}
+		return kept;
+	}
+
+	SDL_Renderer* renderer_;
+	std::unique_ptr<FontAtlas> font_;
+	SDL_Texture* texture_ = nullptr;
+	std::array<SDL_Texture*, 4> buttons_{};  // The buttons' symbols (button_texture).
+	Uint8 alpha_ = 255;  // The alpha of the text being drawn.
+};
+
+}  // namespace p3::app

@@ -1,6 +1,7 @@
 // Muestra el contenido de una partida guardada: ciudades y su almacén,
 // comerciantes y barcos.
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -42,6 +43,7 @@ int usage() {
 		"       p3save compress <in> <out>\n"
 		"       p3save newgame <archivo.cpr> <out.raw> [--seed N] [--year Y] [--home I] [--settings-from SAVE.raw]\n"
 		"         [--stop ops|advance|player] [--ships N] [--female] [--first NAME] [--family NAME]\n"
+		"         [--window [--level L] [--start 1|2] [--speed S] [--goal G] [--goal-time T] [--write-settings F]]\n"
 		"       p3save texts-cache <Patrician3.exe> <cache>\n"
 		"       p3save texts <Patrician3.exe> [FIRST]\n"
 		"       p3save <archivo.cpr> <partida> letters <Patrician3.exe> [merchant]\n"
@@ -240,9 +242,14 @@ int main(int argc, char** argv) {
 	if (argc >= 4 && std::strcmp(argv[1], "newgame") == 0) {
 		// p3save newgame <archivo.cpr> <out.raw> [--seed N] [--year Y] [--home I] [--settings-from SAVE.raw]
 		//   [--stop ops|advance|player] [--ships N] [--female] [--first NAME] [--family NAME]
+		//   [--window [--level L] [--start 1|2] [--speed S] [--goal G] [--goal-time T] [--write-settings F]]
 		// A new game as the game's window starts it (new_game.hpp), on the archive's map
 		// Standard24, with 1.pat's settings by default; its uncompressed .pat to <out.raw>, to
-		// compare with tools/oracle/newgame_oracle.py's.
+		// compare with tools/oracle/newgame_oracle.py's. With --window, the settings and the
+		// player are the window's from its choices (new_game_settings, new_game_player) over
+		// those settings: the year, home town, sex, names, level (its details), start (the
+		// last detail), speed and goal given; --write-settings writes them as a save's head
+		// (the version and the 0x4C bytes) for the oracle's --settings-from.
 		std::string error;
 		std::unique_ptr<CprArchive> archive = CprArchive::open(argv[2], &error);
 		std::unique_ptr<NavData> nav = archive ? NavData::load(*archive, &error) : nullptr;
@@ -264,10 +271,23 @@ int main(int argc, char** argv) {
 		NewGamePlayer player;
 		player.first_name = "Johann";
 		player.family_name = "Kaufmann";
-		for (int i = 4; i + 1 < argc || (i < argc && std::strcmp(argv[i], "--female") == 0); ++i) {
+		bool window = false;
+		NewGameChoices choices;
+		choices.first_name = player.first_name;
+		choices.family_name = player.family_name;
+		std::string settings_out;
+		auto flag = [&](int i) {
+			return i < argc && (std::strcmp(argv[i], "--female") == 0 || std::strcmp(argv[i], "--window") == 0);
+		};
+		for (int i = 4; i + 1 < argc || flag(i); ++i) {
 			const std::string option = argv[i];
 			if (option == "--female") {
 				player.male = false;
+				choices.female = true;
+				continue;
+			}
+			if (option == "--window") {
+				window = true;
 				continue;
 			}
 			const char* value = argv[++i];
@@ -281,8 +301,23 @@ int main(int argc, char** argv) {
 				player.ships = uint8_t(std::strtoul(value, nullptr, 0));
 			} else if (option == "--first") {
 				player.first_name = value;
+				choices.first_name = value;
 			} else if (option == "--family") {
 				player.family_name = value;
+				choices.family_name = value;
+			} else if (option == "--level") {
+				choices.level = uint32_t(std::strtoul(value, nullptr, 0));
+				choices.details = kNewGameLevelDetails[std::min<size_t>(choices.level, 4)];
+			} else if (option == "--start") {
+				choices.details[7] = uint8_t(std::strtoul(value, nullptr, 0));
+			} else if (option == "--speed") {
+				choices.speed = uint32_t(std::strtoul(value, nullptr, 0));
+			} else if (option == "--goal") {
+				choices.goal = uint32_t(std::strtoul(value, nullptr, 0));
+			} else if (option == "--goal-time") {
+				choices.goal_time = uint32_t(std::strtoul(value, nullptr, 0));
+			} else if (option == "--write-settings") {
+				settings_out = value;
 			} else if (option == "--stop") {
 				stop = std::strcmp(value, "ops") == 0 ? NewGameStop::Operations
 					: std::strcmp(value, "advance") == 0 ? NewGameStop::Advance : NewGameStop::Player;
@@ -302,22 +337,36 @@ int main(int argc, char** argv) {
 		SaveGame save;
 		std::memcpy(save.settings.bytes.data(), settings.data(), 0x4C);
 		std::memset(save.settings.bytes.data() + 0x3C, 0, 0x10);
-		if (year >= 0) {
-			save.settings.u32(0x0) = uint32_t(year);
+		GameMap map;
+		if (!load_game_map(*archive, "maps/Standard24.gmf", map, &error)) {
+			std::fprintf(stderr, "%s\n", error.c_str());
+			return 1;
 		}
-		if (home >= 0) {
-			save.settings.u8(0x1E) = uint8_t(home);
+		if (window) {
+			choices.year = year >= 0 ? uint32_t(year) : 1300;
+			choices.home = home >= 0 ? uint32_t(home) : 9;
+			save.settings = new_game_settings(choices, map, save.settings);
+			player = new_game_player(choices);
+			if (!settings_out.empty()) {
+				std::vector<uint8_t> head = {0x82, 0, 0, 0};
+				head.insert(head.end(), save.settings.bytes.begin(), save.settings.bytes.end());
+				if (!write_file(settings_out.c_str(), head)) {
+					return 1;
+				}
+			}
+		} else {
+			if (year >= 0) {
+				save.settings.u32(0x0) = uint32_t(year);
+			}
+			if (home >= 0) {
+				save.settings.u8(0x1E) = uint8_t(home);
+			}
 		}
 		// What the game's start leaves (the world's constructor 0x52F520: [+0x88]
 		// 0xFF, the town of the AI's next feast) and its data (0x5121C0...).
 		save.globals.u8(global::kWorld + 0x88) = 0xFF;
 		load_game_scripts(*archive, save);
 		load_statistics_file(nullptr, save);
-		GameMap map;
-		if (!load_game_map(*archive, "maps/Standard24.gmf", map, &error)) {
-			std::fprintf(stderr, "%s\n", error.c_str());
-			return 1;
-		}
 		Sailing sailing(save, *nav, load_sea_map_towns(*archive));
 		sailing.set_pirates(true);
 		sailing.set_battles(true);

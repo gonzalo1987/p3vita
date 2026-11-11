@@ -3,6 +3,7 @@
 #include "p3data/new_game.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 
 #include "p3data/cpr.hpp"
@@ -1140,6 +1141,381 @@ void fn_536d90(SaveGame& save, const uint8_t* operation) {
 			break;
 		}
 	}
+}
+
+const std::array<std::array<uint8_t, 8>, 5> kNewGameLevelDetails = {{
+	{1, 1, 1, 1, 1, 1, 1, 2},
+	{1, 1, 1, 1, 2, 2, 2, 2},
+	{2, 2, 2, 2, 2, 2, 2, 2},
+	{2, 2, 2, 2, 3, 3, 3, 2},
+	{3, 3, 3, 3, 3, 3, 3, 2},
+}};
+
+void clamp_new_game_choices(NewGameChoices& c, uint32_t speed_before) {
+	if (int32_t(c.year) < 1300 || int32_t(c.year) > 1400) {
+		c.year = 1350;
+	}
+	c.year = uint32_t(int32_t(c.year) / 5 * 5);
+	if (int32_t(c.level) < 0 || int32_t(c.level) > 4) {
+		c.level = 2;
+	}
+	if (int32_t(c.goal) < 0 || int32_t(c.goal) > 7 || c.goal == 1 || c.goal == 7) {
+		c.goal = 0;
+	}
+	// Table 0x497EB8, by the goal.
+	const int32_t time = int32_t(c.goal_time);
+	switch (c.goal) {
+	case 0:
+		if (time > 0) {
+			c.goal_time = 0;
+		}
+		break;
+	case 1:
+	case 2:
+	case 3:
+		if (time > 14) {
+			c.goal_time = 14;
+		}
+		break;
+	case 4:
+	case 5:
+		if (time >= 13) {
+			c.goal_time = 13;
+		}
+		break;
+	case 6:
+		if (time >= 2) {
+			c.goal_time = 2;
+		}
+		break;
+	default:
+		if (time >= 4) {
+			c.goal_time = 4;
+		}
+		break;
+	}
+	if (int32_t(c.goal_time) < 0) {
+		c.goal_time = 0;
+	}
+	if (int32_t(c.speed) < 0 || int32_t(c.speed) > 5) {
+		c.speed = speed_before;
+	}
+	for (size_t k = 0; k < c.details.size(); ++k) {
+		uint8_t& v = c.details[k];
+		if (v < 1) {
+			v = 1;
+		}
+		if (v > 2) {
+			v = k == 7 ? 2 : 3;
+		}
+	}
+}
+
+uint32_t new_game_level_of(const std::array<uint8_t, 8>& details) {
+	static constexpr int32_t kSums[5] = {9, 12, 16, 19, 23};  // 0x66F6B0
+	int32_t sum = 0;
+	for (uint8_t v : details) {
+		sum += v;
+	}
+	int32_t nearest = 0x24;
+	uint32_t level = 0;
+	for (uint32_t k = 0; k < 5; ++k) {
+		const int32_t d = std::abs(sum - kSums[k]);
+		if (d < nearest) {
+			nearest = d;
+			level = k;
+		}
+	}
+	return level;
+}
+
+uint32_t new_game_goal_time_limit(uint32_t goal) {
+	switch (goal) {
+	case 0:
+		return 0;
+	case 1:
+	case 2:
+	case 3:
+		return 14;
+	case 4:
+	case 5:
+		return 13;
+	case 6:
+		return 2;
+	default:
+		return 4;
+	}
+}
+
+void press_new_game_ball(NewGameWindowState& state, NewGameBall ball) {
+	NewGameChoices& c = state.choices;
+	if (!state.saved) {
+		state.saved = true;
+		state.saved_time = c.goal_time;
+	}
+	switch (ball) {
+	case NewGameBall::GenderLeft:
+		c.female = false;
+		break;
+	case NewGameBall::GenderRight:
+		c.female = true;
+		break;
+	case NewGameBall::YearMinus:
+		c.year -= 5;
+		if (int32_t(c.year) <= 1300) {
+			c.year = 1300;
+		}
+		break;
+	case NewGameBall::YearPlus:
+		c.year += 5;
+		if (int32_t(c.year) >= 1400) {
+			c.year = 1400;
+		}
+		break;
+	case NewGameBall::LevelMinus:
+		c.level -= 1;
+		if (int32_t(c.level) <= 0) {
+			c.level = 0;
+		}
+		c.details = kNewGameLevelDetails[c.level];
+		break;
+	case NewGameBall::LevelPlus:
+		c.level += 1;
+		if (int32_t(c.level) >= 4) {
+			c.level = 4;
+		}
+		c.details = kNewGameLevelDetails[c.level];
+		break;
+	case NewGameBall::GoalLeft:
+	case NewGameBall::GoalRight: {
+		const uint32_t goal = ball == NewGameBall::GoalLeft ? c.goal - 1 : c.goal + 1;
+		c.goal = goal;
+		if (ball == NewGameBall::GoalLeft) {
+			if (goal == 0 || goal == 6) {
+				c.goal_time = 0;
+			} else if (goal == 5) {
+				c.goal_time = state.saved_time;  // Back from the Hanse's population.
+			}
+			if (goal == 1) {
+				c.goal = 0;  // No «Councillor».
+			}
+			if (int32_t(c.goal) <= 0) {
+				c.goal = 0;
+			}
+		} else {
+			if (goal == 1) {
+				c.goal = 2;
+			} else if (goal == 4) {
+				if (int32_t(c.goal_time) > 13) {
+					c.goal_time = 13;
+				}
+			} else if (goal == 6 || goal == 7) {
+				state.saved_time = c.goal_time;
+				c.goal_time = 0;
+			}
+			if (int32_t(c.goal) >= 6) {
+				c.goal = 6;
+			}
+		}
+		// 0x499AF0: the time within the new goal's limit (none without a goal).
+		const uint32_t limit = new_game_goal_time_limit(c.goal);
+		if (c.goal == 0 || int32_t(c.goal_time) > int32_t(limit)) {
+			c.goal_time = limit;
+		}
+		break;
+	}
+	case NewGameBall::TimeMinus:
+		c.goal_time -= 1;
+		if (int32_t(c.goal_time) <= 0) {
+			c.goal_time = 0;
+		}
+		break;
+	case NewGameBall::TimePlus: {
+		c.goal_time += 1;
+		const uint32_t limit = new_game_goal_time_limit(c.goal);
+		if (c.goal <= 7 && int32_t(c.goal_time) >= int32_t(limit)) {
+			c.goal_time = limit;
+		}
+		break;
+	}
+	case NewGameBall::SpeedMinus:
+		c.speed = c.speed == 0 ? 5 : c.speed - 1;
+		break;
+	case NewGameBall::SpeedPlus:
+		if (c.speed == 5) {
+			c.speed = 0;
+		} else if (int32_t(++c.speed) >= 4) {
+			c.speed = 4;
+		}
+		break;
+	case NewGameBall::Count:
+		break;
+	}
+}
+
+bool new_game_ball_enabled(const NewGameChoices& c, NewGameBall ball) {
+	switch (ball) {
+	case NewGameBall::GenderLeft:
+		return c.female;
+	case NewGameBall::GenderRight:
+		return !c.female;
+	case NewGameBall::YearMinus:
+		return int32_t(c.year) > 1300;
+	case NewGameBall::YearPlus:
+		return int32_t(c.year) < 1400;
+	case NewGameBall::LevelMinus:
+		return int32_t(c.level) > 0;
+	case NewGameBall::LevelPlus:
+		return int32_t(c.level) < 4;
+	case NewGameBall::GoalLeft:
+		return int32_t(c.goal) > 0;
+	case NewGameBall::GoalRight:
+		return int32_t(c.goal) < 6;
+	case NewGameBall::TimeMinus:
+		return c.goal_time != 0;
+	case NewGameBall::TimePlus:
+		return c.goal != 0 && int32_t(c.goal_time) < int32_t(new_game_goal_time_limit(c.goal));
+	case NewGameBall::SpeedMinus:
+		return c.speed != 5;
+	case NewGameBall::SpeedPlus:
+		return c.speed != 4;
+	case NewGameBall::Count:
+		break;
+	}
+	return false;
+}
+
+bool new_game_ball_shown(const NewGameChoices& c, NewGameBall ball) {
+	if (ball == NewGameBall::TimeMinus || ball == NewGameBall::TimePlus) {
+		return c.goal != 0;
+	}
+	return ball != NewGameBall::Count;
+}
+
+uint32_t next_hanse_town(const GameMap& map, uint32_t index) {
+	uint32_t i = index;
+	for (uint32_t n = 0; n <= map.count; ++n) {
+		if (++i >= map.count) {
+			i = 0;
+		}
+		if (map.flags[i] & 0x40) {
+			return i;
+		}
+	}
+	return index;  // The game loops for ever (no map without a Hanse town).
+}
+
+uint32_t previous_hanse_town(const GameMap& map, uint32_t index) {
+	uint32_t i = index;
+	for (uint32_t n = 0; n <= map.count; ++n) {
+		if (i == 0) {
+			i = map.count;
+		}
+		if (i == 0 || i > map.flags.size()) {
+			break;
+		}
+		const uint8_t flags = map.flags[i - 1];
+		--i;
+		if (flags & 0x40) {
+			return i;
+		}
+	}
+	return index;
+}
+
+const std::string& game_map_town_name(const GameMap& map, uint32_t index) {
+	if (index >= map.count) {
+		index = 0;
+	}
+	const uint8_t number = map.numbers[index % map.numbers.size()];
+	return map.names[number % map.names.size()];
+}
+
+std::vector<uint8_t> game_map_town_wares(const GameMap& map, uint32_t index, bool efficient) {
+	static constexpr uint8_t kOrder[17] = {9, 2, 3, 12, 5, 0, 1, 11, 8, 4, 16, 14, 7, 18, 19, 15, 17};  // 0x672C30
+	std::vector<uint8_t> wares;
+	if (index >= map.count) {
+		return wares;
+	}
+	const uint32_t bits = efficient ? map.efficient[index] : map.inefficient[index];
+	for (uint32_t k = 0; k < 17; ++k) {
+		if (bits & (1u << k)) {
+			wares.push_back(kOrder[k]);
+		}
+	}
+	if (bits & 0x40) {
+		wares.push_back(13);  // leather (0x6C0BE4)
+	}
+	if (bits & 0x20000) {
+		wares.push_back(10);  // whale oil (0x6C0BD8)
+		wares.push_back(2);  // fish (0x6C0BB8)
+	}
+	return wares;
+}
+
+SettingsMemory initial_game_settings() {
+	SettingsMemory s;
+	s.u32(0x0) = 0x541;
+	s.u8(0xB) = 12;  // *0x66E920
+	s.u8(0xA) = 1;
+	s.u8(0xC) = 1;
+	s.u8(0x17) = 1;
+	s.u8(0x25) = 1;  // TOOLTIPS
+	s.u8(0x26) = 1;  // VIDEOS
+	return s;
+}
+
+SettingsMemory new_game_settings(const NewGameChoices& c, const GameMap& map, const SettingsMemory& before,
+		bool tooltips) {
+	// The last detail's table 0x66F6A4 (u32, read by the detail's value).
+	static constexpr uint8_t kStart[4] = {2, 1, 2, 9};
+	SettingsMemory s = before;
+	s.u32(0x0) = c.year;
+	s.u8(0xF) = uint8_t(c.goal);
+	s.u8(0xB) = 12;
+	s.u8(0xA) = kStart[std::min<size_t>(c.details[7], 3)];
+	s.u8(0x19) = c.production != 0 ? 1 : 0;
+	s.u8(0xE) = uint8_t(c.level);
+	s.u8(0xC) = 1;
+	s.u32(0x4) = c.speed;
+	s.u8(0x9) = uint8_t(c.details[6] - 1);
+	s.u8(0xD) = 3;  // [+0x1BB4]: the window opened for a game of one player (0x42F6E7).
+	s.u8(0x11) = uint8_t(c.details[1] - 1);
+	s.u8(0x16) = uint8_t(c.details[5] - 1);
+	s.u8(0x13) = uint8_t(c.details[4] - 1);
+	s.u8(0x10) = uint8_t(c.details[0] - 1);
+	s.u8(0x12) = uint8_t(c.details[3] - 1);
+	s.u8(0x17) = uint8_t(c.details[2] - 1);
+	s.u8(0x25) = tooltips ? 1 : 0;  // *0x6CBDF0 [+0x184]
+	s.u8(0x1E) = uint8_t(c.home);
+	// The home town's name (strcpy; the game's fit).
+	const std::string& name = game_map_town_name(map, c.home);
+	const size_t length = std::min<size_t>(name.size(), SettingsMemory::kSize - 0x28);
+	std::memcpy(s.bytes.data() + 0x27, name.data(), length);
+	s.u8(0x27 + length) = 0;
+	// The goal (jump tables 0x4999E4 by the kind and 0x499A00 by the time); a
+	// time the window doesn't give leaves it as it was.
+	if (c.goal == 0) {
+		s.u8(0x8) = 0xE;
+	} else if (c.goal <= 5) {
+		if (c.goal_time <= 14) {
+			s.u8(0x8) = uint8_t(c.goal_time);
+		}
+	} else if (c.goal == 6 && c.goal_time <= 2) {
+		s.u8(0x8) = uint8_t(0x10 + c.goal_time);
+	}
+	return s;
+}
+
+NewGamePlayer new_game_player(const NewGameChoices& c) {
+	// Table 0x66F6B0 − 4 · the last detail (u32: 9, 2, 1, 2).
+	static constexpr uint8_t kShips[4] = {9, 2, 1, 2};
+	NewGamePlayer player;
+	player.ships = kShips[std::min<size_t>(c.details[7], 3)];
+	player.male = !c.female;
+	player.first_name = c.first_name;
+	player.family_name = c.family_name;
+	return player;
 }
 
 void start_new_game(SaveGame& save, Sailing& sailing, const GameMap& map, const NewGamePlayer& player, uint32_t seed,

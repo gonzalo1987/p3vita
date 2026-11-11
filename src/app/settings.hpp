@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include "p3data/new_game.hpp"
+
 namespace p3::app {
 
 // The viewer's settings, kept in a small text file with one «key = value» per
@@ -16,6 +18,10 @@ struct AppSettings {
 	// Spanish Patrician3.exe) or English (the English archive alone and the
 	// English exe).
 	bool spanish = true;
+	// The new game window's last choices (the game keeps them in P2.CFG
+	// [SPIELEINST], new_game.hpp), with the game's defaults; read back with
+	// P2.CFG's limits (clamp_new_game_choices).
+	p3::data::NewGameChoices new_game;
 };
 
 // ux0:data/p3vita/p3vita-settings.txt on the Vita; on the PC, in the data

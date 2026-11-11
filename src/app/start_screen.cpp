@@ -8,13 +8,13 @@
 
 #include "p3data/cpr.hpp"
 #include "p3data/image.hpp"
+#include "ui_images.hpp"
 
 namespace p3::app {
 
 namespace {
 
 using p3::data::CprArchive;
-using p3::data::CprEntry;
 using p3::data::Image;
 
 // Where the game draws each lit entry on the book (800 · 600): the tables of
@@ -24,76 +24,23 @@ constexpr SDL_Point kEnglishPlaces[kStartEntries] = {
 constexpr SDL_Point kSpanishPlaces[kStartEntries] = {
 	{223, 183}, {197, 207}, {167, 235}, {135, 265}, {103, 297}, {64, 332}, {24, 368}, {0, 409}};
 
-bool read_file(const CprArchive& archive, const char* path, std::vector<uint8_t>& out) {
-	const CprEntry* entry = archive.find(path);
-	return entry && archive.read(*entry, out);
-}
-
-bool read_image(const CprArchive& archive, const char* path, Image& out) {
-	std::vector<uint8_t> data;
-	return read_file(archive, path, data) && p3::data::decode_standard_image(data.data(), data.size(), out);
-}
-
-SDL_Texture* make_texture(SDL_Renderer* renderer, const Image& image) {
-	SDL_Texture* texture =
-		SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, image.width, image.height);
-	if (texture) {
-		SDL_UpdateTexture(texture, nullptr, image.rgba.data(), image.width * 4);
-		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-	}
-	return texture;
-}
-
-// The frames «OffsetNSizeK=x y w h» of a section «[TEXn]» of textures.ini (the
-// lines with a «;» before are left out).
-void read_frames(const std::vector<uint8_t>& ini, const char* section, SDL_Rect* frames, int count) {
-	const std::string text(ini.begin(), ini.end());
-	size_t pos = text.find(section);
-	if (pos == std::string::npos) {
-		return;
-	}
-	pos = text.find('\n', pos);
-	while (pos != std::string::npos && pos + 1 < text.size()) {
-		const size_t start = pos + 1;
-		pos = text.find('\n', start);
-		std::string line = text.substr(start, pos == std::string::npos ? std::string::npos : pos - start);
-		size_t first = line.find_first_not_of(" \t");
-		if (first == std::string::npos) {
-			continue;
-		}
-		line = line.substr(first);
-		if (line[0] == '[') {
-			break;
-		}
-		int k = 0;
-		int x = 0;
-		int y = 0;
-		int w = 0;
-		int h = 0;
-		if (line[0] != ';' && std::sscanf(line.c_str(), "OffsetNSize%d=%d %d %d %d", &k, &x, &y, &w, &h) == 5 &&
-			k >= 0 && k < count) {
-			frames[k] = {x, y, w, h};
-		}
-	}
-}
-
 }  // namespace
 
 StartScreen::StartScreen(SDL_Renderer* renderer, const CprArchive& archive, bool spanish, int screen_width,
 		int screen_height)
 	: screen_width_(screen_width), screen_height_(screen_height) {
 	Image book;
-	if (!read_image(archive, "images/options/Hauptmenu.jpg", book) || book.width <= 0 || book.height <= 0) {
+	if (!read_cpr_image(archive, "images/options/Hauptmenu.jpg", book) || book.width <= 0 || book.height <= 0) {
 		return;
 	}
 	book_ = make_texture(renderer, book);
 	Image glow;
-	if (read_image(archive, "images/options/p_hmenu01.bmp", glow)) {
+	if (read_cpr_image(archive, "images/options/p_hmenu01.bmp", glow)) {
 		p3::data::apply_magenta_key(glow);
 		glow_ = make_texture(renderer, glow);
 	}
 	Image map;
-	if (read_image(archive, "images/options/hmenu_colormap.bmp", map)) {
+	if (read_cpr_image(archive, "images/options/hmenu_colormap.bmp", map)) {
 		map_width_ = map.width;
 		map_height_ = map.height;
 		map_.assign(size_t(map.width) * size_t(map.height), 0);
@@ -107,8 +54,8 @@ StartScreen::StartScreen(SDL_Renderer* renderer, const CprArchive& archive, bool
 		}
 	}
 	std::vector<uint8_t> ini;
-	if (read_file(archive, "scripts/textures.ini", ini)) {
-		read_frames(ini, "[TEX14]", frames_, kStartEntries);
+	if (read_cpr_file(archive, "scripts/textures.ini", ini)) {
+		read_texture_frames(ini, "[TEX14]", frames_, kStartEntries);
 	}
 	for (int k = 0; k < kStartEntries; ++k) {
 		places_[k] = spanish ? kSpanishPlaces[k] : kEnglishPlaces[k];
