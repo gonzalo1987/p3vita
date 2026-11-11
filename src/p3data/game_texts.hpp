@@ -313,6 +313,32 @@ enum class GameText {
 	EventFrozen,  // «The harbour is frozen solid» (0x4000000; 0x6B2A24)
 	EventBlockade,  // «The harbour is blockaded» (0x200)
 	EventBoycott,  // «The town is being boycotted» (0x400)
+	// The new game window («Game settings», 0x497xxx..0x49Bxxx; re/emu/sesion24/new_game_notes.md).
+	NewGameFirstName,  // «First name of trader»
+	NewGameSurname,  // «Surname of trader»
+	NewGameHomeTown,  // «Home town»
+	NewGameStartingYear,  // «Starting year»
+	NewGameHeraldry,  // «Heraldry»
+	NewGameLevel,  // «Level of difficulty»
+	NewGameDetails,  // «Details»
+	NewGameObjective,  // «Objective conditions»
+	NewGameAfter,  // «after»
+	NewGameYears,  // «years» (the Spanish «%s años»)
+	NewGameProduction,  // «Town production»
+	NewGameRealistic,  // «realistic»
+	NewGameRandom,  // «random»
+	NewGameTitle,  // «Game settings»
+	NewGameUse,  // «Use» (the Spanish «Aceptar»)
+	DetailTrade,  // The 8 details: «Difficulty level of trade», of reputation, «Needs of the citizens», of sea
+	DetailShips = DetailTrade + 7,  // battle, «Pirates activity», «Activity of the Prince», «Starting capital», ships.
+	DetailValueTrade,  // Their values, 3 each, in the game's 7 tables: trade, reputation (easy, normal, hard),
+	DetailValueLast = DetailValueTrade + 20,  // needs (low...), sea battle (easy...), pirates, prince, capital (low...).
+	LevelShopkeeper,  // The 5 levels of difficulty («Shopkeeper» .. «Patrician»).
+	LevelPatrician = LevelShopkeeper + 4,
+	GoalNone,  // The goals' table: «none», «Councillor», «Lord Mayor», «Alderman», «Balance of points»,
+	GoalLast = GoalNone + 8,  // «Balance of wealth», «Wealth», «Capacity» and «of».
+	YearsOne,  // «1 year» .. «10 years».
+	YearsTen = YearsOne + 9,
 	Count
 };
 
