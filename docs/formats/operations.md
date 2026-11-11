@@ -1,6 +1,7 @@
 # The operations: the 193 codes of the executor
 
-Inventoried on 2026-11-05 (the inventory's part E, [../inventario.md](../inventario.md)).
+Inventoried on 2026-11-05 (the inventory's part E, [../inventario.md](../inventario.md)); the «p3vita» column
+checked against `run_operation` (`src/p3data/simulation.cpp`) on 2026-11-11.
 An operation is 0x14 bytes: a u32 code and 16 bytes of data. The interface and the
 simulation fill one (the interface first with 0x535740: a u32 0xFFFFFFFF, then
 zeros), and either queue it with **0x54AA70** on the object 0x6DF2F0, which the
@@ -115,9 +116,9 @@ an action of the interface; 0x54 and 0x55 go with letters), others may be dead.
 |-|-|-|
 | simulation | 37: the ones the simulation queues (inventory, part B) | all 37 |
 | player | 105: queued by the interface | 49: 0x00..0x0A, 0x0C, 0x0D, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x3B, 0x3F, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x68..0x71 |
-| battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 0x91, 0x94, 0x96, 0x9F |
-| network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | the five that do nothing |
-| new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | — |
+| battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 12: all but 0x99 (never queued; its function, the chase's battle, is done) and 0xBD (the window) |
+| network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | 8: 0xA7, 0xAA, 0xAB (the new game's player and his names) and the five that do nothing |
+| new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | 8: all but 0xAE, 0xB2 and 0xB6 (no queuer found) |
 | missions | 1: 0xC0, the mission interpreter | — |
 | unused | 10: nothing (0x14, 0x73, 0x9C..0x9E, 0xA1) or no queuer found and nothing to do with the player (0x3C, 0x4C, 0x5C, 0x8F) | — |
 
@@ -275,21 +276,21 @@ feast window): the handler is the same and is done.
 | 0x8F | unused | a siege's letters (0x38 «Siege», 0x37 «Extra tax»; 0x540240) | not found | 0x536AA9 → 0x540240 | 1, 592 B |  | read (mail.md) |
 | 0x90 | player | a siege (letter 0x38, 0x634660, 0x62B860, 0x62DD70) | 0x5F2F90, 0x5F30B0, 0x5F31C0 | 0x536AB8 → 0x540490 | 6, 4.4 KB |  | read (mail.md) |
 | 0x91 | battles | a ship takes another (0x540520) | the sea battle 0x60C1C9 (run at once) | 0x536B92 → 0x540520 |  | yes | read |
-| 0x92 | battles | a town battle's order (0x540F50) | 0x4942C0, 0x60D259 | 0x536BA1 → 0x540F50 | 1, 256 B |  | read (battles.md) |
-| 0x93 | battles | a battle's order (0x541050) | 0x6016CB, 0x608360 | 0x536BB0 → 0x541050 | 1, 432 B |  | guess |
+| 0x92 | battles | fire: the selected ships fire (0x540F50, `battle/orders.cpp`) | 0x4942C0, 0x60D259 | 0x536BA1 → 0x540F50 |  | yes | read |
+| 0x93 | battles | attack a ship, or a tower with 0xFFFE − tower (0x541050, `battle/orders.cpp`) | 0x6016CB, 0x608360 | 0x536BB0 → 0x541050 |  | yes | read |
 | 0x94 | battles | the battles take their steps (0x536BBF) | the real-time loop 0x612DB0 | 0x536BBF → 0x612D20, 0x612C90 |  | yes | read |
-| 0x95 | battles | a battle (0x541200, 0x6270C7) | 0x608550 | 0x536C43 → 0x541200 | 2, 656 B |  | guess |
+| 0x95 | battles | sail to a point, and the held order (0x541200, 0x6270C7, `battle/orders.cpp`) | 0x608550 | 0x536C43 → 0x541200 |  | yes | read |
 | 0x96 | battles | a merchant's sides to the computer or back (0x60FEC9) | 0x5FBFE0, 0x5FFF40, 0x605420, 0x6100D9 | 0x536C52 → 0x60FEC9 |  | yes | read |
-| 0x97 | battles | a battle (0x541380) | 0x6103E9 | 0x536C7F → 0x541380 | 1, 352 B |  | guess |
-| 0x98 | battles | a battle (0x5414E0) | 0x48D420, 0x610579 | 0x536C8E → 0x5414E0 | 1, 256 B |  | guess |
+| 0x97 | battles | board: capture or plunder (0x541380, `battle/orders.cpp`) | 0x6103E9 | 0x536C7F → 0x541380 |  | yes | read |
+| 0x98 | battles | the sails (0x5414E0, `battle/orders.cpp`) | 0x48D420, 0x610579 | 0x536C8E → 0x5414E0 |  | yes | read |
 | 0x99 | battles | a battle at sea from a chase (0x50B250) | not found | 0x536C9D → 0x50B250 |  |  | read |
-| 0x9A | battles | a battle (0x5415E0) | 0x610C09 | 0x536CB7 → 0x5415E0 | 1, 288 B |  | guess |
-| 0x9B | battles | a battle (0x541700) | 0x610FD9 | 0x536CC6 → 0x541700 | 1, 320 B |  | guess |
+| 0x9A | battles | flee (0x5415E0, `battle/orders.cpp`) | 0x610C09 | 0x536CB7 → 0x5415E0 |  | yes | read |
+| 0x9B | battles | the white flag (0x541700, `battle/orders.cpp`) | 0x610FD9 | 0x536CC6 → 0x541700 |  | yes | read |
 | 0x9C | unused | nothing (0x537025) |  | — |  |  | read |
 | 0x9D | unused | nothing (0x537025) |  | — |  |  | read |
 | 0x9E | unused | nothing (0x537025) |  | — |  |  | read |
 | 0x9F | battles | ships join a sea battle (0x611309) | the chase 0x50B250 | 0x536CD5 → 0x611309 |  | yes | read |
-| 0xA0 | battles | a battle (0x6116A9) | 0x42D230, 0x60D259 | 0x536D04 → 0x6116A9 | 2, 583 B |  | guess |
+| 0xA0 | battles | leave the battle once the enemy fled: {0xA0, slot, merchant} (0x6116A9, `battle/orders.cpp`) | 0x42D230, 0x60D259 | 0x536D04 → 0x6116A9 |  | yes | read |
 | 0xA1 | unused | nothing (0x537025) |  | — |  |  | read |
 | 0xA2 | network | a network game's lobby (0x43E3C0, 0x439DB0; *0x6CBB94) | 0x547FD0 | 0x536D27 → 0x541840 | 1, 384 B |  | guess |
 | 0xA3 | network | a network game's lobby (0x43E240) | 0x548160 | 0x536D36 → 0x5419C0 | 1, 240 B |  | guess |
@@ -309,7 +310,7 @@ feast window): the handler is the same and is done.
 | 0xB1 | new game | with no merchants: each town's merchant with his office and four ships (0x542560, 0x530470), the navigation and routes (Sailing's), the travel times (0x531BA0), the Hamburg–Lübeck road (0x533510) (`fn_542860`) | 0x544E50 | 0x536E50 → 0x542860 |  | yes | read |
 | 0xB2 | new game | 0x542980 | not found | 0x536E5F → 0x542980 | 3, 1.5 KB |  | guess |
 | 0xB3 | new game | the AI merchants, each in the next Hanse town with his office and ships (0x542A30: 0x530470, 0x4F68D0, 0x507D60, 0x4F7BB0, 0x54E170) (`fn_542a30`) | 0x544E50 | 0x536E6E → 0x542A30 |  | yes | read |
-| 0xB4 | new game | a pirate (0x513720, 0x513EC0, 0x513D80) | 0x544E50; the pirates 0x514920 | 0x536E7D → 0x542E40 | 1, 208 B |  | guess |
+| 0xB4 | new game | a new pirate in the first free slot (0x542E40: 0x513720, 0x513EC0, 0x513D80; `battle/town_end.cpp`) | 0x544E50; a destroyed nest 0x514920 | 0x536E7D → 0x542E40 |  | yes | read |
 | 0xB5 | simulation | a pirate fleet leaves its nest (0x514D40) | 0x514000 | 0x536E8C → 0x514D40 |  | yes | read |
 | 0xB6 | new game | a merchant's name (0x512BA0) | not found | 0x536EBE → 0x5303C0, 0x512BA0 | 1, 176 B |  | guess |
 | 0xB7 | new game | the game starts: resets (mail 0x4D64B0, routes 0x4D4C60, statistics 0x54DDF0, ships 0x504750, the world 0x530230, 0x5352B0), the event queue's first events (0x4D8B10), the trade's difficulty (`fn_5434e0`) | 0x544E50 | 0x536F0E → 0x5434E0 |  | yes | read |

@@ -302,17 +302,20 @@ built with rand()).
 
 - **97** are in functions p3vita has rewritten (`fn_XXXXXX`), which skipped
   the letter when this inventory was made (comments «A letter (0x4D6530): not
-  rewritten» or «no se traduce»). All are connected now but the 0x6A of
-  0x633DB0 (only from the battle in a town).
+  rewritten» or «no se traduce»). All are connected now (the 0x6A of
+  0x633DB0, sent only from the battle in a town, since 2026-11-07).
 - **10** were in functions p3vita named but skipped whole: the mission
   interpreter 0x4ECF64 (5, three with a letter built by the script), the
   alderman's notification 0x5299F0 (2), the convoy's automatic route
   0x503230, the sinking message 0x519D90 and 0x4F3AF0. 0x5299F0 and
   0x519D90 are rewritten and connected now (2026-11-03, 2026-11-04).
-- On 2026-11-04, **99** of the 154 are connected (appendix A, «Connected»; 105 on 2026-11-11, with
-  the trade routes' reports 0x5035CD and 0x4D55F9);
-  the other 55 are the 0x6A above, the 7 left of this group and the 47
-  below, which go with the subsystems they belong to.
+- On 2026-11-04, **99** of the 154 are connected (appendix A, «Connected»); on 2026-11-11, **112**: since
+  then the town battle's four (three in 0x5FE7E0 and the 0x6A of 0x633DB0), the player's actions' 0x02, 0x04 and 0x14, the dividends
+  of event 0x18 (three), the new game's 0x0E and the trade routes' reports 0x5035CD and 0x4D55F9.
+  The 42 left: the operations of the player not rewritten yet (13, two of them of 0x8F, which nobody was
+  found to queue), the events they create (14: 0x0C, 0x0F, 0x10, 0x11, 0x17), the mission interpreter and
+  the event 0x09 it creates (9), the diet's 0x4F3AF0 (1), the event 0x28 that nobody creates (3) and the
+  interface window 0x419EB0 (2).
 - **47** are in events and operations p3vita doesn't have yet. Events 0x09,
   0x0C, 0x0F, 0x10, 0x11, 0x17, 0x18 and 0x28 are created only by player
   actions (operations from the interface) or by the mission interpreter;
@@ -618,7 +621,7 @@ interpreter's 0x4ED0C6, 0x4EDEDA.
 («named»); «—» with what it is when p3vita doesn't have it. «Class» is the
 type's class (§2). «Connected»: p3vita sends that letter (`send_letter`) and
 the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
-99 of the 154 on 2026-11-04, 105 on 2026-11-11).
+99 of the 154 on 2026-11-04, 112 on 2026-11-11).
 
 | p3vita file | Function | Call | Type | Title (English exe) | Class | To | Note | Connected |
 |---|---|---|---|---|---|---|---|---|
@@ -751,18 +754,18 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | — event 0x11 | 0x4E6744 | 0x4E6878 | 0x5B | Dishonoured | 2 | one merchant |  | |
 | — event 0x11 | 0x4E6744 | 0x4E6987 | 0x5A | Fulfilled | 3 | one merchant |  | |
 | — event 0x17 | 0x4E8684 | 0x4E87CF | 0x22 | Proposal | 2 | one merchant |  | |
-| — event 0x18 | 0x4E8804 | 0x4E8975 | 0x62 | Dividend | 2 | one merchant |  | |
-| — event 0x18 | 0x4E8804 | 0x4E8A49 | 0x28 | Dividend | 2 | one merchant |  | |
-| — event 0x18 | 0x4E8804 | 0x4E8AD2 | 0x27 | Dividend | 3 | one merchant |  | |
+| p3data/town_tick/events_towns.cpp | 0x4E8804 | 0x4E8975 | 0x62 | Dividend | 2 | one merchant | event 0x18 | yes |
+| p3data/town_tick/events_towns.cpp | 0x4E8804 | 0x4E8A49 | 0x28 | Dividend | 2 | one merchant | event 0x18 | yes |
+| p3data/town_tick/events_towns.cpp | 0x4E8804 | 0x4E8AD2 | 0x27 | Dividend | 3 | one merchant | event 0x18 | yes |
 | — event 0x28 | 0x4DDF40 | 0x4DE32B | 0x51 | Captain | 2 | one merchant |  | |
 | — event 0x28 | 0x4DDF40 | 0x4DE394 | 0x50 | Captain | 2 | one merchant |  | |
 | — event 0x28 | 0x4DDF40 | 0x4DE485 | 0x4E | Captain | 2 | one merchant |  | |
 | — interface (a window, from 0x410A02) | 0x419EB0 | 0x41B16D | 0x45 | — | 4 | player (0x6DFC14) | interface window 0x419EB0 (rand) | |
 | — interface (a window, from 0x410A02) | 0x419EB0 | 0x41B4D3 | 0x21 | Suitor | 2 | player (0x6DFC14) | interface window 0x419EB0 (rand) | |
-| — new game (0x541DC4, 0x5425D1, 0x542B9D) | 0x530470 | 0x530625 | 0x0E | Move | 4 | -2 (chronicle) |  | |
-| — operation 0x03 | 0x52ACD0 | 0x52AEDD | 0x02 | No repair | 3 | one merchant |  | |
-| — operation 0x06 | 0x537EE0 | 0x537FC6 | 0x04 | New captain | 2 | one merchant |  | |
-| — operation 0x2F | 0x52B110 | 0x52B288 | 0x14 | Annulment | 1 | one merchant |  | |
+| p3data/new_game.cpp | 0x530470 | 0x530625 | 0x0E | Move | 4 | -2 (chronicle) | new game (0x541DC4, 0x5425D1, 0x542B9D) | yes |
+| p3data/town_tick/ship_operations.cpp | 0x52ACD0 | 0x52AEDD | 0x02 | No repair | 3 | one merchant | operation 0x03 | yes |
+| p3data/town_tick/ship_operations.cpp | 0x537EE0 | 0x537FC6 | 0x04 | New captain | 2 | one merchant | operation 0x06 | yes |
+| p3data/town_tick/ship_operations.cpp | 0x52B110 | 0x52B288 | 0x14 | Annulment | 1 | one merchant | operation 0x2F | yes |
 | — operation 0x3D | 0x53A620 | 0x53A794 | 0x1A | Order | 2 | one merchant |  | |
 | — operation 0x3E | 0x53A810 | 0x53A910 | 0x0E | Move | 4 | -2 (chronicle) |  | |
 | — operation 0x4A | 0x53B1F0 | 0x53B40C | 0x78 | Hanse Day | 1 | -1 (each merchant) |  | |
