@@ -26,6 +26,7 @@ void fn_4fe190(CaptainMemory& c);
 }  // namespace events_detail
 namespace core_detail {
 void fn_4fa6f0(SaveGame& save, int town);
+void fn_527d40(SaveGame& save, int town);
 }  // namespace core_detail
 namespace facilities_detail {
 uint8_t fn_5252f0(const SaveGame& save, int town);
@@ -38,6 +39,7 @@ int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town);
 }  // namespace events_towns_detail
 namespace construction_detail {
 uint32_t fn_51fab0(SaveGame& save, int town, uint8_t type, bool immediate);
+void fn_545f50(SaveGame& save, int town);
 }  // namespace construction_detail
 
 namespace {
@@ -518,6 +520,88 @@ void fn_5462f0(SaveGame& save, int town, uint32_t k) {
 	st.nodes.insert(st.nodes.begin(), node);
 }
 
+// 0x545CE0 (on the town; a town of a new game, 0x5458D0 with `flag`): its
+// businesses at work: each facility 3..20 with a productivity above 400 gets
+// workers by the year (table 0x6729D0: 0 before 1300, 250 from 1400, 2.5 a
+// year between, plus 250, shared by the table's sum), the facilities' goods
+// from their productivity (0x673C24), the citizens by class from the workers,
+// a million of each ware in the price thresholds' base, the citizens'
+// consumption (0x527D40), each facility's tick (0x5101D0), the needs
+// (0x528070) and the stock from the price thresholds.
+void fn_545ce0(SaveGame& save, int town) {
+	// 0x6729D0: the workers' share of each facility (types 3..20).
+	static constexpr uint8_t kShare[21] = {0x32, 0x28, 0x1E, 0x0F, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E,
+		0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x1E, 0x0F, 0x0F, 0x1E};
+	// 0x673C24: the goods of each facility by its productivity, in /1024.
+	static constexpr uint16_t kGoods[21] = {1024, 1024, 1024, 1024, 2048, 942, 1638, 2048, 1229, 1331, 1638, 1229,
+		1536, 1024, 1024, 1229, 4096, 1024, 1024, 1024, 1024};
+	TownMemory& t = town_of(save, town);
+	t.u16(0x844) = 10;
+	t.u8(0x998) = 1;
+	t.u8(0x999) = 1;
+	t.u8(0x99A) = 0;
+	t.u8(0x99B) = 0;
+	std::memset(t.bytes.data() + 0x99C, 0, 4);
+	t.u16(0x854) = 10;
+	t.u16(0x864) = 5;
+	t.u16(0x874) = 2;
+	uint32_t shares = 0;
+	for (uint32_t k = 3; k < 21; ++k) {
+		if (t.u16(0x848 + 16 * k) > 0x190) {
+			t.u16(0x844 + 16 * k) = 1;
+			shares += kShare[k];
+		} else {
+			t.u16(0x844 + 16 * k) = 0;
+		}
+	}
+	// The FPU at 53 bits, each step kept as a float.
+	const uint16_t year = save.globals.u16(kYear);
+	float workers = 0.0f;
+	if (year >= 0x514) {
+		workers = year > 0x578 ? 250.0f : float(double(float(int32_t(year) - 0x514)) * 2.5);
+	}
+	workers = float(double(workers) + 250.0);
+	workers = float(double(workers) / double(float(shares)));
+	for (uint32_t k = 3; k < 21; ++k) {
+		if (t.u16(0x844 + 16 * k) != 0) {
+			const double v = double(float(kShare[k])) * double(workers) + double(0.9999f);
+			t.u16(0x844 + 16 * k) = uint16_t(ftol(v));
+		}
+	}
+	t.u32(0x2D4) = 0;
+	for (uint32_t k = 0; k < 21; ++k) {
+		t.u32(0x2D4) += t.u16(0x844 + 16 * k);
+		t.s32(0x840 + 16 * k) = int32_t(uint32_t(kGoods[k]) * t.u16(0x848 + 16 * k)) >> 10;
+	}
+	const int32_t all = int32_t(t.u32(0x2D4) << 2);
+	const int32_t rich = all / 10;
+	t.s32(0x2D8) = rich;
+	t.s32(0x2DC) = rich * 3;
+	t.s32(0x2E0) = all - rich * 3 - rich;
+	const int32_t beggars = all / 17;
+	t.s32(0x2E4) = beggars;
+	t.s32(0x2D4) = beggars + all;
+	std::memcpy(t.bytes.data() + 0x2E8, t.bytes.data() + 0x2D8, 0x10);
+	for (size_t w = 0; w < 24; ++w) {
+		t.u32(0x4 + 4 * w) = 1000000;
+	}
+	core_detail::fn_527d40(save, town);
+	for (int k = 0; k < 21; ++k) {
+		fn_5101d0(save, town, k);
+	}
+	fn_528070(save, town, true);
+	for (size_t w = 0; w < 24; ++w) {
+		const uint32_t base = t.u32(0x4F0 + 16 * w);
+		t.u32(0x430 + 4 * w) = 0;
+		t.u32(0x4 + 4 * w) = base;
+		t.u32(0x3D0 + 4 * w) = base;
+	}
+	t.u32(0x54) = 300;
+	t.u32(0x58) = 200;
+	t.u32(0x5C) = 0;
+	t.u32(0x60) = 0;
+}
+
 // 0x5458D0 (sobre la ciudad): lo demás de una ciudad nueva (0x545B20): la
 // productividad de las instalaciones (1024; las empresas de las mercancías
 // de `wares`, 1024; las de `other`, 768; las demás, 0), los nodos de
@@ -566,9 +650,10 @@ void fn_5458d0(SaveGame& save, int town, bool flag, uint32_t wares, uint32_t oth
 	t.u16(0x9A0) = 10;
 	if (flag) {
 		// With `flag`, 0x545CE0 and 0x545F50: only a new game sets it (0x544E50,
-		// operation 0xAF with [+0xF] = 1; roadmap, «Partida nueva desde cero»).
-		// Founding a town during a game (the Hanse's task, the window 0x41B290)
-		// leaves it at 0.
+		// operation 0xAF with [+0xF] = 1; new_game.cpp). Founding a town during
+		// a game (the Hanse's task, the window 0x41B290) leaves it at 0.
+		fn_545ce0(save, town);
+		construction_detail::fn_545f50(save, town);
 		return;
 	}
 	std::memset(t.bytes.data() + 0x998, 0, 4);
@@ -621,7 +706,8 @@ uint32_t fn_516930(const SeaRoute& route) {
 void fn_531bd0(SaveGame& save) {
 	const uint32_t n = save.globals.u32(kTownCount);
 	std::vector<uint8_t> travel(size_t(n) * n, 0);
-	const uint32_t old = n - 1;
+	// Without the old matrix (0x531BA0, a new game) every town's.
+	const uint32_t old = save.town_travel.empty() ? 0 : n - 1;
 	for (uint32_t r = 0; r < old; ++r) {
 		for (uint32_t c = 0; c < old; ++c) {
 			travel[size_t(r) * n + c] =
@@ -665,16 +751,17 @@ void fn_531d50(SaveGame& save, const GameMemory<0x10>& rec) {
 		for (size_t i = old; i < save.towns.size(); ++i) {
 			fn_51b100(save, int(i));
 		}
-		if (!save.sieges.empty()) {
-			const size_t sieges = save.sieges.size();
-			save.sieges.resize(size_t(index) + 1);
-			save.siege_extras.resize(save.sieges.size());
-			for (size_t i = sieges; i < save.sieges.size(); ++i) {
-				fn_6334b0(save.sieges[i]);
-			}
-			for (size_t i = old; i <= index; ++i) {
-				save.sieges[i].u8(0x4) = uint8_t(i);
-			}
+		// A new array of sieges (0x6334B0 each) with the old ones copied; the
+		// new ones get their town's index, all of them when there were none (a
+		// new game's first town, 0x532260).
+		const size_t sieges = save.sieges.size();
+		save.sieges.resize(size_t(index) + 1);
+		save.siege_extras.resize(save.sieges.size());
+		for (size_t i = sieges; i < save.sieges.size(); ++i) {
+			fn_6334b0(save.sieges[i]);
+		}
+		for (size_t i = sieges ? old : 0; i <= index; ++i) {
+			save.sieges[i].u8(0x4) = uint8_t(i);
 		}
 		g.u32(kTownCount) = index + 1;
 		grown = rec.u8(0xF) == 0;
@@ -700,9 +787,45 @@ void fn_531d50(SaveGame& save, const GameMemory<0x10>& rec) {
 	fn_545890(save, int(index), rec.u8(0xF) != 0);
 	fn_5458d0(save, int(index), rec.u8(0xF) != 0, rec.u32(0x4), rec.u32(0x8));
 	if ((rec.u32(0x0) & 0x40) == 0x40) {
-		// The election of its mayor (0x532063..0x5321C5), for a Hanse town of
-		// a new game (0x544E50; roadmap, «Partida nueva desde cero»). Founding
-		// a town during a game the situation is 0.
+		// A Hanse town (a new game's, 0x544E50; founding a town during a game
+		// the situation is 0): the election of its mayor, an event 0x02 on a
+		// day of the year from its index and the record's [+0xB] (0x532063..
+		// 0x5321C5), moved on 9 days while it falls within 4 days of another
+		// town's election.
+		int32_t day = int32_t((uint32_t(rec.u8(0xE)) + 1) * 3 + (rec.u32(0x8) >> 22)) % 0x16D;
+		int32_t last = day + 4;
+		for (uint32_t i = g.u16(kEventHead); i < g.u16(kEventHead + 4);) {
+			const GameMemory<0x18>& ev = save.events[i];
+			i = ev.u16(0x4);
+			if (ev.u16(0x6) == 2 && int32_t(ev.u16(0x8)) <= last && int32_t(ev.u16(0x8)) + 4 >= day) {
+				day += 9;
+				last += 9;
+				if (day >= 0x16D) {
+					day -= 0x16D;
+					last -= 0x16D;
+				}
+				i = g.u16(kEventHead);
+			}
+		}
+		uint32_t at = (uint32_t(g.u16(kYear)) * 0x16D + uint32_t(day)) << 8;
+		if (at < g.u32(kTick) + 0xA00) {
+			at += 0x16D00;
+		}
+		const uint16_t e = events_detail::fn_4d8cf0(save, at);
+		GameMemory<0x18>& ev = save.events[e];
+		ev.u16(0x6) = 2;
+		const int32_t days = int32_t(at) >> 8;
+		ev.u16(0x8) = uint16_t(days / 0x16D);
+		ev.u8(0x10) = 0;
+		const int32_t of_year = days - (days / 0x16D) * 0x16D;
+		if (int32_t(kMonthStartTable[0]) <= of_year) {
+			do {
+				ev.u8(0x10) = uint8_t(ev.u8(0x10) + 1);
+			} while (int32_t(kMonthStartTable[ev.u8(0x10)]) <= of_year);
+		}
+		ev.u8(0xF) = uint8_t(of_year - kMonthStartTable[ev.u8(0x10) - 1] + 1);
+		ev.u16(0x8) = uint16_t(days % 0x16D);
+		ev.u8(0xE) = t.u8(0x2C0);
 	}
 	if (rec.u8(0xF) == 0) {
 		const uint16_t e = events_detail::fn_4d8cf0(save, g.u32(kTick) + 0xB400);

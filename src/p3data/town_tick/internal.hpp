@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "p3data/game_memory.hpp"
 #include "p3data/game_texts.hpp"
@@ -472,6 +473,17 @@ void fn_518b80(SaveGame& save, int ship, uint32_t arg);  // Un barco de la IA de
 // events_rare.cpp: the cargo bought for a ship (also trade.cpp, operation 0x02).
 namespace events_rare_detail {
 void fn_517fe0(SaveGame& save, int ship, uint32_t ware, int32_t amount, int32_t price);
+// Una pieza de muralla de 0x4FA1D0: celda (x, y), tipo (0x36 tramo, 0x37 y
+// 0x38 esquinas o torres) y orientación.
+struct WallPiece {
+	uint8_t x = 0;
+	uint8_t y = 0;
+	uint8_t type = 0;
+	uint8_t param = 0;
+};
+// 0x4FA1D0 (on town_class1): the planned wall's pieces from the wall point
+// `side` (also 0x545F50, a town of a new game).
+void fn_4fa1d0(SaveGame& save, int town, uint32_t side, std::vector<WallPiece>& out, uint32_t& corners);
 }  // namespace events_rare_detail
 // ship_ai.cpp: lo que usan también los convoyes (src/p3data/convoys*.cpp).
 namespace ship_ai_detail {

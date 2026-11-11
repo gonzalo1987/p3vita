@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "p3data/mail.hpp"
+#include "p3data/new_game.hpp"
 #include "p3data/trade.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/town_tick/votes.hpp"
@@ -435,6 +436,33 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			save.globals.u32(global::kShips + 0xC + 4 * uint32_t(fields[1])) != 0) {
 			sailing->fn_514d40(size_t(fields[1]), uint16_t(fields[3]), uint16_t(fields[2]));
 		}
+		break;
+	case 0xAC:  // The new game's goal and the mailbox (0x536DF2 → 0x542420; new_game.cpp).
+		fn_542420(save, operation);
+		break;
+	case 0xAD:  // A world object of a new game (0x536E01 → 0x52BD80; new_game.cpp).
+		fn_52bd80(save, operation);
+		break;
+	case 0xAF: {  // A town of a new game (0x536E3A → 0x531D50, the record at [+0x4]; town_tick/new_town.cpp).
+		GameMemory<0x10> rec;
+		std::memcpy(rec.bytes.data(), operation + 4, 0x10);
+		tick::fn_531d50(save, rec);
+		break;
+	}
+	case 0xB0:  // A town's name from a new game's map (0x536F1D → 0x543570; new_game.cpp).
+		fn_543570(save, operation);
+		break;
+	case 0xB1:  // The new game's town merchants (0x536E50 → 0x542860; new_game.cpp).
+		fn_542860(save, operation);
+		break;
+	case 0xB3: {  // The new game's AI merchants (0x536E6E → 0x542A30; new_game.cpp).
+		uint8_t copy[0x14];
+		std::memcpy(copy, operation, sizeof(copy));
+		fn_542a30(save, copy);
+		break;
+	}
+	case 0xB7:  // The new game starts: the resets and the first events (0x536F0E → 0x5434E0; new_game.cpp).
+		fn_5434e0(save, operation);
 		break;
 	case 0xB8:  // Network games' sync checks (0x542F10).
 		tick::fn_542f10(save, operation);

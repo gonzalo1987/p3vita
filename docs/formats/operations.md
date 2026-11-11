@@ -301,18 +301,18 @@ feast window): the handler is the same and is done.
 | 0xA9 | network | queues more operations (0x542380) | 0x547F10 | 0x536D81 → 0x542380 | 1, 160 B |  | guess |
 | 0xAA | network | a merchant's name (0x512C50; same handler as 0xAB) | 0x43D030, 0x497EE0, 0x541D70 | 0x536D90 → 0x5303C0, 0x512C50 | 1, 240 B |  | guess |
 | 0xAB | network | a merchant's name (0x512C50) | 0x43D030, 0x497EE0, 0x541D70 | 0x536D90 → 0x5303C0, 0x512C50 | 1, 240 B |  | guess |
-| 0xAC | new game | the game starts: the mailbox reset (0x4D64B0), an event (0x4D8CF0) | the new game 0x544E50 | 0x536DF2 → 0x542420 | 3, 352 B |  | guess |
-| 0xAD | new game | 0x52BD80 | 0x544E50 | 0x536E01 → 0x52BD80 | 1, 272 B |  | guess |
+| 0xAC | new game | [0x6DD89A..] by its [+0x8], the travel times again (0x531BA0), the mailbox reset (0x4D64B0), the goal's event 0x0E (`new_game.cpp` `fn_542420`) | the new game 0x544E50 | 0x536DF2 → 0x542420 |  | yes | read |
+| 0xAD | new game | a world object [+0x10] < 15: its towns and wares (tables 0x673944, 0x673920, 0x67392C), its list emptied (`fn_52bd80`) | 0x544E50 | 0x536E01 → 0x52BD80 |  | yes | read |
 | 0xAE | new game | a town's nodes (0x50FCA0, 0x50FE00) | not found | 0x536E2B → 0x5424D0 | 1, 144 B |  | guess |
-| 0xAF | new game | found a town (0x531D50; with [+0xF] = 1, the new game) | 0x544E50; 0x419EB0 | 0x536E3A → 0x531D50 |  |  | read |
-| 0xB0 | new game | names (0x512830, 0x6DDAA0) | 0x544E50 | 0x536F1D → 0x543570 | 3, 656 B |  | guess |
-| 0xB1 | new game | 0x542860 (0x444BA0, 0x4482C0, 0x533510) | 0x544E50 | 0x536E50 → 0x542860 | 49, 13.5 KB |  | guess |
+| 0xAF | new game | found a town (0x531D50; with [+0xF] = 1, the new game: 0x545CE0, 0x545F50, 0x5205D0, a Hanse town's mayor election) (`town_tick/new_town.cpp`) | 0x544E50; 0x419EB0 | 0x536E3A → 0x531D50 |  | yes | read |
+| 0xB0 | new game | 13 characters of a town slot's name (0x512830 on the names object; `fn_543570`) | 0x544E50 | 0x536F1D → 0x543570 |  | yes | read |
+| 0xB1 | new game | with no merchants: each town's merchant with his office and four ships (0x542560, 0x530470), the navigation and routes (Sailing's), the travel times (0x531BA0), the Hamburg–Lübeck road (0x533510) (`fn_542860`) | 0x544E50 | 0x536E50 → 0x542860 |  | yes | read |
 | 0xB2 | new game | 0x542980 | not found | 0x536E5F → 0x542980 | 3, 1.5 KB |  | guess |
-| 0xB3 | new game | a new merchant with ships (0x542A30: 0x4F68D0, 0x507D60, 0x4F7BB0, 0x54E170) | 0x544E50 | 0x536E6E → 0x542A30 |  |  | guess |
+| 0xB3 | new game | the AI merchants, each in the next Hanse town with his office and ships (0x542A30: 0x530470, 0x4F68D0, 0x507D60, 0x4F7BB0, 0x54E170) (`fn_542a30`) | 0x544E50 | 0x536E6E → 0x542A30 |  | yes | read |
 | 0xB4 | new game | a pirate (0x513720, 0x513EC0, 0x513D80) | 0x544E50; the pirates 0x514920 | 0x536E7D → 0x542E40 | 1, 208 B |  | guess |
 | 0xB5 | simulation | a pirate fleet leaves its nest (0x514D40) | 0x514000 | 0x536E8C → 0x514D40 |  | yes | read |
 | 0xB6 | new game | a merchant's name (0x512BA0) | not found | 0x536EBE → 0x5303C0, 0x512BA0 | 1, 176 B |  | guess |
-| 0xB7 | new game | the game starts: resets (mail 0x4D64B0, routes 0x4D4C60, statistics 0x54DDF0...) | 0x544E50 | 0x536F0E → 0x5434E0 | 8, 1.3 KB |  | guess |
+| 0xB7 | new game | the game starts: resets (mail 0x4D64B0, routes 0x4D4C60, statistics 0x54DDF0, ships 0x504750, the world 0x530230, 0x5352B0), the event queue's first events (0x4D8B10), the trade's difficulty (`fn_5434e0`) | 0x544E50 | 0x536F0E → 0x5434E0 |  | yes | read |
 | 0xB8 | simulation | network sync checks (0x542F10) | 0x4DD400, 0x4DDA40; 0x544E50 | 0x536F2C → 0x542F10 |  | yes | read |
 | 0xB9 | network | nothing: a ship's checksum | 0x542F10 (op) | — |  |  | read |
 | 0xBA | network | nothing: a town's checksum | 0x542F10 (op) | — |  |  | read |

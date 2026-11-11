@@ -35,6 +35,7 @@ add_library(p3data STATIC
 	lz.cpp
 	mail.cpp
 	navigation.cpp
+	new_game.cpp
 	prices.cpp
 	sailing.cpp
 	sailing_load.cpp

@@ -2223,6 +2223,35 @@ what the town view would show) is kept only with SaveGame::battle_window present
 Checked after it: the world 7 days in the 12 saves (0 «distintas»), `battle_balls` (3), `battle_sounds` (5) and
 `battle_question` (3), all equal.
 
+## The new game: 0x544E50 and its operations (2026-11-11)
+
+What the new game window does when the player starts a game (0x499252..; roadmap, phase 2, «Partida nueva desde
+cero»): the settings (*0x6CC3E8), the map into a setup object (0x549940 → 0x5448A0: `Maps/Standard24.gmf`, an LZ blob
+also in the archive as `maps/Standard24.gmf`; p3vita: `GameMap`, `parse_game_map`, `load_game_map`), then 0x547F10:
+srand(time) and **0x544E50**, which runs at once (one player) 0xB7, an 0xAF for each town from the last, 0xB0 for
+the names that differ from the game's, 0xB1, 0xAC, 0x7E, fifteen 0xAD, the 0xB4 pirates and 0xB3, and queues 0xC4
+(the world 70 days on). All in `src/p3data/new_game.cpp` (with the new game's branches of the founding in
+`town_tick/new_town.cpp` and `town_tick/construction.cpp`); the notes in `re/emu/sesion24/new_game_notes.md`.
+
+`tools/oracle/newgame_oracle.py` runs it in the emulator from the oracle's empty memory (no save loaded): the
+startup's names object and towns' table (0x5121C0), the expeditions, the settings (by default `1.pat`'s, with
+`--year` and `--home`), the setup object written from the .gmf (its CStrings built by hand), `--seed` as srand's,
+and 0x544E50 through a trampoline. With `--probe` it records `--functions` as **wide samples** («T»: 24 u32 of the
+stack instead of 8): 0x544E50 keeps each operation in its frame, beyond the 8 words of a normal sample, and
+tick_probe's 0x535760 probe takes it from there (and prints the operation's code). tick_probe has a probe of
+0x544E50 that reads the archive's Standard24. It writes the game's .pat after it (`re/emu/sesion24/ng.sh`;
+`look.sh` reads it with p3save: 24 towns, 24 town merchants with 750 000 coins and four ships each, 12 AI merchants).
+
+| Recording | Result |
+|-|-|
+| `ngp.sh --functions 544e50,535760` (seed 1, 1300, 1.pat's settings) | 0x535760 48 of 48 equal (0xB7, 24 × 0xAF, 3 × 0xB0, 0xB1, 0xAC, 0x7E, 15 × 0xAD, 0xB4, 0xB3); 0x544E50 equal, also its queued 0xC4 |
+
+Caught on the way (real differences, fixed): the event queue's last two first events at tick + 0x5A00 (0x4D8B10
+keeps that sum in its argument's place); a town founded when there are no sieges creates them all (0x532260;
+p3vita only grew existing ones: no save starts without them); the queued 0xC4's last four bytes, which are the
+0xB3's (0x544E50 uses one operation buffer for all, 0x535740). 0xB0 writes the names object (SaveOpaque::town_names),
+which the oracle doesn't record. With it the world 7 days in the 12 saves (0 «distintas») and the Vita build.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

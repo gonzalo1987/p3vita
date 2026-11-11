@@ -1673,15 +1673,6 @@ void fn_52a150(SaveGame& save, int town, uint8_t rate) {
 	save.towns[size_t(town)].memory.u8(0x6F8) = rate > 0x14 ? 0xA : rate;
 }
 
-// Una pieza de muralla de 0x4FA1D0: celda (x, y), tipo (0x36 tramo, 0x37 y
-// 0x38 esquinas o torres) y orientación.
-struct WallPiece {
-	uint8_t x = 0;
-	uint8_t y = 0;
-	uint8_t type = 0;
-	uint8_t param = 0;
-};
-
 // 0x4FA1D0 (sobre town_class1, [+0x7A4] de la ciudad): recorre la muralla
 // planeada (celdas 0xA de la rejilla) desde el punto `side` ([+0xC + 2·side]
 // de town_class1, [0x7B0] de la ciudad) y apunta sus piezas: cada celda un

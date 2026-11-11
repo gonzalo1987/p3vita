@@ -1,6 +1,8 @@
 // Sondas de src/p3data/town_tick/alderman.cpp (la candidatura a Gobernador)
 // y del ejecutor de las operaciones encoladas (0x535760, simulation.cpp).
 
+#include <algorithm>
+
 #include "p3data/simulation.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "probe_registry.hpp"
@@ -72,14 +74,25 @@ void register_probes_alderman(ProbeRegistry& r) {
 		// la marca «P3OP» (town_oracle.py, EXECUTOR_MAGIC). Las llamadas del
 		// propio juego (el evento 0x03, los barcos) no la llevan: las repite
 		// la sonda de la función que las contiene.
-		if (c.args[5] != 0x504F3350) {
-			c.skip = true;
-			return std::nullopt;
+		// A wide sample (newgame_oracle.py) has the operation of 0x544E50's
+		// frame among its 24 u32 of the stack: it is run.
+		uint32_t fields[5];
+		if (c.args[5] == 0x504F3350) {
+			std::copy(c.args.begin(), c.args.begin() + 5, fields);
+		} else {
+			for (size_t k = 0; k < 5; ++k) {
+				const std::optional<uint32_t> v = c.wide ? c.stack(c.ecx + 4 * uint32_t(k)) : std::nullopt;
+				if (!v) {
+					c.skip = true;
+					return std::nullopt;
+				}
+				fields[k] = *v;
+			}
 		}
 		uint8_t op[0x14];
 		for (size_t k = 0; k < 5; ++k) {
 			for (size_t b = 0; b < 4; ++b) {
-				op[4 * k + b] = uint8_t(c.args[k] >> (8 * b));
+				op[4 * k + b] = uint8_t(fields[k] >> (8 * b));
 			}
 		}
 		run_operation(s, probe_sailing(), op);

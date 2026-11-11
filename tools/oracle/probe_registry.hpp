@@ -38,7 +38,11 @@ struct ProbeCall {
 	uint32_t tick = 0;
 	uint32_t ecx = 0;
 	uint32_t esp = 0;  // Al entrar: apunta a la dirección de retorno.
-	std::array<uint32_t, 8> args{};  // La pila al entrar, sin la dirección de retorno.
+	// La pila al entrar, sin la dirección de retorno: 8 u32 (muestras «S») o 24
+	// (muestras «T», `wide`: newgame_oracle.py, where 0x544E50 keeps each
+	// operation it runs in its frame); the rest 0.
+	std::array<uint32_t, 24> args{};
+	bool wide = false;
 	std::function<Location(uint32_t)> locate;
 	// Bits de eax que se comparan: la sonda de una función que devuelve un u8 o
 	// un u16 en al/ax (el resto de eax queda con basura) pone 0xFF o 0xFFFF.
@@ -51,7 +55,7 @@ struct ProbeCall {
 	// El u32 de la pila del llamador en `address` si cae entre los argumentos
 	// grabados (para punteros a variables locales del llamador).
 	std::optional<uint32_t> stack(uint32_t address) const {
-		if (address < esp + 4 || address >= esp + 4 + 4 * args.size() || (address - esp) % 4) {
+		if (address < esp + 4 || address >= esp + 4 + 4 * (wide ? 24 : 8) || (address - esp) % 4) {
 			return std::nullopt;
 		}
 		return args[(address - esp - 4) / 4];

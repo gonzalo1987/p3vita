@@ -63,6 +63,7 @@
 #include <deque>
 #include <memory>
 
+#include "p3data/new_game.hpp"
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_texts.hpp"
 #include "p3data/mail.hpp"
@@ -1118,6 +1119,18 @@ int main(int argc, char** argv) {
 			sailing->update_ships();
 			return std::nullopt;
 		};
+		// The new game (newgame_oracle.py): 0x544E50 on the setup object of the
+		// archive's map, Standard24, as the oracle's.
+		registry[0x544E50] = [&](SaveGame& s, const ProbeCall&) -> std::optional<uint32_t> {
+			GameMap map;
+			std::string why;
+			if (!load_game_map(*archive, "maps/Standard24.gmf", map, &why)) {
+				std::fprintf(stderr, "%s\n", why.c_str());
+				return std::nullopt;
+			}
+			fn_544e50(s, sailing.get(), map);
+			return std::nullopt;
+		};
 	}
 	if (!load.empty()) {
 		std::ifstream f(load, std::ios::binary);
@@ -1231,7 +1244,7 @@ int main(int argc, char** argv) {
 	bool sail_seen = false;
 	while (in.ok()) {
 		const uint8_t tag = in.u8();
-		if (tag != 'S') {
+		if (tag != 'S' && tag != 'T') {
 			break;
 		}
 		ProbeCall call;
@@ -1239,8 +1252,9 @@ int main(int argc, char** argv) {
 		call.tick = in.u32();
 		call.ecx = in.u32();
 		call.esp = in.u32();
-		for (uint32_t& a : call.args) {
-			a = in.u32();
+		call.wide = tag == 'T';
+		for (size_t k = 0; k < (call.wide ? 24 : 8); ++k) {
+			call.args[k] = in.u32();
 		}
 		apply_diff(in, game);
 		const uint32_t eax = in.u32();
@@ -1330,9 +1344,14 @@ int main(int argc, char** argv) {
 			++skipped[call.function];
 			continue;
 		}
-		char title[128];
+		char title[160];
 		std::snprintf(title, sizeof(title), "0x%x tick %u ecx %08x arg %08x %08x:", call.function, call.tick, call.ecx,
 			call.args[0], call.args[1]);
+		if (const std::optional<uint32_t> code = call.wide ? call.stack(call.ecx) : std::nullopt) {
+			// A wide sample's operation (newgame_oracle.py): its code.
+			const size_t used = std::strlen(title) - 1;
+			std::snprintf(title + used, sizeof(title) - used, " (operation 0x%x):", *code & 0xFF);
+		}
 		int d = compare(dump_save(save, game), game, budget, title, !load.empty());
 		if (ours && ((*ours ^ eax) & call.eax_mask)) {
 			if (budget-- > 0) {

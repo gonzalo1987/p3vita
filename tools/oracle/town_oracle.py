@@ -1764,7 +1764,10 @@ class Recorder:
     estado de antes de la de fuera sea anterior al de después de la de dentro.
     """
 
-    def __init__(self, oracle, functions, out, limit):
+    def __init__(self, oracle, functions, out, limit, wide=False):
+        # wide: samples «T» with 24 u32 of the stack instead of 8 («S»):
+        # newgame_oracle.py, where 0x544E50 keeps each operation it runs in its frame.
+        self.wide = wide
         self.o = oracle
         self.out = out
         self.limit = limit
@@ -1852,9 +1855,10 @@ class Recorder:
             return
         o = self.o
         esp = uc.reg_read(UC_X86_REG_ESP)
-        stack = bytes(uc.mem_read(esp, 36))  # the return address and 8 arguments
+        stack = bytes(uc.mem_read(esp, 100 if self.wide else 36))  # the return address and 8 (24) arguments
         ret = struct.unpack_from('<I', stack)[0]
-        header = b'S' + struct.pack('<IIII', address, o.u32(WORLD + 0x14), uc.reg_read(UC_X86_REG_ECX), esp) + stack[4:]
+        header = (b'T' if self.wide else b'S') + struct.pack('<IIII', address, o.u32(WORLD + 0x14),
+                                                             uc.reg_read(UC_X86_REG_ECX), esp) + stack[4:]
         first_in_run = self.entered_run != self.changes[0]
         self.entered_run = self.changes[0]
         if (first_in_run and self.unchanged is not None

@@ -29,6 +29,9 @@ int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town);
 namespace events_detail {
 void fn_4dafe0(const SaveGame& save, uint32_t town, uint32_t record, uint32_t& tick, int32_t& price);  // events.cpp
 }  // namespace events_detail
+namespace core_detail {
+void fn_4fa6f0(SaveGame& save, int town);  // core.cpp
+}  // namespace core_detail
 
 namespace construction_detail {
 
@@ -43,6 +46,10 @@ bool fn_4f9c80(const SaveGame& save, int town, uint8_t& x, uint8_t& y, uint32_t 
 void fn_4fa7f0(const SaveGame& save, int town, uint8_t& x, uint8_t& y);
 uint32_t fn_51fab0(SaveGame& save, int town, uint8_t type, bool immediate);
 void fn_51e270(SaveGame& save, int town);
+// A town of a new game (0x5458D0 with its flag; new_town.cpp): 0x5205D0
+// finishes every work at once, 0x545F50 builds its wall and buildings.
+void fn_5205d0(SaveGame& save, int town);
+void fn_545f50(SaveGame& save, int town);
 void fn_5250d0(const SaveGame& save, int town, uint8_t& x, uint8_t& y);
 bool fn_4fcbd0(const SaveGame& save, int town, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
 bool fn_521900(SaveGame& save, int town, uint8_t owner, uint8_t x, uint8_t y, uint8_t type, uint8_t param);
@@ -2498,6 +2505,197 @@ void fn_521240(SaveGame& save, int town, uint32_t record) {
 // Días de obra del tipo de edificio (0x672BB4).
 uint8_t build_days(uint8_t type) {
 	return type < 60 ? kBuildDays[type] : 0;
+}
+
+// 0x5205D0 (on the town): every record of the works [0x762] is finished at
+// once, its time [+0x6] 0: a merchant's (0x5308A0) to his office's lists
+// (businesses [+0x2CE], houses [+0x2D0], 0x4FF2D0), the rest by its type
+// (tables 0x5207B4 and 0x520804) to the town's lists [0x764] or [0x768], or
+// back to the free ones [0x760].
+void fn_5205d0(SaveGame& save, int town) {
+	SavedTown& st = save.towns[size_t(town)];
+	TownMemory& t = st.memory;
+	auto to_free = [&](BuildingRecord& rec, uint16_t r) {
+		rec.x = 0xFF;
+		rec.y = 0xFF;
+		rec.owner = 0xFF;
+		rec.type = 0xFF;
+		rec.pending = 0xFF;
+		rec.next = t.u16(0x760);
+		rec.param = 0xFF;
+		t.u16(0x760) = r;
+	};
+	auto to_list = [&](BuildingRecord& rec, uint16_t r, uint32_t list) {
+		rec.next = t.u16(list);
+		t.u16(list) = r;
+	};
+	while (t.u16(0x762) < t.u16(0x776)) {
+		const uint16_t r = t.u16(0x762);
+		BuildingRecord& rec = st.records[r];
+		t.u16(0x762) = rec.next;
+		rec.next = 0xFFFF;
+		rec.pending = 0;
+		const uint32_t type = rec.type;
+		if (rec.owner < save.globals.u16(global::kWorldMerchantCount)) {
+			const int office = facilities_detail::fn_5308a0(save, rec.owner, t.u8(0x2C0));
+			// 0x5207B4 by type − 1: 0 [0x76C] |= 0x80 and the businesses, 1 the town's
+			// [0x764], 2 the businesses, 3 the houses, 4 [0x764] keeping the owner, 5
+			// the town's [0x768], 6 free.
+			static constexpr uint8_t kByType[56] = {0, 6, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+				3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1, 4, 4, 4, 4, 4, 4, 1, 6, 1, 5, 5, 5, 5, 6, 6,
+				5, 5, 5};
+			const uint32_t kind = type >= 1 && type <= 56 ? kByType[type - 1] : 6;
+			if ((kind == 0 || kind == 2 || kind == 3) && office < 0) {
+				continue;  // The game would use a null office: no save reaches it.
+			}
+			switch (kind) {
+			case 0:
+				t.u32(0x76C) |= 0x80;
+				[[fallthrough]];
+			case 2:
+				rec.next = save.offices[size_t(office)].memory.u16(0x2CE);
+				save.offices[size_t(office)].memory.u16(0x2CE) = r;
+				fn_4ff2d0(save, office);
+				break;
+			case 3:
+				rec.next = save.offices[size_t(office)].memory.u16(0x2D0);
+				save.offices[size_t(office)].memory.u16(0x2D0) = r;
+				fn_4ff2d0(save, office);
+				break;
+			case 1:
+				rec.owner = 0xFF;
+				to_list(rec, r, 0x764);
+				break;
+			case 4:
+				to_list(rec, r, 0x764);
+				break;
+			case 5:
+				rec.owner = 0xFF;
+				to_list(rec, r, 0x768);
+				break;
+			default:
+				to_free(rec, r);
+				break;
+			}
+		} else {
+			// 0x520804 by type: 0 free, 1 [0x76C] |= 0x80 and free, 2 [0x764], 3
+			// [0x76C] |= 0x20000 and free, 4 [0x768], 5 none.
+			static constexpr uint8_t kByType[57] = {0, 1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+				0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 4, 4, 4, 4, 5,
+				5, 4, 4, 4};
+			const uint32_t kind = type <= 56 ? kByType[type] : 5;
+			switch (kind) {
+			case 1:
+				t.u32(0x76C) |= 0x80;
+				to_free(rec, r);
+				break;
+			case 2:
+				to_list(rec, r, 0x764);
+				break;
+			case 3:
+				t.u32(0x76C) |= 0x20000;
+				to_free(rec, r);
+				break;
+			case 4:
+				to_list(rec, r, 0x768);
+				break;
+			case 5:
+				break;
+			default:
+				to_free(rec, r);
+				break;
+			}
+		}
+	}
+}
+
+// 0x545F50 (on the town; a town of a new game): its wall from the wall point
+// 0 (0x4FA1D0: the towers' footprints 0x4FBD60, the records 0x524140 and
+// 0x5240A0 in the town's list [0x768], 0x4FD830 for the gates), then its
+// public buildings (12 with a Hanse town's [0x2C8] & 0xC0, otherwise 9) and
+// the houses of each class until their citizens fit, each built at once
+// (0x51FAB0) with its materials put in the stock first; the works finished
+// (0x5205D0) and the streets (0x4FA6F0).
+void fn_545f50(SaveGame& save, int town) {
+	static constexpr uint8_t kPublic[12] = {0x23, 0x20, 0x03, 0x21, 0x24, 0x01, 0x1F, 0x25, 0x30, 0x26, 0x22, 0x2E};
+	static constexpr uint16_t kHouseCitizens[3] = {0x50, 0x8C, 0x118};  // 0x672A18
+	auto record = [&](uint8_t x, uint8_t y, uint8_t type, uint8_t param, uint16_t count) {
+		const uint16_t r = fn_51f100(save, town);
+		SavedTown& st = save.towns[size_t(town)];
+		BuildingRecord& rec = st.records[r];
+		rec.x = x;
+		rec.y = y;
+		rec.owner = 0xFF;
+		rec.type = type;
+		rec.next = st.memory.u16(0x768);
+		st.memory.u16(0x768) = r;
+		rec.pending = 0;
+		rec.param = param;
+		st.memory.u16(0x786) = uint16_t(st.memory.u16(0x786) + count);
+		// With the town view on this town, its 0x590680 (the interface's).
+	};
+	save.towns[size_t(town)].memory.u32(0x76C) |= 0x10;
+	if (save.towns[size_t(town)].memory.u8(0x7B0) < 0xFF) {
+		std::vector<events_rare_detail::WallPiece> pieces;
+		uint32_t corners = 0;
+		events_rare_detail::fn_4fa1d0(save, town, 0, pieces, corners);
+		for (const events_rare_detail::WallPiece& p : pieces) {
+			if (p.type == 0x36) {
+				fn_4fbd60(save, town, p.x, p.y);
+				record(p.x, p.y, 0x36, p.param, 1);
+				continue;
+			}
+			uint32_t x2 = 0;
+			if (p.type == 0x38) {
+				fn_4fbd60(save, town, uint32_t(p.x) - 1, uint32_t(p.y) - 2);
+				x2 = uint32_t(p.x) - 2;
+			} else {
+				fn_4fbd60(save, town, uint32_t(p.x) + 1, uint32_t(p.y) - 2);
+				x2 = uint32_t(p.x) + 2;
+			}
+			fn_4fbd60(save, town, x2, uint32_t(p.y) - 4);
+			fn_4fbd60(save, town, p.x, p.y);
+			record(p.x, p.y, p.type, p.param, 3);
+			fn_4fd830(save, town, p.x, p.y, p.type);
+		}
+	}
+	TownMemory& t0 = save.towns[size_t(town)].memory;
+	t0.u8(0x7B0) = 0xFF;
+	t0.u8(0x7B1) = 0xFF;
+	const uint32_t count = (t0.u8(0x2C8) & 0xC0) ? 12 : 9;
+	auto materials = [&](uint8_t type) {
+		TownMemory& t = save.towns[size_t(town)].memory;
+		t.u32(0x50) += uint32_t(kBricks[type]) * 2000;
+		t.u32(0x30) += uint32_t(kTimber[type]) * 2000;
+		t.u32(0x34) += uint32_t(kTools[type]) * 200;
+		t.u32(0x48) += uint32_t(kHemp[type]) * 2000;
+	};
+	for (uint32_t k = 0; k < count; ++k) {
+		const uint8_t type = kPublic[k];
+		materials(type);
+		fn_51fab0(save, town, type, true);
+		if (type == 1) {
+			fn_5205d0(save, town);
+		}
+	}
+	for (uint32_t c = 0; c < 3; ++c) {
+		const uint8_t type = uint8_t((c + 7) * 3);
+		int32_t housed = 0;
+		if (save.towns[size_t(town)].memory.s32(0x2D8 + 4 * c) <= 0) {
+			continue;
+		}
+		do {
+			materials(type);
+			if (fn_51fab0(save, town, type, true) == 1) {
+				housed += kHouseCitizens[c] >> 1;
+			} else {
+				housed = 0xFFFFFFF;
+			}
+		} while (housed < save.towns[size_t(town)].memory.s32(0x2D8 + 4 * c));
+	}
+	fn_5205d0(save, town);
+	save.towns[size_t(town)].memory.u32(0x76C) |= 0x100;
+	core_detail::fn_4fa6f0(save, town);
 }
 
 }  // namespace construction_detail

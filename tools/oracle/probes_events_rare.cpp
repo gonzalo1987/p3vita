@@ -19,13 +19,6 @@ uint32_t fn_4ea594(SaveGame& save);
 uint32_t fn_4fac70(const SaveGame& save, int town);
 void fn_52a150(SaveGame& save, int town, uint8_t rate);
 void fn_522b20(SaveGame& save, int town, uint32_t side);
-struct WallPiece {
-	uint8_t x = 0;
-	uint8_t y = 0;
-	uint8_t type = 0;
-	uint8_t param = 0;
-};
-void fn_4fa1d0(SaveGame& save, int town, uint32_t side, std::vector<WallPiece>& out, uint32_t& corners);
 uint32_t fn_4e9a94(SaveGame& save);
 bool fn_532c50(const SaveGame& save, uint32_t index);
 uint32_t fn_4eafe4(SaveGame& save);
