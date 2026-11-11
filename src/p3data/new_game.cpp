@@ -341,8 +341,17 @@ uint16_t fn_530470(SaveGame& save, uint8_t home, uint16_t kind, uint8_t a2, uint
 	m.u8(0x19) = home;
 	tick::merchants_detail::fn_4f72c0(m);
 	if (kind == 0) {
-		// The chronicle's «new merchant» (0x4F9430, 0x4D6530): with the player
-		// (operation 0xA7).
+		// A human: the chronicle's «new merchant» (the letter 0xE, his rank in
+		// his home town and his title, 0x4F9430).
+		Letter letter(0xE);
+		letter.entry.u8(0x5) = home;
+		letter.entry.u16(0x8) = index;
+		letter.entry.u16(0xA) = 0xFFFF;
+		const uint32_t rank = m.u8(0x39C + home) & 7;
+		const uint32_t title = tick::merchants_detail::fn_4f9430(save, index);
+		letter.entry.u16(0xE) = 1;
+		letter.entry.u16(0xC) = uint16_t(rank + title * 8);
+		send_letter(save, kLetterToChronicle, letter);
 	} else {
 		m.u32(0x468) = 1u << home;
 	}
@@ -781,6 +790,16 @@ void fn_543570(SaveGame& save, const uint8_t* operation) {
 	}
 	buffer[0x2F] = 0;
 	names[slot] = buffer;
+	// The table 0x6DDA00 at the index of each town of that number.
+	std::vector<std::string>& table = save.opaque.town_name_table;
+	if (table.size() < 0x28) {
+		table.resize(0x28);
+	}
+	for (uint32_t i = 0; i < 0x28; ++i) {
+		if (save.globals.u8(kWorld + 0x18 + i) == slot) {
+			table[i] = names[slot];
+		}
+	}
 }
 
 void fn_544e50(SaveGame& save, Sailing* sailing, const GameMap& map) {
@@ -946,6 +965,265 @@ void fn_544e50(SaveGame& save, Sailing* sailing, const GameMap& map) {
 	put32(0x8, weeks * 7 * 256 + tick + 0x4600);
 	put32(0xC, 0);
 	save.queued_operations.emplace_back(op, op + sizeof(op));
+}
+
+void fn_541d70(SaveGame& save, Sailing* sailing, uint8_t* op) {
+	(void)sailing;
+	static constexpr uint8_t kCrew[4] = {5, 8, 10, 12};  // 0x673660
+	static constexpr uint16_t kMoney[3] = {30000, 10000, 1000};  // 0x672D20
+	static constexpr uint32_t kCareful[3] = {0x3FA66666, 0x3F800000, 0x3F333333};  // 0x672E04: 1.3, 1.0, 0.7
+	GlobalMemory& g = save.globals;
+	if (op[0x9] > g.u32(kWorldTownCount)) {
+		op[0x9] = uint8_t(op[0x9] % g.u32(kWorldTownCount));  // (one past the last stays)
+	}
+	const uint16_t index = fn_530470(save, op[0x9], 0, uint8_t(op_u16(op, 0xE)),
+		uint8_t(op[0xD] + op_u16(op, 0xE)));
+	if (index == 0xFFFF) {
+		return;
+	}
+	{
+		MerchantMemory& m = save.merchants[index].memory;
+		m.u16(0x8) = 0;
+		m.u32(0x0) = op[0xA] < 3 ? kMoney[op[0xA]] : 0;
+		m.u32(0x4) = 0;
+		tick::merchants_detail::fn_4f68d0(save, m, op[0xD], 0x15, 1, op[0xC] != 0 ? 1 : 0);
+		// 0x4F9550: a human's [+0x464] by the difficulty.
+		if (m.u16(0x8) == 0) {
+			std::memcpy(&m.f32(0x464), &kCareful[op[0x10] % 3], 4);
+		}
+	}
+	{
+		GameMemory<0x18>& e = save.events[tick::events_detail::fn_4d8cf0(save, g.u32(kWorldTick) + 0x5A00)];
+		e.u16(0x6) = 4;
+		e.u16(0xA) = 0;
+		e.u16(0x8) = uint16_t(index & 0xFF);
+		e.u16(0xC) = 0;
+		e.u8(0xE) = 0;
+		e.u8(0x10) = 0;
+		e.u8(0x11) = 0;
+		e.u8(0xF) = 0;
+	}
+	{
+		// 0x512BA0: the player's names are a slot of the players' names (after
+		// each list of the game's), emptied.
+		MerchantMemory& m = save.merchants[index].memory;
+		const uint8_t slot = uint8_t(uint8_t(index) - uint8_t(g.u32(kWorldTownCount)) - 0xC);
+		if (op[0xC] != 0) {
+			m.u8(0x1C) = uint8_t(g.u16(0x6DDB70) + slot);
+			if (save.custom_names[0].size() > slot) {
+				save.custom_names[0][slot].clear();
+			}
+		} else {
+			m.u8(0x1C) = uint8_t(uint8_t(g.u16(0x6DDB72) + slot) | 0x80);
+			if (save.custom_names[1].size() > slot) {
+				save.custom_names[1][slot].clear();
+			}
+		}
+		m.u8(0x1D) = uint8_t(g.u16(0x6DDB76) + slot);
+		if (save.custom_names[2].size() > slot) {
+			save.custom_names[2][slot].clear();
+		}
+		m.u8(0x1C) = m.u8(0x1A) ? uint8_t(m.u8(0x1C) & 0x7F) : uint8_t(m.u8(0x1C) | 0x80);  // 0x4F6420
+	}
+	if (op_u32(op, 0x4) == g.u32(0x6DF31C)) {
+		g.u32(kPlayer) = index;
+		save.player = int(index);
+	}
+	tick::events_towns_detail::fn_5308a0_create(save, index, op[0x9]);
+	while (int8_t(op[0xB]) > 0) {
+		op[0xB] = uint8_t(op[0xB] - 1);
+		uint16_t ship = 0;
+		tick::events_mayor_detail::fn_507d60(save, ship, op[0x9], 1);
+		if (op[0x8] == 0 && op[0xB] == 0) {
+			// The last one a craier of level 2: its hold less two levels' 5 loads
+			// (0x66E048), the first four unusable gun places (0xFF) free.
+			tick::events_mayor_detail::fn_52a8d0(save, op[0x9], ship, 1);
+			ShipMemory& s = save.ships[ship].memory;
+			s.u8(0xF) = 2;
+			s.s32(0x10) += -20000;
+			tick::events_mayor_detail::fn_5181d0(save, ship);
+			uint32_t freed = 0;
+			for (size_t k = 0; k < 12; ++k) {
+				if (s.u8(0x13C + 2 * k) == 0xFF) {
+					s.u8(0x13C + 2 * k) = 0;
+					if (++freed >= 4) {
+						break;
+					}
+				}
+			}
+		} else {
+			tick::events_mayor_detail::fn_52a8d0(save, op[0x9], ship, 0);
+			tick::events_mayor_detail::fn_5181d0(save, ship);
+		}
+		recalculate_cargo(save.ships[ship]);
+		ShipMemory& s = save.ships[ship].memory;
+		MerchantMemory& m = save.merchants[index].memory;
+		s.u8(0x0) = uint8_t(index);
+		s.u16(0x4) = m.u16(0xE);
+		m.u16(0xE) = ship;
+		s.u32(0x18) = s.u32(0x14);
+		s.u8(0x13A) = op[0x9];
+		tick::events_mayor_detail::fn_509a50(save, ship);
+		s.u16(0x40) = kCrew[s.u8(0xE) & 3];
+		s.u8(0x3F) = 5;
+	}
+	op[0xB] = uint8_t(op[0xB] - 1);
+	tick::fn_4f7bb0(save, index);
+	add_merchant_statistics(save, index);
+	if (g.u32(0x6DF31C) == 0) {
+		// A game of one player (the game object's [+0] & 1): the real-time
+		// loop's 0xC0, 0xC6 and 0xC8 (the game speed of the settings [+0x4],
+		// table 0x66DE7C, in ms · 1000 / 256).
+		static constexpr int32_t kSpeeds[6] = {120, 90, 60, 30, 20, 900};
+		uint8_t q[0x14] = {0xFF, 0xFF, 0xFF, 0xFF};
+		auto put32 = [&](size_t at, uint32_t v) {
+			for (size_t b = 0; b < 4; ++b) {
+				q[at + b] = uint8_t(v >> (8 * b));
+			}
+		};
+		put32(0x0, 0xC0);
+		tick::enqueue_operation(save, q, sizeof(q));
+		put32(0x0, 0xC6);
+		tick::enqueue_operation(save, q, sizeof(q));
+		const uint32_t speed = save.settings.u32(0x4);
+		const int32_t ms = speed < 6 ? kSpeeds[speed] * 1000 : 0;
+		put32(0x0, 0xC8);
+		put32(0xC, 0);
+		put32(0x4, uint32_t(ms / 256));
+		put32(0x8, 0xFFFFFFFF);
+		put32(0x10, 0xFFFFFFFF);
+		tick::enqueue_operation(save, q, sizeof(q));
+	}
+	// In a network game the player's names follow (0xAA, 0xAB from the
+	// interface's [+0x1908] and [+0x1788]); in a game of one player the new
+	// game window sends them.
+}
+
+void fn_536d90(SaveGame& save, const uint8_t* operation) {
+	const uint16_t merchant = op_u16(operation, 0x4);
+	if (merchant >= save.globals.u16(kWorldMerchantCount)) {
+		return;
+	}
+	const MerchantMemory& m = save.merchants[merchant].memory;
+	size_t list = 2;
+	uint32_t index = m.u8(0x1D);
+	uint32_t count = save.globals.u16(0x6DDB76);
+	if (op_u32(operation, 0x0) == 0xAA) {
+		list = (m.u8(0x1A) & 1) ? 0 : 1;
+		index = m.u8(0x1C);
+		if (list == 1) {
+			index &= 0x7F;
+		}
+		count = save.globals.u16(list ? 0x6DDB72 : 0x6DDB70);
+	}
+	// 0x512C50: the name's string of the list (a player's slot past the game's
+	// names; one of the game's would be written over: no caller does it).
+	if (index >= count + 20 || index < count) {
+		return;
+	}
+	std::vector<std::string>& names = save.custom_names[list];
+	if (names.size() <= index - count) {
+		names.resize(index - count + 1);
+	}
+	std::string& name = names[index - count];
+	if (name.size() >= 0x17) {
+		return;
+	}
+	size_t length = name.size();
+	for (size_t i = 0;; ++i) {
+		++length;
+		if (i >= 0xC || operation[8 + i] == 0) {
+			break;
+		}
+		name.push_back(char(operation[8 + i]));
+		if (length >= 0x17) {
+			break;
+		}
+	}
+}
+
+void start_new_game(SaveGame& save, Sailing& sailing, const GameMap& map, const NewGamePlayer& player, uint32_t seed,
+		NewGameStop stop) {
+	using tick::game_rand;
+	use_sailing(sailing);
+	save.rand_state = seed;  // 0x547F10: srand(time)
+	fn_544e50(save, &sailing, map);
+	if (stop == NewGameStop::Operations) {
+		return;
+	}
+	// The window: the player (0xA7) and the game speed (0xC8), queued.
+	const SettingsMemory& s = save.settings;
+	uint8_t a7[0x14] = {};
+	a7[0x0] = 0xA7;
+	std::memcpy(a7 + 4, &save.globals.u32(0x6DF31C), 4);
+	a7[0x8] = s.u8(0xE);
+	a7[0x9] = s.u8(0x1E);
+	a7[0xA] = s.u8(0x9);
+	a7[0xB] = player.ships;
+	a7[0xC] = player.male ? 1 : 0;
+	a7[0xD] = uint8_t(int32_t(game_rand(save)) % 0x16D);
+	const uint16_t r = uint16_t(game_rand(save));
+	a7[0xE] = uint8_t(r);
+	a7[0xF] = uint8_t(r >> 8);
+	a7[0x10] = s.u8(0x11);
+	save.queued_operations.emplace_back(a7, a7 + sizeof(a7));
+	{
+		static constexpr int32_t kSpeeds[6] = {120, 90, 60, 30, 20, 900};  // 0x66DE7C
+		const uint32_t speed = s.u32(0x4);
+		const int32_t ms = speed < 6 ? kSpeeds[speed] * 1000 : 0;
+		uint8_t c8[0x14] = {0xC8};
+		const uint32_t fields[4] = {uint32_t(ms / 256), 2, 0, 0xFFFFFFFF};
+		std::memcpy(c8 + 4, fields, sizeof(fields));
+		save.queued_operations.emplace_back(c8, c8 + sizeof(c8));
+	}
+	// The queue (0x546870 copies it and runs the copy): the 0xC4 takes the world
+	// to its date in one advance_time, whose operations wait in the queue
+	// behind the window's.
+	std::vector<std::vector<uint8_t>> batch;
+	batch.swap(save.queued_operations);
+	for (std::vector<uint8_t>& op : batch) {
+		uint32_t code = 0;
+		std::memcpy(&code, op.data(), 4);
+		if (code == 0xC4) {
+			uint32_t target = 0;
+			std::memcpy(&target, op.data() + 8, 4);
+			while (save.tick() < target) {
+				advance_game_tick(save, sailing, false);
+			}
+			cap_merchant_money(save);
+			if (stop == NewGameStop::Advance) {
+				return;
+			}
+		} else if (code == 0xA7) {
+			fn_541d70(save, &sailing, op.data());
+		} else {
+			run_operation(save, &sailing, op.data());
+		}
+	}
+	// The window sends the player's names, 12 characters, then 11 at a time.
+	for (const auto& [code, name] : {std::pair<uint32_t, const std::string*>{0xAA, &player.first_name},
+			 std::pair<uint32_t, const std::string*>{0xAB, &player.family_name}}) {
+		uint8_t q[0x14] = {};
+		std::memcpy(q, &code, 4);
+		const uint16_t who = uint16_t(save.globals.u32(kPlayer));
+		q[4] = uint8_t(who);
+		q[5] = uint8_t(who >> 8);
+		size_t offset = 0;
+		size_t i = 0;
+		for (; i < name->size(); ++i) {
+			q[8 + i - offset] = uint8_t((*name)[i]);
+			if (i % 11 == 0 && i != 0) {
+				save.queued_operations.emplace_back(q, q + sizeof(q));
+				offset = i + 1;
+				q[6] = uint8_t(offset);
+				q[7] = uint8_t(offset >> 8);
+			}
+		}
+		q[8 + i - offset] = 0;
+		save.queued_operations.emplace_back(q, q + sizeof(q));
+	}
+	// The next frame's queue: what the days queued, the 0xA7's and the names.
+	run_queued_operations(save, sailing);
 }
 
 }  // namespace p3::data

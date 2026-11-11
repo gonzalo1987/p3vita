@@ -37,7 +37,7 @@ void town_tick(SaveGame& save, int town) {
 	tick::fn_51ba10(save, town, save.globals.u16(global::kWorldDayOfYear));
 }
 
-void advance_game_tick(SaveGame& save, Sailing& sailing) {
+void advance_game_tick(SaveGame& save, Sailing& sailing, bool run_queue) {
 	sailing.begin_tick();
 	const uint32_t t = save.tick() & 0xFF;
 	if (t == 0) {
@@ -73,8 +73,21 @@ void advance_game_tick(SaveGame& save, Sailing& sailing) {
 	for (size_t i = 0; i < save.sieges.size(); ++i) {
 		tick::fn_633a90(save, int(i));
 	}
+	if (!run_queue) {
+		return;
+	}
+	cap_merchant_money(save);
 	run_queued_operations(save, sailing);
 	sailing.step_battles();  // The battles' clock (battle/battles.cpp).
+}
+
+void cap_merchant_money(SaveGame& save) {
+	for (uint32_t i = 0; i < save.globals.u16(global::kWorldMerchantCount) && i < save.merchants.size(); ++i) {
+		int32_t& money = save.merchants[i].memory.s32(0x0);
+		if (money > 999999999) {
+			money = 999999999;
+		}
+	}
 }
 
 void use_sailing(Sailing& sailing) {
@@ -436,6 +449,16 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			save.globals.u32(global::kShips + 0xC + 4 * uint32_t(fields[1])) != 0) {
 			sailing->fn_514d40(size_t(fields[1]), uint16_t(fields[3]), uint16_t(fields[2]));
 		}
+		break;
+	case 0xA7: {  // A human merchant, the player (0x536D63 → 0x541D70; new_game.cpp).
+		uint8_t copy[0x14];
+		std::memcpy(copy, operation, sizeof(copy));
+		fn_541d70(save, sailing, copy);
+		break;
+	}
+	case 0xAA:  // A merchant's first name, 12 characters more (0x536D90 → 0x512C50; new_game.cpp).
+	case 0xAB:  // His family name.
+		fn_536d90(save, operation);
 		break;
 	case 0xAC:  // The new game's goal and the mailbox (0x536DF2 → 0x542420; new_game.cpp).
 		fn_542420(save, operation);

@@ -3620,7 +3620,8 @@ std::string letter_text(GameText id) {
 
 std::string letter_town_name(const SaveGame& save, uint32_t town) {
 	const uint32_t named = fix_game_bugs() ? save.globals.u8(kTownIds + town) : town;
-	return named < save.opaque.town_names.size() ? save.opaque.town_names[named] : std::string();
+	const std::vector<std::string>& table = fix_game_bugs() ? save.opaque.town_names : save.opaque.town_name_table;
+	return named < table.size() ? table[named] : std::string();
 }
 
 }  // namespace p3::data::tick

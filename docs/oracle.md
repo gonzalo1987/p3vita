@@ -2246,6 +2246,30 @@ tick_probe's 0x535760 probe takes it from there (and prints the operation's code
 |-|-|
 | `ngp.sh --functions 544e50,535760` (seed 1, 1300, 1.pat's settings) | 0x535760 48 of 48 equal (0xB7, 24 × 0xAF, 3 × 0xB0, 0xB1, 0xAC, 0x7E, 15 × 0xAD, 0xB4, 0xB3); 0x544E50 equal, also its queued 0xC4 |
 
+**The whole new game** (the same day, part 2): after 0x544E50 the window queues 0xA7 (the player; two rand() of its
+own) and 0xC8, and the queue runs: the 0xC4 is one advance_time (0x530E80) to 70 days later, whose operations wait in
+the queue (0x546870 runs a copy of it) behind the 0xA7; the money's cap of advance_time's end (0x53106F, which p3vita
+didn't have: it now runs after each tick, `cap_merchant_money`); the 0xA7; then the window queues the player's names
+(0xAA, 0xAB, 12 characters and then 11 at a time) and the next frame runs the held operations, the 0xA7's (0xC0,
+0xC6, 0xC8) and the names. p3vita: `start_new_game` (new_game.cpp; `advance_game_tick` without running the queue);
+the oracle: `newgame_oracle.py --stop advance|player` (`TownOracle.advance_tick(defer=True)`, the game object's
+[+0] = 1 as 0x54B230 leaves it alone, the chronicle's letter of 0x530470 connected, `MAIL_CALLS`). Both write the
+.pat (`p3save newgame`); `re/emu/sesion24/ngc.sh STOP [ARGS]` compares them with compare_written.py:
+
+| Run | Result |
+|-|-|
+| `ngc.sh ops`, `advance`, `player` (seed 1, 1300, 1.pat's settings, home 9, two ships, «Johann Kaufmann») | the .pat equal byte for byte (929 455, 931 311 and 942 262 bytes; only the game's pointers differ, written 1 by p3vita) |
+| `ngc.sh player --seed 12345 --year 1340 --home 3 --female --ships 1 --first "Margarethe Elisabeth" --family "von Brandenburg"` | equal (943 751 bytes): the year's productivity and the extra weeks, a woman, one ship, names longer than 12 characters |
+| `ngc.sh player --seed 777 --settings-from 3.pat --home 10` | equal (939 919 bytes): another difficulty, three pirates, one ship each AI merchant |
+
+Found by comparing the files (the game's writer, p3vita's fixed): a captain's [+0xE] is written as a bool (0x4FDE30:
+a new game's free captains have 0xFF there); the save's size (0x549C60 → 0x5350F0) frees the human players' slots
+of 0x6DE588 whose merchant doesn't exist or without their towns' bytes (0xFF); the home town's name of the settings
+comes from the table 0x6DDA00 by the index (a game bug), which the founding (0x5127E0) and 0xB0 (0x512830) fill by
+index: `SaveOpaque::town_name_table`, by number after a load as before (the letters' and the chronicle's game bug path
+reads it). With all this: write-check (the 12 saves as the game writes them; 7's known 12 bytes), letters-check (the
+12, all equal), the world 7 days in the 12 saves (0 «distintas») and the Vita build.
+
 Caught on the way (real differences, fixed): the event queue's last two first events at tick + 0x5A00 (0x4D8B10
 keeps that sum in its argument's place); a town founded when there are no sieges creates them all (0x532260;
 p3vita only grew existing ones: no save starts without them); the queued 0xC4's last four bytes, which are the

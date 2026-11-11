@@ -17,6 +17,11 @@
 #include "p3data/letters.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/lz.hpp"
+#include "p3data/navigation.hpp"
+#include "p3data/new_game.hpp"
+#include "p3data/sailing.hpp"
+#include "p3data/seamap.hpp"
+#include "p3data/statistics.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/savegame_write.hpp"
 #include "p3data/lz_compress.hpp"
@@ -35,6 +40,8 @@ int usage() {
 		"       p3save <archivo.cpr> <partida> write <out.pat> [<out.raw>]\n"
 		"       (--fix-game-bugs anywhere: with the fixes to the game's bugs, game_fixes.hpp)\n"
 		"       p3save compress <in> <out>\n"
+		"       p3save newgame <archivo.cpr> <out.raw> [--seed N] [--year Y] [--home I] [--settings-from SAVE.raw]\n"
+		"         [--stop ops|advance|player] [--ships N] [--female] [--first NAME] [--family NAME]\n"
 		"       p3save texts-cache <Patrician3.exe> <cache>\n"
 		"       p3save texts <Patrician3.exe> [FIRST]\n"
 		"       p3save <archivo.cpr> <partida> letters <Patrician3.exe> [merchant]\n"
@@ -229,6 +236,100 @@ int main(int argc, char** argv) {
 		}
 		std::fclose(f);
 		return write_file(argv[3], lz_compress(data.data(), data.size())) ? 0 : 1;
+	}
+	if (argc >= 4 && std::strcmp(argv[1], "newgame") == 0) {
+		// p3save newgame <archivo.cpr> <out.raw> [--seed N] [--year Y] [--home I] [--settings-from SAVE.raw]
+		//   [--stop ops|advance|player] [--ships N] [--female] [--first NAME] [--family NAME]
+		// A new game as the game's window starts it (new_game.hpp), on the archive's map
+		// Standard24, with 1.pat's settings by default; its uncompressed .pat to <out.raw>, to
+		// compare with tools/oracle/newgame_oracle.py's.
+		std::string error;
+		std::unique_ptr<CprArchive> archive = CprArchive::open(argv[2], &error);
+		std::unique_ptr<NavData> nav = archive ? NavData::load(*archive, &error) : nullptr;
+		if (!nav) {
+			std::fprintf(stderr, "%s: %s\n", argv[2], error.c_str());
+			return 1;
+		}
+		static const char kSettings[] =
+			"14050000050000000f00010c01030000000000000000000000010d0514050901012f50500301014cfc6265636b"
+			"00000000000000000000000000008000000000000000000000000000000000";
+		std::vector<uint8_t> settings;
+		for (size_t i = 0; i + 1 < sizeof(kSettings); i += 2) {
+			settings.push_back(uint8_t(std::strtoul(std::string(kSettings + i, 2).c_str(), nullptr, 16)));
+		}
+		uint32_t seed = 1;
+		int year = -1;
+		int home = -1;
+		NewGameStop stop = NewGameStop::Player;
+		NewGamePlayer player;
+		player.first_name = "Johann";
+		player.family_name = "Kaufmann";
+		for (int i = 4; i + 1 < argc || (i < argc && std::strcmp(argv[i], "--female") == 0); ++i) {
+			const std::string option = argv[i];
+			if (option == "--female") {
+				player.male = false;
+				continue;
+			}
+			const char* value = argv[++i];
+			if (option == "--seed") {
+				seed = uint32_t(std::strtoul(value, nullptr, 0));
+			} else if (option == "--year") {
+				year = int(std::strtol(value, nullptr, 0));
+			} else if (option == "--home") {
+				home = int(std::strtol(value, nullptr, 0));
+			} else if (option == "--ships") {
+				player.ships = uint8_t(std::strtoul(value, nullptr, 0));
+			} else if (option == "--first") {
+				player.first_name = value;
+			} else if (option == "--family") {
+				player.family_name = value;
+			} else if (option == "--stop") {
+				stop = std::strcmp(value, "ops") == 0 ? NewGameStop::Operations
+					: std::strcmp(value, "advance") == 0 ? NewGameStop::Advance : NewGameStop::Player;
+			} else if (option == "--settings-from") {
+				FILE* f = std::fopen(value, "rb");
+				uint8_t block[4 + 0x4C] = {};
+				if (!f || std::fread(block, 1, sizeof(block), f) != sizeof(block)) {
+					std::fprintf(stderr, "can't read %s\n", value);
+					return 1;
+				}
+				std::fclose(f);
+				settings.assign(block + 4, block + sizeof(block));
+			} else {
+				return usage();
+			}
+		}
+		SaveGame save;
+		std::memcpy(save.settings.bytes.data(), settings.data(), 0x4C);
+		std::memset(save.settings.bytes.data() + 0x3C, 0, 0x10);
+		if (year >= 0) {
+			save.settings.u32(0x0) = uint32_t(year);
+		}
+		if (home >= 0) {
+			save.settings.u8(0x1E) = uint8_t(home);
+		}
+		// What the game's start leaves (the world's constructor 0x52F520: [+0x88]
+		// 0xFF, the town of the AI's next feast) and its data (0x5121C0...).
+		save.globals.u8(global::kWorld + 0x88) = 0xFF;
+		load_game_scripts(*archive, save);
+		load_statistics_file(nullptr, save);
+		GameMap map;
+		if (!load_game_map(*archive, "maps/Standard24.gmf", map, &error)) {
+			std::fprintf(stderr, "%s\n", error.c_str());
+			return 1;
+		}
+		Sailing sailing(save, *nav, load_sea_map_towns(*archive));
+		sailing.set_pirates(true);
+		sailing.set_battles(true);
+		start_new_game(save, sailing, map, player, seed, stop);
+		prepare_save(save);
+		const std::vector<uint8_t> raw = write_savegame(save);
+		if (!write_file(argv[3], raw)) {
+			return 1;
+		}
+		std::printf("%zu towns, %zu merchants, %zu ships; %zu bytes in %s\n", save.towns.size(), save.merchants.size(),
+			save.ships.size(), raw.size(), argv[3]);
+		return 0;
 	}
 	if ((argc == 3 || argc == 4) && std::strcmp(argv[1], "texts") == 0) {
 		// The texts p3vita reads from the exe (GameText), from FIRST on: index and text.

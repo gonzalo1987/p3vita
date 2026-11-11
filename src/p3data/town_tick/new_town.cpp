@@ -9,8 +9,9 @@
 // alcalde, con la operación 0x46 si no tiene, 0x535FD6; su oficina, la
 // población y el prestamista).
 //
-// Los punteros que el juego deja en los globales (los nombres de la ciudad,
-// 0x5127E0: [0x6DD960 + 4·i] y [0x6DDA00 + 4·i]) no se reproducen.
+// Of the pointers the game leaves in the globals (0x5127E0), the town's name
+// [0x6DDA00 + 4·i] is kept (SaveOpaque::town_name_table), not its guild's
+// [0x6DD960 + 4·i].
 
 #include <cstdlib>
 #include <cstring>
@@ -772,7 +773,19 @@ void fn_531d50(SaveGame& save, const GameMemory<0x10>& rec) {
 	t.u8(0x2C0) = uint8_t(index);
 	g.u8(kTownIds + index) = number;
 	t.u8(0x2C1) = number;
-	// 0x5127E0: los punteros a su nombre en los globales (no se reproducen).
+	// 0x5127E0: its name at its index in the table 0x6DDA00 (the guilds' table
+	// 0x6DD960, the same, isn't kept).
+	{
+		std::vector<std::string>& table = save.opaque.town_name_table;
+		const std::vector<std::string>& names = save.opaque.town_names;
+		const uint32_t named = number < 0x28 ? number : index;
+		if (index < 0x28) {
+			if (table.size() < 0x28) {
+				table.resize(0x28);
+			}
+			table[index] = named < names.size() ? names[named] : std::string();
+		}
+	}
 	g.u8(kTownMaps + index) = rec.u8(0xD);
 	t.u8(0x2C2) = rec.u8(0xD);
 	t.u32(0x2C8) = rec.u32(0x0);

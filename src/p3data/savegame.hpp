@@ -344,6 +344,12 @@ struct SaveOpaque {
 	// The 40 town names of scripts/NamenStaedte_eng.txt (0x5125E0), by town
 	// number, in Latin-1 (the table 0x6DDA00). Read by load_game_scripts.
 	std::vector<std::string> town_names;
+	// The town name table 0x6DDA00 (40 entries): by town number after the
+	// game's start and a load (0x5125E0, 0x512730: town_names), but a town
+	// founded (0x531D50 → 0x5127E0) or renamed by a new game's map (0xB0,
+	// 0x512830) puts its name at its index. The game reads it with a town's
+	// index (a game bug where it goes by number: letters.cpp table_town).
+	std::vector<std::string> town_name_table;
 	// The same file's 40 taverns' names after its 40 guilds' (the table
 	// 0x6DD8C0, by town number after a load: 0x512730).
 	std::vector<std::string> town_taverns;

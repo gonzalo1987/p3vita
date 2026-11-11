@@ -45,7 +45,7 @@ std::string table_town(const SaveGame& save, uint32_t town, const std::vector<st
 	return named < table.size() ? table[named] : std::string();
 }
 std::string table_town(const SaveGame& save, uint32_t town) {
-	return table_town(save, town, save.opaque.town_names);
+	return table_town(save, town, fix_game_bugs() ? save.opaque.town_names : save.opaque.town_name_table);
 }
 
 // The composer's state: the text so far and the letter.
@@ -1738,7 +1738,7 @@ std::optional<std::string> compose_letter(const SaveGame& save, const GameTexts&
 			if (fix_game_bugs()) {
 				return c.town(i);
 			}
-			const std::vector<std::string>& names = save.opaque.town_names;
+			const std::vector<std::string>& names = save.opaque.town_name_table;
 			return i < 40 && i < names.size() ? names[i] : (names.empty() ? std::string() : names[0]);
 		};
 		switch (task) {

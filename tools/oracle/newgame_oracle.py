@@ -24,7 +24,7 @@ in its order:
 
 usage: python3 newgame_oracle.py <Patrician3.exe> DATOS <p2arch0_eng.cpr> <out.raw> [--seed N] [--year Y]
        [--home I] [--settings-from SAVE.raw] [--map FILE.gmf] [--stop ops|advance|player]
-       [--probe OUT [--functions 535760,...]]
+       [--ships N] [--female] [--first NAME] [--family NAME] [--probe OUT [--functions 535760,...]]
 DATOS: a folder with navdata/ and scripts/ (re/emu/sesion6/run.sh makes /tmp/datos).
 """
 import argparse
@@ -33,9 +33,10 @@ import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from town_oracle import (ARCHIVE_FREE, ARCHIVE_READ, EMPTY_CSTRING, EXPEDITIONS, INI_INT, INI_STRING,  # noqa: E402
-                         LOAD_NAMES, NAMES, REST, SETTINGS_POINTER, SETTINGS_SIZE, TOWN_TABLE, TOWN_TABLE_SIZE,
-                         SENTINEL, Recorder, TownOracle, lz_decompress, trampoline)
+from town_oracle import (ARCHIVE_FREE, ARCHIVE_READ, EMPTY_CSTRING, EXECUTOR_MAGIC, EXECUTOR_TRAMPOLINE,  # noqa: E402
+                         EXPEDITIONS, INI_INT, INI_STRING, LOAD_NAMES, NAMES, OPERATION_SIZE, REST,
+                         SETTINGS_POINTER, SETTINGS_SIZE, TOWN_TABLE, TOWN_TABLE_SIZE, WORLD, SENTINEL, Recorder,
+                         TownOracle, lz_decompress, trampoline)
 from unicorn import UC_HOOK_CODE  # noqa: E402
 from write_oracle import write_files  # noqa: E402
 
@@ -47,6 +48,8 @@ TOWN_SLOTS = 40
 # 0x544E50 is called through this (call; ret) so that it returns to a real
 # instruction and the Recorder sees its end (at SENTINEL the emulator stops).
 NEW_GAME_TRAMPOLINE = SENTINEL + 0x200
+GAME = 0x6DF2F0  # the game object: [+0] 1 in a game of one player (0x54B230), | 0x10 once started
+LOCAL_PLAYER = 0x6DF31C  # u32: the local player's number in the session (0 alone)
 
 
 def parse_gmf(raw):
@@ -84,6 +87,7 @@ class NewGameOracle(TownOracle):
         block = self.alloc(0x100)
         self.uc.mem_write(block, settings)
         self.write_u32(SETTINGS_POINTER, block)
+        self.write_u32(GAME, 1)  # 0x54B230(1, 0, ...): one player
         hooks = [self.uc.hook_add(UC_HOOK_CODE, f, begin=a, end=a) for a, f in (
             (ARCHIVE_READ, self._archive_read), (ARCHIVE_FREE, self._archive_free), (INI_INT, self._ini_int),
             (INI_STRING, self._ini_string))]
@@ -121,6 +125,59 @@ class NewGameOracle(TownOracle):
                 self.write_u32(setup + SETUP_NAMES + 4 * i, self.cstring_object(name))
         return setup
 
+    def rand(self):
+        """rand() from Python, on the oracle's state (the window's own calls)."""
+        self.rand_state = (self.rand_state * 0x343FD + 0x269EC3) & 0xFFFFFFFF
+        return (self.rand_state >> 16) & 0x7FFF
+
+    def execute(self, op):
+        """An operation through the executor, as the oracle runs the queued ones."""
+        buffer = self.alloc(OPERATION_SIZE)
+        self.uc.mem_write(buffer, op)
+        self.call(EXECUTOR_TRAMPOLINE, list(struct.unpack('<5I', op)) + [EXECUTOR_MAGIC], ecx=buffer)
+
+    def window(self, settings, ships, male, first, family, stop):
+        """What the window does after 0x544E50 (0x499600..0x49985C): the 0xA7 with
+        two rand(), the queue (the 0xC4: advance_time to its target with the
+        days' operations held, the money's cap; the 0xA7; the 0xC8 is the
+        real-time loop's), the player's names (0xAA, 0xAB: 12 characters, then
+        11 at a time) and the next frame's queue: the held operations, the 0xA7's
+        and the names."""
+        c4 = next(q for q in self.queued if struct.unpack_from('<I', q)[0] == 0xC4)
+        self.tick_operations = []
+        a7 = bytearray(OPERATION_SIZE)
+        struct.pack_into('<II', a7, 0, 0xA7, self.u32(LOCAL_PLAYER))
+        a7[8], a7[9], a7[0xA], a7[0xB] = settings[0xE], settings[0x1E], settings[0x9], ships
+        a7[0xC] = 1 if male else 0
+        a7[0xD] = (self.rand() % 0x16D) & 0xFF  # the remainder's low byte (dl)
+        struct.pack_into('<H', a7, 0xE, self.rand())
+        a7[0x10] = settings[0x11]
+        self.write_u32(GAME, self.u32(GAME) | 0x10)
+        target = struct.unpack_from('<I', c4, 8)[0]
+        while self.u32(WORLD + 0x14) < target:
+            self.advance_tick(defer=True)
+        self.cap_money()
+        if stop == 'advance':
+            return
+        self.execute(bytes(a7))
+        player = self.u32(0x6DFC14)
+        for code, name in ((0xAA, first), (0xAB, family)):
+            q = bytearray(OPERATION_SIZE)
+            struct.pack_into('<IH', q, 0, code, player)
+            offset = 0
+            for i, ch in enumerate(name):
+                q[8 + i - offset] = ch
+                if i % 11 == 0 and i != 0:
+                    self.tick_operations.append(bytes(q))
+                    offset = i + 1
+                    struct.pack_into('<H', q, 6, offset)
+            q[8 + len(name) - offset] = 0
+            self.tick_operations.append(bytes(q))
+        operations, self.tick_operations = self.tick_operations, []
+        for op in operations:
+            if struct.unpack_from('<I', op)[0] in self.operations | {0xAA, 0xAB}:
+                self.execute(op)
+
     def new_game(self, setup):
         _, build = trampoline(NEW_GAME, 0)
         self.uc.mem_write(NEW_GAME_TRAMPOLINE, build(NEW_GAME_TRAMPOLINE))
@@ -139,6 +196,10 @@ def main():
     p.add_argument('--settings-from', help="a test save's settings (uncompressed .pat); by default 1.pat's")
     p.add_argument('--map', help='a .gmf (compressed); by default maps/Standard24.gmf of the CPR')
     p.add_argument('--stop', choices=('ops', 'advance', 'player'), default='player')
+    p.add_argument('--ships', type=int, default=2, help="the player's ships (the 0xA7's [+0xB])")
+    p.add_argument('--female', action='store_true')
+    p.add_argument('--first', default='Johann', help="the player's first name")
+    p.add_argument('--family', default='Kaufmann', help="the player's family name")
     p.add_argument('--probe', metavar='OUT', help="tick_probe's samples of the new game's calls")
     p.add_argument('--functions', default='535760', help='with --probe, the functions (hex) recorded')
     a = p.parse_args()
@@ -157,20 +218,27 @@ def main():
     blob = open(a.map, 'rb').read() if a.map else o.game_file('maps/Standard24.gmf')
     gmf = lz_decompress(blob, struct.unpack_from('<i', blob, 0)[0])
     setup = o.setup_object(gmf)
+
+    def run():
+        o.new_game(setup)
+        towns, offices, merchants, ships = o.counts()
+        print(f'after 0x544E50: {towns} towns, {offices} offices, {merchants} merchants, {ships} ships; '
+              f'{len(o.queued)} queued: {[hex(struct.unpack_from("<I", q)[0]) for q in o.queued]}')
+        if a.stop != 'ops':
+            o.window(settings, a.ships, not a.female, a.first.encode('latin-1'), a.family.encode('latin-1'), a.stop)
+            towns, offices, merchants, ships = o.counts()
+            print(f'at the end: {towns} towns, {merchants} merchants, {ships} ships, tick {o.u32(WORLD + 0x14)}')
     if a.probe:
         with open(a.probe, 'wb') as f:
             f.write(b'P3PROBE1')
             rec = Recorder(o, [int(x, 16) for x in a.functions.split(',')], f, 1 << 30, wide=True)
             rec.active = True
-            o.new_game(setup)
+            run()
             rec.active = False
             f.write(b'E')
         print(f'{rec.count} samples in {a.probe}')
     else:
-        o.new_game(setup)
-    towns, offices, merchants, ships = o.counts()
-    print(f'after 0x544E50: {towns} towns, {offices} offices, {merchants} merchants, {ships} ships; '
-          f'{len(o.queued)} queued: {[hex(struct.unpack_from("<I", q)[0]) for q in o.queued]}')
+        run()
     raw, _ = write_files(o, a.out)
     print(f'{len(raw)} bytes in {a.out}')
 

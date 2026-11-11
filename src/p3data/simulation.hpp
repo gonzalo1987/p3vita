@@ -44,8 +44,14 @@ int merchant_for_tick(const SaveGame& save, uint32_t tick);
 // El tick de ciudad (0x51BA10) de la ciudad `town`.
 void town_tick(SaveGame& save, int town);
 
-// Un tick completo.
-void advance_game_tick(SaveGame& save, Sailing& sailing);
+// Un tick completo. Without `run_queue` the operations the tick queues stay in
+// save.queued_operations and the battles' clock doesn't run: one tick of a
+// long advance_time, whose operations run after it (a new game's 0xC4).
+void advance_game_tick(SaveGame& save, Sailing& sailing, bool run_queue = true);
+
+// The end of advance_time (0x53106F): no merchant has more than 999 999 999
+// coins.
+void cap_merchant_money(SaveGame& save);
 
 // The Sailing (and its navigation) the event queue and the town ticks use.
 // advance_game_tick sets it in the middle of each tick, so what runs before

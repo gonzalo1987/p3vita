@@ -1228,6 +1228,7 @@ int main(int argc, char** argv) {
 			save.first_names = first_names;
 			save.family_names = family_names;
 			save.opaque.town_names = town_names;
+			save.opaque.town_name_table = town_names;
 			save.custom_names = custom_names;
 			save.town_templates = town_templates;
 			save.town_view = town_view;
@@ -1313,6 +1314,7 @@ int main(int argc, char** argv) {
 			save.first_names = first_names;
 			save.family_names = family_names;
 			save.opaque.town_names = town_names;
+			save.opaque.town_name_table = town_names;
 			if (!names_path.empty()) {
 				save.custom_names = custom_names;
 			}

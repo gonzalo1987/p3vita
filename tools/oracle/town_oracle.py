@@ -423,6 +423,9 @@ TICKER_SEND = 0x548CA0
 TICKER_SILENT = (0x02, 0x0F, 0x11, 0x13, 0x14, 0x17, 0x18, 0x1A, 0x1E, 0x1F, 0x26, 0x27)
 TICKER_FIXED = (0x09, 0x0C, 0x10, 0x12, 0x19)  # a fixed text: the argument recorded as 0
 MAIL_CALLS = (
+    # A new human merchant (0x530470 with kind 0, the new game's player 0xA7,
+    # new_game.cpp): the chronicle's 0x0E.
+    0x530625,
     # The merchant's tick (0x4F7BB0, merchants.cpp): letters 0x0F, 0x10, 0x11
     # to the merchant and 0x06 (a promotion) to the chronicle.
     0x4F7CB0, 0x4F7CF6, 0x4F7D33, 0x4F82D9,
@@ -1355,8 +1358,16 @@ class TownOracle(SaveOracle):
     def town_tick(self, i):
         self.call(TRAMPOLINE, [self.u16(WORLD + 4)], ecx=self.town(i))
 
-    def advance_tick(self):
-        """Un tick de advance_time (0x530E80) con la fecha y las ciudades."""
+    def cap_money(self):
+        """The end of advance_time (0x53106F): no merchant above 999 999 999 coins."""
+        for m in range(self.u16(WORLD + 0xA)):
+            if self.s32(self.merchant(m)) > 999999999:
+                self.write_u32(self.merchant(m), 999999999)
+
+    def advance_tick(self, defer=False):
+        """Un tick de advance_time (0x530E80) con la fecha y las ciudades.
+        With `defer` (a long advance_time, a new game's 0xC4) the operations it
+        queues stay in self.tick_operations and the battles' clock doesn't run."""
         tick = (self.u32(WORLD + 0x14) + 1) & 0xFFFFFFFF
         self.write_u32(WORLD + 0x14, tick)
         t = tick & 0xFF
@@ -1384,6 +1395,9 @@ class TownOracle(SaveOracle):
             if self.u32(SIEGES):
                 for i in range(self.u32(WORLD + 0x10)):
                     self.run_rest(0x633A90, [], self.u32(SIEGES) + i * 0x1024)
+            if defer:
+                return tick
+            self.cap_money()
             # Las operaciones encoladas en este tick, al final y en su orden,
             # con el ejecutor del juego: las de self.operations (las demás,
             # como las obras de las ciudades, se descartan).

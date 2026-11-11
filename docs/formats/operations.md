@@ -296,11 +296,11 @@ feast window): the handler is the same and is done.
 | 0xA4 | network | a network game's lobby (0x43E1F0, 0x43FF40, 0x54BDD0) | 0x43C5F0, 0x43FD20, 0x547FD0 | 0x536D45 → 0x541AB0 | 2, 752 B |  | guess |
 | 0xA5 | network | a network game's lobby (0x43EF70, 0x43FBA0, 0x440310) | 0x4381E0, 0x43C090, 0x43FF40 | 0x536D54 → 0x541CC0 | 124, 35.3 KB |  | guess |
 | 0xA6 | network | a network game (inline, 0x536FBA) | not found | 0x536FBA → 0x5303C0 |  |  | guess |
-| 0xA7 | network | a merchant joins a network game: a new merchant with a ship (0x541D70: 0x4F68D0, 0x507D60...) | 0x43D030, 0x497EE0, 0x542380 | 0x536D63 → 0x541D70 |  |  | guess |
+| 0xA7 | network | a human merchant: the new game's player (the window 0x499624) or one joining a network game: 0x530470 (with the chronicle's 0x0E), money by [+0xA], a players' names slot (0x512BA0), his office and [+0xB] ships (the last a craier of level 2 with [+0x8] = 0); alone, it queues 0xC0, 0xC6 and 0xC8 (`new_game.cpp` `fn_541d70`) | 0x43D030, 0x497EE0, 0x542380; the new game window 0x499624 | 0x536D63 → 0x541D70 |  | yes | read |
 | 0xA8 | network | a network game's lobby (0x43F660...) | 0x4335B0, 0x4381E0, 0x43A2A0, 0x43C090, 0x43C5F0, 0x43D030, 0x43FD20, 0x547FD0 | 0x536D72 → 0x5421E0 | 1, 416 B |  | guess |
 | 0xA9 | network | queues more operations (0x542380) | 0x547F10 | 0x536D81 → 0x542380 | 1, 160 B |  | guess |
-| 0xAA | network | a merchant's name (0x512C50; same handler as 0xAB) | 0x43D030, 0x497EE0, 0x541D70 | 0x536D90 → 0x5303C0, 0x512C50 | 1, 240 B |  | guess |
-| 0xAB | network | a merchant's name (0x512C50) | 0x43D030, 0x497EE0, 0x541D70 | 0x536D90 → 0x5303C0, 0x512C50 | 1, 240 B |  | guess |
+| 0xAA | network | up to 12 characters more of a merchant's first name in his players' names slot, at most 23 (0x512C50; `fn_536d90`) | 0x43D030, 0x497EE0, 0x541D70; the new game window 0x499748 | 0x536D90 → 0x5303C0, 0x512C50 |  | yes | read |
+| 0xAB | network | the same with his family name (0x512C50; `fn_536d90`) | 0x43D030, 0x497EE0, 0x541D70; the new game window 0x4997CE | 0x536D90 → 0x5303C0, 0x512C50 |  | yes | read |
 | 0xAC | new game | [0x6DD89A..] by its [+0x8], the travel times again (0x531BA0), the mailbox reset (0x4D64B0), the goal's event 0x0E (`new_game.cpp` `fn_542420`) | the new game 0x544E50 | 0x536DF2 → 0x542420 |  | yes | read |
 | 0xAD | new game | a world object [+0x10] < 15: its towns and wares (tables 0x673944, 0x673920, 0x67392C), its list emptied (`fn_52bd80`) | 0x544E50 | 0x536E01 → 0x52BD80 |  | yes | read |
 | 0xAE | new game | a town's nodes (0x50FCA0, 0x50FE00) | not found | 0x536E2B → 0x5424D0 | 1, 144 B |  | guess |

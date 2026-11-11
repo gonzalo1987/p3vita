@@ -105,8 +105,9 @@ void update_settings(SaveGame& save) {
 	// Fixed: the name of the hometown's number (0x6DE4B8), at most 19
 	// characters and its 0 in the 0x14 bytes of [+0x27].
 	const size_t number = fix_game_bugs() ? g.u8(kTownNumbers + hometown) : hometown;
-	if (number < save.opaque.town_names.size()) {
-		const std::string& name = save.opaque.town_names[number];
+	const std::vector<std::string>& table = fix_game_bugs() ? save.opaque.town_names : save.opaque.town_name_table;
+	if (number < table.size()) {
+		const std::string& name = table[number];
 		const size_t n = fix_game_bugs() ? std::min<size_t>(name.size(), 0x13)
 		                                 : std::min(name.size() + 1, SettingsMemory::kSize - 0x27);
 		std::memcpy(&s.u8(0x27), name.c_str(), n);
@@ -267,6 +268,24 @@ void free_listed_offices(SaveGame& save) {
 	}
 }
 
+// 0x5350F0 (the size of the object 0x6DE588, which the save's size 0x549C60
+// takes before writing): a human player's slot whose merchant doesn't exist,
+// or without its byte per town, is freed (0xFF). No loaded save has one; a new
+// game's eight are all freed.
+void free_unused_player_slots(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	for (uint32_t i = 0; i < 8; ++i) {
+		uint8_t& slot = g.u8(0x6DEF88 + i);
+		if (slot >= g.u16(global::kWorldMerchantCount)) {
+			slot = 0xFF;
+			save.player_towns[i].clear();
+			g.u32(0x6DEF90 + 4 * i) = 0;
+		} else if (save.player_towns[i].empty()) {
+			slot = 0xFF;
+		}
+	}
+}
+
 void write_world(Writer& w, SaveGame& save) {
 	const GlobalMemory& g = save.globals;
 	constexpr uint32_t W = global::kWorld;
@@ -307,6 +326,7 @@ void write_world(Writer& w, SaveGame& save) {
 			i < save.opaque.merchant_lists.size() ? save.opaque.merchant_lists[i] : kNoLists);
 	}
 	// 0x535160 on 0x6DE588: 0xA08 bytes and 40 for each used slot.
+	free_unused_player_slots(save);
 	w.from(g, 0x6DE588, 0xA08);
 	for (size_t i = 0; i < save.player_towns.size(); ++i) {
 		if (g.u8(0x6DEF88 + uint32_t(i)) < 0xFF) {
@@ -382,8 +402,9 @@ void write_ships(Writer& w, const SaveGame& save) {
 		w.from(g, global::kShips + field, 2);
 	}
 	for (const CaptainMemory& c : save.captains) {  // 0x4FDE30
-		chunks(w, c, {{0x0, 2}, {0x2, 1}, {0x3, 1}, {0x4, 4}, {0xC, 2}, {0x8, 1}, {0x9, 1}, {0xA, 1}, {0xB, 1},
-						 {0xE, 1}, {0xF, 1}});
+		chunks(w, c, {{0x0, 2}, {0x2, 1}, {0x3, 1}, {0x4, 4}, {0xC, 2}, {0x8, 1}, {0x9, 1}, {0xA, 1}, {0xB, 1}});
+		w.u8(c.u8(0xE) != 0 ? 1 : 0);  // as a bool (a free captain's 0xFF, a new game's, is written 1)
+		w.from(c, 0xF, 1);
 	}
 	for (const SavedShip& ship : save.ships) {
 		write_ship(w, ship, g.u32(global::kWorldTownCount));
@@ -766,6 +787,7 @@ void load_save_scripts(const CprArchive& archive, SaveGame& save) {
 				// 40 names, 40 guilds, 40 taverns (0x512730).
 				std::vector<std::string> lines = split_town_names(data, 120);
 				save.opaque.town_names.assign(lines.begin(), lines.begin() + 40);
+				save.opaque.town_name_table = save.opaque.town_names;
 				save.opaque.town_taverns.assign(lines.begin() + 80, lines.end());
 				return;
 			}

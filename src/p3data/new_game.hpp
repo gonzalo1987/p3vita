@@ -73,5 +73,39 @@ void fn_542a30(SaveGame& save, uint8_t* operation);
 // 0xB0 (0x536F1D → 0x543570): 13 characters ([+0x4]) of the name of the slot
 // [+0x11] (a town number) from [+0x13] on (0x512830: SaveOpaque::town_names).
 void fn_543570(SaveGame& save, const uint8_t* operation);
+// 0xA7 (0x541D70): a human merchant (0x530470 with the chronicle's letter) in
+// the town [+0x9] with the money of [+0xA] (table 0x672D20), a new life, a
+// players' names slot (0x512BA0), his office and [+0xB] ships (the last a
+// craier of level 2 with [+0x8] = 0); the local player's (*0x6DF31C) becomes
+// the player; in a game of one player the real-time loop's 0xC0, 0xC6 and
+// 0xC8 are queued. It writes into the operation (the town, the ships' count).
+void fn_541d70(SaveGame& save, Sailing* sailing, uint8_t* operation);
+// 0xAA and 0xAB (0x536D90 → 0x512C50): up to 12 characters ([+0x8]) more of
+// the first name (0xAA) or family name (0xAB) of the merchant [+0x4], in his
+// players' names slot (SaveGame::custom_names), at most 23 in all.
+void fn_536d90(SaveGame& save, const uint8_t* operation);
+
+// What the new game window sends besides the settings: the player's ships
+// (the 0xA7's [+0xB]: by the window's start, 2 in the test saves' settings),
+// sex and names (Latin-1).
+struct NewGamePlayer {
+	uint8_t ships = 2;
+	bool male = true;
+	std::string first_name;
+	std::string family_name;
+};
+
+// Where start_new_game stops (for the checks): after 0x544E50, after the
+// world's 70 days, or at the end.
+enum class NewGameStop { Operations, Advance, Player };
+
+// A new game as the window starts it (0x499252..0x49985C), on a save with the
+// game's data (load_game_scripts) and the settings in save.settings: srand
+// with `seed` (the game: the time), 0x544E50 on the map, then the queue: the
+// 0xC4 (advance_time to 70 days later, its operations held), the player
+// (0xA7) and 0xC8, then the player's names (0xAA, 0xAB) and the operations
+// the days queued.
+void start_new_game(SaveGame& save, Sailing& sailing, const GameMap& map, const NewGamePlayer& player, uint32_t seed,
+	NewGameStop stop = NewGameStop::Player);
 
 }  // namespace p3::data
