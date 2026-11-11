@@ -42,6 +42,8 @@ constexpr const char* kGunFire[3] = {"iso/lcr/KanoneFeuer.lcr", "iso/lcr/KanoneF
 // has a third, `feuer`, for the town's fires) and a tower falling (0x12/0x30, 0x6014EE).
 constexpr const char* kTowerFire[2] = {"iso/lcr/feuer_klein.lcr", "iso/lcr/feuer_mittel.lcr"};
 constexpr char kTowerFall[] = "iso/lcr/schiffsexplosion.lcr";
+// A ship's pennant (class 0x1E, 0x56CA0B; 32 directions of 5 frames at 7 a second).
+constexpr char kPennant[] = "iso/lcr/faehnchen.lcr";
 // The splinters' pictures (class 0x13: `brocken_a.lcr`, `brocken_b.lcr`; their head has another layout, so the
 // viewer takes the pictures' 8 cells of 16 · 16, a piece turning, at their 15 frames a second).
 constexpr const char* kSplinterImages[2] = {"images/creatures/_X_p_brocken_a.aim", "images/creatures/_X_p_brocken_b.aim"};
@@ -272,7 +274,7 @@ void BattleView::want(const std::string& path) {
 }
 
 void BattleView::need(const SaveGame& save, size_t battle) {
-	for (const char* path : {kSplash, kPuff, kExplosion, kBurning}) {
+	for (const char* path : {kSplash, kPuff, kExplosion, kBurning, kPennant}) {
 		want(path);
 	}
 	for (int k = 0; k < 3; ++k) {
@@ -348,6 +350,22 @@ void BattleView::load_step() {
 		}
 		for (size_t i = 0; i < splinter_images_.size(); ++i) {
 			splinter_images_[i] = texture(kSplinterImages[i], true);
+		}
+		// Where each type's pennant goes (0x56B052): the points of its look of hull state 0 and sails 0 less that
+		// look's anchor in each direction; the same for every look of the type.
+		for (int type = 0; type < 4; ++type) {
+			pennant_offsets_[size_t(type)].clear();
+			const CprEntry* entry = archive_.find(p3::data::lcr_ship_path(type, 0, 0));
+			std::vector<uint8_t> data;
+			LcrAnim look;
+			if (!entry || !archive_.read(*entry, data) || !p3::data::parse_lcr(data.data(), data.size(), look)) {
+				continue;
+			}
+			for (size_t d = 0; d < look.pennant.size() && d < look.directions.size(); ++d) {
+				const LcrFrame* f = look.directions[d].empty() ? nullptr : &look.directions[d][0];
+				pennant_offsets_[size_t(type)].push_back(
+					f ? SDL_Point{look.pennant[d].x - f->anchor_x, look.pennant[d].y - f->anchor_y} : SDL_Point{0, 0});
+			}
 		}
 		return;
 	}
@@ -1038,11 +1056,36 @@ void BattleView::draw(const SaveGame& save, size_t battle, int camera_x, int cam
 		hit.own = own;
 		hit.anchor = {d.x, d.y};
 		hit.rect = {d.x - 30, d.y - 80, 60, 100};
+		int pennant_top = d.y;
 		if (d.look) {
 			draw_frame(*d.look, d.frame, 0, d.x, d.y, 255, false);
+			// Its pennant (0x56CA0B at the look's point of that direction), turned to the wind ([+0x670]: the town
+			// view's [+0x598]) and waving faster the stronger it blows (0x568EA0: a frame's time less its
+			// [+0x671] / 20).
+			const std::vector<SDL_Point>& offsets = pennant_offsets_[size_t(ship.type() & 3)];
+			const Anim* pennant = anim(kPennant);
+			if (pennant && size_t(d.frame) < offsets.size() && !(g.get<uint8_t>(d.entry, 0x12A) & 0x4)) {
+				const int wind = g.get<uint8_t>(battle, 0x670);
+				const int strength = std::min<int>(g.get<uint8_t>(battle, 0x671), 19);
+				const int dirs = int(pennant->lcr.directions.size());
+				const int dir = ((wind * dirs + 128) >> 8) & (dirs - 1);
+				const uint32_t period = std::max<uint32_t>(30, (1000 / std::max<uint32_t>(pennant->lcr.fps, 1)) *
+						uint32_t(20 - strength) / 20);
+				const size_t n = std::max<size_t>(pennant->lcr.directions[size_t(dir)].size(), 1);
+				// Each ship's own pace (its scene's block), as each game sprite keeps its own clock.
+				const int frame = int((now / period + d.entry) % n);
+				const int px = d.x + offsets[size_t(d.frame)].x, py = d.y + offsets[size_t(d.frame)].y;
+				draw_frame(*pennant, dir, frame, px, py, 255, false);
+				const std::vector<LcrFrame>& pf = pennant->lcr.directions[size_t(dir)];
+				if (!pf.empty()) {
+					const LcrFrame& p0 = pf[size_t(frame) % pf.size()];
+					pennant_top = py - (p0.anchor_y - p0.body.y);  // The label goes over it, not on it.
+				}
+			}
 			const LcrFrame& f = d.look->lcr.directions[size_t(d.frame)][0];
-			top_y = d.y - (f.anchor_y - f.body.y);
-			hit.rect = {d.x - (f.anchor_x - f.body.x), top_y, f.body.w, f.body.h};
+			const int body_top = d.y - (f.anchor_y - f.body.y);
+			top_y = std::min(body_top, pennant_top);
+			hit.rect = {d.x - (f.anchor_x - f.body.x), body_top, f.body.w, f.body.h};
 		}
 		if (g.get<uint8_t>(d.entry, 0x12A) & 0x4) {
 			continue;  // Sinking: no label, no touch.

@@ -72,6 +72,20 @@ bool load_saved_town_template(const CprArchive& archive, const SavedTown& saved,
 bool load_battle_town_template(const CprArchive& archive, const SavedTown& saved, const std::vector<int>& regions,
 	SavedTownTemplate& out, std::string* error = nullptr);
 
+// A pirate nest's battle map (0x58EB30 → 0x515D20: iso/towns/<0xFE − ([+0xF] & 3)>.town, 251 to 254, and its
+// .editor), with the region of its pirate's town (0x515B80: 0x6DDBC0 by its [+0xE]).
+bool load_nest_town_template(const CprArchive& archive, int map, int region, SavedTownTemplate& out,
+	std::string* error = nullptr);
+// 0x515B80: the nest's pool from entry 0 along its list (while below `count`, the pirate's [+0x8]), each entry
+// not fallen ([+0x6] below 200) as a building of its kind [+0x3] (0x672FC0) and orientation [+0x7], at its cell
+// moved by `dx`, `dy` (the view's [+0x528], [+0x52C]: the .town file's last two numbers).
+size_t place_nest_buildings(const PirateNest& nest, uint32_t count, int region, const TileSet& tiles, TownMap& town,
+	std::vector<uint8_t>* owners = nullptr, int dx = 0, int dy = 0);
+// A key of what place_nest_buildings reads: it changes when the nest's buildings do.
+uint64_t nest_buildings_key(const PirateNest& nest, uint32_t count);
+// The last two s32 of iso/towns/<id>.town (0x58E8C0 puts them in the view's [+0x528], [+0x52C]).
+bool load_town_ends(const CprArchive& archive, int id, int32_t& x, int32_t& y);
+
 // The template with the buildings of the town `index` of the save as they are now (moved by `dx`, `dy` cells on
 // a battle map).
 void place_saved_town(const SavedTownTemplate& base, const SaveGame& save, size_t index, const TileSet& tiles,

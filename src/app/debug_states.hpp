@@ -21,4 +21,8 @@ extern const char kDebugStatesHelp[];
 // middling fire, 0x6018DB), when the viewer opens its screen. Only for the eyes.
 void weaken_towers(p3::data::SaveGame& save, size_t battle);
 
+// nest-attack: while the player's first ship sails and no battle at the first pirate's nest has started, the
+// nest's place is moved to the ship (each frame); false once there is nothing more to do.
+bool follow_nest_attack(p3::data::SaveGame& save);
+
 }  // namespace p3::app

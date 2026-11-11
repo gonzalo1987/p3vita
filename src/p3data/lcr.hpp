@@ -5,7 +5,8 @@
 // and their smoke. Each file names its images (AIM or BMP in the CPR) and
 // gives, for each direction and frame, the rectangle to draw from them and
 // the point of it that stands on the creature's place. Read: the ships'
-// looks (class 0x0D) and the effects (class 0x12).
+// looks (class 0x0D), the effects (class 0x12) and the ships' pennant (class
+// 0x1E, another layout).
 
 #include <cstddef>
 #include <cstdint>
@@ -37,6 +38,12 @@ struct LcrFrame {
 	int shadow_y = 0;
 };
 
+// A point in an animation's main image.
+struct LcrPoint {
+	int x = 0;
+	int y = 0;
+};
+
 struct LcrAnim {
 	uint16_t id = 0;
 	uint16_t kind = 0;  // The class: 0x0D a ship's look, 0x12 an effect...
@@ -48,6 +55,9 @@ struct LcrAnim {
 	std::string shadow_image;  // CPR paths, with '/' separators; no shadow: empty.
 	std::string image;
 	std::vector<std::vector<LcrFrame>> directions;  // Each direction's frames.
+	// A ship's look of hull state 0 and sails 0: where its pennant goes in each direction, in the main image
+	// (the game takes it less that direction's anchor for every look of the type, 0x56B052); empty otherwise.
+	std::vector<LcrPoint> pennant;
 };
 
 // False (and why in `error`) if the bytes aren't an animation of the layout

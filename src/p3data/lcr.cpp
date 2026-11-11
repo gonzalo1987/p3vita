@@ -80,6 +80,34 @@ bool parse_lcr(const uint8_t* data, size_t size, LcrAnim& out, std::string* erro
 	if (version != 0x0600 || directions == 0 || directions > 64) {
 		return fail(error, "not an animation");
 	}
+	if (out.kind == 0x1E) {
+		// A ship's pennant (`faehnchen.lcr`): only three words after the head's byte, no shadow, and each frame
+		// its anchor and its body (x1, y1, x2, y2) without strips.
+		std::memset(out.words + 3, 0, 3 * sizeof(uint32_t));
+		Reader r{data, size, 0x29};
+		out.directions.resize(directions);
+		for (std::vector<LcrFrame>& frames : out.directions) {
+			uint32_t n = 0;
+			if (!r.u32(n) || n > 256) {
+				return fail(error, "bad frame count");
+			}
+			frames.resize(n);
+			for (LcrFrame& f : frames) {
+				int x2 = 0;
+				int y2 = 0;
+				if (!r.s32(f.anchor_x) || !r.s32(f.anchor_y) || !r.s32(f.body.x) || !r.s32(f.body.y) || !r.s32(x2) ||
+					!r.s32(y2)) {
+					return fail(error, "bad frame");
+				}
+				f.body.w = x2 - f.body.x + 1;
+				f.body.h = y2 - f.body.y + 1;
+			}
+		}
+		if (!r.text(out.image) || out.image.empty()) {
+			return fail(error, "bad image name");
+		}
+		return true;
+	}
 	Reader r{data, size, 0x35};
 	if (!r.text(out.shadow_image)) {
 		return fail(error, "bad shadow image name");
@@ -117,6 +145,25 @@ bool parse_lcr(const uint8_t* data, size_t size, LcrAnim& out, std::string* erro
 	}
 	if (!r.text(out.image) || out.image.empty()) {
 		return fail(error, "bad image name");
+	}
+	// A ship's look of hull state 0 and sails 0 goes on (0x56AFA0): the number of sections and each one's tag, a
+	// word, two words, its count of points (x, y in the image and two words 1, 1; 0x5852A0), its image's name and
+	// a key. The first is tag 4, the pennant's place in each of the 32 directions; the others (the icons over a
+	// ship: the marker arrow, the white flag...) aren't read.
+	uint32_t sections = 0;
+	uint32_t tag = 0;
+	uint32_t skip = 0;
+	uint32_t count = 0;
+	if (r.u32(sections) && sections > 0 && sections < 16 && r.u32(tag) && tag == 4 && r.u32(skip) && r.u32(skip) &&
+		r.u32(skip) && r.u32(count) && count <= 64 && r.at + 16 * size_t(count) <= size) {
+		out.pennant.resize(count);
+		for (LcrPoint& point : out.pennant) {
+			uint32_t one = 0;
+			r.s32(point.x);
+			r.s32(point.y);
+			r.u32(one);
+			r.u32(one);
+		}
 	}
 	return true;
 }

@@ -6,8 +6,9 @@
 // the ships with their shadows (0x62018B, the town view's ship sprites
 // 0x56B140), a sinking ship and the smoke of a burning one (0x62018B), the
 // cannon balls (0x6038C0), the guns' smoke and fire, the splashes, the hits
-// and their splinters (the engine's Sailing::BattleEffect), and the clouds of
-// the wind (0x6107B9). A battle at a town (its method +0x20,
+// and their splinters (the engine's Sailing::BattleEffect), each ship's
+// pennant in the wind (0x56CA0B, 0x568EA0), and the clouds of the wind
+// (0x6107B9). A battle at a town (its method +0x20,
 // 0x6018DB, then the sea's) is drawn over the town's battle map, which the
 // viewer's town view draws (BattleTownLayer), with its towers' smoke and fire.
 // The ships' labels are handed to the viewer, which has the fonts.
@@ -255,6 +256,7 @@ private:
 	std::map<size_t, Sinking> sinking_;  // By the scene's ship.
 	std::map<size_t, uint32_t> burning_;  // By the scene's ship: when it smokes next (0x620CDE).
 	std::array<TowerFire, 4> towers_{};
+	std::array<std::vector<SDL_Point>, 4> pennant_offsets_{};  // By type: each direction's pennant from the anchor.
 	std::array<SDL_Texture*, 2> splinter_images_{};
 	std::vector<Splinter> splinters_;
 	static constexpr int kRippleCell = 4;

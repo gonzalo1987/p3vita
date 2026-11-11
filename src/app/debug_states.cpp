@@ -8,6 +8,7 @@
 #include "p3data/game_memory.hpp"
 #include "p3data/hanse_tasks.hpp"
 #include "p3data/player_actions.hpp"
+#include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -371,6 +372,9 @@ const char kDebugStatesHelp[] =
 	"              ship its guard ship: a town battle against the player\n"
 	"  town-events  Lübeck with the eight event symbols of the town view, and towns\n"
 	"              with each of the sea map's (only to look at them)\n"
+	"  nest-attack  the player's first ship sails and attacks the first pirate's nest\n"
+	"              (a Hanse task of kind 3; the nest's place follows the ship): a\n"
+	"              battle at the nest against the player\n"
 	"  weak-towers  the towers of a town battle weakened when its screen opens: smoke\n"
 	"              and fire (only to look at them)\n"
 	"  damaged     the player's ships in port with half their hull (the shipyard)\n"
@@ -379,6 +383,96 @@ const char kDebugStatesHelp[] =
 	"  shipyard-materials  100 units of each shipyard material in that ship's town\n"
 	"  lender      loans on offer and asked for in that ship's town, an AI merchant's\n"
 	"              shares on sale (the moneylender)\n";
+
+namespace {
+
+constexpr uint32_t kTownTableEntries = 0x6DDB90;  // StadtDaten.ini, 0x34 bytes per number.
+constexpr uint32_t kPirateObjects = global::kShips + 0xC;  // The 5 pirate objects.
+
+// The first pirate with an object (its k), or -1.
+int first_pirate(const SaveGame& save) {
+	for (size_t k = 0; k < 5 && k < save.pirates.size(); ++k) {
+		if (save.globals.u32(kPirateObjects + 4 * uint32_t(k)) != 0 && save.pirates[k] && k < save.pirate_nests.size()) {
+			return int(k);
+		}
+	}
+	return -1;
+}
+
+}  // namespace
+
+// The player's attack on a pirate nest (the battles' piece 7, part 3), as nest_attack of
+// tools/oracle/retouch_unchecked.py does it for an AI merchant: the player's first ship, in port, is ordered to sail
+// to the last town (or the first; operation 0x00); a new event 0x32 (a Hanse task) of kind 3 for the player, started,
+// in its phase 1 ([+0x12] 1: the nest found), against the first pirate's nest ([+0x10] the pirate, [+0x11] its
+// nest's number), due at the next tick, the merchant's [+0xE1] the nest; and while that ship sails the viewer moves
+// the nest's place to it (follow_nest_attack), so that the task finds it right at the nest (0x4EBA71: distance² 0)
+// and it attacks (Sailing::nest_attack): a battle at the nest (0xFE − k) against the player.
+bool nest_attack(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	const int k = first_pirate(save);
+	const uint16_t ship = save.merchants[size_t(save.player)].memory.u16(0xE);
+	if (k < 0 || ship >= save.ships.size() || save.ships[ship].town() >= save.towns.size()) {
+		return false;
+	}
+	const uint8_t town = save.ships[ship].town();
+	const uint32_t target = town + 1u == save.towns.size() ? 0u : uint32_t(save.towns.size() - 1);
+	const uint32_t fields[5] = {0x00, ship, target, 0, 0};
+	std::vector<uint8_t> op(sizeof(fields));
+	std::memcpy(op.data(), fields, sizeof(fields));
+	save.queued_operations.push_back(op);
+	const uint8_t nest = save.pirates[size_t(k)]->u8(0xE);
+	const uint32_t now = g.u32(global::kWorldTick);
+	GameMemory<0x18>& e = save.events[tick::events_detail::fn_4d8cf0(save, now + 1)];
+	e.u16(0x6) = 0x32;
+	e.u32(0x8) = now + 0x3000;  // Its deadline.
+	e.u8(0xC) = 3;
+	e.u8(0xD) = uint8_t(save.player);
+	e.u8(0xE) = 0;
+	e.u8(0xF) = 1;
+	e.u8(0x10) = uint8_t(k);
+	e.u8(0x11) = nest;
+	e.u8(0x12) = 1;
+	e.u8(0x13) = 0xFF;
+	e.u16(0x14) = 0xFFFF;
+	e.u16(0x16) = 0;
+	save.merchants[size_t(save.player)].memory.u8(0xE1) = nest;
+	return true;
+}
+
+bool follow_nest_attack(SaveGame& save) {
+	const int k = first_pirate(save);
+	const uint16_t ship = save.player >= 0 ? save.merchants[size_t(save.player)].memory.u16(0xE) : 0xFFFF;
+	if (k < 0 || ship >= save.ships.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < save.battles.count(); ++i) {  // Its battle has started: done.
+		const int b = save.battles.battle(i);
+		if (b >= 0 && save.battles.get<uint32_t>(size_t(b), 0) == Sailing::kTownBattleVtable &&
+			save.battles.get<uint8_t>(size_t(b), 0x1E98) == 0xFE - k) {
+			return false;
+		}
+	}
+	const ShipMemory& m = save.ships[ship].memory;
+	// The ships move in a tick before its events run (0x506720 before 0x4D85C0): the place where the ship will be
+	// after the next tick, by how far it went in the last one.
+	static uint32_t seen_tick = 0;
+	static int32_t now_x = 0, now_y = 0, last_x = 0, last_y = 0;
+	const uint32_t t = save.globals.u32(global::kWorldTick);
+	if (t != seen_tick) {
+		seen_tick = t;
+		last_x = now_x;
+		last_y = now_y;
+		now_x = m.s16(0x1E);
+		now_y = m.s16(0x22);
+	}
+	if (m.u16(0x134) == 0xF) {
+		const uint32_t entry = kTownTableEntries + 0x34 * uint32_t(save.pirates[size_t(k)]->u8(0xE));
+		save.globals.s32(entry + 0x20) = 2 * now_x - last_x;
+		save.globals.s32(entry + 0x24) = 2 * now_y - last_y;
+	}
+	return true;
+}
 
 void weaken_towers(SaveGame& save, size_t battle) {
 	static constexpr int32_t kStrength[4] = {120000, 50000, 25000, 9000};
@@ -440,6 +534,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "alderman") {
 			save.globals.u8(kAlderman) = uint8_t(save.player);
 			save.globals.u8(kAldermanTown) = m.u8(0x19);
+		} else if (state == "nest-attack") {
+			if (!nest_attack(save)) {
+				error = "the player's first ship isn't in a town, or no pirate has a nest";
+				return false;
+			}
 		} else if (state == "weak-towers") {
 			// The viewer weakens them when the battle's screen opens (weaken_towers).
 		} else if (state == "damaged") {

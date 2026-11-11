@@ -6,7 +6,9 @@ names its images (AIM or BMP in the CPR) and gives, for each direction and frame
 them and the point of it that stands on the creature's place. Read by `src/p3data/lcr.cpp` (`parse_lcr`), worked
 out from the files on 2026-11-08 (the battles' piece 7, part 3) and checked on the 80 ships' looks and the 108
 effects; the town people's files with several sequences (`armbrust_pa`, `bogen_pa`, `musket_pa`) and the old
-ship files (`holk_0`..`4`, `kogge_0`..`4`...) have another layout and aren't read.
+ship files (`holk_0`..`4`, `kogge_0`..`4`...) have another layout and aren't read; a ship's pennant (class 0x1E)
+has its own, read too, and the ships' looks of hull state 0 and sails 0 a tail with it (below, «Other battle
+creatures»).
 
 The game loads them at start (0x5894F0: each name of `files.lst`, its u16 at 2 and its class at 4, an object of
 that class, 0x54F7E0, registered by the id); its loader 0x551000 checks a second byte 0x52, which these files
@@ -67,12 +69,23 @@ reuse them.
   takes the picture's cells. The class's init (0x5803B0) picks `_a` or `_b` by rand() among those of the detail
   level, its speed rand() % 64 − 32 and rand() % 44 − 22; its update (0x580520) moves it by speed · ms / 10000
   pixels, the speed shaken at random: the pieces float where the hit was.
-- **A ship's pennant**, class 0x1E (`faehnchen.lcr`, `_X_faehnchen.aim`: 32 directions of a small grey flag,
-  7 frames a second). Each ship's town view sprite makes one (0x56CA0B) at its place moved by a point per
-  direction from the view's table 0x6E1860 + 24 · type ([+4]: 8 bytes a direction), filled at load (not found
-  yet). Its update (0x568EA0) turns it to the wind's direction (the view's [+0x598]) and steps its frames
-  faster with a stronger wind ([+0x599]: a frame's time less its [+0x599] / 20). (The battles' notes once
-  took it for the bow wave.)
+- **A ship's pennant**, class 0x1E (`faehnchen.lcr`, `_X_faehnchen.aim`, a small grey flag). Another layout:
+  after the head's byte at 0x1C only three words (0x1D, 0x21, 0x25: 0), no shadow's name, and from 0x29 its 32
+  directions, each its count of frames (5) and per frame six s32: the anchor x, y and the body x1, y1, x2, y2
+  (inclusive), without strips; then the main image's name. Read by `parse_lcr` (2026-11-11). Each ship's town
+  view sprite makes one (0x56CA0B) at its place moved by the view's table 0x6E1860 + 24 · type ([+4]: 8 bytes a
+  direction); its update (0x568EA0) turns it to the wind's direction (the view's [+0x598]) and steps its frames
+  faster with a stronger wind ([+0x599]: a frame's time less its [+0x599] / 20). (The battles' notes once took
+  it for the bow wave.)
+- **The tail of a ship's look of hull state 0 and sails 0** (`<type>_schaden00_segel00.lcr`; 0x56AFA0 reads it
+  as the look loads): after the main image's name, u32 the number of sections, and each: u32 its tag (0..5), a
+  word, two words, u32 its count, count records of four s32 (x, y in the main image, 1, 1; 0x5852A0), its image's
+  name and a key (0xFFFF00FF). The first section is tag 4, the pennant: 32 points, one a direction (the cog's
+  first (27, 1), its anchor there (28, 87): the mast's top); 0x56B052 takes each less that direction's anchor
+  into the table 0x6E1860 of the type (the same for its other looks). The snaikka's file has five more, the
+  icons over a ship (tags 0..3, 5: `markerpfeil01.aim`, `Versteigerung und Verkauf01.tga`, `Im Hafen
+  ausbau.tga`, `shield_autohandel.tga`, `weisseFlagge.tga`, into 0x6E1920, 0x6E18F0, 0x6E1908, 0x6E18C0,
+  0x6E18D8). `parse_lcr` keeps the pennant's points (`LcrAnim::pennant`).
 - **Waves**, class 0x12 number 0x50 (`welle_a`, `_b`, `_c`, black is nothing: added light), and the sinking
   ship's whirlpool, number 0x51 (`schiffuntergangstrudel.lcr`, `_X_bodenschiffuntergangpage.aim`). Who asks
   for them wasn't looked at. The town view's ripples (a sinking ship's foam, a ship's wake) aren't creatures but

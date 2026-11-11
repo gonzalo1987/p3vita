@@ -1476,36 +1476,74 @@ private:
 // The town under a battle at it (the battles' piece 7, part 3): the game's town view shows the attacked town's
 // battle map (0x58A310 → 0x58EB30, load_battle_town_template: its harbour with the open sea before it) with the
 // town's buildings as they are now, moved by the map's offset (the battle's [+0x1ED8], [+0x1EDC]; the view's
-// [+0x528], [+0x52C]). Its template is loaded once; its buildings are placed again when the town's change (a
-// tower falls and burns).
+// [+0x528], [+0x52C]); at a pirate nest (0xFE − k), the nest's map (0x515D20: 251..254) with its pool's buildings
+// (0x515B80), moved by that file's last two numbers (not the battle's, which 0x5FFC10 works out otherwise for a
+// nest). Its template is loaded once; its buildings are placed again when they change (a tower falls and burns).
 class BattleTown {
 public:
-	bool load(const CprArchive& archive, const SaveGame& save, size_t index, const std::vector<int>& regions,
+	bool load(const CprArchive& archive, const SaveGame& save, size_t battle, const std::vector<int>& regions,
 		std::string& error) {
-		if (index >= save.towns.size()) {
+		const uint8_t place = save.battles.get<uint8_t>(battle, 0x1E98);
+		const bool nest = place >= save.towns.size();
+		const size_t k = size_t(0xFE - place);
+		if (nest && (place < 0xFA || !save.pirates[k] || k >= save.pirate_nests.size())) {
 			loaded_ = false;
-			error = "the save has no town " + std::to_string(index);
+			error = "no pirate nest " + std::to_string(place);
 			return false;
 		}
-		if (loaded_ && index == index_) {
+		const int map = nest ? 0xFE - (save.pirates[k]->u8(0xF) & 3) : save.towns[place].template_map() | 0x80;
+		if (loaded_ && place == place_ && map == map_) {
 			return true;
 		}
-		index_ = index;
+		place_ = place;
+		map_ = map;
+		nest_ = nest;
 		key_ = 0;
-		loaded_ = load_battle_town_template(archive, save.towns[index], regions, base_, &error);
+		if (nest) {
+			const uint8_t id = save.pirates[k]->u8(0xE);
+			const int region = id < regions.size() ? regions[id] : regions.empty() ? 0 : regions[0];
+			int32_t x = 0, y = 0;
+			loaded_ = load_nest_town_template(archive, map, region, base_, &error);
+			load_town_ends(archive, map, x, y);
+			origin_ = {x, y};
+		} else {
+			loaded_ = load_battle_town_template(archive, save.towns[place], regions, base_, &error);
+			origin_ = {save.battles.get<int32_t>(battle, 0x1ED8), save.battles.get<int32_t>(battle, 0x1EDC)};
+		}
 		return loaded_;
 	}
 
-	void draw(const SaveGame& save, const TileSet& tiles, int dx, int dy, TownMap& out, std::vector<uint8_t>* owners) {
-		place_saved_town(base_, save, index_, tiles, out, owners, dx, dy);
-		key_ = drawn_buildings_key(save, index_);
+	void draw(const SaveGame& save, const TileSet& tiles, TownMap& out, std::vector<uint8_t>* owners) {
+		if (nest_) {
+			const size_t k = size_t(0xFE - place_);
+			out = base_.town;
+			place_nest_buildings(save.pirate_nests[k], save.pirates[k]->u16(0x8), base_.region, tiles, out, owners,
+				origin_.x, origin_.y);
+		} else {
+			place_saved_town(base_, save, place_, tiles, out, owners, origin_.x, origin_.y);
+		}
+		key_ = key(save);
 	}
 
-	bool changed(const SaveGame& save) const { return loaded_ && drawn_buildings_key(save, index_) != key_; }
+	bool changed(const SaveGame& save) const { return loaded_ && key(save) != key_; }
+	// The view's origin [+0x528], [+0x52C]: what its buildings' cells are moved by.
+	SDL_Point origin() const { return origin_; }
+	bool nest() const { return nest_; }
 
 private:
+	uint64_t key(const SaveGame& save) const {
+		if (!nest_) {
+			return drawn_buildings_key(save, place_);
+		}
+		const size_t k = size_t(0xFE - place_);
+		return save.pirates[k] ? nest_buildings_key(save.pirate_nests[k], save.pirates[k]->u16(0x8)) : 0;
+	}
+
 	SavedTownTemplate base_;
-	size_t index_ = 0;
+	size_t place_ = 0;  // The town, or the nest's 0xFE − k.
+	int map_ = -1;
+	bool nest_ = false;
+	SDL_Point origin_ = {0, 0};
 	bool loaded_ = false;
 	uint64_t key_ = 0;
 };
@@ -8023,16 +8061,15 @@ int main(int argc, char** argv) {
 	// The battles' window: open in the engine (the question, an end, a boarding), its box, and its buttons.
 	auto battle_window_up = [&]() { return sailing && save.battle_window.present && save.battle_window.open; };
 	auto steer_label = [&]() { return lender_text(0x6B2BC0, "Dirigir manualmente", "Steer manually"); };
-	// Whether the battle in that slot can be steered: the battle's screen draws the sea battles and those at a
-	// town (not yet a pirate nest's).
+	// Whether the battle in that slot can be steered: the battle's screen draws the sea battles, those at a town
+	// and those at a pirate nest.
 	auto can_steer = [&](int slot) {
 		const int b = slot >= 0 && slot < 0xFF ? save.battles.battle(size_t(slot)) : -1;
 		if (!kBattleScreen || b < 0) {
 			return false;
 		}
 		const uint32_t vtable = save.battles.get<uint32_t>(size_t(b), 0);
-		return vtable == Sailing::kSeaBattleVtable ||
-			(vtable == Sailing::kTownBattleVtable && save.battles.get<uint8_t>(size_t(b), 0x1E98) < save.towns.size());
+		return vtable == Sailing::kSeaBattleVtable || vtable == Sailing::kTownBattleVtable;
 	};
 	auto battle_window_box = [&]() {
 		ChoiceBox box;
@@ -8140,6 +8177,8 @@ int main(int argc, char** argv) {
 	BattleTown battle_town;  // The town's battle map under the battle on the screen at a town.
 	const bool debug_weak_towers =
 		options.debug_state && std::string(options.debug_state).find("weak-towers") != std::string::npos;
+	bool debug_nest_attack =
+		options.debug_state && std::string(options.debug_state).find("nest-attack") != std::string::npos;
 	int battle_town_index = -1;  // That town, while its battle map is shown; −1.
 	// The town under that battle: where a ball splashes (0x60329B: a cell of the water, .let type 0xE, or a sand
 	// bank, 0x13; a puff on anything else); its drawing's parts are added where it is drawn.
@@ -8499,11 +8538,14 @@ int main(int argc, char** argv) {
 		// The battle the player directs, on the screen ([0x6E59CC], the battles' [+0x3FC]): it takes the town's
 		// part of the screen and its camera (the battles' piece 7, part 3); its graphics load a sheet a frame. At a
 		// town, the town view shows the town's battle map under it (BattleTown).
+		if (debug_nest_attack && has_save) {
+			debug_nest_attack = p3::app::follow_nest_attack(save);
+		}
 		auto show_battle_town = [&](size_t b) {
 			TownMap map;
 			std::vector<uint8_t> owners;
-			battle_town.draw(save, view->tiles(), save.battles.get<int32_t>(b, 0x1ED8), save.battles.get<int32_t>(b, 0x1EDC),
-				map, &owners);
+			(void)b;
+			battle_town.draw(save, view->tiles(), map, &owners);
 			view->show(map, std::move(owners));
 			live.forget_drawn();
 		};
@@ -8523,13 +8565,13 @@ int main(int argc, char** argv) {
 				if (on_screen >= 0 && p3::app::BattleView::at_town(save, size_t(on_screen))) {
 					const uint8_t town = save.battles.get<uint8_t>(size_t(on_screen), 0x1E98);
 					std::string error;
-					if (town < save.towns.size() && battle_town.load(*archive, save, town, regions, error)) {
+					if (battle_town.load(*archive, save, size_t(on_screen), regions, error)) {
 						show_battle_town(size_t(on_screen));
 						town_now = town;
 						if (debug_weak_towers) {
 							p3::app::weaken_towers(save, size_t(on_screen));
 						}
-					} else if (town < save.towns.size()) {
+					} else {
 						std::fprintf(stderr, "the battle map: %s\n", error.c_str());
 					}
 				}
@@ -10445,9 +10487,15 @@ int main(int argc, char** argv) {
 							const int ax = camera_x + touch_start.x, ay = camera_y + touch_start.y;
 							const int tower = battle_town_index >= 0 ? p3::app::BattleView::tower_at(save, b, ax, ay) : -1;
 							if (tower >= 0) {
+								// The cell of the view where its building is drawn: the tower's own moved by the view's
+								// origin (at a town 0x6016CB takes the map's ends off again). At a nest it doesn't
+								// (it compares the view's cell with the nest's): on the map 253, whose file moves
+								// the buildings by (1, 4), no tower is found, as on the PC; with fix_game_bugs() the
+								// tower's own cell, so that it's found.
 								const BattleGraph& g = save.battles;
-								sailing->fn_6016cb(b, int32_t(g.get<uint8_t>(b, 0x1EAE + size_t(tower))) + g.get<int32_t>(b, 0x1ED8),
-									int32_t(g.get<uint8_t>(b, 0x1EB2 + size_t(tower))) + g.get<int32_t>(b, 0x1EDC));
+								const SDL_Point o = battle_town.nest() && fix_game_bugs() ? SDL_Point{0, 0} : battle_town.origin();
+								sailing->fn_6016cb(b, int32_t(g.get<uint8_t>(b, 0x1EAE + size_t(tower))) + o.x,
+									int32_t(g.get<uint8_t>(b, 0x1EB2 + size_t(tower))) + o.y);
 								battle_view->mark_order(g.get<uint16_t>(b, 0x1E9E + 2 * size_t(tower)),
 									p3::app::BattleView::screen_y(g.get<uint16_t>(b, 0x1EA6 + 2 * size_t(tower))), app_ticks());
 							} else if (battle_town_index < 0 || !view->building_at(ax, ay)) {

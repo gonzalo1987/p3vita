@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 
 namespace p3::data {
@@ -38,6 +39,16 @@ TownFixedPoints current_fixed_points(const TownMemory& m) {
 	copy(f.sites);
 	copy(f.shipyards);
 	return f;
+}
+
+// A pirate nest's pool in the order 0x515B80 places it: from entry 0 along [+0x4] while below its count.
+template <class Visit>
+void walk_nest_entries(const PirateNest& nest, uint32_t count, Visit visit) {
+	size_t walked = 0;
+	for (uint32_t i = 0; count > 0 && i < count && i < nest.pool.size() && walked < nest.pool.size(); ++walked) {
+		visit(nest.pool[i]);
+		i = nest.pool[i].u16(0x4);
+	}
 }
 
 // Calls visit(record) for each record of the drawn lists, in the game's order.
@@ -215,7 +226,8 @@ std::vector<FootprintCell> footprint(int x, int y, int cols, int rows) {
 	return cells;
 }
 
-void building_objects(const BuildingRecord& record, const SavedTown& town, int region, int merchant_count,
+// (`town` null: a pirate nest's, without a church or a statue.)
+void building_objects(const BuildingRecord& record, const SavedTown* town, int region, int merchant_count,
 	const TileIndex& index, std::vector<Placed>& out, size_t& missing) {
 	if (record.type >= sizeof(kBuildingTileType)) {
 		missing++;
@@ -237,7 +249,7 @@ void building_objects(const BuildingRecord& record, const SavedTown& town, int r
 		break;
 	}
 	case kTileChurch:
-		tile = index.find_regional(tile_type, [&](const auto& p) { return has(p, 2, town.church_level()); },
+		tile = index.find_regional(tile_type, [&](const auto& p) { return has(p, 2, town ? town->church_level() : 0); },
 			region, 1);
 		break;
 	case kTileTownHall:
@@ -272,7 +284,7 @@ void building_objects(const BuildingRecord& record, const SavedTown& town, int r
 	case kTileMonument:
 		if (record.owner >= merchant_count) {
 			// Supuesto: la estatua de la ciudad es el statue_* de su tabla.
-			const uint32_t statue = town.town_id() < 40 ? kStatueByTown[town.town_id()] : 0;
+			const uint32_t statue = town && town->town_id() < 40 ? kStatueByTown[town->town_id()] : 0;
 			tile = index.find(kTileStatue, [&](const auto& p) { return has(p, 1, statue); });
 		} else {
 			tile = index.find(tile_type, [&](const auto& p) { return has(p, 1, param); });
@@ -386,6 +398,8 @@ void kontor_objects(const TownFixedPoints& f, const TownMap& map, const TileInde
 	}
 }
 
+void put_placed(const TileSet& tiles, const std::vector<Placed>& placed, TownMap& town, std::vector<uint8_t>* owners);
+
 }  // namespace
 
 KontorView kontor_view(const SaveGame& save, size_t town) {
@@ -460,7 +474,7 @@ size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int reg
 
 	// Las listas que dibuja el juego, siguiendo el campo `next` de cada registro.
 	walk_drawn_records(saved, office_heads, [&](const BuildingRecord& record) {
-		building_objects(record, saved, region, merchant_count, index, placed, missing);
+		building_objects(record, &saved, region, merchant_count, index, placed, missing);
 	});
 	fixed_objects(saved, current_fixed_points(saved.memory), town, index, editor, tiles, placed, dx, dy);
 	if (kontors) {
@@ -470,7 +484,15 @@ size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int reg
 		p.x += dx;
 		p.y += dy;
 	}
+	put_placed(tiles, placed, town, owners);
+	return missing;
+}
 
+namespace {
+
+// What place_saved_buildings and place_nest_buildings have to place, put on the map: the natural objects it
+// covers taken away whole, each cell to the last one placed on it.
+void put_placed(const TileSet& tiles, const std::vector<Placed>& placed, TownMap& town, std::vector<uint8_t>* owners) {
 	// Objetos naturales del mapa (árboles, rocas...), agrupados por huella desde
 	// su celda delantera, para poder quitarlos enteros si un edificio los pisa.
 	const size_t cells = size_t(town.width) * size_t(town.height);
@@ -533,7 +555,63 @@ size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int reg
 			}
 		}
 	}
+}
+
+}  // namespace
+
+size_t place_nest_buildings(const PirateNest& nest, uint32_t count, int region, const TileSet& tiles,
+	TownMap& town, std::vector<uint8_t>* owners, int dx, int dy) {
+	const TileIndex index(tiles);
+	std::vector<Placed> placed;
+	size_t missing = 0;
+	walk_nest_entries(nest, count, [&](const GameMemory<8>& e) {
+		if (e.u8(0x6) >= 0xC8) {
+			return;  // Fallen (0x515BB0): not drawn.
+		}
+		BuildingRecord record;
+		record.x = e.u8(0x0);
+		record.y = e.u8(0x1);
+		record.type = e.u8(0x3);
+		record.param = e.u8(0x7);
+		record.owner = kRivalOwner;  // Not a merchant's.
+		building_objects(record, nullptr, region, 0, index, placed, missing);
+	});
+	for (Placed& p : placed) {
+		p.x += dx;
+		p.y += dy;
+	}
+	put_placed(tiles, placed, town, owners);
 	return missing;
+}
+
+uint64_t nest_buildings_key(const PirateNest& nest, uint32_t count) {
+	uint64_t key = 1469598103934665603ull;
+	walk_nest_entries(nest, count, [&](const GameMemory<8>& e) {
+		const uint32_t v = uint32_t(e.u8(0x0)) | uint32_t(e.u8(0x1)) << 8 | uint32_t(e.u8(0x3)) << 16 |
+			uint32_t(e.u8(0x6) >= 0xC8) << 24 | uint32_t(e.u8(0x7)) << 25;
+		key = (key ^ v) * 1099511628211ull;
+	});
+	return key;
+}
+
+bool load_town_ends(const CprArchive& archive, int id, int32_t& x, int32_t& y) {
+	const CprEntry* entry = archive.find("iso/towns/" + std::to_string(id) + ".town");
+	std::vector<uint8_t> data;
+	if (!entry || !archive.read(*entry, data) || data.size() < 8) {
+		return false;
+	}
+	std::memcpy(&x, data.data() + data.size() - 8, 4);
+	std::memcpy(&y, data.data() + data.size() - 4, 4);
+	return true;
+}
+
+bool load_nest_town_template(const CprArchive& archive, int map, int region, SavedTownTemplate& out, std::string* error) {
+	if (!load_town(archive, map, out.town, error)) {
+		return false;
+	}
+	out.has_editor = load_town(archive, map, out.editor, nullptr, true);
+	out.region = region;
+	return true;
 }
 
 uint64_t drawn_buildings_key(const SavedTown& saved, const std::vector<uint16_t>& office_heads) {
