@@ -359,6 +359,22 @@ enum class GameText {
 	HomeTownStation,
 	HomeTownEffective,
 	HomeTownNormal,
+	// The goal's times after «10 years» (0x69AAE8..: «15 years», «20 years», «30 years», «50 years», «endless»)
+	// and the Hanse's population goal's (0x69AC64..: «70,000 inhabitants», «100,000 ...», «200,000 ...»).
+	YearsFifteen,
+	YearsEndless = YearsFifteen + 4,
+	PopulationGoal,
+	PopulationGoalLast = PopulationGoal + 2,
+	// The map choice's window (0x434D30, opened by the map's button): «Choose Map», «Map Information», «This is
+	// the standard map provided with the game.», «File», «Number of towns», «Commentary» (0x6AEF18..) and its
+	// «Load» (0x69B138).
+	MapChoose,
+	MapInformation,
+	MapStandardText,
+	MapFile,
+	MapTowns,
+	MapCommentary,
+	ButtonLoad,
 	Count
 };
 

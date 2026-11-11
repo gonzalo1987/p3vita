@@ -262,6 +262,34 @@ void balls() {
 	check(first.choices.goal == 4 && first.choices.goal_time == 9, "4 → 3 → 4 keeps the time");
 }
 
+// The «Details» window (0x49B5C0): the first six rows up with +, the capital
+// and the start the other way round; when each ball can be pressed (0x49B180).
+void details_window() {
+	std::array<uint8_t, 8> d = kNewGameLevelDetails[0];  // 1, 1, 1, 1, 1, 1, 1, 2
+	check(!new_game_detail_enabled(d, 0, false) && new_game_detail_enabled(d, 0, true), "trade at 1: only +");
+	press_new_game_detail(d, 0, true);
+	press_new_game_detail(d, 0, true);
+	press_new_game_detail(d, 0, true);
+	check(d[0] == 3 && !new_game_detail_enabled(d, 0, true) && new_game_detail_enabled(d, 0, false), "trade up to 3");
+	press_new_game_detail(d, 5, false);
+	check(d[5] == 1, "the prince not below 1");
+	// The capital: 1 the most money; − takes it towards 3.
+	check(new_game_detail_enabled(d, 6, false) && !new_game_detail_enabled(d, 6, true), "capital at 1: only −");
+	press_new_game_detail(d, 6, false);
+	press_new_game_detail(d, 6, false);
+	press_new_game_detail(d, 6, false);
+	check(d[6] == 3 && !new_game_detail_enabled(d, 6, false) && new_game_detail_enabled(d, 6, true), "capital to 3");
+	press_new_game_detail(d, 6, true);
+	check(d[6] == 2, "+ gives money back");
+	// The start: 2 (one ship) at the most; + takes it to 1 (two ships).
+	check(!new_game_detail_enabled(d, 7, false) && new_game_detail_enabled(d, 7, true), "start at 2: only +");
+	press_new_game_detail(d, 7, false);
+	check(d[7] == 2, "the start not above 2");
+	press_new_game_detail(d, 7, true);
+	check(d[7] == 1 && new_game_detail_enabled(d, 7, false) && !new_game_detail_enabled(d, 7, true), "start at 1");
+	check(new_game_level_of(d) == 1, "3+1+1+1+1+1+2+1 = 11: the second level");
+}
+
 }  // namespace
 
 int main() {
@@ -272,6 +300,7 @@ int main() {
 	town_wares();
 	config_limits();
 	balls();
+	details_window();
 	if (failures == 0) {
 		std::printf("new game window: OK\n");
 	}

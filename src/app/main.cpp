@@ -15,6 +15,7 @@
 #include <cstring>
 #include <ctime>
 #include <deque>
+#include <dirent.h>
 #include <map>
 #include <memory>
 #include <string>
@@ -7757,6 +7758,12 @@ int main(int argc, char** argv) {
 	int home_town_cursor = -1;
 	int home_town_pressed = -1;
 	std::vector<SDL_Point> home_town_places;
+	// Its «Details» window: the details being changed (a copy, 0x49B180), the
+	// buttons' cursor and the finger's control.
+	bool details_open = false;
+	std::array<uint8_t, p3::app::kDetailRows> details_copy{};
+	int details_focus = p3::app::kDetailOk;
+	int details_pressed = -1;
 	bool has_save = !start_open &&
 		load_savegame(*archive, options.save ? options.save : kStartSave, save) && !save.towns.empty();
 	if (options.debug_state) {
@@ -8102,19 +8109,14 @@ int main(int argc, char** argv) {
 	};
 	// A new game (the user's choice, 2026-11-11: from the game's main menu, the
 	// start screen) as the game's window starts it (p3data/new_game.hpp): the
-	// game's data in a new save, its settings, the map Standard24, the player's
+	// game's data in a new save, its settings, the window's map, the player's
 	// names, and srand with the time. On a failure the game in play stays.
-	auto new_game = [&](const SettingsMemory& game_settings, const NewGamePlayer& player) {
+	auto new_game = [&](const SettingsMemory& game_settings, const NewGamePlayer& player, const GameMap& map) {
 		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
-		GameMap map;
-		std::string error;
 		if (!nav) {
 			nav = NavData::load(*archive);
 		}
-		if (!nav || !load_game_map(*archive, "maps/Standard24.gmf", map, &error)) {
-#ifndef __vita__
-			std::fprintf(stderr, "%s\n", error.c_str());
-#endif
+		if (!nav) {
 			notify(tr("No se puede empezar la partida.", "The game can't be started."));
 			return false;
 		}
@@ -8467,12 +8469,53 @@ int main(int argc, char** argv) {
 		}
 		t.back = game_text(GameText::ButtonBack, tr("Atrás", "Back"));
 		t.start = game_text(GameText::NewGameStart, tr("Jugar", "Start"));
+		static constexpr const char* kYears[15][2] = {{"1 año", "1 year"}, {"2 años", "2 years"}, {"3 años", "3 years"},
+			{"4 años", "4 years"}, {"5 años", "5 years"}, {"6 años", "6 years"}, {"7 años", "7 years"}, {"8 años", "8 years"},
+			{"9 años", "9 years"}, {"10 años", "10 years"}, {"15 años", "15 years"}, {"20 años", "20 years"},
+			{"30 años", "30 years"}, {"50 años", "50 years"}, {"sin límite de años", "endless"}};
+		for (size_t k = 0; k < t.years.size(); ++k) {
+			const GameText id = k < 10 ? GameText(int(GameText::YearsOne) + int(k))
+									   : GameText(int(GameText::YearsFifteen) + int(k) - 10);
+			t.years[k] = game_text(id, tr(kYears[k][0], kYears[k][1]));
+		}
+		static constexpr const char* kPopulation[3][2] = {{"70.000 habitantes", "70,000 inhabitants"},
+			{"100.000 habitantes", "100,000 inhabitants"}, {"200.000 habitantes", "200,000 inhabitants"}};
+		for (size_t k = 0; k < t.population.size(); ++k) {
+			t.population[k] =
+				game_text(GameText(int(GameText::PopulationGoal) + int(k)), tr(kPopulation[k][0], kPopulation[k][1]));
+		}
+		static constexpr const char* kDetailLabels[8][2] = {{"Dificultad para comerciar", "Difficulty level of trade"},
+			{"Dificultad para subir reputación", "Difficulty level of reputation"},
+			{"Demanda de población", "Needs of the citizens"}, {"Dificultad en batallas navales", "Difficulty level of sea battle"},
+			{"Actividad de los piratas", "Pirates activity"}, {"Actividad del príncipe", "Activity of the Prince"},
+			{"Riqueza inicial", "Starting capital"}, {"Número de barcos", "Number of ships"}};
+		for (size_t k = 0; k < t.detail_labels.size(); ++k) {
+			t.detail_labels[k] =
+				game_text(GameText(int(GameText::DetailTrade) + int(k)), tr(kDetailLabels[k][0], kDetailLabels[k][1]));
+		}
+		// The 7 tables of 3 (trade, reputation, needs, sea battle, pirates, prince, capital).
+		static constexpr const char* kEasy[3][2] = {{"Fácil", "easy"}, {"Normal", "normal"}, {"Difícil", "hard"}};
+		static constexpr const char* kLow[3][2] = {{"Baja", "low"}, {"Normal", "normal"}, {"Alta", "high"}};
+		static constexpr const char* kAverage[3][2] = {{"Baja", "low"}, {"Normal", "average"}, {"Alta", "high"}};
+		static constexpr const char* const (*kTables[7])[2] = {kEasy, kEasy, kLow, kEasy, kLow, kLow, kAverage};
+		for (size_t k = 0; k < t.detail_values.size(); ++k) {
+			const char* const* pair = kTables[k / 3][k % 3];
+			t.detail_values[k] = game_text(GameText(int(GameText::DetailValueTrade) + int(k)), tr(pair[0], pair[1]));
+		}
+		t.cancel = game_text(GameText::ButtonCancel, tr("Cancelar", "Cancel"));
+		t.ok = game_text(GameText::ButtonOk, tr("OK", "OK"));
+		t.choose_map = game_text(GameText::MapChoose, tr("Elige un mapa", "Choose Map"));
+		t.map_information = game_text(GameText::MapInformation, tr("Información del mapa", "Map Information"));
+		t.standard_map_text = game_text(GameText::MapStandardText,
+			tr("Este es el mapa original proporcionado con el juego.", "This is the standard map provided with the game."));
+		t.file = game_text(GameText::MapFile, tr("Archivo", "File"));
+		t.towns = game_text(GameText::MapTowns, tr("Número de ciudades", "Number of towns"));
+		t.commentary = game_text(GameText::MapCommentary, tr("Comentario", "Commentary"));
+		t.load = game_text(GameText::ButtonLoad, tr("Cargar", "Load"));
 		return t;
 	};
-	// What the window shows. In this part (the roadmap's (c)) the names, the
-	// sex, the home town, the year, «Back» and «Start» can be used; the map (the only one,
-	// Standard24), the level, the details, the goal, its time and the speed show
-	// their values, dimmed (part (d)).
+	// What the window shows: every control can be used («Start» only with both
+	// names).
 	auto new_game_view = [&]() {
 		p3::app::NewGameWindow::View v;
 		const NewGameChoices& c = new_game_state.choices;
@@ -8487,20 +8530,17 @@ int main(int argc, char** argv) {
 			switch (control) {
 			case NewGameControl::FirstName:
 			case NewGameControl::FamilyName:
+			case NewGameControl::Map:
 			case NewGameControl::HomeTown:
+			case NewGameControl::Details:
 			case NewGameControl::Back:
 				on = true;
 				break;
 			case NewGameControl::Start:
 				on = !c.first_name.empty() && !c.family_name.empty();  // 0x49A906..
 				break;
-			case NewGameControl::GenderLeft:
-			case NewGameControl::GenderRight:
-			case NewGameControl::YearMinus:
-			case NewGameControl::YearPlus:
-				on = new_game_ball_enabled(c, ball);
-				break;
 			default:
+				on = ball != NewGameBall::Count && new_game_ball_enabled(c, ball);
 				break;
 			}
 			v.enabled[size_t(k)] = on;
@@ -8542,18 +8582,39 @@ int main(int argc, char** argv) {
 			std::fprintf(stderr, "can't save %s\n", settings_file.c_str());
 		}
 	};
-	auto open_new_game = [&]() {
-		if (!new_game_map_read) {
-			std::string error;
-			if (!load_game_map(*archive, "maps/Standard24.gmf", new_game_map, &error)) {
+	// The window's map (0x549940 with [+0x470]): the standard one is the
+	// archive's maps/Standard24.gmf; another, its .gmf in the Maps folder of the
+	// viewer's (as the game's in its own folder), or Standard24 if it can't be
+	// read (0x499192). Then the home town a Hanse town of it (0x4991AC).
+	auto read_new_game_map = [&]() {
+		NewGameChoices& c = new_game_state.choices;
+		std::string error;
+		if (!c.map.empty() &&
+			!load_game_map_file(data_dir + "Maps/" + latin1_to_utf8(c.map) + ".gmf", new_game_map, &error)) {
 #ifndef __vita__
-				std::fprintf(stderr, "%s\n", error.c_str());
+			std::fprintf(stderr, "%s\n", error.c_str());
 #endif
-				notify(tr("No se puede empezar la partida.", "The game can't be started."));
-				return;
-			}
-			new_game_map_read = true;
+			c.map.clear();
 		}
+		if (c.map.empty() && !load_game_map(*archive, "maps/Standard24.gmf", new_game_map, &error)) {
+#ifndef __vita__
+			std::fprintf(stderr, "%s\n", error.c_str());
+#endif
+			return false;
+		}
+		if (c.home >= new_game_map.count) {
+			c.home = 0;
+		}
+		c.home = previous_hanse_town(new_game_map, next_hanse_town(new_game_map, c.home));
+		return true;
+	};
+	auto open_new_game = [&]() {
+		new_game_state.choices.map.clear();  // The standard map each time it opens (0x49802E).
+		if (!read_new_game_map()) {
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return;
+		}
+		new_game_map_read = true;
 		if (!new_game_window) {
 			new_game_window = std::make_unique<p3::app::NewGameWindow>(renderer, *archive, kScreenWidth, kScreenHeight);
 		}
@@ -8561,17 +8622,159 @@ int main(int argc, char** argv) {
 			notify(tr("No se puede empezar la partida.", "The game can't be started."));
 			return;
 		}
-		// A home town that isn't a Hanse town: the one before the next (as the
-		// map's choice does, 0x4991AC).
-		NewGameChoices& c = new_game_state.choices;
-		if (c.home >= new_game_map.count) {
-			c.home = 0;
-		}
-		c.home = previous_hanse_town(new_game_map, next_hanse_town(new_game_map, c.home));
 		new_game_texts = make_new_game_texts();
 		new_game_open = true;
 		new_game_focus = int(NewGameControl::Start);
 		new_game_pressed = -1;
+	};
+	// The map choice's window: the standard map and the .gmf of the Maps folder
+	// (0x435DA0: their titles, in the folder's order; here sorted), the one
+	// chosen with its information (0x4368B0 reads its towns and commentary),
+	// the first row shown, the finger's control and the buttons' cursor.
+	bool map_choice_open = false;
+	std::vector<std::string> map_names;  // UTF-8, the first the standard map's.
+	int map_selected = -1;
+	int map_first = 0;
+	int map_pressed = -1;
+	int map_focus = -1;
+	GameMap map_info;
+	auto open_map_choice = [&]() {
+		map_names.assign(1, new_game_texts.standard_map);
+		std::vector<std::string> titles;
+		const std::string folder = data_dir + "Maps";
+		if (DIR* dir = opendir(folder.c_str())) {
+			while (const dirent* entry = readdir(dir)) {
+				const std::string name = entry->d_name;
+				if (name.size() > 4 && name[0] != '.') {
+					std::string ext = name.substr(name.size() - 4);
+					std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+					if (ext == ".gmf") {
+						titles.push_back(name.substr(0, name.size() - 4));
+					}
+				}
+			}
+			closedir(dir);
+		}
+		std::sort(titles.begin(), titles.end());
+		map_names.insert(map_names.end(), titles.begin(), titles.end());
+		map_selected = -1;  // 0x435DA0
+		map_first = 0;
+		map_pressed = -1;
+		map_focus = -1;
+		map_choice_open = true;
+	};
+	auto map_view = [&]() {
+		p3::app::NewGameWindow::MapView v;
+		v.names = &map_names;
+		v.texts = &new_game_texts;
+		v.first = map_first;
+		v.selected = map_selected;
+		v.pressed = map_pressed;
+		v.focus = map_focus;
+		if (map_selected == 0) {
+			v.file = new_game_texts.standard_map;
+			v.towns = 24;  // 0x4365F6
+			v.commentary = new_game_texts.standard_map_text;
+		} else if (map_selected > 0) {
+			v.file = map_names[size_t(map_selected)];
+			v.towns = map_info.count;
+			v.commentary = latin1_to_utf8(map_info.commentary);
+		}
+		return v;
+	};
+	auto map_select = [&](int row) {
+		if (row < 0 || row >= int(map_names.size())) {
+			return;
+		}
+		if (row != map_selected && row > 0) {
+			map_info = GameMap();
+			load_game_map_file(data_dir + "Maps/" + map_names[size_t(row)] + ".gmf", map_info);
+		}
+		map_selected = row;
+		map_first = std::clamp(map_first, std::max(0, row - p3::app::NewGameWindow::kMapRows + 1), row);
+	};
+	// «Load» (0x435729): the map's name into the window (empty for the standard
+	// one) and the map's productions (the window's production, 1: its buttons
+	// are hidden); the window reads the map (0x499153).
+	auto map_load = [&]() {
+		if (map_selected < 0) {
+			return;
+		}
+		NewGameChoices& c = new_game_state.choices;
+		c.map = map_selected == 0 ? std::string() : utf8_to_latin1(map_names[size_t(map_selected)]);
+		c.production = 1;
+		map_choice_open = false;
+		if (!read_new_game_map()) {
+			c.map.clear();
+			read_new_game_map();
+		}
+	};
+	auto map_choice_frame = [&]() {
+		SDL_Event event;
+		while (SDL_PollEvent(&event)) {
+			if ((event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP) &&
+				rear_touch(event.tfinger.touchId)) {
+				continue;
+			}
+			const int x = int(event.tfinger.x * kScreenWidth);
+			const int y = int(event.tfinger.y * kScreenHeight);
+			switch (event.type) {
+			case SDL_QUIT:
+				running = false;
+				break;
+			case SDL_CONTROLLERBUTTONDOWN: {
+				const Uint8 button = event.cbutton.button;
+				if (button == SDL_CONTROLLER_BUTTON_DPAD_UP || button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+					const int step = button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1;
+					map_select(std::clamp(map_selected < 0 ? 0 : map_selected + step, 0, int(map_names.size()) - 1));
+					map_focus = -1;
+				} else if (button == SDL_CONTROLLER_BUTTON_A) {
+					map_load();
+				} else if (button == SDL_CONTROLLER_BUTTON_B) {
+					map_choice_open = false;
+				}
+				break;
+			}
+			case SDL_FINGERDOWN:
+			case SDL_FINGERMOTION:
+				map_pressed = new_game_window->map_control_at(x, y, map_view());
+				break;
+			case SDL_FINGERUP: {
+				const int k = new_game_window->map_control_at(x, y, map_view());
+				const int pressed = map_pressed;
+				map_pressed = -1;
+				if (k < 0 || k != pressed) {
+					break;
+				}
+				if (k == p3::app::NewGameWindow::kMapBack) {
+					map_choice_open = false;
+				} else if (k == p3::app::NewGameWindow::kMapLoad) {
+					map_load();
+				} else if (k == map_selected) {
+					map_load();  // A second tap on the chosen map loads it.
+				} else {
+					map_select(k);
+				}
+				break;
+			}
+			default:
+				break;
+			}
+		}
+		if (!map_choice_open || !running) {
+			return;
+		}
+		new_game_window->draw_map(renderer, map_view());
+		if (script && !script->screenshot().empty()) {
+			std::string error;
+			if (p3::app::save_screenshot(renderer, kScreenWidth, kScreenHeight, script->screenshot(), error)) {
+				std::printf("%s\n", script->screenshot().c_str());
+			} else {
+				std::fprintf(stderr, "%s\n", error.c_str());
+				screenshot_failed = true;
+			}
+		}
+		SDL_RenderPresent(renderer);
 	};
 	// The home town's window opens on the home town.
 	auto open_home_town = [&]() {
@@ -8610,6 +8813,13 @@ int main(int argc, char** argv) {
 			press_new_game_ball(new_game_state, ball);
 		} else if (k == NewGameControl::HomeTown) {
 			open_home_town();
+		} else if (k == NewGameControl::Map) {
+			open_map_choice();
+		} else if (k == NewGameControl::Details) {
+			details_copy = new_game_state.choices.details;
+			details_focus = p3::app::kDetailOk;
+			details_pressed = -1;
+			details_open = true;
 		} else if (k == NewGameControl::Back) {
 			keep_new_game_choices();
 			new_game_open = false;
@@ -8617,7 +8827,7 @@ int main(int argc, char** argv) {
 			keep_new_game_choices();
 			const NewGameChoices& c = new_game_state.choices;
 			const SettingsMemory before = has_save ? save.settings : initial_game_settings();
-			if (new_game(new_game_settings(c, new_game_map, before), new_game_player(c))) {
+			if (new_game(new_game_settings(c, new_game_map, before), new_game_player(c), new_game_map)) {
 				new_game_open = false;
 				start_open = false;
 			}
@@ -8881,6 +9091,112 @@ int main(int argc, char** argv) {
 		}
 		SDL_RenderPresent(renderer);
 	};
+	// The «Details» window: a tap on a ball or a button, or the buttons (Up and
+	// Down the rows, Left and Right a row's balls or «Cancel» and «OK», X,
+	// Circle «Cancel»). «OK» gives the details back; either way the window
+	// takes the level nearest to the details (0x498EFD).
+	auto details_view = [&]() {
+		p3::app::NewGameWindow::DetailsView v;
+		v.details = &details_copy;
+		v.texts = &new_game_texts;
+		for (int k = 0; k < p3::app::kDetailCancel; ++k) {
+			v.enabled[size_t(k)] = new_game_detail_enabled(details_copy, k / 2, k % 2 == 1);
+		}
+		v.enabled[size_t(p3::app::kDetailCancel)] = true;
+		v.enabled[size_t(p3::app::kDetailOk)] = true;
+		v.focus = details_focus;
+		v.pressed = details_pressed;
+		v.own_values = fix_game_bugs();
+		return v;
+	};
+	auto details_press = [&](int control) {
+		NewGameChoices& c = new_game_state.choices;
+		if (control >= 0 && control < p3::app::kDetailCancel) {
+			if (new_game_detail_enabled(details_copy, control / 2, control % 2 == 1)) {
+				press_new_game_detail(details_copy, control / 2, control % 2 == 1);
+			}
+			return;
+		}
+		if (control != p3::app::kDetailCancel && control != p3::app::kDetailOk) {
+			return;
+		}
+		if (control == p3::app::kDetailOk) {
+			c.details = details_copy;
+		}
+		c.level = new_game_level_of(c.details);
+		details_open = false;
+	};
+	auto details_frame = [&]() {
+		SDL_Event event;
+		while (SDL_PollEvent(&event)) {
+			if ((event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP) &&
+				rear_touch(event.tfinger.touchId)) {
+				continue;
+			}
+			const int x = int(event.tfinger.x * kScreenWidth);
+			const int y = int(event.tfinger.y * kScreenHeight);
+			switch (event.type) {
+			case SDL_QUIT:
+				running = false;
+				break;
+			case SDL_CONTROLLERBUTTONDOWN: {
+				const Uint8 button = event.cbutton.button;
+				const bool buttons_row = details_focus >= p3::app::kDetailCancel;
+				if (button == SDL_CONTROLLER_BUTTON_DPAD_UP || button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+					const int row = buttons_row ? p3::app::kDetailRows : details_focus / 2;
+					const int next = std::clamp(row + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1), 0,
+						p3::app::kDetailRows);
+					details_focus = next == p3::app::kDetailRows ? (buttons_row ? details_focus : p3::app::kDetailOk)
+																 : 2 * next;
+				} else if (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
+					const bool right = button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+					if (buttons_row) {
+						details_focus = right ? p3::app::kDetailOk : p3::app::kDetailCancel;
+					} else {
+						details_press(2 * (details_focus / 2) + (right ? 1 : 0));
+					}
+				} else if (button == SDL_CONTROLLER_BUTTON_A) {
+					if (buttons_row) {
+						details_press(details_focus);
+					}
+				} else if (button == SDL_CONTROLLER_BUTTON_B) {
+					details_press(p3::app::kDetailCancel);
+				}
+				break;
+			}
+			case SDL_FINGERDOWN:
+			case SDL_FINGERMOTION:
+				details_pressed = new_game_window->details_control_at(x, y, details_view());
+				break;
+			case SDL_FINGERUP: {
+				const int k = new_game_window->details_control_at(x, y, details_view());
+				const int pressed = details_pressed;
+				details_pressed = -1;
+				if (k >= 0 && k == pressed) {
+					details_focus = k >= p3::app::kDetailCancel ? k : 2 * (k / 2);
+					details_press(k);
+				}
+				break;
+			}
+			default:
+				break;
+			}
+		}
+		if (!details_open || !running) {
+			return;
+		}
+		new_game_window->draw_details(renderer, details_view());
+		if (script && !script->screenshot().empty()) {
+			std::string error;
+			if (p3::app::save_screenshot(renderer, kScreenWidth, kScreenHeight, script->screenshot(), error)) {
+				std::printf("%s\n", script->screenshot().c_str());
+			} else {
+				std::fprintf(stderr, "%s\n", error.c_str());
+				screenshot_failed = true;
+			}
+		}
+		SDL_RenderPresent(renderer);
+	};
 	// The start screen (the game's main menu): the book, the entry under the
 	// finger or the buttons' (Up and Down; X chooses), and over it the load
 	// menu's slots. «Single player» opens the «Game settings» window, «Load
@@ -9001,8 +9317,12 @@ int main(int argc, char** argv) {
 			}
 		}
 		if (start_open) {
-			if (new_game_open && home_town_open) {
+			if (new_game_open && map_choice_open) {
+				map_choice_frame();
+			} else if (new_game_open && home_town_open) {
 				home_town_frame();
+			} else if (new_game_open && details_open) {
+				details_frame();
 			} else if (new_game_open) {
 				new_game_frame();
 			} else {

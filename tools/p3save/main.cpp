@@ -44,6 +44,7 @@ int usage() {
 		"       p3save newgame <archivo.cpr> <out.raw> [--seed N] [--year Y] [--home I] [--settings-from SAVE.raw]\n"
 		"         [--stop ops|advance|player] [--ships N] [--female] [--first NAME] [--family NAME]\n"
 		"         [--window [--level L] [--start 1|2] [--speed S] [--goal G] [--goal-time T] [--write-settings F]]\n"
+		"         [--map FILE.gmf]\n"
 		"       p3save texts-cache <Patrician3.exe> <cache>\n"
 		"       p3save texts <Patrician3.exe> [FIRST]\n"
 		"       p3save <archivo.cpr> <partida> letters <Patrician3.exe> [merchant]\n"
@@ -243,6 +244,7 @@ int main(int argc, char** argv) {
 		// p3save newgame <archivo.cpr> <out.raw> [--seed N] [--year Y] [--home I] [--settings-from SAVE.raw]
 		//   [--stop ops|advance|player] [--ships N] [--female] [--first NAME] [--family NAME]
 		//   [--window [--level L] [--start 1|2] [--speed S] [--goal G] [--goal-time T] [--write-settings F]]
+		//   [--map FILE.gmf]
 		// A new game as the game's window starts it (new_game.hpp), on the archive's map
 		// Standard24, with 1.pat's settings by default; its uncompressed .pat to <out.raw>, to
 		// compare with tools/oracle/newgame_oracle.py's. With --window, the settings and the
@@ -276,6 +278,7 @@ int main(int argc, char** argv) {
 		choices.first_name = player.first_name;
 		choices.family_name = player.family_name;
 		std::string settings_out;
+		std::string map_file;  // --map: a .gmf on the disk instead of the archive's Standard24.
 		auto flag = [&](int i) {
 			return i < argc && (std::strcmp(argv[i], "--female") == 0 || std::strcmp(argv[i], "--window") == 0);
 		};
@@ -318,6 +321,8 @@ int main(int argc, char** argv) {
 				choices.goal_time = uint32_t(std::strtoul(value, nullptr, 0));
 			} else if (option == "--write-settings") {
 				settings_out = value;
+			} else if (option == "--map") {
+				map_file = value;
 			} else if (option == "--stop") {
 				stop = std::strcmp(value, "ops") == 0 ? NewGameStop::Operations
 					: std::strcmp(value, "advance") == 0 ? NewGameStop::Advance : NewGameStop::Player;
@@ -338,7 +343,8 @@ int main(int argc, char** argv) {
 		std::memcpy(save.settings.bytes.data(), settings.data(), 0x4C);
 		std::memset(save.settings.bytes.data() + 0x3C, 0, 0x10);
 		GameMap map;
-		if (!load_game_map(*archive, "maps/Standard24.gmf", map, &error)) {
+		if (map_file.empty() ? !load_game_map(*archive, "maps/Standard24.gmf", map, &error)
+							 : !load_game_map_file(map_file, map, &error)) {
 			std::fprintf(stderr, "%s\n", error.c_str());
 			return 1;
 		}

@@ -3,6 +3,7 @@
 #include "p3data/new_game.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -719,7 +720,14 @@ bool parse_game_map(const uint8_t* data, size_t size, GameMap& out) {
 		return false;
 	}
 	if (p + 4 <= size && (data[p] | data[p + 1] << 8) == 0xAFFE) {
-		p += 4 + size_t(data[p + 2] | data[p + 3] << 8);
+		const size_t length = size_t(data[p + 2] | data[p + 3] << 8);
+		p += 4;
+		if (p + length > size) {
+			return false;
+		}
+		const char* text = reinterpret_cast<const char*>(data + p);
+		out.commentary.assign(text, std::find(text, text + length, '\0'));
+		p += length;
 	}
 	for (uint32_t i = 0; i < out.count; ++i) {
 		if (!u32(out.efficient[i])) {
@@ -763,6 +771,26 @@ bool load_game_map(const CprArchive& archive, const std::string& path, GameMap& 
 	}
 	std::vector<uint8_t> raw;
 	if (!lz_decompress_file(blob.data(), blob.size(), raw) || !parse_game_map(raw.data(), raw.size(), out)) {
+		if (error) {
+			*error = path + " can't be read";
+		}
+		return false;
+	}
+	return true;
+}
+
+bool load_game_map_file(const std::string& path, GameMap& out, std::string* error) {
+	std::vector<uint8_t> blob;
+	if (std::FILE* f = std::fopen(path.c_str(), "rb")) {
+		uint8_t buffer[1 << 14];
+		for (size_t n; (n = std::fread(buffer, 1, sizeof(buffer), f)) > 0;) {
+			blob.insert(blob.end(), buffer, buffer + n);
+		}
+		std::fclose(f);
+	}
+	std::vector<uint8_t> raw;
+	if (blob.size() < 4 || !lz_decompress_file(blob.data(), blob.size(), raw) ||
+		!parse_game_map(raw.data(), raw.size(), out)) {
 		if (error) {
 			*error = path + " can't be read";
 		}
@@ -1227,6 +1255,32 @@ uint32_t new_game_level_of(const std::array<uint8_t, 8>& details) {
 		}
 	}
 	return level;
+}
+
+void press_new_game_detail(std::array<uint8_t, 8>& details, int row, bool plus) {
+	if (row < 0 || row >= int(details.size())) {
+		return;
+	}
+	int v = details[size_t(row)];
+	if (row < 6) {
+		v = plus ? std::min(v + 1, 3) : std::max(v - 1, 1);
+	} else if (row == 6) {
+		v = plus ? std::max(v - 1, 1) : std::min(v + 1, 3);
+	} else {
+		v = plus ? std::max(v - 1, 1) : std::min(v + 1, 2);
+	}
+	details[size_t(row)] = uint8_t(v);
+}
+
+bool new_game_detail_enabled(const std::array<uint8_t, 8>& details, int row, bool plus) {
+	if (row < 0 || row >= int(details.size())) {
+		return false;
+	}
+	const int v = details[size_t(row)];
+	if (row < 6) {
+		return plus ? v < 3 : v > 1;
+	}
+	return plus ? v > 1 : v < (row == 6 ? 3 : 2);
 }
 
 uint32_t new_game_goal_time_limit(uint32_t goal) {

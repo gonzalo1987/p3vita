@@ -32,12 +32,18 @@ struct GameMap {
 	std::array<uint8_t, 40> numbers{};
 	std::array<uint8_t, 40> templates{};
 	std::array<std::string, 40> names;
+	// The optional block after the count ({u16 0xAFFE, u16 length, bytes}): the
+	// map editor's commentary (Latin-1, up to its first 0), which the map
+	// choice's window shows (0x4368B0); Standard24's is empty.
+	std::string commentary;
 };
 
 // A decompressed .gmf (0x5448A0).
 bool parse_game_map(const uint8_t* data, size_t size, GameMap& out);
 // A .gmf of the archive (e.g. "maps/Standard24.gmf").
 bool load_game_map(const CprArchive& archive, const std::string& path, GameMap& out, std::string* error = nullptr);
+// A .gmf file on the disk (the game's Maps folder, the map editor's maps).
+bool load_game_map_file(const std::string& path, GameMap& out, std::string* error = nullptr);
 
 // 0x544E50 (on the setup object): the new game's operations, with the
 // settings (*0x6CC3E8) already in save.settings and rand() seeded (0x547F10:
@@ -117,6 +123,10 @@ struct NewGameChoices {
 	// starting capital, the start (1: two ships, 2: one). The level sets them
 	// (kNewGameLevelDetails); the «Details» window changes them one by one.
 	std::array<uint8_t, 8> details = {1, 1, 1, 1, 1, 1, 1, 2};
+	// [+0x470]: the map chosen with the map's button, the title of a .gmf of
+	// the Maps folder; empty for the standard one (Standard24), as it is each
+	// time the window opens (0x49802E; P2.CFG doesn't keep it).
+	std::string map;
 };
 
 // The details each level sets (0x66F608: 5 × 8 u32).
@@ -161,6 +171,16 @@ void press_new_game_ball(NewGameWindowState& state, NewGameBall ball);
 // whether it shows (the goal's time only with a goal, 0x499AF0).
 bool new_game_ball_enabled(const NewGameChoices& choices, NewGameBall ball);
 bool new_game_ball_shown(const NewGameChoices& choices, NewGameBall ball);
+// The «Details» window (0x49AC90 on *0x6D1C90, opened by the window's
+// «Details» button with a copy of the details, 0x49B180): two balls a row,
+// − and +. The first six rows go 1..3 (− down, + up); the starting capital
+// (row 6) and the start (row 7) go the other way, as their tables are read
+// backwards: − up to 3 (the capital) or 2 (the start), + down to 1 (0x49B5C0's
+// jump table 0x49B888). Its «OK» gives the details back, «Cancel» doesn't;
+// either way the window takes the level new_game_level_of gives (0x498EFD).
+void press_new_game_detail(std::array<uint8_t, 8>& details, int row, bool plus);
+bool new_game_detail_enabled(const std::array<uint8_t, 8>& details, int row, bool plus);
+
 // The goal's time limit by the goal (0x499AF0's table 0x499BBC): 0 without a
 // goal, 14 for the goals 1..3, 13 for 4 and 5, 2 for 6 and 4 for 7.
 uint32_t new_game_goal_time_limit(uint32_t goal);

@@ -2291,6 +2291,10 @@ doesn't run; p3vita's `new_game_settings` and `new_game_player` (new_game.hpp) w
   --level 3 --start 1 --speed 2 --goal 3 --goal-time 5" "..."`: `p3save newgame --window` builds the settings and the
   player from those choices, writes the settings for the oracle (`--settings-from`), and both new games' .pat are equal
   (950 334 bytes, 0 different).
+- The «Details» window's balls (0x49B5C0, 0x49B180) in the same test. And a map of the map editor (the window's map
+  choice): `ngc.sh player --map Prueba2.gmf` (`re/emu/sesion24/mkmap.sh` makes it from Standard24: 23 towns, without
+  Novgorod; Bergen a Hanse town; Luebeck's efficient and inefficient productions swapped), `p3save newgame --map` and
+  the oracle's `--map`: equal (904 151 bytes, 0 different).
 
 ## The game's static initializers (2026-11-03)
 

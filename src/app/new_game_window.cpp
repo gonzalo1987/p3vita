@@ -148,6 +148,9 @@ NewGameWindow::NewGameWindow(SDL_Renderer* renderer, const CprArchive& archive, 
 	}
 	background_ = make_texture(renderer, background);
 	Image image;
+	if (read_cpr_image(archive, "images/background/spielladen.jpg", image)) {
+		map_background_ = make_texture(renderer, image);  // TEX23, the map choice's (ANIM40)
+	}
 	if (read_cpr_image(archive, "images/options/Hauptbttn_komplett.tga", image)) {
 		buttons_ = make_texture(renderer, image);
 	}
@@ -168,7 +171,7 @@ NewGameWindow::NewGameWindow(SDL_Renderer* renderer, const CprArchive& archive, 
 }
 
 NewGameWindow::~NewGameWindow() {
-	for (SDL_Texture* t : {background_, buttons_, balls_}) {
+	for (SDL_Texture* t : {background_, map_background_, buttons_, balls_}) {
 		if (t) {
 			SDL_DestroyTexture(t);
 		}
@@ -214,23 +217,51 @@ int NewGameWindow::control_at(int x, int y, const View& view) const {
 	return -1;
 }
 
-void NewGameWindow::draw(SDL_Renderer* renderer, const View& view) const {
+// The background over the screen (black at the sides) and the title (0x498135
+// and 0x49B34A: font 5, right-aligned at (757, 11)).
+void NewGameWindow::draw_backdrop(SDL_Renderer* renderer, const NewGameTexts& texts) const {
 	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 	SDL_RenderClear(renderer);
+	const SDL_Rect whole = place(0, 0, 800, 600);
+	SDL_RenderCopy(renderer, background_, nullptr, &whole);
+	if (title_font_) {
+		const SDL_Rect at = place(757, 11, 0, 0);
+		title_font_->draw(texts.title, at.x - title_font_->measure(texts.title), at.y, kTitle);
+	}
+}
+
+void NewGameWindow::draw_ball(SDL_Renderer* renderer, const SDL_Rect& at, int frame) const {
+	if (balls_ && frame >= 0 && frame < 22 && ball_frames_[frame].w > 0) {
+		SDL_RenderCopy(renderer, balls_, &ball_frames_[frame], &at);
+	}
+}
+
+// A button: its frame (BUTTON3 for the wide ones, BUTTON4 for the 149 wide;
+// pressed or not) and its text in font 2 in the middle.
+void NewGameWindow::draw_button(SDL_Renderer* renderer, const SDL_Rect& at, const std::string& text, bool pressed,
+		SDL_Color color) const {
+	const bool small = at.w < int(std::lround(200.0f * scale_));
+	const int frame = small ? (pressed ? kSmallPressed : kSmallNeutral) : (pressed ? kWidePressed : kWideNeutral);
+	if (buttons_ && button_frames_[frame].w > 0) {
+		SDL_RenderCopy(renderer, buttons_, &button_frames_[frame], &at);
+	}
+	if (value_font_) {
+		const int w = value_font_->measure(text);
+		value_font_->draw(text, at.x + (at.w - w) / 2, at.y + (at.h - value_font_->line_height()) / 2, color);
+	}
+}
+
+void NewGameWindow::draw(SDL_Renderer* renderer, const View& view) const {
 	if (!background_ || !view.choices || !view.texts) {
+		SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+		SDL_RenderClear(renderer);
 		return;
 	}
 	const NewGameChoices& c = *view.choices;
 	const NewGameTexts& t = *view.texts;
-	const SDL_Rect whole = place(0, 0, 800, 600);
-	SDL_RenderCopy(renderer, background_, nullptr, &whole);
+	draw_backdrop(renderer, t);
 	auto shown = [&](NewGameControl k) { return view.shown[size_t(k)]; };
 	auto enabled = [&](NewGameControl k) { return view.enabled[size_t(k)]; };
-	// The title (0x498135: font 5, right-aligned at (757, 11)).
-	if (title_font_) {
-		const SDL_Rect at = place(757, 11, 0, 0);
-		title_font_->draw(t.title, at.x - title_font_->measure(t.title), at.y, kTitle);
-	}
 	// The labels (font 4, right-aligned 16 pixels before their control, in the
 	// middle of its height).
 	auto label = [&](NewGameControl k, const std::string& text) {
@@ -283,24 +314,17 @@ void NewGameWindow::draw(SDL_Renderer* renderer, const View& view) const {
 		if (!shown(k)) {
 			return;
 		}
-		const SDL_Rect r = rect(k);
-		const bool small = kPlaces[int(k)].w == 149;
 		const bool pressed = view.pressed == int(k) && enabled(k);
-		const int frame = small ? (pressed ? kSmallPressed : kSmallNeutral) : (pressed ? kWidePressed : kWideNeutral);
-		if (buttons_ && button_frames_[frame].w > 0) {
-			SDL_RenderCopy(renderer, buttons_, &button_frames_[frame], &r);
-		}
-		if (!value_font_) {
-			return;
-		}
 		SDL_Color color = enabled(k) ? (view.focus == int(k) || pressed ? kLit : kWhite) : kDimmed;
 		if (k == NewGameControl::Start && !enabled(k)) {
 			color = kGrey;  // Without both names (0x49A906..).
 		}
-		const int w = value_font_->measure(text);
-		value_font_->draw(text, r.x + (r.w - w) / 2, r.y + (r.h - value_font_->line_height()) / 2, color);
+		draw_button(renderer, rect(k), text, pressed, color);
 	};
-	button(NewGameControl::Map, t.standard_map + (c.production == 0 ? " (*)" : ""));
+	// The map's name (0x49A7A0: «Standard Map», or the file's trimmed to the button), « (*)» without the map's
+	// productions.
+	button(NewGameControl::Map, (c.map.empty() ? t.standard_map : fit(p3::data::latin1_to_utf8(c.map), 233)) +
+			(c.production == 0 ? " (*)" : ""));
 	button(NewGameControl::HomeTown, view.home_town);
 	const bool custom = c.level < p3::data::kNewGameLevelDetails.size() &&
 		c.details != p3::data::kNewGameLevelDetails[c.level];
@@ -320,10 +344,7 @@ void NewGameWindow::draw(SDL_Renderer* renderer, const View& view) const {
 			: view.pressed == k            ? f.pressed
 			: row_lit                      ? f.lit
 										   : f.neutral;
-		const SDL_Rect r = rect(control);
-		if (ball_frames_[frame].w > 0) {
-			SDL_RenderCopy(renderer, balls_, &ball_frames_[frame], &r);
-		}
+		draw_ball(renderer, rect(control), frame);
 	}
 	// The values between the balls (font 2, in the middle of the row, 0x4984C0..).
 	auto value = [&](NewGameControl k, const std::string& text) {
@@ -340,7 +361,104 @@ void NewGameWindow::draw(SDL_Renderer* renderer, const View& view) const {
 	value(NewGameControl::YearMinus, std::to_string(c.year));
 	value(NewGameControl::LevelMinus, c.level < t.levels.size() ? t.levels[c.level] : std::string());
 	value(NewGameControl::GoalLeft, c.goal == 6 ? t.hanse_population : c.goal < t.goals.size() ? t.goals[c.goal] : "");
+	if (c.goal >= 1 && c.goal <= 5 && c.goal_time < t.years.size()) {
+		value(NewGameControl::TimeMinus, t.years[c.goal_time]);
+	} else if (c.goal == 6 && c.goal_time < t.population.size()) {
+		value(NewGameControl::TimeMinus, t.population[c.goal_time]);
+	}
 	value(NewGameControl::SpeedMinus, c.speed < t.speeds.size() ? t.speeds[c.speed] : std::string());
+}
+
+// --- The «Details» window. ---
+
+namespace {
+
+// Its rows' − balls (the + 152 to the right) and its buttons, on the game's 800 · 600.
+SDL_Rect detail_place(int control) {
+	if (control == kDetailCancel) {
+		return {453, 544, 149, 36};
+	}
+	if (control == kDetailOk) {
+		return {614, 544, 149, 36};
+	}
+	return {(control % 2) ? 669 : 517, 118 + 51 * (control / 2), 29, 28};
+}
+
+}  // namespace
+
+int NewGameWindow::details_control_at(int x, int y, const DetailsView& view) const {
+	(void)view;
+	const SDL_Point p = {x, y};
+	for (int k = 0; k < kDetailControls; ++k) {
+		const SDL_Rect r = place(detail_place(k));
+		if (SDL_PointInRect(&p, &r)) {
+			return k;
+		}
+	}
+	// A little more around: the buttons 4 pixels, the balls their half of the row
+	// (517..697, split at 607) and 10 pixels above and below.
+	for (int k = 0; k < kDetailControls; ++k) {
+		const SDL_Rect at = detail_place(k);
+		const SDL_Rect r = k >= kDetailCancel ? place(at.x - 4, at.y - 4, at.w + 8, at.h + 8)
+			: (k % 2)                         ? place(607, at.y - 10, 91, at.h + 20)
+											  : place(517, at.y - 10, 90, at.h + 20);
+		if (SDL_PointInRect(&p, &r)) {
+			return k;
+		}
+	}
+	return -1;
+}
+
+void NewGameWindow::draw_details(SDL_Renderer* renderer, const DetailsView& view) const {
+	if (!background_ || !view.details || !view.texts) {
+		SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+		SDL_RenderClear(renderer);
+		return;
+	}
+	const NewGameTexts& t = *view.texts;
+	const std::array<uint8_t, kDetailRows>& d = *view.details;
+	draw_backdrop(renderer, t);
+	for (int row = 0; row < kDetailRows; ++row) {
+		const SDL_Rect minus = place(detail_place(2 * row));
+		// The label (font 4, right-aligned at 501, 0x49B3BE).
+		if (label_font_) {
+			const SDL_Rect at = place(517 - 16, 0, 0, 0);
+			const std::string& text = t.detail_labels[size_t(row)];
+			label_font_->draw(text, at.x - label_font_->measure(text), minus.y + (minus.h - label_font_->line_height()) / 2,
+				kWhite);
+		}
+		// The balls: − and + (BUTTON7, BUTTON8), lit on the cursor's row.
+		const bool row_lit = view.focus >= 0 && view.focus < kDetailCancel && view.focus / 2 == row;
+		for (int k = 2 * row; k <= 2 * row + 1; ++k) {
+			const BallFrames f = (k % 2) ? kPlus : kMinus;
+			const int frame = !view.enabled[size_t(k)] ? f.disabled
+				: view.pressed == k                    ? f.pressed
+				: row_lit                              ? f.lit
+													   : f.neutral;
+			draw_ball(renderer, place(detail_place(k)), frame);
+		}
+		// The value (font 2, in the middle at 607, 0x49B4A1): the game's tables or each row's own.
+		const int v = std::clamp(int(d[size_t(row)]), 1, 3);
+		int text = 0;
+		if (row < 6) {
+			text = view.own_values ? 3 * row + v - 1 : 12 + v - 1;
+		} else if (row == 6) {
+			text = view.own_values ? 18 + 3 - v : 12 + 3 - v;
+		} else {
+			text = v == 2 ? 12 : 14;
+		}
+		if (value_font_) {
+			const std::string& value = t.detail_values[size_t(text)];
+			const SDL_Rect mid = place(607, 0, 0, 0);
+			value_font_->draw(value, mid.x - value_font_->measure(value) / 2,
+				minus.y + (minus.h - value_font_->line_height()) / 2, kWhite);
+		}
+	}
+	for (int k : {kDetailCancel, kDetailOk}) {
+		const bool pressed = view.pressed == k;
+		draw_button(renderer, place(detail_place(k)), k == kDetailOk ? t.ok : t.cancel, pressed,
+			view.focus == k || pressed ? kLit : kWhite);
+	}
 }
 
 // --- The home town's window. ---
@@ -488,6 +606,141 @@ void HomeTownWindow::draw(SDL_Renderer* renderer, const View& view) const {
 		const int w = int(std::lround(float(entry_font_->measure(t.hint)) / scale_)) + 8;
 		box(775 - w, 555, w, 20, " " + t.hint, entry_font_.get(), false);
 	}
+}
+
+}  // namespace p3::app
+
+namespace p3::app {
+
+// --- The map choice's window. ---
+
+namespace {
+
+constexpr int kListLeft = 428;  // [+0xA84]
+constexpr int kListTop = 138;  // [+0xA88]
+constexpr int kListRight = 720;  // [+0xA8C]
+constexpr int kRowHeight = 20;  // font 2's line ([+0xA78])
+constexpr SDL_Rect kLoadPlace = {596, 525, 149, 36};
+constexpr SDL_Rect kBackPlace = {425, 525, 149, 36};
+constexpr SDL_Color kChosen = {211, 64, 0, 255};  // 0x66E114
+
+}  // namespace
+
+std::string NewGameWindow::fit(const std::string& text, int width) const {
+	if (!value_font_) {
+		return text;
+	}
+	const int limit = int(std::lround(float(width) * scale_));
+	std::string out = text;
+	while (!out.empty() && value_font_->measure(out) > limit) {
+		// One character off the end (a whole UTF-8 sequence), and the spaces before it.
+		do {
+			out.pop_back();
+		} while (!out.empty() && (uint8_t(out.back()) & 0xC0) == 0x80);
+		while (!out.empty() && out.back() == ' ') {
+			out.pop_back();
+		}
+	}
+	return out;
+}
+
+int NewGameWindow::map_control_at(int x, int y, const MapView& view) const {
+	const SDL_Point p = {x, y};
+	const SDL_Rect load = place(kLoadPlace.x - 4, kLoadPlace.y - 4, kLoadPlace.w + 8, kLoadPlace.h + 8);
+	const SDL_Rect back = place(kBackPlace.x - 4, kBackPlace.y - 4, kBackPlace.w + 8, kBackPlace.h + 8);
+	if (SDL_PointInRect(&p, &load)) {
+		return kMapLoad;
+	}
+	if (SDL_PointInRect(&p, &back)) {
+		return kMapBack;
+	}
+	if (!view.names) {
+		return -1;
+	}
+	for (int r = 0; r < kMapRows && view.first + r < int(view.names->size()); ++r) {
+		const SDL_Rect row = place(kListLeft, kListTop + kRowHeight * r, kListRight - kListLeft, kRowHeight);
+		if (SDL_PointInRect(&p, &row)) {
+			return view.first + r;
+		}
+	}
+	return -1;
+}
+
+void NewGameWindow::draw_map(SDL_Renderer* renderer, const MapView& view) const {
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+	SDL_RenderClear(renderer);
+	if (!map_background_ || !view.names || !view.texts) {
+		return;
+	}
+	const NewGameTexts& t = *view.texts;
+	const SDL_Rect whole = place(0, 0, 800, 600);
+	SDL_RenderCopy(renderer, map_background_, nullptr, &whole);
+	if (title_font_) {
+		const SDL_Rect at = place(757, 27, 0, 0);
+		title_font_->draw(t.choose_map, at.x - title_font_->measure(t.choose_map), at.y, kTitle);
+	}
+	// The list (0x435313..): each name trimmed to the list's width (0x4360B1).
+	if (value_font_) {
+		for (int r = 0; r < kMapRows && view.first + r < int(view.names->size()); ++r) {
+			const int k = view.first + r;
+			const SDL_Rect row = place(kListLeft, kListTop + kRowHeight * r, kListRight - kListLeft, kRowHeight);
+			const SDL_Color color = k == view.selected ? kChosen : k == view.pressed ? kLit : kWhite;
+			value_font_->draw(fit((*view.names)[size_t(k)], kListRight - kListLeft), row.x,
+				row.y + (row.h - value_font_->line_height()) / 2, color);
+		}
+	}
+	// The chosen map's information (0x436450).
+	if (view.selected >= 0 && label_font_ && value_font_) {
+		const SDL_Rect head = place(206, 60, 0, 0);
+		label_font_->draw(t.map_information, head.x - label_font_->measure(t.map_information) / 2, head.y, kWhite);
+		auto line = [&](int x, int y, const std::string& text) {
+			const SDL_Rect at = place(x, y, 0, 0);
+			value_font_->draw(text, at.x, at.y, kWhite);
+		};
+		const int file_y = 107;
+		const int towns_y = 112 + 2 * kRowHeight;
+		const int commentary_y = towns_y + 2 * kRowHeight + 5;
+		line(60, file_y, t.file);
+		line(60, towns_y, t.towns);
+		line(60, commentary_y, t.commentary);
+		// The file's name trimmed to 286 (the information's width less 60), with «...» then.
+		std::string file = view.file;
+		if (value_font_->measure(file) > int(std::lround(286.0f * scale_))) {
+			file = fit(file, 286);
+			file = file.size() > 3 ? file.substr(0, file.size() - 3) + "..." : "...";
+		}
+		line(80, file_y + kRowHeight, file);
+		line(80, towns_y + kRowHeight, std::to_string(view.towns));
+		// The commentary in a box 280 wide and four lines high, broken at the spaces.
+		const int width = int(std::lround(280.0f * scale_));
+		std::vector<std::string> lines(1);
+		size_t pos = 0;
+		while (pos < view.commentary.size() && lines.size() <= 4) {
+			size_t end = view.commentary.find(' ', pos);
+			if (end == std::string::npos) {
+				end = view.commentary.size();
+			}
+			const std::string word = view.commentary.substr(pos, end - pos);
+			const std::string joined = lines.back().empty() ? word : lines.back() + " " + word;
+			if (!lines.back().empty() && value_font_->measure(joined) > width) {
+				lines.push_back(word);
+			} else {
+				lines.back() = joined;
+			}
+			pos = end + 1;
+		}
+		for (size_t k = 0; k < lines.size() && k < 4; ++k) {
+			line(80, commentary_y + kRowHeight * int(k + 1), lines[k]);
+		}
+	}
+	// «Back» and «Load» (BUTTON4; «Load» dark grey without a map chosen, [+0x304]).
+	const bool back_pressed = view.pressed == kMapBack;
+	draw_button(renderer, place(kBackPlace.x, kBackPlace.y, kBackPlace.w, kBackPlace.h), t.back, back_pressed,
+		view.focus == kMapBack || back_pressed ? kLit : kWhite);
+	const bool can_load = view.selected >= 0;
+	const bool load_pressed = view.pressed == kMapLoad && can_load;
+	draw_button(renderer, place(kLoadPlace.x, kLoadPlace.y, kLoadPlace.w, kLoadPlace.h), t.load, load_pressed,
+		!can_load ? kGrey : view.focus == kMapLoad || load_pressed ? kLit : kWhite);
 }
 
 }  // namespace p3::app
