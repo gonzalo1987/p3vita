@@ -35,6 +35,8 @@
 //        player_ops demolish TOWN MERCHANT X Y | auction TOWN MERCHANT X Y
 //        player_ops letters PLAYER DAYS1 DAYS2 DAYS3 EVENT_SOUND NOTICES | letters-check PLAYER REPAIR
 //        player_ops pirate SHIP FLAG (the ship menu's «Pirate» 1, «Civil» 0)
+//        player_ops letter-answer LETTER ENTRY ANSWER PLAYER TOWNS TICK RAND [RECORD] (a letter's button: the
+//        operation, then the rand() state after)
 // (STEP 1, 5, 50, or 0 for all; «none» when the window sends nothing;
 // tavern-sailors prints the tavern's roll, its float's bits, and the
 // sailors it shows, from what 0x4F6CA0 allows and the game's rand() value)
@@ -46,6 +48,8 @@
 #include <string>
 
 #include "p3data/hanse_tasks.hpp"
+#include "p3data/letter_window.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/player_actions.hpp"
 
 using namespace p3::data;
@@ -231,6 +235,40 @@ int main(int argc, char** argv) {
 	} else if (what == "pirate" && argc == 4) {
 		// The ship menu's «Pirate» / «Civil» (0x494244).
 		op = pirate_operation(uint32_t(number(argv[2])), number(argv[3]) != 0);
+	} else if (what == "letter-answer" && (argc == 9 || argc == 10)) {
+		// LETTER (32 hex digits: the entry's 16 bytes) ENTRY ANSWER PLAYER TOWNS TICK RAND [RECORD (32 hex digits)]:
+		// the button of the letter window (0x4D6C90), with the game's rand() state before it; the rand() state after
+		// on a second line.
+		std::array<uint8_t, 16> letter{};
+		std::array<uint8_t, 16> record{};
+		if (!hex_bytes(argv[2], letter) || (argc == 10 && !hex_bytes(argv[9], record))) {
+			return usage();
+		}
+		const uint16_t entry = uint16_t(number(argv[3]));
+		SaveGame save;
+		save.globals.u16(kMailCount) = uint16_t(entry + 1);
+		save.mail.resize(size_t(entry) + 1);
+		std::memcpy(save.mail[entry].bytes.data(), letter.data(), 16);
+		save.mail_records.resize(size_t(entry) + 1);
+		save.mail_buffers.resize(size_t(entry) + 1);
+		if (argc == 10) {
+			save.mail_records[entry].emplace();
+			std::memcpy(save.mail_records[entry]->bytes.data(), record.data(), 16);
+		}
+		save.globals.u32(global::kPlayer) = uint32_t(number(argv[5]));
+		save.globals.u32(global::kWorldTownCount) = uint32_t(number(argv[6]));
+		save.globals.u32(global::kWorldTick) = uint32_t(number(argv[7]));
+		save.rand_state = uint32_t(number(argv[8]));
+		const std::optional<OperationBytes> answer = letter_answer(save, entry, uint32_t(number(argv[4])));
+		if (!answer) {
+			std::printf("none\n");
+			return 0;
+		}
+		for (const uint8_t b : *answer) {
+			std::printf("%02x", b);
+		}
+		std::printf("\n%u\n", save.rand_state);
+		return 0;
 	} else if (what == "letters-check" && argc == 4) {
 		op = letters_check_operation(uint32_t(number(argv[2])), number(argv[3]) != 0);
 	} else if (what == "rename" && argc == 4) {

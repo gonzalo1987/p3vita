@@ -2410,6 +2410,54 @@ their actions, so the first stop's bit 0x4 goes where the file had it. The world
 write-check as before (save 7's 12 known bytes); ctest; the Vita build. The viewer: a route saved, changed, loaded back
 and its file deleted, with touch and the pad (`re/emu/sesion25/shots.sh`).
 
+## The convoys' repair in the shipyard (2026-11-12)
+
+The town tick's shipyard work, 0x508AA0, after the ships it repairs walks the convoys of the town's list [0x820]
+(0x508C86..0x508E8B; `fn_508aa0`, `town_tick/facilities.cpp`): each ship gets the work and the state 6; the convoy
+leaves the list when every ship is whole or its guide's orders are 1 (then every ship is whole too: seems a game
+bug, noted in the roadmap), back to the convoys' list in the state 0, with the ticker line «Repairs completed» for a
+human owner. Before, a convoy sent to repair (0x1D) never left the shipyard in p3vita; the list is empty in the 12
+saves, which is why the whole world never caught it.
+
+| Scenario | What | Saves | Result |
+|-|-|-|-|
+| `convoy_repair` | 0x508AA0 called directly with five convoys moved to town 0's repair list: the player's, all whole (the line); with orders 2 (they become 1, no line); an AI's with a ship not whole (stays); the same with orders 1 (leaves); one without ships; again with more work | 1, 3, 5, 7 | 2 calls equal, 9 of 9 targets |
+
+Broken on purpose (the ships not made whole when the convoy leaves) and caught. The world 7 days in the 12 saves:
+0 different.
+
+## The player's actions: the letters' buttons (2026-11-12)
+
+The letter window's buttons ([formats/mail.md](formats/mail.md) §4, «The buttons»; notes in
+`re/emu/sesion26/letters_actions_notes.md`): which letters have buttons and their labels, and what each queues
+(0x4D6C90), in `letter_window.cpp` (ctest `letter_window` for the buttons' rules; the bytes against the game's own
+code in the emulator, below), and the operations they queue, in the engine:
+- 0x72 (0x53EAC0, `operations.cpp`): the suitor paid; in time, the event 0x17 (0x4E8684, `events_big.cpp`: the
+  proposal, the letter 0x22), too late the letter 0x2B.
+- 0x8B (0x635B80, `sieges.cpp`; 0x633AF0 queues it): the prince's request, a node of the siege's list [+0x1020]
+  (after the head, even when earlier: the head is never compared) and the letter 0x64; 0x8C (0x635CD0): accepted,
+  the letter 0x65 and the letter 0x64 without its button.
+- 0x77 (0x53EEC0, `operations.cpp`): a townsman's loan released (reputation) or impounded (a ship over 15000 of debt,
+  two wares, the rest in money), with the letter 0x83 whose text the operation writes into its buffer (seven new
+  text addresses in `game_text_addresses.inc`; texts cache 10).
+- 0x60 was done; 0x75 (the offers' letters 0x1E, 0x1F) goes with the offers (0x5F, another merchant's office); 0x74
+  with the mission interpreter.
+
+| Scenario | What | Saves | Result |
+|-|-|-|-|
+| `suitor_answer` | 0x72 in time (home town: 2 days; the farthest; a town past the towns: 8), too late, an entry not a 0x21, one past the mailbox, a merchant past; three events 0x17 (the player as he is, his [+0x1A] the other way round, a merchant past) | 1, 3, 5, 7 | 7 operations and 3 calls of the queue equal, 10 of 10 targets |
+| `prince_ops` | 0x8C on an empty list; 0x8B four times (empty, the head alone, earlier than the head, the latest) and with a town past; 0x8C not found (the 0x64 loses its button all the same), found (an entry past), a town past | 1, 3, 5, 7 | 9 operations equal, 12 of 12 targets |
+| `impounding` | 0x77 on events 0x01 made here: released; impounded for 10000 with and without an office, for 24000 (a snaikka), for 3 000 000 (a crayer, the wares cut to its room), with other ranks (the first ware in barrels and in loads); a letter 0x79 losing its event; the composer's 0x77; the guards | 1, 3, 5, 7 | 12 operations equal (the letter 0x83's text too), 22 of 22 targets |
+| `letter_answers` | the game's 0x4D6C90 run directly against the viewer's bytes (`player_ops letter-answer`) for the letters 0x21 (in time, late), 0x22, 0x64, 0x79 (both answers), 0x1E, 0x1F (both), a type below 0x1E and an entry past the mailbox: the same operation and rand() each time; then each runs | 1, 3, 5, 7 | 7 operations equal, 9 of 9 targets |
+
+Broken on purpose and caught: the proposal's [+0xF], the list's order (the node before the head), the letter 0x83's
+barrel and load letters. The world 7 days in the 12 saves: 0 different; write-check as before (save 7's 12 known
+bytes); ctest; the Vita build. The older scenarios that touch these: `siege_ops`, `operation_guards`, `letter_ops`,
+`debt_mail_branches`, `mail_branches`, `shipyard_repair`, all equal. In the viewer (`re/emu/sesion26/shots.sh` with
+`--debug-state letters`): the buttons on the letter's parchment (X the first, Triangle the second, touch), gone once
+pressed until another letter is shown; the impounding's letter arriving with its wares, the proposal's wedding, the
+prince's meeting; in Spanish and English.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

@@ -95,6 +95,8 @@ uint16_t ship_count(const SaveGame& save) { return save.globals.u16(global::kShi
 constexpr uint32_t kDockedHead = global::kShips + 0xE8;
 // [+0xF6]: número de convoyes.
 constexpr uint32_t kConvoyCount = global::kShips + 0xF6;
+// [+0xEC]: the first convoy of the convoys' list (0x6DD88C).
+constexpr uint32_t kConvoyHead = global::kShips + 0xEC;
 // Registros de 0x14 bytes del mundo: número ([0x6DE4A6]) y primero libre ([0x6DE51C]).
 constexpr uint32_t kWorldRecordCount = global::kWorld + 0x6;
 constexpr uint32_t kWorldRecordFree = global::kWorld + 0x7C;
@@ -549,9 +551,8 @@ void fn_5083b0(SaveGame& save, int town, int32_t work) {
 	// 0x613920: escena del puerto (no se traduce).
 }
 
-// 0x508AA0: trabajo del astillero en los barcos que repara ([0x81E]): cada uno
-// recibe `work` de casco y sale de la lista al quedar entero o si su orden
-// [+0x136] es 1.
+// 0x508AA0: the shipyard's work on the ships it repairs ([0x81E]): each gets `work` of hull and leaves the list once
+// whole or if its orders [+0x136] are 1; then the same for the convoys it repairs ([0x820]).
 void fn_508aa0(SaveGame& save, int town, int32_t work) {
 	TownMemory& t = save.towns[size_t(town)].memory;
 	const uint16_t ships = ship_count(save);
@@ -602,11 +603,66 @@ void fn_508aa0(SaveGame& save, int town, int32_t work) {
 		save.globals.u16(kDockedHead) = index;
 		// 0x613920: escena del puerto (no se traduce).
 	}
-	// Sin traducir: los convoyes en reparación (lista [0x820] de la ciudad,
-	// 0x508C86-0x508E8B; se hace si [0x820] < [0x6DD896]). Hacen falta los
-	// convoyes (0x14 bytes en *0x6DD7A8), que SaveGame no tiene; [0x820] vale
-	// 0xFFFF en todas las ciudades de las 12 partidas.
-	(void)kConvoyCount;
+	// 0x508C86: the convoys in repair (the town's list [0x820], by the convoy's [+0x8]; empty in the 12 saves). The
+	// convoy gets the state 6 and each of its ships (from [+0xA], by [+0x6]) `work` of hull and the state 6, the work
+	// counted as for a ship alone. The convoy leaves the list once every ship is whole, or at once if its guide's
+	// orders ([+0x136] of [+0x10]) are 1 (the repair cancelled): back to the convoys' list (0x6DD88C) in the state 0,
+	// the orders 2 become 1 and every ship gets its whole hull back and the state 0. Game bug (seems): the cancelled
+	// repair ends with every ship whole too, although the work wasn't done (a ship alone, above, keeps its hull).
+	// Checked with the oracle: scenario convoy_repair (saves 1, 3, 5, 7, direct calls).
+	const uint16_t convoys = save.globals.u16(kConvoyCount);
+	// The guide's orders: the game reads them without looking at the guide ([+0x10] always a ship in its convoys).
+	auto guide_orders = [&](const GameMemory<0x3C>& c) -> uint8_t* {
+		return c.u16(0x10) < save.ships.size() ? &save.ships[c.u16(0x10)].orders() : nullptr;
+	};
+	link = &t.u16(0x820);
+	while (*link < convoys) {
+		const uint16_t index = *link;
+		GameMemory<0x3C>& c = save.convoys[index];
+		bool unfinished = false;
+		c.u16(0x12) = 6;
+		for (uint16_t i = c.u16(0xA); i < ships;) {
+			SavedShip& ship = save.ships[i];
+			const int32_t health = add32(ship.health(), work);
+			ship.notices() |= 0x100;
+			i = ship.next_in_list();
+			ship.health() = health;
+			ship.status() = 6;
+			if (health >= ship.max_health()) {
+				t.s32(0x814) = add32(t.s32(0x814), add32(sub32(ship.max_health(), health), work));
+				ship.health() = ship.max_health();
+			} else {
+				unfinished = true;
+				t.s32(0x814) = add32(t.s32(0x814), work);
+			}
+		}
+		uint8_t* orders = guide_orders(c);
+		if ((!orders || *orders != 1) && unfinished) {
+			link = &c.u16(0x8);
+			continue;
+		}
+		*link = c.u16(0x8);
+		c.u16(0x8) = save.globals.u16(kConvoyHead);
+		save.globals.u16(kConvoyHead) = index;
+		c.u16(0x12) = 0;
+		if (orders && *orders == 2) {
+			*orders = 1;
+		}
+		for (uint16_t i = c.u16(0xA); i < ships;) {
+			SavedShip& ship = save.ships[i];
+			i = ship.next_in_list();
+			ship.notices() |= 0x100;
+			ship.health() = ship.max_health();
+			ship.status() = 0;
+		}
+		// 0x613920 on the port's scene 0x6E6220 (the guide): the interface.
+		// A human owner whose guide's orders aren't 1 (now: 2 became 1): the ticker line «Repairs completed in X»
+		// (0x508E69, kind 7, the guide).
+		const uint8_t owner = c.u8(0x0);
+		if (owner < merchant_count(save) && save.merchants[owner].memory.u16(8) == 0 && (!orders || *orders != 1)) {
+			send_ticker(save, owner, 7, c.u16(0x10));
+		}
+	}
 }
 
 // 0x51FF30: las obras de la ciudad avanzan con `workers` puntos (como mucho 5

@@ -1,7 +1,7 @@
 # The operations: the 193 codes of the executor
 
 Inventoried on 2026-11-05 (the inventory's part E, [../inventario.md](../inventario.md)); the «p3vita» column
-checked against `run_operation` (`src/p3data/simulation.cpp`) on 2026-11-11.
+checked against `run_operation` (`src/p3data/simulation.cpp`) on 2026-11-12.
 An operation is 0x14 bytes: a u32 code and 16 bytes of data. The interface and the
 simulation fill one (the interface first with 0x535740: a u32 0xFFFFFFFF, then
 zeros), and either queue it with **0x54AA70** on the object 0x6DF2F0, which the
@@ -56,6 +56,13 @@ second otherwise; the office's side (0x4AA7C0) has its stock / 200 or / 2000 and
   into the window's [+0x2154]) and queues it as it is (0x5D5970) when the player
   accepts: any code can come that way.
 - The Hanse tasks window queues 0x4A and 0x4B from the same call (0x5E8E71).
+- **The letter window's buttons** (2026-11-12; `letter_window.hpp`, [mail.md](mail.md) §4): the composer
+  (0x47F3B0) gives the letters 0x1E, 0x1F, 0x21, 0x22, 0x3D..0x3F, 0x64 and 0x79 their buttons, and a button
+  calls 0x4D6C50 → 0x4D6C90, which queues by the letter's type 0x75 (0x1E, 0x1F), 0x72 (0x21, three rand() and a
+  town), 0x60 (0x22, four rand()), 0x74 (0x3C..0x3F), 0x8C (0x64) or 0x77 (0x79); the composer itself queues
+  0x77 {0xFFFF, entry, 1} for a letter 0x79 whose loan is no longer to decide.
+- **The town hall** (.let 0x03 → *0x6E5500) queues 0x3D (an order of the world's seven, 0x6DE530: 0x5E7877);
+  **another merchant's office** (.let 0x2D → *0x6E5550, BuildingParchment.ini) queues 0x5F (an offer: 0x5BE06E).
 - **The convoy window** (the ship's panel, 0x6CE6D0; 2026-11-05) offers, for the ships
   selected in the town of the first (0x40C170): a private convoy if one of them can
   guide (0x519C40), a public one with the guild's licence ([+0x468]), and the convoys
@@ -115,7 +122,7 @@ an action of the interface; 0x54 and 0x55 go with letters), others may be dead.
 | Group | Codes | Done in p3vita |
 |-|-|-|
 | simulation | 37: the ones the simulation queues (inventory, part B) | all 37 |
-| player | 105: queued by the interface | 49: 0x00..0x0A, 0x0C, 0x0D, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x3B, 0x3F, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x68..0x71 |
+| player | 105: queued by the interface | 53: 0x00..0x0A, 0x0C, 0x0D, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x3B, 0x3F, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x68..0x72, 0x77, 0x8B, 0x8C |
 | battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 12: all but 0x99 (never queued; its function, the chase's battle, is done) and 0xBD (the window) |
 | network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | 8: 0xA7, 0xAA, 0xAB (the new game's player and his names) and the five that do nothing |
 | new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | 8: all but 0xAE, 0xB2 and 0xB6 (no queuer found) |
@@ -191,7 +198,7 @@ feast window): the handler is the same and is done.
 | 0x3A | player | an event record's fields (0x53A2C0: 0x4D8CF0, 0x4D8DB0, 0x4D85C0) | 0x419EB0, 0x5EB3C0 | 0x535EAC → 0x53A2C0 | 1, 288 B |  | guess |
 | 0x3B | player | materials for a Hanse road (0x53A3E0, `fn_53a3e0`) | road window 0x5F2A20 | 0x535EBB → 0x53A3E0 |  | yes | read |
 | 0x3C | unused | a building on sale (0x4DAB00) | not found (computed code or dead) | 0x535ECA → 0x4DAB00 |  |  | read |
-| 0x3D | player | an order (letter 0x1A «Order»; 0x53A620) | 0x5E7730 | 0x535EE5 → 0x53A620 | 1, 496 B |  | read (mail.md) |
+| 0x3D | player | an order of the town hall accepted (one of the world's seven, 0x6DE530): the town's slot [+0x830] or [+0x832], the event 0x11 at its deadline with the order, the letter 0x1A «Order», the world's order of that town cleared (0x53A620) | the town hall 0x5E7730 (0x5E7877) | 0x535EE5 → 0x53A620 | 1, 496 B |  | read |
 | 0x3E | player | move one's home town? (letter 0x0E «Move» to the chronicle; 0x4F9430, 0x4F75F0, 0x635040) | 0x5DD520 | 0x535EF4 → 0x53A810 | 2, 816 B |  | guess |
 | 0x3F | player | the vote of a human player (0x53AA10) | 0x5E8280 | 0x535F03 → 0x53AA10 |  | yes | read |
 | 0x40 | player | dismiss a militia squad (0x51D410) | town hall 0x5B0510 | 0x535F12 → 0x51D410 |  |  | book |
@@ -225,7 +232,7 @@ feast window): the handler is the same and is done.
 | 0x5C | unused | something in an office (0x5308A0) | not found | 0x53629F → 0x53D6D0 | 1, 704 B |  | guess |
 | 0x5D | player | open an office (0x5362AE, 0x51B890) | none found: not a literal anywhere, nor in the tavern's stored operations (0x55, 0x4C); the player opens an office by building it (0x21 with the type 0x2C) | 0x5362AE → 0x51B890 |  | yes | read |
 | 0x5E | player | an office's administrator (0x5098B0, 0x5097C0) | 0x5DC2A0 | 0x5362F5 → 0x53D990 | 1, 160 B |  | guess |
-| 0x5F | player | the letters 0x1E «Memo» / 0x1F «Offer» (0x5338A0) | 0x5BB9D0 | 0x536304 → 0x53DA30 | 4, 1.3 KB |  | read (mail.md) |
+| 0x5F | player | an offer to another merchant (money, a ship or wares, taken in escrow): a node of the offers' list *0x6DE584 (not saved), the event 0x13 and the letters 0x1E «Memo» and 0x1F «Offer» (0x53DA30 → 0x5338A0) | another merchant's office *0x6E5550 (0x5BE06E) | 0x536304 → 0x53DA30 | 4, 1.3 KB |  | read |
 | 0x60 | simulation | a wedding (0x53DA90) | event 0x16 (dead), letter answers 0x4D6C90 | 0x536313 → 0x53DA90 |  | yes | read |
 | 0x61 | simulation | a merchant's feast (0x53DBF0) | 0x5316E0; the feast window 0x5BAE40 | 0x536322 → 0x53DBF0 |  | yes | read |
 | 0x62 | player | something in an office (inline, 0x536331) | 0x5AE4D0 | 0x536331 → 0x5308A0 |  |  | guess |
@@ -244,12 +251,12 @@ feast window): the handler is the same and is done.
 | 0x6F | player | a letter deleted (0x4D6A50, `delete_letter`) | mailbox 0x47C9B0 | 0x536AE1 → 0x4D6A50 |  | yes | read |
 | 0x70 | player | a merchant's letter settings: {0x70, u16 merchant at [+4], [+6..+0xD] to his [+0x38..+0x3F] (the days each class is kept, the event sound, zeros), [+0xE] to his [+0x26] (the notices)}; a merchant under the count (0x4D6AF0, `mail.cpp` `set_letter_settings`) | the letters' settings window 0x408F50 on closing (0x4096DB) | 0x536AFB → 0x4D6AF0 |  | yes | read |
 | 0x71 | player | the letters checked: {0x71, merchant, repair}: with repair, 0x4D7960 repairs the chains (a letter reached twice cuts the link to it; the free list ends at a letter already in a chain); then 0x4D6780 removes the merchant's old letters (`mail.cpp` `repair_letter_chains`, `expire_letters`) | the letters' settings window 0x408F50 ({player, 1}, 0x409735); the letter window 0x47C9B0 ({player, 0} once a tick while open, 0x47CD83), 0x47D1F0 | 0x536B1C → 0x4D7960, 0x4D6780 |  | yes | read |
-| 0x72 | player | answer a letter: «It's a pity» (letter 0x2B; 0x53EAC0) | letter answers 0x4D6C90 | 0x536B43 → 0x53EAC0 | 1, 368 B |  | read (mail.md) |
+| 0x72 | player | a suitor's letter 0x21 answered: the sum paid, the proposal (event 0x17) in time or «It's a pity» (letter 0x2B) (0x53EAC0, `operations.cpp`) | letter answers 0x4D6C90 | 0x536B43 → 0x53EAC0 |  | yes | read |
 | 0x73 | unused | nothing (0x537025) |  | — |  |  | read |
-| 0x74 | player | answer a letter (0x53EC30) | letter answers 0x4D6C90 | 0x536B56 → 0x53EC30 | 1, 128 B |  | read (mail.md) |
-| 0x75 | player | answer a letter (0x53ECB0, deletes it 0x4D6A50) | letter answers 0x4D6C90 | 0x536B65 → 0x53ECB0 | 4, 2.0 KB |  | read (mail.md) |
+| 0x74 | player | a mission's letter 0x3D..0x3F answered: the answer into the variables of its script (event 0x1B), the letter's record without deadline (0x53EC30; with the mission interpreter) | letter answers 0x4D6C90 | 0x536B56 → 0x53EC30 | 1, 128 B |  | read |
+| 0x75 | player | an offer between merchants answered (the letters 0x1E «Memo», 0x1F «Offer»): accepted (0x534600), the offer out of the list *0x6DE584 (0x5340D0) and both letters deleted (0x53ECB0) | letter answers 0x4D6C90 | 0x536B65 → 0x53ECB0 | 4, 2.0 KB |  | read |
 | 0x76 | player | remove a letter 0x71 (0x4D7870) | 0x5D8100 | 0x536B74 → 0x53EDF0 | 2, 352 B |  | read (mail.md) |
-| 0x77 | player | answer a letter: the impounding (letter 0x83; a ship 0x507D60) | letter answers 0x4D6C90, 0x47F3B0 | 0x536B83 → 0x53EEC0 | 2, 2.5 KB |  | read (mail.md) |
+| 0x77 | player | a townsman who can't pay back the player's loan (letter 0x79): released (reputation) or impounded (a ship over 15000, wares, money; the letter 0x83 with its text) (0x53EEC0, `operations.cpp`) | letter answers 0x4D6C90, 0x47F3B0 | 0x536B83 → 0x53EEC0 |  | yes | read |
 | 0x78 | simulation | a new ship in [0x6DD7C0] (0x5051E0) | 0x4E3F44, 0x4E43E4 | 0x53651F → 0x5051E0 |  | yes | read |
 | 0x79 | simulation | the Hanse diet: a byte per town (0x536535) | 0x4DC800 | 0x536535 |  | yes | read |
 | 0x7A | simulation | the Hanse diet: a town's [0x834..0x83F] (0x536570) | 0x4DC6B0 | 0x536570 |  | yes | read |
@@ -269,8 +276,8 @@ feast window): the handler is the same and is done.
 | 0x88 | player | a siege: a town's expense (0x529F90) and 0x6348E0 on the siege objects 0x6DF270 | 0x5F1F00 | 0x53688D → 0x529F90, 0x6348E0 | 1, 272 B |  | guess |
 | 0x89 | player | a siege (0x635990) | 0x5F2200 | 0x5368E9 → 0x635990 | 1, 496 B |  | guess |
 | 0x8A | player | a siege (0x6356D0) | 0x5F2550 | 0x53692B → 0x6356D0 |  |  | guess |
-| 0x8B | player | a siege: the prince (letter 0x64 «Prince», 0x635B80) | 0x633AF0 (op) | 0x536974 → 0x635B80 | 1, 336 B |  | read (mail.md) |
-| 0x8C | player | a siege: the prince (letter 0x65, 0x635CD0) | letter answers 0x4D6C90 | 0x5369C7 → 0x635CD0 | 1, 272 B |  | read (mail.md) |
+| 0x8B | player | a siege: the prince of the player's home town asks for goods: a node of the siege's list [+0x1020] and the letter 0x64 «Prince» (0x635B80, `sieges.cpp`) | 0x633AF0 (op) | 0x536974 → 0x635B80 |  | yes | read |
+| 0x8C | player | a siege: the prince's request accepted: the node's [+0x7], the letter 0x65 and the letter 0x64 without its button (0x635CD0, `sieges.cpp`) | letter answers 0x4D6C90 | 0x5369C7 → 0x635CD0 |  | yes | read |
 | 0x8D | player | a siege (0x635DE0) | 0x5F2E90 | 0x536A2B → 0x635DE0 | 1, 1.1 KB |  | guess |
 | 0x8E | simulation | a siege: the besieging army (0x633AF0) | 0x6349F0; 0x419EB0; the mission interpreter | 0x536A67 → 0x633AF0 |  | yes | read |
 | 0x8F | unused | a siege's letters (0x38 «Siege», 0x37 «Extra tax»; 0x540240) | not found | 0x536AA9 → 0x540240 | 1, 592 B |  | read (mail.md) |

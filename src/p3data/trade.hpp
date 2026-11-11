@@ -26,6 +26,9 @@ void fn_5180c0(SaveGame& save, int ship, uint32_t ware, int32_t amount, float pr
 // 0x4FF6F0 (on the office): `amount` of a ware into the office at `price` a
 // unit. Nothing for an amount ≤ 0.
 void fn_4ff6f0(OfficeMemory& o, uint32_t ware, int32_t amount, float price);
+// 0x5007A0 (on the office): `amount` of a ware into the office for `price` in all (its average price again, unless
+// the new stock isn't positive).
+void fn_5007a0(OfficeMemory& o, uint32_t ware, int32_t amount, int32_t price);
 
 struct TradeResult {
 	int32_t amount = 0;  // What was bought or sold.

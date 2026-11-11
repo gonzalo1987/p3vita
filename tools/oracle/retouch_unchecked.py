@@ -1414,6 +1414,61 @@ def shipyard_repair(o):
     return during
 
 
+def convoy_repair(o):
+    """Direct calls to 0x508AA0 (the shipyard's work: after the ships, the convoys of the town's repair list [0x820],
+    0x508C86) with five convoys of the convoys' list moved to town 0's repair list: one of the player's (only its
+    [+0x0]) whose ships all end whole (back to the list, the ticker line); another with its guide's orders 2 (they
+    become 1: no line); an AI one with a ship that doesn't end whole (it stays); one like it with its guide's orders
+    1 (it leaves, every ship whole); one without ships ([+0xA] 0xFFFF). A second call with more work ends the one that
+    stayed."""
+    _, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    found = [c for c in convoy_list(o, CONVOY_HEAD)
+             if o.u16(convoy_at(o, c) + 0x10) < ships and o.u16(convoy_at(o, c) + 0xA) < ships]
+    if len(found) < 5:
+        raise RuntimeError(f'convoys in the list with ships: {found}')
+    cs = found[:5]
+    t = 0
+    a = o.town(t)
+    print(f'convoys {cs} to the repair list of town {t} ([0x820] {o.u16(a + 0x820):#x})')
+
+    def members(c):
+        out, s = [], o.u16(convoy_at(o, c) + 0xA)
+        while s < ships and len(out) < 50:
+            out.append(s)
+            s = o.u16(o.ship(s) + 6)
+        return out
+
+    def during(o):
+        # Out of the convoys' list, into the town's repair list in this order.
+        for c in cs:
+            link = CONVOY_HEAD
+            while o.u16(link) != c:
+                link = convoy_at(o, o.u16(link)) + 0x8
+            w16(o, link, o.u16(convoy_at(o, c) + 0x8))
+        for c, nxt in zip(cs, cs[1:] + [0xFFFF]):
+            w16(o, convoy_at(o, c) + 0x8, nxt)
+            w16(o, convoy_at(o, c) + 0x1C, t)
+        w16(o, a + 0x820, cs[0])
+        c1, c2, c3, c4, c5 = cs
+        for c, owner, orders, deep in ((c1, player, 0, False), (c2, player, 2, False), (c3, None, 0, True),
+                                       (c4, None, 1, True), (c5, None, 0, False)):
+            ca = convoy_at(o, c)
+            if owner is not None:
+                w8(o, ca, owner)
+            w8(o, o.ship(o.u16(ca + 0x10)) + 0x136, orders)
+            for k, s in enumerate(members(c)):
+                sa = o.ship(s)
+                w32(o, sa + 0x18, o.s32(sa + 0x14) - (100000 if deep and k == 0 else 10))
+        w16(o, convoy_at(o, c5) + 0xA, 0xFFFF)
+        direct(o, 0x508AA0, [t, 1000], ecx=to.SHIPS)
+        print(f'after: [0x820] {o.u16(a + 0x820):#x}, ' + ', '.join(
+            f'{c}: state {o.u16(convoy_at(o, c) + 0x12)}, next {o.u16(convoy_at(o, c) + 0x8):#x}' for c in cs))
+        direct(o, 0x508AA0, [t, 200000], ecx=to.SHIPS)
+        print(f'after the second: [0x820] {o.u16(a + 0x820):#x}, the convoys\' list {convoy_list(o, CONVOY_HEAD)[:8]}')
+    return during
+
+
 def weaponsmith(o):
     """Direct calls on the weaponsmith (facility 3) of town 0: 0x510AA0 with
     the weapon it makes ([0x6D0] = 0x15) still in its range (kept); 0x50F6E0
@@ -3964,6 +4019,198 @@ def expedition_branches(o):
 
 
 SCRATCH_LETTER = SCRATCH + 0xC0  # a letter's 0x10 bytes (0x4D6530)
+
+
+def suitor_answer(o):
+    """The operation 0x72 (0x53EAC0: the button of a suitor's letter 0x21, 0x4D6C90) and the event 0x17 it makes
+    (0x4E8684, the proposal: the letter 0x22). A letter 0x21 sent to the player (0x4D6530 called directly), then 0x72
+    in time with the letter's town his home town (2 days), the farthest town and a town past the towns (the
+    travel 0xFF: 8 days), too late (the letter 0x2B),
+    with an entry not a 0x21 and one past the mailbox, and for a merchant past the merchants (nothing); then three
+    events 0x17 at the current tick run by the queue (0x4D85C0): for the player as he is, with his [+0x1A] the other
+    way round, and for a merchant past the merchants."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    pa = o.merchant(player)
+    home = o.u8(pa + 0x19)
+    far = max((t for t in range(towns) if t != home), key=lambda t: direct(o, 0x531B70, [home, t], ecx=to.WORLD) & 0xFF)
+    print(f'the player {player}, home {home}, farthest {far}; [+0x1A] {o.u8(pa + 0x1A)}')
+
+    def during(o):
+        at = _trampolines.get((0x4D6530, 2, False), TRAMPOLINES + 0x40 * len(_trampolines))
+        to.MAIL_SITES.add(at + 4 * 2 + 5)
+        o.uc.mem_write(SCRATCH_LETTER, bytes([0, 0x80, 0xFF, 0xFF, 0x21, home, 0xFF, 0xFF]) +
+                       struct.pack('<4H', 5, 7, 4000, 100))
+        direct(o, 0x4D6530, [player, SCRATCH_LETTER], ecx=MAILBOX)
+        entry = o.u16(pa + 0xA)
+        print(f'the letter 0x21: entry {entry}, money {o.s32(pa)}')
+
+        def op72(what, entry, merchant, valid, town):
+            operation(o, 0x72, 4000, entry, 0x1234, 0x2345, 0x3456, 7, merchant, town, 5, 7, valid, fmt='<I5H6B')
+            print(f'{what}: money {o.s32(pa)}, the entry [+0xE] {o.u16(o.u32(MAILBOX) + 0x10 * entry + 0xE)}, '
+                  f'the head {o.u16(pa + 0xA)}')
+        op72('in time, home', entry, player, 1, home)
+        op72('in time, far', entry, player, 1, far)
+        op72('in time, a town past the towns (0xFF: 8 days)', entry, player, 1, towns)
+        op72('too late', entry, player, 0, home)
+        op72('not a 0x21', o.u16(pa + 0xA), player, 0, home)
+        op72('past the mailbox', o.u16(MAILBOX + 6), player, 1, home)
+        op72('a merchant past', entry, merchants, 1, home)
+
+        def proposal(merchant, x):
+            _, a = new_event(o, 0, 0x17)
+            o.uc.mem_write(a + 8, struct.pack('<5H6B', 4000, entry, x, 0x2345, 0x3456, 9, merchant, home, 5, 7, 1))
+            direct(o, 0x4D85C0, [o.u32(WORLD + 0x14)], ecx=to.EVENTS)
+            print(f'proposal to {merchant}: the head {o.u16(pa + 0xA)}')
+        proposal(player, 0x1234)
+        w8(o, pa + 0x1A, 0 if o.u8(pa + 0x1A) else 1)
+        proposal(player, 0x4321)
+        proposal(merchants, 0x1234)
+    return during
+
+
+def letter_answers(o):
+    """The letter window's buttons (0x4D6C90, the game's own code run directly in the emulator: the operation it
+    queues and the rand() it rolls) against the viewer's (p3data/letter_window.hpp, through player_ops
+    letter-answer, from the same letter, tick and rand() state); different bytes stop the scenario. Then the
+    operation runs with the executor (compared call by call): a suitor's letter 0x21 in time and too late (0x72), a
+    proposal 0x22 (0x60), the prince's 0x64 (0x8C, after the 0x8B that makes its node), a letter 0x79 impounded and
+    released (0x77, on loans made here). The offers' 0x1E and 0x1F (0x75) only compared: their operation goes with the
+    offers. Letters sent to the player with 0x4D6530 called directly."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    pa = o.merchant(player)
+    home = o.u8(pa + 0x19)
+    besieged = (home + 1) % towns
+
+    def during(o):
+        at = _trampolines.get((0x4D6530, 2, False), TRAMPOLINES + 0x40 * len(_trampolines))
+        to.MAIL_SITES.add(at + 4 * 2 + 5)
+
+        def send(kind, town, payload):
+            o.uc.mem_write(SCRATCH_LETTER, bytes([0, 0x80, 0xFF, 0xFF, kind, town, 0xFF, 0xFF]) + payload)
+            direct(o, 0x4D6530, [player, SCRATCH_LETTER], ecx=MAILBOX)
+            return o.u16(pa + 0xA)
+
+        def press(what, entry, answer, run=True):
+            letter = bytes(o.uc.mem_read(o.u32(MAILBOX) + 0x10 * entry, 0x10))
+            before = o.rand_state
+            viewer = player_op_text('letter-answer', letter.hex(), entry, answer, player, towns,
+                                    o.u32(WORLD + 0x14), before).split()
+            o.tick_operations = []
+            direct(o, 0x4D6C90, [entry, answer], ecx=MAILBOX)
+            game = o.tick_operations[0] if o.tick_operations else None
+            o.tick_operations = []
+            mine = None if viewer[0] == 'none' else bytes.fromhex(viewer[0])
+            print(f'{what}: the game {game.hex() if game else None}, rand {before:#x} -> {o.rand_state:#x}')
+            if mine != game or (mine and int(viewer[1]) != o.rand_state):
+                raise RuntimeError(f'{what}: the viewer {viewer}')
+            if game and run:
+                run_bytes(o, game)
+        day = o.u32(WORLD + 0x14) >> 8
+        year = day // 365
+        suitor = send(0x21, home, struct.pack('<4H', 5, 7, 4000, (day - year * 365 + 14) & 0xFFFF))
+        press('suitor in time', suitor, 0)
+        late = send(0x21, home, struct.pack('<4H', 5, 7, 4000, 0))
+        press('suitor too late', late, 0)
+        proposal = send(0x22, home, bytes([5, 7, 2, besieged, 9, 11, 3, 14]))
+        press('proposal', proposal, 0)
+        operation(o, 0x8B, 10, 20, 30, 40, 50, home, player, besieged, o.u32(WORLD + 0x14) + 0x1500, fmt='<I8BI')
+        prince = o.u16(pa + 0xA)
+        press('prince', prince, 0)
+        for answer in (0, 1):
+            i, _ = new_event(o, 0x10000, 1, d8=10000, bC=0x40, b10=player, b11=0xFF, b12=0, b14=home, b15=2, b16=5,
+                             b17=9)
+            debtor = send(0x79, home, struct.pack('<HHBBBB', 10000, i, 0x22, 5, 7, 9))
+            press(f'0x79, answer {answer}', debtor, answer)
+        memo = send(0x1E, home, struct.pack('<IHH', 0x12345, player, 0))
+        press('memo, the first button', memo, 0, run=False)
+        press('memo, another', memo, 1, run=False)
+        offer = send(0x1F, home, struct.pack('<IHH', 0x12345, 0, player))
+        press('offer, accepted', offer, 0, run=False)
+        press('offer, rejected', offer, 1, run=False)
+        w8(o, o.u32(MAILBOX) + 0x10 * late + 4, 0x05)
+        press('a type below 0x1E', late, 0)
+        press('an entry past the mailbox', o.u16(MAILBOX + 6), 0)
+    return during
+
+
+def impounding(o):
+    """The operation 0x77 (0x53EEC0: the buttons of a letter 0x79, a citizen who can't pay back the player's loan, and
+    the composer's own 0x77 with the event 0xFFFF), run with the executor on events 0x01 made here (the debtor a
+    citizen 0xFF, the creditor the player): lenient; impounded for 10000 in the town of his office (two wares to it,
+    their lines in the letter) and in a town without one (no goods: the debt in money); for 24000 (18000 after its share
+    [+0xC] 0x40: a snaikka, the wares into it); for 3 000 000 (a crayer, both wares cut to its room, the rest in money); with the debtor's rank
+    choosing other wares (the first in barrels and in loads). A letter 0x79 sent to the player (0x4D6530) loses its event; the guards: the event 0xFFFF
+    (only the letter), an event of another kind, one with [+0x12], one whose debtor is a merchant, one whose creditor
+    is past the merchants."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    pa = o.merchant(player)
+    mine = office_town(o, player)
+    other = next(t for t in range(towns) if t not in {o.u8(o.office(f) + 0x2C6) for f in rt.merchant_offices(o, player)})
+    print(f'the player {player}: office in {mine}, none in {other}; money {o.s32(pa)}')
+
+    def during(o):
+        at = _trampolines.get((0x4D6530, 2, False), TRAMPOLINES + 0x40 * len(_trampolines))
+        to.MAIL_SITES.add(at + 4 * 2 + 5)
+        o.uc.mem_write(SCRATCH_LETTER, bytes([0, 0x80, 0xFF, 0xFF, 0x79, mine, 0xFF, 0xFF]) +
+                       struct.pack('<HHBBBB', 9000, 0, 0x22, 5, 7, 9))
+        direct(o, 0x4D6530, [player, SCRATCH_LETTER], ecx=MAILBOX)
+        entry = o.u16(pa + 0xA)
+
+        def loan(debt, town, rank=2, share=0x40, kind=1, b12=0, debtor=0xFF, creditor=player):
+            i, a = new_event(o, 0x10000, kind, d8=debt, bC=share, b10=creditor, b11=debtor, b12=b12, b14=town,
+                             b15=rank, b16=5, b17=9)
+            return i
+
+        def op77(what, event, answer, letter=0xFFFFFFFF):
+            operation(o, 0x77, event, letter, answer)
+            print(f'{what}: money {o.s32(pa)}, ships head {o.u16(pa + 0xE)}, mail head {o.u16(pa + 0xA)}')
+        op77('lenient', loan(10000, mine), 1)
+        op77('office', loan(10000, mine), 0, entry)
+        op77('no office', loan(10000, other), 0)
+        op77('a snaikka', loan(24000, mine), 0)
+        op77('a crayer, full', loan(3000000, mine, rank=5), 0)
+        op77('another rank', loan(12000, mine, rank=7, share=0), 0)
+        op77('the first ware in loads', loan(12000, mine, rank=0, share=0), 0)
+        op77('the composer\'s', 0xFFFF, 1, entry)
+        op77('another kind', loan(10000, mine, kind=4), 0)
+        op77('[+0x12]', loan(10000, mine, b12=1), 0)
+        op77('a merchant debtor', loan(10000, mine, debtor=0), 0)
+        op77('a creditor past', loan(10000, mine, creditor=merchants), 0)
+    return during
+
+
+def prince_ops(o):
+    """The prince's request in a siege, run with the executor: 0x8C (the button of the letter 0x64, 0x635CD0) on the
+    player's home town with its list [+0x1020] still empty; 0x8B (0x635B80, which 0x633AF0 queues: a node and the
+    letter 0x64) four times on that list (empty; a later tick, the head alone; a tick earlier than the head,
+    second; the latest, walked to the end) and once with a town past the towns; then 0x8C with another besieged
+    town (not found) and the last letter 0x64 (it loses its button all the same), with the first node's (found:
+    [+0x7] and the letter 0x65) and an entry past the mailbox, and with a town past the towns."""
+    towns = o.counts()[0]
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    besieged = (home + 1) % towns
+    now = o.u32(WORLD + 0x14)
+    print(f'the player {player}, home {home}, besieged {besieged}')
+
+    def during(o):
+        def op8b(town, when, goods=(10, 20, 30, 40, 50)):
+            operation(o, 0x8B, *goods, town, player, besieged, when, fmt='<I8BI')
+        operation(o, 0x8C, home, player, besieged, 0)
+        op8b(home, now + 0x1500)
+        op8b(home, now + 0x2500, (15, 25, 35, 45, 55))
+        op8b(home, now + 0x500, (5, 5, 5, 5, 5))
+        op8b(home, now + 0x3000, (1, 2, 3, 4, 5))
+        op8b(towns, now + 0x1500)
+        letter = o.u16(o.merchant(player) + 0xA)  # the last letter 0x64
+        operation(o, 0x8C, home, player, (besieged + 1) % towns, letter)
+        operation(o, 0x8C, home, player, besieged, o.u16(MAILBOX + 6))
+        operation(o, 0x8C, towns, player, besieged, 0)
+        print(f'the player\'s head {o.u16(o.merchant(player) + 0xA)}')
+    return during
 
 
 def mail_branches(o):
@@ -11551,6 +11798,9 @@ SCENARIOS = {
     'world_records': Scenario(world_records, [0x4D36E0, 0x5306B0, 0x530780], 0, ['@4d373e', '@5306d3', '@53079e']),
     'wall_level': Scenario(wall_level, [0x5252F0], 0, ['@525343', '@52535a']),
     'shipyard_repair': Scenario(shipyard_repair, [0x508AA0], 0, ['@508bf6', '@508c20']),
+    'convoy_repair': Scenario(convoy_repair, [0x508AA0], 0, [
+        '@508d13', '@508d30', '@508ce0>508d5b', '@508d72>508d7e', '@508e70', '@508dbb', '@508e69', '@508e53>508e77',
+        '@508e35>508e77']),
     'weaponsmith': Scenario(weaponsmith, [0x510AA0, 0x50F6E0], 0, ['510b29>510c45', '@50f724']),
     'office_recount': Scenario(office_recount, [0x4FF2D0], 0, ['@4ff31b', '@4ff3d1', '@4ff64e']),
     # offices.cpp
@@ -11678,6 +11928,20 @@ SCENARIOS = {
     # mail.cpp
     'mail_branches': Scenario(mail_branches, [0x4D6530], 0, ['@4d653e>4d6670', '@4d6553>4d6670', '@4d65fc',
                                                             '@4d6b66']),
+    # The letters' buttons (2026-11-11).
+    'suitor_answer': Scenario(suitor_answer, [0x535760, 0x4D85C0], 0, [
+        '@53eb38', '@53eb5e', '@53eb90', '@53ec00', '@53eafd>53ec06', '@53ebfe>53ec06', '@53ebdb>53ec06', '@4e8733',
+        '@4e8762', '@4e86c1>4e87d4']),
+    'letter_answers': Scenario(letter_answers, [0x535760], 0, [
+        '@4d6ce8', '@4d6d14', '@4d6d56', '@4d6dfc', '@4d6ed5', '@4d6f14', '@4d6ce2>4d6f41', '@4d6cc7>4d6f41',
+        '@4d6cac>4d6f41']),
+    'impounding': Scenario(impounding, [0x535760], 0, [
+        '@53ef01', '@53ef7f', '@53f16f', '@53f1a3', '@53f1ce', '@53f2cf', '@53f396', '@53f3b4', '@53f3dd', '@53f453',
+        '@53f4a0', '@53f4b9', '@53f55d', '@53f5d9', '@53f633', '@53f66d', '@53f326>53f666', '@53ef12>53f6f1',
+        '@53ef2a>53f6f1', '@53ef35>53f6f1', '@53ef4a>53f6f1', '@53ef5b>53f6f1']),
+    'prince_ops': Scenario(prince_ops, [0x535760], 0, [
+        '@635c23', '@635c08>635c18', '@635c0f', '@635c0d>635c18', '@536981>537025', '@635cf5>635dbf', '@635d28',
+        '@635d14', '@5369d2>537025', '@536a1f', '@536a05>537025', '@536a19>537025']),
     # events_big.cpp
     'site_start_houses': Scenario(site_start_houses, [0x500F50], 0, ['@500f79>501355', '@501399>5013ae']),
     # ship_trade.cpp

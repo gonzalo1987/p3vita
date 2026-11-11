@@ -325,6 +325,10 @@ void fn_5366a0(SaveGame& save, const uint8_t* operation);
 void fn_538c40(SaveGame& save, const uint8_t* operation);
 // 0x60 (a merchant's wedding is arranged: event 0x15, 0x53DA90).
 void fn_53da90(SaveGame& save, const uint8_t* operation);
+// 0x72 (the player answers a suitor's letter 0x21: the event 0x17 or the letter 0x2B; 0x53EAC0).
+void fn_53eac0(SaveGame& save, const uint8_t* operation);
+// 0x77 (the creditor answers a letter 0x79: lenient, or the impounding with the letter 0x83; 0x53EEC0).
+void fn_53eec0(SaveGame& save, const uint8_t* operation);
 // 0x65 (an AI merchant goes bankrupt, 0x4F5D80; 0x53DD70).
 void fn_53dd70(SaveGame& save, const uint8_t* operation);
 // 0x87 (a child is born to a married merchant, 0x53FEA0).
@@ -389,6 +393,10 @@ uint32_t fn_636920(const SaveGame& save, int siege);
 // sieges.cpp: la operación 0x8E, un asedio a una ciudad (en 0x536A67:
 // 0x633AF0 crea el ejército sitiador y 0x629C60 lo prepara).
 void fn_536a67(SaveGame& save, const uint8_t* operation);
+// sieges.cpp: the operations 0x8B (the prince asks the player for goods: a node of the siege's list [+0x1020]
+// and the letter 0x64; 0x635B80) and 0x8C (the player accepts: the letter 0x65; 0x635CD0).
+void fn_536974(SaveGame& save, const uint8_t* operation);
+void fn_5369c7(SaveGame& save, const uint8_t* operation);
 // sieges.cpp: lo que hace el lector del ejército sitiador (0x627AD0, la
 // llama savegame.cpp) tras leer sus campos: las puertas de la muralla
 // ([+0x244..+0x24C]), su posición (0x632780), sus objetivos (0x62B2B0,

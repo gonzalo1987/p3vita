@@ -32,6 +32,7 @@
 #include "p3data/image.hpp"
 #include "p3data/letter_picture.hpp"
 #include "p3data/letters.hpp"
+#include "p3data/letter_window.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/navigation.hpp"
 #include "p3data/new_game.hpp"
@@ -6635,6 +6636,12 @@ struct MailUi {
 	uint8_t option_notices = 0;
 	bool option_event_sound = false;
 	int last_check = -1;  // The tick's low byte of the last 0x71 queued while it is open (0x47CD83).
+	// The buttons of the letter shown (letter_window.hpp: their labels in UTF-8; X the first, Triangle the second),
+	// made each frame. Once one is pressed, the letter shows none until another letter is shown (as the game's,
+	// whose buttons come back when the letter is opened again; some, as the proposal's, stay valid till the day's
+	// end).
+	std::vector<std::string> answers;
+	uint16_t answered = 0xFFFF;
 };
 
 // The letters' settings window's rows (0x408F50): for each class its days, its
@@ -6685,6 +6692,42 @@ struct MailLayout {
 	SDL_Rect close_button{};
 	SDL_Rect options_button{};  // In the panel only.
 	SDL_Rect title{};  // In the panel: the tab's name over the list.
+	std::array<SDL_Rect, 3> answers{};  // The letter's buttons (with_answers).
+	int answer_count = 0;
+
+	// Room for the letter's `count` buttons: in the panel, in a row with the close button at the parchment's foot;
+	// on the whole screen, under the letter.
+	void with_answers(int count) {
+		answer_count = std::clamp(count, 0, int(answers.size()));
+		if (answer_count == 0) {
+			return;
+		}
+		constexpr int kGap = 10;
+		if (in_panel) {
+			const int w = 200;
+			const int total = answer_count * (w + kGap) + close_button.w;
+			const int x0 = panel.x + (panel.w - total) / 2;
+			for (int k = 0; k < answer_count; ++k) {
+				answers[size_t(k)] = {x0 + k * (w + kGap), close_button.y, w, close_button.h};
+			}
+			close_button.x = x0 + answer_count * (w + kGap);
+			return;
+		}
+		const int h = close_button.h;
+		text.h -= h + 6;
+		const int w = std::min(240, (text.w - (answer_count - 1) * kGap) / answer_count);
+		for (int k = 0; k < answer_count; ++k) {
+			answers[size_t(k)] = {text.x + k * (w + kGap), text.y + text.h + 6, w, h};
+		}
+	}
+	int answer_at(int x, int y) const {
+		for (int k = 0; k < answer_count; ++k) {
+			if (inside(answers[size_t(k)], x, y)) {
+				return k;
+			}
+		}
+		return -1;
+	}
 
 	// In the side panel's room (`room`), with the parchment over the town on its left.
 	MailLayout(int line_height, const SDL_Rect& room) : in_panel(true) {
@@ -6820,6 +6863,16 @@ std::string mail_tab_name(int tab) {
 	return clean_game_text(letter_tab_name(*g_texts, uint8_t(tab)));
 }
 
+// Whether an operation with these very bytes is still in the queue.
+bool operation_queued(const SaveGame& save, const OperationBytes& op) {
+	for (const std::vector<uint8_t>& q : save.queued_operations) {
+		if (q.size() >= op.size() && std::equal(op.begin(), op.end(), q.begin())) {
+			return true;
+		}
+	}
+	return false;
+}
+
 // Whether the operation `op` for the player's letter `entry` is still in the queue.
 bool queued_letter_operation(const SaveGame& save, uint32_t op, uint16_t entry) {
 	for (const std::vector<uint8_t>& q : save.queued_operations) {
@@ -6848,10 +6901,28 @@ std::vector<uint16_t> mail_rows(const SaveGame& save, int tab) {
 	return rows;
 }
 
+// The letter's buttons (letter_window.hpp), each with its key: X the first, Triangle the second; a label too long
+// for its button is cut.
+void draw_letter_answers(SDL_Renderer* renderer, TextRenderer& text, const MailUi& ui, const MailLayout& layout) {
+	static const char* const kKeys[3] = {BTN_CROSS " ", BTN_TRIANGLE " ", ""};
+	for (int k = 0; k < layout.answer_count && k < int(ui.answers.size()); ++k) {
+		const SDL_Rect& r = layout.answers[size_t(k)];
+		std::string label = ui.answers[size_t(k)];
+		while (!label.empty() && text.measure(kKeys[k] + label) > r.w - 8) {
+			label.pop_back();
+			while (!label.empty() && (uint8_t(label.back()) & 0xC0) == 0x80) {
+				label.pop_back();  // Never half a UTF-8 character.
+			}
+		}
+		draw_button(renderer, text, r, kKeys[k] + label);
+	}
+}
+
 void draw_mailbox(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, const MailUi& ui,
 	const std::vector<uint16_t>& rows) {
 	const bool chronicle = ui.tab == 0;
-	const MailLayout layout(text.line_height(), chronicle);
+	MailLayout layout(text.line_height(), chronicle);
+	layout.with_answers(int(ui.answers.size()));
 	draw_panel_box(renderer, layout.panel, 250);
 	for (int k = 0; k < 4; ++k) {
 		const SDL_Rect& r = layout.tabs[size_t(k)];
@@ -6904,6 +6975,7 @@ void draw_mailbox(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sa
 		draw_button(renderer, text, layout.delete_button, tr(BTN_SQUARE " Borrar", BTN_SQUARE " Delete"));
 	}
 	draw_button(renderer, text, layout.close_button, tr(BTN_CIRCLE " Cerrar", BTN_CIRCLE " Close"));
+	draw_letter_answers(renderer, text, ui, layout);
 	// The letter (or the chronicle), clipped to its box and scrolled.
 	SDL_Rect clip = layout.text;
 	SDL_RenderSetClipRect(renderer, &clip);
@@ -7151,6 +7223,7 @@ void draw_mail_parchment(SDL_Renderer* renderer, TextRenderer& text, const Panel
 		return;
 	}
 	draw_letter_lines(renderer, text, ui, layout.text, kParchmentInk, rule);
+	draw_letter_answers(renderer, text, ui, layout);
 	draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Cerrar", "Close"));
 }
 
@@ -10349,8 +10422,10 @@ int main(int argc, char** argv) {
 		// In a town the messages are the side panel's (its room and a parchment over the town).
 		const bool mail_in_panel = in_mail && panel_shown && side.menu == PanelMenu::Messages;
 		const bool mail_parchment = mail_in_panel && (mail.letter_open || mail.options || mail.tab == 0);
-		const MailLayout mail_layout = mail_in_panel ? MailLayout(small_text->line_height(), panel_layout.room)
-													 : MailLayout(small_text ? small_text->line_height() : 20, mail.tab == 0);
+		MailLayout mail_layout = mail_in_panel ? MailLayout(small_text->line_height(), panel_layout.room)
+											   : MailLayout(small_text ? small_text->line_height() : 20, mail.tab == 0);
+		// The letter's buttons as the last frame drew them (MailUi::answers).
+		mail_layout.with_answers(mail_in_panel && !mail.letter_open ? 0 : int(mail.answers.size()));
 		const std::vector<uint16_t> mail_list = in_mail && mail.tab != 0 ? mail_rows(save, mail.tab) : std::vector<uint16_t>();
 		auto mail_select = [&](int row) {
 			if (mail_list.empty()) {
@@ -10366,6 +10441,19 @@ int main(int argc, char** argv) {
 				queue_operation(save, letter_operation(0x6F, save.player, mail_list[size_t(mail.row)]));
 				mail.selected = 0xFFFF;  // The same row: the next letter.
 			}
+		};
+		// A button of the letter shown (X the first, Triangle the second): the operation it queues
+		// (letter_window.hpp, rolling the game's rand() as the game's window does); its buttons gone (MailUi::answered).
+		auto mail_answer = [&](int k) {
+			if (k < 0 || k >= int(mail.answers.size()) || mail.shown >= save.mail.size() || mail.options) {
+				return false;
+			}
+			if (std::optional<OperationBytes> op = letter_answer(save, mail.shown, uint32_t(k))) {
+				queue_operation(save, *op);
+				mail.answered = mail.shown;
+				mail.answers.clear();
+			}
+			return true;
 		};
 		// The messages closed in the side panel (the settings sent, if they were open).
 		auto close_mail = [&]() {
@@ -10432,8 +10520,16 @@ int main(int argc, char** argv) {
 				mail_tab(mail.tab + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1));
 				return true;
 			case SDL_CONTROLLER_BUTTON_A:
+				if (mail.letter_open && mail_answer(0)) {
+					return true;  // The letter's first button.
+				}
 				mail_select(mail.row);
 				mail.letter_open = mail.tab == 0 || !mail_list.empty();
+				return true;
+			case SDL_CONTROLLER_BUTTON_Y:  // Triangle: the letter's second button.
+				if (mail.letter_open) {
+					mail_answer(1);
+				}
 				return true;
 			case SDL_CONTROLLER_BUTTON_BACK:  // Select: the letters' settings.
 				mail_options(true);
@@ -10488,6 +10584,10 @@ int main(int argc, char** argv) {
 				return true;
 			case SDL_CONTROLLER_BUTTON_BACK:  // Select: the next tab.
 				mail_tab(mail.tab + 1);
+				return true;
+			case SDL_CONTROLLER_BUTTON_A:  // The letter's buttons: X the first, Triangle the second.
+			case SDL_CONTROLLER_BUTTON_Y:
+				mail_answer(button == SDL_CONTROLLER_BUTTON_A ? 0 : 1);
 				return true;
 			case SDL_CONTROLLER_BUTTON_X:  // Square.
 				mail_delete();
@@ -12976,7 +13076,9 @@ int main(int argc, char** argv) {
 						}
 						break;
 					}
-					if (inside(mail_layout.close_button, x, y)) {
+					if (mail_answer(mail_layout.answer_at(x, y))) {
+						// A button of the letter.
+					} else if (inside(mail_layout.close_button, x, y)) {
 						if (mail.options) {
 							mail_options(false);
 						} else if (mail.tab != 0) {
@@ -13011,6 +13113,8 @@ int main(int argc, char** argv) {
 					const int row = mail.tab != 0 ? mail_layout.row_at(x, y) : -1;
 					if (tab >= 0) {
 						mail_tab(tab);
+					} else if (mail_answer(mail_layout.answer_at(x, y))) {
+						// A button of the letter.
 					} else if (inside(mail_layout.close_button, x, y)) {
 						mail.open = false;
 					} else if (mail.tab != 0 && inside(mail_layout.delete_button, x, y)) {
@@ -13504,8 +13608,8 @@ int main(int argc, char** argv) {
 			// read (0x6E) when it is shown.
 			const std::vector<uint16_t> rows = mail.tab != 0 ? mail_rows(save, mail.tab) : std::vector<uint16_t>();
 			const bool in_panel = mail_in_panel && side.menu == PanelMenu::Messages;
-			const MailLayout layout = in_panel ? MailLayout(small_text->line_height(), PanelLayout(side.folded).room)
-											   : MailLayout(small_text->line_height(), mail.tab == 0);
+			MailLayout layout = in_panel ? MailLayout(small_text->line_height(), PanelLayout(side.folded).room)
+										 : MailLayout(small_text->line_height(), mail.tab == 0);
 			const auto at = std::find(rows.begin(), rows.end(), mail.selected);
 			mail.row = at != rows.end() ? int(at - rows.begin()) : std::clamp(mail.row, 0, std::max(0, int(rows.size()) - 1));
 			mail.selected = rows.empty() ? 0xFFFF : rows[size_t(mail.row)];
@@ -13515,6 +13619,17 @@ int main(int argc, char** argv) {
 			}
 			// In the side panel a letter is made (and marked read) only once its parchment is open.
 			const uint16_t entry = mail.tab == 0 ? 0xFFFE : in_panel && !mail.letter_open ? 0xFFFF : mail.selected;
+			// The letter's buttons now.
+			mail.answers.clear();
+			if (mail.answered != entry) {
+				mail.answered = 0xFFFF;
+			}
+			if (mail.tab != 0 && entry < save.mail.size() && mail.answered != entry) {
+				for (const std::string& label : letter_buttons(save, g_texts, entry)) {
+					mail.answers.push_back(clean_game_text(label));
+				}
+			}
+			layout.with_answers(int(mail.answers.size()));
 			// The chronicle again when a news comes (a new head of its list).
 			const uint16_t news = save.globals.u16(kMailChronicle);
 			if (mail.tab == 0 && news != mail.chronicle_head) {
@@ -13541,6 +13656,11 @@ int main(int argc, char** argv) {
 				} else if (std::optional<std::string> letter = compose_letter(save, *g_texts, entry)) {
 					raw = *letter;
 					letter_viewed(save, entry);
+					// What the composer queues by itself (a letter 0x79 whose loan is no longer to decide).
+					if (std::optional<OperationBytes> op = letter_shown_operation(save, entry);
+						op && !operation_queued(save, *op)) {
+						queue_operation(save, *op);
+					}
 					from_game = true;
 				} else {
 					raw = tr("(Esta carta aún no se puede mostrar.)", "(This letter can't be shown yet.)");

@@ -1566,3 +1566,13 @@
 	{0x00699950, 0x00698E18},
 	// The files' list's name when it opens (0x48C71A, with the ship's stop): «Route%d» (the Spanish exe «%d»).
 	{0x806BA3A0, 0x806BAB2C},
+	// The letter 0x83 «Impounding» that the operation 0x77 writes into its buffer (0x53EEC0, operations.cpp): the
+	// impounding by the debtor, the ship given (a snaikka, a crayer), the goods to the office, each goods' line
+	// (twice the same string: the amount, the picture of a barrel or a load, the ware) and the lender's signature.
+	{0x006B1BC0, 0x006B24D0},
+	{0x006B1BC4, 0x006B24D4},
+	{0x006B1BC8, 0x006B24D8},
+	{0x006B1BCC, 0x006B24DC},
+	{0x006B1BD0, 0x006B24E0},
+	{0x806C36D4, 0x806C3D60},
+	{0x806C36E0, 0x806C3D6C},

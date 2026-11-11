@@ -146,7 +146,7 @@ the RNG of the senders (rand() calls that build the letters).
 | 0x4D6A50 | delete a letter (merchant ≥ 0: from its chain; negative: from the chronicle): unlinked, put at the head of the free list, released (0x51AAB0) | event 0x13 (0x4E7A14: 0x4E7B6C, 0x4E7B80), operation 0x6F (0x536AEE), operation 0x75 (0x53ECB0: 0x53ED5E, 0x53EDDA) | `delete_letter` |
 | 0x4D6AF0 | a merchant's letter settings: 8 bytes to [+0x38..+0x3F] and [+0x26] | operation 0x70 (0x536B0F) | — |
 | 0x4D6B40 | grow by 200 | 0x4D6530, 0x4D6680, 0x4D7140, 0x4D73F0 | — |
-| 0x4D6C50 → 0x4D6C90 | the player answers a letter (a button of the letter window, pushed at 0x486550): by type, queues operation 0x75, 0x72, 0x60, 0x74, 0x8C or 0x77 | interface | — |
+| 0x4D6C50 → 0x4D6C90 | the player answers a letter (a button of the letter window, pushed at 0x486550): by type, queues operation 0x75, 0x72, 0x60, 0x74, 0x8C or 0x77 (§4, «The buttons») | interface | `letter_answer` (`letter_window.hpp`) |
 | 0x4D6FD0 | clear the marks of a merchant's letters 0x21 ([+0xE]) and 0x22 ([+0xF]) | operation 0x60 (0x53DA90) | `fn_4d6fd0` |
 | 0x4D7030 | remove the 0x45 letters and mark the 0x46 ones that match two u16 | mission interpreter (0x4EE252) | — |
 | 0x4D7140, 0x4D7200, 0x4D73F0 | add a 0x44 letter, find one, add a 0x45/0x46 letter | none (dead code) | — |
@@ -202,6 +202,27 @@ operation 0xBC), and 0x526BB9. The interface: 0x4135C0,
   rule, `\d` paragraph, `\f1_` font, `\C` the currency sign, `\B` a bale...)
   and the letter's fields. About 28 KB of code. Classes 0 and 3 start with
   another font byte. Its per-type case and longest text are in appendix B.
+- **The buttons** (2026-11-12; p3vita: `letter_window.hpp`): as it writes a letter, the composer fills the
+  struct it hands the text window (0x41D9B0 on *0x6CBB10): +0x0 the text, +0x4 «official» (class 1), u16 +0x6
+  the buttons' count, +0x8 a new[]ed array of their labels, +0xC a merchant, +0x18 the callback 0x4D6C50 and
+  +0x1C the entry; the letter window's [+0xB0] gets the buttons' deadline. Pressing a button calls 0x4D6C50
+  with the entry, which passes 0x4D6C90 the button's index ([*0x6CBB10 + 0x5A4] − [0x66BDC0]). The letters
+  with buttons: 0x1E «Memo» («Take back», 0x6B503C) and 0x1F «Offer» («Accept offer», «Reject offer») always;
+  0x21 «Suitor» («Accept offer», 0x6B52A0) while the tick is before the day [+0xE] of the letter's year;
+  0x22 «Proposal» (the same label) while the tick is before the letter's day (0x672D78 by the month, + its
+  day 1..31, so a day later than its date) + [+0xF] days; 0x3D..0x3F (the missions') the record's [+0xB]
+  labels, the strings after the title and the text in the buffer, while the tick is before the record's
+  [+0x4]; 0x64 «Prince» («Accept», 0x6A9A04) unless its [+0xF] is 0xFE, while the tick's day isn't past the
+  letter's day + 13; 0x79 («impound», «release», 0x6AEBFC, 0x6AEC00) while its event [+0xA] is the loan to
+  decide (an event 0x01 without [+0x12], the debtor a townsman, the creditor a merchant); with any other event
+  of the queue there, the composer queues 0x77 {0xFFFF, the entry, 1} itself (0x485D7F). 0x4D6C90 queues, by
+  the type: 0x75 {[+0x8], u16 [+0xC], u16 [+0xE], the answer} (0x1E only with the first button, its answer
+  −1), 0x72 {u16 [+0xC], u16 the entry, three u16 rand(), u8 rand() % towns, the player, [+0x5], [+0x8],
+  [+0xA], in time} (0x21), 0x60 (0x22: four rand()), 0x74 {u16 the record's [+0x8], its [+0xA], the answer,
+  the entry} (0x3C..0x3F), 0x8C {[+0x5], the player, [+0xF], the entry} (0x64), 0x77 {u16 [+0xA], the entry,
+  the answer} (0x79). Checked: the scenario `letter_answers` runs the game's 0x4D6C90 in the emulator and
+  compares its operation and its rand() with p3vita's ([../oracle.md](../oracle.md)); the buttons' rules, ctest
+  `letter_window`.
 - **The chronicle** (0x47DD40 on the letter window 0x6CC960, called from
   the main panel's button 0x424504): one buffer of 0x100 + 0x100 bytes per
   news, «\c\f2_» and the title with today's date (0x6C11D0 with the month
@@ -311,11 +332,13 @@ built with rand()).
   0x519D90 are rewritten and connected now (2026-11-03, 2026-11-04).
 - On 2026-11-04, **99** of the 154 are connected (appendix A, «Connected»); on 2026-11-11, **112**: since
   then the town battle's four (three in 0x5FE7E0 and the 0x6A of 0x633DB0), the player's actions' 0x02, 0x04 and 0x14, the dividends
-  of event 0x18 (three), the new game's 0x0E and the trade routes' reports 0x5035CD and 0x4D55F9.
-  The 42 left: the operations of the player not rewritten yet (13, two of them of 0x8F, which nobody was
-  found to queue), the events they create (14: 0x0C, 0x0F, 0x10, 0x11, 0x17), the mission interpreter and
-  the event 0x09 it creates (9), the diet's 0x4F3AF0 (1), the event 0x28 that nobody creates (3) and the
-  interface window 0x419EB0 (2).
+  of event 0x18 (three), the new game's 0x0E and the trade routes' reports 0x5035CD and 0x4D55F9. On
+  2026-11-12, **117**: the letters' buttons' 0x2B (operation 0x72), 0x22 (event 0x17), 0x64 and 0x65 (0x8B,
+  0x8C) and 0x83 (0x77).
+  The 37 left: the operations of the player not rewritten yet (9: 0x3D, 0x3E, 0x4A, 0x53, 0x5F twice, 0x90
+  and the two of 0x8F, which nobody was found to queue), the events they create (13: 0x0C, 0x0F, 0x10, 0x11),
+  the mission interpreter and the event 0x09 it creates (9), the diet's 0x4F3AF0 (1), the event 0x28 that
+  nobody creates (3) and the interface window 0x419EB0 (2).
 - **47** are in events and operations p3vita doesn't have yet. Events 0x09,
   0x0C, 0x0F, 0x10, 0x11, 0x17, 0x18 and 0x28 are created only by player
   actions (operations from the interface) or by the mission interpreter;
@@ -621,7 +644,7 @@ interpreter's 0x4ED0C6, 0x4EDEDA.
 («named»); «—» with what it is when p3vita doesn't have it. «Class» is the
 type's class (§2). «Connected»: p3vita sends that letter (`send_letter`) and
 the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
-99 of the 154 on 2026-11-04, 112 on 2026-11-11).
+99 of the 154 on 2026-11-04, 112 on 2026-11-11, 117 on 2026-11-12).
 
 | p3vita file | Function | Call | Type | Title (English exe) | Class | To | Note | Connected |
 |---|---|---|---|---|---|---|---|---|
@@ -753,7 +776,7 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | — event 0x10 | 0x4E63E4 | 0x4E6691 | 0x18 | Traveller | 2 | one merchant |  | |
 | — event 0x11 | 0x4E6744 | 0x4E6878 | 0x5B | Dishonoured | 2 | one merchant |  | |
 | — event 0x11 | 0x4E6744 | 0x4E6987 | 0x5A | Fulfilled | 3 | one merchant |  | |
-| — event 0x17 | 0x4E8684 | 0x4E87CF | 0x22 | Proposal | 2 | one merchant |  | |
+| p3data/town_tick/events_big.cpp | 0x4E8684 | 0x4E87CF | 0x22 | Proposal | 2 | one merchant | event 0x17 | yes |
 | p3data/town_tick/events_towns.cpp | 0x4E8804 | 0x4E8975 | 0x62 | Dividend | 2 | one merchant | event 0x18 | yes |
 | p3data/town_tick/events_towns.cpp | 0x4E8804 | 0x4E8A49 | 0x28 | Dividend | 2 | one merchant | event 0x18 | yes |
 | p3data/town_tick/events_towns.cpp | 0x4E8804 | 0x4E8AD2 | 0x27 | Dividend | 3 | one merchant | event 0x18 | yes |
@@ -772,10 +795,10 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | — operation 0x53 | 0x53C840 | 0x53C9B5 | 0x17 | Traveller | 2 | one merchant |  | |
 | — operation 0x5F (0x53DA30) | 0x5338A0 | 0x533C9B | 0x1E | Memo | 2 | one merchant |  | |
 | — operation 0x5F (0x53DA30) | 0x5338A0 | 0x533CB5 | 0x1F | Offer | 2 | one merchant |  | |
-| — operation 0x72 | 0x53EAC0 | 0x53EBC8 | 0x2B | It's a pity | 2 | one merchant |  | |
-| — operation 0x77 | 0x53EEC0 | 0x53F6D6 | 0x83 | Impounding | 2 | one merchant |  | |
-| — operation 0x8B | 0x635B80 | 0x635C9F | 0x64 | Prince | 1 | one merchant |  | |
-| — operation 0x8C | 0x635CD0 | 0x635DA9 | 0x65 | Prince | 1 | one merchant |  | |
+| p3data/town_tick/operations.cpp | 0x53EAC0 | 0x53EBC8 | 0x2B | It's a pity | 2 | one merchant | operation 0x72 | yes |
+| p3data/town_tick/operations.cpp | 0x53EEC0 | 0x53F6D6 | 0x83 | Impounding | 2 | one merchant | operation 0x77: its text in the buffer | yes |
+| p3data/town_tick/sieges.cpp | 0x635B80 | 0x635C9F | 0x64 | Prince | 1 | one merchant | operation 0x8B | yes |
+| p3data/town_tick/sieges.cpp | 0x635CD0 | 0x635DA9 | 0x65 | Prince | 1 | one merchant | operation 0x8C | yes |
 | — operation 0x8F | 0x540240 | 0x5402BF | 0x38 | Siege | 4 | -2 (chronicle) |  | |
 | — operation 0x8F | 0x540240 | 0x5403DB | 0x37 | Extra tax | 1 | one merchant |  | |
 | — operation 0x90 (0x540490) | 0x634660 | 0x63477B | 0x38 | Siege | 4 | -2 (chronicle) |  | |

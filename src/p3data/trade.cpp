@@ -275,8 +275,6 @@ void fn_4ff6f0(OfficeMemory& o, uint32_t ware, int32_t amount, float price) {
 	}
 }
 
-namespace {
-
 // 0x5007A0 (thiscall on the office: ware, amount, price): `amount` bought for
 // `price` in all into the office: its average price (stock · average + price)
 // / the new stock, unless the new stock isn't positive.
@@ -293,8 +291,6 @@ void fn_5007a0(OfficeMemory& o, uint32_t ware, int32_t amount, int32_t price) {
 		average = float(sum / double(now));
 	}
 }
-
-}  // namespace
 
 // 0x538100 (operation 0x08): {0x08, s32 amount, u16 ship, u16 ware, u16 (the
 // player), u8 direction}: wares between a ship out of the shipyard (state <

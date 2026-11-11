@@ -176,8 +176,9 @@ muralla) y la 0x24 (las piezas de muralla pendientes)
   avisos (0x48) también, como las demás de la simulación
   ([world_tick.md](world_tick.md) §7). Lo que hace el almacén nuevo de un
   comerciante (0x4FF2D0, recontar su oficina) ya está (`construction.cpp`).
-- Convoyes en reparación en el astillero (lista [0x820], vacía en las 12
-  partidas) y los barcos nuevos de jugadores humanos (carta y ventana).
+- Los barcos nuevos de jugadores humanos (la ventana). Los convoyes en reparación en el astillero (lista
+  [0x820], vacía en las 12 partidas) ya se reparan (0x508C86, `facilities.cpp`, 12-11-2026: escenario
+  `convoy_repair`).
 - Ramas que no se dan en las partidas ni en los estados retocados con los que
   se comprobaron: están marcadas `// Sin comprobar con el oráculo` en el código.
 - Fallos del juego, reproducidos tal cual con el ajuste apagado y corregidos con

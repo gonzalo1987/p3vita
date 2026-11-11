@@ -93,3 +93,9 @@ target_link_libraries(trade_route_window_test PRIVATE p3data)
 target_compile_options(trade_route_window_test PRIVATE -Wall -Wextra)
 
 add_test(NAME trade_route_window COMMAND trade_route_window_test)
+
+add_executable(letter_window_test letter_window_test.cpp)
+target_link_libraries(letter_window_test PRIVATE p3data)
+target_compile_options(letter_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME letter_window COMMAND letter_window_test)

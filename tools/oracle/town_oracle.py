@@ -513,6 +513,16 @@ MAIL_CALLS += (
     # The trade routes (trade_routes.cpp): the report 0x07 of a ship alone (0x4D5200) and of a convoy (0x503230).
     0x4D55F9, 0x5035CD,
 )
+MAIL_CALLS += (
+    # The letters' buttons: a suitor paid too late (operation 0x72, 0x53EAC0, operations.cpp: 0x2B) and the proposal
+    # (event 0x17, 0x4E8684, events_big.cpp: 0x22).
+    0x53EBC8, 0x4E87CF,
+    # The prince's request in a siege (operation 0x8B, 0x635B80, sieges.cpp: 0x64) and its acceptance (0x8C,
+    # 0x635CD0: 0x65).
+    0x635C9F, 0x635DA9,
+    # The impounding (operation 0x77, 0x53EEC0, operations.cpp: 0x83 with its text).
+    0x53F6D6,
+)
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is
 # counted by its call address and printed to stderr at the end (whether it

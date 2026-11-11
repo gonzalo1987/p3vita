@@ -982,6 +982,44 @@ void fn_4e8234(SaveGame& save, uint16_t event) {
 	}
 }
 
+// 0x4E8684 (event 0x17, called with its [+0x8]: the 16 bytes of the operation 0x72 that made it, operations.cpp
+// fn_53eac0): the marriage proposal after a suitor was paid: the letter 0x22 to the merchant [+0xB] (a merchant past
+// the count: nothing), with x = the first rand() u16 [+0x4] and v = (x % 3) · 5 + x / 3 % 5: [+0x5] the suitor
+// letter's town, [+0x8], [+0x9] the go-between's names, [+0xA] x % 3, [+0xB] the rand() town [+0xA] % the towns,
+// [+0xC] the other's first name (u16 [+0x6] % the women's names [0x6DDB72] | 0x80 for a man, the [+0x1A] ≠ 0; % the
+// men's names [0x6DDB70] for a woman), [+0xD] the family name (u16 [+0x8] % [0x6DDB74]), [+0xE] the dowry's step
+// (0x6726BC[v] for a man, 0x6726CB[v] for a woman) and [+0xF] the days to answer, 14. The event is then removed.
+void fn_4e8684(SaveGame& save, uint16_t event) {
+	static constexpr uint8_t kDowryForMen[15] = {5, 0xB, 0xD, 8, 9, 6, 7, 0xE, 0, 4, 0xA, 0xC, 1, 2, 3};  // 0x6726BC
+	static constexpr uint8_t kDowryForWomen[15] = {0x1A, 0x1C, 0x11, 0x16, 0x16, 0x19, 0x1B, 0x10, 0x17, 0x17, 0xF,
+		0x12, 0x14, 0x15, 0x15};  // 0x6726CB
+	const GlobalMemory& g = save.globals;
+	const Event& e = save.events[event];
+	const uint8_t merchant = e.u8(0x8 + 0xB);
+	if (merchant >= merchant_count(save)) {
+		return;
+	}
+	const bool man = save.merchants[merchant].memory.u8(0x1A) != 0;
+	const uint32_t x = e.u16(0x8 + 0x4);
+	const uint32_t v = (x % 3) * 5 + x / 3 % 5;
+	Letter letter(0x22);
+	letter.entry.u8(5) = e.u8(0x8 + 0xC);
+	letter.entry.u8(8) = e.u8(0x8 + 0xD);
+	letter.entry.u8(9) = e.u8(0x8 + 0xE);
+	letter.entry.u8(0xA) = uint8_t(x % 3);
+	letter.entry.u8(0xB) = uint8_t(e.u8(0x8 + 0xA) % g.u32(global::kWorldTownCount));
+	if (man) {
+		letter.entry.u8(0xE) = kDowryForMen[v];
+		letter.entry.u8(0xC) = uint8_t((e.u16(0x8 + 0x6) % g.u16(0x6DDB72)) | 0x80);
+	} else {
+		letter.entry.u8(0xE) = kDowryForWomen[v];
+		letter.entry.u8(0xC) = uint8_t(e.u16(0x8 + 0x6) % g.u16(0x6DDB70));
+	}
+	letter.entry.u8(0xD) = uint8_t(e.u16(0x8 + 0x8) % g.u16(0x6DDB74));
+	letter.entry.u8(0xF) = 0xE;
+	send_letter(save, merchant, letter);
+}
+
 }  // namespace events_big_detail
 
 using namespace events_big_detail;
@@ -1007,6 +1045,9 @@ int events_big(SaveGame& save, uint16_t event, uint16_t type) {
 	case 0x16:
 		fn_4e8234(save, event);
 		return 1;
+	case 0x17:
+		fn_4e8684(save, event);
+		return 0;
 	default:
 		return -1;
 	}

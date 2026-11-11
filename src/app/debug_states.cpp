@@ -7,6 +7,7 @@
 
 #include "p3data/game_memory.hpp"
 #include "p3data/hanse_tasks.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/player_actions.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -356,6 +357,57 @@ bool lender(SaveGame& save) {
 	return true;
 }
 
+// Letters with buttons in the player's mailbox (letter_window.hpp): a suitor 0x21 and a proposal 0x22 in time, the
+// prince's request 0x64 (the operation 0x8B on the siege object of his home town) and a townsman who can't pay back
+// the player's loan, 0x79 (an event 0x01 to decide, due in 10 days).
+void letters_with_buttons(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	const uint32_t tick = g.u32(global::kWorldTick);
+	const MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+	const uint8_t home = m.u8(0x19);
+	const uint8_t other = uint8_t((home + 1) % g.u32(global::kWorldTownCount));
+	Letter suitor(0x21);
+	suitor.entry.u8(5) = home;
+	suitor.entry.u16(8) = 5;
+	suitor.entry.u16(0xA) = 7;
+	suitor.entry.u16(0xC) = 4000;
+	suitor.entry.u16(0xE) = uint16_t((tick >> 8) % 365 + 14);
+	send_letter(save, save.player, suitor);
+	Letter proposal(0x22);
+	const uint8_t bytes[8] = {5, 7, 2, other, 9, 11, 3, 14};
+	std::memcpy(proposal.entry.bytes.data() + 8, bytes, 8);
+	proposal.entry.u8(5) = home;
+	send_letter(save, save.player, proposal);
+	if (home < save.sieges.size()) {
+		uint8_t op[0x14] = {0x8B, 0, 0, 0, 10, 20, 30, 40, 50, home, uint8_t(save.player), other};
+		const uint32_t when = tick + 0x1500;
+		std::memcpy(op + 0xC, &when, 4);
+		tick::fn_536974(save, op);
+	}
+	const uint16_t index = tick::events_detail::fn_4d8cf0(save, tick + 0xA00);
+	GameMemory<0x18>& e = save.events[index];
+	e.u16(6) = 1;
+	e.u32(8) = 10000;
+	e.u8(0xC) = 0x40;
+	e.u8(0x10) = uint8_t(save.player);
+	e.u8(0x11) = 0xFF;
+	e.u8(0x12) = 0;
+	e.u8(0x13) = 0;
+	e.u8(0x14) = home;
+	e.u8(0x15) = 2;
+	e.u8(0x16) = 5;
+	e.u8(0x17) = 9;
+	Letter debtor(0x79);
+	debtor.entry.u8(5) = home;
+	debtor.entry.u16(8) = 10000;
+	debtor.entry.u16(0xA) = index;
+	debtor.entry.u8(0xC) = 2;
+	debtor.entry.u8(0xD) = 9;
+	debtor.entry.u8(0xE) = m.u8(0x1C);
+	debtor.entry.u8(0xF) = m.u8(0x1D);
+	send_letter(save, save.player, debtor);
+}
+
 }  // namespace
 
 const char kDebugStatesHelp[] =
@@ -382,7 +434,9 @@ const char kDebugStatesHelp[] =
 	"  convoy-leader  the player's first ship in port fit to guide a convoy\n"
 	"  shipyard-materials  100 units of each shipyard material in that ship's town\n"
 	"  lender      loans on offer and asked for in that ship's town, an AI merchant's\n"
-	"              shares on sale (the moneylender)\n";
+	"              shares on sale (the moneylender)\n"
+	"  letters     letters with buttons: a suitor, a proposal, the prince's request\n"
+	"              and a townsman who can't pay back the player's loan\n";
 
 namespace {
 
@@ -553,6 +607,8 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 				error = "the player has no ship in port out of a convoy, or no town has a captain";
 				return false;
 			}
+		} else if (state == "letters") {
+			letters_with_buttons(save);
 		} else if (state == "lender") {
 			if (!lender(save)) {
 				error = "the player has no ship in port";

@@ -3,9 +3,13 @@
 // de la Hansa.
 
 #include <cstring>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "p3data/game_fixes.hpp"
+#include "p3data/game_texts.hpp"
+#include "p3data/prices.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -19,6 +23,9 @@ uint16_t fn_5097c0(SaveGame& save, bool keep);
 }  // namespace events_detail
 namespace events_mayor_detail {
 uint16_t fn_507d60(SaveGame& save, uint16_t& out, uint32_t town, uint32_t mode);
+void fn_52a8d0(SaveGame& save, int town, int ship, uint32_t type);
+void fn_5181d0(SaveGame& save, int ship);
+void fn_509a50(SaveGame& save, int ship);
 }  // namespace events_mayor_detail
 namespace events_towns_detail {
 bool fn_52a360(SaveGame& save, int town, uint32_t merchant_arg, uint32_t type_arg, uint8_t force);
@@ -809,6 +816,197 @@ void fn_53da90(SaveGame& save, const uint8_t* operation) {
 		letter.entry.u16(0xE) = year;
 		send_letter(save, merchant, letter);
 	}
+}
+
+// Operation 0x72 (0x53EAC0, from the executor's 0x536B43 with the operation's data): {0x72, u16 the sum, u16 the
+// entry, three u16 rand(), u8 rand() % towns, u8 the merchant, u8 the letter's town [+0x5], u8 its [+0x8], u8 its
+// [+0xA], u8 still in time}: the player answers a suitor's letter 0x21 (its button, 0x4D6C90; `suitor_answer` in
+// player_actions.hpp builds the bytes). A merchant pays the sum (money and [+0x4BC], unchecked); in time, the event
+// 0x17 (fn_4e8684, the proposal) in min(8, the travel from his home town to the letter's town / 8 + 2) days with the
+// operation's 16 bytes; too late, the letter 0x2B («It's a pity»: [+0x5] the town, u16 [+0x8], u16 [+0xA] the
+// go-between's names, u16 [+0xC] the sum). Then the entry, if still a letter 0x21, loses its deadline [+0xE] (no
+// button). Nothing at all for a merchant past the count.
+void fn_53eac0(SaveGame& save, const uint8_t* operation) {
+	const uint8_t* d = operation + 4;
+	const uint8_t merchant = d[0xB];
+	if (merchant >= save.globals.u16(global::kWorldMerchantCount)) {
+		return;
+	}
+	MerchantMemory& m = save.merchants[merchant].memory;
+	const uint16_t sum = half(operation, 4);
+	m.s32(0x0) = int32_t(uint32_t(m.s32(0x0)) - sum);
+	m.s32(0x4BC) = int32_t(uint32_t(m.s32(0x4BC)) + sum);
+	if (d[0xF] != 0) {
+		uint32_t days = (uint32_t(ship_trade_detail::fn_531b70(save, m.u8(0x19), d[0xC])) >> 3) + 2;
+		if (days > 8) {
+			days = 8;
+		}
+		GameMemory<0x18>& e =
+			save.events[events_detail::fn_4d8cf0(save, save.globals.u32(global::kWorldTick) + (days << 8))];
+		e.u16(6) = 0x17;
+		std::memcpy(e.bytes.data() + 8, d, 16);
+	} else {
+		Letter letter(0x2B);
+		letter.entry.u8(5) = d[0xC];
+		letter.entry.u16(8) = d[0xD];
+		letter.entry.u16(0xA) = d[0xE];
+		letter.entry.u16(0xC) = sum;
+		send_letter(save, merchant, letter);
+	}
+	const uint16_t entry = half(operation, 6);
+	if (entry < save.globals.u16(kMailCount) && save.mail[entry].u8(4) == 0x21) {
+		save.mail[entry].u16(0xE) = 0;
+	}
+}
+
+// Operation 0x77 (0x53EEC0): {0x77, u32 the event, u32 the letter's entry, u32 the answer}: the creditor answers a
+// letter 0x79 (a citizen who can't pay back his loan, the event 0x01 of events_towns.cpp: its button, 0x4D6C90; or,
+// shown when the loan is no longer his to decide, the composer queues it with the event 0xFFFF and the answer 1).
+// The entry, if a 0x79, loses its event [+0xA]. Then, for an event 0x01 without [+0x12] whose debtor [+0x11] is a
+// citizen (not a merchant) and whose creditor [+0x10] is a merchant:
+// - answer ≠ 0 (lenient): the creditor's reputation in the town [+0x14] rises by the debt [+0x8] · 0.00005 (0x4F9280);
+// - answer 0 (impound): it falls as much; the debt becomes (0x100 − [+0xC]) · debt >> 8; over 15000 the creditor
+//   gets a new ship in the town (0x507D60 in port; over 20000 a crayer, else a snaikka; hull (max >> 5) · (tick &
+//   0x1F), state 3, its sailors, readiness), worth 20000 or 15000 of the debt; then, with that ship or an office of
+//   his in the town, two wares by the debtor's rank and the town (0x673B38): half the debt's worth of the first and
+//   the rest's of the second (0x673A18), in whole barrels or loads, into the ship (as much as it holds) or the office;
+//   what is still owed is paid to him in money ([+0x0], [+0x4B8]). He gets the letter 0x83 «Impounding», its text
+//   written into its buffer here (the greeting by his rank and names, the debtor, the ship or the office, each ware's
+//   line without a ship, the lender's signature).
+// Either way the event loses its creditor ([+0x10] = 0xFF).
+void fn_53eec0(SaveGame& save, const uint8_t* operation) {
+	static constexpr uint8_t kInBarrels[0x18] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};
+	static constexpr uint8_t kImpounded[12] = {0, 2, 0xB, 3, 1, 0xE, 7, 9, 8, 6, 9, 5};  // 0x673B38
+	static constexpr uint8_t kSailors[4] = {5, 8, 0xA, 0xC};  // 0x673660
+	static constexpr uint32_t kReputationRate = 0x3851B717;  // 0x672F44: 0.00005f
+	GlobalMemory& g = save.globals;
+	const uint32_t entry = field(operation, 8);
+	if (entry < g.u16(kMailCount) && save.mail[entry].u8(4) == 0x79) {
+		save.mail[entry].u16(0xA) = 0xFFFF;
+	}
+	const uint32_t index = field(operation, 4);
+	if (index >= g.u16(kEventCount)) {
+		return;
+	}
+	GameMemory<0x18>& e = save.events[index];
+	const uint32_t merchants = g.u16(global::kWorldMerchantCount);
+	if (e.u16(6) != 1 || e.u8(0x12) != 0 || e.u8(0x11) < merchants || e.u8(0x10) >= merchants) {
+		return;
+	}
+	const uint8_t creditor = e.u8(0x10);
+	MerchantMemory& m = save.merchants[creditor].memory;
+	const uint8_t town = e.u8(0x14);
+	auto reputation = [&](int32_t amount) {  // 0x4F9280
+		float rate;
+		std::memcpy(&rate, &kReputationRate, sizeof(rate));
+		float& r = m.f32(0x120 + 12 * size_t(town));
+		r = float(double(float(amount)) * double(rate) + double(r));
+	};
+	if (field(operation, 0xC) != 0) {
+		reputation(e.s32(8));
+		e.u8(0x10) = 0xFF;
+		return;
+	}
+	const GameTexts* texts = letter_texts();
+	auto raw = [&](uint32_t english) { return texts ? texts->raw_at(english) : std::string(); };
+	std::string text;
+	auto put = [&](const std::string& format, const std::vector<std::string>& args) {
+		text += GameTexts::sprintf_raw(format, args);
+	};
+	const bool bit = m.u8(0x1A) & 1;
+	put(raw(bit ? 0x6B19FC : 0x6B1A00),
+		{raw((bit ? 0x6A0C54 : 0x6A0C18) + 4 * uint32_t(merchants_detail::fn_4f9430(save, creditor))),
+			raw((bit ? 0x6A0628 : 0x6A0608) + 4 * uint32_t(m.u8(0x39C + m.u8(0x19)))), game_first_name(save, m.u8(0x1C)),
+			game_family_name(save, m.u8(0x1D))});
+	put(raw(0x6B1BC0), {raw(0x6A0628 + 4 * uint32_t(e.u8(0x15))), game_first_name(save, e.u8(0x16)),
+		game_family_name(save, e.u8(0x17)), letter_town_name(save, town)});
+	reputation(int32_t(0u - e.u32(8)));
+	e.s32(8) = int32_t(uint32_t(0x100 - e.u8(0xC)) * e.u32(8)) >> 8;
+	int ship = -1;
+	if (e.s32(8) > 15000) {
+		uint16_t out = 0xFFFF;
+		ship = events_mayor_detail::fn_507d60(save, out, town, 1);
+		events_mayor_detail::fn_509a50(save, ship);
+		const bool crayer = e.s32(8) > 20000;
+		events_mayor_detail::fn_52a8d0(save, town, ship, crayer ? 1 : 0);
+		ShipMemory& s = save.ships[size_t(ship)].memory;
+		std::string name;
+		for (size_t k = 0; k < 0x20 && s.u8(0x160 + k) != 0; ++k) {
+			name += char(s.u8(0x160 + k));
+		}
+		put(raw(crayer ? 0x6B1BCC : 0x6B1BC8), {name, letter_town_name(save, town)});
+		events_mayor_detail::fn_5181d0(save, ship);
+		recalculate_cargo(save.ships[size_t(ship)]);
+		s.u8(0x0) = creditor;
+		s.u8(0x3D) |= 4;
+		s.u16(0x4) = m.u16(0xE);
+		m.u16(0xE) = out;
+		s.u8(0x13A) = town;
+		const uint32_t tick = g.u32(global::kWorldTick);
+		s.s32(0x18) = int32_t((tick & 0x1F) * uint32_t(s.s32(0x14) >> 5));
+		s.u16(0x134) = 3;
+		s.u16(0x40) = kSailors[s.u8(0xE) & 3];
+		recalculate_cargo(save.ships[size_t(ship)]);
+		const uint16_t readiness = uint16_t((tick & 0xFF) + out + 0x2EE);
+		s.u16(0x3E) = int16_t(readiness) > 0x700 ? 0x700 : readiness;
+		e.s32(8) = e.s32(8) > 20000 ? e.s32(8) - 20000 : e.s32(8) - 15000;
+	} else {
+		put(raw(0x6B1BC4), {letter_town_name(save, town)});
+	}
+	const int office = facilities_detail::fn_5308a0(save, creditor, town);
+	if (ship >= 0 || office >= 0) {
+		const uint32_t row = ((uint32_t(e.u8(0x15)) >> 1) & 3) * 3;
+		const uint32_t r = (uint32_t(town) + g.u16(global::kWorld + 0x4)) % 3;
+		const uint8_t wares[2] = {kImpounded[row + r], r == 2 ? kImpounded[row] : kImpounded[row + r + 1]};
+		for (int k = 0; k < 2; ++k) {
+			// The first ware for half the debt, the second for what is left of it.
+			const uint8_t w = wares[k];
+			const bool barrels = kInBarrels[w] != 0;
+			const int32_t unit = barrels ? 200 : 2000;
+			const double price = double(ware_base_price(w));
+			const int32_t worth = k == 0 ? e.s32(8) / 2 : e.s32(8);
+			const int32_t n = int32_t(ftol(double(float(worth)) / (price * double(unit))));
+			if (ship < 0) {
+				put(raw(k == 0 ? 0x6C36D4 : 0x6C36E0),
+					{std::to_string(uint32_t(n)), std::string(1, barrels ? 'B' : 'L'), raw(0x6C0BB0 + 4 * uint32_t(w))});
+			}
+			int32_t units = int32_t(uint32_t(n) * uint32_t(unit));
+			if (ship >= 0) {
+				SavedShip& s = save.ships[size_t(ship)];
+				const int32_t room = k == 0 ? s.memory.s32(0x10) : recalculate_cargo(s);
+				if (units > room) {
+					units = room / unit * unit;
+				}
+				int32_t& cargo = s.memory.s32(0x54 + 4 * size_t(w));
+				if (k == 0 && cargo == 0) {
+					s.memory.f32(0xB4 + 4 * size_t(w)) = ware_base_price(w);
+				}
+				cargo = int32_t(uint32_t(cargo) + uint32_t(units));
+				if (k == 1) {
+					recalculate_cargo(s);
+				}
+			} else if (k == 0) {
+				fn_5007a0(save.offices[size_t(office)].memory, w, units,
+					int32_t(ftol(double(float(units)) * price)));
+			} else {
+				int32_t& stock = save.offices[size_t(office)].memory.s32(4 + 4 * size_t(w));
+				stock = int32_t(uint32_t(stock) + uint32_t(units));
+			}
+			e.s32(8) = int32_t(uint32_t(e.s32(8)) - uint32_t(int32_t(ftol(double(float(units)) * price))));
+		}
+	}
+	if (e.s32(8) > 0) {
+		m.s32(0x0) = int32_t(uint32_t(m.s32(0x0)) + e.u32(8));
+		m.s32(0x4B8) = int32_t(uint32_t(m.s32(0x4B8)) + e.u32(8));
+	}
+	put(raw(0x6B1BD0), {letter_town_name(save, town)});
+	text += '\0';
+	Letter letter(0x83);
+	letter.entry.u8(5) = town;
+	letter.entry.u32(0xC) = uint32_t(text.size());
+	letter.buffer.assign(text.begin(), text.end());
+	send_letter(save, creditor, letter);
+	e.u8(0x10) = 0xFF;
 }
 
 // La operación 0x13 (0x538C40): {0x13, u32 barco, u32 capitán}: el capitán

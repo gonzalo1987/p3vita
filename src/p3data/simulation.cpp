@@ -320,6 +320,12 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x87:  // A child is born to a married merchant (0x53FEA0).
 		tick::fn_53fea0(save, operation);
 		break;
+	case 0x8B:  // The prince of a besieged town's neighbour asks the player for goods (0x536974 → 0x635B80).
+		tick::fn_536974(save, operation);
+		break;
+	case 0x8C:  // The player accepts the prince's request (0x5369C7 → 0x635CD0).
+		tick::fn_5369c7(save, operation);
+		break;
 	case 0x8E:  // Un asedio: el ejército sitiador (0x536A67, 0x633AF0).
 		tick::fn_536a67(save, operation);
 		break;
@@ -363,6 +369,12 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			repair_letter_chains(save);
 		}
 		expire_letters(save, fields[1]);
+		break;
+	case 0x72:  // The player answers a suitor's letter 0x21 (0x53EAC0): the event 0x17 or the letter 0x2B.
+		tick::fn_53eac0(save, operation);
+		break;
+	case 0x77:  // The creditor answers a letter 0x79 (0x53EEC0): lenient, or the impounding (the letter 0x83).
+		tick::fn_53eec0(save, operation);
 		break;
 	case 0x65:  // An AI merchant goes bankrupt (0x53DD70, 0x4F5D80).
 		tick::fn_53dd70(save, operation);

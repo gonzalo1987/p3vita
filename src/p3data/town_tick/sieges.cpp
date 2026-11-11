@@ -1938,6 +1938,100 @@ void fn_536a67(SaveGame& save, const uint8_t* operation) {
 	fn_633af0(save, int(town), operation[8], operation[0xC], flag != 0 ? 1 : 0);
 }
 
+// The operation 0x8B (0x536974 → 0x635B80 on the siege object of the town [+0x9]): {0x8B, u8 timber, grain, tools,
+// pitch, beer, the town [+0x9], the merchant [+0xA], the besieged town [+0xB], u32 [+0xC] the deadline's tick}: the
+// prince of the player's home town asks him for goods (0x633AF0 queues it, above). A new node of the list [+0x1020]
+// (the goods at [+0x0..+0x4], the merchant [+0x5], the besieged town [+0x6], [+0x7..+0x9] 0, the tick [+0xC]) goes
+// after the last node from the head whose next one isn't later (the head itself is never compared: a node earlier
+// than the head goes second), and the merchant gets the letter 0x64 («Prince»: [+0x5] the town, [+0x8] beer, [+0x9]
+// tools, [+0xA] timber, [+0xB] pitch, [+0xC] grain, [+0xD] the deadline's day and [+0xE] month, [+0xF] the besieged
+// town). Checked with the oracle: scenario prince_ops (saves 1, 3, 5, 7).
+void fn_536974(SaveGame& save, const uint8_t* operation) {
+	const uint32_t town = operation[0x9];
+	if (town >= save.globals.u32(kTownCount) || town >= save.sieges.size()) {
+		return;
+	}
+	const SiegeMemory& s = save.sieges[town];
+	std::vector<GameMemory<0x10>>& list = save.siege_extras[town].list_1020;
+	GameMemory<0x10> node;
+	node.u8(0x0) = operation[0x4];
+	node.u8(0x1) = operation[0x5];
+	node.u8(0x2) = operation[0x6];
+	node.u8(0x3) = operation[0x7];
+	node.u8(0x4) = operation[0x8];
+	node.u8(0x5) = operation[0xA];
+	node.u8(0x6) = operation[0xB];
+	std::memcpy(&node.u32(0xC), operation + 0xC, 4);
+	if (list.empty()) {
+		list.push_back(node);
+	} else {
+		size_t after = 0;
+		while (after + 1 < list.size() && list[after + 1].u32(0xC) < node.u32(0xC)) {
+			++after;
+		}
+		list.insert(list.begin() + long(after + 1), node);
+	}
+	save.sieges[town].u32(0x1020) = 1;
+	uint8_t day = 0;
+	uint8_t month = 0;
+	uint16_t year = 0;
+	events_mayor_detail::fn_5311d0(node.u32(0xC), day, month, year);
+	Letter letter(0x64);
+	letter.entry.u8(5) = s.u8(0x4);
+	letter.entry.u8(8) = node.u8(0x4);
+	letter.entry.u8(9) = node.u8(0x2);
+	letter.entry.u8(0xA) = node.u8(0x0);
+	letter.entry.u8(0xB) = node.u8(0x3);
+	letter.entry.u8(0xC) = node.u8(0x1);
+	letter.entry.u8(0xD) = day;
+	letter.entry.u8(0xE) = month;
+	letter.entry.u8(0xF) = node.u8(0x6);
+	send_letter(save, operation[0xA], letter);
+}
+
+// The operation 0x8C (0x5369C7 → 0x635CD0 on the siege object of the town u32 [+0x4]): {0x8C, u32 the town, u32 the
+// merchant, u32 the besieged town, u32 the letter's entry}: the player accepts the prince's request (the button of
+// the letter 0x64, 0x4D6C90). The first node of the list [+0x1020] with that merchant [+0x5] and besieged town
+// [+0x6] gets [+0x7] = 1, and the merchant the letter 0x65 (the meeting: as the 0x64 without [+0xF]); then the
+// entry, if a letter 0x64, loses its button ([+0xF] = 0xFE), the node found or not.
+// Checked with the oracle: scenario prince_ops (saves 1, 3, 5, 7).
+void fn_5369c7(SaveGame& save, const uint8_t* operation) {
+	uint32_t town;
+	std::memcpy(&town, operation + 4, 4);
+	if (town >= save.globals.u32(kTownCount) || town >= save.sieges.size()) {
+		return;
+	}
+	const uint8_t merchant = operation[0x8];
+	const uint8_t besieged = operation[0xC];
+	for (GameMemory<0x10>& node : save.siege_extras[town].list_1020) {
+		if (node.u8(0x5) != merchant || node.u8(0x6) != besieged) {
+			continue;
+		}
+		node.u8(0x7) = 1;
+		uint8_t day = 0;
+		uint8_t month = 0;
+		uint16_t year = 0;
+		events_mayor_detail::fn_5311d0(node.u32(0xC), day, month, year);
+		Letter letter(0x65);
+		letter.entry.u8(5) = save.sieges[town].u8(0x4);
+		letter.entry.u8(8) = node.u8(0x4);
+		letter.entry.u8(9) = node.u8(0x2);
+		letter.entry.u8(0xA) = node.u8(0x0);
+		letter.entry.u8(0xB) = node.u8(0x3);
+		letter.entry.u8(0xC) = node.u8(0x1);
+		letter.entry.u8(0xD) = day;
+		letter.entry.u8(0xE) = month;
+		send_letter(save, merchant, letter);
+		break;
+	}
+	// Then (0x5369F8, in the executor) the entry, if a letter 0x64, loses its button ([+0xF] = 0xFE).
+	uint32_t entry;
+	std::memcpy(&entry, operation + 0x10, 4);
+	if (entry < save.globals.u16(kMailCount) && save.mail[entry].u8(4) == 0x64) {
+		save.mail[entry].u8(0xF) = 0xFE;
+	}
+}
+
 // Lo que hace 0x627AD0 tras leer los campos del ejército (desde 0x627D77).
 void load_siege_army(SaveGame& save, int town) {
 	SiegeExtras& ex = save.siege_extras[size_t(town)];
