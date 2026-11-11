@@ -87,3 +87,9 @@ target_link_libraries(new_game_test PRIVATE p3data)
 target_compile_options(new_game_test PRIVATE -Wall -Wextra)
 
 add_test(NAME new_game COMMAND new_game_test)
+
+add_executable(trade_route_window_test trade_route_window_test.cpp)
+target_link_libraries(trade_route_window_test PRIVATE p3data)
+target_compile_options(trade_route_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME trade_route_window COMMAND trade_route_window_test)

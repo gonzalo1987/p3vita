@@ -2379,6 +2379,37 @@ ship alone is passed its town after it was cleared to 0xFF (every travel time 0x
 number), and the big ship's test is the wrong way round (a small ship avoids the towns without a deep port, a big one
 alone doesn't).
 
+## The trade routes, part 3: the viewer's windows and the route files (2026-11-11)
+
+The viewer's route page, towns' list and wares window (`src/p3data/trade_route_window.cpp`, `src/app/main.cpp`) queue
+the operations 0x68..0x6D of part 1, already checked: their rules (which operation each button sends, with which
+bytes) were read from the game's windows (0x48B3E0, 0x492CA0, 0x492EE0, 0x405A20, 0x404B50, 0x406D50, 0x407CA0;
+`re/emu/sesion25/trade_routes_notes.md`) and are tested by ctest `trade_route_window`, not run in the emulator.
+
+The route files are engine (`trade_routes.cpp`): 0x4D5C50 writes the route of a stop (from its first, each stop's
++0x0 at 0, compressed with the savegames' LZ), 0x4D5EE0 reads one (whole stops, linked 0 → 1 → … → 0), and 0x5492D0,
+at the end of the queue's loop (`run_queued_operations`), applies the stops the page's «Load» left in the queue
+object (0x6DF2F0: [+0x930] the stops, [+0x934] the ship): alone, a new route (0x6C, run at once) and the stops copied
+into it; in a network game ([+0x0] & 0xC), 0x68, 0x6C, 0x6A, 0x6D and 0x69 queued for what differs, over several
+calls (it stops with the queue's count [+0x56] at 0x34; p3vita reads that count as the oracle has it, where nothing
+adds to it, while in a network game 0x543F10 adds and the network's thread takes away: for phase 7). The oracle has a
+region `AR` (the stops at [+0x930], up to the first whose +0x0 is 0; `SaveGame::loaded_route`)
+and the queue object's fields are in `G` (its heap pointer skipped as any pointer). For the files, the scenario makes
+a trampoline (`ROUTE_FILE`, 0x03000B80: the page's «Save» then «Load», 0x4D5C50 and 0x4D5EE0 with the stop and the
+ship) and answers the file functions under them (CreateDirectory skipped, CFile's Open, Write keeping the bytes,
+Close; the archive's read returning them).
+
+| Scenario | What | Saves | Result |
+|-|-|-|-|
+| `trade_route_files` | 0x5492D0 alone (a ship without a route; the route on, a stop out of the world first, one without a deep port for a big ship; every stop out; the ship out; a convoy with a big ship) and in a network game (the route on and of another length: kept; the same length: towns, actions, wares, a stop out between them; everything the same; the queue full; a ship without a route; a longer route); and the files from each stop of the ship's route, of one stop and of a convoy | 1, 3, 5, 7 | 0x5492D0 11 to 13 calls, the round trip 3 or 4, 0x535760 6 to 8: all equal; 27 of 27 targets in 3 and 5 (1: no convoy; 7: no route of two stops to relink) |
+
+Broken on purpose twice and caught: the 0x6D queued without the fields the 0x6A before it leaves in the operation
+(the game reuses one), and a file started at the stop asked instead of the route's first. (The +0x0 written into a
+file can't be seen: reading relinks the stops.) A detail seen there: copying a file's stops into the new route writes
+their actions, so the first stop's bit 0x4 goes where the file had it. The world 7 days in the 12 saves: 0 different;
+write-check as before (save 7's 12 known bytes); ctest; the Vita build. The viewer: a route saved, changed, loaded back
+and its file deleted, with touch and the pad (`re/emu/sesion25/shots.sh`).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

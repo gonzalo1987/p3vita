@@ -1,7 +1,10 @@
 #include "savegames.hpp"
 
+#include <dirent.h>
 #include <sys/stat.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -71,7 +74,53 @@ bool make_dir(const std::string& dir) {
 	return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+std::string route_path(const std::string& dir, const std::string& name) {
+	return dir + "AutoRoute/" + name + ".rou";
+}
+
 }  // namespace
+
+std::vector<std::string> list_route_files(const std::string& dir) {
+	std::vector<std::string> out;
+	if (DIR* folder = opendir((dir + "AutoRoute").c_str())) {
+		while (const dirent* entry = readdir(folder)) {
+			const std::string name = entry->d_name;
+			if (name.size() > 4) {
+				std::string extension = name.substr(name.size() - 4);
+				for (char& c : extension) {
+					c = char(std::tolower(uint8_t(c)));
+				}
+				if (extension == ".rou") {
+					out.push_back(name.substr(0, name.size() - 4));
+				}
+			}
+		}
+		closedir(folder);
+	}
+	std::sort(out.begin(), out.end(), [](const std::string& a, const std::string& b) {
+		for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
+			const int x = std::tolower(uint8_t(a[i]));
+			const int y = std::tolower(uint8_t(b[i]));
+			if (x != y) {
+				return x < y;
+			}
+		}
+		return a.size() < b.size();
+	});
+	return out;
+}
+
+bool read_route_file(const std::string& dir, const std::string& name, std::vector<uint8_t>& out) {
+	return read_file(route_path(dir, name), out);
+}
+
+bool write_route_file(const std::string& dir, const std::string& name, const std::vector<uint8_t>& data) {
+	return make_dir(dir) && make_dir(dir + "AutoRoute") && write_file(route_path(dir, name), data);
+}
+
+bool delete_route_file(const std::string& dir, const std::string& name) {
+	return std::remove(route_path(dir, name).c_str()) == 0;
+}
 
 std::string savegames_dir(const char* data_dir) {
 #ifdef __vita__

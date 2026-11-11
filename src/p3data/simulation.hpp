@@ -59,7 +59,9 @@ void cap_merchant_money(SaveGame& save);
 // replaces the old one (another game loaded).
 void use_sailing(Sailing& sailing);
 
-// Ejecuta las operaciones encoladas y vacía la cola.
+// Ejecuta las operaciones encoladas y vacía la cola; después, como el final
+// del bucle de la cola del juego, aplica una ruta cargada de un fichero
+// (0x5492D0, trade_routes.hpp).
 void run_queued_operations(SaveGame& save, Sailing& sailing);
 
 // El ejecutor (0x535760): una operación encolada (0x14 bytes: u32 código y

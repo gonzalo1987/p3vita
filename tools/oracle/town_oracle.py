@@ -174,6 +174,7 @@ INI_STRING = 0x4BE060  # thiscall (sección, clave, por omisión, búfer, tamañ
 # StadtDaten.ini): la llena 0x51E440 desde 0x5121C0. En +0x28, un CString.
 TOWN_TABLE_SIZE = 0x34
 EMPTY_CSTRING = 0x6C7CCC  # puntero a la cadena vacía de MFC con el que empieza un CString
+LOADED_ROUTE = 0x6DFC20  # the queue object 0x6DF2F0's [+0x930]: a route loaded from a file (0x5492D0)
 ENQUEUE = 0x54AA70  # encola una operación: se anota y no se ejecuta
 OPERATION_SIZE = 0x14  # lo que copia 0x543F10; lo que sigue en la pila es basura
 # El tick de ciudad se llama por este trampolín para que vuelva a una
@@ -1559,6 +1560,16 @@ class TownOracle(SaveOracle):
         out['V'] = (convoys, block(convoys, gu16(SHIPS + 0xF6) * 0x3C if convoys else 0))
         stops = gu32(TRADE_ROUTES + 4)  # the trade routes' stops (0xDC bytes, as many as the u16 [+0x2])
         out['AU'] = (stops, block(stops, gu16(TRADE_ROUTES + 2) * 0xDC if stops else 0))
+        # A route loaded from a file (the queue object's [+0x930], 0x4D5EE0): its stops up to the first whose +0x0 is
+        # 0, as 0x5492D0 walks them (SaveGame::loaded_route).
+        loaded = gu32(LOADED_ROUTE)
+        records = []
+        while loaded and len(records) < 0x1000:
+            r = bytes(read(loaded + 0xDC * len(records), 0xDC))
+            records.append(r)
+            if unpack('<H', r, 0)[0] == 0:
+                break
+        out['AR'] = (loaded, b''.join(records))
         routes = []
         for i in range(ships):
             route = unpack('<I', ship_block, i * 0x180 + 0x24)[0]

@@ -18,6 +18,7 @@
 #include <dirent.h>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -46,6 +47,8 @@
 #include "p3data/town.hpp"
 #include "p3data/town_buildings.hpp"
 #include "p3data/trade.hpp"
+#include "p3data/trade_route_window.hpp"
+#include "p3data/trade_routes.hpp"
 #include "p3data/wares.hpp"
 #include "battle_view.hpp"
 #include "debug_states.hpp"
@@ -3553,6 +3556,43 @@ struct SidePanel {
 	ShipPage ship_page = ShipPage::Goods;
 	int cargo_first = 0;
 	PlaceUi ship_ui;
+	// Its trade route page ([+0xE4], trade_route_window.hpp), for the ship `route_for`: the first row shown
+	// ([+0x57D8]), the pad's row (-1: the title's «Archivo» and «Activa») and column (the town, «Mercancías», the
+	// mode); a row's town button dragged (-1 none; where its top is now); the towns' list a town button opened (its
+	// row, -1 closed; the pad's entry); and the wares window of a stop (*0x6CBA74), with its first row shown, the
+	// pad's row (kStopRows: the bottom buttons) and column, and a ware's row dragged.
+	int route_for = -1;
+	int route_first = 0;
+	int route_row = 0;
+	int route_column = 0;
+	int route_drag = -1;
+	int route_drag_top = 0;
+	int route_towns_row = -1;
+	int route_towns_pick = 0;
+	std::optional<StopWindow> stop_window;
+	int stop_first = 0;
+	int stop_row = 0;
+	int stop_column = 0;
+	int stop_drag = -1;
+	int stop_drag_top = 0;
+	// A box of the wares window being written (its edit boxes, 0x407235): the ware (-1 none), the price's or the
+	// amount's, the digits so far.
+	int stop_typing = -1;
+	bool stop_typing_price = false;
+	std::string stop_typed;
+	// The route files' list («Archivo»: the towns' list class in its mode 4): open; its files (save\AutoRoute's
+	// .rou, without the extension); the name in its box ([+0x938]) and whether it's being written; the pad's row
+	// (a file; past them the bottom row: the box, «Cargar», «Guardar», «Borrar», close) and column; the first file
+	// shown; the question open (1 overwrite, 2 delete; 0 none: X answers yes, Circle no).
+	bool route_files = false;
+	std::vector<std::string> route_file_list;
+	std::string route_file_name;
+	bool route_file_typing = false;
+	std::string route_file_before;  // The name before it is written (the keyboard starts empty; left empty, it comes back).
+	int route_file_row = 0;
+	int route_file_column = 0;
+	int route_file_first = 0;
+	int route_file_question = 0;
 	// The statistics (SIDEMENU_STATISTIK and its parchment, statistics_window.hpp), opened by the top bar's money:
 	// the page ([+0xB0], 2 at first), the entry the parchment shows ([+0xBE]: the balance when it opens), the
 	// balance's period ([+0xA4]), the graphs' ([+0xC0]) and Suministro's town ([+0x2440]; -1: his home town).
@@ -3645,6 +3685,9 @@ struct PanelArt {
 	SDL_Texture* battle_buttons = nullptr;  // menu_seeschlacht.tga (TEX16045): the battle's six, 32 · 32 in 4 rows.
 	SDL_Texture* fire = nullptr;  // sidemenu/fire.aim (TEX20037): the deck's fire button, 64 · 64 in 4 frames.
 	SDL_Texture* backpics[4] = {};
+	// The wares window's direction buttons (bttn_transfer.tga, TEX16035: 48 · 18, three frames each (neutral, pressed,
+	// hover) for to the town, to the office, from the town, from the office).
+	SDL_Texture* transfer = nullptr;
 	enum Icon { Anchor, Sailing, Sunk, Repair, Knots, Hull, Crew, Captain, Weapons, BigBall, SmallBall, Barrel, Bale,
 		HandWeapons, Offered, Auction, Upgrade, Fleet, IconCount };
 	SDL_Texture* list_icons[IconCount] = {};
@@ -3690,6 +3733,7 @@ struct PanelArt {
 		deck = load_texture(renderer, archive, "images/sidemenu/schiffsdeck.tga");
 		battle_buttons = load_texture(renderer, archive, "images/menu_seeschlacht.tga");
 		fire = load_aim_texture(renderer, archive, "images/sidemenu/fire.aim");
+		transfer = load_texture(renderer, archive, "images/bttn_transfer.tga");
 		// By type (snaikka, craier, cog, hulk: schnigge, kraier, kogge, holk).
 		static constexpr const char* kBackpics[4] = {"images/sidemenu/backpic_schnigge01.bmp",
 			"images/sidemenu/backpic_kraier01.bmp", "images/sidemenu/backpic_kogge01.bmp",
@@ -3726,7 +3770,7 @@ struct PanelArt {
 	~PanelArt() {
 		for (SDL_Texture* t : {icons, bar, plank, wood, parchment, build_tabs, ships[0], ships[1], ships[2], ships[3],
 				 ship_buttons, morale, barrel, barrel_mask, bonus, deck, battle_buttons, fire, backpics[0], backpics[1], backpics[2], backpics[3],
-				 letters, paper, seal, bar_left, bar_right, people, coins, map_switch, events}) {
+				 transfer, letters, paper, seal, bar_left, bar_right, people, coins, map_switch, events}) {
 			if (t) {
 				SDL_DestroyTexture(t);
 			}
@@ -4418,17 +4462,23 @@ bool ship_in_convoy(const SaveGame& save, int ship) {
 	return convoy < save.globals.u16(global::kShips + 0xF6) && convoy < save.convoys.size();
 }
 
+// The menu shows a convoy: the ship is in one without its flag 0x10 (0x48A983..0x48A9B2).
+bool ship_menu_convoy(const SaveGame& save, int ship) {
+	const SavedShip& s = save.ships[size_t(ship)];
+	return ship_in_convoy(save, ship) && !(save.convoys[s.convoy()].u8(0x14) & 0x10);
+}
+
 // What can be chosen (0x48A9A2..0x48AA9A): in a convoy (without its flag 0x10) leaving or disbanding it,
 // unless the state has the bits 0x14, and showing it; otherwise forming one only in port (the states 0
-// and 1). The trade routes (the game's button, with a captain and out of a convoy) aren't in p3vita yet
-// (phase 6).
+// and 1). The trade route: a ship alone with a captain (0x48AA79); the convoy's menu always (0x48AAB2):
+// p3vita has no menu of its own for a convoy, and a ship's in a convoy stands for it (the guide's route).
 bool ship_page_enabled(const SaveGame& save, int ship, ShipPage page) {
 	const SavedShip& s = save.ships[size_t(ship)];
-	const bool in_convoy = ship_in_convoy(save, ship) && !(save.convoys[s.convoy()].u8(0x14) & 0x10);
+	const bool in_convoy = ship_menu_convoy(save, ship);
 	switch (page) {
 	case ShipPage::LeaveConvoy: return in_convoy && (s.status() & 0x14) != 0x14;
 	case ShipPage::Convoy: return ship_in_convoy(save, ship) || s.status() == 0 || s.status() == 1;
-	case ShipPage::TradeRoute: return false;
+	case ShipPage::TradeRoute: return in_convoy || s.captain() < save.globals.u16(global::kCaptainCount);
 	default: return true;
 	}
 }
@@ -4926,6 +4976,594 @@ void draw_disabled_button(SDL_Renderer* renderer, TextRenderer& text, const SDL_
 	text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - text.line_height()) / 2, kParchmentDim);
 }
 
+// --- The trade route page of the ship menu (CSideMenu_Ship's page [+0xE4], drawn by 0x48F2C0), its towns' list
+// (0x46F9B0, mode 1) and the wares window of a stop (*0x6CBA74): their rules and operations in
+// trade_route_window.hpp; the layout adapted to the Vita. ---
+
+std::vector<std::string> stats_town_names();
+void draw_scroll(SDL_Renderer* renderer, SDL_Texture* paper, const SDL_Rect& r);
+void draw_panel_box(SDL_Renderer* renderer, const SDL_Rect& box, Uint8 alpha);
+
+// A button of the route's parchments: lit where the pad points, greyed when off.
+void draw_route_button(SDL_Renderer* renderer, TextRenderer& text, const SDL_Rect& r, const std::string& label, bool lit,
+	bool enabled) {
+	SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, enabled ? (lit ? 140 : 60) : 25);
+	SDL_RenderFillRect(renderer, &r);
+	SDL_SetRenderDrawColor(renderer, 110, 80, 40, enabled ? 255 : 90);
+	SDL_RenderDrawRect(renderer, &r);
+	const std::string shown = cut_text(text, label, r.w - 6);
+	text.draw(shown, r.x + (r.w - text.measure(shown)) / 2, r.y + (r.h - text.line_height()) / 2,
+		enabled ? kParchmentInk : kParchmentDim);
+}
+
+// A scroll's arrow: a triangle up or down in `r`, dark when there is more that way.
+void draw_route_arrow(SDL_Renderer* renderer, const SDL_Rect& r, bool up, bool enabled) {
+	SDL_SetRenderDrawColor(renderer, 150, 115, 70, enabled ? 60 : 25);
+	SDL_RenderFillRect(renderer, &r);
+	SDL_SetRenderDrawColor(renderer, 110, 80, 40, enabled ? 255 : 90);
+	SDL_RenderDrawRect(renderer, &r);
+	SDL_SetRenderDrawColor(renderer, 70, 45, 20, enabled ? 255 : 90);
+	const int cx = r.x + r.w / 2;
+	const int cy = r.y + r.h / 2;
+	for (int i = 0; i < 6; ++i) {
+		const int y = up ? cy - 3 + i : cy + 3 - i;
+		SDL_RenderDrawLine(renderer, cx - i, y, cx + i, y);
+	}
+}
+
+// The page under the ship menu's buttons: one line of the header (the convoy's or the ship's name with its state's
+// icon), «File» and «active», then the rows: the stops from the first and, while there
+// are fewer than 20, one more with «Select town» (0x493A59) that appends a stop. A row: the number (red for the
+// ship's stop now), the town button (its towns' list; dragged, the stop moves), «Goods» (the wares window) and the
+// mode button («X», «R», «-»); the scroll's arrows on the right.
+struct RoutePageLayout {
+	SDL_Rect room{};
+	int name_y = 0;
+	int title_y = 0;
+	SDL_Rect files{};
+	SDL_Rect active{};
+	int rows_y = 0;
+	int row_h = 0;
+	int rows = 0;  // Shown.
+	SDL_Rect up{};
+	SDL_Rect down{};
+
+	RoutePageLayout(const SDL_Rect& menu_room, int line) : room(menu_room) {
+		name_y = room.y + 46;
+		const int button_h = line + 6;
+		title_y = name_y + line + 4;
+		files = {room.x + 8, title_y, 96, button_h};
+		active = {room.x + room.w - 6 - 30 - 96, title_y, 96, button_h};
+		row_h = line + 6;
+		rows_y = title_y + button_h + 4;
+		rows = std::max(1, (room.y + room.h - 4 - rows_y) / row_h);
+		up = {room.x + room.w - 6 - 18, rows_y, 18, row_h - 2};
+		down = {up.x, rows_y + (rows - 1) * row_h, 18, row_h - 2};
+	}
+	int top(int k) const { return rows_y + k * row_h; }
+	SDL_Rect number(int k) const { return {room.x + 2, top(k), 18, row_h - 2}; }
+	SDL_Rect town(int k) const { return {room.x + 23, top(k), 85, row_h - 2}; }
+	SDL_Rect wares(int k) const { return {room.x + 111, top(k), 95, row_h - 2}; }
+	SDL_Rect mode(int k) const { return {room.x + 209, top(k), 22, row_h - 2}; }
+	SDL_Rect append(int k) const { return {room.x + 23, top(k), 183, row_h - 2}; }  // «Select town», alone in its row.
+	// The shown row at y, -1 off the rows.
+	int row_at(int y) const {
+		if (y < rows_y || y >= rows_y + rows * row_h) {
+			return -1;
+		}
+		return (y - rows_y) / row_h;
+	}
+};
+
+// How many rows the page has: the stops and the row that appends one (none at 20).
+int route_page_rows(const SaveGame& save, int ship) {
+	const size_t stops = route_rows(save, ship).size();
+	return int(stops) + (stops < 20 ? 1 : 0);
+}
+
+std::string route_town_label(const SaveGame& save, const std::vector<std::string>& names, uint8_t town) {
+	// The town button's text: 0x6DDA00 by the town's index (the letters' bug, statistics_town_name).
+	return clean_game_text(statistics_town_name(save, names, town));
+}
+
+void draw_route_page(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
+	const SidePanel& ui, const SDL_Rect& room) {
+	const RoutePageLayout layout(room, text.line_height());
+	const int line = text.line_height();
+	const int ship_index = ui.ship;
+	const SavedShip& ship = save.ships[size_t(ship_index)];
+	const bool convoy = ship_menu_convoy(save, ship_index);
+	int x = room.x + 8;
+	x += art.icon(renderer, ship_status_line(save, ship_index).first, x, layout.name_y) + 3;
+	text.draw(cut_text(text, convoy ? convoy_label(save, ship.convoy()) : ship.name(), room.x + room.w - 8 - x), x,
+		layout.name_y, kParchmentInk);
+	// (The game's title «Trade route» doesn't fit beside its two buttons: the page's button says it.)
+	const int title_text_y = layout.title_y + (layout.files.h - line) / 2;
+	const bool title_pad = ui.route_row < 0;
+	draw_route_button(renderer, text, layout.files, exe_text(0x6B0394, "Archivo", "File"), title_pad && ui.route_column == 0,
+		true);
+	// «Activa»: a check box with its word.
+	const bool can_activate = route_active_operation(save, ship_index).has_value();
+	draw_route_button(renderer, text, layout.active, std::string(), title_pad && ui.route_column == 1, can_activate);
+	const SDL_Rect box = {layout.active.x + 6, layout.active.y + (layout.active.h - 12) / 2, 12, 12};
+	SDL_SetRenderDrawColor(renderer, 60, 40, 20, can_activate ? 255 : 110);
+	SDL_RenderDrawRect(renderer, &box);
+	if (route_active(save, ship_index)) {
+		for (int d = 0; d < 2; ++d) {
+			SDL_RenderDrawLine(renderer, box.x + 2, box.y + 5 + d, box.x + 5, box.y + 8 + d);
+			SDL_RenderDrawLine(renderer, box.x + 5, box.y + 8 + d, box.x + 10, box.y + 2 + d);
+		}
+	}
+	text.draw(cut_text(text, exe_text(0x6A43B8, "Activa", "active"), layout.active.w - 26), box.x + 17, title_text_y,
+		can_activate ? kParchmentInk : kParchmentDim);
+	const std::vector<RouteRow> rows = route_rows(save, ship_index);
+	const int count = route_page_rows(save, ship_index);
+	const std::vector<std::string> names = stats_town_names();
+	static constexpr const char* kModes[3] = {"X", "R", "-"};  // 0x6BA478, 0x6BA476, 0x6BA474
+	for (int k = 0; k < layout.rows && ui.route_first + k < count; ++k) {
+		const int r = ui.route_first + k;
+		const bool pad_row = ui.route_row == r;
+		if (r == int(rows.size())) {
+			draw_route_button(renderer, text, layout.append(k), exe_text(0x6A43AC, "Ciudad", "Select town"), pad_row, true);
+			continue;
+		}
+		const RouteRow& row = rows[size_t(r)];
+		const SDL_Rect n = layout.number(k);
+		const std::string number = std::to_string(r + 1);
+		text.draw(number, n.x + n.w - text.measure(number), n.y + (n.h - line) / 2, row.current ? kParchmentRed : kParchmentInk);
+		if (r != ui.route_drag) {
+			draw_route_button(renderer, text, layout.town(k), route_town_label(save, names, row.town),
+				pad_row && ui.route_column == 0, true);
+		}
+		draw_route_button(renderer, text, layout.wares(k), exe_text(0x69B310, "Mercancías", "Goods"),
+			pad_row && ui.route_column == 1, true);
+		draw_route_button(renderer, text, layout.mode(k), kModes[row.mode], pad_row && ui.route_column == 2, true);
+	}
+	draw_route_arrow(renderer, layout.up, true, ui.route_first > 0);
+	draw_route_arrow(renderer, layout.down, false, ui.route_first + layout.rows < count);
+	if (ui.route_drag >= 0 && ui.route_drag < int(rows.size())) {
+		// The town button being dragged, where the finger has it.
+		SDL_Rect t = layout.town(0);
+		t.y = ui.route_drag_top;
+		draw_route_button(renderer, text, t, route_town_label(save, names, rows[size_t(ui.route_drag)].town), true, true);
+	}
+}
+
+// The towns' list a town button opens (0x46F9B0 in its mode 1; sorted by name when it opens, 0x471FF0): the towns the
+// stop can have and, after them, «none» (0x4713DE: 0xFF, which removes the stop); a choice for the page's row
+// (0x492CA0). Over the town, in columns.
+std::vector<int> route_town_entries(const SaveGame& save, int ship) {
+	StatisticsChoice choice;
+	choice.mode = 1;
+	choice.merchants = route_town_choices(save, ship);
+	if (g_texts) {
+		sort_choice_by_name(save, *g_texts, stats_town_names(), choice);
+	}
+	std::vector<int> out(choice.merchants.begin(), choice.merchants.end());
+	out.push_back(-1);
+	return out;
+}
+
+struct RouteTownsLayout {
+	SDL_Rect panel{};
+	int title_y = 0;
+	int entries_y = 0;
+	int row_h = 0;
+	int columns = 1;
+	int rows_per_column = 1;
+	int column_w = 0;
+	SDL_Rect close_button{};
+
+	RouteTownsLayout(int line, int entries) {
+		const int w = std::min(560, g_town_right - 24);
+		row_h = line + 6;
+		const int button_h = line + 10;
+		const int top = kBarHeight + 12;
+		title_y = top + 10;
+		entries_y = title_y + line + 10;
+		const int most = std::max(1, (kScreenHeight - 12 - 12 - button_h - 8 - entries_y) / row_h);
+		columns = std::max(1, (entries + most - 1) / most);
+		rows_per_column = std::max(1, (entries + columns - 1) / columns);
+		const int h = entries_y - top + rows_per_column * row_h + 8 + button_h + 12;
+		panel = {(g_town_right - w) / 2, top, w, h};
+		column_w = (panel.w - 24) / columns;
+		close_button = {panel.x + panel.w / 2 - 60, panel.y + panel.h - button_h - 10, 120, button_h};
+	}
+	SDL_Rect entry(int k) const {
+		return {panel.x + 12 + (k / rows_per_column) * column_w + 2, entries_y + (k % rows_per_column) * row_h,
+			column_w - 4, row_h - 2};
+	}
+	int entry_at(int x, int y, int entries) const {
+		for (int k = 0; k < entries; ++k) {
+			if (inside(entry(k), x, y)) {
+				return k;
+			}
+		}
+		return -1;
+	}
+};
+
+void draw_route_towns(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, const SidePanel& ui) {
+	if (ui.route_towns_row < 0) {
+		return;
+	}
+	const std::vector<int> entries = route_town_entries(save, ui.ship);
+	const RouteTownsLayout layout(text.line_height(), int(entries.size()));
+	SDL_SetRenderDrawColor(renderer, 236, 220, 180, 250);
+	SDL_RenderFillRect(renderer, &layout.panel);
+	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
+	SDL_RenderDrawRect(renderer, &layout.panel);
+	text.draw(exe_text(0x6C10CC, "Elegir ciudad", "choose town"), layout.panel.x + 12, layout.title_y, kParchmentInk);
+	// The row's town now, lit.
+	const std::vector<RouteRow> rows = route_rows(save, ui.ship);
+	const int current = ui.route_towns_row < int(rows.size()) ? int(rows[size_t(ui.route_towns_row)].town) : -2;
+	const std::vector<std::string> names = stats_town_names();
+	for (size_t k = 0; k < entries.size(); ++k) {
+		const SDL_Rect r = layout.entry(int(k));
+		const int t = entries[k];
+		const bool lit = int(k) == ui.route_towns_pick || t == current;
+		SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, lit ? 110 : 40);
+		SDL_RenderFillRect(renderer, &r);
+		const std::string name = t < 0 ? exe_text(0x6C1078, "ninguna", "none") : route_town_label(save, names, uint8_t(t));
+		text.draw(cut_text(text, name, r.w - 8), r.x + 4, r.y + (r.h - text.line_height()) / 2, kParchmentInk);
+	}
+	draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Cerrar", "Close"));
+}
+
+// The route files' list («File»: the towns' list class in its mode 4, 0x470B4B..0x470F4F), over the town: the title
+// «Trade route», the files (save\AutoRoute\*.rou, 0x4721F0; a file puts its name in the box), the box with the name
+// (written with the Vita's keyboard), «Load» (the name is a file's: 0x63AC5B, without case), «Save» (a name), «Delete»
+// (a file's) and the close button; «Save» on a file's name and «Delete» ask first (Yes / No).
+constexpr int kRouteFileColumns = 5;  // The bottom row's for the pad: the box, «Load», «Save», «Delete», close.
+
+struct RouteFilesLayout {
+	SDL_Rect panel{};
+	SDL_Rect list{};
+	SDL_Rect track{};
+	SDL_Rect box{};
+	SDL_Rect buttons[4] = {};  // «Load», «Save», «Delete», close
+	SDL_Rect question{};
+	SDL_Rect yes{};
+	SDL_Rect no{};
+	int title_y = 0;
+	int row_h = 0;
+	int rows = 0;  // Shown.
+
+	explicit RouteFilesLayout(int line) {
+		const int w = std::min(420, g_town_right - 24);
+		panel = {(g_town_right - w) / 2, kBarHeight + 8, w, kScreenHeight - kBarHeight - 16};
+		title_y = panel.y + 10;
+		row_h = line + 6;
+		const int button_h = line + 10;
+		const int buttons_y = panel.y + panel.h - 10 - button_h;
+		box = {panel.x + 12, buttons_y - 8 - (line + 8), panel.w - 24, line + 8};
+		const int list_y = title_y + line + 10;
+		rows = std::max(1, (box.y - 8 - list_y) / row_h);
+		list = {panel.x + 12, list_y, panel.w - 24 - 10, rows * row_h};
+		track = {list.x + list.w + 4, list.y, 5, list.h - 2};
+		const int close_w = 48;
+		const int bw = (panel.w - 24 - close_w - 3 * 6) / 3;
+		for (int k = 0; k < 3; ++k) {
+			buttons[k] = {panel.x + 12 + k * (bw + 6), buttons_y, bw, button_h};
+		}
+		buttons[3] = {panel.x + panel.w - 12 - close_w, buttons_y, close_w, button_h};
+		question = {panel.x + 24, panel.y + panel.h / 2 - 80, panel.w - 48, 160};
+		yes = {question.x + question.w / 2 - 6 - 100, question.y + question.h - button_h - 14, 100, button_h};
+		no = {question.x + question.w / 2 + 6, yes.y, 100, button_h};
+	}
+	SDL_Rect row(int k) const { return {list.x, list.y + k * row_h, list.w, row_h - 2}; }
+	int row_at(int x, int y) const { return inside(list, x, y) ? (y - list.y) / row_h : -1; }
+	// The bottom row's cell for the pad (the box, then the buttons).
+	SDL_Rect cell(int column) const { return column == 0 ? box : buttons[column - 1]; }
+};
+
+// The file whose name is `name`, without case (0x63AC5B), or -1.
+int route_file_match(const std::vector<std::string>& files, const std::string& name) {
+	for (size_t i = 0; i < files.size(); ++i) {
+		if (files[i].size() == name.size() &&
+			std::equal(files[i].begin(), files[i].end(), name.begin(), [](char a, char b) {
+				return std::tolower(uint8_t(a)) == std::tolower(uint8_t(b));
+			})) {
+			return int(i);
+		}
+	}
+	return -1;
+}
+
+// A question's text without the line breaks it starts with.
+std::string route_question_text(uint32_t english, const char* spanish, const char* fallback) {
+	std::string s = exe_text(english, spanish, fallback);
+	while (!s.empty() && (s.front() == '\n' || s.front() == ' ')) {
+		s.erase(s.begin());
+	}
+	return s;
+}
+
+void draw_route_files(SDL_Renderer* renderer, TextRenderer& text, const SidePanel& ui) {
+	if (!ui.route_files) {
+		return;
+	}
+	const RouteFilesLayout layout(text.line_height());
+	const int line = text.line_height();
+	SDL_SetRenderDrawColor(renderer, 236, 220, 180, 250);
+	SDL_RenderFillRect(renderer, &layout.panel);
+	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
+	SDL_RenderDrawRect(renderer, &layout.panel);
+	const std::string title = exe_text(0x6B0388, "Ruta comercial", "Trade route");
+	text.draw(title, layout.panel.x + (layout.panel.w - text.measure(title)) / 2, layout.title_y, kParchmentInk);
+	const int n = int(ui.route_file_list.size());
+	const int match = route_file_match(ui.route_file_list, ui.route_file_name);
+	for (int k = 0; k < layout.rows && ui.route_file_first + k < n; ++k) {
+		const int i = ui.route_file_first + k;
+		const SDL_Rect r = layout.row(k);
+		const bool lit = i == ui.route_file_row || i == match;
+		SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, lit ? 110 : 30);
+		SDL_RenderFillRect(renderer, &r);
+		text.draw(cut_text(text, ui.route_file_list[size_t(i)], r.w - 8), r.x + 4, r.y + (r.h - line) / 2, kParchmentInk);
+	}
+	if (n > layout.rows) {
+		SDL_SetRenderDrawColor(renderer, 150, 115, 70, 60);
+		SDL_RenderFillRect(renderer, &layout.track);
+		const int bar = std::max(8, layout.track.h * layout.rows / n);
+		const SDL_Rect thumb = {layout.track.x,
+			layout.track.y + (layout.track.h - bar) * ui.route_file_first / std::max(1, n - layout.rows), layout.track.w, bar};
+		SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
+		SDL_RenderFillRect(renderer, &thumb);
+	}
+	const bool bottom = ui.route_file_row >= n;
+	const bool asking = ui.route_file_question != 0;
+	SDL_SetRenderDrawColor(renderer, 150, 115, 70, ui.route_file_typing ? 110 : bottom && ui.route_file_column == 0 ? 90 : 45);
+	SDL_RenderFillRect(renderer, &layout.box);
+	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
+	SDL_RenderDrawRect(renderer, &layout.box);
+	const std::string name = ui.route_file_name + (ui.route_file_typing ? "_" : "");
+	text.draw(cut_text(text, name, layout.box.w - 10), layout.box.x + 5, layout.box.y + (layout.box.h - line) / 2,
+		kParchmentInk);
+	const std::string labels[3] = {exe_text(0x6B039C, "Cargar", "Load"), exe_text(0x6B03A4, "Guardar", "Save"),
+		exe_text(0x69AF30, "Borrar", "Delete")};
+	const bool enabled[3] = {match >= 0 && !asking, !ui.route_file_name.empty() && !asking, match >= 0 && !asking};
+	for (int k = 0; k < 3; ++k) {
+		draw_route_button(renderer, text, layout.buttons[k], labels[k], bottom && ui.route_file_column == k + 1, enabled[k]);
+	}
+	draw_route_button(renderer, text, layout.buttons[3], BTN_CIRCLE, bottom && ui.route_file_column == 4, true);
+	if (!asking) {
+		return;
+	}
+	// The question: «This file already exists, overwrite?» or «Do you really want to delete this trade route?».
+	draw_panel_box(renderer, layout.question, 235);
+	const std::string ask = ui.route_file_question == 1
+		? route_question_text(0x6B03AC, "Este archivo ya existe. ¿Sobrescribir?", "This file already exists, overwrite?")
+		: route_question_text(0x6B0508, "¿Realmente quieres borrar esta ruta comercial?",
+			  "Do you really want to delete this trade route?");
+	int y = layout.question.y + 14;
+	for (const std::string& l : wrap_text(text, ask, layout.question.w - 24)) {
+		text.draw(l, layout.question.x + (layout.question.w - text.measure(l)) / 2, y, kTextColor);
+		y += line;
+	}
+	draw_button(renderer, text, layout.yes, BTN_CROSS + std::string(" ") + exe_text(0x699948, "Sí", "Yes"));
+	draw_button(renderer, text, layout.no, BTN_CIRCLE + std::string(" ") + exe_text(0x699950, "No", "No"));
+}
+
+// The wares window of a stop (0x405A20; parchment.ini [Autotradeparchment0]) on the game's parchment over the town:
+// the title «Automatic maritime trading in %s», the columns' names, the 20 rows in the stop's order (the ware's
+// name, dragged to move its row; its direction button; the amount's −, its units or «Max» with the barrel or the
+// bale, +; «min» or «max» with the price's −, the price, +), the legend and the bottom buttons: «<», «>», the
+// direction of them all, «Max», «0», «Undo» and the close button. The rows that don't fit scroll.
+constexpr int kStopRows = 20;
+constexpr int kStopBottomButtons = 7;  // «<», «>», all, «Máx.», «0», «Deshaz», close
+// A row's cells for the pad: the direction, the amount's −, box and +, the price's −, box and +.
+constexpr int kStopColumns = 7;
+
+struct StopWindowLayout {
+	SDL_Rect panel{};
+	SDL_Rect inner{};
+	int title_y = 0;
+	int head_y = 0;
+	int rows_y = 0;
+	int row_h = 0;
+	int rows = 0;  // Shown.
+	int legend_y = 0;
+	// The columns: x and width.
+	int name_x = 0, name_w = 0, dir_x = 0, dir_w = 0, aminus_x = 0, amount_x = 0, amount_w = 0, unit_x = 0, aplus_x = 0;
+	int label_x = 0, label_w = 0, pminus_x = 0, price_x = 0, price_w = 0, pplus_x = 0, step_w = 0;
+	SDL_Rect track{};  // The scroll's.
+	SDL_Rect bottom[kStopBottomButtons] = {};
+
+	explicit StopWindowLayout(int line) {
+		const int w = std::min(620, g_town_right - 12);
+		panel = {(g_town_right - w) / 2, kBarHeight + 2, w, kScreenHeight - kBarHeight - 4};
+		inner = {panel.x + 36, panel.y + 38, panel.w - 72, panel.h - 38 - 38};
+		title_y = inner.y;
+		head_y = title_y + line + 6;
+		rows_y = head_y + line + 2;
+		row_h = line + 3;
+		const int button_h = line + 6;
+		const int bottom_y = inner.y + inner.h - button_h;
+		legend_y = bottom_y - line - 6;
+		rows = std::max(1, std::min(kStopRows, (legend_y - 4 - rows_y) / row_h));
+		step_w = 24;
+		name_w = 136;
+		dir_w = 52;
+		amount_w = 52;
+		label_w = 44;
+		price_w = 56;
+		const int used = name_w + 6 + dir_w + 12 + step_w + amount_w + 26 + step_w + 12 + label_w + step_w + price_w + step_w;
+		int x = inner.x + std::max(0, (inner.w - 10 - used) / 2);
+		name_x = x;
+		x += name_w + 6;
+		dir_x = x;
+		x += dir_w + 12;
+		aminus_x = x;
+		x += step_w;
+		amount_x = x;
+		x += amount_w;
+		unit_x = x;
+		x += 26;
+		aplus_x = x;
+		x += step_w + 12;
+		label_x = x;
+		x += label_w;
+		pminus_x = x;
+		x += step_w;
+		price_x = x;
+		x += price_w;
+		pplus_x = x;
+		track = {inner.x + inner.w - 6, rows_y, 5, rows * row_h - 2};
+		const int widths[kStopBottomButtons] = {36, 36, 58, 58, 36, 84, 48};
+		const int xs[kStopBottomButtons] = {inner.x, inner.x + 42, inner.x + 90, inner.x + inner.w / 2 - 40,
+			inner.x + inner.w / 2 + 24, inner.x + inner.w - 48 - 8 - 84, inner.x + inner.w - 48};
+		for (int k = 0; k < kStopBottomButtons; ++k) {
+			bottom[k] = {xs[k], bottom_y, widths[k], button_h};
+		}
+	}
+	int top(int k) const { return rows_y + k * row_h; }
+	SDL_Rect name(int k) const { return {name_x, top(k), name_w, row_h - 2}; }
+	SDL_Rect dir(int k) const { return {dir_x, top(k), dir_w, row_h - 2}; }
+	// The pad's columns: 0 the direction, 1..3 the amount's −, box and +, 4..6 the price's.
+	SDL_Rect cell(int k, int column) const {
+		const int xs[kStopColumns] = {dir_x, aminus_x, amount_x + 2, aplus_x, pminus_x, price_x + 2, pplus_x};
+		const int ws[kStopColumns] = {dir_w, step_w, amount_w - 4, step_w, step_w, price_w - 4, step_w};
+		return {xs[column], top(k), ws[column], row_h - 2};
+	}
+	int row_at(int y) const {
+		if (y < rows_y || y >= rows_y + rows * row_h) {
+			return -1;
+		}
+		return (y - rows_y) / row_h;
+	}
+};
+
+// A direction's picture in bttn_transfer.tga (its neutral frame; +2 the lit one), -1 for none («---»).
+int stop_direction_frame(StopDirection d) {
+	switch (d) {
+	case StopDirection::Sell: return 0;
+	case StopDirection::ToOffice: return 3;
+	case StopDirection::Buy: return 6;
+	case StopDirection::FromOffice: return 9;
+	default: return -1;
+	}
+}
+
+void draw_stop_direction(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SDL_Rect& r,
+	StopDirection d, bool lit) {
+	const int frame = stop_direction_frame(d);
+	if (frame < 0 || !art.transfer) {
+		// «---» (Button11, a large button that always looks off).
+		draw_route_button(renderer, text, r, "---", lit, true);
+		return;
+	}
+	const SDL_Rect src = {0, 18 * (frame + (lit ? 2 : 0)), 48, 18};
+	const SDL_Rect dst = {r.x + (r.w - 48) / 2, r.y + (r.h - 18) / 2, 48, 18};
+	SDL_RenderCopy(renderer, art.transfer, &src, &dst);
+}
+
+void draw_stop_window(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
+	const SidePanel& ui) {
+	if (!ui.stop_window) {
+		return;
+	}
+	const StopWindow& w = *ui.stop_window;
+	const StopWindowLayout layout(text.line_height());
+	const int line = text.line_height();
+	draw_scroll(renderer, art.paper, layout.panel);
+	// «Automatic maritime trading in %s», the town by its index as the page's.
+	const uint8_t town = w.stop < save.trade_routes.size() ? save.trade_routes[w.stop].u8(0x2) : 0;
+	const std::string title = exe_text(0x69B2B0, "Ruta comercial automática", "Automatic maritime trading") + " " +
+		exe_text(0x69B2FC, "en", "in") + " " + route_town_label(save, stats_town_names(), town);
+	text.draw(cut_text(text, title, layout.inner.w), layout.inner.x + (layout.inner.w - text.measure(title)) / 2,
+		layout.title_y, kParchmentInk);
+	text.draw(exe_text(0x69B310, "Mercancías", "Goods"), layout.name_x + 4, layout.head_y, kParchmentInk);
+	const std::string amount = exe_text(0x69B308, "Cantidad", "Ammount");
+	text.draw(amount, (layout.aminus_x + layout.aplus_x + layout.step_w - text.measure(amount)) / 2, layout.head_y,
+		kParchmentInk);
+	const std::string price = exe_text(0x69B300, "Precio", "Price");
+	text.draw(price, (layout.pminus_x + layout.pplus_x + layout.step_w - text.measure(price)) / 2, layout.head_y,
+		kParchmentInk);
+	const std::string most = exe_text(0x69A358, "Máx.", "Max");
+	for (int k = 0; k < layout.rows && ui.stop_first + k < kStopRows; ++k) {
+		const int r = ui.stop_first + k;
+		const int ware = w.order[size_t(r)];
+		if (ware >= kStopRows) {
+			continue;
+		}
+		const bool pad_row = ui.stop_row == r;
+		auto lit = [&](int column) { return pad_row && ui.stop_column == column; };
+		const int y = layout.top(k);
+		const int h = layout.row_h - 2;
+		if (r != ui.stop_drag) {
+			draw_route_button(renderer, text, layout.name(k), ware_label(ware), pad_row, true);
+		}
+		const StopDirection d = w.state[size_t(ware)];
+		draw_stop_direction(renderer, text, art, layout.dir(k), d, lit(0));
+		if (d == StopDirection::None) {
+			continue;
+		}
+		// An edit box: its number, or the digits being written with a cursor.
+		auto draw_box = [&](int column, const std::string& value, bool price_box) {
+			const SDL_Rect box = layout.cell(k, column);
+			const bool typing = ui.stop_typing == ware && ui.stop_typing_price == price_box;
+			SDL_SetRenderDrawColor(renderer, 150, 115, 70, typing ? 110 : lit(column) ? 90 : 35);
+			SDL_RenderFillRect(renderer, &box);
+			const std::string shown = typing ? ui.stop_typed + "_" : value;
+			text.draw(shown, box.x + (box.w - text.measure(shown)) / 2, y + (h - line) / 2, kParchmentInk);
+		};
+		draw_route_button(renderer, text, layout.cell(k, 1), "-", lit(1), stop_amount_step_enabled(w, ware, -1));
+		const int32_t units = w.units[size_t(ware)];
+		draw_box(2, units < 0 ? most : std::to_string(units), false);
+		const bool barrels = kWares[size_t(ware)].unit == WareUnit::Barrel;
+		const PanelArt::Icon unit = barrels ? PanelArt::Barrel : PanelArt::Bale;
+		art.icon(renderer, unit, layout.unit_x + (26 - art.icon_width[unit]) / 2, y + (h - art.icon_height[unit]) / 2);
+		draw_route_button(renderer, text, layout.cell(k, 3), "+", lit(3), stop_amount_step_enabled(w, ware, 1));
+		if (d != StopDirection::Sell && d != StopDirection::Buy) {
+			continue;
+		}
+		// Selling: the least price («min»); buying: the most («max»).
+		const std::string label = d == StopDirection::Sell ? exe_text(0x69B2D0, "mín.", "min") : exe_text(0x69B2CC, "máx.", "max");
+		text.draw(label, layout.label_x + (layout.label_w - text.measure(label)) / 2, y + (h - line) / 2, kParchmentInk);
+		draw_route_button(renderer, text, layout.cell(k, 4), "-", lit(4), stop_price_step_enabled(w, ware, -1));
+		draw_box(5, std::to_string(w.price[size_t(ware)]), true);
+		draw_route_button(renderer, text, layout.cell(k, 6), "+", lit(6), stop_price_step_enabled(w, ware, 1));
+	}
+	if (layout.rows < kStopRows) {
+		// The scroll: its track and the part shown.
+		SDL_SetRenderDrawColor(renderer, 150, 115, 70, 60);
+		SDL_RenderFillRect(renderer, &layout.track);
+		const int bar = layout.track.h * layout.rows / kStopRows;
+		const SDL_Rect thumb = {layout.track.x, layout.track.y + (layout.track.h - bar) * ui.stop_first / (kStopRows - layout.rows),
+			layout.track.w, bar};
+		SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
+		SDL_RenderFillRect(renderer, &thumb);
+	}
+	if (ui.stop_drag >= 0 && ui.stop_drag < kStopRows && w.order[size_t(ui.stop_drag)] < kStopRows) {
+		// The ware's name being dragged, where the finger has it.
+		SDL_Rect n = layout.name(0);
+		n.y = ui.stop_drag_top;
+		draw_route_button(renderer, text, n, ware_label(w.order[size_t(ui.stop_drag)]), true, true);
+	}
+	// The legend: the town's and the office's pictures (the buttons' right halves) with their words.
+	int x = layout.inner.x + 8;
+	const std::string legend[2] = {exe_text(0x69B2D4, "Comerciar con ciudad", "...Town trade"),
+		exe_text(0x69B2E4, "Comerciar con oficina", "...Trading office trade")};
+	for (int k = 0; k < 2; ++k) {
+		if (art.transfer) {
+			const SDL_Rect src = {22, 18 * (k == 0 ? 0 : 3), 26, 18};
+			const SDL_Rect dst = {x, layout.legend_y + (line - 18) / 2, 26, 18};
+			SDL_RenderCopy(renderer, art.transfer, &src, &dst);
+		}
+		text.draw(legend[k], x + 30, layout.legend_y, kParchmentInk);
+		x = layout.inner.x + layout.inner.w / 2 + 8;
+	}
+	const bool bottom_pad = ui.stop_row == kStopRows;
+	auto bottom_lit = [&](int k) { return bottom_pad && ui.stop_column == k; };
+	draw_route_button(renderer, text, layout.bottom[0], "<", bottom_lit(0), true);
+	draw_route_button(renderer, text, layout.bottom[1], ">", bottom_lit(1), true);
+	draw_stop_direction(renderer, text, art, layout.bottom[2], w.all, bottom_lit(2));
+	draw_route_button(renderer, text, layout.bottom[3], most, bottom_lit(3), true);
+	draw_route_button(renderer, text, layout.bottom[4], "0", bottom_lit(4), true);
+	draw_route_button(renderer, text, layout.bottom[5], exe_text(0x692C48, "Deshaz", "Undo"), bottom_lit(5), true);
+	draw_route_button(renderer, text, layout.bottom[6], BTN_CIRCLE, bottom_lit(6), true);
+}
+
 void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
 	const SidePanel& ui, const PlaceView& actions, bool can_pirate) {
 	const PanelLayout panel(ui.folded);
@@ -5142,9 +5780,7 @@ void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& 
 		break;
 	}
 	default:
-		draw_ship_header(renderer, text, art, save, ship_index, layout, room, true);
-		text.draw(tr("Las rutas comerciales aún no están.", "The trade routes aren't there yet."), left, layout.cargo_y,
-			kParchmentDim);
+		draw_route_page(renderer, text, art, save, ui, room);
 		break;
 	}
 }
@@ -8402,6 +9038,10 @@ int main(int argc, char** argv) {
 	SDL_Point touch_now = {0, 0};  // Where the finger is now.
 	int touch_moved = 0;
 	float touch_scroll = 0;  // A drag on a list of the side panel, not yet a whole row.
+	// A finger held on a − or + of the wares window repeats it (as the game's held buttons): when it went down and how
+	// many times it has repeated.
+	Uint32 touch_down_ms = 0;
+	int stop_repeats = 0;
 	bool finger_down = false;  // A finger on the screen now (the tooltip of the button under it).
 	bool touch_on_panel = false;
 	bool touch_on_side = false;  // It started on the side panel.
@@ -10068,6 +10708,46 @@ int main(int argc, char** argv) {
 				const int rows = ship_goods_rows(save, side.ship);
 				const ShipMenuLayout ship_layout(panel_layout.room, small_text->line_height());
 				side.cargo_first = std::clamp(side.cargo_first, 0, std::max(0, rows - ship_layout.cargo_rows));
+				// The trade route page: its state goes with its ship; the rows as they are now (the wares window
+				// closes when its stop leaves the route).
+				if (side.route_for != side.ship) {
+					side.route_for = side.ship;
+					side.route_first = 0;
+					side.route_row = 0;
+					side.route_column = 0;
+					side.route_towns_row = -1;
+					side.stop_window.reset();
+					side.route_files = false;
+				}
+				const std::vector<RouteRow> route_now = route_rows(save, side.ship);
+				const int route_count = route_page_rows(save, side.ship);
+				const RoutePageLayout route_layout(panel_layout.room, small_text->line_height());
+				side.route_first = std::clamp(side.route_first, 0, std::max(0, route_count - route_layout.rows));
+				side.route_row = std::clamp(side.route_row, -1, route_count - 1);
+				if (side.route_towns_row >= route_count) {
+					side.route_towns_row = -1;
+				}
+				if (side.stop_window && std::none_of(route_now.begin(), route_now.end(),
+											[&](const RouteRow& r) { return r.stop == side.stop_window->stop; })) {
+					side.stop_window.reset();
+				}
+			}
+		}
+		if (side.menu != PanelMenu::Ship || side.ship_page != ShipPage::TradeRoute || side.folded || !panel_shown) {
+			side.route_towns_row = -1;
+			side.stop_window.reset();
+			side.route_drag = -1;
+			side.route_files = false;
+		}
+		if (!side.route_files && side.route_file_typing) {
+			side.route_file_typing = false;
+			SDL_StopTextInput();
+		}
+		if (!side.stop_window) {
+			side.stop_drag = -1;
+			if (side.stop_typing >= 0) {
+				side.stop_typing = -1;
+				SDL_StopTextInput();
 			}
 		}
 		// The finger at the town's pixel (x, y) puts the building there: on the
@@ -10232,6 +10912,8 @@ int main(int argc, char** argv) {
 			side.ship_page = page;
 			side.ship_ui.row = page == ShipPage::Crew ? 0 : page == ShipPage::Convoy || page == ShipPage::LeaveConvoy ? 2 : 0;
 			side.ship_ui.amount = 0;
+			side.route_row = 0;
+			side.route_column = 0;
 		};
 		// Its action: the selected row of the ship's window (place_act, as the game's window sends it).
 		auto ship_act = [&]() {
@@ -10256,10 +10938,427 @@ int main(int argc, char** argv) {
 				}
 			}
 		};
+		// The trade route page and its windows: what they queue runs at once (trade_route_window.hpp).
+		auto route_run = [&](const std::optional<OperationBytes>& op) {
+			if (op) {
+				run_operations(save, sailing.get(), {*op});
+			}
+		};
+		auto route_run_all = [&](const std::vector<OperationBytes>& ops) {
+			if (!ops.empty()) {
+				run_operations(save, sailing.get(), ops);
+			}
+		};
+		// A row's town button: the towns' list, the pad on the row's town.
+		auto route_open_towns = [&](int row) {
+			side.route_towns_row = row;
+			side.route_towns_pick = 0;
+			const std::vector<RouteRow> rows = route_rows(save, side.ship);
+			const std::vector<int> entries = route_town_entries(save, side.ship);
+			if (row < int(rows.size())) {
+				const auto at = std::find(entries.begin(), entries.end(), int(rows[size_t(row)].town));
+				if (at != entries.end()) {
+					side.route_towns_pick = int(at - entries.begin());
+				}
+			}
+		};
+		auto route_choose_town = [&](int entry) {
+			const std::vector<int> entries = route_town_entries(save, side.ship);
+			if (side.route_towns_row >= 0 && entry >= 0 && entry < int(entries.size())) {
+				const int town = entries[size_t(entry)];
+				route_run(route_town_operation(save, side.ship, side.route_towns_row, town < 0 ? uint8_t(0xFF) : uint8_t(town)));
+			}
+			side.route_towns_row = -1;
+		};
+		auto stop_end_typing = [&](bool commit) {
+			if (side.stop_typing < 0) {
+				return;
+			}
+			if (commit && side.stop_window && !side.stop_typed.empty()) {
+				const int32_t value = int32_t(std::min(std::atol(side.stop_typed.c_str()), 1000000L));
+				StopWindow& w = *side.stop_window;
+				route_run(side.stop_typing_price ? set_stop_price(w, side.stop_typing, value)
+												 : set_stop_amount(w, side.stop_typing, value));
+			}
+			side.stop_typing = -1;
+			side.stop_typed.clear();
+			SDL_StopTextInput();
+		};
+		// A row's «Mercancías»: the wares window of its stop (0x405A20 with the menu's ship and whether it shows a convoy).
+		auto route_open_stop = [&](uint16_t stop) {
+			stop_end_typing(false);
+			side.stop_window = open_stop_window(save, side.ship, stop, ship_menu_convoy(save, side.ship));
+			side.route_towns_row = -1;
+		};
+		// The route files' list («Archivo», 0x48C6A0): its files, the name «Route%d» with the ship's (or its guide's)
+		// stop (none without a route), the pad on the box.
+		auto route_files_open = [&]() {
+			side.route_files = true;
+			side.route_file_list = p3::app::list_route_files(saves_dir);
+			const uint16_t own = save.ships[size_t(route_ship(save, side.ship))].memory.u16(0x132);
+			side.route_file_name = own == 0xFFFF
+				? std::string()
+				: GameTexts::sprintf_raw(exe_text(0x6BA3A0, "%d", "Route%d"), {std::to_string(own)});
+			side.route_file_typing = false;
+			side.route_file_question = 0;
+			side.route_file_first = 0;
+			side.route_file_row = int(side.route_file_list.size());
+			side.route_file_column = 0;
+			side.route_towns_row = -1;
+			side.stop_window.reset();
+		};
+		auto route_file_end_typing = [&]() {
+			if (side.route_file_typing) {
+				side.route_file_typing = false;
+				if (side.route_file_name.empty()) {
+					side.route_file_name = side.route_file_before;
+				}
+				SDL_StopTextInput();
+			}
+		};
+		auto route_file_show = [&](int row) {
+			const RouteFilesLayout fl(small_text->line_height());
+			if (row < int(side.route_file_list.size())) {
+				if (row < side.route_file_first) {
+					side.route_file_first = row;
+				} else if (row >= side.route_file_first + fl.rows) {
+					side.route_file_first = row - fl.rows + 1;
+				}
+			}
+		};
+		// «Cargar» (0x48C92E): the file's stops (0x4D5EE0) to the queue object for the menu's ship, applied at once
+		// (the end of the queue's loop, 0x5492D0).
+		auto route_file_load = [&]() {
+			const int i = route_file_match(side.route_file_list, side.route_file_name);
+			if (i < 0) {
+				return;
+			}
+			std::vector<uint8_t> bytes;
+			std::optional<std::vector<TradeStop>> stops;
+			if (p3::app::read_route_file(saves_dir, side.route_file_list[size_t(i)], bytes)) {
+				stops = fn_4d5ee0(bytes);
+			}
+			load_route_file(save, side.ship, stops);
+			if (sailing) {
+				run_queued_operations(save, *sailing);
+			}
+			side.route_files = false;
+		};
+		// «Guardar» (0x48C9A0): the route of the ship (or its guide) written (0x4D5C50); the list closes.
+		auto route_file_save = [&]() {
+			const uint16_t stop = route_file_stop(save, side.ship);
+			if (stop != 0xFFFF) {
+				if (const std::optional<std::vector<uint8_t>> bytes = fn_4d5c50(save, stop)) {
+					p3::app::write_route_file(saves_dir, side.route_file_name, *bytes);
+				}
+			}
+			side.route_files = false;
+		};
+		auto route_file_answer = [&](bool yes) {
+			const int question = side.route_file_question;
+			side.route_file_question = 0;
+			if (!yes) {
+				return;
+			}
+			if (question == 1) {
+				route_file_save();
+			} else if (question == 2) {
+				const int i = route_file_match(side.route_file_list, side.route_file_name);
+				if (i >= 0) {
+					p3::app::delete_route_file(saves_dir, side.route_file_list[size_t(i)]);  // (0x472470)
+				}
+				side.route_file_list = p3::app::list_route_files(saves_dir);
+				side.route_file_row = std::min(side.route_file_row, int(side.route_file_list.size()));
+				side.route_file_first = 0;
+			}
+		};
+		// A file (its name into the box) or a bottom button: the box, «Cargar», «Guardar», «Borrar», close.
+		auto route_file_press = [&](int row, int column) {
+			route_file_end_typing();
+			const int n = int(side.route_file_list.size());
+			const bool exists = route_file_match(side.route_file_list, side.route_file_name) >= 0;
+			if (row < n) {
+				side.route_file_name = side.route_file_list[size_t(row)];
+				return;
+			}
+			switch (column) {
+			case 0:
+				side.route_file_typing = true;
+				side.route_file_before = side.route_file_name;
+				side.route_file_name.clear();
+				SDL_StartTextInput();
+				break;
+			case 1: route_file_load(); break;
+			case 2:
+				if (side.route_file_name.empty()) {
+					break;
+				}
+				if (exists) {
+					side.route_file_question = 1;  // (0x470E29: «overwrite?»)
+				} else {
+					route_file_save();
+				}
+				break;
+			case 3:
+				if (exists) {
+					side.route_file_question = 2;  // (0x470D39: «delete?»)
+				}
+				break;
+			default: side.route_files = false; break;
+			}
+		};
+		// Its keys: Up and Down the files (below them the bottom row), Left and Right that row's buttons, X presses
+		// the one lit (a file: its name), Circle closes it; a question: X yes, Circle no.
+		auto route_files_button = [&](Uint8 button) {
+			if (side.route_file_question) {
+				if (button == SDL_CONTROLLER_BUTTON_A || button == SDL_CONTROLLER_BUTTON_B) {
+					route_file_answer(button == SDL_CONTROLLER_BUTTON_A);
+				}
+				return button != SDL_CONTROLLER_BUTTON_START;
+			}
+			const int n = int(side.route_file_list.size());
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+				route_file_end_typing();
+				side.route_file_row = std::clamp(side.route_file_row + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1), 0, n);
+				if (side.route_file_row < n) {
+					side.route_file_name = side.route_file_list[size_t(side.route_file_row)];
+				}
+				route_file_show(side.route_file_row);
+				return true;
+			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+				if (side.route_file_row >= n) {
+					route_file_end_typing();
+					side.route_file_column = std::clamp(
+						side.route_file_column + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1), 0, kRouteFileColumns - 1);
+				}
+				return true;
+			case SDL_CONTROLLER_BUTTON_A:
+				route_file_press(side.route_file_row, side.route_file_column);
+				return true;
+			case SDL_CONTROLLER_BUTTON_B:
+				if (side.route_file_typing) {
+					route_file_end_typing();
+				} else {
+					side.route_files = false;
+				}
+				return true;
+			default:
+				return button != SDL_CONTROLLER_BUTTON_START;
+			}
+		};
+		auto route_press = [&](int row, int column) {
+			const std::vector<RouteRow> rows = route_rows(save, side.ship);
+			const int stops = int(rows.size());
+			if (row < 0) {
+				if (column == 1) {
+					route_run(route_active_operation(save, side.ship));
+				} else {
+					route_files_open();
+				}
+				return;
+			}
+			if (row > stops || (row == stops && stops >= 20)) {
+				return;
+			}
+			if (row == stops || column == 0) {
+				route_open_towns(row);
+			} else if (column == 1) {
+				side.stop_first = 0;
+				side.stop_row = 0;
+				side.stop_column = 0;
+				route_open_stop(rows[size_t(row)].stop);
+			} else {
+				route_run(route_mode_operation(save, side.ship, row));
+			}
+		};
+		auto route_show_row = [&](int row) {
+			const RoutePageLayout rl(PanelLayout(side.folded).room, small_text->line_height());
+			if (row >= 0 && row < side.route_first) {
+				side.route_first = row;
+			} else if (row >= side.route_first + rl.rows) {
+				side.route_first = row - rl.rows + 1;
+			}
+		};
+		// The wares window's previous or next stop («<», «>»: 0x405A20 again), round the route.
+		auto stop_step_stop = [&](int step) {
+			const std::vector<RouteRow> rows = route_rows(save, side.ship);
+			const int n = int(rows.size());
+			for (int k = 0; k < n && side.stop_window; ++k) {
+				if (rows[size_t(k)].stop == side.stop_window->stop) {
+					route_open_stop(rows[size_t((k + step + n) % n)].stop);
+					break;
+				}
+			}
+		};
+		auto stop_show_row = [&](int row) {
+			const StopWindowLayout sl(small_text->line_height());
+			if (row < kStopRows && row < side.stop_first) {
+				side.stop_first = row;
+			} else if (row < kStopRows && row >= side.stop_first + sl.rows) {
+				side.stop_first = row - sl.rows + 1;
+			}
+		};
+		// A button of the wares window: a row's cell (the direction, −, a box, +) or a bottom button.
+		auto stop_press = [&](int row, int column) {
+			if (!side.stop_window) {
+				return;
+			}
+			stop_end_typing(true);
+			StopWindow& w = *side.stop_window;
+			if (row == kStopRows) {
+				switch (column) {
+				case 0:
+				case 1: stop_step_stop(column == 0 ? -1 : 1); break;
+				case 2: route_run_all(press_stop_direction_all(w, save)); break;
+				case 3:
+				case 4: route_run_all(stop_amounts_all(w, column == 3)); break;
+				case 5: route_run_all(undo_stop_window(w)); break;
+				default: side.stop_window.reset(); break;
+				}
+				return;
+			}
+			const int ware = w.order[size_t(row)];
+			if (ware >= kStopRows) {
+				return;
+			}
+			const StopDirection d = w.state[size_t(ware)];
+			switch (column) {
+			case 0: route_run(press_stop_direction(w, save, ware)); break;
+			case 1:
+			case 3: route_run(step_stop_amount(w, ware, column == 1 ? -1 : 1)); break;
+			case 4:
+			case 6: route_run(step_stop_price(w, ware, column == 4 ? -1 : 1)); break;
+			default: {
+				// A box: written with the keyboard (the Vita's), committed with its 0x69.
+				const bool price_box = column == 5;
+				if (d == StopDirection::None || (price_box && d != StopDirection::Sell && d != StopDirection::Buy)) {
+					break;
+				}
+				side.stop_typing = ware;
+				side.stop_typing_price = price_box;
+				side.stop_typed.clear();
+				SDL_StartTextInput();
+				break;
+			}
+			}
+		};
+		// The wares window's keys: Up and Down the rows (below them its bottom buttons), Left and Right the row's
+		// cells, X presses the one lit, Square moves the row up, L and R the previous and next stop, Circle closes it.
+		auto stop_button = [&](Uint8 button) {
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+				stop_end_typing(true);
+				side.stop_row = std::clamp(side.stop_row + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1), 0, kStopRows);
+				side.stop_column = std::min(side.stop_column, (side.stop_row == kStopRows ? kStopBottomButtons : kStopColumns) - 1);
+				stop_show_row(side.stop_row);
+				return true;
+			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+				stop_end_typing(true);
+				side.stop_column = std::clamp(side.stop_column + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1), 0,
+					(side.stop_row == kStopRows ? kStopBottomButtons : kStopColumns) - 1);
+				return true;
+			case SDL_CONTROLLER_BUTTON_A:
+				stop_press(side.stop_row, side.stop_column);
+				return true;
+			case SDL_CONTROLLER_BUTTON_X:
+				stop_end_typing(true);
+				if (side.stop_window && side.stop_row >= 1 && side.stop_row < kStopRows) {
+					route_run(move_stop_row(*side.stop_window, side.stop_row, side.stop_row - 1));
+					--side.stop_row;
+					stop_show_row(side.stop_row);
+				}
+				return true;
+			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+				stop_end_typing(true);
+				stop_step_stop(button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1);
+				return true;
+			case SDL_CONTROLLER_BUTTON_B:
+				if (side.stop_typing >= 0) {
+					stop_end_typing(false);  // First the box being written.
+				} else {
+					side.stop_window.reset();
+				}
+				return true;
+			default:
+				return button != SDL_CONTROLLER_BUTTON_START;  // The window takes the pad's other keys.
+			}
+		};
+		// The page's keys: Up and Down its rows (above them «Archivo» and «Activa»), Left and Right the row's buttons,
+		// X presses the one lit, Square moves the row's stop up (0x6B, after the row two above it or on top); the towns'
+		// list: Up and Down its towns, Left and Right its columns, X chooses, Circle closes it.
+		auto route_button = [&](Uint8 button) {
+			if (side.route_files) {
+				return route_files_button(button);
+			}
+			if (side.stop_window) {
+				return stop_button(button);
+			}
+			if (side.route_towns_row >= 0) {
+				const int n = int(route_town_entries(save, side.ship).size());
+				const RouteTownsLayout tl(small_text->line_height(), n);
+				switch (button) {
+				case SDL_CONTROLLER_BUTTON_DPAD_UP:
+				case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+					side.route_towns_pick = (side.route_towns_pick + n + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1)) % n;
+					return true;
+				case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+				case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+					side.route_towns_pick = std::clamp(side.route_towns_pick +
+							(button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -tl.rows_per_column : tl.rows_per_column), 0, n - 1);
+					return true;
+				case SDL_CONTROLLER_BUTTON_A:
+					route_choose_town(side.route_towns_pick);
+					return true;
+				case SDL_CONTROLLER_BUTTON_B:
+					side.route_towns_row = -1;
+					return true;
+				default:
+					return button != SDL_CONTROLLER_BUTTON_START;
+				}
+			}
+			const int count = route_page_rows(save, side.ship);
+			const int stops = int(route_rows(save, side.ship).size());
+			auto columns = [&]() { return side.route_row < 0 ? 2 : side.route_row >= stops ? 1 : 3; };
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN: {
+				side.route_row = std::clamp(side.route_row + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1), -1, count - 1);
+				side.route_column = std::min(side.route_column, columns() - 1);
+				route_show_row(side.route_row);
+				return true;
+			}
+			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+				side.route_column = std::clamp(side.route_column + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1), 0,
+					columns() - 1);
+				return true;
+			case SDL_CONTROLLER_BUTTON_A:
+				route_press(side.route_row, side.route_column);
+				return true;
+			case SDL_CONTROLLER_BUTTON_X:
+				if (side.route_row >= 1 && side.route_row < stops) {
+					route_run(route_move_operation(save, side.ship, side.route_row, side.route_row - 2));
+					--side.route_row;
+					route_show_row(side.route_row);
+				}
+				return true;
+			default:
+				return false;
+			}
+		};
 		// Its buttons while it is open: L and R the pages, Up and Down the rows (the goods page's list),
 		// Left and Right the amount (the sailors to dismiss, the public convoy's destination), X does it,
 		// Circle closes it.
 		auto ship_button = [&](Uint8 button) {
+			if (side.ship_page == ShipPage::TradeRoute && route_button(button)) {
+				return true;
+			}
 			const int rows = int(ship_now.rows.size());
 			switch (button) {
 			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
@@ -10717,6 +11816,35 @@ int main(int argc, char** argv) {
 				return false;
 			}
 		};
+		// The wares window's − or + under a finger held still: again after 380 ms, then every 70 ms.
+		auto stop_cell_at = [&](int x, int y, int& row, int& column) {
+			const StopWindowLayout sl(small_text->line_height());
+			const int k = sl.row_at(y);
+			if (k < 0 || side.stop_first + k >= kStopRows) {
+				return false;
+			}
+			for (int c = 0; c < kStopColumns; ++c) {
+				if (inside(sl.cell(k, c), x, y)) {
+					row = side.stop_first + k;
+					column = c;
+					return true;
+				}
+			}
+			return false;
+		};
+		if (side.stop_window && finger_down && touch_moved < kTapDistance && side.stop_drag < 0 && small_text) {
+			int row = 0;
+			int column = 0;
+			if (stop_cell_at(touch_start.x, touch_start.y, row, column) && column != 0 && column != 2 && column != 5) {
+				const Uint32 held = app_ticks() - touch_down_ms;
+				const int due = held >= 380 ? 1 + int((held - 380) / 70) : 0;
+				for (; stop_repeats < due && side.stop_window; ++stop_repeats) {
+					side.stop_row = row;
+					side.stop_column = column;
+					stop_press(row, column);
+				}
+			}
+		}
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
 			if ((event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP) &&
@@ -10757,6 +11885,10 @@ int main(int argc, char** argv) {
 				if (in_battle && event.cbutton.button != SDL_CONTROLLER_BUTTON_START) {
 					battle_key(event.cbutton.button);  // The battle's screen: its keys; Start, the menu.
 					break;
+				}
+				if (side.menu == PanelMenu::Ship && panel_shown && !side.folded && !in_mail && small_text &&
+					(side.stop_window || side.route_towns_row >= 0 || side.route_files) && route_button(event.cbutton.button)) {
+					break;  // The route page's windows, in the town and on the sea map.
 				}
 				if (in_mail && mail_button(event.cbutton.button)) {
 					break;
@@ -10879,6 +12011,24 @@ int main(int argc, char** argv) {
 				}
 				break;
 			case SDL_TEXTINPUT:
+				if (side.route_file_typing) {
+					// A route file's name: 40 bytes at most, without what a file's name can't have.
+					for (const char* c = event.text.text; *c; ++c) {
+						if (uint8_t(*c) >= 0x20 && !std::strchr("\\/:*?\"<>|", *c) && side.route_file_name.size() < 40) {
+							side.route_file_name += *c;
+						}
+					}
+					break;
+				}
+				if (side.stop_typing >= 0) {
+					// A box of the wares window: its digits (7 at most).
+					for (const char* c = event.text.text; *c; ++c) {
+						if (*c >= '0' && *c <= '9' && side.stop_typed.size() < 7) {
+							side.stop_typed += *c;
+						}
+					}
+					break;
+				}
 				// A ship's name being written (the shipyard's rename page), in Latin-1
 				// as the game's names; 20 characters at most.
 				if (place.typing) {
@@ -10889,6 +12039,30 @@ int main(int argc, char** argv) {
 				}
 				break;
 			case SDL_KEYDOWN:
+				if (side.route_file_typing) {
+					const SDL_Keycode key = event.key.keysym.sym;
+					std::string& name = side.route_file_name;
+					if (key == SDLK_BACKSPACE && !name.empty()) {
+						while (!name.empty() && (uint8_t(name.back()) & 0xC0) == 0x80) {
+							name.pop_back();  // a whole UTF-8 character
+						}
+						if (!name.empty()) {
+							name.pop_back();
+						}
+					} else if (key == SDLK_RETURN || key == SDLK_ESCAPE) {
+						route_file_end_typing();
+					}
+					break;
+				}
+				if (side.stop_typing >= 0) {
+					const SDL_Keycode key = event.key.keysym.sym;
+					if (key == SDLK_BACKSPACE && !side.stop_typed.empty()) {
+						side.stop_typed.pop_back();
+					} else if (key == SDLK_RETURN || key == SDLK_ESCAPE) {
+						stop_end_typing(key == SDLK_RETURN);
+					}
+					break;
+				}
 				if (place.typing) {
 					const SDL_Keycode key = event.key.keysym.sym;
 					if (key == SDLK_BACKSPACE && !place.name.empty()) {
@@ -11070,6 +12244,10 @@ int main(int argc, char** argv) {
 				touch_moved = 0;
 				touch_scroll = 0;
 				finger_down = true;
+				touch_down_ms = app_ticks();
+				stop_repeats = 0;
+				side.route_drag = -1;
+				side.stop_drag = -1;
 				if (battle_popup()) {
 					// Under the battles' window nothing moves: the touch is the window's.
 					touch_on_side = false;
@@ -11105,7 +12283,10 @@ int main(int argc, char** argv) {
 					(in_menu && (inside(MenuLayout(small_text->line_height(), menu.screen).panel, touch_start.x, touch_start.y) ||
 						menu.ask != MenuAsk::None)) ||
 					(in_mail && (!mail_in_panel || mail_parchment) && inside(mail_layout.panel, touch_start.x, touch_start.y)) ||
-					(stats_open && inside(StatsLayout(small_text->line_height()).panel, touch_start.x, touch_start.y));
+					(stats_open && inside(StatsLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
+					// The route page's windows over the town: the town doesn't move under them.
+					(side.menu == PanelMenu::Ship && (side.stop_window || side.route_towns_row >= 0 || side.route_files) &&
+						touch_start.x < panel_layout.town_right && touch_start.y >= kBarHeight);
 				// Placing a building: the finger puts it on the cell it touches.
 				touch_building = placing && !touch_on_side && !in_menu && !in_mail && touch_start.x < town_width &&
 					touch_start.y >= kBarHeight;
@@ -11143,7 +12324,29 @@ int main(int argc, char** argv) {
 					place_at(camera_x + int(event.tfinger.x * kScreenWidth), camera_y + int(event.tfinger.y * kScreenHeight));
 				} else if (touch_on_side) {
 					SDL_Point at;
-					if (!side.folded && side.menu == PanelMenu::Ship && side.ship_page == ShipPage::Goods &&
+					if (!side.folded && side.menu == PanelMenu::Ship && side.ship_page == ShipPage::TradeRoute &&
+						side.route_towns_row < 0 && inside(panel_layout.room, touch_start.x, touch_start.y)) {
+						// The route page: a stop's town button dragged (0x492EE0 when it is let go), or the rows
+						// moved a row at a time.
+						const RoutePageLayout rl(panel_layout.room, small_text->line_height());
+						const int k = rl.row_at(touch_start.y);
+						const int r = k >= 0 ? side.route_first + k : -1;
+						if (side.route_drag < 0 && r >= 0 && r < int(route_rows(save, side.ship).size()) &&
+							inside(rl.town(k), touch_start.x, touch_start.y) && touch_moved >= kTapDistance) {
+							side.route_drag = r;
+						}
+						if (side.route_drag >= 0) {
+							side.route_drag_top = rl.town(k).y + (touch_now.y - touch_start.y);
+						} else if (k >= 0) {
+							touch_scroll -= event.tfinger.dy * kScreenHeight;
+							for (; touch_scroll >= float(rl.row_h); touch_scroll -= float(rl.row_h)) {
+								++side.route_first;  // Clamped next frame.
+							}
+							for (; touch_scroll <= -float(rl.row_h); touch_scroll += float(rl.row_h)) {
+								side.route_first = std::max(0, side.route_first - 1);
+							}
+						}
+					} else if (!side.folded && side.menu == PanelMenu::Ship && side.ship_page == ShipPage::Goods &&
 						inside(panel_layout.room, touch_start.x, touch_start.y)) {
 						// Dragging the goods page's list moves it a row at a time.
 						touch_scroll -= event.tfinger.dy * kScreenHeight;
@@ -11162,6 +12365,40 @@ int main(int argc, char** argv) {
 										 int(event.tfinger.y * kScreenHeight), at))) {
 						camera_x = at.x - town_width / 2;
 						camera_y = at.y - kScreenHeight / 2;
+					}
+				} else if (side.route_files && side.menu == PanelMenu::Ship && small_text &&
+					inside(RouteFilesLayout(small_text->line_height()).list, touch_start.x, touch_start.y)) {
+					// The route files' list: dragged, its files move a row at a time.
+					const RouteFilesLayout fl(small_text->line_height());
+					const int most = std::max(0, int(side.route_file_list.size()) - fl.rows);
+					touch_scroll -= event.tfinger.dy * kScreenHeight;
+					for (; touch_scroll >= float(fl.row_h); touch_scroll -= float(fl.row_h)) {
+						side.route_file_first = std::min(most, side.route_file_first + 1);
+					}
+					for (; touch_scroll <= -float(fl.row_h); touch_scroll += float(fl.row_h)) {
+						side.route_file_first = std::max(0, side.route_file_first - 1);
+					}
+				} else if (side.stop_window && side.menu == PanelMenu::Ship && small_text &&
+					inside(StopWindowLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) {
+					// The wares window: a ware's name dragged (its row moves when it is let go), or the rows moved a row
+					// at a time.
+					const StopWindowLayout sl(small_text->line_height());
+					const int k = sl.row_at(touch_start.y);
+					const int r = k >= 0 ? side.stop_first + k : -1;
+					if (side.stop_drag < 0 && r >= 0 && r < kStopRows && inside(sl.name(k), touch_start.x, touch_start.y) &&
+						touch_moved >= kTapDistance) {
+						side.stop_drag = r;
+					}
+					if (side.stop_drag >= 0) {
+						side.stop_drag_top = sl.name(k).y + (touch_now.y - touch_start.y);
+					} else if (k >= 0) {
+						touch_scroll -= event.tfinger.dy * kScreenHeight;
+						for (; touch_scroll >= float(sl.row_h); touch_scroll -= float(sl.row_h)) {
+							side.stop_first = std::min(kStopRows - sl.rows, side.stop_first + 1);
+						}
+						for (; touch_scroll <= -float(sl.row_h); touch_scroll += float(sl.row_h)) {
+							side.stop_first = std::max(0, side.stop_first - 1);
+						}
 					}
 				} else if (!touch_on_panel) {
 					camera_x -= int(event.tfinger.dx * kScreenWidth);
@@ -11434,6 +12671,125 @@ int main(int argc, char** argv) {
 					touch_on_panel = false;
 					break;
 				}
+				if (side.route_drag >= 0 && small_text) {
+					// A stop's town button let go (0x492EE0): its stop goes after the row before the first shown whose
+					// top is at or below the button's (on top: it becomes the first; below them: after the last shown).
+					const RoutePageLayout rl(panel_layout.room, small_text->line_height());
+					const int stops = int(route_rows(save, side.ship).size());
+					int target = std::min(stops, side.route_first + rl.rows) - 1;
+					for (int k = 0; k < rl.rows && side.route_first + k < stops; ++k) {
+						if (rl.top(k) >= side.route_drag_top) {
+							target = side.route_first + k - 1;
+							break;
+						}
+					}
+					route_run(route_move_operation(save, side.ship, side.route_drag, target));
+					side.route_drag = -1;
+					touch_on_side = false;
+					touch_on_panel = false;
+					break;
+				}
+				if (side.stop_drag >= 0 && small_text) {
+					// A ware's name let go: its row is the one under the name's middle.
+					const StopWindowLayout sl(small_text->line_height());
+					const int rel = side.stop_drag_top + sl.row_h / 2 - sl.rows_y;
+					const int k = rel >= 0 ? rel / sl.row_h : -1 - (-rel - 1) / sl.row_h;
+					const int to = std::clamp(side.stop_first + k, 0, kStopRows - 1);
+					if (side.stop_window) {
+						route_run(move_stop_row(*side.stop_window, side.stop_drag, to));
+						side.stop_row = to;
+					}
+					side.stop_drag = -1;
+					touch_on_side = false;
+					touch_on_panel = false;
+					break;
+				}
+				if (side.route_files && side.menu == PanelMenu::Ship && small_text) {
+					// The route files' list: a file, the box, its buttons; a question's Yes and No; a tap elsewhere closes
+					// it.
+					if (touch_moved < kTapDistance) {
+						const RouteFilesLayout fl(small_text->line_height());
+						const int x = touch_start.x;
+						const int y = touch_start.y;
+						const int n = int(side.route_file_list.size());
+						const int k = fl.row_at(x, y);
+						if (side.route_file_question) {
+							if (inside(fl.yes, x, y) || inside(fl.no, x, y)) {
+								route_file_answer(inside(fl.yes, x, y));
+							}
+						} else if (!inside(fl.panel, x, y)) {
+							route_file_end_typing();
+							side.route_files = false;
+						} else if (k >= 0 && side.route_file_first + k < n) {
+							side.route_file_row = side.route_file_first + k;
+							route_file_press(side.route_file_row, 0);
+						} else {
+							for (int c = 0; c < kRouteFileColumns; ++c) {
+								if (inside(fl.cell(c), x, y)) {
+									side.route_file_row = n;
+									side.route_file_column = c;
+									route_file_press(n, c);
+									break;
+								}
+							}
+						}
+					}
+					touch_building = false;
+					touch_on_side = false;
+					touch_on_panel = false;
+					break;
+				}
+				if (side.route_towns_row >= 0 && side.menu == PanelMenu::Ship && small_text) {
+					// The towns' list: a town (or «none»); a tap elsewhere closes it.
+					if (touch_moved < kTapDistance) {
+						const int n = int(route_town_entries(save, side.ship).size());
+						const RouteTownsLayout tl(small_text->line_height(), n);
+						const int e = tl.entry_at(touch_start.x, touch_start.y, n);
+						if (e >= 0) {
+							side.route_towns_pick = e;
+							route_choose_town(e);
+						} else {
+							side.route_towns_row = -1;
+						}
+					}
+					touch_building = false;
+					touch_on_side = false;
+					touch_on_panel = false;
+					break;
+				}
+				if (side.stop_window && side.menu == PanelMenu::Ship && small_text && !touch_on_side) {
+					// The wares window: its rows' cells and its bottom buttons (a − or + held has repeated already).
+					if (touch_moved < kTapDistance) {
+						const StopWindowLayout sl(small_text->line_height());
+						int row = 0;
+						int column = 0;
+						bool hit = false;
+						for (int b = 0; b < kStopBottomButtons && !hit; ++b) {
+							if (inside(sl.bottom[b], touch_start.x, touch_start.y)) {
+								side.stop_row = kStopRows;
+								side.stop_column = b;
+								stop_press(kStopRows, b);
+								hit = true;
+							}
+						}
+						if (!hit && stop_cell_at(touch_start.x, touch_start.y, row, column)) {
+							side.stop_row = row;
+							side.stop_column = column;
+							if (stop_repeats == 0) {
+								stop_press(row, column);
+							}
+						} else if (!hit) {
+							const int k = sl.row_at(touch_start.y);
+							if (k >= 0 && inside(sl.name(k), touch_start.x, touch_start.y)) {
+								side.stop_row = side.stop_first + k;
+							}
+						}
+					}
+					touch_building = false;
+					touch_on_side = false;
+					touch_on_panel = false;
+					break;
+				}
 				if (touch_building) {
 					touch_building = false;  // It stays where the finger left it.
 					touch_on_panel = false;
@@ -11565,6 +12921,35 @@ int main(int argc, char** argv) {
 									ship_now.max_amount);
 							} else if (inside(room.act_button, x, y)) {
 								ship_act();
+							}
+						} else if (side.ship_page == ShipPage::TradeRoute) {
+							// The route page: «Activa», the scroll's arrows, a row's buttons.
+							const RoutePageLayout rl(panel_layout.room, small_text->line_height());
+							const int k = rl.row_at(y);
+							const int r = k >= 0 ? side.route_first + k : -1;
+							const int stops = int(route_rows(save, side.ship).size());
+							if (inside(rl.files, x, y)) {
+								side.route_row = -1;
+								side.route_column = 0;
+								route_press(-1, 0);
+							} else if (inside(rl.active, x, y)) {
+								side.route_row = -1;
+								side.route_column = 1;
+								route_press(-1, 1);
+							} else if (inside(rl.up, x, y)) {
+								side.route_first = std::max(0, side.route_first - 1);
+							} else if (inside(rl.down, x, y)) {
+								++side.route_first;  // Clamped next frame.
+							} else if (r >= 0 && r < route_page_rows(save, side.ship)) {
+								const int column = inside(r < stops ? rl.town(k) : rl.append(k), x, y) ? 0
+									: inside(rl.wares(k), x, y)			 ? 1
+									: inside(rl.mode(k), x, y)				 ? 2
+																			 : -1;
+								if (column >= 0 && (r < stops || column == 0)) {
+									side.route_row = r;
+									side.route_column = column;
+									route_press(r, column);
+								}
 							}
 						}
 					} else if (sea_panel ? minimap_sea_point(panel_layout, *sea, x, y, at)
@@ -11894,6 +13279,9 @@ int main(int argc, char** argv) {
 				}
 				if (side.menu == PanelMenu::Ship && side.ship >= 0 && !side.folded) {
 					draw_ship_menu(renderer, *small_text, *panel_art, save, side, ship_now, ship_pirate_ok);
+					draw_route_towns(renderer, *small_text, save, side);
+					draw_route_files(renderer, *small_text, side);
+					draw_stop_window(renderer, *small_text, *panel_art, save, side);
 				}
 				if (side.menu == PanelMenu::Statistics && !side.folded) {
 					draw_stats_room(renderer, *small_text, *panel_art, side);
@@ -11971,6 +13359,9 @@ int main(int argc, char** argv) {
 				}
 				if (side.menu == PanelMenu::Ship && side.ship >= 0 && !side.folded) {
 					draw_ship_menu(renderer, *small_text, *panel_art, save, side, ship_now, ship_pirate_ok);
+					draw_route_towns(renderer, *small_text, save, side);
+					draw_route_files(renderer, *small_text, side);
+					draw_stop_window(renderer, *small_text, *panel_art, save, side);
 				}
 				if (side.menu == PanelMenu::Statistics && !side.folded) {
 					draw_stats_room(renderer, *small_text, *panel_art, side);
@@ -11986,6 +13377,9 @@ int main(int argc, char** argv) {
 			if (battle_popup() || messages.open || end_window.open) {
 				// A window over the screen (a battle's, a message, the end): its buttons say what the keys do now,
 				// so the bar's actions, which the keys don't do while it is open, aren't shown.
+			} else if (side.menu == PanelMenu::Ship && panel_shown && !side.folded && !in_mail && !in_menu &&
+				(side.stop_window || side.route_towns_row >= 0 || side.route_files)) {
+				// So do the trade route page's windows.
 			} else if (in_battle) {
 				// The battle's screen: its own keys.
 				right_texts = {tr(BTN_CROSS " disparar   " BTN_TRIANGLE " todos   L/R: barco   arriba/abajo: velas",

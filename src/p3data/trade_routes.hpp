@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 #include "p3data/savegame.hpp"
 
@@ -83,5 +85,41 @@ void fn_53e610(SaveGame& save, const uint8_t* op);  // 0x6A: insert, remove or c
 void fn_53e7c0(SaveGame& save, const uint8_t* op);  // 0x6B: move a stop
 void fn_53e890(SaveGame& save, uint8_t* op);  // 0x6C: a new route for a ship
 void fn_53e9c0(SaveGame& save, const uint8_t* op);  // 0x6D: a stop's action
+
+// --- The route files (the route page's «File»: save\AutoRoute\NAME.rou) ---
+
+// The queue object 0x6DF2F0's fields for them: its game mode ([+0x0]: & 0xC a
+// network game), its queue's count ([+0x56], 0x34 at most), the stops loaded
+// ([+0x930]: 0x4D5EE0's buffer, non-zero while they wait; p3vita keeps them in
+// SaveGame::loaded_route) and the ship they're for ([+0x934]).
+constexpr uint32_t kQueueObject = 0x6DF2F0;
+constexpr uint32_t kQueueCount = 0x6DF346;
+constexpr uint32_t kLoadedRoute = 0x6DFC20;
+constexpr uint32_t kLoadedRouteShip = 0x6DFC24;
+// 0x4D5C50 (on the pool: a stop, the name): the file of the route through
+// `stop`: its stops from the first (the bit 0x4) along +0x0, each with +0x0 at
+// 0, compressed (0x54C410: lz_compress). Nothing when `stop` is out of the pool
+// or the route takes as many stops as the pool has (the game gives up).
+std::optional<std::vector<uint8_t>> fn_4d5c50(const SaveGame& save, uint16_t stop);
+// 0x4D5EE0 (the name): a file's stops: the header's size (& 0x3FFFFFFF) in
+// whole stops of 0xDC bytes, decompressed (0x54C480) and linked 0 → 1 → … →
+// the last → 0. Nothing on any failure (and for a size of 0, where the game
+// would write before its buffer).
+std::optional<std::vector<TradeStop>> fn_4d5ee0(const std::vector<uint8_t>& file);
+// The route page's «Load» (0x48C92E): the queue object gets the menu's ship and
+// the stops (none when the file failed); the next end of its queue's loop
+// applies them (fn_5492d0).
+void load_route_file(SaveGame& save, int ship, const std::optional<std::vector<TradeStop>>& stops);
+// 0x5492D0 (on the queue object, at the end of its loop 0x546870 while it holds
+// stops): the stops at towns out of the world, or without a deep port for a big
+// ship (the ship's type, or a convoy's biggest, ≥ 2), get town 0xFF, the others
+// lose their office transfers where the ship's owner has no office. Then, alone
+// (not a network game): the ship's (or its guide's) route off, a new one of as
+// many stops as are left (0x6C, run at once) and those stops copied into it. In
+// a network game it queues instead: 0x68 off if the route is on, then 0x6C when
+// the route's length differs (the stops kept for the next call), else 0x6A,
+// 0x6D and 0x69 for what differs, stop by stop from the ship's own; with the
+// queue full (its count 0x34) it stops there and goes on the next time.
+void fn_5492d0(SaveGame& save, Sailing* sailing);
 
 }  // namespace p3::data

@@ -11167,6 +11167,242 @@ def trade_route_branches(o):
     return during
 
 
+QUEUE_OBJECT = 0x6DF2F0  # the queue object: [+0x0] the game mode (& 0xC a network game), [+0x56] its queue's count
+LOADED_ROUTE = 0x6DFC20  # its [+0x930]: the stops loaded from a file (0x4D5EE0), [+0x934] the ship
+# The route page's «Save» then «Load» (probes_ship_ai.cpp kRouteFile): (stop, ship): 0x4D5C50 writes the file of the
+# stop's route, 0x4D5EE0 reads it back, and the queue object gets them for the ship, as the page does (0x48C92E).
+ROUTE_FILE = to.SENTINEL + 0xB80
+ROUTE_FILE_NAME = to.SENTINEL + 0xBC0  # the CString of the file's name the page passes (a pointer to its text)
+
+
+def route_file_setup(o):
+    """The trampoline ROUTE_FILE and the file functions under 0x4D5C50 and 0x4D5EE0 answered here: CreateDirectory
+    (its call skipped), CFile's Open (1), Write (its bytes kept as the file), Close; the archive's read (the bytes
+    kept, as a file on the disk; none: 0) and free. Returns the hooks (to remove) and the kept file's holder."""
+    from unicorn import UC_HOOK_CODE
+    from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_EIP, UC_X86_REG_ESP
+    assert len(_trampolines) < 29  # (the dynamic trampolines stay below ROUTE_FILE)
+    kept = {'file': None}
+    text = o.alloc(12 + 16)
+    o.uc.mem_write(text, struct.pack('<iii', -1, 7, 7) + b'Testing\0')  # MFC's CStringData, locked
+    w32(o, ROUTE_FILE_NAME, text + 12)
+
+    def rel(at, code, target):
+        return struct.pack('<i', target - (at + len(code) + 4))
+
+    at = ROUTE_FILE
+    code = bytes([0x8B, 0x44, 0x24, 0x08, 0xA3]) + struct.pack('<I', LOADED_ROUTE + 4)  # [0x6DFC24] = ship
+    code += bytes([0x68]) + struct.pack('<I', ROUTE_FILE_NAME) + bytes([0xFF, 0x74, 0x24, 0x08])
+    code += bytes([0xB9]) + struct.pack('<I', TRADE_ROUTES) + bytes([0xE8])
+    code += rel(at, code, 0x4D5C50)
+    code += bytes([0x68]) + struct.pack('<I', ROUTE_FILE_NAME) + bytes([0xB9]) + struct.pack('<I', TRADE_ROUTES)
+    code += bytes([0xE8])
+    code += rel(at, code, 0x4D5EE0)
+    code += bytes([0xA3]) + struct.pack('<I', LOADED_ROUTE) + bytes([0xC2, 0x08, 0x00])  # [0x6DFC20] = its stops
+    assert len(code) <= 0x40
+    o.uc.mem_write(at, code)
+
+    def skip_mkdir(uc, address, size, user_data):
+        uc.reg_write(UC_X86_REG_ESP, uc.reg_read(UC_X86_REG_ESP) + 8)
+        uc.reg_write(UC_X86_REG_EAX, 1)
+        uc.reg_write(UC_X86_REG_EIP, 0x4D5DC9)
+
+    def file_open(uc, address, size, user_data):
+        o._returns(uc, 1, 0xC)
+
+    def file_write(uc, address, size, user_data):
+        kept['file'] = bytes(uc.mem_read(o._arg(0), o._arg(1)))
+        o._returns(uc, 0, 8)
+
+    def file_close(uc, address, size, user_data):
+        o._returns(uc, 0, 0)
+
+    def archive_read(uc, address, size, user_data):
+        data = kept['file']
+        if data is None:
+            return o._returns(uc, 0, 0)
+        p = o.alloc(len(data))
+        o.uc.mem_write(p, data)
+        o.write_u32(o._arg(2), p)
+        o.write_u32(o._arg(3), len(data))
+        o._returns(uc, p, 0)
+
+    def archive_free(uc, address, size, user_data):
+        o._returns(uc, 0, 0)
+
+    hooks = [o.uc.hook_add(UC_HOOK_CODE, f, begin=x, end=x) for f, x in (
+        (skip_mkdir, 0x4D5DC3), (file_open, 0x653C1D), (file_write, 0x653D74), (file_close, 0x653E38),
+        (archive_read, to.ARCHIVE_READ), (archive_free, to.ARCHIVE_FREE))]
+    return hooks, kept
+
+
+def trade_route_files(o):
+    """The route files (src/p3data/trade_routes.cpp): 0x5492D0, the queue object applying a route loaded from a file
+    (as the route page's «Load» leaves it: the stops in [+0x930] linked 0 → 1 → … → 0, the menu's ship in [+0x934]),
+    called on stops written here for the player's first ship in port s (made fit to guide). Alone (the game mode 0):
+    three stops (one at a town without his office with transfers: cleared) on a ship without a route; again with
+    the route on, a first stop out of the world (the 0x6C's town from the next) and one without a deep port for a
+    big ship; every stop out (nothing); the ship out; a convoy with a big ship (its guide's route). In a network game
+    (the mode 4): the route on and its length different (0x68 and 0x6C queued, the stops kept), the route of the same
+    length (0x6A, 0x6D, 0x69 for what differs, a stop out of the world between them), everything the same (nothing
+    queued), the queue full (count 0x34: it stops), a ship without a route, a route longer than the stops. And the
+    files themselves, as the page's «Save» then «Load» (ROUTE_FILE: 0x4D5C50 from a stop in the middle of the route,
+    the bytes it writes read back by 0x4D5EE0): the ship's route of three stops with their orders, of one stop, and a
+    convoy's (its guide's)."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    towns, offices, merchants, ships = o.counts()
+    office_table = o.u32(to.WORLD + 0x74)
+
+    def stop(i):
+        return o.u32(TRADE_ROUTES + 4) + 0xDC * i
+
+    def count():
+        return o.u16(TRADE_ROUTES + 2)
+
+    def route(ship):
+        out, i = [], o.u16(o.ship(ship) + 0x132)
+        while i < count() and i not in out:
+            out.append(i)
+            i = o.u16(stop(i))
+        return out
+
+    def office(u):
+        k = o.u16(o.town(u) + 0x784)
+        for _ in range(offices):
+            if k >= offices:
+                return False
+            if o.u16(office_table + 0x44C * k + 0x2C4) == m:
+                return True
+            k = o.u16(office_table + 0x44C * k + 0x2CA)
+        return False
+
+    def record(town, action=0, orders=(), order=None):
+        """A stop of a file: orders (ware, price, amount)."""
+        prices = [0] * 24
+        amounts = [0] * 24
+        for w, p, n in orders:
+            prices[w] = p
+            amounts[w] = n
+        return (struct.pack('<HBB', 0, town & 0xFF, action) + bytes(order or range(24)) +
+                struct.pack('<24i', *prices) + struct.pack('<24i', *amounts))
+
+    def load(records, ship, mode=0, queued=0):
+        buffer = o.alloc(0xDC * len(records))
+        for k, r in enumerate(records):
+            o.uc.mem_write(buffer + 0xDC * k, struct.pack('<H', k + 1 if k + 1 < len(records) else 0) + r[2:])
+        w32(o, QUEUE_OBJECT, mode)
+        w16(o, QUEUE_OBJECT + 0x56, queued)
+        w32(o, LOADED_ROUTE, buffer)
+        w32(o, LOADED_ROUTE + 4, ship)
+
+    def apply(what, ship=s):
+        direct(o, 0x5492D0, [], ecx=QUEUE_OBJECT)
+        r = route(ship) if ship < ships else []
+        stops = ' '.join(f'{i}:{o.u8(stop(i) + 2)}/{o.u8(stop(i) + 3):#x}' for i in r)
+        print(f'  {what}: loaded {o.u32(LOADED_ROUTE):#x} for {o.u32(LOADED_ROUTE + 4):#x}, orders '
+              f'{o.u8(o.ship(ship) + 0x136) if ship < ships else 0:#x}, route {stops}')
+
+    def during(o):
+        w32(o, o.merchant(m), 10000000)
+        make_guide(o, s, t)
+        other = nearest_town(o, t)
+        no_office = next((u for u in range(towns) if not office(u) and u not in (t, other)), other)
+        third = next(u for u in range(towns) if u not in (t, other, no_office))
+        print(f'  ship {s} in {t}; towns {other}, {no_office} (no office: {not office(no_office)}), {third}')
+        sell = record(t, 4 | 1, [(3, 50, 1000000000), (0, 0, 4000)])
+        buy = record(other, 0, [(3, -90, 2000), (5, 0, -600)])
+        transfers = record(no_office, 8, [(0, 0, -4000), (7, 120, 400)])
+        # Alone.
+        load([sell, buy, transfers], s)
+        apply('alone, three stops on a ship without a route')
+        w8(o, a + 0x136, 1)
+        deep = next((u for u in range(towns) if o.u32(o.town(u) + 0x2C8) & 1), None)
+        if deep is None:
+            deep = third
+            w32(o, o.town(deep) + 0x2C8, o.u32(o.town(deep) + 0x2C8) | 1)
+        kind = o.u8(a + 0xE)
+        w8(o, a + 0xE, 2)
+        load([record(towns), buy, record(deep, 1), sell], s)
+        apply('alone, the route on, a first stop out of the world, a big ship at a town without a deep port')
+        w8(o, a + 0xE, kind)
+        load([record(towns), record(0xFF)], s)
+        apply('alone, every stop out')
+        load([sell], ships)
+        apply('the ship out', ships)
+        # The files: «Save» then «Load».
+        hooks, kept = route_file_setup(o)
+
+        def save_and_load(what, from_stop, ship=s):
+            kept['file'] = None
+            direct(o, ROUTE_FILE, [from_stop, ship])
+            loaded = o.u32(LOADED_ROUTE)
+            print(f'  {what}: a file of {len(kept["file"] or b"")} bytes, read back {loaded:#x} for '
+                  f'{o.u32(LOADED_ROUTE + 4):#x}')
+            w32(o, LOADED_ROUTE, 0)
+
+        r = route(s)
+        for i in r:
+            save_and_load(f"the ship's route, saved from its stop {i} (action {o.u8(stop(i) + 3):#x})", i)
+        operation(o, 0x6C, s, t, 1)
+        save_and_load('a route of one stop', o.u16(a + 0x132))
+        # A network game.
+        operation(o, 0x6C, s, t, 2)
+        w8(o, a + 0x136, 1)
+        load([sell, buy, transfers], s, 4)
+        apply('network, the route on and of another length')
+        apply('network, again (the stops kept)')
+        r = route(s)
+        operation(o, 0x6A, r[1], 0, other, s)
+        operation(o, 0x69, r[0] | m << 16, 3 | 0 << 16, 1000000000, 50)
+        order = list(range(24))
+        order[0], order[5] = order[5], order[0]
+        load([sell, record(towns), record(third, 5, [(3, -80, 2000), (9, 300, 200)], order)], s, 4)
+        apply('network, the same length: towns, actions and wares queued, a stop out between them')
+        load([record(t, o.u8(stop(r[0]) + 3)), record(other, o.u8(stop(r[1]) + 3))], s, 4)
+        for i in r:
+            for w in range(24):
+                w32(o, stop(i) + 0x1C + 4 * w, 0)
+                w32(o, stop(i) + 0x7C + 4 * w, 0)
+                w8(o, stop(i) + 4 + w, w)
+        apply('network, everything the same')
+        load([sell, buy], s, 4, 0x34)
+        apply('network, the queue full')
+        operation(o, 0x6C, s, t, 3)
+        load([sell, buy], s, 4)
+        apply('network, a route longer than the stops')
+        h = o.u16(a + 0x132)
+        w16(o, a + 0x132, 0xFFFF)
+        load([sell], s, 4)
+        apply('network, a ship without a route')
+        w16(o, a + 0x132, h)
+        # A convoy with a big ship (its guide's route), alone.
+        others = docked_ships(o, m, t, (s,))
+        if others:
+            b = others[0]
+            bb = o.ship(b)
+            w16(o, bb + 0x40, 25)
+            w32(o, bb + 0x18, o.s32(bb + 0x14))
+            run_bytes(o, player_op('create-convoy', s, 0, 0))
+            run_bytes(o, player_op('join-convoy', s, b))
+            kind_b = o.u8(bb + 0xE)
+            w8(o, bb + 0xE, 3)
+            load([sell, record(deep), buy], b)
+            apply(f'alone, a convoy (ship {b} in convoy {o.u16(bb + 8)}, a big one)', s)
+            w8(o, bb + 0xE, kind_b)
+            load([sell, buy, transfers], b, 4)
+            apply('network, the convoy', s)
+            save_and_load('the convoy\'s route (its guide\'s)', o.u16(a + 0x132), b)
+        else:
+            print('  no other ship of the player in his town: no convoy')
+        for h in hooks:
+            o.uc.hook_del(h)
+        w32(o, QUEUE_OBJECT, 0)
+        w16(o, QUEUE_OBJECT + 0x56, 0)
+    return during
+
+
 def ai_closed_port(o):
     """0x51A2C0 (a ship before a closed port looks for another destination: the open town nearest by the world's
     travel times, 0x531B70): the destinations of AI ships sailing alone (a small one and a big one) and of AI
@@ -11685,6 +11921,11 @@ SCENARIOS = {
     'trade_route_branches': Scenario(trade_route_branches, [0x518860, 0x4D5200, 0x535760], 0, [
         '@4d526b', '@4d532b', '@4d5306', '@4d5310', '@4d570d', '@4d5482',
         '@518b38', '@5189a0', '@518a5d', '@518abd', '@518915']),
+    'trade_route_files': Scenario(trade_route_files, [0x5492D0, 0x535760, ROUTE_FILE], 0, [
+        '@4d5d43', '@4d5e11', '@4d5e18', '@4d5fc7', '@4d6016', '@4d602c',
+        '@549316', '@54934e', '@549391', '@5493ae', '@54945b', '@549446', '@5494a2', '@5494d2', '@549561', '@54956b',
+        '@54960b', '@549670', '@549715', '@549711', '@549794', '@549936', '@5497c7', '@549806', '@54987d', '@549906',
+        '@549913']),
     'ai_closed_port': Scenario(ai_closed_port, [0x51A2C0, 0x535760], 4, [
         '@506ecd', '@502872', '@50241b', '@51a30c', '@51a314', '@51a35a']),
     'letter_ops': Scenario(letter_ops, [0x535760, 0x4D6530], 0, [

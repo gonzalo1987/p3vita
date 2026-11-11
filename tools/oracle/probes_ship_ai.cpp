@@ -96,6 +96,18 @@ void register_probes_ship_ai(ProbeRegistry& r) {
 		probe_sailing()->fn_51a2c0(uint16_t(c.ship(c.ecx)), c.args[1]);
 		return std::nullopt;
 	};
+	// The route page's «Save» then «Load» (retouch_unchecked.py ROUTE_FILE, at 0x03000B80): (stop, ship): the file of
+	// the stop's route (0x4D5C50) read back (0x4D5EE0) and given to the queue object for the ship (0x48C92E).
+	r[0x03000B80] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const std::optional<std::vector<uint8_t>> file = fn_4d5c50(s, uint16_t(c.args[0]));
+		load_route_file(s, int(c.args[1]), file ? fn_4d5ee0(*file) : std::nullopt);
+		return std::nullopt;
+	};
+	r[0x5492D0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		(void)c;
+		fn_5492d0(s, probe_sailing());  // on the queue object 0x6DF2F0 (its fields in G, the stops in AR)
+		return std::nullopt;
+	};
 	r[0x4D5900] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		fn_4d5900(s, probe_sailing(), c.ship(c.args[0]));
 		return std::nullopt;

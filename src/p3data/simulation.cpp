@@ -102,6 +102,10 @@ void run_queued_operations(SaveGame& save, Sailing& sailing) {
 	for (const std::vector<uint8_t>& op : operations) {
 		run_operation(save, &sailing, op.data());
 	}
+	// The end of the queue's loop (0x547254): a route loaded from a file (trade_routes.hpp).
+	if (save.globals.u32(kLoadedRoute) != 0) {
+		fn_5492d0(save, &sailing);
+	}
 }
 
 void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {

@@ -1535,3 +1535,34 @@
 	{0x006AA1A4, 0x006AA7AC},
 	{0x006AA1A8, 0x006AA7B0},
 	{0x006AA1AC, 0x006AA7B4},
+	// The trade route page of the ship menu (0x48F2C0, 0x493A59) and its files' list: «File», «Load», «Save», the
+	// overwrite question, «active» (the slot 0x6A4510), «Select town» (the slot 0x6A450C; the Spanish
+	// «Ciudad»); the wares window of a stop (0x405A20, 0x404B50): its title «Automatic maritime trading», «in»,
+	// «max», «min», the legend's «...Town trade» and «...Trading office trade», the columns «Price», «Ammount» and
+	// «Goods», the amount's «Max» (the slot 0x69A368) and «Undo». Strings at these addresses.
+	{0x806B0394, 0x806B0C9C},
+	{0x806B039C, 0x806B0CA4},
+	{0x806B03A4, 0x806B0CAC},
+	{0x806B03AC, 0x806B0CB4},
+	{0x806A43B8, 0x806A4394},
+	{0x806A43AC, 0x806A438C},
+	{0x8069B2B0, 0x8069AAB8},
+	{0x8069B2FC, 0x8069AB14},
+	{0x8069B2CC, 0x8069AAD4},
+	{0x8069B2D0, 0x8069AADC},
+	{0x8069B2D4, 0x8069AAE4},
+	{0x8069B2E4, 0x8069AAFC},
+	{0x8069B300, 0x8069AB18},
+	{0x8069B308, 0x8069AB20},
+	{0x8069B310, 0x8069AB2C},
+	{0x8069A358, 0x806998E0},
+	{0x80692C48, 0x806C0998},
+	// The route files' list (the towns' list class in its mode 4, 0x470912..0x470E92): its title «Trade route»
+	// (the slot 0x6B04F4), «Delete» (the slot 0x69AF30; its question is the slot 0x6B0508, above), and the
+	// questions' «Yes» and «No» (the slots 0x699948, 0x699950).
+	{0x806B0388, 0x806B0C8C},
+	{0x0069AF30, 0x0069A710},
+	{0x00699948, 0x00698E10},
+	{0x00699950, 0x00698E18},
+	// The files' list's name when it opens (0x48C71A, with the ship's stop): «Route%d» (the Spanish exe «%d»).
+	{0x806BA3A0, 0x806BAB2C},

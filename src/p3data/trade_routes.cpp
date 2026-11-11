@@ -3,8 +3,11 @@
 #include <cstring>
 
 #include "p3data/game_fixes.hpp"
+#include "p3data/lz.hpp"
+#include "p3data/lz_compress.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
+#include "p3data/simulation.hpp"
 #include "p3data/trade.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -1349,6 +1352,275 @@ void fn_503230(SaveGame& save, Sailing* sailing, int convoy) {
 			}
 		}
 	}
+}
+
+// --- The route files ---
+
+std::optional<std::vector<uint8_t>> fn_4d5c50(const SaveGame& save, uint16_t stop) {
+	const uint32_t count = stop_count(save);
+	// How many stops the route has from `stop` (back to it, or to a next out of the pool); as many as the pool's
+	// count: nothing.
+	if (stop >= count) {
+		return std::nullopt;  // (the page never asks: the game would read past the pool)
+	}
+	uint32_t n = 0;
+	{
+		uint32_t at = stop;
+		do {
+			if (!valid_stop(save, at)) {
+				break;  // (the game reads past the records)
+			}
+			at = save.trade_routes[at].u16(0x0);
+			++n;
+			if (n >= count) {
+				return std::nullopt;
+			}
+		} while (at != stop && at < count);
+	}
+	// From the first (the bit 0x4; back at `stop` without one, `stop`).
+	uint32_t first = stop;
+	for (uint32_t at = stop; valid_stop(save, at);) {
+		if (save.trade_routes[at].u8(0x3) & 4) {
+			first = at;
+			break;
+		}
+		at = save.trade_routes[at].u16(0x0);
+		if (at == stop) {
+			break;
+		}
+	}
+	std::vector<uint8_t> records(size_t(n) * 0xDC);
+	uint32_t at = first;
+	for (uint32_t k = 0; k < n && valid_stop(save, at); ++k) {
+		std::memcpy(records.data() + 0xDC * k, save.trade_routes[at].bytes.data(), 0xDC);
+		records[0xDC * k] = 0;
+		records[0xDC * k + 1] = 0;
+		at = save.trade_routes[at].u16(0x0);
+	}
+	return lz_compress(records.data(), records.size());
+}
+
+std::optional<std::vector<TradeStop>> fn_4d5ee0(const std::vector<uint8_t>& file) {
+	if (file.size() < 4) {
+		return std::nullopt;
+	}
+	uint32_t header;
+	std::memcpy(&header, file.data(), 4);
+	const uint32_t size = header & 0x3FFFFFFF;
+	if (size % 0xDC != 0 || size == 0 || size > 0x1000000) {
+		return std::nullopt;  // (a size the game's allocation refuses: none)
+	}
+	const uint32_t n = size / 0xDC;
+	std::vector<uint8_t> records(size);
+	size_t produced = 0;
+	if (!lz_decompress(file.data(), file.size(), records.data(), records.size(), produced) || produced != size) {
+		return std::nullopt;
+	}
+	std::vector<TradeStop> out(n);
+	for (uint32_t k = 0; k < n; ++k) {
+		std::memcpy(out[k].bytes.data(), records.data() + 0xDC * k, 0xDC);
+		out[k].u16(0x0) = uint16_t(k + 1 < n ? k + 1 : 0);
+	}
+	return out;
+}
+
+void load_route_file(SaveGame& save, int ship, const std::optional<std::vector<TradeStop>>& stops) {
+	save.globals.u32(kLoadedRouteShip) = uint32_t(ship);
+	save.loaded_route = stops ? *stops : std::vector<TradeStop>();
+	save.globals.u32(kLoadedRoute) = save.loaded_route.empty() ? 0 : 1;  // (the game's buffer; here only non-zero)
+}
+
+void fn_5492d0(SaveGame& save, Sailing* sailing) {
+	GlobalMemory& g = save.globals;
+	std::vector<TradeStop>& loaded = save.loaded_route;
+	// The operation it fills and queues (0x535740: −1 and zeros); what one doesn't write stays from the one before.
+	uint32_t op[5] = {0xFFFFFFFF, 0, 0, 0, 0};
+	auto release = [&](bool ship_too) {
+		loaded.clear();
+		g.u32(kLoadedRoute) = 0;
+		if (ship_too) {
+			g.u32(kLoadedRouteShip) = 0xFFFF;
+		}
+	};
+	auto queue = [&]() { tick::enqueue_operation(save, reinterpret_cast<const uint8_t*>(op), sizeof(op)); };
+	// The queue's count: in a network game 0x54AA70 adds and the network's thread takes (p3vita: as the oracle, where
+	// nothing adds to it).
+	auto full = [&]() { return g.u16(kQueueCount) == 0x34; };
+	const bool network = (g.u32(kQueueObject) & 0xC) != 0;
+	const uint32_t ships = ship_count(save);
+	const uint32_t ship = g.u32(kLoadedRouteShip);
+	if (ship >= ships || ship >= save.ships.size()) {
+		release(false);
+		return;
+	}
+	// The ship, or its convoy's guide; big: its type (or a convoy's biggest) ≥ 2. The game compares the convoy with the
+	// ships' count, not the convoys'.
+	uint32_t s_index = ship;
+	bool big = false;
+	const uint16_t convoy = save.ships[ship].memory.u16(0x8);
+	if (convoy < ships && convoy < save.convoys.size()) {
+		const GameMemory<0x3C>& c = save.convoys[convoy];
+		s_index = c.u16(0x10);
+		for (uint32_t i = c.u16(0xA); i < ships && i < save.ships.size(); i = save.ships[i].memory.u16(0x6)) {
+			if (save.ships[i].memory.u8(0xE) >= 2) {
+				big = true;
+				break;
+			}
+		}
+	} else {
+		big = save.ships[ship].memory.u8(0xE) >= 2;
+	}
+	if (s_index >= save.ships.size()) {
+		release(false);
+		return;  // (the game reads past the ships)
+	}
+	ShipMemory& s = save.ships[s_index].memory;
+	const uint32_t towns = g.u32(kWorldTownCount);
+	// The stops, up to the first whose +0x0 is 0.
+	uint32_t valid = 0;
+	uint32_t n = 0;
+	for (size_t k = 0; k < loaded.size(); ++k) {
+		TradeStop& r = loaded[k];
+		const uint8_t town = r.u8(0x2);
+		if (town >= towns || town >= save.towns.size() || (big && (save.towns[town].memory.u32(0x2C8) & 1))) {
+			r.u8(0x2) = 0xFF;
+		} else {
+			if (tick::facilities_detail::fn_5308a0(save, s.u8(0x0), town) < 0) {
+				for (int w = 0; w < 24; ++w) {
+					if (r.s32(0x1C + 4 * w) == 0 && r.s32(0x7C + 4 * w) != 0) {
+						r.s32(0x7C + 4 * w) = 0;  // no office there: no transfers
+					}
+				}
+			}
+			++valid;
+		}
+		++n;
+		if (r.u16(0x0) == 0) {
+			break;
+		}
+	}
+	if (valid == 0) {
+		release(false);
+		return;
+	}
+	if (!network) {
+		// Alone: the route off, a new one of `valid` stops at the first stop's town still in the world (0x6C, run at
+		// once), and the stops copied into it.
+		s.u8(0x136) = 0;
+		op[0] = 0x6C;
+		op[1] = ship;
+		uint32_t town = loaded[0].u8(0x2);
+		for (uint32_t k = 1; k < n && town >= towns; ++k) {
+			town = loaded[k].u8(0x2);
+		}
+		op[2] = town;
+		op[3] = valid;
+		run_operation(save, sailing, reinterpret_cast<const uint8_t*>(op));
+		uint32_t at = s.u16(0x132);
+		if (at < stop_count(save)) {
+			for (uint32_t k = 0; k < n; ++k) {
+				const TradeStop& r = loaded[k];
+				if (r.u8(0x2) >= towns) {
+					continue;
+				}
+				if (!valid_stop(save, at)) {
+					break;  // (the game writes past the records)
+				}
+				TradeStop& t = save.trade_routes[at];
+				t.u8(0x2) = r.u8(0x2);
+				t.u8(0x3) = r.u8(0x3);
+				std::memcpy(t.bytes.data() + 0x4, r.bytes.data() + 0x4, 0x18);
+				std::memcpy(t.bytes.data() + 0x1C, r.bytes.data() + 0x1C, 0x60);
+				std::memcpy(t.bytes.data() + 0x7C, r.bytes.data() + 0x7C, 0x60);
+				at = t.u16(0x0);
+			}
+		}
+		release(true);
+		return;
+	}
+	// A network game: queued.
+	if (s.u8(0x136) == 1) {
+		op[0] = 0x68;
+		op[1] = ship;
+		op[2] = 0;
+		queue();
+	}
+	// The route's length from the ship's stop (0: out of the pool, or longer than the stops loaded).
+	const uint32_t count = stop_count(save);
+	const uint16_t own = s.u16(0x132);
+	uint32_t length = 0;
+	if (own < count) {
+		length = 1;
+		uint32_t at = valid_stop(save, own) ? save.trade_routes[own].u16(0x0) : count;
+		while (at != own) {
+			++length;
+			at = valid_stop(save, at) ? save.trade_routes[at].u16(0x0) : count;
+			if (at >= count || length > valid) {
+				length = 0;
+				break;
+			}
+		}
+	}
+	if (valid != length) {
+		op[0] = 0x6C;
+		op[1] = ship;
+		op[2] = loaded[0].u8(0x2);
+		op[3] = valid;
+		queue();
+		return;  // the stops kept: the next call goes on
+	}
+	uint32_t at = own;
+	for (uint32_t k = 0; k < n; ++k) {
+		const TradeStop& r = loaded[k];
+		const uint8_t town = r.u8(0x2);
+		if (town >= towns) {
+			continue;  // (its stop not passed)
+		}
+		if (!valid_stop(save, at)) {
+			break;  // (the game reads past the records)
+		}
+		const TradeStop& t = save.trade_routes[at];
+		if (t.u8(0x2) != town) {
+			if (full()) {
+				return;
+			}
+			op[0] = 0x6A;
+			op[1] = at;
+			op[2] = 0;
+			op[3] = town;
+			op[4] = ship;
+			queue();
+		}
+		if (t.u8(0x3) != r.u8(0x3)) {
+			if (full()) {
+				return;
+			}
+			op[0] = 0x6D;
+			op[1] = at;
+			op[2] = r.u8(0x3);
+			queue();
+		}
+		// A ware's amount and price (a ware past 23, in no file the game writes: the game reads past the stop; 0).
+		auto amount = [](const TradeStop& x, uint32_t ware) { return ware < 24 ? x.s32(0x7C + 4 * ware) : 0; };
+		auto price = [](const TradeStop& x, uint32_t ware) { return ware < 24 ? x.s32(0x1C + 4 * ware) : 0; };
+		for (uint32_t w = 0; w < 24; ++w) {
+			const uint8_t ware = r.u8(0x4 + w);
+			if (t.u8(0x4 + w) == ware && amount(t, ware) == amount(r, ware) && price(t, ware) == price(r, ware)) {
+				continue;
+			}
+			if (full()) {
+				return;
+			}
+			op[0] = 0x69;
+			op[1] = at | uint32_t(s.u8(0x0)) << 16;
+			op[2] = ware | w << 16;
+			op[3] = uint32_t(amount(r, ware));
+			op[4] = uint32_t(price(r, ware));
+			queue();
+		}
+		at = t.u16(0x0);
+	}
+	release(true);
 }
 
 }  // namespace p3::data

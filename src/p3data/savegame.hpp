@@ -426,6 +426,11 @@ struct SaveGame {
 	// records of 0xDC bytes, as many as the u16 [0x6DD72A]; the u16 [0x6DD728]
 	// is the free list's head (trade_routes.hpp). In tick_probe, region AU.
 	std::vector<GameMemory<0xDC>> trade_routes;
+	// A route loaded from a file that waits to be applied (not saved): the
+	// stops of the queue object's [0x6DFC20] (0x4D5EE0's buffer, non-zero
+	// while one waits), for the ship [0x6DFC24] (trade_routes.hpp, 0x5492D0).
+	// In tick_probe, region AR.
+	std::vector<GameMemory<0xDC>> loaded_route;
 	// Buzón de los avisos a los comerciantes (*0x6DD730, tantos como u16
 	// [0x6DD736]): entradas de 16 bytes con u8 [+0x0] día, u8 [+0x1] mes, u16
 	// [+0x2] año, u8 [+0x4] tipo y u16 [+0x6] siguiente; la lista de cada
