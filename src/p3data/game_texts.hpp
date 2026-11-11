@@ -339,6 +339,7 @@ enum class GameText {
 	GoalLast = GoalNone + 8,  // «Balance of wealth», «Wealth», «Capacity» and «of».
 	YearsOne,  // «1 year» .. «10 years».
 	YearsTen = YearsOne + 9,
+	MainMenu,  // «Main menu» (the game's options window: back to its main menu)
 	Count
 };
 
