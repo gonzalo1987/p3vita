@@ -118,7 +118,7 @@ void register_ship_name(const SaveGame& save, ShipMemory& m, std::vector<std::st
 // until it comes back to the first) go to the free list.
 void check_trade_routes(SaveGame& save) {
 	GlobalMemory& g = save.globals;
-	std::vector<GameMemory<0xDC>>& routes = save.opaque.trade_routes;
+	std::vector<GameMemory<0xDC>>& routes = save.trade_routes;
 	const uint32_t count = std::min<uint32_t>(g.u16(kTradeRouteCount), uint32_t(routes.size()));
 	std::vector<uint8_t> used(count, 0);
 	for (uint32_t i = g.u16(kTradeRoutesFree); i < count; i = routes[i].u16(0)) {

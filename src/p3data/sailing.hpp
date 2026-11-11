@@ -82,6 +82,11 @@ struct ShipEvent {
 struct BattleReader;  // battle/battle_save.cpp
 class GameTexts;  // game_texts.hpp
 
+// What 0x51A2C0 chooses for `ship` before a closed port (Sailing::fn_51a2c0):
+// the open town nearest to `town` by the world's travel times, town 0 if none
+// (with its two game bugs and their fixes, sailing.cpp).
+uint32_t closed_port_destination(const SaveGame& save, int ship, uint32_t town);
+
 class Sailing {
 public:
 	// `map_towns`: las 40 ciudades de scripts/StadtDaten.ini (load_sea_map_towns).
@@ -542,6 +547,10 @@ public:
 	// 0x5172A0: nueva ruta del barco desde donde está, a la ciudad `town` o a
 	// (x, y) (también la usa la flota de la Hansa, `diet.cpp`).
 	void set_destination(SavedShip& ship, int town, int x, int y);
+	// 0x51A2C0 (on the ship: its index, a town): a ship before a closed port
+	// sails to the open town nearest to `town` by the world's travel times
+	// (0x531B70).
+	void fn_51a2c0(uint16_t index, uint32_t town);
 
 private:
 	template <class F>

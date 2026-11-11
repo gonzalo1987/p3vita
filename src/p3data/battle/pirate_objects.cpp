@@ -9,6 +9,7 @@
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
+#include "p3data/trade_routes.hpp"
 
 namespace p3::data::tick {
 namespace alderman_detail {
@@ -486,9 +487,9 @@ void Sailing::fn_514d40(size_t k, uint16_t most, uint16_t strength_arg) {
 		m.u8(0x13B) = 0;
 		m.u8(0x13A) = 0;
 		if (m.u16(0x132) <= g.u16(0x6DD72A)) {
-			// 0x4D4DD0(route, 1) on the trade routes 0x6DD728, which SaveGame
-			// doesn't keep (only the player's ships have them). Not checked
-			// with the oracle.
+			// The route released with its ships (0x4D4DD0 with 1; the game checks with `ja`, so the count itself
+			// passes, and 0x4D4DD0 does nothing with it).
+			fn_4d4dd0(save_, m.u16(0x132), true);
 			m.u16(0x132) = 0xFFFF;
 		}
 		if (m.u16(0xA) < count || m.u16(0xC) < count) {

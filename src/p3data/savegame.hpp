@@ -331,10 +331,6 @@ struct SaveOpaque {
 	// [+0x15] >= 7 and a list: 4 bytes a node, 0x7F before each next one and
 	// 0 at the end).
 	std::vector<std::vector<uint8_t>> event_extras;
-	// The automatic trade routes of the player: the records of 0xDC bytes of
-	// the object 0x6DD728 (0x4D4BC0; their number is the u16 [0x6DD72A] of
-	// the globals, which the simulation reads).
-	std::vector<GameMemory<0xDC>> trade_routes;
 	// The battles (0x611AE0 on 0x6E55D0), as in the file.
 	std::vector<uint8_t> battles;
 	// The ship names written by the players that the save carries (the end of
@@ -426,6 +422,10 @@ struct SaveGame {
 	// tick [+0x0], u16 siguiente [+0x4] y u16 tipo [+0x6], enlazados en orden de
 	// tick desde la cabeza u16 [0x6DD744]; u16 [0x6DD748] es su número.
 	std::vector<GameMemory<0x18>> events;
+	// The stops of the automatic trade routes (the pool *0x6DD728, 0x4D4BC0):
+	// records of 0xDC bytes, as many as the u16 [0x6DD72A]; the u16 [0x6DD728]
+	// is the free list's head (trade_routes.hpp). In tick_probe, region AU.
+	std::vector<GameMemory<0xDC>> trade_routes;
 	// Buzón de los avisos a los comerciantes (*0x6DD730, tantos como u16
 	// [0x6DD736]): entradas de 16 bytes con u8 [+0x0] día, u8 [+0x1] mes, u16
 	// [+0x2] año, u8 [+0x4] tipo y u16 [+0x6] siguiente; la lista de cada

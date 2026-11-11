@@ -13,6 +13,7 @@
 #include "p3data/statistics_window.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
+#include "p3data/trade_routes.hpp"
 
 namespace p3::data {
 
@@ -912,8 +913,7 @@ void Sailing::fn_504970() {
 // 250; fame down if the loser is no merchant); the towns' wares on the way
 // again (0x504970) if the winner is a merchant.
 //
-// Not reproduced: the trade routes [+0x132] (0x4D4DD0 on 0x6DD728, which
-// SaveGame does not have), the Hanse event's list of sunk ships (0x4F3980,
+// Not reproduced: the Hanse event's list of sunk ships (0x4F3980,
 // 0x4F3AD0; p3vita doesn't keep it), the letters (0x4D6530) and the UI.
 void Sailing::fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other) {
 	GlobalMemory& gl = save_.globals;
@@ -955,8 +955,8 @@ void Sailing::fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other) {
 	}
 	auto drop_trade_route = [&](ShipMemory& s) {
 		s.u8(0x136) = uint8_t(s.u8(0x136) & 0xFC);
-		// 0x4D4DD0 on 0x6DD728 when [+0x132] is one: not reproduced.
 		if (s.u16(0x132) < gl.u16(0x6DD72A)) {
+			fn_4d4dd0(save_, s.u16(0x132), true);  // 0x50C77C: the route released with its ships
 			s.u16(0x132) = 0xFFFF;
 		}
 	};
@@ -972,7 +972,8 @@ void Sailing::fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other) {
 				s.u16(0x3C) = 0xFFFF;
 				s.u8(0x39) = 0xFF;
 				if (s.u16(0x132) < gl.u16(0x6DD72A)) {
-					s.u16(0x132) = 0xFFFF;  // 0x4D4DD0: not reproduced.
+					fn_4d4dd0(save_, s.u16(0x132), true);  // 0x50C161: the route released with its ships
+					s.u16(0x132) = 0xFFFF;
 				}
 				if (s.s32(0x18) < 1) {
 					fn_4ec864(index, other);

@@ -466,7 +466,7 @@ std::string letter_town_name(const SaveGame& save, uint32_t town);
 // los barcos o el [+0x6] del anterior). Devuelven true si el recorrido sigue
 // por el [+0x6] del barco y false si el barco ha salido de la lista (el
 // recorrido sigue por `link`).
-bool fn_5067d0(SaveGame& save, int ship, uint16_t* link);
+bool fn_5067d0(SaveGame& save, int ship, uint16_t* link, Sailing* sailing);
 bool fn_506a19(SaveGame& save, int ship, uint16_t* link);
 bool fn_506b6a(SaveGame& save, int ship, uint16_t* link);
 void fn_518b80(SaveGame& save, int ship, uint32_t arg);  // Un barco de la IA decide qué hacer en puerto.

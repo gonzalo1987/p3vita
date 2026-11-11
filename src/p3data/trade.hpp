@@ -20,6 +20,13 @@ namespace p3::data {
 // internal units; it may be negative.
 int32_t recalculate_cargo(SavedShip& ship);
 
+// 0x5180C0 (on the ship): `amount` of a ware into its hold at `price` a unit
+// (the average price weighed as the game does). Nothing for an amount ≤ 0.
+void fn_5180c0(SaveGame& save, int ship, uint32_t ware, int32_t amount, float price);
+// 0x4FF6F0 (on the office): `amount` of a ware into the office at `price` a
+// unit. Nothing for an amount ≤ 0.
+void fn_4ff6f0(OfficeMemory& o, uint32_t ware, int32_t amount, float price);
+
 struct TradeResult {
 	int32_t amount = 0;  // What was bought or sold.
 	int32_t price = 0;  // What was paid or got.

@@ -705,8 +705,8 @@ std::vector<uint8_t> write_savegame(SaveGame& save) {
 	w.separator();
 	// 0x4D4B60 on 0x6DD728.
 	w.from(save.globals, 0x6DD728, 2);
-	w.u16(uint16_t(save.opaque.trade_routes.size()));
-	for (const GameMemory<0xDC>& record : save.opaque.trade_routes) {
+	w.u16(uint16_t(save.trade_routes.size()));
+	for (const GameMemory<0xDC>& record : save.trade_routes) {
 		w.from(record, 0, 0xDC);
 	}
 	w.separator();

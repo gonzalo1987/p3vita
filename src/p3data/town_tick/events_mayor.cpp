@@ -62,6 +62,7 @@
 #include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
+#include "p3data/trade_routes.hpp"
 
 namespace p3::data::tick {
 
@@ -1563,9 +1564,7 @@ void fn_509250(SaveGame& save, Sailing* sailing, uint32_t ship, uint32_t winner,
 	}
 	s.u8(0x136) &= 0xFC;
 	if (s.u16(0x132) < g.u16(kTradeRouteCount)) {
-		// With the trade routes (phase 6; no save has one): 0x4D4DD0 on 0x6DD728
-		// (the routes, which SaveGame doesn't hold) releases the route; not
-		// reproduced.
+		fn_4d4dd0(save, s.u16(0x132), false);  // its trade route released (trade_routes.cpp)
 		s.u16(0x132) = 0xFFFF;
 	}
 	if (s.u16(0x134) == 0xC) {

@@ -6,7 +6,9 @@
 
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
+#include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
+#include "p3data/trade_routes.hpp"
 
 using namespace p3::data;
 
@@ -158,10 +160,113 @@ void company_shares() {
 
 }  // namespace
 
+// Operation 0x6C (0x53E890, trade_routes.cpp): a route of 152 stops for a ship on an empty pool. The pool grows
+// at the first stop and again at the 151st, when the game writes the link to it into the freed array: its route
+// ends after 150 stops. Fixed, the 152.
+void trade_route_growth() {
+	for (bool fix : {false, true}) {
+		set_fix_game_bugs(fix);
+		SaveGame save;
+		save.globals.u16(global::kShipCount) = 1;
+		save.globals.u32(global::kWorldTownCount) = 2;
+		save.ships.resize(1);
+		save.ships[0].memory.u16(0x132) = 0xFFFF;
+		uint8_t op[0x14] = {0x6C, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 152, 0, 0, 0, 0, 0, 0, 0};
+		fn_53e890(save, op);
+		check(save.globals.u16(0x6DD72A) == 300 && save.trade_routes.size() == 300, "0x6C: the pool grown twice");
+		const uint32_t head = save.ships[0].memory.u16(0x132);
+		int stops = 0;
+		uint32_t s = head;
+		do {
+			++stops;
+			s = save.trade_routes[s].u16(0x0);
+		} while (s != head && stops < 1000);
+		check(stops == (fix ? 152 : 150), fix ? "0x6C fixed: the whole route" : "0x6C: the route cut at 150");
+		check(save.trade_routes[head].u8(0x2) == 1 && (save.trade_routes[head].u8(0x3) & 4), "0x6C: the first stop");
+	}
+	set_fix_game_bugs(false);
+}
+
+// 0x4D5900 (trade_routes.cpp): a ship on its route before its closed port (town 1), nothing to do at its only
+// stop, its home (town 0) closed too: the nearest town with a shipyard is its own closed port (the game then
+// hangs, the ship arriving again and again in the same tick). Fixed, the open town 2, far away.
+void closed_port_route() {
+	for (bool fix : {false, true}) {
+		set_fix_game_bugs(fix);
+		SaveGame save;
+		GlobalMemory& g = save.globals;
+		g.u32(global::kWorldTownCount) = 3;
+		g.u16(global::kWorldMerchantCount) = 1;
+		g.u16(global::kShipCount) = 1;
+		save.towns.resize(3);
+		save.merchants.resize(1);
+		save.ships.resize(1);
+		const uint32_t flags[3] = {0x240, 0x240, 0x40};
+		const int32_t x[3] = {100, 500, 1500};
+		for (uint32_t t = 0; t < 3; ++t) {
+			save.towns[t].memory.u32(0x2C8) = flags[t];
+			g.u8(0x6DE4B8 + t) = uint8_t(t);  // the towns' numbers
+			g.s32(0x6DDB90 + 0x34 * t + 0x20) = x[t];
+			g.s32(0x6DDB90 + 0x34 * t + 0x24) = 300;
+		}
+		save.merchants[0].memory.u8(0x19) = 0;  // home
+		ShipMemory& s = save.ships[0].memory;
+		s.u8(0x0) = 0;
+		s.u16(0x8) = 0xFFFF;
+		s.u16(0x1E) = 500;  // at town 1
+		s.u16(0x22) = 300;
+		uint8_t op[0x14] = {0x6C, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0};
+		fn_53e890(save, op);  // one stop at town 1, nothing to do there
+		check(next_route_town(save, 0) == (fix ? 2u : 1u),
+			fix ? "0x4D5900 fixed: the open town" : "0x4D5900: its own closed port");
+	}
+	set_fix_game_bugs(false);
+}
+
+// 0x51A2C0 (sailing.cpp): a ship before its closed port (town 1) looks for the open town nearest to it by the
+// travel times: town 2 is a day away and has no deep port (bit 1), town 3 is three days away, town 0 ten. A big
+// ship: the game's test is the wrong way round, so it may go to town 2 and a small one may not; fixed, the other
+// way. Passed 0xFF (what the game passes for a ship alone, its town already cleared), every time is 0xFF and the
+// first open town wins (town 0).
+void closed_port_ai() {
+	for (bool fix : {false, true}) {
+		set_fix_game_bugs(fix);
+		SaveGame save;
+		save.globals.u32(global::kWorldTownCount) = 4;
+		save.globals.u16(global::kShipCount) = 1;
+		save.towns.resize(4);
+		save.ships.resize(1);
+		const uint32_t flags[4] = {0, 0x200, 1, 0};
+		for (uint32_t t = 0; t < 4; ++t) {
+			save.towns[t].memory.u32(0x2C8) = flags[t];
+		}
+		save.town_travel.assign(16, 0xFF);
+		const uint8_t from_1[4] = {160, 0, 16, 48};
+		for (uint32_t t = 0; t < 4; ++t) {
+			save.town_travel[4 + t] = from_1[t];
+		}
+		ShipMemory& s = save.ships[0].memory;
+		s.u16(0x8) = 0xFFFF;
+		for (uint8_t type : {0, 3}) {
+			s.u8(0xE) = type;
+			const bool big = type >= 2;
+			// Unfixed, a small ship avoids town 2 and a big one doesn't; fixed, the other way round.
+			const uint32_t expected = (big != fix) ? 2 : 3;
+			check(closed_port_destination(save, 0, 1) == expected,
+				fix ? "0x51A2C0 fixed: a big ship not up a river, a small one may" : "0x51A2C0: the test the wrong way");
+		}
+		check(closed_port_destination(save, 0, 0xFF) == 0, "0x51A2C0 from 0xFF: the first open town");
+	}
+	set_fix_game_bugs(false);
+}
+
 int main() {
 	check(!fix_game_bugs(), "the library starts with the fixes off");
 	old_letters();
 	company_shares();
+	trade_route_growth();
+	closed_port_route();
+	closed_port_ai();
 	if (failures == 0) {
 		std::printf("game_fixes_test: all correct\n");
 	}

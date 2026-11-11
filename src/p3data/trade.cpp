@@ -222,8 +222,6 @@ TradeResult fn_537340(SaveGame& save, uint8_t* op) {
 
 // --- The player's office (docs/formats/operations.md: 0x08, 0x58, 0x59) ---
 
-namespace {
-
 // 0x5180C0 (thiscall on the ship: ware, amount, float price): `amount` of a
 // ware into the hold at `price` a unit: the average price weighed as the game
 // does (each product exact in double, the sum stored as a float, the quotient
@@ -276,6 +274,8 @@ void fn_4ff6f0(OfficeMemory& o, uint32_t ware, int32_t amount, float price) {
 		average = price;
 	}
 }
+
+namespace {
 
 // 0x5007A0 (thiscall on the office: ware, amount, price): `amount` bought for
 // `price` in all into the office: its average price (stock · average + price)

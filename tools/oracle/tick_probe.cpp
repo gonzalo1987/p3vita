@@ -386,6 +386,9 @@ void build_save(const State& state, SaveGame& save) {
 	if (const Region* v = find(state, "V")) {
 		copy_blocks(*v, save.convoys);
 	}
+	if (const Region* au = find(state, "AU")) {
+		copy_blocks(*au, save.trade_routes);  // the trade routes' stops
+	}
 	if (const Region* q = find(state, "Q")) {
 		// Rutas: u16 barco, u32 nº de puntos y los puntos. En el juego el
 		// barco tiene un puntero ([+0x24]); en p3vita, su copia de la ruta.
@@ -608,6 +611,9 @@ State dump_save(const SaveGame& save, const State& game) {
 	if (s.count("V")) {
 		store_blocks(save.convoys, s["V"]);
 	}
+	if (s.count("AU")) {
+		store_blocks(save.trade_routes, s["AU"]);
+	}
 	if (s.count("Q")) {
 		std::vector<uint8_t>& b = s["Q"].bytes;
 		b.clear();
@@ -812,6 +818,8 @@ std::string describe(const std::string& region, size_t offset) {
 	if (const char* k = std::strchr(names, name[0]); k && name[1] == '\0') {
 		const size_t size = sizes[k - names];
 		std::snprintf(text, sizeof(text), "%s[%zu]+0x%zx", name, offset / size, offset % size);
+	} else if (region == "AU") {
+		std::snprintf(text, sizeof(text), "stop[%zu]+0x%zx", offset / 0xDC, offset % 0xDC);
 	} else if (region == "G") {
 		std::snprintf(text, sizeof(text), "global 0x%zx", GlobalMemory::kBegin + offset);
 	} else {

@@ -2296,6 +2296,89 @@ doesn't run; p3vita's `new_game_settings` and `new_game_player` (new_game.hpp) w
   Novgorod; Bergen a Hanse town; Luebeck's efficient and inefficient productions swapped), `p3save newgame --map` and
   the oracle's `--map`: equal (904 151 bytes, 0 different).
 
+## The trade routes, part 1: the stops' pool and the six operations (2026-11-11)
+
+The pool of the stops (*0x6DD728, records of 0xDC bytes) is live state now: `SaveGame::trade_routes` (it was in
+`SaveOpaque`), and both the oracle and tick_probe have it as a region, **`AU`** (the stops, as many as the u16
+[0x6DD72A]; `stop[i]+0x..` in the reports). The operations 0x68..0x6D are in `run_operation`
+(`src/p3data/trade_routes.cpp`, with 0x4D4C90, 0x4D4DD0, 0x4D4E80, 0x4D4F60, 0x4D5AB0, 0x509030, 0x51A3C0,
+0x51A450 and 0x5171E0) and in the oracle's `OPERATIONS`; the route window's redraw after 0x6B (0x48FD90 on
+*0x6CE6D0) is silenced (`QUIET`).
+
+| Scenario | What | Saves | Result |
+|-|-|-|-|
+| `trade_route_ops` | on the player's first ship in port (a captain): 0x6C three stops (the pool grows to 150), two at another town (the old route released with its ships), a town out, no stops, a ship out; 0x6A a stop inserted, a town out, the head's town changed with the ship on it (to a town with his office and without: the office transfers cleared), the same town, no ship, a stop out, under a ship at sea (0x5171E0), the head removed (the ship moved on, the bit passed), the only stop removed; 0x69 a ware to sell, to buy, to the office, an amount only, a ware out, the order without the ware (reset), the 25th place (the low byte of ware 0's price), wares twice; 0x6D action 1 at a town with and without [+0x76C] & 0x40 and at a town out, 5, 0, a stop out; 0x6B a stop made first, one already after the other, moved, the first stop moved, the ship's stop removed, another removed, one out of the route, a ship out, the head alone (the route gone); 0x68 nothing to do anywhere, a ware to take from the office, to sell, stopped, a town without a deep port and a closed one, no captain, [+0x15C], no route, sailing (0xF: 0x5172A0), the state 8 to another town and to its own (with the town's [+0x994]), the shipyard (6) alone and as a convoy's guide, a convoy started, stopped and with a big ship; 0x6C and 0x6B on the convoy; 0x6C with the pool running out in the middle | 1, 3, 5, 7 | 71–78 operations equal; 85 of 85 targets in 1 and 3, 83 in 5 and 7 (the player's ship is big there: not the small ship's branches) |
+
+Breaking the bit 0x8 of 0x6D on purpose: that operation differs in `stop[2]+0x0`. Not made: 0x4D4E80 on a stop
+whose next is out of the pool (the operations never leave one) and 0x69 for a merchant out (the game writes past
+the merchants' array: in the oracle into ship 0, `P[0]+0xe4`; not reproducible). Three game bugs (roadmap,
+«Corregir los fallos del juego»): 0x4D4E80 reads past the pool (harmless from 0x6A), 0x69 checks the stop with
+`ja` and 0x6C loses a link when the pool grows (fixed behind `fix_game_bugs`, ctest `game_fixes`). The world 7 days
+in the 12 saves: 0 different; `write-check`: as before (save 7's 12 bytes of the battles); `write-retouched` (two
+stops): 0 different.
+
+## The trade routes, part 2: the ships on their routes (2026-11-11)
+
+Rewritten in `src/p3data/trade_routes.cpp`: a docked ship of a human on its route (0x518860, from the docked
+state 0x5067D0, which now gets the `Sailing`), a docked convoy on its guide's route (0x503230, from the convoys'
+update), the trading at a stop (0x4D5200, with 0x500EC0; the report 0x07), the next stop before a closed port
+(0x4D5900, from 0x506EEF and 0x502831), and the route released (0x4D4DD0) where p3vita skipped it: 0x507FB0,
+0x509250, 0x50BFD0 (both), 0x5017F0, 0x514D40. The oracle no longer silences 0x518860 and 0x4D5900
+(`QUIET_SHIPS`), lets the two reports run (0x4D55F9, 0x5035CD in `MAIL_CALLS`) and tick_probe has probes for
+0x518860, 0x503230, 0x4D5200 and 0x4D5900. A scenario's `during` may now return a function that runs after each
+tick (`retouch_unchecked.py`: a change once the world has moved).
+
+Each scenario of `retouch_unchecked.py` gives the player's first ship in port s (fit to guide) a route of two stops
+made with the window's operations: at its town t buy the two wares t has most of, at the nearest town u sell them;
+then 0x68. Recorded: 0x518860, 0x4D5200, 0x503230, 0x4D5900 and the executor.
+
+| Scenario | What | Saves | Result |
+|-|-|-|-|
+| `trade_route_ships` | the ship alone on its route 8 days (cargo put into the office, office goods taken, the report at the first stop) | 1, 3, 5 (7) | 0x518860 15–16 calls, 0x4D5200 8, the operations: all equal; 15 of 15 targets (save 7: the ship doesn't sail) |
+| `trade_route_closed`, `_home`, `_far` | u closed (0x200) once the ship sails to it: 0x4D5900 to the next stop; with nothing to do at t either: home; with home closed too and both closed towns without their shipyards: the nearest town with one | 1, 3 | all equal (0x4D5900 1 to 7 calls); 3, 2 and 3 targets |
+| `trade_route_repair` | the second stop with the repair bit, the hull at a half: 0x52ACD0 | 1, 3 | equal; 2 of 2 |
+| `trade_route_bad` | a stop at a town out of the world (dropped) and no sailors (the line 0x28) | 1, 3 | equal; 3 of 3 |
+| `trade_route_stop` | the second stop with the bit 2 (the route ends there) | 1, 3 | equal; 1 of 1 |
+| `trade_route_convoy`, `_away`, `_closed`, `_repair`, `_guide` | the ship guides a convoy with another of his ships: the members trading one after the other on a copy of the stop, the convoy's report, the captain lent; the guide's stop at u while docked (it sails at once); u closed at sea (0x502831 → 0x4D5900); a member at half its hull (the convoy's state 4, 0x52ACD0); the guide without sailors at sea and the other ship with a stop of its own (0x5017F0 at the docking: its stop released with its ships, the route inherited) | 3, 5 (7) | 0x503230 1 to 8 calls, 0x4D5200 up to 16, 0x5017F0 12–13: all equal; all targets |
+| `trade_route_release` | each ship with a route first: operation 0x0A (0x507FB0), a ship sold to an AI merchant (0x509250), a pirate convoy after its battle (0x50BFD0, its guide with a stop), a nest's ship leaving (0x514D40) | 3, 5, 7 | equal; 5 of 5 |
+| `trade_route_branches` | 0x4D5200 and 0x518860 called directly from retouched states: the stop at u, no captain, a town without [+0x76C] & 0x100 (its [+0x6F1] the owner and not), little money and none, selling down to five limits (the unit more), nothing to do anywhere (0x24), the repair bit without a shipyard, a twentieth of the hull (0x23), the port closed (0), a stop at a town out of the world (no route left) | 1, 3, 5, 7 | equal; 11 of 11 (save 7: 10) |
+
+Not reached: the unit more sold after the town's limit (0x4D549E: 20 limits tried, those whose stock falls well
+into a unit; its code is the main sale's), 0x50BFD0's other release (0x50C77C: a ship of no merchant in a
+merchant's convoy broken up after its battle).
+
+**The world with routes, continuous** (`re/emu/sesion25/world_routes.sh`): the scenario only prepares, the game
+writes that save, and the whole world runs 7 days from it in the oracle while p3vita runs its own from its load:
+`trade_route_ships` in saves 1, 3, 5 and `trade_route_convoy` in 3, 5, 7, **0 different**. Breaking the captain's
+discount of 0x4D5200 on purpose: 47 663 different (the merchant's money, the ship's prices). The world 7 days in
+the 12 saves: 0 different.
+
+**A game bug that hangs the game** (fixed behind `fix_game_bugs`, ctest `game_fixes`): 0x4D5900's last resort, the
+nearest town with a shipyard, doesn't look at a closed port, so a ship before its closed port with nothing to do on
+its route and its home closed is sent to that same town (or to its closed home), arrives again in the same tick and
+so on for ever: the oracle hangs in that tick (first seen with `trade_route_closed_far` before both closed towns
+lost their shipyards).
+
+## An AI ship before a closed port: 0x51A2C0 (2026-11-11)
+
+Found while doing 0x4D5900, next to it, and done at the user's request. `Sailing::fn_51a2c0` (sailing.cpp, with
+`closed_port_destination`, the choice): the open town nearest by the world's travel times (0x531B70 on
+`SaveGame::town_travel`), without the closed ports (0x4000E00) and, for some ships, those without a deep port (bit 1).
+Connected at its three sites: an AI ship alone at a closed port (0x506ECD, `Sailing::arrive`), a convoy of the AI (or
+of a human not of all his ships) at one (0x502872) and an AI convoy at sea without its route (0x50241B). The oracle
+no longer silences it (`QUIET_SHIPS`); tick_probe has its probe.
+
+| Scenario | What | Saves | Result |
+|-|-|-|-|
+| `ai_closed_port` | the destinations of an AI ship alone (a small one and a big one) and of two AI convoys at sea closed ([+0x2C8] \| 0x200), and an AI convoy at sea whose guide loses its route ([+0x24] = 0); 4 days | 1, 3, 5, 7 | 0x51A2C0 11 to 21 calls, all equal; 6 of 6 targets in 1 and 5 (3 and 7: no small AI ship alone at sea) |
+
+From the state the scenario leaves, written by the game, the whole world 4 days continuous
+(`re/emu/sesion25/world_routes.sh ai_closed_port 4 1 3 5 7`): 0 different. The world 7 days in the 12 saves, now
+with 0x51A2C0 for every AI ship: 0 different. Two game bugs, fixed behind `fix_game_bugs` (ctest `game_fixes`): the
+ship alone is passed its town after it was cleared to 0xFF (every travel time 0xFF: the first open town by its
+number), and the big ship's test is the wrong way round (a small ship avoids the towns without a deep port, a big one
+alone doesn't).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

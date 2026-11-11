@@ -22,6 +22,7 @@
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
+#include "p3data/trade_routes.hpp"
 
 namespace p3::data {
 
@@ -127,11 +128,10 @@ void Sailing::update_convoys() {
 				}
 			} else if (lead.orders() & 1) {
 				// The players have no convoys in the 12 saves. Checked with the oracle: scenario
-				// convoy_states (saves 1, 3, 5, 7): without trade routes, the route is interrupted
-				// (the automatic route, 0x503230, goes with the trade routes, phase 6).
+				// convoy_states (saves 1, 3, 5, 7): without trade routes, the route is interrupted.
 				if (lead.memory.u16(0x132) < g.u16(kRouteCount) && tick::ship_ai_detail::fn_519c40(save_, leader) &&
 					tick::ship_ai_detail::fn_519ba0(save_, leader)) {
-					// 0x503230: la ruta automática del convoy; no se reproduce.
+					fn_503230(save_, this, int(index));  // The convoy on its trade route (trade_routes.cpp).
 				} else {
 					// Deja la ruta automática, and the ticker line «X's trade route is
 					// interrupted» (0x507283: kind 0x22, the convoy's guide).

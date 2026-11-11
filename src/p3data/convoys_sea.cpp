@@ -27,6 +27,7 @@
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
+#include "p3data/trade_routes.hpp"
 
 namespace p3::data {
 
@@ -176,8 +177,11 @@ bool Sailing::fn_502110(int convoy, uint32_t every_32) {
 
 	if (!lead.route) {
 		// Solo en las pruebas sintéticas: sin ruta, el convoy se para. Si es de
-		// la IA, antes 0x51A2C0(guía, [+0x37] % ciudades) le busca otro
-		// destino; el oráculo se la salta (como en Sailing::arrive).
+		// la IA, antes le busca otro destino (0x50241B → 0x51A2C0, with its
+		// guide's [+0x37] modulo the towns).
+		if (lead.owner() < save_.globals.u16(global::kWorldMerchantCount) && ai_merchant(save_, lead.owner())) {
+			fn_51a2c0(c.u16(0x10), lead.origin() % save_.globals.u32(global::kWorldTownCount));
+		}
 		c.u32(0x18) |= 0x80;
 		for (uint32_t i = c.u16(0xA); i < ship_count(save_); i = save_.ships[i].next_in_list()) {
 			SavedShip& s = save_.ships[i];
@@ -319,15 +323,19 @@ bool Sailing::fn_502110(int convoy, uint32_t every_32) {
 		// route (above).
 		set_destination(lead, 0xFF, 0x220, 0x368);
 	} else if (!ai_merchant(save_, c.u8(0x0)) && (c.u16(0x14) & 2)) {
-		// Jugador humano, todos sus barcos: con ruta automática, 0x4D5900 (el
-		// oráculo se la salta); si iba a esta ciudad, the ticker line (0x50285C:
-		// kind 3, the guide) y pierde las órdenes de ruta.
+		// Jugador humano, todos sus barcos: with its guide's trade route on, its
+		// next stop (0x502831 → 0x4D5900); si iba a esta ciudad, the ticker line
+		// (0x50285C: kind 3, the guide) y pierde las órdenes de ruta.
+		if ((lead.orders() & 1) == 1) {
+			fn_4d5900(save_, this, c.u16(0x10));
+		}
 		if (lead.destination() == uint32_t(town)) {
 			send_ticker(save_, c.u8(0x0), 3, c.u16(0x10));
 			lead.orders() &= 0xFC;
 		}
 	} else {
-		// La IA busca otro destino con 0x51A2C0(guía, ciudad): el oráculo se la salta.
+		// An AI convoy, or a human's not of all his ships, looks for another destination (0x502872 → 0x51A2C0).
+		fn_51a2c0(c.u16(0x10), uint32_t(town));
 	}
 	c.u8(0x1E) = uint8_t(town);
 	for (uint32_t i = c.u16(0xA); i < ship_count(save_); i = save_.ships[i].next_in_list()) {

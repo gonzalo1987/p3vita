@@ -143,7 +143,8 @@ OPERATIONS = (0x00, 0x01, 0x02, 0x08, 0x09, 0x0A, 0x12, 0x13, 0x1E, 0x1F, 0x22, 
               0x87, 0x8E, 0xB8, 0x58, 0x59,
               0x0C, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x20, 0x2D, 0x2E, 0x2F,
               0x2A, 0x2B, 0x25, 0x26, 0x70, 0x71, 0x0D,
-              0x9F)  # las que se ejecutan por omisión (0x9F: queued by the chase that catches, 0x50B250)
+              0x9F,
+              0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D)  # las que se ejecutan por omisión (0x9F: queued by the chase that catches, 0x50B250; 0x68..0x6D: the trade routes)
 UPDATE_DATE = 0x5310D0
 RAND = 0x639C03
 MERGE_TOWN_FLAGS = 0x5348B0  # la carga lo llama con 0x6DF278 tras leer el mundo
@@ -153,6 +154,7 @@ PLAYER = 0x6DFC14
 SIEGES = 0x6DF270
 EVENTS = 0x6DD73C  # cola de eventos: puntero al array, cabeza u16 en +8, número u16 en +0xC
 MAIL = 0x6DD730  # buzón de los avisos: puntero a las entradas de 16 bytes, número u16 en +6
+TRADE_ROUTES = 0x6DD728  # the trade routes' pool: u16 free head, u16 count, the array of stops
 PLAYER_TOWNS = 0x6DEF90  # 8 punteros a 40 bytes (un byte por ciudad) del objeto 0x6DE588
 GLOBALS = (0x6DD000, 0x6E0000)
 # Objeto de los nombres (0x5121C0 lo carga al arrancar el juego): punteros a
@@ -407,6 +409,7 @@ DOCKED_STATES = (0, 1, 2, 3, 4, 5)
 QUIET = {
     0x548CA0: 0x18,  # mensaje al jugador
     0x613920: 4,  # escena del puerto (0x6E6220)
+    0x48FD90: 0,  # the trade route window after operation 0x6B (*0x6CE6D0)
     0x6141D0: 8,  # the port scene shows another town (operations 0x16, 0x17)
     0x4D6530: 8,  # mensaje a uno o varios comerciantes (buzón 0x6DD730)
 }
@@ -505,6 +508,10 @@ MAIL_CALLS = (
     # 0x62 to the owner, 0x28 when he can't pay, 0x27 to the holder).
     0x4E8975, 0x4E8A49, 0x4E8AD2,
 )
+MAIL_CALLS += (
+    # The trade routes (trade_routes.cpp): the report 0x07 of a ship alone (0x4D5200) and of a convoy (0x503230).
+    0x4D55F9, 0x5035CD,
+)
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is
 # counted by its call address and printed to stderr at the end (whether it
@@ -525,7 +532,6 @@ QUIET_SHIPS = {
     0x453DF0: 0,  # interfaz
     0x6132C0: 4, 0x6135C0: 8,  # escena del puerto
     0x514000: 4,  # objetos del final de la sección de barcos
-    0x51A2C0: 8, 0x4D5900: 8, 0x518860: 4,  # IA ante un puerto bloqueado; ruta automática (no se reproducen)
 }
 # Con la cola de eventos (--resto 4d85c0), además, interfaz:
 QUIET_EVENTS = {
@@ -1551,6 +1557,8 @@ class TownOracle(SaveOracle):
         out['Y'] = (times, block(times, towns * towns if times else 0))
         convoys = gu32(SHIPS + 8)
         out['V'] = (convoys, block(convoys, gu16(SHIPS + 0xF6) * 0x3C if convoys else 0))
+        stops = gu32(TRADE_ROUTES + 4)  # the trade routes' stops (0xDC bytes, as many as the u16 [+0x2])
+        out['AU'] = (stops, block(stops, gu16(TRADE_ROUTES + 2) * 0xDC if stops else 0))
         routes = []
         for i in range(ships):
             route = unpack('<I', ship_block, i * 0x180 + 0x24)[0]

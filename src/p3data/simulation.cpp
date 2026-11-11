@@ -6,6 +6,7 @@
 #include "p3data/mail.hpp"
 #include "p3data/new_game.hpp"
 #include "p3data/trade.hpp"
+#include "p3data/trade_routes.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/town_tick/votes.hpp"
 
@@ -317,6 +318,29 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x8E:  // Un asedio: el ejército sitiador (0x536A67, 0x633AF0).
 		tick::fn_536a67(save, operation);
+		break;
+	case 0x68:  // Start or stop a ship's trade route (0x5364C5 → 0x53DF00; trade_routes.cpp).
+	case 0x6C: {  // A new trade route for a ship (0x536501 → 0x53E890).
+		uint8_t op[0x14];
+		std::memcpy(op, operation, sizeof(op));  // The handlers write into it.
+		if (fields[0] == 0x68) {
+			fn_53df00(save, sailing, op);
+		} else {
+			fn_53e890(save, op);
+		}
+		break;
+	}
+	case 0x69:  // A ware of a trade route's stop (0x5364D4 → 0x53E480).
+		fn_53e480(save, operation);
+		break;
+	case 0x6A:  // Insert, remove or change a trade route's stop (0x5364E3 → 0x53E610).
+		fn_53e610(save, operation);
+		break;
+	case 0x6B:  // Move a stop of a ship's trade route (0x5364F2 → 0x53E7C0).
+		fn_53e7c0(save, operation);
+		break;
+	case 0x6D:  // A trade route stop's action (0x536510 → 0x53E9C0).
+		fn_53e9c0(save, operation);
 		break;
 	case 0x6E:  // The player has read a letter (0x536AC7 → 0x4D69D0): {0x6E, merchant, entry}.
 		mark_letter_read(save, fields[1], uint32_t(fields[2]));

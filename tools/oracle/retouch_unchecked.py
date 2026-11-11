@@ -10444,6 +10444,772 @@ def town_symbols(o):
     return during
 
 
+TRADE_ROUTES = 0x6DD728  # the stops' pool: u16 free head, u16 count, the array of stops (0xDC bytes)
+
+
+def trade_route_ops(o):
+    """The trade routes' operations (src/p3data/trade_routes.cpp) on the player's first ship in port s (made fit
+    to guide: a captain), with the pool's functions under them (0x4D4C90, 0x4D4DD0, 0x4D4E80, 0x4D4F60, 0x4D5AB0).
+    0x6C (0x53E890): three stops at its town (the pool grows), again two at another town (the old route
+    released), a town out, no stops, a ship out. 0x6A (0x53E610): a stop inserted, a town out of the world, a
+    stop's town changed with the ship on it (to a town with his office: amounts kept; without: the office
+    transfers cleared), the same town, no ship, a stop out, a stop removed (its ship moved on, the first stop's
+    bit passed). 0x69 (0x53E480): a ware to sell, to buy, to put in the office, an amount only (position out), a
+    ware out, a merchant out, the order without the ware (reset), the 25th place (the low byte of ware 0's
+    price), wares twice. 0x6D (0x53E9C0): action 1 (a town with and without [+0x76C] & 0x40, a stop at a town
+    out), 5, 0, a stop out. 0x6B (0x53E7C0): a stop made first, one already after the other made first, moved,
+    again with the bit, removed (the other out of the route), a stop out of the route, a ship out, the head alone
+    (the route gone). 0x68 (0x53DF00): nothing to do anywhere, a ware to sell (docked: started), stopped, no
+    captain, [+0x15C], no route, sailing (0xF), the state 8 (with the town's [+0x994], to its own town), the
+    shipyard (6) alone and as a convoy's guide, a convoy started and stopped; 0x6C and 0x6B on a convoy (its
+    guide). 0x6C with the pool running out in the middle (the route cut: a game bug). Not made: 0x4D4E80 with a
+    stop whose next is out of the pool (0x4D4EF7; the operations never leave one), 0x69 for a merchant out (the game
+    writes past his array)."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    towns, offices, merchants, ships = o.counts()
+    other = next(u for u in range(towns) if u != t)
+    office_table = o.u32(to.WORLD + 0x74)
+
+    def base():
+        return o.u32(TRADE_ROUTES + 4)
+
+    def stop(i):
+        return base() + 0xDC * i
+
+    def count():
+        return o.u16(TRADE_ROUTES + 2)
+
+    def route(head):
+        out, i = [], head
+        while i < count() and len(out) <= count():
+            out.append(i)
+            i = o.u16(stop(i))
+            if i == head:
+                break
+        return out
+
+    def show(what):
+        h = o.u16(a + 0x132)
+        r = route(h) if h < count() else []
+        stops = ' '.join(f'{i}:{o.u8(stop(i) + 2)}/{o.u8(stop(i) + 3):#x}' for i in r)
+        print(f'  {what}: free {o.u16(TRADE_ROUTES)}, count {count()}, stop {h:#x}, orders {o.u8(a + 0x136):#x}, '
+              f'state {o.u16(a + 0x134)}, route {stops}')
+
+    def office(u):
+        k = o.u16(o.town(u) + 0x784)
+        for _ in range(offices):
+            if k >= offices:
+                return False
+            if o.u16(office_table + 0x44C * k + 0x2C4) == m:
+                return True
+            k = o.u16(office_table + 0x44C * k + 0x2CA)
+        return False
+
+    def unlink(head, link, x):
+        """x out of the list at the u16 `head`, linked by the u16 at link(each)."""
+        p = head
+        while o.u16(p) != x:
+            p = link(o.u16(p))
+        w16(o, p, o.u16(link(x)))
+
+    def during(o):
+        w32(o, o.merchant(m), 10000000)
+        make_guide(o, s, t)
+        # 0x6C
+        operation(o, 0x6C, s, t, 3)
+        show('0x6C: three stops at its town')
+        operation(o, 0x6C, s, other, 2)
+        show('0x6C again: two at another town')
+        operation(o, 0x6C, s, towns, 2)
+        operation(o, 0x6C, s, t, 0)
+        operation(o, 0x6C, ships, t, 1)
+        h = o.u16(a + 0x132)
+        # 0x6A
+        operation(o, 0x6A, h, 1, t, s)
+        show('0x6A: a stop inserted after the head')
+        operation(o, 0x6A, h, 1, towns, s)
+        here = o.u8(stop(h) + 2)
+        no_office = next((u for u in range(towns) if not office(u) and u != here), None)
+        with_office = next((u for u in range(towns) if office(u) and u != here), None)
+        print(f'  a town with his office {with_office}, one without {no_office}')
+        operation(o, 0x69, h | m << 16, 0 | 0x18 << 16, -1000000000 & 0xFFFFFFFF, 0)
+        operation(o, 0x69, h | m << 16, 1 | 0x18 << 16, 4000, 0)
+        w8(o, a + 0x136, 1)
+        if with_office is not None:
+            operation(o, 0x6A, h, 0, with_office, s)
+            show('0x6A: the head to a town with his office, the ship on it')
+        w8(o, a + 0x136, 1)
+        if no_office is not None:
+            operation(o, 0x6A, h, 0, no_office, s)
+            show('0x6A: the head to a town without his office')
+            operation(o, 0x6A, h, 0, no_office, s)
+        operation(o, 0x6A, h, 0, t, ships)
+        operation(o, 0x6A, count(), 0, t, s)
+        # A ship sailing (0xF and over 0xC) on the stop whose town changes: 0x5171E0.
+        state = o.u16(a + 0x134)
+        w16(o, a + 0x134, 0xF)
+        operation(o, 0x6A, h, 0, other if o.u8(stop(h) + 2) != other else t, s)
+        show('0x6A: the town changed under a ship at sea')
+        w16(o, a + 0x134, state)
+        w8(o, a + 0x38, o.u8(a + 0x39))
+        r = route(h)
+        w16(o, a + 0x132, r[0])
+        operation(o, 0x6A, r[0], 0, towns, s)
+        show('0x6A: the head removed (the ship moved on, the bit passed)')
+        h = o.u16(a + 0x132)
+        # 0x69
+        for ware, pos, amount, price in ((3, 0, 1000, 100), (5, 23, 2000, -50), (0, 2, -1000000000, 0),
+                                         (7, 0x18, 5, 0), (0x18, 0, 1, 1), (6, 6, 6, 6)):
+            operation(o, 0x69, h | m << 16, ware | pos << 16, amount & 0xFFFFFFFF, price & 0xFFFFFFFF)
+        # (A merchant out: the game writes his price past its array, into whatever follows; not reproducible.)
+        o.uc.mem_write(stop(h) + 4, bytes(24))
+        operation(o, 0x69, h | m << 16, 5 | 3 << 16, 9, 0)
+        print(f'  0x69 without the ware: order {bytes(o.uc.mem_read(stop(h) + 4, 24)).hex()}')
+        o.uc.mem_write(stop(h) + 4, bytes([1] * 24))
+        w32(o, stop(h) + 0x1C, 9)
+        operation(o, 0x69, h | m << 16, 9 | 4 << 16, 9, 0)
+        print(f'  0x69 at the 25th place: order {bytes(o.uc.mem_read(stop(h) + 4, 24)).hex()}, '
+              f'price0 {o.s32(stop(h) + 0x1C)}')
+        o.uc.mem_write(stop(h) + 4, bytes(list(range(20)) + [3, 3, 7, 7]))
+        operation(o, 0x69, h | m << 16, 11 | 1 << 16, 1, 0)
+        print(f'  0x69 with wares twice: order {bytes(o.uc.mem_read(stop(h) + 4, 24)).hex()}')
+        # 0x6D
+        tt = o.u8(stop(h) + 2)
+        flags = o.u32(o.town(tt) + 0x76C)
+        for bit in (0, 0x40):
+            w32(o, o.town(tt) + 0x76C, (flags & ~0x40) | bit)
+            operation(o, 0x6D, h, 1)
+            print(f'  0x6D 1, the town with {bit:#x}: action {o.u8(stop(h) + 3):#x}')
+        w32(o, o.town(tt) + 0x76C, flags)
+        operation(o, 0x6D, h, 5)
+        operation(o, 0x6D, h, 0)
+        w8(o, stop(h) + 2, 0xFF)
+        operation(o, 0x6D, h, 1)
+        w8(o, stop(h) + 2, tt)
+        operation(o, 0x6D, count(), 1)
+        # 0x6B on a route of four stops
+        operation(o, 0x6C, s, t, 4)
+        r = route(o.u16(a + 0x132))
+        show('0x6C: four stops')
+        operation(o, 0x6B, s, r[1], r[1], 1)
+        show('0x6B: the second made first')
+        operation(o, 0x6B, s, r[2], r[1], 1)
+        show('0x6B: the third, already after the second, made first')
+        operation(o, 0x6B, s, r[1], r[3], 0)
+        show('0x6B: the second after the fourth')
+        operation(o, 0x6B, s, r[1], r[3], 1)
+        operation(o, 0x6B, s, r[3], r[1], 1)
+        show('0x6B: the fourth after the second, first')
+        operation(o, 0x6B, s, r[3], r[0], 0)
+        show('0x6B: the first stop (with the bit) moved')
+        operation(o, 0x6B, s, o.u16(a + 0x132), 0xFFFF, 0)
+        show('0x6B: the stop of the ship removed')
+        operation(o, 0x6B, s, r[2], 0xFFFF, 0)
+        show('0x6B: the third removed')
+        operation(o, 0x6B, s, o.u16(TRADE_ROUTES), r[0], 0)
+        operation(o, 0x6B, ships, r[0], r[1], 0)
+        operation(o, 0x6C, s, t, 1)
+        operation(o, 0x6A, o.u16(a + 0x132), 0, towns, s)
+        show('0x6A: the only stop removed')
+        operation(o, 0x6C, s, t, 1)
+        operation(o, 0x6B, s, o.u16(a + 0x132), 0xFFFF, 0)
+        show('0x6B: the head alone removed')
+        # 0x68
+        operation(o, 0x6C, s, t, 2)
+        r = route(o.u16(a + 0x132))
+        operation(o, 0x68, s, 1)
+        show('0x68: nothing to do anywhere')
+        if office(o.u8(stop(r[0]) + 2)):
+            operation(o, 0x69, r[0] | m << 16, 2 | 0x18 << 16, 2000, 0)
+            operation(o, 0x68, s, 1)
+            show('0x68: a ware to take from the office')
+            operation(o, 0x68, s, 0)
+            operation(o, 0x69, r[0] | m << 16, 2 | 0x18 << 16, 0, 0)
+        else:
+            print('  no office at the first stop')
+        w32(o, a + 0x54 + 4 * 3, 4000)
+        operation(o, 0x69, r[1] | m << 16, 3, 1000, 1)
+        operation(o, 0x68, s, 1)
+        show('0x68: a ware to sell at the second (docked)')
+        operation(o, 0x68, s, 0)
+        show('0x68: stopped')
+        tf = o.town(o.u8(stop(o.u16(a + 0x132)) + 2))
+        f0 = o.u32(tf + 0x2C8)
+        for bit, what in ((1, 'a town without a deep port'), (0x200, 'a town closed')):
+            w32(o, tf + 0x2C8, f0 | bit)
+            operation(o, 0x68, s, 1)
+            show(f'0x68: {what} (type of the ship {o.u8(a + 0xE)})')
+            operation(o, 0x68, s, 0)
+        w32(o, tf + 0x2C8, f0)
+        captain = o.u16(a + 0x42)
+        w16(o, a + 0x42, 0xFFFF)
+        operation(o, 0x68, s, 1)
+        w16(o, a + 0x42, captain)
+        w8(o, a + 0x15C, 1)
+        operation(o, 0x68, s, 1)
+        w8(o, a + 0x15C, 0)
+        here = o.u16(a + 0x132)
+        w16(o, a + 0x132, 0xFFFF)
+        operation(o, 0x68, s, 1)
+        show('0x68: no route')
+        w16(o, a + 0x132, here)
+        state, wait = o.u16(a + 0x134), o.u16(a + 0x138)
+        w16(o, a + 0x134, 0xF)
+        operation(o, 0x68, s, 1)
+        show('0x68: sailing')
+        w16(o, a + 0x134, 8)
+        w16(o, a + 0x138, 0x10)
+        w8(o, stop(o.u16(a + 0x132)) + 2, other)
+        operation(o, 0x68, s, 1)
+        show('0x68: the state 8, to another town')
+        tw = o.town(o.u8(a + 0x39))
+        w16(o, a + 0x134, 8)
+        w16(o, tw + 0x994, s)
+        w32(o, tw + 0x990, 0x1234)
+        w8(o, stop(o.u16(a + 0x132)) + 2, o.u8(a + 0x39))
+        operation(o, 0x68, s, 1)
+        show('0x68: the state 8, its town\'s [+0x994], to its own town')
+        w16(o, a + 0x134, state)
+        w16(o, a + 0x138, wait)
+        w8(o, a + 0x38, o.u8(a + 0x39))
+        # The shipyard (6): the ship out of the docked list into its town's list [+0x81E].
+        yard = o.u16(tw + 0x81E)
+        unlink(to.SHIPS + 0xE8, lambda x: o.ship(x) + 6, s)
+        w16(o, a + 6, yard)
+        w16(o, tw + 0x81E, s)
+        w16(o, a + 0x134, 6)
+        operation(o, 0x68, s, 1)
+        show('0x68: in the shipyard')
+        # A convoy guided by s: on, off; in the shipyard; 0x6C and 0x6B on it.
+        w16(o, a + 0x134, 0)
+        run_bytes(o, player_op('create-convoy', s, 0, 0))
+        k = o.u16(a + 8)
+        if k < o.u16(CONVOY_COUNT):
+            operation(o, 0x68, s, 1)
+            show('0x68: a convoy started')
+            operation(o, 0x68, s, 0)
+            show('0x68: a convoy stopped')
+            c = convoy_at(o, k)
+            big, f0 = o.u8(c + 1), o.u32(tf + 0x2C8)
+            w8(o, c + 1, 2)
+            w32(o, tf + 0x2C8, f0 | 1)
+            operation(o, 0x68, s, 1)
+            show('0x68: a convoy with a big ship, a town without a deep port')
+            operation(o, 0x68, s, 0)
+            w8(o, c + 1, big)
+            w32(o, tf + 0x2C8, f0)
+            c = convoy_at(o, k)
+            unlink(CONVOY_HEAD, lambda x: convoy_at(o, x) + 8, k)
+            w16(o, c + 8, o.u16(tw + 0x820))
+            w16(o, tw + 0x820, k)
+            w16(o, a + 0x134, 6)
+            operation(o, 0x68, s, 1)
+            show('0x68: a convoy in the shipyard')
+            operation(o, 0x6C, s, other, 1)
+            show('0x6C on the convoy: its guide\'s route')
+            operation(o, 0x6B, s, o.u16(a + 0x132), o.u16(a + 0x132), 1)
+            operation(o, 0x17, s)
+        else:
+            print('  no convoy made')
+        # 0x6C with the pool running out in the middle.
+        operation(o, 0x6C, s, t, 1)
+        n, f = 0, o.u16(TRADE_ROUTES)
+        while f < count():
+            n += 1
+            f = o.u16(stop(f))
+        operation(o, 0x6C, s, other, n + 3)
+        show(f'0x6C with {n + 3} stops, {n} free')
+    return during
+
+
+TRADE_ROUTE_SHIPS = [0x518860, 0x4D5200, 0x503230, 0x4D5900, 0x535760]
+
+
+def nearest_town(o, t, exclude=()):
+    """The town nearest to t on the map (StadtDaten.ini's x, y by town number), not in `exclude`."""
+    towns = o.counts()[0]
+
+    def place(u):
+        row = 0x6DDB90 + 0x34 * o.u8(TOWN_IDS + u)
+        return o.s32(row + 0x20), o.s32(row + 0x24)
+    x, y = place(t)
+    return min((u for u in range(towns) if u != t and u not in exclude),
+               key=lambda u: (place(u)[0] - x) ** 2 + (place(u)[1] - y) ** 2)
+
+
+def route_ship(o, variant):
+    """The player's first ship in port s, fit to guide (a captain, sailors, guns, its hull), with a route of two
+    stops made by the window's operations: at its town t (the first stop: the report) buy two wares the town has
+    most of (up to twice their base price, a few loads or barrels), put one ware of the ship's into the office and
+    take one out of it (if he has one there); at the nearest town u sell those two wares down to 1. Then 0x68 starts
+    it. `variant` adds: 'closed' (u closed: [+0x2C8] | 0x200 once the ship sails), 'repair' (the second stop with
+    the repair bit, the hull at a half), 'bad' (a third stop at a town out of the world, then the ship's
+    sailors taken away when it docks), 'stop' (the second stop with the bit 2: the route ends there).
+    'closed' returns a function for after each tick (u closed once the ship sails to it)."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    towns = o.counts()[0]
+    u = nearest_town(o, t)
+    stops = 0x6DD72C
+
+    def stop(i):
+        return o.u32(stops) + 0xDC * i
+
+    def route():
+        out, i = [], o.u16(a + 0x132)
+        while i < o.u16(TRADE_ROUTES + 2) and i not in out:
+            out.append(i)
+            i = o.u16(stop(i))
+        return out
+
+    def during(o):
+        w32(o, o.merchant(m), 10000000)
+        make_guide(o, s, t)
+        stock = sorted(range(20), key=lambda w: -o.s32(o.town(t) + 4 + 4 * w))
+        buy = stock[:2]
+        operation(o, 0x6C, s, t, 2)
+        r = route()
+        operation(o, 0x6A, r[1], 0, u, s)
+        for k, w in enumerate(buy):
+            unit = 200 if w in (3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 18) else 2000
+            base = o.s32(stop(r[0]) + 0x1C + 4 * w)
+            operation(o, 0x69, r[0] | m << 16, w | k << 16, 5 * unit, (-2 * base) & 0xFFFFFFFF)
+            operation(o, 0x69, r[1] | m << 16, w | k << 16, 1000000000, 1)
+        cargo = [w for w in range(20) if o.s32(a + 0x54 + 4 * w) > 0 and w not in buy]
+        if not cargo:
+            cargo = [next(w for w in range(20) if w not in buy)]
+            w32(o, a + 0x54 + 4 * cargo[0], 4000)
+            o.uc.mem_write(a + 0xB4 + 4 * cargo[0], struct.pack('<f', 0.5))
+            direct(o, 0x5182B0, [], ecx=a)
+        office_stock = []
+        k = o.u16(o.town(t) + 0x784)
+        offices, table = o.counts()[1], o.u32(to.WORLD + 0x74)
+        while k < offices:
+            if o.u16(table + 0x44C * k + 0x2C4) == m:
+                office_stock = [w for w in range(20) if o.s32(table + 0x44C * k + 4 + 4 * w) > 0
+                                and w not in buy and w not in cargo]
+                if not office_stock:
+                    office_stock = [next(w for w in range(20) if w not in buy and w not in cargo)]
+                    w32(o, table + 0x44C * k + 4 + 4 * office_stock[0], 6000)
+                break
+            k = o.u16(table + 0x44C * k + 0x2CA)
+        if office_stock:
+            operation(o, 0x69, r[0] | m << 16, cargo[0] | 5 << 16, (-1000000000) & 0xFFFFFFFF, 0)
+            operation(o, 0x69, r[0] | m << 16, office_stock[0] | 6 << 16, 2000, 0)
+        if variant == 'repair':
+            operation(o, 0x6D, r[1], 1)
+            w32(o, a + 0x18, o.s32(a + 0x14) // 2)
+        if variant == 'stop':
+            operation(o, 0x6D, r[1], 2)
+        if variant == 'bad':
+            operation(o, 0x6A, r[1], 1, t, s)
+            w8(o, stop(route()[2]) + 2, 0xFF)
+        print(f'  ship {s} in {t}, the route\'s other town {u}; buy {buy}, cargo to the office {cargo[:1]}, '
+              f'from the office {office_stock[:1]}; stops {route()}')
+        operation(o, 0x68, s, 1)
+        print(f'  0x68: state {o.u16(a + 0x134)}, orders {o.u8(a + 0x136):#x}, stop {o.u16(a + 0x132)}')
+        if variant == 'bad':
+            w16(o, a + 0x132, route()[2] if len(route()) > 2 else o.u16(a + 0x132))
+            w16(o, a + 0x40, 0)
+        if variant in ('closed', 'closed_home', 'closed_far'):
+            def close_once_at_sea(o, tick):
+                flags = o.u32(o.town(u) + 0x2C8)
+                if o.u16(a + 0x134) == 0xF and o.u8(a + 0x38) == u and not flags & 0x200:
+                    w32(o, o.town(u) + 0x2C8, flags | 0x200)
+                    if variant != 'closed':
+                        for i in route():  # nothing to do at the stop in t any more
+                            if o.u8(stop(i) + 2) == t:
+                                for w in range(24):
+                                    w32(o, stop(i) + 0x7C + 4 * w, 0)
+                    if variant == 'closed_far':
+                        home = o.u8(o.merchant(m) + 0x19)
+                        # Both closed towns without their shipyards too: else the game sends the ship to one of them,
+                        # where it arrives again in the same tick for ever (a game bug, fixed behind fix_game_bugs;
+                        # ctest game_fixes).
+                        for x in (home, u):
+                            w32(o, o.town(x) + 0x2C8, (o.u32(o.town(x) + 0x2C8) | 0x200) & ~0x40)
+                    print(f'  tick {tick}: the ship at sea to {u}, its port closed')
+            return close_once_at_sea
+    return during
+
+
+def trade_route_ships(o):
+    """A ship alone on its route (route_ship), the world 10 days: 0x518860 (docked on its route: it trades, waits
+    and sails to the next stop), 0x4D5200 (the trading: buying with the captain's discount, the office both ways,
+    selling, the report 0x07 at the first stop) and the operations."""
+    return route_ship(o, None)
+
+
+def trade_route_closed(o):
+    """As trade_route_ships, the other town closed: the ship before its port, 0x4D5900 (its next stop: none but
+    this one, so home)."""
+    return route_ship(o, 'closed')
+
+
+def trade_route_closed_home(o):
+    """As trade_route_closed, nothing to do at the first stop either: 0x4D5900 sends it home."""
+    return route_ship(o, 'closed_home')
+
+
+def trade_route_closed_far(o):
+    """As trade_route_closed_home, the home town closed too: the nearest town with a shipyard. Both closed towns
+    lose their shipyards as well: 0x4D5900 doesn't look at [+0x2C8] & 0x200, so it would send the ship to one of
+    them, where it arrives again in the same tick for ever (the game hangs)."""
+    return route_ship(o, 'closed_far')
+
+
+def trade_route_repair(o):
+    """As trade_route_ships, the second stop with repairs and the ship at half its hull: 0x52ACD0 at that stop."""
+    return route_ship(o, 'repair')
+
+
+def trade_route_bad(o):
+    """As trade_route_ships with a third stop at a town out of the world (dropped by 0x518860) and the ship
+    without sailors (it can't sail on: the line 0x28)."""
+    return route_ship(o, 'bad')
+
+
+def trade_route_stop(o):
+    """As trade_route_ships, the second stop with the bit 2: the route ends after trading there."""
+    return route_ship(o, 'stop')
+
+
+def route_convoy(o, variant):
+    """The player's first ship in port s guides a private convoy with another ship of his b in its town t (saves
+    3, 5, 7; none in save 1), both fit (a captain for s only), and the route of route_ship made on s (the
+    operations go to the guide): at t buy two wares, at the nearest town u sell them; then 0x68 starts it.
+    `variant`: 'closed' (u closed once the convoy sails to it: 0x502831 → 0x4D5900), 'repair' (the first stop
+    with the repair bit and b at half its hull: the convoy's state 4, 0x52ACD0), 'away' (the guide's stop the one
+    at u while docked at t: it sails there at once), 'guide' (b fit to guide too; at sea the guide loses its
+    sailors and b gets a stop of its own: docking, 0x5017F0 makes b the guide, its stop released with its ships, the
+    old guide's route inherited)."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    u = nearest_town(o, t)
+
+    def stop(i):
+        return o.u32(TRADE_ROUTES + 4) + 0xDC * i
+
+    def route():
+        out, i = [], o.u16(a + 0x132)
+        while i < o.u16(TRADE_ROUTES + 2) and i not in out:
+            out.append(i)
+            i = o.u16(stop(i))
+        return out
+
+    def during(o):
+        w32(o, o.merchant(m), 10000000)
+        make_guide(o, s, t)
+        others = docked_ships(o, m, t, (s,))
+        if not others:
+            print('  no other ship of the player in his town')
+            return None
+        b = others[0]
+        bb = o.ship(b)
+        w16(o, bb + 0x40, 25)
+        w32(o, bb + 0x18, o.s32(bb + 0x14))
+        run_bytes(o, player_op('create-convoy', s, 0, 0))
+        k = o.u16(a + 8)
+        run_bytes(o, player_op('join-convoy', s, b))
+        print(f'  convoy {k} of ship {s} with ship {b} (in convoy {o.u16(bb + 8)}) in {t}; the other town {u}')
+        stock = sorted(range(20), key=lambda w: -o.s32(o.town(t) + 4 + 4 * w))
+        buy = stock[:2]
+        operation(o, 0x6C, s, t, 2)
+        r = route()
+        operation(o, 0x6A, r[1], 0, u, s)
+        for j, w in enumerate(buy):
+            unit = 200 if w in (3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 18) else 2000
+            base = o.s32(stop(r[0]) + 0x1C + 4 * w)
+            operation(o, 0x69, r[0] | m << 16, w | j << 16, 10 * unit, (-2 * base) & 0xFFFFFFFF)
+            operation(o, 0x69, r[1] | m << 16, w | j << 16, 1000000000, 1)
+        if variant == 'repair':
+            operation(o, 0x6D, r[0], 1)
+            w32(o, bb + 0x18, o.s32(bb + 0x14) // 2)
+        operation(o, 0x68, s, 1)
+        print(f'  0x68: state {o.u16(a + 0x134)}, orders {o.u8(a + 0x136):#x}, stop {o.u16(a + 0x132)}, stops {route()}')
+        if variant == 'away':
+            w16(o, a + 0x132, r[1])
+            w32(o, a + 0x54 + 4 * buy[0], 4000)  # something to sell at u
+            direct(o, 0x5182B0, [], ecx=a)
+        if variant == 'closed':
+            def close_once_at_sea(o, tick):
+                flags = o.u32(o.town(u) + 0x2C8)
+                if o.u16(a + 0x134) == 0xF and o.u8(a + 0x38) == u and not flags & 0x200:
+                    w32(o, o.town(u) + 0x2C8, flags | 0x200)
+                    print(f'  tick {tick}: the convoy at sea to {u}, its port closed')
+            return close_once_at_sea
+        if variant == 'guide':
+            make_guide(o, b, t)
+            done = []
+
+            def guide_without_sailors(o, tick):
+                if not done and o.u16(a + 0x134) == 0xF:
+                    done.append(tick)
+                    w16(o, a + 0x40, 0)
+                    lone_stop(o, b, u)
+                    print(f'  tick {tick}: at sea, the guide {s} without sailors, ship {b} with a stop of its own')
+            return guide_without_sailors
+        return None
+    return during
+
+
+def trade_route_convoy(o):
+    """A convoy of the player on its route (route_convoy), 8 days: 0x503230 (the members trade one after the other
+    on a copy of the stop, the convoy's report 0x07, the next stop that serves a member, the guide's captain lent
+    to a member without one) and 0x4D5200 under it."""
+    return route_convoy(o, None)
+
+
+def trade_route_convoy_closed(o):
+    """As trade_route_convoy, the other town closed while the convoy sails to it: 0x4D5900 from the convoys'
+    update (0x502831)."""
+    return route_convoy(o, 'closed')
+
+
+def trade_route_convoy_away(o):
+    """As trade_route_convoy, the guide's stop at the other town while the convoy is docked: 0x503230 sails at
+    once (state 1, a wait of 1)."""
+    return route_convoy(o, 'away')
+
+
+def trade_route_convoy_guide(o):
+    """As trade_route_convoy, the guide without sailors at sea: 0x5017F0 at the docking gives the convoy and its
+    route to the other ship, whose own route is released first (0x4D4DD0 with its ships)."""
+    return route_convoy(o, 'guide')
+
+
+def trade_route_convoy_repair(o):
+    """As trade_route_convoy, the first stop with repairs and a member at half its hull: the convoy's state 4 and
+    0x52ACD0 for the guide (the convoy into the shipyard)."""
+    return route_convoy(o, 'repair')
+
+
+def lone_stop(o, ship, town):
+    """A stop of its own for `ship` (the game's 0x4D4C90, as a route of one stop at `town`): its index."""
+    i = direct(o, 0x4D4C90, [], ecx=TRADE_ROUTES) & 0xFFFF
+    w8(o, o.u32(TRADE_ROUTES + 4) + 0xDC * i + 2, town)
+    w16(o, o.ship(ship) + 0x132, i)
+    return i
+
+
+def trade_route_release(o):
+    """The trade routes released where a ship leaves them (0x4D4DD0), each ship with a route first: operation
+    0x0A on a ship of the player (0x507FB0, the route released alone), one of his ships sold to an AI merchant
+    (0x509250, called directly: alone), a pirate convoy after its battle (0x50BFD0 called directly, the convoy and
+    its guide out of their lists first as at a battle's start; its guide with a stop of its own: released with its
+    ships) and the ships of a nest leaving it (0x514D40 called directly on each pirate, the first nest ship with a
+    full hull, an accepted captain and a stop of its own). Not made: 0x50BFD0's other release (0x50C77C: a ship of
+    no merchant in a merchant's convoy broken up after its battle)."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    convoys = o.u16(CONVOY_COUNT)
+    mine = [s for s in merchant_ships(o, player) if o.u16(o.ship(s) + 0x134) == 0 and o.u16(o.ship(s) + 8) >= convoys]
+    pirate_convoy = None
+    for c in range(convoys):
+        a = convoy_at(o, c)
+        if o.u8(a) >= merchants and o.u16(a + 0x10) < ships:
+            pirate_convoy = c
+            break
+    print(f'the player\'s docked ships {mine}; a pirate convoy {pirate_convoy}')
+
+    def during(o):
+        if len(mine) >= 2:
+            d, sold = mine[0], mine[1]
+            t = o.u8(o.ship(d) + 0x39)
+            operation(o, 0x6C, d, t, 2)
+            operation(o, 0x0A, d, player)
+            print(f'  0x0A: ship {d} deleted, free stop {o.u16(TRADE_ROUTES)}')
+            operation(o, 0x6C, sold, t, 3)
+            ai = next(k for k in range(merchants) if k != player and o.u16(o.merchant(k) + 8))
+            direct(o, 0x509250, [sold, ai, 0, 0, t], ecx=to.SHIPS)
+            print(f'  0x509250: ship {sold} owner {o.u8(o.ship(sold)):#x}, stop {o.u16(o.ship(sold) + 0x132):#x}, '
+                  f'free stop {o.u16(TRADE_ROUTES)}')
+        if pirate_convoy is not None:
+            c = pirate_convoy
+            g = o.u16(convoy_at(o, c) + 0x10)
+            lone_stop(o, g, 0)
+            link, steps = to.SHIPS + 0xEC, 0
+            while o.u16(link) != c and o.u16(link) < o.u16(CONVOY_COUNT) and steps < 200:
+                link, steps = convoy_at(o, o.u16(link)) + 8, steps + 1
+            if o.u16(link) == c:
+                w16(o, link, o.u16(convoy_at(o, c) + 8))
+                w16(o, convoy_at(o, c) + 8, 0xFFFF)
+            direct(o, 0x50D040, [g], ecx=to.SHIPS)
+            direct(o, 0x50BFD0, [c, 0, player], ecx=to.SHIPS)
+            print(f'  0x50BFD0: convoy {c}, its guide {g} stop {o.u16(o.ship(g) + 0x132):#x}, free stop '
+                  f'{o.u16(TRADE_ROUTES)}')
+        w8(o, o.u32(to.SHIPS) + 8, 0x40)  # captain 0 accepted at the nest
+        for k, pirate in pirates(o):
+            w16(o, pirate + 0x10, 0xFFFF)
+            nest = []
+            i = o.u16(pirate + 0x12)
+            while i < ships and len(nest) < 100:
+                nest.append(i)
+                i = o.u16(o.ship(i) + 6)
+            if not nest:
+                continue
+            s = o.ship(nest[0])
+            w32(o, s + 0x18, o.s32(s + 0x14))
+            w16(o, s + 0x42, 0)
+            lone_stop(o, nest[0], 0)
+            direct(o, 0x514D40, [1, 0x1F4], pirate)
+            print(f'  0x514D40 on pirate {k}: ship {nest[0]} stop {o.u16(s + 0x132):#x}, free stop '
+                  f'{o.u16(TRADE_ROUTES)}')
+            break
+    return during
+
+
+def trade_route_branches(o):
+    """0x4D5200 and 0x518860 called directly on the player's first ship in port s (fit to guide) with a route of
+    two stops (at its town t, buying the ware t has most of; at the nearest town u, selling it), each from a
+    retouched state, restored after: 0x4D5200 with its stop at u (the line 0), with no captain (its orders 0), at a
+    town without [+0x76C] & 0x100 whose [+0x6F1] is the owner and one whose isn't, with little money and with none
+    (the purchase cut down), selling with lots of cargo down to 99 and 70 % of what the first unit fetches and to three
+    limits whose town stock (0x52EA80) falls well into a unit (the unit more); 0x518860 with nothing to do anywhere (the line 0x24), the repair bit at a town without a shipyard
+    (the bit goes), the hull at a twentieth (the line 0x23), its port closed (it can't sail: the line 0), and a stop of its own at a town out of the world (dropped:
+    no route left, the line 0). Not reached: the unit more sold (0x4D549E): after the sale up to the town's limit
+    (0x52EA80), the next unit never fetched more than the limit (20 limits in saves 1, 3, 5, 7, those whose town
+    stock falls well into a unit); its code is the main sale's."""
+    s, t = player_docked_ship(o)
+    m = o.u32(to.PLAYER)
+    a = o.ship(s)
+    u = nearest_town(o, t)
+    tw = o.town(t)
+
+    def stop(i):
+        return o.u32(TRADE_ROUTES + 4) + 0xDC * i
+
+    def trade(what):
+        direct(o, 0x4D5200, [a, 0], ecx=TRADE_ROUTES)
+        print(f'  0x4D5200 {what}: money {o.s32(o.merchant(m))}, orders {o.u8(a + 0x136):#x}')
+
+    def docked(what):
+        direct(o, 0x518860, [s], ecx=a)
+        print(f'  0x518860 {what}: state {o.u16(a + 0x134)}, orders {o.u8(a + 0x136):#x}, stop {o.u16(a + 0x132):#x}')
+
+    def during(o):
+        w32(o, o.merchant(m), 10000000)
+        make_guide(o, s, t)
+        w = max(range(20), key=lambda w: o.s32(tw + 4 + 4 * w))
+        unit = 200 if w in (3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 18) else 2000
+        operation(o, 0x6C, s, t, 2)
+        r0 = o.u16(a + 0x132)
+        r1 = o.u16(stop(r0))
+        operation(o, 0x6A, r1, 0, u, s)
+        base = o.s32(stop(r0) + 0x1C + 4 * w)
+        operation(o, 0x69, r0 | m << 16, w, 10 * unit, (-3 * base) & 0xFFFFFFFF)
+        operation(o, 0x69, r1 | m << 16, w, 1000000000, 1)
+        saved = bytes(o.uc.mem_read(a, 0x180)), o.s32(o.merchant(m)), o.u32(tw + 0x76C), o.u8(tw + 0x6F1)
+        town_stock = o.s32(tw + 4 + 4 * w)
+
+        def restore():
+            o.uc.mem_write(a, saved[0])
+            w32(o, o.merchant(m), saved[1])
+            w32(o, tw + 0x76C, saved[2])
+            w8(o, tw + 0x6F1, saved[3])
+            w32(o, tw + 4 + 4 * w, town_stock)
+        w16(o, a + 0x132, r1)
+        trade('with its stop at u')
+        restore()
+        w16(o, a + 0x42, 0xFFFF)
+        trade('without a captain')
+        restore()
+        for lord, what in ((m, 'its lord the owner'), ((m + 1) % o.counts()[2], 'another lord')):
+            w32(o, tw + 0x76C, saved[2] & ~0x100)
+            w8(o, tw + 0x6F1, lord)
+            trade(f'at a town without 0x100, {what}')
+            restore()
+        for money in (300, 0):
+            w32(o, o.merchant(m), money)
+            trade(f'with {money} in money')
+            restore()
+        first = direct(o, 0x52E1D0, [w, t, unit], ecx=0x6DE3D8)  # what the first unit fetches
+        # Limits whose town stock (0x52EA80) falls well into a unit: the unit more may fetch more than the limit.
+        limits = [max(1, first * k // 100) for k in (99, 70)]
+        for k in range(990, 300, -3):
+            limit = max(1, first * k // 1000)
+            n = direct(o, 0x52EA80, [w, t, limit], ecx=0x6DE3D8) - town_stock
+            if 0 < n < 30 * unit and n % unit > unit * 6 // 10 and limit not in limits:
+                limits.append(limit)
+                if len(limits) >= 5:
+                    break
+        for limit in limits:
+            operation(o, 0x69, r0 | m << 16, w, 1000000000, limit)
+            w32(o, a + 0x54 + 4 * w, 40 * unit)
+            direct(o, 0x5182B0, [], ecx=a)
+            trade(f'selling down to {limit} (the first unit fetches {first})')
+            restore()
+        operation(o, 0x69, r0 | m << 16, w, 0, 0)
+        operation(o, 0x69, r1 | m << 16, w, 0, 0)
+        docked('with nothing to do anywhere')
+        restore()
+        operation(o, 0x69, r0 | m << 16, w, 10 * unit, (-3 * base) & 0xFFFFFFFF)
+        operation(o, 0x6D, r0, 1)
+        w32(o, tw + 0x76C, saved[2] & ~0x40)
+        docked('with the repair bit at a town without a shipyard')
+        restore()
+        w32(o, a + 0x18, o.s32(a + 0x14) // 20)
+        docked('at a twentieth of its hull')
+        restore()
+        w32(o, tw + 0x2C8, o.u32(tw + 0x2C8) | 0x200)
+        docked('with its port closed: it cannot sail')
+        w32(o, tw + 0x2C8, o.u32(tw + 0x2C8) & ~0x200)
+        restore()
+        lone = direct(o, 0x4D4C90, [], ecx=TRADE_ROUTES) & 0xFFFF
+        w8(o, stop(lone) + 2, 0xFF)
+        w16(o, a + 0x132, lone)
+        docked('on a stop at a town out of the world')
+        restore()
+    return during
+
+
+def ai_closed_port(o):
+    """0x51A2C0 (a ship before a closed port looks for another destination: the open town nearest by the world's
+    travel times, 0x531B70): the destinations of AI ships sailing alone (a small one and a big one) and of AI
+    convoys at sea closed ([+0x2C8] | 0x200): at their arrival 0x506ECD (alone: the town it passes is 0xFF, a game
+    bug, so the first open town by its number) and 0x502872 (a convoy, with the closed town); and an AI convoy at
+    sea whose guide loses its route ([+0x24] = 0, the pointer only): 0x50241B, with its [+0x37]. 4 days."""
+    towns, _, merchants, ships = o.counts()
+    convoys = o.u16(CONVOY_COUNT)
+
+    def ai(owner):
+        return owner < merchants and o.u16(o.merchant(owner) + 8) != 0
+
+    alone = {}
+    for s in range(ships):
+        a = o.ship(s)
+        if (ai(o.u8(a)) and o.u16(a + 0x134) == 0xF and o.u16(a + 8) >= convoys and o.u8(a + 0x38) < towns
+                and o.u32(a + 0x24)):
+            alone.setdefault(o.u8(a + 0xE) >= 2, s)
+    at_sea = []
+    for c in range(convoys):
+        ca = convoy_at(o, c)
+        g = o.u16(ca + 0x10)
+        if g < ships and ai(o.u8(ca)) and o.u16(o.ship(g) + 0x134) == 0xF and o.u8(o.ship(g) + 0x38) < towns \
+                and o.u32(o.ship(g) + 0x24):
+            at_sea.append(c)
+    print(f'AI ships alone at sea (small, big): {alone}; AI convoys at sea: {at_sea[:6]}')
+
+    def during(o):
+        closed = set()
+        for big, s in sorted(alone.items()):
+            closed.add(o.u8(o.ship(s) + 0x38))
+        for c in at_sea[:2]:
+            closed.add(o.u8(o.ship(o.u16(convoy_at(o, c) + 0x10)) + 0x38))
+        for t in sorted(closed):
+            w32(o, o.town(t) + 0x2C8, o.u32(o.town(t) + 0x2C8) | 0x200)
+        print(f'  closed: {sorted(closed)}')
+        if len(at_sea) > 2:
+            g = o.u16(convoy_at(o, at_sea[2]) + 0x10)
+            w32(o, o.ship(g) + 0x24, 0)
+            print(f'  convoy {at_sea[2]}: its guide {g} without its route')
+    return during
+
+
 def player_op_text(*args):
     """player_ops's output as text."""
     import subprocess
@@ -10876,6 +11642,51 @@ SCENARIOS = {
     'citizen_window': Scenario(citizen_window, [CITIZEN_STATS], 0, [
         '@40b5db', '@40b629', '@40b627>40b62e', '@40b653', '@40b668', '@40b680', '@40b698', '@40b6b3>40b6ba',
         '@40b6b5', '@40b6fb', '@40b6ff']),
+    'trade_route_ops': Scenario(trade_route_ops, [0x535760], 0, [
+        '@53df43', '@53df64', '@53df6f', '@53df8b', '@53dfc4', '@53dfe0', '@53e008', '@53e032', '@53e461', '@53e093',
+        '@53e0d2', '@53e0e6', '@53e11f', '@53e13f', '@53e16e', '@53e1bf', '@53e1df', '@53e1fc', '@53e225', '@53e28b',
+        '@53e2a3', '@53e300', '@53e392', '@53e3dc', '@53e40d',
+        '@53e4f2', '@53e505', '@53e517', '@53e546', '@53e555', '@53e56a', '@53e584', '@53e5e4', '@53e5f6',
+        '@53e643', '@53e69e', '@53e6b9', '@53e6cb', '@53e6e1', '@53e704', '@53e731', '@53e74f', '@53e785', '@53e79c',
+        '@53e7ab',
+        '@53e7f6', '@53e836', '@53e861',
+        '@53e8e0', '@53e944', '@53e964', '@53e995', '@53e9ae',
+        '@53e9df', '@53ea02', '@53ea1e', '@53ea24',
+        '@4d4ca4', '@4d4d42', '@4d4df1', '@4d4e33', '@4d4ed0', '@4d4f1a',
+        '@4d4f7c', '@4d5004', '@4d5059', '@4d50b8', '@4d50f6', '@4d515e', '@4d5175', '@4d5186', '@4d51ab',
+        '@4d5b26>4d5c3d', '@4d5b2c', '@4d5b3a', '@4d5b57', '@4d5b7a', '@4d5b88', '@4d5ba8', '@4d5bd0', '@4d5be5', '@4d5c02', '@4d5c15', '@4d5c23',
+        '@4d5c3d']),
+    'trade_route_ships': Scenario(trade_route_ships, TRADE_ROUTE_SHIPS, 8, [
+        '@51893d', '@51895d', '@518972', '@5189c9', '@518ac1', '@518afe', '@4d5293', '@4d539b', '@4d540d', '@4d564b', '@4d5696', '@4d57b1', '@4d5599', '@4d54f7', '@4d586b']),
+    'trade_route_closed': Scenario(trade_route_closed, TRADE_ROUTE_SHIPS, 8, [
+        '@4d5933', '@4d5956', '@4d5a80']),
+    'trade_route_closed_home': Scenario(trade_route_closed_home, TRADE_ROUTE_SHIPS, 8, [
+        '@4d599c', '@4d5a80']),
+    'trade_route_closed_far': Scenario(trade_route_closed_far, TRADE_ROUTE_SHIPS, 2, [
+        '@4d5a02', '@4d5a11', '@4d5a67']),
+    'trade_route_repair': Scenario(trade_route_repair, TRADE_ROUTE_SHIPS, 8, [
+        '@51897e', '@5189b9']),
+    'trade_route_bad': Scenario(trade_route_bad, TRADE_ROUTE_SHIPS, 2, [
+        '@5188b9', '@518a2f', '@518aa5']),
+    'trade_route_stop': Scenario(trade_route_stop, TRADE_ROUTE_SHIPS, 8, [
+        '@4d5825']),
+    'trade_route_convoy': Scenario(trade_route_convoy, TRADE_ROUTE_SHIPS, 8, [
+        '@503386', '@50340b', '@503466', '@503576', '@5035ee', '@50380f']),
+    'trade_route_convoy_away': Scenario(trade_route_convoy_away, TRADE_ROUTE_SHIPS, 2, [
+        '@5036d7', '@50370a', '@5037a6']),
+    'trade_route_convoy_closed': Scenario(trade_route_convoy_closed, TRADE_ROUTE_SHIPS, 8, [
+        '@502826', '@4d5933']),
+    'trade_route_convoy_repair': Scenario(trade_route_convoy_repair, TRADE_ROUTE_SHIPS, 3, [
+        '@5032fb', '@503331', '@503354']),
+    'trade_route_convoy_guide': Scenario(trade_route_convoy_guide, TRADE_ROUTE_SHIPS + [0x5017F0], 4, [
+        '@501adb', '@4d4df1']),
+    'trade_route_release': Scenario(trade_route_release, [0x535760, 0x509250, 0x50BFD0, 0x514D40], 0, [
+        '@5080ca', '@50959d', '@50c161', '@515212', '@4d4df1']),
+    'trade_route_branches': Scenario(trade_route_branches, [0x518860, 0x4D5200, 0x535760], 0, [
+        '@4d526b', '@4d532b', '@4d5306', '@4d5310', '@4d570d', '@4d5482',
+        '@518b38', '@5189a0', '@518a5d', '@518abd', '@518915']),
+    'ai_closed_port': Scenario(ai_closed_port, [0x51A2C0, 0x535760], 4, [
+        '@506ecd', '@502872', '@50241b', '@51a30c', '@51a314', '@51a35a']),
     'letter_ops': Scenario(letter_ops, [0x535760, 0x4D6530], 0, [
         '@4d6b01', '@4d6aff>4d6b35', '@536b23', '@536b21>536b2d', '@4d79b7', '@4d79e9', '@4d79f0', '@4d7a43',
         '@4d7a30', '@4d7a7e', '@4d7a6b']),
@@ -11004,13 +11815,16 @@ def main():
         f.write(b'P3PROBE1')
         rec = to.Recorder(o, functions, f, 1 << 30)
         rec.active = True
-        if callable(during):
-            during(o)
+        # `during` may return a function, called after each tick with the tick's number (a change once the world
+        # has moved: trade_route_closed).
+        after = during(o) if callable(during) else None
         ticks = days * 256 if a.ticks is None else a.ticks
         import time
         started = time.time()
         for t in range(ticks):
             o.advance_tick()
+            if callable(after):
+                after(o, t)
             if a.ticks is not None and (t < 32 or t % 32 == 31):
                 print(f'tick {t + 1}: {rec.count} samples, {time.time() - started:.0f} s', flush=True)
         f.write(b'E')

@@ -114,7 +114,7 @@ an action of the interface; 0x54 and 0x55 go with letters), others may be dead.
 | Group | Codes | Done in p3vita |
 |-|-|-|
 | simulation | 37: the ones the simulation queues (inventory, part B) | all 37 |
-| player | 105: queued by the interface | 43: 0x00..0x0A, 0x0C, 0x0D, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x3B, 0x3F, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x6E..0x71 |
+| player | 105: queued by the interface | 49: 0x00..0x0A, 0x0C, 0x0D, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x3B, 0x3F, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x68..0x71 |
 | battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 0x91, 0x94, 0x96, 0x9F |
 | network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | the five that do nothing |
 | new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | — |
@@ -233,12 +233,12 @@ feast window): the handler is the same and is done.
 | 0x65 | simulation | an AI merchant goes bankrupt (0x53DD70) | 0x4F4E50 | 0x53642E → 0x5303C0, 0x4F5D80 |  | yes | read |
 | 0x66 | player | something in an office (inline, 0x53644B) | 0x5DCDB0 (at 0x5DD479) | 0x53644B → 0x5308A0 |  |  | guess |
 | 0x67 | simulation | an administrator improves (0x53DDF0) | 0x4DCEA0 | 0x5364B6 → 0x53DDF0 |  | yes | read |
-| 0x68 | player | trade routes: a ship's route (the routes' object 0x6DD728; 0x4D5AB0, 0x5172A0...) | 0x45A6B0, 0x48AC30, 0x5492D0 | 0x5364C5 → 0x53DF00 | 4, 2.0 KB |  | guess |
-| 0x69 | player | trade routes (0x53E480) | 0x404B50, 0x406D50, 0x407CA0, 0x5492D0 | 0x5364D4 → 0x53E480 | 1, 400 B |  | guess |
-| 0x6A | player | trade routes (0x4D4C90, 0x4D4E80) | 0x492CA0, 0x5492D0 | 0x5364E3 → 0x53E610 | 5, 1.2 KB |  | guess |
-| 0x6B | player | trade routes (0x4D4F60) | 0x492EE0 | 0x5364F2 → 0x53E7C0 | 9, 1.8 KB |  | guess |
-| 0x6C | player | trade routes (0x4D4DD0, 0x4D4C90) | 0x492CA0, 0x5492D0 | 0x536501 → 0x53E890 | 2, 624 B |  | guess |
-| 0x6D | player | trade routes (0x53E9C0) | 0x48AC30 (code in ebp), 0x5492D0 | 0x536510 → 0x53E9C0 | 2, 496 B |  | guess |
+| 0x68 | player | a ship's trade route started or stopped: {0x68, u32 ship, u32 on}. Off: the ship's (or every ship of the convoy's owner) [+0x136] & 0xFC, docked ones' destination their town. On: the convoy's guide (written into the operation); with a captain and a route, from its stop the first with something to do (0x4D5AB0, the convoy's cargo 0x51A3C0/0x51A450); then by state: 0xF sails to it (0x5172A0), 8 leaves or arrives, ≤ 1 its wait 0, 6 out of the shipyard (`trade_routes.cpp`) | 0x45A6B0, 0x48AC30, 0x5492D0 | 0x5364C5 → 0x53DF00 |  | yes | read |
+| 0x69 | player | a ware of a stop: {0x69, u16 stop, u16 merchant, u16 ware, u16 place, s32 amount, s32 price}: the amount and the price, the merchant's last price for the ware ([+0x548 + 4w] buying, [+0x54A + 4w] selling), the ware moved to the place in the order, then the order made a permutation | 0x404B50, 0x406D50, 0x407CA0, 0x5492D0 | 0x5364D4 → 0x53E480 |  | yes | read |
+| 0x6A | player | a stop: {0x6A, u32 stop, u32 insert, u32 town, u32 ship}: a new stop after it at the town (0x4D4C90); a town out: the stop removed (its ships to the next, 0x509030, 0x4D4E80); else its town changed (the ship on it stops its route, 0x5171E0 at sea; without his office there, no transfers with it) | 0x492CA0, 0x5492D0 | 0x5364E3 → 0x53E610 |  | yes | read |
+| 0x6B | player | a stop moved: {0x6B, u32 ship, u32 a, u32 b, u32 first}: in the route of the ship (or its convoy's guide) stop a after stop b (0x4D4F60), removed if b isn't in it; with first = 1 it becomes the first; the window after it (0x48FD90, interface) | 0x492EE0 | 0x5364F2 → 0x53E7C0 |  | yes | read |
+| 0x6C | player | a new route: {0x6C, u32 ship, u32 town, u32 count}: the old one released (0x4D4DD0 with its ships), `count` stops at the town (0x4D4C90), the first with the bit 0x4; for a convoy, its guide's | 0x492CA0, 0x5492D0 | 0x536501 → 0x53E890 |  | yes | read |
+| 0x6D | player | a stop's action: {0x6D, u32 stop, u32 action}: [+0x3] = action; with bit 0 at a town without [+0x76C] & 0x40, (action − 1) \| 8 (no town: action − 1) | 0x48AC30 (code in ebp), 0x5492D0 | 0x536510 → 0x53E9C0 |  | yes | read |
 | 0x6E | player | a letter read (0x4D69D0, `mark_letter_read`) | letters 0x47F3B0 | 0x536AC7 → 0x4D69D0 |  | yes | read |
 | 0x6F | player | a letter deleted (0x4D6A50, `delete_letter`) | mailbox 0x47C9B0 | 0x536AE1 → 0x4D6A50 |  | yes | read |
 | 0x70 | player | a merchant's letter settings: {0x70, u16 merchant at [+4], [+6..+0xD] to his [+0x38..+0x3F] (the days each class is kept, the event sound, zeros), [+0xE] to his [+0x26] (the notices)}; a merchant under the count (0x4D6AF0, `mail.cpp` `set_letter_settings`) | the letters' settings window 0x408F50 on closing (0x4096DB) | 0x536AFB → 0x4D6AF0 |  | yes | read |

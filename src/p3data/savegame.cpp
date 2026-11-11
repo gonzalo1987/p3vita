@@ -1103,14 +1103,14 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 				out.opaque.battles.assign(data + pos + 4, data + next_separator);
 			} else if (separators == 5) {
 				// 0x4D4BC0 on 0x6DD728, the automatic trade routes: u16 [+0x0],
-				// u16 [+0x2] and that many records of 0xDC bytes, which only
-				// write_savegame uses.
+				// u16 [+0x2] and that many records of 0xDC bytes (the stops,
+				// trade_routes.hpp).
 				Reader section(data, size);
 				section.skip(pos + 4);
 				out.globals.u16(0x6DD728) = section.u16();
 				out.globals.u16(0x6DD72A) = section.u16();
-				out.opaque.trade_routes.assign(out.globals.u16(0x6DD72A), GameMemory<0xDC>());
-				for (GameMemory<0xDC>& record : out.opaque.trade_routes) {
+				out.trade_routes.assign(out.globals.u16(0x6DD72A), GameMemory<0xDC>());
+				for (GameMemory<0xDC>& record : out.trade_routes) {
 					section.to(record, 0, 0xDC);
 				}
 			}

@@ -33,6 +33,7 @@
 #include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/trade_routes.hpp"
 
 namespace p3::data::tick::events_detail {
 // 0x5097C0 (town_tick/events*.cpp): a new captain.
@@ -196,10 +197,11 @@ bool Sailing::fn_5017f0(int convoy) {
 		}
 		if (c.u16(0x10) < ship_count(save_)) {
 			// Hereda la ruta automática del viejo. Si ya tenía una
-			// ([+0x132] < [0x6DD72A]), el juego la borra antes con
-			// 0x4D4DD0(ruta, 1) sobre la lista de rutas 0x6DD728, que no se
-			// reproduce: sus registros (0xDC bytes en *[0x6DD72C]) no están en
-			// SaveGame y solo las usan los barcos del jugador.
+			// ([+0x132] < [0x6DD72A]), el juego la borra antes, with its
+			// ships (0x4D4DD0 with 1, trade_routes.cpp).
+			if (m.u16(0x132) < save_.globals.u16(0x6DD72A)) {
+				fn_4d4dd0(save_, m.u16(0x132), true);
+			}
 			ShipMemory& old = save_.ships[c.u16(0x10)].memory;
 			m.u16(0x132) = old.u16(0x132);
 			old.u16(0x132) = 0xFFFF;

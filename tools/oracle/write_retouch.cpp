@@ -185,7 +185,7 @@ int main(int argc, char** argv) {
 	for (uint8_t k = 0; k < 2; ++k) {
 		GameMemory<0xDC> route;
 		std::memcpy(route.bytes.data(), pattern(0xDC, uint8_t(0xC0 + k)).data(), 0xDC);
-		save.opaque.trade_routes.push_back(route);
+		save.trade_routes.push_back(route);
 	}
 	g.u16(0x6DD72A) = 2;
 

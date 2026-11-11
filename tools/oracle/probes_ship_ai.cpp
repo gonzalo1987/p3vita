@@ -9,7 +9,9 @@
 
 #include <cstring>
 
+#include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/trade_routes.hpp"
 #include "probe_registry.hpp"
 
 namespace p3::data::tick::ship_ai_detail {
@@ -69,7 +71,35 @@ uint32_t bits(float f) {
 }  // namespace
 
 void register_probes_ship_ai(ProbeRegistry& r) {
-	r[0x5067D0] = [](SaveGame& s, const ProbeCall& c) { return handler(tick::fn_5067d0, s, c); };
+	r[0x5067D0] = [](SaveGame& s, const ProbeCall& c) {
+		return handler([](SaveGame& save, int ship, uint16_t* link) {
+			return tick::fn_5067d0(save, ship, link, probe_sailing());
+		}, s, c);
+	};
+	// The trade routes (trade_routes.cpp): a docked ship and a convoy on their routes, the trading at a stop (its
+	// office a pointer or 0) and the next stop before a closed port.
+	r[0x518860] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		fn_518860(s, probe_sailing(), c.ship(c.ecx));
+		return std::nullopt;
+	};
+	r[0x503230] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		fn_503230(s, probe_sailing(), c.convoy(c.ecx));
+		return std::nullopt;
+	};
+	r[0x4D5200] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		fn_4d5200(s, c.ship(c.args[0]), c.args[1] ? c.office(c.args[1]) : -1);
+		return std::nullopt;
+	};
+	// 0x51A2C0 (on a ship: its index, a town): a ship before a closed port, another destination.
+	r[0x51A2C0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		(void)s;
+		probe_sailing()->fn_51a2c0(uint16_t(c.ship(c.ecx)), c.args[1]);
+		return std::nullopt;
+	};
+	r[0x4D5900] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		fn_4d5900(s, probe_sailing(), c.ship(c.args[0]));
+		return std::nullopt;
+	};
 	r[0x506A19] = [](SaveGame& s, const ProbeCall& c) { return handler(tick::fn_506a19, s, c); };
 	r[0x506B6A] = [](SaveGame& s, const ProbeCall& c) { return handler(tick::fn_506b6a, s, c); };
 	r[0x518B80] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {

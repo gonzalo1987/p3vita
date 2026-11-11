@@ -33,6 +33,7 @@
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
+#include "p3data/trade_routes.hpp"
 
 namespace p3::data::tick {
 
@@ -734,7 +735,7 @@ void fn_518b80(SaveGame& save, int ship, uint32_t arg) {
 // Estado 0 de 0x506720 (desde 0x5067D0): atracado. La tripulación descansa;
 // los barcos de la IA deciden (0x518B80) y, si van a zarpar, buscan convoy
 // (0x519EB0); los de los jugadores avisan de que están en la ciudad (0x535400).
-bool fn_5067d0(SaveGame& save, int ship, uint16_t* link) {
+bool fn_5067d0(SaveGame& save, int ship, uint16_t* link, Sailing* sailing) {
 	GlobalMemory& g = save.globals;
 	ShipMemory& m = save.ships[size_t(ship)].memory;
 	if (m.u8(0x0) == g.u32(global::kPlayer)) {
@@ -757,7 +758,7 @@ bool fn_5067d0(SaveGame& save, int ship, uint16_t* link) {
 		return true;
 	}
 	if (m.u8(0x136) & 1) {
-		// Ruta automática (0x518860): no se traduce.
+		fn_518860(save, sailing, ship);  // A human's ship on its trade route (trade_routes.cpp).
 		return true;
 	}
 	const uint8_t town = m.u8(0x39);

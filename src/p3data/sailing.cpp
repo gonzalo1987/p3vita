@@ -4,9 +4,11 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
+#include "p3data/trade_routes.hpp"
 
 namespace p3::data::tick::events_rare_detail {
 void fn_5098b0(SaveGame& save, uint16_t& captain);
@@ -521,7 +523,7 @@ void Sailing::update_docked() {
 			if (!ai_ && !human(ship)) {
 				break;
 			}
-			if (!tick::fn_5067d0(save_, index, link)) {
+			if (!tick::fn_5067d0(save_, index, link, this)) {
 				continue;
 			}
 			break;
@@ -884,12 +886,22 @@ void Sailing::arrive(SavedShip& ship, uint16_t index, uint16_t& link) {
 			ship.town() = kNoTown;
 			return;
 		}
-		// Se queda fuera sin ruta (la IA busca otro destino con 0x51A2C0 y
-		// las rutas automáticas del jugador con 0x4D5900, que no se
-		// reproducen), y el juego vuelve a pasar por él en este mismo tick.
+		// Se queda fuera sin ruta, y el juego vuelve a pasar por él en este
+		// mismo tick. An AI ship looks for another destination (0x506ECD →
+		// 0x51A2C0); a human's ship with orders, its trade route's next stop
+		// (0x506EEF → 0x4D5900).
 		ship.origin() = ship.town();
 		ship.town() = kNoTown;
 		ship.status() = kShipSailing;
+		if (human(ship)) {
+			if (ship.orders() != 0) {
+				fn_4d5900(save_, this, index);
+			}
+		} else if (merchant(ship)) {
+			// Game bug: the game passes the ship's town after setting it to 0xFF, so every travel time is 0xFF and
+			// the first open town by its number wins, wherever it is. Fixed: the closed town (now [+0x37]).
+			fn_51a2c0(index, fix_game_bugs() ? ship.origin() : ship.town());
+		}
 		return;
 	}
 	clear_route(ship);
@@ -946,8 +958,7 @@ void Sailing::fn_507fb0(uint16_t index) {
 	s.u16(0x42) = 0xFFFF;
 	unlink_x(index);
 	if (s.u16(0x132) < g.u16(0x6DD72A)) {  // The trade routes' count ([+0x2] of 0x6DD728).
-		// Not reproduced: the game releases the route first (0x4D4DD0 on the
-		// trade routes' object 0x6DD728, phase 6); no save has one.
+		fn_4d4dd0(save_, s.u16(0x132), false);  // its trade route released (trade_routes.cpp)
 		s.u16(0x132) = 0xFFFF;
 	}
 	for (uint32_t i = g.u16(global::kShips + 0xE2); i < count; i = save_.ships[i].memory.u16(6)) {
@@ -1168,6 +1179,39 @@ void Sailing::set_destination(SavedShip& ship, int town, int x, int y) {
 	ship.set_route(assigned.route);
 	ship.own_route() = assigned.own;
 	ship.arrival_tick() = save_.tick() + travel_time(ship);
+}
+
+uint32_t closed_port_destination(const SaveGame& save, int ship, uint32_t town) {
+	const ShipMemory& s = save.ships[size_t(ship)].memory;
+	// The ports closed (0x4000E00), and those without a deep port (bit 1) for... a small ship, or a big one in a
+	// convoy with a big ship ([+0x1] ≥ 2). Game bug: the test is the wrong way round (`jb`): a big ship alone may
+	// be sent up a river, a small one may not. Fixed: as 0x4D5AB0 and 0x4D5900 test it, a big ship, or any ship of
+	// a convoy with one.
+	const bool convoy_big = s.u16(0x8) < save.convoy_count() && save.convoys[s.u16(0x8)].u8(0x1) >= 2;
+	const bool deep = fix_game_bugs() ? (s.u8(0xE) >= 2 || convoy_big) : (s.u8(0xE) < 2 || convoy_big);
+	const uint32_t mask = deep ? 0x4000E01 : 0x4000E00;
+	const uint32_t from = town & 0xFF;
+	const uint32_t towns = save.globals.u32(global::kWorldTownCount);
+	uint32_t best = 10000000;
+	uint32_t to = 0;  // no open town: town 0
+	for (uint32_t t = 0; t < towns && t < save.towns.size(); ++t) {
+		if (t == from || (save.towns[t].memory.u32(0x2C8) & mask)) {
+			continue;
+		}
+		// 0x531B70 (on the world): the travel time from `from` to t in the matrix [+0x6C], 0xFF without it or with
+		// a town out of it.
+		const size_t n = towns;
+		const uint32_t time = save.town_travel.size() >= n * n && from < n ? save.town_travel[from * n + t] : 0xFF;
+		if (time < best) {
+			best = time;
+			to = t;
+		}
+	}
+	return to;
+}
+
+void Sailing::fn_51a2c0(uint16_t index, uint32_t town) {
+	set_destination(save_.ships[index], int(closed_port_destination(save_, index, town)), 0, 0);  // 0x5172A0
 }
 
 bool Sailing::set_sail(int index, int town, int x, int y) {

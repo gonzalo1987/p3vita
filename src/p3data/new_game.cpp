@@ -77,7 +77,7 @@ void fn_4d4c60(SaveGame& save) {
 	GlobalMemory& g = save.globals;
 	g.u16(kTradeRoutes) = 0;
 	g.u16(kTradeRoutes + 2) = 0;
-	save.opaque.trade_routes.clear();
+	save.trade_routes.clear();
 	g.u32(kTradeRoutes + 4) = 0;
 }
 
