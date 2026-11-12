@@ -34,11 +34,12 @@ Cómo leerla:
   del juego; el mapa del mar; el mercado, la taberna, el astillero y el muelle, la oficina y el prestamista; construir
   y derribar tocando la ciudad; el menú del barco, con las rutas comerciales; el buzón; las estadísticas; el panel de la
   Hansa; las batallas que dirige el jugador; guardar y cargar; las opciones (idioma, corregir los fallos del juego).
-- **Lo último** (12-11-2026), del encargo `ENCARGO_BUZON_ACCIONES.md`: la reparación de convoyes en el astillero, los
+- **Lo último** (12-11-2026), la primera parte del encargo de las acciones del jugador: la reparación de convoyes en el astillero, los
   botones de las cartas (la boda, la petición del príncipe en un asedio, el embargo de un préstamo que no se devuelve),
   la iglesia (donativos, la ampliación, dar de comer a los pobres) y el baño (bañarse, sobornar a los concejales), en
   el motor y en el visor; y los iconos e imágenes de los textos del juego en todas las pantallas.
-- **Siguiente**: el resto del encargo (apartado 1), en el orden que eligió el usuario: las subastas, la oficina y su
+- **Siguiente**: el encargo `ENCARGO_ACCIONES_2.md` (junto al HANDOFF), con el resto (apartado 1), en el orden que
+  eligió el usuario: las subastas, la oficina y su
   administrador y el barco; la taberna y los eventos; la milicia, los asedios y el resto del ayuntamiento.
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
@@ -104,7 +105,7 @@ Las partes se solapan, y el grafo es estático (no sigue las tablas de métodos 
 
 ### 1. Las acciones del jugador y el resto del buzón (lo siguiente)
 
-El encargo `ENCARGO_BUZON_ACCIONES.md` tiene el detalle (el método, cómo se comprueba, el orden que eligió el usuario:
+El encargo `ENCARGO_ACCIONES_2.md` tiene el detalle (el método, cómo se comprueba, el orden que eligió el usuario:
 la reparación de convoyes, los botones de las cartas, la iglesia y el baño, las subastas, la oficina y el barco, la
 taberna y los eventos, la milicia y los asedios; la 0x4A también, en el motor). Lo que falta del jugador, por edificio
 (los manejadores, en [formats/operations.md](formats/operations.md); varios están solo deducidos y hay que leerlos
