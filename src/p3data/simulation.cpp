@@ -356,6 +356,30 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x57:  // The hand weapon the town's weaponsmith makes first (0x536186, inline; trade.cpp).
 		fn_536186(save, operation);
 		break;
+	case 0xBF:  // Another player's ship groups, set or added to (0x536FAB → 0x5436D0; town_tick/operations.cpp).
+		tick::fn_5436d0(save, operation);
+		break;
+	case 0x52:  // The people in a town's tavern taken or left, a commission (0x5360FC → 0x53C2C0; town_tick/operations.cpp).
+		tick::fn_53c2c0(save, operation);
+		break;
+	case 0x53:  // The tavern's traveller goes with a ship: the event 0x10, the letter 0x17 (0x53610B → 0x53C840; town_tick/tavern.cpp).
+		tick::fn_53c840(save, operation);
+		break;
+	case 0x4F:  // The tavern's burglar hired against another merchant: the event 0x0F (0x5360CF → 0x53BA40; town_tick/tavern.cpp).
+		tick::fn_53ba40(save, operation);
+		break;
+	case 0x51:  // Wares delivered for an order taken, the event 0x11 (0x5360ED → 0x53C050; town_tick/town_hall.cpp).
+		tick::fn_53c050(save, operation);
+		break;
+	case 0x3A:  // A cart convoy by land: the event 0x0C, the queue run at once (0x535EAC → 0x53A2C0; town_tick/land_transport.cpp).
+		tick::fn_53a2c0(save, operation);
+		break;
+	case 0x4A:  // The Hanse tasks window's developers' tools: a task dropped or its meeting called (0x536084 → 0x53B1F0; events_rare.cpp).
+		tick::events_rare_detail::fn_53b1f0(save, operation);
+		break;
+	case 0x45:  // A merchant stands for mayor or not: his [+0x118] (0x535FA4 → 0x4F9390, inline).
+		tick::fn_535fa4(save, operation);
+		break;
 	case 0x5A:  // A business's share of jobs (0x536200; town_tick/operations.cpp).
 		tick::fn_536200(save, operation);
 		break;

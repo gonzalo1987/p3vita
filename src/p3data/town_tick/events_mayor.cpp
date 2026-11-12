@@ -2104,6 +2104,13 @@ int events_mayor(SaveGame& save, uint16_t event, uint16_t type) {
 		return fn_4e2bc4(save, event) ? 1 : 0;
 	case 0x13:  // The end of an offer between merchants (town_tick/offers.cpp).
 		return fn_4e7a14(save, event) ? 1 : 0;
+	case 0x10:  // A traveller aboard (town_tick/tavern.cpp).
+		return fn_4e63e4(save, event) ? 1 : 0;
+	case 0x0F:  // The burglary (town_tick/tavern.cpp).
+		fn_4e5664(save, event);
+		return 0;
+	case 0x0C:  // A cart convoy (town_tick/land_transport.cpp).
+		return fn_4e38b4(save, event) ? 1 : 0;
 	case 0x20:
 		fn_4dbbd0(save);
 		return 1;

@@ -130,6 +130,12 @@ target_compile_options(smithy_window_test PRIVATE -Wall -Wextra)
 
 add_test(NAME smithy_window COMMAND smithy_window_test)
 
+add_executable(tavern_window_test tavern_window_test.cpp)
+target_link_libraries(tavern_window_test PRIVATE p3data)
+target_compile_options(tavern_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME tavern_window COMMAND tavern_window_test)
+
 add_executable(ship_pair_window_test ship_pair_window_test.cpp)
 target_link_libraries(ship_pair_window_test PRIVATE p3data)
 target_compile_options(ship_pair_window_test PRIVATE -Wall -Wextra)

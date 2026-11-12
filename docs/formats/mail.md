@@ -338,11 +338,13 @@ built with rand()).
   then the town battle's four (three in 0x5FE7E0 and the 0x6A of 0x633DB0), the player's actions' 0x02, 0x04 and 0x14, the dividends
   of event 0x18 (three), the new game's 0x0E and the trade routes' reports 0x5035CD and 0x4D55F9. On
   2026-11-12, **117**: the letters' buttons' 0x2B (operation 0x72), 0x22 (event 0x17), 0x64 and 0x65 (0x8B,
-  0x8C) and 0x83 (0x77); then **119**: the offers' 0x1E and 0x1F (operation 0x5F, `town_tick/offers.cpp`).
-  The 35 left: the operations of the player not rewritten yet (7: 0x3D, 0x3E, 0x4A, 0x53, 0x90
-  and the two of 0x8F, which nobody was found to queue), the events they create (13: 0x0C, 0x0F, 0x10, 0x11),
-  the mission interpreter and the event 0x09 it creates (9), the diet's 0x4F3AF0 (1), the event 0x28 that
-  nobody creates (3) and the interface window 0x419EB0 (2).
+  0x8C) and 0x83 (0x77); then **119**: the offers' 0x1E and 0x1F (operation 0x5F, `town_tick/offers.cpp`); then
+  **132**: the traveller's 0x17 (operation 0x53) and 0x18 (event 0x10), the burglar's 0x74, 0x16, 0x20, 0x15 (event
+  0x0F; `town_tick/tavern.cpp`), the cart convoys' 0x67 (twice), 0x68, 0x69, 0x66 (event 0x0C,
+  `town_tick/land_transport.cpp`) and the Hanse day's 0x78 of the operation 0x4A (`events_rare.cpp`). The 22 left:
+  the operations of the player not rewritten yet (5: 0x3D, 0x3E, 0x90 and the two of 0x8F, which nobody was found
+  to queue), the event 0x11 that 0x3D creates (2), the mission interpreter and the event 0x09 it creates (9), the
+  diet's 0x4F3AF0 (1), the event 0x28 that nobody creates (3) and the interface window 0x419EB0 (2).
 - **47** are in events and operations p3vita doesn't have yet. Events 0x09,
   0x0C, 0x0F, 0x10, 0x11, 0x17, 0x18 and 0x28 are created only by player
   actions (operations from the interface) or by the mission interpreter;
@@ -648,7 +650,7 @@ interpreter's 0x4ED0C6, 0x4EDEDA.
 («named»); «—» with what it is when p3vita doesn't have it. «Class» is the
 type's class (§2). «Connected»: p3vita sends that letter (`send_letter`) and
 the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
-99 of the 154 on 2026-11-04, 112 on 2026-11-11, 119 on 2026-11-12).
+99 of the 154 on 2026-11-04, 112 on 2026-11-11, 119 and then 132 on 2026-11-12).
 
 | p3vita file | Function | Call | Type | Title (English exe) | Class | To | Note | Connected |
 |---|---|---|---|---|---|---|---|---|
@@ -767,17 +769,17 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | — event 0x09 | 0x4E2824 | 0x4E299D | 0x09 | Harvest failure | 4 | -2 (chronicle) |  | |
 | — event 0x09 | 0x4E2824 | 0x4E2A9E | 0x08 | Good harvest | 2 | one merchant |  | |
 | — event 0x09 | 0x4E2824 | 0x4E2B04 | 0x09 | Harvest failure | 4 | -2 (chronicle) |  | |
-| — event 0x0C | 0x4E38B4 | 0x4E3B4B | 0x67 | Return | 3 | one merchant |  | |
-| — event 0x0C | 0x4E38B4 | 0x4E3C6E | 0x68 | Ambush | 3 | one merchant |  | |
-| — event 0x0C | 0x4E38B4 | 0x4E3CFC | 0x67 | Return | 3 | one merchant |  | |
-| — event 0x0C | 0x4E38B4 | 0x4E3D43 | 0x69 | Fled | 3 | one merchant |  | |
-| — event 0x0C | 0x4E38B4 | 0x4E3E95 | 0x66 | Arrived | 3 | one merchant |  | |
-| — event 0x0F | 0x4E5664 | 0x4E5925 | 0x74 | Broken in | 2 | one merchant |  | |
-| — event 0x0F | 0x4E5664 | 0x4E594D | 0x74 | Broken in | 2 | one merchant |  | |
-| — event 0x0F | 0x4E5664 | 0x4E5AFF | 0x20 | Robbed | 2 | one merchant |  | |
-| — event 0x0F | 0x4E5664 | 0x4E5B1E | 0x15 | Burglary | 2 | one merchant |  | |
-| — event 0x10 | 0x4E63E4 | 0x4E65CC | 0x18 | Traveller | 2 | one merchant |  | |
-| — event 0x10 | 0x4E63E4 | 0x4E6691 | 0x18 | Traveller | 2 | one merchant |  | |
+| p3data/town_tick/land_transport.cpp | 0x4E38B4 | 0x4E3B4B | 0x67 | Return | 3 | one merchant |  | yes |
+| p3data/town_tick/land_transport.cpp | 0x4E38B4 | 0x4E3C6E | 0x68 | Ambush | 3 | one merchant |  | yes |
+| p3data/town_tick/land_transport.cpp | 0x4E38B4 | 0x4E3CFC | 0x67 | Return | 3 | one merchant |  | yes |
+| p3data/town_tick/land_transport.cpp | 0x4E38B4 | 0x4E3D43 | 0x69 | Fled | 3 | one merchant |  | yes |
+| p3data/town_tick/land_transport.cpp | 0x4E38B4 | 0x4E3E95 | 0x66 | Arrived | 3 | one merchant |  | yes |
+| p3data/town_tick/tavern.cpp | 0x4E5664 | 0x4E5925 | 0x74 | Broken in | 2 | one merchant |  | yes |
+| p3data/town_tick/tavern.cpp | 0x4E5664 | 0x4E594D | 0x16 | Burglary | 2 | one merchant |  | yes |
+| p3data/town_tick/tavern.cpp | 0x4E5664 | 0x4E5AFF | 0x20 | Robbed | 2 | one merchant |  | yes |
+| p3data/town_tick/tavern.cpp | 0x4E5664 | 0x4E5B1E | 0x15 | Burglary | 2 | one merchant |  | yes |
+| p3data/town_tick/tavern.cpp | 0x4E63E4 | 0x4E65CC | 0x18 | Traveller | 2 | one merchant |  | yes |
+| p3data/town_tick/tavern.cpp | 0x4E63E4 | 0x4E6691 | 0x18 | Traveller | 2 | one merchant |  | yes |
 | — event 0x11 | 0x4E6744 | 0x4E6878 | 0x5B | Dishonoured | 2 | one merchant |  | |
 | — event 0x11 | 0x4E6744 | 0x4E6987 | 0x5A | Fulfilled | 3 | one merchant |  | |
 | p3data/town_tick/events_big.cpp | 0x4E8684 | 0x4E87CF | 0x22 | Proposal | 2 | one merchant | event 0x17 | yes |
@@ -795,8 +797,8 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | p3data/town_tick/ship_operations.cpp | 0x52B110 | 0x52B288 | 0x14 | Annulment | 1 | one merchant | operation 0x2F | yes |
 | — operation 0x3D | 0x53A620 | 0x53A794 | 0x1A | Order | 2 | one merchant |  | |
 | — operation 0x3E | 0x53A810 | 0x53A910 | 0x0E | Move | 4 | -2 (chronicle) |  | |
-| — operation 0x4A | 0x53B1F0 | 0x53B40C | 0x78 | Hanse Day | 1 | -1 (each merchant) |  | |
-| — operation 0x53 | 0x53C840 | 0x53C9B5 | 0x17 | Traveller | 2 | one merchant |  | |
+| p3data/town_tick/events_rare.cpp | 0x53B1F0 | 0x53B40C | 0x78 | Hanse Day | 1 | -1 (each merchant) |  | yes |
+| p3data/town_tick/tavern.cpp | 0x53C840 | 0x53C9B5 | 0x17 | Traveller | 2 | one merchant |  | yes |
 | p3data/town_tick/offers.cpp | 0x5338A0 | 0x533C9B | 0x1E | Memo | 2 | one merchant | operation 0x5F (0x53DA30) | yes |
 | p3data/town_tick/offers.cpp | 0x5338A0 | 0x533CB5 | 0x1F | Offer | 2 | one merchant | operation 0x5F (0x53DA30) | yes |
 | p3data/town_tick/operations.cpp | 0x53EAC0 | 0x53EBC8 | 0x2B | It's a pity | 2 | one merchant | operation 0x72 | yes |
@@ -841,7 +843,7 @@ are cut at the next case, so some neighbours share it).
 | 0x13 | Impound | 1 | option [+0x38] | 0x4F6618, 0x4F66FA, 0x4F6818, 0x4F68A3 | 0x47FE79 | Because you are in arrears with your payments, goods in %s to the value of %u\C will be… |
 | 0x14 | Annulment | 1 | option [+0x38] | 0x52B288 | 0x47FF50 | Your order of %i. %s %i for %s in %s was cancelled. After subtraction of a small fee, %… |
 | 0x15 | Burglary | 2 | option [+0x39] | 0x4E5B1E | 0x47FFF4 | The burglary at %s %s was extremely successful. Your share of the stolen gold amounts t… |
-| 0x16 | Burglary | 2 | option [+0x39] | — | 0x480164 | Just a bit of information: The burglary at %s %s did not, unfortunately, go according t… |
+| 0x16 | Burglary | 2 | option [+0x39] | 0x4E594D | 0x480164 | Just a bit of information: The burglary at %s %s did not, unfortunately, go according t… |
 | 0x17 | Traveller | 2 | option [+0x39] | 0x53C9B5 | 0x4801A1 | Traveller from %s  \dTake me with your ship %s at the latest by %i. %s to %s. I will pa… |
 | 0x18 | Traveller | 2 | option [+0x39] | 0x4E65CC, 0x4E6691 | 0x480221 | Traveller from %s  \dMany thanks for the quick and safe transportation. I am most oblig… |
 | 0x19 | Indictment | 1 | option [+0x38] | 0x4E5D4D | 0x480256 | \dYou stand accused of taking part in a punishable offence, undermining the good of the… |
@@ -935,7 +937,7 @@ are cut at the next case, so some neighbours share it).
 | 0x71 | — | 4 | until record [+0x4] | — | none (default) |  |
 | 0x72 | — | 4 | 28 days | 0x60EC1B, 0x60EC83 | none (default) |  |
 | 0x73 | Theft | 2 | option [+0x39] | 0x4ECAEC | 0x485175 |  \lWe should employ more guards to prevent any more fiendish attacks. |
-| 0x74 | Broken in | 2 | option [+0x39] | 0x4E5925, 0x4E594D | 0x485303 |  However the ever vigilant guards were able to capture the culprit. He was immediately … |
+| 0x74 | Broken in | 2 | option [+0x39] | 0x4E5925 | 0x485303 |  However the ever vigilant guards were able to capture the culprit. He was immediately … |
 | 0x75 | Fire | 2 | option [+0x39] | 0x500E8F | 0x4854BA |  \lOne of our warehouses has been lost in the town fire. |
 | 0x76 | Auctioned off | 1 | option [+0x38] | — | 0x485604 | We have managed to sell your building (%$2$s) at the %$1$s Guild's auction. It was sold… |
 | 0x77 | Hanse Day | 1 | option [+0x38] | 0x4EA72B, 0x4EA77F (−1), 0x4EA825, 0x4EA8B0, 0x4EA979 (−1) | 0x4857D8 | \cHanse Day was not called \l It is your duty as the Hanseatic League's Alderman to cal… |

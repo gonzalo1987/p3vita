@@ -1439,6 +1439,37 @@ void fn_4f91c0(SaveGame& save, int merchant) {
 	}
 }
 
+// The meeting's letter 0x78 to each merchant for the event 0x21 `p` (0x4EAA54..0x4EAB45, also 0x53B318..0x53B40C):
+// [+0x5] the meeting's town; [+0x8] the day and [+0x9] the month of the event (0x5311D0); [+0xA] its [+0x9]; [+0xB]
+// its [+0xE] << 4 + its [+0xA]; for the kind 0 [+0xC] its [+0xC]; [+0xD] the leader's title (0x4F9430), [+0xE],
+// [+0xF] his [+0x1C], [+0x1D]. Without a leader, the title and names of the councillor ((0xFF − the mayor [+0x6F1]) &
+// 3) of the meeting's town ([+0x6E0], [+0x6D4], [+0x6D8]).
+void send_meeting_letter(SaveGame& save, const Event& p) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t leader = g.u8(kHanseLeader);
+	Letter letter(0x78);
+	letter.entry.u8(5) = g.u8(kHanseTown);
+	if (leader < merchant_count(save)) {
+		const MerchantMemory& lm = save.merchants[leader].memory;
+		letter.entry.u8(0xE) = lm.u8(0x1C);
+		letter.entry.u8(0xF) = lm.u8(0x1D);
+		letter.entry.u8(0xD) = merchants_detail::fn_4f9430(save, int(leader));
+	} else {
+		const TownMemory& t = save.towns[g.u8(kHanseTown)].memory;
+		const uint32_t k = uint8_t(0xFF - t.u8(0x6F1)) & 3;
+		letter.entry.u8(0xE) = t.u8(0x6D4 + k);
+		letter.entry.u8(0xF) = t.u8(0x6D8 + k);
+		letter.entry.u8(0xD) = t.u8(0x6E0 + k);
+	}
+	events_mayor_detail::fn_5311d0(p.u32(0), letter.entry.u8(8), letter.entry.u8(9));
+	letter.entry.u8(0xA) = p.u8(9);
+	letter.entry.u8(0xB) = uint8_t((p.u8(0xE) << 4) + p.u8(0xA));
+	if (p.u8(0xA) == 0) {
+		letter.entry.u8(0xC) = p.u8(0xC);
+	}
+	send_letter(save, kLetterToEach, letter);
+}
+
 // 0x4EA594 (evento 0x30 de la cabeza): el encargo del jefe de la Hansa
 // ([0x6DE52D], comerciante) con la reunión en [0x6DE52E] (ciudad). [+0x8]
 // tick del encargo (0: nada), [+0xC], [+0x12], [+0x13] tipo (0..7), [+0x14],
@@ -1602,35 +1633,57 @@ uint32_t fn_4ea594(SaveGame& save) {
 	for (uint32_t k = 0xF; k <= 0x16; ++k) {
 		p.u8(k) = 0;
 	}
-	// The meeting's letter 0x78 to each merchant (0x4EAA54..0x4EAB45):
-	// [+0x5] the meeting's town; [+0x8] the day and [+0x9] the month of the
-	// new event (0x5311D0); [+0xA] its [+0x9]; [+0xB] its [+0xE] << 4 + its
-	// [+0xA]; for the kind 0 [+0xC] its [+0xC]; [+0xD] the leader's title
-	// (0x4F9430), [+0xE], [+0xF] his [+0x1C], [+0x1D]. Without a leader, the
-	// title and names of the councillor ((0xFF − the mayor [+0x6F1]) & 3) of
-	// the meeting's town ([+0x6E0], [+0x6D4], [+0x6D8]).
-	Letter letter(0x78);
-	letter.entry.u8(5) = g.u8(kHanseTown);
-	if (leader < merchant_count(save)) {
-		const MerchantMemory& lm = save.merchants[leader].memory;
-		letter.entry.u8(0xE) = lm.u8(0x1C);
-		letter.entry.u8(0xF) = lm.u8(0x1D);
-		letter.entry.u8(0xD) = merchants_detail::fn_4f9430(save, int(leader));
-	} else {
-		const TownMemory& t = save.towns[g.u8(kHanseTown)].memory;
-		const uint32_t k = uint8_t(0xFF - t.u8(0x6F1)) & 3;
-		letter.entry.u8(0xE) = t.u8(0x6D4 + k);
-		letter.entry.u8(0xF) = t.u8(0x6D8 + k);
-		letter.entry.u8(0xD) = t.u8(0x6E0 + k);
-	}
-	events_mayor_detail::fn_5311d0(p.u32(0), letter.entry.u8(8), letter.entry.u8(9));
-	letter.entry.u8(0xA) = p.u8(9);
-	letter.entry.u8(0xB) = uint8_t((p.u8(0xE) << 4) + p.u8(0xA));
-	if (p.u8(0xA) == 0) {
-		letter.entry.u8(0xC) = p.u8(0xC);
-	}
-	send_letter(save, kLetterToEach, letter);
+	send_meeting_letter(save, p);
 	return 0;
+}
+
+// The operation 0x4A (0x53B1F0): {0x4A, u32 a tick, u32 the event, u32 the decision}: the Hanse tasks window's
+// developers' tools on a Hanse task (an event 0x30 below the events; the user wanted it in the engine though the viewer
+// doesn't offer it). The decision 6 drops it ([+0x8] = 0), its leader (a human merchant) losing reputation (0x4F91C0)
+// unless its [+0xC] is 6 or its kind [+0x13] 5 or 6. Any other calls the meeting: the event 0x21 at the given tick (at
+// least now + 0x700) with its low byte 0 ([+0x8] the meeting's town, [+0x9] the task's [+0x12], [+0xA] its kind,
+// [+0xB] its [+0xC], [+0xC] [+0x14], [+0xD] [+0x15], [+0xE] the decision, [+0xF..+0x16] 0), the task dropped and the
+// meeting's letter 0x78 to each merchant.
+void fn_53b1f0(SaveGame& save, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	uint32_t at;
+	std::memcpy(&at, operation + 4, 4);
+	uint32_t index;
+	std::memcpy(&index, operation + 8, 4);
+	uint32_t decision;
+	std::memcpy(&decision, operation + 0xC, 4);
+	if (index >= g.u16(kEventCount) || save.events[index].u16(6) != 0x30) {
+		return;
+	}
+	if (decision == 6) {
+		const Event& e = save.events[index];
+		const uint32_t leader = g.u8(kHanseLeader);
+		if (e.u8(0xC) != 6 && e.u8(0x13) != 5 && e.u8(0x13) != 6 && leader < merchant_count(save) &&
+			save.merchants[leader].memory.u16(8) == 0) {
+			fn_4f91c0(save, int(leader));
+		}
+		save.events[index].u32(8) = 0;
+		return;
+	}
+	if (at < g.u32(kTick) + 0x700) {
+		at = g.u32(kTick) + 0x700;
+	}
+	const uint16_t n = fn_4d8cf0(save, at & ~0xFFu);
+	Event& p = save.events[n];
+	const Event& h = save.events[index];
+	p.u16(6) = 0x21;
+	p.u8(8) = g.u8(kHanseTown);
+	p.u8(9) = h.u8(0x12);
+	p.u8(0xA) = h.u8(0x13);
+	p.u8(0xB) = h.u8(0xC);
+	p.u8(0xC) = h.u8(0x14);
+	p.u8(0xD) = h.u8(0x15);
+	p.u8(0xE) = uint8_t(decision);
+	for (uint32_t k = 0xF; k <= 0x16; ++k) {
+		p.u8(k) = 0;
+	}
+	save.events[index].u32(8) = 0;
+	send_meeting_letter(save, p);
 }
 
 // --- Evento 0x2E: la votación del consejo ---

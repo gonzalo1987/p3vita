@@ -8,6 +8,7 @@
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
 #include "p3data/town_tick/internal.hpp"
+#include "p3data/trade.hpp"
 
 namespace p3::data::tick::ship_trade_detail {
 uint16_t fn_5269a0(const SaveGame& save, int town, uint16_t owner);  // ship_trade.cpp
@@ -443,6 +444,48 @@ std::vector<uint16_t> window_ships(const SaveGame& save, int merchant, int town,
 			if (convoy >= convoys && !(s.u8(0x136) & 1) && s.u16(0x134) <= 1) {
 				list.push_back(uint16_t(i));
 			}
+			break;
+		case ShipListMode::SmallShips:  // 0x504E0B
+			if (s.u16(0x134) <= 1 && !(s.u8(0xE) & 2)) {
+				list.push_back(uint16_t(i));
+			}
+			break;
+		case ShipListMode::Pirate:  // 0x504E77
+			if (s.u16(0x42) >= captains && convoy >= convoys && s.s32(0x18) > (s.s32(0x14) >> 2) && s.u16(0x134) <= 1) {
+				list.push_back(uint16_t(i));
+			}
+			break;
+		case ShipListMode::WeaponsDealer: {  // 0x504FAC
+			if (s.u16(0x134) > 1 || (s.u8(0x136) & 1)) {
+				break;
+			}
+			// Some hand weapon above 10 units, or room for more than 10 (0x5182B0, asked of a copy); in a convoy those of
+			// the guide (the merchant's list's ship), for each of the merchant's ships of the convoy (the game's).
+			bool fits = false;
+			for (uint32_t k = 0; k < 4; ++k) {
+				fits = fits || s.s32(0xA4 + 4 * k) > 10;
+			}
+			if (!fits) {
+				SavedShip copy = save.ships[i];
+				fits = recalculate_cargo(copy) > 10;
+			}
+			if (convoy >= convoys) {
+				if (fits) {
+					list.push_back(uint16_t(i));
+				}
+				break;
+			}
+			const auto& c = save.convoys[convoy];
+			if (c.u16(0x10) != i) {
+				break;
+			}
+			for (uint32_t k = c.u16(0xA); k < ships; k = ship(k).u16(0x6)) {
+				if (int(ship(k).u8(0)) == merchant && fits) {
+					list.push_back(uint16_t(k));
+				}
+			}
+			break;
+		}
 			break;
 		}
 	}

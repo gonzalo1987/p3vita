@@ -2581,6 +2581,74 @@ The rest of the task's group 3 in the viewer (notes and scripts in `re/emu/sesio
   him), so that the player's chain has three memos 0x1E and two offers 0x1F: saves 1, 3, 5, 7, English and Spanish,
   all equal (`re/emu/sesion28/letters_offers.sh`).
 
+## The player's actions: the tavern, the land transport, the town hall's deliveries (2026-11-13)
+
+The engine half of the task's group 4 (notes in `re/emu/sesion29/`). Each operation is queued by its scenario through
+the executor 0x535760; those that make an event also run the queue (0x4D85C0) at its deadline. The scenarios (saves 1,
+3, 5, 7) all equal, all targets, a detail broken on purpose in each and caught; `world.sh 7` still 0 different with
+the three new event handlers in the dispatch:
+- **0x52** (0x53C2C0, `operations.cpp` `fn_53c2c0`): the people in a town's tavern, taken by a merchant who talks to
+  them (0xFF free) and left (a merchant past the merchants). Kinds 1 and 5 the town's [+0x83E] and [+0x83F] (left only
+  when not 0), 6 and 7 [+0x83D] and [+0x83C] (left always), 3 and 8 a captain (the draw's low 16 bits; his [+0xF]),
+  10 all of the merchant's places and the town's captain list [+0x82E], 9 nothing (its letters 0x71 write the mission
+  scripts' variables: the mission interpreter's). 6, 7 and 8 may give a commission (the event 0x05 at
+  (tick + 0x200) | 0x80) when the draw's low 10 bits are below 0x66 and the town's last one ([+0x9EC], [+0x9F4],
+  [+0x9F0]) is older than tick + 0x200; 6 never for the Alderman, the mayor or a town with [+0x2C8] & 0xE10.
+  Scenario `tavern_people` (37 targets).
+- **0x53** (0x53C840) and its **event 0x10** (0x4E63E4), `town_tick/tavern.cpp`: the traveller on a ship ([+0x157]),
+  letters 0x17 and 0x18. Scenario `traveller` (19 targets).
+- **0x4F** (0x53BA40) and its **event 0x0F** (0x4E5664), `tavern.cpp`: the burglar hired against another merchant with
+  an office there (fame +256 twice; the event in max(3, draw & 7) days). The event: n is 0x19A without an office, else
+  (draw & 0x3FF) · (g − 1) / (guards + g) with g from the office's capacity (an AI's guards at least 2); up to 0x66
+  caught (a commission, the event 0x05 with [+0x10] 3, and the letter 0x74 to the victim), up to 0x19A failed (0x16
+  to the burglar's master), else the burglary: money, min(8, (n & 7) + 3) % of the victim's and at most 50000, half
+  to the master; wares from the office drawn by the generator 0x46C350 seeded with the tick; letters 0x20 and 0x15.
+  Scenario `burglar` (26 targets).
+- **0x3A** (0x53A2C0) and its **event 0x0C** (0x4E38B4), `town_tick/land_transport.cpp`: the land transport (a cart
+  convoy; the operation makes the event at the tick, even with nothing to carry, and runs the queue at once). Eight
+  states: leaving the office, a day's wait, the road (the 7 roads of 0x672BF8, 16 ticks without one), an ambush taking
+  the escort's share, back from a besieged town (letter 0x67) or lost (0x69), unloading into the office with the
+  average price, the letter 0x66 and the ticker line 0x29. Scenario `land_transport` (32 targets). The office short
+  of the amount reproduces a game bug (`docs/roadmap.md`).
+- **0x51** (0x53C050, `town_tick/town_hall.cpp`): the wares delivered for a town hall order taken (its event 0x11,
+  made by 0x3D: group 5), from the merchant's ships in the town and then his office. Scenario `order_delivery` (19
+  targets).
+- **0x45** (0x535FA4, inline in the executor; `town_hall.cpp`): standing for mayor ([+0x118]; an AI merchant's always
+  1), and **0x4A** (0x53B1F0, `events_rare.cpp`): the developers' tools of the Hanse tasks window on an event 0x30
+  (the decision 6 drops it, with the leader's reputation; else the meeting's event 0x21 and the letter 0x78, its
+  composing shared with the event 0x30). Scenario `hanse_dev_candidacy` (19 targets).
+- **0xBF** (0x5436D0, `operations.cpp`): another player's ship groups (the network game; at most 7 ships, the others'
+  filtered out). Their lists are `SaveGame::opaque.merchant_lists` (the region ML of `tick_probe`, whose pointers
+  [+0x624..0x64B] are now pointer fields). Scenario `ship_groups` (9 targets); adding to a list with the flag is a
+  game bug that reads past the list, left out.
+- The 13 letter calls of these handlers are in `MAIL_CALLS` (132 of 154).
+- The land transport's game bug (the office short of the amount: the convoy carries the count divided again by
+  2000) is fixed behind fix_game_bugs at the user's word: `re/emu/sesion27/uc_fix.sh land_transport:1` differs from
+  the game in one call only, the convoy's amount (3 loads instead of 0).
+
+## The player's actions: the tavern's people, its trader, weapons dealer and traveller (2026-11-13)
+
+The viewer's half of group 4 so far (`tavern_window.cpp`, notes in `re/emu/sesion29/group4_notes.md`). Scenario
+`tavern_window` (saves 1, 3, 5, 7; 46 targets, all equal; the trader's last-ship quirk broken on purpose and caught):
+- Who is there (direct calls, thiscall on the town, al): 0x526880 the client of an order the player took, 0x5265E0
+  the trader, 0x5261A0 the traveller, 0x526280 the weapons dealer, 0x526120 the burglar; with the places
+  [+0x83C..0x83F] free, the player's, another's, past, the order places, the stocks around the trader's 40000 (a ware
+  out of his mask too), the siege, [+0x874] and the hand weapons, the town's first office alone.
+- The trader's offer (0x526650, through the copier TAVERN_OFFER: its 16 bytes into the scratch globals, the heap's byte
+  [+0xF] at 0): no surplus, barrels and loads, the larger, a seller's ship in the middle of the docked list (its owner
+  from another home town with [+0x8] & 4, the most its [+0x10]) and the last one (the game looks at the next ship's
+  index: the town's own merchant and 30000), a tiny most (one at least), the seller without the flag.
+- The trader's ships (0x5D7DE0, through TAVERN_SHIPS on a window of the oracle's): the units around a ship's room, a
+  ship out of anchor or in another town, a convoy by its guide with a member of the player's (the room of both) or
+  another's, not its guide.
+- The weapons dealer's prices (0x526470: 40 calls with the town's units 0, 9, 10, 1234 and 5000, 499, 25, 100000, its
+  people 300, 499, 500, 7000, the steps 0..3 and 7, the place's counts 0, 3, 70, −2) and 0x504AC0's kinds 4 (the
+  traveller's small ships), 5 (the pirate's) and 8 (the dealer's; in a convoy the game looks at the guide's weapons
+  and room for each member) with a captain or none, a quarter of the hull, the states, the mark, 11 swords, the types.
+- The window's own rules (the trader's arrows and two presses, 0x52, 0x4D, the units) by the ctest `tavern_window`;
+  the viewer seen in shots (`re/emu/sesion29/shots`: the trader, the dealer buying and selling a sword, the traveller
+  boarding with his letter 0x17).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

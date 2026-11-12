@@ -265,6 +265,33 @@ bool tavern_captain(SaveGame& save) {
 	return true;
 }
 
+// All the tavern's people (tavern_window.hpp) in the town of the player's first ship in port: a free captain
+// (tavern-captain), the trader (the stock of the ware 3 100000 above its [+0x4F4 + 0x30]), the informer ([+0x82C] 0),
+// the traveller, the weapons dealer (25 swords), the trader and the burglar free ([+0x83C..0x83F] 0xFF).
+bool tavern_people(SaveGame& save) {
+	if (!tavern_captain(save)) {
+		return false;
+	}
+	for (const SavedShip& ship : save.ships) {
+		if (ship.docked() && ship.owner() == save.player && ship.town() < save.towns.size()) {
+			TownMemory& t = save.towns[ship.town()].memory;
+			t.s32(4 + 4 * 3) = t.s32(0x4F4 + 0x10 * 3) + 100000;
+			t.u8(0x82C) = 0;
+			t.u8(0x83C) = 0xFF;
+			t.u8(0x83D) = 0xFF;
+			t.u8(0x83E) = 0xFF;
+			t.u8(0x83F) = 0xFF;
+			t.s32(0x54) = 25;
+			// The traveller: to the next town for 1500 within ten days.
+			t.u8(0x834) = uint8_t((ship.town() + 1) % save.towns.size());
+			t.u16(0x836) = 1500;
+			t.u32(0x838) = save.globals.u32(global::kWorldTick) + 10 * 256;
+			return true;
+		}
+	}
+	return false;
+}
+
 // The player's first ship docked out of a convoy, fit to guide one
 // (0x519C40): a captain of its town's list (or another town's), 25 sailors,
 // 7 small guns (firepower 70) and its whole hull.
@@ -472,6 +499,7 @@ const char kDebugStatesHelp[] =
 	"              and fire (only to look at them)\n"
 	"  damaged     the player's ships in port with half their hull (the shipyard)\n"
 	"  tavern-captain  a free captain in the tavern of the player's first ship's town\n"
+	"  tavern-people   all the tavern's people there (a captain, the trader, the informer, the traveller, ...)\n"
 	"  convoy-leader  the player's first ship in port fit to guide a convoy\n"
 	"  shipyard-materials  100 units of each shipyard material in that ship's town\n"
 	"  lender      loans on offer and asked for in that ship's town, an AI merchant's\n"
@@ -660,6 +688,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "lender") {
 			if (!lender(save)) {
 				error = "the player has no ship in port";
+				return false;
+			}
+		} else if (state == "tavern-people") {
+			if (!tavern_people(save)) {
+				error = "the player has no ship in port, or no town has a captain";
 				return false;
 			}
 		} else if (state == "tavern-captain") {

@@ -165,6 +165,16 @@ enum class ShipListMode : uint32_t {
 	// 0x504F30 alone: in the town, out of a convoy, docked (state 0 or 1), not marked [+0x136] & 1 (the ships another
 	// merchant's office lets the player offer).
 	Docked = 7,
+	// The tavern's traveller to a town of [+0x2C8] & 1 (0x5D6AE0, 0x504E0B): in the town, docked (state ≤ 1), of the
+	// types 0 and 1 ([+0xE] & 2 clear).
+	SmallShips = 4,
+	// The tavern's pirate (0x5D5430, 0x504E77): in the town, without a captain, out of a convoy, more than a quarter of
+	// its hull ([+0x18] > [+0x14] >> 2), docked (state ≤ 1).
+	Pirate = 5,
+	// The tavern's weapons dealer (0x5D5C60, 0x504FAC): in the town, docked (state ≤ 1), not marked [+0x136] & 1, with
+	// a hand weapon above 10 units or room above 10 (0x5182B0); in a convoy, its guide (the merchant's list's ship) for
+	// each of the merchant's ships of it, which go on the list, with the guide's weapons and room (the game's).
+	WeaponsDealer = 8,
 };
 std::vector<uint16_t> window_ships(const SaveGame& save, int merchant, int town, ShipListMode mode);
 

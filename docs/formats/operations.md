@@ -138,7 +138,7 @@ an action of the interface; 0x54 and 0x55 go with letters), others may be dead.
 | Group | Codes | Done in p3vita |
 |-|-|-|
 | simulation | 37: the ones the simulation queues (inventory, part B) | all 37 |
-| player | 105: queued by the interface | 80: 0x00..0x11, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x30..0x36, 0x39, 0x3B, 0x3F, 0x42, 0x43, 0x4B, 0x4D, 0x4E, 0x50, 0x56, 0x57, 0x58..0x5B, 0x5D..0x5F, 0x62, 0x63, 0x66, 0x68..0x72, 0x75, 0x77, 0x8B, 0x8C |
+| player | 105: queued by the interface | 88: 0x00..0x11, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x30..0x36, 0x39, 0x3A, 0x3B, 0x3F, 0x42, 0x43, 0x45, 0x4A, 0x4B, 0x4D..0x4F, 0x50..0x53, 0x56, 0x57, 0x58..0x5B, 0x5D..0x5F, 0x62, 0x63, 0x66, 0x68..0x72, 0x75, 0x77, 0x8B, 0x8C, 0xBF |
 | battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 12: all but 0x99 (never queued; its function, the chase's battle, is done) and 0xBD (the window) |
 | network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | 8: 0xA7, 0xAA, 0xAB (the new game's player and his names) and the five that do nothing |
 | new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | 8: all but 0xAE, 0xB2 and 0xB6 (no queuer found) |
@@ -211,7 +211,7 @@ feast window): the handler is the same and is done.
 | 0x37 | simulation | a merchant pays for a town (0x4F8560; the book: «Join Guild») | 0x4F4A20; guild 0x5BFB20 | 0x535E04 → 0x5303C0, 0x4F8560 |  | yes | read |
 | 0x38 | simulation | a ship auction: event 0x0A (0x535E3B) | 0x4DD400 | 0x535E3B → 0x4D8CF0 |  | yes | read |
 | 0x39 | player | a bath: the merchant's [+0x4], the tick of his last (0x535E7F, `operations.cpp`) | bath house 0x5B1410, 0x5B15F0, 0x5B1D80 | 0x535E7F → 0x5303C0 |  | yes | read |
-| 0x3A | player | an event record's fields (0x53A2C0: 0x4D8CF0, 0x4D8DB0, 0x4D85C0) | 0x419EB0, 0x5EB3C0 | 0x535EAC → 0x53A2C0 | 1, 288 B |  | guess |
+| 0x3A | player | a cart convoy by land: {0x3A, u8 from, u8 to, u8 merchant, u8 tell him, u16 amount, u16 price, u16 escorts, u8 ware, u8 -}: the event 0x0C at the tick (made even with no amount), the queue run at once (0x4D85C0); the event (0x4E38B4) leaves from the office (a game bug: short of the amount, the office loses its whole units and the convoy carries the count / 2000), waits a day, travels its road (0x672BF8), may be ambushed, turns back at a besieged town, arrives into the office; letters 0x66..0x69, ticker 0x29 (`town_tick/land_transport.cpp`) | the town gate 0x5EB3C0; 0x419EB0 | 0x535EAC → 0x53A2C0 | | yes | read |
 | 0x3B | player | materials for a Hanse road (0x53A3E0, `fn_53a3e0`) | road window 0x5F2A20 | 0x535EBB → 0x53A3E0 |  | yes | read |
 | 0x3C | unused | a building on sale (0x4DAB00) | not found (computed code or dead) | 0x535ECA → 0x4DAB00 |  |  | read |
 | 0x3D | player | an order of the town hall accepted (one of the world's seven, 0x6DE530): the town's slot [+0x830] or [+0x832], the event 0x11 at its deadline with the order, the letter 0x1A «Order», the world's order of that town cleared (0x53A620) | the town hall 0x5E7730 (0x5E7877) | 0x535EE5 → 0x53A620 | 1, 496 B |  | read |
@@ -222,21 +222,21 @@ feast window): the handler is the same and is done.
 | 0x42 | player | a bribe that works: paid, the reputation (0x4F8E30), the councillor's slot [0x6DC + k] (0x53AC50, `operations.cpp`) | bath house 0x5B2480 (the offer ≥ 0x529E20's price) | 0x535F77 → 0x53AC50 |  | yes | read |
 | 0x43 | player | a bribe that fails: the reputation − 2 (0x4F8E90), the slot to the merchant 1 if his or free (0x53AD10, `operations.cpp`) | bath house 0x5B2480 | 0x535F86 → 0x53AD10 |  | yes | read |
 | 0x44 | player | a ship for the town's defence (the town hall): the town's [+0x994] ship, in its state 8, back to 3; the new one (docked, out of a convoy) to the state 8 with [+0x30] = 0x5170F0 / 2, the town's [+0x990] the payment | 0x5E7AB0 | 0x535F95 → 0x53AD90 | 2, 464 B |  | read |
-| 0x45 | player | something of a merchant (0x4F9390) | 0x5E7C80 | 0x535FA4 → 0x5303C0, 0x4F9390 | 1, 48 B |  | guess |
+| 0x45 | player | stand for mayor or not: {0x45, merchant, yes}: a human merchant's [+0x118] the answer, an AI's 1 (0x4F9390; `town_tick/town_hall.cpp`) | the town hall 0x5E7C80 | 0x535FA4 → 0x4F9390 | | yes | read |
 | 0x46 | simulation | a mayor for a new town (0x535FD6) | event 0x2F; 0x419EB0 | 0x535FD6 → 0x5303C0 |  | yes | read |
 | 0x47 | player | a town's expense (0x529F90) | 0x5E8380 | 0x536057 → 0x53AF30 | 1, 224 B |  | guess |
 | 0x48 | simulation | a proposal for a town (0x53B010; the book: «Make Town Hall Offer») | 0x51E070, 0x51E270 | 0x536066 → 0x53B010 |  | yes | read |
 | 0x49 | player | an event's record (0x4DA060, 0x4D8DB0) | 0x5E8280 (through the jump at 0x5E82FE) | 0x536075 → 0x53B0D0 | 2, 512 B |  | guess |
-| 0x4A | player | the Hanse tasks window's other buttons (developers' tools; letter 0x78 «Hanse Day») | Hanse tasks window 0x5E87D0 | 0x536084 → 0x53B1F0 | 1, 592 B |  | read (alderman-viewer.md) |
+| 0x4A | player | the Hanse tasks window's developers' tools on a Hanse task (event 0x30): the decision 6 drops it (the leader's reputation, 0x4F91C0, unless exempt), another calls the meeting (the event 0x21 at least 0x700 later, the letter 0x78 to each) (`events_rare.cpp` `fn_53b1f0`) | Hanse tasks window 0x5E87D0 | 0x536084 → 0x53B1F0 | | yes | read |
 | 0x4B | player | take a Hanse task (0x53B440) | Hanse tasks window 0x5E87D0 (through the jump at 0x5E8A5A) | 0x536093 → 0x53B440 |  | yes | read |
 | 0x4C | unused | something of a merchant in a town (0x535400) | not found | 0x5360A2 → 0x53B4D0 | 1, 272 B |  | guess |
 | 0x4D | player | the tavern's trader: the units bought into a ship (and its convoy) or the office at price / units, the buyer pays, the town's stock down by what was left (a game bug?), the seller (a town's merchant: they are the merchants 0..towns − 1) paid (`trade.cpp`) | 0x5D6FC0 | 0x5360B1 → 0x53B5E0 | 1, 624 B | yes | read |
 | 0x4E | player | a player's ship turns pirate (0x53B850) | 0x5D5430 | 0x5360C0 → 0x53B850 |  | yes | read |
-| 0x4F | player | an event in a town (0x4D8CF0, an office 0x5308A0) | 0x5D68E0 | 0x5360CF → 0x53BA40 | 1, 592 B |  | guess |
+| 0x4F | player | the tavern's burglar hired by A against B (who has an office there): {0x4F, price, u16 draw, u16 town, u16 A, u16 B, u8 commission}: A pays, his fame +256 twice, the town's [+0x83C] 1, the event 0x0F in max(3, draw & 7) days and maybe a commission (event 0x05); the event (0x4E5664): caught (letter 0x74 to B, a commission), failed (0x16 to A) or the burglary (money and wares of B's office; 0x20 to B, 0x15 to A) (`town_tick/tavern.cpp`) | the tavern 0x5D68E0 | 0x5360CF → 0x53BA40 | | yes | read |
 | 0x50 | player | hand weapons with the town's weaponsmith for a ship (and its convoy) or the office: bought (cut by the room, the money, the town's stock) or sold (paid the count still to sell for each ship: a game bug?); the merchant's [+0x16] + 25 (`trade.cpp`) | the weaponsmith 0x5ECFA0 (one into the office); the tavern's weapons dealer | 0x5360DE → 0x53BC90 | 2, 1.1 KB | yes | read |
-| 0x51 | player | something with a ship, an office and an event record | 0x5D7760 | 0x5360ED → 0x53C050 | 1, 624 B |  | guess |
-| 0x52 | player | a tavern interaction (0x53C2C0; the book) | 0x5A5EA0, 0x5A7A60, 0x5A7BA0; the tavern's stored operation (0x5D5970) | 0x5360FC → 0x53C2C0 | 2, 1.5 KB |  | book |
-| 0x53 | player | a traveller (letter 0x17 «Traveller») | 0x5D6AE0 | 0x53610B → 0x53C840 | 1, 496 B |  | read (mail.md) |
+| 0x51 | player | wares delivered for an order taken: {0x51, merchant, -, the event 0x11, how many}: from his ships in the town, then his office, paid by the order's price unless already paid; done, the town's places [+0x830]/[+0x832] cleared (`town_tick/town_hall.cpp`) | 0x5D7760 | 0x5360ED → 0x53C050 | | yes | read |
+| 0x52 | player | the people in a town's tavern: {0x52, the draw, merchant, town, kind}: a merchant who talks to one takes him (the town's [+0x83C..0x83F], a captain's [+0xF]), past the merchants he leaves; the kinds 6, 7, 8 may give a commission (event 0x05); 9 and 10 touch the mission scripts' variables (not kept) (`town_tick/operations.cpp` `fn_53c2c0`) | the tavern's side menu 0x5A6604, 0x5A7A60, 0x5A7BA0; the tavern's stored operation (0x5D5970) | 0x5360FC → 0x53C2C0 | | yes | read |
+| 0x53 | player | the tavern's traveller goes with a ship: {0x53, u16 ship, u16 payment, u32 the tick to arrive by, u8 town, u8 destination}: the event 0x10 (0x4E63E4: he pays at his destination, less when late, letter 0x18) and the letter 0x17 (`town_tick/tavern.cpp`) | the tavern 0x5D6AE0 | 0x53610B → 0x53C840 | | yes | read |
 | 0x54 | player | remove a letter 0x44 (0x4D7340) | not found (letter answers?) | 0x53611A → 0x53CA30 | 2, 576 B |  | read (mail.md) |
 | 0x55 | player | pay for a letter 0x45/0x46 (0x4D74C0) | not found (letter answers?) | 0x536129 → 0x4D74C0 | 1, 272 B |  | read (mail.md) |
 | 0x56 | player | a piece of artillery (or one of [+0x2BC]) between the office and the town's weaponsmith, bought or sold (`trade.cpp`) | the weaponsmith 0x5ECFA0 | 0x536177 → 0x53CAF0 | 1, 496 B | yes | read |
@@ -344,7 +344,7 @@ feast window): the handler is the same and is done.
 | 0xBC | network | nothing: counters | 0x542F10 (op) | — |  |  | read |
 | 0xBD | battles | open the battle window (0x462280, 0x41D9B0: interface) | not found | 0x536F3B → 0x462280, 0x41D9B0 | 1, 144 B |  | read |
 | 0xBE | network | nothing: a merchant's checksum | 0x542F10 (op) | — |  |  | read |
-| 0xBF | player | a merchant's ship lists (0x4F5500, 0x4F56C0) | 0x4F5500, 0x4F56C0 (op), 0x4F5840 | 0x536FAB → 0x5436D0 | 6, 1.7 KB |  | guess |
+| 0xBF | player | another player's ship groups (network): {0xBF, u8 merchant \| 0x80 set, u8 list \| 0x80 flag, u16 ×7 ships}: a list of the ten set or added to, the ships of others filtered out (0x4F5500, 0x4F56C0; nothing for the local player) (`town_tick/operations.cpp` `fn_5436d0`) | 0x4F5500, 0x4F56C0 (op), 0x4F5840 | 0x536FAB → 0x5436D0 | | yes | read |
 | 0xC0 | missions | the mission interpreter starts (0x511270, 0x532420...) | 0x43D030, 0x541D70 | 0x53701E → 0x543810 | 49, 14.2 KB |  | read |
 
 ## Above 0xC0: the real-time loop's operations

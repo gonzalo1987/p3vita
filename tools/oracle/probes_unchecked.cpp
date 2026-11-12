@@ -13,6 +13,7 @@
 #include "p3data/sailing.hpp"
 #include "p3data/smithy_window.hpp"
 #include "p3data/statistics_window.hpp"
+#include "p3data/tavern_window.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "probe_registry.hpp"
 
@@ -142,6 +143,10 @@ constexpr uint32_t kWindowShips = 0x03000F80;
 // Its copier of the guild's list of the auctions to come (AUCTION_LIST: SENTINEL + 0xFE0): 0x4DA1A0 on the queue, its
 // entries (0x14 bytes each, at most 3) into the scratch globals and their count at 0x6DFF40.
 constexpr uint32_t kAuctionList = 0x03000FE0;
+// Its copiers of the tavern's trader (TAVERN_OFFER: SENTINEL + 0x3C0, 0x526650's 16 bytes into the scratch globals;
+// TAVERN_SHIPS: SENTINEL + 0x3E0, 0x5D7DE0's list there).
+constexpr uint32_t kTavernOffer = 0x030003C0;
+constexpr uint32_t kTavernShips = 0x030003E0;
 // Its copiers of the convoy window's choices (0x40C170) and of the market
 // window's convoy (0x4AA4A0) (CONVOY_CHOICES, CONVOY_SUMMARY).
 constexpr uint32_t kConvoyChoices = 0x03000E80;
@@ -1079,6 +1084,66 @@ void register_probes_unchecked(ProbeRegistry& r) {
 			return uint32_t(town_artillery(s, uint32_t(town), c.args[0]));
 		}
 		return uint32_t(office_artillery(s, uint32_t(c.office(c.ecx)), c.args[0]));
+	};
+	// The tavern (tavern_window.hpp): who is there (thiscall on the town; al), the trader's offer and his ships.
+	r[0x526880] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		c.eax_mask = 0xFF;
+		return tavern_order_client(s, uint32_t(c.town(c.ecx))) ? 1u : 0u;
+	};
+	r[0x5265E0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		c.eax_mask = 0xFF;
+		return tavern_trader(s, uint32_t(c.town(c.ecx))) ? 1u : 0u;
+	};
+	r[0x5261A0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		c.eax_mask = 0xFF;
+		return tavern_traveller(s, uint32_t(c.town(c.ecx))) ? 1u : 0u;
+	};
+	r[0x526280] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		c.eax_mask = 0xFF;
+		return tavern_weapons_dealer(s, uint32_t(c.town(c.ecx))) ? 1u : 0u;
+	};
+	r[0x526120] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		c.eax_mask = 0xFF;
+		return tavern_burglar(s, uint32_t(c.town(c.ecx))) ? 1u : 0u;
+	};
+	r[kTavernOffer] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const std::optional<TraderOffer> offer = trader_offer(s, uint32_t(c.town(c.ecx)));
+		if (!offer) {
+			return 0u;
+		}
+		GlobalMemory& g = s.globals;
+		g.u32(kScratch) = offer->tick;
+		g.u32(kScratch + 4) = uint32_t(offer->price);
+		g.u16(kScratch + 8) = offer->amount;
+		g.u16(kScratch + 0xA) = offer->ship;
+		g.u8(kScratch + 0xC) = offer->seller;
+		g.u8(kScratch + 0xD) = offer->buyer;
+		g.u8(kScratch + 0xE) = offer->ware;
+		g.u8(kScratch + 0xF) = 0;
+		return 1u;
+	};
+	// 0x526470 (thiscall on the town: step, &town's, &sell, &buy, &have; four each, in the scratch globals): the
+	// weapons dealer's prices; eax is what was left in it (not compared).
+	r[0x526470] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		std::array<int32_t, 4> have{};
+		for (uint32_t k = 0; k < 4; ++k) {
+			have[k] = s.globals.s32(c.args[4] + 4 * k);
+		}
+		const DealerPrices p = fn_526470(s, uint32_t(c.town(c.ecx)), c.args[0], have);
+		for (uint32_t k = 0; k < 4; ++k) {
+			s.globals.s32(c.args[1] + 4 * k) = p.town[k];
+			s.globals.s32(c.args[2] + 4 * k) = p.sell[k];
+			s.globals.s32(c.args[3] + 4 * k) = p.buy[k];
+		}
+		return std::nullopt;
+	};
+	r[kTavernShips] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const std::vector<uint16_t> list = trader_ships(s, c.args[1], int32_t(c.args[0]));
+		s.globals.u16(kScratch) = uint16_t(list.size());
+		for (size_t k = 0; k < list.size(); ++k) {
+			s.globals.u16(kScratch + 2 + 2 * uint32_t(k)) = list[k];
+		}
+		return uint32_t(list.size());
 	};
 	// The guild's window (guild_window.hpp): 0x4DA480 (thiscall on the queue: event), whether the player is told of
 	// the auction (al); and the copier of 0x4DA1A0's list.

@@ -38,6 +38,7 @@
 #include "p3data/office_window.hpp"
 #include "p3data/ship_pair_window.hpp"
 #include "p3data/smithy_window.hpp"
+#include "p3data/tavern_window.hpp"
 #include "p3data/letter_window.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/navigation.hpp"
@@ -2450,6 +2451,24 @@ struct PlaceUi {
 	int offer_choice = 0;
 	int32_t offer_amount = 0;
 	int32_t offer_price = 0;
+	// The tavern: the person talked to (TavernPerson; 0xFF nobody), a greeting drawn when it opened (the window's
+	// [+0x1C90]), the trader's window and his ships' list as the last update made it.
+	int talking = 0xFF;
+	int greeting = 0;
+	TraderWindow trader;
+	std::vector<uint16_t> trader_list;
+	// Inside a person's page with rows of its own (the weapons dealer's): the people's row kept; ○ goes back to them.
+	bool inside = false;
+	int people_row = 0;
+	// The weapons dealer's window: the step (0..3: 1, 5, 50, all; [+0x1CA4], kept while the tavern is open), the place
+	// (the office or a ship: [+0x1CA6], [+0x1C30]) and his ships' list as the last update made it.
+	int dealer_step = 0;
+	bool dealer_office = false;
+	uint16_t dealer_ship = 0xFFFF;
+	std::vector<uint16_t> dealer_list;
+	// The traveller's window and his ships' list as the last update made it.
+	TravellerWindow traveller;
+	std::vector<uint16_t> traveller_list;
 };
 
 constexpr int kShipyardPages = 5;
@@ -3792,7 +3811,26 @@ void place_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const
 		smithy_square(save, sailing, town, ui);
 	} else if (ui.open == Place::ShipPair) {
 		ship_pair_act(save, sailing, ui, true);
+	} else if (ui.open == Place::Tavern && ui.inside && ui.talking == int(TavernPerson::WeaponsDealer) && ui.row >= 2) {
+		run_operations(save, sailing,
+			{dealer_operation(save, uint32_t(town), uint32_t(ui.row - 2), false, uint32_t(std::clamp(ui.dealer_step, 0, 3)),
+				ui.dealer_office, ui.dealer_ship)});
 	}
+}
+
+// The weapons dealer's place (its row 0: the game's arrows) or step (row 1: its four buttons), −1 or +1.
+bool dealer_step_or_place(SaveGame& save, int town, PlaceUi& ui, int step) {
+	if (ui.open != Place::Tavern || !ui.inside || ui.talking != int(TavernPerson::WeaponsDealer) || ui.row > 1) {
+		return false;
+	}
+	if (ui.row == 0) {
+		if (trader_arrows(save, uint32_t(town), ui.dealer_list)) {
+			tavern_turn(save, uint32_t(town), ui.dealer_office, ui.dealer_ship, ui.dealer_list, step);
+		}
+	} else {
+		ui.dealer_step = (std::clamp(ui.dealer_step, 0, 3) + step + 4) % 4;
+	}
+	return true;
 }
 
 // Another merchant's office (.let 0x2D, the rival kontor; offer_window.hpp): the page 0 lists the merchants of the
@@ -3934,6 +3972,384 @@ void offer_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 	ui.row = 0;
 }
 
+// --- The tavern (its side menu 0x5A66C0 and its window *0x6E5574; the rules in tavern_window.hpp): a row for each
+// person there; the selected one is the one talked to, his page under the rows ---
+
+// The people there; and the one talked to while his page shows what came of it (the game's page after it stays on
+// the window when his button goes from the menu).
+std::vector<int> tavern_rows(const SaveGame& save, int town, const PlaceUi& ui) {
+	std::vector<int> rows;
+	const std::array<bool, kTavernPeople> there = tavern_people(save, uint32_t(town));
+	const int kept = (ui.talking == int(TavernPerson::Trader) && ui.trader.done) ||
+			(ui.talking == int(TavernPerson::Traveller) && ui.traveller.done)
+		? ui.talking
+		: -1;
+	for (int k = 0; k < kTavernPeople; ++k) {
+		if (there[size_t(k)] || k == kept) {
+			rows.push_back(k);
+		}
+	}
+	return rows;
+}
+
+// The person's word on the game's menu (0x69C9D8: Trader .. Burglar; 0x69C98C Pirate).
+std::string tavern_person_name(int person) {
+	switch (TavernPerson(person)) {
+	case TavernPerson::OrderClient:
+		return tr("Cliente de un pedido", "An order's client");
+	case TavernPerson::Trader:
+		return exe_text(0x69C9D8, "Comerciante", "Trader");
+	case TavernPerson::Sailors:
+		return exe_text(0x69C9DC, "Marineros", "Sailors");
+	case TavernPerson::Captain:
+		return exe_text(0x69C9E0, "Capitán", "Captain");
+	case TavernPerson::Informer:
+		return exe_text(0x69C9E4, "Soplón", "Informer");
+	case TavernPerson::Traveller:
+		return exe_text(0x69C9E8, "Viajero", "Traveller");
+	case TavernPerson::WeaponsDealer:
+		return exe_text(0x69C9EC, "Traficante de armas", "Weapons dealer");
+	case TavernPerson::Burglar:
+		return exe_text(0x69C9F0, "Ladrón", "Burglar");
+	case TavernPerson::Pirate:
+		return exe_text(0x69C98C, "Pirata", "Pirate");
+	default:
+		return "?";
+	}
+}
+
+// The row's person talked to, as the game's menu does when one is chosen (0x5A68A0): the one before left (0x5A7A60,
+// also when there was none) and the new one taken (0x5A7BA0); his page opened (the trader's: 0x5CF59C).
+void tavern_talk(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
+	const std::vector<int> rows = tavern_rows(save, town, ui);
+	if (rows.empty()) {
+		ui.inside = false;
+		return;
+	}
+	int& row = ui.inside ? ui.people_row : ui.row;
+	row = std::clamp(row, 0, int(rows.size()) - 1);
+	const int person = rows[size_t(row)];
+	if (person != ui.talking) {
+		ui.inside = false;
+	}
+	if (person == ui.talking && person == int(TavernPerson::Traveller)) {
+		std::vector<uint16_t> now = traveller_ships(save, uint32_t(town));
+		traveller_refresh(save, uint32_t(town), ui.traveller, ui.traveller_list, now);
+		ui.traveller_list = std::move(now);
+		return;
+	}
+	if (person == ui.talking && person == int(TavernPerson::WeaponsDealer)) {
+		// Each update (0x5D5CD7): the list again (an empty one that has ships gives its first); without ships the
+		// office if there is one.
+		std::vector<uint16_t> now = window_ships(save, save.player, town, ShipListMode::WeaponsDealer);
+		if (ui.dealer_list.size() != now.size() && ui.dealer_list.empty() && !now.empty()) {
+			ui.dealer_ship = now[0];
+		}
+		if (now.empty() && player_office(save, town) >= 0) {
+			ui.dealer_office = true;
+		}
+		ui.dealer_list = std::move(now);
+		return;
+	}
+	if (person == ui.talking) {
+		if (person == int(TavernPerson::Trader) && ui.trader.offer && !ui.trader.done) {
+			// Each update the list again (0x5D701A): an empty one that has ships gives its first.
+			std::vector<uint16_t> now = trader_ships(save, uint32_t(town), ui.trader.offer->units());
+			trader_refresh(save, uint32_t(town), ui.trader, ui.trader_list, now);
+			ui.trader_list = std::move(now);
+		}
+		return;
+	}
+	const uint32_t merchants = save.globals.u16(global::kWorldMerchantCount);
+	const OperationBytes left = tavern_talk_operation(save, merchants, uint32_t(town), uint32_t(ui.talking));
+	const OperationBytes taken = tavern_talk_operation(save, uint32_t(save.player), uint32_t(town), uint32_t(person));
+	run_operations(save, sailing, {left, taken});
+	ui.talking = person;
+	ui.amount = 0;
+	ui.ship = 0;
+	if (person == int(TavernPerson::Trader)) {
+		trader_open(save, uint32_t(town), ui.trader);
+		ui.trader_list = ui.trader.offer ? trader_ships(save, uint32_t(town), ui.trader.offer->units())
+										 : std::vector<uint16_t>();
+	}
+	if (person == int(TavernPerson::Traveller)) {
+		ui.traveller = TravellerWindow();
+		ui.traveller_list = traveller_ships(save, uint32_t(town));
+		if (!ui.traveller_list.empty()) {
+			ui.traveller.ship = ui.traveller_list[0];
+		}
+	}
+	if (person == int(TavernPerson::WeaponsDealer)) {
+		// The page opened (0x5CF401): his ships, the first chosen; the office not (0x5CEF49).
+		ui.dealer_list = window_ships(save, save.player, town, ShipListMode::WeaponsDealer);
+		if (!ui.dealer_list.empty()) {
+			ui.dealer_ship = ui.dealer_list[0];
+		}
+		ui.dealer_office = false;
+	}
+}
+
+std::array<std::string, 3> tavern_greeted(const SaveGame& save);
+std::string exe_format(uint32_t english, const std::vector<std::string>& args, const std::string& fallback);
+
+// «... the Snaikka Constance.»: the article by the ship's type (0x5D38A8: 0 and 2, 0x69D8F4; 1 and 3, 0x69D8F0), its
+// type's name and its name.
+std::string tavern_ship_words(const SavedShip& s) {
+	const int type = s.type();
+	const std::string article = type == 0 || type == 2 ? exe_text(0x69D8F4, "del", "the") : exe_text(0x69D8F0, "del", "the");
+	return article + " " + ship_type_name(type) + " " + s.name();
+}
+
+// The tavern's greeting of the player (the trader's and the traveller's, by the window's [+0x1CA5]: 0x69D998, 0x69D9C8,
+// 0x69D9E0 with his rank, first name and family name).
+std::string tavern_greeting_text(const SaveGame& save, int variant) {
+	static const uint32_t kGreetings[3] = {0x69D998, 0x69D9C8, 0x69D9E0};
+	if (variant < 0 || variant > 2) {
+		return std::string();
+	}
+	const std::array<std::string, 3> who = tavern_greeted(save);
+	return exe_format(kGreetings[variant], {who[0], who[1], who[2]},
+		tr("\"Saludos, ", "\"Greetings, ") + who[1] + " " + who[2] + ".");
+}
+
+// The traveller's page (its drawing 0x5D22E0 and the page after it 0x5D2BC0).
+void traveller_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	TravellerWindow& w = ui.traveller;
+	v.title = place_name(ui.let_type) + " - " + exe_text(0x69D8B8, "Negociar con el viajero", "Talk to traveller");
+	v.act = exe_text(0x69DB40, "Aceptar encargo", "Accept order");
+	std::pair<std::string, bool>& row = v.rows[size_t(ui.row)];
+	const uint16_t past = save.globals.u16(global::kShipCount);
+	if (w.done) {
+		std::string said;
+		if (w.expired) {
+			said = exe_text(0x69D98C, "\"Lo siento, pero si no te decides, buscaré un comerciante más rápido.\"",
+				"\"I'm sorry, but if you can't decide, I will find a quicker trader.\"");
+		} else if (w.late) {
+			said = exe_text(0x69D990, "\"Como tu barco sea tan lento como tú negociando, tal vez sea mejor ir andando!\"",
+				"\"If your ship is just as slow as your bargaining, then perhaps it would be better to walk!\"");
+		} else if (w.ship < past) {
+			said = exe_text(0x69D9C4, "El viajero sube a bordo", "The traveller boards") + " " + tavern_ship_words(save.ships[w.ship]) + ".";
+		}
+		for (const std::string& line : text_lines(said)) {
+			v.lines.push_back({line, kTextColor});
+		}
+		row.second = false;
+		return;
+	}
+	const TravellerJob job = traveller_job(save, uint32_t(town));
+	const std::string greeting = tavern_greeting_text(save, ui.trader.greeting);
+	const std::string where = window_town_name(save, job.destination);
+	const std::string day = std::to_string(job.day);
+	const std::string month = exe_text(0x6C0D00 + 4 * uint32_t(job.month), "", "");
+	const std::string year = std::to_string(job.year);
+	const std::string pay = std::to_string(job.payment);
+	std::string text;
+	switch (ui.greeting) {  // The window's [+0x1C90].
+	case 0:
+		text = exe_format(0x69D988, {greeting, where, pay, day, month, year}, greeting + " " + where + " " + pay);
+		break;
+	case 1:
+		text = exe_format(0x69D99C, {greeting, where, day, month, year, pay}, greeting + " " + where + " " + pay);
+		break;
+	case 2: {
+		const std::array<std::string, 3> who = tavern_greeted(save);
+		text = exe_format(0x69D9B4, {who[0], who[1], who[2], where, day, month, year, pay}, where + " " + pay);
+		break;
+	}
+	default:
+		break;
+	}
+	for (const std::string& line : text_lines(text)) {  // The variants 0 and 1 begin with the greeting (their first %s).
+		v.lines.push_back({line, kTextColor});
+	}
+	if (ui.traveller_list.empty()) {
+		v.lines.push_back({game_text(GameText::TavernNoShip, tr("No tienes barcos adecuados en el puerto", "You have no ship in port")),
+			kDimColor});
+		row.second = false;
+		return;
+	}
+	if (w.ship < past) {
+		v.lines.push_back({game_text(GameText::TavernChosenShip, tr("Barco elegido:", "Chosen ship:")) + " " +
+				ship_label(save.ships[w.ship]),
+			kTextColor});
+	}
+	if (ui.traveller_list.size() > 1) {
+		v.max_amount = 0;
+		v.amount_choice = true;
+		v.amount_label = "<>";
+	}
+}
+
+// The weapons dealer's greeting (0x5D1512: three lines).
+std::vector<std::string> dealer_greeting() {
+	return {exe_text(0x69D92C, "\"¡Saludos!", "\"Greetings!"),
+		exe_text(0x69D930, "¿Estás interesado en", "Would you be interested in a few"),
+		exe_text(0x69D934, "comprar o vender armas?\"", "weapon deals?\"")};
+}
+
+// The weapons dealer's page (its drawing 0x5D14A0): the place, the step and the four hand weapons, each with the
+// dealer's count and price of one bought, the place's count and price of one sold. X buys the row's weapon, □ sells it.
+void dealer_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	v.title = place_name(ui.let_type) + " - " + exe_text(0x69D8BC, "Hablar con traficante de armas", "Talk to weapons dealer");
+	const uint16_t past = save.globals.u16(global::kShipCount);
+	const bool office = player_office(save, town) >= 0;
+	const bool on = !ui.dealer_list.empty() || office;  // Without ships or an office the buttons are off.
+	std::string place;
+	if (ui.dealer_office) {
+		place = game_text(GameText::Office, tr("Oficina", "Office"));
+	} else if (ui.dealer_ship < past) {
+		place = ship_label(save.ships[ui.dealer_ship]);
+	}
+	v.rows.push_back({ui.dealer_office ? place : game_text(GameText::MarketShip, tr("Barco", "Ship")) + ": " + (on ? place : "-"),
+		false});
+	static const char* kSteps[4] = {"1", "5", "50", nullptr};
+	const int step = std::clamp(ui.dealer_step, 0, 3);
+	v.rows.push_back({tr("Paso: ", "Step: ") + (kSteps[step] ? std::string(kSteps[step]) : tr("todo", "all")), false});
+	const std::array<int32_t, 4> have = dealer_have(save, uint32_t(town), ui.dealer_office, ui.dealer_ship);
+	const DealerPrices prices = fn_526470(save, uint32_t(town), uint32_t(step), have);
+	for (uint32_t k = 0; k < 4; ++k) {
+		const int32_t sell = have[k] == 0 ? 0 : prices.sell[k];
+		v.rows.push_back({ware_label(int(0x14 + k)) + ":  " + exe_text(0x6998E4, "Mercader", "Trader") + " " +
+				std::to_string(prices.town[k]) + "  " + game_text(GameText::MarketBuy, tr("Comprar", "Buy")) + " " +
+				format_money(prices.buy[k]) + "  |  " + std::to_string(have[k]) + "  " +
+				game_text(GameText::MarketSell, tr("Vender", "Sell")) + " " + format_money(sell),
+			on});
+	}
+	ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
+	for (const std::string& line : dealer_greeting()) {
+		v.lines.push_back({line, kTextColor});
+	}
+	if (!on) {
+		v.lines.push_back({game_text(GameText::TavernNoShip, tr("No tienes barcos adecuados en el puerto", "You have no ship in port")) +
+				" " + exe_text(0x69DA58, "en el que cargar armas.\"", "on which you could load weapons.\""),
+			kDimColor});
+	}
+	if (ui.row <= 1) {
+		// The place (the game's arrows) and the step (its four buttons): Left/Right or − and +.
+		v.max_amount = 0;
+		v.amount_choice = true;
+		v.amount_label = "<>";
+		v.act = game_text(GameText::MarketBuy, tr("Comprar", "Buy"));
+		v.rows[size_t(ui.row)].second = false;
+		v.act2 = game_text(GameText::MarketSell, tr("Vender", "Sell"));
+		v.act2_on = false;
+		if (ui.row == 0 && !trader_arrows(save, uint32_t(town), ui.dealer_list)) {
+			v.max_amount = -1;  // One place: no arrows.
+		}
+		return;
+	}
+	v.act = game_text(GameText::MarketBuy, tr("Comprar", "Buy"));
+	v.act2 = game_text(GameText::MarketSell, tr("Vender", "Sell"));
+	v.act2_on = on;
+}
+
+// The player as the tavern's people greet him (0x5D2EC2): his rank in his home town by his sex (0x6A0608, [+0x39C +
+// home town] + 8 · ([+0x1A] & 1)), his first name and his family name.
+std::array<std::string, 3> tavern_greeted(const SaveGame& save) {
+	const MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+	const uint32_t rank = uint32_t(m.u8(0x39C + m.u8(0x19))) + 8 * (m.u8(0x1A) & 1u);
+	return {lender_text(0x6A0608 + 4 * rank, "", ""), clean_game_text(game_first_name(save, m.u8(0x1C))),
+		clean_game_text(game_family_name(save, m.u8(0x1D)))};
+}
+
+// A game's sentence with its arguments (GameTexts::format), cleaned; the fallback without the game's texts.
+std::string exe_format(uint32_t english, const std::vector<std::string>& args, const std::string& fallback) {
+	if (g_texts) {
+		const std::string& raw = g_texts->raw_at(english);
+		if (!raw.empty()) {
+			return clean_game_text(GameTexts::format(raw, args));
+		}
+	}
+	return fallback;
+}
+
+// The trader's page (its drawing 0x5D2DC0 and the page after it 0x5D36A0).
+void trader_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	TraderWindow& w = ui.trader;
+	v.title = place_name(ui.let_type) + " - " + exe_text(0x69D8A8, "Hablar con comerciante", "Talk to trader");
+	std::pair<std::string, bool>& row = v.rows[size_t(ui.row)];
+	if (w.done) {
+		// The page after it: the money short, the place, no place.
+		std::string said;
+		const std::string delivered = exe_text(0x69D9F0, "\"Las mercancías han sido transportadas", "\"The goods were delivered");
+		const std::string end = exe_text(0x69D9F8, ".\"", ".\"");
+		const uint16_t past = save.globals.u16(global::kShipCount);
+		if (!w.afforded) {
+			said = exe_text(0x69D9EC, "\"¡Primero deberías mejorar tu situación económica!\"",
+				"\"You should improve your finances first!\"");
+		} else if (w.office) {
+			said = delivered + " " + exe_text(0x69DA00, "a tu oficina comercial", "to your trading office") + end;
+		} else if (w.convoy && w.ship < past) {
+			said = delivered + " " + exe_text(0x69D9FC, "al convoy", "to the convoy") + " " + save.ships[w.ship].name() + end;
+		} else if (w.no_place) {
+			said = exe_text(0x69DA04, "No hay disponible ni una oficina comercial ni un barco que tengan suficiente capacidad.",
+				"There is neither a trading office nor a ship available that would have enough capacity for the supplies.");
+		} else if (w.ship < past) {
+			const SavedShip& s = save.ships[w.ship];
+			const int type = s.type();
+			// 0x5D38A8: the article by the ship's type (0 and 2: 0x69D8F4; 1 and 3: 0x69D8F0), then its type's name.
+			const std::string article = type == 0 || type == 2 ? exe_text(0x69D8F4, "del", "the") : exe_text(0x69D8F0, "del", "the");
+			said = delivered + " " + exe_text(0x69D9F4, "al", "to") + " " + article + " " + ship_type_name(type) + " " + s.name() + end;
+		}
+		for (const std::string& line : text_lines(said)) {
+			v.lines.push_back({line, kTextColor});
+		}
+		v.act = exe_text(0x69DB50, "Cargar mercancías", "Load goods");
+		row.second = false;
+		return;
+	}
+	if (!w.offer) {
+		row.second = false;
+		return;
+	}
+	const TraderOffer& o = *w.offer;
+	const std::array<std::string, 3> who = tavern_greeted(save);
+	static const uint32_t kGreetings[3] = {0x69D998, 0x69D9C8, 0x69D9E0};
+	if (w.greeting >= 0 && w.greeting < 3) {
+		for (const std::string& line : text_lines(exe_format(kGreetings[w.greeting], {who[0], who[1], who[2]},
+				 tr("\"Saludos, ", "\"Greetings, ") + who[1] + " " + who[2] + "."))) {
+			v.lines.push_back({line, kTextColor});
+		}
+	}
+	const bool barrels = o.units() == int32_t(o.amount) * 200;
+	const std::vector<std::string> offer_args = {std::to_string(o.amount), ware_name(o.ware), std::to_string(o.price)};
+	const std::string offer = barrels ? exe_format(0x69D9CC, offer_args,
+										   tr("Te doy ", "I offer you ") + std::to_string(o.amount) + " " + ware_name(o.ware) + " " +
+											   format_money(o.price) + "?")
+									  : exe_format(0x69D9E4, offer_args,
+											tr("¿Te interesan ", "Are you interested in ") + std::to_string(o.amount) + " " +
+												ware_name(o.ware) + " " + format_money(o.price) + "?");
+	for (const std::string& line : text_lines(offer)) {
+		v.lines.push_back({line, kTextColor});
+	}
+	if (w.confirmed) {
+		// Where to (0x5D3195): the office or the ship (the word «Convoy» for a convoy's guide), the arrows when there is
+		// more than one place.
+		const std::vector<uint16_t> ships = trader_ships(save, uint32_t(town), o.units());
+		const uint16_t past = save.globals.u16(global::kShipCount);
+		std::string place;
+		if (w.office) {
+			place = game_text(GameText::Office, tr("Oficina", "Office"));
+		} else if (w.ship < past) {
+			const SavedShip& s = save.ships[w.ship];
+			place = s.memory.u16(0x8) < save.convoys.size() && s.memory.u16(0x8) < save.globals.u16(global::kShips + 0xF6)
+				? exe_text(0x699908, "Convoy", "Convoy") + ": " + s.name()
+				: ship_label(s);
+		}
+		v.lines.push_back({exe_text(0x69DA0C, "¿Dónde deseas que se lleve la mercancía?", "Where should the goods be delivered?"),
+			kTextColor});
+		v.lines.push_back({place, kTextColor});
+		if (trader_arrows(save, uint32_t(town), ships)) {
+			v.max_amount = 0;
+			v.amount_choice = true;
+			v.amount_label = "<>";
+		}
+		v.act = exe_text(0x69DB50, "Cargar mercancías", "Load goods");
+	} else {
+		v.act = exe_text(0x69DB30, "Aceptar oferta", "Accept offer");
+	}
+}
+
 PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	PlaceView v;
 	const int player = save.player;
@@ -3957,12 +4373,35 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	switch (ui.open) {
 	case Place::Tavern: {
 		v.title = place_name(ui.let_type);
-		v.rows = {{game_text(GameText::TavernHireSailors, tr("Contratar marineros", "Hire sailors")), true},
-			{game_text(GameText::TavernHireCaptain, tr("Contratar capitán", "Hire captain")), true}};
-		ui.row = std::clamp(ui.row, 0, 1);
+		if (ui.inside && ui.talking == int(TavernPerson::WeaponsDealer)) {
+			dealer_page(save, town, ui, v);
+			break;
+		}
+		const std::vector<int> people = tavern_rows(save, town, ui);
+		for (const int k : people) {
+			v.rows.push_back({tavern_person_name(k), true});
+			v.codes.push_back(k);
+		}
+		if (people.empty()) {
+			break;
+		}
+		ui.row = std::clamp(ui.row, 0, int(people.size()) - 1);
+		const TavernPerson person = TavernPerson(people[size_t(ui.row)]);
 		const std::string no_ship = game_text(GameText::TavernNoShip, tr("No tienes barcos adecuados en el puerto",
 			"You have no ship in port"));
-		if (ui.row == 0) {
+		if (person == TavernPerson::Trader) {
+			trader_page(save, town, ui, v);
+		} else if (person == TavernPerson::Traveller) {
+			traveller_page(save, town, ui, v);
+		} else if (person == TavernPerson::WeaponsDealer) {
+			v.title += " - " + exe_text(0x69D8BC, "Hablar con traficante de armas", "Talk to weapons dealer");
+			for (const std::string& line : dealer_greeting()) {
+				v.lines.push_back({line, kTextColor});
+			}
+			v.act = exe_text(0x69D8BC, "Hablar con traficante de armas", "Talk to weapons dealer");
+		} else if (person == TavernPerson::Sailors) {
+			v.title += " - " + game_text(GameText::TavernHireSailors, tr("Contratar marineros", "Hire sailors"));
+			v.act = game_text(GameText::TavernHireSailors, tr("Contratar marineros", "Hire sailors"));
 			choose(window_ships(save, player, town, ShipListMode::Sailors));
 			const uint32_t shown = tavern_sailors(save, player, town, ui.roll);
 			chosen_line({no_ship, game_text(GameText::TavernNoShipForSailors, "")});
@@ -3974,8 +4413,10 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 				v.lines.push_back({game_text(GameText::TavernHowMany, tr("¿A cuántos quieres contratar?",
 					"How many do you want to hire?")), kTextColor});
 			}
-			v.rows[0].second = v.ship >= 0 && shown > 0;
-		} else {
+			v.rows[size_t(ui.row)].second = v.ship >= 0 && shown > 0;
+		} else if (person == TavernPerson::Captain) {
+			v.title += " - " + game_text(GameText::TavernHireCaptain, tr("Contratar capitán", "Hire captain"));
+			v.act = game_text(GameText::TavernHireCaptain, tr("Contratar capitán", "Hire captain"));
 			choose(window_ships(save, player, town, ShipListMode::Captains));
 			v.captain = tavern_captain(save, town, uint16_t(player));
 			if (v.captain != 0xFFFF) {
@@ -3996,7 +4437,10 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 				v.lines.push_back({tr("No hay ningún capitán en la taberna.", "There is no captain in the tavern."), kDimColor});
 			}
 			chosen_line({no_ship});
-			v.rows[1].second = v.ship >= 0 && v.captain != 0xFFFF;
+			v.rows[size_t(ui.row)].second = v.ship >= 0 && v.captain != 0xFFFF;
+		} else {
+			v.lines.push_back({tr("(Su ventana aún no está en el visor.)", "(His window isn't in the viewer yet.)"), kDimColor});
+			v.rows[size_t(ui.row)].second = false;
 		}
 		break;
 	}
@@ -4252,6 +4696,11 @@ struct PlaceLayout {
 	}
 };
 
+// «○ close», or «○ back» inside a person's page of the tavern; a tap on it does the same as ○.
+std::string place_close_label(const PlaceUi& ui) {
+	return ui.inside ? tr(BTN_CIRCLE " volver", BTN_CIRCLE " back") : tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close");
+}
+
 void draw_place(SDL_Renderer* renderer, TextRenderer& text, const PlaceUi& ui, const PlaceView& v) {
 	const PlaceLayout layout(text.line_height());
 	const SDL_Rect& panel = layout.panel;
@@ -4264,7 +4713,7 @@ void draw_place(SDL_Renderer* renderer, TextRenderer& text, const PlaceUi& ui, c
 	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
 	SDL_RenderDrawRect(renderer, &panel);
 	text.draw(v.title, left, layout.header_y, kTextColor);
-	const std::string close = tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close");
+	const std::string close = place_close_label(ui);
 	text.draw(close, panel.x + panel.w - PlaceLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
 
 	// The rows (the shipyard's ships scroll with the selection).
@@ -4480,6 +4929,42 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 		ship_pair_act(save, sailing, ui, false);
 		return;
 	}
+	if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::WeaponsDealer)) {
+		if (!ui.inside) {
+			ui.inside = true;  // Into his page: the people's row kept.
+			ui.people_row = ui.row;
+			ui.row = 2;
+		} else if (ui.row >= 2) {
+			run_operations(save, sailing,
+				{dealer_operation(save, uint32_t(town), uint32_t(ui.row - 2), true, uint32_t(std::clamp(ui.dealer_step, 0, 3)),
+					ui.dealer_office, ui.dealer_ship)});
+		}
+		ui.message.clear();
+		return;
+	}
+	if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::Traveller)) {
+		// «Accept order» (0x5D6DEE).
+		if (!ui.traveller_list.empty()) {
+			const std::optional<OperationBytes> op = traveller_press(save, uint32_t(town), ui.traveller);
+			if (op) {
+				run_operations(save, sailing, {*op});
+			}
+		}
+		ui.message.clear();
+		return;
+	}
+	if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::Trader)) {
+		// «Accept offer», then «Load goods» (0x5D7384).
+		if (ui.trader.offer) {
+			const std::vector<uint16_t> ships = trader_ships(save, uint32_t(town), ui.trader.offer->units());
+			const std::optional<OperationBytes> op = trader_press(save, uint32_t(town), ui.trader, ships);
+			if (op) {
+				run_operations(save, sailing, {*op});
+			}
+		}
+		ui.message.clear();
+		return;
+	}
 	if (ui.open == Place::Building) {
 		// 0x5AFD80 after «Yes»: 0x26 or 0x28 with the building's cell; the window closes.
 		const BuildingRecord& r = save.towns[size_t(town)].records[size_t(ui.record)];
@@ -4508,7 +4993,8 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 	const SavedShip* s = ship >= 0 ? &save.ships[size_t(ship)] : nullptr;
 	const int sailors = s ? s->sailors() : 0;
 	const uint16_t captain = s ? s->captain() : 0xFFFF;
-	if (ui.open == Place::Tavern && ui.row == 0) {
+	const bool hiring_sailors = ui.open == Place::Tavern && ui.talking == int(TavernPerson::Sailors);
+	if (hiring_sailors) {
 		op = hire_sailors_operation(uint32_t(ship), uint32_t(ui.amount));
 	} else if (ui.open == Place::Tavern) {
 		op = hire_captain_operation(v.captain, uint32_t(ship), uint32_t(town));
@@ -4529,7 +5015,7 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 		run_operation(save, nullptr, op->data());
 	}
 	const std::string name = s->name();
-	if (ui.open == Place::Tavern && ui.row == 0) {
+	if (hiring_sailors) {
 		const int n = s->sailors() - sailors;
 		ui.message = g_spanish ? "Contratas " + std::to_string(n) + " marineros para el " + name + "."
 							   : "You hire " + std::to_string(n) + " sailors for the " + name + ".";
@@ -9505,6 +9991,7 @@ int main(int argc, char** argv) {
 	MarketUi market;
 	HanseUi hanse;  // The Hanse panel (Square in a town).
 	PlaceUi place;  // The town's places (the tavern, the shipyard) and the ship's window.
+	int tavern_town = -1;  // The town whose tavern is open (its people let go when it closes: 0x52 with the kind 10).
 	SaveGame save;
 	// The game's main menu first (the user's choice, 2026-11-11), unless a save
 	// or debug states are given or a scripted run doesn't ask for it.
@@ -9876,6 +10363,7 @@ int main(int argc, char** argv) {
 		market = MarketUi();
 		hanse = HanseUi();
 		place = PlaceUi();
+		tavern_town = -1;
 		messages = MessageWindow();
 		end_window = EndWindow();
 		fleet_index = 0;
@@ -11374,6 +11862,19 @@ int main(int argc, char** argv) {
 			run_operations(save, sailing.get(), {bath_operation(uint32_t(save.player), save.globals.u32(global::kWorldTick))});
 			place.bathed = false;
 		}
+		// The tavern: closed (or another town), all of the player's people let go (0x52 with the kind 10, 0x5A6590);
+		// open, the row's person talked to (tavern_talk).
+		const bool in_tavern = in_place && place.open == Place::Tavern;
+		if (tavern_town >= 0 && (!in_tavern || tavern_town != town_index)) {
+			if (has_save && save.player >= 0) {
+				run_operations(save, sailing.get(), {tavern_leave_operation(uint32_t(save.player), uint32_t(tavern_town))});
+			}
+			tavern_town = -1;
+		}
+		if (in_tavern) {
+			tavern_town = town_index;
+			tavern_talk(save, sailing.get(), town_index, place);
+		}
 		const PlaceView place_now = in_place ? place_view(save, town_index, place) : PlaceView();
 		if (!in_place && place.typing) {
 			place.typing = false;
@@ -11460,6 +11961,10 @@ int main(int argc, char** argv) {
 			place.let_type = let_type;
 			if (p == Place::Tavern) {
 				place.roll = tavern_roll(save);
+				// The tavern's window opened (0x5CCE4B..0x5CCECF): a greeting, the trader's offer and his greeting.
+				place.greeting = tavern_greeting(save);
+				place.trader.offer = trader_offer(save, uint32_t(town_index));
+				place.trader.greeting = tavern_greeting(save);
 			}
 			if (p == Place::Lender) {
 				// When it opens (0x5B2B00): his debts, and the shares on sale
@@ -11503,6 +12008,22 @@ int main(int argc, char** argv) {
 				offer_step(save, town_index, place, button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1);
 				return true;
 			}
+			if ((button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) &&
+				dealer_step_or_place(save, town_index, place, button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1)) {
+				return true;
+			}
+			if ((button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) &&
+				place.open == Place::Tavern && place.talking == int(TavernPerson::Traveller) && !place.traveller.done) {
+				traveller_turn(place.traveller, place.traveller_list, button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1);
+				return true;
+			}
+			if (place.open == Place::Tavern && place.talking == int(TavernPerson::Trader) && place_now.max_amount >= 0 &&
+				place.trader.confirmed && (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) {
+				// The trader's arrows: where the goods go.
+				trader_turn(save, uint32_t(town_index), place.trader, place.trader_list,
+					button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1);
+				return true;
+			}
 			if (renaming && button == SDL_CONTROLLER_BUTTON_X) {
 				place.typing = true;
 				SDL_StartTextInput();
@@ -11535,6 +12056,11 @@ int main(int argc, char** argv) {
 				}
 				return true;
 			case SDL_CONTROLLER_BUTTON_B:
+				if (place.open == Place::Tavern && place.inside) {
+					place.inside = false;  // Back to the tavern's people.
+					place.row = place.people_row;
+					return true;
+				}
 				place.open = Place::None;
 				return true;
 			case SDL_CONTROLLER_BUTTON_BACK:  // Select: the next ship of the list.
@@ -14367,9 +14893,14 @@ int main(int argc, char** argv) {
 					const int row = layout.row_at(x, y, int(place_now.rows.size()) - first);
 					const bool pages = place_pages(place) > 0;
 					const bool kinds = place.open == Place::Lender && place.page == 2;  // The interest's kind.
+					const std::string close = place_close_label(place);
 					if (place.typing) {
 						place.typing = false;  // A tap ends the writing.
 						SDL_StopTextInput();
+					} else if (y >= layout.panel.y && y < layout.rows_y &&
+						x >= layout.panel.x + layout.panel.w - PlaceLayout::kPadding - small_text->measure(close) - 8 &&
+						x < layout.panel.x + layout.panel.w) {
+						place_button(SDL_CONTROLLER_BUTTON_B);  // «○ close» (or back).
 					} else if (pages && y >= layout.panel.y && y < layout.rows_y && x >= layout.panel.x &&
 						x < layout.panel.x + layout.panel.w) {
 						// The title: the page before (its left half) or after.
@@ -14380,6 +14911,19 @@ int main(int argc, char** argv) {
 					} else if (place.open == Place::Offers && place.page == 1 && place_now.max_amount >= 0 &&
 						(inside(layout.minus_button, x, y) || inside(layout.plus_button, x, y))) {
 						offer_step(save, town_index, place, inside(layout.minus_button, x, y) ? -1 : 1);
+					} else if (place_now.max_amount >= 0 &&
+						(inside(layout.minus_button, x, y) || inside(layout.plus_button, x, y)) &&
+						dealer_step_or_place(save, town_index, place, inside(layout.minus_button, x, y) ? -1 : 1)) {
+						// The weapons dealer's place or step.
+					} else if (place_now.max_amount >= 0 && place.open == Place::Tavern &&
+						place.talking == int(TavernPerson::Traveller) &&
+						(inside(layout.minus_button, x, y) || inside(layout.plus_button, x, y))) {
+						traveller_turn(place.traveller, place.traveller_list, inside(layout.minus_button, x, y) ? -1 : 1);
+					} else if (place.open == Place::Tavern && place.talking == int(TavernPerson::Trader) &&
+						place.trader.confirmed && place_now.max_amount >= 0 &&
+						(inside(layout.minus_button, x, y) || inside(layout.plus_button, x, y))) {
+						trader_turn(save, uint32_t(town_index), place.trader, place.trader_list,
+							inside(layout.minus_button, x, y) ? -1 : 1);
 					} else if (place_now.max_amount >= 0 && inside(layout.minus_button, x, y)) {
 						place.amount = std::max(0, place.amount - 1);
 						place.name.clear();

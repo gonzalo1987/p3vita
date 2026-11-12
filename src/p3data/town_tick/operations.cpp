@@ -1349,6 +1349,175 @@ void fn_53644b(SaveGame& save, const uint8_t* operation) {
 	}
 }
 
+// The operation 0x52 (0x53C2C0): {0x52, u32 the window's draw (rand() << 16 plus more), u32 merchant, u32 town, u32
+// kind}: the people in the town's tavern (its side menu, 0x5A6604 and 0x5A7A60..0x5A7CED): a merchant (below the
+// merchants, [0x6DE4AA]) who talks to one takes him if he is free (0xFF); past the merchants, he leaves him. By kind:
+//   1 the town's [+0x83E] (the tavern's trader; left only if not 0), 5 [+0x83F] (the same), 6 [+0x83D] and 7 [+0x83C]
+//   (left always); 3 and 8 the captain [+0x4] (u16, below the captains): his [+0xF];
+//   6, 7 and 8, once taken, may also give the merchant a commission: an event 0x05 at (tick + 0x200) | 0x80 ([+0x8]
+//   merchant, [+0x9] town, [+0xB] his home town [+0x19], [+0xC] the tick, [+0x10] and [+0x11] 0) when the draw's low
+//   10 bits ([+0x4]; for 8, of [+0x6]) are below 0x66 and the town's [+0x9EC] (6), [+0x9F4] (7) or [+0x9F0] (8), the
+//   tick of the last one, is below tick + 0x200, which it becomes; 6 only for one who isn't the Alderman ([0x6DE52D])
+//   nor the town's mayor ([+0x6F1]), in a town without [+0x2C8] & 0xE10;
+//   9 a variable of a mission's script (the event [+0x4] of type 0x1B, the variable [+0x6]), and 10 (he leaves the
+//   tavern: all of his there, the four places and the captains of the town's list [+0x82E], next [+0x0]; then the
+//   script variables named by his letters 0x71 of the town) write the scripts' variables, which p3vita doesn't keep
+//   yet (the mission interpreter, docs/roadmap.md apartado 3: on the heap, not compared); 2, 4 and past 10, nothing.
+// A town past the towns: nothing.
+void fn_53c2c0(SaveGame& save, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t town = field(operation, 0xC);
+	if (town >= g.u32(global::kWorldTownCount)) {
+		return;
+	}
+	TownMemory& t = save.towns[town].memory;
+	const uint32_t draw = field(operation, 4);
+	const uint32_t merchant = field(operation, 8);
+	const uint32_t kind = field(operation, 0x10);
+	const bool joins = merchant < g.u16(global::kWorldMerchantCount);
+	const uint32_t tick = g.u32(global::kWorldTick);
+	// The commission (an event 0x05) and the tick of the last one in the town's `last`.
+	auto commission = [&](uint32_t chance, size_t last) {
+		if ((chance & 0x3FF) >= 0x66 || t.u32(last) >= tick + 0x200) {
+			return;
+		}
+		const uint8_t home = save.merchants[merchant].memory.u8(0x19);
+		GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, (tick + 0x200) | 0x80)];
+		e.u16(6) = 0x05;
+		e.u8(8) = uint8_t(merchant);
+		e.u8(9) = uint8_t(town);
+		e.u8(0xB) = home;
+		e.u32(0xC) = g.u32(global::kWorldTick);
+		e.u8(0x10) = 0;
+		e.u8(0x11) = 0;
+		t.u32(last) = g.u32(global::kWorldTick);
+	};
+	switch (kind) {
+	case 1:
+	case 5: {
+		uint8_t& place = t.u8(kind == 1 ? 0x83E : 0x83F);
+		if (joins) {
+			if (place == 0xFF) {
+				place = uint8_t(merchant);
+			}
+		} else if (place != 0) {
+			place = 0xFF;
+		}
+		return;
+	}
+	case 6:
+	case 7: {
+		uint8_t& place = t.u8(kind == 6 ? 0x83D : 0x83C);
+		if (!joins) {
+			place = 0xFF;
+			return;
+		}
+		if (place != 0xFF) {
+			return;
+		}
+		place = uint8_t(merchant);
+		if (kind == 6 && (merchant == g.u8(0x6DE52D) || t.u8(0x6F1) == merchant || (t.u32(0x2C8) & 0xE10))) {
+			return;
+		}
+		commission(draw, kind == 6 ? 0x9EC : 0x9F4);
+		return;
+	}
+	case 3:
+	case 8: {
+		const uint32_t captain = draw & 0xFFFF;
+		if (captain >= g.u16(global::kCaptainCount)) {
+			return;
+		}
+		uint8_t& with = save.captains[captain].u8(0xF);
+		if (!joins) {
+			with = 0xFF;
+			return;
+		}
+		if (with != 0xFF) {
+			return;
+		}
+		with = uint8_t(merchant);
+		if (kind == 8) {
+			commission(draw >> 16, 0x9F0);
+		}
+		return;
+	}
+	case 10:
+		for (const size_t place : {size_t(0x83D), size_t(0x83E), size_t(0x83F), size_t(0x83C)}) {
+			if (t.u8(place) == merchant) {
+				t.u8(place) = 0xFF;
+			}
+		}
+		for (uint32_t c = t.u16(0x82E); c < g.u16(global::kCaptainCount); c = save.captains[c].u16(0x0)) {
+			if (save.captains[c].u8(0xF) == merchant) {
+				save.captains[c].u8(0xF) = 0xFF;
+			}
+		}
+		return;  // His letters 0x71's script variables: the mission interpreter's.
+	default:
+		return;  // 9: a script variable (the mission interpreter's); 2, 4: nothing.
+	}
+}
+
+// The operation 0xBF (0x5436D0): {0xBF, u8 merchant | 0x80 to set (else add), u8 the list | 0x80 the flag, u16 ×7
+// ships}: another player's ship groups in a network game (the local player's own are set by the interface, which
+// queues this for the others: nothing for him here). The ships: the first ones below the ships. Set (0x4F5500 with
+// the queue's argument 0): the list k ([+0x60C + 2·k] its length; its u16s in SaveGame::opaque.merchant_lists) becomes
+// them, those of other owners taken out (the last moved into their place); none left, the list emptied; else, with
+// the flag, the length's bit 15. Add (0x4F56C0, the list the whole byte): the same filter, then them after the list.
+void fn_5436d0(SaveGame& save, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t merchant = operation[4] & 0x7F;
+	if (merchant == g.u32(global::kPlayer) || merchant >= save.merchants.size()) {
+		return;
+	}
+	std::vector<uint16_t> ships;
+	for (size_t k = 0; k < 7; ++k) {
+		const uint16_t ship = field16(operation, 6 + 2 * k);
+		if (ship >= g.u16(global::kShipCount)) {
+			break;
+		}
+		ships.push_back(ship);
+	}
+	// 0x4F5500's and 0x4F56C0's filter: a ship of another owner out, the last into its place.
+	for (size_t k = 0; k < ships.size();) {
+		if (save.ships[ships[k]].memory.u8(0) != merchant) {
+			ships[k] = ships.back();
+			ships.pop_back();
+		} else {
+			++k;
+		}
+	}
+	const bool set = operation[4] & 0x80;
+	const uint32_t list = set ? operation[5] & 0x7F : operation[5];
+	if (list >= 10) {
+		return;  // The game would write past the merchant's ten lists.
+	}
+	if (save.opaque.merchant_lists.size() < save.merchants.size()) {
+		save.opaque.merchant_lists.resize(save.merchants.size());
+	}
+	std::vector<uint16_t>& kept = save.opaque.merchant_lists[merchant][list];
+	MerchantMemory& m = save.merchants[merchant].memory;
+	if (set) {
+		kept = ships;
+		m.u16(0x60C + 2 * list) = uint16_t(ships.size());
+		if (!ships.empty() && (operation[5] & 0x80)) {
+			m.u8(0x60D + 2 * list) |= 0x80;
+		}
+		return;
+	}
+	if (ships.empty()) {
+		return;
+	}
+	// The game copies the whole u16 of the old length, its bit 15 too (a game bug: on a list with the flag it reads
+	// 0x8000 entries past the old ones, and the new ships go after them, past the length's 15 bits); here the new
+	// ships go after the old ones and the length keeps the game's value.
+	const uint16_t length = m.u16(0x60C + 2 * list);
+	kept.resize(length & 0x7FFF);
+	kept.insert(kept.end(), ships.begin(), ships.end());
+	m.u16(0x60C + 2 * list) = uint16_t(length + ships.size());
+}
+
 // La operación 0x13 (0x538C40): {0x13, u32 barco, u32 capitán}: el capitán
 // del barco de un jugador humano se retira: el evento 0x27 (events_towns.cpp,
 // fn_4ddc00) en el tick siguiente con el barco y el capitán, y [+0xE] del

@@ -355,6 +355,19 @@ void fn_536200(SaveGame& save, const uint8_t* operation);
 void fn_53da30(SaveGame& save, const uint8_t* operation);
 void fn_53ecb0(SaveGame& save, const uint8_t* operation);
 uint32_t fn_4e7a14(SaveGame& save, uint16_t event);
+// tavern.cpp: the burglar, 0x4F (0x53BA40) and the event 0x0F (0x4E5664); the traveller, 0x53 (0x53C840) and the
+// event 0x10 (0x4E63E4).
+void fn_53ba40(SaveGame& save, const uint8_t* operation);
+// land_transport.cpp: 0x3A (0x53A2C0), a cart convoy, and its event 0x0C (0x4E38B4).
+void fn_53a2c0(SaveGame& save, const uint8_t* operation);
+uint32_t fn_4e38b4(SaveGame& save, uint16_t event);
+// town_hall.cpp: 0x51 (0x53C050), the wares delivered for an order taken (the event 0x11); 0x45 (0x535FA4), a
+// merchant stands for mayor or not.
+void fn_535fa4(SaveGame& save, const uint8_t* operation);
+void fn_53c050(SaveGame& save, const uint8_t* operation);
+void fn_4e5664(SaveGame& save, uint16_t event);
+void fn_53c840(SaveGame& save, const uint8_t* operation);
+uint32_t fn_4e63e4(SaveGame& save, uint16_t event);
 namespace offers_detail {
 bool fn_534090(const SaveGame& save, uint32_t id, uint32_t a, uint32_t b);
 void fn_5340d0(SaveGame& save, uint32_t id, uint32_t a, uint32_t b);
@@ -369,6 +382,10 @@ void fn_53d990(SaveGame& save, const uint8_t* operation);
 void fn_536331(SaveGame& save, const uint8_t* operation);
 void fn_53639b(SaveGame& save, const uint8_t* operation);
 void fn_53644b(SaveGame& save, const uint8_t* operation);
+// 0x52 (0x53C2C0): the people in a town's tavern taken or left by a merchant, a commission (event 0x05).
+void fn_53c2c0(SaveGame& save, const uint8_t* operation);
+// 0xBF (0x5436D0): another player's ship groups (network games).
+void fn_5436d0(SaveGame& save, const uint8_t* operation);
 // core.cpp: the church's 0x30 (feed the poor, 0x4FE557), 0x31 (for its extension, 0x4FE420) and 0x32 (a donation,
 // 0x4FE2D0).
 void fn_535cf0(SaveGame& save, const uint8_t* operation);
@@ -531,6 +548,8 @@ void fn_518b80(SaveGame& save, int ship, uint32_t arg);  // Un barco de la IA de
 // events_rare.cpp: the cargo bought for a ship (also trade.cpp, operation 0x02).
 namespace events_rare_detail {
 void fn_517fe0(SaveGame& save, int ship, uint32_t ware, int32_t amount, int32_t price);
+// 0x4A (0x53B1F0): the Hanse tasks window's developers' tools: drop a Hanse task or call its meeting.
+void fn_53b1f0(SaveGame& save, const uint8_t* operation);
 // Una pieza de muralla de 0x4FA1D0: celda (x, y), tipo (0x36 tramo, 0x37 y
 // 0x38 esquinas o torres) y orientación.
 struct WallPiece {

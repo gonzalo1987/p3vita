@@ -6,6 +6,7 @@ add_library(p3data STATIC
 	office_window.cpp
 	ship_pair_window.cpp
 	smithy_window.cpp
+	tavern_window.cpp
 	battle/attack.cpp
 	battle/battle_setup.cpp
 	battle/battle_step.cpp
@@ -78,6 +79,9 @@ add_library(p3data STATIC
 	town_tick/diet.cpp
 	town_tick/offices.cpp
 	town_tick/offers.cpp
+	town_tick/land_transport.cpp
+	town_tick/tavern.cpp
+	town_tick/town_hall.cpp
 	town_tick/population.cpp
 	town_tick/sieges.cpp
 	town_tick/votes.cpp

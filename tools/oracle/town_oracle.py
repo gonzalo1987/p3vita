@@ -529,6 +529,19 @@ MAIL_CALLS += (
     # 0x1F to B.
     0x533C9B, 0x533CB5,
 )
+MAIL_CALLS += (
+    # The tavern's traveller (town_tick/tavern.cpp): his letter 0x17 (operation 0x53, 0x53C840) and the thanks 0x18
+    # of the event 0x10 (0x4E63E4: at his destination, and past the day elsewhere).
+    0x53C9B5, 0x4E65CC, 0x4E6691,
+    # The tavern's burglar's event 0x0F (0x4E5664, tavern.cpp): caught, 0x74 to the victim; failed, 0x16 to who hired
+    # him; the burglary, 0x20 to the victim and 0x15 to him.
+    0x4E5925, 0x4E594D, 0x4E5AFF, 0x4E5B1E,
+    # A cart convoy by land, the event 0x0C (0x4E38B4, land_transport.cpp): 0x67 at a besieged town (leaving, arriving),
+    # 0x68 an ambush, 0x69 lost, 0x66 arrived.
+    0x4E3B4B, 0x4E3CFC, 0x4E3C6E, 0x4E3D43, 0x4E3E95,
+    # The Hanse tasks window's developers' tools (operation 0x4A, 0x53B1F0, events_rare.cpp): the meeting's 0x78.
+    0x53B40C,
+)
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is
 # counted by its call address and printed to stderr at the end (whether it

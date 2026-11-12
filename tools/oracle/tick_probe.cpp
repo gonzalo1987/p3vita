@@ -801,8 +801,8 @@ bool pointer_field(const std::string& name, size_t w, const std::vector<uint8_t>
 	}
 	if (name == "M") {
 		const size_t field = w % MerchantMemory::kSize;
-		// The name's strings (0x512A60/0x512AE0) and the route by points (region MR).
-		return field == 0xE4 || field == 0xE8 || field == 0xEC;
+		// The name's strings (0x512A60/0x512AE0), the route by points (region MR) and the ten ship lists (region ML).
+		return field == 0xE4 || field == 0xE8 || field == 0xEC || (field >= 0x624 && field < 0x64C);
 	}
 	if (name == "P") {
 		return w % ShipMemory::kSize == 0x24;  // the route, apart in p3vita
