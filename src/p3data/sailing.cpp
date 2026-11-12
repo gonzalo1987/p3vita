@@ -251,6 +251,28 @@ Sailing::Assigned Sailing::route_for(MapPoint start, MapPoint end) {
 	return {std::make_shared<SeaRoute>(std::move(points)), true};
 }
 
+void Sailing::follow_points(SavedShip& ship, const std::vector<MapPoint>& points, size_t count) {
+	Assigned assigned;
+	if (count < 3) {
+		assigned = route_for(points[0], points[1]);
+	} else {
+		std::vector<MapPoint> route;
+		MapPoint failed;
+		if (nav_.route_through(points.data(), count, route, failed)) {
+			assigned = {std::make_shared<SeaRoute>(std::move(route)), true};
+		} else if (save_.towns.size() > 6) {
+			// As route_for: no route, but the first point of the matrix's element 6 · n changed.
+			std::shared_ptr<SeaRoute> other = town_route(6, 0);
+			if (!other->empty()) {
+				other->front() = failed;
+			}
+		}
+	}
+	ship.set_route(assigned.route);
+	ship.own_route() = assigned.own;
+	ship.arrival_tick() = save_.tick() + travel_time(ship);
+}
+
 void Sailing::assign_loaded_routes() {
 	const size_t count = save_.towns.size();
 	for (SavedShip& ship : save_.ships) {

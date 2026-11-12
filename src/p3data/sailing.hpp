@@ -131,6 +131,11 @@ public:
 	// o si es un caso que p3vita no reproduce (barcos en el astillero, estados 6 y 8).
 	bool set_sail(int ship, int town, int x = 0, int y = 0);
 
+	// The end of operation 0x0B (0x538DE0 → 0x445010): the ship's route through `points` (at least two, the first
+	// where the ship is) of which the first `count` count: below three, the route between the first two
+	// (route_for); else NavData::route_through. Its own flag [+0x36] and the arrival tick (0x5169C0).
+	void follow_points(SavedShip& ship, const std::vector<MapPoint>& points, size_t count);
+
 	// Lo que set_sail comprueba antes de zarpar un barco que está en puerto
 	// (0x519BA0), en ese orden.
 	enum class SailCheck {

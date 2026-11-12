@@ -105,3 +105,21 @@ target_link_libraries(building_windows_test PRIVATE p3data)
 target_compile_options(building_windows_test PRIVATE -Wall -Wextra)
 
 add_test(NAME building_windows COMMAND building_windows_test)
+
+add_executable(guild_window_test guild_window_test.cpp)
+target_link_libraries(guild_window_test PRIVATE p3data)
+target_compile_options(guild_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME guild_window COMMAND guild_window_test)
+
+add_executable(office_window_test office_window_test.cpp)
+target_link_libraries(office_window_test PRIVATE p3data)
+target_compile_options(office_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME office_window COMMAND office_window_test)
+
+add_executable(offer_window_test offer_window_test.cpp)
+target_link_libraries(offer_window_test PRIVATE p3data)
+target_compile_options(offer_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME offer_window COMMAND offer_window_test)

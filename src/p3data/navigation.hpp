@@ -33,6 +33,12 @@ public:
 	// Vacía si alguno de los dos no tiene agua cerca.
 	std::vector<MapPoint> route(MapPoint start, MapPoint end) const;
 
+	// 0x445010 with three points or more (operation 0x0B, the sea map's route by points): each stretch between two
+	// of the `count` points straight if they see each other, else through the navigation points; then the corners
+	// of the whole route cut and the repeated points removed. False if a stretch's end has no water near: `failed`
+	// is then that stretch's first point (the game writes it into the route of the matrix's element 6 · n).
+	bool route_through(const MapPoint* points, size_t count, std::vector<MapPoint>& route, MapPoint& failed) const;
+
 	// Visión directa entre dos celdas de la rejilla (0x4445A0); el juego recorre
 	// la línea desde `b` hacia `a`.
 	bool line_of_sight(MapPoint a, MapPoint b) const;

@@ -166,8 +166,23 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x0A:  // A ship is deleted (0x535866, 0x507FB0).
 		tick::fn_535866(save, sailing, operation);
 		break;
+	case 0x0B:  // The sea map's route by points (0x5358AC → 0x538DE0; town_tick/ship_operations.cpp).
+		tick::fn_538de0(save, sailing, operation);
+		break;
 	case 0x0C:  // Upgrade a ship in its town's shipyard (0x5358BB → 0x508660; town_tick/ship_operations.cpp).
 		tick::fn_508660(save, uint32_t(fields[1]), uint32_t(fields[2]));
+		break;
+	case 0x0E:  // A sailing ship takes another as its target (0x5358E4 → 0x538800; town_tick/ship_operations.cpp).
+		tick::fn_538800(save, operation);
+		break;
+	case 0x0F:  // Two ships swap their captains (0x5358F3).
+		tick::fn_5358f3(save, operation);
+		break;
+	case 0x10:  // Sailors from one ship to another (0x535953 → 0x538930).
+		tick::fn_538930(save, operation);
+		break;
+	case 0x11:  // Hand weapons from one ship to another (0x535962 → 0x5389C0).
+		tick::fn_5389c0(save, operation);
 		break;
 	case 0x12:  // El capitán de un barco mejora (0x538A80).
 		tick::fn_538a80(save, operation);
@@ -287,6 +302,18 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x32:  // A donation to the church (0x535D85 → 0x4FE2D0).
 		tick::fn_535d85(save, operation);
 		break;
+	case 0x33:  // A bid at an auction (0x535DC1 → 0x53A010; town_tick/operations.cpp).
+		tick::fn_53a010(save, operation);
+		break;
+	case 0x34:  // Be told of an auction, or not (0x535DD0 → 0x53A0B0).
+		tick::fn_53a0b0(save, operation);
+		break;
+	case 0x35:  // An automatic bid at an auction: the event 0x2D (0x535DDF → 0x53A170).
+		tick::fn_53a170(save, operation);
+		break;
+	case 0x36:  // Auction a ship (0x535DEE → 0x4DA510; town_tick/events.cpp).
+		tick::events_detail::fn_4da510(save, uint32_t(fields[1]));
+		break;
 	case 0x37:  // El comerciante paga por una ciudad (0x535E04, 0x4F8560).
 		tick::fn_535e04(save, operation);
 		break;
@@ -316,6 +343,39 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x4B:  // Un candidato coge un encargo de la Hansa (0x53B440).
 		tick::fn_53b440(save, operation);
+		break;
+	case 0x4D:  // The tavern's trader's wares bought into a ship or the office (0x5360B1 → 0x53B5E0; trade.cpp).
+		fn_53b5e0(save, operation);
+		break;
+	case 0x50:  // Hand weapons bought from or sold to the town for a ship, its convoy or the office (0x5360DE → 0x53BC90; trade.cpp).
+		fn_53bc90(save, operation);
+		break;
+	case 0x56:  // A piece of artillery bought from or sold to the town for the office (0x536177 → 0x53CAF0; trade.cpp).
+		fn_53caf0(save, operation);
+		break;
+	case 0x5A:  // A business's share of jobs (0x536200; town_tick/operations.cpp).
+		tick::fn_536200(save, operation);
+		break;
+	case 0x5B:  // The office administrator's order for a ware (0x536290 → 0x53D5C0).
+		tick::fn_53d5c0(save, operation);
+		break;
+	case 0x5E:  // Hire or dismiss the office's administrator (0x5362F5 → 0x53D990).
+		tick::fn_53d990(save, operation);
+		break;
+	case 0x62:  // The rent of a class of the office's houses (0x536331).
+		tick::fn_536331(save, operation);
+		break;
+	case 0x63:  // The office's guards (0x53639B).
+		tick::fn_53639b(save, operation);
+		break;
+	case 0x66:  // A ware's bit of the office's [+0x3B4] (0x53644B).
+		tick::fn_53644b(save, operation);
+		break;
+	case 0x5F:  // An offer to another merchant: the offers' list, the event 0x13, the letters 0x1E and 0x1F (0x536304 → 0x53DA30; town_tick/offers.cpp).
+		tick::fn_53da30(save, operation);
+		break;
+	case 0x75:  // The answer to an offer: accepted or not, removed, its letters deleted (0x536B65 → 0x53ECB0).
+		tick::fn_53ecb0(save, operation);
 		break;
 	case 0x4E:  // A player's ship turns pirate (0x53B850; 0x509250 with no winner).
 		tick::fn_53b850(save, sailing, operation);

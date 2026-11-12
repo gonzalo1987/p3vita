@@ -31,6 +31,7 @@
 // partidas): el 0x32 con comerciante y el ataque pirata del 0x1E (0x5063C0).
 // Los mensajes al jugador y la interfaz no se traducen.
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -613,6 +614,136 @@ void fn_4dab00(SaveGame& save, uint32_t town_arg, uint32_t record_arg) {
 			// so the last blocked day is 0x17B + 5 = 0x180 and six free days
 			// from 0x181 always stop the search by day 0x186.
 			break;
+		}
+		int32_t left = 6;
+		while (left > 0 && free_day[size_t(day)] != 0) {
+			--day;
+			--left;
+		}
+		if (left == 0) {
+			break;
+		}
+		e.u16(0xE) = uint16_t(e.u16(0xE) + left);
+	}
+	e.u16(0xE) = uint16_t(e.u16(0xE) << 8);
+}
+
+// 0x4D9000 (thiscall on the queue: merchant, town, lot, &top): the merchant's automatic bid (an event 0x2D, made by
+// the operation 0x35) for the lot of the town's auction, walking the queue from its head: its index, and its top
+// ([+0x8]) in `top`; 0xFFFF and 0 if he has none. The arguments are compared whole with the event's bytes and u16.
+uint16_t fn_4d9000(const SaveGame& save, uint32_t merchant, uint32_t town, uint32_t lot, uint32_t& top) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t count = g.u16(kEventCount);
+	for (uint32_t i = g.u16(kEventHead); i < count; i = save.events[i].u16(4)) {
+		const Event& e = save.events[i];
+		if (e.u16(6) == 0x2D && e.u8(0x11) == town && e.u8(0x10) == merchant && e.u16(0xE) == lot) {
+			top = e.u32(8);
+			return uint16_t(i);
+		}
+	}
+	top = 0;
+	return 0xFFFF;
+}
+
+// 0x4DA510 (thiscall on the queue, with the ship; the operation 0x36, 0x535DEE: the guild's «auction a ship»): the
+// ship is put on sale if it exists, is out of a convoy ([+0x8] past the convoys), in a town ([+0x39]), docked (its
+// state [+0x134] below 4) and its owner, a merchant, has the guild's bit of that town ([+0x468]). As 0x4DAB00 does with
+// the buildings: into the first free slot (a ship past the count) of the three of an auction of ships (an event 0x0A)
+// of its town in phase 1 before the next day + 0x300 ticks (only with the settings' byte [+0xD] at 0; in a game of
+// one player it is 3 and the queue is only skipped up to there) or else in phase 2 within 0x3200 ticks; without one, a
+// new auction at the next tick (phase 1, the ship and two free slots, [+0x17] 0xFF) with its wait [+0xE] in days
+// (14 to 20 by the tick and the ship) put off while the 6 days it ends on fall near the end of another auction (events
+// 0x0A and 0x36), then in ticks. Unlike 0x4DAB00, an auction already ended (its end before now) blocks nothing (the
+// day is unsigned here). The ship's [+0x3C] |= 0x20 and its state 0xC (on sale).
+void fn_4da510(SaveGame& save, uint32_t ship_arg) {
+	GlobalMemory& g = save.globals;
+	if (ship_arg >= g.u16(kShipCount)) {
+		return;
+	}
+	ShipMemory& s = save.ships[ship_arg].memory;
+	if (s.u16(0x8) < g.u16(global::kShips + 0xF6)) {
+		return;  // In a convoy.
+	}
+	const uint8_t town = s.u8(0x39);
+	if (town >= town_count(save) || s.u16(0x134) >= 4 || s.u8(0x0) >= merchant_count(save)) {
+		return;
+	}
+	if (!(save.merchants[s.u8(0x0)].memory.u32(0x468) & (1u << (town & 31)))) {
+		return;
+	}
+	const uint32_t now = g.u32(kTick);
+	const uint32_t count = g.u16(kEventCount);
+	const uint16_t ships = g.u16(kShipCount);
+	auto put = [&](Event& e, uint8_t phase) {
+		if (e.u16(6) != 0xA || e.u8(0x15) != town || e.u8(0x14) != phase) {
+			return false;
+		}
+		for (size_t k = 0; k < 3; ++k) {
+			if (e.u16(8 + 2 * k) >= ships) {
+				s.u8(0x3C) |= 0x20;
+				s.u16(0x134) = 0xC;
+				e.u16(8 + 2 * k) = uint16_t(ship_arg);
+				return true;
+			}
+		}
+		return false;
+	};
+	uint32_t i = g.u16(kEventHead);
+	const uint32_t soon = (now | 0xFF) + 0x301;
+	for (; i < count && save.events[i].u32(0) < soon; i = save.events[i].u16(4)) {
+		if (save.settings.u8(0xD) == 0 && put(save.events[i], 1)) {
+			return;
+		}
+	}
+	for (; i < count && save.events[i].u32(0) <= now + 0x3200; i = save.events[i].u16(4)) {
+		if (put(save.events[i], 2)) {
+			return;
+		}
+	}
+	// The days (from today) with an auction ending near: 0.
+	std::vector<uint8_t> free_day(0x190, 1);
+	for (i = g.u16(kEventHead); i < count; i = save.events[i].u16(4)) {
+		const Event& e = save.events[i];
+		if (e.u16(6) != 0xA && e.u16(6) != 0x36) {
+			continue;
+		}
+		uint32_t end = e.u32(0);
+		switch (e.u8(0x14)) {
+		case 0:
+			end += 0x2000;
+			break;
+		case 1:
+			end += uint32_t(e.u16(0xE)) + 0x200;
+			break;
+		case 2:
+			end += 0x200;
+			break;
+		default:
+			break;
+		}
+		const uint32_t day = (end - now) >> 8;
+		if (day < 0x17C) {
+			std::fill_n(free_day.begin() + day, 6, uint8_t(0));
+		}
+	}
+	Event& e = save.events[fn_4d8cf0(save, now + 1)];
+	e.u16(6) = 0xA;
+	e.u8(0x17) = 0xFF;
+	e.u16(8) = uint16_t(ship_arg);
+	e.u16(0xA) = 0xFFFF;
+	e.u16(0xC) = 0xFFFF;
+	e.u16(0x10) = 0;
+	e.u16(0x12) = 0;
+	e.u8(0x14) = 1;
+	e.u8(0x16) = 0;
+	e.u8(0x15) = town;
+	s.u8(0x3C) |= 0x20;
+	s.u16(0x134) = 0xC;
+	e.u16(0xE) = uint16_t((now & 3) + (ship_arg & 3) + 0xE);
+	for (;;) {
+		int32_t day = int32_t(e.u16(0xE)) + 5;
+		if (day >= 0x190) {
+			break;  // Unreachable, as in 0x4DAB00.
 		}
 		int32_t left = 6;
 		while (left > 0 && free_day[size_t(day)] != 0) {

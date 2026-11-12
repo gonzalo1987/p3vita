@@ -87,6 +87,8 @@ const char kStepsHelp[] =
 	"  touch:X:Y    put a finger on the screen at (X, Y); lift:X:Y lifts it there\n"
 	"  move:X:Y     slide the finger that is down to (X, Y) in one motion\n"
 	"  cell:X:Y     center the camera on the town's cell (X, Y)\n"
+	"  place:N      center the camera on the town's building of the .let type N\n"
+	"               (0x2D the rival kontor...)\n"
 	"  text:TEXT    type TEXT (an SDL_TEXTINPUT, as the keyboard gives it)\n"
 	"  shot:FILE    save the screen as a PNG\n";
 
@@ -118,6 +120,14 @@ std::unique_ptr<InputScript> InputScript::parse(const std::string& steps, std::s
 			step.count = number(rest);
 			if (step.count < 0) {
 				error = "wrong number in step \"" + text + "\"";
+				return nullptr;
+			}
+		} else if (head == "place" && colon != std::string::npos) {
+			step.kind = Kind::Place;
+			char* end = nullptr;
+			step.x = int(std::strtol(rest.c_str(), &end, 0));
+			if (rest.empty() || *end != 0 || step.x < 0) {
+				error = "wrong .let type in step \"" + text + "\"";
 				return nullptr;
 			}
 		} else if (head == "ticks" && colon != std::string::npos) {
@@ -192,6 +202,7 @@ void InputScript::start_frame() {
 	screenshot_.clear();
 	look_x_ = -1;
 	look_y_ = -1;
+	look_place_ = -1;
 	// The end of a press or a hold: the button goes up in the frame after.
 	if (held_ != SDL_CONTROLLER_BUTTON_INVALID && progress_ == 0) {
 		push_button(held_, false);
@@ -242,6 +253,9 @@ void InputScript::start_frame() {
 	case Kind::Cell:
 		look_x_ = step.x;
 		look_y_ = step.y;
+		break;
+	case Kind::Place:
+		look_place_ = step.x;
 		break;
 	case Kind::Text: {
 		// Typed text (as SDL's keyboard, or the Vita's, gives it).

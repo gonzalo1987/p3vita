@@ -637,10 +637,11 @@ the town and the date, then a case per type of the table 0x48664C;
 [formats/mail.md](formats/mail.md) §4). p3vita's is `compose_letter`
 (`src/p3data/letters.cpp`), with the game's texts by their address
 (`GameTexts::raw_at`, the table `game_text_addresses.inc`). **Every type
-with a text is done** (`letter_type_rewritten`) but the offers 0x1E/0x1F
-(they need the world's offers list [0x6DE584] and operation 0x5F, a
-player's action). Some cases change the save when shown (`letter_viewed`:
-the loan dates of 0x12 and 0x26, the women's bit of 0x4F6420).
+with a text is done** (`letter_type_rewritten`; the offers 0x1E/0x1F
+since 2026-11-12, with the world's offers list, but not compared with the
+game's: below, «The player's actions: the offers»). Some cases change the
+save when shown (`letter_viewed`: the loan dates of 0x12 and 0x26, the
+women's bit of 0x4F6420, also for both merchants of 0x1E/0x1F).
 
 - **The two letters with a picture** (2026-11-04), 0x46 and 0x6E: their
   text is only «\n\n\c\h%u_» with the number of the texture 0x51AC60 makes
@@ -2484,6 +2485,63 @@ feeding window prices wine as salt (fixed behind fix_game_bugs, ctest `game_fixe
 days in the 12 saves: 0 different; write-check as before; ctest; the Vita build. In the viewer
 (`re/emu/sesion26/shots.sh`, save 1, Lübeck: the church at cell 57:79, touched at 340:170; the bath house at 68:84):
 the church's three pages and the bath house's two, with the game's bath reactions.
+
+## The player's actions: the auctions and the guild (2026-11-12)
+
+The guild's window (*0x6E5558, its update 0x5BFD60; `guild_window.hpp`) and the auctions' operations: 0x33 (a bid,
+0x53A010), 0x34 (be told of an auction, 0x53A0B0), 0x35 (an automatic bid, 0x53A170, with 0x4D9000) and its event 0x2D
+(0x4E2BC4), 0x36 (auction a ship, 0x4DA510: as 0x4DAB00 does the buildings, but the end day unsigned). Scenario
+`auction_ops` of `retouch_unchecked.py` (saves 1, 3, 5, 7): 31 operations through the executor, the queue called once
+for the events 0x2D, and the window's own functions: 0x4DA1A0 (the auctions to come, copied from the heap into the
+scratch globals by the copier AUCTION_LIST, probe kAuctionList), 0x4DA480 (whether the player is told) and 0x504AC0's
+mode 6 (WINDOW_SHIPS): all equal, 66 targets hit; the event 0x2D's «3 ticks» broken on purpose and caught. ctest
+`guild_window`. The viewer: the guild (.let 0x07) with the pages joining, the auctions (tell me; register a ship) and
+the town's auction (the bid), shots in `re/emu/sesion27/shots/` (debug state `auctions`). The town's [+0x2C8] & 0xC0 is
+«the town has a guild» (the 16 towns with a guild building).
+
+## The player's actions: the office, the arsenal, the tavern's trader, two ships (2026-11-12)
+
+The office's windows (`office_window.hpp`): 0x5A (a business's share of jobs, 0x536200), 0x5B (the administrator's
+order, 0x53D5C0), 0x5E (hire or dismiss him, 0x53D990), 0x62 (a house class's rent, 0x536331), 0x63 (the guards,
+0x53639B), 0x66 (a ware's stock kept from the trade routes, 0x53644B), all in `operations.cpp`: scenario
+`office_admin_ops` (saves 3, 5, 7; in 1 no office has two businesses): 31 operations, all equal, all targets; the
+0xFFFC mask of 0x5B broken and caught. The arsenal: 0x50 (hand weapons with a ship, its convoy or the office,
+0x53BC90) and 0x56 (artillery with the office, 0x53CAF0), scenario `arsenal_ops`; the tavern's trader: 0x4D
+(0x53B5E0), scenario `tavern_trader` (both saves 1, 3, 5, 7, all equal, all targets). Two ships: 0x0E (a sailing
+ship's target, 0x538800), 0x0F (swap captains, 0x5358F3), 0x10 (sailors, 0x538930), 0x11 (hand weapons, 0x5389C0) in
+`ship_operations.cpp`, scenario `ship_pair_ops` (1, 3, 5, 7: all equal, all targets; 0x11's unsigned room broken and
+caught). ctest `office_window`. The viewer: the office opens its window (the warehouse with «Trade» and the guards,
+the administrator with his orders) and the player's own business and house windows have the workers' share and the
+rent. A game bug, fixed behind `fix_game_bugs()` at the user's request: 0x4D's town stock goes down by what didn't
+fit into the ship instead of what was sold (`tavern_trader` with `re/emu/sesion27/uc_fix.sh`: only the town's stock
+differs, in the cases with a ship; without the fix all equal). The others the window prevents: 0x50 paying the whole
+count per ship, 0x56 without the office's check, 0x33 and 0x11 comparing without sign. (0x4D paying the seller below
+the towns' count is right: the merchants 0..towns − 1 are the towns'.)
+
+## The player's actions: the offers between merchants and the sea map's route by points (2026-11-12)
+
+The offers (`town_tick/offers.cpp`): 0x5F (a new offer, 0x53DA30 → 0x5338A0), 0x75 (its answer, 0x53ECB0) and the
+event 0x13 (0x4E7A14), with the offers' list *0x6DE584 as the region OF (the nodes from the head, their pointer to
+the next as 0; `SaveGame::offers`) and the letters 0x1E and 0x1F connected (MAIL_CALLS 0x533C9B, 0x533CB5). Scenario
+`offer_ops` (saves 1, 3, 5, 7): money, a ship, wares in escrow, the answers and the events: all equal, all targets.
+The window (another merchant's office, .let 0x2D, *0x6E5550; `offer_window.cpp`, ctest `offer_window`): its rules are
+inside the window's update (0x5BDAFA), not functions of their own, so they are checked by the ctest and in the viewer
+(the rival kontor of a town: the merchants' list, money, wares and a ship offered; shots f1, f4, f8, f9 in
+`re/emu/sesion27/shots/`; the step `place:0x2D` of the viewer's script centres the camera on it). The letters' text
+(0x480868 with 0x533F20) is seen in the viewer (shot f7) but not compared with the game's composer yet:
+`letters-check.sh` composes the letters of a save, and the offers' list isn't in the save file.
+
+The route by points (`town_tick/ship_operations.cpp` `fn_538de0`, 0x538DE0) with the multi-point route of 0x445010
+(`NavData::route_through`, `Sailing::follow_points`): the owner's buffer [+0xEC] as the region MR (u16 merchant, u16
+its size, u16 the u16s used and the points from the u16 4 on; the merchant's [+0xEC] itself a pointer, not compared).
+Scenario `route_points_ops` (saves 1, 3, 5, 7): the points started, added, changed, one too far, more than 30 (the
+buffer doubled); sailing from port with a town among the points, while leaving a port, at sea with three points or
+more (stretches straight and through the navigation's points, a turn back, repeated points), to land (no route) and
+from land; and the checks: 78 calls equal in each save, 23 targets hit (22 in save 5); the doubled size broken on
+purpose and caught in MR. The corner cut 0x446F20's last argument is 1 in this route: A isn't added again (the
+two-point route passes 0) — the first run had a point more at each turn back. The viewer: on the sea map a tap on the
+sea (or on a town once a route is started) adds a point, X or the «Sail» button sails along them, Circle or «Clear»
+clears them (`re/emu/sesion27/shots/` r5, r7, r8).
 
 ## The game's static initializers (2026-11-03)
 

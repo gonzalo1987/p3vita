@@ -15,6 +15,10 @@
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
+namespace p3::data::convoys_sea_detail {
+int fn_517260(const Sailing& sailing, uint16_t x, uint16_t y);  // convoys_sea.cpp: the town at a point, or -1
+}  // namespace p3::data::convoys_sea_detail
+
 namespace p3::data::tick {
 
 namespace ship_trade_detail {
@@ -873,6 +877,226 @@ void fn_508660(SaveGame& save, uint32_t ship, uint32_t levels) {
 	}
 	alderman_detail::fn_51a750(save, int(ship), uint8_t(levels));
 	diet_detail::fn_4f9120(save, s.u8(0), s.u8(0x39), uint32_t(s.s32(0x14) - s.s32(0x18)));
+}
+
+// --- Two ships in the same place (the window 0x40EEB0) and the sea map ---
+
+// The operation 0x0E (0x538800): {0x0E, u32 ship A, u32 ship B}: A, sailing (state 0xF or 0x10), takes B as its target
+// ([+0x3A]) if B is one it may pursue (A a pirate, [+0x15C]: B in the states 0xF, 0x10 or 0x12; else B in 0x12, or a
+// pirate in 0xF) and within reach (the squared distance of their positions [+0x1E], [+0x22] at most [0x6DD89C]).
+void fn_538800(SaveGame& save, const uint8_t* operation) {
+	const uint32_t ships = save.globals.u16(global::kShipCount);
+	const uint32_t a = word(operation, 4);
+	const uint32_t b = word(operation, 8);
+	if (a >= ships || b >= ships) {
+		return;
+	}
+	ShipMemory& sa = save.ships[a].memory;
+	const ShipMemory& sb = save.ships[b].memory;
+	const uint16_t state = sa.u16(0x134);
+	if (state != 0xF && state != 0x10) {
+		return;
+	}
+	const uint16_t other = sb.u16(0x134);
+	const bool may = sa.u8(0x15C) != 0 ? (other == 0xF || other == 0x10 || other == 0x12)
+									   : (other == 0x12 || (other == 0xF && sb.u8(0x15C) != 0));
+	if (!may) {
+		return;
+	}
+	const int32_t dx = int32_t(sb.s16(0x1E)) - sa.s16(0x1E);
+	const int32_t dy = int32_t(sb.s16(0x22)) - sa.s16(0x22);
+	const int32_t d2 = int32_t(uint32_t(dy) * uint32_t(dy) + uint32_t(dx) * uint32_t(dx));
+	if (d2 > int32_t(save.globals.u16(global::kShips + 0xFC))) {
+		return;
+	}
+	sa.u16(0x3A) = uint16_t(b);
+}
+
+// The operation 0x0B (0x538DE0): {0x0B, u32 ship, u32 step, u32 x, u32 y}: the sea map's route by points, kept in the
+// buffer [+0xEC] of the ship's owner (SavedMerchant::route_points; made with room for 0x40 u16s the first time). Step
+// 0 starts the points with (x, y); a step k > 0 puts (x, y) as the point k (u16 2k + 4): the next one is added (the
+// room doubled when full), one already there changed, one further on frees the buffer. Step −1 sails: a ship not sunk
+// (state < 0x11) nor in 0xE, with hull, and in a town only if it may leave (0x519BA0), with one point or more; the
+// first point at a town other than the ship's (0x517260) ends the points there and is the destination of 0x537670
+// (Sailing::set_sail); without one, the point given is where the ship is (or, leaving or entering a port, the approach
+// point of the town of the number 0x6DE4B8[1 − (town & 1)]: the town 0's or 1's, whatever the ship's; seems a game bug:
+// a ship entering a port from that very town doesn't turn round, docs/roadmap.md). The route
+// set_sail made is dropped (freed if its own), the ship's place is put before the points ([2..3]), the points equal to
+// the one before taken out (in the buffer, its length kept; after one is taken out the next isn't compared) and the
+// route made through them (Sailing::follow_points). If the ship may not sail the game tells the sea map (0x44F940, UI).
+void fn_538de0(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t index = word(operation, 4);
+	if (index >= g.u16(global::kShipCount)) {
+		return;
+	}
+	SavedShip& ship = save.ships[index];
+	ShipMemory& s = ship.memory;
+	if (s.u8(0) >= g.u16(global::kWorldMerchantCount)) {
+		return;
+	}
+	SavedMerchant& owner = save.merchants[s.u8(0)];
+	std::vector<uint16_t>& buffer = owner.route_points;
+	if (buffer.empty()) {
+		buffer.assign(0x40, 0);
+		buffer[0] = 0x40;
+		buffer[1] = 4;
+		owner.memory.u32(0xEC) = 1;
+	}
+	const uint32_t step = word(operation, 8);
+	const uint16_t x = uint16_t(word(operation, 0xC));
+	const uint16_t y = uint16_t(word(operation, 0x10));
+	auto add = [&] {
+		buffer[buffer[1]++] = x;
+		buffer[buffer[1]++] = y;
+	};
+	if (step == 0) {
+		buffer[1] = 4;
+		add();
+		return;
+	}
+	if (step != 0xFFFFFFFF) {
+		const uint32_t at = 2 * step + 4;
+		const uint32_t used = buffer[1];
+		if (at > used) {
+			buffer.clear();
+			owner.memory.u32(0xEC) = 0;
+		} else if (at < used) {
+			buffer[at] = x;
+			buffer[at + 1] = y;
+		} else {
+			if (used + 2 > buffer[0]) {
+				buffer.resize(size_t(buffer[0]) * 2, 0);
+				buffer[0] = uint16_t(buffer[0] * 2);
+			}
+			add();
+		}
+		return;
+	}
+	const uint16_t state = s.u16(0x134);
+	const uint32_t towns = g.u32(global::kWorldTownCount);
+	if (state >= 0x11 || state == 0xE || s.s32(0x18) < 1 ||
+		(s.u8(0x39) < towns && !ship_ai_detail::fn_519ba0(save, int(index)))) {
+		return;  // 0x44F940 on the sea map (UI)
+	}
+	if (buffer[1] <= 5 || !sailing) {
+		return;
+	}
+	uint32_t fields[5] = {0x0B, index, 0xFFFFFFFF, 0, 0};
+	for (uint32_t k = 4; k < buffer[1]; k += 2) {
+		const int town = convoys_sea_detail::fn_517260(*sailing, buffer[k], buffer[k + 1]);
+		if (town >= 0 && uint32_t(town) < towns && town != s.u8(0x39)) {
+			fields[2] = uint32_t(town);
+			fields[3] = buffer[k];
+			fields[4] = buffer[k + 1];
+			buffer[1] = uint16_t(k + 2);
+			break;
+		}
+	}
+	if (fields[2] == 0xFFFFFFFF) {
+		if (state == kShipLeaving || state == kShipArriving) {
+			const uint32_t entry = 0x6DDB90 + 0x34 * uint32_t(g.u8(0x6DE4B9 - (s.u8(0x39) & 1)));
+			fields[3] = g.u32(entry + 0x20);
+			fields[4] = g.u32(entry + 0x24);
+		} else {
+			fields[3] = uint32_t(int32_t(s.s16(0x1E)));
+			fields[4] = uint32_t(int32_t(s.s16(0x22)));
+		}
+	}
+	if (state == 6 || state == 8) {
+		return;  // 0x537670 does more with a ship in the shipyard (6) or in the state 8: as Sailing::set_sail, not done
+	}
+	sailing->set_sail(int(index), int32_t(fields[2]), int32_t(fields[3]), int32_t(fields[4]));
+	ship.set_route(nullptr);
+	const size_t used = buffer[1];
+	buffer[2] = s.u16(0x1E);
+	buffer[3] = s.u16(0x22);
+	size_t count = used / 2 - 1;
+	// The points from the buffer's [2] on, the one before compared for each from the second.
+	for (size_t i = 2; i - 1 < count; ++i) {
+		const size_t p = 2 + 2 * (i - 1);
+		if (buffer[p] == buffer[p - 2] && buffer[p + 1] == buffer[p - 1]) {
+			for (size_t m = i; m < count; ++m) {
+				buffer[2 + 2 * (m - 1)] = buffer[2 + 2 * m];
+				buffer[3 + 2 * (m - 1)] = buffer[3 + 2 * m];
+			}
+			--count;
+		}
+	}
+	std::vector<MapPoint> points;
+	for (size_t p = 2; p + 1 < used; p += 2) {
+		points.push_back({int16_t(buffer[p]), int16_t(buffer[p + 1])});
+	}
+	sailing->follow_points(ship, points, count);
+}
+
+// The operation 0x0F (in the executor, 0x5358F3): {0x0F, u32 ship A, u32 ship B}: they swap their captains ([+0x42]),
+// each ship's notice 2 (0x517770).
+void fn_5358f3(SaveGame& save, const uint8_t* operation) {
+	const uint32_t ships = save.globals.u16(global::kShipCount);
+	const uint32_t a = word(operation, 4);
+	const uint32_t b = word(operation, 8);
+	if (a >= ships || b >= ships) {
+		return;
+	}
+	std::swap(save.ships[a].memory.u16(0x42), save.ships[b].memory.u16(0x42));
+	ship_ai_detail::fn_517770(save, int(a), 2);
+	ship_ai_detail::fn_517770(save, int(b), 2);
+}
+
+// The operation 0x10 (0x538930): {0x10, u32 ship A, u32 ship B, u32 count}: sailors from A to B, at most A's and what B
+// takes (0x5184F0, compared without sign); each ship's notice 2 and its hold again (0x5182B0).
+void fn_538930(SaveGame& save, const uint8_t* operation) {
+	const uint32_t ships = save.globals.u16(global::kShipCount);
+	const uint32_t a = word(operation, 4);
+	const uint32_t b = word(operation, 8);
+	if (a >= ships || b >= ships) {
+		return;
+	}
+	ShipMemory& sa = save.ships[a].memory;
+	ShipMemory& sb = save.ships[b].memory;
+	uint32_t count = word(operation, 0xC);
+	if (sa.u16(0x40) < count) {
+		count = sa.u16(0x40);
+	}
+	const uint32_t room = uint32_t(ship_ai_detail::fn_5184f0(save, int(b)));
+	if (count > room) {
+		count = room;
+	}
+	sa.u16(0x40) = uint16_t(sa.u16(0x40) - count);
+	sb.u16(0x40) = uint16_t(sb.u16(0x40) + count);
+	ship_ai_detail::fn_517770(save, int(a), 2);
+	ship_ai_detail::fn_517770(save, int(b), 2);
+	recalculate_cargo(save.ships[a]);
+	recalculate_cargo(save.ships[b]);
+}
+
+// The operation 0x11 (0x5389C0): {0x11, u32 ship A, u32 ship B, u32 count}: hand weapons ([+0x154], 10 units each) from
+// A to B, at most A's and, if B's room (0x5182B0) is below count · 10 (compared without sign: a hold over its room
+// takes them all), room / 10; each ship's notice 0x14 and its hold again.
+void fn_5389c0(SaveGame& save, const uint8_t* operation) {
+	const uint32_t ships = save.globals.u16(global::kShipCount);
+	const uint32_t a = word(operation, 4);
+	const uint32_t b = word(operation, 8);
+	if (a >= ships || b >= ships) {
+		return;
+	}
+	ShipMemory& sa = save.ships[a].memory;
+	ShipMemory& sb = save.ships[b].memory;
+	uint32_t count = word(operation, 0xC);
+	if (sa.u16(0x154) < count) {
+		count = sa.u16(0x154);
+	}
+	const int32_t room = recalculate_cargo(save.ships[b]);
+	if (uint32_t(room) < count * 10) {
+		count = uint32_t(room / 10);
+	}
+	sa.u16(0x154) = uint16_t(sa.u16(0x154) - count);
+	sb.u16(0x154) = uint16_t(sb.u16(0x154) + count);
+	ship_ai_detail::fn_517770(save, int(a), 0x14);
+	ship_ai_detail::fn_517770(save, int(b), 0x14);
+	recalculate_cargo(save.ships[a]);
+	recalculate_cargo(save.ships[b]);
 }
 
 }  // namespace p3::data::tick

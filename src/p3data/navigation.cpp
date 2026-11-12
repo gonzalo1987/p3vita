@@ -55,7 +55,8 @@ int32_t ftol(double v) {
 
 // Recorta la esquina B entre A y C (0x446F20), con las cuentas en float y
 // double y las comparaciones de la FPU x87 del juego. Añade a la ruta A (si
-// `first`) y B si la esquina es recta, o los dos puntos del recorte si no.
+// `first`: el quinto argumento del juego a 0) y B si la esquina es recta, o
+// los dos puntos del recorte si no.
 void corner(std::vector<MapPoint>& route, MapPoint a, MapPoint b, MapPoint c, bool first) {
 	const float bx = float(b.x);
 	const float by = float(b.y);
@@ -333,6 +334,62 @@ std::vector<MapPoint> NavData::route(MapPoint start, MapPoint end) const {
 	}
 	remove_repeats(route);
 	return route;
+}
+
+bool NavData::route_through(const MapPoint* points, size_t count, std::vector<MapPoint>& route, MapPoint& failed) const {
+	auto pixel = [&](int point) {
+		return MapPoint{to_pixel(points_[size_t(point)].x), to_pixel(points_[size_t(point)].y)};
+	};
+	// The stretches, their corners not cut yet.
+	std::vector<MapPoint> raw{points[0]};
+	for (size_t i = 1; i < count; ++i) {
+		const MapPoint a = points[i - 1];
+		const MapPoint b = points[i];
+		MapPoint ga{to_grid(a.x), to_grid(a.y)};
+		MapPoint gb{to_grid(b.x), to_grid(b.y)};
+		if (!find_water(ga, kWaterRadius) || !find_water(gb, kWaterRadius)) {
+			failed = a;
+			return false;
+		}
+		if (!line_of_sight(ga, gb)) {
+			int current = 0, target = 0;
+			best_pair(ga, gb, current, target);
+			raw.push_back(pixel(current));
+			while (current != target) {
+				current = next(current, target);
+				raw.push_back(pixel(current));
+			}
+		}
+		raw.push_back(b);
+	}
+	// The corners (0x446F20), from the first point different from the first; as the game, the third point taken is
+	// always the raw route's third, wherever that second one was.
+	route.clear();
+	route.push_back(raw[0]);
+	MapPoint a = raw[0];
+	size_t k = 1;
+	while (k < raw.size() && raw[k] == a) {
+		++k;
+	}
+	// The game's last point is the last one the loop read: with every point the same (four or more clicks on the
+	// ship itself), a word left on its stack; here the raw route's last.
+	MapPoint last = raw.back();
+	if (k < raw.size()) {
+		MapPoint b = raw[k];
+		for (size_t c = 2; c < raw.size(); ++c) {
+			const MapPoint p = raw[c];
+			last = p;
+			if (p == b) {
+				continue;
+			}
+			corner(route, a, b, p, false);  // the game's flag 1: A not added again
+			a = b;
+			b = p;
+		}
+	}
+	route.push_back(last);
+	remove_repeats(route);
+	return true;
 }
 
 }  // namespace p3::data

@@ -159,6 +159,12 @@ enum class ShipListMode : uint32_t {
 	// without a captain; the guide of a convoy (not marked [+0x136] & 1)
 	// stands for the convoy's ships of the merchant without a captain.
 	Captains = 3,
+	// The guild's ships to auction (0x504F02, its page 1): none without the merchant's guild bit of the town
+	// ([+0x468]); in the town, out of a convoy, docked (state 0 or 1), not marked [+0x136] & 1.
+	Auction = 6,
+	// 0x504F30 alone: in the town, out of a convoy, docked (state 0 or 1), not marked [+0x136] & 1 (the ships another
+	// merchant's office lets the player offer).
+	Docked = 7,
 };
 std::vector<uint16_t> window_ships(const SaveGame& save, int merchant, int town, ShipListMode mode);
 
@@ -230,6 +236,11 @@ FirepowerBalls firepower_balls(int32_t firepower);
 // from the towns (0x517260 at the ship's point: no town).
 bool can_turn_pirate(const SaveGame& save, const Sailing& sailing, int ship);
 OperationBytes pirate_operation(uint32_t ship, bool pirate);
+
+// The sea map's route by points (0x0B, town_tick/ship_operations.cpp fn_538de0): {0x0B, ship, step, x, y}: step 0
+// starts the points with (x, y), step k adds the point k, step 0xFFFFFFFF (kSailRoute) sails along them.
+constexpr uint32_t kSailRoute = 0xFFFFFFFF;
+OperationBytes route_point_operation(uint32_t ship, uint32_t step, int x, int y);
 
 // The shipyard's repair (0x5F8F50): what it costs (0x52A950: the ship, or
 // all the ships of its convoy) and what it sends: 0x1D with its convoy for a

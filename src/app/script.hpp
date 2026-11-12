@@ -37,6 +37,11 @@ public:
 		y = look_y_;
 		return look_x_ >= 0;
 	}
+	// The .let type of the town building to center the camera on in this frame (place:N), if any.
+	bool look_place(int& let_type) const {
+		let_type = look_place_;
+		return look_place_ >= 0;
+	}
 	// All the steps have been played (after the last frame's screenshot).
 	bool finished() const { return finished_; }
 
@@ -44,7 +49,7 @@ public:
 	Uint32 now() const { return Uint32(frame_) * kScriptFrameMs; }
 
 private:
-	enum class Kind { Press, Hold, Frames, Days, Ticks, Shot, Tap, Cell, Text, Touch, Lift, Move };
+	enum class Kind { Press, Hold, Frames, Days, Ticks, Shot, Tap, Cell, Text, Touch, Lift, Move, Place };
 	struct Step {
 		Kind kind = Kind::Press;
 		SDL_GameControllerButton button = SDL_CONTROLLER_BUTTON_INVALID;
@@ -67,6 +72,7 @@ private:
 	std::string screenshot_;
 	int look_x_ = -1;
 	int look_y_ = -1;
+	int look_place_ = -1;
 	int finger_x_ = 0;  // Where the finger is (touch, move, lift, tap), for move's motion.
 	int finger_y_ = 0;
 	bool finished_ = false;

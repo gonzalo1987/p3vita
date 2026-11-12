@@ -1,6 +1,9 @@
 add_library(p3data STATIC
 	aim.cpp
 	building_windows.cpp
+	guild_window.cpp
+	offer_window.cpp
+	office_window.cpp
 	battle/attack.cpp
 	battle/battle_setup.cpp
 	battle/battle_step.cpp
@@ -72,6 +75,7 @@ add_library(p3data STATIC
 	town_tick/operations.cpp
 	town_tick/diet.cpp
 	town_tick/offices.cpp
+	town_tick/offers.cpp
 	town_tick/population.cpp
 	town_tick/sieges.cpp
 	town_tick/votes.cpp

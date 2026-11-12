@@ -338,8 +338,8 @@ built with rand()).
   then the town battle's four (three in 0x5FE7E0 and the 0x6A of 0x633DB0), the player's actions' 0x02, 0x04 and 0x14, the dividends
   of event 0x18 (three), the new game's 0x0E and the trade routes' reports 0x5035CD and 0x4D55F9. On
   2026-11-12, **117**: the letters' buttons' 0x2B (operation 0x72), 0x22 (event 0x17), 0x64 and 0x65 (0x8B,
-  0x8C) and 0x83 (0x77).
-  The 37 left: the operations of the player not rewritten yet (9: 0x3D, 0x3E, 0x4A, 0x53, 0x5F twice, 0x90
+  0x8C) and 0x83 (0x77); then **119**: the offers' 0x1E and 0x1F (operation 0x5F, `town_tick/offers.cpp`).
+  The 35 left: the operations of the player not rewritten yet (7: 0x3D, 0x3E, 0x4A, 0x53, 0x90
   and the two of 0x8F, which nobody was found to queue), the events they create (13: 0x0C, 0x0F, 0x10, 0x11),
   the mission interpreter and the event 0x09 it creates (9), the diet's 0x4F3AF0 (1), the event 0x28 that
   nobody creates (3) and the interface window 0x419EB0 (2).
@@ -648,7 +648,7 @@ interpreter's 0x4ED0C6, 0x4EDEDA.
 («named»); «—» with what it is when p3vita doesn't have it. «Class» is the
 type's class (§2). «Connected»: p3vita sends that letter (`send_letter`) and
 the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
-99 of the 154 on 2026-11-04, 112 on 2026-11-11, 117 on 2026-11-12).
+99 of the 154 on 2026-11-04, 112 on 2026-11-11, 119 on 2026-11-12).
 
 | p3vita file | Function | Call | Type | Title (English exe) | Class | To | Note | Connected |
 |---|---|---|---|---|---|---|---|---|
@@ -797,8 +797,8 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | — operation 0x3E | 0x53A810 | 0x53A910 | 0x0E | Move | 4 | -2 (chronicle) |  | |
 | — operation 0x4A | 0x53B1F0 | 0x53B40C | 0x78 | Hanse Day | 1 | -1 (each merchant) |  | |
 | — operation 0x53 | 0x53C840 | 0x53C9B5 | 0x17 | Traveller | 2 | one merchant |  | |
-| — operation 0x5F (0x53DA30) | 0x5338A0 | 0x533C9B | 0x1E | Memo | 2 | one merchant |  | |
-| — operation 0x5F (0x53DA30) | 0x5338A0 | 0x533CB5 | 0x1F | Offer | 2 | one merchant |  | |
+| p3data/town_tick/offers.cpp | 0x5338A0 | 0x533C9B | 0x1E | Memo | 2 | one merchant | operation 0x5F (0x53DA30) | yes |
+| p3data/town_tick/offers.cpp | 0x5338A0 | 0x533CB5 | 0x1F | Offer | 2 | one merchant | operation 0x5F (0x53DA30) | yes |
 | p3data/town_tick/operations.cpp | 0x53EAC0 | 0x53EBC8 | 0x2B | It's a pity | 2 | one merchant | operation 0x72 | yes |
 | p3data/town_tick/operations.cpp | 0x53EEC0 | 0x53F6D6 | 0x83 | Impounding | 2 | one merchant | operation 0x77: its text in the buffer | yes |
 | p3data/town_tick/sieges.cpp | 0x635B80 | 0x635C9F | 0x64 | Prince | 1 | one merchant | operation 0x8B | yes |

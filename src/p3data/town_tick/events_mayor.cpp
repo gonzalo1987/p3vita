@@ -1,6 +1,7 @@
 // La cola de eventos (events.cpp): los tipos 0x02 (0x4DBB00, elección del
-// alcalde 0x528E60), 0x0A y 0x36 (subastas, 0x4E2CD4), 0x20 (0x4DBBD0,
-// elección del alderman) y 0x21 (0x4DC1F0, votación de la Hansa).
+// alcalde 0x528E60), 0x0A y 0x36 (subastas, 0x4E2CD4), 0x2D (an automatic bid at
+// an auction, 0x4E2BC4), 0x20 (0x4DBBD0, elección del alderman) y 0x21 (0x4DC1F0,
+// votación de la Hansa).
 //
 // Evento 0x02 (uno por ciudad, una vez al año; se recoloca siempre):
 //   [+0x8] u16 día del año de la elección (>= 365: se saca del tick)
@@ -1656,6 +1657,51 @@ void fn_5256f0(SaveGame& save, int town, uint32_t record, uint32_t winner, int32
 	// 0x5891C0; el oráculo los salta): no se traducen.
 }
 
+// 0x4E2BC4 (the event 0x2D, made by the operation 0x35): a merchant's automatic bid at an auction: [+0x8] u32 his top,
+// u16 [+0xC] the auction (an event 0x0A or 0x36), u16 [+0xE] the lot, [+0x10] the merchant, [+0x11] the town. It goes
+// when the auction does (not an auction, of another town, its tick before now, its phase past 7) or with a merchant
+// past the count; before the bidding (phases up to 3) it waits for the auction's tick + 1; while another lot is on sale
+// ([+0x8]), 3 ticks more; on its lot, a price plus step above the top (signed) removes it; else, if he isn't the
+// highest bidder and the lot isn't being sold (phase 7), he bids the price plus the step (the phase 4 again, [+0x12]
+// 0); a tick more. Returns whether it stays.
+uint32_t fn_4e2bc4(SaveGame& save, uint16_t event) {
+	GlobalMemory& g = save.globals;
+	Event& e = save.events[event];
+	const uint16_t index = e.u16(0xC);
+	if (index >= g.u16(kEventCount)) {
+		return 0;
+	}
+	Event& a = save.events[index];
+	if ((a.u16(6) != 0xA && a.u16(6) != 0x36) || a.u8(0x15) != e.u8(0x11) || a.u32(0) < g.u32(kTick)) {
+		return 0;
+	}
+	const uint8_t phase = a.u8(0x14);
+	const uint8_t merchant = e.u8(0x10);
+	if (phase > 7 || merchant >= merchant_count(save)) {
+		return 0;
+	}
+	if (phase <= 3) {
+		e.u32(0) = a.u32(0) + 1;
+		return 1;
+	}
+	if (a.u16(0x8) != e.u16(0xE)) {
+		e.u32(0) += 3;
+		return 1;
+	}
+	const uint32_t bid = uint32_t(a.u16(0xE)) + a.u16(0x10);
+	if (int32_t(bid) > e.s32(0x8)) {
+		return 0;
+	}
+	if (a.u8(0x17) != merchant && phase != 7) {
+		a.u16(0xE) = uint16_t(bid);
+		a.u8(0x17) = merchant;
+		a.u8(0x14) = 4;
+		a.u16(0x12) = 0;
+	}
+	e.u32(0) += 1;
+	return 1;
+}
+
 // 0x4E2CD4 (eventos 0x0A y 0x36): un paso de la subasta según la fase
 // [+0x14] (ver arriba). Devuelve si el evento sigue (recolocado) o se quita.
 uint32_t fn_4e2cd4(SaveGame& save, uint16_t event) {
@@ -2044,8 +2090,8 @@ uint32_t fn_4e2cd4(SaveGame& save, uint16_t event) {
 using namespace events_mayor_detail;
 
 // Los tipos de este grupo (manejadores de la tabla 0x4D8A28): el 0x02 y el
-// 0x20 se recolocan siempre; el 0x0A, el 0x36 y el 0x21, según lo que devuelve
-// su manejador.
+// 0x20 se recolocan siempre; el 0x0A, el 0x36, el 0x2D y el 0x21, según lo que
+// devuelve su manejador.
 int events_mayor(SaveGame& save, uint16_t event, uint16_t type) {
 	switch (type) {
 	case 0x02:
@@ -2054,6 +2100,10 @@ int events_mayor(SaveGame& save, uint16_t event, uint16_t type) {
 	case 0x0A:
 	case 0x36:
 		return fn_4e2cd4(save, event) ? 1 : 0;
+	case 0x2D:
+		return fn_4e2bc4(save, event) ? 1 : 0;
+	case 0x13:  // The end of an offer between merchants (town_tick/offers.cpp).
+		return fn_4e7a14(save, event) ? 1 : 0;
 	case 0x20:
 		fn_4dbbd0(save);
 		return 1;

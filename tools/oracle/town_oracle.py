@@ -175,6 +175,7 @@ INI_STRING = 0x4BE060  # thiscall (sección, clave, por omisión, búfer, tamañ
 TOWN_TABLE_SIZE = 0x34
 EMPTY_CSTRING = 0x6C7CCC  # puntero a la cadena vacía de MFC con el que empieza un CString
 LOADED_ROUTE = 0x6DFC20  # the queue object 0x6DF2F0's [+0x930]: a route loaded from a file (0x5492D0)
+OFFERS = 0x6DE584  # the offers between merchants: a list of 0x14-byte nodes, the next at [+0x0] (SaveGame::offers)
 ENQUEUE = 0x54AA70  # encola una operación: se anota y no se ejecuta
 OPERATION_SIZE = 0x14  # lo que copia 0x543F10; lo que sigue en la pila es basura
 # El tick de ciudad se llama por este trampolín para que vuelva a una
@@ -522,6 +523,11 @@ MAIL_CALLS += (
     0x635C9F, 0x635DA9,
     # The impounding (operation 0x77, 0x53EEC0, operations.cpp: 0x83 with its text).
     0x53F6D6,
+)
+MAIL_CALLS += (
+    # An offer between merchants (operation 0x5F, 0x5338A0, town_tick/offers.cpp): the memo 0x1E to A and the offer
+    # 0x1F to B.
+    0x533C9B, 0x533CB5,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is
@@ -1487,6 +1493,18 @@ class TownOracle(SaveOracle):
                 if n and pointer:
                     lists.append(struct.pack('<HBH', i, k, n) + bytes(read(pointer, 2 * n)))
         out['ML'] = (0, b''.join(lists))
+        # Each merchant's route by points on the sea map (operation 0x0B: the heap buffer [+0xEC],
+        # SavedMerchant::route_points): u16 merchant, u16 its size, u16 the u16s used and the points from the u16 4 on
+        # (the 2 and 3, the ship's place, are written only when it sails, the heap's leftovers before: checked through
+        # its route, Q).
+        buffers = []
+        for i in range(merchants):
+            pointer = unpack('<I', merchant_block, 0x650 * i + 0xEC)[0]
+            if pointer:
+                size, used = unpack('<HH', read(pointer, 4))
+                n = max(0, min(used, size) - 4)
+                buffers.append(struct.pack('<HHH', i, size, used) + bytes(read(pointer + 8, 2 * n)))
+        out['MR'] = (0, b''.join(buffers))
         # The ship names the players wrote (SaveGame::player_ship_names): the
         # texts of the names object's second list, each with its 0 (empty
         # after a load; operations 0x2D and 0x2E add them).
@@ -1580,6 +1598,13 @@ class TownOracle(SaveOracle):
             if unpack('<H', r, 0)[0] == 0:
                 break
         out['AR'] = (loaded, b''.join(records))
+        # The offers between merchants (0x5338A0): the nodes from the head, their pointer to the next ([+0x0]) as 0.
+        offers, node = [], gu32(OFFERS)
+        while node and len(offers) < 0x1000:
+            r = bytes(read(node, 0x14))
+            offers.append(bytes(4) + r[4:])
+            node = unpack('<I', r, 0)[0]
+        out['OF'] = (gu32(OFFERS), b''.join(offers))
         routes = []
         for i in range(ships):
             route = unpack('<I', ship_block, i * 0x180 + 0x24)[0]

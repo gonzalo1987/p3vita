@@ -231,6 +231,55 @@ constexpr uint16_t kDaysBefore[16] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 27
 // 0x672C14: a byte per ware for 0x1A's two texts (the same in both exes).
 constexpr uint8_t kWareText[24] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};
 
+// 0x533EE0 (on the offers' list, town_tick/offers.cpp): the offer of that number, A and B, as 0x533F20 words it: what
+// is offered (wares «%u %s %s»: the amount, \B or \L by 0x672C14, the ware's name; a ship of the count «the %s, %s
+// with %i\L loading capacity.»: its name, its type's word by [+0xE], its capacity / 2000; money «%i\C.»), a line, the
+// price «For which I demand %u\C.» and a line. Empty if the list hasn't it.
+std::string offer_letter_text(const Composer& c, uint32_t id, uint16_t a, uint16_t b) {
+	const SaveGame& save = c.save;
+	for (const GameMemory<0x14>& o : save.offers) {
+		if (o.u32(4) != id || o.u8(0xC) != a || o.u8(0xD) != b) {
+			continue;
+		}
+		std::string what;
+		switch (o.u8(0xF)) {
+		case 0: {
+			const uint16_t ware = o.u16(0x10);
+			what = GameTexts::sprintf_raw(c.text(0x6B4FDC),
+				{num(o.u16(0x12)), c.table(0x6C0DF8, ware < 24 ? kWareText[ware] : 0u), c.table(0x6C0BB0, ware)});
+			break;
+		}
+		case 1:
+			if (o.u16(0x10) < save.globals.u16(global::kShipCount) && o.u16(0x10) < save.ships.size()) {
+				const ShipMemory& s = save.ships[o.u16(0x10)].memory;
+				std::string name;
+				for (size_t k = 0; k < 32 && s.u8(0x160 + k) != 0; ++k) {
+					name += char(s.u8(0x160 + k));
+				}
+				what = GameTexts::sprintf_raw(c.text(0x6B4FE0),
+					{name, c.table(0x6C0E80, s.u8(0xE)), std::to_string(s.s32(0x10) / 2000)});
+			}
+			break;
+		case 2:
+			what = GameTexts::sprintf_raw(c.text(0x6B4FE4), {std::to_string(o.s32(0x10))});
+			break;
+		default:
+			break;
+		}
+		return what + "\n" + GameTexts::sprintf_raw(c.text(0x6B5004), {num(o.u32(8))}) + "\n";
+	}
+	return std::string();
+}
+
+// 0x4F6420's mark on a merchant (it gets his first name): [+0x1C]'s bit 0x80, the women's list, set for a woman
+// ([+0x1A] 0) and cleared for a man.
+void mark_first_name(SaveGame& save, uint32_t merchant) {
+	if (merchant < save.globals.u16(global::kWorldMerchantCount) && merchant < save.merchants.size()) {
+		MerchantMemory& m = save.merchants[merchant].memory;
+		m.u8(0x1C) = m.u8(0x1A) ? uint8_t(m.u8(0x1C) & 0x7F) : uint8_t(m.u8(0x1C) | 0x80);
+	}
+}
+
 }  // namespace
 
 void letter_viewed(SaveGame& save, uint16_t entry) {
@@ -244,6 +293,11 @@ void letter_viewed(SaveGame& save, uint16_t entry) {
 		if (m.u8(0x1A) == 0) {
 			m.u8(0x1C) |= 0x80;
 		}
+	}
+	if (type == 0x1E || type == 0x1F) {
+		// The offer's letters (0x480868) take B's first name, then A's.
+		mark_first_name(save, save.mail[entry].u16(0xE));
+		mark_first_name(save, save.mail[entry].u16(0xC));
 	}
 	if (type != 0x12 && type != 0x26) {
 		return;
@@ -286,6 +340,8 @@ bool letter_type_rewritten(uint8_t type) {
 	case 0x1A:
 	case 0x1B:
 	case 0x1D:
+	case 0x1E:
+	case 0x1F:
 	case 0x20:
 	case 0x21:
 	case 0x22:
@@ -1957,6 +2013,24 @@ std::optional<std::string> compose_letter(const SaveGame& save, const GameTexts&
 		c.out[5] = '1';
 		c.format(c.text(0x6B9CD8), {});
 		break;
+	case 0x1E:  // An offer between merchants (0x480868): the memo to A who offers and the offer to B.
+	case 0x1F: {
+		// To B ([+0xE]): «Dear Miss/Mr %s %s, ... I offer » by his [+0x1A]; the offer of the letter's number, A and B
+		// (0x533EE0, from the offers' list); then «\n\n\c» and A's ([+0xC]) closing, which the game leaves in its
+		// buffer for the end to append.
+		const uint32_t merchants = save.globals.u16(global::kWorldMerchantCount);
+		if (e.u16(0xE) < merchants) {
+			const MerchantMemory* b = c.merchant(e.u16(0xE));
+			c.format(c.table(0x6B4F78, b ? b->u8(0x1A) : 0u), {c.merchant_first(b), c.merchant_family(b), "\n", "\n", "\n"});
+		}
+		c.add(offer_letter_text(c, e.u32(8), e.u16(0xC), e.u16(0xE)));
+		if (e.u16(0xC) < merchants) {
+			const MerchantMemory* a = c.merchant(e.u16(0xC));
+			c.add("\n\n\\c");
+			c.format(0x6B4F9C, {"\n", "\\", "r", c.merchant_first(a), c.merchant_family(a)});
+		}
+		break;
+	}
 	default:
 		return std::nullopt;
 	}

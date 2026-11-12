@@ -127,6 +127,11 @@ struct SavedOffice {
 
 struct SavedMerchant {
 	MerchantMemory memory;  // Como en el juego (0x650 bytes).
+	// [+0xEC] The sea map's route by points (operation 0x0B, 0x538DE0): the game's heap buffer of u16s, as many as
+	// its [0]; [1] the u16s used, [2..3] where the ship was when it last sailed, then the points (x, y). Empty: none
+	// (the game's pointer at 0; memory [+0xEC] is 1 or 0). Not in the save file (the merchant's constructor 0x4F5F..
+	// sets it to 0, 0x4F6050 frees it).
+	std::vector<uint16_t> route_points;
 
 	int32_t& money() { return memory.s32(0x0); }
 	int32_t money() const { return memory.s32(0x0); }
@@ -431,6 +436,10 @@ struct SaveGame {
 	// while one waits), for the ship [0x6DFC24] (trade_routes.hpp, 0x5492D0).
 	// In tick_probe, region AR.
 	std::vector<GameMemory<0xDC>> loaded_route;
+	// The offers between merchants (*0x6DE584, a list of 0x14-byte nodes on the heap that the game doesn't keep in
+	// the save: empty after loading one), the head first; [+0x0] (the game's pointer to the next) kept 0
+	// (town_tick/offers.cpp). In tick_probe, region OF.
+	std::vector<GameMemory<0x14>> offers;
 	// Buzón de los avisos a los comerciantes (*0x6DD730, tantos como u16
 	// [0x6DD736]): entradas de 16 bytes con u8 [+0x0] día, u8 [+0x1] mes, u16
 	// [+0x2] año, u8 [+0x4] tipo y u16 [+0x6] siguiente; la lista de cada

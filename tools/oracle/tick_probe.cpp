@@ -335,6 +335,32 @@ void build_save(const State& state, SaveGame& save) {
 			o += 5 + 2 * size_t(n);
 		}
 	}
+	if (const Region* mr = find(state, "MR")) {
+		// The route by points of each merchant that has one (operation 0x0B): u16 merchant, u16 the buffer's size,
+		// u16 the u16s used and those from the 4th on (SavedMerchant::route_points).
+		for (SavedMerchant& m : save.merchants) {
+			m.route_points.clear();
+			m.memory.u32(0xEC) = 0;
+		}
+		const std::vector<uint8_t>& b = mr->bytes;
+		for (size_t o = 0; o + 6 <= b.size();) {
+			const uint16_t i = get<uint16_t>(b.data(), o);
+			const uint16_t size = get<uint16_t>(b.data(), o + 2);
+			const uint16_t used = get<uint16_t>(b.data(), o + 4);
+			const size_t n = std::min(used, size) > 4 ? size_t(std::min(used, size)) - 4 : 0;
+			if (i < save.merchants.size()) {
+				std::vector<uint16_t>& r = save.merchants[i].route_points;
+				r.assign(std::max<size_t>(size, 4), 0);
+				r[0] = size;
+				r[1] = used;
+				for (size_t j = 0; j < n && o + 8 + 2 * j <= b.size(); ++j) {
+					r[4 + j] = get<uint16_t>(b.data(), o + 6 + 2 * j);
+				}
+				save.merchants[i].memory.u32(0xEC) = 1;
+			}
+			o += 6 + 2 * n;
+		}
+	}
 	if (const Region* sn = find(state, "SN")) {
 		// The ship names the players wrote: their texts, each with its 0.
 		save.player_ship_names.clear();
@@ -391,6 +417,9 @@ void build_save(const State& state, SaveGame& save) {
 	}
 	if (const Region* ar = find(state, "AR")) {
 		copy_blocks(*ar, save.loaded_route);  // a route loaded from a file (0x5492D0)
+	}
+	if (const Region* of = find(state, "OF")) {
+		copy_blocks(*of, save.offers);  // the offers between merchants (town_tick/offers.cpp)
 	}
 	if (const Region* q = find(state, "Q")) {
 		// Rutas: u16 barco, u32 nº de puntos y los puntos. En el juego el
@@ -566,6 +595,27 @@ State dump_save(const SaveGame& save, const State& game) {
 			}
 		}
 	}
+	if (s.count("MR")) {
+		// As the oracle: each buffer, its points from the u16 4 to the used ones.
+		std::vector<uint8_t>& b = s["MR"].bytes;
+		b.clear();
+		for (size_t i = 0; i < save.merchants.size(); ++i) {
+			const std::vector<uint16_t>& r = save.merchants[i].route_points;
+			if (r.size() < 4) {
+				continue;
+			}
+			const size_t used = std::min<size_t>(r[1], r[0]);
+			const size_t n = used > 4 ? used - 4 : 0;
+			const size_t o = b.size();
+			b.resize(o + 6 + 2 * n);
+			put<uint16_t>(b.data(), o, uint16_t(i));
+			put<uint16_t>(b.data(), o + 2, r[0]);
+			put<uint16_t>(b.data(), o + 4, r[1]);
+			for (size_t j = 0; j < n; ++j) {
+				put<uint16_t>(b.data(), o + 6 + 2 * j, 4 + j < r.size() ? r[4 + j] : 0);
+			}
+		}
+	}
 	if (s.count("WN") && s["WN"].bytes.size() >= 5) {
 		std::vector<uint8_t>& b = s["WN"].bytes;
 		b[0] = save.battle_window.open ? 1 : 0;
@@ -619,6 +669,9 @@ State dump_save(const SaveGame& save, const State& game) {
 	}
 	if (s.count("AR")) {
 		store_blocks(save.loaded_route, s["AR"]);
+	}
+	if (s.count("OF")) {
+		store_blocks(save.offers, s["OF"]);
 	}
 	if (s.count("Q")) {
 		std::vector<uint8_t>& b = s["Q"].bytes;
@@ -748,7 +801,8 @@ bool pointer_field(const std::string& name, size_t w, const std::vector<uint8_t>
 	}
 	if (name == "M") {
 		const size_t field = w % MerchantMemory::kSize;
-		return field == 0xE4 || field == 0xE8;  // the name's strings (0x512A60/0x512AE0)
+		// The name's strings (0x512A60/0x512AE0) and the route by points (region MR).
+		return field == 0xE4 || field == 0xE8 || field == 0xEC;
 	}
 	if (name == "P") {
 		return w % ShipMemory::kSize == 0x24;  // the route, apart in p3vita
@@ -826,6 +880,8 @@ std::string describe(const std::string& region, size_t offset) {
 		std::snprintf(text, sizeof(text), "%s[%zu]+0x%zx", name, offset / size, offset % size);
 	} else if (region == "AU") {
 		std::snprintf(text, sizeof(text), "stop[%zu]+0x%zx", offset / 0xDC, offset % 0xDC);
+	} else if (region == "OF") {
+		std::snprintf(text, sizeof(text), "offer[%zu]+0x%zx", offset / 0x14, offset % 0x14);
 	} else if (region == "AR") {
 		std::snprintf(text, sizeof(text), "loaded stop[%zu]+0x%zx", offset / 0xDC, offset % 0xDC);
 	} else if (region == "G") {

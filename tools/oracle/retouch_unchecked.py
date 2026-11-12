@@ -4363,6 +4363,799 @@ def prince_ops(o):
     return during
 
 
+def auction_ops(o):
+    """The auctions' operations (the guild's window), run with the executor, and the event 0x2D (0x4E2BC4) with the
+    queue called directly. 0x36 (auction a ship, 0x4DA510) on the player's first docked ship: a ship past the count,
+    one in a convoy, at sea, not docked, of nobody, without the guild's bit of its town; then a new auction (its wait
+    put off by an auction ending in its days; other auctions in the phases 0, 1, 2, ended and far, in another town);
+    into a phase-2 auction of its town after a full one; with the settings' byte [+0xD] at 0, into the new phase-1 one
+    (its second slot). 0x33
+    (a bid, 0x53A010) on an auction in phase 5: a bid, again (the highest bidder), a smaller one, short of money, in
+    debt (passes: the money without sign), a merchant past, the phases 3 and 7, not an auction, an event past. 0x34 (be
+    told, 0x53A0B0): on and off, with an AI merchant made human (the later of the two: his bit doubled), an AI merchant, a merchant past,
+    not an auction, an event past. 0x35 (an automatic bid, 0x53A170): new (the top's bit 31 dropped), the same again
+    (its top changed), not an auction, an event past. Then events 0x2D on auctions of their own: an auction past the
+    queue, not an auction, another town, the auction's tick before now, its phase 8, a merchant past, the phase 3
+    (waits), another lot on sale (3 ticks), a top too low, the highest bidder already, the phase 7, and a bid."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    pa = o.merchant(player)
+    ship, town = player_docked_ship(o)
+    sa = o.ship(ship)
+    other_town = (town + 1) % towns
+    ais = rt.ai_with_office(o)
+    ai = ais[0]
+    # An AI merchant made human for a while (before the player if there is one: 0x4DA480 doubles the bit then).
+    second = next(m for m in sorted(range(merchants), key=lambda m: m > player) if m != player and o.u16(o.merchant(m) + 8) != 0)
+    settings = o.u32(to.SETTINGS_POINTER)
+    now = o.u32(WORLD + 0x14)
+    window_ships_copier(o)
+    auction_list_copier(o)
+    guilds = [t for t in range(towns) if o.u8(o.town(t) + 0x2C8) & 0xC0]
+    print(f'the player {player}: ship {ship} in {town}; AI {ai}, second human {second}; settings [+0xD] '
+          f'{o.u8(settings + 0xD)}, convoys {o.u16(to.SHIPS + 0xF6)}; towns with a guild {guilds}')
+
+    def ev(i):
+        return o.u32(to.EVENTS) + 0x18 * i
+
+    def auction(when, phase, at=town, kind=0x0A, lots=(0xFFFF, 0xFFFF, 0xFFFF), price=1000, step=100, high=0xFF):
+        i, _ = new_event(o, when, kind, w8=lots[0], wA=lots[1], wC=lots[2], wE=price, w10=step, w12=0, b14=phase,
+                         b15=at, b16=0, b17=high)
+        return i
+
+    def show(what, i):
+        a = ev(i)
+        print(f'{what}: event {i} {bytes(o.uc.mem_read(a, 0x18)).hex()}')
+
+    def during(o):
+        def op(code, *words):
+            operation(o, code, *words)
+            print(f'{code:#x}: ship state {o.u16(sa + 0x134):#x} [+0x3C] {o.u8(sa + 0x3C):#x}, '
+                  f'events {o.u16(to.EVENTS + 0xC)}, head {o.u16(to.EVENTS + 8)}')
+
+        def auction_list(what):
+            o.uc.mem_write(SCRATCH, bytes(0x44))
+            direct(o, AUCTION_LIST, [])
+            n = o.u32(SCRATCH + 0x40)
+            print(f'{what}: {n} auctions {bytes(o.uc.mem_read(SCRATCH, 0x14 * min(n, 3))).hex()}')
+
+        def auction_ships(what):
+            direct(o, WINDOW_SHIPS, [player, town, 6, 0])
+            print(f'{what}: the ships to auction {[o.u16(SCRATCH + 2 + 2 * k) for k in range(o.u16(SCRATCH))]}')
+        auction_list("the save's auctions")
+        # 0x36: the guards.
+        op(0x36, ships)
+        if o.u16(to.SHIPS + 0xF6):
+            convoy = o.u16(sa + 8)
+            w16(o, sa + 8, 0)
+            op(0x36, ship)
+            w16(o, sa + 8, convoy)
+        w8(o, sa + 0x39, 0xFF)
+        op(0x36, ship)
+        w8(o, sa + 0x39, town)
+        w16(o, sa + 0x134, 4)
+        op(0x36, ship)
+        w16(o, sa + 0x134, 0)
+        w8(o, sa, merchants)
+        op(0x36, ship)
+        w8(o, sa, player)
+        bits = o.u32(pa + 0x468)
+        w32(o, pa + 0x468, bits & ~(1 << (town & 31)))
+        op(0x36, ship)
+        auction_ships("without the guild's bit")
+        w32(o, pa + 0x468, bits | (1 << (town & 31)))
+        auction_ships('with it')
+        # A new auction: its days blocked by others, in another town (buildings' auctions: no slot for a ship).
+        wait = (now & 3) + (ship & 3) + 0xE
+        auction(((wait + 2) << 8), 3, at=other_town, kind=0x36, lots=(0x8001, 0xFFFF, 0xFFFF))
+        auction(0x3000, 0, at=other_town, kind=0x36)
+        auction(0x4000, 1, at=other_town, kind=0x36, price=0x500)
+        auction(0x5000, 2, at=other_town, kind=0x36)
+        auction(0x18000, 3, at=other_town, kind=0x36)
+        ended = auction(0x10000, 3, at=other_town, kind=0x36)
+        w32(o, ev(ended), now - 0x500)  # out of the queue's order: never reached by it
+        op(0x36, ship)
+        show('the new auction', o.u16(to.EVENTS + 8))
+        # Into a phase-2 auction of its town after a full one.
+        full = auction(0x800, 2, lots=(1, 2, 3))
+        free = auction(0x1000, 2, lots=(0xFFFF, 4, 0xFFFF))
+        w16(o, sa + 0x134, 0)
+        op(0x36, ship)
+        show('full', full)
+        show('with a slot', free)
+        # The settings' byte [+0xD] at 0: into a phase-1 auction (the new one, its second slot).
+        w16(o, sa + 0x134, 0)
+        value = o.u8(settings + 0xD)
+        w8(o, settings + 0xD, 0)
+        op(0x36, ship)
+        w8(o, settings + 0xD, value)
+        # The auctions to come: the town and the other one without a guild, then with one ([+0x2C8] & 0xC0), with the
+        # settings' byte [+0xD] at 0 (the phase 1 too).
+        flags = [o.u32(o.town(t) + 0x2C8) for t in (town, other_town)]
+        for t in (town, other_town):
+            w32(o, o.town(t) + 0x2C8, o.u32(o.town(t) + 0x2C8) & ~0xC0)
+        auction_list('no guild in either town')
+        w32(o, o.town(town) + 0x2C8, o.u32(o.town(town) + 0x2C8) | 0x40)
+        w32(o, o.town(other_town) + 0x2C8, o.u32(o.town(other_town) + 0x2C8) | 0x80)
+        auction_list('a guild in both')
+        w8(o, settings + 0xD, 0)
+        auction_list("the settings' byte at 0")
+        w8(o, settings + 0xD, value)
+        for t, f in zip((town, other_town), flags):
+            w32(o, o.town(t) + 0x2C8, f)
+
+        # 0x33: the bids.
+        a = auction(0x10000, 5, at=other_town, kind=0x36, lots=(0, 0xFFFF, 0xFFFF))
+        money = o.s32(o.merchant(ai))
+        op(0x33, player, a, 1500)
+        op(0x33, player, a, 1600)
+        op(0x33, ai, a, 1400)
+        w32(o, o.merchant(ai), 100)
+        op(0x33, ai, a, 2000)
+        w32(o, o.merchant(ai), -100)
+        op(0x33, ai, a, 2000)
+        w32(o, o.merchant(ai), money)
+        op(0x33, merchants, a, 3000)
+        w8(o, ev(a) + 0x14, 3)
+        op(0x33, player, a, 3000)
+        w8(o, ev(a) + 0x14, 7)
+        op(0x33, player, a, 3000)
+        w8(o, ev(a) + 0x14, 5)
+        w16(o, ev(a) + 6, 0x2D)
+        op(0x33, player, a, 3000)
+        w16(o, ev(a) + 6, 0x36)
+        op(0x33, player, o.u16(to.EVENTS + 0xC), 3000)
+        show('bids', a)
+
+        # 0x34: be told (and whether the player is, 0x4DA480).
+        def told(what):
+            print(f'{what}: told {direct(o, 0x4DA480, [a], ecx=to.EVENTS) & 0xFF}')
+        told('not told')
+        op(0x34, player, a, 1)
+        told('told')
+        op(0x34, player, a, 0)
+        told('not any more')
+        kind = o.u16(o.merchant(second) + 8)
+        w16(o, o.merchant(second) + 8, 0)
+        op(0x34, max(second, player), a, 1)  # the other human comes first: the bit doubled
+        told('another human')
+        op(0x34, min(second, player), a, 1)
+        told('both')
+        w16(o, o.merchant(second) + 8, kind)
+        direct(o, 0x4DA480, [0xFFFE], ecx=to.EVENTS)
+        direct(o, 0x4DA480, [next(i for i in range(o.u16(to.EVENTS + 0xC)) if o.u16(ev(i) + 6) not in (0xA, 0x36))],
+               ecx=to.EVENTS)
+        op(0x34, ai, a, 1)
+        op(0x34, merchants, a, 1)
+        w16(o, ev(a) + 6, 0x2D)
+        op(0x34, player, a, 1)
+        w16(o, ev(a) + 6, 0x36)
+        op(0x34, player, o.u16(to.EVENTS + 0xC), 1)
+        show('told', a)
+
+        # 0x35: automatic bids.
+        op(0x35, 0x80001000, a, 0, player)
+        op(0x35, 5000, a, 0, player)
+        w16(o, ev(a) + 6, 0x2D)
+        op(0x35, 5000, a, 0, player)
+        w16(o, ev(a) + 6, 0x36)
+        op(0x35, 5000, o.u16(to.EVENTS + 0xC), 0, player)
+
+        # The events 0x2D, each on an auction of its own (after the queue's next tick).
+        def proxy(target, lot=0, merchant=player, top=5000, at=other_town):
+            i, _ = new_event(o, 1, 0x2D, d8=top, wC=target, wE=lot, b10=merchant, b11=at)
+            return i
+
+        def bidding(phase=5, high=0xFF, lot=0):
+            return auction(0x100, phase, at=other_town, kind=0x36, lots=(lot, 0xFFFF, 0xFFFF), high=high)
+        cases = []
+        cases.append(proxy(0xFFFE))  # past the queue
+        inner = proxy(bidding())
+        cases.append(inner)
+        cases.append(proxy(inner))  # an event 0x2D as the auction
+        cases.append(proxy(bidding(), at=town))
+        past = bidding()
+        w32(o, ev(past), now - 0x100)  # out of the queue's order
+        cases.append(proxy(past))
+        cases.append(proxy(bidding(phase=8)))
+        cases.append(proxy(bidding(), merchant=merchants))
+        cases.append(proxy(bidding(phase=3)))
+        cases.append(proxy(bidding(lot=7)))
+        cases.append(proxy(bidding(), top=1050))
+        cases.append(proxy(bidding(high=player)))
+        cases.append(proxy(bidding(phase=7)))
+        bid = bidding(high=ai)
+        cases.append(proxy(bid))
+        direct(o, 0x4D85C0, [now + 1], ecx=to.EVENTS)
+        for i in cases:
+            show('0x2D', i)
+        show('bid on', bid)
+    return during
+
+
+def f32_at(o, a):
+    return struct.unpack('<f', bytes(o.uc.mem_read(a, 4)))[0]
+
+
+def office_businesses(o, f):
+    """The world records of office f's businesses ([+0x2CC], next [+0x8])."""
+    out, r, count, table = [], o.u16(o.office(f) + 0x2CC), o.u16(RECORD_COUNT), o.u32(WORLD_RECORDS)
+    while r < count:
+        out.append(r)
+        r = o.u16(table + 0x14 * r + 8)
+    return out
+
+
+def office_admin_ops(o):
+    """The office's windows' operations, run with the executor on the player's first office: 0x5E (the administrator,
+    0x53D990) dismissed (if any), again (nothing), hired (a new captain), again (nothing), in a town without his office;
+    0x5B (the administrator's order, 0x53D5C0) without an administrator (all the orders cleared), then with one:
+    selling, buying, 0 with another price left, 0 with none (the orders' bits off), an office past; the administrator
+    dismissed again; 0x62 (a house class's
+    rent, 0x536331) and its guards (a class past 2, a level past 4, a merchant past, a town past, no office); 0x63 (the
+    guards) and its guards; 0x66 (a ware's bit of [+0x3B4]) on and off, a ware past, no office; 0x5A (a business's
+    share of jobs, 0x536200) on an office with two businesses (the first's type changed if the same): the second's
+    (walked to), the first's, a type it hasn't, no office. Saves 3, 5 and 7 (in 1 no office has two businesses)."""
+    towns, offices, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    t = office_town(o, player)
+    f = facilities_office(o, player, t)
+    b = o.office(f)
+    other = next(x for x in range(towns) if facilities_office(o, player, x) is None)
+    table = o.u32(WORLD_RECORDS)
+    rich = max((g for g in range(offices) if o.u16(o.office(g) + 0x2C4) < merchants),
+               key=lambda g: len(office_businesses(o, g)))
+    if len(office_businesses(o, rich)) < 2:
+        raise RuntimeError('no office with two businesses')
+    owner, rich_town = o.u16(o.office(rich) + 0x2C4), o.u8(o.office(rich) + 0x2C6)
+    records = office_businesses(o, rich)
+    types = [o.u8(table + 0x14 * r + 6) for r in records]
+    missing = next(k for k in range(0x15) if k not in types)
+    if types[1] == types[0]:  # the first of another type, so that the second is walked to
+        types[0] = next(k for k in range(0x15) if k not in types and k != missing)
+        w8(o, table + 0x14 * records[0] + 6, types[0])
+    later = types[1]
+    print(f'the player {player}: office {f} in {t}, none in {other}; administrator {o.u16(b + 0x2F2):#x}; office {rich} '
+          f'of {owner} in {rich_town}: business types {types}')
+
+    def during(o):
+        def op(code, *words):
+            operation(o, code, *words)
+            print(f'{code:#x}: administrator {o.u16(b + 0x2F2):#x}, orders {o.u8(b + 0x2D6):#x}, rents '
+                  f'{bytes(o.uc.mem_read(b + 0x2E4, 3)).hex()}, guards {o.u8(b + 0x2C7)}, bits {o.u32(b + 0x3B4):#x}')
+        op(0x5E, player, t, 1)
+        op(0x5E, player, t, 1)
+        for w in (3, 5):
+            w32(o, b + 0x2F4 + 4 * w, 77)
+            w32(o, b + 0x354 + 4 * w, 1000)
+        op(0x5B, 4000, 50, f, 3)
+        op(0x5E, player, t, 0)
+        op(0x5E, player, t, 0)
+        op(0x5E, player, other, 0)
+        op(0x5B, 20000, 50, f, 3)
+        op(0x5B, 30000, -40 & 0xFFFFFFFF, f, 5)
+        op(0x5B, 30000, 0, f, 5)
+        op(0x5B, 30000, 0, f, 3)
+        op(0x5B, 30000, 10, offices, 3)
+        op(0x5E, player, t, 1)
+        op(0x62, player, t, 3, 1)
+        op(0x62, player, t, 3, 3)
+        op(0x62, player, t, 5, 1)
+        op(0x62, merchants, t, 3, 1)
+        op(0x62, player, towns, 3, 1)
+        op(0x62, player, other, 3, 1)
+        op(0x63, player, t, 4)
+        op(0x63, merchants, t, 4)
+        op(0x63, player, towns, 4)
+        op(0x63, player, other, 4)
+        op(0x66, 7, player, t, 1)
+        op(0x66, 2, player, t, 1)
+        op(0x66, 7, player, t, 0)
+        op(0x66, 0x18, player, t, 1)
+        op(0x66, 7, player, other, 1)
+
+        def shares():
+            return [round(f32_at(o, table + 0x14 * r + 0x10), 4) for r in office_businesses(o, rich)]
+        for kind, percent in ((later, 37), (types[0], 120), (missing, 50)):
+            operation(o, 0x5A, owner, rich_town, kind, percent)
+            print(f'0x5A {kind:#x} {percent}: {shares()}')
+        operation(o, 0x5A, owner, (rich_town + 1) % towns if facilities_office(o, owner, (rich_town + 1) % towns) is None
+                  else next(x for x in range(towns) if facilities_office(o, owner, x) is None), types[0], 10)
+    return during
+
+
+def arsenal_ops(o):
+    """The arsenal's window's operations (0x5ECAB0), run with the executor in the town of the player's first docked
+    ship (an office made there if he has none): 0x56 (a piece of artillery, 0x53CAF0): buying a piece and one of
+    [+0x2BC], again (the town has none), a piece the town hasn't, short of money; selling them back, one the office
+    hasn't; a merchant past, a town past. 0x50 (hand weapons, 0x53BC90): buying into the ship, cut by its money, with no room, cut by its
+    room, with the town short (the count to 0), into the office, without money, in a town without his
+    office; selling from the ship, more than it has (cut), none at all (paid all the same); the merchant's [+0x16]
+    near its top (saturated); then with the ship guiding a convoy (the convoy walked); the guards (count 0, a town
+    past, a merchant past)."""
+    s, t = player_docked_ship(o)
+    towns, _, merchants, ships = o.counts()
+    m = o.u32(to.PLAYER)
+    pa = o.merchant(m)
+    sa = o.ship(s)
+    ta = o.town(t)
+    other = next(x for x in range(towns) if facilities_office(o, m, x) is None and x != t)
+    print(f'the player {m}: ship {s} in {t}; no office in {other}')
+
+    def during(o):
+        w32(o, pa, 5000000)
+        if facilities_office(o, m, t) is None:
+            store(o, t)
+            operation(o, 0x5D, m, t)
+        b = o.office(facilities_office(o, m, t))
+
+        def show(what):
+            print(f'{what}: money {o.s32(pa)}, [+0x16] {o.u16(pa + 0x16):#x}, town arty '
+                  f'{[o.s32(ta + 0x124 + 4 * k) for k in range(6)]} {o.u32(ta + 0x2BC)}, office '
+                  f'{[o.s32(b + 0x124 + 4 * k) for k in range(6)]} {o.u32(b + 0x2BC)}, weapons town '
+                  f'{[o.s32(ta + 4 + 4 * (0x14 + k)) for k in range(4)]} ship {[o.s32(sa + 0x54 + 4 * (0x14 + k)) for k in range(4)]} '
+                  f'office {[o.s32(b + 4 + 4 * (0x14 + k)) for k in range(4)]}')
+
+        def op56(kind, price, town, sell=False, who=None):
+            operation(o, 0x56, m if who is None else who, kind, price, town | (0x100 if sell else 0))
+            show(f'0x56 {kind} {"sell" if sell else "buy"}')
+
+        def op50(price, count, kind, buy, ship, town=None, who=None):
+            operation(o, 0x50, price, count & 0xFFFFFFFF,
+                      (t if town is None else town) | (m if who is None else who) << 8 | kind << 16 | buy << 24, ship)
+            show(f'0x50 {kind} {count} {"buy" if buy else "sell"} ship {ship:#x}')
+        for k in range(6):
+            w32(o, ta + 0x124 + 4 * k, 5000)
+            w32(o, b + 0x124 + 4 * k, 0)
+        w32(o, ta + 0x2BC, 1)
+        w32(o, b + 0x2BC, 0)
+        op56(2, 1500, t)
+        op56(6, 800, t)
+        op56(6, 800, t)
+        w32(o, ta + 0x124 + 4 * 4, 100)
+        op56(4, 900, t)
+        w32(o, pa, 1000)
+        op56(1, 1500, t)
+        w32(o, pa, 5000000)
+        op56(2, 1500, t, True)
+        op56(6, 800, t, True)
+        op56(6, 800, t, True)
+        op56(5, 700, t, True)
+        op56(2, 1500, t, who=merchants)
+        op56(2, 1500, towns)
+        for k in range(4):
+            w32(o, ta + 4 + 4 * (0x14 + k), 3000)
+            w32(o, sa + 0x54 + 4 * (0x14 + k), 0)
+        op50(20, 5, 1, 1, s)
+        w32(o, pa, 300)
+        op50(20, 100, 1, 1, s)
+        w32(o, pa, 5000000)
+        cargo = o.s32(sa + 0x54 + 4 * TIMBER)
+        w32(o, sa + 0x54 + 4 * TIMBER, cargo + 10 ** 7)
+        op50(20, 100, 1, 1, s)  # no room
+        w32(o, sa + 0x54 + 4 * TIMBER, cargo)
+        direct(o, 0x5182B0, [], ecx=sa)
+        op50(20, 100000, 1, 1, s)  # cut by the room
+        w32(o, ta + 4 + 4 * 0x16, 5)
+        op50(20, 4, 2, 1, s)  # the town has under ten units
+        op50(25, 7, 3, 1, ships)  # into the office
+        w32(o, pa, 0)
+        op50(25, 7, 3, 1, s)
+        w32(o, pa, 5000000)
+        op50(25, 7, 3, 1, ships, town=other)
+        op50(15, 3, 1, 0, s)
+        op50(15, 100, 1, 0, s)
+        op50(15, 4, 0, 0, s)  # nothing of it: paid all the same
+        w16(o, pa + 0x16, 0x7FF0)
+        op50(20, 1, 0, 1, s)
+        make_guide(o, s, t)
+        run_bytes(o, player_op('create-convoy', s, 0, 0))
+        print(f'the convoy {o.u16(sa + 8)}')
+        op50(20, 6, 0, 1, s)
+        op50(15, 2, 0, 0, s)
+        op50(20, 0, 0, 1, s)
+        op50(20, 5, 0, 1, s, town=towns)
+        op50(20, 5, 0, 1, s, who=merchants)
+    return during
+
+
+def tavern_trader(o):
+    """The tavern's trader (0x4D, 0x53B5E0), run with the executor in the town of the player's first docked ship (an
+    office made there if he has none): beer (barrels) into the office (the town's stock down by all), into a town
+    without his office (nothing), grain (loads) into the ship (all fits), into it with room for part (whole loads; the
+    stock down by the rest), a ship of another merchant (nothing placed, paid all the same); the seller below the towns
+    (paid) and past them (not); the town's [+0x83E] the buyer (cleared); beer into the office with the town short (its
+    stock to 0); then the ship guiding a convoy, too much for it (the convoy walked); a buyer past, a ware past 0x13."""
+    s, t = player_docked_ship(o)
+    towns, _, merchants, ships = o.counts()
+    m = o.u32(to.PLAYER)
+    pa = o.merchant(m)
+    sa = o.ship(s)
+    ta = o.town(t)
+    other = next(x for x in range(towns) if facilities_office(o, m, x) is None and x != t)
+    stranger = next((x for x in docked_ships(o) if o.u8(o.ship(x)) != m), None)
+    seller = 2 if m != 2 else 3
+    print(f'the player {m}: ship {s} in {t}; no office in {other}; another\'s ship {stranger}; seller {seller}')
+
+    def during(o):
+        w32(o, pa, 5000000)
+        if facilities_office(o, m, t) is None:
+            store(o, t)
+            operation(o, 0x5D, m, t)
+        b = o.office(facilities_office(o, m, t))
+
+        def op(price, amount, ship, ware, town=None, who=None, by=None):
+            operation(o, 0x4D, 0, price, amount | ship << 16,
+                      (seller if by is None else by) | (m if who is None else who) << 8 | ware << 16 |
+                      (t if town is None else town) << 24)
+            print(f'0x4D {ware} x{amount} ship {ship:#x}: money {o.s32(pa)}, seller {o.s32(o.merchant(seller))}, '
+                  f'town {o.s32(ta + 4 + 4 * ware)}, office {o.s32(b + 4 + 4 * ware)} {f32_at(o, b + 0x3B8 + 4 * ware):.3f}, '
+                  f'ship {o.s32(sa + 0x54 + 4 * ware)} {f32_at(o, sa + 0xB4 + 4 * ware):.3f}, [+0x83E] {o.u8(ta + 0x83E)}')
+        for ware in (BEER, GRAIN):
+            w32(o, ta + 4 + 4 * ware, 400000)
+        op(3000, 20, ships, BEER)
+        op(3000, 20, ships, BEER, town=other)
+        op(5000, 3, s, GRAIN)
+        cargo = o.s32(sa + 0x54 + 4 * TIMBER)
+        free = direct(o, 0x5182B0, [], ecx=sa)
+        w32(o, sa + 0x54 + 4 * TIMBER, cargo + max(0, free - 5000))
+        op(9000, 6, s, GRAIN, by=merchants - 1 if merchants - 1 >= towns else towns)
+        w32(o, sa + 0x54 + 4 * TIMBER, cargo)
+        direct(o, 0x5182B0, [], ecx=sa)
+        if stranger is not None:
+            op(1000, 1, stranger, GRAIN)
+        w8(o, ta + 0x83E, m)
+        op(1000, 1, s, BEER)
+        w32(o, ta + 4 + 4 * BEER, 100)
+        op(1000, 2, ships, BEER)
+        make_guide(o, s, t)
+        run_bytes(o, player_op('create-convoy', s, 0, 0))
+        print(f'the convoy {o.u16(sa + 8)}')
+        op(2000, 400, s, GRAIN)
+        op(2000, 4, s, GRAIN, who=merchants)
+        op(2000, 4, s, 0x14)
+    return during
+
+
+def ship_pair_ops(o):
+    """Two ships' operations (the window 0x40EEB0 and the sea map), run with the executor on the player's first docked
+    ship A and another ship B: 0x0F (their captains swapped, 0x5358F3), a ship past; 0x10 (sailors from A to B,
+    0x538930) more than A has, more than B takes (B's sailors near its most), a few, a ship past; 0x11 (hand weapons,
+    0x5389C0) more than A has, with B's room under them (cut to room / 10), with B's hold over its room (the room
+    without sign: all of them), a ship past; 0x0E (A's target, 0x538800) with A docked (nothing), A sailing (0xF) and
+    not a pirate: B in 0x12 (taken), B in 0x10 (nothing), B a pirate in 0xF (taken), B not a pirate in 0xF (nothing);
+    A a pirate: B in 0x10 (taken), B docked (nothing); too far (nothing); a ship past."""
+    s, t = player_docked_ship(o)
+    towns, _, merchants, ships = o.counts()
+    b = next(x for x in range(ships) if x != s and o.u16(o.ship(x) + 0x134) < 0x17 and o.u8(o.ship(x)) < merchants)
+    sa, sb = o.ship(s), o.ship(b)
+    reach = o.u16(to.SHIPS + 0xFC)
+    print(f'ships A {s} and B {b}; the reach {reach}')
+
+    def during(o):
+        def op(code, *words):
+            operation(o, code, *words)
+            print(f'{code:#x}: captains {o.u16(sa + 0x42):#x} {o.u16(sb + 0x42):#x}, sailors {o.u16(sa + 0x40)} '
+                  f'{o.u16(sb + 0x40)}, weapons {o.u16(sa + 0x154)} {o.u16(sb + 0x154)}, target {o.u16(sa + 0x3A):#x}')
+        op(0x0F, s, b)
+        op(0x0F, s, ships)
+        w16(o, sa + 0x40, 30)
+        w16(o, sb + 0x40, 5)
+        op(0x10, s, b, 1000)
+        w16(o, sa + 0x40, 30)
+        w16(o, sb + 0x40, 5)
+        op(0x10, s, b, 7)
+        w16(o, sb + 0x40, o.u16(sb + 0x40) + max(0, direct(o, 0x5184F0, [], ecx=sb) - 3))
+        w16(o, sa + 0x40, 30)
+        op(0x10, s, b, 7)  # B takes 3
+        op(0x10, ships, b, 7)
+        w16(o, sa + 0x154, 40)
+        w16(o, sb + 0x154, 0)
+        op(0x11, s, b, 100)
+        cargo = o.s32(sb + 0x54 + 4 * TIMBER)
+        free = direct(o, 0x5182B0, [], ecx=sb)
+        beer = o.s32(sb + 0x54 + 4 * BEER)
+        w32(o, sb + 0x54 + 4 * BEER, beer + max(0, free - 100) // 200 * 200)
+        w16(o, sa + 0x154, 40)
+        op(0x11, s, b, 60)  # room for 10 to 29
+        w32(o, sb + 0x54 + 4 * BEER, beer)
+        w32(o, sb + 0x54 + 4 * TIMBER, cargo + 10 ** 7)
+        w16(o, sa + 0x154, 40)
+        op(0x11, s, b, 20)
+        w32(o, sb + 0x54 + 4 * TIMBER, cargo)
+        op(0x11, s, ships, 20)
+        states = (o.u16(sa + 0x134), o.u16(sb + 0x134), o.u8(sa + 0x15C), o.u8(sb + 0x15C))
+        for k in (0x1E, 0x22):
+            w16(o, sb + k, o.u16(sa + k))
+        w16(o, sa + 0x3A, 0xFFFF)
+        op(0x0E, s, b)
+        w16(o, sa + 0x134, 0xF)
+        w8(o, sa + 0x15C, 0)
+        for state, pirate in ((0x12, 0), (0x10, 0), (0xF, 1), (0xF, 0)):
+            w16(o, sa + 0x3A, 0xFFFF)
+            w16(o, sb + 0x134, state)
+            w8(o, sb + 0x15C, pirate)
+            op(0x0E, s, b)
+        w8(o, sa + 0x15C, 1)
+        for state in (0x10, 0):
+            w16(o, sa + 0x3A, 0xFFFF)
+            w16(o, sb + 0x134, state)
+            op(0x0E, s, b)
+        w16(o, sa + 0x3A, 0xFFFF)
+        w16(o, sb + 0x134, 0x10)
+        w16(o, sb + 0x1E, o.u16(sa + 0x1E) + 200)
+        op(0x0E, s, b)
+        op(0x0E, ships, b)
+        w16(o, sa + 0x134, states[0])
+        w16(o, sb + 0x134, states[1])
+        w8(o, sa + 0x15C, states[2])
+        w8(o, sb + 0x15C, states[3])
+    return during
+
+
+def s16(o, a):
+    return struct.unpack('<h', bytes(o.uc.mem_read(a, 2)))[0]
+
+
+def route_points_ops(o):
+    """The sea map's route by points (0x0B, 0x538DE0; town_tick/ship_operations.cpp), run with the executor on the
+    player's first docked ship: points of water from the navigation's points (*0x6CBDC8 [+0xC], in cells), the approach
+    point of another town and a point of land (the first cell from the map's bottom without water within 50, 0x448450).
+    Sailing (−1) without points (the buffer made, nothing), the points started (0), added, one changed, one too far (the
+    buffer freed), again with the town among them (ends there) and sailed from port (0x519BA0 made to pass); then while
+    leaving the port (the approach point of the town 0's or 1's number), at sea with three points or more (stretches
+    straight and through the navigation's points, the corners), repeated points (taken out, the next not compared), a
+    stretch to land (no route: the matrix's element 6 · n changed) and two points to land, the ship on land at sea, more
+    than 30 points (the buffer doubled); and nothing for a ship sunk, in the state 0xE, without hull, in port unable to
+    leave, and a ship past."""
+    s, t = player_docked_ship(o)
+    towns, _, merchants, ships = o.counts()
+    sa = o.ship(s)
+    owner = o.merchant(o.u8(sa))
+    nav = o.u32(0x6CBDC8)
+    points, count = o.u32(nav + 0xC), o.u16(nav + 0x1C)
+    pixel = lambda v: (v * 3536 + 500) // 1000 + 0x44
+    water = [(pixel(s16(o, points + 4 * k)), pixel(s16(o, points + 4 * k + 2))) for k in range(0, min(count, 400), 7)]
+    p1, p2, p3, p4 = water[3], water[9], water[17], water[25]
+    other = next(u for u in range(towns) if u != t)
+
+    def approach(u):
+        entry = 0x6DDB90 + 0x34 * o.u8(0x6DE4B8 + u)
+        return o.s32(entry + 0x20), o.s32(entry + 0x24)
+    town_point = approach(other)
+    cell = o.alloc(4)
+    land = None
+    for y in range(470, 300, -6):
+        for x in range(20, 620, 12):
+            w16(o, cell, x)
+            w16(o, cell + 2, y)
+            if not direct(o, 0x448450, [cell, 0x32], ecx=nav) & 0xFF:
+                land = (pixel(x), pixel(y))
+                break
+        if land:
+            break
+    print(f'ship {s} in town {t}; navigation points {count}; water {p1} {p2} {p3} {p4}; town {other} at {town_point}; '
+          f'land {land}')
+
+    def during(o):
+        def show(what):
+            buffer = o.u32(owner + 0xEC)
+            text = 'none'
+            if buffer:
+                size, used = o.u16(buffer), o.u16(buffer + 2)
+                text = f'{size} {used} ' + ' '.join(str(s16(o, buffer + 2 * k)) for k in range(4, min(used, 24)))
+            route = o.u32(sa + 0x24)
+            n = o.u32(route + 4) if route else 0
+            first = [(s16(o, o.u32(route) + 4 * k), s16(o, o.u32(route) + 4 * k + 2)) for k in range(n if n <= 100 else 6)]
+            print(f'{what}: buffer {text}; state {o.u16(sa + 0x134)} town {o.u8(sa + 0x39)} at {s16(o, sa + 0x1E)} '
+                  f'{s16(o, sa + 0x22)}, route {n} own {o.u8(sa + 0x36)} {first}, arrival {o.u32(sa + 0x48)}')
+
+        def op(step, point=(0, 0), ship=None):
+            operation(o, 0x0B, s if ship is None else ship, step & 0xFFFFFFFF, point[0] & 0xFFFFFFFF,
+                      point[1] & 0xFFFFFFFF)
+            show(f'0x0B {step} {point}')
+
+        def ready():
+            w16(o, sa + 0x40, max(o.u16(sa + 0x40), 40))
+            w8(o, sa + 0x3F, 0x40)
+
+        def at_sea(point):
+            w16(o, sa + 0x134, 0xF)
+            w8(o, sa + 0x39, 0xFF)
+            w32(o, sa + 0x1C, point[0] << 16)
+            w32(o, sa + 0x20, point[1] << 16)
+
+        op(-1)
+        op(0, p1)
+        op(1, p2)
+        op(2, p3)
+        op(1, p4)
+        op(5, p1)  # past the points: the buffer freed
+        op(0, p1)
+        op(1, p2)
+        op(2, town_point)
+        op(3, p3)
+        ready()
+        op(-1)  # from port: ends at the town
+        op(0, p3)
+        op(-1)  # leaving the port, no town: the approach point of the town 0's or 1's number
+        at_sea(p1)
+        op(0, p2)
+        op(1, p3)
+        op(2, p4)
+        op(3, p1)
+        op(-1)
+        at_sea(p1)
+        op(0, p2)
+        op(1, p2)
+        op(2, p3)
+        op(3, p3)
+        op(4, p3)
+        op(5, p4)
+        op(-1)  # repeated points
+        if land:
+            at_sea(p1)
+            op(0, p2)
+            op(1, land)
+            op(2, p3)
+            op(-1)  # a stretch to land
+            at_sea(p1)
+            op(0, land)
+            op(-1)  # two points, one on land
+            at_sea(land)
+            op(0, p2)
+            op(1, p3)
+            op(-1)  # the ship on land
+        at_sea(p1)
+        op(0, p2)
+        for k in range(1, 34):
+            op(k, (p3, p4, p1, p2)[k % 4])
+        op(-1)  # more than 30 points
+        for state, hull in ((0x11, None), (0xE, None), (0xF, 0)):
+            at_sea(p1)
+            w16(o, sa + 0x134, state)
+            keep = o.s32(sa + 0x18)
+            if hull is not None:
+                w32(o, sa + 0x18, hull)
+            op(0, p2)
+            op(-1)
+            w32(o, sa + 0x18, keep)
+        w16(o, sa + 0x134, 0)
+        w8(o, sa + 0x39, t)
+        w16(o, sa + 0x40, 0)
+        op(0, p2)
+        op(-1)  # in port, unable to leave
+        op(-1, p2, ship=ships)
+    return during
+
+
+OFFERS = 0x6DE584  # the offers' list (town_oracle.py OFFERS)
+
+
+def offer_list(o):
+    out, node = [], o.u32(OFFERS)
+    while node and len(out) < 50:
+        r = bytes(o.uc.mem_read(node, 0x14))
+        out.append((struct.unpack('<I', r[4:8])[0], struct.unpack('<i', r[8:12])[0], r[12], r[13], r[14], r[15],
+                    struct.unpack('<I', r[16:20])[0]))
+        node = struct.unpack('<I', r[:4])[0]
+    return out
+
+
+def offer_ops(o):
+    """The offers between merchants (town_tick/offers.cpp), run with the executor in the town of the player's first
+    docked ship (an office made there if he has none), the queue called once for the events 0x13: 0x5F (0x5338A0) money
+    (all of it, part of it as A has less, none), the same number again (made one less), a ship (docked: held in the
+    state 0xD; in a convoy, compared with its number: 0xFFFF; not docked: 0xFFFF), wares (from the office, then from
+    the docked ships, the last one in part; A with less than offered); 0x75 (0x53ECB0) accepted: money for a price,
+    short of money (nothing: then removed, returned), a ship (into B's list), wares into B's office and with B without an
+    office there (lost), and rejected: a ship back into port, wares back into A's office and, without one, into his
+    ship; then the events 0x13: both letters kept (A and B humans: again in 0x40), an offer to an AI merchant (no letter:
+    removed and returned), the offer gone but its letters there (deleted)."""
+    s, t = player_docked_ship(o)
+    towns, _, merchants, ships = o.counts()
+    p = o.u32(to.PLAYER)
+    pa = o.merchant(p)
+    ais = rt.ai_with_office(o)
+    b = next(x for x in ais if facilities_office(o, x, t) is not None)
+    lone = next(x for x in ais if facilities_office(o, x, t) is None)
+    now = o.u32(WORLD + 0x14)
+    print(f'the player {p}: ship {s} in {t}; AI {b} with an office there, {lone} without')
+
+    def during(o):
+        w32(o, pa, 5000000)
+        if facilities_office(o, p, t) is None:
+            store(o, t)
+            operation(o, 0x5D, p, t)
+        f = facilities_office(o, p, t)
+        office = o.office(f)
+
+        def op5f(id, price, a, bb, kind, what, town=None):
+            operation(o, 0x5F, id, price & 0xFFFFFFFF, a | bb << 8 | (t if town is None else town) << 16 | kind << 24,
+                      what)
+            print(f'0x5F {id}: offers {offer_list(o)}; money {o.s32(pa)}, head mail {o.u16(pa + 0xA)}')
+
+        def op75(id, a, bb, answer):
+            operation(o, 0x75, id, a, bb, answer)
+            print(f'0x75 {id} {answer}: offers {offer_list(o)}; money {o.s32(pa)} {o.s32(o.merchant(b))}')
+        # Money.
+        op5f(100, 0, p, b, 2, 20000)
+        op5f(100, 0, p, b, 2, 30000)  # the same number: 99
+        money = o.s32(pa)
+        w32(o, pa, 7000)
+        op5f(200, 0, p, b, 2, 20000)  # part of it
+        w32(o, pa, -50)
+        op5f(201, 0, p, b, 2, 20000)  # none
+        w32(o, pa, money)
+        # B accepts money for a price; short of money.
+        op5f(300, 1500, p, b, 2, 4000)
+        op75(300, p, b, 0)
+        op5f(301, 10 ** 9, p, b, 2, 4000)
+        op75(301, p, b, 0)
+        # A ship.
+        sa = o.ship(s)
+        op5f(400, 0, p, b, 1, s)
+        print(f'  ship {s}: state {o.u16(sa + 0x134):#x} [+0x6] {o.u16(sa + 6):#x}')
+        op75(400, p, b, 1)  # rejected: back into port
+        print(f'  ship {s}: state {o.u16(sa + 0x134):#x} [+0x6] {o.u16(sa + 6):#x}, owner {o.u8(sa)}')
+        other = next(x for x in range(ships) if x != s and 1 < o.u16(o.ship(x) + 0x134) < 0x17)
+        op5f(401, 0, p, b, 1, other)  # not docked
+        w16(o, sa + 8, 0)
+        op5f(402, 0, p, b, 1, s)  # its convoy below its number
+        w16(o, sa + 8, 0xFFFF)
+        # Wares: from the office, then the docked ships.
+        w32(o, office + 4 + 4 * BEER, 200 * 10 + 50)
+        op5f(500, 900, p, b, 0, BEER | 4 << 16)
+        print(f'  office beer {o.s32(office + 4 + 4 * BEER)}')
+        op75(500, p, b, 0)  # into B's office
+        op5f(501, 900, p, lone, 0, BEER | 3 << 16)
+        op75(501, p, lone, 0)  # B without an office there: lost
+        mine = [x for x in merchant_ships(o, p) if o.u8(o.ship(x) + 0x39) == t and o.u16(o.ship(x) + 0x134) < 4]
+        for x in mine:
+            w32(o, o.ship(x) + 0x54 + 4 * GRAIN, 2000 * 3 + 700)
+        w32(o, office + 4 + 4 * GRAIN, 2000 * 2 + 100)
+        op5f(502, 0, p, b, 0, GRAIN | (4 + 3 * len(mine)) << 16)  # more than he has
+        print(f'  grain: office {o.s32(office + 4 + 4 * GRAIN)}, ships {[o.s32(o.ship(x) + 0x54 + 4 * GRAIN) for x in mine]}')
+        op75(502, p, b, 1)  # rejected: back into the office
+        print(f'  grain: office {o.s32(office + 4 + 4 * GRAIN)}')
+        op5f(503, 0, p, b, 0, GRAIN | 1 << 16, town=(t + 1) % towns if facilities_office(o, p, (t + 1) % towns) is None
+             else next(x for x in range(towns) if facilities_office(o, p, x) is None))
+        for x in mine:
+            w32(o, o.ship(x) + 0x54 + 4 * GRAIN, 2000 * 3 + 700)
+        w32(o, office + 4 + 4 * GRAIN, 2000 * 2 + 100)
+        op5f(504, 0, p, b, 0, GRAIN | 3 << 16)  # the office's two loads and one of the first ship's
+        print(f'  grain: office {o.s32(office + 4 + 4 * GRAIN)}, ships {[o.s32(o.ship(x) + 0x54 + 4 * GRAIN) for x in mine]}')
+        op5f(403, 500, p, b, 1, s)
+        op75(403, p, b, 0)  # accepted: into B's list
+        print(f'  ship {s}: owner {o.u8(sa)}, B\'s head {o.u16(o.merchant(b) + 0xE)}')
+        # The events 0x13: both humans keep their letters; an AI's offer; an offer gone with its letters there.
+        second = next(x for x in range(merchants) if x != p and o.u16(o.merchant(x) + 8) != 0 and x not in (b, lone))
+        kind = o.u16(o.merchant(second) + 8)
+        w16(o, o.merchant(second) + 8, 0)
+        op5f(700, 0, second, p, 2, 500)
+        op75(700, second, p, 1)  # the player's letter 0x1F deleted
+        op5f(600, 0, p, second, 2, 1000)
+        op5f(601, 0, second, p, 2, 1000)
+        w16(o, o.merchant(second) + 8, kind)
+        op5f(602, 0, p, b, 2, 1000)
+        nodes = offer_list(o)
+        # The offer 601 out of the list by hand (its letters stay).
+        head = o.u32(OFFERS)
+        prev, node = None, head
+        while node:
+            if o.u32(node + 4) == 601:
+                nxt = o.u32(node)
+                if prev is None:
+                    w32(o, OFFERS, nxt)
+                else:
+                    w32(o, prev, nxt)
+                break
+            prev, node = node, o.u32(node)
+        direct(o, 0x4D85C0, [now + 5], ecx=to.EVENTS)
+        print(f'after the events: offers {offer_list(o)}; money {o.s32(pa)}; before {nodes}')
+    return during
+
+
 def mail_branches(o):
     """Sending a letter, 0x4D6530 (called directly with the letter in
     scratch globals; the oracle lets the call run as it does the connected
@@ -7388,6 +8181,30 @@ def window_ships_copier(o):
     assert len(code) <= 0x80
     o.uc.mem_write(WINDOW_SHIPS, code)
     o.uc.mem_write(FPU_POP, bytes([0xDD, 0xD8, 0xC3]))
+
+
+AUCTION_LIST = to.SENTINEL + 0xFE0  # the copier of 0x4DA1A0's list (probes_unchecked.cpp kAuctionList)
+
+
+def auction_list_copier(o):
+    """The copier at AUCTION_LIST (stdcall, no arguments): 0x4DA1A0 on the queue (the guild's auctions to come) with
+    its count at SCRATCH + 0x40, and its entries (0x14 bytes each, at most 3) copied into SCRATCH, so that the state
+    holds them (the game's list is on the heap). tick_probe's probe makes p3vita's."""
+    at = o.alloc(0x40)
+    code = bytes([0x56, 0x57])  # push esi; push edi
+    code += bytes([0x68]) + struct.pack('<I', SCRATCH + 0x40)  # push &count
+    code += bytes([0xB9]) + struct.pack('<I', to.EVENTS)  # mov ecx, the queue
+    code += bytes([0xE8]) + struct.pack('<i', 0x4DA1A0 - (at + len(code) + 5))
+    copy = bytes([0x89, 0xC6])  # mov esi, eax
+    copy += bytes([0xBF]) + struct.pack('<I', SCRATCH)  # mov edi, SCRATCH
+    copy += bytes([0x8B, 0x0D]) + struct.pack('<I', SCRATCH + 0x40)  # mov ecx, [count]
+    copy += bytes([0x8D, 0x0C, 0x89])  # lea ecx, [ecx + ecx*4]
+    copy += bytes([0xFC, 0xF3, 0xA5])  # cld; rep movsd
+    code += bytes([0x85, 0xC0, 0x74, len(copy)]) + copy  # test eax, eax; jz past the copy
+    code += bytes([0x5F, 0x5E, 0xC3])  # pop edi; pop esi; ret
+    assert len(code) <= 0x40
+    o.uc.mem_write(at, code)
+    o.uc.mem_write(AUCTION_LIST, bytes([0xE9]) + struct.pack('<i', at - (AUCTION_LIST + 5)))
 
 
 def snippet(o, begin, end, esi):
@@ -12104,6 +12921,49 @@ SCENARIOS = {
     'prince_ops': Scenario(prince_ops, [0x535760], 0, [
         '@635c23', '@635c08>635c18', '@635c0f', '@635c0d>635c18', '@536981>537025', '@635cf5>635dbf', '@635d28',
         '@635d14', '@5369d2>537025', '@536a1f', '@536a05>537025', '@536a19>537025']),
+    # The auctions (2026-11-12: the guild's window).
+    'auction_ops': Scenario(auction_ops, [0x535760, 0x4D85C0, AUCTION_LIST, 0x4DA480, WINDOW_SHIPS], 0, [
+        '@4da52d>4da853', '@4da551>4da853', '@4da563>4da853', '@4da571>4da853', '@4da586>4da853', '@4da5b1>4da853',
+        '@4da638', '@4da69b>4da727', '@4da6aa', '@4da619>4da727', '@4da6bc', '@4da71e', '@4da751', '@4da769',
+        '@4da77e', '@4da77c>4da788', '@4da830',
+        '@53a025>53a09e', '@53a042>53a09e', '@53a049>53a09e', '@53a04d>53a09e', '@53a05d>53a09e', '@53a067>53a09e',
+        '@53a07b>53a09e', '@53a085>53a09e', '@53a087',
+        '@53a0c4>53a166', '@53a0da>53a166', '@53a0f1>53a166', '@53a110>53a166', '@53a134', '@53a152', '@53a15c',
+        '@53a188>53a23f', '@53a1ae>53a23f', '@53a1f0', '@53a22d', '@4d9069', '@4d9055',
+        '@4e2bdf>4e2cca', '@4e2bff>4e2cca', '@4e2c0d>4e2cca', '@4e2c1d>4e2cca', '@4e2c29>4e2cca', '@4e2c41>4e2cca',
+        '@4e2c4c', '@4e2c63', '@4e2c95>4e2cca', '@4e2c9e>4e2cbb', '@4e2ca3>4e2cbb', '@4e2ca5',
+        '@4da21c>4da247', '@4da242>4da247', '@4da266', '@4da272', '@4da277', '@4da353', '@4da3aa', '@4da3a8>4da422',
+        '@4da40b', '@4da409>4da422', '@4da4f0', '@4da4d8', '@4da4a7>4da4e8', '@4da48f>4da4e8', '@504f24>5051a3',
+        '@504f2a']),
+    # The office's windows (2026-11-12).
+    'office_admin_ops': Scenario(office_admin_ops, [0x535760], 0, [
+        '@53d9d1', '@53d9cf>53d9e3', '@53d9f6', '@53d9f4>53d9e3', '@53d9ae>53d9e3', '@53d5ec', '@53d649', '@53d672',
+        '@53d69c', '@53d6bc', '@53d6b1>53d6c3', '@53d5d6>53d6c3', '@53638f', '@536359>537025', '@536363>537025',
+        '@53633f>537025', '@53634f>537025', '@536380>537025', '@5363e3', '@5363a9>537025', '@5363ba>537025',
+        '@5363d7>537025', '@53649e', '@536481', '@53646f>537025', '@536463>537025', '@536264', '@53625a>536232',
+        '@53625c', '@536218>537025']),
+    'arsenal_ops': Scenario(arsenal_ops, [0x535760], 0, [
+        '@53cb03>53cc7d', '@53cb19>53cc7d', '@53cb6e>53cc7d', '@53cb7c', '@53cb85>53cc7d', '@53cba1', '@53cbb4>53cc7d',
+        '@53cbe0', '@53cc07', '@53cc1a>53cc7d', '@53cc44', '@53cc4d>53cc7d', '@53cc63',
+        '@53bcac>53c042', '@53bcbe>53c042', '@53bcd3>53c042', '@53bd31', '@53bd25', '@53bdaa', '@53bdba', '@53bde9',
+        '@53be0b>53c042', '@53be38>53c042', '@53be4a', '@53be78', '@53bf14', '@53bf2d', '@53bf52', '@53bfbf',
+        '@53bfe3', '@53c02c']),
+    'ship_pair_ops': Scenario(ship_pair_ops, [0x535760], 0, [
+        '@53590f>537025', '@53593d', '@538944>5389b7', '@538972', '@538981', '@538984', '@5389df>538a72', '@538a0d',
+        '@538a25', '@538a23>538a39', '@538813>5388c2', '@53884b>5388c2', '@53885e', '@53886e>5388c2', '@538872',
+        '@53887c>5388c2', '@538886>5388c2', '@5388b8>5388c2', '@5388ba']),
+    'route_points_ops': Scenario(route_points_ops, [0x535760], 0, [
+        '@538e40', '@538e73', '@538ec0', '@538ecb', '@538ef8>5391fc', '@538f4c', '@538fac', '@538f9c', '@539005',
+        '@53909a', '@539114', '@539119', '@53913c', '@539148', '@44561e', '@4457c5', '@4457de', '@445934', '@445b8f',
+        '@445bd4', '@445cab', '@445cbb', '@445c8f']),
+    'offer_ops': Scenario(offer_ops, [0x535760, 0x4D85C0], 0, [
+        '@533936', '@533947', '@5339d1', '@5339ea', '@5339de', '@533a6e', '@533a27', '@533a63', '@533aee', '@533af8',
+        '@533bc7', '@533bd1', '@533c62', '@53411a', '@534154', '@5342ad', '@5342e1', '@534389>5345f0', '@5343b9',
+        '@5344d4', '@53458d>5345e3', '@53458f', '@4e7a91', '@4e7b0c', '@4e7b49', '@4e7b62', '@4e7b76', '@4e7b89',
+        '@53ecbc', '@53ed54', '@53edd0']),
+    'tavern_trader': Scenario(tavern_trader, [0x535760], 0, [
+        '@53b600>53b842', '@53b60a>53b842', '@53b635', '@53b646', '@53b685', '@53b69f>53b842', '@53b6ec', '@53b71b',
+        '@53b76d', '@53b791', '@53b7ed', '@53b7f3', '@53b808', '@53b806>53b81c', '@53b83f']),
     # events_big.cpp
     'site_start_houses': Scenario(site_start_houses, [0x500F50], 0, ['@500f79>501355', '@501399>5013ae']),
     # ship_trade.cpp

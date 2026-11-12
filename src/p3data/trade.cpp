@@ -4,6 +4,7 @@
 #include <array>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data {
@@ -791,6 +792,259 @@ void fn_5396b0(SaveGame& save, const uint8_t* op) {
 			}
 		}
 		i = next;
+	}
+}
+
+// 0x53B5E0 (operation 0x4D): {0x4D, -, s32 [+0x8] the price, u16 [+0xC] the amount in barrels or loads, u16 [+0xE] the
+// ship (past the ships: the office), [+0x10] the seller, [+0x11] the buyer, [+0x12] the ware (< 0x14), [+0x13] the
+// town}: the tavern's trader (the 16 bytes 0x526650 prepares on the town, queued by the tavern's window 0x5D6FC0).
+// The units (amount · 200 or 2000) at price / units each (a float): into the buyer's office in the town (0x4FF6F0; none:
+// nothing at all), or into the ship and, in a convoy, the convoy's ships from its first ([+0xA], next [+0x6]) while
+// some are left: each of the buyer's takes all if it fits, else whole barrels or loads of its room (0x5180C0, its
+// hold again 0x5182B0). Then the buyer pays the price (his money down, [+0x4A0] up), the town's stock of the ware goes
+// down by the units LEFT (seems a game bug: all of them into the office, only what didn't fit with a ship: the wares are
+// the town's surplus, 0x526650), the seller is paid if he is below the towns' count (the merchants 0..towns − 1 are the
+// towns' own merchants, the one of town i numbered i: 0x526650 puts there one of them, a ship's owner or the town's own
+// number) and the town's [+0x83E] loses the buyer.
+void fn_53b5e0(SaveGame& save, const uint8_t* operation) {
+	uint8_t op[0x14];
+	std::memcpy(op, operation, sizeof(op));  // The game walks the convoy writing the next ship into [+0xE].
+	GlobalMemory& g = save.globals;
+	const uint8_t buyer = op[0x11];
+	const uint8_t ware = op[0x12];
+	if (buyer >= g.u16(global::kWorldMerchantCount) || ware >= 0x14) {
+		return;
+	}
+	const int32_t price = op_s32(op, 8);
+	const uint16_t amount = op_u16(op, 0xC);
+	int32_t left = int32_t(amount) * (kInBarrels[ware] ? 200 : 2000);
+	int32_t placed = 0;  // What the buyer got (for the fix).
+	const float each = float(double(float(price)) / double(float(left)));
+	const uint16_t ships = g.u16(global::kShipCount);
+	if (op_u16(op, 0xE) >= ships) {
+		const int office = tick::facilities_detail::fn_5308a0(save, buyer, op[0x13]);
+		if (office < 0) {
+			return;
+		}
+		fn_4ff6f0(save.offices[size_t(office)].memory, ware, left, each);
+		placed = left;  // All of it; the game leaves `left` as it was.
+	} else {
+		bool first = true;
+		for (;;) {
+			const uint16_t i = op_u16(op, 0xE);
+			SavedShip& ship = save.ships[i];
+			if (ship.memory.u8(0) == buyer) {
+				int32_t room = recalculate_cargo(ship);
+				if (room < 0) {
+					room = 0;
+				}
+				const int32_t put = room >= left ? left : round_to_unit(ware, room);
+				fn_5180c0(save, int(i), ware, put, each);
+				recalculate_cargo(ship);
+				left -= put;
+				placed += put;
+			}
+			const uint16_t convoy = ship.memory.u16(0x8);
+			if (convoy >= save.globals.u16(kConvoyCount)) {
+				break;
+			}
+			const uint16_t next = first ? save.convoys[convoy].u16(0xA) : ship.memory.u16(0x6);
+			first = false;
+			std::memcpy(op + 0xE, &next, 2);
+			if (next >= ships || left <= 0) {
+				break;
+			}
+		}
+	}
+	MerchantMemory& m = save.merchants[buyer].memory;
+	m.s32(0x0) = int32_t(uint32_t(m.s32(0x0)) - uint32_t(price));
+	m.s32(0x4A0) = int32_t(uint32_t(m.s32(0x4A0)) + uint32_t(price));
+	const uint8_t town = op[0x13];
+	if (town >= save.towns.size()) {
+		return;  // The game writes past the towns.
+	}
+	int32_t& stock = save.towns[town].memory.s32(0x4 + 4 * size_t(ware));
+	// The game takes from the town what was LEFT (with a ship, what didn't fit: if all fit, nothing; the wares are the
+	// town's surplus); with the fix, what the buyer got (with the office, all of it, as the game).
+	const int32_t taken = fix_game_bugs() ? placed : left;
+	stock = stock > taken ? stock - taken : 0;
+	const uint8_t seller = op[0x10];
+	if (seller < g.u32(global::kWorldTownCount) && seller < save.merchants.size()) {
+		MerchantMemory& s = save.merchants[seller].memory;
+		s.s32(0x0) = int32_t(uint32_t(s.s32(0x0)) + uint32_t(price));
+	}
+	if (save.towns[town].memory.u8(0x83E) == buyer) {
+		save.towns[town].memory.u8(0x83E) = 0;
+	}
+}
+
+// 0x53BC90 (operation 0x50): {0x50, u32 the price of one, s32 how many, u8 town, u8 merchant, u8 kind (& 3: the hand
+// weapons, the wares 0x14..0x17, written back), u8 buy (> 0) or sell, u16 the ship (past the ships: the office)}: hand
+// weapons with the town's weaponsmith (the window 0x5ECAB0), each 10 units. First the merchant's [+0x16] up by 25 (to
+// 0x7FFF at most). Then for the ship (and, in a convoy, the merchant's ships of it from its first) or the office:
+// buying (with money above 0, else nothing more), as many as fit in the hold ((room) / 10; none without room) and the
+// money pays (money / price), taken from the town's stock (0x526300: its whole tens), paid (price · units / 10; the
+// [+0x4A0] up) into the ship's or office's stock with its average price ((stock · average + cost) / the new stock,
+// in double); the count down by as many as asked for that ship, or to 0 if the town had none; selling, as many as
+// it holds (in tens) to the town's stock ([+0x54 + 4·kind]), the merchant paid the count still to sell · the price
+// (seems a game bug: not what this ship sold; a ship without any is paid all the same) and the count down. Each
+// ship's hold again (0x5182B0).
+void fn_53bc90(SaveGame& save, const uint8_t* operation) {
+	uint8_t op[0x14];
+	std::memcpy(op, operation, sizeof(op));  // The game writes the kind and the next ship into the operation.
+	GlobalMemory& g = save.globals;
+	const uint8_t town = op[0xC];
+	const uint8_t merchant = op[0xD];
+	if (op_s32(op, 8) <= 0 || town >= g.u32(global::kWorldTownCount) || merchant >= g.u16(global::kWorldMerchantCount)) {
+		return;
+	}
+	TownMemory& t = save.towns[town].memory;
+	MerchantMemory& m = save.merchants[merchant].memory;
+	{
+		const int16_t had = m.s16(0x16);
+		m.s16(0x16) = int32_t(had) < 0x7FFF - 25 ? int16_t(had + 25) : int16_t(0x7FFF);
+	}
+	op[0xE] &= 3;
+	const uint8_t kind = op[0xE];
+	const size_t ware = size_t(kind) + 0x14;
+	const int32_t price = op_s32(op, 4);
+	const uint16_t ships = g.u16(global::kShipCount);
+	bool first = true;
+	do {
+		const uint16_t i = op_u16(op, 0x10);
+		SavedShip* ship = i < ships ? &save.ships[i] : nullptr;
+		int32_t n;
+		int32_t* stock;
+		float* average;
+		if (ship) {
+			n = op_s32(op, 8);
+			if (op[0xF] > 0) {
+				const int32_t room = recalculate_cargo(*ship);
+				if (room <= 0) {
+					n = 0;
+				} else if (int32_t(uint32_t(n) * 10u) > room) {
+					n = room / 10;
+				}
+			}
+			stock = &ship->memory.s32(0x54 + 4 * ware);
+			average = &ship->memory.f32(0xB4 + 4 * ware);
+		} else {
+			const int office = tick::facilities_detail::fn_5308a0(save, merchant, town);
+			if (office < 0) {
+				return;
+			}
+			OfficeMemory& o = save.offices[size_t(office)].memory;
+			n = op_s32(op, 8);
+			stock = &o.s32(4 + 4 * ware);
+			average = &o.f32(0x3B8 + 4 * ware);
+		}
+		if (op[0xF] > 0) {
+			if (m.s32(0x0) <= 0) {
+				return;
+			}
+			if (int32_t(uint32_t(price) * uint32_t(n)) > m.s32(0x0)) {
+				n = m.s32(0x0) / price;
+			}
+			// 0x526300 (on the town): at most its stock in whole tens, out of it.
+			int32_t units = int32_t(uint32_t(n) * 10u);
+			int32_t& held = t.s32(0x4 + 4 * ware);
+			if (held < units) {
+				units = held / 10 * 10;
+			}
+			held -= units;
+			if (units > 0) {
+				const int32_t cost = int32_t(uint32_t(price) * uint32_t(units)) / 10;
+				m.s32(0x4A0) = int32_t(uint32_t(m.s32(0x4A0)) + uint32_t(cost));
+				m.s32(0x0) = int32_t(uint32_t(m.s32(0x0)) - uint32_t(cost));
+				const int32_t old = *stock;
+				*stock = old + units;
+				*average = float((double(old) * double(*average) + double(cost)) / double(old + units));
+				set_op_s32(op, 8, op_s32(op, 8) - n);
+			} else if (n > 0) {
+				set_op_s32(op, 8, 0);
+			}
+		} else {
+			int32_t units = int32_t(uint32_t(n) * 10u);
+			if (*stock < units) {
+				n = *stock / 10;
+				units = n * 10;
+			}
+			if (units > 0) {
+				t.s32(0x54 + 4 * size_t(kind & 3)) += units;
+			}
+			*stock -= units;
+			const int32_t paid = int32_t(uint32_t(op_s32(op, 8)) * uint32_t(price));
+			m.s32(0x0) = int32_t(uint32_t(m.s32(0x0)) + uint32_t(paid));
+			m.s32(0x49C) = int32_t(uint32_t(m.s32(0x49C)) + uint32_t(paid));
+			set_op_s32(op, 8, op_s32(op, 8) - n);
+		}
+		if (!ship) {
+			return;
+		}
+		recalculate_cargo(*ship);
+		const uint16_t convoy = ship->memory.u16(0x8);
+		if (convoy >= save.globals.u16(kConvoyCount)) {
+			return;
+		}
+		uint16_t next = first ? save.convoys[convoy].u16(0xA) : ship->memory.u16(0x6);
+		first = false;
+		while (next < ships && save.ships[next].memory.u8(0) != merchant) {
+			next = save.ships[next].memory.u16(0x6);
+		}
+		std::memcpy(op + 0x10, &next, 2);
+	} while (op_u16(op, 0x10) < ships);
+}
+
+// 0x53CAF0 (operation 0x56): {0x56, u32 merchant, u32 the kind (0..5 a piece of artillery, more: the [+0x2BC]), u32
+// the price, u32 town | 0x100 to sell}: a piece of artillery between the merchant's office in the town and the town's
+// arsenal (the window 0x5ECAB0): buying (with the money at least the price, signed) a piece the town has (its weight,
+// 0x672CB4, of the town's [+0x124 + 4·k], or one of its [+0x2BC]) into the office, the money down and [+0x4BC] up;
+// selling one the office has, the money and [+0x4B8] up. The game doesn't look for the office (it writes through a
+// null one): here nothing without it.
+void fn_53caf0(SaveGame& save, const uint8_t* op) {
+	GlobalMemory& g = save.globals;
+	const uint32_t merchant = uint32_t(op_s32(op, 4));
+	const uint32_t town = uint32_t(op_s32(op, 0x10)) & 0xFF;
+	if (merchant >= g.u16(global::kWorldMerchantCount) || town >= g.u32(global::kWorldTownCount)) {
+		return;
+	}
+	const int office = tick::facilities_detail::fn_5308a0(save, merchant & 0xFFFF, town);
+	if (office < 0) {
+		return;
+	}
+	TownMemory& t = save.towns[town].memory;
+	OfficeMemory& o = save.offices[size_t(office)].memory;
+	MerchantMemory& m = save.merchants[merchant].memory;
+	const uint32_t kind = uint32_t(op_s32(op, 8));
+	const int32_t price = op_s32(op, 0xC);
+	const bool sell = uint32_t(op_s32(op, 0x10)) >= 0x100;
+	if (!sell && m.s32(0x0) < price) {
+		return;
+	}
+	if (kind < 6) {
+		const int32_t weight = kArtilleryWeight[kind];
+		int32_t& giver = sell ? o.s32(0x124 + 4 * kind) : t.s32(0x124 + 4 * kind);
+		int32_t& taker = sell ? t.s32(0x124 + 4 * kind) : o.s32(0x124 + 4 * kind);
+		if (giver < weight) {
+			return;
+		}
+		giver -= weight;
+		taker += weight;
+	} else {
+		uint32_t& giver = sell ? o.u32(0x2BC) : t.u32(0x2BC);
+		uint32_t& taker = sell ? t.u32(0x2BC) : o.u32(0x2BC);
+		if (giver < 1) {
+			return;
+		}
+		--giver;
+		++taker;
+	}
+	if (sell) {
+		m.s32(0x0) = int32_t(uint32_t(m.s32(0x0)) + uint32_t(price));
+		m.s32(0x4B8) = int32_t(uint32_t(m.s32(0x4B8)) + uint32_t(price));
+	} else {
+		m.s32(0x0) = int32_t(uint32_t(m.s32(0x0)) - uint32_t(price));
+		m.s32(0x4BC) = int32_t(uint32_t(m.s32(0x4BC)) + uint32_t(price));
 	}
 }
 

@@ -168,8 +168,18 @@ algoritmo que 0x445d50 (repetido dentro de la función; p3vita usa
 `NavData::route` y coincide en las 415 órdenes hacia puntos del mar del
 oráculo). Si uno de los extremos no tiene agua en 50 celdas, no escribe la
 ruta, pero sí cambia el primer punto del elemento 6 · n de la matriz (la ruta
-de la ciudad 6 a la 0) por el de salida. Con tres puntos o más (0x44561E)
-encadena tramos; no se usa al zarpar.
+de la ciudad 6 a la 0) por el de salida.
+
+With three points or more (0x44561E; only the sea map's route by points,
+operation 0x0B, uses it: `NavData::route_through`, checked with the scenario
+`route_points_ops`), stretch by stretch: both ends to cells and water within 50
+(if not: the matrix's element 6 · n gets the stretch's first point, no route,
+0 returned); in sight, the end is added; if not, 0x444800's pair and the
+matrix's next points to it, as pixels, then the end, without cutting corners.
+Then the whole route: its first point, the corners by 0x446f20 with the last
+argument **1** (A not added again), from the first point different from the
+first one and the third always the raw route's third, the last point read and
+the repeats out as in step 6 below. It returns 1 (the route is the ship's).
 
 0x445d50(inicio, fin), con puntos en píxeles:
 

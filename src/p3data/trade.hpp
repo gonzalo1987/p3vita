@@ -58,6 +58,15 @@ TradeResult fn_53d3c0(SaveGame& save, uint8_t* operation);  // 0x59, buy for the
 // ({0x1B, s32 amount, u16 convoy, u16 ware, u16 merchant, u8 direction: 1
 // from the office, 0 into it}).
 TradeResult fn_539300(SaveGame& save, const uint8_t* operation, bool sell);
+// 0x4D (0x53B5E0): the tavern's trader's wares bought into a ship (and its convoy) or the office ({0x4D, -, s32
+// price, u16 amount in barrels or loads, u16 ship (past the ships: the office), u8 seller, u8 buyer, u8 ware, u8
+// town}).
+void fn_53b5e0(SaveGame& save, const uint8_t* operation);
+// The arsenal's window (0x5ECAB0): 0x50 (0x53BC90) hand weapons bought from the town into a ship (and its convoy) or
+// the office, or sold ({0x50, u32 price of one, s32 count, u8 town, u8 merchant, u8 kind, u8 buy, u16 ship}); 0x56
+// (0x53CAF0) a piece of artillery between the office and the town ({0x56, merchant, kind, price, town | 0x100 sell}).
+void fn_53bc90(SaveGame& save, const uint8_t* operation);
+void fn_53caf0(SaveGame& save, const uint8_t* operation);
 void fn_5396b0(SaveGame& save, const uint8_t* operation);
 
 // The same handlers on an operation made here (for the tests and the

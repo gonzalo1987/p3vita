@@ -33,6 +33,7 @@ void fn_538a80(SaveGame& save, uint32_t ship, uint8_t add9, uint8_t add_ab);
 }  // namespace events_towns_detail
 namespace events_rare_detail {
 void fn_52a150(SaveGame& save, int town, uint8_t rate);
+void fn_5098b0(SaveGame& save, uint16_t& captain);
 }  // namespace events_rare_detail
 namespace construction_detail {
 void fn_4d9fc0(const SaveGame& save, uint32_t& tick, uint32_t town);
@@ -58,6 +59,7 @@ namespace {
 constexpr uint32_t kConvoyCount = global::kShips + 0xF6;  // u16 (0x6DD896)
 constexpr uint32_t kExpeditionMark = 0x6DE52B;  // u8 ([+0x8B] del mundo)
 constexpr uint32_t kEventCount = 0x6DD748;  // u16 registros de la cola ([+0xC] de 0x6DD73C)
+constexpr uint32_t kWorldRecordCountGlobal = 0x6DE4A6;  // u16 the world's records (*0x6DE510)
 
 uint16_t half(const uint8_t* operation, size_t offset) {
 	uint16_t v;
@@ -1077,6 +1079,273 @@ void fn_53ad10(SaveGame& save, const uint8_t* operation) {
 	uint8_t& councillor = save.towns[town].memory.u8(0x6DC + slot);
 	if (councillor == merchant || councillor >= merchants) {
 		councillor = 1;
+	}
+}
+
+// --- The auctions (the guild's window, 0x5BFD60: its pages 1 and 2) ---
+
+namespace {
+
+bool is_auction(const GameMemory<0x18>& e) {
+	return e.u16(6) == 0xA || e.u16(6) == 0x36;
+}
+
+}  // namespace
+
+// The operation 0x33 (0x53A010): {0x33, u32 merchant, u32 auction (an event 0x0A or 0x36), u32 bid}: a merchant bids
+// at an auction (the guild's window in a game of one player, 0x5C0B94: the price plus the step). While the auction is
+// bidding (phases 4 to 6), the merchant isn't its highest bidder ([+0x17]), his money is at least the bid (compared
+// without sign: a merchant in debt passes; the window only offers the bid with the money) and the bid is above the
+// price ([+0xE]): the price is the bid, he is the highest bidder, the phase 4 again and the ticks without bids
+// ([+0x12]) 0.
+void fn_53a010(SaveGame& save, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t auction = field(operation, 8);
+	if (auction >= g.u16(kEventCount)) {
+		return;
+	}
+	GameMemory<0x18>& e = save.events[auction];
+	if (!is_auction(e) || e.u8(0x14) < 4 || e.u8(0x14) > 6) {
+		return;
+	}
+	const uint32_t merchant = field(operation, 4);
+	if (merchant >= g.u16(global::kWorldMerchantCount) || e.u8(0x17) == uint16_t(merchant)) {
+		return;
+	}
+	const uint32_t bid = field(operation, 0xC);
+	if (save.merchants[merchant].memory.u32(0x0) < bid || e.u16(0xE) >= bid) {
+		return;
+	}
+	e.u16(0xE) = uint16_t(bid);
+	e.u8(0x17) = uint8_t(merchant);
+	e.u8(0x14) = 4;
+	e.u16(0x12) = 0;
+}
+
+// The operation 0x34 (0x53A0B0): {0x34, u32 merchant, u32 auction, u32 on}: a human merchant asks to be told of an
+// auction (the guild's list of auctions, 0x5C0129: its boxes) or stops: his bit in the auction's [+0x16], the human
+// merchants in order from 1 (0x4E2CD4 tells them the day before). An AI merchant, one past the count, an event past
+// the queue or not an auction: nothing.
+void fn_53a0b0(SaveGame& save, const uint8_t* operation) {
+	const GlobalMemory& g = save.globals;
+	const uint16_t merchants = g.u16(global::kWorldMerchantCount);
+	const uint32_t merchant = field(operation, 4);
+	if (merchant >= merchants || save.merchants[merchant].memory.u16(0x8) != 0) {
+		return;
+	}
+	const uint32_t auction = field(operation, 8);
+	if (auction >= g.u16(kEventCount) || !is_auction(save.events[auction])) {
+		return;
+	}
+	GameMemory<0x18>& e = save.events[auction];
+	uint8_t bit = 1;
+	for (uint32_t m = 0; m < merchants; ++m) {
+		if (save.merchants[m].memory.u16(0x8) != 0) {
+			continue;
+		}
+		if (m == merchant) {
+			if (field(operation, 0xC) != 0) {
+				e.u8(0x16) |= bit;
+			} else {
+				e.u8(0x16) &= uint8_t(0xFF - bit);
+			}
+			return;
+		}
+		bit = uint8_t(bit + bit);
+	}
+}
+
+// The operation 0x35 (0x53A170): {0x35, u32 top, u32 auction, u32 lot, u32 merchant}: a merchant's automatic bid for
+// a lot of an auction (the guild's window with the settings' byte [+0xD] at 0, run at once: 0x5C0B55; not in a game of
+// one player): his event 0x2D for that lot in the auction's town (0x4D9000) gets the top (without its bit 31); without
+// one, a new event 0x2D at the next tick (events_mayor.cpp, 0x4E2BC4): [+0x8] the top, u16 [+0xC] the auction, u16
+// [+0xE] the lot, [+0x10] the merchant, [+0x11] the town.
+void fn_53a170(SaveGame& save, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	const uint32_t auction = field(operation, 8);
+	if (auction >= g.u16(kEventCount)) {
+		return;
+	}
+	const uint8_t town = save.events[auction].u8(0x15);
+	if (!is_auction(save.events[auction])) {
+		return;
+	}
+	const uint32_t top = field(operation, 4) & 0x7FFFFFFF;
+	uint32_t old;
+	const uint16_t found = events_detail::fn_4d9000(save, field(operation, 0x10), town, field(operation, 0xC), old);
+	if (found < g.u16(kEventCount)) {
+		save.events[found].u32(8) = top;
+		return;
+	}
+	GameMemory<0x18>& e = save.events[events_detail::fn_4d8cf0(save, g.u32(global::kWorldTick) + 1)];
+	e.u16(6) = 0x2D;
+	e.u32(8) = top;
+	e.u16(0xC) = uint16_t(auction);
+	e.u16(0xE) = uint16_t(field(operation, 0xC));
+	e.u8(0x11) = town;
+	e.u8(0x10) = uint8_t(field(operation, 0x10));
+}
+
+// --- The office's windows: its administrator and its settings ---
+
+namespace {
+
+uint16_t field16(const uint8_t* operation, size_t offset) {
+	uint16_t v;
+	std::memcpy(&v, operation + offset, 2);
+	return v;
+}
+
+OfficeMemory* office_of(SaveGame& save, uint32_t merchant, uint32_t town) {
+	const int office = facilities_detail::fn_5308a0(save, merchant, town);
+	return office < 0 ? nullptr : &save.offices[size_t(office)].memory;
+}
+
+}  // namespace
+
+// The operation 0x5A (in the executor, 0x536200): {0x5A, u16 merchant, -, u16 town, -, u32 business type, u32
+// percent}: the share of its jobs a business of the merchant's office in the town fills: the first world record of
+// the office's businesses ([+0x2CC], next [+0x8]) of that type ([+0x6]) gets [+0x10] = float(percent) · 0.01.
+void fn_536200(SaveGame& save, const uint8_t* operation) {
+	OfficeMemory* o = office_of(save, field16(operation, 4), field16(operation, 8));
+	if (!o) {
+		return;
+	}
+	static constexpr uint32_t kHundredthBits = 0x3C23D70A;  // 0x672838: 0.01f
+	float hundredth;
+	std::memcpy(&hundredth, &kHundredthBits, 4);
+	const uint16_t count = save.globals.u16(kWorldRecordCountGlobal);
+	for (uint16_t r = o->u16(0x2CC); r < count && r < save.world_records.size();) {
+		GameMemory<0x14>& record = save.world_records[r];
+		if (record.u8(6) == field(operation, 0xC)) {
+			const float percent = float(uint64_t(field(operation, 0x10)));
+			record.f32(0x10) = float(double(percent) * double(hundredth));
+			return;
+		}
+		r = record.u16(8);
+	}
+}
+
+// The operation 0x5B (0x53D5C0): {0x5B, u32 the stock to keep, s32 the price (> 0 sell at it, < 0 buy at it, 0
+// neither), u32 office, u32 ware}: the administrator's order for a ware ([+0x354 + 4·w], [+0x2F4 + 4·w]); the price
+// also into the merchant's [+0x5A8 + 4·w] (buying, u16 of −price) or [+0x5AA + 4·w] (selling); with a price the
+// office's orders [+0x2D6] get the bit 1 (a fixed price), and without any price left they lose the bits 1 and 2.
+// Without an administrator ([+0x2F2] past the captains) its low two bits go and all the prices and stocks are 0. An
+// office past the count: nothing.
+void fn_53d5c0(SaveGame& save, const uint8_t* operation) {
+	const uint32_t index = field(operation, 0xC);
+	if (index >= save.globals.u16(global::kWorldOfficeCount) || index >= save.offices.size()) {
+		return;
+	}
+	OfficeMemory& o = save.offices[index].memory;
+	if (o.u16(0x2F2) >= save.globals.u16(global::kCaptainCount)) {
+		o.u16(0x2F2) = uint16_t(o.u16(0x2F2) & 0xFFFC);
+		for (size_t w = 0; w < 0x18; ++w) {
+			o.u32(0x2F4 + 4 * w) = 0;
+			o.u32(0x354 + 4 * w) = 0;
+		}
+		return;
+	}
+	const uint32_t ware = field(operation, 0x10);
+	if (ware >= 0x18) {
+		return;  // The game writes past the office's tables (the window sends 0..23).
+	}
+	o.u32(0x354 + 4 * ware) = field(operation, 4);
+	o.u32(0x2F4 + 4 * ware) = field(operation, 8);
+	const int32_t price = o.s32(0x2F4 + 4 * ware);
+	const uint16_t owner = o.u16(0x2C4);
+	if (owner < save.merchants.size()) {
+		MerchantMemory& m = save.merchants[owner].memory;
+		if (price < 0) {
+			m.u16(0x5A8 + 4 * ware) = uint16_t(0u - uint32_t(price));
+		} else if (price > 0) {
+			m.u16(0x5AA + 4 * ware) = uint16_t(price);
+		}
+	}
+	if (field(operation, 8) != 0) {
+		o.u8(0x2D6) |= 1;
+		return;
+	}
+	for (size_t w = 0; w < 0x18; ++w) {
+		if (o.u32(0x2F4 + 4 * w) != 0) {
+			return;
+		}
+	}
+	o.u8(0x2D6) &= 0xFC;
+}
+
+// The operation 0x5E (0x53D990): {0x5E, u16 merchant, -, u16 town, -, u32 0 hire / 1 dismiss}: the administrator of
+// the merchant's office in the town. Hired (without one): a new captain (0x5097C0 with 0), its [+0xA] 0 and its
+// [+0xC] 10 (0x4FE160). Dismissed (with one): back to the free captains (0x5098B0) and the orders [+0x2D6] lose the
+// bits 1 and 2.
+void fn_53d990(SaveGame& save, const uint8_t* operation) {
+	OfficeMemory* o = office_of(save, field16(operation, 4), field16(operation, 8));
+	if (!o) {
+		return;
+	}
+	const uint16_t captains = save.globals.u16(global::kCaptainCount);
+	switch (field(operation, 0xC)) {
+	case 0: {
+		if (o->u16(0x2F2) < captains) {
+			return;
+		}
+		const uint16_t c = events_detail::fn_5097c0(save, false);
+		o->u16(0x2F2) = c;
+		CaptainMemory& captain = save.captains[c];
+		captain.u8(0xA) = 0;
+		captain.u16(0xC) = uint16_t((captain.u8(0xA) / 43) * 20 + 10);  // 0x4FE160
+		return;
+	}
+	case 1:
+		if (o->u16(0x2F2) < captains) {
+			events_rare_detail::fn_5098b0(save, o->u16(0x2F2));
+			o->u8(0x2D6) &= 0xFC;
+		}
+		return;
+	default:
+		return;
+	}
+}
+
+// The operation 0x62 (in the executor, 0x536331): {0x62, u32 merchant, u32 town, u32 level (≤ 4), u32 class (≤ 2)}:
+// the rent level of the houses of a class of the merchant's office in the town ([+0x2E4 + class]).
+void fn_536331(SaveGame& save, const uint8_t* operation) {
+	const uint32_t merchant = field(operation, 4);
+	const uint32_t town = field(operation, 8);
+	if (merchant >= save.globals.u16(global::kWorldMerchantCount) || town >= save.globals.u32(global::kWorldTownCount) ||
+		field(operation, 0x10) > 2 || field(operation, 0xC) > 4) {
+		return;
+	}
+	if (OfficeMemory* o = office_of(save, merchant & 0xFFFF, town & 0xFFFF)) {
+		o->u8(0x2E4 + field(operation, 0x10)) = operation[0xC];
+	}
+}
+
+// The operation 0x63 (in the executor, 0x53639B): {0x63, u32 merchant, u32 town, u8 guards}: the guards of the
+// merchant's office in the town ([+0x2C7]: each costs 10 a day and is an employee).
+void fn_53639b(SaveGame& save, const uint8_t* operation) {
+	const uint32_t merchant = field(operation, 4);
+	const uint32_t town = field(operation, 8);
+	if (merchant >= save.globals.u16(global::kWorldMerchantCount) || town >= save.globals.u32(global::kWorldTownCount)) {
+		return;
+	}
+	if (OfficeMemory* o = office_of(save, merchant & 0xFFFF, town & 0xFFFF)) {
+		o->u8(0x2C7) = operation[0xC];
+	}
+}
+
+// The operation 0x66 (in the executor, 0x53644B): {0x66, u32 ware (< 0x18), u16 merchant, -, u16 town, -, u32 on}: a
+// ware's bit in the [+0x3B4] of the merchant's office in the town, set or cleared.
+void fn_53644b(SaveGame& save, const uint8_t* operation) {
+	OfficeMemory* o = office_of(save, field16(operation, 8), field16(operation, 0xC));
+	const uint32_t ware = field(operation, 4);
+	if (!o || ware >= 0x18) {
+		return;
+	}
+	if (field(operation, 0x10) != 0) {
+		o->u32(0x3B4) |= 1u << ware;
+	} else {
+		o->u32(0x3B4) &= ~(1u << ware);
 	}
 }
 

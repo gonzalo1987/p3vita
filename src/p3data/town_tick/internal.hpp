@@ -62,6 +62,13 @@ void fn_537c20(SaveGame& save, const uint8_t* operation);  // 0x04 hire sailors.
 void fn_537dd0(SaveGame& save, const uint8_t* operation);  // 0x05 dismiss sailors.
 void fn_537ee0(SaveGame& save, const uint8_t* operation);  // 0x06 hire a captain.
 void fn_538000(SaveGame& save, Sailing* sailing, const uint8_t* operation);  // 0x07 dismiss the captain.
+// Two ships in the same place (the window 0x40EEB0) and the sea map: 0x0E a ship's target (0x538800), 0x0F swap
+// their captains (0x5358F3), 0x10 sailors (0x538930) and 0x11 hand weapons (0x5389C0) from one to the other.
+void fn_538800(SaveGame& save, const uint8_t* operation);
+void fn_5358f3(SaveGame& save, const uint8_t* operation);
+void fn_538930(SaveGame& save, const uint8_t* operation);
+void fn_5389c0(SaveGame& save, const uint8_t* operation);
+void fn_538de0(SaveGame& save, Sailing* sailing, const uint8_t* operation);  // 0x0B the sea map's route by points.
 void fn_5386c0(SaveGame& save, const uint8_t* operation);  // 0x0D a ship's «Pirate» / «Civil».
 // The shipyard's: 0x0C upgrade a ship (0x508660), 0x2D and 0x2E its name
 // (0x53CCE0), 0x2F cancel a ship ordered (0x535CB9 → 0x52B110).
@@ -334,6 +341,30 @@ void fn_53eec0(SaveGame& save, const uint8_t* operation);
 void fn_535e7f(SaveGame& save, const uint8_t* operation);
 void fn_53ac50(SaveGame& save, const uint8_t* operation);
 void fn_53ad10(SaveGame& save, const uint8_t* operation);
+// The auctions (the guild's window): 0x33 (a bid, 0x53A010), 0x34 (be told of an auction, 0x53A0B0), 0x35 (an
+// automatic bid: the event 0x2D, 0x53A170) and 0x36 (auction a ship, 0x4DA510).
+void fn_53a010(SaveGame& save, const uint8_t* operation);
+void fn_53a0b0(SaveGame& save, const uint8_t* operation);
+void fn_53a170(SaveGame& save, const uint8_t* operation);
+// The office's windows: 0x5A (a business's share of jobs, 0x536200), 0x5B (the administrator's order for a ware,
+// 0x53D5C0), 0x5E (hire or dismiss the administrator, 0x53D990), 0x62 (a house class's rent, 0x536331), 0x63 (the
+// guards, 0x53639B), 0x66 (a ware's bit of [+0x3B4], 0x53644B).
+void fn_536200(SaveGame& save, const uint8_t* operation);
+// offers.cpp: the offers between merchants (SaveGame::offers): 0x5F a new one (0x53DA30), 0x75 its answer (0x53ECB0),
+// the event 0x13 (0x4E7A14).
+void fn_53da30(SaveGame& save, const uint8_t* operation);
+void fn_53ecb0(SaveGame& save, const uint8_t* operation);
+uint32_t fn_4e7a14(SaveGame& save, uint16_t event);
+namespace offers_detail {
+bool fn_534090(const SaveGame& save, uint32_t id, uint32_t a, uint32_t b);
+void fn_5340d0(SaveGame& save, uint32_t id, uint32_t a, uint32_t b);
+void fn_534600(SaveGame& save, uint32_t id, uint32_t a, uint32_t b);
+}  // namespace offers_detail
+void fn_53d5c0(SaveGame& save, const uint8_t* operation);
+void fn_53d990(SaveGame& save, const uint8_t* operation);
+void fn_536331(SaveGame& save, const uint8_t* operation);
+void fn_53639b(SaveGame& save, const uint8_t* operation);
+void fn_53644b(SaveGame& save, const uint8_t* operation);
 // core.cpp: the church's 0x30 (feed the poor, 0x4FE557), 0x31 (for its extension, 0x4FE420) and 0x32 (a donation,
 // 0x4FE2D0).
 void fn_535cf0(SaveGame& save, const uint8_t* operation);
@@ -425,6 +456,11 @@ void fn_4d8dd0(SaveGame& save);
 // lo pone en la cabeza con el tick `tick` y lo lleva a su sitio. Devuelve su
 // índice.
 uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick);
+// 0x4D9000: the merchant's automatic bid (an event 0x2D) for the lot of the town's auction: its index and its top
+// ([+0x8]) in `top`; 0xFFFF and 0 if he has none.
+uint16_t fn_4d9000(const SaveGame& save, uint32_t merchant, uint32_t town, uint32_t lot, uint32_t& top);
+// 0x4DA510: a merchant's ship put on sale at an auction (the operation 0x36).
+void fn_4da510(SaveGame& save, uint32_t ship);
 }  // namespace events_detail
 // events_*.cpp: los manejadores de los demás tipos de la cola de eventos,
 // por grupos. Cada uno devuelve qué hace el despachador (0x4D85C0) con el
@@ -433,7 +469,7 @@ uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick);
 // por su tick, ya cambiado (0x4D8DD0).
 int events_big(SaveGame& save, uint16_t event, uint16_t type);  // 0x2c, 0x5, 0x16
 int events_towns(SaveGame& save, uint16_t event, uint16_t type);  // 0x3, 0x1, 0x2a, 0x2b, 0x27
-int events_mayor(SaveGame& save, uint16_t event, uint16_t type);  // 0x2, 0xa, 0x36, 0x20, 0x21
+int events_mayor(SaveGame& save, uint16_t event, uint16_t type);  // 0x2, 0xa, 0x36, 0x2d, 0x20, 0x21
 // events_mayor.cpp: 0x5311D0 (on the world), a tick's date: the day of the
 // month (from 1), the month (from 1) and the year ((tick >> 8) / 365), as
 // the letters carry it.

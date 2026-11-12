@@ -376,6 +376,9 @@ std::vector<uint16_t> window_ships(const SaveGame& save, int merchant, int town,
 	const uint32_t ships = save.globals.u16(global::kShipCount);
 	const uint32_t convoys = save.globals.u16(kConvoyCountGlobal);
 	const uint32_t captains = save.globals.u16(global::kCaptainCount);
+	if (mode == ShipListMode::Auction && !(save.merchants[size_t(merchant)].memory.u32(0x468) & (1u << (uint32_t(town) & 31)))) {
+		return list;
+	}
 	auto ship = [&](uint32_t i) -> const ShipMemory& { return save.ships[i].memory; };
 	for (uint32_t i = save.merchants[size_t(merchant)].memory.u16(0xE); i < ships; i = ship(i).u16(0x4)) {
 		const ShipMemory& s = ship(i);
@@ -433,6 +436,12 @@ std::vector<uint16_t> window_ships(const SaveGame& save, int merchant, int town,
 						list.push_back(uint16_t(k));
 					}
 				}
+			}
+			break;
+		case ShipListMode::Auction:  // 0x504F02, then 0x504F30 (the mode 7)
+		case ShipListMode::Docked:  // 0x504F30
+			if (convoy >= convoys && !(s.u8(0x136) & 1) && s.u16(0x134) <= 1) {
+				list.push_back(uint16_t(i));
 			}
 			break;
 		}
@@ -593,6 +602,10 @@ bool can_turn_pirate(const SaveGame& save, const Sailing& sailing, int ship) {
 
 OperationBytes pirate_operation(uint32_t ship, bool pirate) {
 	return words_operation({0x0D, ship, pirate ? 1u : 0u});
+}
+
+OperationBytes route_point_operation(uint32_t ship, uint32_t step, int x, int y) {
+	return words_operation({0x0B, ship, step, uint32_t(x), uint32_t(y)});
 }
 
 int32_t repair_cost(const SaveGame& save, int town, int ship) {

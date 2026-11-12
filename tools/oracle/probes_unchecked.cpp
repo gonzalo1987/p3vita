@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "p3data/building_windows.hpp"
+#include "p3data/guild_window.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/game_texts.hpp"
 #include "p3data/player_actions.hpp"
@@ -137,6 +138,9 @@ constexpr uint32_t kScratch = 0x6DFF00;
 // The oracle's copier of 0x504AC0's list, in its sentinel page
 // (retouch_unchecked.py WINDOW_SHIPS: SENTINEL + 0xF80).
 constexpr uint32_t kWindowShips = 0x03000F80;
+// Its copier of the guild's list of the auctions to come (AUCTION_LIST: SENTINEL + 0xFE0): 0x4DA1A0 on the queue, its
+// entries (0x14 bytes each, at most 3) into the scratch globals and their count at 0x6DFF40.
+constexpr uint32_t kAuctionList = 0x03000FE0;
 // Its copiers of the convoy window's choices (0x40C170) and of the market
 // window's convoy (0x4AA4A0) (CONVOY_CHOICES, CONVOY_SUMMARY).
 constexpr uint32_t kConvoyChoices = 0x03000E80;
@@ -1062,6 +1066,30 @@ void register_probes_unchecked(ProbeRegistry& r) {
 	// bribe window).
 	r[0x529E20] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		return councillor_price(s, uint32_t(c.town(c.ecx)), c.args[0], c.args[1]);
+	};
+	// The guild's window (guild_window.hpp): 0x4DA480 (thiscall on the queue: event), whether the player is told of
+	// the auction (al); and the copier of 0x4DA1A0's list.
+	r[0x4DA480] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		c.eax_mask = 0xFF;
+		return told_of_auction(s, c.args[0]) ? 1u : 0u;
+	};
+	r[kAuctionList] = [](SaveGame& s, const ProbeCall&) -> std::optional<uint32_t> {
+		const std::vector<AuctionEntry> list = upcoming_auctions(s);
+		s.globals.u32(kScratch + 0x40) = uint32_t(list.size());
+		for (size_t k = 0; k < list.size(); ++k) {
+			const uint32_t at = kScratch + 0x14 * uint32_t(k);
+			const AuctionEntry& a = list[k];
+			s.globals.u32(at) = a.tick;
+			for (uint32_t j = 0; j < 3; ++j) {
+				s.globals.u16(at + 4 + 2 * j) = a.lots[j];
+			}
+			s.globals.u16(at + 0xA) = a.town;
+			s.globals.u32(at + 0xC) = a.event;
+			for (uint32_t j = 0; j < 4; ++j) {
+				s.globals.u8(at + 0x10 + j) = a.types[j];
+			}
+		}
+		return std::nullopt;
 	};
 }
 
