@@ -18,7 +18,8 @@ namespace p3::data {
 // letters, the strings of the letter's buffer), in order; empty for none:
 // - 0x1E «Memo»: «Take back» (0x6B503C); 0x1F «Offer»: «Accept offer», «Reject offer» (0x6B5028, 0x6B502C);
 // - 0x21 «Suitor»: «Accept offer» (0x6B52A0) while the tick is before the day [+0xE] of the letter's year;
-// - 0x22 «Proposal»: «Accept offer» while the tick is before the letter's day + [+0xF] days;
+// - 0x22 «Proposal»: «Accept offer» while the tick is before the letter's day + [+0xF] days (the game counts the
+//   letter's day a day late: with fix_game_bugs(), from 0, so an accepted proposal loses its button at once);
 // - 0x3D..0x3F (the missions'; 0x3C and 0x40 have no text): the record's [+0xB] labels, the strings after the
 //   title and the text in the buffer, while the tick is before the record's [+0x4];
 // - 0x64 «Prince»: «Accept» (0x6A9A04) unless its [+0xF] is 0xFE, while the tick's day isn't past the letter's day

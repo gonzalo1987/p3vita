@@ -26,7 +26,8 @@ int32_t church_extension_cost(const SaveGame& save, uint32_t town);
 // The feeding window's five rows (0x5CAAB0): grain, meat, fish, beer and wine, in barrels or loads.
 inline constexpr std::array<uint8_t, 5> kFeedingWares = {0, 1, 2, 3, 7};
 // Its kind (0x5CAF71..0x5CB116), the operation's [+0x6]: the worth of the rows (what the town would pay for them,
-// 0x52E1D0; the fifth row priced as the ware 4, salt, though the operation gives wine: seems a game bug) divided by
+// 0x52E1D0; the fifth row priced as the ware 4, salt, though the operation gives wine: a game bug, fixed behind
+// fix_game_bugs(): priced as wine) divided by
 // ftol(sqrt(s16 [+0x304] · [+0x2D4] / 18)) + 8, at most 255.
 uint8_t church_feeding_kind(const SaveGame& save, uint32_t town, const std::array<uint16_t, 5>& amounts);
 // The operation 0x30 the window queues (0x5CB102): {0x30, u8 player, u8 town, u8 kind, -, u16 the rows grain, beer,

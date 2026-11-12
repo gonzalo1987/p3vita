@@ -44,6 +44,7 @@
 
 #include <cassert>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -607,8 +608,9 @@ void fn_508aa0(SaveGame& save, int town, int32_t work) {
 	// convoy gets the state 6 and each of its ships (from [+0xA], by [+0x6]) `work` of hull and the state 6, the work
 	// counted as for a ship alone. The convoy leaves the list once every ship is whole, or at once if its guide's
 	// orders ([+0x136] of [+0x10]) are 1 (the repair cancelled): back to the convoys' list (0x6DD88C) in the state 0,
-	// the orders 2 become 1 and every ship gets its whole hull back and the state 0. Game bug (seems): the cancelled
-	// repair ends with every ship whole too, although the work wasn't done (a ship alone, above, keeps its hull).
+	// the orders 2 become 1 and every ship gets its whole hull back and the state 0. Game bug: the cancelled repair
+	// ends with every ship whole too, although the work wasn't done (a ship alone, above, keeps its hull); fixed
+	// behind fix_game_bugs() (the user's choice, 2026-11-12): each ship keeps the hull it has.
 	// Checked with the oracle: scenario convoy_repair (saves 1, 3, 5, 7, direct calls).
 	const uint16_t convoys = save.globals.u16(kConvoyCount);
 	// The guide's orders: the game reads them without looking at the guide ([+0x10] always a ship in its convoys).
@@ -652,7 +654,9 @@ void fn_508aa0(SaveGame& save, int town, int32_t work) {
 			SavedShip& ship = save.ships[i];
 			i = ship.next_in_list();
 			ship.notices() |= 0x100;
-			ship.health() = ship.max_health();
+			if (!fix_game_bugs()) {
+				ship.health() = ship.max_health();  // A finished repair's ships are whole already.
+			}
 			ship.status() = 0;
 		}
 		// 0x613920 on the port's scene 0x6E6220 (the guide): the interface.

@@ -328,7 +328,7 @@ hacen sin preguntar; las que tocan la partida o el equilibrio, se preguntan ante
 Pendiente:
 - [ ] **Decidir y corregir los fallos reproducidos que aún no tienen corrección** (lista abajo, «Reproducidos, sin
   corregir»): los de los piratas y las batallas en el mar, los de la batalla en una ciudad, los de la batalla que
-  dirige el jugador, construir en el borde de la rejilla, el reloj de las batallas y los del astillero y las cartas.
+  dirige el jugador, construir en el borde de la rejilla, el reloj de las batallas y los de las cartas.
 - [ ] **Más adelante, cada corrección por separado** (idea del usuario, 05-11-2026): un inventario de los fallos y
   rarezas y una pantalla en las Opciones para encender o apagar cada corrección, en vez del ajuste único. Por eso cada
   fallo de la lista de abajo tiene que quedar bien identificado: dónde está, qué hace mal y qué cambia su corrección.
@@ -532,20 +532,10 @@ construir (0x47B8C0) acepta una casa de pescador en el agua de la columna 1 y el
 Windows, el montón antes de la rejilla). Las marcas de dónde cabe (0x4FD0D0, 0x4FD4A0, 0x5241E0) también escriben fuera
 cerca de los bordes, y 0x5241E0 guarda en la pila sitio para 24. p3vita solo escribe dentro, con el ajuste y sin él.
 
-**La iglesia y el baño** (12-11-2026):
-- Los dos de los sobornos del baño (0x42, 0x43): el usuario decidió dejarlos como el original (abajo, «No se
-  corrigen»).
-- La ventana de dar de comer a los pobres valora su quinta fila como sal (la mercancía 4) aunque se reparte vino (la
-  7), y con ese valor calcula el «tipo» que da la reputación (0x5CAF83; parece).
+**La iglesia y el baño** (12-11-2026): los dos de los sobornos (0x42, 0x43), que el usuario decidió dejar como el
+original (abajo, «No se corrigen»); el de la ventana de dar de comer, corregido (abajo).
 
-**Del astillero y las cartas** (12-11-2026):
-- La reparación de un convoy cancelada (las órdenes 1 de su guía) deja todos sus barcos con el casco entero aunque el
-  trabajo no se hizo (0x508D7E..0x508E00; parece: un barco solo, cancelado, conserva el suyo). Corrección: dejar el
-  casco como esté.
-- El botón «Aceptar» de la propuesta 0x22 sigue hasta el final del día aunque ya se haya aceptado (0x480D91: el día de
-  la carta va de 1 a 31, uno más que su fecha, y la 0x60 pone su [+0xF] a 0): volviendo a abrir la carta ese día se
-  acepta otra vez (otra 0x60, otra boda). Parece; sin comprobar qué hace una segunda boda. El visor quita los botones
-  al pulsar, hasta que se enseña otra carta.
+**Las cartas** (12-11-2026; la reparación de convoyes cancelada y el botón de la propuesta, corregidos: abajo):
 - La carta 0x83 del embargo sin barco ni oficina dice «Las siguientes mercancías fueron embargadas y entregadas en tu
   oficina» y no lista ninguna: se cobran en dinero (0x53F2CF, 0x53F326; solo el texto).
 - La 0x74 (los botones de las cartas de misión) deja escribir la variable número [+0x12] del guion, una más allá de
@@ -555,6 +545,19 @@ cerca de los bordes, y 0x5241E0 guarda en la pila sitio para 24. p3vita solo esc
 de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; si el orden no importa, no hace daño).
 
 ### Corregidos con el ajuste
+
+**Del astillero, las cartas y la iglesia** (12-11-2026, a petición del usuario; ctest `game_fixes`):
+- La reparación de un convoy cancelada (las órdenes 1 de su guía, 0x508D7E..0x508E00; parecía): el juego deja todos sus
+  barcos con el casco entero aunque el trabajo no se hizo (un barco solo, cancelado, conserva el suyo). Corregido: cada
+  barco se queda con el casco que tenga (`fn_508aa0`; con el ajuste, el escenario `convoy_repair` sale distinto del
+  juego solo en ese casco).
+- El botón «Aceptar» de la propuesta 0x22 (0x480D91; parecía): el día de la carta (de 1 a 31) sobre los días de antes
+  de su mes cuenta uno de más, así que tras aceptarla (la 0x60 pone su [+0xF] a 0) el botón sigue hasta el final del
+  día y se podía aceptar otra vez (otra 0x60, otra boda); el plazo de 14 días, uno más. Corregido en la regla de la
+  ventana (`letter_window.cpp`): el día contado desde 0.
+- La ventana de dar de comer a los pobres (0x5CAF83; parecía) valora su quinta fila como sal (la mercancía 4) aunque se
+  reparte vino (la 7), y con ese valor calcula el «tipo» que da la reputación. Corregido (`building_windows.cpp`):
+  valorada como vino.
 
 **La simulación**:
 - La carretera vencida del jugador (0x4EAFE4, en 0x4EB25F; seguro): el juego crea un encargo igual con un índice de

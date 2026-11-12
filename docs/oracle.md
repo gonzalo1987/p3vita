@@ -2414,8 +2414,9 @@ and its file deleted, with touch and the pad (`re/emu/sesion25/shots.sh`).
 
 The town tick's shipyard work, 0x508AA0, after the ships it repairs walks the convoys of the town's list [0x820]
 (0x508C86..0x508E8B; `fn_508aa0`, `town_tick/facilities.cpp`): each ship gets the work and the state 6; the convoy
-leaves the list when every ship is whole or its guide's orders are 1 (then every ship is whole too: seems a game
-bug, noted in the roadmap), back to the convoys' list in the state 0, with the ticker line «Repairs completed» for a
+leaves the list when every ship is whole or its guide's orders are 1 (then every ship is whole too: a game bug,
+fixed behind fix_game_bugs at the user's request: each ship keeps its hull; with it on, `convoy_repair` differs from
+the game only in that hull), back to the convoys' list in the state 0, with the ticker line «Repairs completed» for a
 human owner. Before, a convoy sent to repair (0x1D) never left the shipyard in p3vita; the list is empty in the 12
 saves, which is why the whole world never caught it.
 
@@ -2477,8 +2478,9 @@ window's kind (0x5CAF71), the bath's reaction by the days since the last (0x5B1F
 | `bath_ops` | 0x39 for the player and a merchant past; 0x42 on another's slot, on his own, past the gain's cap, a town and a merchant past; 0x43 on his slot, a free one, another's, a slot past 3, a town past | 1, 3, 5, 7 | 12 operations equal, 11 of 11 targets |
 | `building_windows` | 0x4FE360 by the church's [+0x0]; 0x4FE390 at each level, gathered, within and past 100 days; 0x529E20 at each rank 0..7 and 9, on a free and a held slot, a merchant past, a slot past (with its `rand()`) | 1, 3, 5, 7 | 29 calls equal, 20 of 20 targets |
 
-Broken on purpose (the church's cap without its − 1) and caught. Three game bugs noted in the roadmap (0x42 never
-limits the councillors, 0x43 gives the slot to the merchant 1, the feeding window prices wine as salt). The world 7
+Broken on purpose (the church's cap without its − 1) and caught. Three game bugs noted in the roadmap: 0x42 never
+limits the councillors and 0x43 gives the slot to the merchant 1 (both left as the original, the user's decision); the
+feeding window prices wine as salt (fixed behind fix_game_bugs, ctest `game_fixes`). The world 7
 days in the 12 saves: 0 different; write-check as before; ctest; the Vita build. In the viewer
 (`re/emu/sesion26/shots.sh`, save 1, Lübeck: the church at cell 57:79, touched at 340:170; the bath house at 68:84):
 the church's three pages and the bath house's two, with the game's bath reactions.

@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -72,7 +73,10 @@ std::vector<std::string> letter_buttons(const SaveGame& save, const GameTexts* t
 		}
 		return labels({0x6B52A0});
 	case 0x22:
-		if (((letter_day(*e, 0xF) + e->u8(0xF)) << 8) <= tick) {
+		// Game bug: the letter's day (1..31) on the days before its month counts a day too many, so the button lasts
+		// till the day's end once accepted (0x60 sets [+0xF] to 0) and the proposal can be accepted twice (two
+		// weddings). Fixed behind fix_game_bugs() (the user's choice, 2026-11-12): the day counted from 0.
+		if (((letter_day(*e, 0xF) - (fix_game_bugs() ? 1 : 0) + e->u8(0xF)) << 8) <= tick) {
 			return {};
 		}
 		return labels({0x6B52A0});

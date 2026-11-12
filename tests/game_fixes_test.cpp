@@ -4,8 +4,10 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "p3data/building_windows.hpp"
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
+#include "p3data/letter_window.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/trade_routes.hpp"
@@ -16,6 +18,10 @@ namespace p3::data::tick::events_towns_detail {
 // 0x4D6780 (town_tick/events_towns.cpp): expires the old letters of a merchant.
 void fn_4d6780(SaveGame& save, int32_t merchant);
 }  // namespace p3::data::tick::events_towns_detail
+namespace p3::data::tick::facilities_detail {
+// 0x508AA0 (town_tick/facilities.cpp): the shipyard's work on the ships and convoys it repairs.
+void fn_508aa0(SaveGame& save, int town, int32_t work);
+}  // namespace p3::data::tick::facilities_detail
 namespace p3::data::tick {
 // 0x4D98F0 (town_tick/operations.cpp): the operation 0x2B, company shares.
 void fn_4d98f0(SaveGame& save, const uint8_t* operation);
@@ -260,8 +266,91 @@ void closed_port_ai() {
 	set_fix_game_bugs(false);
 }
 
+// The cancelled convoy repair (0x508C86): a convoy of one ship at half its hull, its guide's orders 1, in town 0's
+// repair list; the work 100. Off, it leaves with the ship whole (the game); on, with the hull it got.
+void cancelled_convoy_repair() {
+	for (const bool fix : {false, true}) {
+		set_fix_game_bugs(fix);
+		SaveGame save;
+		save.globals.u16(global::kShipCount) = 1;
+		save.globals.u16(global::kShips + 0xF6) = 1;  // the convoys
+		save.globals.u16(global::kShips + 0xEC) = 0xFFFF;  // the convoys' list
+		save.towns.resize(1);
+		save.towns[0].memory.u16(0x81E) = 0xFFFF;
+		save.towns[0].memory.u16(0x820) = 0;
+		save.ships.resize(1);
+		SavedShip& ship = save.ships[0];
+		ship.max_health() = 1000;
+		ship.health() = 500;
+		ship.orders() = 1;
+		ship.next_in_list() = 0xFFFF;
+		save.convoys.resize(1);
+		GameMemory<0x3C>& c = save.convoys[0];
+		c.u8(0x0) = 0xFF;
+		c.u16(0x8) = 0xFFFF;
+		c.u16(0xA) = 0;
+		c.u16(0x10) = 0;
+		tick::facilities_detail::fn_508aa0(save, 0, 100);
+		check(save.towns[0].memory.u16(0x820) == 0xFFFF && c.u16(0x12) == 0, "the cancelled convoy leaves the shipyard");
+		check(ship.health() == (fix ? 600 : 1000), fix ? "fixed: the ship keeps its hull" : "the game: the ship whole");
+	}
+	set_fix_game_bugs(false);
+}
+
+// The proposal's button (the letter 0x22, letter_window.hpp): accepted ([+0xF] 0, as 0x60 leaves it) the day it came,
+// the game still shows it till the day's end; fixed, not. With 14 days: the 14th day is the last one, and the game
+// gives one more.
+void proposal_button() {
+	const uint32_t day = 1300 * 365 + 100;  // the 11th of April
+	SaveGame save;
+	save.globals.u32(global::kWorldTick) = (day << 8) + 0x40;
+	save.globals.u16(kMailCount) = 1;
+	save.mail.resize(1);
+	save.mail_records.resize(1);
+	save.mail_buffers.resize(1);
+	GameMemory<0x10>& e = save.mail[0];
+	e.u8(0) = 11;
+	e.u8(1) = 3;
+	e.u16(2) = 1300;
+	e.u8(4) = 0x22;
+	e.u8(0xF) = 0;
+	check(letter_buttons(save, nullptr, 0).size() == 1, "the game: the accepted proposal's button till the day's end");
+	set_fix_game_bugs(true);
+	check(letter_buttons(save, nullptr, 0).empty(), "fixed: no button once accepted");
+	e.u8(0xF) = 14;
+	save.globals.u32(global::kWorldTick) = ((day + 13) << 8) + 0xFF;
+	check(letter_buttons(save, nullptr, 0).size() == 1, "fixed: the 14th day still");
+	save.globals.u32(global::kWorldTick) = (day + 14) << 8;
+	check(letter_buttons(save, nullptr, 0).empty(), "fixed: past the 14 days");
+	set_fix_game_bugs(false);
+	check(letter_buttons(save, nullptr, 0).size() == 1, "the game: one day more");
+}
+
+// The feeding window's kind (building_windows.hpp): five barrels of wine priced as salt (the game) or as wine (fixed).
+void feeding_wine() {
+	SaveGame save;
+	save.globals.u32(global::kWorldTownCount) = 1;
+	save.towns.resize(1);
+	TownMemory& t = save.towns[0].memory;
+	t.u32(0x76C) = 0x100;
+	for (int w : {4, 7}) {
+		for (int i = 0; i < 4; ++i) {
+			t.u32(0x4F0 + 16 * uint32_t(w) + 4 * uint32_t(i)) = uint32_t(2000 * (i + 1));
+		}
+	}
+	const std::array<uint16_t, 5> wine = {0, 0, 0, 0, 5};
+	const uint8_t game = church_feeding_kind(save, 0, wine);
+	set_fix_game_bugs(true);
+	const uint8_t fixed = church_feeding_kind(save, 0, wine);
+	set_fix_game_bugs(false);
+	check(fixed > game, "fixed: wine is worth more than salt");
+}
+
 int main() {
 	check(!fix_game_bugs(), "the library starts with the fixes off");
+	cancelled_convoy_repair();
+	proposal_button();
+	feeding_wine();
 	old_letters();
 	company_shares();
 	trade_route_growth();

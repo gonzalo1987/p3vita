@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -70,9 +71,11 @@ uint8_t church_feeding_kind(const SaveGame& save, uint32_t town, const std::arra
 	}
 	int32_t worth = 0;
 	for (int k = 0; k < 5; ++k) {
-		// The window prices its field k as the ware k (0x5CAF83): the fifth, wine, as salt.
-		const int32_t units = int32_t(amounts[size_t(k)]) * (kInBarrels[k] ? 200 : 2000);
-		worth = int32_t(uint32_t(worth) + uint32_t(tick::game_sell_price(save, k, int(town), units)));
+		// The window prices its field k as the ware k (0x5CAF83): the fifth, wine, as salt (a game bug; fixed behind
+		// fix_game_bugs(), the user's choice, 2026-11-12: priced as the wine it gives).
+		const int ware = fix_game_bugs() ? kFeedingWares[size_t(k)] : k;
+		const int32_t units = int32_t(amounts[size_t(k)]) * (kInBarrels[ware] ? 200 : 2000);
+		worth = int32_t(uint32_t(worth) + uint32_t(tick::game_sell_price(save, ware, int(town), units)));
 	}
 	const TownMemory& t = save.towns[town].memory;
 	const int32_t people = int32_t(uint32_t(int32_t(t.s16(0x304))) * t.u32(0x2D4)) / 18;
