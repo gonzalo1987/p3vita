@@ -656,4 +656,176 @@ void fn_51ba10(SaveGame& save, int town, uint32_t day_of_year) {
 	}
 }
 
+
+// --- The church's operations (the player's: the church's windows) ---
+
+namespace {
+
+// 0x4F8AF0 (on the merchant: town, amount): a donation's reputation: [+0x120 + 12 · town] += float(float(amount) ·
+// 0.0003 (0x672F2C) / float(the church factor + 1)) · [+0x464].
+void fn_4f8af0(SaveGame& save, uint32_t merchant, uint8_t town, int32_t amount) {
+	static constexpr uint32_t kRateBits = 0x399D4952;  // 0x672F2C: 0.0003f
+	float rate;
+	std::memcpy(&rate, &kRateBits, sizeof(rate));
+	MerchantMemory& m = save.merchants[merchant].memory;
+	const float share = float(double(float(amount)) * double(rate) / double(float(save.globals.u8(kWorldChurchFactor) + 1)));
+	const float gain = float(double(share) * double(m.f32(0x464)));
+	float& r = m.f32(0x120 + 12 * size_t(town));
+	r = float(double(gain) + double(r));
+}
+
+// What a merchant pays of `amount` (all his money if he has less: he ends with 0), counted in his [+0x4BC].
+int32_t pay_what_he_has(MerchantMemory& m, int32_t amount) {
+	if (m.s32(0x0) >= amount) {
+		m.s32(0x0) -= amount;
+	} else {
+		amount = m.s32(0x0);
+		m.s32(0x0) = 0;
+	}
+	m.s32(0x4BC) = int32_t(uint32_t(m.s32(0x4BC)) + uint32_t(amount));
+	return amount;
+}
+
+}  // namespace
+
+// The operation 0x32 (0x535D85 → 0x4FE2D0 on the church of the town u32 [+0x8]): {0x32, u32 merchant, u32 town,
+// u32 amount}: a donation to the church. The merchant pays it (or what he has: 0x4FE2D0 doesn't check the merchant;
+// p3vita does nothing for one past the count); the church's [+0x0] (what feeds the poor, −100 a day) gets it up to
+// 12000 · (factor + 1): past it, [+0x0] becomes that − 1 and only what fitted counts for his reputation (0x4F8AF0).
+// Checked with the oracle: scenario church_ops (saves 1, 3, 5, 7).
+void fn_535d85(SaveGame& save, const uint8_t* operation) {
+	uint32_t merchant, town;
+	int32_t amount;
+	std::memcpy(&merchant, operation + 4, 4);
+	std::memcpy(&town, operation + 8, 4);
+	std::memcpy(&amount, operation + 0xC, 4);
+	if (town >= save.globals.u32(global::kWorldTownCount) || merchant >= merchant_count(save)) {
+		return;
+	}
+	TownMemory& c = save.towns[town].memory;
+	MerchantMemory& m = save.merchants[merchant].memory;
+	amount = pay_what_he_has(m, amount);
+	const int32_t cap = int32_t((uint32_t(save.globals.u8(kWorldChurchFactor)) + 1) * 12000);
+	const int32_t sum = int32_t(uint32_t(c.s32(kChurch)) + uint32_t(amount));
+	if (sum > cap) {
+		amount = cap - c.s32(kChurch);
+		c.s32(kChurch) = cap - 1;
+	} else {
+		c.s32(kChurch) = sum;
+	}
+	fn_4f8af0(save, merchant, uint8_t(town), amount);
+}
+
+// The operation 0x31 (0x535D49 → 0x4FE420 on the church of the town u32 [+0x8]): {0x31, u32 merchant, u32 town, u32
+// amount}: a donation for the church's extension. Nothing at the last level (3), with the money already gathered
+// ([+0x4] ≥ the cost: the factor · 10000, 15000 or 20000 by the level, + 0x6734B4[level]) or within 100 days of the
+// last extension ([+0x8] ≤ 100); otherwise the merchant pays it (or what he has), [+0x4] gets it up to the cost (the
+// rest isn't counted) and his reputation the part that counted (0x4F8AF0).
+// Checked with the oracle: scenario church_ops (saves 1, 3, 5, 7).
+void fn_535d49(SaveGame& save, const uint8_t* operation) {
+	uint32_t merchant, town;
+	int32_t amount;
+	std::memcpy(&merchant, operation + 4, 4);
+	std::memcpy(&town, operation + 8, 4);
+	std::memcpy(&amount, operation + 0xC, 4);
+	if (town >= save.globals.u32(global::kWorldTownCount) || merchant >= merchant_count(save)) {
+		return;
+	}
+	TownMemory& c = save.towns[town].memory;
+	const uint8_t level = c.u8(kChurch + 0xF);
+	int32_t cost = save.globals.u8(kWorldChurchFactor);
+	cost *= level == 0 ? 10000 : level == 1 ? 15000 : 20000;
+	cost += kChurchCost[level & 3];
+	if (level >= 3 || c.s32(kChurch + 4) >= cost || c.u32(kChurch + 8) <= 100) {
+		return;
+	}
+	amount = pay_what_he_has(save.merchants[merchant].memory, amount);
+	c.s32(kChurch + 4) = int32_t(uint32_t(c.s32(kChurch + 4)) + uint32_t(amount));
+	if (c.s32(kChurch + 4) > cost) {
+		amount -= c.s32(kChurch + 4) - cost;
+		c.s32(kChurch + 4) = cost;
+	}
+	fn_4f8af0(save, merchant, uint8_t(town), amount);
+}
+
+// The operation 0x30 (0x535CF0 → 0x4FE557): {0x30, u8 merchant, u8 town, u8 kind, -, 5 × u16 amounts}: the merchant
+// feeds the town's poor: the barrels or loads of the five wares of 0x6734CC (grain, beer, fish, meat, wine) are
+// taken from his office in the town, then from his ships there (his list [+0xE] by [+0x4]), whole barrels or loads
+// when only part is left; the walk stops once a place had everything left. With a kind of 10 or more his reputation
+// rises by what the town would pay for what was given (0x52E1D0; 0x4F8AF0), and with 50 or more the town gets the
+// bit 0x800000 of [+0x2C8]. A merchant past the count, a town past the towns: nothing.
+// Checked with the oracle: scenario church_ops (saves 1, 3, 5, 7).
+void fn_535cf0(SaveGame& save, const uint8_t* operation) {
+	static constexpr uint8_t kFood[5] = {0, 3, 2, 1, 7};  // 0x6734CC
+	const uint8_t merchant = operation[4];
+	const uint8_t town = operation[5];
+	const uint8_t kind = operation[6];
+	if (merchant >= merchant_count(save) || town >= save.globals.u32(global::kWorldTownCount)) {
+		return;
+	}
+	int32_t wanted[5];
+	int32_t given[5] = {};
+	for (size_t k = 0; k < 5; ++k) {
+		uint16_t n;
+		std::memcpy(&n, operation + 8 + 2 * k, 2);
+		wanted[k] = int32_t(n) * (kByBarrel[kFood[k]] ? 200 : 2000);
+	}
+	// One place's goods (the office's stock or a ship's cargo, by ware): returns whether nothing more was wanted
+	// that it didn't have (its flag runs over the five wares: only the places without stock keep it).
+	auto take = [&](auto stock_of) {
+		bool all = true;
+		for (size_t k = 0; k < 5; ++k) {
+			const uint8_t w = kFood[k];
+			int32_t& have = stock_of(w);
+			if (have <= 0) {
+				have = 0;
+				all = all && wanted[k] == 0;
+			} else if (have > wanted[k]) {
+				have -= wanted[k];
+				given[k] += wanted[k];
+				wanted[k] = 0;
+			} else {
+				const int32_t unit = kByBarrel[w] ? 200 : 2000;
+				const int32_t part = have / unit * unit;
+				wanted[k] -= part;
+				given[k] += part;
+				have -= part;
+				all = false;
+			}
+		}
+		return all;
+	};
+	bool done = false;
+	const int office = facilities_detail::fn_5308a0(save, merchant, town);
+	if (office >= 0) {
+		done = take([&](uint8_t w) -> int32_t& { return save.offices[size_t(office)].memory.s32(4 + 4 * size_t(w)); });
+	}
+	if (!done) {
+		const uint16_t ships = save.globals.u16(global::kShipCount);
+		for (uint16_t s = save.merchants[merchant].memory.u16(0xE); s < ships;) {
+			ShipMemory& ship = save.ships[s].memory;
+			s = ship.u16(0x4);
+			if (ship.u8(0x39) != town) {
+				continue;
+			}
+			if (take([&](uint8_t w) -> int32_t& { return ship.s32(0x54 + 4 * size_t(w)); })) {
+				break;
+			}
+		}
+	}
+	if (kind < 10) {
+		return;
+	}
+	int32_t worth = 0;
+	for (size_t k = 0; k < 5; ++k) {
+		if (given[k] > 0) {
+			worth = int32_t(uint32_t(worth) + uint32_t(game_sell_price(save, kFood[k], town, given[k])));
+		}
+	}
+	fn_4f8af0(save, merchant, town, worth);
+	if (kind >= 50) {
+		save.towns[town].memory.u32(0x2C8) |= 0x800000;
+	}
+}
+
 }  // namespace p3::data::tick

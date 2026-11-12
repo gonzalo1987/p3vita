@@ -2458,6 +2458,31 @@ bytes); ctest; the Vita build. The older scenarios that touch these: `siege_ops`
 pressed until another letter is shown; the impounding's letter arriving with its wares, the proposal's wedding, the
 prince's meeting; in Spanish and English.
 
+## The player's actions: the church and the bath house (2026-11-12)
+
+The church's operations in `town_tick/core.cpp` (next to its daily tick 0x4FE877): 0x32 a donation (0x4FE2D0: the
+church's [+0x0] up to 12000 · (factor + 1), then one less), 0x31 for its extension (0x4FE420: up to its cost; not at
+the last level, with the money gathered or within 100 days of the last), 0x30 feeding the poor (0x4FE557: five wares
+from the merchant's office, then his ships in the town, whole barrels or loads; reputation by their worth, 0x52E1D0,
+with a kind of 10 or more, the town's bit 0x800000 with 50), all with 0x4F8AF0 (a donation's reputation). The bath
+house's in `operations.cpp`: 0x39 (the merchant's [+0x4], his last bath's tick), 0x42 and 0x43 (a bribe that works or
+fails: 0x4F8E30, 0x4F8E90, the town's councillor slots [0x6DC..0x6DF]). Their windows' rules in `building_windows.cpp`
+(ctest `building_windows`): how well the poor are fed (0x4FE360), the extension's state (0x4FE390), the feeding
+window's kind (0x5CAF71), the bath's reaction by the days since the last (0x5B1FC5) and the councillor's price
+(0x529E20, rolling `rand()`), which decides between 0x42 and 0x43.
+
+| Scenario | What | Saves | Result |
+|-|-|-|-|
+| `church_ops` | 0x32 as it is, past the cap, short of money, a town past; 0x31 at the levels 0, 1, 2, cut at the cost, short of money, within 100 days, the money gathered, the last level, a town past; 0x30 all from the office (kind 50), part from it in odd units and the rest from a ship (kind 10), a kind below 10, without an office (a ship elsewhere skipped), a merchant past, a town past | 1, 3, 5, 7 | 19 operations equal, 25 of 25 targets |
+| `bath_ops` | 0x39 for the player and a merchant past; 0x42 on another's slot, on his own, past the gain's cap, a town and a merchant past; 0x43 on his slot, a free one, another's, a slot past 3, a town past | 1, 3, 5, 7 | 12 operations equal, 11 of 11 targets |
+| `building_windows` | 0x4FE360 by the church's [+0x0]; 0x4FE390 at each level, gathered, within and past 100 days; 0x529E20 at each rank 0..7 and 9, on a free and a held slot, a merchant past, a slot past (with its `rand()`) | 1, 3, 5, 7 | 29 calls equal, 20 of 20 targets |
+
+Broken on purpose (the church's cap without its − 1) and caught. Three game bugs noted in the roadmap (0x42 never
+limits the councillors, 0x43 gives the slot to the merchant 1, the feeding window prices wine as salt). The world 7
+days in the 12 saves: 0 different; write-check as before; ctest; the Vita build. In the viewer
+(`re/emu/sesion26/shots.sh`, save 1, Lübeck: the church at cell 57:79, touched at 340:170; the bath house at 68:84):
+the church's three pages and the bath house's two, with the game's bath reactions.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

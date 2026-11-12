@@ -2476,11 +2476,23 @@ std::vector<LetterParagraph> letter_paragraphs(const std::string& raw) {
 			break;
 		}
 		case 't':
-		case 'h':
-			p.picture = std::atoi(raw.substr(i + 2, digits_and_underscore(i + 2) - (i + 2)).c_str());
+		case 'h': {
+			const size_t end = digits_and_underscore(i + 2);
+			const std::string number = raw.substr(i + 2, end - (i + 2));
+			p.picture = std::atoi(number.c_str());
 			p.made_picture = code == 'h';
-			i = digits_and_underscore(i + 2) - 1;
+			if (code == 't') {
+				size_t digits = 0;
+				while (digits < number.size() && number[digits] >= '0' && number[digits] <= '9') {
+					++digits;
+				}
+				p.text += kTextPicture;
+				p.text += number.substr(0, digits);
+				p.text += kTextPictureEnd;
+			}
+			i = end - 1;
 			break;
+		}
 		case 'd':
 			++i;  // The drop cap: the letter after it stays.
 			break;

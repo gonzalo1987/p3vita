@@ -122,7 +122,7 @@ an action of the interface; 0x54 and 0x55 go with letters), others may be dead.
 | Group | Codes | Done in p3vita |
 |-|-|-|
 | simulation | 37: the ones the simulation queues (inventory, part B) | all 37 |
-| player | 105: queued by the interface | 53: 0x00..0x0A, 0x0C, 0x0D, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x3B, 0x3F, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x68..0x72, 0x77, 0x8B, 0x8C |
+| player | 105: queued by the interface | 59: 0x00..0x0A, 0x0C, 0x0D, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x30..0x32, 0x39, 0x3B, 0x3F, 0x42, 0x43, 0x4B, 0x4E, 0x58, 0x59, 0x5D, 0x68..0x72, 0x77, 0x8B, 0x8C |
 | battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 12: all but 0x99 (never queued; its function, the chase's battle, is done) and 0xBD (the window) |
 | network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | 8: 0xA7, 0xAA, 0xAB (the new game's player and his names) and the five that do nothing |
 | new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | 8: all but 0xAE, 0xB2 and 0xB6 (no queuer found) |
@@ -185,16 +185,16 @@ feast window): the handler is the same and is done.
 | 0x2D | player | a ship's name, its first 12 characters: {0x2D, 12 characters, u32 ship} (0x53CCE0: the name in the names object, 0x512D40, its index [+0x15E]; the name [+0x160]; `town_tick/ship_operations.cpp`) | shipyard window 0x5FABE0 (rename), 0x46C420 (a new ship's name) | 0x535CAA → 0x53CCE0 |  | yes | read |
 | 0x2E | player | the next 12 characters of a ship's name (0x53CCE0: at the end of the names object's last name, 0x512FC0, or a new name of its index's and them, 0x512B20 and 0x512D40) | shipyard window 0x5FABE0, 0x46C420 | 0x535CAA → 0x53CCE0 |  | yes | read |
 | 0x2F | player | cancel a ship ordered: {0x2F, merchant, town, ship} (0x535CB9 → 0x52B110): his ship in the town's list [+0x81C]; the letter 0x14 «Annulment»; with its work not started, nine tenths of [+0x48] back and the ship deleted (`town_tick/ship_operations.cpp`) | shipyard window 0x5F9B00 | 0x535CB9 → 0x52B110 |  | yes | read |
-| 0x30 | player | feed the poor (0x4FE557) | church 0x5CAAB0 | 0x535CF0 → 0x4FE557 | 2, 896 B |  | book |
-| 0x31 | player | donate to the church's extension (0x4FE420) | church 0x5CB4E0 | 0x535D49 → 0x4FE420 | 2, 407 B |  | book |
-| 0x32 | player | donate to the church (0x4FE2D0) | church 0x5CB280 | 0x535D85 → 0x4FE2D0 | 2, 240 B |  | book |
+| 0x30 | player | feed the poor: five wares from the office then the ships in the town, reputation by their worth with a kind ≥ 10, the town's bit 0x800000 with ≥ 50 (0x4FE557, `core.cpp`) | church 0x5CAAB0 | 0x535CF0 → 0x4FE557 |  | yes | read |
+| 0x31 | player | donate to the church's extension, up to its cost (0x4FE420, `core.cpp`) | church 0x5CB4E0 | 0x535D49 → 0x4FE420 |  | yes | read |
+| 0x32 | player | donate to the church: its [+0x0] up to 12000 · (factor + 1), the reputation (0x4FE2D0, 0x4F8AF0; `core.cpp`) | church 0x5CB280 | 0x535D85 → 0x4FE2D0 |  | yes | read |
 | 0x33 | player | an auction's bid? (an event record [+0x4], 0x6DD748) | guild 0x5BFB20 | 0x535DC1 → 0x53A010 | 1, 160 B |  | guess |
 | 0x34 | player | an auction's bid? (an event record) | guild 0x5BFB20 | 0x535DD0 → 0x53A0B0 | 1, 192 B |  | guess |
 | 0x35 | player | an auction: a new event (0x4D9000, 0x4D8CF0) | guild 0x5BFB20 (run at once) | 0x535DDF → 0x53A170 | 2, 464 B |  | guess |
 | 0x36 | player | an auction of a ship: an event (0x4DA510) | guild 0x5BFB20 | 0x535DEE → 0x4DA510 | 1, 848 B |  | guess |
 | 0x37 | simulation | a merchant pays for a town (0x4F8560; the book: «Join Guild») | 0x4F4A20; guild 0x5BFB20 | 0x535E04 → 0x5303C0, 0x4F8560 |  | yes | read |
 | 0x38 | simulation | a ship auction: event 0x0A (0x535E3B) | 0x4DD400 | 0x535E3B → 0x4D8CF0 |  | yes | read |
-| 0x39 | player | bathe (0x535E7F on the merchant; the book) | bath house 0x5B1410, 0x5B15F0, 0x5B1D80 | 0x535E7F → 0x5303C0 |  |  | book |
+| 0x39 | player | a bath: the merchant's [+0x4], the tick of his last (0x535E7F, `operations.cpp`) | bath house 0x5B1410, 0x5B15F0, 0x5B1D80 | 0x535E7F → 0x5303C0 |  | yes | read |
 | 0x3A | player | an event record's fields (0x53A2C0: 0x4D8CF0, 0x4D8DB0, 0x4D85C0) | 0x419EB0, 0x5EB3C0 | 0x535EAC → 0x53A2C0 | 1, 288 B |  | guess |
 | 0x3B | player | materials for a Hanse road (0x53A3E0, `fn_53a3e0`) | road window 0x5F2A20 | 0x535EBB → 0x53A3E0 |  | yes | read |
 | 0x3C | unused | a building on sale (0x4DAB00) | not found (computed code or dead) | 0x535ECA → 0x4DAB00 |  |  | read |
@@ -203,8 +203,8 @@ feast window): the handler is the same and is done.
 | 0x3F | player | the vote of a human player (0x53AA10) | 0x5E8280 | 0x535F03 → 0x53AA10 |  | yes | read |
 | 0x40 | player | dismiss a militia squad (0x51D410) | town hall 0x5B0510 | 0x535F12 → 0x51D410 |  |  | book |
 | 0x41 | player | form a militia squad (0x51D4C0; the book) | town hall 0x5B0510 | 0x535F45 → 0x51D4C0 |  |  | book |
-| 0x42 | player | a bribe in the bath house that works (0x4F8E30; the book) | bath house 0x5B2480 | 0x535F77 → 0x53AC50 | 2, 288 B |  | book |
-| 0x43 | player | a bribe in the bath house that fails (0x4F8E90; the book) | bath house 0x5B2480 | 0x535F86 → 0x53AD10 | 2, 160 B |  | book |
+| 0x42 | player | a bribe that works: paid, the reputation (0x4F8E30), the councillor's slot [0x6DC + k] (0x53AC50, `operations.cpp`) | bath house 0x5B2480 (the offer ≥ 0x529E20's price) | 0x535F77 → 0x53AC50 |  | yes | read |
+| 0x43 | player | a bribe that fails: the reputation − 2 (0x4F8E90), the slot to the merchant 1 if his or free (0x53AD10, `operations.cpp`) | bath house 0x5B2480 | 0x535F86 → 0x53AD10 |  | yes | read |
 | 0x44 | player | a ship or convoy's load or speed (0x5170F0) | 0x5E7AB0 | 0x535F95 → 0x53AD90 | 2, 464 B |  | guess |
 | 0x45 | player | something of a merchant (0x4F9390) | 0x5E7C80 | 0x535FA4 → 0x5303C0, 0x4F9390 | 1, 48 B |  | guess |
 | 0x46 | simulation | a mayor for a new town (0x535FD6) | event 0x2F; 0x419EB0 | 0x535FD6 → 0x5303C0 |  | yes | read |

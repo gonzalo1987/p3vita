@@ -1,19 +1,25 @@
 #pragma once
 
 // The viewer's text: a font of the game (FontAtlas) put in a texture, with the
-// Vita's buttons and the letters' signs drawn as small pictures among the words.
+// Vita's buttons, the game's signs (the coin, a barrel, a load) and its
+// pictures by number drawn as small pictures among the words.
 
 #include <SDL.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "p3data/font.hpp"
+#include "p3data/game_texts.hpp"
 #include "p3data/image.hpp"
+#include "ui_images.hpp"
 
 // The Vita's buttons in the viewer's texts: a byte that TextRenderer draws as
 // the button's symbol, in its colour (the game's font has none). Macros, to
@@ -29,7 +35,7 @@ using p3::data::FontAtlas;
 using p3::data::Image;
 
 // The bytes TextRenderer draws as a symbol: the buttons above and the signs
-// of the game's letters (letters.hpp: kLetterCoin, kLetterBarrel, kLetterLoad).
+// of the game's texts (game_texts.hpp: kTextCoin, kTextBarrel, kTextLoad).
 inline bool symbol_byte(char c) {
 	return c >= 1 && c <= 7;
 }
@@ -54,62 +60,167 @@ public:
 				SDL_DestroyTexture(t);
 			}
 		}
-	}
-
-	// The width of the text, the symbols included.
-	int measure(const std::string& text) const {
-		int width = 0;
-		size_t start = 0;
-		for (size_t i = 0; i <= text.size(); ++i) {
-			if (i == text.size() || symbol_byte(text[i])) {
-				if (i > start) {
-					width += font_->measure(text.substr(start, i - start));
-				}
-				if (i < text.size()) {
-					width += symbol_width(text[i]);
-				}
-				start = i + 1;
+		for (const auto& [id, picture] : pictures_) {
+			if (picture.texture) {
+				SDL_DestroyTexture(picture.texture);
 			}
 		}
+	}
+
+	// The game's pictures by their TEX number of textures.ini, read from `archive` (the caller keeps it while this
+	// renderer lives; null: none) the first time each is drawn: the signs (5, 6, 7: TEX16014, TEX16030 and TEX16031,
+	// the ones the game's text box draws for \C, \B and \L: 0x42ED9E, 0x462540) and the texts' pictures by number
+	// (\tN_: kTextPicture N kTextPictureEnd). Without them, the signs are drawn by hand and the pictures left out.
+	void set_archive(const p3::data::CprArchive* archive) {
+		archive_ = archive;
+		ini_.clear();
+		ini_read_ = false;
+	}
+
+	// The width of the text, the symbols and pictures included.
+	int measure(const std::string& text) const {
+		int width = 0;
+		walk(text, [&](const std::string& part) { width += font_->measure(part); },
+			[&](char c) { width += symbol_width(c); }, [&](uint32_t id) { width += picture_width(id); });
 		return width;
 	}
 	int line_height() const { return font_->line_height(); }
 
-	// The colour's alpha fades the letters and the buttons' symbols alike (a button that can't be pressed).
+	// The colour's alpha fades the letters, the buttons' symbols and the pictures alike (a button that can't be
+	// pressed).
 	void draw(const std::string& text, int x, int y, SDL_Color color) {
 		SDL_SetTextureColorMod(texture_, color.r, color.g, color.b);
 		SDL_SetTextureAlphaMod(texture_, color.a);
 		alpha_ = color.a;
-		size_t start = 0;
-		for (size_t i = 0; i <= text.size(); ++i) {
-			if (i < text.size() && !symbol_byte(text[i])) {
-				continue;
-			}
-			if (i > start) {
-				const std::string part = text.substr(start, i - start);
+		walk(
+			text,
+			[&](const std::string& part) {
 				for (const FontAtlas::Quad& q : font_->layout(part, x, y)) {
 					const SDL_Rect src = {q.src_x, q.src_y, q.width, q.height};
 					const SDL_Rect dst = {q.dst_x, q.dst_y, q.width, q.height};
 					SDL_RenderCopy(renderer_, texture_, &src, &dst);
 				}
 				x += font_->measure(part);
+			},
+			[&](char c) {
+				draw_symbol(c, x, y);
+				x += symbol_width(c);
+			},
+			[&](uint32_t id) {
+				draw_picture(id, x + 1, y);
+				x += picture_width(id);
+			});
+	}
+
+private:
+	// The text's runs of letters, its symbols and its pictures by number, in order.
+	template <typename Part, typename Symbol, typename Picture>
+	static void walk(const std::string& text, Part part, Symbol symbol, Picture picture) {
+		size_t start = 0;
+		for (size_t i = 0; i <= text.size(); ++i) {
+			const bool end = i == text.size();
+			if (!end && !symbol_byte(text[i]) && text[i] != p3::data::kTextPicture) {
+				continue;
 			}
-			if (i < text.size()) {
-				draw_symbol(text[i], x, y);
-				x += symbol_width(text[i]);
+			if (i > start) {
+				part(text.substr(start, i - start));
+			}
+			if (end) {
+				break;
+			}
+			if (text[i] == p3::data::kTextPicture) {
+				size_t close = text.find(p3::data::kTextPictureEnd, i + 1);
+				if (close == std::string::npos) {
+					close = text.size();
+				}
+				picture(uint32_t(std::strtoul(text.substr(i + 1, close - i - 1).c_str(), nullptr, 10)));
+				i = close;
+			} else {
+				symbol(text[i]);
 			}
 			start = i + 1;
 		}
 	}
 
-private:
-	// A button's symbol is about as wide as the line is high; a letter's sign, narrower.
-	int symbol_width(char c) const { return c <= 4 ? font_->line_height() + 2 : font_->line_height() * 2 / 3 + 2; }
+	struct Picture {
+		SDL_Texture* texture = nullptr;
+		SDL_Rect frame{};  // The texture's frame 0 (OffsetNSize0).
+	};
+
+	// The picture TEX`id` of textures.ini (its TextureFile, its frame 0), loaded the first time; null if it can't be.
+	const Picture* picture(uint32_t id) const {
+		const auto known = pictures_.find(id);
+		if (known != pictures_.end()) {
+			return known->second.texture ? &known->second : nullptr;
+		}
+		Picture& p = pictures_[id];
+		if (!archive_) {
+			return nullptr;
+		}
+		if (!ini_read_) {
+			std::vector<uint8_t> bytes;
+			if (read_cpr_file(*archive_, "scripts/textures.ini", bytes)) {
+				ini_.assign(bytes.begin(), bytes.end());
+			}
+			ini_read_ = true;
+		}
+		const std::string section = "[TEX" + std::to_string(id) + "]";
+		const size_t at = ini_.find(section);
+		const size_t next = at == std::string::npos ? at : ini_.find('[', at + section.size());
+		const size_t key = at == std::string::npos ? at : ini_.find("TextureFile=", at);
+		if (key == std::string::npos || key > next) {
+			return nullptr;
+		}
+		const size_t from = key + 12;
+		const size_t to = ini_.find_first_of("\r\n", from);
+		const std::string file = ini_.substr(from, to == std::string::npos ? std::string::npos : to - from);
+		p3::data::Image image;
+		if (!read_cpr_image(*archive_, file.c_str(), image)) {
+			return nullptr;
+		}
+		p.frame = {0, 0, image.width, image.height};
+		const std::vector<uint8_t> ini(ini_.begin(), ini_.end());
+		read_texture_frames(ini, section.c_str(), &p.frame, 1);
+		p.texture = make_texture(renderer_, image);
+		return p.texture && p.frame.w > 0 && p.frame.h > 0 ? &p : nullptr;
+	}
+
+	// A picture's size in a line: its own, no higher than the line, its width kept in proportion.
+	SDL_Rect picture_size(const Picture& p) const {
+		const int h = std::min(p.frame.h, font_->line_height());
+		return {0, 0, std::max(1, p.frame.w * h / p.frame.h), h};
+	}
+	int picture_width(uint32_t id) const {
+		const Picture* p = picture(id);
+		return p ? picture_size(*p).w + 2 : 0;
+	}
+	void draw_picture(uint32_t id, int x, int y) {
+		const Picture* p = picture(id);
+		if (!p) {
+			return;
+		}
+		const SDL_Rect r = picture_size(*p);
+		const SDL_Rect dst = {x, y + (font_->line_height() - r.h) / 2, r.w, r.h};
+		SDL_SetTextureAlphaMod(p->texture, alpha_);
+		SDL_RenderCopy(renderer_, p->texture, &p->frame, &dst);
+	}
+
+	// The signs' pictures: the coin's, a barrel's and a load's.
+	static uint32_t sign_picture(char c) { return c == 5 ? 16014u : c == 6 ? 16030u : 16031u; }
+
+	// A button's symbol is about as wide as the line is high; a sign, its picture's width (or narrower, by hand).
+	int symbol_width(char c) const {
+		if (c <= 4) {
+			return font_->line_height() + 2;
+		}
+		const int w = picture_width(sign_picture(c));
+		return w > 0 ? w : font_->line_height() * 2 / 3 + 2;
+	}
 
 	// The symbol in a square about the text's height: the buttons in the
 	// PlayStation's colours, smoothed (button_texture), three quarters of the
-	// line high; the letters' coin (a gold disc), barrel and load (a sack),
-	// small and filled.
+	// line high; the signs, the game's pictures or, without them, a gold
+	// disc, a barrel and a sack drawn small and filled.
 	void draw_symbol(char c, int x, int y) {
 		const int h = font_->line_height();
 		if (c <= 4) {
@@ -119,6 +230,10 @@ private:
 				SDL_SetTextureAlphaMod(t, alpha_);
 				SDL_RenderCopy(renderer_, t, nullptr, &dst);
 			}
+			return;
+		}
+		if (picture(sign_picture(c))) {
+			draw_picture(sign_picture(c), x + 1, y);
 			return;
 		}
 		const int size = h * 3 / 5;
@@ -234,6 +349,10 @@ private:
 	std::unique_ptr<FontAtlas> font_;
 	SDL_Texture* texture_ = nullptr;
 	std::array<SDL_Texture*, 4> buttons_{};  // The buttons' symbols (button_texture).
+	const p3::data::CprArchive* archive_ = nullptr;  // set_archive
+	mutable std::string ini_;  // textures.ini, read the first time a picture is drawn.
+	mutable bool ini_read_ = false;
+	mutable std::unordered_map<uint32_t, Picture> pictures_;  // By TEX number; a null texture: it can't be loaded.
 	Uint8 alpha_ = 255;  // The alpha of the text being drawn.
 };
 

@@ -4069,6 +4069,156 @@ def suitor_answer(o):
     return during
 
 
+def church_ops(o):
+    """The church's operations, run with the executor on the town of the player's first office: 0x32 (a donation,
+    0x4FE2D0) as it is, past the church's cap ([+0x0] near it), with the player short of money and for a town past the
+    towns (one past the merchants isn't checked by the game: it writes past them); 0x31 (for the extension, 0x4FE420) at the levels 0, 1 and 2 (100 days
+    after the last), cut at the cost, short of money, within the 100 days, with the money already gathered and at the
+    last level; 0x30 (feeding the poor, 0x4FE557) with everything in his office (kind 50: the town's bit), with part
+    of it there in odd units and the rest from his first ship put in that town (kind 10), with a kind below 10, in a
+    town without his office (a ship elsewhere skipped), for a merchant past."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    pa = o.merchant(player)
+    town = office_town(o, player)
+    office = o.office(o.u16(pa + 0xC))
+    other = next(t for t in range(towns) if t not in {o.u8(o.office(f) + 0x2C6) for f in rt.merchant_offices(o, player)})
+    ship = o.u16(pa + 0xE)
+    church = o.town(town) + 0x794
+    factor = o.u8(WORLD + 0x8C)
+    print(f'the player {player}: office in {town}, none in {other}; ship {ship}; the church factor {factor}, '
+          f'level {o.u8(church + 0xF)}, money {o.s32(pa)}')
+    food = (0, 3, 2, 1, 7)
+
+    def during(o):
+        def op(code, *words, fmt=None):
+            operation(o, code, *words, fmt=fmt)
+            print(f'{code:#x}: money {o.s32(pa)}, church {o.s32(church)} {o.s32(church + 4)} {o.u32(church + 8)} '
+                  f'level {o.u8(church + 0xF)}, the town\'s [+0x2C8] {o.u32(o.town(town) + 0x2C8):#x}')
+        money = o.s32(pa)
+        w32(o, church, 0)
+        op(0x32, player, town, 5000)
+        w32(o, church, 12000 * (factor + 1) - 100)
+        op(0x32, player, town, 5000)
+        w32(o, pa, 3000)
+        op(0x32, player, town, 5000)
+        w32(o, pa, money)
+        op(0x32, player, towns, 5000)
+        for level in (0, 1, 2):
+            w8(o, church + 0xF, level)
+            w32(o, church + 4, 0)
+            w32(o, church + 8, 200)
+            op(0x31, player, town, 4000)
+        w32(o, church + 4, factor * 20000 + 60000 - 1000)
+        op(0x31, player, town, 4000)
+        w32(o, church + 4, 0)
+        w32(o, pa, 2000)
+        op(0x31, player, town, 4000)
+        w32(o, pa, money)
+        w32(o, church + 8, 100)
+        op(0x31, player, town, 4000)
+        w32(o, church + 8, 200)
+        w32(o, church + 4, factor * 20000 + 60000)
+        op(0x31, player, town, 4000)
+        w8(o, church + 0xF, 3)
+        op(0x31, player, town, 4000)
+        op(0x31, player, towns, 4000)
+        w8(o, church + 0xF, 0)
+
+        def stock(place, units):
+            for w, n in zip(food, units):
+                w32(o, place + 4 * w, n)
+        stock(office + 4, (20000, 2000, 30000, 4000, 1000))
+        op(0x30, player, town, 50, 0, 2, 3, 5, 1, 2, fmt='<I4B5H')
+        sa = o.ship(ship)
+        w8(o, sa + 0x39, town)
+        stock(office + 4, (2500, 300, 0, 0, 400))
+        stock(sa + 0x54, (10000, 1000, 6000, 2000, 2000))
+        op(0x30, player, town, 10, 0, 2, 3, 1, 1, 2, fmt='<I4B5H')
+        stock(office + 4, (20000, 2000, 30000, 4000, 1000))
+        op(0x30, player, town, 5, 0, 1, 1, 1, 1, 1, fmt='<I4B5H')
+        w8(o, sa + 0x39, (town + 1) % towns if (town + 1) % towns != other else (town + 2) % towns)
+        op(0x30, player, other, 20, 0, 1, 1, 1, 1, 1, fmt='<I4B5H')
+        op(0x30, merchants, town, 20, 0, 1, 1, 1, 1, 1, fmt='<I4B5H')
+        op(0x30, player, towns, 20, 0, 1, 1, 1, 1, 1, fmt='<I4B5H')
+    return during
+
+
+def building_windows(o):
+    """What the church's and the bath house's windows show, the game's functions called directly
+    (building_windows.hpp): 0x4FE360 (how well the poor are fed) with the church's [+0x0] at 0, just under and at
+    half a step, and far past 5 steps; 0x4FE390 (the extension) at the levels 0..3, with the money gathered, within
+    and past 100 days; 0x529E20 (a councillor's price, rolling rand()) for the player at each rank 0..7 and 9 (past
+    the table: his own number), on a slot of nobody's and of a merchant's, for a merchant past and a slot past 3."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    pa = o.merchant(player)
+    t = office_town(o, player)
+    ta = o.town(t)
+    church = ta + 0x794
+    unit = (o.u8(WORLD + 0x8C) + 1) * 2000
+    rank = pa + 0x39C + o.u8(pa + 0x19)
+    print(f'the player {player}, town {t}; a step of the poor {unit}')
+
+    def during(o):
+        for fed in (0, unit // 2 - 1, unit // 2, unit * 9):
+            w32(o, church, fed)
+            direct(o, 0x4FE360, [], ecx=church)
+        w32(o, church + 4, 0)
+        for level, days in ((0, 200), (1, 200), (2, 50), (3, 200)):
+            w8(o, church + 0xF, level)
+            w32(o, church + 8, days)
+            direct(o, 0x4FE390, [], ecx=church)
+        w8(o, church + 0xF, 1)
+        w32(o, church + 4, 10 ** 6)
+        direct(o, 0x4FE390, [], ecx=church)
+        w8(o, ta + 0x6DC, 0xFF)
+        w8(o, ta + 0x6DD, 0 if player else 1)
+        for r in (0, 1, 2, 3, 4, 5, 6, 7, 9):
+            w8(o, rank, r)
+            for slot in (0, 1):
+                print(f'rank {r}, slot {slot}: {direct(o, 0x529E20, [player, slot], ecx=ta)}')
+        direct(o, 0x529E20, [merchants, 0], ecx=ta)
+        direct(o, 0x529E20, [player, 4], ecx=ta)
+    return during
+
+
+def bath_ops(o):
+    """The bath house's operations, run with the executor: 0x39 (a bath: [+0x4]) for the player and a merchant past;
+    0x42 (a bribe that works, 0x53AC50) on a slot of another merchant's (it becomes his), on his own slot (kept), with
+    a bribe big enough for the gain's cap 3 (0x4F8E30), a town past and a merchant past; 0x43 (one that fails,
+    0x53AD10) on his own slot and a free one (both become 1's), another merchant's (kept), a slot past 3 (only the
+    reputation) and a town past."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    t = office_town(o, player)
+    slots = o.town(t) + 0x6DC
+    other = 0 if player != 0 else 1
+    print(f'the player {player}, town {t}: the slots {bytes(o.uc.mem_read(slots, 4)).hex()}')
+
+    def during(o):
+        def op(code, *words):
+            operation(o, code, *words)
+            print(f'{code:#x}: [+0x4] {o.u32(o.merchant(player) + 4):#x}, money {o.s32(o.merchant(player))}, '
+                  f'the slots {bytes(o.uc.mem_read(slots, 4)).hex()}')
+        op(0x39, player, 0x12345678)
+        op(0x39, merchants, 1)
+        w8(o, slots, other)
+        op(0x42, 0, player, 2000, t)
+        op(0x42, 0, player, 2000, t)
+        op(0x42, 1, player, 100000, t)
+        op(0x42, 2, player, 2000, towns)
+        op(0x42, 2, merchants, 2000, t)
+        w8(o, slots + 2, 0xFF)
+        w8(o, slots + 3, other)
+        op(0x43, 0, player, 0, t)
+        op(0x43, 2, player, 0, t)
+        op(0x43, 3, player, 0, t)
+        op(0x43, 5, player, 0, t)
+        op(0x43, 0, player, 0, towns)
+    return during
+
+
 def letter_answers(o):
     """The letter window's buttons (0x4D6C90, the game's own code run directly in the emulator: the operation it
     queues and the rand() it rolls) against the viewer's (p3data/letter_window.hpp, through player_ops
@@ -11932,6 +12082,18 @@ SCENARIOS = {
     'suitor_answer': Scenario(suitor_answer, [0x535760, 0x4D85C0], 0, [
         '@53eb38', '@53eb5e', '@53eb90', '@53ec00', '@53eafd>53ec06', '@53ebfe>53ec06', '@53ebdb>53ec06', '@4e8733',
         '@4e8762', '@4e86c1>4e87d4']),
+    'church_ops': Scenario(church_ops, [0x535760], 0, [
+        '@4fe2f4', '@4fe32f', '@4fe349', '@4fe45c', '@4fe46a', '@4fe478', '@4fe4e7', '@4fe527', '@4fe4ab', '@4fe4bb',
+        '@4fe4c9', '@4fe653', '@4fe675', '@4fe630', '@4fe6de>4fe806', '@4fe6f0', '@4fe73d', '@4fe737>4fe7fe',
+        '@4fe797', '@4fe80f>4fe864', '@4fe846', '@4fe85a', '@535d17>537025', '@535d54>537025',
+        '@535d90>537025']),
+    'building_windows': Scenario(building_windows, [0x4FE360, 0x4FE390, 0x529E20], 0, [
+        '@4fe389', '@4fe399', '@4fe3e1', '@4fe3cd', '@4fe3bc', '@4fe403', '@4fe407', '@529e6e', '@529e75', '@529e7c',
+        '@529e83', '@529e8a', '@529e91', '@529e98', '@529e9f', '@529e65>529ea4', '@529ee3', '@529ee0>529eee',
+        '@529e2f>529ee9', '@529e3c>529ee9']),
+    'bath_ops': Scenario(bath_ops, [0x535760], 0, [
+        '@535ea4', '@535e8d>537025', '@53acfb', '@53acdf>53ad02', '@4f8e59', '@53ac5e>53ad02', '@53ac72>53ad02',
+        '@53ad85', '@53ad48>53ad88', '@53ad83>53ad88', '@53ad1d>53ad88']),
     'letter_answers': Scenario(letter_answers, [0x535760], 0, [
         '@4d6ce8', '@4d6d14', '@4d6d56', '@4d6dfc', '@4d6ed5', '@4d6f14', '@4d6ce2>4d6f41', '@4d6cc7>4d6f41',
         '@4d6cac>4d6f41']),

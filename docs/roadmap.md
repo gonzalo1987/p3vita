@@ -34,12 +34,12 @@ Cómo leerla:
   del juego; el mapa del mar; el mercado, la taberna, el astillero y el muelle, la oficina y el prestamista; construir
   y derribar tocando la ciudad; el menú del barco, con las rutas comerciales; el buzón; las estadísticas; el panel de la
   Hansa; las batallas que dirige el jugador; guardar y cargar; las opciones (idioma, corregir los fallos del juego).
-- **Lo último** (12-11-2026), del encargo `ENCARGO_BUZON_ACCIONES.md`: la reparación de convoyes en el astillero y los
-  botones de las cartas, en el motor y en el visor: la boda (el pretendiente y la propuesta), la petición del príncipe
-  en un asedio y el embargo de un préstamo que no se devuelve.
-- **Siguiente**: el resto del encargo (apartado 1), en el orden que eligió el usuario: la iglesia y el baño; las
-  subastas, la oficina y su administrador y el barco; la taberna y los eventos; la milicia, los asedios y el resto del
-  ayuntamiento.
+- **Lo último** (12-11-2026), del encargo `ENCARGO_BUZON_ACCIONES.md`: la reparación de convoyes en el astillero, los
+  botones de las cartas (la boda, la petición del príncipe en un asedio, el embargo de un préstamo que no se devuelve),
+  la iglesia (donativos, la ampliación, dar de comer a los pobres) y el baño (bañarse, sobornar a los concejales), en
+  el motor y en el visor; y los iconos e imágenes de los textos del juego en todas las pantallas.
+- **Siguiente**: el resto del encargo (apartado 1), en el orden que eligió el usuario: las subastas, la oficina y su
+  administrador y el barco; la taberna y los eventos; la milicia, los asedios y el resto del ayuntamiento.
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
   (apartado 6).
@@ -54,9 +54,9 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | La simulación sola (sin el jugador) | del código del juego al que llega, el 84 % reescrito con su nombre y otro 12 % hecho sin él (cargar y guardar partidas, la navegación) o saltado a propósito (medida abajo) | el 4 % sin nada son los manejadores de los tipos de evento que crean las acciones del jugador; además, los estados raros del barco y unas ramas sueltas (apartado 2) |
 | El intérprete de misiones (aparte) | 18 % | casi entero (apartado 3) |
 | Tipos de evento (58) | 47 | 11: 6 los crean acciones del jugador que faltan, 1 el intérprete de misiones, 1 la partida en red y 3 nadie |
-| Operaciones (193 códigos) | 118: las 37 de la simulación, 53 de las 105 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan y 8 de las 15 de la red | **52 del jugador** (apartado 1; 4 de ellas, 0x54, 0x55, 0x74 y 0x76, van con el intérprete de misiones), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 15, sin uso: 6 no hacen nada y a 9 no se les ha encontrado quien las encole (una, la 0x8F, manda dos cartas del asedio) |
+| Operaciones (193 códigos) | 124: las 37 de la simulación, 59 de las 105 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan y 8 de las 15 de la red | **46 del jugador** (apartado 1; 4 de ellas, 0x54, 0x55, 0x74 y 0x76, van con el intérprete de misiones), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 15, sin uso: 6 no hacen nada y a 9 no se les ha encontrado quien las encole (una, la 0x8F, manda dos cartas del asedio) |
 | Cartas (las 154 llamadas del juego que mandan una) | 117 | 37: 9 de operaciones del jugador, 13 de los eventos que crean, 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
-| Edificios con vista propia en el juego (12) | 5 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista), todas provisionales: paneles planos | 7 sin ventana (ayuntamiento, gremio, iglesia, baño, herrería, granero y puerta de la ciudad) y rehacer las 5 con la vista del juego (apartado 4) |
+| Edificios con vista propia en el juego (12) | 7 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño), todas provisionales: paneles planos | 5 sin ventana (ayuntamiento, gremio, herrería, granero y puerta de la ciudad) y rehacer las 7 con la vista del juego (apartado 4) |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
@@ -116,9 +116,12 @@ enteros antes de reescribirlos):
   embargo (0x77, con la carta 0x83 y su texto). Queda de ellos: la **0x75** (contestar las ofertas 0x1E/0x1F, cuyos
   botones y bytes ya están), que va con las ofertas (abajo, la oficina de otro comerciante); y la **0x74** (los
   botones de las cartas de las misiones), con el intérprete de misiones (apartado 3).
-- [ ] **La iglesia y los pobres**: 0x30 dar de comer a los pobres (0x4FE557), 0x31 donar para la ampliación de la
-  iglesia (0x4FE420), 0x32 donar a la iglesia (0x4FE2D0).
-- [ ] **El baño**: 0x39 bañarse (0x535E7F), 0x42 y 0x43 un soborno que sale bien o mal (0x4F8E30, 0x4F8E90).
+- [x] **La iglesia y los pobres** (12-11-2026; `core.cpp`, las reglas de su ventana en `building_windows.cpp`): 0x30
+  dar de comer a los pobres (0x4FE557), 0x31 donar para la ampliación (0x4FE420), 0x32 donar a la iglesia (0x4FE2D0);
+  en el visor, la iglesia (.let 0x04) con sus tres páginas.
+- [x] **El baño** (12-11-2026; `operations.cpp`, `building_windows.cpp`): 0x39 bañarse (el tick del último baño), 0x42
+  y 0x43 un soborno que sale bien o mal según el precio del concejal (0x529E20, con `rand()`); en el visor, el baño
+  (.let 0x09) con sus dos páginas.
 - [ ] **Las subastas** (el gremio): 0x33 y 0x34 pujas (un registro de evento), 0x35 una subasta nueva (0x4D9000;
   evento 0x2D), 0x36 la subasta de un barco (0x4DA510).
 - [ ] **El ayuntamiento** (.let 0x03, la ventana *0x6E5500): **los pedidos**, 0x3D (aceptar uno de los siete
@@ -236,8 +239,8 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   y `Bad/`, la herrería `schmied.jpg`, el granero `Scheune.aim` y `Scheune/`, la puerta de la ciudad `Stadttor.aim` y
   `stadttor/`; los rostros en `images/Gesichter/`. Rehacer cada ventana con su vista a medida que se hagan las acciones
   de cada edificio (lo que listan y mandan, en `player_actions.cpp`, no cambia).
-- [ ] **Los edificios que aún no tienen ventana**: el ayuntamiento, el gremio, la iglesia y el baño (con sus acciones,
-  apartado 1), la puerta de la ciudad (parece el transporte por tierra, apartado 1), la herrería y el granero (qué
+- [ ] **Los edificios que aún no tienen ventana**: el ayuntamiento y el gremio (con sus acciones, apartado 1; la
+  iglesia y el baño ya la tienen, 12-11-2026), la puerta de la ciudad (parece el transporte por tierra, apartado 1), la herrería y el granero (qué
   hacen, por leer en el código). Se añaden a `kPlaces` de `src/app/main.cpp` por su tipo de
   `.let`.
 - [ ] **El panel de la Hansa** (Cuadrado en una ciudad) es una ventana propia del visor (lo que lista y encola sí es
@@ -262,6 +265,14 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   - [ ] Coste en la Vita: cada redibujado rehace la ciudad entera (2 ms en el PC más la lista de sprites); si da tirones
     en avance rápido, redibujar solo las celdas que cambian. Y quitar `SavedTown::drawn_lists` y `SavedTown::fixed`, que
     ya no se usan para dibujar.
+- [x] **Los iconos e imágenes de los textos del juego** (12-11-2026, lo vio el usuario en la carta del embargo): la
+  moneda, el barril y el fardo (`\C`, `\B`, `\L`) y las imágenes por número (`\tN_`: el adorno de la crónica, los
+  iconos del barco, las balas de las vistas de los edificios, los de las votaciones...) se dibujan con los gráficos
+  del juego (`textures.ini`, cargados la primera vez) en todas las pantallas, no solo en las cartas; antes, fuera de
+  ellas se perdían y en ellas eran dibujos a mano.
+- [ ] **Las capitulares de las cartas** (`\d` y una mayúscula: la primera letra adornada, 0x462540 con el juego de
+  imágenes *0x6CC3D4 y `DecoLettersCol` de `parchment.ini`): hoy sale la letra normal. Leer de dónde salen las letras
+  adornadas y dibujarlas.
 - [ ] **Los gráficos**: decidir la transparencia del motor (magenta, alfa 0 de los `_TP`, sombras con alfa 100); subir
   los DXT3 a la Vita como texturas BC2 sin descomprimir.
 - [ ] **Detalles del mapa del mar**: los nombres de las ciudades se ven blandos (stb_truetype sin ajuste a los píxeles,
@@ -401,13 +412,14 @@ las estadísticas `.pst`.
 - **el buzón** ([formats/mail.md](formats/mail.md)): mandar y guardar las cartas como el juego (117 de las 154
   llamadas), el texto de cada carta (el compositor 0x47F3B0) y la crónica (0x47DD40) en los dos idiomas, las líneas de
   aviso (0x548CA0), leer, borrar y los ajustes (0x6E, 0x6F, 0x70, 0x71), y las dos cartas con imagen;
-- **las acciones del jugador** (53 de las 105 operaciones): comprar y vender, la tripulación y el capitán, reparar, la
+- **las acciones del jugador** (59 de las 105 operaciones): comprar y vender, la tripulación y el capitán, reparar, la
   oficina, el astillero (encargar, cancelar, mejorar, cambiar el nombre), los convoyes, los préstamos y las acciones
   de empresa, construir, derribar, las calles y subastar un edificio, hacerse pirata, los encargos de la Hansa, las
   rutas comerciales (0x68..0x6D) y sus ficheros `.rou`, los botones de las cartas (la boda, la petición del príncipe
-  en un asedio y el embargo de un préstamo que no se devuelve: 0x72 con el evento 0x17, 0x8B, 0x8C y 0x77); y las
+  en un asedio y el embargo de un préstamo que no se devuelve: 0x72 con el evento 0x17, 0x8B, 0x8C y 0x77), la iglesia
+  (0x30..0x32) y el baño (0x39, 0x42, 0x43); y las
   reglas de las ventanas que las encolan (`player_actions.cpp`, `statistics_window.cpp`, `trade_route_window.cpp`,
-  `new_game.cpp`, `letter_window.cpp`);
+  `new_game.cpp`, `letter_window.cpp`, `building_windows.cpp`);
 - **la partida nueva** (`new_game.cpp`; notas en `re/emu/sesion24/new_game_notes.md`): el mapa, 0x544E50 y sus
   operaciones, los 70 días de antes de jugar, el jugador y sus ajustes: el `.pat` que escribe p3vita es igual byte a
   byte al del juego, también con otros años, otros jugadores y mapas propios;
@@ -419,7 +431,8 @@ la pantalla de inicio (el libro del menú principal) y la ventana «Configuraci�
 estado actual, los kontors y los iconos de suceso; el panel lateral del juego (minimapa, iconos, botones y lista de
 barcos, el menú del barco con sus seis páginas y la ruta comercial, los mensajes, construir con la colocación táctil,
 las estadísticas enteras, la barra de arriba con el hombre y la casa); el mapa del mar con su panel; el mercado en sus
-modos (barco, oficina, convoy, armas); la taberna, el astillero y el muelle, la oficina y el prestamista; el buzón y la
+modos (barco, oficina, convoy, armas); la taberna, el astillero y el muelle, la oficina, el prestamista, la iglesia y
+el baño; el buzón (con los botones de las cartas) y la
 crónica con el aviso de carta nueva y las líneas de aviso; el panel de la Hansa; las batallas en pantalla (la
 pregunta, la batalla en el mar, en una ciudad y en una guarida, con su panel y sus órdenes táctiles); guardar y cargar
 en 8 ranuras; las opciones (idioma español o inglés, corregir los fallos del juego). Las cargas en la Vita, más ligeras
@@ -517,6 +530,12 @@ ser a propósito. El detalle, en el comentario del código y en [oracle.md](orac
 construir (0x47B8C0) acepta una casa de pescador en el agua de la columna 1 y el juego escribe en la columna −1 (en
 Windows, el montón antes de la rejilla). Las marcas de dónde cabe (0x4FD0D0, 0x4FD4A0, 0x5241E0) también escriben fuera
 cerca de los bordes, y 0x5241E0 guarda en la pila sitio para 24. p3vita solo escribe dentro, con el ajuste y sin él.
+
+**La iglesia y el baño** (12-11-2026):
+- Los dos de los sobornos del baño (0x42, 0x43): el usuario decidió dejarlos como el original (abajo, «No se
+  corrigen»).
+- La ventana de dar de comer a los pobres valora su quinta fila como sal (la mercancía 4) aunque se reparte vino (la
+  7), y con ese valor calcula el «tipo» que da la reputación (0x5CAF83; parece).
 
 **Del astillero y las cartas** (12-11-2026):
 - La reparación de un convoy cancelada (las órdenes 1 de su guía) deja todos sus barcos con el casco entero aunque el
@@ -631,6 +650,10 @@ juego se puede pulsar (apartado 4, «Mirar en el juego original»).
 
 ### No se corrigen
 
+- **Los sobornos del baño** (12-11-2026; parecen fallos): el que sale bien (0x42, 0x53AC50) quería no dar más de dos
+  de los cuatro concejales de una ciudad al mismo comerciante, pero lee cuatro veces el mismo hueco y nunca limita; el
+  que sale mal (0x43, 0x53AD10) pasa el concejal, si era del comerciante o de nadie, al comerciante número 1 (un hueco
+  libre sería 0xFF). Decisión del usuario (12-11-2026): dejarlos como el original, porque cambian la partida.
 - **Las fiestas de la IA no ocurren nunca** (0x5316E0; seguro por el código): la ciudad de la próxima fiesta ([+0x88]
   del mundo) empieza a 0xFF (el constructor 0x52F520) y solo la cambia la propia fiesta. Decisión del usuario
   (03-11-2026): no se corrige, ni con el ajuste, porque cambiaría el equilibrio; podría ser una opción aparte. (Una

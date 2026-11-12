@@ -1576,3 +1576,7 @@
 	{0x006B1BD0, 0x006B24E0},
 	{0x806C36D4, 0x806C3D60},
 	{0x806C36E0, 0x806C3D6C},
+	// The bath house's reaction to a bath by the days since the last (0x5B1FC5): within 6 days, within 21, longer.
+	{0x006A2A48, 0x006A29D4},
+	{0x006A2A44, 0x006A29D0},
+	{0x006A2A40, 0x006A29CC},

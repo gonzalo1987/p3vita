@@ -186,15 +186,19 @@ operation 0xBC), and 0x526BB9. The interface: 0x4135C0,
   string of the letter's buffer [+0xC]); unread rows in another colour
   (black, the read ones brown); a type from 0x86 on is not drawn.
 - **The text box** (0x462540, the codes of every text the game lays out):
-  `\l`, `
-`, `\c` set the alignment (1 left, 2 right, 3 centre) from there
-  on, kept across lines; `N_` a font (atoi); `\d` followed by a capital
+  `\l`, `\r`, `\c` set the alignment (1 left, 2 right, 3 centre) from there
+  on, kept across lines; `\fN_` a font (atoi); `\d` followed by a capital
   letter draws that letter as a drop cap (from the pictures 0x6CC3D4) and
-  indents the first lines; `	`, `\C`, `\L`, `\B`, `\h` are pictures in the
-  line (`	N_`, `\hN_` by number; `\C` the coin, `\B` a barrel, `\L` a
-  load); `_` marks where a word may be split (a '-' at the end of the line,
-  otherwise taken out). p3vita: `letter_paragraphs` (`letters.hpp`) and the
-  viewer's `wrap_letter`.
+  indents the first lines; `\t`, `\C`, `\L`, `\B`, `\h` are pictures in the
+  line (`\tN_` by its TEX number of textures.ini, `\hN_` a texture made for
+  the letter; `\C` the coin, `\B` a barrel, `\L` a load: the pictures
+  *0x6CC37C, *0x6CC380, *0x6CC384, which 0x42ED9E loads from TEX16014,
+  TEX16030 and TEX16031); `_` marks where a word may be split (a '-' at the
+  end of the line, otherwise taken out). p3vita: `letter_paragraphs`
+  (`letters.hpp`) and `clean_game_text` (`game_texts.hpp`: the signs and the
+  pictures by number as bytes, 2026-11-12), the viewer's `wrap_letter` and
+  its `TextRenderer`, which draws them with the game's pictures; the drop
+  caps are still plain letters.
 - **A letter** (0x47F3B0, called from 0x47CD46, 0x47DD29, 0x486AD0): a
   switch on the type at 0x47F5EA (table 0x48664C, types 0..0x85; 0x4865E5
   is the default, no text) composes the body from text pointers of the exe

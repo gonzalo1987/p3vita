@@ -103,7 +103,9 @@ BallFrames ball_frames(NewGameControl c) {
 std::unique_ptr<TextRenderer> load_font(SDL_Renderer* renderer, const CprArchive& archive, const char* face,
 	float height) {
 	if (auto font = FontAtlas::load(archive, face, height)) {
-		return std::make_unique<TextRenderer>(renderer, std::move(font));
+		auto text = std::make_unique<TextRenderer>(renderer, std::move(font));
+		text->set_archive(&archive);  // The window goes with the archive (main.cpp resets it first).
+		return text;
 	}
 	return nullptr;
 }

@@ -94,14 +94,14 @@ std::optional<std::string> compose_ticker(const SaveGame& save, const GameTexts&
 // (at each '\n'; a 0 byte ends the text) with the alignment set by the codes
 // \l (left), \r (right) and \c (centre), which stays for the next ones, in
 // UTF-8 without the other codes: \fN_ (a font: kept in `font`), \d (the next
-// letter as a drop cap: the letter stays), \tN_ and \hN_ (pictures: out, their
-// number in `picture`), \C,
-// \B and \L (the coin's, a barrel's and a load's signs: the bytes below), and
+// letter as a drop cap: the letter stays), \tN_ (a picture by its number: in the text as kTextPicture N
+// kTextPictureEnd, game_texts.hpp, and its number in `picture`), \hN_ (a picture made for the letter: out, its number
+// in `picture`), \C, \B and \L (the coin's, a barrel's and a load's signs: the bytes below), and
 // '_' (where a word may be split with a hyphen: kLetterSoftHyphen). The
 // carriage returns of the mission letters are dropped.
-constexpr char kLetterCoin = '\x05';
-constexpr char kLetterBarrel = '\x06';
-constexpr char kLetterLoad = '\x07';
+constexpr char kLetterCoin = kTextCoin;
+constexpr char kLetterBarrel = kTextBarrel;
+constexpr char kLetterLoad = kTextLoad;
 constexpr char kLetterSoftHyphen = '\x1F';
 struct LetterParagraph {
 	enum Align : uint8_t { Left = 1, Right = 2, Center = 3 };

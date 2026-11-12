@@ -32,6 +32,7 @@
 #include "p3data/image.hpp"
 #include "p3data/letter_picture.hpp"
 #include "p3data/letters.hpp"
+#include "p3data/building_windows.hpp"
 #include "p3data/letter_window.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/navigation.hpp"
@@ -258,7 +259,7 @@ bool rear_touch(SDL_TouchID id) {
 // the tavern (0x24, «kneipe», 0x02), the shipyard (0x2E, «werft», 0x01) and
 // the repair dock (0x01, «repwerft», 0x1B) (savegame.md §8.1); their names,
 // the game's (0x6A57C8 + 4 · the building's type).
-enum class Place { None, MarketHall, Tavern, Shipyard, Ship, Office, Lender, Building };
+enum class Place { None, MarketHall, Tavern, Shipyard, Ship, Office, Lender, Building, Church, BathHouse };
 
 struct PlaceInfo {
 	uint32_t let_type;
@@ -266,6 +267,7 @@ struct PlaceInfo {
 	GameText name;
 	const char* spanish;
 	const char* english;
+	int building = -1;  // Its name the game's of this building type (0x6A57C8 + 4 · type), without a GameText.
 };
 
 constexpr PlaceInfo kPlaces[] = {
@@ -278,6 +280,9 @@ constexpr PlaceInfo kPlaces[] = {
 	{0x2C, Place::Office, GameText::Office, "Oficina", "Office"},
 	// The moneylender (building type 0x25, «darlehensgeber»): loans and company shares.
 	{0x05, Place::Lender, GameText::BuildingLender, "Prestamista", "Lender's House"},
+	// The church (building type 0x1F, «kircheR*») and the bath house (0x26, «badhaus»): building_windows.hpp.
+	{0x04, Place::Church, GameText::Count, "Iglesia", "Church", 0x1F},
+	{0x09, Place::BathHouse, GameText::Count, "Baño", "Bath House", 0x26},
 };
 
 const PlaceInfo* place_of(uint32_t let_type) {
@@ -2325,6 +2330,12 @@ struct PlaceUi {
 	int lender_kind = 2;
 	// The player's own building touched in the town (its record): demolish or auction it.
 	int record = -1;
+	// The church's feeding page: each row's amount (the row being changed is `amount`).
+	std::array<int, 5> feed{};
+	int feed_row = -1;
+	// The bath house: a bath taken (its 0x39 goes once the player goes on) and the game's reaction to it.
+	bool bathed = false;
+	int bath_reaction = 0;
 };
 
 constexpr int kShipyardPages = 5;
@@ -2335,6 +2346,12 @@ constexpr int kLenderPages = 6;
 int place_pages(const PlaceUi& ui) {
 	if (ui.open == Place::Shipyard && ui.let_type == 0x01) {
 		return kShipyardPages;
+	}
+	if (ui.open == Place::Church) {
+		return 3;
+	}
+	if (ui.open == Place::BathHouse) {
+		return 2;
 	}
 	return ui.open == Place::Lender ? kLenderPages : 0;
 }
@@ -2403,8 +2420,14 @@ std::string capitalized(std::string s) {
 	return s;
 }
 
+std::string building_name(int type);
+
 std::string place_name(int let_type) {
 	const PlaceInfo* p = place_of(uint32_t(let_type));
+	if (p && p->building >= 0) {
+		const std::string name = building_name(p->building);
+		return name.empty() ? tr(p->spanish, p->english) : name;
+	}
 	return p ? game_text(p->name, tr(p->spanish, p->english)) : "";
 }
 
@@ -2977,6 +3000,168 @@ void lender_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const P
 std::string building_name(int type);
 std::string exe_text(uint32_t english, const char* spanish, const char* fallback);
 
+std::string building_name(int type);
+
+// The church (.let 0x04; building_windows.hpp): its pages (L/R) 0 a donation (0x32), 1 for its extension (0x31), 2
+// feeding the poor (0x30, a row per ware with its own amount). The donations go by 500 (the game's step, 0x5CB441).
+constexpr int kChurchPages = 3;
+constexpr int kDonationStep = 500;
+
+void church_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	static const char* const kPages[kChurchPages][2] = {{"Donativo", "Donation"}, {"Ampliación", "Extension"},
+		{"Dar de comer a los pobres", "Feed the poor"}};
+	ui.page = ((ui.page % kChurchPages) + kChurchPages) % kChurchPages;
+	v.title = place_name(ui.let_type) + " - " + tr(kPages[ui.page][0], kPages[ui.page][1]) + "   (L/R)";
+	const int32_t money = save.merchants[size_t(save.player)].money();
+	const int fed = church_feeding_level(save, uint32_t(town));
+	static const char* const kFed[6][2] = {{"Los pobres pasan hambre.", "The poor are starving."},
+		{"Los pobres apenas comen.", "The poor hardly eat."}, {"Los pobres comen poco.", "The poor eat little."},
+		{"Los pobres comen lo justo.", "The poor eat just enough."}, {"Los pobres comen bien.", "The poor eat well."},
+		{"Los pobres comen de sobra.", "The poor eat plenty."}};
+	switch (ui.page) {
+	case 0:
+	case 1: {
+		const bool extension = ui.page == 1;
+		v.max_amount = std::max(0, std::min(money, 999999) / kDonationStep);
+		v.amount_label = format_money(int64_t(ui.amount) * kDonationStep);
+		bool can = true;
+		if (extension) {
+			const int state = church_extension_state(save, uint32_t(town));
+			const int32_t cost = church_extension_cost(save, uint32_t(town));
+			const int32_t gathered = save.towns[size_t(town)].memory.s32(0x794 + 4);
+			v.lines.push_back({tr("Nivel de la iglesia: ", "The church's level: ") +
+					std::to_string(save.towns[size_t(town)].memory.u8(0x794 + 0xF)), kTextColor});
+			if (state == 2) {
+				v.lines.push_back({tr("La iglesia no se puede ampliar más.", "The church can't be extended further."), kDimColor});
+			} else {
+				v.lines.push_back({tr("Reunido para la ampliación: ", "Gathered for the extension: ") +
+						format_money(gathered) + " / " + format_money(cost), kTextColor});
+				if (state == 0) {
+					v.lines.push_back({tr("Ya está todo el dinero: falta el material.", "The money is there: the materials are missing."),
+						kDimColor});
+				} else if (state == 1) {
+					v.lines.push_back({tr("La última ampliación es muy reciente.", "The last extension is too recent."), kDimColor});
+				}
+			}
+			can = state == -1;
+		} else {
+			v.lines.push_back({tr(kFed[fed][0], kFed[fed][1]), kTextColor});
+		}
+		v.rows.push_back({tr("Donar", "Donate"), can});
+		v.act = tr("Donar", "Donate");
+		break;
+	}
+	default: {
+		// The rows: the five wares, each with its amount (Left and Right on the selected row).
+		ui.row = std::clamp(ui.row, 0, 4);
+		if (ui.row != ui.feed_row) {
+			ui.amount = ui.feed[size_t(ui.row)];
+			ui.feed_row = ui.row;
+		} else {
+			ui.feed[size_t(ui.row)] = ui.amount;
+		}
+		v.max_amount = 999;
+		v.lines.push_back({tr(kFed[fed][0], kFed[fed][1]), kTextColor});
+		std::array<uint16_t, 5> amounts{};
+		for (size_t k = 0; k < 5; ++k) {
+			amounts[k] = uint16_t(ui.feed[k]);
+			const uint8_t w = kFeedingWares[k];
+			v.rows.push_back({capitalized(ware_name(w)) + ": " + amount_label(ui.feed[k], kWares[w].unit), true});
+		}
+		v.lines.push_back({tr("Lo toman de tu oficina en la ciudad y después de tus barcos en ella.",
+								"Taken from your office in the town, then from your ships there."), kDimColor});
+		v.act = tr("Repartir", "Give");
+		v.amount_choice = true;  // Each row has its own amount; 0 too.
+		v.amount_label = std::to_string(ui.amount);
+		(void)amounts;
+		break;
+	}
+	}
+}
+
+void church_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
+	const uint32_t player = uint32_t(save.player);
+	if (ui.page <= 1) {
+		run_operations(save, sailing,
+			{church_donation_operation(ui.page == 0 ? 0x32 : 0x31, player, uint32_t(town), ui.amount * kDonationStep)});
+		ui.amount = 0;
+		ui.message = tr("Donado.", "Donated.");
+		return;
+	}
+	std::array<uint16_t, 5> amounts{};
+	bool any = false;
+	for (size_t k = 0; k < 5; ++k) {
+		amounts[k] = uint16_t(ui.feed[k]);
+		any = any || amounts[k] != 0;
+	}
+	if (!any) {
+		ui.message = tr("Ahora no se puede.", "It can't be done now.");
+		return;
+	}
+	run_operations(save, sailing, {feeding_operation(save, player, uint32_t(town), amounts)});
+	ui.feed = {};
+	ui.amount = 0;
+	ui.message = tr("Repartido.", "Given.");
+}
+
+// The bath house (.let 0x09; building_windows.hpp): its pages 0 the bath (X: take one; the game's reaction by the days
+// since the last, and the operation 0x39 with the tick once the player goes on: the next page or leaving), 1 the
+// councillors' bribes (a row per councillor, the offer by 500; 0x42 or 0x43 by the councillor's price, 0x529E20).
+constexpr int kBathPages = 2;
+
+void bath_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	static const uint32_t kReactions[3] = {0x6A2A48, 0x6A2A44, 0x6A2A40};
+	static const char* const kFallback[3][2] = {
+		{"Ni siquiera te has secado desde tu último baño.", "You are not really dry from your last bath."},
+		{"Un baño así le hace sentirse bien a uno.", "Such a bath always makes one feel good."},
+		{"¡Por fin un baño! Han pasado más de tres semanas.", "A bath at last! After more than 3 weeks."}};
+	ui.page = ((ui.page % kBathPages) + kBathPages) % kBathPages;
+	static const char* const kPages[kBathPages][2] = {{"Baño", "Bath"}, {"Concejales", "Councillors"}};
+	v.title = place_name(ui.let_type) + " - " + tr(kPages[ui.page][0], kPages[ui.page][1]) + "   (L/R)";
+	const uint32_t player = uint32_t(save.player);
+	if (ui.page == 0) {
+		if (ui.bathed) {
+			const int k = ui.bath_reaction;
+			v.lines.push_back({exe_text(kReactions[k], kFallback[k][0], kFallback[k][1]), kTextColor});
+		}
+		v.rows.push_back({tr("Bañarse", "Take a bath"), !ui.bathed});
+		v.act = tr("Bañarse", "Take a bath");
+		return;
+	}
+	const TownMemory& t = save.towns[size_t(town)].memory;
+	const uint16_t merchants = save.globals.u16(global::kWorldMerchantCount);
+	for (int j = 0; j < 4; ++j) {
+		std::string name = clean_game_text(game_first_name(save, t.u8(0x6D4 + j))) + " " +
+			clean_game_text(game_family_name(save, t.u8(0x6D8 + j)));
+		const uint8_t holder = t.u8(0x6DC + j);
+		if (holder < merchants) {
+			const MerchantMemory& m = save.merchants[holder].memory;
+			name += tr(" (con ", " (with ") + clean_game_text(game_family_name(save, m.u8(0x1D))) + ")";
+		}
+		v.rows.push_back({name, true});
+	}
+	const int32_t money = save.merchants[size_t(player)].money();
+	v.max_amount = std::max(0, std::min(money, 999999) / kDonationStep);
+	v.amount_label = format_money(int64_t(ui.amount) * kDonationStep);
+	v.lines.push_back({tr("Elige el concejal y lo que le ofreces.", "Choose the councillor and your offer."), kDimColor});
+	v.act = tr("Sobornar", "Bribe");
+}
+
+void bath_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
+	if (ui.page == 0) {
+		// The reaction is told by the days since the last bath, before this one counts (0x5B1FC5).
+		ui.bath_reaction = bath_state(save, uint32_t(save.player));
+		ui.bathed = true;
+		return;
+	}
+	const OperationBytes op = bribe_operation(save, uint32_t(town), uint32_t(save.player), uint32_t(ui.row),
+		uint32_t(ui.amount * kDonationStep));
+	run_operations(save, sailing, {op});
+	ui.message = op[0] == 0x42 ? tr("El concejal acepta.", "The councillor accepts.")
+							   : tr("El concejal rechaza tu oferta.", "The councillor turns your offer down.");
+	ui.amount = 0;
+}
+
 PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	PlaceView v;
 	const int player = save.player;
@@ -3159,6 +3344,12 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	case Place::Lender:
 		lender_view(save, town, ui, v);
 		break;
+	case Place::Church:
+		church_view(save, town, ui, v);
+		break;
+	case Place::BathHouse:
+		bath_view(save, town, ui, v);
+		break;
 	case Place::Building: {
 		// The player's building (the game's windows 0x5AF5C0 and 0x5A2xxx, with
 		// their two buttons, which the game draws as pictures): demolish it,
@@ -3286,7 +3477,8 @@ void draw_place(SDL_Renderer* renderer, TextRenderer& text, const PlaceUi& ui, c
 		draw_button(renderer, text, layout.minus_button, "-");
 		draw_button(renderer, text, layout.plus_button, "+");
 		const SDL_Rect box = layout.amount_box();
-		draw_button(renderer, text, box, v.amount_choice ? v.amount_label : std::to_string(ui.amount));
+		draw_button(renderer, text, box,
+			v.amount_choice || !v.amount_label.empty() ? v.amount_label : std::to_string(ui.amount));
 	}
 	const bool can = ui.row < int(v.rows.size()) && v.rows[size_t(ui.row)].second &&
 		(v.max_amount < 0 || v.amount_choice || ui.amount > 0);
@@ -3427,6 +3619,14 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 	}
 	if (ui.open == Place::Lender) {
 		lender_act(save, sailing, town, ui, v);
+		return;
+	}
+	if (ui.open == Place::Church) {
+		church_act(save, sailing, town, ui);
+		return;
+	}
+	if (ui.open == Place::BathHouse) {
+		bath_act(save, sailing, town, ui);
 		return;
 	}
 	if (ui.open == Place::Building) {
@@ -6617,7 +6817,8 @@ struct MailUi {
 	uint16_t selected = 0xFFFF;  // The entry of the selected row (the rows move when a letter comes).
 	uint16_t shown = 0xFFFF;  // The entry whose text is in `lines`.
 	int shown_tab = -1;
-	std::vector<std::pair<LetterParagraph::Align, std::string>> lines;  // Wrapped, UTF-8 (kOrnament: a picture).
+	// Wrapped, UTF-8 (the game's pictures by number in them, as the chronicle's ornament: TextRenderer draws them).
+	std::vector<std::pair<LetterParagraph::Align, std::string>> lines;
 	bool stale = true;  // `lines` to be made again (another letter, language or font).
 	uint16_t chronicle_head = 0xFFFF;  // The chronicle's newest news when it was made.
 	// The picture the window makes for the letter shown (0x46, 0x6E: the map
@@ -6648,9 +6849,6 @@ struct MailUi {
 // notice and its sound, then the event sound.
 constexpr int kMailOptionRows = 10;
 
-// A line of the mailbox that is one of the game's pictures (the chronicle's
-// ornament between two news): drawn as a short rule.
-constexpr char kOrnament = '\x1E';
 // The line where the letter's own picture (MailUi::picture) starts; empty
 // lines under it keep its height.
 constexpr char kPictureLine = '\x1D';
@@ -6989,17 +7187,6 @@ void draw_mailbox(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sa
 				const SDL_Rect where = {x, y, ui.picture_width, ui.picture_height};
 				SDL_RenderCopy(renderer, ui.picture.get(), nullptr, &where);
 			}
-		} else if (line.size() == 1 && line[0] == kOrnament) {
-			// The ornament: a rule with a diamond in the middle.
-			const int cx = layout.text.x + layout.text.w / 2;
-			const int cy = y + text.line_height() / 2;
-			SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
-			SDL_RenderDrawLine(renderer, cx - 90, cy, cx - 8, cy);
-			SDL_RenderDrawLine(renderer, cx + 8, cy, cx + 90, cy);
-			for (int k = 0; k <= 4; ++k) {
-				SDL_RenderDrawLine(renderer, cx - 4 + k, cy - k, cx + 4 - k, cy - k);
-				SDL_RenderDrawLine(renderer, cx - 4 + k, cy + k, cx + 4 - k, cy + k);
-			}
 		} else if (y + text.line_height() >= layout.text.y && y < layout.text.y + layout.text.h) {
 			const int w = text.measure(line);
 			const int x = align == LetterParagraph::Right ? layout.text.x + layout.text.w - 4 - w
@@ -7063,16 +7250,6 @@ void draw_letter_lines(SDL_Renderer* renderer, TextRenderer& text, const MailUi&
 					: box.x + 4;
 				const SDL_Rect where = {x, y, ui.picture_width, ui.picture_height};
 				SDL_RenderCopy(renderer, ui.picture.get(), nullptr, &where);
-			}
-		} else if (line.size() == 1 && line[0] == kOrnament) {
-			const int cx = box.x + box.w / 2;
-			const int cy = y + text.line_height() / 2;
-			SDL_SetRenderDrawColor(renderer, rule.r, rule.g, rule.b, 255);
-			SDL_RenderDrawLine(renderer, cx - 90, cy, cx - 8, cy);
-			SDL_RenderDrawLine(renderer, cx + 8, cy, cx + 90, cy);
-			for (int k = 0; k <= 4; ++k) {
-				SDL_RenderDrawLine(renderer, cx - 4 + k, cy - k, cx + 4 - k, cy - k);
-				SDL_RenderDrawLine(renderer, cx - 4 + k, cy + k, cx + 4 - k, cy + k);
 			}
 		} else if (y + text.line_height() >= box.y && y < box.y + box.h) {
 			const int w = text.measure(line);
@@ -8431,9 +8608,11 @@ int main(int argc, char** argv) {
 	std::unique_ptr<TextRenderer> small_text;
 	if (auto font = FontAtlas::load(*archive, kUiFont, kUiFontHeight)) {
 		text = std::make_unique<TextRenderer>(renderer, std::move(font));
+		text->set_archive(archive.get());
 	}
 	if (auto font = FontAtlas::load(*archive, kUiFont, kSmallFontHeight)) {
 		small_text = std::make_unique<TextRenderer>(renderer, std::move(font));
+		small_text->set_archive(archive.get());
 	}
 	MarketUi market;
 	HanseUi hanse;  // The Hanse panel (Square in a town).
@@ -8886,9 +9065,11 @@ int main(int argc, char** argv) {
 		names = load_name_lists(*archive);
 		if (auto font = FontAtlas::load(*archive, kUiFont, kUiFontHeight)) {
 			text = std::make_unique<TextRenderer>(renderer, std::move(font));
+			text->set_archive(archive.get());
 		}
 		if (auto font = FontAtlas::load(*archive, kUiFont, kSmallFontHeight)) {
 			small_text = std::make_unique<TextRenderer>(renderer, std::move(font));
+			small_text->set_archive(archive.get());
 		}
 		game_texts = std::move(texts);
 		g_texts = game_texts.get();
@@ -10255,6 +10436,11 @@ int main(int argc, char** argv) {
 		// the market or the Hanse panel).
 		const bool in_place = place.open != Place::None && !trading && !in_hanse && selection.mode == Mode::Saved &&
 			save.player >= 0 && small_text;
+		if (place.bathed && (place.open != Place::BathHouse || place.page != 0) && has_save && save.player >= 0) {
+			// The bath taken: its 0x39 with the tick now, once the player goes on (0x5B19F1, 0x5B1E93).
+			run_operations(save, sailing.get(), {bath_operation(uint32_t(save.player), save.globals.u32(global::kWorldTick))});
+			place.bathed = false;
+		}
 		const PlaceView place_now = in_place ? place_view(save, town_index, place) : PlaceView();
 		if (!in_place && place.typing) {
 			place.typing = false;
@@ -13680,10 +13866,6 @@ int main(int argc, char** argv) {
 							}
 							continue;
 						}
-					}
-					if (from_game && p.picture >= 0 && p.text.find_first_not_of(' ') == std::string::npos) {
-						mail.lines.emplace_back(p.align, std::string(1, kOrnament));  // The game's picture.
-						continue;
 					}
 					const std::string& s = from_game ? p.text : raw;  // The viewer's own texts are UTF-8 already.
 					for (const std::string& line : wrap_letter(*small_text, s, layout.text.w - 12)) {

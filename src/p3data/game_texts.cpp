@@ -234,7 +234,7 @@ constexpr uint32_t kDirect = 0x80000000;
 // build's PE time stamp, u32 a hash of p3vita's slots for that build, u32 the
 // number of texts, and each text as u32 size and its raw bytes.
 constexpr char kCacheMagic[4] = {'P', '3', 'T', 'X'};
-constexpr uint32_t kCacheVersion = 10;  // 4: with the buttons' tooltips (the string table, GameTexts::resource); 5: the new game window's; 6: «Main menu»; 7: the window's sex, start, map and home town's; 8: the goals' times and the map choice's; 9: the trade route windows'; 10: the letter 0x83's (operation 0x77).
+constexpr uint32_t kCacheVersion = 11;  // 4: with the buttons' tooltips (the string table, GameTexts::resource); 5: the new game window's; 6: «Main menu»; 7: the window's sex, start, map and home town's; 8: the goals' times and the map choice's; 9: the trade route windows'; 10: the letter 0x83's (operation 0x77); 11: the bath house's.
 
 // The tooltips read from the string table: 20000.. (the scripts' «ToolTip=»; 20062 the last).
 constexpr uint32_t kTooltipFirst = 20000;
@@ -376,11 +376,17 @@ std::string clean_game_text(const std::string& raw) {
 		const uint8_t c = uint8_t(raw[i]);
 		if (c == '\\' && i + 1 < raw.size()) {
 			const char code = raw[i + 1];
-			if (code == 'f' || code == 't') {
-				// \fN_ (font) and \tNNNN_: the number and the '_', if there is one.
+			if (code == 'f' || code == 't' || code == 'h') {
+				// \fN_ (font), \tNNNN_ (a picture by its number: kept) and \hN_ (a picture made for a letter): the
+				// number and the '_', if there is one.
 				size_t j = i + 2;
 				while (j < raw.size() && is_digit(raw[j])) {
 					++j;
+				}
+				if (code == 't' && j > i + 2) {
+					out += kTextPicture;
+					out.append(raw, i + 2, j - (i + 2));
+					out += kTextPictureEnd;
 				}
 				if (j < raw.size() && raw[j] == '_') {
 					++j;
@@ -388,8 +394,13 @@ std::string clean_game_text(const std::string& raw) {
 				i = j - 1;
 				continue;
 			}
+			if (code == 'C' || code == 'B' || code == 'L') {
+				out += code == 'C' ? kTextCoin : code == 'B' ? kTextBarrel : kTextLoad;
+				++i;
+				continue;
+			}
 			if ((code >= 'a' && code <= 'z') || (code >= 'A' && code <= 'Z')) {
-				// \c \l \r (alignment), \C (the coin symbol), \d, \B, \L, \S...
+				// \c \l \r (alignment), \d, \S...
 				++i;
 				continue;
 			}

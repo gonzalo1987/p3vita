@@ -1009,6 +1009,77 @@ void fn_53eec0(SaveGame& save, const uint8_t* operation) {
 	e.u8(0x10) = 0xFF;
 }
 
+// The operation 0x39 (in the executor, 0x535E7F): {0x39, u32 merchant, u32 value}: a merchant takes a bath (the bath
+// house's windows): his [+0x4] gets the value (a merchant past the count: nothing).
+// Checked with the oracle: scenario bath_ops (saves 1, 3, 5, 7).
+void fn_535e7f(SaveGame& save, const uint8_t* operation) {
+	const uint32_t merchant = field(operation, 4);
+	if (merchant < save.globals.u16(global::kWorldMerchantCount)) {
+		save.merchants[merchant].memory.u32(0x4) = field(operation, 8);
+	}
+}
+
+// The operation 0x42 (0x53AC50): {0x42, u32 the councillor's slot, u32 merchant, u32 the bribe, u32 town}: a bribe in
+// the bath house that works. The merchant pays it (unchecked), his reputation in the town rises (0x4F8E30: the bribe
+// · 0.0001, at most 3, · his [+0x464]) and the town's councillor slot [0x6DC + slot] becomes his. Game bug: to count
+// how many of the town's four slots are already his (two or more: the slot isn't given), it reads the slot itself
+// four times, so the slot is always given (it is his already, or the count is 0): reproduced. A town past the towns,
+// a merchant past the count: nothing.
+// Checked with the oracle: scenario bath_ops (saves 1, 3, 5, 7).
+void fn_53ac50(SaveGame& save, const uint8_t* operation) {
+	static constexpr uint32_t kRateBits = 0x38D1B717;  // 0x672F30: 0.0001f
+	const uint32_t slot = field(operation, 4);
+	const uint32_t merchant = field(operation, 8);
+	const uint32_t bribe = field(operation, 0xC);
+	const uint32_t town = field(operation, 0x10);
+	if (town >= save.globals.u32(global::kWorldTownCount) || merchant >= save.globals.u16(global::kWorldMerchantCount)) {
+		return;
+	}
+	TownMemory& t = save.towns[town].memory;
+	// The game reads and writes the slot unchecked (the window sends 0..3); past the town's memory p3vita leaves it.
+	const bool inside = slot < 0x9F8 - 0x6DC;
+	const int held = inside && t.u8(0x6DC + slot) == merchant ? 4 : 0;
+	MerchantMemory& m = save.merchants[merchant].memory;
+	m.u32(0x0) -= bribe;
+	m.u32(0x4BC) += bribe;
+	float rate;
+	std::memcpy(&rate, &kRateBits, sizeof(rate));
+	float gain = float(double(float(int32_t(bribe))) * double(rate));
+	if (gain > 3.0f) {
+		gain = 3.0f;
+	}
+	gain = float(double(gain) * double(m.f32(0x464)));
+	float& r = m.f32(0x120 + 12 * size_t(town & 0xFF));
+	r = float(double(gain) + double(r));
+	if (held < 2 && inside) {
+		t.u8(0x6DC + slot) = uint8_t(merchant);
+	}
+}
+
+// The operation 0x43 (0x53AD10): {0x43, u32 the councillor's slot, u32 merchant, u32 -, u32 town}: a bribe in the bath
+// house that fails. The merchant's reputation in the town falls by 2 (0x4F8E90), and the slot (0..3), if it was his
+// or nobody's (past the merchants), becomes the merchant 1's (seems a game bug: 1, not a free 0xFF). A town past the
+// towns, a merchant past the count: nothing.
+// Checked with the oracle: scenario bath_ops (saves 1, 3, 5, 7).
+void fn_53ad10(SaveGame& save, const uint8_t* operation) {
+	const uint32_t slot = field(operation, 4);
+	const uint32_t merchant = field(operation, 8);
+	const uint32_t town = field(operation, 0x10);
+	const uint16_t merchants = save.globals.u16(global::kWorldMerchantCount);
+	if (town >= save.globals.u32(global::kWorldTownCount) || merchant >= merchants) {
+		return;
+	}
+	float& r = save.merchants[merchant].memory.f32(0x120 + 12 * size_t(town & 0xFF));
+	r = float(double(r) - 2.0);
+	if (slot >= 4) {
+		return;
+	}
+	uint8_t& councillor = save.towns[town].memory.u8(0x6DC + slot);
+	if (councillor == merchant || councillor >= merchants) {
+		councillor = 1;
+	}
+}
+
 // La operación 0x13 (0x538C40): {0x13, u32 barco, u32 capitán}: el capitán
 // del barco de un jugador humano se retira: el evento 0x27 (events_towns.cpp,
 // fn_4ddc00) en el tick siguiente con el barco y el capitán, y [+0xE] del

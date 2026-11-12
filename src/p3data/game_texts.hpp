@@ -440,7 +440,17 @@ private:
 	bool spanish_ = false;
 };
 
-// The control codes out and Windows-1252 to UTF-8 (exposed for the tests).
+// The bytes a cleaned text (clean_game_text, letter_paragraphs) has for the game's signs and pictures, which the
+// viewer's text draws as the game's pictures: the coin's, a barrel's and a load's (\C, \B, \L), and a picture by its
+// TEX number of textures.ini (\tN_: kTextPicture, the number in decimal, kTextPictureEnd).
+constexpr char kTextCoin = '\x05';
+constexpr char kTextBarrel = '\x06';
+constexpr char kTextLoad = '\x07';
+constexpr char kTextPicture = '\x0E';
+constexpr char kTextPictureEnd = '\x0F';
+
+// Windows-1252 to UTF-8 without the control codes (the alignment, the fonts, the drop caps, \hN_), but the signs and
+// the pictures by number as the bytes above (exposed for the tests).
 std::string clean_game_text(const std::string& raw);
 
 // A Windows-1252 byte (the game's texts) appended in UTF-8 ('?' for the

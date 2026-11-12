@@ -194,7 +194,9 @@ void text_codes() {
 	check(p[5].text == "X", "a 0 ends the text");
 	check(p[0].picture < 0 && p[2].picture < 0 && p[5].picture < 0, "no picture");
 	const std::vector<LetterParagraph> news = letter_paragraphs("\\c\\f3_1. 4. 1362\n\n\\l\\f0_News\n\n\\c\\t16063_ ");
-	check(news.size() == 5 && news[4].picture == 16063 && news[4].text == " " && news[4].align == LetterParagraph::Center &&
+	check(news.size() == 5 && news[4].picture == 16063 &&
+			news[4].text == std::string(1, kTextPicture) + "16063" + kTextPictureEnd + " " &&
+			news[4].align == LetterParagraph::Center &&
 			news[3].picture < 0 && news[2].font == 0 && news[0].font == 3,
 		"the chronicle's ornament, \\t16063_; the fonts");
 }

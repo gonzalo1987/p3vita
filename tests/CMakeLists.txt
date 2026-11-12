@@ -99,3 +99,9 @@ target_link_libraries(letter_window_test PRIVATE p3data)
 target_compile_options(letter_window_test PRIVATE -Wall -Wextra)
 
 add_test(NAME letter_window COMMAND letter_window_test)
+
+add_executable(building_windows_test building_windows_test.cpp)
+target_link_libraries(building_windows_test PRIVATE p3data)
+target_compile_options(building_windows_test PRIVATE -Wall -Wextra)
+
+add_test(NAME building_windows COMMAND building_windows_test)

@@ -22,9 +22,12 @@ void check(bool condition, const char* what) {
 
 int main() {
 	check(clean_game_text("\\c\\f1_Choose a candidate.") == "Choose a candidate.", "alignment and font codes");
-	check(clean_game_text("\\f1_An extra tax of %d\\C has been levied.") == "An extra tax of %d has been levied.",
-		"the coin symbol");
-	check(clean_game_text("\\t16057_x\\f0y") == "xy", "tab code and a font code without '_'");
+	check(clean_game_text("\\f1_An extra tax of %d\\C has been levied.") ==
+			std::string("An extra tax of %d") + kTextCoin + " has been levied.",
+		"the coin's sign");
+	check(clean_game_text("\\B\\L") == std::string(1, kTextBarrel) + kTextLoad, "a barrel's and a load's signs");
+	check(clean_game_text("\\t16057_x\\f0y\\h3_z") == std::string(1, kTextPicture) + "16057" + kTextPictureEnd + "xyz",
+		"a picture by its number, a font code without '_', a made picture out");
 	check(clean_game_text("Hanse\xe1tica \x96 \x80") == "Hanse\xc3\xa1tica \xe2\x80\x93 \xe2\x82\xac", "Windows-1252");
 	check(clean_game_text("line\none") == "line\none", "line breaks stay");
 

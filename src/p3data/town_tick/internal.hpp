@@ -329,6 +329,16 @@ void fn_53da90(SaveGame& save, const uint8_t* operation);
 void fn_53eac0(SaveGame& save, const uint8_t* operation);
 // 0x77 (the creditor answers a letter 0x79: lenient, or the impounding with the letter 0x83; 0x53EEC0).
 void fn_53eec0(SaveGame& save, const uint8_t* operation);
+// 0x39 (a bath: the merchant's [+0x4]; 0x535E7F), 0x42 and 0x43 (a bribe in the bath house that works or fails:
+// 0x53AC50, 0x53AD10).
+void fn_535e7f(SaveGame& save, const uint8_t* operation);
+void fn_53ac50(SaveGame& save, const uint8_t* operation);
+void fn_53ad10(SaveGame& save, const uint8_t* operation);
+// core.cpp: the church's 0x30 (feed the poor, 0x4FE557), 0x31 (for its extension, 0x4FE420) and 0x32 (a donation,
+// 0x4FE2D0).
+void fn_535cf0(SaveGame& save, const uint8_t* operation);
+void fn_535d49(SaveGame& save, const uint8_t* operation);
+void fn_535d85(SaveGame& save, const uint8_t* operation);
 // 0x65 (an AI merchant goes bankrupt, 0x4F5D80; 0x53DD70).
 void fn_53dd70(SaveGame& save, const uint8_t* operation);
 // 0x87 (a child is born to a married merchant, 0x53FEA0).

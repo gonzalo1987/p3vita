@@ -1,5 +1,6 @@
 add_library(p3data STATIC
 	aim.cpp
+	building_windows.cpp
 	battle/attack.cpp
 	battle/battle_setup.cpp
 	battle/battle_step.cpp

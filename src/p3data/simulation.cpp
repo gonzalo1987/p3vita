@@ -278,6 +278,15 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x2C:  // Un barco encargado al astillero de una ciudad (0x535C70, 0x52A360).
 		tick::fn_535c70(save, operation);
 		break;
+	case 0x30:  // The poor fed by a merchant (0x535CF0 → 0x4FE557).
+		tick::fn_535cf0(save, operation);
+		break;
+	case 0x31:  // A donation for the church's extension (0x535D49 → 0x4FE420).
+		tick::fn_535d49(save, operation);
+		break;
+	case 0x32:  // A donation to the church (0x535D85 → 0x4FE2D0).
+		tick::fn_535d85(save, operation);
+		break;
 	case 0x37:  // El comerciante paga por una ciudad (0x535E04, 0x4F8560).
 		tick::fn_535e04(save, operation);
 		break;
@@ -287,8 +296,17 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x3F:  // The vote of a human player in an election or the diet (0x53AA10).
 		tick::fn_53aa10(save, operation);
 		break;
+	case 0x39:  // A bath (0x535E7F): the merchant's [+0x4].
+		tick::fn_535e7f(save, operation);
+		break;
 	case 0x3B:  // Materiales para la carretera de un encargo de la Hansa (0x53A3E0).
 		tick::fn_53a3e0(save, operation);
+		break;
+	case 0x42:  // A bribe in the bath house that works (0x53AC50).
+		tick::fn_53ac50(save, operation);
+		break;
+	case 0x43:  // A bribe in the bath house that fails (0x53AD10).
+		tick::fn_53ad10(save, operation);
 		break;
 	case 0x46:  // Alcalde para una ciudad nueva (0x535FD6).
 		tick::fn_535fd6(save, operation);

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <optional>
 
+#include "p3data/building_windows.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/game_texts.hpp"
 #include "p3data/player_actions.hpp"
@@ -1048,6 +1049,19 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		}
 		write_view(s, view, c.args[1]);
 		return std::nullopt;
+	};
+	// The church's window (building_windows.hpp): 0x4FE360 and 0x4FE390, thiscall on the church (the town's
+	// [+0x794]): how well the poor are fed and the extension's state.
+	r[0x4FE360] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		return uint32_t(church_feeding_level(s, uint32_t(c.town(c.ecx - 0x794))));
+	};
+	r[0x4FE390] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		return uint32_t(church_extension_state(s, uint32_t(c.town(c.ecx - 0x794))));
+	};
+	// 0x529E20, thiscall on the town (merchant, slot): the councillor's bribe price, rolling rand() (the bath house's
+	// bribe window).
+	r[0x529E20] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		return councillor_price(s, uint32_t(c.town(c.ecx)), c.args[0], c.args[1]);
 	};
 }
 
