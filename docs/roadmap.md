@@ -43,9 +43,11 @@ Cómo leerla:
   (0x5F, 0x75 y el evento 0x13, con sus cartas y, en el visor, la ventana de la oficina de otro comerciante) y la ruta
   por puntos del mapa del mar (0x0B), esta también en el visor (tocar el mar añade puntos; X zarpa, ○ los borra).
   Antes, la primera parte: la reparación de convoyes, los botones de las cartas, la iglesia y el baño.
-- **Siguiente**: el encargo `ENCARGO_ACCIONES_2.md` (junto al HANDOFF), con el resto (apartado 1): del grupo 3 quedan
+- **Siguiente**: el encargo `ENCARGO_ACCIONES_3.md` (junto al HANDOFF), con el resto (apartado 1): del grupo 3 quedan
   en el visor la armería, el traspaso entre barcos, el objetivo en el mar y las existencias a guardar del
-  administrador; después la taberna y los eventos; la milicia, los asedios y el resto del ayuntamiento.
+  administrador, y comparar las cartas de las ofertas con el compositor del juego; después la taberna y los eventos;
+  la milicia, los asedios y el resto del ayuntamiento. Esperan la palabra del usuario dos fallos (las mercancías de
+  las ofertas y la ruta por puntos de un barco que entra en puerto).
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
   (apartado 6).
@@ -110,7 +112,7 @@ Las partes se solapan, y el grafo es estático (no sigue las tablas de métodos 
 
 ### 1. Las acciones del jugador y el resto del buzón (lo siguiente)
 
-El encargo `ENCARGO_ACCIONES_2.md` tiene el detalle (el método, cómo se comprueba, el orden que eligió el usuario:
+El encargo `ENCARGO_ACCIONES_3.md` tiene el detalle (el método, cómo se comprueba, el orden que eligió el usuario:
 la reparación de convoyes, los botones de las cartas, la iglesia y el baño, las subastas, la oficina y el barco, la
 taberna y los eventos, la milicia y los asedios; la 0x4A también, en el motor). Lo que falta del jugador, por edificio
 (los manejadores, en [formats/operations.md](formats/operations.md); varios están solo deducidos y hay que leerlos
