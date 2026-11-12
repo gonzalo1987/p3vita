@@ -257,7 +257,10 @@ void fn_519170(SaveGame& save, int ship, uint32_t mask) {
 // (kSailorsWanted) y como mucho hasta capacidad/2000 + nivel · kSailorsPerLevel
 // (al menos 20) menos los que lleva.
 int32_t fn_5184f0(SaveGame& save, int ship) {
-	SavedShip& s = save.ships[size_t(ship)];
+	return fn_5184f0_on(save.ships[size_t(ship)]);
+}
+
+int32_t fn_5184f0_on(SavedShip& s) {
 	ShipMemory& m = s.memory;
 	const int32_t free_space = recalculate_cargo(s);
 	const int type = m.u8(0xE) & 3;

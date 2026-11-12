@@ -62,11 +62,15 @@ TradeResult fn_539300(SaveGame& save, const uint8_t* operation, bool sell);
 // price, u16 amount in barrels or loads, u16 ship (past the ships: the office), u8 seller, u8 buyer, u8 ware, u8
 // town}).
 void fn_53b5e0(SaveGame& save, const uint8_t* operation);
-// The arsenal's window (0x5ECAB0): 0x50 (0x53BC90) hand weapons bought from the town into a ship (and its convoy) or
-// the office, or sold ({0x50, u32 price of one, s32 count, u8 town, u8 merchant, u8 kind, u8 buy, u16 ship}); 0x56
-// (0x53CAF0) a piece of artillery between the office and the town ({0x56, merchant, kind, price, town | 0x100 sell}).
+// The weaponsmith's window (.let 0x08, *0x6E55A8; its update 0x5ECFA0, smithy_window.hpp) and the tavern's weapons
+// dealer: 0x50 (0x53BC90) hand weapons bought from the town into a ship (and its convoy) or the office, or sold
+// ({0x50, u32 price of one, s32 count, u8 town, u8 merchant, u8 kind, u8 buy, u16 ship}); 0x56 (0x53CAF0) a piece of
+// artillery between the office and the town ({0x56, merchant, kind, price, town | 0x100 sell}); 0x57 (0x536186,
+// inline in the executor) the hand weapon the town's weaponsmith makes first ({0x57, town, ware}: the town's [+0x6D0]
+// the ware if 0x14..0x17, else 0; the window offers it to the town's mayor).
 void fn_53bc90(SaveGame& save, const uint8_t* operation);
 void fn_53caf0(SaveGame& save, const uint8_t* operation);
+void fn_536186(SaveGame& save, const uint8_t* operation);
 void fn_5396b0(SaveGame& save, const uint8_t* operation);
 
 // The same handlers on an operation made here (for the tests and the

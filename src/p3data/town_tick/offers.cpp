@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -253,6 +254,24 @@ void fn_534600(SaveGame& save, uint32_t id, uint32_t a, uint32_t b) {
 	}
 }
 
+int32_t holdable_units(const SaveGame& save, uint32_t a, uint32_t town, uint16_t ware) {
+	if (ware >= 0x18 || a >= merchant_count(save) || a >= save.merchants.size()) {
+		return 0;
+	}
+	int64_t total = 0;
+	const int office = facilities_detail::fn_5308a0(save, a, town);
+	if (office >= 0) {
+		total = std::max(0, whole_units(ware, save.offices[size_t(office)].memory.s32(4 + 4 * size_t(ware))));
+	}
+	for (uint32_t i = save.merchants[a].memory.u16(0xE); i < ship_count(save); i = save.ships[i].memory.u16(0x4)) {
+		const ShipMemory& s = save.ships[i].memory;
+		if (s.u8(0x39) == town && s.u16(0x134) < 4) {
+			total += std::max(0, s.s32(0x54 + 4 * size_t(ware)));
+		}
+	}
+	return int32_t(std::min<int64_t>(total, 0x7FFFFFFF));
+}
+
 }  // namespace offers_detail
 
 using namespace offers_detail;
@@ -265,8 +284,10 @@ using namespace offers_detail;
 // a ship (one of the docked list, compared with its convoy [+0x8] ≥ its own number (seems meant: out of a convoy);
 // else its number becomes 0xFFFF and nothing more: no letters) out of it into the state 0xD, [+0x3C] |= 0x20, wares
 // from A's office in the town and then from his docked ships there (in whole barrels or loads; the node keeps the
-// amount asked even if A had less: seems a game bug). Then the letters 0x1E to A and 0x1F to B ([+0x5] the town, [+0x8]
-// the number, u16 [+0xC] A, [+0xE] B).
+// amount asked even if A had less: a game bug, B gets the whole amount on accepting and A gets it back on a rejection,
+// wares out of nothing; with fix_game_bugs() the node keeps the whole barrels or loads that can be held back,
+// holdable_units, and only those are taken). Then the letters 0x1E to A and 0x1F to B ([+0x5] the town, [+0x8] the
+// number, u16 [+0xC] A, [+0xE] B).
 void fn_53da30(SaveGame& save, const uint8_t* operation) {
 	const uint16_t merchants = merchant_count(save);
 	const uint8_t a = operation[0xC];
@@ -344,6 +365,10 @@ void fn_53da30(SaveGame& save, const uint8_t* operation) {
 	}
 	case 0: {
 		const uint16_t ware = o.u16(0x10);
+		if (fix_game_bugs() && ware < 0x18) {
+			const int32_t most = holdable_units(save, a, town, ware) / units_of(ware, 1);
+			o.u16(0x12) = uint16_t(std::min<int32_t>(o.u16(0x12), most));
+		}
 		int32_t left = units_of(ware, o.u16(0x12));
 		const int office = facilities_detail::fn_5308a0(save, a, town);
 		if (office >= 0) {

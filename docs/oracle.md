@@ -2528,8 +2528,14 @@ The window (another merchant's office, .let 0x2D, *0x6E5550; `offer_window.cpp`,
 inside the window's update (0x5BDAFA), not functions of their own, so they are checked by the ctest and in the viewer
 (the rival kontor of a town: the merchants' list, money, wares and a ship offered; shots f1, f4, f8, f9 in
 `re/emu/sesion27/shots/`; the step `place:0x2D` of the viewer's script centres the camera on it). The letters' text
-(0x480868 with 0x533F20) is seen in the viewer (shot f7) but not compared with the game's composer yet:
-`letters-check.sh` composes the letters of a save, and the offers' list isn't in the save file.
+(0x480868 with 0x533F20), seen in the viewer (shot f7), was compared with the game's composer afterwards: below,
+«the offers' letters against the game's composer» (`letters-check.sh` with `P3_OFFERS=1`).
+
+The fix of the offers' amount (2026-11-12, at the user's word; `fn_53da30` and `offer_window.cpp` behind
+fix_game_bugs: the node keeps the whole barrels or loads that can be held back, `holdable_units`, and the window
+offers no more): `re/emu/sesion27/uc_fix.sh offer_ops:1,3` differs from the game only in the amount of the two offers
+of wares that asked for more than A had (save 1: 7 loads of grain asked, 5 held back; and 1 asked in a town without
+anything of his, 0; save 3: 19 and 18); off, all equal as before. The window's end with the fix: ctest `offer_window`.
 
 The route by points (`town_tick/ship_operations.cpp` `fn_538de0`, 0x538DE0) with the multi-point route of 0x445010
 (`NavData::route_through`, `Sailing::follow_points`): the owner's buffer [+0xEC] as the region MR (u16 merchant, u16
@@ -2542,6 +2548,38 @@ purpose and caught in MR. The corner cut 0x446F20's last argument is 1 in this r
 two-point route passes 0) — the first run had a point more at each turn back. The viewer: on the sea map a tap on the
 sea (or on a town once a route is started) adds a point, X or the «Sail» button sails along them, Circle or «Clear»
 clears them (`re/emu/sesion27/shots/` r5, r7, r8).
+
+## The player's actions: the weaponsmith, two ships, a ship's target, the administrator's stock (2026-11-12)
+
+The rest of the task's group 3 in the viewer (notes and scripts in `re/emu/sesion28/`):
+- **The town's weaponsmith** (.let 0x08, «8bitkomplettstadtschmiede», building type 0x03; its window *0x6E55A8, update
+  0x5ECFA0, pages set by 0x5EBD70, drawn by 0x5EC590 and 0x5ECAB0; `smithy_window.cpp`, ctest `smithy_window`). What
+  the earlier notes called «the arsenal's window» is the weaponsmith's: the armoury (.let 0x0B, *0x6E552C) is the
+  militia's (0x40, 0x41). Page 0 the artillery (7 rows: the six pieces and the cutlasses [+0x2BC]; buy 0x56 at
+  0x5285B0's price, sell at half of it), page 1 the hand weapons (buy one into the office, 0x50, at a price inline in
+  the window: ((tick >> 8) + town) · 3 % 5 − trunc(0x673A68[k] · −9.25)); the «Priority» checks (the town's mayor
+  only) queue the new **0x57** (0x536186, inline in the executor: the town's [+0x6D0], the hand weapon its weaponsmith
+  makes first). Scenario `smithy_window` (saves 1, 3, 5, 7): 0x5285B0 26 direct calls (the kinds 0..7 at three days
+  of the year and in the first and last towns), 0x52E030 16 (on a town and an office: none, a part, whole, negative,
+  the cutlasses) and 0x57 9 (each weapon, none, the wares beside, a town past): all equal, 8 of 8 targets; the price's
+  `% 5` and 0x57's range broken on purpose and caught. The pieces' names are the weaponsmith's words (0x6A2B38..0x6A2B54),
+  now also in the market's mode 5 (before: «Pieza N»).
+- **Two ships in one place** (the window 0x40EEB0, update 0x40F210; `ship_pair_window.cpp`, ctest `ship_pair_window`):
+  which of its six buttons are on (a guide of a convoy without its [+0x14] bit 1 gives neither captain nor sailors;
+  sailors by 0x5185C0 and 0x5184F0 of the taker, asked of a copy of the ship: `fn_5184f0_on`; hand weapons with ten
+  units of room) and the bytes of 0x0F, 0x10, 0x11. Its rules are inline in the window: checked by the ctest; the
+  engine's operations by `ship_pair_ops` as before. The viewer opens it from the ship menu's crew page («Otro barco»).
+- **A ship's target at sea** (the sea map's right button, 0x44FB40): only the chosen ship's [+0x50] and [+0x52] can be
+  taken, each hit and checked as its convoy's guide (sailing with the chosen ship a pirate, fleeing, or a pirate), the
+  operation naming the ship itself: 0x0E {chosen, it} (`sea_targets`, ctest `ship_pair_window`). In the viewer a tap on
+  such a ship; not seen in the viewer yet (a pirate near the player's ship before the attack is hard to set up).
+- **The administrator's stock to keep** (the control beside each order of 0x5DCDB0: in barrels or loads, one by one;
+  each change sends 0x5B with the order's price and kind as they are): the office's third page in the viewer.
+- **The offers' letters against the game's composer**: `scripts/letters-check.sh` with `P3_OFFERS=1` makes the same
+  five offers on both sides first (`p3save … letters EXE offers`, `letter_oracle.py --offers`: from the docked list,
+  the player's first ship and a merchant past the towns' own; money, wares and the ship to him, money and wares from
+  him), so that the player's chain has three memos 0x1E and two offers 0x1F: saves 1, 3, 5, 7, English and Spanish,
+  all equal (`re/emu/sesion28/letters_offers.sh`).
 
 ## The game's static initializers (2026-11-03)
 

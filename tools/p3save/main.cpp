@@ -2,6 +2,7 @@
 // comerciantes y barcos.
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -25,6 +26,7 @@
 #include "p3data/statistics.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/savegame_write.hpp"
+#include "p3data/simulation.hpp"
 #include "p3data/lz_compress.hpp"
 #include "p3data/wares.hpp"
 #include "stb_image_write.h"
@@ -47,7 +49,7 @@ int usage() {
 		"         [--map FILE.gmf]\n"
 		"       p3save texts-cache <Patrician3.exe> <cache>\n"
 		"       p3save texts <Patrician3.exe> [FIRST]\n"
-		"       p3save <archivo.cpr> <partida> letters <Patrician3.exe> [merchant]\n"
+		"       p3save <archivo.cpr> <partida> letters <Patrician3.exe> [merchant] [offers]\n"
 		"       p3save <archivo.cpr> <partida> chronicle <Patrician3.exe>\n"
 		"       p3save <archivo.cpr> <partida> letter-picture <entry> <out.png>\n"
 		"       p3save <archivo.cpr> <partida> ticker <Patrician3.exe> <ticker_oracle.py's output>\n"
@@ -63,7 +65,8 @@ int usage() {
 		"texts prints the game's texts p3vita reads from the exe (game_texts.hpp), from FIRST on.\n"
 		"letters prints the letters of the merchant's chain (by default the player's) as\n"
 		"p3vita composes them (letters.hpp) with the exe's texts: entry, type and the\n"
-		"text in hex; - without a text, ? for a type not rewritten yet\n"
+		"text in hex; - without a text, ? for a type not rewritten yet; with offers, five offers\n"
+		"made first (offer_recipe: their letters 0x1E and 0x1F aren't in a save)\n"
 		"(tools/oracle/letter_oracle.py prints the game's).\n"
 		"chronicle prints the chronicle (the news of the list -2) as p3vita composes it, in\n"
 		"hex (tools/oracle/chronicle_oracle.py prints the game's).\n"
@@ -210,6 +213,58 @@ bool load_any_savegame(const CprArchive& archive, const std::string& path, SaveG
 		}
 	}
 	return true;
+}
+
+// letters … offers: the offers between merchants aren't in a save (SaveGame::offers), so their letters (0x1E, 0x1F)
+// can't be composed from one. These five are made with the engine's 0x5F before composing, the same ones
+// tools/oracle/letter_oracle.py --offers makes in the game (scripts/letters-check.sh with P3_OFFERS=1). From the docked
+// list ([0x6DD888], next [+0x6]): the player's first ship there (its town T) and the first ship there of a merchant
+// past the towns' own and not the player (that merchant, M): to M from the player money (5001, price 500, 1000), beer
+// (5002, 800, 2 barrels) and that ship (5003, 1500); to the player from M money (5004, 300, 700) and grain (5005, 0, 1
+// load). The player's chain gets the memos 0x1E of the first three and the offers 0x1F of the other two (an AI
+// merchant keeps no letters). Nothing if the list has no such ships.
+std::vector<std::array<uint8_t, 0x14>> offer_recipe(const SaveGame& save, std::string& note) {
+	std::vector<std::array<uint8_t, 0x14>> ops;
+	const uint32_t ships = save.globals.u16(global::kShipCount);
+	const uint32_t towns = save.globals.u32(global::kWorldTownCount);
+	const uint32_t player = save.globals.u32(global::kPlayer);
+	int own = -1;
+	int other = -1;
+	for (uint32_t i = save.globals.u16(global::kShips + 0xE8), seen = 0; i < ships && i < save.ships.size() && seen < ships;
+		 i = save.ships[i].memory.u16(0x6), ++seen) {
+		const uint8_t owner = save.ships[i].memory.u8(0);
+		if (own < 0 && owner == player) {
+			own = int(i);
+		} else if (other < 0 && owner != player && owner >= towns) {
+			other = int(owner);
+		}
+	}
+	if (own < 0 || other < 0) {
+		note = "no ship of the player and of another merchant in the docked list: no offers";
+		return ops;
+	}
+	const uint8_t town = save.ships[size_t(own)].memory.u8(0x39);
+	auto offer = [&](uint32_t number, int32_t price, uint32_t a, uint32_t b, uint8_t kind, uint32_t what) {
+		std::array<uint8_t, 0x14> op{};
+		const uint32_t code = 0x5F;
+		std::memcpy(op.data(), &code, 4);
+		std::memcpy(op.data() + 4, &number, 4);
+		std::memcpy(op.data() + 8, &price, 4);
+		op[0xC] = uint8_t(a);
+		op[0xD] = uint8_t(b);
+		op[0xE] = town;
+		op[0xF] = kind;
+		std::memcpy(op.data() + 0x10, &what, 4);
+		ops.push_back(op);
+	};
+	offer(5001, 500, player, uint32_t(other), 2, 1000);
+	offer(5002, 800, player, uint32_t(other), 0, 3 | 2 << 16);
+	offer(5003, 1500, player, uint32_t(other), 1, uint32_t(own));
+	offer(5004, 300, uint32_t(other), player, 2, 700);
+	offer(5005, 0, uint32_t(other), player, 0, 0 | 1 << 16);
+	note = "offers: the player " + std::to_string(player) + ", merchant " + std::to_string(other) + ", ship " +
+		std::to_string(own) + ", town " + std::to_string(town);
+	return ops;
 }
 
 }  // namespace
@@ -544,7 +599,18 @@ int main(int argc, char** argv) {
 			std::fprintf(stderr, "%s\n", error.c_str());
 			return 1;
 		}
-		const int merchant = argc > 5 ? std::atoi(argv[5]) : save.player;
+		int merchant = save.player;
+		for (int k = 5; k < argc; ++k) {
+			if (std::strcmp(argv[k], "offers") == 0) {
+				std::string note;
+				for (const std::array<uint8_t, 0x14>& op : offer_recipe(save, note)) {
+					run_operation(save, nullptr, op.data());
+				}
+				std::fprintf(stderr, "%s\n", note.c_str());
+			} else {
+				merchant = std::atoi(argv[k]);
+			}
+		}
 		if (merchant < 0 || size_t(merchant) >= save.merchants.size()) {
 			std::fprintf(stderr, "no merchant %d\n", merchant);
 			return 1;

@@ -920,7 +920,8 @@ void fn_538800(SaveGame& save, const uint8_t* operation) {
 // first point at a town other than the ship's (0x517260) ends the points there and is the destination of 0x537670
 // (Sailing::set_sail); without one, the point given is where the ship is (or, leaving or entering a port, the approach
 // point of the town of the number 0x6DE4B8[1 − (town & 1)]: the town 0's or 1's, whatever the ship's; seems a game bug:
-// a ship entering a port from that very town doesn't turn round, docs/roadmap.md). The route
+// a ship entering a port from that very town doesn't turn round; left as the original at the user's word, even with
+// fix_game_bugs, docs/roadmap.md). The route
 // set_sail made is dropped (freed if its own), the ship's place is put before the points ([2..3]), the points equal to
 // the one before taken out (in the buffer, its length kept; after one is taken out the next isn't compared) and the
 // route made through them (Sailing::follow_points). If the ship may not sail the game tells the sea map (0x44F940, UI).

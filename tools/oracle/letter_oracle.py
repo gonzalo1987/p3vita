@@ -99,6 +99,33 @@ def compose_all(o, merchant, types=None, run=None):
     return out
 
 
+def make_offers(o):
+    """--offers: the five offers tools/p3save/main.cpp's offer_recipe makes (the offers' letters 0x1E and 0x1F can't be
+    composed from a save, which hasn't the offers' list), run with the game's executor (0x5F). Returns a note."""
+    ships, towns, player = o.u16(0x6DD894), o.u32(0x6DE4B0), o.u32(to.PLAYER)
+    own = other = None
+    i, seen = o.u16(0x6DD888), 0
+    while i < ships and seen < ships:
+        owner = o.u8(o.ship(i))
+        if own is None and owner == player:
+            own = i
+        elif other is None and owner != player and owner >= towns:
+            other = owner
+        i, seen = o.u16(o.ship(i) + 6), seen + 1
+    if own is None or other is None:
+        return 'no ship of the player and of another merchant in the docked list: no offers'
+    town = o.u8(o.ship(own) + 0x39)
+    for number, price, a, b, kind, what in ((5001, 500, player, other, 2, 1000), (5002, 800, player, other, 0, 3 | 2 << 16),
+                                            (5003, 1500, player, other, 1, own), (5004, 300, other, player, 2, 700),
+                                            (5005, 0, other, player, 0, 0 | 1 << 16)):
+        op = struct.pack('<IIiBBBBI', 0x5F, number, price, a, b, town, kind, what).ljust(to.OPERATION_SIZE, b'\0')
+        buffer = o.alloc(to.OPERATION_SIZE)
+        o.uc.mem_write(buffer, op)
+        o.tick_operations = []
+        o.call(to.EXECUTOR_TRAMPOLINE, list(struct.unpack('<5I', op[:0x14])) + [to.EXECUTOR_MAGIC], ecx=buffer)
+    return f'offers: the player {player}, merchant {other}, ship {own}, town {town}'
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     p.add_argument('exe')
@@ -109,9 +136,12 @@ def main():
     p.add_argument('--merchant', type=int)
     p.add_argument('--types', help='only these types (hex, comma-separated)')
     p.add_argument('--spanish', metavar='EXE', help="the Spanish Patrician3.exe: its composer's texts")
+    p.add_argument('--offers', action='store_true', help='make five offers first (make_offers), as p3save letters offers')
     a = p.parse_args()
     o = to.TownOracle(a.exe, open(a.save, 'rb').read(), 1, a.barcos, cpr=a.cpr)
     o.load()
+    if a.offers:
+        print(make_offers(o), file=sys.stderr)
     run = None
     if a.spanish:
         import spanish_exe

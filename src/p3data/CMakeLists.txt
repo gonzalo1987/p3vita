@@ -4,6 +4,8 @@ add_library(p3data STATIC
 	guild_window.cpp
 	offer_window.cpp
 	office_window.cpp
+	ship_pair_window.cpp
+	smithy_window.cpp
 	battle/attack.cpp
 	battle/battle_setup.cpp
 	battle/battle_step.cpp

@@ -11,6 +11,7 @@
 #include "p3data/game_texts.hpp"
 #include "p3data/player_actions.hpp"
 #include "p3data/sailing.hpp"
+#include "p3data/smithy_window.hpp"
 #include "p3data/statistics_window.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "probe_registry.hpp"
@@ -1066,6 +1067,18 @@ void register_probes_unchecked(ProbeRegistry& r) {
 	// bribe window).
 	r[0x529E20] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		return councillor_price(s, uint32_t(c.town(c.ecx)), c.args[0], c.args[1]);
+	};
+	// The weaponsmith's window (smithy_window.hpp): 0x5285B0 (thiscall on the town: kind), a piece of artillery's
+	// price; 0x52E030 (thiscall on a town or an office: kind), how many of a kind it holds.
+	r[0x5285B0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		return uint32_t(artillery_price(s, uint32_t(c.town(c.ecx)), c.args[0]));
+	};
+	r[0x52E030] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const int town = c.town(c.ecx);
+		if (town >= 0) {
+			return uint32_t(town_artillery(s, uint32_t(town), c.args[0]));
+		}
+		return uint32_t(office_artillery(s, uint32_t(c.office(c.ecx)), c.args[0]));
 	};
 	// The guild's window (guild_window.hpp): 0x4DA480 (thiscall on the queue: event), whether the player is told of
 	// the auction (al); and the copier of 0x4DA1A0's list.

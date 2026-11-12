@@ -4759,6 +4759,41 @@ def arsenal_ops(o):
     return during
 
 
+def smithy_window(o):
+    """The town's weaponsmith's window (.let 0x08, *0x6E55A8; smithy_window.hpp), in the town of the player's first
+    office: 0x5285B0 (a piece of artillery's price, thiscall on the town) for the kinds 0..7 at three days of the year
+    and in the first and the last town; 0x52E030 (how many of a kind, thiscall on a town or an office) for the kinds
+    0..7 with the counts none, just under a piece, whole, a part over, negative, and the cutlasses; 0x57 (0x536186: the
+    hand weapon the weaponsmith makes first) with each of the four, none (the window's 0x113), the wares beside them
+    and a town past."""
+    towns, _, _, _ = o.counts()
+    m = o.u32(to.PLAYER)
+    t = office_town(o, m)
+    ta = o.town(t)
+    b = o.office(facilities_office(o, m, t))
+    print(f'the player {m}, his office in town {t}')
+
+    def during(o):
+        for day in (0, 1, 364):
+            w16(o, WORLD + 4, day)
+            print(f'day {day}: {[direct(o, 0x5285B0, [k], ecx=ta) for k in range(8)]}')
+        for x in (0, towns - 1):
+            direct(o, 0x5285B0, [3], ecx=o.town(x))
+        for k, (town_has, office_has) in enumerate(((0, 3000), (999, 1000), (1000, 0), (2500, 4100), (5999, 1999),
+                                                    (-1500, 2000))):
+            w32(o, ta + 0x124 + 4 * k, town_has)
+            w32(o, b + 0x124 + 4 * k, office_has)
+        w32(o, ta + 0x2BC, 7)
+        w32(o, b + 0x2BC, -2)
+        print(f'town {[direct(o, 0x52E030, [k], ecx=ta) for k in range(8)]}, '
+              f'office {[direct(o, 0x52E030, [k], ecx=b) for k in range(8)]}')
+        for ware in (0x14, 0x15, 0x16, 0x17, 0x113, 0x16, 0x13, 0x18):
+            operation(o, 0x57, t, ware)
+            print(f'0x57 {ware:#x}: {o.u32(ta + 0x6D0):#x}')
+        operation(o, 0x57, towns, 0x14)
+    return during
+
+
 def tavern_trader(o):
     """The tavern's trader (0x4D, 0x53B5E0), run with the executor in the town of the player's first docked ship (an
     office made there if he has none): beer (barrels) into the office (the town's stock down by all), into a town
@@ -12904,6 +12939,9 @@ SCENARIOS = {
         '@4fe4c9', '@4fe653', '@4fe675', '@4fe630', '@4fe6de>4fe806', '@4fe6f0', '@4fe73d', '@4fe737>4fe7fe',
         '@4fe797', '@4fe80f>4fe864', '@4fe846', '@4fe85a', '@535d17>537025', '@535d54>537025',
         '@535d90>537025']),
+    'smithy_window': Scenario(smithy_window, [0x535760, 0x5285B0, 0x52E030], 0, [
+        '@5285db', '@528614', '@52e039', '@52e042', '@5361a4', '@53619d>5361c1', '@5361a2>5361c1',
+        '@536191>537025']),
     'building_windows': Scenario(building_windows, [0x4FE360, 0x4FE390, 0x529E20], 0, [
         '@4fe389', '@4fe399', '@4fe3e1', '@4fe3cd', '@4fe3bc', '@4fe403', '@4fe407', '@529e6e', '@529e75', '@529e7c',
         '@529e83', '@529e8a', '@529e91', '@529e98', '@529e9f', '@529e65>529ea4', '@529ee3', '@529ee0>529eee',

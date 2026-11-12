@@ -1,7 +1,9 @@
 #include "p3data/offer_window.hpp"
 
+#include <algorithm>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -57,9 +59,20 @@ std::vector<OfferChoice> offer_choices(const SaveGame& save, uint32_t player, in
 	for (uint32_t w = 0; w < kOfferWares; ++w) {
 		const int32_t held = ware_held(save, player, town, w);
 		const int32_t unit = kInBarrels[w] ? 200 : 2000;
-		if (uint32_t(held) / uint32_t(unit) != 0) {
-			list.push_back({0, uint16_t(w), held / unit});
+		if (uint32_t(held) / uint32_t(unit) == 0) {
+			continue;
 		}
+		int32_t most = held / unit;
+		if (fix_game_bugs()) {
+			// The game's end adds the office's units to the ships' before rounding and counts the ships in any state,
+			// but 0x5F holds back only whole barrels or loads of the office and the docked ships' cargo, and the
+			// offer kept the amount asked: offering more than that made wares out of nothing (town_tick/offers.cpp).
+			most = std::min(most, tick::offers_detail::holdable_units(save, player, uint32_t(town), uint16_t(w)) / unit);
+			if (most <= 0) {
+				continue;
+			}
+		}
+		list.push_back({0, uint16_t(w), most});
 	}
 	for (uint16_t ship : window_ships(save, int(player), town, ShipListMode::Docked)) {
 		list.push_back({1, ship, 0});

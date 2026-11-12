@@ -36,6 +36,8 @@
 #include "p3data/guild_window.hpp"
 #include "p3data/offer_window.hpp"
 #include "p3data/office_window.hpp"
+#include "p3data/ship_pair_window.hpp"
+#include "p3data/smithy_window.hpp"
 #include "p3data/letter_window.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/navigation.hpp"
@@ -262,7 +264,22 @@ bool rear_touch(SDL_TouchID id) {
 // the tavern (0x24, «kneipe», 0x02), the shipyard (0x2E, «werft», 0x01) and
 // the repair dock (0x01, «repwerft», 0x1B) (savegame.md §8.1); their names,
 // the game's (0x6A57C8 + 4 · the building's type).
-enum class Place { None, MarketHall, Tavern, Shipyard, Ship, Office, Lender, Building, Church, BathHouse, Guild, Offers };
+enum class Place {
+	None,
+	MarketHall,
+	Tavern,
+	Shipyard,
+	Ship,
+	Office,
+	Lender,
+	Building,
+	Church,
+	BathHouse,
+	Guild,
+	Offers,
+	Smithy,
+	ShipPair
+};
 
 struct PlaceInfo {
 	uint32_t let_type;
@@ -291,6 +308,9 @@ constexpr PlaceInfo kPlaces[] = {
 	// The rival kontor (.let 0x2D, drawn when another merchant has an office in the town): another merchant's office,
 	// the offers (offer_window.hpp).
 	{0x2D, Place::Offers, GameText::Count, "Oficina de otro comerciante", "Another merchant's office"},
+	// The town's weaponsmith (building type 0x03, «8bitkomplettstadtschmiede»): the ship's artillery and the hand
+	// weapons (smithy_window.hpp). (The armoury, .let 0x0B, is the militia's: with the town hall.)
+	{0x08, Place::Smithy, GameText::Count, "Maestro armero", "Weaponsmith", 0x03},
 };
 
 const PlaceInfo* place_of(uint32_t let_type) {
@@ -987,6 +1007,11 @@ public:
 	}
 
 	// Ciudad de la partida cuyo símbolo (o nombre, con margen) está en un punto del mapa; -1 si ninguna.
+	// Whether the map point (x, y) is on a ship's picture, as draw puts it (centred on its position).
+	static bool on_ship(const SavedShip& ship, int x, int y) {
+		return std::abs(x - (ship.x() >> 16)) <= kShipSpriteWidth / 2 && std::abs(y - (ship.y() >> 16)) <= kShipSpriteHeight / 2;
+	}
+
 	int town_at(const SaveGame& save, int x, int y) const {
 		for (size_t i = 0; i < save.towns.size(); ++i) {
 			const SDL_Point c = town_center(save, i);
@@ -1795,9 +1820,36 @@ std::string market_mode_name(int mode) {
 	}
 }
 
+std::string exe_text(uint32_t english, const char* spanish, const char* fallback);
+
+// A piece of artillery by its kind (0..5, the order of the weights 0x672CB4; 6 the cutlasses of [+0x2BC]), with the
+// weaponsmith's words (0x6A2B38..0x6A2B54, which the game draws on two lines: «small» over «catapult»; 0x6AA35C).
+std::string artillery_name(int kind) {
+	const std::string small = exe_text(0x6A2B38, "pequeña", "small");
+	const std::string large = exe_text(0x6A2B3C, "gran", "large");
+	const std::string catapult = exe_text(0x6A2B40, "catapulta", "catapult");
+	const std::string ballista = exe_text(0x6A2B4C, "balista", "ballista");
+	switch (kind) {
+	case 0:
+		return capitalized(small + " " + catapult);
+	case 1:
+		return capitalized(exe_text(0x6A2B44, "pequeña", "small") + " " + ballista);
+	case 2:
+		return capitalized(large + " " + catapult);
+	case 3:
+		return capitalized(exe_text(0x6A2B48, "gran", "large") + " " + ballista);
+	case 4:
+		return capitalized(exe_text(0x6A2B50, "bombarda", "bombard"));
+	case 5:
+		return capitalized(exe_text(0x6A2B54, "cañón", "cannon"));
+	default:
+		return capitalized(exe_text(0x6AA35C, "puñal", "Cutlass"));
+	}
+}
+
 // The rows of the mode 5: the four weapons (the wares 0x14..0x17), the hand
-// weapons and the six pieces (their names are pictures in the game; these
-// are the viewer's, by their weight: 0x672CB4).
+// weapons and the six pieces (by their weight: 0x672CB4; named as the
+// weaponsmith names them).
 std::string arsenal_row_name(int row) {
 	if (row < 4) {
 		return capitalized(game_text(GameText(int(GameText::WareSword) + row),
@@ -1806,10 +1858,7 @@ std::string arsenal_row_name(int row) {
 	if (row == 4) {
 		return game_text(GameText::HandWeapons, tr("Armas de mano", "Hand weapons"));
 	}
-	static constexpr bool kBig[6] = {false, false, true, true, true, false};
-	const int type = row - 5;
-	return (g_spanish ? "Pieza " + std::to_string(type + 1) + (kBig[type] ? " (grande)" : " (pequeña)")
-					  : "Piece " + std::to_string(type + 1) + (kBig[type] ? " (big)" : " (small)"));
+	return artillery_name(row - 5);
 }
 
 // What X (`first`) or Square sends in the modes 2, 0 and 5, as the game's
@@ -2377,6 +2426,10 @@ struct PlaceUi {
 	int lender_kind = 2;
 	// The player's own building touched in the town (its record): demolish or auction it.
 	int record = -1;
+	// Two ships in one place (ship_pair_window.hpp): the ship whose menu opened it (A); the other is the page's among
+	// those it can pair with (pair_pages of them, set by the view).
+	int pair_ship = -1;
+	int pair_pages = 0;
 	// The church's feeding page: each row's amount (the row being changed is `amount`).
 	std::array<int, 5> feed{};
 	int feed_row = -1;
@@ -2417,8 +2470,14 @@ int place_pages(const PlaceUi& ui) {
 	if (ui.open == Place::Guild) {
 		return 3;
 	}
-	if (ui.open == Place::Office || ui.open == Place::Offers) {
+	if (ui.open == Place::Office) {
+		return 3;
+	}
+	if (ui.open == Place::Offers || ui.open == Place::Smithy) {
 		return 2;
+	}
+	if (ui.open == Place::ShipPair) {
+		return std::max(1, ui.pair_pages);
 	}
 	return ui.open == Place::Lender ? kLenderPages : 0;
 }
@@ -2448,6 +2507,10 @@ struct PlaceView {
 	std::string amount_label;
 	uint16_t captain = 0xFFFF;  // The tavern's captain.
 	std::string act;  // The act button's label, if not the row's.
+	// A second action of the selected row, with Square or its touch button beside the act button (the office
+	// administrator's «keep the stock», the weaponsmith's «sell» and «priority»): its label, empty for none.
+	std::string act2;
+	bool act2_on = false;
 	// What each row does, where the rows aren't fixed: the convoy window's
 	// choices (kPrivateConvoy, kPublicConvoy, a convoy to join), kLeaveConvoy,
 	// kDisbandConvoy; the shipyard's pages' items (a ship type, a ship).
@@ -3430,13 +3493,16 @@ void guild_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 // with the office, as before; the guards one more or one less, 0x63, and the storage and the thieves' chance the game
 // shows), 1 the administrator (hire or dismiss him, 0x5E, and his order for each of the wares 0..19, 0x5B: Left/Right
 // the price by 10, X none → buy at most at it → sell at least at it → none, Square keep its stock from the trade
-// routes' ships, 0x66). The stock to keep isn't chosen here yet: the order keeps the office's.
-constexpr int kOfficePages = 2;
+// routes' ships, 0x66), 2 the stock each order keeps (the game's control beside each order, 0x5DCDB0: in barrels or
+// loads, one by one; each change sends 0x5B with the order's price and kind as they are).
+constexpr int kOfficePages = 3;
 constexpr int kOfficePriceStep = 10;
+constexpr int kOfficeMostStock = 999;  // The viewer's end of the stock to keep, in barrels or loads.
 
 void office_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	ui.page = ((ui.page % kOfficePages) + kOfficePages) % kOfficePages;
-	static const char* const kPages[kOfficePages][2] = {{"Almacén", "Warehouse"}, {"Administrador", "Administrator"}};
+	static const char* const kPages[kOfficePages][2] = {{"Almacén", "Warehouse"}, {"Administrador", "Administrator"},
+		{"Existencias a guardar", "Stock to keep"}};
 	v.title = place_name(ui.let_type) + " - " + tr(kPages[ui.page][0], kPages[ui.page][1]) + "   (L/R)";
 	const uint32_t player = uint32_t(save.player);
 	const int office = player_office(save, town);
@@ -3463,6 +3529,23 @@ void office_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 		return;
 	}
 	const bool hired = has_administrator(save, uint32_t(office));
+	if (ui.page == 2) {
+		// The stock each order keeps: the amount is the new one (from 0), X sends it.
+		for (uint32_t w = 0; w < 20; ++w) {
+			const WareUnit unit = kWares[w].unit;
+			v.rows.push_back({capitalized(ware_name(int(w))) + ": " + amount_label(units(o.s32(0x354 + 4 * w), unit), unit), hired});
+		}
+		ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
+		const WareUnit unit = kWares[size_t(ui.row)].unit;
+		v.max_amount = kOfficeMostStock;
+		v.amount_choice = true;
+		v.amount_label = amount_label(std::clamp(ui.amount, 0, kOfficeMostStock), unit);
+		v.act = tr("Guardar ", "Keep ") + v.amount_label;
+		if (!hired) {
+			v.lines.push_back({tr("Sin administrador.", "No administrator."), kDimColor});
+		}
+		return;
+	}
 	v.rows.push_back({hired ? tr("Despedir al administrador", "Dismiss the administrator")
 							: tr("Contratar un administrador", "Hire an administrator"),
 		true});
@@ -3474,7 +3557,7 @@ void office_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 			: price > 0	   ? tr("vende desde ", "sells from ") + format_money(price)
 						   : std::string("-");
 		if (keep > 0) {
-			label += tr(", guarda ", ", keeps ") + amount_label(keep, kWares[w].unit);
+			label += tr(", guarda ", ", keeps ") + amount_text(keep, kWares[w].unit);
 		}
 		if (o.u32(0x3B4) & (1u << w)) {
 			label += tr(" (reservado)", " (reserved)");
@@ -3492,10 +3575,9 @@ void office_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	const int32_t price = o.s32(0x2F4 + 4 * w);
 	const int32_t chosen = ui.amount > 0 ? ui.amount * kOfficePriceStep : last_order_price(save, player, w, price == 0);
 	v.amount_label = tr("Precio: ", "Price: ") + format_money(chosen);
-	v.lines.push_back({tr("X: nada, comprar, vender.  Cuadrado: reservar las existencias.",
-						   "X: none, buy, sell.  Square: keep the stock."),
-		kDimColor});
 	v.act = price < 0 ? tr("Vender", "Sell") : price > 0 ? tr("Nada", "None") : tr("Comprar", "Buy");
+	v.act2 = (o.u32(0x3B4) & (1u << w)) ? tr("No reservar", "Don't keep") : tr("Reservar", "Keep the stock");
+	v.act2_on = hired;
 }
 
 void office_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
@@ -3512,6 +3594,14 @@ void office_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const P
 		const OfficeStorage s = office_storage(save, uint32_t(office));
 		run_operations(save, sailing,
 			{guards_operation(player, uint32_t(town), uint32_t(ui.row == 1 ? s.guards + 1 : s.guards - 1))});
+		return;
+	}
+	if (ui.page == 2) {
+		// 0x5DCFD1: {0x5B, the stock in barrels or loads · 200 or 2000, the order's price as it is, office, ware}.
+		const uint32_t w = uint32_t(ui.row);
+		const int32_t stock = std::clamp(ui.amount, 0, kOfficeMostStock) * ware_scale(kWares[w].unit);
+		run_operations(save, sailing, {administrator_order_operation(stock,
+										  save.offices[size_t(office)].memory.s32(0x2F4 + 4 * w), uint32_t(office), w)});
 		return;
 	}
 	if (ui.row == 0) {
@@ -3539,6 +3629,170 @@ void office_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
 	const uint32_t w = uint32_t(ui.row - 1);
 	const bool on = !(save.offices[size_t(office)].memory.u32(0x3B4) & (1u << w));
 	run_operations(save, sailing, {reserve_operation(w, uint32_t(save.player), uint32_t(town), on)});
+}
+
+// The town's weaponsmith (.let 0x08; smithy_window.hpp): its pages (L/R) 0 the ship's artillery (a row per piece and
+// the cutlasses: X buys one for the office, Square sells one of the office's) and 1 the hand weapons (X buys one into
+// the office; Square, for the town's mayor, the one the weaponsmith makes first, or none). As in the game, nothing
+// without an office there; the viewer also dims what the town, the office or the money can't give.
+void smithy_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	ui.page = ((ui.page % 2) + 2) % 2;
+	const bool artillery = ui.page == 0;
+	const uint32_t player = uint32_t(save.player);
+	v.title = exe_text(0x6A2B2C, "Armería", "Weapons smith") + " - " +
+		(artillery ? game_text(GameText::ShipWeapons, tr("Armas de barco", "Ship's weapons"))
+				   : game_text(GameText::HandWeapons, tr("Armas de mano", "Hand weapons"))) +
+		"   (L/R)";
+	const SmithyPage page = artillery ? smithy_artillery(save, player, town) : smithy_hand_weapons(save, player, town);
+	if (page.rows.empty()) {
+		return;
+	}
+	const int32_t money = save.merchants[player].memory.s32(0x0);
+	for (size_t k = 0; k < page.rows.size(); ++k) {
+		const SmithyRow& r = page.rows[k];
+		std::string label = (artillery ? artillery_name(int(k))
+									   : capitalized(game_text(GameText(int(GameText::WareSword) + int(k)), "")));
+		label += ": " + std::to_string(r.town);
+		if (!artillery && page.priority == int(k)) {
+			label += " (" + exe_text(0x6AA360, "Prioridad", "Priority") + ")";
+		}
+		v.rows.push_back({label, page.office && r.town > 0 && money >= r.price});
+	}
+	ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
+	const SmithyRow& r = page.rows[size_t(ui.row)];
+	v.lines.push_back({exe_text(0x6A2B30, "Armería", "Smithy") + ": " + std::to_string(r.town), kTextColor});
+	if (page.office) {
+		v.lines.push_back({game_text(GameText::Office, tr("Oficina", "Office")) + ": " + std::to_string(r.office),
+			kTextColor});
+	} else {
+		v.lines.push_back({exe_text(0x6A2B34, "Para comprar armas para tus barcos, tienes que tener una oficina en esta ciudad.",
+							   "You must have a trading office in this town, to be able to buy weapons for your ships."),
+			kDimColor});
+	}
+	if (const int stopped = smithy_stopped(save, town); stopped >= 0) {
+		v.lines.push_back({exe_text(0x6B2284 + 4 * uint32_t(stopped), "Producción interrumpida.", "Production stopped."),
+			kDimColor});
+	}
+	v.act = game_text(GameText::MarketBuy, tr("Comprar", "Buy")) + ": " + format_money(r.price);
+	if (artillery) {
+		v.act2 = game_text(GameText::MarketSell, tr("Vender", "Sell")) + ": " + format_money(r.sell);
+		v.act2_on = page.office && r.office > 0;
+	} else {
+		v.act2 = page.priority == ui.row ? tr("Sin prioridad", "No priority") : exe_text(0x6AA360, "Prioridad", "Priority");
+		v.act2_on = page.office && page.may_choose;
+	}
+}
+
+void smithy_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
+	const uint32_t player = uint32_t(save.player);
+	if (player_office(save, town) < 0) {
+		return;
+	}
+	run_operations(save, sailing,
+		{ui.page == 0 ? smithy_artillery_operation(save, player, uint32_t(town), uint32_t(ui.row), false)
+					  : smithy_hand_weapon_operation(save, player, uint32_t(town), uint32_t(ui.row))});
+}
+
+// Square on the weaponsmith: sell one piece of the office's (page 0), or the weapon made first (page 1, the mayor).
+void smithy_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
+	const uint32_t player = uint32_t(save.player);
+	if (player_office(save, town) < 0) {
+		return;
+	}
+	if (ui.page == 0) {
+		run_operations(save, sailing, {smithy_artillery_operation(save, player, uint32_t(town), uint32_t(ui.row), true)});
+		return;
+	}
+	const SmithyPage page = smithy_hand_weapons(save, player, town);
+	if (page.may_choose) {
+		run_operations(save, sailing, {smithy_priority_operation(uint32_t(town), page.priority == ui.row ? -1 : ui.row)});
+	}
+}
+
+// The player's ships `ship` can be paired with (ship_pair_window.hpp), in the ships' order.
+std::vector<int> pairable_ships(const SaveGame& save, int ship) {
+	std::vector<int> list;
+	if (save.player < 0 || ship < 0) {
+		return list;
+	}
+	const int ships = std::min(int(save.ships.size()), int(save.globals.u16(global::kShipCount)));
+	for (int i = 0; i < ships; ++i) {
+		if (can_pair_ships(save, uint32_t(save.player), ship, i)) {
+			list.push_back(i);
+		}
+	}
+	return list;
+}
+
+// Two ships of the player in one place (the game's window 0x40EEB0; ship_pair_window.hpp), opened from the ship menu's
+// crew page: its pages (L/R) the other ships docked with it; its rows the captains (X swaps them), the sailors and the
+// hand weapons (X one to the other ship, Square one from it), each with what the two ships have.
+void ship_pair_view(const SaveGame& save, PlaceUi& ui, PlaceView& v) {
+	const std::vector<int> others = pairable_ships(save, ui.pair_ship);
+	ui.pair_pages = int(others.size());
+	if (others.empty()) {
+		return;
+	}
+	const int n = int(others.size());
+	ui.page = ((ui.page % n) + n) % n;
+	const int a = ui.pair_ship;
+	const int b = others[size_t(ui.page)];
+	const SavedShip& sa = save.ships[size_t(a)];
+	const SavedShip& sb = save.ships[size_t(b)];
+	v.title = sa.name() + " - " + sb.name() + (n > 1 ? "   (L/R)" : "");
+	const ShipPairButtons on = ship_pair_buttons(save, a, b);
+	auto captain = [&](const SavedShip& s) {
+		return s.captain() < save.globals.u16(global::kCaptainCount) ? captain_name(save, s.captain()) : tr("ninguno", "none");
+	};
+	v.rows.push_back({exe_text(0x6999D4, "Capitán", "Captain") + ": " + captain(sa) + " / " + captain(sb),
+		on.captain[0] || on.captain[1]});
+	v.rows.push_back({tr("Marineros", "Sailors") + ": " + std::to_string(sa.sailors()) + " / " + std::to_string(sb.sailors()),
+		on.sailors[1]});
+	v.rows.push_back({game_text(GameText::HandWeapons, tr("Armas de mano", "Hand weapons")) + ": " +
+			std::to_string(sa.hand_weapons()) + " / " + std::to_string(sb.hand_weapons()),
+		on.weapons[1]});
+	ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
+	if (ui.row == 0) {
+		v.act = tr("Cambiar capitanes", "Swap captains");
+		return;
+	}
+	v.act = tr("Uno al ", "One to the ") + sb.name();
+	v.act2 = tr("Uno del ", "One from the ") + sb.name();
+	v.act2_on = ui.row == 1 ? on.sailors[0] : on.weapons[0];
+}
+
+// X (`from_other` false) or Square on the two ships' window: the row's operation, if its button is on.
+void ship_pair_act(SaveGame& save, Sailing* sailing, PlaceUi& ui, bool from_other) {
+	const std::vector<int> others = pairable_ships(save, ui.pair_ship);
+	if (others.empty() || ui.page < 0 || ui.page >= int(others.size())) {
+		return;
+	}
+	const int a = ui.pair_ship;
+	const int b = others[size_t(ui.page)];
+	const ShipPairButtons on = ship_pair_buttons(save, a, b);
+	const int from = from_other ? b : a;
+	const int to = from_other ? a : b;
+	if (ui.row == 0 && !from_other && (on.captain[0] || on.captain[1])) {
+		run_operations(save, sailing, {swap_captains_operation(a, b)});
+	} else if (ui.row == 1 && on.sailors[from_other ? 0 : 1]) {
+		run_operations(save, sailing, {pass_sailors_operation(from, to)});
+	} else if (ui.row == 2 && on.weapons[from_other ? 0 : 1]) {
+		run_operations(save, sailing, {pass_hand_weapons_operation(from, to)});
+	}
+}
+
+// Square, or the second button: the window's second action, when it can be done.
+void place_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
+	if (v.act2.empty() || !v.act2_on || ui.row < 0 || ui.row >= int(v.rows.size())) {
+		return;
+	}
+	if (ui.open == Place::Office) {
+		office_square(save, sailing, town, ui);
+	} else if (ui.open == Place::Smithy) {
+		smithy_square(save, sailing, town, ui);
+	} else if (ui.open == Place::ShipPair) {
+		ship_pair_act(save, sailing, ui, true);
+	}
 }
 
 // Another merchant's office (.let 0x2D, the rival kontor; offer_window.hpp): the page 0 lists the merchants of the
@@ -3877,6 +4131,12 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	case Place::Offers:
 		offer_view(save, town, ui, v);
 		break;
+	case Place::Smithy:
+		smithy_view(save, town, ui, v);
+		break;
+	case Place::ShipPair:
+		ship_pair_view(save, ui, v);
+		break;
 	case Place::Building: {
 		// The player's building (the game's windows 0x5AF5C0 and 0x5A2xxx, with
 		// their two buttons, which the game draws as pictures): demolish it,
@@ -3954,6 +4214,10 @@ struct PlaceLayout {
 	SDL_Rect minus_button{};
 	SDL_Rect plus_button{};
 	SDL_Rect act_button{};
+	// With a second action (PlaceView::act2) the act button's room is split: the second on its left half (Square),
+	// the act on its right half.
+	SDL_Rect act2_button{};
+	SDL_Rect act_half{};
 
 	explicit PlaceLayout(int line_height) {
 		const int button_height = line_height + 6;
@@ -3967,7 +4231,12 @@ struct PlaceLayout {
 		plus_button = {minus_button.x + minus_button.w + 8 + 120 + 8, button_y, 60, button_height};
 		act_button = {plus_button.x + plus_button.w + 8, button_y, panel.x + kPadding + inner - (plus_button.x + plus_button.w + 8),
 			button_height};
+		act2_button = {act_button.x, button_y, (act_button.w - 8) / 2, button_height};
+		act_half = {act2_button.x + act2_button.w + 8, button_y, act_button.w - act2_button.w - 8, button_height};
 	}
+
+	// Where the act button is for this window.
+	const SDL_Rect& act_for(const PlaceView& v) const { return v.act2.empty() ? act_button : act_half; }
 
 	// The amount's box, between − and +.
 	SDL_Rect amount_box() const {
@@ -4039,12 +4308,18 @@ void draw_place(SDL_Renderer* renderer, TextRenderer& text, const PlaceUi& ui, c
 	const bool can = ui.row < int(v.rows.size()) && v.rows[size_t(ui.row)].second &&
 		(v.max_amount < 0 || v.amount_choice || ui.amount > 0);
 	if (ui.row < int(v.rows.size())) {
-		draw_button(renderer, text, layout.act_button,
-			std::string(BTN_CROSS " ") + (v.act.empty() ? v.rows[size_t(ui.row)].first : v.act));
+		const SDL_Rect& act = layout.act_for(v);
+		draw_button(renderer, text, act, std::string(BTN_CROSS " ") + (v.act.empty() ? v.rows[size_t(ui.row)].first : v.act));
+		SDL_SetRenderDrawColor(renderer, 30, 22, 14, 150);
 		if (!can) {
-			const SDL_Rect& r = layout.act_button;
-			SDL_SetRenderDrawColor(renderer, 30, 22, 14, 150);
-			SDL_RenderFillRect(renderer, &r);
+			SDL_RenderFillRect(renderer, &act);
+		}
+		if (!v.act2.empty()) {
+			draw_button(renderer, text, layout.act2_button, std::string(BTN_SQUARE " ") + v.act2);
+			if (!v.act2_on) {
+				SDL_SetRenderDrawColor(renderer, 30, 22, 14, 150);
+				SDL_RenderFillRect(renderer, &layout.act2_button);
+			}
 		}
 	}
 }
@@ -4197,6 +4472,14 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 		offer_act(save, sailing, town, ui, v);
 		return;
 	}
+	if (ui.open == Place::Smithy) {
+		smithy_act(save, sailing, town, ui);
+		return;
+	}
+	if (ui.open == Place::ShipPair) {
+		ship_pair_act(save, sailing, ui, false);
+		return;
+	}
 	if (ui.open == Place::Building) {
 		// 0x5AFD80 after «Yes»: 0x26 or 0x28 with the building's cell; the window closes.
 		const BuildingRecord& r = save.towns[size_t(town)].records[size_t(ui.record)];
@@ -4338,6 +4621,8 @@ struct SidePanel {
 	ShipPage ship_page = ShipPage::Goods;
 	int cargo_first = 0;
 	PlaceUi ship_ui;
+	// The crew page's pad on «Other ship» (the two ships' window), below the ship's window's rows.
+	bool crew_pair = false;
 	// Its trade route page ([+0xE4], trade_route_window.hpp), for the ship `route_for`: the first row shown
 	// ([+0x57D8]), the pad's row (-1: the title's «Archivo» and «Activa») and column (the town, «Mercancías», the
 	// mode); a row's town button dragged (-1 none; where its top is now); the towns' list a town button opened (its
@@ -5292,6 +5577,9 @@ struct ShipMenuLayout {
 	SDL_Rect sailors_button{};
 	SDL_Rect captain_button{};
 	SDL_Rect pirate_button{};  // «Pirate» / «Civil», beside it (0x492A70).
+	// The viewer's: the two ships' window (0x40EEB0, which the game opens picking another of the player's ships in the
+	// town with this one chosen), beside the sailors' amount; the pad's SidePanel::crew_pair, below the other rows.
+	SDL_Rect pair_button{};
 	// The convoy pages: their rows, the destination's minus and plus, and the act button.
 	static constexpr int kConvoyRows = 4;
 	SDL_Rect convoy_rows[kConvoyRows] = {};
@@ -5318,6 +5606,8 @@ struct ShipMenuLayout {
 		minus_button = {room.x + 8, sy, 34, button_h};
 		amount_box = {minus_button.x + minus_button.w + 2, sy, 44, button_h};
 		plus_button = {amount_box.x + amount_box.w + 2, sy, 34, button_h};
+		pair_button = {plus_button.x + plus_button.w + 8, sy, room.x + room.w - 8 - (plus_button.x + plus_button.w + 8),
+			button_h};
 		sailors_button = {room.x + 8, sy + button_h + 4, room.w - 16, button_h};
 		captain_button = {room.x + 8, room.y + room.h - button_h - 6, (room.w - 22) * 3 / 5, button_h};
 		pirate_button = {captain_button.x + captain_button.w + 6, captain_button.y,
@@ -6370,7 +6660,11 @@ void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& 
 	}
 	const int left = room.x + 8;
 	const int line = layout.line;
-	const PlaceUi& act = ui.ship_ui;  // Its results go to the viewer's notices (ship_act).
+	// Its results go to the viewer's notices (ship_act); with the pad on «Other ship», none of its rows is marked.
+	PlaceUi act = ui.ship_ui;
+	if (ui.crew_pair && ui.ship_page == ShipPage::Crew) {
+		act.row = -1;
+	}
 	switch (ui.ship_page) {
 	case ShipPage::Goods:
 		draw_ship_header(renderer, text, art, save, ship_index, layout, room, true);
@@ -6415,6 +6709,19 @@ void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& 
 		SDL_RenderFillRect(renderer, &layout.amount_box);
 		text.draw(amount, layout.amount_box.x + (layout.amount_box.w - text.measure(amount)) / 2,
 			layout.amount_box.y + (layout.amount_box.h - line) / 2, kParchmentInk);
+		// Another of the player's ships docked here: the two ships' window.
+		const std::string pair = (ui.crew_pair ? BTN_CROSS " " : "") + tr("Otro barco", "Other ship");
+		if (!pairable_ships(save, ship_index).empty()) {
+			draw_button(renderer, text, layout.pair_button, pair);
+		} else {
+			draw_disabled_button(renderer, text, layout.pair_button, tr("Otro barco", "Other ship"));
+		}
+		if (ui.crew_pair) {
+			const SDL_Rect frame = {layout.pair_button.x - 2, layout.pair_button.y - 2, layout.pair_button.w + 4,
+				layout.pair_button.h + 4};
+			SDL_SetRenderDrawColor(renderer, 120, 80, 30, 255);
+			SDL_RenderDrawRect(renderer, &frame);
+		}
 		const std::string dismiss = rows ? actions.rows[0].first : tr("Despedir marineros", "Dismiss sailors");
 		if (can_dismiss && act.row == 0 && act.amount > 0) {
 			draw_button(renderer, text, layout.sailors_button, BTN_CROSS + std::string(" ") + dismiss);
@@ -11234,8 +11541,8 @@ int main(int argc, char** argv) {
 				place.ship++;
 				place.amount = 0;
 				return true;
-			case SDL_CONTROLLER_BUTTON_X:  // Square: the office administrator's «keep the stock».
-				office_square(save, sailing.get(), town_index, place);
+			case SDL_CONTROLLER_BUTTON_X:  // Square: the window's second action (PlaceView::act2).
+				place_square(save, sailing.get(), town_index, place, place_now);
 				return true;
 			case SDL_CONTROLLER_BUTTON_Y:
 			case SDL_CONTROLLER_BUTTON_START:
@@ -11835,6 +12142,7 @@ int main(int argc, char** argv) {
 				return;
 			}
 			side.ship_page = page;
+			side.crew_pair = false;
 			side.ship_ui.row = page == ShipPage::Crew ? 0 : page == ShipPage::Convoy || page == ShipPage::LeaveConvoy ? 2 : 0;
 			side.ship_ui.amount = 0;
 			side.route_row = 0;
@@ -11843,6 +12151,15 @@ int main(int argc, char** argv) {
 		// Its action: the selected row of the ship's window (place_act, as the game's window sends it).
 		auto ship_act = [&]() {
 			if (side.menu != PanelMenu::Ship || side.ship < 0) {
+				return;
+			}
+			if (side.ship_page == ShipPage::Crew && side.crew_pair) {
+				// «Other ship»: the two ships' window, the menu's ship as its A.
+				if (!pairable_ships(save, side.ship).empty()) {
+					const int ship = side.ship;
+					open_place(Place::ShipPair, -1);
+					place.pair_ship = ship;
+				}
 				return;
 			}
 			if (side.ship_page == ShipPage::Crew && side.ship_ui.row == 2) {
@@ -12303,7 +12620,16 @@ int main(int argc, char** argv) {
 					side.cargo_first += step;  // Clamped next frame.
 				} else if (side.ship_page == ShipPage::Crew) {
 					const bool captain = save.ships[size_t(side.ship)].captain() < save.globals.u16(global::kCaptainCount);
-					side.ship_ui.row = std::clamp(side.ship_ui.row + step, 0, captain ? 2 : 1);
+					// The rows 0 the sailors, 1 the captain, 2 «Pirate» (with a captain), then «Other ship».
+					int row = (side.crew_pair ? 3 : side.ship_ui.row) + step;
+					if (row == 2 && !captain) {
+						row += step;
+					}
+					row = std::clamp(row, 0, 3);
+					side.crew_pair = row == 3;
+					if (!side.crew_pair) {
+						side.ship_ui.row = row;
+					}
 					side.ship_ui.amount = 0;
 				} else if (side.ship_page == ShipPage::Convoy && !ship_in_convoy(save, side.ship) && rows > 2) {
 					side.ship_ui.row = 2 + (side.ship_ui.row - 2 + step + (rows - 2)) % (rows - 2);
@@ -13825,6 +14151,9 @@ int main(int argc, char** argv) {
 						if (page >= 0) {
 							ship_page(ShipPage(page));
 						} else if (side.ship_page == ShipPage::Crew) {
+							if (!inside(room.pair_button, x, y)) {
+								side.crew_pair = false;
+							}
 							if (inside(room.minus_button, x, y) || inside(room.plus_button, x, y)) {
 								if (side.ship_ui.row != 0) {
 									side.ship_ui.row = 0;
@@ -13833,6 +14162,9 @@ int main(int argc, char** argv) {
 								const int most = ship_window_open(save, side.ship) ? save.ships[size_t(side.ship)].sailors() : 0;
 								side.ship_ui.amount =
 									std::clamp(side.ship_ui.amount + (inside(room.minus_button, x, y) ? -1 : 1), 0, most);
+							} else if (inside(room.pair_button, x, y)) {
+								side.crew_pair = true;
+								ship_act();
 							} else if (inside(room.sailors_button, x, y) && side.ship_ui.row == 0) {
 								ship_act();
 							} else if (inside(room.captain_button, x, y)) {
@@ -13991,9 +14323,25 @@ int main(int argc, char** argv) {
 					if (town >= 0) {
 						selection.saved_index = size_t(town);
 					}
+					// Tapping a ship the simulation keeps near the chosen one (its [+0x50] or [+0x52]; the game's right
+					// button, 0x44FB40): it becomes its target (0x0E; ship_pair_window.hpp), if the engine agrees.
+					bool targeted = false;
+					if (sea_route.empty() && sailing && fleet_ship() >= 0 && !touch_on_panel && !in_menu && !in_mail &&
+						!messages.open && !end_window.open && !stats_open && touch_start.x < town_width) {
+						const int chosen = fleet_ship();
+						for (const SeaTarget& t : sea_targets(save, chosen)) {
+							if (SeaMapView::on_ship(save.ships[size_t(t.drawn)], camera_x + touch_start.x, camera_y + touch_start.y)) {
+								run_operations(save, sailing.get(), {target_operation(chosen, t.ship)});
+								notify(save.ships[size_t(chosen)].name() + ": " + tr("objetivo ", "target ") +
+									save.ships[size_t(t.ship)].name());
+								targeted = true;
+								break;
+							}
+						}
+					}
 					// Tapping the sea (or a town once a route is started) adds a point to the chosen ship's route by
 					// points (0x0B); a point at a town ends the route there when it sails.
-					if ((town < 0 || !sea_route.empty()) && !touch_on_panel && !in_menu && !in_mail && !messages.open &&
+					if (!targeted && (town < 0 || !sea_route.empty()) && !touch_on_panel && !in_menu && !in_mail && !messages.open &&
 						!end_window.open && !stats_open && touch_start.x < town_width && touch_start.y >= kBarHeight &&
 						touch_start.y < kScreenHeight - kBarHeight) {
 						add_route_point(camera_x + touch_start.x, camera_y + touch_start.y);
@@ -14038,7 +14386,9 @@ int main(int argc, char** argv) {
 					} else if (place_now.max_amount >= 0 && inside(layout.plus_button, x, y)) {
 						place.amount = std::min(place_now.max_amount, place.amount + 1);
 						place.name.clear();
-					} else if (inside(layout.act_button, x, y)) {
+					} else if (!place_now.act2.empty() && inside(layout.act2_button, x, y)) {
+						place_square(save, sailing.get(), town_index, place, place_now);
+					} else if (inside(layout.act_for(place_now), x, y)) {
 						place_act(save, sailing.get(), town_index, place, place_now);
 						if (place.open_market) {  // The office's «Trade».
 							open_place(Place::MarketHall, -1);

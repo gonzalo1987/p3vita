@@ -880,8 +880,8 @@ void fn_53b5e0(SaveGame& save, const uint8_t* operation) {
 
 // 0x53BC90 (operation 0x50): {0x50, u32 the price of one, s32 how many, u8 town, u8 merchant, u8 kind (& 3: the hand
 // weapons, the wares 0x14..0x17, written back), u8 buy (> 0) or sell, u16 the ship (past the ships: the office)}: hand
-// weapons with the town's weaponsmith (the window 0x5ECAB0), each 10 units. First the merchant's [+0x16] up by 25 (to
-// 0x7FFF at most). Then for the ship (and, in a convoy, the merchant's ships of it from its first) or the office:
+// weapons with the town's weaponsmith (its window's update 0x5ECFA0) or the tavern's weapons dealer, each 10 units.
+// First the merchant's [+0x16] up by 25 (to 0x7FFF at most). Then for the ship (and, in a convoy, the merchant's ships of it from its first) or the office:
 // buying (with money above 0, else nothing more), as many as fit in the hold ((room) / 10; none without room) and the
 // money pays (money / price), taken from the town's stock (0x526300: its whole tens), paid (price · units / 10; the
 // [+0x4A0] up) into the ship's or office's stock with its average price ((stock · average + cost) / the new stock,
@@ -997,8 +997,9 @@ void fn_53bc90(SaveGame& save, const uint8_t* operation) {
 
 // 0x53CAF0 (operation 0x56): {0x56, u32 merchant, u32 the kind (0..5 a piece of artillery, more: the [+0x2BC]), u32
 // the price, u32 town | 0x100 to sell}: a piece of artillery between the merchant's office in the town and the town's
-// arsenal (the window 0x5ECAB0): buying (with the money at least the price, signed) a piece the town has (its weight,
-// 0x672CB4, of the town's [+0x124 + 4·k], or one of its [+0x2BC]) into the office, the money down and [+0x4BC] up;
+// weaponsmith (its window's update 0x5ECFA0, smithy_window.hpp): buying (with the money at least the price, signed) a
+// piece the town has (its weight, 0x672CB4, of the town's [+0x124 + 4·k], or one of its [+0x2BC]) into the office, the
+// money down and [+0x4BC] up;
 // selling one the office has, the money and [+0x4B8] up. The game doesn't look for the office (it writes through a
 // null one): here nothing without it.
 void fn_53caf0(SaveGame& save, const uint8_t* op) {
@@ -1046,6 +1047,18 @@ void fn_53caf0(SaveGame& save, const uint8_t* op) {
 		m.s32(0x0) = int32_t(uint32_t(m.s32(0x0)) - uint32_t(price));
 		m.s32(0x4BC) = int32_t(uint32_t(m.s32(0x4BC)) + uint32_t(price));
 	}
+}
+
+// 0x536186 (operation 0x57, inline in the executor): {0x57, u32 town, u32 ware}: the town's weaponsmith makes that hand
+// weapon first ([+0x6D0], which 0x510AA0 reads): the ware if it is one of 0x14..0x17, else 0 (none). A town past the
+// towns: nothing.
+void fn_536186(SaveGame& save, const uint8_t* op) {
+	const uint32_t town = uint32_t(op_s32(op, 4));
+	if (town >= save.globals.u32(global::kWorldTownCount)) {
+		return;
+	}
+	const uint32_t ware = uint32_t(op_s32(op, 8));
+	save.towns[town].memory.u32(0x6D0) = ware >= 0x14 && ware <= 0x17 ? ware : 0;
 }
 
 namespace {

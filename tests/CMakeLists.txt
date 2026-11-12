@@ -123,3 +123,15 @@ target_link_libraries(offer_window_test PRIVATE p3data)
 target_compile_options(offer_window_test PRIVATE -Wall -Wextra)
 
 add_test(NAME offer_window COMMAND offer_window_test)
+
+add_executable(smithy_window_test smithy_window_test.cpp)
+target_link_libraries(smithy_window_test PRIVATE p3data)
+target_compile_options(smithy_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME smithy_window COMMAND smithy_window_test)
+
+add_executable(ship_pair_window_test ship_pair_window_test.cpp)
+target_link_libraries(ship_pair_window_test PRIVATE p3data)
+target_compile_options(ship_pair_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME ship_pair_window COMMAND ship_pair_window_test)

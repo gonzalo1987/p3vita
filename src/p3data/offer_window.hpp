@@ -24,7 +24,9 @@ std::vector<uint16_t> offer_merchants(const SaveGame& save, int town);
 // What the player can offer (0x5BDB17..0x5BDD78), in the window's order: money if he has some (signed > 0); each of
 // the wares 0..19 (the table 0x698538 is the identity) whose units are over 0: the office's stock in the town plus the
 // cargo of his ships with [+0x39] the town and not marked [+0x136] & 1 (in any state), divided unsigned by 200 for the
-// wares in barrels, 2000 for the loads; and his ships of 0x504AC0's mode 7 (ShipListMode::Docked).
+// wares in barrels, 2000 for the loads; and his ships of 0x504AC0's mode 7 (ShipListMode::Docked). With
+// fix_game_bugs() a ware's end is at most what 0x5F can hold back (offers_detail::holdable_units), and a ware with
+// nothing to hold back isn't listed.
 struct OfferChoice {
 	uint8_t kind = 2;  // The operation's [+0xF]: 2 money, 0 a ware, 1 a ship.
 	uint16_t what = 0;  // The ware or the ship.

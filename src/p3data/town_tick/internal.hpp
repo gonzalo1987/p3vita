@@ -359,6 +359,10 @@ namespace offers_detail {
 bool fn_534090(const SaveGame& save, uint32_t id, uint32_t a, uint32_t b);
 void fn_5340d0(SaveGame& save, uint32_t id, uint32_t a, uint32_t b);
 void fn_534600(SaveGame& save, uint32_t id, uint32_t a, uint32_t b);
+// What 0x5F can hold back of a ware for merchant A in a town, in units (not the game's: for the fix of the offers'
+// amount, fix_game_bugs): the whole barrels or loads of his office there, plus the cargo of his docked ships there
+// (state < 4). Asking at most this rounded down to whole barrels or loads, all of it is held back.
+int32_t holdable_units(const SaveGame& save, uint32_t a, uint32_t town, uint16_t ware);
 }  // namespace offers_detail
 void fn_53d5c0(SaveGame& save, const uint8_t* operation);
 void fn_53d990(SaveGame& save, const uint8_t* operation);
@@ -550,6 +554,9 @@ void fn_501680(SaveGame& save, int convoy, uint16_t ship, uint16_t mode);  // Co
 // 0x509B90 (ships object): the docked ship founds a convoy (operation 0x15 too).
 void fn_509b90(SaveGame& save, uint32_t ship, uint32_t immediate, uint32_t wait_days, uint32_t destination);
 void fn_535400(SaveGame& save, uint32_t town, uint32_t merchant);
+// 0x5184F0 (on the ship): the sailors it would still hire (fn_5184f0 on save.ships[ship]); on a ship of its own (the
+// two ships' window asks it of a copy, ship_pair_window.cpp). It writes the ship's hold (0x5182B0).
+int32_t fn_5184f0_on(SavedShip& ship);
 }  // namespace ship_ai_detail
 
 // ship_trade.cpp (las llama fn_518b80)

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/offer_window.hpp"
 
 using namespace p3::data;
@@ -97,6 +98,25 @@ int main() {
 		check(c.size() == 2 && c[0].kind == 0 && c[0].most == 2, "no money; beer from his ships only (450: 2)");
 		check(offer_from_ships_only(save, 0, 0, c[0]), "wares without an office: the warning");
 		check(offer_choices(save, 0, 1).empty() && offer_merchants(save, -1).empty(), "a town out of the world");
+	}
+	{
+		// With the fix (fix_game_bugs): at most what 0x5F holds back, the office's whole barrels and the docked ships'.
+		SaveGame save = world();
+		save.ships[2].memory.s32(0x54 + 4 * 3) = 0;
+		save.ships[0].memory.s32(0x54 + 4 * 3) = 250;  // the game's end: 150 + 250 + 300 = 700, 3 barrels
+		set_fix_game_bugs(true);
+		std::vector<OfferChoice> c = offer_choices(save, 0, 0);
+		check(c.size() == 3 && c[1].kind == 0 && c[1].what == 3 && c[1].most == 1,
+			"fixed: beer, the docked ship's 250 (the office's 150 is no whole barrel, the shipyard's ship gives none)");
+		save.ships[0].memory.s32(0x54 + 4 * 3) = 150;
+		c = offer_choices(save, 0, 0);
+		check(c.size() == 2 && c[1].kind == 1, "fixed: beer left out, nothing to hold back a whole barrel of");
+		save.ships[2].memory.s32(0x54 + 4 * 3) = 2000;  // the marked ship: 0x5F takes from it too
+		c = offer_choices(save, 0, 0);
+		check(c.size() == 3 && c[1].most == 3, "fixed: never more than the game's end");
+		set_fix_game_bugs(false);
+		c = offer_choices(save, 0, 0);
+		check(c.size() == 3 && c[1].most == 3, "off again: the game's end");
 	}
 	{
 		const OfferChoice beer{0, 3, 3};

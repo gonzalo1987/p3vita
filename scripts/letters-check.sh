@@ -8,7 +8,8 @@
 # usage: scripts/letters-check.sh [SAVES...]   (by default the 12 of missav/)
 # A save given as a path ending in .raw (with its .pat next to it, as
 # retouch_mail.py --write leaves them) is used as it is.
-# Needs P3_EXE, P3_CPR, P3_SHIPS (as scripts/write-reload.sh); BUILD.
+# Needs P3_EXE, P3_CPR, P3_SHIPS (as scripts/write-reload.sh); BUILD. With P3_OFFERS=1 both sides make the same
+# five offers between merchants first (their letters 0x1E and 0x1F aren't in a save: p3save's offer_recipe).
 cd "$(dirname "$0")/.."
 : "${P3_EXE:?missing P3_EXE (path of Patrician3.exe)}"
 : "${P3_CPR:?missing P3_CPR (path of p2arch0_eng.cpr)}"
@@ -30,9 +31,9 @@ for s in "${saves[@]}"; do
 			spanish=()
 			if [ $lang = spa ]; then exe=$P3_EXE_SPA; spanish=(--spanish "$P3_EXE_SPA"); fi
 			python3 tools/oracle/letter_oracle.py "$P3_EXE" "$raw" "$tmp/$name-letters-game-$lang.txt" --cpr "$P3_CPR" \
-				--barcos "$P3_SHIPS" "${spanish[@]}" >/dev/null 2>"$tmp/$name-letters-$lang.err"
-			"$build/tools/p3save/p3save" "$P3_CPR" "$pat" letters "$exe" >"$tmp/$name-letters-p3vita-$lang.txt" \
-				2>>"$tmp/$name-letters-$lang.err"
+				--barcos "$P3_SHIPS" "${spanish[@]}" ${P3_OFFERS:+--offers} >/dev/null 2>"$tmp/$name-letters-$lang.err"
+			"$build/tools/p3save/p3save" "$P3_CPR" "$pat" letters "$exe" ${P3_OFFERS:+offers} \
+				>"$tmp/$name-letters-p3vita-$lang.txt" 2>>"$tmp/$name-letters-$lang.err"
 		) &
 	done
 done

@@ -353,6 +353,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x56:  // A piece of artillery bought from or sold to the town for the office (0x536177 → 0x53CAF0; trade.cpp).
 		fn_53caf0(save, operation);
 		break;
+	case 0x57:  // The hand weapon the town's weaponsmith makes first (0x536186, inline; trade.cpp).
+		fn_536186(save, operation);
+		break;
 	case 0x5A:  // A business's share of jobs (0x536200; town_tick/operations.cpp).
 		tick::fn_536200(save, operation);
 		break;
