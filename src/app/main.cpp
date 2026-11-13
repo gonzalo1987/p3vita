@@ -2477,6 +2477,8 @@ struct PlaceUi {
 	int lender_debts = 0;
 	bool paid_off = false;
 	int lender_kind = 2;
+	// «Offer loan» pressed on the requests: the window's page 9, the interest (0x5B44F0); ○ back to the requests.
+	bool lender_interest = false;
 	// The player's own building touched in the town (its record): demolish or auction it.
 	int record = -1;
 	// Two ships in one place (ship_pair_window.hpp): the ship whose menu opened it (A); the other is the page's among
@@ -2526,6 +2528,9 @@ struct PlaceUi {
 	std::vector<uint16_t> traveller_list;
 	// The burglar's window (his victims made when the tavern opens, as the game's window does).
 	BurglarWindow burglar;
+	// The captain hired (0xFFFF none) and the ship he boarded: the page 10 after «Hire captain» (0x5D0100).
+	uint16_t hired_captain = 0xFFFF;
+	uint16_t hired_ship = 0xFFFF;
 	// The pirate's window and his ships' list as the last update made it.
 	PirateWindow pirate;
 	std::vector<uint16_t> pirate_list;
@@ -2632,6 +2637,8 @@ struct PlaceView {
 		bool centred = false;  // x is its middle.
 		bool title_font = false;  // The game's font 3.
 		SDL_Color color = {0, 0, 0, 255};
+		bool right = false;  // x is its right end (0x4BBA10(2)).
+		bool head_font = false;  // The game's font 0 (Tiepolo black): the tables' heads.
 	};
 	struct PageIcon {
 		uint32_t tex = 0;
@@ -2640,13 +2647,19 @@ struct PlaceView {
 		int y = 0;
 	};
 	// Act and Act2: the page's X and Square; Previous and Next: another ship (the window's [+0x9A4], [+0xA8C]); Minus
-	// and Plus: the amount (the sailors' [+0xB74], [+0xC5C]).
-	enum class PageAction { Act, Act2, Previous, Next, Minus, Plus };
+	// and Plus: the amount (the sailors' [+0xB74], [+0xC5C]); Choose: one of a row of buttons (its value: the weapons
+	// dealer's step).
+	enum class PageAction { Act, Act2, Previous, Next, Minus, Plus, Choose };
 	struct PageButton {
 		SDL_Rect rect{};  // The pill's (18 high); touched a little taller.
 		std::string label;
 		PageAction action = PageAction::Act;
 		bool enabled = true;
+		bool lit = false;  // Pressed in (the chosen one of a row of them).
+		bool keyed = true;  // Its key before its label (a table's many buttons: only the chosen row's).
+		int row = -1;  // Touched, it chooses this row of the view first (a table's buttons).
+		int value = 0;  // Choose's.
+		bool hidden = false;  // Only a place to touch (a list's row: its words are the page's texts).
 	};
 	// A number's box (parchment.ini [TextBox0]: its dark see-through background 0x28000000, the text black, centred).
 	struct PageBox {
@@ -2684,6 +2697,23 @@ std::vector<std::string> text_lines(const std::string& s) {
 			lines.push_back(line.substr(first));
 		}
 		at = end + 1;
+	}
+	return lines;
+}
+
+// A game's text in the lines of its text box (0x462520, before wrapping): a line ends at each '\n' and a space right
+// after one is skipped; empty lines stay, and so does the empty one after a final '\n' (the box counts it: the tavern's
+// greetings end so, and the offer under them starts a line lower).
+std::vector<std::string> box_lines(const std::string& s) {
+	std::vector<std::string> lines;
+	size_t at = 0;
+	while (true) {
+		const size_t end = s.find('\n', at);
+		lines.push_back(s.substr(at, end == std::string::npos ? std::string::npos : end - at));
+		if (end == std::string::npos) {
+			break;
+		}
+		at = end + 1 + (end + 1 < s.size() && s[end + 1] == ' ' ? 1 : 0);
 	}
 	return lines;
 }
@@ -2926,6 +2956,141 @@ std::string interest_kind(int kind) {
 	return capitalized(lender_text(0x69C0EC + 4 * uint32_t(k), kKinds[k][0], kKinds[k][1]));
 }
 
+PlaceView::PageButton fitted(PlaceView::PageButton b);
+
+// «12345 ⊙ to repay in N weeks»-like lines: a text, the coin 2 after it, the rest 4 after the coin (the lender's pages,
+// 0x5B43D0.., 0x5B46D2..).
+void add_coin_line(PlaceView::Page& page, const std::string& before, const std::string& after, int x, int y, SDL_Color color) {
+	const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
+	page.texts.push_back({before, x, y, false, false, color});
+	x += (font ? font->measure(before) : 0) + 2;
+	page.icons.push_back({16014, 0, x, y});
+	const SDL_Point coin = g_game_art ? g_game_art->tex_size(16014, 0) : SDL_Point{12, 12};
+	page.texts.push_back({after, x + coin.x + 4, y, false, false, color});
+}
+
+// The lender's page 2, «Grant loan» (0x5B4180), as the game's (the user's photo): the head in font 0 at (50, 205) and
+// (50, 225) («I can arrange for the following parties…»); each request 30 under the line before it, «The <rank>
+// <first name> <family name> requests» and 20 under it «<amount> ⊙ at a term of <N> weeks», the chosen one dark blue
+// (0xFF003C8C); without requests 0x69C0E4 centred at (w/2, 205); «Offer loan» the confirm button (148, 450). The
+// article and the rank's table go by the sex of the merchant number 10 for every request (0x5B42C9: 0x5303C0(10), a
+// game's slip: reproduced). «Offer loan» opens the page 9 (0x5B44F0): «How high should the interest be?» in font 0 at
+// (50, 225); the interest's kind centred between its arrows; 100 under the question the amount and the term, 20 under
+// that the interest and the sum to repay; or, not resident or the money short, the game's two lines at (50, 225).
+void lender_grant_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	const int player = save.player;
+	const int32_t money = save.merchants[size_t(player)].money();
+	std::array<LoanTerms, 3> requests{};
+	const int32_t n = loan_requests(save, town, requests, nullptr);
+	PlaceView::Page page;
+	const SDL_Color black = {0, 0, 0, 255};
+	const SDL_Color chosen_color = {0x00, 0x3C, 0x8C, 255};
+	if (n == 0) {
+		ui.lender_interest = false;
+		v.lines.push_back({lender_text(0x69C0E4, "Nadie en esta ciudad necesita un préstamo.", "Nobody in this town wants to take a loan."),
+			kDimColor});
+		page.texts.push_back({v.lines.back().first, kInteriorWidth / 2, 205, true});
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, false}));
+		v.page = std::move(page);
+		return;
+	}
+	for (int32_t k = 0; k < n; ++k) {
+		v.rows.push_back({std::to_string(k), true});
+		v.codes.push_back(k);
+	}
+	ui.row = std::clamp(ui.row, 0, int(n) - 1);
+	auto amount_of = [](const LoanTerms& o) {
+		uint16_t amount;
+		std::memcpy(&amount, o.data() + 8, 2);
+		return amount;
+	};
+	if (!ui.lender_interest) {
+		PlaceView::PageText head{lender_text(0x69C030, "Puedo contactar con las siguientes personas que desean",
+									 "I can arrange for the following parties to be interested"),
+			50, 205};
+		head.head_font = true;
+		page.texts.push_back(head);
+		head.text = lender_text(0x69C034, "obtener un préstamo de ti:", "in a loan for you");
+		head.y = 225;
+		page.texts.push_back(head);
+		const uint8_t sex = save.merchants.size() > 10 ? save.merchants[10].memory.u8(0x1A) : 0;
+		const std::string article = sex != 0 ? lender_text(0x69C038, "El", "The") : lender_text(0x69C03C, "El", "The");
+		for (int32_t k = 0, y = 255; k < n; ++k, y += 50) {
+			const LoanTerms& o = requests[size_t(k)];
+			const SDL_Color color = k == ui.row ? chosen_color : black;
+			page.texts.push_back({article + " " + rank_name(o[0x5] + 8 * (sex & 1)) + " " +
+					clean_game_text(game_first_name(save, o[0x6])) + " " + clean_game_text(game_family_name(save, o[0x7])) + " " +
+					lender_text(0x69C040, "solicita", "requests"),
+				50, y, false, false, color});
+			add_coin_line(page, std::to_string(amount_of(o)),
+				lender_text(0x69C044, "a devolver en el plazo de", "at a term of") + " " + std::to_string(o[0xA]) + " " +
+					lender_text(0x69C048, "semanas", "weeks"),
+				50, y + 20, color);
+			PlaceView::PageButton touch{{50, y, kInteriorWidth - 100, 40}, "", PlaceView::PageAction::Choose, true};
+			touch.hidden = true;
+			touch.row = k;
+			page.buttons.push_back(touch);
+		}
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, true}));
+		v.page = std::move(page);
+		return;
+	}
+	// The page 9.
+	const LoanTerms& chosen = requests[size_t(ui.row)];
+	if (player_office(save, town) < 0) {
+		page.texts.push_back({lender_text(0x69C078, "Tienes que residir en esta ciudad", "You have to be resident in this town"), 50, 225});
+		page.texts.push_back({lender_text(0x69C07C, "para poder conceder un préstamo", "in order to be able to grant a loan"), 50, 245});
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, false}));
+		v.page = std::move(page);
+		return;
+	}
+	if (int32_t(amount_of(chosen)) > money) {
+		page.texts.push_back({lender_text(0x69C080, "Tendrás que pedir tú mismo un préstamo", "Perhaps you should take out a loan yourself"),
+			50, 225});
+		page.texts.push_back({lender_text(0x69C084, "para poder ofrecer una cantidad así.", "before offering an amount of this size."), 50, 245});
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, false}));
+		v.page = std::move(page);
+		return;
+	}
+	LoanTerms o = chosen;
+	o[0xF] = uint8_t((o[0xF] & 0xF0) | uint8_t(ui.lender_kind));
+	fn_51d270(o, nullptr);  // What the window shows; the roll is when it is granted.
+	v.max_amount = 4;
+	v.amount_choice = true;
+	v.amount_label = interest_kind(ui.lender_kind);
+	PlaceView::PageText question{lender_text(0x69C04C, "¿Cuál debería ser el tipo de interés?", "How high should the interest be?"), 50, 225};
+	question.head_font = true;
+	page.texts.push_back(question);
+	// The kind between its arrows (where the game puts them, by a box of its own, is still to read: here 45 under the
+	// question, 80 either side of the middle).
+	const int middle = kInteriorWidth / 2;
+	constexpr int kKindY = 270;
+	page.texts.push_back({interest_kind(ui.lender_kind), middle, kKindY, true});
+	page.buttons.push_back({{middle - 80 - 32, kKindY, 32, 18}, "<", PlaceView::PageAction::Minus, ui.lender_kind > 0});
+	page.buttons.push_back({{middle + 80, kKindY, 32, 18}, ">", PlaceView::PageAction::Plus, ui.lender_kind < 4});
+	uint32_t repay;
+	std::memcpy(&repay, o.data(), 4);
+	const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
+	const std::string amount = GameTexts::format(lender_text(0x69C050, "Cantidad prestada: %i", "Amount of loan %i"),
+		{std::to_string(amount_of(o))});
+	add_coin_line(page, amount, GameTexts::format(lender_text(0x69C054, ". Plazo de devolución %i semanas", ", term %i weeks"),
+									{std::to_string(o[0xA])}),
+		50, 325, black);
+	std::string interest = lender_text(0x69C058, "Interés: %1.1f%%", "interest: %1.1f%%");
+	if (const size_t at = interest.find("%1.1f"); at != std::string::npos) {
+		interest.replace(at, 5, interest_text(o[0x4]));
+	}
+	interest = GameTexts::format(interest, {});
+	const std::string sum = GameTexts::format(lender_text(0x69C05C, ". Total a devolver %i", ", repayment sum: %i"),
+		{std::to_string(repay)});
+	page.texts.push_back({interest, 50, 345});
+	const int sum_x = 50 + (font ? font->measure(interest) : 0);
+	page.texts.push_back({sum, sum_x, 345});
+	page.icons.push_back({16014, 0, sum_x + (font ? font->measure(sum) : 0) + 2, 345});
+	page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, true}));
+	v.page = std::move(page);
+}
+
 // Its pages: 0 take out a loan, 1 pay one off, 2 grant one, 3 the loans
 // granted, 4 buy company shares, 5 sell them.
 void lender_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
@@ -2935,8 +3100,19 @@ void lender_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 		{"Préstamos concedidos", "Loans granted"}, {"Comprar acciones", "Buy company shares"},
 		{"Vender acciones", "Sell company shares"}};
 	ui.page = ((ui.page % kLenderPages) + kLenderPages) % kLenderPages;
-	v.title = place_name(ui.let_type) + " - " + lender_text(kTitles[ui.page], kFallback[ui.page][0], kFallback[ui.page][1]) +
-		"   (L/R)";
+	v.title = lender_text(kTitles[ui.page], kFallback[ui.page][0], kFallback[ui.page][1]);  // On the banner, alone.
+	if (ui.page != 2) {
+		ui.lender_interest = false;
+	}
+	// Its side menu (0x5A2815 «Lender» and six buttons, each opening its page, 0x5B32D0): the picture alone until one is
+	// chosen, then the parchment from the line 205 (0x5A2F69).
+	v.menu_title = lender_text(0x69B73C, "Prestamista", "Lender");
+	static const uint32_t kMenu[kLenderPages] = {0x69B724, 0x69B728, 0x69B72C, 0x69B738, 0x69B730, 0x69B734};
+	for (int k = 0; k < kLenderPages; ++k) {
+		v.menu.push_back({lender_text(kMenu[k], kFallback[k][0], kFallback[k][1]), true});
+	}
+	v.menu_lit = ui.shown ? ui.page : -1;
+	v.parchment_top = ui.shown ? 0xCD : -1;
 	const int player = save.player;
 	const int32_t money = save.merchants[size_t(player)].money();
 	auto clamp_row = [&]() { ui.row = std::clamp(ui.row, 0, std::max(0, int(v.rows.size()) - 1)); };
@@ -3030,62 +3206,7 @@ void lender_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	}
 	case 2: {  // Grant one (0x51D160; 0x5B6000 sends it with the interest's kind).
 		v.act = lender_text(0x69C004, "Ofrecer préstamo", "Offer loan");
-		if (player_office(save, town) < 0) {
-			dim(lender_text(0x69C078, "Tienes que residir en esta ciudad", "You have to be resident in this town") + " " +
-				lender_text(0x69C07C, "para poder conceder un préstamo", "in order to be able to grant a loan"));
-			break;
-		}
-		std::array<LoanTerms, 3> requests{};
-		const int32_t n = loan_requests(save, town, requests, nullptr);
-		if (n == 0) {
-			dim(lender_text(0x69C0E4, "Nadie en esta ciudad necesita un préstamo.", "Nobody in this town wants to take a loan."));
-			break;
-		}
-		v.lines.push_back({lender_text(0x69C030, "Puedo contactar con las siguientes personas que desean",
-								"I can arrange for the following parties to be interested") +
-				" " + lender_text(0x69C034, "obtener un préstamo de ti:", "in a loan for you"),
-			kTextColor});
-		for (int32_t k = 0; k < n; ++k) {
-			const LoanTerms& o = requests[size_t(k)];
-			uint16_t amount;
-			std::memcpy(&amount, o.data() + 8, 2);
-			v.rows.push_back({capitalized(rank_name(o[0x5])) + " " + clean_game_text(game_first_name(save, o[0x6])) + " " +
-					clean_game_text(game_family_name(save, o[0x7])) + ": " + format_money(amount) + ", " +
-					std::to_string(o[0xA]) + " " + lender_text(0x69C048, "semanas", "weeks"),
-				int32_t(amount) <= money});
-			v.codes.push_back(k);
-		}
-		clamp_row();
-		LoanTerms o = requests[size_t(ui.row)];
-		o[0xF] = uint8_t((o[0xF] & 0xF0) | uint8_t(ui.lender_kind));
-		fn_51d270(o, nullptr);  // What the window shows; the roll is when it is granted.
-		v.max_amount = 4;
-		v.amount_choice = true;
-		v.amount_label = interest_kind(ui.lender_kind);
-		uint16_t amount;
-		std::memcpy(&amount, o.data() + 8, 2);
-		uint32_t repay;
-		std::memcpy(&repay, o.data(), 4);
-		v.lines.push_back({lender_text(0x69C04C, "¿Cuál debería ser el tipo de interés?", "How high should the interest be?") +
-				"  " + tr("(Izq./Der.)", "(Left/Right)"),
-			kTextColor});
-		auto with = [](std::string text, const std::string& value) {
-			const size_t at = text.find("%1.1f");
-			if (at != std::string::npos) {
-				text.replace(at, 5, value);
-			}
-			return GameTexts::format(text, {});
-		};
-		v.lines.push_back({GameTexts::format(lender_text(0x69C050, "Cantidad prestada: %i", "Amount of loan %i"), {format_money(amount)}) +
-				GameTexts::format(lender_text(0x69C054, ". Plazo de devolución %i semanas", ", term %i weeks"), {std::to_string(o[0xA])}),
-			kTextColor});
-		v.lines.push_back({capitalized(with(lender_text(0x69C058, "Interés: %1.1f%%", "interest: %1.1f%%"), interest_text(o[0x4]))) +
-				GameTexts::format(lender_text(0x69C05C, ". Total a devolver %i", ", repayment sum: %i"), {format_money(int64_t(repay))}),
-			kTextColor});
-		if (int32_t(amount) > money) {
-			dim(lender_text(0x69C080, "Tendrás que pedir tú mismo un préstamo", "Perhaps you should take out a loan yourself") + " " +
-				lender_text(0x69C084, "para poder ofrecer una cantidad así.", "before offering an amount of this size."));
-		}
+		lender_grant_view(save, town, ui, v);
 		break;
 	}
 	case 3: {  // The loans granted (0x5B62E0, 0x4D9210): nothing to send.
@@ -3228,6 +3349,16 @@ void lender_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const P
 		if (loan_requests(save, town, requests, nullptr) <= k) {
 			return;
 		}
+		if (!ui.lender_interest) {
+			ui.lender_interest = true;  // «Offer loan» on the requests: the page 9, the interest (0x5B44F0).
+			return;
+		}
+		uint16_t asked;
+		std::memcpy(&asked, requests[size_t(k)].data() + 8, 2);
+		if (player_office(save, town) < 0 || int32_t(asked) > save.merchants[size_t(player)].money()) {
+			return;  // The page 9 says why (not resident, the money short).
+		}
+		ui.lender_interest = false;
 		const size_t before = loans_granted(save, player).size();
 		const OperationBytes op = grant_loan_operation(save, requests[size_t(k)], uint32_t(ui.lender_kind));
 		run_operations(save, sailing, {op});
@@ -4132,7 +4263,8 @@ std::vector<int> tavern_rows(const SaveGame& save, int town, const PlaceUi& ui) 
 	const int kept = ui.inside || (ui.talking == int(TavernPerson::Trader) && ui.trader.done) ||
 			(ui.talking == int(TavernPerson::Traveller) && ui.traveller.done) ||
 			(ui.talking == int(TavernPerson::Pirate) && ui.pirate.done) ||
-			(ui.talking == int(TavernPerson::Informer) && ui.informer_done)
+			(ui.talking == int(TavernPerson::Informer) && ui.informer_done) ||
+			(ui.talking == int(TavernPerson::Captain) && ui.hired_captain != 0xFFFF)
 		? ui.talking
 		: -1;
 	for (int k = 0; k < kTavernPeople; ++k) {
@@ -4235,6 +4367,9 @@ void tavern_talk(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
 		ui.burglar.done = false;
 		ui.burglar.hired = false;
 	}
+	if (person == int(TavernPerson::Captain)) {
+		ui.hired_captain = 0xFFFF;
+	}
 	if (person == int(TavernPerson::Informer) && g_texts) {
 		// His page opened (0x5CF2D1): the news made again.
 		fn_526b40(save, sailing ? &sailing->nav() : nullptr, *g_texts, uint32_t(town), ui.informer);
@@ -4267,11 +4402,11 @@ void tavern_talk(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
 std::array<std::string, 3> tavern_greeted(const SaveGame& save);
 std::string exe_format(uint32_t english, const std::vector<std::string>& args, const std::string& fallback);
 
-// «... the Snaikka Constance.»: the article by the ship's type (0x5D38A8: 0 and 2, 0x69D8F4; 1 and 3, 0x69D8F0), its
-// type's name and its name.
+// «... the Snaikka Constance.»: the article by the ship's type (the jump tables of 0x5D38A8 and 0x5D0FFA: 0 and 2,
+// 0x69D8F0; 1 and 3, 0x69D8F4), its type's name and its name.
 std::string tavern_ship_words(const SavedShip& s) {
 	const int type = s.type();
-	const std::string article = type == 0 || type == 2 ? exe_text(0x69D8F4, "del", "the") : exe_text(0x69D8F0, "del", "the");
+	const std::string article = type == 0 || type == 2 ? exe_text(0x69D8F0, "del", "the") : exe_text(0x69D8F4, "del", "the");
 	return article + " " + ship_type_name(type) + " " + s.name();
 }
 
@@ -4291,13 +4426,13 @@ std::string tavern_greeting_text(const SaveGame& save, int variant) {
 // [+0xA8C], small, at the middle ∓ 110 and y 380), its capacity, hull and crew (Kneipeparchment's WarenID, HerzID,
 // CrewID) spread between them with their numbers under them; the arrows on with more than one ship.
 constexpr int kTavernArrowsY = 380;
-void add_ship_row(PlaceView::Page& page, const SaveGame& save, int ship, bool more) {
+void add_ship_row(PlaceView::Page& page, const SaveGame& save, int ship, bool more, int arrows_y = kTavernArrowsY, int row = -1) {
 	const int middle = kInteriorWidth / 2;
-	const SDL_Rect previous = {middle - 32 - 110, kTavernArrowsY, 32, 18};
-	const SDL_Rect next = {middle + 110, kTavernArrowsY, 32, 18};
+	const SDL_Rect previous = {middle - 32 - 110, arrows_y, 32, 18};
+	const SDL_Rect next = {middle + 110, arrows_y, 32, 18};
 	if (ship >= 0 && size_t(ship) < save.ships.size()) {
 		const SavedShip& s = save.ships[size_t(ship)];
-		page.texts.push_back({ship_type_name(s.type()) + " " + s.name(), middle, kTavernArrowsY - 20, true});
+		page.texts.push_back({ship_type_name(s.type()) + " " + s.name(), middle, arrows_y - 20, true});
 		const uint32_t icons[3] = {16046, 20013, 20017};
 		const int values[3] = {int(s.capacity() / 100), hull_percent(s), int(s.sailors())};
 		int widths = 0;
@@ -4309,25 +4444,45 @@ void add_ship_row(PlaceView::Page& page, const SaveGame& save, int ship, bool mo
 		const int gap = (next.x - (previous.x + previous.w) - widths) / 4;
 		int x = previous.x + previous.w + gap;
 		for (int k = 0; k < 3; ++k) {
-			page.icons.push_back({icons[k], 0, x, kTavernArrowsY});
-			page.texts.push_back({std::to_string(values[k]), x + sizes[k].x / 2, kTavernArrowsY + sizes[k].y, true});
+			page.icons.push_back({icons[k], 0, x, arrows_y});
+			page.texts.push_back({std::to_string(values[k]), x + sizes[k].x / 2, arrows_y + sizes[k].y, true});
 			x += sizes[k].x + gap;
 		}
 	}
-	page.buttons.push_back({previous, "<", PlaceView::PageAction::Previous, more});
-	page.buttons.push_back({next, ">", PlaceView::PageAction::Next, more});
+	PlaceView::PageButton back{previous, "<", PlaceView::PageAction::Previous, more};
+	PlaceView::PageButton on{next, ">", PlaceView::PageAction::Next, more};
+	back.row = on.row = row;
+	page.buttons.push_back(back);
+	page.buttons.push_back(on);
 }
 
 // A tavern page's words as one text wrapped from (70, `top`), 285 wide (0x420A10's box: the window's width − 140), as
-// the traveller's (0x5D22E0) or the informer's after buying (0x5D12A0); the y under them.
+// the traveller's (0x5D22E0) or the informer's after buying (0x5D12A0); the y under them. The game's box keeps the
+// text's own line breaks (0x462520 ends a line at each '\n') and draws it from the box's left; many of the tavern's
+// texts break their short sentences («…oferta:\nTe daré…\n¿Aceptas?»), so the block is centred in the box (the
+// user's choice, 2026-11-13: «que salga centrado») — a text that fills the width stays where the game draws it.
 int add_wrapped(PlaceView::Page& page, const std::vector<std::pair<std::string, SDL_Color>>& lines, int top) {
 	const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
-	int y = top;
+	constexpr int kBox = kInteriorWidth - 140;
+	std::vector<std::string> parts;
+	int widest = 0;
 	for (const auto& [line, color] : lines) {
-		for (const std::string& part : font ? wrap_text(*font, line, kInteriorWidth - 140) : std::vector<std::string>{line}) {
-			page.texts.push_back({part, 70, y});
-			y += font ? font->line_height() : 16;
+		if (line.empty()) {
+			parts.emplace_back();  // An empty line of the box (box_lines) keeps its height.
+			continue;
 		}
+		for (std::string& part : font ? wrap_text(*font, line, kBox) : std::vector<std::string>{line}) {
+			widest = std::max(widest, font ? font->measure(part) : 0);
+			parts.push_back(std::move(part));
+		}
+	}
+	const int x = 70 + std::max(0, kBox - widest) / 2;
+	int y = top;
+	for (std::string& part : parts) {
+		if (!part.empty()) {
+			page.texts.push_back({std::move(part), x, y});
+		}
+		y += font ? font->line_height() : 16;
 	}
 	return y;
 }
@@ -4365,14 +4520,21 @@ void traveller_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 			said = exe_text(0x69D990, "\"Como tu barco sea tan lento como tú negociando, tal vez sea mejor ir andando!\"",
 				"\"If your ship is just as slow as your bargaining, then perhaps it would be better to walk!\"");
 		} else if (w.ship < past) {
-			said = exe_text(0x69D9C4, "El viajero sube a bordo", "The traveller boards") + " " + tavern_ship_words(save.ships[w.ship]) + ".";
+			// «The traveller boards the <type> <name>», without a full stop (0x5D2CE8).
+			said = exe_text(0x69D9C4, "El viajero sube a bordo", "The traveller boards") + " " + tavern_ship_words(save.ships[w.ship]);
 		}
-		for (const std::string& line : text_lines(said)) {
+		for (const std::string& line : box_lines(said)) {
 			v.lines.push_back({line, kTextColor});
 		}
 		row.second = false;
-		PlaceView::Page page;  // The page 14 (0x5D2BC0): what was said, wrapped from (70, 225).
-		add_wrapped(page, v.lines, 225);
+		// The page 14 (0x5D2BC0): his refusals in a text box from (70, 255); his boarding one line centred on the
+		// window's middle (w/2, h/2 = 255).
+		PlaceView::Page page;
+		if (w.expired || w.late) {
+			add_wrapped(page, v.lines, 255);
+		} else if (!said.empty()) {
+			page.texts.push_back({said, kInteriorWidth / 2, 255, true});
+		}
 		v.page = std::move(page);
 		return;
 	}
@@ -4399,7 +4561,7 @@ void traveller_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	default:
 		break;
 	}
-	for (const std::string& line : text_lines(text)) {  // The variants 0 and 1 begin with the greeting (their first %s).
+	for (const std::string& line : box_lines(text)) {  // The variants 0 and 1 begin with the greeting (their first %s).
 		v.lines.push_back({line, kTextColor});
 	}
 	// Laid out as the game's page 5 (0x5D22E0): his offer wrapped from (70, 225); «Chosen ship:» and the ship's row,
@@ -4435,16 +4597,95 @@ void traveller_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 std::vector<std::string> burglar_lines() {
 	std::vector<std::string> lines;
 	for (const uint32_t at : {0x69D954u, 0x69D95Cu}) {
-		for (const std::string& line : text_lines(exe_text(at, "", ""))) {
+		for (const std::string& line : box_lines(exe_text(at, "", ""))) {
 			lines.push_back(line);
 		}
 	}
 	return lines;
 }
 
-// The burglar's page inside (its drawing 0x5D1E70 and the page after it 0x5D21A0): a row for each victim (the game's
-// row says «The <his adjective> <rank> <first name> <family name> from <home town>.»: here without the adjective, of
-// 0x4F9430), the price of the chosen one; X hires the burglar against him.
+}  // namespace
+namespace p3::data::tick::merchants_detail {
+uint8_t fn_4f9430(const SaveGame& save, int merchant);  // town_tick/merchants.cpp: a merchant's title
+}  // namespace p3::data::tick::merchants_detail
+namespace {
+
+// A victim's row on the burglar's page (0x5D1FE2..0x5D209F, 0x69D960): «The <his title> <rank> <first name> <family
+// name> from <home town>.» (the article 0x6C0EF8 and the rank 0x6A0608 by his sex, the title 0x6A0C18 by 0x4F9430).
+std::string burglar_victim_text(const SaveGame& save, uint16_t merchant) {
+	const MerchantMemory& m = save.merchants[merchant].memory;
+	const uint32_t sex = m.u8(0x1A) & 1u;
+	const uint32_t rank = uint32_t(m.u8(0x39C + m.u8(0x19))) + 8 * sex;
+	const uint32_t title = tick::merchants_detail::fn_4f9430(save, int(merchant));
+	const auto [first, family] = merchant_names(save, merchant);
+	const std::string town = window_town_name(save, m.u8(0x19));
+	return exe_format(0x69D960,
+		{lender_text(0x6C0EF8 + 4 * sex, "El", "The"), lender_text(0x6A0C18 + 4 * title, "", ""), lender_text(0x6A0608 + 4 * rank, "", ""),
+			clean_game_text(first), clean_game_text(family), town},
+		clean_game_text(first) + " " + clean_game_text(family) + " (" + town + ")");
+}
+
+// The burglar's page laid out as the game's (0x5D1E70): his two texts, a text box each from (70, 225); with victims,
+// their list 10 under them, a row each 20 (font 1's height, [+0x1C7C]; six shown, the rest by its scroll bar), the
+// block centred across the window ([+0x1C9C], 0x5CCDAF), the chosen one dark blue (0xFF003C8C); the price of the
+// chosen one in a text box from (70, the scroll bar's bottom + 5 = 440); «Distribute order» the confirm button (148,
+// 450). Without victims: 0x69DA60 in a box 20 under the texts. `selected` the victim chosen (-1 none: outside the page,
+// as the game's before one is clicked).
+PlaceView::Page burglar_layout(SaveGame& save, PlaceUi& ui, int selected) {
+	PlaceView::Page page;
+	const BurglarWindow& w = ui.burglar;
+	std::vector<std::pair<std::string, SDL_Color>> first;
+	std::vector<std::pair<std::string, SDL_Color>> second;
+	for (const std::string& line : box_lines(exe_text(0x69D954, "", ""))) {
+		first.push_back({line, kTextColor});
+	}
+	for (const std::string& line : box_lines(exe_text(0x69D95C, "", ""))) {
+		second.push_back({line, kTextColor});
+	}
+	const int under = add_wrapped(page, second, add_wrapped(page, first, 225));
+	const std::string act = exe_text(0x69DB48, "Realizar encargo", "Distribute order");
+	if (w.victims.empty()) {
+		add_wrapped(page, {{exe_text(0x69DA60, "No tienes competidores en esta ciudad a los que les pueda robar.",
+								 "You have no competitors in this town by whom I can break in."),
+							   kTextColor}},
+			under + 20);
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, act, PlaceView::PageAction::Act, false}));
+		return page;
+	}
+	const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
+	constexpr int kRow = 20;
+	constexpr int kShown = 6;
+	const int count = int(w.victims.size());
+	std::vector<std::string> texts;
+	int widest = 0;
+	for (const BurglarVictim& victim : w.victims) {
+		texts.push_back(burglar_victim_text(save, victim.merchant));
+		widest = std::max(widest, font ? font->measure(texts.back()) : 0);
+	}
+	const int x = (kInteriorWidth - widest - (count > kShown ? 30 : 0)) / 2;
+	const int top = std::clamp(selected - kShown + 1, 0, std::max(0, count - kShown));
+	for (int k = top, y = under + 10; k < count && k < top + kShown; ++k, y += kRow) {
+		PlaceView::PageText t{texts[size_t(k)], x, y};
+		if (k == selected) {
+			t.color = {0x00, 0x3C, 0x8C, 255};
+		}
+		page.texts.push_back(t);
+		PlaceView::PageButton touch{{x, y, std::max(widest, 40), kRow - 4}, "", PlaceView::PageAction::Choose, true};
+		touch.hidden = true;
+		touch.row = k;
+		page.buttons.push_back(touch);
+	}
+	if (selected >= 0 && selected < count) {
+		// (440 in the game, which leaves its line on the confirm button's top: a line higher here.)
+		const uint16_t price = w.victims[size_t(selected)].price;
+		add_wrapped(page, {{exe_format(0x69D964, {std::to_string(price)}, format_money(price)), kTextColor}}, 440 - kRow);
+	}
+	page.buttons.push_back(fitted({{148, 450, 128, 18}, act, PlaceView::PageAction::Act, selected >= 0 && !w.done}));
+	return page;
+}
+
+// The burglar's page inside (its drawing 0x5D1E70 and the page after it 0x5D21A0): a row for each victim, the price of
+// the chosen one; X hires the burglar against him.
 void burglar_page(SaveGame& save, PlaceUi& ui, PlaceView& v) {
 	BurglarWindow& w = ui.burglar;
 	v.title = place_name(ui.let_type) + " - " + exe_text(0x69D8C0, "Negociar con el ladrón", "Talk to burglar");
@@ -4461,6 +4702,7 @@ void burglar_page(SaveGame& save, PlaceUi& ui, PlaceView& v) {
 		v.lines.push_back({exe_text(0x69DA60, "No tienes competidores en esta ciudad a los que les pueda robar.",
 							   "You have no competitors in this town by whom I can break in."),
 			kTextColor});
+		v.page = burglar_layout(save, ui, -1);
 		return;
 	}
 	ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
@@ -4473,15 +4715,19 @@ void burglar_page(SaveGame& save, PlaceUi& ui, PlaceView& v) {
 		} else {
 			said = exe_text(0x69D96C + 4 * uint32_t(std::clamp(w.refusal, 0, 4)), "", "");
 		}
-		for (const std::string& line : text_lines(said)) {
+		for (const std::string& line : box_lines(said)) {
 			v.lines.push_back({line, kTextColor});
 		}
+		PlaceView::Page page;  // The page 13 (0x5D21A0): what he says in a text box from (70, 255).
+		add_wrapped(page, v.lines, 255);
+		v.page = std::move(page);
 		return;
 	}
 	for (const std::string& line : burglar_lines()) {
 		v.lines.push_back({line, kTextColor});
 	}
 	v.lines.push_back({exe_format(0x69D964, {std::to_string(chosen.price)}, format_money(chosen.price)), kTextColor});
+	v.page = burglar_layout(save, ui, ui.row);
 }
 
 // The pirate's page (its drawing 0x5D09A0 and the page after it 0x5D0F00): his henchmen and share, the ship offered;
@@ -4494,21 +4740,31 @@ void pirate_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	std::pair<std::string, bool>& row = v.rows[size_t(ui.row)];
 	const uint16_t past = save.globals.u16(global::kShipCount);
 	if (w.done) {
-		std::string said;
+		// The page 11 (0x5D0F00): single lines centred on the window's middle (w/2, h/2 = 255): the ship refused («this
+		// old seller of souls», its hull under 20 %), or «The pirates take <the ship>» and, a line lower, «and set sail.»
+		// (the Spanish exe's slot for it points at no text: there the sentence ends with its full stop instead).
+		PlaceView::Page page;
+		const int middle = kInteriorWidth / 2;
 		if (w.wrecked) {
-			said = exe_text(0x69D928, "No nos estarás ofreciendo este viejo cascarón, ¿verdad?",
-				"You are not offering us this old seller of souls, are you?");
+			v.lines.push_back({exe_text(0x69D928, "No nos estarás ofreciendo este viejo cascarón, ¿verdad?",
+								   "You are not offering us this old seller of souls, are you?"),
+				kTextColor});
+			page.texts.push_back({v.lines.back().first, middle, 255, true});
 		} else if (w.ship < past) {
-			const std::string tail = exe_text(0x69DA54, "", "and set sail.");
-			said = exe_text(0x69DA50, "Los piratas zarpan a bordo", "The pirates take") + " " + tavern_ship_words(save.ships[w.ship]) +
-				(tail.empty() || tail == "?" ? "." : " " + tail);
-		}
-		for (const std::string& line : text_lines(said)) {
-			v.lines.push_back({line, kTextColor});
+			std::string tail = exe_text(0x69DA54, "", "and set sail.");
+			if (tail == "?" || std::any_of(tail.begin(), tail.end(), [](char c) { return uint8_t(c) < 0x20; })) {
+				tail.clear();
+			}
+			v.lines.push_back({exe_text(0x69DA50, "Los piratas zarpan a bordo", "The pirates take") + " " +
+					tavern_ship_words(save.ships[w.ship]) + (tail.empty() ? "." : ""),
+				kTextColor});
+			page.texts.push_back({v.lines.back().first, middle, 255, true});
+			if (!tail.empty()) {
+				v.lines.push_back({tail, kTextColor});
+				page.texts.push_back({tail, middle, 275, true});
+			}
 		}
 		row.second = false;
-		PlaceView::Page page;  // The page 11 (0x5D0F00): what was said, wrapped from (70, 225).
-		add_wrapped(page, v.lines, 225);
 		v.page = std::move(page);
 		return;
 	}
@@ -4558,26 +4814,21 @@ void pirate_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 
 // The informer's page (its drawing 0x5D10C0 and the page after it 0x5D12A0): his greeting and price; «Buy
 // information» queues the news's operation (0x4C, or 0x55 for a map's piece) and shows its text.
-void informer_page(PlaceUi& ui, PlaceView& v) {
+void informer_page(const SaveGame& save, PlaceUi& ui, PlaceView& v) {
+	// The title of the pages 4 and 12 (0x5D10FC, 0x5D12EC): «Conversation with <his first name> <his family name>».
 	v.title = place_name(ui.let_type) + " - " + exe_text(0x69D8B4, "Conversar con", "Conversation with") + " " +
-		lowered(exe_text(0x69C9E4, "Soplón", "Informer"));
+		clean_game_text(game_first_name(save, ui.informer.first_name)) + " " +
+		clean_game_text(game_family_name(save, ui.informer.family_name));
 	v.act = exe_text(0x69DB3C, "Comprar información", "Buy information");
 	std::pair<std::string, bool>& row = v.rows[size_t(ui.row)];
 	if (ui.informer_done) {
-		for (const std::string& line : text_lines(ui.informer_said)) {
+		for (const std::string& line : box_lines(ui.informer_said)) {
 			v.lines.push_back({line, kTextColor});
 		}
 		row.second = false;
 		// Laid out as the game's page 12 (0x5D12A0): what he says from (70, 225), 285 wide (the window's width − 140).
 		PlaceView::Page page;
-		const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
-		int y = 225;
-		for (const auto& [line, color] : v.lines) {
-			for (const std::string& part : font ? wrap_text(*font, line, kInteriorWidth - 140) : std::vector<std::string>{line}) {
-				page.texts.push_back({part, 70, y});
-				y += font ? font->line_height() : 16;
-			}
-		}
+		add_wrapped(page, v.lines, 225);
 		v.page = std::move(page);
 		return;
 	}
@@ -4614,6 +4865,114 @@ std::vector<std::string> dealer_greeting() {
 	return {exe_text(0x69D92C, "\"¡Saludos!", "\"Greetings!"),
 		exe_text(0x69D930, "¿Estás interesado en", "Would you be interested in a few"),
 		exe_text(0x69D934, "comprar o vender armas?\"", "weapon deals?\"")};
+}
+
+// The weapons dealer's page laid out as the game's (0x5D14A0; its controls 0x5CC549..0x5CC7FD): the greeting's three
+// lines from (70, 225); the place, the office's word centred between the arrows or the ship's row; the table of the
+// four hand weapons (BuildingParchment.ini [CHART1]: columns 96 64 48 48 64 apart 6 6 12 6 from x 20, rows 18 high
+// every 20 from 370, its head 20 over them in font 0): the weapon right-aligned on the first column, the dealer's count
+// centred on the second, a button with the price of one bought («Buy», medium, 48 × 18, at 192) and one with the price
+// of one sold («Sell», at 252), the place's count centred on the last; the four step buttons «1», «5» (small, 32),
+// «50», «Max» (medium) from (192, 480), 2 apart, the chosen pressed in. The game puts the place's row on the arrows'
+// line (380), over the table's; with no photo of it (the user, 2026-11-13: improvise), it goes up between the greeting
+// and the table (the arrows at 310). Without ships or an office: the game's two lines centred on that line.
+// `selected` is the row chosen inside the page (0 the place, 1 the step, 2..5 the weapons; -1 outside it): its
+// weapon's name in blue and its buttons with their keys.
+constexpr int kDealerPlaceY = 310;
+PlaceView::Page dealer_layout(SaveGame& save, int town, PlaceUi& ui, int selected) {
+	PlaceView::Page page;
+	const std::vector<std::string> greeting = dealer_greeting();
+	for (size_t k = 0; k < greeting.size(); ++k) {
+		page.texts.push_back({greeting[k], 70, 225 + 20 * int(k)});
+	}
+	const int middle = kInteriorWidth / 2;
+	const uint16_t past = save.globals.u16(global::kShipCount);
+	const bool office = player_office(save, town) >= 0;
+	const bool on = !ui.dealer_list.empty() || office;
+	if (!on) {
+		page.texts.push_back({"\"" + game_text(GameText::TavernNoShip, tr("No tienes barcos adecuados en el puerto", "You have no ship in port")) + ",",
+			middle, kDealerPlaceY, true});
+		page.texts.push_back({exe_text(0x69DA58, "en el que cargar armas.\"", "on which you could load weapons.\""), middle,
+			kDealerPlaceY + 20, true});
+		return page;
+	}
+	const bool arrows = trader_arrows(save, uint32_t(town), ui.dealer_list);
+	const SDL_Color place_color = selected == 0 ? kButtonHighlight : SDL_Color{0, 0, 0, 255};
+	if (ui.dealer_office) {
+		page.texts.push_back({exe_text(0x699874, "Oficina", "Office"), middle, kDealerPlaceY, true, false, place_color});
+		add_ship_row(page, save, -1, arrows, kDealerPlaceY, 0);
+	} else {
+		add_ship_row(page, save, ui.dealer_ship < past ? int(ui.dealer_ship) : -1, arrows, kDealerPlaceY, 0);
+		if (selected == 0 && !page.texts.empty()) {
+			for (PlaceView::PageText& t : page.texts) {
+				if (t.y == kDealerPlaceY - 20) {
+					t.color = place_color;  // The ship's name.
+				}
+			}
+		}
+	}
+	// The table.
+	constexpr int kLeft = 20;
+	constexpr int kWidths[5] = {96, 64, 48, 48, 64};
+	constexpr int kGaps[4] = {6, 6, 12, 6};
+	int columns[5] = {};
+	for (int c = 0, x = kLeft; c < 5; ++c) {
+		columns[c] = x;
+		x += kWidths[c] + (c < 4 ? kGaps[c] : 0);
+	}
+	auto centre = [&](int c) { return columns[c] + kWidths[c] / 2; };
+	constexpr int kHead = 350;
+	PlaceView::PageText head;
+	head.head_font = true;
+	head.y = kHead;
+	auto add_head = [&](const std::string& s, int x, bool right) {
+		PlaceView::PageText t = head;
+		t.text = s;
+		t.x = x;
+		t.right = right;
+		t.centred = !right;
+		page.texts.push_back(t);
+	};
+	add_head(exe_text(0x69D938, "Tipo de arma", "Type of weapon"), columns[0] + kWidths[0], true);
+	add_head(exe_text(0x6998E4, "Mercader", "Trader"), centre(1), false);
+	add_head(exe_text(0x699894, "Comprar", "Buy"), centre(2), false);
+	add_head(exe_text(0x6998A0, "Vender", "Sell"), centre(3), false);
+	add_head(ui.dealer_office ? exe_text(0x699874, "Oficina", "Office") : exe_text(0x6998AC, "Barco", "Ship"), centre(4), false);
+	const int step = std::clamp(ui.dealer_step, 0, 3);
+	const std::array<int32_t, 4> have = dealer_have(save, uint32_t(town), ui.dealer_office, ui.dealer_ship);
+	const DealerPrices prices = fn_526470(save, uint32_t(town), uint32_t(step), have);
+	for (int k = 0; k < 4; ++k) {
+		const int y = kHead + 20 * (k + 1);
+		const bool chosen = selected == 2 + k;
+		PlaceView::PageText name{ware_label(0x14 + k), columns[0] + kWidths[0], y};
+		name.right = true;
+		name.color = chosen ? kButtonHighlight : SDL_Color{0, 0, 0, 255};
+		page.texts.push_back(name);
+		page.texts.push_back({std::to_string(prices.town[k]), centre(1), y, true});
+		page.texts.push_back({std::to_string(have[k]), centre(4), y, true});
+		PlaceView::PageButton buy{{columns[2], y, kWidths[2], 18}, std::to_string(prices.buy[k]), PlaceView::PageAction::Act,
+			prices.town[k] > 0};
+		PlaceView::PageButton sell{{columns[3], y, kWidths[3], 18}, std::to_string(prices.sell[k]), PlaceView::PageAction::Act2,
+			have[k] > 0};
+		buy.keyed = sell.keyed = chosen;
+		buy.row = sell.row = 2 + k;
+		page.buttons.push_back(chosen ? fitted(buy) : buy);
+		page.buttons.push_back(chosen ? fitted(sell) : sell);
+	}
+	static const uint32_t kStepTexts[4] = {0x69A35C, 0x69A360, 0x69A364, 0x69A368};
+	static const char* const kStepWords[4][2] = {{"1", "1"}, {"5", "5"}, {"50", "50"}, {"Máx.", "Max"}};
+	for (int k = 0, x = 192; k < 4; ++k) {
+		const int w = k < 2 ? 32 : 48;
+		PlaceView::PageButton b{{x, 480, w, 18}, exe_text(kStepTexts[k], kStepWords[k][0], kStepWords[k][1]),
+			PlaceView::PageAction::Choose, true};
+		b.lit = k == step;
+		b.keyed = false;
+		b.row = 1;
+		b.value = k;
+		page.buttons.push_back(b);
+		x += w + 2;
+	}
+	return page;
 }
 
 // The weapons dealer's page (its drawing 0x5D14A0): the place, the step and the four hand weapons, each with the
@@ -4709,10 +5068,12 @@ void trader_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	v.title = place_name(ui.let_type) + " - " + exe_text(0x69D8A8, "Hablar con comerciante", "Talk to trader");
 	std::pair<std::string, bool>& row = v.rows[size_t(ui.row)];
 	if (w.done) {
-		// The page after it: the money short, the place, no place.
+		// The page after it (0x5D36A0): the money short, the place, no place. One line centred on the window's middle
+		// (w/2, h/2 = 255), the place's sentence put together with a space before its closing «."» (0x6C670A.., as the
+		// game shows it); «no place» a text box from (70, 255).
 		std::string said;
 		const std::string delivered = exe_text(0x69D9F0, "\"Las mercancías han sido transportadas", "\"The goods were delivered");
-		const std::string end = exe_text(0x69D9F8, ".\"", ".\"");
+		const std::string end = " " + exe_text(0x69D9F8, ".\"", ".\"");
 		const uint16_t past = save.globals.u16(global::kShipCount);
 		if (!w.afforded) {
 			said = exe_text(0x69D9EC, "\"¡Primero deberías mejorar tu situación económica!\"",
@@ -4725,19 +5086,19 @@ void trader_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 			said = exe_text(0x69DA04, "No hay disponible ni una oficina comercial ni un barco que tengan suficiente capacidad.",
 				"There is neither a trading office nor a ship available that would have enough capacity for the supplies.");
 		} else if (w.ship < past) {
-			const SavedShip& s = save.ships[w.ship];
-			const int type = s.type();
-			// 0x5D38A8: the article by the ship's type (0 and 2: 0x69D8F4; 1 and 3: 0x69D8F0), then its type's name.
-			const std::string article = type == 0 || type == 2 ? exe_text(0x69D8F4, "del", "the") : exe_text(0x69D8F0, "del", "the");
-			said = delivered + " " + exe_text(0x69D9F4, "al", "to") + " " + article + " " + ship_type_name(type) + " " + s.name() + end;
+			said = delivered + " " + exe_text(0x69D9F4, "al", "to") + " " + tavern_ship_words(save.ships[w.ship]) + end;
 		}
-		for (const std::string& line : text_lines(said)) {
+		for (const std::string& line : box_lines(said)) {
 			v.lines.push_back({line, kTextColor});
 		}
 		v.act = exe_text(0x69DB50, "Cargar mercancías", "Load goods");
 		row.second = false;
-		PlaceView::Page page;  // The page 15 (0x5D36A0): what was said, wrapped from (70, 225).
-		add_wrapped(page, v.lines, 225);
+		PlaceView::Page page;
+		if (w.afforded && !w.office && !w.convoy && w.no_place) {
+			add_wrapped(page, v.lines, 255);
+		} else if (!said.empty()) {
+			page.texts.push_back({said, kInteriorWidth / 2, 255, true});
+		}
 		v.page = std::move(page);
 		return;
 	}
@@ -4749,7 +5110,7 @@ void trader_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	const std::array<std::string, 3> who = tavern_greeted(save);
 	static const uint32_t kGreetings[3] = {0x69D998, 0x69D9C8, 0x69D9E0};
 	if (w.greeting >= 0 && w.greeting < 3) {
-		for (const std::string& line : text_lines(exe_format(kGreetings[w.greeting], {who[0], who[1], who[2]},
+		for (const std::string& line : box_lines(exe_format(kGreetings[w.greeting], {who[0], who[1], who[2]},
 				 tr("\"Saludos, ", "\"Greetings, ") + who[1] + " " + who[2] + "."))) {
 			v.lines.push_back({line, kTextColor});
 		}
@@ -4762,7 +5123,7 @@ void trader_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 									  : exe_format(0x69D9E4, offer_args,
 											tr("¿Te interesan ", "Are you interested in ") + std::to_string(o.amount) + " " +
 												ware_name(o.ware) + " " + format_money(o.price) + "?");
-	for (const std::string& line : text_lines(offer)) {
+	for (const std::string& line : box_lines(offer)) {
 		v.lines.push_back({line, kTextColor});
 	}
 	if (w.confirmed) {
@@ -5238,12 +5599,21 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 			default: break;
 			}
 		}
+		// The banner shows the page's title alone.
+		auto banner_title = [&] {
+			if (const std::string prefix = place_name(ui.let_type) + " - "; v.title.rfind(prefix, 0) == 0) {
+				v.title = v.title.substr(prefix.size());
+			}
+		};
 		if (ui.inside && ui.talking == int(TavernPerson::WeaponsDealer)) {
 			dealer_page(save, town, ui, v);
+			v.page = dealer_layout(save, town, ui, ui.row);
+			banner_title();
 			break;
 		}
 		if (ui.inside && ui.talking == int(TavernPerson::Burglar)) {
 			burglar_page(save, ui, v);
+			banner_title();
 			break;
 		}
 		v.rows_in_menu = true;
@@ -5265,24 +5635,24 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 		} else if (person == TavernPerson::Pirate) {
 			pirate_page(save, town, ui, v);
 		} else if (person == TavernPerson::Informer) {
-			informer_page(ui, v);
+			informer_page(save, ui, v);
 		} else if (person == TavernPerson::Burglar) {
 			v.title += " - " + exe_text(0x69D8C0, "Negociar con el ladrón", "Talk to burglar");
 			for (const std::string& line : burglar_lines()) {
 				v.lines.push_back({line, kTextColor});
 			}
 			v.act = exe_text(0x69D8C0, "Negociar con el ladrón", "Talk to burglar");
-			// Laid out as the game's page 7 (0x5D1E70): his two texts wrapped from (70, 225); his button the confirm one.
-			PlaceView::Page page;
-			add_wrapped(page, v.lines, 225);
-			page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, true}));
-			v.page = std::move(page);
+			// His page as the game's, no victim chosen yet (X goes into it to choose one with the keys; a touch on a
+			// victim chooses it).
+			v.page = burglar_layout(save, ui, -1);
 		} else if (person == TavernPerson::WeaponsDealer) {
 			v.title += " - " + exe_text(0x69D8BC, "Hablar con traficante de armas", "Talk to weapons dealer");
 			for (const std::string& line : dealer_greeting()) {
 				v.lines.push_back({line, kTextColor});
 			}
 			v.act = exe_text(0x69D8BC, "Hablar con traficante de armas", "Talk to weapons dealer");
+			// His page as the game's (X goes into it to choose a row with the keys; its buttons work at a touch).
+			v.page = dealer_layout(save, town, ui, -1);
 		} else if (person == TavernPerson::Sailors) {
 			v.title += " - " + game_text(GameText::TavernHireSailors, tr("Contratar marineros", "Hire sailors"));
 			v.act = game_text(GameText::TavernHireSailors, tr("Contratar marineros", "Hire sailors"));
@@ -5336,6 +5706,23 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 		} else if (person == TavernPerson::Captain) {
 			v.title += " - " + game_text(GameText::TavernHireCaptain, tr("Contratar capitán", "Hire captain"));
 			v.act = game_text(GameText::TavernHireCaptain, tr("Contratar capitán", "Hire captain"));
+			if (ui.hired_captain != 0xFFFF && ui.hired_ship < save.ships.size()) {
+				// The page 10 (0x5D0100): two lines centred on the window's middle (w/2, h/2 = 255 and 275): «The captain
+				// <first name> <family name> thanks you», «and boards the <type> <name>.».
+				v.lines.push_back({exe_text(0x69D8E4, "El capitán", "The captain") + " " + captain_name(save, ui.hired_captain) + " " +
+						exe_text(0x69D8E8, "te da las gracias", "thanks you"),
+					kTextColor});
+				v.lines.push_back({exe_text(0x69D8EC, "y sube a bordo", "and boards") + " " + tavern_ship_words(save.ships[ui.hired_ship]) +
+						".",
+					kTextColor});
+				v.rows[size_t(ui.row)].second = false;
+				PlaceView::Page page;
+				page.texts.push_back({v.lines[0].first, kInteriorWidth / 2, 255, true});
+				page.texts.push_back({v.lines[1].first, kInteriorWidth / 2, 275, true});
+				v.page = std::move(page);
+				banner_title();
+				break;
+			}
 			choose(window_ships(save, player, town, ShipListMode::Captains));
 			v.captain = tavern_captain(save, town, uint16_t(player));
 			if (v.captain != 0xFFFF) {
@@ -5403,10 +5790,7 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 			v.lines.push_back({tr("(Su ventana aún no está en el visor.)", "(His window isn't in the viewer yet.)"), kDimColor});
 			v.rows[size_t(ui.row)].second = false;
 		}
-		// The banner shows the page's title alone.
-		if (const std::string prefix = place_name(ui.let_type) + " - "; v.title.rfind(prefix, 0) == 0) {
-			v.title = v.title.substr(prefix.size());
-		}
+		banner_title();
 		break;
 	}
 	case Place::Shipyard: {
@@ -5749,15 +6133,29 @@ void draw_place_page(SDL_Renderer* renderer, TextRenderer& text, GameWindowArt& 
 // its title in the game's font 3 centred near its top, black over its light shadow (0x5A8CF9..0x5A8D53), and its
 // buttons, the game's huge ones (buttons.ini Button4, 128 × 18), one under another; the lit one (the page shown)
 // pressed and blue, the ones that can't be pressed dimmed. The rows a little taller than the pills, for the finger.
+// The building's side menu (the tavern's 0x5A6370, 0x5A6920): its buttons (huge, 128 × 18) centred across the menu and
+// one under another every 18 + 18/4 = 22, the first at the menu's middle less half their count times a font's height
+// ([+0xB00], 0x5A6144: the height WalType gives the side menus' font 2, Tiepolo black «16 17»; 23 as measured on the
+// photos of the tavern's menu with 2 buttons and the town hall's with 8), so that a few sit round the middle and many
+// fill it. The game's menu is not the viewer's room (that reaches the screen's bottom): on the photos it starts 8 under
+// the parchment's top (its title at 10, 0x5A8CF9) and is 276 high.
 struct PlaceMenuLayout {
-	static constexpr int kRow = 24;
+	static constexpr int kRow = 22;
+	static constexpr int kFontHeight = 23;
+	static constexpr int kMenuTop = 8;
+	static constexpr int kMenuHeight = 276;
 	SDL_Rect room{};
 	int title_y = 0;
-	explicit PlaceMenuLayout(const SDL_Rect& r) : room(r), title_y(r.y + 18) {}
-	SDL_Rect entry(int k) const { return {room.x + (room.w - 128) / 2, room.y + 52 + k * kRow, 128, kRow}; }
+	explicit PlaceMenuLayout(const SDL_Rect& r) : room(r), title_y(r.y + kMenuTop + 10) {}
+	SDL_Rect entry(int k, int count) const {
+		return {room.x + (room.w - 128) / 2, room.y + kMenuTop + kMenuHeight / 2 - count / 2 * kFontHeight + k * kRow, 128, 18};
+	}
 	int entry_at(int x, int y, int count) const {
 		for (int k = 0; k < count; ++k) {
-			if (inside(entry(k), x, y)) {
+			SDL_Rect r = entry(k, count);
+			r.y -= (kRow - r.h) / 2;  // The touch takes the whole row.
+			r.h = kRow;
+			if (inside(r, x, y)) {
 				return k;
 			}
 		}
@@ -5776,9 +6174,10 @@ void draw_place_menu(SDL_Renderer* renderer, TextRenderer& screen_text, const Ga
 	const int x = room.x + (room.w - title.measure(v.menu_title)) / 2;
 	title.draw(v.menu_title, x + 1, layout.title_y + 1, {0xEF, 0xD7, 0xC0, 255});
 	title.draw(v.menu_title, x, layout.title_y, kButtonInk);
-	TextRenderer& text = art.menu_text() ? *art.menu_text() : screen_text;
+	// The buttons' labels in their style's font (buttons.ini: FontID=1 for every style), as the window's buttons.
+	TextRenderer& text = art.page_text() ? *art.page_text() : screen_text;
 	for (int k = 0; k < int(v.menu.size()); ++k) {
-		const SDL_Rect r = layout.entry(k);
+		const SDL_Rect r = layout.entry(k, int(v.menu.size()));
 		const bool lit = k == v.menu_lit;
 		const bool can = v.menu[size_t(k)].second;
 		art.draw_pill(r, lit ? PillState::Pressed : can ? PillState::Standard : PillState::Disabled);
@@ -5819,9 +6218,10 @@ void draw_place_page(SDL_Renderer* renderer, TextRenderer& text, GameWindowArt& 
 	if (v.page) {
 		// Laid out as the game's: where its drawing puts each thing.
 		TextRenderer& title = art.title_text() ? *art.title_text() : text;
+		TextRenderer& head = art.head_text() ? *art.head_text() : text;
 		for (const PlaceView::PageText& t : v.page->texts) {
-			TextRenderer& font = t.title_font ? title : text;
-			const int x = panel.x + (t.centred ? t.x - font.measure(t.text) / 2 : t.x);
+			TextRenderer& font = t.title_font ? title : t.head_font ? head : text;
+			const int x = panel.x + (t.centred ? t.x - font.measure(t.text) / 2 : t.right ? t.x - font.measure(t.text) : t.x);
 			font.draw(t.text, x, panel.y + t.y, t.color);
 		}
 		for (const PlaceView::PageIcon& i : v.page->icons) {
@@ -5834,10 +6234,14 @@ void draw_place_page(SDL_Renderer* renderer, TextRenderer& text, GameWindowArt& 
 			text.draw(b.text, r.x + (r.w - text.measure(b.text)) / 2, r.y + (r.h - lh) / 2, kButtonInk);
 		}
 		for (const PlaceView::PageButton& b : v.page->buttons) {
+			if (b.hidden) {
+				continue;
+			}
 			const SDL_Rect r = {panel.x + b.rect.x, panel.y + b.rect.y, b.rect.w, b.rect.h};
-			art.draw_pill(r, b.enabled ? PillState::Standard : PillState::Disabled);
-			const std::string label = page_button_key(b.action) + b.label;
-			text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - lh) / 2, b.enabled ? kButtonInk : kParchmentDim);
+			art.draw_pill(r, b.lit ? PillState::Pressed : b.enabled ? PillState::Standard : PillState::Disabled);
+			const std::string label = (b.keyed ? page_button_key(b.action) : std::string()) + b.label;
+			text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - lh) / 2,
+				b.lit ? kButtonHighlight : b.enabled ? kButtonInk : kParchmentDim);
 		}
 		return;
 	}
@@ -6237,8 +6641,12 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 							   : "You hire " + std::to_string(n) + " sailors for the " + name + ".";
 		ui.amount = 0;
 	} else if (ui.open == Place::Tavern) {
-		ui.message = s->captain() != captain ? tr("El nuevo capitán sube a bordo del ", "The new captain boards the ") + name + "."
-											 : tr("El capitán no ha subido a bordo.", "The captain hasn't come on board.");
+		if (s->captain() != captain) {
+			ui.hired_captain = v.captain;  // The page 10 says it (0x5D0100).
+			ui.hired_ship = uint16_t(ship);
+		} else {
+			ui.message = tr("El capitán no ha subido a bordo.", "The captain hasn't come on board.");
+		}
 	} else if (ui.open == Place::Shipyard) {
 		ui.message = s->status() == 4 ? name + tr(" entra en el astillero.", " goes into the shipyard.")
 									  : tr("No se ha podido reparar (mira el buzón).", "It couldn't be repaired (see the mailbox).");
@@ -13311,6 +13719,10 @@ int main(int argc, char** argv) {
 					place.row = place.people_row;
 					return true;
 				}
+				if (place.open == Place::Lender && place.lender_interest) {
+					place.lender_interest = false;  // Back to the requests (the page 9 to the page 2).
+					return true;
+				}
 				place.open = Place::None;
 				return true;
 			case SDL_CONTROLLER_BUTTON_BACK:  // Select: the next ship of the list.
@@ -16177,15 +16589,33 @@ int main(int argc, char** argv) {
 							if (!b.enabled || !inside(r, x, y)) {
 								continue;
 							}
+							const bool dealer = place.open == Place::Tavern && place.talking == int(TavernPerson::WeaponsDealer);
+							const bool burglar = place.open == Place::Tavern && place.talking == int(TavernPerson::Burglar);
+							if (b.row >= 0) {
+								// A table's button or a list's row: its row chosen (the dealer's or the burglar's: into the
+								// person's page, ○ going back to the people).
+								if ((dealer || burglar) && !place.inside) {
+									place.inside = true;
+									place.people_row = place.row;
+								}
+								place.row = b.row;
+							}
 							switch (b.action) {
 							case PlaceView::PageAction::Act: place_button(SDL_CONTROLLER_BUTTON_A); break;
 							case PlaceView::PageAction::Act2: place_button(SDL_CONTROLLER_BUTTON_X); break;
 							case PlaceView::PageAction::Minus: place_button(SDL_CONTROLLER_BUTTON_DPAD_LEFT); break;
 							case PlaceView::PageAction::Plus: place_button(SDL_CONTROLLER_BUTTON_DPAD_RIGHT); break;
+							case PlaceView::PageAction::Choose:
+								if (dealer) {
+									place.dealer_step = b.value;
+								}
+								break;
 							case PlaceView::PageAction::Previous:
 							case PlaceView::PageAction::Next: {
 								const bool back = b.action == PlaceView::PageAction::Previous;
-								if (place.open == Place::Tavern && (place.talking == int(TavernPerson::Pirate) ||
+								if (dealer) {
+									dealer_step_or_place(save, town_index, place, back ? -1 : 1);
+								} else if (place.open == Place::Tavern && (place.talking == int(TavernPerson::Pirate) ||
 										place.talking == int(TavernPerson::Traveller) || place.talking == int(TavernPerson::Trader))) {
 									place_button(back ? SDL_CONTROLLER_BUTTON_DPAD_LEFT : SDL_CONTROLLER_BUTTON_DPAD_RIGHT);
 								} else if (!place_now.ships.empty()) {

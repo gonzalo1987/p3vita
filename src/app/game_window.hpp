@@ -100,8 +100,8 @@ public:
 	TextRenderer* page_text() const { return page_.get(); }
 	// The titles' font (the game's font 3); null without it.
 	TextRenderer* title_text() const { return title_.get(); }
-	// The side menus' buttons' font (the game's font 2); null without it.
-	TextRenderer* menu_text() const { return menu_.get(); }
+	// The tables' heads' font (the game's font 0, Tiepolo black); null without it.
+	TextRenderer* head_text() const { return head_.get(); }
 
 	// The interior's animations ([Anim k] of animation.ini: AnimN the TEX with its frames, AnimNX/Y its place on the
 	// picture, AnimNTime the loop's ms, AnimNFrames), as the interior view runs them: 0x466490 starts one (back and
@@ -155,6 +155,7 @@ private:
 	void load_interior(uint32_t now);
 	void opened(uint32_t now);
 	void tick(uint32_t now);
+	void tavern_tick(uint32_t now);
 	void update_animations(uint32_t now);
 	// The side menus' chances: rand() / 32768 as the game's (0x639C03 and 0x66CB34), from a generator of the viewer's
 	// own (the game's uses the CRT's, the simulation's; the viewer's engine mustn't see these).
@@ -172,6 +173,7 @@ private:
 	SDL_Rect picture_frame_{};
 	std::vector<Animation> animations_;
 	uint32_t timer_ = 0;  // The town hall's side menu's [+0x8F0]: when its animation 4 plays again.
+	uint32_t spit_at_ = 0;  // The tavern window's [+0x1BE0]: when the sailor may spit again.
 	Portrait portrait_ = Portrait::None;
 	SDL_Texture* portrait_picture_ = nullptr;
 	SDL_Rect portrait_frame_{};
@@ -209,7 +211,7 @@ private:
 	SDL_Rect seal_frame_{};
 	std::unique_ptr<TextRenderer> title_;
 	std::unique_ptr<TextRenderer> page_;
-	std::unique_ptr<TextRenderer> menu_;
+	std::unique_ptr<TextRenderer> head_;
 };
 
 }  // namespace p3::app

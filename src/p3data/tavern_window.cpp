@@ -931,14 +931,14 @@ void fn_526b40(SaveGame& save, const NavData* nav, const GameTexts& texts, uint3
 	put32(news.op, 8, 0xFFFF);
 	put32(news.op, 0xC, (rank + 1) * 100);
 	put32(news.op, 0x10, 0xFFFF);
-	news.icon = 0;
-	news.icon2 = 0;
+	news.first_name = 0;
+	news.family_name = 0;
 	news.text.clear();
 	uint32_t region = 0;
 	const uint8_t idx = t.u8(0x82C);
 	if (idx < 0x14) {
-		news.icon = kInformerTable[idx][2];
-		news.icon2 = kInformerTable[idx][3];
+		news.first_name = kInformerTable[idx][2];
+		news.family_name = kInformerTable[idx][3];
 		region = kInformerTable[idx][1];
 	}
 	auto add_price = [&](uint32_t more) {

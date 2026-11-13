@@ -1150,14 +1150,14 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		}
 		constexpr uint32_t kNews = kScratch + 0x80;
 		InformerNews news;
-		news.icon = s.globals.u16(kNews + 0x14);
-		news.icon2 = s.globals.u16(kNews + 0x16);
+		news.first_name = s.globals.u16(kNews + 0x14);
+		news.family_name = s.globals.u16(kNews + 0x16);
 		fn_526b40(s, &probe_sailing()->nav(), *texts, uint32_t(c.town(c.ecx)), news);
 		for (uint32_t k = 0; k < 0x14; ++k) {
 			s.globals.u8(kNews + k) = news.op[k];
 		}
-		s.globals.u16(kNews + 0x14) = news.icon;
-		s.globals.u16(kNews + 0x16) = news.icon2;
+		s.globals.u16(kNews + 0x14) = news.first_name;
+		s.globals.u16(kNews + 0x16) = news.family_name;
 		uint32_t h = 0x811C9DC5;
 		for (const char ch : news.text) {
 			h = (h ^ uint8_t(ch)) * 0x01000193;

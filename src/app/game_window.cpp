@@ -124,11 +124,13 @@ void GameWindowArt::ensure_common() {
 		if (auto font = p3::data::FontAtlas::load_em(archive_, "fonts/Elgreco_.ttf", 21, 20)) {
 			title_ = std::make_unique<TextRenderer>(renderer_, std::move(font));
 		}
-		// The side menus' buttons' font 2 (Tiepolo black, 16 × 17: 0x5A8F2C's 0x6DCE78).
-		if (auto font = p3::data::FontAtlas::load_em(archive_, "fonts/Tiepolo_black.ttf", 15, 17)) {
-			menu_ = std::make_unique<TextRenderer>(renderer_, std::move(font));
-			menu_->set_archive(&archive_);
+		// The tables' heads' font 0 (Tiepolo black, 14 × 15; 0x6DCD28), a pixel narrower as the others.
+		if (auto font = p3::data::FontAtlas::load_em(archive_, "fonts/Tiepolo_black.ttf", 13, 15)) {
+			head_ = std::make_unique<TextRenderer>(renderer_, std::move(font));
+			head_->set_archive(&archive_);
 		}
+		// (The side menus' buttons too: 0x5A8F2C sets font 2, but each button draws in its style's font, buttons.ini's
+		// FontID=1.)
 		if (auto font = p3::data::FontAtlas::load_em(archive_, "fonts/Tiepolo_bold.ttf", 12, 15)) {
 			page_ = std::make_unique<TextRenderer>(renderer_, std::move(font));
 			page_->set_archive(&archive_);
@@ -211,6 +213,9 @@ PortraitInfo portrait_info(Portrait p) {
 }
 
 constexpr int kPortraitTop = 55;  // 0x66E100.
+// The sailor's spit (the face 10, Matrose_spuckt) every 7 s at his loop's end (the page 2's update, 0x5CD613..0x5CD775).
+constexpr int kSpitFace = 10;
+constexpr uint32_t kSpitWait = 7000;
 
 }  // namespace
 
@@ -249,6 +254,7 @@ void GameWindowArt::draw_portrait(Portrait p, uint32_t now) {
 			portrait_picture_ = load(info.tex, &portrait_frame_, 1);
 		}
 		set_face(info.start, now);
+		spit_at_ = now + kSpitWait;  // The sailors' page opened (0x5CF240).
 	}
 	if (!torn_across_) {
 		torn_across_ = load(31013, torn_across_frames_, 2);
@@ -284,6 +290,11 @@ void GameWindowArt::draw_portrait(Portrait p, uint32_t now) {
 				}
 			} else if (face_.animation == info.start && info.loop >= 0) {
 				set_face(info.loop, now);
+			} else if (p == Portrait::Sailors && face_.animation == info.loop && int32_t(now - spit_at_) >= 0) {
+				set_face(kSpitFace, now);  // The sailor spits at his loop's end once 7 s have gone (0x5CD6D9; and a sound).
+			} else if (face_.animation == kSpitFace) {
+				set_face(info.loop, now);  // Back to his loop, the next one 7 s on (0x5CD75F).
+				spit_at_ = now + kSpitWait;
 			} else {
 				face_.frame = 0;  // The loop again.
 				face_.next = now + uint32_t(time);
@@ -458,6 +469,10 @@ void GameWindowArt::opened(uint32_t now) {
 // the woman's two (0 when 1 isn't on, 1 when 0 isn't, each with a chance over 0.99), the man's (2 with one over 0.5
 // when 3 isn't on; 3 over 0.99, after 2 if 2 is on), each once; the 4th every 10 to 20 s.
 void GameWindowArt::tick(uint32_t now) {
+	if (interior_ == kTavernInterior) {
+		tavern_tick(now);
+		return;
+	}
 	if (interior_ != kTownHallInterior) {
 		return;
 	}
@@ -486,6 +501,50 @@ void GameWindowArt::tick(uint32_t now) {
 		start_animation(4, false, now);
 		stop_at_loop_end(4);
 		timer_ = now + 10000 + uint32_t(chance() * 10000);
+	}
+}
+
+// The tavern's people at random each frame (its side menu's update, 0x5A6A30..0x5A6D90), each chance rand() / 32768
+// over its mark: 7 and 8 once each (0.99); 9 once (0.999), or after 12 if 12 is on (0.99); 12 once when 9 is off
+// (0.99); 10 and 11 one after the other for ever when 11 is off (0.995; 10 starts with the window); 13 there and back
+// once when 3, 4 and 5 are off (0.99); 3 then 4 when 13, 4 and 5 are off (0.99); while 4 is on, 5 after it once (0.9).
+void GameWindowArt::tavern_tick(uint32_t now) {
+	auto once = [&](int k, bool back_and_forth = false) {
+		start_animation(k, back_and_forth, now);
+		stop_at_loop_end(k);
+	};
+	if (chance() > 0.99) {
+		once(7);
+	}
+	if (chance() > 0.99) {
+		once(8);
+	}
+	const double r = chance();
+	if (!animation_on(12)) {
+		if (r > 0.999) {
+			once(9);
+		}
+	} else if (r > 0.99) {
+		chain_animation(12, 9);
+		stop_at_loop_end(9);
+	}
+	if (!animation_on(9) && chance() > 0.99) {
+		once(12);
+	}
+	if (!animation_on(11) && chance() > 0.995) {
+		chain_animation(10, 11);
+		chain_animation(11, 10);
+	}
+	if (!animation_on(5) && !animation_on(4) && !animation_on(3) && chance() > 0.99) {
+		once(13, true);
+	}
+	if (!animation_on(13) && !animation_on(4) && !animation_on(5) && chance() > 0.99) {
+		start_animation(3, false, now);
+		chain_animation(3, 4);
+	}
+	if (animation_on(4) && chance() > 0.9) {
+		chain_animation(4, 5);
+		stop_at_loop_end(5);
 	}
 }
 

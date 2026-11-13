@@ -1836,3 +1836,28 @@
 	{0x0069D8FC, 0x0069D37C},
 	{0x0069DA5C, 0x0069D4DC},
 	{0x0069D94C, 0x0069D3CC},
+	// The tavern's page 10 (0x5D0100): «The captain <names> thanks you», «and boards the <ship>.».
+	{0x0069D8E4, 0x0069D364},
+	{0x0069D8E8, 0x0069D368},
+	{0x0069D8EC, 0x0069D36C},
+	// The weapons dealer's page (0x5D14A0): its table's head «Buy», «Sell», «Office», «Ship» (the Spanish «  Comprar»,
+	// «  Vender» with two spaces before them) and its step buttons «1», «5», «50», «Max» (0x5CEAB3..).
+	{0x00699894, 0x00698D2C},
+	{0x006998A0, 0x00698D3C},
+	{0x00699874, 0x00698D00},
+	{0x006998AC, 0x00698D48},
+	{0x0069A35C, 0x006998E8},
+	{0x0069A360, 0x006998EC},
+	{0x0069A364, 0x006998F0},
+	{0x0069A368, 0x006998F4},
+	// The burglar's list (0x5D209F): «%s %s %s %s %s from %s.» (the article, title, rank, names and home town).
+	{0x0069D960, 0x0069D3E0},
+	// The lender's side menu (0x5A2815 its title): «Take out loan», «Repay loan», «Grant loan», «Buy shares», «Sell
+	// shares», «Granted loans», «Lender».
+	{0x0069B724, 0x0069AFA8},
+	{0x0069B728, 0x0069AFAC},
+	{0x0069B72C, 0x0069AFB0},
+	{0x0069B730, 0x0069AFB4},
+	{0x0069B734, 0x0069AFB8},
+	{0x0069B738, 0x0069AFBC},
+	{0x0069B73C, 0x0069AFC0},

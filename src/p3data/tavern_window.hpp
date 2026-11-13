@@ -239,8 +239,10 @@ void ship_turn(uint16_t& ship, const std::vector<uint16_t>& ships, int step);
 // signed against his money), and a text (the game's, Latin-1) shown then.
 struct InformerNews {
 	OperationBytes op{};   // [+0x0]: 0x4C {player, his town or 0xFFFF, price, 0xFFFF} or 0x55 (a map's piece)
-	uint16_t icon = 0;     // [+0x14], [+0x16]: 0x673732 and 0x673733 of his [+0x82C] (0 without)
-	uint16_t icon2 = 0;
+	// [+0x14], [+0x16]: his first and family names (0x673732 and 0x673733 of his [+0x82C]; 0 without), which the pages
+	// 4 and 12 put in their title through 0x512A60 and 0x512AE0 (the window's copy at [+0x2168], [+0x216A]).
+	uint16_t first_name = 0;
+	uint16_t family_name = 0;
 	std::string text;      // [+0x18]
 	int32_t price() const;
 };

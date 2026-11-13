@@ -326,20 +326,26 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     cadenas (no caben). Las fuentes del juego español (las TTF de `ttffonts.ini` con su ancho y alto, medidas contra
     las fotos).
   - [x] **Las animaciones de los interiores** (`animation.ini`, 0x466800): las que arranca cada edificio al abrirse y
-    los gestos al azar del ayuntamiento. Falta: los gestos al azar de la taberna, el gremio, el prestamista, la oficina
-    y la iglesia (y las condiciones de la iglesia), y la gente de la taberna en la imagen.
+    los gestos al azar del ayuntamiento. Falta: los gestos al azar del gremio, el prestamista, la oficina
+    y la iglesia (los de la taberna, hechos el 13-11-2026 noche) (y las condiciones de la iglesia), y la gente de la taberna en la imagen.
   - [x] **El menú de cada edificio en el panel lateral** (el rollo de pergamino, el título en Elgreco, los botones):
     al entrar se ve la imagen sola y la página se elige ahí (la taberna y el ayuntamiento). Falta en los demás
     edificios. L/R pasará a la velocidad del tiempo (decisión del usuario).
-  - [x] **Páginas ya como las del juego**: los avisos del ayuntamiento (un aviso cada vez, en su papel) y, en la
-    taberna, los retratos con su cara animada y su marco rasgado, y las páginas del pirata, los marineros, el
-    capitán, el informante, el viajero, el ladrón y el comerciante. Pendiente en ellas (lo vio el usuario): el texto
-    partido no llena el ancho bajo el retrato (el visor corta en los saltos de línea del texto del juego; mirar cómo
-    los trata 0x420A10).
-  - [ ] Por hacer como el juego: las páginas del traficante de armas y el cliente de un pedido; las del
-    resto de edificios (la lonja, el astillero y el muelle, la oficina, el prestamista, el gremio, la iglesia, el baño,
-    la herrería, la caballeriza y las otras páginas del ayuntamiento); la armería, que en el juego es un rollo de papel
-    sin marco ni interior. Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
+  - [x] **Páginas ya como las del juego**: los avisos del ayuntamiento (un aviso cada vez, en su papel); en la
+    taberna, los retratos con su cara animada y su marco rasgado, y las páginas del pirata, los marineros (con su
+    escupitajo), el capitán, el informante (con su nombre en el título), el viajero, el ladrón (con su lista de
+    víctimas en la misma página), el comerciante y el traficante de armas (su tabla del juego; la fila del barco, que
+    el código pone encima de la tabla, subida porque no hay foto: decisión del usuario, improvisar), y las de después
+    de cada trato (capitán contratado, pirata, ladrón, viajero, comerciante); los gestos al azar de la gente de la
+    taberna; el texto partido como la caja del juego (sus saltos y la línea en blanco tras el saludo), centrado bajo el
+    retrato cuando es más estrecho (lo pidió el usuario). El prestamista: su menú lateral con sus seis páginas y la de
+    conceder préstamo como la foto, con la del interés (la 9 del juego) detrás de «Ofrecer préstamo». Los menús
+    laterales con la letra de sus botones (la 1) y colocados como los del juego (13-11-2026, noche; sin commit aún).
+  - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido) y
+    el texto del informante con su barra de desplazamiento; las otras cinco páginas del prestamista; el menú lateral
+    del resto de edificios; las páginas del resto (la lonja, el astillero y el muelle, la oficina, el gremio, la iglesia,
+    el baño, la herrería, la caballeriza y las otras páginas del ayuntamiento); la armería, que en el juego es un rollo
+    de papel sin marco ni interior. Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
 - [ ] **Los edificios que aún no tienen ventana**: la puerta de la ciudad (`Stadttor`: qué hace, por leer en el
   código; el transporte por tierra resultó ser de la caballeriza, el granero de las vistas, que ya tiene la suya,
   13-11-2026, como el gremio, la herrería, la iglesia, el baño, la armería de la milicia y el ayuntamiento, este solo
@@ -679,6 +685,14 @@ del peligro (no lo deja la ventana) daría la vuelta a la pérdida.
 
 **De cargar y guardar**: el `.pst` tiene un byte de más cuando hay meses (sin ajuste: nadie lo lee); la lista de nodos
 de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; si el orden no importa, no hace daño).
+
+**Las ventanas (solo lo que enseñan)** (13-11-2026, noche):
+- La lista de quienes piden un préstamo (0x5B4180, la página 2 del prestamista) pone el artículo y el rango de cada uno
+  según el sexo del comerciante número 10 (0x5B42C9: 0x5303C0(10)), no el del que lo pide (seguro). Corrección: el
+  suyo.
+- En la taberna, la entrega del comerciante deja un espacio antes de su «."» final y el viajero sube a bordo sin punto
+  (textos del juego; parecen descuidos). En el exe español, el hueco de «and set sail.» del pirata no apunta a ningún
+  texto: el visor acaba la frase con su punto.
 
 ### Corregidos con el ajuste
 
