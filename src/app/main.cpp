@@ -3998,6 +3998,21 @@ void guild_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 			kTextColor});
 		v.rows.push_back({tr("Unirse al gremio", "Join the guild"), can_join_guild(save, t, player)});
 		v.act = v.rows[0].first;
+		// Laid out as the game's page 0 (0x5C1A10): «The <the town's guild> would like to greet you, <first name>
+		// <family name>, as a new member. Are you willing to pay the admission fee of <price>⊙ ?» in a text box from
+		// (50, h − 160), w − 100 wide; the confirm button.
+		const int id = t < save.towns.size() ? save.towns[t].town_id() : -1;
+		const std::string guild = id >= 0 && size_t(id) < save.opaque.town_guilds.size()
+			? clean_game_text(save.opaque.town_guilds[size_t(id)])
+			: window_town_name(save, town);
+		const auto [first, family] = merchant_names(save, player);
+		PlaceView::Page page;
+		add_box(page,
+			exe_format(0x69C8C4, {guild, clean_game_text(first), clean_game_text(family), std::to_string(guild_join_price(save, t, player))},
+				v.lines.back().first),
+			50, kInteriorHeight - 160, kInteriorWidth - 100, false);
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, v.rows[0].second}));
+		v.page = std::move(page);
 		return;
 	}
 	if (ui.page == 1) {

@@ -342,11 +342,13 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     juego (la de conceder préstamo y la de vender acciones, comparadas con las fotos), con la del interés (la 9 del
     juego) detrás de «Ofrecer préstamo». Los menús
     laterales con la letra de sus botones (la 1) y colocados como los del juego (13-11-2026, noche; commit 8d31da6), y
-    los de la iglesia, el gremio, la herrería y el astillero (los botones de las páginas aún por hacer, atenuados).
+    los de la iglesia, el gremio, la herrería y el astillero (los botones de las páginas aún por hacer, atenuados). Las páginas de
+    la herrería (armas de mano, como la foto, y de barco) y de la iglesia (alimentar a los pobres, como la foto,
+    donaciones y ampliación, con el retrato del cura) (13-11-2026, noche; commit 2aa4ac2).
   - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido) y
     el texto del informante con su barra de desplazamiento; dónde van las flechas del interés del prestamista; el menú lateral
-    del muelle, la lonja, el baño, la oficina, la caballeriza y la oficina de otro comerciante; las páginas del resto (la lonja, el astillero y el muelle, la oficina, el gremio, la iglesia,
-    el baño, la herrería, la caballeriza y las otras páginas del ayuntamiento); la armería, que en el juego es un rollo
+    del muelle, la lonja, el baño, la oficina, la caballeriza y la oficina de otro comerciante; las páginas del resto (la lonja, el astillero y el muelle, la oficina, el gremio, la página
+    de rezar de la iglesia y las caras del cura, el baño, la caballeriza y las otras páginas del ayuntamiento); la armería, que en el juego es un rollo
     de papel sin marco ni interior. Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
 - [ ] **Los edificios que aún no tienen ventana**: la puerta de la ciudad (`Stadttor`: qué hace, por leer en el
   código; el transporte por tierra resultó ser de la caballeriza, el granero de las vistas, que ya tiene la suya,

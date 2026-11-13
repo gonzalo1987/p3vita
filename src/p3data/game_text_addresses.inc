@@ -1907,3 +1907,5 @@
 	{0x006A04C0, 0x006A01C0},
 	{0x006A04C4, 0x006A01C4},
 	{0x006A04C8, 0x006A01C8},
+	// The guild's joining page (0x5C1A10): «The <guild> would like to greet you, <names>, as a new member…».
+	{0x0069C8C4, 0x0069C284},

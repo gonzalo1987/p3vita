@@ -788,6 +788,7 @@ void load_save_scripts(const CprArchive& archive, SaveGame& save) {
 				std::vector<std::string> lines = split_town_names(data, 120);
 				save.opaque.town_names.assign(lines.begin(), lines.begin() + 40);
 				save.opaque.town_name_table = save.opaque.town_names;
+				save.opaque.town_guilds.assign(lines.begin() + 40, lines.begin() + 80);
 				save.opaque.town_taverns.assign(lines.begin() + 80, lines.end());
 				return;
 			}

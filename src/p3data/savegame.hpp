@@ -354,6 +354,8 @@ struct SaveOpaque {
 	// The same file's 40 taverns' names after its 40 guilds' (the table
 	// 0x6DD8C0, by town number after a load: 0x512730).
 	std::vector<std::string> town_taverns;
+	// Their guilds' names, by town number (the same file's lines 40..79; the table 0x6DD960, 0x511E7F), in Latin-1.
+	std::vector<std::string> town_guilds;
 };
 
 // The statistics for the graphs of the game: the object 0x6DFC90, filled
