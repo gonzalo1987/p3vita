@@ -2627,6 +2627,8 @@ struct PlaceView {
 	std::vector<std::pair<std::string, bool>> menu;
 	int menu_lit = -1;
 	bool rows_in_menu = false;
+	// The view's page each button opens, where they don't go in order (place_side_menu); empty: the button k the page k.
+	std::vector<int> menu_pages;
 	// A page laid out as the game's drawing lays it out (window coordinates, the interior's top left at (0, 0)): its
 	// texts, its pictures and its buttons; drawn instead of the rows, lines and act buttons, its buttons touched where
 	// they are.
@@ -2776,7 +2778,7 @@ void shipyard_page_view(const SaveGame& save, int town, PlaceUi& ui, PlaceView& 
 	const std::string page = ui.page == 1 ? tr(kPages[1][0], kPages[1][1])
 		: game_text(titles[ui.page], ui.page == 2 ? tr("Cancelar contrato", "Cancel contract")
 								   : ui.page == 3 ? tr("Mejorar barco", "Upgrade ship") : tr("Cambiar nombre", "Change name"));
-	v.title = place_name(ui.let_type) + " - " + page + "   (L/R)";
+	v.title = page;
 	auto clamp_row = [&]() { ui.row = std::clamp(ui.row, 0, std::max(0, int(v.rows.size()) - 1)); };
 	switch (ui.page) {
 	case 1: {  // Order a ship: the four types, what each costs (0x52B2C0).
@@ -3645,6 +3647,23 @@ std::string exe_text(uint32_t english, const char* spanish, const char* fallback
 
 std::string building_name(int type);
 
+// A building's side menu as the game's (its title and buttons in the panel): each button opens the view's page
+// `pages[k]` (-1: a page not made yet, its button dimmed); the picture alone until one is chosen, then the parchment
+// from the line `line` (the side menu's [+0xEC]).
+void place_side_menu(PlaceView& v, const PlaceUi& ui, const std::string& title,
+	const std::vector<std::pair<std::string, int>>& buttons, int line) {
+	v.menu_title = title;
+	v.menu_lit = -1;
+	for (size_t k = 0; k < buttons.size(); ++k) {
+		v.menu.push_back({buttons[k].first, buttons[k].second >= 0});
+		v.menu_pages.push_back(buttons[k].second);
+		if (ui.shown && buttons[k].second == ui.page) {
+			v.menu_lit = int(k);
+		}
+	}
+	v.parchment_top = ui.shown ? line : -1;
+}
+
 // The church (.let 0x04; building_windows.hpp): its pages (L/R) 0 a donation (0x32), 1 for its extension (0x31), 2
 // feeding the poor (0x30, a row per ware with its own amount). The donations go by 500 (the game's step, 0x5CB441).
 constexpr int kChurchPages = 3;
@@ -3654,7 +3673,13 @@ void church_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	static const char* const kPages[kChurchPages][2] = {{"Donativo", "Donation"}, {"Ampliación", "Extension"},
 		{"Dar de comer a los pobres", "Feed the poor"}};
 	ui.page = ((ui.page % kChurchPages) + kChurchPages) % kChurchPages;
-	v.title = place_name(ui.let_type) + " - " + tr(kPages[ui.page][0], kPages[ui.page][1]) + "   (L/R)";
+	v.title = tr(kPages[ui.page][0], kPages[ui.page][1]);
+	// Its side menu (0x5A5296; the parchment from 225, 0x5A5A8C): «Pray» (not made yet), «Feeding the poor»,
+	// «Donation», «Extension».
+	place_side_menu(v, ui, exe_text(0x69FEB8, "Catedral", "Church"),
+		{{exe_text(0x69FEA8, "Rezar", "Pray"), -1}, {exe_text(0x69FEAC, "Donar alimentos", "Feeding the poor"), 2},
+			{exe_text(0x69FEB0, "Donar oro", "Donation"), 0}, {exe_text(0x69FEB4, "Ampliación", "Extension"), 1}},
+		0xE1);
 	const int32_t money = save.merchants[size_t(save.player)].money();
 	const int fed = church_feeding_level(save, uint32_t(town));
 	static const char* const kFed[6][2] = {{"Los pobres pasan hambre.", "The poor are starving."},
@@ -3862,7 +3887,15 @@ void guild_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	const std::string page = ui.page == 0 ? tr("Ingreso", "Joining")
 		: ui.page == 1					   ? exe_text(0x69C190, "Subastas", "Auctions")
 										   : exe_text(0x69C7F8, "La subasta", "The auction");
-	v.title = place_name(ui.let_type) + " - " + page + "   (L/R)";
+	v.title = page;
+	// Its side menu (0x5A3536): «Join», «Auctions», «Auction hall», «Convoys», «Members» (the last two not made yet);
+	// a page that can't open, dimmed (its parchment's line, not set by the menu, to read: 225 meanwhile).
+	place_side_menu(v, ui, exe_text(0x69C1A4, "Gremio de mercaderes", "Traders guild"),
+		{{exe_text(0x69C18C, "Ingresar", "Join"), guild_page_open(save, town, 0) ? 0 : -1},
+			{exe_text(0x69C190, "Subastas", "Auctions"), guild_page_open(save, town, 1) ? 1 : -1},
+			{exe_text(0x69C194, "Sala de subastas", "Auction hall"), guild_page_open(save, town, 2) ? 2 : -1},
+			{exe_text(0x69C198, "Convoyes", "Convoys"), -1}, {exe_text(0x69C19C, "Miembros", "Members"), -1}},
+		0xE1);
 	const uint32_t player = uint32_t(save.player);
 	const uint32_t t = uint32_t(town);
 	if (ui.page == 0) {
@@ -4147,10 +4180,12 @@ void smithy_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	ui.page = ((ui.page % 2) + 2) % 2;
 	const bool artillery = ui.page == 0;
 	const uint32_t player = uint32_t(save.player);
-	v.title = exe_text(0x6A2B2C, "Armería", "Weapons smith") + " - " +
-		(artillery ? game_text(GameText::ShipWeapons, tr("Armas de barco", "Ship's weapons"))
-				   : game_text(GameText::HandWeapons, tr("Armas de mano", "Hand weapons"))) +
-		"   (L/R)";
+	v.title = artillery ? game_text(GameText::ShipWeapons, tr("Armas de barco", "Ship's weapons"))
+						: game_text(GameText::HandWeapons, tr("Armas de mano", "Hand weapons"));
+	// Its side menu (0x5AA990): «Ship's weapons», «Hand weapons» (its parchment's line, not set by the menu, to read: 225
+	// meanwhile).
+	place_side_menu(v, ui, exe_text(0x6A2B2C, "Armería", "Weapons smith"),
+		{{exe_text(0x6AA33C, "Armas de barco", "Ship's weapons"), 0}, {exe_text(0x6AA340, "Armas de mano", "Hand weapons"), 1}}, 0xE1);
 	const SmithyPage page = artillery ? smithy_artillery(save, player, town) : smithy_hand_weapons(save, player, town);
 	if (page.rows.empty()) {
 		return;
@@ -6021,12 +6056,22 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	case Place::Shipyard: {
 		// The shipyard's pages (the repair dock only repairs): L and R.
 		ui.page = ui.let_type == 0x01 ? (ui.page % kShipyardPages + kShipyardPages) % kShipyardPages : 0;
+		if (ui.let_type == 0x01) {
+			// Its side menu (0x5AD606; the parchment from 260 once a page is chosen, 0x5ADDEB): «Repair ship»,
+			// «Building contract», «List of contracts», «List of repairs» (not made yet), «Improve ship», «Ship's name».
+			place_side_menu(v, ui, exe_text(0x6A59D0, "Astillero", "Shipyard"),
+				{{exe_text(0x6A59B8, "Reparar barco", "Repair ship"), 0}, {exe_text(0x6A59BC, "Construcción", "Building contract"), 1},
+					{exe_text(0x6A59C0, "Lista de contratos", "List of contracts"), 2},
+					{exe_text(0x6A59C4, "Lista de reparaciones", "List of repairs"), -1},
+					{exe_text(0x6A59C8, "Mejorar barco", "Improve ship"), 3}, {exe_text(0x6A59CC, "Nombre del barco", "Ship's name"), 4}},
+				0x104);
+		}
 		if (ui.page != 0) {
 			shipyard_page_view(save, town, ui, v);
 			break;
 		}
 		v.act = game_text(GameText::ShipyardRepair, tr("Reparar", "Repair"));
-		v.title = place_name(ui.let_type) + " - " + v.act + (ui.let_type == 0x01 ? "   (L/R)" : "");
+		v.title = ui.let_type == 0x01 ? v.act : place_name(ui.let_type) + " - " + v.act;
 		const std::vector<uint16_t> ships = window_ships(save, player, town, ShipListMode::Repairs);
 		v.lines.push_back({game_text(GameText::ShipyardRepairsHere, tr("Encargos de reparación en este astillero:",
 			"For repairs at this shipyard")), kTextColor});
@@ -13903,6 +13948,10 @@ int main(int argc, char** argv) {
 				place.shown = true;  // The side menu's button pressed: its page (the tavern's lit person).
 				return true;
 			}
+			if (place.open == Place::Lender && place.lender_interest && button == SDL_CONTROLLER_BUTTON_B) {
+				place.lender_interest = false;  // Back to the requests (the page 9 to the page 2).
+				return true;
+			}
 			if (!place_now.menu_title.empty() && place.shown && !place.inside && button == SDL_CONTROLLER_BUTTON_B) {
 				place.shown = false;  // Back to the picture alone, the side menu still there.
 				return true;
@@ -16496,9 +16545,10 @@ int main(int argc, char** argv) {
 									place.ship = 0;
 								}
 							} else {
-								place.page = k;
+								place.page = place_now.menu_pages.empty() ? k : place_now.menu_pages[size_t(k)];
 							}
 							place.inside = false;
+							place.lender_interest = false;
 							place.shown = true;
 						}
 					} else if (inside(panel_layout.map_switch, x, y)) {
