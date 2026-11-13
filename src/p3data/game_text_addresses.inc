@@ -1827,3 +1827,12 @@
 	{0x006A94EC, 0x006A9AC4},
 	{0x006A94F0, 0x006A9AC8},
 	{0x006A94F4, 0x006A9ACC},
+	// The town hall's side menu's last two pages (0x5A8E78, 0x5A8E87): «Town Coffers», «Alderman's office».
+	{0x006A94F8, 0x006A9AD0},
+	{0x006A9630, 0x006A9C08},
+	// The tavern's pages as the game lays them out (0x5D0330, 0x5CF830): «tavern», «ship» over the sailors' boxes, and
+	// the second line when there's no ship for the sailors or the captain.
+	{0x0069D8F8, 0x0069D378},
+	{0x0069D8FC, 0x0069D37C},
+	{0x0069DA5C, 0x0069D4DC},
+	{0x0069D94C, 0x0069D3CC},

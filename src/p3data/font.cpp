@@ -1,5 +1,6 @@
 #include "p3data/font.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 #include "stb_truetype.h"
@@ -107,6 +108,102 @@ std::unique_ptr<FontAtlas> FontAtlas::load(const CprArchive& archive, const std:
 		return nullptr;
 	}
 	return create(ttf, pixel_height, error);
+}
+
+std::unique_ptr<FontAtlas> FontAtlas::create_em(const std::vector<uint8_t>& ttf, int em_width, int em_height,
+	std::string* error) {
+	stbtt_fontinfo info;
+	if (ttf.empty() || em_width <= 0 || em_height <= 0 ||
+		!stbtt_InitFont(&info, ttf.data(), stbtt_GetFontOffsetForIndex(ttf.data(), 0))) {
+		fail(error, "invalid TrueType font");
+		return nullptr;
+	}
+	const float scale_x = stbtt_ScaleForMappingEmToPixels(&info, float(em_width));
+	const float scale_y = stbtt_ScaleForMappingEmToPixels(&info, float(em_height));
+	// The glyphs in rows of an atlas that grows until they fit (a pixel between them).
+	struct Box {
+		int glyph = 0;
+		int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+		int x = 0, y = 0;
+	};
+	std::vector<Box> boxes(kCharCount);
+	for (int c = 0; c < kCharCount; ++c) {
+		Box& b = boxes[size_t(c)];
+		b.glyph = stbtt_FindGlyphIndex(&info, kFirstChar + c);
+		stbtt_GetGlyphBitmapBox(&info, b.glyph, scale_x, scale_y, &b.x0, &b.y0, &b.x1, &b.y1);
+	}
+	int size = 128;
+	for (;; size *= 2) {
+		if (size > kMaxAtlasSize) {
+			fail(error, "the font doesn't fit in the atlas");
+			return nullptr;
+		}
+		int x = 1;
+		int y = 1;
+		int row = 0;
+		bool fits = true;
+		for (Box& b : boxes) {
+			const int w = b.x1 - b.x0;
+			const int h = b.y1 - b.y0;
+			if (x + w + 1 > size) {
+				x = 1;
+				y += row + 1;
+				row = 0;
+			}
+			if (y + h + 1 > size) {
+				fits = false;
+				break;
+			}
+			b.x = x;
+			b.y = y;
+			x += w + 1;
+			row = std::max(row, h);
+		}
+		if (fits) {
+			break;
+		}
+	}
+	std::vector<uint8_t> coverage(size_t(size) * size_t(size), 0);
+	std::unique_ptr<FontAtlas> font(new FontAtlas());
+	for (int c = 0; c < kCharCount; ++c) {
+		const Box& b = boxes[size_t(c)];
+		const int w = b.x1 - b.x0;
+		const int h = b.y1 - b.y0;
+		if (w > 0 && h > 0) {
+			stbtt_MakeGlyphBitmap(&info, &coverage[size_t(b.y) * size_t(size) + size_t(b.x)], w, h, size, scale_x, scale_y,
+				b.glyph);
+		}
+		int advance = 0;
+		int bearing = 0;
+		stbtt_GetGlyphHMetrics(&info, b.glyph, &advance, &bearing);
+		font->glyphs_[size_t(kFirstChar + c)] = {b.x, b.y, b.x + w, b.y + h, float(b.x0), float(b.y0), advance * scale_x};
+	}
+	font->image_.width = size;
+	font->image_.height = size;
+	font->image_.rgba.resize(coverage.size() * 4);
+	for (size_t i = 0; i < coverage.size(); ++i) {
+		uint8_t* p = &font->image_.rgba[i * 4];
+		p[0] = p[1] = p[2] = 0xFF;
+		p[3] = coverage[i];
+	}
+	int ascent = 0;
+	int descent = 0;
+	int line_gap = 0;
+	stbtt_GetFontVMetrics(&info, &ascent, &descent, &line_gap);
+	font->ascent_ = int(std::lround(ascent * scale_y));
+	font->line_height_ = font->ascent_ + int(std::lround(-descent * scale_y));
+	return font;
+}
+
+std::unique_ptr<FontAtlas> FontAtlas::load_em(const CprArchive& archive, const std::string& path, int em_width,
+	int em_height, std::string* error) {
+	const CprEntry* entry = archive.find(path);
+	std::vector<uint8_t> ttf;
+	if (!entry || !archive.read(*entry, ttf)) {
+		fail(error, "can't read " + path);
+		return nullptr;
+	}
+	return create_em(ttf, em_width, em_height, error);
 }
 
 std::vector<FontAtlas::Quad> FontAtlas::layout(std::string_view utf8, int x, int y) const {

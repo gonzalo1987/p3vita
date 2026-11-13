@@ -35,6 +35,14 @@ public:
 	static std::unique_ptr<FontAtlas> load(const CprArchive& archive, const std::string& path, float pixel_height,
 		std::string* error = nullptr);
 
+	// As the Spanish game draws its TrueType fonts (ttffonts.ini «Params=width height»: the em square `em_width` ×
+	// `em_height` pixels, so Font1's 13 × 15 is narrower than the face): the line the ascent and descent at that
+	// height.
+	static std::unique_ptr<FontAtlas> create_em(const std::vector<uint8_t>& ttf, int em_width, int em_height,
+		std::string* error = nullptr);
+	static std::unique_ptr<FontAtlas> load_em(const CprArchive& archive, const std::string& path, int em_width,
+		int em_height, std::string* error = nullptr);
+
 	const Image& image() const { return image_; }
 	int ascent() const { return ascent_; }
 	int line_height() const { return line_height_; }

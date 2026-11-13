@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <string>
 
+#include "p3data/aim.hpp"
 #include "p3data/cpr.hpp"
 
 namespace p3::app {
@@ -16,7 +17,33 @@ bool read_cpr_file(const p3::data::CprArchive& archive, const char* path, std::v
 
 bool read_cpr_image(const p3::data::CprArchive& archive, const char* path, p3::data::Image& out) {
 	std::vector<uint8_t> data;
-	return read_cpr_file(archive, path, data) && p3::data::decode_standard_image(data.data(), data.size(), out);
+	if (!read_cpr_file(archive, path, data)) {
+		return false;
+	}
+	// The engine's own AIM pictures (the parchment of the buildings' windows, some interiors) or a standard one.
+	return p3::data::decode_standard_image(data.data(), data.size(), out) || p3::data::decode_aim(data.data(), data.size(), out);
+}
+
+std::string ini_value(const std::string& ini, const std::string& section, const char* key) {
+	const std::string head = "[" + section + "]";
+	const size_t at = ini.find(head);
+	if (at == std::string::npos) {
+		return "";
+	}
+	const size_t end = ini.find("\n[", at + head.size());
+	const std::string wanted = std::string("\n") + key + "=";
+	const size_t k = ini.find(wanted, at);
+	if (k == std::string::npos || (end != std::string::npos && k > end)) {
+		return "";
+	}
+	const size_t from = k + wanted.size();
+	const size_t to = ini.find_first_of("\r\n;", from);
+	std::string value = ini.substr(from, to == std::string::npos ? std::string::npos : to - from);
+	while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) {
+		value.pop_back();
+	}
+	const size_t first = value.find_first_not_of(" \t");
+	return first == std::string::npos ? "" : value.substr(first);
 }
 
 SDL_Texture* make_texture(SDL_Renderer* renderer, const p3::data::Image& image) {

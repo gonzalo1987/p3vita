@@ -316,16 +316,30 @@ Cada pantalla se adapta a la Vita y se comprueba a ojo frente al juego original 
 gráficos y sus textos; las reglas de lo que enseña y las órdenes que encola, contra el juego como siempre. Las normas
 del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo en «Decisiones del usuario».
 
-- [ ] **Las vistas de dentro de los edificios** (lo pidió el usuario el 05-11-2026). Las ventanas que abre ahora el
-  visor al entrar en un edificio (la lonja con el mercado, la taberna, el astillero y el muelle, la oficina, el
-  prestamista) son paneles planos provisionales. El juego tiene para cada edificio su vista, con sus dibujos y animaciones, en `images/Gebaeude_innen/`
-  del CPR: la taberna `Kneipe_innen.jpg` y `Kneipe/` (el tabernero, el capitán, el informante, el ladrón...: 34
-  ficheros), el astillero `innenbild_werft01.jpg` y `werft/`, la lonja `markthalle.jpg` y `markt/`, la oficina
-  `innenbild_kontor01.aim` y `Kontor/`, el prestamista `darlehensgeber01.jpg` y `bank/`, el ayuntamiento `rathaus.jpg`
-  y `rathaus/`, el gremio `gildenhaus.jpg` y `Gilde/`, la iglesia `innenkirche01.jpg` y `Kirche/`, el baño `badhaus.jpg`
-  y `Bad/`, la herrería `schmied.jpg`, el granero `Scheune.aim` y `Scheune/`, la puerta de la ciudad `Stadttor.aim` y
-  `stadttor/`; los rostros en `images/Gesichter/`. Rehacer cada ventana con su vista a medida que se hagan las acciones
-  de cada edificio (lo que listan y mandan, en `player_actions.cpp`, no cambia).
+- [ ] **Las vistas de dentro de los edificios** (lo pidió el usuario el 05-11-2026; en marcha desde el 13-11-2026 con
+  el encargo `ENCARGO_VISTAS_JUEGO.md`; lo leído del juego, en `re/emu/sesion31/views_notes.md`, y las fotos de la
+  pantalla del juego que mandó el usuario, en `re/emu/sesion31/pc_shots/`).
+  - [x] **El marco común** (`src/app/game_window.cpp`): la ventana del juego entera (451 × 537, como 0x465BA0) dibujada a
+    su tamaño en una textura y ajustada al alto de la Vita (×0,95), centrada en la vista de la ciudad: el marco de
+    madera, la imagen interior de cada edificio, el pergamino desde la línea de cada página ([+0xEC]) con sus 160
+    líneas de difuminado, la banderola del título, el botón de cerrar, los botones y el papel del juego. Sin las
+    cadenas (no caben). Las fuentes del juego español (las TTF de `ttffonts.ini` con su ancho y alto, medidas contra
+    las fotos).
+  - [x] **Las animaciones de los interiores** (`animation.ini`, 0x466800): las que arranca cada edificio al abrirse y
+    los gestos al azar del ayuntamiento. Falta: los gestos al azar de la taberna, el gremio, el prestamista, la oficina
+    y la iglesia (y las condiciones de la iglesia), y la gente de la taberna en la imagen.
+  - [x] **El menú de cada edificio en el panel lateral** (el rollo de pergamino, el título en Elgreco, los botones):
+    al entrar se ve la imagen sola y la página se elige ahí (la taberna y el ayuntamiento). Falta en los demás
+    edificios. L/R pasará a la velocidad del tiempo (decisión del usuario).
+  - [x] **Páginas ya como las del juego**: los avisos del ayuntamiento (un aviso cada vez, en su papel) y, en la
+    taberna, los retratos con su cara animada y su marco rasgado, y las páginas del pirata, los marineros, el
+    capitán, el informante, el viajero, el ladrón y el comerciante. Pendiente en ellas (lo vio el usuario): el texto
+    partido no llena el ancho bajo el retrato (el visor corta en los saltos de línea del texto del juego; mirar cómo
+    los trata 0x420A10).
+  - [ ] Por hacer como el juego: las páginas del traficante de armas y el cliente de un pedido; las del
+    resto de edificios (la lonja, el astillero y el muelle, la oficina, el prestamista, el gremio, la iglesia, el baño,
+    la herrería, la caballeriza y las otras páginas del ayuntamiento); la armería, que en el juego es un rollo de papel
+    sin marco ni interior. Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
 - [ ] **Los edificios que aún no tienen ventana**: la puerta de la ciudad (`Stadttor`: qué hace, por leer en el
   código; el transporte por tierra resultó ser de la caballeriza, el granero de las vistas, que ya tiene la suya,
   13-11-2026, como el gremio, la herrería, la iglesia, el baño, la armería de la milicia y el ayuntamiento, este solo
@@ -429,6 +443,9 @@ que van a una cola y ejecuta la simulación, y en red solo viajan esas órdenes.
 
 - [ ] La simulación entera idéntica, no solo lo que sale en las partidas de prueba (las misiones, los estados raros del
   barco, las ramas del apartado 2...). Un solo byte distinto y las dos partidas se separan.
+- [ ] Ojo: el juego tira los gestos al azar de los interiores (el ayuntamiento, 0x5A94FA, y los demás edificios) con el
+  mismo `rand()` de la CRT que usa la simulación: en el PC, tener un edificio abierto cambia los números al azar de la
+  partida. El visor usa un azar aparte para esos gestos. Para jugar en red habrá que ver cómo lo resuelve el juego.
 - [ ] Todas las acciones del jugador como las mismas órdenes que encola el juego.
 - [ ] La red del juego: `Schnelltransfer.dll` (de Ascaron, sobre Winsock: buscar partidas en la red local, unirse por
   IP, mandar y recibir; sus funciones `Network_*`). Estudiar su protocolo y los mensajes de la partida en red, y
