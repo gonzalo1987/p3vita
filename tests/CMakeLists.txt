@@ -147,3 +147,9 @@ target_link_libraries(ship_pair_window_test PRIVATE p3data)
 target_compile_options(ship_pair_window_test PRIVATE -Wall -Wextra)
 
 add_test(NAME ship_pair_window COMMAND ship_pair_window_test)
+
+add_executable(town_hall_window_test town_hall_window_test.cpp)
+target_link_libraries(town_hall_window_test PRIVATE p3data)
+target_compile_options(town_hall_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME town_hall_window COMMAND town_hall_window_test)

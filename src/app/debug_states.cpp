@@ -363,6 +363,60 @@ bool shipyard_materials(SaveGame& save) {
 	return false;
 }
 
+// The arsenal (town_hall_window.hpp): the player the mayor of his home town (make_mayor), his office there (made if
+// there is none) with 60 of each hand weapon but the muskets (40), 300 beggars in the town, three archers on duty
+// and one in training.
+bool arsenal(SaveGame& save) {
+	make_mayor(save);
+	const uint32_t home = save.merchants[size_t(save.player)].hometown();
+	const int office = tick::events_towns_detail::fn_5308a0_create(save, uint32_t(save.player), home);
+	if (office < 0) {
+		return false;
+	}
+	OfficeMemory& o = save.offices[size_t(office)].memory;
+	for (uint32_t k = 0; k < 4; ++k) {
+		o.s32(0x54 + 4 * k) = k == 3 ? 40 : 60;
+	}
+	TownMemory& t = save.towns[home].memory;
+	t.s32(0x2E4) = 300;
+	t.u8(0x998 + 1) = 3;
+	t.u8(0x99C + 1) = 1;
+	return true;
+}
+
+// The town hall's notices (town_hall_window.hpp): three of the world's seven orders (0x6DE530; the event 0x22 makes them
+// only for wares a town lacks without stock nor production): 40 loads of grain for the town after the player's home
+// town, 25 barrels of beer with the bonus for the next one, 12 barrels of wine for the one after it, due in 20, 30 and
+// 45 days; the player's standing at least 20, so that he may take them.
+void town_orders(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	constexpr uint32_t kOrders = 0x6DE530;
+	struct Order {
+		uint8_t ware, bonus, count;
+		uint32_t days, price;
+	};
+	constexpr Order kOrdersMade[3] = {{0, 0, 40, 20, 120}, {3, 1, 25, 30, 70}, {7, 0, 12, 45, 380}};
+	for (uint32_t k = 0; k < 7; ++k) {
+		g.u8(kOrders + 12 * k) = 0xFF;
+		g.u8(kOrders + 12 * k + 1) = 0xFF;
+	}
+	const uint32_t towns = g.u32(global::kWorldTownCount);
+	const uint32_t home = save.merchants[size_t(save.player)].hometown();
+	for (uint32_t k = 0; k < 3; ++k) {
+		const uint32_t at = kOrders + 12 * k;
+		g.u8(at) = uint8_t((home + 1 + k) % towns);
+		g.u8(at + 1) = kOrdersMade[k].ware;
+		g.u8(at + 2) = kOrdersMade[k].bonus;
+		g.u8(at + 3) = kOrdersMade[k].count;
+		g.u32(at + 4) = g.u32(global::kWorldTick) + kOrdersMade[k].days * 256;
+		g.u32(at + 8) = kOrdersMade[k].price;
+	}
+	MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+	if (int16_t(m.u16(0x22)) < 20) {
+		m.u16(0x22) = 20;
+	}
+}
+
 // The land trade (land_trade_window.hpp): the first town from the player's home town on whose side menu lets its
 // window open (0x5336B0: the barn built, no siege) and its partner, the player's office in both (made where there is
 // none), in the first one 10 loads of grain, 30 barrels of beer, 12 barrels of wine and 8 loads of timber; the town
@@ -554,6 +608,10 @@ const char kDebugStatesHelp[] =
 	"  tavern-people   all the tavern's people there (a captain, the trader, the informer, the traveller, ...)\n"
 	"  convoy-leader  the player's first ship in port fit to guide a convoy\n"
 	"  shipyard-materials  100 units of each shipyard material in that ship's town\n"
+	"  arsenal     the player the mayor of his home town, weapons in his office there,\n"
+	"              beggars and archers in the town (the arsenal)\n"
+	"  town-orders  three orders of towns in the town hall's notices (grain, beer\n"
+	"              with the bonus, wine), the player's standing enough to take them\n"
 	"  land-trade  the player's offices at both ends of the first open road, wares in\n"
 	"              the first (its town and the R presses to it on stdout)\n"
 	"  lender      loans on offer and asked for in that ship's town, an AI merchant's\n"
@@ -739,6 +797,13 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 				error = "the player's first ship isn't in a town";
 				return false;
 			}
+		} else if (state == "arsenal") {
+			if (!arsenal(save)) {
+				error = "no office for the player in his home town";
+				return false;
+			}
+		} else if (state == "town-orders") {
+			town_orders(save);
 		} else if (state == "land-trade") {
 			if (!land_trade(save)) {
 				error = "no town lets the land trade's window open";

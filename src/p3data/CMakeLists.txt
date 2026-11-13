@@ -8,6 +8,7 @@ add_library(p3data STATIC
 	ship_pair_window.cpp
 	smithy_window.cpp
 	tavern_window.cpp
+	town_hall_window.cpp
 	battle/attack.cpp
 	battle/battle_setup.cpp
 	battle/battle_step.cpp

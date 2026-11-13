@@ -70,9 +70,10 @@ Cómo leerla:
   (0x5F, 0x75 y el evento 0x13, con sus cartas y, en el visor, la ventana de la oficina de otro comerciante) y la ruta
   por puntos del mapa del mar (0x0B), esta también en el visor (tocar el mar añade puntos; X zarpa, ○ los borra).
   Antes, la primera parte: la reparación de convoyes, los botones de las cartas, la iglesia y el baño.
-- **Siguiente**: el encargo `ENCARGO_ACCIONES_3.md` (junto al HANDOFF), el grupo 5 en el visor (apartado 1): la
-  ventana del ayuntamiento (pedidos, consejo, caja, barco de defensa, asedio), la armería (la milicia), mudar la
-  ciudad natal y el cliente de un pedido de la taberna.
+- **Siguiente**: el encargo `ENCARGO_VISTAS_JUEGO.md` (junto al HANDOFF): las ventanas de los edificios como las
+  dibuja el juego (apartado 4), y sobre ellas el grupo 5 en el visor (apartado 1): el resto de páginas del
+  ayuntamiento (barco patrulla, traslado, alcalde, Gobernador, consejo, bodega), los asedios, mudar la ciudad natal y
+  el cliente de un pedido de la taberna. La armería y la página de avisos del ayuntamiento ya tienen ventana.
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
   (apartado 6).
@@ -89,7 +90,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Tipos de evento (58) | 53 | 5: 1 el intérprete de misiones, 1 la partida en red y 3 nadie |
 | Operaciones (193 códigos) | 167: las 37 de la simulación, 101 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red y la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) | **5 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74, 0x76 y 0x82; apartado 3), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 139 | 15: 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
-| Edificios con vista propia en el juego (13) | 10 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería y el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—; y la oficina de otro comerciante, con las ofertas), todas provisionales: paneles planos | 3 sin ventana (ayuntamiento, armería —la de la milicia— y puerta de la ciudad) y rehacer las 10 con la vista del juego (apartado 4) |
+| Edificios con vista propia en el juego (13) | 12 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia y el ayuntamiento, este solo con su página de avisos; y la oficina de otro comerciante, con las ofertas), todas provisionales: paneles planos | la puerta de la ciudad sin ventana, 7 de las 8 páginas del ayuntamiento, y rehacer las 12 con la vista del juego (apartado 4) |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
@@ -172,9 +173,12 @@ enteros antes de reescribirlos):
   consejo (en el evento 0x2E del día, 0x4DA060); los asedios 0x88 (la caja paga), 0x89 (vender mercancía a la ciudad
   sitiada), 0x8A (prometer entregas), 0x8D (entregar lo que pidió el príncipe), 0x90 (pagar el rescate y las órdenes
   del ejército) y la 0x8F (el impuesto extraordinario, cartas 0x38 y 0x37; nadie la encola, reescrita igual). La
-  candidatura a alcalde (la pregunta del ayuntamiento, 0x45) quedó hecha con el grupo 4. **Falta el visor**: la
-  ventana del ayuntamiento (sus páginas: pedidos, consejo, caja, barco de defensa, asedio), la armería, mudar la
-  ciudad natal (0x5DD520) y el cliente de un pedido de la taberna (0x5D7760, la 0x51).
+  candidatura a alcalde (la pregunta del ayuntamiento, 0x45) quedó hecha con el grupo 4. En el visor (13-11-2026,
+  `town_hall_window.cpp` con su ctest): la armería (.let 0x0B: formar y despedir unidades, 0x41 y 0x40, solo para el
+  alcalde) y la página 0 del ayuntamiento (.let 0x03), los avisos (los pedidos del mundo y el decreto del príncipe;
+  «Aceptar misión», 0x3D). **Falta el visor** de las otras 7 páginas del ayuntamiento (barco patrulla 0x44, traslado,
+  alcalde, Gobernador 0x3F/0x49, consejo, bodega 0x47, Hansa), los asedios (0x5F1F00..0x5F31C0), mudar la ciudad
+  natal (0x5DD520) y el cliente de un pedido de la taberna (0x5D7760, la 0x51): en `ENCARGO_VISTAS_JUEGO.md`.
 - [x] **La oficina y su administrador** (12-11-2026; `operations.cpp`, `office_window.cpp`): 0x5A el porcentaje de
   trabajadores de una empresa, 0x5B la orden del administrador para una mercancía, 0x5E contratarlo o despedirlo, 0x62
   el alquiler de una clase de casas, 0x63 los guardias, 0x66 reservar las existencias de una mercancía; en el visor,
@@ -322,10 +326,10 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   y `Bad/`, la herrería `schmied.jpg`, el granero `Scheune.aim` y `Scheune/`, la puerta de la ciudad `Stadttor.aim` y
   `stadttor/`; los rostros en `images/Gesichter/`. Rehacer cada ventana con su vista a medida que se hagan las acciones
   de cada edificio (lo que listan y mandan, en `player_actions.cpp`, no cambia).
-- [ ] **Los edificios que aún no tienen ventana**: el ayuntamiento y la armería de la milicia (con sus acciones,
-  apartado 1, grupo 5) y la puerta de la ciudad (`Stadttor`: qué hace, por leer en el código; el transporte por tierra
-  resultó ser de la caballeriza, el granero de las vistas, que ya tiene la suya, 13-11-2026, como el gremio, la
-  herrería, la iglesia y el baño). Se añaden a `kPlaces` de `src/app/main.cpp` por su tipo de
+- [ ] **Los edificios que aún no tienen ventana**: la puerta de la ciudad (`Stadttor`: qué hace, por leer en el
+  código; el transporte por tierra resultó ser de la caballeriza, el granero de las vistas, que ya tiene la suya,
+  13-11-2026, como el gremio, la herrería, la iglesia, el baño, la armería de la milicia y el ayuntamiento, este solo
+  con su página de avisos). Se añaden a `kPlaces` de `src/app/main.cpp` por su tipo de
   `.let`.
 - [ ] **El panel de la Hansa** (Cuadrado en una ciudad) es una ventana propia del visor (lo que lista y encola sí es
   como el juego); el juego tiene las suyas (la de encargos 0x5E87D0, la de la carretera 0x5F2A20). Por decidir con el

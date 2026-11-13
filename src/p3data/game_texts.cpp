@@ -234,7 +234,7 @@ constexpr uint32_t kDirect = 0x80000000;
 // build's PE time stamp, u32 a hash of p3vita's slots for that build, u32 the
 // number of texts, and each text as u32 size and its raw bytes.
 constexpr char kCacheMagic[4] = {'P', '3', 'T', 'X'};
-constexpr uint32_t kCacheVersion = 15;  // 4: with the buttons' tooltips (the string table, GameTexts::resource); 5: the new game window's; 6: «Main menu»; 7: the window's sex, start, map and home town's; 8: the goals' times and the map choice's; 9: the trade route windows'; 10: the letter 0x83's (operation 0x77); 11: the bath house's; 12: the guild's; 13: the offers' window's; 14: the weaponsmith's; 15: the tavern's.
+constexpr uint32_t kCacheVersion = 16;  // 4: with the buttons' tooltips (the string table, GameTexts::resource); 5: the new game window's; 6: «Main menu»; 7: the window's sex, start, map and home town's; 8: the goals' times and the map choice's; 9: the trade route windows'; 10: the letter 0x83's (operation 0x77); 11: the bath house's; 12: the guild's; 13: the offers' window's; 14: the weaponsmith's; 15: the tavern's; 16: the arsenal's and the town hall's.
 
 // The tooltips read from the string table: 20000.. (the scripts' «ToolTip=»; 20062 the last).
 constexpr uint32_t kTooltipFirst = 20000;

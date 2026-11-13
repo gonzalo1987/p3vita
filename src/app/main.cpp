@@ -40,6 +40,7 @@
 #include "p3data/smithy_window.hpp"
 #include "p3data/land_trade_window.hpp"
 #include "p3data/tavern_window.hpp"
+#include "p3data/town_hall_window.hpp"
 #include "p3data/letter_window.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/navigation.hpp"
@@ -282,6 +283,8 @@ enum class Place {
 	Offers,
 	Smithy,
 	LandTrade,
+	Arsenal,
+	TownHall,
 	ShipPair
 };
 
@@ -318,6 +321,10 @@ constexpr PlaceInfo kPlaces[] = {
 	// The land trade's barn (building type 0x27, «landhandel»): wares by carts to the road's other end
 	// (land_trade_window.hpp).
 	{0x33, Place::LandTrade, GameText::Count, "Caballeriza", "Barn", 0x27},
+	// The arsenal: the town's militia, for its mayor (town_hall_window.hpp).
+	{0x0B, Place::Arsenal, GameText::Count, "Arsenal", "Arsenal"},
+	// The town hall (its side menu's title 0x69DDD0): its pages (town_hall_window.hpp).
+	{0x03, Place::TownHall, GameText::Count, "Ayuntamiento", "Town hall"},
 };
 
 const PlaceInfo* place_of(uint32_t let_type) {
@@ -2487,6 +2494,12 @@ struct PlaceUi {
 	// The land trade's window, and the partner town the side menu's check found (0x5336B0; 0xFF until then).
 	LandTradeWindow land;
 	uint8_t land_partner = 0xFF;
+	// The arsenal's message (the window's [+0x387]).
+	ArsenalMessage arsenal_message = ArsenalMessage::None;
+	// The town hall's notices: «Accept order» pressed (the window's [+0x18E9]), accepted ([+0x18EA]) and the order.
+	bool hall_pressed = false;
+	bool hall_accepted = false;
+	OperationBytes hall_order{};
 };
 
 constexpr int kShipyardPages = 5;
@@ -3821,6 +3834,8 @@ void ship_pair_act(SaveGame& save, Sailing* sailing, PlaceUi& ui, bool from_othe
 	}
 }
 
+void arsenal_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, bool dismiss);
+
 // Square, or the second button: the window's second action, when it can be done.
 void place_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
 	if (v.act2.empty() || !v.act2_on || ui.row < 0 || ui.row >= int(v.rows.size())) {
@@ -3832,6 +3847,8 @@ void place_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const
 		smithy_square(save, sailing, town, ui);
 	} else if (ui.open == Place::ShipPair) {
 		ship_pair_act(save, sailing, ui, true);
+	} else if (ui.open == Place::Arsenal) {
+		arsenal_act(save, sailing, town, ui, true);
 	} else if (ui.open == Place::LandTrade && ui.land.page == 1) {
 		// «Back» ([+0x264]): the page 0, the escort 0.
 		ui.land.page = 0;
@@ -4450,7 +4467,17 @@ std::string exe_format(uint32_t english, const std::vector<std::string>& args, c
 	if (g_texts) {
 		const std::string& raw = g_texts->raw_at(english);
 		if (!raw.empty()) {
-			return GameTexts::format(clean_game_text(raw), args);
+			// Some texts put the icon's code after a '\' as an argument ("\%s" with "B", "L" or "C": the unit's icon of
+			// 0x6C6B44 and 0x6C5E64): the icon once the arguments are in (the rest cleaned before them, so that the
+			// arguments, already UTF-8, are not converted again).
+			std::string out = GameTexts::format(clean_game_text(raw), args);
+			for (size_t at = out.find('\\'); at != std::string::npos && at + 1 < out.size(); at = out.find('\\', at + 1)) {
+				const char code = out[at + 1];
+				if (code == 'B' || code == 'L' || code == 'C') {
+					out.replace(at, 2, 1, code == 'C' ? kTextCoin : code == 'B' ? kTextBarrel : kTextLoad);
+				}
+			}
+			return out;
 		}
 	}
 	return fallback;
@@ -4696,6 +4723,214 @@ void land_trade_act(SaveGame& save, Sailing* sailing, PlaceUi& ui) {
 	ui.message.clear();
 }
 
+// The arsenal (.let 0x0B; town_hall_window.hpp): only for the town's mayor (else the game's warning): a row for each
+// type of soldier (on duty, in training, the weekly cost), the total, the last press's message; X «Form unit» (0x41)
+// for the row's type, Square «Dismiss unit» (0x40) with soldiers of it on duty.
+void arsenal_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	v.title = exe_text(0x69DD18, "Arsenal", "Arsenal");
+	if (!arsenal_mayor(save, uint32_t(town))) {
+		v.lines.push_back({exe_text(0x69DD1C, "Tienes que ser elegido alcalde para poder tomar decisiones en el arsenal.",
+							   "You have to be Lord Mayor in order to carry out activities in the arsenal."),
+			kDimColor});
+		return;
+	}
+	const TownMemory& t = save.towns[size_t(town)].memory;
+	static const char* kTypes[kArsenalTypes][2] = {
+		{"Guardias", "Town watch"}, {"Arqueros", "Archers"}, {"Ballesteros", "Cross bowers"}, {"Mosqueteros", "Musketeers"}};
+	const std::string duty = exe_text(0x69DD2C, "Unidades", "Duty");
+	const std::string training = exe_text(0x69DD30, "En formación", "Training");
+	const std::string costs = exe_text(0x69DD34, "Coste", "Costs");
+	int32_t total = 0;
+	for (uint32_t k = 0; k < kArsenalTypes; ++k) {
+		const int32_t cost = arsenal_cost(save, uint32_t(town), k);
+		total += cost;
+		v.rows.push_back({exe_text(0x69DD38 + 4 * k, kTypes[k][0], kTypes[k][1]) + ":  " + duty + " " +
+				std::to_string(t.u8(0x998 + k)) + ",  " + training + " " + std::to_string(t.u8(0x99C + k)) + ",  " +
+				costs + " " + format_money(cost),
+			true});
+	}
+	ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
+	v.lines.push_back({exe_format(0x6B2974, {std::to_string(total)}, tr("Coste semanal: ", "Total costs per week: ") +
+							format_money(total)),
+		kTextColor});
+	switch (ui.arsenal_message) {
+	case ArsenalMessage::NoWeapons:
+		v.lines.push_back({exe_text(0x6AA450, "Las armas que necesita esta unidad no están disponibles en tu oficina comercial.",
+							   "The weapons needed by this unit are not available in your trading office."),
+			kWarnColor});
+		break;
+	case ArsenalMessage::NoBeggars:
+		v.lines.push_back({exe_text(0x69DD24, "No puedes formar esta unidad porque no hay mendigos suficientes en la ciudad.",
+							   "You cannot train this unit because there are not enough beggars in the town."),
+			kWarnColor});
+		break;
+	case ArsenalMessage::NoCouncil:
+		v.lines.push_back({exe_text(0x6AA448, "El Consejo de la ciudad no ha autorizado nuevas tropas.",
+							   "The town council has not authorised further units."),
+			kWarnColor});
+		break;
+	case ArsenalMessage::Authorised:
+		v.lines.push_back({exe_format(0x6AA44C, {std::to_string(t.u16(0x9A0))},
+							   tr("Unidades autorizadas: ", "Units authorised: ") + std::to_string(t.u16(0x9A0))),
+			kTextColor});
+		break;
+	case ArsenalMessage::None:
+		break;
+	}
+	v.act = exe_text(0x69DD10, "Formar unidad", "Form unit");
+	v.act_on = 1;
+	v.act2 = exe_text(0x69DD14, "Despedir unidad", "Dismiss unit");
+	v.act2_on = t.u8(0x998 + uint32_t(ui.row)) != 0;
+}
+
+// X (`dismiss` false) or Square on the arsenal: the row's type formed or dismissed, the message as the game sets it.
+void arsenal_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, bool dismiss) {
+	if (!arsenal_mayor(save, uint32_t(town)) || ui.row < 0 || ui.row >= int(kArsenalTypes)) {
+		return;
+	}
+	const uint32_t type = uint32_t(ui.row);
+	if (dismiss) {
+		if (save.towns[size_t(town)].memory.u8(0x998 + type) != 0) {
+			run_operations(save, sailing, {arsenal_dismiss(save, uint32_t(town), type, ui.arsenal_message)});
+		}
+		return;
+	}
+	OperationBytes op{};
+	if (arsenal_form(save, uint32_t(town), type, ui.arsenal_message, op)) {
+		run_operations(save, sailing, {op});
+	}
+	ui.message.clear();
+}
+
+// The unit's sign after a count, as the game's tables 0x6C6B44 (English) and 0x6C5E64 (Spanish) give it ("\t16031_" a
+// load, "\t16030_" a barrel: the pictures the text renderer draws for kTextLoad and kTextBarrel).
+std::string unit_sign(WareUnit unit) {
+	return std::string(1, unit == WareUnit::Barrel ? kTextBarrel : kTextLoad);
+}
+
+// A town's tavern's name (the table 0x6DD8C0, by the town's number as the viewer's names).
+std::string tavern_of(const SaveGame& save, uint32_t town) {
+	const int id = town < save.towns.size() ? save.towns[town].town_id() : -1;
+	return id >= 0 && size_t(id) < save.opaque.town_taverns.size() ? clean_game_text(save.opaque.town_taverns[size_t(id)])
+																	: place_name(0x02);
+}
+
+// The town hall (.let 0x03; town_hall_window.hpp). Its page 0, the notices (0x5E1010): a row for each of the world's
+// orders («Price guarantee» or «Bonus», by its town and ware) and the prince's decree; the selected one's text; X
+// «Accept order» (0x5E7730: 0x3D) on an order. After it, what the game says: accepted, where and when to meet the
+// client to deliver (in the tavern of the order's town); refused, not reliable enough.
+void town_hall_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	ui.page = 0;
+	v.title = place_name(ui.let_type) + " - " + exe_text(0x69DDB4, "Avisos", "Notices");
+	const bool spanish = g_texts && g_texts->spanish();
+	if (ui.hall_pressed) {
+		if (!ui.hall_accepted) {
+			v.lines.push_back({exe_text(0x69EF10, "No se concederá el contrato.", "Order will not be granted"), kTextColor});
+			v.lines.push_back({exe_text(0x69EF14, "No se te considera lo suficientemente digno de confianza como para encargarte este pedido.",
+								   "You are held to be not reliable enough to get this order."),
+				kDimColor});
+			return;
+		}
+		const OperationBytes& op = ui.hall_order;
+		uint32_t deadline;
+		std::memcpy(&deadline, op.data() + 8, 4);
+		const GameDate date = date_from_tick(deadline);
+		const WareUnit unit = kWares[op[5] % kWareCount].unit;
+		const uint32_t count = op[0xC];
+		const std::vector<std::string> who = {clean_game_text(game_first_name(save, op[6])),
+			clean_game_text(game_family_name(save, op[7])), tavern_of(save, op[4]), window_town_name(save, op[4])};
+		const std::vector<std::string> when = {std::to_string(date.day), month_name(date.month), std::to_string(date.year)};
+		std::vector<std::string> args = spanish ? when : who;
+		args.insert(args.end(), spanish ? who.begin() : when.begin(), spanish ? who.end() : when.end());
+		args.insert(args.end(), {std::to_string(count), unit_sign(unit), ware_name(op[5])});
+		v.lines.push_back({exe_text(0x69EF08, "Misión aceptada.", "Order accepted"), kTextColor});
+		v.lines.push_back({exe_format(0x69EF0C, args, tr("Entrega el pedido a tiempo.", "Deliver the order in time.")),
+			kTextColor});
+		if (op[0x13] != 0) {
+			v.lines.push_back({exe_text(0x69EFA0, "Obtendrás la bonificación cuando hayas entregado la mercancía solicitada.",
+								   "You will get the bonus after supplying all the goods demanded."),
+				kTextColor});
+		}
+		return;
+	}
+	for (uint32_t k = 0; k < 7; ++k) {
+		const std::optional<TownOrder> o = town_order(save, k);
+		if (!o) {
+			continue;
+		}
+		v.rows.push_back({exe_format(o->bonus ? 0x69EFB0 : 0x69EF00, {ware_name(o->ware), window_town_name(save, o->town)},
+							  ware_label(o->ware) + " - " + window_town_name(save, o->town)),
+			true});
+		v.codes.push_back(int32_t(k));
+	}
+	const std::optional<PrinceDecree> decree = prince_decree(save, uint32_t(town));
+	if (decree) {
+		v.rows.push_back({exe_text(0x6A94E0, "El decreto del Príncipe", "The Prince's Decree"), true});
+		v.codes.push_back(7);
+	}
+	if (v.rows.empty()) {
+		v.lines.push_back({tr("No hay avisos.", "No notices."), kDimColor});
+		return;
+	}
+	ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
+	const int32_t entry = v.codes[size_t(ui.row)];
+	v.act = exe_text(0x69EEFC, "Aceptar misión", "Accept order");
+	v.act_on = entry < 7 ? 1 : 0;
+	if (entry == 7) {
+		auto ware = [&](uint8_t w) { return ware_name(w % kWareCount); };
+		v.lines.push_back({exe_format(0x6A94E4, {ware(decree->wares[0])}, ware_label(decree->wares[0] % kWareCount)),
+			kTextColor});
+		std::vector<std::string> more;
+		for (uint32_t k = 1; k < 4 && decree->wares[k] != 0xFF; ++k) {
+			more.push_back(ware(decree->wares[k]));
+		}
+		if (!more.empty()) {
+			v.lines.push_back({exe_format(0x6A94E8 + 4 * uint32_t(more.size() - 1), more, ""), kTextColor});
+		}
+		if (decree->contract != 0xFF) {
+			v.lines.push_back({exe_format(0x6A94F4, {ware(decree->contract)}, ""), kTextColor});
+		}
+		return;
+	}
+	const TownOrder o = *town_order(save, uint32_t(entry));
+	const GameDate date = date_from_tick(o.deadline);
+	const WareUnit unit = kWares[o.ware % kWareCount].unit;
+	const bool barrels = unit == WareUnit::Barrel;
+	const std::string count = std::to_string(o.count);
+	const std::string units = unit_sign(unit);
+	if (o.bonus) {
+		v.lines.push_back({exe_format(0x69EF98,
+							   {ware_name(o.ware), std::to_string(date.day),
+								   spanish ? month_name(date.month) : std::to_string(date.month + 1), count, units,
+								   std::to_string(uint32_t(o.count) * o.price), std::to_string(o.price), barrels ? "B" : "L"},
+							   ""),
+			kTextColor});
+	} else {
+		v.lines.push_back({exe_format(0x69EF04,
+							   {window_town_name(save, o.town), ware_name(o.ware), std::to_string(o.price),
+								   exe_text(0x6C0DEC + (barrels ? 4 : 0), barrels ? "barril" : "fardo", barrels ? "barrel" : "load"),
+								   count, units, std::to_string(date.day), month_name(date.month)},
+							   ""),
+			kTextColor});
+	}
+}
+
+// X on the town hall's notices: «Accept order» (0x5E7730), the order k: 0x3D, or refused.
+void town_hall_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
+	if (ui.hall_pressed || ui.row < 0 || ui.row >= int(v.codes.size()) || v.codes[size_t(ui.row)] >= 7) {
+		return;
+	}
+	OperationBytes op{};
+	ui.hall_accepted = accept_order(save, uint32_t(town), uint32_t(v.codes[size_t(ui.row)]), op);
+	if (ui.hall_accepted) {
+		ui.hall_order = op;
+		run_operations(save, sailing, {op});
+	}
+	ui.hall_pressed = true;
+	ui.row = 0;
+	ui.message.clear();
+}
+
 PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	PlaceView v;
 	const int player = save.player;
@@ -4937,6 +5172,12 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 		break;
 	case Place::Smithy:
 		smithy_view(save, town, ui, v);
+		break;
+	case Place::TownHall:
+		town_hall_view(save, town, ui, v);
+		break;
+	case Place::Arsenal:
+		arsenal_view(save, town, ui, v);
 		break;
 	case Place::LandTrade:
 		land_trade_view(save, town, ui, v);
@@ -5267,6 +5508,14 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 		(v.max_amount < 0 || v.amount_choice || ui.amount > 0);
 	if (ui.row >= int(v.rows.size()) || (v.act_on >= 0 ? v.act_on == 0 : !by_row)) {
 		ui.message = tr("Ahora no se puede.", "It can't be done now.");
+		return;
+	}
+	if (ui.open == Place::TownHall) {
+		town_hall_act(save, sailing, town, ui, v);
+		return;
+	}
+	if (ui.open == Place::Arsenal) {
+		arsenal_act(save, sailing, town, ui, false);
 		return;
 	}
 	if (ui.open == Place::LandTrade) {
@@ -12396,6 +12645,9 @@ int main(int argc, char** argv) {
 				place.trader.greeting = tavern_greeting(save);
 				place.burglar.victims = burglar_victims(save, uint32_t(town_index));
 			}
+			if (p == Place::Arsenal) {
+				place.arsenal_message = arsenal_open_message(save, uint32_t(town_index));
+			}
 			if (p == Place::LandTrade) {
 				// The side menu's button opens the window on its page 0 (0x5EA280(0)).
 				land_trade_open(save, uint32_t(town_index), place.land);
@@ -15971,17 +16223,23 @@ int main(int argc, char** argv) {
 		}
 		if (small_text) {
 			// The notices still in time, one under another (with the mailbox
-			// open, at the bottom on the right, under its letter).
+			// open, at the bottom on the right, under its letter; with a place's
+			// window open, in it over its footer, not on its title).
 			const int padding = 8;
 			const int box_height = small_text->line_height() + padding;
 			while (!notices.empty() && SDL_TICKS_PASSED(app_ticks(), notices.front().second)) {
 				notices.pop_front();
 			}
 			const bool mail_full = in_mail && mail.open && !mail_in_panel;  // The whole-screen mailbox (the sea map).
-			int y = mail_full ? kScreenHeight - 18 - int(notices.size()) * (box_height + 2) : kBarHeight + 6;
+			const bool over_place = place.open != Place::None && selection.mode == Mode::Saved && has_save &&
+				save.player >= 0 && !market.open && !hanse.open;
+			const PlaceLayout place_layout(small_text->line_height());
+			const int stacked = int(notices.size()) * (box_height + 2);
+			int y = mail_full ? kScreenHeight - 18 - stacked : over_place ? place_layout.footer_y - 6 - stacked : kBarHeight + 6;
 			for (const auto& [line, until] : notices) {
 				const int width = small_text->measure(line) + 2 * padding;
-				const SDL_Rect box = {mail_full ? kScreenWidth - 18 - width : 8, y, width, box_height};
+				const int x = mail_full ? kScreenWidth - 18 - width : over_place ? place_layout.panel.x + PlaceLayout::kPadding : 8;
+				const SDL_Rect box = {x, y, width, box_height};
 				SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 				SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
 				SDL_RenderFillRect(renderer, &box);
