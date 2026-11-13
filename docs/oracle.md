@@ -2607,7 +2607,7 @@ the three new event handlers in the dispatch:
 - **0x3A** (0x53A2C0) and its **event 0x0C** (0x4E38B4), `town_tick/land_transport.cpp`: the land transport (a cart
   convoy; the operation makes the event at the tick, even with nothing to carry, and runs the queue at once). Eight
   states: leaving the office, a day's wait, the road (the 7 roads of 0x672BF8, 16 ticks without one), an ambush taking
-  the escort's share, back from a besieged town (letter 0x67) or lost (0x69), unloading into the office with the
+  the loss the window decided (the operation's [+0xC]), back from a besieged town (letter 0x67) or lost (0x69), unloading into the office with the
   average price, the letter 0x66 and the ticker line 0x29. Scenario `land_transport` (32 targets). The office short
   of the amount reproduces a game bug (`docs/roadmap.md`).
 - **0x51** (0x53C050, `town_tick/town_hall.cpp`): the wares delivered for a town hall order taken (its event 0x11,
@@ -2626,10 +2626,10 @@ the three new event handlers in the dispatch:
   2000) is fixed behind fix_game_bugs at the user's word: `re/emu/sesion27/uc_fix.sh land_transport:1` differs from
   the game in one call only, the convoy's amount (3 loads instead of 0).
 
-## The player's actions: the tavern's people, its trader, weapons dealer, traveller, burglar and pirate (2026-11-13)
+## The player's actions: the tavern's people, its trader, weapons dealer, traveller, burglar, pirate and informer (2026-11-13)
 
-The viewer's half of group 4 so far (`tavern_window.cpp`, notes in `re/emu/sesion29/group4_notes.md`). Scenario
-`tavern_window` (saves 1, 3, 5, 7; 46 targets, all equal; the trader's last-ship quirk broken on purpose and caught):
+The viewer's half of group 4 (`tavern_window.cpp`, notes in `re/emu/sesion29/group4_notes.md`). Scenario
+`tavern_window` (saves 1, 3, 5, 7; 69 targets, all equal; the trader's last-ship quirk broken on purpose and caught):
 - Who is there (direct calls, thiscall on the town, al): 0x526880 the client of an order the player took, 0x5265E0
   the trader, 0x5261A0 the traveller, 0x526280 the weapons dealer, 0x526120 the burglar; with the places
   [+0x83C..0x83F] free, the player's, another's, past, the order places, the stocks around the trader's 40000 (a ware
@@ -2648,9 +2648,41 @@ The viewer's half of group 4 so far (`tavern_window.cpp`, notes in `re/emu/sesio
 - The burglar's victims (0x531470 on the world, through the copier TAVERN_VICTIMS: the town's offices' owners
   without [+0x8] & 4, not the player, with their offices' [+0x2D4] + [+0x2D2]): 6 calls (as they are, an owner with
   the flag 4 and without it, the player's office, an owner past).
+- The informer's news (0x526B40 on the town, through the copier TAVERN_INFORMER: the operation the window keeps, its
+  [+0x14] and [+0x16], and the rumour's text, whose FNV-1a and length a hook puts where the CString was): no informer,
+  as it is, the region's towns' changes known late (the player's lag table at 5), each change alone in the region's
+  first town (the siege, the epidemic, the famine, the blockade, a ware short, the two plenties, the history's entry
+  the player sees adjusted), the scarcest and the plentiful wares, the pirates seen (their [+0x16] cleared for the
+  fallback's facts), the treasure map's piece (the operation 0x55 of the mission interpreter, the icons kept); the
+  texts by the player's own exe (the Spanish one composes in another order: read in its code, `texts.spanish()`).
+  Two real differences found on the way (the map piece's [+0x14], the scarce ware's field [+0x4F0]). The operation
+  **0x4C** (0x53B4D0, `town_tick/tavern.cpp`) through the executor: the price paid, the region's towns known
+  (0x535400), the informer gone. With the adjustment, the epidemic and the famine get their own texts (the game tells
+  them as a siege) and the towns' names come by number (`tick_probe --fix-game-bugs`).
 - The window's own rules (the trader's arrows and two presses, 0x52, 0x4D, the units) by the ctest `tavern_window`;
   the viewer seen in shots (`re/emu/sesion29/shots`: the trader, the dealer buying and selling a sword, the traveller
-  boarding with his letter 0x17).
+  boarding with his letter 0x17, the burglar, the pirate, the informer).
+
+## The player's actions: the land trade's window (2026-11-13)
+
+The barn's window (.let 0x33, building 0x27 «landhandel», the window *0x6E55A0; `land_trade_window.cpp`). Scenario
+`land_trade_window` (saves 1, 3, 5, 7; 28 targets, all equal; the sort's index and the loss's index broken on purpose
+and caught):
+- The road's other end 0x525630 (each town with and without [+0x76C] & 0x8000: 48 calls), its days 0x533490 (each
+  road both ways and a pair without one) and the side menu's check 0x5336B0 (the partner through a scratch byte: each
+  town as it is; a town that can trade without its barn, without its partner's, besieged, its partner besieged, a
+  partner given). In save 1 only Lübeck and Hamburg can trade: the other roads' barns aren't built yet.
+- The send 0x5EB3C0 on a window of the oracle's whose fields [+0x2DA4..+0x2E2F] are the scratch globals (41 sends:
+  the escort at the danger, below it by 1 and 2, nothing loaded, loads of barrels and loads, small ones that cut the
+  loss, a cost above the danger's that wraps the loss, all the wares): the ambush's draw (rand() & 3), the loss spread
+  over the wares sorted by value with the game's indices, and the 0x3A operations queued (the oracle notes them; the
+  probe queues its own).
+- The pages' rules the oracle can't call (their update runs the buttons: 0x5EAAE0, 0x5EB010) by the ctest
+  `land_trade_window`: the step, the office's stock, the carts' room, the slots, the value, the danger and the cost.
+- Found on the way: 0x5336B0 never checks the partner's barn (it looks in the town's own list twice: a game bug, the
+  game says 0 without Hamburg's barn). Fixed behind fix_game_bugs at the user's word: `re/emu/sesion27/uc_fix.sh
+  land_trade_window:1` differs from the game in two calls only (2 instead of 0: without the partner's barn, and with a
+  partner given that has none).
 
 ## The game's static initializers (2026-11-03)
 

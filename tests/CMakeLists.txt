@@ -136,6 +136,12 @@ target_compile_options(tavern_window_test PRIVATE -Wall -Wextra)
 
 add_test(NAME tavern_window COMMAND tavern_window_test)
 
+add_executable(land_trade_window_test land_trade_window_test.cpp)
+target_link_libraries(land_trade_window_test PRIVATE p3data)
+target_compile_options(land_trade_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME land_trade_window COMMAND land_trade_window_test)
+
 add_executable(ship_pair_window_test ship_pair_window_test.cpp)
 target_link_libraries(ship_pair_window_test PRIVATE p3data)
 target_compile_options(ship_pair_window_test PRIVATE -Wall -Wextra)

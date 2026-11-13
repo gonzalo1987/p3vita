@@ -4854,6 +4854,36 @@ def tavern_copiers(o):
     o.uc.mem_write(TAVERN_VICTIMS, bytes([0xE9]) + struct.pack('<i', at - (TAVERN_VICTIMS + 5)))
 
 
+TAVERN_INFORMER = to.SENTINEL + 0x3A8  # the copier of the informer's news 0x526B40 (kTavernInformer)
+INFORMER_NEWS = SCRATCH + 0x80  # its 0x20 bytes: above the ships when the game takes its address's low half
+
+
+def informer_copier(o):
+    """The copier at TAVERN_INFORMER (thiscall on the town): 0x526B40 on INFORMER_NEWS (its CString at [+0x18] made
+    empty first, as the window's is); after it a hook puts in [+0x18] the text's FNV-1a and in [+0x1C] its length (the
+    text is on the heap)."""
+    at = o.alloc(0x40)
+    code = bytes([0xA1]) + struct.pack('<I', 0x6C7CCC)  # mov eax, [the empty CString]
+    code += bytes([0xA3]) + struct.pack('<I', INFORMER_NEWS + 0x18)  # mov [news + 0x18], eax
+    code += bytes([0x68]) + struct.pack('<I', INFORMER_NEWS)  # push news
+    code += bytes([0xE8]) + struct.pack('<i', 0x526B40 - (at + len(code) + 5))
+    hook = at + len(code)
+    code += bytes([0x90, 0xC3])  # nop (the hook); ret
+    o.uc.mem_write(at, code)
+    o.uc.mem_write(TAVERN_INFORMER, bytes([0xE9]) + struct.pack('<i', at - (TAVERN_INFORMER + 5)))
+
+    def text_hook(uc, address, size, data):
+        p = o.u32(INFORMER_NEWS + 0x18)
+        n = o.u32(p - 8) if p else 0
+        text = bytes(o.uc.mem_read(p, n)) if n else b''
+        w32(o, INFORMER_NEWS + 0x18, fnv1a(text))
+        w32(o, INFORMER_NEWS + 0x1C, n)
+        print(f'    informer: {text.decode("latin-1")!r}')
+
+    o.uc.hook_add(UC_HOOK_CODE, text_hook, begin=hook, end=hook)
+    o.uc.ctl_remove_cache(hook, hook + 1)
+
+
 def tavern_window(o):
     """The tavern's side menu and its trader (tavern_window.hpp), in the town of the player's first docked ship: who
     is there (0x526880 the order's client, 0x5265E0 the trader, 0x5261A0 the traveller, 0x526280 the weapons dealer,
@@ -4871,6 +4901,7 @@ def tavern_window(o):
     other = (m + 1) % merchants
     tavern_copiers(o)
     window_ships_copier(o)
+    informer_copier(o)
     print(f'the player {m}: ship {s} in town {t}')
 
     def during(o):
@@ -5032,6 +5063,107 @@ def tavern_window(o):
         w16(o, sa + 0x134, kept5[2])
         w8(o, sa + 0x136, kept5[3])
         w32(o, sa + 0xA4, kept5[4])
+        # The informer's news (0x526B40): his region (the informer's [+0x82C]) that of the town, the player's lag of
+        # its towns (his slot's table), their states, the scarce and plentiful wares, the treasure map, nothing to tell.
+        def news(label):
+            direct(o, TAVERN_INFORMER, [], ecx=ta)
+            print(f'informer {label}: op {bytes(o.uc.mem_read(INFORMER_NEWS, 0x14)).hex()} '
+                  f'[+0x14] {o.u16(INFORMER_NEWS + 0x14)} [+0x16] {o.u16(INFORMER_NEWS + 0x16)} '
+                  f'length {o.u32(INFORMER_NEWS + 0x1C)}')
+        region_of = [o.u8(0x6DDB90 + 0x34 * o.u8(o.town(i) + 0x2C1) + 0x30) for i in range(towns)]
+        idx = next((k for k in range(0x14) if o.u8(0x673731 + 4 * k) == region_of[t]), 0)
+        mates = [i for i in range(towns) if region_of[i] == region_of[t]]
+        slot = next((k for k in range(8) if o.u8(0x6DE588 + 0xA00 + k) == m), None)
+        lag = o.u32(0x6DE588 + 0xA08 + 4 * slot) if slot is not None else 0
+        print(f'the region {region_of[t]} (informer {idx}): towns {mates}; the player slot {slot}, lag table {lag:#x}')
+        tick = o.u32(0x6DE4B4)
+        day = next(d for d in range(3) if (((tick >> 8) + d + o.u8(ta + 0x2C0)) % 3) != 0)
+        w32(o, 0x6DE4B4, tick + 256 * day)
+        w8(o, ta + 0x82C, 0x14)
+        news('no informer')
+        w8(o, ta + 0x82C, idx)
+        news('as it is')
+        if lag:
+            for i in mates:
+                w8(o, lag + i, 5)
+        flags = [0x10, 0x8, 0x8000, 0x1000, 5 << 18, 0x2000, 0x4000, 0x13 << 18, 0x14 << 18]
+        kept_flags = [o.u32(o.town(i) + 0x2C8) for i in range(towns)]
+        kept_history = [o.u32(0x6DE588 + 4 * k) for k in range(16 * towns)]
+        for i, f in zip(mates, flags):
+            w32(o, o.town(i) + 0x2C8, (o.u32(o.town(i) + 0x2C8) & ~0x7CF018) | f)
+        news('the towns changed, known late')
+        # Each change alone in the region's first town; its known state without a ware short (the history's entry
+        # the player sees, five days late).
+        if mates and lag:
+            i = mates[0]
+            seen = 0x6DE588 + 4 * (16 * i + ((((o.u32(0x6DE4B4) >> 8) & 0xF) + 0x10 - 5) & 0xF))
+            w32(o, seen, o.u32(seen) & ~0x7CF018)
+            for j in mates[1:]:
+                w32(o, o.town(j) + 0x2C8, kept_flags[j])
+                w8(o, lag + j, 0)
+            for f in flags:
+                w32(o, o.town(i) + 0x2C8, (kept_flags[i] & ~0x7CF018) | f)
+                news(f'the town {i} alone with {f:#x}')
+            for j in mates[1:]:
+                w8(o, lag + j, 5)
+        for k, v in enumerate(kept_history):
+            w32(o, 0x6DE588 + 4 * k, v)
+        if mates:
+            u = o.town(mates[-1])
+            w32(o, u + 4 + 4 * 6, o.s32(u + 0x4F4 + 0x10 * 6) // 3)
+            w32(o, u + 4 + 4 * 9, 0)
+            w32(o, u + 0x76C, o.u32(u + 0x76C) | 0x100)
+            w32(o, u + 4 + 4 * 8, o.s32(u + 0x4F8 + 0x10 * 8) + 50000)
+            w32(o, u + 4 + 4 * 3, o.s32(u + 0x4F4 + 0x10 * 3) + 30000)
+        news('a scarce and a plentiful ware')
+        for i in range(towns):
+            w32(o, o.town(i) + 0x2C8, kept_flags[i])
+        if lag:
+            for i in mates:
+                w8(o, lag + i, 0)
+        for i in mates:
+            u = o.town(i)
+            for w in range(20):
+                w32(o, u + 4 + 4 * w, o.s32(u + 0x4F4 + 0x10 * w))
+        pirates = [o.u32(0x6DD7AC + 4 * k) for k in range(5)]
+        kept_largest = [o.u16(p + 0x16) if p else 0 for p in pirates]
+        for p in pirates:
+            if p:
+                w16(o, p + 0x16, 0)
+        for sword in (0, 1, 2, 3):
+            w32(o, ta + 0x54, sword)
+            news(f'nothing to tell, the town swords {sword}')
+        w8(o, ta + 0x82C, 0x13)
+        news('nothing to tell, another region')
+        for p, v in zip(pirates, kept_largest):
+            if p:
+                w16(o, p + 0x16, v)
+        # The treasure map: a letter of the player's made one (0x45, the pieces 0x1F3 found).
+        w32(o, 0x6DE4B4, tick + 256 * next(d for d in range(3) if (((tick >> 8) + d + o.u8(ta + 0x2C0)) % 3) == 0))
+        news('a map day without a map')
+        pm = o.merchant(m)
+        mails = o.u16(0x6DD736)
+        if mails:
+            mail = o.u32(0x6DD730)
+            head = o.u16(pm + 0xA)
+            j = head if head < mails else 0
+            if head >= mails:
+                w16(o, pm + 0xA, 0)
+                w16(o, mail + 6, 0xFFFF)
+            w8(o, mail + 16 * j + 4, 0x45)
+            for bits in (0x1F3, 0x1FE, 0x0F0):
+                w16(o, mail + 16 * j + 0xA, bits)
+                news(f'a map day, the letter {j} with the pieces {bits:#x}')
+        w32(o, 0x6DE4B4, tick)
+        # The informer's operation 0x4C (0x53B4D0): paid and the informer gone, a region known (0x535400 for each
+        # town of the town's region), a merchant past.
+        w8(o, ta + 0x82C, idx)
+        operation(o, 0x4C, m, t, 120, 0xFFFF)
+        print(f'0x4C: money {o.s32(o.merchant(m))}, the informer {o.u8(ta + 0x82C):#x}')
+        w8(o, ta + 0x82C, idx)
+        operation(o, 0x4C, m, 0xFFFF, 50, t)
+        operation(o, 0x4C, merchants, towns, 10, t)
+        print(f'0x4C: money {o.s32(o.merchant(m))}, the informer {o.u8(ta + 0x82C):#x}')
         # The trader's ships.
         room = direct(o, 0x5182B0, [], ecx=sa)
         for x in range(ships):
@@ -5063,6 +5195,123 @@ def tavern_window(o):
             w16(o, c + 0x10, s)
             w8(o, o.ship(s2), m)
             kinds('a convoy guided by the ship')
+    return during
+
+
+LAND_WINDOW = SCRATCH + 0x10 - 0x2DA4  # a land trade window of the oracle's: its fields [+0x2DA4..+0x2E2F] in SCRATCH
+LAND_IN_BARRELS = (0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0)  # 0x672C14
+
+
+def land_trade_window(o):
+    """The land trade (land_trade_window.hpp): the road's other end 0x525630 (each town with and without [+0x76C] &
+    0x8000), the road's days 0x533490 (each road both ways, a pair without one), and the send 0x5EB3C0 on a window of
+    the oracle's (the escort at and below the danger 1 and 2, loads of barrels and of loads, small (the loss cut to
+    them) and large, none, a cost above the danger's), its operations (queued: noted by the oracle)."""
+    import random
+    towns = o.counts()[0]
+
+    def during(o):
+        ends = {}
+        for i in range(towns):
+            ta = o.town(i)
+            kept = o.u32(ta + 0x76C)
+            for flag in (0, 0x8000):
+                w32(o, ta + 0x76C, (kept & ~0x8000) | flag)
+                end = direct(o, 0x525630, [], ecx=ta) & 0xFF
+                if flag:
+                    ends[i] = end
+            w32(o, ta + 0x76C, kept)
+        print(f'the roads\' other ends: {ends}')
+        roads = [(i, e) for i, e in ends.items() if e != 0xFF]
+        for a, b in roads + [(0, 1), (1, 0)]:
+            print(f'days {a} > {b}: {direct(o, 0x533490, [a, b], ecx=0x6DE4A0)}')
+        # The side menu's check 0x5336B0 (the partner through a byte of SCRATCH): each town as it is; in a road's town
+        # its barn gone (its type changed), it and its partner besieged, a partner given.
+        partner = SCRATCH + 0xB0
+
+        def can(t, label, given=0xFF):
+            w8(o, partner, given)
+            r = direct(o, 0x5336B0, [t, partner], ecx=0x6DE4A0)
+            print(f'land trade from {t}, {label}: {r}, the partner {o.u8(partner)}')
+            return r
+
+        open_ = [i for i in range(towns) if can(i, 'as it is') == 0]
+        if roads:
+            a, b = next(((i, e) for i, e in roads if i in open_), roads[0])
+            ta, tb = o.town(a), o.town(b)
+
+            def barns_of(t):
+                table = o.u32(t + 0x75C)
+                found = []
+                k = o.u16(t + 0x764)
+                while k < o.u16(t + 0x776):
+                    if o.u8(table + 8 * k + 3) == 0x27:
+                        found.append(table + 8 * k + 3)
+                    k = o.u16(table + 8 * k + 4)
+                return found
+
+            # Without the town's barn, then without the partner's (the game doesn't look: with the fix, 2).
+            for t, label in ((ta, 'without its barn'), (tb, 'without its partner\'s barn')):
+                barns = barns_of(t)
+                for at in barns:
+                    w8(o, at, 0x26)
+                can(a, label)
+                for at in barns:
+                    w8(o, at, 0x27)
+            kept = (o.u32(ta + 0x2C8), o.u32(tb + 0x2C8))
+            w32(o, ta + 0x2C8, kept[0] | 0x10)
+            can(a, 'besieged')
+            w32(o, ta + 0x2C8, kept[0] & ~0x10)
+            w32(o, tb + 0x2C8, kept[1] | 0x10)
+            can(a, 'its partner besieged')
+            can(a, 'another partner given', given=(b + 1) % towns)
+            can(a, 'its partner given', given=b)
+            w32(o, ta + 0x2C8, kept[0])
+            w32(o, tb + 0x2C8, kept[1])
+        start, end = roads[0] if roads else (0, 1)
+        rnd = random.Random(0x3A)
+
+        def send(label, loads, escorts, danger, cost=None):
+            for k in range(0x2DA4, 0x2E30):
+                w8(o, LAND_WINDOW + k, 0)
+            w8(o, LAND_WINDOW + 0x2DA4, start)
+            w8(o, LAND_WINDOW + 0x2E0C, end)
+            slots, used = 0, 0
+            for w, n in loads.items():
+                w8(o, LAND_WINDOW + 0x2DA5 + w, n)
+                slots += n if LAND_IN_BARRELS[w] else 10 * n
+                used += n if LAND_IN_BARRELS[w] else 10 * n
+            tier = (slots & 0xFF) + 9
+            tier = tier // 10 * (50, 200, 800)[escorts]
+            w32(o, LAND_WINDOW + 0x2E10, tier if cost is None else cost)
+            w8(o, LAND_WINDOW + 0x2E14, escorts)
+            w8(o, LAND_WINDOW + 0x2E15, danger)
+            w8(o, LAND_WINDOW + 0x2E16, slots & 0xFF)
+            w32(o, LAND_WINDOW + 0x2E2C, used)
+            direct(o, 0x5EB3C0, [], ecx=LAND_WINDOW)  # (the recorder empties o.queued when the call starts)
+            print(f'send {label}: ' + ' '.join(op[:0x10].hex() for op in o.queued))
+
+        def loads(count, small=False):
+            out = {}
+            for w in rnd.sample(range(20), count):
+                out[w] = (1 if small else rnd.randint(1, 60)) if LAND_IN_BARRELS[w] else rnd.randint(1, 1 if small else 6)
+            return out
+
+        send('no danger', {0: 3, 5: 20}, 0, 0)
+        send('escort 1 of 1', loads(3), 1, 1)
+        send('escort 2 of 2', loads(4), 2, 2)
+        send('nothing loaded', {}, 0, 2)
+        for k in range(8):
+            send(f'danger 2, no escort {k}', loads(rnd.randint(1, 6)), 0, 2)
+        for k in range(8):
+            send(f'danger 1, no escort {k}', loads(rnd.randint(1, 6)), 0, 1)
+        for k in range(6):
+            send(f'danger 2, escort 1 {k}', loads(rnd.randint(1, 6)), 1, 2)
+        for k in range(6):
+            send(f'small loads {k}', loads(rnd.randint(2, 8), small=True), 0, 2)
+        for k in range(8):
+            send(f'the cost above {k}', loads(rnd.randint(2, 6)), 0, 2, cost=100000)
+        send('all the wares', {w: 1 for w in range(20)}, 0, 2)
     return during
 
 
@@ -13742,14 +13991,21 @@ SCENARIOS = {
         '@53c611', '@53c56d>53c80a', '@53c57f>53c80a', '@53c593>53c80a', '@53c5ab>53c80a', '@53c544>53c80a',
         '@53c628', '@53c63e', '@53c654', '@53c66a', '@53c6a0', '@53c7c1', '@53c7bf>53c80a', '@53c2ee>53c80a',
         '@53c2d0>53c80a']),
-    'tavern_window': Scenario(tavern_window, [0x526880, 0x5265E0, 0x5261A0, 0x526280, 0x526120, TAVERN_OFFER,
-                                              TAVERN_SHIPS, 0x526470, WINDOW_SHIPS, TAVERN_VICTIMS], 0, [
+    'land_trade_window': Scenario(land_trade_window, [0x525630, 0x533490, 0x5336B0, 0x5EB3C0], 0, [
+        '@52565a>5256d5', '@52565c', '@525678', '@52568e', '@5256ab', '@5334c9', '@5334da', '@5334e7',
+        '@53371e', '@533744>53371b', '@5336e1>53374c', '@5337b2', '@5337dc', '@5337e5',
+        '@5334d8>5334fa', '@5eb403>5eb5eb', '@5eb423>5eb5eb', '@5eb429', '@5eb441', '@5eb468', '@5eb50e',
+        '@5eb50c>5eb52c', '@5eb5c2', '@5eb5cf', '@5eb5db', '@5eb643>5eb68f', '@5eb66a', '@5eb664>5eb674']),
+    'tavern_window': Scenario(tavern_window, [0x535760, 0x526880, 0x5265E0, 0x5261A0, 0x526280, 0x526120, TAVERN_OFFER,
+                                              TAVERN_SHIPS, 0x526470, WINDOW_SHIPS, TAVERN_VICTIMS, TAVERN_INFORMER], 0, [
         '@5268c5', '@5268c0', '@526606', '@52663a', '@526640', '@5261aa', '@5261ad', '@5262c9', '@5262ce', '@5262da',
         '@5262e8', '@5262ec', '@52612a', '@526151', '@5266ac', '@52673f', '@526758', '@5267d1', '@5267e8',
         '@5d7e8d', '@5d7efd', '@5d7f19', '@5d7f2a', '@5d7f7e', '@5d7f8b',
         '@5264b3', '@5264c6', '@5264d9', '@5264e7', '@5265a0', '@5265a8', '@5265b0', '@5263e1', '@5263fb', '@526405',
         '@526430', '@526445', '@526465', '@504ed3', '@504ee3', '@50503b', '@505022', '@5050e9', '@5050d0',
-        '@504e48', '@504e58']),
+        '@504e48', '@504e58', '@526bd4', '@526cad', '@526dec', '@526e4e', '@526eb6', '@526f1e', '@526f92', '@52700d',
+        '@52705f', '@5271bd', '@527334', '@5275ec', '@5276e8', '@527716', '@52777a', '@5277b7', '@5277c5', '@4d76ca',
+        '@4d76dc', '@53b4ec', '@53b586', '@53b5b0', '@53b5cb']),
     'smithy_window': Scenario(smithy_window, [0x535760, 0x5285B0, 0x52E030], 0, [
         '@5285db', '@528614', '@52e039', '@52e042', '@5361a4', '@53619d>5361c1', '@5361a2>5361c1',
         '@536191>537025']),

@@ -358,6 +358,8 @@ uint32_t fn_4e7a14(SaveGame& save, uint16_t event);
 // tavern.cpp: the burglar, 0x4F (0x53BA40) and the event 0x0F (0x4E5664); the traveller, 0x53 (0x53C840) and the
 // event 0x10 (0x4E63E4).
 void fn_53ba40(SaveGame& save, const uint8_t* operation);
+// tavern.cpp: the informer's news, 0x4C (0x53B4D0).
+void fn_53b4d0(SaveGame& save, const uint8_t* operation);
 // land_transport.cpp: 0x3A (0x53A2C0), a cart convoy, and its event 0x0C (0x4E38B4).
 void fn_53a2c0(SaveGame& save, const uint8_t* operation);
 uint32_t fn_4e38b4(SaveGame& save, uint16_t event);

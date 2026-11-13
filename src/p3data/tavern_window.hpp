@@ -233,4 +233,45 @@ std::optional<OperationBytes> pirate_press(const SaveGame& save, uint32_t town, 
 // The traveller's and the pirate's arrows: the ships in turn (nothing with fewer than two).
 void ship_turn(uint16_t& ship, const std::vector<uint16_t>& ships, int step);
 
+// --- The informer (the page 4: update 0x5D5970, drawing 0x5D10C0, the page after it 0x5D0F00) ---
+// He is there while the town's [+0x82C] is below 0x14. What he sells is made by 0x526B40 when the tavern's window
+// opens and again after each sale: an operation the window queues as it is when the player pays its price ([+0xC],
+// signed against his money), and a text (the game's, Latin-1) shown then.
+struct InformerNews {
+	OperationBytes op{};   // [+0x0]: 0x4C {player, his town or 0xFFFF, price, 0xFFFF} or 0x55 (a map's piece)
+	uint16_t icon = 0;     // [+0x14], [+0x16]: 0x673732 and 0x673733 of his [+0x82C] (0 without)
+	uint16_t icon2 = 0;
+	std::string text;      // [+0x18]
+	int32_t price() const;
+};
+class NavData;
+class GameTexts;
+// 0x526B40 (on the town, &news). Every third day ((tick >> 8) + the town) % 3 == 0, with a treasure map's letter of the
+// player's (0x4D75D0: his mail's first 0x45, or 0x46 with [+0xA] below 0x1FF; a piece of its nine bits [+0xA] not
+// found yet, the only one or one by rand()): 0x55 {player, the letter, 10 · (rand() % 11 + 30 · (his rank + 1)), the
+// piece << 5 + the town} with the text 0x6C29F8. Else 0x4C at (his rank in his home town + 1) · 100, and the news of
+// the region of the informer ([+0x82C]'s 0x673731), each 10 more, joined by lines:
+//   the towns of the region whose state the player knows (0x535300) four days late or more (0x5353C0 above 3), the
+//   first change of each: the siege 0x10 (0x6C25C8, lifted 0x6C25CC), the epidemic 0x8 and the famine 0x1000 (the
+//   game says the siege's words for them too: fixed behind fix_game_bugs, 0x6C2624/8 and 0x6C2670/4), the fire
+//   0x8000 (0x6C26C0, 0x6C26C4), the ware short (bits 18..22; 0x6C276C or 0x6C2770 by 0x66E0D4); else a bad (0x2000,
+//   0x6C272C) or a good (0x4000, 0x6C2730) harvest; none told, the informer's own town becomes [+0x8] (he leaves);
+//   the scarcest ware of the region (stock below its [+0x4F0 + 0x10·w]: (stock · 4) / (that >> 7), or −that without
+//   stock; the least below 256; 0x6C27E0); the most plentiful of the mask 0x4472E in a region town with [+0x76C] &
+//   0x100 (stock above [+0x4F4 + 0x10·w] + 20000; 0x6C28A8); the pirate with the largest [+0x16] (his captain's names
+//   0x515AE0; or the player's Hanse task 0x4EC694 hunting one: [+0xC] 2, [+0x16] 0) seen near the nearest town of
+//   each of his ships with him as captain (0x448610; 0x6B1460, 0x6B1464, 0x6B1468 by (captain + town) % 3).
+// Nothing at all: a town of the region (the (rand() & 3) + 1-th, round the towns once; none: [+0x82C] % towns) and,
+// by the informer's town's [+0x54] & 3, its people and beggars (0x6C29B8), its mayor (0x6C29BC), its beer [+0x31C]
+// (0x6C29C0) or its trade tax [+0x2C6] (0x6C29C4); the price (([+0x54] + that town + the region) & 3 + 7) · 10 and
+// [+0x8] his town. Any text ends in quotes. The towns' names are 0x6DDA00 by the town's index (the letters' game bug:
+// the right ones with fix_game_bugs). The pirates' part needs the navigation: without it, nothing of it. With the
+// Spanish exe's texts, its code's orders (0x526FF0: the scarce and the plentiful ware's and the beer's town first, the
+// plentiful ware in the plural by 0x66E0D4: 0x6C2F80).
+// It writes over the window's news (the map's piece leaves [+0x14] and [+0x16] as they were).
+void fn_526b40(SaveGame& save, const NavData* nav, const GameTexts& texts, uint32_t town, InformerNews& news);
+// 0x448610 (a ship): the town (its index) whose sea route from the ship (0x445010) is the shortest by 29 · the sum of
+// its legs' vertical lengths (the game's measure), the first of equals; 0 with no route.
+uint32_t fn_448610(const SaveGame& save, const NavData& nav, uint32_t ship);
+
 }  // namespace p3::data

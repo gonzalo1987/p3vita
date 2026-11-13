@@ -38,6 +38,7 @@
 #include "p3data/office_window.hpp"
 #include "p3data/ship_pair_window.hpp"
 #include "p3data/smithy_window.hpp"
+#include "p3data/land_trade_window.hpp"
 #include "p3data/tavern_window.hpp"
 #include "p3data/letter_window.hpp"
 #include "p3data/mail.hpp"
@@ -124,6 +125,7 @@ constexpr int kBarMargin = 12;
 constexpr int kTapDistance = 12;  // Píxeles que puede moverse un dedo en un toque.
 constexpr SDL_Color kTextColor = {255, 236, 190, 255};
 constexpr SDL_Color kDimColor = {200, 190, 170, 255};
+constexpr SDL_Color kWarnColor = {255, 120, 90, 255};  // The warnings the game draws in red (0xFFFF0000).
 
 #ifdef __vita__
 const char* const kDataDirs[] = {"ux0:data/p3vita/"};
@@ -279,6 +281,7 @@ enum class Place {
 	Guild,
 	Offers,
 	Smithy,
+	LandTrade,
 	ShipPair
 };
 
@@ -312,6 +315,9 @@ constexpr PlaceInfo kPlaces[] = {
 	// The town's weaponsmith (building type 0x03, «8bitkomplettstadtschmiede»): the ship's artillery and the hand
 	// weapons (smithy_window.hpp). (The armoury, .let 0x0B, is the militia's: with the town hall.)
 	{0x08, Place::Smithy, GameText::Count, "Maestro armero", "Weaponsmith", 0x03},
+	// The land trade's barn (building type 0x27, «landhandel»): wares by carts to the road's other end
+	// (land_trade_window.hpp).
+	{0x33, Place::LandTrade, GameText::Count, "Caballeriza", "Barn", 0x27},
 };
 
 const PlaceInfo* place_of(uint32_t let_type) {
@@ -2474,6 +2480,13 @@ struct PlaceUi {
 	// The pirate's window and his ships' list as the last update made it.
 	PirateWindow pirate;
 	std::vector<uint16_t> pirate_list;
+	// The informer's news (the window's [+0x2154], made by 0x526B40), and after «Buy information» what he said.
+	InformerNews informer;
+	bool informer_done = false;
+	std::string informer_said;
+	// The land trade's window, and the partner town the side menu's check found (0x5336B0; 0xFF until then).
+	LandTradeWindow land;
+	uint8_t land_partner = 0xFF;
 };
 
 constexpr int kShipyardPages = 5;
@@ -2531,6 +2544,9 @@ struct PlaceView {
 	std::string amount_label;
 	uint16_t captain = 0xFFFF;  // The tavern's captain.
 	std::string act;  // The act button's label, if not the row's.
+	// The act button on (1) or off (0) whatever the selected row (the land trade's «Continue»: something loaded);
+	// -1 by the row (and the amount).
+	int act_on = -1;
 	// A second action of the selected row, with Square or its touch button beside the act button (the office
 	// administrator's «keep the stock», the weaponsmith's «sell» and «priority»): its label, empty for none.
 	std::string act2;
@@ -3816,6 +3832,11 @@ void place_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const
 		smithy_square(save, sailing, town, ui);
 	} else if (ui.open == Place::ShipPair) {
 		ship_pair_act(save, sailing, ui, true);
+	} else if (ui.open == Place::LandTrade && ui.land.page == 1) {
+		// «Back» ([+0x264]): the page 0, the escort 0.
+		ui.land.page = 0;
+		ui.land.escorts = 0;
+		ui.row = 0;
 	} else if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::Pirate) && !ui.pirate.done &&
 		!ui.pirate_list.empty()) {
 		// «before <town>» (0x5D584C).
@@ -3994,7 +4015,8 @@ std::vector<int> tavern_rows(const SaveGame& save, int town, const PlaceUi& ui) 
 	const std::array<bool, kTavernPeople> there = tavern_people(save, uint32_t(town));
 	const int kept = ui.inside || (ui.talking == int(TavernPerson::Trader) && ui.trader.done) ||
 			(ui.talking == int(TavernPerson::Traveller) && ui.traveller.done) ||
-			(ui.talking == int(TavernPerson::Pirate) && ui.pirate.done)
+			(ui.talking == int(TavernPerson::Pirate) && ui.pirate.done) ||
+			(ui.talking == int(TavernPerson::Informer) && ui.informer_done)
 		? ui.talking
 		: -1;
 	for (int k = 0; k < kTavernPeople; ++k) {
@@ -4096,6 +4118,11 @@ void tavern_talk(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
 	if (person == int(TavernPerson::Burglar)) {
 		ui.burglar.done = false;
 		ui.burglar.hired = false;
+	}
+	if (person == int(TavernPerson::Informer) && g_texts) {
+		// His page opened (0x5CF2D1): the news made again.
+		fn_526b40(save, sailing ? &sailing->nav() : nullptr, *g_texts, uint32_t(town), ui.informer);
+		ui.informer_done = false;
 	}
 	if (person == int(TavernPerson::Pirate)) {
 		ui.pirate = PirateWindow();
@@ -4320,6 +4347,31 @@ void pirate_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	v.act2_on = true;
 }
 
+// The informer's page (its drawing 0x5D10C0 and the page after it 0x5D12A0): his greeting and price; «Buy
+// information» queues the news's operation (0x4C, or 0x55 for a map's piece) and shows its text.
+void informer_page(PlaceUi& ui, PlaceView& v) {
+	v.title = place_name(ui.let_type) + " - " + exe_text(0x69D8B4, "Conversar con", "Conversation with") + " " +
+		lowered(exe_text(0x69C9E4, "Soplón", "Informer"));
+	v.act = exe_text(0x69DB3C, "Comprar información", "Buy information");
+	std::pair<std::string, bool>& row = v.rows[size_t(ui.row)];
+	if (ui.informer_done) {
+		for (const std::string& line : text_lines(ui.informer_said)) {
+			v.lines.push_back({line, kTextColor});
+		}
+		row.second = false;
+		return;
+	}
+	if (!g_texts) {
+		row.second = false;
+		return;
+	}
+	v.lines.push_back({exe_text(0x69D92C, "\"¡Saludos!", "\"Greetings!"), kTextColor});
+	v.lines.push_back({exe_text(0x69D93C, "Tengo alguna información para ti.", "I have some information there for you."), kTextColor});
+	v.lines.push_back({exe_text(0x69D940, "Te costará la mísera cantidad de", "It would cost you the small sum of") + " " +
+			format_money(ui.informer.price()) + ".\"",
+		kTextColor});
+}
+
 // The weapons dealer's greeting (0x5D1512: three lines).
 std::vector<std::string> dealer_greeting() {
 	return {exe_text(0x69D92C, "\"¡Saludos!", "\"Greetings!"),
@@ -4491,6 +4543,159 @@ void trader_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	}
 }
 
+// The land trade (.let 0x33, the barn «landhandel», building 0x27; land_trade_window.hpp). Instead of the window, the
+// side menu's warning when 0x5336B0 doesn't let it open (the barn not built, a town besieged). The page 0 the wares:
+// the row 0 the step (1, 5, 50, all), a row for each ware the office has or the carts carry (− unloads and + loads the
+// step's), X «Continue» with something loaded; the page 1 the escort (− and +), the costs and the danger's advice, X
+// «Despatch» with the money, Square «Back»; the page 2 the convoy set out (as the game's window, without buttons: ○).
+std::string land_trade_town(const SaveGame& save, uint32_t town) {
+	return town < save.towns.size() ? window_town_name(save, int(town)) : "-";
+}
+
+// The wares the page 0 shows, in the game's order.
+std::vector<uint32_t> land_trade_wares(const LandTradeWindow& w) {
+	std::vector<uint32_t> wares;
+	for (uint32_t ware = 0; ware < 20; ++ware) {
+		if (w.left[ware] != 0 || w.loaded[ware] != 0) {
+			wares.push_back(ware);
+		}
+	}
+	return wares;
+}
+
+void land_trade_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	LandTradeWindow& w = ui.land;
+	uint8_t partner = ui.land_partner;  // The side menu's [+0x1DC]: found once.
+	const uint8_t warning = fn_5336b0(save, uint32_t(town), partner);
+	ui.land_partner = partner;
+	if (warning != 0) {
+		v.title = place_name(ui.let_type);
+		v.lines.push_back({warning == 5 ? tr("No hay comercio terrestre desde esta ciudad.", "No overland trade from this town.")
+										: exe_format(0x6AFA20 + 4 * uint32_t(warning), {land_trade_town(save, partner)},
+											  tr("Ahora no se puede comerciar por tierra.", "No overland trade now.")),
+			kDimColor});
+		return;
+	}
+	if (w.page == 1 && !w.offices) {
+		w.page = 0;
+	}
+	v.title = exe_format(0x6AF9F0, {land_trade_town(save, w.to)}, tr("Comercio terrestre", "Land trade"));
+	const int32_t money = save.merchants[size_t(save.player)].money();
+	if (w.page == 0) {
+		land_trade_update(save, w);
+		if (!w.offices) {
+			v.lines.push_back({exe_format(0x6AFA20, {land_trade_town(save, w.to)},
+								   tr("Necesitas una oficina aquí y en la otra ciudad.", "You need an office here and in the other town.")),
+				kDimColor});
+			return;
+		}
+		static const char* kSteps[4] = {"1", "5", "50", nullptr};
+		v.rows.push_back({tr("Paso: ", "Step: ") + (kSteps[w.step & 3] ? std::string(kSteps[w.step & 3]) : tr("todo", "all")),
+			true});
+		const std::vector<uint32_t> wares = land_trade_wares(w);
+		const std::string office = exe_text(0x6AFA44, "Oficina", "Trading Office");
+		for (const uint32_t ware : wares) {
+			const WareUnit unit = kWares[ware].unit;
+			v.rows.push_back({ware_label(int(ware)) + ":  " + office + " " + amount_label(int(w.left[ware]), unit) + ",  " +
+					tr("carros ", "carts ") + amount_label(w.loaded[ware], unit),
+				true});
+		}
+		ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
+		v.lines.push_back({exe_text(0x6AFA48, "Carros (máx. 100)", "Carts (max. 100)") + ": " + std::to_string(w.used), kTextColor});
+		if (wares.empty()) {
+			v.lines.push_back({tr("Tu oficina no tiene mercancías.", "Your office has no goods."), kDimColor});
+		}
+		v.max_amount = 0;
+		v.amount_choice = true;
+		v.amount_label = ui.row == 0 ? "<>" : std::to_string(w.loaded[wares[size_t(ui.row - 1)]]);
+		v.act = exe_text(0x6AFA34, "Confirmar", "Continue");
+		v.act_on = w.slots != 0 ? 1 : 0;
+		return;
+	}
+	const uint32_t carts = (uint32_t(w.slots) + 9) / 10;
+	if (w.page == 2) {
+		v.lines.push_back({exe_format(0x6AFA1C,
+							   {std::to_string(carts), land_trade_town(save, w.to), std::to_string(w.days)},
+							   tr("El convoy ha salido.", "The convoy has set out.")),
+			kTextColor});
+		return;
+	}
+	land_trade_costs(save, w);
+	// The question, and the level between − and + (as the game draws it between its two buttons).
+	v.rows.push_back({exe_text(0x6AFA0C, "¿Qué nivel quieres que tenga la escolta que protege tu convoy?",
+						  "What level of protection should be given to your convoy?"),
+		true});
+	ui.row = 0;
+	v.lines.push_back({exe_format(0x6AFA3C,
+						   {land_trade_town(save, w.from), land_trade_town(save, w.to), std::to_string(carts),
+							   std::to_string(w.cost)},
+						   tr("Costes del convoy: ", "Convoy costs: ") + format_money(int32_t(w.cost))),
+		kTextColor});
+	if (money < int32_t(w.cost)) {
+		v.lines.push_back({exe_text(0x6AFA40, "Actualmente no dispones de suficiente dinero para financiar este convoy.",
+							   "You do not currently have enough cash to fund this convoy."),
+			kWarnColor});
+	}
+	v.lines.push_back({exe_text(0x6AF9F4 + 4 * uint32_t(std::min<uint8_t>(w.danger, 2)), "", ""), kTextColor});
+	v.max_amount = 0;
+	v.amount_choice = true;
+	v.amount_label = exe_text(0x6AFA10 + 4 * uint32_t(std::min<uint8_t>(w.escorts, 2)), "bajo", "low");
+	v.act = exe_text(0x6AFA08, "Enviar", "Despatch");
+	v.act_on = money >= int32_t(w.cost) ? 1 : 0;
+	v.act2 = exe_text(0x6AFA38, "Atrás", "Back");
+	v.act2_on = true;
+}
+
+// − and + (Left/Right) on the land trade: the page 0's step (its row 0) or a ware's unload and load (0x5EAD0C), the
+// page 1's escort (its buttons [+0x34C], [+0x434]: 0..2).
+bool land_trade_step(SaveGame& save, int town, PlaceUi& ui, int step) {
+	if (ui.open != Place::LandTrade) {
+		return false;
+	}
+	uint8_t partner = ui.land_partner;
+	LandTradeWindow& w = ui.land;
+	if (fn_5336b0(save, uint32_t(town), partner) != 0) {
+		return true;
+	}
+	if (w.page == 0 && w.offices) {
+		const std::vector<uint32_t> wares = land_trade_wares(w);
+		if (ui.row == 0) {
+			w.step = uint8_t((w.step + step + 4) % 4);
+		} else if (ui.row >= 1 && size_t(ui.row - 1) < wares.size()) {
+			if (step < 0) {
+				land_trade_unload(w, wares[size_t(ui.row - 1)]);
+			} else {
+				land_trade_load(w, wares[size_t(ui.row - 1)]);
+			}
+			land_trade_update(save, w);
+		}
+	} else if (w.page == 1) {
+		if (step < 0 && w.escorts > 0) {
+			--w.escorts;
+		} else if (step > 0 && w.escorts < 2) {
+			++w.escorts;
+		}
+	}
+	return true;
+}
+
+// X on the land trade: «Continue» (the page 1) or «Despatch» (0x5EB3C0: its 0x3A operations; the page 2).
+void land_trade_act(SaveGame& save, Sailing* sailing, PlaceUi& ui) {
+	LandTradeWindow& w = ui.land;
+	if (w.page == 0 && w.slots != 0) {
+		w.page = 1;
+		ui.row = 0;
+	} else if (w.page == 1) {
+		land_trade_costs(save, w);
+		if (save.merchants[size_t(save.player)].money() >= int32_t(w.cost)) {
+			run_operations(save, sailing, land_trade_send(save, w));
+			w.page = 2;
+			ui.row = 0;
+		}
+	}
+	ui.message.clear();
+}
+
 PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	PlaceView v;
 	const int player = save.player;
@@ -4540,6 +4745,8 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 			traveller_page(save, town, ui, v);
 		} else if (person == TavernPerson::Pirate) {
 			pirate_page(save, town, ui, v);
+		} else if (person == TavernPerson::Informer) {
+			informer_page(ui, v);
 		} else if (person == TavernPerson::Burglar) {
 			v.title += " - " + exe_text(0x69D8C0, "Negociar con el ladrón", "Talk to burglar");
 			for (const std::string& line : burglar_lines()) {
@@ -4731,6 +4938,9 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	case Place::Smithy:
 		smithy_view(save, town, ui, v);
 		break;
+	case Place::LandTrade:
+		land_trade_view(save, town, ui, v);
+		break;
 	case Place::ShipPair:
 		ship_pair_view(save, ui, v);
 		break;
@@ -4921,8 +5131,9 @@ void draw_place(SDL_Renderer* renderer, TextRenderer& text, const PlaceUi& ui, c
 		draw_button(renderer, text, box,
 			v.amount_choice || !v.amount_label.empty() ? v.amount_label : std::to_string(ui.amount));
 	}
-	const bool can = ui.row < int(v.rows.size()) && v.rows[size_t(ui.row)].second &&
+	const bool by_row = ui.row < int(v.rows.size()) && v.rows[size_t(ui.row)].second &&
 		(v.max_amount < 0 || v.amount_choice || ui.amount > 0);
+	const bool can = v.act_on >= 0 ? v.act_on == 1 : by_row;
 	if (ui.row < int(v.rows.size())) {
 		const SDL_Rect act = layout.act_for(v);
 		draw_button(renderer, text, act, std::string(BTN_CROSS " ") + (v.act.empty() ? v.rows[size_t(ui.row)].first : v.act));
@@ -5052,9 +5263,14 @@ void shipyard_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const
 // builds it, run at once (the queue, as the market does).
 void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
 	ui.message_until = app_ticks() + kMessageTime;
-	if (ui.row >= int(v.rows.size()) || !v.rows[size_t(ui.row)].second ||
-		(v.max_amount >= 0 && !v.amount_choice && ui.amount <= 0)) {
+	const bool by_row = ui.row < int(v.rows.size()) && v.rows[size_t(ui.row)].second &&
+		(v.max_amount < 0 || v.amount_choice || ui.amount > 0);
+	if (ui.row >= int(v.rows.size()) || (v.act_on >= 0 ? v.act_on == 0 : !by_row)) {
 		ui.message = tr("Ahora no se puede.", "It can't be done now.");
+		return;
+	}
+	if (ui.open == Place::LandTrade) {
+		land_trade_act(save, sailing, ui);
 		return;
 	}
 	if (ui.open == Place::Ship && ui.row >= 2) {
@@ -5120,6 +5336,22 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 			run_operations(save, sailing,
 				{dealer_operation(save, uint32_t(town), uint32_t(ui.row - 2), true, uint32_t(std::clamp(ui.dealer_step, 0, 3)),
 					ui.dealer_office, ui.dealer_ship)});
+		}
+		ui.message.clear();
+		return;
+	}
+	if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::Informer)) {
+		// «Buy information» (0x5D59EC): with the money (signed) the news's operation and its text; else «I cannot give
+		// you the information for nothing...»; then the next news (0x5D5C3B).
+		if (!ui.informer_done && g_texts) {
+			if (save.merchants[size_t(save.player)].money() >= ui.informer.price()) {
+				run_operations(save, sailing, {ui.informer.op});
+				ui.informer_said = clean_game_text(ui.informer.text);
+			} else {
+				ui.informer_said = exe_text(0x69D944, "", "\"I cannot give you the information for nothing, can I?\"");
+			}
+			ui.informer_done = true;
+			fn_526b40(save, sailing ? &sailing->nav() : nullptr, *g_texts, uint32_t(town), ui.informer);
 		}
 		ui.message.clear();
 		return;
@@ -12154,11 +12386,19 @@ int main(int argc, char** argv) {
 			place.let_type = let_type;
 			if (p == Place::Tavern) {
 				place.roll = tavern_roll(save);
-				// The tavern's window opened (0x5CCE4B..0x5CCECF): a greeting, the trader's offer and his greeting.
+				// The tavern's window opened: the informer's news (0x5CC942), then (0x5CCE4B..0x5CCECF) a greeting,
+				// the trader's offer and his greeting.
+				if (g_texts) {
+					fn_526b40(save, sailing ? &sailing->nav() : nullptr, *g_texts, uint32_t(town_index), place.informer);
+				}
 				place.greeting = tavern_greeting(save);
 				place.trader.offer = trader_offer(save, uint32_t(town_index));
 				place.trader.greeting = tavern_greeting(save);
 				place.burglar.victims = burglar_victims(save, uint32_t(town_index));
+			}
+			if (p == Place::LandTrade) {
+				// The side menu's button opens the window on its page 0 (0x5EA280(0)).
+				land_trade_open(save, uint32_t(town_index), place.land);
 			}
 			if (p == Place::Lender) {
 				// When it opens (0x5B2B00): his debts, and the shares on sale
@@ -12204,6 +12444,10 @@ int main(int argc, char** argv) {
 			}
 			if ((button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) &&
 				dealer_step_or_place(save, town_index, place, button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1)) {
+				return true;
+			}
+			if ((button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) &&
+				land_trade_step(save, town_index, place, button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1)) {
 				return true;
 			}
 			if ((button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) &&
@@ -15114,6 +15358,10 @@ int main(int argc, char** argv) {
 						(inside(layout.minus_button, x, y) || inside(layout.plus_button, x, y)) &&
 						dealer_step_or_place(save, town_index, place, inside(layout.minus_button, x, y) ? -1 : 1)) {
 						// The weapons dealer's place or step.
+					} else if (place_now.max_amount >= 0 &&
+						(inside(layout.minus_button, x, y) || inside(layout.plus_button, x, y)) &&
+						land_trade_step(save, town_index, place, inside(layout.minus_button, x, y) ? -1 : 1)) {
+						// The land trade's step, a ware's load, the escort.
 					} else if (place_now.max_amount >= 0 && place.open == Place::Tavern &&
 						place.talking == int(TavernPerson::Traveller) &&
 						(inside(layout.minus_button, x, y) || inside(layout.plus_button, x, y))) {

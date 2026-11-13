@@ -1,17 +1,23 @@
 #include "debug_states.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <vector>
 
 #include "p3data/game_memory.hpp"
 #include "p3data/hanse_tasks.hpp"
+#include "p3data/land_trade_window.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/player_actions.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
+
+namespace p3::data::tick::events_towns_detail {
+int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town);  // events_towns.cpp: the office, made if none
+}  // namespace p3::data::tick::events_towns_detail
 
 namespace p3::app {
 
@@ -357,6 +363,35 @@ bool shipyard_materials(SaveGame& save) {
 	return false;
 }
 
+// The land trade (land_trade_window.hpp): the first town from the player's home town on whose side menu lets its
+// window open (0x5336B0: the barn built, no siege) and its partner, the player's office in both (made where there is
+// none), in the first one 10 loads of grain, 30 barrels of beer, 12 barrels of wine and 8 loads of timber; the town
+// and how many towns from the home town (R in the viewer) on stdout.
+bool land_trade(SaveGame& save) {
+	const uint32_t player = uint32_t(save.player);
+	const uint32_t home = save.merchants[size_t(save.player)].hometown();
+	for (uint32_t k = 0; k < save.towns.size(); ++k) {
+		const uint32_t town = uint32_t((home + k) % save.towns.size());
+		uint8_t partner = 0xFF;
+		if (fn_5336b0(save, town, partner) != 0) {
+			continue;
+		}
+		const int from = tick::events_towns_detail::fn_5308a0_create(save, player, town);
+		const int to = tick::events_towns_detail::fn_5308a0_create(save, player, partner);
+		if (from < 0 || to < 0) {
+			return false;
+		}
+		OfficeMemory& o = save.offices[size_t(from)].memory;
+		o.s32(4 + 4 * 0) += 20000;
+		o.s32(4 + 4 * 3) += 6000;
+		o.s32(4 + 4 * 7) += 2400;
+		o.s32(4 + 4 * 11) += 16000;
+		std::printf("land-trade: town %u (R x%u from the home town %u), its partner %u\n", town, k, home, partner);
+		return true;
+	}
+	return false;
+}
+
 // The moneylender of the town of the player's first ship in port, busy: three
 // loans on offer (the town's slots 0..2, [0x9C6 + 6·k]: rank, names, weeks,
 // amount) and three townsmen asking for one (3..5); the player worth 300000
@@ -519,6 +554,8 @@ const char kDebugStatesHelp[] =
 	"  tavern-people   all the tavern's people there (a captain, the trader, the informer, the traveller, ...)\n"
 	"  convoy-leader  the player's first ship in port fit to guide a convoy\n"
 	"  shipyard-materials  100 units of each shipyard material in that ship's town\n"
+	"  land-trade  the player's offices at both ends of the first open road, wares in\n"
+	"              the first (its town and the R presses to it on stdout)\n"
 	"  lender      loans on offer and asked for in that ship's town, an AI merchant's\n"
 	"              shares on sale (the moneylender)\n"
 	"  letters     letters with buttons: a suitor, a proposal, the prince's request\n"
@@ -700,6 +737,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "auctions") {
 			if (!auctions(save)) {
 				error = "the player's first ship isn't in a town";
+				return false;
+			}
+		} else if (state == "land-trade") {
+			if (!land_trade(save)) {
+				error = "no town lets the land trade's window open";
 				return false;
 			}
 		} else if (state == "lender") {

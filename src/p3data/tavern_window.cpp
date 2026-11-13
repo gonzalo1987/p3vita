@@ -1,10 +1,14 @@
 #include "p3data/tavern_window.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <tuple>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
+#include "p3data/game_texts.hpp"
+#include "p3data/navigation.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -16,6 +20,9 @@ uint16_t fn_5269a0(const SaveGame& save, int town, uint16_t owner);
 namespace tick::events_detail {
 uint32_t fn_5261d0(const SaveGame& save, uint32_t town);
 }  // namespace tick::events_detail
+namespace tick::alderman_detail {
+uint16_t fn_4ec694(const SaveGame& save, uint32_t merchant);
+}  // namespace tick::alderman_detail
 
 namespace {
 
@@ -746,6 +753,430 @@ std::optional<OperationBytes> pirate_press(const SaveGame& save, uint32_t town, 
 	put32(op, 0xC, henchmen);
 	put32(op, 0x10, before_town ? town : 0xFF);
 	return op;
+}
+
+int32_t InformerNews::price() const {
+	int32_t v;
+	std::memcpy(&v, op.data() + 0xC, 4);
+	return v;
+}
+
+namespace {
+
+constexpr uint32_t kTownTable = 0x6DDB90;  // StadtDaten.ini: 0x34 bytes per town number ([+0x20], [+0x24] its place)
+constexpr uint32_t kTownIds = 0x6DE4B8;    // u8 per town index: its number
+constexpr uint32_t kHistory = 0x6DE588;    // the towns' history (0x535300, 0x5353C0)
+constexpr uint32_t kMailCount = 0x6DD736;  // u16
+constexpr uint8_t kSingular[20] = {1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0};  // 0x66E0D4
+constexpr uint8_t kInformerTable[0x14][4] = {{4, 3, 12, 10}, {0, 1, 11, 11}, {0, 2, 18, 12}, {0, 3, 0, 13}, {0, 4, 7, 14},
+	{1, 0, 20, 15}, {1, 2, 13, 16}, {1, 3, 4, 17}, {1, 4, 23, 18}, {2, 0, 12, 19}, {2, 1, 30, 20}, {2, 3, 1, 21},
+	{2, 4, 2, 22}, {3, 0, 19, 23}, {3, 1, 12, 24}, {3, 2, 29, 25}, {3, 4, 25, 26}, {4, 0, 5, 27}, {4, 1, 27, 28},
+	{4, 2, 31, 29}};  // 0x673730 (its 0x50 bytes)
+
+// A town's name by its index in the table of names by number 0x6DDA00 (the game's index-for-number: the letters'
+// game bug; the right name with fix_game_bugs).
+std::string informer_town(const SaveGame& save, uint32_t town) {
+	const bool fixed = fix_game_bugs();
+	if (fixed && town >= save.globals.u32(global::kWorldTownCount)) {
+		return std::string();
+	}
+	const uint32_t named = fixed ? save.globals.u8(kTownIds + town) : town;
+	const std::vector<std::string>& table = fixed ? save.opaque.town_names : save.opaque.town_name_table;
+	return named < table.size() ? table[named] : std::string();
+}
+
+uint8_t town_region(const SaveGame& save, uint32_t town) {
+	return save.globals.u8(kTownTable + 0x34 * save.towns[town].memory.u8(0x2C1) + 0x30);
+}
+
+// 0x5353C0 (on the history, a town): how many days late the local player knows the town (his slot's table; 15
+// without one).
+uint32_t fn_5353c0(const SaveGame& save, uint32_t town) {
+	const GlobalMemory& g = save.globals;
+	for (uint32_t slot = 0; slot < 8; ++slot) {
+		if (g.u8(kHistory + 0xA00 + slot) == g.u32(global::kPlayer)) {
+			const std::vector<uint8_t>& lag = save.player_towns[slot];
+			if (lag.empty()) {
+				return 15;
+			}
+			return town < lag.size() ? lag[town] : 0;
+		}
+	}
+	return 15;
+}
+
+// 0x515AE0 (the pirate k): his captain's names (the first ship of his chain [+0xC], next [+0x4], with a busy captain,
+// 0x4FE150), or 0x2D and the families' count's low byte.
+void pirate_names(const SaveGame& save, uint32_t k, uint8_t& first, uint8_t& family) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t ships = g.u16(global::kShipCount);
+	for (uint32_t s = save.pirates[k] ? save.pirates[k]->u16(0xC) : 0xFFFF; s < ships; s = save.ships[s].memory.u16(4)) {
+		const uint16_t c = save.ships[s].memory.u16(0x42);
+		if (c < g.u16(global::kCaptainCount) && save.captains[c].u8(8) > 0x20) {
+			first = save.captains[c].u8(2);
+			family = save.captains[c].u8(3);
+			return;
+		}
+	}
+	first = 0x2D;
+	family = g.u8(0x6DDB74);
+}
+
+// 0x4D75D0 (on the mailbox: merchant, &letter, &piece): the merchant's first treasure map (the type 0x45, or 0x46 with
+// [+0xA] below 0x1FF) and a piece (1 << k) of its nine not found ([+0xA]'s bits clear): the only one, or by rand().
+bool fn_4d75d0(SaveGame& save, uint32_t merchant, uint16_t& letter, uint16_t& piece) {
+	const GlobalMemory& g = save.globals;
+	letter = 0xFFFF;
+	piece = 0;
+	if (merchant >= g.u16(global::kWorldMerchantCount)) {
+		return false;
+	}
+	const uint32_t count = g.u16(kMailCount);
+	int32_t left = int32_t(count);
+	uint32_t i = save.merchants[merchant].memory.u16(0xA);
+	bool found = false;
+	while (int32_t(i) < int32_t(count) && left-- > 0) {
+		const GameMemory<0x10>& e = save.mail[i];
+		if (e.u8(4) == 0x45 || (e.u8(4) == 0x46 && e.u16(0xA) < 0x1FF)) {
+			letter = uint16_t(i);
+			found = true;
+			break;
+		}
+		i = e.u16(6);
+	}
+	if (!found || letter >= count || left < 0 || save.mail[letter].u16(0xA) >= 0x1FF) {
+		letter = 0xFFFF;
+		return false;
+	}
+	const uint16_t bits = save.mail[letter].u16(0xA);
+	uint16_t clear[9];
+	int n = 0;
+	for (int k = 0; k < 9; ++k) {
+		if (!(bits & (1 << k))) {
+			clear[n++] = uint16_t(1 << k);
+		}
+	}
+	piece = n == 1 ? clear[0] : clear[(tick::game_rand(save) & 0xFF) * uint32_t(n) >> 8];
+	return true;
+}
+
+void put_news(std::string& text, bool& first, const std::string& piece) {
+	if (first) {
+		first = false;
+	} else {
+		text += '\n';
+	}
+	text += piece;
+}
+
+}  // namespace
+
+uint32_t fn_448610(const SaveGame& save, const NavData& nav, uint32_t ship) {
+	const GlobalMemory& g = save.globals;
+	const ShipMemory& s = save.ships[ship].memory;
+	uint32_t best = 0xFFFFFFFF;
+	uint32_t found = 0;
+	for (uint32_t t = 0; t < g.u32(global::kWorldTownCount) && t < 0x100; ++t) {
+		const uint32_t entry = kTownTable + 0x34 * g.u8(kTownIds + t);
+		const MapPoint points[2] = {{int16_t(s.u16(0x1E)), int16_t(s.u16(0x22))},
+			{int16_t(g.u16(entry + 0x20)), int16_t(g.u16(entry + 0x24))}};
+		std::vector<MapPoint> route;
+		MapPoint failed;
+		nav.route_through(points, 2, route, failed);
+		if (route.empty()) {
+			continue;  // No route at all: the town isn't looked at.
+		}
+		uint32_t length = 0;
+		for (size_t k = 1; k < route.size(); ++k) {
+			const int32_t dy = std::abs(int32_t(route[k - 1].y) - int32_t(route[k].y));
+			length += uint32_t(dy) * 29;
+		}
+		if (length < best) {
+			best = length;
+			found = t;
+		}
+	}
+	return found & 0xFF;
+}
+
+void fn_526b40(SaveGame& save, const NavData* nav, const GameTexts& texts, uint32_t town, InformerNews& news) {
+	GlobalMemory& g = save.globals;
+	const TownMemory& t = town_memory(save, town);
+	const uint32_t player = g.u32(global::kPlayer);
+	const uint32_t towns = g.u32(global::kWorldTownCount);
+	auto text = [&](uint32_t english) -> const std::string& { return texts.raw_at(english); };
+	auto fmt = [&](uint32_t english, const std::vector<std::string>& args) { return GameTexts::format(text(english), args); };
+	// The Spanish build's code (0x526FF0) gives some of them their arguments in another order (its sentences need it)
+	// and says the plentiful ware in the singular or the plural (0x66E0D4).
+	const bool spanish = texts.spanish();
+	const MerchantMemory& m = save.merchants[player].memory;
+	const uint32_t rank = m.u8(0x39C + m.u8(0x19));
+	if (((g.u32(global::kWorldTick) >> 8) + t.u8(0x2C0)) % 3 == 0) {
+		uint16_t letter = 0;
+		uint16_t piece = 0;
+		fn_4d75d0(save, player, letter, piece);
+		if (letter < g.u16(kMailCount)) {
+			put32(news.op, 0, 0x55);
+			put32(news.op, 4, player);
+			put32(news.op, 8, letter);
+			const uint32_t draw = tick::game_rand(save);
+			put32(news.op, 0xC, (draw % 11 + 30 * (rank + 1)) * 10);
+			put32(news.op, 0x10, (uint32_t(piece) << 5) + t.u8(0x2C0));
+			news.text = "\"" + text(0x6C29F8) + "\"";
+			return;
+		}
+	}
+	put32(news.op, 0, 0x4C);
+	put32(news.op, 4, player);
+	put32(news.op, 8, 0xFFFF);
+	put32(news.op, 0xC, (rank + 1) * 100);
+	put32(news.op, 0x10, 0xFFFF);
+	news.icon = 0;
+	news.icon2 = 0;
+	news.text.clear();
+	uint32_t region = 0;
+	const uint8_t idx = t.u8(0x82C);
+	if (idx < 0x14) {
+		news.icon = kInformerTable[idx][2];
+		news.icon2 = kInformerTable[idx][3];
+		region = kInformerTable[idx][1];
+	}
+	auto add_price = [&](uint32_t more) {
+		uint32_t v;
+		std::memcpy(&v, news.op.data() + 0xC, 4);
+		put32(news.op, 0xC, v + more);
+	};
+	bool first = true;
+	const bool fixed = fix_game_bugs();
+	// The towns' changes the player hasn't heard of.
+	for (uint32_t i = 0; i < towns; ++i) {
+		if (town_region(save, i) != region || fn_5353c0(save, i) <= 3) {
+			continue;
+		}
+		const uint32_t now = save.towns[i].memory.u32(0x2C8);
+		const uint32_t known = town_situation_known(save, i);
+		const std::string name = informer_town(save, i);
+		std::string piece;
+		if ((now ^ known) & 0x10) {
+			piece = fmt(now & 0x10 ? 0x6C25C8 : 0x6C25CC, {name});
+		} else if ((now ^ known) & 0x8) {
+			piece = fmt(now & 0x8 ? (fixed ? 0x6C2624 : 0x6C25C8) : (fixed ? 0x6C2628 : 0x6C25CC), {name});
+		} else if ((now ^ known) & 0x8000) {
+			piece = fmt(now & 0x8000 ? 0x6C26C0 : 0x6C26C4, {name});
+		} else if ((now ^ known) & 0x1000) {
+			piece = fmt(now & 0x1000 ? (fixed ? 0x6C2670 : 0x6C25C8) : (fixed ? 0x6C2674 : 0x6C25CC), {name});
+		} else if ((now ^ known) & 0x7C0000) {
+			const uint32_t ware = (now >> 18) & 0x1F;
+			if (ware >= 0x14) {
+				continue;
+			}
+			piece = fmt(kSingular[ware] ? 0x6C276C : 0x6C2770, {name, text(0x6C0BB0 + 4 * ware)});
+		} else if (now & 0x2000) {
+			piece = fmt(0x6C272C, {name});
+		} else if (now & 0x4000) {
+			piece = fmt(0x6C2730, {name});
+		} else {
+			continue;
+		}
+		put_news(news.text, first, piece);
+		add_price(10);
+	}
+	if (news.text.empty()) {
+		put32(news.op, 8, t.u8(0x2C0));
+	}
+	// The scarcest ware of the region.
+	int32_t least = 0x100;
+	uint32_t least_ware = 0xFF;
+	uint32_t least_town = 0xFF;
+	for (uint32_t i = towns; i-- > 0;) {
+		if (town_region(save, i) != region) {
+			continue;
+		}
+		const TownMemory& u = save.towns[i].memory;
+		for (uint32_t w = 20; w-- > 0;) {
+			const int32_t stock = u.s32(4 + 4 * w);
+			const int32_t wanted = u.s32(0x4F0 + 0x10 * w);  // (Not the trader's [+0x4F4]: the field before it.)
+			if (stock >= wanted) {
+				continue;
+			}
+			int32_t ratio;
+			if (stock > 0) {
+				const int32_t scale = wanted >> 7;
+				if (scale == 0) {
+					continue;  // The game would divide by 0.
+				}
+				ratio = int32_t(uint32_t(stock) * 4) / scale;
+			} else {
+				ratio = -wanted;
+			}
+			if (ratio < least) {
+				least = ratio;
+				least_ware = w;
+				least_town = i;
+			}
+		}
+	}
+	if (least_town < towns) {
+		const std::string ware = text(0x6C0BB0 + 4 * least_ware);
+		const std::string where = informer_town(save, least_town);
+		put_news(news.text, first, spanish ? fmt(0x6C27E0, {where, ware}) : fmt(0x6C27E0, {ware, where}));
+		add_price(10);
+	}
+	// The most plentiful.
+	int32_t most = 0;
+	uint32_t most_ware = 0xFF;
+	uint32_t most_town = 0xFF;
+	for (uint32_t i = towns; i-- > 0;) {
+		const TownMemory& u = save.towns[i].memory;
+		if (town_region(save, i) != region || !(u.u32(0x76C) & 0x100)) {
+			continue;
+		}
+		for (uint32_t w = 0; w < 0x18; ++w) {
+			if (!((0x4472Eu >> w) & 1)) {
+				continue;
+			}
+			const int32_t low = u.s32(0x4F4 + 0x10 * w);
+			const int32_t stock = u.s32(4 + 4 * w);
+			if (stock <= int32_t(uint32_t(low) + 20000)) {
+				continue;
+			}
+			const int32_t high = u.s32(0x4F8 + 0x10 * w);
+			int32_t ratio;
+			if (stock > high) {
+				const int32_t span = int32_t(uint32_t(high) - uint32_t(low)) >> 7;
+				ratio = span > 1 ? int32_t(uint32_t(stock) * 2) / span + 0x100 : int32_t(uint32_t(stock) + 0x100);
+			} else {
+				const int32_t scale = low >> 7;
+				if (scale == 0) {
+					continue;  // The game would divide by 0.
+				}
+				ratio = int32_t(uint32_t(stock) * 2) / scale;
+			}
+			if (ratio > most) {
+				most = ratio;
+				most_ware = w;
+				most_town = i;
+			}
+		}
+	}
+	if (most_town < towns) {
+		const std::string ware = text(0x6C0BB0 + 4 * most_ware);
+		const std::string where = informer_town(save, most_town);
+		if (spanish) {
+			const std::string& plural = texts.raw_at(0x40000000 | 0x6C2F80);
+			put_news(news.text, first,
+				GameTexts::format(kSingular[most_ware] || plural.empty() ? text(0x6C28A8) : plural, {where, ware}));
+		} else {
+			put_news(news.text, first, fmt(0x6C28A8, {ware, where}));
+		}
+		add_price(10);
+	}
+	// The pirates seen.
+	uint8_t pirate = 0;
+	uint32_t chain = 0xFF00;  // The game's [esp+0x54] with its low byte cleared: the window's address (above the ships).
+	uint8_t first_name = 0;
+	uint8_t family_name = 0;
+	uint32_t largest = 0;
+	for (uint8_t k = 0; k < 5; ++k) {
+		if (save.pirates[k] && save.pirates[k]->u16(0x16) > largest) {
+			largest = save.pirates[k]->u16(0x16);
+			pirate = k;
+			pirate_names(save, k, first_name, family_name);
+			chain = save.pirates[k]->u16(0xC);
+		}
+	}
+	const uint16_t task = tick::alderman_detail::fn_4ec694(save, player);
+	if (task != 0xFFFF && task < save.events.size()) {
+		const GameMemory<0x18>& e = save.events[task];  // 0x4D8DB0's record: [+0xC] of it is the event's [+0xC]
+		if (e.u8(0xC) == 2 && e.u8(0x16) == 0) {
+			first_name = e.u8(0x12);
+			chain = e.u16(0x10);
+			family_name = e.u8(0x14);
+		}
+	}
+	const uint32_t ships = g.u16(global::kShipCount);
+	if (save.pirates[pirate] && nav) {
+		for (uint32_t i = chain & 0xFFFF; i < ships; i = save.ships[i].memory.u16(4)) {
+			const ShipMemory& s = save.ships[i].memory;
+			const uint16_t c = s.u16(0x42);
+			if (c >= g.u16(global::kCaptainCount) || save.captains[c].u8(2) != first_name ||
+				save.captains[c].u8(3) != family_name) {
+				continue;
+			}
+			const uint32_t near = fn_448610(save, *nav, i);
+			const std::string his_first = game_first_name(save, first_name);
+			const std::string his_family = game_family_name(save, family_name);
+			const std::string where = informer_town(save, near);
+			std::string piece;
+			switch ((c + near) % 3) {
+			case 0:
+				piece = fmt(0x6B1460, {where, his_first, his_family});
+				break;
+			case 1:
+				piece = fmt(0x6B1464, {his_first, his_family, where});
+				break;
+			default:
+				piece = fmt(0x6B1468, {his_first, his_family, where});
+				break;
+			}
+			put_news(news.text, first, piece);
+			add_price(10);
+		}
+	}
+	if (!news.text.empty()) {
+		news.text = "\"" + news.text + "\"";
+		return;
+	}
+	// Nothing to tell: a town of the region.
+	uint32_t chosen = 0xFF;
+	{
+		int32_t n = int32_t(tick::game_rand(save) & 3) + 1;
+		uint32_t i = 0;
+		bool round = false;
+		bool fallback = false;
+		while (n > 0) {
+			if (town_region(save, i) == region) {
+				chosen = i;
+				--n;
+			}
+			if (++i >= towns) {
+				if (round) {
+					fallback = true;
+					break;
+				}
+				i = 0;
+				round = true;
+			}
+		}
+		if (fallback) {
+			chosen = t.u8(0x82C) % towns;
+		}
+	}
+	const TownMemory& c = save.towns[chosen].memory;
+	const std::string where = informer_town(save, chosen);
+	switch (t.u32(0x54) & 3) {
+	case 0:
+		news.text = fmt(0x6C29B8, {std::to_string(c.s32(0x2D4)), where, std::to_string(c.s32(0x2E4))});
+		break;
+	case 1:
+		if (c.u8(0x6F1) < g.u16(global::kWorldMerchantCount)) {
+			const auto [mayor_first, mayor_family] = merchant_names(save, c.u8(0x6F1));
+			news.text = fmt(0x6C29BC, {mayor_first, mayor_family, where});
+		} else {
+			news.text = fmt(0x6C29BC, {game_first_name(save, c.u8(0x6D4)), game_family_name(save, c.u8(0x6D8)), where});
+		}
+		break;
+	case 2:
+		news.text = spanish ? fmt(0x6C29C0, {where, std::to_string(c.s32(0x31C))})
+							: fmt(0x6C29C0, {std::to_string(c.s32(0x31C)), where});
+		break;
+	default:
+		news.text = fmt(0x6C29C4, {std::to_string(c.u16(0x2C6)), where});
+		break;
+	}
+	news.text = "\"" + news.text + "\"";
+	put32(news.op, 0xC, (((t.u32(0x54) + chosen + region) & 3) + 7) * 10);
+	put32(news.op, 8, t.u8(0x2C0));
 }
 
 }  // namespace p3::data

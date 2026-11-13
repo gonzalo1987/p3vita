@@ -4,6 +4,7 @@
 // are in operations.cpp.
 
 #include <algorithm>
+#include <cstring>
 
 #include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -374,6 +375,40 @@ uint32_t fn_4e63e4(SaveGame& save, uint16_t event) {
 	}
 	traveller_leaves(save, event);
 	return 0;
+}
+
+namespace ship_ai_detail {
+void fn_535400(SaveGame& save, uint32_t town, uint32_t merchant);
+}  // namespace ship_ai_detail
+
+// The operation 0x4C (0x53B4D0): {0x4C, merchant, the informer's town, the price, the town told about}: the tavern's
+// informer's news (his window 0x5D5970 queues what 0x526B40 prepared). The merchant (below the merchants) pays ([+0x0]
+// down, [+0x4BC] up) and, with the town told about in the world, every town of its region (the byte [+0x30] of the
+// StadtDaten entry 0x6DDB90 of each town's number [+0x2C1]) is known to him as if his ship were there (0x535400). The
+// informer leaves: the informer's town's [+0x82C] = 0xFF (a town in the world).
+void fn_53b4d0(SaveGame& save, const uint8_t* operation) {
+	constexpr uint32_t kTownTable = 0x6DDB90;  // 0x34 bytes per town number (StadtDaten.ini)
+	uint32_t f[5];
+	std::memcpy(f, operation, sizeof(f));
+	GlobalMemory& g = save.globals;
+	const uint32_t towns = g.u32(global::kWorldTownCount);
+	if (f[1] < g.u16(global::kWorldMerchantCount)) {
+		MerchantMemory& m = save.merchants[f[1]].memory;
+		m.s32(0) = int32_t(uint32_t(m.s32(0)) - f[3]);
+		m.s32(0x4BC) = int32_t(uint32_t(m.s32(0x4BC)) + f[3]);
+		if (f[4] < towns) {
+			auto region = [&](uint32_t town) { return g.u8(kTownTable + 0x34 * save.towns[town].memory.u8(0x2C1) + 0x30); };
+			const uint8_t wanted = region(f[4]);
+			for (uint32_t t = 0; t < g.u32(global::kWorldTownCount); ++t) {  // (The game counts in a byte.)
+				if (region(t) == wanted) {
+					ship_ai_detail::fn_535400(save, t, f[1]);
+				}
+			}
+		}
+	}
+	if (f[2] < g.u32(global::kWorldTownCount)) {
+		save.towns[f[2]].memory.u8(0x82C) = 0xFF;
+	}
 }
 
 }  // namespace p3::data::tick

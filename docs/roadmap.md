@@ -22,7 +22,7 @@ Cómo leerla:
   terminadas). Las notas y los scripts de cada sesión, fuera del repositorio, en `re/emu/sesionN/` (con su README).
 - `[ ]` pendiente; `[x]` hecho y comprobado. Este documento se queda en español: lo lee el usuario.
 
-## Dónde estamos (12-11-2026)
+## Dónde estamos (13-11-2026)
 
 - **El motor**: todo lo que hace una partida por sí sola está reescrito e idéntico al juego: las ciudades, los
   comerciantes, los barcos y los convoyes de la IA, la cola de eventos, los asedios, las tormentas, los piratas, todas
@@ -33,9 +33,14 @@ Cómo leerla:
 - **El visor** (lo que se juega en la Vita): la pantalla de inicio y la partida nueva; la ciudad con el panel lateral
   del juego; el mapa del mar; el mercado, la taberna, el astillero y el muelle, la oficina y el prestamista; construir
   y derribar tocando la ciudad; el menú del barco, con las rutas comerciales y la ventana de dos barcos; el gremio, la
-  herrería, la iglesia, el baño y la oficina de otro comerciante; el buzón; las estadísticas; el panel de la
-  Hansa; las batallas que dirige el jugador; guardar y cargar; las opciones (idioma, corregir los fallos del juego).
-- **Lo último** (13-11-2026): en el visor, el ladrón y el pirata de la taberna (y los botones de acción de las
+  herrería, la iglesia, el baño, la oficina de otro comerciante y la caballeriza (el transporte por tierra); el buzón;
+  las estadísticas; el panel de la Hansa; las batallas que dirige el jugador; guardar y cargar; las opciones (idioma,
+  corregir los fallos del juego).
+- **Lo último** (13-11-2026): acabado el grupo 4 del encargo. En el visor, el soplón de la taberna (su noticia, que
+  prepara la ciudad, 0x526B40, con el texto del rumor; la 0x4C, nueva en el motor) y la ventana del transporte por
+  tierra en la caballeriza (`land_trade_window.cpp`: las mercancías de la oficina a los carros, la escolta y su coste,
+  el sorteo de la emboscada y su pérdida repartida por mercancías, como el juego; escenario `land_trade_window`, ctest
+  `land_trade_window`). Antes, el ladrón y el pirata de la taberna (y los botones de acción de las
   ventanas de lugar ocupan todo el ancho cuando no hay − y +; tocar «○ cerrar» cierra). Antes, la taberna en el visor:
   una fila por persona presente (quién está, como el juego; hablar
   con una encola la 0x52 como su menú y salir de la taberna la de tipo 10), el comerciante (su oferta, «Aceptar
@@ -60,10 +65,8 @@ Cómo leerla:
   (0x5F, 0x75 y el evento 0x13, con sus cartas y, en el visor, la ventana de la oficina de otro comerciante) y la ruta
   por puntos del mapa del mar (0x0B), esta también en el visor (tocar el mar añade puntos; X zarpa, ○ los borra).
   Antes, la primera parte: la reparación de convoyes, los botones de las cartas, la iglesia y el baño.
-- **Siguiente**: el encargo `ENCARGO_ACCIONES_3.md` (junto al HANDOFF), con el resto (apartado 1): del grupo 4 queda
-  el soplón de la taberna (con la 0x4C en el motor) y la ventana del transporte por tierra de la puerta de la ciudad
-  (0x5EA3xx..0x5EB3C0, con su sorteo de la emboscada); después la milicia, los asedios y el resto del
-  ayuntamiento (grupo 5, con la votación del consejo 0x49).
+- **Siguiente**: el encargo `ENCARGO_ACCIONES_3.md` (junto al HANDOFF), con su grupo 5 (apartado 1): el
+  ayuntamiento, la milicia y los asedios (con la votación del consejo 0x49 y el cliente de un pedido de la taberna).
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
   (apartado 6).
@@ -78,9 +81,9 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | La simulación sola (sin el jugador) | del código del juego al que llega, el 84 % reescrito con su nombre y otro 12 % hecho sin él (cargar y guardar partidas, la navegación) o saltado a propósito (medida abajo) | el 4 % sin nada son los manejadores de los tipos de evento que crean las acciones del jugador; además, los estados raros del barco y unas ramas sueltas (apartado 2) |
 | El intérprete de misiones (aparte) | 18 % | casi entero (apartado 3) |
 | Tipos de evento (58) | 52 | 6: 1 lo crea una acción del jugador que falta (el 0x11, los pedidos del ayuntamiento), 1 el intérprete de misiones, 1 la partida en red y 3 nadie |
-| Operaciones (193 códigos) | 153: las 37 de la simulación, 88 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan y 8 de las 15 de la red | **18 del jugador** (apartado 1; 5 de ellas, 0x54, 0x55, 0x74, 0x76 y 0x82, van con el intérprete de misiones; la 0x4C, que se creía sin uso, la prepara el soplón de la taberna), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 15, sin uso: 6 no hacen nada y a 9 no se les ha encontrado quien las encole (una, la 0x8F, manda dos cartas del asedio) |
+| Operaciones (193 códigos) | 154: las 37 de la simulación, 89 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan y 8 de las 15 de la red | **17 del jugador** (apartado 1; 5 de ellas, 0x54, 0x55, 0x74, 0x76 y 0x82, van con el intérprete de misiones), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 15, sin uso: 6 no hacen nada y a 9 no se les ha encontrado quien las encole (una, la 0x8F, manda dos cartas del asedio) |
 | Cartas (las 154 llamadas del juego que mandan una) | 132 | 22: 5 de operaciones del jugador, 2 del evento 0x11 que crea una de ellas, 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
-| Edificios con vista propia en el juego (13) | 9 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería; y la oficina de otro comerciante, con las ofertas), todas provisionales: paneles planos | 4 sin ventana (ayuntamiento, armería —la de la milicia—, granero y puerta de la ciudad) y rehacer las 9 con la vista del juego (apartado 4) |
+| Edificios con vista propia en el juego (13) | 10 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería y el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—; y la oficina de otro comerciante, con las ofertas), todas provisionales: paneles planos | 3 sin ventana (ayuntamiento, armería —la de la milicia— y puerta de la ciudad) y rehacer las 10 con la vista del juego (apartado 4) |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
@@ -196,7 +199,7 @@ enteros antes de reescribirlos):
   partida: `SavedMerchant::route_points`, región MR; la ruta de tres puntos o más de la navegación, 0x445010:
   `NavData::route_through`; escenario `route_points_ops`), también en el visor. La 0x44 resultó ser del ayuntamiento
   (un barco al servicio de la ciudad: el estado 8; abajo).
-- [ ] **La taberna** (el motor hecho el 12/13-11-2026; `operations.cpp`, `town_tick/tavern.cpp`; escenarios
+- [x] **La taberna** (el motor hecho el 12/13-11-2026; `operations.cpp`, `town_tick/tavern.cpp`; escenarios
   `tavern_people`, `traveller`, `burglar`): 0x52 las personas de la taberna (quién habla con quién: el comerciante
   [+0x83E], el viajero [+0x83F], el ladrón [+0x83C], [+0x83D] y los capitanes; tres pueden dar un encargo, el evento
   0x05), 0x53 el viajero con su **evento 0x10** (cartas 0x17 y 0x18) y 0x4F el ladrón con su **evento 0x0F** (atrapado:
@@ -207,16 +210,23 @@ enteros antes de reescribirlos):
   (0x5D6FC0: su oferta 0x526650, sus barcos 0x5D7DE0, la 0x4D), del traficante de armas (0x5D5C60: los precios
   0x526470, la 0x50 con los pasos 1, 5, 50 y todo), del viajero (0x5D6AE0: la 0x53), del ladrón (0x5D68E0: sus
   víctimas 0x531470, la 0x4F; la fila del juego lleva además un adjetivo del comerciante, de 0x4F9430, que falta) y
-  del pirata (0x5D5430: sus dos botones, la 0x4E). Falta el soplón (0x5D5970): la taberna encola tal cual la
-  operación que le prepara la ciudad (0x526B40), la 0x4C (que el motor aún no tiene: 0x53B4D0) o, con las misiones,
-  la 0x55, y compone el texto del rumor (los asedios, los piratas avistados…). El cliente de un
-  pedido (0x5D7760, la 0x51) va con los pedidos del ayuntamiento (grupo 5); la carta de misión (0x5D8100, las 0x71),
-  con el intérprete de misiones.
-- [ ] **La puerta de la ciudad: el transporte por tierra** (el motor hecho el 13-11-2026, `town_tick/land_transport.cpp`,
-  escenario `land_transport`): 0x3A crea el **evento 0x0C** y ejecuta la cola en el acto; el evento (0x4E38B4) sale de
-  la oficina, espera un día, viaja por una de las 7 carreteras (0x672BF8), puede sufrir una emboscada, vuelve ante
-  una ciudad sitiada y llega (cartas 0x66..0x69, línea de aviso 0x29); su fallo con la oficina corta, corregido detrás
-  del ajuste (abajo). Falta su ventana en el visor (0x5EB3C0).
+  del pirata (0x5D5430: sus dos botones, la 0x4E) y del soplón (0x5D5970: encola tal cual la operación que le prepara
+  la ciudad al abrirse la taberna, 0x526B40, la **0x4C**, ahora en el motor: 0x53B4D0, con el texto del rumor de su
+  región: los cambios de las ciudades que el jugador no sabe, la mercancía que más falta y la que sobra, los piratas
+  avistados; con las misiones, la 0x55 del trozo de mapa del tesoro, que va con el intérprete de misiones). El cliente
+  de un pedido (0x5D7760, la 0x51) va con los pedidos del ayuntamiento (grupo 5); la carta de misión (0x5D8100, las
+  0x71), con el intérprete de misiones.
+- [x] **La caballeriza: el transporte por tierra** (el granero de las vistas del juego, «Overland Trade Office»; .let
+  0x33, edificio 0x27; el motor hecho el 13-11-2026, `town_tick/land_transport.cpp`, escenario `land_transport`): 0x3A
+  crea el **evento 0x0C** y ejecuta la cola en el acto; el evento (0x4E38B4) sale de la oficina, espera un día, viaja
+  por una de las 7 carreteras (0x672BF8), puede sufrir una emboscada, vuelve ante una ciudad sitiada y llega (cartas
+  0x66..0x69, línea de aviso 0x29); su fallo con la oficina corta, corregido detrás del ajuste (abajo). Su ventana
+  (13-11-2026; `land_trade_window.cpp`, escenario `land_trade_window`, ctest `land_trade_window`): la abre el menú
+  lateral si 0x5336B0 lo deja (la caballeriza construida y ninguna de las dos ciudades sitiada; si no, su aviso);
+  página 0 las mercancías de la oficina a los carros (pasos 1, 5, 50 y todo; 100 de sitio, un barril 1, una carga 10),
+  página 1 la escolta (baja, media, alta: 50, 200 u 800 por cada 10 de sitio) con el consejo por el valor de la carga,
+  y «Enviar» (0x5EB3C0): el sorteo de la emboscada, su pérdida repartida por las mercancías ordenadas por su valor
+  (con los índices raros del juego) y una 0x3A por mercancía; página 2 el convoy en marcha.
 - [x] **Otras** (13-11-2026): 0x45 la candidatura a alcalde (el [+0x118]; `town_hall.cpp`), 0x51 la entrega de un pedido
   (el evento 0x11; `town_hall.cpp`, escenario `order_delivery`), 0xBF los grupos de barcos de otro jugador (la partida
   en red; escenario `ship_groups`) y 0x4A, las herramientas de los desarrolladores de la ventana de encargos de la
@@ -230,8 +240,7 @@ enteros antes de reescribirlos):
 - [ ] **La ventana del final de la partida**: la clasificación de los comerciantes (0x4220B0 → 0x4220D0, sobre
   *0x6CBB30, con el título 0x4F9430 y 0x4F73D0). El objetivo de la partida (evento 0x0E) ya se comprueba.
 - [ ] **Las ventanas de operaciones que el motor ya tiene** pero que el visor aún no encola, porque falta la ventana:
-  0x37 entrar en el gremio (la ventana del gremio, 0x5BFB20), 0x61 dar una fiesta (0x5BAE40), 0x4E un barco tuyo se
-  hace pirata (0x5D5430, junto a las de la taberna) y 0x0A borrar un barco (0x4768B0).
+  0x61 dar una fiesta (0x5BAE40) y 0x0A borrar un barco (0x4768B0).
 - [ ] La ventana de los desarrolladores 0x419EB0 encola de todo y manda dos cartas (0x45 y 0x21 con `rand()`): no hace
   falta salvo que se quiera.
 
@@ -305,9 +314,10 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   y `Bad/`, la herrería `schmied.jpg`, el granero `Scheune.aim` y `Scheune/`, la puerta de la ciudad `Stadttor.aim` y
   `stadttor/`; los rostros en `images/Gesichter/`. Rehacer cada ventana con su vista a medida que se hagan las acciones
   de cada edificio (lo que listan y mandan, en `player_actions.cpp`, no cambia).
-- [ ] **Los edificios que aún no tienen ventana**: el ayuntamiento y el gremio (con sus acciones, apartado 1; la
-  iglesia y el baño ya la tienen, 12-11-2026), la puerta de la ciudad (parece el transporte por tierra, apartado 1), la herrería y el granero (qué
-  hacen, por leer en el código). Se añaden a `kPlaces` de `src/app/main.cpp` por su tipo de
+- [ ] **Los edificios que aún no tienen ventana**: el ayuntamiento y la armería de la milicia (con sus acciones,
+  apartado 1, grupo 5) y la puerta de la ciudad (`Stadttor`: qué hace, por leer en el código; el transporte por tierra
+  resultó ser de la caballeriza, el granero de las vistas, que ya tiene la suya, 13-11-2026, como el gremio, la
+  herrería, la iglesia y el baño). Se añaden a `kPlaces` de `src/app/main.cpp` por su tipo de
   `.let`.
 - [ ] **El panel de la Hansa** (Cuadrado en una ciudad) es una ventana propia del visor (lo que lista y encola sí es
   como el juego); el juego tiene las suyas (la de encargos 0x5E87D0, la de la carretera 0x5F2A20). Por decidir con el
@@ -626,10 +636,24 @@ operación comprueba mal; se dejan como el original):
   longitud entera con su bit 15, así que lee 0x8000 entradas más allá y pone los barcos nuevos detrás de ellas. p3vita
   los pone detrás de los que había y deja la longitud del juego (el escenario `ship_groups` no lo compara).
 
+**La ventana del transporte por tierra** (13-11-2026; rarezas que no hacen daño, se reproducen): el orden de las
+mercancías para repartir la pérdida de una emboscada lee el valor del puesto donde cayó la anterior, no el de cada
+mercancía (siempre sale el mismo orden), y la pérdida de cada una usa el valor de su puesto; un coste por encima del
+del peligro (no lo deja la ventana) daría la vuelta a la pérdida.
+
 **De cargar y guardar**: el `.pst` tiene un byte de más cuando hay meses (sin ajuste: nadie lo lee); la lista de nodos
 de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; si el orden no importa, no hace daño).
 
 ### Corregidos con el ajuste
+
+**La caballeriza de la otra ciudad** (el menú lateral de la caballeriza, 0x5336B0; 13-11-2026, seguro, corregido a
+petición del usuario): para el aviso «La caballeriza de la ciudad de %s está todavía en construcción» (su resultado 2)
+el juego busca otra vez la caballeriza en la lista de la propia ciudad (el desplazamiento de la ciudad que guardó en
+la pila, no el de la otra), así que ese aviso no sale nunca y se puede mandar un convoy a una ciudad cuya caballeriza
+no está acabada (la carga llega igual: al llegar solo se mira la oficina). Corregido (`land_trade_window.cpp`
+`fn_5336b0`): se mira la de la otra ciudad y el visor enseña el aviso; con el ajuste, el escenario `land_trade_window`
+sale distinto del juego solo en esas llamadas (2 en vez de 0: sin la caballeriza de Hamburgo, y con otra ciudad dada
+que no la tiene).
 
 **El transporte por tierra con la oficina corta** (el evento 0x0C al salir, 0x4E38B4; 13-11-2026, a petición del
 usuario): si la oficina no tiene todo lo pedido, pierde todas sus cargas, barriles o piezas enteras, pero el convoy
@@ -727,8 +751,12 @@ retener (`holdable_units`), y la ventana no deja ofrecer más (ctest `offer_wind
 **Los textos** (solo cambian lo que lee el jugador; `tick_probe --fix-game-bugs` en los escenarios):
 - El nombre de una ciudad sacado de la tabla 0x6DDA00 (por número) con el índice de la ciudad: el informe de la
   expedición (0x4E7198), las cartas de las elecciones (0x5292A3, 0x5299F0), la cabecera de cada carta (0x47F534), la
-  crónica, las estadísticas, el parte de la batalla en una ciudad (0x5FE7E0). Solo pasa tras cargar una partida (al
-  final de la carga 0x5121C0 deja la tabla por número). Corregido: por el número de la ciudad.
+  crónica, las estadísticas, el parte de la batalla en una ciudad (0x5FE7E0), el rumor del soplón de la taberna
+  (0x526B40). Solo pasa tras cargar una partida (al final de la carga 0x5121C0 deja la tabla por número). Corregido:
+  por el número de la ciudad.
+- El rumor del soplón de la taberna (0x526B40; 13-11-2026): una epidemia o una hambruna en una ciudad de su región, o
+  su final, las cuenta con los textos del asedio («La ciudad de %s está sitiada por un ejército», «El asedio de %s ha
+  finalizado»). Corregido: con sus propios textos, que el juego tiene sin usar (0x6C2624/28, 0x6C2670/74).
 - El informe de la expedición pierde su final (0x4E7306..0x4E745B: «, » sin contar); las compras de la expedición
   cuentan barriles o cargas por la última mercancía (0x52C5FE).
 - La carta del encargo del jefe de la Hansa humano (0x77 del tipo 2, 0x4EA6A8): la comprobación del objeto pirata al

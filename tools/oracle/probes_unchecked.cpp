@@ -7,6 +7,7 @@
 
 #include "p3data/building_windows.hpp"
 #include "p3data/guild_window.hpp"
+#include "p3data/land_trade_window.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/game_texts.hpp"
 #include "p3data/player_actions.hpp"
@@ -148,6 +149,7 @@ constexpr uint32_t kAuctionList = 0x03000FE0;
 constexpr uint32_t kTavernOffer = 0x030003C0;
 constexpr uint32_t kTavernShips = 0x030003E0;
 constexpr uint32_t kTavernVictims = 0x030003A0;  // TAVERN_VICTIMS: 0x531470's list (count, merchants, sums)
+constexpr uint32_t kTavernInformer = 0x030003A8;  // TAVERN_INFORMER: 0x526B40 on INFORMER_NEWS (SCRATCH + 0x80)
 // Its copiers of the convoy window's choices (0x40C170) and of the market
 // window's convoy (0x4AA4A0) (CONVOY_CHOICES, CONVOY_SUMMARY).
 constexpr uint32_t kConvoyChoices = 0x03000E80;
@@ -1138,6 +1140,32 @@ void register_probes_unchecked(ProbeRegistry& r) {
 		}
 		return std::nullopt;
 	};
+	// The informer's news on INFORMER_NEWS: its operation, [+0x14], [+0x16], and the text's FNV-1a and length (the
+	// copier's hook puts them for the game's). Without the game's texts, skipped.
+	r[kTavernInformer] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const GameTexts* texts = probe_sailing() ? probe_sailing()->texts() : nullptr;
+		if (!texts) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		constexpr uint32_t kNews = kScratch + 0x80;
+		InformerNews news;
+		news.icon = s.globals.u16(kNews + 0x14);
+		news.icon2 = s.globals.u16(kNews + 0x16);
+		fn_526b40(s, &probe_sailing()->nav(), *texts, uint32_t(c.town(c.ecx)), news);
+		for (uint32_t k = 0; k < 0x14; ++k) {
+			s.globals.u8(kNews + k) = news.op[k];
+		}
+		s.globals.u16(kNews + 0x14) = news.icon;
+		s.globals.u16(kNews + 0x16) = news.icon2;
+		uint32_t h = 0x811C9DC5;
+		for (const char ch : news.text) {
+			h = (h ^ uint8_t(ch)) * 0x01000193;
+		}
+		s.globals.u32(kNews + 0x18) = h;
+		s.globals.u32(kNews + 0x1C) = uint32_t(news.text.size());
+		return std::nullopt;
+	};
 	r[kTavernVictims] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		const std::vector<std::pair<uint16_t, uint16_t>> list = fn_531470(s, c.args[0]);
 		const uint32_t n = uint32_t(list.size());
@@ -1155,6 +1183,47 @@ void register_probes_unchecked(ProbeRegistry& r) {
 			s.globals.u16(kScratch + 2 + 2 * uint32_t(k)) = list[k];
 		}
 		return uint32_t(list.size());
+	};
+	// The land trade (land_trade_window.hpp): the road's other end (thiscall on the town; al), the road's days
+	// (thiscall on the world: from, to), the side menu's check, and the send on a window of the oracle's whose fields [+0x2DA4..+0x2E2F] are
+	// the scratch globals from +0x10 (retouch_unchecked.py LAND_WINDOW): the loads and the room emptied, its operations
+	// queued.
+	r[0x525630] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		c.eax_mask = 0xFF;
+		return fn_525630(s, uint32_t(c.town(c.ecx)));
+	};
+	r[0x533490] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		return fn_533490(s, c.args[0], c.args[1]);
+	};
+	// 0x5336B0 (thiscall on the world: town, &partner, a byte of the scratch globals).
+	r[0x5336B0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		uint8_t partner = s.globals.u8(c.args[1]);
+		const uint8_t result = fn_5336b0(s, c.args[0], partner);
+		s.globals.u8(c.args[1]) = partner;
+		return result;
+	};
+	r[0x5EB3C0] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		GlobalMemory& g = s.globals;
+		const uint32_t at = c.ecx;
+		LandTradeWindow w;
+		w.from = g.u8(at + 0x2DA4);
+		for (uint32_t k = 0; k < 20; ++k) {
+			w.loaded[k] = g.u8(at + 0x2DA5 + k);
+		}
+		w.to = g.u8(at + 0x2E0C);
+		w.cost = g.u32(at + 0x2E10);
+		w.escorts = g.u8(at + 0x2E14);
+		w.danger = g.u8(at + 0x2E15);
+		w.slots = g.u8(at + 0x2E16);
+		w.used = g.u32(at + 0x2E2C);
+		for (const OperationBytes& op : land_trade_send(s, w)) {
+			queue_operation(s, op);
+		}
+		for (uint32_t k = 0; k < 20; ++k) {
+			g.u8(at + 0x2DA5 + k) = w.loaded[k];
+		}
+		g.u32(at + 0x2E2C) = w.used;
+		return std::nullopt;
 	};
 	// The guild's window (guild_window.hpp): 0x4DA480 (thiscall on the queue: event), whether the player is told of
 	// the auction (al); and the copier of 0x4DA1A0's list.

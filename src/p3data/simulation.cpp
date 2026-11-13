@@ -365,6 +365,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x53:  // The tavern's traveller goes with a ship: the event 0x10, the letter 0x17 (0x53610B → 0x53C840; town_tick/tavern.cpp).
 		tick::fn_53c840(save, operation);
 		break;
+	case 0x4C:  // The tavern's informer's news: paid, the region known (0x5360A2 → 0x53B4D0; town_tick/tavern.cpp).
+		tick::fn_53b4d0(save, operation);
+		break;
 	case 0x4F:  // The tavern's burglar hired against another merchant: the event 0x0F (0x5360CF → 0x53BA40; town_tick/tavern.cpp).
 		tick::fn_53ba40(save, operation);
 		break;

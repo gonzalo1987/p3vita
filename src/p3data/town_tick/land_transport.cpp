@@ -1,12 +1,12 @@
-// The land transport (the town gate's window 0x5EB3C0): the operation 0x3A sends a cart convoy with a ware from the
-// merchant's office in a town to his office in another, and the event 0x0C carries it (0x4E38B4): it leaves, waits a
-// day, travels the time of its road, may be ambushed, turns back at a besieged town and arrives. Its letters 0x66
-// «Arrival», 0x67 «Return», 0x68 «Ambush» and 0x69 (the prince's troops), and the ticker line 0x29.
+// The land transport (the barn's land trade window 0x5EB3C0): the operation 0x3A sends a cart convoy with a ware
+// from the merchant's office in a town to his office in another, and the event 0x0C carries it (0x4E38B4): it leaves,
+// waits a day, travels the time of its road, may be ambushed, turns back at a besieged town and arrives. Its letters
+// 0x66 «Arrival», 0x67 «Return», 0x68 «Ambush» and 0x69 (the prince's troops), and the ticker line 0x29.
 //
 // The event 0x0C: [+0x8] u8 the town it is in / leaves, [+0x9] u8 where it goes, [+0xA] u8 the merchant, [+0xB] u8 the
-// escort's share (escorts · 200 / the amount; its bit 0: the merchant is told), [+0xC] f32 the ware's average price,
-// u16 [+0x10] the price paid, u16 [+0x12] the amount (barrels, loads), [+0x14] u8 the ware, [+0x15] u8 the state,
-// [+0x16] u8 a counter, [+0x17] u8 the operation's [+0xF].
+// ambush's share (the loss · 200 / the amount, in half percents; its bit 0: the merchant is told), [+0xC] f32 the
+// ware's average price, u16 [+0x10] the price paid, u16 [+0x12] the amount (barrels, loads), [+0x14] u8 the ware,
+// [+0x15] u8 the state, [+0x16] u8 a counter, [+0x17] u8 the operation's [+0xF] (the escort's level).
 
 #include "p3data/game_fixes.hpp"
 #include "p3data/mail.hpp"
@@ -47,10 +47,11 @@ void tell(SaveGame& save, const GameMemory<0x18>& e, uint8_t type, uint8_t town,
 
 }  // namespace
 
-// The operation 0x3A (0x53A2C0): {0x3A, u8 from, u8 to, u8 merchant, u8 tell him, u16 the amount, u16 the price, u16
-// the escorts, u8 the ware, u8 [+0xF]}: an event 0x0C at the tick (made even with no amount: then left as the free
-// record was), its fields from the operation, the escorts' share escorts · 200 / amount with the bit 0 to tell him
-// (cleared when there are no escorts and the queue's head is an event 0x0C of the same town in the state 1 with its
+// The operation 0x3A (0x53A2C0; the land trade's window 0x5EB3C0 queues it, land_trade_window.hpp): {0x3A, u8 from, u8
+// to, u8 merchant, u8 tell him, u16 the amount, u16 the price, u16 the ambush's loss (decided by the window), u8 the
+// ware, u8 the escort's level}: an event 0x0C at the tick (made even with no amount: then left as the free record
+// was), its fields from the operation, the ambush's share loss · 200 / amount with the bit 0 to tell him (cleared when
+// there's no loss and the queue's head is an event 0x0C of the same town in the state 1 with its
 // counter below 9; the look goes on only while each event's tick − 16 is not below the tick), the state 0; then the
 // queue runs at once (0x4D85C0 with the tick): the convoy leaves.
 void fn_53a2c0(SaveGame& save, const uint8_t* operation) {
@@ -108,7 +109,7 @@ void fn_53a2c0(SaveGame& save, const uint8_t* operation) {
 //     state 6.
 //   2 and 4, setting out: the time of the road between the two towns' numbers (0x672BF8, either way; 16 ticks without
 //     one), the next state, the counter 0xFF.
-//   3 and 5, arriving: at a town not besieged, the amount less escort's share / 2 % of it, with an ambush's letter
+//   3 and 5, arriving: at a town not besieged, the amount less the share / 2 % (the loss), with an ambush's letter
 //     0x68 when the share is over 1 (its bit 0), and the state 6 (the counter 0xFF); at a besieged one, in the state
 //     3 the letter 0x67 and back (the towns swapped, the state 4, 0x41 ticks), in the state 5 the letter 0x69: lost.
 //   6, unloading: the counter down to 0, a tick each, then the state 7 in 4 ticks.

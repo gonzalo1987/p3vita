@@ -2,6 +2,7 @@ add_library(p3data STATIC
 	aim.cpp
 	building_windows.cpp
 	guild_window.cpp
+	land_trade_window.cpp
 	offer_window.cpp
 	office_window.cpp
 	ship_pair_window.cpp
