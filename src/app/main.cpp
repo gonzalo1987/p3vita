@@ -3717,6 +3717,49 @@ void church_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 		}
 		v.rows.push_back({tr("Donar", "Donate"), can});
 		v.act = tr("Donar", "Donate");
+		// Laid out as the game's (0x5CA670, 0x5CA760; the controls 0x5C9248..0x5C933D): the banner's title, the
+		// priest's portrait, the lines from (70, 225) 20 apart; the donation's box centred across the window at 2h/3
+		// (340) with the coin 2 after it, «<» 2 before it and «>» 21 after it (room for the coin); «Donate». The
+		// extension's lines by its state (0x4FEA97: the gathered sum · 3 / the cost 0..2, 3 the sum gathered, 4 too
+		// soon, 5 the last level; the box only under 3).
+		v.portrait = p3::app::Portrait::Priest;
+		PlaceView::Page page;
+		std::vector<uint32_t> lines;
+		bool box = true;
+		if (!extension) {
+			v.title = exe_text(0x6A04DC, "Donaciones para redecorar la catedral", "Donations for redecorating the church");
+			lines = {0x6A0490, 0x6A0494};
+		} else {
+			v.title = exe_text(0x6A04E0, "Ampliación de la catedral", "Extension of the church");
+			const int state = church_extension_state(save, uint32_t(town));
+			const int32_t cost = std::max(1, church_extension_cost(save, uint32_t(town)));
+			const int32_t gathered = save.towns[size_t(town)].memory.s32(0x794 + 4);
+			// (The game's 4 also while a church is being built in the town: not looked at here.)
+			const int game_state = state == 2 ? 5 : state == 1 ? 4 : state == 0 ? 3 : std::clamp(int(int64_t(gathered) * 3 / cost), 0, 2);
+			switch (game_state) {
+			case 0: lines = {0x6A0498, 0x6A049C, 0x6A04A0, 0x6A04A4, 0x6A04C4}; break;
+			case 1: lines = {0x6A0498, 0x6A049C, 0x6A04A8, 0x6A04C4}; break;
+			case 2: lines = {0x6A0498, 0x6A049C, 0x6A04AC, 0x6A04B0, 0x6A04C4}; break;
+			case 3: lines = {0x6A04B4, 0x6A04B8}; break;
+			case 4: lines = {0x6A04BC}; break;
+			default: lines = {0x6A04C0}; break;
+			}
+			box = game_state < 3;
+		}
+		for (size_t k = 0; k < lines.size(); ++k) {
+			page.texts.push_back({exe_text(lines[k], "", ""), 70, 225 + 20 * int(k)});
+		}
+		if (box) {
+			constexpr int kBoxWidth = 80;
+			const int bx = kInteriorWidth / 2 - kBoxWidth / 2;
+			constexpr int kBoxY = kInteriorHeight * 2 / 3;
+			page.boxes.push_back({{bx, kBoxY, kBoxWidth, 18}, std::to_string(ui.amount * kDonationStep)});
+			page.icons.push_back({16014, 0, bx + kBoxWidth + 2, kBoxY});
+			page.buttons.push_back({{bx - 2 - 32, kBoxY, 32, 18}, "<", PlaceView::PageAction::Minus, ui.amount > 0});
+			page.buttons.push_back({{bx + kBoxWidth + 21, kBoxY, 32, 18}, ">", PlaceView::PageAction::Plus, ui.amount < v.max_amount});
+		}
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, can && box && ui.amount > 0}));
+		v.page = std::move(page);
 		break;
 	}
 	default: {
@@ -3738,10 +3781,61 @@ void church_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 		}
 		v.lines.push_back({tr("Lo toman de tu oficina en la ciudad y después de tus barcos en ella.",
 								"Taken from your office in the town, then from your ships there."), kDimColor});
-		v.act = tr("Repartir", "Give");
+		v.act = tr("Donar", "Donate");
 		v.amount_choice = true;  // Each row has its own amount; 0 too.
 		v.amount_label = std::to_string(ui.amount);
 		(void)amounts;
+		// Laid out as the game's (0x5CA210, its controls 0x5C8E11..; the user's photo): «Feeding the poor» on the
+		// banner and the priest's portrait; its three lines from (70, 225); a row each ware every 20 from 3h/5 = 306:
+		// the ware at 70, the stock (the office's and the player's ships in port not on a trade route, 0x5CAAF3, in
+		// barrels or loads, less what is in the donation's box) right-aligned at 181 with its unit's picture, «<» and
+		// «>» (small) at w/2 + 10 and 32 on, the donation's box at 295 with its unit's picture after it; the head
+		// («Good», «Warehouse», «Donation») 20 over the first row; «Donate» the confirm button.
+		v.title = exe_text(0x6A04D8, "Alimentar a los pobres", "Feeding the poor");
+		v.portrait = p3::app::Portrait::Priest;
+		PlaceView::Page page;
+		page.texts.push_back({exe_text(0x6A0458, "Los mendigos de la ciudad tienen hambre y sed.",
+								  "The beggars in our town are hungry and thirsty."),
+			70, 225});
+		page.texts.push_back({exe_text(0x6A045C, "Dona alimentos para que podamos repartirlos", "Donate goods so that we can organise"),
+			70, 245});
+		page.texts.push_back({exe_text(0x6A0460, "entre los pobres.", "food for the poor people."), 70, 265});
+		constexpr int kTop = 306;
+		page.texts.push_back({exe_text(0x6A0464, "Mercancías", "Good"), 70, kTop - 20});
+		page.texts.push_back({exe_text(0x6A0468, "Almacén", "Warehouse"), 148, kTop - 20});
+		page.texts.push_back({exe_text(0x6A046C, "Donación", "Donation"), 295, kTop - 20});
+		const int office = player_office(save, town);
+		bool any = false;
+		for (size_t k = 0; k < 5; ++k) {
+			const uint8_t w = kFeedingWares[k];
+			const WareUnit unit = kWares[w].unit;
+			int64_t have = office >= 0 ? int64_t(save.offices[size_t(office)].stock(w)) : 0;
+			const uint16_t past = save.globals.u16(global::kShipCount);
+			for (uint16_t s = save.merchants[size_t(save.player)].memory.u16(0xE); s < past && s < save.ships.size();
+				 s = save.ships[s].next_of_owner()) {
+				if (save.ships[s].town() == town && (save.ships[s].orders() & 1) == 0) {
+					have += save.ships[s].cargo(w);
+				}
+			}
+			const int shown = units(int32_t(have), unit) - ui.feed[k];
+			const int y = kTop + 20 * int(k);
+			const uint32_t picture = unit == WareUnit::Barrel ? 16030 : 16031;
+			page.texts.push_back({ware_name(w), 70, y, false, false, int(k) == ui.row ? kButtonHighlight : SDL_Color{0, 0, 0, 255}});
+			PlaceView::PageText stock{std::to_string(shown), 181, y};
+			stock.right = true;
+			page.texts.push_back(stock);
+			page.icons.push_back({picture, 0, 188, y});
+			PlaceView::PageButton less{{222, y, 32, 18}, "<", PlaceView::PageAction::Minus, ui.feed[k] > 0};
+			PlaceView::PageButton more{{254, y, 32, 18}, ">", PlaceView::PageAction::Plus, shown > 0};
+			less.row = more.row = int(k);
+			page.buttons.push_back(less);
+			page.buttons.push_back(more);
+			page.boxes.push_back({{295, y, 40, 18}, std::to_string(ui.feed[k])});
+			page.icons.push_back({picture, 0, 337, y});
+			any = any || ui.feed[k] > 0;
+		}
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, any}));
+		v.page = std::move(page);
 		break;
 	}
 	}
@@ -4172,6 +4266,160 @@ void office_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
 	run_operations(save, sailing, {reserve_operation(w, uint32_t(save.player), uint32_t(town), on)});
 }
 
+void smithy_sentences(PlaceView::Page& out, const PlaceView& v);
+
+// The weaponsmith's hand weapons as the game's page 1 (its controls 0x5EBF3B.., its drawing 0x5ECAB0; the user's
+// photo): «Weapons smith» on the banner; four rows 52 apart from 266: the weapon's name at x 30, its picture
+// (Waffen.tga TEX31037, frames 7..10) at (100, the row − 15), the armory's count right-aligned at w/2 − 48 + 55, the
+// buy button (medium, 48 × 18) with the price, its right end at w/2 + 65 for the town's mayor and centred at w/2 + 70
+// for anyone else, the mayor's «Priority» check at w/2 + 75 + (48 − 16) / 2, the office's count at w/2 + 48 + 90; the
+// head 40 over the first row in font 0 («Smithy» right-aligned over the armory's counts, «Buy» and «Priority» centred
+// over their buttons, «Office» over the office's counts). The game's sentences centred at the bottom (smithy_sentences).
+void smithy_hand_layout(SaveGame& save, PlaceUi& ui, PlaceView& v, const SmithyPage& page, int32_t money) {
+	(void)save;
+	PlaceView::Page out;
+	const int middle = kInteriorWidth / 2;
+	constexpr int kTop = 266;
+	constexpr int kStep = 52;
+	constexpr int kButtonWidth = 48;
+	const int buy_x = page.may_choose ? middle + 65 - kButtonWidth : middle + 70 - kButtonWidth / 2;
+	const int check_x = middle + 75 + (kButtonWidth - 16) / 2;
+	const int town_right = middle - kButtonWidth + 55;
+	const int office_x = middle + kButtonWidth + 90;
+	PlaceView::PageText head{exe_text(0x6A2B30, "Armería", "Smithy"), town_right, kTop - 40};
+	head.head_font = true;
+	head.right = true;
+	out.texts.push_back(head);
+	head.right = false;
+	head.centred = true;
+	head.text = game_text(GameText::MarketBuy, tr("Comprar", "Buy"));
+	head.x = buy_x + kButtonWidth / 2;
+	out.texts.push_back(head);
+	if (page.may_choose) {  // Only for the town's mayor (0x5ECD2E).
+		head.text = exe_text(0x6AA360, "Prioridad", "Priority");
+		head.x = check_x + 8;
+		out.texts.push_back(head);
+	}
+	head.centred = false;
+	head.text = game_text(GameText::Office, tr("Oficina", "Office"));
+	head.x = office_x;
+	out.texts.push_back(head);
+	for (int k = 0; k < int(page.rows.size()) && k < 4; ++k) {
+		const SmithyRow& r = page.rows[size_t(k)];
+		const int y = kTop + kStep * k;
+		const bool chosen = ui.row == k;
+		PlaceView::PageText name{game_text(GameText(int(GameText::WareSword) + k), ""), 30, y};
+		if (chosen) {
+			name.color = kButtonHighlight;
+		}
+		out.texts.push_back(name);
+		out.icons.push_back({31037, 7 + k, 100, y - 15});
+		PlaceView::PageText town{std::to_string(r.town), town_right, y};
+		town.right = true;
+		out.texts.push_back(town);
+		if (page.office) {
+			out.texts.push_back({std::to_string(r.office), office_x, y});
+		}
+		PlaceView::PageButton buy{{buy_x, y, kButtonWidth, 18}, std::to_string(r.price), PlaceView::PageAction::Act,
+			page.office && r.town > 0 && money >= r.price};
+		buy.keyed = chosen;
+		buy.row = k;
+		out.buttons.push_back(chosen ? fitted(buy) : buy);
+		if (page.may_choose) {
+			PlaceView::PageButton check{{check_x, y, 16, 18}, "", PlaceView::PageAction::Act2, page.office};
+			check.keyed = false;
+			check.lit = page.priority == k;
+			check.row = k;
+			out.buttons.push_back(check);
+		}
+	}
+	smithy_sentences(out, v);
+	v.page = std::move(out);
+}
+
+// The weaponsmith's ship's weapons as the game's page 0 (its controls 0x5EC28A.., its drawing 0x5EC590): seven rows
+// 52 apart from 110 (the parchment from there, 0x5EC444): the piece's name at x 30 (the first four on two lines, the
+// first 10 higher: «small» over «catapult»...), its picture (frames 0..6) at (100, the row − 15), the town's count
+// right-aligned 10 before the buy button, the buy button (medium) with its right end at w/2 + 65, the sell button
+// beside it at w/2 + 75, the office's count 15 after it; the head 40 over the first row in font 0 («Smithy»
+// right-aligned 10 before the buy buttons, «Buy» and «Sell» centred over theirs, «Office» over the office's counts).
+// The game's sentence (no office, production stopped) centred at (w/2, h − 35).
+void smithy_artillery_layout(PlaceUi& ui, PlaceView& v, const SmithyPage& page, int32_t money) {
+	PlaceView::Page out;
+	const int middle = kInteriorWidth / 2;
+	constexpr int kTop = 110;
+	constexpr int kStep = 52;
+	constexpr int kButtonWidth = 48;
+	const int buy_x = middle + 65 - kButtonWidth;
+	const int sell_x = middle + 75;
+	const int town_right = buy_x - 10;
+	const int office_x = sell_x + kButtonWidth + 15;
+	PlaceView::PageText head{exe_text(0x6A2B30, "Armería", "Smithy"), town_right, kTop - 40};
+	head.head_font = true;
+	head.right = true;
+	out.texts.push_back(head);
+	head.right = false;
+	head.centred = true;
+	head.text = game_text(GameText::MarketBuy, tr("Comprar", "Buy"));
+	head.x = buy_x + kButtonWidth / 2;
+	out.texts.push_back(head);
+	head.text = exe_text(0x6998A0, "Vender", "Sell");
+	head.x = sell_x + kButtonWidth / 2;
+	out.texts.push_back(head);
+	head.centred = false;
+	head.text = game_text(GameText::Office, tr("Oficina", "Office"));
+	head.x = office_x;
+	out.texts.push_back(head);
+	// The names' words (0x6A2B38..0x6A2B54, 0x6AA35C): two lines for the catapults and ballistas.
+	const std::string small_c = exe_text(0x6A2B38, "pequeña", "small"), large_c = exe_text(0x6A2B3C, "gran", "large");
+	const std::string small_b = exe_text(0x6A2B44, "pequeña", "small"), large_b = exe_text(0x6A2B48, "gran", "large");
+	const std::string catapult = exe_text(0x6A2B40, "catapulta", "catapult"), ballista = exe_text(0x6A2B4C, "balista", "ballista");
+	const std::pair<std::string, std::string> names[7] = {{small_c, catapult}, {small_b, ballista}, {large_c, catapult},
+		{large_b, ballista}, {"", exe_text(0x6A2B50, "bombarda", "bombard")}, {"", exe_text(0x6A2B54, "cañón", "cannon")},
+		{"", exe_text(0x6AA35C, "puñal", "Cutlass")}};
+	for (int k = 0; k < int(page.rows.size()) && k < 7; ++k) {
+		const SmithyRow& r = page.rows[size_t(k)];
+		const int y = kTop + kStep * k;
+		const bool chosen = ui.row == k;
+		const SDL_Color name_color = chosen ? kButtonHighlight : SDL_Color{0, 0, 0, 255};
+		if (!names[k].first.empty()) {
+			out.texts.push_back({names[k].first, 30, y - 10, false, false, name_color});
+		}
+		out.texts.push_back({names[k].second, 30, y, false, false, name_color});
+		out.icons.push_back({31037, k, 100, y - 15});
+		PlaceView::PageText town{std::to_string(r.town), town_right, y};
+		town.right = true;
+		out.texts.push_back(town);
+		if (page.office) {
+			out.texts.push_back({std::to_string(r.office), office_x, y});
+		}
+		PlaceView::PageButton buy{{buy_x, y, kButtonWidth, 18}, std::to_string(r.price), PlaceView::PageAction::Act,
+			page.office && r.town > 0 && money >= r.price};
+		PlaceView::PageButton sell{{sell_x, y, kButtonWidth, 18}, std::to_string(r.sell), PlaceView::PageAction::Act2,
+			page.office && r.office > 0};
+		buy.keyed = sell.keyed = chosen;
+		buy.row = sell.row = k;
+		out.buttons.push_back(chosen ? fitted(buy) : buy);
+		out.buttons.push_back(chosen ? fitted(sell) : sell);
+	}
+	smithy_sentences(out, v);
+	v.page = std::move(out);
+}
+
+// The weaponsmith's sentences (no office, production stopped), centred at (w/2, h − 35) and under it (0x5ECA48, 0x5ECEDC).
+void smithy_sentences(PlaceView::Page& out, const PlaceView& v) {
+	int y = kInteriorHeight - 35;
+	for (const auto& [line, color] : v.lines) {
+		if (color.r == kDimColor.r && color.g == kDimColor.g && color.b == kDimColor.b) {
+			const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
+			for (const std::string& part : font ? wrap_text(*font, line, kInteriorWidth - 60) : std::vector<std::string>{line}) {
+				out.texts.push_back({part, kInteriorWidth / 2, y, true});
+				y += 20;
+			}
+		}
+	}
+}
+
 // The town's weaponsmith (.let 0x08; smithy_window.hpp): its pages (L/R) 0 the ship's artillery (a row per piece and
 // the cutlasses: X buys one for the office, Square sells one of the office's) and 1 the hand weapons (X buys one into
 // the office; Square, for the town's mayor, the one the weaponsmith makes first, or none). As in the game, nothing
@@ -4180,8 +4428,7 @@ void smithy_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	ui.page = ((ui.page % 2) + 2) % 2;
 	const bool artillery = ui.page == 0;
 	const uint32_t player = uint32_t(save.player);
-	v.title = artillery ? game_text(GameText::ShipWeapons, tr("Armas de barco", "Ship's weapons"))
-						: game_text(GameText::HandWeapons, tr("Armas de mano", "Hand weapons"));
+	v.title = exe_text(0x6A2B2C, "Maestro armero", "Weapons smith");  // The game's banner (the user's photo).
 	// Its side menu (0x5AA990): «Ship's weapons», «Hand weapons» (its parchment's line, not set by the menu, to read: 225
 	// meanwhile).
 	place_side_menu(v, ui, exe_text(0x6A2B2C, "Armería", "Weapons smith"),
@@ -4223,7 +4470,13 @@ void smithy_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	} else {
 		v.act2 = page.priority == ui.row ? tr("Sin prioridad", "No priority") : exe_text(0x6AA360, "Prioridad", "Priority");
 		v.act2_on = page.office && page.may_choose;
+		smithy_hand_layout(save, ui, v, page, money);
 	}
+	if (artillery) {
+		smithy_artillery_layout(ui, v, page, money);
+	}
+	// The parchment from the first row (0x5EC444: the first buy button's y).
+	v.parchment_top = ui.shown ? (artillery ? 110 : 266) : -1;
 }
 
 void smithy_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
@@ -16874,6 +17127,10 @@ int main(int argc, char** argv) {
 									place.people_row = place.row;
 								}
 								place.row = b.row;
+								if (place.open == Place::Church && place.page == 2 && place.feed_row != b.row) {
+									place.amount = place.feed[size_t(b.row)];  // That row's own amount (church_view).
+									place.feed_row = b.row;
+								}
 							}
 							switch (b.action) {
 							case PlaceView::PageAction::Act: place_button(SDL_CONTROLLER_BUTTON_A); break;

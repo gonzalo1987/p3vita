@@ -60,7 +60,7 @@ constexpr SDL_Color kButtonHighlight = {0x0C, 0x2A, 0xE0, 255};
 enum class PillState { Standard, Pressed, Disabled };
 
 // The tavern's people with a portrait on their pages (the tavern window's 0x5CDC60 and 0x5CF138, by the person).
-enum class Portrait { None, Sailors, Captain, Informer, Traveller, WeaponsDealer, Burglar, Pirate, Client };
+enum class Portrait { None, Sailors, Captain, Informer, Traveller, WeaponsDealer, Burglar, Pirate, Client, Priest };
 
 class GameWindowArt {
 public:

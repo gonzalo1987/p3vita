@@ -208,6 +208,7 @@ PortraitInfo portrait_info(Portrait p) {
 	case Portrait::Burglar: return {31099, 15, 16};
 	case Portrait::Pirate: return {31010, 4, 5};
 	case Portrait::Client: return {31011, 13, 14};
+	case Portrait::Priest: return {31062, -1, -1};  // The church's (0x5C9913; 31063 past its page 4; his faces 6..9 still to do).
 	default: return {0, -1, -1};
 	}
 }

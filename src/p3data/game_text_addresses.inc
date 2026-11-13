@@ -1639,7 +1639,7 @@
 	// column (the Spanish exe has one text for both), «You must have a trading office in this town...», the pieces'
 	// words (the game draws each on two lines: «small» «catapult», «small» «ballista», «large»..., «bombard»,
 	// «cannon»), the cutlass and «Priority» (0x6AA35C, 0x6AA360), and why it stopped (0x6B2284..0x6B2294).
-	{0x006A2B2C, 0x006A2ACC},
+	{0x006A2B2C, 0x006A2AC8},
 	{0x006A2B30, 0x006A2ACC},
 	{0x006A2B34, 0x006A2AD0},
 	{0x006A2B38, 0x006A2AD4},
@@ -1882,3 +1882,28 @@
 	{0x006A59C8, 0x006A5A2C},
 	{0x006A59CC, 0x006A5A30},
 	{0x006A59D0, 0x006A5A34},
+	// The church's pages (0x5CA210..): «Feeding the poor», «Donations for redecorating the church», «Extension of the
+	// church» on the banner; the feeding page's three lines and its head's «Donation».
+	{0x006A04D8, 0x006A01D8},
+	{0x006A04DC, 0x006A01DC},
+	{0x006A04E0, 0x006A01E0},
+	{0x006A0458, 0x006A0158},
+	{0x006A045C, 0x006A015C},
+	{0x006A0460, 0x006A0160},
+	{0x006A046C, 0x006A016C},
+	// The church's donation and extension pages (0x5CA670, 0x5CA760): their lines by the extension's state (0x4FEA97).
+	{0x006A0490, 0x006A0190},
+	{0x006A0494, 0x006A0194},
+	{0x006A0498, 0x006A0198},
+	{0x006A049C, 0x006A019C},
+	{0x006A04A0, 0x006A01A0},
+	{0x006A04A4, 0x006A01A4},
+	{0x006A04A8, 0x006A01A8},
+	{0x006A04AC, 0x006A01AC},
+	{0x006A04B0, 0x006A01B0},
+	{0x006A04B4, 0x006A01B4},
+	{0x006A04B8, 0x006A01B8},
+	{0x006A04BC, 0x006A01BC},
+	{0x006A04C0, 0x006A01C0},
+	{0x006A04C4, 0x006A01C4},
+	{0x006A04C8, 0x006A01C8},
