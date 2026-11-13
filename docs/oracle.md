@@ -2626,7 +2626,7 @@ the three new event handlers in the dispatch:
   2000) is fixed behind fix_game_bugs at the user's word: `re/emu/sesion27/uc_fix.sh land_transport:1` differs from
   the game in one call only, the convoy's amount (3 loads instead of 0).
 
-## The player's actions: the tavern's people, its trader, weapons dealer and traveller (2026-11-13)
+## The player's actions: the tavern's people, its trader, weapons dealer, traveller, burglar and pirate (2026-11-13)
 
 The viewer's half of group 4 so far (`tavern_window.cpp`, notes in `re/emu/sesion29/group4_notes.md`). Scenario
 `tavern_window` (saves 1, 3, 5, 7; 46 targets, all equal; the trader's last-ship quirk broken on purpose and caught):
@@ -2645,6 +2645,9 @@ The viewer's half of group 4 so far (`tavern_window.cpp`, notes in `re/emu/sesio
   people 300, 499, 500, 7000, the steps 0..3 and 7, the place's counts 0, 3, 70, −2) and 0x504AC0's kinds 4 (the
   traveller's small ships), 5 (the pirate's) and 8 (the dealer's; in a convoy the game looks at the guide's weapons
   and room for each member) with a captain or none, a quarter of the hull, the states, the mark, 11 swords, the types.
+- The burglar's victims (0x531470 on the world, through the copier TAVERN_VICTIMS: the town's offices' owners
+  without [+0x8] & 4, not the player, with their offices' [+0x2D4] + [+0x2D2]): 6 calls (as they are, an owner with
+  the flag 4 and without it, the player's office, an owner past).
 - The window's own rules (the trader's arrows and two presses, 0x52, 0x4D, the units) by the ctest `tavern_window`;
   the viewer seen in shots (`re/emu/sesion29/shots`: the trader, the dealer buying and selling a sword, the traveller
   boarding with his letter 0x17).

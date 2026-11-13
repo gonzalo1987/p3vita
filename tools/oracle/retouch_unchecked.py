@@ -4796,6 +4796,7 @@ def smithy_window(o):
 
 TAVERN_OFFER = to.SENTINEL + 0x3C0  # the copier of the trader's offer 0x526650 (probes_unchecked.cpp kTavernOffer)
 TAVERN_SHIPS = to.SENTINEL + 0x3E0  # of the trader's ships 0x5D7DE0 (kTavernShips)
+TAVERN_VICTIMS = to.SENTINEL + 0x3A0  # of the burglar's victims 0x531470 (kTavernVictims)
 
 
 def tavern_copiers(o):
@@ -4834,6 +4835,23 @@ def tavern_copiers(o):
     assert len(code) <= 0x40
     o.uc.mem_write(at, code)
     o.uc.mem_write(TAVERN_SHIPS, bytes([0xE9]) + struct.pack('<i', at - (TAVERN_SHIPS + 5)))
+    # TAVERN_VICTIMS (stdcall town): 0x531470 on the world; its list (the count, the merchants and their sums) into
+    # SCRATCH; eax the count.
+    at = o.alloc(0x40)
+    code = bytes([0x56, 0x57])  # push esi; push edi
+    code += bytes([0xFF, 0x74, 0x24, 0x0C])  # push dword [esp + 0xC] (the town)
+    code += bytes([0xB9]) + struct.pack('<I', 0x6DE4A0)  # mov ecx, the world
+    code += bytes([0xE8]) + struct.pack('<i', 0x531470 - (at + len(code) + 5))
+    copy = bytes([0x89, 0xC6])  # mov esi, eax
+    copy += bytes([0xBF]) + struct.pack('<I', SCRATCH)  # mov edi, SCRATCH
+    copy += bytes([0x0F, 0xB7, 0x08, 0x8D, 0x4C, 0x09, 0x01])  # movzx ecx, word [eax]; lea ecx, [ecx + ecx + 1]
+    copy += bytes([0xFC, 0xF3, 0x66, 0xA5])  # cld; rep movsw
+    copy += bytes([0x0F, 0xB7, 0x05]) + struct.pack('<I', SCRATCH)  # movzx eax, word [SCRATCH]
+    code += bytes([0x85, 0xC0, 0x74, len(copy)]) + copy  # test eax, eax; jz past the copy
+    code += bytes([0x5F, 0x5E, 0xC2, 0x04, 0x00])  # pop edi; pop esi; ret 4
+    assert len(code) <= 0x40
+    o.uc.mem_write(at, code)
+    o.uc.mem_write(TAVERN_VICTIMS, bytes([0xE9]) + struct.pack('<i', at - (TAVERN_VICTIMS + 5)))
 
 
 def tavern_window(o):
@@ -4931,6 +4949,29 @@ def tavern_window(o):
                 people(f'dealer siege {siege:#x} [+0x874] {stall} weapon {weapon} place {v:#x}')
         w8(o, ta + 0x2C8, o.u8(ta + 0x2C8) & ~0x10)
         w8(o, ta + 0x83D, 0xFF)
+        # The burglar's victims (0x531470): as they are, an owner with the flag 4, the player's office, an owner past.
+        def victims(label):
+            n = direct(o, TAVERN_VICTIMS, [t])
+            print(f'victims {label}: {[o.u16(SCRATCH + 2 + 2 * k) for k in range(n)]} '
+                  f'sums {[o.u16(SCRATCH + 2 + 2 * (n + k)) for k in range(n)]}')
+        victims('as they are')
+        f = o.u16(ta + 0x784)
+        if f < o.u16(0x6DE4A8):
+            fa = o.office(f)
+            owner = o.u16(fa + 0x2C4)
+            kept_flag = o.u8(o.merchant(owner) + 8) if owner < merchants else None
+            if kept_flag is not None:
+                w8(o, o.merchant(owner) + 8, kept_flag | 4)
+                victims('the first owner with the flag 4')
+                w8(o, o.merchant(owner) + 8, kept_flag & ~4)
+                victims('without it')
+                w8(o, o.merchant(owner) + 8, kept_flag)
+            w16(o, fa + 0x2C4, m)
+            victims("the first office the player's")
+            w16(o, fa + 0x2C4, merchants)
+            victims('its owner past')
+            w16(o, fa + 0x2C4, owner)
+        victims('again')
         # The burglar: the town's first office without a next one.
         first = o.u16(ta + 0x784)
         if first < o.u16(0x6DE4A8):
@@ -13702,7 +13743,7 @@ SCENARIOS = {
         '@53c628', '@53c63e', '@53c654', '@53c66a', '@53c6a0', '@53c7c1', '@53c7bf>53c80a', '@53c2ee>53c80a',
         '@53c2d0>53c80a']),
     'tavern_window': Scenario(tavern_window, [0x526880, 0x5265E0, 0x5261A0, 0x526280, 0x526120, TAVERN_OFFER,
-                                              TAVERN_SHIPS, 0x526470, WINDOW_SHIPS], 0, [
+                                              TAVERN_SHIPS, 0x526470, WINDOW_SHIPS, TAVERN_VICTIMS], 0, [
         '@5268c5', '@5268c0', '@526606', '@52663a', '@526640', '@5261aa', '@5261ad', '@5262c9', '@5262ce', '@5262da',
         '@5262e8', '@5262ec', '@52612a', '@526151', '@5266ac', '@52673f', '@526758', '@5267d1', '@5267e8',
         '@5d7e8d', '@5d7efd', '@5d7f19', '@5d7f2a', '@5d7f7e', '@5d7f8b',

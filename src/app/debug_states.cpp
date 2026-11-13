@@ -282,6 +282,23 @@ bool tavern_people(SaveGame& save) {
 			t.u8(0x83E) = 0xFF;
 			t.u8(0x83F) = 0xFF;
 			t.s32(0x54) = 25;
+			// The pirate (0x5261D0): the next captain of the town's list busy ([+0x8] above 0x20) and nobody's; one of
+			// another town's list moved there if there is none.
+			const uint16_t count = save.globals.u16(global::kCaptainCount);
+			uint16_t& next = save.captains[t.u16(0x82E)].u16(0);
+			for (size_t u = 0; next >= count && u < save.towns.size(); ++u) {
+				uint16_t& other = save.towns[u].memory.u16(0x82E);
+				if (u != ship.town() && other < count) {
+					const uint16_t c = other;
+					other = save.captains[c].u16(0);
+					save.captains[c].u16(0) = 0xFFFF;
+					next = c;
+				}
+			}
+			if (next < count) {
+				save.captains[next].u8(0x8) = 0x40;
+				save.captains[next].u8(0xF) = 0xFF;
+			}
 			// The traveller: to the next town for 1500 within ten days.
 			t.u8(0x834) = uint8_t((ship.town() + 1) % save.towns.size());
 			t.u16(0x836) = 1500;

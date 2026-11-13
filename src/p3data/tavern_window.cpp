@@ -1,6 +1,7 @@
 #include "p3data/tavern_window.hpp"
 
 #include <algorithm>
+#include <tuple>
 #include <cstring>
 
 #include "p3data/game_memory.hpp"
@@ -177,6 +178,15 @@ OperationBytes tavern_leave_operation(uint32_t player, uint32_t town) {
 	put32(op, 0xC, town);
 	put32(op, 0x10, 10);
 	return op;
+}
+
+std::pair<std::string, std::string> merchant_names(const SaveGame& save, uint32_t merchant) {
+	if (merchant >= save.merchants.size()) {
+		return {};
+	}
+	const MerchantMemory& m = save.merchants[merchant].memory;
+	const uint32_t first = m.u8(0x1A) ? (m.u8(0x1C) & 0x7Fu) : (m.u8(0x1C) | 0x80u);
+	return {game_first_name(save, first), game_family_name(save, m.u8(0x1D))};
 }
 
 int tavern_greeting(SaveGame& save) {
@@ -573,17 +583,21 @@ void traveller_refresh(const SaveGame& save, uint32_t town, TravellerWindow& w, 
 	}
 }
 
-void traveller_turn(TravellerWindow& w, const std::vector<uint16_t>& ships, int step) {
+void ship_turn(uint16_t& ship, const std::vector<uint16_t>& ships, int step) {
 	const size_t n = ships.size();
 	if (n < 2) {
 		return;
 	}
-	const size_t at = size_t(std::find(ships.begin(), ships.end(), w.ship) - ships.begin());
+	const size_t at = size_t(std::find(ships.begin(), ships.end(), ship) - ships.begin());
 	if (step < 0) {
-		w.ship = at > 0 && at <= n ? ships[at - 1] : ships[n - 1];
+		ship = at > 0 && at <= n ? ships[at - 1] : ships[n - 1];
 	} else {
-		w.ship = at + 1 < n ? ships[at + 1] : ships[0];
+		ship = at + 1 < n ? ships[at + 1] : ships[0];
 	}
+}
+
+void traveller_turn(TravellerWindow& w, const std::vector<uint16_t>& ships, int step) {
+	ship_turn(w.ship, ships, step);
 }
 
 std::optional<OperationBytes> traveller_press(const SaveGame& save, uint32_t town, TravellerWindow& w) {
@@ -603,6 +617,134 @@ std::optional<OperationBytes> traveller_press(const SaveGame& save, uint32_t tow
 		w.late = true;
 	}
 	w.done = true;
+	return op;
+}
+
+std::vector<std::pair<uint16_t, uint16_t>> fn_531470(const SaveGame& save, uint32_t town) {
+	std::vector<std::pair<uint16_t, uint16_t>> list;
+	const GlobalMemory& g = save.globals;
+	if (town >= g.u32(global::kWorldTownCount)) {
+		return list;
+	}
+	const uint16_t offices = g.u16(global::kWorldOfficeCount);
+	const uint16_t merchants = g.u16(global::kWorldMerchantCount);
+	for (uint32_t i = town_memory(save, town).u16(0x784); i < offices; i = save.offices[i].memory.u16(0x2CA)) {
+		const OfficeMemory& o = save.offices[i].memory;
+		const uint16_t owner = o.u16(0x2C4);
+		if (owner < merchants && !(save.merchants[owner].memory.u8(0x8) & 4) && owner != player_of(save)) {
+			list.push_back({owner, uint16_t(o.u16(0x2D4) + o.u16(0x2D2))});
+		}
+	}
+	return list;
+}
+
+namespace {
+
+// _stricmp on two upper-cased names: ASCII letters without case, the rest by its byte.
+int name_order(const std::string& a, const std::string& b) {
+	auto low = [](char c) {
+		const unsigned char u = static_cast<unsigned char>(c);
+		return u >= 'A' && u <= 'Z' ? u + 32 : u;
+	};
+	for (size_t k = 0;; ++k) {
+		const int x = k < a.size() ? low(a[k]) : 0;
+		const int y = k < b.size() ? low(b[k]) : 0;
+		if (x != y || x == 0) {
+			return x - y;
+		}
+	}
+}
+
+}  // namespace
+
+std::vector<BurglarVictim> burglar_victims(const SaveGame& save, uint32_t town) {
+	struct Named {
+		BurglarVictim v;
+		std::string family;
+		std::string first;
+	};
+	std::vector<Named> named;
+	for (const auto& [merchant, sum] : fn_531470(save, town)) {
+		(void)sum;  // The second half of 0x531470's list: not used by the window.
+		const MerchantMemory& m = save.merchants[merchant].memory;
+		Named n;
+		n.v.merchant = merchant;
+		const int32_t worth = m.s32(0x46C);
+		n.v.price = worth < 0 ? 500 : uint16_t(std::min<int64_t>((int64_t(worth / 10000) + 1) * 500, 65000));
+		std::tie(n.first, n.family) = merchant_names(save, merchant);
+		named.push_back(std::move(n));
+	}
+	std::stable_sort(named.begin(), named.end(), [](const Named& a, const Named& b) {
+		const int by_family = name_order(a.family, b.family);
+		return by_family != 0 ? by_family < 0 : name_order(a.first, b.first) < 0;
+	});
+	std::vector<BurglarVictim> victims;
+	for (const Named& n : named) {
+		victims.push_back(n.v);
+	}
+	return victims;
+}
+
+std::optional<OperationBytes> burglar_press(SaveGame& save, uint32_t town, BurglarWindow& w, size_t victim) {
+	if (victim >= w.victims.size()) {
+		return std::nullopt;
+	}
+	const BurglarVictim& v = w.victims[victim];
+	std::optional<OperationBytes> op;
+	w.hired = false;
+	if (int32_t(v.price) <= save.merchants[player_of(save)].memory.s32(0)) {
+		OperationBytes o{};
+		put32(o, 0, 0x4F);
+		put32(o, 4, v.price);
+		const uint16_t here = uint16_t(town);
+		const uint16_t player = uint16_t(player_of(save));
+		std::memcpy(o.data() + 0xA, &here, 2);
+		std::memcpy(o.data() + 0xC, &player, 2);
+		std::memcpy(o.data() + 0xE, &v.merchant, 2);
+		const uint16_t draw = uint16_t(tick::game_rand(save));
+		std::memcpy(o.data() + 8, &draw, 2);
+		op = o;
+		w.hired = true;
+	} else {
+		w.refusal = int(tick::game_rand(save) * 5 / 32768);
+	}
+	w.done = true;
+	return op;
+}
+
+uint32_t tavern_pirate_captain(const SaveGame& save, uint32_t town) {
+	return tick::events_detail::fn_5261d0(save, town);
+}
+
+uint32_t pirate_henchmen(float roll) {
+	return uint32_t(tick::ftol(double(roll) * 40.0 + 10.5));  // fmul 40.0f (0x66DCD8); fadd 10.5 (0x679CA0); __ftol
+}
+
+uint32_t pirate_share(const SaveGame& save, uint32_t captain) {
+	if (captain >= save.captains.size()) {
+		return 0;
+	}
+	return ((uint32_t(save.captains[captain].u8(0x8)) >> 5) + 6) * 5;
+}
+
+std::optional<OperationBytes> pirate_press(const SaveGame& save, uint32_t town, PirateWindow& w, uint32_t henchmen,
+	bool before_town) {
+	w.done = true;
+	w.wrecked = false;
+	if (w.ship >= save.ships.size()) {
+		return std::nullopt;
+	}
+	const ShipMemory& s = save.ships[w.ship].memory;
+	if (s.s32(0x14) == 0 || int32_t(uint32_t(s.s32(0x18)) * 100) / s.s32(0x14) <= 20) {
+		w.wrecked = true;
+		return std::nullopt;
+	}
+	OperationBytes op{};
+	put32(op, 0, 0x4E);
+	put32(op, 4, tick::events_detail::fn_5261d0(save, town));
+	put32(op, 8, w.ship);
+	put32(op, 0xC, henchmen);
+	put32(op, 0x10, before_town ? town : 0xFF);
 	return op;
 }
 

@@ -128,22 +128,24 @@ second otherwise; the office's side (0x4AA7C0) has its stock / 200 or / 2000 and
   sound, zeros, [+0xE] the notices} (0x4096DB) and then 0x71 {player, 1} (0x409735); the letter
   window queues 0x71 {player, 0} once a tick while it is open (0x47CD83).
 
-Not found: 0x3C, 0x4C, 0x54, 0x55, 0x5C, 0x5D, 0x8F, 0x99, 0xA6, 0xAE, 0xB2, 0xB6 and
+Not found: 0x3C, 0x54, 0x55, 0x5C, 0x5D, 0x8F, 0x99, 0xA6, 0xAE, 0xB2, 0xB6 and
 0xBD have no queuing site with a constant code. Some are surely queued with a
 computed code or through the tavern's stored operation (0x5D, opening an office, is
 an action of the interface; 0x54 and 0x55 go with letters), others may be dead.
+Found 2026-11-13: the tavern's informer prepares 0x4C or 0x55 (0x526B40, the operation
+the town stores for him) and the tavern queues it as it is (0x5D5970).
 
 ## The groups
 
 | Group | Codes | Done in p3vita |
 |-|-|-|
 | simulation | 37: the ones the simulation queues (inventory, part B) | all 37 |
-| player | 105: queued by the interface | 88: 0x00..0x11, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x30..0x36, 0x39, 0x3A, 0x3B, 0x3F, 0x42, 0x43, 0x45, 0x4A, 0x4B, 0x4D..0x4F, 0x50..0x53, 0x56, 0x57, 0x58..0x5B, 0x5D..0x5F, 0x62, 0x63, 0x66, 0x68..0x72, 0x75, 0x77, 0x8B, 0x8C, 0xBF |
+| player | 106: queued by the interface | 88: 0x00..0x11, 0x15..0x1D, 0x20, 0x21, 0x25, 0x26, 0x29..0x2B, 0x2D..0x2F, 0x30..0x36, 0x39, 0x3A, 0x3B, 0x3F, 0x42, 0x43, 0x45, 0x4A, 0x4B, 0x4D..0x4F, 0x50..0x53, 0x56, 0x57, 0x58..0x5B, 0x5D..0x5F, 0x62, 0x63, 0x66, 0x68..0x72, 0x75, 0x77, 0x8B, 0x8C, 0xBF |
 | battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 12: all but 0x99 (never queued; its function, the chase's battle, is done) and 0xBD (the window) |
 | network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | 8: 0xA7, 0xAA, 0xAB (the new game's player and his names) and the five that do nothing |
 | new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | 8: all but 0xAE, 0xB2 and 0xB6 (no queuer found) |
 | missions | 1: 0xC0, the mission interpreter | — |
-| unused | 10: nothing (0x14, 0x73, 0x9C..0x9E, 0xA1) or no queuer found and nothing to do with the player (0x3C, 0x4C, 0x5C, 0x8F) | — |
+| unused | 9: nothing (0x14, 0x73, 0x9C..0x9E, 0xA1) or no queuer found and nothing to do with the player (0x3C, 0x5C, 0x8F) | — |
 
 Some codes of the simulation are also queued by the interface (0x22, 0x24 and 0x23
 by the construction window; 0x2C by the shipyard; 0x37, 0x61 by the guild and the
@@ -229,7 +231,7 @@ feast window): the handler is the same and is done.
 | 0x49 | player | an event's record (0x4DA060, 0x4D8DB0) | 0x5E8280 (through the jump at 0x5E82FE) | 0x536075 → 0x53B0D0 | 2, 512 B |  | guess |
 | 0x4A | player | the Hanse tasks window's developers' tools on a Hanse task (event 0x30): the decision 6 drops it (the leader's reputation, 0x4F91C0, unless exempt), another calls the meeting (the event 0x21 at least 0x700 later, the letter 0x78 to each) (`events_rare.cpp` `fn_53b1f0`) | Hanse tasks window 0x5E87D0 | 0x536084 → 0x53B1F0 | | yes | read |
 | 0x4B | player | take a Hanse task (0x53B440) | Hanse tasks window 0x5E87D0 (through the jump at 0x5E8A5A) | 0x536093 → 0x53B440 |  | yes | read |
-| 0x4C | unused | something of a merchant in a town (0x535400) | not found | 0x5360A2 → 0x53B4D0 | 1, 272 B |  | guess |
+| 0x4C | player | something of a merchant in a town (0x535400): the tavern's informer prepares it (0x526B40: {0x4C, player, 0xFFFF, his rank in his home town + 1 · 100, 0xFFFF, the town's [+0x82C]'s entry of 0x673731..}, then the rumour's text) | the tavern's informer (0x5D5970) | 0x5360A2 → 0x53B4D0 | 1, 272 B |  | guess |
 | 0x4D | player | the tavern's trader: the units bought into a ship (and its convoy) or the office at price / units, the buyer pays, the town's stock down by what was left (a game bug?), the seller (a town's merchant: they are the merchants 0..towns − 1) paid (`trade.cpp`) | 0x5D6FC0 | 0x5360B1 → 0x53B5E0 | 1, 624 B | yes | read |
 | 0x4E | player | a player's ship turns pirate (0x53B850) | 0x5D5430 | 0x5360C0 → 0x53B850 |  | yes | read |
 | 0x4F | player | the tavern's burglar hired by A against B (who has an office there): {0x4F, price, u16 draw, u16 town, u16 A, u16 B, u8 commission}: A pays, his fame +256 twice, the town's [+0x83C] 1, the event 0x0F in max(3, draw & 7) days and maybe a commission (event 0x05); the event (0x4E5664): caught (letter 0x74 to B, a commission), failed (0x16 to A) or the burglary (money and wares of B's office; 0x20 to B, 0x15 to A) (`town_tick/tavern.cpp`) | the tavern 0x5D68E0 | 0x5360CF → 0x53BA40 | | yes | read |

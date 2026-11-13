@@ -61,6 +61,10 @@ OperationBytes tavern_talk_operation(SaveGame& save, uint32_t merchant, uint32_t
 // 0x5A6590, the tavern closed: {0x52, 0xFFFFFFFF, player, town, 10}.
 OperationBytes tavern_leave_operation(uint32_t player, uint32_t town);
 
+// A merchant's first name and family name as the game keeps them in his [+0xE8] and [+0xE4] (0x4F6420: the first
+// name [+0x1C] from the women's list, the bit 0x80, unless [+0x1A]; 0x4F6450: the family name [+0x1D]).
+std::pair<std::string, std::string> merchant_names(const SaveGame& save, uint32_t merchant);
+
 // A greeting's variant when the window opens (0x5CCE4B, 0x5CCEA1): rand() / 32768.0 · 3, truncated (0..2).
 int tavern_greeting(SaveGame& save);
 
@@ -184,5 +188,49 @@ void traveller_turn(TravellerWindow& w, const std::vector<uint16_t>& ships, int 
 // «Accept order» (0x5D6DEE, with a ship): with more than 0x700 ticks to the deadline (unsigned), {0x53, u16 ship, u16
 // payment, u32 deadline, u8 town, u8 destination}; else too late. The page after it.
 std::optional<OperationBytes> traveller_press(const SaveGame& save, uint32_t town, TravellerWindow& w);
+
+// --- The burglar (the page 7: update 0x5D68E0, drawing 0x5D1E70, the page after it 0x5D21A0) ---
+// 0x531470 (on the world: town): the owners of the town's offices (its list [+0x784], next [+0x2CA]; the owner
+// [+0x2C4] below the merchants) without the flag [+0x8] & 4, not the player, each with the office's [+0x2D4] +
+// [+0x2D2] (u16).
+std::vector<std::pair<uint16_t, uint16_t>> fn_531470(const SaveGame& save, uint32_t town);
+// The victims as the window makes them when it opens (0x5CC95C): 0x531470's merchants sorted by their family name,
+// then their first name (upper-cased and compared by _stricmp: ASCII without case, the rest by its byte; equal ones in
+// their order), each with the price ((his [+0x46C] / 10000) + 1) · 500, at most 65000; 500 when [+0x46C] is negative.
+struct BurglarVictim {
+	uint16_t merchant = 0;
+	uint16_t price = 0;
+};
+std::vector<BurglarVictim> burglar_victims(const SaveGame& save, uint32_t town);
+struct BurglarWindow {
+	std::vector<BurglarVictim> victims;
+	bool hired = false;   // [+0x1CA7]
+	int refusal = 0;      // [+0x1C8C]: which «get some more gold» (0..4)
+	bool done = false;    // the page after it (0xD)
+};
+// «Hire» on a victim (0x5D69A6): with the money (signed, the price at most it) {0x4F, u32 price, u16 rand(), u16 town,
+// u16 player, u16 the victim, u8 0}; else rand() / 32768.0 · 5 truncated, the refusal. The page after it.
+std::optional<OperationBytes> burglar_press(SaveGame& save, uint32_t town, BurglarWindow& w, size_t victim);
+
+// --- The pirate (the page 8: update 0x5D5430, drawing 0x5D09A0, the page after it 0x5D0F00) ---
+// His captain is the town's 0x5261D0 (the page closes without one); his henchmen the window's [+0x1C3C], made when it
+// opens from the tavern's roll (0x5CC482: roll · 40 + 10.5, truncated: 10..50); his share of the loot ((the captain's
+// [+0x8] >> 5) + 6) · 5 %; the ships 0x504AC0's kind 5 (ShipListMode::Pirate), as the traveller's (the arrows on with
+// more than one, the first when the list was empty).
+uint32_t tavern_pirate_captain(const SaveGame& save, uint32_t town);  // 0x5261D0
+uint32_t pirate_henchmen(float roll);
+uint32_t pirate_share(const SaveGame& save, uint32_t captain);
+struct PirateWindow {
+	uint16_t ship = 0xFFFF;  // [+0x1C30]
+	bool wrecked = false;    // the ship with 20 % of its hull or less: refused
+	bool done = false;       // the page after it (0xB)
+};
+// «Hand over ship» (0x5D573A: the pirates sail all the Hanse) or its second button «before <town>» (0x5D584C): with
+// more than 20 % of the ship's hull ([+0x18] · 100 / [+0x14], signed), {0x4E, captain, ship, henchmen, 0xFF or the
+// town}; else refused. The page after it.
+std::optional<OperationBytes> pirate_press(const SaveGame& save, uint32_t town, PirateWindow& w, uint32_t henchmen,
+	bool before_town);
+// The traveller's and the pirate's arrows: the ships in turn (nothing with fewer than two).
+void ship_turn(uint16_t& ship, const std::vector<uint16_t>& ships, int step);
 
 }  // namespace p3::data

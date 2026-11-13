@@ -35,7 +35,9 @@ Cómo leerla:
   y derribar tocando la ciudad; el menú del barco, con las rutas comerciales y la ventana de dos barcos; el gremio, la
   herrería, la iglesia, el baño y la oficina de otro comerciante; el buzón; las estadísticas; el panel de la
   Hansa; las batallas que dirige el jugador; guardar y cargar; las opciones (idioma, corregir los fallos del juego).
-- **Lo último** (13-11-2026): la taberna en el visor: una fila por persona presente (quién está, como el juego; hablar
+- **Lo último** (13-11-2026): en el visor, el ladrón y el pirata de la taberna (y los botones de acción de las
+  ventanas de lugar ocupan todo el ancho cuando no hay − y +; tocar «○ cerrar» cierra). Antes, la taberna en el visor:
+  una fila por persona presente (quién está, como el juego; hablar
   con una encola la 0x52 como su menú y salir de la taberna la de tipo 10), el comerciante (su oferta, «Aceptar
   oferta», a qué barco u oficina y «Cargar mercancías»), el traficante de armas (sus precios, el paso 1/5/50/todo,
   comprar y vender) y el viajero (su encargo con fecha, el barco, «Aceptar encargo»); `tavern_window.cpp`, escenario
@@ -59,8 +61,8 @@ Cómo leerla:
   por puntos del mapa del mar (0x0B), esta también en el visor (tocar el mar añade puntos; X zarpa, ○ los borra).
   Antes, la primera parte: la reparación de convoyes, los botones de las cartas, la iglesia y el baño.
 - **Siguiente**: el encargo `ENCARGO_ACCIONES_3.md` (junto al HANDOFF), con el resto (apartado 1): del grupo 4 queda
-  el visor del ladrón, el pirata y el soplón de la taberna, y la ventana del transporte por tierra de la puerta de la
-  ciudad; después la milicia, los asedios y el resto del
+  el soplón de la taberna (con la 0x4C en el motor) y la ventana del transporte por tierra de la puerta de la ciudad
+  (0x5EA3xx..0x5EB3C0, con su sorteo de la emboscada); después la milicia, los asedios y el resto del
   ayuntamiento (grupo 5, con la votación del consejo 0x49).
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
@@ -76,7 +78,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | La simulación sola (sin el jugador) | del código del juego al que llega, el 84 % reescrito con su nombre y otro 12 % hecho sin él (cargar y guardar partidas, la navegación) o saltado a propósito (medida abajo) | el 4 % sin nada son los manejadores de los tipos de evento que crean las acciones del jugador; además, los estados raros del barco y unas ramas sueltas (apartado 2) |
 | El intérprete de misiones (aparte) | 18 % | casi entero (apartado 3) |
 | Tipos de evento (58) | 52 | 6: 1 lo crea una acción del jugador que falta (el 0x11, los pedidos del ayuntamiento), 1 el intérprete de misiones, 1 la partida en red y 3 nadie |
-| Operaciones (193 códigos) | 153: las 37 de la simulación, 88 de las 105 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan y 8 de las 15 de la red | **17 del jugador** (apartado 1; 5 de ellas, 0x54, 0x55, 0x74, 0x76 y 0x82, van con el intérprete de misiones), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 15, sin uso: 6 no hacen nada y a 9 no se les ha encontrado quien las encole (una, la 0x8F, manda dos cartas del asedio) |
+| Operaciones (193 códigos) | 153: las 37 de la simulación, 88 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan y 8 de las 15 de la red | **18 del jugador** (apartado 1; 5 de ellas, 0x54, 0x55, 0x74, 0x76 y 0x82, van con el intérprete de misiones; la 0x4C, que se creía sin uso, la prepara el soplón de la taberna), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 15, sin uso: 6 no hacen nada y a 9 no se les ha encontrado quien las encole (una, la 0x8F, manda dos cartas del asedio) |
 | Cartas (las 154 llamadas del juego que mandan una) | 132 | 22: 5 de operaciones del jugador, 2 del evento 0x11 que crea una de ellas, 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | 9 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería; y la oficina de otro comerciante, con las ofertas), todas provisionales: paneles planos | 4 sin ventana (ayuntamiento, armería —la de la milicia—, granero y puerta de la ciudad) y rehacer las 9 con la vista del juego (apartado 4) |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
@@ -203,9 +205,11 @@ enteros antes de reescribirlos):
   (0x5A66C0; quién está por 0x5A6E60: 0x526880, 0x5265E0, 0x4F6CA0, 0x5269A0, [+0x82C], 0x5261A0, 0x526280, 0x526120,
   0x5261D0) como filas, con la 0x52 al hablar (0x5A7A60, 0x5A7BA0) y al salir (0x5A6590); las ventanas del comerciante
   (0x5D6FC0: su oferta 0x526650, sus barcos 0x5D7DE0, la 0x4D), del traficante de armas (0x5D5C60: los precios
-  0x526470, la 0x50 con los pasos 1, 5, 50 y todo) y del viajero (0x5D6AE0: la 0x53). Faltan las del ladrón
-  (0x5D68E0, la 0x4F; su lista de víctimas 0x531470), del pirata (0x5D5430, la 0x4E) y del soplón (0x5D5970: la taberna
-  encola tal cual una operación que le prepara la ciudad, 0x526B40: puede llegar cualquier código). El cliente de un
+  0x526470, la 0x50 con los pasos 1, 5, 50 y todo), del viajero (0x5D6AE0: la 0x53), del ladrón (0x5D68E0: sus
+  víctimas 0x531470, la 0x4F; la fila del juego lleva además un adjetivo del comerciante, de 0x4F9430, que falta) y
+  del pirata (0x5D5430: sus dos botones, la 0x4E). Falta el soplón (0x5D5970): la taberna encola tal cual la
+  operación que le prepara la ciudad (0x526B40), la 0x4C (que el motor aún no tiene: 0x53B4D0) o, con las misiones,
+  la 0x55, y compone el texto del rumor (los asedios, los piratas avistados…). El cliente de un
   pedido (0x5D7760, la 0x51) va con los pedidos del ayuntamiento (grupo 5); la carta de misión (0x5D8100, las 0x71),
   con el intérprete de misiones.
 - [ ] **La puerta de la ciudad: el transporte por tierra** (el motor hecho el 13-11-2026, `town_tick/land_transport.cpp`,

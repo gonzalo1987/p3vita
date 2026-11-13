@@ -147,6 +147,7 @@ constexpr uint32_t kAuctionList = 0x03000FE0;
 // TAVERN_SHIPS: SENTINEL + 0x3E0, 0x5D7DE0's list there).
 constexpr uint32_t kTavernOffer = 0x030003C0;
 constexpr uint32_t kTavernShips = 0x030003E0;
+constexpr uint32_t kTavernVictims = 0x030003A0;  // TAVERN_VICTIMS: 0x531470's list (count, merchants, sums)
 // Its copiers of the convoy window's choices (0x40C170) and of the market
 // window's convoy (0x4AA4A0) (CONVOY_CHOICES, CONVOY_SUMMARY).
 constexpr uint32_t kConvoyChoices = 0x03000E80;
@@ -1136,6 +1137,16 @@ void register_probes_unchecked(ProbeRegistry& r) {
 			s.globals.s32(c.args[3] + 4 * k) = p.buy[k];
 		}
 		return std::nullopt;
+	};
+	r[kTavernVictims] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const std::vector<std::pair<uint16_t, uint16_t>> list = fn_531470(s, c.args[0]);
+		const uint32_t n = uint32_t(list.size());
+		s.globals.u16(kScratch) = uint16_t(n);
+		for (uint32_t k = 0; k < n; ++k) {
+			s.globals.u16(kScratch + 2 + 2 * k) = list[k].first;
+			s.globals.u16(kScratch + 2 + 2 * (n + k)) = list[k].second;
+		}
+		return n;
 	};
 	r[kTavernShips] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		const std::vector<uint16_t> list = trader_ships(s, c.args[1], int32_t(c.args[0]));
