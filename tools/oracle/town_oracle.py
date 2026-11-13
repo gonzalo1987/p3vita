@@ -541,6 +541,13 @@ MAIL_CALLS += (
     0x4E3B4B, 0x4E3CFC, 0x4E3C6E, 0x4E3D43, 0x4E3E95,
     # The Hanse tasks window's developers' tools (operation 0x4A, 0x53B1F0, events_rare.cpp): the meeting's 0x78.
     0x53B40C,
+    # An order of the town hall (town_hall.cpp): taken, 0x1A (operation 0x3D, 0x53A620); at its deadline, the event
+    # 0x11 (0x4E6744): 0x5B «Dishonoured», 0x5A «Fulfilled».
+    0x53A794, 0x4E6878, 0x4E6987,
+    # A merchant moves his home town (operation 0x3E, 0x53A810, town_hall.cpp): 0x0E «Move» to the chronicle.
+    0x53A910,
+    # The sieges' operations (sieges.cpp): 0x8F (0x540240) the news 0x38 and the extra tax 0x37; 0x90 (0x634660) 0x38.
+    0x5402BF, 0x5403DB, 0x63477B,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is

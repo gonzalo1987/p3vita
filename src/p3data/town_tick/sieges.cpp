@@ -1804,6 +1804,278 @@ void fn_633af0(SaveGame& save, int siege, uint8_t kind, uint8_t r, uint8_t flag)
 	enqueue_operation(save, op, sizeof(op));
 }
 
+// 0x635040 (on a town's siege object; a human merchant `arrived` there as his home town, or left it): counted the
+// human merchants whose home town ([+0x19]) is the object's town [+0x4]: the first one arrived, [+0x101B] 0 and
+// [+0x1018] the town's people [+0x2D4] · the tick % 0x3001 + 0x1800; the last one gone, [+0x101B] 0xFF and the same
+// % 0xA001 + 0x2800.
+void fn_635040(SaveGame& save, int siege, bool arrived) {
+	const GlobalMemory& g = save.globals;
+	if (size_t(siege) >= save.sieges.size()) {
+		return;  // (No siege objects: an old save's.)
+	}
+	SiegeMemory& s = save.sieges[size_t(siege)];
+	uint8_t humans = 0;
+	for (uint32_t m = 0; m < g.u16(global::kWorldMerchantCount); ++m) {
+		const MerchantMemory& mm = save.merchants[m].memory;
+		if (mm.u8(0x19) == s.u8(0x4) && mm.u16(0x8) == 0) {
+			++humans;
+		}
+	}
+	const uint32_t people = uint32_t(save.towns[s.u8(0x4)].memory.s32(0x2D4)) * g.u32(kTick);
+	if (arrived) {
+		if (humans == 1) {
+			s.u8(0x101B) = 0;
+			s.u16(0x1018) = uint16_t(people % 0x3001 + 0x1800);
+		}
+	} else if (humans == 0) {
+		s.u8(0x101B) = 0xFF;
+		s.u16(0x1018) = uint16_t(people % 0xA001 + 0x2800);
+	}
+}
+
+namespace {
+
+// The countdown [+0x1018] up by `add`, up to 0x4FFF (the town sold to: 0x635990, 0x6356D0, 0x635DE0, 0x6348E0).
+void countdown_up(SiegeMemory& s, uint32_t add) {
+	const uint16_t v = s.u16(0x1018);
+	s.u16(0x1018) = uint32_t(v) + add > 0x4FFF ? 0x4FFF : uint16_t(v + add);
+}
+
+uint32_t ware_unit(uint32_t ware) {
+	return ware < 20 && kBarrelWare[ware] ? 200 : 2000;
+}
+
+}  // namespace
+
+// 0x6348E0 (on the siege object; the operation 0x88: a town's treasury pays `amount`): 1, the countdown [+0x1018],
+// above 0xFFF, to the start of its 0x1000 less one; else, the countdown not above 0x4FFF, up by amount · 256 / 3125
+// (0x4FFF from 250000 on, and at most).
+void fn_6348e0(SaveGame& save, int siege, uint32_t amount) {
+	SiegeMemory& s = save.sieges[size_t(siege)];
+	const uint16_t v = s.u16(0x1018);
+	if (amount == 1) {
+		if (v > 0xFFF) {
+			s.u16(0x1018) = uint16_t((v & 0xF000) - 1);
+		}
+		return;
+	}
+	if (v > 0x4FFF) {
+		return;
+	}
+	if (amount >= 0x3D090) {
+		s.u16(0x1018) = 0x4FFF;
+		return;
+	}
+	countdown_up(s, (amount << 8) / 3125);
+}
+
+// 0x635990 (on the siege object; the operation 0x89): the merchant sells `count` barrels or loads of the ware to the
+// town (the siege's market): from his office there (all its whole units it has, at most the count), then from his
+// ships there not marked ([+0x136] & 1) in his list ([+0xE], next [+0x4]) while some is left (each one's hold again,
+// 0x5182B0); he is paid the price · the last of them taken (from the office, or the last ship; without an office the
+// count asked, if no ship gave any: the game's; with fix_game_bugs() all sold), [+0x0] and [+0x49C]; the countdown
+// [+0x1018], not above 0x4FFF, up
+// by all of them (a load as 5) · 512 / 25 (0x4FFF from 1000 on, and at most).
+void fn_635990(SaveGame& save, int siege, uint32_t merchant, uint32_t ware, uint32_t count, uint32_t price) {
+	GlobalMemory& g = save.globals;
+	SiegeMemory& s = save.sieges[size_t(siege)];
+	merchant &= 0xFF;
+	ware &= 0xFF;
+	if (merchant >= g.u16(global::kWorldMerchantCount) || ware >= 24) {
+		return;  // (Past them the game reads elsewhere.)
+	}
+	MerchantMemory& m = save.merchants[merchant].memory;
+	const uint32_t town = s.u8(0x4);
+	const int office = facilities_detail::fn_5308a0(save, merchant, town);
+	const uint32_t unit = ware_unit(ware);
+	uint32_t left = count;
+	uint32_t sold = 0;
+	uint32_t last = count;
+	if (office >= 0) {
+		uint32_t& stock = save.offices[size_t(office)].memory.u32(4 + 4 * ware);
+		last = std::min(stock / unit, left);
+		stock -= last * unit;
+		left -= last;
+		sold = last;
+	}
+	const uint16_t ships = g.u16(global::kShipCount);
+	for (uint32_t ship = m.u16(0xE); ship < ships && left > 0; ship = save.ships[ship].memory.u16(0x4)) {
+		ShipMemory& sm = save.ships[ship].memory;
+		if (sm.u8(0x39) != town || (sm.u8(0x136) & 1)) {
+			continue;
+		}
+		uint32_t& cargo = sm.u32(0x54 + 4 * ware);
+		last = std::min(cargo / unit, left);
+		left -= last;
+		sold += last;
+		cargo -= last * unit;
+		recalculate_cargo(save.ships[ship]);
+	}
+	// The game pays the last batch only (and, with nothing taken, all asked): a game bug; fixed behind fix_game_bugs()
+	// at the user's word: what was sold (docs/roadmap.md).
+	const uint32_t pay = (fix_game_bugs() ? sold : last) * price;
+	m.u32(0x0) += pay;
+	m.u32(0x49C) += pay;
+	if (s.u16(0x1018) > 0x4FFF) {
+		return;
+	}
+	const uint32_t worth = unit == 200 ? sold : sold * 5;
+	if (worth >= 1000) {
+		s.u16(0x1018) = 0x4FFF;
+		return;
+	}
+	countdown_up(s, (worth << 9) / 25);
+}
+
+// 0x6356D0 (on the siege object; the operation 0x8A): a merchant promises deliveries to the town: unless a node of
+// the list [+0x101C] is his already ([+0x3]), a new one at its head ([+0x0] the ware, [+0x1] 6 deliveries, [+0x2]
+// 0xFF with `first` else 0, [+0x3] the merchant, u16 [+0x4] barrels or loads, u16 [+0x6] the price of one; 0x635440
+// makes them).
+void fn_6356d0(SaveGame& save, int siege, uint8_t ware, uint8_t merchant, uint16_t amount, uint16_t price, bool first) {
+	std::vector<GameMemory<8>>& list = save.siege_extras[size_t(siege)].list_101c;
+	for (const GameMemory<8>& node : list) {
+		if (node.u8(0x3) == merchant) {
+			return;
+		}
+	}
+	GameMemory<8> node;
+	node.u8(0x0) = ware;
+	node.u8(0x1) = 6;
+	node.u8(0x2) = first ? 0xFF : 0;
+	node.u8(0x3) = merchant;
+	node.u16(0x4) = amount;
+	node.u16(0x6) = price;
+	list.insert(list.begin(), node);
+	save.sieges[size_t(siege)].u32(0x101C) = 1;
+}
+
+// 0x635DE0 (on the siege object; the operation 0x8D): the merchant's office in the town gives what the prince asked
+// for (the first node of the list [+0x1020] with the merchant [+0x5] and the besieged town [+0x6]; none: nothing):
+// with all of it there (timber [+0x0], grain [+0x1], tools [+0x2], pitch [+0x3], beer [+0x4], in barrels or loads),
+// it leaves the office, the node marked ([+0x8] 1) with the tick given ([+0xC]) and put again by its tick (after the
+// last from the head whose next isn't later), and the countdown [+0x1018], not above 0x4FFF, up by their value
+// (ftol of Σ units · count · 0x673A18[w]) · 128 / 3125 (0x4FFF from 500000 on, and at most). Without an office there
+// the game reads at 0: here nothing.
+void fn_635de0(SaveGame& save, int siege, uint8_t merchant, uint8_t besieged, uint32_t tick) {
+	SiegeMemory& s = save.sieges[size_t(siege)];
+	std::vector<GameMemory<0x10>>& list = save.siege_extras[size_t(siege)].list_1020;
+	const int office = facilities_detail::fn_5308a0(save, merchant, s.u8(0x4));
+	size_t at = 0;
+	while (at < list.size() && !(list[at].u8(0x5) == merchant && list[at].u8(0x6) == besieged)) {
+		++at;
+	}
+	if (at == list.size() || office < 0) {
+		return;
+	}
+	OfficeMemory& o = save.offices[size_t(office)].memory;
+	GameMemory<0x10> node = list[at];
+	// The wares and the node's byte of each, in the order the game checks them: beer, tools, timber, pitch, grain.
+	static constexpr uint32_t kWares[5] = {3, 12, 11, 15, 0};
+	static constexpr size_t kBytes[5] = {4, 2, 0, 3, 1};
+	for (size_t k = 0; k < 5; ++k) {
+		if (o.s32(4 + 4 * kWares[k]) < int32_t(ware_unit(kWares[k]) * node.u8(kBytes[k]))) {
+			return;
+		}
+	}
+	for (size_t k = 0; k < 5; ++k) {
+		o.s32(4 + 4 * kWares[k]) -= int32_t(ware_unit(kWares[k]) * node.u8(kBytes[k]));
+	}
+	node.u32(0xC) = tick;
+	node.u8(0x8) = 1;
+	list.erase(list.begin() + std::ptrdiff_t(at));
+	if (list.empty()) {
+		list.push_back(node);
+	} else {
+		size_t after = 0;
+		while (after + 1 < list.size() && list[after + 1].u32(0xC) < node.u32(0xC)) {
+			++after;
+		}
+		list.insert(list.begin() + std::ptrdiff_t(after + 1), node);
+	}
+	// The value, in the FPU's order: grain, pitch, timber, tools, beer.
+	static constexpr uint32_t kSum[5] = {0, 15, 11, 12, 3};
+	static constexpr size_t kSumBytes[5] = {1, 3, 0, 2, 4};
+	double value = 0;
+	for (size_t k = 0; k < 5; ++k) {
+		const double term = double(float(ware_unit(kSum[k]))) * double(float(node.u8(kSumBytes[k]))) *
+			double(ware_value(kSum[k]));
+		value = k == 0 ? term : value + term;
+	}
+	const uint32_t worth = uint32_t(ftol(value));
+	if (s.u16(0x1018) > 0x4FFF) {
+		return;
+	}
+	if (worth >= 0x7A120) {
+		s.u16(0x1018) = 0x4FFF;
+		return;
+	}
+	countdown_up(s, (worth << 7) / 3125);
+}
+
+// 0x634660 (on the siege object; the operation 0x90 with an amount): the town pays its besiegers off: the town's
+// account 0x529F90 of the kind 8, no more besieged ([+0x2C8] &= ~0x10), the army ([+0x8]; without one the game would
+// stop: here nothing more) retreating ([+0x3A] its [+0x6A] · 2, [+0x42] 0, [+0x78] and [+0x79] 1; its graphics with
+// [+0x77] not here), the news 0x38 «Siege» to the chronicle ([+0x5] the town, u16 [+0x8] the days of the siege (the
+// day − [+0x584] + 1), [+0xA] and [+0xC] 0xFFFF, [+0xE] the group [+0x6F] − 1, or [+0x6E] without one), and 0x634C50
+// (paid).
+void fn_634660(SaveGame& save, int siege, uint32_t amount) {
+	GlobalMemory& g = save.globals;
+	SiegeMemory& s = save.sieges[size_t(siege)];
+	const uint8_t town = s.u8(0x4);
+	fn_529f90(save, town, int32_t(amount), 8);
+	TownMemory& t = save.towns[town].memory;
+	t.u32(0x2C8) &= ~0x10u;
+	SiegeExtras& ex = save.siege_extras[size_t(siege)];
+	if (!ex.army) {
+		return;
+	}
+	SiegeArmyMemory& a = *ex.army;
+	a.u16(0x3A) = uint16_t(a.u16(0x6A) * 2);
+	a.u16(0x42) = 0;
+	a.u8(0x78) = 1;
+	a.u8(0x79) = 1;
+	Letter letter(0x38);
+	letter.entry.u8(5) = town;
+	letter.entry.u16(8) = uint16_t((g.u32(kTick) >> 8) - a.u16(0x584) + 1);
+	letter.entry.u16(0xA) = 0xFFFF;
+	letter.entry.u16(0xC) = 0xFFFF;
+	letter.entry.u16(0xE) = a.u8(0x6F) != 0xFF ? uint16_t(a.u8(0x6F) - 1) : a.u8(0x6E);
+	send_letter(save, kLetterToChronicle, letter);
+	fn_634c50(save, siege, true);
+}
+
+// 0x6347B0 (on the siege object; 0x90 with [+0xB]): the army, neither retreating nor collecting ([+0x3A], [+0x3C]),
+// collects the ransom: [+0x42] 0, the next group [+0x6F] the one arriving [+0x6E] and none next, [+0x3C] its [+0x68],
+// [+0x78] and [+0x79] 1 (its graphics with [+0x77] not here). 0x634820 (without [+0xB]): the army, neither arriving,
+// retreating nor collecting and still attacking ([+0x42], [+0x3A], [+0x3C], [+0x78]), stops attacking ([+0x78] 1).
+void fn_6347b0(SaveGame& save, int siege) {
+	SiegeExtras& ex = save.siege_extras[size_t(siege)];
+	if (!ex.army) {
+		return;
+	}
+	SiegeArmyMemory& a = *ex.army;
+	if (a.u16(0x3A) != 0 || a.u16(0x3C) != 0) {
+		return;
+	}
+	a.u16(0x42) = 0;
+	a.u8(0x6E) = a.u8(0x6F);
+	a.u8(0x6F) = 0xFF;
+	a.u16(0x3C) = a.u16(0x68);
+	a.u8(0x79) = 1;
+	a.u8(0x78) = 1;
+}
+
+void fn_634820(SaveGame& save, int siege) {
+	SiegeExtras& ex = save.siege_extras[size_t(siege)];
+	if (!ex.army) {
+		return;
+	}
+	SiegeArmyMemory& a = *ex.army;
+	if (a.u16(0x42) == 0 && a.u16(0x3A) == 0 && a.u16(0x3C) == 0 && a.u8(0x78) == 0) {
+		a.u8(0x78) = 1;
+	}
+}
+
 }  // namespace sieges_detail
 
 using namespace sieges_detail;
@@ -2029,6 +2301,164 @@ void fn_5369c7(SaveGame& save, const uint8_t* operation) {
 	std::memcpy(&entry, operation + 0x10, 4);
 	if (entry < save.globals.u16(kMailCount) && save.mail[entry].u8(4) == 0x64) {
 		save.mail[entry].u8(0xF) = 0xFE;
+	}
+}
+
+namespace {
+
+uint32_t op32(const uint8_t* operation, size_t at) {
+	uint32_t v;
+	std::memcpy(&v, operation + at, 4);
+	return v;
+}
+
+uint16_t op16(const uint8_t* operation, size_t at) {
+	uint16_t v;
+	std::memcpy(&v, operation + at, 2);
+	return v;
+}
+
+bool siege_town(const SaveGame& save, uint32_t town) {
+	return town < save.globals.u32(kTownCount) && town < save.sieges.size();
+}
+
+}  // namespace
+
+// The operation 0x88 (0x53688D, inline): {0x88, u32 town, u32 amount}: the town's treasury pays toward the siege: the
+// amount at most the treasury [+0x700] (unsigned), the town's account 0x529F90 of the kind 10, and 0x6348E0.
+void fn_53688d(SaveGame& save, const uint8_t* operation) {
+	const uint32_t town = op32(operation, 4);
+	if (!siege_town(save, town)) {
+		return;
+	}
+	uint32_t amount = op32(operation, 8);
+	const uint32_t treasury = save.towns[town].memory.u32(0x700);
+	if (amount > treasury) {
+		amount = treasury;
+	}
+	fn_529f90(save, int(town), int32_t(amount), 0xA);
+	fn_6348e0(save, int(town), amount);
+}
+
+// The operation 0x89 (0x5368E9 → 0x635990): {0x89, u32 how many, u32 the price, u8 the ware, u8 the merchant, u8 the
+// town}: wares sold to the besieged town.
+void fn_5368e9(SaveGame& save, const uint8_t* operation) {
+	const uint32_t town = operation[0xE];
+	if (!siege_town(save, town)) {
+		return;
+	}
+	fn_635990(save, int(town), operation[0xD], operation[0xC], op32(operation, 4), op32(operation, 8));
+}
+
+// The operation 0x8A (0x53692B → 0x6356D0): {0x8A, u16 how many, -, u16 the price, -, u8 the ware, u8 the merchant,
+// u8 the town, u8 first}: deliveries promised to the town.
+void fn_53692b(SaveGame& save, const uint8_t* operation) {
+	const uint32_t town = operation[0xE];
+	if (!siege_town(save, town)) {
+		return;
+	}
+	fn_6356d0(save, int(town), operation[0xC], operation[0xD], op16(operation, 4), op16(operation, 8),
+		operation[0xF] != 0);
+}
+
+// The operation 0x8D (0x536A2B → 0x635DE0): {0x8D, u32 town, u8 the merchant, …, u8 [+0xC] the besieged town, …,
+// u32 [+0x10] the tick}: the prince's request delivered.
+void fn_536a2b(SaveGame& save, const uint8_t* operation) {
+	const uint32_t town = op32(operation, 4);
+	if (!siege_town(save, town)) {
+		return;
+	}
+	fn_635de0(save, int(town), operation[8], operation[0xC], op32(operation, 0x10));
+}
+
+// The operation 0x8F (0x536AA9 → 0x540240; nobody found to queue it): {0x8F, u32 the tax, u16 [+0x8], u16 [+0xA],
+// u16 [+0xC], u16 [+0xE], u8 the town}: an extra tax for the siege on the town's offices. With [+0xC], the news 0x38
+// «Siege» to the chronicle ([+0x5] the town, u16 [+0x8] [+0xC], [+0xA] [+0x8], [+0xC] [+0xA], [+0xE] [+0xE]); then the
+// letter, as 0x37 «Extra tax» with u32 [+0x8] the tax asked, to each human owner of an office there with his share:
+// ((his company's worth [+0x46C] · 70 / (it + 100000) + it % 21 + 10) · the tax (over 65000: (the town's [+0x2E0] & 15
+// + 50) · 1000) + 5000) / 10000 · 100, at most 65500, in its u32 [+0x8], and a debt (an event 0x01 in 20 days: u32
+// [+0x8] the share, [+0x10] 0xFF, [+0x11] the owner, [+0xC] the day's start, [+0x14] the town); an AI owner pays it
+// ([+0x0] down, [+0x4BC] up).
+void fn_540240(SaveGame& save, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	const uint32_t town = operation[0x10];
+	if (town >= g.u32(kTownCount)) {
+		return;
+	}
+	Letter letter;
+	if (op16(operation, 0xC) != 0) {
+		letter.entry.u8(4) = 0x38;
+		letter.entry.u8(5) = uint8_t(town);
+		letter.entry.u16(8) = op16(operation, 0xC);
+		letter.entry.u16(0xA) = op16(operation, 8);
+		letter.entry.u16(0xC) = op16(operation, 0xA);
+		letter.entry.u16(0xE) = op16(operation, 0xE);
+		send_letter(save, kLetterToChronicle, letter);
+	} else {
+		letter.entry.u8(5) = uint8_t(town);
+	}
+	letter.entry.u8(4) = 0x37;
+	uint32_t tax = op32(operation, 4);
+	letter.entry.u32(8) = tax;
+	const TownMemory& t = save.towns[town].memory;
+	if (tax > 65000) {
+		tax = ((t.u32(0x2E0) & 0xF) + 0x32) * 1000;
+	}
+	for (uint32_t o = t.u16(0x784); o < g.u16(kOfficeCount); o = save.offices[o].memory.u16(0x2CA)) {
+		const uint16_t owner = save.offices[o].memory.u16(0x2C4);
+		if (owner >= save.merchants.size()) {
+			continue;  // (An owner past the merchants: the game reads elsewhere.)
+		}
+		MerchantMemory& p = save.merchants[owner].memory;
+		const int32_t worth = p.s32(0x46C);
+		const int32_t part = int32_t(uint32_t(worth) * 70) / (worth + 100000);
+		const uint32_t factor = uint32_t(part + worth % 21 + 10);
+		uint32_t share = (factor * tax + 5000) / 10000 * 100;
+		if (share > 0xFFDC) {
+			share = 0xFFDC;
+		}
+		if (p.u16(0x8) == 0) {
+			letter.entry.u32(8) = share;
+			send_letter(save, owner, letter);
+			const uint16_t index = events_detail::fn_4d8cf0(save, g.u32(kTick) + 0x1400);
+			GameMemory<0x18>& e = save.events[index];
+			e.u16(6) = 1;
+			e.u8(0x12) = 0;
+			e.u8(0x15) = 0;
+			e.u8(0x16) = 0;
+			e.u8(0x17) = 0;
+			e.u32(8) = share;
+			e.u8(0x13) = 0;
+			e.u8(0x10) = 0xFF;
+			e.u8(0x11) = uint8_t(owner);
+			e.u32(0xC) = g.u32(kTick);
+			e.u8(0xC) = 0;
+			e.u8(0x14) = uint8_t(town);
+		} else {
+			p.u32(0x0) -= share;
+			p.u32(0x4BC) += share;
+		}
+	}
+}
+
+// The operation 0x90 (0x536AB8 → 0x540490): {0x90, u32 amount, u8 town, u8 [+0x9], u8 [+0xA], u8 [+0xB]}: the siege's
+// window: an amount, the town pays its besiegers off (0x634660); else [+0x9] or [+0xA] set its [+0x101A] to 1 or 0;
+// else the army collects the ransom ([+0xB], 0x6347B0) or stops attacking (0x634820).
+void fn_540490(SaveGame& save, const uint8_t* operation) {
+	const uint32_t town = operation[8];
+	if (!siege_town(save, town)) {
+		return;
+	}
+	if (op32(operation, 4) != 0) {
+		fn_634660(save, int(town), op32(operation, 4));
+	} else if (operation[9] != 0) {
+		save.sieges[town].u8(0x101A) = 1;
+	} else if (operation[0xA] != 0) {
+		save.sieges[town].u8(0x101A) = 0;
+	} else if (operation[0xB] != 0) {
+		fn_6347b0(save, int(town));
+	} else {
+		fn_634820(save, int(town));
 	}
 }
 

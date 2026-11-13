@@ -2109,6 +2109,8 @@ int events_mayor(SaveGame& save, uint16_t event, uint16_t type) {
 	case 0x0F:  // The burglary (town_tick/tavern.cpp).
 		fn_4e5664(save, event);
 		return 0;
+	case 0x11:  // An order of the town hall taken, at its deadline (town_tick/town_hall.cpp).
+		return fn_4e6744(save, event) ? 1 : 0;
 	case 0x0C:  // A cart convoy (town_tick/land_transport.cpp).
 		return fn_4e38b4(save, event) ? 1 : 0;
 	case 0x20:

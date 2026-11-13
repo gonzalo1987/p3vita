@@ -1302,6 +1302,33 @@ def militia(o):
     return during
 
 
+def militia_ops(o):
+    """The militia's operations through the executor (the town hall's armoury window 0x5B0930), {code, u32 type, u32
+    town}: 0x41 recruits a soldier (0x51D4C0) and 0x40 dismisses one (0x51D410), in a town without a merchant mayor
+    (with beggars and weapons to spare): the types 0..3 and 4, a type without soldiers, a town past the count."""
+    t = plain_town(o)
+    a = o.town(t)
+    towns = o.counts()[0]
+
+    def during(o):
+        w32(o, a + 0x2E4, 1000)
+        for k in range(4):
+            w32(o, a + 0x54 + 4 * k, 1000)
+            w8(o, a + 0x998 + k, 0)
+            w8(o, a + 0x99C + k, 0)
+        for kind in (0, 1, 2, 3, 4, 0):
+            operation(o, 0x41, kind, t)
+        operation(o, 0x41, 0, towns)
+        print(f'town {t}: soldiers {[o.u8(a + 0x998 + k) for k in range(4)]}, recruits '
+              f'{[o.u8(a + 0x99C + k) for k in range(4)]}, [+0x844] {o.u16(a + 0x844)}')
+        for kind in (0, 3, 1, 4, 0, 0):
+            operation(o, 0x40, kind, t)
+        operation(o, 0x40, 1, towns)
+        print(f'after: soldiers {[o.u8(a + 0x998 + k) for k in range(4)]}, recruits '
+              f'{[o.u8(a + 0x99C + k) for k in range(4)]}, [+0x844] {o.u16(a + 0x844)}')
+    return during
+
+
 def facilities_office(o, m, t):
     """Merchant m's office in town t, or None."""
     return next((f for f in rt.merchant_offices(o, m) if o.u8(o.office(f) + 0x2C6) == t), None)
@@ -1945,6 +1972,138 @@ def grid_branches(o):
 
 def siege_object(o, t):
     return o.u32(to.SIEGES) + 0x1024 * t
+
+
+def siege_window(o):
+    """The siege's operations of the town hall's windows (sieges.cpp), on a siege made with the game's code (0x8E,
+    without the flag) on a town T that can have one, where the player gets an office (0x5D) and an AI merchant B has
+    none: 0x88 (the treasury pays: 1 with the countdown above and below 0xFFF, an amount, 250000, more than the
+    treasury, the countdown above 0x4FFF, a town past); 0x89 (wares sold: grain and beer from the office and two ships,
+    one marked; B without an office nor ships there, paid for all asked; a large sale; a town past); 0x8A (deliveries
+    promised: the player, again, B); 0x8D (the prince's requests made by 0x8B in T's list: delivered, then a second one
+    put by its tick, the office short, none found); 0x8F (the extra tax: with the news, without it, over 65000, a town
+    past); 0x90 (the town's [+0x101A] to 1 and 0, the army to collect the ransom and to stop attacking, as they are and
+    with [+0x3A] and [+0x3C] 0, a town past, then the besiegers paid off)."""
+    towns, _, merchants, ships = o.counts()
+    m = o.u32(to.PLAYER)
+    pa = o.merchant(m)
+    ready = [i for i in range(towns) if rt.siege_ready(o, i)]
+    t = ready[0]
+    ta = o.town(t)
+    s = siege_object(o, t)
+    b = next(x for x in rt.ai_with_office(o) if facilities_office(o, x, t) is None and
+             all(o.u8(o.ship(k) + 0x39) != t for k in range(ships) if o.u8(o.ship(k)) == x))
+    own = []  # his first two ships, in his list ([+0xE], next [+0x4])
+    x = o.u16(pa + 0xE)
+    while x < ships and len(own) < 2:
+        own.append(x)
+        x = o.u16(o.ship(x) + 4)
+    print(f'the siege of town {t} (object {s:#x}); the player {m}, his ships {own}; merchant {b} without an office there')
+
+    def during(o):
+        w32(o, pa, 1000000)
+        if facilities_office(o, m, t) is None:
+            store(o, t)
+            operation(o, 0x5D, m, t)
+        office = o.office(facilities_office(o, m, t))
+        operation(o, 0x8E, t, 1, 0x80, 0)
+        army = o.u32(s + 8)
+
+        def show(label):
+            print(f'{label}: countdown {o.u16(s + 0x1018):#x} [+0x101A] {o.u8(s + 0x101A)} lists {o.u32(s + 0x101C):#x} '
+                  f'{o.u32(s + 0x1020):#x}, treasury {o.s32(ta + 0x700)}, money {o.s32(pa)}, office grain '
+                  f'{o.s32(office + 4)} beer {o.s32(office + 0x10)}, B {o.s32(o.merchant(b))}')
+
+        w32(o, ta + 0x700, 400000)
+        for countdown, amount in ((0x800, 1), (0x2345, 1), (0x1000, 50000), (0x1000, 300000), (0x1000, 900000),
+                                  (0x4000, 100000),
+                                  (0x5000, 1000)):
+            w16(o, s + 0x1018, countdown)
+            w32(o, ta + 0x700, 400000)
+            operation(o, 0x88, t, amount)
+            show(f'0x88 {countdown:#x} {amount}')
+        operation(o, 0x88, towns, 100)
+        # 0x89: the office and two ships in T, the second marked.
+        w32(o, office + 4, 5 * 2000 + 700)
+        w32(o, office + 0x10, 3 * 200)
+        for k, x in enumerate(own):
+            w8(o, o.ship(x) + 0x39, t)
+            w8(o, o.ship(x) + 0x136, 1 - k)  # (the first in his list marked)
+            w32(o, o.ship(x) + 0x54, 4 * 2000)
+            w32(o, o.ship(x) + 0x60, 9 * 200)
+        w16(o, s + 0x1018, 0x1000)
+
+        def op89(count, price, ware, merchant, town=t):
+            operation(o, 0x89, count, price, ware | (merchant << 8) | (town << 16), fmt='<BxxxIII')
+            show(f'0x89 {count} of {ware} at {price} by {merchant}')
+
+        op89(7, 120, 0, m)
+        op89(20, 30, 3, m)
+        op89(10, 50, 0, b)
+        w32(o, office + 4, 200 * 2000)
+        op89(200, 10, 0, m)  # 200 loads: 1000
+        op89(5, 10, 0, m, town=towns)
+        w16(o, s + 0x1018, 0x5100)
+        op89(1, 10, 0, m)
+
+        def op8a(amount, price, ware, merchant, first, town=t):
+            operation(o, 0x8A, amount, price, ware | (merchant << 8) | (town << 16) | (first << 24), fmt='<BxxxIII')
+            print(f'0x8A by {merchant}: list {o.u32(s + 0x101C):#x}')
+
+        op8a(5, 100, 0, m, 1)
+        op8a(9, 70, 3, m, 0)
+        op8a(4, 80, 11, b, 0)
+        op8a(4, 80, 11, b, 1, town=towns)
+        # 0x8D on nodes of T's list made by 0x8B: {timber, grain, tools, pitch, beer, town, merchant, besieged, tick}.
+        now = o.u32(WORLD + 0x14)
+        far = (t + 1) % towns
+        for off, n in ((0x30, 9), (0x4, 9), (0x34, 9), (0x40, 9), (0x10, 9)):
+            w32(o, office + off, n * 2000)
+        operation(o, 0x8B, 1, 2, 1, 1, 3, t, m, far, now + 0x3000, fmt='<BxxxBBBBBBBBI')
+        operation(o, 0x8B, 1, 1, 1, 1, 1, t, m, (far + 1) % towns, now + 0x2000, fmt='<BxxxBBBBBBBBI')
+        operation(o, 0x8B, 1, 1, 1, 1, 1, t, m, (far + 2) % towns, now + 0x4000, fmt='<BxxxBBBBBBBBI')
+        w16(o, s + 0x1018, 0x1000)
+
+        def op8d(besieged, tick, merchant=m, town=t):
+            operation(o, 0x8D, town, merchant, besieged, tick & 0xFFFFFFFF)
+            show(f'0x8D {merchant} {besieged}')
+
+        op8d(far, now + 0x5000)
+        op8d((far + 1) % towns, now + 0x1000)
+        w32(o, office + 0x30, 0)
+        op8d(far, now + 0x6000)
+        op8d((far + 2) % towns, now + 0x6000)
+        op8d((far + 3) % towns, now + 0x6000)
+        op8d(far, now, town=towns)
+        # 0x8F: {u32 tax, u16 [+0x8], [+0xA], [+0xC], [+0xE], u8 town}.
+        for tax, news in ((20000, 7), (40000, 0), (90000, 3)):
+            operation(o, 0x8F, tax, 11, 22, news, 44, t, fmt='<BxxxIHHHHB')
+            show(f'0x8F {tax} {news}')
+        operation(o, 0x8F, 1000, 0, 0, 0, 0, towns, fmt='<BxxxIHHHHB')
+        # 0x90: {u32 amount, u8 town, [+0x9], [+0xA], [+0xB]}.
+
+        def op90(amount, b9, ba, bb, town=t, label=''):
+            operation(o, 0x90, amount, town | (b9 << 8) | (ba << 16) | (bb << 24), fmt='<BxxxII')
+            a = o.u32(s + 8)
+            fields = f'{o.u16(a + 0x3A)} {o.u16(a + 0x3C)} {o.u16(a + 0x42)} {o.u8(a + 0x6E)} {o.u8(a + 0x6F)} ' \
+                     f'{o.u8(a + 0x78)} {o.u8(a + 0x79)}' if a else 'no army'
+            show(f'0x90 {label}: army {fields}')
+
+        op90(0, 1, 0, 0, label='[+0x9]')
+        op90(0, 0, 1, 0, label='[+0xA]')
+        op90(0, 0, 0, 0, label='stop, as it is')
+        op90(0, 0, 0, 1, label='collect, as it is')
+        if army:
+            w16(o, army + 0x3A, 0)
+            w16(o, army + 0x3C, 0)
+            w16(o, army + 0x42, 0)
+            w8(o, army + 0x78, 0)
+        op90(0, 0, 0, 0, label='stop')
+        op90(0, 0, 0, 1, label='collect')
+        op90(0, 0, 0, 0, label='stop again')
+        op90(1000, 0, 0, 0, town=towns, label='a town past')
+        op90(25000, 0, 0, 0, label='paid off')
+    return during
 
 
 def siege_ops(o):
@@ -5634,6 +5793,254 @@ def order_delivery(o):
         op51(order(3, 5, town=towns), 5)
         op51(o.u16(to.EVENTS + 0xC), 5)
         op51(grain, 5, who=merchants)
+    return during
+
+
+def guard_ship(o):
+    """A ship in the town's service (0x44, 0x53AD90, town_hall.cpp), {0x44, town, ship, pay}, in the town of the player's
+    first docked ship: a town past; no guard ship, the ship docked there made it (the state 8, the pay); another ship
+    then (the guard back to the state 3); the guard not in the state 8 (only the town's place cleared); a ship in
+    another town, in the state 2, in a convoy, past the ships (nothing)."""
+    s, t = player_docked_ship(o)
+    towns, _, _, ships = o.counts()
+    ta = o.town(t)
+    s2 = next(x for x in range(ships) if x != s)
+    s3 = next(x for x in range(ships) if x not in (s, s2))
+    convoys = o.u16(0x6DD896)
+
+    def during(o):
+        def op44(town, ship, pay):
+            operation(o, 0x44, town, ship, pay)
+            states = ' '.join(f'{x}:{o.u16(o.ship(x) + 0x134)}/{o.u8(o.ship(x) + 0x3C):#x}/{o.u32(o.ship(x) + 0x30)}'
+                              for x in (s, s2, s3))
+            print(f'0x44 {town} {ship} {pay}: the town\'s guard {o.u16(ta + 0x994):#x} pay {o.u32(ta + 0x990)}; {states}')
+
+        w16(o, ta + 0x994, 0xFFFF)
+        for x in (s, s2, s3):
+            w8(o, o.ship(x) + 0x39, t)
+            w16(o, o.ship(x) + 0x134, 0)
+            w16(o, o.ship(x) + 8, 0xFFFF)
+        op44(towns, s, 100)
+        op44(t, s, 150)
+        w16(o, o.ship(s2) + 0x134, 1)
+        op44(t, s2, 200)
+        w16(o, o.ship(s2) + 0x134, 5)
+        op44(t, ships, 0)  # the guard not in the state 8: only cleared; a ship past
+        w8(o, o.ship(s3) + 0x39, (t + 1) % towns)
+        op44(t, s3, 10)
+        w8(o, o.ship(s3) + 0x39, t)
+        w16(o, o.ship(s3) + 0x134, 2)
+        op44(t, s3, 20)
+        w16(o, o.ship(s3) + 0x134, 0)
+        w16(o, o.ship(s3) + 8, max(convoys - 1, 0))
+        op44(t, s3, 30)
+        w16(o, o.ship(s3) + 8, 0xFFFF)
+        op44(t, s3, 40)
+    return during
+
+
+def treasury_council(o):
+    """The town hall's money and council (town_hall.cpp), in the town of the player's first docked ship: 0x47 (0x53AF30)
+    into the treasury, out of it (less than it has, more, with none), a merchant past, a town past; 0x49 (0x53B0D0) in
+    an event 0x2E of the town made due today (his bit in [+0x13]): votes for, against and abstaining with the ranks 3,
+    5 and 7, again after his bit is gone (nothing), with two of the councillors his; an AI merchant's vote, a town
+    whose vote is due tomorrow (not found), a town without one."""
+    s, t = player_docked_ship(o)
+    towns, _, merchants, _ = o.counts()
+    m = o.u32(to.PLAYER)
+    pa = o.merchant(m)
+    ta = o.town(t)
+    t2 = (t + 1) % towns
+    t3 = (t + 2) % towns
+    ai = next(x for x in range(merchants) if o.u16(o.merchant(x) + 8) != 0)
+
+    def during(o):
+        now = o.u32(WORLD + 0x14)
+        w32(o, pa, 100000)
+
+        def op47(merchant, town, into, amount):
+            operation(o, 0x47, merchant, town, into, amount)
+            print(f'0x47 {merchant} {town} {into} {amount}: money {o.s32(pa)}, [+0x4B8] {o.s32(pa + 0x4B8)}, [+0x4BC] '
+                  f'{o.s32(pa + 0x4BC)}, the treasury {o.s32(ta + 0x700)}')
+
+        w32(o, ta + 0x700, 5000)
+        op47(m, t, 1, 1000)
+        op47(m, t, 0, 2000)
+        op47(m, t, 0, 9000)
+        w32(o, ta + 0x700, (-300) & 0xFFFFFFFF)
+        op47(m, t, 0, 100)
+        op47(merchants, t, 1, 100)
+        op47(m, towns, 1, 100)
+        # The council: an event 0x2E of the town due today, all its bits set; one of another town due tomorrow.
+        i, e = new_event_at(o, now, 0x2E, bc=t, bd=1, be=3, bf=10, b10=0, b11=0, b12=0, b13=0xFF)
+        new_event_at(o, now + 0x200, 0x2E, bc=t2, bd=1, b13=0xFF)
+
+        def op49(merchant, town, vote, label):
+            operation(o, 0x49, merchant, town, vote)
+            print(f'0x49 {label}: the event {bytes(o.uc.mem_read(e + 0xC, 8)).hex()}')
+
+        for rank, vote in ((3, 0), (5, 1), (7, 2)):
+            w8(o, pa + 0x39C + t, rank)
+            w8(o, e + 0x13, 0xFF)
+            op49(m, t, vote, f'rank {rank}, vote {vote}')
+        op49(m, t, 0, 'again')
+        w8(o, e + 0x13, 0xFF)
+        w8(o, ta + 0x6DC, m)
+        w8(o, ta + 0x6DE, m)
+        for vote in (0, 1, 2):
+            w8(o, e + 0x13, 0xFF)
+            op49(m, t, vote, f'two seats, vote {vote}')
+        w8(o, e + 0x13, 0xFF)
+        op49(ai, t, 0, 'the AI merchant')
+        op49(m, t2, 0, 'due tomorrow')
+        op49(m, t3, 0, 'no vote')
+    return during
+
+
+def home_move(o):
+    """A merchant moves his home town (0x3E, 0x53A810, town_hall.cpp; the siege objects' 0x635040, sieges.cpp): the
+    player from his home town H to a town T with [+0x2C8] & 0x40: to H itself, with [+0x8] & 4, to a town without the
+    flag, a merchant past, a town past (nothing); as the mayor of H with [+0x2C8] & 0xE0 and the Alderman there (the
+    mayor's place left, his rank again, the Alderman's town moved); back to H as the mayor without the flags, then to T
+    with another human (an AI merchant made one for a while) at home in T (no first), and back leaving him there (no
+    last)."""
+    towns, _, merchants, _ = o.counts()
+    m = o.u32(to.PLAYER)
+    pa = o.merchant(m)
+    h = o.u8(pa + 0x19)
+    t = next(x for x in range(towns) if x != h)
+    ha, ta = o.town(h), o.town(t)
+    ai = next(x for x in range(merchants) if o.u16(o.merchant(x) + 8) != 0)
+    xa = o.merchant(ai)
+    sieges = o.u32(0x6DF270)
+    print(f'the player {m}: home {h}, to {t}; AI merchant {ai}')
+
+    def during(o):
+        w32(o, pa, 200000)
+        w32(o, ta + 0x2C8, o.u32(ta + 0x2C8) | 0x40)
+
+        def op3e(merchant, town, price, label):
+            operation(o, 0x3E, merchant, town, price)
+            print(f'0x3E {label}: home {o.u8(pa + 0x19)}, money {o.s32(pa)}, H mayor {o.u8(ha + 0x6F1)} [+0x6E4] '
+                  f'{o.u8(ha + 0x6E4)}, rank in H {o.u8(pa + 0x39C + h)}, sieges H {o.u8(sieges + 0x1024 * h + 0x101B)} '
+                  f'{o.u16(sieges + 0x1024 * h + 0x1018):#x} T {o.u8(sieges + 0x1024 * t + 0x101B)} '
+                  f'{o.u16(sieges + 0x1024 * t + 0x1018):#x}, the Alderman {o.u8(0x6DE52D)} in {o.u8(0x6DE52E)}')
+
+        op3e(m, h, 100, 'to his home town')
+        w8(o, pa + 8, o.u8(pa + 8) | 4)
+        op3e(m, t, 100, 'with [+0x8] & 4')
+        w8(o, pa + 8, o.u8(pa + 8) & ~4)
+        kept = o.u32(ta + 0x2C8)
+        w32(o, ta + 0x2C8, kept & ~0x40)
+        op3e(m, t, 100, 'to a town without the flag')
+        w32(o, ta + 0x2C8, kept)
+        op3e(merchants, t, 100, 'a merchant past')
+        op3e(m, towns, 100, 'a town past')
+        w8(o, ha + 0x6F1, m)
+        w32(o, ha + 0x2C8, o.u32(ha + 0x2C8) | 0x20)
+        w8(o, 0x6DE52D, m)
+        w8(o, 0x6DE52E, h)
+        op3e(m, t, 5000, 'the mayor of H and the Alderman')
+        w8(o, ta + 0x6F1, m)
+        w32(o, ta + 0x2C8, o.u32(ta + 0x2C8) & ~0xE0)
+        w32(o, ha + 0x2C8, o.u32(ha + 0x2C8) | 0x40)
+        w8(o, 0x6DE52E, (h + 2) % towns if (h + 2) % towns != t else (h + 3) % towns)
+        op3e(m, h, 3000, 'back to H, the mayor of T without the flags, the Alderman of another town')
+        w32(o, ta + 0x2C8, o.u32(ta + 0x2C8) | 0x40)  # (0xE0 took it away)
+        w8(o, 0x6DE52D, ai)
+        kept_ai = (o.u16(xa + 8), o.u8(xa + 0x19))
+        w16(o, xa + 8, 0)
+        w8(o, xa + 0x19, t)
+        op3e(m, t, 1000, 'to T with another human at home there')
+        op3e(m, h, 1000, 'to H, the other human still at home in T')
+        w16(o, xa + 8, kept_ai[0])
+        w8(o, xa + 0x19, kept_ai[1])
+    return during
+
+
+WORLD_ORDERS = 0x6DE530  # the world's seven orders of the town halls, 12 bytes each
+
+
+def town_orders(o):
+    """The town hall's orders (town_hall.cpp): 0x3D (0x53A620) taken by the player in the town of his first docked ship:
+    a town past, a ware 0x18, a deadline not ahead (nothing), the first place, the second (paid at the end), both
+    taken (nothing); the world's orders of the town cleared, another town's kept. Then the events 0x11 (0x4E6744) run
+    by the queue at their deadlines: partly delivered (his standing by the share), paid at the end and all delivered
+    (the money, 0x5A), paid at the end and short (0x5B, the standing down), the standing at 30000 and −30000, an AI
+    merchant's (no letters), a merchant past, the town past, nothing in all; each one's barrel or load for the town,
+    the last one (the event ends)."""
+    s, t = player_docked_ship(o)
+    towns, _, merchants, _ = o.counts()
+    m = o.u32(to.PLAYER)
+    pa = o.merchant(m)
+    ta = o.town(t)
+    ai = next(x for x in range(merchants) if o.u16(o.merchant(x) + 8) != 0)
+    print(f'the player {m}: ship {s} in town {t}; AI merchant {ai}')
+
+    def during(o):
+        now = o.u32(WORLD + 0x14)
+        w16(o, ta + 0x830, 0xFFFF)
+        w16(o, ta + 0x832, 0xFFFF)
+        for k, town in enumerate((t, (t + 1) % towns, t)):
+            w8(o, WORLD_ORDERS + 12 * k, town)
+            w8(o, WORLD_ORDERS + 12 * k + 1, 3)
+            w8(o, WORLD_ORDERS + 12 * k + 3, 9)
+
+        def op3d(town, ware, deadline, left=10, count=10, price=50, who=m, paid=0):
+            operation(o, 0x3D, town, ware, 1, 2, deadline & 0xFFFFFFFF, left, count, price, who, paid,
+                      fmt='<BxxxBBBBIHHHBB')
+            print(f'0x3D {town} {ware} {deadline - now:#x}: places {o.u16(ta + 0x830):#x} {o.u16(ta + 0x832):#x}, '
+                  f'orders {bytes(o.uc.mem_read(WORLD_ORDERS, 36)).hex()}')
+
+        op3d(towns, 0, now + 0x200)
+        op3d(t, 0x18, now + 0x200)
+        op3d(t, 0, now)
+        op3d(t, 0, now + 0x200, left=8, count=8)
+        op3d(t, 3, now + 0x300, left=5, count=5, paid=1)
+        op3d(t, 0, now + 0x400)
+        first, second = o.u16(ta + 0x830), o.u16(ta + 0x832)
+        events = o.u32(to.EVENTS)
+
+        def show(label):
+            print(f'{label}: standing {s16(o, pa + 0x22)}, money {o.s32(pa)}, [+0x4C8] {o.s32(pa + 0x4C8)}, the town\'s '
+                  f'grain {o.s32(ta + 4)} beer {o.s32(ta + 4 + 12)}, places {o.u16(ta + 0x830):#x} '
+                  f'{o.u16(ta + 0x832):#x}, AI standing {s16(o, o.merchant(ai) + 0x22)} money {o.s32(o.merchant(ai))}')
+
+        # The first partly delivered (7 of 8: 61 and 60 tell apart), the second all (paid at the end).
+        w16(o, events + 0x18 * first + 0x10, 1)
+        w16(o, events + 0x18 * second + 0x10, 0)
+        w16(o, pa + 0x22, 100)
+        direct(o, 0x4D85C0, [now + 0x200], ecx=to.EVENTS)
+        show('the first at its deadline')
+        direct(o, 0x4D85C0, [now + 0x300], ecx=to.EVENTS)
+        show('the second at its deadline')
+        at = now + 0x300
+
+        def event11(label, left, count=4, paid=0, who=m, town=t, ware=3, standing=None):
+            nonlocal at
+            at += 2  # (close together: a day of the queue may meet an event slow in the emulator)
+            if standing is not None:
+                w16(o, o.merchant(who) + 0x22 if who < merchants else pa + 0x22, standing & 0xFFFF)
+            new_event_at(o, at, 0x11, b8=town, b9=ware, ba=1, bb=2, w10=left, w12=count, w14=70, b16=who, b17=paid)
+            direct(o, 0x4D85C0, [at], ecx=to.EVENTS)
+            show(label)
+
+        event11('paid at the end, short', 3, paid=1, standing=100)
+        event11('paid at the end, short, at -30000', 3, paid=1, standing=-30000)
+        event11('paid at the end, short, at -29999', 3, paid=1, standing=-29999)
+        event11('partly, at 30000', 2, standing=30000)
+        event11('partly, at 29999', 1, count=8, standing=29999)
+        event11('all, at 30000', 0, standing=30000)
+        event11('all, not paid at the end', 0, standing=100)
+        event11('the AI merchant, paid at the end, all', 0, paid=1, who=ai, standing=50)
+        event11('the AI merchant, paid at the end, short', 1, paid=1, who=ai)
+        event11('a merchant past', 2, who=merchants, ware=0)
+        event11('the town past', 2, town=towns)
+        event11('nothing in all', 0, count=0)
+        # The last barrel and the last load (judged before: the merchant 0xFF): the event ends. (Days of the queue
+        # may meet an event too slow in the emulator: the events already run go on a day at a time, not run here.)
+        event11('the last barrel', 0, count=1, who=0xFF)
+        event11('the last load', 0, count=1, who=0xFF, ware=0)
     return during
 
 
@@ -13814,6 +14221,8 @@ SCENARIOS = {
     # facilities.cpp
     'militia': Scenario(militia, [0x510C50, 0x51D410, 0x51D4C0], 0, [
         '510cfb', '@510ebd', '@510f30', '@510f53', '@510f5c', '510e67>510f75', '51d43f>51d4b7', '51d497', '@51d587']),
+    'militia_ops': Scenario(militia_ops, [0x535760], 0, [
+        '@535f38', '@535f1d>537025', '@535f6a', '@535f50>537025']),
     'works_completion': Scenario(works_completion, [0x51FF30], 0, [
         '@520022', '520127', '52010c', '5201ac', '5201c7', '5201e9', '52020c', '520298', '520324', '520316', '520352',
         '520369', '5203dd']),
@@ -13971,6 +14380,29 @@ SCENARIOS = {
         '@4e393a>4e3ef5', '@4e3ad3', '@4e3ae2', '@4e3b1b', '@4e3b64', '@4e3bb8', '@4e3c0a', '@4e3c3e', '@4e3c77',
         '@4e3ccc', '@4e3d27', '@4e3d21>4e3ef5', '@4e3d4d', '@4e3d61', '@4e3d9a', '@4e3e28', '@4e3e41', '@4e3e65',
         '@4e3e59>4e3e9a', '@4e3d88>4e3e9a', '@4e3ea0', '@4e3e9e>4e3ef5', '@4e3e5f>4e3ef5', '@4e3900>4e3ef5']),
+    'siege_window': Scenario(siege_window, [0x535760], 0, [
+        '@6348f8', '@6348f6>634968', '@634920', '@634951', '@63495f', '@634916>634968', '@5368bc', '@536898>537025',
+        '@635a0b', '@635a36', '@635a8b', '@635a6e>635aad', '@635a77>635aad', '@635b03', '@635b0e', '@635b4a',
+        '@635af7>635b53', '@5368f6>537025', '@6356e5>635738', '@635700', '@635706', '@536938>537025', '@635e40',
+        '@635e36', '@635ff0', '@6361c7', '@6361be', '@536a36>537025', '@5402c6', '@5402e0', '@540434',
+        '@5403c3', '@540267>54047b', '@5404d5', '@5404f4', '@540516', '@54051b', '@6346c3', '@6347c4', '@634842',
+        '@63482b>63486b', '@54049d>5404be']),
+    'home_move': Scenario(home_move, [0x535760], 0, [
+        '@53a83a>53a9f2', '@53a84b>53a9f2', '@53a87f>53a9e1', '@53a889>53a9e1', '@53a8aa>53a9e1', '@53a955',
+        '@53a943>53a96b', '@53a953>53a96b', '@53a9d9', '@53a9ca>53a9e1', '@53a9d7>53a9e1', '@63508f',
+        '@635089>635114', '@6350d7', '@6350d5>635114']),
+    'treasury_council': Scenario(treasury_council, [0x535760], 0, [
+        '@53af42>53b000', '@53af53>53b000', '@53af73', '@53afc5', '@53afc3>53afd2', '@53b0ff>53b1e7', '@53b10b>53b1e7',
+        '@53b146', '@53b159', '@53b163', '@53b168', '@53b19a', '@53b1cd', '@53b1d7', '@53b1dc', '@4da0aa',
+        '@4da0fc>4da137']),
+    'guard_ship': Scenario(guard_ship, [0x535760], 0, [
+        '@53ada0>53ae8c', '@53ade7', '@53ade5>53ae09', '@53adc8>53ae18', '@53ae23>53ae8c', '@53ae3d>53ae8c',
+        '@53ae47>53ae8c', '@53ae54>53ae8c', '@53ae56']),
+    'town_orders': Scenario(town_orders, [0x535760, 0x4D85C0], 0, [
+        '@53a659>53a7e2', '@53a663>53a7e2', '@53a674>53a7e2', '@53a6a3>53a7e2', '@53a6b0', '@53a6c0', '@53a7b1',
+        '@4e676e>4e6a31', '@4e6779>4e6a31', '@4e679c', '@4e67c3', '@4e67d7>4e69a2', '@4e6810', '@4e680e>4e688e',
+        '@4e6898', '@4e6896>4e68d8', '@4e68b6', '@4e68b4>4e68d8', '@4e68ee', '@4e68ec>4e68f5', '@4e692a',
+        '@4e6928>4e699d', '@4e68fa>4e699d', '@4e69bc', '@4e69e0', '@4e6a1c']),
     'order_delivery': Scenario(order_delivery, [0x535760], 0, [
         '@53c135', '@53c150', '@53c1a7', '@53c1c5', '@53c1ff', '@53c224', '@53c244', '@53c27a', '@53c2a7',
         '@53c0e9', '@53c12f>53c234', '@53c16a>53c2ac', '@53c1fd>53c220', '@53c0aa>53c2ac', '@53c0d6>53c2ac',

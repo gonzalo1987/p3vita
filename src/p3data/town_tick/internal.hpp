@@ -239,6 +239,9 @@ void fn_51d870(SaveGame& save, int town);
 namespace facilities_detail {
 // 0x5308A0 con create = 0: la oficina del comerciante en la ciudad, o -1.
 int fn_5308a0(const SaveGame& save, uint32_t merchant, uint32_t town);
+// 0x51D410 and 0x51D4C0: a militia soldier of the type dismissed or recruited (also the operations 0x40 and 0x41).
+void fn_51d410(SaveGame& save, int town, uint32_t type);
+void fn_51d4c0(SaveGame& save, int town, uint32_t type);
 }  // namespace facilities_detail
 namespace offices_detail {
 // 0x4F8690 y 0x4F8840: estadísticas de venta y de compra del comerciante.
@@ -367,6 +370,17 @@ uint32_t fn_4e38b4(SaveGame& save, uint16_t event);
 // merchant stands for mayor or not.
 void fn_535fa4(SaveGame& save, const uint8_t* operation);
 void fn_53c050(SaveGame& save, const uint8_t* operation);
+// town_hall.cpp: 0x3D (0x53A620), an order of the town hall taken, and its event 0x11 (0x4E6744).
+void fn_53a620(SaveGame& save, const uint8_t* operation);
+uint32_t fn_4e6744(SaveGame& save, uint16_t event);
+// town_hall.cpp: 0x44 (0x53AD90), a ship in the town's service.
+void fn_53ad90(SaveGame& save, const uint8_t* operation);
+// town_hall.cpp: 0x47 (0x53AF30), money between a merchant and the town's treasury; 0x49 (0x53B0D0), a vote in the
+// town council.
+void fn_53af30(SaveGame& save, const uint8_t* operation);
+void fn_53b0d0(SaveGame& save, const uint8_t* operation);
+// town_hall.cpp: 0x3E (0x53A810), a merchant moves his home town.
+void fn_53a810(SaveGame& save, const uint8_t* operation);
 void fn_4e5664(SaveGame& save, uint16_t event);
 void fn_53c840(SaveGame& save, const uint8_t* operation);
 uint32_t fn_4e63e4(SaveGame& save, uint16_t event);
@@ -408,6 +422,8 @@ void fn_542f10(SaveGame& save, const uint8_t* operation);
 namespace merchants_detail {
 // merchants.cpp: 0x4F9430, a merchant's title (by his money and fame).
 uint8_t fn_4f9430(const SaveGame& save, int merchant);
+// merchants.cpp: 0x4F75F0, a merchant's rank in a town again.
+void fn_4f75f0(SaveGame& save, int merchant, uint32_t town);
 }  // namespace merchants_detail
 namespace construction_detail {
 // The operations 0x22 and, with `request`, 0x21 (0x53CE30); 0x5D (0x5362AE):
@@ -461,6 +477,15 @@ void fn_536a67(SaveGame& save, const uint8_t* operation);
 // and the letter 0x64; 0x635B80) and 0x8C (the player accepts: the letter 0x65; 0x635CD0).
 void fn_536974(SaveGame& save, const uint8_t* operation);
 void fn_5369c7(SaveGame& save, const uint8_t* operation);
+// sieges.cpp: the siege's operations of the town hall's windows: 0x88 (0x53688D) the treasury pays, 0x89 (0x5368E9)
+// wares sold to the town, 0x8A (0x53692B) deliveries promised, 0x8D (0x536A2B) the prince's request delivered, 0x8F
+// (0x540240) an extra tax, 0x90 (0x540490) paying the besiegers off and the army's orders.
+void fn_53688d(SaveGame& save, const uint8_t* operation);
+void fn_5368e9(SaveGame& save, const uint8_t* operation);
+void fn_53692b(SaveGame& save, const uint8_t* operation);
+void fn_536a2b(SaveGame& save, const uint8_t* operation);
+void fn_540240(SaveGame& save, const uint8_t* operation);
+void fn_540490(SaveGame& save, const uint8_t* operation);
 // sieges.cpp: lo que hace el lector del ejército sitiador (0x627AD0, la
 // llama savegame.cpp) tras leer sus campos: las puertas de la muralla
 // ([+0x244..+0x24C]), su posición (0x632780), sus objetivos (0x62B2B0,
@@ -515,6 +540,8 @@ namespace sieges_detail {
 // its ships). Its money in `amount`, the offices looked at in `offices`;
 // whether it paid anything.
 bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices, uint16_t convoy = 0xFFFF);
+// 0x635040 (on the town's siege object): a human merchant's home town arrived at or left: the first one, the last.
+void fn_635040(SaveGame& save, int siege, bool arrived);
 }  // namespace sieges_detail
 int events_rare(SaveGame& save, uint16_t event, uint16_t type);  // 0xe, 0x12, 0x1c, 0x1e, 0x1f, 0x25, 0x26, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x35, 0x38, 0x39
 // La navegación que usa la cola de eventos (agua en un punto del mapa,

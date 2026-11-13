@@ -329,6 +329,31 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x3B:  // Materiales para la carretera de un encargo de la Hansa (0x53A3E0).
 		tick::fn_53a3e0(save, operation);
 		break;
+	case 0x3D:  // An order of the town hall taken: the event 0x11, the letter 0x1A (0x535EE5 → 0x53A620; town_tick/town_hall.cpp).
+		tick::fn_53a620(save, operation);
+		break;
+	case 0x3E:  // A merchant moves his home town: the letter 0x0E (0x535EF4 → 0x53A810; town_tick/town_hall.cpp).
+		tick::fn_53a810(save, operation);
+		break;
+	case 0x40:  // A militia soldier dismissed: {0x40, u32 type, u32 town} (0x535F12 → 0x51D410; town_tick/facilities.cpp).
+		if (uint32_t(fields[2]) < save.globals.u32(global::kWorldTownCount)) {
+			tick::facilities_detail::fn_51d410(save, int(fields[2]), uint32_t(fields[1]));
+		}
+		break;
+	case 0x41:  // A militia soldier recruited: {0x41, u32 type, u32 town} (0x535F45 → 0x51D4C0; town_tick/facilities.cpp).
+		if (uint32_t(fields[2]) < save.globals.u32(global::kWorldTownCount)) {
+			tick::facilities_detail::fn_51d4c0(save, int(fields[2]), uint32_t(fields[1]));
+		}
+		break;
+	case 0x44:  // A ship in the town's service, the state 8 (0x535F95 → 0x53AD90; town_tick/town_hall.cpp).
+		tick::fn_53ad90(save, operation);
+		break;
+	case 0x47:  // Money between a merchant and the town's treasury (0x536057 → 0x53AF30; town_tick/town_hall.cpp).
+		tick::fn_53af30(save, operation);
+		break;
+	case 0x49:  // A human merchant's vote in the town council, the event 0x2E (0x536075 → 0x53B0D0; town_tick/town_hall.cpp).
+		tick::fn_53b0d0(save, operation);
+		break;
 	case 0x42:  // A bribe in the bath house that works (0x53AC50).
 		tick::fn_53ac50(save, operation);
 		break;
@@ -427,6 +452,24 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x87:  // A child is born to a married merchant (0x53FEA0).
 		tick::fn_53fea0(save, operation);
+		break;
+	case 0x88:  // A siege: the town's treasury pays toward it (0x53688D → 0x529F90, 0x6348E0; town_tick/sieges.cpp).
+		tick::fn_53688d(save, operation);
+		break;
+	case 0x89:  // A siege: wares sold to the besieged town (0x5368E9 → 0x635990; town_tick/sieges.cpp).
+		tick::fn_5368e9(save, operation);
+		break;
+	case 0x8A:  // A siege: deliveries promised to the town (0x53692B → 0x6356D0; town_tick/sieges.cpp).
+		tick::fn_53692b(save, operation);
+		break;
+	case 0x8D:  // A siege: the prince's request delivered (0x536A2B → 0x635DE0; town_tick/sieges.cpp).
+		tick::fn_536a2b(save, operation);
+		break;
+	case 0x8F:  // A siege: an extra tax on the town's offices; nobody found to queue it (0x536AA9 → 0x540240; town_tick/sieges.cpp).
+		tick::fn_540240(save, operation);
+		break;
+	case 0x90:  // A siege: the besiegers paid off, the army's orders (0x536AB8 → 0x540490; town_tick/sieges.cpp).
+		tick::fn_540490(save, operation);
 		break;
 	case 0x8B:  // The prince of a besieged town's neighbour asks the player for goods (0x536974 → 0x635B80).
 		tick::fn_536974(save, operation);

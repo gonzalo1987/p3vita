@@ -2684,6 +2684,33 @@ and caught):
   land_trade_window:1` differs from the game in two calls only (2 instead of 0: without the partner's barn, and with a
   partner given that has none).
 
+## The player's actions: the town hall, the militia and the sieges in the engine (2026-11-13)
+
+The engine half of the task's group 5 (notes in `re/emu/sesion30/group5_notes.md`). Each operation through the
+executor 0x535760 (the events 0x11 through the queue 0x4D85C0 at their ticks); saves 1, 3, 5, 7, all equal, a detail
+broken on purpose in each and caught; `world.sh 7` still 0 different:
+- **0x40**, **0x41** (`simulation.cpp`): the militia's dismissal and recruit (0x51D410, 0x51D4C0, checked before).
+  Scenario `militia_ops` (4 targets).
+- **0x3D** and its **event 0x11** (`town_tick/town_hall.cpp`): an order taken (the town's free place, the event at the
+  deadline, the letter 0x1A, the world's orders cleared) and, at its deadline, the merchant judged (the letters 0x5B
+  and 0x5A, his standing [+0x22] by what he delivered) with the town's barrel or load a day after. Scenario
+  `town_orders` (26 targets). The cases have to tell 61 and 60 apart (7 of 8 delivered: 53 and 52); days of the queue
+  in the emulator can meet an event too slow to run, so the scenario's events stay a few ticks apart.
+- **0x44** (`town_hall.cpp`): the town's guard ship (the state 8; the old one back to 3). Scenario `guard_ship` (9).
+- **0x47** and **0x49** (`town_hall.cpp`, with 0x4DA060): the treasury's money both ways; a human merchant's vote in
+  the council's event 0x2E of the day. Scenario `treasury_council` (17).
+- **0x3E** (`town_hall.cpp`) with **0x635040** (`sieges.cpp`): the home town's move (the letter 0x0E, the mayor's
+  place, the siege objects' first and last human at home, the Alderman's town). Scenario `home_move` (15).
+- **0x88**, **0x89**, **0x8A**, **0x8D**, **0x8F**, **0x90** (`sieges.cpp`): on a siege made by 0x8E: the treasury pays
+  (0x6348E0), wares sold to the town (0x635990, paying only the last batch: a game bug, fixed behind fix_game_bugs
+  at the user's word; with it `re/emu/sesion27/uc_fix.sh siege_window:3` differs in the three sales' money only),
+  deliveries promised
+  (0x6356D0), the prince's request delivered (0x635DE0 on nodes made by 0x8B), the extra tax (0x540240: the news 0x38,
+  0x37 and a debt to a human), the besiegers paid off and the army's orders (0x634660, 0x6347B0, 0x634820). Scenario
+  `siege_window` (42 targets over the saves).
+- The 7 letter calls in `MAIL_CALLS` (139 of 154). Reading the objdump keep its `ds:` (`mov eax,ds:0x6df270` loads
+  the siege objects' pointer; stripping it confuses a load with an address).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

@@ -341,10 +341,12 @@ built with rand()).
   0x8C) and 0x83 (0x77); then **119**: the offers' 0x1E and 0x1F (operation 0x5F, `town_tick/offers.cpp`); then
   **132**: the traveller's 0x17 (operation 0x53) and 0x18 (event 0x10), the burglar's 0x74, 0x16, 0x20, 0x15 (event
   0x0F; `town_tick/tavern.cpp`), the cart convoys' 0x67 (twice), 0x68, 0x69, 0x66 (event 0x0C,
-  `town_tick/land_transport.cpp`) and the Hanse day's 0x78 of the operation 0x4A (`events_rare.cpp`). The 22 left:
-  the operations of the player not rewritten yet (5: 0x3D, 0x3E, 0x90 and the two of 0x8F, which nobody was found
-  to queue), the event 0x11 that 0x3D creates (2), the mission interpreter and the event 0x09 it creates (9), the
-  diet's 0x4F3AF0 (1), the event 0x28 that nobody creates (3) and the interface window 0x419EB0 (2).
+  `town_tick/land_transport.cpp`) and the Hanse day's 0x78 of the operation 0x4A (`events_rare.cpp`). On
+  2026-11-13, **139**: the town hall's order 0x1A (operation 0x3D) with the event 0x11's 0x5B and 0x5A
+  (`town_tick/town_hall.cpp`), the home town's move 0x0E (0x3E), the siege's 0x38 and 0x37 of 0x8F (which nobody was
+  found to queue) and 0x38 of 0x90 (`town_tick/sieges.cpp`). The 15 left: the mission interpreter and the event 0x09
+  it creates (9), the diet's 0x4F3AF0 (1), the event 0x28 that nobody creates (3) and the interface window 0x419EB0
+  (2).
 - **47** are in events and operations p3vita doesn't have yet. Events 0x09,
   0x0C, 0x0F, 0x10, 0x11, 0x17, 0x18 and 0x28 are created only by player
   actions (operations from the interface) or by the mission interpreter;
@@ -650,7 +652,7 @@ interpreter's 0x4ED0C6, 0x4EDEDA.
 («named»); «—» with what it is when p3vita doesn't have it. «Class» is the
 type's class (§2). «Connected»: p3vita sends that letter (`send_letter`) and
 the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
-99 of the 154 on 2026-11-04, 112 on 2026-11-11, 119 and then 132 on 2026-11-12).
+99 of the 154 on 2026-11-04, 112 on 2026-11-11, 119 and then 132 on 2026-11-12, 139 on 2026-11-13).
 
 | p3vita file | Function | Call | Type | Title (English exe) | Class | To | Note | Connected |
 |---|---|---|---|---|---|---|---|---|
@@ -780,8 +782,8 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | p3data/town_tick/tavern.cpp | 0x4E5664 | 0x4E5B1E | 0x15 | Burglary | 2 | one merchant |  | yes |
 | p3data/town_tick/tavern.cpp | 0x4E63E4 | 0x4E65CC | 0x18 | Traveller | 2 | one merchant |  | yes |
 | p3data/town_tick/tavern.cpp | 0x4E63E4 | 0x4E6691 | 0x18 | Traveller | 2 | one merchant |  | yes |
-| — event 0x11 | 0x4E6744 | 0x4E6878 | 0x5B | Dishonoured | 2 | one merchant |  | |
-| — event 0x11 | 0x4E6744 | 0x4E6987 | 0x5A | Fulfilled | 3 | one merchant |  | |
+| p3data/town_tick/town_hall.cpp (event 0x11) | 0x4E6744 | 0x4E6878 | 0x5B | Dishonoured | 2 | one merchant |  | yes |
+| p3data/town_tick/town_hall.cpp (event 0x11) | 0x4E6744 | 0x4E6987 | 0x5A | Fulfilled | 3 | one merchant |  | yes |
 | p3data/town_tick/events_big.cpp | 0x4E8684 | 0x4E87CF | 0x22 | Proposal | 2 | one merchant | event 0x17 | yes |
 | p3data/town_tick/events_towns.cpp | 0x4E8804 | 0x4E8975 | 0x62 | Dividend | 2 | one merchant | event 0x18 | yes |
 | p3data/town_tick/events_towns.cpp | 0x4E8804 | 0x4E8A49 | 0x28 | Dividend | 2 | one merchant | event 0x18 | yes |
@@ -795,8 +797,8 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | p3data/town_tick/ship_operations.cpp | 0x52ACD0 | 0x52AEDD | 0x02 | No repair | 3 | one merchant | operation 0x03 | yes |
 | p3data/town_tick/ship_operations.cpp | 0x537EE0 | 0x537FC6 | 0x04 | New captain | 2 | one merchant | operation 0x06 | yes |
 | p3data/town_tick/ship_operations.cpp | 0x52B110 | 0x52B288 | 0x14 | Annulment | 1 | one merchant | operation 0x2F | yes |
-| — operation 0x3D | 0x53A620 | 0x53A794 | 0x1A | Order | 2 | one merchant |  | |
-| — operation 0x3E | 0x53A810 | 0x53A910 | 0x0E | Move | 4 | -2 (chronicle) |  | |
+| p3data/town_tick/town_hall.cpp (0x3D) | 0x53A620 | 0x53A794 | 0x1A | Order | 2 | one merchant |  | yes |
+| p3data/town_tick/town_hall.cpp (0x3E) | 0x53A810 | 0x53A910 | 0x0E | Move | 4 | -2 (chronicle) |  | yes |
 | p3data/town_tick/events_rare.cpp | 0x53B1F0 | 0x53B40C | 0x78 | Hanse Day | 1 | -1 (each merchant) |  | yes |
 | p3data/town_tick/tavern.cpp | 0x53C840 | 0x53C9B5 | 0x17 | Traveller | 2 | one merchant |  | yes |
 | p3data/town_tick/offers.cpp | 0x5338A0 | 0x533C9B | 0x1E | Memo | 2 | one merchant | operation 0x5F (0x53DA30) | yes |
@@ -805,9 +807,9 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | p3data/town_tick/operations.cpp | 0x53EEC0 | 0x53F6D6 | 0x83 | Impounding | 2 | one merchant | operation 0x77: its text in the buffer | yes |
 | p3data/town_tick/sieges.cpp | 0x635B80 | 0x635C9F | 0x64 | Prince | 1 | one merchant | operation 0x8B | yes |
 | p3data/town_tick/sieges.cpp | 0x635CD0 | 0x635DA9 | 0x65 | Prince | 1 | one merchant | operation 0x8C | yes |
-| — operation 0x8F | 0x540240 | 0x5402BF | 0x38 | Siege | 4 | -2 (chronicle) |  | |
-| — operation 0x8F | 0x540240 | 0x5403DB | 0x37 | Extra tax | 1 | one merchant |  | |
-| — operation 0x90 (0x540490) | 0x634660 | 0x63477B | 0x38 | Siege | 4 | -2 (chronicle) |  | |
+| p3data/town_tick/sieges.cpp (0x8F) | 0x540240 | 0x5402BF | 0x38 | Siege | 4 | -2 (chronicle) |  | yes |
+| p3data/town_tick/sieges.cpp (0x8F) | 0x540240 | 0x5403DB | 0x37 | Extra tax | 1 | one merchant |  | yes |
+| p3data/town_tick/sieges.cpp (0x90, 0x540490) | 0x634660 | 0x63477B | 0x38 | Siege | 4 | -2 (chronicle) |  | yes |
 
 ## Appendix B. The types
 
