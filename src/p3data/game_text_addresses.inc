@@ -1148,13 +1148,13 @@
 	{0x006B292C, 0x006B3314},
 	{0x006C34CC, 0x006C3BA4},
 	// The moneylender's window (0x5B2B00..0x5B6900): its texts 0x69BFE8.. in the
-	// English exe, 0x6D0 lower in the Spanish one; the page titles and «Loans
-	// granted» from the Spanish code's own menu (0x69AFA8..).
-	{0x0069BFE8, 0x0069AFA8},
-	{0x0069BFEC, 0x0069AFAC},
-	{0x0069BFF0, 0x0069AFB0},
-	{0x0069BFF4, 0x0069AFB4},
-	{0x0069BFF8, 0x0069AFB8},
+	// English exe, 0x6D0 lower in the Spanish one, the page titles too (the Spanish
+	// photo's «Vender acciones de empresa»; its side menu's are 0x69B724.., below).
+	{0x0069BFE8, 0x0069B918},
+	{0x0069BFEC, 0x0069B91C},
+	{0x0069BFF0, 0x0069B920},
+	{0x0069BFF4, 0x0069B924},
+	{0x0069BFF8, 0x0069B928},
 	{0x0069BFFC, 0x0069B92C},
 	{0x0069C000, 0x0069B930},
 	{0x0069C004, 0x0069B934},
@@ -1219,7 +1219,7 @@
 	{0x0069C10C, 0x0069BA3C},
 	{0x0069C110, 0x0069BA40},
 	{0x0069C114, 0x0069BA44},
-	{0x0069C118, 0x0069AFBC},
+	{0x0069C118, 0x0069BA48},
 	{0x0069C11C, 0x0069BA4C},
 	{0x0069C120, 0x0069BA50},
 	{0x0069C124, 0x0069BA54},

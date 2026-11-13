@@ -338,11 +338,12 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     el código pone encima de la tabla, subida porque no hay foto: decisión del usuario, improvisar), y las de después
     de cada trato (capitán contratado, pirata, ladrón, viajero, comerciante); los gestos al azar de la gente de la
     taberna; el texto partido como la caja del juego (sus saltos y la línea en blanco tras el saludo), centrado bajo el
-    retrato cuando es más estrecho (lo pidió el usuario). El prestamista: su menú lateral con sus seis páginas y la de
-    conceder préstamo como la foto, con la del interés (la 9 del juego) detrás de «Ofrecer préstamo». Los menús
-    laterales con la letra de sus botones (la 1) y colocados como los del juego (13-11-2026, noche; sin commit aún).
+    retrato cuando es más estrecho (lo pidió el usuario). El prestamista: su menú lateral y sus seis páginas como las del
+    juego (la de conceder préstamo y la de vender acciones, comparadas con las fotos), con la del interés (la 9 del
+    juego) detrás de «Ofrecer préstamo». Los menús
+    laterales con la letra de sus botones (la 1) y colocados como los del juego (13-11-2026, noche; commit 8d31da6).
   - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido) y
-    el texto del informante con su barra de desplazamiento; las otras cinco páginas del prestamista; el menú lateral
+    el texto del informante con su barra de desplazamiento; dónde van las flechas del interés del prestamista; el menú lateral
     del resto de edificios; las páginas del resto (la lonja, el astillero y el muelle, la oficina, el gremio, la iglesia,
     el baño, la herrería, la caballeriza y las otras páginas del ayuntamiento); la armería, que en el juego es un rollo
     de papel sin marco ni interior. Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
