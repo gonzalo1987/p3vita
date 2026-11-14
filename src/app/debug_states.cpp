@@ -17,6 +17,7 @@
 
 namespace p3::data::tick::events_towns_detail {
 int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town);  // events_towns.cpp: the office, made if none
+bool fn_52a360(SaveGame& save, int town, uint32_t merchant_arg, uint32_t type_arg, uint8_t force);  // events_towns.cpp
 }  // namespace p3::data::tick::events_towns_detail
 
 namespace p3::app {
@@ -776,6 +777,8 @@ const char kDebugStatesHelp[] =
 	"              the first (its town and the R presses to it on stdout)\n"
 	"  married     the player married, two children (the office's «Personal»)\n"
 	"  home-elsewhere  the player's home town the next one (the office's «Move» offered)\n"
+	"  shipyard-orders  20 snaikkas ordered by the player at his first ship's town's\n"
+	"              shipyard (its list of contracts with its scroll bar)\n"
 	"  lost-ship   the player's last ship out of a convoy lost (the state 0x11: the ship\n"
 	"              list removes it)\n"
 	"  office-goods  the player's office at home with stock, a day's making and using of\n"
@@ -1002,6 +1005,30 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			// The player's home town the next one ([+0x19]): his office there offers the move (the office's «Move»).
 			MerchantMemory& m = save.merchants[size_t(save.player)].memory;
 			m.u8(0x19) = uint8_t((m.u8(0x19) + 1) % std::max<uint32_t>(1, save.globals.u32(global::kWorldTownCount)));
+		} else if (state == "shipyard-orders") {
+			// 20 snaikkas ordered by the player at his first ship's town's shipyard (0x52A360 with force), his office
+			// there given the materials and him the money first: the shipyard's list of contracts with its scroll bar.
+			const int ship = save.player >= 0 ? save.merchants[size_t(save.player)].memory.u16(0xE) : -1;
+			if (ship < 0 || size_t(ship) >= save.ships.size()) {
+				error = "the player has no ship";
+				return false;
+			}
+			const int town = save.ships[size_t(ship)].memory.u8(0x39);
+			const int office = tick::events_towns_detail::fn_5308a0_create(save, uint32_t(save.player), uint32_t(town));
+			if (office >= 0) {
+				for (int ware : {0xB, 8, 0xC, 0x11, 0xF}) {
+					save.offices[size_t(office)].memory.s32(4 + 4 * ware) += 500 * 2000;
+				}
+			}
+			save.merchants[size_t(save.player)].memory.s32(0) += 10000000;
+			int ordered = 0;
+			for (int k = 0; k < 20; ++k) {
+				ordered += tick::events_towns_detail::fn_52a360(save, town, uint32_t(save.player), 0, 1) ? 1 : 0;
+			}
+			if (ordered == 0) {
+				error = "the shipyard there takes no orders";
+				return false;
+			}
 		} else if (state == "lost-ship") {
 			// The player's last ship out of a convoy in the state 0x11 (as a ship sunk in a battle: Sailing::sink).
 			int last = -1;

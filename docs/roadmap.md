@@ -87,9 +87,8 @@ Cómo leerla:
   por puntos del mapa del mar (0x0B), esta también en el visor (tocar el mar añade puntos; X zarpa, ○ los borra).
   Antes, la primera parte: la reparación de convoyes, los botones de las cartas, la iglesia y el baño.
 - **Siguiente**: el encargo `ENCARGO_VISTAS_JUEGO.md` (junto al HANDOFF): las páginas que faltan
-  como las del juego (el astillero y el muelle con su lista de reparaciones; hechos ya el baño, la caballeriza, la
-  oficina de otro comerciante, la armería y la fiesta) y el grupo 5 en el visor (apartado 1): las páginas 1 a 7 del
-  ayuntamiento, el cliente de un pedido de la taberna y los asedios.
+  como las del juego están hechas (la última, el astillero y el muelle, el 14-11-2026 por la noche); queda el grupo 5
+  en el visor (apartado 1): las páginas 1 a 7 del ayuntamiento, el cliente de un pedido de la taberna y los asedios.
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
   (apartado 6).
@@ -106,7 +105,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Tipos de evento (58) | 53 | 5: 1 el intérprete de misiones, 1 la partida en red y 3 nadie |
 | Operaciones (193 códigos) | 167: las 37 de la simulación, 101 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red y la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) | **5 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74, 0x76 y 0x82; apartado 3), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 139 | 15: 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
-| Edificios con vista propia en el juego (13) | 12 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia y el ayuntamiento; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 12; con todas sus páginas como las del juego: la taberna (menos el cliente de un pedido), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta») y la armería; y la fiesta en los puestos del mercado | las páginas como las del juego del astillero y el muelle (con la lista de reparaciones, sin página) y 7 de las 8 del ayuntamiento; la puerta de la ciudad sin ventana (los asedios) (apartado 4) |
+| Edificios con vista propia en el juego (13) | 12 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia y el ayuntamiento; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 12; con todas sus páginas como las del juego: la taberna (menos el cliente de un pedido), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería y el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida); y la fiesta en los puestos del mercado | 7 de las 8 páginas del ayuntamiento y el cliente de un pedido de la taberna; la puerta de la ciudad sin ventana (los asedios) (apartado 4) |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
@@ -414,7 +413,14 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     coste, «Anunciar» → 0x61, y el texto de la fiesta ya anunciada). Comparadas con la foto de la armería. Improvisado:
     el sitio de la lista «Escoge oferta» (el juego la pone según la pantalla) y los nombres largos de mercancías en
     español, cortados antes de sus unidades (el juego los monta encima). Notas: `re/emu/sesion35/notes_paper.md`.
-  - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido); el astillero y el muelle (con la lista de reparaciones) y
+  - [x] El astillero y el muelle (14-11-2026, noche): sus seis páginas como las del juego, trazadas en el emulador: el
+    libro del barco con sus esquinas y la fila de cifras con sus dibujos; reparar (las sumas de un convoy), encargar
+    (la tabla de materias primas, y tras «Ejecutar» la página del encargo con sus fechas), la lista de contratos (con
+    la pregunta del juego antes de cancelar), la lista de reparaciones (nueva: «Parar reparaciones», la 0x00), mejorar
+    (el nivel entre «-» y «+», su tabla) y el nombre; la barra de las listas largas. Improvisado: el tamaño de la
+    ventanita de la pregunta (el juego lo calcula por el texto); sin el fundido del libro entre dos barcos. Notas:
+    `re/emu/sesion35/notes_shipyard.md`.
+  - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido) y
     las otras páginas del ayuntamiento. La
     sombra del edificio en su subasta (la vista de la ciudad del visor aún no dibuja sombras) y el sonido de rezar
     (con el sonido, apartado 5). Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.

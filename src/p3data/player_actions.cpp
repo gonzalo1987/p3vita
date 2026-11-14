@@ -15,6 +15,9 @@ uint16_t fn_5269a0(const SaveGame& save, int town, uint16_t owner);  // ship_tra
 }  // namespace p3::data::tick::ship_trade_detail
 namespace p3::data::tick::events_towns_detail {
 bool ship_order_cost(const SaveGame& save, int town, uint32_t type, uint32_t merchant, int32_t& cost);  // events_towns.cpp
+bool ship_order_details(const SaveGame& save, int town, uint32_t type, uint32_t merchant, int32_t out[26],
+	int32_t materials[5]);  // events_towns.cpp
+bool fn_52b0d0(const SaveGame& save, int town, uint8_t type);  // events_towns.cpp
 }  // namespace p3::data::tick::events_towns_detail
 namespace p3::data::tick::events_detail {
 int16_t fn_4f9580(const SaveGame& save, int merchant, uint32_t town);  // events.cpp
@@ -738,6 +741,92 @@ bool can_cancel_order(const SaveGame& save, int ship) {
 
 OperationBytes cancel_order_operation(uint32_t player, uint32_t town, uint32_t ship) {
 	return words_operation({0x2F, player, town, ship});
+}
+
+ShipOrderInfo ship_order_info(const SaveGame& save, int town, uint32_t type, int merchant) {
+	ShipOrderInfo info;
+	if (town < 0 || size_t(town) >= save.towns.size() || merchant < 0 || size_t(merchant) >= save.merchants.size() ||
+		type > 3) {
+		return info;
+	}
+	int32_t f[26] = {};
+	info.ok = tick::events_towns_detail::ship_order_details(save, town, type, uint32_t(merchant), f, info.need);
+	for (size_t k = 0; k < 5; ++k) {
+		info.have[k] = f[k];
+		info.buy[k] = f[10 + k];
+		info.price[k] = f[15 + k];
+	}
+	info.cost = f[20];
+	info.days = f[21];
+	info.hold = f[22];
+	info.big_slots = uint8_t(f[23]);
+	info.small_slots = uint8_t(f[24]);
+	static constexpr uint8_t kCrew[4] = {5, 8, 10, 12};  // 0x673660
+	static constexpr uint8_t kKnots[4] = {6, 6, 5, 5};  // 0x673668
+	info.crew = kCrew[type];
+	info.knots = kKnots[type];
+	return info;
+}
+
+bool shipyard_builds(const SaveGame& save, int town, uint32_t type) {
+	return town >= 0 && size_t(town) < save.towns.size() && type < 4 &&
+		tick::events_towns_detail::fn_52b0d0(save, town, uint8_t(type));
+}
+
+int32_t shipyard_ship_days(const SaveGame& save, int ship, bool whole) {
+	if (ship < 0 || size_t(ship) >= save.ships.size()) {
+		return 0;
+	}
+	const uint32_t town = save.ships[size_t(ship)].memory.u8(0x39);
+	if (town >= save.towns.size()) {
+		return 0;
+	}
+	return tick::fn_52aad0(save, int(town), ship, whole ? 1 : 0);
+}
+
+std::vector<uint16_t> shipyard_repairs(const SaveGame& save, int town, int player) {
+	std::vector<uint16_t> list;
+	if (player < 0 || size_t(player) >= save.merchants.size()) {
+		return list;
+	}
+	const uint16_t ships = save.globals.u16(global::kShipCount);
+	for (uint32_t i = save.merchants[size_t(player)].memory.u16(0xE); i < ships && i < save.ships.size();
+		 i = save.ships[i].memory.u16(0x4)) {
+		const ShipMemory& s = save.ships[i].memory;
+		if (s.u16(0x134) == 6 && int(s.u8(0x39)) == town) {
+			list.push_back(uint16_t(i));
+		}
+	}
+	// 0x5FB870(0, count, list, 0): for each i, each later j swapped in when it has fewer days left (each ship's days
+	// by its own town's 0x52AAD0 with 0).
+	for (size_t i = 0; i < list.size(); ++i) {
+		for (size_t j = i + 1; j < list.size(); ++j) {
+			if (shipyard_ship_days(save, list[j], false) < shipyard_ship_days(save, list[i], false)) {
+				std::swap(list[i], list[j]);
+			}
+		}
+	}
+	return list;
+}
+
+OperationBytes stop_repairs_operation(uint32_t ship, uint32_t town) {
+	return words_operation({0x00, ship, town});
+}
+
+std::array<uint8_t, 2> ship_slots(int type, int level) {
+	static constexpr uint8_t kSlots[24] = {0x00, 0x00, 0x04, 0x00, 0x04, 0x02, 0x00, 0x00, 0x04, 0x00, 0x02, 0x04, 0x00,
+		0x04, 0x00, 0x06, 0x02, 0x08, 0x00, 0x06, 0x02, 0x08, 0x00, 0x0C};  // 0x672CF0
+	const size_t at = size_t(6 * (type & 3) + 2 * std::clamp(level, 0, 2));
+	return {kSlots[at], kSlots[at + 1]};
+}
+
+std::array<int32_t, 3> upgrade_needs(int type, int levels) {
+	static constexpr int32_t kTable[4][3] = {{2, 1, 1}, {3, 2, 2}, {4, 3, 3}, {5, 4, 4}};  // 0x66E030's [1..3]
+	std::array<int32_t, 3> need{};
+	for (size_t k = 0; k < 3; ++k) {
+		need[k] = kTable[type & 3][k] * levels;
+	}
+	return need;
 }
 
 bool upgrade_cost(const SaveGame& save, int town, int ship, int level, ShipUpgrade& out) {

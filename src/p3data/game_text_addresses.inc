@@ -1646,6 +1646,16 @@
 	{0x006A43A0, 0x006A4380},
 	{0x006A43A4, 0x006A4384},
 	{0x006A43A8, 0x006A4388},
+	// The shipyard window's pages (0x5F42B0's drawings): the banners of «Building contract» and «Ship's name», «Construction
+	// starts on the», «Date», «Stop repairs», «No orders have been received to repair ships.» (the Spanish 0xC8 higher)
+	// and the list of repairs' head «Ship's name» (the initializer 0x46C046, Spanish 0x46C0B6).
+	{0x006A59E8, 0x006A5A4C},
+	{0x006A59EC, 0x006A5A50},
+	{0x006A5CE0, 0x006A5DA8},
+	{0x006A5CE8, 0x006A5DB0},
+	{0x006A5D1C, 0x006A5DE4},
+	{0x006A5D20, 0x006A5DE8},
+	{0x806B2D50, 0x806B37A8},
 	// The offers' description (0x533F20, the letters 0x1E and 0x1F): wares, a ship, money, the price.
 	{0x006B4FDC, 0x006B5AAC},
 	{0x006B4FE0, 0x006B5AB0},

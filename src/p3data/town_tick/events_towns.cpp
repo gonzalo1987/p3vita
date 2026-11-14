@@ -2105,7 +2105,7 @@ struct ShipOrder {
 // Materiales de los barcos (0x66DEB0 + 0x60 · tipo + 0x20 · nivel, u32 cada uno):
 // unidades de madera, paño, herramientas, cáñamo y brea; [6] lo que cuesta.
 constexpr int32_t kShipMaterials[4][3][8] = {
-	{{7, 3, 3, 3, 20, 23, 7650, 11414}, {9, 3, 3, 3, 20, 20, 8200, 12074}, {11, 3, 3, 3, 20, 24, 8800, 12784}},
+	{{7, 3, 3, 3, 20, 17, 7650, 11414}, {9, 3, 3, 3, 20, 20, 8200, 12074}, {11, 3, 3, 3, 20, 24, 8800, 12784}},
 	{{12, 5, 5, 5, 30, 29, 18270, 24450}, {14, 5, 5, 5, 30, 32, 18720, 25010}, {16, 5, 5, 5, 30, 34, 19890, 26290}},
 	{{18, 3, 4, 4, 40, 46, 16560, 22296}, {20, 3, 4, 4, 40, 50, 16500, 22346}, {22, 3, 4, 4, 40, 53, 17490, 23446}},
 	{{30, 10, 10, 8, 50, 58, 22968, 34442}, {33, 10, 10, 8, 50, 64, 23040, 34679}, {36, 10, 10, 8, 50, 69, 24840, 36644}},
@@ -2221,6 +2221,29 @@ bool ship_order_cost(const SaveGame& save, int town, uint32_t type, uint32_t mer
 	ShipOrder order{};
 	const bool ok = fn_52b2c0(save, town, order, type, merchant);
 	cost = order.cost;
+	return ok;
+}
+
+// 0x52B2C0 for the shipyard's page 1 (player_actions.cpp ship_order_info): everything it fills, as numbers: have[5],
+// used[5], buy[5], price[5], then cost, days, value, [+0x5C], [+0x5D], level; and the type's materials at that level
+// (0x66DEB0 + 0x60 · type + 0x20 · level: the page's needs).
+bool ship_order_details(const SaveGame& save, int town, uint32_t type, uint32_t merchant, int32_t out[26],
+	int32_t materials[5]) {
+	ShipOrder order{};
+	const bool ok = fn_52b2c0(save, town, order, type, merchant);
+	for (size_t k = 0; k < 5; ++k) {
+		out[k] = order.have[k];
+		out[5 + k] = order.used[k];
+		out[10 + k] = order.buy[k];
+		out[15 + k] = order.price[k];
+		materials[k] = type < 4 ? kShipMaterials[type][order.level > 2 ? 2 : order.level][k] : 0;
+	}
+	out[20] = order.cost;
+	out[21] = order.days;
+	out[22] = order.value;
+	out[23] = order.b5c;
+	out[24] = order.b5d;
+	out[25] = order.level;
 	return ok;
 }
 

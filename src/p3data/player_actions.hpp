@@ -279,6 +279,42 @@ std::vector<uint16_t> shipyard_orders(const SaveGame& save, int town);
 // (its side menu 0x5ADE2B, 0x5ADEC9, 0x5AE0EC, 0x5AE18A; the shipyard window 0x5F6CAF, 0x5F9ACA).
 uint32_t shipyard_done_tick(SaveGame& save, int town, int ship);
 bool can_cancel_order(const SaveGame& save, int ship);
+// What the page «Building contract» shows for a type (0x5F9570 copies 0x52B2C0's fill into the window; 0x5F5520,
+// 0x5F5A60 draw it): whether it can be ordered (its «Execute»), each material's need at the shipyard's level
+// (0x66DEB0: timber, cloth, tools, hemp, pitch), what the player has there, what he must buy and its price, the whole
+// cost (the page shows it less the materials' prices beside the coin pile, and whole in its total), the days, the
+// hold (the page shows it · 10), the big and small guns' slots ([+0x5C], [+0x5D]), the crew and the knots of the type
+// (0x673660, 0x673668).
+struct ShipOrderInfo {
+	bool ok = false;
+	int32_t need[5] = {};
+	int32_t have[5] = {};
+	int32_t buy[5] = {};
+	int32_t price[5] = {};
+	int32_t cost = 0;
+	int32_t days = 0;
+	int32_t hold = 0;
+	uint8_t big_slots = 0;
+	uint8_t small_slots = 0;
+	uint8_t crew = 0;
+	uint8_t knots = 0;
+};
+ShipOrderInfo ship_order_info(const SaveGame& save, int town, uint32_t type, int merchant);
+// 0x52B0D0: whether the town's shipyard builds ships of the type (the page's «-» and «+» skip the others).
+bool shipyard_builds(const SaveGame& save, int town, uint32_t type);
+// The page «List of repairs» (0x5FA000): the player's ships in the state 6 (repairing) at the town, walking his list,
+// sorted by 0x5FB870 (an exchange sort: each pair swapped when the later one has fewer days left, 0x52AAD0 with 0).
+std::vector<uint16_t> shipyard_repairs(const SaveGame& save, int town, int player);
+// 0x52AAD0 (on the ship's town): the days a ship spends at the shipyard; `whole` its repair as the page «Repair ship»
+// shows it (the flag 1), else what is left.
+int32_t shipyard_ship_days(const SaveGame& save, int ship, bool whole);
+// «Stop repairs» (0x5FA040): the operation 0x00 {0x00, ship, town} (the sailing order to the town itself).
+OperationBytes stop_repairs_operation(uint32_t ship, uint32_t town);
+// What an upgrade of `levels` needs of timber, pitch and tools (0x66E030 + 0x18 · type: its [1..3] · levels).
+std::array<int32_t, 3> upgrade_needs(int type, int levels);
+// 0x672CF0 (two bytes for each 3 · type + level): a ship's small and big guns' slots at a level ([0] small, [1] big;
+// the pages «Building contract» and «Improve ship» show them).
+std::array<uint8_t, 2> ship_slots(int type, int level);
 OperationBytes cancel_order_operation(uint32_t player, uint32_t town, uint32_t ship);
 // Upgrade a ship (0x5FA320): the ships of 0x504AC0's mode 2 (in the town,
 // out of a convoy, docked, below the level 2, not marked [+0x136] & 1); the
