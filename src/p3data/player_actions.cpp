@@ -694,6 +694,40 @@ std::vector<uint16_t> shipyard_orders(const SaveGame& save, int town) {
 	return list;
 }
 
+uint32_t shipyard_done_tick(const SaveGame& save, int town, int ship) {
+	if (town < 0 || size_t(town) >= save.towns.size()) {
+		return 0;
+	}
+	const TownMemory& t = save.towns[size_t(town)].memory;
+	const uint32_t ships = save.globals.u16(global::kShipCount);
+	const uint32_t now = save.globals.u32(global::kWorldTick);
+	uint32_t i = t.u16(0x81C);
+	if (i >= ships) {
+		return 0;
+	}
+	const int32_t per_day = int32_t(t.u16(0x854)) * 100;
+	int32_t work = 0;
+	uint32_t extra = 0;
+	for (size_t guard = 0; i < ships && i < save.ships.size() && guard < ships; ++guard) {
+		const ShipMemory& s = save.ships[i].memory;
+		int32_t done = s.s32(0x18);
+		if (done < 0x1C) {
+			done = std::max(done, 0);
+			extra += uint32_t(0x1C - done) << 8;
+		}
+		work += s.s32(0x14) - done;
+		if (int(i) == ship) {
+			break;
+		}
+		i = s.u16(0x6);
+	}
+	int32_t days = per_day != 0 ? (per_day + work - 1) / per_day : 0;  // The game divides by 0 there.
+	if (int32_t(now & 0xFF) < int32_t(t.u8(0x2C0)) * 8 + 7) {
+		--days;
+	}
+	return (uint32_t(days) << 8) + extra + (now & 0xFFFFFF00u);
+}
+
 bool can_cancel_order(const SaveGame& save, int ship) {
 	return ship >= 0 && size_t(ship) < save.ships.size() && save.ships[size_t(ship)].memory.s32(0x18) <= 0 &&
 		int(save.ships[size_t(ship)].memory.u8(0)) == save.player;

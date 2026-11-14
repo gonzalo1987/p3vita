@@ -582,6 +582,124 @@ bool auctions(SaveGame& save, uint32_t count = 2) {
 	return true;
 }
 
+// The guild's buildings' auction: the player a member of his first ship's town's guild and an auction of three of the
+// town's buildings (an event 0x36 as 0x4DAB00 makes one, in phase 1 at the next tick, waiting a day): the last three
+// records of a type below 0x39 owned by AI merchants (or, short of them, the player's own, or the town's made an AI
+// trader's), each owner given the town's guild bit (as 0x4DAB00 asks).
+bool building_auction(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+	const uint16_t ship = m.u16(0xE);
+	if (ship >= save.ships.size() || save.ships[ship].town() >= g.u32(global::kWorldTownCount)) {
+		return false;
+	}
+	const uint8_t town = save.ships[ship].town();
+	m.u32(0x468) |= 1u << (town & 31);
+	const SavedTown& st = save.towns[town];
+	const uint32_t merchants = g.u16(global::kWorldMerchantCount);
+	std::vector<uint16_t> lots;
+	// The AI merchants' first, then the player's, then (a save's early years) the town's own houses made the first AI
+	// trader's.
+	const int ai = [&]() {
+		for (uint32_t k = 0; k < merchants && k < save.merchants.size(); ++k) {
+			if (k != uint32_t(save.player) && !(save.merchants[k].memory.u8(0x8) & 6)) {
+				return int(k);
+			}
+		}
+		return -1;
+	}();
+	SavedTown& owned = save.towns[town];
+	for (int pass = 0; pass < 3; ++pass) {
+		for (uint32_t r = std::min<uint32_t>(st.memory.u16(0x776), uint32_t(st.records.size())); r-- > 0 && lots.size() < 3;) {
+			BuildingRecord& b = owned.records[r];
+			const bool merchant = b.owner < merchants;
+			if (b.type >= 0x39 || (pass < 2 && (!merchant || (b.owner == uint32_t(save.player)) != (pass == 1))) ||
+				(pass == 2 && (merchant || ai < 0 || b.type == 0))) {
+				continue;
+			}
+			if (pass == 2) {
+				b.owner = uint8_t(ai);
+			}
+			const size_t cell = size_t(st.memory.u32(0x7AC)) * b.x + b.y;
+			const bool fine = cell < st.grid.size() && (st.grid[cell] & 0x80);
+			save.merchants[b.owner].memory.u32(0x468) |= 1u << (town & 31);
+			lots.push_back(uint16_t(r | (fine ? 0x8000 : 0)));
+		}
+	}
+	if (lots.empty()) {
+		return false;
+	}
+	lots.resize(3, 0xFFFF);
+	GameMemory<0x18>& e = save.events[tick::events_detail::fn_4d8cf0(save, g.u32(global::kWorldTick) + 1)];
+	e.u16(0x6) = 0x36;
+	e.u16(0x8) = lots[0];
+	e.u16(0xA) = lots[1];
+	e.u16(0xC) = lots[2];
+	e.u16(0xE) = 0x100;
+	e.u16(0x10) = 0;
+	e.u16(0x12) = 0;
+	e.u8(0x14) = 1;
+	e.u8(0x15) = town;
+	e.u8(0x16) = 0;
+	e.u8(0x17) = 0xFF;
+	return true;
+}
+
+// The guild's trading centres: the player's own finds (his [+0x4D8]) of America's points (the first 100 of
+// Expeditionen.dat) north of y 70 and of the others west of x 300, every third one with the wide brush, and every
+// trading centre (his [+0x538] 0x7FFF), those nobody found yet found by him ten days ago.
+void trading_centres(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+	for (uint32_t j = 0; j < 384 && j < save.expeditions.size(); ++j) {
+		const bool america = j < 100;
+		if ((america && save.expeditions[j][1] < 70) || (!america && save.expeditions[j][0] < 300)) {
+			m.u32(0x4D8 + 4 * (j >> 5)) |= 1u << (j & 31);
+			if (j % 3 == 0) {
+				m.u32(0x508 + 4 * (j >> 5)) |= 1u << (j & 31);
+			}
+		}
+	}
+	m.u32(0x538) = 0x7FFF;
+	const uint32_t now = g.u32(global::kWorldTick);
+	for (uint32_t k = 0; k < 15; ++k) {
+		const uint32_t o = 0x6DEFB0 + 0x2C * k;
+		if (g.u8(o + 6) >= g.u16(global::kWorldMerchantCount) || g.u32(o + 8) > now) {
+			g.u8(o + 6) = uint8_t(save.player);
+			g.u32(o + 8) = now - 10 * 256;
+		}
+	}
+}
+
+// The guild's trade contracts: two of the player's in the world objects' lists (SaveGame::world_object_lists, as
+// 0x52C6C0 adds them with the object's counts [+0x28] and [+0x1C]): the first trading post buys 1200 of its first
+// ware it wants at 95 each, by 120 days from now; the second sells 800 of its second ware it offers at 40, by 60 days.
+void trade_contracts(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	const uint32_t now = g.u32(global::kWorldTick);
+	const struct {
+		uint32_t object;
+		uint8_t side;
+		uint8_t buys;
+		uint32_t amount;
+		uint32_t price;
+		uint32_t days;
+	} kContracts[2] = {{0, 0, 1, 1200, 95, 120}, {1, 1, 0, 800, 40, 60}};
+	for (const auto& c : kContracts) {
+		GameMemory<0x10> order;
+		order.u16(0x0) = uint16_t(save.player);
+		order.u8(0x2) = c.side;
+		order.u8(0x3) = c.buys;
+		order.u32(0x4) = c.amount;
+		order.u32(0x8) = c.price;
+		order.u32(0xC) = now + c.days * 256;
+		save.world_object_lists[c.object].push_back(order);
+		const uint32_t o = 0x6DEFB0 + 0x2C * c.object;
+		++g.u32(o + 0x28);
+		++g.u16(o + 0x1C);
+	}
+}
+
 }  // namespace
 
 const char kDebugStatesHelp[] =
@@ -620,7 +738,16 @@ const char kDebugStatesHelp[] =
 	"              and a townsman who can't pay back the player's loan\n"
 	"  auctions    the player in the guild of his first ship's town and two auctions\n"
 	"              of ships there and in the next town with a guild (bidding in 15 days)\n"
-	"  auction     the same with the first auction only\n";
+	"  auction     the same with the first auction only\n"
+	"  church-fed-N  every town's poor fed by its church to the level N (1..5): the\n"
+	"              church's statues and altar in its picture\n"
+	"  building-auction  the player in that guild and an auction of three of the town's\n"
+	"              buildings there (bidding in about 2 days)\n"
+	"  network     the settings' [+0xD] at 0: the network game's auction hall (and its\n"
+	"              automatic bids)\n"
+	"  centres     the player's own expeditions' finds (America's north, the Mediterranean's\n"
+	"              west) and every trading centre (the guild's map)\n"
+	"  contracts   two trade contracts of the player's with the first two trading posts\n";
 
 namespace {
 
@@ -798,6 +925,17 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 				error = "the player's first ship isn't in a town";
 				return false;
 			}
+		} else if (state == "building-auction") {
+			if (!building_auction(save)) {
+				error = "the player's first ship isn't in a town, or no AI merchant has a building there";
+				return false;
+			}
+		} else if (state == "network") {
+			save.settings.u8(0xD) = 0;
+		} else if (state == "centres") {
+			trading_centres(save);
+		} else if (state == "contracts") {
+			trade_contracts(save);
 		} else if (state == "arsenal") {
 			if (!arsenal(save)) {
 				error = "no office for the player in his home town";
@@ -824,6 +962,14 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			if (!tavern_captain(save)) {
 				error = "the player has no ship in port, or no town has a captain";
 				return false;
+			}
+		} else if (state.size() == 12 && state.compare(0, 11, "church-fed-") == 0 && state[11] >= '1' &&
+			state[11] <= '5') {
+			// The church's [+0x0] (the town's [+0x794], less 100 a day) at N units of 0x4FE360 (the church factor, the
+			// world's [+0x8C] at 0x6DE52C, + 1, · 2000): its level N (church_feeding_level).
+			const int32_t unit = (int32_t(save.globals.u8(0x6DE52C)) + 1) * 2000;
+			for (SavedTown& town : save.towns) {
+				town.memory.s32(0x794) = (state[11] - '0') * unit;
 			}
 		} else {
 			error = "unknown debugging state \"" + state + "\"";

@@ -238,6 +238,11 @@ uint32_t automatic_bid(const SaveGame& save, uint32_t event, uint32_t lot, uint3
 	return top;
 }
 
+bool automatic_bid_shown(const SaveGame& save, uint32_t event, uint32_t player) {
+	const Event* e = auction_at(save, event);
+	return e && (e->u16(6) == 0xA || tick::facilities_detail::fn_5308a0(save, player, e->u8(0x15)) >= 0);
+}
+
 ShipAuction ship_auction(const SaveGame& save, uint16_t ship) {
 	ShipAuction a;
 	a.minimum = tick::events_mayor_detail::fn_4da860(save, ship);
@@ -371,6 +376,162 @@ GuildMemberPage guild_member_page(const SaveGame& save, uint16_t merchant) {
 	p.children = m.u8(0x36);
 	p.ships = m.u16(0x478);
 	return p;
+}
+
+namespace {
+
+constexpr uint32_t kMembersFinds = 0x6DF278;  // The guild members' finds (0x5346A0 makes it).
+constexpr uint32_t kMerchantFinds = 0x4D8;  // A merchant's own.
+constexpr uint32_t kWorldObjects = 0x6DEFB0;  // The 15 world objects ([+0xB10] of the world), 0x2C bytes each.
+constexpr int kMediterraneanX = 186;  // 0x673ADC
+constexpr int kMediterraneanY = 16;  // 0x673ADE
+constexpr int kMediterraneanScale = 53;  // 0x673AE0: 100 map pixels to so many of the whole map's.
+
+// 0x673858 (u16 x, u16 y): the place of each world object on the whole map by its [+0x4]: the 30 of the
+// Mediterranean's and the North Sea's trading posts, then 20 of America's. (Past them the game reads what follows in
+// .rdata, as events_rare.cpp's copy keeps; no world object has such a place: not shown here.)
+constexpr uint16_t kCentrePlaces[50][2] = {
+	{248, 22}, {236, 29}, {217, 40}, {216, 51}, {217, 31}, {227, 61}, {249, 46}, {259, 37}, {273, 28}, {280, 27},
+	{286, 23}, {294, 28}, {301, 36}, {310, 41}, {314, 49}, {305, 56}, {309, 59}, {287, 47}, {335, 54}, {323, 33},
+	{358, 53}, {341, 42}, {347, 69}, {341, 61}, {343, 55}, {394, 74}, {371, 90}, {289, 60}, {261, 64}, {345, 84},
+	{93, 8}, {88, 16}, {80, 19}, {73, 22}, {66, 25}, {61, 31}, {56, 36}, {45, 42}, {40, 45}, {38, 51}, {31, 53},
+	{32, 64}, {26, 68}, {19, 72}, {12, 77}, {4, 84}, {1, 96}, {3, 110}, {17, 137}, {40, 144},
+};
+
+// An expeditions' finds object of the game's memory (0x64 bytes from `at`).
+template <typename Memory>
+void add_finds(ExpeditionFinds& f, const Memory& m, uint32_t at) {
+	for (uint32_t k = 0; k < 12; ++k) {
+		f.points[k] |= m.u32(at + 4 * k);
+		f.wide[k] |= m.u32(at + 0x30 + 4 * k);
+	}
+	f.centres |= m.u32(at + 0x60);
+}
+
+// A brush of 0x534A40: `rows` rows of `stride` bytes from (−r, −r), each 255 − (dx² + dy²)·f, 0 past 255.
+std::vector<uint8_t> brush(int r, int f, int rows, int stride) {
+	std::vector<uint8_t> b(size_t(rows) * size_t(stride));
+	for (int dy = -r; dy + r < rows; ++dy) {
+		for (int dx = -r; dx + r < stride; ++dx) {
+			const int v = (dx * dx + dy * dy) * f;
+			b[size_t(dy + r) * size_t(stride) + size_t(dx + r)] = v > 255 ? 0 : uint8_t(255 - v);
+		}
+	}
+	return b;
+}
+
+}  // namespace
+
+ExpeditionFinds guild_map_finds(const SaveGame& save, uint32_t merchant) {
+	ExpeditionFinds f;
+	const bool player = merchant < merchant_count(save) && merchant < save.merchants.size();
+	if (player) {
+		add_finds(f, save.merchants[merchant].memory, kMerchantFinds);
+	}
+	if (!player || save.merchants[merchant].memory.u32(0x468) != 0) {
+		// 0x6DF278: what the engine added to it, with every member's own finds as the load makes it (0x5348B0).
+		add_finds(f, save.globals, kMembersFinds);
+		for (uint32_t m = 0; m < merchant_count(save) && m < save.merchants.size(); ++m) {
+			if (save.merchants[m].memory.u32(0x468) != 0) {
+				add_finds(f, save.merchants[m].memory, kMerchantFinds);
+			}
+		}
+	}
+	return f;
+}
+
+TradingMap trading_map(const SaveGame& save, const ExpeditionFinds& finds) {
+	TradingMap map;
+	// No point of the first 100 (the bits of the first three words and the fourth's low four): the Mediterranean.
+	map.mediterranean = finds.points[0] == 0 && finds.points[1] == 0 && finds.points[2] == 0 && (finds.points[3] & 0xF) == 0;
+	const int r1 = map.mediterranean ? 9 : 5;
+	const int f1 = map.mediterranean ? 3 : 8;
+	const int r2 = map.mediterranean ? 13 : 7;
+	const int f2 = map.mediterranean ? 2 : 5;
+	const std::vector<uint8_t> narrow = brush(r1, f1, 16, 32);
+	const std::vector<uint8_t> wide = brush(r2, f2, 24, 48);
+	map.fog.assign(size_t(kTradingMapWidth) * kTradingMapHeight, 200);
+	for (uint32_t j = 0; j < 384 && j < save.expeditions.size(); ++j) {
+		const uint32_t bit = 1u << (j & 31);
+		if (!(finds.points[j >> 5] & bit)) {
+			continue;
+		}
+		const bool big = (finds.wide[j >> 5] & bit) != 0;
+		const int r = big ? r2 : r1;
+		const std::vector<uint8_t>& b = big ? wide : narrow;
+		const int stride = big ? 48 : 32;
+		int x = save.expeditions[j][0];
+		int y = save.expeditions[j][1];
+		if (map.mediterranean) {
+			x = (x * 5 - kMediterraneanX * 5) * 20 / kMediterraneanScale;
+			y = (y * 5 - kMediterraneanY * 5) * 20 / kMediterraneanScale;
+		}
+		// The brush's left column and its middle row.
+		x = x < r ? 0 : x + r >= kTradingMapWidth ? (kTradingMapWidth / 2 - r) * 2 : x - r;
+		y = y < r ? r : y + r > kTradingMapHeight ? kTradingMapHeight - r : y;
+		// Its rows from the top and from the bottom together, the same brush row on both.
+		for (int i = 0; i < r; ++i) {
+			uint8_t* top = &map.fog[size_t(y - r + i) * kTradingMapWidth + size_t(x)];
+			uint8_t* bottom = &map.fog[size_t(y + r - 1 - i) * kTradingMapWidth + size_t(x)];
+			const uint8_t* row = &b[size_t(i) * size_t(stride)];
+			for (int c = 0; c < 2 * r; ++c) {
+				top[c] = top[c] > row[c] ? uint8_t(top[c] - row[c]) : 0;
+				bottom[c] = bottom[c] > row[c] ? uint8_t(bottom[c] - row[c]) : 0;
+			}
+		}
+	}
+	map.centres = finds.centres;
+	return map;
+}
+
+std::vector<TradingCentre> trading_centres(const SaveGame& save, const TradingMap& map) {
+	std::vector<TradingCentre> out;
+	const GlobalMemory& g = save.globals;
+	for (uint32_t k = 0; k < 15; ++k) {
+		const uint32_t o = kWorldObjects + 0x2C * k;
+		if (!(map.centres & (1u << k)) || g.u32(o + 8) > g.u32(global::kWorldTick) || g.u8(o + 6) >= merchant_count(save)) {
+			continue;
+		}
+		TradingCentre c;
+		c.object = k;
+		c.place = g.u8(o + 4);
+		c.kind = g.u8(o + 5);
+		c.finder = g.u8(o + 6);
+		c.tick = g.u32(o + 8);
+		c.offer = {g.u8(o + 0), g.u8(o + 1)};
+		c.demand = {g.u8(o + 2), g.u8(o + 3)};
+		if (c.place >= 50) {
+			continue;
+		}
+		int16_t x = int16_t(kCentrePlaces[c.place][0]);
+		int16_t y = int16_t(kCentrePlaces[c.place][1]);
+		if (map.mediterranean) {
+			// In 16 bits (0x5C64EF..0x5C6573): less the corner, times 100 as a short, divided by 53.
+			x = int16_t(int16_t(int16_t(x - kMediterraneanX) * 100) / kMediterraneanScale);
+			y = int16_t(int16_t(int16_t(y - kMediterraneanY) * 100) / kMediterraneanScale);
+		}
+		if (x < 0 || x >= kTradingMapWidth || y < 0 || y >= kTradingMapHeight) {
+			continue;
+		}
+		c.x = x;
+		c.y = y;
+		out.push_back(c);
+	}
+	return out;
+}
+
+int trading_centre_at(const std::vector<TradingCentre>& centres, int x, int y, int limit) {
+	int best = -1;
+	int nearest = limit;
+	for (size_t k = 0; k < centres.size(); ++k) {
+		const int dx = x - centres[k].x;
+		const int dy = y - centres[k].y;
+		if (dx * dx + dy * dy < nearest) {
+			nearest = dx * dx + dy * dy;
+			best = int(k);
+		}
+	}
+	return best;
 }
 
 }  // namespace p3::data

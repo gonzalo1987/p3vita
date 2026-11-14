@@ -78,6 +78,9 @@ OperationBytes bid_operation(const SaveGame& save, uint32_t event, uint32_t play
 // the lot, player}; the player's current one for a lot (0x4D9000: its top, 0 without one).
 OperationBytes automatic_bid_operation(uint32_t top, uint32_t event, uint32_t lot, uint32_t player);
 uint32_t automatic_bid(const SaveGame& save, uint32_t event, uint32_t lot, uint32_t player);
+// Its button («offer», the window's [+0x14D0] in that game: 0x5C0AAC..0x5C0AE5) in every phase but hidden at a
+// buildings' auction without an office of the player's in the town (0x5308A0).
+bool automatic_bid_shown(const SaveGame& save, uint32_t event, uint32_t player);
 
 // 0x4DAA50 (on the queue: ship, &minimum, &tick): the ship's minimum bid (0x4DA860) and when the first auction of
 // ships (0x0A) in the queue's order with the ship among its lots takes place (its tick, + 0x100 up to its phase 2, +
@@ -141,5 +144,63 @@ struct GuildMemberPage {
 	uint16_t ships = 0;  // [+0x478]
 };
 GuildMemberPage guild_member_page(const SaveGame& save, uint16_t merchant);
+
+// --- The trading centres (the page 5: its map 0x534A40 made as the page opens, 0x5C1607; its places 0x5C63A0; its
+// drawing 0x5C5F00; the place under the mouse 0x5BFC40) ---
+
+// What an expeditions' finds object keeps (0x534750 makes one; the merchant's [+0x4D8], the guild members' 0x6DF278):
+// a bit per point of scripts/Expeditionen.dat (SaveGame::expeditions) reached, [+0x0..0x30), the same bits for those
+// drawn on the map with the wider brush, [+0x30..0x60), and a bit per trading centre found (the 15 world objects),
+// [+0x60].
+struct ExpeditionFinds {
+	std::array<uint32_t, 12> points{};
+	std::array<uint32_t, 12> wide{};
+	uint32_t centres = 0;
+};
+// 0x4F7490 (on the merchant, as the page opens for the player): his own finds ([+0x4D8]) with, if he is a member of
+// any guild ([+0x468] not 0), the guild members' 0x6DF278. The game keeps that one as the save loads it (0x5348B0: the
+// finds of every merchant with a guild's bit), with what members find (0x4F93C0, 0x4F9400) and a new member's own
+// (0x4F8560) added; p3vita's loader doesn't make the first part, so here it is the members' finds now with what the
+// engine added to 0x6DF278 (the same but for a merchant who left every guild since the load).
+ExpeditionFinds guild_map_finds(const SaveGame& save, uint32_t merchant);
+
+constexpr int kTradingMapWidth = 400;  // 0x673AD8
+constexpr int kTradingMapHeight = 150;  // 0x673ADA
+// The map (0x534A40): the picture (textures.ini TEX21000 «Amerika.bmp», the whole sea from America to the Levant, or
+// TEX21001 «Mittelmeer.bmp», the Mediterranean: the window's [+0x540 + 4·mediterranean]) under a fog the game makes,
+// a texture 400 × 150 of one byte a pixel (0x4BB2A0 with the format 0x23) whose palette's entry k is the grey
+// (0x50, 0x50, 0x50) with the alpha k, every byte 200 at first; each point found clears it round its place with a brush
+// (a byte less the brush's, at 0 the least): the brush's 2r × 2r bytes 255 − (dx² + dy²)·f (0 past 255) for dx, dy from
+// −r, r and f 5 and 8 (the wide brush 7 and 5) on the whole map. Without a point among the first 100 (America's) the
+// map is the Mediterranean, the points scaled to it ((x − 186)·100 / 53, (y − 16)·100 / 53, truncated) and the brushes
+// 9 and 3 (the wide 13 and 2). A brush past the map's left edge starts at 0, past its right at 400 − 2r; its middle row
+// at r at least and 150 − r at most.
+struct TradingMap {
+	bool mediterranean = false;  // The window's [+0xC2].
+	uint32_t centres = 0;  // [+0xC8]: the finds' trading centres.
+	std::vector<uint8_t> fog;  // kTradingMapWidth · kTradingMapHeight bytes, row by row.
+};
+TradingMap trading_map(const SaveGame& save, const ExpeditionFinds& finds);
+
+// A trading centre on the map (0x5C63A0, the window's [+0x54C]: 15 records of 0x128 bytes): a world object
+// (0x6DEFB0 + 0x2C·k: the wares it offers [+0x0], [+0x1], those it wants [+0x2], [+0x3], its place [+0x4] and kind
+// [+0x5], who found it first [+0x6], when [+0x8]) shown with the finds' bit k, found by then (its tick not past the
+// world's) by a merchant, its place (0x673858 + 4·place, scaled on the Mediterranean as the points but in 16 bits:
+// (x − 186)·100 as a short, then divided by 53) inside the map.
+struct TradingCentre {
+	uint32_t object = 0;
+	int16_t x = 0;  // On the map ([+0x4], [+0x6] of the window's record).
+	int16_t y = 0;
+	uint8_t place = 0;  // Its name 0x6B1F20 + 4·place below 30 (with the kind 0x6C0840 + 4·kind), else «indian tribe».
+	uint8_t kind = 0;
+	uint8_t finder = 0;
+	uint32_t tick = 0;
+	std::array<uint8_t, 2> offer{};  // A first ware past the wares (0x18 or more): «-/-».
+	std::array<uint8_t, 2> demand{};
+};
+std::vector<TradingCentre> trading_centres(const SaveGame& save, const TradingMap& map);
+// 0x5BFC40 (the mouse on the page): the centre nearest to (x, y) of the map whose distance² is below `limit` (the
+// game's 225), the first of the nearest; −1 for none (the window's [+0xC4] 0xFFFF).
+int trading_centre_at(const std::vector<TradingCentre>& centres, int x, int y, int limit = 225);
 
 }  // namespace p3::data

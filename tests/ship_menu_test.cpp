@@ -48,6 +48,30 @@ int main() {
 	expect(prices[20] == 123, "a weapon's price, by ten");
 	expect(prices[5] == 0, "nothing paid, 0");
 
+	{
+		// The shipyard's side menu's dates (0x52AFC0): the town's list the ship 2, then the ship 0.
+		SaveGame yard;
+		yard.globals.u16(global::kShipCount) = 3;
+		yard.globals.u32(global::kWorldTick) = (100u << 8) + 0x10;
+		yard.towns.resize(1);
+		yard.ships.resize(3);
+		TownMemory& t = yard.towns[0].memory;
+		t.u16(0x81C) = 2;
+		t.u16(0x854) = 2;  // 200 a day.
+		t.u8(0x2C0) = 1;  // The day's tick 0x10 isn't under 1 · 8 + 7: no day less.
+		yard.ships[2].memory.s32(0x14) = 1000;
+		yard.ships[2].memory.s32(0x18) = 10;  // 990 to do, 18 under 28.
+		yard.ships[2].memory.u16(0x6) = 0;
+		yard.ships[0].memory.s32(0x14) = 500;
+		yard.ships[0].memory.s32(0x18) = -5;  // Counted as 0: 500 to do, 28 under 28.
+		expect(shipyard_done_tick(yard, 0, -1) == ((100u + 8 + 18 + 28) << 8), "the shipyard free: 1490 in 8 days, 46 more");
+		expect(shipyard_done_tick(yard, 0, 2) == ((100u + 5 + 18) << 8), "the first ship done: 990 in 5 days, 18 more");
+		t.u8(0x2C0) = 2;  // 0x10 under 2 · 8 + 7: a day less.
+		expect(shipyard_done_tick(yard, 0, 2) == ((100u + 4 + 18) << 8), "early in the day, a day less");
+		t.u16(0x81C) = 3;
+		expect(shipyard_done_tick(yard, 0, -1) == 0, "no ship in the list");
+	}
+
 	if (failures == 0) {
 		std::printf("ship menu: all right\n");
 	}

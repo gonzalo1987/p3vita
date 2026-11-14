@@ -3,11 +3,14 @@
 #include "game_window.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
 
 #include "p3data/font.hpp"
+#include "p3data/game_fixes.hpp"
 #include "p3data/image.hpp"
 #include "text_renderer.hpp"
 #include "ui_images.hpp"
@@ -24,15 +27,21 @@ std::string read_text(const p3::data::CprArchive& archive, const char* path) {
 }  // namespace
 
 GameWindowArt::GameWindowArt(SDL_Renderer* renderer, const p3::data::CprArchive& archive)
-	: renderer_(renderer), archive_(archive) {}
+	: renderer_(renderer), archive_(archive) {
+	// The bath house's side menu as its constructor leaves it (0x59FCAC..0x59FCD2): the player alone in each town's
+	// bath until the tick then plus a day. It is made when the game starts, before a game is loaded: here the first
+	// visit to each town's bath rolls its guests.
+	for (uint32_t t = 0; t < kTownSlots; ++t) {
+		bath_mask_[t] = 1;
+		bath_until_[t] = 0;
+	}
+}
 
 GameWindowArt::~GameWindowArt() {
 	free_animations();
 	free_face();
 	for (auto& [id, t] : texs_) {
-		if (t.texture) {
-			SDL_DestroyTexture(t.texture);
-		}
+		free_strip(t);
 	}
 	for (SDL_Texture* t : {portrait_picture_, torn_across_, torn_down_}) {
 		if (t) {
@@ -46,14 +55,49 @@ GameWindowArt::~GameWindowArt() {
 	}
 }
 
-SDL_Texture* GameWindowArt::load(uint32_t tex, SDL_Rect* frames, int count) {
+namespace {
+
+// An ini's value `word` in any case (textures.ini has «UseAlpha=False» too).
+bool ini_is(const std::string& value, const char* word) {
+	std::string v;
+	for (char c : value) {
+		v += char(std::tolower(static_cast<unsigned char>(c)));
+	}
+	return v == word;
+}
+
+// The largest texture a picture may go in: the Vita's (its GXM renderer's 4096), or the renderer's if smaller.
+int max_texture_side(SDL_Renderer* renderer) {
+	constexpr int kVitaMax = 4096;
+	SDL_RendererInfo info;
+	int side = kVitaMax;
+	if (SDL_GetRendererInfo(renderer, &info) == 0) {
+		if (info.max_texture_width > 0) {
+			side = std::min(side, info.max_texture_width);
+		}
+		if (info.max_texture_height > 0) {
+			side = std::min(side, info.max_texture_height);
+		}
+	}
+	return side;
+}
+
+}  // namespace
+
+bool GameWindowArt::read_tex_image(uint32_t tex, p3::data::Image& image) {
 	const std::string section = "TEX" + std::to_string(tex);
 	const std::string file = ini_value(textures_ini_, section, "TextureFile");
-	p3::data::Image image;
 	if (file.empty() || !read_cpr_image(archive_, file.c_str(), image)) {
-		return nullptr;
+		return false;
 	}
-	if (ini_value(textures_ini_, section, "UseColorKey") == "true") {
+	if (ini_is(ini_value(textures_ini_, section, "UseAlpha"), "false")) {
+		// Drawn without the file's alpha (the palette AIMs' is 0 throughout: the bath house's steam, water and drinking
+		// man were invisible), opaque but for its colour key.
+		for (size_t i = 3; i < image.rgba.size(); i += 4) {
+			image.rgba[i] = 255;
+		}
+	}
+	if (ini_is(ini_value(textures_ini_, section, "UseColorKey"), "true")) {
 		// Its colour key («ColorKey=0xAARRGGBB»), transparent.
 		const uint32_t key = uint32_t(std::strtoul(ini_value(textures_ini_, section, "ColorKey").c_str(), nullptr, 16));
 		for (size_t i = 0; i + 3 < image.rgba.size(); i += 4) {
@@ -62,44 +106,155 @@ SDL_Texture* GameWindowArt::load(uint32_t tex, SDL_Rect* frames, int count) {
 			}
 		}
 	}
+	return true;
+}
+
+SDL_Texture* GameWindowArt::load(uint32_t tex, SDL_Rect* frames, int count) {
+	p3::data::Image image;
+	if (!read_tex_image(tex, image)) {
+		return nullptr;
+	}
 	for (int k = 0; k < count; ++k) {
 		frames[k] = {0, 0, image.width, image.height};
 	}
 	const std::vector<uint8_t> ini(textures_ini_.begin(), textures_ini_.end());
-	read_texture_frames(ini, ("[" + section + "]").c_str(), frames, count);
+	read_texture_frames(ini, ("[TEX" + std::to_string(tex) + "]").c_str(), frames, count);
 	return make_texture(renderer_, image);
 }
 
-SDL_Texture* GameWindowArt::load_frames(uint32_t tex, std::vector<SDL_Rect>& frames) {
+bool GameWindowArt::load_strip(uint32_t tex, Strip& strip) {
+	free_strip(strip);
+	p3::data::Image image;
+	if (!read_tex_image(tex, image)) {
+		return false;
+	}
 	const int count = std::max(1, std::atoi(ini_value(textures_ini_, "TEX" + std::to_string(tex), "Count").c_str()));
-	frames.assign(size_t(count), SDL_Rect{});
-	return load(tex, frames.data(), count);
+	strip.frames.assign(size_t(count), SDL_Rect{0, 0, image.width, image.height});
+	const std::vector<uint8_t> ini(textures_ini_.begin(), textures_ini_.end());
+	read_texture_frames(ini, ("[TEX" + std::to_string(tex) + "]").c_str(), strip.frames.data(), count);
+	const int side = max_texture_side(renderer_);
+	if (image.width <= side && image.height <= side) {
+		strip.texture = make_texture(renderer_, image);
+		return strip.texture != nullptr;
+	}
+	// Too big for one texture: a texture for each frame (the same rectangle's made once: the strips going and coming
+	// back, as the bath house's resting man's, repeat theirs).
+	strip.pieces.assign(size_t(count), nullptr);
+	for (int k = 0; k < count; ++k) {
+		SDL_Rect r = strip.frames[size_t(k)];
+		SDL_Rect inside;
+		const SDL_Rect whole = {0, 0, image.width, image.height};
+		if (!SDL_IntersectRect(&r, &whole, &inside)) {
+			continue;
+		}
+		strip.frames[size_t(k)] = inside;
+		for (int j = 0; j < k; ++j) {
+			const SDL_Rect& o = strip.frames[size_t(j)];
+			if (strip.pieces[size_t(j)] && o.x == inside.x && o.y == inside.y && o.w == inside.w && o.h == inside.h) {
+				strip.pieces[size_t(k)] = strip.pieces[size_t(j)];
+				break;
+			}
+		}
+		if (strip.pieces[size_t(k)]) {
+			continue;
+		}
+		p3::data::Image piece;
+		piece.width = inside.w;
+		piece.height = inside.h;
+		piece.rgba.resize(size_t(inside.w) * size_t(inside.h) * 4);
+		for (int y = 0; y < inside.h; ++y) {
+			const uint8_t* from = image.rgba.data() + (size_t(inside.y + y) * size_t(image.width) + size_t(inside.x)) * 4;
+			std::copy(from, from + size_t(inside.w) * 4, piece.rgba.begin() + std::ptrdiff_t(size_t(y) * size_t(inside.w) * 4));
+		}
+		strip.pieces[size_t(k)] = make_texture(renderer_, piece);
+	}
+	return true;
+}
+
+void GameWindowArt::free_strip(Strip& strip) {
+	if (strip.texture) {
+		SDL_DestroyTexture(strip.texture);
+	}
+	// The pieces shared between frames destroyed once.
+	for (size_t k = 0; k < strip.pieces.size(); ++k) {
+		SDL_Texture* t = strip.pieces[k];
+		const auto before = strip.pieces.begin() + std::ptrdiff_t(k);
+		if (t && std::find(strip.pieces.begin(), before, t) == before) {
+			SDL_DestroyTexture(t);
+		}
+	}
+	strip = Strip();
+}
+
+SDL_Point GameWindowArt::draw_strip(const Strip& strip, int frame, int x, int y, int width) const {
+	if (frame < 0 || size_t(frame) >= strip.frames.size()) {
+		return {0, 0};
+	}
+	SDL_Rect src = strip.frames[size_t(frame)];
+	if (width > 0 && width < src.w) {
+		src.w = width;
+	}
+	const SDL_Rect dst = {x, y, src.w, src.h};
+	if (!strip.pieces.empty()) {
+		if (SDL_Texture* t = strip.pieces[size_t(frame)]) {
+			const SDL_Rect part = {0, 0, src.w, src.h};
+			SDL_RenderCopy(renderer_, t, &part, &dst);
+			return {src.w, src.h};
+		}
+		return {0, 0};
+	}
+	if (!strip.texture) {
+		return {0, 0};
+	}
+	SDL_RenderCopy(renderer_, strip.texture, &src, &dst);
+	return {src.w, src.h};
 }
 
 void GameWindowArt::free_animations() {
 	for (Animation& a : animations_) {
-		if (a.texture) {
-			SDL_DestroyTexture(a.texture);
-		}
+		free_strip(a.strip);
 	}
 	animations_.clear();
 }
 
-void GameWindowArt::set_interior(int k, uint32_t now) {
+void GameWindowArt::set_interior(int k, uint32_t now, const InteriorState& state) {
 	ensure_common();
-	if (k == interior_) {
+	if (k != interior_) {
+		leave();  // Another building entered straight from this one.
+	}
+	state_ = state;
+	if (k != interior_) {
+		if (picture_) {
+			SDL_DestroyTexture(picture_);
+			picture_ = nullptr;
+		}
+		free_animations();
+		interior_ = k;
+		inside_ = false;
+		if (k >= 0) {
+			load_interior();
+		}
+	}
+	if (!inside_) {
+		inside_ = true;
+		opened(now);
+	}
+}
+
+void GameWindowArt::leave() {
+	if (!inside_) {
 		return;
 	}
-	if (picture_) {
-		SDL_DestroyTexture(picture_);
-		picture_ = nullptr;
+	inside_ = false;
+	if (interior_ == kBathHouseInterior) {
+		// The bath house's side menu closed (0x5A0567..0x5A05AF): its animations 1..4 stopped, the guests kept a day.
+		for (int k = 1; k <= 4; ++k) {
+			stop_animation(k);
+		}
+		if (state_.town < kTownSlots) {
+			bath_until_[state_.town] = state_.tick + 0x100;
+		}
 	}
-	free_animations();
-	interior_ = k;
-	if (k < 0) {
-		return;
-	}
-	load_interior(now);
 }
 
 void GameWindowArt::ensure_common() {
@@ -138,7 +293,7 @@ void GameWindowArt::ensure_common() {
 	}
 }
 
-void GameWindowArt::load_interior(uint32_t now) {
+void GameWindowArt::load_interior() {
 	const std::string section = "Anim" + std::to_string(interior_);
 	const int id = std::atoi(ini_value(animation_ini_, section, "BGID").c_str());
 	if (id > 0) {
@@ -149,21 +304,20 @@ void GameWindowArt::load_interior(uint32_t now) {
 		const std::string key = "Anim" + std::to_string(n);
 		auto value = [&](const char* what) { return std::atoi(ini_value(animation_ini_, section, (key + what).c_str()).c_str()); };
 		Animation a;
-		a.texture = load_frames(uint32_t(value("")), a.frames);
+		load_strip(uint32_t(value("")), a.strip);
 		a.x = value("X");
 		a.y = value("Y");
 		a.time = value("Time");
 		a.count = std::max(1, value("Frames"));
 		animations_.push_back(std::move(a));
 	}
-	opened(now);
 }
 
 namespace {
 
-// The talking faces of animation.ini's [GebaeudeAni] (0x46B110's names, its case for each: the frame's number with two
-// or one zero before it below 10 or from 10, and its place over the portrait, 0x46B7C4..0x46B8C2, from the window's
-// middle and the portrait's top).
+// The talking faces of animation.ini's [GebaeudeAni] (0x46B110's names under images/Gebaeude_innen/, its case for
+// each: the frame's number with two or one zero before it below 10 or from 10, and its place over the portrait,
+// 0x46B7C4..0x46B8C2 by the table 0x46B94C, from the window's middle and the portrait's top).
 struct FaceFiles {
 	const char* below_ten;
 	const char* from_ten;
@@ -171,32 +325,37 @@ struct FaceFiles {
 	int y;  // From the portrait's top.
 };
 constexpr FaceFiles kFaces[19] = {
-	{"Matrose_start/Matrose_Start000%i.bmp", "Matrose_start/Matrose_Start00%i.bmp", -109, 0},
-	{"Matrose_Loop/Matrose_Loop000%i.bmp", "Matrose_Loop/Matrose_Loop00%i.bmp", -109, 0},
-	{"Informant_start/Matrose_00%i.bmp", "Informant_start/Matrose_0%i.bmp", -90, 13},
-	{"Informant_Loop/Matrose_Loop00%i.bmp", "Informant_Loop/Matrose_Loop0%i.bmp", -90, 13},
-	{"Pirat_start/Pirat_start00%i.bmp", "Pirat_start/Pirat_start0%i.bmp", -97, 8},
-	{"Pirat_loop/Pirat_loop00%i.bmp", "Pirat_loop/Pirat_loop0%i.bmp", -97, 8},
-	{"", "", -140, 0},  // 6..9: the church's priest (images/Gebaeude_innen/Kirche/...), with the church.
-	{"", "", -140, 0},
-	{"", "", -140, 0},
-	{"", "", -140, 0},
-	{"Matrose_spuckt/Matrose_spuckt000%i.bmp", "Matrose_spuckt/Matrose_spuckt00%i.bmp", -109, 0},
-	{"Kapitaen_Start/Kapitaen_Start000%i.bmp", "Kapitaen_Start/Kapitaen_Start00%i.bmp", -140, 0},
-	{"Kapitaen_Loop/Kapitaen_Loop000%i.bmp", "Kapitaen_Loop/Kapitaen_Loop00%i.bmp", -140, 0},
-	{"Waffenhaendler_Start/Start000%i.bmp", "Waffenhaendler_Start/Start00%i.bmp", -37, 0},
-	{"Waffenhaendler_Loop/Loop000%i.bmp", "Waffenhaendler_Loop/Loop00%i.bmp", -37, 0},
-	{"Einbrecher/Start/Einbrecher_Start000%i.bmp", "Einbrecher/Start/Einbrecher_Start00%i.bmp", -140, 0},
-	{"Einbrecher/Loop/Einbrecher_Loop000%i.bmp", "Einbrecher/Loop/Einbrecher_Loop00%i.bmp", -140, 0},
-	{"Reisender/Start/Reisender_Start000%i.bmp", "Reisender/Start/Reisender_Start00%i.bmp", -140, 0},
-	{"Reisender/Loop/Reisender_Loop000%i.bmp", "Reisender/Loop/Reisender_Loop00%i.bmp", -140, 0},
+	{"Kneipe/Matrose_start/Matrose_Start000%i.bmp", "Kneipe/Matrose_start/Matrose_Start00%i.bmp", -109, 0},
+	{"Kneipe/Matrose_Loop/Matrose_Loop000%i.bmp", "Kneipe/Matrose_Loop/Matrose_Loop00%i.bmp", -109, 0},
+	{"Kneipe/Informant_start/Matrose_00%i.bmp", "Kneipe/Informant_start/Matrose_0%i.bmp", -90, 13},
+	{"Kneipe/Informant_Loop/Matrose_Loop00%i.bmp", "Kneipe/Informant_Loop/Matrose_Loop0%i.bmp", -90, 13},
+	{"Kneipe/Pirat_start/Pirat_start00%i.bmp", "Kneipe/Pirat_start/Pirat_start0%i.bmp", -97, 8},
+	{"Kneipe/Pirat_loop/Pirat_loop00%i.bmp", "Kneipe/Pirat_loop/Pirat_loop0%i.bmp", -97, 8},
+	// 6..9: the church's priest (258 × 160 over the whole portrait): talking, thanking; with the altar the same.
+	{"Kirche/ohneAltar/Priester_loop_ohneAltar000%i.bmp", "Kirche/ohneAltar/Priester_loop_ohneAltar00%i.bmp", -140, 0},
+	{"Kirche/Dank_ohneAltar/Priester_Dank_ohneAltar000%i.bmp", "Kirche/Dank_ohneAltar/Priester_Dank_ohneAltar00%i.bmp",
+		-140, 0},
+	{"Kirche/mitAltar/Priester_loop_mitAltar000%i.bmp", "Kirche/mitAltar/Priester_loop_mitAltar00%i.bmp", -140, 0},
+	{"Kirche/Dank_mitAltar/Priester_Dank_mitAltar000%i.bmp", "Kirche/Dank_mitAltar/Priester_Dank_mitAltar00%i.bmp",
+		-140, 0},
+	{"Kneipe/Matrose_spuckt/Matrose_spuckt000%i.bmp", "Kneipe/Matrose_spuckt/Matrose_spuckt00%i.bmp", -109, 0},
+	{"Kneipe/Kapitaen_Start/Kapitaen_Start000%i.bmp", "Kneipe/Kapitaen_Start/Kapitaen_Start00%i.bmp", -140, 0},
+	{"Kneipe/Kapitaen_Loop/Kapitaen_Loop000%i.bmp", "Kneipe/Kapitaen_Loop/Kapitaen_Loop00%i.bmp", -140, 0},
+	{"Kneipe/Waffenhaendler_Start/Start000%i.bmp", "Kneipe/Waffenhaendler_Start/Start00%i.bmp", -37, 0},
+	{"Kneipe/Waffenhaendler_Loop/Loop000%i.bmp", "Kneipe/Waffenhaendler_Loop/Loop00%i.bmp", -37, 0},
+	{"Kneipe/Einbrecher/Start/Einbrecher_Start000%i.bmp", "Kneipe/Einbrecher/Start/Einbrecher_Start00%i.bmp", -140, 0},
+	{"Kneipe/Einbrecher/Loop/Einbrecher_Loop000%i.bmp", "Kneipe/Einbrecher/Loop/Einbrecher_Loop00%i.bmp", -140, 0},
+	{"Kneipe/Reisender/Start/Reisender_Start000%i.bmp", "Kneipe/Reisender/Start/Reisender_Start00%i.bmp", -140, 0},
+	{"Kneipe/Reisender/Loop/Reisender_Loop000%i.bmp", "Kneipe/Reisender/Loop/Reisender_Loop00%i.bmp", -140, 0},
 };
 
-// Each portrait's picture and its faces (the start, then the loop; -1 none).
+// Each portrait's picture and its faces (the start, then the loop; -1 none); the priest's loop goes back and forth
+// and his thanks plays when asked (priest_thanks).
 struct PortraitInfo {
 	uint32_t tex;
 	int start;
 	int loop;
+	int thanks = -1;
 };
 PortraitInfo portrait_info(Portrait p) {
 	switch (p) {
@@ -208,7 +367,9 @@ PortraitInfo portrait_info(Portrait p) {
 	case Portrait::Burglar: return {31099, 15, 16};
 	case Portrait::Pirate: return {31010, 4, 5};
 	case Portrait::Client: return {31011, 13, 14};
-	case Portrait::Priest: return {31062, -1, -1};  // The church's (0x5C9913; 31063 past its page 4; his faces 6..9 still to do).
+	// The church's (0x5C98FA: by the town's poor fed, [+0x1D5E] = 0x4FE360; its faces by the same, 0x5C958F, 0x5CA170).
+	case Portrait::Priest: return {31062, 6, 6, 7};
+	case Portrait::PriestAltar: return {31063, 8, 8, 9};
 	default: return {0, -1, -1};
 	}
 }
@@ -277,13 +438,48 @@ void GameWindowArt::draw_portrait(Portrait p, uint32_t now) {
 			char name[160];
 			std::snprintf(name, sizeof name, i < 10 ? files.below_ten : files.from_ten, i);
 			p3::data::Image image;
-			const std::string path = std::string("images/Gebaeude_innen/Kneipe/") + name;
+			const std::string path = std::string("images/Gebaeude_innen/") + name;
 			face_.frames.push_back(read_cpr_image(archive_, path.c_str(), image) ? make_texture(renderer_, image) : nullptr);
 		}
 		// On to the next frame when its time comes and it is read (0x46B530); at the start's end, the loop.
 		const int time = std::max(1, std::atoi(ini_value(animation_ini_, "GebaeudeAni",
 			("FrameTime" + std::to_string(face_.animation)).c_str()).c_str()));
-		if (int32_t(now - face_.next) >= 0) {
+		// 0x46B530(k, 0, 1), back and forth: a frame on its way (or back from the last one), turned at the first.
+		auto back_and_forth = [&] {
+			if (int32_t(now - face_.next) < 0) {
+				return;
+			}
+			if (face_.frame < face_.count - 1) {
+				const int to = face_.frame + (face_.forward ? 1 : -1);
+				if (to < int(face_.frames.size())) {
+					face_.frame = to;
+					face_.next = now + uint32_t(time);
+				}
+			} else if (face_.frame > 0) {
+				--face_.frame;
+				face_.forward = false;
+				face_.next = now + uint32_t(time);
+			}
+			if (face_.frame == 0) {
+				face_.forward = true;
+			}
+		};
+		if (info.thanks >= 0) {
+			// The priest (the church window's update, 0x5C958F..0x5C964D): asked to thank, he starts it when his loop is
+			// back at its first frame and plays it to its last (the request then over, 0x5C9621), then his loop again.
+			if (thanks_ && face_.animation != info.thanks && face_.frame == 0) {
+				set_face(info.thanks, now);
+			} else if (thanks_ && face_.animation == info.thanks) {
+				back_and_forth();
+				if (face_.frame == face_.count - 1) {
+					thanks_ = false;
+				}
+			} else if (!thanks_ && face_.animation == info.thanks) {
+				set_face(info.loop, now);
+			} else {
+				back_and_forth();
+			}
+		} else if (int32_t(now - face_.next) >= 0) {
 			if (face_.frame < face_.count - 1) {
 				if (face_.frame + 1 < int(face_.frames.size())) {
 					++face_.frame;
@@ -339,33 +535,30 @@ const GameWindowArt::Tex& GameWindowArt::tex(uint32_t id) {
 		}
 	}
 	Tex t;
-	t.texture = load_frames(id, t.frames);
+	load_strip(id, t);
 	texs_.push_back({id, std::move(t)});
 	return texs_.back().second;
 }
 
 SDL_Point GameWindowArt::tex_size(uint32_t id, int frame) {
 	const Tex& t = tex(id);
-	if (!t.texture || frame < 0 || size_t(frame) >= t.frames.size()) {
+	if ((!t.texture && t.pieces.empty()) || frame < 0 || size_t(frame) >= t.frames.size()) {
 		return {0, 0};
 	}
 	return {t.frames[size_t(frame)].w, t.frames[size_t(frame)].h};
 }
 
-SDL_Point GameWindowArt::draw_tex(uint32_t id, int frame, int x, int y) {
-	const Tex& t = tex(id);
-	if (!t.texture || frame < 0 || size_t(frame) >= t.frames.size()) {
-		return {0, 0};
-	}
-	const SDL_Rect& src = t.frames[size_t(frame)];
-	const SDL_Rect dst = {x, y, src.w, src.h};
-	SDL_RenderCopy(renderer_, t.texture, &src, &dst);
-	return {src.w, src.h};
+SDL_Point GameWindowArt::draw_tex(uint32_t id, int frame, int x, int y, int width) {
+	return draw_strip(tex(id), frame, x, y, width);
+}
+
+int GameWindowArt::menu_rand() {
+	seed_ = seed_ * 214013u + 2531011u;  // The CRT's own recipe, on a generator of the viewer's.
+	return int((seed_ >> 16) & 0x7FFF);
 }
 
 double GameWindowArt::chance() {
-	seed_ = seed_ * 214013u + 2531011u;  // The CRT's own recipe, on a generator of the viewer's.
-	return double((seed_ >> 16) & 0x7FFF) / 32768.0;
+	return double(menu_rand()) / 32768.0;
 }
 
 bool GameWindowArt::animation_on(int k) const {
@@ -408,6 +601,9 @@ void GameWindowArt::chain_animation(int k, int next) {
 		animations_[size_t(k)].next = next;
 		animations_[size_t(k)].forward = true;
 	}
+	if (next >= 0 && size_t(next) < animations_.size()) {
+		animations_[size_t(next)].forward = true;  // 0x4667EE: the next one forward too.
+	}
 }
 
 void GameWindowArt::update_animations(uint32_t now) {
@@ -419,10 +615,16 @@ void GameWindowArt::update_animations(uint32_t now) {
 		const int step = std::max(1, a.time / a.count);  // The ms of a frame.
 		const int done = int((now - a.start) / uint32_t(step));
 		a.frame = a.forward ? done : a.count - done - 1;
+		// Going back, it stays on its first frame, on, for ever (0x46691D clamps the frame at 0 before 0x46694C
+		// checks the backward end, back and forth and frame < 0: never): a game bug, display only, reproduced. Its
+		// only one going back and forth, the tavern's informer turning round (13), so stays on after his first turn,
+		// and his other gestures (3, 4, 5), which wait for 13 to be off, never come again while the game runs. Behind
+		// fix_game_bugs (the user's word, 2026-11-14), the backward end is checked before the frame is clamped.
+		const bool back_end = a.back_and_forth && a.frame < 0 && p3::data::fix_game_bugs();
 		if (a.frame < 0) {
-			a.frame = 0;  // Going back, it stays on its first frame (0x46691D: the end is only checked forward).
+			a.frame = 0;
 		}
-		if (a.frame < a.count) {
+		if (a.frame < a.count && !back_end) {
 			continue;
 		}
 		// The loop's end (0x466970): again from now; the next one started and this one stopped; stopped if asked to,
@@ -447,36 +649,198 @@ void GameWindowArt::update_animations(uint32_t now) {
 }
 
 // What each building's side menu starts when it opens (the calls after its 0x466430: the tavern 0x5A649F, the
-// shipyard 0x5AD9D8, the guild 0x5A3A7A, the bath house 0x5A03A7, the market hall 0x5ACAC2; the church's depend on
-// the town's church, 0x5A56A5, still to do; the others start none).
+// shipyard 0x5AD9D8, the guild 0x5A3A7A, the bath house 0x5A03A7 / 0x5A0624, the market hall 0x5ACAC2, the church
+// 0x5A56A5), and the timers its window sets then (the town hall, the barn, the town gate). No building starts one
+// back and forth when it opens (not the bath house's 2: 0x5A03C9 pushes the flag 0 before choosing 1 or 2); only
+// the tavern's 13 goes so, at random.
 void GameWindowArt::opened(uint32_t now) {
-	timer_ = now + 5000;  // The town hall's 0x5A9710: its animation 4 first 5 s after.
-	auto start = [&](std::initializer_list<int> ks, bool back_and_forth = false) {
+	auto start = [&](std::initializer_list<int> ks) {
 		for (int k : ks) {
-			start_animation(k, back_and_forth, now);
+			start_animation(k, false, now);
 		}
 	};
 	switch (interior_) {
 	case kTavernInterior: start({0, 1, 2, 6, 10}); break;
 	case kShipyardInterior: start({0, 1, 2, 3, 4}); break;
 	case kGuildInterior: start({0, 5, 6}); break;
-	case kBathHouseInterior: start({0, 4}); start({2}, true); break;
 	case kMarketHallInterior: start({1}); break;
-	default: break;
+	case kChurchInterior:
+		// 0x5A56AA..0x5A57B8: the animation k when the town's poor are fed over k (its window's update keeps it so).
+		for (int k = 0; k < 5; ++k) {
+			if (state_.church_level > k) {
+				start({k});
+			}
+		}
+		break;
+	case kBathHouseInterior: {
+		// Its side menu opened (0x5A0830): who is in the bath (the player, and each councillor of the town with a chance
+		// of 7 in 100 once the day after the last visit has gone; rand() % 100 < 7), then (0x5A0629..0x5A065F) the
+		// steam (0), and the water (1) with the player alone in the bath, or else the water with a man in it (2) and the
+		// man resting (4).
+		const uint32_t t = state_.town < kTownSlots ? state_.town : 0;
+		bath_count_ = 1;
+		if (bath_until_[t] < state_.tick) {
+			bath_mask_[t] = 1;
+			for (int k = 1; k <= 4; ++k) {
+				if (menu_rand() % 100 < 7) {
+					bath_mask_[t] = uint8_t(bath_mask_[t] | (1 << k));
+					++bath_count_;
+				}
+			}
+		} else {
+			for (int k = 1; k <= 4; ++k) {
+				bath_count_ += (bath_mask_[t] >> k) & 1;
+			}
+		}
+		start({0});
+		if (bath_count_ == 1) {
+			start({1});
+		} else {
+			start({2, 4});
+		}
+		break;
+	}
+	case kTownHallInterior: timer_ = now + 5000; break;  // 0x5A973B: its animation 4 first 5 s after.
+	case kBarnInterior: timer_ = now + 5000 + uint32_t(menu_rand() % 5000); break;  // Its window laid out, 0x5E9C8F.
+	case kTownGateInterior: timer_ = now + 2000 + uint32_t(menu_rand() % 2000); break;  // Its window laid out, 0x5EF4DA.
+	default: break;  // The lender's, the office's and the weaponsmith's start none.
 	}
 }
 
-// Each frame, what a side menu starts at random while its building is open. The town hall's (0x5A94E0..0x5A96FC):
-// the woman's two (0 when 1 isn't on, 1 when 0 isn't, each with a chance over 0.99), the man's (2 with one over 0.5
-// when 3 isn't on; 3 over 0.99, after 2 if 2 is on), each once; the 4th every 10 to 20 s.
+// Each frame, what a building's side menu (or its window) starts while it is open: at random, at times, or by the
+// game's state.
 void GameWindowArt::tick(uint32_t now) {
-	if (interior_ == kTavernInterior) {
-		tavern_tick(now);
+	switch (interior_) {
+	case kTavernInterior: tavern_tick(now); break;
+	case kTownHallInterior: town_hall_tick(now); break;
+	case kGuildInterior: guild_tick(now); break;
+	case kLenderInterior: pair_tick(now, false); break;
+	case kOfficeInterior: pair_tick(now, true); break;
+	case kMarketHallInterior: market_hall_tick(now); break;
+	case kChurchInterior: church_tick(now); break;
+	case kBathHouseInterior: bath_tick(now); break;
+	case kBarnInterior: barn_tick(now); break;
+	case kTownGateInterior: gate_tick(now); break;
+	default: break;  // The shipyard's and the weaponsmith's side menus start none.
+	}
+}
+
+// The guild's side menu's update (0x5A3E03..0x5A3FD7): the two men's gestures in pairs (Mann_A_Teil1/2 the one in
+// red, 1 and 2; Mann_B_Teil1/2 the one in blue, 3 and 4; the fire 0 and its light on a stool and a corner, 5 and 6,
+// start with the window), each chance rand() / 32768 over 0.99 ([0x677FA8]), each played once: 1 (after 2 if 2 is
+// on), 2 (after 1 if 1 is on), 3 (after 4 if 4 is on), 4 (after 3 if 3 is on); a chance rolled for each every frame.
+void GameWindowArt::guild_tick(uint32_t now) {
+	auto pair = [&](int k, int other) {
+		if (chance() > 0.99) {
+			if (animation_on(other)) {
+				chain_animation(other, k);
+			} else {
+				start_animation(k, false, now);
+			}
+			stop_at_loop_end(k);
+		}
+	};
+	pair(1, 2);
+	pair(2, 1);
+	pair(3, 4);
+	pair(4, 3);
+}
+
+// The lender's side menu's update (0x5A3042..0x5A310D: the lender writing, 0, or resting, 1) and the office's
+// (0x5A4CC9..0x5A4D8A: its two lights, kontor_TP and kontor_TP2): two animations in one place, each once with a
+// chance over 0.99: 0 when 1 is off, 1 when 0 is off. The lender rolls a chance only when the other is off, the
+// office every frame.
+void GameWindowArt::pair_tick(uint32_t now, bool always_roll) {
+	for (int k = 0; k < 2; ++k) {
+		const int other = 1 - k;
+		if (always_roll) {
+			if (chance() > 0.99 && !animation_on(other)) {
+				start_animation(k, false, now);
+				stop_at_loop_end(k);
+			}
+		} else if (!animation_on(other) && chance() > 0.99) {
+			start_animation(k, false, now);
+			stop_at_loop_end(k);
+		}
+	}
+}
+
+// The market hall's side menu's update (0x5ACDCC..0x5ACEEC; the notes took it for the church's): the women (0) once
+// with a chance over 0.99 every frame; the man's shadow (3) once when the woman's (2) is off, hers once when his is
+// off (0.99 each); the trader (1) starts with the window.
+void GameWindowArt::market_hall_tick(uint32_t now) {
+	if (chance() > 0.99) {
+		start_animation(0, false, now);
+		stop_at_loop_end(0);
+	}
+	if (!animation_on(2) && chance() > 0.99) {
+		start_animation(3, false, now);
+		stop_at_loop_end(3);
+	}
+	if (!animation_on(3) && chance() > 0.99) {
+		start_animation(2, false, now);
+		stop_at_loop_end(2);
+	}
+}
+
+// The church's window's update (0x5C9652..0x5C97F1), each frame while it is open: its animation k (0..4: the four
+// statues with their candles, Status01..04, and the altar) on while the town's poor are fed over k (0x4FE360),
+// stopped otherwise; nothing at random.
+void GameWindowArt::church_tick(uint32_t now) {
+	for (int k = 0; k < 5; ++k) {
+		if (state_.church_level > k) {
+			start_animation(k, false, now);
+		} else if (animation_on(k)) {
+			stop_animation(k);
+		}
+	}
+}
+
+// The bath house's side menu's update (0x5A0797..0x5A07EB): with someone else in the bath, a chance over 0.995
+// ([0x677D28]) each frame chains the man resting (4) and drinking (3) to each other: at 4's loop's end 3 once, then 4
+// again (each stopped one loses its chain, 0x4666FC).
+void GameWindowArt::bath_tick(uint32_t /*now*/) {
+	if (bath_count_ > 1 && chance() > 0.995) {
+		chain_animation(4, 3);
+		chain_animation(3, 4);
+	}
+}
+
+// The barn's window's update (0x5E9E77..0x5E9ED2; the land trade's, *0x6E55A0): the horse (0) once every 8 to 13 s
+// (rand() % 5000 more).
+void GameWindowArt::barn_tick(uint32_t now) {
+	if (int32_t(now - timer_) >= 0) {
+		start_animation(0, false, now);
+		stop_at_loop_end(0);
+		timer_ = now + 8000 + uint32_t(menu_rand() % 5000);
+	}
+}
+
+// The town gate's window's update (0x5EF7A0..0x5EF8B9; the sieges' window): the gate closed (InteriorState), its
+// armoured captain (3) alone, 0, 1 and 2 stopped; else the guard at the open gate (0) and, every 8 to 10 s
+// (rand() % 2000 more), one of his two gestures (1 with an odd rand(), else 2) once, and 3 stopped.
+void GameWindowArt::gate_tick(uint32_t now) {
+	if (state_.gate_closed) {
+		stop_animation(0);
+		stop_animation(1);
+		stop_animation(2);
+		start_animation(3, false, now);
 		return;
 	}
-	if (interior_ != kTownHallInterior) {
-		return;
+	if (int32_t(now - timer_) >= 0) {
+		const int k = (menu_rand() & 1) != 0 ? 1 : 2;
+		start_animation(k, false, now);
+		stop_at_loop_end(k);
+		timer_ = now + 8000 + uint32_t(menu_rand() % 2000);
 	}
+	start_animation(0, false, now);
+	stop_animation(3);
+}
+
+// The town hall's side menu's update (0x5A94E0..0x5A96FC): the woman's two (0 when 1 isn't on, 1 when 0 isn't, each
+// with a chance over 0.99), the man's (2 with one over 0.5 when 3 isn't on; 3 over 0.99, after 2 if 2 is on), each
+// once; the 4th every 10 to 20 s.
+void GameWindowArt::town_hall_tick(uint32_t now) {
 	if (!animation_on(1) && chance() > 0.99) {
 		start_animation(0, false, now);
 		stop_at_loop_end(0);
@@ -507,7 +871,7 @@ void GameWindowArt::tick(uint32_t now) {
 
 // The tavern's people at random each frame (its side menu's update, 0x5A6A30..0x5A6D90), each chance rand() / 32768
 // over its mark: 7 and 8 once each (0.99); 9 once (0.999), or after 12 if 12 is on (0.99); 12 once when 9 is off
-// (0.99); 10 and 11 one after the other for ever when 11 is off (0.995; 10 starts with the window); 13 there and back
+// (0.99); 11 once after 10, then 10 again, when 11 is off (0.995; 10 starts with the window); 13 there and back
 // once when 3, 4 and 5 are off (0.99); 3 then 4 when 13, 4 and 5 are off (0.99); while 4 is on, 5 after it once (0.9).
 void GameWindowArt::tavern_tick(uint32_t now) {
 	auto once = [&](int k, bool back_and_forth = false) {
@@ -578,10 +942,8 @@ void GameWindowArt::begin(const SDL_Rect& on_screen, int parchment_top, uint32_t
 	}
 	// The animations on it (0x465CC9: their frame at their place).
 	for (const Animation& a : animations_) {
-		if (a.on && a.texture && a.frame >= 0 && size_t(a.frame) < a.frames.size()) {
-			const SDL_Rect& src = a.frames[size_t(a.frame)];
-			const SDL_Rect dst = {x + a.x, y + a.y, src.w, src.h};
-			SDL_RenderCopy(renderer_, a.texture, &src, &dst);
+		if (a.on) {
+			draw_strip(a.strip, a.frame, x + a.x, y + a.y);
 		}
 	}
 	if (parchment_top >= 0 && parchment_) {

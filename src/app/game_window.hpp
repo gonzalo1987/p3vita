@@ -19,6 +19,7 @@
 
 namespace p3::data {
 class CprArchive;
+struct Image;
 }
 
 namespace p3::app {
@@ -59,8 +60,23 @@ constexpr SDL_Color kButtonHighlight = {0x0C, 0x2A, 0xE0, 255};
 
 enum class PillState { Standard, Pressed, Disabled };
 
-// The tavern's people with a portrait on their pages (the tavern window's 0x5CDC60 and 0x5CF138, by the person).
-enum class Portrait { None, Sailors, Captain, Informer, Traveller, WeaponsDealer, Burglar, Pirate, Client, Priest };
+// The tavern's people with a portrait on their pages (the tavern window's 0x5CDC60 and 0x5CF138, by the person), and
+// the church's priest (0x5C98FA: TEX31062, or TEX31063 with the altar when the town's poor are fed past level 4).
+enum class Portrait { None, Sailors, Captain, Informer, Traveller, WeaponsDealer, Burglar, Pirate, Client, Priest, PriestAltar };
+
+// What some interiors' animations hang on in the game, given by the viewer each frame with set_interior().
+struct InteriorState {
+	uint32_t town = 0;  // The town the building is in.
+	uint32_t tick = 0;  // The world's tick ([0x6DE4B4], 256 a day).
+	// The church: 0x4FE360 on the town's church ([+0x794]: how well its poor are fed, 0..5); its animation k plays while
+	// this is over k (0x5A56A5 when it opens, its window's update 0x5C9652..0x5C97F1 each frame).
+	int church_level = 0;
+	// The town gate (the sieges' window's update 0x5EF7A0): the siege going on (0x633AE0, the army not retreating: its
+	// [+0x3A] at 0) or the window's [+0x94] (set as it queues 0x90, 0x5F31A8 / 0x5F3424): the gate closed with its
+	// armoured captain (3) alone; otherwise the guard (0) at the open gate with his gestures. (No view of the viewer
+	// opens the town gate yet: the sieges' windows, group 5, are to set it.)
+	bool gate_closed = false;
+};
 
 class GameWindowArt {
 public:
@@ -70,9 +86,19 @@ public:
 	GameWindowArt& operator=(const GameWindowArt&) = delete;
 
 	// The interior k of animation.ini (kNoInterior: none, the parchment alone), its picture and animations read now if
-	// it isn't the one loaded (one at a time: the other is freed), and the parchment and buttons the first time; a new
-	// one starts the animations its building's side menu starts when it opens (opened()).
-	void set_interior(int k, uint32_t now);
+	// it isn't the one loaded (one at a time: the other is freed), and the parchment and buttons the first time. Called
+	// each frame while a building is open, with what its animations hang on: on entering (the first call after
+	// leave(), or another interior) it starts the animations its building's side menu starts when it opens (opened();
+	// the game keeps each interior's animations going between visits, as here while it stays loaded).
+	void set_interior(int k, uint32_t now, const InteriorState& state = InteriorState());
+	// The building left (its side menu closed): what its menu stops then (the bath house's 1..4, 0x5A0567; and the
+	// guests in its bath kept for a day, 0x5A05A1).
+	void leave();
+	// The people in the bath house's bath when the player last entered it there: its side menu's [+0xAC + town] (bit 0
+	// the player, bits 1..4 the town's councillors 0..3, each there with a chance of 7 in 100, 0x5A0907..0x5A09F7),
+	// rolled on entering once the day after the last visit there has gone ([+0xD4 + 4 · town], 0x5A08F8). (The bath's
+	// side menu has a button for each: the councillors to bribe.)
+	uint8_t bath_guests(uint32_t town) const { return town < kTownSlots ? bath_mask_[town] : 1; }
 	// Starts drawing the window into its texture at the game's size (kWindowWidth × kWindowHeight, the interior's
 	// top left at (kFrameLeft, kFrameTop)): the picture, the parchment over it if `parchment` (at alpha 160 over a
 	// picture, whole without one) and the frame; what is drawn until end() goes on it, in those coordinates. Without
@@ -104,9 +130,9 @@ public:
 	TextRenderer* head_text() const { return head_.get(); }
 
 	// The interior's animations ([Anim k] of animation.ini: AnimN the TEX with its frames, AnimNX/Y its place on the
-	// picture, AnimNTime the loop's ms, AnimNFrames), as the interior view runs them: 0x466490 starts one (back and
-	// forth or not), 0x466610 stops it at its loop's end, 0x4666B0 stops it, 0x4667A0 starts `next` when `k` ends;
-	// 0x466800 moves them on each frame.
+	// picture, AnimNTime the loop's ms, AnimNFrames; as many as its Animations, 0x46563E: the office's lists five but
+	// says 2), as the interior view runs them: 0x466490 starts one (back and forth or not), 0x466610 stops it at its
+	// loop's end, 0x4666B0 stops it, 0x4667A0 starts `next` when `k` ends; 0x466800 moves them on each frame.
 	void start_animation(int k, bool back_and_forth, uint32_t now);
 	void stop_at_loop_end(int k);
 	void stop_animation(int k);
@@ -117,9 +143,15 @@ public:
 	// (w/2 − 140, 55), the talking face over it (the object *0x6CC7F4: animation.ini [GebaeudeAni], its start once and
 	// then its loop, a frame each FrameTime ms; read a frame or two at a time, as 0x46B110 reads one) and the torn paper
 	// frame round it (0x46B960: TEX31013 and TEX31014). In the window's coordinates, between begin() and end().
+	// The priest's faces (the church window's update 0x5C94F0): his talking loop played back and forth (6, with the
+	// altar 8), his thanks (7, 9) once when asked, from the loop's first frame, then the loop again.
 	void draw_portrait(Portrait p, uint32_t now);
-	// The picture TEX`tex` of textures.ini (its frame `frame`) at (x, y), read the first time; its size.
-	SDL_Point draw_tex(uint32_t tex, int frame, int x, int y);
+	// The church window's [+0x1D5F]: the priest thanks the player (set by a donation of goods or for the extension,
+	// 0x5CB24D and 0x5CB839; cleared when the window opens, 0x5C937C, and at his thanks' last frame, 0x5C9621).
+	void priest_thanks(bool on) { thanks_ = on; }
+	// The picture TEX`tex` of textures.ini (its frame `frame`) at (x, y), read the first time; its size. With `width`,
+	// only that much of the frame's left part (the half cannonball, 0x490428).
+	SDL_Point draw_tex(uint32_t tex, int frame, int x, int y, int width = 0);
 	SDL_Point tex_size(uint32_t tex, int frame);
 
 private:
@@ -129,12 +161,24 @@ private:
 		int count = 0;
 		int frame = 0;  // [+0x1F]
 		uint32_t next = 0;  // [+0x8]: when the next frame shows.
+		bool forward = true;  // [+0x3A]: back and forth (0x46B530's third argument), its way now.
 	};
 	void set_face(int animation, uint32_t now);
 	void free_face();
-	struct Animation {
+	// A picture of textures.ini with its frames (Count, OffsetNSize): one texture, or a texture a frame when the
+	// picture is wider or higher than a texture may be (the Vita's 4096: the strips of the lender, the market hall, the
+	// bath house and the office, the guild's fire, the shipyard's water).
+	struct Strip {
 		SDL_Texture* texture = nullptr;
 		std::vector<SDL_Rect> frames;
+		std::vector<SDL_Texture*> pieces;  // Each frame's own texture when split.
+	};
+	bool load_strip(uint32_t tex, Strip& strip);
+	static void free_strip(Strip& strip);
+	// Its frame `frame` at (x, y) (with `width`, only that much of its left part); the size drawn.
+	SDL_Point draw_strip(const Strip& strip, int frame, int x, int y, int width = 0) const;
+	struct Animation {
+		Strip strip;
 		int x = 0;
 		int y = 0;
 		int time = 0;
@@ -148,17 +192,28 @@ private:
 		uint32_t start = 0;  // [+0xC4]
 	};
 
+	// The picture TEX`tex` of textures.ini as the game draws it: its file read, opaque when UseAlpha=false (the game
+	// leaves the file's alpha out then: the palette AIMs' is 0 throughout), its ColorKey clear.
+	bool read_tex_image(uint32_t tex, p3::data::Image& image);
 	SDL_Texture* load(uint32_t tex, SDL_Rect* frames, int count);
-	SDL_Texture* load_frames(uint32_t tex, std::vector<SDL_Rect>& frames);
 	void free_animations();
 	void ensure_common();  // textures.ini, animation.ini, the parchment, buttons and fonts, the first time.
-	void load_interior(uint32_t now);
+	void load_interior();
 	void opened(uint32_t now);
 	void tick(uint32_t now);
+	void town_hall_tick(uint32_t now);
 	void tavern_tick(uint32_t now);
+	void guild_tick(uint32_t now);
+	void pair_tick(uint32_t now, bool always_roll);
+	void market_hall_tick(uint32_t now);
+	void church_tick(uint32_t now);
+	void bath_tick(uint32_t now);
+	void barn_tick(uint32_t now);
+	void gate_tick(uint32_t now);
 	void update_animations(uint32_t now);
-	// The side menus' chances: rand() / 32768 as the game's (0x639C03 and 0x66CB34), from a generator of the viewer's
-	// own (the game's uses the CRT's, the simulation's; the viewer's engine mustn't see these).
+	// The side menus' and windows' rand() (0x639C03, 0..32767; their chances rand() / 32768 with 0x66CB34) from a
+	// generator of the viewer's own (the game's uses the CRT's, the simulation's; the viewer's engine mustn't see these).
+	int menu_rand();
 	double chance();
 
 	void draw_frame() const;
@@ -172,7 +227,15 @@ private:
 	SDL_Texture* picture_ = nullptr;
 	SDL_Rect picture_frame_{};
 	std::vector<Animation> animations_;
-	uint32_t timer_ = 0;  // The town hall's side menu's [+0x8F0]: when its animation 4 plays again.
+	bool inside_ = false;  // The building entered (set_interior since the last leave()).
+	InteriorState state_;
+	// When the next gesture comes: the town hall's side menu's [+0x8F0] (its animation 4), the barn's window's
+	// [+0x2E20] and the town gate's window's [+0x1618].
+	uint32_t timer_ = 0;
+	static constexpr uint32_t kTownSlots = 40;  // The bath house's side menu's arrays (0x59FCCF).
+	uint8_t bath_mask_[kTownSlots];
+	uint32_t bath_until_[kTownSlots];
+	int bath_count_ = 1;  // The menu's [+0x6A2]: how many are in the bath (the player and the councillors there).
 	uint32_t spit_at_ = 0;  // The tavern window's [+0x1BE0]: when the sailor may spit again.
 	Portrait portrait_ = Portrait::None;
 	SDL_Texture* portrait_picture_ = nullptr;
@@ -182,10 +245,8 @@ private:
 	SDL_Texture* torn_down_ = nullptr;  // TEX31014: its left (7 × 144) and right (12 × 144).
 	SDL_Rect torn_down_frames_[2] = {};
 	Face face_;
-	struct Tex {
-		SDL_Texture* texture = nullptr;
-		std::vector<SDL_Rect> frames;
-	};
+	bool thanks_ = false;  // priest_thanks().
+	using Tex = Strip;
 	std::vector<std::pair<uint32_t, Tex>> texs_;  // draw_tex's.
 	const Tex& tex(uint32_t id);
 	uint32_t seed_ = 1;

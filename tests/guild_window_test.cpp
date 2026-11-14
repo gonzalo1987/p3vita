@@ -261,6 +261,110 @@ int main() {
 				l.waiting && l.departure == (1000u << 8) + 100,
 			"a convoy's line: its guide's owner's ships");
 	}
+	{
+		// The trading centres' map (0x534A40 through 0x4F7490): two states made the same way in the emulator by
+		// re/emu/sesion34/guild/fogtrace.py (its cases `a` and `b`, the player not a member), the game's fog's FNV-1a
+		// and counts: the Mediterranean (points off its left, top, right and bottom once scaled, overlapping ones, wide
+		// ones), and the whole map (a point among the first 100; points at its edges and corners).
+		struct FogCase {
+			std::vector<std::pair<uint32_t, std::array<uint16_t, 2>>> points;
+			std::vector<uint32_t> bits;
+			std::vector<uint32_t> wide;
+			uint32_t centres;
+			bool mediterranean;
+			uint64_t fnv;
+			size_t zeros;
+			size_t untouched;
+		};
+		const FogCase cases[2] = {
+			{{{100, {150, 10}}, {101, {398, 50}}, {102, {250, 95}}, {103, {260, 50}}, {104, {266, 54}}, {105, {380, 18}},
+				 {106, {186, 16}}, {107, {300, 80}}},
+				{100, 101, 102, 103, 104, 105, 106, 107}, {104, 105, 107}, 0x4A51, true, 0xd3a37fbf21b3688aull, 572, 57974},
+			{{{3, {2, 2}}, {7, {398, 148}}, {12, {200, 75}}, {13, {204, 77}}, {40, {0, 140}}, {99, {399, 3}},
+				 {100, {120, 149}}, {110, {60, 60}}, {129, {330, 100}}},
+				{3, 7, 12, 13, 40, 99, 100, 110, 129}, {7, 13, 100, 129}, 0x7FFF, false, 0x3309082d33eb9501ull, 214, 59070},
+		};
+		for (const FogCase& fc : cases) {
+			SaveGame save;
+			save.globals.u16(global::kWorldMerchantCount) = 1;
+			save.merchants.resize(1);
+			save.expeditions.assign(130, {0, 0});
+			for (const auto& [k, p] : fc.points) {
+				save.expeditions[k] = p;
+			}
+			MerchantMemory& m = save.merchants[0].memory;
+			for (uint32_t k : fc.bits) {
+				m.u32(0x4D8 + 4 * (k >> 5)) |= 1u << (k & 31);
+			}
+			for (uint32_t k : fc.wide) {
+				m.u32(0x508 + 4 * (k >> 5)) |= 1u << (k & 31);
+			}
+			m.u32(0x538) = fc.centres;
+			save.globals.u32(0x6DF278) = 0xFFFFFFFF;  // The members': not his (not a member).
+			const TradingMap map = trading_map(save, guild_map_finds(save, 0));
+			uint64_t h = 0xCBF29CE484222325ull;
+			size_t zeros = 0;
+			size_t untouched = 0;
+			for (uint8_t b : map.fog) {
+				h = (h ^ b) * 0x100000001B3ull;
+				zeros += b == 0;
+				untouched += b == 200;
+			}
+			check(map.mediterranean == fc.mediterranean && map.centres == fc.centres, "the trading map: its picture and centres");
+			check(map.fog.size() == 400u * 150u && h == fc.fnv && zeros == fc.zeros && untouched == fc.untouched,
+				"the trading map's fog as the game's");
+		}
+		// A member: the members' finds too (0x6DF278 and every member's own), a merchant past the count only those.
+		SaveGame save;
+		save.globals.u16(global::kWorldMerchantCount) = 3;
+		save.merchants.resize(3);
+		save.merchants[0].memory.u32(0x468) = 1;
+		save.merchants[0].memory.u32(0x4D8) = 1;
+		save.merchants[1].memory.u32(0x4D8) = 2;
+		save.merchants[1].memory.u32(0x538) = 4;
+		save.merchants[2].memory.u32(0x468) = 4;
+		save.merchants[2].memory.u32(0x50C) = 8;
+		save.globals.u32(0x6DF278 + 0x60) = 0x10;
+		ExpeditionFinds f = guild_map_finds(save, 1);
+		check(f.points[0] == 2 && f.wide[1] == 0 && f.centres == 4, "not a member: his own finds");
+		f = guild_map_finds(save, 2);
+		check(f.points[0] == 1 && f.wide[1] == 8 && f.centres == 0x10, "a member: the members' finds");
+		f = guild_map_finds(save, 5);
+		check(f.points[0] == 1 && f.wide[1] == 8 && f.centres == 0x10, "past the merchants: the members' finds");
+		// The centres shown (0x5C63A0): with their bit, found by then by a merchant, inside the map; on the
+		// Mediterranean scaled in 16 bits.
+		save.globals.u32(global::kWorldTick) = 5000;
+		const uint32_t objects = 0x6DEFB0;
+		auto centre = [&](uint32_t k, uint8_t place, uint8_t finder, uint32_t tick) {
+			save.globals.u8(objects + 0x2C * k + 4) = place;
+			save.globals.u8(objects + 0x2C * k + 5) = 1;
+			save.globals.u8(objects + 0x2C * k + 6) = finder;
+			save.globals.u32(objects + 0x2C * k + 8) = tick;
+			save.globals.u8(objects + 0x2C * k + 0) = uint8_t(k);
+			save.globals.u8(objects + 0x2C * k + 3) = 7;
+		};
+		centre(0, 0, 1, 100);  // (248, 22): (116, 11) on the Mediterranean.
+		centre(1, 30, 0, 100);  // (93, 8): off the Mediterranean, (93, 8) on the whole map.
+		centre(2, 25, 2, 5000);  // (394, 74): (392, 109).
+		centre(3, 3, 3, 100);  // Its finder past the merchants.
+		centre(4, 4, 0, 5001);  // Not found yet.
+		centre(5, 5, 0, 100);  // Its bit not set.
+		TradingMap map;
+		map.centres = 0x1F;
+		map.mediterranean = true;
+		std::vector<TradingCentre> shown = trading_centres(save, map);
+		check(shown.size() == 2 && shown[0].object == 0 && shown[0].x == 116 && shown[0].y == 11 && shown[1].object == 2 &&
+				shown[1].x == 392 && shown[1].y == 109 && shown[1].offer[0] == 2 && shown[1].demand[1] == 7 &&
+				shown[1].kind == 1 && shown[1].finder == 2,
+			"the centres on the Mediterranean");
+		map.mediterranean = false;
+		shown = trading_centres(save, map);
+		check(shown.size() == 3 && shown[1].object == 1 && shown[1].x == 93 && shown[1].y == 8, "the centres on the whole map");
+		// The place under the mouse (0x5BFC40): the nearest within a distance² below 225, the first of the nearest.
+		check(trading_centre_at(shown, 93 + 12, 8 + 9) == -1 && trading_centre_at(shown, 93 + 11, 8 + 9) == 1 &&
+				trading_centre_at(shown, 248, 22) == 0 && trading_centre_at(shown, 200, 100) == -1,
+			"the centre under the mouse");
+	}
 	if (failures == 0) {
 		std::printf("guild_window: ok\n");
 	}

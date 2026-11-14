@@ -270,6 +270,12 @@ bool ship_order_cost(const SaveGame& save, int town, uint32_t type, int merchant
 // ship}, only if its work hasn't started ([+0x18] ≤ 0; otherwise the page
 // says «Work is already being done on this ship.» and sends nothing).
 std::vector<uint16_t> shipyard_orders(const SaveGame& save, int town);
+// 0x52AFC0 (on the town; the shipyard's side menu, 0x5AE0EC, 0x5AE18A): the tick its shipyard is done with the ships
+// of its list up to `ship` (all of them with -1): for each, its work left ([+0x14] − [+0x18]) summed, and 0x100 more
+// per point under 28 of [+0x18]; the days the sum takes at the town's [+0x854] · 100 a day, rounded up, one less while
+// the day's tick (its low byte) is under the town's number [+0x2C0] · 8 + 7; then from today (the low byte dropped).
+// 0 with no ship in the list. (The game also sets a [+0x18] below 0 to 0 there: a write the display leaves out.)
+uint32_t shipyard_done_tick(const SaveGame& save, int town, int ship);
 bool can_cancel_order(const SaveGame& save, int ship);
 OperationBytes cancel_order_operation(uint32_t player, uint32_t town, uint32_t ship);
 // Upgrade a ship (0x5FA320): the ships of 0x504AC0's mode 2 (in the town,

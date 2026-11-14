@@ -577,6 +577,10 @@ cada una: el HANDOFF y [oracle.md](oracle.md).
 
 ## Decisiones del usuario que siguen valiendo
 
+- **Sin flecos** (14-11-2026: «No quiero dejar cosas atrás, hay que acabar lo que falta primero … no dejar flecos
+  por todos lados»): lo que falte de algo ya empezado se termina antes de empezar nada nuevo; lo que una sesión deje sin
+  hacer pasa a lo primero de la lista, no al final.
+
 - **El motor idéntico al original**, comprobado contra el juego, aunque vaya más lento (04-11-2026): para jugar en red
   con el PC al final. Lo visual se comprueba a ojo.
 - **Los fallos del juego**: reproducidos tal cual, apuntados aquí y corregidos detrás de `fix_game_bugs()`, encendido
