@@ -694,7 +694,7 @@ std::vector<uint16_t> shipyard_orders(const SaveGame& save, int town) {
 	return list;
 }
 
-uint32_t shipyard_done_tick(const SaveGame& save, int town, int ship) {
+uint32_t shipyard_done_tick(SaveGame& save, int town, int ship) {
 	if (town < 0 || size_t(town) >= save.towns.size()) {
 		return 0;
 	}
@@ -709,10 +709,13 @@ uint32_t shipyard_done_tick(const SaveGame& save, int town, int ship) {
 	int32_t work = 0;
 	uint32_t extra = 0;
 	for (size_t guard = 0; i < ships && i < save.ships.size() && guard < ships; ++guard) {
-		const ShipMemory& s = save.ships[i].memory;
+		ShipMemory& s = save.ships[i].memory;
 		int32_t done = s.s32(0x18);
 		if (done < 0x1C) {
-			done = std::max(done, 0);
+			if (done < 0) {
+				s.s32(0x18) = 0;  // 0x52B03A: the game writes it back, a date shown changing the save (as the game).
+				done = 0;
+			}
 			extra += uint32_t(0x1C - done) << 8;
 		}
 		work += s.s32(0x14) - done;

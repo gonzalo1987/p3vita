@@ -1,6 +1,9 @@
 #include "p3data/office_window.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "p3data/game_memory.hpp"
@@ -49,6 +52,8 @@ OfficeStorage office_storage(const SaveGame& save, uint32_t office) {
 	s.capacity = o->u16(0x2EC);
 	s.over = uint32_t(s.used) > uint32_t(s.capacity) ? s.used - s.capacity : 0;
 	s.guards = o->u8(0x2C7);
+	s.other_goods = extra / 200;
+	s.extension = o->u16(0x2EE);
 	s.max_guards = int16_t((s.capacity - kGuardsBase) / kGuardsStep + 1);
 	if (uint32_t(s.used) > 50) {
 		const int32_t per = int32_t(uint32_t(s.max_guards) * 1000u) / (s.guards + 1) - 1000;
@@ -130,6 +135,179 @@ int business_share(const SaveGame& save, uint32_t town, uint32_t merchant, uint8
 
 OperationBytes business_share_operation(uint32_t merchant, uint32_t town, uint8_t type, int percent) {
 	return words({0x5A, merchant, town, type, uint32_t(percent)});
+}
+
+namespace {
+
+// 0x672C2C: the ware each business type makes.
+constexpr uint8_t kBusinessWare[24] = {0x06, 0x06, 0x06, 0x14, 0x09, 0x02, 0x03, 0x0C, 0x05, 0x00, 0x01, 0x0B, 0x08,
+	0x04, 0x10, 0x0E, 0x07, 0x12, 0x13, 0x0F, 0x11, 0x00, 0x00, 0x00};
+constexpr int32_t kPieceWeight[6] = {1000, 1000, 2000, 2000, 2000, 1000};  // 0x672CB4 (u16)
+
+// x87 products of a float and a float constant, stored as a float (exact in double, then rounded once).
+float times(float a, float b) {
+	return float(double(a) * double(b));
+}
+
+}  // namespace
+
+std::array<OfficeGoodsRow, 20> office_goods(const SaveGame& save, uint32_t office) {
+	std::array<OfficeGoodsRow, 20> rows{};
+	if (office >= save.offices.size()) {
+		return rows;
+	}
+	const OfficeMemory& o = save.offices[office].memory;
+	for (uint32_t w = 0; w < 20; ++w) {
+		OfficeGoodsRow& r = rows[w];
+		const bool barrels = kInBarrels[w] != 0;
+		r.stock = o.s32(0x4 + 4 * w) / (barrels ? 200 : 2000);
+		r.production = times(times(float(o.s32(0xC4 + 4 * w)), 7.0f), barrels ? 0.005f : 0.0005f);
+		r.consumption = times(float(o.s32(0x64 + 4 * w)), barrels ? 0.035f : 0.0035f);
+		r.short_of = float(r.stock) < r.consumption;
+	}
+	const uint32_t records = std::min<uint32_t>(save.globals.u16(kWorldRecordCount), uint32_t(save.world_records.size()));
+	uint32_t walked = 0;
+	for (uint32_t i = o.u16(0x2CC); i < records && walked < records; i = save.world_records[i].u16(8), ++walked) {
+		const GameMemory<0x14>& b = save.world_records[i];
+		const uint8_t type = b.u8(6);
+		const bool lacking = b.u16(4) < b.u16(0xA);
+		const uint8_t ware = type < 24 ? kBusinessWare[type] : 0;
+		if (ware < 20) {
+			rows[ware].workers = lacking;
+		}
+		if (type == 5) {
+			rows[0x11].workers = lacking;  // 0x5DC0E4: the hemp, though a fishery's second ware is the whale oil.
+		} else if (type == 0xA) {
+			rows[0x0D].workers = lacking;
+		}
+	}
+	return rows;
+}
+
+std::array<int32_t, 11> office_weapons(const SaveGame& save, uint32_t office) {
+	std::array<int32_t, 11> out{};
+	if (office >= save.offices.size()) {
+		return out;
+	}
+	const OfficeMemory& o = save.offices[office].memory;
+	for (uint32_t k = 0; k < 4; ++k) {
+		out[k] = o.s32(0x4 + 4 * (20 + k)) / 10;
+	}
+	for (uint32_t k = 0; k < 6; ++k) {
+		out[4 + k] = o.s32(0x124 + 4 * k) / kPieceWeight[k];
+	}
+	out[10] = o.s32(0x2BC);
+	return out;
+}
+
+OfficeBalance office_balance(const SaveGame& save, uint32_t office) {
+	OfficeBalance b;
+	if (office >= save.offices.size()) {
+		return b;
+	}
+	const OfficeMemory& o = save.offices[office].memory;
+	const uint32_t now = save.globals.u32(global::kWorldTick);
+	const int32_t town_day = int32_t(((now - uint32_t(o.u8(0x2C6)) * 8 - 7) >> 8) % 7);
+	const int32_t world_day = int32_t((now >> 8) % 7);
+	// The sum so far turned into the week's forecast (0x5DC368..), by the days gone `d`.
+	auto forecast = [](int32_t sum, int32_t last, int32_t d, bool plus_one) {
+		if (d != 0) {
+			return int32_t(uint32_t(sum / (plus_one ? d + 1 : d)) * 7u);
+		}
+		return sum == 0 ? last : int32_t(uint32_t(sum) * 7u);
+	};
+	static const uint32_t kPairs[6] = {0x418, 0x428, 0x438, 0x420, 0x430, 0x440};
+	for (int k = 0; k < 6; ++k) {
+		int32_t sum = o.s32(kPairs[k]);
+		int32_t last = o.s32(kPairs[k] + 4);
+		if (k == 3) {
+			sum = int32_t(0u - uint32_t(sum));
+			last = int32_t(0u - uint32_t(last));
+		}
+		b.last[size_t(k)] = last;
+		if (k == 4) {
+			b.forecast[4] = sum;
+		} else {
+			b.forecast[size_t(k)] = forecast(sum, last, k == 2 ? world_day : town_day, k != 2);
+		}
+	}
+	b.manager = o.u16(0x2F2) < save.globals.u16(global::kCaptainCount) && o.u16(0x2F2) < save.captains.size();
+	const int32_t wage = b.manager ? int32_t(save.captains[o.u16(0x2F2)].u16(0xC)) + int32_t(o.u16(0x2D2)) : 0;
+	if (b.manager) {
+		b.forecast[4] = int32_t(uint32_t(b.forecast[4]) + uint32_t(wage) * uint32_t(6 - town_day));
+		b.stage = int(save.captains[o.u16(0x2F2)].u8(0xA)) / 43;
+	}
+	b.wage = b.manager ? wage : int(o.u16(0x2D2)) + 10;
+	auto add = [](int32_t a, int32_t v) { return int32_t(uint32_t(a) + uint32_t(v)); };
+	auto take = [](int32_t a, int32_t v) { return int32_t(uint32_t(a) - uint32_t(v)); };
+	b.forecast_total = take(take(take(add(add(0, b.forecast[0]), b.forecast[3]), b.forecast[1]), b.forecast[2]), b.forecast[5]);
+	b.last_total = take(take(take(add(add(0, b.last[0]), b.last[3]), b.last[1]), b.last[2]), b.last[5]);
+	b.from_tick = now - uint32_t(world_day + 7) * 256;
+	b.to_tick = now - uint32_t(world_day + 1) * 256;
+	b.businesses = o.u16(0x2D2);
+	b.dwellings = o.u16(0x2D4);
+	b.workers = o.u16(0x448);
+	b.most_workers = o.u16(0x44A);
+	b.tenants = o.u16(0x2DE) + o.u16(0x2E0) + o.u16(0x2E2);
+	b.most_tenants = o.u16(0x2D8) + o.u16(0x2DA) + o.u16(0x2DC);
+	b.short_of_materials = o.u16(0x2) != 0;
+	return b;
+}
+
+uint32_t home_move_fees(const SaveGame& save, uint32_t merchant) {
+	if (merchant >= save.merchants.size()) {
+		return 0;
+	}
+	const uint32_t fees = uint32_t(int64_t(double(save.merchants[merchant].memory.s32(0x46C)) * 0.1327));
+	return fees > 1000000u ? 1000000u : fees;
+}
+
+OperationBytes home_move_operation(uint32_t player, uint32_t town, uint32_t fees) {
+	return words({0x3E, player, town, fees});
+}
+
+std::string game_tenths(double value) {
+	// 17 significant digits, as MSVC's _cftof gets them, then rounded half up at the tenths.
+	char digits[40];
+	std::snprintf(digits, sizeof digits, "%.16e", value);
+	const bool negative = digits[0] == '-';
+	const char* p = digits + (negative ? 1 : 0);
+	std::string mantissa;
+	for (; *p && *p != 'e'; ++p) {
+		if (*p != '.') {
+			mantissa += *p;
+		}
+	}
+	const int exponent = std::atoi(p + 1);
+	// The value is 0.mantissa · 10^(exponent + 1); its tenths: the first exponent + 2 digits.
+	const int keep = exponent + 2;
+	std::string whole;  // The digits up to the tenths.
+	if (keep <= 0) {
+		whole = "0";
+		if (keep == 0 && mantissa[0] >= '5') {
+			whole = "1";
+		}
+	} else {
+		whole = mantissa.substr(0, size_t(keep));
+		while (int(whole.size()) < keep) {
+			whole += '0';
+		}
+		if (size_t(keep) < mantissa.size() && mantissa[size_t(keep)] >= '5') {
+			int k = int(whole.size()) - 1;
+			for (; k >= 0 && whole[size_t(k)] == '9'; --k) {
+				whole[size_t(k)] = '0';
+			}
+			if (k < 0) {
+				whole.insert(whole.begin(), '1');
+			} else {
+				whole[size_t(k)]++;
+			}
+		}
+	}
+	if (whole.size() < 2) {
+		whole.insert(whole.begin(), 2 - whole.size(), '0');
+	}
+	return (negative ? "-" : "") + whole.substr(0, whole.size() - 1) + "." + whole.substr(whole.size() - 1);
 }
 
 }  // namespace p3::data

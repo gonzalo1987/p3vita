@@ -21,6 +21,19 @@ namespace p3::data {
 // and those with [+0x8] & 4.
 std::vector<uint16_t> offer_merchants(const SaveGame& save, int town);
 
+// The window's list (its open 0x5BBAA0, the page 0 «Traders in this town»): 0x531470's merchants, each with his
+// office's buildings ([+0x2D2] + [+0x2D4], u16), sorted by family name, then first name ([+0xE4], [+0xE8]), both
+// upper-cased (CString::MakeUpper, the CRT's _mbsupr on Windows-1252: the accented letters too) and compared byte by
+// byte (strcmp, unsigned): an insertion that puts a merchant before the first one he sorts before, so of two equal
+// names the later stays after.
+struct OfferMerchant {
+	uint16_t merchant = 0;
+	uint16_t buildings = 0;
+};
+std::vector<OfferMerchant> offer_window_merchants(const SaveGame& save, int town);
+// The upper case of _mbsupr on Windows-1252 (a..z, à..þ but ÷, š œ ž ÿ), on a Latin-1 string as the game's names.
+std::string upper_1252(std::string s);
+
 // What the player can offer (0x5BDB17..0x5BDD78), in the window's order: money if he has some (signed > 0); each of
 // the wares 0..19 (the table 0x698538 is the identity) whose units are over 0: the office's stock in the town plus the
 // cargo of his ships with [+0x39] the town and not marked [+0x136] & 1 (in any state), divided unsigned by 200 for the

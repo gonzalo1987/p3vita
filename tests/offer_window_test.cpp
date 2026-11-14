@@ -119,6 +119,47 @@ int main() {
 		check(c.size() == 3 && c[1].most == 3, "off again: the game's end");
 	}
 	{
+		// The window's list (0x5BBAA0): sorted by family name, then first name, upper-cased as Windows-1252 and
+		// compared byte by byte; each with his office's buildings ([+0x2D2] + [+0x2D4]).
+		SaveGame save;
+		GlobalMemory& g = save.globals;
+		g.u32(global::kWorldTownCount) = 1;
+		g.u16(global::kWorldMerchantCount) = 8;
+		g.u16(global::kWorldOfficeCount) = 8;
+		g.u32(global::kPlayer) = 0;
+		save.towns.resize(1);
+		save.merchants.resize(8);
+		save.offices.resize(8);
+		save.family_names = {"Weber", "DeVries", "Deacon", "\xC4rger", "\xE4" "bel", "Weber"};
+		g.u16(0x6DDB76) = uint16_t(save.family_names.size());
+		save.first_names[0] = {"Hans", "Anton", "Otto"};
+		g.u16(0x6DDB70) = uint16_t(save.first_names[0].size());
+		// Merchant m (1..7) in office m − 1 (the player's office 7 last); family, first name.
+		const uint8_t family[8] = {0, 0, 1, 2, 3, 4, 5, 0};
+		const uint8_t first[8] = {0, 0, 0, 0, 0, 0, 1, 1};
+		for (uint16_t i = 0; i < 8; ++i) {
+			OfficeMemory& o = save.offices[i].memory;
+			o.u16(0x2C4) = uint16_t((i + 1) % 8);
+			o.u16(0x2CA) = uint16_t(i + 1);
+			o.u16(0x2D2) = i;
+			o.u16(0x2D4) = 10;
+			save.merchants[i].memory.u8(0x1D) = family[i];
+			save.merchants[i].memory.u8(0x1C) = first[i];
+		}
+		const std::vector<OfferMerchant> list = offer_window_merchants(save, 0);
+		// Weber Hans (1), DeVries (2), Deacon (3), Ärger (4), äbel (5), Weber Anton (6), Weber Anton (7): Deacon before
+		// DeVries (upper case: A < V), Ä after the ASCII, ÄBEL before ÄRGER, Weber Anton before Hans, the two Anton
+		// Webers in the list's order.
+		const uint16_t order[7] = {3, 2, 6, 7, 1, 5, 4};
+		bool same = list.size() == 7;
+		for (size_t k = 0; same && k < 7; ++k) {
+			same = list[k].merchant == order[k];
+		}
+		check(same, "the window's merchants sorted as 0x5BBAA0");
+		check(!list.empty() && list[0].buildings == 12, "Deacon's office (2): 2 + 10 buildings");
+		check(upper_1252("a\xE9\xF7\xFF\x9A\xDF") == "A\xC9\xF7\x9F\x8A\xDF", "Windows-1252's upper case");
+	}
+	{
 		const OfferChoice beer{0, 3, 3};
 		const OperationBytes op = offer_operation(1234, 500, 0, 1, 0, beer, 2);
 		check(u32_at(op, 0) == 0x5F && u32_at(op, 4) == 1234 && int32_t(u32_at(op, 8)) == 500, "0x5F, its number, price");

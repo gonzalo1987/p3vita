@@ -913,7 +913,7 @@ void GameWindowArt::tavern_tick(uint32_t now) {
 	}
 }
 
-void GameWindowArt::begin(const SDL_Rect& on_screen, int parchment_top, uint32_t now) {
+void GameWindowArt::begin(const SDL_Rect& on_screen, int parchment_top, uint32_t now, bool framed) {
 	tick(now);
 	update_animations(now);
 	on_screen_ = on_screen;
@@ -934,6 +934,10 @@ void GameWindowArt::begin(const SDL_Rect& on_screen, int parchment_top, uint32_t
 		SDL_RenderSetScale(renderer_, float(on_screen_.w) / kWindowWidth, float(on_screen_.h) / kWindowHeight);
 	}
 	SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+	if (!framed) {
+		ensure_common();
+		return;
+	}
 	const int x = kFrameLeft;
 	const int y = kFrameTop;
 	if (picture_) {
@@ -1095,6 +1099,84 @@ SDL_Rect GameWindowArt::draw_paper(int x, int y, int cols, int rows) const {
 		SDL_RenderCopy(renderer_, seal_, &seal_frame_, &dst);
 	}
 	return {x + 16, y + 16, right - (x + 16), 32 * rows - 32};
+}
+
+// A middle row of a dialog's tiles (0x41C73E..0x41C79B): its left edge, its middle, its right edge.
+void GameWindowArt::roll_dialog_row(DialogTiles& d, int row) {
+	uint8_t* t = d.tiles.data() + size_t(row) * size_t(d.cols);
+	t[0] = uint8_t(0x0E + menu_rand() % 3);
+	for (int k = 1; k < d.cols - 1; ++k) {
+		t[k] = uint8_t(0x1E + menu_rand() % 9);
+	}
+	t[d.cols - 1] = uint8_t(0x11 + menu_rand() % 3);
+}
+
+void GameWindowArt::draw_dialog(int x, int y, int cols, int rows, bool rolls, int key) {
+	if (cols < 2 || rows < 2) {
+		return;
+	}
+	ensure_common();
+	auto found = std::find_if(dialogs_.begin(), dialogs_.end(), [&](const auto& e) { return e.first == key; });
+	if (found == dialogs_.end()) {
+		dialogs_.push_back({key, DialogTiles{}});
+		found = dialogs_.end() - 1;
+	}
+	DialogTiles& d = found->second;
+	if (d.cols != cols || d.rolls != rolls || d.tiles.empty()) {
+		// 0x41C5A0: a new grid (its corners, the top and bottom edges column by column, then the middle rows).
+		d = DialogTiles{cols, rows, rolls, std::vector<uint8_t>(size_t(cols) * size_t(rows))};
+		const int top = rolls ? 4 : 9;
+		const int bottom = rolls ? 0x19 : 0x14;
+		uint8_t* first = d.tiles.data();
+		uint8_t* last = d.tiles.data() + size_t(rows - 1) * size_t(cols);
+		first[0] = uint8_t(top);
+		first[cols - 1] = uint8_t(top + 4);
+		last[0] = uint8_t(bottom);
+		last[cols - 1] = uint8_t(bottom + 4);
+		for (int k = 1; k < cols - 1; ++k) {
+			first[k] = uint8_t(top + 1 + menu_rand() % 3);
+			last[k] = uint8_t(bottom + 1 + menu_rand() % 3);
+		}
+		for (int r = 1; r < rows - 1; ++r) {
+			roll_dialog_row(d, r);
+		}
+	} else if (d.rows != rows) {
+		// 0x41C420: the rows above the last kept, the last row too, the new middle ones rolled.
+		std::vector<uint8_t> tiles(size_t(cols) * size_t(rows));
+		const int kept = std::min(rows, d.rows) - 1;
+		std::copy(d.tiles.begin(), d.tiles.begin() + std::ptrdiff_t(size_t(kept) * size_t(cols)), tiles.begin());
+		std::copy(d.tiles.end() - cols, d.tiles.end(), tiles.end() - cols);
+		const int old_rows = d.rows;
+		d.tiles = std::move(tiles);
+		d.rows = rows;
+		for (int r = old_rows - 1; r < rows - 1; ++r) {
+			roll_dialog_row(d, r);
+		}
+	}
+	if (!paper_) {
+		return;
+	}
+	// 0x41CAA0: with the rolls, their ends at the window's corners (frames 0..3: left top, right top, left bottom,
+	// right bottom), the tiles from their width in.
+	int left = x;
+	if (rolls) {
+		const SDL_Rect* ends = paper_frames_;
+		const int w = 32 * cols + 2 * ends[0].w;
+		const int h = 32 * rows;
+		const SDL_Point at[4] = {{x, y}, {x + w - ends[1].w, y}, {x, y + h - ends[2].h}, {x + w - ends[3].w, y + h - ends[3].h}};
+		for (int k = 0; k < 4; ++k) {
+			const SDL_Rect dst = {at[k].x, at[k].y, ends[k].w, ends[k].h};
+			SDL_RenderCopy(renderer_, paper_, &ends[k], &dst);
+		}
+		left += ends[3].w;
+	}
+	for (int r = 0; r < rows; ++r) {
+		for (int c = 0; c < cols; ++c) {
+			const SDL_Rect& src = paper_frames_[std::min<int>(d.tiles[size_t(r) * size_t(cols) + size_t(c)], 38)];
+			const SDL_Rect dst = {left + 32 * c, y + 32 * r, src.w, src.h};
+			SDL_RenderCopy(renderer_, paper_, &src, &dst);
+		}
+	}
 }
 
 }  // namespace p3::app

@@ -114,6 +114,58 @@ int main() {
 		const OperationBytes no = bribe_operation(save, 0, 1, 0, 17999);
 		check(field(no, 0) == 0x43 && field(no, 3) == 0 && field(no, 4) == 0, "0x43: short of the price");
 		check(save.rand_state != 1, "the price rolls rand()");
+		save.rand_state = 1;
+		uint32_t price = 0;
+		bribe_operation(save, 0, 1, 0, 18000, &price);
+		check(price == 18000, "the price rolled given back");
+		check(bribe_reaction(18000, 17999) == 2, "the answer: short of the price");
+		check(bribe_reaction(18000, 18000) == 0 && bribe_reaction(18000, 26999) == 0, "the answer: taken");
+		check(bribe_reaction(18000, 27000) == 1, "the answer: half as much again, loyal");
+	}
+	{
+		// A feast (0x5BAC20, 0x5BAE40, 0x5BB110): the town's delay, the date, the cost, «Announce» and its operation.
+		SaveGame save = world();
+		GlobalMemory& g = save.globals;
+		save.towns[0].memory.s32(0x2D4) = 1234;  // 1234 % 11 = 2
+		const std::vector<uint32_t> d = feast_delays(save);
+		check(d.size() == 2 && d[0] == 7u << 9 && d[1] == 5u << 9, "the feast's delays: (citizens % 11 + 5) << 9");
+		FeastWindow w = feast_open(save, 0, d);
+		check(w.merchant == 1 && w.date == (1000u << 8) + (7u << 9) && !w.announced, "opened: the player, now + the delay");
+		feast_update(save, w, d);
+		check(!w.office && w.cost == 1234 / 2 + 100, "no office; the cost citizens / 2 + 100");
+		check(!feast_can_announce(save, w), "no office: no «Announce»");
+		g.u16(global::kWorldOfficeCount) = 1;
+		save.offices.resize(1);
+		save.offices[0].memory.u16(0x2C4) = 1;
+		save.offices[0].memory.u8(0x2C6) = 0;
+		save.offices[0].memory.u16(0x2C8) = 1;
+		save.merchants[1].memory.u16(0xC) = 0;
+		save.merchants[1].memory.u32(0) = 716;
+		feast_update(save, w, d);
+		check(w.office && !feast_can_announce(save, w), "an office, the money short");
+		save.merchants[1].memory.u32(0) = 717;
+		check(feast_can_announce(save, w), "an office and the money: «Announce»");
+		const OperationBytes op = feast_operation(w, 1);
+		check(field(op, 0) == 0x61 && field(op, 1) == 1 && field(op, 2) == w.date && field(op, 3) == 0 && field(op, 4) == 717,
+			"0x61: player, date, town, cost");
+		// Another merchant's feast announced in the town (an event 0x07 with [+0x10] 2): his, its date.
+		g.u16(0x6DD748) = 1;  // the queue's count
+		g.u16(0x6DD744) = 0;  // its first event
+		save.events.resize(1);
+		save.events[0].u16(4) = 1;
+		save.events[0].u16(6) = 7;
+		save.events[0].u8(8) = 0;
+		save.events[0].u32(0xC) = 0;
+		save.events[0].u32(0x10) = 2;
+		save.events[0].u32(0) = 1010u << 8;
+		feast_update(save, w, d);
+		check(w.announced && w.merchant == 0 && w.date == 1010u << 8 && !feast_can_announce(save, w),
+			"a feast announced: its merchant and date, no «Announce»");
+		// A date gone by: now + the delay again.
+		save.events[0].u16(6) = 6;
+		g.u32(global::kWorldTick) = 1011u << 8;
+		feast_update(save, w, d);
+		check(!w.announced && w.date == (1011u << 8) + (7u << 9), "the date gone by: now + the delay");
 	}
 	if (failures == 0) {
 		std::printf("building_windows: all checks passed\n");

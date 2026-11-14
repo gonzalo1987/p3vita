@@ -44,8 +44,14 @@ Cómo leerla:
   de subastas de la partida en red, los contratos en el orden del exe español), la página de rezar de la iglesia y
   las caras del cura (con las páginas de después de donar), las flechas del interés del prestamista, el texto del
   informante con su barra, los gestos de todos los interiores y el menú lateral de todos los edificios, cada uno con
-  su disposición del juego. Una segunda tanda (oficina, lonja y otros, astillero, ayuntamiento) se paró a medias: lo
-  de la lonja está guardado en `re/emu/sesion34/wip/market.patch`.
+  su disposición del juego. Una segunda tanda (oficina, lonja y otros, astillero, ayuntamiento) se paró a medias; de
+  ella, la lonja la acabé después: sus tres páginas de información (existencias con los precios, producción y consumo
+  de la semana), con sus cifras iguales a las del juego en el emulador. Y la fecha del menú del astillero escribe la
+  partida como el juego (decisión del usuario). Y L y R cambian la velocidad del tiempo con un edificio abierto;
+  arriba y abajo de la cruceta eligen el botón de su menú lateral. Y la oficina entera como el juego: sus siete páginas
+  (balance, mercancías, armas, almacén, las órdenes del administrador, la ficha personal y el traslado), comprobadas
+  contra el juego en el emulador donde se pudo; y las páginas del baño (el baño, cada concejal con su saludo, la caja
+  del soborno y su respuesta) y de la caballeriza (las mercancías, la escolta y el convoy enviado) como las del juego.
 - **Antes** (13-11-2026): el grupo 5 del encargo en el motor (sin el visor aún): los pedidos del ayuntamiento
   (0x3D y su evento 0x11, con sus cartas «Pedido», «Deshonrado» y «Cumplido»), mudar la ciudad natal (0x3E), la milicia
   (0x40 y 0x41), un barco al servicio de la ciudad (0x44), el dinero con la caja de la ciudad (0x47), el voto en el
@@ -80,12 +86,10 @@ Cómo leerla:
   (0x5F, 0x75 y el evento 0x13, con sus cartas y, en el visor, la ventana de la oficina de otro comerciante) y la ruta
   por puntos del mapa del mar (0x0B), esta también en el visor (tocar el mar añade puntos; X zarpa, ○ los borra).
   Antes, la primera parte: la reparación de convoyes, los botones de las cartas, la iglesia y el baño.
-- **Siguiente**: el encargo `ENCARGO_VISTAS_JUEGO.md` (junto al HANDOFF): primero lo empezado (las páginas de la
-  lonja, a medias en el parche; L/R a la velocidad del tiempo, que el usuario aprobó); luego las páginas que faltan
-  como las del juego (la oficina con sus cinco páginas atenuadas y el traslado de la ciudad natal, que es su página 6;
-  el baño, la caballeriza, la oficina de otro comerciante, el astillero y el muelle con su lista de reparaciones, la
-  armería) y el grupo 5 en el visor (apartado 1): las páginas 1 a 7 del ayuntamiento, el cliente de un pedido de la
-  taberna y los asedios.
+- **Siguiente**: el encargo `ENCARGO_VISTAS_JUEGO.md` (junto al HANDOFF): las páginas que faltan
+  como las del juego (el astillero y el muelle con su lista de reparaciones; hechos ya el baño, la caballeriza, la
+  oficina de otro comerciante, la armería y la fiesta) y el grupo 5 en el visor (apartado 1): las páginas 1 a 7 del
+  ayuntamiento, el cliente de un pedido de la taberna y los asedios.
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
   (apartado 6).
@@ -102,7 +106,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Tipos de evento (58) | 53 | 5: 1 el intérprete de misiones, 1 la partida en red y 3 nadie |
 | Operaciones (193 códigos) | 167: las 37 de la simulación, 101 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red y la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) | **5 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74, 0x76 y 0x82; apartado 3), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 139 | 15: 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
-| Edificios con vista propia en el juego (13) | 12 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia y el ayuntamiento; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral): las 12; con todas sus páginas como las del juego: la taberna (menos el cliente de un pedido), el prestamista, la iglesia, el gremio y la herrería | las páginas como las del juego de la lonja (3, a medias), la oficina (7, cinco sin página aún), el baño, la caballeriza, la oficina de otro comerciante, el astillero y el muelle (con la lista de reparaciones, sin página), la armería y 7 de las 8 del ayuntamiento; la puerta de la ciudad sin ventana (los asedios) (apartado 4) |
+| Edificios con vista propia en el juego (13) | 12 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia y el ayuntamiento; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 12; con todas sus páginas como las del juego: la taberna (menos el cliente de un pedido), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta») y la armería; y la fiesta en los puestos del mercado | las páginas como las del juego del astillero y el muelle (con la lista de reparaciones, sin página) y 7 de las 8 del ayuntamiento; la puerta de la ciudad sin ventana (los asedios) (apartado 4) |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
@@ -263,8 +267,10 @@ enteros antes de reescribirlos):
   (0x4DDF40, cuyo único creador, 0x538DA0, es código muerto), que no crea nadie.
 - [ ] **La ventana del final de la partida**: la clasificación de los comerciantes (0x4220B0 → 0x4220D0, sobre
   *0x6CBB30, con el título 0x4F9430 y 0x4F73D0). El objetivo de la partida (evento 0x0E) ya se comprueba.
-- [ ] **Las ventanas de operaciones que el motor ya tiene** pero que el visor aún no encola, porque falta la ventana:
-  0x61 dar una fiesta (0x5BAE40) y 0x0A borrar un barco (0x4768B0).
+- [x] **Las ventanas de operaciones que el motor ya tiene** pero que el visor aún no encolaba (14-11-2026, noche): 0x61
+  dar una fiesta (su ventana 0x5BAE40, en los puestos del mercado) y 0x0A borrar un barco (no es una ventana: el doble
+  clic sobre un barco perdido, estado 0x11, en la lista de barcos del panel, 0x4768B0; en el visor, X o un segundo
+  toque en su fila; la lista entera como la del juego va con el panel).
 - [ ] La ventana de los desarrolladores 0x419EB0 encola de todo y manda dos cartas (0x45 y 0x21 con `rand()`): no hace
   falta salvo que se quiera.
 
@@ -352,8 +358,10 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     baño con un botón por concejal en el baño, la oficina, la caballeriza, el muelle con el menú del astillero y sus
     textos; la oficina de otro comerciante no tiene menú en el juego), cada menú con su primera posición y su paso,
     como el código del juego (`re/emu/sesion34/notes_menus.md`; antes todos usaban el de la taberna). Los botones de
-    las páginas que el visor aún no tiene, atenuados. Falta: L/R a la velocidad del tiempo (el usuario lo aprobó el
-    14-11-2026: arriba y abajo de la cruceta eligen el botón del menú cuando la página no tiene filas).
+    las páginas que el visor aún no tiene, atenuados. Con los botones de la consola (14-11-2026, como aprobó el
+    usuario): arriba y abajo de la cruceta eligen el botón del menú cuando la página no tiene filas propias (o se ve
+    la imagen sola), y L y R cambian la velocidad del tiempo (más lenta, más rápida; el aviso de la velocidad nueva
+    sustituye al anterior). La ventana de dos barcos pasa al otro barco con Select (o tocando su título).
   - [x] **Páginas ya como las del juego**: los avisos del ayuntamiento (un aviso cada vez, en su papel); en la
     taberna, los retratos con su cara animada y su marco rasgado, y las páginas del pirata, los marineros (con su
     escupitajo), el capitán, el informante (con su nombre en el título), el viajero, el ladrón (con su lista de
@@ -382,12 +390,32 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     partida en red (0x5C3640, solo en ella) y los contratos con su frase en el orden del exe español; en la iglesia,
     «Rezar» (la imagen sola, como el juego, sin el sonido aún), las caras del cura (habla y da las gracias tras un
     donativo; con altar cuando los pobres están bien alimentados) y las dos páginas de después de donar; en el
-    prestamista, «–» y «+» del interés en su sitio; en la taberna, el texto del informante con la barra del juego.
-  - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido);
-    las páginas de la lonja (sus tres de información: hechas a medias en `re/emu/sesion34/wip/market.patch`, sin
-    comprobar), la oficina (las siete, cinco aún sin página, y el traslado de la ciudad natal, que es su página 6), el
-    baño, la caballeriza, la oficina de otro comerciante, el astillero y el muelle (con la lista de reparaciones) y
-    las otras páginas del ayuntamiento; la armería, que en el juego es un rollo de papel sin marco ni interior. La
+    prestamista, «–» y «+» del interés en su sitio; en la taberna, el texto del informante con la barra del juego. La
+    lonja: sus tres páginas de información («Mercancías» con lo que cuesta comprar y vender una unidad, «Producción
+    semanal» de la ciudad y de las oficinas, «Consumo semanal» de los ciudadanos y las empresas;
+    `market_hall_window.cpp` con su ctest; las cifras, iguales a las del juego en el emulador en la partida 3). La
+    oficina (14-11-2026, `re/emu/sesion34/notes_office.md`): sus siete páginas como las del juego: el balance de la
+    semana con su previsión, los edificios y el administrador (contratarlo o despedirlo con la pregunta del juego;
+    cifras iguales a las del juego en la partida 6), las mercancías (en rojo las que no llegan a la semana y las de
+    empresas sin obreros), las armas, el almacén con sus guardias («–» y «+», como el juego; sin el «Comerciar» que el
+    visor tenía: se comercia desde el mercado, como en el juego), las órdenes del administrador en una tabla (precio,
+    existencias a guardar y candado en cada fila; sus columnas, improvisadas), la ficha personal (con el cónyuge y los
+    hijos, si los hay) y el traslado de la ciudad natal (0x3E). El baño (el baño con la frase por los días desde el
+    último, cada concejal con su saludo según con quién va, la caja del soborno con sus flechas y su respuesta) y la
+    caballeriza (las 20 mercancías con su «–» y «+», la escolta con sus costes y su consejo, el convoy enviado; los
+    botones del paso 1, 5, 50 y todo, improvisados).
+  - [x] Las ventanas de papel del juego sobre la ciudad (14-11-2026, noche; su clase base 0x41C5A0 / 0x41CAA0: el rollo
+    TEX16001 en baldosas de 32 con los rodillos, sorteadas como el juego y guardadas por ventana): la oficina de otro
+    comerciante (los mercaderes de la ciudad ordenados por apellido como el juego, con sus casas y edificios; la carta
+    de la oferta con «Oferta», la cantidad y el precio —hasta 1 000 000, como el juego, no 9 999 900— y su lista
+    «Escoge oferta» encima: oro, mercancías con sus unidades, barcos; se cierra al enviarla), la armería (su tabla,
+    el coste semanal con la moneda, el aviso, «Formar unidad» y «Despedir unidad» encendidos como el juego, ninguna fila
+    elegida al abrir) y la fiesta (los puestos del mercado, .let 0x06: la fecha propuesta por la tabla de la ciudad, el
+    coste, «Anunciar» → 0x61, y el texto de la fiesta ya anunciada). Comparadas con la foto de la armería. Improvisado:
+    el sitio de la lista «Escoge oferta» (el juego la pone según la pantalla) y los nombres largos de mercancías en
+    español, cortados antes de sus unidades (el juego los monta encima). Notas: `re/emu/sesion35/notes_paper.md`.
+  - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido); el astillero y el muelle (con la lista de reparaciones) y
+    las otras páginas del ayuntamiento. La
     sombra del edificio en su subasta (la vista de la ciudad del visor aún no dibuja sombras) y el sonido de rezar
     (con el sonido, apartado 5). Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
 - [ ] **Los edificios que aún no tienen ventana**: la puerta de la ciudad (`Stadttor`: qué hace, por leer en el
@@ -640,11 +668,25 @@ ser a propósito. El detalle, en el comentario del código y en [oracle.md](orac
 
 ### Reproducidos, sin corregir aún
 
+**El balance de la oficina** (la página «Total», 0x5DC2A0; 14-11-2026, seguro, solo lo que se ve): los totales de la
+semana pasada y de la previsión no cuentan la fila del administrador (su sueldo), aunque esa fila sale en la página.
+Reproducido; sin decidir si corregirlo.
+
+**Las mercancías de la oficina** (la página «Mercancías», 0x5DC0E4; 14-11-2026, parece, solo lo que se ve): una
+pesquería con obreros de menos marca en rojo, además del pescado, el cáñamo (0x11), cuando la otra mercancía de una
+pesquería es el aceite de ballena (0x0A). Reproducido.
+
+**El nombre del cónyuge** (0x4F6470, en la ficha de la oficina; 14-11-2026, seguro): al dibujar el nombre, el juego
+escribe en la partida el bit 7 del [+0x30] del comerciante según su sexo. El visor lo escribe igual (como la fecha del
+astillero); no cambia nada si el bit ya estaba bien.
+
 **La fecha del astillero en su menú lateral** (0x52AFC0, llamada desde el menú en 0x5AE0EC y 0x5AE18A; 14-11-2026,
 seguro): al calcular cuándo acaba el astillero para enseñarlo, el juego pone a 0 el [+0x18] de los barcos encargados
-que lo tengan por debajo de 0: abrir el menú cambia la partida. El visor calcula la fecha sin escribirlo
-(`shipyard_done_tick`, `player_actions.cpp`), así que en esto no es aún como el original. Por decidir con el usuario
-si reproducirlo (para ser idéntico) o dejarlo así.
+que lo tengan por debajo de 0: abrir el menú cambia la partida (el [+0x18] es lo construido del barco). Reproducido a
+petición del usuario, como el original (`shipyard_done_tick`, `player_actions.cpp`, con su ctest): el visor lo escribe
+al enseñar las fechas del menú (cada vez que lo dibuja; el juego, al abrirlo). Sin ver aún si en una partida llega a
+haber un barco encargado con el [+0x18] negativo; las páginas del astillero que enseñen fechas (0x5F6CAF, 0x5F9ACA)
+tendrán que llamarlo también.
 
 **El respeto de los miembros del gremio** (la página «Miembros», 0x5C67A0; 14-11-2026, seguro, solo el texto): la
 ciudad donde más respeta al miembro se busca entre las que le dan más de 0, así que si no tiene respeto positivo en
@@ -760,6 +802,15 @@ se ve: corregido a petición del usuario): una animación de ida y vuelta, al vo
 fotograma, porque el juego pone el fotograma a 0 antes de mirar si ha llegado al principio. La única así es el
 informante dándose la vuelta: tras la primera vez no vuelve a hacer sus otros gestos en toda la partida. Corregido
 (`src/app/game_window.cpp`, `update_animations`): con el ajuste, se mira antes de poner el fotograma a 0.
+
+**La producción de la ciudad en la lonja** (la página «Producción semanal», 0x5DE960; 14-11-2026, seguro, solo cambia
+lo que se ve): la página suma la producción de un día de cada oficina por 7, pero la de la ciudad (también de un día:
+el tick la pone a cero cada día) la enseña sin multiplicar, una séptima parte de la semana. Corregido
+(`market_hall_window.cpp`): con el ajuste, también por 7.
+
+**La situación social en la ficha de la oficina** (la página «Personal», 0x5DB4E0; 14-11-2026, seguro, solo el
+texto): el juego escribe el rango en «Situación social en esta ciudad: %s», pero el texto del exe español no tiene el
+«%s» y el rango se pierde. Corregido (`office_personal_page`, `src/app/main.cpp`): con el ajuste, «: <rango>» detrás.
 
 **El aviso 5 de la caballeriza** (su menú lateral, 0x5A9D5A..; 14-11-2026, seguro, solo el texto): para el aviso 5 el
 juego enseña el texto de «Continuar» (0x6AFA34) en vez de un aviso. Corregido (`land_trade_view`, `src/app/main.cpp`):

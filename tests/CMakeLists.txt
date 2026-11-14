@@ -153,3 +153,9 @@ target_link_libraries(town_hall_window_test PRIVATE p3data)
 target_compile_options(town_hall_window_test PRIVATE -Wall -Wextra)
 
 add_test(NAME town_hall_window COMMAND town_hall_window_test)
+
+add_executable(market_hall_window_test market_hall_window_test.cpp)
+target_link_libraries(market_hall_window_test PRIVATE p3data)
+target_compile_options(market_hall_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME market_hall_window COMMAND market_hall_window_test)

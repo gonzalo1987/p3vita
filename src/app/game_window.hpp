@@ -105,7 +105,9 @@ public:
 	// the texture, the renderer's viewport and scale do the same.
 	// The parchment from the picture's line `parchment_top` down (the interior's [+0xEC], each page's: the 160 lines
 	// above it fading in, as 0x465DC0..0x465EAD), none if negative. The animations move on to `now` (ms) first.
-	void begin(const SDL_Rect& on_screen, int parchment_top, uint32_t now);
+	// Without `framed`: none of that (no picture, parchment nor frame), the texture left clear for a dialog window over
+	// the town (draw_dialog).
+	void begin(const SDL_Rect& on_screen, int parchment_top, uint32_t now, bool framed = true);
 	// The window put on the screen in `on_screen` (begin's), smoothly scaled.
 	void end();
 	// A pill of the parchments, `r`'s width, its own height (18) centred in `r`.
@@ -121,6 +123,16 @@ public:
 	// (TEX16001: its top and bottom edges, sides and middle by the cell's column and row modulo 3) with the folded
 	// corners (TEX16058) and the seal with the cog (TEX16059) at its lower right; the room for the text inside it.
 	SDL_Rect draw_paper(int x, int y, int cols, int rows) const;
+	// The game's dialog windows over the town (their base class: 0x41C5A0 lays out the tiles, 0x41CAA0 draws them;
+	// parchment.ini [DialogBG0]: TEX16001, TileSize 32): `cols` × `rows` tiles of 32 at (x, y). With `rolls` (the
+	// third argument 1: the arsenal, another merchant's office, the selection lists) the rolls of paper at the top and
+	// bottom (frames 4..8 and 25..29) and their ends (frames 0..3, 6 × 32, at the window's corners: the window 12 wider
+	// than its tiles, which start 6 in); without them the plain edges (9..13, 20..24). Corners fixed, each edge and
+	// middle tile one of three or nine at random (rand() % 3: the top's 5 + r, the bottom's 0x1A + r, the left's 0xE + r,
+	// the right's 0x11 + r; the middle's 0x1E + rand() % 9), rolled when the window first gets its size; `key` keeps
+	// each window's tiles, as each game window keeps its own: a new size with as many columns keeps the rows above the
+	// last and the last row (0x41C420), rolling the new middle ones.
+	void draw_dialog(int x, int y, int cols, int rows, bool rolls, int key);
 	// The game's font 1 (ttffonts.ini: Tiepolo bold, 13 × 15), the one its pages and buttons are laid out for; null
 	// without it.
 	TextRenderer* page_text() const { return page_.get(); }
@@ -217,6 +229,15 @@ private:
 	double chance();
 
 	void draw_frame() const;
+	// A dialog window's tiles (draw_dialog): the frames of TEX16001, by row.
+	struct DialogTiles {
+		int cols = 0;
+		int rows = 0;
+		bool rolls = true;
+		std::vector<uint8_t> tiles;
+	};
+	void roll_dialog_row(DialogTiles& d, int row);
+	std::vector<std::pair<int, DialogTiles>> dialogs_;
 
 	SDL_Renderer* renderer_;
 	const p3::data::CprArchive& archive_;

@@ -1,5 +1,6 @@
 #include "p3data/building_windows.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -8,6 +9,10 @@
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data {
+
+namespace tick::events_towns_detail {
+bool fn_4e2314(const SaveGame& save, uint32_t town, uint8_t& merchant, uint32_t& tick);  // town_tick/events_towns.cpp
+}  // namespace tick::events_towns_detail
 
 namespace {
 
@@ -134,12 +139,76 @@ uint32_t councillor_price(SaveGame& save, uint32_t town, uint32_t merchant, uint
 	return price;
 }
 
-OperationBytes bribe_operation(SaveGame& save, uint32_t town, uint32_t player, uint32_t slot, uint32_t offer) {
+OperationBytes bribe_operation(SaveGame& save, uint32_t town, uint32_t player, uint32_t slot, uint32_t offer,
+	uint32_t* rolled) {
 	const uint32_t price = councillor_price(save, town, player, slot);
+	if (rolled) {
+		*rolled = price;
+	}
 	if (price > offer) {
 		return words({0x43, slot, player, 0, town});
 	}
 	return words({0x42, slot, player, offer, town});
+}
+
+int bribe_reaction(uint32_t price, uint32_t offer) {
+	if (price > offer) {
+		return 2;
+	}
+	// fild qword {price, 0}, fmul 1.5, __ftol: the low 32 bits.
+	const uint32_t enticing = uint32_t(int64_t(double(price) * 1.5));
+	return offer < enticing ? 0 : 1;
+}
+
+// --- A feast ---
+
+std::vector<uint32_t> feast_delays(const SaveGame& save) {
+	const uint32_t towns = std::min<uint32_t>(save.globals.u32(global::kWorldTownCount), uint32_t(save.towns.size()));
+	std::vector<uint32_t> delays(towns);
+	for (uint32_t t = 0; t < towns; ++t) {
+		delays[t] = uint32_t((save.towns[t].memory.s32(0x2D4) % 11) + 5) << 9;  // idiv: the citizens' sign kept
+	}
+	return delays;
+}
+
+namespace {
+
+uint32_t feast_delay(const std::vector<uint32_t>& delays, uint32_t town) {
+	return town < delays.size() ? delays[town] : 0;
+}
+
+}  // namespace
+
+FeastWindow feast_open(const SaveGame& save, uint32_t town, const std::vector<uint32_t>& delays) {
+	FeastWindow w;
+	w.town = town;
+	w.merchant = uint8_t(save.globals.u32(global::kPlayer));
+	w.date = save.globals.u32(global::kWorldTick) + feast_delay(delays, town);
+	w.announced = tick::events_towns_detail::fn_4e2314(save, town, w.merchant, w.date);
+	return w;
+}
+
+void feast_update(const SaveGame& save, FeastWindow& w, const std::vector<uint32_t>& delays) {
+	w.office = town_ok(save, w.town) &&
+		tick::facilities_detail::fn_5308a0(save, save.globals.u32(global::kPlayer), w.town) >= 0;
+	w.announced = tick::events_towns_detail::fn_4e2314(save, w.town, w.merchant, w.date);
+	const uint32_t now = save.globals.u32(global::kWorldTick);
+	if (w.date < now) {
+		w.date = now + feast_delay(delays, w.town);
+	}
+	w.cost = town_ok(save, w.town) ? save.towns[w.town].memory.s32(0x2D4) / 2 + 100 : 100;
+}
+
+bool feast_can_announce(const SaveGame& save, const FeastWindow& w) {
+	return !w.announced && w.office && w.merchant < save.merchants.size() &&
+		save.merchants[w.merchant].memory.u32(0) >= uint32_t(w.cost);
+}
+
+OperationBytes feast_operation(const FeastWindow& w, uint32_t player) {
+	OperationBytes op{};
+	const uint32_t fields[5] = {0x61, player, w.date, w.town, uint32_t(w.cost)};
+	std::memcpy(op.data(), fields, sizeof fields);
+	return op;
 }
 
 }  // namespace p3::data

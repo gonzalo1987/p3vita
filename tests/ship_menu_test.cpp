@@ -65,6 +65,7 @@ int main() {
 		yard.ships[0].memory.s32(0x14) = 500;
 		yard.ships[0].memory.s32(0x18) = -5;  // Counted as 0: 500 to do, 28 under 28.
 		expect(shipyard_done_tick(yard, 0, -1) == ((100u + 8 + 18 + 28) << 8), "the shipyard free: 1490 in 8 days, 46 more");
+		expect(yard.ships[0].memory.s32(0x18) == 0, "the [+0x18] below 0 written back as 0, as the game (0x52B03A)");
 		expect(shipyard_done_tick(yard, 0, 2) == ((100u + 5 + 18) << 8), "the first ship done: 990 in 5 days, 18 more");
 		t.u8(0x2C0) = 2;  // 0x10 under 2 · 8 + 7: a day less.
 		expect(shipyard_done_tick(yard, 0, 2) == ((100u + 4 + 18) << 8), "early in the day, a day less");

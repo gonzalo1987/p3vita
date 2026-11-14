@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 #include "p3data/player_actions.hpp"
 #include "p3data/savegame.hpp"
@@ -51,7 +52,39 @@ OperationBytes bath_operation(uint32_t player, uint32_t tick);
 // already some merchant's; 0x80000000 for a merchant past the count or a slot past 3 (no roll).
 uint32_t councillor_price(SaveGame& save, uint32_t town, uint32_t merchant, uint32_t slot);
 // The bribe window's button (0x5B2589): the councillor's price (0x529E20, rolling); an offer at least that much
-// queues 0x42 {0x42, slot, player, offer, town}, a smaller one 0x43 {0x43, slot, player, 0, town}.
-OperationBytes bribe_operation(SaveGame& save, uint32_t town, uint32_t player, uint32_t slot, uint32_t offer);
+// queues 0x42 {0x42, slot, player, offer, town}, a smaller one 0x43 {0x43, slot, player, 0, town}. The price rolled, in
+// `price` when given (the window's answer, bribe_reaction).
+OperationBytes bribe_operation(SaveGame& save, uint32_t town, uint32_t player, uint32_t slot, uint32_t offer,
+	uint32_t* price = nullptr);
+// The councillor's answer the window shows after the button (its [+0x62E], 0x5B2602..0x5B2680; display only): 2 the
+// offer short of the price (0x43), 1 at least the price · the double 1.5 (0x66F490; ftol, compared unsigned), else 0.
+int bribe_reaction(uint32_t price, uint32_t offer);
+
+// --- A feast (the market's stalls, .let 0x06: the window *0x6E5548, opened by 0x5BAE40, updated by 0x5BB110) ---
+
+// The days to the feast the window proposes, by town (its constructor 0x5BAC20, when the game builds its windows on
+// loading or starting a game): ((the town's citizens [+0x2D4] % 11) + 5) << 9 ticks, 10 to 30 days.
+std::vector<uint32_t> feast_delays(const SaveGame& save);
+// What the window holds and shows (its [+0x294] the date, [+0x29C] the cost, [+0x2A0] the town, [+0x2A1] the merchant,
+// [+0x2A2] a feast announced, [+0x2A3] an office of the player's in the town).
+struct FeastWindow {
+	uint32_t town = 0;
+	uint8_t merchant = 0;  // The player, or the merchant whose feast is announced (0x4E2314 writes it).
+	uint32_t date = 0;
+	int32_t cost = 0;
+	bool announced = false;
+	bool office = false;
+};
+// The window opened (0x5BAE56..0x5BB07F): the town, the player, the date now + the town's delay, then 0x4E2314 (an
+// event 0x07 of the town with [+0x10] 2: its merchant and its tick, `announced`).
+FeastWindow feast_open(const SaveGame& save, uint32_t town, const std::vector<uint32_t>& delays);
+// Each frame (0x5BB19B..0x5BB2A6): `office` (0x5308A0), `announced` again by 0x4E2314, a date gone by moved to now + the
+// delay, the cost (citizens / 2 + 100, rounded towards 0).
+void feast_update(const SaveGame& save, FeastWindow& w, const std::vector<uint32_t>& delays);
+// «Announce» shown (0x5BB1FD..0x5BB23B): no feast announced, an office, and the window's merchant's money (unsigned) at
+// least the cost.
+bool feast_can_announce(const SaveGame& save, const FeastWindow& w);
+// Its operation (0x5BB151..0x5BB196): {0x61, u32 player, u32 the date, u32 town, u32 the cost}.
+OperationBytes feast_operation(const FeastWindow& w, uint32_t player);
 
 }  // namespace p3::data

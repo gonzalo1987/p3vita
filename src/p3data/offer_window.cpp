@@ -46,6 +46,59 @@ std::vector<uint16_t> offer_merchants(const SaveGame& save, int town) {
 	return town < 0 ? std::vector<uint16_t>() : tick::events_towns_detail::fn_531470(save, uint32_t(town));
 }
 
+std::string upper_1252(std::string s) {
+	for (char& c : s) {
+		const uint8_t b = uint8_t(c);
+		if ((b >= 'a' && b <= 'z') || (b >= 0xE0 && b <= 0xFE && b != 0xF7)) {
+			c = char(b - 0x20);
+		} else if (b == 0x9A || b == 0x9C || b == 0x9E) {
+			c = char(b - 0x10);
+		} else if (b == 0xFF) {
+			c = char(0x9F);
+		}
+	}
+	return s;
+}
+
+std::vector<OfferMerchant> offer_window_merchants(const SaveGame& save, int town) {
+	std::vector<OfferMerchant> list;
+	if (!valid_town(save, town)) {
+		return list;
+	}
+	// 0x531470's walk (the same as fn_531470's), with each office's buildings in the list's second half.
+	const uint32_t offices = std::min<uint32_t>(save.globals.u16(global::kWorldOfficeCount), uint32_t(save.offices.size()));
+	const uint32_t merchants = std::min<uint32_t>(save.globals.u16(global::kWorldMerchantCount), uint32_t(save.merchants.size()));
+	for (uint32_t o = save.towns[size_t(town)].memory.u16(0x784); o < offices; o = save.offices[o].memory.u16(0x2CA)) {
+		const OfficeMemory& office = save.offices[o].memory;
+		const uint16_t m = office.u16(0x2C4);
+		if (m >= merchants || (save.merchants[m].memory.u8(0x8) & 4) || m == save.globals.u32(global::kPlayer)) {
+			continue;
+		}
+		list.push_back({m, uint16_t(office.u16(0x2D4) + office.u16(0x2D2))});
+	}
+	// 0x5BBB8C..0x5BBF18: the insertion into a new list.
+	auto names = [&](uint16_t m) {
+		const MerchantMemory& mm = save.merchants[m].memory;
+		return std::make_pair(upper_1252(game_family_name(save, mm.u8(0x1D))), upper_1252(game_first_name(save, mm.u8(0x1C))));
+	};
+	auto before = [](const std::string& a, const std::string& b) {
+		return std::strcmp(a.c_str(), b.c_str()) < 0;  // The bytes compared as unsigned chars, as 0x639CF0.
+	};
+	std::vector<OfferMerchant> sorted;
+	for (const OfferMerchant& e : list) {
+		const auto [family, first] = names(e.merchant);
+		size_t at = 0;
+		for (; at < sorted.size(); ++at) {
+			const auto [other_family, other_first] = names(sorted[at].merchant);
+			if (before(family, other_family) || (family == other_family && before(first, other_first))) {
+				break;
+			}
+		}
+		sorted.insert(sorted.begin() + std::ptrdiff_t(at), e);
+	}
+	return sorted;
+}
+
 std::vector<OfferChoice> offer_choices(const SaveGame& save, uint32_t player, int town) {
 	std::vector<OfferChoice> list;
 	if (player >= save.globals.u16(global::kWorldMerchantCount) || player >= save.merchants.size() ||

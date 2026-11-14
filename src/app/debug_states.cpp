@@ -363,6 +363,48 @@ bool shipyard_materials(SaveGame& save) {
 	return false;
 }
 
+// The office's pages of information (office_window.hpp): the player's office in his home town (made if there is none)
+// with some stock, a day's making and using of a few wares (the beer short for the week), hand weapons, pieces and
+// cutlasses.
+bool office_goods(SaveGame& save) {
+	const uint32_t home = save.merchants[size_t(save.player)].hometown();
+	const int office = tick::events_towns_detail::fn_5308a0_create(save, uint32_t(save.player), home);
+	if (office < 0) {
+		return false;
+	}
+	OfficeMemory& o = save.offices[size_t(office)].memory;
+	struct Ware {
+		uint32_t ware;
+		int32_t stock, made, used;
+	};
+	const Ware wares[] = {{0, 60 * 2000, 4000, 0}, {3, 15 * 200, 0, 600}, {11, 22 * 2000, 0, 900}, {12, 45 * 200, 2000, 300},
+		{18, 0, 1500, 0}};
+	for (const Ware& w : wares) {
+		o.s32(0x4 + 4 * w.ware) = w.stock;
+		o.s32(0xC4 + 4 * w.ware) = w.made;
+		o.s32(0x64 + 4 * w.ware) = w.used;
+	}
+	o.s32(0x4 + 4 * 20) = 120;  // 12 swords
+	o.s32(0x4 + 4 * 22) = 35;  // 3 crossbows
+	o.s32(0x124) = 3000;  // 3 small catapults
+	o.s32(0x124 + 4 * 5) = 2000;  // 2 cannons
+	o.s32(0x2BC) = 4;
+	return true;
+}
+
+// The player married (the office's «Personal»; no save has it): his wife from his home town ([+0x31]), her first name
+// [+0x30], portrait [+0x27], 25 years old ([+0x28]), two children, respected (2) by the citizens and councillors ([+0x32]).
+void married(SaveGame& save) {
+	MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+	const uint32_t now = save.globals.u32(global::kWorldTick);
+	m.u8(0x31) = m.u8(0x19);
+	m.u8(0x30) = 5;
+	m.u8(0x27) = 3;
+	m.u32(0x28) = now > 25u * 93440u ? now - 25u * 93440u : 0;
+	m.u8(0x36) = 2;
+	m.u8(0x32) = 2;
+}
+
 // The arsenal (town_hall_window.hpp): the player the mayor of his home town (make_mayor), his office there (made if
 // there is none) with 60 of each hand weapon but the muskets (40), 300 beggars in the town, three archers on duty
 // and one in training.
@@ -732,6 +774,12 @@ const char kDebugStatesHelp[] =
 	"              with the bonus, wine), the player's standing enough to take them\n"
 	"  land-trade  the player's offices at both ends of the first open road, wares in\n"
 	"              the first (its town and the R presses to it on stdout)\n"
+	"  married     the player married, two children (the office's «Personal»)\n"
+	"  home-elsewhere  the player's home town the next one (the office's «Move» offered)\n"
+	"  lost-ship   the player's last ship out of a convoy lost (the state 0x11: the ship\n"
+	"              list removes it)\n"
+	"  office-goods  the player's office at home with stock, a day's making and using of\n"
+	"              a few wares, weapons (the office's pages of information)\n"
 	"  lender      loans on offer and asked for in that ship's town, an AI merchant's\n"
 	"              shares on sale (the moneylender)\n"
 	"  letters     letters with buttons: a suitor, a proposal, the prince's request\n"
@@ -946,6 +994,30 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "land-trade") {
 			if (!land_trade(save)) {
 				error = "no town lets the land trade's window open";
+				return false;
+			}
+		} else if (state == "married") {
+			married(save);
+		} else if (state == "home-elsewhere") {
+			// The player's home town the next one ([+0x19]): his office there offers the move (the office's «Move»).
+			MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+			m.u8(0x19) = uint8_t((m.u8(0x19) + 1) % std::max<uint32_t>(1, save.globals.u32(global::kWorldTownCount)));
+		} else if (state == "lost-ship") {
+			// The player's last ship out of a convoy in the state 0x11 (as a ship sunk in a battle: Sailing::sink).
+			int last = -1;
+			for (size_t i = 0; i < save.ships.size(); ++i) {
+				if (save.ships[i].in_use() && save.ships[i].owner() == save.player && save.ships[i].convoy() == 0xFFFF) {
+					last = int(i);
+				}
+			}
+			if (last < 0) {
+				error = "the player has no ship out of a convoy";
+				return false;
+			}
+			save.ships[size_t(last)].status() = kShipSunk;
+		} else if (state == "office-goods") {
+			if (!office_goods(save)) {
+				error = "no office for the player in his home town";
 				return false;
 			}
 		} else if (state == "lender") {

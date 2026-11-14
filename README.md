@@ -115,12 +115,13 @@ touch pad isn't used.
 **In a town**, as in the game, you go into its buildings: touch one, or bring it
 to the middle of the screen (it glows and shows its name, the game's) and press
 X. The Market Hall is the market; your office (drawn where you have one)
-opens the market with the office; the tavern hires sailors and captains; the
-repair dock repairs your ships, and the shipyard has five pages (L and R, or
-touching its title): repair, order a ship, cancel an order, upgrade a ship and
+opens its window (the balance, its goods and weapons, the warehouse and its
+guards, the administrator's orders); the tavern hires sailors and captains; the
+repair dock repairs your ships, and the shipyard has five pages (its side
+menu's buttons): repair, order a ship, cancel an order, upgrade a ship and
 rename one (left and right go through the game's names; Square types another,
-with the Vita's keyboard, and X ends it). The moneylender has six pages (L and
-R): take out a loan, pay one off, grant one to a townsman (the interest with
+with the Vita's keyboard, and X ends it). The moneylender has six pages: take
+out a loan, pay one off, grant one to a townsman (the interest with
 left and right; only where you have an office), the loans you granted, and buy
 and sell company shares. X with no building in the middle opens the market.
 Touching a building of yours opens its window: demolish it or auction it, with
@@ -196,9 +197,12 @@ it, green where it fits and red where it doesn't (with the pad, it moves cell
 by cell), and its button or X builds it. Circle goes back to the menu, and
 closes it.
 
-In a building's window, up and down choose the row, left and right the amount
-(L and R, ten at a time), X does it, Select takes the next ship and Circle
-closes it; the rows and the buttons at its foot can be touched too. What each
+In a building, as in the game, its picture shows alone and its side menu, in
+the panel, opens its pages (touch a button, or up and down when the page has no
+rows of its own). In a page up and down choose the row, left and right the
+amount, X does it, Select takes the next ship (in the two ships' window, the
+other ship) and Circle goes back to the picture, then closes it; the rows and
+the buttons at its foot can be touched too. L and R set the game's speed. What each
 window lists and sends is the game's (`src/p3data/player_actions.hpp`).
 
 **The market**: the stock, the price of buying and selling a unit and what your
