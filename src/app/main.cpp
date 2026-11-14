@@ -1875,6 +1875,12 @@ std::string market_mode_name(int mode) {
 
 std::string exe_text(uint32_t english, const char* spanish, const char* fallback);
 
+// The game's short month names for a month 0..11: its table 0x6C0D00 + 4·month takes the month 1..12 as 0x5311D0 gives
+// it («Mar», «mar.»).
+std::string short_month(int month) {
+	return exe_text(0x6C0D04 + 4 * uint32_t(((month % 12) + 12) % 12), "", "");
+}
+
 // A piece of artillery by its kind (0..5, the order of the weights 0x672CB4; 6 the cutlasses of [+0x2BC]), with the
 // weaponsmith's words (0x6A2B38..0x6A2B54, which the game draws on two lines: «small» over «catapult»; 0x6AA35C).
 std::string artillery_name(int kind) {
@@ -2495,6 +2501,7 @@ struct PlaceUi {
 	// registered for an auction since the page opened (the game's [+0x12F5]: one each time).
 	int page_step = 1;
 	bool ship_auctioned = false;
+	int auctioned_ship = -1;  // That ship (the window's [+0x4DC]): the page tells of its auction.
 	// The office's «Trade»: the market with the office opens instead (the main loop does it).
 	bool open_market = false;
 	// Another merchant's office (the offers): the merchant chosen on its first page (-1: none) and the offer's number
@@ -2551,6 +2558,7 @@ struct PlaceUi {
 
 constexpr int kShipyardPages = 5;
 constexpr int kLenderPages = 6;
+constexpr int kGuildPages = 5;  // The game's pages 0..4 (guild_view; its 5 and 8 still to make).
 
 // How many pages the window has (L/R, or touching its title): the shipyard's
 // and the moneylender's; 0 for the others (the repair dock only repairs).
@@ -2565,7 +2573,7 @@ int place_pages(const PlaceUi& ui) {
 		return 2;
 	}
 	if (ui.open == Place::Guild) {
-		return 3;
+		return kGuildPages;
 	}
 	if (ui.open == Place::Office) {
 		return 3;
@@ -2587,6 +2595,7 @@ void turn_page(PlaceUi& ui, int step) {
 	ui.row = 0;
 	ui.amount = 0;
 	ui.ship_auctioned = false;
+	ui.auctioned_ship = -1;
 	ui.name.clear();
 }
 
@@ -2647,6 +2656,7 @@ struct PlaceView {
 		int frame = 0;
 		int x = 0;
 		int y = 0;
+		bool under = false;  // Drawn before the texts (the guild's boards under their words).
 	};
 	// Act and Act2: the page's X and Square; Previous and Next: another ship (the window's [+0x9A4], [+0xA8C]); Minus
 	// and Plus: the amount (the sailors' [+0xB74], [+0xC5C]); Choose: one of a row of buttons (its value: the weapons
@@ -2973,6 +2983,12 @@ void add_coin_line(PlaceView::Page& page, const std::string& before, const std::
 	page.texts.push_back({after, x + coin.x + 4, y, false, false, color});
 }
 
+// A line of the game's text box (0x420A10 → 0x462C20: the height its fonts give, [+0x40] of 0x6DCD28 + 0xA8·k; the
+// burglar's rows too, [+0x1C7C]): the font's height in ttffonts.ini, 15 for the fonts 0 and 1. Measured on the user's
+// photos with what the code places (the lender's head 20 apart, the notices' 16 after their title, the guild's
+// arrows): 14.6 to 15.9. The box's own font is 0 (0x4624B7) until a text's «\f1_».
+constexpr int kBoxLine = 15;
+
 // A game's text box at (x, y), `width` wide, left-aligned (0x420A10: its own line breaks, the rest wrapped), in font 0
 // or 1; the y under it.
 int add_box(PlaceView::Page& page, const std::string& text, int x, int y, int width, bool head,
@@ -2986,7 +3002,7 @@ int add_box(PlaceView::Page& page, const std::string& text, int x, int y, int wi
 				t.color = color;
 				page.texts.push_back(t);
 			}
-			y += 20;  // Font 0's and 1's line in the game's box.
+			y += kBoxLine;
 		}
 	}
 	return y;
@@ -3337,7 +3353,7 @@ void lender_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 					lender_text(0x69C02C, "a pagar el", "to be paid by"),
 				101 + coin.x + 2, y, false, false, color});
 			const GameDate date = date_from_tick(e.u32(0));
-			page.texts.push_back({(date.day < 10 ? "0" : "") + std::to_string(date.day) + ". " + exe_text(0x6C0D00 + 4 * uint32_t(date.month), "", "") +
+			page.texts.push_back({(date.day < 10 ? "0" : "") + std::to_string(date.day) + ". " + short_month(date.month) +
 					" " + std::to_string(date.year),
 				306, y, false, false, color});
 			PlaceView::PageButton touch{{50, y, kInteriorWidth - 100, 18}, "", PlaceView::PageAction::Choose, true};
@@ -3384,7 +3400,7 @@ void lender_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 				{lender_text(0x6C0EF0 + 4 * sex, "al", "the"), rank_name(e.u8(0x15) + 8 * sex),
 					clean_game_text(game_first_name(save, e.u8(0x16))), clean_game_text(game_family_name(save, e.u8(0x17))),
 					window_town_name(save, e.u8(0x14)), std::to_string(e.u32(8)), std::to_string(date.day),
-					exe_text(0x6C0D00 + 4 * uint32_t(date.month), "", ""), std::to_string(date.year)},
+					short_month(date.month), std::to_string(date.year)},
 				format_money(int64_t(e.u32(8))) + ", " + full_date(e.u32(0)));
 			v.lines.push_back({one_line(text), kTextColor});
 			y = add_box(page, text, 50, y, kInteriorWidth - 120, false);
@@ -3924,21 +3940,38 @@ void bath_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
 	ui.amount = 0;
 }
 
-// The guild (.let 0x07; guild_window.hpp): its pages (L/R) are the first three buttons of the game's side menu, and
-// those it greys out are skipped: 0 joining (only for a merchant who isn't a member; X joins, 0x37), 1 the auctions to
+// The guild (.let 0x07; guild_window.hpp): its pages are the game's (the buttons of its side menu, 0x5A3C00; L/R too,
+// skipping those it greys out): 0 joining (only for a merchant who isn't a member; X joins, 0x37), 1 the auctions to
 // come (a row each, X: be told of it or not, 0x34; the last row registers a ship of the player's for an auction, 0x36,
 // Select the ship; once each time the page opens, as the game), 2 the town's auction (while it has one: its lots, the
-// current bid and its bidder; X bids the price plus the step, 0x33). The auctions go on while the window is open.
-constexpr int kGuildPages = 3;
-
+// current bid and its bidder; X bids the price plus the step, 0x33), 3 the public convoys (members only), 4 the
+// members (members only). The auctions go on while the window is open.
 bool guild_page_open(const SaveGame& save, int town, int page) {
+	const bool member = guild_member(save, uint32_t(town), uint32_t(save.player));
 	switch (page) {
 	case 0:
-		return !guild_member(save, uint32_t(town), uint32_t(save.player));
+		return !member;
 	case 2:
 		return town_auction(save, uint32_t(town)) >= 0;
+	case 3:
+	case 4:
+		return member;
 	default:
 		return true;
+	}
+}
+
+// The parchment's line of each page (0x5C1080): the joining page's at h − 160, the auctions' 50 over their arrows
+// (h − 100, 0x5C13C1), the members' at 200, the trading centres' at 300, the others' the whole parchment; the
+// auction's end (6) and the welcome (7) keep the line of the page before them (the auction's, the joining's).
+int guild_parchment_line(int page) {
+	switch (page) {
+	case 0:
+	case 7: return kInteriorHeight - 160;
+	case 1: return kInteriorHeight - 150;
+	case 4: return 200;
+	case 5: return 300;
+	default: return 0;
 	}
 }
 
@@ -3947,51 +3980,441 @@ std::string guild_text(uint32_t slot, const char* spanish, const char* english, 
 	return GameTexts::format(exe_text(slot, spanish, english), args);
 }
 
-// An auction's lots as a line: its ships by type ((the count) (the type's plural), or one's name), or its buildings.
-std::string auction_lots_line(const SaveGame& save, const AuctionEntry& a) {
-	std::string line;
-	auto add = [&](const std::string& part) { line += (line.empty() ? "" : ", ") + part; };
+// What an auction to come offers, as the auctions' page puts it together (0x5C1CDB..0x5C2528): «Offered will be» (the
+// singular 0x69C7D0 or the plural 0x69C7D4 by the count), then a ship auction's types from the largest (hulks, cogs,
+// crayers, snaikkas): one of a type «one <type>» (the word 0x69C7DC, for the cogs and snaikkas 0x69C7D8: «una», «un»
+// in Spanish; the type 0x6C0CB4 + 4·k), more «<n> <plural>» (0x69C7E0 + 4·k); between them «, » while more than one
+// type is left, else « and » (0x69C7F0), «.» at the end. A buildings' auction: its buildings counted by type (the
+// record's type), in the types' order, each « <article> <name>» (0x6AFEE0, 0x6A57C8) or « <n> <plural>» (0x6AFD80),
+// «,» between them but « and» before the last one, «.» at the end.
+std::string auction_offered(const SaveGame& save, const AuctionEntry& a) {
+	std::string s = exe_text(0x69C7CC, "Se", "Offered") + " ";
 	if (a.types[0] == 0xFF) {
+		std::array<int, 0x39> count{};
+		int total = 0;
 		const SavedTown& st = save.towns[a.town];
 		for (uint16_t lot : a.lots) {
-			if (lot != 0xFFFF && (lot & 0x7FFF) < st.records.size()) {
-				add(building_name(st.records[lot & 0x7FFF].type));
+			if (lot != 0xFFFF && (lot & 0x7FFF) < st.records.size() && st.records[lot & 0x7FFF].type < 0x39) {
+				++count[st.records[lot & 0x7FFF].type];
+				++total;
 			}
 		}
-		return line;
+		s += exe_text(total > 1 ? 0x69C7D4 : 0x69C7D0, total > 1 ? "subastarán" : "subastará", "will be");
+		std::vector<std::string> pieces;
+		int done = 0;
+		for (uint32_t t = 0; t < 0x39; ++t) {
+			if (count[t] == 0) {
+				continue;
+			}
+			done += count[t];
+			pieces.push_back(count[t] == 1 ? " " + exe_text(0x6AFEE0 + 4 * t, "", "a") + " " + exe_text(0x6A57C8 + 4 * t, "", "")
+										   : " " + std::to_string(count[t]) + " " + exe_text(0x6AFD80 + 4 * t, "", ""));
+			if (done == total) {
+				break;
+			}
+			pieces.back() += total - done > 1 ? "," : "";
+		}
+		if (pieces.size() > 1) {
+			std::string& before = pieces[pieces.size() - 2];
+			if (!before.empty() && before.back() == ',') {
+				before.pop_back();
+			}
+			before += " " + exe_text(0x69C7F0, "y", "and");
+		}
+		for (const std::string& p : pieces) {
+			s += p;
+		}
+		return s + ".";
 	}
-	static const char* const kPlurals[4][2] = {{"goletas", "snaikkas"}, {"carabelas", "crayers"}, {"naos", "cogs"},
-		{"galeones", "hulks"}};
-	for (int k = 0; k < 4; ++k) {
-		if (a.types[size_t(k)] == 1) {
-			add("1 " + ship_type_name(k));
-		} else if (a.types[size_t(k)] > 1) {
-			add(std::to_string(a.types[size_t(k)]) + " " +
-				exe_text(0x69C7E0 + 4 * uint32_t(k), kPlurals[k][0], kPlurals[k][1]));
+	const int snaikkas = a.types[0];
+	const int crayers = a.types[1];
+	const int cogs = a.types[2];
+	const int hulks = a.types[3];
+	s += exe_text(snaikkas + crayers + cogs + hulks > 1 ? 0x69C7D4 : 0x69C7D0, "subastará", "will be") + " ";
+	const std::string and_word = " " + exe_text(0x69C7F0, "y", "and") + " ";
+	// Each type: «one <type>» or «<n> <plural>».
+	auto type = [&](int n, int k, uint32_t one) {
+		s += n == 1 ? exe_text(one, "un", "one") + " " + exe_text(0x6C0CB4 + 4 * uint32_t(k), "", "")
+					: std::to_string(n) + " " + exe_text(0x69C7E0 + 4 * uint32_t(k), "", "");
+	};
+	if (hulks > 0) {
+		type(hulks, 3, 0x69C7DC);
+		if (cogs + crayers + snaikkas > 0) {
+			s += ((snaikkas || crayers) && cogs) || (snaikkas && crayers) ? ", " : and_word;
+		} else {
+			s += ".";
 		}
 	}
-	return line;
+	if (cogs > 0) {
+		type(cogs, 2, 0x69C7D8);
+		s += crayers + snaikkas > 0 ? (crayers && snaikkas ? ", " : and_word) : ".";
+	}
+	if (crayers > 0) {
+		type(crayers, 1, 0x69C7DC);
+		s += snaikkas > 0 ? and_word : ".";
+	}
+	if (snaikkas > 0) {
+		type(snaikkas, 0, 0x69C7D8);
+		s += ".";
+	}
+	return s;
+}
+
+// The town's guild's name (NamenStaedte's lines 40..79 by the town's number, the table 0x6DD960:
+// SaveOpaque::town_guilds), or the town's name.
+std::string guild_name(const SaveGame& save, int town) {
+	const int id = town >= 0 && size_t(town) < save.towns.size() ? save.towns[size_t(town)].town_id() : -1;
+	return id >= 0 && size_t(id) < save.opaque.town_guilds.size() ? clean_game_text(save.opaque.town_guilds[size_t(id)])
+																	: window_town_name(save, town);
+}
+
+// A piece of a sentence the game puts together (sprintf's and strcat's): its text formatted with the spaces at its ends
+// kept (exe_format drops them: «%s » and « , y %s flota mercante consta de » in the guild member's fleet).
+std::string exe_piece(uint32_t english, const std::vector<std::string>& args) {
+	std::string out = exe_format(english, args, "");
+	if (g_texts && !out.empty()) {
+		std::string raw = g_texts->raw_at(english);
+		if (raw.size() > 2 && raw[0] == '\\' && raw[1] == 'f') {  // A font's code first (\fN_).
+			raw.erase(0, std::min(raw.find('_'), raw.size() - 1) + 1);
+		}
+		const size_t lead = std::min(raw.find_first_not_of(' '), raw.size());
+		const size_t last = raw.find_last_not_of(' ');
+		const size_t trail = last == std::string::npos ? 0 : raw.size() - 1 - last;
+		out = std::string(lead, ' ') + out + std::string(trail, ' ');
+	}
+	return out;
+}
+
+// The guild's «Members» page (the game's page 4) as the game draws it (0x5C59D0; the user's photo
+// `guild_members.jpg`): from (50, 200), each a text box w − 100 wide, 20 under the one before it: the member's names
+// centred in font 0 («\c%s %s»); «<The> <title> <rank> <names> from <home town> opened <his> first trading office on
+// <date> in <town>.» (0x69C86C); «Age: %i years» (0x69C878); «Married to <spouse>» (0x69C87C) with «, %i children»
+// (0x69C880) or «, a child» (0x6B01B4), or «not married» (0x69C894) right under the age (0x5C5D21 adds no line);
+// «<He> is represented with a trading office in <n towns | one town> and <his> trading fleet counts <n Ships. | one
+// Ship.>» (0x69C88C.., the Spanish «Posee 5 oficinas comerciales , y su flota mercante consta de 3 barcos.»); «<He> is
+// most highly respected by the citizens of <town>.» (0x69C8B0). The members one at a time (the rows, hidden), stepped
+// round by «<» and «>» (small, at w/2 − 50 − 32 and w/2 + 50 on h − 50; hidden with a single member, 0x5C0D93). The
+// parchment from 200 (0x5C15BC). Without members, 0x6C2CEC and 0x6C2CF0 in font 0 at (50, 200) and 30 under.
+void guild_members_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	v.title = exe_text(0x69C19C, "Miembros", "Members");
+	v.one_at_a_time = true;
+	const std::vector<GuildMember> members = guild_members(save, uint32_t(town));
+	PlaceView::Page page;
+	constexpr int kX = 50;
+	constexpr int kWidth = kInteriorWidth - 100;
+	if (members.size() != 1) {
+		const bool more = members.size() > 1;
+		page.buttons.push_back({{kInteriorWidth / 2 - 50 - 32, kInteriorHeight - 50, 32, 18}, "<", PlaceView::PageAction::Previous, more});
+		page.buttons.push_back({{kInteriorWidth / 2 + 50, kInteriorHeight - 50, 32, 18}, ">", PlaceView::PageAction::Next, more});
+	}
+	if (members.empty()) {
+		PlaceView::PageText line{exe_text(0x6C2CEC, "Se ha cerrado el plazo sin que ningún mercader importante se haya inscrito",
+									 "No important trader could decide to enter"),
+			kX, 200};
+		line.head_font = true;
+		page.texts.push_back(line);
+		line.text = exe_text(0x6C2CF0, "a tiempo.", "at this point in time.");
+		line.y = 230;
+		page.texts.push_back(line);
+		v.page = std::move(page);
+		return;
+	}
+	for (size_t k = 0; k < members.size(); ++k) {
+		v.rows.push_back({"", false});  // Only to step through (nothing to do with X).
+	}
+	ui.row = std::clamp(ui.row, 0, int(members.size()) - 1);
+	const GuildMember& g = members[size_t(ui.row)];
+	const GuildMemberPage p = guild_member_page(save, g.merchant);
+	const auto [first, family] = merchant_names(save, g.merchant);
+	PlaceView::PageText name{clean_game_text(first) + " " + clean_game_text(family), kInteriorWidth / 2, 200, true};
+	name.head_font = true;
+	page.texts.push_back(name);
+	int y = 200 + kBoxLine + 20;  // Under the name's box.
+	const GameDate opened = date_from_tick(g.first_tick);
+	y = add_box(page,
+			exe_format(0x69C86C,
+				{lender_text(0x6C0EF8 + 4 * p.sex, "El", "The"), lender_text(0x6A0C18 + 4 * uint32_t(p.title), "", ""),
+					lender_text(0x6A0608 + 4 * (uint32_t(p.rank) + 8 * p.sex), "", ""), clean_game_text(first),
+					clean_game_text(family), window_town_name(save, p.home), lender_text(0x69C870 + 4 * p.sex, "su", "his"),
+					std::to_string(opened.day), short_month(opened.month), std::to_string(opened.year),
+					window_town_name(save, g.first_town)},
+				""),
+			kX, y, kWidth, false) +
+		20;
+	y = add_box(page, exe_format(0x69C878, {std::to_string(p.age)}, tr("Edad: ", "Age: ") + std::to_string(p.age)), kX, y,
+		kWidth, false);
+	if (p.married) {
+		std::string married = exe_format(0x69C87C, {clean_game_text(game_first_name(save, p.spouse))}, "");
+		if (p.children > 1) {
+			married += exe_format(0x69C880, {std::to_string(p.children)}, "");
+		} else if (p.children == 1) {
+			married += exe_text(0x6B01B4, ", un niño", ", a child");
+		}
+		y = add_box(page, married, kX, y + 20, kWidth, false);
+	} else {
+		y = add_box(page, exe_text(0x69C894, "Soltero", "not married"), kX, y, kWidth, false);
+	}
+	std::string fleet = exe_piece(0x69C88C, {lender_text(0x69C884 + 4 * p.sex, "Posee", "He")});
+	fleet += g.offices > 1 ? exe_piece(0x69C89C, {std::to_string(g.offices)}) : exe_piece(0x69C8A0, {});
+	fleet += exe_piece(0x69C8A4, {lender_text(0x69C8C8 + 4 * p.sex, "su", "his")});
+	fleet += p.ships == 1 ? exe_piece(0x69C8A8, {exe_text(0x6998AC, "barco", "Ship")}) : exe_piece(0x69C8AC, {std::to_string(p.ships)});
+	y = add_box(page, fleet, kX, y + 20, kWidth, false);
+	add_box(page,
+		exe_format(0x69C8B0, {lender_text(0x69C8D0 + 4 * p.sex, "Goza", "He"), window_town_name(save, g.respected_town)}, ""),
+		kX, y + 20, kWidth, false);
+	v.page = std::move(page);
+}
+
+// The guild's convoys page (the game's page 3, 0x5C5370; no photo: the drawing run in the emulator, re/emu/sesion33
+// drawtrace.py): «Public convoys» on the banner; the public convoys (guild_convoys: 0x50A340 sorted by 0x5C6A30) in its
+// list (x 30, from y 100, 300 high: five shown, the list scrolled a convoy at a time with Up and Down), 60 apart, each in
+// three lines 15 apart: «Convoy <the guide ship's name>» (0x69C8B4) in a box at (30, y) and the columns' pictures
+// centred in boxes 50 wide at 182, 222, 262 and 312 (TEX16043 the ships, 20013 the hull, 20017 the crew, 16054 the
+// weapons); «<whence> -> <whither>» (0x69C8B8; an expedition's 0x6B01BC) and under the pictures the ships, the hulls'
+// average and the crews in font 0 (the box's own: these texts have no «\f1_»), the firepower as cannonballs (0x4901C0:
+// big and small ones from the same place, centred in 100 from 308; the half ball not drawn yet); while waiting «Sail: <date>» (0x69C8BC), sailing
+// «at sea» (0x69C8C0; an expedition nothing).
+void guild_convoys_view(const SaveGame& save, PlaceUi& ui, PlaceView& v) {
+	v.title = exe_text(0x69C890, "Convoyes públicos:", "public convoys");
+	const std::vector<uint16_t> list = guild_convoys(save);
+	for (size_t k = 0; k < list.size(); ++k) {
+		v.rows.push_back({"", false});  // Only to scroll the list.
+	}
+	ui.row = list.empty() ? 0 : std::clamp(ui.row, 0, int(list.size()) - 1);
+	constexpr int kShown = 5;
+	const int first = std::max(0, std::min(ui.row, int(list.size()) - kShown));
+	PlaceView::Page page;
+	const uint32_t towns = save.globals.u32(global::kWorldTownCount);
+	for (int k = first; k < int(list.size()) && k < first + kShown; ++k) {
+		const GuildConvoyLine l = guild_convoy_line(save, list[size_t(k)]);
+		const int y = 100 + 60 * (k - first);
+		const std::string guide = l.guide < save.ships.size() ? save.ships[l.guide].name() : "";
+		page.texts.push_back({exe_format(0x69C8B4, {guide}, tr("Convoy ", "Convoy ") + guide), 30, y});
+		const uint32_t icons[4] = {16043, 20013, 20017, 16054};
+		const int columns[4] = {182, 222, 262, 312};
+		for (int c = 0; c < 4; ++c) {
+			const SDL_Point size = g_game_art ? g_game_art->tex_size(icons[c], 0) : SDL_Point{18, 18};
+			page.icons.push_back({icons[c], 0, columns[c] + (50 - size.x) / 2, y});
+		}
+		const bool expedition = l.from >= 0x7F || l.to >= 0x7F;
+		page.texts.push_back({expedition ? exe_text(0x6B01BC, "De expedición", "Going on Expedition")
+										 : exe_format(0x69C8B8, {l.from < towns ? window_town_name(save, l.from) : "",
+																	l.to < towns ? window_town_name(save, l.to) : ""}, ""),
+			30, y + 15});
+		const int values[3] = {l.ships, l.hull, l.crew};
+		for (int c = 0; c < 3; ++c) {
+			PlaceView::PageText t{std::to_string(values[c]), columns[c] + 25, y + 15, true};
+			t.head_font = true;
+			page.texts.push_back(t);
+		}
+		if (l.firepower > 0) {
+			const FirepowerBalls balls = firepower_balls(l.firepower);
+			const int count = balls.big >= 5 ? 5 : std::max(balls.big, balls.small + (balls.half ? 1 : 0));
+			const int x = 308 + (100 - 12 * count) / 2;
+			for (int b = 0; b < balls.big; ++b) {
+				page.icons.push_back({20014, 0, x + 12 * b, y + 15});
+			}
+			for (int b = 0; b < balls.small; ++b) {
+				page.icons.push_back({20015, 0, x + 12 * b, y + 15});
+			}
+		}
+		if (l.waiting) {
+			const GameDate date = date_from_tick(l.departure);
+			page.texts.push_back({exe_format(0x69C8BC, {std::to_string(date.day), short_month(date.month), std::to_string(date.year)}, ""),
+				30, y + 30});
+		} else if (l.to < 0x7F) {
+			page.texts.push_back({exe_text(0x69C8C0, "En el mar", "at sea"), 30, y + 30});
+		}
+	}
+	v.page = std::move(page);
+}
+
+// The guild's trade contracts page (the game's page 8, 0x5C74C0, its list 0x5C7680; no photo: the drawing run in the
+// emulator, re/emu/sesion33 drawtrace.py): «Trade Contracts in the Mediterranean» on the banner; the player's contracts
+// with the world's 15 trading posts (their lists, SaveGame::world_object_lists: each record's owner [+0x0]) in the
+// posts' order, each «A trader in <place> has promised to <sell|buy> <n>⊡ <ware> by <d>.<m>.<y> at a price of <n>⊙.»
+// (ContractPromised, the place by the post's [+0x4], the ware [+0x2 + side] bought or [+side] sold, the amount
+// [+0x4], the price [+0x8], the deadline [+0xC]) in a box from (30, y) 365 wide, 60 apart in the list (five shown,
+// scrolled with Up and Down); none: «There are currently no trading contracts in place.» (0x6B200C, font 0).
+void guild_contracts_view(const SaveGame& save, PlaceUi& ui, PlaceView& v) {
+	v.title = exe_text(0x6B2008, "Contratos comerciales en el Mediterráneo", "Trade Contracts in the Mediterranean");
+	std::vector<std::string> texts;
+	const uint32_t player = uint32_t(save.player);
+	for (uint32_t object = 0; object < 15; ++object) {
+		const uint32_t base = global::kWorld + 0xB10 + 0x2C * object;
+		for (const GameMemory<0x10>& r : save.world_object_lists[object]) {
+			if (r.u16(0x0) != player) {
+				continue;
+			}
+			const uint8_t place = save.globals.u8(base + 4);
+			const bool buys = r.u8(0x3) != 0;
+			const uint8_t ware = save.globals.u8(base + (buys ? 2u : 0u) + (r.u8(0x2) & 1u));
+			const GameDate date = date_from_tick(r.u32(0xC));
+			std::string text = GameTexts::format(game_text(GameText::ContractPromised, ""),
+				{place < 30 ? game_text(GameText(int(GameText::ExpeditionPlace0) + place), "") : std::string(),
+					game_text(buys ? GameText::ContractBuy : GameText::ContractSell, buys ? "buy" : "sell"),
+					std::to_string(r.u32(0x4)), "B", ware < kWareCount ? ware_name(ware) : std::string(), std::to_string(date.day),
+					std::to_string(date.month + 1), std::to_string(date.year), std::to_string(r.u32(0x8))});
+			for (size_t at = text.find("\\B"); at != std::string::npos; at = text.find("\\B", at)) {
+				text.replace(at, 2, 1, kTextBarrel);
+			}
+			texts.push_back(text);
+		}
+	}
+	PlaceView::Page page;
+	if (texts.empty()) {
+		add_box(page, exe_text(0x6B200C, "Por el momento, no hay contratos comerciales.", "There are currently no trading contracts in place."),
+			30, 100, 365, true);
+		v.page = std::move(page);
+		return;
+	}
+	for (size_t k = 0; k < texts.size(); ++k) {
+		v.rows.push_back({"", false});  // Only to scroll the list.
+	}
+	ui.row = std::clamp(ui.row, 0, int(texts.size()) - 1);
+	constexpr int kShown = 5;
+	const int first = std::max(0, std::min(ui.row, int(texts.size()) - kShown));
+	for (int k = first; k < int(texts.size()) && k < first + kShown; ++k) {
+		add_box(page, texts[size_t(k)], 30, 100 + 60 * (k - first), 365, false);
+	}
+	v.page = std::move(page);
+}
+
+// The guild's page 6, the auction's end (0x5C2F90; no photo: the drawing run in the emulator, re/emu/sesion33
+// drawtrace.py): on a board (TEX32004) at (34, 155) «The auction has ended» (0x69C868) centred at (w/2, 170) in font
+// 0; then, when the results are this town's (SaveGame::auction_results, its town as the window got it: a game bug,
+// see events_mayor.cpp), a box each from (50, 190), 76 apart, on the boards hung under it as the lots' list: «The
+// <n>-load <type> "<name>" went for <price>⊙ to <rank> <names>.» (0x69C864, the hold in loads) or «<A> <building>
+// was sold for <price>⊙ to <rank> <names>.» (0x6B01B8, the article's first letter in upper case; the building a
+// record of the window's town), the buyer's rank in his home town by his sex. A lot not sold is listed too, its
+// buyer 0xFF past the merchants (the game reads what lies there: empty here; left out behind fix_game_bugs).
+void guild_results_view(const SaveGame& save, int town, PlaceView& v) {
+	PlaceView::Page page;
+	page.icons.push_back({32004, 0, 34, 155, true});
+	PlaceView::PageText head{exe_text(0x69C868, "Fin de la subasta", "The auction has ended"), kInteriorWidth / 2, 170, true};
+	head.head_font = true;
+	page.texts.push_back(head);
+	const SaveGame::AuctionResults& r = save.auction_results;
+	const uint32_t merchants = std::min<uint32_t>(save.globals.u16(global::kWorldMerchantCount), uint32_t(save.merchants.size()));
+	if (r.town == town) {
+		int k = 0;
+		for (uint32_t i = 0; i < r.count && i < r.buyers.size(); ++i) {
+			const bool sold = r.buyers[i] < merchants;
+			if (!sold && fix_game_bugs()) {
+				continue;
+			}
+			const int y = 190 + 76 * k;
+			if (k > 0) {
+				page.icons.push_back({32005, 0, 61, y - 35, true});
+				page.icons.push_back({32005, 0, 353, y - 35, true});
+				page.icons.push_back({32004, 1, 34, y - 10, true});
+			}
+			std::string rank;
+			std::string first;
+			std::string family;
+			if (sold) {
+				const MerchantMemory& m = save.merchants[r.buyers[i]].memory;
+				const uint32_t sex = m.u8(0x1A) & 1u;
+				rank = exe_text(0x6A0608 + 4 * (uint32_t(m.u8(0x39C + m.u8(0x19))) + 8 * sex), "", "");
+				const auto names = merchant_names(save, r.buyers[i]);
+				first = clean_game_text(names.first);
+				family = clean_game_text(names.second);
+			}
+			std::string text;
+			if (!r.buildings) {
+				if (r.lots[i] >= save.ships.size()) {
+					continue;
+				}
+				const SavedShip& s = save.ships[r.lots[i]];
+				text = exe_format(0x69C864,
+					{std::to_string(s.capacity() / 2000), exe_text(0x6C0CB4 + 4 * uint32_t(s.type() & 3), "", ""), s.name(),
+						std::to_string(r.prices[i]), rank, first, family},
+					"");
+			} else {
+				const SavedTown& st = save.towns[size_t(town)];
+				if (r.lots[i] >= st.records.size()) {
+					continue;
+				}
+				const uint32_t type = st.records[r.lots[i]].type;
+				std::string article = exe_text(0x6AFEE0 + 4 * type, "", "a");
+				if (!article.empty()) {
+					article[0] = char(std::toupper(uint8_t(article[0])));
+				}
+				text = exe_format(0x6B01B8,
+					{article, exe_text(0x6A57C8 + 4 * type, "", ""), std::to_string(r.prices[i]), rank, first, family}, "");
+			}
+			add_box(page, text, 50, y, kInteriorWidth - 100, false);
+			++k;
+		}
+	}
+	v.page = std::move(page);
 }
 
 void guild_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
-	ui.page = ((ui.page % kGuildPages) + kGuildPages) % kGuildPages;
-	while (!guild_page_open(save, town, ui.page)) {
-		ui.page = (ui.page + (ui.page_step < 0 ? -1 : 1) + kGuildPages) % kGuildPages;
+	// The game's own pages besides its side menu's: the auction's end (6), shown when the town's auction ends while
+	// the window is on its page 2 (0x5C6BF0), the welcome (7) after joining (0x5C1080(7)) and the trade contracts (8,
+	// the side menu's last button); L/R leave them.
+	// The town's auction event past its phase 7 (the page 2 stays on it until the event ends: its side menu's button
+	// dims, the page doesn't change).
+	const uint16_t hall = save.towns[size_t(town)].memory.u16(0x9A2);
+	const bool hall_open = hall < save.globals.u16(0x6DD748) && hall < save.events.size() &&
+		(save.events[hall].u16(6) == 0xA || save.events[hall].u16(6) == 0x36);
+	if (ui.page == 2 && !hall_open && save.auction_results.ended) {
+		ui.page = 6;
 	}
-	const std::string page = ui.page == 0 ? tr("Ingreso", "Joining")
-		: ui.page == 1					   ? exe_text(0x69C190, "Subastas", "Auctions")
-										   : exe_text(0x69C7F8, "La subasta", "The auction");
-	v.title = page;
-	// Its side menu (0x5A3536): «Join», «Auctions», «Auction hall», «Convoys», «Members» (the last two not made yet);
-	// a page that can't open, dimmed (its parchment's line, not set by the menu, to read: 225 meanwhile).
+	const bool own = ui.page == 8 || (ui.page == 6 && save.auction_results.ended) || (ui.page == 2 && hall_open) ||
+		(ui.page == 7 && guild_member(save, uint32_t(town), uint32_t(save.player)));
+	if (!own) {
+		ui.page = ((ui.page % kGuildPages) + kGuildPages) % kGuildPages;
+		while (!guild_page_open(save, town, ui.page)) {
+			ui.page = (ui.page + (ui.page_step < 0 ? -1 : 1) + kGuildPages) % kGuildPages;
+		}
+	}
+	v.title = ui.page == 0 || ui.page == 7 ? exe_text(0x69C18C, "Ingresar", "Join")
+		: ui.page == 1					  ? exe_text(0x69C190, "Subastas", "Auctions")
+										  : exe_text(0x69C194, "Sala de subastas", "Auction hall");
+	// Its side menu (0x5A3536; the buttons enabled as 0x5A37C0, each opening the page of its number, the last the page
+	// 8): «Join», «Auctions», «Auction hall», «Convoys», «Members», «Goods trading centres» and «Trade Contracts» (the
+	// trading centres, a map the game draws of what the expeditions found, 0x5C5F00 and 0x534A40, not made yet); a page
+	// that can't open, dimmed.
 	place_side_menu(v, ui, exe_text(0x69C1A4, "Gremio de mercaderes", "Traders guild"),
 		{{exe_text(0x69C18C, "Ingresar", "Join"), guild_page_open(save, town, 0) ? 0 : -1},
 			{exe_text(0x69C190, "Subastas", "Auctions"), guild_page_open(save, town, 1) ? 1 : -1},
 			{exe_text(0x69C194, "Sala de subastas", "Auction hall"), guild_page_open(save, town, 2) ? 2 : -1},
-			{exe_text(0x69C198, "Convoyes", "Convoys"), -1}, {exe_text(0x69C19C, "Miembros", "Members"), -1}},
-		0xE1);
+			{exe_text(0x69C198, "Convoyes", "Convoys"), guild_page_open(save, town, 3) ? 3 : -1},
+			{exe_text(0x69C19C, "Miembros", "Members"), guild_page_open(save, town, 4) ? 4 : -1},
+			{exe_text(0x69C1A0, "Rutas comerciales", "Goods trading centres"), -1},
+			{exe_text(0x6B2004, "Contratos comerciales", "Trade Contracts"), 8}},
+		guild_parchment_line(ui.page));
+	if (ui.page == 4) {
+		guild_members_view(save, town, ui, v);
+		return;
+	}
+	if (ui.page == 3) {
+		guild_convoys_view(save, ui, v);
+		return;
+	}
+	if (ui.page == 8) {
+		guild_contracts_view(save, ui, v);
+		return;
+	}
 	const uint32_t player = uint32_t(save.player);
 	const uint32_t t = uint32_t(town);
+	if (ui.page == 7) {
+		// The welcome (0x5C6200): «The <guild> welcomes you warm heartedly. The members present are pleased to have
+		// <such a respected trader> in their midst.» (0x69C898, the words by the player's sex 0x69C8D8) in a box from
+		// (50, h − 160), w − 100 wide; the parchment from the joining page's line.
+		PlaceView::Page welcome;
+		const uint32_t sex = save.merchants[player].memory.u8(0x1A) & 1u;
+		add_box(welcome, exe_format(0x69C898, {guild_name(save, town), exe_text(0x69C8D8 + 4 * sex, "", "such a respected trader")}, ""),
+			50, kInteriorHeight - 160, kInteriorWidth - 100, false);
+		v.page = std::move(welcome);
+		return;
+	}
+	if (ui.page == 6) {
+		guild_results_view(save, town, v);
+		return;
+	}
 	if (ui.page == 0) {
 		v.lines.push_back({exe_text(0x6C2E64, "La cuota para unirse al Gremio", "The cost of joining the guild") + ": " +
 				format_money(guild_join_price(save, t, player)),
@@ -4001,10 +4424,7 @@ void guild_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 		// Laid out as the game's page 0 (0x5C1A10): «The <the town's guild> would like to greet you, <first name>
 		// <family name>, as a new member. Are you willing to pay the admission fee of <price>⊙ ?» in a text box from
 		// (50, h − 160), w − 100 wide; the confirm button.
-		const int id = t < save.towns.size() ? save.towns[t].town_id() : -1;
-		const std::string guild = id >= 0 && size_t(id) < save.opaque.town_guilds.size()
-			? clean_game_text(save.opaque.town_guilds[size_t(id)])
-			: window_town_name(save, town);
+		const std::string guild = guild_name(save, town);
 		const auto [first, family] = merchant_names(save, player);
 		PlaceView::Page page;
 		add_box(page,
@@ -4017,99 +4437,249 @@ void guild_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	}
 	if (ui.page == 1) {
 		const std::vector<AuctionEntry> list = upcoming_auctions(save);
-		if (list.empty()) {
-			v.lines.push_back({exe_text(0x6C2C68, "No hay ninguna subasta prevista", "No auctions will take place."),
-				kTextColor});
-		}
 		for (const AuctionEntry& a : list) {
-			const GameDate date = date_from_tick(a.tick);
-			const bool told = told_of_auction(save, a.event);
-			v.rows.push_back({std::string(told ? "[X] " : "[  ] ") +
-					guild_text(0x69C7C8, "Subasta en %s el %i de %s de %i", "Auction at %s on %i. %s %i",
-						{window_town_name(save, a.town), std::to_string(date.day), month_name(date.month),
-							std::to_string(date.year)}),
-				guild_member(save, a.town, player)});
+			v.rows.push_back({auction_offered(save, a), guild_member(save, a.town, player)});
 		}
 		const size_t ship_row = v.rows.size();
 		v.rows.push_back({exe_text(0x69C828, "Incluir el siguiente barco en la subasta", "Register own ship for auction"),
 			false});
 		ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
-		if (size_t(ui.row) < list.size()) {
-			const AuctionEntry& a = list[size_t(ui.row)];
-			v.lines.push_back({auction_lots_line(save, a), kTextColor});
-			v.act = told_of_auction(save, a.event) ? tr("No avisarme", "Don't tell me") : tr("Avisarme", "Tell me");
-			return;
-		}
 		v.ships = window_ships(save, int(player), town, ShipListMode::Auction);
 		v.ship = v.ships.empty() ? -1 : int(v.ships[ui.ship % v.ships.size()]);
-		v.rows[ship_row].second = v.ship >= 0 && !ui.ship_auctioned;
-		if (!guild_member(save, t, player)) {
-			v.lines.push_back({guild_text(0x69C830, "No eres miembro del %s.", "You are not a member of the %s.",
-								   {exe_text(0x69C1A4, "Gremio de mercaderes", "Traders guild")}),
-				kDimColor});
-		} else if (v.ship < 0) {
-			v.lines.push_back({exe_text(0x69C834, "No tienes barcos en el puerto.", "You have no ship in port."), kDimColor});
+		v.rows[ship_row].second = v.ship >= 0 && !ui.ship_auctioned && guild_member(save, t, player);
+		if (size_t(ui.row) < list.size()) {
+			v.act = told_of_auction(save, list[size_t(ui.row)].event) ? tr("No avisarme", "Don't tell me")
+																	  : tr("Avisarme", "Tell me");
 		} else {
-			v.lines.push_back({ship_label(save.ships[size_t(v.ship)]) +
-					(v.ships.size() > 1 ? tr("   (Select: otro)", "   (Select: another)") : ""),
-				kTextColor});
+			v.act = exe_text(0x69C82C, "Subastar barco", "Register ship");
 		}
-		v.act = exe_text(0x69C82C, "Subastar barco", "Register ship");
+		// Laid out as the game's (0x5C1B00; no photo: the drawing run in the emulator, re/emu/sesion33 drawtrace.py):
+		// each auction (at most 3) on a strip of parchment (TEX32004's first frame, 357 × 83) from (34, 55), 104 apart,
+		// hung from the one above by two hooks (TEX32005) at x 61 and 353, 25 over it; on it the date (0x69C7C8, the
+		// month's short name) at (50, +20), what is offered in a box from (50, +36) w − 100 wide, and for a member of
+		// the auction's town's guild «Note» (0x69C7F4) at (250, +52) with its round button (16 × 18) after the word
+		// (5 + its width from 250; at 107 + 102·k: the game's buttons drift 2 a strip from their strips) and the hook
+		// TEX20008 over it, 4 to its left, when he is told. Without auctions: one strip and 0x6C2C68 at (50, 75). Under
+		// them, for a member of the town's guild: «Register own ship for auction» at (50, 360); the ship's type and name
+		// centred at (220, 390) between «-» (100, 410) and «+» (325, 410) (round buttons, 0x5BF2D6), and between those
+		// the hold in barrels (TEX16031), the hull in % (TEX20013) and the crew (TEX20017; with a captain, his picture
+		// TEX16053 and the number after it, from the crew's picture less half the number's width), 34 apart, the numbers
+		// centred under the pictures; or «You have no ship in port.» at (50, 390). Not a member: «You are not a member of
+		// the <guild>.» centred at (w/2, 390). Once a ship is registered (the window's [+0x12F5]), the sentence of its
+		// auction (0x69C838) from (50, 390), 300 wide, a line every 20. «Register ship» (0x69C82C) at (148, 470).
+		PlaceView::Page page;
+		constexpr int kStrip = 104;
+		if (list.empty()) {
+			page.icons.push_back({32004, 0, 34, 55, true});
+			page.texts.push_back({exe_text(0x6C2C68, "No hay ninguna subasta prevista", "No auctions will take place."), 50, 75});
+		}
+		const std::string note = exe_text(0x69C7F4, "Aviso", "Note");
+		const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
+		const SDL_Color blue = {0x00, 0x3C, 0x8C, 255};
+		for (size_t k = 0; k < list.size(); ++k) {
+			const AuctionEntry& a = list[k];
+			const int y = 55 + kStrip * int(k);
+			if (k > 0) {
+				page.icons.push_back({32005, 0, 61, y - 25, true});
+				page.icons.push_back({32005, 0, 353, y - 25, true});
+			}
+			page.icons.push_back({32004, 0, 34, y, true});
+			const GameDate date = date_from_tick(a.tick);
+			page.texts.push_back({guild_text(0x69C7C8, "Subasta en %s el %i de %s de %i", "Auction at %s on %i. %s %i",
+									  {window_town_name(save, a.town), std::to_string(date.day), short_month(date.month),
+										  std::to_string(date.year)}),
+				50, y + 20});
+			add_box(page, v.rows[k].first, 50, y + 36, kInteriorWidth - 100, false);
+			if (v.rows[k].second) {
+				page.texts.push_back({note, 250, y + 52, false, false, int(k) == ui.row ? blue : SDL_Color{0, 0, 0, 255}});
+				const int bx = 255 + (font ? font->measure(note) : 28);
+				const int by = 107 + 102 * int(k);
+				PlaceView::PageButton box{{bx, by, 16, 18}, "", PlaceView::PageAction::Act, true};
+				box.keyed = false;
+				box.row = int(k);
+				page.buttons.push_back(box);
+				if (told_of_auction(save, a.event)) {
+					page.icons.push_back({20008, 0, bx - 4, by});
+				}
+			}
+		}
+		const int middle = (100 + 325) / 2 + 8;
+		if (ui.ship_auctioned && ui.auctioned_ship >= 0 && size_t(ui.auctioned_ship) < save.ships.size()) {
+			const SavedShip& s = save.ships[size_t(ui.auctioned_ship)];
+			const ShipAuction sa = ship_auction(save, uint16_t(ui.auctioned_ship));
+			if (sa.tick >= 0) {
+				const GameDate date = date_from_tick(uint32_t(sa.tick));
+				const uint32_t type = s.type() & 3;
+				const std::string text = exe_format(0x69C838,
+					{exe_text(type == 1 || type == 3 ? 0x69C840 : 0x69C83C, "de la", "of the"), exe_text(0x6C0CB4 + 4 * type, "", ""),
+						s.name(), std::to_string(date.day), short_month(date.month), std::to_string(date.year),
+						window_town_name(save, town), std::to_string(sa.minimum)},
+					"");
+				int y = 390;
+				for (const std::string& line : box_lines(text)) {
+					for (const std::string& part : font ? wrap_text(*font, line, 300) : std::vector<std::string>{line}) {
+						page.texts.push_back({part, 50, y});
+						y += 20;
+					}
+				}
+			}
+		} else if (!guild_member(save, t, player)) {
+			page.texts.push_back({guild_text(0x69C830, "No eres miembro del %s.", "You are not a member of the %s.",
+									  {guild_name(save, town)}),
+				kInteriorWidth / 2, 390, true});
+		} else {
+			page.texts.push_back({v.rows[ship_row].first, 50, 360, false, false, ui.row == int(ship_row) ? blue : SDL_Color{0, 0, 0, 255}});
+			if (v.ship < 0) {
+				page.texts.push_back({exe_text(0x69C834, "No tienes barcos en el puerto.", "You have no ship in port."), 50, 390});
+			} else {
+				const SavedShip& s = save.ships[size_t(v.ship)];
+				page.texts.push_back({exe_text(0x6C0CB4 + 4 * uint32_t(s.type() & 3), "", "") + " " + s.name(), middle, 390, true});
+				const bool more = v.ships.size() > 1;
+				PlaceView::PageButton less{{100, 410, 16, 18}, "-", PlaceView::PageAction::Previous, more};
+				PlaceView::PageButton on{{325, 410, 16, 18}, "+", PlaceView::PageAction::Next, more};
+				less.row = on.row = int(ship_row);
+				page.buttons.push_back(less);
+				page.buttons.push_back(on);
+				const uint32_t icons[3] = {16031, 20013, 20017};
+				const int xs[3] = {150, 210, 262};
+				const int values[3] = {int(s.capacity() / 200), hull_percent(s), int(s.sailors())};
+				for (int k = 0; k < 3; ++k) {
+					page.icons.push_back({icons[k], 0, xs[k], 410});
+					const SDL_Point size = g_game_art ? g_game_art->tex_size(icons[k], 0) : SDL_Point{18, 18};
+					if (k == 2 && s.captain() < save.globals.u16(global::kCaptainCount)) {
+						// The crew with a captain (0x5C2A19): his picture, then the number after it.
+						const TextRenderer* head = g_game_art ? g_game_art->head_text() : nullptr;
+						const int x = xs[k] - (head ? head->measure(std::to_string(values[k])) : 10) / 2;
+						page.icons.push_back({16053, 0, x, 428});
+						page.texts.push_back({std::to_string(values[k]), x + 18, 428});
+					} else {
+						page.texts.push_back({std::to_string(values[k]), xs[k] + size.x / 2, 428, true});
+					}
+				}
+			}
+			PlaceView::PageButton reg{{148, 470, 128, 18}, exe_text(0x69C82C, "Subastar barco", "Register ship"),
+				PlaceView::PageAction::Act, v.rows[ship_row].second};
+			reg.row = int(ship_row);
+			reg.keyed = ui.row == int(ship_row);
+			page.buttons.push_back(fitted(reg));
+		}
+		v.page = std::move(page);
 		return;
 	}
-	const int a = town_auction(save, t);
+	const int a = town_auction(save, t) >= 0 ? town_auction(save, t) : int(hall);
 	const GameMemory<0x18>& e = save.events[size_t(a)];
 	const bool ships = e.u16(6) == 0xA;
-	static const char* const kConditions[5][2] = {{"perfecto", "undamaged"}, {"óptimo", "good"}, {"aceptable", "serious"},
-		{"lamentable", "bad"}, {"catastrófico", "catastrophic"}};
-	for (uint16_t lot : auction_lots(save, uint32_t(a))) {
-		const int32_t minimum = lot_minimum_bid(save, uint32_t(a), lot);
-		if (ships) {
-			const int c = ship_condition(save, lot);
-			v.lines.push_back({ship_label(save.ships[lot]) + ". " +
-					guild_text(0x69C808, "En un estado %s. Puja mínima: %i", "in %s condition. Minimum bid: %i",
-						{exe_text(0x69C81C - 4 * uint32_t(c), kConditions[c][0], kConditions[c][1]), format_money(minimum)}),
-				lot == e.u16(0x8) ? kTextColor : kDimColor});
-		} else {
-			const SavedTown& st = save.towns[e.u8(0x15)];
-			v.lines.push_back({building_name(st.records[lot & 0x7FFF].type) + ". " + tr("Puja mínima: ", "Minimum bid: ") +
-					format_money(minimum),
-				lot == e.u16(0x8) ? kTextColor : kDimColor});
-		}
-	}
 	const uint8_t phase = e.u8(0x14);
-	if (phase < 4) {
-		v.lines.push_back({exe_text(0x69C7F8, "La subasta", "The auction") + " " +
-				exe_text(0x69C7FC, "comenzará pronto", "begins shortly"),
-			kTextColor});
-	} else if (phase == 7) {
-		v.lines.push_back({exe_text(0x69C868, "Fin de la subasta", "The auction has ended"), kTextColor});
-	} else {
-		std::string bid = guild_text(0x69C844, "La puja actual es de %i", "The current bid is %i", {format_money(e.u16(0xE))});
-		const uint8_t high = e.u8(0x17);
-		if (high < save.globals.u16(global::kWorldMerchantCount)) {
-			const MerchantMemory& m = save.merchants[high].memory;
-			bid += " " + guild_text(0x69C848, "Ofrecida por %s %s", "by %s %s",
-							 {clean_game_text(game_first_name(save, m.u8(0x1C))),
-								 clean_game_text(game_family_name(save, m.u8(0x1D)))});
-		}
-		v.lines.push_back({bid, kTextColor});
-		if (phase == 5 || phase == 6) {
-			v.lines.push_back({phase == 5 ? exe_text(0x69C84C, "A la una", "For the first time")
-										  : exe_text(0x69C850, "A la dos", "For the second time"),
-				kTextColor});
-		}
-	}
 	const bool shown = bid_shown(save, uint32_t(a), player);
-	if (!ships && phase >= 4 && !shown) {
-		v.lines.push_back({exe_text(0x6B01C0, "Para poder pujar en la subasta de los edificios necesitas una oficina "
-											  "comercial en esta ciudad.",
-							   "You need a trading office in this town in order to participate in the auction of buildings."),
-			kDimColor});
-	}
+	v.title = exe_text(0x69C194, "Sala de subastas", "Auction hall");
 	v.rows.push_back({guild_text(0x69C858, "Ofrecer %i más", "Offer %i more gold", {format_money(e.u16(0x10))}),
 		shown && can_bid(save, uint32_t(a), player)});
 	v.act = v.rows[0].first;
+	// Laid out as the game's in a game of one player (0x5C3DD0; no photo: the drawing run in the emulator,
+	// re/emu/sesion33 drawtrace.py). Before the bidding (the phase 3): the lots on boards (TEX32004) hung from each
+	// other, the first (its first frame) at (34, 155) with the heading centred at (w/2, 170) in font 0 («The following
+	// ships will be auctioned», 0x69C800; the buildings' 0x6B0198), the next ones on the smaller frame, each lot's two
+	// lines from (50, 190): a ship's «<n>-load <type> "<name>"» (0x69C804, the hold in loads, and « once / twice
+	// extended,» by its level, 0x69C85C) and «in <condition> condition. Minimum bid: <n>» (0x69C808) with the coin 2
+	// after it, 16 apart and the lots 76 apart; a building's «<a> <name> is being auctioned.» (0x6B019C) and «Starting
+	// bid: <n>» (0x6B01A0), 20 apart, the lots 80 apart. Bidding (the phases 4 to 7): the lot on sale (its first slot)
+	// from (50, 60), 20 apart (a building's: whether it stands inside the town walls, the grid cell's bit 7, 0x6B01AC
+	// or 0x6B01B0, and its starting bid); a ship's picture in its frame (TEX32000: the frame at (12, 115), the ship at
+	// (57, 129): crayers, cogs and hulks, none for a snaikka; a building's picture as the town shows it: not drawn
+	// here yet); «The current bid is <n>⊙» (0x69C844) at (50, 315), «by <names>» (0x69C848) at (50, 335) and «For
+	// the first time», «For the second time», «And for the third time» (0x69C84C..0x69C854, the phases 5 to 7) at (50,
+	// 355); a buildings' auction without an office of the player's in the town, 0x6B01C0 in a box 20 over the bid
+	// button. The bid button (0x69C858) at (148, 471).
+	PlaceView::Page page;
+	const std::vector<uint16_t> lots = auction_lots(save, uint32_t(a));
+	const SavedTown& st = save.towns[e.u8(0x15)];
+	static const char* const kConditions[5][2] = {{"perfecto", "undamaged"}, {"óptimo", "good"}, {"aceptable", "serious"},
+		{"lamentable", "bad"}, {"catastrófico", "catastrophic"}};
+	const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
+	// A lot's lines (and the coin after the last).
+	auto lot_lines = [&](uint16_t lot, bool bidding) {
+		std::vector<std::string> lines;
+		if (ships) {
+			const SavedShip& s = save.ships[lot];
+			const uint8_t level = s.memory.u8(0xF);
+			std::string first = exe_format(0x69C804, {std::to_string(s.capacity() / 2000), exe_text(0x6C0CB4 + 4 * uint32_t(s.type() & 3), "", ""), s.name()}, "");
+			if (level == 1 || level == 2) {
+				first += exe_piece(0x69C85C, {exe_text(level == 1 ? 0x69C820 : 0x69C824, "2", "once")});
+			}
+			const int c = ship_condition(save, lot);
+			lines = {first, guild_text(0x69C808, "En un estado %s. Puja mínima: %i", "in %s condition. Minimum bid: %i",
+								{exe_text(0x69C81C - 4 * uint32_t(c), kConditions[c][0], kConditions[c][1]),
+									std::to_string(lot_minimum_bid(save, uint32_t(a), lot))})};
+		} else {
+			const BuildingRecord& r = st.records[lot & 0x7FFF];
+			lines.push_back(exe_format(0x6B019C, {exe_text(0x6AFEE0 + 4 * uint32_t(r.type), "", "a"), exe_text(0x6A57C8 + 4 * uint32_t(r.type), "", "")}, ""));
+			if (bidding) {
+				const size_t cell = size_t(r.x) * size_t(st.memory.s32(0x7AC)) + r.y;
+				const bool inside = cell < st.grid.size() && (st.grid[cell] & 0x80);
+				lines.push_back(exe_text(inside ? 0x6B01B0 : 0x6B01AC, "", ""));
+			}
+			lines.push_back(exe_format(0x6B01A0, {std::to_string(lot_minimum_bid(save, uint32_t(a), lot))}, ""));
+		}
+		return lines;
+	};
+	auto put_lines = [&](const std::vector<std::string>& lines, int y, int step) {
+		for (size_t k = 0; k < lines.size(); ++k) {
+			page.texts.push_back({lines[k], 50, y + step * int(k)});
+		}
+		page.icons.push_back({16014, 0, 50 + (font ? font->measure(lines.back()) : 0) + 2, y + step * int(lines.size() - 1)});
+	};
+	if (phase == 3) {
+		const int step = ships ? 16 : 20;  // The lines' and the lots' spacing.
+		const int apart = ships ? 76 : 80;
+		page.icons.push_back({32004, 0, 34, 155, true});
+		PlaceView::PageText head{ships ? exe_text(0x69C800, "Se subastarán los barcos siguientes", "The following ships will be auctioned")
+									   : exe_text(0x6B0198, "Los siguientes edificios van a ser subastados:", "The following buildings are up for auction:"),
+			kInteriorWidth / 2, 170, true};
+		head.head_font = true;
+		page.texts.push_back(head);
+		for (size_t k = 0; k < lots.size(); ++k) {
+			const int y = 190 + apart * int(k);
+			if (k > 0) {
+				page.icons.push_back({32005, 0, 61, y - 35, true});
+				page.icons.push_back({32005, 0, 353, y - 35, true});
+				page.icons.push_back({32004, 1, 34, y - 10, true});
+			}
+			put_lines(lot_lines(lots[k], false), y, step);
+		}
+	} else {
+		if (!lots.empty()) {
+			put_lines(lot_lines(lots[0], true), 60, 20);
+			if (ships) {
+				page.icons.push_back({32000, 0, 12, 115});
+				const int type = save.ships[lots[0]].type() & 3;
+				if (type > 0) {
+					page.icons.push_back({32000, 2 + type, 57, 129});
+				}
+			}
+		}
+		page.texts.push_back({guild_text(0x69C844, "La puja actual es de %i", "The current bid is %i", {std::to_string(e.u16(0xE))}), 50, 315});
+		const uint8_t high = e.u8(0x17);
+		if (high < save.globals.u16(global::kWorldMerchantCount)) {
+			const MerchantMemory& m = save.merchants[high].memory;
+			page.texts.push_back({guild_text(0x69C848, "Ofrecida por %s %s", "by %s %s",
+									  {clean_game_text(game_first_name(save, m.u8(0x1C))), clean_game_text(game_family_name(save, m.u8(0x1D)))}),
+				50, 335});
+		}
+		if (phase >= 5 && phase <= 7) {
+			static const char* const kCalls[3][2] = {{"A la una", "For the first time"}, {"A la dos", "For the second time"},
+				{"Y a la de tres", "And for the third time"}};
+			page.texts.push_back({exe_text(0x69C84C + 4 * uint32_t(phase - 5), kCalls[phase - 5][0], kCalls[phase - 5][1]), 50, 355});
+		}
+		if (!ships && !shown) {
+			add_box(page, exe_text(0x6B01C0, "Para poder pujar en la subasta de los edificios necesitas una oficina comercial en esta ciudad.",
+							  "You need a trading office in this town in order to participate in the auction of buildings."),
+				50, 471 - 20, kInteriorWidth - 100, false);
+		}
+	}
+	if (shown) {
+		page.buttons.push_back(fitted({{148, 471, 128, 18}, v.act, PlaceView::PageAction::Act, v.rows[0].second}));
+	}
+	v.page = std::move(page);
 }
 
 void guild_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
@@ -4120,7 +4690,7 @@ void guild_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 	}
 	if (ui.page == 0) {
 		run_operations(save, sailing, {join_guild_operation(player, t, guild_join_price(save, t, player))});
-		ui.page = 1;  // As the game (0x5C1080(7)): the joining page is over.
+		ui.page = 7;  // As the game (0x5C1080(7)): the welcome.
 		return;
 	}
 	if (ui.page == 1) {
@@ -4130,6 +4700,7 @@ void guild_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 		} else if (v.ship >= 0) {
 			run_operations(save, sailing, {auction_ship_operation(uint32_t(v.ship))});
 			ui.ship_auctioned = true;
+			ui.auctioned_ship = v.ship;
 		}
 		return;
 	}
@@ -5010,7 +5581,7 @@ int add_wrapped(PlaceView::Page& page, const std::vector<std::pair<std::string, 
 		if (!part.empty()) {
 			page.texts.push_back({std::move(part), x, y});
 		}
-		y += font ? font->line_height() : 16;
+		y += kBoxLine;
 	}
 	return y;
 }
@@ -5181,7 +5752,7 @@ PlaceView::Page burglar_layout(SaveGame& save, PlaceUi& ui, int selected) {
 		return page;
 	}
 	const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
-	constexpr int kRow = 20;
+	constexpr int kRow = kBoxLine;  // [+0x1C7C]: font 1's height.
 	constexpr int kShown = 6;
 	const int count = int(w.victims.size());
 	std::vector<std::string> texts;
@@ -6757,13 +7328,20 @@ void draw_place_page(SDL_Renderer* renderer, TextRenderer& text, GameWindowArt& 
 		// Laid out as the game's: where its drawing puts each thing.
 		TextRenderer& title = art.title_text() ? *art.title_text() : text;
 		TextRenderer& head = art.head_text() ? *art.head_text() : text;
+		for (const PlaceView::PageIcon& i : v.page->icons) {
+			if (i.under) {
+				art.draw_tex(i.tex, i.frame, panel.x + i.x, panel.y + i.y);
+			}
+		}
 		for (const PlaceView::PageText& t : v.page->texts) {
 			TextRenderer& font = t.title_font ? title : t.head_font ? head : text;
 			const int x = panel.x + (t.centred ? t.x - font.measure(t.text) / 2 : t.right ? t.x - font.measure(t.text) : t.x);
 			font.draw(t.text, x, panel.y + t.y, t.color);
 		}
 		for (const PlaceView::PageIcon& i : v.page->icons) {
-			art.draw_tex(i.tex, i.frame, panel.x + i.x, panel.y + i.y);
+			if (!i.under) {
+				art.draw_tex(i.tex, i.frame, panel.x + i.x, panel.y + i.y);
+			}
 		}
 		for (const PlaceView::PageBox& b : v.page->boxes) {
 			const SDL_Rect r = {panel.x + b.rect.x, panel.y + b.rect.y, b.rect.w, b.rect.h};
@@ -6792,14 +7370,17 @@ void draw_place_page(SDL_Renderer* renderer, TextRenderer& text, GameWindowArt& 
 											 : SDL_Rect{left, layout.rows_y, width, layout.footer_y - layout.rows_y};
 			int at = room.y;
 			TextRenderer& page = text;
-			const int plh = page.line_height();
+			const int plh = kBoxLine;  // The game's text box's line.
 			bool first = true;
 			auto paragraph = [&](const std::string& s, const SDL_Color& color) {
+				// The notices' titles are centred on their paper («\c»: 0x69EF00, 0x69EFB0, 0x6A94E0, 0x69EF08,
+				// 0x69EF10; the user's photo); the rest from the paper's left.
+				const bool centred = first && v.on_paper;
 				for (const std::string& part : wrap_text(page, s, room.w)) {
 					if (at + plh > room.y + room.h) {
 						return;
 					}
-					page.draw(part, room.x, at, color);
+					page.draw(part, centred ? room.x + (room.w - page.measure(part)) / 2 : room.x, at, color);
 					at += plh;
 				}
 				// 0x420A10 returns the bottom of what it drew: the text after the first (its title) 16 lower, the
@@ -16813,7 +17394,15 @@ int main(int argc, char** argv) {
 									place.ship = 0;
 								}
 							} else {
-								place.page = place_now.menu_pages.empty() ? k : place_now.menu_pages[size_t(k)];
+								// Another page (as the game's set page, the guild's 0x5C1080): from its first row.
+								const int page = place_now.menu_pages.empty() ? k : place_now.menu_pages[size_t(k)];
+								if (page != place.page) {
+									place.row = 0;
+									place.amount = 0;
+									place.ship_auctioned = false;
+									place.auctioned_ship = -1;
+								}
+								place.page = page;
 							}
 							place.inside = false;
 							place.lender_interest = false;
@@ -17165,6 +17754,9 @@ int main(int argc, char** argv) {
 								} else if (place.open == Place::Tavern && (place.talking == int(TavernPerson::Pirate) ||
 										place.talking == int(TavernPerson::Traveller) || place.talking == int(TavernPerson::Trader))) {
 									place_button(back ? SDL_CONTROLLER_BUTTON_DPAD_LEFT : SDL_CONTROLLER_BUTTON_DPAD_RIGHT);
+								} else if (place_now.one_at_a_time && !place_now.rows.empty()) {
+									const int n = int(place_now.rows.size());  // One row at a time: the one before or after, round.
+									place.row = (place.row + (back ? n - 1 : 1)) % n;
 								} else if (!place_now.ships.empty()) {
 									const int n = int(place_now.ships.size());
 									place.ship = (place.ship % n + (back ? n - 1 : 1)) % n;  // As Select, either way.

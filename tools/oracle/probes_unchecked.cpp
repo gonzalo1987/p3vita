@@ -150,6 +150,10 @@ constexpr uint32_t kTavernOffer = 0x030003C0;
 constexpr uint32_t kTavernShips = 0x030003E0;
 constexpr uint32_t kTavernVictims = 0x030003A0;  // TAVERN_VICTIMS: 0x531470's list (count, merchants, sums)
 constexpr uint32_t kTavernInformer = 0x030003A8;  // TAVERN_INFORMER: 0x526B40 on INFORMER_NEWS (SCRATCH + 0x80)
+// GUILD_MEMBERS (stdcall town, k): the guild's members 0x5C67A0, the count and the member k's five values in u32s.
+constexpr uint32_t kGuildMembers = 0x030003B0;
+// GUILD_CONVOYS (stdcall): the guild's convoys 0x50A340 sorted by 0x5C6A30, the count and the convoys (u16).
+constexpr uint32_t kGuildConvoys = 0x030003B8;
 // Its copiers of the convoy window's choices (0x40C170) and of the market
 // window's convoy (0x4AA4A0) (CONVOY_CHOICES, CONVOY_SUMMARY).
 constexpr uint32_t kConvoyChoices = 0x03000E80;
@@ -1230,6 +1234,32 @@ void register_probes_unchecked(ProbeRegistry& r) {
 	r[0x4DA480] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		c.eax_mask = 0xFF;
 		return told_of_auction(s, c.args[0]) ? 1u : 0u;
+	};
+	r[kGuildConvoys] = [](SaveGame& s, const ProbeCall&) -> std::optional<uint32_t> {
+		const std::vector<uint16_t> list = guild_convoys(s);
+		const uint32_t n = uint32_t(list.size());
+		s.globals.u16(kScratch) = uint16_t(n);
+		for (uint32_t k = 0; k < n && k < 126; ++k) {
+			s.globals.u16(kScratch + 2 + 2 * k) = list[k];
+		}
+		return n & 0xFFFF;
+	};
+	r[kGuildMembers] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		const std::vector<GuildMember> list = guild_members(s, c.args[0]);
+		const uint32_t n = uint32_t(int32_t(int8_t(uint8_t(list.size()))));  // [+0x111], a byte sign-extended
+		for (uint32_t k = 0; k < 6; ++k) {
+			s.globals.u32(kScratch + 4 * k) = 0;
+		}
+		s.globals.u32(kScratch) = n;
+		if (int32_t(c.args[1]) < int32_t(n)) {
+			const GuildMember& g = list[c.args[1]];
+			s.globals.u32(kScratch + 4) = g.merchant;
+			s.globals.u32(kScratch + 8) = g.offices;
+			s.globals.u32(kScratch + 0xC) = g.respected_town;
+			s.globals.u32(kScratch + 0x10) = g.first_town;
+			s.globals.u32(kScratch + 0x14) = g.first_tick;
+		}
+		return n;
 	};
 	r[kAuctionList] = [](SaveGame& s, const ProbeCall&) -> std::optional<uint32_t> {
 		const std::vector<AuctionEntry> list = upcoming_auctions(s);

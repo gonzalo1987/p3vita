@@ -60,6 +60,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -84,6 +85,23 @@ int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town);
 }  // namespace events_towns_detail
 
 namespace {
+
+// 0x5C6740 (on the guild's window *0x6E5558): a lot of the auction, sold or not, into the window's arrays (the buyer,
+// the lot, the price; 4 of each, the count after them). The event pushes the town and then the buildings' flag
+// (0x4E3417, 0x4E36C1) where the window takes the flag and then the town ([+0x15B8] = the town ≠ 0, [+0x15B9] = the
+// flag): a game bug, its page 6 shows the results only where the window's town is the flag's value (0 for ships, 1
+// for buildings) and as buildings for any town but the first. Fixed behind fix_game_bugs (only what it shows).
+void record_auction_result(SaveGame& save, uint32_t buyer, uint32_t lot, uint32_t price, uint8_t town, bool buildings) {
+	SaveGame::AuctionResults& r = save.auction_results;
+	if (r.count < r.buyers.size()) {
+		r.buyers[r.count] = buyer;
+		r.lots[r.count] = lot;
+		r.prices[r.count] = price;
+	}
+	++r.count;
+	r.buildings = fix_game_bugs() ? buildings : town != 0;
+	r.town = fix_game_bugs() ? town : uint8_t(buildings ? 1 : 0);
+}
 
 constexpr uint32_t kEvents = 0x6DD73C;
 constexpr uint32_t kEventBusy = kEvents + 0x4;  // u32 1 mientras 0x4D85C0 atiende la cola.
@@ -1812,7 +1830,9 @@ uint32_t fn_4e2cd4(SaveGame& save, uint16_t event) {
 		e.u8(0x14) = 3;
 		e.u32(0) += 0x100;
 		e.u8(0x0) = 0;
-		// 0x5C6C80: interfaz.
+		// 0x5C6C80 (the guild's window, while there is a town view): its results emptied.
+		save.auction_results.count = 0;
+		save.auction_results.ended = false;
 		return 1;
 	}
 	case 3: {
@@ -1973,7 +1993,8 @@ uint32_t fn_4e2cd4(SaveGame& save, uint16_t event) {
 					s.u8(0x3C) |= 0x20;
 					s.u16(0x134) = 0;
 				}
-				// 0x5C6740, 0x5C6BA0: interfaz.
+				// 0x5C6740 (0x5C6BA0 redraws the window).
+				record_auction_result(save, e.u8(0x17), ship, e.u16(0xE), e.u8(0x15), false);
 			}
 			const uint16_t n = g.u16(kShipCount);
 			if (e.u16(0x8) >= n) {
@@ -2049,7 +2070,8 @@ uint32_t fn_4e2cd4(SaveGame& save, uint16_t event) {
 				letter.entry.u8(9) = o.u8(0x1D);
 				send_letter(save, owner, letter);
 			}
-			// 0x5C6740, 0x5C6BA0: interfaz.
+			// 0x5C6740 (0x5C6BA0 redraws the window).
+			record_auction_result(save, e.u8(0x17), record, e.u16(0xE), e.u8(0x15), true);
 		}
 		const uint16_t n = st.memory.u16(0x776);
 		if ((e.u16(0x8) & 0x7FFF) >= n) {
@@ -2077,7 +2099,8 @@ uint32_t fn_4e2cd4(SaveGame& save, uint16_t event) {
 		if (t.u16(0x9A2) == g.u16(kEventHead)) {
 			t.u16(0x9A2) = 0xFFFF;
 		}
-		// 0x5C6BF0: interfaz.
+		// 0x5C6BF0: the guild's window told the auction ended ([+0x12F6]; on its page 2, it shows the page 6).
+		save.auction_results.ended = true;
 		return 0;
 	}
 	default:

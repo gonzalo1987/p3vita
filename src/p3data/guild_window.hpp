@@ -16,7 +16,8 @@ namespace p3::data {
 //
 // The side menu's buttons (0x5A37C0): 0 joining, only for a merchant who isn't a member of the town's guild; 1 the
 // auctions to come, always; 2 the town's auction, while it has one (the town's [+0x9A2], an event 0x0A or 0x36 up to
-// its phase 7); 3 and 4 only for members; 5 and 6 (the page 8) always. The viewer has the first three.
+// its phase 7); 3 and 4 only for members; 5 and 6 (the page 8) always. Each opens the window's page of its number
+// (0x5A3DCE), the last the page 8; the page 6 is the auction's end and 7 the welcome after joining.
 
 // --- Joining (the page 0, 0x5BFE60) ---
 
@@ -77,5 +78,68 @@ OperationBytes bid_operation(const SaveGame& save, uint32_t event, uint32_t play
 // the lot, player}; the player's current one for a lot (0x4D9000: its top, 0 without one).
 OperationBytes automatic_bid_operation(uint32_t top, uint32_t event, uint32_t lot, uint32_t player);
 uint32_t automatic_bid(const SaveGame& save, uint32_t event, uint32_t lot, uint32_t player);
+
+// 0x4DAA50 (on the queue: ship, &minimum, &tick): the ship's minimum bid (0x4DA860) and when the first auction of
+// ships (0x0A) in the queue's order with the ship among its lots takes place (its tick, + 0x100 up to its phase 2, +
+// its wait [+0xE] in phase 1), or −1 for none. The auctions' page tells the player of the ship he registered with it
+// (0x5C2B61).
+struct ShipAuction {
+	int32_t minimum = 0;
+	int32_t tick = -1;
+};
+ShipAuction ship_auction(const SaveGame& save, uint16_t ship);
+
+// --- The convoys (the page 3: its list made as the page opens, 0x5C14D0; its drawing 0x5C5370) ---
+
+// 0x50A340 (on the ships' object) sorted by 0x5C6A30: the convoys from the head [0x6DD88C] (their next [+0x8]) whose
+// guide's owner byte [+0x0] is a merchant, without the flags [+0x14] & 0xA, in a state [+0x12] below 4 or 0xF; then, in
+// that order, one in a state of 2 or more goes after those placed, one below 2 before the first placed one that is below
+// 2 too or that leaves later than it (their [+0x16], unsigned): the waiting ones first, the last of them first.
+std::vector<uint16_t> guild_convoys(const SaveGame& save);
+// A convoy's lines on the page (0x5C5370): its guide ship ([+0x10]), whence and whither ([+0x1E], [+0x1F]: 0x7F or
+// more, an expedition), and over the ships from its [+0xA] (their next [+0x6]) of its guide's owner: how many, their
+// hulls' average in % (each health · 100 / the most, the sum divided by the count), their crews and firepowers
+// ([+0x120]) summed; while waiting (the state below 2) when it sails: the tick + its [+0x16].
+struct GuildConvoyLine {
+	uint16_t guide = 0;
+	uint8_t from = 0;
+	uint8_t to = 0;
+	int ships = 0;
+	int hull = 0;
+	int crew = 0;
+	int32_t firepower = 0;
+	bool waiting = false;
+	uint32_t departure = 0;
+};
+GuildConvoyLine guild_convoy_line(const SaveGame& save, uint16_t convoy);
+
+// --- The members (the page 4: its list 0x5C67A0, made as the page opens; its update 0x5C0D68; its drawing 0x5C59D0) ---
+
+// A member as the page's list keeps him (the window's [+0xFC], [+0x100], [+0x104], [+0x108], [+0x10C]).
+struct GuildMember {
+	uint16_t merchant = 0;
+	uint16_t offices = 0;  // In how many towns he has an office (0x5308A0 on each).
+	uint16_t respected_town = 0;  // Where his respect (0x4F9580) is highest, if above 0 (the first such town); else 0.
+	uint16_t first_town = 0;  // The town of his oldest office (its [+0x2C0] the least, the first such town).
+	uint32_t first_tick = 0x7F7F7F7F;  // That office's [+0x2C0]: when it opened.
+};
+// 0x5C67A0: the merchants in their order who aren't a town's own (their [+0x8] & 6 is 0: the humans and the AI's
+// traders) with the town's bit in their [+0x468]. (A member without an office would keep the tick 0x7F7F7F7F and,
+// in the game, whatever the buffer held for the town: 0 here.)
+std::vector<GuildMember> guild_members(const SaveGame& save, uint32_t town);
+
+// What the page shows of a member besides the list's (0x5C0E2D..0x5C0F1D, read from his memory as the page updates).
+struct GuildMemberPage {
+	uint32_t sex = 0;  // [+0x1A] & 1 (1 a man): the article 0x6C0EF8, «his» 0x69C870, «He» 0x69C884 and 0x69C8D0, 0x69C8C8.
+	uint8_t title = 0;  // 0x4F9430: the word 0x6A0C18 + 4·title.
+	uint8_t rank = 0;  // [+0x39C + his home town]: the word 0x6A0608 + 4·(rank + 8·sex).
+	uint8_t home = 0;  // [+0x19]
+	uint32_t age = 0;  // (the tick − [+0x10]) / 93440, unsigned.
+	bool married = false;  // [+0x31] below the towns' count.
+	uint8_t spouse = 0;  // [+0x30]: the spouse's first name (0x512A60).
+	uint8_t children = 0;  // [+0x36]
+	uint16_t ships = 0;  // [+0x478]
+};
+GuildMemberPage guild_member_page(const SaveGame& save, uint16_t merchant);
 
 }  // namespace p3::data

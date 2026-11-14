@@ -438,6 +438,21 @@ struct SaveGame {
 	// while one waits), for the ship [0x6DFC24] (trade_routes.hpp, 0x5492D0).
 	// In tick_probe, region AR.
 	std::vector<GameMemory<0xDC>> loaded_route;
+	// The guild window's auction results (*0x6E5558's [+0x4F4], [+0x504], [+0x514] (4 each), [+0x528], [+0x15B8],
+	// [+0x15B9], [+0x12F6]: not in the save), which the auctions' event fills as the game's does through the window
+	// (town_tick/events_mayor.cpp): cleared as an auction starts (0x5C6C80), a lot each time one is sold or not
+	// (0x5C6740: the buyer, the lot, the price; the event passes the town and the buildings' flag the other way round
+	// from what the window takes, a game bug), ended as the auction ends (0x5C6BF0). The guild's page 6 shows them.
+	struct AuctionResults {
+		std::array<uint32_t, 4> buyers{};
+		std::array<uint32_t, 4> lots{};
+		std::array<uint32_t, 4> prices{};
+		uint32_t count = 0;
+		bool buildings = false;
+		uint8_t town = 0;
+		bool ended = false;
+	};
+	AuctionResults auction_results;
 	// The offers between merchants (*0x6DE584, a list of 0x14-byte nodes on the heap that the game doesn't keep in
 	// the save: empty after loading one), the head first; [+0x0] (the game's pointer to the next) kept 0
 	// (town_tick/offers.cpp). In tick_probe, region OF.

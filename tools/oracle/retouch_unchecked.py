@@ -9669,6 +9669,207 @@ def auction_list_copier(o):
     o.uc.mem_write(AUCTION_LIST, bytes([0xE9]) + struct.pack('<i', at - (AUCTION_LIST + 5)))
 
 
+GUILD_MEMBERS = to.SENTINEL + 0x3B0  # the copier of the guild's members 0x5C67A0 (probes_unchecked.cpp kGuildMembers)
+
+
+def guild_members_copier(o):
+    """The copier at GUILD_MEMBERS (stdcall town, k): 0x5C67A0 on a window of the oracle's (its town at [+0xD9], its
+    lists' pointers at 0 first so that it frees none) and, into SCRATCH, the list's count ([+0x111], sign-extended)
+    and its member k: the merchant, his offices, the town of his best respect, his oldest office's town (u16s of
+    [+0xFC], [+0x100], [+0x104], [+0x108]) and its tick ([+0x10C]), each in a u32 (zeros for k past the count); eax the
+    count. The game's lists are on the heap."""
+    window = o.alloc(0x200)
+    at = o.alloc(0xC0)
+    code = bytes([0x56, 0x57])  # push esi; push edi
+    code += bytes([0xBE]) + struct.pack('<I', window)  # mov esi, window
+    code += bytes([0x31, 0xC0])  # xor eax, eax
+    for field in (0xFC, 0x100, 0x104, 0x108, 0x10C):
+        code += bytes([0x89, 0x86]) + struct.pack('<I', field)  # mov [esi + field], eax
+    for k in range(6):
+        code += bytes([0xA3]) + struct.pack('<I', SCRATCH + 4 * k)  # mov [SCRATCH + 4k], eax
+    code += bytes([0x8B, 0x44, 0x24, 0x0C])  # mov eax, [esp + 0xC] (the town)
+    code += bytes([0x88, 0x86]) + struct.pack('<I', 0xD9)  # mov [esi + 0xD9], al
+    code += bytes([0x89, 0xF1])  # mov ecx, esi
+    code += bytes([0xE8]) + struct.pack('<i', 0x5C67A0 - (at + len(code) + 5))
+    code += bytes([0x8B, 0x4C, 0x24, 0x10])  # mov ecx, [esp + 0x10] (k)
+    code += bytes([0x0F, 0xBE, 0x86]) + struct.pack('<I', 0x111)  # movsx eax, byte [esi + 0x111]
+    code += bytes([0xA3]) + struct.pack('<I', SCRATCH)  # mov [SCRATCH], eax
+    copy = b''
+    for k, field in enumerate((0xFC, 0x100, 0x104, 0x108)):
+        copy += bytes([0x8B, 0x96]) + struct.pack('<I', field)  # mov edx, [esi + field]
+        copy += bytes([0x0F, 0xB7, 0x04, 0x4A])  # movzx eax, word [edx + ecx*2]
+        copy += bytes([0xA3]) + struct.pack('<I', SCRATCH + 4 + 4 * k)  # mov [SCRATCH + 4 + 4k], eax
+    copy += bytes([0x8B, 0x96]) + struct.pack('<I', 0x10C)  # mov edx, [esi + 0x10C]
+    copy += bytes([0x8B, 0x04, 0x8A])  # mov eax, [edx + ecx*4]
+    copy += bytes([0xA3]) + struct.pack('<I', SCRATCH + 0x14)  # mov [SCRATCH + 0x14], eax
+    code += bytes([0x39, 0xC1, 0x7D, len(copy)]) + copy  # cmp ecx, eax; jge past the copy
+    code += bytes([0xA1]) + struct.pack('<I', SCRATCH)  # mov eax, [SCRATCH]
+    code += bytes([0x5F, 0x5E, 0xC2, 0x08, 0x00])  # pop edi; pop esi; ret 8
+    assert len(code) <= 0xC0
+    o.uc.mem_write(at, code)
+    o.uc.mem_write(GUILD_MEMBERS, bytes([0xE9]) + struct.pack('<i', at - (GUILD_MEMBERS + 5)))
+
+
+def guild_members(o):
+    """The guild's members page (0x5C67A0, guild_window.hpp guild_members): the members of each town's guild with
+    the merchants' guild bits as the save has them, then retouched: in the town of the player's first docked ship, the
+    player, three AI traders, a town's own merchant (never listed: its [+0x8] & 6) and one with [+0x8] = 2 made
+    members; the first AI trader's respect below 0 everywhere (the town 0), the second's the same in two towns (the
+    first kept), the player's above 32758 in the town 9 (0x7FFF); the third (the one with the most offices) his two
+    oldest offices of the same tick (the first kept); a merchant without the bit; then the player's respect only at home, and nowhere above 0. Each
+    member copied (GUILD_MEMBERS), and one past the count."""
+    towns, offices, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    _, town = player_docked_ship(o)
+    guild_members_copier(o)
+    guilds = [t for t in range(towns) if o.u8(o.town(t) + 0x2C8) & 0xC0]
+    ais = [m for m in range(merchants) if o.u16(o.merchant(m) + 8) and not o.u16(o.merchant(m) + 8) & 6]
+    own = [m for m in range(merchants) if o.u16(o.merchant(m) + 8) & 6]
+    print(f'the player {player} in {town}; towns with a guild {guilds}; AI traders {len(ais)}, towns\' own {len(own)}')
+
+    def offices_of(m):
+        found = []
+        for t in range(towns):
+            i = o.u16(o.town(t) + 0x784)
+            while i < offices:
+                if o.u16(o.office(i) + 0x2C4) == m:
+                    found.append((t, i))
+                i = o.u16(o.office(i) + 0x2CA)
+        return found
+
+    # The third the AI trader with the most offices.
+    rich = max(ais, key=lambda m: len(offices_of(m)))
+    ais = [m for m in ais if m != rich][:2] + [rich] + [m for m in ais if m != rich][2:]
+
+    def respect(m, t, v):
+        o.uc.mem_write(o.merchant(m) + 0x2FC + 4 * t, struct.pack('<f', v))
+
+    def show(what):
+        for t in [town] + [g for g in guilds if g != town]:
+            k = 0
+            while True:
+                n = direct(o, GUILD_MEMBERS, [t, k])
+                if k >= n:
+                    break
+                print(f'  {what}: town {t} member {k}: merchant {o.u32(SCRATCH + 4)}, offices {o.u32(SCRATCH + 8)}, '
+                      f'respected in {o.u32(SCRATCH + 0xC)}, first office in {o.u32(SCRATCH + 0x10)} '
+                      f'at {o.u32(SCRATCH + 0x14):#x}')
+                k += 1
+            if what != 'the save':
+                break
+
+    def during(o):
+        show('the save')
+        bit = 1 << town
+        for m in [player] + ais[:3] + own[:1]:
+            w32(o, o.merchant(m) + 0x468, o.u32(o.merchant(m) + 0x468) | bit)
+        two = next((m for m in range(merchants) if o.u16(o.merchant(m) + 8) == 2), None)
+        if two is not None:
+            w32(o, o.merchant(two) + 0x468, o.u32(o.merchant(two) + 0x468) | bit)
+        if len(ais) > 3:
+            w32(o, o.merchant(ais[3]) + 0x468, o.u32(o.merchant(ais[3]) + 0x468) & ~bit)
+        for t in range(towns):
+            respect(ais[0], t, -3.5)
+            respect(ais[1], t, 1.0)
+        respect(ais[1], 2, 6.7)
+        respect(ais[1], 5, 6.2)
+        respect(player, 9, 40000.0)
+        mine = offices_of(ais[2])
+        print(f'  the third AI trader\'s offices {mine}')
+        if len(mine) >= 2:
+            oldest = min(o.u32(o.office(i) + 0x2C0) for _, i in mine)
+            for _, i in mine[:2]:
+                w32(o, o.office(i) + 0x2C0, oldest)
+        show('retouched')
+        # The player's respect above 0 only in his town; then everywhere 0.
+        for t in range(towns):
+            respect(player, t, 0.0)
+        respect(player, town, 3.0)
+        show('the player respected at home')
+        for t in range(towns):
+            respect(player, t, 0.5)
+        show('the player respected nowhere')
+    return during
+
+
+GUILD_CONVOYS = to.SENTINEL + 0x3B8  # the copier of the guild's convoys 0x50A340 + 0x5C6A30 (kGuildConvoys)
+
+
+def guild_convoys_copier(o):
+    """The copier at GUILD_CONVOYS (stdcall, no arguments): 0x50A340 on the ships' object into a window of the
+    oracle's [+0x114], sorted by 0x5C6A30 (which frees it and keeps its own), and that list (a u16 count and the
+    convoys, at most 126) copied into SCRATCH; eax the count. The game's lists are on the heap."""
+    window = o.alloc(0x200)
+    at = o.alloc(0x60)
+    code = bytes([0x56, 0x57])  # push esi; push edi
+    code += bytes([0xB9]) + struct.pack('<I', to.SHIPS)  # mov ecx, the ships' object
+    code += bytes([0xE8]) + struct.pack('<i', 0x50A340 - (at + len(code) + 5))
+    code += bytes([0xBE]) + struct.pack('<I', window)  # mov esi, window
+    code += bytes([0x89, 0x86]) + struct.pack('<I', 0x114)  # mov [esi + 0x114], eax
+    code += bytes([0x89, 0xF1])  # mov ecx, esi
+    code += bytes([0xE8]) + struct.pack('<i', 0x5C6A30 - (at + len(code) + 5))
+    code += bytes([0x8B, 0x35]) + struct.pack('<I', window + 0x114)  # mov esi, [window + 0x114]
+    code += bytes([0xBF]) + struct.pack('<I', SCRATCH)  # mov edi, SCRATCH
+    code += bytes([0x0F, 0xB7, 0x0E])  # movzx ecx, word [esi]
+    code += bytes([0x83, 0xF9, 0x7E, 0x76, 0x05])  # cmp ecx, 126; jbe +5
+    code += bytes([0xB9]) + struct.pack('<I', 0x7E)  # mov ecx, 126
+    code += bytes([0x41, 0xFC, 0xF3, 0x66, 0xA5])  # inc ecx; cld; rep movsw
+    code += bytes([0x0F, 0xB7, 0x05]) + struct.pack('<I', SCRATCH)  # movzx eax, word [SCRATCH]
+    code += bytes([0x5F, 0x5E, 0xC3])  # pop edi; pop esi; ret
+    assert len(code) <= 0x60
+    o.uc.mem_write(at, code)
+    o.uc.mem_write(GUILD_CONVOYS, bytes([0xE9]) + struct.pack('<i', at - (GUILD_CONVOYS + 5)))
+
+
+def guild_convoys(o):
+    """The guild's convoys page (0x50A340 and 0x5C6A30, guild_window.hpp guild_convoys): the save's convoys, then
+    retouched: every listed convoy waiting (the state 0 or 1) with departures in a mixed order, two of them equal; one
+    private (the flag 2), one with the flag 8, one in the state 5 and one in 0xF, one whose guide's owner byte is past
+    the merchants; the list copied (GUILD_CONVOYS) after each."""
+    count = o.u16(to.SHIPS + 0xF6)
+    merchants = o.counts()[2]
+    guild_convoys_copier(o)
+
+    def convoy(c):
+        return o.u32(to.SHIPS + 8) + 0x3C * c
+
+    def chain():
+        found, c = [], o.u16(to.SHIPS + 0xEC)
+        while c < count:
+            found.append(c)
+            c = o.u16(convoy(c) + 8)
+        return found
+
+    def show(what):
+        n = direct(o, GUILD_CONVOYS, [])
+        print(f'  {what}: {[o.u16(SCRATCH + 2 + 2 * k) for k in range(min(n, 126))]}')
+
+    def during(o):
+        existing = chain()
+        print(f'the convoys {existing}, states {[o.u16(convoy(c) + 0x12) for c in existing]}')
+        show('the save')
+        for k, c in enumerate(existing):
+            w16(o, convoy(c) + 0x12, k % 2)
+            w16(o, convoy(c) + 0x16, (k * 37) % 5 * 100)
+        show('all waiting')
+        for k, c in enumerate(existing):
+            w16(o, convoy(c) + 0x12, (0, 1, 2, 3, 0xF)[k % 5])
+        show('waiting and sailing')
+        # The first sailing and leaving early, the second waiting and leaving later: placed after it.
+        w16(o, convoy(existing[0]) + 0x12, 2)
+        w16(o, convoy(existing[0]) + 0x16, 0)
+        w16(o, convoy(existing[1]) + 0x12, 0)
+        w16(o, convoy(existing[1]) + 0x16, 300)
+        show('sailing first')
+        if len(existing) >= 5:
+            w8(o, convoy(existing[0]) + 0x14, o.u8(convoy(existing[0]) + 0x14) | 2)
+            w8(o, convoy(existing[1]) + 0x14, o.u8(convoy(existing[1]) + 0x14) | 8)
+            w16(o, convoy(existing[2]) + 0x12, 5)
+            w8(o, convoy(existing[3]), merchants)
+            show('left out')
+    return during
+
+
 def snippet(o, begin, end, esi):
     """The game's code [begin, end) with esi (a window), on a stack of its own;
     eax at the end."""
@@ -14459,6 +14660,13 @@ SCENARIOS = {
         '@635c23', '@635c08>635c18', '@635c0f', '@635c0d>635c18', '@536981>537025', '@635cf5>635dbf', '@635d28',
         '@635d14', '@5369d2>537025', '@536a1f', '@536a05>537025', '@536a19>537025']),
     # The auctions (2026-11-12: the guild's window).
+    # The guild's members page (2026-11-14: the buildings' windows as the game's).
+    'guild_members': Scenario(guild_members, [GUILD_MEMBERS], 0, [
+        '@5c67e0', '@5c67d6>5c67e1', '@5c67de>5c67e1', '@5c6919', '@5c6909>5c6927', '@5c6917>5c6927',
+        '@5c698f>5c69b4', '@5c69a8', '@5c69a6>5c69b4', '@5c69da>5c69ff', '@5c69dc', '@5c693f>5c6a28']),
+    'guild_convoys': Scenario(guild_convoys, [GUILD_CONVOYS], 0, [
+        '@50a3aa', '@50a392>50a3ba', '@50a398>50a3ba', '@50a3a8>50a3ba', '@50a3a2>50a3aa',
+        '@5c6aa1>5c6b5c', '@5c6ad0>5c6aea', '@5c6ade>5c6b12', '@5c6ae0', '@5c6b4b']),
     'auction_ops': Scenario(auction_ops, [0x535760, 0x4D85C0, AUCTION_LIST, 0x4DA480, WINDOW_SHIPS], 0, [
         '@4da52d>4da853', '@4da551>4da853', '@4da563>4da853', '@4da571>4da853', '@4da586>4da853', '@4da5b1>4da853',
         '@4da638', '@4da69b>4da727', '@4da6aa', '@4da619>4da727', '@4da6bc', '@4da71e', '@4da751', '@4da769',

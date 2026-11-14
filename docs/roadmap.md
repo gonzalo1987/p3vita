@@ -344,12 +344,23 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     laterales con la letra de sus botones (la 1) y colocados como los del juego (13-11-2026, noche; commit 8d31da6), y
     los de la iglesia, el gremio, la herrería y el astillero (los botones de las páginas aún por hacer, atenuados). Las páginas de
     la herrería (armas de mano, como la foto, y de barco) y de la iglesia (alimentar a los pobres, como la foto,
-    donaciones y ampliación, con el retrato del cura) (13-11-2026, noche; commit 2aa4ac2).
+    donaciones y ampliación, con el retrato del cura) (13-11-2026, noche; commit 2aa4ac2). El gremio (14-11-2026): su
+    menú lateral con sus 7 botones; «Miembros» como la foto (la lista contra el juego: escenario `guild_members`);
+    las subastas previstas en sus tablas de madera colgadas, con «Aviso» y el barco a inscribir; la sala de subastas
+    (la lista de lotes, el lote en puja con el libro de barcos, las pujas); el fin de la subasta con lo vendido (que el
+    evento de la subasta deja en `SaveGame::auction_results`, como el juego en su ventana); la bienvenida al ingresar;
+    los convoyes públicos (su orden contra el juego: escenario `guild_convoys`) y los contratos del Mediterráneo. Y,
+    en todas las páginas, la caja de texto del juego con sus líneas de 15 (antes 20) y los títulos de los avisos
+    centrados. Las páginas sin foto, con la disposición que da su dibujo ejecutado en el emulador
+    (`re/emu/sesion33/drawtrace.py`).
   - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido) y
     el texto del informante con su barra de desplazamiento; dónde van las flechas del interés del prestamista; el menú lateral
-    del muelle, la lonja, el baño, la oficina, la caballeriza y la oficina de otro comerciante; las páginas del resto (la lonja, el astillero y el muelle, la oficina, el gremio, la página
+    del muelle, la lonja, el baño, la oficina, la caballeriza y la oficina de otro comerciante; las páginas del resto (la lonja, el astillero y el muelle, la oficina, la página
     de rezar de la iglesia y las caras del cura, el baño, la caballeriza y las otras páginas del ayuntamiento); la armería, que en el juego es un rollo
-    de papel sin marco ni interior. Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
+    de papel sin marco ni interior. En el gremio: las «Rutas comerciales» (un mapa de 400 × 150 que el juego dibuja con
+    lo que hallaron las expediciones, 0x5C5F00 y 0x534A40), el dibujo del edificio en una subasta de edificios (lo saca
+    de la vista de la ciudad, 0x5C6FB9), la media bala de cañón de los convoyes, la sala de subastas de una partida en
+    red (0x5C3640) y sus gestos al azar (0x5A3E03). Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
 - [ ] **Los edificios que aún no tienen ventana**: la puerta de la ciudad (`Stadttor`: qué hace, por leer en el
   código; el transporte por tierra resultó ser de la caballeriza, el granero de las vistas, que ya tiene la suya,
   13-11-2026, como el gremio, la herrería, la iglesia, el baño, la armería de la milicia y el ayuntamiento, este solo
@@ -596,6 +607,11 @@ ser a propósito. El detalle, en el comentario del código y en [oracle.md](orac
 
 ### Reproducidos, sin corregir aún
 
+**El respeto de los miembros del gremio** (la página «Miembros», 0x5C67A0; 14-11-2026, seguro, solo el texto): la
+ciudad donde más respeta al miembro se busca entre las que le dan más de 0, así que si no tiene respeto positivo en
+ninguna, la página dice que «goza del máximo respeto» de la primera ciudad de la partida (Edimburgo en las del
+visor). Reproducido; sin decidir cómo corregirlo (¿su ciudad natal?).
+
 **Los piratas y las batallas en el mar** ([cloud/battles-2.md](cloud/battles-2.md), «Game bugs»):
 - Los edificios de la guarida nunca se ponen en su mapa (seguro): 0x515DA0 llama a 0x4F9C80 con el tipo y la
   orientación cambiados de sitio. Corrección: cambiarlos.
@@ -699,6 +715,15 @@ de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; s
   texto: el visor acaba la frase con su punto.
 
 ### Corregidos con el ajuste
+
+**Los resultados de la subasta en el gremio** (la página «Fin de la subasta», 0x5C2F90; 14-11-2026, seguro, solo cambia
+lo que se ve: corregido sin preguntar, como los textos): el evento de la subasta pasa a la ventana del gremio (0x5C6740,
+llamada en 0x4E3417 y 0x4E36C1) la ciudad y la marca de «edificios» en el orden cambiado, así que la ventana toma la
+ciudad como marca y la marca como ciudad: la lista de lo vendido solo sale en la primera ciudad de la partida (subastas
+de barcos) o en la segunda (de edificios), y en las demás solo «Fin de la subasta». Y un lote sin vender también se
+apunta, con el comprador 0xFF, fuera de la lista de comerciantes (el juego lee lo que haya allí). Corregido
+(`town_tick/events_mayor.cpp` `record_auction_result`, la página en `src/app/main.cpp` `guild_results_view`): con el
+ajuste, la ciudad y la marca donde van y sin los lotes no vendidos.
 
 **La venta a una ciudad sitiada** (0x89, 0x635990; 13-11-2026, seguro, corregido a petición del usuario): al
 comerciante se le paga solo el último lote que se le quita (el de la oficina o el del último de sus barcos), no todo

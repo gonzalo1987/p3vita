@@ -1,5 +1,6 @@
 #include "p3data/guild_window.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 #include "p3data/game_memory.hpp"
@@ -10,6 +11,7 @@ namespace p3::data {
 namespace tick::events_detail {
 int32_t fn_51b7e0(const SaveGame& save, int town, int merchant);  // events.cpp
 int32_t fn_4daf10(const SaveGame& save, uint32_t town, uint32_t record, bool flag);  // events.cpp
+int16_t fn_4f9580(const SaveGame& save, int merchant, uint32_t town);  // events.cpp
 }  // namespace tick::events_detail
 namespace tick::events_mayor_detail {
 int32_t fn_4da860(const SaveGame& save, uint32_t ship);  // events_mayor.cpp
@@ -234,6 +236,141 @@ uint32_t automatic_bid(const SaveGame& save, uint32_t event, uint32_t lot, uint3
 		tick::events_detail::fn_4d9000(save, player, e->u8(0x15), lot, top);
 	}
 	return top;
+}
+
+ShipAuction ship_auction(const SaveGame& save, uint16_t ship) {
+	ShipAuction a;
+	a.minimum = tick::events_mayor_detail::fn_4da860(save, ship);
+	const uint32_t count = save.globals.u16(kEventCount);
+	for (uint32_t i = save.globals.u16(kEventHead); i < count && i < save.events.size(); i = save.events[i].u16(4)) {
+		const Event& e = save.events[i];
+		if (e.u16(6) != 0xA || (e.u16(8) != ship && e.u16(0xA) != ship && e.u16(0xC) != ship)) {
+			continue;
+		}
+		a.tick = e.s32(0);
+		if (e.u8(0x14) <= 2) {
+			a.tick += 0x100;
+			if (e.u8(0x14) == 1) {
+				a.tick += e.u16(0xE);
+			}
+		}
+		break;
+	}
+	return a;
+}
+
+std::vector<uint16_t> guild_convoys(const SaveGame& save) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t count = g.u16(global::kShips + 0xF6);
+	const uint32_t merchants = g.u16(global::kWorldMerchantCount);
+	std::vector<uint16_t> list;
+	for (uint32_t c = g.u16(global::kShips + 0xEC); c < count && c < save.convoys.size(); c = save.convoys[c].u16(0x8)) {
+		const GameMemory<0x3C>& m = save.convoys[c];
+		if (m.u8(0x0) < merchants && (m.u8(0x14) & 0xA) == 0 && (m.u16(0x12) < 4 || m.u16(0x12) == 0xF)) {
+			list.push_back(uint16_t(c));
+		}
+	}
+	std::vector<uint16_t> out(list.size());
+	for (size_t k = 0; k < list.size(); ++k) {
+		const GameMemory<0x3C>& c = save.convoys[list[k]];
+		if (c.u16(0x12) >= 2) {
+			out[k] = list[k];
+			continue;
+		}
+		size_t at = 0;
+		while (at < k) {
+			const GameMemory<0x3C>& d = save.convoys[out[at]];
+			if (d.u16(0x12) < 2 || c.u16(0x16) < d.u16(0x16)) {
+				break;
+			}
+			++at;
+		}
+		for (size_t j = k; j > at; --j) {
+			out[j] = out[j - 1];
+		}
+		out[at] = list[k];
+	}
+	return out;
+}
+
+GuildConvoyLine guild_convoy_line(const SaveGame& save, uint16_t convoy) {
+	GuildConvoyLine l;
+	if (convoy >= save.convoys.size()) {
+		return l;
+	}
+	const GameMemory<0x3C>& c = save.convoys[convoy];
+	const uint32_t ships = save.globals.u16(global::kShipCount);
+	l.guide = c.u16(0x10);
+	l.from = c.u8(0x1E);
+	l.to = c.u8(0x1F);
+	const uint8_t owner = l.guide < save.ships.size() ? save.ships[l.guide].memory.u8(0x0) : 0xFF;
+	int hulls = 0;
+	for (uint32_t s = c.u16(0xA); s < ships && s < save.ships.size(); s = save.ships[s].memory.u16(0x6)) {
+		const ShipMemory& m = save.ships[s].memory;
+		if (m.u8(0x0) != owner) {
+			continue;
+		}
+		hulls += m.s32(0x14) != 0 ? m.s32(0x18) * 100 / m.s32(0x14) : 0;
+		l.crew += m.u16(0x40);
+		l.firepower += m.s32(0x120);
+		++l.ships;
+	}
+	l.hull = l.ships > 0 ? hulls / l.ships : 0;  // (The game divides by a count of 0 too: a guide of its owner's.)
+	l.waiting = c.u16(0x12) < 2;
+	l.departure = save.globals.u32(global::kWorldTick) + c.u16(0x16);
+	return l;
+}
+
+std::vector<GuildMember> guild_members(const SaveGame& save, uint32_t town) {
+	std::vector<GuildMember> members;
+	const uint32_t bit = 1u << (town & 31);
+	const uint32_t merchants = std::min<uint32_t>(save.globals.u16(global::kWorldMerchantCount), uint32_t(save.merchants.size()));
+	const uint32_t towns = save.globals.u32(global::kWorldTownCount);
+	for (uint32_t m = 0; m < merchants; ++m) {
+		const MerchantMemory& mm = save.merchants[m].memory;
+		if ((mm.u8(0x8) & 6) != 0 || (mm.u32(0x468) & bit) == 0) {
+			continue;
+		}
+		GuildMember g;
+		g.merchant = uint16_t(m);
+		float best = 0.0f;  // 0x5C69C5: compared as floats, a town only above the best so far.
+		for (uint32_t t = 0; t < towns; ++t) {
+			const int office = tick::facilities_detail::fn_5308a0(save, m, t);
+			if (office >= 0) {
+				++g.offices;
+				const uint32_t opened = save.offices[size_t(office)].memory.u32(0x2C0);
+				if (g.first_tick > opened) {
+					g.first_tick = opened;
+					g.first_town = uint16_t(t);
+				}
+			}
+			const float respect = float(tick::events_detail::fn_4f9580(save, int(m), t));
+			if (best < respect) {
+				best = respect;
+				g.respected_town = uint16_t(t);
+			}
+		}
+		members.push_back(g);
+	}
+	return members;
+}
+
+GuildMemberPage guild_member_page(const SaveGame& save, uint16_t merchant) {
+	GuildMemberPage p;
+	if (merchant >= save.merchants.size()) {
+		return p;
+	}
+	const MerchantMemory& m = save.merchants[merchant].memory;
+	p.sex = m.u8(0x1A) & 1u;
+	p.title = tick::merchants_detail::fn_4f9430(save, int(merchant));
+	p.home = m.u8(0x19);
+	p.rank = m.u8(0x39C + size_t(p.home));
+	p.age = (save.globals.u32(global::kWorldTick) - m.u32(0x10)) / 93440u;
+	p.married = m.u8(0x31) < save.globals.u32(global::kWorldTownCount);
+	p.spouse = m.u8(0x30);
+	p.children = m.u8(0x36);
+	p.ships = m.u16(0x478);
+	return p;
 }
 
 }  // namespace p3::data

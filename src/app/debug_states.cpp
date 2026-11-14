@@ -544,8 +544,8 @@ void letters_with_buttons(SaveGame& save) {
 // The guild's auctions (guild_window.hpp): the player a member of the guild of his first ship's town (its bit in his
 // [+0x468]) and two auctions of ships (events 0x0A as 0x4DA510 makes them, in phase 0, which makes their ship) at the
 // next ticks, in that town and in the next one with a guild ([+0x2C8] & 0xC0): they are announced 14 days later and
-// bid on a day after.
-bool auctions(SaveGame& save) {
+// bid on a day after. `count` 1: only the first (the guild's window keeps one auction's results: the last's).
+bool auctions(SaveGame& save, uint32_t count = 2) {
 	GlobalMemory& g = save.globals;
 	MerchantMemory& m = save.merchants[size_t(save.player)].memory;
 	const uint16_t ship = m.u16(0xE);
@@ -565,7 +565,7 @@ bool auctions(SaveGame& save) {
 	}
 	const uint32_t now = g.u32(global::kWorldTick);
 	const uint8_t places[2] = {town, other};
-	for (uint32_t k = 0; k < 2; ++k) {
+	for (uint32_t k = 0; k < count; ++k) {
 		GameMemory<0x18>& e = save.events[tick::events_detail::fn_4d8cf0(save, now + 1 + k)];
 		e.u16(0x6) = 0xA;
 		e.u16(0x8) = 0xFFFF;
@@ -619,7 +619,8 @@ const char kDebugStatesHelp[] =
 	"  letters     letters with buttons: a suitor, a proposal, the prince's request\n"
 	"              and a townsman who can't pay back the player's loan\n"
 	"  auctions    the player in the guild of his first ship's town and two auctions\n"
-	"              of ships there and in the next town with a guild (bidding in 15 days)\n";
+	"              of ships there and in the next town with a guild (bidding in 15 days)\n"
+	"  auction     the same with the first auction only\n";
 
 namespace {
 
@@ -792,8 +793,8 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			}
 		} else if (state == "letters") {
 			letters_with_buttons(save);
-		} else if (state == "auctions") {
-			if (!auctions(save)) {
+		} else if (state == "auctions" || state == "auction") {
+			if (!auctions(save, state == "auction" ? 1 : 2)) {
 				error = "the player's first ship isn't in a town";
 				return false;
 			}
