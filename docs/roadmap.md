@@ -86,7 +86,7 @@ Cómo leerla:
   (0x5F, 0x75 y el evento 0x13, con sus cartas y, en el visor, la ventana de la oficina de otro comerciante) y la ruta
   por puntos del mapa del mar (0x0B), esta también en el visor (tocar el mar añade puntos; X zarpa, ○ los borra).
   Antes, la primera parte: la reparación de convoyes, los botones de las cartas, la iglesia y el baño.
-- **Siguiente**: el encargo `ENCARGO_VISTAS_JUEGO.md` (junto al HANDOFF): las páginas que faltan
+- **Siguiente**: el encargo `ENCARGO_GRUPO5_VISOR.md` (junto al HANDOFF): las páginas que faltan
   como las del juego están hechas (la última, el astillero y el muelle, el 14-11-2026 por la noche); queda el grupo 5
   en el visor (apartado 1): las páginas 1 a 7 del ayuntamiento, el cliente de un pedido de la taberna y los asedios.
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
@@ -192,8 +192,9 @@ enteros antes de reescribirlos):
   `town_hall_window.cpp` con su ctest): la armería (.let 0x0B: formar y despedir unidades, 0x41 y 0x40, solo para el
   alcalde) y la página 0 del ayuntamiento (.let 0x03), los avisos (los pedidos del mundo y el decreto del príncipe;
   «Aceptar misión», 0x3D). **Falta el visor** de las otras 7 páginas del ayuntamiento (barco patrulla 0x44, traslado,
-  alcalde, Gobernador 0x3F/0x49, consejo, bodega 0x47, Hansa), los asedios (0x5F1F00..0x5F31C0), mudar la ciudad
-  natal (0x5DD520) y el cliente de un pedido de la taberna (0x5D7760, la 0x51): en `ENCARGO_VISTAS_JUEGO.md`.
+  alcalde, Gobernador 0x3F/0x49, consejo, bodega 0x47, Hansa), los asedios (0x5F1F00..0x5F31C0) y el cliente de un
+  pedido de la taberna (0x5D7760, la 0x51): en `ENCARGO_GRUPO5_VISOR.md`. (Mudar la ciudad natal, 0x5DD520, quedó
+  hecho en la página «Trasladarse» de la oficina, 14-11-2026.)
 - [x] **La oficina y su administrador** (12-11-2026; `operations.cpp`, `office_window.cpp`): 0x5A el porcentaje de
   trabajadores de una empresa, 0x5B la orden del administrador para una mercancía, 0x5E contratarlo o despedirlo, 0x62
   el alquiler de una clase de casas, 0x63 los guardias, 0x66 reservar las existencias de una mercancía; en el visor,
@@ -334,7 +335,8 @@ gráficos y sus textos; las reglas de lo que enseña y las órdenes que encola, 
 del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo en «Decisiones del usuario».
 
 - [ ] **Las vistas de dentro de los edificios** (lo pidió el usuario el 05-11-2026; en marcha desde el 13-11-2026 con
-  el encargo `ENCARGO_VISTAS_JUEGO.md`; lo leído del juego, en `re/emu/sesion31/views_notes.md`, y las fotos de la
+  el encargo de las vistas, acabado el 14-11-2026, y desde entonces con `ENCARGO_GRUPO5_VISOR.md`; lo leído del juego,
+  en `re/emu/sesion31/views_notes.md`, y las fotos de la
   pantalla del juego que mandó el usuario, en `re/emu/sesion31/pc_shots/`).
   - [x] **El marco común** (`src/app/game_window.cpp`): la ventana del juego entera (451 × 537, como 0x465BA0) dibujada a
     su tamaño en una textura y ajustada al alto de la Vita (×0,95), centrada en la vista de la ciudad: el marco de
