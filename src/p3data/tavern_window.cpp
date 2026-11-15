@@ -79,6 +79,60 @@ bool tavern_order_client(const SaveGame& save, uint32_t town) {
 	return false;
 }
 
+OrderClient tavern_order(const SaveGame& save, uint32_t town) {
+	OrderClient o;
+	const TownMemory& t = town_memory(save, town);
+	const uint16_t events = save.globals.u16(kEventCount);
+	for (size_t k = 0; k < 2; ++k) {
+		const uint16_t i = t.u16(0x830 + 2 * k);
+		if (i < events && i < save.events.size() && save.events[i].u8(0x16) == player_of(save)) {
+			const GameMemory<0x18>& e = save.events[i];
+			o.event = i;
+			o.town = e.u8(0x8);
+			o.ware = e.u8(0x9);
+			o.first = e.u8(0xA);
+			o.family = e.u8(0xB);
+			o.deadline = e.u32(0xC);
+			o.left = e.u16(0x10);
+			o.total = e.u16(0x12);
+			o.price = e.u16(0x14);
+			o.at_end = e.u8(0x17) != 0;
+			break;
+		}
+	}
+	return o;
+}
+
+int32_t order_client_stock(const SaveGame& save, uint32_t town, uint8_t ware) {
+	const uint32_t player = player_of(save);
+	if (ware >= 24 || player >= save.merchants.size()) {
+		return 0;
+	}
+	int32_t sum = 0;
+	const int office = tick::facilities_detail::fn_5308a0(save, player, town);
+	if (office >= 0) {
+		sum = save.offices[size_t(office)].memory.s32(0x4 + 4 * ware);
+	}
+	const uint32_t ships = save.globals.u16(global::kShipCount);
+	size_t walked = 0;
+	for (uint32_t s = save.merchants[player].memory.u16(0xE); s < ships && s < save.ships.size() && walked < save.ships.size();
+		 s = save.ships[s].memory.u16(0x4), ++walked) {
+		const ShipMemory& ship = save.ships[s].memory;
+		if (ship.u8(0x39) == town && !(ship.u8(0x136) & 1)) {
+			sum = int32_t(uint32_t(sum) + uint32_t(ship.s32(0x54 + 4 * ware)));
+		}
+	}
+	static constexpr uint8_t kInBarrels[24] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};
+	return sum / (kInBarrels[ware] ? 200 : 2000);
+}
+
+OperationBytes order_delivery_operation(uint32_t player, uint16_t event, uint32_t amount) {
+	OperationBytes op{};
+	const uint32_t fields[5] = {0x51, player, 0, event, amount};
+	std::memcpy(op.data(), fields, sizeof fields);
+	return op;
+}
+
 bool tavern_trader(const SaveGame& save, uint32_t town) {
 	const TownMemory& t = town_memory(save, town);
 	const uint8_t holder = t.u8(0x83E);

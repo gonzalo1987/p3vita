@@ -16,6 +16,7 @@
 #include "p3data/town_hall_window.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
+#include "p3data/wares.hpp"
 
 namespace p3::data::tick::events_towns_detail {
 int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town);  // events_towns.cpp: the office, made if none
@@ -757,6 +758,9 @@ const char kDebugStatesHelp[] =
 	"  failed-task  a Hanse task of the player's failed today (kind 5, gone in 28 days):\n"
 	"              the town hall's «Alderman's office» tells him to take no more (with\n"
 	"              candidate: 0x4EC694 needs the merchant's [+0x37])\n"
+	"  order-client  a town hall order the player took in his first docked ship's town (10\n"
+	"              of 30 left, a ware the ship carries): its client in the tavern there\n"
+	"  order-premium  the same, paid at the end (a premium)\n"
 	"  road-task   a Hanse road of the player's, 5 sections left, some materials delivered\n"
 	"              (the town gate's «Overland route»; with materials: some to hand over)\n"
 	"  town-manager  mayor of his home town without a council (the town hall's page 2:\n"
@@ -1068,6 +1072,53 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			if (m.u8(0x37) == 0) {
 				m.u8(0x37) = 1;  // (0x4EC694 needs it.)
 			}
+		} else if (state == "order-client" || state == "order-premium") {
+			// A town hall order the player took (an event 0x11 in the town's place [+0x830], as 0x3D leaves it) in the town
+			// of his first docked ship, of the first ware that ship carries 2 loads or barrels of (else grain, 10 loads of
+			// it put in the ship): 10 of 30
+			// left at 100 each, its deadline in 20 days, paid by the unit or (order-premium) at the end: its client in
+			// that town's tavern.
+			int town = -1;
+			int ware = -1;
+			for (int s = m.u16(0xE); s >= 0 && size_t(s) < save.ships.size() && s < save.globals.u16(global::kShipCount);
+				 s = save.ships[size_t(s)].memory.u16(0x4)) {
+				ShipMemory& ship = save.ships[size_t(s)].memory;
+				if (ship.u16(0x134) <= 1) {
+					town = ship.u8(0x39);
+					for (int w = 0; w < 20 && ware < 0; ++w) {
+						if (ship.s32(0x54 + 4 * w) >= (kWares[w].unit == WareUnit::Barrel ? 400 : 4000)) {
+							ware = w;
+						}
+					}
+					if (ware < 0) {
+						ware = 0;
+						ship.s32(0x54) += 20000;  // (10 loads of grain to hand over.)
+						recalculate_cargo(save.ships[size_t(s)]);
+					}
+					break;
+				}
+			}
+			if (town < 0 || size_t(town) >= save.towns.size()) {
+				error = "the player has no ship in port";
+				return false;
+			}
+			const uint32_t now = save.globals.u32(global::kWorldTick);
+			const uint32_t deadline = now + 20 * 0x100;
+			const uint16_t index = tick::events_detail::fn_4d8cf0(save, deadline);
+			GameMemory<0x18>& e = save.events[index];
+			TownMemory& t = save.towns[size_t(town)].memory;
+			e.u16(0x6) = 0x11;
+			e.u8(0x8) = uint8_t(town);
+			e.u8(0x9) = uint8_t(ware);
+			e.u8(0xA) = t.u8(0x6E8);
+			e.u8(0xB) = t.u8(0x6EC);
+			e.u32(0xC) = deadline;
+			e.u16(0x10) = 10;
+			e.u16(0x12) = 30;
+			e.u16(0x14) = 100;
+			e.u8(0x16) = uint8_t(save.player);
+			e.u8(0x17) = state == "order-premium" ? 1 : 0;
+			t.u16(t.u16(0x830) < save.globals.u16(0x6DD73C + 0xC) ? 0x832 : 0x830) = index;
 		} else if (state == "nest-attack") {
 			if (!nest_attack(save)) {
 				error = "the player's first ship isn't in a town, or no pirate has a nest";

@@ -90,8 +90,8 @@ Cómo leerla:
 - **Siguiente**: el encargo `ENCARGO_GRUPO5_VISOR_2.md` (junto al HANDOFF): las páginas que faltan
   como las del juego están hechas (la última, el astillero y el muelle, el 14-11-2026 por la noche) y las siete del
   ayuntamiento (15-11-2026), con su texto tras una misión fallida, y la puerta de la ciudad con su «Ruta terrestre»
-  (15-11-2026; el panel de la Hansa propio del visor, quitado); queda del grupo 5 en el visor (apartado 1) el cliente
-  de un pedido de la taberna y los asedios (las otras siete páginas de la puerta).
+  (15-11-2026; el panel de la Hansa propio del visor, quitado); con el cliente de un pedido de la taberna
+  (15-11-2026); queda del grupo 5 en el visor (apartado 1) los asedios (las otras siete páginas de la puerta).
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
   (apartado 6).
@@ -108,7 +108,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Tipos de evento (58) | 53 | 5: 1 el intérprete de misiones, 1 la partida en red y 3 nadie |
 | Operaciones (193 códigos) | 167: las 37 de la simulación, 101 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red y la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) | **5 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74, 0x76 y 0x82; apartado 3), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 139 | 15: 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
-| Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (menos el cliente de un pedido), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | El cliente de un pedido de la taberna y 7 de las 8 páginas de la puerta de la ciudad (las del asedio) (apartado 4) |
+| Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | 7 de las 8 páginas de la puerta de la ciudad (las del asedio) (apartado 4) |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
@@ -203,9 +203,12 @@ enteros antes de reescribirlos):
   puerta de la ciudad** (.let 0x2F, 15-11-2026; `re/emu/sesion37/notes_gate.md`): su menú lateral como el del juego
   (0x5ABFA0 con sus condiciones de asedio y la nota bajo el título, `town_gate_window.{hpp,cpp}` con su ctest) y su
   página «Ruta terrestre» (0x5F2A20, 0x5F0DF0: los materiales de la carretera, la 0x3B; estado `road-task`); el panel
-  de la Hansa propio del visor, quitado a petición del usuario. **Falta**: las otras siete páginas de la puerta, los
-  asedios (0x5F1F00..0x5F31C0), y el cliente de un pedido de la taberna (0x5D7760, la 0x51): en
-  `ENCARGO_GRUPO5_VISOR_2.md`. (Mudar la ciudad natal, 0x5DD520, quedó
+  de la Hansa propio del visor, quitado a petición del usuario. **El cliente de un pedido** en la taberna (15-11-2026;
+  `re/emu/sesion37/notes_client.md`): su botón con su apellido, su página 0 (el saludo, lo que hay, la cantidad,
+  «Entregar suministros»: la 0x51) y la página 16 tras la entrega en sus cuatro casos (todo o parte, por unidad o con
+  prima), como las del juego (`tavern_order`, `order_client_stock`, `order_delivery_operation` con su ctest; estados
+  `order-client`, `order-premium`). **Falta**: las otras siete páginas de la puerta, los asedios
+  (0x5F1F00..0x5F31C0): en `ENCARGO_GRUPO5_VISOR_2.md`. (Mudar la ciudad natal, 0x5DD520, quedó
   hecho en la página «Trasladarse» de la oficina, 14-11-2026.)
 - [x] **La oficina y su administrador** (12-11-2026; `operations.cpp`, `office_window.cpp`): 0x5A el porcentaje de
   trabajadores de una empresa, 0x5B la orden del administrador para una mercancía, 0x5E contratarlo o despedirlo, 0x62
@@ -436,8 +439,11 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     ventanita de la pregunta (el juego lo calcula por el texto); sin el fundido del libro entre dos barcos. Notas:
     `re/emu/sesion35/notes_shipyard.md`.
   - [x] Las siete páginas del ayuntamiento que faltaban (15-11-2026; `re/emu/sesion36/notes_townhall.md`).
-  - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido). La
-    sombra del edificio en su subasta (la vista de la ciudad del visor aún no dibuja sombras) y el sonido de rezar
+  - [x] El cliente de un pedido en la taberna (15-11-2026; `re/emu/sesion37/notes_client.md`). Improvisado (sin foto):
+    en español «Mercancía» llega más allá de «Almacén» (el juego los escribe uno encima del otro): cada cabecera
+    empieza al menos 6 después de la anterior; y una frase española más larga que su sitio pasa a la línea siguiente y
+    baja las de debajo.
+  - [ ] Por hacer como el juego: la sombra del edificio en su subasta (la vista de la ciudad del visor aún no dibuja sombras) y el sonido de rezar
     (con el sonido, apartado 5). Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
 - [ ] **La puerta de la ciudad** (.let 0x2F, `Stadttor`; 15-11-2026, `re/emu/sesion37/notes_gate.md`): abre su menú
   lateral como el del juego (ocho botones con sus condiciones, la nota bajo el título; la nota del juego, de tres
@@ -829,6 +835,11 @@ de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; s
   texto: el visor acaba la frase con su punto.
 
 ### Corregidos con el ajuste
+
+**La prima del pedido en la taberna, en español** (la página tras una entrega a medias con prima, 0x5D4BA6 del exe
+español; 15-11-2026, seguro, solo cambia lo que se ve): el código español pone el precio en una línea propia, «de %u»
+(0x69D4C4), y coloca la moneda tras el ancho de la cadena «de %u» y no del precio escrito, así que la moneda pisa la
+última cifra. Corregido (`order_client_page`): con el ajuste, tras el ancho del texto escrito.
 
 **Los botones de las reuniones en la oficina del Gobernador** (la página 7 del ayuntamiento, 0x5E6730; 15-11-2026,
 seguro, solo cambia lo que se ve): tras una misión fallida (el tipo 5, que dura 28 días), la página enseña «Después de tu

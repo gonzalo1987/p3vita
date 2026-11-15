@@ -78,6 +78,55 @@ TraderWindow opened(int32_t price) {
 
 int main() {
 	{
+		// The order client (0x5268D0, 0x5D7760): the order in the town's second place, the player's stock there (his
+		// office and his docked ships, summed before dividing), «Hand over supplies»' 0x51.
+		SaveGame save = world(true);
+		GlobalMemory& g = save.globals;
+		g.u16(0x6DD73C + 0xC) = 3;
+		save.events.resize(3);
+		save.towns[1].memory.u16(0x830) = 0xFFFF;
+		save.towns[1].memory.u16(0x832) = 1;
+		save.events[1].u8(0x16) = 1;
+		check(tavern_order(save, 1).event == 0xFFFF, "an order of another merchant: none");
+		GameMemory<0x18>& e = save.events[1];
+		e.u16(6) = 0x11;
+		e.u8(0x16) = 0;
+		e.u8(0x8) = 1;
+		e.u8(0x9) = 3;  // In barrels.
+		e.u8(0xA) = 7;
+		e.u8(0xB) = 9;
+		e.u32(0xC) = 0x123400;
+		e.u16(0x10) = 12;
+		e.u16(0x12) = 30;
+		e.u16(0x14) = 250;
+		e.u8(0x17) = 1;
+		save.events[2].u8(0x16) = 1;
+		const OrderClient o = tavern_order(save, 1);
+		check(o.event == 1 && o.ware == 3 && o.first == 7 && o.family == 9 && o.deadline == 0x123400 && o.left == 12 &&
+				  o.total == 30 && o.price == 250 && o.at_end,
+			"the player's order: its fields");
+		save.offices[0].memory.s32(0x4 + 4 * 3) = 350;
+		save.merchants[0].memory.u16(0xE) = 4;
+		for (uint16_t k = 0; k < kShips; ++k) {
+			save.ships[k].memory.u16(0x4) = 0xFFFF;
+		}
+		save.ships[4].memory.u16(0x4) = 6;
+		save.ships[6].memory.u16(0x4) = 8;
+		save.ships[4].memory.u8(0x39) = 1;
+		save.ships[4].memory.s32(0x54 + 4 * 3) = 150;
+		save.ships[6].memory.u8(0x39) = 1;
+		save.ships[6].memory.u8(0x136) = 1;  // Not docked: not counted.
+		save.ships[6].memory.s32(0x54 + 4 * 3) = 5000;
+		save.ships[8].memory.u8(0x39) = 0;  // Another town.
+		save.ships[8].memory.s32(0x54 + 4 * 3) = 5000;
+		check(order_client_stock(save, 1, 3) == 2, "350 + 150 units: 2 barrels (summed, then divided)");
+		check(order_client_stock(save, 0, 3) == 25, "the other town: the ship there, no office");
+		const OperationBytes op = order_delivery_operation(0, 1, 2);
+		uint32_t f[5];
+		std::memcpy(f, op.data(), sizeof f);
+		check(f[0] == 0x51 && f[1] == 0 && f[2] == 0 && f[3] == 1 && f[4] == 2, "{0x51, player, 0, the event, 2}");
+	}
+	{
 		const SaveGame save = world(true);
 		const std::vector<uint16_t> ships = {5, 7};
 		check(trader_arrows(save, 1, ships) && trader_arrows(save, 1, {5}) && !trader_arrows(save, 1, {}),

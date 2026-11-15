@@ -40,6 +40,28 @@ std::array<bool, kTavernPeople> tavern_people(const SaveGame& save, uint32_t tow
 // 0x526880: one of the town's two order places [+0x830], [+0x832] holds an event (below the events) whose [+0x16],
 // the merchant who took the order, is the player.
 bool tavern_order_client(const SaveGame& save, uint32_t town);
+// The order itself (0x5268D0, when his page opens, 0x5CF77B: the event's [+0x8..+0x17] copied to the window's
+// [+0x2174], the event to [+0x1BF0]); event 0xFFFF: none.
+struct OrderClient {
+	uint16_t event = 0xFFFF;
+	uint8_t town = 0;
+	uint8_t ware = 0;
+	uint8_t first = 0;   // [+0xA]: the client's first name (0x512A60)
+	uint8_t family = 0;  // [+0xB]: his family name (0x512AE0), the side menu's button (0x5A6F2A)
+	uint32_t deadline = 0;  // [+0xC]
+	uint16_t left = 0;      // [+0x10]
+	uint16_t total = 0;     // [+0x12]
+	uint16_t price = 0;     // [+0x14], of one barrel or load
+	bool at_end = false;    // [+0x17]: paid at the end (a premium of price · total), not for each delivery
+};
+OrderClient tavern_order(const SaveGame& save, uint32_t town);
+// What his page (update 0x5D7760: 0x5D77D4..0x5D78E0) says the player has of the ware in the town: his office's
+// (0x5308A0) and his ships' docked there ([+0x39] the town, [+0x136] bit 0 clear) summed, then in barrels or loads.
+// The page's amount goes from 0 to the smaller of it and what is left (its box's top).
+int32_t order_client_stock(const SaveGame& save, uint32_t town, uint8_t ware);
+// «Hand over supplies» (0x5D7A90, with an amount): {0x51, player, 0, the event, the amount} (the engine's fn_53c050);
+// then the page 16 says it was all when the amount reaches what is left.
+OperationBytes order_delivery_operation(uint32_t player, uint16_t event, uint32_t amount);
 // 0x5265E0: the trader: the town's [+0x83E] free (not below the merchants) or the player, and a ware of the mask
 // 0x47FAF (the wares 0..19 but grain, meat, wine, ... : 0, 1, 2, 3, 5, 7..14, 18) whose stock [+0x4 + 4·ware] is above
 // [+0x4F4 + 0x10·ware] + 40000 (signed).

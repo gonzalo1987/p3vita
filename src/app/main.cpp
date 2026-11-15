@@ -2656,6 +2656,12 @@ struct PlaceUi {
 	std::vector<uint16_t> dealer_list;
 	// The traveller's window and his ships' list as the last update made it.
 	TravellerWindow traveller;
+	// The order's client: his page after a delivery (the window's page 16: the order as it was, [+0x2174], the amount
+	// handed over [+0x1C98] and whether it was all that was left, [+0x1CA7]).
+	bool client_done = false;
+	OrderClient client;
+	uint32_t client_amount = 0;
+	bool client_complete = false;
 	std::vector<uint16_t> traveller_list;
 	// The burglar's window (his victims made when the tavern opens, as the game's window does).
 	BurglarWindow burglar;
@@ -6858,6 +6864,7 @@ std::vector<int> tavern_rows(const SaveGame& save, int town, const PlaceUi& ui) 
 	const std::array<bool, kTavernPeople> there = tavern_people(save, uint32_t(town));
 	const int kept = ui.inside || (ui.talking == int(TavernPerson::Trader) && ui.trader.done) ||
 			(ui.talking == int(TavernPerson::Traveller) && ui.traveller.done) ||
+			(ui.talking == int(TavernPerson::OrderClient) && ui.client_done) ||
 			(ui.talking == int(TavernPerson::Pirate) && ui.pirate.done) ||
 			(ui.talking == int(TavernPerson::Informer) && ui.informer_done) ||
 			(ui.talking == int(TavernPerson::Captain) && ui.hired_captain != 0xFFFF)
@@ -6871,7 +6878,8 @@ std::vector<int> tavern_rows(const SaveGame& save, int town, const PlaceUi& ui) 
 	return rows;
 }
 
-// The person's word on the game's menu (0x69C9D8: Trader .. Burglar; 0x69C98C Pirate).
+// The person's word on the game's menu (0x69C9D8: Trader .. Burglar; 0x69C98C Pirate; the order's client his family
+// name, tavern_row_name).
 std::string tavern_person_name(int person) {
 	switch (TavernPerson(person)) {
 	case TavernPerson::OrderClient:
@@ -6895,6 +6903,16 @@ std::string tavern_person_name(int person) {
 	default:
 		return "?";
 	}
+}
+
+// A person's button on the side menu: the order's client's is his family name (0x5A6F07..0x5A6F2F: 0x5268D0's order,
+// its [+0xB]; after a delivery, the order as it was).
+std::string tavern_row_name(const SaveGame& save, int town, const PlaceUi& ui, int person) {
+	if (person != int(TavernPerson::OrderClient)) {
+		return tavern_person_name(person);
+	}
+	const OrderClient o = ui.client_done && ui.talking == person ? ui.client : tavern_order(save, uint32_t(town));
+	return clean_game_text(game_family_name(save, o.family));
 }
 
 // The row's person talked to, as the game's menu does when one is chosen (0x5A68A0): the one before left (0x5A7A60,
@@ -6977,6 +6995,10 @@ void tavern_talk(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
 		if (!ui.pirate_list.empty()) {
 			ui.pirate.ship = ui.pirate_list[0];
 		}
+	}
+	if (person == int(TavernPerson::OrderClient)) {
+		ui.client_done = false;  // His page 0 (0x5CF6FA: the order copied, the amount's box 0).
+		ui.amount = 0;
 	}
 	if (person == int(TavernPerson::Traveller)) {
 		ui.traveller = TravellerWindow();
@@ -7680,6 +7702,166 @@ std::string exe_format(uint32_t english, const std::vector<std::string>& args, c
 		}
 	}
 	return fallback;
+}
+
+// The order's client (the tavern window's page 0: update 0x5D7760, drawing 0x5D3990; after a delivery its page 16,
+// 0x5D3EB0; traced in the emulator, re/emu/sesion37/tavtrace.sh and clientvariants.sh; no photo). The banner
+// «Conversation with <his names>» (0x69D8B4). The page 0: paid by the unit, a greeting (the window's [+0x1CA5], the
+// trader's: 0x69D998, 0x69D9C8, 0x69D9E0 «%s %s %s»: the player's rank at home 0x6A0608 + 4·(rank + 8·sex), his first
+// and family names) in a text box from (70, 225), 285 wide, and 20 and 40 under it «I am very pleased to see you.»
+// (0x69DA10) and «Do you have <ware> for me ?"» (0x69DA68); paid at the end, «"Welcome, …» (0x69DA14) and 0x69DA18,
+// 0x69DA1C. Then «Good», «Warehouse», «Trader» (0x6A0464, 0x6A0468, 0x6998E4) at y 362 over the ware's name (70), the
+// warehouse's box [+0x2010] (106, 382, 80 × 18: what he has there less the amount) with its unit's picture after it,
+// «<» [+0x1D98] (222, 382) and «>» [+0x1CB0] (254, 382), the amount's box [+0x1E80] (296, 382) with its unit's picture;
+// «Hand over supplies» [+0x17C] (148, 450) with an amount: 0x51, then the page 16 (no button): by what was handed over
+// and how it is paid, its lines at fixed places, the numbers, the coin (TEX16014) and the unit's picture each 2 after
+// the piece before it (a piece that doesn't fit goes on a line lower, improvised).
+void order_client_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	const OrderClient now = tavern_order(save, uint32_t(town));
+	const OrderClient o = ui.client_done ? ui.client : now;
+	v.title = exe_text(0x69D8B4, "Conversación con", "Conversation with") + " " +
+		clean_game_text(game_first_name(save, o.first)) + " " + clean_game_text(game_family_name(save, o.family));
+	PlaceView::Page page;
+	constexpr int kX = 70;
+	const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
+	const uint32_t unit = o.ware < 20 && kWares[o.ware].unit == WareUnit::Barrel ? 16030u : 16031u;
+	const SDL_Point unit_size = g_game_art ? g_game_art->tex_size(unit, 0) : SDL_Point{26, 18};
+	const SDL_Point coin_size = g_game_art ? g_game_art->tex_size(16014, 0) : SDL_Point{17, 16};
+	const std::string ware = o.ware < 24 ? exe_text(0x6C0BB0 + 4 * uint32_t(o.ware), "", "") : std::string();
+	// A line of pieces from (x, y): a text, or the coin (16014) or the unit's picture, each 2 after the one before. (A
+	// piece past the window's right side, 20 from it, goes on from 70 a line lower and so do the lines after it: the
+	// Spanish texts are longer than the English ones the game's places were made for; improvised.)
+	struct Piece {
+		std::string text;
+		uint32_t tex = 0;
+	};
+	int shift = 0;
+	auto run = [&](int x, int y, const std::vector<Piece>& pieces) {
+		y += shift;
+		for (const Piece& p : pieces) {
+			const int w = p.tex != 0 ? (p.tex == 16014 ? coin_size.x : unit_size.x)
+									 : (font ? font->measure(p.text) : 7 * int(p.text.size()));
+			if (x > kX && x + w > kInteriorWidth - 20) {
+				x = kX;
+				y += 20;
+				shift += 20;
+			}
+			if (p.tex != 0) {
+				page.icons.push_back({p.tex, 0, x, y});
+			} else {
+				page.texts.push_back({p.text, x, y});
+			}
+			x += w + 2;
+		}
+		return x;
+	};
+	if (ui.client_done) {
+		const GameDate d = date_from_tick(o.deadline);
+		const std::string left = std::to_string(o.left > ui.client_amount ? o.left - ui.client_amount : 0);
+		const std::string price = std::to_string(o.price);
+		const std::string per = exe_text(0x69DA48, "por", "per");
+		if (ui.client_complete && !o.at_end) {
+			run(kX, 255, {{exe_text(0x69DA7C, "", "")}});
+			run(kX, 275, {{exe_text(0x69DA80, "", "")}});
+			run(kX, 305, {{exe_text(0x69DA84, "", "")}, {"", unit}, {ware}});
+			run(kX, 325, {{exe_format(0x69DA88, {price}, "")}, {"", 16014}, {exe_text(0x69DA8C, ".", ".")}});
+			run(kX, 365, {{exe_text(0x69DA90, "", "")}});
+		} else if (ui.client_complete) {
+			run(kX, 255, {{exe_text(0x69DA6C, "", "")}});
+			const int x = run(kX, 275, {{exe_format(0x69DA70, {std::to_string(uint32_t(o.price) * o.total)}, "")}, {"", 16014}});
+			// (The game goes on 20 lower from after the coin, where the date's line also starts.)
+			run(x, 295, {{GameTexts::format(exe_text(0x806C6724, "(%u", "(%u"), {price})}, {"", 16014}, {per}, {"", unit},
+							{ware + ")"}});
+			run(kX, 295, {{exe_format(0x69DA74, {std::to_string(d.day), short_month(d.month), std::to_string(d.year)}, "")}});
+			run(kX, 315, {{exe_text(0x69DA78, "", "")}});
+		} else if (!o.at_end) {
+			run(kX, 255, {{exe_format(0x69DA20, {std::to_string(uint32_t(o.price) * ui.client_amount)}, "")}, {"", 16014},
+							 {exe_text(0x69DA24, "", "")}});
+			run(kX, 275, {{exe_format(0x69DA28, {left}, "")}, {"", unit}, {ware}});
+			run(kX, 295, {{exe_text(0x69DA2C, "", "")}});
+			run(kX, 325, {{exe_text(0x69DA30, "", "")}});
+			run(kX, 345, {{exe_format(0x69DA34, {std::to_string(d.day), month_name(d.month), std::to_string(d.year)}, "")}});
+		} else if (g_spanish) {
+			// The Spanish exe's code (0x5D4ADE..0x5D4D2D) has its sentence on two lines and the price on a third, «de %u»
+			// (0x69D4C4, a slot the English code hasn't), the coin placed after the width of «de %u» itself, not of the
+			// written price: it reaches into the number (a slip; fixed behind fix_game_bugs: the written text's width).
+			run(kX, 255, {{exe_text(0x69DA38, "", "")}});
+			run(kX, 285, {{exe_format(0x69DA3C, {left}, "")}, {"", unit}, {ware}});
+			run(kX, 305, {{exe_text(0x69DA40, "", "")}});
+			const std::string raw = exe_text(0x4069D4C4, "de %u", "");
+			const std::string written = GameTexts::format(raw, {price});
+			const int y = 325 + shift;
+			page.texts.push_back({written, kX, y});
+			const std::string& measured = fix_game_bugs() ? written : raw;
+			run(kX + (font ? font->measure(measured) : 7 * int(measured.size())) + 2, 325, {{"", 16014}, {per}, {"", unit}});
+			run(kX, 355, {{exe_text(0x69DA4C, "", "")}});
+			run(kX, 375, {{GameTexts::format(exe_text(0x806C6728, "%u. %s %u.\"", "%u. %s %u.\""),
+							 {std::to_string(d.day), month_name(d.month), std::to_string(d.year)})}});
+		} else {
+			run(kX, 255, {{exe_text(0x69DA38, "", "")}});
+			run(kX, 285, {{exe_format(0x69DA3C, {left}, "")}, {"", unit}, {ware}});
+			run(kX, 305, {{exe_format(0x69DA40, {price}, "")}, {"", 16014}, {per}, {"", unit}});
+			run(kX, 335, {{exe_text(0x69DA4C, "", "")}});
+			run(kX, 355, {{GameTexts::format(exe_text(0x806C6728, "%u. %s %u.\"", "%u. %s %u.\""),
+							 {std::to_string(d.day), month_name(d.month), std::to_string(d.year)})}});
+		}
+		v.act_on = 0;
+		v.page = std::move(page);
+		return;
+	}
+	const uint32_t player = uint32_t(save.player);
+	const MerchantMemory& m = save.merchants[player].memory;
+	const auto [first, family] = merchant_names(save, player);
+	const std::vector<std::string> names = {
+		lender_text(0x6A0608 + 4 * (uint32_t(m.u8(0x39C + m.u8(0x19))) + 8 * (m.u8(0x1A) & 1u)), "", ""),
+		clean_game_text(first), clean_game_text(family)};
+	int y = 225;
+	if (o.at_end) {
+		y = add_box(page, exe_format(0x69DA14, names, ""), kX, y, 285, false) + 20;
+		run(kX, y, {{exe_text(0x69DA18, "", "")}});
+		run(kX, y + 20, {{exe_format(0x69DA1C, {ware}, "")}});
+	} else {
+		static const uint32_t kGreetings[3] = {0x69D998, 0x69D9C8, 0x69D9E0};
+		y = add_box(page, exe_format(kGreetings[std::clamp(ui.trader.greeting, 0, 2)], names, ""), kX, y, 285, false) + 20;
+		run(kX, y, {{exe_text(0x69DA10, "", "")}});
+		run(kX, y + 20, {{exe_format(0x69DA68, {ware}, "")}});
+	}
+	const int32_t stock = order_client_stock(save, uint32_t(town), o.ware);
+	v.max_amount = std::max(0, std::min<int32_t>(stock, o.left));
+	ui.amount = std::clamp(ui.amount, 0, v.max_amount);
+	// (The heads at 70, 106 and 296 as the game's; the Spanish «Mercancía» reaches past 106 and the game writes «Almacén»
+	// over it: the viewer starts each head 6 after the one before at least, improvised.)
+	int head = run(kX, 362, {{exe_text(0x6A0464, "Mercancía", "Good")}}) + 4;
+	head = run(std::max(106, head), 362, {{exe_text(0x6A0468, "Almacén", "Warehouse")}}) + 4;
+	run(std::max(296, head), 362, {{exe_text(0x6998E4, "Comerciante", "Trader")}});
+	run(kX, 382, {{ware}});
+	page.boxes.push_back({{106, 382, 80, 18}, std::to_string(stock - ui.amount)});
+	page.icons.push_back({unit, 0, 186, 382});
+	page.buttons.push_back({{222, 382, 32, 18}, "<", PlaceView::PageAction::Minus, ui.amount > 0});
+	page.buttons.push_back({{254, 382, 32, 18}, ">", PlaceView::PageAction::Plus, ui.amount < v.max_amount});
+	page.boxes.push_back({{296, 382, 80, 18}, std::to_string(ui.amount)});
+	page.icons.push_back({unit, 0, 376, 382});
+	v.act = exe_text(0x8069DA98, "Entregar suministros", "Hand over supplies");
+	v.act_on = ui.amount > 0 ? 1 : 0;
+	page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, ui.amount > 0}));
+	v.page = std::move(page);
+}
+
+// «Hand over supplies» (0x5D7A90): 0x51 with the amount, then the page 16 from the order as it was.
+void order_client_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
+	if (ui.client_done || ui.amount <= 0) {
+		return;
+	}
+	const OrderClient o = tavern_order(save, uint32_t(town));
+	if (o.event == 0xFFFF) {
+		return;
+	}
+	run_operations(save, sailing, {order_delivery_operation(uint32_t(save.player), o.event, uint32_t(ui.amount))});
+	ui.client = o;
+	ui.client_amount = uint32_t(ui.amount);
+	ui.client_complete = uint32_t(ui.amount) >= o.left;
+	ui.client_done = true;
+	ui.amount = 0;
 }
 
 // The trader's page (its drawing 0x5D2DC0 and the page after it 0x5D36A0).
@@ -10418,7 +10600,7 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 		v.parchment_top = ui.shown ? 0xE1 : -1;
 		const std::vector<int> people = tavern_rows(save, town, ui);
 		for (const int k : people) {
-			v.menu.push_back({tavern_person_name(k), true});
+			v.menu.push_back({tavern_row_name(save, town, ui, k), true});
 		}
 		if (ui.shown && !people.empty()) {
 			// The lit button: the person talked to (inside the dealer's or the burglar's page, the row kept).
@@ -10459,7 +10641,7 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 		}
 		v.rows_in_menu = true;
 		for (const int k : people) {
-			v.rows.push_back({tavern_person_name(k), true});
+			v.rows.push_back({tavern_row_name(save, town, ui, k), true});
 			v.codes.push_back(k);
 		}
 		if (people.empty()) {
@@ -10471,6 +10653,8 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 			"You have no ship in port"));
 		if (person == TavernPerson::Trader) {
 			trader_page(save, town, ui, v);
+		} else if (person == TavernPerson::OrderClient) {
+			order_client_page(save, town, ui, v);
 		} else if (person == TavernPerson::Traveller) {
 			traveller_page(save, town, ui, v);
 		} else if (person == TavernPerson::Pirate) {
@@ -11537,6 +11721,11 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 				run_operations(save, sailing, {*op});
 			}
 		}
+		ui.message.clear();
+		return;
+	}
+	if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::OrderClient)) {
+		order_client_act(save, sailing, town, ui);
 		ui.message.clear();
 		return;
 	}
