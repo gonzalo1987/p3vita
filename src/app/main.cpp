@@ -41,6 +41,7 @@
 #include "p3data/land_trade_window.hpp"
 #include "p3data/market_hall_window.hpp"
 #include "p3data/tavern_window.hpp"
+#include "p3data/town_gate_window.hpp"
 #include "p3data/town_hall_window.hpp"
 #include "p3data/letter_window.hpp"
 #include "p3data/mail.hpp"
@@ -306,7 +307,8 @@ enum class Place {
 	Arsenal,
 	TownHall,
 	ShipPair,
-	Feast
+	Feast,
+	TownGate
 };
 
 struct PlaceInfo {
@@ -352,6 +354,9 @@ constexpr PlaceInfo kPlaces[] = {
 	{0x06, Place::Feast, GameText::Count, "Puestos del mercado", "Market stalls"},
 	// The town hall (its side menu's title 0x69DDD0): its pages (town_hall_window.hpp).
 	{0x03, Place::TownHall, GameText::Count, "Ayuntamiento", "Town hall"},
+	// The town gate (.let 0x2F, 0x59518A: its side menu at once): the road's materials, the sieges
+	// (town_gate_window.hpp).
+	{0x2F, Place::TownGate, GameText::Count, "Puerta de la ciudad", "Town gate"},
 };
 
 // The interior picture the game shows in each place (its side menu's 0x466430 argument; the repair dock as the
@@ -369,6 +374,7 @@ int place_interior(Place p) {
 	case Place::Smithy: return kSmithyInterior;
 	case Place::LandTrade: return kBarnInterior;
 	case Place::TownHall: return kTownHallInterior;
+	case Place::TownGate: return kTownGateInterior;
 	case Place::MarketHall: return kMarketHallInterior;
 	default: return kNoInterior;
 	}
@@ -708,14 +714,36 @@ public:
 	}
 
 	// Where the building of that .let type is drawn (in the town's pixels).
-	SDL_Rect bounds(int let_type) const {
-		SDL_Rect r{0, 0, 0, 0};
+	// Where a building of that .let type is drawn: its pieces that touch one another (a town has several gates), the
+	// group with the point `near` in one of its pieces, else the first group.
+	SDL_Rect bounds(int let_type, SDL_Point near = {-1, -1}) const {
+		std::vector<SDL_Rect> pieces;
 		for (const Item& item : items_) {
 			if (item.tile && int(item.tile->type) == let_type) {
-				if (r.w == 0) {
-					r = item.dst;
-				} else {
-					SDL_UnionRect(&r, &item.dst, &r);
+				pieces.push_back(item.dst);
+			}
+		}
+		if (pieces.empty()) {
+			return {0, 0, 0, 0};
+		}
+		size_t seed = 0;
+		for (size_t k = 0; k < pieces.size(); ++k) {
+			if (SDL_PointInRect(&near, &pieces[k])) {
+				seed = k;
+				break;
+			}
+		}
+		SDL_Rect r = pieces[seed];
+		std::vector<bool> taken(pieces.size(), false);
+		taken[seed] = true;
+		for (bool grown = true; grown;) {
+			grown = false;
+			const SDL_Rect wider = {r.x - 8, r.y - 8, r.w + 16, r.h + 16};
+			for (size_t k = 0; k < pieces.size(); ++k) {
+				if (!taken[k] && SDL_HasIntersection(&wider, &pieces[k])) {
+					taken[k] = true;
+					SDL_UnionRect(&r, &pieces[k], &r);
+					grown = true;
 				}
 			}
 		}
@@ -2673,6 +2701,12 @@ struct PlaceUi {
 	int coffers = 0;
 	// Its page 7's view ([+0x1908]): the tasks, else the meetings (the Alderman's at first).
 	bool hall_tasks = false;
+	// Its page 7's five meeting actions ([+0xC5C..+0xFFC]) shown by the last drawing: the tasks' view after a failed
+	// task leaves them as they were (town_hall_office_view).
+	bool hall_actions_shown = false;
+	// The town gate's page «Overland route»: the amount chosen (the window's [+0x161C]: kRoadAmounts' 1, 5, 50, all;
+	// the first whenever the window opens, its layout 0x5EF486).
+	int gate_amount = 0;
 	int chamber_shown = 0;
 	std::array<uint8_t, 4> chamber_votes{};
 	std::array<AldermanCandidate, 4> chamber_candidates{};
@@ -2742,8 +2776,15 @@ enum class SideMenuLayout {
 	MiddleWide,  // The weaponsmith's (0x5AABE0) and the bath house's (0x5A0140): round the middle by font 0, every 27.
 	Shipyard,  // The shipyard's and the repair dock's (0x5AD800): six head font lines down (its texts over them), every 20.
 	Middle,  // The barn's (0x5AA040): its one button at the menu's middle.
+	Gate,  // The town gate's (0x5AB940): round the middle by the head font, the count less two, every 22.
 };
 constexpr int kPanelMenuWidth = 260;  // The side menus' width: the side panel's inside (kPanelInner), as the game's.
+// The game's side menu's height, its head font's (SIDEMENU_STATISTIK's HeadlFont), the text boxes' line and a button's
+// height (PlaceMenuLayout).
+constexpr int kSideMenuHeight = 250;
+constexpr int kSideMenuHeadFont = 18;
+constexpr int kSideMenuLine = 15;
+constexpr int kSideMenuButton = 18;
 
 // What a window shows now, made from the save each frame (also for the touch screen).
 struct PlaceView {
@@ -2789,6 +2830,10 @@ struct PlaceView {
 	// top left, w wide, in the pages' font, its lines centred where the text says so (\c); a y below 0 is that far
 	// under the text before it.
 	SideMenuLayout menu_layout = SideMenuLayout::Centred;
+	// The first button's place down the menu and the step, when the view moves them from its layout's (the town gate's
+	// buttons under its note); -1: the layout's.
+	int menu_first = -1;
+	int menu_step = -1;
 	struct MenuNote {
 		std::string text;
 		int x = 0;
@@ -9242,10 +9287,27 @@ void town_hall_office_decide(SaveGame& save, int town, PlaceUi& ui, uint16_t eve
 	ui.row = -1;
 }
 
+// The page 7's five meeting actions [+0xC5C..+0xFFC] («no action», «small fine», «moderate fine», «large fine»,
+// «Blockade»): their values 16 + the decision.
+void add_meeting_actions(PlaceView::Page& page) {
+	struct Act {
+		SDL_Rect rect;
+		uint32_t label;
+		int decision;
+	};
+	static const Act kButtons[5] = {{{10, 428, 128, 18}, 0x6A9600, 6}, {{148, 428, 128, 18}, 0x6A9588, 5},
+		{{287, 428, 128, 18}, 0x6A958C, 4}, {{10, 450, 128, 18}, 0x6A9590, 3}, {{287, 450, 128, 18}, 0x6A9598, 1}};
+	for (const Act& a : kButtons) {
+		PlaceView::PageButton b{a.rect, exe_text(a.label, "", ""), PlaceView::PageAction::Choose, true, false, false};
+		b.value = 16 + a.decision;
+		page.buttons.push_back(fitted(b));
+	}
+}
+
 // The town hall's page 7, «Alderman's office» (0x5E6730, 0x5E87D0; no photo: traced in the emulator, re/emu/sesion36
 // halltrace.sh 7): for the Alderman its two views by «Meetings» / «Tasks» ([+0x156C], 148, 480), for others the tasks.
-// The tasks: the player's own (0x4EC694) told on paper from (50, 212), 10 × 8 («Many thanks…», 0x6A9684 + 4·kind);
-// else the tasks on offer (0x4EC5F4, five at most): «You can choose between the following orders…» (0x6A9654) from
+// The tasks: the player's own (0x4EC694) told on paper from (50, 212), 10 × 8 («Many thanks…», 0x6A9684 + 4·kind), or
+// failed (kind 5) 0x6A9680 from (50, 212); else the tasks on offer (0x4EC5F4, five at most): «You can choose between the following orders…» (0x6A9654) from
 // (50, 212) and, on paper 8 under it, 10 × 6, the chosen one (0x6A966C + 4·kind with its region), «<» (90, 450) and
 // «>» (302, 450) with more than one, «Accept order» (148, 450): 0x4B; none: 0x6A9698 from (50, 212). The meetings:
 // «A Hanse Day could be called due to the following events:» (0x6A9574) from (50, 196) and the events (0x4D9EA0: the
@@ -9286,10 +9348,25 @@ void town_hall_office_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) 
 	if (ui.hall_tasks) {
 		const uint16_t own = merchant_hanse_task(save, int(player));
 		if (own != 0xFFFF) {
-			add_on_paper(g_hanse ? hanse_thanks(save, hanse_task(save, own), *g_hanse) : "", 212, 8);
+			const HanseTask t = hanse_task(save, own);
+			if (t.type == uint8_t(HanseTaskType::Void)) {
+				// Failed (0x5E6A9A): «It is probably best if you don't take on any more new tasks…» until the task goes
+				// 28 days later. Game slip: this branch doesn't hide the meetings' five actions, so the Alderman who
+				// comes from the meetings with an event chosen still sees them; they do nothing in this view. Fixed
+				// behind fix_game_bugs() (the user's word): hidden, as the other branches hide them (0x5E6E4D).
+				add_box(page, exe_text(0x6A9680, "", ""), kX, 212, width, false);
+				if (ui.hall_actions_shown && !fix_game_bugs()) {
+					add_meeting_actions(page);
+				}
+				v.page = std::move(page);
+				return;
+			}
+			ui.hall_actions_shown = false;
+			add_on_paper(g_hanse ? hanse_thanks(save, t, *g_hanse) : "", 212, 8);
 			v.page = std::move(page);
 			return;
 		}
+		ui.hall_actions_shown = false;
 		const std::vector<uint16_t> offered = offered_hanse_tasks(save, 5);
 		if (offered.empty()) {
 			add_box(page, exe_text(0x6A9698, "", ""), kX, 212, width, false);
@@ -9315,6 +9392,7 @@ void town_hall_office_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) 
 		return;
 	}
 	// The meetings (the Alderman's).
+	ui.hall_actions_shown = false;
 	std::vector<uint16_t> items;
 	{
 		const uint32_t count = std::min<uint32_t>(g.u16(0x6DD73C + 0xC), uint32_t(save.events.size()));
@@ -9406,20 +9484,13 @@ void town_hall_office_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) 
 			target < towns ? name_of(target) : std::string()},
 		"");
 	add_box(page, text, kX, 372, width, false);
-	struct Act {
-		SDL_Rect rect;
-		uint32_t label;
-		int decision;
-	};
 	if (target < towns) {
-		static const Act kButtons[6] = {{{10, 428, 128, 18}, 0x6A9600, 6}, {{148, 428, 128, 18}, 0x6A9588, 5},
-			{{287, 428, 128, 18}, 0x6A958C, 4}, {{10, 450, 128, 18}, 0x6A9590, 3}, {{287, 450, 128, 18}, 0x6A9598, 1},
-			{{148, 450, 128, 18}, 0x6A9594, 2}};
-		for (const Act& a : kButtons) {
-			PlaceView::PageButton b{a.rect, exe_text(a.label, "", ""), PlaceView::PageAction::Choose, true, false, false};
-			b.value = 16 + a.decision;
-			page.buttons.push_back(fitted(b));
-		}
+		add_meeting_actions(page);
+		ui.hall_actions_shown = true;
+		// «Boycott», the accept button [+0x17C].
+		PlaceView::PageButton b{{148, 450, 128, 18}, exe_text(0x6A9594, "", ""), PlaceView::PageAction::Choose, true, false, false};
+		b.value = 16 + 2;
+		page.buttons.push_back(fitted(b));
 	} else {
 		PlaceView::PageButton b{{148, 450, 128, 18}, exe_text(0x6A96A8, "", ""), PlaceView::PageAction::Choose, true, false, false};
 		b.value = 16;
@@ -9500,6 +9571,156 @@ void town_hall_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, cons
 	case 7: town_hall_office_act(save, sailing, ui, v); break;
 	default: break;
 	}
+}
+
+// --- The town gate (.let 0x2F; town_gate_window.hpp) ---
+// Its side menu *0x6E5514 (its texts 0x6A5DA4.., its title 0x6A5DC4 in font 3 at (w/2, 10); its buttons enabled each
+// frame by 0x5ABFA0; its layout 0x5AB940: the eight from the menu's middle less three head font lines, every 22; its
+// drawing 0x5AB360 writes a note (town_gate_menu) in a text box from (15, 44), w − 30 wide) opens the pages of the
+// window *0x6E55B8 (0x5EFD30: the parchment's line 300, 300, 252, 268, 220, 364, 364, 332). The game's note, three lines,
+// reaches the first two buttons (71 down): the viewer puts the buttons under it, a little closer together so that the
+// eight fit in the menu (improvised: no photo). Traced in the emulator: re/emu/sesion37/gatetrace.sh.
+constexpr int kGateParchment[kGatePages] = {300, 300, 252, 268, 220, 364, 364, 332};
+constexpr int kGateNoteX = 15;
+constexpr int kGateNoteY = 44;
+
+// The page «Overland route» (update 0x5F2A20, drawing 0x5F0DF0; traced, no photo): the banner (the button's text);
+// from (50, 220), w − 100 wide, the greeting (0x6A70CC at home, else 0x6A70D0: «%s %s %s %s» his epithet 0x6A0C18 +
+// 4·(15 if [+0x1A] + 0x4F9430), his rank at home 0x6A0608 + 4·(8 if [+0x1A] + the rank), his names) or, all delivered,
+// 0x6A70D4; 8 under it, unless all delivered, 0x6A70D8 and under that, a material delivered short of a section's,
+// 0x6A7100 in red; a row a material at the «->» buttons' y (334 + 20k): its name at 50, what the player has there
+// «%d» with its unit's picture right-aligned at 50 + 2q (q = (w − 100)/4: a text box's «\r» aligns at its x), its «->»
+// [+0x7D8 + 0xE8·k] (48 wide) at (w/8 + w/2 − 24), «delivered/(delivered + needed)» with the unit right-aligned at
+// 50 + 4q; 24 under the last row «%d%% of the overland route has already been completed.»; the amounts «1», «5»,
+// «50» (32 wide) and «Max» (48) at (225, 450), (259, 450), (293, 450), (327, 450), the chosen one lit.
+void town_gate_road_view(SaveGame& save, PlaceUi& ui, PlaceView& v, const RoadWindowPage& road) {
+	PlaceView::Page page;
+	constexpr int kX = 50;
+	const int width = kInteriorWidth - 100;
+	const int q = width / 4;
+	const uint32_t player = uint32_t(save.player);
+	const MerchantMemory& m = save.merchants[player].memory;
+	int y = 220;
+	if (road.all_delivered) {
+		y = add_box(page, exe_text(0x6A70D4, "", ""), kX, y, width, false);
+	} else {
+		const bool second = m.u8(0x1A) != 0;
+		const uint32_t title = tick::merchants_detail::fn_4f9430(save, int(player));
+		const auto [first, family] = merchant_names(save, player);
+		const std::string greeting = exe_format(road.home ? 0x6A70CC : 0x6A70D0,
+			{lender_text(0x6A0C18 + 4 * ((second ? 15u : 0u) + title), "", ""),
+				lender_text(0x6A0608 + 4 * ((second ? 8u : 0u) + m.u8(0x39C + m.u8(0x19))), "", ""), clean_game_text(first),
+				clean_game_text(family)},
+			"");
+		y = add_box(page, greeting, kX, y, width, false);
+	}
+	y += 8;
+	if (!road.all_delivered) {
+		y = add_box(page, exe_text(0x6A70D8, "", ""), kX, y, width, false);
+		if (road.short_of_a_section) {
+			add_box(page, exe_text(0x6A7100, "", ""), kX, y, width, false, {0xFF, 0x00, 0x00, 255});
+		}
+	}
+	ui.row = std::clamp(ui.row, 0, 3);
+	ui.gate_amount = std::clamp(ui.gate_amount, 0, 3);
+	const int button_x = kInteriorWidth / 8 + kInteriorWidth / 2 - 24;
+	int row_y = 334;
+	for (int k = 0; k < 4; ++k) {
+		row_y = 334 + 20 * k;
+		const uint8_t ware = kRoadWares[size_t(k)];
+		v.rows.push_back({"", road.can_give(k)});
+		PlaceView::PageText name{ware_name(int(ware)), kX, row_y};
+		if (k == ui.row) {
+			name.color = {0x0C, 0x2A, 0xE0, 255};
+		}
+		page.texts.push_back(name);
+		const uint32_t unit = kWares[ware].unit == WareUnit::Barrel ? 16030u : 16031u;
+		const SDL_Point pic = g_game_art ? g_game_art->tex_size(unit, 0) : SDL_Point{26, 18};
+		PlaceView::PageText there{std::to_string(road.available[size_t(k)]), kX + 2 * q - pic.x, row_y};
+		there.right = true;
+		page.texts.push_back(there);
+		page.icons.push_back({unit, 0, kX + 2 * q - pic.x, row_y});
+		PlaceView::PageButton give{{button_x, row_y, 48, 18}, "->", PlaceView::PageAction::Act, road.can_give(k)};
+		give.row = k;
+		give.keyed = k == ui.row;
+		page.buttons.push_back(give);
+		const int delivered = road.materials.delivered[size_t(k)];
+		PlaceView::PageText kept{std::to_string(delivered) + "/" + std::to_string(int(road.materials.needed(k)) + delivered),
+			kX + 4 * q - pic.x, row_y};
+		kept.right = true;
+		page.texts.push_back(kept);
+		page.icons.push_back({unit, 0, kX + 4 * q - pic.x, row_y});
+	}
+	add_box(page, exe_format(0x6A70E8, {std::to_string(road.materials.percent() & 0xFF)}, ""), kX, row_y + 24, width, false);
+	static const SDL_Rect kAmounts[4] = {{225, 450, 32, 18}, {259, 450, 32, 18}, {293, 450, 32, 18}, {327, 450, 48, 18}};
+	for (int k = 0; k < 4; ++k) {
+		PlaceView::PageButton b{kAmounts[k], exe_text(0x69A35C + 4 * uint32_t(k), "", ""), PlaceView::PageAction::Choose, true};
+		b.value = k;
+		b.lit = ui.gate_amount == k;
+		b.keyed = false;
+		page.buttons.push_back(b);
+	}
+	v.act = "->";
+	v.page = std::move(page);
+}
+
+void town_gate_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	static const char* kNames[kGatePages][2] = {{"Presentes", "Presents"}, {"Venta de mercancías", "Goods for sale"},
+		{"Contratos de entrega", "Delivery agreements"}, {"Préstamo", "Loan"}, {"Ruta terrestre", "Overland route"},
+		{"Atacar", "Attack"}, {"Rendirse", "Surrender"}, {"Comprar libertad", "Buy freedom"}};
+	const TownGateMenu menu = town_gate_menu(save, uint32_t(town));
+	std::vector<std::pair<std::string, int>> buttons;
+	for (uint32_t k = 0; k < kGatePages; ++k) {
+		// (Only «Overland route» is made: the sieges' pages are to come.)
+		const bool made = k == uint32_t(GatePage::OverlandRoute);
+		buttons.push_back({exe_text(0x6A5DA4 + 4 * k, kNames[k][0], kNames[k][1]), menu.on[k] && made ? int(k) : -1});
+	}
+	ui.page = std::clamp(ui.page, 0, int(kGatePages) - 1);
+	place_side_menu(v, ui, exe_text(0x6A5DC4, "Puerta de la ciudad", "Town gate"), buttons, kGateParchment[ui.page]);
+	if (menu.note != 0) {
+		const std::string note = exe_text(menu.note, "", "");
+		v.menu_notes.push_back({note, kGateNoteX, kGateNoteY, kPanelMenuWidth - 2 * kGateNoteX});
+		// The buttons under the note (improvised, see above): 4 under it, as far apart as the menu's room lets.
+		int lines = 0;
+		const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
+		for (const std::string& line : box_lines(note)) {
+			lines += font && !line.empty() ? int(wrap_text(*font, line, kPanelMenuWidth - 2 * kGateNoteX).size()) : 1;
+		}
+		const int first = kGateNoteY + lines * kSideMenuLine + 4;
+		if (first > kSideMenuHeight / 2 - 3 * kSideMenuHeadFont) {
+			v.menu_first = first;
+			v.menu_step = std::min(22, (kSideMenuHeight - kSideMenuButton - first) / int(kGatePages - 1));
+		}
+	}
+	if (!ui.shown) {
+		return;  // The picture alone until a button is pressed (0x5ABCD3: 0x466430(10)).
+	}
+	v.title = buttons[size_t(ui.page)].first;
+	if (ui.page == int(GatePage::OverlandRoute)) {
+		const RoadWindowPage road = road_window_page(save, uint32_t(town));
+		if (road.task == 0xFFFF) {
+			// No road of the player's: the page closes at once and the menu's buttons let go (0x5F2A6A).
+			ui.shown = false;
+			v.menu_lit = -1;
+			v.parchment_top = -1;
+			v.title.clear();
+			return;
+		}
+		town_gate_road_view(save, ui, v, road);
+	}
+}
+
+// X on the town gate's page: a material's «->» (0x5F2D9A): 0x3B with the amount chosen.
+void town_gate_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
+	if (!ui.shown || ui.page != int(GatePage::OverlandRoute)) {
+		return;
+	}
+	const RoadWindowPage road = road_window_page(save, uint32_t(town));
+	if (road.task == 0xFFFF || ui.row < 0 || ui.row > 3 || !road.can_give(ui.row)) {
+		return;
+	}
+	run_operations(save, sailing,
+		{road_window_give(save, uint32_t(town), road, ui.row, kRoadAmounts[size_t(std::clamp(ui.gate_amount, 0, 3))])});
 }
 
 // The shipyard's side menu's texts over its buttons (0x5AD2A3..0x5AD511; the dates made when it opens, 0x5AE0EC..
@@ -10529,6 +10750,9 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	case Place::TownHall:
 		town_hall_view(save, town, ui, v);
 		break;
+	case Place::TownGate:
+		town_gate_view(save, town, ui, v);
+		break;
 	case Place::Arsenal:
 		arsenal_view(save, town, ui, v);
 		break;
@@ -10608,6 +10832,7 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 	case Place::BathHouse: v.menu_layout = SideMenuLayout::MiddleWide; break;
 	case Place::Shipyard: v.menu_layout = SideMenuLayout::Shipyard; break;
 	case Place::LandTrade: v.menu_layout = SideMenuLayout::Middle; break;
+	case Place::TownGate: v.menu_layout = SideMenuLayout::Gate; break;
 	default: v.menu_layout = SideMenuLayout::Centred; break;
 	}
 	if (v.max_amount >= 0) {
@@ -10760,16 +10985,22 @@ void draw_place_page(SDL_Renderer* renderer, TextRenderer& text, GameWindowArt& 
 // parchment's top (its title at 10, 0x5A8CF9).
 struct PlaceMenuLayout {
 	static constexpr int kMenuTop = 8;
-	static constexpr int kMenuHeight = 250;
-	static constexpr int kHeadFont = 18;
-	static constexpr int kLine = 15;
-	static constexpr int kButton = 18;
+	static constexpr int kMenuHeight = kSideMenuHeight;
+	static constexpr int kHeadFont = kSideMenuHeadFont;
+	static constexpr int kLine = kSideMenuLine;
+	static constexpr int kButton = kSideMenuButton;
 	SDL_Rect room{};
 	SideMenuLayout kind = SideMenuLayout::Centred;
 	int title_y = 0;
-	PlaceMenuLayout(const SDL_Rect& r, SideMenuLayout k) : room(r), kind(k), title_y(r.y + kMenuTop + 10) {}
+	int first_set = -1;  // PlaceView::menu_first, menu_step.
+	int step_set = -1;
+	PlaceMenuLayout(const SDL_Rect& r, SideMenuLayout k, int first = -1, int step = -1)
+		: room(r), kind(k), title_y(r.y + kMenuTop + 10), first_set(first), step_set(step) {}
 	int top() const { return room.y + kMenuTop; }
 	int step() const {
+		if (step_set >= 0) {
+			return step_set;
+		}
 		switch (kind) {
 		case SideMenuLayout::HeadWide:
 		case SideMenuLayout::MiddleWide: return kButton + kButton / 2;
@@ -10779,8 +11010,12 @@ struct PlaceMenuLayout {
 	}
 	// How far down the menu the first button is, with `count` of them.
 	int first(int count) const {
+		if (first_set >= 0) {
+			return first_set;
+		}
 		switch (kind) {
 		case SideMenuLayout::Centred: return kMenuHeight / 2 - count / 2 * kHeadFont;
+		case SideMenuLayout::Gate: return kMenuHeight / 2 - (count - 2) / 2 * kHeadFont;
 		case SideMenuLayout::ThreeLines: return 3 * kLine;
 		case SideMenuLayout::Head:
 		case SideMenuLayout::HeadWide: return kHeadFont * 5 / 2;
@@ -10811,7 +11046,7 @@ void draw_place_menu(SDL_Renderer* renderer, TextRenderer& screen_text, const Ga
 	if (parchment) {
 		SDL_RenderCopy(renderer, parchment, nullptr, &dst);
 	}
-	const PlaceMenuLayout layout(room, v.menu_layout);
+	const PlaceMenuLayout layout(room, v.menu_layout, v.menu_first, v.menu_step);
 	TextRenderer& title = art.title_text() ? *art.title_text() : screen_text;
 	const int x = room.x + (room.w - title.measure(v.menu_title)) / 2;
 	title.draw(v.menu_title, x + 1, layout.title_y + 1, {0xEF, 0xD7, 0xC0, 255});
@@ -11204,6 +11439,10 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 	}
 	if (ui.open == Place::TownHall) {
 		town_hall_act(save, sailing, town, ui, v);
+		return;
+	}
+	if (ui.open == Place::TownGate) {
+		town_gate_act(save, sailing, town, ui);
 		return;
 	}
 	if (ui.open == Place::Arsenal) {
@@ -13718,24 +13957,12 @@ void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& 
 	}
 }
 
-// --- The Hanse panel: the path to Alderman («Gobernador») ---
-// What the game shows in its Hanse task window (0x5E87D0) and its road
-// window (0x5F2A20), and the operations they queue (0x4B and 0x3B, built in
-// p3data/hanse_tasks.cpp); see docs/cloud/alderman-viewer.md. The game's own
-// texts are in Patrician3.exe, not in the CPR, so these are the viewer's,
-// with the names (towns, people, ships) from the CPR and the save.
+// --- The Hanse's tasks' texts (the town hall's «Alderman's office», town_hall_office_view) ---
+// The names (towns, people, ships) from the CPR and the save, the game's texts from its exe (docs/cloud/alderman-
+// viewer.md). (The viewer's own Hanse panel that was here, improvised before the game's views, was removed on
+// 2026-11-15 at the user's word: the town hall's pages and the town gate's «Overland route» are the game's.)
 
-struct HanseUi {
-	bool open = false;
-	int page = 0;  // 0 the Hanse tasks, 1 the election (Select).
-	int row = 0;  // Selected task, material or candidate.
-	int amount = 0;  // Index in kRoadAmounts.
-	std::string message;
-	Uint32 message_until = 0;
-	bool briefing = false;  // The player has just taken a task: show what the Hanse says.
-};
-
-// What the panel reads besides the save: names, regions and the game's texts.
+// What the texts read besides the save: names, regions and the game's texts.
 struct HanseContext {
 	const std::vector<std::string>& town_names;
 	const NameLists& names;
@@ -13745,54 +13972,6 @@ struct HanseContext {
 	// The game's text, or `fallback` without the executable.
 	std::string text(GameText id, const std::string& fallback) const { return texts ? texts->get(id) : fallback; }
 };
-
-// What the panel shows, worked out from the save each frame.
-struct HanseView {
-	int level = 0;  // candidacy_level of the player.
-	bool is_alderman = false;
-	uint16_t task = 0xFFFF;  // The player's task, or 0xFFFF.
-	std::vector<uint16_t> offered;  // Tasks on offer, for a candidate without a task.
-	bool road_here = false;  // The player's road can take materials in this town.
-	RoadMaterials road;
-	std::array<int, 4> available{};
-	// The election: today's (with its votes) or the next one's candidates.
-	uint16_t election = 0xFFFF;  // Today's event 0x20, or 0xFFFF.
-	bool can_vote = false;  // 0x4D9D40.
-	std::array<ElectionCandidate, 4> candidates{};
-
-	int rows(int page) const {
-		if (page == 1) {
-			return can_vote ? 4 : 0;
-		}
-		return task != 0xFFFF ? (road_here ? 4 : 0) : int(offered.size());
-	}
-};
-
-HanseView hanse_view(const SaveGame& save, int town, int page) {
-	HanseView v;
-	const int player = save.player;
-	v.level = candidacy_level(save, player);
-	v.is_alderman = alderman(save) == player;
-	v.task = merchant_hanse_task(save, player);
-	if (v.task == 0xFFFF) {
-		// The game's window offers the tasks to a candidate without one (0x4EC5F4).
-		if (v.level >= 1 && v.level <= 3) {
-			v.offered = offered_hanse_tasks(save);
-		}
-	} else if (road_materials(save, v.task, player, v.road)) {
-		// The road window works in either of the two towns while sections are
-		// left (what the executor of 0x3B, 0x53A3E0, accepts).
-		const HanseTask t = hanse_task(save, v.task);
-		v.road_here = (t.data[0] == town || t.data[1] == town) && t.data[2] > 0;
-		v.available = available_road_materials(save, player, town);
-	}
-	if (page == 1) {
-		v.election = election_today(save);
-		v.can_vote = player_can_vote(save);
-		v.candidates = v.election != 0xFFFF ? election_candidates(save, v.election) : next_election_candidates(save);
-	}
-	return v;
-}
 
 // Name of a town by its number in StadtDaten.ini (not its index in the save).
 std::string numbered_town_name(const std::vector<std::string>& names, int number) {
@@ -13808,32 +13987,6 @@ std::string full_date(uint32_t tick) {
 std::string index_town_name(const SaveGame& save, const HanseContext& c, int town) {
 	return town < int(save.towns.size()) ? town_name(save, c.town_names, town)
 										 : tr("la ciudad ", "town ") + std::to_string(town);
-}
-
-// One line for a task: what to do.
-std::string hanse_task_text(const SaveGame& save, const HanseTask& t, const HanseContext& c) {
-	switch (HanseTaskType(t.type)) {
-	case HanseTaskType::FoundTown:
-		return tr("Fundar una ciudad nueva: ", "Found a new town: ") + numbered_town_name(c.town_names, t.data[4]);
-	case HanseTaskType::Road:
-		return tr("Carretera entre ", "Road between ") + index_town_name(save, c, t.data[0]) + tr(" y ", " and ") +
-			index_town_name(save, c, t.data[1]);
-	case HanseTaskType::PirateShip: {
-		const size_t ship = size_t(t.data[0] | t.data[1] << 8);
-		return ship < save.ships.size() ? tr("Cazar el barco pirata ", "Hunt the pirate ship ") + save.ships[ship].name()
-										: tr("Cazar un barco pirata", "Hunt a pirate ship");
-	}
-	case HanseTaskType::PirateNest:
-		return tr("Acabar con la guarida pirata de ", "Destroy the pirate hideaway near ") +
-			numbered_town_name(c.town_names, t.data[1]);
-	case HanseTaskType::GrowTown:
-		return g_spanish ? "Que " + index_town_name(save, c, t.data[2]) + " llegue a " +
-				format_money(t.data[0] | t.data[1] << 8) + " habitantes"
-						 : "Let " + index_town_name(save, c, t.data[2]) + " reach " +
-				format_money(t.data[0] | t.data[1] << 8) + " inhabitants";
-	default:
-		return tr("Encargo anulado", "Task cancelled");
-	}
 }
 
 // The region of a town (its number in StadtDaten.ini) as the task window
@@ -13907,52 +14060,6 @@ std::string hanse_thanks(const SaveGame& save, const HanseTask& t, const HanseCo
 	return c.texts->format(GameText(int(GameText::ThanksFoundTown) + t.type), args);
 }
 
-// How the player's task is going.
-std::string hanse_progress_text(const SaveGame& save, const HanseTask& t, const HanseView& v, const HanseContext& c) {
-	switch (HanseTaskType(t.type)) {
-	case HanseTaskType::FoundTown:
-		return t.started && t.data[6] < save.towns.size()
-			? (g_spanish ? "Se cumple cuando " + town_name(save, c.town_names, t.data[6]) + " tenga mercado."
-						 : "Done when " + town_name(save, c.town_names, t.data[6]) + " has a market.")
-			: tr("La ciudad se funda al empezar el encargo.", "The town is founded when the task starts.");
-	case HanseTaskType::Road:
-		return tr("Tramos hechos: ", "Sections built: ") + std::to_string(v.road.sections - v.road.sections_left) +
-			tr(" de ", " of ") + std::to_string(v.road.sections) + " (" + std::to_string(v.road.percent()) + " %).";
-	case HanseTaskType::PirateShip:
-		return tr("Hunde el barco pirata (las batallas aún no están en p3vita).",
-			"Sink the pirate ship (the battles aren't in p3vita yet).");
-	case HanseTaskType::PirateNest:
-		return t.data[2] == 0 ? tr("Acerca un barco a la guarida.", "Take a ship to the hideaway.")
-							  : tr("Ataca la guarida (las batallas aún no están).",
-								  "Attack the hideaway (the battles aren't there yet).");
-	case HanseTaskType::GrowTown:
-		return t.data[2] < save.towns.size()
-			? tr("Habitantes ahora: ", "Inhabitants now: ") + format_money(save.towns[t.data[2]].citizens()) + "."
-			: "";
-	default:
-		return "";
-	}
-}
-
-// A candidate in the election: a merchant (with its home town) or the mayor of a town.
-std::string candidate_name(const SaveGame& save, const HanseContext& c, const ElectionCandidate& candidate) {
-	if (candidate.index < 0) {
-		return "-";
-	}
-	if (candidate.merchant) {
-		const SavedMerchant& m = save.merchants[size_t(candidate.index)];
-		std::string name = merchant_name(save, c.names, candidate.index) + tr(" de ", " from ") +
-			index_town_name(save, c, m.hometown());
-		return candidate.index == save.player ? name + tr(" (tú)", " (you)") : name;
-	}
-	return tr("El alcalde de ", "The mayor of ") + index_town_name(save, c, candidate.index);
-}
-
-std::string road_amount_text(int amount) {
-	const uint32_t n = kRoadAmounts[size_t(amount)];
-	return n == 0xFFFFFFFF ? tr("todo", "all") : std::to_string(n);
-}
-
 // A text in lines that fit in `width` pixels (the game's texts are long and
 // have line breaks).
 std::vector<std::string> wrap_text(const TextRenderer& text, const std::string& s, int width) {
@@ -13989,96 +14096,6 @@ std::vector<std::string> wrap_text(const TextRenderer& text, const std::string& 
 	return lines;
 }
 
-// Disposición del panel, compartida por el dibujo y el táctil.
-struct HanseLayout {
-	static constexpr int kWidth = 600;
-	static constexpr int kPadding = 10;
-	static constexpr int kRowHeight = 22;
-	static constexpr int kMaxRows = 5;
-	static constexpr int kInfoLines = 5;
-	SDL_Rect panel{};
-	int header_y = 0;
-	int info_y = 0;
-	int title_y = 0;
-	int rows_y = 0;
-	int detail_y = 0;
-	int footer_y = 0;
-	SDL_Rect amount_button{};
-	SDL_Rect act_button{};
-
-	explicit HanseLayout(int line_height) {
-		const int button_height = line_height + 4;
-		panel = {g_town_right - kWidth - 8, kBarHeight + 4, kWidth, kScreenHeight - kBarHeight - 12};
-		header_y = panel.y + kPadding;
-		info_y = header_y + line_height + 6;
-		title_y = info_y + kInfoLines * line_height + 6;
-		rows_y = title_y + line_height + 2;
-		detail_y = rows_y + kMaxRows * kRowHeight + 6;
-		const int button_y = panel.y + panel.h - kPadding - button_height;
-		footer_y = button_y - line_height - 4;
-		const int inner = kWidth - 2 * kPadding - 8;
-		amount_button = {panel.x + kPadding, button_y, inner / 2, button_height};
-		act_button = {amount_button.x + amount_button.w + 8, button_y, inner - amount_button.w, button_height};
-	}
-
-	int row_at(int x, int y, int rows) const {
-		if (x < panel.x || x >= panel.x + panel.w || y < rows_y) {
-			return -1;
-		}
-		const int row = (y - rows_y) / kRowHeight;
-		return row < rows ? row : -1;
-	}
-};
-
-// X or the act button: take the selected task (0x4B), give the selected
-// material (0x3B) or vote for the selected candidate (0x3F), as the game's
-// windows do. The executor runs it after the next tick, as the game runs its
-// queue between two calls to advance_time.
-void hanse_act(SaveGame& save, int town, HanseUi& ui, const HanseView& v, const HanseContext& c) {
-	ui.message_until = app_ticks() + kMessageTime;
-	if (ui.page == 1) {
-		if (!v.can_vote) {
-			ui.message = v.election != 0xFFFF ? tr("No puedes votar (o ya has votado).", "You can't vote (or you have voted).")
-											  : tr("Hoy no hay elección.", "There is no election today.");
-		} else if (ui.row < 4 && v.candidates[size_t(ui.row)].index >= 0) {
-			queue_operation(save, vote_operation(uint32_t(save.player), uint32_t(ui.row)));
-			std::string name = candidate_name(save, c, v.candidates[size_t(ui.row)]);
-			if (name.compare(0, 3, "El ") == 0 || name.compare(0, 4, "The ") == 0) {
-				name[0] = char(std::tolower(uint8_t(name[0])));
-			}
-			ui.message = tr("Has votado por ", "You voted for ") + name + ".";
-		}
-		return;
-	}
-	if (v.task == 0xFFFF && ui.row < int(v.offered.size())) {
-		const HanseTask t = hanse_task(save, v.offered[size_t(ui.row)]);
-		queue_operation(save, take_task_operation(uint32_t(save.player), t.event));
-		ui.briefing = true;  // Once started (its deadline changes when it starts).
-		ui.message = tr("Has aceptado el encargo.", "You have taken the task.");
-		ui.row = 0;
-		return;
-	}
-	if (v.road_here && ui.row < 4) {
-		const int k = ui.row;
-		const uint16_t needed = v.road.needed(k);
-		if (needed == 0 || v.available[size_t(k)] <= 0) {
-			ui.message = needed == 0 ? tr("Ya no hace falta más.", "No more is needed.")
-									 : tr("No tienes en esta ciudad.", "You have none in this town.");
-			return;
-		}
-		const uint16_t amount = road_window_amount(kRoadAmounts[size_t(ui.amount)], uint32_t(v.available[size_t(k)]),
-			needed);
-		queue_operation(save, road_materials_operation(v.task, amount, uint8_t(town), uint8_t(save.player),
-			kRoadWares[size_t(k)]));
-		const WareInfo& ware = kWares[kRoadWares[size_t(k)]];
-		ui.message = tr("Entregas ", "You deliver ") + amount_label(amount, ware.unit) + tr(" de ", " of ") +
-			ware_name(kRoadWares[size_t(k)]) + ".";
-		return;
-	}
-	ui.message = v.level == 0 ? tr("Aún no eres candidato.", "You are not a candidate yet.")
-							  : tr("No hay nada que hacer aquí.", "There is nothing to do here.");
-}
-
 // The Alderman: a merchant, or a citizen of the town [0x6DE52E].
 std::string alderman_name(const SaveGame& save, const NameLists& names, const std::vector<std::string>& town_names) {
 	const int chief = alderman(save);
@@ -14088,184 +14105,6 @@ std::string alderman_name(const SaveGame& save, const NameLists& names, const st
 	const int town = save.globals.u8(0x6DE52E);
 	return town < int(save.towns.size()) ? tr("un ciudadano de ", "a citizen of ") + town_name(save, town_names, town)
 										 : tr("un ciudadano", "a citizen");
-}
-
-void draw_hanse(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, const HanseUi& ui,
-	const HanseView& v, const HanseContext& c) {
-	const HanseLayout layout(text.line_height());
-	const SDL_Rect& panel = layout.panel;
-	const int left = panel.x + HanseLayout::kPadding;
-	const int width = panel.w - 2 * HanseLayout::kPadding;
-	const int lh = text.line_height();
-	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
-	SDL_RenderFillRect(renderer, &panel);
-	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
-	SDL_RenderDrawRect(renderer, &panel);
-
-	text.draw(ui.page == 1 ? c.text(GameText::ElectionTitle, tr("Elección del Gobernador", "Election of Alderman"))
-						   : tr("La Hansa", "The Hanse"),
-		left, layout.header_y, kTextColor);
-	const std::string close = (ui.page == 1 ? tr("Select: encargos", "Select: tasks") : tr("Select: elección", "Select: election")) +
-		tr("   " BTN_CIRCLE " cerrar", "   " BTN_CIRCLE " close");
-	text.draw(close, panel.x + panel.w - HanseLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
-
-	// The Alderman, the election and the player's candidacy.
-	std::vector<std::pair<std::string, SDL_Color>> info;
-	info.push_back({tr("Gobernador: ", "Alderman: ") + alderman_name(save, c.names, c.town_names), kTextColor});
-	if (const uint32_t election = alderman_election_tick(save)) {
-		info.push_back({(v.election != 0xFFFF ? tr("Elección: hoy, ", "Election: today, ")
-											  : tr("Próxima elección: ", "Next election: ")) + full_date(election),
-			kTextColor});
-	}
-	if (v.is_alderman) {
-		info.push_back({tr("¡Eres Gobernador de la Hansa!", "You are the Alderman of the Hanseatic League!"), kTextColor});
-	} else if (v.level == 0) {
-		const std::vector<int> mayor = mayor_towns(save, save.player);
-		info.push_back({tr("No eres candidato a Gobernador.", "You are not a candidate for Alderman."), kDimColor});
-		info.push_back({mayor.empty() ? tr("Hace falta ser alcalde de una ciudad.", "You have to be the mayor of a town.")
-									  : tr("Alcalde de ", "Mayor of ") + town_name(save, c.town_names, mayor[0]) + ".",
-			kDimColor});
-		info.push_back({tr("Reputación para optar: ", "Reputation to stand: ") +
-				std::to_string(candidacy_reputation(save, save.player)) + tr(" de ", " of ") +
-				std::to_string(kCandidacyReputation) + ".",
-			kDimColor});
-	} else if (v.level <= 3) {
-		info.push_back({g_spanish ? "Candidato a Gobernador: " + std::to_string(v.level - 1) + " de 3 encargos cumplidos."
-								  : "Candidate for Alderman: " + std::to_string(v.level - 1) + " of 3 tasks done.",
-			kTextColor});
-	} else {
-		info.push_back({tr("Has cumplido los encargos: puedes presentarte a la elección.",
-							"You have done the tasks: you can stand for election."),
-			kTextColor});
-	}
-	for (size_t i = 0; i < info.size() && i < size_t(HanseLayout::kInfoLines); ++i) {
-		text.draw(info[i].first, left, layout.info_y + int(i) * lh, info[i].second);
-	}
-
-	auto row_box = [&](int row) {
-		const SDL_Rect box = {panel.x + 2, layout.rows_y + row * HanseLayout::kRowHeight - 1, panel.w - 4,
-			HanseLayout::kRowHeight};
-		SDL_SetRenderDrawColor(renderer, 110, 80, 40, 230);
-		SDL_RenderFillRect(renderer, &box);
-	};
-	// Wrapped lines in the detail area, down to the footer.
-	auto draw_lines = [&](const std::string& s, int y, SDL_Color color) {
-		for (const std::string& line : wrap_text(text, s, width)) {
-			if (y + lh > layout.footer_y) {
-				break;
-			}
-			text.draw(line, left, y, color);
-			y += lh;
-		}
-		return y;
-	};
-
-	if (ui.page == 1) {
-		// The election: the candidates (with their votes on the day) and the vote.
-		const bool today = v.election != 0xFFFF;
-		std::string intro;
-		if (v.can_vote) {
-			intro = c.text(GameText::VotePrompt, tr("Elige un candidato y vota.", "Choose a candidate and cast your vote."));
-		} else if (today) {
-			intro = c.text(GameText::CandidatesIntro, tr("Se presentan a la elección:", "Standing for election:"));
-		} else if (const uint32_t tick = alderman_election_tick(save)) {
-			const GameDate date = date_from_tick(tick);
-			const int place = save.globals.u8(0x6DE52E);
-			intro = c.texts ? c.texts->format(GameText::Nominated, {std::to_string(date.day), c.texts->month(date.month),
-								  std::to_string(date.year), index_town_name(save, c, place)})
-							: tr("Candidatos para la próxima elección:", "Candidates for the next election:");
-		}
-		text.draw(today ? tr("Candidatos y votos de hoy:", "Candidates and today's votes:") : tr("Candidatos:", "Candidates:"),
-			left, layout.title_y, kDimColor);
-		for (size_t k = 0; k < v.candidates.size(); ++k) {
-			const int y = layout.rows_y + int(k) * HanseLayout::kRowHeight;
-			if (v.can_vote && int(k) == ui.row) {
-				row_box(int(k));
-			}
-			text.draw(candidate_name(save, c, v.candidates[k]), left, y, kTextColor);
-			if (today && v.candidates[k].index >= 0) {
-				const std::string votes = std::to_string(v.candidates[k].votes) + tr(" votos", " votes");
-				text.draw(votes, panel.x + panel.w - HanseLayout::kPadding - text.measure(votes), y, kDimColor);
-			}
-		}
-		draw_lines(intro, layout.detail_y, kDimColor);
-	} else if (v.task == 0xFFFF && !v.offered.empty()) {
-		text.draw(c.text(GameText::TasksChoose, tr("Encargos de la Hansa (elige uno):", "The Hanse's tasks (choose one):")),
-			left, layout.title_y, kDimColor);
-		for (size_t i = 0; i < v.offered.size(); ++i) {
-			const int y = layout.rows_y + int(i) * HanseLayout::kRowHeight;
-			if (int(i) == ui.row) {
-				row_box(int(i));
-			}
-			const HanseTask t = hanse_task(save, v.offered[i]);
-			text.draw(hanse_task_text(save, t, c), left, y, kTextColor);
-		}
-		if (ui.row < int(v.offered.size())) {
-			const HanseTask t = hanse_task(save, v.offered[size_t(ui.row)]);
-			const int y = draw_lines(tr("Plazo: hasta el ", "Deadline: ") + full_date(t.deadline) + ".", layout.detail_y,
-				kTextColor);
-			draw_lines(hanse_task_description(save, t, c), y, kDimColor);
-		}
-	} else if (v.task != 0xFFFF) {
-		const HanseTask t = hanse_task(save, v.task);
-		text.draw(tr("Tu encargo: ", "Your task: ") + hanse_task_text(save, t, c), left, layout.title_y, kTextColor);
-		if (v.road_here) {
-			static constexpr int kColumns[2] = {390, 590};  // Right edges.
-			auto right = [&](const std::string& s, int column, int y, SDL_Color color) {
-				text.draw(s, panel.x + kColumns[column] - text.measure(s), y, color);
-			};
-			for (int k = 0; k < 4; ++k) {
-				const int y = layout.rows_y + k * HanseLayout::kRowHeight;
-				if (k == ui.row) {
-					row_box(k);
-				}
-				const WareInfo& ware = kWares[kRoadWares[size_t(k)]];
-				const uint16_t needed = v.road.needed(k);
-				const bool enabled = needed != 0 && v.available[size_t(k)] > 0;
-				text.draw(ware_label(kRoadWares[size_t(k)]), left, y, enabled ? kTextColor : kDimColor);
-				auto amount = [&](int n) {
-					return g_texts ? amount_label(n, ware.unit)
-								   : std::to_string(n) + (ware.unit == WareUnit::Barrel ? tr(" barr.", " barr.") : tr(" cargas", " loads"));
-				};
-				right(tr("falta ", "needed ") + amount(needed), 0, y, enabled ? kTextColor : kDimColor);
-				right(tr("tienes ", "you have ") + amount(v.available[size_t(k)]), 1, y, enabled ? kTextColor : kDimColor);
-			}
-		} else if (ui.briefing) {
-			// No rows: what the Hanse says when the player takes it.
-			int y = layout.rows_y;
-			for (const std::string& line : wrap_text(text, hanse_thanks(save, t, c), width)) {
-				if (y + lh > layout.detail_y) {
-					break;
-				}
-				text.draw(line, left, y, kDimColor);
-				y += lh;
-			}
-		}
-		int y = draw_lines(tr("Plazo: hasta el ", "Deadline: ") + full_date(t.deadline) + ".", layout.detail_y, kTextColor);
-		y = draw_lines(hanse_progress_text(save, t, v, c), y, kTextColor);
-		if (HanseTaskType(t.type) == HanseTaskType::Road && !v.road_here && t.data[2] > 0) {
-			draw_lines(tr("Lleva los materiales a ", "Take the materials to ") + town_name(save, c.town_names, t.data[0]) +
-				tr(" o a ", " or to ") + town_name(save, c.town_names, t.data[1]) + ".", y, kDimColor);
-		}
-	} else if (v.level >= 1 && v.level <= 3 && c.texts) {
-		draw_lines(c.texts->get(GameText::NoTasks), layout.title_y, kDimColor);
-	}
-
-	const bool show_message = !ui.message.empty() && !SDL_TICKS_PASSED(app_ticks(), ui.message_until);
-	if (show_message) {
-		text.draw(ui.message, left, layout.footer_y, kTextColor);
-	}
-	if (ui.page == 1) {
-		if (v.can_vote) {
-			draw_button(renderer, text, layout.act_button, tr(BTN_CROSS " votar", BTN_CROSS " vote"));
-		}
-	} else if (v.road_here) {
-		draw_button(renderer, text, layout.amount_button, tr("Izq./Der.: ", "Left/Right: ") + road_amount_text(ui.amount));
-		draw_button(renderer, text, layout.act_button, tr(BTN_CROSS " entregar", BTN_CROSS " deliver"));
-	} else if (v.task == 0xFFFF && !v.offered.empty()) {
-		draw_button(renderer, text, layout.act_button, tr(BTN_CROSS " aceptar el encargo", BTN_CROSS " take the task"));
-	}
 }
 
 // The end: the window when the player is elected Alderman (the game also
@@ -16349,7 +16188,6 @@ int main(int argc, char** argv) {
 		small_text->set_archive(archive.get());
 	}
 	MarketUi market;
-	HanseUi hanse;  // The Hanse panel (Square in a town).
 	PlaceUi place;  // The town's places (the tavern, the shipyard) and the ship's window.
 	int tavern_town = -1;  // The town whose tavern is open (its people let go when it closes: 0x52 with the kind 10).
 	SaveGame save;
@@ -16731,7 +16569,6 @@ int main(int argc, char** argv) {
 		last_alderman = alderman(save);
 		last_election = alderman_election_tick(save);
 		market = MarketUi();
-		hanse = HanseUi();
 		place = PlaceUi();
 		tavern_town = -1;
 		messages = MessageWindow();
@@ -16893,7 +16730,6 @@ int main(int argc, char** argv) {
 		mail.options = false;
 		mail.last_check = -1;
 		market.open = false;
-		hanse.open = false;
 		place.open = Place::None;
 		if (selection.mode == Mode::Saved || (selection.mode == Mode::Sea && sea && panel_art)) {
 			side.menu = PanelMenu::Messages;  // The side panel's messages (SIDEMENU_INFOS).
@@ -18079,7 +17915,6 @@ int main(int argc, char** argv) {
 					}
 					// The town's windows close: the battle's screen takes the view (as the game's town view, 0x6102A9).
 					market.open = false;
-					hanse.open = false;
 					place.open = Place::None;
 					side.menu = PanelMenu::None;  // The messages close with it (below).
 					side.citizens = false;
@@ -18223,12 +18058,8 @@ int main(int argc, char** argv) {
 		if (trading) {
 			fit_market_mode(save, town_index, market);  // A convoy chosen or no longer there (Select, the operations).
 		}
-		// The Hanse panel, in the save's towns like the market (never both open).
-		const bool in_hanse = hanse.open && !trading && selection.mode == Mode::Saved && save.player >= 0 && small_text;
-		const HanseView hanse_now = in_hanse ? hanse_view(save, town_index, hanse.page) : HanseView();
-		// The window of a place or of the ship, in the save's towns (never with
-		// the market or the Hanse panel).
-		const bool in_place = place.open != Place::None && !trading && !in_hanse && selection.mode == Mode::Saved &&
+		// The window of a place or of the ship, in the save's towns (never with the market).
+		const bool in_place = place.open != Place::None && !trading && selection.mode == Mode::Saved &&
 			save.player >= 0 && small_text;
 		if (place.bathed && (place.open != Place::BathHouse || place.page != 0) && has_save && save.player >= 0) {
 			// The bath taken: its 0x39 with the tick now, once the player goes on (0x5B19F1, 0x5B1E93).
@@ -18313,7 +18144,7 @@ int main(int argc, char** argv) {
 		}
 		// The building in the middle of the town's part of the screen, the
 		// buttons' cursor (as the game's mouse pointer): X goes into it.
-		const bool town_free = selection.mode == Mode::Saved && has_save && save.player >= 0 && !trading && !in_hanse &&
+		const bool town_free = selection.mode == Mode::Saved && has_save && save.player >= 0 && !trading &&
 			!in_place && !in_mail && !in_menu && !in_battle;
 		const int hover = town_free ? view->place_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2) : -1;
 		// Goes into a place: the Market Hall is the market; the tavern rolls its
@@ -18326,7 +18157,6 @@ int main(int argc, char** argv) {
 				market.mode = place.open_market && player_office(save, town_index) >= 0 ? 2 : 1;
 				market.ware = std::min(market.ware, market_rows(market) - 1);
 				market.open = true;
-				hanse.open = false;
 				place.open = Place::None;
 				return;
 			}
@@ -18374,7 +18204,6 @@ int main(int argc, char** argv) {
 				shares_on_sale(save);
 			}
 			market.open = false;
-			hanse.open = false;
 		};
 		// The building's side menu's button k chosen (a touch, or the pad's Up / Down going the way `step`): its page, or
 		// the tavern's person talked to; the church's «Pray» the picture alone. A dimmed button or none: nothing.
@@ -18399,7 +18228,8 @@ int main(int argc, char** argv) {
 			place.hall_done = false;
 			place.chamber_shown = 0;  // the page 4's last vote (0x5E0F07),
 			place.coffers = 0;  // the page 6's balance (0x5E0F45),
-			place.hall_tasks = false;  // the page 7's meetings (0x5E0F6C).
+			place.hall_tasks = false;  // the page 7's meetings (0x5E0F6C),
+			place.hall_actions_shown = false;  // every control hidden (0x5E0BA0..).
 			place.chamber_votes = {};
 			if (alone) {
 				// The church's «Pray»: the picture alone, no button lit (place_side_menu).
@@ -18541,6 +18371,12 @@ int main(int argc, char** argv) {
 			}
 			if ((button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) &&
 				land_trade_step(save, town_index, place, button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1)) {
+				return true;
+			}
+			if ((button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) &&
+				place.open == Place::TownGate && place.shown && place.page == int(GatePage::OverlandRoute)) {
+				// The road's amount: 1, 5, 50, Max (its four buttons [+0x11A8..]).
+				place.gate_amount = (place.gate_amount + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? 3 : 1)) % 4;
 				return true;
 			}
 			if ((button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) &&
@@ -18841,48 +18677,6 @@ int main(int argc, char** argv) {
 				return false;
 			default:
 				return true;
-			}
-		};
-		auto hanse_select = [&](int step) {
-			const int rows = hanse_now.rows(hanse.page);
-			hanse.row = rows > 0 ? (hanse.row + rows + step) % rows : 0;
-		};
-		auto change_amount = [&](int step) {
-			const int count = int(kRoadAmounts.size());
-			hanse.amount = (hanse.amount + count + step) % count;
-		};
-		auto open_hanse = [&](bool open) {
-			hanse.open = open;
-			hanse.row = 0;
-			hanse.briefing = false;
-			if (open) {
-				market.open = false;
-			}
-		};
-		// With the panel open the pad, X, Circle and Square are its own; the rest work as usual.
-		auto hanse_button = [&](Uint8 button) {
-			switch (button) {
-			case SDL_CONTROLLER_BUTTON_DPAD_UP:
-			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-				hanse_select(button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1);
-				return true;
-			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-				change_amount(button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1);
-				return true;
-			case SDL_CONTROLLER_BUTTON_A:
-				hanse_act(save, town_index, hanse, hanse_now, hanse_context);
-				return true;
-			case SDL_CONTROLLER_BUTTON_B:
-			case SDL_CONTROLLER_BUTTON_X:
-				open_hanse(false);
-				return true;
-			case SDL_CONTROLLER_BUTTON_BACK:  // Select: the tasks or the election.
-				hanse.page ^= 1;
-				hanse.row = 0;
-				return true;
-			default:
-				return false;
 			}
 		};
 		auto select_ware = [&](int step) {
@@ -20024,7 +19818,7 @@ int main(int argc, char** argv) {
 		// The statistics (the top bar's money): Left and Right their pages (the done ones), Up and Down the page's
 		// entries (the parchment shows each), L and R the period (Suministro: the town), Circle closes them.
 		const bool stats_open = side.menu == PanelMenu::Statistics && panel_shown && !side.folded && has_save &&
-			save.player >= 0 && small_text && !trading && !in_hanse && !in_place && !in_mail && !in_menu;
+			save.player >= 0 && small_text && !trading && !in_place && !in_mail && !in_menu;
 		auto stats_pick_town = [&](int step) {
 			const std::vector<int> towns = statistics_supply_towns(save, uint32_t(save.player));
 			if (towns.empty()) {
@@ -20253,9 +20047,6 @@ int main(int argc, char** argv) {
 				if (in_mail && mail_button(event.cbutton.button)) {
 					break;
 				}
-				if (in_hanse && hanse_button(event.cbutton.button)) {
-					break;
-				}
 				if (in_place && place_button(event.cbutton.button)) {
 					break;
 				}
@@ -20330,13 +20121,11 @@ int main(int argc, char** argv) {
 					}
 					break;
 				case SDL_CONTROLLER_BUTTON_X:
-					// Cuadrado: vende; en el mar, el siguiente barco del jugador; en la ciudad, the Hanse panel.
+					// Square: sells; at sea, the player's next ship.
 					if (trading) {
 						trade(save, sailing.get(), town_index, market, false);
 					} else if (selection.mode == Mode::Sea) {
 						fleet_index++;
-					} else if (selection.mode == Mode::Saved) {
-						open_hanse(true);
 					}
 					break;
 				case SDL_CONTROLLER_BUTTON_B:
@@ -20484,21 +20273,6 @@ int main(int argc, char** argv) {
 												 : SDL_CONTROLLER_BUTTON_INVALID);
 					break;
 				}
-				if (in_hanse) {
-					// Keyboard: the arrows, C or Enter to act, H or Escape to close.
-					const SDL_Keycode key = event.key.keysym.sym;
-					const Uint8 button = key == SDLK_UP ? SDL_CONTROLLER_BUTTON_DPAD_UP
-						: key == SDLK_DOWN ? SDL_CONTROLLER_BUTTON_DPAD_DOWN
-						: key == SDLK_LEFT ? SDL_CONTROLLER_BUTTON_DPAD_LEFT
-						: key == SDLK_RIGHT ? SDL_CONTROLLER_BUTTON_DPAD_RIGHT
-						: key == SDLK_c || key == SDLK_RETURN ? SDL_CONTROLLER_BUTTON_A
-						: key == SDLK_h || key == SDLK_ESCAPE ? SDL_CONTROLLER_BUTTON_B
-						: key == SDLK_TAB ? SDL_CONTROLLER_BUTTON_BACK
-						: SDL_CONTROLLER_BUTTON_INVALID;
-					if (button != Uint8(SDL_CONTROLLER_BUTTON_INVALID) && hanse_button(button)) {
-						break;
-					}
-				}
 				if (in_place) {
 					// Keyboard: the arrows, Page Up/Down ±10, C or Enter to act, Tab the next ship, Escape to close.
 					const SDL_Keycode key = event.key.keysym.sym;
@@ -20536,11 +20310,6 @@ int main(int argc, char** argv) {
 					break;
 				}
 				switch (event.key.keysym.sym) {
-				case SDLK_h:
-					if (selection.mode == Mode::Saved) {
-						open_hanse(true);
-					}
-					break;
 				case SDLK_b:  // The mailbox.
 					if (selection.mode == Mode::Saved || selection.mode == Mode::Sea) {
 						open_mailbox();
@@ -20560,7 +20329,6 @@ int main(int argc, char** argv) {
 					break;
 				case SDLK_m:
 					market.open = !market.open;
-					hanse.open = false;
 					break;
 				case SDLK_c:
 				case SDLK_v:
@@ -20655,7 +20423,6 @@ int main(int argc, char** argv) {
 					inside(panel_layout.panel, touch_start.x, touch_start.y);
 				touch_on_panel = touch_on_side ||
 					(trading && inside(MarketLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
-					(in_hanse && inside(HanseLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
 					(in_place && inside(PlaceLayout::on_screen(), touch_start.x, touch_start.y)) ||
 					(in_menu && (inside(MenuLayout(small_text->line_height(), menu.screen).panel, touch_start.x, touch_start.y) ||
 						menu.ask != MenuAsk::None)) ||
@@ -20962,7 +20729,7 @@ int main(int argc, char** argv) {
 				}
 				if (touch_moved < kTapDistance && !in_menu && !messages.open && !end_window.open && has_save &&
 					save.player >= 0 && (selection.mode == Mode::Saved || selection.mode == Mode::Sea) && panel_shown &&
-					!trading && !in_hanse && !in_place && inside(g_money_button, touch_start.x, touch_start.y)) {
+					!trading && !in_place && inside(g_money_button, touch_start.x, touch_start.y)) {
 					// The top bar's money: the statistics, as the game's on the company overview with its balance.
 					touch_building = false;
 					touch_on_side = false;
@@ -20987,7 +20754,7 @@ int main(int argc, char** argv) {
 					break;
 				}
 				if (touch_moved < kTapDistance && !in_menu && !messages.open && !end_window.open && has_save &&
-					save.player >= 0 && selection.mode == Mode::Saved && !trading && !in_hanse && !in_place &&
+					save.player >= 0 && selection.mode == Mode::Saved && !trading && !in_place &&
 					(inside(g_people_button, touch_start.x, touch_start.y) ||
 						inside(g_house_button, touch_start.x, touch_start.y))) {
 					// The top bar's man: the citizens' window; its house: the competition's buildings shaded.
@@ -21209,7 +20976,7 @@ int main(int argc, char** argv) {
 					} else if (in_place && !place_now.menu_title.empty() && side.menu == PanelMenu::None &&
 						inside(panel_layout.room, x, y)) {
 						// The building's side menu: a page or a person (the tavern's: talked to).
-						choose_menu_entry(PlaceMenuLayout(panel_layout.room, place_now.menu_layout)
+						choose_menu_entry(PlaceMenuLayout(panel_layout.room, place_now.menu_layout, place_now.menu_first, place_now.menu_step)
 											  .entry_at(x, y, int(place_now.menu.size())),
 							1);
 					} else if (inside(panel_layout.map_switch, x, y)) {
@@ -21498,16 +21265,6 @@ int main(int argc, char** argv) {
 				}
 				if (in_menu && touch_moved < kTapDistance) {
 					menu_tap(touch_start.x, touch_start.y);
-				} else if (touch_on_panel && in_hanse && touch_moved < kTapDistance) {
-					const HanseLayout layout(small_text->line_height());
-					const int row = layout.row_at(touch_start.x, touch_start.y, hanse_now.rows(hanse.page));
-					if (hanse_now.road_here && inside(layout.amount_button, touch_start.x, touch_start.y)) {
-						change_amount(1);
-					} else if (inside(layout.act_button, touch_start.x, touch_start.y)) {
-						hanse_act(save, town_index, hanse, hanse_now, hanse_context);
-					} else if (row >= 0) {
-						hanse.row = row;
-					}
 				} else if (touch_on_panel && in_place && touch_moved < kTapDistance) {
 					const PlaceLayout layout;
 					const SDL_Point at = PlaceLayout::to_window(touch_start.x, touch_start.y);  // In the game's window.
@@ -21614,6 +21371,8 @@ int main(int argc, char** argv) {
 									place.row = guild_centre_touched(save, x - layout.panel.x, y - layout.panel.y);
 								} else if (place.open == Place::TownHall) {
 									place.hall_choice = b.value;  // A button of the page (town_hall_view takes it).
+								} else if (place.open == Place::TownGate) {
+									place.gate_amount = b.value & 3;  // The road's amount.
 								}
 								break;
 							case PlaceView::PageAction::Previous:
@@ -21793,13 +21552,13 @@ int main(int argc, char** argv) {
 				place.page_scroll += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY));
 			}
 		}
-		if (!trading && !in_hanse && !in_mail && !in_place && side.focus < 0 && side.menu == PanelMenu::None &&
+		if (!trading && !in_mail && !in_place && side.focus < 0 && side.menu == PanelMenu::None &&
 			!battle_popup() && !in_battle) {  // Nothing moves under the battles' window.
 			// (On the battle's screen the pad's up and down are the sails: part 2.)
 			camera_x += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) - pad(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
 			camera_y += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_DOWN) - pad(SDL_CONTROLLER_BUTTON_DPAD_UP));
 		}
-		if (!trading && !in_hanse && !in_mail && !in_place) {
+		if (!trading && !in_mail && !in_place) {
 			const Uint8* keys = SDL_GetKeyboardState(nullptr);
 			camera_x += kPadSpeed * (keys[SDL_SCANCODE_RIGHT] - keys[SDL_SCANCODE_LEFT]);
 			camera_y += kPadSpeed * (keys[SDL_SCANCODE_DOWN] - keys[SDL_SCANCODE_UP]);
@@ -21915,7 +21674,7 @@ int main(int argc, char** argv) {
 		} else {
 			// The building under the cursor now (after this frame's camera): glowing, with its name.
 			const bool free_now = selection.mode == Mode::Saved && has_save && save.player >= 0 && !market.open &&
-				!hanse.open && place.open == Place::None && !mail.open && !menu.open();
+				place.open == Place::None && !mail.open && !menu.open();
 			const int pointed = free_now && side.menu != PanelMenu::Build
 				? view->place_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2)
 				: -1;
@@ -21957,7 +21716,7 @@ int main(int argc, char** argv) {
 				SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 			}
 			if (pointed >= 0 && small_text) {
-				const SDL_Rect b = view->bounds(pointed);
+				const SDL_Rect b = view->bounds(pointed, {camera_x + town_width / 2, camera_y + kScreenHeight / 2});
 				const std::string name = place_name(pointed);
 				const int padding = 6;
 				const int w = small_text->measure(name) + 2 * padding;
@@ -22054,7 +21813,7 @@ int main(int argc, char** argv) {
 						  tr("Select: pestaña   " BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar",
 							  "Select: tab   " BTN_SQUARE " delete   " BTN_CIRCLE " close"),
 						  tr(BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar", BTN_SQUARE " delete   " BTN_CIRCLE " close")};
-			} else if (trading || in_hanse || place.open != Place::None) {
+			} else if (trading || place.open != Place::None) {
 				const std::string money = format_money(save.merchants[size_t(save.player)].money()) + tr(" monedas", " coins");
 				right_texts = {merchant_name(save, names, save.player) + ": " + money, money};
 			} else if (at_sea) {
@@ -22071,10 +21830,8 @@ int main(int argc, char** argv) {
 				const std::string ship = tr("   Select: panel", "   Select: panel");
 				const std::string l = tr("L/R: ciudad   ", "L/R: town   ");
 				const std::string map = tr(BTN_TRIANGLE " mapa   ", BTN_TRIANGLE " map   ");
-				const std::string hanse_mail = tr("   " BTN_SQUARE " Hansa   " BTN_CIRCLE " buzón", "   " BTN_SQUARE " Hanse   " BTN_CIRCLE " mailbox");
-				const std::string hanse_only = tr("   " BTN_SQUARE " Hansa", "   " BTN_SQUARE " Hanse");
-				right_texts = {l + map + x + hanse_mail + ship, map + x + hanse_mail + ship, map + x + hanse_mail,
-					map + x + hanse_only, x + hanse_only, map + x, x};
+				const std::string mail = tr("   " BTN_CIRCLE " buzón", "   " BTN_CIRCLE " mailbox");
+				right_texts = {l + map + x + mail + ship, map + x + mail + ship, map + x + mail, map + x, x};
 			} else {
 				right_texts = {tr("L/R: ciudad   " BTN_TRIANGLE " mapa   " BTN_CROSS " mercado", "L/R: town   " BTN_TRIANGLE " map   " BTN_CROSS " market"),
 					tr(BTN_TRIANGLE " mapa   " BTN_CROSS " mercado", BTN_TRIANGLE " map   " BTN_CROSS " market")};
@@ -22121,17 +21878,11 @@ int main(int argc, char** argv) {
 					town_width);
 			}
 		}
-		if (in_hanse) {
-			// After this frame's ticks and operations: what the panel shows now.
-			const HanseView view_now = hanse_view(save, town_index, hanse.page);
-			hanse.row = std::min(hanse.row, std::max(0, view_now.rows(hanse.page) - 1));
-			draw_hanse(renderer, *small_text, save, hanse, view_now, hanse_context);
-		}
 		if (trading) {
 			draw_market(renderer, *small_text, save, town_index, market);
 		}
 		if (place.open != Place::None && selection.mode == Mode::Saved && has_save && save.player >= 0 && small_text &&
-			!market.open && !hanse.open) {
+			!market.open) {
 			// After this frame's ticks and operations: what the window shows now.
 			const PlaceView view_now = place_view(save, town_index, place);
 			// The interior read when the building is entered; what its animations hang on in the game.
@@ -22294,7 +22045,7 @@ int main(int argc, char** argv) {
 			}
 			const bool mail_full = in_mail && mail.open && !mail_in_panel;  // The whole-screen mailbox (the sea map).
 			const bool over_place = place.open != Place::None && selection.mode == Mode::Saved && has_save &&
-				save.player >= 0 && !market.open && !hanse.open;
+				save.player >= 0 && !market.open;
 			const PlaceLayout place_layout;
 			const SDL_Point place_footer = PlaceLayout::to_screen(place_layout.panel.x + PlaceLayout::kPadding,
 				place_layout.footer_y);

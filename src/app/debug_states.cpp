@@ -754,6 +754,20 @@ const char kDebugStatesHelp[] =
 	"  materials   road materials in the player's first ship (12 loads)\n"
 	"  level4      three tasks done: the player can stand for election\n"
 	"  alderman    the player is the Alderman\n"
+	"  failed-task  a Hanse task of the player's failed today (kind 5, gone in 28 days):\n"
+	"              the town hall's «Alderman's office» tells him to take no more (with\n"
+	"              candidate: 0x4EC694 needs the merchant's [+0x37])\n"
+	"  road-task   a Hanse road of the player's, 5 sections left, some materials delivered\n"
+	"              (the town gate's «Overland route»; with materials: some to hand over)\n"
+	"  town-manager  mayor of his home town without a council (the town hall's page 2:\n"
+	"              the town manager's taxes)\n"
+	"  council-vote  a town council's vote today in his home town, his rank there 5\n"
+	"              (the town hall's «Council Chamber»)\n"
+	"  diet-vote   a Hanse diet's vote today, his home the Alderman's town (the same)\n"
+	"  guard-ship  his docked ship of least firepower enough made the guard ship of its\n"
+	"              town (the town hall's «Outrigger»)\n"
+	"  prince-decree  the prince's decree in his home town (the town hall's «Notices»\n"
+	"              can be opened)\n"
 	"  election-tomorrow  the election of the Alderman at the start of the next day\n"
 	"  pirate-attack  the player's first ship sails and pirates attack it two days\n"
 	"              later (event 0x1E): a sea battle against the player\n"
@@ -998,6 +1012,62 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "alderman") {
 			save.globals.u8(kAlderman) = uint8_t(save.player);
 			save.globals.u8(kAldermanTown) = m.u8(0x19);
+		} else if (state == "failed-task") {
+			// A Hanse task of the player's that failed today, as fn_4eb0eb leaves it (an event 0x32 of kind 5, gone 28
+			// days later): the town hall's page 7 tells him to take no more.
+			const uint32_t now = save.globals.u32(global::kWorldTick);
+			GameMemory<0x18>& e = save.events[tick::events_detail::fn_4d8cf0(save, now + 0x1C00)];
+			e.u16(0x6) = 0x32;
+			e.u32(0x8) = now + 0x1C01;
+			e.u8(0xC) = 5;
+			e.u8(0xD) = uint8_t(save.player);
+			e.u8(0xF) = 1;
+		} else if (state == "road-task") {
+			// A Hanse road of the player's (an event 0x32 of kind 1, started) between a pair of 0x672BF8 whose two towns the
+			// save has (one his home town if it can: the materials given there count, 0x53A3E0), 5 sections left, some
+			// materials delivered (wood 2, bricks 4, tools 0, hemp 1: short of a section's), its deadline in 46 days: the
+			// town gate's «Overland route».
+			int a = -1;
+			int b = -1;
+			const uint32_t towns = std::min<uint32_t>(uint32_t(save.towns.size()), save.globals.u32(global::kWorldTownCount));
+			for (int pass = 0; pass < 2 && b < 0; ++pass) {
+				for (size_t k = 0; k < kRoadPairs && b < 0; ++k) {
+					const std::array<uint8_t, 3> pair = road_pair(k);
+					a = b = -1;
+					for (uint32_t t = 0; t < towns; ++t) {
+						if (save.towns[t].town_id() == pair[0]) {
+							a = int(t);
+						} else if (save.towns[t].town_id() == pair[1]) {
+							b = int(t);
+						}
+					}
+					if (a < 0 || (pass == 0 && a != int(m.u8(0x19)) && b != int(m.u8(0x19)))) {
+						b = -1;
+					}
+				}
+			}
+			if (b < 0) {
+				error = "the save has no pair of towns a road can join";
+				return false;
+			}
+			const uint32_t now = save.globals.u32(global::kWorldTick);
+			GameMemory<0x18>& e = save.events[tick::events_detail::fn_4d8cf0(save, now + 0x100)];
+			e.u16(0x6) = 0x32;
+			e.u32(0x8) = now + 0xBA00;
+			e.u8(0xC) = 1;
+			e.u8(0xD) = uint8_t(save.player);
+			e.u8(0xF) = 1;
+			e.u8(0x10) = uint8_t(a);
+			e.u8(0x11) = uint8_t(b);
+			e.u8(0x12) = 5;
+			e.u8(0x13) = 0;
+			e.u8(0x14) = 2;
+			e.u8(0x15) = 4;
+			e.u8(0x16) = 0;
+			e.u8(0x17) = 1;
+			if (m.u8(0x37) == 0) {
+				m.u8(0x37) = 1;  // (0x4EC694 needs it.)
+			}
 		} else if (state == "nest-attack") {
 			if (!nest_attack(save)) {
 				error = "the player's first ship isn't in a town, or no pirate has a nest";

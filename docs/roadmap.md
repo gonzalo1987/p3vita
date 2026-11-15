@@ -34,7 +34,8 @@ Cómo leerla:
   del juego; el mapa del mar; el mercado, la taberna, el astillero y el muelle, la oficina y el prestamista; construir
   y derribar tocando la ciudad; el menú del barco, con las rutas comerciales y la ventana de dos barcos; el gremio, la
   herrería, la iglesia, el baño, la oficina de otro comerciante y la caballeriza (el transporte por tierra); el buzón;
-  las estadísticas; el panel de la Hansa; las batallas que dirige el jugador; guardar y cargar; las opciones (idioma,
+  las estadísticas; la puerta de la ciudad (los materiales de la carretera); las batallas que dirige el jugador;
+  guardar y cargar; las opciones (idioma,
   corregir los fallos del juego). Las ventanas de los edificios, pasando a las del juego (apartado 4): su marco, su
   imagen con sus animaciones y sus gestos, su menú lateral en el panel (ya en todos) y sus páginas (hechas las de la
   taberna, el prestamista, la iglesia, el gremio, la herrería y los avisos del ayuntamiento).
@@ -88,8 +89,9 @@ Cómo leerla:
   Antes, la primera parte: la reparación de convoyes, los botones de las cartas, la iglesia y el baño.
 - **Siguiente**: el encargo `ENCARGO_GRUPO5_VISOR_2.md` (junto al HANDOFF): las páginas que faltan
   como las del juego están hechas (la última, el astillero y el muelle, el 14-11-2026 por la noche) y las siete del
-  ayuntamiento (15-11-2026); queda del grupo 5 en el visor (apartado 1) el texto tras una misión fallida, qué hacer con
-  el panel de la Hansa del visor, el cliente de un pedido de la taberna y los asedios.
+  ayuntamiento (15-11-2026), con su texto tras una misión fallida, y la puerta de la ciudad con su «Ruta terrestre»
+  (15-11-2026; el panel de la Hansa propio del visor, quitado); queda del grupo 5 en el visor (apartado 1) el cliente
+  de un pedido de la taberna y los asedios (las otras siete páginas de la puerta).
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
   (apartado 6).
@@ -106,7 +108,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Tipos de evento (58) | 53 | 5: 1 el intérprete de misiones, 1 la partida en red y 3 nadie |
 | Operaciones (193 códigos) | 167: las 37 de la simulación, 101 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red y la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) | **5 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74, 0x76 y 0x82; apartado 3), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 139 | 15: 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
-| Edificios con vista propia en el juego (13) | 12 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia y el ayuntamiento; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 12; con todas sus páginas como las del juego: la taberna (menos el cliente de un pedido), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería y el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida); y la fiesta en los puestos del mercado | 7 de las 8 páginas del ayuntamiento y el cliente de un pedido de la taberna; la puerta de la ciudad sin ventana (los asedios) (apartado 4) |
+| Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (menos el cliente de un pedido), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | El cliente de un pedido de la taberna y 7 de las 8 páginas de la puerta de la ciudad (las del asedio) (apartado 4) |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
@@ -197,9 +199,13 @@ enteros antes de reescribirlos):
   alcalde (la candidatura 0x45, las propuestas al consejo 0x48 y los impuestos del regidor de una ciudad sin consejo),
   información de la Hansa, sala de conferencias (la elección 0x3F, la Dieta 0x3F, el consejo 0x49 y sus resultados),
   casa de la cerveza, arcas (0x47) y oficina del Gobernador (las misiones 0x4B y las reuniones 0x4A); el menú lateral
-  como 0x5A9780. **Falta**: el texto 0x6A9680 de la oficina (tras una misión fallida), qué hacer con el panel de la
-  Hansa del visor (ahora repite las páginas 3, 4 y 7 salvo los materiales del camino, 0x3B), los asedios
-  (0x5F1F00..0x5F31C0) y el cliente de un pedido de la taberna (0x5D7760, la 0x51): en `ENCARGO_GRUPO5_VISOR_2.md`. (Mudar la ciudad natal, 0x5DD520, quedó
+  como 0x5A9780; el texto 0x6A9680 de la oficina tras una misión fallida (15-11-2026, estado `failed-task`). **La
+  puerta de la ciudad** (.let 0x2F, 15-11-2026; `re/emu/sesion37/notes_gate.md`): su menú lateral como el del juego
+  (0x5ABFA0 con sus condiciones de asedio y la nota bajo el título, `town_gate_window.{hpp,cpp}` con su ctest) y su
+  página «Ruta terrestre» (0x5F2A20, 0x5F0DF0: los materiales de la carretera, la 0x3B; estado `road-task`); el panel
+  de la Hansa propio del visor, quitado a petición del usuario. **Falta**: las otras siete páginas de la puerta, los
+  asedios (0x5F1F00..0x5F31C0), y el cliente de un pedido de la taberna (0x5D7760, la 0x51): en
+  `ENCARGO_GRUPO5_VISOR_2.md`. (Mudar la ciudad natal, 0x5DD520, quedó
   hecho en la página «Trasladarse» de la oficina, 14-11-2026.)
 - [x] **La oficina y su administrador** (12-11-2026; `operations.cpp`, `office_window.cpp`): 0x5A el porcentaje de
   trabajadores de una empresa, 0x5B la orden del administrador para una mercancía, 0x5E contratarlo o despedirlo, 0x62
@@ -358,8 +364,9 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     altar salen según lo alimentados que estén sus pobres. La gente de la taberna no se dibuja aparte: ya está en la
     imagen y sus gestos salen esté quien esté, como en el juego. Las tiras de más de 4096 píxeles (el prestamista, la
     oficina, la lonja, el baño, el fuego del gremio, el agua del astillero), que la Vita no admite en una textura, van
-    ahora con una textura por fotograma, y las imágenes sin canal alfa (el vapor y el agua del baño) se ven. Falta
-    verlas en la puerta de la ciudad (con los asedios).
+    ahora con una textura por fotograma, y las imágenes sin canal alfa (el vapor y el agua del baño) se ven. La puerta
+    de la ciudad ya se abre (15-11-2026) y su guardia hace sus gestos; falta la puerta cerrada de un asedio (con los
+    asedios).
   - [x] **El menú de cada edificio en el panel lateral** (el rollo de pergamino, el título en Elgreco, los botones):
     al entrar se ve la imagen sola y la página se elige ahí; en todos los edificios desde el 14-11-2026 (la lonja, el
     baño con un botón por concejal en el baño, la oficina, la caballeriza, el muelle con el menú del astillero y sus
@@ -432,14 +439,16 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido). La
     sombra del edificio en su subasta (la vista de la ciudad del visor aún no dibuja sombras) y el sonido de rezar
     (con el sonido, apartado 5). Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
-- [ ] **Los edificios que aún no tienen ventana**: la puerta de la ciudad (`Stadttor`: qué hace, por leer en el
-  código; el transporte por tierra resultó ser de la caballeriza, el granero de las vistas, que ya tiene la suya,
-  13-11-2026, como el gremio, la herrería, la iglesia, el baño, la armería de la milicia y el ayuntamiento, este con
-  sus ocho páginas desde el 15-11-2026). Se añaden a `kPlaces` de `src/app/main.cpp` por su tipo de
-  `.let`.
-- [ ] **El panel de la Hansa** (Cuadrado en una ciudad) es una ventana propia del visor (lo que lista y encola sí es
-  como el juego); el juego tiene las suyas (la de encargos 0x5E87D0, la de la carretera 0x5F2A20). Por decidir con el
-  usuario si se rehace como el juego, como las demás.
+- [ ] **La puerta de la ciudad** (.let 0x2F, `Stadttor`; 15-11-2026, `re/emu/sesion37/notes_gate.md`): abre su menú
+  lateral como el del juego (ocho botones con sus condiciones, la nota bajo el título; la nota del juego, de tres
+  líneas, pisa los dos primeros botones: el visor los pone debajo, algo más juntos, improvisado) y su página «Ruta
+  terrestre» (los materiales de una carretera de la Hansa). Faltan sus otras siete páginas, las del asedio (Presentes,
+  Venta de mercancías, Contratos de entrega, Préstamo, Atacar, Rendirse, Comprar libertad): sus botones salen
+  atenuados hasta hacerlas (apartado 1, `ENCARGO_GRUPO5_VISOR_2.md`). (Los demás edificios con vista propia ya tienen
+  la suya: el transporte por tierra resultó ser de la caballeriza, 13-11-2026.)
+- [x] **El panel de la Hansa** propio del visor (Cuadrado en una ciudad), quitado el 15-11-2026 a petición del
+  usuario: sus encargos y elecciones son las páginas del ayuntamiento, y los materiales de la carretera, la página
+  «Ruta terrestre» de la puerta de la ciudad, como las del juego.
 - **La ciudad viva**: la simulación cambia la ciudad como el juego y el visor ya dibuja su estado actual (sus listas de
   edificios, obras y fortificaciones, y las de cada oficina), pero solo los edificios:
   - [ ] Antes de seguir, mirar en el juego original qué se ve y qué cambia: si la ciudad se redibuja en cuanto se
@@ -634,7 +643,7 @@ barcos, el menú del barco con sus seis páginas y la ruta comercial, los mensaj
 las estadísticas enteras, la barra de arriba con el hombre y la casa); el mapa del mar con su panel; el mercado en sus
 modos (barco, oficina, convoy, armas); la taberna, el astillero y el muelle, la oficina, el prestamista, la iglesia y
 el baño; el buzón (con los botones de las cartas) y la
-crónica con el aviso de carta nueva y las líneas de aviso; el panel de la Hansa; las batallas en pantalla (la
+crónica con el aviso de carta nueva y las líneas de aviso; la puerta de la ciudad; las batallas en pantalla (la
 pregunta, la batalla en el mar, en una ciudad y en una guarida, con su panel y sus órdenes táctiles); guardar y cargar
 en 8 ranuras; las opciones (idioma español o inglés, corregir los fallos del juego). Las cargas en la Vita, más ligeras
 y a demanda con aviso.
@@ -675,17 +684,15 @@ cada una: el HANDOFF y [oracle.md](oracle.md).
 - **En la Vita**: nada de ficheros que el usuario no haya pedido en `ux0:data/p3vita/`; cargas a demanda con aviso
   mejor que precargas de fondo que den tirones; el usuario mide los tiempos a ojo.
 
+- **El panel de la Hansa del visor, fuera** (15-11-2026): quitado; lo suyo, en las ventanas del juego (el ayuntamiento y
+  la puerta de la ciudad).
+
 ## Los fallos del juego encontrados
 
 Cada uno con su dirección, qué hace y su estado. «Seguro»: leído en el código o visto en el oráculo; «parece»: puede
 ser a propósito. El detalle, en el comentario del código y en [oracle.md](oracle.md).
 
 ### Reproducidos, sin corregir aún
-
-**El botón «Avisos» del ayuntamiento** (el menú lateral, 0x5A9780; 15-11-2026, seguro: comprobado en el emulador,
-`re/emu/sesion36/halltrace.sh 0 1 --menu`): con un pedido en el mundo y sin decreto del Príncipe, el juego enciende el
-botón y en la misma pasada lo vuelve a apagar (se le olvida salir del bucle), así que «Avisos» solo se puede pulsar con
-el decreto. Reproducido (`town_hall_menu`); sin decidir si corregirlo.
 
 **«El carabela»** (las frases del barco patrulla en español, 0x5E1F01; 15-11-2026, seguro, solo texto): el artículo va
 por el tipo de barco (0 y 2 «La», 1 y 3 «El») y la carabela es el tipo 1. Reproducido tal cual.
@@ -822,6 +829,26 @@ de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; s
   texto: el visor acaba la frase con su punto.
 
 ### Corregidos con el ajuste
+
+**Los botones de las reuniones en la oficina del Gobernador** (la página 7 del ayuntamiento, 0x5E6730; 15-11-2026,
+seguro, solo cambia lo que se ve): tras una misión fallida (el tipo 5, que dura 28 días), la página enseña «Después de tu
+último fracaso…» (0x6A9680) y salta al final sin esconder los cinco botones de las reuniones (0x5E6A9A → 0x5E76A5; las
+demás ramas pasan por 0x5E6E4D, que los esconde). El Gobernador que pasa a «Misiones» desde una reunión elegida sigue
+viendo «Ninguna acción», «Multa leve», «Multa moderada», «Multa elevada» y «Bloqueo», que ahí no hacen nada.
+Corregido a petición del usuario (`town_hall_office_view`, estado `failed-task`): con el ajuste, escondidos.
+
+**La «Ruta terrestre» de cualquier puerta** (la página 4 de la puerta de la ciudad, 0x5F2A20; 15-11-2026, seguro: el
+código y el visor): la página sale en la puerta de cualquier ciudad mientras el jugador tenga una carretera de la
+Hansa, con sus «->» encendidos si tiene materiales allí, pero el ejecutor de la 0x3B (0x53A3E0) solo acepta las dos
+ciudades de la carretera: en las demás, pulsar no entrega nada (sin aviso). Corregido a petición del usuario
+(`road_window_page`, con su ctest): con el ajuste, la página solo se abre en las dos ciudades de la carretera (en las
+demás se cierra como sin carretera).
+
+**El botón «Avisos» del ayuntamiento** (el menú lateral, 0x5A9780; 15-11-2026, seguro: comprobado en el emulador,
+`re/emu/sesion36/halltrace.sh 0 1 --menu`; corregido a petición del usuario): con un pedido en el mundo y sin decreto
+del Príncipe, el juego enciende el botón y en la misma pasada lo vuelve a apagar (se le olvida salir del bucle,
+0x5A97F2), así que «Avisos» solo se puede pulsar con el decreto. Corregido (`town_hall_menu`, con su ctest): con el
+ajuste, un pedido en el mundo también lo enciende.
 
 **El informante de la taberna se queda quieto** (0x466800: 0x46691D y 0x46694C; 14-11-2026, seguro, solo cambia lo que
 se ve: corregido a petición del usuario): una animación de ida y vuelta, al volver, se queda para siempre en su primer

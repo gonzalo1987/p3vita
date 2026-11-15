@@ -81,6 +81,10 @@ struct RoadMaterials {
 };
 bool road_materials(const SaveGame& save, uint16_t event, int merchant, RoadMaterials& out);
 
+// 0x672BF8: the k-th of the pairs of towns (their numbers of StadtDaten.ini) a road can join, and its sections.
+constexpr size_t kRoadPairs = 7;
+std::array<uint8_t, 3> road_pair(size_t k);
+
 // The road window's «available»: per material, the merchant's office in the
 // town plus its ships docked there, in loads or barrels.
 std::array<int, 4> available_road_materials(const SaveGame& save, int merchant, int town);

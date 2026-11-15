@@ -7,6 +7,7 @@
 #include <cstring>
 #include <vector>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/town_hall_window.hpp"
 
 using namespace p3::data;
@@ -304,8 +305,15 @@ int main() {
 		check(!menu.on[0] && menu.on[1] && menu.on[2] && menu.on[3] && !menu.on[4] && menu.on[5] && !menu.on[6] &&
 				  !menu.office && !menu.on[7],
 			"the menu: no decree, no council, not the mayor, not the Alderman's town");
-		g.u8(0x6DE530) = 0;  // An order of the town 0 in the world: still off (the game's slip).
-		check(!town_hall_menu(save, 0).on[0], "an order alone leaves the notices off");
+		for (uint32_t k = 0; k < 7; ++k) {
+			g.u8(0x6DE530 + 12 * k) = 0xFF;  // No order.
+		}
+		set_fix_game_bugs(true);
+		check(!town_hall_menu(save, 0).on[0], "fixed: no order, no decree: off");
+		g.u8(0x6DE530 + 12 * 6) = 0;  // An order of the town 0 in the world (the last slot).
+		check(town_hall_menu(save, 0).on[0], "fixed: an order turns the notices on");
+		set_fix_game_bugs(false);
+		check(!town_hall_menu(save, 0).on[0], "an order alone leaves the notices off (the game's slip)");
 		save.sieges[0].u8(0x1010) = 3;
 		check(town_hall_menu(save, 0).on[0], "the prince's decree: the notices on");
 		save.towns[0].memory.u8(0x6F1) = 0;

@@ -125,8 +125,10 @@ out a loan, pay one off, grant one to a townsman (the interest with
 left and right; only where you have an office), the loans you granted, and buy
 and sell company shares. X with no building in the middle opens the market.
 Touching a building of yours opens its window: demolish it or auction it, with
-the game's questions. Square opens the Hanse's panel (the way to Alderman) and
-Circle the messages.
+the game's questions. Circle opens the messages. The way to Alderman goes
+through the game's own windows: the town hall's pages (the Hanse's tasks, the
+elections) and the town gate's «Overland route» (a road's materials: up and
+down choose the material, left and right the amount, X hands it over).
 
 **The side panel** on the right is the game's: the town's minimap (touch or
 drag on it to move the view), its row of icons (the ship list, the game's
@@ -226,8 +228,8 @@ Without a game loaded, Select goes through the town's template with all the
 designer's buildings (`.editor`) and with the terrain only (`.town`).
 
 On the PC: the arrows, Page Up / Page Down, Enter (go into the building, or set
-sail), E (map), F (templates), M (market), C (buy), V (sell), H (Hanse), B
-(mailbox), Tab, + and − (speed) and Esc.
+sail), E (map), F (templates), M (market), C (buy), V (sell), B (mailbox), Tab,
++ and − (speed) and Esc.
 
 ## Thanks
 

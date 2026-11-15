@@ -194,6 +194,10 @@ bool road_materials(const SaveGame& save, uint16_t event, int merchant, RoadMate
 	return false;
 }
 
+std::array<uint8_t, 3> road_pair(size_t k) {
+	return k < kRoadPairs ? std::array<uint8_t, 3>{kRoads[k][0], kRoads[k][1], kRoads[k][2]} : std::array<uint8_t, 3>{};
+}
+
 std::array<int, 4> available_road_materials(const SaveGame& save, int merchant, int town) {
 	std::array<int, 4> out{};
 	if (merchant < 0 || size_t(merchant) >= save.merchants.size()) {

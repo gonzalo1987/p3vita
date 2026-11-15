@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/town_tick/votes.hpp"
@@ -207,8 +208,14 @@ TownHallMenu town_hall_menu(const SaveGame& save, uint32_t town) {
 	}
 	const uint32_t player = g.u32(global::kPlayer);
 	const TownMemory& t = save.towns[town].memory;
-	// (The orders' loop 0x5A97F2 ends turning the button off whatever it finds: the decree alone turns it on.)
 	menu.on[0] = town < save.sieges.size() && save.sieges[town].u8(0x1010) != 0xFF;
+	if (!menu.on[0] && fix_game_bugs()) {
+		// Game bug fixed: the orders' loop 0x5A97F2 turns the button on for an order in the world and off again in the
+		// same breath (it doesn't leave the loop), so the decree alone turns it on. Fixed: an order turns it on.
+		for (uint32_t k = 0; k < 7 && !menu.on[0]; ++k) {
+			menu.on[0] = town_order(save, k).has_value();
+		}
+	}
 	menu.on[1] = menu.on[2] = menu.on[3] = menu.on[5] = true;
 	if ((t.u32(0x2C8) & 0xE0) && player < save.merchants.size()) {
 		const uint32_t now = g.u32(global::kWorldTick);
