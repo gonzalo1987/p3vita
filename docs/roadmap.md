@@ -87,12 +87,12 @@ Cómo leerla:
   (0x5F, 0x75 y el evento 0x13, con sus cartas y, en el visor, la ventana de la oficina de otro comerciante) y la ruta
   por puntos del mapa del mar (0x0B), esta también en el visor (tocar el mar añade puntos; X zarpa, ○ los borra).
   Antes, la primera parte: la reparación de convoyes, los botones de las cartas, la iglesia y el baño.
-- **Siguiente**: el encargo `ENCARGO_GRUPO5_VISOR_2.md` (junto al HANDOFF): las páginas que faltan
-  como las del juego están hechas (la última, el astillero y el muelle, el 14-11-2026 por la noche) y las siete del
-  ayuntamiento (15-11-2026), con su texto tras una misión fallida, y la puerta de la ciudad con su «Ruta terrestre»
-  (15-11-2026; el panel de la Hansa propio del visor, quitado); con el cliente de un pedido de la taberna
-  (15-11-2026) y los asedios en las páginas de la puerta (15-11-2026): el grupo 5 en el visor, hecho; quedan restos
-  pequeños de las vistas.
+- **Siguiente**: el encargo `ENCARGO_VISTAS_RESTOS.md` (junto al HANDOFF): los restos pequeños de las vistas (el
+  fundido del libro del astillero, el tamaño de la ventanita de mensaje, los cuadros «\c», la sombra de la subasta y las
+  capitulares de las cartas). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
+  15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
+  terrestre» y sus siete páginas de asedio, y el cliente de un pedido de la taberna; el panel de la Hansa propio del
+  visor, quitado): el grupo 5 en el visor, hecho.
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
   (apartado 6).
@@ -212,7 +212,7 @@ enteros antes de reescribirlos):
   páginas como las del juego (Presentes 0x88, Venta de mercancías 0x89, Contratos de entrega 0x8A, Préstamo 0x8D,
   Atacar, Rendirse y Comprar libertad 0x90, con sus mensajes; `town_gate_window` con su ctest; estados `siege`,
   `siege-prince`, `prince-loan`) y la puerta cerrada del asedio en su interior. **Falta** del encargo: los restos
-  pequeños de las vistas (`ENCARGO_GRUPO5_VISOR_2.md`). (Mudar la ciudad natal, 0x5DD520, quedó
+  pequeños de las vistas (`ENCARGO_VISTAS_RESTOS.md`). (Mudar la ciudad natal, 0x5DD520, quedó
   hecho en la página «Trasladarse» de la oficina, 14-11-2026.)
 - [x] **La oficina y su administrador** (12-11-2026; `operations.cpp`, `office_window.cpp`): 0x5A el porcentaje de
   trabajadores de una empresa, 0x5B la orden del administrador para una mercancía, 0x5E contratarlo o despedirlo, 0x62
@@ -354,7 +354,7 @@ gráficos y sus textos; las reglas de lo que enseña y las órdenes que encola, 
 del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo en «Decisiones del usuario».
 
 - [ ] **Las vistas de dentro de los edificios** (lo pidió el usuario el 05-11-2026; en marcha desde el 13-11-2026 con
-  el encargo de las vistas, acabado el 14-11-2026, y desde entonces con `ENCARGO_GRUPO5_VISOR_2.md`; lo leído del juego,
+  el encargo de las vistas, acabado el 14-11-2026, después con `ENCARGO_GRUPO5_VISOR_2.md` (acabado el 15-11-2026) y ahora con `ENCARGO_VISTAS_RESTOS.md`; lo leído del juego,
   en `re/emu/sesion31/views_notes.md`, y las fotos de la
   pantalla del juego que mandó el usuario, en `re/emu/sesion31/pc_shots/`).
   - [x] **El marco común** (`src/app/game_window.cpp`): la ventana del juego entera (451 × 537, como 0x465BA0) dibujada a
