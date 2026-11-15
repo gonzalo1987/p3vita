@@ -2713,6 +2713,12 @@ struct PlaceUi {
 	// The town gate's page «Overland route»: the amount chosen (the window's [+0x161C]: kRoadAmounts' 1, 5, 50, all;
 	// the first whenever the window opens, its layout 0x5EF486).
 	int gate_amount = 0;
+	// Its siege pages: the message a page shows after its button (the window's [+0x1614]: the presents' 1 with the words
+	// [+0x1615] in gate_said, the others' 1, 3, 5, 9, 0x11; a contract confirmed 1), cleared when a page is chosen
+	// (0x5EFD30); the gate closed by a surrender or a ransom paid (its [+0x94]: InteriorState::gate_closed).
+	uint8_t gate_message = 0;
+	uint8_t gate_said = 0;
+	bool gate_closing = false;
 	int chamber_shown = 0;
 	std::array<uint8_t, 4> chamber_votes{};
 	std::array<AldermanCandidate, 4> chamber_candidates{};
@@ -9846,6 +9852,261 @@ void town_gate_road_view(SaveGame& save, PlaceUi& ui, PlaceView& v, const RoadWi
 	v.page = std::move(page);
 }
 
+// The siege pages (re/emu/sesion37/notes_gate.md; traced: gatepages.sh, page2.sh; no photo). Text boxes from x 50,
+// w − 100 wide; the amount's box (172, 410, 80 × 18) between «-» (138, 410) and «+» (278, 410), the coin or the unit after
+// it; the accept (148, 450). The game's 0x5ABF70 (after «Give», «Order an attack», «Surrender») lets the side menu's
+// buttons go.
+constexpr int kGateX = 50;
+constexpr int kGateWidth = kInteriorWidth - 100;
+
+std::string gate_army_words(const SaveGame& save, int town, uint32_t mercenaries, uint32_t prince) {
+	return gate_prince_army(save, uint32_t(town)) ? exe_text(prince, "", "") : exe_text(mercenaries, "", "");
+}
+
+// The amount's box, its picture, «-» and «+» (on as `minus`, `plus`) and the accept (on as `act`).
+void gate_amount_controls(PlaceView::Page& page, PlaceView& v, int amount, uint32_t picture, bool minus, bool plus,
+	const std::string& act, bool act_on) {
+	page.boxes.push_back({{172, 410, 80, 18}, std::to_string(amount)});
+	page.icons.push_back({picture, 0, 254, 410});
+	page.buttons.push_back({{138, 410, 32, 18}, "-", PlaceView::PageAction::Minus, minus});
+	page.buttons.push_back({{278, 410, 32, 18}, "+", PlaceView::PageAction::Plus, plus});
+	v.act = act;
+	v.act_on = act_on ? 1 : 0;
+	page.buttons.push_back(fitted({{148, 450, 128, 18}, act, PlaceView::PageAction::Act, act_on}));
+}
+
+// «Presents» (0x5F1F00, 0x5F0130).
+void town_gate_presents_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	PlaceView::Page page;
+	v.act_on = 0;
+	if (ui.gate_message & 1) {
+		add_box(page, exe_text(0x6A6FF0 + 4u * ui.gate_said, "", ""), kGateX, 300, kGateWidth, false);
+		v.menu_lit = -1;
+		v.page = std::move(page);
+		return;
+	}
+	const uint8_t mood = gate_prince_mood(save, uint32_t(town));
+	const int y = add_box(page, exe_text(0x6A6FF0 + 4u * mood, "", ""), kGateX, 300, kGateWidth, false);
+	if (save.towns[size_t(town)].memory.u8(0x6F1) != uint32_t(save.player)) {
+		v.page = std::move(page);
+		return;
+	}
+	if (mood == 2 || mood == 3) {
+		add_box(page, exe_text(mood == 2 ? 0x6A7004 : 0x6A7008, "", ""), kGateX, y, kGateWidth, false);
+	}
+	add_box(page, exe_text(0x6A7028, "", ""), kGateX, 388, kGateWidth, false);
+	const int32_t top = std::min(gate_treasury_top(save, uint32_t(town)), 999999);
+	v.max_amount = top;
+	ui.amount = std::clamp(ui.amount, 0, top);
+	const bool open = !gate_active_siege(save, uint32_t(town));
+	gate_amount_controls(page, v, ui.amount, 16014, open && ui.amount > 0, open && ui.amount < top,
+		exe_text(0x6A702C, "Dar", "Give"), open && ui.amount > 0);
+	v.page = std::move(page);
+}
+
+// «Goods for sale» (0x5F3510, 0x5F2200, 0x5F0430): from (50, 300) 0x6A709C (more than one ware) or 0x6A70A0; 8 under it
+// «Good» (50), «Office» and «Sell» centred over the boxes and the buttons; a row a ware at 352 + 20k: its name, the
+// player's stock in its box (186, 40 × 18) with the unit after it, its button (270, 354 + 20k, 48) with the price,
+// on with some; the amounts 1, 5, 50, Max as the road's.
+void town_gate_goods_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	PlaceView::Page page;
+	const std::vector<GateWare> wares = gate_goods_for_sale(save, uint32_t(town));
+	const int y = add_box(page, exe_text(wares.size() > 1 ? 0x6A709C : 0x6A70A0, "", ""), kGateX, 300, kGateWidth, false) + 8;
+	page.texts.push_back({exe_text(0x6A0464, "Mercancía", "Good"), kGateX, y});
+	page.texts.push_back({exe_text(0x699874, "Oficina", "Office"), 186 + 20, y, true});
+	page.texts.push_back({exe_text(0x6998A0, "Vender", "Sell"), 270 + 24, y, true});
+	ui.row = std::clamp(ui.row, 0, std::max(0, int(wares.size()) - 1));
+	ui.gate_amount = std::clamp(ui.gate_amount, 0, 3);
+	for (size_t k = 0; k < wares.size(); ++k) {
+		const int row_y = 352 + 20 * int(k);
+		const uint8_t ware = wares[k].ware;
+		const int32_t stock = gate_player_stock(save, uint32_t(town), ware);
+		v.rows.push_back({"", stock != 0});
+		PlaceView::PageText name{exe_text(0x6C0BB0 + 4u * ware, "", ""), kGateX, row_y};
+		if (int(k) == ui.row) {
+			name.color = {0x0C, 0x2A, 0xE0, 255};
+		}
+		page.texts.push_back(name);
+		page.boxes.push_back({{186, row_y, 40, 18}, std::to_string(stock)});
+		page.icons.push_back({ware < 20 && kWares[ware].unit == WareUnit::Barrel ? 16030u : 16031u, 0, 226, row_y});
+		PlaceView::PageButton sell{{270, row_y + 2, 48, 18}, std::to_string(wares[k].price), PlaceView::PageAction::Act, stock != 0};
+		sell.row = int(k);
+		sell.keyed = int(k) == ui.row;
+		page.buttons.push_back(sell);
+	}
+	static const SDL_Rect kAmounts[4] = {{225, 450, 32, 18}, {259, 450, 32, 18}, {293, 450, 32, 18}, {327, 450, 48, 18}};
+	for (int k = 0; k < 4; ++k) {
+		PlaceView::PageButton b{kAmounts[k], exe_text(0x69A35C + 4 * uint32_t(k), "", ""), PlaceView::PageAction::Choose, true};
+		b.value = k;
+		b.lit = ui.gate_amount == k;
+		b.keyed = false;
+		page.buttons.push_back(b);
+	}
+	v.act = exe_text(0x6998A0, "Vender", "Sell");
+	v.page = std::move(page);
+}
+
+// «Delivery agreements» (0x5EFF1D, 0x5F2550, 0x5F0680), from (50, 252), the boxes 16 apart (but after «Outstanding
+// deliveries», right under it).
+void town_gate_contract_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	PlaceView::Page page;
+	v.act_on = 0;
+	const GateContract c = gate_contract(save, uint32_t(town));
+	auto unit_mark = [](uint8_t ware) { return std::string(ware < 20 && kWares[ware].unit == WareUnit::Barrel ? "\\B" : "\\L"); };
+	if (c.exists) {
+		int y = add_box(page, exe_text(c.words, "", ""), kGateX, 252, kGateWidth, false) + 16;
+		y = add_box(page,
+				exe_format(0x6A7094, {exe_text(0x6C0BB0 + 4u * c.ware, "", ""), std::to_string(c.amount), unit_mark(c.ware),
+										 std::to_string(c.left)},
+					""),
+				kGateX, y, kGateWidth, false);
+		y = add_box(page, exe_format(0x6A70EC, {std::to_string(c.price), unit_mark(c.ware)}, ""), kGateX, y, kGateWidth, false) + 16;
+		add_box(page, exe_format(0x6A7098, {std::to_string(c.day), short_month(c.month)}, ""), kGateX, y, kGateWidth, false);
+		v.page = std::move(page);
+		return;
+	}
+	const GateContractOffer o = gate_contract_offer(save, uint32_t(town));
+	if (o.ware == 0xFF) {
+		add_box(page, exe_text(0x6A70BC, "", ""), kGateX, 252, kGateWidth, false);
+		v.page = std::move(page);
+		return;
+	}
+	const std::string ware = exe_text(0x6C0BB0 + 4u * o.ware, "", "");
+	// (The offer from (50, 220), each box right under the one before.)
+	int y = add_box(page, exe_format(0x6A7078, {ware}, ""), kGateX, 220, kGateWidth, false);
+	y = add_box(page, exe_format(0x6A707C, {ware, std::to_string(o.price), unit_mark(o.ware)}, ""), kGateX, y, kGateWidth, false);
+	add_box(page, exe_format(0x6A7080, {std::to_string(o.day), short_month(o.month)}, ""), kGateX, y, kGateWidth, false);
+	add_box(page, exe_text(0x6A7084, "", ""), kGateX, 388, kGateWidth, false);
+	const int32_t top = gate_delivery_top(o.ware);
+	v.max_amount = top;
+	ui.amount = std::clamp(ui.amount, 0, top);
+	const bool open = !gate_active_siege(save, uint32_t(town));
+	gate_amount_controls(page, v, ui.amount, o.ware < 20 && kWares[o.ware].unit == WareUnit::Barrel ? 16030u : 16031u,
+		open && ui.amount > 0, open && ui.amount < top, exe_text(0x6A7030, "Confirmar", "Confirm"), open && ui.amount > 0);
+	v.page = std::move(page);
+}
+
+// «Loan» (0x5F2E90, 0x5F12A0), from (50, 268): his pending loan (not just delivered: the window's [+0x1614]) the request
+// 0x6A70A4 with its goods (0x636620: «%d\L %s» or «%d\B %s», each before the ones written, « and » 0x6A70B0 before
+// the first, «, » 0x6A70B4 between the others), right under it 0x6A70A8 with its deadline (day, short month), without
+// all of the goods in his office 0x6A70AC under it, «Good delivered» on with them; else his loans: 0x6A70C4 and, 16
+// under it, «Loan for %s.» each, or 0x6A70C0.
+void town_gate_loan_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	PlaceView::Page page;
+	v.act_on = 0;
+	const uint32_t t = uint32_t(town);
+	auto goods_text = [](const GateLoan& l) {
+		std::string out;
+		int k = 0;
+		for (const auto& [ware, n] : gate_loan_wares(l)) {
+			const bool barrel = ware < 20 && kWares[ware].unit == WareUnit::Barrel;
+			const std::string piece = std::to_string(n) + std::string(1, barrel ? kTextBarrel : kTextLoad) + " " +
+				exe_text(0x6C0BB0 + 4u * ware, "", "");
+			// (The separators keep their spaces at both ends, as the game's « and », «, »; cleaned texts lose them.)
+			const uint32_t slot = k == 1 ? 0x6A70B0 : 0x6A70B4;
+			const std::string raw = g_texts ? g_texts->raw_at(slot) : std::string(k == 1 ? " and " : ", ");
+			const std::string separator = (!raw.empty() && raw.front() == ' ' ? " " : "") +
+				exe_text(slot, k == 1 ? "y" : ",", k == 1 ? "and" : ",") + spaced(slot);
+			out = k == 0 ? piece : piece + separator + out;
+			++k;
+		}
+		return out;
+	};
+	GateLoan loan;
+	if (gate_pending_loan(save, t, loan) && ui.gate_message != 1) {
+		int y = add_box(page, exe_format(0x6A70A4, {goods_text(loan)}, ""), kGateX, 268, kGateWidth, false);
+		const GameDate d = date_from_tick(loan.tick);
+		y = add_box(page, exe_format(0x6A70A8, {std::to_string(d.day), short_month(d.month)}, ""), kGateX, y, kGateWidth, false);
+		const bool ready = gate_loan_ready(save, t, loan);
+		if (!ready) {
+			add_box(page, exe_text(0x6A70AC, "", ""), kGateX, y, kGateWidth, false);
+		}
+		v.act = exe_text(0x6A70B8, "Mercancía entregada", "Good delivered");
+		v.act_on = ready ? 1 : 0;
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, ready}));
+		v.page = std::move(page);
+		return;
+	}
+	const std::vector<GateLoan> loans = gate_loans(save, t);
+	if (loans.empty()) {
+		add_box(page, exe_text(0x6A70C0, "", ""), kGateX, 268, kGateWidth, false);
+	} else {
+		int y = add_box(page, exe_text(0x6A70C4, "", ""), kGateX, 268, kGateWidth, false) + 16;
+		for (const GateLoan& l : loans) {
+			y = add_box(page, exe_format(0x6A70C8, {goods_text(l)}, ""), kGateX, y, kGateWidth, false);
+		}
+	}
+	v.page = std::move(page);
+}
+
+// «Attack» and «Surrender» (0x5F16A0, 0x5F1910): the question or, after the button, its message, at (50, 364).
+void town_gate_attack_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v, bool surrender) {
+	PlaceView::Page page;
+	v.act_on = 0;
+	std::string text;
+	const bool active = gate_active_siege(save, uint32_t(town));
+	if (!active) {
+		text = exe_text(0x6A7068, "", "");
+	} else if (ui.gate_message & 1) {
+		v.menu_lit = -1;
+		const uint8_t m = ui.gate_message;
+		if (m & 2) {
+			text = exe_format(surrender ? 0x6A7064 : 0x6A705C, {gate_army_words(save, town, 0x6A7050, 0x6A7054)}, "");
+		} else if (!surrender && (m & 4)) {
+			text = exe_format(0x6A7060, {gate_army_words(save, town, 0x6A7050, 0x6A7054)}, "");
+		} else if (m & 8) {
+			text = exe_text(0x6A7068, "", "");
+		} else {
+			text = exe_text(surrender ? 0x6A7070 : 0x6A706C, "", "");
+		}
+	} else {
+		text = surrender ? exe_format(0x6A704C, {gate_army_words(save, town, 0x6A7050, 0x6A7054)}, "")
+						 : exe_format(0x6A7040, {gate_army_words(save, town, 0x6A7044, 0x6A7048)}, "");
+		const bool mayor = save.towns[size_t(town)].memory.u8(0x6F1) == uint32_t(save.player);
+		v.act = surrender ? exe_text(0x6A7038, "Rendirse", "Surrender") : exe_text(0x6A7034, "Ordenar un ataque", "Order an attack");
+		v.act_on = mayor ? 1 : 0;
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, mayor}));
+	}
+	add_box(page, text, kGateX, 364, kGateWidth, false);
+	v.page = std::move(page);
+}
+
+// «Buy freedom» (0x5EF72A, 0x5F31C0, 0x5F1B60), at (50, 332).
+void town_gate_freedom_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	PlaceView::Page page;
+	v.act_on = 0;
+	const uint8_t m = ui.gate_message;
+	const uint8_t chances = town < int(save.sieges.size()) ? save.sieges[size_t(town)].u8(0x101A) : 0;
+	if (!(m & 1) && chances >= 2) {
+		if (!gate_active_siege(save, uint32_t(town))) {
+			add_box(page, exe_text(0x6A7068, "", ""), kGateX, 332, kGateWidth, false);
+			v.page = std::move(page);
+			return;
+		}
+		add_box(page, exe_text(0x6A7014, "", ""), kGateX, 332, kGateWidth, false);
+		const int32_t top = gate_treasury_top(save, uint32_t(town));
+		v.max_amount = top;
+		ui.amount = std::clamp(ui.amount, 0, top);
+		gate_amount_controls(page, v, ui.amount, 16014, ui.amount > 0, ui.amount < top,
+			exe_text(0x6A703C, "Comprar libertad", "Buy freedom"), ui.amount > 0);
+		v.page = std::move(page);
+		return;
+	}
+	uint32_t said = 0x6A7018;
+	std::string text;
+	if (m & 2) {
+		said = 0x6A7020;
+	} else if ((m & 4) || chances == 1) {
+		said = 0x6A701C;
+	} else if (m & 8) {
+		said = 0x6A7070;
+	} else if (m & 0x10) {
+		text = exe_format(0x6A7074, {gate_army_words(save, town, 0x6A7050, 0x6A7054)}, "");
+	}
+	add_box(page, text.empty() ? exe_text(said, "", "") : text, kGateX, 332, kGateWidth, false);
+	v.page = std::move(page);
+}
+
 void town_gate_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	static const char* kNames[kGatePages][2] = {{"Presentes", "Presents"}, {"Venta de mercancías", "Goods for sale"},
 		{"Contratos de entrega", "Delivery agreements"}, {"Préstamo", "Loan"}, {"Ruta terrestre", "Overland route"},
@@ -9853,8 +10114,7 @@ void town_gate_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	const TownGateMenu menu = town_gate_menu(save, uint32_t(town));
 	std::vector<std::pair<std::string, int>> buttons;
 	for (uint32_t k = 0; k < kGatePages; ++k) {
-		// (Only «Overland route» is made: the sieges' pages are to come.)
-		const bool made = k == uint32_t(GatePage::OverlandRoute);
+		const bool made = true;
 		buttons.push_back({exe_text(0x6A5DA4 + 4 * k, kNames[k][0], kNames[k][1]), menu.on[k] && made ? int(k) : -1});
 	}
 	ui.page = std::clamp(ui.page, 0, int(kGatePages) - 1);
@@ -9889,12 +10149,83 @@ void town_gate_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 			return;
 		}
 		town_gate_road_view(save, ui, v, road);
+		return;
+	}
+	switch (GatePage(ui.page)) {
+	case GatePage::Presents: town_gate_presents_view(save, town, ui, v); break;
+	case GatePage::GoodsForSale: town_gate_goods_view(save, town, ui, v); break;
+	case GatePage::DeliveryAgreements: town_gate_contract_view(save, town, ui, v); break;
+	case GatePage::Loan: town_gate_loan_view(save, town, ui, v); break;
+	case GatePage::Attack: town_gate_attack_view(save, town, ui, v, false); break;
+	case GatePage::Surrender: town_gate_attack_view(save, town, ui, v, true); break;
+	case GatePage::BuyFreedom: town_gate_freedom_view(save, town, ui, v); break;
+	default: break;
 	}
 }
 
-// X on the town gate's page: a material's «->» (0x5F2D9A): 0x3B with the amount chosen.
+// X on the town gate's page: a material's «->» (0x5F2D9A): 0x3B with the amount chosen; the siege pages' buttons.
 void town_gate_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
-	if (!ui.shown || ui.page != int(GatePage::OverlandRoute)) {
+	if (!ui.shown) {
+		return;
+	}
+	const uint32_t t = uint32_t(town);
+	OperationBytes op{};
+	switch (GatePage(ui.page)) {
+	case GatePage::Presents:
+		if (ui.amount > 0 && !(ui.gate_message & 1)) {
+			run_operations(save, sailing, {gate_presents_operation(t, uint32_t(ui.amount))});
+			ui.gate_said = ui.amount == 1 ? 0x43 : 0x1A;
+			ui.gate_message = 1;
+		}
+		return;
+	case GatePage::GoodsForSale: {
+		const std::vector<GateWare> wares = gate_goods_for_sale(save, t);
+		if (ui.row >= 0 && ui.row < int(wares.size()) && gate_player_stock(save, t, wares[size_t(ui.row)].ware) != 0) {
+			run_operations(save, sailing,
+				{gate_sell_operation(save, t, wares[size_t(ui.row)], kRoadAmounts[size_t(std::clamp(ui.gate_amount, 0, 3))])});
+		}
+		return;
+	}
+	case GatePage::DeliveryAgreements: {
+		const GateContractOffer o = gate_contract_offer(save, t);
+		if (ui.amount > 0 && o.ware != 0xFF && !gate_contract(save, t).exists) {
+			run_operations(save, sailing, {gate_contract_operation(save, t, o, uint32_t(ui.amount))});
+			ui.gate_message = 1;
+		}
+		return;
+	}
+	case GatePage::Loan: {
+		GateLoan loan;
+		if (ui.gate_message != 1 && gate_pending_loan(save, t, loan) && gate_loan_ready(save, t, loan)) {
+			run_operations(save, sailing, {gate_loan_operation(save, t, loan)});
+			ui.gate_message = 1;
+		}
+		return;
+	}
+	case GatePage::Attack:
+	case GatePage::Surrender:
+		if (ui.gate_message & 1) {
+			return;
+		}
+		ui.gate_message = GatePage(ui.page) == GatePage::Attack ? gate_attack(save, t, op) : gate_surrender(save, t, op);
+		if (op[0] != 0) {
+			run_operations(save, sailing, {op});
+			ui.gate_closing = ui.gate_closing || GatePage(ui.page) == GatePage::Surrender;
+		}
+		return;
+	case GatePage::BuyFreedom:
+		if (ui.amount <= 0 || (ui.gate_message & 1)) {
+			return;
+		}
+		ui.gate_message = gate_buy_freedom(save, t, uint32_t(ui.amount), op);
+		if (op[0] != 0) {
+			run_operations(save, sailing, {op});
+			ui.gate_closing = ui.gate_closing || ui.gate_message == 3;
+		}
+		return;
+	default: break;
+	}
+	if (ui.page != int(GatePage::OverlandRoute)) {
 		return;
 	}
 	const RoadWindowPage road = road_window_page(save, uint32_t(town));
@@ -11615,6 +11946,10 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 		shipyard_act(save, sailing, town, ui, v);
 		return;
 	}
+	if (ui.open == Place::TownGate) {
+		town_gate_act(save, sailing, town, ui);  // (Its own checks: most pages have no rows.)
+		return;
+	}
 	const bool by_row = ui.row >= 0 && ui.row < int(v.rows.size()) && v.rows[size_t(ui.row)].second &&
 		(v.max_amount < 0 || v.amount_choice || ui.amount > 0);
 	if (ui.row >= int(v.rows.size()) || (v.act_on >= 0 ? v.act_on == 0 : !by_row)) {
@@ -11623,10 +11958,6 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 	}
 	if (ui.open == Place::TownHall) {
 		town_hall_act(save, sailing, town, ui, v);
-		return;
-	}
-	if (ui.open == Place::TownGate) {
-		town_gate_act(save, sailing, town, ui);
 		return;
 	}
 	if (ui.open == Place::Arsenal) {
@@ -18419,6 +18750,10 @@ int main(int argc, char** argv) {
 			place.coffers = 0;  // the page 6's balance (0x5E0F45),
 			place.hall_tasks = false;  // the page 7's meetings (0x5E0F6C),
 			place.hall_actions_shown = false;  // every control hidden (0x5E0BA0..).
+			place.gate_message = 0;  // The town gate's set page 0x5EFD30: the message gone (its [+0x1614])
+			if (place.open == Place::TownGate) {
+				place.amount = 0;  // and its amount's box at 0 (0x5EFE00).
+			}
 			place.chamber_votes = {};
 			if (alone) {
 				// The church's «Pray»: the picture alone, no button lit (place_side_menu).
@@ -18563,9 +18898,20 @@ int main(int argc, char** argv) {
 				return true;
 			}
 			if ((button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) &&
-				place.open == Place::TownGate && place.shown && place.page == int(GatePage::OverlandRoute)) {
-				// The road's amount: 1, 5, 50, Max (its four buttons [+0x11A8..]).
+				place.open == Place::TownGate && place.shown &&
+				(place.page == int(GatePage::OverlandRoute) || place.page == int(GatePage::GoodsForSale))) {
+				// The road's or the goods' amount: 1, 5, 50, Max (its four buttons [+0x11A8..]).
 				place.gate_amount = (place.gate_amount + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? 3 : 1)) % 4;
+				return true;
+			}
+			if ((button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) &&
+				place.open == Place::TownGate && place.shown && place_now.max_amount >= 0) {
+				// «-» and «+» of the presents and the ransom (1000), the deliveries (50 barrels, 10 loads; 0x5F2859).
+				int step = 1000;
+				if (place.page == int(GatePage::DeliveryAgreements)) {
+					step = gate_delivery_step(gate_contract_offer(save, uint32_t(town_index)).ware);
+				}
+				add_amount(button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -step : step);
 				return true;
 			}
 			if ((button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) &&
@@ -22079,6 +22425,8 @@ int main(int argc, char** argv) {
 			interior.town = uint32_t(std::max(0, town_index));
 			interior.tick = save.globals.u32(global::kWorldTick);
 			interior.church_level = town_index >= 0 ? church_feeding_level(save, uint32_t(town_index)) : 0;
+			interior.gate_closed = place.open == Place::TownGate && town_index >= 0 &&
+				(gate_active_siege(save, uint32_t(town_index)) || place.gate_closing);
 			game_art->set_interior(place_interior(place.open), app_ticks(), interior);
 			draw_place(renderer, *small_text, *game_art, place, view_now, view.get());
 		} else if (game_art) {

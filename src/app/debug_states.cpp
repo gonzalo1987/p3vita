@@ -758,6 +758,10 @@ const char kDebugStatesHelp[] =
 	"  failed-task  a Hanse task of the player's failed today (kind 5, gone in 28 days):\n"
 	"              the town hall's «Alderman's office» tells him to take no more (with\n"
 	"              candidate: 0x4EC694 needs the merchant's [+0x37])\n"
+	"  siege       a siege of the player's home town now (mercenaries; the town gate's pages)\n"
+	"  siege-prince  the same by the prince's army\n"
+	"  prince-loan  goods the prince of his home asked him for, accepted, in his office\n"
+	"              there (the town gate's «Loan»)\n"
 	"  order-client  a town hall order the player took in his first docked ship's town (10\n"
 	"              of 30 left, a ware the ship carries): its client in the tavern there\n"
 	"  order-premium  the same, paid at the end (a premium)\n"
@@ -1071,6 +1075,49 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			e.u8(0x17) = 1;
 			if (m.u8(0x37) == 0) {
 				m.u8(0x37) = 1;  // (0x4EC694 needs it.)
+			}
+		} else if (state == "siege" || state == "siege-prince") {
+			// A siege of the player's home town now (the operation 0x8E: 0x633AF0 with the kind 0, r 0x40, no request
+			// letters): its army made and set up; siege-prince the prince's army (its [+0x61C]). The town gate's pages.
+			const uint32_t home = m.u8(0x19);
+			OperationBytes op{};
+			const uint32_t words[5] = {0x8E, home, 0, 0x40, 0};
+			std::memcpy(op.data(), words, sizeof words);
+			run_operation(save, nullptr, op.data());
+			if (home >= save.siege_extras.size() || !save.siege_extras[home].army) {
+				error = "the player's home town can't be besieged (its walls: three gates or towers)";
+				return false;
+			}
+			if (state == "siege-prince") {
+				save.siege_extras[home].army->u8(0x61C) = 1;
+			}
+		} else if (state == "prince-loan") {
+			// The prince of the player's home town asked him for goods (timber 2, grain 3, tools 4, pitch 1, beer 5) and he
+			// accepted (a node of its siege list [+0x1020] with [+0x7] set, the deadline in 10 days; the besieged town the
+			// next one), the goods put in his office there if he has one: the town gate's «Loan».
+			const uint32_t home = m.u8(0x19);
+			if (home >= save.siege_extras.size()) {
+				error = "no siege object for the player's home town";
+				return false;
+			}
+			GameMemory<0x10> node;
+			const uint8_t goods[5] = {2, 3, 4, 1, 5};
+			for (uint32_t k = 0; k < 5; ++k) {
+				node.u8(k) = goods[k];
+			}
+			node.u8(5) = uint8_t(save.player);
+			node.u8(6) = uint8_t((home + 1) % std::max<uint32_t>(1, save.globals.u32(global::kWorldTownCount)));
+			node.u8(7) = 1;
+			node.u32(0xC) = save.globals.u32(global::kWorldTick) + 10 * 0x100;
+			save.siege_extras[home].list_1020.push_back(node);
+			const int office = tick::facilities_detail::fn_5308a0(save, uint32_t(save.player), home);
+			if (office >= 0) {
+				OfficeMemory& o = save.offices[size_t(office)].memory;
+				o.s32(0x4 + 4 * 11) += 2 * 2000;  // timber
+				o.s32(0x4 + 4 * 0) += 3 * 2000;   // grain
+				o.s32(0x4 + 4 * 12) += 4 * 200;   // tools
+				o.s32(0x4 + 4 * 15) += 1 * 200;   // pitch
+				o.s32(0x4 + 4 * 3) += 5 * 200;    // beer
 			}
 		} else if (state == "order-client" || state == "order-premium") {
 			// A town hall order the player took (an event 0x11 in the town's place [+0x830], as 0x3D leaves it) in the town

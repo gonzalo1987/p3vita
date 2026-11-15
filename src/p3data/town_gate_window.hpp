@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 #include "p3data/hanse_tasks.hpp"
 #include "p3data/savegame.hpp"
@@ -47,6 +48,96 @@ uint8_t siege_contract_ware(const SaveGame& save, uint32_t town);
 // 0x6365E0(merchant, 0) on it: a loan of the merchant's to the prince (a node of [+0x1020] with [+0x5] the merchant and
 // [+0x7] set).
 bool siege_loan(const SaveGame& save, uint32_t town, uint32_t merchant);
+
+// The siege pages (re/emu/sesion37/notes_gate.md). «An active siege»: one going on (0x633AE0) whose army isn't leaving
+// (its [+0x3A] 0); the army's words by its [+0x61C] (the prince's army, else mercenaries).
+bool gate_active_siege(const SaveGame& save, uint32_t town);
+bool gate_prince_army(const SaveGame& save, uint32_t town);
+
+// «Presents» (update 0x5F1F00, drawing 0x5F0130): the Prince's mood 0..4 (0x5F3750: the siege object's countdown
+// [+0x1018], above 0x3FFF 4, else >> 12); the amount's top the treasury ([+0x700] above 0, else 0; the presents' at most
+// 999999), by 1000; «Give»: 0x88 {town, amount}, then the message 0x43 (an amount of 1: «insulted») or 0x1A («thanks»).
+uint8_t gate_prince_mood(const SaveGame& save, uint32_t town);
+int32_t gate_treasury_top(const SaveGame& save, uint32_t town);
+OperationBytes gate_presents_operation(uint32_t town, uint32_t amount);
+
+// «Goods for sale» (set page 0x5F3510, update 0x5F2200): the decree's wares ([+0x1010..+0x1013] not 0xFF), each its
+// price: base = ftol(0x673A18[w] · 200 or 2000) and base + ((town + the year's day) · the year) % (base · 3 / 10); the
+// player's stock there: his office's and each docked ship's barrels or loads (each divided apart); a row's button with
+// the amount chosen (1, 5, 50, all): 0x89 {u32 min(chosen, stock), u32 price, ware, player, town}.
+struct GateWare {
+	uint8_t ware = 0;
+	uint16_t price = 0;
+};
+std::vector<GateWare> gate_goods_for_sale(const SaveGame& save, uint32_t town);
+int32_t gate_player_stock(const SaveGame& save, uint32_t town, uint8_t ware);
+OperationBytes gate_sell_operation(const SaveGame& save, uint32_t town, const GateWare& w, uint32_t amount);
+
+// «Delivery agreements» (set page 0x5EFF1D, update 0x5F2550, drawing 0x5F0680): the ware offered (0x635660; 0xFF none),
+// its price base + base / 10 + ((the year's day + town) · the year) % (base / 10) and the first delivery: the next 7th or
+// 21st (after the 21st the 7th of the month after) from the date 10 days on; the amount per delivery up to 500 barrels
+// or 100 loads, by 50 or 10. «Confirm»: 0x8A {u16 amount, u16 price, ware, player, town, whether the next delivery
+// day from today differs from the first's}.
+struct GateContractOffer {
+	uint8_t ware = 0xFF;
+	uint16_t price = 0;
+	int day = 0;    // The first delivery's (1..31).
+	int month = 0;  // 0..11.
+};
+GateContractOffer gate_contract_offer(const SaveGame& save, uint32_t town);
+int32_t gate_delivery_top(uint8_t ware);
+int32_t gate_delivery_step(uint8_t ware);
+OperationBytes gate_contract_operation(const SaveGame& save, uint32_t town, const GateContractOffer& offer, uint32_t amount);
+// His contract (0x636590's node: [+0] ware, [+1] deliveries left, [+2] a count, u16 [+4] amount, u16 [+6] price) and its
+// next delivery (the next 7th or 21st from today, one later while the node's [+2] is 0xFF); the Prince's words: 6 left
+// 0x6A7088, else 0x6A708C when (6 − left) · 10 < [+2] · 13, else 0x6A7090.
+struct GateContract {
+	bool exists = false;
+	uint8_t ware = 0;
+	uint8_t left = 0;
+	uint8_t count = 0;
+	uint16_t amount = 0;
+	uint16_t price = 0;
+	int day = 0;
+	int month = 0;
+	uint32_t words = 0;
+};
+GateContract gate_contract(const SaveGame& save, uint32_t town);
+
+// «Attack», «Surrender», «Buy freedom» pressed (0x5F2F90, 0x5F30B0, 0x5F31C0): the window's message (its [+0x1614]: 1,
+// 3, 5, 9 or 0x11, the drawings' texts by it) and the operation 0x90 when one is queued (op[0] 0 when none):
+// attack: no active siege 9; the army no longer attacking ([+0x78]) 1; still arriving ([+0x42]) 5; else 0x90 {0, town,
+// +0xC 1} 3. Surrender: no active siege 9; collecting the ransom ([+0x79]) 1; else 0x90 {0, town, +0xB 1} 3 (the window
+// closes the gate: [+0x94]). Buy freedom: no active siege 9; collecting 0x11; the amount at least the price
+// (gate_freedom_price) 0x90 {amount, town} 3 (the gate closed); twice it at least the price and the siege object's
+// [+0x101A] ≥ 2 0x90 {0, town, +9 1} 5; else 0x90 {0, town, +0xA 1} 1.
+uint8_t gate_attack(const SaveGame& save, uint32_t town, OperationBytes& op);
+uint8_t gate_surrender(const SaveGame& save, uint32_t town, OperationBytes& op);
+uint8_t gate_buy_freedom(const SaveGame& save, uint32_t town, uint32_t amount, OperationBytes& op);
+// min(the town's [+0x2D4], 10000) · 10 + (the army's u16 [+0x66] · (town + 1)) % (that / 2).
+uint32_t gate_freedom_price(const SaveGame& save, uint32_t town);
+
+// «Loan» (update 0x5F2E90, drawing 0x5F12A0): the goods the prince of the player's home asked him for and he accepted
+// (a node of the town's siege list [+0x1020]: the goods [+0..+4] timber, grain, tools, pitch, beer in loads or barrels,
+// [+5] the merchant, [+6] the besieged town, [+7] accepted, [+8] delivered, u32 [+0xC] the deadline, then the repayment).
+struct GateLoan {
+	std::array<uint8_t, 5> goods{};
+	uint8_t besieged = 0;
+	bool delivered = false;
+	uint32_t tick = 0;
+};
+// 0x6365B0: his loan accepted and not delivered yet, if any.
+bool gate_pending_loan(const SaveGame& save, uint32_t town, GateLoan& out);
+// 0x6365E0 in turn: his loans accepted (delivered or not), in the list's order.
+std::vector<GateLoan> gate_loans(const SaveGame& save, uint32_t town);
+// «Good delivered» on (0x5F146D..0x5F14DB): his office in the town (0x5308A0) has each of the goods.
+bool gate_loan_ready(const SaveGame& save, uint32_t town, const GateLoan& loan);
+// «Good delivered» (0x5F2EA9): 0x8D {town, player, the besieged town, now + 0x2A00 + rand() % 0x1C00, its low byte 0}
+// (the game's rand(), the world's: it moves it).
+OperationBytes gate_loan_operation(SaveGame& save, uint32_t town, const GateLoan& loan);
+// The wares of 0x636620's text, in its order: grain, pitch, timber, tools, beer (each before the ones already written,
+// « and » before the first, «, » between the others), as {ware, amount}.
+std::vector<std::pair<uint8_t, uint8_t>> gate_loan_wares(const GateLoan& loan);
 
 // The page «Overland route» (update 0x5F2A20, drawing 0x5F0DF0): only while the player's Hanse task (0x4EC694) is a road
 // (kind 1), else the page closes at once (0x5ABF70 lets the menu's buttons go, 0x5EFD30(−1)); with fix_game_bugs(), also

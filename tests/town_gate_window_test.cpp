@@ -181,6 +181,60 @@ int main() {
 		e.u8(0x17) = 0;
 		check(road_window_page(save, 0).all_delivered, "no sections left, nothing kept: all delivered (0x6A70D4)");
 	}
+	{
+		// The siege pages' rules (0x5F3510, 0x5EFF1D, 0x5F3750, 0x5F2F90, 0x5F30B0, 0x5F31C0).
+		SaveGame save = world();
+		GlobalMemory& g = save.globals;
+		g.u8(0x6DE4A1) = 100;  // The year's day.
+		g.u16(0x6DE4A2) = 0x546;  // The year.
+		SiegeMemory& s = save.sieges[1];
+		for (uint32_t k = 0; k < 4; ++k) {
+			s.u8(0x1010 + k) = 0xFF;
+		}
+		s.u8(0x1010) = 0x10;  // Pig iron: worth 0x3EE147AF (0.44000003…) a unit, by loads: ftol(… · 2000) = 880.
+		s.u8(0x1012) = 3;     // Beer: 0x3E322D0E · 200 = 34.
+		const std::vector<GateWare> wares = gate_goods_for_sale(save, 1);
+		check(wares.size() == 2 && wares[0].ware == 0x10 && wares[1].ware == 3, "the decree's two wares, in order");
+		check(wares[0].price == 880 + (101 * 0x546) % (880 * 3 / 10), "pig iron: 880 + (1 + 100) · 1350 % 264");
+		check(wares[1].price == 34 + (101 * 0x546) % (34 * 3 / 10), "beer: 34 + … % 10");
+		s.u8(0x1014) = 3;  // The pig iron three months: the contract offered.
+		const GateContractOffer o = gate_contract_offer(save, 1);
+		check(o.ware == 0x10 && o.price == 880 + 88 + (101 * 0x546) % 88, "the offer: pig iron at 880 + 88 + … % 88");
+		g.u32(global::kWorldTick) = (31 + 28 + 2) << 8;  // The 3rd of March: 10 days on, the 13th: the 21st.
+		check(gate_contract_offer(save, 1).day == 21 && gate_contract_offer(save, 1).month == 2, "the first delivery");
+		check(gate_delivery_top(0x10) == 100 && gate_delivery_step(0x10) == 10 && gate_delivery_top(3) == 500 &&
+				  gate_delivery_step(3) == 50,
+			"per delivery: 100 loads by 10, 500 barrels by 50");
+		const OperationBytes c = gate_contract_operation(save, 1, gate_contract_offer(save, 1), 40);
+		check(c[0] == 0x8A && c[4] == 40 && c[0xC] == 0x10 && c[0xE] == 1 && c[0xF] == 1,
+			"0x8A: 40, the ware, the town; the next delivery from today (the 7th) not the first's (the 21st)");
+		s.u16(0x1018) = 0x2FFF;
+		check(gate_prince_mood(save, 1) == 2, "the countdown 0x2FFF: the mood 2");
+		s.u16(0x1018) = 0x5000;
+		check(gate_prince_mood(save, 1) == 4, "above 0x3FFF: 4");
+		OperationBytes op{};
+		check(gate_attack(save, 1, op) == 9 && op[0] == 0, "no siege: «already over», nothing queued");
+		save.sieges[1].u32(8) = 1;
+		save.siege_extras[1].army = SiegeArmyMemory();
+		SiegeArmyMemory& army = *save.siege_extras[1].army;
+		army.u16(0x21E) = 10;
+		army.u16(0x42) = 3;
+		check(gate_attack(save, 1, op) == 5 && op[0] == 0, "the army still arriving: «can't attack yet»");
+		army.u16(0x42) = 0;
+		check(gate_attack(save, 1, op) == 3 && op[0] == 0x90 && op[8] == 1 && op[0xC] == 1, "the attack: 0x90 +0xC 1");
+		check(gate_surrender(save, 1, op) == 3 && op[0xB] == 1, "the surrender: 0x90 +0xB 1");
+		save.towns[1].memory.u32(0x2D4) = 3000;
+		army.u16(0x66) = 7000;
+		check(gate_freedom_price(save, 1) == 30000 + (7000 * 2) % 15000, "the ransom: 30000 + 14000 % 15000");
+		save.sieges[1].u8(0x101A) = 2;
+		uint32_t amount = 0;
+		check(gate_buy_freedom(save, 1, 44000, op) == 3 && (std::memcpy(&amount, op.data() + 4, 4), amount == 44000),
+			"enough: 0x90 with the amount");
+		check(gate_buy_freedom(save, 1, 22000, op) == 5 && op[9] == 1, "half of it: 0x90 +9 1");
+		check(gate_buy_freedom(save, 1, 3000, op) == 1 && op[0xA] == 1, "less: 0x90 +0xA 1");
+		army.u8(0x79) = 1;
+		check(gate_buy_freedom(save, 1, 44000, op) == 0x11 && op[0] == 0, "the ransom being collected: 0x11");
+	}
 	if (failures) {
 		std::fprintf(stderr, "%d failures\n", failures);
 		return 1;
