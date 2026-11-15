@@ -371,7 +371,7 @@ OperationBytes repair_convoy_operation(uint32_t convoy) {
 	return words_operation({0x1D, convoy});
 }
 
-std::vector<uint16_t> window_ships(const SaveGame& save, int merchant, int town, ShipListMode mode) {
+std::vector<uint16_t> window_ships(const SaveGame& save, int merchant, int town, ShipListMode mode, int32_t least) {
 	std::vector<uint16_t> list;
 	if (merchant < 0 || uint32_t(merchant) >= save.globals.u16(global::kWorldMerchantCount) ||
 		size_t(merchant) >= save.merchants.size()) {
@@ -489,6 +489,10 @@ std::vector<uint16_t> window_ships(const SaveGame& save, int merchant, int town,
 			}
 			break;
 		}
+		case ShipListMode::Guard:  // 0x505126
+			if (convoy >= convoys && s.u16(0x134) <= 1 && tick::ship_ai_detail::fn_519c40(save, int(i)) && s.s32(0x120) >= least) {
+				list.push_back(uint16_t(i));
+			}
 			break;
 		}
 	}

@@ -12,6 +12,8 @@
 #include "p3data/mail.hpp"
 #include "p3data/player_actions.hpp"
 #include "p3data/sailing.hpp"
+#include "p3data/simulation.hpp"
+#include "p3data/town_hall_window.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
 
@@ -947,6 +949,52 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 				error = "the save has no other town than Lübeck";
 				return false;
 			}
+		} else if (state == "town-manager") {
+			// The player's home town without a council (its [+0x2C8] & 0xE0 cleared: as a town a merchant founded) and
+			// he its mayor, the «Town Manager» of the town hall's page 2.
+			make_mayor(save);
+			save.towns[m.u8(0x19)].memory.u32(0x2C8) &= ~0xE0u;
+		} else if (state == "council-vote" || state == "diet-vote") {
+			// A vote of today for the town hall's «Council Chamber» in the player's home town (his rank there 5): the town
+			// council's (an event 0x2E: the head tax to 12, two votes for, one against, eight abstaining, his bit to vote
+			// in its [+0x13]), or the diet's (an event 0x21, the town his home made the Alderman's: a boycott of the next
+			// town for an export tax on wine, his bit in its [+0x16]: 0x4D9D40).
+			const uint32_t home = m.u8(0x19);
+			const uint32_t towns = save.globals.u32(global::kWorldTownCount);
+			m.u8(0x39C + home) = 5;
+			uint32_t bit = 1;
+			for (int p = 0; p < save.player; ++p) {
+				if (save.merchants[size_t(p)].memory.u16(0x8) == 0) {
+					bit += bit;
+				}
+			}
+			const uint32_t now = save.globals.u32(global::kWorldTick);
+			GameMemory<0x18>& e = save.events[tick::events_detail::fn_4d8cf0(save, now + 1)];
+			if (state == "council-vote") {
+				save.towns[home].memory.u32(0x2C8) |= 0x20;
+				e.u16(0x6) = 0x2E;
+				e.u32(0x8) = 0;
+				e.u8(0xC) = uint8_t(home);
+				e.u8(0xD) = 3;
+				e.u8(0x10) = 2;
+				e.u8(0x11) = 1;
+				e.u8(0x12) = 8;
+				e.u8(0x13) = uint8_t(bit);
+				e.u8(0x14) = 12;
+			} else {
+				save.globals.u8(kAldermanTown) = uint8_t(home);
+				save.towns[home].memory.u32(0x2C8) |= 0x20;
+				e.u16(0x6) = 0x21;
+				e.u8(0x8) = uint8_t(home);
+				e.u8(0x9) = uint8_t((home + 1) % std::max<uint32_t>(1, towns));
+				e.u8(0xA) = 0;
+				e.u8(0xC) = 5;
+				e.u8(0xE) = 2;
+				e.u8(0x12) = 3;
+				e.u8(0x13) = 6;
+				e.u8(0x14) = 1;
+				e.u16(0x16) = uint16_t(bit);
+			}
 		} else if (state == "alderman") {
 			save.globals.u8(kAlderman) = uint8_t(save.player);
 			save.globals.u8(kAldermanTown) = m.u8(0x19);
@@ -1028,6 +1076,45 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			if (ordered == 0) {
 				error = "the shipyard there takes no orders";
 				return false;
+			}
+		} else if (state == "guard-ship") {
+			// The town hall's outrigger kept by the player: in the town of his first docked ship, his docked ship of the
+			// least firepower the page asks for or more made the town's guard ship (the operation 0x44 with its pay).
+			const int first = save.player >= 0 ? save.merchants[size_t(save.player)].memory.u16(0xE) : -1;
+			int town = -1;
+			for (int s = first; s >= 0 && size_t(s) < save.ships.size() && s < save.globals.u16(global::kShipCount);
+				 s = save.ships[size_t(s)].memory.u16(0x4)) {
+				if (save.ships[size_t(s)].memory.u16(0x134) <= 1 && save.ships[size_t(s)].convoy() == 0xFFFF) {
+					town = save.ships[size_t(s)].memory.u8(0x39);
+					break;
+				}
+			}
+			if (town < 0 || size_t(town) >= save.towns.size()) {
+				error = "the player has no ship in port";
+				return false;
+			}
+			const GuardShipTerms terms = guard_ship_terms(save, uint32_t(town));
+			const std::vector<uint16_t> able = window_ships(save, save.player, town, ShipListMode::Guard, int32_t(terms.firepower));
+			if (able.empty()) {
+				error = "the player has no ship able to guard his ship's town";
+				return false;
+			}
+			const uint16_t guard = *std::min_element(able.begin(), able.end(), [&](uint16_t a, uint16_t b) {
+				return save.ships[a].memory.s32(0x120) < save.ships[b].memory.s32(0x120);
+			});
+			run_operation(save, nullptr, guard_ship_operation(uint32_t(town), guard, terms.pay).data());
+		} else if (state == "prince-decree") {
+			// The prince's decree in the player's home town (its siege object's wares the world lacks, [+0x1010..],
+			// three months listed): its town hall's «Notices» can be opened (town_hall_menu).
+			const uint32_t home = save.merchants[size_t(save.player)].hometown();
+			if (home >= save.sieges.size()) {
+				error = "no siege object for the player's home town";
+				return false;
+			}
+			const uint8_t wares[4] = {5, 7, 0xFF, 0xFF};
+			for (uint32_t k = 0; k < 4; ++k) {
+				save.sieges[home].u8(0x1010 + k) = wares[k];
+				save.sieges[home].u8(0x1014 + k) = k < 2 ? 3 : 0;
 			}
 		} else if (state == "lost-ship") {
 			// The player's last ship out of a convoy in the state 0x11 (as a ship sunk in a battle: Sailing::sink).

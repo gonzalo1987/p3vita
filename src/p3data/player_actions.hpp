@@ -175,8 +175,11 @@ enum class ShipListMode : uint32_t {
 	// a hand weapon above 10 units or room above 10 (0x5182B0); in a convoy, its guide (the merchant's list's ship) for
 	// each of the merchant's ships of it, which go on the list, with the guide's weapons and room (the game's).
 	WeaponsDealer = 8,
+	// The town hall's outrigger (0x5E1A10, 0x505126): in the town, out of a convoy, docked (state ≤ 1), able to lead a
+	// convoy (0x519C40), its firepower [+0x120] at least `least` (0x504AC0's fourth argument; signed).
+	Guard = 9,
 };
-std::vector<uint16_t> window_ships(const SaveGame& save, int merchant, int town, ShipListMode mode);
+std::vector<uint16_t> window_ships(const SaveGame& save, int merchant, int town, ShipListMode mode, int32_t least = 0);
 
 // The tavern's window rolls rand() each time it opens (0x5CC479, its method
 // 0x5CC120): rand() / 32768 as a float, kept in its [+0x1CA0]. The game's

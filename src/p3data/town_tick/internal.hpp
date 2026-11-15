@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "p3data/game_memory.hpp"
@@ -592,6 +593,11 @@ struct WallPiece {
 void fn_4fa1d0(SaveGame& save, int town, uint32_t side, std::vector<WallPiece>& out, uint32_t& corners);
 }  // namespace events_rare_detail
 // ship_ai.cpp: lo que usan también los convoyes (src/p3data/convoys*.cpp).
+namespace town_hall_detail {
+// 0x4DA060 (on the queue): the first event 0x2E (the town council's vote) of the town due by the end of the day (or
+// 0xFFFF), and whether the merchant, a human one, is still to vote in it (town_hall.cpp).
+std::pair<uint16_t, bool> fn_4da060(const SaveGame& save, uint16_t town, uint16_t merchant);
+}  // namespace town_hall_detail
 namespace ship_ai_detail {
 void fn_517770(SaveGame& save, int ship, uint32_t flags);  // Aviso a la interfaz del barco y de su convoy.
 bool fn_519ba0(const SaveGame& save, int ship);  // ¿Puede zarpar?

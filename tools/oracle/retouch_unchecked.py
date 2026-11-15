@@ -5839,6 +5839,119 @@ def guard_ship(o):
     return during
 
 
+GUARD_TERMS = to.SENTINEL + 0x3C8  # the copier of the outrigger page's terms (probes_unchecked.cpp kGuardTerms)
+
+
+def guard_terms_copier(o):
+    """The copier at GUARD_TERMS (stdcall town): the outrigger page's drawing's own code that works out the terms
+    (0x5E1A99..0x5E1BB9 of 0x5E1A10, copied with its calls moved and the alignment's call 0x4BBA10 left out: 0x515750's
+    average, the strength [+0x18EC], the least firepower [+0x18F0], the pay [+0x18F4]) on a window of the oracle's with
+    the town at [+0x18E8], on a frame of its own; the three into SCRATCH (u32s; the pay a u16). The page has no
+    function of its own for them."""
+    window = o.alloc(0x2000)
+    begin, end = 0x5E1A99, 0x5E1BB9
+    body = bytearray(o.uc.mem_read(begin, end - begin))
+    at = o.alloc(0x200)
+    code = bytes([0x53, 0x55, 0x56, 0x57])  # push ebx; push ebp; push esi; push edi
+    code += bytes([0x8B, 0x44, 0x24, 0x14])  # mov eax, [esp + 0x14] (the town)
+    code += bytes([0x81, 0xEC]) + struct.pack('<I', 0x80)  # sub esp, 0x80
+    code += bytes([0xBF]) + struct.pack('<I', window)  # mov edi, window
+    code += bytes([0x88, 0x87]) + struct.pack('<I', 0x18E8)  # mov [edi + 0x18E8], al
+    code += bytes([0x31, 0xED])  # xor ebp, ebp
+    start = at + len(code)
+    for offset, target in ((0x0A, 0x4BBA10), (0x1E, 0x515750), (0x60, 0x63AAE4), (0x68, 0x639C28), (0xE9, 0x639C28)):
+        assert body[offset] == 0xE8 and begin + offset + 5 + struct.unpack_from('<i', body, offset + 1)[0] == target
+        if target == 0x4BBA10:
+            body[offset:offset + 5] = b'\x90' * 5
+        else:
+            struct.pack_into('<i', body, offset + 1, target - (start + offset + 5))
+    code += bytes(body)
+    for k, field in enumerate((0x18EC, 0x18F0)):
+        code += bytes([0x8B, 0x87]) + struct.pack('<I', field)  # mov eax, [edi + field]
+        code += bytes([0xA3]) + struct.pack('<I', SCRATCH + 4 * k)  # mov [SCRATCH + 4k], eax
+    code += bytes([0x0F, 0xB7, 0x87]) + struct.pack('<I', 0x18F4)  # movzx eax, word [edi + 0x18F4]
+    code += bytes([0xA3]) + struct.pack('<I', SCRATCH + 8)  # mov [SCRATCH + 8], eax
+    code += bytes([0x81, 0xC4]) + struct.pack('<I', 0x80)  # add esp, 0x80
+    code += bytes([0x5F, 0x5E, 0x5D, 0x5B, 0xC2, 0x04, 0x00])  # pop edi; pop esi; pop ebp; pop ebx; ret 4
+    assert len(code) <= 0x200
+    o.uc.mem_write(at, code)
+    o.uc.mem_write(GUARD_TERMS, bytes([0xE9]) + struct.pack('<i', at - (GUARD_TERMS + 5)))
+
+
+def guard_ship_window(o):
+    """The town hall's outrigger page (0x5E1A10; town_hall_window.hpp guard_ship_terms, guard_ship_page): the terms
+    (GUARD_TERMS) in every town, then the player's ships 0x504AC0's mode 9 lists (WINDOW_SHIPS with the least
+    firepower) in the town of his first docked ship, as the save has them and retouched: up to nine of his ships
+    there, with firepowers round the least (one short by 1, one at it, one at 66), one with 19 sailors, one with
+    [+0x15C] set, one in the state 2, one in a convoy, one out of a convoy with its hull under half, one without a
+    captain, the last one in another town; then every ship's firepower 0 (no average: the strength 20), 5 (under 9),
+    400 and odd ones, the town's wealth [+0x2D4] negative, small and the largest."""
+    _, t = player_docked_ship(o)
+    towns, _, _, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    ta = o.town(t)
+    convoys = o.u16(0x6DD896)
+    captains = o.u16(0x6DD892)
+    guard_terms_copier(o)
+    window_ships_copier(o)
+
+    def terms(town, what):
+        direct(o, GUARD_TERMS, [town])
+        n, least, pay = o.u32(SCRATCH), o.u32(SCRATCH + 4), o.u32(SCRATCH + 8)
+        print(f'  {what}: town {town}: strength {n}, least {least}, pay {pay}')
+        return least
+
+    def listed(least, what):
+        direct(o, WINDOW_SHIPS, [player, t, 9, least])
+        print(f'  {what}: least {least}: {[o.u16(SCRATCH + 2 + 2 * k) for k in range(o.u16(SCRATCH))]}')
+
+    def during(o):
+        for town in range(towns):
+            terms(town, 'the save')
+        least = terms(t, 'the town')
+        listed(least, 'the save')
+        own = []
+        x = o.u16(o.merchant(player) + 0xE)
+        while x < ships:
+            own.append(x)
+            x = o.u16(o.ship(x) + 4)
+        mine = own[:9]
+
+        def able(k, x):
+            a = o.ship(x)
+            w8(o, a + 0x39, t)
+            w16(o, a + 0x134, k % 2)
+            w16(o, a + 8, 0xFFFF)
+            w16(o, a + 0x40, 30)
+            w16(o, a + 0x42, 0 if captains else 0xFFFF)
+            w8(o, a + 0x15C, 0)
+            w32(o, a + 0x18, o.u32(a + 0x14))
+            w32(o, a + 0x120, least + 20 + k)
+        for k, x in enumerate(mine):
+            able(k, x)
+        listed(least, 'all able')
+        listed(least + 21, 'one more')
+        listed(0x80000000, 'a negative least')
+        # Each retouch on the first ship alone (the others able).
+        for field, size, value in ((0x120, 4, least - 1), (0x120, 4, least), (0x120, 4, 66), (0x40, 2, 19),
+                                   (0x15C, 1, 1), (0x134, 2, 2), (8, 2, max(convoys - 1, 0)), (0x18, 4, 0),
+                                   (0x42, 2, captains), (0x39, 1, (t + 1) % towns)):
+            able(0, mine[0])
+            (w8 if size == 1 else w16 if size == 2 else w32)(o, o.ship(mine[0]) + field, value)
+            listed(least, f'the first with [+{field:#x}] {value}')
+        able(0, mine[0])
+        for value in (0, 5, 400, 77, 123):
+            for x in range(ships):
+                w32(o, o.ship(x) + 0x120, value)
+            terms(t, f'firepower {value}')
+        w32(o, o.ship(own[0]) + 0x120, 89)  # one ship apart: an average with a remainder
+        terms(t, 'one ship apart')
+        for wealth in (-12345, 99, 2 ** 31 - 1):
+            w32(o, ta + 0x2D4, wealth & 0xFFFFFFFF)
+            terms(t, f'wealth {wealth}')
+    return during
+
+
 def treasury_council(o):
     """The town hall's money and council (town_hall.cpp), in the town of the player's first docked ship: 0x47 (0x53AF30)
     into the treasury, out of it (less than it has, more, with none), a merchant past, a town past; 0x49 (0x53B0D0) in
@@ -14596,6 +14709,9 @@ SCENARIOS = {
         '@53af42>53b000', '@53af53>53b000', '@53af73', '@53afc5', '@53afc3>53afd2', '@53b0ff>53b1e7', '@53b10b>53b1e7',
         '@53b146', '@53b159', '@53b163', '@53b168', '@53b19a', '@53b1cd', '@53b1d7', '@53b1dc', '@4da0aa',
         '@4da0fc>4da137']),
+    'guard_ship_window': Scenario(guard_ship_window, [GUARD_TERMS, WINDOW_SHIPS], 0, [
+        '@5157bb', '@5157dd', '@505181', '@50514d>505190', '@50515a>505190', '@505164>505190', '@505171>505190',
+        '@50517f>505190', '@519c47', '@519c63', '@519c6f', '@519c7f', '@519c8c']),
     'guard_ship': Scenario(guard_ship, [0x535760], 0, [
         '@53ada0>53ae8c', '@53ade7', '@53ade5>53ae09', '@53adc8>53ae18', '@53ae23>53ae8c', '@53ae3d>53ae8c',
         '@53ae47>53ae8c', '@53ae54>53ae8c', '@53ae56']),

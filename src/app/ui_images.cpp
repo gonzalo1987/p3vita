@@ -7,6 +7,7 @@
 
 #include "p3data/aim.hpp"
 #include "p3data/cpr.hpp"
+#include "p3data/image.hpp"
 
 namespace p3::app {
 
@@ -22,6 +23,26 @@ bool read_cpr_image(const p3::data::CprArchive& archive, const char* path, p3::d
 	}
 	// The engine's own AIM pictures (the parchment of the buildings' windows, some interiors) or a standard one.
 	return p3::data::decode_standard_image(data.data(), data.size(), out) || p3::data::decode_aim(data.data(), data.size(), out);
+}
+
+void apply_bmp_palette_alpha(const p3::data::CprArchive& archive, const char* path, p3::data::Image& image) {
+	std::vector<uint8_t> data;
+	p3::data::Bmp8 bmp;
+	if (!read_cpr_file(archive, path, data) || !p3::data::parse_bmp8(data.data(), data.size(), bmp) || bmp.width != image.width ||
+		bmp.height != image.height) {
+		return;
+	}
+	const uint32_t header = uint32_t(data[14]) | uint32_t(data[15]) << 8 | uint32_t(data[16]) << 16 | uint32_t(data[17]) << 24;
+	const size_t palette = 14 + size_t(header);
+	for (int y = 0; y < bmp.height; ++y) {
+		const size_t row = bmp.row(y);
+		for (int x = 0; x < bmp.width && row + size_t(x) < data.size(); ++x) {
+			const size_t entry = palette + 4 * size_t(data[row + size_t(x)]) + 3;
+			if (entry < data.size()) {
+				image.rgba[(size_t(y) * size_t(image.width) + size_t(x)) * 4 + 3] = uint8_t(255 - data[entry]);
+			}
+		}
+	}
 }
 
 std::string ini_value(const std::string& ini, const std::string& section, const char* key) {

@@ -322,7 +322,7 @@ void fn_53af30(SaveGame& save, const uint8_t* operation) {
 	m.s32(0x4B8) = int32_t(uint32_t(m.s32(0x4B8)) + amount);
 }
 
-namespace {
+namespace town_hall_detail {
 
 // 0x4DA060 (on the queue: &the event, &may vote, town, merchant): the first event 0x2E (the town council's vote) of
 // the town among those due by the end of the day (tick | 0xFF; past them, 0xFFFF), and whether the merchant, a human
@@ -354,7 +354,9 @@ std::pair<uint16_t, bool> fn_4da060(const SaveGame& save, uint16_t town, uint16_
 	return {index, false};
 }
 
-}  // namespace
+}  // namespace town_hall_detail
+
+using town_hall_detail::fn_4da060;
 
 // The operation 0x49 (0x53B0D0): {0x49, u32 merchant, u32 town, u32 the vote}: a human merchant's vote in the town
 // council (the town hall's window 0x5E8280): in the town's vote of the day (0x4DA060) he is still to vote in, the vote

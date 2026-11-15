@@ -15,6 +15,7 @@
 #include "p3data/smithy_window.hpp"
 #include "p3data/statistics_window.hpp"
 #include "p3data/tavern_window.hpp"
+#include "p3data/town_hall_window.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "probe_registry.hpp"
 
@@ -152,6 +153,8 @@ constexpr uint32_t kTavernVictims = 0x030003A0;  // TAVERN_VICTIMS: 0x531470's l
 constexpr uint32_t kTavernInformer = 0x030003A8;  // TAVERN_INFORMER: 0x526B40 on INFORMER_NEWS (SCRATCH + 0x80)
 // GUILD_MEMBERS (stdcall town, k): the guild's members 0x5C67A0, the count and the member k's five values in u32s.
 constexpr uint32_t kGuildMembers = 0x030003B0;
+// GUARD_TERMS: the town hall's outrigger page's terms (the strength, the least firepower, the pay) into the scratch.
+constexpr uint32_t kGuardTerms = 0x030003C8;
 // GUILD_CONVOYS (stdcall): the guild's convoys 0x50A340 sorted by 0x5C6A30, the count and the convoys (u16).
 constexpr uint32_t kGuildConvoys = 0x030003B8;
 // Its copiers of the convoy window's choices (0x40C170) and of the market
@@ -600,9 +603,10 @@ void register_probes_unchecked(ProbeRegistry& r) {
 	};
 	r[kWindowShips] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		// The oracle's copier (retouch_unchecked.py WINDOW_SHIPS): 0x504AC0
-		// (merchant, town, mode, 0) and its list (a u16 count and the ships)
+		// (merchant, town, mode, the least firepower of the mode 9) and its list (a u16 count and the ships)
 		// copied into the scratch globals 0x6DFF00, at most 126 ships.
-		const std::vector<uint16_t> list = window_ships(s, int(c.args[0]), int(c.args[1]), ShipListMode(c.args[2]));
+		const std::vector<uint16_t> list =
+			window_ships(s, int(c.args[0]), int(c.args[1]), ShipListMode(c.args[2]), int32_t(c.args[3]));
 		s.globals.u16(kScratch) = uint16_t(list.size());
 		for (size_t k = 0; k < list.size() && k < 126; ++k) {
 			s.globals.u16(kScratch + 2 + 2 * uint32_t(k)) = list[k];
@@ -1243,6 +1247,17 @@ void register_probes_unchecked(ProbeRegistry& r) {
 			s.globals.u16(kScratch + 2 + 2 * k) = list[k];
 		}
 		return n & 0xFFFF;
+	};
+	r[kGuardTerms] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		if (c.args[0] >= s.towns.size()) {
+			c.skip = true;
+			return std::nullopt;
+		}
+		const GuardShipTerms t = guard_ship_terms(s, c.args[0]);
+		s.globals.u32(kScratch) = t.strength;
+		s.globals.u32(kScratch + 4) = t.firepower;
+		s.globals.u32(kScratch + 8) = t.pay;
+		return std::nullopt;
 	};
 	r[kGuildMembers] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
 		const std::vector<GuildMember> list = guild_members(s, c.args[0]);

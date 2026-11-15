@@ -2653,6 +2653,32 @@ struct PlaceUi {
 	bool hall_pressed = false;
 	bool hall_accepted = false;
 	OperationBytes hall_order{};
+	// Its page 2 (town_hall_proposals_view): in a town with a council the proposals shown («Make offer» pressed: the
+	// window's [+0x18F6] 1); the proposal whose amount `hall_value` holds ([+0x1907], -1 none) and the amount ([+0x1658]'s
+	// number); a proposal made ([+0x190D]): its kind ([+0x1927]), its amount ([+0x1934]) and the vote's tick; a button of
+	// the page touched (its value: «Yes» 1, «No» 0; -1 none).
+	bool hall_proposals = false;
+	int hall_kind = -1;
+	int32_t hall_value = 0;
+	bool hall_done = false;
+	int hall_done_kind = 0;
+	int32_t hall_done_value = 0;
+	uint32_t hall_done_tick = 0;
+	int hall_choice = -1;
+	// Its page 4 (town_hall_chamber_view), what the window keeps of the vote it last showed: its kind ([+0x190D], the
+	// game's ChamberVote; 0 none), the votes ([+0x1909..+0x190C]), the election's candidates ([+0x190E..+0x1921]), the
+	// diet's town and kind or the council's kind ([+0x1926], [+0x1927]) and the council's amount ([+0x1934]).
+	// Its page 6, the coffers' state (the window's [+0x1907]): 0 this month's balance, 3 the last one's, 1 donating, 2
+	// taking gold (the amount in hall_value).
+	int coffers = 0;
+	// Its page 7's view ([+0x1908]): the tasks, else the meetings (the Alderman's at first).
+	bool hall_tasks = false;
+	int chamber_shown = 0;
+	std::array<uint8_t, 4> chamber_votes{};
+	std::array<AldermanCandidate, 4> chamber_candidates{};
+	uint8_t chamber_town = 0;
+	uint8_t chamber_kind = 0;
+	int32_t chamber_amount = 0;
 };
 
 constexpr int kShipyardPages = 6;  // The window's pages 0..5 (its side menu's).
@@ -2841,7 +2867,16 @@ struct PlaceView {
 		int total = 0;  // The text's height ([+0x364]).
 		int line = 15;  // The bar's step, the text's line ([+0x374]).
 	};
+	// The game's sheet of paper (0x5E8E90: TEX16001's tiles, its corners and seal) at (x, y), cols × rows cells of 32,
+	// drawn first (the town hall's pages).
+	struct PagePaper {
+		int x = 0;
+		int y = 0;
+		int cols = 0;
+		int rows = 0;
+	};
 	struct Page {
+		std::vector<PagePaper> papers;
 		std::vector<PageText> texts;
 		std::vector<PageIcon> icons;
 		std::vector<PageButton> buttons;
@@ -3177,7 +3212,7 @@ int add_box(PlaceView::Page& page, const std::string& text, int x, int y, int wi
 	return y;
 }
 
-// Whether a game's text starts centred («\c», before or after its font's «N_»).
+// Whether a game's text starts centred («\c», before or after its font's «\fN_»).
 bool game_text_centred(uint32_t english) {
 	if (!g_texts) {
 		return false;
@@ -6356,6 +6391,7 @@ void ship_pair_act(SaveGame& save, Sailing* sailing, PlaceUi& ui, bool from_othe
 }
 
 void arsenal_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, bool dismiss);
+void town_hall_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui);
 
 // Square, or the second button: the window's second action, when it can be done.
 void offer_open_list(PlaceUi& ui);
@@ -6372,6 +6408,8 @@ void place_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const
 		ship_pair_act(save, sailing, ui, true);
 	} else if (ui.open == Place::Arsenal) {
 		arsenal_act(save, sailing, town, ui, true);
+	} else if (ui.open == Place::TownHall) {
+		town_hall_square(save, sailing, town, ui);
 	} else if (ui.open == Place::Offers) {
 		offer_open_list(ui);
 	} else if (ui.open == Place::LandTrade && ui.land.page == 1) {
@@ -8119,26 +8157,10 @@ std::string tavern_of(const SaveGame& save, uint32_t town) {
 // orders («Price guarantee» or «Bonus», by its town and ware) and the prince's decree; the selected one's text; X
 // «Accept order» (0x5E7730: 0x3D) on an order. After it, what the game says: accepted, where and when to meet the
 // client to deliver (in the tavern of the order's town); refused, not reliable enough.
-void town_hall_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
-	ui.page = 0;
+void town_hall_notices_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	v.title = exe_text(0x69DDB4, "Avisos", "Notices");  // The page's name on the banner, as the game.
 	v.one_at_a_time = true;
 	v.on_paper = true;
-	v.parchment_top = ui.shown ? 0xEC : -1;  // 0x5E0DEE: the notices' page.
-	// Its side menu (0x5A8DB0): «Town hall» and its eight pages (the texts 0x69DDB4, 0x69DDB8, 0x69DDC0..0x69DDCC,
-	// 0x6A94F8, 0x6A9630); only the notices made yet.
-	v.menu_title = exe_text(0x69DDD0, "Ayuntamiento", "Town hall");
-	static const uint32_t kPages[8] = {0x69DDB4, 0x69DDB8, 0x69DDC0, 0x69DDC4, 0x69DDC8, 0x69DDCC, 0x6A94F8, 0x6A9630};
-	static const char* kNames[8][2] = {{"Avisos", "Notices"}, {"Barco patrulla", "Outrigger"}, {"Alcalde", "Town info"},
-		{"Gobernador", "Hanseatic info"}, {"Sala de conferencias", "Council Chamber"}, {"Casa de la cerveza", "Town hall cellar"},
-		{"Arcas de la ciudad", "Town Coffers"}, {"Oficina del Gobernador", "Alderman's office"}};
-	for (int k = 0; k < 8; ++k) {
-		if (k == 7 && town != int(save.globals.u8(0x6DE52E))) {
-			break;  // The Alderman's office only in his town (0x5A8F5C: not drawn elsewhere).
-		}
-		v.menu.push_back({exe_text(kPages[k], kNames[k][0], kNames[k][1]), k == 0});
-	}
-	v.menu_lit = ui.shown ? 0 : -1;
 	const bool spanish = g_texts && g_texts->spanish();
 	if (ui.hall_pressed) {
 		if (!ui.hall_accepted) {
@@ -8232,7 +8254,7 @@ void town_hall_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 }
 
 // X on the town hall's notices: «Accept order» (0x5E7730), the order k: 0x3D, or refused.
-void town_hall_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
+void town_hall_notices_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
 	if (ui.hall_pressed || ui.row < 0 || ui.row >= int(v.codes.size()) || v.codes[size_t(ui.row)] >= 7) {
 		return;
 	}
@@ -8245,6 +8267,1239 @@ void town_hall_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, cons
 	ui.hall_pressed = true;
 	ui.row = 0;
 	ui.message.clear();
+}
+
+// A game's text's picture (\tN_ as the texts' renderer takes it: game_texts.hpp kTextPicture).
+std::string text_picture(uint32_t tex) {
+	return std::string(1, kTextPicture) + std::to_string(tex) + std::string(1, kTextPictureEnd);
+}
+
+// The firepower's cannonballs (0x4901C0 on *0x6CE6D0 with its last argument 0): the big ones (TEX20014) and then the
+// small ones (TEX20015) from the same x, 12 apart, and a half small one after the small ones (its left half,
+// 0x490428), the row centred in the room of five big ones (60) from x.
+void add_page_balls(PlaceView::Page& page, int32_t firepower, int x, int y) {
+	if (firepower <= 0) {
+		return;
+	}
+	const FirepowerBalls balls = firepower_balls(firepower);
+	const int count = balls.big >= 5 ? 5 : std::max(balls.big, balls.small + (balls.half ? 1 : 0));
+	x += (60 - 12 * count) / 2;
+	for (int b = 0; b < balls.big; ++b) {
+		page.icons.push_back({20014, 0, x + 12 * b, y});
+	}
+	for (int b = 0; b < balls.small; ++b) {
+		page.icons.push_back({20015, 0, x + 12 * b, y});
+	}
+	if (balls.half) {
+		PlaceView::PageIcon half{20015, 0, x + 12 * balls.small, y};
+		half.width = 12 / 2;
+		page.icons.push_back(half);
+	}
+}
+
+// The town hall's pages' parchment line (0x5E0BA0, its table 0x5E0FEC): 0 the notices 236, 1 the outrigger and 3
+// 200, 2 168 in a town with [+0x2C8] & 0xE0, else 312 for its mayor and 408 for others (the proposals 296 after «Make
+// offer», 0x5E8237; a proposal made 408, 0x5E81DD), 4 and 7 212, 5 380, 6 160.
+int town_hall_parchment(const SaveGame& save, int town, const PlaceUi& ui) {
+	const TownMemory& t = save.towns[size_t(town)].memory;
+	switch (ui.page) {
+	case 0: return 0xEC;
+	case 1:
+	case 3: return 0xC8;
+	case 2:
+		if (ui.hall_done) {
+			return 0x198;
+		}
+		if (t.u32(0x2C8) & 0xE0) {
+			return ui.hall_proposals ? 0x128 : 0xA8;
+		}
+		return t.u8(0x6F1) == save.globals.u32(global::kPlayer) ? 0x138 : 0x198;
+	case 4:
+	case 7: return 0xD4;
+	case 5: return 0x17C;
+	default: return 0xA0;
+	}
+}
+
+// A ship's figures in a row as the outrigger's page draws them (0x5E2049..0x5E2286, 0x5E25C7..0x5E288A): TEX16054 (the
+// weapons) at (x, y) with the cannonballs under it (from its middle less 30, 18 down), then `gap` on TEX20013 (the
+// hull) with the hull's percent (100 · [+0x18] / [+0x14]) centred under it, then `gap` on TEX20017 (the crew) with the
+// sailors ([+0x40]) centred under it; black, in the page's font.
+void add_guard_ship_figures(PlaceView::Page& page, const SaveGame& save, uint16_t ship, int x, int gap, int y) {
+	const ShipMemory& s = save.ships[ship].memory;
+	auto width = [](uint32_t tex) { return g_game_art ? g_game_art->tex_size(tex, 0).x : 18; };
+	page.icons.push_back({16054, 0, x, y});
+	add_page_balls(page, s.s32(0x120), x + width(16054) / 2 - 30, y + 18);
+	x += width(16054) + gap;
+	page.icons.push_back({20013, 0, x, y});
+	const int32_t hull = s.s32(0x14) != 0 ? s.s32(0x18) * 100 / s.s32(0x14) : 0;
+	page.texts.push_back({std::to_string(hull), x + width(20013) / 2, y + 18, true});
+	x += width(20013) + gap;
+	page.icons.push_back({20017, 0, x, y});
+	page.texts.push_back({std::to_string(s.u16(0x40)), x + width(20017) / 2, y + 18, true});
+}
+
+// A ship's type as the game's sentences put it (0x6C0CB4 + 4·type: «crayer», «carabela», in small letters).
+std::string ship_type_word(uint8_t type) {
+	return exe_text(0x6C0CB4 + 4u * type, "", "");
+}
+
+// The guard ship's owner's line (0x5E1F01..0x5E2018; 0x6C6BD4 «%s %s %s %s %s %s %s %s», in both exes the same order):
+// the article by the ship's type (0x69EE84 + 4 for the types 0 and 2: «La» in Spanish), the type, its name, 0x6C0EE0 by
+// the owner's sex ([+0x1A] not 0: «del», else «de la»), his title (0x69EF2C by 0x4F9430), his rank at home (0x6A0718,
+// + 8 for the sex), his first and family names.
+std::string guard_owner_line(const SaveGame& save, uint16_t ship) {
+	const SavedShip& s = save.ships[ship];
+	const uint8_t type = s.memory.u8(0xE);
+	const uint32_t owner = s.memory.u8(0x0);
+	if (owner >= save.merchants.size()) {
+		return s.name();
+	}
+	const MerchantMemory& m = save.merchants[owner].memory;
+	const uint32_t sex = m.u8(0x1A) != 0 ? 1 : 0;
+	const uint32_t rank = uint32_t(m.u8(0x39C + m.u8(0x19))) + 8 * sex;
+	const uint32_t title = tick::merchants_detail::fn_4f9430(save, int(owner));
+	const auto [first, family] = merchant_names(save, owner);
+	const std::vector<std::string> pieces = {exe_text(0x69EE84 + ((type == 0 || type == 2) ? 4 : 0), "El", "The"),
+		ship_type_word(type), s.name(), exe_text(0x6C0EE0 + 4 * sex, "del", "the"), exe_text(0x69EF2C + 4 * title, "", ""),
+		exe_text(0x6A0718 + 4 * rank, "", ""), clean_game_text(first), clean_game_text(family)};
+	std::string line;
+	for (const std::string& p : pieces) {
+		line += (line.empty() ? "" : " ") + p;
+	}
+	return line;
+}
+
+// The town hall's page 1, «Outrigger» (its drawing 0x5E1A10, its update 0x5E7AB0; town_hall_window.hpp guard_ship_page;
+// no photo: traced in the emulator, re/emu/sesion36 halltrace.sh 1): the sheet of paper at (50, 152), 10 × 6, its text
+// room from (66, 168) 288 wide; in a text box from (66, 184) «The town of <town> is looking for an outrigger…» with
+// the least firepower as cannonball pictures and the pay (0x69EEB8), or «Because the <guard> is unsuitable…»
+// (0x69EEC8), or «The town of <town> already has an outrigger.» (0x69EEF4), 8 under it the guard's owner's line, under
+// that its figures (from the room's left a fourth of what the room leaves of its width less 16 and the pictures — the
+// game takes TEX20013's width twice, not TEX16054's), and with the guard the player's «The weekly pay for the <ship>
+// is <pay>.» (0x69EEF8) 48 under the figures, 224 wide. Then, unless the guard is another merchant's: «You have the
+// following suitable ships at anchor in port:» (0x69EEEC) 40 over the arrows (at 66, or 50 with a guard: the game's
+// place), the chosen one's «<type> <name>» centred 16 over them, its figures between the arrows (from the left
+// arrow's end a fourth of what is between them less the right arrow and the pictures); «<» (50, 388) and «>» (343,
+// 388) with more than one; none: 0x69EEF0 (0x69EF90 with his guard) 40 over the arrows; «Post outrigger» (0x69EEC0,
+// with his guard «Post new outrigger» 0x69EECC) at (148, 450): the operation 0x44 with the chosen ship and the pay.
+void town_hall_guard_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	v.title = exe_text(0x69DDB8, "Barco patrulla", "Outrigger");
+	const GuardShipPage g = guard_ship_page(save, uint32_t(town));
+	PlaceView::Page page;
+	page.papers.push_back({50, 152, 10, 6});
+	constexpr int kRoomX = 66;
+	constexpr int kRoomW = 288;
+	constexpr int kArrowsY = 388;
+	constexpr int kLeftArrow = 50;
+	const int right_arrow = kInteriorWidth - 82;
+	auto width = [](uint32_t tex) { return g_game_art ? g_game_art->tex_size(tex, 0).x : 18; };
+	const std::string town_name = window_town_name(save, town);
+	std::string strength = " ";
+	for (const uint32_t tex : guard_ship_strength_pictures(g.terms.firepower)) {
+		strength += text_picture(tex);
+	}
+	strength += " ";
+	const std::string pay = std::to_string(g.terms.pay);
+	int list_x = kRoomX;
+	if (g.kind == GuardShipCase::Wanted) {
+		add_box(page, exe_format(0x69EEB8, {town_name, strength, pay}, ""), kRoomX, 184, kRoomW, false);
+	} else if (g.kind == GuardShipCase::Unsuitable) {
+		add_box(page, exe_format(0x69EEC8, {save.ships[g.guard].name(), town_name, strength, pay}, ""), kRoomX, 184, kRoomW, false);
+	} else {
+		int y = add_box(page, exe_format(0x69EEF4, {town_name}, ""), kRoomX, 184, kRoomW, false) + 8;
+		y = add_box(page, guard_owner_line(save, g.guard), kRoomX, y, kRoomW, false);
+		const int gap = (kRoomW - 16 - 2 * width(20013) - width(20017)) / 4;
+		add_guard_ship_figures(page, save, g.guard, kRoomX + gap, gap, y);
+		if (g.own) {
+			add_box(page, exe_format(0x69EEF8, {save.ships[g.guard].name(), std::to_string(save.towns[size_t(town)].memory.s32(0x990))}, ""),
+				kRoomX, y + 48, kRoomW - 64, false);
+		}
+		list_x = 50;
+	}
+	if (!g.list) {
+		v.page = std::move(page);
+		return;  // Another merchant's guard: no list, no buttons (0x5E2371: the flag 0).
+	}
+	const bool wanted = g.kind != GuardShipCase::Kept;
+	v.ships = g.ships;
+	v.act = wanted ? exe_text(0x69EEC0, "Situar barco patrulla", "Post outrigger")
+				   : exe_text(0x69EECC, "Cambiar barco patrulla", "Post new outrigger");
+	v.rows.push_back({"", !g.ships.empty()});  // Only for X.
+	ui.row = 0;
+	if (g.ships.empty()) {
+		add_box(page, wanted ? exe_text(0x69EEF0, "No dispones de un barco anclado que reúna los requisitos.", "You have no suitable ship at anchor in port.")
+							 : exe_text(0x69EF90, "No dispones de un barco mejor anclado en el puerto.", "You do not have a better ship at anchor in port."),
+			list_x, kArrowsY - 40, kInteriorWidth - 100, false);
+	} else {
+		const uint16_t ship = g.ships[ui.ship % g.ships.size()];
+		v.ship = ship;
+		add_box(page, exe_text(0x69EEEC, "Los siguientes barcos anclados en el puerto reúnen los requisitos:",
+						  "You have the following suitable ships at anchor in port:"),
+			list_x, kArrowsY - 40, kInteriorWidth - 100, false);
+		const SavedShip& s = save.ships[ship];
+		const int y = add_box(page, ship_type_word(s.memory.u8(0xE)) + " " + s.name(), list_x, kArrowsY - 16, kInteriorWidth - 100,
+			false, {0, 0, 0, 255}, true);
+		const int gap = (right_arrow - kLeftArrow - 32 - 2 * width(20013) - width(20017)) / 4;
+		add_guard_ship_figures(page, save, ship, kLeftArrow + 32 + gap, gap, y);
+		const bool more = g.ships.size() > 1;
+		page.buttons.push_back({{kLeftArrow, kArrowsY, 32, 18}, "<", PlaceView::PageAction::Previous, more});
+		page.buttons.push_back({{right_arrow, kArrowsY, 32, 18}, ">", PlaceView::PageAction::Next, more});
+	}
+	page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, !g.ships.empty()}));
+	v.page = std::move(page);
+}
+
+// X on the outrigger's page: «Post outrigger» (0x5E7AB0): 0x44 {town, the chosen ship, the pay}.
+void town_hall_guard_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
+	if (v.ship < 0) {
+		return;
+	}
+	const GuardShipTerms terms = guard_ship_terms(save, uint32_t(town));
+	run_operations(save, sailing, {guard_ship_operation(uint32_t(town), uint32_t(v.ship), terms.pay)});
+	ui.ship = 0;
+	ui.message.clear();
+}
+
+// A person of the town hall's page 2 in its sentences: «<the> <title> <first name> <family name>»'s pieces (the mayor's
+// line, 0x5E33B5..0x5E34CD: a merchant's names his own, 0x4F6420 / 0x4F6450; a citizen's by their numbers).
+std::pair<std::string, std::string> town_person_names(const SaveGame& save, const TownPerson& p) {
+	if (p.merchant) {
+		const auto [first, family] = merchant_names(save, p.who);
+		return {clean_game_text(first), clean_game_text(family)};
+	}
+	return {clean_game_text(game_first_name(save, p.first)), clean_game_text(game_family_name(save, p.family))};
+}
+
+// The amount's steps the pad and the page's «-» and «+» make (PlaceUi::amount from its middle, kHallSteps): taken
+// and the amount put back in the middle, so that the view steps its own amount as the game's box does.
+constexpr int kHallSteps = 1000;
+int take_hall_steps(PlaceUi& ui) {
+	const int steps = ui.amount - kHallSteps;
+	ui.amount = kHallSteps;
+	return steps;
+}
+
+// The town hall's page 2 in a town with a council, its first part (0x5E333A, the window's [+0x18F6] 0; no photo: traced
+// in the emulator, re/emu/sesion36 halltrace.sh 2): text boxes from (50, 168), 325 wide: «Lord Mayor of <town> is the
+// <title> <names>.» (0x69EE38; a mayoress 0x69EE3C; a citizen of the town as the mayor his own title and names), 8
+// under it «The next Lord Mayor's election takes place on <date>. The following citizens from <town> have been
+// nominated to date:» (0x69EE8C, 0x5295F0), 8 under that the four candidates (0x528CF0), a box each: «The <title>
+// <rank> <names>» (0x6C6C10 / 0x6C6C20: the article 0x69EE88 and the ranks 0x6A0608 for a woman, 0x69EE84 and
+// 0x6A0628 for the rest); the council's next vote (0x4DA140) at (50, 410), «The next meeting will take place on
+// <date>.» (0x6A972C) and its subject (0x6A9730..0x6A9740) under it; in the player's home town «Accept candidature?»
+// (0x69EFB4) at (50, 386) with «Yes» (271, 386) and «No» (327, 386), the one he stands by lit (0x4F9360; the other
+// pressed: 0x45, 0x5E7C92); «Make offer» (0x6A9724, 148, 450) for a rank of 4 or more in the town: the proposals.
+void town_hall_info_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	const uint32_t player = uint32_t(save.player);
+	PlaceView::Page page;
+	constexpr int kX = 50;
+	const int width = kInteriorWidth - 100;
+	const std::string town_name = window_town_name(save, town);
+	const TownPerson mayor = town_mayor(save, uint32_t(town));
+	{
+		const auto [first, family] = town_person_names(save, mayor);
+		const bool woman = mayor.merchant && mayor.female;
+		const std::string text = exe_format(woman ? 0x69EE3C : 0x69EE38,
+			{town_name, exe_text(woman ? 0x69EE44 : 0x69EE40, "el", "the"), exe_text(0x69EE48 + 4u * mayor.title, "", ""), first,
+				family},
+			"");
+		int y = add_box(page, text, kX, 168, width, false) + 8;
+		const TownDate d = next_mayor_election(save, uint32_t(town));
+		y = add_box(page, exe_format(0x69EE8C, {std::to_string(d.day), short_month(d.month - 1), std::to_string(d.year), town_name}, ""),
+				kX, y, width, false) +
+			8;
+		for (const TownPerson& c : mayor_candidates(save, uint32_t(town))) {
+			const bool female = c.merchant && c.female;
+			const std::string line = exe_text(female ? 0x69EE88 : 0x69EE84, "El", "The") + " " +
+				exe_text(0x69EE48 + 4u * c.title, "", "") + " " + exe_text((female ? 0x6A0608 : 0x6A0628) + 4u * c.rank, "", "") +
+				" " + clean_game_text(game_first_name(save, c.first)) + " " + clean_game_text(game_family_name(save, c.family));
+			y = add_box(page, line, kX, y, width, false);
+		}
+	}
+	if (const std::optional<CouncilVote> vote = council_vote(save, uint32_t(town))) {
+		const GameDate d = date_from_tick(vote->tick);
+		int y = add_box(page, exe_format(0x6A972C, {std::to_string(d.day), short_month(d.month), std::to_string(d.year)}, ""), kX, 410,
+			width, false);
+		std::string subject;
+		switch (vote->kind) {
+		case 0: subject = exe_format(0x6A9730, {std::to_string(vote->amount)}, ""); break;
+		case 1: subject = exe_text(0x6A9734, "", ""); break;
+		case 2: subject = exe_text(0x6A9738, "", ""); break;
+		case 3:
+			subject = exe_format(vote->tax > save.towns[size_t(town)].memory.u8(0x6F8) ? 0x6A973C : 0x6A9740,
+				{std::to_string(vote->tax)}, "");
+			break;
+		default: break;
+		}
+		add_box(page, subject, kX, y, width, false);
+	}
+	const MerchantMemory& m = save.merchants[player].memory;
+	const bool home = m.u8(0x19) == town;
+	if (home) {
+		const bool standing = standing_for_mayor(save, player);
+		if (ui.hall_choice >= 0) {
+			if ((ui.hall_choice != 0) != standing) {
+				run_operations(save, nullptr, {candidacy_operation(player, ui.hall_choice != 0)});
+			}
+			ui.hall_choice = -1;
+		}
+		const bool now = standing_for_mayor(save, player);
+		add_box(page, exe_text(0x69EFB4, "¿Aceptar candidatura?", "Accept candidature?"), kX, 386, width, false);
+		PlaceView::PageButton yes{{271, 386, 48, 18}, exe_text(0x699948, "Sí", "Yes"), PlaceView::PageAction::Choose, true, now, false};
+		yes.value = 1;
+		PlaceView::PageButton no{{327, 386, 48, 18}, exe_text(0x699950, "No", "No"), PlaceView::PageAction::Choose, true, !now, false};
+		no.value = 0;
+		page.buttons.push_back(yes);
+		page.buttons.push_back(no);
+		v.act2 = now ? no.label : yes.label;  // Square: the other one.
+		v.act2_on = true;
+	}
+	ui.hall_choice = -1;
+	const bool can = m.u8(0x39C + uint32_t(town)) >= 4;
+	v.act = exe_text(0x6A9724, "Presentar propuesta", "Make offer");
+	v.rows.push_back({"", can});  // Only for X and Square.
+	v.act_on = can ? 1 : 0;
+	ui.row = 0;
+	page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, can}));
+	v.page = std::move(page);
+}
+
+// The proposals (the window's [+0x18F6] 1 in a town with a council, 2 without one; 0x5E2D99, 0x5E2A4D; the user's photo
+// town_hall_mayor.jpg): with a council «Choose which proposal is to be voted on at the next council meeting.»
+// (0x6A961C) in a box from (50, 296) and the four proposals (huge buttons centred at 340, 364, 388, 412, each on as
+// proposals_open says); without one «The Town Manager of <town> is the <title> <names>.» (0x6A96C4; a woman 0x6A96C8)
+// from (50, 312) for him or 408 for others, and for him «Which tax do you want to change or revoke?» (0x6A96CC) 16 under
+// it and the two taxes' buttons (388, 412). The chosen one lit; the walls or the military: «Confirm» (0x6A9504, 148,
+// 450); a tax: its amount in the box (66, 450, 80 wide) with the coin or «%» 2 after it (\C or %, 0x6C6C08 / 0x6C6C0C),
+// «-» (48, 450) and «+» (167, 450) (round, 16), «OK» (0x6A950C, 270, 450, 96 wide) as proposal_ok says. Pressed, the
+// operation 0x48 (council_proposal); with a council or an extra tax the page tells it (0x5E2DC1, from (50, 408)): «A
+// decision on the proposal to … will be made on <date>.» (0x6A9620..0x6A962C), or «An extra tax of <n> has been
+// levied.» (0x6A9748) without a council.
+void town_hall_proposals_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	const uint32_t player = uint32_t(save.player);
+	const bool council = council_town(save, uint32_t(town));
+	PlaceView::Page page;
+	constexpr int kX = 50;
+	const int width = kInteriorWidth - 100;
+	if (ui.hall_done) {
+		const GameDate d = date_from_tick(ui.hall_done_tick);
+		const std::string day = std::to_string(d.day);
+		const std::string month = short_month(d.month);
+		const std::string value = std::to_string(ui.hall_done_value);
+		std::string text;
+		switch (ui.hall_done_kind) {
+		case 0: text = exe_format(0x6A9620, {day, month}, ""); break;
+		case 1: text = exe_format(0x6A9624, {day, month}, ""); break;
+		case 2: text = exe_format(0x6A9628, {value, day, month}, ""); break;
+		default: text = council ? exe_format(0x6A962C, {value, day, month}, "") : exe_format(0x6A9748, {value}, ""); break;
+		}
+		add_box(page, text, kX, 408, width, false);
+		v.page = std::move(page);
+		return;
+	}
+	std::array<bool, 4> open = proposals_open(save, uint32_t(town));
+	int first_kind = 0;
+	if (council) {
+		add_box(page, exe_text(0x6A961C, "", ""), kX, 296, width, false);
+	} else {
+		const TownPerson manager = town_mayor(save, uint32_t(town));
+		const bool own = manager.who == player;
+		const bool woman = manager.merchant && manager.female;
+		const auto [first, family] = town_person_names(save, manager);
+		const int y = add_box(page,
+			exe_format(woman ? 0x6A96C8 : 0x6A96C4,
+				{window_town_name(save, town), exe_text(woman ? 0x69EE44 : 0x69EE40, "el", "the"), exe_text(0x69EE48 + 4u * manager.title, "", ""),
+					first, family},
+				""),
+			kX, own ? 312 : 408, width, false);
+		if (!own) {
+			v.page = std::move(page);
+			return;  // (0x5E2BC2: nothing more for others.)
+		}
+		add_box(page, exe_text(0x6A96CC, "", ""), kX, y + 16, width, false);
+		first_kind = 2;
+	}
+	static const uint32_t kLabels[4] = {0x6A9614, 0x6A9618, 0x6A94FC, 0x6A9500};
+	for (int k = first_kind; k < 4; ++k) {
+		v.rows.push_back({exe_text(kLabels[k], "", ""), open[size_t(k)]});
+		v.codes.push_back(k);
+	}
+	// The chosen proposal: a row that can be pressed (none at first: as the game's [+0x1907] 0xFF).
+	const int row = ui.row >= 0 && ui.row < int(v.rows.size()) && v.rows[size_t(ui.row)].second ? ui.row : -1;
+	const int kind = row >= 0 ? v.codes[size_t(row)] : -1;
+	for (int r = 0; r < int(v.rows.size()); ++r) {
+		const int k = v.codes[size_t(r)];
+		PlaceView::PageButton b{{148, 340 + 24 * k, 128, 18}, v.rows[size_t(r)].first, PlaceView::PageAction::Choose,
+			v.rows[size_t(r)].second, k == kind, false};
+		b.row = r;
+		page.buttons.push_back(fitted(b));
+	}
+	const int steps = take_hall_steps(ui);
+	v.max_amount = 2 * kHallSteps;
+	if (kind != ui.hall_kind) {
+		ui.hall_kind = kind;
+		ui.hall_value = kind >= 2 ? proposal_amount(save, uint32_t(town), uint32_t(kind)).start : 0;
+	} else if (kind >= 2 && steps != 0) {
+		const ProposalAmount a = proposal_amount(save, uint32_t(town), uint32_t(kind));
+		for (int n = 0; n < std::abs(steps); ++n) {
+			ui.hall_value = proposal_step(a, ui.hall_value, steps < 0 ? -1 : 1);
+		}
+	}
+	if (kind < 0) {
+		v.act_on = 0;
+		v.page = std::move(page);
+		return;
+	}
+	if (kind < 2) {
+		v.act = exe_text(0x6A9504, "Confirmar", "Confirm");
+		v.act_on = 1;
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, true}));
+		v.page = std::move(page);
+		return;
+	}
+	const ProposalAmount a = proposal_amount(save, uint32_t(town), uint32_t(kind));
+	page.boxes.push_back({{66, 450, 80, 18}, std::to_string(ui.hall_value)});
+	page.texts.push_back({kind == 3 ? std::string(1, kTextCoin) : "%", 66 + 80 + 2, 450});
+	page.buttons.push_back({{48, 450, 16, 18}, "-", PlaceView::PageAction::Minus, ui.hall_value > a.low});
+	page.buttons.push_back({{167, 450, 16, 18}, "+", PlaceView::PageAction::Plus, ui.hall_value < a.high});
+	const bool ok = proposal_ok(save, uint32_t(town), uint32_t(kind), ui.hall_value);
+	v.act = exe_text(0x6A950C, "OK", "OK");
+	v.act_on = ok ? 1 : 0;
+	page.buttons.push_back(fitted({{270, 450, 96, 18}, v.act, PlaceView::PageAction::Act, ok}));
+	v.page = std::move(page);
+}
+
+// X on the page 2: «Make offer» (the proposals), or a proposal's «Confirm» / «OK» (0x5E80AD): 0x48, and, with a council
+// or for an extra tax, the page telling it (its date from the operation's tick, 0x5311D0).
+void town_hall_proposals_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
+	const bool council = council_town(save, uint32_t(town));
+	if (council && !ui.hall_proposals) {
+		ui.hall_proposals = true;
+		ui.hall_kind = -1;
+		ui.hall_done = false;
+		ui.row = -1;
+		return;
+	}
+	if (ui.hall_done || ui.row < 0 || ui.row >= int(v.codes.size()) || ui.hall_kind < 0) {
+		return;
+	}
+	const int kind = ui.hall_kind;
+	const int32_t value = kind >= 2 ? ui.hall_value : 0;
+	const OperationBytes op = council_proposal(save, uint32_t(town), uint32_t(kind), value);
+	run_operations(save, sailing, {op});
+	if (council || kind == 3) {
+		uint32_t tick;
+		std::memcpy(&tick, op.data() + 4, 4);
+		ui.hall_done = true;
+		ui.hall_done_kind = kind;
+		ui.hall_done_value = value;
+		ui.hall_done_tick = tick;
+		ui.hall_proposals = true;
+		ui.hall_kind = -1;
+		ui.row = -1;
+	}
+	// (Else, the head tax without a council, changed at once: the proposal stays chosen, its «OK» off, as the game's.)
+	ui.message.clear();
+}
+
+void town_hall_coffers_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, bool square);
+
+// Square on the town hall: the page 2's candidacy's other button (0x45), the page 6's «Take gold».
+void town_hall_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
+	if (ui.page == 6) {
+		town_hall_coffers_act(save, sailing, town, ui, true);
+		return;
+	}
+	if (ui.page != 2 || ui.hall_proposals || save.merchants[size_t(save.player)].memory.u8(0x19) != town) {
+		return;
+	}
+	ui.hall_choice = standing_for_mayor(save, uint32_t(save.player)) ? 0 : 1;
+}
+
+// The town hall's page 3, «Hanseatic info» (0x5E39F0; no photo: traced in the emulator, re/emu/sesion36 halltrace.sh
+// 3): text boxes from (50, 200), 325 wide: «Alderman of the Hanseatic League is the <title> <names> from <his town>.»
+// (0x69EE90; a woman 0x69EE94); 8 under it «The following Lord Mayors have been nominated for the next Alderman
+// election on <date> in <his town>:» (0x69EE98; the date of the first event 0x20 of the queue's slots); 8 under that the
+// four candidates (0x529700), a box each: «The <title> <names> from <town>» (0x69EF8C; the article 0x69EE88 for a
+// woman, else 0x69EE84), and the player's own line after them when he may stand ([+0x37] at 4 or more) and isn't one;
+// 16 under them the diet's extraordinary meeting (the first event 0x21): «On <date> the town of <the Alderman's town>
+// will be calling an extraordinary Hanse Day. The matter under discussion will be <a fine on, a boycott of, a blockade
+// of, no action against> <town>, as <its reason>» (0x6A95B4 with 0x6A95A0..0x6A95B0 / 0x6A9600 and 0x6A95B8..0x6A95C4),
+// or «the creation of a pirate fleet, as the Hanseatic League has recently been the focus of pirate attacks.»
+// (0x6A96FC, 0x6A96B4).
+// " " when the game's text ends with a space (its cleaned text has lost it).
+std::string spaced(uint32_t english) {
+	if (!g_texts) {
+		return " ";
+	}
+	const std::string& raw = g_texts->raw_at(english);
+	return !raw.empty() && raw.back() == ' ' ? " " : "";
+}
+
+void town_hall_hanse_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	(void)town;
+	(void)ui;
+	const GlobalMemory& g = save.globals;
+	const uint32_t player = uint32_t(save.player);
+	const uint32_t towns = g.u32(global::kWorldTownCount);
+	PlaceView::Page page;
+	constexpr int kX = 50;
+	const int width = kInteriorWidth - 100;
+	const uint8_t home = g.u8(0x6DE52E);
+	const std::string home_name = home < towns ? window_town_name(save, home) : "";
+	const TownPerson alderman = alderman_person(save);
+	const auto [first, family] = town_person_names(save, alderman);
+	const bool woman = alderman.merchant && alderman.female;
+	int y = add_box(page,
+				exe_format(woman ? 0x69EE94 : 0x69EE90,
+					{exe_text(woman ? 0x69EE44 : 0x69EE40, "el", "the"), exe_text(0x69EE48 + 4u * alderman.title, "", ""), first, family,
+						home_name},
+					""),
+				kX, 200, width, false) +
+		8;
+	GameDate date{};
+	if (const std::optional<uint32_t> tick = election_slot_tick(save)) {
+		date = date_from_tick(*tick);
+	}
+	y = add_box(page,
+			exe_format(0x69EE98, {std::to_string(date.day), short_month(date.month), std::to_string(date.year), home_name}, ""), kX, y,
+			width, false) +
+		8;
+	bool own = save.merchants[player].memory.u8(0x37) >= 4;
+	auto line = [&](const TownPerson& p, const std::string& first_name, const std::string& family_name, uint32_t from) {
+		const bool female = p.merchant && p.female;
+		return exe_format(0x69EF8C,
+			{exe_text(female ? 0x69EE88 : 0x69EE84, "El", "The"), exe_text(0x69EE48 + 4u * p.title, "", ""), first_name, family_name,
+				from < towns ? window_town_name(save, from) : ""},
+			"");
+	};
+	for (const AldermanCandidate& c : alderman_candidates(save)) {
+		if (c.person.who == player) {
+			own = false;
+		}
+		y = add_box(page,
+			line(c.person, clean_game_text(game_first_name(save, c.person.first)), clean_game_text(game_family_name(save, c.person.family)),
+				c.town),
+			kX, y, width, false);
+	}
+	if (own) {
+		TownPerson me;
+		me.who = uint8_t(player);
+		me.merchant = true;
+		me.female = save.merchants[player].memory.u8(0x1A) == 0;
+		me.title = tick::merchants_detail::fn_4f9430(save, int(player));
+		const auto [my_first, my_family] = town_person_names(save, me);
+		y = add_box(page, line(me, my_first, my_family, save.merchants[player].memory.u8(0x19)), kX, y, width, false);
+	}
+	if (const std::optional<HanseDay> day = hanse_day(save)) {
+		const GameDate d = date_from_tick(day->tick);
+		std::string text;
+		if (day->town >= towns) {
+			text = exe_format(0x6A95B4,
+					   {std::to_string(d.day), short_month(d.month), std::to_string(d.year), home_name, exe_text(0x6A96FC, "", ""), ""}, "") +
+				spaced(0x6A95B4) + exe_text(0x6A96B4, "", "");
+		} else {
+			// The action (0x5E3F87: 1..5 the blockade, boycott and the large, moderate and small fines; else none).
+			static const uint32_t kActions[5] = {0x6A95B0, 0x6A95AC, 0x6A95A8, 0x6A95A4, 0x6A95A0};
+			const uint32_t action = day->action >= 1 && day->action <= 5 ? kActions[day->action - 1] : 0x6A9600;
+			// (The texts lose their spaces at their ends when cleaned: put back where the game's have them; «no action» has
+			// none, so the game runs it into the town's name.)
+			text = exe_format(0x6A95B4,
+					   {std::to_string(d.day), short_month(d.month), std::to_string(d.year), home_name,
+						   exe_text(action, "", "") + spaced(action), window_town_name(save, day->town)},
+					   "") +
+				spaced(0x6A95B4);
+			switch (day->reason) {
+			case 0: text += exe_format(0x6A95B8, {exe_text(0x6C0BB0 + 4u * day->ware, "", "")}, ""); break;
+			case 1: text += exe_text(0x6A95BC, "", ""); break;
+			case 2:
+			case 5: text += exe_text(0x6A95C0, "", ""); break;
+			case 4:
+			case 6: text += exe_text(0x6A95C4, "", ""); break;
+			default: break;
+			}
+		}
+		add_box(page, text, kX, y + 16, width, false);
+	}
+	v.page = std::move(page);
+}
+
+// A vote's tally as the game's text puts it (\tN_ pictures).
+std::string tally_text(uint32_t votes, uint32_t cap) {
+	std::string text;
+	for (const uint32_t tex : vote_tally(votes, cap)) {
+		text += text_picture(tex);
+	}
+	return text;
+}
+
+// The first letter of a name (UTF-8: its first code point), as the election's lines give the first name.
+std::string initial_of(const std::string& name) {
+	size_t n = name.empty() ? 0 : 1;
+	while (n < name.size() && (uint8_t(name[n]) & 0xC0) == 0x80) {
+		++n;
+	}
+	return name.substr(0, n);
+}
+
+// The town hall's page 4, «Council Chamber» (0x5E4160; no photo: traced in the emulator, re/emu/sesion36 halltrace.sh 4
+// with the votes made today): the vote of today (chamber_state) from (50, 212), 325 wide: «Voting has begun» centred
+// (0x69EF28), 16 under it the subject: the election's «Today's subject: Election of Alderman» and 16 under that «The
+// lord mayors of the following Hanseatic League towns are standing for election:» (0x69EED0, 0x69EED4, 0x69EED8) and
+// 8 under it the candidates (0x529700) from x 25, 375 wide, each «The <title> <initial>. <family name> (<town>)» and
+// its votes' tally marks (0x69EE9C), «Choose a candidate and cast your vote.» (0x69EF68) centred 8 under them while
+// he may vote; the diet's «Today's subject: <action> <town>» (0x6A9604..0x6A9610, 0x69EEDC; the pirates' fleet
+// 0x6A96A0) and 16 under it «Because of <reason> it is proposed that, <what>» (0x6A95C8 with 0x6A95CC..0x6A95D8 /
+// 0x6A96B0 and 0x6A95DC..0x6A95EC / 0x6A96A4); the council's «It has been requested, to …» (0x6A9508 with 0x6A9560..
+// 0x6A956C); then 16 under «Choose one of the following voting possibilities:» (0x69EF6C) and 8 under it «Accept the
+// motion», «Reject the motion», «Abstain» (0x69EF70..0x69EF78) a line each, 375 wide, their tallies at 262; the chosen
+// one dark blue (0xFF003C8C); «Cast vote» (0x69EF18, 148, 450) while he may vote. After the vote (the page keeps the
+// vote it showed): «The Hanseatic League conference is closed» (0x69EF88) and who was elected (0x69EF7C) or the
+// diet's result (0x6A95F0..0x6A95FC, 0x69EF80, 0x69EF84, 0x6A96B8, 0x6A96BC), «The council meeting is over.»
+// (0x6A9744) and the council's (0x6A9634..0x6A9650), 16 under it; accepted with more votes for than against, then
+// told for, against and abstaining, rejected against, for and abstaining (the game's order).
+void town_hall_chamber_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	const uint32_t player = uint32_t(save.player);
+	const uint32_t towns = save.globals.u32(global::kWorldTownCount);
+	PlaceView::Page page;
+	constexpr int kX = 50;
+	const int width = kInteriorWidth - 100;
+	const int wide = kInteriorWidth - 50;
+	const SDL_Color chosen = {0x00, 0x3C, 0x8C, 255};
+	if (!council_town(save, uint32_t(town))) {
+		v.page = std::move(page);
+		return;  // (0x5E41C2: nothing in a town without a council.)
+	}
+	auto name_of = [&](uint32_t t) { return t < towns ? window_town_name(save, t) : std::string(); };
+	const ChamberState s = chamber_state(save, uint32_t(town));
+	auto options = [&](int y) {
+		// The three choices, a line each, and their tallies at 262 (0x5E5150..).
+		static const uint32_t kOptions[3] = {0x69EF70, 0x69EF74, 0x69EF78};
+		for (int k = 0; k < 3; ++k) {
+			v.rows.push_back({exe_text(kOptions[k], "", ""), true});
+			const int top = y;
+			add_box(page, exe_text(kOptions[k], "", ""), kX, y, wide, false, ui.row == k ? chosen : SDL_Color{0, 0, 0, 255});
+			y = add_box(page, tally_text(s.votes[size_t(k)], 20), kX + kInteriorWidth / 2, y, wide, false);
+			PlaceView::PageButton touch{{kX, top, kInteriorWidth - 100, y - top}, "", PlaceView::PageAction::Choose, true};
+			touch.hidden = true;
+			touch.row = k;
+			page.buttons.push_back(touch);
+		}
+	};
+	if (s.vote != ChamberVote::None) {
+		const auto& e = save.events[s.event];
+		int y = add_box(page, exe_text(0x69EF28, "", ""), kX, 212, width, false, {0, 0, 0, 255}, true) + 16;
+		ui.chamber_shown = int(s.vote);
+		ui.chamber_votes = s.votes;
+		if (s.vote == ChamberVote::Election) {
+			y = add_box(page, exe_text(0x69EED0, "", "") + " " + exe_text(0x69EED4, "", ""), kX, y, width, false) + 16;
+			y = add_box(page, exe_text(0x69EED8, "", ""), kX, y, width, false) + 8;
+			ui.chamber_candidates = alderman_candidates(save);
+			for (int k = 0; k < 4; ++k) {
+				const AldermanCandidate& c = ui.chamber_candidates[size_t(k)];
+				const TownMemory* t = c.town < save.towns.size() ? &save.towns[c.town].memory : nullptr;
+				const uint8_t mayor = t ? t->u8(0x6F1) : 0xFF;
+				const bool female = mayor < save.globals.u16(global::kWorldMerchantCount) && mayor < save.merchants.size() &&
+					save.merchants[mayor].memory.u8(0x1A) == 0;
+				const std::string line = exe_text(female ? 0x69EE88 : 0x69EE84, "El", "The") + " " +
+					exe_text(0x69EE48 + 4u * c.person.title, "", "") + " " +
+					initial_of(clean_game_text(game_first_name(save, c.person.first))) + ". " +
+					clean_game_text(game_family_name(save, c.person.family)) + " (" + name_of(c.town) + ")" +
+					tally_text(s.votes[size_t(k)], 15);
+				v.rows.push_back({line, true});
+				const int top = y;
+				y = add_box(page, line, 25, y, wide, false, ui.row == k ? chosen : SDL_Color{0, 0, 0, 255});
+				PlaceView::PageButton touch{{25, top, wide, y - top}, "", PlaceView::PageAction::Choose, true};
+				touch.hidden = true;
+				touch.row = k;
+				page.buttons.push_back(touch);
+			}
+			if (s.may_vote) {
+				add_box(page, exe_text(0x69EF68, "", ""), 25, y + 8, wide, false, {0, 0, 0, 255}, true);
+			}
+		} else if (s.vote == ChamberVote::Diet) {
+			const uint8_t action = e.u8(0xE);
+			const uint8_t target = e.u8(0x9);
+			ui.chamber_town = target;
+			ui.chamber_kind = action;
+			static const uint32_t kSubjects[6] = {0x6A96A0, 0x6A9610, 0x69EEDC, 0x6A960C, 0x6A9608, 0x6A9604};
+			std::string subject = exe_text(0x69EED0, "", "") + " " + exe_text(kSubjects[action < 6 ? action : 0], "", "");
+			if (action != 0 && action < 6) {
+				subject += " " + name_of(target);
+			}
+			y = add_box(page, subject, kX, y, width, false) + 16;
+			std::string reason;
+			if (target >= towns) {
+				reason = exe_text(0x6A96B0, "", "");
+			} else {
+				switch (e.u8(0xA)) {
+				case 0: reason = exe_format(0x6A95CC, {exe_text(0x6C0BB0 + 4u * e.u8(0xC), "", "")}, ""); break;
+				case 1: reason = exe_text(0x6A95D0, "", ""); break;
+				case 2:
+				case 5: reason = exe_text(0x6A95D4, "", ""); break;
+				case 4:
+				case 6: reason = exe_text(0x6A95D8, "", ""); break;
+				default: break;
+				}
+			}
+			static const uint32_t kWhat[6] = {0x6A96A4, 0x6A95EC, 0x6A95E8, 0x6A95E4, 0x6A95E0, 0x6A95DC};
+			const uint32_t what = kWhat[action < 6 ? action : 0];
+			const std::string sentence = exe_format(0x6A95C8, {reason}, "") + spaced(0x6A95C8) +
+				(action == 0 || action >= 6 ? exe_text(what, "", "") : exe_format(what, {name_of(target)}, ""));
+			y = add_box(page, sentence, kX, y, width, false) + 16;
+			y = add_box(page, exe_text(0x69EF6C, "", ""), kX, y, width, false) + 8;
+			options(y);
+		} else {
+			const std::string asked = exe_text(0x6A9508, "", "");
+			std::string motion;
+			ui.chamber_kind = e.u8(0xD);
+			switch (e.u8(0xD)) {
+			case 0:
+				motion = exe_format(0x6A9560, {asked, std::to_string(e.s32(0x8))}, "");
+				ui.chamber_amount = e.s32(0x8);
+				break;
+			case 1: motion = exe_format(0x6A9564, {asked}, ""); break;
+			case 2: motion = exe_format(0x6A9568, {asked}, ""); break;
+			case 3:
+				motion = exe_format(0x6A956C, {asked, std::to_string(e.u8(0x14))}, "");
+				ui.chamber_amount = e.u8(0x14);
+				break;
+			default: break;
+			}
+			y = add_box(page, motion, kX, y, width, false) + 16;
+			y = add_box(page, exe_text(0x69EF6C, "", ""), kX, y, width, false) + 8;
+			options(y);
+		}
+		const bool picked = ui.row >= 0 && ui.row < int(v.rows.size());
+		if (s.may_vote) {
+			v.act = exe_text(0x69EF18, "Votar", "Cast vote");
+			v.act_on = picked ? 1 : 0;
+			page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, picked}));
+		} else {
+			v.act_on = 0;
+		}
+		v.page = std::move(page);
+		return;
+	}
+	// After the vote, what the window kept of it (0x5E5696).
+	const uint8_t forv = ui.chamber_votes[0];
+	const uint8_t against = ui.chamber_votes[1];
+	const uint8_t abstain = ui.chamber_votes[2];
+	const bool rejected = forv <= against;
+	auto result = [&](uint32_t yes, uint32_t no, std::vector<std::string> more) {
+		std::vector<std::string> args = rejected ? std::vector<std::string>{std::to_string(against), std::to_string(forv)}
+												 : std::vector<std::string>{std::to_string(forv), std::to_string(against)};
+		args.push_back(std::to_string(abstain));
+		args.insert(args.end(), more.begin(), more.end());
+		return exe_format(rejected ? no : yes, args, "");
+	};
+	switch (ui.chamber_shown) {
+	case 0:
+		if (save.merchants[player].memory.u8(0x39C + uint32_t(town)) < 4) {
+			add_box(page, exe_text(0x6A9570, "", ""), kX, 212, width, false);
+		}
+		break;
+	case 1: {
+		const int y = add_box(page, exe_text(0x69EF88, "", ""), kX, 212, width, false, {0, 0, 0, 255}, true) + 16;
+		int best = 0;
+		for (int k = 1; k < 4; ++k) {
+			if (ui.chamber_votes[size_t(k)] > ui.chamber_votes[size_t(best)]) {
+				best = k;
+			}
+		}
+		const AldermanCandidate& c = ui.chamber_candidates[size_t(best)];
+		const TownMemory* t = c.town < save.towns.size() ? &save.towns[c.town].memory : nullptr;
+		const uint8_t mayor = t ? t->u8(0x6F1) : 0xFF;
+		const bool female = mayor < save.globals.u16(global::kWorldMerchantCount) && mayor < save.merchants.size() &&
+			save.merchants[mayor].memory.u8(0x1A) == 0;
+		add_box(page,
+			exe_format(0x69EF7C,
+				{exe_text(female ? 0x69EE88 : 0x69EE84, "El", "The"), exe_text(0x69EE48 + 4u * c.person.title, "", ""),
+					clean_game_text(game_first_name(save, c.person.first)), clean_game_text(game_family_name(save, c.person.family)),
+					name_of(c.town), std::to_string(ui.chamber_votes[size_t(best)])},
+				""),
+			kX, y, width, false);
+		break;
+	}
+	case 2: {
+		const int y = add_box(page, exe_text(0x69EF88, "", ""), kX, 212, width, false, {0, 0, 0, 255}, true) + 16;
+		const std::string where = name_of(ui.chamber_town);
+		std::string text;
+		switch (ui.chamber_kind) {
+		case 0: text = result(0x6A96B8, 0x6A96BC, {}); break;
+		case 1: text = result(0x6A95F8, 0x6A95FC, {where}); break;
+		case 2: text = result(0x69EF80, 0x69EF84, {where}); break;
+		case 3:
+		case 4:
+		case 5: text = result(0x6A95F0, 0x6A95F4, {where}); break;
+		default: break;
+		}
+		add_box(page, text, kX, y, width, false);
+		break;
+	}
+	case 4: {
+		const int y = add_box(page, exe_text(0x6A9744, "", ""), kX, 212, width, false, {0, 0, 0, 255}, true) + 16;
+		std::string text;
+		switch (ui.chamber_kind) {
+		case 0: text = result(0x6A9634, 0x6A9638, rejected ? std::vector<std::string>{} : std::vector<std::string>{std::to_string(ui.chamber_amount)}); break;
+		case 1: text = result(0x6A963C, 0x6A9640, {}); break;
+		case 2: text = result(0x6A9644, 0x6A9648, {}); break;
+		case 3:
+			text = result(0x6A964C, 0x6A9650,
+				{std::to_string(rejected ? int32_t(save.towns[size_t(town)].memory.u8(0x6F8)) : ui.chamber_amount)});
+			break;
+		default: break;
+		}
+		add_box(page, text, kX, y, width, false);
+		break;
+	}
+	default: break;
+	}
+	v.page = std::move(page);
+}
+
+// X on the page 4: «Cast vote» (0x5E8280): 0x3F or 0x49 with the choice; the page shows the vote again (without the
+// button, his vote cast).
+void town_hall_chamber_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
+	(void)v;
+	const ChamberState s = chamber_state(save, uint32_t(town));
+	if (!s.may_vote || ui.row < 0) {
+		return;
+	}
+	if (const std::optional<OperationBytes> op = chamber_vote_operation(save, uint32_t(town), s.vote, uint32_t(ui.row))) {
+		run_operations(save, sailing, {*op});
+	}
+	ui.row = -1;
+	ui.message.clear();
+}
+
+// A game's text box in its title font (a text's «\f3_»: ttffonts.ini's Font3, its lines 20 high), each line centred.
+int add_title_box(PlaceView::Page& page, const std::string& text, int x, int y, int width) {
+	const TextRenderer* font = g_game_art ? g_game_art->title_text() : nullptr;
+	for (const std::string& line : box_lines(text)) {
+		for (const std::string& part : line.empty() || !font ? std::vector<std::string>{line} : wrap_text(*font, line, width)) {
+			if (!part.empty()) {
+				PlaceView::PageText t{part, x + width / 2, y, true, true};
+				page.texts.push_back(t);
+			}
+			y += 20;
+		}
+	}
+	return y;
+}
+
+// The town hall's page 5, «Town hall cellar» (0x5E6040; no photo: traced in the emulator, re/emu/sesion36 halltrace.sh
+// 5): «Especially recommended today in the town hall cellar» (0x69FD70, in the titles' font) centred in a box from
+// (50, 362), 325 wide; 16 under it the dish of the day (cellar_dish: 0x69FD74 + 8·n) in the same font and its words
+// (+ 4) in the pages' font under it, centred.
+void town_hall_cellar_view(SaveGame& save, int town, PlaceView& v) {
+	PlaceView::Page page;
+	constexpr int kX = 50;
+	const int width = kInteriorWidth - 100;
+	const int y = add_title_box(page, exe_text(0x69FD70, "", ""), kX, 362, width) + 16;
+	const uint32_t n = cellar_dish(save, uint32_t(town));
+	const int below = add_title_box(page, exe_text(0x69FD74 + 8 * n, "", ""), kX, y, width);
+	add_box(page, exe_text(0x69FD78 + 8 * n, "", ""), kX, below, width, false, {0, 0, 0, 255}, true);
+	v.page = std::move(page);
+}
+
+// The town hall's page 6, «Town Coffers» (0x5E6190, 0x5E8380; the user's photo town_hall_treasury.jpg): «Balance from
+// 1st <month> to date» (0x6A9524; the last month's «Balance from last Month», 0x6A9520) centred in font 0 from (50,
+// 160), 325 wide; 16 under it the eight kinds (0x6A9528..0x6A9544, coffers_balance) a line each, their sums right
+// against 375 («+» before what is above 0, the coin after); 16 under them «Total» and its sum and 16 under that
+// «Available» and the town's [+0x700] in font 0; «Donate gold» (42, 450), «Last month» / «This month» (148, 418),
+// «Take gold» (254, 450) for the mayor («Take gold» off while besieged). Donating or taking: «How much of your wealth
+// would you like to donate to the town coffers?» (0x6A9550) or «Remember that a negative donation won't improve your
+// standing…» (0x6A9554) 16 under «Available», the amount in the box (66, 450, 80 wide) with the coin 2 after it, «-»
+// (48, 450) and «+» (167, 450) by 10000 (round, 16), «OK» (270, 450): 0x47 (coffers_operation).
+void town_hall_coffers_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	const uint32_t player = uint32_t(save.player);
+	const TownMemory& t = save.towns[size_t(town)].memory;
+	PlaceView::Page page;
+	constexpr int kX = 50;
+	const int width = kInteriorWidth - 100;
+	const int right = kX + width;
+	if (ui.coffers == 2 && !coffers_can_take(save, uint32_t(town))) {
+		ui.coffers = 0;  // (0x5E83BF: besieged, back to the balance.)
+	}
+	const bool last = ui.coffers == 3;
+	int y;
+	if (last) {
+		y = add_box(page, exe_text(0x6A9520, "", ""), kX, 160, width, true, {0, 0, 0, 255}, true);
+	} else {
+		const GameDate d = date_from_tick(save.globals.u32(global::kWorldTick));
+		y = add_box(page, exe_format(0x6A9524, {short_month(d.month)}, ""), kX, 160, width, true, {0, 0, 0, 255}, true);
+	}
+	y += 16;
+	auto sum_text = [](int32_t v) { return (v > 0 ? "+" : "") + std::to_string(v) + std::string(1, kTextCoin); };
+	const std::array<int32_t, 8> balance = coffers_balance(save, uint32_t(town), last);
+	int32_t total = 0;
+	for (uint32_t k = 0; k < 8; ++k) {
+		page.texts.push_back({sum_text(balance[k]), right, y, false, false, {0, 0, 0, 255}, true});
+		y = add_box(page, exe_text(0x6A9528 + 4 * k, "", ""), kX, y, width, false);
+		total = int32_t(uint32_t(total) + uint32_t(balance[k]));
+	}
+	y += 16;
+	PlaceView::PageText sum{sum_text(total), right, y, false, false, {0, 0, 0, 255}, true, true};
+	page.texts.push_back(sum);
+	y = add_box(page, exe_text(0x6A9548, "Total", "Total"), kX, y, width, true) + 16;
+	sum.text = std::to_string(t.s32(0x700)) + std::string(1, kTextCoin);
+	sum.y = y;
+	page.texts.push_back(sum);
+	y = add_box(page, exe_text(0x6A954C, "Disponible", "Available"), kX, y, width, true) + 16;
+	const bool mayor = t.u8(0x6F1) == player;
+	if (ui.coffers == 1 || ui.coffers == 2) {
+		const bool donate = ui.coffers == 1;
+		add_box(page, exe_text(donate ? 0x6A9550 : 0x6A9554, "", ""), kX, y, width, false);
+		const int32_t high = donate ? save.merchants[player].money() : t.s32(0x700);
+		const int steps = take_hall_steps(ui);
+		v.max_amount = 2 * kHallSteps;
+		for (int n = 0; n < std::abs(steps); ++n) {
+			ui.hall_value += steps < 0 ? -10000 : 10000;
+			if (ui.hall_value <= 0) {
+				ui.hall_value = 0;
+			}
+			if (ui.hall_value >= high) {
+				ui.hall_value = std::max(0, high);
+			}
+		}
+		ui.hall_value = std::clamp(ui.hall_value, 0, std::max(0, high));
+		page.boxes.push_back({{66, 450, 80, 18}, std::to_string(ui.hall_value)});
+		page.texts.push_back({std::string(1, kTextCoin), 66 + 80 + 2, 450});
+		page.buttons.push_back({{48, 450, 16, 18}, "-", PlaceView::PageAction::Minus, ui.hall_value > 0});
+		page.buttons.push_back({{167, 450, 16, 18}, "+", PlaceView::PageAction::Plus, ui.hall_value < high});
+		v.act = exe_text(0x6A950C, "OK", "OK");
+		v.act_on = 1;
+		v.rows.push_back({"", true});
+		ui.row = 0;
+		page.buttons.push_back(fitted({{270, 450, 96, 18}, v.act, PlaceView::PageAction::Act, true}));
+		v.page = std::move(page);
+		return;
+	}
+	const bool take = mayor && coffers_can_take(save, uint32_t(town));
+	v.act = exe_text(0x6A9510, "Donar oro", "Donate gold");
+	v.act_on = mayor ? 1 : 0;
+	v.act2 = exe_text(0x6A9514, "Retirar oro", "Take gold");
+	v.act2_on = take;
+	v.rows.push_back({"", mayor});
+	ui.row = 0;
+	page.buttons.push_back(fitted({{42, 450, 128, 18}, v.act, PlaceView::PageAction::Act, mayor}));
+	page.buttons.push_back(fitted({{254, 450, 128, 18}, v.act2, PlaceView::PageAction::Act2, take}));
+	PlaceView::PageButton month{{148, 418, 128, 18}, last ? exe_text(0x6A951C, "Mes en curso", "This month")
+															: exe_text(0x6A9518, "Mes pasado", "Last month"),
+		PlaceView::PageAction::Choose, mayor, false, false};
+	month.value = 3;
+	page.buttons.push_back(fitted(month));
+	if (ui.hall_choice == 3 && mayor) {
+		ui.coffers = 3 - ui.coffers;  // (0x5E83E3: «Last month» / «This month».)
+	}
+	ui.hall_choice = -1;
+	v.page = std::move(page);
+}
+
+// X and Square on the page 6: «Donate gold» and «Take gold» (the amount from 0), or «OK»: 0x47, the balance again.
+void town_hall_coffers_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, bool square) {
+	if (ui.coffers == 1 || ui.coffers == 2) {
+		if (square) {
+			return;
+		}
+		if (const std::optional<OperationBytes> op = coffers_operation(save, uint32_t(town), ui.coffers == 1, ui.hall_value)) {
+			run_operations(save, sailing, {*op});
+		}
+		ui.coffers = 0;
+		return;
+	}
+	if (square && !coffers_can_take(save, uint32_t(town))) {
+		return;
+	}
+	ui.coffers = square ? 2 : 1;
+	ui.hall_value = 0;
+	ui.amount = kHallSteps;
+}
+
+// The Hanse panel's context (its names and texts, set by the main loop) and its tasks' game texts (below), which the
+// town hall's page 7 tells as the game's window does.
+struct HanseContext;
+const HanseContext* g_hanse = nullptr;
+}  // namespace
+namespace p3::data::tick::construction_detail {
+void fn_4d9fc0(const SaveGame& save, uint32_t& tick, uint32_t town);  // construction.cpp
+}  // namespace p3::data::tick::construction_detail
+namespace {
+std::string hanse_task_description(const SaveGame& save, const HanseTask& t, const HanseContext& c);
+std::string hanse_thanks(const SaveGame& save, const HanseTask& t, const HanseContext& c);
+
+// A meeting's action pressed (0x5E8B23..): 0x4A {now + 0xE00 moved off the town's votes (0x4D9FC0), the event, the
+// decision}; the page's choice from nothing again.
+void town_hall_office_decide(SaveGame& save, int town, PlaceUi& ui, uint16_t event, int decision) {
+	uint32_t tick = save.globals.u32(global::kWorldTick) + 0xE00;
+	tick::construction_detail::fn_4d9fc0(save, tick, uint32_t(town));
+	OperationBytes op{};
+	const uint32_t words[4] = {0x4A, tick, uint32_t(event), uint32_t(decision)};
+	std::memcpy(op.data(), words, sizeof words);
+	run_operations(save, nullptr, {op});
+	ui.row = -1;
+}
+
+// The town hall's page 7, «Alderman's office» (0x5E6730, 0x5E87D0; no photo: traced in the emulator, re/emu/sesion36
+// halltrace.sh 7): for the Alderman its two views by «Meetings» / «Tasks» ([+0x156C], 148, 480), for others the tasks.
+// The tasks: the player's own (0x4EC694) told on paper from (50, 212), 10 × 8 («Many thanks…», 0x6A9684 + 4·kind);
+// else the tasks on offer (0x4EC5F4, five at most): «You can choose between the following orders…» (0x6A9654) from
+// (50, 212) and, on paper 8 under it, 10 × 6, the chosen one (0x6A966C + 4·kind with its region), «<» (90, 450) and
+// «>» (302, 450) with more than one, «Accept order» (148, 450): 0x4B; none: 0x6A9698 from (50, 212). The meetings:
+// «A Hanse Day could be called due to the following events:» (0x6A9574) from (50, 196) and the events (0x4D9EA0: the
+// events 0x30 with [+0x8] set, four at most) 8 under it, 32 apart (an export tax revoked 0x6A957C, the extra tax
+// revoked 0x6A9578, pirates sent 0x6A96D4, the coffers plundered 0x6A96D8, the offices plundered 0x6A9584; a town past
+// the towns: the pirates' attacks 0x6A969C), the chosen one dark blue; under it, from (50, 372), who recommends what
+// (0x6A959C: his title, rank, names and town, the action 0x6A95A0..0x6A95B0 / 0x6A96AC / 0x6A96C0 and the town) and
+// the actions: «no action», «small fine», «moderate fine», «large fine», «Blockade» and «Boycott» (for the pirates
+// «Pirate fleet» alone): 0x4A {tick, the event, 6, 5, 4, 3, 1, 2 (0 the fleet)}; none: 0x6A96DC from (50, 196).
+void town_hall_office_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t player = uint32_t(save.player);
+	const uint32_t towns = g.u32(global::kWorldTownCount);
+	PlaceView::Page page;
+	constexpr int kX = 50;
+	const int width = kInteriorWidth - 100;
+	const bool alderman = g.u8(0x6DE52D) == player;
+	const int choice = ui.hall_choice;
+	ui.hall_choice = -1;
+	if (!alderman) {
+		ui.hall_tasks = true;
+	}
+	if (alderman) {
+		PlaceView::PageButton swap{{148, 480, 128, 18}, ui.hall_tasks ? exe_text(0x6A96E0, "Reuniones", "Meetings")
+																	: exe_text(0x6A96E4, "Misiones", "Tasks"),
+			PlaceView::PageAction::Choose, true, false, false};
+		swap.value = 8;
+		page.buttons.push_back(fitted(swap));
+		if (choice == 8) {
+			ui.hall_tasks = !ui.hall_tasks;  // (0x5E87F0: the other view, from its first entry.)
+			ui.row = ui.hall_tasks ? 0 : -1;
+		}
+	}
+	auto add_on_paper = [&](const std::string& text, int y, int rows) {
+		page.papers.push_back({kX, y, 10, rows});
+		add_box(page, text, kX + 16, y + 32, 32 * 10 - 32, false);
+	};
+	if (ui.hall_tasks) {
+		const uint16_t own = merchant_hanse_task(save, int(player));
+		if (own != 0xFFFF) {
+			add_on_paper(g_hanse ? hanse_thanks(save, hanse_task(save, own), *g_hanse) : "", 212, 8);
+			v.page = std::move(page);
+			return;
+		}
+		const std::vector<uint16_t> offered = offered_hanse_tasks(save, 5);
+		if (offered.empty()) {
+			add_box(page, exe_text(0x6A9698, "", ""), kX, 212, width, false);
+			v.page = std::move(page);
+			return;
+		}
+		const int y = add_box(page, exe_text(0x6A9654, "", ""), kX, 212, width, false) + 8;
+		ui.row = ((ui.row % int(offered.size())) + int(offered.size())) % int(offered.size());
+		const HanseTask t = hanse_task(save, offered[size_t(ui.row)]);
+		add_on_paper(g_hanse ? hanse_task_description(save, t, *g_hanse) : "", y, 6);
+		for (size_t k = 0; k < offered.size(); ++k) {
+			v.rows.push_back({"", true});  // The tasks: «<» and «>», Up and Down.
+		}
+		v.codes.assign(offered.begin(), offered.end());
+		v.one_at_a_time = true;
+		v.act = exe_text(0x69EEFC, "Aceptar misión", "Accept order");
+		v.act_on = 1;
+		const bool more = offered.size() > 1;
+		page.buttons.push_back({{90, 450, 32, 18}, "<", PlaceView::PageAction::Previous, more});
+		page.buttons.push_back({{302, 450, 32, 18}, ">", PlaceView::PageAction::Next, more});
+		page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, true}));
+		v.page = std::move(page);
+		return;
+	}
+	// The meetings (the Alderman's).
+	std::vector<uint16_t> items;
+	{
+		const uint32_t count = std::min<uint32_t>(g.u16(0x6DD73C + 0xC), uint32_t(save.events.size()));
+		const uint32_t limit = g.u32(global::kWorldTick) + 0x1D00;
+		for (uint32_t i = g.u16(0x6DD73C + 0x8), walked = 0; i < count && walked < count && items.size() < 8;
+			 i = save.events[i].u16(4), ++walked) {
+			const auto& e = save.events[i];
+			if (e.u16(6) == 0x30) {
+				if (e.u32(0x8) != 0) {
+					items.push_back(uint16_t(i));
+				}
+			} else if (e.u32(0) > limit) {
+				break;
+			}
+		}
+		if (items.size() > 4) {
+			items.resize(4);
+		}
+	}
+	if (items.empty()) {
+		add_box(page, exe_text(0x6A96DC, "", ""), kX, 196, width, false);
+		v.page = std::move(page);
+		return;
+	}
+	int y = add_box(page, exe_text(0x6A9574, "", ""), kX, 196, width, false) + 8;
+	auto name_of = [&](uint32_t t) { return t < towns ? window_town_name(save, t) : std::string(); };
+	const SDL_Color chosen = {0x00, 0x3C, 0x8C, 255};
+	for (int k = 0; k < int(items.size()); ++k) {
+		const auto& e = save.events[items[size_t(k)]];
+		const GameDate d = date_from_tick(e.u32(0x8));
+		const std::string day = std::to_string(d.day);
+		const std::string month = short_month(d.month);
+		const uint8_t at = e.u8(0x12);
+		std::string text;
+		if (at >= towns) {
+			text = exe_text(0x6A969C, "", "");
+		} else {
+			switch (e.u8(0x13)) {
+			case 0: text = exe_format(0x6A957C, {day, month, name_of(at), exe_text(0x6C0BB0 + 4u * e.u8(0x14), "", "")}, ""); break;
+			case 1: text = exe_format(0x6A9578, {day, month, name_of(at)}, ""); break;
+			// (The Spanish exe passes these two the day, the month and the town: 0x5E763A, 0x5E7676 there.)
+			case 2:
+			case 5:
+				text = exe_format(0x6A96D4, g_spanish ? std::vector<std::string>{day, month, name_of(at)}
+													  : std::vector<std::string>{name_of(at), day, month},
+					"");
+				break;
+			case 4:
+				text = exe_format(0x6A96D8, g_spanish ? std::vector<std::string>{day, month, name_of(at)}
+													  : std::vector<std::string>{name_of(at), day, month},
+					"");
+				break;
+			case 6:
+				text = exe_format(0x6A9584, {day, month, name_of(at), clean_game_text(game_first_name(save, e.u8(0x14))),
+												clean_game_text(game_family_name(save, e.u8(0x15)))},
+					"");
+				break;
+			default: break;
+			}
+		}
+		v.rows.push_back({text, true});
+		add_box(page, text, kX, y, width, false, ui.row == k ? chosen : SDL_Color{0, 0, 0, 255});
+		PlaceView::PageButton touch{{kX, y, width, 30}, "", PlaceView::PageAction::Choose, true};
+		touch.hidden = true;
+		touch.row = k;
+		page.buttons.push_back(touch);
+		y += 32;
+	}
+	v.codes.assign(items.begin(), items.end());
+	v.act_on = 1;  // X chooses the first event when none is (one alone has no rows to go through with the pad).
+	if (ui.row < 0 || ui.row >= int(items.size())) {
+		v.page = std::move(page);
+		return;
+	}
+	if (choice >= 16) {
+		town_hall_office_decide(save, town, ui, items[size_t(ui.row)], choice - 16);
+		v.page = std::move(page);
+		return;
+	}
+	const auto& e = save.events[items[size_t(ui.row)]];
+	static const uint32_t kActions[6] = {0x6A96AC, 0x6A95B0, 0x6A95AC, 0x6A95A8, 0x6A95A4, 0x6A95A0};
+	const uint32_t action = e.u8(0xC) < 6 ? kActions[e.u8(0xC)] : 0x6A96C0;
+	const bool woman = (e.u8(0xD) & 0x80) != 0;
+	const uint8_t target = e.u8(0x12);
+	const std::string text = exe_format(0x6A959C,
+		{exe_text(woman ? 0x69C03C : 0x69C038, "", ""), exe_text(0x69EE48 + 4u * e.u8(0x10), "", ""),
+			exe_text((woman ? 0x6A0608 : 0x6A0628) + 4u * e.u8(0x11), "", ""), clean_game_text(game_first_name(save, e.u8(0xD))),
+			clean_game_text(game_family_name(save, e.u8(0xE))), name_of(e.u8(0xF)), exe_text(action, "", "") + spaced(action),
+			target < towns ? name_of(target) : std::string()},
+		"");
+	add_box(page, text, kX, 372, width, false);
+	struct Act {
+		SDL_Rect rect;
+		uint32_t label;
+		int decision;
+	};
+	if (target < towns) {
+		static const Act kButtons[6] = {{{10, 428, 128, 18}, 0x6A9600, 6}, {{148, 428, 128, 18}, 0x6A9588, 5},
+			{{287, 428, 128, 18}, 0x6A958C, 4}, {{10, 450, 128, 18}, 0x6A9590, 3}, {{287, 450, 128, 18}, 0x6A9598, 1},
+			{{148, 450, 128, 18}, 0x6A9594, 2}};
+		for (const Act& a : kButtons) {
+			PlaceView::PageButton b{a.rect, exe_text(a.label, "", ""), PlaceView::PageAction::Choose, true, false, false};
+			b.value = 16 + a.decision;
+			page.buttons.push_back(fitted(b));
+		}
+	} else {
+		PlaceView::PageButton b{{148, 450, 128, 18}, exe_text(0x6A96A8, "", ""), PlaceView::PageAction::Choose, true, false, false};
+		b.value = 16;
+		page.buttons.push_back(fitted(b));
+	}
+	v.page = std::move(page);
+}
+
+// X on the page 7's tasks: «Accept order» (0x5E8A20): 0x4B {player, the task's event}.
+void town_hall_office_act(SaveGame& save, Sailing* sailing, PlaceUi& ui, const PlaceView& v) {
+	if (!ui.hall_tasks) {
+		if (ui.row < 0 && !v.codes.empty()) {
+			ui.row = 0;  // The meetings: the first event chosen.
+		}
+		return;
+	}
+	if (ui.row < 0 || ui.row >= int(v.codes.size())) {
+		return;
+	}
+	run_operations(save, sailing, {take_task_operation(uint32_t(save.player), uint16_t(v.codes[size_t(ui.row)]))});
+	ui.row = 0;
+}
+
+// The town hall (.let 0x03; town_hall_window.hpp): its side menu (0x5A8DB0, «Town hall» 0x69DDD0) and its buttons
+// (0x69DDB4, 0x69DDB8, 0x69DDC0..0x69DDCC, 0x6A94F8, 0x6A9630), the button k the window's page k (0x5A9471: 0x5E0BA0),
+// the eighth only in the Alderman's town (0x5A8F5C), each on or off as 0x5A9780 decides (town_hall_menu); the parchment
+// from the page's line (town_hall_parchment).
+void town_hall_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	static const uint32_t kPages[8] = {0x69DDB4, 0x69DDB8, 0x69DDC0, 0x69DDC4, 0x69DDC8, 0x69DDCC, 0x6A94F8, 0x6A9630};
+	static const char* kNames[8][2] = {{"Avisos", "Notices"}, {"Barco patrulla", "Outrigger"}, {"Alcalde", "Town info"},
+		{"Gobernador", "Hanseatic info"}, {"Sala de conferencias", "Council Chamber"}, {"Casa de la cerveza", "Town hall cellar"},
+		{"Arcas de la ciudad", "Town Coffers"}, {"Oficina del Gobernador", "Alderman's office"}};
+	const TownHallMenu menu = town_hall_menu(save, uint32_t(town));
+	std::vector<std::pair<std::string, int>> buttons;
+	for (int k = 0; k < 8; ++k) {
+		if (k == 7 && !menu.office) {
+			break;
+		}
+		buttons.push_back({exe_text(kPages[k], kNames[k][0], kNames[k][1]), menu.on[size_t(k)] ? k : -1});
+	}
+	ui.page = std::clamp(ui.page, 0, int(buttons.size()) - 1);
+	place_side_menu(v, ui, exe_text(0x69DDD0, "Ayuntamiento", "Town hall"), buttons, town_hall_parchment(save, town, ui));
+	if (ui.page == 2 && ui.hall_proposals) {
+		v.menu_lit = -1;  // «Make offer» unlit the side menu's buttons (0x5E8209: 0x5A9750).
+	}
+	if (!ui.shown) {
+		return;  // The picture alone until a button is pressed (0x5A93A7: 0x466430(7)).
+	}
+	v.title = buttons[size_t(ui.page)].first;  // (The pages' banners are their buttons' texts: 0x5E1A37, 0x5E29E7..)
+	switch (ui.page) {
+	case 0: town_hall_notices_view(save, town, ui, v); break;
+	case 1: town_hall_guard_view(save, town, ui, v); break;
+	case 2:
+		v.title = exe_text(0x69DDC0, "Alcalde", "Town info");
+		if (council_town(save, uint32_t(town)) && !ui.hall_proposals) {
+			town_hall_info_view(save, town, ui, v);
+		} else {
+			town_hall_proposals_view(save, town, ui, v);
+		}
+		break;
+	case 3: town_hall_hanse_view(save, town, ui, v); break;
+	case 4: town_hall_chamber_view(save, town, ui, v); break;
+	case 5: town_hall_cellar_view(save, town, v); break;
+	case 6: town_hall_coffers_view(save, town, ui, v); break;
+	case 7: town_hall_office_view(save, town, ui, v); break;
+	default: break;
+	}
+}
+
+// X on the town hall's page.
+void town_hall_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
+	switch (ui.page) {
+	case 0: town_hall_notices_act(save, sailing, town, ui, v); break;
+	case 1: town_hall_guard_act(save, sailing, town, ui, v); break;
+	case 2: town_hall_proposals_act(save, sailing, town, ui, v); break;
+	case 4: town_hall_chamber_act(save, sailing, town, ui, v); break;
+	case 6: town_hall_coffers_act(save, sailing, town, ui, false); break;
+	case 7: town_hall_office_act(save, sailing, ui, v); break;
+	default: break;
+	}
 }
 
 // The shipyard's side menu's texts over its buttons (0x5AD2A3..0x5AD511; the dates made when it opens, 0x5AE0EC..
@@ -9640,6 +10895,9 @@ void draw_page_items(SDL_Renderer* renderer, TextRenderer& text, GameWindowArt& 
 	// Laid out as the game's: where its drawing puts each thing.
 	TextRenderer& title = art.title_text() ? *art.title_text() : text;
 	TextRenderer& head = art.head_text() ? *art.head_text() : text;
+	for (const PlaceView::PagePaper& p : page.papers) {
+		art.draw_paper(panel.x + p.x, panel.y + p.y, p.cols, p.rows);
+	}
 	for (const PlaceView::PageIcon& i : page.icons) {
 		if (i.under) {
 			art.draw_tex(i.tex, i.frame, panel.x + i.x, panel.y + i.y, i.width);
@@ -15155,6 +16413,7 @@ int main(int argc, char** argv) {
 	}
 #endif
 	HanseContext hanse_context{town_names, names, regions, game_texts.get()};
+	g_hanse = &hanse_context;  // (The town hall's page 7 tells the tasks with it.)
 	g_texts = game_texts.get();
 	EndWindow end_window;  // When the player is elected Alderman.
 	MessageWindow messages;  // The game's messages to the player (a battle...).
@@ -17134,6 +18393,14 @@ int main(int argc, char** argv) {
 			place.move_from = -1;
 			place.move_pressed = false;
 			place.bribe_answer = -1;  // The bath house: the councillor's greeting again (0x5B1D80(k): his page 1).
+			place.hall_pressed = false;  // The town hall: its set page clears the notices' answer (0x5E0BD5)
+			place.hall_proposals = false;  // and the page 2's proposals,
+			place.hall_kind = -1;
+			place.hall_done = false;
+			place.chamber_shown = 0;  // the page 4's last vote (0x5E0F07),
+			place.coffers = 0;  // the page 6's balance (0x5E0F45),
+			place.hall_tasks = false;  // the page 7's meetings (0x5E0F6C).
+			place.chamber_votes = {};
 			if (alone) {
 				// The church's «Pray»: the picture alone, no button lit (place_side_menu).
 				place.shown = false;
@@ -17150,7 +18417,8 @@ int main(int argc, char** argv) {
 				// Another page (as the game's set page, the guild's 0x5C1080): from its first row.
 				const int page = place_now.menu_pages.empty() ? k : place_now.menu_pages[size_t(k)];
 				if (page != place.page) {
-					place.row = 0;
+					// (The town hall's pages start with no row chosen: the page 2's proposals, [+0x1907] 0xFF.)
+					place.row = place.open == Place::TownHall ? -1 : 0;
 					place.amount = 0;
 					place.ship_auctioned = false;
 					place.auctioned_ship = -1;
@@ -20344,6 +21612,8 @@ int main(int argc, char** argv) {
 								} else if (place.open == Place::Guild && place.page == 5) {
 									// The guild's map: the centre nearest the finger, or none.
 									place.row = guild_centre_touched(save, x - layout.panel.x, y - layout.panel.y);
+								} else if (place.open == Place::TownHall) {
+									place.hall_choice = b.value;  // A button of the page (town_hall_view takes it).
 								}
 								break;
 							case PlaceView::PageAction::Previous:

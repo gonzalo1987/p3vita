@@ -178,6 +178,10 @@ private:
 		if (!read_cpr_image(*archive_, file.c_str(), image)) {
 			return nullptr;
 		}
+		const size_t use_alpha = ini_.find("UseAlpha=", at);
+		if (use_alpha < next && (ini_.compare(use_alpha + 9, 4, "true") == 0 || ini_.compare(use_alpha + 9, 4, "True") == 0)) {
+			apply_bmp_palette_alpha(*archive_, file.c_str(), image);  // (The votes' tally marks.)
+		}
 		p.frame = {0, 0, image.width, image.height};
 		const std::vector<uint8_t> ini(ini_.begin(), ini_.end());
 		read_texture_frames(ini, section.c_str(), &p.frame, 1);

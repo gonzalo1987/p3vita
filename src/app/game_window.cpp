@@ -90,6 +90,9 @@ bool GameWindowArt::read_tex_image(uint32_t tex, p3::data::Image& image) {
 	if (file.empty() || !read_cpr_image(archive_, file.c_str(), image)) {
 		return false;
 	}
+	if (ini_is(ini_value(textures_ini_, section, "UseAlpha"), "true")) {
+		apply_bmp_palette_alpha(archive_, file.c_str(), image);  // An 8-bit BMP's alpha in its palette (the tally marks).
+	}
 	if (ini_is(ini_value(textures_ini_, section, "UseAlpha"), "false")) {
 		// Drawn without the file's alpha (the palette AIMs' is 0 throughout: the bath house's steam, water and drinking
 		// man were invisible), opaque but for its colour key.

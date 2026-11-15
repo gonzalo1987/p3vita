@@ -86,9 +86,10 @@ Cómo leerla:
   (0x5F, 0x75 y el evento 0x13, con sus cartas y, en el visor, la ventana de la oficina de otro comerciante) y la ruta
   por puntos del mapa del mar (0x0B), esta también en el visor (tocar el mar añade puntos; X zarpa, ○ los borra).
   Antes, la primera parte: la reparación de convoyes, los botones de las cartas, la iglesia y el baño.
-- **Siguiente**: el encargo `ENCARGO_GRUPO5_VISOR.md` (junto al HANDOFF): las páginas que faltan
-  como las del juego están hechas (la última, el astillero y el muelle, el 14-11-2026 por la noche); queda el grupo 5
-  en el visor (apartado 1): las páginas 1 a 7 del ayuntamiento, el cliente de un pedido de la taberna y los asedios.
+- **Siguiente**: el encargo `ENCARGO_GRUPO5_VISOR_2.md` (junto al HANDOFF): las páginas que faltan
+  como las del juego están hechas (la última, el astillero y el muelle, el 14-11-2026 por la noche) y las siete del
+  ayuntamiento (15-11-2026); queda del grupo 5 en el visor (apartado 1) el texto tras una misión fallida, qué hacer con
+  el panel de la Hansa del visor, el cliente de un pedido de la taberna y los asedios.
 - **En la Vita**: lo último que el usuario probó en la consola fueron las cargas más ligeras (04-11-2026). Todo lo de
   después está probado en el PC sin pantalla, con capturas, y compila para la Vita, pero no consta probado en ella
   (apartado 6).
@@ -191,9 +192,14 @@ enteros antes de reescribirlos):
   candidatura a alcalde (la pregunta del ayuntamiento, 0x45) quedó hecha con el grupo 4. En el visor (13-11-2026,
   `town_hall_window.cpp` con su ctest): la armería (.let 0x0B: formar y despedir unidades, 0x41 y 0x40, solo para el
   alcalde) y la página 0 del ayuntamiento (.let 0x03), los avisos (los pedidos del mundo y el decreto del príncipe;
-  «Aceptar misión», 0x3D). **Falta el visor** de las otras 7 páginas del ayuntamiento (barco patrulla 0x44, traslado,
-  alcalde, Gobernador 0x3F/0x49, consejo, bodega 0x47, Hansa), los asedios (0x5F1F00..0x5F31C0) y el cliente de un
-  pedido de la taberna (0x5D7760, la 0x51): en `ENCARGO_GRUPO5_VISOR.md`. (Mudar la ciudad natal, 0x5DD520, quedó
+  «Aceptar misión», 0x3D). **El visor de las otras siete páginas, hecho** (15-11-2026; `re/emu/sesion36/
+  notes_townhall.md`): barco patrulla (0x44; sus condiciones comprobadas con el juego, escenario `guard_ship_window`),
+  alcalde (la candidatura 0x45, las propuestas al consejo 0x48 y los impuestos del regidor de una ciudad sin consejo),
+  información de la Hansa, sala de conferencias (la elección 0x3F, la Dieta 0x3F, el consejo 0x49 y sus resultados),
+  casa de la cerveza, arcas (0x47) y oficina del Gobernador (las misiones 0x4B y las reuniones 0x4A); el menú lateral
+  como 0x5A9780. **Falta**: el texto 0x6A9680 de la oficina (tras una misión fallida), qué hacer con el panel de la
+  Hansa del visor (ahora repite las páginas 3, 4 y 7 salvo los materiales del camino, 0x3B), los asedios
+  (0x5F1F00..0x5F31C0) y el cliente de un pedido de la taberna (0x5D7760, la 0x51): en `ENCARGO_GRUPO5_VISOR_2.md`. (Mudar la ciudad natal, 0x5DD520, quedó
   hecho en la página «Trasladarse» de la oficina, 14-11-2026.)
 - [x] **La oficina y su administrador** (12-11-2026; `operations.cpp`, `office_window.cpp`): 0x5A el porcentaje de
   trabajadores de una empresa, 0x5B la orden del administrador para una mercancía, 0x5E contratarlo o despedirlo, 0x62
@@ -335,7 +341,7 @@ gráficos y sus textos; las reglas de lo que enseña y las órdenes que encola, 
 del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo en «Decisiones del usuario».
 
 - [ ] **Las vistas de dentro de los edificios** (lo pidió el usuario el 05-11-2026; en marcha desde el 13-11-2026 con
-  el encargo de las vistas, acabado el 14-11-2026, y desde entonces con `ENCARGO_GRUPO5_VISOR.md`; lo leído del juego,
+  el encargo de las vistas, acabado el 14-11-2026, y desde entonces con `ENCARGO_GRUPO5_VISOR_2.md`; lo leído del juego,
   en `re/emu/sesion31/views_notes.md`, y las fotos de la
   pantalla del juego que mandó el usuario, en `re/emu/sesion31/pc_shots/`).
   - [x] **El marco común** (`src/app/game_window.cpp`): la ventana del juego entera (451 × 537, como 0x465BA0) dibujada a
@@ -422,14 +428,14 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     (el nivel entre «-» y «+», su tabla) y el nombre; la barra de las listas largas. Improvisado: el tamaño de la
     ventanita de la pregunta (el juego lo calcula por el texto); sin el fundido del libro entre dos barcos. Notas:
     `re/emu/sesion35/notes_shipyard.md`.
-  - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido) y
-    las otras páginas del ayuntamiento. La
+  - [x] Las siete páginas del ayuntamiento que faltaban (15-11-2026; `re/emu/sesion36/notes_townhall.md`).
+  - [ ] Por hacer como el juego: en la taberna, el cliente de un pedido (con el grupo 5; su botón lleva su apellido). La
     sombra del edificio en su subasta (la vista de la ciudad del visor aún no dibuja sombras) y el sonido de rezar
     (con el sonido, apartado 5). Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
 - [ ] **Los edificios que aún no tienen ventana**: la puerta de la ciudad (`Stadttor`: qué hace, por leer en el
   código; el transporte por tierra resultó ser de la caballeriza, el granero de las vistas, que ya tiene la suya,
-  13-11-2026, como el gremio, la herrería, la iglesia, el baño, la armería de la milicia y el ayuntamiento, este solo
-  con su página de avisos). Se añaden a `kPlaces` de `src/app/main.cpp` por su tipo de
+  13-11-2026, como el gremio, la herrería, la iglesia, el baño, la armería de la milicia y el ayuntamiento, este con
+  sus ocho páginas desde el 15-11-2026). Se añaden a `kPlaces` de `src/app/main.cpp` por su tipo de
   `.let`.
 - [ ] **El panel de la Hansa** (Cuadrado en una ciudad) es una ventana propia del visor (lo que lista y encola sí es
   como el juego); el juego tiene las suyas (la de encargos 0x5E87D0, la de la carretera 0x5F2A20). Por decidir con el
@@ -675,6 +681,18 @@ Cada uno con su dirección, qué hace y su estado. «Seguro»: leído en el cód
 ser a propósito. El detalle, en el comentario del código y en [oracle.md](oracle.md).
 
 ### Reproducidos, sin corregir aún
+
+**El botón «Avisos» del ayuntamiento** (el menú lateral, 0x5A9780; 15-11-2026, seguro: comprobado en el emulador,
+`re/emu/sesion36/halltrace.sh 0 1 --menu`): con un pedido en el mundo y sin decreto del Príncipe, el juego enciende el
+botón y en la misma pasada lo vuelve a apagar (se le olvida salir del bucle), así que «Avisos» solo se puede pulsar con
+el decreto. Reproducido (`town_hall_menu`); sin decidir si corregirlo.
+
+**«El carabela»** (las frases del barco patrulla en español, 0x5E1F01; 15-11-2026, seguro, solo texto): el artículo va
+por el tipo de barco (0 y 2 «La», 1 y 3 «El») y la carabela es el tipo 1. Reproducido tal cual.
+
+**«no action»** (la Dieta extraordinaria en la información de la Hansa, 0x5E3FBC; 15-11-2026, seguro, solo texto): el
+juego une «no action» al nombre de la ciudad sin espacio («no actionLübeck»), porque su texto no lo lleva (los otros
+sí). Reproducido tal cual.
 
 **El balance de la oficina** (la página «Total», 0x5DC2A0; 14-11-2026, seguro, solo lo que se ve): los totales de la
 semana pasada y de la previsión no cuentan la fila del administrador (su sueldo), aunque esa fila sale en la página.

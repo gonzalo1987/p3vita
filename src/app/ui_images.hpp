@@ -22,6 +22,10 @@ namespace p3::app {
 bool read_cpr_file(const p3::data::CprArchive& archive, const char* path, std::vector<uint8_t>& out);
 // A picture of the archive (BMP, TGA, JPG, PNG or the engine's AIM) decoded; false if it isn't there or can't be read.
 bool read_cpr_image(const p3::data::CprArchive& archive, const char* path, p3::data::Image& out);
+// An 8-bit BMP's transparency as the game takes it with «UseAlpha=true» (the tally marks of the town hall's votes,
+// images/Abstimmung*.bmp, alone have it): each pixel's alpha 255 less its palette entry's fourth byte (0 opaque, 0xFF
+// clear); nothing for another kind of file.
+void apply_bmp_palette_alpha(const p3::data::CprArchive& archive, const char* path, p3::data::Image& image);
 // The picture as a texture with its alpha blended, or nullptr.
 SDL_Texture* make_texture(SDL_Renderer* renderer, const p3::data::Image& image);
 // The frames «OffsetNSizeK=x y w h» of a section «[TEXn]» of textures.ini (the
