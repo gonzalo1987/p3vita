@@ -33,6 +33,19 @@ struct TileSlice {
 	int height = 0;
 };
 
+// A picture drawn with a tile, after its atlas's path in the .let (0x5513F0: their count, then each read by
+// 0x5852A0): its kind (0 the shadow, the tile's [data+0x14]; 1 the snow, [+0x18]; 2 the scaffolding's frames,
+// [+0x1C]; others the tile's class's own), its parameters, its place in the tile's atlas coordinates (relative to the
+// tile's rectangle here, as the slices), its frames in its own atlas and that atlas (empty: the tile's).
+struct TileVariant {
+	uint32_t kind = 0;
+	std::vector<uint32_t> params;
+	int x = 0;
+	int y = 0;
+	std::vector<TileSlice> frames;
+	std::string atlas;
+};
+
 // Tile isométrico (.let, ver docs/formats/town.md).
 struct TileDef {
 	std::string name;  // Nombre del fichero sin carpeta ni extensión.
@@ -50,6 +63,17 @@ struct TileDef {
 	std::vector<TileSlice> slices;  // cols + rows - 1 franjas.
 	size_t front_slice = 0;  // La que cubre la celda delantera, que es la más baja.
 	std::string atlas;  // Ruta del AIM dentro del CPR.
+	std::vector<TileVariant> variants;  // Its shadow, snow, scaffolding... (none if the .let's tail can't be read).
+
+	// Its shadow (the variant of kind 0), or null.
+	const TileVariant* shadow() const {
+		for (const TileVariant& v : variants) {
+			if (v.kind == 0) {
+				return &v;
+			}
+		}
+		return nullptr;
+	}
 
 	// Nodos de rutas (tipo 48) y puntos de aparición (tipo 49): solo los ve el editor.
 	bool is_editor_marker() const { return type == 48 || type == 49; }

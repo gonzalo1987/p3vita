@@ -162,8 +162,9 @@ public:
 	// 0x5CB24D and 0x5CB839; cleared when the window opens, 0x5C937C, and at his thanks' last frame, 0x5C9621).
 	void priest_thanks(bool on) { thanks_ = on; }
 	// The picture TEX`tex` of textures.ini (its frame `frame`) at (x, y), read the first time; its size. With `width`,
-	// only that much of the frame's left part (the half cannonball, 0x490428).
-	SDL_Point draw_tex(uint32_t tex, int frame, int x, int y, int width = 0);
+	// only that much of the frame's left part (the half cannonball, 0x490428); with `alpha`, faded (the shipyard book's
+	// ships, 0x5F8910).
+	SDL_Point draw_tex(uint32_t tex, int frame, int x, int y, int width = 0, uint8_t alpha = 255);
 	SDL_Point tex_size(uint32_t tex, int frame);
 
 private:
@@ -187,8 +188,8 @@ private:
 	};
 	bool load_strip(uint32_t tex, Strip& strip);
 	static void free_strip(Strip& strip);
-	// Its frame `frame` at (x, y) (with `width`, only that much of its left part); the size drawn.
-	SDL_Point draw_strip(const Strip& strip, int frame, int x, int y, int width = 0) const;
+	// Its frame `frame` at (x, y) (with `width`, only that much of its left part; with `alpha`, faded); the size drawn.
+	SDL_Point draw_strip(const Strip& strip, int frame, int x, int y, int width = 0, uint8_t alpha = 255) const;
 	struct Animation {
 		Strip strip;
 		int x = 0;

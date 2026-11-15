@@ -99,8 +99,23 @@ tipo en 0x04, color clave en 0x08, rectángulo del atlas en 0x0C/0x10/0x14/0x18,
 `cols` en 0x1C y `rows` en 0x20, número de entradas extra en 0x24), luego
 `u32[extra]`, las `cols + rows − 1` franjas (`s32 x, y, ancho, alto` en
 coordenadas del atlas) y la ruta del atlas AIM (`u32 longitud` + texto con
-separadores mezclados `\` y `/`). Lo que sigue (variantes de sombra, nieve y
-andamios) aún no se lee.
+separadores mezclados `\` y `/`; su color clave es el de la cabecera).
+
+Tras la ruta, las variantes (0x5513F0, cada una leída por 0x5852A0): `u32`
+cuántas y, cada una, `u32 clase` (0 la sombra, el `[data+0x14]` del juego; 1 la
+nieve, `[+0x18]`; 2 los fotogramas de los andamios, `[+0x1C]`; 3 a 8 las de la
+clase del objeto), `u32 n` y `u32[n]` parámetros, `u32 x, y` (su sitio en las
+coordenadas del atlas del tile; el juego los guarda en u16), `u32 m` y `m`
+rectángulos `u32 x, y, ancho, alto` en su propio atlas, `u32 longitud` y, si no es
+0, la ruta de su AIM y su `u32` color clave (sin ruta, el atlas del tile). Leído
+así, cada uno de los 934 `.let` acaba justo en su último byte (15-11-2026,
+`re/emu/sesion38/letvariants.py`): 358 sombras (un rectángulo cada una), 175
+nieves, 3083 de la clase 2, 393 de la 3 y unas pocas de la 4 a la 8. `TileDef::variants`.
+
+La sombra se dibuja (0x551F70) en negro con alfa 100 (el color 0x64000000 de
+quien la llama), su primer rectángulo con su `x, y` puestos desde la franja
+`cols − 1` del tile: x de la celda + x − x de la franja, y de abajo + y − y de la
+franja − alto de la franja.
 
 El color clave es siempre `0xFFFF00FF`: los píxeles magenta `FF00FF` del atlas
 son transparentes.

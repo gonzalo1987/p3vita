@@ -87,9 +87,13 @@ Cómo leerla:
   (0x5F, 0x75 y el evento 0x13, con sus cartas y, en el visor, la ventana de la oficina de otro comerciante) y la ruta
   por puntos del mapa del mar (0x0B), esta también en el visor (tocar el mar añade puntos; X zarpa, ○ los borra).
   Antes, la primera parte: la reparación de convoyes, los botones de las cartas, la iglesia y el baño.
-- **Siguiente**: el encargo `ENCARGO_VISTAS_RESTOS.md` (junto al HANDOFF): los restos pequeños de las vistas (el
-  fundido del libro del astillero, el tamaño de la ventanita de mensaje, los cuadros «\c», la sombra de la subasta y las
-  capitulares de las cartas). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
+- **Hecho el 15-11-2026 (tercera sesión, `re/emu/sesion38/`)**: los restos pequeños de las vistas: el fundido del
+  libro del astillero entre dos barcos o tipos (con el fallo de sus títulos corregido detrás del ajuste), la ventanita de
+  mensaje del juego con su tamaño (0x41D9B0, `game_message`), los textos centrados «\c» revisados en las vistas, la
+  sombra del edificio en su subasta (las variantes de los `.let` ya se leen) y las capitulares de las cartas.
+- **Siguiente**: lo que elija el usuario de «Lo que falta». De las pantallas quedan, ya localizados: las sombras y la
+  nieve de los tiles en la vista de la ciudad (apartado 4, «La ciudad viva») y las preguntas del convoy con la
+  ventanita del juego. Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
   terrestre» y sus siete páginas de asedio, y el cliente de un pedido de la taberna; el panel de la Hansa propio del
   visor, quitado): el grupo 5 en el visor, hecho.
@@ -211,8 +215,8 @@ enteros antes de reescribirlos):
   `order-client`, `order-premium`). **Los asedios** en la puerta (15-11-2026; `notes_gate.md`): sus siete
   páginas como las del juego (Presentes 0x88, Venta de mercancías 0x89, Contratos de entrega 0x8A, Préstamo 0x8D,
   Atacar, Rendirse y Comprar libertad 0x90, con sus mensajes; `town_gate_window` con su ctest; estados `siege`,
-  `siege-prince`, `prince-loan`) y la puerta cerrada del asedio en su interior. **Falta** del encargo: los restos
-  pequeños de las vistas (`ENCARGO_VISTAS_RESTOS.md`). (Mudar la ciudad natal, 0x5DD520, quedó
+  `siege-prince`, `prince-loan`) y la puerta cerrada del asedio en su interior. Los restos pequeños de las vistas,
+  hechos el 15-11-2026 (`re/emu/sesion38/`). (Mudar la ciudad natal, 0x5DD520, quedó
   hecho en la página «Trasladarse» de la oficina, 14-11-2026.)
 - [x] **La oficina y su administrador** (12-11-2026; `operations.cpp`, `office_window.cpp`): 0x5A el porcentaje de
   trabajadores de una empresa, 0x5B la orden del administrador para una mercancía, 0x5E contratarlo o despedirlo, 0x62
@@ -354,7 +358,7 @@ gráficos y sus textos; las reglas de lo que enseña y las órdenes que encola, 
 del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo en «Decisiones del usuario».
 
 - [ ] **Las vistas de dentro de los edificios** (lo pidió el usuario el 05-11-2026; en marcha desde el 13-11-2026 con
-  el encargo de las vistas, acabado el 14-11-2026, después con `ENCARGO_GRUPO5_VISOR_2.md` (acabado el 15-11-2026) y ahora con `ENCARGO_VISTAS_RESTOS.md`; lo leído del juego,
+  el encargo de las vistas, acabado el 14-11-2026, después con `ENCARGO_GRUPO5_VISOR_2.md` y `ENCARGO_VISTAS_RESTOS.md` (acabados el 15-11-2026); lo leído del juego,
   en `re/emu/sesion31/views_notes.md`, y las fotos de la
   pantalla del juego que mandó el usuario, en `re/emu/sesion31/pc_shots/`).
   - [x] **El marco común** (`src/app/game_window.cpp`): la ventana del juego entera (451 × 537, como 0x465BA0) dibujada a
@@ -438,15 +442,25 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     libro del barco con sus esquinas y la fila de cifras con sus dibujos; reparar (las sumas de un convoy), encargar
     (la tabla de materias primas, y tras «Ejecutar» la página del encargo con sus fechas), la lista de contratos (con
     la pregunta del juego antes de cancelar), la lista de reparaciones (nueva: «Parar reparaciones», la 0x00), mejorar
-    (el nivel entre «-» y «+», su tabla) y el nombre; la barra de las listas largas. Improvisado: el tamaño de la
-    ventanita de la pregunta (el juego lo calcula por el texto); sin el fundido del libro entre dos barcos. Notas:
-    `re/emu/sesion35/notes_shipyard.md`.
+    (el nivel entre «-» y «+», su tabla) y el nombre; la barra de las listas largas; la ventanita de la pregunta con su
+    tamaño del juego (15-11-2026, 0x41D9B0 trazada en el emulador: el ancho por el texto con la proporción 0,6, sus
+    botones por el ancho de su texto y el de cerrar; centrada en la ventana del edificio y no en la pantalla). Notas: `re/emu/sesion35/notes_shipyard.md`. El
+    fundido del libro entre dos barcos o dos tipos (15-11-2026, `re/emu/sesion38/`): medio segundo, el anterior
+    debajo y el nuevo encima, como el juego (comprobado en el emulador; su fallo de los títulos, abajo).
   - [x] Las siete páginas del ayuntamiento que faltaban (15-11-2026; `re/emu/sesion36/notes_townhall.md`).
   - [x] El cliente de un pedido en la taberna (15-11-2026; `re/emu/sesion37/notes_client.md`). Improvisado (sin foto):
     en español «Mercancía» llega más allá de «Almacén» (el juego los escribe uno encima del otro): cada cabecera
     empieza al menos 6 después de la anterior; y una frase española más larga que su sitio pasa a la línea siguiente y
     baja las de debajo.
-  - [ ] Por hacer como el juego: la sombra del edificio en su subasta (la vista de la ciudad del visor aún no dibuja sombras) y el sonido de rezar
+  - [x] Los textos centrados («\c»): todos los de las vistas de los edificios salen centrados (revisado el 15-11-2026
+    con `re/emu/sesion38/cscan.py`, en los dos exes; las cartas y las batallas ya siguen su alineación).
+  - [ ] Fuera de los edificios, con la ventanita de mensaje del juego (0x41D9B0, ya en el visor: `game_message`): las
+    preguntas del convoy en la ventana del barco («Deshacer convoy», «Abandonar convoy», «No es posible formar un
+    convoy», hoy una fila del visor) y, con la tanda del panel, el aviso de la reputación del panel de construir
+    (0x6B20A4, centrado).
+  - [x] La sombra del edificio en su subasta (15-11-2026, `re/emu/sesion38/`): la imagen de la sombra del `.let`
+    (sus variantes ya se leen: `docs/formats/town.md`) en negro con alfa 100 bajo el edificio, como 0x551F70.
+  - [ ] Por hacer como el juego: el sonido de rezar
     (con el sonido, apartado 5). Lo que listan y mandan (`player_actions.cpp` y los `*_window.cpp`) no cambia.
 - [x] **La puerta de la ciudad** (.let 0x2F, `Stadttor`; 15-11-2026, `re/emu/sesion37/notes_gate.md`): abre su menú
   lateral como el del juego (ocho botones con sus condiciones, la nota bajo el título; la nota del juego, de tres
@@ -465,7 +479,9 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   - [ ] Los barcos en el puerto (la lista *0x6E2D50, el objeto 0x6E6220 al que la simulación avisa al atracar y
     zarpar), también como puntos en el minimapa con el color de su dueño (0x56C730: azul los tuyos, gris oscuro los
     piratas, blanco los demás, rojo los de otro jugador humano; el dibujo del minimapa, 0x59C590).
-  - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe) y las variantes de los tiles (sombras, nieve).
+  - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe) y las variantes de los tiles (sombras, nieve):
+    sus datos ya se leen del `.let` (`TileDef::variants`, 15-11-2026) y la sombra ya se dibuja en la subasta de un
+    edificio; falta leer cómo las pone la vista de la ciudad (0x5854D0 coloca una variante por 0x59B5B0 de la vista).
   - [ ] Las obras: hoy lo que está en obras ([0x762] con `pending` ≠ 0) se dibuja terminado; faltan los andamios y los
     bordes de calle de las celdas 0x81.
   - [ ] El fuego ([0x76A]): falta el humo y las llamas (los incendios de la ciudad, de un asedio, y la torre que cae en
@@ -481,9 +497,10 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   iconos del barco, las balas de las vistas de los edificios, los de las votaciones...) se dibujan con los gráficos
   del juego (`textures.ini`, cargados la primera vez) en todas las pantallas, no solo en las cartas; antes, fuera de
   ellas se perdían y en ellas eran dibujos a mano.
-- [ ] **Las capitulares de las cartas** (`\d` y una mayúscula: la primera letra adornada, 0x462540 con el juego de
-  imágenes *0x6CC3D4 y `DecoLettersCol` de `parchment.ini`): hoy sale la letra normal. Leer de dónde salen las letras
-  adornadas y dibujarlas.
+- [x] **Las capitulares de las cartas** (15-11-2026, `re/emu/sesion38/`): `\d` y una mayúscula (0x4626C5) ponen la
+  imagen de esa letra (parchment.ini [TEXCOL0], `images/grossbuchstaben`, la letra − «A»; 39 × 39) al principio del
+  párrafo en lugar de la letra, y las líneas a su lado (las del párrafo y las siguientes, hasta pasar su borde de abajo)
+  empiezan su ancho y 4 más adentro, como la caja de texto del juego.
 - [ ] **Los gráficos**: decidir la transparencia del motor (magenta, alfa 0 de los `_TP`, sombras con alfa 100); subir
   los DXT3 a la Vita como texturas BC2 sin descomprimir.
 - [ ] **Detalles del mapa del mar**: los nombres de las ciudades se ven blandos (stb_truetype sin ajuste a los píxeles,
@@ -837,6 +854,14 @@ de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; s
   texto: el visor acaba la frase con su punto.
 
 ### Corregidos con el ajuste
+
+**Los títulos del libro del astillero al pasar de un barco a otro** (0x5F8910, las páginas de reparar, mejorar y el
+nombre; 15-11-2026, seguro: comprobado en el emulador, solo cambia lo que se ve medio segundo): el libro funde el barco
+anterior con el nuevo, pero entre barcos compara los títulos solo por «Convoy» (0x5F8BC1, 0x5F8E93): de un convoy a un
+barco suelto el título que aparece es el tipo del convoy (0x5F8EB4: «crayer» en vez de «snaikka», comprobado en la
+partida 4) hasta que acaba el fundido; entre dos convoyes no sale ningún título; entre dos barcos sueltos de tipos
+distintos el título anterior desaparece de golpe. Corregido sin preguntar (es solo de lo que se ve; `yard_book`): con
+el ajuste, los títulos se comparan por sus palabras, como entre los tipos de «Construcción».
 
 **La prima del pedido en la taberna, en español** (la página tras una entrega a medias con prima, 0x5D4BA6 del exe
 español; 15-11-2026, seguro, solo cambia lo que se ve): el código español pone el precio en una línea propia, «de %u»

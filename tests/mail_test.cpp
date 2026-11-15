@@ -189,8 +189,9 @@ void text_codes() {
 	check(p[2].align == LetterParagraph::Right && p[2].text.empty(), "the alignment stays");
 	check(p[3].align == LetterParagraph::Center && p[3].text == std::string("Hanse") + kLetterSoftHyphen + "tag",
 		"\\l\\c: centred, the soft hyphen");
-	check(p[4].align == LetterParagraph::Left && p[4].text == std::string("You owe 12") + kLetterCoin + ".",
-		"\\d out, the coin, the carriage return out");
+	check(p[4].align == LetterParagraph::Left && p[4].drop_cap == 'Y' && p[4].text == std::string("ou owe 12") + kLetterCoin + ".",
+		"\\d and its capital the drop cap, the coin, the carriage return out");
+	check(p[0].drop_cap == 0 && p[3].drop_cap == 0, "no drop cap");
 	check(p[5].text == "X", "a 0 ends the text");
 	check(p[0].picture < 0 && p[2].picture < 0 && p[5].picture < 0, "no picture");
 	const std::vector<LetterParagraph> news = letter_paragraphs("\\c\\f3_1. 4. 1362\n\n\\l\\f0_News\n\n\\c\\t16063_ ");

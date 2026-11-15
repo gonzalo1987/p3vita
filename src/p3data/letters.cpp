@@ -2568,7 +2568,14 @@ std::vector<LetterParagraph> letter_paragraphs(const std::string& raw) {
 			break;
 		}
 		case 'd':
-			++i;  // The drop cap: the letter after it stays.
+			// The drop cap (0x4626C5): a capital after it becomes its picture (the paragraph's, at its start; elsewhere
+			// the letter stays as it is).
+			if (i + 2 < raw.size() && raw[i + 2] >= 'A' && raw[i + 2] <= 'Z' && p.text.empty() && !p.drop_cap) {
+				p.drop_cap = raw[i + 2];
+				i += 2;
+			} else {
+				++i;
+			}
 			break;
 		case 'C':
 			p.text += kLetterCoin;

@@ -111,6 +111,9 @@ struct LetterParagraph {
 	// Whether that picture is \hN_, one made for the letter (kLetterMapPicture),
 	// rather than \tN_, one of the game's graphics by its TEX number.
 	bool made_picture = false;
+	// Its drop cap (0x4626C5: «\d» and a capital A..Z at the paragraph's start): the letter, drawn as its picture
+	// (parchment.ini [TEXCOL0], images/grossbuchstaben: the letter − 'A'), taken out of the text; 0 for none.
+	char drop_cap = 0;
 	std::string text;
 };
 std::vector<LetterParagraph> letter_paragraphs(const std::string& raw);

@@ -696,7 +696,9 @@ public:
 	// cell, bottoms aligned; draw_tile's placing): the guild's auction of a building (0x5C6FB9 draws the town view's
 	// object of the record's cell at the window's (w/2 − tile/2, 260); that object's drawing, 0x551C20, puts the
 	// picture's bottom at the y it is given and its left (its slices but the last, each as wide as the first) before
-	// the x). False if nothing stands there.
+	// the x). Its shadow first (0x5C6FF9: colour 0x64000000, its slot 0x28, 0x551F70): the .let's shadow picture (its
+	// first frame, in its own atlas) in black at alpha 100, at its place in the tile's atlas coordinates from the
+	// slice cols − 1's ([data+0x2A] − 1: the cell given). False if nothing stands there.
 	bool draw_building_at(int x, int y, int left, int bottom) {
 		for (size_t i = first_object_; i < items_.size(); ++i) {
 			const Item& item = items_[i];
@@ -704,6 +706,22 @@ public:
 				continue;
 			}
 			const TileDef* tile = item.tile;
+			const TileVariant* shadow = tile->shadow();
+			const size_t k = size_t(std::max(1, tile->cols) - 1);
+			if (shadow && !shadow->frames.empty() && k < tile->slices.size()) {
+				SDL_Texture* texture = shadow->atlas.empty() ? item.texture : atlas_texture(shadow->atlas);
+				if (texture) {
+					const TileSlice& s = tile->slices[k];
+					const TileSlice& f = shadow->frames[0];
+					const SDL_Rect src = {f.x, f.y, f.width, f.height};
+					const SDL_Rect dst = {left + shadow->x - s.x, bottom + shadow->y - s.y - s.height, f.width, f.height};
+					SDL_SetTextureColorMod(texture, 0, 0, 0);
+					SDL_SetTextureAlphaMod(texture, 100);
+					SDL_RenderCopy(renderer_, texture, &src, &dst);
+					SDL_SetTextureColorMod(texture, 255, 255, 255);
+					SDL_SetTextureAlphaMod(texture, 255);
+				}
+			}
 			const TileSlice& front = tile->slices[std::min(tile->front_slice, tile->slices.size() - 1)];
 			const SDL_Rect src = {tile->src_x, tile->src_y, tile->width, tile->height};
 			const SDL_Rect dst = {left - front.x, bottom - front.height - front.y, tile->width, tile->height};
@@ -2636,6 +2654,10 @@ struct PlaceUi {
 	int yard_ask = 0;
 	int yard_page = -1;  // The page the window had (its set page resets the rest).
 	int yard_row_seen = -1;  // The lists' row the last frame (the pad's new row is scrolled into sight).
+	// The book's fade (0x5F8910): the ship or the type shown before a corner changed it ([+0xCE8], -1 none: its set
+	// page clears it, its updates when the fade is over) and when it changed ([+0xCE4], the viewer's ms).
+	int yard_fade_from = -1;
+	uint32_t yard_fade_at = 0;
 	// The tavern: the person talked to (TavernPerson; 0xFF nobody), a greeting drawn when it opened (the window's
 	// [+0x1C90]), the trader's window and his ships' list as the last update made it.
 	// A page (or a person) chosen in the building's side menu (PlaceView::menu); none when it is entered: the window
@@ -2876,6 +2898,7 @@ struct PlaceView {
 		int y = 0;
 		bool under = false;  // Drawn before the texts (the guild's boards under their words).
 		int width = 0;  // Only so much of the frame's left part (0: all of it; the half cannonball, 0x490428).
+		uint8_t alpha = 255;  // Faded (the shipyard book's ships, 0x5F8910).
 	};
 	// A picture the page makes itself (the guild's trading centres' fog, 0x534A40): a byte a pixel, each the alpha of
 	// one colour, filling `rect`; drawn over the pictures under the texts. Its texture is made again when `key` changes.
@@ -2971,7 +2994,12 @@ struct PlaceView {
 	// 0x46F760: «choose offer»); its close button (its [+0x4A4]) at (w − 64, h − 47) (0x47014E..0x47018A).
 	std::optional<Dialog> popup_dialog;
 	std::optional<Page> popup;
+	// Its close button where its window puts it (the game's message, game_message: [+0x4B0]); else the list's.
+	std::optional<SDL_Rect> popup_close_at;
 	SDL_Rect popup_close() const {
+		if (popup_close_at) {
+			return *popup_close_at;
+		}
 		return popup_dialog ? SDL_Rect{popup_dialog->at.x + popup_dialog->width() - 64,
 								  popup_dialog->at.y + popup_dialog->height() - 47, 32, 18}
 							: SDL_Rect{};
@@ -3267,6 +3295,131 @@ int add_box(PlaceView::Page& page, const std::string& text, int x, int y, int wi
 		}
 	}
 	return y;
+}
+
+// A game's text box with its own fonts (0x462520: «\fN» sets the font from there on, the box's own being 0): each line
+// in the font it starts with, wrapped, 15 high (20 in the title font, 3); with a page, its lines as the page's texts
+// from (x, y). Its height.
+int game_box(PlaceView::Page* page, const std::string& raw, int x, int y, int width, SDL_Color color = {0, 0, 0, 255}) {
+	int font = 0;
+	int height = 0;
+	for (std::string line : box_lines(raw)) {
+		while (line.size() >= 3 && line[0] == '\\' && line[1] == 'f' && std::isdigit(uint8_t(line[2]))) {
+			font = line[2] - '0';
+			line.erase(0, line.size() > 3 && line[3] == '_' ? 4 : 3);
+		}
+		const std::string text = clean_game_text(line);
+		const TextRenderer* f = !g_game_art ? nullptr
+			: font == 0						? g_game_art->head_text()
+			: font == 3						? g_game_art->title_text()
+											: g_game_art->page_text();
+		const int step = font == 3 ? 20 : kBoxLine;
+		for (const std::string& part : text.empty() || !f ? std::vector<std::string>{text} : wrap_text(*f, text, width)) {
+			if (page && !part.empty()) {
+				PlaceView::PageText t{part, x, y + height};
+				t.head_font = font == 0;
+				t.title_font = font == 3;
+				t.color = color;
+				page->texts.push_back(t);
+			}
+			height += step;
+		}
+	}
+	return height;
+}
+
+// The game's message window (*0x6CBB10, laid out by 0x41D9B0; traced in the emulator with re/emu/sesion38/msgtrace.sh:
+// the same places): parchment.ini [Parchment0]'s MinXSize 128, XReserved 52, YReserved 40, TextXOffset 12, TextYOffset
+// 4; tiles of 32; its buttons' styles by their labels' width with two spaces in font 1 (up to 16, 32, 48, 96: buttons.ini
+// [Button0..3]'s width; else [Button4]'s 128), its close button [+0x4B0] Button5 (32 × 18). Its width from the screen's
+// tiles (its height ftol(width · 0.6 / 32) · 32), a tile narrower while the text (laid out XReserved narrower, its height
+// to a line, with YReserved and, official, two tiles) is lower than the window, then one back if it fits; no narrower
+// than its buttons, the close one and half of it (MinXSize at least). Centred (its x plus x % 4: 0x41E0AD), official
+// with the rolls (6 wide) at its sides. The text box from (6 + 12 + 3, 32 + 4) (0x41E500: centred between there and the
+// scroll bar), the buttons 61 over its bottom (29 not official) with even gaps from the left roll, the close one 44 from
+// its right side. The screen here is the window's room (the game centres it on its screen): the message stays inside it.
+void game_message(PlaceView& v, const std::string& raw, std::vector<PlaceView::PageButton> buttons, bool official, int key) {
+	constexpr int kTile = 32;
+	constexpr int kMinX = 128;
+	constexpr int kXReserved = 52;
+	constexpr int kYReserved = 40;
+	constexpr int kClose = 32;
+	constexpr int kRoll = 6;
+	const double ratio = double(0.6f);  // (The message's float, 0x3F19999A.)
+	const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
+	int sum = 0;
+	for (PlaceView::PageButton& b : buttons) {
+		const int w = font ? font->measure(b.label) + font->measure("  ") : 7 * (int(b.label.size()) + 2);
+		b.rect.w = w <= 16 ? 16 : w <= 32 ? 32 : w <= 48 ? 48 : w <= 96 ? 96 : 128;
+		b.rect.h = 18;
+		sum += b.rect.w;
+	}
+	int least = std::max(kClose / 2 + kClose + sum, kMinX);
+	const int screen_w = kInteriorWidth;
+	const int screen_h = kInteriorHeight;
+	if (least > screen_w) {
+		least = screen_w / kTile;  // (0x41DCD9: the screen's tiles, not its pixels: the game's.)
+	}
+	const int extra = official ? 2 * kTile : 0;
+	auto high = [&](int w) { return int(double(w) * ratio / kTile) * kTile; };
+	auto need = [&](int w) {
+		return (game_box(nullptr, raw, 0, 0, w - kXReserved) + kBoxLine - 1) / kBoxLine * kBoxLine + extra + kYReserved;
+	};
+	int w = 0;
+	int h = 0;
+	if (double(screen_h) / screen_w > ratio) {
+		w = screen_w / kTile * kTile;
+		h = high(w);
+	} else {
+		h = screen_h / kTile * kTile;
+		w = int(h / ratio / kTile) * kTile;
+	}
+	bool grow = true;
+	if (need(w) < h) {
+		while (true) {
+			if (w - kTile < least) {
+				grow = false;
+				break;
+			}
+			w -= kTile;
+			h = high(w);
+			if (need(w) >= h) {
+				break;
+			}
+		}
+	}
+	if (grow && w + kTile < screen_w && high(w + kTile) < screen_h) {
+		w += kTile;
+		h = high(w);
+	}
+	int x = (screen_w - w) / 2;
+	const int y = (screen_h - h) / 2;
+	x += x % 4;
+	if (official) {
+		x -= kRoll;
+	}
+	PlaceView::Dialog d;
+	d.cols = w / kTile;
+	d.rows = h / kTile;
+	d.rolls = official;
+	d.key = key;
+	d.at = {x, y};
+	v.popup_dialog = d;
+	PlaceView::Page page;
+	game_box(&page, raw, (official ? kRoll : 0) + 12 + 3, (official ? kTile : 0) + 4, w - kXReserved);
+	const int button_y = h - (official ? kTile : 0) - kYReserved + (kYReserved - 18) / 2;
+	const int gap = buttons.empty() ? 0 : (w - (kClose / 2 + kClose) - sum) / int(buttons.size() + 1);
+	int bx = official ? kRoll : 0;
+	for (PlaceView::PageButton& b : buttons) {
+		bx += gap;
+		b.rect.x = bx;
+		b.rect.y = button_y;
+		bx += b.rect.w;
+		page.buttons.push_back(b);
+	}
+	PlaceView::offset_page(page, x, y);
+	v.popup = std::move(page);
+	v.popup_close_at = SDL_Rect{x + w - (kClose / 2 + kClose) / 4 - kClose, y + button_y, kClose, 18};
 }
 
 // Whether a game's text starts centred («\c», before or after its font's «\fN_»).
@@ -5209,8 +5362,8 @@ void guild_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	// from (50, 60), 20 apart (a building's: whether it stands inside the town walls, the grid cell's bit 7, 0x6B01AC
 	// or 0x6B01B0, and its starting bid); a ship's picture in its frame (TEX32000: the frame at (12, 115), the ship at
 	// (57, 129): crayers, cogs and hulks, none for a snaikka; a building's picture as the town view draws it, its cell's
-	// left side at 195 and its bottom at 260; the game draws its shadow first, the .let's own shadow picture in black at
-	// alpha 100, 0x551F70, which the viewer's town view doesn't draw: not here either); «The current bid is <n>⊙»
+	// left side at 195 and its bottom at 260, its shadow first, the .let's own shadow picture in black at alpha 100,
+	// 0x551F70: TownView::draw_building_at); «The current bid is <n>⊙»
 	// (0x69C844) at (50, 315), «by <names>» (0x69C848) at (50, 335) and «For
 	// the first time», «For the second time», «And for the third time» (0x69C84C..0x69C854, the phases 5 to 7) at (50,
 	// 355); a buildings' auction without an office of the player's in the town, 0x6B01C0 in a box 20 over the bid
@@ -10288,25 +10441,98 @@ void shipyard_menu_notes(SaveGame& save, int town, PlaceView& v) {
 // repair dock's the same): six pages opened by its side menu's buttons, laid out as the game's (re/emu/sesion35/
 // notes_shipyard.md; traced in the emulator with re/emu/sesion34/shipyard/yardtrace.sh). Pages 0, 1, 4 and 5 show the
 // ship book (0x5F8910: TEX32000's page at (12, 60), the ship's picture, frame 2 + type, at (57, 74), none for a snaikka;
-// «Convoy» or the type in font 3 centred at (310, 65), the ship's name in font 1 centred at (320, 162); the game fades
-// from the ship before to the next: not here) with its corners (TEX32000's frames 1 and 2 at (12, 154) and (374, 154):
+// «Convoy» or the type in font 3 centred at (310, 65), the ship's name in font 1 centred at (320, 162); faded from the
+// ship or type before for half a second, yard_book) with its corners (TEX32000's frames 1 and 2 at (12, 154) and (374, 154):
 // the ship or type before and after) and a row of figures with their pictures (BuildingParchment.ini [Werftparchment]:
 // WarenID the hold, HerzID the hull, CrewID the crew with KapitaenID before it when it has a captain, KonvoiID the
 // convoy's ships, BewaffnungGross / Klein the guns' slots, KnotenID the knots, TimeID the days, KohleID the cost),
 // each number in font 0 centred under its picture; the confirm button at Bestaet2DPos (148, 450).
 constexpr int kYardBookY = 60;
 
-// The ship book (0x5F8910): its page, the ship's picture, the title, the name.
-void yard_book(PlaceView::Page& page, int type, bool convoy, const std::string* name) {
+// What the book shows of a ship (the pages 0, 4, 5: the window's [+0xC84]) or of a type (the page 1: [+0xC80]).
+struct YardBook {
+	int type = 0;
+	bool convoy = false;
+	std::string name;
+};
+
+// The book's fade (the window's [+0xCE8] and [+0xCE4]): how far it is, 0..255 and over (0x5F8AD0..: the ms since the
+// corner was touched / 500 · 255, ftol), or -1 without one; past 255 it is over (each page's update, 0x5F951C..: [+0xCE8]
+// -1), set here as the update does before the drawing.
+int yard_fade(PlaceUi& ui) {
+	if (ui.yard_fade_from < 0) {
+		return -1;
+	}
+	const int t = int(double(app_ticks() - ui.yard_fade_at) / 500.0 * 255.0);
+	if (t > 255) {
+		ui.yard_fade_from = -1;
+		return -1;
+	}
+	return t;
+}
+
+// The ship book (0x5F8910 with the ship or type before, the one now, and whether they are ships): its page; the one before
+// (with a fade, t ≥ 0) faded out under the one now faded in: the picture before drawn whole under a picture now, else
+// faded out (a snaikka has none: the page's own print shows), its title faded out where it isn't the same, its name
+// (ships) faded out; the picture and name now faded in, its title too unless the same type. The game compares the
+// ships' titles only by «Convoy» (0x5F8BC1, 0x5F8E93): between two ships of different types the title before isn't
+// drawn, between two convoys no title at all, and from a convoy to a ship the new title is the type before's (0x5F8EB4);
+// fix_game_bugs compares their words, as for the types (a display slip, half a second).
+void yard_book(PlaceView::Page& page, const YardBook& now, const YardBook* before, int t, bool ships) {
 	// (Under the texts: the title and the name are written on the book.)
 	page.icons.push_back({32000, 0, 12, kYardBookY, true});
-	if (type > 0) {
-		page.icons.push_back({32000, 2 + type, 57, kYardBookY + 14, true});
+	const std::string convoy = exe_text(0x699908, "Convoy", "Convoy");
+	auto title_of = [&](const YardBook& b) { return ships && b.convoy ? convoy : ship_type_name(b.type); };
+	const bool fading = before && t >= 0;
+	const uint8_t out = uint8_t(std::max(0, 255 - t));
+	const uint8_t in = fading ? uint8_t(std::min(t, 255)) : 255;
+	const bool old_convoy = ships && fading && before->convoy;
+	const bool new_convoy = ships && now.convoy;
+	const bool fixed = fix_game_bugs();
+	if (fading) {
+		if (before->type > 0) {
+			PlaceView::PageIcon picture{32000, 2 + before->type, 57, kYardBookY + 14, true};
+			picture.alpha = now.type > 0 ? 255 : out;
+			page.icons.push_back(picture);
+		}
+		const bool title = fixed ? title_of(*before) != title_of(now)
+								 : ships ? old_convoy != new_convoy : before->type != now.type;
+		if (title) {
+			PlaceView::PageText text{title_of(*before), 310, kYardBookY + 5, true, true};
+			text.color.a = out;
+			page.texts.push_back(text);
+		}
+		if (ships) {
+			PlaceView::PageText name{before->name, 320, kYardBookY + 102, true};
+			name.color.a = out;
+			page.texts.push_back(name);
+		}
 	}
-	const std::string title = convoy ? exe_text(0x699908, "Convoy", "Convoy") : ship_type_name(type);
-	page.texts.push_back({title, 310, kYardBookY + 5, true, true});
-	if (name) {
-		page.texts.push_back({*name, 320, kYardBookY + 102, true});
+	if (now.type > 0) {
+		PlaceView::PageIcon picture{32000, 2 + now.type, 57, kYardBookY + 14, true};
+		picture.alpha = in;
+		page.icons.push_back(picture);
+	}
+	if (ships) {
+		PlaceView::PageText name{now.name, 320, kYardBookY + 102, true};
+		name.color.a = in;
+		page.texts.push_back(name);
+	}
+	std::string title = title_of(now);
+	bool drawn = true;
+	if (ships && !fixed) {
+		// 0x5F8E8F..: «Convoy» or the type before's where the two differ by «Convoy», the type where neither is one.
+		if (old_convoy != new_convoy) {
+			title = new_convoy ? convoy : ship_type_name(before->type);
+		} else {
+			drawn = !new_convoy;
+		}
+	}
+	if (drawn) {
+		PlaceView::PageText text{title, 310, kYardBookY + 5, true, true};
+		const bool same = fading && (fixed ? title_of(*before) == title_of(now) : before->type == now.type);
+		text.color.a = same ? 255 : in;
+		page.texts.push_back(text);
 	}
 }
 
@@ -10437,8 +10663,9 @@ void shipyard_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	ui.page = (ui.page % kShipyardPages + kShipyardPages) % kShipyardPages;
 	if (ui.page != ui.yard_page) {
 		// Another page (0x5F4790): the type 0 and no order placed, no row chosen, the first ship, the level and the
-		// name again.
+		// name again, no fade ([+0xCE8] -1).
 		ui.yard_page = ui.page;
+		ui.yard_fade_from = -1;
 		ui.yard_type = 0;
 		ui.yard_ordered = false;
 		ui.yard_ask = 0;
@@ -10480,6 +10707,18 @@ void shipyard_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 		ui.ship = ((ui.ship % int(v.ships.size())) + int(v.ships.size())) % int(v.ships.size());
 		return v.ships[size_t(ui.ship)];
 	};
+	// The book of a ship (0x5F8A03..: its type [+0xE], «Convoy» by its [+0x8] under the convoys' count, its name), with
+	// the ship before it while they fade.
+	const int fade = yard_fade(ui);
+	auto ship_book = [&](int ship) {
+		const SavedShip& s = save.ships[size_t(ship)];
+		return YardBook{s.type() & 3, s.convoy() < convoys, s.name()};
+	};
+	auto book_of_ship = [&](PlaceView::Page& p, int ship) {
+		const bool fading = fade >= 0 && size_t(ui.yard_fade_from) < save.ships.size();
+		const YardBook before = fading ? ship_book(ui.yard_fade_from) : YardBook{};
+		yard_book(p, ship_book(ship), fading ? &before : nullptr, fade, true);
+	};
 	switch (ui.page) {
 	case 0: {
 		// «Repair ship» (0x5F4E30, its figures by 0x5F8F50): a ship, or a convoy's guide with its convoy's sums.
@@ -10515,8 +10754,7 @@ void shipyard_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 			add(s.memory);
 		}
 		const int32_t cost = repair_cost(save, town, ship);
-		const std::string name = s.name();
-		yard_book(page, s.type() & 3, in_convoy, &name);
+		book_of_ship(page, ship);
 		if (v.ships.size() > 1) {
 			yard_corners(page, PlaceView::PageAction::Previous, PlaceView::PageAction::Next);
 		}
@@ -10541,7 +10779,11 @@ void shipyard_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 		v.title = exe_text(0x6A59E8, "Encargar contrato de construcción", "Commission building contract");
 		const int type = std::clamp(ui.yard_type, 0, 3);
 		const ShipOrderInfo o = ship_order_info(save, town, uint32_t(type), player);
-		yard_book(page, type, false, nullptr);
+		YardBook before;
+		before.type = std::clamp(ui.yard_fade_from, 0, 3);
+		YardBook now;
+		now.type = type;
+		yard_book(page, now, fade >= 0 ? &before : nullptr, fade, false);
 		if (!ui.yard_ordered) {
 			yard_corners(page, PlaceView::PageAction::Minus, PlaceView::PageAction::Plus);
 		}
@@ -10669,31 +10911,21 @@ void shipyard_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 					  : exe_text(0x6A5D1C, "Parar reparaciones", "Stop repairs"),
 			ui.row >= 0 && ui.yard_ask == 0);
 		if (ui.yard_ask != 0 && contracts) {
-			// The game's message (0x41D9B0 on *0x6CBB10): 0x6A5CF8 with «Yes» and «No» before cancelling a contract whose
-			// work hasn't started, else 0x6A5CFC. Its size and place are worked out from the text by the game; here a
-			// paper of 10 × 7 tiles centred over the window (improvised).
-			PlaceView::Dialog d;
-			d.cols = 10;
-			d.rows = 7;
-			d.key = 5;
-			d.at = {(kInteriorWidth - d.width()) / 2, (kInteriorHeight - d.height()) / 2};
-			v.popup_dialog = d;
-			PlaceView::Page ask;
+			// The game's message (0x41D9B0 on *0x6CBB10, official: 0x5F9B40): 0x6A5CF8 with «Yes» and «No» before
+			// cancelling a contract whose work hasn't started, else 0x6A5CFC.
 			const bool question = ui.yard_ask == 1;
-			add_box(ask, question ? game_text(GameText::ShipyardCancelAsk, "") : game_text(GameText::ShipyardWorkStarted, ""), 32,
-				8, d.width() - 64, false);
+			// (The text as the exe has it, its fonts' codes in: game_box.)
+			const std::string raw =
+				g_texts ? g_texts->raw(question ? GameText::ShipyardCancelAsk : GameText::ShipyardWorkStarted) : std::string();
+			std::vector<PlaceView::PageButton> buttons;
 			if (question) {
-				PlaceView::PageButton yes = fitted({{d.width() / 2 - 133, d.height() - 75, 128, 18},
-					exe_text(0x699948, "Sí", "Yes"), PlaceView::PageAction::Act, true});
+				PlaceView::PageButton yes{{0, 0, 0, 18}, exe_text(0x699948, "Sí", "Yes"), PlaceView::PageAction::Act, true};
 				yes.value = 1;
-				PlaceView::PageButton no = fitted({{d.width() / 2 + 5, d.height() - 75, 128, 18}, exe_text(0x699950, "No", "No"),
-					PlaceView::PageAction::Back, true});
+				PlaceView::PageButton no{{0, 0, 0, 18}, exe_text(0x699950, "No", "No"), PlaceView::PageAction::Back, true};
 				no.value = 0;
-				ask.buttons.push_back(yes);
-				ask.buttons.push_back(no);
+				buttons = {yes, no};
 			}
-			PlaceView::offset_page(ask, d.at.x, d.at.y);
-			v.popup = std::move(ask);
+			game_message(v, raw, buttons, true, 5);
 		}
 		break;
 	}
@@ -10717,9 +10949,8 @@ void shipyard_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 		const int levels = ui.yard_level - level;
 		ShipUpgrade cost;
 		const bool ok = upgrade_cost(save, town, ship, ui.yard_level, cost) && levels > 0;
-		const std::string name = s.name();
 		const int type = s.type() & 3;
-		yard_book(page, type, false, &name);
+		book_of_ship(page, ship);
 		if (v.ships.size() > 1) {
 			yard_corners(page, PlaceView::PageAction::Previous, PlaceView::PageAction::Next);
 		}
@@ -10768,8 +10999,7 @@ void shipyard_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 		}
 		const SavedShip& s = save.ships[size_t(ship)];
 		const std::string name = s.name();
-		const uint16_t convoy = s.convoy();
-		yard_book(page, s.type() & 3, convoy < convoys, &name);
+		book_of_ship(page, ship);
 		if (v.ships.size() > 1) {
 			yard_corners(page, PlaceView::PageAction::Previous, PlaceView::PageAction::Next);
 		}
@@ -10805,8 +11035,16 @@ void shipyard_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 
 // The book's corners, Left / Right (and Select): the ship before or after (pages 0, 4, 5, the list [+0xCD4]), the type
 // before or after on «Building contract» (0x5F9591..0x5F968B: a type the shipyard doesn't build skipped, as the game),
-// the level on «Improve ship» (0x5FA5E7..0x5FA64C: under the ship's level round to 2, over 2 round to the ship's).
+// the level on «Improve ship» (0x5FA5E7..0x5FA64C: under the ship's level round to 2, over 2 round to the ship's). A
+// corner starts the book's fade from the ship or type it showed ([+0xCE8], [+0xCE4]: 0x5F9003, 0x5F9591, 0x5FA42B,
+// 0x5FACAC); not to the same one (the viewer's Select with one ship: the game has no corners then).
 void shipyard_step(const SaveGame& save, int town, PlaceUi& ui, const PlaceView& v, int direction, bool ships) {
+	auto fade_from = [&](int before, int after) {
+		if (before != after) {
+			ui.yard_fade_from = before;
+			ui.yard_fade_at = app_ticks();
+		}
+	};
 	if (ui.page == 1 && !ui.yard_ordered) {
 		int type = ui.yard_type + direction;
 		if (direction < 0) {
@@ -10827,6 +11065,7 @@ void shipyard_step(const SaveGame& save, int town, PlaceUi& ui, const PlaceView&
 				type = 0;
 			}
 		}
+		fade_from(std::clamp(ui.yard_type, 0, 3), type);
 		ui.yard_type = type;
 		return;
 	}
@@ -10843,7 +11082,9 @@ void shipyard_step(const SaveGame& save, int town, PlaceUi& ui, const PlaceView&
 	}
 	if ((ui.page == 0 || ui.page == 4 || ui.page == 5) && !v.ships.empty()) {
 		const int n = int(v.ships.size());
+		const int before = v.ships[size_t((ui.ship % n + n) % n)];
 		ui.ship = ((ui.ship + direction) % n + n) % n;
+		fade_from(before, v.ships[size_t(ui.ship)]);
 	}
 }
 
@@ -11650,7 +11891,7 @@ void draw_page_items(SDL_Renderer* renderer, TextRenderer& text, GameWindowArt& 
 	}
 	for (const PlaceView::PageIcon& i : page.icons) {
 		if (i.under) {
-			art.draw_tex(i.tex, i.frame, panel.x + i.x, panel.y + i.y, i.width);
+			art.draw_tex(i.tex, i.frame, panel.x + i.x, panel.y + i.y, i.width, i.alpha);
 		}
 	}
 	for (const PlaceView::PageAlpha& a : page.alphas) {
@@ -11694,7 +11935,7 @@ void draw_page_items(SDL_Renderer* renderer, TextRenderer& text, GameWindowArt& 
 	}
 	for (const PlaceView::PageIcon& i : page.icons) {
 		if (!i.under) {
-			art.draw_tex(i.tex, i.frame, panel.x + i.x, panel.y + i.y, i.width);
+			art.draw_tex(i.tex, i.frame, panel.x + i.x, panel.y + i.y, i.width, i.alpha);
 		}
 	}
 	for (const PlaceView::PageBox& b : page.boxes) {
@@ -11761,14 +12002,17 @@ void draw_place_page(SDL_Renderer* renderer, TextRenderer& text, GameWindowArt& 
 			if (v.popup) {
 				draw_page_items(renderer, text, art, *v.popup, panel, town);
 			}
-			// Its close button, unless it has buttons of its own (the question's «Yes» and «No»).
-			const bool buttons = v.popup && std::any_of(v.popup->buttons.begin(), v.popup->buttons.end(),
-												[](const PlaceView::PageButton& b) { return !b.hidden; });
-			if (!buttons) {
-				const SDL_Rect c = {panel.x + v.popup_close().x, panel.y + v.popup_close().y, 32, 18};
+			// Its close button (the game's message has it with its buttons too, 0x41E41F); its key unless a button of its
+			// own already does the same (the question's «No»).
+			const bool back = v.popup && std::any_of(v.popup->buttons.begin(), v.popup->buttons.end(),
+											 [](const PlaceView::PageButton& b) {
+												 return !b.hidden && b.action == PlaceView::PageAction::Back;
+											 });
+			const SDL_Rect c = {panel.x + v.popup_close().x, panel.y + v.popup_close().y, 32, 18};
+			if (!back) {
 				text.draw(BTN_CIRCLE, c.x - text.measure(BTN_CIRCLE) - 2, c.y + (c.h - lh) / 2, kButtonInk);
-				art.draw_close(c, false);
 			}
+			art.draw_close(c, false);
 		}
 		return;
 	}
@@ -14909,7 +15153,17 @@ struct MailUi {
 	uint16_t shown = 0xFFFF;  // The entry whose text is in `lines`.
 	int shown_tab = -1;
 	// Wrapped, UTF-8 (the game's pictures by number in them, as the chronicle's ornament: TextRenderer draws them).
-	std::vector<std::pair<LetterParagraph::Align, std::string>> lines;
+	struct Line {
+		LetterParagraph::Align align = LetterParagraph::Left;
+		std::string text;
+		int indent = 0;  // Beside a drop cap: its width and 4 (0x46272F), until the line is below it.
+		char cap = 0;  // The drop cap drawn at this line's start (its paragraph's first line).
+	};
+	std::vector<Line> lines;
+	// The drop caps' pictures (parchment.ini [TEXCOL0]: images/grossbuchstaben, the letter − 'A'), read the first time
+	// a letter shows one, and their sizes.
+	std::map<char, std::shared_ptr<SDL_Texture>> caps;
+	std::map<char, SDL_Point> cap_sizes;
 	bool stale = true;  // `lines` to be made again (another letter, language or font).
 	uint16_t chronicle_head = 0xFFFF;  // The chronicle's newest news when it was made.
 	// The picture the window makes for the letter shown (0x46, 0x6E: the map
@@ -15083,15 +15337,18 @@ struct MailLayout {
 };
 
 // A paragraph of a letter (letter_paragraphs) in lines that fit in `width`
-// pixels: at the spaces, or inside a word at one of its soft hyphens, with a
+// pixels (the first `narrow_lines` of them `indent` narrower: beside a drop
+// cap): at the spaces, or inside a word at one of its soft hyphens, with a
 // '-', as the game's text box does; the soft hyphens taken out. An empty
 // paragraph is an empty line.
-std::vector<std::string> wrap_letter(const TextRenderer& text, const std::string& s, int width) {
+std::vector<std::string> wrap_letter(const TextRenderer& text, const std::string& s, int full_width, int indent = 0,
+	size_t narrow_lines = 0) {
 	auto plain = [](std::string w) {
 		w.erase(std::remove(w.begin(), w.end(), kLetterSoftHyphen), w.end());
 		return w;
 	};
 	std::vector<std::string> lines;
+	auto width = [&] { return full_width - (lines.size() < narrow_lines ? indent : 0); };  // The line's being filled.
 	std::string line;
 	bool empty_line = true;  // No word on `line` yet.
 	size_t pos = 0;
@@ -15104,7 +15361,7 @@ std::vector<std::string> wrap_letter(const TextRenderer& text, const std::string
 		pos = next + 1;
 		while (true) {
 			const std::string joined = empty_line ? plain(word) : line + " " + plain(word);
-			if (text.measure(joined) <= width) {
+			if (text.measure(joined) <= width()) {
 				line = joined;
 				empty_line = false;
 				break;
@@ -15114,7 +15371,7 @@ std::vector<std::string> wrap_letter(const TextRenderer& text, const std::string
 			for (size_t k = word.find(kLetterSoftHyphen); k != std::string::npos;
 				 k = word.find(kLetterSoftHyphen, k + 1)) {
 				const std::string head = plain(word.substr(0, k)) + "-";
-				if (text.measure(empty_line ? head : line + " " + head) <= width) {
+				if (text.measure(empty_line ? head : line + " " + head) <= width()) {
 					cut = k;
 				}
 			}
@@ -15134,6 +15391,38 @@ std::vector<std::string> wrap_letter(const TextRenderer& text, const std::string
 	}
 	lines.push_back(line);
 	return lines;
+}
+
+// A line of the letter shown (MailUi::lines) at y in `box`, if it shows there: the window's picture (kPictureLine), or
+// its text by its alignment, a drop cap at its start (its picture at the line's top left) and the text after its indent.
+void draw_mail_line(SDL_Renderer* renderer, TextRenderer& text, const MailUi& ui, const MailUi::Line& l, const SDL_Rect& box,
+	int y, SDL_Color color) {
+	const std::string& line = l.text;
+	if (line.size() == 1 && line[0] == kPictureLine) {
+		if (ui.picture) {
+			const int x = l.align == LetterParagraph::Right ? box.x + box.w - 4 - ui.picture_width
+				: l.align == LetterParagraph::Center ? box.x + (box.w - ui.picture_width) / 2
+				: box.x + 4;
+			const SDL_Rect where = {x, y, ui.picture_width, ui.picture_height};
+			SDL_RenderCopy(renderer, ui.picture.get(), nullptr, &where);
+		}
+		return;
+	}
+	if (l.cap) {
+		const auto cap = ui.caps.find(l.cap);
+		const auto size = ui.cap_sizes.find(l.cap);
+		if (cap != ui.caps.end() && cap->second && size != ui.cap_sizes.end()) {
+			const SDL_Rect where = {box.x + 4, y, size->second.x, size->second.y};
+			SDL_RenderCopy(renderer, cap->second.get(), nullptr, &where);
+		}
+	}
+	if (y + text.line_height() >= box.y && y < box.y + box.h) {
+		const int w = text.measure(line);
+		const int x = l.align == LetterParagraph::Right ? box.x + box.w - 4 - w
+			: l.align == LetterParagraph::Center ? box.x + (box.w - w) / 2
+			: box.x + 4 + l.indent;
+		text.draw(line, x, y, color);
+	}
 }
 
 // The tab's name, from the game. The Spanish exe repeats «Notificaciones
@@ -15269,22 +15558,8 @@ void draw_mailbox(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sa
 	SDL_Rect clip = layout.text;
 	SDL_RenderSetClipRect(renderer, &clip);
 	int y = layout.text.y + 2 - ui.scroll;
-	for (const auto& [align, line] : ui.lines) {
-		if (line.size() == 1 && line[0] == kPictureLine) {
-			if (ui.picture) {
-				const int x = align == LetterParagraph::Right ? layout.text.x + layout.text.w - 4 - ui.picture_width
-					: align == LetterParagraph::Center ? layout.text.x + (layout.text.w - ui.picture_width) / 2
-					: layout.text.x + 4;
-				const SDL_Rect where = {x, y, ui.picture_width, ui.picture_height};
-				SDL_RenderCopy(renderer, ui.picture.get(), nullptr, &where);
-			}
-		} else if (y + text.line_height() >= layout.text.y && y < layout.text.y + layout.text.h) {
-			const int w = text.measure(line);
-			const int x = align == LetterParagraph::Right ? layout.text.x + layout.text.w - 4 - w
-				: align == LetterParagraph::Center ? layout.text.x + (layout.text.w - w) / 2
-				: layout.text.x + 4;
-			text.draw(line, x, y, kTextColor);
-		}
+	for (const MailUi::Line& line : ui.lines) {
+		draw_mail_line(renderer, text, ui, line, layout.text, y, kTextColor);
 		y += text.line_height();
 	}
 	SDL_RenderSetClipRect(renderer, nullptr);
@@ -15333,22 +15608,8 @@ void draw_letter_lines(SDL_Renderer* renderer, TextRenderer& text, const MailUi&
 	SDL_Rect clip = box;
 	SDL_RenderSetClipRect(renderer, &clip);
 	int y = box.y + 2 - ui.scroll;
-	for (const auto& [align, line] : ui.lines) {
-		if (line.size() == 1 && line[0] == kPictureLine) {
-			if (ui.picture) {
-				const int x = align == LetterParagraph::Right ? box.x + box.w - 4 - ui.picture_width
-					: align == LetterParagraph::Center ? box.x + (box.w - ui.picture_width) / 2
-					: box.x + 4;
-				const SDL_Rect where = {x, y, ui.picture_width, ui.picture_height};
-				SDL_RenderCopy(renderer, ui.picture.get(), nullptr, &where);
-			}
-		} else if (y + text.line_height() >= box.y && y < box.y + box.h) {
-			const int w = text.measure(line);
-			const int x = align == LetterParagraph::Right ? box.x + box.w - 4 - w
-				: align == LetterParagraph::Center ? box.x + (box.w - w) / 2
-				: box.x + 4;
-			text.draw(line, x, y, color);
-		}
+	for (const MailUi::Line& line : ui.lines) {
+		draw_mail_line(renderer, text, ui, line, box, y, color);
 		y += text.line_height();
 	}
 	SDL_RenderSetClipRect(renderer, nullptr);
@@ -21921,6 +22182,8 @@ int main(int argc, char** argv) {
 								} else if (place_now.one_at_a_time && !place_now.rows.empty()) {
 									const int n = int(place_now.rows.size());  // One row at a time: the one before or after, round.
 									place.row = (place.row + (back ? n - 1 : 1)) % n;
+								} else if (place.open == Place::Shipyard) {
+									shipyard_step(save, town_index, place, place_now, back ? -1 : 1, true);  // The book's corners.
 								} else if (!place_now.ships.empty()) {
 									const int n = int(place_now.ships.size());
 									place.ship = (place.ship % n + (back ? n - 1 : 1)) % n;  // As Select, either way.
@@ -22496,6 +22759,9 @@ int main(int argc, char** argv) {
 				} else {
 					raw = tr("(Esta carta aún no se puede mostrar.)", "(This letter can't be shown yet.)");
 				}
+				int cap_indent = 0;  // The drop cap's: its width and 4, for its lines left (below).
+				size_t cap_lines = 0;
+				size_t cap_at = SIZE_MAX;  // Its line.
 				for (const LetterParagraph& p : letter_paragraphs(raw)) {
 					if (from_game && p.made_picture && p.picture == kLetterMapPicture && entry < save.mail.size()) {
 						// The picture the game's window makes for this letter (0x51AC60),
@@ -22505,16 +22771,44 @@ int main(int argc, char** argv) {
 								mail.picture_height);
 						}
 						if (mail.picture) {
-							mail.lines.emplace_back(p.align, std::string(1, kPictureLine));
+							mail.lines.push_back({p.align, std::string(1, kPictureLine)});
 							for (int h = small_text->line_height(); h < mail.picture_height; h += small_text->line_height()) {
-								mail.lines.emplace_back(p.align, std::string());
+								mail.lines.push_back({p.align, std::string()});
 							}
 							continue;
 						}
 					}
 					const std::string& s = from_game ? p.text : raw;  // The viewer's own texts are UTF-8 already.
-					for (const std::string& line : wrap_letter(*small_text, s, layout.text.w - 12)) {
-						mail.lines.emplace_back(p.align, line);
+					// A drop cap (0x4626C5..0x46275F): its picture at the paragraph's start and the lines beside it, while
+					// their top is above its bottom (4 lower in the font 3), its width and 4 further in, the next
+					// paragraphs' too (the box's, not the paragraph's).
+					if (from_game && p.drop_cap) {
+						if (!mail.caps.count(p.drop_cap)) {
+							const std::string file = std::string("images/grossbuchstaben/Gbuchstabe_") + p.drop_cap + ".tga";
+							int w = 0;
+							int h = 0;
+							mail.caps[p.drop_cap] = std::shared_ptr<SDL_Texture>(
+								load_texture(renderer, *archive, file.c_str(), &w, &h), SDL_DestroyTexture);
+							mail.cap_sizes[p.drop_cap] = {w, h};
+						}
+						if (mail.caps[p.drop_cap]) {
+							const SDL_Point size = mail.cap_sizes[p.drop_cap];
+							cap_indent = size.x + 4;
+							const int below = size.y + (p.font == 3 ? 4 : 0);
+							cap_lines = size_t((below + small_text->line_height() - 1) / small_text->line_height());
+							cap_at = mail.lines.size();
+						}
+					}
+					for (const std::string& line : wrap_letter(*small_text, s, layout.text.w - 12, cap_indent, cap_lines)) {
+						MailUi::Line l{p.align, line};
+						if (cap_lines > 0) {
+							l.indent = cap_indent;
+							--cap_lines;
+						}
+						if (mail.lines.size() == cap_at) {
+							l.cap = p.drop_cap;
+						}
+						mail.lines.push_back(l);
 					}
 					if (!from_game) {
 						break;

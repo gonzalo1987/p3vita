@@ -126,6 +126,68 @@ bool parse_let(const uint8_t* data, size_t size, TileDef& out, std::string* erro
 	const char* path = reinterpret_cast<const char*>(data + pos);
 	const void* end = std::memchr(path, 0, path_size);
 	out.atlas.assign(path, end ? static_cast<const char*>(end) - path : path_size);
+	pos += path_size;  // (The atlas's colour key is the header's, 0x08.)
+
+	// Its variants (0x5513F0: their count; each, 0x5852A0 and its slot 8: its kind, its parameters' count and them,
+	// its x and y, its frames' count and each frame's x, y, width and height, its atlas's path's length and, with one,
+	// the path and its colour key). A tail that can't be read leaves the tile without them.
+	auto u32 = [&](uint32_t& v) {
+		if (pos + 4 > size) {
+			return false;
+		}
+		v = read_u32_le(data + pos);
+		pos += 4;
+		return true;
+	};
+	uint32_t count = 0;
+	if (!u32(count) || count > 64) {
+		return true;
+	}
+	std::vector<TileVariant> variants;
+	for (uint32_t i = 0; i < count; ++i) {
+		TileVariant v;
+		uint32_t params = 0;
+		uint32_t x = 0;
+		uint32_t y = 0;
+		uint32_t frames = 0;
+		uint32_t length = 0;
+		if (!u32(v.kind) || !u32(params) || params > 256) {
+			return true;
+		}
+		for (uint32_t k = 0; k < params; ++k) {
+			uint32_t p = 0;
+			if (!u32(p)) {
+				return true;
+			}
+			v.params.push_back(p);
+		}
+		if (!u32(x) || !u32(y) || !u32(frames) || frames > 256) {
+			return true;
+		}
+		// (The game keeps them as u16: 0x5852B7..0x5852DA.)
+		v.x = int(uint16_t(x)) - out.src_x;
+		v.y = int(uint16_t(y)) - out.src_y;
+		for (uint32_t k = 0; k < frames; ++k) {
+			uint32_t f[4] = {};
+			for (uint32_t& e : f) {
+				if (!u32(e)) {
+					return true;
+				}
+			}
+			v.frames.push_back({int(uint16_t(f[0])), int(uint16_t(f[1])), int(uint16_t(f[2])), int(uint16_t(f[3]))});
+		}
+		if (!u32(length) || length > size - pos) {
+			return true;
+		}
+		if (length) {
+			const char* at = reinterpret_cast<const char*>(data + pos);
+			const void* stop = std::memchr(at, 0, length);
+			v.atlas.assign(at, stop ? static_cast<const char*>(stop) - at : length);
+			pos += length + 4;
+		}
+		variants.push_back(std::move(v));
+	}
+	out.variants = std::move(variants);
 	return true;
 }
 

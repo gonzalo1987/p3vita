@@ -189,7 +189,7 @@ void GameWindowArt::free_strip(Strip& strip) {
 	strip = Strip();
 }
 
-SDL_Point GameWindowArt::draw_strip(const Strip& strip, int frame, int x, int y, int width) const {
+SDL_Point GameWindowArt::draw_strip(const Strip& strip, int frame, int x, int y, int width, uint8_t alpha) const {
 	if (frame < 0 || size_t(frame) >= strip.frames.size()) {
 		return {0, 0};
 	}
@@ -198,18 +198,21 @@ SDL_Point GameWindowArt::draw_strip(const Strip& strip, int frame, int x, int y,
 		src.w = width;
 	}
 	const SDL_Rect dst = {x, y, src.w, src.h};
+	SDL_Texture* t = strip.texture;
 	if (!strip.pieces.empty()) {
-		if (SDL_Texture* t = strip.pieces[size_t(frame)]) {
-			const SDL_Rect part = {0, 0, src.w, src.h};
-			SDL_RenderCopy(renderer_, t, &part, &dst);
-			return {src.w, src.h};
-		}
+		t = strip.pieces[size_t(frame)];
+		src = {0, 0, src.w, src.h};
+	}
+	if (!t) {
 		return {0, 0};
 	}
-	if (!strip.texture) {
-		return {0, 0};
+	if (alpha != 255) {
+		SDL_SetTextureAlphaMod(t, alpha);
 	}
-	SDL_RenderCopy(renderer_, strip.texture, &src, &dst);
+	SDL_RenderCopy(renderer_, t, &src, &dst);
+	if (alpha != 255) {
+		SDL_SetTextureAlphaMod(t, 255);
+	}
 	return {src.w, src.h};
 }
 
@@ -551,8 +554,8 @@ SDL_Point GameWindowArt::tex_size(uint32_t id, int frame) {
 	return {t.frames[size_t(frame)].w, t.frames[size_t(frame)].h};
 }
 
-SDL_Point GameWindowArt::draw_tex(uint32_t id, int frame, int x, int y, int width) {
-	return draw_strip(tex(id), frame, x, y, width);
+SDL_Point GameWindowArt::draw_tex(uint32_t id, int frame, int x, int y, int width, uint8_t alpha) {
+	return draw_strip(tex(id), frame, x, y, width, alpha);
 }
 
 int GameWindowArt::menu_rand() {
