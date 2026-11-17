@@ -147,6 +147,16 @@ your buildings there (the house: touching it shades the competition's buildings,
 and again to undo it), your money, the date and the hourglass, which opens the
 chronicle.
 
+**The ship list** (the panel's first icon; a town's lighthouse shows the ships
+in its port, the other merchants' too) is the game's parchment window over the
+town or the sea map: each ship with its type, where it is, its hull, its cargo
+and the cargo's worth in coins (Square, or its button, shows the crew and the
+weapons instead) and its convoy. A touch chooses a ship (its menu opens in the
+panel); a second touch, its row's arrow or X goes to it (a lost ship's cross
+removes it). Triangle, or the button after «Sort by:», changes the order; up
+and down move along the rows; drag the rows or the scroll bar to move them;
+Circle, the close button or a touch out of the window closes it.
+
 **The ship menu** (a ship button, or a ship of the ship list) has the game's six
 pages, by its buttons or with L and R: the goods (the hold's barrel, each ware
 with its average price; drag the list to move it), the crew (morale, the
@@ -219,6 +229,9 @@ ship's weapons and pieces with the office.
 
 Triangle switches between the town and the **sea map**, with the towns and the
 ships (yours has a mark; touching a town chooses it and Triangle goes into it).
+As in the game, touching one of your ships at sea chooses it (several there at
+once: the ship list with them), and touching a town where your ships are in
+port chooses the ship (several: the ship list of that port).
 On the sea map X sends your ship to the chosen town: it leaves the port, sails
 the game's route (its course is drawn) and enters the port of destination,
 where it can trade. Square chooses another of your ships and Select changes the

@@ -165,3 +165,9 @@ target_link_libraries(market_hall_window_test PRIVATE p3data)
 target_compile_options(market_hall_window_test PRIVATE -Wall -Wextra)
 
 add_test(NAME market_hall_window COMMAND market_hall_window_test)
+
+add_executable(ship_list_window_test ship_list_window_test.cpp)
+target_link_libraries(ship_list_window_test PRIVATE p3data)
+target_compile_options(ship_list_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME ship_list_window COMMAND ship_list_window_test)

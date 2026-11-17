@@ -6,6 +6,7 @@ add_library(p3data STATIC
 	market_hall_window.cpp
 	offer_window.cpp
 	office_window.cpp
+	ship_list_window.cpp
 	ship_pair_window.cpp
 	smithy_window.cpp
 	tavern_window.cpp

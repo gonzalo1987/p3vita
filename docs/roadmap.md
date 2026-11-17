@@ -94,9 +94,13 @@ Cómo leerla:
 - **Hecho el 17-11-2026 (`re/emu/sesion39/`)**: las preguntas del convoy con la ventanita del juego («Deshacer
   convoy», «Abandonar convoy» y el aviso «No es posible formar un convoy»), y con ellas la alineación y las imágenes de
   la caja de texto de la ventanita (commit 64c2eb6). Después, las sombras de los edificios y objetos y la nieve de la
-  ciudad por estaciones, como el juego (apartado 4).
+  ciudad por estaciones, como el juego (apartado 4; commit 97e004c).
+- **Hecho el 17-11-2026 (segunda sesión, `re/emu/sesion40/`)**: la lista de barcos como la ventana de pergamino del
+  juego («Información de la flota»), con sus letras, textos, columnas, órdenes y botones, abierta desde el icono del
+  panel y desde el faro de la ciudad (los barcos de su puerto, también los de otros comerciantes) (apartado 4).
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): primero el resto
-  de las pantallas, el panel lateral con las letras y los textos del juego (apartado 4); luego el intérprete de misiones (apartado 3), el final de la partida
+  de las pantallas, el panel lateral con las letras y los textos del juego (apartado 4; el encargo
+  `ENCARGO_PANEL_JUEGO.md`: lo que queda de la lista de barcos, luego el menú del barco); luego el intérprete de misiones (apartado 3), el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -297,8 +301,8 @@ enteros antes de reescribirlos):
   *0x6CBB30, con el título 0x4F9430 y 0x4F73D0). El objetivo de la partida (evento 0x0E) ya se comprueba.
 - [x] **Las ventanas de operaciones que el motor ya tiene** pero que el visor aún no encolaba (14-11-2026, noche): 0x61
   dar una fiesta (su ventana 0x5BAE40, en los puestos del mercado) y 0x0A borrar un barco (no es una ventana: el doble
-  clic sobre un barco perdido, estado 0x11, en la lista de barcos del panel, 0x4768B0; en el visor, X o un segundo
-  toque en su fila; la lista entera como la del juego va con el panel).
+  clic sobre un barco perdido, estado 0x11, en la lista de barcos, 0x4768B0; en el visor, su botón de la fila, X o un
+  segundo toque en ella; la lista entera como la ventana del juego desde el 17-11-2026).
 - [ ] La ventana de los desarrolladores 0x419EB0 encola de todo y manda dos cartas (0x45 y 0x21 con `rand()`): no hace
   falta salvo que se quiera.
 
@@ -481,10 +485,36 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   Contratos de entrega, Préstamo, Atacar, Rendirse, Comprar libertad), trazadas en el emulador (`gatetrace.sh`). (Los demás edificios con vista propia ya tienen
   la suya: el transporte por tierra resultó ser de la caballeriza, 13-11-2026.)
 - [ ] **El panel lateral con las letras y los textos del juego** (con los restos de las pantallas, por decisión del
-  usuario del 17-11-2026): hoy sus páginas se dibujan con la letra del visor.
-  Ya apuntado para entonces: la lista de barcos entera como la del juego (0x4768B0) y el aviso de la reputación del
-  panel de construir (0x6B20A4, un texto «\c» centrado). Mirar antes, como con los edificios, qué dibuja el juego en
-  cada página del panel.
+  usuario del 17-11-2026): hoy sus páginas se dibujan con la letra del visor. El encargo `ENCARGO_PANEL_JUEGO.md`
+  tiene el detalle. Cómo (lo aprobó el usuario): cada página como la dibuja el juego, su composición trazada en el
+  emulador con su propio código (`re/emu/sesion33/drawtrace.py`, que ya ejecuta el arranque de una ventana con sus
+  `.ini`), con las fuentes del juego a su tamaño (el panel del juego mide unos 282 de ancho, el de la Vita 270) y la
+  altura adaptada. Por partes y en este orden:
+  - [x] La lista de barcos (17-11-2026, `re/emu/sesion40/README.md`; las reglas en `ship_list_window.cpp` con su
+    ctest): la ventana de pergamino del juego sobre la ciudad o el mapa del mar (parchment.ini [ShipList0], [CHART2]),
+    con su tamaño y sitio (0x4751D0), su título, sus dos tablas (los barcos propios; los de otros comerciantes en un
+    puerto, con sus cifras aproximadas como el juego) con sus siete columnas en los dos modos (mercancías y valor en
+    monedas, o tripulación con el capitán y cañonazos), los iconos de estado y de convoy (las banderas teñidas), sus
+    cinco órdenes, sus botones (cerrar, columnas, «Ordenar por», y en cada fila «ir al barco» o «borrar» el barco
+    perdido, 0x0A) y sus clics (elegir el barco, el doble toque); abierta desde el icono del panel y desde el **faro**
+    de la ciudad (.let 0x15: los barcos de su puerto). Comprobada en el emulador (`shiplisttrace.sh`, los dos modos) y
+    con capturas en los dos idiomas. Improvisado para la Vita: el botón de las columnas algo a la izquierda (la tecla ○
+    del de cerrar), el desplazamiento por filas enteras, la fila de la cruceta como la fila bajo el ratón, un toque
+    fuera la cierra, abrirla cierra la ventana de un edificio. Lo que queda de ella:
+    - [x] Las aperturas del mapa del mar (17-11-2026): tocar barcos del jugador en el mar elige uno o abre la lista
+      con ellos (0x44FB40, tipo 1, el primero elegido), y tocar una ciudad con sus barcos en el puerto elige uno o abre
+      la lista de su puerto sin los ajenos (0x44F980; la ciudad queda elegida como antes). No está el recuadro
+      arrastrado (0x44D780 → 0x44DC5F, todos elegidos a la vez): en la Vita arrastrar mueve el mapa; y tocar el mar
+      vacío sigue añadiendo un punto de ruta (el botón derecho del juego en el visor) en vez de vaciar la selección.
+    - [ ] Elegir en el menú del barco un barco de otro comerciante (la segunda tabla) y un barco perdido, como el juego:
+      va con el menú del barco (el del visor solo enseña los barcos del jugador), y la selección de varios barcos.
+    - [ ] «Ir al barco» centrado en su barco del puerto (0x476A30: la lista 0x6E2D50): va con los barcos en el puerto
+      de la ciudad viva. (El de un barco en construcción, estado 0xE, ya centra el astillero de su ciudad.)
+  - [ ] El menú del barco: su cabecera y sus cinco páginas.
+  - [ ] El menú de construir, con **el aviso de la reputación** (0x6B20A4, «Todavía no puedes construir una oficina
+    comercial…»: un texto «\c» centrado en la letra del juego; hoy un texto del visor alineado a la izquierda).
+  - [ ] Las estadísticas (el panel y sus ventanas), los mensajes en el panel, el panel de las batallas y la barra de
+    arriba.
 - [x] **El panel de la Hansa** propio del visor (Cuadrado en una ciudad), quitado el 15-11-2026 a petición del
   usuario: sus encargos y elecciones son las páginas del ayuntamiento, y los materiales de la carretera, la página
   «Ruta terrestre» de la puerta de la ciudad, como las del juego.
@@ -495,7 +525,8 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   - [ ] Los habitantes y los carros por las calles, y las animaciones de los edificios.
   - [ ] Los barcos en el puerto (la lista *0x6E2D50, el objeto 0x6E6220 al que la simulación avisa al atracar y
     zarpar), también como puntos en el minimapa con el color de su dueño (0x56C730: azul los tuyos, gris oscuro los
-    piratas, blanco los demás, rojo los de otro jugador humano; el dibujo del minimapa, 0x59C590).
+    piratas, blanco los demás, rojo los de otro jugador humano; el dibujo del minimapa, 0x59C590). Con ellos, el «ir al
+    barco» de la lista de barcos centrado en su barco (0x476A30).
   - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe).
   - [x] Las sombras y la nieve de los tiles (17-11-2026, `re/emu/sesion39/README.md`; las variantes del `.let`, con
     la clase 1 de la obra y la 2 de la nieve corregidas en `docs/formats/town.md`). **Sombras**: como la pasada del

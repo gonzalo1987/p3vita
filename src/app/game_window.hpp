@@ -173,8 +173,9 @@ public:
 	void priest_thanks(bool on) { thanks_ = on; }
 	// The picture TEX`tex` of textures.ini (its frame `frame`) at (x, y), read the first time; its size. With `width`,
 	// only that much of the frame's left part (the half cannonball, 0x490428); with `alpha`, faded (the shipyard book's
-	// ships, 0x5F8910).
-	SDL_Point draw_tex(uint32_t tex, int frame, int x, int y, int width = 0, uint8_t alpha = 255);
+	// ships, 0x5F8910); with `tint` (0xAARRGGBB), its colours multiplied by it (the game's constant colour, 0x4BB870: the
+	// ship list's convoy flags, 0x490F80).
+	SDL_Point draw_tex(uint32_t tex, int frame, int x, int y, int width = 0, uint8_t alpha = 255, uint32_t tint = 0xFFFFFFFF);
 	SDL_Point tex_size(uint32_t tex, int frame);
 
 private:
@@ -198,8 +199,10 @@ private:
 	};
 	bool load_strip(uint32_t tex, Strip& strip);
 	static void free_strip(Strip& strip);
-	// Its frame `frame` at (x, y) (with `width`, only that much of its left part; with `alpha`, faded); the size drawn.
-	SDL_Point draw_strip(const Strip& strip, int frame, int x, int y, int width = 0, uint8_t alpha = 255) const;
+	// Its frame `frame` at (x, y) (with `width`, only that much of its left part; with `alpha`, faded; with `tint`,
+	// coloured); the size drawn.
+	SDL_Point draw_strip(const Strip& strip, int frame, int x, int y, int width = 0, uint8_t alpha = 255,
+		uint32_t tint = 0xFFFFFFFF) const;
 	struct Animation {
 		Strip strip;
 		int x = 0;
