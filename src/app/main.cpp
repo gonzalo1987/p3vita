@@ -134,6 +134,7 @@ constexpr char kStartSave[] = "missav/1.pat";
 constexpr int kLuebeck = 14;
 constexpr uint8_t kTownHallType = 0x20;
 constexpr uint32_t kWaterTileType = 0xE;  // The water's .let tiles (g_k: frame g, tile k), as the game's 0x60329B.
+constexpr uint32_t kTreeTileType = 0x14;  // The trees' .let tiles (baum*): their snow by the season itself (0x591EC0).
 // Fuente del texto de la interfaz (Font4 de scripts/ttffonts.ini en la versión española).
 constexpr char kUiFont[] = "fonts/Tiepolo_bold.ttf";
 constexpr float kUiFontHeight = 23;
@@ -528,9 +529,27 @@ public:
 
 	const TileSet& tiles() const { return tiles_; }
 
+	// The season to show (the town's [0x9BC]: 0 from May, 1 from October, 6 from March, the ice's level 2..5 in winter;
+	// 0x58B7F0 → 0x591EC0, only with P2.CFG's [OPTIONS] WEATHER ≥ 1, the game's 3: always here): the tiles' snowy
+	// atlases (season_texture). Nothing when it is the one shown already ([view+0x504]).
+	void set_snow(int mode) {
+		if (mode == snow_mode_) {
+			return;
+		}
+		snow_mode_ = mode;
+		for (Item& item : items_) {
+			if (item.tile) {
+				if (SDL_Texture* texture = season_texture(item.tile)) {
+					item.texture = texture;
+				}
+			}
+		}
+	}
+
 	// The town's drawing; `owners`, each cell's building owner (place_saved_town; empty for a template map).
 	void show(const TownMap& town, std::vector<uint8_t> owners = {}) {
 		items_.clear();
+		shadows_.clear();
 		width_ = 0;
 		height_ = 0;
 		first_object_ = 0;
@@ -538,7 +557,7 @@ public:
 		const std::vector<TownSprite> sprites = build_town_sprites(town, tiles_);
 		items_.reserve(sprites.size());
 		for (const TownSprite& sprite : sprites) {
-			SDL_Texture* texture = tile_texture(sprite.tile);
+			SDL_Texture* texture = season_texture(sprite.tile);
 			if (!texture) {
 				continue;
 			}
@@ -547,6 +566,21 @@ public:
 			items_.push_back({texture, {sprite.src_x, sprite.src_y, sprite.width, sprite.height},
 				{sprite.dst_x, sprite.dst_y, sprite.width, sprite.height}, sprite.tile, owner, sprite.cell_y,
 				!sprite.object && sprite.tile->type == kWaterTileType, sprite.cell_x});
+			const TileDef* tile = sprite.tile;
+			const TileVariant* shadow = sprite.object ? tile->shadow() : nullptr;
+			const size_t k = size_t(std::max(1, tile->cols) - 1);
+			if (shadow && !shadow->frames.empty() && sprite.slice == int(k) && k < tile->slices.size()) {
+				// Its shadow, placed as 0x551F70 from the cell's left and bottom (the slice cols − 1 stands on the
+				// cell's left side, no more right than the front one).
+				if (SDL_Texture* picture = shadow->atlas.empty() ? tile_texture(tile) : atlas_texture(shadow->atlas)) {
+					const TileSlice& s = tile->slices[k];
+					const TileSlice& f = shadow->frames[0];
+					const int left = cell_screen_x(sprite.cell_x, sprite.cell_y);
+					const int bottom = cell_screen_y(sprite.cell_y) + kTileHeight;
+					shadows_.push_back({picture, {f.x, f.y, f.width, f.height},
+						{left + shadow->x - s.x, bottom + shadow->y - s.y - s.height, f.width, f.height}});
+				}
+			}
 			if (!sprite.object) {
 				first_object_ = items_.size();
 			}
@@ -584,6 +618,7 @@ public:
 			const SDL_Rect dst = {item.dst.x - camera_x, item.dst.y - camera_y, item.dst.w, item.dst.h};
 			SDL_RenderCopy(renderer_, item.texture, &item.src, &dst);
 		}
+		draw_shadows(screen);  // Over the ground, under the objects.
 	}
 	size_t first_object() const { return first_object_; }
 	void draw_objects(size_t& cursor, int last_row, int camera_x, int camera_y) const {
@@ -633,7 +668,11 @@ public:
 	// manual's figure 4-4): another merchant's (below `merchants`) and the rival kontor.
 	void draw(int camera_x, int camera_y, int highlight = -1, int player = -1, int merchants = 0) {
 		const SDL_Rect screen = {camera_x, camera_y, kScreenWidth, kScreenHeight};
-		for (const Item& item : items_) {
+		for (size_t i = 0; i < items_.size(); ++i) {
+			const Item& item = items_[i];
+			if (i == first_object_) {
+				draw_shadows(screen);  // After the ground, before the objects (0x588900: 0x590F30, 0x591C50).
+			}
 			if (!SDL_HasIntersection(&item.dst, &screen)) {
 				continue;
 			}
@@ -782,6 +821,32 @@ private:
 		bool water = false;  // A ground tile of the water (.let type 0xE).
 		int col = 0;  // That cell's column.
 	};
+	// A tile's shadow in the town (0x591C50: after the ground and before the objects, 0x568CE0, a pass of shadows
+	// alone, row by row: one where a cell holds its object's slice cols − 1; 0x551F70 places it): the .let's shadow
+	// picture (its first frame, in its own atlas), in the town's pixels. The objects drawn after it cover it.
+	struct Shadow {
+		SDL_Texture* texture;
+		SDL_Rect src;
+		SDL_Rect dst;
+	};
+	// The objects' shadows on `screen` (the camera's rectangle in the town's pixels): black at alpha 100, the ground
+	// under them at 61 %. The game draws them with the graphics library's blend mode 2 and the colour 0x64FFFFFF
+	// (0x591C50: sgl_SetBlendMode, sgl_SetConstantColor; in ddraw_Dll.dll a multiplication, blitter 8): how it loads the
+	// pictures (black on the colour key) isn't read; the guild's auction draws them black at alpha 100 (0x5C6FF9), and
+	// the user's photos of the game's town show the ground darkened so, seen through.
+	void draw_shadows(const SDL_Rect& screen) const {
+		for (const Shadow& s : shadows_) {
+			if (!SDL_HasIntersection(&s.dst, &screen)) {
+				continue;
+			}
+			const SDL_Rect dst = {s.dst.x - screen.x, s.dst.y - screen.y, s.dst.w, s.dst.h};
+			SDL_SetTextureColorMod(s.texture, 0, 0, 0);
+			SDL_SetTextureAlphaMod(s.texture, 100);
+			SDL_RenderCopy(renderer_, s.texture, &s.src, &dst);
+			SDL_SetTextureColorMod(s.texture, 255, 255, 255);
+			SDL_SetTextureAlphaMod(s.texture, 255);
+		}
+	}
 	// Where a building of kPlaces is opaque (alpha ≥ 128), one byte per pixel
 	// of its tile's rectangle in the atlas: made when its atlas is decoded.
 	struct Mask {
@@ -801,6 +866,30 @@ private:
 		return tile_textures_[tile] = atlas_texture(tile->atlas);
 	}
 
+	// The tile's atlas for the season shown (0x591EC0: the town's [0x9BC], the mode; the level 0 for the modes 0, 1
+	// and 6, else the mode − 1, every tile's +0x70 but the trees', whose +0x70 takes the mode itself as the index of
+	// their pictures: 1 the autumn's leaves, 2 the blossom and fruit, 3 the bare winter's, `Schnee_*_01..03`; the
+	// conifers only 2 and 3, snowy): its snowy atlas (TileDef::snow, 0x552090), else its own. The trees' modes 5 and 6
+	// index past the end of their five atlases (the array of 0x14 bytes of 0x551482: the heap's next bytes): 5, the
+	// frozen port, taken as 4 (down to the winter's); 6, the spring, as the user's photo of the game's Edinburgh on 17
+	// March 1301 shows them, not as the code reads: the deciduous trees (those with an autumn's picture) in blossom (2:
+	// the pink, the fruit's red dots), the conifers with their own picture (no snow). Its own atlas is decoded first
+	// anyway: its tiles' minimap colours (the winter's minimap stays green in the game) and hit masks come from it.
+	SDL_Texture* season_texture(const TileDef* tile) {
+		SDL_Texture* own = tile_texture(tile);
+		if (snow_mode_ <= 0 || snow_mode_ > 6) {
+			return own;
+		}
+		const bool tree = tile->type == kTreeTileType;
+		const int index = tree && snow_mode_ == 6			 ? (tile->snow(1) ? 2 : 0)
+			: tree											 ? std::min(snow_mode_, 4)
+			: snow_mode_ == 1 || snow_mode_ == 6 ? 0
+															 : snow_mode_ - 1;
+		const TileVariant* snowy = tile->snow(index);
+		SDL_Texture* texture = snowy ? atlas_texture(snowy->atlas) : nullptr;
+		return texture ? texture : own;
+	}
+
 	// Los atlas se decodifican y suben una sola vez, y se comparten entre ciudades.
 	SDL_Texture* atlas_texture(const std::string& path) {
 		auto it = atlases_.find(path);
@@ -815,6 +904,19 @@ private:
 			return texture = nullptr;
 		}
 		apply_magenta_key(image);
+		{
+			// Two snowy atlases have their background 254, 0, 254 instead of the colour key 0xFF00FF (their palette's
+			// entry: Schnee_RathausR4 Rathaus_02..04, Schnee_8bitKomplett_Stadtkontor01..04), and a few others a pixel
+			// or two so at their edges. The game never shows them pink (the user, 17-11-2026), though its 32-bit
+			// textures' loader compares the key exactly (ddraw_Dll.dll 0x50132B7; a palette's texture takes its key at
+			// the blit, not read): a magenta that 16 bits (5, 6, 5) don't tell from the key is taken as it.
+			for (size_t i = 0; i + 3 < image.rgba.size(); i += 4) {
+				uint8_t* p = &image.rgba[i];
+				if ((p[0] & 0xF8) == 0xF8 && p[1] < 4 && (p[2] & 0xF8) == 0xF8) {
+					p[3] = 0;
+				}
+			}
+		}
 		if (const auto all = tiles_by_atlas_.find(path); all != tiles_by_atlas_.end()) {
 			// Each tile's average colour (its opaque pixels), for the minimap.
 			for (const TileDef* tile : all->second) {
@@ -922,6 +1024,8 @@ private:
 	std::map<std::string, std::vector<const TileDef*>> places_by_atlas_;  // The tiles of kPlaces, by atlas.
 	std::unordered_map<const TileDef*, Mask> masks_;
 	std::vector<Item> items_;
+	std::vector<Shadow> shadows_;  // The objects' shadows (Item::shadow).
+	int snow_mode_ = 0;  // The season shown (set_snow): the town's [0x9BC].
 	size_t first_object_ = 0;  // items_: the ground's, then the objects' row by row (build_town_sprites).
 	std::vector<uint32_t> cell_types_;  // cell_type_at.
 	int width_ = 0;
@@ -20582,6 +20686,13 @@ int main(int argc, char** argv) {
 			std::vector<uint8_t> owners;
 			live.draw(save, view->tiles(), town, &owners);
 			view->show(town, std::move(owners));
+		}
+		// The season of the town on screen, its [0x9BC] (0x58B7F0 with the view's town): the tiles' snow. A town's
+		// template map (not a save's) as in summer.
+		if (view) {
+			const bool saved = selection.mode == Mode::Saved && has_save && town_index >= 0 &&
+				size_t(town_index) < save.towns.size();
+			view->set_snow(saved ? int(save.towns[size_t(town_index)].memory.u8(0x9BC)) : 0);
 		}
 
 		int town_step = 0;

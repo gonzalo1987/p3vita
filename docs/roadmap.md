@@ -93,10 +93,10 @@ Cómo leerla:
   sombra del edificio en su subasta (las variantes de los `.let` ya se leen) y las capitulares de las cartas.
 - **Hecho el 17-11-2026 (`re/emu/sesion39/`)**: las preguntas del convoy con la ventanita del juego («Deshacer
   convoy», «Abandonar convoy» y el aviso «No es posible formar un convoy»), y con ellas la alineación y las imágenes de
-  la caja de texto de la ventanita.
+  la caja de texto de la ventanita (commit 64c2eb6). Después, las sombras de los edificios y objetos y la nieve de la
+  ciudad por estaciones, como el juego (apartado 4).
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): primero el resto
-  de las pantallas, las sombras y la nieve de los tiles en la vista de la ciudad y el panel lateral con las letras y
-  los textos del juego (apartado 4); luego el intérprete de misiones (apartado 3), el final de la partida
+  de las pantallas, el panel lateral con las letras y los textos del juego (apartado 4); luego el intérprete de misiones (apartado 3), el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -496,18 +496,38 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   - [ ] Los barcos en el puerto (la lista *0x6E2D50, el objeto 0x6E6220 al que la simulación avisa al atracar y
     zarpar), también como puntos en el minimapa con el color de su dueño (0x56C730: azul los tuyos, gris oscuro los
     piratas, blanco los demás, rojo los de otro jugador humano; el dibujo del minimapa, 0x59C590).
-  - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe) y las variantes de los tiles (sombras, nieve):
-    sus datos ya se leen del `.let` (`TileDef::variants`, 15-11-2026) y la sombra ya se dibuja en la subasta de un
-    edificio; falta leer cómo las pone la vista de la ciudad (0x5854D0 coloca una variante por 0x59B5B0 de la vista).
+  - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe).
+  - [x] Las sombras y la nieve de los tiles (17-11-2026, `re/emu/sesion39/README.md`; las variantes del `.let`, con
+    la clase 1 de la obra y la 2 de la nieve corregidas en `docs/formats/town.md`). **Sombras**: como la pasada del
+    juego (0x591C50), todas tras el suelo y antes de los objetos, cada una desde la celda de la franja `cols − 1` de su
+    tile (0x551F70), en negro con alfa 100 (el juego, modo de mezcla 2 de la librería gráfica: una multiplicación; el
+    resultado, el suelo al 61 %, como en las fotos del juego del usuario), también bajo una batalla en la ciudad.
+    **Nieve**: el byte [0x9BC] de la ciudad en pantalla (ya en el motor) da el modo; cada tipo de tile cambia su atlas
+    por el de nieve de su nivel (0x552090) y los árboles por el de su estación (el otoño, la nieve); las paletas que
+    0x54F4F0 retoca no las marca ningún `.let` de los datos (no cambia nada); estado de depuración `season-N`. Los
+    árboles: sus dibujos `_01` son el otoño, `_02` la floración (los de hoja caduca) o la nieve ligera (los pinos) y
+    `_03` el invierno (pelados o muy nevados). Como en las fotos del juego del usuario (Edimburgo el 3 de febrero y el
+    17 de marzo de 1301, `re/emu/sesion31/pc_shots/`), y no como lee el código (con la primavera lee más allá de su
+    tabla de atlas): en primavera los de hoja caduca en flor y los pinos sin nieve. Los dos atlas de nieve con el
+    fondo en 254, 0, 254 (la oficina y el ayuntamiento grande), sin marco rosa, que el usuario no ha visto nunca. Las
+    sombras de los árboles son las de siempre también en invierno (su `WinterSchatten`, clase 4, el juego no la lee).
+    Por mirar en el juego: a principios del invierno (el nivel de hielo 2), el código pone a los árboles de hoja
+    caduca su floración.
+  - [ ] Los árboles: su clase propia (0x676B30) los mece con el viento (0x583080; 0x581710 pinta encima el mismo
+    rectángulo con la textura *0x6E3390 de la tabla 0x6E335C y un alfa que sigue al viento); hoy se dibujan quietos
+    con su primer fotograma. Va con la ciudad animada.
   - [ ] Las obras: hoy lo que está en obras ([0x762] con `pending` ≠ 0) se dibuja terminado; faltan los andamios y los
-    bordes de calle de las celdas 0x81.
+    bordes de calle de las celdas 0x81. Los andamios y cimientos son la variante de clase 1 del `.let` ([data+0x18]),
+    que 0x550770 dibuja con el avance de la obra (17-11-2026, `re/emu/sesion39/README.md`).
   - [ ] El fuego ([0x76A]): falta el humo y las llamas (los incendios de la ciudad, de un asedio, y la torre que cae en
     una batalla y arde unos 100 ticks como edificio, el evento 0x25; 0x5891C0, 0x599040). Decisión del usuario
     (10-11-2026): con la ciudad animada.
   - [ ] El asedio en la vista: el campamento, las tropas y el ataque a la puerta (0x62C730 y los objetos del ejército
     [+0x1F8], [+0x574], [+0x5DC..]) y el aviso al jugador; su icono de suceso ya sale.
   - [ ] Coste en la Vita: cada redibujado rehace la ciudad entera (2 ms en el PC más la lista de sprites); si da tirones
-    en avance rápido, redibujar solo las celdas que cambian. Y quitar `SavedTown::drawn_lists` y `SavedTown::fixed`, que
+    en avance rápido, redibujar solo las celdas que cambian. Y la nieve: al cambiar de estación (o al entrar en una
+    ciudad en invierno) se decodifican los atlas de nieve de sus tiles además de los normales, y se guardan; mirar el
+    tirón y la memoria en la Vita. Y quitar `SavedTown::drawn_lists` y `SavedTown::fixed`, que
     ya no se usan para dibujar.
 - [x] **Los iconos e imágenes de los textos del juego** (12-11-2026, lo vio el usuario en la carta del embargo): la
   moneda, el barril y el fardo (`\C`, `\B`, `\L`) y las imágenes por número (`\tN_`: el adorno de la crónica, los

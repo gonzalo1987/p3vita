@@ -102,20 +102,42 @@ coordenadas del atlas) y la ruta del atlas AIM (`u32 longitud` + texto con
 separadores mezclados `\` y `/`; su color clave es el de la cabecera).
 
 Tras la ruta, las variantes (0x5513F0, cada una leída por 0x5852A0): `u32`
-cuántas y, cada una, `u32 clase` (0 la sombra, el `[data+0x14]` del juego; 1 la
-nieve, `[+0x18]`; 2 los fotogramas de los andamios, `[+0x1C]`; 3 a 8 las de la
-clase del objeto), `u32 n` y `u32[n]` parámetros, `u32 x, y` (su sitio en las
+cuántas y, cada una, `u32 clase` (0 la sombra, el `[data+0x14]` del juego,
+ficheros `Schatten_*`; 1 la obra, andamios o cimientos, `[+0x18]`, ficheros
+`geruest_*`, `Grundmauer*`, que 0x550770 dibuja con el avance; 2 un atlas con
+nieve, `Schnee_*`, de nivel 1 a 4 su primer parámetro, `[+0x1C][nivel]`, que
+0x552090 pone en lugar del atlas del tile; 3 a 8 las de la clase del objeto: sus
+animaciones, el fuego, el agua de los acantilados; corregido el 17-11-2026,
+`re/emu/sesion39/`), `u32 n` y `u32[n]` parámetros, `u32 x, y` (su sitio en las
 coordenadas del atlas del tile; el juego los guarda en u16), `u32 m` y `m`
 rectángulos `u32 x, y, ancho, alto` en su propio atlas, `u32 longitud` y, si no es
 0, la ruta de su AIM y su `u32` color clave (sin ruta, el atlas del tile). Leído
 así, cada uno de los 934 `.let` acaba justo en su último byte (15-11-2026,
 `re/emu/sesion38/letvariants.py`): 358 sombras (un rectángulo cada una), 175
-nieves, 3083 de la clase 2, 393 de la 3 y unas pocas de la 4 a la 8. `TileDef::variants`.
+obras, 3083 atlas con nieve, 393 de la clase 3 y unas pocas de la 4 a la 8.
+`TileDef::variants`.
 
 La sombra se dibuja (0x551F70) en negro con alfa 100 (el color 0x64000000 de
 quien la llama), su primer rectángulo con su `x, y` puestos desde la franja
 `cols − 1` del tile: x de la celda + x − x de la franja, y de abajo + y − y de la
 franja − alto de la franja.
+
+En la vista de la ciudad (17-11-2026, `re/emu/sesion39/README.md`) las sombras
+van en una pasada propia, 0x591C50, tras el suelo (0x590F30) y antes de los
+objetos (0x568CE0): fila a fila, una sombra en cada celda donde está la franja
+`cols − 1` de su objeto, con el modo de mezcla 2 de la librería gráfica (una
+multiplicación) y el color 0x64FFFFFF; los objetos, encima, las tapan. p3vita las
+dibuja en negro con alfa 100 (el suelo al 61 %, como se ve en el juego).
+
+La nieve: el byte `[0x9BC]` de la ciudad es el modo (0 desde mayo, 1 desde
+octubre, 6 desde marzo, el nivel del hielo 2 a 5 en invierno); 0x591EC0 da a cada
+tipo de tile, salvo los árboles (tipo 0x14), el nivel 0 con los modos 0, 1 y 6 y
+`modo − 1` con los demás, y a los árboles el modo mismo; 0x552090 pone en su
+`[data+0xC]` el atlas de `[data+0x1C]` de ese índice (el 0 es el suyo, 0x551250),
+o el de más abajo que tenga. Solo con `WEATHER` ≥ 1 en `P2.CFG` (el juego trae 3).
+El retoque de paletas de 0x54F4F0 (las entradas 224 a 255 hacia el blanco) solo
+alcanza a los atlas de tiles con la primera entrada extra ≠ 0, y en los datos
+ninguno la tiene.
 
 El color clave es siempre `0xFFFF00FF`: los píxeles magenta `FF00FF` del atlas
 son transparentes.

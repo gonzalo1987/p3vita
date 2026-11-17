@@ -789,6 +789,8 @@ const char kDebugStatesHelp[] =
 	"  weak-towers  the towers of a town battle weakened when its screen opens: smoke\n"
 	"              and fire (only to look at them)\n"
 	"  damaged     the player's ships in port with half their hull (the shipyard)\n"
+	"  season-N    every town's season [0x9BC] N (0 summer, 1 autumn, 2..5 the snow, 6\n"
+	"              spring): the town view's snow (only to look at it, until it changes)\n"
 	"  tavern-captain  a free captain in the tavern of the player's first ship's town\n"
 	"  tavern-people   all the tavern's people there (a captain, the trader, the informer, the traveller, ...)\n"
 	"  convoy-leader  the player's first ship in port fit to guide a convoy\n"
@@ -1175,6 +1177,10 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			// The viewer weakens them when the battle's screen opens (weaken_towers).
 		} else if (state == "damaged") {
 			damage_ships(save);
+		} else if (state.size() == 8 && state.compare(0, 7, "season-") == 0 && state[7] >= '0' && state[7] <= '6') {
+			for (auto& town : save.towns) {
+				town.memory.u8(0x9BC) = uint8_t(state[7] - '0');
+			}
 		} else if (state == "shipyard-materials") {
 			if (!shipyard_materials(save)) {
 				error = "the player has no ship in port";

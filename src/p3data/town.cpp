@@ -48,6 +48,7 @@ void add_cell_sprites(const TileDef& tile, uint16_t aux, int x, int y, std::vect
 	sprite.dst_y = cell_y + kTileHeight - slice.height;
 	sprite.cell_x = x;
 	sprite.cell_y = y;
+	sprite.slice = int(slice_index);
 	out.push_back(sprite);
 }
 
