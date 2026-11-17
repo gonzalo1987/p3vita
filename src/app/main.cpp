@@ -12541,7 +12541,8 @@ constexpr const char* kPanelShipFiles[kPanelShipButtons] = {"images/b_schiffe_an
 	"images/b_konvoi_anker.tga", "images/b_konvoi_see.tga"};
 
 // What the menus' room shows.
-enum class PanelMenu { None, Build, Ship, Messages, Statistics };
+// OtherShip: the ship menu with another merchant's ship (its state 3: draw_foreign_ship_menu).
+enum class PanelMenu { None, Build, Ship, OtherShip, Messages, Statistics };
 
 // The ship menu's pages (SIDEMENU_SHIP: its buttons in the game's order, the
 // convoy's showing the convoy's ships when the ship is in one, as the game's
@@ -13585,6 +13586,111 @@ ShipListTap ship_list_tap(const ShipListFrame& f, int x, int y) {
 		}
 	}
 	return {ShipListHit::None};
+}
+
+// --- The side panel's ship menu with another merchant's ship (CSideMenu_Ship's state 3: 0x488181..0x4881C2 sets it
+// for one ship that isn't the player's; its drawing 0x48B1F2 → 0x491240 and 0x48D8C0; re/emu/sesion40/README.md
+// «Part 2»): no pages nor buttons, its head and the ship seen through a telescope, at the game's size and with its
+// fonts in the panel's room. ---
+
+// The owner's line (0x4913E2..0x491457): «%s %s %s» (0x6BA448: his rank's title in his home town, 0x6A0608 with 8
+// more for a woman, his first name, his family name); for a ship past the merchants or raiding the pirate's name the
+// battles give (0x612EE0 on 0x6E55D0, «Unknown pirate» when none: the viewer says «Pirate», the ship list's word).
+std::string foreign_ship_owner(const SaveGame& save, const SavedShip& s) {
+	const uint8_t owner = s.owner();
+	if (owner >= save.globals.u16(global::kWorldMerchantCount) || owner >= save.merchants.size() || s.raid() != 0) {
+		return exe_text(0x69C98C, "Pirata", "Pirate");
+	}
+	const MerchantMemory& m = save.merchants[owner].memory;
+	const uint32_t rank = m.u8(0x39C + m.u8(0x19)) + 8 * (m.u8(0x1A) & 1);
+	return exe_text(0x6A0608 + 4 * rank, "", "") + " " + clean_game_text(game_first_name(save, m.u8(0x1C))) + " " +
+		clean_game_text(game_family_name(save, m.u8(0x1D)));
+}
+
+// The ship menu's row of icons (0x491CA0), from (x, y) with ShipInfoSymbolSpacing 12 between them, each figure centred
+// under its icon in the font 1: the knots (TEX20016, [+0x30] >> 4), the hull (TEX20013, red under 40 %), the crew
+// (TEX20017: the captain's TEX16053 if it has one and the sailors under it), the weapons (TEX16054 centred over the
+// cannonballs' room of 60, the balls 2 under the icon); with `shadow_x` the panel roll's shadow (TEX20005) from it 4
+// under the knots. Returns the x after it.
+int draw_ship_icons_row(SDL_Renderer* renderer, GameWindowArt& art, TextRenderer& font, int x, int y, int shadow_x,
+	int32_t knots, int32_t hull, bool captain, uint32_t sailors, int32_t firepower) {
+	constexpr int kSpacing = 12;
+	(void)renderer;
+	const SDL_Color black = argb_color(kShipListInk);
+	auto under = [&](const std::string& s, int left, int width, SDL_Color c) {
+		font.draw(s, left + (width - font.measure(s)) / 2, y + 18, c);
+	};
+	const SDL_Point knot = art.draw_tex(20016, 0, x, y);
+	if (shadow_x >= 0) {
+		art.draw_tex(20005, 0, shadow_x, y + knot.y + 4);
+	}
+	under(std::to_string(knots), x, knot.x, black);
+	x += knot.x + kSpacing;
+	const SDL_Point heart = art.draw_tex(20013, 0, x, y);
+	under(std::to_string(hull), x, heart.x, uint32_t(hull) < 40 ? argb_color(kShipListDamaged) : black);
+	x += heart.x + kSpacing;
+	const SDL_Point crew = art.draw_tex(20017, 0, x, y);
+	const std::string men = std::to_string(sailors);
+	const int captain_w = captain ? art.tex_size(16053, 0).x : 0;
+	const int left = x + (crew.x - (captain_w + font.measure(men))) / 2;
+	if (captain) {
+		art.draw_tex(16053, 0, left, y + 18);
+	}
+	font.draw(men, left + captain_w, y + 18, black);
+	x += crew.x + kSpacing;
+	draw_ship_list_balls(art, firepower, x, y + 18 + 2);
+	art.draw_tex(16054, 0, x + (60 - art.tex_size(16054, 0).x) / 2, y);
+	return x + 60;
+}
+
+void draw_foreign_ship_menu(SDL_Renderer* renderer, GameWindowArt& art, TextRenderer& fallback, const SaveGame& save,
+	int ship, const SDL_Rect& room) {
+	const SavedShip& s = save.ships[size_t(ship)];
+	TextRenderer& head = art.info_text() ? *art.info_text() : fallback;
+	TextRenderer& page = art.page_text() ? *art.page_text() : fallback;
+	const SDL_Color black = argb_color(kShipListInk);
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	// The head (0x491240): from TextXOffset 8 and half the panel roll's overlay (TEX20007, 20 high) down, the last
+	// column's marks of the ship list (0x490F80: the trade route, the convoy's flag tinted) and its name, in the font 2.
+	int x = room.x + 8;
+	int y = room.y + 10;
+	const ShipListMarks m = ship_list_marks(save, uint16_t(ship));
+	if (m.trade_route) {
+		x += art.draw_tex(16034, 0, x, y).x;
+	}
+	if (m.tex) {
+		x += art.draw_tex(m.tex, 0, x, y, 0, 255, m.colour).x;
+	}
+	head.draw(s.name(), x, y, black);
+	y += head.line_height();
+	// Its owner a line lower in the font 1; the row of icons its status picture's height (18) under that (0x4914AA),
+	// with the cargo (TEX16046 and its 200s, 0x4954C0) after it (0x4914D7..0x4915A4).
+	page.draw(foreign_ship_owner(save, s), room.x + 8, y, black);
+	y += 18;
+	x = draw_ship_icons_row(renderer, art, page, room.x + 8, y, room.x, s.speed() >> 4, shown_hull(save, uint16_t(ship)),
+		s.captain() < save.globals.u16(global::kCaptainCount), shown_sailors(save, uint16_t(ship)),
+		shown_firepower(save, uint16_t(ship)));
+	const SDL_Point goods = art.draw_tex(16046, 0, x, y);
+	const std::string cargo = std::to_string(uint32_t(shown_cargo(save, uint16_t(ship))) / 200);
+	page.draw(cargo, x + (goods.x - page.measure(cargo)) / 2, y + 18, black);
+	// The telescope (0x48D8C0): its mask (TEX20023, 164 × 164) at the room's bottom in its middle; the ship's type seen
+	// through it (180 × 180: 20021, 20020, 20022, 20019 by type, 20026, 20025, 20027, 20024 in a convoy without the flag
+	// 0x10) centred on it and cut to it; the mask over it; a pirate's (the state 0x12 or raiding) TEX20028 at alpha 100.
+	const SDL_Point mask = art.tex_size(20023, 0);
+	const SDL_Rect lens = {room.x + (room.w - mask.x) / 2, room.y + room.h - mask.y, mask.x, mask.y};
+	static constexpr uint32_t kTypes[2][4] = {{20021, 20020, 20022, 20019}, {20026, 20025, 20027, 20024}};
+	const uint16_t convoy = s.convoy();
+	const bool in_convoy = convoy < std::min<size_t>(save.globals.u16(global::kShipCount + 2), save.convoys.size()) &&
+		!(save.convoys[convoy].u8(0x14) & 0x10);
+	const uint32_t picture = kTypes[in_convoy ? 1 : 0][s.type() & 3];
+	const SDL_Point size = art.tex_size(picture, 0);
+	SDL_RenderSetClipRect(renderer, &lens);
+	art.draw_tex(picture, 0, lens.x + lens.w / 2 - size.x / 2, lens.y + lens.h / 2 - size.y / 2);
+	SDL_RenderSetClipRect(renderer, nullptr);
+	art.draw_tex(20023, 0, lens.x, lens.y);
+	if (s.status() == 0x12 || s.raid() != 0) {
+		art.draw_tex(20028, 0, lens.x, lens.y, 0, 0x64);
+	}
 }
 
 // The table a list's index is in, and its row in it.
@@ -20163,6 +20269,12 @@ int main(int argc, char** argv) {
 		if (sea_panel && side.menu == PanelMenu::Ship && fleet_ship() >= 0) {
 			side.ship = fleet_ship();  // On the sea map the menu is the chosen ship's (Square, the ship buttons).
 		}
+		if (side.menu == PanelMenu::OtherShip &&
+			(!panel_shown || side.ship < 0 || size_t(side.ship) >= save.ships.size() || save.player < 0 ||
+				!save.ships[size_t(side.ship)].in_use() || save.ships[size_t(side.ship)].owner() == save.player)) {
+			side.menu = PanelMenu::None;  // Another merchant's ship while it is his (state 3).
+			side.ship = -1;
+		}
 		if (side.menu == PanelMenu::Ship) {
 			const bool valid = side.ship >= 0 && size_t(side.ship) < save.ships.size() && save.player >= 0 &&
 				save.ships[size_t(side.ship)].in_use() && save.ships[size_t(side.ship)].owner() == save.player;
@@ -21157,13 +21269,20 @@ int main(int argc, char** argv) {
 				ship_list.open = false;
 			}
 		};
-		// A row touched once (0x477150): its ship chosen in the ship menu, but in the states 0xC..0xE and 0x13. The viewer's
-		// ship menu shows the player's ships only, and not a lost one: those rows are only lit (the pad's row).
+		// A row touched once (0x477150): its ship chosen in the ship menu, but in the states 0xC..0xE and 0x13: a ship of
+		// the player's (a lost one too) its pages (the menu's state 1), another merchant's his ship's head and telescope
+		// (state 3: PanelMenu::OtherShip).
 		auto ship_list_choose = [&](uint32_t index, uint16_t ship) {
 			ship_list.row = int(index);
 			const SavedShip& s = save.ships[ship];
-			if (ship_list_can_choose(save, ship) && s.in_use() && s.owner() == save.player && s.status() != kShipSunk) {
+			if (!ship_list_can_choose(save, ship) || !s.in_use()) {
+				return;
+			}
+			if (s.owner() == save.player) {
 				choose_ship(ship);
+			} else {
+				side.menu = PanelMenu::OtherShip;
+				side.ship = ship;
 			}
 		};
 		// The side panel's icons (0..5) and ship buttons (6..9), tapped or with X.
@@ -23255,6 +23374,9 @@ int main(int argc, char** argv) {
 					draw_route_files(renderer, *small_text, side);
 					draw_stop_window(renderer, *small_text, *panel_art, save, side);
 				}
+				if (side.menu == PanelMenu::OtherShip && side.ship >= 0 && !side.folded && g_game_art) {
+					draw_foreign_ship_menu(renderer, *g_game_art, *small_text, save, side.ship, panel_layout.room);
+				}
 				if (side.menu == PanelMenu::Statistics && !side.folded) {
 					draw_stats_room(renderer, *small_text, *panel_art, side);
 					draw_stats_window(renderer, *small_text, *panel_art, save, town_names, side);
@@ -23331,6 +23453,9 @@ int main(int argc, char** argv) {
 					draw_route_towns(renderer, *small_text, save, side);
 					draw_route_files(renderer, *small_text, side);
 					draw_stop_window(renderer, *small_text, *panel_art, save, side);
+				}
+				if (side.menu == PanelMenu::OtherShip && side.ship >= 0 && !side.folded && g_game_art) {
+					draw_foreign_ship_menu(renderer, *g_game_art, *small_text, save, side.ship, panel_layout.room);
 				}
 				if (side.menu == PanelMenu::Statistics && !side.folded) {
 					draw_stats_room(renderer, *small_text, *panel_art, side);
@@ -23628,7 +23753,7 @@ int main(int argc, char** argv) {
 			const ShipListFrame f = ship_list_frame(save, ship_list, town_width);
 			ship_list.row = std::clamp(ship_list.row, 0, std::max(0, int(f.list.ships.size()) - 1));
 			draw_ship_list_window(renderer, *small_text, *g_game_art, save, town_names, ship_list, f,
-				side.menu == PanelMenu::Ship ? side.ship : -1);
+				side.menu == PanelMenu::Ship || side.menu == PanelMenu::OtherShip ? side.ship : -1);
 		}
 		if (small_text && has_save && save.player >= 0 && !in_menu && panel_shown) {
 			// A button's tooltip: under the finger before it is lifted, or the one the pad points at.

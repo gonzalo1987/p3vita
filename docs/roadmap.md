@@ -506,8 +506,12 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
       la lista de su puerto sin los ajenos (0x44F980; la ciudad queda elegida como antes). No está el recuadro
       arrastrado (0x44D780 → 0x44DC5F, todos elegidos a la vez): en la Vita arrastrar mueve el mapa; y tocar el mar
       vacío sigue añadiendo un punto de ruta (el botón derecho del juego en el visor) en vez de vaciar la selección.
-    - [ ] Elegir en el menú del barco un barco de otro comerciante (la segunda tabla) y un barco perdido, como el juego:
-      va con el menú del barco (el del visor solo enseña los barcos del jugador), y la selección de varios barcos.
+    - [x] Elegir un barco de otro comerciante (17-11-2026): el menú del barco en su estado 3 como el juego, su cabecera
+      con el dueño, la fila de iconos con las cifras aproximadas y el barco en un catalejo (0x491240, 0x491CA0,
+      0x48D8C0); y un barco perdido del jugador en su menú de siempre (el estado 1).
+    - [ ] Con el menú del barco (parte 2): un barco en convoy elegido desde la lista enseña antes su convoy (0x495190:
+      el estado 2 o 4, «Convoy …» con sus sumas; tocado otra vez, el barco), y la selección de varios barcos (el
+      estado 0: en el juego con Ctrl o el recuadro; en la Vita, sin gesto aún); el nombre del pirata (0x612EE0).
     - [ ] «Ir al barco» centrado en su barco del puerto (0x476A30: la lista 0x6E2D50): va con los barcos en el puerto
       de la ciudad viva. (El de un barco en construcción, estado 0xE, ya centra el astillero de su ciudad.)
   - [ ] El menú del barco: su cabecera y sus cinco páginas.

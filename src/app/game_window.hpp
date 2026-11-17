@@ -150,6 +150,11 @@ public:
 		ensure_common();
 		return head_.get();
 	}
+	// The game's font 2 (Tiepolo black, 16 × 17: the ship menu's heads, ShipInfoHeadFontID); null without it.
+	TextRenderer* info_text() {
+		ensure_common();
+		return info_.get();
+	}
 
 	// The interior's animations ([Anim k] of animation.ini: AnimN the TEX with its frames, AnimNX/Y its place on the
 	// picture, AnimNTime the loop's ms, AnimNFrames; as many as its Animations, 0x46563E: the office's lists five but
@@ -308,6 +313,7 @@ private:
 	std::unique_ptr<TextRenderer> title_;
 	std::unique_ptr<TextRenderer> page_;
 	std::unique_ptr<TextRenderer> head_;
+	std::unique_ptr<TextRenderer> info_;
 };
 
 }  // namespace p3::app

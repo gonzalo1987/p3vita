@@ -304,6 +304,11 @@ void GameWindowArt::ensure_common() {
 			page_ = std::make_unique<TextRenderer>(renderer_, std::move(font));
 			page_->set_archive(&archive_);
 		}
+		// Font 2 (Tiepolo black, 16 × 17): the ship menu's heads (sidemenu.ini ShipInfoHeadFontID).
+		if (auto font = p3::data::FontAtlas::load_em(archive_, "fonts/Tiepolo_black.ttf", 15, 17)) {
+			info_ = std::make_unique<TextRenderer>(renderer_, std::move(font));
+			info_->set_archive(&archive_);
+		}
 	}
 }
 

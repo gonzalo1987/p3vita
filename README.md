@@ -152,7 +152,8 @@ in its port, the other merchants' too) is the game's parchment window over the
 town or the sea map: each ship with its type, where it is, its hull, its cargo
 and the cargo's worth in coins (Square, or its button, shows the crew and the
 weapons instead) and its convoy. A touch chooses a ship (its menu opens in the
-panel); a second touch, its row's arrow or X goes to it (a lost ship's cross
+panel; another merchant's ship shows its owner, its figures as you can guess
+them and the ship through a telescope); a second touch, its row's arrow or X goes to it (a lost ship's cross
 removes it). Triangle, or the button after «Sort by:», changes the order; up
 and down move along the rows; drag the rows or the scroll bar to move them;
 Circle, the close button or a touch out of the window closes it.
