@@ -171,3 +171,9 @@ target_link_libraries(ship_list_window_test PRIVATE p3data)
 target_compile_options(ship_list_window_test PRIVATE -Wall -Wextra)
 
 add_test(NAME ship_list_window COMMAND ship_list_window_test)
+
+add_executable(ship_menu_window_test ship_menu_window_test.cpp)
+target_link_libraries(ship_menu_window_test PRIVATE p3data)
+target_compile_options(ship_menu_window_test PRIVATE -Wall -Wextra)
+
+add_test(NAME ship_menu_window COMMAND ship_menu_window_test)

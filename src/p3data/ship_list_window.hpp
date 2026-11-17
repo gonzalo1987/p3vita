@@ -58,6 +58,9 @@ bool ship_list_convoy_line(const SaveGame& save, const ShipList& list, uint32_t 
 // 0x4954C0 ([+0x118] off by (n % 70 − 35) % of its 200s, in 200s, from 0), the sailors 0x4953C0 ([+0x40] off by
 // (n % 40 − 20) %, 1..the most it takes) and the firepower 0x495450 ([+0x120] off by (n % 20 − 10) %, from 0).
 int32_t shown_hull(const SaveGame& save, uint16_t ship);
+// What a figure is off by: ((n % k) − k / 2) % of it, as the game works it (the figure << 16 times that in 32 bits, by
+// 100 with the compiler's 0x51EB851F, shifted back by 16); the shown figure is the figure less this.
+int32_t figure_offset(int32_t figure, uint16_t number, int32_t k);
 int32_t shown_cargo(const SaveGame& save, uint16_t ship);
 uint32_t shown_sailors(const SaveGame& save, uint16_t ship);
 int32_t shown_firepower(const SaveGame& save, uint16_t ship);

@@ -509,9 +509,12 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     - [x] Elegir un barco de otro comerciante (17-11-2026): el menú del barco en su estado 3 como el juego, su cabecera
       con el dueño, la fila de iconos con las cifras aproximadas y el barco en un catalejo (0x491240, 0x491CA0,
       0x48D8C0); y un barco perdido del jugador en su menú de siempre (el estado 1).
-    - [ ] Con el menú del barco (parte 2): un barco en convoy elegido desde la lista enseña antes su convoy (0x495190:
-      el estado 2 o 4, «Convoy …» con sus sumas; tocado otra vez, el barco), y la selección de varios barcos (el
-      estado 0: en el juego con Ctrl o el recuadro; en la Vita, sin gesto aún); el nombre del pirata (0x612EE0).
+    - [x] El convoy de otro comerciante (18-11-2026): un barco suyo en convoy elegido desde la lista enseña antes su
+      convoy (0x495190: el estado 4, «Convoy …» con sus sumas aproximadas y el número de barcos, 0x48FE80, 0x4906E0,
+      0x492150), tocado otra vez el barco solo; la lista marca entonces todos los barcos del convoy.
+    - [ ] Con el menú del barco (parte 2): el convoy del jugador (el estado 2: su cabecera y la lista de sus barcos, hoy
+      el menú propio del visor), la selección de varios barcos (el estado 0: en el juego con Ctrl o el recuadro; en la
+      Vita, sin gesto aún) y el nombre del pirata (0x612EE0).
     - [ ] «Ir al barco» centrado en su barco del puerto (0x476A30: la lista 0x6E2D50): va con los barcos en el puerto
       de la ciudad viva. (El de un barco en construcción, estado 0xE, ya centra el astillero de su ciudad.)
   - [ ] El menú del barco: su cabecera y sus cinco páginas.

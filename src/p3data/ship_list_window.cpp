@@ -7,6 +7,7 @@
 
 #include "p3data/game_memory.hpp"
 #include "p3data/player_actions.hpp"
+#include "p3data/ship_menu_window.hpp"
 
 namespace p3::data {
 
@@ -79,16 +80,16 @@ int32_t exact_hull(const ShipMemory& s) {
 	return top != 0 ? s.s32(0x18) * 100 / top : 0;
 }
 
-// What the others' figures are off by (0x495340..0x495540): ((n % k) − k / 2) % of the figure, as the game works it:
-// the figure << 16 times that (32 bits), divided by 100 (the compiler's 0x51EB851F), shifted back by 16.
-int32_t figure_offset(int32_t figure, uint16_t ship, int32_t k) {
-	const int32_t off = int32_t(ship % uint32_t(k)) - k / 2;
-	const int32_t product = int32_t(uint32_t(figure) << 16) * off;
+}  // namespace
+
+// (0x495340..0x495540, 0x492326..0x49240D, 0x4909E5..0x490A35.)
+int32_t figure_offset(int32_t figure, uint16_t number, int32_t k) {
+	const int32_t off = int32_t(number % uint32_t(k)) - k / 2;
+	// The game's 32-bit product (a convoy's cargo overflows it), wrapped as the game's imul.
+	const int32_t product = int32_t((uint32_t(figure) << 16) * uint32_t(off));
 	const int32_t hundredth = int32_t((int64_t(product) * 0x51EB851FLL) >> 37) + (product < 0 ? 1 : 0);
 	return hundredth >> 16;
 }
-
-}  // namespace
 
 ShipList merchant_ship_list(const SaveGame& save, uint32_t merchant) {
 	ShipList list;
@@ -350,11 +351,7 @@ ShipListMarks ship_list_marks(const SaveGame& save, uint16_t ship) {
 		if (pirate) {
 			m.colour = 0xFF282828;
 		} else {
-			// 0x503AC0 on the convoy: the Hanse's fleet of its event 0x34 ([+0x2] the event, whose [+0x16] is it).
-			const uint16_t e = save.convoys[c].u16(0x2);
-			const bool hanse = e < save.globals.u16(0x6DD748) && e < save.events.size() &&
-							   save.events[e].u16(0x6) == 0x34 && save.events[e].u16(0x16) == c;
-			if (hanse) {
+			if (hanse_fleet_convoy(save, c)) {
 				m.colour = 0xFFFFFF00;
 			} else if (s.u8(0x0) == save.globals.u32(global::kPlayer)) {
 				m.colour = 0xFF0000FF;

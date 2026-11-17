@@ -37,6 +37,7 @@
 #include "p3data/offer_window.hpp"
 #include "p3data/office_window.hpp"
 #include "p3data/ship_list_window.hpp"
+#include "p3data/ship_menu_window.hpp"
 #include "p3data/ship_pair_window.hpp"
 #include "p3data/smithy_window.hpp"
 #include "p3data/land_trade_window.hpp"
@@ -12576,6 +12577,8 @@ struct SidePanel {
 	uint64_t marks_key = 0;
 	// The ship list window is open (its icon lit).
 	bool ship_list_open = false;
+	// With PanelMenu::OtherShip, the convoy it shows (the menu's state 4), or −1 the ship alone (3).
+	int other_convoy = -1;
 	// The ship menu (SIDEMENU_SHIP): the ship it shows, its page, the first
 	// cargo row shown, and its crew and convoy pages' state (as the flat
 	// windows': open = Place::Ship, ship = the ship, the row, the amount, the
@@ -13369,9 +13372,11 @@ void draw_ship_list_balls(GameWindowArt& art, int32_t firepower, int x, int y) {
 // The window (0x473220): its parchment (0x41CAA0, without rolls), its title (font 3 centred at TitleYPos, its light
 // shadow a pixel lower right), its two tables (their heads 0x473650 and 0x4738C0, their rows 0x473B20 and 0x4743F0) or
 // «No ships available» in the title's font, then «Sort by:» on the close button's line; the buttons as the game's GUI
-// draws them. `chosen` is the ship of the side panel's ship menu (the game's selection, *0x66E108's blue).
+// draws them. `chosen` are the ships of the side panel's ship menu (the game's selection, *0x66E108's blue: a convoy's
+// ships while it shows the convoy).
 void draw_ship_list_window(SDL_Renderer* renderer, TextRenderer& fallback, GameWindowArt& art, const SaveGame& save,
-	const std::vector<std::string>& names, const ShipListUi& ui, const ShipListFrame& f, int chosen) {
+	const std::vector<std::string>& names, const ShipListUi& ui, const ShipListFrame& f,
+	const std::vector<uint16_t>& chosen) {
 	art.draw_dialog(f.at.x, f.at.y, f.layout.w / kShipListTile, f.layout.h / kShipListTile, false, kShipListDialog);
 	TextRenderer& page = art.page_text() ? *art.page_text() : fallback;
 	TextRenderer& head = art.head_text() ? *art.head_text() : page;
@@ -13428,7 +13433,7 @@ void draw_ship_list_window(SDL_Renderer* renderer, TextRenderer& fallback, GameW
 			if (int(i) == ui.row) {
 				ink = kShipListPointed;
 			}
-			if (int(id) == chosen) {
+			if (std::find(chosen.begin(), chosen.end(), id) != chosen.end()) {
 				ink = kShipListSelected;
 			}
 			if (st.grey) {
@@ -13643,8 +13648,19 @@ int draw_ship_icons_row(SDL_Renderer* renderer, GameWindowArt& art, TextRenderer
 	return x + 60;
 }
 
+// With `convoy` (not −1) the menu's state 4, another merchant's convoy (0x4904B0 → 0x491240): its head for the ship it
+// points at (the convoy's guide, 0x48FE80), named «Convoy %s» (0x6BA418: *0x699908 and the guide's name, or «Hanseatic
+// League Fleet» for the Hanse's, 0x503AC0), its figures the convoy's (convoy_menu_head), and after the cargo the
+// convoy's ships' count under TEX16043 ([+0x3820], 0x4915BB..); the telescope on its guide (page 6, 0x48B2E1).
 void draw_foreign_ship_menu(SDL_Renderer* renderer, GameWindowArt& art, TextRenderer& fallback, const SaveGame& save,
-	int ship, const SDL_Rect& room) {
+	int chosen, int convoy, const SDL_Rect& room) {
+	ConvoyMenuList list;
+	if (convoy >= 0) {
+		list = convoy_menu_list(save, uint16_t(convoy));
+	}
+	const bool many = convoy >= 0 && !list.ships.empty();
+	const int ship = many ? list.ships[size_t(std::max(0, list.pointed))] : chosen;
+	const ConvoyMenuHead sums = many ? convoy_menu_head(save, list) : ConvoyMenuHead{};
 	const SavedShip& s = save.ships[size_t(ship)];
 	TextRenderer& head = art.info_text() ? *art.info_text() : fallback;
 	TextRenderer& page = art.page_text() ? *art.page_text() : fallback;
@@ -13661,27 +13677,46 @@ void draw_foreign_ship_menu(SDL_Renderer* renderer, GameWindowArt& art, TextRend
 	if (m.tex) {
 		x += art.draw_tex(m.tex, 0, x, y, 0, 255, m.colour).x;
 	}
-	head.draw(s.name(), x, y, black);
+	std::string name = s.name();
+	if (many) {
+		name = exe_text(0x699908, "Convoy", "Convoy") + " " +
+			(hanse_fleet_convoy(save, uint16_t(convoy)) ? exe_text(0x6B0D88, "Flota de la Hansa", "Hanseatic League Fleet")
+														: s.name());
+	}
+	head.draw(name, x, y, black);
 	y += head.line_height();
 	// Its owner a line lower in the font 1; the row of icons its status picture's height (18) under that (0x4914AA),
 	// with the cargo (TEX16046 and its 200s, 0x4954C0) after it (0x4914D7..0x4915A4).
 	page.draw(foreign_ship_owner(save, s), room.x + 8, y, black);
 	y += 18;
-	x = draw_ship_icons_row(renderer, art, page, room.x + 8, y, room.x, s.speed() >> 4, shown_hull(save, uint16_t(ship)),
-		s.captain() < save.globals.u16(global::kCaptainCount), shown_sailors(save, uint16_t(ship)),
-		shown_firepower(save, uint16_t(ship)));
+	const bool captain = s.captain() < save.globals.u16(global::kCaptainCount);
+	if (many) {
+		x = draw_ship_icons_row(renderer, art, page, room.x + 8, y, room.x, s.speed() >> 4, sums.hull, captain,
+			uint32_t(sums.sailors), sums.firepower);
+	} else {
+		x = draw_ship_icons_row(renderer, art, page, room.x + 8, y, room.x, s.speed() >> 4,
+			shown_hull(save, uint16_t(ship)), captain, shown_sailors(save, uint16_t(ship)),
+			shown_firepower(save, uint16_t(ship)));
+	}
 	const SDL_Point goods = art.draw_tex(16046, 0, x, y);
-	const std::string cargo = std::to_string(uint32_t(shown_cargo(save, uint16_t(ship))) / 200);
+	const std::string cargo =
+		std::to_string(uint32_t(many ? sums.cargo : shown_cargo(save, uint16_t(ship))) / 200);
 	page.draw(cargo, x + (goods.x - page.measure(cargo)) / 2, y + 18, black);
+	if (many) {
+		x += goods.x + 12;
+		const SDL_Point sail = art.draw_tex(16043, 0, x, y);
+		const std::string count = std::to_string(list.ships.size());
+		page.draw(count, x + (sail.x - page.measure(count)) / 2, y + 18, black);
+	}
 	// The telescope (0x48D8C0): its mask (TEX20023, 164 × 164) at the room's bottom in its middle; the ship's type seen
 	// through it (180 × 180: 20021, 20020, 20022, 20019 by type, 20026, 20025, 20027, 20024 in a convoy without the flag
 	// 0x10) centred on it and cut to it; the mask over it; a pirate's (the state 0x12 or raiding) TEX20028 at alpha 100.
 	const SDL_Point mask = art.tex_size(20023, 0);
 	const SDL_Rect lens = {room.x + (room.w - mask.x) / 2, room.y + room.h - mask.y, mask.x, mask.y};
 	static constexpr uint32_t kTypes[2][4] = {{20021, 20020, 20022, 20019}, {20026, 20025, 20027, 20024}};
-	const uint16_t convoy = s.convoy();
-	const bool in_convoy = convoy < std::min<size_t>(save.globals.u16(global::kShipCount + 2), save.convoys.size()) &&
-		!(save.convoys[convoy].u8(0x14) & 0x10);
+	const uint16_t its = s.convoy();
+	const bool in_convoy = its < std::min<size_t>(save.globals.u16(global::kShipCount + 2), save.convoys.size()) &&
+		!(save.convoys[its].u8(0x14) & 0x10);
 	const uint32_t picture = kTypes[in_convoy ? 1 : 0][s.type() & 3];
 	const SDL_Point size = art.tex_size(picture, 0);
 	SDL_RenderSetClipRect(renderer, &lens);
@@ -20275,6 +20310,10 @@ int main(int argc, char** argv) {
 			side.menu = PanelMenu::None;  // Another merchant's ship while it is his (state 3).
 			side.ship = -1;
 		}
+		if (side.menu == PanelMenu::OtherShip && side.other_convoy >= 0 &&
+			size_t(side.other_convoy) >= std::min<size_t>(save.globals.u16(global::kShipCount + 2), save.convoys.size())) {
+			side.other_convoy = -1;  // The convoy gone: the ship alone.
+		}
 		if (side.menu == PanelMenu::Ship) {
 			const bool valid = side.ship >= 0 && size_t(side.ship) < save.ships.size() && save.player >= 0 &&
 				save.ships[size_t(side.ship)].in_use() && save.ships[size_t(side.ship)].owner() == save.player;
@@ -21281,6 +21320,12 @@ int main(int argc, char** argv) {
 			if (s.owner() == save.player) {
 				choose_ship(ship);
 			} else {
+				// 0x495190: a ship in a convoy shows its convoy first (the state 4, unless the convoy has 0x10), touched
+				// again the ship alone (3).
+				const int shown = side.menu == PanelMenu::OtherShip ? side.other_convoy : -1;
+				const uint16_t convoy = s.convoy();
+				side.other_convoy = ship_menu_shows_convoy(save, ship, shown) && !(save.convoys[convoy].u8(0x14) & 0x10)
+					? int(convoy) : -1;
 				side.menu = PanelMenu::OtherShip;
 				side.ship = ship;
 			}
@@ -23375,7 +23420,8 @@ int main(int argc, char** argv) {
 					draw_stop_window(renderer, *small_text, *panel_art, save, side);
 				}
 				if (side.menu == PanelMenu::OtherShip && side.ship >= 0 && !side.folded && g_game_art) {
-					draw_foreign_ship_menu(renderer, *g_game_art, *small_text, save, side.ship, panel_layout.room);
+					draw_foreign_ship_menu(renderer, *g_game_art, *small_text, save, side.ship, side.other_convoy,
+						panel_layout.room);
 				}
 				if (side.menu == PanelMenu::Statistics && !side.folded) {
 					draw_stats_room(renderer, *small_text, *panel_art, side);
@@ -23455,7 +23501,8 @@ int main(int argc, char** argv) {
 					draw_stop_window(renderer, *small_text, *panel_art, save, side);
 				}
 				if (side.menu == PanelMenu::OtherShip && side.ship >= 0 && !side.folded && g_game_art) {
-					draw_foreign_ship_menu(renderer, *g_game_art, *small_text, save, side.ship, panel_layout.room);
+					draw_foreign_ship_menu(renderer, *g_game_art, *small_text, save, side.ship, side.other_convoy,
+						panel_layout.room);
 				}
 				if (side.menu == PanelMenu::Statistics && !side.folded) {
 					draw_stats_room(renderer, *small_text, *panel_art, side);
@@ -23752,8 +23799,13 @@ int main(int argc, char** argv) {
 			// The ship list window over the town or the sea map, left of the panel.
 			const ShipListFrame f = ship_list_frame(save, ship_list, town_width);
 			ship_list.row = std::clamp(ship_list.row, 0, std::max(0, int(f.list.ships.size()) - 1));
-			draw_ship_list_window(renderer, *small_text, *g_game_art, save, town_names, ship_list, f,
-				side.menu == PanelMenu::Ship || side.menu == PanelMenu::OtherShip ? side.ship : -1);
+			std::vector<uint16_t> chosen;
+			if (side.menu == PanelMenu::OtherShip && side.other_convoy >= 0) {
+				chosen = convoy_menu_list(save, uint16_t(side.other_convoy)).ships;
+			} else if ((side.menu == PanelMenu::Ship || side.menu == PanelMenu::OtherShip) && side.ship >= 0) {
+				chosen.push_back(uint16_t(side.ship));
+			}
+			draw_ship_list_window(renderer, *small_text, *g_game_art, save, town_names, ship_list, f, chosen);
 		}
 		if (small_text && has_save && save.player >= 0 && !in_menu && panel_shown) {
 			// A button's tooltip: under the finger before it is lifted, or the one the pad points at.
