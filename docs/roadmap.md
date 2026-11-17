@@ -91,9 +91,14 @@ Cómo leerla:
   libro del astillero entre dos barcos o tipos (con el fallo de sus títulos corregido detrás del ajuste), la ventanita de
   mensaje del juego con su tamaño (0x41D9B0, `game_message`), los textos centrados «\c» revisados en las vistas, la
   sombra del edificio en su subasta (las variantes de los `.let` ya se leen) y las capitulares de las cartas.
-- **Siguiente**: lo que elija el usuario de «Lo que falta». De las pantallas quedan, ya localizados: las sombras y la
-  nieve de los tiles en la vista de la ciudad (apartado 4, «La ciudad viva») y las preguntas del convoy con la
-  ventanita del juego. Antes: las páginas como las del juego de todos los edificios (la última tanda, el
+- **Hecho el 17-11-2026 (`re/emu/sesion39/`)**: las preguntas del convoy con la ventanita del juego («Deshacer
+  convoy», «Abandonar convoy» y el aviso «No es posible formar un convoy»), y con ellas la alineación y las imágenes de
+  la caja de texto de la ventanita.
+- **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): primero el resto
+  de las pantallas, las sombras y la nieve de los tiles en la vista de la ciudad y el panel lateral con las letras y
+  los textos del juego (apartado 4); luego el intérprete de misiones (apartado 3), el final de la partida
+  (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
+  ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
   terrestre» y sus siete páginas de asedio, y el cliente de un pedido de la taberna; el panel de la Hansa propio del
   visor, quitado): el grupo 5 en el visor, hecho.
@@ -454,10 +459,17 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     baja las de debajo.
   - [x] Los textos centrados («\c»): todos los de las vistas de los edificios salen centrados (revisado el 15-11-2026
     con `re/emu/sesion38/cscan.py`, en los dos exes; las cartas y las batallas ya siguen su alineación).
-  - [ ] Fuera de los edificios, con la ventanita de mensaje del juego (0x41D9B0, ya en el visor: `game_message`): las
-    preguntas del convoy en la ventana del barco («Deshacer convoy», «Abandonar convoy», «No es posible formar un
-    convoy», hoy una fila del visor) y, con la tanda del panel, el aviso de la reputación del panel de construir
-    (0x6B20A4, centrado).
+  - [x] Las preguntas del convoy con la ventanita de mensaje del juego (17-11-2026, `re/emu/sesion39/`): el botón
+    «abandonar convoy» del menú del barco no abre página, pregunta (0x494DC0: «Deshacer convoy» si el barco es el
+    guía, si no «Abandonar convoy», con «Sí» y «No»; «Sí» encola la 0x16 o la 0x17, 0x4950D0), y «formar convoy» sin
+    nada que elegir no abre la ventana del convoy, avisa (0x40C470: «No es posible formar un convoy», con la imagen de
+    lo que necesita el guía, `konvoi_min.tga`). Las dos sin rodillos, la pregunta con la proporción 0,4 y el aviso con
+    1,375, centradas en la pantalla (`game_message_layout`, `convoy_question`, `convoy_cannot_form`); sus tamaños y
+    sitios, iguales a los de 0x41D9B0 en el emulador con las dos proporciones, en la pantalla del PC y en la de la Vita.
+    La caja de texto de la ventanita sigue ahora la alineación del juego («\c», «\l», «\r») y pone a su tamaño una
+    imagen sola en su línea (0x462F00). Arreglado de paso, en todas las pantallas: las fuentes de las ventanas del
+    juego se cargan la primera vez que se piden (una ventanita dispuesta antes de dibujar ninguna se medía sin ellas)
+    y los botones de la ventanita crecen para su tecla, como los de las páginas (también «○ No» del astillero).
   - [x] La sombra del edificio en su subasta (15-11-2026, `re/emu/sesion38/`): la imagen de la sombra del `.let`
     (sus variantes ya se leen: `docs/formats/town.md`) en negro con alfa 100 bajo el edificio, como 0x551F70.
   - [ ] Por hacer como el juego: el sonido de rezar
@@ -468,6 +480,11 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   terrestre» (los materiales de una carretera de la Hansa) y las siete del asedio (Presentes, Venta de mercancías,
   Contratos de entrega, Préstamo, Atacar, Rendirse, Comprar libertad), trazadas en el emulador (`gatetrace.sh`). (Los demás edificios con vista propia ya tienen
   la suya: el transporte por tierra resultó ser de la caballeriza, 13-11-2026.)
+- [ ] **El panel lateral con las letras y los textos del juego** (con los restos de las pantallas, por decisión del
+  usuario del 17-11-2026): hoy sus páginas se dibujan con la letra del visor.
+  Ya apuntado para entonces: la lista de barcos entera como la del juego (0x4768B0) y el aviso de la reputación del
+  panel de construir (0x6B20A4, un texto «\c» centrado). Mirar antes, como con los edificios, qué dibuja el juego en
+  cada página del panel.
 - [x] **El panel de la Hansa** propio del visor (Cuadrado en una ciudad), quitado el 15-11-2026 a petición del
   usuario: sus encargos y elecciones son las páginas del ayuntamiento, y los materiales de la carretera, la página
   «Ruta terrestre» de la puerta de la ciudad, como las del juego.
@@ -537,7 +554,8 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
 
 ### 6. Probar en la Vita
 
-- [ ] Todo lo hecho desde el 04-11-2026: el buzón y las líneas de aviso, las tandas del barco, la oficina, el astillero
+- [ ] Todo lo hecho desde el 04-11-2026 (el usuario lo probará cuando esté más avanzado, 17-11-2026; mientras, cada
+  parte se compila para la Vita): el buzón y las líneas de aviso, las tandas del barco, la oficina, el astillero
   y los convoyes, el prestamista, construir y el panel lateral, las estadísticas, las batallas en pantalla, la partida
   nueva, guardar y cargar, las rutas comerciales. En especial el teclado de la Vita (el IME de SDL: nombres de barco,
   de jugador, de ficheros de ruta), que no se puede probar sin ella. Cada VPK nuevo: `bash scripts/build-vita.sh` →
@@ -556,8 +574,9 @@ Pendiente:
 - [ ] **Decidir y corregir los fallos reproducidos que aún no tienen corrección** (lista abajo, «Reproducidos, sin
   corregir»): los de los piratas y las batallas en el mar, los de la batalla en una ciudad, los de la batalla que
   dirige el jugador, construir en el borde de la rejilla, el reloj de las batallas y los de las cartas.
-- [ ] **Más adelante, cada corrección por separado** (idea del usuario, 05-11-2026): un inventario de los fallos y
-  rarezas y una pantalla en las Opciones para encender o apagar cada corrección, en vez del ajuste único. Por eso cada
+- [ ] **Más adelante, cada corrección por separado** (idea del usuario, 05-11-2026; el 17-11-2026, una pantalla de
+  ajustes para encender o apagar ciertas cosas, cada corrección por separado o como complementos): un inventario de los
+  fallos y rarezas y una pantalla en las Opciones para encender o apagar cada corrección, en vez del ajuste único. Por eso cada
   fallo de la lista de abajo tiene que quedar bien identificado: dónde está, qué hace mal y qué cambia su corrección.
 - [ ] La fiesta de la IA que nunca ocurre, como opción aparte (abajo, «No se corrigen»).
 
@@ -681,6 +700,14 @@ comprobaciones de escritura de partidas, de cartas (`letters-check.sh`) y de la 
 cada una: el HANDOFF y [oracle.md](oracle.md).
 
 ## Decisiones del usuario que siguen valiendo
+
+- **El orden de lo que falta** (17-11-2026): 1) los restos de las pantallas ya empezados (las preguntas del convoy, las
+  sombras y la nieve de los tiles, y el panel lateral con las letras y los textos del juego, que el usuario metió en
+  este punto); 2) el intérprete de misiones, porque las misiones salen durante la partida, antes de
+  llegar a Gobernador; 3) el final de la partida (la clasificación y el vídeo de Gobernador); 4) la ciudad viva; 5) el
+  sonido, la música y los vídeos; 6) los fallos del juego, con una pantalla de ajustes para encender o apagar cosas (cada
+  corrección por separado, o como complementos); 7) la partida en red. La prueba en la Vita, más adelante, cuando esté
+  más avanzado: mientras, cada parte se sigue compilando para la Vita.
 
 - **Sin flecos** (14-11-2026: «No quiero dejar cosas atrás, hay que acabar lo que falta primero … no dejar flecos
   por todos lados»): lo que falte de algo ya empezado se termina antes de empezar nada nuevo; lo que una sesión deje sin

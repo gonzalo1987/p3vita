@@ -3297,26 +3297,49 @@ int add_box(PlaceView::Page& page, const std::string& text, int x, int y, int wi
 	return y;
 }
 
-// A game's text box with its own fonts (0x462520: «\fN» sets the font from there on, the box's own being 0): each line
-// in the font it starts with, wrapped, 15 high (20 in the title font, 3); with a page, its lines as the page's texts
-// from (x, y). Its height.
+// A game's text box with its own fonts and alignment (0x462540: «\fN» sets the font from there on, the box's own being
+// 0; «\c», «\l» and «\r» the alignment from there on, 0x462659..0x46269A): each line in the font it starts with,
+// wrapped, 15 high (20 in the title font, 3), centred in `width` or at its right end by its alignment; a line that is
+// only a picture («\tN_», textures.ini's TEX N: 0x4627AB) as large as the picture, the line as high as it (0x462F00: a
+// line is as high as its pieces). With a page, its lines as the page's texts and pictures from (x, y). Its height.
 int game_box(PlaceView::Page* page, const std::string& raw, int x, int y, int width, SDL_Color color = {0, 0, 0, 255}) {
 	int font = 0;
+	char align = 'l';
 	int height = 0;
 	for (std::string line : box_lines(raw)) {
-		while (line.size() >= 3 && line[0] == '\\' && line[1] == 'f' && std::isdigit(uint8_t(line[2]))) {
-			font = line[2] - '0';
-			line.erase(0, line.size() > 3 && line[3] == '_' ? 4 : 3);
+		while (line.size() >= 2 && line[0] == '\\') {
+			if (line.size() >= 3 && line[1] == 'f' && std::isdigit(uint8_t(line[2]))) {
+				font = line[2] - '0';
+				line.erase(0, line.size() > 3 && line[3] == '_' ? 4 : 3);
+			} else if (line[1] == 'c' || line[1] == 'l' || line[1] == 'r') {
+				align = line[1];
+				line.erase(0, 2);
+			} else {
+				break;
+			}
+		}
+		const int step = font == 3 ? 20 : kBoxLine;
+		if (line.size() > 3 && line[0] == '\\' && line[1] == 't' && line.back() == '_' &&
+			std::all_of(line.begin() + 2, line.end() - 1, [](char c) { return std::isdigit(uint8_t(c)) != 0; })) {
+			const uint32_t tex = uint32_t(std::strtoul(line.c_str() + 2, nullptr, 10));
+			const SDL_Point size = g_game_art ? g_game_art->tex_size(tex, 0) : SDL_Point{0, 0};
+			if (page && size.x > 0) {
+				const int left = align == 'c' ? x + (width - size.x) / 2 : align == 'r' ? x + width - size.x : x;
+				page->icons.push_back({tex, 0, left, y + height});
+			}
+			height += std::max(step, size.y);
+			continue;
 		}
 		const std::string text = clean_game_text(line);
 		const TextRenderer* f = !g_game_art ? nullptr
 			: font == 0						? g_game_art->head_text()
 			: font == 3						? g_game_art->title_text()
 											: g_game_art->page_text();
-		const int step = font == 3 ? 20 : kBoxLine;
 		for (const std::string& part : text.empty() || !f ? std::vector<std::string>{text} : wrap_text(*f, text, width)) {
 			if (page && !part.empty()) {
-				PlaceView::PageText t{part, x, y + height};
+				PlaceView::PageText t{part, align == 'c' ? x + width / 2 : align == 'r' ? x + width : x, y + height};
+				t.centred = align == 'c';
+				t.right = align == 'r';
 				t.head_font = font == 0;
 				t.title_font = font == 3;
 				t.color = color;
@@ -3332,20 +3355,27 @@ int game_box(PlaceView::Page* page, const std::string& raw, int x, int y, int wi
 // the same places): parchment.ini [Parchment0]'s MinXSize 128, XReserved 52, YReserved 40, TextXOffset 12, TextYOffset
 // 4; tiles of 32; its buttons' styles by their labels' width with two spaces in font 1 (up to 16, 32, 48, 96: buttons.ini
 // [Button0..3]'s width; else [Button4]'s 128), its close button [+0x4B0] Button5 (32 × 18). Its width from the screen's
-// tiles (its height ftol(width · 0.6 / 32) · 32), a tile narrower while the text (laid out XReserved narrower, its height
-// to a line, with YReserved and, official, two tiles) is lower than the window, then one back if it fits; no narrower
-// than its buttons, the close one and half of it (MinXSize at least). Centred (its x plus x % 4: 0x41E0AD), official
-// with the rolls (6 wide) at its sides. The text box from (6 + 12 + 3, 32 + 4) (0x41E500: centred between there and the
-// scroll bar), the buttons 61 over its bottom (29 not official) with even gaps from the left roll, the close one 44 from
-// its right side. The screen here is the window's room (the game centres it on its screen): the message stays inside it.
-void game_message(PlaceView& v, const std::string& raw, std::vector<PlaceView::PageButton> buttons, bool official, int key) {
+// tiles (its height ftol(width · ratio / 32) · 32, the caller's ratio, its struct's +0x10: 0.6 the shipyard's question,
+// 0.4 the convoy's, 1.375 the convoy window's note), a tile narrower while the text (laid out XReserved narrower, its
+// height to a line, with YReserved and, official, two tiles) is lower than the window, then one back if it fits; no
+// narrower than its buttons, the close one and half of it (MinXSize at least). Centred (its x plus x % 4: 0x41E0AD),
+// official with the rolls (6 wide) at its sides. The text box from (6 + 12 + 3, 32 + 4) (0x41E500: centred between
+// there and the scroll bar), the buttons 61 over its bottom (29 not official) with even gaps from the left roll, the
+// close one 44 from its right side. The screen is the room the caller gives (the game centres it on its screen).
+struct GameMessage {
+	PlaceView::Dialog dialog;
+	PlaceView::Page page;
+	SDL_Rect close{};  // Its close button, [+0x4B0].
+};
+GameMessage game_message_layout(const std::string& raw, std::vector<PlaceView::PageButton> buttons, bool official, int key,
+	float message_ratio, int screen_w, int screen_h) {
 	constexpr int kTile = 32;
 	constexpr int kMinX = 128;
 	constexpr int kXReserved = 52;
 	constexpr int kYReserved = 40;
 	constexpr int kClose = 32;
 	constexpr int kRoll = 6;
-	const double ratio = double(0.6f);  // (The message's float, 0x3F19999A.)
+	const double ratio = double(message_ratio);  // (The message's float.)
 	const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
 	int sum = 0;
 	for (PlaceView::PageButton& b : buttons) {
@@ -3355,8 +3385,6 @@ void game_message(PlaceView& v, const std::string& raw, std::vector<PlaceView::P
 		sum += b.rect.w;
 	}
 	int least = std::max(kClose / 2 + kClose + sum, kMinX);
-	const int screen_w = kInteriorWidth;
-	const int screen_h = kInteriorHeight;
 	if (least > screen_w) {
 		least = screen_w / kTile;  // (0x41DCD9: the screen's tiles, not its pixels: the game's.)
 	}
@@ -3398,15 +3426,13 @@ void game_message(PlaceView& v, const std::string& raw, std::vector<PlaceView::P
 	if (official) {
 		x -= kRoll;
 	}
-	PlaceView::Dialog d;
-	d.cols = w / kTile;
-	d.rows = h / kTile;
-	d.rolls = official;
-	d.key = key;
-	d.at = {x, y};
-	v.popup_dialog = d;
-	PlaceView::Page page;
-	game_box(&page, raw, (official ? kRoll : 0) + 12 + 3, (official ? kTile : 0) + 4, w - kXReserved);
+	GameMessage m;
+	m.dialog.cols = w / kTile;
+	m.dialog.rows = h / kTile;
+	m.dialog.rolls = official;
+	m.dialog.key = key;
+	m.dialog.at = {x, y};
+	game_box(&m.page, raw, (official ? kRoll : 0) + 12 + 3, (official ? kTile : 0) + 4, w - kXReserved);
 	const int button_y = h - (official ? kTile : 0) - kYReserved + (kYReserved - 18) / 2;
 	const int gap = buttons.empty() ? 0 : (w - (kClose / 2 + kClose) - sum) / int(buttons.size() + 1);
 	int bx = official ? kRoll : 0;
@@ -3415,11 +3441,20 @@ void game_message(PlaceView& v, const std::string& raw, std::vector<PlaceView::P
 		b.rect.x = bx;
 		b.rect.y = button_y;
 		bx += b.rect.w;
-		page.buttons.push_back(b);
+		m.page.buttons.push_back(fitted(b));  // (Grown round its middle for the Vita's key before its label.)
 	}
-	PlaceView::offset_page(page, x, y);
-	v.popup = std::move(page);
-	v.popup_close_at = SDL_Rect{x + w - (kClose / 2 + kClose) / 4 - kClose, y + button_y, kClose, 18};
+	PlaceView::offset_page(m.page, x, y);
+	m.close = SDL_Rect{x + w - (kClose / 2 + kClose) / 4 - kClose, y + button_y, kClose, 18};
+	return m;
+}
+
+// The message over a building's window: the window's room its screen (425 × 510: the message stays inside it).
+void game_message(PlaceView& v, const std::string& raw, std::vector<PlaceView::PageButton> buttons, bool official, int key,
+	float ratio = 0.6f) {
+	GameMessage m = game_message_layout(raw, std::move(buttons), official, key, ratio, kInteriorWidth, kInteriorHeight);
+	v.popup_dialog = m.dialog;
+	v.popup = std::move(m.page);
+	v.popup_close_at = m.close;
 }
 
 // Whether a game's text starts centred («\c», before or after its font's «\fN_»).
@@ -11417,20 +11452,11 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 		// the ship alone selected.
 		const uint16_t convoy = ship.convoy();
 		if (convoy < save.globals.u16(global::kShips + 0xF6) && convoy < save.convoys.size()) {
+			// Leaving it or, the guide, disbanding it: the panel's button asks first with the game's message
+			// (0x494DC0, convoy_question), whose «Yes» does this row.
 			const bool guide = save.convoys[convoy].u16(0x10) == v.ship;
-			// The %s: the guide's name (0x494EDE) or the ship's.
-			const uint16_t guide_ship = save.convoys[convoy].u16(0x10);
-			const std::vector<std::string> ask = text_lines(game_format(guide ? GameText::ConvoyDisbandAsk : GameText::ConvoyLeaveAsk,
-				{guide_ship < save.ships.size() && guide ? save.ships[guide_ship].name() : ship.name()},
-				guide ? tr("Deshacer convoy\n¿Quieres separar los barcos del convoy?", "Disband convoy\nShould the convoy be disbanded?")
-					  : tr("Abandonar convoy\n¿Quieres que tu barco abandone el convoy?", "Leave convoy\nShould the ship leave the convoy?")));
-			v.rows.push_back({ask.empty() ? std::string() : ask[0], true});
+			v.rows.push_back({guide ? tr("Deshacer convoy", "Disband convoy") : tr("Abandonar convoy", "Leave convoy"), true});
 			v.codes.push_back(guide ? kDisbandConvoy : kLeaveConvoy);
-			if (ui.row == 2) {
-				for (size_t k = 1; k < ask.size(); ++k) {
-					v.lines.push_back({ask[k], kTextColor});
-				}
-			}
 		} else {
 			const std::vector<int32_t> choices = convoy_choices(save, {uint16_t(v.ship)});
 			for (const int32_t c : choices) {
@@ -11448,16 +11474,9 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 				v.codes.push_back(c);
 			}
 			if (choices.empty()) {
+				// (The panel's button doesn't open the page then: the game's note, convoy_cannot_form.)
 				v.rows.push_back({game_text(GameText::ConvoyFormPrivate, tr("Formar convoy privado", "Form private convoy")), false});
 				v.codes.push_back(kNoConvoy);
-				if (ui.row == 2) {
-					const std::vector<std::string> why = text_lines(game_text(GameText::ConvoyCannotForm,
-						tr("No es posible formar un convoy\nNo has seleccionado una nave capitana apropiada.",
-							"Convoy cannot be formed\nYou have not chosen a suitable convoy leader.")));
-					for (const std::string& line : why) {
-						v.lines.push_back({line, kDimColor});
-					}
-				}
 			}
 		}
 		ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
@@ -11712,7 +11731,7 @@ SDL_Color parchment_color(const SDL_Color& c) {
 }
 
 // A pill of the parchments with its label (black, or dimmed when it can't be pressed).
-void draw_pill_button(const GameWindowArt& art, TextRenderer& text, const SDL_Rect& r, const std::string& label,
+void draw_pill_button(GameWindowArt& art, TextRenderer& text, const SDL_Rect& r, const std::string& label,
 	bool enabled) {
 	art.draw_pill(r, enabled ? PillState::Standard : PillState::Disabled);
 	const std::string shown = cut_text(text, label, r.w - 12);
@@ -11796,7 +11815,7 @@ struct PlaceMenuLayout {
 	}
 };
 
-void draw_place_menu(SDL_Renderer* renderer, TextRenderer& screen_text, const GameWindowArt& art, SDL_Texture* parchment,
+void draw_place_menu(SDL_Renderer* renderer, TextRenderer& screen_text, GameWindowArt& art, SDL_Texture* parchment,
 	const SDL_Rect& room, const PlaceView& v) {
 	const SDL_Rect dst = room;
 	if (parchment) {
@@ -13382,6 +13401,33 @@ bool ship_menu_convoy(const SaveGame& save, int ship) {
 	return ship_in_convoy(save, ship) && !(save.convoys[s.convoy()].u8(0x14) & 0x10);
 }
 
+// The panel's «leave convoy» button (0x48B985, 0x48BE8E → 0x494DC0) is no page: it asks with the game's message, not
+// official, the ratio 0.4 (0x3ECCCCCD), «Yes» and «No», centred on the screen: 0x699A78 «Disband convoy» with the
+// guide's name when the ship is its guide, else 0x699AC0 «Leave convoy» with the ship's; «Yes» (its answer 0x4950D0)
+// queues 0x16 or 0x17 (the convoy window's row, ship_convoy_act). A question for a ship in a convoy.
+GameMessage convoy_question(const SaveGame& save, int ship) {
+	const SavedShip& s = save.ships[size_t(ship)];
+	const uint16_t guide = save.convoys[s.convoy()].u16(0x10);
+	const bool disband = guide == ship;
+	const std::string name = disband && guide < save.ships.size() ? save.ships[guide].name() : s.name();
+	const std::string raw = g_texts ? GameTexts::sprintf_raw(g_texts->raw(disband ? GameText::ConvoyDisbandAsk : GameText::ConvoyLeaveAsk),
+										  {utf8_to_latin1(name)})
+									: std::string();
+	PlaceView::PageButton yes{{0, 0, 0, 18}, exe_text(0x699948, "Sí", "Yes"), PlaceView::PageAction::Act, true};
+	yes.value = 1;
+	PlaceView::PageButton no{{0, 0, 0, 18}, exe_text(0x699950, "No", "No"), PlaceView::PageAction::Back, true};
+	no.value = 0;
+	return game_message_layout(raw, {yes, no}, false, 20, 0.4f, kScreenWidth, kScreenHeight);
+}
+
+// The panel's «form convoy» button opens the convoy window (0x40C470, its slot 0x120) unless 0x40C170 finds nothing to
+// choose: then the game's message 0x699B48 («Convoy cannot be formed», with konvoi_min.tga: what a guide needs), not
+// official, no buttons, the ratio 1.375 (0x3FB00000), centred on the screen, and the window stays shut.
+GameMessage convoy_cannot_form() {
+	const std::string raw = g_texts ? g_texts->raw(GameText::ConvoyCannotForm) : std::string();
+	return game_message_layout(raw, {}, false, 21, 1.375f, kScreenWidth, kScreenHeight);
+}
+
 // What can be chosen (0x48A9A2..0x48AA9A): in a convoy (without its flag 0x10) leaving or disbanding it,
 // unless the state has the bits 0x14, and showing it; otherwise forming one only in port (the states 0
 // and 1). The trade route: a ship alone with a captain (0x48AA79); the convoy's menu always (0x48AAB2):
@@ -14670,10 +14716,9 @@ void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& 
 		}
 		[[fallthrough]];
 	case ShipPage::LeaveConvoy: {
-		// The convoy window's choices (0x40C170) or its question (0x494DC0): the rows from 2 of the ship's
-		// actions, the selected one lit, the public's destination with minus and plus, and its button.
-		text.draw(ui.ship_page == ShipPage::LeaveConvoy ? tr("Convoy", "Convoy") : tr("Formar convoy", "Form convoy"), left,
-			layout.top, kParchmentInk);
+		// The convoy window's choices (0x40C170): the rows from 2 of the ship's actions, the selected one lit, the
+		// public's destination with minus and plus, and its button. («Leave convoy» opens no page: convoy_question.)
+		text.draw(tr("Formar convoy", "Form convoy"), left, layout.top, kParchmentInk);
 		int k = 0;
 		for (size_t r = 2; r < actions.rows.size() && k < ShipMenuLayout::kConvoyRows; ++r, ++k) {
 			const SDL_Rect& rr = layout.convoy_rows[k];
@@ -17036,6 +17081,13 @@ int main(int argc, char** argv) {
 	g_texts = game_texts.get();
 	EndWindow end_window;  // When the player is elected Alderman.
 	MessageWindow messages;  // The game's messages to the player (a battle...).
+	// The game's message window over the screen (game_message_layout): the ship menu's convoy question and note;
+	// `ship` the ship whose «Yes» it asks (−1: a note).
+	struct ScreenMessage {
+		GameMessage m;
+		int ship = -1;
+	};
+	std::optional<ScreenMessage> screen_message;
 	// The window of a sea map battle icon (ChoiceBox: its battle's slot, or -1); and the sea map's battle icons
 	// (Sailing::take_sea_map_icons, each with its battle's block: it goes when its battle goes, as the game's
 	// destructor drops it, 0x457DF0).
@@ -19836,14 +19888,26 @@ int main(int argc, char** argv) {
 				return false;
 			}
 		};
+		// The ship menu's buttons that open no page: «leave convoy» asks (convoy_question) and «form convoy» with nothing
+		// to choose says why (convoy_cannot_form).
+		auto ship_no_page = [&](ShipPage page) {
+			return page == ShipPage::LeaveConvoy ||
+				(page == ShipPage::Convoy && !ship_in_convoy(save, side.ship) &&
+					convoy_choices(save, {uint16_t(side.ship)}).empty());
+		};
 		// The ship menu's page: its first row (the crew's or the convoy's) and amount.
 		auto ship_page = [&](ShipPage page) {
 			if (side.ship < 0 || !ship_page_enabled(save, side.ship, page)) {
 				return;
 			}
+			if (ship_no_page(page)) {
+				screen_message = page == ShipPage::LeaveConvoy ? ScreenMessage{convoy_question(save, side.ship), side.ship}
+															   : ScreenMessage{convoy_cannot_form(), -1};
+				return;
+			}
 			side.ship_page = page;
 			side.crew_pair = false;
-			side.ship_ui.row = page == ShipPage::Crew ? 0 : page == ShipPage::Convoy || page == ShipPage::LeaveConvoy ? 2 : 0;
+			side.ship_ui.row = page == ShipPage::Convoy ? 2 : 0;
 			side.ship_ui.amount = 0;
 			side.route_row = 0;
 			side.route_column = 0;
@@ -19870,13 +19934,34 @@ int main(int argc, char** argv) {
 				return;
 			}
 			const bool crew = side.ship_page == ShipPage::Crew && side.ship_ui.row < 2;
-			const bool convoy = (side.ship_page == ShipPage::Convoy || side.ship_page == ShipPage::LeaveConvoy) &&
+			const bool convoy = side.ship_page == ShipPage::Convoy &&
 				side.ship_ui.row >= 2 && !(side.ship_page == ShipPage::Convoy && ship_in_convoy(save, side.ship));
 			if (crew || convoy) {
 				place_act(save, sailing.get(), town_index, side.ship_ui, ship_now);
 				if (!side.ship_ui.message.empty()) {
 					notify(side.ship_ui.message);  // As the game's lines, over the town.
 					side.ship_ui.message.clear();
+				}
+			}
+		};
+		// The game's message's answer: «Yes» does what it asks (the convoy question: the convoy window's row 2 for its
+		// ship, ship_convoy_act, as 0x4950D0 queues 0x16 or 0x17); anything else shuts it.
+		auto screen_message_answer = [&](bool yes) {
+			const int ship = screen_message ? screen_message->ship : -1;
+			screen_message.reset();
+			if (!yes || ship < 0 || size_t(ship) >= save.ships.size() || !ship_in_convoy(save, ship)) {
+				return;
+			}
+			PlaceUi ui = side.ship_ui;
+			ui.open = Place::Ship;
+			ui.ship = size_t(ship);
+			ui.row = 2;
+			ui.amount = 0;
+			const PlaceView v = place_view(save, town_index, ui);
+			if (v.codes.size() > 2 && (v.codes[2] == kLeaveConvoy || v.codes[2] == kDisbandConvoy)) {
+				place_act(save, sailing.get(), town_index, ui, v);
+				if (!ui.message.empty()) {
+					notify(ui.message);  // As the game's lines, over the town.
 				}
 			}
 		};
@@ -20307,7 +20392,7 @@ int main(int argc, char** argv) {
 			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
 				for (int k = 1; k < kShipPages; ++k) {
 					const int p = (int(side.ship_page) + kShipPages + (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -k : k)) % kShipPages;
-					if (ship_page_enabled(save, side.ship, ShipPage(p))) {
+					if (ship_page_enabled(save, side.ship, ShipPage(p)) && !ship_no_page(ShipPage(p))) {
 						ship_page(ShipPage(p));
 						break;
 					}
@@ -20818,6 +20903,13 @@ int main(int argc, char** argv) {
 				if (battle_button(event.cbutton.button)) {
 					break;  // The battles' window, over the others.
 				}
+				if (screen_message) {
+					// The game's message: X its first button («Yes»), Circle shuts it («No»); a note, either of them.
+					if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A || event.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
+						screen_message_answer(event.cbutton.button == SDL_CONTROLLER_BUTTON_A && screen_message->ship >= 0);
+					}
+					break;
+				}
 				if (end_window.open) {
 					// The end window takes X and Circle.
 					if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A || event.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
@@ -21196,6 +21288,12 @@ int main(int argc, char** argv) {
 					touch_building = false;
 					break;
 				}
+				if (screen_message) {
+					touch_on_side = false;  // So under the game's message.
+					touch_on_panel = true;
+					touch_building = false;
+					break;
+				}
 				if (in_battle && !in_menu) {
 					// The battle's screen: dragging moves its view; a tap or a long press is an order (on lifting
 					// it, and in the frame, kBattleLongPressMs). On its panel, the panel's.
@@ -21239,6 +21337,9 @@ int main(int argc, char** argv) {
 				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
 					std::abs(int(event.tfinger.dy * kScreenHeight));
 				touch_now = {int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight)};
+				if (screen_message) {
+					break;  // Nothing moves under the game's message.
+				}
 				if (in_battle && touch_on_side) {
 					// On the battle's minimap, the view goes where the finger is.
 					SDL_Point at;
@@ -21368,6 +21469,29 @@ int main(int argc, char** argv) {
 				break;
 			case SDL_FINGERUP:
 				finger_down = false;
+				if (screen_message) {
+					// The game's message: its buttons (a little taller for the finger); its close button, or a touch out
+					// of it, shuts it.
+					if (touch_moved < kTapDistance) {
+						const GameMessage& m = screen_message->m;
+						const int tx = touch_start.x, ty = touch_start.y;
+						int pressed = -1;
+						for (const PlaceView::PageButton& b : m.page.buttons) {
+							if (inside({b.rect.x, b.rect.y - 4, b.rect.w, b.rect.h + 8}, tx, ty)) {
+								pressed = b.value;
+							}
+						}
+						const SDL_Rect room = {m.dialog.at.x, m.dialog.at.y, m.dialog.width(), m.dialog.height()};
+						const SDL_Rect shut = {m.close.x - 4, m.close.y - 4, m.close.w + 8, m.close.h + 8};
+						if (pressed >= 0) {
+							screen_message_answer(pressed == 1);
+						} else if (!inside(room, tx, ty) || inside(shut, tx, ty)) {
+							screen_message_answer(false);
+						}
+					}
+					touch_on_panel = false;
+					break;
+				}
 				if (battle_popup()) {
 					// A tap on one of the battles' window's buttons.
 					if (touch_moved < kTapDistance && text && small_text) {
@@ -21889,7 +22013,7 @@ int main(int argc, char** argv) {
 								side.ship_ui.row = 2;
 								ship_act();
 							}
-						} else if (side.ship_page == ShipPage::Convoy || side.ship_page == ShipPage::LeaveConvoy) {
+						} else if (side.ship_page == ShipPage::Convoy) {
 							const int row = room.convoy_row_at(x, y);
 							const bool destination = ship_now.amount_choice && ship_now.max_amount >= 0;
 							if (row >= 0 && 2 + row < int(ship_now.rows.size()) && 2 + row != side.ship_ui.row) {
@@ -22900,6 +23024,21 @@ int main(int argc, char** argv) {
 		}
 		if (end_window.open && text && small_text) {
 			draw_end_window(renderer, *text, *small_text, end_window, hanse_context);
+		}
+		if (screen_message && g_game_art && small_text) {
+			// The game's message over the screen: its paper, its texts and buttons, its close button after its key unless
+			// a button of its own already does the same (the question's «No»).
+			const GameMessage& m = screen_message->m;
+			g_game_art->draw_dialog(m.dialog.at.x, m.dialog.at.y, m.dialog.cols, m.dialog.rows, m.dialog.rolls, m.dialog.key);
+			TextRenderer& font = g_game_art->page_text() ? *g_game_art->page_text() : *small_text;
+			draw_page_items(renderer, font, *g_game_art, m.page, SDL_Rect{0, 0, kScreenWidth, kScreenHeight}, nullptr);
+			const bool back = std::any_of(m.page.buttons.begin(), m.page.buttons.end(),
+				[](const PlaceView::PageButton& b) { return b.action == PlaceView::PageAction::Back; });
+			if (!back) {
+				font.draw(BTN_CIRCLE, m.close.x - font.measure(BTN_CIRCLE) - 2, m.close.y + (m.close.h - font.line_height()) / 2,
+					kButtonInk);
+			}
+			g_game_art->draw_close(m.close, false);
 		}
 		if (text && small_text) {
 			// The battles' window over the others: the question (or an end), else a battle icon's window.

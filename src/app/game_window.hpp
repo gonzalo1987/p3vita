@@ -134,12 +134,22 @@ public:
 	// last and the last row (0x41C420), rolling the new middle ones.
 	void draw_dialog(int x, int y, int cols, int rows, bool rolls, int key);
 	// The game's font 1 (ttffonts.ini: Tiepolo bold, 13 × 15), the one its pages and buttons are laid out for; null
-	// without it.
-	TextRenderer* page_text() const { return page_.get(); }
+	// without it. The fonts load with the common pieces the first time one is asked for (a page laid out before any
+	// window is drawn: the ship menu's convoy question measures its buttons with it).
+	TextRenderer* page_text() {
+		ensure_common();
+		return page_.get();
+	}
 	// The titles' font (the game's font 3); null without it.
-	TextRenderer* title_text() const { return title_.get(); }
+	TextRenderer* title_text() {
+		ensure_common();
+		return title_.get();
+	}
 	// The tables' heads' font (the game's font 0, Tiepolo black); null without it.
-	TextRenderer* head_text() const { return head_.get(); }
+	TextRenderer* head_text() {
+		ensure_common();
+		return head_.get();
+	}
 
 	// The interior's animations ([Anim k] of animation.ini: AnimN the TEX with its frames, AnimNX/Y its place on the
 	// picture, AnimNTime the loop's ms, AnimNFrames; as many as its Animations, 0x46563E: the office's lists five but
