@@ -12574,6 +12574,8 @@ struct SidePanel {
 	int stats_choice_slot = -1;
 	bool stats_choice_by_key = false;
 	int stats_choice_row = 0;
+	int stats_choice_first = 0;  // The list's first row shown ([+0x494]).
+	int stats_residents_first = 0;  // The towns' residents' first row shown (its scroll bar [+0x2634]).
 	// The towns' pages' choices ([+0xAC..+0xBD]): the comparison's four towns and its ware (the slot 4 of the
 	// buttons: the ware button [+0x214]).
 	StatisticsTownChoices stats_towns;
@@ -13979,17 +13981,23 @@ void ship_list_show_row(ShipListUi& ui, const ShipListFrame& f) {
 	ui.first[t] = std::clamp(ui.first[t], k - f.rows[t] + 1, k);
 }
 
-// --- The game's selection list in its mode 1, «choose town» (0x46F760: its open 0x46F9B0, its drawing 0x471420;
-// ship_menu_window.hpp, selection_list_layout; re/emu/sesion42/README.md): a parchment with rolls over the view, for a
-// public convoy's destination (the convoy window's [+0xA8]) and a trade route's stop (the route page's town buttons,
-// [+0x4170]'s sibling). Its rows the towns' names (0x6DDA00 by index, statistics_town_name), sorted by name when it
-// opens (0x471FF0), and the route's extra row «none» (0xFF). ---
+// --- The game's selection list (0x46F760: its open 0x46F9B0, its drawing 0x471420; ship_menu_window.hpp,
+// selection_list_layout; re/emu/sesion42/README.md, re/emu/sesion43/README.md): a parchment with rolls over the view,
+// its title in the font 3 («choose goods», «choose town», «choose trader»: 0x6C10C8 + 4 · mode), its rows in the font 0,
+// its extra row («none», «no trader»: [+0xC4]) and, with keys, its sort button [+0x58C] (Button4) at the rows' left on
+// the close button's line (0x470371). In its mode 1 for a public convoy's destination (the convoy window's [+0xA8]) and a
+// trade route's stop (the route page's town buttons, [+0x4170]'s sibling): the towns' names (0x6DDA00 by index,
+// statistics_town_name), sorted by name when it opens (0x471FF0), and the route's extra row «none» (0xFF); in its
+// modes 0, 1 and 2 for the statistics' buttons (stats_list_frame). ---
 constexpr int kTownListDialog = 32;  // GameWindowArt::draw_dialog's key.
 std::vector<std::string> stats_town_names();
 
 struct TownListFrame {
-	std::vector<int> towns;  // Its rows: a town's index, or -1 the extra row ([+0xC4]: «none», 0x4713DE).
+	std::vector<int> towns;  // Its rows: a town's (a ware's, a merchant's) index, or -1 the extra row.
 	std::vector<std::string> names;  // Each row's words.
+	std::vector<uint32_t> inks;  // Each row's ink when not pointed (the merchants' list: the player's blue).
+	std::string title;
+	std::string sort;  // The sort button's label (with its key); empty without it.
 	SelectionListLayout layout;
 	int first = 0;  // The first row shown ([+0x494]).
 	SDL_Rect window() const { return {layout.x, layout.y, layout.window_w(), layout.h}; }
@@ -13998,6 +14006,9 @@ struct TownListFrame {
 			layout.rows_width, kSelectionListRowHeight};
 	}
 	SDL_Rect close() const { return {layout.x + layout.close_x(), layout.y + layout.close_y(), 32, 18}; }
+	SDL_Rect sort_button() const {
+		return {layout.x + kSelectionListRowX, layout.y + layout.close_y(), kSelectionListButton, 18};
+	}
 	// Its scroll bar when some rows don't show (w 0: none).
 	SDL_Rect bar() const {
 		if (int(towns.size()) <= layout.rows) {
@@ -14020,33 +14031,25 @@ struct TownListFrame {
 	int shown_from(int row) const { return std::clamp(first, row - layout.rows + 1, row); }
 };
 
-// The list for `towns` (sorted by name here, as the open sorts them; `none` adds the extra row after them), over the view
-// left of `view_right`, from the first row `first` (clamped).
-TownListFrame town_list_frame(const SaveGame& save, const std::vector<uint8_t>& towns, bool none, int first,
+// The list of `items` (`words` each, `inks` each) under `title`, laid out as its open (the rows' width the widest of the
+// title, the sort button and 5, and the rows in the font 0), over the view left of `view_right`, from the first row
+// `first` (clamped).
+TownListFrame selection_list_frame(const std::string& title, const std::vector<int>& items,
+	const std::vector<std::string>& words, const std::vector<uint32_t>& inks, const std::string& sort, int first,
 	int view_right) {
 	TownListFrame f;
-	StatisticsChoice choice;
-	choice.mode = 1;
-	choice.merchants = towns;
-	const std::vector<std::string> by_number = stats_town_names();
-	if (g_texts) {
-		sort_choice_by_name(save, *g_texts, by_number, choice);
-	}
-	for (const uint8_t t : choice.merchants) {
-		f.towns.push_back(int(t));
-	}
-	if (none) {
-		f.towns.push_back(-1);
-	}
+	f.towns = items;
+	f.names = words;
+	f.inks = inks;
+	f.inks.resize(f.towns.size(), kShipListInk);
+	f.title = title;
+	f.sort = sort;
 	TextRenderer* row_font = g_game_art ? g_game_art->head_text() : nullptr;
 	TextRenderer* title_font = g_game_art ? g_game_art->title_text() : nullptr;
 	int widest = 0;
-	for (const int t : f.towns) {
-		f.names.push_back(t < 0 ? exe_text(0x6C1078, "ninguna", "none")
-								: clean_game_text(statistics_town_name(save, by_number, uint32_t(t))));
-		widest = std::max(widest, row_font ? row_font->measure(f.names.back()) : 7 * int(f.names.back().size()));
+	for (const std::string& w : f.names) {
+		widest = std::max(widest, row_font ? row_font->measure(w) : 7 * int(w.size()));
 	}
-	const std::string title = exe_text(0x6C10CC, "Elegir ciudad", "choose town");
 	const int title_w = title_font ? title_font->measure(title) : 7 * int(title.size());
 	f.layout = selection_list_layout(0, kBarHeight, view_right, kScreenHeight - kBarHeight, int(f.towns.size()), widest,
 		title_w);
@@ -14054,9 +14057,33 @@ TownListFrame town_list_frame(const SaveGame& save, const std::vector<uint8_t>& 
 	return f;
 }
 
+// The towns' list for `towns` (sorted by name here, as the open sorts them; `none` adds the extra row after them).
+TownListFrame town_list_frame(const SaveGame& save, const std::vector<uint8_t>& towns, bool none, int first,
+	int view_right) {
+	StatisticsChoice choice;
+	choice.mode = 1;
+	choice.merchants = towns;
+	const std::vector<std::string> by_number = stats_town_names();
+	if (g_texts) {
+		sort_choice_by_name(save, *g_texts, by_number, choice);
+	}
+	std::vector<int> items;
+	std::vector<std::string> words;
+	for (const uint8_t t : choice.merchants) {
+		items.push_back(int(t));
+		words.push_back(clean_game_text(statistics_town_name(save, by_number, uint32_t(t))));
+	}
+	if (none) {
+		items.push_back(-1);
+		words.push_back(exe_text(0x6C1078, "ninguna", "none"));
+	}
+	return selection_list_frame(exe_text(0x6C10CC, "Elegir ciudad", "choose town"), items, words, {}, std::string(),
+		first, view_right);
+}
+
 // The list (0x471420): its parchment with the rolls, its title in the font 3 centred, black; its rows in the font 0
 // clipped to their room, the pointed one (the pad's, the game's under the mouse [+0xD8]) in 0x0020CC; the scroll bar;
-// the close button with its key.
+// the sort button; the close button with its key.
 void draw_town_list(SDL_Renderer* renderer, GameWindowArt& art, TextRenderer& fallback, const TownListFrame& f,
 	int pointed) {
 	const SelectionListLayout& l = f.layout;
@@ -14065,15 +14092,15 @@ void draw_town_list(SDL_Renderer* renderer, GameWindowArt& art, TextRenderer& fa
 	TextRenderer& rows = art.head_text() ? *art.head_text() : fallback;
 	TextRenderer& page = art.page_text() ? *art.page_text() : fallback;
 	const SDL_Color black = argb_color(kShipListInk);
-	const std::string t = exe_text(0x6C10CC, "Elegir ciudad", "choose town");
-	title.draw(t, l.x + l.title_x() - title.measure(t) / 2, l.y + l.title_y(), black);
+	title.draw(f.title, l.x + l.title_x() - title.measure(f.title) / 2, l.y + l.title_y(), black);
 	const SDL_Rect clip = {l.x + kSelectionListRowX, l.y + kSelectionListRowY, l.rows_width,
 		kSelectionListRowHeight * l.rows};
 	SDL_RenderSetClipRect(renderer, &clip);
 	for (int k = 0; k < l.rows && f.first + k < int(f.towns.size()); ++k) {
 		const int i = f.first + k;
 		const SDL_Rect r = f.row(k);
-		rows.draw(f.names[size_t(i)], r.x, r.y, i == pointed ? argb_color(kShipListPointed) : black);
+		rows.draw(f.names[size_t(i)], r.x, r.y,
+			i == pointed ? argb_color(kShipListPointed) : argb_color(f.inks[size_t(i)]));
 	}
 	SDL_RenderSetClipRect(renderer, nullptr);
 	const SDL_Rect b = f.bar();
@@ -14081,14 +14108,19 @@ void draw_town_list(SDL_Renderer* renderer, GameWindowArt& art, TextRenderer& fa
 		draw_menu_scroll_bar(renderer, art, b, clip.x, kSelectionListRowHeight * int(f.towns.size()),
 			kSelectionListRowHeight * f.first, kSelectionListRowHeight);
 	}
+	if (!f.sort.empty()) {
+		const SDL_Rect r = art.pill_for_label(f.sort_button(), page.measure(f.sort));
+		art.draw_pill(r, PillState::Standard);
+		page.draw(f.sort, r.x + (r.w - page.measure(f.sort)) / 2, r.y + (r.h - page.line_height()) / 2, kButtonInk);
+	}
 	const SDL_Rect c = f.close();
 	art.draw_close(c, false);
 	page.draw(BTN_CIRCLE, c.x - page.measure(BTN_CIRCLE) - 2, c.y + (c.h - page.line_height()) / 2, kButtonInk);
 }
 
-// What a touch on the list does: a row chosen, its scroll bar's halves a page up or down, the close button or a touch
-// out of it closing it.
-enum class TownListHit { None, Row, Close, PageUp, PageDown };
+// What a touch on the list does: a row chosen, its scroll bar's halves a page up or down, its sort button, the close
+// button or a touch out of it closing it.
+enum class TownListHit { None, Row, Close, PageUp, PageDown, Sort };
 struct TownListTap {
 	TownListHit hit = TownListHit::None;
 	int row = -1;
@@ -14101,6 +14133,10 @@ TownListTap town_list_tap(const TownListFrame& f, int x, int y) {
 	const SDL_Rect b = f.bar();
 	if (b.w > 0 && inside({b.x - 6, b.y, b.w + 12, b.h}, x, y)) {
 		return {y < b.y + b.h / 2 ? TownListHit::PageUp : TownListHit::PageDown};
+	}
+	const SDL_Rect s = f.sort_button();
+	if (!f.sort.empty() && inside({s.x - 4, s.y - 6, s.w + 8, s.h + 12}, x, y)) {
+		return {TownListHit::Sort};
 	}
 	const int row = f.row_at(x, y);
 	return row >= 0 ? TownListTap{TownListHit::Row, row} : TownListTap{};
@@ -17015,39 +17051,56 @@ void draw_mail_parchment(SDL_Renderer* renderer, TextRenderer& text, const Panel
 	draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Cerrar", "Close"));
 }
 
-// --- The statistics (the game's SIDEMENU_STATISTIK, statistics_window.hpp): the menu in the panel's room (its four
-// pages' tabs, the page's title, its entries) and the window on a parchment over the town (the entry's title, the
-// period's buttons, the balance's table, a graph or Suministro's table; the competition's merchant buttons and their
-// list; the town comparison's residents' table, its graphs with their town and ware buttons). Opened by the top
-// bar's money. Done: the town comparison (page 1), the company overview (2) and the competition (3); the town data's
-// tab is off. ---
+// --- The statistics (the game's SIDEMENU_STATISTIK, statistics_window.hpp; read and traced in re/emu/sesion15 and
+// re/emu/sesion43): the menu in the panel's room as the game's (its four tabs in the row over it, the page's title,
+// its entries' buttons) and its window over the town as the game's parchment (the balance's table, a graph with its
+// axes, lines and legend, Suministro's table, the towns' residents), drawn at the game's size and fitted to the view's
+// height; its buttons' lists are the game's selection list (draw_town_list) in its modes 0, 1 and 2. Opened by the top
+// bar's money. ---
 
 // The tabs' frames in page_statistiken.tga (sidemenu.ini Button14..17 → textures.ini TEX20034's frames 8, 4, 12,
 // 0): their column and width (rows: normal, pressed, lit, off).
 constexpr int kStatsTabX[kStatisticsPages] = {0, 100, 36, 68};
 constexpr int kStatsTabW[kStatisticsPages] = {36, 36, 32, 32};
 constexpr bool kStatsPageDone[kStatisticsPages] = {true, true, true, true};
+// The menu (its init 0x495C10, its layout 0x495E90, its open 0x495FF0, its drawing 0x4963D0; traced with
+// re/emu/sesion43/statstrace.sh): the tabs in the row over the menu (as the build menu's categories: on the Vita at the
+// parchment's top) in the manual's order, the company overview, the competition, the town data and the town comparison
+// (the pages 2, 3, 0, 1), with equal gaps ((260 − 136) / 5 = 24); the page's title (0x6C151C + 4 · page) in the font
+// 3 centred at the font 3's height ([+0xB2], 20) less 2, black over its light shadow a pixel lower right; the page's
+// entries' buttons (Button4, 128 × 18) centred, from 2.5 · 20 every 1.5 · 18, the one shown pressed (+0x124). (The
+// layout 0x495E90 puts them past the last tab, off the menu, but the open 0x495FF0 places them again centred before
+// the menu shows: as here.)
+constexpr int kStatsTabOrder[kStatisticsPages] = {2, 3, 0, 1};
+constexpr int kStatsMenuTitleY = 18;
+constexpr int kStatsMenuFirst = 50;
+constexpr int kStatsMenuStep = 27;
 
 struct StatsRoomLayout {
-	SDL_Rect tabs[kStatisticsPages] = {};
-	int title_y = 0;
+	SDL_Rect tabs[kStatisticsPages] = {};  // By page.
+	int head_y = 0;  // The menu's top (under the tabs' row).
 	SDL_Rect rows[7] = {};
 
-	StatsRoomLayout(const SDL_Rect& room, int line_height) {
-		int x = room.x + 10;
+	StatsRoomLayout(const SDL_Rect& room, int /*line_height*/) {
+		int widths = 0;
 		for (int k = 0; k < kStatisticsPages; ++k) {
-			const int w = kStatsTabW[k] * 5 / 4;
-			tabs[k] = {x, room.y + 6, w, 40};
-			x += w + 14;
+			widths += kStatsTabW[k];
 		}
-		title_y = room.y + 52;
-		for (int k = 0; k < 7; ++k) {  // Under two lines of the page's title.
-			rows[k] = {room.x + 8, title_y + 2 * line_height + 8 + k * (line_height + 10), room.w - 16, line_height + 6};
+		const int gap = (kPanelMenuWidth - widths) / 5;
+		int x = room.x + gap;
+		for (int k = 0; k < kStatisticsPages; ++k) {
+			const int page = kStatsTabOrder[k];
+			tabs[page] = {x, room.y + 4, kStatsTabW[page], 32};
+			x += kStatsTabW[page] + gap;
+		}
+		head_y = room.y + 36;  // As the ship menu's and the build menu's.
+		for (int k = 0; k < 7; ++k) {
+			rows[k] = {room.x + (kPanelMenuWidth - 128) / 2, head_y + kStatsMenuFirst + kStatsMenuStep * k, 128, 18};
 		}
 	}
 	int tab_at(int x, int y) const {
 		for (int k = 0; k < kStatisticsPages; ++k) {
-			if (inside(tabs[k], x, y)) {
+			if (inside({tabs[k].x - 4, tabs[k].y - 2, tabs[k].w + 8, tabs[k].h + 4}, x, y)) {
 				return k;
 			}
 		}
@@ -17055,7 +17108,7 @@ struct StatsRoomLayout {
 	}
 	int row_at(int x, int y) const {
 		for (int k = 0; k < 7; ++k) {
-			if (inside(rows[k], x, y)) {
+			if (inside({rows[k].x, rows[k].y - 4, rows[k].w, rows[k].h + 8}, x, y)) {
 				return k;
 			}
 		}
@@ -17067,102 +17120,48 @@ std::string stats_text(const std::string& raw) {
 	return clean_game_text(raw);
 }
 
+// The text with the spaces at its end the game measures (clean_game_text trims them): «balance », «company value »,
+// the titles.
+std::string stats_spaced(const std::string& raw) {
+	size_t spaces = 0;
+	while (spaces < raw.size() && raw[raw.size() - 1 - spaces] == ' ') {
+		++spaces;
+	}
+	const std::string clean = clean_game_text(raw);
+	return clean.empty() ? clean : clean + std::string(spaces, ' ');
+}
+
+// The tabs (the game lights none: the shown page's in its hover frame here, as the build menu's categories, for want
+// of a mouse: adapted), the page's title and its entries' buttons.
 void draw_stats_room(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SidePanel& ui) {
-	if (!g_texts) {
+	if (!g_texts || !g_game_art) {
 		return;
 	}
+	GameWindowArt& gart = *g_game_art;
 	const PanelLayout panel(ui.folded);
-	const StatsRoomLayout layout(panel.room, text.line_height());
-	for (int k = 0; k < kStatisticsPages; ++k) {
-		const int row = !kStatsPageDone[k] ? 3 : k == ui.stats_page ? 2 : 0;
-		const SDL_Rect src = {kStatsTabX[k], row * 32, kStatsTabW[k], 32};
-		draw_picture(renderer, art.stats_tabs, layout.tabs[k], &src);
+	const StatsRoomLayout layout(panel.room, 0);
+	for (int page = 0; page < kStatisticsPages; ++page) {
+		const int row = !kStatsPageDone[page] ? 3 : page == ui.stats_page ? 2 : 0;
+		const SDL_Rect src = {kStatsTabX[page], row * 32, kStatsTabW[page], 32};
+		draw_picture(renderer, art.stats_tabs, layout.tabs[page], &src);
 	}
-	int y = layout.title_y;
-	for (const std::string& line : wrap_text(text, stats_text(statistics_page_title(*g_texts, ui.stats_page)), panel.room.w - 20)) {
-		text.draw(line, panel.room.x + (panel.room.w - text.measure(line)) / 2, y, kParchmentInk);
-		y += text.line_height();
-	}
+	TextRenderer& title = gart.title_text() ? *gart.title_text() : text;
+	TextRenderer& page = gart.page_text() ? *gart.page_text() : text;
+	const std::string t = stats_text(statistics_page_title(*g_texts, ui.stats_page));
+	const int x = panel.room.x + kPanelMenuWidth / 2 - title.measure(t) / 2;
+	title.draw(t, x + 1, layout.head_y + kStatsMenuTitleY + 1, argb_color(0xFFEFD7C0));
+	title.draw(t, x, layout.head_y + kStatsMenuTitleY, argb_color(kShipListInk));
 	const int first = kStatisticsPageFirst[size_t(ui.stats_page)];
 	const int count = kStatisticsPageFirst[size_t(ui.stats_page) + 1] - first;
 	for (int k = 0; k < count && k < 7; ++k) {
-		const SDL_Rect& r = layout.rows[k];
-		const bool lit = first + k == ui.stats_entry;
-		SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, lit ? 110 : 45);
-		SDL_RenderFillRect(renderer, &r);
 		const std::string name = stats_text(statistics_button(*g_texts, first + k));
-		text.draw(name, r.x + (r.w - text.measure(name)) / 2, r.y + 3, kStatsPageDone[ui.stats_page] ? kParchmentInk : kParchmentDim);
+		const bool lit = first + k == ui.stats_entry;
+		const SDL_Rect r = gart.pill_for_label(layout.rows[k], page.measure(name));
+		gart.draw_pill(r, lit ? PillState::Pressed : PillState::Standard);
+		page.draw(name, r.x + (r.w - page.measure(name)) / 2, r.y + (r.h - page.line_height()) / 2,
+			lit ? kButtonHighlight : kButtonInk);
 	}
 }
-
-// The parchment over the town and its parts.
-struct StatsLayout {
-	SDL_Rect panel{};
-	SDL_Rect inner{};  // Inside the rolls.
-	int title_y = 0;
-	SDL_Rect periods[4] = {};  // The balance's or the graph's period; Suministro: previous, the town's list, next.
-	SDL_Rect body{};
-	SDL_Rect close_button{};
-
-	explicit StatsLayout(int line_height) {
-		panel = {12, kBarHeight + 10, g_town_right - 24, kScreenHeight - kBarHeight - 20};
-		inner = {panel.x + 40, panel.y + 52, panel.w - 80, panel.h - 52 - 50};
-		title_y = inner.y;
-		const int bh = line_height + 8;
-		const int bw = (inner.w - 3 * 8) / 4;
-		for (int k = 0; k < 4; ++k) {
-			periods[k] = {inner.x + k * (bw + 8), title_y + line_height + 8, bw, bh};
-		}
-		body = {inner.x, periods[0].y + bh + 10, inner.w, 0};
-		close_button = {panel.x + panel.w / 2 - 70, panel.y + panel.h - 48, 140, line_height + 10};
-		body.h = close_button.y - 8 - body.y;
-		// The competition's merchant buttons, under its graph and the texts beside it.
-		const int plot_w = body.w - kStatsSideW - 18;
-		const int mw = (body.w - 8 - 3 * 6) / 4;
-		for (int k = 0; k < 4; ++k) {
-			merchants[k] = {body.x + 4 + k * (mw + 6), body.y + body.h - line_height - 8, mw, line_height + 6};
-		}
-		// A merchant button's list, over the graph and its texts: its title and sort button, then the rows in two
-		// columns.
-		choice = {body.x, body.y, body.w, merchants[0].y - 6 - body.y};
-		(void)plot_w;
-		sort_button = {choice.x + choice.w - 230, choice.y + 4, 226, line_height + 6};
-		row_h = line_height + 6;
-		rows_top = choice.y + line_height + 18;
-		rows_per_column = std::max(1, (choice.y + choice.h - rows_top) / row_h);
-	}
-	static constexpr int kStatsSideW = 230;  // The texts beside a graph.
-	SDL_Rect merchants[4] = {};
-	SDL_Rect choice{};
-	SDL_Rect sort_button{};
-	int row_h = 0;
-	int rows_top = 0;
-	int rows_per_column = 1;
-	// The list's columns for n rows (2 to 4) and a row's place.
-	int choice_columns(int n) const {
-		return std::clamp((n + rows_per_column - 1) / rows_per_column, 2, 4);
-	}
-	SDL_Rect choice_row(int k, int columns) const {
-		const int w = (choice.w - 4 - 4 * columns) / columns;
-		return {choice.x + 4 + (k / rows_per_column) * (w + 4), rows_top + (k % rows_per_column) * row_h, w, row_h - 2};
-	}
-	int period_at(int x, int y) const {
-		for (int k = 0; k < 4; ++k) {
-			if (inside(periods[k], x, y)) {
-				return k;
-			}
-		}
-		return -1;
-	}
-	int merchant_at(int x, int y) const {
-		for (int k = 0; k < 4; ++k) {
-			if (inside(merchants[k], x, y)) {
-				return k;
-			}
-		}
-		return -1;
-	}
-};
 
 // The town names by number as the game holds them (Latin-1, like its other texts), for the statistics' engine.
 std::vector<std::string> stats_town_names() {
@@ -17173,48 +17172,6 @@ std::vector<std::string> stats_town_names() {
 		}
 	}
 	return out;
-}
-
-// The list a button of the statistics opens, as the game's (0x49E850, 0x49FC1C, 0x49FB41): a merchant's (the
-// competition), a town's (the comparison's slots), a ware's (the town data's slots) or the button [+0x214]'s (slot 4:
-// the comparison's ware, the town data's town), sorted by name (or by the entry's key, with its button), and the
-// extra row (-1: «no trader», «none») when it may empty the slot.
-StatisticsChoice stats_choice(const SaveGame& save, const SidePanel& ui) {
-	StatisticsChoice choice;
-	if (ui.stats_choice_slot < 0 || !g_texts) {
-		return choice;
-	}
-	if (stats_competition(ui.stats_entry)) {
-		choice = statistics_competition_choice(save, ui.stats_merchants, ui.stats_choice_slot, ui.stats_entry);
-	} else if (ui.stats_choice_slot == 4) {
-		choice = stats_town_data(ui.stats_entry) ? statistics_town_list(save) : statistics_ware_choice();
-	} else {
-		choice = statistics_town_choice(save, ui.stats_towns, ui.stats_choice_slot, ui.stats_entry);
-	}
-	sort_choice_by_name(save, *g_texts, stats_town_names(), choice);
-	if (ui.stats_choice_by_key) {
-		sort_choice_by_key(choice);
-	}
-	return choice;
-}
-
-std::vector<int> stats_choice_rows(const SaveGame& save, const SidePanel& ui) {
-	const StatisticsChoice choice = stats_choice(save, ui);
-	std::vector<int> rows(choice.merchants.begin(), choice.merchants.end());
-	if (choice.none) {
-		rows.push_back(-1);
-	}
-	return rows;
-}
-
-void draw_stats_toggle(SDL_Renderer* renderer, TextRenderer& text, const SDL_Rect& r, const std::string& label, bool lit,
-	bool enabled) {
-	SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, enabled ? (lit ? 140 : 60) : 25);
-	SDL_RenderFillRect(renderer, &r);
-	SDL_SetRenderDrawColor(renderer, 110, 80, 40, enabled ? 255 : 90);
-	SDL_RenderDrawRect(renderer, &r);
-	text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - text.line_height()) / 2,
-		enabled ? kParchmentInk : kParchmentDim);
 }
 
 // Suministro's town: the one chosen, or his home town, or the first of his offices' towns; -1 without any.
@@ -17237,389 +17194,509 @@ bool stats_years_shown(const SaveGame& save) {
 	return !save.statistics.towns[3].empty() && save.globals.u16(kStatistics + 0x8) > 1;
 }
 
-void draw_stats_balance(SDL_Renderer* renderer, TextRenderer& text, const StatisticsBalance& b, const SDL_Rect& body) {
-	if (!b.found) {
-		return;
+// The list a button of the statistics opens, as the game's (0x49E850, 0x49FC1C, 0x49FB41): a merchant's (the
+// competition), a town's (the comparison's slots), a ware's (the town data's slots) or the button [+0x214]'s (slot 4:
+// the comparison's ware, the town data's town), Suministro's towns of his offices («Choose town» [+0x2270]: slot 5,
+// 0x49F71C), sorted by name (or by the entry's key, with its button), and the extra row (-1: «no trader», «none») when
+// it may empty the slot.
+constexpr int kStatsSupplySlot = 5;
+StatisticsChoice stats_choice(const SaveGame& save, const SidePanel& ui) {
+	StatisticsChoice choice;
+	if (ui.stats_choice_slot < 0 || !g_texts) {
+		return choice;
 	}
-	// The game's rows (0x4A0C30), in two columns: on the left the company's value (now and at the start, each with
-	// its date), the building and the income; on the right the expenditure and the total. The header «balance»
-	// gives its period's line over both.
-	const int line = text.line_height() + 2;
-	const int column_w = (body.w - 20) / 2;
-	auto value_text = [&](int k) { return k >= 0 && k < 20 ? stats_text(b.texts[size_t(k)]) : std::string(); };
-	text.draw(stats_text(b.period), body.x, body.y, kParchmentInk);
-	const int top = body.y + line + 4;
-	auto header = [&](int column, int at, const std::string& label, const std::string& value) {
-		const int x = body.x + column * (column_w + 20);
-		const int y = top + at * line;
-		text.draw(label, x, y, kParchmentInk);
-		SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
-		SDL_RenderDrawLine(renderer, x, y + line - 2, x + column_w, y + line - 2);
-		text.draw(value, x + column_w - text.measure(value), y, kParchmentInk);
-	};
-	auto row = [&](int column, int at, const std::string& label, const std::string& value) {
-		const int x = body.x + column * (column_w + 20);
-		const int y = top + at * line;
-		const SDL_Rect band = {x - 2, y, column_w + 4, line - 1};
-		SDL_SetRenderDrawColor(renderer, 230, 255, 255, 40);  // The game's 0x64FFE6CA.
-		SDL_RenderFillRect(renderer, &band);
-		text.draw(label, x, y, kParchmentDim);
-		text.draw(value, x + column_w - text.measure(value), y, kParchmentInk);
-	};
-	const std::string value_label = stats_text(balance_label(*g_texts, 1));
-	header(0, 0, value_label, std::string());
-	row(0, 1, "  " + value_text(19), value_text(0));
-	row(0, 2, "  " + value_text(18), value_text(1));
-	row(0, 3, stats_text(balance_label(*g_texts, 3)), value_text(2));
-	row(0, 4, stats_text(balance_label(*g_texts, 4)), value_text(3));
-	header(0, 5, stats_text(balance_label(*g_texts, 5)), std::string());
-	for (int k = 6; k <= 11; ++k) {
-		row(0, k, stats_text(balance_label(*g_texts, k)), value_text(k - 2));
+	if (ui.stats_choice_slot == kStatsSupplySlot) {
+		choice.mode = 1;
+		for (const int t : statistics_supply_towns(save, uint32_t(save.player))) {
+			choice.merchants.push_back(uint8_t(t));
+		}
+	} else if (stats_competition(ui.stats_entry)) {
+		choice = statistics_competition_choice(save, ui.stats_merchants, ui.stats_choice_slot, ui.stats_entry);
+	} else if (ui.stats_choice_slot == 4) {
+		choice = stats_town_data(ui.stats_entry) ? statistics_town_list(save) : statistics_ware_choice();
+	} else {
+		choice = statistics_town_choice(save, ui.stats_towns, ui.stats_choice_slot, ui.stats_entry);
 	}
-	header(1, 0, stats_text(balance_label(*g_texts, 12)), std::string());
-	for (int k = 13; k <= 19; ++k) {
-		row(1, k - 12, stats_text(balance_label(*g_texts, k)), value_text(k - 3));
+	sort_choice_by_name(save, *g_texts, stats_town_names(), choice);
+	if (ui.stats_choice_by_key) {
+		sort_choice_by_key(choice);
 	}
-	header(1, 8, stats_text(balance_label(*g_texts, 20)), value_text(17));
+	return choice;
 }
 
-void draw_stats_graph(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const StatisticsGraph& g,
-	int entry, const SDL_Rect& body) {
-	const int line = text.line_height();
-	const int side_w = 230;
-	const SDL_Rect plot = {body.x + 4, body.y + 6, body.w - side_w - 18, body.h - 2 * line - 14};
-	SDL_SetRenderDrawColor(renderer, 245, 232, 200, 120);
-	SDL_RenderFillRect(renderer, &plot);
-	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
-	SDL_RenderDrawRect(renderer, &plot);
-	// 0x4A5DD0's scale: from the entry's floor up to the largest point, at 0.95 of the height.
-	float top = statistics_scale_floor(entry);
-	for (uint32_t s = 0; s < g.series && s < 5; ++s) {
-		for (float v : g.values[s]) {
-			top = std::max(top, v);
-		}
+std::vector<int> stats_choice_rows(const SaveGame& save, const SidePanel& ui) {
+	const StatisticsChoice choice = stats_choice(save, ui);
+	std::vector<int> rows(choice.merchants.begin(), choice.merchants.end());
+	if (choice.none) {
+		rows.push_back(-1);
 	}
-	auto height_of = [&](float v) { return plot.y + plot.h - 1 - int(float(plot.h) * 0.95f * std::max(0.0f, v) / top); };
-	// The needs, the quality of life and the export balance (the scale's kind 5) have no numbers on the axis: «max.»
-	// and «min.», or «exp.», «0» and «imp.», as the game's axes (0x4A0190), at the zero line (their last series,
-	// colour 0xFFFFFFFF; the needs without one, at the bottom).
-	const bool marked = entry >= kStatisticsRequirement && entry <= kStatisticsExportBalance;
-	for (int k = 1; k <= 4; ++k) {
-		const int y = plot.y + plot.h - int(plot.h * 0.95f * float(k) / 4.0f);
-		SDL_SetRenderDrawColor(renderer, 160, 130, 90, 120);
-		SDL_RenderDrawLine(renderer, plot.x + 1, y, plot.x + plot.w - 2, y);
-		if (!marked) {
-			const std::string label = format_money(int64_t(top * float(k) / 4.0f));
-			text.draw(label, plot.x + 4, y - line + 2, kParchmentDim);
-		}
-	}
-	if (marked) {
-		const bool zero = g.series >= 1 && g.colours[g.series - 1] == 0xFFFFFFFFu && !g.values[g.series - 1].empty();
-		const int zero_y = zero ? height_of(g.values[g.series - 1][0]) : plot.y + plot.h - 1;
-		const bool exports = entry == kStatisticsExportBalance;
-		text.draw(stats_text(g_texts->raw_at(exports ? 0x6C225C : 0x6C2268)), plot.x + 4, plot.y + 2, kParchmentDim);
-		if (exports) {
-			text.draw("0", plot.x + plot.w - 4 - text.measure("0"), zero_y - line, kParchmentDim);
-			text.draw(stats_text(g_texts->raw_at(0x6C2250)), plot.x + 4, plot.y + plot.h - line - 2, kParchmentDim);
+	return rows;
+}
+
+// The list as the game's selection list draws it (0x471420) in the choice's mode: the wares' names (mode 0), the towns'
+// (1), «First Family (Home town)» (2: 0x4718B8..0x471948; an invalid merchant «no trader»; the player's row in blue
+// 0xFF0000FF), the extra row «none» (0x6C1078; the merchants' «no trader», 0x6C1088); its title «choose goods», «choose
+// town» or «choose trader» (0x6C10C8 + 4 · mode); with keys, its sort button (what touching it does: by the entry's key,
+// 0x6C1190 + 4 · kind, or back to by name, 0x6C10EC).
+TownListFrame stats_list_frame(const SaveGame& save, const SidePanel& ui, int view_right) {
+	const StatisticsChoice choice = stats_choice(save, ui);
+	const std::vector<std::string> names = stats_town_names();
+	std::vector<int> items;
+	std::vector<std::string> words;
+	std::vector<uint32_t> inks;
+	for (const uint8_t m : choice.merchants) {
+		items.push_back(int(m));
+		std::string line;
+		uint32_t ink = kShipListInk;
+		if (choice.mode == 0) {
+			line = g_texts->raw_at(0x6C0BB0 + 4 * uint32_t(m));
+		} else if (choice.mode == 1) {
+			line = statistics_town_name(save, names, uint32_t(m));
+		} else if (m >= save.globals.u16(global::kWorldMerchantCount) || m >= save.merchants.size()) {
+			line = g_texts->raw_at(0x6C1088);
 		} else {
-			text.draw(stats_text(g_texts->raw_at(0x6C2274)), plot.x + 4, std::min(zero_y, plot.y + plot.h - 2) - line,
-				kParchmentDim);
-		}
-	}
-	if (g.points >= 1) {
-		// The recorded points (the oldest `missing` aren't), joined, each with a dot; the zero line, plain ink.
-		const float step = g.points > 1 ? float(plot.w - 6) / float(g.points - 1) : 0.0f;
-		for (uint32_t s = 0; s < g.series && s < 5; ++s) {
-			const uint32_t colour = g.colours[s];
-			if (colour == 0xFFFFFFFFu) {
-				if (!g.values[s].empty()) {
-					const int y = height_of(g.values[s][0]);
-					SDL_SetRenderDrawColor(renderer, 70, 45, 20, 255);
-					SDL_RenderDrawLine(renderer, plot.x + 1, y, plot.x + plot.w - 2, y);
-				}
-				continue;
+			const std::string first = statistics_first_name(save, uint32_t(m));
+			line = first + (first.empty() ? "" : " ") + statistics_family_name(save, uint32_t(m));
+			const uint32_t home = save.merchants[m].memory.u8(0x19);
+			if (home < save.globals.u32(global::kWorldTownCount)) {
+				line += " (" + statistics_town_name(save, names, home) + ")";
 			}
-			SDL_SetRenderDrawColor(renderer, Uint8(colour >> 16), Uint8(colour >> 8), Uint8(colour), 255);
-			auto at = [&](uint32_t k) { return SDL_Point{plot.x + 3 + int(step * float(k)), height_of(g.values[s][k])}; };
-			for (uint32_t p = g.missing; p < g.points && p < g.values[s].size(); ++p) {
-				const SDL_Point c = at(p);
-				const SDL_Rect dot = {c.x - 2, c.y - 2, 5, 5};
-				SDL_RenderFillRect(renderer, &dot);
-				if (p > g.missing) {
-					const SDL_Point a = at(p - 1);
-					SDL_RenderDrawLine(renderer, a.x, a.y, c.x, c.y);
-					SDL_RenderDrawLine(renderer, a.x, a.y - 1, c.x, c.y - 1);
-				}
+			if (int(m) == save.player) {
+				ink = 0xFF0000FF;
 			}
 		}
+		words.push_back(clean_game_text(line));
+		inks.push_back(ink);
 	}
-	// The series' names under the graph, each with its colour (the town data's classes: its hidden buttons' texts).
-	int x = plot.x;
-	const bool classes = entry >= kStatisticsPopulation && entry <= kStatisticsQualityOfLife;
-	for (uint32_t s = 0; s < 4; ++s) {
-		const std::string raw = classes ? g.buttons[s] : g.names[s] ? g_texts->raw_at(g.names[s]) : std::string();
-		if (raw.empty() || raw == " ") {
+	if (choice.none) {
+		items.push_back(-1);
+		words.push_back(clean_game_text(g_texts->raw_at(choice.mode == 2 ? 0x6C1088 : 0x6C1078)));
+		inks.push_back(kShipListInk);
+	}
+	std::string sort;
+	if (!choice.keys.empty()) {
+		sort = BTN_TRIANGLE " " +
+			clean_game_text(g_texts->raw_at(ui.stats_choice_by_key ? 0x6C10EC : 0x6C1190 + 4 * uint32_t(choice.kind)));
+	}
+	return selection_list_frame(clean_game_text(g_texts->raw_at(0x6C10C8 + 4 * uint32_t(choice.mode))), items, words,
+		inks, sort, ui.stats_choice_first, view_right);
+}
+
+// --- The window (the menu's [+0xC0], vtable 0x66FC28): its show 0x49D380 (its controls' places), its drawing 0x4A14D0
+// and its parts: the balance 0x4A0C30, Suministro 0x4A0F10, the residents 0x4A0980, the x axis 0x49FD70, the y axis
+// 0x4A0190, the legend 0x4A0690 (statistics_window.hpp, its places). ---
+constexpr int kStatsDialog = 34;  // GameWindowArt::draw_dialog's key.
+
+// The window on the screen: the game's 524 × 544, scaled to the view's height (×0.9375: adapted, as the trade route
+// stop's wares window), centred left of the panel.
+struct StatsWindowFrame {
+	SDL_Rect on_screen{};
+	float scale = 1.0f;
+	StatsWindowFrame() {
+		const int view_h = kScreenHeight - kBarHeight;
+		scale = std::min(1.0f, float(view_h) / float(kStatsWindowH));
+		const int w = int(float(kStatsWindowW) * scale + 0.5f);
+		const int h = int(float(kStatsWindowH) * scale + 0.5f);
+		on_screen = {(g_town_right - w) / 2, kBarHeight + (view_h - h) / 2, w, h};
+	}
+	// A point of the screen in the window's coordinates.
+	SDL_Point window(int x, int y) const {
+		return {int(float(x - on_screen.x) / scale), int(float(y - on_screen.y) / scale)};
+	}
+	int screen_y(int y) const { return on_screen.y + int(float(y) * scale + 0.5f); }
+};
+
+// Its buttons (their places in the window's coordinates; statistics_window.hpp).
+enum StatsButtonId {
+	kStatsCloseButton = 0,
+	kStatsPeriodButton = 1,  // + k: the graphs' or the balance's period k
+	kStatsSlotButton = 5,  // + k: the four under the graph; + 4 the ware's or the town's [+0x214]
+	kStatsTownViewButton = 10,
+	kStatsPrevTownButton,
+	kStatsChooseTownButton,
+	kStatsNextTownButton,
+};
+struct StatsButton {
+	int id = 0;
+	SDL_Rect r{};
+	std::string label;  // Shown (clean).
+	bool lit = false;
+};
+
+// What the window shows this frame.
+struct StatsWindowView {
+	enum class Kind { None, Balance, Supply, Residents, Graph };
+	Kind kind = Kind::None;
+	int entry = 0;
+	int period = 0;  // The graphs' ([+0xC0], the competition's and the towns' turned from 0 to 1).
+	std::string title;  // Raw ([+0x20C]).
+	StatisticsBalance balance;
+	int supply_town = -1;
+	std::vector<SupplyRow> supply;
+	StatisticsResidents residents;
+	StatisticsGraph graph;
+	StatisticsScale scale;
+	std::array<std::string, 4> legend;  // The hidden buttons [+0xC28]'s texts (raw), in their series' colours.
+	std::vector<StatsButton> buttons;
+};
+
+StatsWindowView stats_window_view(const SaveGame& save, const SidePanel& ui) {
+	StatsWindowView v;
+	if (!g_texts || save.player < 0) {
+		return v;
+	}
+	const GameTexts& texts = *g_texts;
+	const uint32_t player = uint32_t(save.player);
+	const int entry = ui.stats_entry;
+	v.entry = entry;
+	v.title = statistics_title(texts, entry);
+	v.buttons.push_back({kStatsCloseButton, {kStatsCloseX, kStatsCloseY, 32, 18}, std::string(), false});
+	if (entry == kStatisticsBalance) {
+		v.kind = StatsWindowView::Kind::Balance;
+		v.balance = statistics_balance(save, texts, player, ui.stats_balance_period);
+		for (int k = 0; k < 4; ++k) {
+			v.buttons.push_back({kStatsPeriodButton + k, {kStatsBalancePeriodX[k], kStatsBalancePeriodY, 96, 18},
+				stats_text(texts.raw_at(0x6C1A74 + 4 * uint32_t(k))), k == ui.stats_balance_period});
+		}
+		return v;
+	}
+	if (entry == kStatisticsSupply) {
+		v.kind = StatsWindowView::Kind::Supply;
+		v.supply_town = stats_supply_town(save, ui);
+		// The title with the town's name as the window takes it (0x6DDA00 by the index: the letters' bug, or fixed).
+		const std::string name =
+			v.supply_town >= 0 ? statistics_town_name(save, stats_town_names(), uint32_t(v.supply_town)) : std::string();
+		v.title = GameTexts::sprintf_raw(v.title, {name});
+		if (v.supply_town >= 0) {
+			v.supply = statistics_supply(save, player, uint32_t(v.supply_town));
+		}
+		v.buttons.push_back({kStatsTownViewButton, {kStatsSupplyX[0], kStatsCloseY, 32, 18}, std::string(), false});
+		if (statistics_supply_towns(save, player).size() > 1) {  // [+0x2444] > 1 (0x49F43D)
+			v.buttons.push_back({kStatsPrevTownButton, {kStatsSupplyX[1], kStatsCloseY, 48, 18}, "<", false});
+			v.buttons.push_back({kStatsChooseTownButton, {kStatsSupplyX[2], kStatsCloseY, 128, 18},
+				stats_text(texts.raw_at(0x6B0D68)), ui.stats_choice_slot == kStatsSupplySlot});
+			v.buttons.push_back({kStatsNextTownButton, {kStatsSupplyX[3], kStatsCloseY, 48, 18}, ">", false});
+		}
+		return v;
+	}
+	if (entry == kStatisticsResidents) {
+		v.kind = StatsWindowView::Kind::Residents;
+		v.residents = statistics_residents(save, texts, stats_town_names());
+		return v;
+	}
+	v.kind = StatsWindowView::Kind::Graph;
+	const bool no_days = stats_no_days(entry);
+	v.period = no_days ? statistics_competition_period(ui.stats_graph_period) : ui.stats_graph_period;
+	if (stats_competition(entry)) {
+		v.graph = statistics_competition(save, texts, ui.stats_merchants, entry, v.period);
+	} else if (stats_town_graph(entry) || stats_town_data(entry)) {
+		StatisticsTownChoices choices = ui.stats_towns;  // (The population's change is kept when shown: stats_select.)
+		v.graph = statistics_towns(save, texts, stats_town_names(), choices, entry, v.period);
+		v.title += v.graph.title_end;
+	} else {
+		v.graph = statistics_graph(save, player, entry, v.period);
+	}
+	v.scale = statistics_scale(entry, v.graph);
+	// The period's buttons: «4 weeks» hidden in the competition's and the towns' graphs, «playing time» only with more
+	// than a year recorded.
+	static constexpr uint32_t kPeriodText[4] = {0x6C1A38, 0x6C1A3C, 0x6C1A40, 0x6C1A44};
+	for (int k = 0; k < 4; ++k) {
+		if ((k == 0 && no_days) || (k == 3 && !stats_years_shown(save))) {
 			continue;
 		}
-		const uint32_t colour = kStatisticsColours[s];
-		const SDL_Rect swatch = {x, plot.y + plot.h + 8 + line / 4, line / 2 + 4, line / 2};
-		SDL_SetRenderDrawColor(renderer, Uint8(colour >> 16), Uint8(colour >> 8), Uint8(colour), 255);
-		SDL_RenderFillRect(renderer, &swatch);
-		const std::string name = stats_text(raw);
-		text.draw(name, swatch.x + swatch.w + 6, plot.y + plot.h + 6, kParchmentInk);
-		x += swatch.w + 6 + text.measure(name) + 18;
+		v.buttons.push_back({kStatsPeriodButton + k, {kStatsGraphPeriodX[k], kStatsPeriodY, 96, 18},
+			stats_text(texts.raw_at(kPeriodText[k])), k == v.period});
 	}
-	// The texts beside it: each label, then its value (with the coins for money, «%» for the averages).
-	int y = body.y + 4;
-	const int sx = body.x + body.w - side_w;
-	for (size_t k = 0; k < g.texts.size(); ++k) {
-		const std::string label = k < g.labels.size() ? stats_text(g_texts->raw_at(g.labels[k])) : std::string();
-		for (const std::string& part : wrap_text(text, label, side_w)) {
-			text.draw(part, sx, y, kParchmentDim);
-			y += line;
+	// The four under the graph: shown with the merchants', towns' or wares' names; hidden with the series' names (the
+	// company overview's, the town data's classes'), which the drawing writes in their colours.
+	const bool classes = entry >= kStatisticsPopulation && entry <= kStatisticsQualityOfLife;
+	for (int k = 0; k < 4; ++k) {
+		if (stats_slot_buttons(entry)) {
+			v.buttons.push_back({kStatsSlotButton + k, {kStatsSlotX, kStatsSlotY + kStatsSlotStep * k, 128, 18},
+				stats_text(v.graph.buttons[size_t(k)]), ui.stats_choice_slot == k});
+		} else if (classes) {
+			v.legend[size_t(k)] = v.graph.buttons[size_t(k)];
+		} else if (v.graph.names[size_t(k)]) {
+			v.legend[size_t(k)] = texts.raw_at(v.graph.names[size_t(k)]);
 		}
-		std::string value = stats_text(g.texts[k]);
-		const uint8_t kind = k < g.kinds.size() ? g.kinds[k] : 0;
-		if (kind == 4) {
-			value += " %";
-		}
-		const int vw = text.measure(value);
-		int vx = sx + side_w - vw;
-		if (kind == 1) {
-			draw_picture(renderer, art.coins, {vx - 16, y - 2, 13, 20});
-		} else if (kind == 2 || kind == 3) {
-			SDL_Texture* icon = art.list_icons[PanelArt::Bale];
-			draw_picture(renderer, icon, {vx - 20, y, 16, 16});
-		}
-		text.draw(value, vx, y, kParchmentInk);
-		y += line + 6;
 	}
+	if (stats_choice_button(entry)) {
+		// [+0x214]: the comparison's ware, the town data's town (named even when the graph is empty).
+		const std::string choice = stats_town_data(entry)
+			? statistics_town_name(save, stats_town_names(), ui.stats_towns.town)
+			: v.graph.choice;
+		v.buttons.push_back({kStatsSlotButton + 4, {kStatsSlotX, kStatsChoiceY, 128, 18}, stats_text(choice),
+			ui.stats_choice_slot == 4});
+	}
+	return v;
 }
 
-void draw_stats_supply(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art,
-	const std::vector<SupplyRow>& rows, const SDL_Rect& body) {
-	const int line = text.line_height() + 3;
-	const int column_w = (body.w - 20) / 2;
-	const SDL_Color red = {170, 20, 10, 255};
-	static constexpr bool kInBarrels[20] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0};
-	const std::string office = stats_text(g_texts->raw_at(0x6A0468));
-	const std::string hall = stats_text(g_texts->raw_at(0x6A0814));
-	const std::string buy = stats_text(g_texts->raw_at(0x6A0810));
-	for (int column = 0; column < 2; ++column) {
-		const int x = body.x + column * (column_w + 20);
-		const int c1 = x + column_w * 58 / 100;  // The office's, the hall's and the price's right edges.
-		const int c2 = x + column_w * 77 / 100;
-		const int c3 = x + column_w;
-		text.draw(stats_text(g_texts->raw_at(0x6A0464)), x, body.y, kParchmentInk);
-		text.draw(office, c1 - text.measure(office), body.y, kParchmentInk);
-		text.draw(hall, c2 - text.measure(hall), body.y, kParchmentInk);
-		text.draw(buy, c3 - text.measure(buy), body.y, kParchmentInk);
-		SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
-		SDL_RenderDrawLine(renderer, x, body.y + line - 1, c3, body.y + line - 1);
-		for (int k = 0; k < 10; ++k) {
-			const size_t i = size_t(column * 10 + k);
-			if (i >= rows.size()) {
-				break;
-			}
-			const SupplyRow& r = rows[i];
-			const int y = body.y + (k + 1) * line + 2;
-			const int unit = kInBarrels[r.ware] ? 200 : 2000;
-			SDL_Texture* icon = art.list_icons[kInBarrels[r.ware] ? PanelArt::Barrel : PanelArt::Bale];
-			draw_picture(renderer, icon, {x, y, 16, 16});
-			text.draw(ware_name(r.ware), x + 20, y, kParchmentDim);
-			if (r.office / unit > 0 || r.needed > 0) {
-				const std::string v = (r.needed > 0 ? "*" : "") + std::to_string(r.office / unit);
-				text.draw(v, c1 - text.measure(v), y, r.needed > r.office ? red : kParchmentInk);
-			}
-			if (r.town / unit > 0) {
-				const std::string v = std::to_string(r.town / unit);
-				text.draw(v, c2 - text.measure(v), y, kParchmentInk);
-			}
-			if (r.price > 0) {
-				const std::string v = format_money(r.price);
-				text.draw(v, c3 - text.measure(v), y, kParchmentInk);
-			}
+// The button at a point of the window (a little round each for the finger), or -1.
+int stats_button_at(const StatsWindowView& v, SDL_Point p) {
+	for (const StatsButton& b : v.buttons) {
+		if (inside({b.r.x - 4, b.r.y - 5, b.r.w + 8, b.r.h + 10}, p.x, p.y)) {
+			return b.id;
 		}
 	}
+	return -1;
 }
 
-// A text cut (by whole UTF-8 letters) to fit `width`.
-std::string stats_fit(TextRenderer& text, std::string s, int width) {
-	while (!s.empty() && text.measure(s) > width) {
-		size_t last = s.size() - 1;  // The last letter's first byte.
-		while (last > 0 && (uint8_t(s[last]) & 0xC0) == 0x80) {
-			--last;
-		}
-		s.resize(last);
+// The residents' rows shown and the first one (the scroll's, clamped).
+int stats_residents_shown(const StatsWindowView& v, int first) {
+	return std::clamp(first, 0, std::max(0, int(v.residents.towns.size()) - kStatsResidentsRows));
+}
+SDL_Rect stats_residents_bar(const StatsWindowView& v) {
+	if (int(v.residents.towns.size()) <= kStatsResidentsRows) {
+		return {};
 	}
-	return s;
+	return {kStatsResidentsBarX - ScrollBarLayout::kThumbWidth / 2, kStatsResidentsY, ScrollBarLayout::kThumbWidth,
+		kStatsRowStep * kStatsResidentsRows};
 }
 
-// The list of a competition's merchant button, over the graph (the game's list 0x46F760 in its mode 2): «choose
-// trader», its sort button (what touching it does: by the entry's key, or back to by name), the merchants with
-// their home towns, and «no trader» when it may empty the slot.
-void draw_stats_choice(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save,
-	const std::vector<std::string>& town_names, const SidePanel& ui, const StatsLayout& layout) {
-	SDL_SetRenderDrawColor(renderer, 236, 220, 180, 250);
-	SDL_RenderFillRect(renderer, &layout.choice);
-	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
-	SDL_RenderDrawRect(renderer, &layout.choice);
-	const StatisticsChoice choice = stats_choice(save, ui);
-	// «choose goods», «choose town», «choose trader» (0x6C10C8 + 4 · mode).
-	text.draw(stats_text(g_texts->raw_at(0x6C10C8 + 4 * uint32_t(choice.mode))), layout.choice.x + 6,
-		layout.choice.y + 6, kParchmentInk);
-	if (!choice.keys.empty()) {
-		// The sort button: what touching it does (by the key, or back to by name).
-		const uint32_t sort_text = ui.stats_choice_by_key ? 0x6C10EC : 0x6C1190 + 4 * uint32_t(choice.kind);
-		draw_stats_toggle(renderer, text, layout.sort_button,
-			stats_fit(text, stats_text(g_texts->raw_at(sort_text)), layout.sort_button.w - 8), false, true);
-	}
-	const std::vector<std::string> names = stats_town_names();
-	const std::vector<int> rows = stats_choice_rows(save, ui);
-	const int slot = ui.stats_choice_slot;
-	const int current = choice.mode == 2 ? ui.stats_merchants[size_t(slot)]
-		: slot == 4						 ? (choice.mode == 1 ? ui.stats_towns.town : ui.stats_towns.ware)
-		: choice.mode == 0				 ? ui.stats_towns.wares[size_t(slot)]
-										 : ui.stats_towns.towns[size_t(slot)];
-	const int columns = layout.choice_columns(int(rows.size()));
-	for (size_t k = 0; k < rows.size() && int(k) < columns * layout.rows_per_column; ++k) {
-		const SDL_Rect r = layout.choice_row(int(k), columns);
-		const int m = rows[k];
-		const bool lit = int(k) == ui.stats_choice_row || m == current;
-		SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, lit ? 110 : 40);
-		SDL_RenderFillRect(renderer, &r);
-		std::string line;
-		if (m < 0) {
-			line = stats_text(g_texts->raw_at(choice.mode == 2 ? 0x6C1088 : 0x6C1078));  // «no trader», «none»
-		} else if (choice.mode == 0) {
-			line = stats_text(g_texts->raw_at(0x6C0BB0 + 4 * uint32_t(m)));
-		} else if (choice.mode == 1) {
-			line = stats_text(statistics_town_name(save, names, uint32_t(m)));
-		} else {
-			line = stats_text(statistics_first_name(save, uint32_t(m)) + " " + statistics_family_name(save, uint32_t(m)));
-			const int home = save.merchants[size_t(m)].memory.u8(0x19);
-			if (home < int(save.towns.size())) {
-				line += " (" + stats_text(statistics_town_name(save, names, uint32_t(home))) + ")";
-			}
-		}
-		text.draw(stats_fit(text, line, r.w - 8), r.x + 4, r.y + 2, kParchmentInk);
-	}
-	(void)town_names;
-}
-
-// The towns' residents (entry 6, 0x4A3BB0 and its draw 0x4A0980): the towns by name in two columns, each with its
-// residents, and the total line («Total population in the Hanseatic League:» and «%d %s» with the first entry's
-// button).
-void draw_stats_residents(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, const SDL_Rect& body) {
-	const StatisticsResidents r = statistics_residents(save, *g_texts, stats_town_names());
-	const std::vector<std::string> names = stats_town_names();
-	const int line = text.line_height() + 3;
-	const int per_column = std::max(1, (body.h - 2 * line - 6) / line);
-	const int column_w = (body.w - 20) / 2;
-	for (size_t k = 0; k < r.towns.size() && int(k) < 2 * per_column; ++k) {
-		const int x = body.x + int(k) / per_column * (column_w + 20);
-		const int y = body.y + int(k) % per_column * line;
-		const SDL_Rect band = {x - 2, y, column_w + 4, line - 1};
-		SDL_SetRenderDrawColor(renderer, 230, 255, 255, 40);  // The game's 0x64FFE6CA.
-		SDL_RenderFillRect(renderer, &band);
-		text.draw(stats_text(statistics_town_name(save, names, r.towns[k])), x, y, kParchmentDim);
-		const std::string v = stats_text(r.texts[k]);
-		text.draw(v, x + column_w - text.measure(v), y, kParchmentInk);
-	}
-	const int y = body.y + body.h - line;
-	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
-	SDL_RenderDrawLine(renderer, body.x, y - 4, body.x + body.w, y - 4);
-	text.draw(stats_text(g_texts->raw_at(0x6B0D6C)), body.x, y, kParchmentInk);
-	const std::string total = stats_text(GameTexts::sprintf_raw(g_texts->raw_at(0x6BACA4),
-		{std::to_string(r.total), statistics_button(*g_texts, 0)}));
-	text.draw(total, body.x + body.w - text.measure(total), y, kParchmentInk);
-}
-
-void draw_stats_window(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
-	const std::vector<std::string>& town_names, const SidePanel& ui) {
-	if (!g_texts || save.player < 0) {
+void draw_stats_window(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& /*art*/, const SaveGame& save,
+	const std::vector<std::string>& /*town_names*/, const SidePanel& ui) {
+	if (!g_texts || !g_game_art || save.player < 0) {
 		return;
 	}
-	const StatsLayout layout(text.line_height());
-	draw_scroll(renderer, art.paper, layout.panel);
-	const int entry = ui.stats_entry;
-	const uint32_t player = uint32_t(save.player);
-	std::string title = stats_text(statistics_title(*g_texts, entry));
-	if (entry == kStatisticsSupply) {
-		const int town = stats_supply_town(save, ui);
-		// The town's name as the window takes it (statistics_town_name: by the index, the game's bug, or fixed).
-		const std::string name = town >= 0 ? stats_text(statistics_town_name(save, stats_town_names(), uint32_t(town)))
-										   : std::string();
-		title = GameTexts::format(title, {name});
-		const std::string choose = stats_text(g_texts->raw_at(0x6B0D68));
-		draw_stats_toggle(renderer, text, layout.periods[0], "<", false, town >= 0);
-		draw_stats_toggle(renderer, text, {layout.periods[1].x, layout.periods[1].y,
-			layout.periods[2].x + layout.periods[2].w - layout.periods[1].x, layout.periods[1].h},
-			town >= 0 ? name : choose, true, town >= 0);
-		draw_stats_toggle(renderer, text, layout.periods[3], ">", false, town >= 0);
-		if (town >= 0) {
-			draw_stats_supply(renderer, text, art, statistics_supply(save, player, uint32_t(town)), layout.body);
+	GameWindowArt& gart = *g_game_art;
+	const GameTexts& texts = *g_texts;
+	const StatsWindowFrame frame;
+	const StatsWindowView v = stats_window_view(save, ui);
+	gart.begin_sized(frame.on_screen, kStatsWindowW, kStatsWindowH);
+	gart.draw_dialog(0, 0, (kStatsWindowW - 12) / 32, kStatsWindowH / 32, true, kStatsDialog);
+	TextRenderer& title = gart.title_text() ? *gart.title_text() : text;
+	TextRenderer& head = gart.head_text() ? *gart.head_text() : text;  // The font 0 (FontGr).
+	TextRenderer& page = gart.page_text() ? *gart.page_text() : text;  // The font 1 (FontKl).
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	const SDL_Color black = argb_color(kShipListInk);
+	const SDL_Color light = argb_color(0xFFEFD7C0);
+	auto right = [&](TextRenderer& font, const std::string& s, int x, int y, SDL_Color c) {
+		font.draw(s, x - font.measure(s), y, c);
+	};
+	auto band = [&](int x, int y, int w) {
+		SDL_SetRenderDrawColor(renderer, 0xFF, 0xE6, 0xCA, 0x64);  // 0x64FFE6CA
+		const SDL_Rect r = {x, y, w, kStatsRowHeight};
+		SDL_RenderFillRect(renderer, &r);
+	};
+	auto line = [&](uint32_t argb, float x1, float y1, float x2, float y2) {
+		SDL_SetRenderDrawColor(renderer, Uint8(argb >> 16), Uint8(argb >> 8), Uint8(argb), Uint8(argb >> 24));
+		SDL_RenderDrawLineF(renderer, x1, y1, x2, y2);
+	};
+	// The title centred at the window's middle on DrawYmin, its light colour first and black a pixel lower right; the
+	// residents' the other way round (0x4A0A37). The balance has none.
+	auto draw_title = [&](bool shadow_under) {
+		const std::string t = stats_spaced(v.title);
+		const int x = kStatsWindowW / 2 - title.measure(t) / 2;
+		if (shadow_under) {
+			title.draw(t, x + 1, kStatsTitleY + 1, light);
+			title.draw(t, x, kStatsTitleY, black);
+		} else {
+			title.draw(t, x, kStatsTitleY, light);
+			title.draw(t, x + 1, kStatsTitleY + 1, black);
 		}
-	} else if (entry == kStatisticsBalance) {
-		for (int k = 0; k < 4; ++k) {
-			draw_stats_toggle(renderer, text, layout.periods[k], stats_text(g_texts->raw_at(0x6C1A74 + 4 * uint32_t(k))),
-				k == ui.stats_balance_period, true);
+	};
+	switch (v.kind) {
+	case StatsWindowView::Kind::Balance: {
+		// Its 21 rows (0x4A0C30): the headers in the font 0, the first three with the period's line after them, the last
+		// with the total; the others a band, the label and the value (texts 0..16 in order); then the company value's
+		// two dates after «company value » (its width in the font 1), drawn in the font 0 left by the last header.
+		const StatisticsBalance& b = v.balance;
+		auto value = [&](int k) { return k >= 0 && k < 20 ? stats_text(b.texts[size_t(k)]) : std::string(); };
+		int next = 0;
+		for (int r = 0; r < kBalanceRows; ++r) {
+			const int y = statistics_balance_row_y(r);
+			const std::string label = stats_spaced(balance_label(texts, r));
+			if (balance_header(r)) {
+				head.draw(label, kStatsDrawX, y, black);
+				if (r < kBalanceRows - 1) {
+					head.draw(stats_text(b.period), kStatsDrawX + head.measure(label), y, black);
+				} else {
+					right(head, value(17), kStatsRight, y, black);
+				}
+			} else {
+				band(kStatsDrawX, y, kStatsRight - kStatsDrawX);
+				page.draw(label, kStatsDrawX, y, black);
+				right(page, value(next++), kStatsRight, y, black);
+			}
 		}
-		draw_stats_balance(renderer, text, statistics_balance(save, *g_texts, player, ui.stats_balance_period), layout.body);
-	} else if (entry == kStatisticsResidents) {
-		draw_stats_residents(renderer, text, save, layout.body);
-	} else if (stats_no_days(entry)) {
-		// The competition's and the towns' graphs: no «4 weeks» (the game hides its button and turns that period into
-		// 6 months); in its place, the button [+0x214]: the comparison's ware of the production and the stock, the
-		// town data's town.
-		static constexpr uint32_t kPeriodText[4] = {0x6C1A38, 0x6C1A3C, 0x6C1A40, 0x6C1A44};
-		const int period = statistics_competition_period(ui.stats_graph_period);
-		for (int k = 1; k < 4; ++k) {
-			draw_stats_toggle(renderer, text, layout.periods[k], stats_text(g_texts->raw_at(kPeriodText[k])),
-				k == period, k < 3 || stats_years_shown(save));
-		}
-		// (The population's change to the choices is kept when the entry is shown: stats_select.)
-		StatisticsTownChoices choices = ui.stats_towns;
-		const StatisticsGraph g = stats_competition(entry)
-			? statistics_competition(save, *g_texts, ui.stats_merchants, entry, period)
-			: statistics_towns(save, *g_texts, stats_town_names(), choices, entry, period);
-		title = stats_text(statistics_title(*g_texts, entry) + g.title_end);  // (Cleaned whole: its space kept.)
-		if (stats_choice_button(entry)) {
-			// (The town data's town is named even when the graph is empty.)
-			const std::string choice = stats_town_data(entry)
-				? statistics_town_name(save, stats_town_names(), ui.stats_towns.town)
-				: g.choice;
-			draw_stats_toggle(renderer, text, layout.periods[0], stats_fit(text, stats_text(choice),
-				layout.periods[0].w - 8), ui.stats_choice_slot == 4 || (ui.stats_choice_slot < 0 && ui.stats_slot == 4), true);
-		}
-		draw_stats_graph(renderer, text, art, g, entry, layout.body);
-		if (ui.stats_choice_slot >= 0) {
-			draw_stats_choice(renderer, text, save, town_names, ui, layout);
-		}
-		// The merchant, town or ware buttons: each slot's colour and its name (empty: none); touching one opens its
-		// list. (The town data's first three entries have none: the legend names their classes.)
-		for (int k = 0; k < 4 && stats_slot_buttons(entry); ++k) {
-			const SDL_Rect& r = layout.merchants[k];
-			const bool lit = k == ui.stats_choice_slot || (ui.stats_choice_slot < 0 && k == ui.stats_slot);
-			draw_stats_toggle(renderer, text, r, std::string(), lit, true);
-			const uint32_t colour = kStatisticsColours[size_t(k)];
-			const SDL_Rect swatch = {r.x + 5, r.y + (r.h - 10) / 2, 14, 10};
-			SDL_SetRenderDrawColor(renderer, Uint8(colour >> 16), Uint8(colour >> 8), Uint8(colour), 255);
-			SDL_RenderFillRect(renderer, &swatch);
-			const std::string name = stats_fit(text, stats_text(g.buttons[size_t(k)]), r.w - 28);
-			text.draw(name, swatch.x + swatch.w + 5, r.y + (r.h - text.line_height()) / 2, kParchmentInk);
-		}
-	} else {
-		static constexpr uint32_t kPeriodText[4] = {0x6C1A38, 0x6C1A3C, 0x6C1A40, 0x6C1A44};
-		for (int k = 0; k < 4; ++k) {
-			draw_stats_toggle(renderer, text, layout.periods[k], stats_text(g_texts->raw_at(kPeriodText[k])),
-				k == ui.stats_graph_period, k < 3 || stats_years_shown(save));
-		}
-		draw_stats_graph(renderer, text, art, statistics_graph(save, player, entry, ui.stats_graph_period), entry,
-			layout.body);
+		const int x = kStatsDrawX + page.measure(stats_spaced(balance_label(texts, 1)));
+		head.draw(value(18), x, statistics_balance_row_y(2), black);
+		head.draw(value(19), x, statistics_balance_row_y(1), black);
+		break;
 	}
-	text.draw(title, layout.inner.x + (layout.inner.w - text.measure(title)) / 2, layout.title_y, kParchmentInk);
-	draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Cerrar", "Close"));
+	case StatsWindowView::Kind::Supply: {
+		// 0x4A0F10: the heads, then each ware (0x698538's order: 0..19) with its unit's picture after each figure: the
+		// office's stock (red when its workshops need more; «*» when they need some), the town's stock and the price of
+		// a unit, each only above 0.
+		draw_title(false);
+		head.draw(stats_text(texts.raw_at(0x6A0464)), kStatsDrawX, kStatsSupplyHeadY, black);
+		right(head, stats_text(GameTexts::sprintf_raw("%s/%s", {texts.raw_at(0x699874), texts.raw_at(0x6A0468)})),
+			kStatsSupplyHead[0], kStatsSupplyHeadY, black);
+		right(head, stats_text(texts.raw_at(0x6A0814)), kStatsSupplyHead[1], kStatsSupplyHeadY, black);
+		right(head, stats_text(texts.raw_at(0x6A0810)), kStatsSupplyHead[2], kStatsSupplyHeadY, black);
+		static constexpr bool kInBarrels[20] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0};  // 0x672C14
+		int y = kStatsSupplyHeadY + kStatsRowStep;
+		for (const SupplyRow& r : v.supply) {
+			band(kStatsDrawX, y, kStatsRight - kStatsDrawX);
+			page.draw(ware_name(r.ware), kStatsDrawX, y, black);
+			const bool barrels = kInBarrels[r.ware];
+			const uint32_t unit_tex = barrels ? 16030 : 16031;
+			const int32_t unit = barrels ? 200 : 2000;
+			const int32_t office = r.office / unit;
+			if (office > 0 || r.needed > 0) {
+				const SDL_Color c = r.needed > r.office ? argb_color(0xFFFF0000) : black;
+				if (r.needed > 0) {
+					page.draw("*", kStatsSupplyStar, y, c);
+				}
+				right(page, std::to_string(office), kStatsSupplyColumn[0] - 5, y, c);
+				gart.draw_tex(unit_tex, 0, kStatsSupplyColumn[0], y);
+			}
+			if (r.town / unit > 0) {
+				right(page, std::to_string(r.town / unit), kStatsSupplyColumn[1] - 5, y, black);
+				gart.draw_tex(unit_tex, 0, kStatsSupplyColumn[1], y);
+			}
+			if (r.price > 0) {
+				right(page, std::to_string(r.price), kStatsSupplyColumn[2] - 5, y, black);
+				gart.draw_tex(16014, 0, kStatsSupplyColumn[2], y);
+			}
+			y += kStatsRowStep;
+		}
+		break;
+	}
+	case StatsWindowView::Kind::Residents: {
+		// 0x4A0980: the towns by name from the first shown, each a band, its name and its residents, down to 22 rows;
+		// then half a row lower, in the font 0, «Total population in the Hanseatic League:» and «%d %s» with the first
+		// entry's button text.
+		draw_title(true);
+		const StatisticsResidents& r = v.residents;
+		const std::vector<std::string> names = stats_town_names();
+		const int first = stats_residents_shown(v, ui.stats_residents_first);
+		int y = kStatsResidentsY;
+		for (size_t k = size_t(first); k < r.towns.size() && y < kStatsResidentsY + kStatsRowStep * kStatsResidentsRows;
+			 ++k) {
+			band(kStatsResidentsX, y, kStatsResidentsRight - kStatsResidentsX);
+			page.draw(stats_text(statistics_town_name(save, names, r.towns[k])), kStatsResidentsX, y, black);
+			right(page, stats_text(r.texts[k]), kStatsResidentsRight, y, black);
+			y += kStatsRowStep;
+		}
+		const SDL_Rect bar = stats_residents_bar(v);
+		if (bar.w > 0) {
+			draw_menu_scroll_bar(renderer, gart, bar, kStatsResidentsX, kStatsRowStep * int(r.towns.size()),
+				kStatsRowStep * first, kStatsRowStep);
+		}
+		y += kStatsRowStep / 2;
+		head.draw(stats_text(texts.raw_at(0x6B0D6C)), kStatsResidentsX, y, black);
+		right(head, stats_text(GameTexts::sprintf_raw(texts.raw_at(0x6BACA4),
+						{std::to_string(r.total), statistics_button(texts, 0)})),
+			kStatsResidentsRight, y, black);
+		break;
+	}
+	case StatsWindowView::Kind::Graph: {
+		const StatisticsGraph& g = v.graph;
+		const float bottom = float(kStatsPlotBottom);
+		// The axes with their soft shadow inwards (0x4A15C8..0x4A16FC), then the plot's band.
+		for (int d = 0; d < 3; ++d) {
+			const uint32_t ink = uint32_t(0xFF >> d) << 24;
+			line(ink, float(kStatsPlotX - 2 + 2 * d), bottom - float(d), float(kStatsRight), bottom - float(d));
+		}
+		for (int d = 0; d < 3; ++d) {
+			const uint32_t ink = uint32_t(0xFF >> d) << 24;
+			line(ink, float(kStatsPlotX + d), float(kStatsPlotY + d), float(kStatsPlotX + d), bottom);
+		}
+		SDL_SetRenderDrawColor(renderer, 0xFF, 0xE6, 0xCA, 0x64);
+		const SDL_Rect plot = {kStatsPlotX, kStatsPlotY, kStatsPlotW, kStatsPlotH};
+		SDL_RenderFillRect(renderer, &plot);
+		// The x axis: a line at each point and its label (0x49FD70).
+		for (const StatisticsXLabel& l : statistics_x_labels(save, &texts, v.period, g.points, page.measure(" 48 "),
+				 page.measure(" 1888 "))) {
+			line(0x1F000000, l.x, float(kStatsPlotY), l.x, bottom + 2.0f);
+			if (!l.text.empty()) {
+				const std::string s = stats_text(l.text);
+				page.draw(s, game_ftol(l.x) - page.measure(s) / 2, kStatsDateY, black);
+			}
+		}
+		// The y axis: its labels right-aligned before the plot and the grid (0x4A0190).
+		const StatisticsYAxis axis = statistics_y_axis(&texts, v.entry, g, v.scale, kStatsRowHeight / 2);
+		const int axis_x = kStatsPlotX - page.measure("a");
+		for (const StatisticsYLabel& l : axis.labels) {
+			right(page, stats_text(l.text), axis_x, l.y, black);
+		}
+		for (const float y : axis.grid) {
+			line(0x1F000000, float(kStatsPlotX - 2), y, float(kStatsRight), y);
+		}
+		// The series from the last, each from its first recorded point, at 0xCC (0x4A176F..0x4A1853).
+		if (g.points > 0) {
+			const float step = statistics_x_step(g.points);
+			const float factor = v.scale.scaled ? v.scale.scale : 1.0f;
+			for (int s = int(std::min<uint32_t>(g.series, 5)) - 1; s >= 0; --s) {
+				const std::vector<float>& values = g.values[size_t(s)];
+				const uint32_t colour = (g.colours[size_t(s)] & 0x00FFFFFF) | 0xCC000000;
+				float x = float(double(float(g.missing)) * double(step) + double(float(kStatsPlotX)));
+				for (uint32_t p = g.missing; p + 1 < g.points && p + 1 < values.size(); ++p) {
+					const float y1 = float(double(bottom) - double(float(double(factor) * double(values[p]))));
+					const float y2 = float(double(bottom) - double(float(double(factor) * double(values[p + 1]))));
+					const float x2 = float(double(x) + double(step));
+					line(colour, x, y1, x2, y2);
+					x = x2;
+				}
+			}
+		}
+		draw_title(false);
+		// The hidden buttons' texts in their series' colours, centred on them 5 lower (0x4A18E9).
+		for (int k = 0; k < 4; ++k) {
+			const std::string s = stats_text(v.legend[size_t(k)]);
+			if (s.empty() || s == " ") {
+				continue;
+			}
+			const uint32_t colour = 0xFF000000 | kStatisticsColours[size_t(k)];
+			page.draw(s, kStatsSlotX + 64 - page.measure(s) / 2, kStatsSlotY + kStatsSlotStep * k + 5, argb_color(colour));
+		}
+		// The legend (0x4A0690): each text with its label, a band to the right end, its value and its picture.
+		const int legend_x = kStatsLegendBase + page.measure("M");
+		for (size_t k = 0; k < g.texts.size(); ++k) {
+			const int y = kStatsSlotY + kStatsRowStep * int(k);
+			band(legend_x, y, kStatsRight - legend_x);
+			const std::string label = k < g.labels.size() && g.labels[k] ? stats_text(texts.raw_at(g.labels[k])) : "";
+			head.draw(label, legend_x, y, black);
+			const uint8_t kind = k < g.kinds.size() ? g.kinds[k] : 0;
+			int x = kStatsLegendValueX;
+			switch (kind) {
+			case 0: x = kStatsRight; break;
+			case 1: gart.draw_tex(16014, 0, kStatsLegendValueX + 4, y); break;
+			case 2: gart.draw_tex(16030, 0, kStatsLegendValueX, y); break;
+			case 3: gart.draw_tex(16031, 0, kStatsLegendValueX, y); break;
+			case 4: head.draw("%", kStatsLegendValueX, y, black); break;
+			default: break;
+			}
+			right(head, stats_text(g.texts[k]), x, y, black);
+		}
+		break;
+	}
+	case StatsWindowView::Kind::None: break;
+	}
+	// The buttons as the game's GUI draws them: the pills (the period shown and the button whose list is open pressed
+	// and blue, the pad's in blue), the town's view's picture (parchment.ini [Button13]: TEX16044's frame 9), the close
+	// button with its key.
+	for (const StatsButton& b : v.buttons) {
+		if (b.id == kStatsCloseButton) {
+			gart.draw_close(b.r, false);
+			page.draw(BTN_CIRCLE, b.r.x - page.measure(BTN_CIRCLE) - 2, b.r.y + (b.r.h - page.line_height()) / 2, kButtonInk);
+			continue;
+		}
+		if (b.id == kStatsTownViewButton) {
+			gart.draw_tex(16044, 9, b.r.x, b.r.y);
+			continue;
+		}
+		const bool pointed = ui.stats_choice_slot < 0 && b.id == kStatsSlotButton + ui.stats_slot;
+		const SDL_Rect r = gart.pill_for_label(b.r, page.measure(b.label));
+		gart.draw_pill(r, b.lit ? PillState::Pressed : PillState::Standard);
+		page.draw(b.label, r.x + (r.w - page.measure(b.label)) / 2, r.y + (r.h - page.line_height()) / 2,
+			b.lit || pointed ? kButtonHighlight : kButtonInk);
+	}
+	gart.end();
+	if (ui.stats_choice_slot >= 0) {
+		draw_town_list(renderer, gart, text, stats_list_frame(save, ui, g_town_right), ui.stats_choice_row);
+	}
 }
 
 // --- The citizens' window (the top bar's man, «Population»: the game's «CitizenStats», 0x40B570 and its draw
@@ -18989,6 +19066,8 @@ int main(int argc, char** argv) {
 	bool touch_on_side = false;  // It started on the side panel.
 	bool touch_building = false;  // It places the building chosen in the build menu.
 	bool touch_on_convoy = false;  // It is the convoy window's (or its towns' list's).
+	bool touch_on_stats = false;  // It is the statistics' window's (or its buttons' list's).
+	int stats_drag_first = 0;  // The residents' first row when the finger went down.
 	// A tap on the open menu.
 	auto menu_tap = [&](int x, int y) {
 		const MenuLayout layout(small_text->line_height(), menu.screen);
@@ -22318,8 +22397,11 @@ int main(int argc, char** argv) {
 				return false;
 			}
 		};
-		// The statistics (the top bar's money): Left and Right their pages (the done ones), Up and Down the page's
-		// entries (the parchment shows each), L and R the period (Suministro: the town), Circle closes them.
+		// The statistics (the top bar's money): Left and Right their pages, Up and Down the page's entries (the window
+		// shows each), Triangle the period (Suministro: the next town), Square the next button under the graph (then the
+		// ware's or the town's), X opens its list (Suministro's: its towns), L and R the game's speed as in the other
+		// windows over the town, Circle closes them. In a list: up and down its rows, left and right a page, X chooses,
+		// Triangle its sort button, Circle closes it.
 		const bool stats_open = side.menu == PanelMenu::Statistics && panel_shown && !side.folded && has_save &&
 			save.player >= 0 && small_text && !trading && !in_place && !in_mail && !in_menu;
 		auto stats_pick_town = [&](int step) {
@@ -22336,6 +22418,8 @@ int main(int argc, char** argv) {
 				stats_pick_town(step);
 			} else if (side.stats_entry == kStatisticsBalance) {
 				side.stats_balance_period = (side.stats_balance_period + 4 + step) % 4;
+			} else if (side.stats_entry == kStatisticsResidents) {
+				return;  // (No period buttons.)
 			} else if (stats_no_days(side.stats_entry)) {
 				// 6 months, 2 years and the playing time (with more than a year recorded).
 				const int periods = stats_years_shown(save) ? 3 : 2;
@@ -22346,7 +22430,7 @@ int main(int argc, char** argv) {
 				side.stats_graph_period = (std::min(side.stats_graph_period, periods - 1) + periods + step) % periods;
 			}
 		};
-		// The buttons an entry has: the four under the graph (0..3) and the one in the place of «4 weeks» (4).
+		// The buttons an entry has: the four under the graph (0..3) and the ware's or the town's [+0x214] (4).
 		auto stats_slot_valid = [&](int entry, int slot) {
 			return slot == 4 ? stats_choice_button(entry) : slot >= 0 && slot < 4 && stats_slot_buttons(entry);
 		};
@@ -22367,19 +22451,24 @@ int main(int argc, char** argv) {
 			}
 		};
 		// A button's list: opened sorted by name; a row puts its merchant, town or ware in the slot (the extra row:
-		// empty).
+		// empty); Suministro's (slot 5) shows that town.
 		auto stats_open_choice = [&](int slot) {
-			side.stats_slot = slot;
+			if (slot < kStatsSupplySlot) {
+				side.stats_slot = slot;
+			}
 			side.stats_choice_slot = slot;
 			side.stats_choice_by_key = false;
 			side.stats_choice_row = 0;
+			side.stats_choice_first = 0;
 		};
 		auto stats_choose = [&](int row) {
 			const std::vector<int> rows = stats_choice_rows(save, side);
 			if (side.stats_choice_slot >= 0 && row >= 0 && row < int(rows.size())) {
 				const int m = rows[size_t(row)];
 				const size_t slot = size_t(side.stats_choice_slot);
-				if (stats_competition(side.stats_entry)) {
+				if (slot == kStatsSupplySlot) {
+					side.stats_town = m < 0 ? side.stats_town : m;
+				} else if (stats_competition(side.stats_entry)) {
 					side.stats_merchants[slot] = m < 0 ? 0xFF : uint8_t(m);
 				} else if (slot == 4 && stats_town_data(side.stats_entry)) {
 					side.stats_towns.town = m < 0 ? side.stats_towns.town : uint8_t(m);  // [+0xBD]
@@ -22393,24 +22482,120 @@ int main(int argc, char** argv) {
 				side.stats_choice_slot = -1;
 			}
 		};
-		auto stats_button = [&](Uint8 button) {
+		// Suministro's town's view ([+0x2358], 0x49F807): that town shown (from the sea map, into it).
+		auto stats_town_view = [&]() {
+			const int town = stats_supply_town(save, side);
+			if (town < 0 || size_t(town) >= save.towns.size() || (town == town_index && selection.mode != Mode::Sea)) {
+				return;
+			}
+			selection.saved_index = size_t(town);
+			market.open = false;
+			place.open = Place::None;
+			if (selection.mode == Mode::Sea) {
+				next_mode = true;
+			} else {
+				reload = true;
+			}
+		};
+		// A touch on the window or its list: the list's rows, scroll bar, sort and close buttons (a touch out of it shuts
+		// it); the window's buttons (the close button, the periods, the buttons under the graph and [+0x214] opening their
+		// lists, Suministro's), the residents' scroll bar's halves a page.
+		auto stats_tap = [&](int x, int y) {
 			if (side.stats_choice_slot >= 0) {
-				// A button's list: Up and Down its rows, Cross picks, Square the sort, Circle closes it.
-				const int count = int(stats_choice_rows(save, side).size());
+				const TownListFrame tl = stats_list_frame(save, side, town_width);
+				const TownListTap tap = town_list_tap(tl, x, y);
+				switch (tap.hit) {
+				case TownListHit::Row:
+					side.stats_choice_row = tap.row;
+					stats_choose(tap.row);
+					break;
+				case TownListHit::Close: side.stats_choice_slot = -1; break;
+				case TownListHit::PageUp:
+				case TownListHit::PageDown:
+					side.stats_choice_first = std::clamp(tl.first + (tap.hit == TownListHit::PageUp ? -1 : 1) *
+							std::max(1, tl.layout.rows), 0, std::max(0, int(tl.towns.size()) - tl.layout.rows));
+					break;
+				case TownListHit::Sort:
+					side.stats_choice_by_key = !side.stats_choice_by_key;
+					side.stats_choice_row = 0;
+					side.stats_choice_first = 0;
+					break;
+				case TownListHit::None: break;
+				}
+				return;
+			}
+			const StatsWindowFrame frame;
+			if (!inside(frame.on_screen, x, y)) {
+				return;
+			}
+			const SDL_Point p = frame.window(x, y);
+			const StatsWindowView v = stats_window_view(save, side);
+			const SDL_Rect bar = stats_residents_bar(v);
+			if (v.kind == StatsWindowView::Kind::Residents && bar.w > 0 &&
+				inside({bar.x - 6, bar.y, bar.w + 12, bar.h}, p.x, p.y)) {
+				side.stats_residents_first = stats_residents_shown(v, stats_residents_shown(v, side.stats_residents_first) +
+						(p.y < bar.y + bar.h / 2 ? -1 : 1) * kStatsResidentsRows);
+				return;
+			}
+			const int id = stats_button_at(v, p);
+			if (id == kStatsCloseButton) {
+				side.menu = PanelMenu::None;
+			} else if (id >= kStatsPeriodButton && id < kStatsPeriodButton + 4) {
+				const int k = id - kStatsPeriodButton;
+				if (v.kind == StatsWindowView::Kind::Balance) {
+					side.stats_balance_period = k;
+				} else {
+					side.stats_graph_period = k;
+				}
+			} else if (id >= kStatsSlotButton && id <= kStatsSlotButton + 4) {
+				stats_open_choice(id - kStatsSlotButton);
+			} else if (id == kStatsTownViewButton) {
+				stats_town_view();
+			} else if (id == kStatsPrevTownButton || id == kStatsNextTownButton) {
+				stats_pick_town(id == kStatsPrevTownButton ? -1 : 1);
+			} else if (id == kStatsChooseTownButton) {
+				stats_open_choice(kStatsSupplySlot);
+			}
+		};
+		auto stats_button = [&](Uint8 button) {
+			if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
+				// The game's speed a step slower or faster, as in the other windows over the town.
+				game_speed = std::clamp(game_speed + (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1), 0,
+					kGameSpeedCount - 1);
+				notify_speed();
+				return true;
+			}
+			if (side.stats_choice_slot >= 0) {
+				// A button's list.
+				const TownListFrame tl = stats_list_frame(save, side, town_width);
+				const int count = int(tl.towns.size());
+				auto point = [&](int row) {
+					side.stats_choice_row = std::clamp(row, 0, std::max(0, count - 1));
+					TownListFrame shown = tl;
+					shown.first = side.stats_choice_first;
+					side.stats_choice_first = shown.shown_from(side.stats_choice_row);
+				};
 				switch (button) {
 				case SDL_CONTROLLER_BUTTON_DPAD_UP:
 				case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
 					if (count > 0) {
-						side.stats_choice_row =
-							(side.stats_choice_row + count + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1)) % count;
+						point((side.stats_choice_row + count + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1)) % count);
 					}
+					return true;
+				case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+				case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+					point(side.stats_choice_row +
+						(button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1) * std::max(1, tl.layout.rows));
 					return true;
 				case SDL_CONTROLLER_BUTTON_A:
 					stats_choose(side.stats_choice_row);
 					return true;
-				case SDL_CONTROLLER_BUTTON_X:
-					side.stats_choice_by_key = !side.stats_choice_by_key;
-					side.stats_choice_row = 0;
+				case SDL_CONTROLLER_BUTTON_Y:
+					if (!tl.sort.empty()) {
+						side.stats_choice_by_key = !side.stats_choice_by_key;
+						side.stats_choice_row = 0;
+						side.stats_choice_first = 0;
+					}
 					return true;
 				case SDL_CONTROLLER_BUTTON_B:
 					side.stats_choice_slot = -1;
@@ -22440,13 +22625,12 @@ int main(int argc, char** argv) {
 				stats_select(first + (side.stats_entry - first + count + step) % count);
 				return true;
 			}
-			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
-			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
-				stats_step_period(button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1);
+			case SDL_CONTROLLER_BUTTON_Y:
+				stats_step_period(1);
 				return true;
 			case SDL_CONTROLLER_BUTTON_X: {
-				// The competition and the towns' pages: Square the next merchant, town or ware button (then the one in
-				// the place of «4 weeks»), Cross opens its list.
+				// The competition and the towns' pages: Square the next merchant, town or ware button (then the ware's
+				// or the town's), X opens its list.
 				const int entry = side.stats_entry;
 				if (!stats_slot_buttons(entry) && !stats_choice_button(entry)) {
 					return false;
@@ -22461,6 +22645,12 @@ int main(int argc, char** argv) {
 				return true;
 			}
 			case SDL_CONTROLLER_BUTTON_A:
+				if (side.stats_entry == kStatisticsSupply) {
+					if (statistics_supply_towns(save, uint32_t(save.player)).size() > 1) {
+						stats_open_choice(kStatsSupplySlot);
+					}
+					return true;
+				}
 				if (!stats_slot_valid(side.stats_entry, side.stats_slot)) {
 					return false;
 				}
@@ -22970,6 +23160,21 @@ int main(int argc, char** argv) {
 					touch_building = false;
 					break;
 				}
+				touch_on_stats = false;
+				if (stats_open && ((touch_start.x < town_width && touch_start.y >= kBarHeight) ||
+									  (side.stats_choice_slot >= 0 &&
+										  inside(stats_list_frame(save, side, town_width).window(), touch_start.x,
+											  touch_start.y)))) {
+					// The statistics' window over the view (and its buttons' list, whose last quarter lies over the panel):
+					// nothing moves under it; a drag on the residents' rows scrolls them. The panel's touches stay the
+					// panel's.
+					touch_on_stats = true;
+					touch_on_side = false;
+					touch_on_panel = true;
+					touch_building = false;
+					stats_drag_first = side.stats_residents_first;
+					break;
+				}
 				if (ship_list.open && touch_start.x < town_width && touch_start.y >= kBarHeight) {
 					// The ship list window over the town: nothing moves under it; a drag on a table's rows or on its scroll
 					// bar scrolls that table (the panel's touches stay the panel's).
@@ -23019,7 +23224,6 @@ int main(int argc, char** argv) {
 					(in_menu && (inside(MenuLayout(small_text->line_height(), menu.screen).panel, touch_start.x, touch_start.y) ||
 						menu.ask != MenuAsk::None)) ||
 					(in_mail && (!mail_in_panel || mail_parchment) && inside(mail_layout.panel, touch_start.x, touch_start.y)) ||
-					(stats_open && inside(StatsLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
 					// The route page's windows over the town: the town doesn't move under them.
 					(side.menu == PanelMenu::Ship && (side.stop_window || side.route_towns_row >= 0 || side.route_files) &&
 						touch_start.x < panel_layout.town_right && touch_start.y >= kBarHeight) ||
@@ -23043,6 +23247,17 @@ int main(int argc, char** argv) {
 				touch_now = {int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight)};
 				if (screen_message || touch_on_convoy) {
 					break;  // Nothing moves under the game's message, nor under the convoy window.
+				}
+				if (touch_on_stats) {
+					// The statistics' window: a drag on the residents' rows scrolls them (whole rows).
+					if (stats_open && side.stats_choice_slot < 0 && side.stats_entry == kStatisticsResidents &&
+						touch_moved >= kTapDistance) {
+						const StatsWindowFrame frame;
+						const int dy = int(float(touch_now.y - touch_start.y) / frame.scale);
+						side.stats_residents_first =
+							stats_residents_shown(stats_window_view(save, side), stats_drag_first - dy / kStatsRowStep);
+					}
+					break;
 				}
 				if (ship_list.open && touch_start.x < town_width && touch_start.y >= kBarHeight) {
 					// The ship list: the rows follow the finger, or the scroll bar's thumb does (whole rows).
@@ -23196,6 +23411,14 @@ int main(int argc, char** argv) {
 				break;
 			case SDL_FINGERUP:
 				finger_down = false;
+				if (touch_on_stats) {
+					touch_on_stats = false;
+					touch_on_panel = false;
+					if (touch_moved < kTapDistance && stats_open) {
+						stats_tap(touch_start.x, touch_start.y);
+					}
+					break;
+				}
 				if (touch_on_convoy && !screen_message) {
 					// The convoy window: a row picks its choice, a touch elsewhere on it drops the pick (0x40D330), «OK»,
 					// the close button; its towns' list over it: a town chosen, the scroll bar's halves a page, its close
@@ -23223,6 +23446,7 @@ int main(int argc, char** argv) {
 							convoy_window.towns_first = std::clamp(tl.first + (tap.hit == TownListHit::PageUp ? -1 : 1) *
 									std::max(1, tl.layout.rows), 0, std::max(0, int(tl.towns.size()) - tl.layout.rows));
 							break;
+						case TownListHit::Sort:
 						case TownListHit::None:
 							break;
 						}
@@ -23534,58 +23758,6 @@ int main(int argc, char** argv) {
 					}
 					break;
 				}
-				if (stats_open && touch_moved < kTapDistance &&
-					inside(StatsLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) {
-					// The statistics' parchment: its period's buttons (Suministro: the towns), or closed.
-					const StatsLayout sl(small_text->line_height());
-					const int x = touch_start.x;
-					const int y = touch_start.y;
-					const int k = sl.period_at(x, y);
-					const int slot = stats_choice_button(side.stats_entry) && inside(sl.periods[0], x, y) ? 4
-						: stats_slot_buttons(side.stats_entry)											   ? sl.merchant_at(x, y)
-																										   : -1;
-					if (inside(sl.close_button, x, y)) {
-						side.menu = PanelMenu::None;
-					} else if (slot >= 0) {
-						if (side.stats_choice_slot == slot) {
-							side.stats_choice_slot = -1;
-						} else {
-							stats_open_choice(slot);
-						}
-					} else if (side.stats_choice_slot >= 0) {
-						// A merchant's list: its sort button, a row, or closed by touching elsewhere.
-						if (inside(sl.sort_button, x, y)) {
-							side.stats_choice_by_key = !side.stats_choice_by_key;
-							side.stats_choice_row = 0;
-						} else if (inside(sl.choice, x, y)) {
-							const int columns = sl.choice_columns(int(stats_choice_rows(save, side).size()));
-							for (int r = 0; r < columns * sl.rows_per_column; ++r) {
-								if (inside(sl.choice_row(r, columns), x, y)) {
-									stats_choose(r);
-									break;
-								}
-							}
-						} else {
-							side.stats_choice_slot = -1;
-						}
-					} else if (k >= 0 && stats_no_days(side.stats_entry)) {
-						if (k >= 1 && (k < 3 || stats_years_shown(save))) {
-							side.stats_graph_period = k;
-						}
-					} else if (k >= 0 && side.stats_entry == kStatisticsSupply) {
-						if (k == 0 || k == 3) {
-							stats_pick_town(k == 0 ? -1 : 1);
-						}
-					} else if (k >= 0 && side.stats_entry == kStatisticsBalance) {
-						side.stats_balance_period = k;
-					} else if (k >= 0 && (k < 3 || stats_years_shown(save))) {
-						side.stats_graph_period = k;
-					}
-					touch_building = false;
-					touch_on_side = false;
-					touch_on_panel = false;
-					break;
-				}
 				if (side.route_drag >= 0 && small_text) {
 					// A stop's town button let go (0x492EE0): its stop goes after the row before the first shown whose
 					// top is at or below the button's (on top: it becomes the first; below them: after the last shown).
@@ -23674,6 +23846,7 @@ int main(int argc, char** argv) {
 							side.route_towns_first = std::clamp(tl.first + (tap.hit == TownListHit::PageUp ? -1 : 1) *
 									std::max(1, tl.layout.rows), 0, std::max(0, int(tl.towns.size()) - tl.layout.rows));
 							break;
+						case TownListHit::Sort:
 						case TownListHit::None:
 							break;
 						}
@@ -24661,27 +24834,34 @@ int main(int argc, char** argv) {
 					tr(BTN_CROSS " disparar   " BTN_TRIANGLE " todos", BTN_CROSS " fire   " BTN_TRIANGLE " all")};
 			} else if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu &&
 				side.stats_choice_slot >= 0) {
-				right_texts = {tr(BTN_CROSS " elegir   " BTN_SQUARE " orden   " BTN_CIRCLE " volver",
-								   BTN_CROSS " choose   " BTN_SQUARE " order   " BTN_CIRCLE " back"),
+				right_texts = {tr(BTN_CROSS " elegir   " BTN_TRIANGLE " orden   " BTN_CIRCLE " volver",
+								   BTN_CROSS " choose   " BTN_TRIANGLE " order   " BTN_CIRCLE " back"),
 					tr(BTN_CIRCLE " volver", BTN_CIRCLE " back")};
 			} else if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu &&
 				(stats_slot_buttons(side.stats_entry) || stats_choice_button(side.stats_entry))) {
 				const int entry = side.stats_entry;
 				right_texts = {stats_competition(entry)
-						? tr("L/R: periodo   " BTN_SQUARE " " BTN_CROSS " comerciante   " BTN_CIRCLE " cerrar",
-							  "L/R: period   " BTN_SQUARE " " BTN_CROSS " merchant   " BTN_CIRCLE " close")
+						? tr(BTN_TRIANGLE " periodo   " BTN_SQUARE " " BTN_CROSS " comerciante   " BTN_CIRCLE " cerrar",
+							  BTN_TRIANGLE " period   " BTN_SQUARE " " BTN_CROSS " merchant   " BTN_CIRCLE " close")
 						: stats_town_data_wares(entry)
-						? tr("L/R: periodo   " BTN_SQUARE " " BTN_CROSS " mercancía   " BTN_CIRCLE " cerrar",
-							  "L/R: period   " BTN_SQUARE " " BTN_CROSS " ware   " BTN_CIRCLE " close")
+						? tr(BTN_TRIANGLE " periodo   " BTN_SQUARE " " BTN_CROSS " mercancía   " BTN_CIRCLE " cerrar",
+							  BTN_TRIANGLE " period   " BTN_SQUARE " " BTN_CROSS " ware   " BTN_CIRCLE " close")
 						: stats_town_data(entry)
-						? tr("L/R: periodo   " BTN_CROSS " ciudad   " BTN_CIRCLE " cerrar",
-							  "L/R: period   " BTN_CROSS " town   " BTN_CIRCLE " close")
-						: tr("L/R: periodo   " BTN_SQUARE " " BTN_CROSS " ciudad   " BTN_CIRCLE " cerrar",
-							  "L/R: period   " BTN_SQUARE " " BTN_CROSS " town   " BTN_CIRCLE " close"),
+						? tr(BTN_TRIANGLE " periodo   " BTN_CROSS " ciudad   " BTN_CIRCLE " cerrar",
+							  BTN_TRIANGLE " period   " BTN_CROSS " town   " BTN_CIRCLE " close")
+						: tr(BTN_TRIANGLE " periodo   " BTN_SQUARE " " BTN_CROSS " ciudad   " BTN_CIRCLE " cerrar",
+							  BTN_TRIANGLE " period   " BTN_SQUARE " " BTN_CROSS " town   " BTN_CIRCLE " close"),
 					tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")};
 			} else if (side.menu == PanelMenu::Statistics && panel_shown && !side.folded && !in_mail && !in_menu) {
-				right_texts = {tr("L/R: periodo   " BTN_CIRCLE " cerrar", "L/R: period   " BTN_CIRCLE " close"),
-					tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")};
+				right_texts = side.stats_entry == kStatisticsSupply
+					? std::vector<std::string>{tr(BTN_TRIANGLE " ciudad   " BTN_CROSS " elegir ciudad   " BTN_CIRCLE " cerrar",
+												   BTN_TRIANGLE " town   " BTN_CROSS " choose town   " BTN_CIRCLE " close"),
+						  tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")}
+					: side.stats_entry == kStatisticsResidents
+					? std::vector<std::string>{tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")}
+					: std::vector<std::string>{tr(BTN_TRIANGLE " periodo   " BTN_CIRCLE " cerrar",
+												   BTN_TRIANGLE " period   " BTN_CIRCLE " close"),
+						  tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")};
 			} else if (in_mail && mail_in_panel) {
 				// The side panel's messages: the tabs with Left and Right, the settings with Select.
 				right_texts = mail.options

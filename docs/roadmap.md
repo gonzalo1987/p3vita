@@ -102,10 +102,11 @@ Cómo leerla:
 - **Hecho el 18-11-2026 (`re/emu/sesion41/`)**: en el menú del barco, la cabecera del barco propio como la del juego,
   el convoy propio (su estado 2) y el nombre del pirata; de paso, la sombra de la tabla en lo alto de todos los menús
   laterales, el borde rasgado bajo la fila de iconos y las texturas que se mezclan multiplicando (apartado 4).
+- **Hecho el 18-11-2026 (quinta sesión, `re/emu/sesion43/`)**: las estadísticas como las del juego, su menú lateral
+  y su ventana de pergamino con todas sus entradas, trazadas en el emulador (apartado 4).
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): primero el resto
   de las pantallas, el panel lateral con las letras y los textos del juego (apartado 4; el encargo
-  `ENCARGO_PANEL_JUEGO.md`: las páginas del menú del barco, el menú de construir, las estadísticas, los mensajes, el
-  panel de las batallas y la barra de arriba); luego el intérprete de misiones (apartado 3), el final de la partida
+  `ENCARGO_PANEL_JUEGO.md`: quedan los mensajes, el panel de las batallas y la barra de arriba); luego el intérprete de misiones (apartado 3), el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -128,6 +129,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Operaciones (193 códigos) | 167: las 37 de la simulación, 101 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red y la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) | **5 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74, 0x76 y 0x82; apartado 3), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 139 | 15: 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
+| El panel lateral y sus ventanas como los del juego (18-11-2026) | 4 de 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir y las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña) | 3: los mensajes (el buzón en el panel y la carta), el panel de las batallas («ver convoy» y sus botones) y la barra de arriba (apartado 4) |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
@@ -585,8 +587,24 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     todas las pantallas, un botón cuyo texto deja menos de 6 por lado crece desde su centro hasta dejar libres sus
     extremos (adaptado; los redondos de «-» y «+» no cambian), y la fila de botones de la lista de archivos se recoloca
     y ensancha la ventana si no cabe.
-  - [ ] Las estadísticas (el panel y sus ventanas), los mensajes en el panel, el panel de las batallas y la barra de
-    arriba.
+  - [x] Las estadísticas (18-11-2026, quinta sesión, `re/emu/sesion43/README.md`): el menú lateral como el del juego,
+    trazado en el emulador (las cuatro pestañas en la fila de arriba en el orden del manual: negocios, competencia,
+    ciudades y comparativa; el título de la página en la letra 3; los botones de las entradas, Button4, centrados cada
+    27, el de la entrada que se ve pulsado; el juego no enciende ninguna pestaña: la de la página, en su dibujo «encima»,
+    adaptado como en el menú de construir) y su ventana como el pergamino del juego (16 × 17 baldosas con los extremos
+    de los rollos, dibujada a su tamaño y ajustada al alto de la Vita, ×0,9375: adaptado): el balance con sus filas y
+    sus fechas, las gráficas con sus ejes y su sombra, la rejilla y las fechas de cada periodo (días cada 5, semanas,
+    iniciales de los meses, años), la escala como el juego (1, 2, 5, 10... con la «t» de los miles de oro y la unidad
+    arriba; «mín.»/«máx.», «exp.»/«imp.»), las líneas de cada serie, los nombres de las series en su color, la leyenda
+    con su moneda, barril, fardo o «%»; el suministro con sus columnas, sus dibujos y su lista de ciudades («Seleccionar
+    ciudad», «<», «>» y el botón de ver la ciudad, que lleva a ella); los habitantes con su barra; los botones de
+    mercaderes, ciudades y mercancías en columna como el juego (los de la competencia con su texto negro, como el
+    juego: el color solo en las líneas) y la ventanita de selección del juego en sus modos 0, 1 y 2 («Nombre Apellido
+    (Ciudad)», el jugador en azul, «Ninguno», el botón de ordenar en la línea del de cerrar). Con el mando, L y R pasan
+    a ser la velocidad como en las demás ventanas sobre la ciudad; Triángulo cambia el periodo (en el suministro, la
+    ciudad) y, en las listas, el orden; Cuadrado y X, los botones bajo la gráfica y su lista (decisión de manejo, para
+    que las teclas coincidan con el resto del visor).
+  - [ ] Los mensajes en el panel, el panel de las batallas y la barra de arriba.
 - [x] **El panel de la Hansa** propio del visor (Cuadrado en una ciudad), quitado el 15-11-2026 a petición del
   usuario: sus encargos y elecciones son las páginas del ayuntamiento, y los materiales de la carretera, la página
   «Ruta terrestre» de la puerta de la ciudad, como las del juego.
@@ -1200,7 +1218,10 @@ retener (`holdable_units`), y la ventana no deja ofrecer más (ctest `offer_wind
   del pirata detenido (0x47F1BC: [+0xE] en vez de [+0xF]).
 - Las estadísticas: los comerciantes de Competencia al abrir (0x49D380, 0x49DB27..0x49DB67), el orden alfabético con
   tildes (0x4720D0, 0x471FF0, 0x471F10, 0x639CF0: corregido como un diccionario), ordenar por riqueza con negativos
-  (0x471EA0) y el título de los habitantes en inglés sin espacio.
+  (0x471EA0) y el título de los habitantes en inglés sin espacio; las fechas de los días de la gráfica (0x49FD70,
+  0x49FF58): al volver atrás pasando dos veces de mes (de los primeros días de marzo a enero) toma la duración del
+  mes anterior al actual, y las fechas de enero salen tres días corridas (solo el dibujo; corregido detrás del ajuste,
+  `statistics_x_labels`).
 - La línea del bloqueo de la Hansa (0x5483D0, clase 0x2A, 0x548766): la comprobación al revés, nunca sale jugando; y
   en red se manda al comerciante 0 (0x4E0D86).
 - La pestaña de la crónica en español (0x6B2DD8 repite «Notificaciones oficiales»): «Noticias públicas».

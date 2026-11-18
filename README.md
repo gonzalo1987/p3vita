@@ -192,20 +192,23 @@ settings, as the game's: how long each kind is kept, its notice and sound, and
 the events' sound (up and down choose, left and right or X change, Circle closes
 it, which sends them to the game).
 
-**The statistics** (touching the money on the top bar, as in the game): the menu in the panel's room with the
-game's four pages and the chosen entry on a parchment over the town: the balance (income and expenditure of the last
-4 weeks or 3, 6, 12 months), the graphs of the company's wealth, its ships and its production (4 weeks, 6 months,
-2 years, or the whole game after its second year) and the goods' supply in a town of your offices; the competition:
-the company value, loading capacity and popularity of up to four merchants (6 months, 2 years or the whole game),
-with the averages of all of them; the town comparison: every town's residents, and the residents, ship traffic,
-production and stock of a ware of up to four towns, with the largest and the smallest town; and the town data: a
-town's residents by class, how their needs are covered, their quality of life, and the export balance, production
-and stock of up to four wares, with the classes' residents beside them. Touch the tabs, the entries and the period's
-buttons; with the buttons, up and down choose the entry, L and R the period (or the supply's town), Circle closes
-them. In the competition and the towns' pages, a merchant's, town's or ware's button under the graph opens the list
-of the others, sorted by name or by the graph's value, to put another one in its place or to leave it empty; the
-comparison's production and stock have a ware button and the town data a town button where «4 weeks» is elsewhere,
-each opening its list (with the buttons: Square goes to the next button, X opens its list).
+**The statistics** (touching the money on the top bar, as in the game): the game's menu in the panel's room (its four
+tabs: the company overview, the competition, the town data and the town comparison; the page's entries) and the
+game's window over the town: the balance (income and expenditure of the last 4 weeks or 3, 6, 12 months), the graphs of
+the company's wealth, its ships and its production (4 weeks, 6 months, 2 years, or the whole game after its second
+year) with their axes, dates and legend, and the goods' supply in a town of your offices (its button by the close one
+shows that town; «<», «>» and «Choose town» the others); the competition: the company value, loading capacity and
+popularity of up to four merchants (6 months, 2 years or the whole game), with the averages of all of them; the town
+comparison: every town's residents, and the residents, ship traffic, production and stock of a ware of up to four
+towns, with the largest and the smallest town; and the town data: a town's residents by class, how their needs are
+covered, their quality of life, and the export balance, production and stock of up to four wares, with the classes'
+residents beside them. Touch the tabs, the entries and the window's buttons; with the buttons, left and right choose
+the page, up and down the entry, Triangle the period (the supply's town), L and R set the game's speed as in the other
+windows, Circle closes them. In the competition and the towns' pages, a merchant's, town's or ware's button under the
+graph (and the ware's or the town's below them) opens the game's list of the others, sorted by name or, with its
+button (or Triangle), by the graph's value, to put another one in its place or to leave it empty (with the buttons:
+Square goes to the next button, X opens its list; in the list up and down, left and right a page, X chooses). Drag the
+towns' residents, or touch their scroll bar, to see the rest.
 
 **On the sea map** the panel stays: the sea's minimap (touch or drag to move the
 map), the ship buttons (a ship at sea is chosen and centred; one in port takes

@@ -255,4 +255,115 @@ constexpr std::array<uint32_t, 4> kStatisticsColours = {0xCC0009, 0x7E009B, 0x00
 std::string game_format_float(double value);
 int32_t game_ftol(double value);
 
+// --- The window's drawing (0x4A14D0 and its parts, read and traced in the emulator: re/emu/sesion43/README.md) ---
+//
+// The window (the menu's [+0xC0]): 16 × 17 tiles of 32 (its show 0x49D380: *0x6CBB00 · 16 and · 17), the dialogs' paper
+// with the rolls' ends (0x41C5A0(w, h, 1): the window 12 wider, its tiles 6 in), centred in the view left of the side
+// panel and in its height; parchment.ini [Parchment1]: DrawXmin 26, DrawYmin 32 (its key is written «DrawYmin32»: the
+// default), LinePosX 60, FontGr 0 (the heads and the legend), FontKl 1 (the rows and the axes). Its places, in its own
+// coordinates (its left the rolls' end's), are the code's with the fonts 0 and 1 15 high (ttffonts.ini's Tiepolo).
+constexpr int kStatsWindowW = 16 * 32 + 12;
+constexpr int kStatsWindowH = 17 * 32;
+constexpr int kStatsDrawX = 26;  // [+0xCA]
+constexpr int kStatsTitleY = 32;  // [+0xCE]: the title's line (the font 3, centred)
+constexpr int kStatsRight = 486;  // [+0xCC]: 512 − DrawXmin
+constexpr int kStatsRowHeight = 15;  // A row's band: the font 1's height
+constexpr int kStatsRowStep = 17;  // [+0xF0]: a button's height / 4 / 2 and the font 1's height
+constexpr int kStatsPlotX = 60;  // [+0xDC]: LinePosX
+constexpr int kStatsPlotY = 54;  // [+0xD4]: DrawYmin and the font 0's height and a half
+constexpr int kStatsPlotW = 426;  // [+0xE4]: [+0xCC] − LinePosX
+constexpr int kStatsPlotH = 263;  // [+0xE8]: down to the period buttons less the font 1's height and a half
+constexpr int kStatsPlotBottom = kStatsPlotY + kStatsPlotH;
+constexpr int kStatsDateY = kStatsPlotBottom + 4;  // The x axis' labels (0x49FD70); its lines to the plot's bottom + 2
+// The y axis' labels, right-aligned at [+0xDA]: LinePosX less the width of «a» in the font 1 (0x6BAC22).
+// The buttons (their styles of buttons.ini): the graphs' periods [+0x784 + 0xE8 k] (Button3, 96 × 18), the balance's
+// [+0x3E4 + 0xE8 k] (Button3), the four under the graph [+0xC28 + 0xE8 k] (Button4, 128 × 18; k = 0 the top one), the
+// ware's or the town's [+0x214] (Button4), the close button [+0x2FC] (32 × 18); Suministro's «<» [+0x20A0] (Button2,
+// 48), «Choose town» [+0x2270] (Button4) and «>» [+0x2188] (Button2) centred on the close button's line, and the town's
+// view [+0x2358] (parchment.ini [Button13], 32 × 18) at its left.
+constexpr int kStatsPeriodY = 339;
+constexpr int kStatsGraphPeriodX[4] = {26, 147, 268, 390};  // The last at [+0xCC] − 96, the others a third apart.
+constexpr int kStatsBalancePeriodY = 472;  // The close button's line less 22.
+constexpr int kStatsBalancePeriodX[4] = {26, 147, 268, 389};  // From DrawXmin, (460 − 96) / 3 apart.
+constexpr int kStatsSlotX = 26;
+constexpr int kStatsSlotY = 369;  // The first; the others 22 under it.
+constexpr int kStatsSlotStep = 22;
+constexpr int kStatsChoiceY = 468;  // [+0x214], at kStatsSlotX.
+constexpr int kStatsCloseX = 454;
+constexpr int kStatsCloseY = 494;
+constexpr int kStatsSupplyX[4] = {26, 139, 192, 325};  // The town's view, «<», «Choose town», «>».
+// The legend (0x4A0690): rows from ([+0xEC], [+0xEE]) every [+0xF0] with a band to [+0xCC]; [+0xEC] = DrawXmin − 4 +
+// Button4's width + the width of «M» in the font 1 (0x6BAC20), [+0xEE] the top slot button's y. Each row's label in
+// the font 0 at its left and its value right-aligned at [+0xCC] (kind 0) or 26 (the load's picture's width) before it,
+// after it its picture by the kind: 1 the coin (TEX16014) 4 to the right, 2 the barrel (TEX16030), 3 the load
+// (TEX16031), 4 «%» (left-aligned there); 5 none.
+constexpr int kStatsLegendBase = kStatsDrawX - 4 + 128;
+constexpr int kStatsLegendValueX = kStatsRight - 26;
+// The towns' residents (entry 6, 0x4A0980): the rows a twelfth of the window's width in from DrawXmin and [+0xCC],
+// from DrawYmin and twice the font 1's height, every [+0xF0] down to 22 rows ([+0x29EC]); the scroll bar at [+0xCC] − 4
+// (0x49DD9C); the total line half a row under the last.
+constexpr int kStatsResidentsX = kStatsDrawX + kStatsWindowW / 12;
+constexpr int kStatsResidentsRight = kStatsRight - kStatsWindowW / 12;
+constexpr int kStatsResidentsY = kStatsTitleY + 2 * kStatsRowHeight;
+constexpr int kStatsResidentsRows = 22;
+constexpr int kStatsResidentsBarX = kStatsRight - 4;
+// Suministro (0x4A0F10): the heads in the font 0 at DrawYmin + 40, the rows every [+0xF0] under them; the columns'
+// right ends (the heads') and their pictures 5 to the right of each figure.
+constexpr int kStatsSupplyHeadY = kStatsTitleY + 40;
+constexpr int kStatsSupplyStar = kStatsDrawX + 0x5A;
+constexpr int kStatsSupplyColumn[3] = {kStatsDrawX + 180, kStatsDrawX + 280, kStatsDrawX + 380};  // pictures
+constexpr int kStatsSupplyHead[3] = {kStatsDrawX + 206, kStatsDrawX + 306, kStatsDrawX + 396};  // heads' right ends
+// The balance (0x4A0C30): its 21 rows from DrawYmin + 8, every [+0xF0], a header in the font 0 8 under the row before
+// and its rows 8 under its line (the font 0's height); the others a band (DrawXmin, y, 460, 15), the label at DrawXmin and
+// the value right-aligned at [+0xCC].
+constexpr int kStatsBalanceY = kStatsTitleY + 8;
+// The balance's rows' tops (each of the 21 rows of balance_label).
+int statistics_balance_row_y(int row);
+
+// The scale of a graph's points (0x4A5DD0, [+0x2094]): its floor (statistics_scale_floor) or its largest point (every
+// series' points, the empty ones too), and if that is above 0 the plot's height · 0.95 over it, every point multiplied
+// by it (`scaled`); else the largest point itself, the points as they are.
+struct StatisticsScale {
+	float scale = 1.0f;
+	bool scaled = false;
+};
+StatisticsScale statistics_scale(int entry, const StatisticsGraph& g);
+// The x step between points ([+0x2090]: the plot's width over the points less one).
+float statistics_x_step(uint32_t points);
+
+// The x axis (0x49FD70): a line at each point from the plot's top to its bottom + 2 (0x1F000000) and its label in the
+// font 1 centred at the date line, from the last point leftwards. By the period ([+0xC0], the competition's and the
+// towns' turned from 0 to 1): the days from yesterday back, «D.M.» on the days divisible by 5 (going back past the 1st
+// the month's days are the current month's previous one's: twice back, a wrong month's length; fixed behind
+// fix_game_bugs), the weeks' «NN.» (the week of the year (day of the year less the week's day) / 7, back from the
+// one before, 01 wrapping to 52), the months' first letter, the years' «%i»; the weeks and the years only where the
+// room since the last label reaches their width («␣48␣», «␣1888␣» in the font 1: `week_width`, `year_width`).
+struct StatisticsXLabel {
+	float x = 0.0f;  // The point's x (its line); the label at its ftol.
+	std::string text;  // Raw (the game's own text); empty without one.
+};
+std::vector<StatisticsXLabel> statistics_x_labels(const SaveGame& save, const GameTexts* texts, int period,
+	uint32_t points, int week_width, int year_width);
+
+// The y axis (0x4A0190): its labels right-aligned (the font 1) and the grid's lines (0x1F000000, from the plot's left
+// less 2 to its right). By the entry's kind (0x66FC0C): kinds 0..4 «0» at the bottom and the unit at the top (the slots
+// 0x6C1AAC + 4 · kind: load, people, gold, ships), then the steps; the needs and the quality of life «min.» at their
+// zero line and «max.» at the top; the export balance «exp.» at the top, «0» at its zero line and «imp.» at the bottom;
+// the others «0» at their zero line (with one). The step: from the kind's (2000 loads, 1000 gold, 1, 10⁷ for the kinds
+// 5 and 6) doubled, × 2.5, doubled... (1, 2, 5, 10) until it is over three half lines on the plot; its labels a counter
+// of 15 characters (the kind's digits, «t» at the end for the gold's thousands), up the plot while over its top and a
+// line.
+struct StatisticsYLabel {
+	int y = 0;  // Its text's top.
+	std::string text;  // Raw.
+};
+struct StatisticsYAxis {
+	std::vector<StatisticsYLabel> labels;
+	std::vector<float> grid;  // The grid lines' y.
+};
+// `g`'s points as the window holds them (before the scale), `half_line` the font 1's height / 2. Without `texts` (the
+// tests) the words are left empty, as the months' letters of statistics_x_labels.
+StatisticsYAxis statistics_y_axis(const GameTexts* texts, int entry, const StatisticsGraph& g, const StatisticsScale& s,
+	int half_line);
+
 }  // namespace p3::data

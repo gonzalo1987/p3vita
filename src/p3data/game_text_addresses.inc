@@ -1426,6 +1426,11 @@
 	{0x006C1A78, 0x006C1FF8},
 	{0x006C1A7C, 0x006C1FFC},
 	{0x006C1A80, 0x006C2000},
+	// The graphs' y axis' units (0x4A03BB, the slots 0x6C1AAC + 4 · kind: load, people, gold, ships).
+	{0x006C1AAC, 0x006C2028},
+	{0x006C1AB0, 0x006C202C},
+	{0x006C1AB4, 0x006C2030},
+	{0x006C1AB8, 0x006C2034},
 	{0x006B0D68, 0x006B15A0},
 	// The competition (0x4A19C0): the six averages' labels and formats beside its graph («competing traders», «%i
 	// traders», ...: 0x4A1D0F); the list of a merchant's button (0x46F760 in its mode 2): «choose trader» (0x46FA19),

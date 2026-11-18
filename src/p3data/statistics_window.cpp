@@ -478,10 +478,20 @@ StatisticsGraph statistics_graph(const SaveGame& save, uint32_t merchant, int en
 	return out;
 }
 
+namespace {
+
+// Each entry's kind of graph (0x66FC0C): its scale's floor and its y axis' unit and step.
+constexpr uint8_t kEntryKind[kStatisticsEntries] = {1, 5, 5, 5, 0, 0, 5, 1, 3, 0, 0, 2, 2, 0, 0, 6, 2, 0, 6, 0, 0, 0, 1,
+	1, 3, 4, 4, 6};
+
+uint8_t entry_kind(int entry) {
+	return entry >= 0 && entry < kStatisticsEntries ? kEntryKind[entry] : 0xFF;
+}
+
+}  // namespace
+
 float statistics_scale_floor(int entry) {
-	static constexpr uint8_t kKind[kStatisticsEntries] = {1, 5, 5, 5, 0, 0, 5, 1, 3, 0, 0, 2, 2, 0, 0, 6, 2, 0, 6, 0, 0,
-		0, 1, 1, 3, 4, 4, 6};  // 0x66FC0C
-	const uint8_t kind = entry >= 0 && entry < kStatisticsEntries ? kKind[entry] : 0xFF;
+	const uint8_t kind = entry_kind(entry);
 	if (kind == 0) {
 		return 2000.0f;
 	}
@@ -1428,6 +1438,280 @@ std::vector<SupplyRow> statistics_supply(const SaveGame& save, uint32_t merchant
 		row.town = t.s32(0x4 + 4 * size_t(w));
 		row.price = tick::game_buy_price(save, w, int(town), kInBarrels[w] ? 200 : 2000);
 		out.push_back(row);
+	}
+	return out;
+}
+
+// --- The window's drawing ---
+
+int statistics_balance_row_y(int row) {
+	// 0x4A0C30: from DrawYmin; a header half a row (8) lower, its rows the font 0's height and half a row under it.
+	int y = kStatsTitleY;
+	for (int r = 0; r < kBalanceRows; ++r) {
+		const bool header = balance_header(r);
+		if (header) {
+			y += kStatsRowStep / 2;
+		}
+		if (r == row) {
+			return y;
+		}
+		y += header ? kStatsRowHeight + kStatsRowStep / 2 : kStatsRowStep;
+	}
+	return y;
+}
+
+StatisticsScale statistics_scale(int entry, const StatisticsGraph& g) {
+	// 0x4A5F3D..0x4A609B: the floor, raised by every point of the series filled ([+0x2084] series of [+0x2088] points).
+	float largest = statistics_scale_floor(entry);
+	for (uint32_t s = 0; s < g.series && s < g.values.size(); ++s) {
+		for (uint32_t p = 0; p < g.points && p < g.values[s].size(); ++p) {
+			if (largest < g.values[s][p]) {
+				largest = g.values[s][p];
+			}
+		}
+	}
+	StatisticsScale out;
+	if (largest > 0.0f) {
+		// fld [+0xE8]; fmul [0x66FD60] (0.95f); fdiv the largest.
+		out.scale = float(double(float(kStatsPlotH)) * double(0.95f) / double(largest));
+		out.scaled = true;
+	} else {
+		out.scale = largest;
+	}
+	return out;
+}
+
+float statistics_x_step(uint32_t points) {
+	// 0x4A5F25: the points less one as an unsigned 64-bit integer, to a float.
+	return float(double(float(kStatsPlotW)) / double(float(uint32_t(points - 1))));
+}
+
+std::vector<StatisticsXLabel> statistics_x_labels(const SaveGame& save, const GameTexts* texts, int period,
+	uint32_t points, int week_width, int year_width) {
+	std::vector<StatisticsXLabel> out;
+	if (points == 0) {
+		return out;
+	}
+	const float step = statistics_x_step(points);
+	const int day = save.globals.u8(global::kWorldDay);
+	const int month = save.globals.u8(global::kWorldMonth);  // 0 January
+	char text[8] = {};
+	int number = 0;  // esi: the day, the week or the month
+	int month1 = 0;  // ebx: the days' month, 1..12
+	int room = 0;  // [esp+0x14]: the room since the last label (the weeks', the years')
+	int room_step = 0;  // [esp+0x18]: the step's ftol
+	int width = 0;  // the label's width
+	switch (period) {
+	case 0:
+		number = day;
+		month1 = month + 1;
+		break;
+	case 1: {
+		const uint32_t weekday = (save.tick() >> 8) % 7;
+		const int32_t week = (int32_t(save.globals.u16(global::kWorldDayOfYear)) - int32_t(weekday)) / 7;
+		text[0] = char('0' + week / 10);
+		text[1] = char('0' + week % 10);
+		text[2] = '.';
+		room = width = week_width;
+		room_step = game_ftol(step);
+		break;
+	}
+	case 2: number = month; break;
+	case 3:
+		std::snprintf(text, sizeof(text), "%i", int(save.globals.u16(global::kWorldYear)));
+		room = width = year_width;
+		room_step = game_ftol(step);
+		break;
+	default: break;
+	}
+	// The last point's x: fild (points − 1); fstp; fld; fmul the step; fadd the plot's left; fstp.
+	float x = float(double(float(uint32_t(points - 1))) * double(step) + double(float(kStatsPlotX)));
+	// Whether a week's or a year's label fits since the last one (0x4A00FD).
+	auto spaced = [&]() {
+		if (width > room) {
+			room += room_step;
+			return false;
+		}
+		room = room_step;
+		return true;
+	};
+	for (uint32_t k = 0; k < points; ++k) {
+		std::string label;
+		switch (period) {
+		case 0:
+			if (--number < 1) {
+				// 0x49FF58: the month before, its days the current month's previous one's (0x672D92 + 2 · month): twice
+				// back (from March's 1st and 2nd, past February into January) the wrong one's, fixed behind
+				// fix_game_bugs.
+				if (fix_game_bugs()) {
+					month1 = month1 > 1 ? month1 - 1 : 12;
+					number = kMonthDays[month1 - 1];
+				} else if (month > 0) {
+					--month1;
+					number = kMonthDays[month - 1];
+				} else {
+					month1 = 12;
+					number = kMonthDays[11];
+				}
+			}
+			if (number % 5 == 0) {
+				label = std::to_string(number) + "." + std::to_string(month1) + ".";
+			}
+			break;
+		case 1:
+			// The week before: «01.» wraps to «52.».
+			if (text[1] > '1') {
+				--text[1];
+			} else if (text[0] > '0') {
+				if (text[1] == '1') {
+					text[1] = '0';
+				} else {
+					--text[0];
+					text[1] = '9';
+				}
+			} else {
+				text[0] = '5';
+				text[1] = '2';
+			}
+			if (spaced()) {
+				label = text;
+			}
+			break;
+		case 2: {
+			if (--number < 0) {
+				number = 11;
+			}
+			const std::string name = texts ? texts->raw_at(kMonthNames + 4 + 4 * uint32_t(number)) : std::string();
+			label = name.empty() ? std::string() : name.substr(0, 1);
+			break;
+		}
+		case 3:
+			// The year before, digit by digit from the last.
+			for (int d = 3; d >= 0; --d) {
+				if (--text[d] >= '0' || d == 0) {
+					break;
+				}
+				text[d] = '9';
+			}
+			if (spaced()) {
+				label = text;
+			}
+			break;
+		default: break;
+		}
+		out.push_back({x, label});
+		x = float(double(x) - double(step));
+	}
+	return out;
+}
+
+StatisticsYAxis statistics_y_axis(const GameTexts* texts, int entry, const StatisticsGraph& g, const StatisticsScale& s,
+	int half_line) {
+	StatisticsYAxis out;
+	const uint8_t kind = entry_kind(entry);
+	const float bottom = float(kStatsPlotBottom);
+	const float top = float(kStatsPlotY);
+	float base = 1.0f;  // [esp+0x14]: the step
+	int digits = 14;  // [esp+0x18]: where the counter's units are
+	int series = -1;  // ebp: the zero line's series (the kinds 5 and 6)
+	switch (kind) {
+	case 0: base = 2000.0f; break;
+	case 1:
+	case 3:
+	case 4: break;
+	case 2:
+		base = 1000.0f;
+		digits = 13;
+		break;
+	case 5:
+		series = int(g.series) - 1;
+		base = 1.0e7f;
+		break;
+	case 6:
+		series = 0xFFFF;
+		base = 1.0e7f;
+		break;
+	default: return out;
+	}
+	if (!(s.scale > 0.0f)) {
+		return out;  // (The game's scale is never at or below 0 here: its floor is at least 1.)
+	}
+	// The step grows (×2, ×2.5, ×2: 1, 2, 5, 10...) until it is over three half lines on the plot.
+	const float least = float(half_line) * 3.0f;
+	char increment = 1;
+	for (int cycle = 0;;) {
+		if (float(double(base) * double(s.scale)) > least) {
+			break;
+		}
+		if (cycle == 0) {
+			base += base;
+			increment = 2;
+			cycle = 1;
+		} else if (cycle == 1) {
+			base = float(double(base) * 2.5);
+			increment = 5;
+			cycle = 2;
+		} else {
+			base += base;
+			increment = 1;
+			--digits;
+			cycle = 0;
+		}
+	}
+	char counter[16];
+	std::memset(counter, ' ', 15);
+	for (int k = std::max(0, digits); k < 15; ++k) {
+		counter[k] = '0';
+	}
+	if (kind == 2) {
+		counter[14] = 't';
+	}
+	counter[15] = 0;
+	auto at = [&](double y) { return game_ftol(y); };
+	auto word = [&](uint32_t slot) { return texts ? texts->raw_at(slot) : std::string(); };
+	const float factor = s.scaled ? s.scale : 1.0f;
+	const bool zero = series >= 0 && uint32_t(series) < g.series && size_t(series) < g.values.size() &&
+		!g.values[size_t(series)].empty();
+	const double zero_y = zero ? double(bottom) - double(float(double(factor) * double(g.values[size_t(series)][0]))) : 0.0;
+	if (kind < 5) {
+		out.labels.push_back({at(bottom) - half_line, "0"});
+		out.labels.push_back({at(top) - half_line, word(0x6C1AAC + 4 * uint32_t(kind))});
+	} else if (entry < kStatisticsExportBalance) {
+		if (zero) {
+			out.labels.push_back({at(zero_y) - half_line, word(0x6C2274)});  // «min.»
+		}
+		out.labels.push_back({at(top) - half_line, word(0x6C2268)});  // «max.»
+	} else if (entry == kStatisticsExportBalance) {
+		out.labels.push_back({at(top) - half_line, word(0x6C225C)});  // «exp.»
+		if (zero) {
+			out.labels.push_back({at(zero_y) - half_line, "0"});
+		}
+		out.labels.push_back({at(double(bottom) - double(float(half_line))), word(0x6C2250)});  // «imp.»
+	} else if (zero) {
+		out.labels.push_back({at(zero_y) - half_line, "0"});
+	}
+	// The steps up the plot while over its top and a line.
+	const float stop = float(double(float(2 * half_line)) + double(top));
+	float value = 0.0f;
+	for (int guard = 0; guard < 1000; ++guard) {
+		int p = std::clamp(digits, 0, 14);
+		counter[p] = char(counter[p] + increment);
+		while (counter[p] > '9' && p > 0) {
+			counter[p] = '0';
+			--p;
+			counter[p] = counter[p] == ' ' ? '1' : char(counter[p] + 1);
+		}
+		value = float(double(value) + double(base));
+		const float y = float(double(bottom) - double(value) * double(s.scale));
+		if (!(y > stop)) {
+			break;
+		}
+		const char* first = counter;
+		while (*first == ' ') {
+			++first;
+		}
+		out.labels.push_back({game_ftol(y) - half_line, first});
+		out.grid.push_back(y);
 	}
 	return out;
 }
