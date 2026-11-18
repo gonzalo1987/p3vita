@@ -12542,8 +12542,9 @@ constexpr const char* kPanelShipFiles[kPanelShipButtons] = {"images/b_schiffe_an
 	"images/b_konvoi_anker.tga", "images/b_konvoi_see.tga"};
 
 // What the menus' room shows.
-// OtherShip: the ship menu with another merchant's ship (its state 3: draw_foreign_ship_menu).
-enum class PanelMenu { None, Build, Ship, OtherShip, Messages, Statistics };
+// OtherShip: the ship menu with another merchant's ship (its state 3: draw_foreign_ship_menu); Ships: with several of
+// the player's (state 0: draw_ship_selection_menu).
+enum class PanelMenu { None, Build, Ship, OtherShip, Ships, Messages, Statistics };
 
 // The ship menu's pages (SIDEMENU_SHIP: its buttons in the game's order, the
 // convoy's showing the convoy's ships when the ship is in one, as the game's
@@ -12579,6 +12580,9 @@ struct SidePanel {
 	bool ship_list_open = false;
 	// With PanelMenu::OtherShip, the convoy it shows (the menu's state 4), or −1 the ship alone (3).
 	int other_convoy = -1;
+	// With PanelMenu::Ships, the player's ships chosen (the menu's state 0) and its list's first row shown.
+	std::vector<uint16_t> ships_chosen;
+	int ships_first = 0;
 	// The ship menu (SIDEMENU_SHIP): the ship it shows, its page, the first
 	// cargo row shown, and its crew and convoy pages' state (as the flat
 	// windows': open = Place::Ship, ship = the ship, the row, the amount, the
@@ -13226,6 +13230,7 @@ struct ShipListUi {
 	int drag = -1;
 	bool drag_bar = false;
 	int drag_first = 0;
+	uint32_t pressed_at = 0;  // When the finger went down on it (a long touch on a row adds or takes its ship).
 };
 constexpr int kShipListDialog = 30;  // GameWindowArt::draw_dialog's key.
 constexpr int kShipListStep = kShipListRowHeight + kShipListRowSpacing;
@@ -13725,6 +13730,80 @@ void draw_foreign_ship_menu(SDL_Renderer* renderer, GameWindowArt& art, TextRend
 	art.draw_tex(20023, 0, lens.x, lens.y);
 	if (s.status() == 0x12 || s.raid() != 0) {
 		art.draw_tex(20028, 0, lens.x, lens.y, 0, 0x64);
+	}
+}
+
+// --- The ship menu with several ships chosen (CSideMenu_Ship's state 0: 0x488080 with more than one ship; its
+// drawing 0x48B100 → the list 0x48CF50, with sidemenu.ini [Chart0] «ship selection»: 3 columns 104 50 54, spacing 2,
+// rows 18 + 2 under a head 24 high, at (8, 90) from the room's top). The game chooses several with Ctrl on the ship
+// list's rows (0x477286) or the sea map's dragged box (0x44D780); the viewer with a long touch on a row (the user's
+// choice, 2026-11-18). The pointed row's head (0x48EE90 over the list while the mouse is on a row) isn't there: the
+// Vita has no pointer; the rows' heights adapted with the game's scroll bar where they don't fit. ---
+
+constexpr int kShipsChartX = 8;
+constexpr int kShipsChartY = 90;
+constexpr int kShipsHead = 24;
+constexpr int kShipsStep = 18 + 2;
+constexpr int kShipsColumn[3] = {0, 104 + 2, 104 + 2 + 50 + 2};
+
+// The rows that fit in the room under the head, and the scroll bar's place (w 0 none) for `count` ships.
+struct ShipsMenuLayout {
+	int rows = 0;
+	SDL_Rect bar{};
+	SDL_Rect row(const SDL_Rect& room, int k) const {
+		return {room.x + kShipsChartX, room.y + kShipsChartY + kShipsHead + kShipsStep * k, 104 + 2 + 50 + 2 + 54, 18};
+	}
+	ShipsMenuLayout(const SDL_Rect& room, int count) {
+		rows = std::max(1, (room.h - kShipsChartY - kShipsHead) / kShipsStep);
+		if (count > rows) {
+			bar = {room.x + room.w - ScrollBarLayout::kThumbWidth - 2, room.y + kShipsChartY + kShipsHead,
+				ScrollBarLayout::kThumbWidth, kShipsStep * rows};
+		}
+	}
+};
+
+void draw_ship_selection_menu(SDL_Renderer* renderer, GameWindowArt& art, TextRenderer& fallback, const SaveGame& save,
+	const std::vector<uint16_t>& ships, int first, const SDL_Rect& room) {
+	TextRenderer& head = art.head_text() ? *art.head_text() : fallback;
+	TextRenderer& page = art.page_text() ? *art.page_text() : fallback;
+	const SDL_Color black = argb_color(kShipListInk);
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	const int x = room.x + kShipsChartX;
+	head.draw(exe_text(0x6998AC, "Barco", "Ship"), x + kShipsColumn[0], room.y + kShipsChartY, black);
+	head.draw(exe_text(0x6998F0, "Tipo", "Type"), x + kShipsColumn[1], room.y + kShipsChartY, black);
+	const ShipsMenuLayout l(room, int(ships.size()));
+	for (int k = 0; k < l.rows && first + k < int(ships.size()); ++k) {
+		const SavedShip& s = save.ships[ships[size_t(first + k)]];
+		const SDL_Rect r = l.row(room, k);
+		page.draw(s.name(), r.x + kShipsColumn[0], r.y, black);
+		page.draw(ship_type_name(s.type()), r.x + kShipsColumn[1], r.y, black);
+		// The last column's marks (0x490F80, 0x48D1CA): the trade route, the convoy's flag.
+		const ShipListMarks m = ship_list_marks(save, ships[size_t(first + k)]);
+		int mx = r.x + kShipsColumn[2];
+		if (m.trade_route) {
+			mx += art.draw_tex(16034, 0, mx, r.y).x;
+		}
+		if (m.tex) {
+			art.draw_tex(m.tex, 0, mx, r.y, 0, 255, m.colour);
+		}
+	}
+	if (l.bar.w > 0) {
+		PlaceView::PageScroll scroll;
+		scroll.bar = l.bar;
+		scroll.clip = {x, l.bar.y, l.bar.x - x, l.bar.h};
+		scroll.total = kShipsStep * int(ships.size());
+		scroll.offset = kShipsStep * first;
+		scroll.line = kShipsStep;
+		const ScrollBarLayout bar(scroll);
+		SDL_RenderSetClipRect(renderer, &bar.track);
+		const int tile = std::max(1, art.tex_size(16012, 0).y);
+		for (int y = bar.track.y; y < bar.track.y + bar.track.h; y += tile) {
+			art.draw_tex(16012, 0, bar.track.x, y);
+		}
+		SDL_RenderSetClipRect(renderer, nullptr);
+		art.draw_tex(16010, 0, bar.up.x, bar.up.y);
+		art.draw_tex(16011, 0, bar.down.x, bar.down.y);
+		art.draw_tex(16013, 0, bar.thumb.x, bar.thumb.y);
 	}
 }
 
@@ -20304,6 +20383,29 @@ int main(int argc, char** argv) {
 		if (sea_panel && side.menu == PanelMenu::Ship && fleet_ship() >= 0) {
 			side.ship = fleet_ship();  // On the sea map the menu is the chosen ship's (Square, the ship buttons).
 		}
+		if (side.menu == PanelMenu::Ships) {
+			// 0x490B10 each frame: only the player's ships, not at an auction, offered or on an expedition; one left is
+			// chosen alone, none closes it.
+			std::vector<uint16_t>& v = side.ships_chosen;
+			v.erase(std::remove_if(v.begin(), v.end(),
+						[&](uint16_t id) {
+							const SavedShip& c = save.ships[id];
+							return !c.in_use() || c.owner() != save.player || c.status() == 0x0C ||
+								c.status() == 0x0D || c.status() == 0x13;
+						}),
+				v.end());
+			if (!panel_shown || v.empty()) {
+				side.menu = PanelMenu::None;
+				side.ship = -1;
+			} else if (v.size() == 1) {
+				side.ship_ui = PlaceUi();
+				side.cargo_first = 0;
+				side.menu = PanelMenu::Ship;
+				side.ship = v[0];
+			}
+			side.ships_first = std::clamp(side.ships_first, 0,
+				std::max(0, int(v.size()) - ShipsMenuLayout(panel_layout.room, int(v.size())).rows));
+		}
 		if (side.menu == PanelMenu::OtherShip &&
 			(!panel_shown || side.ship < 0 || size_t(side.ship) >= save.ships.size() || save.player < 0 ||
 				!save.ships[size_t(side.ship)].in_use() || save.ships[size_t(side.ship)].owner() == save.player)) {
@@ -21330,6 +21432,37 @@ int main(int argc, char** argv) {
 				side.ship = ship;
 			}
 		};
+		// A long touch on a row (the game's Ctrl on it, 0x477286..0x47734F): one of the player's ships (not in the
+		// states 0xC..0xE, 0x13) added to the ship menu's ships or taken out of them; several make its state 0, one is
+		// chosen alone, none closes it. The ships of another merchant's menu aren't kept.
+		auto ship_list_toggle = [&](uint32_t index, uint16_t ship) {
+			ship_list.row = int(index);
+			const SavedShip& s = save.ships[ship];
+			if (!ship_list_can_choose(save, ship) || !s.in_use() || s.owner() != save.player) {
+				return;
+			}
+			std::vector<uint16_t> chosen;
+			if (side.menu == PanelMenu::Ships) {
+				chosen = side.ships_chosen;
+			} else if (side.menu == PanelMenu::Ship && side.ship >= 0) {
+				chosen.push_back(uint16_t(side.ship));
+			}
+			const auto at = std::find(chosen.begin(), chosen.end(), ship);
+			if (at != chosen.end()) {
+				chosen.erase(at);
+			} else {
+				chosen.push_back(ship);
+			}
+			if (chosen.size() > 1) {
+				side.menu = PanelMenu::Ships;
+				side.ships_chosen = chosen;
+			} else if (chosen.size() == 1) {
+				choose_ship(chosen[0]);
+			} else {
+				side.menu = PanelMenu::None;
+				side.ship = -1;
+			}
+		};
 		// The side panel's icons (0..5) and ship buttons (6..9), tapped or with X.
 		auto side_act = [&](int item) {
 			if (item < kPanelIcons) {
@@ -22024,6 +22157,7 @@ int main(int argc, char** argv) {
 					touch_on_panel = true;
 					touch_building = false;
 					ship_list.drag = -1;
+					ship_list.pressed_at = app_ticks();
 					const ShipListFrame f = ship_list_frame(save, ship_list, town_width);
 					for (int t = 0; t < 2; ++t) {
 						const SDL_Rect b = f.bar(t);
@@ -22266,7 +22400,10 @@ int main(int argc, char** argv) {
 						case ShipListHit::Row: {
 							const uint32_t when = app_ticks();
 							const uint16_t id = f.list.ships[tap.index];
-							if (tap.table == 0 && ship_list.touched == int(tap.index) && when - ship_list.touched_at < kShipListDoubleMs) {
+							if (tap.table == 0 && when - ship_list.pressed_at >= kBattleLongPressMs) {
+								ship_list.touched = -1;
+								ship_list_toggle(tap.index, id);  // The game's Ctrl (0x477286).
+							} else if (tap.table == 0 && ship_list.touched == int(tap.index) && when - ship_list.touched_at < kShipListDoubleMs) {
 								ship_list.touched = -1;
 								ship_list_act(id);
 							} else {
@@ -22776,6 +22913,19 @@ int main(int argc, char** argv) {
 							mail_options(false);
 							mail_select(mail.first + row);
 							mail.letter_open = true;
+						}
+					} else if (side.menu == PanelMenu::Ships && inside(panel_layout.room, x, y)) {
+						const ShipsMenuLayout l(panel_layout.room, int(side.ships_chosen.size()));
+						if (l.bar.w > 0 && inside({l.bar.x - 6, l.bar.y, l.bar.w + 12, l.bar.h}, x, y)) {
+							const int half = l.bar.y + l.bar.h / 2;
+							side.ships_first += y < half ? -1 : 1;
+						} else {
+							for (int k = 0; k < l.rows && side.ships_first + k < int(side.ships_chosen.size()); ++k) {
+								if (inside(l.row(panel_layout.room, k), x, y)) {
+									choose_ship(side.ships_chosen[size_t(side.ships_first + k)]);
+									break;
+								}
+							}
 						}
 					} else if (side.menu == PanelMenu::Ship && side.ship >= 0 && inside(panel_layout.room, x, y)) {
 						// The ship menu: its page buttons, the crew page's and the convoy pages' buttons and rows.
@@ -23423,6 +23573,10 @@ int main(int argc, char** argv) {
 					draw_foreign_ship_menu(renderer, *g_game_art, *small_text, save, side.ship, side.other_convoy,
 						panel_layout.room);
 				}
+				if (side.menu == PanelMenu::Ships && !side.folded && g_game_art) {
+					draw_ship_selection_menu(renderer, *g_game_art, *small_text, save, side.ships_chosen, side.ships_first,
+						panel_layout.room);
+				}
 				if (side.menu == PanelMenu::Statistics && !side.folded) {
 					draw_stats_room(renderer, *small_text, *panel_art, side);
 					draw_stats_window(renderer, *small_text, *panel_art, save, town_names, side);
@@ -23502,6 +23656,10 @@ int main(int argc, char** argv) {
 				}
 				if (side.menu == PanelMenu::OtherShip && side.ship >= 0 && !side.folded && g_game_art) {
 					draw_foreign_ship_menu(renderer, *g_game_art, *small_text, save, side.ship, side.other_convoy,
+						panel_layout.room);
+				}
+				if (side.menu == PanelMenu::Ships && !side.folded && g_game_art) {
+					draw_ship_selection_menu(renderer, *g_game_art, *small_text, save, side.ships_chosen, side.ships_first,
 						panel_layout.room);
 				}
 				if (side.menu == PanelMenu::Statistics && !side.folded) {
@@ -23802,6 +23960,8 @@ int main(int argc, char** argv) {
 			std::vector<uint16_t> chosen;
 			if (side.menu == PanelMenu::OtherShip && side.other_convoy >= 0) {
 				chosen = convoy_menu_list(save, uint16_t(side.other_convoy)).ships;
+			} else if (side.menu == PanelMenu::Ships) {
+				chosen = side.ships_chosen;
 			} else if ((side.menu == PanelMenu::Ship || side.menu == PanelMenu::OtherShip) && side.ship >= 0) {
 				chosen.push_back(uint16_t(side.ship));
 			}

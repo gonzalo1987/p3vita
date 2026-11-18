@@ -97,10 +97,11 @@ Cómo leerla:
   ciudad por estaciones, como el juego (apartado 4; commit 97e004c).
 - **Hecho el 17-11-2026 (segunda sesión, `re/emu/sesion40/`)**: la lista de barcos como la ventana de pergamino del
   juego («Información de la flota»), con sus letras, textos, columnas, órdenes y botones, abierta desde el icono del
-  panel y desde el faro de la ciudad (los barcos de su puerto, también los de otros comerciantes) (apartado 4).
+  panel y desde el faro de la ciudad (los barcos de su puerto, también los de otros comerciantes) (apartado 4); y,
+  ya en el menú del barco, el barco y el convoy de otro comerciante y varios barcos a la vez (18-11-2026).
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): primero el resto
   de las pantallas, el panel lateral con las letras y los textos del juego (apartado 4; el encargo
-  `ENCARGO_PANEL_JUEGO.md`: lo que queda de la lista de barcos, luego el menú del barco); luego el intérprete de misiones (apartado 3), el final de la partida
+  `ENCARGO_PANEL_JUEGO.md`: lo que queda del menú del barco, su cabecera y su convoy propios, y sus páginas); luego el intérprete de misiones (apartado 3), el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -512,9 +513,11 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     - [x] El convoy de otro comerciante (18-11-2026): un barco suyo en convoy elegido desde la lista enseña antes su
       convoy (0x495190: el estado 4, «Convoy …» con sus sumas aproximadas y el número de barcos, 0x48FE80, 0x4906E0,
       0x492150), tocado otra vez el barco solo; la lista marca entonces todos los barcos del convoy.
+    - [x] Varios barcos a la vez (18-11-2026): una pulsación larga en una fila de la lista los añade o los quita, como
+      el Ctrl del juego (decisión del usuario); el menú del barco enseña entonces su estado 0, la lista de los elegidos
+      ([Chart0] de sidemenu.ini), con la barra del juego donde no caben.
     - [ ] Con el menú del barco (parte 2): el convoy del jugador (el estado 2: su cabecera y la lista de sus barcos, hoy
-      el menú propio del visor), la selección de varios barcos (el estado 0: en el juego con Ctrl o el recuadro; en la
-      Vita, sin gesto aún) y el nombre del pirata (0x612EE0).
+      el menú propio del visor) y el nombre del pirata (0x612EE0).
     - [ ] «Ir al barco» centrado en su barco del puerto (0x476A30: la lista 0x6E2D50): va con los barcos en el puerto
       de la ciudad viva. (El de un barco en construcción, estado 0xE, ya centra el astillero de su ciudad.)
   - [ ] El menú del barco: su cabecera y sus cinco páginas.
