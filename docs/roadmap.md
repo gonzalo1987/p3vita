@@ -534,7 +534,7 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
       mueve el mapa (para la pasada de usabilidad, si hace falta).
     - [ ] «Ir al barco» centrado en su barco del puerto (0x476A30: la lista 0x6E2D50): va con los barcos en el puerto
       de la ciudad viva. (El de un barco en construcción, estado 0xE, ya centra el astillero de su ciudad.)
-  - [ ] El menú del barco: su cabecera y sus cinco páginas. **Hecha la cabecera del barco propio** (18-11-2026,
+  - [x] El menú del barco: su cabecera y sus cinco páginas. **Hecha la cabecera del barco propio** (18-11-2026,
     0x48EE90 → 0x4916E0, trazada en el emulador): el nombre con sus marcas en la letra 2, la línea de estado como el
     juego (los días, el icono, el sitio), la fila de iconos con el borde rasgado del pergamino debajo, y el barril
     con la bodega y el equipo (el equipo abajo, en rojo solo la capacidad si se pasa); en la página de mercancías y,
@@ -567,8 +567,11 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     mensaje del juego) y la ventana de mercancías de una parada (*0x6CBA74: el dibujo del juego con su marco y sus
     sombras, la tabla [CHART0] con sus 20 filas, la leyenda y la fila de abajo como el código y la foto del usuario;
     escalada al alto de la Vita, ×0,904, como las de los edificios: adaptado). Las listas de selección van donde las
-    pone el juego, con su último cuarto sobre el panel (lo confirma la foto del usuario). Falta del menú del barco
-    solo la cabecera vieja del panel de la batalla (con el panel de las batallas).
+    pone el juego, con su último cuarto sobre el panel (lo confirma la foto del usuario). Y el menú del barco
+    en la batalla (18-11-2026): su página de cubierta como la del juego (la cabecera de la página de cubierta, no la
+    vieja del visor), la fila de botones apagada, el botón de disparar en su sitio y la cuerda con sus tres marcas
+    (el barco en las velas que lleva, las pedidas al 50 % hasta que llega, el nudo bajo el dedo). «Ver convoy» en la
+    batalla, apagado hasta el panel de las batallas. **El menú del barco está acabado.**
   - [ ] El menú de construir, con **el aviso de la reputación** (0x6B20A4, «Todavía no puedes construir una oficina
     comercial…»: un texto «\c» centrado en la letra del juego; hoy un texto del visor alineado a la izquierda). Visto
     el 18-11-2026: en inglés sus dos primeras filas dicen las dos «trading office».

@@ -14982,37 +14982,85 @@ BattleButtonState battle_button_state(BattleButton k, uint16_t bits, bool any_sh
 	}
 }
 
-// The deck page of the battle's panel in the menus' room: the header (left of the fire button, 64 · 64 at the
-// top right), the deck and, under it, the sails' rope (256 · 12, its marker ship at five places, furled on the
-// left: a ship's sails 0..4).
+// The ship menu in a battle (its state [+0xC4], the page the deck: 0x488080) in the panel's room, as the ship menu's
+// deck page (0x48E700, draw_deck_page) under the page buttons' row, with the battle's pieces: the fire button
+// ([+0x2258], sidemenu.ini FireButtonBtnID 25, fire.aim TEX20037 64 × 64) at (the menu's width less 84, the shadow's
+// height 13) (0x48A542..0x48A5B3), and the rope's marks (0x48EADD..0x48ED24): along its middle (192 wide, after its
+// left end's 32) five places a sailing ship's width (TEX16043, 26 × 18) and (192 − 5 · 26) / 4 apart, the ship at the
+// sails it has ([+0x582A]: the scene ship's [+0x26]), the same at half alpha at the sails asked while it hasn't them
+// ([+0x5829]), the knot (the rope's frame 3) at the place under the mouse ([+0x5828]: here under the finger).
+constexpr int kRopeLeft = 32;
+constexpr int kRopeMiddle = 192;
+constexpr int kRopeShip = 26;
 struct BattleDeckLayout {
 	ShipMenuLayout ship;
-	SDL_Rect header_room{};
 	SDL_Rect fire{};
-	SDL_Rect deck{};
 	SDL_Rect rope{};
 
 	BattleDeckLayout(const SDL_Rect& room, int line) : ship(room, line) {
-		ship.top = room.y + 8;
-		header_room = {room.x, room.y, room.w - 74, room.h};
-		fire = {room.x + room.w - 72, room.y + 6, 64, 64};
-		deck = {room.x + 6, room.y + 8 + 4 * line + 8, 248, 96};
-		rope = {room.x + 2, deck.y + deck.h + 14, 256, 12};
+		fire = {room.x + kPanelMenuWidth - 84, ship.head_y + 13, 64, 64};
+		rope = {room.x + 2, ship.head_y + 90, 256, 12};
 	}
-	int sails_x(int sails) const { return rope.x + 32 + sails * 192 / 4; }
+	// A place's x (its ship's left end).
+	int sails_x(int sails) const {
+		const float step = float(kRopeMiddle - 5 * kRopeShip) / 4.0f;
+		return rope.x + kRopeLeft + int((float(kRopeShip) + step) * float(sails));
+	}
 	// The sails asked by a touch on the rope (the nearest of its five places), or -1.
 	int sails_at(int x, int y) const {
 		if (y < rope.y - 14 || y > rope.y + rope.h + 14 || x < rope.x || x > rope.x + rope.w) {
 			return -1;
 		}
-		return std::clamp((x - rope.x - 32 + 24) * 4 / 192, 0, 4);
+		int best = 0;
+		for (int k = 1; k < 5; ++k) {
+			if (std::abs(x - (sails_x(k) + kRopeShip / 2)) < std::abs(x - (sails_x(best) + kRopeShip / 2))) {
+				best = k;
+			}
+		}
+		return best;
 	}
 };
+
+// The ship menu's deck page (0x48E700) in the menu from `head_y` (traced: re/emu/sesion41/README.md): the name with the
+// ship list's marks (0x490F80) in the font 2 at (8, 6); the icons' row (0x491CA0 without the separator) a font-2 line
+// and 18 lower (where the head's is, without its status line); the sails' rope (schiffsdeck.tga's ends and middle) at
+// Knoten2DPos (2, 90); the deck at Deck2DPos (5, 130) with its pieces (0x495210). Its hanging pieces reach 60 + 52
+// under the deck's top: the Vita's menu (232 under the page buttons) is lower than the game's 247, so the deck goes
+// up as much as it needs (120 at most, clear of the rope: adapted). In a battle the rope's marks (draw_battle_panel).
+void draw_deck_page(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save, int ship_index,
+	const SDL_Rect& room, int head_y) {
+	if (!g_game_art) {
+		return;
+	}
+	GameWindowArt& gart = *g_game_art;
+	TextRenderer& head = gart.info_text() ? *gart.info_text() : text;
+	TextRenderer& page = gart.page_text() ? *gart.page_text() : text;
+	const SavedShip& ship = save.ships[size_t(ship_index)];
+	const int mx = room.x;
+	const int my = head_y;
+	int nx = mx + 8;
+	const ShipListMarks marks = ship_list_marks(save, uint16_t(ship_index));
+	if (marks.trade_route) {
+		nx += gart.draw_tex(16034, 0, nx, my + 6).x;
+	}
+	if (marks.tex) {
+		nx += gart.draw_tex(marks.tex, 0, nx, my + 6, 0, 255, marks.colour).x;
+	}
+	head.draw(ship.name(), nx, my + 6, argb_color(kShipListInk));
+	draw_ship_icons_row(renderer, gart, page, mx + 8, my + 6 + head.line_height() + 18, -1, ship.speed() >> 4,
+		shown_hull(save, uint16_t(ship_index)), ship.captain() < save.globals.u16(global::kCaptainCount), ship.sailors(),
+		ship.memory.s32(0x120));
+	draw_picture(renderer, art.deck, {mx + 2, my + 90, 32, 12}, &kDeckFrames[0]);
+	draw_picture(renderer, art.deck, {mx + 2 + 32, my + 90, 192, 12}, &kDeckFrames[1]);
+	draw_picture(renderer, art.deck, {mx + 2 + 32 + 192, my + 90, 32, 12}, &kDeckFrames[2]);
+	const int menu_h = room.y + room.h - my;
+	draw_deck(renderer, art, ship, {mx + 5, my + std::min(130, menu_h - 60 - 52), 248, 96});
+}
 
 void draw_battle_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SidePanel& ui,
 	const SaveGame& save, size_t battle, const p3::app::BattleView& view, SDL_Texture* town_minimap,
 	const SDL_Rect& camera, int deck_place,
-	uint16_t bits, bool any_ship, int pressed_button, bool fire_pressed, bool leave_pressed) {
+	uint16_t bits, bool any_ship, int pressed_button, bool fire_pressed, bool leave_pressed, int pointed_sails) {
 	const PanelLayout layout(ui.folded);
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 	const SDL_Rect bar_src = {0, 0, kPanelBar, layout.bar.h};
@@ -15053,24 +15101,34 @@ void draw_battle_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 	draw_picture(renderer, art.parchment, layout.room);
 	draw_menu_shadow(layout.room);
 	const BattleDeckLayout deck(layout.room, text.line_height());
-	draw_ship_header(renderer, text, art, save, int(index), deck.ship, deck.header_room, false);
+	// The page buttons' row as the battle state's (0x48A852..0x48A926): every one off; «show convoy» on for a ship in a
+	// convoy in the game (its convoy's list in a battle goes with the battles' panel: off here, improvised).
+	const bool convoy = ship_in_convoy(save, int(index));
+	for (int k = 0; k < kShipPages; ++k) {
+		const int column = ship_page_column(ShipPage(k), convoy);
+		const SDL_Rect src = {column * 32, 3 * 32, column == 6 ? 40 : 32, 32};
+		draw_picture(renderer, art.ship_buttons, deck.ship.pages[k], &src);
+	}
+	draw_deck_page(renderer, text, art, save, int(index), layout.room, deck.ship.head_y);
+	// The rope's marks: the ship at the sails it has, at half alpha at the sails asked, the knot under the finger.
+	if (g_game_art) {
+		const int now = std::min<int>(g.get<uint8_t>(size_t(e), 0x26), 4);
+		const int asked = g.get<uint8_t>(size_t(e), 0x148);
+		if (asked <= 4 && asked != now) {
+			g_game_art->draw_tex(16043, 0, deck.sails_x(asked), deck.rope.y + (deck.rope.h - 18) / 2, 0, 0x80);
+		}
+		g_game_art->draw_tex(16043, 0, deck.sails_x(now), deck.rope.y + (deck.rope.h - 18) / 2);
+	}
+	if (pointed_sails >= 0 && pointed_sails <= 4) {
+		const SDL_Rect knot = {deck.sails_x(pointed_sails), deck.rope.y + (deck.rope.h - 22) / 2, 26, 22};
+		draw_picture(renderer, art.deck, knot, &kDeckFrames[3]);
+	}
 	// The fire button (0x4942C0): on while a side's guns are loaded ([+0x130] or [+0x131] 0) and the ship has
 	// firepower; fire.aim's frames: hover 0, pressed 1, neutral 2, disabled 3.
 	const bool loaded = g.get<uint8_t>(size_t(e), 0x130) == 0 || g.get<uint8_t>(size_t(e), 0x131) == 0;
 	const bool can_fire = loaded && save.ships[index].memory.s32(0x120) != 0;
 	const SDL_Rect fire_src = {64 * (!can_fire ? 3 : fire_pressed ? 1 : 2), 0, 64, 64};
 	draw_picture(renderer, art.fire, deck.fire, &fire_src);
-	draw_deck(renderer, art, save.ships[index], deck.deck);
-	// The rope (frames 0, 1, 2) and its marker (frame 3) at the sails asked ([+0x148]).
-	const SDL_Rect left = {deck.rope.x, deck.rope.y, 32, 12};
-	const SDL_Rect middle = {deck.rope.x + 32, deck.rope.y, 192, 12};
-	const SDL_Rect right = {deck.rope.x + 224, deck.rope.y, 32, 12};
-	draw_picture(renderer, art.deck, left, &kDeckFrames[0]);
-	draw_picture(renderer, art.deck, middle, &kDeckFrames[1]);
-	draw_picture(renderer, art.deck, right, &kDeckFrames[2]);
-	const int sails = std::min<int>(g.get<uint8_t>(size_t(e), 0x148), 4);
-	const SDL_Rect marker = {deck.sails_x(sails) - 13, deck.rope.y - 5, 26, 22};
-	draw_picture(renderer, art.deck, marker, &kDeckFrames[3]);
 }
 
 // --- The trade route page of the ship menu (CSideMenu_Ship's page [+0xE4], drawn by 0x48F2C0), its towns' list
@@ -15787,41 +15845,9 @@ void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& 
 		}
 		break;
 	}
-	case ShipPage::Deck: {
-		// 0x48E700, in the menu from head_y: the name with the ship list's marks (0x490F80) in the font 2 at (8, 6); the
-		// icons' row (0x491CA0 without the separator) a font-2 line and 18 lower (where the head's is, without its status
-		// line); the sails' rope (schiffsdeck.tga's ends and middle) at Knoten2DPos (2, 90); the deck at Deck2DPos (5,
-		// 130) with its pieces (0x495210). (In a battle the rope's sails and the slot touched, [+0x5829], [+0x582A]: the
-		// battles' panel.) Traced: re/emu/sesion41/README.md.
-		if (!g_game_art) {
-			break;
-		}
-		GameWindowArt& gart = *g_game_art;
-		TextRenderer& head = gart.info_text() ? *gart.info_text() : text;
-		TextRenderer& page = gart.page_text() ? *gart.page_text() : text;
-		const int mx = room.x;
-		const int my = layout.head_y;
-		int nx = mx + 8;
-		const ShipListMarks marks = ship_list_marks(save, uint16_t(ship_index));
-		if (marks.trade_route) {
-			nx += gart.draw_tex(16034, 0, nx, my + 6).x;
-		}
-		if (marks.tex) {
-			nx += gart.draw_tex(marks.tex, 0, nx, my + 6, 0, 255, marks.colour).x;
-		}
-		head.draw(ship.name(), nx, my + 6, argb_color(kShipListInk));
-		draw_ship_icons_row(renderer, gart, page, mx + 8, my + 6 + head.line_height() + 18, -1, ship.speed() >> 4,
-			shown_hull(save, uint16_t(ship_index)), ship.captain() < save.globals.u16(global::kCaptainCount),
-			ship.sailors(), ship.memory.s32(0x120));
-		draw_picture(renderer, art.deck, {mx + 2, my + 90, 32, 12}, &kDeckFrames[0]);
-		draw_picture(renderer, art.deck, {mx + 2 + 32, my + 90, 192, 12}, &kDeckFrames[1]);
-		draw_picture(renderer, art.deck, {mx + 2 + 32 + 192, my + 90, 32, 12}, &kDeckFrames[2]);
-		// Its hanging pieces reach 60 + 52 under the deck's top: the Vita's menu (232 under the page buttons) is lower than
-		// the game's 247, so the deck goes up as much as it needs (120 at most, clear of the rope: adapted).
-		const int menu_h = room.y + room.h - my;
-		draw_deck(renderer, art, ship, {mx + 5, my + std::min(130, menu_h - 60 - 52), 248, 96});
+	case ShipPage::Deck:
+		draw_deck_page(renderer, text, art, save, ship_index, room, layout.head_y);  // 0x48E700.
 		break;
-	}
 	case ShipPage::Convoy:
 		// The state 1's page 4 ([+0xE0], 0x48DE70) once the ship is in a convoy (formed from it): its head only; its ships
 		// are the convoy's menu («show convoy», the state 2). (Out of a convoy the button opens the game's convoy window:
@@ -24320,7 +24346,11 @@ int main(int argc, char** argv) {
 					battle_town_index >= 0 ? view->minimap() : nullptr,
 					{camera_x, camera_y, town_width, kScreenHeight}, battle_deck_place, battle_bits, battle_any_ship,
 					battle_button_down < kBattleButtons ? battle_button_down : -1, battle_button_down == kBattleButtons,
-					battle_button_down == kBattleLeavePressed);
+					battle_button_down == kBattleLeavePressed,
+					// The rope's place under a finger that is down (the game's under the mouse, [+0x5828]).
+					finger_down && touch_moved < kTapDistance && !side.folded
+						? BattleDeckLayout(panel_layout.room, small_text->line_height()).sails_at(touch_start.x, touch_start.y)
+						: -1);
 				if (battle_button_down == kBattleLeavePressed) {
 					// The game's tooltip of that icon is «Weigh anchor» (20026), which misleads here: the viewer's own.
 					draw_tooltip(renderer, *small_text, tr("Dejar la batalla al ordenador", "Leave the battle to the computer"),
