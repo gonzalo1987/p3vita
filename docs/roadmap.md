@@ -528,9 +528,10 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
       convoy); cada elección nueva vuelve a la página de mercancías (0x488080). El nombre del pirata (0x612EE0): el de su
       batalla, o el del capitán del barco o del guía de su convoy, o «Pirata desconocido» (texto nuevo emparejado;
       estado de depuración `raiding-ship`).
-    - [ ] Varios barcos de otras maneras: el pad no tiene el Ctrl del juego (falta preguntar al usuario si quiere una
-      tecla para la fila del pad) y el recuadro arrastrado del mapa del mar no cabe en la Vita (arrastrar mueve el
-      mapa).
+    - [x] La lista de barcos con el mando como con el dedo (18-11-2026; el usuario dejó la decisión a lo más usable):
+      X elige el barco de la fila sin cerrar la lista, X otra vez va a él (el doble clic del juego), Select lo añade o
+      lo quita de los elegidos (el Ctrl del juego); L y R, la velocidad, como en la ventana de un edificio. El recuadro arrastrado del mapa del mar no está: en la Vita arrastrar
+      mueve el mapa (para la pasada de usabilidad, si hace falta).
     - [ ] «Ir al barco» centrado en su barco del puerto (0x476A30: la lista 0x6E2D50): va con los barcos en el puerto
       de la ciudad viva. (El de un barco en construcción, estado 0xE, ya centra el astillero de su ciudad.)
   - [ ] El menú del barco: su cabecera y sus cinco páginas. **Hecha la cabecera del barco propio** (18-11-2026,
@@ -543,9 +544,14 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     alto de **todos** los menús laterales (TEX20005, que el visor no dibujaba en ninguno; se ve en la foto del
     ayuntamiento del usuario), el separador TEX20007 bajo la fila de iconos (antes la sombra: estaban cambiadas), las
     cabeceras 6 más arriba, y las texturas `Blendmode=multiply` de textures.ini (el pirata del catalejo salía como un
-    cuadrado blanco). Falta: las páginas de mercancías (0x48F510), tripulación (0x48DF90), cubierta (0x48E700, con su
-    propia cabecera; hoy la vieja del visor, también en el panel de la batalla), convoy (la ventana de formar convoy
-    del juego) y ruta (0x48F2C0, bajo la cabecera), y sus botones.
+    cuadrado blanco). **Hechas también las páginas** (18-11-2026, `re/emu/sesion41/README.md`, «The ship menu's
+    pages»): mercancías (0x48F510: cantidad, barril o fardo, mercancía y precio con su moneda, con la barra del
+    juego), tripulación (0x48DF90: moral y sueldo, la fila de despedir marineros, las armas de mano, el capitán con sus
+    habilidades y sus dos botones al pie; los botones con el ancho que da su texto), cubierta (0x48E700: la cuerda de
+    las velas y la cubierta con sus piezas; algo más arriba para que quepa) y ruta comercial (0x48F2C0 bajo la cabecera
+    del barco o del convoy: «Ruta comercial», «Archivo», «Activa» y las filas de las paradas). Falta: «formar convoy»,
+    que en el juego abre su propia ventana sobre la ciudad (*0x6CBA98, 0x40C470; hoy sus filas en la página del
+    panel), y la cabecera vieja del panel de la batalla (con el panel de las batallas).
   - [ ] El menú de construir, con **el aviso de la reputación** (0x6B20A4, «Todavía no puedes construir una oficina
     comercial…»: un texto «\c» centrado en la letra del juego; hoy un texto del visor alineado a la izquierda). Visto
     el 18-11-2026: en inglés sus dos primeras filas dicen las dos «trading office».
@@ -617,7 +623,10 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   la clasificación (apartado 1).
 - [ ] Icono y LiveArea propios del VPK (sin usar arte del juego).
 - [ ] Más adelante, con el juego más avanzado: mejoras de manejo pensadas para la Vita (táctil, botones, tamaño de
-  letra, accesos rápidos), sin cambiar lo que hace el motor.
+  letra, accesos rápidos), sin cambiar lo que hace el motor: el usuario habló el 18-11-2026 de una buena pasada de
+  usabilidad o una «UX 2.0»; mientras, las decisiones de manejo buscan lo más usable (por ejemplo, el mando imita al
+  dedo). Ideas apuntadas para entonces: elegir varios barcos en el mapa del mar (el recuadro arrastrado del juego);
+  ver las teclas de la lista de barcos (X, Select) en pantalla.
 
 #### Mirar en el juego original (el usuario, en su PC)
 

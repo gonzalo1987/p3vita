@@ -153,12 +153,16 @@ town or the sea map: each ship with its type, where it is, its hull, its cargo
 and the cargo's worth in coins (Square, or its button, shows the crew and the
 weapons instead) and its convoy. A touch chooses a ship (its menu opens in the
 panel; another merchant's ship shows its owner, its figures as you can guess
-them and the ship through a telescope); a second touch, its row's arrow or X goes to it (a lost ship's cross
+them and the ship through a telescope); a second touch or its row's arrow goes to it (a lost ship's cross
 removes it); a long touch on a row of yours adds it to the ships chosen or takes
-it out (the game's Ctrl), and with several the panel lists them. Triangle, or the
-button after «Sort by:», changes the order; up
-and down move along the rows; drag the rows or the scroll bar to move them;
-Circle, the close button or a touch out of the window closes it.
+it out (the game's Ctrl), and with several the panel lists them. A ship in a
+convoy shows its convoy first (yours: the convoy's head, its ships, its goods
+and trade route), touched again the ship alone. With the buttons it works as
+with a finger: up and down move along the rows, X chooses the row's ship and X
+again goes to it, Select adds it to the ships chosen or takes it out; L and R
+set the game's speed, as in a building's window. Triangle, or
+the button after «Sort by:», changes the order; drag the rows or the scroll bar
+to move them; Circle, the close button or a touch out of the window closes it.
 
 **The ship menu** (a ship button, or a ship of the ship list) has the game's six
 pages, by its buttons or with L and R: the goods (the hold's barrel, each ware
@@ -168,9 +172,11 @@ sailors and the captain, his skills), the deck (its pieces in their slots), the
 convoys as the game's convoy window offers them (forming a private or a public
 convoy, its destination with left and right, joining a convoy of the town,
 showing it, and leaving or disbanding the one it is in) and the trade route
-(not yet). Up and down choose a row, left and right the amount, X does it. Its header says where the ship
-is or where it goes and in how many days, its speed, hull, crew and firepower.
-The crew's «Pirate» button stays off until the battles in the towns.
+(its stops: each one's town, its goods and its mode; the route on or off). Up
+and down choose a row, left and right the amount, X does it. Its head, as the
+game's, says where the ship is or where it goes and in how many days, its speed,
+hull, crew and firepower, and shows its hold in a barrel. A ship of a convoy of
+yours shows the convoy first (its sums, its ships, its goods and trade route).
 
 **The messages** (the panel's scroll, or Circle): the public news, the official
 and personal letters and the trade information, by the game's buttons or left
