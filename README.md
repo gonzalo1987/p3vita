@@ -169,14 +169,20 @@ pages, by its buttons or with L and R: the goods (the hold's barrel, each ware
 with its average price; drag the list to move it), the crew (morale, the
 weekly wage, the sailors with the least and the most it takes; dismissing
 sailors and the captain, his skills), the deck (its pieces in their slots), the
-convoys as the game's convoy window offers them (forming a private or a public
-convoy, its destination with left and right, joining a convoy of the town,
-showing it, and leaving or disbanding the one it is in) and the trade route
-(its stops: each one's town, its goods and its mode; the route on or off). Up
-and down choose a row, left and right the amount, X does it. Its head, as the
-game's, says where the ship is or where it goes and in how many days, its speed,
-hull, crew and firepower, and shows its hold in a barrel. A ship of a convoy of
-yours shows the convoy first (its sums, its ships, its goods and trade route).
+convoy (showing the one it is in) and the trade route (its stops: each one's
+town, its goods and its mode; the route on or off). Up and down choose a row,
+left and right the amount, X does it. Its head, as the game's, says where the
+ship is or where it goes and in how many days, its speed, hull, crew and
+firepower, and shows its hold in a barrel. A ship of a convoy of yours shows the
+convoy first (its sums, its ships, its goods and trade route). «Form convoy»
+(its button, or Square) opens the game's convoy window over the town: forming a
+private convoy, a public one (its destination chosen in the game's list of
+towns) or joining a convoy of the town; touch a row, then «OK» (with the
+buttons: up and down pick a row, X is «OK», Circle closes it; in the list of
+towns up and down, left and right a page, X chooses). «Leave convoy» (its
+button, or Square in a convoy) asks first. With several ships chosen the menu
+lists them, the head of the row's ship above (up and down move along the rows,
+X chooses its ship alone), and «form convoy» (or Square) makes them a convoy.
 
 **The messages** (the panel's scroll, or Circle): the public news, the official
 and personal letters and the trade information, by the game's buttons or left

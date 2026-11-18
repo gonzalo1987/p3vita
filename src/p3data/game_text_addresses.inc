@@ -2573,3 +2573,6 @@
 	{0x006A1780, 0x006A1650},
 	{0x006999B4, 0x00698E8C},
 	{0x006999C8, 0x00698EA4},
+	// The convoy window (0x40CDA0, 0x40CB90: its title «Chooses an action» and «OK»; re/emu/sesion42/README.md).
+	{0x00699B68, 0x00699080},
+	{0x00699B50, 0x00699068},

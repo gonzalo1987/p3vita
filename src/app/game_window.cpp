@@ -48,7 +48,7 @@ GameWindowArt::~GameWindowArt() {
 			SDL_DestroyTexture(t);
 		}
 	}
-	for (SDL_Texture* t : {picture_, parchment_, pill_, close_, frame_, target_, banner_, paper_, corners_, seal_}) {
+	for (SDL_Texture* t : {picture_, parchment_, pill_, close_, frame_, target_, sized_target_, banner_, paper_, corners_, seal_}) {
 		if (t) {
 			SDL_DestroyTexture(t);
 		}
@@ -996,6 +996,7 @@ void GameWindowArt::begin(const SDL_Rect& on_screen, int parchment_top, uint32_t
 		}
 	}
 	drawing_into_target_ = target_ && SDL_SetRenderTarget(renderer_, target_) == 0;
+	drawn_target_ = target_;
 	if (drawing_into_target_) {
 		SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
 		SDL_RenderClear(renderer_);
@@ -1047,10 +1048,38 @@ void GameWindowArt::begin(const SDL_Rect& on_screen, int parchment_top, uint32_t
 	draw_frame();
 }
 
+void GameWindowArt::begin_sized(const SDL_Rect& on_screen, int w, int h) {
+	on_screen_ = on_screen;
+	if (sized_target_ && (sized_w_ != w || sized_h_ != h)) {
+		SDL_DestroyTexture(sized_target_);
+		sized_target_ = nullptr;
+	}
+	if (!sized_target_) {
+		sized_target_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, w, h);
+		sized_w_ = w;
+		sized_h_ = h;
+		if (sized_target_) {
+			SDL_SetTextureBlendMode(sized_target_, SDL_BLENDMODE_BLEND);
+			SDL_SetTextureScaleMode(sized_target_, SDL_ScaleModeLinear);
+		}
+	}
+	drawing_into_target_ = sized_target_ && SDL_SetRenderTarget(renderer_, sized_target_) == 0;
+	drawn_target_ = sized_target_;
+	if (drawing_into_target_) {
+		SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+		SDL_RenderClear(renderer_);
+	} else {
+		SDL_RenderSetViewport(renderer_, &on_screen_);
+		SDL_RenderSetScale(renderer_, float(on_screen_.w) / w, float(on_screen_.h) / h);
+	}
+	SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+	ensure_common();
+}
+
 void GameWindowArt::end() {
 	if (drawing_into_target_) {
 		SDL_SetRenderTarget(renderer_, nullptr);
-		SDL_RenderCopy(renderer_, target_, nullptr, &on_screen_);
+		SDL_RenderCopy(renderer_, drawn_target_, nullptr, &on_screen_);
 	} else {
 		SDL_RenderSetScale(renderer_, 1.0f, 1.0f);
 		SDL_RenderSetViewport(renderer_, nullptr);

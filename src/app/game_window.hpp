@@ -108,6 +108,10 @@ public:
 	// Without `framed`: none of that (no picture, parchment nor frame), the texture left clear for a dialog window over
 	// the town (draw_dialog).
 	void begin(const SDL_Rect& on_screen, int parchment_top, uint32_t now, bool framed = true);
+	// A window of its own size, `w` × `h` (the trade route stop's wares window: 428 × 564), drawn into a texture of that
+	// size in its own coordinates and put on the screen in `on_screen` by end(), smoothly scaled (without the texture,
+	// the renderer's viewport and scale). Nothing drawn on it yet.
+	void begin_sized(const SDL_Rect& on_screen, int w, int h);
 	// The window put on the screen in `on_screen` (begin's), smoothly scaled.
 	void end();
 	// A pill of the parchments, `r`'s width, its own height (18) centred in `r`.
@@ -311,6 +315,10 @@ private:
 	bool target_failed_ = false;
 	SDL_Rect on_screen_{};
 	bool drawing_into_target_ = false;
+	SDL_Texture* sized_target_ = nullptr;  // begin_sized's, of its size.
+	int sized_w_ = 0;
+	int sized_h_ = 0;
+	SDL_Texture* drawn_target_ = nullptr;  // The one being drawn into.
 	SDL_Texture* banner_ = nullptr;
 	SDL_Rect banner_frame_{};
 	SDL_Texture* paper_ = nullptr;

@@ -1,5 +1,6 @@
 // The ship menu's convoy rules (p3data/ship_menu_window.hpp), without game data: which ship shows its convoy
-// (0x495190), the convoy's list (0x48FE80) and its head's figures (0x4906E0, 0x492150), blurred for another's.
+// (0x495190), the convoy's list (0x48FE80) and its head's figures (0x4906E0, 0x492150), blurred for another's; «form
+// convoy» with several ships (0x48FC00), the convoy window's layout (0x40C5F0) and the selection list's (0x46F9B0).
 
 #include <cstdio>
 
@@ -125,6 +126,48 @@ int main() {
 	g.set<uint8_t>(battle, 0x1E91, 5);
 	p = pirate_name(save, 4);
 	check(p.known && p.first == 3 && p.family == 5, "in a battle the battle's pirate");
+
+	// «Form convoy» with several ships chosen (0x48FC00): ships 2 and 4 are the player's; 2 is in convoy 0.
+	save = world();
+	save.ships[2].memory.u8(0x39) = 7;
+	save.ships[4].memory.u8(0x39) = 7;
+	check(!ships_can_form_convoy(save, {4, 2}), "form convoy: off with a ship in a convoy");
+	save.ships[2].memory.u16(0x8) = 0xFFFF;
+	check(ships_can_form_convoy(save, {4, 2}), "form convoy: on, both docked in one town and in no convoy");
+	save.ships[2].memory.u16(0x134) = 1;
+	check(ships_can_form_convoy(save, {4, 2}), "form convoy: the state 1 too");
+	save.ships[2].memory.u16(0x134) = 2;
+	check(!ships_can_form_convoy(save, {4, 2}), "form convoy: off with a ship leaving");
+	save.ships[2].memory.u16(0x134) = 0;
+	save.ships[2].memory.u8(0x39) = 8;
+	check(!ships_can_form_convoy(save, {4, 2}), "form convoy: off with ships in two towns");
+	save.ships[2].memory.u8(0x39) = 7;
+	save.ships[0].memory.u16(0x8) = 0xFFFF;
+	save.ships[0].memory.u8(0x39) = 7;
+	check(!ships_can_form_convoy(save, {4, 0}), "form convoy: off with another merchant's ship");
+
+	// The convoy window's layout (0x40C5F0), as the game's traced in the emulator (re/emu/sesion42/convoytrace.sh 3 0,
+	// two choices, font 1's height 15, a screen of 1024 × 768; its scroll bar the init's, its thumb 27 wide): 384 × 160
+	// at (320, 304).
+	ConvoyWindowLayout c = convoy_window_layout(0, 0, 1024, 768, 2, 15, 27);
+	check(c.x == 320 && c.y == 304 && c.w == 384 && c.h == 160, "convoy window: the traced place and size");
+	check(c.rows == 4, "convoy window: four rows shown in 160 (60 over them, 40 under)");
+	c = convoy_window_layout(0, 0, 1024, 768, 2, 15, 0);
+	check(c.w == 352, "convoy window: without a scroll bar 11 tiles (the list's 14 + 336 rounded up)");
+	c = convoy_window_layout(0, 24, 690, 520, 40, 15, 27);
+	check(c.h == 512 && c.y == 28 && c.rows == 27, "convoy window: as high as the view's whole tiles at most");
+	check(c.x == 154, "convoy window: centred (153), x pushed on by its remainder of 4 (1)");
+
+	// The selection list's layout (0x46F9B0): the offer list's (mode 3, the viewer's offer window) 7 tiles wide; towns.
+	SelectionListLayout s = selection_list_layout(0, 0, 1024, 768, 3, 100, 98);
+	check(s.w == 224 && s.rows_width == 160, "selection list: the button's 133 rounded up a tile, and a tile each side");
+	check(s.h == ((3 * 16 + 62) / 32 + 3) * 32, "selection list: (rows · 16 + 62) / 32 + 3 tiles high");
+	check(s.x == 1024 - 168 && s.y == (768 - s.h) / 2, "selection list: three quarters of it in the view, centred");
+	s = selection_list_layout(0, 24, 690, 520, 40, 150, 98);
+	check(s.rows_width == 160 && s.w == 224, "selection list: a row of 150 within the button's 160");
+	check(s.h == 512 && s.rows == (512 - 64 - 62) / 16, "selection list: the view's whole tiles and the rows in them");
+	s = selection_list_layout(0, 0, 1024, 768, 3, 170, 98);
+	check(s.rows_width == 192, "selection list: a wider row, a tile more");
 	if (failures == 0) {
 		std::printf("ship_menu_window: all checks passed\n");
 	}

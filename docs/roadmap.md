@@ -549,9 +549,26 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     juego), tripulación (0x48DF90: moral y sueldo, la fila de despedir marineros, las armas de mano, el capitán con sus
     habilidades y sus dos botones al pie; los botones con el ancho que da su texto), cubierta (0x48E700: la cuerda de
     las velas y la cubierta con sus piezas; algo más arriba para que quepa) y ruta comercial (0x48F2C0 bajo la cabecera
-    del barco o del convoy: «Ruta comercial», «Archivo», «Activa» y las filas de las paradas). Falta: «formar convoy»,
-    que en el juego abre su propia ventana sobre la ciudad (*0x6CBA98, 0x40C470; hoy sus filas en la página del
-    panel), y la cabecera vieja del panel de la batalla (con el panel de las batallas).
+    del barco o del convoy: «Ruta comercial», «Archivo», «Activa» y las filas de las paradas). **Hecha la ventana de
+    formar convoy** (18-11-2026, `re/emu/sesion42/README.md`): la ventana de pergamino del juego sobre la ciudad o el
+    mapa del mar (*0x6CBA98: su disposición 0x40C5F0 trazada en el emulador, su dibujo 0x40CDA0): «Elige una
+    acción», las opciones de 0x40C170 (convoy privado, público, unirse a un convoy de la ciudad con su fecha de salida
+    y su destino si es abierto), «OK» y cerrar; el destino del convoy público en la lista de ciudades del juego (la
+    ventanita 0x46F760 en su modo 1, con sus rodillos, que también usa ya la página de la ruta comercial para elegir
+    la ciudad de una parada) y, después, el aviso del juego («El convoy público … zarpará en 5 días hacia …»). El
+    estado 0 (varios barcos) con su fila de botones como el juego (todos apagados menos «formar convoy», encendido si
+    todos están libres en el mismo puerto, 0x48FC00) y la cabecera del barco de la fila (la del ratón en el juego).
+    Con el mando: Cuadrado pulsa el botón del convoy del menú (formar, o abandonar/deshacer: antes el mando no podía
+    pulsar ninguno de los dos); en la ventana, arriba/abajo y X («OK»). Improvisado: un toque fuera la cierra, y
+    abrirla cierra la lista de barcos (y al revés). Arreglado de paso en todas las ventanitas del juego: la barra de
+    arriba enseñaba sus teclas debajo. **Hechas también las dos ventanas de la página de la ruta
+    comercial** que eran del visor: la lista de archivos de rutas («Archivo»: la ventanita 0x46F760 en su modo 4, con
+    «Cargar», «Guardar», «Borrar», el cuadro del nombre y sus preguntas de sobrescribir y borrar con la ventanita de
+    mensaje del juego) y la ventana de mercancías de una parada (*0x6CBA74: el dibujo del juego con su marco y sus
+    sombras, la tabla [CHART0] con sus 20 filas, la leyenda y la fila de abajo como el código y la foto del usuario;
+    escalada al alto de la Vita, ×0,904, como las de los edificios: adaptado). Las listas de selección van donde las
+    pone el juego, con su último cuarto sobre el panel (lo confirma la foto del usuario). Falta del menú del barco
+    solo la cabecera vieja del panel de la batalla (con el panel de las batallas).
   - [ ] El menú de construir, con **el aviso de la reputación** (0x6B20A4, «Todavía no puedes construir una oficina
     comercial…»: un texto «\c» centrado en la letra del juego; hoy un texto del visor alineado a la izquierda). Visto
     el 18-11-2026: en inglés sus dos primeras filas dicen las dos «trading office».

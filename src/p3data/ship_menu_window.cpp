@@ -1,8 +1,10 @@
-// The ship menu's convoy rules (ship_menu_window.hpp; re/emu/sesion40/README.md, «Part 2»).
+// The ship menu's convoy rules and the game's convoy window (ship_menu_window.hpp; re/emu/sesion40/README.md, «Part 2»;
+// re/emu/sesion42/README.md).
 
 #include "p3data/ship_menu_window.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 #include "p3data/game_memory.hpp"
 #include "p3data/ship_list_window.hpp"
@@ -130,6 +132,87 @@ ConvoyMenuHead convoy_menu_head(const SaveGame& save, const ConvoyMenuList& list
 		h.cargo = std::max(0, h.cargo - figure_offset(h.cargo, convoy, 70));
 	}
 	return h;
+}
+
+bool ships_can_form_convoy(const SaveGame& save, const std::vector<uint16_t>& ships) {
+	if (ships.empty() || ships[0] >= save.ships.size()) {
+		return true;  // (0x48FC31: none to look at.)
+	}
+	const uint8_t town = save.ships[ships[0]].memory.u8(0x39);
+	const uint32_t player = save.globals.u32(global::kPlayer);
+	const uint32_t convoys = save.globals.u16(global::kShipCount + 2);
+	for (const uint16_t id : ships) {
+		if (id >= save.ships.size()) {
+			return false;
+		}
+		const ShipMemory& s = save.ships[id].memory;
+		const uint16_t state = s.u16(0x134);
+		if (s.u16(0x8) < convoys || (state != 0 && state != 1) || s.u8(0x39) != town || s.u8(0x0) != player) {
+			return false;
+		}
+	}
+	return true;
+}
+
+namespace {
+
+// ftol(ceil(a / b) · b) on 32-bit floats (0x40C63D..0x40C675).
+int whole_tiles(int a, int tile) {
+	const float q = float(a) / float(tile);
+	return int(double(std::ceil(double(q))) * double(tile));
+}
+
+}  // namespace
+
+ConvoyWindowLayout convoy_window_layout(int view_x, int view_y, int view_w, int view_h, int choices, int line,
+	int scroll_bar_width) {
+	ConvoyWindowLayout l;
+	line = std::max(1, line);
+	l.w = whole_tiles(scroll_bar_width + kConvoyListWidth + kConvoyListX, kConvoyWindowTile);
+	l.h = whole_tiles(choices * line + 40 + kConvoyListY, kConvoyWindowTile);
+	if (l.h > view_h) {
+		l.h = view_h / kConvoyWindowTile * kConvoyWindowTile;
+	}
+	l.x = view_x + (view_w - l.w) / 2;
+	l.y = view_y + (view_h - l.h) / 2;
+	if (l.x & 3) {
+		l.x += l.x % 4;
+	}
+	l.rows = std::max(0, (l.h - kConvoyListY - 40) / line);
+	return l;
+}
+
+ConvoyJoinRow convoy_join_row(const SaveGame& save, uint16_t convoy) {
+	ConvoyJoinRow r;
+	if (convoy >= save.convoys.size()) {
+		return r;
+	}
+	const GameMemory<0x3C>& c = save.convoys[convoy];
+	r.hanse = hanse_fleet_convoy(save, convoy);
+	r.guide = c.u16(0x10);
+	r.open = !(c.u8(0x14) & 2);
+	r.leaves = uint32_t(c.u16(0x16)) + save.globals.u32(global::kWorldTick);
+	r.destination = c.u8(0x1F);
+	return r;
+}
+
+SelectionListLayout selection_list_layout(int view_x, int view_y, int view_w, int view_h, int entries, int widest_row,
+	int title_width) {
+	SelectionListLayout l;
+	const int tile = kSelectionListTile;
+	int inner = std::max({title_width, kSelectionListButton + 5, widest_row});
+	inner = (inner / tile + 1) * tile;
+	l.rows_width = inner;
+	l.w = inner + 2 * tile;
+	l.rows = std::max(0, entries);
+	l.h = ((l.rows * kSelectionListRowHeight + kSelectionListRowY) / tile + 3) * tile;
+	if (l.h > view_h) {
+		l.h = view_h / tile * tile;
+		l.rows = std::max(0, (l.h - 2 * tile - kSelectionListRowY) / kSelectionListRowHeight);
+	}
+	l.x = view_x + view_w - 3 * l.w / 4;
+	l.y = view_y + (view_h - l.h) / 2;
+	return l;
 }
 
 }  // namespace p3::data

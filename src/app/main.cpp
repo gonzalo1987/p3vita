@@ -2937,9 +2937,8 @@ struct PlaceView {
 	// administrator's «keep the stock», the weaponsmith's «sell» and «priority»): its label, empty for none.
 	std::string act2;
 	bool act2_on = false;
-	// What each row does, where the rows aren't fixed: the convoy window's
-	// choices (kPrivateConvoy, kPublicConvoy, a convoy to join), kLeaveConvoy,
-	// kDisbandConvoy; the shipyard's pages' items (a ship type, a ship).
+	// What each row does, where the rows aren't fixed: the shipyard's pages'
+	// items (a ship type, a ship).
 	std::vector<int32_t> codes;
 	// The game's page shows one row at a time, stepped by «<» and «>» beside its confirm button (the town hall's
 	// notices, 0x5E1010: the buttons [+0x434] and [+0x51C] 90 px off the middle), instead of the list.
@@ -3205,10 +3204,6 @@ bool page_scroll_tap(const std::optional<PlaceView::Page>& page, PlaceUi& ui, in
 	}
 	return true;
 }
-
-constexpr int32_t kLeaveConvoy = -3;
-constexpr int32_t kDisbandConvoy = -4;
-constexpr int32_t kNoConvoy = -5;
 
 // A game's text in lines, without the empty ones (its codes are cleaned).
 std::vector<std::string> text_lines(const std::string& s) {
@@ -11527,9 +11522,9 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 		shipyard_view(save, town, ui, v);
 		break;
 	case Place::Ship: {
-		// The side panel's ship menu (its crew and convoy pages): `ui.ship` is
-		// the ship itself. Rows 0 and 1 the crew page's (dismiss sailors, the
-		// captain), from 2 on the convoy's.
+		// The side panel's ship menu's crew page: `ui.ship` is the ship itself. Rows 0 and 1 its own (dismiss
+		// sailors, the captain); the row 2 is its «Pirate» / «Civil» button's, which ship_act does itself. (The
+		// convoy's choices are the game's convoy window's: draw_convoy_window.)
 		if (ui.ship >= save.ships.size() || save.player < 0 || save.ships[ui.ship].owner() != save.player ||
 			!save.ships[ui.ship].in_use()) {
 			break;
@@ -11544,50 +11539,9 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 			{capitalized(game_text(GameText::ShipDismissCaptain, tr("Despedir capitán", "Dismiss captain"))),
 				can_dismiss_captain(save, v.ship)}};
 		v.codes = {0, 0};
-		// The convoys (the ship's panel: the convoy window 0x40C170, 0x494DC0),
-		// the ship alone selected.
-		const uint16_t convoy = ship.convoy();
-		if (convoy < save.globals.u16(global::kShips + 0xF6) && convoy < save.convoys.size()) {
-			// Leaving it or, the guide, disbanding it: the panel's button asks first with the game's message
-			// (0x494DC0, convoy_question), whose «Yes» does this row.
-			const bool guide = save.convoys[convoy].u16(0x10) == v.ship;
-			v.rows.push_back({guide ? tr("Deshacer convoy", "Disband convoy") : tr("Abandonar convoy", "Leave convoy"), true});
-			v.codes.push_back(guide ? kDisbandConvoy : kLeaveConvoy);
-		} else {
-			const std::vector<int32_t> choices = convoy_choices(save, {uint16_t(v.ship)});
-			for (const int32_t c : choices) {
-				std::string label;
-				if (c == kPrivateConvoy) {
-					label = game_text(GameText::ConvoyFormPrivate, tr("Formar convoy privado", "Form private convoy"));
-				} else if (c == kPublicConvoy) {
-					label = game_text(GameText::ConvoyFormPublic, tr("Formar convoy público", "Form public convoy"));
-				} else {
-					const uint16_t guide = save.convoys[size_t(c)].u16(0x10);
-					const std::string name = guide < save.ships.size() ? save.ships[guide].name() : std::string("?");
-					label = game_format(GameText::ConvoyJoin, {name}, tr("Unirse al convoy ", "Join convoy ") + name);
-				}
-				v.rows.push_back({label, true});
-				v.codes.push_back(c);
-			}
-			if (choices.empty()) {
-				// (The panel's button doesn't open the page then: the game's note, convoy_cannot_form.)
-				v.rows.push_back({game_text(GameText::ConvoyFormPrivate, tr("Formar convoy privado", "Form private convoy")), false});
-				v.codes.push_back(kNoConvoy);
-			}
-		}
-		ui.row = std::clamp(ui.row, 0, int(v.rows.size()) - 1);
+		ui.row = std::clamp(ui.row, 0, 2);
 		if (ui.row == 0 && docked) {
 			v.max_amount = ship.sailors();
-		}
-		if (v.codes[size_t(ui.row)] == kPublicConvoy) {
-			// Its destination (0x40CA8E): the towns but this one (and, with a big
-			// ship, those that take them).
-			const std::vector<uint8_t> towns = public_convoy_towns(save, {uint16_t(v.ship)});
-			v.max_amount = std::max(0, int(towns.size()) - 1);
-			v.amount_choice = true;
-			const int k = std::clamp(ui.amount, 0, v.max_amount);
-			v.amount_label = towns.empty() ? "-" : window_town_name(save, towns[size_t(k)]);
-			v.lines.push_back({tr("Destino: ", "Destination: ") + v.amount_label, kTextColor});
 		}
 		break;
 	}
@@ -12256,52 +12210,6 @@ void run_operations(SaveGame& save, Sailing* sailing, const std::vector<Operatio
 	}
 }
 
-// The ship's window's convoy rows (the convoy window's choices, or leaving
-// and disbanding), with the ship alone selected.
-void ship_convoy_act(SaveGame& save, Sailing* sailing, PlaceUi& ui, const PlaceView& v) {
-	const int32_t code = v.codes[size_t(ui.row)];
-	const uint16_t ship = uint16_t(v.ship);
-	std::vector<OperationBytes> ops;
-	uint8_t destination = 0;
-	if (code == kPrivateConvoy || code == kPublicConvoy) {
-		if (code == kPublicConvoy) {
-			const std::vector<uint8_t> towns = public_convoy_towns(save, {ship});
-			if (towns.empty()) {
-				return;
-			}
-			destination = towns[size_t(std::clamp(ui.amount, 0, int(towns.size()) - 1))];
-		}
-		ops = create_convoy_operations(save, {ship}, true, code == kPublicConvoy, destination);
-	} else if (code >= 0) {
-		ops = join_convoy_operations(save, uint32_t(code), {ship});
-	} else if (code == kLeaveConvoy || code == kDisbandConvoy) {
-		ops = {leave_convoy_operation(save, ship, false)};
-	}
-	run_operations(save, sailing, ops);
-	const uint16_t convoy = save.ships[ship].convoy();
-	const bool in_convoy = convoy < save.globals.u16(global::kShips + 0xF6);
-	const std::string name = save.ships[ship].name();
-	if (code == kPublicConvoy && in_convoy) {
-		std::string text;
-		for (const std::string& line : text_lines(game_format(GameText::ConvoyPublicLeaving,
-				 {convoy_label(save, convoy), "5", window_town_name(save, destination)},
-				 tr("El convoy público zarpará en 5 días hacia ", "The public convoy will leave in 5 days for ") +
-					 window_town_name(save, destination) + "."))) {
-			text += (text.empty() ? "" : " ") + line;
-		}
-		ui.message = text;
-	} else if ((code == kPrivateConvoy || code >= 0) && in_convoy) {
-		ui.message = g_spanish ? "El " + name + " va ahora en convoy." : "The " + name + " is in a convoy now.";
-	} else if ((code == kLeaveConvoy || code == kDisbandConvoy) && !in_convoy) {
-		ui.message = code == kDisbandConvoy ? tr("El convoy se ha deshecho.", "The convoy is disbanded.")
-											: (g_spanish ? "El " + name + " ha dejado el convoy." : "The " + name + " has left the convoy.");
-	} else {
-		ui.message = tr("No se ha podido.", "It couldn't be done.");
-	}
-	ui.amount = 0;
-}
-
-
 // X or the act button: what the selected row sends, as the game's window
 // builds it, run at once (the queue, as the market does).
 void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const PlaceView& v) {
@@ -12338,10 +12246,6 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 	}
 	if (ui.open == Place::LandTrade) {
 		land_trade_act(save, sailing, ui);
-		return;
-	}
-	if (ui.open == Place::Ship && ui.row >= 2) {
-		ship_convoy_act(save, sailing, ui, v);
 		return;
 	}
 	if (ui.open == Place::Lender) {
@@ -12597,14 +12501,14 @@ struct SidePanel {
 	// convoy's list with `own_convoy`).
 	std::vector<uint16_t> ships_chosen;
 	int ships_first = 0;
+	int ships_row = 0;  // The state 0's list's row the pad points at (as the game's under the mouse).
 	// With PanelMenu::Ship, the player's convoy it shows (the menu's state 2: 0x488080 for a ship of his convoy chosen
 	// with the flag 8, by the ship list's rule 0x495190, the panel's convoy buttons or «show convoy»), or −1 the ship
 	// alone (state 1). `ship` stays the ship chosen.
 	int own_convoy = -1;
 	// The ship menu (SIDEMENU_SHIP): the ship it shows, its page, the first
-	// cargo row shown, and its crew and convoy pages' state (as the flat
-	// windows': open = Place::Ship, ship = the ship, the row, the amount, the
-	// message).
+	// cargo row shown, and its crew page's state (as the flat windows': open =
+	// Place::Ship, ship = the ship, the row, the amount, the message).
 	int ship = -1;
 	ShipPage ship_page = ShipPage::Goods;
 	int cargo_first = 0;
@@ -12624,6 +12528,7 @@ struct SidePanel {
 	int route_drag_top = 0;
 	int route_towns_row = -1;
 	int route_towns_pick = 0;
+	int route_towns_first = 0;  // Its first row shown (the game's selection list, draw_town_list).
 	std::optional<StopWindow> stop_window;
 	int stop_first = 0;
 	int stop_row = 0;
@@ -12648,6 +12553,7 @@ struct SidePanel {
 	int route_file_column = 0;
 	int route_file_first = 0;
 	int route_file_question = 0;
+	bool route_file_unnamed = false;  // It opened without a name (the ship without a route: [+0x674], «Save» off).
 	// The statistics (SIDEMENU_STATISTIK and its parchment, statistics_window.hpp), opened by the top bar's money:
 	// the page ([+0xB0], 2 at first), the entry the parchment shows ([+0xBE]: the balance when it opens), the
 	// balance's period ([+0xA4]), the graphs' ([+0xC0]) and Suministro's town ([+0x2440]; -1: his home town).
@@ -14017,8 +13923,10 @@ void draw_menu_scroll_bar(SDL_Renderer* renderer, GameWindowArt& art, const SDL_
 	art.draw_tex(16013, 0, b.thumb.x, b.thumb.y);
 }
 
+// The menu's list of ships (0x48CF50, [Chart0] at (8, 90) of `room`): the state 0's chosen ships, his convoy's in the
+// state 2; the row `pointed` (into `ships`: the pad's) in 0x0020CC, as the game's under the mouse ([+0x4164]).
 void draw_ship_selection_menu(SDL_Renderer* renderer, GameWindowArt& art, TextRenderer& fallback, const SaveGame& save,
-	const std::vector<uint16_t>& ships, int first, const SDL_Rect& room) {
+	const std::vector<uint16_t>& ships, int first, const SDL_Rect& room, int pointed = -1) {
 	TextRenderer& head = art.head_text() ? *art.head_text() : fallback;
 	TextRenderer& page = art.page_text() ? *art.page_text() : fallback;
 	const SDL_Color black = argb_color(kShipListInk);
@@ -14030,8 +13938,9 @@ void draw_ship_selection_menu(SDL_Renderer* renderer, GameWindowArt& art, TextRe
 	for (int k = 0; k < l.rows && first + k < int(ships.size()); ++k) {
 		const SavedShip& s = save.ships[ships[size_t(first + k)]];
 		const SDL_Rect r = l.row(room, k);
-		page.draw(s.name(), r.x + kShipsColumn[0], r.y, black);
-		page.draw(ship_type_name(s.type()), r.x + kShipsColumn[1], r.y, black);
+		const SDL_Color ink = first + k == pointed ? argb_color(kShipListPointed) : black;
+		page.draw(s.name(), r.x + kShipsColumn[0], r.y, ink);
+		page.draw(ship_type_name(s.type()), r.x + kShipsColumn[1], r.y, ink);
 		// The last column's marks (0x490F80, 0x48D1CA): the trade route, the convoy's flag.
 		const ShipListMarks m = ship_list_marks(save, ships[size_t(first + k)]);
 		int mx = r.x + kShipsColumn[2];
@@ -14063,6 +13972,281 @@ void ship_list_show_row(ShipListUi& ui, const ShipListFrame& f) {
 		return;
 	}
 	ui.first[t] = std::clamp(ui.first[t], k - f.rows[t] + 1, k);
+}
+
+// --- The game's selection list in its mode 1, «choose town» (0x46F760: its open 0x46F9B0, its drawing 0x471420;
+// ship_menu_window.hpp, selection_list_layout; re/emu/sesion42/README.md): a parchment with rolls over the view, for a
+// public convoy's destination (the convoy window's [+0xA8]) and a trade route's stop (the route page's town buttons,
+// [+0x4170]'s sibling). Its rows the towns' names (0x6DDA00 by index, statistics_town_name), sorted by name when it
+// opens (0x471FF0), and the route's extra row «none» (0xFF). ---
+constexpr int kTownListDialog = 32;  // GameWindowArt::draw_dialog's key.
+std::vector<std::string> stats_town_names();
+
+struct TownListFrame {
+	std::vector<int> towns;  // Its rows: a town's index, or -1 the extra row ([+0xC4]: «none», 0x4713DE).
+	std::vector<std::string> names;  // Each row's words.
+	SelectionListLayout layout;
+	int first = 0;  // The first row shown ([+0x494]).
+	SDL_Rect window() const { return {layout.x, layout.y, layout.window_w(), layout.h}; }
+	SDL_Rect row(int k) const {
+		return {layout.x + kSelectionListRowX, layout.y + kSelectionListRowY + kSelectionListRowHeight * k,
+			layout.rows_width, kSelectionListRowHeight};
+	}
+	SDL_Rect close() const { return {layout.x + layout.close_x(), layout.y + layout.close_y(), 32, 18}; }
+	// Its scroll bar when some rows don't show (w 0: none).
+	SDL_Rect bar() const {
+		if (int(towns.size()) <= layout.rows) {
+			return {};
+		}
+		return {layout.x + layout.bar_x(ScrollBarLayout::kThumbWidth), layout.y + kSelectionListRowY,
+			ScrollBarLayout::kThumbWidth, kSelectionListRowHeight * layout.rows};
+	}
+	// The row (into `towns`) at (x, y), or -1.
+	int row_at(int x, int y) const {
+		for (int k = 0; k < layout.rows && first + k < int(towns.size()); ++k) {
+			const SDL_Rect r = row(k);
+			if (inside({r.x - 4, r.y, r.w + 8, r.h}, x, y)) {
+				return first + k;
+			}
+		}
+		return -1;
+	}
+	// The first row that shows `row` (the pad's).
+	int shown_from(int row) const { return std::clamp(first, row - layout.rows + 1, row); }
+};
+
+// The list for `towns` (sorted by name here, as the open sorts them; `none` adds the extra row after them), over the view
+// left of `view_right`, from the first row `first` (clamped).
+TownListFrame town_list_frame(const SaveGame& save, const std::vector<uint8_t>& towns, bool none, int first,
+	int view_right) {
+	TownListFrame f;
+	StatisticsChoice choice;
+	choice.mode = 1;
+	choice.merchants = towns;
+	const std::vector<std::string> by_number = stats_town_names();
+	if (g_texts) {
+		sort_choice_by_name(save, *g_texts, by_number, choice);
+	}
+	for (const uint8_t t : choice.merchants) {
+		f.towns.push_back(int(t));
+	}
+	if (none) {
+		f.towns.push_back(-1);
+	}
+	TextRenderer* row_font = g_game_art ? g_game_art->head_text() : nullptr;
+	TextRenderer* title_font = g_game_art ? g_game_art->title_text() : nullptr;
+	int widest = 0;
+	for (const int t : f.towns) {
+		f.names.push_back(t < 0 ? exe_text(0x6C1078, "ninguna", "none")
+								: clean_game_text(statistics_town_name(save, by_number, uint32_t(t))));
+		widest = std::max(widest, row_font ? row_font->measure(f.names.back()) : 7 * int(f.names.back().size()));
+	}
+	const std::string title = exe_text(0x6C10CC, "Elegir ciudad", "choose town");
+	const int title_w = title_font ? title_font->measure(title) : 7 * int(title.size());
+	f.layout = selection_list_layout(0, kBarHeight, view_right, kScreenHeight - kBarHeight, int(f.towns.size()), widest,
+		title_w);
+	f.first = std::clamp(first, 0, std::max(0, int(f.towns.size()) - f.layout.rows));
+	return f;
+}
+
+// The list (0x471420): its parchment with the rolls, its title in the font 3 centred, black; its rows in the font 0
+// clipped to their room, the pointed one (the pad's, the game's under the mouse [+0xD8]) in 0x0020CC; the scroll bar;
+// the close button with its key.
+void draw_town_list(SDL_Renderer* renderer, GameWindowArt& art, TextRenderer& fallback, const TownListFrame& f,
+	int pointed) {
+	const SelectionListLayout& l = f.layout;
+	art.draw_dialog(l.x, l.y, l.w / kSelectionListTile, l.h / kSelectionListTile, true, kTownListDialog);
+	TextRenderer& title = art.title_text() ? *art.title_text() : fallback;
+	TextRenderer& rows = art.head_text() ? *art.head_text() : fallback;
+	TextRenderer& page = art.page_text() ? *art.page_text() : fallback;
+	const SDL_Color black = argb_color(kShipListInk);
+	const std::string t = exe_text(0x6C10CC, "Elegir ciudad", "choose town");
+	title.draw(t, l.x + l.title_x() - title.measure(t) / 2, l.y + l.title_y(), black);
+	const SDL_Rect clip = {l.x + kSelectionListRowX, l.y + kSelectionListRowY, l.rows_width,
+		kSelectionListRowHeight * l.rows};
+	SDL_RenderSetClipRect(renderer, &clip);
+	for (int k = 0; k < l.rows && f.first + k < int(f.towns.size()); ++k) {
+		const int i = f.first + k;
+		const SDL_Rect r = f.row(k);
+		rows.draw(f.names[size_t(i)], r.x, r.y, i == pointed ? argb_color(kShipListPointed) : black);
+	}
+	SDL_RenderSetClipRect(renderer, nullptr);
+	const SDL_Rect b = f.bar();
+	if (b.w > 0) {
+		draw_menu_scroll_bar(renderer, art, b, clip.x, kSelectionListRowHeight * int(f.towns.size()),
+			kSelectionListRowHeight * f.first, kSelectionListRowHeight);
+	}
+	const SDL_Rect c = f.close();
+	art.draw_close(c, false);
+	page.draw(BTN_CIRCLE, c.x - page.measure(BTN_CIRCLE) - 2, c.y + (c.h - page.line_height()) / 2, kButtonInk);
+}
+
+// What a touch on the list does: a row chosen, its scroll bar's halves a page up or down, the close button or a touch
+// out of it closing it.
+enum class TownListHit { None, Row, Close, PageUp, PageDown };
+struct TownListTap {
+	TownListHit hit = TownListHit::None;
+	int row = -1;
+};
+TownListTap town_list_tap(const TownListFrame& f, int x, int y) {
+	const SDL_Rect c = f.close();
+	if (!inside(f.window(), x, y) || inside({c.x - 4, c.y - 6, c.w + 8, c.h + 12}, x, y)) {
+		return {TownListHit::Close};
+	}
+	const SDL_Rect b = f.bar();
+	if (b.w > 0 && inside({b.x - 6, b.y, b.w + 12, b.h}, x, y)) {
+		return {y < b.y + b.h / 2 ? TownListHit::PageUp : TownListHit::PageDown};
+	}
+	const int row = f.row_at(x, y);
+	return row >= 0 ? TownListTap{TownListHit::Row, row} : TownListTap{};
+}
+
+// --- The game's convoy window («form convoy»: ship_menu_window.hpp, convoy_window_layout; re/emu/sesion42/README.md):
+// a parchment over the view that the ship menu's button opens (its slot 0x120, 0x40C470) for the ships chosen when
+// 0x40C170 has something to offer (convoy_choices; else the message «Convoy cannot be formed»): «Chooses an action»,
+// the choices in a list, «OK» and the close button. «OK» does the choice picked (0x40C8F0): a private convoy
+// (0x494B80(0, 0)), a public one after its destination is chosen in the towns' list (0x494B80(1, town) and the
+// message 0x699D00), joining a convoy (0x494AF0); then it shuts. It shuts too when the menu's selection changes. ---
+constexpr int kConvoyWindowDialog = 31;  // GameWindowArt::draw_dialog's key.
+constexpr int32_t kConvoyNoChoice = -3;  // [+0x162C] with nothing picked (0xFFFFFFFD).
+constexpr int kConvoyRowHeight = 15;  // A row: the font 1's height (ttffonts.ini; 0x6DCDD0's slot 0x40).
+
+struct ConvoyWindowUi {
+	bool open = false;
+	std::vector<uint16_t> ships;  // The ships it is for: the menu's selection when it opened (0x4885A0, [+0x1538]).
+	int32_t choice = kConvoyNoChoice;  // The choice picked ([+0x162C]): kPrivateConvoy, kPublicConvoy or a convoy.
+	int first = 0;  // The list's first row shown ([+0x1510]).
+	bool towns = false;  // The towns' list over it ([+0x1168]): a public convoy's destination.
+	int town_row = 0;  // Its pointed row (the pad's; a touch chooses at once).
+	int towns_first = 0;
+};
+
+struct ConvoyWindowFrame {
+	std::vector<int32_t> choices;
+	ConvoyWindowLayout layout;
+	int first = 0;
+	SDL_Rect window() const { return {layout.x, layout.y, layout.w, layout.h}; }
+	SDL_Rect row(int k) const {
+		return {layout.x + kConvoyListX, layout.y + kConvoyListY + kConvoyRowHeight * k, kConvoyListWidth,
+			kConvoyRowHeight};
+	}
+	SDL_Rect ok() const { return {layout.x + layout.ok_x(), layout.y + layout.buttons_y(), kConvoyOkWidth, 18}; }
+	SDL_Rect close() const { return {layout.x + layout.close_x(), layout.y + layout.buttons_y(), 32, 18}; }
+	SDL_Rect bar() const {
+		if (int(choices.size()) <= layout.rows) {
+			return {};
+		}
+		return {layout.x + layout.bar_x(), layout.y + kConvoyListY, ScrollBarLayout::kThumbWidth,
+			kConvoyRowHeight * layout.rows};
+	}
+	int row_at(int x, int y) const {
+		for (int k = 0; k < layout.rows && first + k < int(choices.size()); ++k) {
+			if (inside(row(k), x, y)) {
+				return first + k;
+			}
+		}
+		return -1;
+	}
+	int index_of(int32_t choice) const {
+		const auto at = std::find(choices.begin(), choices.end(), choice);
+		return at == choices.end() ? -1 : int(at - choices.begin());
+	}
+};
+
+// The ship menu's selection (0x4885A0): the ship of the state 1, the ships of the state 0; none in the other states.
+std::vector<uint16_t> ship_menu_selection(const SidePanel& side) {
+	if (side.menu == PanelMenu::Ship && side.ship >= 0 && side.own_convoy < 0) {
+		return {uint16_t(side.ship)};
+	}
+	if (side.menu == PanelMenu::Ships) {
+		return side.ships_chosen;
+	}
+	return {};
+}
+
+// The window this frame: its choices (0x40C170 each frame, 0x40C8F0), its layout and its first row (clamped).
+ConvoyWindowFrame convoy_window_frame(const SaveGame& save, const ConvoyWindowUi& ui, int view_right) {
+	ConvoyWindowFrame f;
+	f.choices = convoy_choices(save, ui.ships);
+	f.layout = convoy_window_layout(0, kBarHeight, view_right, kScreenHeight - kBarHeight, int(f.choices.size()),
+		kConvoyRowHeight, ScrollBarLayout::kThumbWidth);
+	f.first = std::clamp(ui.first, 0, std::max(0, int(f.choices.size()) - f.layout.rows));
+	return f;
+}
+
+// A row's words (0x40CF62..0x40D0E9): «Form private convoy» (*0x699B80), «Form public convoy» (*0x699B98), «Join
+// convoy %s» (*0x699BAC) with its guide or «Hanseatic League Fleet», an open one with «; dd.mm.yyyy town» after it.
+std::string convoy_choice_label(const SaveGame& save, int32_t choice) {
+	if (choice == kPrivateConvoy) {
+		return game_text(GameText::ConvoyFormPrivate, tr("Formar convoy privado", "Form private convoy"));
+	}
+	if (choice == kPublicConvoy) {
+		return game_text(GameText::ConvoyFormPublic, tr("Formar convoy público", "Form public convoy"));
+	}
+	const ConvoyJoinRow r = convoy_join_row(save, uint16_t(choice));
+	const std::string name = r.hanse ? exe_text(0x6B0D88, "Flota de la Liga Hanseática", "Hanseatic League Fleet")
+		: r.guide < save.ships.size()  ? save.ships[r.guide].name()
+									   : std::string();
+	std::string label = game_format(GameText::ConvoyJoin, {name}, tr("Unirse al convoy ", "Join convoy ") + name);
+	if (r.open) {
+		const GameDate d = date_from_tick(r.leaves);
+		char date[32];
+		std::snprintf(date, sizeof date, "; %.2u.%.2u.%.4u ", unsigned(d.day), unsigned(d.month + 1), unsigned(d.year));
+		label += date + clean_game_text(statistics_town_name(save, stats_town_names(), r.destination));
+	}
+	return label;
+}
+
+// The window (0x40CDA0): its parchment (0x41CAA0, without rolls), its title in the font 3 centred half a tile down,
+// black over its light shadow (0xEFD7C0) a pixel lower right; the choices in the font 1 from (14, 60), clipped to the
+// list, the picked one in 0x003C8C; the scroll bar; «OK» (off with nothing picked or the towns' list open) and the close
+// button, each after its key.
+void draw_convoy_window(SDL_Renderer* renderer, GameWindowArt& art, TextRenderer& fallback, const SaveGame& save,
+	const ConvoyWindowUi& ui, const ConvoyWindowFrame& f) {
+	const ConvoyWindowLayout& l = f.layout;
+	art.draw_dialog(l.x, l.y, l.w / kConvoyWindowTile, l.h / kConvoyWindowTile, false, kConvoyWindowDialog);
+	TextRenderer& title = art.title_text() ? *art.title_text() : fallback;
+	TextRenderer& page = art.page_text() ? *art.page_text() : fallback;
+	const SDL_Color black = argb_color(kShipListInk);
+	const std::string t = exe_text(0x699B68, "Elige una acción", "Chooses an action");
+	const int tx = l.x + (l.w - title.measure(t)) / 2;
+	title.draw(t, tx + 1, l.y + l.title_y() + 1, argb_color(0xFFEFD7C0));
+	title.draw(t, tx, l.y + l.title_y(), black);
+	const SDL_Rect clip = {l.x + kConvoyListX, l.y + kConvoyListY, kConvoyListWidth, kConvoyRowHeight * l.rows};
+	SDL_RenderSetClipRect(renderer, &clip);
+	for (int k = 0; k < l.rows && f.first + k < int(f.choices.size()); ++k) {
+		const int32_t c = f.choices[size_t(f.first + k)];
+		const SDL_Rect r = f.row(k);
+		page.draw(convoy_choice_label(save, c), r.x, r.y, c == ui.choice ? argb_color(kShipListSelected) : black);
+	}
+	SDL_RenderSetClipRect(renderer, nullptr);
+	const SDL_Rect b = f.bar();
+	if (b.w > 0) {
+		draw_menu_scroll_bar(renderer, art, b, clip.x, kConvoyRowHeight * int(f.choices.size()),
+			kConvoyRowHeight * f.first, kConvoyRowHeight);
+	}
+	const int line_y = f.ok().y + (f.ok().h - page.line_height()) / 2;
+	const bool ok = ui.choice != kConvoyNoChoice && !ui.towns;
+	draw_pill_button(art, page, f.ok(), exe_text(0x699B50, "OK", "OK"), ok, 0);
+	page.draw(BTN_CROSS, f.ok().x - page.measure(BTN_CROSS) - 2, line_y, ok ? kButtonInk : kParchmentDim);
+	art.draw_close(f.close(), false);
+	page.draw(BTN_CIRCLE, f.close().x - page.measure(BTN_CIRCLE) - 2, line_y, kButtonInk);
+}
+
+// A public convoy's destinations (0x40CA97..0x40CB0C: every town but the ships' and, with a big ship, those whose
+// harbour takes none), in the towns' list.
+TownListFrame convoy_town_list(const SaveGame& save, const ConvoyWindowUi& ui, int view_right) {
+	return town_list_frame(save, public_convoy_towns(save, ui.ships), false, ui.towns_first, view_right);
+}
+
+// The message after a public convoy is formed (0x494C85..0x494D17: *0x699D00 with its guide's name, the 5 days and its
+// destination; the game's message window 0x41D9B0, the ratio 0.4, a note).
+GameMessage public_convoy_message(const SaveGame& save, uint16_t guide, uint8_t destination) {
+	const std::string name = guide < save.ships.size() ? save.ships[guide].name() : std::string();
+	const std::string raw = g_texts ? GameTexts::sprintf_raw(g_texts->raw(GameText::ConvoyPublicLeaving),
+										  {utf8_to_latin1(name), "5", statistics_town_name(save, stats_town_names(), destination)})
+									: std::string();
+	return game_message_layout(raw, {}, false, 22, 0.4f, kScreenWidth, kScreenHeight);
 }
 
 // --- The build menu in the panel's room (the game's SIDEMENU_BUILD, read in
@@ -14296,9 +14480,9 @@ void draw_build_room(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 
 // --- The ship menu in the panel's room (the game's SIDEMENU_SHIP, CSideMenu_Ship; what it shows is read
 // in re/emu/sesion14/ship_menu_notes.md): its page buttons, the header with its hold's barrel, and the
-// pages: the goods, the crew, the deck, the convoys and the trade route. What the crew and convoy pages
-// offer and send are the ship's window's and the convoy window's (place_view's Place::Ship and
-// place_act, checked with the game). ---
+// pages: the goods, the crew, the deck, the convoys and the trade route. What the crew page offers and
+// sends is the ship's window's (place_view's Place::Ship and place_act, checked with the game); «form
+// convoy» opens the game's convoy window over the view (draw_convoy_window). ---
 
 // The column of each page's button in schiffinfo0001.tga (show convoy, form convoy, leave convoy, trade
 // route, goods, crew, deck; the deck's is 40 wide).
@@ -14327,7 +14511,7 @@ bool ship_menu_convoy(const SaveGame& save, int ship) {
 // The panel's «leave convoy» button (0x48B985, 0x48BE8E → 0x494DC0) is no page: it asks with the game's message, not
 // official, the ratio 0.4 (0x3ECCCCCD), «Yes» and «No», centred on the screen: 0x699A78 «Disband convoy» with the
 // guide's name when the ship is its guide, else 0x699AC0 «Leave convoy» with the ship's; «Yes» (its answer 0x4950D0)
-// queues 0x16 or 0x17 (the convoy window's row, ship_convoy_act). A question for a ship in a convoy.
+// queues 0x16 or 0x17 (screen_message_answer). A question for a ship in a convoy.
 GameMessage convoy_question(const SaveGame& save, int ship) {
 	const SavedShip& s = save.ships[size_t(ship)];
 	const uint16_t guide = save.convoys[s.convoy()].u16(0x10);
@@ -14414,12 +14598,6 @@ struct ShipMenuLayout {
 	// The viewer's: the two ships' window (0x40EEB0, which the game opens picking another of the player's ships in the
 	// town with this one chosen), beside the sailors' amount; the pad's SidePanel::crew_pair, below the other rows.
 	SDL_Rect pair_button{};
-	// The convoy pages: their rows, the destination's minus and plus, and the act button.
-	static constexpr int kConvoyRows = 4;
-	SDL_Rect convoy_rows[kConvoyRows] = {};
-	SDL_Rect dest_minus{};
-	SDL_Rect dest_plus{};
-	SDL_Rect act_button{};
 
 	ShipMenuLayout(const SDL_Rect& room, int line_height) {
 		// The page buttons as the game's menu row (0x493320): at their size (32 × 32, the deck's 40), with equal gaps
@@ -14437,7 +14615,6 @@ struct ShipMenuLayout {
 		head_y = top - 10;
 		line = line_height;
 		barrel = {room.x + room.w - 74 - 34, top, 74, 65};
-		const int button_h = line + 10;
 		// The crew page (its controls placed by 0x48A358..0x48A4D7, drawn round by 0x48DF90), in the menu from head_y:
 		// the sailors' row at (Moral2DPos's x 15, MatrosenEntlassen2DPos's y 87): «-» (Button1, 32 × 18), the amount's
 		// edit box (40 wide: improvised, its size isn't in the ini files), «+» and «dismiss sailors» (its text's fitted
@@ -14455,12 +14632,6 @@ struct ShipMenuLayout {
 		pirate_button = {captain_button.x, room.y + room.h - 18 - 10, cw, 18};
 		// The viewer's «Other ship» on the name's line at the right (improvised: nothing of the game's there).
 		pair_button = {room.x + room.w - 8 - 96, head_y + 4, 96, 18};
-		for (int k = 0; k < kConvoyRows; ++k) {
-			convoy_rows[k] = {room.x + 8, top + line + 6 + k * (line + 10), room.w - 16, line + 8};
-		}
-		act_button = {room.x + 8, room.y + room.h - button_h - 6, room.w - 16, button_h};
-		dest_minus = {room.x + 8, act_button.y - button_h - 6, 34, button_h};
-		dest_plus = {room.x + room.w - 8 - 34, dest_minus.y, 34, button_h};
 	}
 
 	// The menu's rectangle under the page buttons, from the head's top (its lists' charts 90 down: his convoy's ships,
@@ -14470,14 +14641,6 @@ struct ShipMenuLayout {
 		for (int k = 0; k < kShipPages; ++k) {
 			// Half the gap round each for the finger.
 			if (inside({pages[k].x - 4, pages[k].y - 4, pages[k].w + 8, pages[k].h + 8}, x, y)) {
-				return k;
-			}
-		}
-		return -1;
-	}
-	int convoy_row_at(int x, int y) const {
-		for (int k = 0; k < kConvoyRows; ++k) {
-			if (inside(convoy_rows[k], x, y)) {
 				return k;
 			}
 		}
@@ -14910,13 +15073,6 @@ void draw_battle_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 	draw_picture(renderer, art.deck, marker, &kDeckFrames[3]);
 }
 
-// A greyed button that can't be pressed (the game's disabled row).
-void draw_disabled_button(SDL_Renderer* renderer, TextRenderer& text, const SDL_Rect& r, const std::string& label) {
-	SDL_SetRenderDrawColor(renderer, 120, 100, 80, 160);
-	SDL_RenderFillRect(renderer, &r);
-	text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - text.line_height()) / 2, kParchmentDim);
-}
-
 // --- The trade route page of the ship menu (CSideMenu_Ship's page [+0xE4], drawn by 0x48F2C0), its towns' list
 // (0x46F9B0, mode 1) and the wares window of a stop (*0x6CBA74): their rules and operations in
 // trade_route_window.hpp; the layout adapted to the Vita. ---
@@ -14924,18 +15080,6 @@ void draw_disabled_button(SDL_Renderer* renderer, TextRenderer& text, const SDL_
 std::vector<std::string> stats_town_names();
 void draw_scroll(SDL_Renderer* renderer, SDL_Texture* paper, const SDL_Rect& r);
 void draw_panel_box(SDL_Renderer* renderer, const SDL_Rect& box, Uint8 alpha);
-
-// A button of the route's parchments: lit where the pad points, greyed when off.
-void draw_route_button(SDL_Renderer* renderer, TextRenderer& text, const SDL_Rect& r, const std::string& label, bool lit,
-	bool enabled) {
-	SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, enabled ? (lit ? 140 : 60) : 25);
-	SDL_RenderFillRect(renderer, &r);
-	SDL_SetRenderDrawColor(renderer, 110, 80, 40, enabled ? 255 : 90);
-	SDL_RenderDrawRect(renderer, &r);
-	const std::string shown = cut_text(text, label, r.w - 6);
-	text.draw(shown, r.x + (r.w - text.measure(shown)) / 2, r.y + (r.h - text.line_height()) / 2,
-		enabled ? kParchmentInk : kParchmentDim);
-}
 
 // The trade route page (0x48F2C0, its rows' controls placed by 0x489B80), under the ship's head (0x48EE90) or his
 // convoy's (0x4904B0), in the menu from the head's top with [CHART2] of sidemenu.ini (columns 10 96 96, spacing 2, rows
@@ -15074,131 +15218,90 @@ void draw_route_page(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 
 // The towns' list a town button opens (0x46F9B0 in its mode 1; sorted by name when it opens, 0x471FF0): the towns the
 // stop can have and, after them, «none» (0x4713DE: 0xFF, which removes the stop); a choice for the page's row
-// (0x492CA0). Over the town, in columns.
+// (0x492CA0). The game's selection list over the view (route_town_list, draw_town_list).
 std::vector<int> route_town_entries(const SaveGame& save, int ship) {
-	StatisticsChoice choice;
-	choice.mode = 1;
-	choice.merchants = route_town_choices(save, ship);
-	if (g_texts) {
-		sort_choice_by_name(save, *g_texts, stats_town_names(), choice);
-	}
-	std::vector<int> out(choice.merchants.begin(), choice.merchants.end());
-	out.push_back(-1);
-	return out;
+	return town_list_frame(save, route_town_choices(save, ship), true, 0, g_town_right).towns;
 }
 
-struct RouteTownsLayout {
-	SDL_Rect panel{};
-	int title_y = 0;
-	int entries_y = 0;
-	int row_h = 0;
-	int columns = 1;
-	int rows_per_column = 1;
-	int column_w = 0;
-	SDL_Rect close_button{};
+// The list, as the game's selection list in its mode 1 (draw_town_list: «choose town», the towns sorted by name and
+// «none» after them), over the view; the pad's row the pointed one.
+TownListFrame route_town_list(const SaveGame& save, const SidePanel& ui) {
+	return town_list_frame(save, route_town_choices(save, ui.ship), true, ui.route_towns_first, g_town_right);
+}
 
-	RouteTownsLayout(int line, int entries) {
-		const int w = std::min(560, g_town_right - 24);
-		row_h = line + 6;
-		const int button_h = line + 10;
-		const int top = kBarHeight + 12;
-		title_y = top + 10;
-		entries_y = title_y + line + 10;
-		const int most = std::max(1, (kScreenHeight - 12 - 12 - button_h - 8 - entries_y) / row_h);
-		columns = std::max(1, (entries + most - 1) / most);
-		rows_per_column = std::max(1, (entries + columns - 1) / columns);
-		const int h = entries_y - top + rows_per_column * row_h + 8 + button_h + 12;
-		panel = {(g_town_right - w) / 2, top, w, h};
-		column_w = (panel.w - 24) / columns;
-		close_button = {panel.x + panel.w / 2 - 60, panel.y + panel.h - button_h - 10, 120, button_h};
+void draw_route_towns(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, const SidePanel& ui) {
+	if (ui.route_towns_row < 0 || !g_game_art) {
+		return;
 	}
-	SDL_Rect entry(int k) const {
-		return {panel.x + 12 + (k / rows_per_column) * column_w + 2, entries_y + (k % rows_per_column) * row_h,
-			column_w - 4, row_h - 2};
+	draw_town_list(renderer, *g_game_art, text, route_town_list(save, ui), ui.route_towns_pick);
+}
+
+// The route files' list («File», 0x48C6A0): the game's selection list in its mode 4 (0x46F9B0, 0x471420, its update
+// 0x470A00; re/emu/sesion42/README.md), a parchment with rolls over the view: the title «Trade route» (*0x6B0550), the
+// files (save\AutoRoute\*.rou, 0x4721F0) in the font 0, the row under the pointer in 0x0020CC (a touch puts its name in
+// the box); its width the button [+0x58C]'s and 5 or the widest file, a tile round (no title measured); «Load» [+0x680],
+// «Save» [+0x768], «Delete» [+0x850] (buttons.ini [Button2], 48 × 18) from (20, the close button's line), 2 apart; the
+// name's box [+0x938] (sidemenu.ini [TextBox0]: 18 high, black at alpha 0x28, the font 1; written with the Vita's
+// keyboard) 3 over them, from 20 to the close button's right end. «Load» on with the name a file's (0x63AC5B, without
+// case), «Save» with a name (not the empty one it opened with), «Delete» with a file's; «Save» on a file's name and
+// «Delete» ask first with the game's message (0x41D9B0, the ratio 0.4, «Yes» and «No»: route_file_question).
+constexpr int kRouteFileColumns = 5;  // The bottom row's for the pad: the box, «Load», «Save», «Delete», close.
+constexpr int kRouteFilesDialog = 33;  // GameWindowArt::draw_dialog's key.
+constexpr int kRouteFileButton = 48;  // [Button2].
+constexpr int kRouteFileBox = 18;  // sidemenu.ini [TextBox0]'s height.
+
+struct RouteFilesFrame {
+	SelectionListLayout layout;
+	int count = 0;
+	int first = 0;
+	SDL_Rect window() const { return {layout.x, layout.y, layout.window_w(), layout.h}; }
+	SDL_Rect row(int k) const {
+		return {layout.x + kSelectionListRowX, layout.y + kSelectionListRowY + kSelectionListRowHeight * k,
+			layout.rows_width, kSelectionListRowHeight};
 	}
-	int entry_at(int x, int y, int entries) const {
-		for (int k = 0; k < entries; ++k) {
-			if (inside(entry(k), x, y)) {
-				return k;
+	SDL_Rect close() const { return {layout.x + layout.close_x(), layout.y + layout.close_y(), 32, 18}; }
+	// «Load», «Save», «Delete» (0x4701E0..0x470265).
+	SDL_Rect button(int k) const {
+		return {layout.x + 20 + k * (kRouteFileButton + 2), layout.y + layout.close_y(), kRouteFileButton, 18};
+	}
+	// The name's box (0x470268..0x4702C0).
+	SDL_Rect box() const {
+		const SDL_Rect c = close();
+		return {layout.x + 20, c.y - kRouteFileBox - 3, c.x + c.w - (layout.x + 20), kRouteFileBox};
+	}
+	SDL_Rect bar() const {
+		if (count <= layout.rows) {
+			return {};
+		}
+		return {layout.x + layout.bar_x(ScrollBarLayout::kThumbWidth), layout.y + kSelectionListRowY,
+			ScrollBarLayout::kThumbWidth, kSelectionListRowHeight * layout.rows};
+	}
+	int row_at(int x, int y) const {
+		for (int k = 0; k < layout.rows && first + k < count; ++k) {
+			const SDL_Rect r = row(k);
+			if (inside({r.x - 4, r.y, r.w + 8, r.h}, x, y)) {
+				return first + k;
 			}
 		}
 		return -1;
 	}
+	// The bottom row's cell for the pad (the box, then the buttons, then the close button).
+	SDL_Rect cell(int column) const { return column == 0 ? box() : column < 4 ? button(column - 1) : close(); }
+	int shown_from(int row) const { return std::clamp(first, row - layout.rows + 1, row); }
 };
 
-void draw_route_towns(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, const SidePanel& ui) {
-	if (ui.route_towns_row < 0) {
-		return;
+RouteFilesFrame route_files_frame(const std::vector<std::string>& files, int first, int view_right) {
+	RouteFilesFrame f;
+	f.count = int(files.size());
+	TextRenderer* font = g_game_art ? g_game_art->head_text() : nullptr;
+	int widest = 0;
+	for (const std::string& name : files) {
+		widest = std::max(widest, font ? font->measure(name) : 7 * int(name.size()));
 	}
-	const std::vector<int> entries = route_town_entries(save, ui.ship);
-	const RouteTownsLayout layout(text.line_height(), int(entries.size()));
-	SDL_SetRenderDrawColor(renderer, 236, 220, 180, 250);
-	SDL_RenderFillRect(renderer, &layout.panel);
-	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
-	SDL_RenderDrawRect(renderer, &layout.panel);
-	text.draw(exe_text(0x6C10CC, "Elegir ciudad", "choose town"), layout.panel.x + 12, layout.title_y, kParchmentInk);
-	// The row's town now, lit.
-	const std::vector<RouteRow> rows = route_rows(save, ui.ship);
-	const int current = ui.route_towns_row < int(rows.size()) ? int(rows[size_t(ui.route_towns_row)].town) : -2;
-	const std::vector<std::string> names = stats_town_names();
-	for (size_t k = 0; k < entries.size(); ++k) {
-		const SDL_Rect r = layout.entry(int(k));
-		const int t = entries[k];
-		const bool lit = int(k) == ui.route_towns_pick || t == current;
-		SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, lit ? 110 : 40);
-		SDL_RenderFillRect(renderer, &r);
-		const std::string name = t < 0 ? exe_text(0x6C1078, "ninguna", "none") : route_town_label(save, names, uint8_t(t));
-		text.draw(cut_text(text, name, r.w - 8), r.x + 4, r.y + (r.h - text.line_height()) / 2, kParchmentInk);
-	}
-	draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Cerrar", "Close"));
+	f.layout = selection_list_layout(0, kBarHeight, view_right, kScreenHeight - kBarHeight, f.count, widest, 0);
+	f.first = std::clamp(first, 0, std::max(0, f.count - f.layout.rows));
+	return f;
 }
-
-// The route files' list («File»: the towns' list class in its mode 4, 0x470B4B..0x470F4F), over the town: the title
-// «Trade route», the files (save\AutoRoute\*.rou, 0x4721F0; a file puts its name in the box), the box with the name
-// (written with the Vita's keyboard), «Load» (the name is a file's: 0x63AC5B, without case), «Save» (a name), «Delete»
-// (a file's) and the close button; «Save» on a file's name and «Delete» ask first (Yes / No).
-constexpr int kRouteFileColumns = 5;  // The bottom row's for the pad: the box, «Load», «Save», «Delete», close.
-
-struct RouteFilesLayout {
-	SDL_Rect panel{};
-	SDL_Rect list{};
-	SDL_Rect track{};
-	SDL_Rect box{};
-	SDL_Rect buttons[4] = {};  // «Load», «Save», «Delete», close
-	SDL_Rect question{};
-	SDL_Rect yes{};
-	SDL_Rect no{};
-	int title_y = 0;
-	int row_h = 0;
-	int rows = 0;  // Shown.
-
-	explicit RouteFilesLayout(int line) {
-		const int w = std::min(420, g_town_right - 24);
-		panel = {(g_town_right - w) / 2, kBarHeight + 8, w, kScreenHeight - kBarHeight - 16};
-		title_y = panel.y + 10;
-		row_h = line + 6;
-		const int button_h = line + 10;
-		const int buttons_y = panel.y + panel.h - 10 - button_h;
-		box = {panel.x + 12, buttons_y - 8 - (line + 8), panel.w - 24, line + 8};
-		const int list_y = title_y + line + 10;
-		rows = std::max(1, (box.y - 8 - list_y) / row_h);
-		list = {panel.x + 12, list_y, panel.w - 24 - 10, rows * row_h};
-		track = {list.x + list.w + 4, list.y, 5, list.h - 2};
-		const int close_w = 48;
-		const int bw = (panel.w - 24 - close_w - 3 * 6) / 3;
-		for (int k = 0; k < 3; ++k) {
-			buttons[k] = {panel.x + 12 + k * (bw + 6), buttons_y, bw, button_h};
-		}
-		buttons[3] = {panel.x + panel.w - 12 - close_w, buttons_y, close_w, button_h};
-		question = {panel.x + 24, panel.y + panel.h / 2 - 80, panel.w - 48, 160};
-		yes = {question.x + question.w / 2 - 6 - 100, question.y + question.h - button_h - 14, 100, button_h};
-		no = {question.x + question.w / 2 + 6, yes.y, 100, button_h};
-	}
-	SDL_Rect row(int k) const { return {list.x, list.y + k * row_h, list.w, row_h - 2}; }
-	int row_at(int x, int y) const { return inside(list, x, y) ? (y - list.y) / row_h : -1; }
-	// The bottom row's cell for the pad (the box, then the buttons).
-	SDL_Rect cell(int column) const { return column == 0 ? box : buttons[column - 1]; }
-};
 
 // The file whose name is `name`, without case (0x63AC5B), or -1.
 int route_file_match(const std::vector<std::string>& files, const std::string& name) {
@@ -15213,78 +15316,72 @@ int route_file_match(const std::vector<std::string>& files, const std::string& n
 	return -1;
 }
 
-// A question's text without the line breaks it starts with.
-std::string route_question_text(uint32_t english, const char* spanish, const char* fallback) {
-	std::string s = exe_text(english, spanish, fallback);
-	while (!s.empty() && (s.front() == '\n' || s.front() == ' ')) {
-		s.erase(s.begin());
+// The list (0x471420 in its mode 4): its parchment with the rolls, its title, its files (the pad's row the pointed
+// one), the scroll bar, the name's box (the cursor while it is written), its three buttons and the close button, the
+// one the pad is on at the bottom row marked with its key, X; off while its question is asked (0x470D39: the window
+// disabled).
+void draw_route_files(SDL_Renderer* renderer, TextRenderer& fallback, const SidePanel& ui) {
+	if (!ui.route_files || !g_game_art) {
+		return;
 	}
-	return s;
+	GameWindowArt& art = *g_game_art;
+	const RouteFilesFrame f = route_files_frame(ui.route_file_list, ui.route_file_first, g_town_right);
+	const SelectionListLayout& l = f.layout;
+	art.draw_dialog(l.x, l.y, l.w / kSelectionListTile, l.h / kSelectionListTile, true, kRouteFilesDialog);
+	TextRenderer& title = art.title_text() ? *art.title_text() : fallback;
+	TextRenderer& rows = art.head_text() ? *art.head_text() : fallback;
+	TextRenderer& page = art.page_text() ? *art.page_text() : fallback;
+	const SDL_Color black = argb_color(kShipListInk);
+	const std::string t = exe_text(0x6B0388, "Ruta comercial", "Trade route");
+	title.draw(t, l.x + l.title_x() - title.measure(t) / 2, l.y + l.title_y(), black);
+	const SDL_Rect clip = {l.x + kSelectionListRowX, l.y + kSelectionListRowY, l.rows_width,
+		kSelectionListRowHeight * l.rows};
+	SDL_RenderSetClipRect(renderer, &clip);
+	for (int k = 0; k < l.rows && f.first + k < f.count; ++k) {
+		const int i = f.first + k;
+		const SDL_Rect r = f.row(k);
+		rows.draw(ui.route_file_list[size_t(i)], r.x, r.y, i == ui.route_file_row ? argb_color(kShipListPointed) : black);
+	}
+	SDL_RenderSetClipRect(renderer, nullptr);
+	if (f.bar().w > 0) {
+		draw_menu_scroll_bar(renderer, art, f.bar(), clip.x, kSelectionListRowHeight * f.count,
+			kSelectionListRowHeight * f.first, kSelectionListRowHeight);
+	}
+	const bool asking = ui.route_file_question != 0;
+	const bool bottom = ui.route_file_row >= f.count;
+	const SDL_Rect box = f.box();
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0x28);
+	SDL_RenderFillRect(renderer, &box);
+	const std::string name = ui.route_file_name + (ui.route_file_typing ? "_" : "");
+	page.draw(cut_text(page, name, box.w - 4), box.x + 2, box.y + (box.h - page.line_height()) / 2, black);
+	const int match = route_file_match(ui.route_file_list, ui.route_file_name);
+	const std::string labels[3] = {exe_text(0x6B04FC, "Cargar", "Load"), exe_text(0x6B0500, "Guardar", "Save"),
+		exe_text(0x69AF30, "Borrar", "Delete")};
+	const bool enabled[3] = {match >= 0 && !asking, !ui.route_file_name.empty() && !ui.route_file_unnamed && !asking,
+		match >= 0 && !asking};
+	for (int k = 0; k < 3; ++k) {
+		draw_pill_button(art, page, f.button(k), labels[k], enabled[k], 0);
+	}
+	art.draw_close(f.close(), false);
+	if (bottom && !asking) {
+		// The pad's cell on the bottom row: its key before it.
+		const SDL_Rect c = f.cell(std::clamp(ui.route_file_column, 0, kRouteFileColumns - 1));
+		const char* key = ui.route_file_column == 4 ? BTN_CIRCLE : BTN_CROSS;
+		page.draw(key, c.x - page.measure(key) - 1, c.y + (c.h - page.line_height()) / 2, kButtonInk);
+	}
 }
 
-void draw_route_files(SDL_Renderer* renderer, TextRenderer& text, const SidePanel& ui) {
-	if (!ui.route_files) {
-		return;
-	}
-	const RouteFilesLayout layout(text.line_height());
-	const int line = text.line_height();
-	SDL_SetRenderDrawColor(renderer, 236, 220, 180, 250);
-	SDL_RenderFillRect(renderer, &layout.panel);
-	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
-	SDL_RenderDrawRect(renderer, &layout.panel);
-	const std::string title = exe_text(0x6B0388, "Ruta comercial", "Trade route");
-	text.draw(title, layout.panel.x + (layout.panel.w - text.measure(title)) / 2, layout.title_y, kParchmentInk);
-	const int n = int(ui.route_file_list.size());
-	const int match = route_file_match(ui.route_file_list, ui.route_file_name);
-	for (int k = 0; k < layout.rows && ui.route_file_first + k < n; ++k) {
-		const int i = ui.route_file_first + k;
-		const SDL_Rect r = layout.row(k);
-		const bool lit = i == ui.route_file_row || i == match;
-		SDL_SetRenderDrawColor(renderer, lit ? 120 : 150, lit ? 80 : 115, lit ? 30 : 70, lit ? 110 : 30);
-		SDL_RenderFillRect(renderer, &r);
-		text.draw(cut_text(text, ui.route_file_list[size_t(i)], r.w - 8), r.x + 4, r.y + (r.h - line) / 2, kParchmentInk);
-	}
-	if (n > layout.rows) {
-		SDL_SetRenderDrawColor(renderer, 150, 115, 70, 60);
-		SDL_RenderFillRect(renderer, &layout.track);
-		const int bar = std::max(8, layout.track.h * layout.rows / n);
-		const SDL_Rect thumb = {layout.track.x,
-			layout.track.y + (layout.track.h - bar) * ui.route_file_first / std::max(1, n - layout.rows), layout.track.w, bar};
-		SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
-		SDL_RenderFillRect(renderer, &thumb);
-	}
-	const bool bottom = ui.route_file_row >= n;
-	const bool asking = ui.route_file_question != 0;
-	SDL_SetRenderDrawColor(renderer, 150, 115, 70, ui.route_file_typing ? 110 : bottom && ui.route_file_column == 0 ? 90 : 45);
-	SDL_RenderFillRect(renderer, &layout.box);
-	SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
-	SDL_RenderDrawRect(renderer, &layout.box);
-	const std::string name = ui.route_file_name + (ui.route_file_typing ? "_" : "");
-	text.draw(cut_text(text, name, layout.box.w - 10), layout.box.x + 5, layout.box.y + (layout.box.h - line) / 2,
-		kParchmentInk);
-	const std::string labels[3] = {exe_text(0x6B039C, "Cargar", "Load"), exe_text(0x6B03A4, "Guardar", "Save"),
-		exe_text(0x69AF30, "Borrar", "Delete")};
-	const bool enabled[3] = {match >= 0 && !asking, !ui.route_file_name.empty() && !asking, match >= 0 && !asking};
-	for (int k = 0; k < 3; ++k) {
-		draw_route_button(renderer, text, layout.buttons[k], labels[k], bottom && ui.route_file_column == k + 1, enabled[k]);
-	}
-	draw_route_button(renderer, text, layout.buttons[3], BTN_CIRCLE, bottom && ui.route_file_column == 4, true);
-	if (!asking) {
-		return;
-	}
-	// The question: «This file already exists, overwrite?» or «Do you really want to delete this trade route?».
-	draw_panel_box(renderer, layout.question, 235);
-	const std::string ask = ui.route_file_question == 1
-		? route_question_text(0x6B03AC, "Este archivo ya existe. ¿Sobrescribir?", "This file already exists, overwrite?")
-		: route_question_text(0x6B0508, "¿Realmente quieres borrar esta ruta comercial?",
-			  "Do you really want to delete this trade route?");
-	int y = layout.question.y + 14;
-	for (const std::string& l : wrap_text(text, ask, layout.question.w - 24)) {
-		text.draw(l, layout.question.x + (layout.question.w - text.measure(l)) / 2, y, kTextColor);
-		y += line;
-	}
-	draw_button(renderer, text, layout.yes, BTN_CROSS + std::string(" ") + exe_text(0x699948, "Sí", "Yes"));
-	draw_button(renderer, text, layout.no, BTN_CIRCLE + std::string(" ") + exe_text(0x699950, "No", "No"));
+// Its questions (0x470D39, 0x470E29): the game's message, not official, the ratio 0.4, «Yes» and «No», centred on
+// the screen: *0x6B0504 «This file already exists, overwrite?» (1), *0x6B0508 «Do you really want to delete this
+// trade route?» (2).
+GameMessage route_file_message(int question) {
+	const std::string raw = g_texts ? g_texts->raw_at(question == 1 ? 0x6B0504 : 0x6B0508) : std::string();
+	PlaceView::PageButton yes{{0, 0, 0, 18}, exe_text(0x699948, "Sí", "Yes"), PlaceView::PageAction::Act, true};
+	yes.value = 1;
+	PlaceView::PageButton no{{0, 0, 0, 18}, exe_text(0x699950, "No", "No"), PlaceView::PageAction::Back, true};
+	no.value = 0;
+	return game_message_layout(raw, {yes, no}, false, 23, 0.4f, kScreenWidth, kScreenHeight);
 }
 
 // The wares window of a stop (0x405A20; parchment.ini [Autotradeparchment0]) on the game's parchment over the town:
@@ -15296,83 +15393,81 @@ constexpr int kStopRows = 20;
 constexpr int kStopBottomButtons = 7;  // «<», «>», all, «Máx.», «0», «Deshaz», close
 // A row's cells for the pad: the direction, the amount's −, box and +, the price's −, box and +.
 constexpr int kStopColumns = 7;
+// The game's window (0x405A20 places it, 0x404530 draws it; re/emu/sesion42/README.md): AutomatischerHandelBackground
+// (TEX16100, 424 × 560: its frame and its faded drawing) with its shadows (TEX16051 at its right, 16052 at its bottom),
+// centred in the view; parchment.ini [Autotradeparchment0]'s chart [CHART0] at (OffsetX 18, OffsetY 10): ten columns
+// (the ware's button, the direction, the amount's −, box, unit and +, «min.», the price's −, box and +) 4 apart, a head
+// 60 high, then the 20 rows 18 high and 2 apart; the bottom buttons on Close2DPos's line (y 510): «<» [+0x2E8] at 28,
+// «>» [+0x200] at 71, the direction of them all at 118, «Máx.» at 188, «0» at 231, «Deshaz» at 306, the close button
+// at 366 (0x40648C..0x406614); the legend 30 over them (0x406619..0x406682). The Vita's view is lower (510): the
+// window drawn at its size into a texture and scaled to the view's height (×0.904; the buildings' windows ×0.95):
+// adapted.
+constexpr int kStopWindowW = 428;
+constexpr int kStopWindowH = 564;
+constexpr int kStopChartX = 18;
+constexpr int kStopChartY = 10;
+constexpr int kStopHead = 60;
+constexpr int kStopStep = 20;
+constexpr int kStopRowHeight = 18;
+constexpr int kStopChartColumns = 10;
+constexpr int kStopColumnX[kStopChartColumns] = {0, 100, 152, 172, 220, 246, 266, 304, 324, 372};
+constexpr int kStopColumnW[kStopChartColumns] = {96, 48, 16, 44, 22, 16, 34, 16, 44, 16};
+constexpr int kStopBottomY = 510;
+constexpr int kStopBottomX[kStopBottomButtons] = {28, 71, 118, 188, 231, 306, 366};
+constexpr int kStopBottomW[kStopBottomButtons] = {32, 32, 48, 32, 32, 48, 32};
+constexpr uint32_t kStopWareInk = 0xFF006700;  // [Button11]'s TextCL.
 
 struct StopWindowLayout {
-	SDL_Rect panel{};
-	SDL_Rect inner{};
-	int title_y = 0;
-	int head_y = 0;
-	int rows_y = 0;
-	int row_h = 0;
-	int rows = 0;  // Shown.
-	int legend_y = 0;
-	// The columns: x and width.
-	int name_x = 0, name_w = 0, dir_x = 0, dir_w = 0, aminus_x = 0, amount_x = 0, amount_w = 0, unit_x = 0, aplus_x = 0;
-	int label_x = 0, label_w = 0, pminus_x = 0, price_x = 0, price_w = 0, pplus_x = 0, step_w = 0;
-	SDL_Rect track{};  // The scroll's.
-	SDL_Rect bottom[kStopBottomButtons] = {};
+	SDL_Rect panel{};  // The window on the screen, scaled.
+	float scale = 1.0f;
+	int rows = kStopRows;  // Shown: all of them.
+	int rows_y = 0;  // The rows' top on the screen.
+	int row_h = 0;  // A row's step on the screen.
+	SDL_Rect bottom[kStopBottomButtons] = {};  // On the screen.
 
-	explicit StopWindowLayout(int line) {
-		const int w = std::min(620, g_town_right - 12);
-		panel = {(g_town_right - w) / 2, kBarHeight + 2, w, kScreenHeight - kBarHeight - 4};
-		inner = {panel.x + 36, panel.y + 38, panel.w - 72, panel.h - 38 - 38};
-		title_y = inner.y;
-		head_y = title_y + line + 6;
-		rows_y = head_y + line + 2;
-		row_h = line + 3;
-		const int button_h = line + 6;
-		const int bottom_y = inner.y + inner.h - button_h;
-		legend_y = bottom_y - line - 6;
-		rows = std::max(1, std::min(kStopRows, (legend_y - 4 - rows_y) / row_h));
-		step_w = 24;
-		name_w = 136;
-		dir_w = 52;
-		amount_w = 52;
-		label_w = 44;
-		price_w = 56;
-		const int used = name_w + 6 + dir_w + 12 + step_w + amount_w + 26 + step_w + 12 + label_w + step_w + price_w + step_w;
-		int x = inner.x + std::max(0, (inner.w - 10 - used) / 2);
-		name_x = x;
-		x += name_w + 6;
-		dir_x = x;
-		x += dir_w + 12;
-		aminus_x = x;
-		x += step_w;
-		amount_x = x;
-		x += amount_w;
-		unit_x = x;
-		x += 26;
-		aplus_x = x;
-		x += step_w + 12;
-		label_x = x;
-		x += label_w;
-		pminus_x = x;
-		x += step_w;
-		price_x = x;
-		x += price_w;
-		pplus_x = x;
-		track = {inner.x + inner.w - 6, rows_y, 5, rows * row_h - 2};
-		const int widths[kStopBottomButtons] = {36, 36, 58, 58, 36, 84, 48};
-		const int xs[kStopBottomButtons] = {inner.x, inner.x + 42, inner.x + 90, inner.x + inner.w / 2 - 40,
-			inner.x + inner.w / 2 + 24, inner.x + inner.w - 48 - 8 - 84, inner.x + inner.w - 48};
+	explicit StopWindowLayout(int /*line*/) {
+		const int view_h = kScreenHeight - kBarHeight;
+		scale = std::min(1.0f, float(view_h) / float(kStopWindowH));
+		const int w = int(float(kStopWindowW) * scale + 0.5f);
+		const int h = int(float(kStopWindowH) * scale + 0.5f);
+		panel = {(g_town_right - w) / 2, kBarHeight + (view_h - h) / 2, w, h};
+		rows_y = screen_y(kStopChartY + kStopHead);
+		row_h = int(float(kStopStep) * scale + 0.5f);
 		for (int k = 0; k < kStopBottomButtons; ++k) {
-			bottom[k] = {xs[k], bottom_y, widths[k], button_h};
+			bottom[k] = screen(game_bottom(k));
 		}
 	}
-	int top(int k) const { return rows_y + k * row_h; }
-	SDL_Rect name(int k) const { return {name_x, top(k), name_w, row_h - 2}; }
-	SDL_Rect dir(int k) const { return {dir_x, top(k), dir_w, row_h - 2}; }
-	// The pad's columns: 0 the direction, 1..3 the amount's −, box and +, 4..6 the price's.
-	SDL_Rect cell(int k, int column) const {
-		const int xs[kStopColumns] = {dir_x, aminus_x, amount_x + 2, aplus_x, pminus_x, price_x + 2, pplus_x};
-		const int ws[kStopColumns] = {dir_w, step_w, amount_w - 4, step_w, step_w, price_w - 4, step_w};
-		return {xs[column], top(k), ws[column], row_h - 2};
+	int screen_x(int x) const { return panel.x + int(float(x) * scale + 0.5f); }
+	int screen_y(int y) const { return panel.y + int(float(y) * scale + 0.5f); }
+	SDL_Rect screen(const SDL_Rect& g) const {
+		const int x = screen_x(g.x);
+		const int y = screen_y(g.y);
+		return {x, y, screen_x(g.x + g.w) - x, screen_y(g.y + g.h) - y};
 	}
+	// A screen y in the window's own coordinates.
+	int window_y(int y) const { return int(float(y - panel.y) / scale + 0.5f); }
+	// In the window's own coordinates: a chart cell of the row k, a bottom button.
+	static SDL_Rect game_cell(int k, int column) {
+		return {kStopChartX + kStopColumnX[column], kStopChartY + kStopHead + kStopStep * k, kStopColumnW[column],
+			kStopRowHeight};
+	}
+	static SDL_Rect game_bottom(int k) { return {kStopBottomX[k], kStopBottomY, kStopBottomW[k], 18}; }
+	// The pad's columns in the chart's: the direction, the amount's −, box, +, the price's −, box, +.
+	static int chart_column(int column) {
+		static const int map[kStopColumns] = {1, 2, 3, 5, 7, 8, 9};
+		return map[std::clamp(column, 0, kStopColumns - 1)];
+	}
+	int top(int k) const { return screen_y(kStopChartY + kStopHead + kStopStep * k); }
+	SDL_Rect name(int k) const { return screen(game_cell(k, 0)); }
+	SDL_Rect dir(int k) const { return screen(game_cell(k, 1)); }
+	SDL_Rect cell(int k, int column) const { return screen(game_cell(k, chart_column(column))); }
 	int row_at(int y) const {
-		if (y < rows_y || y >= rows_y + rows * row_h) {
+		const int g = window_y(y) - (kStopChartY + kStopHead);
+		if (g < 0) {
 			return -1;
 		}
-		return (y - rows_y) / row_h;
+		const int k = g / kStopStep;
+		return k < rows && g % kStopStep < kStopRowHeight + 1 ? k : -1;
 	}
 };
 
@@ -15387,12 +15482,13 @@ int stop_direction_frame(StopDirection d) {
 	}
 }
 
-void draw_stop_direction(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SDL_Rect& r,
-	StopDirection d, bool lit) {
+void draw_stop_direction(SDL_Renderer* renderer, GameWindowArt& gart, TextRenderer& text, const PanelArt& art,
+	const SDL_Rect& r, StopDirection d, bool lit) {
 	const int frame = stop_direction_frame(d);
 	if (frame < 0 || !art.transfer) {
-		// «---» (Button11, a large button that always looks off).
-		draw_route_button(renderer, text, r, "---", lit, true);
+		// «---» (its button with no picture).
+		gart.draw_pill(r, lit ? PillState::Pressed : PillState::Standard);
+		text.draw("---", r.x + (r.w - text.measure("---")) / 2, r.y + (r.h - text.line_height()) / 2, kButtonInk);
 		return;
 	}
 	const SDL_Rect src = {0, 18 * (frame + (lit ? 2 : 0)), 48, 18};
@@ -15400,111 +15496,126 @@ void draw_stop_direction(SDL_Renderer* renderer, TextRenderer& text, const Panel
 	SDL_RenderCopy(renderer, art.transfer, &src, &dst);
 }
 
+// The window (0x404530), in its own coordinates into its texture: the background and its shadows (0x41CA00), the
+// title «Automatic maritime trading in %s» (the town by its index, as the page's) in the font 3 centred at y 20, black
+// over its light shadow a pixel lower right; the heads «Goods», «Amount», «Price» in the font 0 centred over the
+// columns 0, 3 and 8, 45 under the chart's top; each row: the ware's button ([Button11]: its name green in the font 1,
+// dragged to move its row), its direction button, and with a direction the amount's −, its box («Máx.» or the units),
+// the barrel or the bale at the unit column's right end (the size of the picture, 26), +; selling or buying, «min.» or
+// «máx.» and the price's −, box and +; the legend; the bottom buttons. The pad's cell marked (lit); its key before the
+// close button.
 void draw_stop_window(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
 	const SidePanel& ui) {
-	if (!ui.stop_window) {
+	if (!ui.stop_window || !g_game_art) {
 		return;
 	}
+	GameWindowArt& gart = *g_game_art;
 	const StopWindow& w = *ui.stop_window;
 	const StopWindowLayout layout(text.line_height());
-	const int line = text.line_height();
-	draw_scroll(renderer, art.paper, layout.panel);
-	// «Automatic maritime trading in %s», the town by its index as the page's.
+	gart.begin_sized(layout.panel, kStopWindowW, kStopWindowH);
+	TextRenderer& title = gart.title_text() ? *gart.title_text() : text;
+	TextRenderer& head = gart.head_text() ? *gart.head_text() : text;
+	TextRenderer& page = gart.page_text() ? *gart.page_text() : text;
+	const SDL_Color black = argb_color(kShipListInk);
+	gart.draw_tex(16100, 0, 0, 0);
+	gart.draw_tex(16051, 0, kStopWindowW - 4, 0);
+	gart.draw_tex(16052, 0, 0, kStopWindowH - 4);
 	const uint8_t town = w.stop < save.trade_routes.size() ? save.trade_routes[w.stop].u8(0x2) : 0;
-	const std::string title = exe_text(0x69B2B0, "Ruta comercial automática", "Automatic maritime trading") + " " +
+	const std::string t = exe_text(0x69B2B0, "Ruta comercial automática", "Automatic maritime trading") + " " +
 		exe_text(0x69B2FC, "en", "in") + " " + route_town_label(save, stats_town_names(), town);
-	text.draw(cut_text(text, title, layout.inner.w), layout.inner.x + (layout.inner.w - text.measure(title)) / 2,
-		layout.title_y, kParchmentInk);
-	text.draw(exe_text(0x69B310, "Mercancías", "Goods"), layout.name_x + 4, layout.head_y, kParchmentInk);
-	const std::string amount = exe_text(0x69B308, "Cantidad", "Ammount");
-	text.draw(amount, (layout.aminus_x + layout.aplus_x + layout.step_w - text.measure(amount)) / 2, layout.head_y,
-		kParchmentInk);
-	const std::string price = exe_text(0x69B300, "Precio", "Price");
-	text.draw(price, (layout.pminus_x + layout.pplus_x + layout.step_w - text.measure(price)) / 2, layout.head_y,
-		kParchmentInk);
+	const int tx = (kStopWindowW - 4) / 2 - title.measure(t) / 2;
+	title.draw(t, tx + 1, 21, argb_color(0xFFEFD7C0));
+	title.draw(t, tx, 20, black);
+	auto centred = [&](TextRenderer& font, const std::string& s, const SDL_Rect& r, SDL_Color c) {
+		font.draw(s, r.x + (r.w - font.measure(s)) / 2, r.y + (r.h - font.line_height()) / 2, c);
+	};
+	const int head_y = kStopChartY + 45;
+	const std::string heads[3] = {exe_text(0x69B310, "Mercancías", "Goods"), exe_text(0x69B308, "Cantidad", "Ammount"),
+		exe_text(0x69B300, "Precio", "Price")};
+	const int head_columns[3] = {0, 3, 8};
+	for (int k = 0; k < 3; ++k) {
+		const SDL_Rect c = StopWindowLayout::game_cell(0, head_columns[k]);
+		head.draw(heads[k], c.x + c.w / 2 - head.measure(heads[k]) / 2, head_y, black);
+	}
 	const std::string most = exe_text(0x69A358, "Máx.", "Max");
-	for (int k = 0; k < layout.rows && ui.stop_first + k < kStopRows; ++k) {
-		const int r = ui.stop_first + k;
+	auto pill = [&](const SDL_Rect& r, const std::string& label, bool lit, bool on, SDL_Color ink) {
+		gart.draw_pill(r, !on ? PillState::Disabled : lit ? PillState::Pressed : PillState::Standard);
+		centred(page, label, r, on ? ink : kParchmentDim);
+	};
+	for (int r = 0; r < kStopRows; ++r) {
 		const int ware = w.order[size_t(r)];
 		if (ware >= kStopRows) {
 			continue;
 		}
 		const bool pad_row = ui.stop_row == r;
 		auto lit = [&](int column) { return pad_row && ui.stop_column == column; };
-		const int y = layout.top(k);
-		const int h = layout.row_h - 2;
+		auto cell = [&](int column) { return StopWindowLayout::game_cell(r, column); };
 		if (r != ui.stop_drag) {
-			draw_route_button(renderer, text, layout.name(k), ware_label(ware), pad_row, true);
+			pill(cell(0), ware_label(ware), pad_row, true, argb_color(pad_row ? 0xFF0C2AE0 : kStopWareInk));
 		}
 		const StopDirection d = w.state[size_t(ware)];
-		draw_stop_direction(renderer, text, art, layout.dir(k), d, lit(0));
+		draw_stop_direction(renderer, gart, page, art, cell(1), d, lit(0));
 		if (d == StopDirection::None) {
 			continue;
 		}
-		// An edit box: its number, or the digits being written with a cursor.
-		auto draw_box = [&](int column, const std::string& value, bool price_box) {
-			const SDL_Rect box = layout.cell(k, column);
+		// An edit box (sidemenu.ini [TextBox0]'s black at 0x28): its number, or the digits being written with a cursor.
+		auto draw_box = [&](int column, int pad_column, const std::string& value, bool price_box) {
+			const SDL_Rect box = cell(column);
 			const bool typing = ui.stop_typing == ware && ui.stop_typing_price == price_box;
-			SDL_SetRenderDrawColor(renderer, 150, 115, 70, typing ? 110 : lit(column) ? 90 : 35);
+			SDL_SetRenderDrawColor(renderer, 0, 0, 0, typing ? 0x50 : lit(pad_column) ? 0x40 : 0x28);
 			SDL_RenderFillRect(renderer, &box);
-			const std::string shown = typing ? ui.stop_typed + "_" : value;
-			text.draw(shown, box.x + (box.w - text.measure(shown)) / 2, y + (h - line) / 2, kParchmentInk);
+			centred(page, typing ? ui.stop_typed + "_" : value, box, black);
 		};
-		draw_route_button(renderer, text, layout.cell(k, 1), "-", lit(1), stop_amount_step_enabled(w, ware, -1));
+		pill(cell(2), "-", lit(1), stop_amount_step_enabled(w, ware, -1), kButtonInk);
 		const int32_t units = w.units[size_t(ware)];
-		draw_box(2, units < 0 ? most : std::to_string(units), false);
-		const bool barrels = kWares[size_t(ware)].unit == WareUnit::Barrel;
-		const PanelArt::Icon unit = barrels ? PanelArt::Barrel : PanelArt::Bale;
-		art.icon(renderer, unit, layout.unit_x + (26 - art.icon_width[unit]) / 2, y + (h - art.icon_height[unit]) / 2);
-		draw_route_button(renderer, text, layout.cell(k, 3), "+", lit(3), stop_amount_step_enabled(w, ware, 1));
+		draw_box(3, 2, units < 0 ? most : std::to_string(units), false);
+		const SDL_Rect u = cell(4);
+		gart.draw_tex(kWares[size_t(ware)].unit == WareUnit::Barrel ? 16030 : 16031, 0, u.x + u.w - 26, u.y);
+		pill(cell(5), "+", lit(3), stop_amount_step_enabled(w, ware, 1), kButtonInk);
 		if (d != StopDirection::Sell && d != StopDirection::Buy) {
 			continue;
 		}
 		// Selling: the least price («min»); buying: the most («max»).
-		const std::string label = d == StopDirection::Sell ? exe_text(0x69B2D0, "mín.", "min") : exe_text(0x69B2CC, "máx.", "max");
-		text.draw(label, layout.label_x + (layout.label_w - text.measure(label)) / 2, y + (h - line) / 2, kParchmentInk);
-		draw_route_button(renderer, text, layout.cell(k, 4), "-", lit(4), stop_price_step_enabled(w, ware, -1));
-		draw_box(5, std::to_string(w.price[size_t(ware)]), true);
-		draw_route_button(renderer, text, layout.cell(k, 6), "+", lit(6), stop_price_step_enabled(w, ware, 1));
-	}
-	if (layout.rows < kStopRows) {
-		// The scroll: its track and the part shown.
-		SDL_SetRenderDrawColor(renderer, 150, 115, 70, 60);
-		SDL_RenderFillRect(renderer, &layout.track);
-		const int bar = layout.track.h * layout.rows / kStopRows;
-		const SDL_Rect thumb = {layout.track.x, layout.track.y + (layout.track.h - bar) * ui.stop_first / (kStopRows - layout.rows),
-			layout.track.w, bar};
-		SDL_SetRenderDrawColor(renderer, 110, 80, 40, 255);
-		SDL_RenderFillRect(renderer, &thumb);
+		centred(head, d == StopDirection::Sell ? exe_text(0x69B2D0, "mín.", "min") : exe_text(0x69B2CC, "máx.", "max"),
+			cell(6), black);
+		pill(cell(7), "-", lit(4), stop_price_step_enabled(w, ware, -1), kButtonInk);
+		draw_box(8, 5, std::to_string(w.price[size_t(ware)]), true);
+		pill(cell(9), "+", lit(6), stop_price_step_enabled(w, ware, 1), kButtonInk);
 	}
 	if (ui.stop_drag >= 0 && ui.stop_drag < kStopRows && w.order[size_t(ui.stop_drag)] < kStopRows) {
-		// The ware's name being dragged, where the finger has it.
-		SDL_Rect n = layout.name(0);
-		n.y = ui.stop_drag_top;
-		draw_route_button(renderer, text, n, ware_label(w.order[size_t(ui.stop_drag)]), true, true);
+		// The ware's button being dragged, where the finger has it.
+		SDL_Rect n = StopWindowLayout::game_cell(0, 0);
+		n.y = layout.window_y(ui.stop_drag_top);
+		pill(n, ware_label(w.order[size_t(ui.stop_drag)]), true, true, argb_color(0xFF0C2AE0));
 	}
-	// The legend: the town's and the office's pictures (the buttons' right halves) with their words.
-	int x = layout.inner.x + 8;
+	// The legend (0x406619..0x406682, 30 over the bottom buttons): the town's and the office's pictures (the direction
+	// buttons' right halves) with their words after them; the office's at 231, the town's at 48 (its x, [+0x5470],
+	// not read: from the user's photo of the PC game, improvised).
 	const std::string legend[2] = {exe_text(0x69B2D4, "Comerciar con ciudad", "...Town trade"),
 		exe_text(0x69B2E4, "Comerciar con oficina", "...Trading office trade")};
+	const int legend_x[2] = {48, 231};
 	for (int k = 0; k < 2; ++k) {
+		const int y = kStopBottomY - 30;
 		if (art.transfer) {
 			const SDL_Rect src = {22, 18 * (k == 0 ? 0 : 3), 26, 18};
-			const SDL_Rect dst = {x, layout.legend_y + (line - 18) / 2, 26, 18};
+			const SDL_Rect dst = {legend_x[k], y, 26, 18};
 			SDL_RenderCopy(renderer, art.transfer, &src, &dst);
 		}
-		text.draw(legend[k], x + 30, layout.legend_y, kParchmentInk);
-		x = layout.inner.x + layout.inner.w / 2 + 8;
+		page.draw(legend[k], legend_x[k] + 26, y + (18 - page.line_height()) / 2, black);
 	}
 	const bool bottom_pad = ui.stop_row == kStopRows;
 	auto bottom_lit = [&](int k) { return bottom_pad && ui.stop_column == k; };
-	draw_route_button(renderer, text, layout.bottom[0], "<", bottom_lit(0), true);
-	draw_route_button(renderer, text, layout.bottom[1], ">", bottom_lit(1), true);
-	draw_stop_direction(renderer, text, art, layout.bottom[2], w.all, bottom_lit(2));
-	draw_route_button(renderer, text, layout.bottom[3], most, bottom_lit(3), true);
-	draw_route_button(renderer, text, layout.bottom[4], "0", bottom_lit(4), true);
-	draw_route_button(renderer, text, layout.bottom[5], exe_text(0x692C48, "Deshaz", "Undo"), bottom_lit(5), true);
-	draw_route_button(renderer, text, layout.bottom[6], BTN_CIRCLE, bottom_lit(6), true);
+	auto bottom = [&](int k) { return StopWindowLayout::game_bottom(k); };
+	pill(bottom(0), "<", bottom_lit(0), true, kButtonInk);
+	pill(bottom(1), ">", bottom_lit(1), true, kButtonInk);
+	draw_stop_direction(renderer, gart, page, art, bottom(2), w.all, bottom_lit(2));
+	pill(bottom(3), most, bottom_lit(3), true, kButtonInk);
+	pill(bottom(4), "0", bottom_lit(4), true, kButtonInk);
+	pill(bottom(5), exe_text(0x692C48, "Deshaz", "Undo"), bottom_lit(5), true, kButtonInk);
+	// The close button's key after it (before it, it would touch «Deshaz»: improvised).
+	gart.draw_close(bottom(6), bottom_lit(6));
+	page.draw(BTN_CIRCLE, bottom(6).x + bottom(6).w + 2, bottom(6).y + (18 - page.line_height()) / 2, kButtonInk);
+	gart.end();
 }
 
 void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
@@ -15560,8 +15671,6 @@ void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& 
 		}
 		return;
 	}
-	const int left = room.x + 8;
-	const int line = layout.line;
 	// Its results go to the viewer's notices (ship_act); with the pad on «Other ship», none of its rows is marked.
 	PlaceUi act = ui.ship_ui;
 	if (ui.crew_pair && ui.ship_page == ShipPage::Crew) {
@@ -15714,60 +15823,13 @@ void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& 
 		break;
 	}
 	case ShipPage::Convoy:
-		if (in_convoy) {
-			// The state 1's page 4 ([+0xE0], 0x48DE70) once the ship is in a convoy (formed from it): its head only; its
-			// ships are the convoy's menu («show convoy», the state 2).
-			if (g_game_art) {
-				draw_own_ship_head(renderer, *g_game_art, text, save, own_ship_head(save, ship_index), {room.x, layout.head_y});
-			}
-			break;
-		}
-		[[fallthrough]];
-	case ShipPage::LeaveConvoy: {
-		// The convoy window's choices (0x40C170): the rows from 2 of the ship's actions, the selected one lit, the
-		// public's destination with minus and plus, and its button. («Leave convoy» opens no page: convoy_question.)
-		text.draw(tr("Formar convoy", "Form convoy"), left, layout.top, kParchmentInk);
-		int k = 0;
-		for (size_t r = 2; r < actions.rows.size() && k < ShipMenuLayout::kConvoyRows; ++r, ++k) {
-			const SDL_Rect& rr = layout.convoy_rows[k];
-			if (int(r) == act.row) {
-				SDL_SetRenderDrawColor(renderer, 120, 80, 30, 70);
-				SDL_RenderFillRect(renderer, &rr);
-			}
-			text.draw(cut_text(text, actions.rows[r].first, rr.w - 8), rr.x + 4, rr.y + 4,
-				actions.rows[r].second ? kParchmentInk : kParchmentDim);
-		}
-		int y = layout.convoy_rows[0].y + k * (line + 10) + 4;
-		for (const auto& [l, color] : actions.lines) {
-			for (const std::string& w : wrap_text(text, l, room.w - 16)) {
-				if (y + line > layout.act_button.y - 2) {
-					break;
-				}
-				text.draw(w, left, y, color.r > 200 ? kParchmentInk : kParchmentDim);
-				y += line;
-			}
-		}
-		const bool selected = act.row >= 2 && act.row < int(actions.rows.size());
-		if (selected && actions.amount_choice && actions.max_amount >= 0) {
-			// The public convoy's destination: minus and plus round it.
-			const SDL_Rect& minus = layout.dest_minus;
-			const SDL_Rect& plus = layout.dest_plus;
-			draw_button(renderer, text, minus, "-");
-			draw_button(renderer, text, plus, "+");
-			const std::string town = cut_text(text, actions.amount_label, plus.x - minus.x - minus.w - 8);
-			text.draw(town, (minus.x + minus.w + plus.x - text.measure(town)) / 2, minus.y + (minus.h - line) / 2,
-				kParchmentInk);
-		}
-		if (selected) {
-			const std::string label = actions.rows[size_t(act.row)].first;
-			if (actions.rows[size_t(act.row)].second) {
-				draw_button(renderer, text, layout.act_button, BTN_CROSS + std::string(" ") + cut_text(text, label, room.w - 50));
-			} else {
-				draw_disabled_button(renderer, text, layout.act_button, cut_text(text, label, room.w - 30));
-			}
+		// The state 1's page 4 ([+0xE0], 0x48DE70) once the ship is in a convoy (formed from it): its head only; its ships
+		// are the convoy's menu («show convoy», the state 2). (Out of a convoy the button opens the game's convoy window:
+		// draw_convoy_window.)
+		if (g_game_art) {
+			draw_own_ship_head(renderer, *g_game_art, text, save, own_ship_head(save, ship_index), {room.x, layout.head_y});
 		}
 		break;
-	}
 	default:
 		// The trade route under the ship's head (0x48DE94: 0x48EE90, then 0x48F2C0).
 		if (g_game_art) {
@@ -15776,6 +15838,28 @@ void draw_ship_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& 
 		draw_route_page(renderer, text, art, save, ui, room);
 		break;
 	}
+}
+
+// The ship menu with several ships chosen (the state 0, 0x48B060): the page buttons' row as the game's state 0's
+// (0x48A5CA..0x48A663: every one off but «form convoy», on when 0x48FC00 allows it; «show convoy» hidden), then the
+// head of the ship of the row under the mouse (0x48B117: 0x48EE90 with [+0x4164]; here the pad's row) and the chosen
+// ships' list ([Chart0], 0x48CF50) under it, as his convoy's in the state 2.
+void draw_ships_menu(SDL_Renderer* renderer, const PanelArt& art, GameWindowArt& gart, TextRenderer& text,
+	const SaveGame& save, const SidePanel& ui, const SDL_Rect& room) {
+	const ShipMenuLayout layout(room, text.line_height());
+	const bool form = ships_can_form_convoy(save, ui.ships_chosen);
+	for (int k = 0; k < kShipPages; ++k) {
+		const ShipPage page = ShipPage(k);
+		const int column = ship_page_column(page, false);
+		const SDL_Rect src = {column * 32, (page == ShipPage::Convoy && form ? 0 : 3) * 32, column == 6 ? 40 : 32, 32};
+		draw_picture(renderer, art.ship_buttons, layout.pages[k], &src);
+	}
+	if (ui.ships_row >= 0 && ui.ships_row < int(ui.ships_chosen.size())) {
+		draw_own_ship_head(renderer, gart, text, save, own_ship_head(save, ui.ships_chosen[size_t(ui.ships_row)]),
+			{room.x, layout.head_y});
+	}
+	draw_ship_selection_menu(renderer, gart, text, save, ui.ships_chosen, ui.ships_first, layout.menu(room),
+		ui.ships_row);
 }
 
 // --- The Hanse's tasks' texts (the town hall's «Alderman's office», town_hall_office_view) ---
@@ -18001,6 +18085,7 @@ int main(int argc, char** argv) {
 	g_game_art = game_art.get();
 	SidePanel side;  // The side panel.
 	ShipListUi ship_list;  // The ship list window (its sort and columns kept while the viewer runs).
+	ConvoyWindowUi convoy_window;  // The game's convoy window («form convoy») over the view.
 	// A town cell to put in the middle of the town's view once that town is shown (the ship list's «go to» a ship being
 	// built: its town's shipyard, 0x476AE8..0x476B61).
 	std::optional<SDL_Point> look_cell;
@@ -18104,7 +18189,9 @@ int main(int argc, char** argv) {
 	// `ship` the ship whose «Yes» it asks (−1: a note).
 	struct ScreenMessage {
 		GameMessage m;
-		int ship = -1;
+		int ship = -1;  // The convoy question's ship.
+		int route_question = 0;  // The route files' question (route_file_message).
+		bool asks() const { return ship >= 0 || route_question != 0; }
 	};
 	std::optional<ScreenMessage> screen_message;
 	// The window of a sea map battle icon (ChoiceBox: its battle's slot, or -1); and the sea map's battle icons
@@ -18782,6 +18869,7 @@ int main(int argc, char** argv) {
 	bool touch_on_panel = false;
 	bool touch_on_side = false;  // It started on the side panel.
 	bool touch_building = false;  // It places the building chosen in the build menu.
+	bool touch_on_convoy = false;  // It is the convoy window's (or its towns' list's).
 	// A tap on the open menu.
 	auto menu_tap = [&](int x, int y) {
 		const MenuLayout layout(small_text->line_height(), menu.screen);
@@ -19958,8 +20046,20 @@ int main(int argc, char** argv) {
 		const PanelLayout panel_layout(side.folded);
 		if (!panel_shown) {
 			ship_list.open = false;
+			convoy_window.open = false;
 		}
 		side.ship_list_open = ship_list.open;
+		// The convoy window shuts when the ship menu's selection isn't its ships any more (0x40C8F0: 0x4885A0's list
+		// another); its choices are made again each frame (0x40C170), and one no longer offered is dropped.
+		if (convoy_window.open && has_save && save.player >= 0) {
+			const std::vector<int32_t> offered = convoy_choices(save, convoy_window.ships);
+			if (ship_menu_selection(side) != convoy_window.ships) {
+				convoy_window.open = false;
+			} else if (std::find(offered.begin(), offered.end(), convoy_window.choice) == offered.end()) {
+				convoy_window.choice = kConvoyNoChoice;
+				convoy_window.towns = false;
+			}
+		}
 		// The battle's panel (draw_battle_panel) takes the side panel's place over the battle.
 		const bool battle_panel = in_battle && small_text && panel_art && save.player >= 0;
 		const int town_width = panel_shown || battle_panel ? panel_layout.town_right : kScreenWidth;
@@ -20009,6 +20109,7 @@ int main(int argc, char** argv) {
 		// lighthouse with the ships in its port; its sort and columns stay as they were.
 		auto open_ship_list = [&](int kind, uint32_t town, bool others, std::vector<uint16_t> given) {
 			ship_list.open = true;
+			convoy_window.open = false;  // (Improvised, as it shuts the ship list: one covers the other on the Vita.)
 			ship_list.kind = kind;
 			ship_list.town = town;
 			ship_list.others = others;
@@ -20733,8 +20834,12 @@ int main(int argc, char** argv) {
 				side.menu = PanelMenu::Ship;
 				side.ship = v[0];
 			}
-			side.ships_first = std::clamp(side.ships_first, 0,
-				std::max(0, int(v.size()) - ShipsMenuLayout(panel_layout.room, int(v.size())).rows));
+			// Its list under the page buttons' row (draw_ships_menu); the pad's row kept on it.
+			const int shown = small_text ? ShipsMenuLayout(ShipMenuLayout(panel_layout.room, small_text->line_height())
+															   .menu(panel_layout.room), int(v.size())).rows
+										 : 1;
+			side.ships_row = std::clamp(side.ships_row, 0, std::max(0, int(v.size()) - 1));
+			side.ships_first = std::clamp(side.ships_first, 0, std::max(0, int(v.size()) - shown));
 		}
 		if (side.menu == PanelMenu::OtherShip &&
 			(!panel_shown || side.ship < 0 || size_t(side.ship) >= save.ships.size() || save.player < 0 ||
@@ -21007,12 +21112,129 @@ int main(int argc, char** argv) {
 				side.other_convoy = int(convoy);
 			}
 		};
-		// The ship menu's buttons that open no page: «leave convoy» asks (convoy_question) and «form convoy» with nothing
-		// to choose says why (convoy_cannot_form).
+		// The convoy window (draw_convoy_window) for the menu's selection: opened when 0x40C170 has something to offer
+		// (0x40C470), else the game's note «Convoy cannot be formed» (convoy_cannot_form); afresh each time (its close,
+		// 0x40BFB0, drops the choice picked). (Improvised: it shuts the ship list's window, which on the Vita covers it.)
+		auto open_convoy_window = [&](const std::vector<uint16_t>& ships) {
+			if (convoy_choices(save, ships).empty()) {
+				screen_message = ScreenMessage{convoy_cannot_form(), -1};
+				return;
+			}
+			ship_list.open = false;
+			convoy_window = ConvoyWindowUi{};
+			convoy_window.open = true;
+			convoy_window.ships = ships;
+		};
+		// «OK» (0x40CA55..0x40CB7C): a private convoy (0x494B80(0, 0)) or joining one (0x494AF0), then it shuts; a public
+		// one first opens the towns' list for its destination ([+0x1168], «OK» off meanwhile).
+		auto convoy_ok = [&]() {
+			const int32_t choice = convoy_window.choice;
+			if (!convoy_window.open || choice == kConvoyNoChoice || convoy_window.towns) {
+				return;
+			}
+			const std::vector<uint16_t> ships = convoy_window.ships;
+			if (choice == kPublicConvoy) {
+				convoy_window.towns = true;
+				convoy_window.town_row = 0;
+				convoy_window.towns_first = 0;
+				return;
+			}
+			run_operations(save, sailing.get(), choice == kPrivateConvoy
+					? create_convoy_operations(save, ships, ships.size() == 1, false, 0)
+					: join_convoy_operations(save, uint32_t(choice), ships));
+			convoy_window.open = false;
+		};
+		// A public convoy's destination chosen (0x40C901..0x40C91C: 0x494B80(1, town)), the message after it; the window
+		// shuts. The list's close button (the town 0xFF) only shuts the list.
+		auto convoy_town = [&](int row) {
+			const TownListFrame tl = convoy_town_list(save, convoy_window, town_width);
+			convoy_window.towns = false;
+			if (row < 0 || row >= int(tl.towns.size()) || tl.towns[size_t(row)] < 0) {
+				return;
+			}
+			const uint8_t town = uint8_t(tl.towns[size_t(row)]);
+			const std::vector<uint16_t> ships = convoy_window.ships;
+			const std::vector<OperationBytes> ops = create_convoy_operations(save, ships, ships.size() == 1, true, town);
+			uint32_t guide = 0xFFFFFFFF;
+			if (!ops.empty()) {
+				std::memcpy(&guide, ops[0].data() + 4, 4);
+			}
+			run_operations(save, sailing.get(), ops);
+			convoy_window.open = false;
+			screen_message = ScreenMessage{public_convoy_message(save, uint16_t(guide), town), -1};
+		};
+		// The convoy window with the pad (the viewer's keys, as its touches): with the towns' list open, Up and Down its
+		// row (Left and Right a page), X chooses it, Circle shuts the list; else Up and Down pick a choice (from none the
+		// first or the last), X «OK» (with none picked, the first), Circle closes it; L and R the game's speed, as the
+		// other windows over the town; the other keys nothing.
+		auto convoy_button = [&](Uint8 button) {
+			const int step = button == SDL_CONTROLLER_BUTTON_DPAD_UP || button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1;
+			if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
+				game_speed = std::clamp(game_speed + (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1), 0,
+					kGameSpeedCount - 1);
+				notify_speed();
+				return;
+			}
+			if (convoy_window.towns) {
+				TownListFrame tl = convoy_town_list(save, convoy_window, town_width);
+				const int n = int(tl.towns.size());
+				switch (button) {
+				case SDL_CONTROLLER_BUTTON_DPAD_UP:
+				case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+				case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+				case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+					if (n > 0) {
+						const bool page = button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+						const int row = std::clamp(convoy_window.town_row, 0, n - 1);
+						convoy_window.town_row = page ? std::clamp(row + step * std::max(1, tl.layout.rows), 0, n - 1)
+													  : (row + n + step) % n;
+						convoy_window.towns_first = tl.shown_from(convoy_window.town_row);
+					}
+					break;
+				case SDL_CONTROLLER_BUTTON_A:
+					convoy_town(convoy_window.town_row);
+					break;
+				case SDL_CONTROLLER_BUTTON_B:
+					convoy_window.towns = false;
+					break;
+				default:
+					break;
+				}
+				return;
+			}
+			const ConvoyWindowFrame f = convoy_window_frame(save, convoy_window, town_width);
+			const int n = int(f.choices.size());
+			auto pick = [&](int at) {
+				convoy_window.choice = f.choices[size_t(at)];
+				convoy_window.first = std::clamp(f.first, at - f.layout.rows + 1, at);
+			};
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+				if (n > 0) {
+					const int at = f.index_of(convoy_window.choice);
+					pick(at < 0 ? (step < 0 ? n - 1 : 0) : (at + n + step) % n);
+				}
+				break;
+			case SDL_CONTROLLER_BUTTON_A:
+				if (convoy_window.choice != kConvoyNoChoice) {
+					convoy_ok();
+				} else if (n > 0) {
+					pick(0);
+				}
+				break;
+			case SDL_CONTROLLER_BUTTON_B:
+				convoy_window.open = false;
+				break;
+			default:
+				break;
+			}
+		};
+		// The ship menu's buttons that open no page: «leave convoy» asks (convoy_question) and «form convoy» opens the
+		// convoy window (or says why it can't).
 		auto ship_no_page = [&](ShipPage page) {
 			return page == ShipPage::LeaveConvoy ||
-				(page == ShipPage::Convoy && side.own_convoy < 0 && !ship_menu_convoy(save, side.ship) &&
-					convoy_choices(save, {uint16_t(side.ship)}).empty());
+				(page == ShipPage::Convoy && side.own_convoy < 0 && !ship_menu_convoy(save, side.ship));
 		};
 		// The ship menu's page: its first row (the crew's or the convoy's) and amount.
 		auto ship_page = [&](ShipPage page) {
@@ -21025,15 +21247,18 @@ int main(int argc, char** argv) {
 				return;
 			}
 			if (ship_no_page(page)) {
+				if (page == ShipPage::Convoy) {
+					open_convoy_window({uint16_t(side.ship)});
+					return;
+				}
 				// «Disband convoy» with his convoy shown (0x494DC0: the guide's name, 0x16), else for the ship.
 				const int asked = side.own_convoy >= 0 ? int(save.convoys[size_t(side.own_convoy)].u16(0x10)) : side.ship;
-				screen_message = page == ShipPage::LeaveConvoy ? ScreenMessage{convoy_question(save, asked), asked}
-															   : ScreenMessage{convoy_cannot_form(), -1};
+				screen_message = ScreenMessage{convoy_question(save, asked), asked};
 				return;
 			}
 			side.ship_page = page;
 			side.crew_pair = false;
-			side.ship_ui.row = page == ShipPage::Convoy ? 2 : 0;
+			side.ship_ui.row = 0;
 			side.ship_ui.amount = 0;
 			side.route_row = 0;
 			side.route_column = 0;
@@ -21059,35 +21284,11 @@ int main(int argc, char** argv) {
 				}
 				return;
 			}
-			const bool crew = side.ship_page == ShipPage::Crew && side.ship_ui.row < 2;
-			const bool convoy = side.ship_page == ShipPage::Convoy &&
-				side.ship_ui.row >= 2 && side.own_convoy < 0 && !ship_menu_convoy(save, side.ship);
-			if (crew || convoy) {
+			if (side.ship_page == ShipPage::Crew && side.ship_ui.row < 2) {
 				place_act(save, sailing.get(), town_index, side.ship_ui, ship_now);
 				if (!side.ship_ui.message.empty()) {
 					notify(side.ship_ui.message);  // As the game's lines, over the town.
 					side.ship_ui.message.clear();
-				}
-			}
-		};
-		// The game's message's answer: «Yes» does what it asks (the convoy question: the convoy window's row 2 for its
-		// ship, ship_convoy_act, as 0x4950D0 queues 0x16 or 0x17); anything else shuts it.
-		auto screen_message_answer = [&](bool yes) {
-			const int ship = screen_message ? screen_message->ship : -1;
-			screen_message.reset();
-			if (!yes || ship < 0 || size_t(ship) >= save.ships.size() || !ship_in_convoy(save, ship)) {
-				return;
-			}
-			PlaceUi ui = side.ship_ui;
-			ui.open = Place::Ship;
-			ui.ship = size_t(ship);
-			ui.row = 2;
-			ui.amount = 0;
-			const PlaceView v = place_view(save, town_index, ui);
-			if (v.codes.size() > 2 && (v.codes[2] == kLeaveConvoy || v.codes[2] == kDisbandConvoy)) {
-				place_act(save, sailing.get(), town_index, ui, v);
-				if (!ui.message.empty()) {
-					notify(ui.message);  // As the game's lines, over the town.
 				}
 			}
 		};
@@ -21106,12 +21307,14 @@ int main(int argc, char** argv) {
 		auto route_open_towns = [&](int row) {
 			side.route_towns_row = row;
 			side.route_towns_pick = 0;
+			side.route_towns_first = 0;
 			const std::vector<RouteRow> rows = route_rows(save, side.ship);
-			const std::vector<int> entries = route_town_entries(save, side.ship);
+			const TownListFrame tl = route_town_list(save, side);
 			if (row < int(rows.size())) {
-				const auto at = std::find(entries.begin(), entries.end(), int(rows[size_t(row)].town));
-				if (at != entries.end()) {
-					side.route_towns_pick = int(at - entries.begin());
+				const auto at = std::find(tl.towns.begin(), tl.towns.end(), int(rows[size_t(row)].town));
+				if (at != tl.towns.end()) {
+					side.route_towns_pick = int(at - tl.towns.begin());
+					side.route_towns_first = tl.shown_from(side.route_towns_pick);
 				}
 			}
 		};
@@ -21152,6 +21355,7 @@ int main(int argc, char** argv) {
 			side.route_file_name = own == 0xFFFF
 				? std::string()
 				: GameTexts::sprintf_raw(exe_text(0x6BA3A0, "%d", "Route%d"), {std::to_string(own)});
+			side.route_file_unnamed = side.route_file_name.empty();
 			side.route_file_typing = false;
 			side.route_file_question = 0;
 			side.route_file_first = 0;
@@ -21170,13 +21374,9 @@ int main(int argc, char** argv) {
 			}
 		};
 		auto route_file_show = [&](int row) {
-			const RouteFilesLayout fl(small_text->line_height());
 			if (row < int(side.route_file_list.size())) {
-				if (row < side.route_file_first) {
-					side.route_file_first = row;
-				} else if (row >= side.route_file_first + fl.rows) {
-					side.route_file_first = row - fl.rows + 1;
-				}
+				side.route_file_first =
+					route_files_frame(side.route_file_list, side.route_file_first, town_width).shown_from(row);
 			}
 		};
 		// «Cargar» (0x48C92E): the file's stops (0x4D5EE0) to the queue object for the menu's ship, applied at once
@@ -21225,6 +21425,28 @@ int main(int argc, char** argv) {
 				side.route_file_first = 0;
 			}
 		};
+		// The game's message's answer: «Yes» does what it asks (the convoy question: as 0x4950D0, 0x16 for the ship that
+		// guides its convoy, else 0x17, run at once; the route files' questions: route_file_answer); anything else
+		// shuts it.
+		auto screen_message_answer = [&](bool yes) {
+			const int ship = screen_message ? screen_message->ship : -1;
+			const bool route = screen_message && screen_message->route_question != 0;
+			screen_message.reset();
+			if (route) {
+				route_file_answer(yes);
+				return;
+			}
+			if (!yes || ship < 0 || size_t(ship) >= save.ships.size() || !ship_in_convoy(save, ship)) {
+				return;
+			}
+			const bool guide = save.convoys[save.ships[size_t(ship)].convoy()].u16(0x10) == ship;
+			const std::string name = save.ships[size_t(ship)].name();
+			run_operations(save, sailing.get(), {leave_convoy_operation(save, uint16_t(ship), false)});
+			if (!ship_in_convoy(save, ship)) {
+				notify(guide ? tr("El convoy se ha deshecho.", "The convoy is disbanded.")
+							 : (g_spanish ? "El " + name + " ha dejado el convoy." : "The " + name + " has left the convoy."));
+			}
+		};
 		// A file (its name into the box) or a bottom button: the box, «Cargar», «Guardar», «Borrar», close.
 		auto route_file_press = [&](int row, int column) {
 			route_file_end_typing();
@@ -21243,11 +21465,12 @@ int main(int argc, char** argv) {
 				break;
 			case 1: route_file_load(); break;
 			case 2:
-				if (side.route_file_name.empty()) {
+				if (side.route_file_name.empty() || side.route_file_unnamed) {
 					break;
 				}
 				if (exists) {
 					side.route_file_question = 1;  // (0x470E29: «overwrite?»)
+					screen_message = ScreenMessage{route_file_message(1), -1, 1};
 				} else {
 					route_file_save();
 				}
@@ -21255,6 +21478,7 @@ int main(int argc, char** argv) {
 			case 3:
 				if (exists) {
 					side.route_file_question = 2;  // (0x470D39: «delete?»)
+					screen_message = ScreenMessage{route_file_message(2), -1, 2};
 				}
 				break;
 			default: side.route_files = false; break;
@@ -21263,12 +21487,6 @@ int main(int argc, char** argv) {
 		// Its keys: Up and Down the files (below them the bottom row), Left and Right that row's buttons, X presses
 		// the one lit (a file: its name), Circle closes it; a question: X yes, Circle no.
 		auto route_files_button = [&](Uint8 button) {
-			if (side.route_file_question) {
-				if (button == SDL_CONTROLLER_BUTTON_A || button == SDL_CONTROLLER_BUTTON_B) {
-					route_file_answer(button == SDL_CONTROLLER_BUTTON_A);
-				}
-				return button != SDL_CONTROLLER_BUTTON_START;
-			}
 			const int n = int(side.route_file_list.size());
 			switch (button) {
 			case SDL_CONTROLLER_BUTTON_DPAD_UP:
@@ -21453,17 +21671,20 @@ int main(int argc, char** argv) {
 				return stop_button(button);
 			}
 			if (side.route_towns_row >= 0) {
-				const int n = int(route_town_entries(save, side.ship).size());
-				const RouteTownsLayout tl(small_text->line_height(), n);
+				// Up and Down its row, Left and Right a page, X chooses it, Circle shuts it.
+				TownListFrame tl = route_town_list(save, side);
+				const int n = int(tl.towns.size());
 				switch (button) {
 				case SDL_CONTROLLER_BUTTON_DPAD_UP:
 				case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
 					side.route_towns_pick = (side.route_towns_pick + n + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1)) % n;
+					side.route_towns_first = tl.shown_from(side.route_towns_pick);
 					return true;
 				case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
 				case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
 					side.route_towns_pick = std::clamp(side.route_towns_pick +
-							(button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -tl.rows_per_column : tl.rows_per_column), 0, n - 1);
+							(button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1) * std::max(1, tl.layout.rows), 0, n - 1);
+					side.route_towns_first = tl.shown_from(side.route_towns_pick);
 					return true;
 				case SDL_CONTROLLER_BUTTON_A:
 					route_choose_town(side.route_towns_pick);
@@ -21506,13 +21727,12 @@ int main(int argc, char** argv) {
 			}
 		};
 		// Its buttons while it is open: L and R the pages, Up and Down the rows (the goods page's list),
-		// Left and Right the amount (the sailors to dismiss, the public convoy's destination), X does it,
+		// Left and Right the amount (the sailors to dismiss), X does it, Square the convoy's button (form, leave),
 		// Circle closes it.
 		auto ship_button = [&](Uint8 button) {
 			if (side.ship_page == ShipPage::TradeRoute && route_button(button)) {
 				return true;
 			}
-			const int rows = int(ship_now.rows.size());
 			switch (button) {
 			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
 			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
@@ -21544,9 +21764,6 @@ int main(int argc, char** argv) {
 					side.ship_ui.amount = 0;
 				} else if (side.ship_page == ShipPage::Convoy && side.own_convoy >= 0) {
 					side.ships_first += step;  // His convoy's list (clamped next frame).
-				} else if (side.ship_page == ShipPage::Convoy && !ship_menu_convoy(save, side.ship) && rows > 2) {
-					side.ship_ui.row = 2 + (side.ship_ui.row - 2 + step + (rows - 2)) % (rows - 2);
-					side.ship_ui.amount = 0;
 				}
 				return true;
 			}
@@ -21559,6 +21776,12 @@ int main(int argc, char** argv) {
 				return true;
 			case SDL_CONTROLLER_BUTTON_A:
 				ship_act();
+				return true;
+			case SDL_CONTROLLER_BUTTON_X:
+				// Square: the convoy's button the menu shows, which opens no page (the viewer's key: L and R skip it):
+				// «leave convoy» («disband» with his convoy shown) when in one, else «form convoy».
+				ship_page(side.own_convoy >= 0 || ship_menu_convoy(save, side.ship) ? ShipPage::LeaveConvoy
+																					 : ShipPage::Convoy);
 				return true;
 			case SDL_CONTROLLER_BUTTON_B:
 				side.menu = PanelMenu::None;
@@ -21739,6 +21962,38 @@ int main(int argc, char** argv) {
 			const auto at = std::find(fleet.begin(), fleet.end(), chosen);
 			if (at != fleet.end()) {
 				fleet_index = size_t(at - fleet.begin());
+			}
+		};
+		// The ship menu with several ships (the state 0) with the pad: Up and Down its list's row, X chooses its ship
+		// alone (as a touch on it), Square «form convoy», Circle closes it.
+		auto ships_button = [&](Uint8 button) {
+			const int n = int(side.ships_chosen.size());
+			switch (button) {
+			case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+				if (n > 0 && small_text) {
+					side.ships_row = (std::clamp(side.ships_row, 0, n - 1) + n +
+						(button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1)) % n;
+					const int shown = ShipsMenuLayout(ShipMenuLayout(panel_layout.room, small_text->line_height())
+														  .menu(panel_layout.room), n).rows;
+					side.ships_first = std::clamp(side.ships_first, side.ships_row - shown + 1, side.ships_row);
+				}
+				return true;
+			case SDL_CONTROLLER_BUTTON_A:
+				if (n > 0) {
+					choose_ship(side.ships_chosen[size_t(std::clamp(side.ships_row, 0, n - 1))]);
+				}
+				return true;
+			case SDL_CONTROLLER_BUTTON_X:
+				if (ships_can_form_convoy(save, side.ships_chosen)) {
+					open_convoy_window(side.ships_chosen);
+				}
+				return true;
+			case SDL_CONTROLLER_BUTTON_B:
+				side.menu = PanelMenu::None;
+				return true;
+			default:
+				return false;
 			}
 		};
 		auto go_to_ship = [&](int chosen) {
@@ -22154,8 +22409,12 @@ int main(int argc, char** argv) {
 				if (screen_message) {
 					// The game's message: X its first button («Yes»), Circle shuts it («No»); a note, either of them.
 					if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A || event.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
-						screen_message_answer(event.cbutton.button == SDL_CONTROLLER_BUTTON_A && screen_message->ship >= 0);
+						screen_message_answer(event.cbutton.button == SDL_CONTROLLER_BUTTON_A && screen_message->asks());
 					}
+					break;
+				}
+				if (convoy_window.open && event.cbutton.button != SDL_CONTROLLER_BUTTON_START) {
+					convoy_button(event.cbutton.button);  // The convoy window and its towns' list.
 					break;
 				}
 				if (ship_list.open && event.cbutton.button != SDL_CONTROLLER_BUTTON_START) {
@@ -22263,6 +22522,10 @@ int main(int argc, char** argv) {
 				}
 				if (side.menu == PanelMenu::Ship && panel_shown && town_free && side.focus < 0 &&
 					ship_button(event.cbutton.button)) {
+					break;
+				}
+				if (side.menu == PanelMenu::Ships && panel_shown && town_free && side.focus < 0 && !side.folded &&
+					ships_button(event.cbutton.button)) {
 					break;
 				}
 				switch (event.cbutton.button) {
@@ -22575,6 +22838,19 @@ int main(int argc, char** argv) {
 					touch_building = false;
 					break;
 				}
+				touch_on_convoy = false;
+				if (convoy_window.open && has_save && save.player >= 0 &&
+					((touch_start.x < town_width && touch_start.y >= kBarHeight) ||
+						(convoy_window.towns &&
+							inside(convoy_town_list(save, convoy_window, town_width).window(), touch_start.x, touch_start.y)))) {
+					// The convoy window (and its towns' list, whose last quarter lies over the panel) over the view: nothing
+					// moves under it; the panel's touches stay the panel's.
+					touch_on_convoy = true;
+					touch_on_side = false;
+					touch_on_panel = true;
+					touch_building = false;
+					break;
+				}
 				if (ship_list.open && touch_start.x < town_width && touch_start.y >= kBarHeight) {
 					// The ship list window over the town: nothing moves under it; a drag on a table's rows or on its scroll
 					// bar scrolls that table (the panel's touches stay the panel's).
@@ -22627,7 +22903,13 @@ int main(int argc, char** argv) {
 					(stats_open && inside(StatsLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
 					// The route page's windows over the town: the town doesn't move under them.
 					(side.menu == PanelMenu::Ship && (side.stop_window || side.route_towns_row >= 0 || side.route_files) &&
-						touch_start.x < panel_layout.town_right && touch_start.y >= kBarHeight);
+						touch_start.x < panel_layout.town_right && touch_start.y >= kBarHeight) ||
+					// The towns' list and the files' list, whose last quarter lies over the panel.
+					(side.menu == PanelMenu::Ship && side.route_towns_row >= 0 &&
+						inside(route_town_list(save, side).window(), touch_start.x, touch_start.y)) ||
+					(side.menu == PanelMenu::Ship && side.route_files &&
+						inside(route_files_frame(side.route_file_list, side.route_file_first, town_width).window(),
+							touch_start.x, touch_start.y));
 				// Placing a building: the finger puts it on the cell it touches.
 				touch_building = placing && !touch_on_side && !in_menu && !in_mail && touch_start.x < town_width &&
 					touch_start.y >= kBarHeight;
@@ -22640,8 +22922,8 @@ int main(int argc, char** argv) {
 				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
 					std::abs(int(event.tfinger.dy * kScreenHeight));
 				touch_now = {int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight)};
-				if (screen_message) {
-					break;  // Nothing moves under the game's message.
+				if (screen_message || touch_on_convoy) {
+					break;  // Nothing moves under the game's message, nor under the convoy window.
 				}
 				if (ship_list.open && touch_start.x < town_width && touch_start.y >= kBarHeight) {
 					// The ship list: the rows follow the finger, or the scroll bar's thumb does (whole rows).
@@ -22727,17 +23009,23 @@ int main(int argc, char** argv) {
 						camera_x = at.x - town_width / 2;
 						camera_y = at.y - kScreenHeight / 2;
 					}
-				} else if (side.route_files && side.menu == PanelMenu::Ship && small_text &&
-					inside(RouteFilesLayout(small_text->line_height()).list, touch_start.x, touch_start.y)) {
-					// The route files' list: dragged, its files move a row at a time.
-					const RouteFilesLayout fl(small_text->line_height());
-					const int most = std::max(0, int(side.route_file_list.size()) - fl.rows);
-					touch_scroll -= event.tfinger.dy * kScreenHeight;
-					for (; touch_scroll >= float(fl.row_h); touch_scroll -= float(fl.row_h)) {
-						side.route_file_first = std::min(most, side.route_file_first + 1);
-					}
-					for (; touch_scroll <= -float(fl.row_h); touch_scroll += float(fl.row_h)) {
-						side.route_file_first = std::max(0, side.route_file_first - 1);
+				} else if (side.route_files && side.menu == PanelMenu::Ship &&
+					inside(route_files_frame(side.route_file_list, side.route_file_first, town_width).window(), touch_start.x,
+						touch_start.y)) {
+					// The route files' list: dragged on its files, they move a row at a time.
+					const RouteFilesFrame fl = route_files_frame(side.route_file_list, side.route_file_first, town_width);
+					const SDL_Rect files = {fl.layout.x + kSelectionListRowX, fl.layout.y + kSelectionListRowY,
+						fl.layout.rows_width, kSelectionListRowHeight * fl.layout.rows};
+					if (inside(files, touch_start.x, touch_start.y)) {
+						const int most = std::max(0, fl.count - fl.layout.rows);
+						const float step = float(kSelectionListRowHeight);
+						touch_scroll -= event.tfinger.dy * kScreenHeight;
+						for (; touch_scroll >= step; touch_scroll -= step) {
+							side.route_file_first = std::min(most, side.route_file_first + 1);
+						}
+						for (; touch_scroll <= -step; touch_scroll += step) {
+							side.route_file_first = std::max(0, side.route_file_first - 1);
+						}
 					}
 				} else if (side.stop_window && side.menu == PanelMenu::Ship && small_text &&
 					inside(StopWindowLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) {
@@ -22789,6 +23077,54 @@ int main(int argc, char** argv) {
 				break;
 			case SDL_FINGERUP:
 				finger_down = false;
+				if (touch_on_convoy && !screen_message) {
+					// The convoy window: a row picks its choice, a touch elsewhere on it drops the pick (0x40D330), «OK»,
+					// the close button; its towns' list over it: a town chosen, the scroll bar's halves a page, its close
+					// button or a touch out of it shuts the list. A touch out of the window closes it (improvised, as the
+					// ship list's).
+					touch_on_convoy = false;
+					touch_on_panel = false;
+					if (touch_moved >= kTapDistance || !convoy_window.open) {
+						break;
+					}
+					const int tx = touch_start.x, ty = touch_start.y;
+					if (convoy_window.towns) {
+						const TownListFrame tl = convoy_town_list(save, convoy_window, town_width);
+						const TownListTap tap = town_list_tap(tl, tx, ty);
+						switch (tap.hit) {
+						case TownListHit::Row:
+							convoy_window.town_row = tap.row;
+							convoy_town(tap.row);
+							break;
+						case TownListHit::Close:
+							convoy_window.towns = false;
+							break;
+						case TownListHit::PageUp:
+						case TownListHit::PageDown:
+							convoy_window.towns_first = std::clamp(tl.first + (tap.hit == TownListHit::PageUp ? -1 : 1) *
+									std::max(1, tl.layout.rows), 0, std::max(0, int(tl.towns.size()) - tl.layout.rows));
+							break;
+						case TownListHit::None:
+							break;
+						}
+						break;
+					}
+					const ConvoyWindowFrame f = convoy_window_frame(save, convoy_window, town_width);
+					auto around = [&](const SDL_Rect& r) { return inside({r.x - 4, r.y - 6, r.w + 8, r.h + 12}, tx, ty); };
+					const SDL_Rect bar = f.bar();
+					if (!inside(f.window(), tx, ty) || around(f.close())) {
+						convoy_window.open = false;
+					} else if (around(f.ok())) {
+						convoy_ok();
+					} else if (bar.w > 0 && inside({bar.x - 6, bar.y, bar.w + 12, bar.h}, tx, ty)) {
+						convoy_window.first = std::clamp(f.first + (ty < bar.y + bar.h / 2 ? -1 : 1) * std::max(1, f.layout.rows),
+							0, std::max(0, int(f.choices.size()) - f.layout.rows));
+					} else {
+						const int row = f.row_at(tx, ty);
+						convoy_window.choice = row >= 0 ? f.choices[size_t(row)] : kConvoyNoChoice;
+					}
+					break;
+				}
 				if (ship_list.open && !screen_message && touch_start.x < town_width && touch_start.y >= kBarHeight) {
 					// The ship list window: its buttons; a row chosen, touched again within 500 ms its button's (its own
 					// ships'); a touch out of the window closes it.
@@ -23168,24 +23504,25 @@ int main(int argc, char** argv) {
 					// The route files' list: a file, the box, its buttons; a question's Yes and No; a tap elsewhere closes
 					// it.
 					if (touch_moved < kTapDistance) {
-						const RouteFilesLayout fl(small_text->line_height());
+						const RouteFilesFrame fl = route_files_frame(side.route_file_list, side.route_file_first, town_width);
 						const int x = touch_start.x;
 						const int y = touch_start.y;
 						const int n = int(side.route_file_list.size());
 						const int k = fl.row_at(x, y);
-						if (side.route_file_question) {
-							if (inside(fl.yes, x, y) || inside(fl.no, x, y)) {
-								route_file_answer(inside(fl.yes, x, y));
-							}
-						} else if (!inside(fl.panel, x, y)) {
+						const SDL_Rect bar = fl.bar();
+						auto around = [&](const SDL_Rect& r) { return inside({r.x - 2, r.y - 6, r.w + 4, r.h + 12}, x, y); };
+						if (!inside(fl.window(), x, y) || around(fl.close())) {
 							route_file_end_typing();
 							side.route_files = false;
-						} else if (k >= 0 && side.route_file_first + k < n) {
-							side.route_file_row = side.route_file_first + k;
-							route_file_press(side.route_file_row, 0);
+						} else if (bar.w > 0 && inside({bar.x - 6, bar.y, bar.w + 12, bar.h}, x, y)) {
+							side.route_file_first = std::clamp(fl.first + (y < bar.y + bar.h / 2 ? -1 : 1) * std::max(1, fl.layout.rows),
+								0, std::max(0, n - fl.layout.rows));
+						} else if (k >= 0) {
+							side.route_file_row = k;
+							route_file_press(k, 0);
 						} else {
-							for (int c = 0; c < kRouteFileColumns; ++c) {
-								if (inside(fl.cell(c), x, y)) {
+							for (int c = 0; c < kRouteFileColumns - 1; ++c) {
+								if (around(fl.cell(c))) {
 									side.route_file_row = n;
 									side.route_file_column = c;
 									route_file_press(n, c);
@@ -23200,16 +23537,26 @@ int main(int argc, char** argv) {
 					break;
 				}
 				if (side.route_towns_row >= 0 && side.menu == PanelMenu::Ship && small_text) {
-					// The towns' list: a town (or «none»); a tap elsewhere closes it.
+					// The towns' list: a town (or «none»), its scroll bar's halves a page; its close button or a tap out
+					// of it shuts it.
 					if (touch_moved < kTapDistance) {
-						const int n = int(route_town_entries(save, side.ship).size());
-						const RouteTownsLayout tl(small_text->line_height(), n);
-						const int e = tl.entry_at(touch_start.x, touch_start.y, n);
-						if (e >= 0) {
-							side.route_towns_pick = e;
-							route_choose_town(e);
-						} else {
+						const TownListFrame tl = route_town_list(save, side);
+						const TownListTap tap = town_list_tap(tl, touch_start.x, touch_start.y);
+						switch (tap.hit) {
+						case TownListHit::Row:
+							side.route_towns_pick = tap.row;
+							route_choose_town(tap.row);
+							break;
+						case TownListHit::Close:
 							side.route_towns_row = -1;
+							break;
+						case TownListHit::PageUp:
+						case TownListHit::PageDown:
+							side.route_towns_first = std::clamp(tl.first + (tap.hit == TownListHit::PageUp ? -1 : 1) *
+									std::max(1, tl.layout.rows), 0, std::max(0, int(tl.towns.size()) - tl.layout.rows));
+							break;
+						case TownListHit::None:
+							break;
 						}
 					}
 					touch_building = false;
@@ -23340,13 +23687,22 @@ int main(int argc, char** argv) {
 							mail.letter_open = true;
 						}
 					} else if (side.menu == PanelMenu::Ships && inside(panel_layout.room, x, y)) {
-						const ShipsMenuLayout l(panel_layout.room, int(side.ships_chosen.size()));
-						if (l.bar.w > 0 && inside({l.bar.x - 6, l.bar.y, l.bar.w + 12, l.bar.h}, x, y)) {
+						// The state 0: its «form convoy» (the convoy window for the ships chosen), its list's scroll bar,
+						// a row its ship alone.
+						const ShipMenuLayout room(panel_layout.room, small_text->line_height());
+						const SDL_Rect list_room = room.menu(panel_layout.room);
+						const ShipsMenuLayout l(list_room, int(side.ships_chosen.size()));
+						if (room.page_at(x, y) == int(ShipPage::Convoy)) {
+							if (ships_can_form_convoy(save, side.ships_chosen)) {
+								open_convoy_window(side.ships_chosen);
+							}
+						} else if (l.bar.w > 0 && inside({l.bar.x - 6, l.bar.y, l.bar.w + 12, l.bar.h}, x, y)) {
 							const int half = l.bar.y + l.bar.h / 2;
 							side.ships_first += y < half ? -1 : 1;
 						} else {
 							for (int k = 0; k < l.rows && side.ships_first + k < int(side.ships_chosen.size()); ++k) {
-								if (inside(l.row(panel_layout.room, k), x, y)) {
+								if (inside(l.row(list_room, k), x, y)) {
+									side.ships_row = side.ships_first + k;
 									choose_ship(side.ships_chosen[size_t(side.ships_first + k)]);
 									break;
 								}
@@ -23419,18 +23775,6 @@ int main(int argc, char** argv) {
 										break;
 									}
 								}
-							}
-						} else if (side.ship_page == ShipPage::Convoy) {
-							const int row = room.convoy_row_at(x, y);
-							const bool destination = ship_now.amount_choice && ship_now.max_amount >= 0;
-							if (row >= 0 && 2 + row < int(ship_now.rows.size()) && 2 + row != side.ship_ui.row) {
-								side.ship_ui.row = 2 + row;
-								side.ship_ui.amount = 0;
-							} else if (destination && (inside(room.dest_minus, x, y) || inside(room.dest_plus, x, y))) {
-								side.ship_ui.amount = std::clamp(side.ship_ui.amount + (inside(room.dest_minus, x, y) ? -1 : 1), 0,
-									ship_now.max_amount);
-							} else if (inside(room.act_button, x, y)) {
-								ship_act();
 							}
 						} else if (side.ship_page == ShipPage::TradeRoute) {
 							// The route page: «Activa», the scroll's arrows, a row's buttons.
@@ -23902,7 +24246,7 @@ int main(int argc, char** argv) {
 			// In the mailbox both sticks move the letter.
 			mail_scroll(stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY)) +
 				stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY)));
-		} else if (controller && !ship_list.open) {  // Nothing moves under the ship list window.
+		} else if (controller && !ship_list.open && !convoy_window.open) {  // Nothing moves under those windows.
 			camera_x += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX));
 			camera_y += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY));
 			if (in_place && place_now.page && place_now.page->scroll && place_now.page->scroll->bar.w > 0) {
@@ -23911,12 +24255,12 @@ int main(int argc, char** argv) {
 			}
 		}
 		if (!trading && !in_mail && !in_place && side.focus < 0 && side.menu == PanelMenu::None &&
-			!battle_popup() && !in_battle && !ship_list.open) {  // Nothing moves under the battles' window.
+			!battle_popup() && !in_battle && !ship_list.open && !convoy_window.open) {  // Nor under the battles' window.
 			// (On the battle's screen the pad's up and down are the sails: part 2.)
 			camera_x += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) - pad(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
 			camera_y += kPadSpeed * (pad(SDL_CONTROLLER_BUTTON_DPAD_DOWN) - pad(SDL_CONTROLLER_BUTTON_DPAD_UP));
 		}
-		if (!trading && !in_mail && !in_place && !ship_list.open) {
+		if (!trading && !in_mail && !in_place && !ship_list.open && !convoy_window.open) {
 			const Uint8* keys = SDL_GetKeyboardState(nullptr);
 			camera_x += kPadSpeed * (keys[SDL_SCANCODE_RIGHT] - keys[SDL_SCANCODE_LEFT]);
 			camera_y += kPadSpeed * (keys[SDL_SCANCODE_DOWN] - keys[SDL_SCANCODE_UP]);
@@ -24033,8 +24377,7 @@ int main(int argc, char** argv) {
 						panel_layout.room);
 				}
 				if (side.menu == PanelMenu::Ships && !side.folded && g_game_art) {
-					draw_ship_selection_menu(renderer, *g_game_art, *small_text, save, side.ships_chosen, side.ships_first,
-						panel_layout.room);
+					draw_ships_menu(renderer, *panel_art, *g_game_art, *small_text, save, side, panel_layout.room);
 				}
 				if (side.menu == PanelMenu::Statistics && !side.folded) {
 					draw_stats_room(renderer, *small_text, *panel_art, side);
@@ -24118,8 +24461,7 @@ int main(int argc, char** argv) {
 						panel_layout.room);
 				}
 				if (side.menu == PanelMenu::Ships && !side.folded && g_game_art) {
-					draw_ship_selection_menu(renderer, *g_game_art, *small_text, save, side.ships_chosen, side.ships_first,
-						panel_layout.room);
+					draw_ships_menu(renderer, *panel_art, *g_game_art, *small_text, save, side, panel_layout.room);
 				}
 				if (side.menu == PanelMenu::Statistics && !side.folded) {
 					draw_stats_room(renderer, *small_text, *panel_art, side);
@@ -24137,9 +24479,11 @@ int main(int argc, char** argv) {
 		}
 		if (text) {
 			std::vector<std::string> right_texts;
-			if (battle_popup() || messages.open || end_window.open || (ship_list.open && !in_menu)) {
-				// A window over the screen (a battle's, a message, the end, the ship list): its buttons say what the keys
-				// do now, so the bar's actions, which the keys don't do while it is open, aren't shown.
+			if (battle_popup() || messages.open || end_window.open ||
+				((ship_list.open || convoy_window.open || screen_message) && !in_menu)) {
+				// A window over the screen (a battle's, a message, the end, the ship list, the convoy window, the game's
+				// message): its buttons say what the keys do now, so the bar's actions, which the keys don't do while it
+				// is open, aren't shown.
 			} else if (side.menu == PanelMenu::Ship && panel_shown && !side.folded && !in_mail && !in_menu &&
 				(side.stop_window || side.route_towns_row >= 0 || side.route_files)) {
 				// So do the trade route page's windows.
@@ -24428,6 +24772,15 @@ int main(int argc, char** argv) {
 			}
 			draw_ship_list_window(renderer, *small_text, *g_game_art, save, town_names, ship_list, f, chosen);
 		}
+		if (convoy_window.open && has_save && save.player >= 0 && g_game_art && small_text) {
+			// The convoy window over the town or the sea map, and its towns' list over it.
+			draw_convoy_window(renderer, *g_game_art, *small_text, save, convoy_window,
+				convoy_window_frame(save, convoy_window, town_width));
+			if (convoy_window.towns) {
+				draw_town_list(renderer, *g_game_art, *small_text, convoy_town_list(save, convoy_window, town_width),
+					convoy_window.town_row);
+			}
+		}
 		if (small_text && has_save && save.player >= 0 && !in_menu && panel_shown) {
 			// A button's tooltip: under the finger before it is lifted, or the one the pad points at.
 			SDL_Rect where{};
@@ -24444,7 +24797,8 @@ int main(int argc, char** argv) {
 				draw_tooltip(renderer, *small_text, tooltip_text(tip), where);
 			}
 		}
-		if (small_text && has_save && !in_menu && !ship_list.open && finger_down && touch_moved < kTapDistance &&
+		if (small_text && has_save && !in_menu && !ship_list.open && !convoy_window.open && finger_down &&
+			touch_moved < kTapDistance &&
 			touch_start.x < town_width && touch_start.y >= kBarHeight) {
 			// A town's event symbol's tooltip, under the finger: in the town view (0x4A6290), on the sea map (0x452973).
 			SDL_Rect where{};
