@@ -27,6 +27,8 @@ public:
 
 	// Whether the button is held down during this frame (the pad moves the camera).
 	bool held(SDL_GameControllerButton button) const;
+	// The right stick's axis this frame (rstick:X:Y:N), as SDL gives it (−32767..32767); 0 at rest.
+	Sint16 right_axis(SDL_GameControllerAxis axis) const;
 	// Ticks to run in this frame on top of the real-time ones (days:N, ticks:N).
 	int extra_ticks() const { return extra_ticks_; }
 	// File to save the screen into at the end of this frame, or empty.
@@ -49,7 +51,7 @@ public:
 	Uint32 now() const { return Uint32(frame_) * kScriptFrameMs; }
 
 private:
-	enum class Kind { Press, Hold, Frames, Days, Ticks, Shot, Tap, Cell, Text, Touch, Lift, Move, Place };
+	enum class Kind { Press, Hold, Frames, Days, Ticks, Shot, Tap, Cell, Text, Touch, Lift, Move, Place, Stick };
 	struct Step {
 		Kind kind = Kind::Press;
 		SDL_GameControllerButton button = SDL_CONTROLLER_BUTTON_INVALID;
@@ -74,6 +76,8 @@ private:
 	int look_y_ = -1;
 	int look_place_ = -1;
 	int finger_x_ = 0;  // Where the finger is (touch, move, lift, tap), for move's motion.
+	int stick_x_ = 0;  // The right stick this frame (rstick), in percent.
+	int stick_y_ = 0;
 	int finger_y_ = 0;
 	bool finished_ = false;
 };

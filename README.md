@@ -216,12 +216,14 @@ messages. Building and leaving the town are off there, as in the game.
 categories (houses and warehouses, public buildings, military ones for the
 mayor, and the two groups of businesses the town can produce); L and R, or
 touching them, change the category, up and down and X (or a touch) choose a
-building. Its page shows its costs, the days of works, the materials and why it
-can't be built, as the game's. The streets, the well and the town wall have a
-button of their own; any other building is placed in the town: the areas where
-it fits are marked green (also on the minimap), touch where it goes and drag
-it, green where it fits and red where it doesn't (with the pad, it moves cell
-by cell), and its button or X builds it. Circle goes back to the menu, and
+building. Its page shows its costs, the days of works, the materials, the well's
+or the streets' share and why it can't be built, as the game's. The streets, the
+well and the town wall have a button of their own; any other building is placed
+in the town: the areas where it fits are marked green (also on the minimap),
+touch where it goes and drag it, green where it fits and red where it doesn't
+(with the pad, the cross or the right stick move it cell by cell, the view
+following it, while the left stick moves the view), and its button or X builds
+it. Circle goes back to the menu, and
 closes it.
 
 In a building, as in the game, its picture shows alone and its side menu, in

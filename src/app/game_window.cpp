@@ -1114,6 +1114,20 @@ void GameWindowArt::draw_frame() const {
 	}
 }
 
+int GameWindowArt::pill_end() const {
+	return pill_ && pill_frames_[0].w > 0 ? pill_frames_[0].w : 8;
+}
+
+SDL_Rect GameWindowArt::pill_for_label(const SDL_Rect& r, int label_w) const {
+	// A round button, no wider than its two ends (16: the symbols «-», «+»), stays round; a label leaving 6 each side
+	// keeps the button's width («Undo» on 48).
+	if (r.w <= 2 * pill_end() || label_w + 2 * 6 <= r.w) {
+		return r;
+	}
+	const int need = label_w + 2 * pill_end();
+	return {r.x - (need - r.w + 1) / 2, r.y, need, r.h};
+}
+
 void GameWindowArt::draw_pill(const SDL_Rect& r, PillState state) const {
 	if (!pill_) {
 		return;

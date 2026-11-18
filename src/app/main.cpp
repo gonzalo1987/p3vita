@@ -11784,9 +11784,11 @@ SDL_Color parchment_color(const SDL_Color& c) {
 // With `margin` the text cut to the pill's width less it (0: as the game's buttons sized to their text, never cut).
 void draw_pill_button(GameWindowArt& art, TextRenderer& text, const SDL_Rect& r, const std::string& label,
 	bool enabled, int margin = 12) {
-	art.draw_pill(r, enabled ? PillState::Standard : PillState::Disabled);
 	const std::string shown = margin > 0 ? cut_text(text, label, r.w - margin) : label;
-	text.draw(shown, r.x + (r.w - text.measure(shown)) / 2, r.y + (r.h - text.line_height()) / 2,
+	// (Never cut: its pill as wide as its label needs, GameWindowArt::pill_for_label.)
+	const SDL_Rect p = margin > 0 ? r : art.pill_for_label(r, text.measure(shown));
+	art.draw_pill(p, enabled ? PillState::Standard : PillState::Disabled);
+	text.draw(shown, p.x + (p.w - text.measure(shown)) / 2, p.y + (p.h - text.line_height()) / 2,
 		enabled ? kButtonInk : kParchmentDim);
 }
 
@@ -11906,12 +11908,13 @@ void draw_place_menu(SDL_Renderer* renderer, TextRenderer& screen_text, GameWind
 		bottom = y;
 	}
 	for (int k = 0; k < int(v.menu.size()); ++k) {
-		const SDL_Rect r = layout.entry(k, int(v.menu.size()));
 		const bool lit = k == v.menu_lit;
 		const bool can = v.menu[size_t(k)].second;
-		art.draw_pill(r, lit ? PillState::Pressed : can ? PillState::Standard : PillState::Disabled);
-		// A label wider than the button goes past its ends, centred, as the game draws it («Oficina del Gobernador»).
+		// A label wider than the button: the game draws it past the pill's ends («Oficina del Gobernador»); here the
+		// pill grows for it (GameWindowArt::pill_for_label: adapted, the user's eye).
 		const std::string& label = v.menu[size_t(k)].first;
+		const SDL_Rect r = art.pill_for_label(layout.entry(k, int(v.menu.size())), text.measure(label));
+		art.draw_pill(r, lit ? PillState::Pressed : can ? PillState::Standard : PillState::Disabled);
 		text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - text.line_height()) / 2,
 			lit ? kButtonHighlight : can ? kButtonInk : kParchmentDim);
 	}
@@ -12030,9 +12033,10 @@ void draw_page_items(SDL_Renderer* renderer, TextRenderer& text, GameWindowArt& 
 		if (b.hidden) {
 			continue;
 		}
-		const SDL_Rect r = {panel.x + b.rect.x, panel.y + b.rect.y, b.rect.w, b.rect.h};
-		art.draw_pill(r, b.lit ? PillState::Pressed : b.enabled ? PillState::Standard : PillState::Disabled);
 		const std::string label = (b.keyed ? page_button_key(b.action) : std::string()) + b.label;
+		const SDL_Rect r = art.pill_for_label({panel.x + b.rect.x, panel.y + b.rect.y, b.rect.w, b.rect.h},
+			text.measure(label));
+		art.draw_pill(r, b.lit ? PillState::Pressed : b.enabled ? PillState::Standard : PillState::Disabled);
 		text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - lh) / 2,
 			b.lit ? kButtonHighlight : b.enabled ? kButtonInk : kParchmentDim);
 	}
@@ -13431,9 +13435,10 @@ void draw_ship_list_window(SDL_Renderer* renderer, TextRenderer& fallback, GameW
 	// and 3: «crew – cannon», «money – weapons»... its pressed frames 1 and 4); the close button; each after its key.
 	const int line_y = f.close.y + (f.close.h - page.line_height()) / 2;
 	page.draw(exe_text(0x6B2AA4, "Ordenar por:", "Sort by:"), f.sort_words_x, f.close.y, black);
-	art.draw_pill(f.sort, PillState::Standard);
 	const std::string sort = BTN_TRIANGLE " " + ship_list_sort_name(ui.sort);
-	page.draw(sort, f.sort.x + (f.sort.w - page.measure(sort)) / 2, line_y, kButtonInk);
+	const SDL_Rect sort_pill = art.pill_for_label(f.sort, page.measure(sort));
+	art.draw_pill(sort_pill, PillState::Standard);
+	page.draw(sort, sort_pill.x + (sort_pill.w - page.measure(sort)) / 2, line_y, kButtonInk);
 	art.draw_tex(16044, ui.crew ? 3 : 0, f.change.x, f.change.y);
 	page.draw(BTN_SQUARE, f.change.x - page.measure(BTN_SQUARE) - 2, line_y, kButtonInk);
 	art.draw_close(f.close, false);
@@ -14271,30 +14276,49 @@ std::string building_name(int type) {
 
 constexpr int kBuildRows = 8;
 
+// The build menu as the game's (SIDEMENU_BUILD, *0x6CC95C: its init 0x478920, its drawing 0x479550 and the building's
+// page 0x4797C0, traced in the emulator: re/emu/sesion42/README.md): the five categories' buttons (sidemenu.ini
+// Button20..24, 32 × 32) with equal gaps in the menu's width ((260 − 160) / 6 = 16) in the row over the menu (as the
+// ship menu's page buttons: on the Vita at the parchment's top, improvised); the menu under them. Its title in the font
+// 3 centred at HeadlineY 8; the line under it at 8 + the font 3's height (20: 28); the buildings' buttons
+// (buttons.ini Button4, 128 × 18) centred, the first one 22 (18 · 5 / 4) under that line and 22 apart; the building's
+// page lines 18 (the font 1's height · 5 / 4) apart from it; «back» (Button4) centred 36 over the menu's bottom, the
+// street's, the well's or the wall's button 22 over it.
+constexpr int kBuildTitleY = 8;
+constexpr int kBuildLine0 = 28;
+constexpr int kBuildStep = 18;
+constexpr int kBuildButtonStep = 22;
+constexpr int kBuildMargin = 10;  // Seitenrand.
+
 struct BuildRoomLayout {
 	SDL_Rect tabs[5] = {};
+	int head_y = 0;  // The menu's top (under the categories' row).
 	int title_y = 0;
 	SDL_Rect rows[kBuildRows] = {};
 	SDL_Rect back_button{};
 	SDL_Rect act_button{};
 
 	BuildRoomLayout(const SDL_Rect& room, int line_height) {
+		const int gap = (kPanelMenuWidth - 5 * 32) / 6;
 		for (int k = 0; k < 5; ++k) {
-			tabs[k] = {room.x + 7 + k * 50, room.y + 6, 44, 40};
+			tabs[k] = {room.x + gap + k * (32 + gap), room.y + 4, 32, 32};
 		}
-		title_y = room.y + 50;
-		const int row_height = line_height + 3;
+		(void)line_height;
+		head_y = room.y + 36;  // As the ship menu's (ShipMenuLayout::head_y): under the buttons' row.
+		title_y = head_y + kBuildTitleY;
+		const int x = room.x + (kPanelMenuWidth - 128) / 2;
 		for (int k = 0; k < kBuildRows; ++k) {
-			rows[k] = {room.x + 8, title_y + line_height + 4 + k * row_height, room.w - 16, row_height};
+			rows[k] = {x, head_y + kBuildLine0 + kBuildButtonStep * (k + 1), 128, 18};
 		}
-		const int button_height = line_height + 8;
-		back_button = {room.x + 8, room.y + room.h - button_height - 6, 84, button_height};
-		act_button = {room.x + 98, room.y + room.h - button_height - 6, room.w - 106, button_height};
+		const int bottom = room.y + room.h;
+		back_button = {x, bottom - 36, 128, 18};
+		act_button = {x, back_button.y - kBuildButtonStep, 128, 18};
 	}
+	int line(int k) const { return head_y + kBuildLine0 + kBuildStep * k; }
 
 	int tab_at(int x, int y) const {
 		for (int k = 0; k < 5; ++k) {
-			if (inside(tabs[k], x, y)) {
+			if (inside({tabs[k].x - 4, tabs[k].y - 2, tabs[k].w + 8, tabs[k].h + 4}, x, y)) {
 				return k;
 			}
 		}
@@ -14302,7 +14326,7 @@ struct BuildRoomLayout {
 	}
 	int row_at(int x, int y) const {
 		for (int k = 0; k < kBuildRows; ++k) {
-			if (inside(rows[k], x, y)) {
+			if (inside({rows[k].x, rows[k].y - 2, rows[k].w, rows[k].h + 4}, x, y)) {
 				return k;
 			}
 		}
@@ -14360,103 +14384,153 @@ std::string build_days_text(int32_t days) {
 	return GameTexts::format(exe_text(0x6C2328, "%i semanas", "%i weeks"), {std::to_string((days + 6) / 7)});
 }
 
+// The menu (0x479550): the categories' buttons (normal, pressed, lit, disabled: the game's rows); the category's name
+// (*0x6C2380 + 4 · category) in the font 3 centred, black over its light shadow a pixel lower right; its buildings'
+// buttons (the pad's lit); without an office and the standing to build one, the text *0x6B20A4 in the game's text box
+// (its font 0, its lines centred: «\c») from (2 · Seitenrand, the line under the title + 18), the menu's width less
+// 4 · Seitenrand wide. The building's page (0x4797C0): its title; «total building costs:» (red without the money) with
+// the cost right-aligned at 229 and the coin after it; «construction time:» with the days at 250; «materials:» and the
+// columns' heads right-aligned at 130, 190, 250; each material needed (red when short) with what it needs, has and buys
+// right-aligned at 109, 169, 229 and its unit's picture 4 after each (the tools barrels, the rest loads); «costs of
+// goods:» with their price and the coin; why not, centred in red; the well's covering (its wells · 50000 / the
+// inhabitants) or the developed roads' share («100%», or two figures), right-aligned at 250. Then the buttons.
 void draw_build_room(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SidePanel& ui,
-	const BuildMenu& menu, const std::array<bool, 5>& tabs, const BuildChoice* choice, bool placed, bool fits) {
+	const BuildMenu& menu, const std::array<bool, 5>& tabs, const BuildChoice* choice, bool placed, bool fits,
+	const SaveGame& save, int town) {
 	const PanelLayout panel(ui.folded);
 	const SDL_Rect& room = panel.room;
 	const BuildRoomLayout layout(room, text.line_height());
-	const SDL_Color ink = {40, 25, 10, 255};
-	const SDL_Color dim = {110, 85, 60, 255};
-	const SDL_Color red = {150, 20, 10, 255};
-	const int left = room.x + 10;
+	if (!g_game_art) {
+		return;
+	}
+	GameWindowArt& gart = *g_game_art;
+	TextRenderer& title = gart.title_text() ? *gart.title_text() : text;
+	TextRenderer& page = gart.page_text() ? *gart.page_text() : text;
+	TextRenderer& head = gart.head_text() ? *gart.head_text() : text;
+	const SDL_Color black = argb_color(kShipListInk);
+	const SDL_Color short_red = argb_color(0xFF960000);
+	const SDL_Color reason_red = argb_color(0xFFFF0000);
+	const int cx = room.x + kPanelMenuWidth / 2;
+	auto draw_title = [&](const std::string& t) {
+		const int x = cx - title.measure(t) / 2;
+		title.draw(t, x + 1, layout.title_y + 1, argb_color(0xFFEFD7C0));
+		title.draw(t, x, layout.title_y, black);
+	};
+	auto pill = [&](const SDL_Rect& button, const std::string& label, bool on, bool lit) {
+		const SDL_Rect r = gart.pill_for_label(button, page.measure(label));
+		gart.draw_pill(r, !on ? PillState::Disabled : lit ? PillState::Pressed : PillState::Standard);
+		page.draw(label, r.x + (r.w - page.measure(label)) / 2, r.y + (r.h - page.line_height()) / 2,
+			!on ? kParchmentDim : lit ? kButtonHighlight : kButtonInk);
+	};
+	for (int k = 0; k < 5; ++k) {
+		const int row = !tabs[size_t(k)] ? 3 : k == menu.category ? 2 : 0;
+		const SDL_Rect src = {k * 32, row * 32, 32, 32};
+		draw_picture(renderer, art.build_tabs, layout.tabs[k], &src);
+	}
 	if (!choice) {
-		// The menu: the categories (normal, pressed, lit, disabled: the game's
-		// rows), the category's name and its buildings.
-		for (int k = 0; k < 5; ++k) {
-			const int row = !tabs[size_t(k)] ? 3 : k == menu.category ? 2 : 0;
-			const SDL_Rect src = {k * 32, row * 32, 32, 32};
-			draw_picture(renderer, art.build_tabs, layout.tabs[k], &src);
-		}
-		text.draw(exe_text(0x6C2380 + 4 * uint32_t(menu.category), "", ""), left, layout.title_y, ink);
+		draw_title(exe_text(0x6C2380 + 4 * uint32_t(menu.category), "", ""));
 		int row = 0;
 		for (const int32_t type : menu.types) {
 			if (type < 0 || row >= kBuildRows) {
 				continue;
 			}
-			const SDL_Rect& r = layout.rows[row];
-			if (row == ui.build_row) {
-				SDL_SetRenderDrawColor(renderer, 120, 80, 30, 70);
-				SDL_RenderFillRect(renderer, &r);
-			}
-			text.draw(building_name(type), r.x + 4, r.y + 1, ink);
+			pill(layout.rows[row], building_name(type), true, row == ui.build_row);
 			++row;
 		}
 		if (menu.reputation_text) {
-			int y = layout.rows[0].y;
-			for (const std::string& line : wrap_text(text,
-					 exe_text(0x6B20A4, "Todavía no puedes construir una oficina comercial...",
-						 "You are not yet able to build a trading office..."),
-					 room.w - 20)) {
-				text.draw(line, left, y, dim);
-				y += text.line_height();
+			int y = layout.line(1);
+			const int w = kPanelMenuWidth - 4 * kBuildMargin;
+			for (const std::string& line : box_lines(exe_text(0x6B20A4, "Todavía no puedes construir una oficina comercial...",
+					 "You are not yet able to build a trading office..."))) {
+				for (const std::string& part : line.empty() ? std::vector<std::string>{line} : wrap_text(head, line, w)) {
+					head.draw(part, room.x + 2 * kBuildMargin + (w - head.measure(part)) / 2, y, black);
+					y += kBoxLine;
+				}
 			}
 		}
 		return;
 	}
-	// The building's page: its title, the costs, the days, the materials (what
-	// it needs, what he has there, what is bought), why not, and its buttons.
 	const GameMemory<0x44>& s = choice->cost;
-	int y = room.y + 8;
-	text.draw(build_title(choice->type), left, y, ink);
-	y += text.line_height() + 4;
+	draw_title(build_title(choice->type));
+	const int left = room.x + kBuildMargin;
+	auto right = [&](const std::string& t, int x, int y, SDL_Color c) { page.draw(t, room.x + x - page.measure(t), y, c); };
+	const SDL_Point coin = gart.tex_size(16014, 0);
 	const bool short_money = s.u8(0x43) == 4 || !s.u8(0x40);
-	text.draw(exe_text(0x6C253C, "Coste total del edificio:", "total building costs:") + " " + format_money(s.s32(0x34)),
-		left, y, short_money ? red : ink);
-	y += text.line_height();
-	text.draw(exe_text(0x6C2540, "Duración de la obra:", "construction time:") + " " + build_days_text(s.s32(0x38)), left,
-		y, ink);
-	y += text.line_height() + 3;
-	// The materials' table: the game's four column titles don't fit the
-	// panel's width side by side, so they go as one line over the numbers.
-	static constexpr int kWares[4] = {0x13, 0xB, 0xC, 0x11};  // 0x673720: bricks, timber, tools, hemp.
-	const int right_edges[3] = {room.x + 168, room.x + 208, room.x + 248};
-	for (const std::string& line : wrap_text(text,
-			 exe_text(0x6C2548, "Material", "materials:") + " " + exe_text(0x6C254C, "Requerido", "need:") + " / " +
-				 exe_text(0x6C2550, "Almacén", "in stock:") + " / " + exe_text(0x6C2554, "Comprar", "buy:"),
-			 room.w - 20)) {
-		text.draw(line, left, y, dim);
-		y += text.line_height();
-	}
+	int y = layout.line(0);
+	page.draw(exe_text(0x6C253C, "Coste total del edificio:", "total building costs:"), left, y, short_money ? short_red : black);
+	right(format_money(s.s32(0x34)), 229, y, short_money ? short_red : black);
+	gart.draw_tex(16014, 0, room.x + 233, y + (kBuildStep - coin.y) / 2);
+	y += kBuildStep;
+	page.draw(exe_text(0x6C2540, "Duración de la obra:", "construction time:"), left, y, black);
+	right(build_days_text(s.s32(0x38)), 250, y, black);
+	y += kBuildStep;
+	page.draw(exe_text(0x6C2548, "Material", "materials:"), left, y, black);
+	right(exe_text(0x6C254C, "Requerido", "need:"), 130, y, black);
+	right(exe_text(0x6C2550, "Almacén", "in stock:"), 190, y, black);
+	right(exe_text(0x6C2554, "Comprar", "buy:"), 250, y, black);
+	y += kBuildStep;
+	static constexpr int kMaterials[4] = {0x13, 0xB, 0xC, 0x11};  // 0x673720: bricks, timber, tools, hemp.
 	for (int k = 0; k < 4; ++k) {
 		if (s.s32(4 * k) <= 0) {
 			continue;
 		}
 		const bool short_of = s.s32(4 * k) > s.s32(0x10 + 4 * k) + s.s32(0x20 + 4 * k);
-		text.draw(ware_name(kWares[k]), left, y, ink);
+		const SDL_Color c = short_of ? short_red : black;
+		page.draw(ware_name(kMaterials[k]), left, y, c);
 		const int32_t values[3] = {s.s32(4 * k), s.s32(0x10 + 4 * k), s.s32(0x20 + 4 * k)};
-		for (int c = 0; c < 3; ++c) {
-			const std::string n = std::to_string(values[c]);
-			text.draw(n, right_edges[c] - text.measure(n), y, c == 2 && short_of ? red : ink);
+		for (int col = 0; col < 3; ++col) {
+			right(std::to_string(values[col]), 109 + 60 * col, y, c);
+			gart.draw_tex(k == 2 ? 16030 : 16031, 0, room.x + 113 + 60 * col, y);
 		}
-		y += text.line_height();
+		y += kBuildStep;
 	}
-	y += 4;
-	std::string note = build_reason(*choice);
-	if (note.empty() && choice->action == BuildAction::Place) {
-		note = !placed ? tr("Toca en la ciudad dónde va (las zonas en verde).", "Touch the town where it goes (the green areas).")
-			: fits     ? tr("Cabe aquí.", "It fits here.")
-					   : tr("Aquí no cabe.", "It doesn't fit here.");
+	page.draw(exe_text(0x6C2544, "Coste de las mercancías:", "costs of goods:"), left, y, short_money ? short_red : black);
+	right(format_money(s.s32(0x30)), 229, y, short_money ? short_red : black);
+	gart.draw_tex(16014, 0, room.x + 233, y + (kBuildStep - coin.y) / 2);
+	y += kBuildStep;
+	const std::string reason = build_reason(*choice);
+	for (const std::string& line : wrap_text(page, reason, kPanelMenuWidth - 2 * kBuildMargin)) {
+		page.draw(line, cx - page.measure(line) / 2, y, reason_red);
+		y += kBuildStep;
 	}
-	for (const std::string& line : wrap_text(text, note, room.w - 20)) {
-		if (y + text.line_height() > layout.back_button.y) {
-			break;
+	if (town >= 0 && size_t(town) < save.towns.size() && (choice->type == 0x28 || choice->type == 2)) {
+		const SavedTown& t = save.towns[size_t(town)];
+		std::string value;
+		if (choice->type == 0x28) {
+			const int32_t people = t.memory.s32(0x2D4);
+			value = std::to_string(people != 0 ? int32_t(t.memory.u8(0x789)) * 50000 / people : 0) + "%";
+		} else {
+			const uint16_t done = t.memory.u16(0x790);
+			const uint16_t planned = t.memory.u16(0x792);
+			if (done >= planned) {
+				value = "100%";
+			} else {
+				const int share = planned > 0 ? int(done) * 100 / int(planned) : 0;
+				value = std::string(1, share > 9 ? char('0' + share / 10) : ' ') + char('0' + share % 10) + "%";
+			}
 		}
-		text.draw(line, left, y, build_reason(*choice).empty() ? ink : red);
-		y += text.line_height();
+		page.draw(choice->type == 0x28 ? exe_text(0x6C2574, "Dotación de pozos", "well covering")
+									   : exe_text(0x6C2568, "Porcentaje de calles pavimentadas", "proportion of developed roads"),
+			left, y, black);
+		right(value, 250, y, black);
+		y += kBuildStep;
 	}
-	// The buttons: back, and the window's own (the streets, the well, the wall)
-	// or building it where it is placed.
-	draw_button(renderer, text, layout.back_button, exe_text(0x6C2280, "Atrás", "back"));
+	if (reason.empty() && choice->action == BuildAction::Place) {
+		// The viewer's word for the finger (the game's mouse carries the building): centred, improvised.
+		const std::string note = !placed ? tr("Toca en la ciudad dónde va.", "Touch the town where it goes.")
+			: fits                       ? tr("Cabe aquí.", "It fits here.")
+										 : tr("Aquí no cabe.", "It doesn't fit here.");
+		for (const std::string& line : wrap_text(page, note, kPanelMenuWidth - 2 * kBuildMargin)) {
+			if (y + kBuildStep > layout.act_button.y) {
+				break;
+			}
+			page.draw(line, cx - page.measure(line) / 2, y, black);
+			y += kBuildStep;
+		}
+	}
+	// The buttons: «back», and the window's own (the streets, the well, the wall) or building it where it is placed (the
+	// viewer's, for the finger); each with its key.
+	pill(layout.back_button, BTN_CIRCLE " " + exe_text(0x6C2280, "Atrás", "back"), true, false);
 	std::string act;
 	bool can = false;
 	switch (choice->action) {
@@ -14467,14 +14541,7 @@ void draw_build_room(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 	default: break;
 	}
 	if (!act.empty()) {
-		if (can) {
-			draw_button(renderer, text, layout.act_button, BTN_CROSS " " + act);
-		} else {
-			SDL_SetRenderDrawColor(renderer, 120, 100, 80, 160);
-			SDL_RenderFillRect(renderer, &layout.act_button);
-			text.draw(act, layout.act_button.x + (layout.act_button.w - text.measure(act)) / 2,
-				layout.act_button.y + (layout.act_button.h - text.line_height()) / 2, dim);
-		}
+		pill(layout.act_button, BTN_CROSS " " + act, can, false);
 	}
 }
 
@@ -15308,10 +15375,17 @@ constexpr int kRouteFilesDialog = 33;  // GameWindowArt::draw_dialog's key.
 constexpr int kRouteFileButton = 48;  // [Button2].
 constexpr int kRouteFileBox = 18;  // sidemenu.ini [TextBox0]'s height.
 
+// «Load», «Save», «Delete».
+std::array<std::string, 3> route_file_labels() {
+	return {exe_text(0x6B04FC, "Cargar", "Load"), exe_text(0x6B0500, "Guardar", "Save"), exe_text(0x69AF30, "Borrar", "Delete")};
+}
+
 struct RouteFilesFrame {
 	SelectionListLayout layout;
 	int count = 0;
 	int first = 0;
+	int button_x[3] = {20, 70, 120};  // From the window's left: the game's, or after the ones before when wider.
+	int button_w[3] = {kRouteFileButton, kRouteFileButton, kRouteFileButton};
 	SDL_Rect window() const { return {layout.x, layout.y, layout.window_w(), layout.h}; }
 	SDL_Rect row(int k) const {
 		return {layout.x + kSelectionListRowX, layout.y + kSelectionListRowY + kSelectionListRowHeight * k,
@@ -15319,9 +15393,7 @@ struct RouteFilesFrame {
 	}
 	SDL_Rect close() const { return {layout.x + layout.close_x(), layout.y + layout.close_y(), 32, 18}; }
 	// «Load», «Save», «Delete» (0x4701E0..0x470265).
-	SDL_Rect button(int k) const {
-		return {layout.x + 20 + k * (kRouteFileButton + 2), layout.y + layout.close_y(), kRouteFileButton, 18};
-	}
+	SDL_Rect button(int k) const { return {layout.x + button_x[k], layout.y + layout.close_y(), button_w[k], 18}; }
 	// The name's box (0x470268..0x4702C0).
 	SDL_Rect box() const {
 		const SDL_Rect c = close();
@@ -15357,6 +15429,24 @@ RouteFilesFrame route_files_frame(const std::vector<std::string>& files, int fir
 		widest = std::max(widest, font ? font->measure(name) : 7 * int(name.size()));
 	}
 	f.layout = selection_list_layout(0, kBarHeight, view_right, kScreenHeight - kBarHeight, f.count, widest, 0);
+	// The buttons as wide as their labels need (GameWindowArt::pill_for_label), one after another 2 apart; when they
+	// don't fit before the close button (6 clear), the window a tile wider at a time (adapted, the Spanish labels).
+	TextRenderer* page = g_game_art ? g_game_art->page_text() : nullptr;
+	const std::array<std::string, 3> labels = route_file_labels();
+	const int end = g_game_art ? g_game_art->pill_end() : 8;
+	int x = 20;
+	for (int k = 0; k < 3; ++k) {
+		const int label_w = page ? page->measure(labels[size_t(k)]) : 7 * int(labels[size_t(k)].size());
+		f.button_w[k] = g_game_art ? g_game_art->pill_for_label({0, 0, kRouteFileButton, 18}, label_w).w
+								   : std::max(kRouteFileButton, label_w + 2 * end);
+		f.button_x[k] = x;
+		x += f.button_w[k] + 2;
+	}
+	while (x + 4 > f.layout.close_x()) {
+		f.layout.w += kSelectionListTile;
+		f.layout.rows_width += kSelectionListTile;
+		f.layout.x = view_right - 3 * f.layout.w / 4;
+	}
 	f.first = std::clamp(first, 0, std::max(0, f.count - f.layout.rows));
 	return f;
 }
@@ -15414,8 +15504,7 @@ void draw_route_files(SDL_Renderer* renderer, TextRenderer& fallback, const Side
 	const std::string name = ui.route_file_name + (ui.route_file_typing ? "_" : "");
 	page.draw(cut_text(page, name, box.w - 4), box.x + 2, box.y + (box.h - page.line_height()) / 2, black);
 	const int match = route_file_match(ui.route_file_list, ui.route_file_name);
-	const std::string labels[3] = {exe_text(0x6B04FC, "Cargar", "Load"), exe_text(0x6B0500, "Guardar", "Save"),
-		exe_text(0x69AF30, "Borrar", "Delete")};
+	const std::array<std::string, 3> labels = route_file_labels();
 	const bool enabled[3] = {match >= 0 && !asking, !ui.route_file_name.empty() && !ui.route_file_unnamed && !asking,
 		match >= 0 && !asking};
 	for (int k = 0; k < 3; ++k) {
@@ -15471,7 +15560,9 @@ constexpr int kStopChartColumns = 10;
 constexpr int kStopColumnX[kStopChartColumns] = {0, 100, 152, 172, 220, 246, 266, 304, 324, 372};
 constexpr int kStopColumnW[kStopChartColumns] = {96, 48, 16, 44, 22, 16, 34, 16, 44, 16};
 constexpr int kStopBottomY = 510;
-constexpr int kStopBottomX[kStopBottomButtons] = {28, 71, 118, 188, 231, 306, 366};
+// (The close button 10 right of the game's 366, still inside the frame, so that its key fits before it beside
+// «Deshaz»: adapted.)
+constexpr int kStopBottomX[kStopBottomButtons] = {28, 71, 118, 188, 231, 306, 376};
 constexpr int kStopBottomW[kStopBottomButtons] = {32, 32, 48, 32, 32, 48, 32};
 constexpr uint32_t kStopWareInk = 0xFF006700;  // [Button11]'s TextCL.
 
@@ -15596,7 +15687,8 @@ void draw_stop_window(SDL_Renderer* renderer, TextRenderer& text, const PanelArt
 		head.draw(heads[k], c.x + c.w / 2 - head.measure(heads[k]) / 2, head_y, black);
 	}
 	const std::string most = exe_text(0x69A358, "Máx.", "Max");
-	auto pill = [&](const SDL_Rect& r, const std::string& label, bool lit, bool on, SDL_Color ink) {
+	auto pill = [&](const SDL_Rect& button, const std::string& label, bool lit, bool on, SDL_Color ink) {
+		const SDL_Rect r = gart.pill_for_label(button, page.measure(label));
 		gart.draw_pill(r, !on ? PillState::Disabled : lit ? PillState::Pressed : PillState::Standard);
 		centred(page, label, r, on ? ink : kParchmentDim);
 	};
@@ -15670,9 +15762,9 @@ void draw_stop_window(SDL_Renderer* renderer, TextRenderer& text, const PanelArt
 	pill(bottom(3), most, bottom_lit(3), true, kButtonInk);
 	pill(bottom(4), "0", bottom_lit(4), true, kButtonInk);
 	pill(bottom(5), exe_text(0x692C48, "Deshaz", "Undo"), bottom_lit(5), true, kButtonInk);
-	// The close button's key after it (before it, it would touch «Deshaz»: improvised).
 	gart.draw_close(bottom(6), bottom_lit(6));
-	page.draw(BTN_CIRCLE, bottom(6).x + bottom(6).w + 2, bottom(6).y + (18 - page.line_height()) / 2, kButtonInk);
+	page.draw(BTN_CIRCLE, bottom(6).x - page.measure(BTN_CIRCLE) - 2, bottom(6).y + (18 - page.line_height()) / 2,
+		kButtonInk);
 	gart.end();
 }
 
@@ -18112,6 +18204,7 @@ int main(int argc, char** argv) {
 	SidePanel side;  // The side panel.
 	ShipListUi ship_list;  // The ship list window (its sort and columns kept while the viewer runs).
 	ConvoyWindowUi convoy_window;  // The game's convoy window («form convoy») over the view.
+	Uint32 build_stick_at = 0;  // When the right stick last moved the building being placed (0: back at rest).
 	// A town cell to put in the middle of the town's view once that town is shown (the ship list's «go to» a ship being
 	// built: its town's shipyard, 0x476AE8..0x476B61).
 	std::optional<SDL_Point> look_cell;
@@ -24280,6 +24373,50 @@ int main(int argc, char** argv) {
 				place.page_scroll += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY));
 			}
 		}
+		if ((controller || script) && placing && !in_mail && !in_place && !ship_list.open && !convoy_window.open) {
+			// Placing a building: the right stick moves it as the cross does (left and right a column, up and down a row;
+			// the first push puts it in the middle of the view), again every 250 ms while held, 100 pushed fully; the view
+			// follows it to keep it in sight. The left stick still moves the view (the user's idea, 18-11-2026: both of the
+			// Vita's sticks; touching the town still puts it where the finger is).
+			// The stick (or the script's, rstick).
+			auto axis = [&](SDL_GameControllerAxis a) {
+				const int scripted = script ? int(script->right_axis(a)) : 0;
+				return scripted != 0 || !controller ? scripted : int(SDL_GameControllerGetAxis(controller, a));
+			};
+			const int ax = axis(SDL_CONTROLLER_AXIS_RIGHTX);
+			const int ay = axis(SDL_CONTROLLER_AXIS_RIGHTY);
+			constexpr int kPush = 12000;
+			const int most = std::max(std::abs(ax), std::abs(ay));
+			if (most < kPush) {
+				build_stick_at = 0;
+			} else {
+				const Uint32 now = app_ticks();
+				const Uint32 every = Uint32(250 - (most - kPush) * 150 / (32767 - kPush));
+				if (build_stick_at == 0 || now - build_stick_at >= every) {
+					build_stick_at = now;
+					if (side.cell_x < 0) {
+						const SDL_Point c = TownView::cell_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2);
+						side.cell_x = c.x;
+						side.cell_y = c.y;
+					} else {
+						if (std::abs(ax) >= kPush) {
+							side.cell_x = std::clamp(side.cell_x + (ax < 0 ? -1 : 1), 0, 0xFF);
+						}
+						if (std::abs(ay) >= kPush) {
+							side.cell_y = std::clamp(side.cell_y + (ay < 0 ? -2 : 2), 0, 0xFF);
+						}
+					}
+					// The view after it: its front cell's middle kept 48 from the view's sides.
+					const int sx = cell_screen_x(side.cell_x, side.cell_y) + kTileWidth / 2 - camera_x;
+					const int sy = cell_screen_y(side.cell_y) + kTileHeight / 2 - camera_y;
+					constexpr int kMargin = 48;
+					camera_x += sx < kMargin ? sx - kMargin : sx > town_width - kMargin ? sx - (town_width - kMargin) : 0;
+					camera_y += sy < kBarHeight + kMargin ? sy - (kBarHeight + kMargin)
+						: sy > kScreenHeight - kMargin    ? sy - (kScreenHeight - kMargin)
+														  : 0;
+				}
+			}
+		}
 		if (!trading && !in_mail && !in_place && side.focus < 0 && side.menu == PanelMenu::None &&
 			!battle_popup() && !in_battle && !ship_list.open && !convoy_window.open) {  // Nor under the battles' window.
 			// (On the battle's screen the pad's up and down are the sails: part 2.)
@@ -24478,7 +24615,7 @@ int main(int argc, char** argv) {
 					{camera_x, camera_y, town_width, kScreenHeight}, sea && sea->ready() ? sea.get() : nullptr, &save);
 				if (side.menu == PanelMenu::Build && !side.folded) {
 					draw_build_room(renderer, *small_text, *panel_art, side, build_now, build_tabs_now,
-						build_choice_now ? &*build_choice_now : nullptr, side.cell_x >= 0, build_fits_now);
+						build_choice_now ? &*build_choice_now : nullptr, side.cell_x >= 0, build_fits_now, save, town_index);
 				}
 				if (side.menu == PanelMenu::Ship && side.ship >= 0 && !side.folded) {
 					draw_ship_menu(renderer, *small_text, *panel_art, save, side, ship_now, ship_pirate_ok);

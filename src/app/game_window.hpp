@@ -116,6 +116,11 @@ public:
 	void end();
 	// A pill of the parchments, `r`'s width, its own height (18) centred in `r`.
 	void draw_pill(const SDL_Rect& r, PillState state) const;
+	// The pill for a label `label_w` wide on a button `r`: the button's (the game's style's) width, or, when the label
+	// leaves it less than 6 each side, wider from its middle so that its rounded ends stay clear (a round 16 button stays)
+	// (the user, 18-11-2026: the game's widths left «Máx.», «Deshaz»... touching the ends; adapted in every screen).
+	SDL_Rect pill_for_label(const SDL_Rect& r, int label_w) const;
+	int pill_end() const;  // A rounded end's width (bttn_standard.tga's first frame, 8).
 	// The close button (32 × 18), centred in `r`.
 	void draw_close(const SDL_Rect& r, bool pressed) const;
 	// A page's title as 0x420C70 draws it on a window of width `w` at (x, y): the banner (TEX31006, 292 × 50) centred

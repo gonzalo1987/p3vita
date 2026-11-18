@@ -572,9 +572,19 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     vieja del visor), la fila de botones apagada, el botón de disparar en su sitio y la cuerda con sus tres marcas
     (el barco en las velas que lleva, las pedidas al 50 % hasta que llega, el nudo bajo el dedo). «Ver convoy» en la
     batalla, apagado hasta el panel de las batallas. **El menú del barco está acabado.**
-  - [ ] El menú de construir, con **el aviso de la reputación** (0x6B20A4, «Todavía no puedes construir una oficina
-    comercial…»: un texto «\c» centrado en la letra del juego; hoy un texto del visor alineado a la izquierda). Visto
-    el 18-11-2026: en inglés sus dos primeras filas dicen las dos «trading office».
+  - [x] El menú de construir (18-11-2026, `re/emu/sesion42/README.md`): como el del juego, trazado en el emulador: las
+    cinco categorías repartidas en la fila de arriba, el título de la categoría en la letra 3, los botones de los
+    edificios (Button4) centrados, **el aviso de la reputación** centrado en la caja de texto del juego, y la página
+    de un edificio con su tabla (costes, duración, materiales con sus columnas y sus fardos y barriles, coste de las
+    mercancías, el motivo en rojo, el porcentaje del pozo y de las calles, nuevo). En inglés la categoría 0 se llama
+    «trading office» como la oficina: es el texto del propio juego. Al colocar un edificio con el mando, el joystick
+    derecho lo mueve celda a celda (con la vista siguiéndolo) y el izquierdo mueve la vista: idea del usuario
+    (18-11-2026), para aprovechar los dos joysticks de la Vita.
+  - [x] Los márgenes de los botones (18-11-2026, lo vio el usuario en la ventana de la parada): los botones del juego
+    tienen el ancho de su estilo aunque su texto no quepa («Máx.» en 32, «Deshaz» en 48, en español casi todos); en
+    todas las pantallas, un botón cuyo texto deja menos de 6 por lado crece desde su centro hasta dejar libres sus
+    extremos (adaptado; los redondos de «-» y «+» no cambian), y la fila de botones de la lista de archivos se recoloca
+    y ensancha la ventana si no cabe.
   - [ ] Las estadísticas (el panel y sus ventanas), los mensajes en el panel, el panel de las batallas y la barra de
     arriba.
 - [x] **El panel de la Hansa** propio del visor (Cuadrado en una ciudad), quitado el 15-11-2026 a petición del

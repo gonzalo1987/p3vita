@@ -86,6 +86,7 @@ const char kStepsHelp[] =
 	"  tap:X:Y      touch the screen at (X, Y) and let go\n"
 	"  touch:X:Y    put a finger on the screen at (X, Y); lift:X:Y lifts it there\n"
 	"  move:X:Y     slide the finger that is down to (X, Y) in one motion\n"
+	"  rstick:X:Y:N the right stick pushed X, Y percent (-100..100) for N frames\n"
 	"  cell:X:Y     center the camera on the town's cell (X, Y)\n"
 	"  place:N      center the camera on the town's building of the .let type N\n"
 	"               (0x2D the rival kontor...)\n"
@@ -152,6 +153,24 @@ std::unique_ptr<InputScript> InputScript::parse(const std::string& steps, std::s
 				error = "wrong position in step \"" + text + "\"" + (off_screen ? " (the screen is 960x544)" : "");
 				return nullptr;
 			}
+		} else if (head == "rstick" && colon != std::string::npos) {
+			// rstick:X:Y:N, X and Y signed percents.
+			step.kind = Kind::Stick;
+			const size_t a = rest.find(':');
+			const size_t b = a == std::string::npos ? std::string::npos : rest.find(':', a + 1);
+			char* end = nullptr;
+			bool ok = b != std::string::npos;
+			if (ok) {
+				step.x = int(std::strtol(rest.substr(0, a).c_str(), &end, 10));
+				ok = *end == 0;
+				step.y = int(std::strtol(rest.substr(a + 1, b - a - 1).c_str(), &end, 10));
+				ok = ok && *end == 0;
+				step.count = number(rest.substr(b + 1));
+			}
+			if (!ok || step.count < 1 || std::abs(step.x) > 100 || std::abs(step.y) > 100) {
+				error = "wrong stick in step \"" + text + "\"";
+				return nullptr;
+			}
 		} else if (colon == std::string::npos) {
 			const size_t star = head.find('*');
 			const std::string name = head.substr(0, star);
@@ -203,6 +222,8 @@ void InputScript::start_frame() {
 	look_x_ = -1;
 	look_y_ = -1;
 	look_place_ = -1;
+	stick_x_ = 0;
+	stick_y_ = 0;
 	// The end of a press or a hold: the button goes up in the frame after.
 	if (held_ != SDL_CONTROLLER_BUTTON_INVALID && progress_ == 0) {
 		push_button(held_, false);
@@ -257,6 +278,10 @@ void InputScript::start_frame() {
 	case Kind::Place:
 		look_place_ = step.x;
 		break;
+	case Kind::Stick:
+		stick_x_ = step.x;
+		stick_y_ = step.y;
+		break;
 	case Kind::Text: {
 		// Typed text (as SDL's keyboard, or the Vita's, gives it).
 		SDL_Event event{};
@@ -274,6 +299,11 @@ void InputScript::start_frame() {
 
 bool InputScript::held(SDL_GameControllerButton button) const {
 	return held_ == button;
+}
+
+Sint16 InputScript::right_axis(SDL_GameControllerAxis axis) const {
+	const int percent = axis == SDL_CONTROLLER_AXIS_RIGHTX ? stick_x_ : axis == SDL_CONTROLLER_AXIS_RIGHTY ? stick_y_ : 0;
+	return Sint16(percent * 32767 / 100);
 }
 
 bool save_screenshot(SDL_Renderer* renderer, int width, int height, const std::string& path, std::string& error) {
