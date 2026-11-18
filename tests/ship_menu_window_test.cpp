@@ -78,11 +78,53 @@ int main() {
 	check(h.firepower == 22 && h.sailors == 36, "the firepower and the sailors, blurred");
 	check(h.cargo == 4090, "the cargo, blurred by the convoy's number");
 	check(h.capacity == 50000, "the capacity of the player's ships only");
-	// The player's own convoy: exact (the guide his).
+	// The player's own convoy: exact (the guide his); the equipment of his ships each rounded up to a load (150 → 200,
+	// 400 stays, merchant 1's 30 not counted).
 	save.ships[0].memory.u8(0x0) = 0;
+	save.ships[0].memory.s32(0x11C) = 150;
+	save.ships[2].memory.s32(0x11C) = 400;
+	save.ships[1].memory.s32(0x11C) = 30;
 	const ConvoyMenuHead mine = convoy_menu_head(save, list);
 	check(mine.hull == 76 && mine.sailors == 99 + 10 && mine.firepower == 5 && mine.cargo == 3000,
 		"the player's convoy: his ships' figures as they are");
+	check(mine.equipment == 600, "the player's convoy: the equipment in whole loads");
+
+	// The pirate's name (0x612EE0): ship 4 alone without a captain: unknown; with captain 1 (names 7, 9): known; in convoy
+	// 0 its guide's captain (ship 0's); in a battle the battle's ([+0x1E90], [+0x1E91]; both 0xFF unknown).
+	save.globals.u16(global::kCaptainCount) = 2;
+	save.captains.resize(2);
+	save.captains[1].u8(0x2) = 7;
+	save.captains[1].u8(0x3) = 9;
+	for (SavedShip& s : save.ships) {
+		s.memory.u16(0x42) = 0xFFFF;
+	}
+	check(!pirate_name(save, 4).known, "no captain, no battle: an unknown pirate");
+	save.ships[4].memory.u16(0x42) = 1;
+	PirateName p = pirate_name(save, 4);
+	check(p.known && p.first == 7 && p.family == 9, "its captain's names");
+	save.ships[0].memory.u16(0x42) = 1;
+	p = pirate_name(save, 1);
+	check(p.known && p.first == 7 && p.family == 9, "in a convoy its guide's captain");
+	// A battle in slot 1 with ships 3 and 4 in its list.
+	BattleGraph& g = save.battles;
+	g.set<uint8_t>(0, 0x404, 2);
+	const size_t battle = g.alloc(0x1E98);
+	g.set_ptr(0, 4, int(battle));
+	g.set<uint16_t>(battle, 0x14, 2);
+	g.set<uint8_t>(battle, 0x1E90, 0xFF);
+	g.set<uint8_t>(battle, 0x1E91, 0xFF);
+	const size_t ships = g.alloc(8);
+	g.set_ptr(battle, 0x4, int(ships));
+	for (uint32_t k = 0; k < 2; ++k) {
+		const size_t entry = g.alloc(0x164);
+		g.set<uint32_t>(entry, 0x4, 3 + k);
+		g.set_ptr(ships, 4 * k, int(entry));
+	}
+	check(!pirate_name(save, 4).known, "in a battle without the pirate's names: unknown, whatever its captain");
+	g.set<uint8_t>(battle, 0x1E90, 3);
+	g.set<uint8_t>(battle, 0x1E91, 5);
+	p = pirate_name(save, 4);
+	check(p.known && p.first == 3 && p.family == 5, "in a battle the battle's pirate");
 	if (failures == 0) {
 		std::printf("ship_menu_window: all checks passed\n");
 	}

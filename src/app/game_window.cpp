@@ -132,6 +132,9 @@ bool GameWindowArt::load_strip(uint32_t tex, Strip& strip) {
 		return false;
 	}
 	const int count = std::max(1, std::atoi(ini_value(textures_ini_, "TEX" + std::to_string(tex), "Count").c_str()));
+	std::string blend = ini_value(textures_ini_, "TEX" + std::to_string(tex), "Blendmode");
+	std::transform(blend.begin(), blend.end(), blend.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+	strip.multiply = blend.compare(0, 8, "multiply") == 0;
 	strip.frames.assign(size_t(count), SDL_Rect{0, 0, image.width, image.height});
 	const std::vector<uint8_t> ini(textures_ini_.begin(), textures_ini_.end());
 	read_texture_frames(ini, ("[TEX" + std::to_string(tex) + "]").c_str(), strip.frames.data(), count);
@@ -207,6 +210,10 @@ SDL_Point GameWindowArt::draw_strip(const Strip& strip, int frame, int x, int y,
 	if (!t) {
 		return {0, 0};
 	}
+	if (strip.multiply) {
+		copy_multiplied(t, src, dst, alpha, tint);
+		return {src.w, src.h};
+	}
 	const bool tinted = (tint & 0xFFFFFF) != 0xFFFFFF;
 	if (alpha != 255) {
 		SDL_SetTextureAlphaMod(t, alpha);
@@ -222,6 +229,23 @@ SDL_Point GameWindowArt::draw_strip(const Strip& strip, int frame, int x, int y,
 		SDL_SetTextureColorMod(t, 255, 255, 255);
 	}
 	return {src.w, src.h};
+}
+
+void GameWindowArt::copy_multiplied(SDL_Texture* t, const SDL_Rect& src, const SDL_Rect& dst, uint8_t alpha,
+	uint32_t tint) const {
+	// dst · (a · src + 1 − a): SDL_BLENDMODE_MUL (dst · src' + dst · (1 − src'_alpha)) with the colour scaled by a and
+	// the alpha a; without it (a renderer that lacks MUL), MOD at full strength.
+	const bool mul = SDL_SetTextureBlendMode(t, SDL_BLENDMODE_MUL) == 0;
+	if (!mul) {
+		SDL_SetTextureBlendMode(t, SDL_BLENDMODE_MOD);
+	}
+	const unsigned a = mul ? alpha : 255;
+	SDL_SetTextureColorMod(t, Uint8(((tint >> 16) & 0xFF) * a / 255), Uint8(((tint >> 8) & 0xFF) * a / 255),
+		Uint8((tint & 0xFF) * a / 255));
+	SDL_SetTextureAlphaMod(t, Uint8(a));
+	SDL_RenderCopy(renderer_, t, &src, &dst);
+	SDL_SetTextureColorMod(t, 255, 255, 255);
+	SDL_SetTextureAlphaMod(t, 255);
 }
 
 void GameWindowArt::free_animations() {
@@ -569,6 +593,33 @@ SDL_Point GameWindowArt::tex_size(uint32_t id, int frame) {
 
 SDL_Point GameWindowArt::draw_tex(uint32_t id, int frame, int x, int y, int width, uint8_t alpha, uint32_t tint) {
 	return draw_strip(tex(id), frame, x, y, width, alpha, tint);
+}
+
+void GameWindowArt::draw_tex_part(uint32_t id, int frame, const SDL_Rect& part, int x, int y, uint32_t tint) {
+	const Strip& strip = tex(id);
+	if (frame < 0 || size_t(frame) >= strip.frames.size() || part.w <= 0 || part.h <= 0) {
+		return;
+	}
+	const SDL_Rect f = strip.frames[size_t(frame)];
+	SDL_Texture* t = strip.texture;
+	SDL_Rect src = {f.x + part.x, f.y + part.y, part.w, part.h};
+	if (!strip.pieces.empty()) {
+		t = strip.pieces[size_t(frame)];
+		src = part;
+	}
+	if (!t) {
+		return;
+	}
+	const SDL_Rect dst = {x, y, part.w, part.h};
+	if (strip.multiply) {
+		copy_multiplied(t, src, dst, Uint8(tint >> 24), tint);
+		return;
+	}
+	SDL_SetTextureColorMod(t, Uint8(tint >> 16), Uint8(tint >> 8), Uint8(tint));
+	SDL_SetTextureAlphaMod(t, Uint8(tint >> 24));
+	SDL_RenderCopy(renderer_, t, &src, &dst);
+	SDL_SetTextureColorMod(t, 255, 255, 255);
+	SDL_SetTextureAlphaMod(t, 255);
 }
 
 int GameWindowArt::menu_rand() {

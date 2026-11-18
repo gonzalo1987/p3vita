@@ -181,6 +181,9 @@ public:
 	// ships, 0x5F8910); with `tint` (0xAARRGGBB), its colours multiplied by it (the game's constant colour, 0x4BB870: the
 	// ship list's convoy flags, 0x490F80).
 	SDL_Point draw_tex(uint32_t tex, int frame, int x, int y, int width = 0, uint8_t alpha = 255, uint32_t tint = 0xFFFFFFFF);
+	// Only the part `part` of the frame (in the frame's own coordinates) at (x, y), tinted: the game's blit 0x4BB330 with
+	// a source offset (the ship menu's barrel bands, 0x491A3D..0x491B36).
+	void draw_tex_part(uint32_t tex, int frame, const SDL_Rect& part, int x, int y, uint32_t tint = 0xFFFFFFFF);
 	SDL_Point tex_size(uint32_t tex, int frame);
 
 private:
@@ -201,6 +204,10 @@ private:
 		SDL_Texture* texture = nullptr;
 		std::vector<SDL_Rect> frames;
 		std::vector<SDL_Texture*> pieces;  // Each frame's own texture when split.
+		// textures.ini's Blendmode=multiply (the telescope's pirate TEX20028, the ship menu's backpics): drawn multiplying
+		// what is under it, its constant colour's alpha the strength (dst · (a · src + 1 − a): SDL_BLENDMODE_MUL with the
+		// colour scaled by a).
+		bool multiply = false;
 	};
 	bool load_strip(uint32_t tex, Strip& strip);
 	static void free_strip(Strip& strip);
@@ -208,6 +215,8 @@ private:
 	// coloured); the size drawn.
 	SDL_Point draw_strip(const Strip& strip, int frame, int x, int y, int width = 0, uint8_t alpha = 255,
 		uint32_t tint = 0xFFFFFFFF) const;
+	// A multiply strip's part drawn (Strip::multiply).
+	void copy_multiplied(SDL_Texture* t, const SDL_Rect& src, const SDL_Rect& dst, uint8_t alpha, uint32_t tint) const;
 	struct Animation {
 		Strip strip;
 		int x = 0;

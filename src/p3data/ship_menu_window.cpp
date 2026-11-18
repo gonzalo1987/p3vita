@@ -45,6 +45,43 @@ ConvoyMenuList convoy_menu_list(const SaveGame& save, uint16_t convoy) {
 	return list;
 }
 
+PirateName pirate_name(const SaveGame& save, uint16_t ship) {
+	PirateName name;
+	const BattleGraph& g = save.battles;
+	for (size_t k = 0; k < g.count(); ++k) {
+		const int b = g.battle(k);
+		if (b < 0) {
+			continue;
+		}
+		const uint16_t entries = g.get<uint16_t>(size_t(b), 0x14);
+		const int list = g.ptr(size_t(b), 0x4);
+		for (uint16_t i = 0; i < entries && list >= 0; ++i) {
+			const int entry = g.ptr(size_t(list), 4 * size_t(i));
+			if (entry >= 0 && g.get<uint32_t>(size_t(entry), 0x4) == ship) {
+				name.first = g.get<uint8_t>(size_t(b), 0x1E90);
+				name.family = g.get<uint8_t>(size_t(b), 0x1E91);
+				name.known = name.first != 0xFF || name.family != 0xFF;
+				return name;
+			}
+		}
+	}
+	uint32_t s = ship;
+	const uint16_t convoy = save.ships[ship].memory.u16(0x8);
+	if (convoy < convoy_count(save)) {
+		s = save.convoys[convoy].u16(0x10);
+	}
+	if (s >= save.ships.size()) {
+		return name;
+	}
+	const uint16_t captain = save.ships[s].memory.u16(0x42);
+	if (captain < save.globals.u16(global::kCaptainCount) && captain < save.captains.size()) {
+		name.known = true;
+		name.first = save.captains[captain].u8(0x2);
+		name.family = save.captains[captain].u8(0x3);
+	}
+	return name;
+}
+
 bool hanse_fleet_convoy(const SaveGame& save, uint16_t convoy) {
 	if (convoy >= save.convoys.size()) {
 		return false;
@@ -66,6 +103,11 @@ ConvoyMenuHead convoy_menu_head(const SaveGame& save, const ConvoyMenuList& list
 	for (const uint16_t id : list.ships) {
 		const ShipMemory& s = save.ships[id].memory;
 		if (s.u8(0x0) == owner) {
+			const int32_t equipment = s.s32(0x11C);
+			h.equipment += equipment;
+			if (equipment % 200) {
+				h.equipment += 200 - equipment % 200;
+			}
 			h.sailors += s.u16(0x40);
 			h.firepower += s.s32(0x120);
 			for (int k = 0; k < 24; ++k) {

@@ -12,6 +12,7 @@
 #include "p3data/mail.hpp"
 #include "p3data/player_actions.hpp"
 #include "p3data/sailing.hpp"
+#include "p3data/ship_list_window.hpp"
 #include "p3data/simulation.hpp"
 #include "p3data/town_hall_window.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -805,6 +806,8 @@ const char kDebugStatesHelp[] =
 	"  home-elsewhere  the player's home town the next one (the office's «Move» offered)\n"
 	"  shipyard-orders  20 snaikkas ordered by the player at his first ship's town's\n"
 	"              shipyard (its list of contracts with its scroll bar)\n"
+	"  raiding-ship  in each town another merchant's ship docked there raiding (the\n"
+	"              lighthouse's list; the ship menu's head with the pirate's name)\n"
 	"  lost-ship   the player's last ship out of a convoy lost (the state 0x11: the ship\n"
 	"              list removes it)\n"
 	"  office-goods  the player's office at home with stock, a day's making and using of\n"
@@ -1289,6 +1292,25 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			for (uint32_t k = 0; k < 4; ++k) {
 				save.sieges[home].u8(0x1010 + k) = wares[k];
 				save.sieges[home].u8(0x1014 + k) = k < 2 ? 3 : 0;
+			}
+		} else if (state == "raiding-ship") {
+			// In each town, the first of the lighthouse's second table (port_ship_list: another merchant's ship docked
+			// there, the states 0..3) raiding ([+0x15C] 1): the list says «Pirate» for its owner, the ship menu's head the
+			// pirate's name (0x612EE0: its captain's or its convoy guide's, else «Unknown pirate»).
+			int raiders = 0;
+			for (size_t town = 0; town < save.towns.size() && save.player >= 0; ++town) {
+				const ShipList list = port_ship_list(save, uint32_t(save.player), uint32_t(town));
+				if (list.others > 0) {
+					const uint16_t raider = list.ships[list.own];
+					save.ships[raider].memory.u8(0x15C) = 1;
+					std::printf("raiding-ship: town %zu, ship %u of merchant %u\n", town, unsigned(raider),
+						unsigned(save.ships[raider].owner()));
+					++raiders;
+				}
+			}
+			if (raiders == 0) {
+				error = "no other merchant's ship docked in any town";
+				return false;
 			}
 		} else if (state == "lost-ship") {
 			// The player's last ship out of a convoy in the state 0x11 (as a ship sunk in a battle: Sailing::sink).

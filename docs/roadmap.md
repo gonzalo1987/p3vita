@@ -99,9 +99,13 @@ Cómo leerla:
   juego («Información de la flota»), con sus letras, textos, columnas, órdenes y botones, abierta desde el icono del
   panel y desde el faro de la ciudad (los barcos de su puerto, también los de otros comerciantes) (apartado 4); y,
   ya en el menú del barco, el barco y el convoy de otro comerciante y varios barcos a la vez (18-11-2026).
+- **Hecho el 18-11-2026 (`re/emu/sesion41/`)**: en el menú del barco, la cabecera del barco propio como la del juego,
+  el convoy propio (su estado 2) y el nombre del pirata; de paso, la sombra de la tabla en lo alto de todos los menús
+  laterales, el borde rasgado bajo la fila de iconos y las texturas que se mezclan multiplicando (apartado 4).
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): primero el resto
   de las pantallas, el panel lateral con las letras y los textos del juego (apartado 4; el encargo
-  `ENCARGO_PANEL_JUEGO.md`: lo que queda del menú del barco, su cabecera y su convoy propios, y sus páginas); luego el intérprete de misiones (apartado 3), el final de la partida
+  `ENCARGO_PANEL_JUEGO.md`: las páginas del menú del barco, el menú de construir, las estadísticas, los mensajes, el
+  panel de las batallas y la barra de arriba); luego el intérprete de misiones (apartado 3), el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -516,13 +520,35 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     - [x] Varios barcos a la vez (18-11-2026): una pulsación larga en una fila de la lista los añade o los quita, como
       el Ctrl del juego (decisión del usuario); el menú del barco enseña entonces su estado 0, la lista de los elegidos
       ([Chart0] de sidemenu.ini), con la barra del juego donde no caben.
-    - [ ] Con el menú del barco (parte 2): el convoy del jugador (el estado 2: su cabecera y la lista de sus barcos, hoy
-      el menú propio del visor) y el nombre del pirata (0x612EE0).
+    - [x] El convoy del jugador y el nombre del pirata (18-11-2026, `re/emu/sesion41/README.md`): el estado 2 del menú
+      del barco (su cabecera «Convoy …» con las sumas del convoy, también la del equipo, y la lista de sus barcos; las
+      mercancías del primero de la lista; su ruta; «deshacer convoy»), al que se llega como en el juego: tocando en la
+      lista un barco suyo en convoy (otra vez, el barco solo), con los botones de convoy del panel o con «ver convoy»;
+      los botones de cada estado como el juego (en el estado 1 con el barco en convoy, sin ruta comercial: es la del
+      convoy); cada elección nueva vuelve a la página de mercancías (0x488080). El nombre del pirata (0x612EE0): el de su
+      batalla, o el del capitán del barco o del guía de su convoy, o «Pirata desconocido» (texto nuevo emparejado;
+      estado de depuración `raiding-ship`).
+    - [ ] Varios barcos de otras maneras: el pad no tiene el Ctrl del juego (falta preguntar al usuario si quiere una
+      tecla para la fila del pad) y el recuadro arrastrado del mapa del mar no cabe en la Vita (arrastrar mueve el
+      mapa).
     - [ ] «Ir al barco» centrado en su barco del puerto (0x476A30: la lista 0x6E2D50): va con los barcos en el puerto
       de la ciudad viva. (El de un barco en construcción, estado 0xE, ya centra el astillero de su ciudad.)
-  - [ ] El menú del barco: su cabecera y sus cinco páginas.
+  - [ ] El menú del barco: su cabecera y sus cinco páginas. **Hecha la cabecera del barco propio** (18-11-2026,
+    0x48EE90 → 0x4916E0, trazada en el emulador): el nombre con sus marcas en la letra 2, la línea de estado como el
+    juego (los días, el icono, el sitio), la fila de iconos con el borde rasgado del pergamino debajo, y el barril
+    con la bodega y el equipo (el equipo abajo, en rojo solo la capacidad si se pasa); en la página de mercancías y,
+    con el barco ya en convoy, en la de convoy. Los botones de las páginas a las x y tamaños del juego (0x493320: van
+    en una fila 50 por encima del menú, donde en la Vita están los botones de barcos del panel: arriba del pergamino,
+    improvisado). Arreglos comunes de paso (`re/emu/sesion41/README.md`, «Corrections»): la sombra de la tabla en lo
+    alto de **todos** los menús laterales (TEX20005, que el visor no dibujaba en ninguno; se ve en la foto del
+    ayuntamiento del usuario), el separador TEX20007 bajo la fila de iconos (antes la sombra: estaban cambiadas), las
+    cabeceras 6 más arriba, y las texturas `Blendmode=multiply` de textures.ini (el pirata del catalejo salía como un
+    cuadrado blanco). Falta: las páginas de mercancías (0x48F510), tripulación (0x48DF90), cubierta (0x48E700, con su
+    propia cabecera; hoy la vieja del visor, también en el panel de la batalla), convoy (la ventana de formar convoy
+    del juego) y ruta (0x48F2C0, bajo la cabecera), y sus botones.
   - [ ] El menú de construir, con **el aviso de la reputación** (0x6B20A4, «Todavía no puedes construir una oficina
-    comercial…»: un texto «\c» centrado en la letra del juego; hoy un texto del visor alineado a la izquierda).
+    comercial…»: un texto «\c» centrado en la letra del juego; hoy un texto del visor alineado a la izquierda). Visto
+    el 18-11-2026: en inglés sus dos primeras filas dicen las dos «trading office».
   - [ ] Las estadísticas (el panel y sus ventanas), los mensajes en el panel, el panel de las batallas y la barra de
     arriba.
 - [x] **El panel de la Hansa** propio del visor (Cuadrado en una ciudad), quitado el 15-11-2026 a petición del
