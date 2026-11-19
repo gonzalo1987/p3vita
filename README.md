@@ -184,13 +184,19 @@ button, or Square in a convoy) asks first. With several ships chosen the menu
 lists them, the head of the row's ship above (up and down move along the rows,
 X chooses its ship alone), and «form convoy» (or Square) makes them a convoy.
 
-**The messages** (the panel's scroll, or Circle): the public news, the official
-and personal letters and the trade information, by the game's buttons or left
-and right; touching a letter, or X, opens it on a parchment over the town (up
-and down go through them, L and R through its text, Square deletes it). Select opens the letters'
-settings, as the game's: how long each kind is kept, its notice and sound, and
-the events' sound (up and down choose, left and right or X change, Circle closes
-it, which sends them to the game).
+**The messages** (the panel's scroll, or Circle): the game's menu in the panel's
+room, with its buttons for the official and personal letters and the trade
+information (or left and right), the settings and delete; touching a letter, or
+X, opens it in the game's message window over the town (up and down go through
+the letters, the sticks or a drag move its text, X and Triangle are its buttons,
+Square deletes it, Circle closes it and then the messages; L and R the game's
+speed, as in the other windows over the town). The public news (the chronicle)
+are the top bar's hourglass, as in the game. Select opens the letters' settings,
+as the game's: how long each kind is kept, its notice and sound, and the events'
+sound (up and down choose a row, left is the game's «−» and right its «+», X
+changes the row, Circle closes it, which sends them to the game). Where there is
+no panel (a battle, from the Start menu's mailbox) the messages fill the screen,
+the news as their first tab.
 
 **The statistics** (touching the money on the top bar, as in the game): the game's menu in the panel's room (its four
 tabs: the company overview, the competition, the town data and the town comparison; the page's entries) and the

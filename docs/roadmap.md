@@ -104,9 +104,11 @@ Cómo leerla:
   laterales, el borde rasgado bajo la fila de iconos y las texturas que se mezclan multiplicando (apartado 4).
 - **Hecho el 18-11-2026 (quinta sesión, `re/emu/sesion43/`)**: las estadísticas como las del juego, su menú lateral
   y su ventana de pergamino con todas sus entradas, trazadas en el emulador (apartado 4).
+- **Hecho el 19-11-2026 (`re/emu/sesion43/`, «Part 2»)**: los mensajes como los del juego: su menú lateral, la carta
+  y la crónica en la ventanita de mensaje del juego y la ventana de ajustes de las cartas (apartado 4).
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): primero el resto
   de las pantallas, el panel lateral con las letras y los textos del juego (apartado 4; el encargo
-  `ENCARGO_PANEL_JUEGO.md`: quedan los mensajes, el panel de las batallas y la barra de arriba); luego el intérprete de misiones (apartado 3), el final de la partida
+  `ENCARGO_PANEL_JUEGO.md`: quedan el panel de las batallas y la barra de arriba); luego el intérprete de misiones (apartado 3), el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -129,7 +131,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Operaciones (193 códigos) | 167: las 37 de la simulación, 101 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red y la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) | **5 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74, 0x76 y 0x82; apartado 3), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 139 | 15: 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
-| El panel lateral y sus ventanas como los del juego (18-11-2026) | 4 de 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir y las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña) | 3: los mensajes (el buzón en el panel y la carta), el panel de las batallas («ver convoy» y sus botones) y la barra de arriba (apartado 4) |
+| El panel lateral y sus ventanas como los del juego (19-11-2026) | 5 de 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña) y los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes) | 2: el panel de las batallas («ver convoy» y sus botones) y la barra de arriba (apartado 4) |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
@@ -604,7 +606,22 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     a ser la velocidad como en las demás ventanas sobre la ciudad; Triángulo cambia el periodo (en el suministro, la
     ciudad) y, en las listas, el orden; Cuadrado y X, los botones bajo la gráfica y su lista (decisión de manejo, para
     que las teclas coincidan con el resto del visor).
-  - [ ] Los mensajes en el panel, el panel de las batallas y la barra de arriba.
+  - [x] Los mensajes en el panel (19-11-2026, `re/emu/sesion43/README.md`, «Part 2»): el menú lateral como el del juego
+    (SIDEMENU_INFOS, trazado en el emulador: sus cinco botones en la fila de arriba —oficiales, personales, comercio,
+    ajustes y borrar—, el título de la pestaña en la letra 3, las filas con la fecha, el asunto en negro si no se ha
+    leído y en marrón si sí, y la ciudad, la banda de la carta que se ve y la barra); la carta y la crónica en la
+    ventanita de mensaje del juego (proporción 1,375, con rollos las cartas oficiales y la crónica, las letras del juego
+    en cada línea con sus capitulares y el mapa, sus botones con X y Triángulo, el de cerrar con Círculo y la barra si
+    no cabe); la crónica aparte de las pestañas, con el reloj de arena de la barra de arriba, como el juego; y la
+    ventana de ajustes de las cartas como la del juego (352 × 544, leída a mano: sus «−» y «+», sus casillas con la
+    marca, la notificación de sucesos; al cerrarla se guardan y se miran las cartas, 0x70 y 0x71, que borran las
+    vencidas como el juego). Con el mando, L y R la velocidad, los joysticks mueven la carta, izquierda y derecha las
+    pestañas; en los ajustes, izquierda es «−» y derecha «+», X cambia la fila (los días dan la vuelta). El buzón a
+    pantalla completa (sin panel: en una batalla, desde el menú de Start) sigue siendo el del visor: su texto, con las
+    letras del juego en claro; con él abierto, sus teclas y sus toques van antes que los de la batalla (antes se
+    quedaba sin poder cerrarse con el mando, y el toque que lo cerraba daba una orden a los barcos).
+  - [ ] El panel de las batallas y la barra de arriba (en la barra, las teclas de la derecha se meten bajo el pilar de
+    la fecha cuando esta es corta, como en inglés: con los sitios del juego, screenGame.ini).
 - [x] **El panel de la Hansa** propio del visor (Cuadrado en una ciudad), quitado el 15-11-2026 a petición del
   usuario: sus encargos y elecciones son las páginas del ayuntamiento, y los materiales de la carretera, la página
   «Ruta terrestre» de la puerta de la ciudad, como las del juego.
@@ -722,6 +739,10 @@ Pendiente:
   ajustes para encender o apagar ciertas cosas, cada corrección por separado o como complementos): un inventario de los
   fallos y rarezas y una pantalla en las Opciones para encender o apagar cada corrección, en vez del ajuste único. Por eso cada
   fallo de la lista de abajo tiene que quedar bien identificado: dónde está, qué hace mal y qué cambia su corrección.
+- [ ] **La pantalla de ajustes, como la de las cartas** (idea del usuario, 19-11-2026): la ventana de ajustes de las
+  notificaciones del juego (352 × 544, sus filas con «−» y «+» y sus casillas con la marca; `draw_mail_options`,
+  re/emu/sesion43/README.md) puede servir más adelante de modelo para la configuración del juego: las correcciones de
+  los fallos una a una y los ajustes del visor.
 - [ ] La fiesta de la IA que nunca ocurre, como opción aparte (abajo, «No se corrigen»).
 
 ### 8. Multijugador con el juego original (al final de todo)

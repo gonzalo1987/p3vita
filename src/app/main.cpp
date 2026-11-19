@@ -7,6 +7,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -3457,9 +3458,17 @@ struct GameMessage {
 	PlaceView::Dialog dialog;
 	PlaceView::Page page;
 	SDL_Rect close{};  // Its close button, [+0x4B0].
+	// Its text box (the scroll bar's rectangle, 0x460EF0; traced with re/emu/sesion38/msgtrace.sh: from (12, 4), the
+	// rolls' 6 and 32 more when official, to 6 from its right and 40 (72 more when official) from its bottom) and the text's
+	// left (3 in) and width (the window's less XReserved).
+	SDL_Rect text{};
+	int text_x = 0;
+	int text_w = 0;
 };
-GameMessage game_message_layout(const std::string& raw, std::vector<PlaceView::PageButton> buttons, bool official, int key,
-	float message_ratio, int screen_w, int screen_h) {
+// The window for a text whose height at a width `text_height` gives (game_box's for a game's text; a letter's lines'),
+// its buttons placed; the text left to the caller.
+GameMessage game_message_frame(const std::function<int(int)>& text_height, std::vector<PlaceView::PageButton> buttons,
+	bool official, int key, float message_ratio, int screen_w, int screen_h) {
 	constexpr int kTile = 32;
 	constexpr int kMinX = 128;
 	constexpr int kXReserved = 52;
@@ -3482,7 +3491,7 @@ GameMessage game_message_layout(const std::string& raw, std::vector<PlaceView::P
 	const int extra = official ? 2 * kTile : 0;
 	auto high = [&](int w) { return int(double(w) * ratio / kTile) * kTile; };
 	auto need = [&](int w) {
-		return (game_box(nullptr, raw, 0, 0, w - kXReserved) + kBoxLine - 1) / kBoxLine * kBoxLine + extra + kYReserved;
+		return (text_height(w - kXReserved) + kBoxLine - 1) / kBoxLine * kBoxLine + extra + kYReserved;
 	};
 	int w = 0;
 	int h = 0;
@@ -3523,7 +3532,10 @@ GameMessage game_message_layout(const std::string& raw, std::vector<PlaceView::P
 	m.dialog.rolls = official;
 	m.dialog.key = key;
 	m.dialog.at = {x, y};
-	game_box(&m.page, raw, (official ? kRoll : 0) + 12 + 3, (official ? kTile : 0) + 4, w - kXReserved);
+	const int roll = official ? kRoll : 0;
+	m.text = {x + roll + 12, y + (official ? kTile : 0) + 4, w - 6 - 12, h - kYReserved - (official ? 2 * kTile + 8 : 0)};
+	m.text_x = m.text.x + 3;
+	m.text_w = w - kXReserved;
 	const int button_y = h - (official ? kTile : 0) - kYReserved + (kYReserved - 18) / 2;
 	const int gap = buttons.empty() ? 0 : (w - (kClose / 2 + kClose) - sum) / int(buttons.size() + 1);
 	int bx = official ? kRoll : 0;
@@ -3536,6 +3548,18 @@ GameMessage game_message_layout(const std::string& raw, std::vector<PlaceView::P
 	}
 	PlaceView::offset_page(m.page, x, y);
 	m.close = SDL_Rect{x + w - (kClose / 2 + kClose) / 4 - kClose, y + button_y, kClose, 18};
+	return m;
+}
+
+GameMessage game_message_layout(const std::string& raw, std::vector<PlaceView::PageButton> buttons, bool official, int key,
+	float message_ratio, int screen_w, int screen_h) {
+	GameMessage m = game_message_frame([&](int width) { return game_box(nullptr, raw, 0, 0, width); }, std::move(buttons),
+		official, key, message_ratio, screen_w, screen_h);
+	PlaceView::Page text;
+	game_box(&text, raw, 0, 0, m.text_w);
+	PlaceView::offset_page(text, m.text_x, m.text.y);
+	m.page.texts.insert(m.page.texts.begin(), text.texts.begin(), text.texts.end());
+	m.page.icons.insert(m.page.icons.begin(), text.icons.begin(), text.icons.end());
 	return m;
 }
 
@@ -16432,15 +16456,23 @@ void draw_battle_label(SDL_Renderer* renderer, TextRenderer& text, const PanelAr
 }
 
 // The mailbox (Circle in a town or on the sea map, or the menu): the game's
-// letter window (0x47C520, 0x47D570, 0x47F3B0) with its four tabs: 0 the
-// chronicle («Public news», 0x47DD40), 1..3 the letters of each class. The
-// list on the left, the letter on the right. Picking a letter marks it read
+// letter window (0x47C520, 0x47D570, 0x47F3B0) with its three tabs, 1..3 the
+// letters of each class, and the chronicle («Public news», 0x47DD40: the top
+// bar's hourglass, as the game's) apart. Picking a letter marks it read
 // (operation 0x6E) and Square deletes it (0x6F); the executor runs them after
 // the next tick, as in the game, so the screen hides a letter whose deletion
 // is queued and shows as read one whose reading is.
 struct MailUi {
 	bool open = false;
 	int tab = 1;
+	bool chronicle = false;  // The chronicle shown (its window over the town; on the whole screen, its tab).
+	// The text shown: its paragraphs (letter_paragraphs, or the viewer's own words as one), whether they are the game's,
+	// and whether its window is official (the rolls: the letters of class 1 and the chronicle, 0x47F5CC, 0x47DDB3).
+	std::vector<LetterParagraph> paragraphs;
+	bool from_game = false;
+	bool official = false;
+	int version = 0;  // Counted up when the text or its buttons change: the window is laid out again.
+	int lines_width = -1;  // The width `lines` are wrapped for (-1: not yet).
 	int row = 0;  // The selected row of the list.
 	int first = 0;  // The first row shown.
 	int scroll = 0;  // The text's, in pixels.
@@ -16453,6 +16485,8 @@ struct MailUi {
 		std::string text;
 		int indent = 0;  // Beside a drop cap: its width and 4 (0x46272F), until the line is below it.
 		char cap = 0;  // The drop cap drawn at this line's start (its paragraph's first line).
+		int font = 0;  // The game's font (its paragraph's: «\fN»; the text box's own 0).
+		int height = 15;  // The font 3's lines 20; the window's picture as high as it.
 	};
 	std::vector<Line> lines;
 	// The drop caps' pictures (parchment.ini [TEXCOL0]: images/grossbuchstaben, the letter − 'A'), read the first time
@@ -16688,38 +16722,6 @@ std::vector<std::string> wrap_letter(const TextRenderer& text, const std::string
 	return lines;
 }
 
-// A line of the letter shown (MailUi::lines) at y in `box`, if it shows there: the window's picture (kPictureLine), or
-// its text by its alignment, a drop cap at its start (its picture at the line's top left) and the text after its indent.
-void draw_mail_line(SDL_Renderer* renderer, TextRenderer& text, const MailUi& ui, const MailUi::Line& l, const SDL_Rect& box,
-	int y, SDL_Color color) {
-	const std::string& line = l.text;
-	if (line.size() == 1 && line[0] == kPictureLine) {
-		if (ui.picture) {
-			const int x = l.align == LetterParagraph::Right ? box.x + box.w - 4 - ui.picture_width
-				: l.align == LetterParagraph::Center ? box.x + (box.w - ui.picture_width) / 2
-				: box.x + 4;
-			const SDL_Rect where = {x, y, ui.picture_width, ui.picture_height};
-			SDL_RenderCopy(renderer, ui.picture.get(), nullptr, &where);
-		}
-		return;
-	}
-	if (l.cap) {
-		const auto cap = ui.caps.find(l.cap);
-		const auto size = ui.cap_sizes.find(l.cap);
-		if (cap != ui.caps.end() && cap->second && size != ui.cap_sizes.end()) {
-			const SDL_Rect where = {box.x + 4, y, size->second.x, size->second.y};
-			SDL_RenderCopy(renderer, cap->second.get(), nullptr, &where);
-		}
-	}
-	if (y + text.line_height() >= box.y && y < box.y + box.h) {
-		const int w = text.measure(line);
-		const int x = l.align == LetterParagraph::Right ? box.x + box.w - 4 - w
-			: l.align == LetterParagraph::Center ? box.x + (box.w - w) / 2
-			: box.x + 4 + l.indent;
-		text.draw(line, x, y, color);
-	}
-}
-
 // The tab's name, from the game. The Spanish exe repeats «Notificaciones
 // oficiales» for the chronicle's tab (a bug of its text, fixed with
 // fix_game_bugs()).
@@ -16791,20 +16793,24 @@ void draw_letter_answers(SDL_Renderer* renderer, TextRenderer& text, const MailU
 	}
 }
 
+void draw_letter_line(SDL_Renderer* renderer, TextRenderer& fallback, const MailUi& ui, const MailUi::Line& l, int x,
+	int width, int y, SDL_Color ink);
+
 void draw_mailbox(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, const MailUi& ui,
 	const std::vector<uint16_t>& rows) {
-	const bool chronicle = ui.tab == 0;
+	const bool chronicle = ui.chronicle;
 	MailLayout layout(text.line_height(), chronicle);
 	layout.with_answers(int(ui.answers.size()));
 	draw_panel_box(renderer, layout.panel, 250);
 	for (int k = 0; k < 4; ++k) {
 		const SDL_Rect& r = layout.tabs[size_t(k)];
-		SDL_SetRenderDrawColor(renderer, k == ui.tab ? 120 : 55, k == ui.tab ? 90 : 42, k == ui.tab ? 45 : 26, 230);
+		const bool lit = k == 0 ? ui.chronicle : !ui.chronicle && k == ui.tab;  // (The chronicle: the tab 0 here.)
+		SDL_SetRenderDrawColor(renderer, lit ? 120 : 55, lit ? 90 : 42, lit ? 45 : 26, 230);
 		SDL_RenderFillRect(renderer, &r);
 		SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
 		SDL_RenderDrawRect(renderer, &r);
 		const std::string name = mail_tab_name(k);
-		text.draw(name, r.x + (r.w - text.measure(name)) / 2, r.y + 5, k == ui.tab ? kTextColor : kDimColor);
+		text.draw(name, r.x + (r.w - text.measure(name)) / 2, r.y + 5, lit ? kTextColor : kDimColor);
 	}
 	if (!chronicle) {
 		if (rows.empty()) {
@@ -16853,12 +16859,13 @@ void draw_mailbox(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sa
 	SDL_Rect clip = layout.text;
 	SDL_RenderSetClipRect(renderer, &clip);
 	int y = layout.text.y + 2 - ui.scroll;
+	int height = 4;
 	for (const MailUi::Line& line : ui.lines) {
-		draw_mail_line(renderer, text, ui, line, layout.text, y, kTextColor);
-		y += text.line_height();
+		draw_letter_line(renderer, text, ui, line, layout.text.x + 4, layout.text.w - 8, y, kTextColor);
+		y += line.height;
+		height += line.height;
 	}
 	SDL_RenderSetClipRect(renderer, nullptr);
-	const int height = int(ui.lines.size()) * text.line_height() + 4;
 	if (height > layout.text.h) {
 		// Where in the text: a thin bar on the right.
 		const int bar = std::max(20, layout.text.h * layout.text.h / height);
@@ -16897,27 +16904,6 @@ void draw_scroll(SDL_Renderer* renderer, SDL_Texture* paper, const SDL_Rect& r) 
 	piece(134, 160, 38, 64, x2, y2, 38, 64);
 }
 
-// The letter's or the chronicle's lines (MailUi::lines) in `box`, scrolled, in `color`.
-void draw_letter_lines(SDL_Renderer* renderer, TextRenderer& text, const MailUi& ui, const SDL_Rect& box, SDL_Color color,
-	SDL_Color rule) {
-	SDL_Rect clip = box;
-	SDL_RenderSetClipRect(renderer, &clip);
-	int y = box.y + 2 - ui.scroll;
-	for (const MailUi::Line& line : ui.lines) {
-		draw_mail_line(renderer, text, ui, line, box, y, color);
-		y += text.line_height();
-	}
-	SDL_RenderSetClipRect(renderer, nullptr);
-	const int height = int(ui.lines.size()) * text.line_height() + 4;
-	if (height > box.h) {
-		const int bar = std::max(20, box.h * box.h / height);
-		const int at = box.y + (box.h - bar) * ui.scroll / std::max(1, height - box.h);
-		const SDL_Rect thumb = {box.x + box.w - 3, at, 3, bar};
-		SDL_SetRenderDrawColor(renderer, rule.r, rule.g, rule.b, 255);
-		SDL_RenderFillRect(renderer, &thumb);
-	}
-}
-
 // A frame of briefe0001.tga (TEX20018, 32 · 28 each): 0..11 three a row, 12..15 the delete button's four
 // (its disabled one the fourth), 16..18 the settings'.
 void draw_letter_button(SDL_Renderer* renderer, const PanelArt& art, const SDL_Rect& dst, int frame) {
@@ -16927,128 +16913,416 @@ void draw_letter_button(SDL_Renderer* renderer, const PanelArt& art, const SDL_R
 	draw_picture(renderer, art.letters, dst, &src);
 }
 
-// The letters' settings window's text by its address (0x6C0F34...), or the viewer's.
-std::string letter_option_text(uint32_t english, const char* spanish, const char* fallback) {
-	return exe_text(english, spanish, fallback);
-}
+// The letters' settings window as the game's (the messages' menu's [+0x9FC], vtable 0x66F1E0: its init 0x409E90 with
+// parchment.ini [Parchment3]: SizeX 11 and SizeY 16 + 1 tiles, 352 × 544, FontNorm 1, FontFett 0, DeltaYKl 21 and
+// DeltaYGr 42 (their defaults); its show 0x409050 places its controls, its drawing 0x409780, its clicks 0x409A10): the
+// dialogs' paper without rolls, centred in the view (drawn at its size and fitted to the Vita's view, ×0.9375:
+// adapted); its title (0x6C0F34) in the font 3 centred at the font 3's height, black over its light shadow a pixel
+// lower right; for each class, DeltaYGr under the line before, its name (0x6C0FB8 + 4 · class) in the font 0 at
+// [+0xB4] − 30 ([+0xB4]: the window's width less the second days' name's in the font 0, halved, less a «−»'s width);
+// DeltaYKl lower its days (0x6C1058 + 4 · days) in the font 1 centred between «−» (Button0, 16 × 18; it raises the
+// index, shown under 5) at [+0xB4] − 30 and «+» (it lowers it, shown above 0) at the width less [+0xB4]; then «When news
+// arrive...» (0x6C0FC4), «show notice» (0x6C0FC8) and «play sound» (0x6C0FCC), each DeltaYKl lower, the last two at
+// [+0xB4] after their boxes (Button0 at [+0xB4] − 30, the tick TEX20008, 24 × 16, 4 to their left when set: the
+// notices' bit 3 + class, the sounds' bit class of the player's [+0x26]); last the event sound (0x6C0FD0, its box with
+// «play», 0x6C0FD4: the player's [+0x3B]); the close button (Button5) 20 from its right and bottom ends.
+constexpr int kMailOptionsW = 11 * 32;
+constexpr int kMailOptionsH = 17 * 32;
+constexpr int kMailOptionsDialog = 26;  // GameWindowArt::draw_dialog's key.
+constexpr int kMailOptionsKl = 21;
+constexpr int kMailOptionsGr = 42;
+constexpr int kMailOptionsTitleY = 20;  // The font 3's height ([+0xB8]).
 
-// The messages in the side panel (the game's SIDEMENU_INFOS, *0x6CC960): its six buttons (the public news,
-// the official letters, the personal letters, the trade information, the letters' settings and delete:
-// briefe0001.tga's frames 0, 3, 6, 9, 16, 12, lit + 2), the tab's name and its letters, one a row (the
-// unread ones darker, as the game's black and brown, 0x47D8E0). The letter or the chronicle goes on a
-// parchment over the town (draw_mail_parchment).
-void draw_mail_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
-	const MailUi& ui, const std::vector<uint16_t>& rows, const MailLayout& layout) {
-	static constexpr int kFrames[4] = {0, 3, 6, 9};
-	for (int k = 0; k < 4; ++k) {
-		draw_letter_button(renderer, art, layout.tabs[size_t(k)], kFrames[k] + (k == ui.tab ? 2 : 0));
+struct MailOptionsFrame {
+	SDL_Rect on_screen{};
+	float scale = 1.0f;
+	int left = 0;  // [+0xB4]
+	MailOptionsFrame() {
+		const int view_h = kScreenHeight - kBarHeight;
+		scale = std::min(1.0f, float(view_h) / float(kMailOptionsH));
+		const int w = int(float(kMailOptionsW) * scale + 0.5f);
+		const int h = int(float(kMailOptionsH) * scale + 0.5f);
+		on_screen = {(g_town_right - w) / 2, kBarHeight + (view_h - h) / 2, w, h};
+		TextRenderer* head = g_game_art ? g_game_art->head_text() : nullptr;
+		const std::string second = exe_text(0x6C105C, "", "");
+		left = (kMailOptionsW - (head ? head->measure(second) : 7 * int(second.size()))) / 2 - 16;
 	}
-	draw_letter_button(renderer, art, layout.options_button, ui.options ? 18 : 16);
-	const bool can_delete = ui.tab != 0 && ui.row < int(rows.size());
-	draw_letter_button(renderer, art, layout.delete_button, can_delete ? 12 : 15);
-	text.draw(cut_text(text, mail_tab_name(ui.tab), layout.title.w), layout.title.x, layout.title.y, kParchmentInk);
-	if (ui.tab == 0) {
-		text.draw(tr("(sobre la ciudad)", "(over the town)"), layout.list.x + 2, layout.list.y, kParchmentDim);
+	SDL_Point window(int x, int y) const {
+		return {int(float(x - on_screen.x) / scale), int(float(y - on_screen.y) / scale)};
+	}
+	// In the window's coordinates: a class's line of days, «−», «+», its boxes; the event sound's box; the close button.
+	static int days_y(int k) { return kMailOptionsTitleY + kMailOptionsGr + kMailOptionsKl + 6 * kMailOptionsKl * k; }
+	SDL_Rect minus(int k) const { return {left - 30, days_y(k), 16, 18}; }
+	SDL_Rect plus(int k) const { return {kMailOptionsW - left, days_y(k), 16, 18}; }
+	SDL_Rect notice_box(int k) const { return {left - 30, days_y(k) + 2 * kMailOptionsKl, 16, 18}; }
+	SDL_Rect sound_box(int k) const { return {left - 30, days_y(k) + 3 * kMailOptionsKl, 16, 18}; }
+	SDL_Rect event_box() const { return {left - 30, days_y(3), 16, 18}; }
+	static SDL_Rect close() { return {kMailOptionsW - 32 - 20, kMailOptionsH - 18 - 20, 32, 18}; }
+	// The pad's row (kMailOptionRows: each class's days, notice, sound; the event sound) at a point, -1 none; with the
+	// days, whether on «−» (-1) or «+» (1), 0 on their words.
+	int row_at(SDL_Point p, int& side) const {
+		side = 0;
+		auto near = [&](const SDL_Rect& r) { return inside({r.x - 4, r.y - 3, r.w + 8, r.h + 6}, p.x, p.y); };
+		for (int k = 0; k < 3; ++k) {
+			if (near(minus(k)) || near(plus(k))) {
+				side = near(minus(k)) ? -1 : 1;
+				return 3 * k;
+			}
+			if (inside({left - 34, days_y(k) + 2 * kMailOptionsKl - 2, kMailOptionsW - left, kMailOptionsKl}, p.x, p.y)) {
+				return 3 * k + 1;
+			}
+			if (inside({left - 34, days_y(k) + 3 * kMailOptionsKl - 2, kMailOptionsW - left, kMailOptionsKl}, p.x, p.y)) {
+				return 3 * k + 2;
+			}
+		}
+		if (inside({left - 34, days_y(3) - 2, kMailOptionsW - left, kMailOptionsKl}, p.x, p.y)) {
+			return kMailOptionRows - 1;
+		}
+		return -1;
+	}
+};
+
+void draw_mail_options(TextRenderer& fallback, const MailUi& ui) {
+	if (!g_game_art) {
 		return;
 	}
-	if (rows.empty()) {
-		text.draw(tr("No hay cartas.", "No letters."), layout.list.x + 2, layout.list.y, kParchmentDim);
+	GameWindowArt& gart = *g_game_art;
+	const MailOptionsFrame f;
+	gart.begin_sized(f.on_screen, kMailOptionsW, kMailOptionsH);
+	gart.draw_dialog(0, 0, kMailOptionsW / 32, kMailOptionsH / 32, false, kMailOptionsDialog);
+	TextRenderer& title = gart.title_text() ? *gart.title_text() : fallback;
+	TextRenderer& head = gart.head_text() ? *gart.head_text() : fallback;
+	TextRenderer& page = gart.page_text() ? *gart.page_text() : fallback;
+	const SDL_Color black = argb_color(kShipListInk);
+	// The pad's row (the game's mouse): its words in the pointed blue.
+	auto ink = [&](int row) { return row == ui.options_row ? argb_color(0xFF0020CC) : black; };
+	const std::string t = exe_text(0x6C0F34, "Configuración de las notificaciones", "Configuration of letters");
+	const int cx = kMailOptionsW / 2;
+	title.draw(t, cx - title.measure(t) / 2 + 1, kMailOptionsTitleY + 1, argb_color(0xFFEFD7C0));
+	title.draw(t, cx - title.measure(t) / 2, kMailOptionsTitleY, black);
+	auto box = [&](const SDL_Rect& r, bool on) {
+		gart.draw_pill(r, PillState::Standard);
+		if (on) {
+			gart.draw_tex(20008, 0, r.x - 4, r.y);
+		}
+	};
+	auto pill = [&](const SDL_Rect& r, const char* label) {
+		gart.draw_pill(r, PillState::Standard);
+		page.draw(label, r.x + (r.w - page.measure(label)) / 2, r.y + (r.h - page.line_height()) / 2, kButtonInk);
+	};
+	for (int k = 0; k < 3; ++k) {
+		const int y = MailOptionsFrame::days_y(k);
+		head.draw(exe_text(0x6C0FB8 + 4 * uint32_t(k), "", ""), f.left - 30, y - kMailOptionsKl, ink(3 * k));
+		const uint8_t d = ui.option_days[size_t(k)];
+		const std::string days = exe_text(0x6C1058 + 4 * uint32_t(d), "", "");
+		page.draw(days, cx - page.measure(days) / 2, y, ink(3 * k));
+		if (d < 5) {
+			pill(f.minus(k), "-");
+		}
+		if (d > 0) {
+			pill(f.plus(k), "+");
+		}
+		page.draw(exe_text(0x6C0FC4, "Cuando lleguen...", "When news arrive..."), f.left - 30, y + kMailOptionsKl, black);
+		box(f.notice_box(k), (ui.option_notices >> (3 + k)) & 1);
+		page.draw(exe_text(0x6C0FC8, "Mostrar aviso", "show notice"), f.left, y + 2 * kMailOptionsKl, ink(3 * k + 1));
+		box(f.sound_box(k), (ui.option_notices >> k) & 1);
+		page.draw(exe_text(0x6C0FCC, "Reproducir sonido", "play sound"), f.left, y + 3 * kMailOptionsKl, ink(3 * k + 2));
 	}
+	const int y = MailOptionsFrame::days_y(3);
+	head.draw(exe_text(0x6C0FD0, "Notificación de sucesos", "event sound"), f.left - 30, y - kMailOptionsKl,
+		ink(kMailOptionRows - 1));
+	box(f.event_box(), ui.option_event_sound);
+	page.draw(exe_text(0x6C0FD4, "Activo", "play"), f.left, y, ink(kMailOptionRows - 1));
+	const SDL_Rect c = MailOptionsFrame::close();
+	gart.draw_close(c, false);
+	page.draw(BTN_CIRCLE, c.x - page.measure(BTN_CIRCLE) - 2, c.y + (c.h - page.line_height()) / 2, kButtonInk);
+	gart.end();
+}
+
+// --- The messages in the side panel as the game's (SIDEMENU_INFOS, *0x6CC960, vtable 0x66F0A8: its init 0x47C9B0, its
+// layout 0x47D260, its list 0x47C520, its drawing 0x47D630; traced with re/emu/sesion43/mailtrace.sh) and the letter or
+// the chronicle in the game's message window over the town (0x41D9B0 on *0x6CBB10, from the composer 0x47F3B0 and the
+// chronicle 0x47DD40). ---
+
+// The menu: its five buttons (sidemenu.ini Button9..13, 32 × 28: the official letters, the personal letters, the trade
+// information, the settings, delete; the public news are the top bar's hourglass, Button8 never made) in the row over
+// the menu with equal gaps ((260 − 160) / 7 = 14, 0x47D260); the tab's title (0x6B2DD8 + 4 · tab) in the font 3 centred
+// at half the menus' shadow's height (13 / 2), black over its light shadow a pixel lower right; the rows from two of
+// its lines under it ([+0xC2]: the font 0's height, 15) every 15, as many as the menu's height less that over 15, less
+// 3 ([+0xC8]); each its date «DD.MM.YYYY» in the font 1 at the width of «J» in the font 0 less 2 ([+0xBC]), its title
+// after the width of «28-88-1888» in the font 1 and 2 ([+0xBE]: the font 0 and black unread, the font 1 and brown
+// 0xFF5A2406 read), its town right-aligned at the menu's width less the scroll bar's and 8 ([+0xC0]); the row shown a
+// band 0x64FFE6CA, the one under the pointer (the pad's) blue 0xFF0020CC; the scroll bar [+0x650] at their right.
+constexpr int kMailMenuButtons = 5;
+constexpr int kMailRowStep = 15;
+
+struct MailRoomLayout {
+	SDL_Rect buttons[kMailMenuButtons] = {};  // Official, personal, trade, settings, delete.
+	int head_y = 0;  // The menu's top (under the buttons' row).
+	int title_y = 0;
+	int rows_y = 0;
+	int rows = 0;
+	int date_x = 0;
+	int title_x = 0;
+	int town_right = 0;
+	SDL_Rect list{};  // The rows' room (their clip).
+	SDL_Rect bar{};  // The scroll bar's (its place improvised: at the rows' right).
+
+	explicit MailRoomLayout(const SDL_Rect& room) {
+		const int gap = (kPanelMenuWidth - kMailMenuButtons * 32) / 7;
+		for (int k = 0; k < kMailMenuButtons; ++k) {
+			buttons[k] = {room.x + gap + k * (32 + gap), room.y + 4, 32, 28};
+		}
+		head_y = room.y + 36;  // As the ship menu's and the build menu's.
+		title_y = head_y + 13 / 2;
+		rows_y = title_y + 2 * kMailRowStep;
+		rows = std::max(1, (room.y + room.h - head_y - 13 / 2) / kMailRowStep - 3);
+		TextRenderer* head = g_game_art ? g_game_art->head_text() : nullptr;
+		TextRenderer* page = g_game_art ? g_game_art->page_text() : nullptr;
+		date_x = room.x + (head ? head->measure("J") : 7) - 2;
+		title_x = date_x + (page ? page->measure("28-88-1888") : 70) + 2;
+		town_right = room.x + kPanelMenuWidth - ScrollBarLayout::kThumbWidth - 8;
+		list = {date_x - 1, rows_y, town_right - date_x + 2, rows * kMailRowStep};
+		bar = {room.x + kPanelMenuWidth - 6 - ScrollBarLayout::kThumbWidth, rows_y, ScrollBarLayout::kThumbWidth,
+			rows * kMailRowStep};
+	}
+	int button_at(int x, int y) const {
+		for (int k = 0; k < kMailMenuButtons; ++k) {
+			if (inside({buttons[k].x - 3, buttons[k].y - 2, buttons[k].w + 6, buttons[k].h + 4}, x, y)) {
+				return k;
+			}
+		}
+		return -1;
+	}
+	int row_at(int x, int y) const {
+		if (x < list.x || x >= bar.x || y < rows_y) {
+			return -1;
+		}
+		const int row = (y - rows_y) / kMailRowStep;
+		return row < rows ? row : -1;
+	}
+};
+
+// The menu (0x47D630).
+void draw_mail_menu(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const SaveGame& save,
+	const MailUi& ui, const std::vector<uint16_t>& rows, const MailRoomLayout& layout) {
+	static constexpr int kFrames[3] = {3, 6, 9};  // briefe0001.tga: the three classes' buttons (their hover + 2).
+	for (int k = 0; k < 3; ++k) {
+		// (The game lights none: the tab's in its hover frame, for want of a mouse: adapted, as the other menus'.)
+		draw_letter_button(renderer, art, layout.buttons[k], kFrames[k] + (k + 1 == ui.tab ? 2 : 0));
+	}
+	draw_letter_button(renderer, art, layout.buttons[3], ui.options ? 18 : 16);
+	draw_letter_button(renderer, art, layout.buttons[4], ui.row < int(rows.size()) ? 12 : 15);
+	if (!g_game_art) {
+		return;
+	}
+	GameWindowArt& gart = *g_game_art;
+	TextRenderer& title = gart.title_text() ? *gart.title_text() : text;
+	TextRenderer& head = gart.head_text() ? *gart.head_text() : text;
+	TextRenderer& page = gart.page_text() ? *gart.page_text() : text;
+	const std::string name = mail_tab_name(ui.tab);
+	const int cx = layout.buttons[0].x - (kPanelMenuWidth - kMailMenuButtons * 32) / 7 + kPanelMenuWidth / 2;
+	title.draw(name, cx - title.measure(name) / 2 + 1, layout.title_y + 1, argb_color(0xFFEFD7C0));
+	title.draw(name, cx - title.measure(name) / 2, layout.title_y, argb_color(kShipListInk));
+	const SDL_Rect clip = {layout.list.x, layout.list.y, layout.list.w, layout.list.h};
+	SDL_RenderSetClipRect(renderer, &clip);
 	for (int i = 0; i < layout.rows && ui.first + i < int(rows.size()); ++i) {
 		const int index = ui.first + i;
 		const uint16_t entry = rows[size_t(index)];
-		const SDL_Rect r = {layout.list.x, layout.list.y + i * layout.row_height, layout.list.w, layout.row_height};
-		if (index == ui.row) {
-			SDL_SetRenderDrawColor(renderer, 120, 80, 30, ui.letter_open ? 90 : 50);
-			SDL_RenderFillRect(renderer, &r);
+		const int y = layout.rows_y + i * kMailRowStep;
+		if (ui.letter_open && index == ui.row) {
+			SDL_SetRenderDrawColor(renderer, 0xFF, 0xE6, 0xCA, 0x64);
+			const SDL_Rect band = {layout.date_x - 1, y, layout.town_right - layout.date_x + 2, kMailRowStep - 2};
+			SDL_RenderFillRect(renderer, &band);
 		}
 		const LetterRow row = g_texts ? letter_row(save, *g_texts, entry) : LetterRow();
 		const bool unread = (save.mail[entry].u8(1) & 0x80) && !queued_letter_operation(save, 0x6E, entry);
-		const std::string date = row.date.size() >= 5 ? row.date.substr(0, 5) : row.date;  // «DD.MM».
-		const int dw = text.measure(date);
-		text.draw(cut_text(text, clean_game_text(row.title), r.w - dw - 12), r.x + 2, r.y + 2,
-			unread ? SDL_Color{10, 5, 0, 255} : SDL_Color{130, 95, 60, 255});
-		text.draw(date, r.x + r.w - 2 - dw, r.y + 2, kParchmentDim);
+		const SDL_Color ink = argb_color(index == ui.row ? 0xFF0020CC : unread ? 0xFF000000 : 0xFF5A2406);
+		const std::string town = clean_game_text(row.town);
+		page.draw(town, layout.town_right - page.measure(town), y, ink);
+		page.draw(row.date, layout.date_x, y, ink);
+		(unread ? head : page).draw(clean_game_text(row.title), layout.title_x, y, ink);
 	}
+	SDL_RenderSetClipRect(renderer, nullptr);
 	if (int(rows.size()) > layout.rows) {
-		const std::string more = std::to_string(ui.first + 1) + "-" +
-			std::to_string(std::min(int(rows.size()), ui.first + layout.rows)) + "/" + std::to_string(rows.size());
-		text.draw(more, layout.title.x + layout.title.w - text.measure(more), layout.title.y, kParchmentDim);
+		draw_menu_scroll_bar(renderer, gart, layout.bar, layout.list.x, kMailRowStep * int(rows.size()),
+			kMailRowStep * ui.first, kMailRowStep);
 	}
 }
 
-// What the letters' settings window shows of one row (0x409840..0x4099E0): the class's name with its days
-// (0x6C1058: never deleted .. deleted at once), its notice and its sound, the event sound.
-std::string mail_option_label(const MailUi& ui, int row) {
-	if (row == kMailOptionRows - 1) {
-		return letter_option_text(0x6C0FD0, "Notificación de sucesos", "event sound") + ": " +
-			(ui.option_event_sound ? letter_option_text(0x6C0FD4, "Activo", "play") : "-");
+// The game's font k of the message window's text box (0 Tiepolo black, the box's own; 1 Tiepolo bold; 2 Tiepolo black
+// larger; 3 the titles'), or the fallback.
+TextRenderer& mail_font(int k, TextRenderer& fallback) {
+	if (!g_game_art) {
+		return fallback;
 	}
-	const int c = row / 3;
-	const std::string name = letter_option_text(0x6C0FB8 + 4 * uint32_t(c), "", "");
-	switch (row % 3) {
-	case 0: return name + ": " + letter_option_text(0x6C1058 + 4 * uint32_t(ui.option_days[size_t(c)]), "", "");
-	case 1: return letter_option_text(0x6C0FC8, "Mostrar aviso", "show notice");
-	default: return letter_option_text(0x6C0FCC, "Reproducir sonido", "play sound");
-	}
+	TextRenderer* f = k == 1 ? g_game_art->page_text()
+		: k == 2				? g_game_art->info_text()
+		: k == 3				? g_game_art->title_text()
+								: g_game_art->head_text();
+	return f ? *f : fallback;
 }
 
-// Where a row of the letters' settings goes on the parchment.
-SDL_Rect mail_option_row(const MailLayout& layout, int line, int row) {
-	return {layout.text.x, layout.text.y + 2 * line + 6 + row * (line + 6), layout.text.w, line + 4};
-}
-
-// The parchment over the town: the letter (or the chronicle), or the letters' settings window.
-void draw_mail_parchment(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const MailUi& ui,
-	const MailLayout& layout) {
-	draw_scroll(renderer, art.paper, layout.panel);
-	const SDL_Color rule = {120, 90, 50, 255};
-	if (ui.options) {
-		// The settings (0x409840): its title, then each class, its days with minus and plus and its two
-		// boxes; «When news arrive...»; the event sound. The selected row is lit.
-		const std::string title = letter_option_text(0x6C0F34, "Configuración de las notificaciones", "Configuration of letters");
-		text.draw(title, layout.text.x + (layout.text.w - text.measure(title)) / 2, layout.text.y - 4, kParchmentInk);
-		const int line = text.line_height();
-		text.draw(letter_option_text(0x6C0FC4, "Cuando lleguen...", "When news arrive..."), layout.text.x + 4,
-			layout.text.y + line, kParchmentDim);
-		for (int row = 0; row < kMailOptionRows; ++row) {
-			const SDL_Rect r = mail_option_row(layout, line, row);
-			const int y = r.y + 2;
-			if (row == ui.options_row) {
-				SDL_SetRenderDrawColor(renderer, 120, 80, 30, 70);
-				SDL_RenderFillRect(renderer, &r);
-			}
-			const bool box = row == kMailOptionRows - 1 || row % 3 != 0;
-			int x = layout.text.x + (box && row != kMailOptionRows - 1 ? 28 : 4);
-			if (box) {
-				const int c = row / 3;
-				const bool on = row == kMailOptionRows - 1 ? ui.option_event_sound
-					: (ui.option_notices >> (row % 3 == 1 ? 3 + c : c)) & 1;
-				const SDL_Rect check = {x, y + 2, line - 4, line - 4};
-				SDL_SetRenderDrawColor(renderer, 245, 235, 205, 255);
-				SDL_RenderFillRect(renderer, &check);
-				SDL_SetRenderDrawColor(renderer, 90, 60, 30, 255);
-				SDL_RenderDrawRect(renderer, &check);
-				if (on) {
-					SDL_RenderDrawLine(renderer, check.x + 3, check.y + check.h / 2, check.x + check.w / 2, check.y + check.h - 3);
-					SDL_RenderDrawLine(renderer, check.x + check.w / 2, check.y + check.h - 3, check.x + check.w - 3, check.y + 3);
+// The text shown laid out for a text box `width` wide, as the game's (0x462520): each paragraph in its font, a line 15
+// high (the font 3's 20), wrapped at its spaces and soft hyphens; the window's own picture (the map) a line as high as
+// it; a drop cap's picture at its paragraph's start and the lines beside it, while their top is above its bottom (4
+// lower in the font 3), its width and 4 further in. Their height; the lines into `out`.
+int mail_lines(const MailUi& ui, TextRenderer& fallback, int width, std::vector<MailUi::Line>* out) {
+	int y = 0;
+	int cap_bottom = -1;
+	int cap_indent = 0;
+	for (const LetterParagraph& p : ui.paragraphs) {
+		if (p.made_picture && p.picture == kLetterMapPicture) {
+			if (ui.picture) {
+				if (out) {
+					MailUi::Line l{p.align, std::string(1, kPictureLine)};
+					l.height = ui.picture_height;
+					out->push_back(l);
 				}
-				x += check.w + 8;
+				y += ui.picture_height;
 			}
-			text.draw(mail_option_label(ui, row), x, y, kParchmentInk);
-			if (row % 3 == 0 && row != kMailOptionRows - 1) {
-				// Its arrows (the game's buttons 0x728 and 0x9E0, off at the ends).
-				const int d = ui.option_days[size_t(row / 3)];
-				text.draw("<", r.x + r.w - 46, y, d > 0 ? kParchmentInk : kParchmentDim);
-				text.draw(">", r.x + r.w - 18, y, d < 5 ? kParchmentInk : kParchmentDim);
+			continue;
+		}
+		TextRenderer& font = mail_font(ui.from_game ? p.font : 1, fallback);
+		const int step = p.font == 3 ? 20 : kBoxLine;
+		bool cap_here = false;
+		if (ui.from_game && p.drop_cap) {
+			const auto size = ui.cap_sizes.find(p.drop_cap);
+			if (size != ui.cap_sizes.end() && size->second.x > 0) {
+				cap_bottom = y + size->second.y + (p.font == 3 ? 4 : 0);
+				cap_indent = size->second.x + 4;
+				cap_here = true;
 			}
 		}
-		draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Aceptar", "Accept"));
+		const size_t narrow = cap_bottom > y ? size_t((cap_bottom - y + step - 1) / step) : 0;
+		bool first = true;
+		for (const std::string& line : wrap_letter(font, p.text, width, narrow ? cap_indent : 0, narrow)) {
+			MailUi::Line l{p.align, line};
+			l.font = ui.from_game ? p.font : 1;
+			l.height = step;
+			if (y < cap_bottom) {
+				l.indent = cap_indent;
+			}
+			if (first && cap_here) {
+				l.cap = p.drop_cap;
+			}
+			first = false;
+			if (out) {
+				out->push_back(l);
+			}
+			y += step;
+		}
+	}
+	return y;
+}
+
+// The letter's or the chronicle's window: the game's message window with the ratio 1.375 (0x47F409, 0x47DD8C), official
+// (the rolls) for the letters of class 1 and the chronicle, centred on the screen; its buttons the letter's (X the
+// first, Triangle the second) and its close button (Circle). A text higher than its largest size scrolls in its text
+// box, with the game's scroll bar at its right.
+struct LetterWindow {
+	GameMessage m;
+	int total = 0;  // The lines' height.
+	SDL_Rect bar{};  // The scroll bar (w 0: the text fits).
+};
+constexpr int kLetterDialog = 25;  // GameWindowArt::draw_dialog's key.
+
+// Laid out again when the text or its buttons change (MailUi::version); the lines kept in `ui` at its width.
+LetterWindow letter_window(MailUi& ui, TextRenderer& fallback);
+
+// The window's place on the screen (its rolls' ends included).
+SDL_Rect letter_window_rect(const LetterWindow& w) {
+	const PlaceView::Dialog& d = w.m.dialog;
+	return {d.at.x, d.at.y, d.cols * 32 + (d.rolls ? 12 : 0), d.rows * 32};
+}
+
+LetterWindow letter_window(MailUi& ui, TextRenderer& fallback) {
+	static int laid_out = -1;
+	static LetterWindow w;
+	if (laid_out == ui.version && ui.lines_width >= 0) {
+		return w;
+	}
+	std::vector<PlaceView::PageButton> buttons;
+	for (const std::string& label : ui.answers) {
+		buttons.push_back({{0, 0, 0, 18}, label, PlaceView::PageAction::Act, true});
+	}
+	w = LetterWindow{};
+	w.m = game_message_frame([&](int width) { return mail_lines(ui, fallback, width, nullptr); }, std::move(buttons),
+		ui.official, kLetterDialog, 1.375f, kScreenWidth, kScreenHeight);
+	ui.lines.clear();
+	w.total = mail_lines(ui, fallback, w.m.text_w, &ui.lines);
+	ui.lines_width = w.m.text_w;
+	if (w.total > w.m.text.h) {
+		w.bar = {w.m.text.x + w.m.text.w - ScrollBarLayout::kThumbWidth, w.m.text.y, ScrollBarLayout::kThumbWidth,
+			w.m.text.h};
+	}
+	laid_out = ui.version;
+	return w;
+}
+
+// A line of the window: its picture, or its drop cap and its text in its font by its alignment in the text's width, in
+// `ink` (the game's black on its paper; the viewer's light colour on the whole-screen mailbox's dark box).
+void draw_letter_line(SDL_Renderer* renderer, TextRenderer& fallback, const MailUi& ui, const MailUi::Line& l, int x,
+	int width, int y, SDL_Color ink) {
+	if (l.text.size() == 1 && l.text[0] == kPictureLine) {
+		if (ui.picture) {
+			const int px = l.align == LetterParagraph::Right ? x + width - ui.picture_width
+				: l.align == LetterParagraph::Center		 ? x + (width - ui.picture_width) / 2
+															 : x;
+			const SDL_Rect where = {px, y, ui.picture_width, ui.picture_height};
+			SDL_RenderCopy(renderer, ui.picture.get(), nullptr, &where);
+		}
 		return;
 	}
-	draw_letter_lines(renderer, text, ui, layout.text, kParchmentInk, rule);
-	draw_letter_answers(renderer, text, ui, layout);
-	draw_button(renderer, text, layout.close_button, BTN_CIRCLE + std::string(" ") + tr("Cerrar", "Close"));
+	if (l.cap) {
+		const auto cap = ui.caps.find(l.cap);
+		const auto size = ui.cap_sizes.find(l.cap);
+		if (cap != ui.caps.end() && cap->second && size != ui.cap_sizes.end()) {
+			const SDL_Rect where = {x, y, size->second.x, size->second.y};
+			SDL_RenderCopy(renderer, cap->second.get(), nullptr, &where);
+		}
+	}
+	TextRenderer& font = mail_font(l.font, fallback);
+	const int w = font.measure(l.text);
+	const int tx = l.align == LetterParagraph::Right ? x + width - w
+		: l.align == LetterParagraph::Center		   ? x + l.indent + (width - l.indent - w) / 2
+													   : x + l.indent;
+	font.draw(l.text, tx, y, ink);
+}
+
+// The window: its paper, its lines clipped to its text box and scrolled, the scroll bar, the letter's buttons with their
+// keys, the close button with its key.
+void draw_letter_window(SDL_Renderer* renderer, TextRenderer& fallback, const MailUi& ui, const LetterWindow& w) {
+	if (!g_game_art) {
+		return;
+	}
+	GameWindowArt& art = *g_game_art;
+	const GameMessage& m = w.m;
+	art.draw_dialog(m.dialog.at.x, m.dialog.at.y, m.dialog.cols, m.dialog.rows, m.dialog.rolls, m.dialog.key);
+	SDL_RenderSetClipRect(renderer, &m.text);
+	int y = m.text.y - ui.scroll;
+	for (const MailUi::Line& l : ui.lines) {
+		if (y + l.height > m.text.y && y < m.text.y + m.text.h) {
+			draw_letter_line(renderer, fallback, ui, l, m.text_x, m.text_w, y, argb_color(kShipListInk));
+		}
+		y += l.height;
+	}
+	SDL_RenderSetClipRect(renderer, nullptr);
+	if (w.bar.w > 0) {
+		draw_menu_scroll_bar(renderer, art, w.bar, m.text.x, w.total, ui.scroll, kBoxLine);
+	}
+	TextRenderer& page = art.page_text() ? *art.page_text() : fallback;
+	static const char* const kKeys[2] = {BTN_CROSS " ", BTN_TRIANGLE " "};
+	for (size_t k = 0; k < m.page.buttons.size() && k < 2; ++k) {
+		const PlaceView::PageButton& b = m.page.buttons[k];
+		const std::string label = kKeys[k] + b.label;
+		const SDL_Rect r = art.pill_for_label(b.rect, page.measure(label));
+		art.draw_pill(r, PillState::Standard);
+		page.draw(label, r.x + (r.w - page.measure(label)) / 2, r.y + (r.h - page.line_height()) / 2, kButtonInk);
+	}
+	page.draw(BTN_CIRCLE, m.close.x - page.measure(BTN_CIRCLE) - 2, m.close.y + (m.close.h - page.line_height()) / 2,
+		kButtonInk);
+	art.draw_close(m.close, false);
 }
 
 // --- The statistics (the game's SIDEMENU_STATISTIK, statistics_window.hpp; read and traced in re/emu/sesion15 and
@@ -18861,7 +19135,8 @@ int main(int argc, char** argv) {
 		mail.selected = 0xFFFF;
 		mail.first = 0;
 		mail.stale = true;
-		mail.letter_open = mail.tab == 0;  // In the side panel: the list first, the chronicle on its parchment.
+		mail.letter_open = false;  // In the side panel: the list first.
+		mail.chronicle = false;
 		mail.options = false;
 		mail.last_check = -1;
 		market.open = false;
@@ -18871,15 +19146,37 @@ int main(int argc, char** argv) {
 			side.focus = -1;
 		}
 	};
+	// A tab of letters, 1..3 (its class; wrapping round).
 	auto mail_tab = [&](int tab) {
 		expire_letters(save, save.player);
-		mail.tab = (tab + 4) % 4;
+		mail.tab = ((tab - 1) % 3 + 3) % 3 + 1;
 		mail.row = 0;
 		mail.selected = 0xFFFF;
 		mail.first = 0;
 		mail.stale = true;
-		mail.letter_open = mail.tab == 0;
+		mail.letter_open = false;
+		mail.chronicle = false;
 		mail.options = false;
+	};
+	// The chronicle in its window (the top bar's hourglass, as the game's [+0x1238] → 0x47DD40); its window takes the
+	// letter's place. (In the game the side menu stays as it was; here the messages' menu opens with it: adapted.)
+	auto mail_show_chronicle = [&]() {
+		if (!mail.open) {
+			open_mailbox();
+		}
+		mail.chronicle = true;
+		mail.letter_open = false;
+		mail.options = false;
+		mail.stale = true;
+	};
+	// On the whole screen (no side panel) the chronicle is its first tab: 0 it, 1..3 the classes.
+	auto mail_screen_tab = [&](int tab) {
+		tab = ((tab % 4) + 4) % 4;
+		if (tab == 0) {
+			mail_show_chronicle();
+		} else {
+			mail_tab(tab);
+		}
 	};
 	// The letters' settings window (0x408F50): it opens with the player's settings, and on closing queues
 	// them (0x70) and the check of his letters (0x71 with 1), as the game.
@@ -20094,7 +20391,7 @@ int main(int argc, char** argv) {
 				// selection or taken out of it; on the water, with ships chosen, the held order starts there
 				// (the PC's right button held: 0x608550 with 1, which the step sends again while it is held).
 				if (finger_down && !battle_long && !battle_hold && std::abs(touch_now.x - touch_start.x) < kBattleStill &&
-					std::abs(touch_now.y - touch_start.y) < kBattleStill && !battle_popup() && !menu.open() &&
+					std::abs(touch_now.y - touch_start.y) < kBattleStill && !battle_popup() && !menu.open() && !mail.open &&
 					app_ticks() - battle_touch_ms >= kBattleLongPressMs &&
 					touch_start.x < PanelLayout(side.folded).town_right) {
 					battle_long = true;
@@ -20688,12 +20985,15 @@ int main(int argc, char** argv) {
 		};
 		// In a town the messages are the side panel's (its room and a parchment over the town).
 		const bool mail_in_panel = in_mail && panel_shown && side.menu == PanelMenu::Messages;
-		const bool mail_parchment = mail_in_panel && (mail.letter_open || mail.options || mail.tab == 0);
+		const bool mail_parchment = mail_in_panel && (mail.letter_open || mail.options || mail.chronicle);
+		// The letter's (or the chronicle's) window: the game's message window over the town (letter_window).
+		const bool mail_window = mail_parchment && !mail.options;
 		MailLayout mail_layout = mail_in_panel ? MailLayout(small_text->line_height(), panel_layout.room)
-											   : MailLayout(small_text ? small_text->line_height() : 20, mail.tab == 0);
+											   : MailLayout(small_text ? small_text->line_height() : 20, mail.chronicle);
+		const MailRoomLayout mail_room(panel_layout.room);
 		// The letter's buttons as the last frame drew them (MailUi::answers).
 		mail_layout.with_answers(mail_in_panel && !mail.letter_open ? 0 : int(mail.answers.size()));
-		const std::vector<uint16_t> mail_list = in_mail && mail.tab != 0 ? mail_rows(save, mail.tab) : std::vector<uint16_t>();
+		const std::vector<uint16_t> mail_list = in_mail ? mail_rows(save, mail.tab) : std::vector<uint16_t>();
 		auto mail_select = [&](int row) {
 			if (mail_list.empty()) {
 				return;
@@ -20704,7 +21004,7 @@ int main(int argc, char** argv) {
 		auto mail_scroll = [&](int pixels) { mail.scroll += pixels; };  // Kept in range when drawn.
 		// Square: delete the letter shown (operation 0x6F, as the game's window).
 		auto mail_delete = [&]() {
-			if (mail.tab != 0 && mail.row < int(mail_list.size())) {
+			if (mail.row < int(mail_list.size())) {
 				queue_operation(save, letter_operation(0x6F, save.player, mail_list[size_t(mail.row)]));
 				mail.selected = 0xFFFF;  // The same row: the next letter.
 			}
@@ -20731,10 +21031,10 @@ int main(int argc, char** argv) {
 			}
 		};
 		// In the side panel: the settings window's buttons; the list's (Up and Down a letter, which opens,
-		// Left and Right the tabs, L and R the letter's pages, X opens it, Square deletes it, Select the
-		// settings, Circle closes the letter and then the messages).
+		// Left and Right the tabs, the sticks move the letter, L and R the game's speed, X opens it and then is its first
+		// button, Triangle its second, Square deletes it, Select the settings, Circle closes the letter (the chronicle)
+		// and then the messages).
 		auto mail_panel_button = [&](Uint8 button) {
-			const int line = small_text->line_height();
 			if (mail.options) {
 				switch (button) {
 				case SDL_CONTROLLER_BUTTON_DPAD_UP:
@@ -20744,10 +21044,17 @@ int main(int argc, char** argv) {
 					return true;
 				case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
 				case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-					mail_option_change(mail.options_row, button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1);
+					// «−» on the left raises the days' index, «+» on the right lowers it (the game's).
+					mail_option_change(mail.options_row, button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? 1 : -1);
 					return true;
 				case SDL_CONTROLLER_BUTTON_A:
-					mail_option_change(mail.options_row, 1);
+					// A box toggled; a class's days the next, round from the last to the first.
+					if (mail.options_row % 3 == 0 && mail.options_row != kMailOptionRows - 1 &&
+						mail.option_days[size_t(mail.options_row / 3)] == 5) {
+						mail.option_days[size_t(mail.options_row / 3)] = 0;
+					} else {
+						mail_option_change(mail.options_row, 1);
+					}
 					return true;
 				case SDL_CONTROLLER_BUTTON_B:
 				case SDL_CONTROLLER_BUTTON_BACK:
@@ -20763,8 +21070,8 @@ int main(int argc, char** argv) {
 			case SDL_CONTROLLER_BUTTON_DPAD_UP:
 			case SDL_CONTROLLER_BUTTON_DPAD_DOWN: {
 				const int step = button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1;
-				if (mail.tab == 0) {
-					mail_scroll(step * line);
+				if (mail.chronicle) {
+					mail_scroll(step * kBoxLine);
 				} else {
 					mail_select(mail.row + step);
 					mail.letter_open = !mail_list.empty();
@@ -20772,16 +21079,12 @@ int main(int argc, char** argv) {
 				return true;
 			}
 			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
-			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: {
-				const int step = button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1;
-				if (mail_parchment) {
-					mail_scroll(step * (mail_layout.text.h - line));
-				} else {
-					mail.first = std::max(0, mail.first + step * mail_layout.rows);
-					mail_select(mail.row + step * mail_layout.rows);
-				}
+			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+				// The game's speed, as in the other windows over the town (the sticks move the letter).
+				game_speed = std::clamp(game_speed + (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1), 0,
+					kGameSpeedCount - 1);
+				notify_speed();
 				return true;
-			}
 			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
 			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
 				mail_tab(mail.tab + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1));
@@ -20790,8 +21093,10 @@ int main(int argc, char** argv) {
 				if (mail.letter_open && mail_answer(0)) {
 					return true;  // The letter's first button.
 				}
-				mail_select(mail.row);
-				mail.letter_open = mail.tab == 0 || !mail_list.empty();
+				if (!mail.chronicle) {
+					mail_select(mail.row);
+					mail.letter_open = !mail_list.empty();
+				}
 				return true;
 			case SDL_CONTROLLER_BUTTON_Y:  // Triangle: the letter's second button.
 				if (mail.letter_open) {
@@ -20804,8 +21109,10 @@ int main(int argc, char** argv) {
 			case SDL_CONTROLLER_BUTTON_X:  // Square.
 				mail_delete();
 				return true;
-			case SDL_CONTROLLER_BUTTON_B:  // Circle.
-				if (mail.letter_open && mail.tab != 0) {
+			case SDL_CONTROLLER_BUTTON_B:  // Circle: the window, then the messages.
+				if (mail.chronicle) {
+					mail.chronicle = false;
+				} else if (mail.letter_open) {
 					mail.letter_open = false;
 				} else {
 					close_mail();
@@ -20827,7 +21134,7 @@ int main(int argc, char** argv) {
 			case SDL_CONTROLLER_BUTTON_DPAD_UP:
 			case SDL_CONTROLLER_BUTTON_DPAD_DOWN: {
 				const int step = button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1;
-				if (mail.tab == 0) {
+				if (mail.chronicle) {
 					mail_scroll(step * line);
 				} else {
 					mail_select(mail.row + step);
@@ -20837,7 +21144,7 @@ int main(int argc, char** argv) {
 			case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
 			case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: {
 				const int step = button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1;
-				if (mail.tab == 0) {
+				if (mail.chronicle) {
 					mail_scroll(step * (mail_layout.text.h - line));
 				} else {
 					mail.first = std::max(0, mail.first + step * mail_layout.rows);
@@ -20847,10 +21154,10 @@ int main(int argc, char** argv) {
 			}
 			case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
 			case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-				mail_tab(mail.tab + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1));
+				mail_screen_tab((mail.chronicle ? 0 : mail.tab) + (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1));
 				return true;
 			case SDL_CONTROLLER_BUTTON_BACK:  // Select: the next tab.
-				mail_tab(mail.tab + 1);
+				mail_screen_tab((mail.chronicle ? 0 : mail.tab) + 1);
 				return true;
 			case SDL_CONTROLLER_BUTTON_A:  // The letter's buttons: X the first, Triangle the second.
 			case SDL_CONTROLLER_BUTTON_Y:
@@ -22796,8 +23103,9 @@ int main(int argc, char** argv) {
 						break;
 					}
 				}
-				if (in_battle && event.cbutton.button != SDL_CONTROLLER_BUTTON_START) {
-					battle_key(event.cbutton.button);  // The battle's screen: its keys; Start, the menu.
+				if (in_battle && !in_mail && event.cbutton.button != SDL_CONTROLLER_BUTTON_START) {
+					// The battle's screen: its keys; Start, the menu. (The mailbox opened from the menu over it: its own.)
+					battle_key(event.cbutton.button);
 					break;
 				}
 				if (side.menu == PanelMenu::Ship && panel_shown && !side.folded && !in_mail && small_text &&
@@ -23002,7 +23310,7 @@ int main(int argc, char** argv) {
 					messages.next();
 					break;
 				}
-				if (in_battle && event.key.keysym.sym != SDLK_ESCAPE) {
+				if (in_battle && !in_mail && event.key.keysym.sym != SDLK_ESCAPE) {
 					// The battle's screen, keyboard: Space fires, A all the ships, Tab the next, Page Up and Down the
 					// sails (the PC game's); Escape, the menu.
 					const SDL_Keycode key = event.key.keysym.sym;
@@ -23197,9 +23505,10 @@ int main(int argc, char** argv) {
 					}
 					break;
 				}
-				if (in_battle && !in_menu) {
+				if (in_battle && !in_menu && !in_mail) {
 					// The battle's screen: dragging moves its view; a tap or a long press is an order (on lifting
-					// it, and in the frame, kBattleLongPressMs). On its panel, the panel's.
+					// it, and in the frame, kBattleLongPressMs). On its panel, the panel's. (Under the mailbox, the
+					// mailbox's.)
 					if (battle_panel && inside(panel_layout.panel, touch_start.x, touch_start.y)) {
 						touch_on_side = true;
 						touch_on_panel = true;
@@ -23637,7 +23946,7 @@ int main(int argc, char** argv) {
 					}
 					break;
 				}
-				if (in_battle && !in_menu) {
+				if (in_battle && !in_menu && !in_mail) {
 					touch_on_panel = false;
 					const int lx = int(event.tfinger.x * kScreenWidth);
 					const int ly = int(event.tfinger.y * kScreenHeight);
@@ -23700,7 +24009,7 @@ int main(int argc, char** argv) {
 					if (!mail.open) {
 						open_mailbox();
 					}
-					mail_tab(0);
+					mail_show_chronicle();
 					break;
 				}
 				if (touch_moved < kTapDistance && !in_menu && !messages.open && !end_window.open && has_save &&
@@ -23963,19 +24272,26 @@ int main(int argc, char** argv) {
 							build_act();
 						}
 					} else if (mail_in_panel && inside(panel_layout.room, x, y)) {
-						// The messages: a tab, the settings, delete, or a letter (it opens).
-						const int tab = mail_layout.tab_at(x, y);
-						const int row = mail.tab != 0 ? mail_layout.row_at(x, y) : -1;
-						if (tab >= 0) {
+						// The messages: a tab, the settings, delete, a letter (it opens; the chronicle's window gives it
+						// its place), the scroll bar's halves a page.
+						const int button = mail_room.button_at(x, y);
+						const int row = mail_room.row_at(x, y);
+						if (button >= 0 && button < 3) {
 							mail_options(false);
-							mail_tab(tab);
-						} else if (inside(mail_layout.options_button, x, y)) {
+							mail_tab(button + 1);
+						} else if (button == 3) {
 							mail_options(!mail.options);
-						} else if (inside(mail_layout.delete_button, x, y)) {
+						} else if (button == 4) {
 							mail_delete();
+						} else if (int(mail_list.size()) > mail_room.rows &&
+							inside({mail_room.bar.x - 6, mail_room.bar.y, mail_room.bar.w + 12, mail_room.bar.h}, x, y)) {
+							mail.first = std::clamp(mail.first + (y < mail_room.bar.y + mail_room.bar.h / 2 ? -1 : 1) *
+									mail_room.rows, 0, std::max(0, int(mail_list.size()) - mail_room.rows));
+							mail_select(std::clamp(mail.row, mail.first, mail.first + mail_room.rows - 1));
 						} else if (row >= 0 && mail.first + row < int(mail_list.size())) {
 							mail_options(false);
 							mail_select(mail.first + row);
+							mail.chronicle = false;
 							mail.letter_open = true;
 						}
 					} else if (side.menu == PanelMenu::Ships && inside(panel_layout.room, x, y)) {
@@ -24111,42 +24427,53 @@ int main(int argc, char** argv) {
 					const int x = touch_start.x;
 					const int y = touch_start.y;
 					touch_on_panel = false;
-					if (!mail_parchment || !inside(mail_layout.panel, x, y)) {
-						if (mail_parchment && x < town_width && y >= kBarHeight) {
-							mail_options(false);
-							if (mail.tab != 0) {
-								mail.letter_open = false;
-							} else {
-								close_mail();
+					if (mail_window) {
+						// The letter's window: its buttons, its close button, its scroll bar's halves a page; a tap on the
+						// town out of it closes it.
+						const LetterWindow w = letter_window(mail, *small_text);
+						auto around = [&](const SDL_Rect& r) { return inside({r.x - 4, r.y - 6, r.w + 8, r.h + 12}, x, y); };
+						int answer = -1;
+						for (size_t k = 0; k < w.m.page.buttons.size() && k < 2; ++k) {
+							if (around(w.m.page.buttons[k].rect)) {
+								answer = int(k);
 							}
+						}
+						if (answer >= 0) {
+							mail_answer(answer);
+						} else if (around(w.m.close)) {
+							mail.chronicle = false;
+							mail.letter_open = false;
+						} else if (w.bar.w > 0 && inside({w.bar.x - 6, w.bar.y, w.bar.w + 12, w.bar.h}, x, y)) {
+							mail_scroll((y < w.bar.y + w.bar.h / 2 ? -1 : 1) * (w.m.text.h - kBoxLine));
+						} else if (!inside(letter_window_rect(w), x, y) && x < town_width && y >= kBarHeight) {
+							mail.chronicle = false;
+							mail.letter_open = false;
 						}
 						break;
 					}
-					if (mail_answer(mail_layout.answer_at(x, y))) {
-						// A button of the letter.
-					} else if (inside(mail_layout.close_button, x, y)) {
-						if (mail.options) {
-							mail_options(false);
-						} else if (mail.tab != 0) {
-							mail.letter_open = false;
-						} else {
-							close_mail();
+					if (mail.options) {
+						// The settings window: «−» and «+» (as the game's: «−» raises the days' index, «+» lowers it), a box
+						// or its words toggled, the close button; a tap on the town out of it closes it (and sends them).
+						const MailOptionsFrame f;
+						if (!inside(f.on_screen, x, y)) {
+							if (x < town_width && y >= kBarHeight) {
+								mail_options(false);
+							}
+							break;
 						}
-					} else if (mail.options) {
-						for (int row = 0; row < kMailOptionRows; ++row) {
-							const SDL_Rect r = mail_option_row(mail_layout, small_text->line_height(), row);
-							if (inside(r, x, y)) {
-								mail.options_row = row;
-								// The days: their arrows on the right (the left one less, the right one more).
-								const bool days = row % 3 == 0 && row != kMailOptionRows - 1;
-								if (days && x >= r.x + r.w - 56) {
-									mail_option_change(row, x >= r.x + r.w - 28 ? 1 : -1);  // Its arrows.
-								} else if (days) {
-									const uint8_t d = mail.option_days[size_t(row / 3)];
-									mail.option_days[size_t(row / 3)] = uint8_t((d + 1) % 6);  // Its name: the next one.
-								} else {
-									mail_option_change(row, 1);
-								}
+						const SDL_Point p = f.window(x, y);
+						const SDL_Rect c = MailOptionsFrame::close();
+						int side_hit = 0;
+						const int row = f.row_at(p, side_hit);
+						if (inside({c.x - 4, c.y - 6, c.w + 8, c.h + 12}, p.x, p.y)) {
+							mail_options(false);
+						} else if (row >= 0) {
+							mail.options_row = row;
+							const bool days = row % 3 == 0 && row != kMailOptionRows - 1;
+							if (!days) {
+								mail_option_change(row, 1);
+							} else if (side_hit != 0) {
+								mail_option_change(row, side_hit < 0 ? 1 : -1);
 							}
 						}
 					}
@@ -24156,14 +24483,14 @@ int main(int argc, char** argv) {
 					const int x = touch_start.x;
 					const int y = touch_start.y;
 					const int tab = mail_layout.tab_at(x, y);
-					const int row = mail.tab != 0 ? mail_layout.row_at(x, y) : -1;
+					const int row = !mail.chronicle ? mail_layout.row_at(x, y) : -1;
 					if (tab >= 0) {
-						mail_tab(tab);
+						mail_screen_tab(tab);
 					} else if (mail_answer(mail_layout.answer_at(x, y))) {
 						// A button of the letter.
 					} else if (inside(mail_layout.close_button, x, y)) {
 						mail.open = false;
-					} else if (mail.tab != 0 && inside(mail_layout.delete_button, x, y)) {
+					} else if (!mail.chronicle && inside(mail_layout.delete_button, x, y)) {
 						mail_delete();
 					} else if (row >= 0 && mail.first + row < int(mail_list.size())) {
 						mail_select(mail.first + row);
@@ -24827,8 +25154,8 @@ int main(int argc, char** argv) {
 			} else if (side.menu == PanelMenu::Ship && panel_shown && !side.folded && !in_mail && !in_menu &&
 				(side.stop_window || side.route_towns_row >= 0 || side.route_files)) {
 				// So do the trade route page's windows.
-			} else if (in_battle) {
-				// The battle's screen: its own keys.
+			} else if (in_battle && !in_mail) {
+				// The battle's screen: its own keys (under the mailbox, the mailbox's).
 				right_texts = {tr(BTN_CROSS " disparar   " BTN_TRIANGLE " todos   L/R: barco   arriba/abajo: velas",
 								   BTN_CROSS " fire   " BTN_TRIANGLE " all   L/R: ship   up/down: sails"),
 					tr(BTN_CROSS " disparar   " BTN_TRIANGLE " todos", BTN_CROSS " fire   " BTN_TRIANGLE " all")};
@@ -24870,7 +25197,7 @@ int main(int argc, char** argv) {
 												   "Select: settings   " BTN_SQUARE " delete   " BTN_CIRCLE " close"),
 						  tr(BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar", BTN_SQUARE " delete   " BTN_CIRCLE " close")};
 			} else if (in_mail) {
-				right_texts = mail.tab == 0
+				right_texts = mail.chronicle
 					? std::vector<std::string>{tr("L/R: página   Select: pestaña   " BTN_CIRCLE " cerrar",
 												   "L/R: page   Select: tab   " BTN_CIRCLE " close"),
 						  tr("Select: pestaña   " BTN_CIRCLE " cerrar", "Select: tab   " BTN_CIRCLE " close")}
@@ -24964,55 +25291,65 @@ int main(int argc, char** argv) {
 			game_art->leave();  // The building's side menu closed.
 		}
 		if (in_mail && mail.open) {
-			// After this frame's ticks and operations: the rows now, the selected
-			// letter kept by its entry, and its text made once (the game's
-			// composer, which may change the save: letter_viewed) and marked
-			// read (0x6E) when it is shown.
-			const std::vector<uint16_t> rows = mail.tab != 0 ? mail_rows(save, mail.tab) : std::vector<uint16_t>();
+			// After this frame's ticks and operations: the tab's rows now, the selected letter kept by its entry, and
+			// the text shown made once (the game's composer, which may change the save: letter_viewed) and marked read
+			// (0x6E) when it is shown.
+			const std::vector<uint16_t> rows = mail_rows(save, mail.tab);
 			const bool in_panel = mail_in_panel && side.menu == PanelMenu::Messages;
+			const MailRoomLayout room(PanelLayout(side.folded).room);
 			MailLayout layout = in_panel ? MailLayout(small_text->line_height(), PanelLayout(side.folded).room)
-										 : MailLayout(small_text->line_height(), mail.tab == 0);
+										 : MailLayout(small_text->line_height(), mail.chronicle);
+			const int page_rows = in_panel ? room.rows : layout.rows;
 			const auto at = std::find(rows.begin(), rows.end(), mail.selected);
 			mail.row = at != rows.end() ? int(at - rows.begin()) : std::clamp(mail.row, 0, std::max(0, int(rows.size()) - 1));
 			mail.selected = rows.empty() ? 0xFFFF : rows[size_t(mail.row)];
-			mail.first = std::clamp(mail.first, std::max(0, mail.row - layout.rows + 1), mail.row);
-			if (in_panel && rows.empty() && mail.tab != 0) {
+			mail.first = std::clamp(mail.first, std::max(0, mail.row - page_rows + 1), mail.row);
+			if (in_panel && rows.empty()) {
 				mail.letter_open = false;
 			}
-			// In the side panel a letter is made (and marked read) only once its parchment is open.
-			const uint16_t entry = mail.tab == 0 ? 0xFFFE : in_panel && !mail.letter_open ? 0xFFFF : mail.selected;
+			// In the side panel a letter is made (and marked read) only once its window is open.
+			const uint16_t entry = mail.chronicle ? 0xFFFE : in_panel && !mail.letter_open ? 0xFFFF : mail.selected;
+			const int shown_key = mail.chronicle ? 0 : mail.tab;
 			// The letter's buttons now.
-			mail.answers.clear();
+			std::vector<std::string> answers;
 			if (mail.answered != entry) {
 				mail.answered = 0xFFFF;
 			}
-			if (mail.tab != 0 && entry < save.mail.size() && mail.answered != entry) {
+			if (!mail.chronicle && entry < save.mail.size() && mail.answered != entry) {
 				for (const std::string& label : letter_buttons(save, g_texts, entry)) {
-					mail.answers.push_back(clean_game_text(label));
+					answers.push_back(clean_game_text(label));
 				}
+			}
+			if (answers != mail.answers) {
+				mail.answers = answers;
+				++mail.version;
 			}
 			layout.with_answers(int(mail.answers.size()));
 			// The chronicle again when a news comes (a new head of its list).
 			const uint16_t news = save.globals.u16(kMailChronicle);
-			if (mail.tab == 0 && news != mail.chronicle_head) {
+			if (mail.chronicle && news != mail.chronicle_head) {
 				mail.stale = true;
 			}
-			if (mail.stale || entry != mail.shown || mail.tab != mail.shown_tab) {
-				if (entry != mail.shown || mail.tab != mail.shown_tab) {
+			if (mail.stale || entry != mail.shown || shown_key != mail.shown_tab) {
+				if (entry != mail.shown || shown_key != mail.shown_tab) {
 					mail.scroll = 0;
 				}
 				mail.lines.clear();
+				mail.lines_width = -1;
+				mail.paragraphs.clear();
 				mail.picture.reset();
 				mail.chronicle_head = news;
 				std::string raw;
 				bool from_game = false;  // The game's text (Windows-1252, codes); else the viewer's (UTF-8).
-				if (!g_texts && (mail.tab == 0 || entry != 0xFFFF)) {
+				bool official = false;
+				if (!g_texts && (mail.chronicle || entry != 0xFFFF)) {
 					raw = tr("Para leer las cartas hace falta el Patrician3.exe del juego en la carpeta de datos.",
 						"The letters need the game's Patrician3.exe in the data folder.");
-				} else if (mail.tab == 0) {
+				} else if (mail.chronicle) {
 					raw = compose_chronicle(save, *g_texts);
 					chronicle_viewed(save, *g_texts);
 					from_game = true;
+					official = true;  // (0x47DDB3)
 				} else if (entry == 0xFFFF) {
 					raw.clear();
 				} else if (std::optional<std::string> letter = compose_letter(save, *g_texts, entry)) {
@@ -25024,82 +25361,70 @@ int main(int argc, char** argv) {
 						queue_operation(save, *op);
 					}
 					from_game = true;
+					official = letter_class(save.mail[entry].u8(4)) == 1;  // (0x47F5CC: the type's class 1)
 				} else {
 					raw = tr("(Esta carta aún no se puede mostrar.)", "(This letter can't be shown yet.)");
 				}
-				int cap_indent = 0;  // The drop cap's: its width and 4, for its lines left (below).
-				size_t cap_lines = 0;
-				size_t cap_at = SIZE_MAX;  // Its line.
-				for (const LetterParagraph& p : letter_paragraphs(raw)) {
-					if (from_game && p.made_picture && p.picture == kLetterMapPicture && entry < save.mail.size()) {
-						// The picture the game's window makes for this letter (0x51AC60),
-						// and empty lines of its height.
-						if (!mail.picture) {
+				mail.from_game = from_game;
+				mail.official = official;
+				if (from_game) {
+					mail.paragraphs = letter_paragraphs(raw);
+					for (const LetterParagraph& p : mail.paragraphs) {
+						if (p.made_picture && p.picture == kLetterMapPicture && entry < save.mail.size() && !mail.picture) {
+							// The picture the game's window makes for this letter (0x51AC60).
 							mail.picture = letter_picture_texture(renderer, *archive, save.mail[entry], mail.picture_width,
 								mail.picture_height);
 						}
-						if (mail.picture) {
-							mail.lines.push_back({p.align, std::string(1, kPictureLine)});
-							for (int h = small_text->line_height(); h < mail.picture_height; h += small_text->line_height()) {
-								mail.lines.push_back({p.align, std::string()});
-							}
-							continue;
-						}
-					}
-					const std::string& s = from_game ? p.text : raw;  // The viewer's own texts are UTF-8 already.
-					// A drop cap (0x4626C5..0x46275F): its picture at the paragraph's start and the lines beside it, while
-					// their top is above its bottom (4 lower in the font 3), its width and 4 further in, the next
-					// paragraphs' too (the box's, not the paragraph's).
-					if (from_game && p.drop_cap) {
-						if (!mail.caps.count(p.drop_cap)) {
+						if (p.drop_cap && !mail.caps.count(p.drop_cap)) {
+							// A drop cap's picture (parchment.ini [TEXCOL0]: images/grossbuchstaben, the letter − 'A').
 							const std::string file = std::string("images/grossbuchstaben/Gbuchstabe_") + p.drop_cap + ".tga";
 							int w = 0;
 							int h = 0;
 							mail.caps[p.drop_cap] = std::shared_ptr<SDL_Texture>(
 								load_texture(renderer, *archive, file.c_str(), &w, &h), SDL_DestroyTexture);
-							mail.cap_sizes[p.drop_cap] = {w, h};
-						}
-						if (mail.caps[p.drop_cap]) {
-							const SDL_Point size = mail.cap_sizes[p.drop_cap];
-							cap_indent = size.x + 4;
-							const int below = size.y + (p.font == 3 ? 4 : 0);
-							cap_lines = size_t((below + small_text->line_height() - 1) / small_text->line_height());
-							cap_at = mail.lines.size();
+							mail.cap_sizes[p.drop_cap] = mail.caps[p.drop_cap] ? SDL_Point{w, h} : SDL_Point{0, 0};
 						}
 					}
-					for (const std::string& line : wrap_letter(*small_text, s, layout.text.w - 12, cap_indent, cap_lines)) {
-						MailUi::Line l{p.align, line};
-						if (cap_lines > 0) {
-							l.indent = cap_indent;
-							--cap_lines;
-						}
-						if (mail.lines.size() == cap_at) {
-							l.cap = p.drop_cap;
-						}
-						mail.lines.push_back(l);
-					}
-					if (!from_game) {
-						break;
-					}
+				} else if (!raw.empty()) {
+					LetterParagraph p;  // The viewer's own words (UTF-8), in the font 1.
+					p.font = 1;
+					p.text = raw;
+					mail.paragraphs.push_back(p);
 				}
 				if (entry < save.mail.size() && (save.mail[entry].u8(1) & 0x80) &&
 					!queued_letter_operation(save, 0x6E, entry)) {
 					queue_operation(save, letter_operation(0x6E, save.player, entry));
 				}
 				mail.shown = entry;
-				mail.shown_tab = mail.tab;
+				mail.shown_tab = shown_key;
 				mail.stale = false;
+				++mail.version;
 			}
-			const int height = int(mail.lines.size()) * small_text->line_height() + 4;
-			mail.scroll = std::clamp(mail.scroll, 0, std::max(0, height - layout.text.h));
 			if (in_panel) {
 				if (!side.folded) {
-					draw_mail_panel(renderer, *small_text, *panel_art, save, mail, rows, layout);
+					draw_mail_menu(renderer, *small_text, *panel_art, save, mail, rows, room);
 				}
-				if (mail.letter_open || mail.options || mail.tab == 0) {
-					draw_mail_parchment(renderer, *small_text, *panel_art, mail, layout);
+				if (mail.options) {
+					draw_mail_options(*small_text, mail);
+				} else if (mail.letter_open || mail.chronicle) {
+					const LetterWindow w = letter_window(mail, *small_text);
+					mail.scroll = std::clamp(mail.scroll, 0, std::max(0, w.total - w.m.text.h));
+					draw_letter_window(renderer, *small_text, mail, w);
 				}
 			} else {
+				// The whole screen (no side panel): the viewer's mailbox, its lines at its text's width.
+				const int width = layout.text.w - 8;
+				if (mail.lines_width != width) {
+					mail.lines.clear();
+					mail_lines(mail, *small_text, width, &mail.lines);
+					mail.lines_width = width;
+					++mail.version;  // (The window's lines are another width.)
+				}
+				int height = 4;
+				for (const MailUi::Line& l : mail.lines) {
+					height += l.height;
+				}
+				mail.scroll = std::clamp(mail.scroll, 0, std::max(0, height - layout.text.h));
 				draw_mailbox(renderer, *small_text, save, mail, rows);
 			}
 		}
