@@ -27,7 +27,7 @@ network game's contests and the campaigns' scripts. Read in the executable and i
   - `re/emu/sesion45/p2m.py FILE` lists a file's sections; `--hist` the opcodes over every mission.
 - The game's data have two slips: `[Missions] 308=Kampagne3_Entfuehrung.p2m` but the file is
   `Kampagne3_Entführung.p2m` (the campaign 3's abduction never loads: its scripts get no program, 0x511270 sets its
-  count to 0); `p2arch1_eng.cpr` (an update, not mounted by the viewer) has a newer `WettbewerbRennen.p2m` (18, a
+  count to 0; fixed behind fix_game_bugs: `MissionData::respelt`); `p2arch1_eng.cpr` (an update, not mounted by the viewer) has a newer `WettbewerbRennen.p2m` (18, a
   network contest).
 
 ## The list (*0x6DD8B4)
@@ -47,7 +47,7 @@ it (at a start, how many to start).
   program, the variables freed), 0xFE and 0xFF nothing (the variables leak). A waiting one is an event 0x1B
   (0x4D8CF0 at its tick): [+0x8] the program, [+0xC] the variables, u16 [+0x10] the mission, [+0x12] the variables'
   count, [+0x14] the section after the wait. The drops count the entry down while the loop counts up to it: of three
-  scripts of a passed tick only two go (none of the game's data has one).
+  scripts of a passed tick only two go (none of the game's data has one; fixed behind fix_game_bugs).
 - 0x5116F0 (number, index): `[Missions] <number>=` → `missions_addon/` + the file, read whole (0x402760 opens it with
   0x8020 through Archiver.dll) into the entry; fails without the name, the file or with an empty one.
 - 0x511690 (number): a script takes its mission's program: the entry by its number (none: 0), loaded if it has none,
@@ -64,7 +64,9 @@ it (at a start, how many to start).
     for each human merchant (from the last) with a merchant of the kind 1 at home in his town, a competitor: **game
     bug**, the factor 2 and the bit 8 go to the merchant 0 (0x532500 writes through the array's base); then the
     merchants of the kind 1 with the factor 1, in order, take the rest (bit 8, factor 2). The 12 saves show it (their
-    merchant 0 has the bit 8; `re/emu/sesion45/factors.py`). Then a walk of the events to the first of kind 3 that keeps
+    merchant 0 has the bit 8; `re/emu/sesion45/factors.py`; fixed behind fix_game_bugs: the merchant found). The
+    humans' factors too, which 0xA7 has just set by the difficulty (**game bug**: lost, nothing sets them again; fixed
+    behind fix_game_bugs: kept). Then a walk of the events to the first of kind 3 that keeps
     nothing; the Alderman's town [0x6DE52E]: the Hanse town (flags 0x40) without a human at home whose number is
     nearest to 14 (0 if none); [0x6DE52A] 0; [0x6DE4AC] the tick.
   - 0x635170: the town's countdown to its next siege: a human's home town 0x3FFF with [+0x101B] 0, the others

@@ -26,6 +26,9 @@ struct MissionData {
 	// (the ones the archive lacks, absent).
 	std::map<std::string, std::map<std::string, std::string>> ini;
 	std::map<std::string, MissionProgram> files;
+	// The files the ini misspells («ue» for the file's «ü»: the campaign 3's abduction), by the ini's name, for
+	// fix_game_bugs (a game bug: without the fix they don't load).
+	std::map<std::string, MissionProgram> respelt;
 	// The game's list (*0x6DD8B4, 0x511000: [+0x4] its entries of 8 bytes, [+0x8] u16 their count): u32 [+0x0] the
 	// program (0 until it is loaded, 0x5116F0), u16 [+0x4] the mission's number, u16 [+0x6] how many scripts use it
 	// (at the start, how many to start). `exists`: the pointer *0x6DD8B4 (made by a load, 0x4D81E0, and by 0xC0).
@@ -89,8 +92,9 @@ void fn_4f37e0(SaveGame& save, const MissionProgram& program);
 void fn_543810(SaveGame& save);
 // 0x532420 (on the world): every merchant's factor [+0x464] to 1 (the bit 0x8000 of [+0x8] becoming 0x1),
 // `competitors` merchants of the kind 1 with the factor 2 and the bit 8 (a game bug: the one of a human's home town
-// is written into the merchant 0), and the Alderman's town [0x6DE52E]: the Hanse town (flags 0x40) without a human's
-// home whose number is nearest to 14.
+// is written into the merchant 0; and a human's factor set by the difficulty is lost: both fixed behind
+// fix_game_bugs), and the Alderman's town [0x6DE52E]: the Hanse town (flags 0x40) without a human's home whose number
+// is nearest to 14.
 void fn_532420(SaveGame& save, uint32_t competitors);
 }  // namespace missions_detail
 

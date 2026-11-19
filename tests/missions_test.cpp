@@ -3,13 +3,14 @@
 // with --misiones, docs/oracle.md); this keeps the rules: the groups and numbers apart by spaces as 0x5110E0 and
 // 0x511270 split them (an empty token's atoi reads the next number), the sections that set a variable, 0xFD and 0x00
 // at the start (a passed tick drops the script and lets go of its program), the waits 0x00, 0xFD, 0xFE and 0xFF;
-// and 0x532420's competitors with its bug (the merchant 0).
+// and 0x532420's competitors with its bug (the merchant 0); and the fixes of the game's bugs (fix_game_bugs).
 
 #include <cstdio>
 #include <cstring>
 #include <memory>
 #include <vector>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/mission_script.hpp"
 #include "p3data/missions.hpp"
 #include "p3data/savegame.hpp"
@@ -173,6 +174,44 @@ int main() {
 		check(save.merchants[2].memory.u32(0x464) == 0x3F800000, "the human: factor 1");
 		check(g.u8(0x6DE52E) == 1, "the Alderman's town: the number nearest to 14 without a human at home");
 		check(g.u32(0x6DE4AC) == kNow, "[0x6DE4AC] the tick");
+	}
+	{
+		// The fixes (fix_game_bugs): the seven's three scripts of a passed tick all dropped and its program gone; the
+		// file the ini misspells found; 0x532420's competitor the merchant it found and the human's factor kept.
+		set_fix_game_bugs(true);
+		SaveGame save = world();
+		MissionData& m = save.missions;
+		m.ini["einzelspiel"]["includegroup"] = "A";
+		m.ini["groupa"]["include"] = "7 7 7 8";
+		m.ini["missions"]["7"] = "seven.p2m";
+		m.ini["missions"]["8"] = "Kampagne3_Entfuehrung.p2m";
+		m.files["seven.p2m"] = program(1, {set(0, 0x100), {0x00, 0x00}, {0xFF}});
+		m.respelt["kampagne3_entfuehrung.p2m"] = program(1, {set(0, 0x40), {0xFD, 0x00, 0x00, 0x00}, {0xFF}});
+		fn_511270(save, true);
+		check(m.list.size() == 2 && m.list[0].count == 0 && !m.list[0].program,
+			"fixed: the seven's three scripts dropped, its program gone");
+		check(m.list.size() == 2 && m.list[1].count == 1 && m.list[1].program && m.scripts.size() == 1,
+			"fixed: the misspelt file found, its script started");
+		set_fix_game_bugs(false);
+		check(!mission_file(save, 8), "without the fix the misspelt file isn't found");
+
+		set_fix_game_bugs(true);
+		GlobalMemory& g = save.globals;
+		g.u16(global::kWorldMerchantCount) = 3;
+		g.u32(global::kWorldTownCount) = 0;
+		save.merchants.assign(3, SavedMerchant());
+		save.merchants[0].memory.u16(8) = 7;
+		save.merchants[1].memory.u16(8) = 1;
+		save.merchants[1].memory.u8(0x19) = 2;
+		save.merchants[2].memory.u8(0x19) = 2;
+		save.merchants[2].memory.u32(0x464) = 0x3FA66666;  // 1.3, the easy difficulty's
+		fn_532420(save, 1);
+		check(save.merchants[1].memory.u16(8) == 9 && save.merchants[1].memory.u32(0x464) == 0x40000000,
+			"fixed: the competitor the merchant of the kind 1 at the human's home");
+		check(save.merchants[0].memory.u16(8) == 7 && save.merchants[0].memory.u32(0x464) == 0x3F800000,
+			"fixed: the merchant 0 untouched");
+		check(save.merchants[2].memory.u32(0x464) == 0x3FA66666, "fixed: the human's factor kept");
+		set_fix_game_bugs(false);
 	}
 	if (failures == 0) {
 		std::printf("missions: ok\n");

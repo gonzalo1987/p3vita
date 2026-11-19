@@ -373,7 +373,8 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
 
 - [x] **La base** (19-11-2026, `missions.cpp`, `mission_script.cpp`; `re/emu/sesion45/`): leer el ini y los `.p2m`
   (los españoles con el archivo español), la lista de misiones del juego (*0x6DD8B4: 0x511270, 0x5110E0, 0x5116F0,
-  0x511690, 0x4F37E0), la operación **0xC0** entera (0x543810: los rivales de 0x532420, con su fallo, la cuenta atrás de
+  0x511690, 0x4F37E0), la operación **0xC0** entera (0x543810: los rivales de 0x532420, con sus fallos —corregidos
+  detrás del ajuste, como los otros dos de las misiones, abajo—, la cuenta atrás de
   los asedios de 0x635170, las misiones del modo con sus eventos 0x1B), cargar y guardar los guiones en curso con sus
   variables, y el bucle del intérprete con sus esperas (0x00, 0xFD, 0xFE, 0xFF). Comprobado: la carga con las misiones
   igual al juego en las 12 partidas (el oráculo con `--misiones`: cada partida lleva de 49 a 75 guiones), el escenario
@@ -998,25 +999,6 @@ ser a propósito. El detalle, en el comentario del código y en [oracle.md](orac
 
 ### Reproducidos, sin corregir aún
 
-**El rival de la ciudad del jugador** (0x532420, la operación 0xC0 al empezar una partida; 19-11-2026, seguro: escenario
-`mission_start`, roto a propósito, y las 12 partidas lo muestran): por cada comerciante humano con un comerciante de la
-IA del tipo 1 en su ciudad, el juego quiere hacer de ese uno de los rivales (el bit 8 de [+0x8] y el factor de
-reputación [+0x464] a 2), pero lo escribe en el comerciante 0 (0x532500 usa la base de la tabla). Así, en todas las
-partidas el comerciante 0 (de la ciudad 0) sale como rival y el de la ciudad del jugador no. Cambia el equilibrio
-(quién compite con el jugador): preguntar antes de corregirlo. Además, la misma función pone a 1 el factor de todos,
-también el del humano, que la 0xA7 acaba de poner por la dificultad (1,3, 1 o 0,7, 0x4F9550); en la partida 2 el
-jugador tiene 1,3, así que algo lo vuelve a poner después: por mirar si el factor de la dificultad se pierde.
-
-**Una misión de la campaña 3 que no se carga** (`scripts/missions_eng.ini` y `missions_spa.ini`, 19-11-2026, seguro:
-el fichero no está en el archivo): `[Missions] 308=Kampagne3_Entfuehrung.p2m`, pero el fichero se llama
-`Kampagne3_Entführung.p2m`: el secuestro de «El auge de la Hansa» nunca sale (0x5116F0 no lo encuentra y 0x511270 deja
-su cuenta a 0). Corregirlo detrás del ajuste es buscar también el nombre con la «ü»; va con las campañas.
-
-**Los guiones que se descartan al empezar** (0x511270, 19-11-2026, seguro, sin efecto con los datos del juego): al
-arrancar varios guiones de una misma misión cuyo tick ya ha pasado, el bucle cuenta hacia arriba mientras la cuenta de
-la lista baja con cada uno que descarta, así que de tres solo se van dos y el programa se queda con uno de más. Ninguna
-misión del juego que se repite empieza esperando un tick fijo; reproducido tal cual.
-
 **«El carabela»** (las frases del barco patrulla en español, 0x5E1F01; 15-11-2026, seguro, solo texto): el artículo va
 por el tipo de barco (0 y 2 «La», 1 y 3 «El») y la carabela es el tipo 1. Reproducido tal cual.
 
@@ -1152,6 +1134,30 @@ de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; s
   texto: el visor acaba la frase con su punto.
 
 ### Corregidos con el ajuste
+
+**El rival de la ciudad del jugador** (0x532420, la operación 0xC0 al empezar una partida; 19-11-2026, seguro:
+escenario `mission_start`, roto a propósito, y las 12 partidas lo muestran): por cada comerciante humano con un
+comerciante de la IA del tipo 1 en su ciudad, el juego quiere hacer de ese uno de los rivales (el bit 8 de [+0x8] y el
+factor de reputación [+0x464] a 2), pero lo escribe en el comerciante 0 (0x532500 usa la base de la tabla): en todas
+las partidas el comerciante 0 (de la ciudad 0) sale como rival y el de la ciudad del jugador no. Corregido a petición
+del usuario (19-11-2026): el rival es el comerciante que encuentra (`missions.cpp` `fn_532420`; con
+`tick_probe --fix-game-bugs`, el escenario cambia el comerciante 0 por el 28 en la partida 3).
+
+**El factor de reputación de la dificultad, perdido** (0x532420; 19-11-2026, seguro: `re/emu/sesion45/ngfactor.sh`, la
+partida nueva del juego con la dificultad que da 1,3 acaba con el jugador a 1): la 0xA7 pone el factor [+0x464] del
+jugador según la dificultad (0x4F9550: 1,3, 1 o 0,7) y la 0xC0 que encola a continuación lo vuelve a poner a 1 con el
+de todos; nada lo recalcula después (0x4F42B0, desde el evento 0x04, solo a los de la IA). En una partida de un jugador
+la dificultad no cambia lo que sube su reputación. Corregido a petición del usuario: el de los humanos se queda.
+
+**Una misión de la campaña 3 que no se carga** (`scripts/missions_eng.ini` y `missions_spa.ini`, 19-11-2026, seguro:
+el fichero no está con ese nombre en el archivo): `[Missions] 308=Kampagne3_Entfuehrung.p2m`, pero el fichero se llama
+`Kampagne3_Entführung.p2m`: el secuestro de «El auge de la Hansa» nunca sale (0x5116F0 no lo encuentra y 0x511270 deja
+su cuenta a 0). Corregido a petición del usuario: el fichero también con la «ü» (`load_mission_files`, `mission_file`).
+
+**Los guiones que se descartan al empezar** (0x511270, 19-11-2026, seguro, sin efecto con los datos del juego): al
+arrancar varios guiones de una misma misión cuyo tick ya ha pasado, el bucle cuenta hacia arriba mientras la cuenta de
+la lista baja con cada uno que descarta, así que de tres solo se van dos y el programa se queda con uno de más.
+Corregido a petición del usuario: tantas vueltas como guiones tenía.
 
 **Los botones de huir y de rendirse del panel de la batalla, cruzados** (la fila de acciones, 0x425A5E..0x425A9F;
 19-11-2026, seguro: solo cambia lo que se ve): el panel crea su cuarto botón, el de la bandera blanca (sus bits 0x1000

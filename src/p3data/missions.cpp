@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "p3data/cpr.hpp"
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
 #include "p3data/savegame.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -146,6 +147,18 @@ void load_mission_files(const CprArchive& archive, SaveGame& save) {
 		std::vector<uint8_t> image;
 		if (entry && archive.read(*entry, image)) {
 			m.files[name] = std::make_shared<const std::vector<uint8_t>>(std::move(image));
+			continue;
+		}
+		// GAME BUG: the ini's name spelt «ue» where the file has «ü» (308=Kampagne3_Entfuehrung.p2m, the file
+		// Kampagne3_Entführung.p2m: the campaign 3's abduction never loads). Kept apart for fix_game_bugs
+		// (mission_file).
+		std::string umlaut = file;
+		for (size_t at = umlaut.find("ue"); at != std::string::npos; at = umlaut.find("ue", at + 1)) {
+			umlaut.replace(at, 2, std::string(1, char(0xFC)));  // (the archive's names are Latin-1)
+		}
+		entry = umlaut != file ? archive.find("missions_addon/" + umlaut) : nullptr;
+		if (entry && archive.read(*entry, image)) {
+			m.respelt[name] = std::make_shared<const std::vector<uint8_t>>(std::move(image));
 		}
 	}
 }
@@ -153,7 +166,17 @@ void load_mission_files(const CprArchive& archive, SaveGame& save) {
 MissionProgram mission_file(const SaveGame& save, uint16_t number) {
 	const std::string file = ini_value(save, "Missions", std::to_string(number));
 	auto f = file.empty() ? save.missions.files.end() : save.missions.files.find(lower(file));
-	return f == save.missions.files.end() ? nullptr : f->second;
+	if (f != save.missions.files.end()) {
+		return f->second;
+	}
+	if (fix_game_bugs() && !file.empty()) {
+		// The file its name misspells (load_mission_files: the campaign 3's abduction).
+		auto r = save.missions.respelt.find(lower(file));
+		if (r != save.missions.respelt.end()) {
+			return r->second;
+		}
+	}
+	return nullptr;
 }
 
 void attach_mission_programs(SaveGame& save) {
@@ -266,7 +289,14 @@ void fn_511270(SaveGame& save, bool start) {
 			m.list[i].count = 0;
 			continue;
 		}
-		for (uint32_t k = 0; k < m.list[i].count; ++k) {
+		// GAME BUG: the loop counts up to the entry's count while each script dropped (its tick passed) counts it
+		// down, so of three such scripts only two go and the program keeps one too many (none of the game's missions
+		// that repeat waits for a fixed tick: no effect with its data). Fixed: as many turns as it had.
+		const uint32_t scripts = m.list[i].count;
+		for (uint32_t k = 0; fix_game_bugs() ? k < scripts : k < m.list[i].count; ++k) {
+			if (!m.list[i].program) {
+				break;  // (fix_game_bugs: all of them dropped and the program gone)
+			}
 			const MissionProgram program = m.list[i].program;
 			const std::vector<uint8_t>& p = *program;
 			std::vector<uint32_t> variables(program_u16(p, 2), 0);
@@ -353,7 +383,13 @@ void fn_532420(SaveGame& save, uint32_t competitors) {
 			m.u16(0x8) = uint16_t(flags & 0x7FFF);
 			m.u8(0x8) |= 1;
 		}
-		m.u32(0x464) = kOne;
+		// GAME BUG: a human's factor too, which 0xA7 has just set by the difficulty (0x4F9550: 1.3, 1 or 0.7) and
+		// nothing sets again (0x4F42B0, from the event 0x04, only the AI's): the difficulty's factor is lost in a game
+		// of one player (checked: re/emu/sesion45/ngfactor.sh, the player at 1 after a new game set to 1.3). Fixed:
+		// a human's kept.
+		if (!(fix_game_bugs() && m.u16(0x8) == 0)) {
+			m.u32(0x464) = kOne;
+		}
 	}
 	// For each human merchant (from the last), a merchant of the kind 1 at home in the same town (from the last) makes
 	// one of the competitors: GAME BUG, the factor and the bit go to the merchant 0 (0x532500: the array's base, not
@@ -364,7 +400,8 @@ void fn_532420(SaveGame& save, uint32_t competitors) {
 			continue;
 		}
 		bool found = false;
-		for (uint32_t j = merchants; j > 0 && !found;) {
+		uint32_t j = merchants;
+		while (j > 0 && !found) {
 			const MerchantMemory& other = save.merchants[--j].memory;
 			found = other.u8(0x19) == human.u8(0x19) && (other.u8(0x8) & 7) == 1;
 		}
@@ -374,9 +411,10 @@ void fn_532420(SaveGame& save, uint32_t competitors) {
 		if (competitors == 0) {
 			break;
 		}
-		MerchantMemory& first = save.merchants[0].memory;
-		first.u32(0x464) = kTwo;
-		first.u8(0x8) |= 8;
+		// Fixed: the merchant found (fix_game_bugs).
+		MerchantMemory& rival = save.merchants[fix_game_bugs() ? j : 0].memory;
+		rival.u32(0x464) = kTwo;
+		rival.u8(0x8) |= 8;
 		--competitors;
 	}
 	for (uint32_t i = 0; competitors > 0 && i < merchants; ++i) {
