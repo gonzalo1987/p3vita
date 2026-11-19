@@ -151,6 +151,42 @@ bool pirate_attack(SaveGame& save) {
 	return true;
 }
 
+// As pirate_attack, the player's first ship first made the guide of a private convoy (0x15, then 0x18) with another
+// of his ships docked in its port and out of a convoy: a captain given to it (as convoy_leader) when it has none.
+bool convoy_attack(SaveGame& save) {
+	const uint16_t ship = save.merchants[size_t(save.player)].memory.u16(0xE);
+	if (ship >= save.ships.size() || !save.ships[ship].docked() || save.ships[ship].town() >= save.towns.size()) {
+		return false;
+	}
+	const uint16_t convoys = save.globals.u16(global::kShips + 0xF6);
+	int other = -1;
+	for (size_t i = 0; i < save.ships.size() && other < 0; ++i) {
+		const SavedShip& s = save.ships[i];
+		if (i != ship && s.docked() && s.owner() == save.player && s.town() == save.ships[ship].town() &&
+			s.convoy() >= convoys) {
+			other = int(i);
+		}
+	}
+	if (other < 0) {
+		return false;
+	}
+	ShipMemory& g = save.ships[ship].memory;
+	const uint16_t count = save.globals.u16(global::kCaptainCount);
+	for (size_t u = 0; u < save.towns.size() && g.u16(0x42) >= count; ++u) {
+		uint16_t& head = save.towns[(save.ships[ship].town() + u) % save.towns.size()].memory.u16(0x82E);
+		if (head < count) {
+			const uint16_t c = head;
+			head = save.captains[c].u16(0);
+			save.captains[c].u16(0) = 0xFFFF;
+			g.u16(0x42) = c;
+		}
+	}
+	for (const OperationBytes& op : create_convoy_operations(save, {ship, uint16_t(other)}, false, false, 0)) {
+		save.queued_operations.push_back(std::vector<uint8_t>(op.begin(), op.end()));
+	}
+	return pirate_attack(save);
+}
+
 // A town battle in Lübeck, the town the viewer opens (the battles' piece 6), as town_end_branches of
 // tools/oracle/retouch_unchecked.py makes a raider arrive: the player's first ship is the town's guard ship
 // ([+0x994]); the first AI merchant's ship sailing alone turns raider (operation 0x0D with 1, 0x5386C0) and gets a
@@ -780,6 +816,9 @@ const char kDebugStatesHelp[] =
 	"  election-tomorrow  the election of the Alderman at the start of the next day\n"
 	"  pirate-attack  the player's first ship sails and pirates attack it two days\n"
 	"              later (event 0x1E): a sea battle against the player\n"
+	"  convoy-attack  as pirate-attack, the player's first ship guiding a private\n"
+	"              convoy with another of his ships in its port (the battle's ship\n"
+	"              menu, «show convoy»)\n"
 	"  town-attack  an AI raider attacks Lübeck at the next tick, the player's first\n"
 	"              ship its guard ship: a town battle against the player\n"
 	"  town-events  Lübeck with the eight event symbols of the town view, and towns\n"
@@ -964,6 +1003,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "pirate-attack") {
 			if (!pirate_attack(save)) {
 				error = "the player's first ship isn't in a town, or the save has no events";
+				return false;
+			}
+		} else if (state == "convoy-attack") {
+			if (!convoy_attack(save)) {
+				error = "the player's first ship isn't in a town with another of his ships, or the save has no events";
 				return false;
 			}
 		} else if (state == "town-attack") {

@@ -114,10 +114,10 @@ public:
 	// The marker arrow over a chosen ship (markerpfeil01.aim, the manual's blue arrow), for the labels.
 	SDL_Texture* arrow() const { return arrow_; }
 
-	// The side panel's minimap of the battle in `rect`: the sea, the reefs and sand banks (the manual's «islets»,
-	// yellow), or at a town the minimap of its battle map (`town`), each ship a dot of the town view's colour for
-	// its owner (0x56C7B0: the local player's blue, a pirate's dark grey, another human's red, the others' white)
-	// and the screen's part (`camera`, the area's screen pixels) framed.
+	// The side panel's minimap of the battle in `rect`, as the game's town minimap (0x59C590, 0x59CA00): the sea, the
+	// reefs (grey) and sand banks (yellow), or at a town the minimap of its battle map (`town`), the screen's part
+	// (`camera`, the area's screen pixels) framed in grey, each ship a 3 · 3 dot of the town view's colour for its
+	// owner (0x56C7B0: the local player's blue, a pirate's dark grey, another human's red, the others' white).
 	void draw_minimap(const p3::data::SaveGame& save, size_t battle, const SDL_Rect& rect, const SDL_Rect& camera,
 		SDL_Texture* town = nullptr) const;
 	// The area's screen pixels under the minimap's (x, y); false outside it.

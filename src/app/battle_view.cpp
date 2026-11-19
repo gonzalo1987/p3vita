@@ -571,21 +571,32 @@ void BattleView::draw_reefs(const SaveGame& save, size_t battle, int camera_x, i
 	}
 }
 
+// The battle's minimap as the game's town minimap «CTownMap» (0x59C590): its image painted cell by cell from the town
+// view's map (0x59CA00, the layers 0 then 1: the water 0xFF226192; with no town shown, a sea battle, a reef, the type
+// 0x12 of the battle's list [+0x872] (0x610379 → 0x5944E0), grey 0xFF828282 and a sand bank, 0x13 of [+0x672]
+// (0x594640), yellow 0xFFFFFF00; drawn here as one box each, by eye), a town battle's the town's minimap (its battle
+// map's 128.aim..); the view's frame in grey 0xFF646464; each object a 3 · 3 dot of its colour [+0x34] (the ships': the
+// local player's 0xFF0000FF, a pirate's in the state 0x12 0xFF282828, another human's 0xFFFF0000, else white:
+// 0x56C75C..).
 void BattleView::draw_minimap(const SaveGame& save, size_t battle, const SDL_Rect& rect, const SDL_Rect& camera,
 	SDL_Texture* town) const {
 	const BattleGraph& g = save.battles;
 	const double sx = double(rect.w) / width(save, battle);
 	const double sy = double(rect.h) / height(save, battle);
 	SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(renderer_, 46, 70, 112, 255);
+	SDL_SetRenderDrawColor(renderer_, 0x22, 0x61, 0x92, 255);
 	SDL_RenderFillRect(renderer_, &rect);
 	if (town) {
 		SDL_RenderCopy(renderer_, town, nullptr, &rect);  // The battle map's (the town view's area, whole).
 	}
-	SDL_SetRenderDrawColor(renderer_, 230, 210, 90, 255);
 	for (const size_t base : {size_t(0x672), size_t(0x872)}) {
 		if (town) {
 			break;
+		}
+		if (base == 0x672) {
+			SDL_SetRenderDrawColor(renderer_, 0xFF, 0xFF, 0x00, 255);  // The sand banks.
+		} else {
+			SDL_SetRenderDrawColor(renderer_, 0x82, 0x82, 0x82, 255);  // The reefs.
 		}
 		for (int k = 0; k < 0x40; ++k) {
 			const int x = g.get<int16_t>(battle, base + 8 * size_t(k));
@@ -601,6 +612,10 @@ void BattleView::draw_minimap(const SaveGame& save, size_t battle, const SDL_Rec
 			SDL_RenderFillRect(renderer_, &r);
 		}
 	}
+	const SDL_Rect frame = {rect.x + int(camera.x * sx), rect.y + int(camera.y * sy), std::max(3, int(camera.w * sx)),
+		std::max(3, int(camera.h * sy))};
+	SDL_SetRenderDrawColor(renderer_, 0x64, 0x64, 0x64, 255);
+	SDL_RenderDrawRect(renderer_, &frame);
 	const int player = save.player;
 	for_each_ship(g, battle, [&](size_t e) {
 		if (g.get<uint8_t>(e, 0x12A) & 0x6) {
@@ -613,22 +628,18 @@ void BattleView::draw_minimap(const SaveGame& save, size_t battle, const SDL_Rec
 		const p3::data::SavedShip& ship = save.ships[index];
 		SDL_Color c = {255, 255, 255, 255};
 		if (ship.owner() == player) {
-			c = {40, 90, 255, 255};
+			c = {0, 0, 255, 255};
 		} else if (ship.status() == 0x12) {
-			c = {40, 40, 40, 255};
+			c = {0x28, 0x28, 0x28, 255};
 		} else if (ship.owner() < save.merchants.size() && save.merchants[ship.owner()].memory.u16(0x8) == 0) {
-			c = {255, 40, 40, 255};  // Another human's (0x5303C0 [+0x8] 0), as the town view.
+			c = {255, 0, 0, 255};  // Another human's (0x5303C0 [+0x8] 0), as the town view.
 		}
 		const int x = rect.x + int(g.get<int16_t>(e, 0xA) * sx);
 		const int y = rect.y + int(screen_y(g.get<int16_t>(e, 0xE)) * sy);
-		const SDL_Rect dot = {x - 2, y - 2, 5, 5};
+		const SDL_Rect dot = {x - 1, y - 1, 3, 3};
 		SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, 255);
 		SDL_RenderFillRect(renderer_, &dot);
 	});
-	const SDL_Rect frame = {rect.x + int(camera.x * sx), rect.y + int(camera.y * sy), std::max(3, int(camera.w * sx)),
-		std::max(3, int(camera.h * sy))};
-	SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 230);
-	SDL_RenderDrawRect(renderer_, &frame);
 }
 
 bool BattleView::minimap_point(const SaveGame& save, size_t battle, const SDL_Rect& rect, int x, int y, SDL_Point& at) {

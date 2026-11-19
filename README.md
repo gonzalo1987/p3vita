@@ -221,6 +221,18 @@ map), the ship buttons (a ship at sea is chosen and centred; one in port takes
 you to its town), the chosen ship's menu (Square takes the next ship) and the
 messages. Building and leaving the town are off there, as in the game.
 
+**A battle you direct** (its question's «Steer manually»): touch a ship of yours to
+choose it alone (hold the finger on another to add it or take it out; L and R the
+previous or next one), the water to send the chosen ships there, an enemy to
+attack it; hold still and then drag for a held order; X fires, Triangle chooses
+them all, up and down set the sails. The panel is the game's: the battle's
+minimap, its action row (choose all, capture, plunder, the white flag, flee or,
+once the enemy is gone, leave the battle; the sea map's icon gives the battle to
+the computer) and the ship menu of the ships chosen, as the game's: one ship's
+deck (its fire button and its sails' rope) and its other pages by their buttons,
+several ships' list (a row chooses its ship alone), and «show convoy» (or Square)
+chooses the whole convoy and lists it.
+
 **Building** (the panel's hammer): the game's build menu with its five
 categories (houses and warehouses, public buildings, military ones for the
 mayor, and the two groups of businesses the town can produce); L and R, or

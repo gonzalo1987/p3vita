@@ -105,10 +105,12 @@ Cómo leerla:
 - **Hecho el 18-11-2026 (quinta sesión, `re/emu/sesion43/`)**: las estadísticas como las del juego, su menú lateral
   y su ventana de pergamino con todas sus entradas, trazadas en el emulador (apartado 4).
 - **Hecho el 19-11-2026 (`re/emu/sesion43/`, «Part 2»)**: los mensajes como los del juego: su menú lateral, la carta
-  y la crónica en la ventanita de mensaje del juego y la ventana de ajustes de las cartas (apartado 4).
+  y la crónica en la ventanita de mensaje del juego y la ventana de ajustes de las cartas (apartado 4). Después
+  (`re/emu/sesion44/`), el panel de las batallas repasado con el código: el menú del barco sobre la selección de la
+  batalla con «ver convoy», la fila de acciones en sus sitios y el minimapa con los colores del juego (apartado 4).
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): primero el resto
   de las pantallas, el panel lateral con las letras y los textos del juego (apartado 4; el encargo
-  `ENCARGO_PANEL_JUEGO.md`: quedan el panel de las batallas y la barra de arriba); luego el intérprete de misiones (apartado 3), el final de la partida
+  `ENCARGO_PANEL_JUEGO.md`: queda la barra de arriba); luego el intérprete de misiones (apartado 3), el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -131,7 +133,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Operaciones (193 códigos) | 167: las 37 de la simulación, 101 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red y la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) | **5 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74, 0x76 y 0x82; apartado 3), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 139 | 15: 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
-| El panel lateral y sus ventanas como los del juego (19-11-2026) | 5 de 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña) y los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes) | 2: el panel de las batallas («ver convoy» y sus botones) y la barra de arriba (apartado 4) |
+| El panel lateral y sus ventanas como los del juego (19-11-2026) | 6 de 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes) y el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) | 1: la barra de arriba (apartado 4) |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
@@ -573,9 +575,9 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     escalada al alto de la Vita, ×0,904, como las de los edificios: adaptado). Las listas de selección van donde las
     pone el juego, con su último cuarto sobre el panel (lo confirma la foto del usuario). Y el menú del barco
     en la batalla (18-11-2026): su página de cubierta como la del juego (la cabecera de la página de cubierta, no la
-    vieja del visor), la fila de botones apagada, el botón de disparar en su sitio y la cuerda con sus tres marcas
-    (el barco en las velas que lleva, las pedidas al 50 % hasta que llega, el nudo bajo el dedo). «Ver convoy» en la
-    batalla, apagado hasta el panel de las batallas. **El menú del barco está acabado.**
+    vieja del visor), el botón de disparar en su sitio y la cuerda con sus tres marcas (el barco en las velas que
+    lleva, las pedidas al 50 % hasta que llega, el nudo bajo el dedo); su fila de botones y «ver convoy», con el panel
+    de las batallas (abajo). **El menú del barco está acabado.**
   - [x] El menú de construir (18-11-2026, `re/emu/sesion42/README.md`): como el del juego, trazado en el emulador: las
     cinco categorías repartidas en la fila de arriba, el título de la categoría en la letra 3, los botones de los
     edificios (Button4) centrados, **el aviso de la reputación** centrado en la caja de texto del juego, y la página
@@ -620,8 +622,23 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     pantalla completa (sin panel: en una batalla, desde el menú de Start) sigue siendo el del visor: su texto, con las
     letras del juego en claro; con él abierto, sus teclas y sus toques van antes que los de la batalla (antes se
     quedaba sin poder cerrarse con el mando, y el toque que lo cerraba daba una orden a los barcos).
-  - [ ] El panel de las batallas y la barra de arriba (en la barra, las teclas de la derecha se meten bajo el pilar de
-    la fecha cuando esta es corta, como en inglés: con los sitios del juego, screenGame.ini).
+  - [x] El panel de las batallas (19-11-2026, `re/emu/sesion44/README.md`): repasado con el código. Su menú es el menú
+    del barco del juego sobre la selección de la batalla (0x495190 elige con la marca 2, la de la cubierta): un barco
+    del jugador en su estado 1 con la cubierta y sus botones de página con las reglas de siempre (mercancías,
+    tripulación y cubierta encendidos; un barco en batalla, estado 0x14, no puede formar ni abandonar un convoy; la
+    sesión 42 los había apagado todos, por leer el estado 3, el de un barco de otro mercader), sus demás páginas
+    abiertas desde sus botones, varios barcos su lista (estado 0) y **«ver convoy»** su estado 2: la selección de la
+    batalla pasa a ser el convoy entero (0x60EDF0 toma la selección entera) y una fila elige su barco solo, con su
+    cubierta (0x48D586). Un cambio de la selección en la batalla (un toque, «seleccionar todos», L o R) vuelve a
+    elegir en el menú. Cuadrado es «ver convoy», como fuera de la batalla; las ventanas de la página de la ruta se
+    abren también sobre la batalla. La fila de acciones en los sitios del juego (0x42A3F7..0x42A52A): la bandera
+    blanca en el cuarto y huir en el quinto, con «Terminar» en el quinto cuando el enemigo se ha ido (el visor lo
+    ponía en el cuarto), y el cruce de sus dibujos que tiene el juego (abajo, «Corregidos con el ajuste»). El minimapa
+    con los colores del juego (0x59C590, 0x59CA00: el agua, los arrecifes grises y los bancos de arena amarillos, el
+    marco de la vista gris, puntos de 3 × 3 azul puro, rojo y gris oscuro). Estado de depuración nuevo
+    `convoy-attack` (un convoy del jugador atacado por piratas).
+  - [ ] La barra de arriba (en la barra, las teclas de la derecha se meten bajo el pilar de la fecha cuando esta es
+    corta, como en inglés; en una batalla el reloj de arena no hace nada: con los sitios del juego, screenGame.ini).
 - [x] **El panel de la Hansa** propio del visor (Cuadrado en una ciudad), quitado el 15-11-2026 a petición del
   usuario: sus encargos y elecciones son las páginas del ayuntamiento, y los materiales de la carretera, la página
   «Ruta terrestre» de la puerta de la ciudad, como las del juego.
@@ -1046,6 +1063,14 @@ de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; s
   texto: el visor acaba la frase con su punto.
 
 ### Corregidos con el ajuste
+
+**Los botones de huir y de rendirse del panel de la batalla, cruzados** (la fila de acciones, 0x425A5E..0x425A9F;
+19-11-2026, seguro: solo cambia lo que se ve): el panel crea su cuarto botón, el de la bandera blanca (sus bits 0x1000
+y 0x2000 en 0x424382, su clic 0x610FD9 en 0x42D499), con FliehenBtnID (Button29: el barco que huye y el aviso «Huir»,
+20051), y el quinto, el de huir (los bits 0x1 y 0x2, el clic 0x610C09 en 0x42D436), con AufgebenBtnID (Button30: la
+bandera blanca y «Rendirse», 20052). En el juego, el botón que se ve y se anuncia como «Huir» rinde los barcos y el de
+«Rendirse» los hace huir. Reproducido (`battle_button_state`, estado `convoy-attack`); con el ajuste, cada botón lleva
+el dibujo y el aviso de lo que hace.
 
 **Los títulos del libro del astillero al pasar de un barco a otro** (0x5F8910, las páginas de reparar, mejorar y el
 nombre; 15-11-2026, seguro: comprobado en el emulador, solo cambia lo que se ve medio segundo): el libro funde el barco
