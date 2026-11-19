@@ -428,9 +428,13 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   - [ ] **El menú de Start** del visor (continuar, buzón, guardar, cargar, opciones, menú principal, salir) con sus
     pantallas de **guardar y cargar partida** y de **opciones**: en el juego, la ventana de opciones del icono del
     engranaje del panel (guardar, cargar, opciones, salir).
-  - [ ] **Las ventanas de una batalla**: la pregunta («Ataque sobre la ciudad», «Dirigir manualmente», «Que luche el
-    ordenador»), la del icono de una batalla en el mapa del mar y la de dejarla (`draw_choice_box`), y los mensajes de
-    las batallas (`draw_message_window`): en el juego, la ventana de las batallas *0x6CBB10 (0x611FC0, 0x41D9B0).
+  - [x] **Las ventanas de una batalla** (19-11-2026, `re/emu/sesion46/README.md`): la pregunta, el final, el abordaje
+    y los mensajes de las batallas en la ventana de mensajes del juego (*0x6CBB10, 0x41D9B0) con su descripción
+    (oficial, con los rollos, la proporción 0,7071); la del icono del mapa del mar como la del juego (no oficial, ancho
+    fijo 200, proporción 1,375, sin botón: un fallo del juego, abajo); la de dejar la batalla (del visor) con la misma
+    ventana. Se quedan, por decisión del usuario del 08-11-2026, el segundo botón de la pregunta («Que luche el
+    ordenador»: en el juego, solo el cierre) y su barra del tiempo (improvisada sobre los botones). El abordaje que
+    dirige el jugador ya no sale dos veces (la ventana de la batalla y el recuadro de mensajes).
   - [ ] **Los avisos** de arriba a la izquierda («El Hyphen está siendo atacado», «Información comercial: Factura») y
     **el nombre del edificio señalado** («Ayuntamiento»): como las líneas de aviso y la ayuda emergente del juego.
   - [ ] **El pie del mapa del mar** («barco: en el puerto de...», «L/R: velocidad del juego»): del visor, sin igual en el
@@ -1163,6 +1167,14 @@ su cuenta a 0). Corregido a petición del usuario: el fichero también con la «
 arrancar varios guiones de una misma misión cuyo tick ya ha pasado, el bucle cuenta hacia arriba mientras la cuenta de
 la lista baja con cada uno que descarta, así que de tres solo se van dos y el programa se queda con uno de más.
 Corregido a petición del usuario: tantas vueltas como guiones tenía.
+
+**La ventana del icono de una batalla en el mapa del mar, sin su botón de dirigirla** (0x611FC0, 0x6128E3; 19-11-2026,
+`re/emu/sesion46/README.md`): al cerrarse la ventana, su actualización toma la batalla (el método +0x24 de la batalla,
+0x6102A9: dirigirla en pantalla) si se cerró con su primer botón ([+0x5A4] == [0x66BDC0]), pero su descripción le pone
+0 botones (0x612769), y su cierre deja el resultado 0 (0x41E670): una batalla que lleva el ordenador ya no se puede
+dirigir. Reproducido (la ventana solo con su cierre; estado `pirate-attack`, el ordenador lucha y se toca el icono);
+con el ajuste lleva «Dirigir manualmente» (0x6B2BC0, el texto de la pregunta), que toma la batalla como haría ese
+código. Antes el visor lo tenía siempre (leído mal en la sesión 21).
 
 **Los botones de huir y de rendirse del panel de la batalla, cruzados** (la fila de acciones, 0x425A5E..0x425A9F;
 19-11-2026, seguro: solo cambia lo que se ve): el panel crea su cuarto botón, el de la bandera blanca (sus bits 0x1000

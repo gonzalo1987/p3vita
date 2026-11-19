@@ -3496,6 +3496,7 @@ std::string interest_kind(int kind) {
 }
 
 PlaceView::PageButton fitted(PlaceView::PageButton b);
+std::string page_button_key(PlaceView::PageAction a);
 std::string exe_format(uint32_t english, const std::vector<std::string>& args, const std::string& fallback);
 int add_wrapped(PlaceView::Page& page, const std::vector<std::pair<std::string, SDL_Color>>& lines, int top);
 
@@ -3613,9 +3614,11 @@ struct GameMessage {
 	int text_w = 0;
 };
 // The window for a text whose height at a width `text_height` gives (game_box's for a game's text; a letter's lines'),
-// its buttons placed; the text left to the caller.
+// its buttons placed; the text left to the caller. With a fixed width (the struct's +0x16, 0x41DCFA → 0x41DF6D: the
+// sea map's battle icon's 200) the width is that rounded up to tiles (ceil 0x63A5CE) and the height the text's (to a
+// line) with a tile, the two official ones and YReserved, rounded up to tiles (the screen's at most); no least width.
 GameMessage game_message_frame(const std::function<int(int)>& text_height, std::vector<PlaceView::PageButton> buttons,
-	bool official, int key, float message_ratio, int screen_w, int screen_h) {
+	bool official, int key, float message_ratio, int screen_w, int screen_h, int fixed_width = 0) {
 	constexpr int kTile = 32;
 	constexpr int kMinX = 128;
 	constexpr int kXReserved = 52;
@@ -3625,13 +3628,24 @@ GameMessage game_message_frame(const std::function<int(int)>& text_height, std::
 	const double ratio = double(message_ratio);  // (The message's float.)
 	const TextRenderer* font = g_game_art ? g_game_art->page_text() : nullptr;
 	int sum = 0;
+	bool grown = false;
 	for (PlaceView::PageButton& b : buttons) {
 		const int w = font ? font->measure(b.label) + font->measure("  ") : 7 * (int(b.label.size()) + 2);
 		b.rect.w = w <= 16 ? 16 : w <= 32 ? 32 : w <= 48 ? 48 : w <= 96 ? 96 : 128;
 		b.rect.h = 18;
+		// (A button too narrow for the Vita's key before its label is as wide as fitted makes it, and so counted, with
+		// 8 pixels of the gaps too: the buttons and the close one clear of each other and of the edges; adapted.)
+		const int keyed = font && b.keyed ? font->measure(page_button_key(b.action) + b.label) + 14 : 0;
+		if (keyed > b.rect.w) {
+			b.rect.w = keyed;
+			grown = true;
+		}
 		sum += b.rect.w;
 	}
-	int least = std::max(kClose / 2 + kClose + sum, kMinX);
+	// (And, without a «No» of its own, the close button's key before it: 18.)
+	const bool back = std::any_of(buttons.begin(), buttons.end(),
+		[](const PlaceView::PageButton& b) { return b.action == PlaceView::PageAction::Back; });
+	int least = std::max(kClose / 2 + kClose + sum + (grown ? 8 * int(buttons.size() + 1) + (back ? 0 : 18) : 0), kMinX);
 	if (least > screen_w) {
 		least = screen_w / kTile;  // (0x41DCD9: the screen's tiles, not its pixels: the game's.)
 	}
@@ -3642,15 +3656,23 @@ GameMessage game_message_frame(const std::function<int(int)>& text_height, std::
 	};
 	int w = 0;
 	int h = 0;
-	if (double(screen_h) / screen_w > ratio) {
+	if (fixed_width > 0) {
+		// (No less than its buttons need: the game's only fixed window has none, the viewer's fix gives it one.)
+		w = (std::max(fixed_width, buttons.empty() ? 0 : least) + kTile - 1) / kTile * kTile;
+		const int lines = (text_height(w - kXReserved) + kBoxLine - 1) / kBoxLine * kBoxLine;
+		h = (lines + kTile + extra + kYReserved - 1) / kTile * kTile;
+		if (h > screen_h) {
+			h = screen_h / kTile * kTile;
+		}
+	} else if (double(screen_h) / screen_w > ratio) {
 		w = screen_w / kTile * kTile;
 		h = high(w);
 	} else {
 		h = screen_h / kTile * kTile;
 		w = int(h / ratio / kTile) * kTile;
 	}
-	bool grow = true;
-	if (need(w) < h) {
+	bool grow = fixed_width == 0;
+	if (fixed_width == 0 && need(w) < h) {
 		while (true) {
 			if (w - kTile < least) {
 				grow = false;
@@ -3699,9 +3721,9 @@ GameMessage game_message_frame(const std::function<int(int)>& text_height, std::
 }
 
 GameMessage game_message_layout(const std::string& raw, std::vector<PlaceView::PageButton> buttons, bool official, int key,
-	float message_ratio, int screen_w, int screen_h) {
+	float message_ratio, int screen_w, int screen_h, int fixed_width = 0) {
 	GameMessage m = game_message_frame([&](int width) { return game_box(nullptr, raw, 0, 0, width); }, std::move(buttons),
-		official, key, message_ratio, screen_w, screen_h);
+		official, key, message_ratio, screen_w, screen_h, fixed_width);
 	PlaceView::Page text;
 	game_box(&text, raw, 0, 0, m.text_w);
 	PlaceView::offset_page(text, m.text_x, m.text.y);
@@ -16445,14 +16467,12 @@ void draw_end_window(SDL_Renderer* renderer, TextRenderer& title, TextRenderer& 
 	text.draw(hint, box.x + (width - text.measure(hint)) / 2, box.y + height - 8 - text.line_height(), kDimColor);
 }
 
-// The game's messages to the player in a window (Sailing::take_player_messages:
-// the battle's question when a battle against the player starts, the
-// boarding's message), one after another: the game's text, its first line
-// («Batalla naval:», «Abordaje»...) as the title.
+// The game's messages to the player (Sailing::take_player_messages: what the engine tells him of a battle the computer
+// fights for him, a boarding...), one after another, each the game's raw text in the game's message window as the
+// battles' end window (official, the ratio 0.7071, no button: battle_message).
 struct MessageWindow {
 	bool open = false;
-	std::string title;
-	std::string text;
+	std::string raw;  // The one shown.
 	std::deque<std::string> pending;  // Raw texts of the game, still to show.
 
 	void next() {
@@ -16460,166 +16480,77 @@ struct MessageWindow {
 		if (!open) {
 			return;
 		}
-		const std::string clean = clean_game_text(pending.front());
+		raw = pending.front();
 		pending.pop_front();
-		const size_t line = clean.find('\n');
-		title = clean.substr(0, line);
-		text = line == std::string::npos ? std::string() : clean.substr(line + 1);
-		const size_t first = text.find_first_not_of('\n');
-		const size_t last = text.find_last_not_of('\n');
-		text = first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
 	}
-	void push(const std::string& raw) {
-		pending.push_back(raw);
+	void push(const std::string& raw_text) {
+		pending.push_back(raw_text);
 		if (!open) {
 			next();
 		}
 	}
 };
 
-void draw_message_window(SDL_Renderer* renderer, TextRenderer& title, TextRenderer& text, const MessageWindow& w) {
-	const int width = 620;
-	const std::vector<std::string> lines = wrap_text(text, w.text, width - 40);
-	const int height = 40 + title.line_height() + 16 + int(lines.size()) * text.line_height() + 24 +
-		text.line_height() + 8;
-	const SDL_Rect box = {(kScreenWidth - width) / 2, (kScreenHeight - height) / 2, width, height};
-	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 240);
-	SDL_RenderFillRect(renderer, &box);
-	SDL_SetRenderDrawColor(renderer, 190, 150, 90, 255);
-	SDL_RenderDrawRect(renderer, &box);
-	int y = box.y + 20;
-	title.draw(w.title, box.x + (width - title.measure(w.title)) / 2, y, kTextColor);
-	y += title.line_height() + 16;
-	for (const std::string& line : lines) {
-		text.draw(line, box.x + 20, y, kTextColor);
-		y += text.line_height();
-	}
-	const std::string hint = w.pending.empty() ? tr(BTN_CROSS " continuar", BTN_CROSS " continue") : tr(BTN_CROSS " siguiente", BTN_CROSS " next");
-	text.draw(hint, box.x + (width - text.measure(hint)) / 2, box.y + height - 8 - text.line_height(), kDimColor);
-}
-
-// The battles' window (SaveGame::battle_window, the game's dialog *0x6CBB10 opened by 0x41D9B0): a battle's
-// question when one against the player starts (the user's choice: two buttons, «Dirigir manualmente» and «Que
-// luche el ordenador», and a bar of the time left: the player's side's countdown [+0x15C] of 250, which the
-// engine counts down while it is open and at whose end it closes the window), the end's or a boarding's message
-// (no button: «Continuar»), and the window of the sea map's battle icon (0x611FC0). Each button has its own
-// key, as the viewer's other windows: X the first (closing the question with it answers «steer manually»:
-// result 10, the game's button), Circle the last (the computer fights it; or closes). Steering needs the
-// battle's screen (piece 7, part 3: battle_view.cpp, a sea battle for now); without it that button is off.
+// The battles' window (SaveGame::battle_window, the game's message window *0x6CBB10 opened by 0x41D9B0 with the
+// battle's description, Sailing::battle_window_description: its text [+0x1310], official, the ratio 0x3F3504F4, the
+// question's button «Steer manually» 0x6B2BC0, the end's none), the sea map battle icon's window (0x611FC0: not
+// official, no button, the ratio 1.375, a fixed width of 200) and the battle screen's leave window (the viewer's),
+// centred on the screen as the game's. Each button has its key, as the viewer's other windows: X the first, Circle
+// the close button (the computer fights; or closes). Steering needs the battle's screen (battle_view.cpp).
 constexpr bool kBattleScreen = true;
+constexpr float kBattleMessageRatio = 0.7071068286895752f;  // The description's float, 0x3F3504F4.
 
-struct ChoiceBox {
-	std::string title;
-	std::string body;
-	std::vector<std::pair<std::string, bool>> buttons;  // Each label (with its key) and whether it can be pressed.
-	int bar = -1;  // The time bar's part left, in thousandths; -1 without one.
-	bool low = false;  // At the screen's bottom (over the battle's screen, so that the battle shows above it).
-};
-
-// A game's text as a box's title (its first line) and body (the rest), its empty lines at the ends dropped.
-void split_title(const std::string& raw, ChoiceBox& box) {
-	std::string clean = clean_game_text(raw);
-	const size_t start = clean.find_first_not_of('\n');
-	clean = start == std::string::npos ? std::string() : clean.substr(start);
-	const size_t line = clean.find('\n');
-	box.title = clean.substr(0, line);
-	std::string body = line == std::string::npos ? std::string() : clean.substr(line + 1);
-	const size_t first = body.find_first_not_of('\n');
-	const size_t last = body.find_last_not_of('\n');
-	box.body = first == std::string::npos ? std::string() : body.substr(first, last - first + 1);
+GameMessage battle_message(const std::string& raw, std::vector<PlaceView::PageButton> buttons, bool official, int key,
+	float ratio, int fixed_width = 0) {
+	return game_message_layout(raw, std::move(buttons), official, key, ratio, kScreenWidth, kScreenHeight, fixed_width);
 }
 
-struct ChoiceBoxLayout {
-	SDL_Rect box{};
-	SDL_Rect bar{};
-	std::vector<SDL_Rect> buttons;
-	std::vector<std::string> lines;
-	int body_y = 0;
+// A button of a battle's window (game_message_frame sizes and places it): `value` 0 the first, 1 the second.
+PlaceView::PageButton battle_message_button(const std::string& label, bool enabled, int value, bool back) {
+	PlaceView::PageButton b{{0, 0, 0, 18}, label, back ? PlaceView::PageAction::Back : PlaceView::PageAction::Act, enabled};
+	b.value = value;
+	return b;
+}
 
-	ChoiceBoxLayout(const TextRenderer& title, const TextRenderer& text, const ChoiceBox& c) {
-		const int width = 640;
-		const std::string& body = c.body;
-		size_t from = 0;
-		while (from <= body.size()) {
-			const size_t end = body.find('\n', from);
-			const std::string paragraph = body.substr(from, end == std::string::npos ? std::string::npos : end - from);
-			const std::vector<std::string> wrapped = wrap_text(text, paragraph, width - 40);
-			if (wrapped.empty()) {
-				lines.emplace_back();
-			}
-			lines.insert(lines.end(), wrapped.begin(), wrapped.end());
-			if (end == std::string::npos) {
-				break;
-			}
-			from = end + 1;
-		}
-		const int button_height = 48;
-		int height = 20 + title.line_height() + 14 + int(lines.size()) * text.line_height() + 18;
-		if (c.bar >= 0) {
-			height += 14 + 14;
-		}
-		height += button_height + 16;
-		box = {(kScreenWidth - width) / 2, c.low ? kScreenHeight - height - 12 : std::max(8, (kScreenHeight - height) / 2),
-			width, height};
-		body_y = box.y + 20 + title.line_height() + 14;
-		int y = body_y + int(lines.size()) * text.line_height() + 18;
-		if (c.bar >= 0) {
-			bar = {box.x + 20, y, width - 40, 14};
-			y += 14 + 14;
-		}
-		const int n = std::max(1, int(c.buttons.size()));
-		const int gap = 20;
-		const int button_width = std::min(280, (width - 40 - gap * (n - 1)) / n);
-		const int total = n * button_width + (n - 1) * gap;
-		for (int k = 0; k < int(c.buttons.size()); ++k) {
-			buttons.push_back({box.x + (width - total) / 2 + k * (button_width + gap), y, button_width, button_height});
-		}
+// The game's message window over the screen: its paper, its texts and buttons, its close button after its key unless
+// a button of its own already does the same (a «No»: Back); with `bar` (thousandths, the battle question's time left:
+// the user's choice, improvised) a thin bar over its buttons, from the text's left to its right.
+void draw_screen_message(SDL_Renderer* renderer, TextRenderer& fallback, const GameMessage& m, int bar = -1) {
+	if (!g_game_art) {
+		return;
 	}
-
-	int button_at(int x, int y) const {
-		for (int k = 0; k < int(buttons.size()); ++k) {
-			if (inside(buttons[size_t(k)], x, y)) {
-				return k;
-			}
-		}
-		return -1;
+	g_game_art->draw_dialog(m.dialog.at.x, m.dialog.at.y, m.dialog.cols, m.dialog.rows, m.dialog.rolls, m.dialog.key);
+	TextRenderer& font = g_game_art->page_text() ? *g_game_art->page_text() : fallback;
+	draw_page_items(renderer, font, *g_game_art, m.page, SDL_Rect{0, 0, kScreenWidth, kScreenHeight}, nullptr);
+	const bool back = std::any_of(m.page.buttons.begin(), m.page.buttons.end(),
+		[](const PlaceView::PageButton& b) { return b.action == PlaceView::PageAction::Back; });
+	if (!back) {
+		font.draw(BTN_CIRCLE, m.close.x - font.measure(BTN_CIRCLE) - 2, m.close.y + (m.close.h - font.line_height()) / 2,
+			kButtonInk);
 	}
-};
-
-void draw_choice_box(SDL_Renderer* renderer, TextRenderer& title, TextRenderer& text, const ChoiceBox& c) {
-	const ChoiceBoxLayout l(title, text, c);
-	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 240);
-	SDL_RenderFillRect(renderer, &l.box);
-	SDL_SetRenderDrawColor(renderer, 190, 150, 90, 255);
-	SDL_RenderDrawRect(renderer, &l.box);
-	title.draw(c.title, l.box.x + (l.box.w - title.measure(c.title)) / 2, l.box.y + 20, kTextColor);
-	int y = l.body_y;
-	for (const std::string& line : l.lines) {
-		text.draw(line, l.box.x + 20, y, kTextColor);
-		y += text.line_height();
-	}
-	if (c.bar >= 0) {
-		SDL_SetRenderDrawColor(renderer, 60, 45, 28, 255);
-		SDL_RenderFillRect(renderer, &l.bar);
-		const SDL_Rect left = {l.bar.x, l.bar.y, l.bar.w * std::clamp(c.bar, 0, 1000) / 1000, l.bar.h};
-		SDL_SetRenderDrawColor(renderer, 200, 160, 70, 255);
+	g_game_art->draw_close(m.close, false);
+	if (bar >= 0) {
+		const SDL_Rect track = {m.text_x, m.close.y - 12, m.text_w, 6};
+		const SDL_Rect left = {track.x, track.y, track.w * std::clamp(bar, 0, 1000) / 1000, track.h};
+		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+		SDL_SetRenderDrawColor(renderer, 90, 66, 38, 70);
+		SDL_RenderFillRect(renderer, &track);
+		SDL_SetRenderDrawColor(renderer, 96, 52, 24, 200);
 		SDL_RenderFillRect(renderer, &left);
-		SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
-		SDL_RenderDrawRect(renderer, &l.bar);
+		SDL_SetRenderDrawColor(renderer, 70, 50, 28, 160);
+		SDL_RenderDrawRect(renderer, &track);
 	}
-	for (size_t k = 0; k < c.buttons.size(); ++k) {
-		const SDL_Rect& r = l.buttons[k];
-		const bool enabled = c.buttons[k].second;
-		SDL_SetRenderDrawColor(renderer, enabled ? 90 : 55, enabled ? 65 : 45, enabled ? 35 : 35, 255);
-		SDL_RenderFillRect(renderer, &r);
-		SDL_SetRenderDrawColor(renderer, 190, 150, 90, 255);
-		SDL_RenderDrawRect(renderer, &r);
-		const std::string& label = c.buttons[k].first;
-		text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - text.line_height()) / 2,
-			enabled ? kTextColor : SDL_Color{200, 185, 160, 110});
+}
+
+// What a tap does on the game's message window over the screen: a button's value, -2 its close button, -1 nothing
+// (the buttons a little taller for the finger).
+int screen_message_tap(const GameMessage& m, int x, int y) {
+	for (const PlaceView::PageButton& b : m.page.buttons) {
+		if (b.enabled && inside({b.rect.x, b.rect.y - 4, b.rect.w, b.rect.h + 8}, x, y)) {
+			return b.value;
+		}
 	}
+	return inside({m.close.x - 4, m.close.y - 4, m.close.w + 8, m.close.h + 8}, x, y) ? -2 : -1;
 }
 
 void draw_panel_box(SDL_Renderer* renderer, const SDL_Rect& box, Uint8 alpha = 235) {
@@ -18892,7 +18823,7 @@ int main(int argc, char** argv) {
 		bool asks() const { return ship >= 0 || route_question != 0; }
 	};
 	std::optional<ScreenMessage> screen_message;
-	// The window of a sea map battle icon (ChoiceBox: its battle's slot, or -1); and the sea map's battle icons
+	// The window of a sea map battle icon (battle_info_box: its battle's slot, or -1); and the sea map's battle icons
 	// (Sailing::take_sea_map_icons, each with its battle's block: it goes when its battle goes, as the game's
 	// destructor drops it, 0x457DF0).
 	int battle_info = -1;
@@ -18923,7 +18854,7 @@ int main(int argc, char** argv) {
 		sailing = std::make_unique<Sailing>(save, *nav, load_sea_map_towns(*archive));
 		sailing->assign_loaded_routes();
 		sailing->set_texts(game_texts.get());  // The battles' messages in the installation's language.
-		sailing->set_battle_window(true);  // The viewer is the game's battle window (ChoiceBox).
+		sailing->set_battle_window(true);  // The viewer is the game's battle window (battle_window_box).
 		sailing->set_real_time_battles(true);  // In time mode 2 the viewer's clock drives the battles (0x612DB0).
 		sailing->fn_611e50(uint8_t(save.player));  // After a load (0x43C5C7): the battle the player directs on the screen.
 	}
@@ -19059,101 +18990,111 @@ int main(int argc, char** argv) {
 		const uint32_t vtable = save.battles.get<uint32_t>(size_t(b), 0);
 		return vtable == Sailing::kSeaBattleVtable || vtable == Sailing::kTownBattleVtable;
 	};
+	// The question (its button «Steer manually» and, the user's choice, «Let the computer fight» with the time bar: the
+	// player's side's countdown [+0x15C] of 250, which the engine counts down while it is open and at whose end it
+	// closes the window; in the game only the close button lets the computer fight), the end's or a boarding's text
+	// (no button: its close button).
+	struct BattlePopup {
+		GameMessage m;
+		int bar = -1;
+	};
 	auto battle_window_box = [&]() {
-		ChoiceBox box;
+		BattlePopup out;
 		const SaveGame::BattleWindow& w = save.battle_window;
-		split_title(w.text, box);
+		std::vector<PlaceView::PageButton> buttons;
 		if (w.buttons > 0) {
-			box.buttons = {{BTN_CROSS " " + steer_label(), can_steer(w.battle)},
-				{BTN_CIRCLE " " + tr("Que luche el ordenador", "Let the computer fight"), true}};
+			buttons = {battle_message_button(steer_label(), can_steer(w.battle), 0, false),
+				battle_message_button(tr("Que luche el ordenador", "Let the computer fight"), true, 1, true)};
 			const uint16_t left = sailing->battle_question_count();
-			box.bar = left <= 250 ? int(left) * 1000 / 250 : 0;
-		} else {
-			box.buttons = {{BTN_CROSS " " + tr("Continuar", "Continue"), true}};
+			out.bar = left <= 250 ? int(left) * 1000 / 250 : 0;
 		}
-		box.low = battle_shown >= 0;  // An end or a boarding over the battle: below it, the ships still show.
-		return box;
+		out.m = battle_message(w.text, std::move(buttons), true, 35, kBattleMessageRatio);
+		return out;
 	};
-	// The window of a sea map battle icon (0x611FC0): its button takes the battle (0x6102A9) once it can be steered.
+	// The window of a sea map battle icon (0x611FC0): the battle's ships (battle_info_text), no button. **The game's
+	// bug**: its update (0x6128E3) takes the battle (the battle's method +0x24, 0x6102A9) when the window closed with
+	// its first button ([+0x5A4] == [0x66BDC0]), but its description gives it none (0x612769: 0 buttons), so a battle
+	// the computer fights can't be taken again; behind fix_game_bugs it has «Steer manually» (once it can be steered).
 	auto battle_info_box = [&]() {
-		ChoiceBox box;
-		split_title(sailing ? sailing->battle_info_text(uint8_t(battle_info)) : std::string(), box);
-		if (box.title.empty()) {
-			box.title = tr("Batalla naval", "Sea battle");
+		BattlePopup out;
+		std::vector<PlaceView::PageButton> buttons;
+		if (fix_game_bugs()) {
+			buttons.push_back(battle_message_button(steer_label(), can_steer(battle_info), 0, false));
 		}
-		box.buttons = {{BTN_CROSS " " + steer_label(), can_steer(battle_info)},
-			{BTN_CIRCLE " " + tr("Cerrar", "Close"), true}};
-		return box;
+		out.m = battle_message(sailing ? sailing->battle_info_text(uint8_t(battle_info)) : std::string(), std::move(buttons),
+			false, 36, 1.375f, 200);
+		return out;
 	};
-	// The leave icon's window: the title of the game's battle window (0x611FC0, «Sea battle:» without its colon),
-	// and the question.
+	// The leave icon's window (the viewer's: the PC gives the battle back when another view is chosen, 0x611FA0): the
+	// game's «Sea battle» head and the question, its buttons «Let the computer fight» and «Keep steering it» (as the
+	// convoy's question: not official, the ratio 0.4). A battle at a town has no sea map icon in the game (its setup
+	// doesn't tell the map, 0x605906), and the icon's window has no button but behind fix_game_bugs: once given back it
+	// can't be taken again, and the window says so.
 	auto battle_leave_box = [&]() {
-		ChoiceBox box;
-		if (battle_shown >= 0 && sailing) {
-			split_title(sailing->battle_info_text(uint8_t(save.battles.get<uint16_t>(size_t(battle_shown), 0x662))), box);
+		BattlePopup out;
+		const bool at_town = battle_shown >= 0 && p3::app::BattleView::at_town(save, size_t(battle_shown));
+		const std::string question = at_town || !fix_game_bugs()
+			? tr("¿Dejas que el ordenador siga con la batalla? Ya no podrás volver a dirigirla.",
+				  "Leave the battle to the computer? You won't be able to steer it again.")
+			: tr("¿Dejas que el ordenador siga con la batalla?", "Leave the battle to the computer?");
+		std::string head = g_texts ? g_texts->raw_at(0x6A16CC) : std::string();
+		const size_t colon = head.find(":\n");  // («Batalla naval:», a head for the ships' list: without its colon here.)
+		if (colon != std::string::npos) {
+			head.erase(colon, 1);
 		}
-		while (!box.title.empty() && (box.title.back() == ':' || box.title.back() == ' ')) {
-			box.title.pop_back();
-		}
-		if (box.title.empty()) {
-			box.title = tr("Batalla naval", "Sea battle");
-		}
-		// A battle at a town has no sea map icon in the game (its setup doesn't tell the map, 0x605906): once
-		// given back it can't be taken again (the user's choice: as the PC), and the window says so.
-		if (battle_shown >= 0 && p3::app::BattleView::at_town(save, size_t(battle_shown))) {
-			box.body = tr("¿Dejas que el ordenador siga con la batalla? Ya no podrás volver a dirigirla.",
-				"Leave the battle to the computer? You won't be able to steer it again.");
-		} else {
-			box.body = tr("¿Dejas que el ordenador siga con la batalla?", "Leave the battle to the computer?");
-		}
-		box.buttons = {{BTN_CROSS " " + tr("Que luche el ordenador", "Let the computer fight"), true},
-			{BTN_CIRCLE " " + tr("Seguir dirigiéndola", "Keep steering it"), true}};
-		box.low = true;
-		return box;
+		const std::string raw = (head.empty() ? std::string("\\f1_\n\\c\\f3_") + utf8_to_latin1(tr("Batalla naval", "Sea battle")) +
+				"\n\\l\\f1_" : head) + "\n" + utf8_to_latin1(question);
+		out.m = battle_message(raw,
+			{battle_message_button(tr("Que luche el ordenador", "Let the computer fight"), true, 0, false),
+				battle_message_button(tr("Seguir dirigiéndola", "Keep steering it"), true, 1, true)},
+			false, 37, 0.4f);
+		return out;
 	};
 	auto battle_popup = [&]() { return battle_window_up() || battle_info >= 0 || battle_leave; };
 	auto popup_box = [&]() {
 		return battle_window_up() ? battle_window_box() : battle_info >= 0 ? battle_info_box() : battle_leave_box();
 	};
-	auto battle_press = [&](int k) {
+	// A battle window's first button (`first`), or its close (the question's second button too: the computer fights).
+	auto battle_press = [&](bool first) {
 		if (battle_window_up()) {
-			if (save.battle_window.buttons > 0 && k == 0 && !can_steer(save.battle_window.battle)) {
+			if (save.battle_window.buttons > 0 && first && !can_steer(save.battle_window.battle)) {
 				return;
 			}
 			// The question closed with its button (10, [0x66BDC0]) or otherwise; an end or a boarding closed.
-			sailing->close_battle_window(save.battle_window.buttons > 0 && k == 0 ? 10 : 0);
+			sailing->close_battle_window(save.battle_window.buttons > 0 && first ? 10 : 0);
 		} else if (battle_info >= 0) {
-			if (k == 0) {
+			if (first) {
 				const int b = save.battles.battle(uint8_t(battle_info));
-				if (!can_steer(battle_info) || b < 0) {
+				if (!fix_game_bugs() || !can_steer(battle_info) || b < 0) {
 					return;
 				}
 				sailing->fn_6102a9(size_t(b));
 			}
 			battle_info = -1;
 		} else if (battle_leave) {
-			if (k == 0 && battle_shown >= 0) {
+			if (first && battle_shown >= 0) {
 				sailing->fn_6100d9(size_t(battle_shown));  // 0x611FA0: the battle on the screen given back.
 				battle_to_sea = true;
 			}
 			battle_leave = false;
 		}
 	};
-	// The pad on the window: X its first button (if it can be pressed), Circle its last (the computer,
-	// «Cerrar»; a window of one button closes with either); the other buttons do nothing while it is open but
-	// Start (the menu). True when it took the button.
+	// The pad on the window: X its first button (if it can be pressed; with none, X closes it too), Circle its close
+	// (the question's computer, the leave window's «Keep steering it»); the other buttons do nothing while it is open
+	// but Start (the menu). True when it took the button.
 	auto battle_button = [&](Uint8 button) {
 		if (!battle_popup()) {
 			return false;
 		}
-		const ChoiceBox box = popup_box();
-		const int n = int(box.buttons.size());
+		const BattlePopup box = popup_box();
 		if (button == SDL_CONTROLLER_BUTTON_A) {
-			if (box.buttons[0].second) {
-				battle_press(0);
+			if (box.m.page.buttons.empty()) {
+				battle_press(false);
+			} else if (box.m.page.buttons[0].enabled) {
+				battle_press(true);
 			}
 		} else if (button == SDL_CONTROLLER_BUTTON_B) {
-			battle_press(n - 1);
+			battle_press(false);
 		}
 		return button != SDL_CONTROLLER_BUTTON_START && button != SDL_CONTROLLER_BUTTON_INVALID;
 	};
@@ -23900,8 +23841,8 @@ int main(int argc, char** argv) {
 				stop_repeats = 0;
 				side.route_drag = -1;
 				side.stop_drag = -1;
-				if (battle_popup()) {
-					// Under the battles' window nothing moves: the touch is the window's.
+				if (battle_popup() || messages.open) {
+					// Under the battles' window (or the game's messages) nothing moves: the touch is the window's.
 					touch_on_side = false;
 					touch_on_panel = true;
 					touch_building = false;
@@ -24317,12 +24258,24 @@ int main(int argc, char** argv) {
 					break;
 				}
 				if (battle_popup()) {
-					// A tap on one of the battles' window's buttons.
-					if (touch_moved < kTapDistance && text && small_text) {
-						const ChoiceBox box = popup_box();
-						const int k = ChoiceBoxLayout(*text, *small_text, box).button_at(touch_start.x, touch_start.y);
-						if (k >= 0 && box.buttons[size_t(k)].second) {
-							battle_press(k);
+					// A tap on one of the battles' window's buttons (the question's second one as its close button: the
+					// computer fights), or its close button.
+					if (touch_moved < kTapDistance) {
+						const int k = screen_message_tap(popup_box().m, touch_start.x, touch_start.y);
+						if (k >= 0 || k == -2) {
+							battle_press(k == 0);
+						}
+					}
+					touch_on_panel = false;
+					break;
+				}
+				if (messages.open) {
+					// The game's messages: its close button (or a tap out of it) shows the next one, or shuts it.
+					if (touch_moved < kTapDistance) {
+						const GameMessage m = battle_message(messages.raw, {}, true, 38, kBattleMessageRatio);
+						const SDL_Rect room = {m.dialog.at.x, m.dialog.at.y, m.dialog.width(), m.dialog.height()};
+						if (screen_message_tap(m, touch_start.x, touch_start.y) == -2 || !inside(room, touch_start.x, touch_start.y)) {
+							messages.next();
 						}
 					}
 					touch_on_panel = false;
@@ -25888,36 +25841,19 @@ int main(int argc, char** argv) {
 				y += box.h + 2;
 			}
 		}
-		if (messages.open && text && small_text) {
-			draw_message_window(renderer, *text, *small_text, messages);
+		if (messages.open && small_text) {
+			draw_screen_message(renderer, *small_text, battle_message(messages.raw, {}, true, 38, kBattleMessageRatio));
 		}
 		if (end_window.open && text && small_text) {
 			draw_end_window(renderer, *text, *small_text, end_window, hanse_context);
 		}
-		if (screen_message && g_game_art && small_text) {
-			// The game's message over the screen: its paper, its texts and buttons, its close button after its key unless
-			// a button of its own already does the same (the question's «No»).
-			const GameMessage& m = screen_message->m;
-			g_game_art->draw_dialog(m.dialog.at.x, m.dialog.at.y, m.dialog.cols, m.dialog.rows, m.dialog.rolls, m.dialog.key);
-			TextRenderer& font = g_game_art->page_text() ? *g_game_art->page_text() : *small_text;
-			draw_page_items(renderer, font, *g_game_art, m.page, SDL_Rect{0, 0, kScreenWidth, kScreenHeight}, nullptr);
-			const bool back = std::any_of(m.page.buttons.begin(), m.page.buttons.end(),
-				[](const PlaceView::PageButton& b) { return b.action == PlaceView::PageAction::Back; });
-			if (!back) {
-				font.draw(BTN_CIRCLE, m.close.x - font.measure(BTN_CIRCLE) - 2, m.close.y + (m.close.h - font.line_height()) / 2,
-					kButtonInk);
-			}
-			g_game_art->draw_close(m.close, false);
+		if (screen_message && small_text) {
+			draw_screen_message(renderer, *small_text, screen_message->m);
 		}
-		if (text && small_text) {
-			// The battles' window over the others: the question (or an end), else a battle icon's window.
-			if (battle_window_up()) {
-				draw_choice_box(renderer, *text, *small_text, battle_window_box());
-			} else if (battle_info >= 0) {
-				draw_choice_box(renderer, *text, *small_text, battle_info_box());
-			} else if (battle_leave) {
-				draw_choice_box(renderer, *text, *small_text, battle_leave_box());
-			}
+		if (small_text && battle_popup()) {
+			// The battles' window over the others: the question (or an end), else a battle icon's window, else leaving.
+			const BattlePopup box = popup_box();
+			draw_screen_message(renderer, *small_text, box.m, box.bar);
 		}
 		if (in_menu) {  // The menu, on top of everything.
 			draw_menu(renderer, *small_text, menu, settings, town_names);

@@ -220,9 +220,13 @@ void Sailing::boarding_message(size_t b, uint16_t winner, uint16_t taken, bool a
 		for (size_t i = 0; i <= message.size() && i < room; ++i) {
 			g.set<uint8_t>(b, 0x1310 + i, i < message.size() ? uint8_t(message[i]) : 0);
 		}
-		player_messages_.push_back(message);  // For the viewer (take_player_messages).
 	}
 	if (side >= 0xFF || g.get<uint8_t>(b, 0x5D + size_t(side)) != 0) {
+		// The computer's side: the game shows nothing; the viewer tells it (take_player_messages). (With the player's
+		// own side the window below shows it: only once.)
+		if (texts_) {
+			player_messages_.push_back(GameTexts::sprintf_raw(texts_->raw(text), args));
+		}
 		return;
 	}
 	// The window's description (0x60C9D6..0x60CA34: the text, no button, as
