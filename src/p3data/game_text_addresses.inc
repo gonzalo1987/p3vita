@@ -1285,6 +1285,7 @@
 	{0x006999EC, 0x00698ED4},
 	{0x0069C98C, 0x0069C354},
 	{0x00699908, 0x00698DBC},
+	{0x00699978, 0x00698E44},  // «@-price» (the trade window)
 	{0x00699C78, 0x006991AC},
 	// The letters' settings window (0x408F50, re/emu/sesion14): its title, the three classes, «When news
 	// arrive...», «show notice», «play sound», «event sound», «play», and the six times a class is kept.
@@ -1875,8 +1876,10 @@
 	// «  Vender» with two spaces before them) and its step buttons «1», «5», «50», «Max» (0x5CEAB3..).
 	{0x00699894, 0x00698D2C},
 	{0x006998A0, 0x00698D3C},
+	{0x00699868, 0x00698CF4},  // the trade window's title, «Trading goods» (2026-11-19)
 	{0x00699874, 0x00698D00},
 	{0x006998AC, 0x00698D48},
+	{0x006998B8, 0x00698D58},  // «Loading» (the trade window)
 	{0x0069A35C, 0x006998E8},
 	{0x0069A360, 0x006998EC},
 	{0x0069A364, 0x006998F0},

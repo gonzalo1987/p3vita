@@ -410,9 +410,15 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
 - [ ] **Las ventanas que siguen siendo del visor** (19-11-2026: el usuario vio la de comerciar, «no guarda la estética
   del resto», y pidió rehacerlas como las del juego; inventario en `re/emu/sesion45/README.md`, capturas
   `re/emu/sesion31/shots/v1..v8.png`). Con su recuadro oscuro y la letra del visor:
-  - [ ] **La ventana de comerciar** (el mercado desde una grúa o X sin edificio en medio, y «Comerciar» de la oficina:
-    `draw_market`, `draw_office_market`; sus modos barco, oficina, convoy, la cantidad «Izq./Der.»): la del juego es
-    0x4A8CF0 (sus modos [+0xF0], los lados 0x4AA9D0, 0x4AA7C0, 0x4AA4A0).
+  - [x] **La ventana de comerciar** (19-11-2026, `re/emu/sesion45/README.md`): como la del juego (*0x6D9584, su dibujo
+    0x4A7390 trazado en el emulador): el pergamino con el dibujo de los diálogos, las dos imágenes de los lados, el
+    título, la línea de información, la tabla [CHART1] con los botones de comprar y vender de cada fila con sus precios
+    como 0x4AAC00, los botones de la cantidad «1», «5», «50», «Máx.», la mano con la moneda y el precio del último
+    trato y el botón de cerrar; en todos sus modos, en los dos idiomas (tres textos emparejados: caché 42). La tabla,
+    adaptada a petición del usuario: con el mismo margen a los dos lados (la del juego llega al marco) y, en el modo de
+    las armas, sin la columna del precio medio para que quepan los nombres. Por
+    comparar con una foto del juego: los textos de los botones de mover con la oficina («>» y «<», improvisados), la
+    mano al pagar o cobrar, los precios medios.
   - [ ] **El menú de Start** del visor (continuar, buzón, guardar, cargar, opciones, menú principal, salir) con sus
     pantallas de **guardar y cargar partida** y de **opciones**: en el juego, la ventana de opciones del icono del
     engranaje del panel (guardar, cargar, opciones, salir).

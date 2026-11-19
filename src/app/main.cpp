@@ -1912,6 +1912,10 @@ struct MarketUi {
 	int mode = 1;
 	std::string message;
 	Uint32 message_until = 0;
+	// The last trade's money on the window's bottom line with the coin (the game's [+0x830], fading): paid (> 0) or
+	// earned (< 0), and until when it shows.
+	int32_t coin_price = 0;
+	Uint32 coin_until = 0;
 };
 
 // Barcos del jugador atracados en una ciudad.
@@ -1994,23 +1998,6 @@ std::optional<OperationBytes> trade_operation(const SaveGame& save, int ship, in
 				  : market_sell_operation(save, ship, town, ui.ware, step);
 }
 
-int32_t trade_amount(const SaveGame& save, int ship, int town, const MarketUi& ui, bool buying) {
-	const std::optional<OperationBytes> op = trade_operation(save, ship, town, ui, buying);
-	int32_t amount = 0;
-	if (op) {
-		std::memcpy(&amount, op->data() + 4, 4);
-	}
-	return amount;
-}
-
-std::string step_text(const MarketUi& ui) {
-	const uint32_t step = kMarketSteps[size_t(ui.step)];
-	if (ui.mode == 5) {
-		return step > 0 ? std::to_string(step) : tr("todo", "all");
-	}
-	return step > 0 ? amount_label(int(step), kWares[size_t(ui.ware)].unit) : tr("todo", "all");
-}
-
 std::string capitalized(std::string s);
 
 // --- The market with the player's office (the window's modes 2, 0 and 5) ---
@@ -2047,26 +2034,6 @@ void fit_market_mode(const SaveGame& save, int town, MarketUi& ui) {
 
 int market_rows(const MarketUi& ui) {
 	return ui.mode == 5 ? 11 : kTradeWareCount;  // The weapons, the hand weapons and the six pieces.
-}
-
-std::string market_mode_name(int mode) {
-	const std::string ship = game_text(GameText::MarketShip, tr("Barco", "Ship"));
-	const std::string office = game_text(GameText::Office, tr("Oficina", "Office"));
-	const std::string convoy = game_text(GameText::ShipyardConvoy, tr("Convoy", "Convoy"));
-	switch (mode) {
-	case 2:
-		return office + " <-> " + game_text(GameText::MarketTown, tr("Ciudad", "Town"));
-	case 0:
-		return ship + " <-> " + office;
-	case 4:
-		return convoy + " <-> " + game_text(GameText::MarketTown, tr("Ciudad", "Town"));
-	case 3:
-		return convoy + " <-> " + office;
-	case 5:
-		return game_text(GameText::ShipWeapons, tr("Armas de barco", "Ship's weapons"));
-	default:
-		return ship + " <-> " + game_text(GameText::MarketTown, tr("Ciudad", "Town"));
-	}
 }
 
 std::string exe_text(uint32_t english, const char* spanish, const char* fallback);
@@ -2339,45 +2306,100 @@ void trade(SaveGame& save, Sailing* sailing, int town, MarketUi& ui, bool buying
 }
 
 // Disposición del panel, compartida por el dibujo y el táctil.
-struct MarketLayout {
-	static constexpr int kWidth = 560;
-	static constexpr int kPadding = 10;
-	static constexpr int kRowHeight = 19;
-	static constexpr int kGap = 8;
-	static constexpr int kColumns[4] = {250, 335, 410, 548};  // Bordes derechos de las columnas.
-	SDL_Rect panel{};
-	int header_y = 0;
-	int titles_y = 0;
-	int rows_y = 0;
-	int footer_y = 0;
-	// Los botones sirven también de leyenda de los controles.
-	SDL_Rect step_button{};
-	SDL_Rect buy_button{};
-	SDL_Rect sell_button{};
+// The game's trade window (*0x6D9584, vtable 0x66FEA0; its drawing 0x4A7390, re/emu/sesion45/README.md «The trade
+// window»): a dialog of the size of the stop's wares window (the dialogs' drawing TEX16100, 424 × 560, with its
+// shadows 16051 and 16052: 428 × 564), centred in the view; parchment.ini [Tradeparchment0]: its two pictures at
+// LeftImg2DPos (15, 17) and RightImg2DPos (341, 17), 69 × 61; the title at TitleYPos 24; the info line at InfoYPos 54,
+// InfoXOffs 30 either side of the middle; its chart [CHART1] at Chart2DPos (6, 80): six columns (90 64 48 48 64 66,
+// 4 4 8 4 4 apart), a head 18 high, the 20 rows 18 high and 2 apart; on the bottom line (510) the trade's price right
+// at Price2DPos 80 with the coin after it, the quantity buttons «1», «5», «50» (32 wide) and «Max» (48) from
+// Quantity2DPos 144, QuantitySpacing 2 apart, the close button at Close2DPos 350. The Vita's view is lower: the window
+// drawn at its size into a texture and scaled to the view's height (as the stop's window, ×0.904: adapted). The chart
+// adapted too (the user, 19-11-2026: «Med.» at the screen's edge, «Pequeña catapulta» not fitting): from 10 to 400,
+// the same margin on each side (the game's goes from 6 to 410, its last column at the frame), its columns narrower
+// (108 56 48 48 56 46, 4 8 8 4 4 apart: the Spanish heads clear of each other); in the mode 5, which has no average
+// prices, without that column and its room given to the names (the game's names go past the window's left there).
+constexpr int kTradeWindowW = 428;
+constexpr int kTradeWindowH = 564;
+constexpr int kTradeTitleY = 24;
+constexpr int kTradeInfoY = 54;
+constexpr int kTradeInfoX = 30;
+constexpr int kTradeChartX = 10;
+constexpr int kTradeChartY = 80;
+constexpr int kTradeHead = 18;
+constexpr int kTradeStep = 20;
+constexpr int kTradeRowHeight = 18;
+constexpr int kTradeColumns = 6;
+constexpr int kTradeColumnX[2][kTradeColumns] = {{0, 112, 176, 232, 284, 344}, {0, 162, 226, 282, 334, 390}};
+constexpr int kTradeColumnW[2][kTradeColumns] = {{108, 56, 48, 48, 56, 46}, {158, 56, 48, 48, 56, 0}};
+constexpr int kTradeBottomY = 510;
+constexpr int kTradePriceX = 80;
+constexpr int kTradeQuantityX[4] = {144, 178, 212, 246};
+constexpr int kTradeQuantityW[4] = {32, 32, 32, 48};
+constexpr int kTradeCloseX = 350;
+constexpr int kTradeLeftPicture[2] = {15, 17};
+constexpr int kTradeRightPicture[2] = {341, 17};
+constexpr int kTradePictureW = 69;
+constexpr int kTradePictureH = 61;
 
-	explicit MarketLayout(int line_height) {
-		const int button_height = line_height + 4;
-		const int height = kPadding * 2 + line_height * 3 + button_height + kRowHeight * kTradeWareCount + 16;
-		panel = {g_town_right - kWidth - 8, kBarHeight + 4, kWidth, height};
-		header_y = panel.y + kPadding;
-		titles_y = header_y + line_height + 4;
-		rows_y = titles_y + line_height + 2;
-		footer_y = rows_y + kRowHeight * kTradeWareCount + 6;
-		const int button_y = footer_y + line_height + 4;
-		const int inner = kWidth - 2 * kPadding - 2 * kGap;
-		step_button = {panel.x + kPadding, button_y, inner * 2 / 5, button_height};
-		buy_button = {step_button.x + step_button.w + kGap, button_y, inner * 3 / 10, button_height};
-		sell_button = {buy_button.x + buy_button.w + kGap, button_y, inner - step_button.w - buy_button.w,
-			button_height};
+struct TradeWindowLayout {
+	SDL_Rect panel{};  // The window on the screen, scaled.
+	float scale = 1.0f;
+
+	TradeWindowLayout() {
+		const int view_h = kScreenHeight - kBarHeight;
+		scale = std::min(1.0f, float(view_h) / float(kTradeWindowH));
+		const int w = int(float(kTradeWindowW) * scale + 0.5f);
+		const int h = int(float(kTradeWindowH) * scale + 0.5f);
+		panel = {(g_town_right - w) / 2, kBarHeight + (view_h - h) / 2, w, h};
 	}
-
-	// Fila de mercancía bajo un punto de la pantalla, o -1.
+	int screen_x(int x) const { return panel.x + int(float(x) * scale + 0.5f); }
+	int screen_y(int y) const { return panel.y + int(float(y) * scale + 0.5f); }
+	SDL_Rect screen(const SDL_Rect& g) const {
+		const int x = screen_x(g.x);
+		const int y = screen_y(g.y);
+		return {x, y, screen_x(g.x + g.w) - x, screen_y(g.y + g.h) - y};
+	}
+	// A screen point in the window's own coordinates.
+	int window_x(int x) const { return int(float(x - panel.x) / scale + 0.5f); }
+	int window_y(int y) const { return int(float(y - panel.y) / scale + 0.5f); }
+	// In the window's own coordinates: a chart cell of the row k (a column's whole width), a bottom button, a picture.
+	// (The columns of the mode 5, the weapons', or of the others.)
+	static SDL_Rect game_cell(int k, int column, int mode) {
+		const int m = mode == 5 ? 1 : 0;
+		return {kTradeChartX + kTradeColumnX[m][column], kTradeChartY + kTradeHead + kTradeStep * k,
+			kTradeColumnW[m][column], kTradeRowHeight};
+	}
+	static SDL_Rect game_quantity(int k) { return {kTradeQuantityX[k], kTradeBottomY, kTradeQuantityW[k], 18}; }
+	static SDL_Rect game_close() { return {kTradeCloseX, kTradeBottomY, 32, 18}; }
+	static SDL_Rect game_picture(bool right) {
+		const int* at = right ? kTradeRightPicture : kTradeLeftPicture;
+		return {at[0], at[1], kTradePictureW, kTradePictureH};
+	}
+	// The row (0..19) under a screen point, or -1.
 	int row_at(int x, int y) const {
-		if (x < panel.x || x >= panel.x + panel.w || y < rows_y) {
+		const int gx = window_x(x);
+		const int gy = window_y(y) - (kTradeChartY + kTradeHead);
+		if (gx < kTradeChartX || gx >= kTradeChartX + kTradeColumnX[0][5] + kTradeColumnW[0][5] || gy < 0) {
 			return -1;
 		}
-		const int row = (y - rows_y) / kRowHeight;
-		return row < kTradeWareCount ? row : -1;
+		const int k = gy / kTradeStep;
+		return k < kTradeWareCount ? k : -1;
+	}
+	// The chart's column under a screen point, or -1.
+	int column_at(int x, int mode) const {
+		const int gx = window_x(x) - kTradeChartX;
+		const int m = mode == 5 ? 1 : 0;
+		for (int c = 0; c < kTradeColumns; ++c) {
+			if (gx >= kTradeColumnX[m][c] && gx < kTradeColumnX[m][c] + kTradeColumnW[m][c]) {
+				return c;
+			}
+		}
+		return -1;
+	}
+	bool on(const SDL_Rect& game, int x, int y) const {
+		const SDL_Rect r = screen(game);
+		return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 	}
 };
 
@@ -2402,251 +2424,335 @@ std::array<SDL_Rect, 2> sea_route_buttons(int map_width, int line_height) {
 	return {SDL_Rect{map_width - 2 * w - 16, y, w, h}, SDL_Rect{map_width - w - 8, y, w, h}};
 }
 
-// Mercado de la ciudad: existencias, precios de una unidad y carga del barco
-// del jugador, con la mercancía seleccionada y lo que costaría comerciar.
-void draw_office_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, int town_index,
-	const MarketUi& ui);
+SDL_Color argb_color(uint32_t c);
+std::vector<std::string> stats_town_names();
 
-void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, int town_index,
-	const MarketUi& ui) {
-	if (ui.mode != 1 && ui.mode != 4) {
-		draw_office_market(renderer, text, save, town_index, ui);
-		return;
-	}
-	const SavedTown& town = save.towns[size_t(town_index)];
-	const MarketLayout layout(text.line_height());
-	const SDL_Rect& panel = layout.panel;
-	const int left = panel.x + MarketLayout::kPadding;
-	const int ship_index = market_ship(save, town_index, ui);
-	const int convoy = ui.mode == 4 ? market_convoy(save, town_index, ui) : -1;
-	const SavedShip* ship = ship_index >= 0 && convoy < 0 ? &save.ships[size_t(ship_index)] : nullptr;
-	const WareUnit selected_unit = kWares[size_t(ui.ware)].unit;
+// The two sides of the trade window by its mode (0x4A7390): the left one the town in the modes 1, 2 and 4 (its
+// picture the market, TEX16040), the ship in 0 and 5 and the convoy in 3 (the ship's picture, 16039); the right one
+// the office in 2, 0, 3 and 5 (16041), the ship in 1 and the convoy in 4 (16039).
+enum class TradeSide { Town, Ship, Convoy, Office };
 
-	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
-	SDL_RenderFillRect(renderer, &panel);
-	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
-	SDL_RenderDrawRect(renderer, &panel);
+TradeSide trade_left_side(int mode) {
+	return mode == 1 || mode == 2 || mode == 4 ? TradeSide::Town : mode == 3 ? TradeSide::Convoy : TradeSide::Ship;
+}
 
-	auto right = [&](const std::string& s, int column, int y, SDL_Color color) {
-		text.draw(s, panel.x + MarketLayout::kColumns[column] - text.measure(s), y, color);
-	};
+TradeSide trade_right_side(int mode) {
+	return mode == 1 ? TradeSide::Ship : mode == 4 ? TradeSide::Convoy : TradeSide::Office;
+}
 
-	if (ship) {
-		char used[32];
-		char capacity[32];
-		std::snprintf(used, sizeof(used), "%.1f", ship->used() / 2000.0);
-		std::snprintf(capacity, sizeof(capacity), "%.1f", (ship->capacity() - ship->equipment()) / 2000.0);
-		const std::string hold = g_texts
-			? std::string(used) + " / " + g_texts->format(GameText::AmountLoadsDecimal, {capacity})
-			: std::string(used) + tr(" de ", " of ") + capacity + tr(" cargas", " loads");
-		text.draw(ship->name() + " (" + ship_type_name(ship->type()) + "): " + hold, left, layout.header_y, kTextColor);
-	} else if (convoy >= 0) {
-		// What the window keeps of the convoy (0x4AA4A0): the player's ships' hold.
-		char used[32];
-		char capacity[32];
-		std::snprintf(used, sizeof(used), "%.1f", market_convoy_used(save, convoy) / 10.0);
-		std::snprintf(capacity, sizeof(capacity), "%.1f", market_convoy_capacity(save, convoy) / 2000.0);
-		const std::string hold = g_texts
-			? std::string(used) + " / " + g_texts->format(GameText::AmountLoadsDecimal, {capacity})
-			: std::string(used) + tr(" de ", " of ") + capacity + tr(" cargas", " loads");
-		text.draw(convoy_label(save, convoy) + ": " + hold, left, layout.header_y, kTextColor);
-	} else {
-		text.draw(tr("No tienes ningún barco en este puerto.", "You have no ship in this port."), left, layout.header_y,
-			kDimColor);
-	}
-	const std::string close = tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close");
-	text.draw(close, panel.x + panel.w - MarketLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
-
-	text.draw(game_text(GameText::MarketGoods, tr("Mercancía", "Goods")), left, layout.titles_y, kDimColor);
-	right(game_text(GameText::MarketTown, tr("Ciudad", "Town")), 0, layout.titles_y, kDimColor);
-	right(game_text(GameText::MarketBuy, tr("Compra", "Buy")), 1, layout.titles_y, kDimColor);
-	right(game_text(GameText::MarketSell, tr("Venta", "Sell")), 2, layout.titles_y, kDimColor);
-	right(game_text(GameText::MarketShip, tr("Bodega", "Ship")), 3, layout.titles_y, kDimColor);
-	for (int w = 0; w < kTradeWareCount; ++w) {
-		const WareInfo& ware = kWares[size_t(w)];
-		const int y = layout.rows_y + w * MarketLayout::kRowHeight;
-		if (w == ui.ware) {
-			const SDL_Rect row = {panel.x + 2, y - 1, panel.w - 4, MarketLayout::kRowHeight};
-			SDL_SetRenderDrawColor(renderer, 110, 80, 40, 230);
-			SDL_RenderFillRect(renderer, &row);
-		}
-		const int32_t unit = ware_scale(ware.unit);
-		const int32_t buy = buy_price(w, town.market(w), unit);
-		const int32_t sell = sell_price(w, town.market(w), unit, save.trade_difficulty);
-		auto amount = [&](int n) {
-			return g_texts ? amount_label(n, ware.unit)
-						   : std::to_string(n) + (ware.unit == WareUnit::Barrel ? tr(" barr.", " barr.") : tr(" cargas", " loads"));
-		};
-		text.draw(ware_label(w), left, y, kTextColor);
-		right(amount(units(int32_t(town.stock(size_t(w))), ware.unit)), 0, y, kTextColor);
-		right(buy ? std::to_string(buy) : "-", 1, y, kTextColor);
-		right(std::to_string(sell), 2, y, kTextColor);
-		if (ship || convoy >= 0) {
-			const int n = units(int32_t(ship ? ship->cargo(size_t(w)) : convoy_cargo(save, convoy, w)), ware.unit);
-			right(n ? amount(n) : "-", 3, y, n ? kTextColor : kDimColor);
-		}
-	}
-
-	// El resultado de la última operación o, si no, lo que costaría comerciar
-	// ahora con la cantidad elegida.
-	const bool show_message = !ui.message.empty() && !SDL_TICKS_PASSED(app_ticks(), ui.message_until);
-	std::string footer = show_message ? ui.message : "";
-	if (!show_message && ship) {
-		const TradeResult buy =
-			quote_buy(save, ship_index, town_index, ui.ware, trade_amount(save, ship_index, town_index, ui, true));
-		const TradeResult sell =
-			quote_sell(save, ship_index, town_index, ui.ware, trade_amount(save, ship_index, town_index, ui, false),
-				save.trade_difficulty);
-		footer = buy.amount > 0 ? tr("Comprar ", "Buy ") + amount_text(buy.amount, selected_unit) + ": " +
-				format_money(buy.price) + tr(" monedas", " coins")
-								: tr("No se puede comprar", "Nothing to buy");
-		if (sell.amount > 0) {
-			footer += tr("    vender ", "    sell ") + std::to_string(units(sell.amount, selected_unit)) + ": " +
-				format_money(sell.price);
-		}
-	} else if (!show_message && convoy >= 0) {
-		// What the window would send (its price is the game's when it runs).
-		auto amount_of = [&](bool buying) {
-			int32_t n = 0;
-			if (const std::optional<OperationBytes> op = convoy_market_operation(save, town_index, ui, buying)) {
-				std::memcpy(&n, op->data() + 4, 4);
-			}
-			return n;
-		};
-		const int32_t buy = amount_of(true);
-		const int32_t sell = amount_of(false);
-		footer = buy > 0 ? tr("Comprar ", "Buy ") + amount_text(buy, selected_unit) : tr("No se puede comprar", "Nothing to buy");
-		if (sell > 0) {
-			footer += tr("    vender ", "    sell ") + amount_text(sell, selected_unit);
-		}
-	}
-	text.draw(footer, left, layout.footer_y, kTextColor);
-	draw_button(renderer, text, layout.step_button, tr("Izq./Der.: ", "Left/Right: ") + step_text(ui));
-	if (ship) {
-		draw_button(renderer, text, layout.buy_button, tr(BTN_CROSS " comprar", BTN_CROSS " buy"));
-		draw_button(renderer, text, layout.sell_button, tr(BTN_SQUARE " vender", BTN_SQUARE " sell"));
-	} else if (convoy >= 0) {
-		// The buttons, dimmed when the window sends nothing.
-		for (const bool buying : {true, false}) {
-			const SDL_Rect& r = buying ? layout.buy_button : layout.sell_button;
-			draw_button(renderer, text, r, buying ? tr(BTN_CROSS " comprar", BTN_CROSS " buy") : tr(BTN_SQUARE " vender", BTN_SQUARE " sell"));
-			if (!convoy_market_operation(save, town_index, ui, buying)) {
-				SDL_SetRenderDrawColor(renderer, 30, 22, 14, 150);
-				SDL_RenderFillRect(renderer, &r);
-			}
-		}
+// A side's name in the chart's head (0x6998A4 «Ship», 0x699884 «Town», 0x699900 «Convoy», 0x69986C «Office»).
+std::string trade_side_name(TradeSide side) {
+	switch (side) {
+	case TradeSide::Town: return exe_text(0x69988C, "Ciudad", "Town");
+	case TradeSide::Ship: return exe_text(0x6998AC, "Barco", "Ship");
+	case TradeSide::Convoy: return exe_text(0x699908, "Convoy", "Convoy");
+	default: return exe_text(0x699874, "Oficina", "Office");
 	}
 }
 
-// The market in the modes 2, 0 and 5: the rows with the town's stock and
-// prices, the office's and the ship's.
-void draw_office_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, int town_index,
-	const MarketUi& ui) {
-	const SavedTown& town = save.towns[size_t(town_index)];
-	const MarketLayout layout(text.line_height());
-	const SDL_Rect& panel = layout.panel;
-	const int left = panel.x + MarketLayout::kPadding;
+// What the window shows of a side for a row: its units (barrels or loads; the weapons' pieces in the mode 5), and
+// the average price of what it holds (the ship's as 0x5187F0, the office's [+0x3B8]: · 200 or 2000, + 0.5).
+struct TradeSideRow {
+	int64_t units = 0;
+	int32_t average = 0;
+};
+
+TradeSideRow trade_side_row(const SaveGame& save, int town_index, const MarketUi& ui, TradeSide side, int row) {
+	TradeSideRow out;
 	const int office = player_office(save, town_index);
-	const int ship_index = market_ship(save, town_index, ui);
-	const int convoy = ui.mode == 3 ? market_convoy(save, town_index, ui) : -1;
-	const SavedShip* ship = ship_index >= 0 && ui.mode != 3 ? &save.ships[size_t(ship_index)] : nullptr;
-	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
-	SDL_RenderFillRect(renderer, &panel);
-	SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
-	SDL_RenderDrawRect(renderer, &panel);
-	auto right = [&](const std::string& s, int column, int y, SDL_Color color) {
-		text.draw(s, panel.x + MarketLayout::kColumns[column] - text.measure(s), y, color);
-	};
-	std::string header = market_mode_name(ui.mode);
-	if (ui.mode == 3) {
-		header += convoy >= 0 ? ": " + convoy_label(save, convoy) : "";
-	} else if (ui.mode != 2) {
-		header += ship ? ": " + ship->name() : tr(": ningún barco en el puerto", ": no ship in the port");
+	const int ship = market_ship(save, town_index, ui);
+	const int convoy = market_convoy(save, town_index, ui);
+	if (ui.mode == 5) {
+		const OfficeMemory* o = office >= 0 ? &save.offices[size_t(office)].memory : nullptr;
+		if (side == TradeSide::Office) {
+			out.units = !o ? 0 : row < 4 ? o->s32(4 + 4 * size_t(0x14 + row)) : office_artillery_count(save, office, row - 5);
+		} else if (ship >= 0) {
+			out.units = row < 4 ? save.ships[size_t(ship)].cargo(0x14 + row) : ship_artillery_count(save, ship, row - 5);
+		}
+		return out;
 	}
-	text.draw(header, left, layout.header_y, ship || convoy >= 0 || ui.mode == 2 ? kTextColor : kDimColor);
-	const std::string close = tr("L/R   " BTN_CIRCLE " cerrar", "L/R   " BTN_CIRCLE " close");
-	text.draw(close, panel.x + panel.w - MarketLayout::kPadding - text.measure(close), layout.header_y, kDimColor);
-	const std::string office_word = game_text(GameText::Office, tr("Oficina", "Office"));
-	text.draw(game_text(GameText::MarketGoods, tr("Mercancía", "Goods")), left, layout.titles_y, kDimColor);
-	if (ui.mode == 2) {
-		right(game_text(GameText::MarketTown, tr("Ciudad", "Town")), 0, layout.titles_y, kDimColor);
-		right(game_text(GameText::MarketBuy, tr("Compra", "Buy")), 1, layout.titles_y, kDimColor);
-		right(game_text(GameText::MarketSell, tr("Venta", "Sell")), 2, layout.titles_y, kDimColor);
-		right(office_word, 3, layout.titles_y, kDimColor);
+	const WareInfo& ware = kWares[size_t(row)];
+	const int32_t unit = ware_scale(ware.unit);
+	switch (side) {
+	case TradeSide::Town:
+		out.units = units(int32_t(save.towns[size_t(town_index)].stock(size_t(row))), ware.unit);
+		break;
+	case TradeSide::Office:
+		if (office >= 0) {
+			const OfficeMemory& o = save.offices[size_t(office)].memory;
+			out.units = units(o.s32(4 + 4 * size_t(row)), ware.unit);
+			out.average = int32_t(double(o.f32(0x3B8 + 4 * size_t(row))) * unit + 0.5);
+		}
+		break;
+	case TradeSide::Ship:
+		if (ship >= 0) {
+			out.units = units(save.ships[size_t(ship)].cargo(row), ware.unit);
+			out.average = ship_cargo_prices(save, ship)[size_t(row)];
+		}
+		break;
+	case TradeSide::Convoy:
+		if (convoy >= 0) {
+			out.units = units(int32_t(convoy_cargo(save, convoy, row)), ware.unit);
+		}
+		break;
+	}
+	return out;
+}
+
+// The info line's words for a side (0x4A7390's «%s %u» and «%u/%u %s»): the town's name and all its stock in barrels
+// (0x4AAB10's [+0x584], rounded up to a barrel); the ship's, the convoy's or the office's load and room in barrels and
+// its name.
+std::string trade_side_info(const SaveGame& save, int town_index, const MarketUi& ui, TradeSide side) {
+	auto load = [](int64_t used, int64_t room, const std::string& name) {
+		return std::to_string(used / 200) + "/" + std::to_string(room / 200) + " " + name;
+	};
+	switch (side) {
+	case TradeSide::Town: {
+		int64_t all = 0;
+		for (int w = 0; w < 24; ++w) {
+			all += int32_t(save.towns[size_t(town_index)].stock(size_t(w)));
+		}
+		all = (all + 199) / 200 * 200;
+		return town_name(save, stats_town_names(), town_index) + " " + std::to_string(all / 200);
+	}
+	case TradeSide::Ship: {
+		const int ship = market_ship(save, town_index, ui);
+		if (ship < 0) {
+			return {};
+		}
+		// As the convoy's (0x4AA4A0) for one ship: its cargo and its equipment ([+0x118] + [+0x11C], the equipment
+		// rounded up to a barrel), its capacity [+0x10] (the window's [+0x738], 0x4A97EC).
+		const SavedShip& s = save.ships[size_t(ship)];
+		int64_t used = int64_t(s.memory.s32(0x118)) + s.memory.s32(0x11C);
+		if (s.memory.s32(0x11C) % 200 != 0) {
+			used = used - s.memory.s32(0x11C) % 200 + 200;
+		}
+		return load(used, s.capacity(), s.name());
+	}
+	case TradeSide::Convoy: {
+		const int convoy = market_convoy(save, town_index, ui);
+		return convoy < 0 ? std::string()
+						  : load(int64_t(market_convoy_used(save, convoy)) * 200, market_convoy_capacity(save, convoy),
+								convoy_label(save, convoy));
+	}
+	default: {
+		const int office = player_office(save, town_index);
+		if (office < 0) {
+			return {};
+		}
+		const OfficeMemory& o = save.offices[size_t(office)].memory;
+		int64_t used = 0;
+		for (int w = 0; w < 24; ++w) {
+			used += std::max(0, o.s32(4 + 4 * size_t(w)));
+		}
+		return load(used, int64_t(o.u16(0x2EC)) * 2000, trade_side_name(TradeSide::Office));
+	}
+	}
+}
+
+// A row's name as the window writes it (0x4A79F5, 0x4A7D81): the ware's from the names' table (0x6C0BB0 by
+// 0x698538: lower case, «grain»); in the mode 5 the four weapons' (the wares 20..23), «Cutlass» (0x6AA35C) and the
+// six pieces' (0x6C0C64..0x6C0C78, «small catapult»...).
+std::string trade_row_name(int mode, int row) {
+	if (mode != 5) {
+		const std::string name = exe_text(0x6C0BB0 + 4 * uint32_t(row), "", "");
+		return name.empty() ? ware_name(row) : name;
+	}
+	if (row < 4) {
+		const std::string name = exe_text(0x6C0BB0 + 4 * uint32_t(20 + row), "", "");
+		return name.empty() ? arsenal_row_name(row) : name;
+	}
+	const std::string name = row == 4 ? exe_text(0x6AA35C, "", "") : exe_text(0x6C0C60 + 4 * uint32_t(row - 4), "", "");
+	return name.empty() ? arsenal_row_name(row) : name;
+}
+
+// The price on a row's buy or sell button (0x4AAC00): what that many units cost or bring at the town, divided by
+// them (truncated); the units the quantity's (1, 5, 50) or, with «Max», the left side's stock buying (with a ship or
+// a convoy, no more than its room) and the right side's selling.
+int32_t trade_button_price(const SaveGame& save, int town_index, const MarketUi& ui, int ware, bool buying) {
+	const WareInfo& info = kWares[size_t(ware)];
+	const int32_t unit = ware_scale(info.unit);
+	int64_t n = 0;
+	const uint32_t step = kMarketSteps[size_t(ui.step)];
+	if (step > 0) {
+		n = step;
+	} else if (buying) {
+		n = trade_side_row(save, town_index, ui, TradeSide::Town, ware).units;
+		const TradeSide right = trade_right_side(ui.mode);
+		if (right != TradeSide::Office) {
+			// No more than the ship's or the convoy's room: its capacity (the window's [+0x738]) less what it holds
+			// (its [+0x5E8], in barrels).
+			int64_t room = 0;
+			int64_t held = 0;
+			if (right == TradeSide::Ship && market_ship(save, town_index, ui) >= 0) {
+				const SavedShip& s = save.ships[size_t(market_ship(save, town_index, ui))];
+				room = s.capacity();
+				held = int64_t(s.memory.s32(0x118)) + s.memory.s32(0x11C);
+				held = (held + 199) / 200 * 200;
+			} else if (right == TradeSide::Convoy && market_convoy(save, town_index, ui) >= 0) {
+				room = market_convoy_capacity(save, market_convoy(save, town_index, ui));
+				held = int64_t(market_convoy_used(save, market_convoy(save, town_index, ui))) * 200;
+			}
+			if (n * unit + held > room) {
+				n = (room - held) / unit;
+			}
+		}
 	} else {
-		right(office_word, 1, layout.titles_y, kDimColor);
-		right(ui.mode == 3 ? game_text(GameText::ShipyardConvoy, tr("Convoy", "Convoy"))
-						   : game_text(GameText::MarketShip, tr("Bodega", "Ship")),
-			3, layout.titles_y, kDimColor);
+		n = trade_side_row(save, town_index, ui, trade_right_side(ui.mode), ware).units;
 	}
-	const OfficeMemory* o = office >= 0 ? &save.offices[size_t(office)].memory : nullptr;
-	for (int r = 0; r < market_rows(ui); ++r) {
-		const int y = layout.rows_y + r * MarketLayout::kRowHeight;
-		if (r == ui.ware) {
-			const SDL_Rect row = {panel.x + 2, y - 1, panel.w - 4, MarketLayout::kRowHeight};
-			SDL_SetRenderDrawColor(renderer, 110, 80, 40, 230);
-			SDL_RenderFillRect(renderer, &row);
-		}
-		auto count = [&](int64_t n, int column) {
-			right(n ? std::to_string(n) : "-", column, y, n ? kTextColor : kDimColor);
-		};
-		if (ui.mode == 5) {
-			text.draw(arsenal_row_name(r), left, y, kTextColor);
-			if (r < 4) {
-				count(o ? o->s32(4 + 4 * size_t(0x14 + r)) : 0, 1);
-				count(ship ? ship->cargo(0x14 + r) : 0, 3);
-			} else {
-				count(o ? office_artillery_count(save, office, r - 5) : 0, 1);
-				count(ship ? ship_artillery_count(save, ship_index, r - 5) : 0, 3);
-			}
-			continue;
-		}
-		const WareInfo& ware = kWares[size_t(r)];
-		auto amount = [&](int32_t internal) {
-			const int n = units(internal, ware.unit);
-			return n ? amount_label(n, ware.unit) : std::string("-");
-		};
-		text.draw(ware_label(r), left, y, kTextColor);
-		if (ui.mode == 2) {
-			const int32_t unit = ware_scale(ware.unit);
-			const int32_t buy = buy_price(r, town.market(r), unit);
-			right(amount(int32_t(town.stock(size_t(r)))), 0, y, kTextColor);
-			right(buy ? std::to_string(buy) : "-", 1, y, kTextColor);
-			right(std::to_string(sell_price(r, town.market(r), unit, save.trade_difficulty)), 2, y, kTextColor);
-			right(o ? amount(o->s32(4 + 4 * size_t(r))) : "-", 3, y, kTextColor);
-		} else {
-			right(o ? amount(o->s32(4 + 4 * size_t(r))) : "-", 1, y, kTextColor);
-			if (convoy >= 0) {
-				right(amount(int32_t(convoy_cargo(save, convoy, r))), 3, y, kTextColor);
-			} else {
-				right(ship ? amount(ship->cargo(r)) : "-", 3, y, kTextColor);
-			}
-		}
+	if (n <= 0) {
+		return 0;
 	}
-	if (!ui.message.empty() && !SDL_TICKS_PASSED(app_ticks(), ui.message_until)) {
-		text.draw(ui.message, left, layout.footer_y, kTextColor);
+	const SavedTown& town = save.towns[size_t(town_index)];
+	const int32_t amount = int32_t(n * unit);
+	const int32_t price = buying ? buy_price(ware, town.market(ware), amount)
+								 : sell_price(ware, town.market(ware), amount, save.trade_difficulty);
+	return int32_t(price / n);
+}
+
+// The window (0x4A7390), in its own coordinates into its texture: the background and its shadows (0x41CA00), the two
+// pictures, the title «Trading goods» in the font 3 centred at y 24 (its light shadow a pixel lower right), the
+// chart's head in the font 0 (the goods and the left side's name right-aligned, «Buy» and «Sell» centred over their
+// columns or «Loading» over both, the right side's name and «@-price» right-aligned), each row in the font 1 (the
+// ware's name right-aligned, each side's units right-aligned before their unit's picture, the buy and sell buttons
+// with their prices — between the ship or the convoy and the office, the moving buttons —, the right side's average
+// price), the info line, the trade's price with the coin, the quantity buttons and the close button. The pad's row in
+// the buttons' highlight blue with its keys on its buttons; the close button's key before it.
+void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& save, int town_index,
+	const MarketUi& ui) {
+	(void)renderer;
+	if (!g_game_art) {
+		return;
 	}
-	draw_button(renderer, text, layout.step_button, tr("Izq./Der.: ", "Left/Right: ") + step_text(ui));
-	// The buttons, dimmed when there is nothing to move (they do nothing then).
-	auto button = [&](const SDL_Rect& r, const std::string& label, bool first) {
-		draw_button(renderer, text, r, label);
-		if (!office_operation(save, town_index, ui, first)) {
-			SDL_SetRenderDrawColor(renderer, 30, 22, 14, 150);
-			SDL_RenderFillRect(renderer, &r);
+	GameWindowArt& gart = *g_game_art;
+	const TradeWindowLayout layout;
+	gart.begin_sized(layout.panel, kTradeWindowW, kTradeWindowH);
+	TextRenderer& title = gart.title_text() ? *gart.title_text() : text;
+	TextRenderer& head = gart.head_text() ? *gart.head_text() : text;
+	TextRenderer& page = gart.page_text() ? *gart.page_text() : text;
+	const SDL_Color black = argb_color(kShipListInk);
+	const SDL_Color lit_ink = argb_color(0xFF0C2AE0);
+	gart.draw_tex(16100, 0, 0, 0);
+	gart.draw_tex(16051, 0, kTradeWindowW - 4, 0);
+	gart.draw_tex(16052, 0, 0, kTradeWindowH - 4);
+	const TradeSide left = trade_left_side(ui.mode);
+	const TradeSide right = trade_right_side(ui.mode);
+	auto picture = [](TradeSide side) {
+		return side == TradeSide::Town ? 16040u : side == TradeSide::Office ? 16041u : 16039u;
+	};
+	gart.draw_tex(picture(left), 0, kTradeLeftPicture[0], kTradeLeftPicture[1]);
+	gart.draw_tex(picture(right), 0, kTradeRightPicture[0], kTradeRightPicture[1]);
+	const int middle = (kTradeWindowW - 4) / 2;
+	const std::string t = exe_text(0x699868, "Mercancías comerciales", "Trading goods");
+	title.draw(t, middle - title.measure(t) / 2 + 1, kTradeTitleY + 1, argb_color(0xFFEFD7C0));
+	title.draw(t, middle - title.measure(t) / 2, kTradeTitleY, black);
+	// The info line: the left side right of the middle − 30, the barrel at the middle − 13, the right side from + 30.
+	const std::string left_info = trade_side_info(save, town_index, ui, left);
+	const std::string right_info = trade_side_info(save, town_index, ui, right);
+	page.draw(left_info, middle - kTradeInfoX - page.measure(left_info), kTradeInfoY, black);
+	gart.draw_tex(16030, 0, middle - 13, kTradeInfoY);
+	page.draw(right_info, middle + kTradeInfoX, kTradeInfoY, black);
+	// The chart's head.
+	auto cell = [&](int k, int column) { return TradeWindowLayout::game_cell(k, column, ui.mode); };
+	// (The Spanish heads' leading spaces left out: «  Comprar» touched «Ciudad»; adapted.)
+	auto trimmed = [](std::string s) {
+		const size_t a = s.find_first_not_of(' ');
+		const size_t b = s.find_last_not_of(' ');
+		return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+	};
+	auto head_right = [&](const std::string& s, int column) {
+		const SDL_Rect c = cell(0, column);
+		head.draw(trimmed(s), c.x + c.w - head.measure(trimmed(s)), kTradeChartY, black);
+	};
+	auto head_centred = [&](const std::string& s, int x0, int x1) {
+		head.draw(trimmed(s), (x0 + x1) / 2 - head.measure(trimmed(s)) / 2, kTradeChartY, black);
+	};
+	const bool town_trade = left == TradeSide::Town;
+	head_right(exe_text(0x699880, "Mercancías", "Goods"), 0);
+	head_right(trade_side_name(left), 1);
+	if (town_trade) {
+		head_centred(exe_text(0x699894, "  Comprar", "Buy"), cell(0, 2).x, cell(0, 2).x + cell(0, 2).w);
+		head_centred(exe_text(0x6998A0, "  Vender", "Sell"), cell(0, 3).x, cell(0, 3).x + cell(0, 3).w);
+	} else {
+		head_centred(exe_text(0x6998B8, "Transportar", "Loading"), cell(0, 2).x, cell(0, 3).x + cell(0, 3).w);
+	}
+	head_right(trade_side_name(right), 4);
+	if (ui.mode != 5) {
+		head_right(exe_text(0x699978, "Med.", "@-price"), 5);
+	}
+	auto pill = [&](const SDL_Rect& button, const std::string& label, bool pressed, bool on, SDL_Color ink) {
+		const SDL_Rect r = gart.pill_for_label(button, page.measure(label));
+		gart.draw_pill(r, !on ? PillState::Disabled : pressed ? PillState::Pressed : PillState::Standard);
+		page.draw(label, r.x + (r.w - page.measure(label)) / 2, r.y + (r.h - page.line_height()) / 2,
+			on ? ink : kParchmentDim);
+	};
+	// Each side's units before their unit's picture (none in the mode 5), right-aligned in the column.
+	auto units_cell = [&](int k, int column, int64_t n, WareUnit unit, SDL_Color ink) {
+		if (n == 0) {
+			return;
+		}
+		const SDL_Rect c = cell(k, column);
+		const int picture_w = ui.mode == 5 ? 0 : 26;
+		const std::string s = std::to_string(n);
+		page.draw(s, c.x + c.w - picture_w - page.measure(s), c.y + 1, ink);
+		if (picture_w) {
+			gart.draw_tex(unit == WareUnit::Barrel ? 16030 : 16031, 0, c.x + c.w - picture_w, c.y);
 		}
 	};
-	if (ui.mode == 2) {
-		button(layout.buy_button, tr(BTN_CROSS " comprar", BTN_CROSS " buy"), true);
-		button(layout.sell_button, tr(BTN_SQUARE " vender", BTN_SQUARE " sell"), false);
-	} else if (convoy >= 0) {
-		button(layout.buy_button, tr(BTN_CROSS " al convoy", BTN_CROSS " to the convoy"), true);
-		button(layout.sell_button, tr(BTN_SQUARE " a la oficina", BTN_SQUARE " to the office"), false);
-	} else if (ship) {
-		button(layout.buy_button, tr(BTN_CROSS " al barco", BTN_CROSS " to the ship"), true);
-		button(layout.sell_button, tr(BTN_SQUARE " a la oficina", BTN_SQUARE " to the office"), false);
+	const bool has_left = left == TradeSide::Town || (left == TradeSide::Convoy ? market_convoy(save, town_index, ui) >= 0
+																				 : market_ship(save, town_index, ui) >= 0);
+	const bool has_right = right == TradeSide::Office ? player_office(save, town_index) >= 0
+		: right == TradeSide::Convoy ? market_convoy(save, town_index, ui) >= 0
+									 : market_ship(save, town_index, ui) >= 0;
+	for (int k = 0; k < market_rows(ui); ++k) {
+		const bool pad = k == ui.ware;
+		const SDL_Color ink = pad ? lit_ink : black;
+		const std::string name = trade_row_name(ui.mode, k);
+		const SDL_Rect n = cell(k, 0);
+		page.draw(name, n.x + n.w - page.measure(name), n.y + 1, ink);
+		const WareUnit unit = ui.mode == 5 ? WareUnit::Barrel : kWares[size_t(k)].unit;
+		const TradeSideRow l = trade_side_row(save, town_index, ui, left, k);
+		const TradeSideRow r = trade_side_row(save, town_index, ui, right, k);
+		units_cell(k, 1, l.units, unit, ink);
+		units_cell(k, 4, r.units, unit, ink);
+		if (r.units > 0 && r.average > 0 && ui.mode != 5) {
+			const SDL_Rect a = cell(k, 5);
+			const std::string s = std::to_string(r.average);
+			page.draw(s, a.x + a.w - page.measure(s), a.y + 1, ink);
+		}
+		if (town_trade) {
+			const int32_t buy = trade_button_price(save, town_index, ui, k, true);
+			const int32_t sell = trade_button_price(save, town_index, ui, k, false);
+			pill(cell(k, 2), (pad ? std::string(BTN_CROSS " ") : std::string()) + std::to_string(buy), false,
+				has_right && buy > 0, kButtonInk);
+			pill(cell(k, 3), (pad ? std::string(BTN_SQUARE " ") : std::string()) + std::to_string(sell), false,
+				has_right && sell > 0 && r.units > 0, kButtonInk);
+		} else {
+			// Between the ship or the convoy (left) and the office (right): to the office and from it.
+			pill(cell(k, 2), (pad ? std::string(BTN_CROSS " ") : std::string()) + ">", false,
+				has_left && has_right && l.units > 0, kButtonInk);
+			pill(cell(k, 3), (pad ? std::string(BTN_SQUARE " ") : std::string()) + "<", false,
+				has_left && has_right && r.units > 0, kButtonInk);
+		}
 	}
+	// The bottom: the last trade's price with the coin (hand_gk: its frame 0 paying, 1 earning; it fades), the
+	// quantity buttons (the chosen one pressed), the close button with its key.
+	if (ui.coin_price != 0 && !SDL_TICKS_PASSED(app_ticks(), ui.coin_until)) {
+		const Uint32 left_ms = ui.coin_until - app_ticks();
+		const uint8_t alpha = uint8_t(std::min<Uint32>(255, left_ms * 255 / 1000));
+		const std::string s = format_money(std::abs(ui.coin_price));
+		page.draw(s, kTradePriceX - page.measure(s), kTradeBottomY + (32 - page.line_height()) / 2, black);
+		gart.draw_tex(16029, ui.coin_price > 0 ? 0 : 1, kTradePriceX + 2, kTradeBottomY, 0, alpha);
+	}
+	const std::string quantity[4] = {exe_text(0x69A35C, "1", "1"), exe_text(0x69A360, "5", "5"),
+		exe_text(0x69A364, "50", "50"), exe_text(0x69A368, "Máx.", "Max")};
+	for (int q = 0; q < 4; ++q) {
+		pill(TradeWindowLayout::game_quantity(q), quantity[q], ui.step == q, true, kButtonInk);
+	}
+	const SDL_Rect close = TradeWindowLayout::game_close();
+	gart.draw_close(close, false);
+	page.draw(BTN_CIRCLE, close.x - page.measure(BTN_CIRCLE) - 2, close.y + (18 - page.line_height()) / 2, kButtonInk);
+	gart.end();
 }
 
 // --- The windows of the town's places and of the ship ---
@@ -21344,6 +21450,20 @@ int main(int argc, char** argv) {
 			return true;
 		};
 		auto change_step = [&](int step) { market.step = (market.step + kTradeStepCount + step) % kTradeStepCount; };
+		// A trade from the window: its money on the window's bottom line with the coin (the game's, fading), or, without
+		// money, what the viewer says of it in a notice (why nothing was traded; the game's window says nothing).
+		auto market_trade = [&](bool buying) {
+			const int32_t before = save.merchants[size_t(save.player)].money();
+			market.message.clear();
+			trade(save, sailing.get(), town_index, market, buying);
+			const int32_t paid = before - save.merchants[size_t(save.player)].money();
+			if (paid != 0) {
+				market.coin_price = paid;
+				market.coin_until = app_ticks() + 2000;
+			} else if (!market.message.empty()) {
+				notify(market.message);  // (Moving goods with the office costs nothing: what moved, also in a notice.)
+			}
+		};
 		// Triangle asked for the sea map: it loads now, some rows a frame
 		// (SeaMapView::step), the town and the notice on screen; then to the sea.
 		if (sea_wanted && sea_notice_shown) {
@@ -23476,7 +23596,7 @@ int main(int argc, char** argv) {
 					// X en la Vita: en el mercado, compra; en la ciudad, entra en el
 					// edificio del centro de la pantalla (o el mercado); en el mar, zarpar.
 					if (trading) {
-						trade(save, sailing.get(), town_index, market, true);
+						market_trade(true);
 					} else if (selection.mode == Mode::Saved) {
 						const PlaceInfo* p = hover >= 0 ? place_of(uint32_t(hover)) : nullptr;
 						open_place(p ? p->place : Place::MarketHall, hover);
@@ -23489,7 +23609,7 @@ int main(int argc, char** argv) {
 				case SDL_CONTROLLER_BUTTON_X:
 					// Square: sells; at sea, the player's next ship.
 					if (trading) {
-						trade(save, sailing.get(), town_index, market, false);
+						market_trade(false);
 					} else if (selection.mode == Mode::Sea) {
 						fleet_index++;
 					}
@@ -23699,7 +23819,7 @@ int main(int argc, char** argv) {
 				case SDLK_c:
 				case SDLK_v:
 					if (trading) {
-						trade(save, sailing.get(), town_index, market, event.key.keysym.sym == SDLK_c);
+						market_trade(event.key.keysym.sym == SDLK_c);
 					}
 					break;
 				case SDLK_TAB:
@@ -23846,7 +23966,7 @@ int main(int argc, char** argv) {
 				touch_on_side = panel_shown && !in_menu && (!in_mail || mail_in_panel) && !messages.open && !end_window.open &&
 					inside(panel_layout.panel, touch_start.x, touch_start.y);
 				touch_on_panel = touch_on_side ||
-					(trading && inside(MarketLayout(small_text->line_height()).panel, touch_start.x, touch_start.y)) ||
+					(trading && inside(TradeWindowLayout().panel, touch_start.x, touch_start.y)) ||
 					(in_place && inside(PlaceLayout::on_screen(), touch_start.x, touch_start.y)) ||
 					(in_menu && (inside(MenuLayout(small_text->line_height(), menu.screen).panel, touch_start.x, touch_start.y) ||
 						menu.ask != MenuAsk::None)) ||
@@ -24994,16 +25114,31 @@ int main(int argc, char** argv) {
 						place.record = own;
 					}
 				} else if (touch_on_panel && trading && touch_moved < kTapDistance) {
-					const MarketLayout layout(small_text->line_height());
-					const int row = layout.row_at(touch_start.x, touch_start.y);
-					if (inside(layout.step_button, touch_start.x, touch_start.y)) {
-						change_step(1);
-					} else if (inside(layout.buy_button, touch_start.x, touch_start.y)) {
-						trade(save, sailing.get(), town_index, market, true);
-					} else if (inside(layout.sell_button, touch_start.x, touch_start.y)) {
-						trade(save, sailing.get(), town_index, market, false);
+					// The trade window's buttons: a quantity, the close button, a picture (the next mode: the viewer's), a
+					// row's buy or sell (or moving) button (its row chosen and traded), or the row alone.
+					const TradeWindowLayout layout;
+					const int x = touch_start.x;
+					const int y = touch_start.y;
+					const int row = layout.row_at(x, y);
+					int quantity = -1;
+					for (int q = 0; q < 4; ++q) {
+						if (layout.on(TradeWindowLayout::game_quantity(q), x, y)) {
+							quantity = q;
+						}
+					}
+					if (quantity >= 0) {
+						market.step = quantity;
+					} else if (layout.on(TradeWindowLayout::game_close(), x, y)) {
+						market.open = false;
+					} else if (layout.on(TradeWindowLayout::game_picture(false), x, y) ||
+						layout.on(TradeWindowLayout::game_picture(true), x, y)) {
+						market_mode_step(1);
 					} else if (row >= 0 && row < market_rows(market)) {
 						market.ware = row;
+						const int column = layout.column_at(x, market.mode);
+						if (column == 2 || column == 3) {
+							market_trade(column == 2);
+						}
 					}
 				}
 				touch_on_panel = false;
