@@ -381,6 +381,13 @@ OperationBytes leave_convoy_bytes(uint32_t ship, uint32_t convoy, bool guide, bo
 int32_t market_convoy_units(const SaveGame& save, int convoy, int ware);
 int32_t market_convoy_used(const SaveGame& save, int convoy);
 int32_t market_convoy_capacity(const SaveGame& save, int convoy);
+// The average prices the window shows of the convoy in its mode 4 (0x4AA4A0's [+0x68C]; in mode 3 it clears them and
+// the office's take their place): through the player's ships in the convoy's order, for each ware 0..19 a ship carries
+// (c units, its average price p per unit [+0xB4]), with B the units of the ships before it and a the average so far
+// (0 at first): a = trunc(B / 200) · a, plus trunc(float(c) · p) for a ware in barrels or minus trunc(float(c) · p ·
+// −10) for one in loads, divided by trunc((c + B) / 200) (a barrel's or a load's price). Checked in the emulator on a
+// retouched convoy (re/emu/sesion46/README.md).
+std::array<int32_t, 20> market_convoy_averages(const SaveGame& save, int convoy);
 // Mode 4 (a convoy and the town, as mode 1): 0x1A buying and 0x19 selling,
 // {code, amount, u16 ware, u16 convoy, u16 player, u16 town}.
 std::optional<OperationBytes> convoy_buy_operation(const SaveGame& save, int convoy, int ware, uint32_t step);

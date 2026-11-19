@@ -417,9 +417,14 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     como 0x4AAC00, los botones de la cantidad «1», «5», «50», «Máx.», la mano con la moneda y el precio del último
     trato y el botón de cerrar; en todos sus modos, en los dos idiomas (tres textos emparejados: caché 42). La tabla,
     adaptada a petición del usuario: con el mismo margen a los dos lados (la del juego llega al marco) y, en el modo de
-    las armas, sin la columna del precio medio para que quepan los nombres. Por
-    comparar con una foto del juego: los textos de los botones de mover con la oficina («>» y «<», improvisados), la
-    mano al pagar o cobrar, los precios medios.
+    las armas, sin la columna del precio medio para que quepan los nombres. Lo que quedaba, leído en el juego y
+    trazado (19-11-2026, `re/emu/sesion46/README.md`): los botones de mover con la oficina como los del juego («<» de la
+    oficina al barco o al convoy en la columna de comprar, «>» al revés), la mano de pagar (su fotograma 1) y la de
+    cobrar (el 0), la moneda detrás de cada precio medio, el precio medio del convoy (una media ponderada por sus
+    barcos, 0x4AA4A0, comprobada en el emulador: `market_convoy_averages`), la carga de la oficina con su [+0x2E8], la
+    cubierta del barco con sus piezas en el modo de las armas (0x495210). Adaptado: el juego enseña abajo lo que
+    costaría o daría el botón que tiene el ratón encima (y en rojo si no hay dinero o sitio); sin ratón, el visor enseña
+    lo que costó o dio el último trato.
   - [ ] **El menú de Start** del visor (continuar, buzón, guardar, cargar, opciones, menú principal, salir) con sus
     pantallas de **guardar y cargar partida** y de **opciones**: en el juego, la ventana de opciones del icono del
     engranaje del panel (guardar, cargar, opciones, salir).

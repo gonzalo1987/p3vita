@@ -2317,8 +2317,9 @@ void trade(SaveGame& save, Sailing* sailing, int town, MarketUi& ui, bool buying
 // drawn at its size into a texture and scaled to the view's height (as the stop's window, ×0.904: adapted). The chart
 // adapted too (the user, 19-11-2026: «Med.» at the screen's edge, «Pequeña catapulta» not fitting): from 10 to 400,
 // the same margin on each side (the game's goes from 6 to 410, its last column at the frame), its columns narrower
-// (108 56 48 48 56 46, 4 8 8 4 4 apart: the Spanish heads clear of each other); in the mode 5, which has no average
-// prices, without that column and its room given to the names (the game's names go past the window's left there).
+// (100 56 48 48 56 54, 4 8 8 4 4 apart: the heads clear of each other in both languages, «Convoy» and «@-price»
+// too); in the mode 5, which has no average prices, without that column and its room given to the names (the game's
+// names go past the window's left there).
 constexpr int kTradeWindowW = 428;
 constexpr int kTradeWindowH = 564;
 constexpr int kTradeTitleY = 24;
@@ -2330,8 +2331,8 @@ constexpr int kTradeHead = 18;
 constexpr int kTradeStep = 20;
 constexpr int kTradeRowHeight = 18;
 constexpr int kTradeColumns = 6;
-constexpr int kTradeColumnX[2][kTradeColumns] = {{0, 112, 176, 232, 284, 344}, {0, 162, 226, 282, 334, 390}};
-constexpr int kTradeColumnW[2][kTradeColumns] = {{108, 56, 48, 48, 56, 46}, {158, 56, 48, 48, 56, 0}};
+constexpr int kTradeColumnX[2][kTradeColumns] = {{0, 104, 168, 224, 276, 336}, {0, 162, 226, 282, 334, 390}};
+constexpr int kTradeColumnW[2][kTradeColumns] = {{100, 56, 48, 48, 56, 54}, {158, 56, 48, 48, 56, 0}};
 constexpr int kTradeBottomY = 510;
 constexpr int kTradePriceX = 80;
 constexpr int kTradeQuantityX[4] = {144, 178, 212, 246};
@@ -2451,7 +2452,9 @@ std::string trade_side_name(TradeSide side) {
 }
 
 // What the window shows of a side for a row: its units (barrels or loads; the weapons' pieces in the mode 5), and
-// the average price of what it holds (the ship's as 0x5187F0, the office's [+0x3B8]: · 200 or 2000, + 0.5).
+// the average price of what it holds (the window's [+0x68C], written by the right side's summary, which runs after the
+// left one's: the ship's as 0x5187F0, the office's as 0x500BB0 from its [+0x3B8]: · 200 or 2000, + 0.5; the
+// convoy's weighted by its ships' cargo, market_convoy_averages).
 struct TradeSideRow {
 	int64_t units = 0;
 	int32_t average = 0;
@@ -2493,6 +2496,7 @@ TradeSideRow trade_side_row(const SaveGame& save, int town_index, const MarketUi
 	case TradeSide::Convoy:
 		if (convoy >= 0) {
 			out.units = units(int32_t(convoy_cargo(save, convoy, row)), ware.unit);
+			out.average = market_convoy_averages(save, convoy)[size_t(row)];
 		}
 		break;
 	}
@@ -2501,10 +2505,10 @@ TradeSideRow trade_side_row(const SaveGame& save, int town_index, const MarketUi
 
 // The info line's words for a side (0x4A7390's «%s %u» and «%u/%u %s»): the town's name and all its stock in barrels
 // (0x4AAB10's [+0x584], rounded up to a barrel); the ship's, the convoy's or the office's load and room in barrels and
-// its name.
+// its name (the side's [+0x60] and the window's [+0x734] or [+0x738]; the office's name its head's, «Office»: traced).
 std::string trade_side_info(const SaveGame& save, int town_index, const MarketUi& ui, TradeSide side) {
 	auto load = [](int64_t used, int64_t room, const std::string& name) {
-		return std::to_string(used / 200) + "/" + std::to_string(room / 200) + " " + name;
+		return std::to_string(used) + "/" + std::to_string(room / 200) + " " + name;
 	};
 	switch (side) {
 	case TradeSide::Town: {
@@ -2520,32 +2524,25 @@ std::string trade_side_info(const SaveGame& save, int town_index, const MarketUi
 		if (ship < 0) {
 			return {};
 		}
-		// As the convoy's (0x4AA4A0) for one ship: its cargo and its equipment ([+0x118] + [+0x11C], the equipment
-		// rounded up to a barrel), its capacity [+0x10] (the window's [+0x738], 0x4A97EC).
+		// 0x4AA9D0: its cargo and its equipment ([+0x118] + [+0x11C], the equipment rounded up to a barrel), its
+		// capacity [+0x10] (the window's [+0x738] or, on the left in the modes 0 and 5, [+0x734]: 0x4A97EC).
 		const SavedShip& s = save.ships[size_t(ship)];
-		int64_t used = int64_t(s.memory.s32(0x118)) + s.memory.s32(0x11C);
-		if (s.memory.s32(0x11C) % 200 != 0) {
-			used = used - s.memory.s32(0x11C) % 200 + 200;
-		}
-		return load(used, s.capacity(), s.name());
+		return load(market_ship_used(save, ship), s.capacity(), s.name());
 	}
 	case TradeSide::Convoy: {
 		const int convoy = market_convoy(save, town_index, ui);
 		return convoy < 0 ? std::string()
-						  : load(int64_t(market_convoy_used(save, convoy)) * 200, market_convoy_capacity(save, convoy),
+						  : load(market_convoy_used(save, convoy), market_convoy_capacity(save, convoy),
 								convoy_label(save, convoy));
 	}
 	default: {
+		// 0x4AA7C0: all its stock and its [+0x2E8] rounded up to a barrel; its room [+0x2EC] · 2000.
 		const int office = player_office(save, town_index);
 		if (office < 0) {
 			return {};
 		}
-		const OfficeMemory& o = save.offices[size_t(office)].memory;
-		int64_t used = 0;
-		for (int w = 0; w < 24; ++w) {
-			used += std::max(0, o.s32(4 + 4 * size_t(w)));
-		}
-		return load(used, int64_t(o.u16(0x2EC)) * 2000, trade_side_name(TradeSide::Office));
+		return load(market_office_used(save, office), market_office_capacity(save, office),
+			trade_side_name(TradeSide::Office));
 	}
 	}
 }
@@ -2585,10 +2582,9 @@ int32_t trade_button_price(const SaveGame& save, int town_index, const MarketUi&
 			int64_t room = 0;
 			int64_t held = 0;
 			if (right == TradeSide::Ship && market_ship(save, town_index, ui) >= 0) {
-				const SavedShip& s = save.ships[size_t(market_ship(save, town_index, ui))];
-				room = s.capacity();
-				held = int64_t(s.memory.s32(0x118)) + s.memory.s32(0x11C);
-				held = (held + 199) / 200 * 200;
+				const int ship = market_ship(save, town_index, ui);
+				room = save.ships[size_t(ship)].capacity();
+				held = int64_t(market_ship_used(save, ship)) * 200;  // (0x4AA9D0's, the side's [+0x60].)
 			} else if (right == TradeSide::Convoy && market_convoy(save, town_index, ui) >= 0) {
 				room = market_convoy_capacity(save, market_convoy(save, town_index, ui));
 				held = int64_t(market_convoy_used(save, market_convoy(save, town_index, ui))) * 200;
@@ -2608,6 +2604,34 @@ int32_t trade_button_price(const SaveGame& save, int town_index, const MarketUi&
 	const int32_t price = buying ? buy_price(ware, town.market(ware), amount)
 								 : sell_price(ware, town.market(ware), amount, save.trade_difficulty);
 	return int32_t(price / n);
+}
+
+// schiffsdeck.tga's frames (TEX20010): the rope's left end, middle and right end, the ship marking the sails on
+// it, unused, the deck, the guns standing (6..11) and hanging (12..17), and an empty slot's placeholder.
+constexpr SDL_Rect kDeckFrames[19] = {{0, 0, 32, 12}, {32, 0, 192, 12}, {224, 0, 32, 12}, {45, 124, 26, 22},
+	{0, 0, 0, 0}, {0, 26, 248, 96}, {130, 128, 20, 52}, {109, 128, 20, 52}, {217, 128, 32, 52}, {184, 128, 32, 52},
+	{151, 128, 32, 52}, {88, 128, 20, 52}, {130, 181, 20, 52}, {109, 181, 20, 52}, {217, 181, 32, 52},
+	{184, 181, 32, 52}, {151, 181, 32, 52}, {88, 181, 20, 52}, {7, 123, 17, 34}};
+
+// The deck's pieces as 0x495210 draws them, each blit(frame, x, y) from the deck's top left: its 24 slots in two rows
+// of 12, (the deck's width − 66) / 12 + 2 pixels apart (17 for its 248) from its 13th pixel: the slots k with k % 4 <
+// 2 on the upper line (DeckTopLine 36), standing up from it, the others on the lower one (DeckBottomLine 60), hanging
+// down; a piece of type t is the frame 6 + t above and 12 + t below, an empty slot (0xFF) the placeholder (frame 18).
+template <typename Blit>
+void deck_pieces(const SavedShip& ship, int deck_w, Blit blit) {
+	const int step = (deck_w - 0x42) / 12 + 2;
+	for (int upper = 1; upper >= 0; --upper) {
+		int x = 13;
+		const int anchor = upper ? 36 : 60;
+		for (int k = upper ? 0 : 2; k < 24; k += (k & 1) ? 3 : 1) {
+			const uint8_t type = ship.artillery(k);
+			const int frame = type < 6 ? (upper ? 6 : 12) + type : type == 0xFF ? 18 : -1;
+			if (frame >= 0) {
+				blit(frame, x, upper ? anchor - kDeckFrames[frame].h : anchor);
+			}
+			x += step;
+		}
+	}
 }
 
 // The window (0x4A7390), in its own coordinates into its texture: the background and its shadows (0x41CA00), the two
@@ -2715,10 +2739,14 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 		const TradeSideRow r = trade_side_row(save, town_index, ui, right, k);
 		units_cell(k, 1, l.units, unit, ink);
 		units_cell(k, 4, r.units, unit, ink);
-		if (r.units > 0 && r.average > 0 && ui.mode != 5) {
+		if (r.units != 0 && ui.mode != 5) {
+			// The average (0x4A7C5A..0x4A7D04: whenever the right side has some, 0 too) right-aligned before the coin
+			// (TEX16014, 17 × 16) at the column's end.
 			const SDL_Rect a = cell(k, 5);
+			const int coin_x = a.x + a.w - 17;
 			const std::string s = std::to_string(r.average);
-			page.draw(s, a.x + a.w - page.measure(s), a.y + 1, ink);
+			gart.draw_tex(16014, 0, coin_x, a.y + 1);
+			page.draw(s, coin_x - page.measure(s), a.y + 1, ink);
 		}
 		if (town_trade) {
 			const int32_t buy = trade_button_price(save, town_index, ui, k, true);
@@ -2728,21 +2756,34 @@ void draw_market(SDL_Renderer* renderer, TextRenderer& text, const SaveGame& sav
 			pill(cell(k, 3), (pad ? std::string(BTN_SQUARE " ") : std::string()) + std::to_string(sell), false,
 				has_right && sell > 0 && r.units > 0, kButtonInk);
 		} else {
-			// Between the ship or the convoy (left) and the office (right): to the office and from it.
-			pill(cell(k, 2), (pad ? std::string(BTN_CROSS " ") : std::string()) + ">", false,
-				has_left && has_right && l.units > 0, kButtonInk);
-			pill(cell(k, 3), (pad ? std::string(BTN_SQUARE " ") : std::string()) + "<", false,
+			// Between the ship or the convoy (left) and the office (right), the game's texts (0x4A9A35..0x4A9A54,
+			// 0x4A9C70): the buy column's «<» from the office (0x4A921F: the office's units, the ship's room), the
+			// sell column's «>» to it.
+			pill(cell(k, 2), (pad ? std::string(BTN_CROSS " ") : std::string()) + exe_text(0x6BB072, "<", "<"), false,
 				has_left && has_right && r.units > 0, kButtonInk);
+			pill(cell(k, 3), (pad ? std::string(BTN_SQUARE " ") : std::string()) + exe_text(0x6BB070, ">", ">"), false,
+				has_left && has_right && l.units > 0, kButtonInk);
 		}
 	}
-	// The bottom: the last trade's price with the coin (hand_gk: its frame 0 paying, 1 earning; it fades), the
-	// quantity buttons (the chosen one pressed), the close button with its key.
+	// The mode 5's deck with the ship's pieces (0x4A7ED3..0x4A7F1E: 0x495210 at the window's middle less half its 248,
+	// 200 above its bottom; the window 424 × 560 without its shadows).
+	if (ui.mode == 5 && market_ship(save, town_index, ui) >= 0) {
+		const int deck_x = (kTradeWindowW - 4 - 248) / 2;
+		const int deck_y = kTradeWindowH - 4 - 200;
+		gart.draw_tex(20010, 5, deck_x, deck_y);
+		deck_pieces(save.ships[size_t(market_ship(save, town_index, ui))], 248,
+			[&](int frame, int x, int y) { gart.draw_tex(20010, frame, deck_x + x, deck_y + y); });
+	}
+	// The bottom: the trade's price with the hand (hand_gk, TEX16029: its frame 1 paying, 0 earning: 0x4A7F3E). The
+	// game shows there what the button under the mouse would cost or bring, fading when it leaves it (its [+0x8A4]);
+	// without a mouse the viewer shows what the last trade cost or brought, fading (adapted). Then the quantity
+	// buttons (the chosen one pressed), the close button with its key.
 	if (ui.coin_price != 0 && !SDL_TICKS_PASSED(app_ticks(), ui.coin_until)) {
 		const Uint32 left_ms = ui.coin_until - app_ticks();
 		const uint8_t alpha = uint8_t(std::min<Uint32>(255, left_ms * 255 / 1000));
 		const std::string s = format_money(std::abs(ui.coin_price));
 		page.draw(s, kTradePriceX - page.measure(s), kTradeBottomY + (32 - page.line_height()) / 2, black);
-		gart.draw_tex(16029, ui.coin_price > 0 ? 0 : 1, kTradePriceX + 2, kTradeBottomY, 0, alpha);
+		gart.draw_tex(16029, ui.coin_price > 0 ? 1 : 0, kTradePriceX + 2, kTradeBottomY, 0, alpha);
 	}
 	const std::string quantity[4] = {exe_text(0x69A35C, "1", "1"), exe_text(0x69A360, "5", "5"),
 		exe_text(0x69A364, "50", "50"), exe_text(0x69A368, "Máx.", "Max")};
@@ -15193,33 +15234,13 @@ int ship_goods_rows(const SaveGame& save, int ship_index) {
 	return n + (ship.extra_loads() ? 1 : 0) + (ship.memory.u8(0x157) ? 1 : 0);
 }
 
-// schiffsdeck.tga's frames (TEX20010): the rope's left end, middle and right end, the ship marking the sails on
-// it, unused, the deck, the guns standing (6..11) and hanging (12..17), and an empty slot's placeholder.
-constexpr SDL_Rect kDeckFrames[19] = {{0, 0, 32, 12}, {32, 0, 192, 12}, {224, 0, 32, 12}, {45, 124, 26, 22},
-	{0, 0, 0, 0}, {0, 26, 248, 96}, {130, 128, 20, 52}, {109, 128, 20, 52}, {217, 128, 32, 52}, {184, 128, 32, 52},
-	{151, 128, 32, 52}, {88, 128, 20, 52}, {130, 181, 20, 52}, {109, 181, 20, 52}, {217, 181, 32, 52},
-	{184, 181, 32, 52}, {151, 181, 32, 52}, {88, 181, 20, 52}, {7, 123, 17, 34}};
-
-// 0x48E700 → 0x495210: the deck (frame 5 of schiffsdeck.tga) and its 24 slots in two rows of 12, 17 pixels apart
-// from its 13th pixel: the slots k with k % 4 < 2 on the upper line (DeckTopLine 36), standing up from it, the
-// others on the lower one (DeckBottomLine 60), hanging down; a piece of type t is the frame 6 + t above and
-// 12 + t below, an empty slot (0xFF) the placeholder (frame 18).
+// 0x48E700 → 0x495210: the deck (frame 5 of schiffsdeck.tga) and its pieces (deck_pieces).
 void draw_deck(SDL_Renderer* renderer, const PanelArt& art, const SavedShip& ship, const SDL_Rect& deck) {
 	draw_picture(renderer, art.deck, deck, &kDeckFrames[5]);
-	const int step = (deck.w - 0x42) / 12 + 2;
-	for (int upper = 1; upper >= 0; --upper) {
-		int x = deck.x + 13;
-		const int anchor = deck.y + (upper ? 36 : 60);
-		for (int k = upper ? 0 : 2; k < 24; k += (k & 1) ? 3 : 1) {
-			const uint8_t type = ship.artillery(k);
-			const SDL_Rect* f = type < 6 ? &kDeckFrames[(upper ? 6 : 12) + type] : type == 0xFF ? &kDeckFrames[18] : nullptr;
-			if (f) {
-				const SDL_Rect dst = {x, upper ? anchor - f->h : anchor, f->w, f->h};
-				draw_picture(renderer, art.deck, dst, f);
-			}
-			x += step;
-		}
-	}
+	deck_pieces(ship, deck.w, [&](int frame, int x, int y) {
+		const SDL_Rect* f = &kDeckFrames[frame];
+		draw_picture(renderer, art.deck, SDL_Rect{deck.x + x, deck.y + y, f->w, f->h}, f);
+	});
 }
 
 // --- The battle's panel (the battles' piece 7, part 3; the manual's figure 2-3): the side panel's frame with the

@@ -1074,6 +1074,37 @@ int32_t market_convoy_capacity(const SaveGame& save, int convoy) {
 	return capacity;
 }
 
+std::array<int32_t, 20> market_convoy_averages(const SaveGame& save, int convoy) {
+	std::array<int32_t, 20> average{};
+	std::array<int32_t, 20> before{};  // The cargo of the ships already counted (the window's side, 0x4AA710).
+	// __ftol: the x87 value truncated to 64 bits, its low dword. The float cargo times the float price (and · −10) is
+	// exact in a double.
+	auto ftol = [](double x) { return int32_t(uint32_t(uint64_t(int64_t(x)))); };
+	const uint16_t ships = save.globals.u16(global::kShipCount);
+	for (uint32_t i = save.convoys[size_t(convoy)].u16(0xA); i < ships; i = save.ships[i].memory.u16(0x6)) {
+		const ShipMemory& s = save.ships[i].memory;
+		if (int(s.u8(0)) != save.player) {
+			continue;
+		}
+		for (int w = 0; w < 20; ++w) {
+			const int32_t cargo = s.s32(0x54 + 4 * size_t(w));
+			if (cargo == 0) {
+				continue;
+			}
+			const double paid = double(float(cargo)) * double(s.f32(0xB4 + 4 * size_t(w)));
+			int32_t a = int32_t(uint32_t(before[size_t(w)] / 200) * uint32_t(average[size_t(w)]));
+			a = kInBarrels[w] ? int32_t(uint32_t(ftol(paid)) + uint32_t(a)) : int32_t(uint32_t(a) - uint32_t(ftol(paid * -10.0)));
+			const int32_t barrels = (cargo + before[size_t(w)]) / 200;
+			// (Under a barrel in all the game's idiv would fault; never in a save: the cargo goes by barrels.)
+			average[size_t(w)] = barrels != 0 ? a / barrels : 0;
+		}
+		for (int w = 0; w < 20; ++w) {
+			before[size_t(w)] += s.s32(0x54 + 4 * size_t(w));
+		}
+	}
+	return average;
+}
+
 namespace {
 
 bool valid_convoy(const SaveGame& save, int convoy, int ware) {

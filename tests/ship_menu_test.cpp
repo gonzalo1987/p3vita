@@ -49,6 +49,51 @@ int main() {
 	expect(prices[5] == 0, "nothing paid, 0");
 
 	{
+		// The trade window's convoy (0x4AA4A0), as the game gave it in the emulator (re/emu/sesion46/convoyavg.py: the
+		// save 3's convoy 1, the player made the merchant 20, the cargo and prices set by hand): the ship 131 of the
+		// merchant 34 left out, then the ships 81 and 80.
+		SaveGame c;
+		c.player = 20;
+		c.globals.u16(global::kShipCount) = 132;
+		c.ships.resize(132);
+		c.convoys.resize(2);
+		c.convoys[1].u16(0xA) = 131;
+		c.ships[131].memory.u16(0x6) = 81;
+		c.ships[81].memory.u16(0x6) = 80;
+		c.ships[80].memory.u16(0x6) = 0xFFFF;
+		c.ships[131].memory.u8(0) = 34;
+		c.ships[81].memory.u8(0) = 20;
+		c.ships[80].memory.u8(0) = 20;
+		struct Load {
+			int ship, ware, cargo;
+			float price;
+		};
+		const Load loads[] = {{81, 15, 4000, 0.4137f}, {80, 15, 4000, 0.2911f}, {80, 5, 1400, 0.1903f},
+			{81, 0, 6000, 0.0571f}, {80, 0, 2000, 0.0333f}, {81, 3, 600, 0.0911f}, {80, 3, 1000, 0.1208f},
+			{131, 3, 2000, 9.0f}, {131, 15, 1800, 0.0f}, {81, 9, 4000, 0.0f}, {80, 9, 2000, 0.2222f},
+			{81, 12, 2200, 1.7777f}, {80, 12, 200, 0.0123f}};
+		for (const Load& l : loads) {
+			c.ships[size_t(l.ship)].memory.s32(0x54 + 4 * size_t(l.ware)) = l.cargo;
+			c.ships[size_t(l.ship)].average_price(l.ware) = l.price;
+		}
+		for (int k : {81, 80, 131}) {
+			ShipMemory& s = c.ships[size_t(k)].memory;
+			int32_t used = 0;
+			for (int w = 0; w < 24; ++w) {
+				used += s.s32(0x54 + 4 * size_t(w));
+			}
+			s.s32(0x118) = used;
+			s.s32(0x11C) = k == 131 ? 0 : 14450;
+			s.s32(0x10) = k == 131 ? 96000 : 90000;
+		}
+		const std::array<int32_t, 20> game = {102, 0, 0, 21, 0, 38, 0, 0, 0, 14, 0, 0, 325, 0, 0, 70, 0, 0, 0, 0};
+		expect(market_convoy_averages(c, 1) == game, "the convoy's averages as the game's");
+		expect(market_convoy_used(c, 1) == 283, "what the convoy holds, as the game's");
+		expect(market_convoy_capacity(c, 1) == 180000, "the convoy's capacity, as the game's");
+		expect(market_convoy_units(c, 1, 0) == 4 && market_convoy_units(c, 1, 15) == 40, "the convoy's units");
+	}
+
+	{
 		// The shipyard's side menu's dates (0x52AFC0): the town's list the ship 2, then the ship 0.
 		SaveGame yard;
 		yard.globals.u16(global::kShipCount) = 3;

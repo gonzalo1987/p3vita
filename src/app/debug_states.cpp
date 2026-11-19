@@ -151,12 +151,13 @@ bool pirate_attack(SaveGame& save) {
 	return true;
 }
 
-// As pirate_attack, the player's first ship first made the guide of a private convoy (0x15, then 0x18) with another
-// of his ships docked in its port and out of a convoy: a captain given to it (as convoy_leader) when it has none.
-bool convoy_attack(SaveGame& save) {
+// The player's first ship made the guide of a private convoy (0x15, then 0x18, queued) with another of his ships
+// docked in its port and out of a convoy: a captain given to it (as convoy_leader) when it has none. The other ship,
+// or -1.
+int private_convoy(SaveGame& save) {
 	const uint16_t ship = save.merchants[size_t(save.player)].memory.u16(0xE);
 	if (ship >= save.ships.size() || !save.ships[ship].docked() || save.ships[ship].town() >= save.towns.size()) {
-		return false;
+		return -1;
 	}
 	const uint16_t convoys = save.globals.u16(global::kShips + 0xF6);
 	int other = -1;
@@ -168,7 +169,7 @@ bool convoy_attack(SaveGame& save) {
 		}
 	}
 	if (other < 0) {
-		return false;
+		return -1;
 	}
 	ShipMemory& g = save.ships[ship].memory;
 	const uint16_t count = save.globals.u16(global::kCaptainCount);
@@ -184,7 +185,47 @@ bool convoy_attack(SaveGame& save) {
 	for (const OperationBytes& op : create_convoy_operations(save, {ship, uint16_t(other)}, false, false, 0)) {
 		save.queued_operations.push_back(std::vector<uint8_t>(op.begin(), op.end()));
 	}
-	return pirate_attack(save);
+	return other;
+}
+
+// As pirate_attack, the player's first ship first made the guide of a private convoy (private_convoy).
+bool convoy_attack(SaveGame& save) {
+	return private_convoy(save) >= 0 && pirate_attack(save);
+}
+
+// The private convoy of private_convoy, its two ships carrying wares bought at different prices (their averages
+// [+0xB4]), some of them in the player's office in their town too (its averages [+0x3B8]): the trade window's convoy
+// (its modes 4 and 3, the convoy's averages).
+bool trade_convoy(SaveGame& save) {
+	const int other = private_convoy(save);
+	if (other < 0) {
+		return false;
+	}
+	const uint16_t first = save.merchants[size_t(save.player)].memory.u16(0xE);
+	struct Load {
+		int ware, cargo;
+		float price;  // Per unit.
+	};
+	const Load guide[] = {{0, 4 * 2000, 0.051f}, {3, 20 * 200, 0.21f}, {15, 6 * 200, 0.33f}};
+	const Load second[] = {{0, 2 * 2000, 0.0617f}, {3, 10 * 200, 0.27f}, {4, 8 * 200, 0.143f}};
+	auto load = [](SavedShip& s, const Load* loads, size_t n) {
+		for (size_t k = 0; k < n; ++k) {
+			s.cargo(loads[k].ware) += loads[k].cargo;
+			s.average_price(loads[k].ware) = loads[k].price;
+			s.used() += loads[k].cargo;
+		}
+	};
+	load(save.ships[first], guide, std::size(guide));
+	load(save.ships[size_t(other)], second, std::size(second));
+	const int office = player_office(save, save.ships[first].town());
+	if (office >= 0) {
+		OfficeMemory& o = save.offices[size_t(office)].memory;
+		o.s32(0x4 + 4 * 3) = 30 * 200;
+		o.f32(0x3B8 + 4 * 3) = 0.2f;
+		o.s32(0x4 + 4 * 7) = 5 * 200;
+		o.f32(0x3B8 + 4 * 7) = 0.9f;
+	}
+	return true;
 }
 
 // A town battle in Lübeck, the town the viewer opens (the battles' piece 6), as town_end_branches of
@@ -834,6 +875,9 @@ const char kDebugStatesHelp[] =
 	"  tavern-captain  a free captain in the tavern of the player's first ship's town\n"
 	"  tavern-people   all the tavern's people there (a captain, the trader, the informer, the traveller, ...)\n"
 	"  convoy-leader  the player's first ship in port fit to guide a convoy\n"
+	"  trade-convoy  the player's first ship guiding a private convoy with another of his\n"
+	"              ships in its port, both with wares bought at different prices, some\n"
+	"              in his office there (the trade window's convoy and its averages)\n"
 	"  shipyard-materials  100 units of each shipyard material in that ship's town\n"
 	"  arsenal     the player the mayor of his home town, weapons in his office there,\n"
 	"              beggars and archers in the town (the arsenal)\n"
@@ -1231,6 +1275,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "shipyard-materials") {
 			if (!shipyard_materials(save)) {
 				error = "the player has no ship in port";
+				return false;
+			}
+		} else if (state == "trade-convoy") {
+			if (!trade_convoy(save)) {
+				error = "the player's first ship isn't docked or no other ship of his is in its port";
 				return false;
 			}
 		} else if (state == "convoy-leader") {
