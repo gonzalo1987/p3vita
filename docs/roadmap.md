@@ -109,9 +109,14 @@ Cómo leerla:
   (`re/emu/sesion44/`), el panel de las batallas repasado con el código: el menú del barco sobre la selección de la
   batalla con «ver convoy», la fila de acciones en sus sitios y el minimapa con los colores del juego, y la barra de
   arriba como la del juego: el panel lateral con las letras y los textos del juego, acabado (apartado 4).
+- **Hecho el 19-11-2026 (séptima sesión, `re/emu/sesion45/`)**: la base de las misiones (apartado 3): leer el ini y
+  los `.p2m` del juego, la lista de misiones, la operación 0xC0 que las arranca al empezar una partida, cargar y guardar
+  los guiones en curso con sus variables (antes se tiraban, en p3vita y en el oráculo) y el bucle del intérprete con sus
+  esperas; comprobada contra el juego (la carga en las 12 partidas, la 0xC0 en todos los modos, la partida nueva
+  entera). Faltan las 138 instrucciones del intérprete.
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): acabados los restos
   de las pantallas (las preguntas del convoy, las sombras y la nieve, el panel lateral con las letras y los textos del
-  juego), el intérprete de misiones (apartado 3); luego el final de la partida
+  juego), el intérprete de misiones (apartado 3: la base hecha; ahora sus instrucciones); luego el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -129,9 +134,9 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Parte | Hecho | Lo que falta |
 |-|-|-|
 | La simulación sola (sin el jugador) | del código del juego al que llega, el 86 % reescrito con su nombre y otro 12 % hecho sin él (cargar y guardar partidas, la navegación) o saltado a propósito (medida abajo) | el 1 % sin nada son los manejadores de los eventos de las misiones y de la red y de dos que nadie crea; además, los estados raros del barco y unas ramas sueltas (apartado 2) |
-| El intérprete de misiones (aparte) | 18 % | casi entero (apartado 3) |
+| Las misiones (19-11-2026) | la base: la lista, la 0xC0, cargar y guardar los guiones, el bucle del intérprete y sus 4 esperas | las 138 instrucciones del intérprete (80 de la partida de un jugador, 10 más en red, 28 más en las campañas, 14 sin uso), lo que cuelga de él, el visor, las campañas (apartado 3) |
 | Tipos de evento (58) | 53 | 5: 1 el intérprete de misiones, 1 la partida en red y 3 nadie |
-| Operaciones (193 códigos) | 167: las 37 de la simulación, 101 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red y la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) | **5 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74, 0x76 y 0x82; apartado 3), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
+| Operaciones (193 códigos) | 168: las 37 de la simulación, 101 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red, la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) y la 0xC0 (el arranque de las misiones, 19-11-2026) | **5 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74, 0x76 y 0x82; apartado 3) y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 139 | 15: 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
@@ -163,7 +168,7 @@ Las partes se solapan, y el grafo es estático (no sigue las tablas de métodos 
 | Guardar partida (0x549CC0) | 38 | 11 | 0 % | 96 % | 4 % |
 | Tormentas (0x5053C0) | 4 | 5 | 97 % | 3 % | 0 % |
 | Batallas y encuentros | 58 | 32 | 72 % | 28 % | 0 % |
-| Guiones de misiones (0x4ECF64, 0x511270) | 73 | 23 | 18 % | 32 % | 49 % |
+| Guiones de misiones (0x4ECF64, 0x511270) | 73 | 23 | 27 % | 33 % | 41 % |
 | **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | **86 %** | **12 %** | **1 %** |
 
 - Cargar y guardar partida salen «nombrados», pero están hechos e idénticos al juego en las 12 partidas:
@@ -351,7 +356,8 @@ Cada grupo entra en el visor con su edificio (apartado 4): sin la pantalla no se
   su primer edificio municipal y más de 1000 habitantes. En el emulador (`grow.sh`, partida 1) la ciudad se queda en
   272 habitantes hasta el día 520, y el plazo es de unos dos años. Medir más allá de 550 días (`--desde`) y ver si en
   el juego de verdad crece porque alguien le lleva mercancías. La ciudad nueva, sin probar en el visor de la Vita.
-- [ ] Partidas de la versión 0x4D (`missav/0100–0204.pat`): el lector solo lee la 0x82 y posteriores.
+- [ ] Partidas de la versión 0x4D (`missav/0100–0204.pat`, de las que parten las campañas, apartado 3): el lector
+  solo lee la 0x82 y posteriores.
 - [ ] El objeto opcional del mundo (0x533DA0): ninguna partida lo tiene y p3vita lo rechaza al leer. Solo si aparece
   una partida que lo tenga.
 - [ ] Sin comprobar porque no se pueden preparar: las dos persecuciones que alcanzan sin hueco para la batalla (harían
@@ -359,18 +365,41 @@ Cada grupo entra en el visor con su edificio (apartado 4): sin la pantalla no se
 
 ### 3. El intérprete de misiones
 
-- [ ] 0x511270 interpreta los textos del juego y, con el comando 0xFD, programa eventos 0x1B con un guion que ejecuta
-  0x4ECF64. Se arranca desde la interfaz (la operación 0xC0, al empezar una partida con la 0xA7, y otros dos caminos);
-  en las partidas de prueba los 0x1B llegan sin guion, y el oráculo se salta 0x511270 al cargar. 73 funciones, 23 KB.
-  Con él: el evento 0x09 (0x4E2824, cartas de buena y mala cosecha), sus 5 cartas (tres hechas por el guion, la carta
-  del mapa 0x46 o 0x45, la 0x22), las operaciones que encola (0x1B, 0x28, 0x4E, 0x7C, 0x7D, 0x82, 0x8E) y la carta final
-  0x3D del evento 0x34 (0x4F3AF0, con su lista de avisos [+0x8], 0x4F3980..0x4F3CE0).
-  Y las cuatro operaciones del jugador que escriben en las variables de su guion (el [+0xC] de un evento 0x1B, que
-  p3vita aún no tiene) o trabajan con las cartas que solo manda él (0x3C..0x40, 0x44, 0x45/0x46, 0x71): 0x74 (los
-  botones de las cartas de misión, 0x53EC30; sus botones y bytes ya están en `letter_window.cpp`), 0x54 (quitar una
-  carta 0x44, 0x53CA30 con 0x4D7340), 0x55 (pagar una carta 0x45/0x46, 0x4D74C0) y 0x76 (quitar una carta 0x71,
-  0x53EDF0 con 0x4D7870). Lo que hay en el juego de esto
-  (qué misiones y cuándo) está por mirar.
+Las misiones son programas pequeños (`missions_addon/*.p2m`, 94 ficheros, con los textos de sus cartas dentro, en
+inglés y en español) que `scripts/missions_eng.ini` reparte por modos de juego: en la partida de un jugador, los 48
+sucesos históricos (1305..1669) y las 18 misiones que van saliendo (la tripulación borracha, la boda, el contrabandista,
+el mapa del tesoro...); en red, además, el duende y 5 de competición; y las campañas. Cada guion es un evento 0x1B que
+ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [formats/missions.md](formats/missions.md).
+
+- [x] **La base** (19-11-2026, `missions.cpp`, `mission_script.cpp`; `re/emu/sesion45/`): leer el ini y los `.p2m`
+  (los españoles con el archivo español), la lista de misiones del juego (*0x6DD8B4: 0x511270, 0x5110E0, 0x5116F0,
+  0x511690, 0x4F37E0), la operación **0xC0** entera (0x543810: los rivales de 0x532420, con su fallo, la cuenta atrás de
+  los asedios de 0x635170, las misiones del modo con sus eventos 0x1B), cargar y guardar los guiones en curso con sus
+  variables, y el bucle del intérprete con sus esperas (0x00, 0xFD, 0xFE, 0xFF). Comprobado: la carga con las misiones
+  igual al juego en las 12 partidas (el oráculo con `--misiones`: cada partida lleva de 49 a 75 guiones), el escenario
+  `mission_start` (la 0xC0 en todos los modos), la partida nueva entera con la 0xC0, las partidas escritas, ctest
+  `missions`. Hasta que estén sus instrucciones, un guion termina en la primera que no está (como antes, que se
+  tiraban), y el oráculo y las comprobaciones de siempre siguen sin las misiones.
+- [ ] **Las instrucciones del intérprete**: 0 de las 138 con manejador (tabla en formats/missions.md, con cuántas
+  misiones usan cada una). Por partes: primero las 80 de la partida de un jugador (las de las variables y las cuentas,
+  0x01..0x0E; las de las cartas, 0x17..0x1D y 0xF7; las de las ciudades, los barcos y los comerciantes; las de las
+  historias, 0x37...), cada una leída, reescrita y comprobada con el oráculo con `--misiones` (las 12 partidas ya llevan
+  misiones en curso) y estados retocados para las ramas a las que no llegan; luego las 10 más de la partida en red, las
+  28 más de las campañas y las 14 que no usa ningún fichero. Cuando estén todas, el oráculo con las misiones por omisión
+  (y `world.sh` con ellas).
+- [ ] **Lo que cuelga del intérprete**: el evento 0x09 (0x4E2824, las cartas de buena y mala cosecha), sus cartas (tres
+  que compone el guion con los textos del `.p2m`, la del mapa 0x46 o 0x45, la 0x22), las operaciones que encola (0x1B,
+  0x28, 0x4E, 0x7C, 0x7D, 0x82, 0x8E) y la carta final 0x3D del evento 0x34 (0x4F3AF0, con su lista de avisos [+0x8],
+  0x4F3980..0x4F3CE0). Y las cuatro operaciones del jugador que escriben en las variables de un guion o trabajan con las
+  cartas que solo manda él (0x3C..0x40, 0x44, 0x45/0x46, 0x71): 0x74 (los botones de las cartas de misión, 0x53EC30; sus
+  botones y bytes ya están en `letter_window.cpp`), 0x54 (quitar una carta 0x44, 0x53CA30 con 0x4D7340), 0x55 (pagar
+  una carta 0x45/0x46, 0x4D74C0) y 0x76 (quitar una carta 0x71, 0x53EDF0 con 0x4D7870).
+- [ ] **En el visor**: las cartas de misión con sus botones (0x74), la carta de misión de la taberna (0x5D8100, las
+  0x71), el trozo de mapa del tesoro (0x55 del soplón), lo que enseñe cada misión.
+- [ ] **Las campañas y el tutorial**: su menú de inicio (`[Campaign_0..7]` del ini: el tutorial, «El ascenso», «El
+  comerciante volante», «El auge de la Hansa» y los escenarios del saneamiento, la mala cosecha, el incendio y la
+  peste) y las partidas de la versión 0x4D de las que parten (`missav/0100..0204.pat`, apartado 2); el tutorial va
+  aparte (`scripts/tutorial.ini`, `missav/Tut*.pst`).
 
 ### 4. Las pantallas
 
@@ -943,6 +972,25 @@ Cada uno con su dirección, qué hace y su estado. «Seguro»: leído en el cód
 ser a propósito. El detalle, en el comentario del código y en [oracle.md](oracle.md).
 
 ### Reproducidos, sin corregir aún
+
+**El rival de la ciudad del jugador** (0x532420, la operación 0xC0 al empezar una partida; 19-11-2026, seguro: escenario
+`mission_start`, roto a propósito, y las 12 partidas lo muestran): por cada comerciante humano con un comerciante de la
+IA del tipo 1 en su ciudad, el juego quiere hacer de ese uno de los rivales (el bit 8 de [+0x8] y el factor de
+reputación [+0x464] a 2), pero lo escribe en el comerciante 0 (0x532500 usa la base de la tabla). Así, en todas las
+partidas el comerciante 0 (de la ciudad 0) sale como rival y el de la ciudad del jugador no. Cambia el equilibrio
+(quién compite con el jugador): preguntar antes de corregirlo. Además, la misma función pone a 1 el factor de todos,
+también el del humano, que la 0xA7 acaba de poner por la dificultad (1,3, 1 o 0,7, 0x4F9550); en la partida 2 el
+jugador tiene 1,3, así que algo lo vuelve a poner después: por mirar si el factor de la dificultad se pierde.
+
+**Una misión de la campaña 3 que no se carga** (`scripts/missions_eng.ini` y `missions_spa.ini`, 19-11-2026, seguro:
+el fichero no está en el archivo): `[Missions] 308=Kampagne3_Entfuehrung.p2m`, pero el fichero se llama
+`Kampagne3_Entführung.p2m`: el secuestro de «El auge de la Hansa» nunca sale (0x5116F0 no lo encuentra y 0x511270 deja
+su cuenta a 0). Corregirlo detrás del ajuste es buscar también el nombre con la «ü»; va con las campañas.
+
+**Los guiones que se descartan al empezar** (0x511270, 19-11-2026, seguro, sin efecto con los datos del juego): al
+arrancar varios guiones de una misma misión cuyo tick ya ha pasado, el bucle cuenta hacia arriba mientras la cuenta de
+la lista baja con cada uno que descarta, así que de tres solo se van dos y el programa se queda con uno de más. Ninguna
+misión del juego que se repite empieza esperando un tick fijo; reproducido tal cual.
 
 **«El carabela»** (las frases del barco patrulla en español, 0x5E1F01; 15-11-2026, seguro, solo texto): el artículo va
 por el tipo de barco (0 y 2 «La», 1 y 3 «El») y la carabela es el tipo 1. Reproducido tal cual.

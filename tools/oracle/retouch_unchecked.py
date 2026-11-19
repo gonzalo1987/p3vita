@@ -5600,6 +5600,46 @@ def ship_groups(o):
     return during
 
 
+def mission_start(o):
+    """0xC0 (0x543810, a game's start; the oracle with the missions: TownOracle missions) in each of the game's modes
+    (the settings' [+0xD]: 3 Einzelspiel as the saves, 0 Hotseat, 1 Multiplay, 4 and 5 Kampagne<[+0x14]> with the
+    campaigns 0 (no group), 3 (its mission 308 has no file) and 9 (no section), 6 none), with 0, 2 and 5 competitors
+    ([+0xE] + 1) and an AI merchant with the bit 0x8000 of [+0x8]: the competitors (0x532420, its bug of the merchant
+    0), the sieges' countdowns (0x635170) and the list with its scripts (0x511270: the history's past ticks dropped,
+    the events' pool grown past its records). The scripts there before each start are put out of the way."""
+    towns, _, merchants, _ = o.counts()
+    settings = o.u32(to.SETTINGS_POINTER)
+    ai = next(x for x in range(merchants) if o.u16(o.merchant(x) + 8) != 0)
+
+    def during(o):
+        def start(mode, campaign=0, rivals=None):
+            # A new game has no scripts before 0xC0: the ones there (the save's, the last start's) would point into the
+            # programs the old list frees (the game reads freed memory; p3vita keeps them). Out of the way: kind 0x3A.
+            events = o.u32(to.EVENTS)
+            for i in range(o.u16(to.EVENTS + 0xC)):
+                if o.u16(events + 0x18 * i + 6) == 0x1B:
+                    w16(o, events + 0x18 * i + 6, 0x3A)
+            w8(o, settings + 0xD, mode)
+            w8(o, settings + 0x14, campaign)
+            if rivals is not None:
+                w8(o, settings + 0xE, rivals)
+            operation(o, 0xC0)
+            manager = o.u32(to.MISSIONS)
+            count = o.u16(manager + 8) if manager else 0
+            print(f'mode {mode} campaign {campaign}: {count} missions, events {o.u16(to.EVENTS + 0xC)}, '
+                  f'alderman town {o.u8(WORLD + 0x8E)}')
+        start(3)
+        w16(o, o.merchant(ai) + 8, o.u16(o.merchant(ai) + 8) | 0x8000)
+        start(0, rivals=4)
+        start(1, rivals=0)
+        start(4, 0)
+        start(5, 3, rivals=1)
+        start(4, 9)
+        start(6)
+        start(3)
+    return during
+
+
 def hanse_dev_candidacy(o):
     """0x45 (0x535FA4: standing for mayor, [+0x118]) for the player with 0, 1 and 7, an AI merchant (always 1) and a
     merchant past; 0x4A (0x53B1F0, events_rare.cpp: the Hanse tasks window's developers' tools) on events 0x30 made by
@@ -14444,8 +14484,9 @@ def player_op_text(*args):
 
 
 class Scenario:
-    def __init__(self, setup, functions, days, targets):
+    def __init__(self, setup, functions, days, targets, missions=False):
         self.setup, self.functions, self.days, self.targets = setup, functions, days, targets
+        self.missions = missions  # TownOracle missions: the load gives the scripts their programs
 
 
 EVENTS_FUNCTIONS = [0x4D85C0, 0x4EBF54]
@@ -14685,6 +14726,9 @@ SCENARIOS = {
     'ship_groups': Scenario(ship_groups, [0x535760], 0, [
         '@543728', '@54373c', '@5436e4>543741', '@4f55a0', '@4f55db', '@4f56a1', '@4f5706', '@4f572b>4f582d',
         '@4f57a4']),
+    'mission_start': Scenario(mission_start, [0x535760], 0, [
+        '@5112f8', '@511308', '@511318', '@511328', '@5111be', '@5111d3', '@511428', '@5114ba', '@511500', '@5115d2',
+        '@51162e', '@511644', '@532460', '@5324f2', '@53254f', '@532693', '@6351b2', '@6351cc'], missions=True),
     'hanse_dev_candidacy': Scenario(hanse_dev_candidacy, [0x535760], 0, [
         '@4f9397', '@4f93a4', '@535fb2>537025', '@53b247', '@53b283', '@53b24e>53b28a', '@53b255>53b28a',
         '@53b259>53b28a', '@53b281>53b28a', '@53b26c>53b28a', '@53b29e', '@53b2b0', '@53b2ae>53b2b8', '@53b34a',
@@ -15182,8 +15226,11 @@ def main():
     p.add_argument('--first-arrival', action='store_true', help=argparse.SUPPRESS)
     p.add_argument('--write', metavar='OUT', help='at the end, the save the game writes: OUT uncompressed, OUT.pat '
                    'compressed, OUT.pst (scripts/write-scenario.sh with RETOUCH=unchecked)')
+    p.add_argument('--misiones', action='store_true', help='the missions run, as with a scenario made for them')
     a = p.parse_args()
-    o = to.TownOracle(a.exe, open(a.save, 'rb').read(), a.seed, a.barcos, rest=list(to.REST), cpr=a.cpr)
+    missions = a.misiones or (a.scenario in SCENARIOS and SCENARIOS[a.scenario].missions)
+    o = to.TownOracle(a.exe, open(a.save, 'rb').read(), a.seed, a.barcos, rest=list(to.REST), cpr=a.cpr,
+                      missions=missions)
     o.scenario_args = a  # a scenario may run another copy of the world (raid_arrival)
     if a.first_arrival:
         o.load()

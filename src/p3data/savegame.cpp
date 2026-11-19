@@ -686,9 +686,10 @@ void load_mail(Reader r, SaveGame& out) {
 // 0x82: u16 cabeza [0x6DD744], u16 [0x6DD746], u16 número de registros
 // [0x6DD748] y los registros de 0x18 bytes (u32 tick, u16 siguiente, u16 tipo,
 // enlazados en orden de tick desde la cabeza; un índice ≥ número termina).
-// Los de tipo 0x1B guardan después [+0x12] entradas de 16 bytes y los de tipo
-// 0x34 con [+0x15] ≥ 7 una lista de nodos de 5 bytes; son objetos aparte que
-// no se usan (sus punteros quedan a 0).
+// Los de tipo 0x1B guardan después las [+0x12] variables de su guion (u32 cada
+// una: SaveGame::missions.scripts, sin el programa, que pone
+// attach_mission_programs) y los de tipo 0x34 con [+0x15] ≥ 7 una lista de
+// nodos de 5 bytes, que no se usa (su puntero queda a 0).
 void load_events(Reader r, SaveGame& out) {
 	GlobalMemory& g = out.globals;
 	for (uint32_t a : {0x6DD744u, 0x6DD746u, 0x6DD748u}) {
@@ -701,14 +702,19 @@ void load_events(Reader r, SaveGame& out) {
 		r.to(e, 0, 0x18);
 	}
 	out.opaque.event_extras.assign(count, {});
+	out.missions.scripts.clear();
 	for (size_t i = 0; i < out.events.size(); ++i) {
 		GameMemory<0x18>& e = out.events[i];
 		const size_t extra_start = r.position();
 		if (e.u16(6) == 0x1B) {
-			// 4 bytes an entry in the file (0x4D831B), in a buffer of 16 each.
-			r.skip(size_t(e.u16(0x12)) * 4);
+			// 4 bytes a variable in the file (0x4D831B; the game's buffer has room for 16 each).
+			MissionData::Script& script = out.missions.scripts[uint16_t(i)];
+			script.variables.resize(e.u16(0x12));
+			for (uint32_t& v : script.variables) {
+				v = r.u32();
+			}
 			e.u32(8) = 0;
-			e.u32(0xC) = 0;
+			e.u32(0xC) = script.variables.empty() ? 0 : 1;
 		} else if (e.u16(6) == 0x34 && e.u8(0x15) >= 7 && e.u32(8) != 0) {
 			do {
 				r.skip(4);
@@ -1395,6 +1401,9 @@ void load_game_scripts(const CprArchive& archive, SaveGame& save) {
 		}
 	}
 	load_save_scripts(archive, save);  // For write_savegame (savegame_write.hpp).
+	// The missions (0x4D81E0: the list of the mode and each script's program, missions.hpp).
+	load_mission_files(archive, save);
+	attach_mission_programs(save);
 	finish_load(save);  // The loader's last steps (savegame_load.hpp).
 	// The map templates (0x4F9B40) by their number: the new towns' (0..27) and
 	// the pirate nests' (251..254, 0x514530); the missing ones empty.

@@ -598,6 +598,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			}
 		}
 		break;
+	case 0xC0:  // A game's start (0x53701E → 0x543810): the competitors, the sieges' countdowns, the missions (missions.cpp).
+		missions_detail::fn_543810(save);
+		break;
 	case 0xC8:  // The time's mode (the real-time loop's 0x546DCF): [+0xC], unless -1 (battle/battles.cpp).
 		if (sailing && fields[3] != -1) {
 			sailing->set_time_mode(uint32_t(fields[3]));

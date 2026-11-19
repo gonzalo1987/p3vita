@@ -47,6 +47,8 @@ add_library(p3data STATIC
 	letters.cpp
 	lz.cpp
 	mail.cpp
+	mission_script.cpp
+	missions.cpp
 	navigation.cpp
 	new_game.cpp
 	prices.cpp

@@ -12,6 +12,7 @@
 #include "p3data/battle/pirate_nests.hpp"
 #include "p3data/cpr.hpp"
 #include "p3data/game_memory.hpp"
+#include "p3data/missions.hpp"
 #include "p3data/navigation.hpp"
 #include "p3data/prices.hpp"
 #include "p3data/wares.hpp"
@@ -429,6 +430,9 @@ struct SaveGame {
 	// tick [+0x0], u16 siguiente [+0x4] y u16 tipo [+0x6], enlazados en orden de
 	// tick desde la cabeza u16 [0x6DD744]; u16 [0x6DD748] es su número.
 	std::vector<GameMemory<0x18>> events;
+	// The missions (missions.hpp): the game's data for them, the game's list (*0x6DD8B4) and the script of each event
+	// 0x1B (its program and its variables). In tick_probe, the regions MS and MV.
+	MissionData missions;
 	// The stops of the automatic trade routes (the pool *0x6DD728, 0x4D4BC0):
 	// records of 0xDC bytes, as many as the u16 [0x6DD72A]; the u16 [0x6DD728]
 	// is the free list's head (trade_routes.hpp). In tick_probe, region AU.

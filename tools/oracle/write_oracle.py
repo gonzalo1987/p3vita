@@ -132,8 +132,11 @@ def main():
     p.add_argument('--packed', help='also the compressed .pat')
     p.add_argument('--cpr', help='p2arch0_eng.cpr, for the names object (scripts/Namen*.txt)')
     p.add_argument('--no-expire', action='store_true', help="don't run 0x4D6780 before writing")
+    p.add_argument('--no-missions', action='store_true',
+                   help="the load skips 0x511270 (the scripts without their programs: their [+0x8] written as 0)")
     a = p.parse_args()
-    o = TownOracle(a.exe, open(a.save, 'rb').read(), cpr=a.cpr)
+    # The game's load gives each mission script its program (its pointer goes into the file, as p3save write's 1).
+    o = TownOracle(a.exe, open(a.save, 'rb').read(), cpr=a.cpr, missions=bool(a.cpr) and not a.no_missions)
     o.load()
     prepare_game_object(o)
     raw, packed = write_files(o, a.out, a.packed, not a.no_expire)

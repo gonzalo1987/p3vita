@@ -543,6 +543,8 @@ namespace sieges_detail {
 bool fn_633db0(SaveGame& save, int siege, uint32_t& amount, uint16_t& offices, uint16_t convoy = 0xFFFF);
 // 0x635040 (on the town's siege object): a human merchant's home town arrived at or left: the first one, the last.
 void fn_635040(SaveGame& save, int siege, bool arrived);
+// 0x635170 (on the town's siege object): its countdown and the month's lists at a game's start (the operation 0xC0).
+void fn_635170(SaveGame& save, int siege);
 }  // namespace sieges_detail
 int events_rare(SaveGame& save, uint16_t event, uint16_t type);  // 0xe, 0x12, 0x1c, 0x1e, 0x1f, 0x25, 0x26, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x35, 0x38, 0x39
 // La navegación que usa la cola de eventos (agua en un punto del mapa,

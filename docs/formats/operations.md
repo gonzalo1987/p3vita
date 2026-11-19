@@ -144,7 +144,7 @@ the town stores for him) and the tavern queues it as it is (0x5D5970).
 | battles | 14: 0x91..0x9B, 0x9F, 0xA0 and 0xBD (the battle window) | 12: all but 0x99 (never queued; its function, the chase's battle, is done) and 0xBD (the window) |
 | network | 15: the network game's lobby (0xA2..0xAB, guessed) and the sync checks that do nothing (0xB9..0xBC, 0xBE) | 8: 0xA7, 0xAA, 0xAB (the new game's player and his names) and the five that do nothing |
 | new game | 11: queued by the new game (0x544E50): 0xAC..0xB4, 0xB6, 0xB7 | 8: all but 0xAE, 0xB2 and 0xB6 (no queuer found) |
-| missions | 1: 0xC0, the mission interpreter | — |
+| missions | 1: 0xC0, the missions' start | 1: 0xC0 (2026-11-19) |
 | unused | 9: nothing (0x14, 0x73, 0x9C..0x9E, 0xA1) or no queuer found and nothing to do with the player (0x3C, 0x5C, 0x8F) | 0x8F (rewritten all the same: the siege's extra tax) |
 
 Some codes of the simulation are also queued by the interface (0x22, 0x24 and 0x23
@@ -347,7 +347,7 @@ feast window): the handler is the same and is done.
 | 0xBD | battles | open the battle window (0x462280, 0x41D9B0: interface) | not found | 0x536F3B → 0x462280, 0x41D9B0 | 1, 144 B |  | read |
 | 0xBE | network | nothing: a merchant's checksum | 0x542F10 (op) | — |  |  | read |
 | 0xBF | player | another player's ship groups (network): {0xBF, u8 merchant \| 0x80 set, u8 list \| 0x80 flag, u16 ×7 ships}: a list of the ten set or added to, the ships of others filtered out (0x4F5500, 0x4F56C0; nothing for the local player) (`town_tick/operations.cpp` `fn_5436d0`) | 0x4F5500, 0x4F56C0 (op), 0x4F5840 | 0x536FAB → 0x5436D0 | | yes | read |
-| 0xC0 | missions | the mission interpreter starts (0x511270, 0x532420...) | 0x43D030, 0x541D70 | 0x53701E → 0x543810 | 49, 14.2 KB |  | read |
+| 0xC0 | missions | a game's start (0x543810, `missions.cpp` `fn_543810`): the competitors (0x532420, with its bug of the merchant 0), each town's siege countdown (0x635170) and the missions' list with its scripts (0x511270 with 1; [missions.md](missions.md)) | 0x43D030, 0x541D70 | 0x53701E → 0x543810 | 49, 14.2 KB | yes | read |
 
 ## Above 0xC0: the real-time loop's operations
 

@@ -10,8 +10,12 @@ difference inside a u32 that is 1 in p3data's file and above 0xFFFF in the
 game's, or 0 in p3data's and an emulator address in the game's, is counted
 apart as a pointer, not as a difference.
 
+The 3 bytes the game writes without setting them in each entry of the table at the end of the battles (0x611950, a
+game bug: savegame_write.cpp battle_padding) are whatever the memory had (0xCD in 7.pat; in the emulator, by its
+heap's history): counted apart, not as differences.
+
 usage: python3 compare_written.py <game.raw> <p3vita.raw> [--max N]
-Exit status 0 if there are no differences other than pointers.
+Exit status 0 if there are no differences other than pointers and that padding.
 """
 import struct
 import sys
@@ -39,18 +43,74 @@ def sections(d):
     return [(0, 0x5C)] + [(seps[k] + 4, seps[k + 1]) for k in range(len(seps) - 1)]
 
 
+def battle_padding(b):
+    """The offsets in the battles' section of the 3 bytes the game doesn't set in each entry of the table at its end
+    (savegame_write.cpp battle_padding, the same walk); empty if the section doesn't end there."""
+    p = 0
+
+    def u16(at):
+        return b[at] | b[at + 1] << 8
+
+    def u32(at):
+        return struct.unpack_from('<I', b, at)[0]
+    try:
+        battles = b[p]
+        p += 1
+        for _ in range(battles):
+            p += 1 + 0x1D if b[p] else 1
+            header = p
+            n = b[header]
+            links = u16(header + 1) + u16(header + 3)
+            p += 0x27 + 4 * n + 4 * min(n, 2)
+            words = u16(p)
+            p += 2
+            bits = sum(bin(x).count('1') for x in b[p:p + 4 * words])
+            p += 4 * words
+            nxt = p
+            p += 4 * links + 0x400
+            for head in (header + 5, header + 7):
+                ship, count = u16(head), 0
+                while ship != 0xFFFF:
+                    count += 1
+                    if ship >= links or count > links:
+                        return []
+                    p += 0x2F
+                    ship = u16(nxt + 2 * ship)
+            p += 0x1F * bits
+        padding = []
+        slots = u32(p)
+        p += 4
+        for _ in range(slots):
+            entries = u32(p + 4)
+            p += 8
+            for _ in range(entries):
+                padding.append(p + 5)
+                p += 8
+        return padding if p == len(b) else []
+    except (IndexError, struct.error):
+        return []
+
+
 def compare(game, ours, limit=20):
-    differences = pointers = 0
+    differences = pointers = padding = 0
     shown = 0
     by_section = {}
     for name, (g0, g1), (o0, o1) in zip(NAMES, sections(game), sections(ours)):
         a, b = game[g0:g1], ours[o0:o1]
         if len(a) != len(b):
             print(f'{name}: {len(a)} bytes in the game, {len(b)} in p3vita')
+        unset = set()
+        if name == 'battles':
+            for at in battle_padding(a):
+                unset.update(range(at, at + 3))
         i = 0
         n = min(len(a), len(b))
         while i < n:
             if a[i] == b[i]:
+                i += 1
+                continue
+            if i in unset:
+                padding += 1
                 i += 1
                 continue
             # A pointer: some u32 that covers byte i is an address in the game and 0 or 1 in p3vita.
@@ -72,6 +132,8 @@ def compare(game, ours, limit=20):
             i += 1
     if by_section:
         print('pointers: ' + ', '.join(f'{k} {v}' for k, v in by_section.items()))
+    if padding:
+        print(f"the battles' table's unset bytes: {padding} not alike")
     return differences, pointers
 
 

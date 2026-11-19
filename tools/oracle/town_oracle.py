@@ -140,7 +140,7 @@ EXECUTOR = 0x535760  # ejecuta una operación encolada (thiscall sobre ella)
 EXECUTOR_MAGIC = 0x504F3350  # «P3OP»: tras la operación en la pila, la marca de las llamadas del oráculo
 OPERATIONS = (0x00, 0x01, 0x02, 0x08, 0x09, 0x0A, 0x12, 0x13, 0x1E, 0x1F, 0x22, 0x23, 0x24, 0x27, 0x28, 0x29, 0x2C, 0x37, 0x38, 0x3B, 0x3F, 0x46, 0x48, 0x4B, 0x60, 0x61, 0x64,
               0x65, 0x67, 0x6E, 0x6F, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86,
-              0x87, 0x8E, 0xB8, 0x58, 0x59,
+              0x87, 0x8E, 0xB8, 0x58, 0x59, 0xC0,
               0x0C, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x20, 0x2D, 0x2E, 0x2F,
               0x2A, 0x2B, 0x25, 0x26, 0x70, 0x71, 0x0D,
               0x9F,
@@ -176,6 +176,7 @@ TOWN_TABLE_SIZE = 0x34
 EMPTY_CSTRING = 0x6C7CCC  # puntero a la cadena vacía de MFC con el que empieza un CString
 LOADED_ROUTE = 0x6DFC20  # the queue object 0x6DF2F0's [+0x930]: a route loaded from a file (0x5492D0)
 OFFERS = 0x6DE584  # the offers between merchants: a list of 0x14-byte nodes, the next at [+0x0] (SaveGame::offers)
+MISSIONS = 0x6DD8B4  # the missions' list (0x511000): [+0x4] its entries {u32 program, u16 number, u16 count}, [+0x8] u16 how many
 ENQUEUE = 0x54AA70  # encola una operación: se anota y no se ejecuta
 OPERATION_SIZE = 0x14  # lo que copia 0x543F10; lo que sigue en la pila es basura
 # El tick de ciudad se llama por este trampolín para que vuelva a una
@@ -731,7 +732,11 @@ def executor_trampoline(at):
 class TownOracle(SaveOracle):
     def __init__(self, exe, save, seed=1, navdata=None, ai=True, convoys=True, merchants=True, rest=(), cpr=None,
                  operations=OPERATIONS, storms=True, pirates=True, statistics=False, last_steps=True,
-                 disband=True, battles=False, letters='connected'):
+                 disband=True, battles=False, letters='connected', missions=False):
+        # missions: the load runs 0x511270 (the missions' list) and 0x511690 (each script's program) as the game's,
+        # reading scripts/missions_eng.ini and missions_addon/ (DATOS or --cpr); without it (as before 2026-11-19)
+        # 0x511270 is skipped and the scripts in the events 0x1B have no program (the interpreter ends them).
+        self.missions = missions
         self.pirates = pirates and navdata is not None and convoys
         self.battles = self.pirates  # `battles` is kept for older scripts.
         self.letters = letters
@@ -813,6 +818,10 @@ class TownOracle(SaveOracle):
             self.uc.hook_add(UC_HOOK_CODE, self._quiet, begin=address, end=address)
         if self.pirates:
             self.setup_town_view()
+        if self.missions:
+            # The missions read their ini (0x4BE060) at a load and at a game's start (the operation 0xC0); their
+            # files go through Archiver.dll (_import).
+            self.uc.hook_add(UC_HOOK_CODE, self._ini_string, begin=INI_STRING, end=INI_STRING)
         self.uc.hook_add(UC_HOOK_CODE, self._rand, begin=RAND, end=RAND)
         # push dword [esp+4]; call 0x51BA10; ret 4
         call = struct.pack('<i', TOWN_TICK - (TRAMPOLINE + 4 + 5))
@@ -1013,15 +1022,16 @@ class TownOracle(SaveOracle):
         super().load()
         # Lo que la carga lee después de los barcos: encargos (0x4D6350),
         # 0x4D4BC0 y la cola de eventos (0x4D81E0). Esta carga una tabla de
-        # textos del disco (0x511270) que aquí se salta.
+        # textos del disco (0x511270) que aquí se salta (the missions' list: with `missions` it runs).
         self.skipped[0x511270] = 4
-        hook = self.uc.hook_add(UC_HOOK_CODE, self._stub, begin=0x511270, end=0x511270)
+        hook = None if self.missions else self.uc.hook_add(UC_HOOK_CODE, self._stub, begin=0x511270, end=0x511270)
         version = struct.unpack_from('<I', self.save, 0)[0] >> 16
         pos = self.ships_end + 4
         pos = self.call(0x4D6350, [FILE + pos], ecx=0x6DD730) - FILE + 4
         pos = self.call(0x4D4BC0, [FILE + pos], ecx=0x6DD728) - FILE + 4
         pos = self.call(0x4D81E0, [FILE + pos, version], ecx=EVENTS) - FILE
-        self.uc.hook_del(hook)
+        if hook is not None:
+            self.uc.hook_del(hook)
         if self.game_file('scripts/Namen_eng.ini') is not None:
             self.load_names(pos, version)
         self.call(MERGE_TOWN_FLAGS, [], ecx=0x6DF278)
@@ -1374,7 +1384,7 @@ class TownOracle(SaveOracle):
             raise RuntimeError('no se encuentra la sección de los nombres')
         hooks = [self.uc.hook_add(UC_HOOK_CODE, f, begin=a, end=a) for a, f in (
             (ARCHIVE_READ, self._archive_read), (ARCHIVE_FREE, self._archive_free), (INI_INT, self._ini_int),
-            (INI_STRING, self._ini_string))]
+            (INI_STRING, self._ini_string)) if a != INI_STRING or not getattr(self, 'missions', False)]
         # La primera vez, 0x5121C0 lee también los nombres de las ciudades y la
         # tabla de las ciudades (0x51E440, scripts/StadtDaten.ini); su CString
         # lo inicializa el constructor estático de la tabla.
@@ -1570,6 +1580,27 @@ class TownOracle(SaveOracle):
                     out[f'{name}{i}'] = (first, b''.join(nodes))
         events = gu32(EVENTS)
         out['E'] = (events, block(events, gu16(EVENTS + 0xC) * 0x18 if events else 0))
+        # The missions (tick_probe load_missions): MS the list, MV each event 0x1B's script, MF whether the load ran
+        # 0x511270. A program goes by its size (the heap's requested bytes).
+        requested = self.__dict__.get('requested', {})
+        manager = gu32(MISSIONS)
+        ms = [struct.pack('<B', 1 if manager else 0)]
+        if manager:
+            entries, count = unpack('<IH', read(manager + 4, 6))
+            for k in range(count if entries else 0):
+                program, number, count = unpack('<IHH', read(entries + 8 * k, 8))
+                ms.append(struct.pack('<HHI', number, count, requested.get(program, 0) if program else 0))
+        out['MS'] = (manager, b''.join(ms))
+        mv, ev = [], out['E'][1]
+        for i in range(len(ev) // 0x18):
+            if unpack('<H', ev, 0x18 * i + 6)[0] != 0x1B:
+                continue
+            program, variables, _, n = unpack('<IIHH', ev, 0x18 * i + 8)
+            data = bytes(read(variables, 4 * n)) if variables and n else b''
+            mv.append(struct.pack('<HIBH', i, requested.get(program, 0) if program else 0, 1 if variables else 0,
+                                  len(data) // 4) + data)
+        out['MV'] = (0, b''.join(mv))
+        out['MF'] = (0, struct.pack('<B', 1 if getattr(self, 'missions', False) else 0))
         mail = gu32(MAIL)
         out['B'] = (mail, block(mail, gu16(MAIL + 6) * 0x10 if mail else 0))
         # The 16-byte heap record of the letters of types 0x3C..0x40 and 0x71
@@ -2023,6 +2054,9 @@ def main():
                    'por omisión, todas')
     p.add_argument('--sin-resto', action='store_true', help='con --barcos, sin el resto de advance_time')
     p.add_argument('--cpr', help='archivo de datos (p2arch0_eng.cpr) del que leer scripts/Namen*.txt')
+    p.add_argument('--misiones', action='store_true',
+                   help='the load runs 0x511270 and each script gets its program (missions_addon/, from --cpr): the '
+                        'missions run (TownOracle missions)')
     p.add_argument('--write', metavar='OUT', help='at the end, the uncompressed .pat the game writes for the state '
                    'reached (write_oracle.py)')
     p.add_argument('--letters', choices=('connected', 'all', 'none'), default='connected',
@@ -2040,7 +2074,7 @@ def main():
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
                    not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], not a.no_storms,
                    not a.no_pirates, not a.no_statistics, disband=not a.no_disband, battles=a.battles,
-                   letters=a.letters)
+                   letters=a.letters, missions=a.misiones)
     o.load()
     if a.pst:
         # The .pst next to the save (uncompressed), as 0x5476E0 reads it.

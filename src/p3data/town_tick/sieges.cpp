@@ -1833,6 +1833,33 @@ void fn_635040(SaveGame& save, int siege, bool arrived) {
 	}
 }
 
+// 0x635170 (on the town's siege object; the operation 0xC0, a game's start, from the last town to the first): a town
+// that is a human merchant's home starts with the countdown [+0x1018] at 0x3FFF and [+0x101B] 0, the others with 0xFF
+// and the countdown at (residents · now) % 0xA001 + 0x4800; then the month's lists (0x635220).
+void fn_635170(SaveGame& save, int siege) {
+	const GlobalMemory& g = save.globals;
+	if (size_t(siege) >= save.sieges.size()) {
+		return;  // (No siege objects.)
+	}
+	SiegeMemory& s = save.sieges[size_t(siege)];
+	uint8_t humans = 0;
+	for (uint32_t m = 0; m < g.u16(global::kWorldMerchantCount); ++m) {
+		const MerchantMemory& mm = save.merchants[m].memory;
+		if (mm.u8(0x19) == s.u8(0x4) && mm.u16(0x8) == 0) {
+			++humans;
+		}
+	}
+	if (humans != 0) {
+		s.u16(0x1018) = 0x3FFF;
+		s.u8(0x101B) = 0;
+	} else {
+		const uint32_t people = uint32_t(save.towns[s.u8(0x4)].memory.s32(0x2D4)) * g.u32(kTick);
+		s.u8(0x101B) = 0xFF;
+		s.u16(0x1018) = uint16_t(people % 0xA001 + 0x4800);
+	}
+	fn_635220(save, siege);
+}
+
 namespace {
 
 // The countdown [+0x1018] up by `add`, up to 0x4FFF (the town sold to: 0x635990, 0x6356D0, 0x635DE0, 0x6348E0).

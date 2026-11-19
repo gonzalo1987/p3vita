@@ -20,8 +20,8 @@
 // (IA de cada comerciante, 0x4DFC94), 0x06 (puertos, 0x4E2144), 0x08
 // (capitanes en las tabernas, 0x4E2634), 0x0D (estación, hielo y tormentas,
 // 0x4E4984), 0x19 (capitanes y administradores que buscan trabajo,
-// 0x4E8E24), 0x1A (0x4F6C10 de cada comerciante), 0x1B (solo sin programa:
-// se quita) y 0x22 (pedidos de mercancía, 0x4DB7C0); 0x37: scenario event_queue_branches (saves 1, 3, 5, 7).
+// 0x4E8E24), 0x1A (0x4F6C10 de cada comerciante), 0x1B (the missions' interpreter,
+// mission_script.cpp) y 0x22 (pedidos de mercancía, 0x4DB7C0); 0x37: scenario event_queue_branches (saves 1, 3, 5, 7).
 // Los demás tipos, por grupos, también comprobados: events_big.cpp (0x2C, la
 // IA construye empresas; 0x05, encargos; 0x16), events_towns.cpp (0x03,
 // cada 10 días; 0x01, deudas; 0x2A y 0x2B, oficinas y barcos de la IA),
@@ -36,6 +36,7 @@
 #include <cstring>
 
 #include "p3data/mail.hpp"
+#include "p3data/mission_script.hpp"
 #include "p3data/game_fixes.hpp"
 #include "p3data/town_tick/internal.hpp"
 
@@ -2179,11 +2180,9 @@ void fn_4d85c0(SaveGame& save, uint32_t tick) {
 			next = kResort;
 			break;
 		case 0x1B:
-			// Guion de una misión ([+0x8] el programa, [+0xC] sus variables). En
-			// las partidas siempre llega sin programa: se libera y se quita.
-			// Por traducir: el intérprete de 0x4ECF64 con programa.
-			e.u32(0xC) = 0;
-			result = 0;
+			// A mission's script ([+0x8] its program, [+0xC] its variables): the interpreter 0x4ECF64
+			// (mission_script.cpp).
+			result = missions_detail::run_mission_script(save, head);
 			next = kByResult;
 			break;
 		case 0x22:
@@ -2224,6 +2223,7 @@ void fn_4d85c0(SaveGame& save, uint32_t tick) {
 		Event& first = save.events[g.u16(kEventHead)];
 		if (first.u16(6) == 0x1B) {
 			first.u32(0xC) = 0;
+			save.missions.scripts.erase(g.u16(kEventHead));
 		}
 		const uint16_t index = g.u16(kEventHead);
 		g.u16(kEventHead) = first.u16(4);

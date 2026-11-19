@@ -249,6 +249,99 @@ void store_siege_extras(const SaveGame& save, State& s) {
 }
 
 // El estado de p3vita a partir del del juego.
+// The missions' data (the ini and the .p2m, missions.hpp), which the recording doesn't hold: from --cpr.
+MissionData g_mission_files;
+
+// The regions of the missions (town_oracle.py): MS the list (u8 whether it exists; for each entry u16 number, u16
+// count, u32 its program's size or 0), MV the scripts of the events 0x1B (for each, u16 event, u32 its program's size
+// or 0, u8 whether it has variables, u16 how many and the u32 of each), MF whether the oracle loaded them.
+void load_missions(const State& state, SaveGame& save) {
+	save.missions.ini = g_mission_files.ini;
+	save.missions.files = g_mission_files.files;
+	if (const Region* ms = find(state, "MS"); ms && !ms->bytes.empty()) {
+		const std::vector<uint8_t>& b = ms->bytes;
+		save.missions.exists = b[0] != 0;
+		save.missions.list.clear();
+		for (size_t o = 1; o + 8 <= b.size(); o += 8) {
+			MissionData::Entry e;
+			e.number = get<uint16_t>(b.data(), o);
+			e.count = get<uint16_t>(b.data(), o + 2);
+			if (get<uint32_t>(b.data(), o + 4) != 0) {
+				e.program = mission_file(save, e.number);
+			}
+			save.missions.list.push_back(e);
+		}
+	}
+	if (const Region* mv = find(state, "MV")) {
+		save.missions.scripts.clear();
+		const std::vector<uint8_t>& b = mv->bytes;
+		for (size_t o = 0; o + 9 <= b.size();) {
+			const uint16_t i = get<uint16_t>(b.data(), o);
+			const uint32_t size = get<uint32_t>(b.data(), o + 2);
+			const bool has = b[o + 6] != 0;
+			const uint16_t n = get<uint16_t>(b.data(), o + 7);
+			o += 9;
+			MissionData::Script script;
+			for (uint16_t k = 0; k < n && o + 4 <= b.size(); ++k, o += 4) {
+				script.variables.push_back(get<uint32_t>(b.data(), o));
+			}
+			if (i < save.events.size()) {
+				if (size != 0) {
+					script.program = mission_file(save, save.events[i].u16(0x10));
+				}
+				save.events[i].u32(8) = size != 0 ? 1 : 0;
+				save.events[i].u32(0xC) = has ? 1 : 0;
+				save.missions.scripts[i] = std::move(script);
+			}
+		}
+	}
+}
+
+void store_missions(const SaveGame& save, State& s) {
+	if (s.count("MS")) {
+		std::vector<uint8_t>& b = s["MS"].bytes;
+		b.assign(1, save.missions.exists ? 1 : 0);
+		for (const MissionData::Entry& e : save.missions.list) {
+			const size_t o = b.size();
+			b.resize(o + 8);
+			put<uint16_t>(b.data(), o, e.number);
+			put<uint16_t>(b.data(), o + 2, e.count);
+			put<uint32_t>(b.data(), o + 4, e.program ? uint32_t(e.program->size()) : 0);
+		}
+	}
+	if (s.count("MV")) {
+		std::vector<uint8_t>& b = s["MV"].bytes;
+		b.clear();
+		for (size_t i = 0; i < save.events.size(); ++i) {
+			const GameMemory<0x18>& e = save.events[i];
+			if (e.u16(6) != 0x1B) {
+				continue;
+			}
+			auto script = save.missions.scripts.find(uint16_t(i));
+			const bool has = e.u32(0xC) != 0;
+			const uint16_t n = has ? e.u16(0x12) : 0;
+			const size_t o = b.size();
+			b.resize(o + 9 + 4 * size_t(n));
+			put<uint16_t>(b.data(), o, uint16_t(i));
+			const bool program = e.u32(8) != 0 && script != save.missions.scripts.end() && script->second.program;
+			put<uint32_t>(b.data(), o + 2, program ? uint32_t(script->second.program->size()) : 0);
+			b[o + 6] = has ? 1 : 0;
+			put<uint16_t>(b.data(), o + 7, n);
+			for (uint16_t k = 0; k < n; ++k) {
+				const std::vector<uint32_t>* v = script != save.missions.scripts.end() ? &script->second.variables
+																						 : nullptr;
+				put<uint32_t>(b.data(), o + 9 + 4 * size_t(k), v && k < v->size() ? (*v)[k] : 0);
+			}
+		}
+	}
+}
+
+// Whether the oracle loaded the missions' programs (its --misiones; region MF): without them its load skips 0x511270.
+bool oracle_missions(const State& state) {
+	const Region* mf = find(state, "MF");
+	return mf && !mf->bytes.empty() && mf->bytes[0] != 0;
+}
+
 void build_save(const State& state, SaveGame& save) {
 	save = SaveGame();
 	const Region& g = state.at("G");
@@ -301,6 +394,7 @@ void build_save(const State& state, SaveGame& save) {
 	if (const Region* e = find(state, "E")) {
 		copy_blocks(*e, save.events);
 	}
+	load_missions(state, save);
 	if (const Region* m = find(state, "B")) {
 		copy_blocks(*m, save.mail);
 	}
@@ -541,6 +635,7 @@ State dump_save(const SaveGame& save, const State& game) {
 	if (s.count("E")) {
 		store_blocks(save.events, s["E"]);
 	}
+	store_missions(save, s);
 	if (s.count("B")) {
 		store_blocks(save.mail, s["B"]);
 	}
@@ -1162,6 +1257,12 @@ int main(int argc, char** argv) {
 	std::deque<std::vector<uint8_t>> pending_sail;  // Órdenes de zarpar que esperan a 537670.
 	if (!cpr.empty()) {
 		archive = CprArchive::open(cpr, &error);
+		if (archive) {
+			SaveGame m;
+			load_mission_files(*archive, m);
+			g_mission_files.ini = std::move(m.missions.ini);
+			g_mission_files.files = std::move(m.missions.files);
+		}
 		nav = archive ? NavData::load(*archive, &error) : nullptr;
 		if (!nav) {
 			std::fprintf(stderr, "%s: %s\n", cpr.c_str(), error.c_str());
@@ -1214,6 +1315,9 @@ int main(int argc, char** argv) {
 		if (archive) {
 			load_game_scripts(*archive, save);
 			g_scripts_loaded = true;
+			if (!oracle_missions(game)) {
+				detach_mission_programs(save);  // As the oracle's load without 0x511270.
+			}
 		}
 		if (!pst_path.empty()) {
 			std::ifstream p(pst_path, std::ios::binary);

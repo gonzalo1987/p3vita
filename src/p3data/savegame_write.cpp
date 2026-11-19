@@ -528,7 +528,15 @@ void write_events(Writer& w, const SaveGame& save) {
 	for (size_t i = 0; i < save.events.size(); ++i) {
 		const GameMemory<0x18>& e = save.events[i];
 		if (e.u16(6) == 0x1B) {
-			w.bytes(extras_of(i));
+			// Its script's [+0x12] variables (missions.hpp); without one, what the save had.
+			auto script = save.missions.scripts.find(uint16_t(i));
+			if (script == save.missions.scripts.end()) {
+				w.bytes(extras_of(i));
+				continue;
+			}
+			for (uint16_t k = 0; k < e.u16(0x12); ++k) {
+				w.u32(k < script->second.variables.size() ? script->second.variables[k] : 0);
+			}
 		} else if (e.u16(6) == 0x34 && e.u8(0x15) >= 7) {
 			write_event_nodes(w, extras_of(i));
 		}

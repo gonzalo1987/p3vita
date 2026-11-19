@@ -183,3 +183,9 @@ target_link_libraries(statistics_window_test PRIVATE p3data)
 target_compile_options(statistics_window_test PRIVATE -Wall -Wextra)
 
 add_test(NAME statistics_window COMMAND statistics_window_test)
+
+add_executable(missions_test missions_test.cpp)
+target_link_libraries(missions_test PRIVATE p3data)
+target_compile_options(missions_test PRIVATE -Wall -Wextra)
+
+add_test(NAME missions COMMAND missions_test)

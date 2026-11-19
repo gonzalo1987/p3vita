@@ -78,7 +78,9 @@ def parse_gmf(raw):
 
 class NewGameOracle(TownOracle):
     def __init__(self, exe, navdata, cpr, seed):
-        super().__init__(exe, b'\0' * 0x100, seed, navdata, cpr=cpr, rest=list(REST), statistics=True)
+        # With the missions: the 0xA7 queues 0xC0, which starts them (missions_addon/, from the CPR).
+        super().__init__(exe, b'\0' * 0x100, seed, navdata, cpr=cpr, rest=list(REST), statistics=True,
+                         missions=True)
 
     def startup(self, settings):
         """What the game has before the new game window starts one: the settings,
@@ -90,7 +92,7 @@ class NewGameOracle(TownOracle):
         self.write_u32(GAME, 1)  # 0x54B230(1, 0, ...): one player
         hooks = [self.uc.hook_add(UC_HOOK_CODE, f, begin=a, end=a) for a, f in (
             (ARCHIVE_READ, self._archive_read), (ARCHIVE_FREE, self._archive_free), (INI_INT, self._ini_int),
-            (INI_STRING, self._ini_string))]
+            (INI_STRING, self._ini_string)) if a != INI_STRING or not self.missions]  # (missions: hooked already)
         for i in range(TOWN_SLOTS):
             self.write_u32(TOWN_TABLE + i * TOWN_TABLE_SIZE + 0x28, self.u32(EMPTY_CSTRING))
         self.call(LOAD_NAMES, [], ecx=NAMES)

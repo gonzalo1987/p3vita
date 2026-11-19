@@ -2711,6 +2711,35 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
 - The 7 letter calls in `MAIL_CALLS` (139 of 154). Reading the objdump keep its `ds:` (`mov eax,ds:0x6df270` loads
   the siege objects' pointer; stripping it confuses a load with an address).
 
+## The missions' base: the list, the start 0xC0, the scripts loaded and saved (2026-11-19)
+
+[formats/missions.md](formats/missions.md); scripts in `re/emu/sesion45/` (README).
+
+- **Before**, the oracle skipped 0x511270 at a load: the scripts (events 0x1B, 49 to 75 in each of the 12 saves) got no
+  program and the interpreter dropped them, as p3vita did; the comparisons agreed, but the game runs them. Now
+  `TownOracle(missions=True)` (`town_oracle.py --misiones`, `retouch_unchecked.py --misiones` or a `Scenario(...,
+  missions=True)`) runs 0x511270 and 0x511690 with the game's ini (the INI_STRING hook, kept for the whole run) and
+  files (Archiver.dll through `_import`). Without it (the default until the interpreter is whole) the regions say so
+  (MF 0) and tick_probe detaches p3vita's programs after its own load (`detach_mission_programs`).
+- New regions: **MS** (u8 the list exists; each entry u16 number, u16 count, u32 its program's size: the heap's
+  requested bytes), **MV** (each event 0x1B: u16 event, u32 its program's size, u8 variables or not, u16 their count
+  and the u32), **MF** (the oracle's missions on). The events' [+0x8] and [+0xC] of the kind 0x1B stay out of E.
+- The loads (`re/emu/sesion45/loadcheck.sh [--misiones] SAVES`): 0 differences in the 12 saves with and without the
+  missions; the list's count broken on purpose: 66 differences in MS.
+- The start, `retouch_unchecked.py mission_start` (0xC0 in the modes 3, 0, 1, 4 and 5 with the campaigns 0, 3 and 9, and
+  6; 0, 2 and 5 competitors; an AI merchant with the bit 0x8000): saves 1, 3, 5, 7, 8 calls equal each, 18 of 18
+  targets. The scripts already in the queue are put out of the way first: 0xC0 frees the old list's programs, and
+  they would point into freed memory (the game reads it; a new game has none). 0x532420's merchant 0 (the game's bug)
+  changed to the merchant it means: caught (M[0] and M[28] in save 3).
+- The new game to its end (`re/emu/sesion24/ngc.sh player`): `newgame_oracle.py` with the missions and 0xC0 in the
+  oracle's OPERATIONS: 0 differences (233 pointers: the programs' and variables' of the new scripts);
+  `re/emu/sesion45/ngprobe.sh`, its 81 operations one by one (0xC0 among them): equal.
+- The saves written (`scripts/write-check.sh`): `write_oracle.py` loads with the missions (`--no-missions` without);
+  0 differences in the 12 saves. With the oracle's heap changed by them, the 3 bytes the game writes without setting
+  in each entry of the battles' table (0x611950) came out other than 0xCD in save 7: `compare_written.py` counts them
+  apart now (the same walk as `savegame_write.cpp` `battle_padding`). `scripts/write-reload.sh`: 0 differences.
+- ctest `missions` (the list's rules, the start's sections, the waits, 0x532420).
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:
