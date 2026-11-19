@@ -12746,7 +12746,7 @@ struct PanelArt {
 		letters = load_texture(renderer, archive, "images/briefe0001.tga");
 		paper = load_texture(renderer, archive, "images/dialogparchment/Papier.tga");
 		seal = load_texture(renderer, archive, "images/dialogparchment/Siegel_mit_Kogge.tga");
-		bar_left = load_texture(renderer, archive, "images/HauptscreenA1280.bmp");
+		bar_left = load_texture(renderer, archive, "images/HauptscreenA1280.bmp");  // [ANIM42], 996 × 42
 		bar_right = load_texture(renderer, archive, "images/HauptscreenB800.bmp");
 		people = load_texture(renderer, archive, "images/einwohner_haus_TP.tga");
 		coins = load_texture(renderer, archive, "images/frames_konto/konto0001.tga");
@@ -13095,8 +13095,25 @@ void draw_side_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 	}
 }
 
-// The top bar's hourglass, the chronicle's button (as the game's, at the bar's right end).
-constexpr SDL_Rect kHourglassButton = {kScreenWidth - 38, 1, 34, 28};
+// The top bar as the game's (screenGame.ini's GAMESCREEN0; drawn by 0x4285A0..0x428C07, its texts made by 0x423D30..):
+// the left piece (HauptscreenA1280.bmp, [ANIM42], as far as it goes: the narrow carved post of the game's photo, the
+// man clear of it) and the right one (HauptscreenB800.bmp, [ANIM2], 284 wide: over the panel, its carved post on the
+// panel's column), 42 high in the game (on the Vita the bar's 34: their height and their pictures fitted ×34/42:
+// adapted). Its texts in the game's font 2 (TopFontID) in
+// black, TopBarYSpacing (3) under the top. In a town (0x428792, [+0x2634] 0): the man (BUTTON13, einwohner_haus_TP.tga's
+// frame 0, 32 × 27 at 26) with the citizens left-aligned after it (0x4289D6), the town's name (0x6DDA00) centred over
+// the town view (0x42899C), the house (BUTTON14, its frame 3, 52 before the left piece's end) with the player's buildings
+// right-aligned before it (0x428A37); in the right piece the coin (AnimButton1, buttons.ini's TEXCOL1 konto, at 32) with
+// the money after it less 2 (0x42866A), the hourglass (AnimButton2, TEXCOL2 sanduhr, at 252) with the date right-aligned
+// 2 into it (0x428710): «%u.%s %u» (0x6964B4: the day, the month's short name 0x6C0D04, the year; 0x423E73). On the sea
+// map the game draws no title ([+0x2634] 1; the ships' counts go on the panel's ship buttons): the viewer's «Sea map -
+// town» (its L and R's town) in the name's place, adapted. The viewer's keys (`hints`, the first that fits) in a gap: right
+// of the name (right-aligned before the houses), else left of it.
+constexpr int kTopRightW = 284;
+constexpr int kTopRight = kScreenWidth - kTopRightW;
+constexpr int kTopTextY = 3;
+// The top bar's hourglass, the chronicle's button (AnimButton2, as the game's).
+constexpr SDL_Rect kHourglassButton = {kTopRight + 252, 0, 32, 30};
 // The top bar's money, the statistics' button (screenGame.ini's, ToolTip 20045): where the bar drew it last. And
 // its man (BUTTON13, «Population», 20024: the citizens' window) and house (BUTTON14, «Own buildings», 20025: the
 // competition's buildings shaded).
@@ -13104,60 +13121,90 @@ SDL_Rect g_money_button{};
 SDL_Rect g_people_button{};
 SDL_Rect g_house_button{};
 
-// The game's top bar (screenGame.ini; the manual's «Barra de información»): its wood (HauptscreenA1280 and
-// B800, squeezed to the viewer's bar), from the left the inhabitants (the man) with their number, the town
-// (on the sea map, the one chosen), the player's buildings there (the house), the money (the coins) and, at the
-// right end, the date and the hourglass that opens the chronicle, turning while the time runs. The viewer's
-// button hints go in what is left.
-void draw_top_bar(SDL_Renderer* renderer, TextRenderer& text, const PanelArt& art, const std::string& citizens,
-	const std::string& place, const std::string& houses, const std::string& money, const std::string& date,
-	int hourglass_frame, const std::vector<std::string>& hints) {
-	// The right piece (its carved post on its left) as wide as the date and the hourglass need.
-	const int right_w = std::max(kScreenWidth * 284 / 1280, kScreenWidth - (kHourglassButton.x - 4 - text.measure(date)) + 26);
-	const SDL_Rect a = {0, 0, kScreenWidth - right_w, kBarHeight};
-	const SDL_Rect b = {a.w, 0, right_w, kBarHeight};
-	draw_picture(renderer, art.bar_left, a);
-	draw_picture(renderer, art.bar_right, b);
-	const SDL_Color ink = {35, 20, 5, 255};
-	const int y = (kBarHeight * 30 / 42 - text.line_height()) / 2 + 1;  // On the wood, above its carved edge.
-	int x = 6;
+// The game's date in the top bar (0x423E73): «3.Feb 1301», «3.feb. 1301».
+std::string top_bar_date(int day, int month, int year) {
+	return std::to_string(day) + "." + short_month(month) + " " + std::to_string(year);
+}
+
+void draw_top_bar(SDL_Renderer* renderer, TextRenderer& fallback, const PanelArt& art, const std::string& citizens,
+	const std::string& place, int place_centre, const std::string& houses, const std::string& money,
+	const std::string& date, int hourglass_frame, const std::vector<std::string>& hints) {
+	TextRenderer& text = g_game_art && g_game_art->info_text() ? *g_game_art->info_text() : fallback;
+	const float s = float(kBarHeight) / 42.0f;
+	auto fit = [&](int v) { return int(float(v) * s + 0.5f); };
+	// The left piece not stretched (its carved post the game's ~25 pixels, the man after it): its start, and its last 10
+	// pixels where it meets the right piece.
+	constexpr int kLeftPieceW = 996;
+	constexpr int kLeftEnd = 10;
+	const SDL_Rect left_src = {0, 0, kTopRight - kLeftEnd, 42};
+	const SDL_Rect left_end_src = {kLeftPieceW - kLeftEnd, 0, kLeftEnd, 42};
+	draw_picture(renderer, art.bar_left, {0, 0, kTopRight - kLeftEnd, kBarHeight}, &left_src);
+	draw_picture(renderer, art.bar_left, {kTopRight - kLeftEnd, 0, kLeftEnd, kBarHeight}, &left_end_src);
+	draw_picture(renderer, art.bar_right, {kTopRight, 0, kTopRightW, kBarHeight});
+	const SDL_Color ink = {0, 0, 0, 255};
+	// A button's picture (its frame w × h) centred in its 32 × 27 place, fitted.
+	auto icon = [&](int x, int frame_x) {
+		const SDL_Rect src = {frame_x, 0, 36, 28};
+		draw_picture(renderer, art.people, {x + (32 - fit(36)) / 2, (fit(27) - fit(28)) / 2, fit(36), fit(28)}, &src);
+	};
+	int left_end = 26;  // Where the gaps for the keys begin and end (past the left piece's carved post).
+	int right_end = kTopRight - 8;
 	g_people_button = {};
 	g_house_button = {};
 	if (!citizens.empty()) {
-		g_people_button = {x - 4, 0, 32 + text.measure(citizens) + 8, kBarHeight};
-		const SDL_Rect src = {0, 0, 36, 28};
-		draw_picture(renderer, art.people, {x, 1, 30, 23}, &src);
-		x += 32;
-		text.draw(citizens, x, y, ink);
-		x += text.measure(citizens) + 14;
+		icon(26, 0);
+		text.draw(citizens, 26 + 32, kTopTextY, ink);
+		left_end = 26 + 32 + text.measure(citizens);
+		g_people_button = {22, 0, left_end + 4 - 22, kBarHeight};
 	}
-	text.draw(place, x, y, ink);
-	x += text.measure(place) + 14;
 	if (!houses.empty()) {
-		g_house_button = {x - 4, 0, 32 + text.measure(houses) + 8, kBarHeight};
-		const SDL_Rect src = {36, 0, 36, 28};  // TEX16033's frame 3, the house.
-		draw_picture(renderer, art.people, {x, 1, 30, 23}, &src);
-		x += 32;
-		text.draw(houses, x, y, ink);
-		x += text.measure(houses) + 14;
+		const int hx = kTopRight - 52;
+		icon(hx, 36);
+		const int w = text.measure(houses);
+		text.draw(houses, hx - w, kTopTextY, ink);
+		right_end = hx - w;
+		g_house_button = {right_end - 4, 0, hx + 32 + 4 - (right_end - 4), kBarHeight};
 	}
+	const int name_w = text.measure(place);
+	const int name_x = place_centre - name_w / 2;
+	text.draw(place, name_x, kTopTextY, ink);
 	g_money_button = {};
 	if (!money.empty()) {
-		g_money_button = {x - 4, 0, 20 + text.measure(money) + 8, kBarHeight};
-		draw_picture(renderer, art.coins, {x, 0, 18, 28});
-		x += 20;
-		text.draw(money, x, y, ink);
-		x += text.measure(money) + 14;
+		const int cx = kTopRight + 32;
+		draw_picture(renderer, art.coins, {cx, 0, fit(30), fit(47)});
+		const int mx = cx + fit(30) - 2;
+		text.draw(money, mx, kTopTextY, ink);
+		g_money_button = {cx - 4, 0, mx + text.measure(money) + 4 - (cx - 4), kBarHeight};
 	}
 	SDL_Texture* glass = art.hourglass[((hourglass_frame % PanelArt::kHourglassFrames) + PanelArt::kHourglassFrames) %
 		PanelArt::kHourglassFrames];
-	draw_picture(renderer, glass, kHourglassButton);
-	const int date_x = kHourglassButton.x - 4 - text.measure(date);
-	text.draw(date, date_x, y, ink);
+	draw_picture(renderer, glass, {kHourglassButton.x, 0, fit(35), fit(29)});
+	text.draw(date, kHourglassButton.x + 2 - text.measure(date), kTopTextY, ink);
+	// The viewer's keys, in its own colour: right of the name, else left of it, else split at a gap between two keys (the
+	// first ones left of the name, the rest right of it); the first of `hints` that fits.
+	const SDL_Color key_ink = {90, 60, 30, 255};
+	auto fits_right = [&](int w) { return name_x + name_w + 14 + w <= right_end - 14; };
+	auto fits_left = [&](int w) { return left_end + 14 + w <= name_x - 14; };
+	auto draw_right = [&](const std::string& t) { text.draw(t, right_end - 14 - text.measure(t), kTopTextY, key_ink); };
+	auto draw_left = [&](const std::string& t) { text.draw(t, left_end + 14, kTopTextY, key_ink); };
 	for (const std::string& hint : hints) {
-		if (x + text.measure(hint) <= date_x - 14) {
-			text.draw(hint, date_x - 14 - text.measure(hint), y, SDL_Color{90, 60, 30, 255});
-			break;
+		const int w = text.measure(hint);
+		if (fits_right(w)) {
+			draw_right(hint);
+			return;
+		}
+		if (fits_left(w)) {
+			draw_left(hint);
+			return;
+		}
+		for (size_t at = hint.find("   "); at != std::string::npos; at = hint.find("   ", at + 3)) {
+			const std::string first = hint.substr(0, at);
+			const std::string rest = hint.substr(hint.find_first_not_of(' ', at));
+			if (fits_left(text.measure(first)) && fits_right(text.measure(rest))) {
+				draw_left(first);
+				draw_right(rest);
+				return;
+			}
 		}
 	}
 }
@@ -20575,8 +20622,9 @@ int main(int argc, char** argv) {
 			SDL_StopTextInput();
 		}
 		const bool in_menu = menu.open() && small_text;
-		// In a town the messages are the side panel's: another of its menus closes them.
-		if (mail.open && (selection.mode == Mode::Saved || (selection.mode == Mode::Sea && sea && panel_art)) &&
+		// In a town the messages are the side panel's: another of its menus closes them. (Over a battle the panel is the
+		// battle's, its menu the ship menu: the messages fill the screen.)
+		if (mail.open && !in_battle && (selection.mode == Mode::Saved || (selection.mode == Mode::Sea && sea && panel_art)) &&
 			side.menu != PanelMenu::Messages) {
 			mail_options(false);
 			mail.open = false;
@@ -23408,10 +23456,18 @@ int main(int argc, char** argv) {
 				}
 				switch (event.cbutton.button) {
 				case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
-					town_step = -1;
-					break;
 				case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
-					town_step = 1;
+					if (has_save && (selection.mode == Mode::Saved || selection.mode == Mode::Sea)) {
+						// In a town and on the sea map, the game's speed a step slower or faster, as over its windows (the
+						// user's word, 2026-11-19: L and R chose another town, of little use there; a town is chosen by
+						// touching it on the sea map).
+						game_speed = std::clamp(
+							game_speed + (event.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1), 0,
+							kGameSpeedCount - 1);
+						notify_speed();
+					} else {
+						town_step = event.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1;
+					}
 					break;
 				case SDL_CONTROLLER_BUTTON_Y:  // Triángulo en la Vita.
 					next_mode = true;
@@ -23766,10 +23822,11 @@ int main(int argc, char** argv) {
 					}
 					break;
 				}
-				if (in_battle && !in_menu && !in_mail && !route_window_open) {
+				if (in_battle && !in_menu && !in_mail && !route_window_open &&
+					!inside(kHourglassButton, touch_start.x, touch_start.y)) {
 					// The battle's screen: dragging moves its view; a tap or a long press is an order (on lifting
 					// it, and in the frame, kBattleLongPressMs). On its panel, the panel's. (Under the mailbox, the
-					// mailbox's.)
+					// mailbox's; the top bar's hourglass, the chronicle's, as the game's.)
 					if (battle_panel && inside(panel_layout.panel, touch_start.x, touch_start.y)) {
 						touch_on_side = true;
 						touch_on_panel = true;
@@ -24210,7 +24267,8 @@ int main(int argc, char** argv) {
 					}
 					break;
 				}
-				if (in_battle && !in_menu && !in_mail && !route_window_open) {
+				if (in_battle && !in_menu && !in_mail && !route_window_open &&
+					!inside(kHourglassButton, touch_start.x, touch_start.y)) {
 					touch_on_panel = false;
 					const int lx = int(event.tfinger.x * kScreenWidth);
 					const int ly = int(event.tfinger.y * kScreenHeight);
@@ -25364,18 +25422,18 @@ int main(int argc, char** argv) {
 				const std::string money = format_money(save.merchants[size_t(save.player)].money()) + tr(" monedas", " coins");
 				right_texts = {merchant_name(save, names, save.player) + ": " + money, money};
 			} else if (at_sea) {
-				right_texts = {tr("L/R: ciudad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar   " BTN_CIRCLE " buzón",
-								   "L/R: town   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter   " BTN_CIRCLE " mailbox"),
+				right_texts = {tr("L/R: velocidad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar   " BTN_CIRCLE " buzón",
+								   "L/R: speed   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter   " BTN_CIRCLE " mailbox"),
 					tr(BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar   " BTN_CIRCLE " buzón",
 						BTN_CROSS " set sail   " BTN_TRIANGLE " enter   " BTN_CIRCLE " mailbox"),
-					tr("L/R: ciudad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", "L/R: town   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter"),
+					tr("L/R: velocidad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", "L/R: speed   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter"),
 					tr(BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", BTN_CROSS " set sail   " BTN_TRIANGLE " enter")};
 			} else if (selection.mode == Mode::Saved) {
 				// X: the building under the cursor, or the market.
 				const int pointed = view->place_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2);
 				const std::string x = BTN_CROSS " " + (pointed >= 0 ? place_name(pointed) : tr("mercado", "market"));
 				const std::string ship = tr("   Select: panel", "   Select: panel");
-				const std::string l = tr("L/R: ciudad   ", "L/R: town   ");
+				const std::string l = tr("L/R: velocidad   ", "L/R: speed   ");
 				const std::string map = tr(BTN_TRIANGLE " mapa   ", BTN_TRIANGLE " map   ");
 				const std::string mail = tr("   " BTN_CIRCLE " buzón", "   " BTN_CIRCLE " mailbox");
 				right_texts = {l + map + x + mail + ship, map + x + mail + ship, map + x + mail, map + x, x};
@@ -25392,12 +25450,12 @@ int main(int argc, char** argv) {
 					: town_name(save, town_names, int(selection.saved_index));
 				const int frame = in_menu ? 0 : int(app_ticks() / 90);
 				draw_top_bar(renderer, *small_text, *panel_art,
-					selection.mode == Mode::Saved ? format_money(here.citizens()) : std::string(), place,
+					selection.mode == Mode::Saved ? format_money(here.citizens()) : std::string(), place, town_width / 2,
 					selection.mode == Mode::Saved
 						? std::to_string(own_building_count(save, uint32_t(save.player), uint32_t(selection.saved_index)))
 						: std::string(),
-					format_money(save.merchants[size_t(save.player)].money()), game_date(save.day(), save.month(), save.year()),
-					frame, right_texts);
+					format_money(save.merchants[size_t(save.player)].money()),
+					top_bar_date(save.day(), save.month(), save.year()), frame, right_texts);
 			} else {
 				draw_bar(renderer, *text, 0, bar_title(save, town_names, template_ids, selection), right_texts);
 			}
@@ -25421,7 +25479,7 @@ int main(int argc, char** argv) {
 				draw_button(renderer, *small_text, b[1], BTN_CIRCLE + tr(" Borrar", " Clear"));
 			} else {
 				draw_bar(renderer, *small_text, kScreenHeight - kBarHeight, ship_text,
-					{tr(BTN_SQUARE " barco   Select: ", BTN_SQUARE " ship   Select: ") + speed, "Select: " + speed, speed},
+					{tr(BTN_SQUARE " barco   L/R: ", BTN_SQUARE " ship   L/R: ") + speed, "L/R: " + speed, speed},
 					town_width);
 			}
 		}

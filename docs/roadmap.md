@@ -107,10 +107,11 @@ Cómo leerla:
 - **Hecho el 19-11-2026 (`re/emu/sesion43/`, «Part 2»)**: los mensajes como los del juego: su menú lateral, la carta
   y la crónica en la ventanita de mensaje del juego y la ventana de ajustes de las cartas (apartado 4). Después
   (`re/emu/sesion44/`), el panel de las batallas repasado con el código: el menú del barco sobre la selección de la
-  batalla con «ver convoy», la fila de acciones en sus sitios y el minimapa con los colores del juego (apartado 4).
-- **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): primero el resto
-  de las pantallas, el panel lateral con las letras y los textos del juego (apartado 4; el encargo
-  `ENCARGO_PANEL_JUEGO.md`: queda la barra de arriba); luego el intérprete de misiones (apartado 3), el final de la partida
+  batalla con «ver convoy», la fila de acciones en sus sitios y el minimapa con los colores del juego, y la barra de
+  arriba como la del juego: el panel lateral con las letras y los textos del juego, acabado (apartado 4).
+- **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): acabados los restos
+  de las pantallas (las preguntas del convoy, las sombras y la nieve, el panel lateral con las letras y los textos del
+  juego), el intérprete de misiones (apartado 3); luego el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -133,7 +134,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Operaciones (193 códigos) | 167: las 37 de la simulación, 101 de las 106 del jugador, 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red y la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) | **5 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74, 0x76 y 0x82; apartado 3), 1 del intérprete de misiones y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 139 | 15: 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
-| El panel lateral y sus ventanas como los del juego (19-11-2026) | 6 de 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes) y el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) | 1: la barra de arriba (apartado 4) |
+| El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
@@ -637,8 +638,20 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     con los colores del juego (0x59C590, 0x59CA00: el agua, los arrecifes grises y los bancos de arena amarillos, el
     marco de la vista gris, puntos de 3 × 3 azul puro, rojo y gris oscuro). Estado de depuración nuevo
     `convoy-attack` (un convoy del jugador atacado por piratas).
-  - [ ] La barra de arriba (en la barra, las teclas de la derecha se meten bajo el pilar de la fecha cuando esta es
-    corta, como en inglés; en una batalla el reloj de arena no hace nada: con los sitios del juego, screenGame.ini).
+  - [x] La barra de arriba (19-11-2026, `re/emu/sesion44/README.md`, «The top bar»): como la del juego, leída en su
+    código (0x4285A0..0x428C07, los textos 0x423D30..) y en screenGame.ini: el trozo derecho de 284 sobre el panel,
+    con su pilar tallado sobre la columna del panel, y el izquierdo al resto (alto 34 en la Vita: adaptado); la letra
+    2 del juego en negro; el hombre en 26 con los habitantes detrás, el nombre de la ciudad centrado sobre la vista,
+    la casa 52 antes del final del trozo izquierdo con sus edificios delante, la moneda en 32 del trozo derecho con el
+    dinero detrás, el reloj de arena en 252 con la fecha corta del juego delante («1.abr. 1362», 0x6964B4). En el mapa
+    del mar el juego no pone título: el visor deja «Mapa del mar - ciudad» en su sitio (adaptado). Las teclas del
+    visor van en los huecos a los lados del nombre (partidas por sus separaciones si no caben enteras): ya no se meten
+    bajo el pilar. El trozo izquierdo es el de 1280 sin estirar (su pilar estrecho, el de la foto del usuario: el hombre
+    queda fuera de él, como en el juego). El reloj de arena abre la crónica también sobre una batalla (en el buzón a pantalla completa); de
+    paso, el buzón sobre una batalla ya no se cierra solo (lo cerraba la regla de los mensajes del panel, desde el
+    commit 0609801).
+  - **El panel lateral con las letras y los textos del juego está acabado** (las siete partes de
+    `ENCARGO_PANEL_JUEGO.md`, 17..19-11-2026).
 - [x] **El panel de la Hansa** propio del visor (Cuadrado en una ciudad), quitado el 15-11-2026 a petición del
   usuario: sus encargos y elecciones son las páginas del ayuntamiento, y los materiales de la carretera, la página
   «Ruta terrestre» de la puerta de la ciudad, como las del juego.
@@ -909,6 +922,9 @@ cada una: el HANDOFF y [oracle.md](oracle.md).
 - **Táctil primero**: tocar y arrastrar sobre lo que se ve, con lo posible resaltado (construir: las zonas donde cabe
   en verde, el edificio en verde o rojo bajo el dedo); nunca un cursor fijo en el centro para nada nuevo (la cruz para
   entrar en los edificios se aceptó «de momento»; si se rehace, preguntar).
+- **L y R son la velocidad del juego** (más lenta, más rápida, con su aviso): en las ventanas sobre la ciudad y, desde
+  el 19-11-2026 (a petición del usuario), también en la ciudad y en el mapa del mar, donde cambiaban de ciudad (de poco
+  servía: en el mapa del mar una ciudad se elige tocándola). En una batalla siguen pasando de barco.
 - **Las ventanas emergentes**: cada botón táctil con su tecla (X la acción, ○ cerrar), sin notas que expliquen lo
   obvio, lo que no se puede hacer atenuado y sin poder pulsarse, y con la ventana abierta la barra de arriba no enseña
   sus acciones.

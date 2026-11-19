@@ -105,7 +105,8 @@ look after your ship. It starts in Lübeck as the game of 1300 starts
 (`missav/1.pat`), with the player's merchant (Georg Stromberg, 30,000 coins) and
 a ship in the port. Time passes as in the game at normal speed (a day a
 minute) and the bar shows the date. The D-pad or the left stick move the camera,
-dragging a finger scrolls the map, L and R change the town and Start opens the
+dragging a finger scrolls the map, L and R set the game's speed (slower, faster)
+and Start opens the
 menu: continue, the mailbox, save and load the game (8 slots, in
 `ux0:data/p3vita/savegames/`), the options (fixing the game's bugs, and the
 language, Spanish or English) and quit; while it is open the game stops. The
@@ -145,7 +146,8 @@ the game's too: the inhabitants (the man: touching it opens the town's citizens
 by class, with their mood, the beggars and the shortage of dwellings), the town,
 your buildings there (the house: touching it shades the competition's buildings,
 and again to undo it), your money, the date and the hourglass, which opens the
-chronicle.
+chronicle (also over a battle), in the game's places and font; the buttons' hints
+go in its gaps, either side of the town's name.
 
 **The ship list** (the panel's first icon; a town's lighthouse shows the ships
 in its port, the other merchants' too) is the game's parchment window over the
@@ -270,10 +272,10 @@ ships (yours has a mark; touching a town chooses it and Triangle goes into it).
 As in the game, touching one of your ships at sea chooses it (several there at
 once: the ship list with them), and touching a town where your ships are in
 port chooses the ship (several: the ship list of that port).
-On the sea map X sends your ship to the chosen town: it leaves the port, sails
-the game's route (its course is drawn) and enters the port of destination,
-where it can trade. Square chooses another of your ships and Select changes the
-game's speed (slowed, very slow, slow, normal, fast, very fast and fast
+On the sea map X sends your ship to the chosen town (touch a town to choose it):
+it leaves the port, sails the game's route (its course is drawn) and enters the
+port of destination, where it can trade. Square chooses another of your ships;
+L and R, or Select going round, change the game's speed (slowed, very slow, slow, normal, fast, very fast and fast
 forward). The bottom bar says what the ship does and when it will arrive.
 Without a game loaded, Select goes through the town's template with all the
 designer's buildings (`.editor`) and with the terrain only (`.town`).
