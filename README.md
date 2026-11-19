@@ -106,10 +106,14 @@ look after your ship. It starts in Lübeck as the game of 1300 starts
 a ship in the port. Time passes as in the game at normal speed (a day a
 minute) and the bar shows the date. The D-pad or the left stick move the camera,
 dragging a finger scrolls the map, L and R set the game's speed (slower, faster)
-and Start opens the
-menu: continue, the mailbox, save and load the game (8 slots, in
-`ux0:data/p3vita/savegames/`), the options (fixing the game's bugs, and the
-language, Spanish or English) and quit; while it is open the game stops. The
+and Start (or the panel's gear) opens the
+game's options screen: its settings (the first two the viewer's: the language,
+Spanish or English, and fixing the game's bugs; the game speed and the
+tooltips; the others not yet), «Load game» and «Save game» (the game's saved
+games' screen: the saves by name, as the game's, in
+`ux0:data/p3vita/savegames/ein/`; Triangle writes the name), «Quit» (to the
+main menu), «Cancel» (Circle) and «OK» (Start); while it is open the game
+stops. The
 hints on the screen show the buttons with their symbols (✕, ○, □, △); the rear
 touch pad isn't used.
 

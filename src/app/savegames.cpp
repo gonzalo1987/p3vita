@@ -27,10 +27,6 @@ constexpr size_t kHeaderBytes = 0x60 + 0x20 + 40;
 constexpr size_t kSettings = 4;
 constexpr size_t kWorld = 0x60;
 
-std::string slot_path(const std::string& dir, int slot, const char* extension) {
-	return dir + "slot" + std::to_string(slot + 1) + extension;
-}
-
 bool read_file(const std::string& path, std::vector<uint8_t>& out) {
 	std::FILE* file = std::fopen(path.c_str(), "rb");
 	if (!file) {
@@ -138,13 +134,85 @@ std::string savegames_dir(const char* data_dir) {
 #endif
 }
 
-SlotInfo read_slot_info(const std::string& dir, int slot) {
-	SlotInfo info;
+namespace {
+
+// Names as a Windows folder lists them: letters without case.
+bool windows_order(const std::string& a, const std::string& b) {
+	for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
+		const int x = std::tolower(uint8_t(a[i]));
+		const int y = std::tolower(uint8_t(b[i]));
+		if (x != y) {
+			return x < y;
+		}
+	}
+	return a.size() < b.size();
+}
+
+// The .pat files of a folder (their titles), as the folder lists them.
+std::vector<std::string> pat_titles(const std::string& dir) {
+	std::vector<std::string> out;
+	if (DIR* folder = opendir(dir.c_str())) {
+		while (const dirent* entry = readdir(folder)) {
+			const std::string name = entry->d_name;
+			if (name.size() > 4) {
+				std::string extension = name.substr(name.size() - 4);
+				for (char& c : extension) {
+					c = char(std::tolower(uint8_t(c)));
+				}
+				if (extension == ".pat") {
+					out.push_back(name.substr(0, name.size() - 4));
+				}
+			}
+		}
+		closedir(folder);
+	}
+	std::sort(out.begin(), out.end(), windows_order);
+	return out;
+}
+
+int64_t file_time(const std::string& path) {
+	struct stat st;
+	return stat(path.c_str(), &st) == 0 ? int64_t(st.st_mtime) : 0;
+}
+
+}  // namespace
+
+std::vector<SaveEntry> list_saves(const std::string& dir) {
+	std::vector<SaveEntry> out;
+	for (const std::string& title : pat_titles(dir + "ein")) {
+		const std::string path = dir + "ein/" + title;
+		out.push_back({title, path, file_time(path + ".pat")});
+	}
+	for (const std::string& title : pat_titles(dir.empty() ? std::string(".") : dir)) {
+		const std::string path = dir + title;
+		out.push_back({title, path, file_time(path + ".pat")});
+	}
+	return out;
+}
+
+std::string save_path(const std::string& dir, const std::string& name) {
+	return dir + "ein/" + name;
+}
+
+bool valid_save_name(const std::string& name) {
+	if (name.empty() || name.size() > 24 || name.back() == '.' || name.back() == ' ' || name.front() == ' ') {
+		return false;
+	}
+	for (char c : name) {
+		if (uint8_t(c) < 0x20 || std::strchr("/\\:*?\"<>|", c)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+SaveInfo read_save_info(const std::string& path) {
+	SaveInfo info;
 	std::vector<uint8_t> packed;
-	if (!read_file(slot_path(dir, slot, ".pat"), packed)) {
+	if (!read_file(path + ".pat", packed)) {
+		info.damaged = true;
 		return info;
 	}
-	info.used = true;
 	uint8_t header[kHeaderBytes] = {};
 	size_t produced = 0;
 	lz_decompress_prefix(packed.data(), packed.size(), header, sizeof(header), produced);
@@ -157,22 +225,45 @@ SlotInfo read_slot_info(const std::string& dir, int slot) {
 	info.day = header[kWorld];
 	info.month = header[kWorld + 1];
 	info.year = header[kWorld + 2] | header[kWorld + 3] << 8;
-	const uint8_t hometown = header[kSettings + 0x1E];
+	const uint8_t* s = header + kSettings;
+	const uint8_t hometown = s[0x1E];
 	if (hometown < 40) {
 		info.town_number = header[kWorld + 0x20 + hometown];
+	}
+	std::memcpy(&info.start_year, s, 4);
+	std::memcpy(&info.speed, s + 4, 4);
+	info.goal_time = s[0x08];
+	info.capital = s[0x09];
+	info.level = s[0x0E];
+	info.goal = s[0x0F];
+	info.needs = s[0x17];
+	info.production = s[0x19];
+	info.date_day = s[0x1A];
+	info.date_month = s[0x1B];
+	info.date_year = uint16_t(s[0x1C] | s[0x1D] << 8);
+	for (size_t i = 0x27; i < 0x3B && s[i] != 0; ++i) {
+		info.home += char(s[i]);
+	}
+	info.rank = s[0x3B];
+	// (0x547E0A: the objectives' time at most 14 but for the population's.)
+	if (info.goal != 6 && info.goal_time > 14) {
+		info.goal_time = 14;
 	}
 	return info;
 }
 
-bool save_slot(const std::string& dir, int slot, SaveGame& save, std::string& error) {
-	if (!make_dir(dir)) {
+bool save_game_file(const std::string& path, SaveGame& save, std::string& error) {
+	const size_t slash = path.find_last_of('/');
+	const std::string dir = slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+	const size_t parent = dir.size() > 1 ? dir.find_last_of('/', dir.size() - 2) : std::string::npos;
+	if ((parent != std::string::npos && !make_dir(dir.substr(0, parent + 1))) || !make_dir(dir)) {
 		error = "can't create " + dir;
 		return false;
 	}
 	const std::vector<uint8_t> pat = savegame_file(save);
 	const std::vector<uint8_t> pst = statistics_file(save);
-	const std::string pat_path = slot_path(dir, slot, ".pat");
-	const std::string pst_path = slot_path(dir, slot, ".pst");
+	const std::string pat_path = path + ".pat";
+	const std::string pst_path = path + ".pst";
 	if (!write_file(pat_path + ".tmp", pat) || !write_file(pst_path + ".tmp", pst) ||
 		!replace_file(pat_path + ".tmp", pat_path) || !replace_file(pst_path + ".tmp", pst_path)) {
 		error = "can't write " + pat_path;
@@ -181,11 +272,11 @@ bool save_slot(const std::string& dir, int slot, SaveGame& save, std::string& er
 	return true;
 }
 
-bool load_slot(const CprArchive& archive, const std::string& dir, int slot, SaveGame& out, std::string& error) {
+bool load_game_file(const CprArchive& archive, const std::string& path, SaveGame& out, std::string& error) {
 	std::vector<uint8_t> packed;
 	std::vector<uint8_t> data;
-	if (!read_file(slot_path(dir, slot, ".pat"), packed)) {
-		error = "can't read " + slot_path(dir, slot, ".pat");
+	if (!read_file(path + ".pat", packed)) {
+		error = "can't read " + path + ".pat";
 		return false;
 	}
 	if (!lz_decompress_file(packed.data(), packed.size(), data, &error) ||
@@ -195,13 +286,13 @@ bool load_slot(const CprArchive& archive, const std::string& dir, int slot, Save
 	load_game_scripts(archive, out);
 	// The .pst next to it, as the game reads it after the .pat (0x5476E0).
 	std::vector<uint8_t> pst;
-	load_statistics_file(read_file(slot_path(dir, slot, ".pst"), pst) ? &pst : nullptr, out);
+	load_statistics_file(read_file(path + ".pst", pst) ? &pst : nullptr, out);
 	return true;
 }
 
-bool delete_slot(const std::string& dir, int slot) {
-	const bool pat = std::remove(slot_path(dir, slot, ".pat").c_str()) == 0;
-	std::remove(slot_path(dir, slot, ".pst").c_str());
+bool delete_game_file(const std::string& path) {
+	const bool pat = std::remove((path + ".pat").c_str()) == 0;
+	std::remove((path + ".pst").c_str());
 	return pat;
 }
 
