@@ -18280,9 +18280,12 @@ uint32_t panel_tooltip(const SidePanel& side, const SaveGame& save, int line, bo
 	return 0;
 }
 
+// The options screen's «Tooltips» (AppSettings::tooltips): off, no tooltip shows.
+bool g_tooltips = true;
+
 // The tooltip's box: to the left of a button of the panel, under one of the top bar.
 void draw_tooltip(SDL_Renderer* renderer, TextRenderer& text, const std::string& tip, const SDL_Rect& where) {
-	if (tip.empty()) {
+	if (tip.empty() || !g_tooltips) {
 		return;
 	}
 	const int w = text.measure(tip) + 12;
@@ -18312,44 +18315,286 @@ void show_loading(SDL_Renderer* renderer) {
 	SDL_RenderPresent(renderer);
 }
 
-// The menu (Start on the Vita, Escape on the PC), with the game's texts: go
-// on, save and load the game (the slots of savegames.hpp), the options (the
-// fixes to the game's bugs) and quitting. The game stops while it is open.
-enum class MenuScreen { Closed, Main, Save, Load, Options };
-// A question over the menu: overwrite a slot, delete it, quit.
-enum class MenuAsk { None, Overwrite, Delete, Quit, MainMenu };
+// The menu (Start on the Vita, Escape on the PC; the panel's gear): the game's options screen, its question to quit, and
+// (for now the viewer's) screens of the saved games' slots. The game stops while it is open.
+enum class MenuScreen { Closed, Options, Save, Load };
+// A question over the menu: overwrite a slot, delete it, quit the game (to the main menu).
+enum class MenuAsk { None, Overwrite, Delete, Quit };
+
+// The game's options screen (*0x6CBDF0, 0x2C98 bytes: its constructor 0x45CAC0, its init 0x45CE70 with options.ini, its
+// drawing 0x45E920; the panel's gear changes the game's screen for it, 0x423A6D..0x423CF9; traced in the emulator with
+// re/emu/sesion46/optionstrace.sh, README «The options screen»): a whole screen of 800 × 600, its background
+// optionen.jpg (TEX16), its title «Options» (0x69AE48) in the font 5 right-aligned at (757, 11) over its shadow (2 lower
+// and right, 0x90000000), thirteen rows each with its label in the font 4 right-aligned at 494, 6 under the row's
+// buttons, its value in the font 2 centred at 628 between them: «−» and «+» (BUTTON7/8: Kugel_komplett.tga, TEX15,
+// frames 3..6 and 7..10: neutral, pressed, lit, off) at 510 and 718 for a choice of several, ← and → (BUTTON9/10: frames
+// 11..14 and 15..18) for one of two, or a slider (Slider1 at 526, 203 × 23: its ends BUTTON12/13, TEX18 frames 2 and 3, at
+// 511 and 726, the bar TEX17 at 530, its ball BUTTON11, TEX18 frame 1); at the bottom five buttons (BUTTON4: TEX7 frames
+// 6 and 7, 149 × 36, their words in the font 2): «Load game», «Save game», «Cancel», «OK» on the line 544 and «Quit»
+// over the first at 488. The Vita's screen is lower: the screen drawn at its size into a texture and fitted to the
+// height, in the middle (as the start screen's book).
+// Adapted: the game's first two rows (its screen's resolution and colours) are the viewer's language and its fixes of
+// the game's bugs; the rows the viewer doesn't do yet (details, weather, the volumes, stereo, the event videos, the
+// convoys' ships, autosave) show their value with their buttons off. The values chosen apply with «OK».
+constexpr int kOptionsW = 800;
+constexpr int kOptionsH = 600;
+enum class OptionRow {
+	Language,
+	Fixes,
+	Details,
+	Weather,
+	MusicVolume,
+	SoundVolume,
+	VideoVolume,
+	InvertStereo,
+	GameSpeed,
+	EventVideos,
+	Tooltips,
+	ConvoyShips,
+	Autosave,
+	Count
+};
+constexpr int kOptionRows = int(OptionRow::Count);
+enum class OptionKind { Steps, Switch, Slider };
+struct OptionPlace {
+	int y;  // Its buttons' top.
+	OptionKind kind;
+	bool live;  // The viewer does it.
+};
+constexpr OptionPlace kOptionPlaces[kOptionRows] = {{110, OptionKind::Steps, true}, {142, OptionKind::Steps, true},
+	{174, OptionKind::Steps, false}, {206, OptionKind::Steps, false}, {242, OptionKind::Slider, false},
+	{272, OptionKind::Slider, false}, {302, OptionKind::Slider, false}, {329, OptionKind::Switch, false},
+	{365, OptionKind::Steps, true}, {397, OptionKind::Switch, false}, {429, OptionKind::Switch, true},
+	{461, OptionKind::Switch, false}, {493, OptionKind::Steps, false}};
+constexpr int kOptionLabelX = 494;
+constexpr int kOptionValueX = 628;
+constexpr int kOptionLeftX = 510;
+constexpr int kOptionRightX = 718;
+constexpr int kOptionArrow = 29;  // 29 × 28
+enum class OptionButton { Load, Save, Cancel, Ok, Quit, Count };
+constexpr SDL_Point kOptionButtonAt[int(OptionButton::Count)] = {{135, 544}, {294, 544}, {453, 544}, {614, 544},
+	{135, 488}};
+constexpr int kScreenButtonW = 149;
+constexpr int kScreenButtonH = 36;
+// The pad's stops on the screen: the live rows, then «Quit» and the bottom line's buttons.
+constexpr OptionRow kOptionLiveRows[] = {OptionRow::Language, OptionRow::Fixes, OptionRow::GameSpeed, OptionRow::Tooltips};
+constexpr int kOptionLiveCount = int(sizeof(kOptionLiveRows) / sizeof(kOptionLiveRows[0]));
+constexpr OptionButton kOptionStopButtons[] = {OptionButton::Quit, OptionButton::Load, OptionButton::Save,
+	OptionButton::Cancel, OptionButton::Ok};
+constexpr int kOptionStops = kOptionLiveCount + int(sizeof(kOptionStopButtons) / sizeof(kOptionStopButtons[0]));
+// The question over the game's full screens (*0x6D95A0, 0x434 bytes: its constructor 0x4AC5D0, its init 0x4AC950, its
+// texts and buttons 0x4AC700, its drawing 0x4ACBE0; traced with re/emu/sesion46/asktrace.sh): window.tga (TEX31, 395 ×
+// 179) at (202, 210), its two lines in the font 4 centred at 399 on 240 and 275, «Yes» (0x699948) at (228, 335) and «No»
+// (0x699950) at (424, 335) as the screen's buttons.
+constexpr SDL_Point kAskBoxAt = {202, 210};
+constexpr SDL_Point kAskYesAt = {228, 335};
+constexpr SDL_Point kAskNoAt = {424, 335};
 
 struct MenuUi {
 	MenuScreen screen = MenuScreen::Closed;
-	int row = 0;
+	int row = 0;  // The slots' screens' chosen slot.
 	MenuAsk ask = MenuAsk::None;
 	std::array<p3::app::SlotInfo, p3::app::kSaveSlots> slots{};
+	bool from_book = false;  // Opened from the start screen's book: no game behind it («Save game» and «Quit» off).
+	bool load_alone = false;  // The slots opened alone from the book's «Load game»: back to the book.
+	// The options screen: the pad's stop (kOptionStops) and the values chosen there, applied by «OK».
+	int stop = 0;
+	bool spanish = true;
+	bool fixes = true;
+	bool tooltips = true;
+	int speed = 3;
 
 	bool open() const { return screen != MenuScreen::Closed; }
 	bool slot_screen() const { return screen == MenuScreen::Save || screen == MenuScreen::Load; }
 };
 
-// The rows of the main screen, in order.
-enum MainRow { kRowContinue, kRowMailbox, kRowSave, kRowLoad, kRowOptions, kRowMainMenu, kRowQuit, kMainRows };
-enum OptionRow { kRowFixGameBugs, kRowLanguage, kOptionRows };
+// Whether a bottom button can be pressed: «Save game» and «Quit» need a game.
+bool option_button_on(const MenuUi& menu, OptionButton b, bool game) {
+	return (b != OptionButton::Save && b != OptionButton::Quit) || (game && !menu.from_book);
+}
 
-int menu_rows(MenuScreen screen) {
-	switch (screen) {
-	case MenuScreen::Main:
-		return kMainRows;
-	case MenuScreen::Save:
-	case MenuScreen::Load:
-		return p3::app::kSaveSlots;
-	case MenuScreen::Options:
-		return kOptionRows;
+std::string option_label(OptionRow row) {
+	const std::string volume = exe_text(0x69AE08, "Volumen", "Volume") + " ";
+	switch (row) {
+	case OptionRow::Language:
+		return tr("Idioma", "Language");
+	case OptionRow::Fixes:
+		return tr("Corregir fallos", "Fix the bugs");
+	case OptionRow::Details:
+		return exe_text(0x6B2CDC, "Detalles", "Details");
+	case OptionRow::Weather:
+		return exe_text(0x6B0250, "Efectos del clima", "Weather effects");
+	case OptionRow::MusicVolume:
+		return volume + exe_text(0x69AE0C, "Música", "Music");
+	case OptionRow::SoundVolume:
+		return volume + exe_text(0x69AE10, "Sonido", "Sound");
+	case OptionRow::VideoVolume:
+		return volume + exe_text(0x69AE14, "Vídeos", "Videos");
+	case OptionRow::InvertStereo:
+		return exe_text(0x69AE44, "Invertir estéreo", "Invert stereo");
+	case OptionRow::GameSpeed:
+		return exe_text(0x69AE28, "Velocidad del juego", "Game speed");
+	case OptionRow::EventVideos:
+		return exe_text(0x69AE18, "Vídeos", "Event videos");
+	case OptionRow::Tooltips:
+		return exe_text(0x69AE1C, "Mensajes de ayuda", "Tooltips");
+	case OptionRow::ConvoyShips:
+		return exe_text(0x6B0244, "Barcos en convoy", "Convoy Ships");
+	case OptionRow::Autosave:
+		return exe_text(0x6B0254, "Guardar cada", "Autosave");
 	default:
-		return 0;
+		return {};
 	}
 }
 
-// Where everything goes: the panel, its rows, the buttons at its foot (for
-// the touch screen: delete and back in the slots' screens, back in the
-// options) and the question's box with its two buttons.
+// A row's value: the language's and the switches' as chosen; the rows the viewer doesn't do yet, what it does (the
+// game's details high, weather low as its defaults; no sound; stereo as it is; the convoys' ships all shown; no
+// autosave).
+std::string option_value(const MenuUi& menu, OptionRow row) {
+	const std::string on = exe_text(0x69AE20, "Sí", "on");
+	const std::string off = exe_text(0x69AE24, "No", "off");
+	switch (row) {
+	case OptionRow::Language:
+		return menu.spanish ? "Español" : "English";
+	case OptionRow::Fixes:
+		return menu.fixes ? on : off;
+	case OptionRow::Details:
+		return exe_text(0x69AE04, "Alto", "high");
+	case OptionRow::Weather:
+		return exe_text(0x69ADFC, "Bajo", "low");
+	case OptionRow::InvertStereo:
+		return off;
+	case OptionRow::GameSpeed:
+		return menu.speed < 6 ? speed_name(menu.speed) : tr(kGameSpeeds[menu.speed].name, kGameSpeeds[menu.speed].english);
+	case OptionRow::EventVideos:
+		return on;
+	case OptionRow::Tooltips:
+		return menu.tooltips ? on : off;
+	case OptionRow::ConvoyShips:
+		return exe_text(0x6B024C, "Mostrar todos", "show");
+	case OptionRow::Autosave:
+		return exe_text(0x6B0258, "no", "off");
+	default:
+		return {};
+	}
+}
+
+// The game's full screens (800 × 600) on the Vita's: fitted to its height, in the middle.
+struct GameScreenLayout {
+	SDL_Rect panel{};
+	float scale = 1.0f;
+
+	GameScreenLayout() {
+		scale = float(kScreenHeight) / float(kOptionsH);
+		const int w = int(float(kOptionsW) * scale + 0.5f);
+		panel = {(kScreenWidth - w) / 2, 0, w, kScreenHeight};
+	}
+	// A screen point in the game's screen's coordinates.
+	SDL_Point game(int x, int y) const {
+		return {int(float(x - panel.x) / scale), int(float(y - panel.y) / scale)};
+	}
+	// Whether a screen point is on the game's rectangle (a few pixels more around it for the finger).
+	bool on(const SDL_Rect& r, int x, int y, int margin = 4) const {
+		const SDL_Point p = game(x, y);
+		return p.x >= r.x - margin && p.x < r.x + r.w + margin && p.y >= r.y - margin && p.y < r.y + r.h + margin;
+	}
+};
+
+SDL_Rect option_arrow(OptionRow row, bool right) {
+	return {right ? kOptionRightX : kOptionLeftX, kOptionPlaces[int(row)].y, kOptionArrow, 28};
+}
+
+SDL_Rect option_button(OptionButton b) {
+	return {kOptionButtonAt[int(b)].x, kOptionButtonAt[int(b)].y, kScreenButtonW, kScreenButtonH};
+}
+
+// The question's lines and its buttons' words: «Yes» and «No».
+std::array<std::string, 2> quit_question() {
+	return {game_text(GameText::QuitAsk, tr("¿Seguro que deseas", "Do you really want")),
+		game_text(GameText::QuitAskGame, tr("abandonar la partida?", "to quit the game?"))};
+}
+
+// A button of the game's full screens (BUTTON4: TEX7's frame 6, pressed 7) with its words in the font 2 centred, white;
+// its key before them; off, faded.
+void draw_screen_button(GameWindowArt& gart, TextRenderer& font, const SDL_Rect& r, const std::string& label,
+	const std::string& key, bool on) {
+	gart.draw_tex(7, 6, r.x, r.y, 0, on ? 255 : 110);
+	const std::string s = key.empty() ? label : key + " " + label;
+	font.draw(s, r.x + (r.w - font.measure(s)) / 2, r.y + (r.h - font.line_height()) / 2,
+		on ? SDL_Color{255, 255, 255, 255} : SDL_Color{255, 255, 255, 110});
+}
+
+void draw_options_screen(SDL_Renderer* renderer, TextRenderer& fallback, const MenuUi& menu, bool game) {
+	if (!g_game_art) {
+		return;
+	}
+	GameWindowArt& gart = *g_game_art;
+	const GameScreenLayout layout;
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+	SDL_RenderClear(renderer);
+	TextRenderer& title = gart.screen_title_text() ? *gart.screen_title_text() : fallback;
+	TextRenderer& label = gart.screen_label_text() ? *gart.screen_label_text() : fallback;
+	TextRenderer& value = gart.info_text() ? *gart.info_text() : fallback;
+	const SDL_Color white = {255, 255, 255, 255};
+	gart.begin_sized(layout.panel, kOptionsW, kOptionsH);
+	gart.draw_tex(16, 0, 0, 0);
+	const std::string t = game_text(GameText::MenuOptions, tr("Opciones", "Options"));
+	title.draw(t, 759 - title.measure(t), 13, SDL_Color{0, 0, 0, 0x90});
+	title.draw(t, 757 - title.measure(t), 11, white);
+	const int stop_row = menu.ask == MenuAsk::None && menu.stop < kOptionLiveCount ? int(kOptionLiveRows[menu.stop]) : -1;
+	for (int k = 0; k < kOptionRows; ++k) {
+		const OptionRow row = OptionRow(k);
+		const OptionPlace& p = kOptionPlaces[k];
+		const std::string l = option_label(row);
+		label.draw(l, kOptionLabelX - label.measure(l), p.y + 6, white);
+		if (p.kind == OptionKind::Slider) {
+			// No sound yet: the ball at its left, off.
+			gart.draw_tex(18, 2, 511, p.y, 0, 110);
+			gart.draw_tex(17, 0, 530, p.y, 0, 110);
+			gart.draw_tex(18, 3, 726, p.y, 0, 110);
+			gart.draw_tex(18, 1, 530, p.y - 1, 0, 110);
+			continue;
+		}
+		const int base = p.kind == OptionKind::Steps ? 3 : 11;  // −, + (7) or ←, → (15)
+		const int state = !p.live ? 3 : k == stop_row ? 2 : 0;
+		gart.draw_tex(15, base + state, kOptionLeftX, p.y);
+		gart.draw_tex(15, base + 4 + state, kOptionRightX, p.y);
+		const std::string v = option_value(menu, row);
+		value.draw(v, kOptionValueX - value.measure(v) / 2, p.y + 6, white);
+	}
+	const std::string labels[int(OptionButton::Count)] = {
+		game_text(GameText::MenuLoadGame, tr("Cargar partida", "Load game")),
+		game_text(GameText::MenuSaveGame, tr("Guardar partida", "Save game")),
+		game_text(GameText::ButtonCancel, tr("Cancelar", "Cancel")), game_text(GameText::ButtonOk, "OK"),
+		exe_text(0x69AE34, "Abandonar", "Quit")};
+	const int stop_button = menu.ask == MenuAsk::None && menu.stop >= kOptionLiveCount
+		? int(kOptionStopButtons[menu.stop - kOptionLiveCount])
+		: -1;
+	for (int b = 0; b < int(OptionButton::Count); ++b) {
+		const OptionButton button = OptionButton(b);
+		const std::string key = b == stop_button ? BTN_CROSS : button == OptionButton::Cancel ? BTN_CIRCLE : "";
+		draw_screen_button(gart, value, option_button(button), labels[b], key, option_button_on(menu, button, game));
+	}
+	if (menu.ask == MenuAsk::Quit) {
+		gart.draw_tex(31, 0, kAskBoxAt.x, kAskBoxAt.y);
+		const std::array<std::string, 2> lines = quit_question();
+		label.draw(lines[0], 399 - label.measure(lines[0]) / 2, 240, white);
+		label.draw(lines[1], 399 - label.measure(lines[1]) / 2, 275, white);
+		draw_screen_button(gart, value, {kAskYesAt.x, kAskYesAt.y, kScreenButtonW, kScreenButtonH},
+			exe_text(0x699948, "Sí", "Yes"), BTN_CROSS, true);
+		draw_screen_button(gart, value, {kAskNoAt.x, kAskNoAt.y, kScreenButtonW, kScreenButtonH},
+			exe_text(0x699950, "No", "No"), BTN_CIRCLE, true);
+	}
+	gart.end();
+}
+
+// The rows of the slots' screens.
+int menu_rows(MenuScreen screen) {
+	return screen == MenuScreen::Save || screen == MenuScreen::Load ? p3::app::kSaveSlots : 0;
+}
+
+// Where everything goes in the slots' screens: the panel, its rows, the buttons at its foot (for the touch screen:
+// delete and back) and the question's box with its two buttons.
 struct MenuLayout {
 	static constexpr int kPadding = 10;
 	SDL_Rect panel{};
@@ -18365,11 +18610,10 @@ struct MenuLayout {
 
 	MenuLayout(int line_height, MenuScreen screen) {
 		rows = menu_rows(screen);
-		row_height = screen == MenuScreen::Options ? 2 * line_height + 8 : line_height + 10;
-		const bool buttons = screen != MenuScreen::Main;
-		const int width = screen == MenuScreen::Main ? 360 : 600;
+		row_height = line_height + 10;
+		const int width = 600;
 		const int button_height = line_height + 10;
-		const int height = kPadding * 3 + line_height + rows * row_height + (buttons ? button_height + kPadding : 0);
+		const int height = kPadding * 3 + line_height + rows * row_height + button_height + kPadding;
 		panel = {(kScreenWidth - width) / 2, (kScreenHeight - height) / 2, width, height};
 		header_y = panel.y + kPadding;
 		rows_y = header_y + line_height + kPadding;
@@ -18412,7 +18656,7 @@ std::string slot_label(const MenuUi& menu, int slot, const std::vector<std::stri
 	return std::to_string(slot + 1) + ". " + (info.used ? slot_description(info, town_names) : tr("(vacía)", "(empty)"));
 }
 
-// The question's two lines, as the game has them.
+// The slots' question's two lines, as the game has them.
 std::array<std::string, 2> menu_question(const MenuUi& menu, const std::vector<std::string>& town_names) {
 	switch (menu.ask) {
 	case MenuAsk::Overwrite: {
@@ -18424,30 +18668,22 @@ std::array<std::string, 2> menu_question(const MenuUi& menu, const std::vector<s
 	case MenuAsk::Delete:
 		return {game_text(GameText::DeleteAsk, tr("¿Seguro que quieres", "Do you really want to")),
 			game_text(GameText::DeleteAskSavegame, tr("borrar esta partida?", "delete this savegame?"))};
-	case MenuAsk::Quit:
-	case MenuAsk::MainMenu:  // Leaving the game for the main menu (the start screen): the same question.
-		return {game_text(GameText::QuitAsk, tr("¿Seguro que deseas", "Do you really want")),
-			game_text(GameText::QuitAskGame, tr("abandonar la partida?", "to quit the game?"))};
 	default:
 		return {"", ""};
 	}
 }
 
-void draw_menu(SDL_Renderer* renderer, TextRenderer& text, const MenuUi& menu, const p3::app::AppSettings& settings,
-	const std::vector<std::string>& town_names) {
+// The slots' screens (the viewer's, until the game's dialog of saved games).
+void draw_menu(SDL_Renderer* renderer, TextRenderer& text, const MenuUi& menu, const std::vector<std::string>& town_names) {
 	const MenuLayout layout(text.line_height(), menu.screen);
 	const SDL_Rect& panel = layout.panel;
 	const int left = panel.x + MenuLayout::kPadding;
 	draw_panel_box(renderer, panel);
 	const std::string title = menu.screen == MenuScreen::Save ? game_text(GameText::MenuSaveGame, tr("Guardar partida", "Save game"))
-		: menu.screen == MenuScreen::Load ? game_text(GameText::MenuLoadGame, tr("Cargar partida", "Load game"))
-		: menu.screen == MenuScreen::Options ? game_text(GameText::MenuOptions, tr("Opciones", "Options"))
-		: std::string(kTitle);
+															  : game_text(GameText::MenuLoadGame, tr("Cargar partida", "Load game"));
 	text.draw(title, left, layout.header_y, kTextColor);
-	const std::string hint = menu.screen == MenuScreen::Main ? tr(BTN_CIRCLE " cerrar", BTN_CIRCLE " close")
-															 : tr(BTN_CIRCLE " atrás", BTN_CIRCLE " back");
+	const std::string hint = tr(BTN_CIRCLE " atrás", BTN_CIRCLE " back");
 	text.draw(hint, panel.x + panel.w - MenuLayout::kPadding - text.measure(hint), layout.header_y, kDimColor);
-
 	for (int i = 0; i < layout.rows; ++i) {
 		const int y = layout.rows_y + i * layout.row_height;
 		if (i == menu.row) {
@@ -18455,57 +18691,13 @@ void draw_menu(SDL_Renderer* renderer, TextRenderer& text, const MenuUi& menu, c
 			SDL_SetRenderDrawColor(renderer, 120, 90, 45, 160);
 			SDL_RenderFillRect(renderer, &selected);
 		}
-		std::string label;
-		std::string detail;
-		switch (menu.screen) {
-		case MenuScreen::Main: {
-			static const GameText kTexts[kMainRows] = {GameText::ButtonContinue, GameText::Count, GameText::MenuSaveGame,
-				GameText::MenuLoadGame, GameText::MenuOptions, GameText::MainMenu, GameText::QuitGame};
-			static const char* const kFallbacks[kMainRows] = {"Continuar", "Buzón", "Guardar partida", "Cargar partida",
-				"Opciones", "Menú principal", "Salir del juego"};
-			static const char* const kEnglishFallbacks[kMainRows] = {"Continue", "Mailbox", "Save game", "Load game", "Options",
-				"Main menu", "Quit"};
-			// The mailbox is the viewer's own entry (the game opens it from its panel).
-			label = kTexts[i] == GameText::Count ? tr(kFallbacks[i], kEnglishFallbacks[i])
-												 : game_text(kTexts[i], tr(kFallbacks[i], kEnglishFallbacks[i]));
-			break;
-		}
-		case MenuScreen::Save:
-		case MenuScreen::Load:
-			label = slot_label(menu, i, town_names);
-			break;
-		case MenuScreen::Options:
-			if (i == kRowFixGameBugs) {
-				label = tr("Corregir los fallos del juego: ", "Fix the game's bugs: ") +
-					(settings.fix_game_bugs ? game_text(GameText::SettingOn, tr("Sí", "on"))
-											: game_text(GameText::SettingOff, tr("No", "off")));
-				detail = settings.fix_game_bugs
-					? tr("Con «No», el juego hace lo mismo que el original, fallos incluidos.",
-						"Off, the game does as the original, bugs included.")
-					: tr("Ahora se comporta como el original, fallos incluidos.", "Now it behaves like the original, bugs included.");
-			} else {
-				label = tr("Idioma: ", "Language: ") + (settings.spanish ? "Español" : "English");
-				detail = tr("Los textos y los nombres del juego en ese idioma.", "The game's texts and names in that language.");
-			}
-			break;
-		default:
-			break;
-		}
-		const bool empty_slot = menu.slot_screen() && !menu.slots[size_t(i)].used;
-		text.draw(label, left, y, empty_slot ? kDimColor : kTextColor);
-		if (!detail.empty()) {
-			text.draw(detail, left + 12, y + text.line_height(), kDimColor);
-		}
+		const bool empty_slot = !menu.slots[size_t(i)].used;
+		text.draw(slot_label(menu, i, town_names), left, y, empty_slot ? kDimColor : kTextColor);
 	}
-	if (menu.slot_screen()) {
-		draw_button(renderer, text, layout.delete_button,
-			tr(BTN_SQUARE " ", BTN_SQUARE " ") + game_text(GameText::DeleteSavegame, tr("Borrar partida", "Delete savegame")));
-	}
-	if (menu.screen != MenuScreen::Main) {
-		draw_button(renderer, text, layout.back_button,
-			tr(BTN_CIRCLE " ", BTN_CIRCLE " ") + game_text(GameText::ButtonBack, tr("Atrás", "Back")));
-	}
-
+	draw_button(renderer, text, layout.delete_button,
+		tr(BTN_SQUARE " ", BTN_SQUARE " ") + game_text(GameText::DeleteSavegame, tr("Borrar partida", "Delete savegame")));
+	draw_button(renderer, text, layout.back_button,
+		tr(BTN_CIRCLE " ", BTN_CIRCLE " ") + game_text(GameText::ButtonBack, tr("Atrás", "Back")));
 	if (menu.ask != MenuAsk::None) {
 		const std::array<std::string, 2> question = menu_question(menu, town_names);
 		draw_panel_box(renderer, layout.ask_box, 255);
@@ -18684,6 +18876,7 @@ int main(int argc, char** argv) {
 		settings.fix_game_bugs = std::string(options.fix_game_bugs) == "on";
 	}
 	p3::data::set_fix_game_bugs(settings.fix_game_bugs);
+	g_tooltips = settings.tooltips;
 	g_spanish = settings.spanish;
 
 	std::string tried;
@@ -19390,22 +19583,111 @@ int main(int argc, char** argv) {
 			}
 		}
 	};
-	// Circle: from a screen to the main one (on its row), from the main one out.
+	// The options screen (the panel's gear, Start; the book's «Options»): its values as they are now, the pad on its
+	// first row.
+	auto open_options = [&](bool from_book) {
+		open_menu(MenuScreen::Options, 0);
+		menu.from_book = from_book;
+		menu.load_alone = false;
+		menu.stop = 0;
+		menu.spanish = settings.spanish;
+		menu.fixes = settings.fix_game_bugs;
+		menu.tooltips = settings.tooltips;
+		menu.speed = game_speed;
+	};
+	const auto menu_game = [&]() { return has_save && save.player >= 0; };
+	// «OK»: the values chosen applied (the fixes, the tooltips and the speed at once, the language at the next frame).
+	auto options_apply = [&]() {
+		if (menu.fixes != settings.fix_game_bugs || menu.tooltips != settings.tooltips) {
+			settings.fix_game_bugs = menu.fixes;
+			settings.tooltips = menu.tooltips;
+			p3::data::set_fix_game_bugs(settings.fix_game_bugs);
+			g_tooltips = settings.tooltips;
+			if (!script && !p3::app::save_settings(settings_file, settings)) {
+				std::fprintf(stderr, "can't save %s\n", settings_file.c_str());
+			}
+		}
+		game_speed = menu.speed;
+		if (menu.spanish != settings.spanish) {
+			language_change = menu.spanish ? 1 : 0;
+		}
+		menu.screen = MenuScreen::Closed;
+	};
+	// A row's «−» or «+» (or ← and →): its next value.
+	auto option_step = [&](OptionRow row, int step) {
+		switch (row) {
+		case OptionRow::Language:
+			menu.spanish = !menu.spanish;
+			break;
+		case OptionRow::Fixes:
+			menu.fixes = !menu.fixes;
+			break;
+		case OptionRow::Tooltips:
+			menu.tooltips = !menu.tooltips;
+			break;
+		case OptionRow::GameSpeed:
+			// The game's six speeds (slowed down .. very fast); the viewer's fast forward, which has no name, goes down to
+			// very fast.
+			menu.speed = menu.speed > 5 ? (step < 0 ? 5 : menu.speed) : std::clamp(menu.speed + step, 0, 5);
+			break;
+		default:
+			break;
+		}
+	};
+	auto option_press = [&](OptionButton b) {
+		if (!option_button_on(menu, b, menu_game())) {
+			return;
+		}
+		switch (b) {
+		case OptionButton::Load:
+			open_menu(MenuScreen::Load, 0);
+			break;
+		case OptionButton::Save:
+			open_menu(MenuScreen::Save, 0);
+			break;
+		case OptionButton::Cancel:
+			menu.screen = MenuScreen::Closed;
+			break;
+		case OptionButton::Ok:
+			options_apply();
+			break;
+		case OptionButton::Quit:
+			menu.ask = MenuAsk::Quit;
+			break;
+		default:
+			break;
+		}
+	};
+	// Circle: from the slots back to the options screen (or out, opened alone from the book's «Load game»); from the
+	// options screen out, as its «Cancel».
 	auto menu_back = [&]() {
-		if (menu.screen == MenuScreen::Main) {
+		menu.ask = MenuAsk::None;
+		if (menu.screen == MenuScreen::Options || menu.load_alone) {
 			menu.screen = MenuScreen::Closed;
 			return;
 		}
-		open_menu(MenuScreen::Main, menu.screen == MenuScreen::Save ? kRowSave
-				: menu.screen == MenuScreen::Load                    ? kRowLoad
-																	 : kRowOptions);
+		menu.screen = MenuScreen::Options;
 	};
-	// X: the selected row, or the question's OK.
+	// X: the options screen's stop (a row's next value, a button) or its question's «Yes»; a slot, or its question's OK.
 	auto menu_act = [&]() {
-		const int slot = std::clamp(menu.row, 0, p3::app::kSaveSlots - 1);
-		const bool used = menu.slots[size_t(slot)].used;
 		const MenuAsk ask = menu.ask;
 		menu.ask = MenuAsk::None;
+		if (menu.screen == MenuScreen::Options) {
+			if (ask == MenuAsk::Quit) {
+				// Leaving the game for the main menu (the start screen): the game stays behind until another one is
+				// loaded or started.
+				menu.screen = MenuScreen::Closed;
+				start_open = true;
+				start_lit = int(p3::app::StartEntry::Single);
+			} else if (menu.stop < kOptionLiveCount) {
+				option_step(kOptionLiveRows[menu.stop], 1);
+			} else {
+				option_press(kOptionStopButtons[menu.stop - kOptionLiveCount]);
+			}
+			return;
+		}
+		const int slot = std::clamp(menu.row, 0, p3::app::kSaveSlots - 1);
+		const bool used = menu.slots[size_t(slot)].used;
 		if (ask == MenuAsk::Overwrite) {
 			if (save_game(slot)) {
 				menu.screen = MenuScreen::Closed;
@@ -19417,70 +19699,69 @@ int main(int argc, char** argv) {
 			open_menu(menu.screen, slot);  // The list again.
 			return;
 		}
-		if (ask == MenuAsk::Quit) {
-			running = false;
-			return;
-		}
-		if (ask == MenuAsk::MainMenu) {
-			menu.screen = MenuScreen::Closed;
-			start_open = true;  // The game stays behind until another one is loaded or started.
-			start_lit = int(p3::app::StartEntry::Single);
-			return;
-		}
-		switch (menu.screen) {
-		case MenuScreen::Main:
-			if (menu.row == kRowContinue) {
-				menu.screen = MenuScreen::Closed;
-			} else if (menu.row == kRowMailbox) {
-				if (has_save && save.player >= 0) {
-					menu.screen = MenuScreen::Closed;
-					open_mailbox();
-				}
-			} else if (menu.row == kRowSave) {
-				if (has_save && save.player >= 0) {
-					open_menu(MenuScreen::Save, 0);
-				}
-			} else if (menu.row == kRowLoad) {
-				open_menu(MenuScreen::Load, 0);
-			} else if (menu.row == kRowOptions) {
-				open_menu(MenuScreen::Options, 0);
-			} else if (menu.row == kRowMainMenu) {
-				menu.ask = MenuAsk::MainMenu;
-			} else {
-				menu.ask = MenuAsk::Quit;
-			}
-			break;
-		case MenuScreen::Save:
+		if (menu.screen == MenuScreen::Save) {
 			if (used) {
 				menu.ask = MenuAsk::Overwrite;
 			} else if (save_game(slot)) {
 				menu.screen = MenuScreen::Closed;
 			}
-			break;
-		case MenuScreen::Load:
+		} else if (menu.screen == MenuScreen::Load) {
 			if (used && load_game(slot)) {
 				menu.screen = MenuScreen::Closed;
 			}
-			break;
-		case MenuScreen::Options:
-			if (menu.row == kRowFixGameBugs) {
-				settings.fix_game_bugs = !settings.fix_game_bugs;
-				p3::data::set_fix_game_bugs(settings.fix_game_bugs);
-				if (!script && !p3::app::save_settings(settings_file, settings)) {
-					std::fprintf(stderr, "can't save %s\n", settings_file.c_str());
-				}
-			} else {
-				language_change = settings.spanish ? 0 : 1;
-			}
-			break;
-		default:
-			break;
 		}
 	};
 	// Square in the slots' screens: delete the selected one (after asking).
 	auto menu_delete = [&]() {
 		if (menu.slot_screen() && menu.slots[size_t(std::clamp(menu.row, 0, p3::app::kSaveSlots - 1))].used) {
 			menu.ask = MenuAsk::Delete;
+		}
+	};
+	// The options screen's pad: a stop that can be pressed (the bottom buttons off without a game are passed over).
+	auto stop_on = [&](int k) {
+		return k < kOptionLiveCount || option_button_on(menu, kOptionStopButtons[k - kOptionLiveCount], menu_game());
+	};
+	auto options_pad = [&](Uint8 button) {
+		constexpr int kQuitStop = kOptionLiveCount;
+		constexpr int kLineFirst = kOptionLiveCount + 1;  // «Load game» .. «OK» on the bottom line.
+		int& k = menu.stop;
+		switch (button) {
+		case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+			k = k < kQuitStop ? k + 1 : k == kQuitStop ? kLineFirst : 0;
+			if (!stop_on(k)) {
+				k = kLineFirst;
+			}
+			break;
+		case SDL_CONTROLLER_BUTTON_DPAD_UP:
+			k = k == 0 ? kLineFirst : k <= kQuitStop ? k - 1 : kQuitStop;
+			if (!stop_on(k)) {
+				k = kQuitStop - 1;
+			}
+			break;
+		case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+		case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: {
+			const int step = button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1;
+			if (k < kOptionLiveCount) {
+				option_step(kOptionLiveRows[k], step);
+			} else if (k >= kLineFirst) {
+				const int n = kOptionStops - kLineFirst;
+				do {
+					k = kLineFirst + (k - kLineFirst + n + step) % n;
+				} while (!stop_on(k));
+			}
+			break;
+		}
+		case SDL_CONTROLLER_BUTTON_A:
+			menu_act();
+			break;
+		case SDL_CONTROLLER_BUTTON_B:  // Circle: «Cancel».
+			menu.screen = MenuScreen::Closed;
+			break;
+		case SDL_CONTROLLER_BUTTON_START:  // Start again: as «OK».
+			options_apply();
+			break;
+		default:
+			break;
 		}
 	};
 	// With the menu open, every button is its own.
@@ -19491,6 +19772,10 @@ int main(int argc, char** argv) {
 			} else if (button == SDL_CONTROLLER_BUTTON_B || button == SDL_CONTROLLER_BUTTON_START) {
 				menu.ask = MenuAsk::None;
 			}
+			return;
+		}
+		if (menu.screen == MenuScreen::Options) {
+			options_pad(button);
 			return;
 		}
 		const int rows = menu_rows(menu.screen);
@@ -19536,6 +19821,35 @@ int main(int argc, char** argv) {
 	int stats_drag_first = 0;  // The residents' first row when the finger went down.
 	// A tap on the open menu.
 	auto menu_tap = [&](int x, int y) {
+		if (menu.screen == MenuScreen::Options) {
+			// The options screen: its question's buttons; a live row's «−», «+» (or ← and →); a bottom button.
+			const GameScreenLayout l;
+			if (menu.ask == MenuAsk::Quit) {
+				if (l.on({kAskYesAt.x, kAskYesAt.y, kScreenButtonW, kScreenButtonH}, x, y)) {
+					menu.ask = MenuAsk::Quit;
+					menu_act();
+				} else if (l.on({kAskNoAt.x, kAskNoAt.y, kScreenButtonW, kScreenButtonH}, x, y)) {
+					menu.ask = MenuAsk::None;
+				}
+				return;
+			}
+			for (int k = 0; k < kOptionLiveCount; ++k) {
+				for (int side = 0; side < 2; ++side) {
+					if (l.on(option_arrow(kOptionLiveRows[k], side == 1), x, y)) {
+						menu.stop = k;
+						option_step(kOptionLiveRows[k], side == 1 ? 1 : -1);
+						return;
+					}
+				}
+			}
+			for (int b = 0; b < int(OptionButton::Count); ++b) {
+				if (l.on(option_button(OptionButton(b)), x, y)) {
+					option_press(OptionButton(b));
+					return;
+				}
+			}
+			return;
+		}
 		const MenuLayout layout(small_text->line_height(), menu.screen);
 		const int row = layout.row_at(x, y);
 		if (menu.ask != MenuAsk::None) {
@@ -19544,13 +19858,13 @@ int main(int argc, char** argv) {
 			} else if (inside(layout.cancel_button, x, y)) {
 				menu.ask = MenuAsk::None;
 			}
-		} else if (menu.screen != MenuScreen::Main && inside(layout.back_button, x, y)) {
+		} else if (inside(layout.back_button, x, y)) {
 			menu_back();
 		} else if (menu.slot_screen() && inside(layout.delete_button, x, y)) {
 			menu_delete();
 		} else if (row >= 0) {
 			// In the slots' screens the first tap chooses and the second acts.
-			const bool act = !menu.slot_screen() || row == menu.row;
+			const bool act = row == menu.row;
 			menu.row = row;
 			if (act) {
 				menu_act();
@@ -20336,6 +20650,10 @@ int main(int argc, char** argv) {
 			break;
 		case p3::app::StartEntry::Load:
 			open_menu(MenuScreen::Load, 0);
+			menu.load_alone = true;
+			break;
+		case p3::app::StartEntry::Options:
+			open_options(true);
 			break;
 		case p3::app::StartEntry::Exit:
 			running = false;
@@ -20405,17 +20723,17 @@ int main(int argc, char** argv) {
 			default:
 				break;
 			}
-			// Back from the slots goes to the book, not to the game's menu.
-			if (menu.screen == MenuScreen::Main) {
-				menu.screen = MenuScreen::Closed;
-			}
 		}
 		if (!start_open || !running) {
 			return;
 		}
 		start_screen->draw(renderer, menu.open() ? -1 : start_lit);
 		if (menu.open() && small_text) {
-			draw_menu(renderer, *small_text, menu, settings, town_names);
+			if (menu.screen == MenuScreen::Options) {
+				draw_options_screen(renderer, *small_text, menu, false);
+			} else {
+				draw_menu(renderer, *small_text, menu, town_names);
+			}
 		}
 		if (text && !notices.empty()) {
 			if (app_ticks() > notices.front().second) {
@@ -22917,7 +23235,7 @@ int main(int argc, char** argv) {
 					next_mode = true;
 					break;
 				case PanelIcon::Options:
-					open_menu(MenuScreen::Main, kRowContinue);
+					open_options(false);
 					break;
 				default:
 					break;
@@ -23615,7 +23933,7 @@ int main(int argc, char** argv) {
 					}
 					break;
 				case SDL_CONTROLLER_BUTTON_START:  // The menu.
-					open_menu(MenuScreen::Main, kRowContinue);
+					open_options(false);
 					break;
 				}
 				break;
@@ -23825,7 +24143,7 @@ int main(int argc, char** argv) {
 					} else if (selection.mode == Mode::Sea && !sea_route.empty()) {
 						sea_route.clear();  // As Circle: the route by points started.
 					} else {
-						open_menu(MenuScreen::Main, kRowContinue);
+						open_options(false);
 					}
 					break;
 				}
@@ -25856,7 +26174,11 @@ int main(int argc, char** argv) {
 			draw_screen_message(renderer, *small_text, box.m, box.bar);
 		}
 		if (in_menu) {  // The menu, on top of everything.
-			draw_menu(renderer, *small_text, menu, settings, town_names);
+			if (menu.screen == MenuScreen::Options) {
+				draw_options_screen(renderer, *small_text, menu, menu_game());
+			} else {
+				draw_menu(renderer, *small_text, menu, town_names);
+			}
 		}
 		if (script && !script->screenshot().empty()) {
 			std::string error;

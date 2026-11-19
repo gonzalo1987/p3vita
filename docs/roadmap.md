@@ -425,9 +425,11 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     cubierta del barco con sus piezas en el modo de las armas (0x495210). Adaptado: el juego enseña abajo lo que
     costaría o daría el botón que tiene el ratón encima (y en rojo si no hay dinero o sitio); sin ratón, el visor enseña
     lo que costó o dio el último trato.
-  - [ ] **El menú de Start** del visor (continuar, buzón, guardar, cargar, opciones, menú principal, salir) con sus
-    pantallas de **guardar y cargar partida** y de **opciones**: en el juego, la ventana de opciones del icono del
-    engranaje del panel (guardar, cargar, opciones, salir).
+  - [ ] **El menú de Start** del visor, en parte (19-11-2026, `re/emu/sesion46/README.md`): ya es la pantalla de
+    opciones del juego (*0x6CBDF0, options.ini, a pantalla completa: la abren Start, el engranaje del panel y las
+    «Opciones» del libro), con su pregunta para abandonar; sus dos primeras filas son el idioma y los ajustes de los
+    fallos del visor, las que el visor aún no hace salen con sus botones apagados. Falta la pantalla de partidas del
+    juego (*0x6CBB7C: **guardar y cargar**, con sus fondos), que sustituirá a las listas del visor.
   - [x] **Las ventanas de una batalla** (19-11-2026, `re/emu/sesion46/README.md`): la pregunta, el final, el abordaje
     y los mensajes de las batallas en la ventana de mensajes del juego (*0x6CBB10, 0x41D9B0) con su descripción
     (oficial, con los rollos, la proporción 0,7071); la del icono del mapa del mar como la del juego (no oficial, ancho

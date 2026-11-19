@@ -18,6 +18,8 @@ struct AppSettings {
 	// Spanish Patrician3.exe) or English (the English archive alone and the
 	// English exe).
 	bool spanish = true;
+	// The game's options' «Tooltips» (P2.CFG [OPTIONS] TOOLTIPS): the buttons' tooltips under a finger held on them.
+	bool tooltips = true;
 	// The new game window's last choices (the game keeps them in P2.CFG
 	// [SPIELEINST], new_game.hpp), with the game's defaults; read back with
 	// P2.CFG's limits (clamp_new_game_choices).

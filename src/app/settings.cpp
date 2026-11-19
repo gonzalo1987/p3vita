@@ -13,6 +13,7 @@ namespace {
 constexpr const char* kFileName = "p3vita-settings.txt";
 constexpr const char* kFixGameBugs = "fix_game_bugs";
 constexpr const char* kLanguage = "language";
+constexpr const char* kTooltips = "tooltips";
 // The new game window's choices, as P2.CFG's [SPIELEINST] keys (the names in UTF-8).
 constexpr const char* kFirstName = "new_game_first_name";
 constexpr const char* kFamilyName = "new_game_family_name";
@@ -84,6 +85,8 @@ AppSettings load_settings(const std::string& path) {
 		const std::string value = trim(line.substr(equals + 1));
 		if (key == kFixGameBugs) {
 			parse_bool(value, settings.fix_game_bugs);
+		} else if (key == kTooltips) {
+			parse_bool(value, settings.tooltips);
 		} else if (key == kLanguage && (value == "es" || value == "en")) {
 			settings.spanish = value == "es";
 		} else if (key == kFirstName) {
@@ -134,6 +137,8 @@ bool save_settings(const std::string& path, const AppSettings& settings) {
 	std::fprintf(file, "%s = %d\n", kFixGameBugs, settings.fix_game_bugs ? 1 : 0);
 	std::fprintf(file, "# language: es (Spanish) or en (English)\n");
 	std::fprintf(file, "%s = %s\n", kLanguage, settings.spanish ? "es" : "en");
+	std::fprintf(file, "# tooltips: 1 shows the buttons' tooltips under a finger held on them (the options' «Tooltips»)\n");
+	std::fprintf(file, "%s = %d\n", kTooltips, settings.tooltips ? 1 : 0);
 	const p3::data::NewGameChoices& g = settings.new_game;
 	std::fprintf(file, "# the new game window's last choices\n");
 	std::fprintf(file, "%s = %s\n", kFirstName, p3::data::latin1_to_utf8(g.first_name).c_str());

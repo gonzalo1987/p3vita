@@ -336,6 +336,31 @@ void GameWindowArt::ensure_common() {
 	}
 }
 
+// (A pixel or so narrower than ttffonts.ini's width, as the others: 0.93 to 0.95 of the face on the game's screen.)
+static void load_screen_fonts(SDL_Renderer* renderer, const p3::data::CprArchive& archive,
+	std::unique_ptr<TextRenderer>& label, std::unique_ptr<TextRenderer>& title) {
+	if (auto font = p3::data::FontAtlas::load_em(archive, "fonts/Tiepolo_bold.ttf", 21, 23)) {
+		label = std::make_unique<TextRenderer>(renderer, std::move(font));
+		label->set_archive(&archive);
+	}
+	if (auto font = p3::data::FontAtlas::load_em(archive, "fonts/Elgreco_.ttf", 64, 63)) {
+		title = std::make_unique<TextRenderer>(renderer, std::move(font));
+	}
+}
+
+TextRenderer* GameWindowArt::screen_label_text() {
+	if (!screen_fonts_) {
+		screen_fonts_ = true;
+		load_screen_fonts(renderer_, archive_, screen_label_, screen_title_);
+	}
+	return screen_label_.get();
+}
+
+TextRenderer* GameWindowArt::screen_title_text() {
+	screen_label_text();
+	return screen_title_.get();
+}
+
 void GameWindowArt::load_interior() {
 	const std::string section = "Anim" + std::to_string(interior_);
 	const int id = std::atoi(ini_value(animation_ini_, section, "BGID").c_str());

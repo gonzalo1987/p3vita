@@ -164,6 +164,10 @@ public:
 		ensure_common();
 		return info_.get();
 	}
+	// The game's fonts of its full screens (options.ini's pages): font 4 (Tiepolo bold, 22 × 23: the options' labels)
+	// and font 5 (Elgreco, 68 × 63: their titles), read the first time one is asked for; null without them.
+	TextRenderer* screen_label_text();
+	TextRenderer* screen_title_text();
 
 	// The interior's animations ([Anim k] of animation.ini: AnimN the TEX with its frames, AnimNX/Y its place on the
 	// picture, AnimNTime the loop's ms, AnimNFrames; as many as its Animations, 0x46563E: the office's lists five but
@@ -336,6 +340,9 @@ private:
 	std::unique_ptr<TextRenderer> page_;
 	std::unique_ptr<TextRenderer> head_;
 	std::unique_ptr<TextRenderer> info_;
+	std::unique_ptr<TextRenderer> screen_label_;
+	std::unique_ptr<TextRenderer> screen_title_;
+	bool screen_fonts_ = false;
 };
 
 }  // namespace p3::app
