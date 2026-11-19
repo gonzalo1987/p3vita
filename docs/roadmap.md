@@ -407,6 +407,25 @@ Cada pantalla se adapta a la Vita y se comprueba a ojo frente al juego original 
 gráficos y sus textos; las reglas de lo que enseña y las órdenes que encola, contra el juego como siempre. Las normas
 del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo en «Decisiones del usuario».
 
+- [ ] **Las ventanas que siguen siendo del visor** (19-11-2026: el usuario vio la de comerciar, «no guarda la estética
+  del resto», y pidió rehacerlas como las del juego; inventario en `re/emu/sesion45/README.md`, capturas
+  `re/emu/sesion31/shots/v1..v8.png`). Con su recuadro oscuro y la letra del visor:
+  - [ ] **La ventana de comerciar** (el mercado desde una grúa o X sin edificio en medio, y «Comerciar» de la oficina:
+    `draw_market`, `draw_office_market`; sus modos barco, oficina, convoy, la cantidad «Izq./Der.»): la del juego es
+    0x4A8CF0 (sus modos [+0xF0], los lados 0x4AA9D0, 0x4AA7C0, 0x4AA4A0).
+  - [ ] **El menú de Start** del visor (continuar, buzón, guardar, cargar, opciones, menú principal, salir) con sus
+    pantallas de **guardar y cargar partida** y de **opciones**: en el juego, la ventana de opciones del icono del
+    engranaje del panel (guardar, cargar, opciones, salir).
+  - [ ] **Las ventanas de una batalla**: la pregunta («Ataque sobre la ciudad», «Dirigir manualmente», «Que luche el
+    ordenador»), la del icono de una batalla en el mapa del mar y la de dejarla (`draw_choice_box`), y los mensajes de
+    las batallas (`draw_message_window`): en el juego, la ventana de las batallas *0x6CBB10 (0x611FC0, 0x41D9B0).
+  - [ ] **Los avisos** de arriba a la izquierda («El Hyphen está siendo atacado», «Información comercial: Factura») y
+    **el nombre del edificio señalado** («Ayuntamiento»): como las líneas de aviso y la ayuda emergente del juego.
+  - [ ] **El pie del mapa del mar** («barco: en el puerto de...», «L/R: velocidad del juego»): del visor, sin igual en el
+    juego.
+  - [ ] **El buzón a pantalla completa** (sin panel: en una batalla, desde el menú de Start) y sus respuestas
+    (`draw_letter_answers`); y el aviso «Cargando la batalla...».
+  - (La ventana del final, `draw_end_window`, va con el final de la partida.)
 - [ ] **Las vistas de dentro de los edificios** (lo pidió el usuario el 05-11-2026; en marcha desde el 13-11-2026 con
   el encargo de las vistas, acabado el 14-11-2026, después con `ENCARGO_GRUPO5_VISOR_2.md` y `ENCARGO_VISTAS_RESTOS.md` (acabados el 15-11-2026); lo leído del juego,
   en `re/emu/sesion31/views_notes.md`, y las fotos de la

@@ -25418,9 +25418,15 @@ int main(int argc, char** argv) {
 						  tr("Select: pestaña   " BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar",
 							  "Select: tab   " BTN_SQUARE " delete   " BTN_CIRCLE " close"),
 						  tr(BTN_SQUARE " borrar   " BTN_CIRCLE " cerrar", BTN_SQUARE " delete   " BTN_CIRCLE " close")};
-			} else if (trading || place.open != Place::None) {
-				const std::string money = format_money(save.merchants[size_t(save.player)].money()) + tr(" monedas", " coins");
-				right_texts = {merchant_name(save, names, save.player) + ": " + money, money};
+			} else if (trading) {
+				// The market window says its keys (its header: L/R, Circle); the money is at the bar's coin.
+			} else if (place.open != Place::None) {
+				// A building's window: its buttons say their keys; Circle leaves it (from a tavern's person or the
+				// lender's interest, back first). The money is at the bar's coin (the viewer's old bar showed it here).
+				const bool back = (place.open == Place::Tavern && place.inside) ||
+					(place.open == Place::Lender && place.lender_interest);
+				right_texts = {back ? tr(BTN_CIRCLE " volver", BTN_CIRCLE " back")
+									: tr(BTN_CIRCLE " salir", BTN_CIRCLE " leave")};
 			} else if (at_sea) {
 				right_texts = {tr("L/R: velocidad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar   " BTN_CIRCLE " buzón",
 								   "L/R: speed   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter   " BTN_CIRCLE " mailbox"),
