@@ -5775,6 +5775,33 @@ def mission_branches(o):
                     18: towns + 2, 19: 0x83, 30: player}, 7)
 
 
+def mission_ships_money(o):
+    """The free game's handlers on money, ships and letters, each script of its own (mission_script) in its own tick:
+    0xF8 (the player's money up and down); 0xF9, 0xE9 and 0xE7 (the operation 0x82 queued, d −1); 0xE8 (the player's
+    ticker line 0x26); 0xF1 (extra loads: two in, one out, five out with fewer there, two hundred with no room); 0xF2
+    ([+0x157] +5, then +200 past 0x7F); 0xF3 ([+0x3F]); 0xF4 (barrels and loads in, out, all out, more than the room);
+    0xF6 (the treasure map's letters 0x45 and 0x46 to the player). On the player's first ship."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    ship = merchant_ships(o, player)[0]
+    print(f'player {player}, ship {ship}: state {o.u16(o.ship(ship) + 0x134):#x}, loads {o.u8(o.ship(ship) + 0x156)}, '
+          f'[+0x157] {o.u8(o.ship(ship) + 0x157)}, capacity {o.s32(o.ship(ship) + 0x10)}, '
+          f'used {o.s32(o.ship(ship) + 0x118)}, equipment {o.s32(o.ship(ship) + 0x11C)}')
+    mission_script(o, p2m([bytes([0xF8, 1, 2]), bytes([0xF8, 1, 3]), bytes([0xF9, 4, 5, 6, 7]),
+                           bytes([0xE9, 4, 5, 6, 8]), bytes([0xE7, 4, 9, 6, 10]), bytes([0xE8, 1]), WAIT]),
+                   {1: player, 2: 5000, 3: -3000, 4: 0x0305, 5: player, 6: 7, 7: 1, 8: 2, 9: 3, 10: 4}, 1)
+    # (In and out in two scripts: taking out more than there are recalculates the hold, which hides 0x518640's sum.)
+    mission_script(o, p2m([bytes([0xF1, 1, 2, 3]), bytes([0xF1, 1, 13, 14]), bytes([0xF1, 1, 8, 9]),
+                           bytes([0xF2, 1, 10]), bytes([0xF2, 1, 11]), bytes([0xF3, 1, 12]), WAIT]),
+                   {1: ship, 2: 2, 8: 200, 10: 5, 11: 200, 12: 7, 13: 1}, 2)
+    mission_script(o, p2m([bytes([0xF1, 1, 4, 5]), bytes([0xF1, 1, 6, 7]), WAIT]), {1: ship, 4: -1, 6: -5}, 5)
+    mission_script(o, p2m([bytes([0xF1, 1, 2, 3]), bytes([0xF4, 1, 4, 5]), bytes([0xF4, 1, 6, 7]),
+                           bytes([0xF4, 1, 6, 8]), bytes([0xF4, 1, 4, 9]), bytes([0xF4, 1, 6, 10]), WAIT]),
+                   {1: ship, 2: 2, 4: 3, 5: 5, 6: 0, 7: 3, 8: -2, 9: -1000, 10: 100000}, 3)
+    mission_script(o, p2m([bytes([0xF6, 1, 2, 3, 4, 5]), bytes([0xF6, 6, 2, 3, 4, 7]), WAIT]),
+                   {1: 5, 2: player, 3: 0x1234, 4: o.u8(o.merchant(player) + 0x19), 5: 0, 6: 99, 7: 1}, 4)
+
+
 def hanse_dev_candidacy(o):
     """0x45 (0x535FA4: standing for mayor, [+0x118]) for the player with 0, 1 and 7, an AI merchant (always 1) and a
     merchant past; 0x4A (0x53B1F0, events_rare.cpp: the Hanse tasks window's developers' tools) on events 0x30 made by
@@ -14868,6 +14895,10 @@ SCENARIOS = {
         '@4eed2d', '@533353', '@4f1637', '@4f1c3d', '@4f1c1a', '@4f1c15', '@4f1c13>4f1c5f', '@4ef8a9', '@4ef952',
         '@4ef98c', '@4ef9c4', '@4f13a5', '@4f13b2', '@4f13c9', '@4f13e9', '@4f13d3', '@4f1404', '@4ede69',
         '@4edcf6>4ede88', '@4edeaa', '@4ededa'], missions=True),
+    'mission_ships_money': Scenario(mission_ships_money, [0x4D85C0], 1, [
+        '@4ed20d', '@4ed153', '@4ed160', '@4ed1f4', '@4ed0c6', '@4ee1fc', '@4ee22e', '@51868c', '@518694',
+        '@51872b', '@518705', '@4ee1c3', '@4f37a8', '@4ee196', '@4ee0f5', '@4ee0ff', '@4ee112', '@4ee11b',
+        '@4edfed'], missions=True),
     'hanse_dev_candidacy': Scenario(hanse_dev_candidacy, [0x535760], 0, [
         '@4f9397', '@4f93a4', '@535fb2>537025', '@53b247', '@53b283', '@53b24e>53b28a', '@53b255>53b28a',
         '@53b259>53b28a', '@53b281>53b28a', '@53b26c>53b28a', '@53b29e', '@53b2b0', '@53b2ae>53b2b8', '@53b34a',

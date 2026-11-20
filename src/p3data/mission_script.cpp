@@ -10,7 +10,9 @@
 // 0x38; the next human 0x3F; a first name 0x23, a family name 0x24; a way between towns 0x53; a wanderer's next town 0x29 (0x533210); a ship by its hull 0x40;
 // the mission letter 0xF7; the ware a town lacks 0x2F (0x51BEB0); the sieges' difficulty 0x35; a history event's window
 // 0x37 (the interface's); a town besieged 0x45; a sell price 0x4B; the walls' level 0x6B; a siege 0xFA (the operation
-// 0x8E). The handlers come in parts (roadmap, section 3; the order by what the saves run:
+// 0x8E); a merchant's money 0xF8; a pirate attack 0xF9, 0xE9, 0xE7 (the operation 0x82); a merchant's ticker line 0xE8;
+// a ship's extra loads 0xF1, its [+0x157] 0xF2, its [+0x3F] 0xF3, its cargo 0xF4; the treasure map's letter 0xF6. The
+// handlers come in parts (roadmap, section 3; the order by what the saves run:
 // re/emu/sesion47/opcount.sh); until then an instruction not rewritten ends the script as an unknown one does, and is
 // counted (unwritten_mission_ops).
 
@@ -27,6 +29,7 @@
 #include "p3data/missions.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
+#include "p3data/trade.hpp"
 #include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::missions_detail {
@@ -649,6 +652,180 @@ Step step(Run& r, uint8_t op) {
 		uint8_t bytes[0x14];
 		std::memcpy(bytes, op, sizeof(bytes));
 		tick::enqueue_operation(s, bytes, sizeof(bytes));
+		return Step::Next;
+	}
+	case 0xF8: {
+		// 0x4ED20D: the merchant a gets b (his money [+0x0], signed) and his accounts: b below 0 into his [+0x4BC] (as
+		// −b), else his [+0x4B8]. (A merchant past them: the game writes past the array.)
+		const uint32_t m = r.var(1);
+		if (m >= r.save.merchants.size()) {
+			return Step::Next;
+		}
+		MerchantMemory& mm = r.save.merchants[m].memory;
+		const int32_t amount = int32_t(r.var(2));
+		mm.s32(0x0) = int32_t(uint32_t(mm.s32(0x0)) + uint32_t(amount));
+		if (amount < 0) {
+			mm.s32(0x4BC) = int32_t(uint32_t(mm.s32(0x4BC)) - uint32_t(amount));
+		} else {
+			mm.s32(0x4B8) = int32_t(uint32_t(mm.s32(0x4B8)) + uint32_t(amount));
+		}
+		return Step::Next;
+	}
+	case 0xE7:
+	case 0xE9:
+	case 0xF9: {
+		// 0x4ED125 (the three): unless the session's state ([0x6DF31C], 0x4F3690) is set, the operation 0x82 (a pirate
+		// attack for the mission, queued: 0x54AA70) {[+0x4] u16 the variable b (0xE9: 0xFFFF), [+0x6] the variable a's
+		// second byte, [+0x7] its low byte, [+0x8] u16 the event being run (the event list's [+0x8]), [+0xA] the
+		// variable d's number (the operation writes the result there), [+0xB] the variable c, [+0xC] the variable b
+		// for 0xE9 (else 0xFF), [+0xD] 1 for 0xE7}; then, either way, d ← −1.
+		SaveGame& s = r.save;
+		if (s.globals.u32(0x6DF31C) == 0) {
+			uint8_t op82[0x14] = {0x82, 0, 0, 0};  // (0x535740 leaves the rest 0.)
+			const uint16_t b = op == 0xE9 ? 0xFFFF : uint16_t(r.var(2));
+			std::memcpy(op82 + 4, &b, 2);
+			op82[6] = uint8_t(r.var(1) >> 8);
+			op82[7] = uint8_t(r.var(1));
+			const uint16_t event = s.globals.u16(0x6DD744);
+			std::memcpy(op82 + 8, &event, 2);
+			op82[0xA] = r.b(4);
+			op82[0xB] = uint8_t(r.var(3));
+			op82[0xC] = op == 0xE9 ? uint8_t(r.var(2)) : 0xFF;
+			op82[0xD] = op == 0xE7 ? 1 : 0;
+			tick::enqueue_operation(s, op82, sizeof(op82));
+		}
+		r.var(4) = 0xFFFFFFFFu;
+		return Step::Next;
+	}
+	case 0xE8: {
+		// 0x4ED086: the merchant v (as a u16) told: the ticker line 0x26 with his home town (0x548CA0) and his window
+		// (*0x6CC7E8: 0x469380, 0x469AF0 with 0x1D, the interface's). A merchant past the count: the game jumps back
+		// to the same instruction (0x4F2C97 without a step) and hangs there, a game bug (the roadmap's list); p3vita
+		// ends the script.
+		SaveGame& s = r.save;
+		const uint16_t m = uint16_t(r.var(1));
+		if (m >= s.globals.u16(global::kWorldMerchantCount) || m >= s.merchants.size()) {
+			return Step::End;
+		}
+		send_ticker(s, m, 0x26, s.merchants[m].memory.u8(0x19));
+		return Step::Next;
+	}
+	case 0xF1: {
+		// 0x4EE1CD: the ship a's extra loads ([+0x156], loads that aren't wares) by b: with b above 0, c ← 0x518640 (1
+		// if the room is there: the capacity [+0x10] − its loads · 2000 − [+0x11C] − [+0x118] at least b · 2000; then
+		// [+0x156] += b and [+0x118] += its new loads · 2000 — the new count, not b: it looks like a game bug, the hold
+		// recalculated later puts it right — and 0x517770 with 4; else 0); otherwise 0x5186D0 with −b's low byte (the
+		// loads down by it, to 0 if fewer, and [+0x118] − the loads left · 2000, or recalculated (0x5182B0) when it
+		// isn't above the loads taken · 2000; then 0x517770 with 4). (A ship past them: the game reads past the array.)
+		SaveGame& s = r.save;
+		const uint32_t ship = r.var(1);
+		if (ship >= s.ships.size()) {
+			return Step::Next;
+		}
+		ShipMemory& m = s.ships[ship].memory;
+		const int32_t by = int32_t(r.var(2));
+		if (by > 0) {
+			const uint8_t n = uint8_t(by);
+			const int32_t room = int32_t(uint32_t(m.s32(0x10)) - uint32_t(m.u8(0x156)) * 2000u - uint32_t(m.s32(0x11C)) -
+				uint32_t(m.s32(0x118)));
+			uint8_t done = 0;
+			if (room >= int32_t(uint32_t(n) * 2000u)) {
+				m.u8(0x156) = uint8_t(m.u8(0x156) + n);
+				m.s32(0x118) = int32_t(uint32_t(m.u8(0x156)) * 2000u + uint32_t(m.s32(0x118)));
+				tick::ship_ai_detail::fn_517770(s, int(ship), 4);
+				done = 1;
+			}
+			r.var(3) = done;
+		} else {
+			const uint8_t n = uint8_t(-int8_t(uint8_t(by)));
+			const uint8_t loads = m.u8(0x156);
+			if (loads < n) {
+				m.u8(0x156) = 0;
+				recalculate_cargo(s.ships[ship]);
+			} else {
+				m.u8(0x156) = uint8_t(loads - n);
+				if (m.s32(0x118) <= int32_t(uint32_t(n) * 2000u)) {
+					recalculate_cargo(s.ships[ship]);
+				} else {
+					m.s32(0x118) = int32_t(uint32_t(m.s32(0x118)) - uint32_t(m.u8(0x156)) * 2000u);
+				}
+			}
+			tick::ship_ai_detail::fn_517770(s, int(ship), 4);
+		}
+		return Step::Next;
+	}
+	case 0xF2: {
+		// 0x4EE1A2: the ship a's [+0x157] += b (a byte; 0 from 0x7F on), then 0x517770 with 4 (0x4F3790). (A ship past
+		// them: the game reads past the array.)
+		SaveGame& s = r.save;
+		const uint32_t ship = r.var(1);
+		if (ship >= s.ships.size()) {
+			return Step::Next;
+		}
+		ShipMemory& m = s.ships[ship].memory;
+		m.u8(0x157) = uint8_t(m.u8(0x157) + uint8_t(r.var(2)));
+		if (m.u8(0x157) >= 0x7F) {
+			m.u8(0x157) = 0;
+		}
+		tick::ship_ai_detail::fn_517770(s, int(ship), 4);
+		return Step::Next;
+	}
+	case 0xF3: {
+		// 0x4EE155: the ship a, unless lost (the state 0x11): [+0x3F] ← b's low byte and [+0x3D] |= 2. (A ship past them:
+		// the game reads past the array.)
+		const uint32_t ship = r.var(1);
+		if (ship < r.save.ships.size() && r.save.ships[ship].memory.u16(0x134) != 0x11) {
+			ShipMemory& m = r.save.ships[ship].memory;
+			m.u8(0x3F) = uint8_t(r.var(2));
+			m.u8(0x3D) |= 2;
+		}
+		return Step::Next;
+	}
+	case 0xF4: {
+		// 0x4EE08A: c loads of the ware b (×2000; ×200 in barrels, 0x672C14) into the ship a's hold ([+0x54 + 4 ·
+		// ware]): a negative c takes them out (the hold to 0 if it has fewer); a positive one at most the room
+		// (0x5182B0), rounded down to whole loads or barrels (a signed remainder; a negative room takes out). Then
+		// 0x5182B0 and 0x517770 with 4. (A ship or ware past theirs: the game reads past them.)
+		static constexpr uint8_t kBarrels[kWareCount] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};
+		SaveGame& s = r.save;
+		const uint32_t ship = r.var(1);
+		const uint32_t ware = r.var(2);
+		if (ship >= s.ships.size() || ware >= uint32_t(kWareCount)) {
+			return Step::Next;
+		}
+		SavedShip& sh = s.ships[ship];
+		const int32_t unit = kBarrels[ware] ? 200 : 2000;
+		int32_t amount = int32_t(r.var(3) * uint32_t(unit));
+		int32_t& cargo = sh.memory.s32(0x54 + 4 * ware);
+		if (amount < 0) {
+			cargo = cargo < int32_t(0u - uint32_t(amount)) ? 0 : int32_t(uint32_t(amount) + uint32_t(cargo));
+		} else {
+			const int32_t room = recalculate_cargo(sh);
+			if (room < amount) {
+				amount = recalculate_cargo(sh);
+			}
+			amount -= amount % unit;
+			cargo = int32_t(uint32_t(cargo) + uint32_t(amount));
+		}
+		recalculate_cargo(sh);
+		tick::ship_ai_detail::fn_517770(s, int(ship), 4);
+		return Step::Next;
+	}
+	case 0xF6: {
+		// 0x4EDF3F: a letter of the treasure map to the merchant b: its type 0x45 + (e & 1) (a piece or the map), [+0x5]
+		// the variable d's low byte, [+0x8] 0, [+0xA] the variable c, [+0xC] and [+0xE] the treasure spot a's x and y
+		// (0x672340: u16 of the u32s; past the 100 the game reads the tables after it: here 0). Then the next section
+		// (the handler steps [+0x14] itself and takes the jump's way, 0x4F2C97).
+		Letter letter(uint8_t(0x45 + (r.var(5) & 1)));
+		letter.entry.u8(5) = uint8_t(r.var(4));
+		letter.entry.u16(8) = 0;
+		letter.entry.u16(0xA) = uint16_t(r.var(3));
+		uint16_t x = 0;
+		uint16_t y = 0;
+		treasure_spot(r.var(1), x, y);
+		letter.entry.u16(0xC) = x;
+		letter.entry.u16(0xE) = y;
+		send_letter(r.save, int32_t(r.var(2)), letter);
 		return Step::Next;
 	}
 	default:

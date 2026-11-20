@@ -71,6 +71,9 @@ void delete_letter(SaveGame& save, int32_t merchant, uint32_t entry);
 // by `merchant` (below the count): in his chain (from his [+0xA], at most the mailbox's count of steps) a letter 0x45
 // for that spot ([+0xC], [+0xE]) goes to the free list with its type 0xFF, a letter 0x46 for it gets [+0xB] |= 0xFE.
 void treasure_found(SaveGame& save, uint32_t merchant, uint32_t spot);
+// The treasure spot `spot`'s place (the game's 100 spots, u32 x and y: 0x671FD0, the same at 0x672340); false past
+// them.
+bool treasure_spot(uint32_t spot, uint16_t& x, uint16_t& y);
 
 // 0x4D6780 (on the mailbox): removes a merchant's letters kept longer than
 // their class's setting allows (town_tick/events_towns.cpp, fn_4d6780). The

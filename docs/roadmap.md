@@ -386,13 +386,16 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   `mission_start` (la 0xC0 en todos los modos), la partida nueva entera con la 0xC0, las partidas escritas, ctest
   `missions`. Hasta que estén sus instrucciones, un guion termina en la primera que no está (como antes, que se
   tiraban), y el oráculo y las comprobaciones de siempre siguen sin las misiones.
-- [ ] **Las instrucciones del intérprete**: 45 de las 138 con manejador (tabla en formats/missions.md, con cuántas
+- [ ] **Las instrucciones del intérprete**: 55 de las 138 con manejador (tabla en formats/missions.md, con cuántas
   misiones usan cada una). Hechas (20-11-2026, `re/emu/sesion47/README.md` y `re/emu/sesion48/README.md`): 0x04..0x07,
   0x09..0x0E, 0x11, 0x12, 0x15, 0x17..0x1E, 0x20, 0x21, 0x23, 0x24, 0x26/0x27, 0x29 (con 0x533210, la ciudad más
   cercana), 0x2F (la mercancía que más le falta a una ciudad, 0x51BEB0), 0x35, 0x37 (la ventana de un suceso
   histórico: de la interfaz, para el visor), 0x38, 0x39, 0x3F, 0x40, 0x43, 0x44, 0x45, 0x4B (un precio de venta), 0x4F,
   0x53, 0x6B (el nivel de la muralla), 0xF0 (un tesoro encontrado: `treasure_found`, 0x4D7030), 0xF7 (la carta de
-  misión, con su texto y sus códigos «%»: `mission_letter_text`) y 0xFA (un asedio: encola la 0x8E). **Comprobado: el
+  misión, con su texto y sus códigos «%»: `mission_letter_text`), 0xFA (un asedio: encola la 0x8E), 0xF8 (dinero a
+  un comerciante), 0xF9/0xE9/0xE7 (encolan la 0x82, el ataque pirata de una misión), 0xE8 (la línea de noticias de un
+  comerciante), 0xF1..0xF4 (las cargas que no son mercancía de un barco, su [+0x157], su [+0x3F], su carga) y 0xF6 (la
+  carta del mapa del tesoro, 0x45 o 0x46). **Comprobado: el
   mundo entero 30 días con las misiones igual al juego en las 12 partidas**, llamada a llamada
   (`re/emu/sesion48/worldmd.sh`, por tramos), y la cola de eventos y las operaciones 60 días (igual salvo una
   diferencia de las batallas en la partida 4 que sale también sin las misiones: apartado 2); 7 días también en continuo
@@ -400,9 +403,10 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   ejecutan las partidas en 60 días (`opcount.sh`). Las ramas a las que no llegan las partidas, con guiones propios
   en un estado retocado (`retouch_unchecked.py mission_branches`, partidas 3, 5 y 7: 0x07, 0x26 con todos los
   humanos, 0x27, el paso errante de 0x29, los modos de 0x40 y 0x4F, 0x44 con varias oficinas, las ramas de 0xF7 y
-  todos los códigos «%» de sus cartas): iguales (`docs/oracle.md`). Siguen: las otras 36 de la partida de un jugador
-  con estados retocados, luego las 10 más de la partida en red, las 28 de las campañas y las 19 que no usa ningún
-  fichero. Cuando estén todas, el oráculo con las misiones por omisión (y `world.sh` con ellas).
+  todos los códigos «%» de sus cartas; `mission_ships_money`, partidas 1, 3, 5 y 7: las diez nuevas con sus
+  ramas): iguales (`docs/oracle.md`). Siguen: las otras 27 de la partida de un jugador con estados retocados, luego
+  las 10 más de la partida en red, las 27 de las campañas y las 19 que no usa ningún fichero. Cuando estén todas, el
+  oráculo con las misiones por omisión (y `world.sh` con ellas).
 - [ ] **Lo que cuelga del intérprete**: el evento 0x09 (0x4E2824, las cartas de buena y mala cosecha), sus cartas (tres
   que compone el guion con los textos del `.p2m`, la del mapa 0x46 o 0x45, la 0x22), las operaciones que encola (0x1B,
   0x28, 0x4E, 0x7C, 0x7D, 0x82; la 0x8E de 0xFA, hecha) y la carta final 0x3D del evento 0x34 (0x4F3AF0, con su lista
@@ -1060,6 +1064,13 @@ ser a propósito. El detalle, en el comentario del código y en [oracle.md](orac
   mercancía]) en vez de la de la empresa que la produce (lee ese tipo de 0x672C88 y no lo usa; la rama del aceite de
   ballena queda muerta), como sí hace la lonja (0x5DE3xx). Cambia qué mercancía pide la misión 6 (y su cantidad):
   preguntar antes de corregirlo.
+- **La instrucción 0xE8 con un comerciante que no existe** (0x4ED086; 20-11-2026, seguro, leído en el código): salta a
+  la misma instrucción sin avanzar (0x4F2C97) y el juego se queda colgado. p3vita termina el guion. Ninguna misión del
+  juego le da un comerciante fuera de la cuenta.
+- **Las cargas que no son mercancía de un barco** (0x518640 y 0x5186D0, las usa la instrucción 0xF1; 20-11-2026,
+  parece): al subirlas, la bodega ocupada [+0x118] suma las cargas nuevas · 2000, no las añadidas; al bajarlas, resta
+  las que quedan, no las quitadas. Solo se nota si ya había cargas al subir o si quedan al bajar, y se arregla en el
+  siguiente recálculo de la bodega (0x5182B0). Comprobado con el oráculo (`mission_ships_money`).
 
 **«El carabela»** (las frases del barco patrulla en español, 0x5E1F01; 15-11-2026, seguro, solo texto): el artículo va
 por el tipo de barco (0 y 2 «La», 1 y 3 «El») y la carabela es el tipo 1. Reproducido tal cual.

@@ -2742,7 +2742,7 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
 
 ## The mission interpreter's instructions (2026-11-20)
 
-45 of the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu/sesion48/README.md`).
+55 of the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu/sesion48/README.md`).
 - The oracle with the missions (`--misiones`): 0xF7's three calls of 0x4D6530 let through (`MAIL_CALLS`); 0xF7's
   ticker line to the player jumps over the messages window (0x4EDF27 → 0x4EDF31, `EVENT_JUMPS`: 0x47D1F0 on 0x6CC960,
   the interface's); a new region **MP** (each event 0x1B whose program no entry of the list has: u16 event, u32 size,
@@ -2762,6 +2762,12 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
   twice and «%K» (the tavern) was empty in tick_probe; «%8» and «%9» read past the 16 words of 0x6C3040 (the game
   crashes; none of its letters uses them). Broken on purpose (0x533210's turn modulo 2, 0xF7's record [+0xA] + 2):
   caught.
+- The free game's handlers on money, ships and letters, `retouch_unchecked.py mission_ships_money` (0xF8; 0xF9, 0xE9
+  and 0xE7 queueing the operation 0x82; 0xE8's ticker line; 0xF1's extra loads in and out, with and without room;
+  0xF2; 0xF3; 0xF4's cargo in, out, all out and past the room; 0xF6's letters 0x45 and 0x46, whose call of 0x4D6530,
+  0x4EDFED, the oracle lets through now): saves 1, 3, 5, 7, 256 calls equal each, 19 of 19 targets. Broken on purpose
+  (0xF8's accounts, 0x518640's sum with the new loads): caught once the loads went in twice in a script without
+  taking more out than there are (that recalculates the hold).
 
 ## The game's static initializers (2026-11-03)
 

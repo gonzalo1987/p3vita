@@ -554,6 +554,8 @@ MAIL_CALLS += (
     # The mission interpreter's letter, its instruction 0xF7 (0x4ED4A0, mission_script.cpp): to the owners of a town's
     # offices (a dead branch: the memset before it), to each human merchant, or to the addressee as it is.
     0x4EDDEB, 0x4EDE69, 0x4EDEAA,
+    # Its 0xF6 (0x4EDF3F): the treasure map's letter 0x45 or 0x46.
+    0x4EDFED,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is
