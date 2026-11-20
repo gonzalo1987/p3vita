@@ -63,6 +63,7 @@ add_library(p3data STATIC
 	lz_compress.cpp
 	seamap.cpp
 	simulation.cpp
+	sound.cpp
 	town.cpp
 	town_buildings.cpp
 	thresholds.cpp
@@ -100,7 +101,7 @@ add_library(p3data STATIC
 )
 
 target_include_directories(p3data PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(p3data PRIVATE stb_image stb_truetype)
+target_link_libraries(p3data PRIVATE stb_image stb_truetype dr_mp3)
 target_compile_options(p3data PRIVATE -Wall -Wextra)
 # Los precios reproducen bit a bit las cuentas en coma flotante del juego:
 # sin fusionar multiplicaciones y sumas, que cambiarían los redondeos.

@@ -20,6 +20,12 @@ struct AppSettings {
 	bool spanish = true;
 	// The game's options' «Tooltips» (P2.CFG [OPTIONS] TOOLTIPS): the buttons' tooltips under a finger held on them.
 	bool tooltips = true;
+	// The game's options' «Music volume» and «Sound volume» (P2.CFG [OPTIONS] LSMUSIK and LSSOUND, 0..127; their
+	// defaults without P2.CFG, 0x45CF8A: 80 % of options.ini's [SCREEN0] «Musik» 60, and 80) and «Invert stereo»
+	// (SWAPSPEAKER: the sound effects' left and right swapped).
+	int music_volume = 48;
+	int sound_volume = 80;
+	bool swap_stereo = false;
 	// The new game window's last choices (the game keeps them in P2.CFG
 	// [SPIELEINST], new_game.hpp), with the game's defaults; read back with
 	// P2.CFG's limits (clamp_new_game_choices).

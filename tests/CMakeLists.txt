@@ -189,3 +189,9 @@ target_link_libraries(missions_test PRIVATE p3data)
 target_compile_options(missions_test PRIVATE -Wall -Wextra)
 
 add_test(NAME missions COMMAND missions_test)
+
+add_executable(sound_test sound_test.cpp)
+target_link_libraries(sound_test PRIVATE p3data)
+target_compile_options(sound_test PRIVATE -Wall -Wextra)
+
+add_test(NAME sound COMMAND sound_test)

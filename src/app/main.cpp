@@ -59,12 +59,14 @@
 #include "p3data/savegame.hpp"
 #include "p3data/savegame_write.hpp"
 #include "p3data/seamap.hpp"
+#include "p3data/sound.hpp"
 #include "p3data/town.hpp"
 #include "p3data/town_buildings.hpp"
 #include "p3data/trade.hpp"
 #include "p3data/trade_route_window.hpp"
 #include "p3data/trade_routes.hpp"
 #include "p3data/wares.hpp"
+#include "audio.hpp"
 #include "battle_view.hpp"
 #include "debug_states.hpp"
 #include "game_window.hpp"
@@ -18359,8 +18361,11 @@ enum class MenuAsk { None, Overwrite, Delete, Quit };
 // over the first at 488. The Vita's screen is lower: the screen drawn at its size into a texture and fitted to the
 // height, in the middle (as the start screen's book).
 // Adapted: the game's first two rows (its screen's resolution and colours) are the viewer's language and its fixes of
-// the game's bugs; the rows the viewer doesn't do yet (details, weather, the volumes, stereo, the event videos, the
-// convoys' ships, autosave) show their value with their buttons off. The values chosen apply with «OK».
+// the game's bugs; the rows the viewer doesn't do yet (details, weather, the videos' volume, stereo, the event videos,
+// the convoys' ships, autosave) show their value with their buttons off. The values chosen apply with «OK». The music's
+// and the sound's volumes (0..127) are heard at once as they move, kept with «OK» and put back with «Cancel»: the ball
+// (27 × 25; lit, TEX18's frame 4) along the bar from 530 to 699; a tap on an end moves it by 8 (as ← and → of the pad),
+// on the bar puts it there, and a finger on the bar drags it.
 constexpr int kOptionsW = 800;
 constexpr int kOptionsH = 600;
 enum class OptionRow {
@@ -18387,8 +18392,8 @@ struct OptionPlace {
 	bool live;  // The viewer does it.
 };
 constexpr OptionPlace kOptionPlaces[kOptionRows] = {{110, OptionKind::Steps, true}, {142, OptionKind::Steps, true},
-	{174, OptionKind::Steps, false}, {206, OptionKind::Steps, false}, {242, OptionKind::Slider, false},
-	{272, OptionKind::Slider, false}, {302, OptionKind::Slider, false}, {329, OptionKind::Switch, false},
+	{174, OptionKind::Steps, false}, {206, OptionKind::Steps, false}, {242, OptionKind::Slider, true},
+	{272, OptionKind::Slider, true}, {302, OptionKind::Slider, false}, {329, OptionKind::Switch, false},
 	{365, OptionKind::Steps, true}, {397, OptionKind::Switch, false}, {429, OptionKind::Switch, true},
 	{461, OptionKind::Switch, false}, {493, OptionKind::Steps, false}};
 constexpr int kOptionLabelX = 494;
@@ -18396,13 +18401,21 @@ constexpr int kOptionValueX = 628;
 constexpr int kOptionLeftX = 510;
 constexpr int kOptionRightX = 718;
 constexpr int kOptionArrow = 29;  // 29 × 28
+// A slider: its left end (19 × 23), its bar (196 × 23) and its right end (17 × 23); its ball, 27 wide.
+constexpr int kSliderLeftX = 511;
+constexpr int kSliderBarX = 530;
+constexpr int kSliderBarW = 196;
+constexpr int kSliderRightX = 726;
+constexpr int kSliderBallW = 27;
+constexpr int kSliderStep = 8;  // An end's tap, the pad's ← or →.
 enum class OptionButton { Load, Save, Cancel, Ok, Quit, Count };
 constexpr SDL_Point kOptionButtonAt[int(OptionButton::Count)] = {{135, 544}, {294, 544}, {453, 544}, {614, 544},
 	{135, 488}};
 constexpr int kScreenButtonW = 149;
 constexpr int kScreenButtonH = 36;
 // The pad's stops on the screen: the live rows, then «Quit» and the bottom line's buttons.
-constexpr OptionRow kOptionLiveRows[] = {OptionRow::Language, OptionRow::Fixes, OptionRow::GameSpeed, OptionRow::Tooltips};
+constexpr OptionRow kOptionLiveRows[] = {OptionRow::Language, OptionRow::Fixes, OptionRow::MusicVolume,
+	OptionRow::SoundVolume, OptionRow::GameSpeed, OptionRow::Tooltips};
 constexpr int kOptionLiveCount = int(sizeof(kOptionLiveRows) / sizeof(kOptionLiveRows[0]));
 constexpr OptionButton kOptionStopButtons[] = {OptionButton::Quit, OptionButton::Load, OptionButton::Save,
 	OptionButton::Cancel, OptionButton::Ok};
@@ -18435,14 +18448,28 @@ struct MenuUi {
 	bool fixes = true;
 	bool tooltips = true;
 	int speed = 3;
+	int music = 48;  // 0..127
+	int sound = 80;
 
 	bool open() const { return screen != MenuScreen::Closed; }
 	bool slot_screen() const { return screen == MenuScreen::Save || screen == MenuScreen::Load; }
+	// A slider row's value (the music's or the sound's volume), or nullptr.
+	int* slider(OptionRow row) {
+		return row == OptionRow::MusicVolume ? &music : row == OptionRow::SoundVolume ? &sound : nullptr;
+	}
 };
 
 // Whether a bottom button can be pressed: «Save game» and «Quit» need a game.
 bool option_button_on(const MenuUi& menu, OptionButton b, bool game) {
 	return (b != OptionButton::Save && b != OptionButton::Quit) || (game && !menu.from_book);
+}
+
+// A slider's ball's left at a value (0..127), and the value at a point of the game's screen on its bar.
+int slider_ball_x(int value) {
+	return kSliderBarX + value * (kSliderBarW - kSliderBallW) / 127;
+}
+int slider_value_at(int x) {
+	return std::clamp((x - kSliderBarX - kSliderBallW / 2) * 127 / (kSliderBarW - kSliderBallW), 0, 127);
 }
 
 std::string option_label(OptionRow row) {
@@ -18532,8 +18559,13 @@ struct GameScreenLayout {
 	}
 };
 
+// A row's «−» and «+» (or ← and →), or a slider's ends.
 SDL_Rect option_arrow(OptionRow row, bool right) {
-	return {right ? kOptionRightX : kOptionLeftX, kOptionPlaces[int(row)].y, kOptionArrow, 28};
+	const int y = kOptionPlaces[int(row)].y;
+	if (kOptionPlaces[int(row)].kind == OptionKind::Slider) {
+		return right ? SDL_Rect{kSliderRightX, y, 17, 23} : SDL_Rect{kSliderLeftX, y, 19, 23};
+	}
+	return {right ? kOptionRightX : kOptionLeftX, y, kOptionArrow, 28};
 }
 
 SDL_Rect option_button(OptionButton b) {
@@ -18615,11 +18647,13 @@ void draw_options_screen(SDL_Renderer* renderer, TextRenderer& fallback, const M
 		const std::string l = option_label(row);
 		label.draw(l, kOptionLabelX - label.measure(l), p.y + 6, white);
 		if (p.kind == OptionKind::Slider) {
-			// No sound yet: the ball at its left, off.
-			gart.draw_tex(18, 2, 511, p.y, 0, 110);
-			gart.draw_tex(17, 0, 530, p.y, 0, 110);
-			gart.draw_tex(18, 3, 726, p.y, 0, 110);
-			gart.draw_tex(18, 1, 530, p.y - 1, 0, 110);
+			// The ball at its value, lit under the pad; the videos' volume (no videos yet) off at its left.
+			const int v = row == OptionRow::MusicVolume ? menu.music : row == OptionRow::SoundVolume ? menu.sound : 0;
+			const uint8_t alpha = p.live ? 255 : 110;
+			gart.draw_tex(18, 2, kSliderLeftX, p.y, 0, alpha);
+			gart.draw_tex(17, 0, kSliderBarX, p.y, 0, alpha);
+			gart.draw_tex(18, 3, kSliderRightX, p.y, 0, alpha);
+			gart.draw_tex(18, p.live && k == stop_row ? 4 : 1, slider_ball_x(v), p.y - 1, 0, alpha);
 			continue;
 		}
 		const int base = p.kind == OptionKind::Steps ? 3 : 11;  // −, + (7) or ←, → (15)
@@ -18943,6 +18977,34 @@ struct Options {
 	bool start_screen = false;  // The start screen also with --steps (it opens without --save otherwise).
 };
 
+// The folders where the game's loose files (its Musik folder) may be: the data folder (on the Vita
+// ux0:data/p3vita/), the one with --cpr and the viewer's data folders.
+std::vector<std::string> sound_roots(const Options& options, const std::string& data_dir) {
+	std::vector<std::string> roots;
+	if (!data_dir.empty()) {
+		roots.push_back(data_dir);
+	}
+	if (options.cpr) {
+		const std::string cpr = options.cpr;
+		const size_t slash = cpr.find_last_of("/\\");
+		roots.push_back(slash == std::string::npos ? "" : cpr.substr(0, slash + 1));
+	}
+	for (const char* dir : kDataDirs) {
+		roots.push_back(dir);
+	}
+	return roots;
+}
+
+// scripts/sound.ini of the archive (the music and the sound effects), or nothing.
+SoundIni read_sound_ini(const CprArchive& archive) {
+	std::vector<uint8_t> file;
+	const CprEntry* entry = archive.find("scripts/sound.ini");
+	if (!entry || !archive.read(*entry, file)) {
+		return {};
+	}
+	return parse_sound_ini(std::string_view(reinterpret_cast<const char*>(file.data()), file.size()));
+}
+
 void print_usage() {
 	std::printf(
 		"usage: p3vita [DATA_DIR] [--cpr FILE] [--steps STEPS] [--screenshot FILE.png]\n"
@@ -19108,6 +19170,15 @@ int main(int argc, char** argv) {
 	auto panel_art = std::make_unique<PanelArt>(renderer, *archive);
 	auto game_art = std::make_unique<GameWindowArt>(renderer, *archive);  // The buildings' windows (game_window.hpp).
 	g_game_art = game_art.get();
+	// The game's sound (audio.hpp): the music from the Musik folder in the data folder or beside the archive. Without
+	// an audio device it stays off, and in a scripted run too unless SDL_AUDIODRIVER names a driver.
+	const SoundIni sound_ini = read_sound_ini(*archive);
+	p3::app::GameSound sound;
+	if (!script || SDL_getenv("SDL_AUDIODRIVER")) {
+		sound.open(sound_roots(options, data_dir));
+	}
+	sound.set_volumes(settings.music_volume, settings.sound_volume);
+	bool menu_music = false;  // The main menu's music started (while the start screen is open).
 	SidePanel side;  // The side panel.
 	ShipListUi ship_list;  // The ship list window (its sort and columns kept while the viewer runs).
 	ConvoyWindowUi convoy_window;  // The game's convoy window («form convoy») over the view.
@@ -19863,13 +19934,19 @@ int main(int argc, char** argv) {
 		menu.fixes = settings.fix_game_bugs;
 		menu.tooltips = settings.tooltips;
 		menu.speed = game_speed;
+		menu.music = settings.music_volume;
+		menu.sound = settings.sound_volume;
 	};
 	const auto menu_game = [&]() { return has_save && save.player >= 0; };
-	// «OK»: the values chosen applied (the fixes, the tooltips and the speed at once, the language at the next frame).
+	// «OK»: the values chosen applied (the fixes, the tooltips, the speed and the volumes at once, the language at the
+	// next frame).
 	auto options_apply = [&]() {
-		if (menu.fixes != settings.fix_game_bugs || menu.tooltips != settings.tooltips) {
+		if (menu.fixes != settings.fix_game_bugs || menu.tooltips != settings.tooltips ||
+			menu.music != settings.music_volume || menu.sound != settings.sound_volume) {
 			settings.fix_game_bugs = menu.fixes;
 			settings.tooltips = menu.tooltips;
+			settings.music_volume = menu.music;
+			settings.sound_volume = menu.sound;
 			p3::data::set_fix_game_bugs(settings.fix_game_bugs);
 			g_tooltips = settings.tooltips;
 			if (!script && !p3::app::save_settings(settings_file, settings)) {
@@ -19899,9 +19976,40 @@ int main(int argc, char** argv) {
 			// very fast.
 			menu.speed = menu.speed > 5 ? (step < 0 ? 5 : menu.speed) : std::clamp(menu.speed + step, 0, 5);
 			break;
+		case OptionRow::MusicVolume:
+		case OptionRow::SoundVolume: {
+			int& v = *menu.slider(row);
+			v = std::clamp(v + step * kSliderStep, 0, 127);
+			break;
+		}
 		default:
 			break;
 		}
+	};
+	// A finger on a slider's bar of the options screen (at a screen point; `down`: it touches the screen, else it
+	// moves): the slider it took there goes to its value under the finger. Whether there is one.
+	int slider_taken = -1;  // That slider (kOptionLiveRows' index), or -1.
+	auto option_slide = [&](int x, int y, bool down) {
+		if (menu.screen != MenuScreen::Options || menu.ask != MenuAsk::None) {
+			slider_taken = -1;
+			return false;
+		}
+		const GameScreenLayout l;
+		if (down) {
+			slider_taken = -1;
+			for (int k = 0; k < kOptionLiveCount; ++k) {
+				const OptionRow row = kOptionLiveRows[k];
+				if (menu.slider(row) && l.on({kSliderBarX, kOptionPlaces[int(row)].y, kSliderBarW, 23}, x, y)) {
+					slider_taken = k;
+				}
+			}
+		}
+		if (slider_taken < 0) {
+			return false;
+		}
+		menu.stop = slider_taken;
+		*menu.slider(kOptionLiveRows[slider_taken]) = slider_value_at(l.game(x, y).x);
+		return true;
 	};
 	auto option_press = [&](OptionButton b) {
 		if (!option_button_on(menu, b, menu_game())) {
@@ -20142,6 +20250,9 @@ int main(int argc, char** argv) {
 						return;
 					}
 				}
+			}
+			if (option_slide(x, y, true)) {
+				return;
 			}
 			for (int b = 0; b < int(OptionButton::Count); ++b) {
 				if (l.on(option_button(OptionButton(b)), x, y)) {
@@ -21038,6 +21149,9 @@ int main(int argc, char** argv) {
 			case SDL_FINGERDOWN:
 				touch_start = {x, y};
 				touch_moved = 0;
+				if (menu.open()) {
+					option_slide(x, y, true);
+				}
 				if (!menu.open() && start_screen->entry_at(x, y) >= 0) {
 					start_lit = start_screen->entry_at(x, y);
 				}
@@ -21045,6 +21159,9 @@ int main(int argc, char** argv) {
 			case SDL_FINGERMOTION:
 				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
 					std::abs(int(event.tfinger.dy * kScreenHeight));
+				if (menu.open()) {
+					option_slide(x, y, false);
+				}
 				if (!menu.open() && start_screen->entry_at(x, y) >= 0) {
 					start_lit = start_screen->entry_at(x, y);
 				}
@@ -21099,6 +21216,24 @@ int main(int argc, char** argv) {
 			if (script->finished()) {
 				break;
 			}
+		}
+		{
+			// The sound: the volumes (the options screen's as they move), the main menu's music and the fades.
+			const bool options_shown = menu.screen == MenuScreen::Options;
+			sound.set_volumes(options_shown ? menu.music : settings.music_volume,
+				options_shown ? menu.sound : settings.sound_volume);
+			if (start_open && !menu_music) {
+				// The main menu shown (0x42F1F0; from a game the game stops its music first, 0x45FFD8): its music with a
+				// crossfade, again and again, even at the volume 0.
+				sound.stop_music();
+				sound.play_music(sound_ini.main_menu, 100, true, true, true);
+				menu_music = true;
+			} else if (!start_open && menu_music) {
+				// A game loaded or begun: every music stopped (0x460135; the game's own comes next, part 2).
+				sound.stop_music();
+				menu_music = false;
+			}
+			sound.update(app_ticks());
 		}
 		if (start_open) {
 			if (new_game_open && map_choice_open) {
@@ -24488,6 +24623,9 @@ int main(int argc, char** argv) {
 				touch_start = {int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight)};
 				touch_now = touch_start;
 				touch_moved = 0;
+				if (in_menu) {
+					option_slide(touch_start.x, touch_start.y, true);
+				}
 				touch_scroll = 0;
 				place_scroll_from = place.page_scroll;
 				finger_down = true;
@@ -24608,6 +24746,9 @@ int main(int argc, char** argv) {
 				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
 					std::abs(int(event.tfinger.dy * kScreenHeight));
 				touch_now = {int(event.tfinger.x * kScreenWidth), int(event.tfinger.y * kScreenHeight)};
+				if (in_menu && option_slide(touch_now.x, touch_now.y, false)) {
+					break;
+				}
 				if (screen_message || touch_on_convoy) {
 					break;  // Nothing moves under the game's message, nor under the convoy window.
 				}
@@ -26495,6 +26636,7 @@ int main(int argc, char** argv) {
 	if (controller) {
 		SDL_GameControllerClose(controller);
 	}
+	sound.close();
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
 	SDL_FreeSurface(screen);

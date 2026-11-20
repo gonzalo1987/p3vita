@@ -14,6 +14,9 @@ constexpr const char* kFileName = "p3vita-settings.txt";
 constexpr const char* kFixGameBugs = "fix_game_bugs";
 constexpr const char* kLanguage = "language";
 constexpr const char* kTooltips = "tooltips";
+constexpr const char* kMusicVolume = "music_volume";
+constexpr const char* kSoundVolume = "sound_volume";
+constexpr const char* kSwapStereo = "swap_stereo";
 // The new game window's choices, as P2.CFG's [SPIELEINST] keys (the names in UTF-8).
 constexpr const char* kFirstName = "new_game_first_name";
 constexpr const char* kFamilyName = "new_game_family_name";
@@ -87,6 +90,15 @@ AppSettings load_settings(const std::string& path) {
 			parse_bool(value, settings.fix_game_bugs);
 		} else if (key == kTooltips) {
 			parse_bool(value, settings.tooltips);
+		} else if (key == kMusicVolume || key == kSoundVolume) {
+			// 0..127; anything else leaves the default.
+			char* end = nullptr;
+			const long v = std::strtol(value.c_str(), &end, 10);
+			if (end != value.c_str() && v >= 0 && v <= 127) {
+				(key == kMusicVolume ? settings.music_volume : settings.sound_volume) = int(v);
+			}
+		} else if (key == kSwapStereo) {
+			parse_bool(value, settings.swap_stereo);
 		} else if (key == kLanguage && (value == "es" || value == "en")) {
 			settings.spanish = value == "es";
 		} else if (key == kFirstName) {

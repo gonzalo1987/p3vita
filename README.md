@@ -97,6 +97,10 @@ To try it on the console (with HENkaku or Enso):
    language, the viewer takes the texts it uses out of the exe and keeps them in
    a small file (`p3vita-texts-es.bin`, `p3vita-texts-en.bin`); afterwards it
    reads only that file.
+4. For the music, copy the game's `Musik` folder (76 MB; the same in every
+   version; its `Tutorial` folder isn't needed) to `ux0:data/p3vita/Musik/`.
+   Without it there is no music. (On the PC the viewer looks for it in the data
+   folder and beside the archive given with `--cpr`.)
 
 ## The viewer
 
@@ -108,8 +112,9 @@ minute) and the bar shows the date. The D-pad or the left stick move the camera,
 dragging a finger scrolls the map, L and R set the game's speed (slower, faster)
 and Start (or the panel's gear) opens the
 game's options screen: its settings (the first two the viewer's: the language,
-Spanish or English, and fixing the game's bugs; the game speed and the
-tooltips; the others not yet), «Load game» and «Save game» (the game's saved
+Spanish or English, and fixing the game's bugs; the music's and the sound's
+volumes, heard at once as their sliders move; the game speed and the tooltips;
+the others not yet), «Load game» and «Save game» (the game's saved
 games' screen: the saves by name, as the game's, in
 `ux0:data/p3vita/savegames/ein/`; Triangle writes the name), «Quit» (to the
 main menu), «Cancel» (Circle) and «OK» (Start); while it is open the game

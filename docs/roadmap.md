@@ -114,6 +114,9 @@ Cómo leerla:
   los guiones en curso con sus variables (antes se tiraban, en p3vita y en el oráculo) y el bucle del intérprete con sus
   esperas; comprobada contra el juego (la carga en las 12 partidas, la 0xC0 en todos los modos, la partida nueva
   entera). Faltan las 138 instrucciones del intérprete.
+- **Hecho el 20-11-2026 (en paralelo, a petición del usuario, `re/emu/sesion51/`)**: la base del sonido (apartado 5,
+  parte 1): el mezclador con el audio de SDL en el PC y en la Vita, la música MP3 del juego con sus fundidos, los
+  efectos WAV y el `sound.ini` leídos, los volúmenes de Música y Sonido de las Opciones y la música del menú principal.
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): acabados los restos
   de las pantallas (las preguntas del convoy, las sombras y la nieve, el panel lateral con las letras y los textos del
   juego), el intérprete de misiones (apartado 3: la base hecha; ahora sus instrucciones); luego el final de la partida
@@ -142,7 +145,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
-| Sonido, música y vídeos | nada | todo (apartado 5) |
+| Sonido, música y vídeos (20-11-2026) | la base: el mezclador (PC y Vita), los 123 MP3 y los 178 WAV del juego leídos, el `sound.ini`, los volúmenes de las Opciones y la música del menú principal | la música en la partida, todos los efectos (interfaz, ciudad, mar, batallas, asedio) y los vídeos (apartado 5) |
 | Jugar en red con el juego de PC | el motor idéntico, que es la base | todo lo demás (apartado 8) |
 
 ### La medida del código de la simulación
@@ -871,12 +874,36 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
 
 ### 5. Sonido, música y vídeos
 
-- [ ] El audio con SDL2 en el PC y en la Vita: no hay nada. Los sonidos y la música del juego (formatos por leer; MP3).
+Lo que hay y cómo lo decide el juego: [formats/sound.md](formats/sound.md). Por partes (plan del 20-11-2026):
+
+- [x] **Parte 1, la base** (20-11-2026, `re/emu/sesion51/`): el objeto de sonido del juego (*0x6CBDB8) sobre el audio
+  de SDL (`src/app/audio.hpp`): la música y la atmósfera con las que se apagan, sus fundidos de 5 s (0x444030), tocar
+  una música (0x4426C0) y pararlas todas (0x442D10); los MP3 con dr_mp3 (`third_party/dr_libs`), los WAV IMA ADPCM y
+  el `sound.ini` (`src/p3data/sound.hpp`, test `sound`); los volúmenes de Música y Sonido en las Opciones (se oyen al
+  moverlos; «Cancelar» los devuelve; `p3vita-settings.txt`) y la música del menú principal (para al empezar o cargar
+  una partida, como el juego). La música va en `ux0:data/p3vita/Musik/` (el LEEME de `ux0`).
+- [ ] **Parte 2, la música en la partida**: el director de música (0x42C080, cada fotograma) y sus atmósferas
+  (0x442A10, en verano, invierno, con lluvia o con una batalla), la música de la región de la ciudad, la del mapa del
+  mar, la de las batallas (0x42C770), la de los edificios ([Gebaeude], `m_BMusicVolumeInBuildings`) y el tema de cada
+  ciudad (StadtDaten.ini). El juego elige con el `rand()` del mundo (0x639C03): el visor, con un azar aparte (apartado
+  8). Un fallo del juego que solo cambia lo que se oye: Rügenwald pide `Ruegenwald.mp3` y el fichero es
+  `Rügenwald.mp3`, así que no tiene tema propio (apuntarlo en los fallos al hacerlo).
+- [ ] **Parte 3, los sonidos de la interfaz**: los 20 canales de efectos del juego (0x443540.., su volumen, su
+  posición a izquierda o derecha y «Invertir estéreo», que pasará entonces a estar vivo en las Opciones), los botones
+  (lista 8000, `HSoundID`/`PSoundID` de los .ini), las cartas y los avisos (6000, con «Reproducir sonido» de los
+  ajustes de las cartas), el baño, rezar y escupir (7000, 7100, 7200).
+- [ ] **Parte 4, los sonidos de la ciudad**: los de cada edificio según dónde mira la cámara (iso.ini:
+  `GebaeudeSoundListBase`, `SoundsProGebaeude`, `PanDist`, `VolDist`, los tiempos de espera), las campanas (12000),
+  los barcos que entran y salen (13000), el fuego (10000), un edificio que se cae (9000) y el filtro del juego.
+- [ ] **Parte 5, el mar y las batallas**: el mapa del mar (elegir un barco 1000, la alarma 2000, la tormenta 3000, los
+  icebergs 3200, los barcos 4000, las aves 5000), las batallas en el mar (60000..60100) y los asedios (61000..61100).
 - [ ] Al poner el sonido, el visor tiene que decir al motor si está encendido (`Sailing::set_battle_sound`): con la
   batalla en pantalla, cada sonido de la batalla gasta un `rand()` del mundo, como el juego. Y el sonido del abordaje
   (0x61F1BF) tendrá que guardar en [+0x14A] lo que devuelve la vista de la ciudad del PC con la vista abierta (1,
   suponiendo un hueco de sonido libre); hoy guarda 0, como el emulador.
-- [ ] Los vídeos Bink (con FFmpeg u otro descodificador): la introducción, el final de Gobernador (`eldermann`)...
+- [ ] **Parte 6, los vídeos**: los de los sucesos (`Videos/*.sks`: imágenes JPEG en pase con su música de
+  `Musik/Rendering`, [Videos]), el final de Gobernador (`Eldermann.sks`) y la introducción (Bink, `Intro_2.bik`: con
+  FFmpeg u otro descodificador).
 
 ### 6. Probar en la Vita
 
@@ -932,6 +959,9 @@ que van a una cola y ejecuta la simulación, y en red solo viajan esas órdenes.
 - [ ] Probarlo: una Vita y el juego original en un PC en la misma red.
 
 Lo que ya se sabe que puede separar las partidas:
+- **El azar de la música**: el director de música del juego (0x42C080) elige cada pieza y el punto donde empieza cada
+  atmósfera con el `rand()` del mundo (0x639C03), fuera de la simulación: en el PC, con la música encendida, cambia
+  los números al azar de la partida. El visor usa un azar aparte (como para los gestos de los edificios).
 - **El azar de los sonidos**: con la batalla en pantalla y el sonido encendido, los sonidos gastan el `rand()` del
   mundo (apartado 5); el dibujo de una batalla también gasta `rand()` por fotogramas (0x62018B, 0x62F0E2), fuera del
   motor: con una batalla a la vista y sonido, no podrá ir exacto.
