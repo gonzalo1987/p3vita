@@ -200,9 +200,10 @@ speed, as in the other windows over the town). The public news (the chronicle)
 are the top bar's hourglass, as in the game. Select opens the letters' settings,
 as the game's: how long each kind is kept, its notice and sound, and the events'
 sound (up and down choose a row, left is the game's «−» and right its «+», X
-changes the row, Circle closes it, which sends them to the game). Where there is
-no panel (a battle, from the Start menu's mailbox) the messages fill the screen,
-the news as their first tab.
+changes the row, Circle closes it, which sends them to the game). Over a battle,
+where the panel is the battle's (no messages' icon, as in the game), the hourglass
+opens the chronicle's window alone (up and down move it, Circle or a touch out of
+it closes it).
 
 **The statistics** (touching the money on the top bar, as in the game): the game's menu in the panel's room (its four
 tabs: the company overview, the competition, the town data and the town comparison; the page's entries) and the

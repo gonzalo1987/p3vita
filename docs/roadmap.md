@@ -460,8 +460,12 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     la marca con el ratón), como botones del juego con su tecla dentro, solos y discretos abajo en el centro (el usuario
     vio un papel de diálogo debajo «demasiado cantoso»): «○ Borrar» a la izquierda y «X Zarpar» a la derecha; con la
     ruta empezada, la barra de arriba no dice X ni ○.
-  - [ ] **El buzón a pantalla completa** (sin panel: en una batalla, desde el menú de Start) y sus respuestas
-    (`draw_letter_answers`); y el aviso «Cargando la batalla...».
+  - [x] **El buzón a pantalla completa** (20-11-2026, `re/emu/sesion47/README.md`): quitado. En el juego no hay buzón
+    durante una batalla (su panel, el de la batalla, no tiene el icono de los mensajes): solo el reloj de arena de la
+    barra abre la crónica, en su ventana (0x47DD40). En el visor, igual: sobre una batalla, la crónica en la ventana de
+    mensajes del juego (la misma que en la ciudad), que se abre desde arriba cada vez y se cierra con Círculo o tocando
+    fuera de ella (sin dar órdenes a los barcos). El aviso «Cargando la batalla...», como línea de noticias mientras
+    cargan los barcos (como la carga del mapa del mar).
   - (La ventana del final, `draw_end_window`, va con el final de la partida.)
 - [ ] **Las vistas de dentro de los edificios** (lo pidió el usuario el 05-11-2026; en marcha desde el 13-11-2026 con
   el encargo de las vistas, acabado el 14-11-2026, después con `ENCARGO_GRUPO5_VISOR_2.md` y `ENCARGO_VISTAS_RESTOS.md` (acabados el 15-11-2026); lo leído del juego,
