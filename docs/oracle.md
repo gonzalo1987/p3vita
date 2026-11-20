@@ -2740,6 +2740,29 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
   apart now (the same walk as `savegame_write.cpp` `battle_padding`). `scripts/write-reload.sh`: 0 differences.
 - ctest `missions` (the list's rules, the start's sections, the waits, 0x532420).
 
+## The mission interpreter's instructions (2026-11-20)
+
+45 of the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu/sesion48/README.md`).
+- The oracle with the missions (`--misiones`): 0xF7's three calls of 0x4D6530 let through (`MAIL_CALLS`); 0xF7's
+  ticker line to the player jumps over the messages window (0x4EDF27 → 0x4EDF31, `EVENT_JUMPS`: 0x47D1F0 on 0x6CC960,
+  the interface's); a new region **MP** (each event 0x1B whose program no entry of the list has: u16 event, u32 size,
+  the bytes; empty but in a scenario's own scripts), which tick_probe gives the script. tick_probe ignores a freed
+  event's [+0x8] when it looks like a pointer (the game keeps an ended script's program there), marks the calls that
+  met an instruction not rewritten, and copies the towns' guilds' and taverns' names from the archive.
+- The saves: `re/emu/sesion47/opcount.sh` (the opcodes the game runs: 45 in 60 days, all rewritten);
+  `re/emu/sesion48/worldmd.sh` (worldm.sh's calls in chunks of days): the whole world 30 days with the missions, call
+  by call, 0 differences in the 12 saves; the events and operations 60 days, 0 but a battles' difference in save 4 at
+  tick 126953125 that is there without the missions too (roadmap section 2); 7 days continuously from the load: 0.
+- The branches the saves don't reach: `retouch_unchecked.py mission_branches` (scripts of their own, `p2m` and
+  `mission_script`, each ending in a wait so that its variables stay and are compared; a second human merchant; the
+  world's matrix retouched for the wandering pass): 0x07, 0x26 with every human (two merchants' ships in save 7) and
+  with none found, 0x27 (a ship at sea), 0x29's wandering pass, 0x40's modes either side of the hull, 0x44 with
+  several offices, 0x4F's four modes, 0xF7's copy to each human, b1 5, the ticker line to the player and a letter with
+  every «%» code: saves 3, 5, 7, 256 calls equal each, 21 of 21 targets. Found and fixed: «%k» wrote its last piece
+  twice and «%K» (the tavern) was empty in tick_probe; «%8» and «%9» read past the 16 words of 0x6C3040 (the game
+  crashes; none of its letters uses them). Broken on purpose (0x533210's turn modulo 2, 0xF7's record [+0xA] + 2):
+  caught.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

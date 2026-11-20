@@ -593,6 +593,9 @@ EVENT_JUMPS = {
     0x62B239: 0x62B261,
     0x4ECD3E: 0x4ECD71,  # 0x4ECB14 (evento 0x38): el monumento, si es la ciudad que se ve (0x590680)
     0x4E0DB9: 0x4E0E13,  # 0x4E09D4 (evento 0x24, fase 1): la ventana (*0x6CC7E8, 0x469380 y 0x469AF0)
+    # The mission interpreter's 0xF7 (0x4ED4A0) with its ticker line to the player: the messages window told
+    # (0x47D1F0 on 0x6CC960, the interface's) when no battle window is open (0x4F3940).
+    0x4EDF27: 0x4EDF31,
 }
 # Functions that read a local before writing it (a game bug: the value is
 # whatever an earlier call left on the stack). p3vita takes it as 0, which is
@@ -1590,13 +1593,15 @@ class TownOracle(SaveOracle):
         requested = self.__dict__.get('requested', {})
         manager = gu32(MISSIONS)
         ms = [struct.pack('<B', 1 if manager else 0)]
+        listed = set()
         if manager:
             entries, count = unpack('<IH', read(manager + 4, 6))
             for k in range(count if entries else 0):
                 program, number, count = unpack('<IHH', read(entries + 8 * k, 8))
                 ms.append(struct.pack('<HHI', number, count, requested.get(program, 0) if program else 0))
+                listed.add(program)
         out['MS'] = (manager, b''.join(ms))
-        mv, ev = [], out['E'][1]
+        mv, mp, ev = [], [], out['E'][1]
         for i in range(len(ev) // 0x18):
             if unpack('<H', ev, 0x18 * i + 6)[0] != 0x1B:
                 continue
@@ -1604,7 +1609,13 @@ class TownOracle(SaveOracle):
             data = bytes(read(variables, 4 * n)) if variables and n else b''
             mv.append(struct.pack('<HIBH', i, requested.get(program, 0) if program else 0, 1 if variables else 0,
                                   len(data) // 4) + data)
+            size = requested.get(program, 0) if program and program not in listed else 0
+            if size:
+                # MP: a script's program that no entry of the list has (a retouched scenario's own:
+                # retouch_unchecked.py mission_script): u16 event, u32 size and its bytes, for tick_probe to run.
+                mp.append(struct.pack('<HI', i, size) + bytes(read(program, size)))
         out['MV'] = (0, b''.join(mv))
+        out['MP'] = (0, b''.join(mp))
         out['MF'] = (0, struct.pack('<B', 1 if getattr(self, 'missions', False) else 0))
         mail = gu32(MAIL)
         out['B'] = (mail, block(mail, gu16(MAIL + 6) * 0x10 if mail else 0))

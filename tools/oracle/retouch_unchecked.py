@@ -5640,6 +5640,141 @@ def mission_start(o):
     return during
 
 
+# --- The missions' interpreter (mission_script.cpp): scripts of their own ---
+
+def p2m(sections, texts=()):
+    """A program as the game's .p2m have them (docs/formats/missions.md): u16 the sections' count, u16 the variables'
+    (64), u32 each section's offset, the sections (an instruction each) and the texts after them. A section given as
+    (bytes, k) is those bytes and then the u32 offset of texts[k] (0xF7's)."""
+    at = 4 + 4 * len(sections) + sum(len(s[0]) + 4 if isinstance(s, tuple) else len(s) for s in sections)
+    places = []
+    for t in texts:
+        places.append(at)
+        at += len(t)
+    code, offsets = b'', []
+    for s in sections:
+        offsets.append(4 + 4 * len(sections) + len(code))
+        code += s[0] + struct.pack('<I', places[s[1]]) if isinstance(s, tuple) else s
+    return struct.pack('<HH', len(sections), 64) + b''.join(struct.pack('<I', x) for x in offsets) + code + b''.join(texts)
+
+
+# A script's last section: wait the days of its variable 63 (100: mission_script), so that its variables stay and are
+# compared after the call (the end, 0xFF, frees them: the region MV no longer has them).
+WAIT = bytes([0xFE, 63])
+
+
+def mission_script(o, program, variables, at, section=0, count=64):
+    """One of the save's scripts (an event 0x1B not used yet) made to run `program` (a copy in the heap that no entry of
+    the missions' list has: the oracle's region MP gives it to tick_probe) from `section` with the variables
+    {index: value} (`count` of them, the rest 0; the 63rd 100 for WAIT unless given) at now + `at` ticks. Returns the
+    event's index."""
+    variables = {63: 100, **variables}
+    used = o.__dict__.setdefault('scripts_used', set())
+    i, a = next((i, a) for i, a in rt.events(o) if o.u16(a + 6) == 0x1B and i not in used)
+    used.add(i)
+    p = o.alloc(len(program))
+    o.uc.mem_write(p, program)
+    v = o.alloc(16 * count)  # (the load's room: 16 bytes a variable)
+    data = [0] * count
+    for k, x in variables.items():
+        data[k] = x & 0xFFFFFFFF
+    o.uc.mem_write(v, struct.pack(f'<{count}I', *data) + bytes(12 * count))
+    w32(o, a + 8, p)
+    w32(o, a + 0xC, v)
+    w16(o, a + 0x12, count)
+    w16(o, a + 0x14, section)
+    rt.move_event(o, i, a, o.u32(WORLD + 0x14) + at)
+    print(f'script {i} (mission {o.u16(a + 0x10)}) at now + {at}: {len(program)} bytes, variables {variables}')
+    return i
+
+
+def mission_branches(o):
+    """The branches of the rewritten handlers that the saves don't reach, each script of its own (mission_script) in its
+    own tick, with a second human merchant (the first AI merchant with ships and two offices, its [+0x8] 0): 0x07 a
+    merchant's home town; 0x29 the wandering pass of 0x533210 (three steps from the town 3, six from the player's home); 0x44 a merchant with several offices; 0x4F's four modes;
+    0x26 with every human (−1: several merchants' ships), with none found, and 0x27 (a ship at sea, the state 0xF);
+    0x40's four modes either side of the hull; 0xF7 with the copy to each human (answers, the addressee −1), with b1 5,
+    with the ticker line to the player, and a letter with every «%» code (but 8 and 9, which crash the game). Saves 3,
+    5 and 7 (save 1 has no merchant with two offices)."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+
+    def cargo(s):
+        return [w for w in range(20) if o.s32(o.ship(s) + 0x54 + 4 * w) > 0]
+
+    def states(m):
+        return {o.u16(o.ship(s) + 0x134) for s in merchant_ships(o, m)}
+    second = max((m for m in range(merchants) if o.u16(o.merchant(m) + 8) != 0 and merchant_ships(o, m)),
+                 key=lambda m: (0 in states(m), 0xF in states(m), min(len(rt.merchant_offices(o, m)), 4)))
+    w16(o, o.merchant(second) + 8, 0)
+    humans = [m for m in range(merchants) if o.u16(o.merchant(m) + 8) == 0]
+    print(f'player {player}, second human {second} ({len(rt.merchant_offices(o, second))} offices), humans {humans}')
+    # 0x07, 0x29 (three steps wandering), 0x44, 0x4F (modes 0..3 in the player's home town).
+    home = o.u8(o.merchant(player) + 0x19)
+    # 0x44 for a merchant whose offices' count doesn't divide the tick the script runs at (a step from the first).
+    tick = o.u32(WORLD + 0x14) + 1
+    many = next((m for m in range(merchants) if len(rt.merchant_offices(o, m)) >= 2
+                 and tick % len(rt.merchant_offices(o, m))), second)  # (none in save 1: early)
+    # The wandering pass only changes the town when another is within the best way + 2: the world's matrix ([+0x6C],
+    # a byte k · towns + town; region Y) gets the second nearest town to the player's home one way past the nearest.
+    matrix = o.u32(WORLD + 0x6C)
+    near = sorted((o.u8(matrix + k * towns + home), k) for k in range(3, towns) if k != home)
+    w8(o, matrix + near[1][1] * towns + home, near[0][0] + 1)
+    print(f'from {home}: town {near[0][1]} at {near[0][0]}, town {near[1][1]} from {near[1][0]} to {near[0][0] + 1}')
+    mission_script(o, p2m([bytes([0x07, 1, 2]), bytes([0x07, 3, 4]), bytes([0x29, 5, 6, 7, 8, 9]),
+                           bytes([0x29, 5, 6, 7, 8, 9]), bytes([0x29, 5, 6, 7, 8, 9]), bytes([0x44, 21, 10]),
+                           bytes([0x4F, 12, 16, 17]), bytes([0x4F, 13, 16, 18]), bytes([0x4F, 14, 16, 19]),
+                           bytes([0x4F, 15, 16, 20])] + [bytes([0x29, 22, 23, 24, 25, 9])] * 6 + [WAIT]),
+                   {1: player, 3: second, 5: 0, 6: 1, 7: 2, 8: 3, 9: 1, 12: 0, 13: 1, 14: 2, 15: 3, 16: home,
+                    21: many, 22: 0, 23: 1, 24: 2, 25: home}, 1)
+    # 0x26 with every human, a ware a docked ship of a human has; 0x26 for the player with a ware none of his has; 0x27
+    # for a human with a ship at sea with a ware.
+    docked = [(s, w) for m in humans for s in merchant_ships(o, m) if o.u16(o.ship(s) + 0x134) == 0 for w in cargo(s)]
+    at_sea = [(m, s, w) for m in humans for s in merchant_ships(o, m) if o.u16(o.ship(s) + 0x134) == 0xF
+              for w in cargo(s)]
+    mine = {w for s in merchant_ships(o, player) for w in cargo(s)}
+    none = next(w for w in range(20) if w not in mine)
+    print(f'docked with a ware {docked[:6]}, at sea {at_sea[:6]}, a ware the player has none of {none}')
+    # Fish (2) on a docked ship of each human with one, so that −1 finds two merchants' ships (one by the sum of their
+    # [+0x1E] modulo how many).
+    ware = 2
+    for m in humans:
+        s = next((s for s in merchant_ships(o, m) if o.u16(o.ship(s) + 0x134) == 0), None)
+        if s is not None and o.s32(o.ship(s) + 0x54 + 4 * ware) <= 0:
+            w32(o, o.ship(s) + 0x54 + 4 * ware, 2000)
+        print(f'merchant {m}: docked ship {s} with fish')
+    sea = at_sea[0] if at_sea else (player, None, 0)
+    mission_script(o, p2m([bytes([0x26, 1, 2, 3]), bytes([0x26, 4, 5, 6]), bytes([0x27, 7, 8, 9]), WAIT]),
+                   {1: -1, 2: ware, 4: player, 5: none, 7: sea[0], 8: sea[2]}, 2)
+    # 0x40: hull 50 and 101, above it or below, each mode, for the merchant with most ships of the two humans.
+    who = max(humans, key=lambda m: len(merchant_ships(o, m)))
+    sections = []
+    for above in (1, 2):
+        for hull in (3, 4):
+            for mode in (5, 6, 7, 8, 9):
+                sections.append(bytes([0x40, above, hull, 10, mode, 11 + len(sections)]))
+    mission_script(o, p2m(sections + [WAIT]), {1: 0, 2: 1, 3: 50, 4: 101, 5: 0, 6: 1, 7: 2, 8: 3, 9: 4, 10: who}, 3)
+    # 0xF7: b1 0 with two answers to −1 (a copy each human, the variables b3.. and b5.. set); b1 5 with two answers to
+    # the player; the ticker line (b7) to the player; every «%» code to the player.
+    def f7(b1, b2, b3, b4, b5, answers, ticker):
+        return bytes([0xF7, b1, b2, b3, b4, b5, answers, ticker])
+    texts = [b'Title one\0Body to %v\x02 of %t\x03.\0Yes\0No\0',
+             b'Title two\0Second body\0First\0Second\0',
+             b'Title three\0A ticker for %n\x02\0']
+    mission_script(o, p2m([(f7(0, 3, 20, 4, 30, 2, 0), 0), WAIT], texts), {2: player, 3: home, 4: 7, 30: -1}, 4)
+    mission_script(o, p2m([(f7(5, 3, 20, 4, 30, 2, 0), 1), WAIT], texts), {2: player, 3: home, 30: player}, 5)
+    mission_script(o, p2m([(f7(1, 3, 20, 4, 30, 0, 1), 2), WAIT], texts), {2: player, 3: home, 30: player}, 6)
+    codes = (b'%s\x01 %F\x01 %S\x0e %R\x02 %r\x0d %t\x03 %K\x03 %V\x04 %N\x04 %P\x05 %v\x02 %n\x0d %Q\x06 %D\x07 '
+             b'%M\x08 %W\x09 %w\x09 %w\x0f %e\x09 %e\x0f %E\x01 %E\x00 %c\x0a %B\x0a %k\x0b %k\x10 %G\x02 %g\x0d '
+             b'%A\x02 %a\x0d %z\x02 %+\x0c %-\x0c\x01\x02 %%\x00 %0\x02 %1\x0d %2\x02 %3\x0d %4\x02 %5\x0d %6\x02 '
+             b'%7\x0d %x\x01 %s\x11 %R\x11 %t\x12 %V\x13 end')  # (%8 and %9 crash the game: 16 words in 0x6C3040)
+    first_ship = merchant_ships(o, player)[0]
+    mission_script(o, p2m([(f7(2, 3, 20, 4, 30, 0, 0), 0), WAIT], [b'Codes\0' + codes + b'\0']),
+                   {1: first_ship, 2: player, 3: 5, 4: 10, 5: 30, 6: 20, 7: o.u32(WORLD + 0x14) + 0x900, 8: 13,
+                    9: 3, 10: -1234, 11: 12, 12: 0x1234, 13: second, 14: 6, 15: 0, 16: 7, 17: ships + 3,
+                    18: towns + 2, 19: 0x83, 30: player}, 7)
+
+
 def hanse_dev_candidacy(o):
     """0x45 (0x535FA4: standing for mayor, [+0x118]) for the player with 0, 1 and 7, an AI merchant (always 1) and a
     merchant past; 0x4A (0x53B1F0, events_rare.cpp: the Hanse tasks window's developers' tools) on events 0x30 made by
@@ -14729,6 +14864,10 @@ SCENARIOS = {
     'mission_start': Scenario(mission_start, [0x535760], 0, [
         '@5112f8', '@511308', '@511318', '@511328', '@5111be', '@5111d3', '@511428', '@5114ba', '@511500', '@5115d2',
         '@51162e', '@511644', '@532460', '@5324f2', '@53254f', '@532693', '@6351b2', '@6351cc'], missions=True),
+    'mission_branches': Scenario(mission_branches, [0x4D85C0], 1, [
+        '@4eed2d', '@533353', '@4f1637', '@4f1c3d', '@4f1c1a', '@4f1c15', '@4f1c13>4f1c5f', '@4ef8a9', '@4ef952',
+        '@4ef98c', '@4ef9c4', '@4f13a5', '@4f13b2', '@4f13c9', '@4f13e9', '@4f13d3', '@4f1404', '@4ede69',
+        '@4edcf6>4ede88', '@4edeaa', '@4ededa'], missions=True),
     'hanse_dev_candidacy': Scenario(hanse_dev_candidacy, [0x535760], 0, [
         '@4f9397', '@4f93a4', '@535fb2>537025', '@53b247', '@53b283', '@53b24e>53b28a', '@53b255>53b28a',
         '@53b259>53b28a', '@53b281>53b28a', '@53b26c>53b28a', '@53b29e', '@53b2b0', '@53b2ae>53b2b8', '@53b34a',

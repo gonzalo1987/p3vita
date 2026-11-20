@@ -296,6 +296,21 @@ void load_missions(const State& state, SaveGame& save) {
 			}
 		}
 	}
+	// MP: the scripts' programs that no entry of the list has (a retouched scenario's own): u16 event, u32 size, bytes.
+	if (const Region* mp = find(state, "MP")) {
+		const std::vector<uint8_t>& b = mp->bytes;
+		for (size_t o = 0; o + 6 <= b.size();) {
+			const uint16_t i = get<uint16_t>(b.data(), o);
+			const uint32_t size = get<uint32_t>(b.data(), o + 2);
+			o += 6;
+			const size_t end = std::min(b.size(), o + size);
+			if (auto script = save.missions.scripts.find(i); script != save.missions.scripts.end()) {
+				script->second.program = std::make_shared<const std::vector<uint8_t>>(b.begin() + long(o),
+					b.begin() + long(end));
+			}
+			o = end;
+		}
+	}
 }
 
 void store_missions(const SaveGame& save, State& s) {
@@ -333,6 +348,30 @@ void store_missions(const SaveGame& save, State& s) {
 																						 : nullptr;
 				put<uint32_t>(b.data(), o + 9 + 4 * size_t(k), v && k < v->size() ? (*v)[k] : 0);
 			}
+		}
+	}
+	if (s.count("MP")) {
+		std::vector<uint8_t>& b = s["MP"].bytes;
+		b.clear();
+		for (size_t i = 0; i < save.events.size(); ++i) {
+			const GameMemory<0x18>& e = save.events[i];
+			auto script = save.missions.scripts.find(uint16_t(i));
+			if (e.u16(6) != 0x1B || e.u32(8) == 0 || script == save.missions.scripts.end() || !script->second.program) {
+				continue;
+			}
+			const MissionProgram& program = script->second.program;
+			bool listed = false;
+			for (const MissionData::Entry& entry : save.missions.list) {
+				listed = listed || entry.program == program;
+			}
+			if (listed || program->empty()) {
+				continue;
+			}
+			const size_t o = b.size();
+			b.resize(o + 6);
+			put<uint16_t>(b.data(), o, uint16_t(i));
+			put<uint32_t>(b.data(), o + 2, uint32_t(program->size()));
+			b.insert(b.end(), program->begin(), program->end());
 		}
 	}
 }
@@ -1378,6 +1417,7 @@ int main(int argc, char** argv) {
 	std::array<std::vector<std::string>, 2> first_names;  // Nor the first names.
 	std::vector<std::string> family_names;  // Nor the family names.
 	std::vector<std::string> town_names;  // Nor the town names by number (the table 0x6DDA00).
+	std::vector<std::string> town_guilds, town_taverns;  // Nor their guilds' and taverns' names (0x512730).
 	std::array<std::vector<std::string>, 3> custom_names;  // Nor the players' names (--names).
 	if (!names_path.empty()) {
 		std::ifstream f(names_path, std::ios::binary);
@@ -1399,6 +1439,8 @@ int main(int argc, char** argv) {
 		first_names = scripts.first_names;
 		family_names = scripts.family_names;
 		town_names = scripts.opaque.town_names;
+		town_guilds = scripts.opaque.town_guilds;
+		town_taverns = scripts.opaque.town_taverns;
 		town_templates = scripts.town_templates;
 		town_view = scripts.town_view;
 		if (continuous && load.empty()) {
@@ -1408,6 +1450,8 @@ int main(int argc, char** argv) {
 			save.family_names = family_names;
 			save.opaque.town_names = town_names;
 			save.opaque.town_name_table = town_names;
+			save.opaque.town_guilds = town_guilds;
+			save.opaque.town_taverns = town_taverns;
 			save.custom_names = custom_names;
 			save.town_templates = town_templates;
 			save.town_view = town_view;
@@ -1495,6 +1539,8 @@ int main(int argc, char** argv) {
 			save.family_names = family_names;
 			save.opaque.town_names = town_names;
 			save.opaque.town_name_table = town_names;
+			save.opaque.town_guilds = town_guilds;
+			save.opaque.town_taverns = town_taverns;
 			if (!names_path.empty()) {
 				save.custom_names = custom_names;
 			}

@@ -2739,7 +2739,9 @@ std::vector<uint8_t> mission_letter_text(const SaveGame& save, const GameTexts* 
 			break;
 		case 'k': {
 			// Fives and ones: v / 5 times «\t20014_», v % 5 times «\t20015_» (0x6C0344, 0x6C0350; their counts as
-			// u16), then the last of them once more (the common copy of the pointer left: none without either).
+			// u16: a negative v writes past the game's buffer). The common copy after it (0x4ED8CE) copies the
+			// pointer the loops left at a NUL, or 0x6DD788's empty string: nothing (checked with the oracle:
+			// retouch_unchecked.py mission_branches).
 			const uint16_t fives = uint16_t(int32_t(v) / 5);
 			const uint16_t ones = uint16_t(int32_t(v) % 5);
 			for (uint32_t k = 0; k < fives && out.size() + piece.size() < 0x1000; ++k) {
@@ -2748,7 +2750,6 @@ std::vector<uint8_t> mission_letter_text(const SaveGame& save, const GameTexts* 
 			for (uint32_t k = 0; k < ones && out.size() + piece.size() < 0x1000; ++k) {
 				piece += "\\t20015_";
 			}
-			piece += ones ? "\\t20015_" : fives ? "\\t20014_" : "";
 			break;
 		}
 		case 'G':  // «She» / «He» (0x6B2A88), by the merchant's sex.
@@ -2775,8 +2776,9 @@ std::vector<uint8_t> mission_letter_text(const SaveGame& save, const GameTexts* 
 			break;
 		default:
 			if (code >= '0' && code <= '9') {
-				// A merchant's word by his sex (0x6C3040, [digit · 2 + sex]: «Dear »...).
-				if (const MerchantMemory* m = merchant(v)) {
+				// A merchant's word by his sex (0x6C3040, [digit · 2 + sex]: «Dear »...). The table has 16 words: 8
+				// and 9 read past it, text as pointers (the game crashes; none of its letters uses them): nothing.
+				if (const MerchantMemory* m = merchant(v); m && code <= '7') {
 					piece = c.table(0x6C3040, uint32_t(code - '0') * 2 + sex(m));
 				}
 			}

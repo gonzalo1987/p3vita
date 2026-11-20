@@ -397,11 +397,12 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   (`re/emu/sesion48/worldmd.sh`, por tramos), y la cola de eventos y las operaciones 60 días (igual salvo una
   diferencia de las batallas en la partida 4 que sale también sin las misiones: apartado 2); 7 días también en continuo
   desde la carga (`worldm.sh`); tick_probe marca las llamadas con una instrucción sin escribir. Son todas las que
-  ejecutan las partidas en 60 días (`opcount.sh`). Siguen: estados retocados para las ramas a las que no llegan las
-  partidas (0x07, 0x27, ramas de 0x26, 0x29, 0x40, 0x44, 0xF7 y los códigos de las cartas que no salen, `f7codes.py`),
-  las otras 36 de la partida de un jugador con estados retocados, luego las 10 más de la partida en red, las 28 de las
-  campañas y las 19 que no usa ningún fichero. Cuando estén todas, el oráculo con las misiones por omisión (y
-  `world.sh` con ellas).
+  ejecutan las partidas en 60 días (`opcount.sh`). Las ramas a las que no llegan las partidas, con guiones propios
+  en un estado retocado (`retouch_unchecked.py mission_branches`, partidas 3, 5 y 7: 0x07, 0x26 con todos los
+  humanos, 0x27, el paso errante de 0x29, los modos de 0x40 y 0x4F, 0x44 con varias oficinas, las ramas de 0xF7 y
+  todos los códigos «%» de sus cartas): iguales (`docs/oracle.md`). Siguen: las otras 36 de la partida de un jugador
+  con estados retocados, luego las 10 más de la partida en red, las 28 de las campañas y las 19 que no usa ningún
+  fichero. Cuando estén todas, el oráculo con las misiones por omisión (y `world.sh` con ellas).
 - [ ] **Lo que cuelga del intérprete**: el evento 0x09 (0x4E2824, las cartas de buena y mala cosecha), sus cartas (tres
   que compone el guion con los textos del `.p2m`, la del mapa 0x46 o 0x45, la 0x22), las operaciones que encola (0x1B,
   0x28, 0x4E, 0x7C, 0x7D, 0x82; la 0x8E de 0xFA, hecha) y la carta final 0x3D del evento 0x34 (0x4F3AF0, con su lista
