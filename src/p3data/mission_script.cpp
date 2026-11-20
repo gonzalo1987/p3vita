@@ -13,7 +13,9 @@
 // 0x8E); a merchant's money 0xF8; a pirate attack 0xF9, 0xE9, 0xE7 (the operation 0x82); a merchant's ticker line 0xE8;
 // a ship's extra loads 0xF1, its [+0x157] 0xF2, its [+0x3F] 0xF3, its cargo 0xF4; the treasure map's letter 0xF6; the
 // missions' hold on a ship 0x3A (0x50DF40, 0x50DF70); a ship's sailors 0x3B, owner 0x28, place 0x2A, hull 0x42; a
-// mission's pirate sunk 0x51; a merchant's ship with most room in a town 0x6E. The handlers come in parts (roadmap, section 3; the order by what the saves run:
+// mission's pirate sunk 0x51; a merchant's ship with most room in a town 0x6E; a number below 100 0x22; a ship near a
+// treasure spot 0x1F; a captain's state 0x2C (0x4D7770); a ship's hull set 0x41; a commission's event 0x46; an
+// office's stock 0x47 and its [+0x2E8] 0x48; what wares are worth to the pirates 0x49. The handlers come in parts (roadmap, section 3; the order by what the saves run:
 // re/emu/sesion47/opcount.sh); until then an instruction not rewritten ends the script as an unknown one does, and is
 // counted (unwritten_mission_ops).
 
@@ -48,13 +50,15 @@ bool has_handler(uint8_t op) {
 struct Run {
 	SaveGame& save;
 	uint16_t event;
-	GameMemory<0x18>& e;
+	// The event, by its index each time: an instruction that makes an event (0x46) may move the array (0x4D8CF0 grows
+	// it), as the game reads the event again after it.
+	GameMemory<0x18>& e() const { return save.events[event]; }
 	const std::vector<uint8_t>& p;
 	std::vector<uint32_t>& vars;
 
 	// The current section's offset ([+0x14]) and its bytes.
 	uint32_t at() const {
-		const size_t o = 4 + 4 * size_t(e.u16(0x14));
+		const size_t o = 4 + 4 * size_t(e().u16(0x14));
 		uint32_t v = 0;
 		if (o + 4 <= p.size()) {
 			std::memcpy(&v, p.data() + o, 4);
@@ -67,7 +71,7 @@ struct Run {
 	}
 	uint16_t w(uint32_t k) const { return uint16_t(b(k) | b(k + 1) << 8); }
 	// A jump: [+0x14] the section of the u16 at the byte `k` (the loop doesn't move it on: 0x4F2C97).
-	void jump(uint32_t k) { e.u16(0x14) = w(k); }
+	void jump(uint32_t k) { e().u16(0x14) = w(k); }
 	uint32_t d(uint32_t k) const { return uint32_t(w(k)) | uint32_t(w(k + 2)) << 16; }
 	// A variable by the operand byte `k` (the game indexes the buffer without a check).
 	uint32_t& var(uint32_t k) {
@@ -312,7 +316,7 @@ Step step(Run& r, uint8_t op) {
 		const SaveGame& s = r.save;
 		const uint32_t mixed = (s.globals.u32(global::kWorldTick) + s.globals.u16(0x6DD744) +
 								   (s.towns.size() > 1 ? s.towns[1].memory.u32(0x2D4) : 0)) *
-			uint32_t(r.e.u16(0x14));
+			uint32_t(r.e().u16(0x14));
 		const uint32_t towns = s.globals.u32(global::kWorldTownCount);
 		r.var(1) = towns ? mixed % towns : 0;  // (The game divides by 0 without towns: never.)
 		return Step::Next;
@@ -966,6 +970,185 @@ Step step(Run& r, uint8_t op) {
 		}
 		return Step::Next;
 	}
+	case 0x22: {
+		// 0x4EF518: v ← (now + the event list's [+0x8]) · (the town 3's [+0x2D4] + 3) (32 bits, signed), modulo 100
+		// (unsigned).
+		const SaveGame& s = r.save;
+		uint32_t n = s.globals.u32(global::kWorldTick) + s.globals.u16(0x6DD744);
+		n *= uint32_t((s.towns.size() > 3 ? s.towns[3].memory.s32(0x2D4) : 0) + 3);
+		r.var(1) = n % 100;
+		return Step::Next;
+	}
+	case 0x1F: {
+		// 0x4EF788: c ← −1, then the first ship of the merchant a (a u16 below the count; from his [+0xE] by [+0x4],
+		// below the ships' count) near the treasure spot b (a u16, 0x672340): the squares of its [+0x1E] and [+0x22]
+		// (s16) less the spot's x and y below 27 (80 in the mission 308). (A spot past the 100: the game reads the
+		// tables after it; here none is near.)
+		SaveGame& s = r.save;
+		r.var(3) = 0xFFFFFFFFu;
+		const uint16_t who = uint16_t(r.var(1));
+		uint16_t x = 0;
+		uint16_t y = 0;
+		if (who >= s.globals.u16(global::kWorldMerchantCount) || who >= s.merchants.size() ||
+			!treasure_spot(uint16_t(r.var(2)), x, y)) {
+			return Step::Next;
+		}
+		const int32_t near = r.e().u16(0x10) == 0x134 ? 0x50 : 0x1B;
+		const uint16_t ships = s.globals.u16(global::kShipCount);
+		for (uint16_t id = s.merchants[who].first_ship(); id < ships && id < s.ships.size();
+			 id = s.ships[id].memory.u16(0x4)) {
+			const ShipMemory& m = s.ships[id].memory;
+			const int32_t dx = int32_t(int16_t(m.u16(0x1E))) - int32_t(x);
+			const int32_t dy = int32_t(int16_t(m.u16(0x22))) - int32_t(y);
+			if (int32_t(uint32_t(dy) * uint32_t(dy) + uint32_t(dx) * uint32_t(dx)) < near) {
+				r.var(3) = id;
+				break;
+			}
+		}
+		return Step::Next;
+	}
+	case 0x2C: {
+		// 0x4F0692: c ← the state of the captain b (0x4D7770 on the mailbox, for the merchant a): 0 when b is −1; for
+		// a captain (b's low u16 below the count, his [+0x3] its third byte and his [+0x2] its fourth), 2 if the
+		// merchant (below the count) has in his chain (at most the mailbox's count of steps) a letter 0x54 for him
+		// ([+0xA] b's low u16, [+0x8] its high one), else 0 if a ship of his ([+0x42]) sails as a pirate (the state
+		// 0x12), else 1; 1 for anything else.
+		SaveGame& s = r.save;
+		const GlobalMemory& g = s.globals;
+		const uint32_t key = r.var(2);
+		const uint32_t who = r.var(1);
+		const uint16_t captain = uint16_t(key);
+		uint32_t state = 1;
+		if (key == 0xFFFFFFFFu) {
+			state = 0;
+		} else if (captain < g.u16(global::kCaptainCount) && captain < s.captains.size() &&
+				   s.captains[captain].u8(0x3) == uint8_t(key >> 16) && s.captains[captain].u8(0x2) == uint8_t(key >> 24)) {
+			bool letter = false;
+			if (who < g.u16(global::kWorldMerchantCount) && who < s.merchants.size()) {
+				const uint16_t count = g.u16(0x6DD736);
+				uint32_t at = s.merchants[who].memory.u16(0xA);
+				for (int32_t left = count; at < count && at < s.mail.size() && left > 0; --left) {
+					const GameMemory<0x10>& m = s.mail[at];
+					if (m.u8(4) == 0x54 && m.u16(0xA) == captain && m.u16(0x8) == uint16_t(key >> 16)) {
+						letter = true;
+						break;
+					}
+					at = m.u16(6);
+				}
+			}
+			if (letter) {
+				state = 2;
+			} else {
+				const uint16_t ships = g.u16(global::kShipCount);
+				for (uint16_t i = 0; i < ships && i < s.ships.size(); ++i) {
+					if (s.ships[i].memory.u16(0x42) == captain && s.ships[i].memory.u16(0x134) == 0x12) {
+						state = 0;
+						break;
+					}
+				}
+			}
+		}
+		r.var(3) = state;
+		return Step::Next;
+	}
+	case 0x41: {
+		// 0x4F1409: the ship b's hull set to a % of its full hull ([+0x18] = a · [+0x14] / 100, signed) and 0x517770 with
+		// 0x100, c ← 1, when its state (in a convoy, its guide's: the convoy's [+0x10]) is below 4 or 8, 9, 0xF, 0x12 or
+		// 0x14; else c ← 0. (A ship past them: the game reads past the array.)
+		SaveGame& s = r.save;
+		const uint32_t ship = r.var(2);
+		if (ship >= s.ships.size()) {
+			r.var(3) = 0;
+			return Step::Next;
+		}
+		ShipMemory& m = s.ships[ship].memory;
+		uint16_t state = m.u16(0x134);
+		const uint16_t convoy = m.u16(0x8);
+		if (convoy < s.convoy_count() && convoy < s.convoys.size()) {
+			const uint16_t guide = s.convoys[convoy].u16(0x10);
+			state = guide < s.ships.size() ? s.ships[guide].memory.u16(0x134) : 0;
+		}
+		if (state < 4 || state == 8 || state == 9 || state == 0xF || state == 0x12 || state == 0x14) {
+			m.s32(0x18) = int32_t(r.var(1) * uint32_t(m.s32(0x14))) / 100;
+			tick::ship_ai_detail::fn_517770(s, int(ship), 0x100);
+			r.var(3) = 1;
+		} else {
+			r.var(3) = 0;
+		}
+		return Step::Next;
+	}
+	case 0x46: {
+		// 0x4F16B3: a commission for the town a: a new event (0x4D8CF0 at now + 1, the queue's [+0x4] 0 meanwhile) of
+		// the kind 5 with [+0x8] a, [+0x9] b, [+0xA] 0xFF, [+0xB] b, [+0xC] now, [+0x10] 8, [+0x11] 0, [+0x12] and
+		// [+0x14] the low halves of the [+0x1C] and [+0x20] of the ships' object's ship [+0xEA] (else [+0xE8], else the
+		// ship 0), [+0x16] 0xFF.
+		SaveGame& s = r.save;
+		GlobalMemory& g = s.globals;
+		const uint32_t now = g.u32(global::kWorldTick);
+		g.u32(0x6DD740) = 0;
+		const uint16_t made = tick::events_detail::fn_4d8cf0(s, now + 1);
+		g.u32(0x6DD740) = 1;
+		const uint16_t ships = g.u16(global::kShipCount);
+		uint16_t ship = g.u16(global::kShips + 0xEA);
+		if (ship >= ships) {
+			ship = g.u16(global::kShips + 0xE8) < ships ? g.u16(global::kShips + 0xE8) : 0;
+		}
+		GameMemory<0x18>& e = s.events[made];
+		e.u16(0x6) = 5;
+		e.u8(0x8) = uint8_t(r.var(1));
+		e.u8(0x9) = uint8_t(r.var(2));
+		e.u8(0xA) = 0xFF;
+		e.u8(0xB) = uint8_t(r.var(2));
+		e.u32(0xC) = now;
+		e.u8(0x10) = 8;
+		e.u8(0x11) = 0;
+		e.u16(0x12) = ship < s.ships.size() ? s.ships[ship].memory.u16(0x1C) : 0;
+		e.u16(0x14) = ship < s.ships.size() ? s.ships[ship].memory.u16(0x20) : 0;
+		e.u16(0x16) = 0xFF;
+		return Step::Next;
+	}
+	case 0x47:
+	case 0x48: {
+		// 0x4F17C0 and 0x4F188D: the office of the merchant a in the town b (0x5308A0 with nothing made, the two as
+		// u16): 0x47 d ← its stock of the ware c ([+0x4 + 4 · c]) in loads (/ 2000) or barrels (/ 200, 0x672C14),
+		// signed; 0x48 its [+0x2E8] += d loads (· 2000) or barrels (· 200) of c. (No office: the game reads through a
+		// null pointer; a ware past them: past the tables.)
+		static constexpr uint8_t kBarrels[kWareCount] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};
+		SaveGame& s = r.save;
+		const int office = tick::facilities_detail::fn_5308a0(s, uint16_t(r.var(1)), uint16_t(r.var(2)));
+		const uint32_t ware = r.var(3);
+		if (office < 0 || size_t(office) >= s.offices.size() || ware >= uint32_t(kWareCount)) {
+			if (op == 0x47) {
+				r.var(4) = 0;
+			}
+			return Step::Next;
+		}
+		OfficeMemory& o = s.offices[size_t(office)].memory;
+		if (op == 0x47) {
+			r.var(4) = uint32_t(o.s32(4 + 4 * ware) / (kBarrels[ware] ? 200 : 2000));
+		} else {
+			o.s32(0x2E8) = int32_t(uint32_t(o.s32(0x2E8)) + r.var(4) * (kBarrels[ware] ? 200u : 2000u));
+		}
+		return Step::Next;
+	}
+	case 0x49: {
+		// 0x4F192D: c ← what b loads (or barrels) of the ware a are worth to the pirates: b (a float) · 2000 (200 in
+		// barrels) · 0x673A18[a], truncated (__ftol, at the double precision the game runs the x87). (A ware past them:
+		// past the tables.)
+		static constexpr uint8_t kBarrels[kWareCount] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};
+		static constexpr float kWorth[kWareCount] = {0.055000003f, 0.47855002f, 0.22005001f, 0.174f, 0.1425f, 0.55f,
+			1.4f, 1.1f, 1.034f, 3.3825f, 0.41249999f, 0.027500002f, 1.278f, 1.12f, 0.44000003f, 0.278f, 0.44000003f,
+			0.22000001f, 0.85499996f, 0.039900005f, 10.0f, 8.0f, 12.0f, 14.0f};
+		const uint32_t ware = r.var(1);
+		if (ware >= uint32_t(kWareCount)) {
+			r.var(3) = 0;
+			return Step::Next;
+		}
+		const double worth = double(float(int32_t(r.var(2)))) * double(float(kBarrels[ware] ? 200 : 2000)) *
+			double(kWorth[ware]);
+		r.var(3) = uint32_t(int32_t(worth));
+		return Step::Next;
+	}
 	default:
 		if (has_handler(op)) {
 			++g_unwritten[op];
@@ -990,7 +1173,7 @@ uint32_t run_mission_script(SaveGame& save, uint16_t event) {
 		return 0;
 	}
 	const MissionProgram program = script.program;  // (kept while it runs, even if the list lets it go)
-	Run r{save, event, e, *program, script.variables};
+	Run r{save, event, *program, script.variables};
 	const uint32_t now = save.globals.u32(global::kWorldTick);
 	uint8_t op = r.b(0);
 	// (A tool's trace, P3_MISSION_TRACE set: each instruction as re/emu/sesion47/optrace.py prints the game's.)
@@ -998,7 +1181,7 @@ uint32_t run_mission_script(SaveGame& save, uint16_t event) {
 	while (op != 0 && op < 0xFD) {
 		if (trace) {
 			std::fprintf(stderr, "tick %u event %u mission %u section %u op %#04x", unsigned(now), unsigned(event),
-				unsigned(e.u16(0x10)), unsigned(e.u16(0x14)), unsigned(op));
+				unsigned(r.e().u16(0x10)), unsigned(r.e().u16(0x14)), unsigned(op));
 			for (uint32_t k = 0; k < 12; ++k) {
 				std::fprintf(stderr, "%s%02x", k ? "" : " ", r.b(k));
 			}
@@ -1014,15 +1197,15 @@ uint32_t run_mission_script(SaveGame& save, uint16_t event) {
 			return 0;
 		}
 		if (next == Step::Next) {
-			e.u16(0x14) = uint16_t(e.u16(0x14) + 1);
+			r.e().u16(0x14) = uint16_t(r.e().u16(0x14) + 1);
 		}
 		op = r.b(0);
 	}
 	switch (op) {
 	case 0xFD:
 		// Wait so many ticks (the variable of its byte 1), then go on at its section (u16 at its byte 2).
-		e.u32(0) = r.var(1) + now;
-		e.u16(0x14) = r.w(2);
+		r.e().u32(0) = r.var(1) + now;
+		r.e().u16(0x14) = r.w(2);
 		return 1;
 	case 0x00: {
 		// Wait for the tick of its variable; one that has passed (with a day's grace) ends the script.
@@ -1031,14 +1214,14 @@ uint32_t run_mission_script(SaveGame& save, uint16_t event) {
 			end_script(save, event, script);
 			return 0;
 		}
-		e.u32(0) = tick;
-		e.u16(0x14) = uint16_t(e.u16(0x14) + 1);
+		r.e().u32(0) = tick;
+		r.e().u16(0x14) = uint16_t(r.e().u16(0x14) + 1);
 		return 1;
 	}
 	case 0xFE:
 		// Wait so many days, then start again at the section 0.
-		e.u32(0) = (r.var(1) << 8) + now;
-		e.u16(0x14) = 0;
+		r.e().u32(0) = (r.var(1) << 8) + now;
+		r.e().u16(0x14) = 0;
 		return 1;
 	default:  // 0xFF: the end.
 		end_script(save, event, script);

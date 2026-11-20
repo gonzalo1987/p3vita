@@ -5663,11 +5663,11 @@ def p2m(sections, texts=()):
 WAIT = bytes([0xFE, 63])
 
 
-def mission_script(o, program, variables, at, section=0, count=64):
+def mission_script(o, program, variables, at, section=0, count=64, mission=None):
     """One of the save's scripts (an event 0x1B not used yet) made to run `program` (a copy in the heap that no entry of
     the missions' list has: the oracle's region MP gives it to tick_probe) from `section` with the variables
-    {index: value} (`count` of them, the rest 0; the 63rd 100 for WAIT unless given) at now + `at` ticks. Returns the
-    event's index."""
+    {index: value} (`count` of them, the rest 0; the 63rd 100 for WAIT unless given) at now + `at` ticks; with
+    `mission`, the event's [+0x10] too. Returns the event's index."""
     variables = {63: 100, **variables}
     used = o.__dict__.setdefault('scripts_used', set())
     i, a = next((i, a) for i, a in rt.events(o) if o.u16(a + 6) == 0x1B and i not in used)
@@ -5683,6 +5683,8 @@ def mission_script(o, program, variables, at, section=0, count=64):
     w32(o, a + 0xC, v)
     w16(o, a + 0x12, count)
     w16(o, a + 0x14, section)
+    if mission is not None:
+        w16(o, a + 0x10, mission)
     rt.move_event(o, i, a, o.u32(WORLD + 0x14) + at)
     print(f'script {i} (mission {o.u16(a + 0x10)}) at now + {at}: {len(program)} bytes, variables {variables}')
     return i
@@ -5835,6 +5837,64 @@ def mission_ships_state(o):
                    {1: player, 2: town, 5: gate, 8: o.u8(o.merchant(player) + 0x19)}, 2)
     if pirate is not None:
         mission_script(o, p2m([bytes([0x51, 1]), WAIT]), {1: o.u16(o.ship(pirate) + 0x42)}, 3)
+
+
+def mission_misc(o):
+    """The free game's 0x22, 0x1F, 0x2C, 0x41, 0x46, 0x47, 0x48 and 0x49, each script of its own in its own tick: 0x1F
+    with the player's ship moved next to a treasure spot (and a far spot; the mission 308's wider circle); 0x2C with −1,
+    a captain whose ship sails as a pirate, one with wrong check bytes, and one the player has a letter 0x54 for (a
+    letter of his without a buffer or record made one); 0x41 on a docked ship, a ship in a convoy and a ship in another
+    state; 0x46 (the commission's event); 0x47 and 0x48 on the player's home office (barrels and loads); 0x49. Saves 3,
+    5, 7 (save 1's player has no letter to turn into a 0x54)."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    mine = merchant_ships(o, player)
+    ship = mine[0]
+    # 0x1F: the spot 7 next to the player's ship (x + 2, y + 1).
+    w16(o, o.ship(ship) + 0x1E, 198 + 2)
+    w16(o, o.ship(ship) + 0x22, 417 + 1)
+    mission_script(o, p2m([bytes([0x22, 1]), bytes([0x1F, 2, 3, 4]), bytes([0x1F, 2, 5, 6]), WAIT]),
+                   {2: player, 3: 7, 5: 90}, 1)
+    w16(o, o.ship(ship) + 0x22, 417 + 7)  # (49 + 4 = 53: only within the mission 308's 80)
+    mission_script(o, p2m([bytes([0x1F, 2, 3, 4]), WAIT]), {2: player, 3: 7}, 2, mission=0x134)
+    # 0x2C.
+    captains = o.u16(0x6DD892)
+    table = o.u32(to.SHIPS)
+    sailing = next((o.u16(o.ship(i) + 0x42) for i in range(ships) if o.u16(o.ship(i) + 0x134) == 0x12
+                    and o.u16(o.ship(i) + 0x42) < captains), None)
+
+    def key(c):
+        return c | o.u8(table + 0x10 * c + 3) << 16 | o.u8(table + 0x10 * c + 2) << 24
+    other = next(c for c in range(captains) if c != sailing)
+    letters, at = [], o.u16(o.merchant(player) + 0xA)
+    while at < o.u16(0x6DD736) and len(letters) < 64:
+        letters.append(at)
+        at = o.u16(o.u32(0x6DD730) + 0x10 * at + 6)
+    plain = next((m for m in letters if o.u8(o.u32(0x6DD730) + 0x10 * m + 4) not in
+                  (0x29, 0x47, 0x63, 0x83, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x71)), None)
+    if plain is not None:
+        entry = o.u32(0x6DD730) + 0x10 * plain
+        w8(o, entry + 4, 0x54)
+        w16(o, entry + 8, key(other) >> 16)
+        w16(o, entry + 0xA, other)
+    print(f'player {player}: ship {ship}, captains {captains}, sailing {sailing}, other {other}, letter {plain}')
+    mission_script(o, p2m([bytes([0x2C, 1, 2, 3]), bytes([0x2C, 1, 4, 5]), bytes([0x2C, 1, 6, 7]),
+                           bytes([0x2C, 1, 8, 9]), WAIT]),
+                   {1: player, 2: -1, 4: key(sailing) if sailing is not None else key(other), 6: key(other) ^ 0x10000,
+                    8: key(other)}, 3)
+    # 0x41.
+    convoyed = next((i for i in range(ships) if o.u16(o.ship(i) + 8) < o.u16(to.SHIPS + 0xF6)), ship)
+    stuck = next((i for i in range(ships) if o.u16(o.ship(i) + 8) >= o.u16(to.SHIPS + 0xF6) and
+                  o.u16(o.ship(i) + 0x134) not in (0, 1, 2, 3, 8, 9, 0xF, 0x12, 0x14)), ship)
+    print(f'convoyed {convoyed}, another state {stuck} ({o.u16(o.ship(stuck) + 0x134):#x})')
+    mission_script(o, p2m([bytes([0x41, 1, 2, 3]), bytes([0x41, 1, 4, 5]), bytes([0x41, 1, 6, 7]), WAIT]),
+                   {1: 50, 2: ship, 4: convoyed, 6: stuck}, 4)
+    # 0x46, 0x47, 0x48, 0x49.
+    mission_script(o, p2m([bytes([0x46, 1, 2]), bytes([0x47, 3, 1, 4, 5]), bytes([0x47, 3, 1, 6, 7]),
+                           bytes([0x48, 3, 1, 4, 8]), bytes([0x48, 3, 1, 6, 8]), bytes([0x47, 3, 1, 4, 9]),
+                           bytes([0x49, 4, 10, 11]), bytes([0x49, 6, 12, 13]), bytes([0x49, 14, 15, 16]), WAIT]),
+                   {1: home, 2: 3, 3: player, 4: 3, 6: 0, 8: 5, 10: 7, 12: -3, 14: 20, 15: 1}, 5)
 
 
 def hanse_dev_candidacy(o):
@@ -14937,6 +14997,9 @@ SCENARIOS = {
     'mission_ships_state': Scenario(mission_ships_state, [0x4D85C0], 1, [
         '@4f0fed', '@4f0ff7', '@50df68', '@50dfcd', '@4f1038', '@4efa45', '@4efe49', '@4efe63', '@4efe7b',
         '@4f1587', '@4f04dd', '@4f04c7', '@4f1e20'], missions=True),
+    'mission_misc': Scenario(mission_misc, [0x4D85C0], 1, [
+        '@4ef518', '@4ef864', '@4ef7ce', '@4ef85f', '@4d7784', '@4d7862', '@4d7842', '@4d7856', '@4f1458', '@4f14c4',
+        '@4f14ab', '@4f17a5', '@4f185b', '@4f1874', '@4f1922', '@4f1975'], missions=True),
     'hanse_dev_candidacy': Scenario(hanse_dev_candidacy, [0x535760], 0, [
         '@4f9397', '@4f93a4', '@535fb2>537025', '@53b247', '@53b283', '@53b24e>53b28a', '@53b255>53b28a',
         '@53b259>53b28a', '@53b281>53b28a', '@53b26c>53b28a', '@53b29e', '@53b2b0', '@53b2ae>53b2b8', '@53b34a',
