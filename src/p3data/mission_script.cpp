@@ -2431,6 +2431,119 @@ void fn_53fb00(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		: 0xFFFFFFFEu;
 }
 
+namespace {
+
+uint32_t op_u32(const uint8_t* operation, size_t at) {
+	uint32_t v = 0;
+	std::memcpy(&v, operation + at, 4);
+	return v;
+}
+
+// The variable `var` of the script of the event `event` (0x4D8DB0's record) if it is a 0x1B with its variables and
+// `var` below their count; else null. (The game writes through the event's [+0xC] whatever it is: the callers check
+// the type when the game does, and p3vita leaves out what it can't keep.)
+uint32_t* script_variable(SaveGame& save, uint32_t event, uint32_t var) {
+	if (event >= save.events.size() || save.events[event].u16(0x6) != 0x1B) {
+		return nullptr;
+	}
+	auto script = save.missions.scripts.find(uint16_t(event));
+	if (script == save.missions.scripts.end() || var >= script->second.variables.size()) {
+		return nullptr;
+	}
+	return &script->second.variables[var];
+}
+
+}  // namespace
+
+void fn_53ec30(SaveGame& save, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	const uint32_t event = op_u32(operation, 4);
+	const uint32_t var = op_u32(operation, 8);
+	if (event >= g.u16(0x6DD748) || event >= save.events.size()) {
+		return;
+	}
+	if (save.events[event].u16(0x6) == 0x1B && var <= save.events[event].u16(0x12)) {
+		// (The variable [+0x12] itself, one past them, falls in the buffer's room after them: p3vita doesn't keep it.)
+		if (uint32_t* v = script_variable(save, event, var)) {
+			*v = op_u32(operation, 0xC);
+		}
+	}
+	const uint32_t entry = op_u32(operation, 0x10);
+	// (The entry the mailbox's count, one past it, is read past the entries: left out.)
+	if (entry < g.u16(kMailCount) && entry < save.mail.size()) {
+		const uint8_t type = save.mail[entry].u8(4);
+		if (type >= 0x3C && type <= 0x40 && entry < save.mail_records.size() && save.mail_records[entry]) {
+			save.mail_records[entry]->u32(4) = 0;
+		}
+	}
+}
+
+void fn_53ca30(SaveGame& save, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	const uint8_t town = operation[0xC];
+	if (town >= g.u32(global::kWorldTownCount)) {
+		return;
+	}
+	uint16_t ship = 0;
+	std::memcpy(&ship, operation + 4, 2);
+	if (ship >= g.u16(global::kShipCount) || ship >= save.ships.size() ||
+		operation[0xD] >= g.u32(global::kWorldTownCount)) {
+		// (For an operation 0x53 the town's [+0x83F] would be 0xFF: only 0x54 comes here.)
+		if (op_u32(operation, 0) == 0x53) {
+			save.towns[town].memory.u8(0x83F) = 0xFF;
+		}
+		return;
+	}
+	uint16_t event = 0;
+	std::memcpy(&event, operation + 0xE, 2);
+	const uint16_t var = remove_letter_44(save, save.ships[ship].memory.u8(0x0), town, event);
+	// 0x4D8DB0 gives the event up to the count (one past them: left out); its [+0x12] above the variable, with no
+	// check of its type (only a 0x1B is kept here: the letters 0x44 are never made).
+	if (event <= g.u16(0x6DD748) && event < save.events.size() && save.events[event].u16(0x12) > var) {
+		if (uint32_t* v = script_variable(save, event, var)) {
+			*v = ship;
+		}
+	}
+}
+
+void fn_536129(SaveGame& save, const uint8_t* operation) {
+	const uint32_t bits = op_u32(operation, 0x10);
+	pay_map_letter(save, op_u32(operation, 4), op_u32(operation, 8), op_u32(operation, 0xC), uint16_t(bits >> 5));
+	const uint32_t town = bits & 0x1F;
+	if (town < save.globals.u32(global::kWorldTownCount)) {
+		save.towns[town].memory.u8(0x82C) = 0xFF;
+	}
+}
+
+void fn_53edf0(SaveGame& save, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	const uint32_t event = op_u32(operation, 4);
+	const uint32_t key = op_u32(operation, 8);
+	const uint32_t merchant = op_u32(operation, 0x10);
+	bool removed = false;
+	if (merchant < g.u16(global::kWorldMerchantCount) && merchant < save.merchants.size()) {
+		removed = remove_letter_71(save, save.merchants[merchant].memory.u16(0xA), event, uint8_t(key));
+	}
+	if (event >= g.u16(0x6DD748) || event >= save.events.size() || !removed ||
+		save.events[event].u16(0x6) != 0x1B) {
+		return;
+	}
+	const uint32_t count = save.events[event].u16(0x12);
+	if (count > key >> 8) {
+		if (uint32_t* v = script_variable(save, event, key >> 8)) {
+			if (*v >= g.u16(global::kWorldMerchantCount)) {
+				return;
+			}
+			*v = merchant;
+		}
+	}
+	if (count > (key & 0xFF)) {
+		if (uint32_t* v = script_variable(save, event, key & 0xFF)) {
+			*v = op_u32(operation, 0xC);
+		}
+	}
+}
+
 uint32_t run_mission_script(SaveGame& save, uint16_t event) {
 	GameMemory<0x18>& e = save.events[event];
 	MissionData::Script& script = save.missions.scripts[event];

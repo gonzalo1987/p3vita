@@ -2814,6 +2814,13 @@ All the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu
   after each tick; the player keeps his class-2 letters. Saves 3, 5, 7: 256 calls equal each, 21 of 21 targets (save 5:
   19, three offices in its home town). Broken on purpose (the letter 0x08's [+0xA], the put-off's 15483): caught. The
   mission scenarios, world.sh 7 days and the world 7 days with the missions: 0.
+- The player's operations on the mission letters (`missions_detail::fn_53ec30` 0x74, `fn_53ca30` 0x54, `fn_536129`
+  0x55, `fn_53edf0` 0x76; the mailbox's 0x4D7340, 0x4D74C0, 0x4D7870 as `remove_letter_44`, `pay_map_letter`,
+  `remove_letter_71`), `retouch_unchecked.py mission_letter_ops`: a script of its own sends the player a letter 0x3C
+  with two answers, five tavern letters 0x71 and the map's 0x45 and 0x46, the dead 0x4D7140 a letter 0x44; after the
+  tick 2 the operations through the executor on each branch (its docstring). Saves 3, 5, 7: the events' and the
+  executor's calls equal (36, 31, 55), 31 of 31 targets. Broken on purpose (0x74's record [+0x4], 0x54's variable,
+  0x55's bits, 0x76's merchant): caught, each. The mission scenarios and the world 7 days with the missions: 0.
 
 ## The game's static initializers (2026-11-03)
 

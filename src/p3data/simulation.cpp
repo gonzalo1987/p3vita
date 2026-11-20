@@ -546,6 +546,18 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 	case 0x82:  // A pirate for a mission (0x5367A6 → 0x53FB00; mission_script.cpp).
 		missions_detail::fn_53fb00(save, sailing, operation);
 		break;
+	case 0x74:  // A mission letter's answer into its script (0x536B56 → 0x53EC30; mission_script.cpp).
+		missions_detail::fn_53ec30(save, operation);
+		break;
+	case 0x54:  // A letter 0x44 removed, its ship into a script (0x53611A → 0x53CA30; mission_script.cpp).
+		missions_detail::fn_53ca30(save, operation);
+		break;
+	case 0x55:  // A treasure map's piece paid: the letter 0x46 (0x536129 → 0x4D74C0; mission_script.cpp).
+		missions_detail::fn_536129(save, operation);
+		break;
+	case 0x76:  // The tavern's mission letter 0x71 taken (0x536B74 → 0x53EDF0; mission_script.cpp).
+		missions_detail::fn_53edf0(save, operation);
+		break;
 	case 0x7B:  // Capitanes y administradores que buscan trabajo (0x5365E3).
 		tick::fn_5365e3(save, operation);
 		break;

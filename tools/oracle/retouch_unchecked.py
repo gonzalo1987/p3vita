@@ -6206,6 +6206,99 @@ def harvest_event(o):
     return during
 
 
+MAILBOX = 0x6DD730  # u32 the entries (16 bytes), u16 [+0x4] the free list, u16 [+0x6] the count
+
+
+def chain_letters(o, m):
+    """[(entry, address)] of the merchant m's letters, from his [+0xA]."""
+    base, count = o.u32(MAILBOX), o.u16(MAILBOX + 6)
+    out, i = [], o.u16(o.merchant(m) + 0xA)
+    while i < count and len(out) <= count:
+        out.append((i, base + 16 * i))
+        i = o.u16(base + 16 * i + 6)
+    return out
+
+
+def mission_letter_ops(o):
+    """The player's operations on the mission letters, after a script of its own (tick 1) sent him a letter 0x3C with
+    two answers, five tavern letters 0x71 (their [+0xA] 21, 22, 23, 24 and 100) and the treasure map's 0x45 and 0x46,
+    and the dead 0x4D7140 a letter 0x44 (its variable 50). After the tick 2: 0x74 (the answer into the script and the
+    letter's deadline 0; with the variable the count, one past; past it; an event not 0x1B; one past the events (nothing
+    at all); the entry a 0x45, a 0x71, one below 0x3C, past the mailbox); 0x54 (the 0x44 found and its ship into the variable; another town; a ship, a town
+    and the second town out; the event 0xFFFF); 0x55 (the 0x45 paid, the 0x46, a 0x3C, an entry not in his chain, a
+    merchant out, the town 31 out); 0x76 (the 0x71 21 with the variable 40 −1: nothing more; 22 with the variable 41 a
+    merchant: both written; 23 with the variable 255 past the count; 24 its record's event made one not 0x1B; 100 past
+    the count, its variable 43 a merchant; one not found). Saves 3, 5, 7."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    other = (home + 1) % towns
+    ship = merchant_ships(o, player)[0]
+    now = o.u32(WORLD + 0x14)
+    w8(o, o.merchant(player) + 0x39, 0)  # (his class-2 letters kept)
+
+    def f7(b1, b3, b5, answers):
+        return bytes([0xF7, b1, 2, b3, 4, b5, answers, 0])
+    texts = [b'Mission\0Body\0Yes\0No\0', b'Tavern\0A job in %t\x02.\0']
+    script = mission_script(o, p2m([(f7(0, 20, 30, 2), 0), (f7(5, 21, 30, 0), 1), (f7(5, 22, 30, 0), 1),
+                                    (f7(5, 23, 30, 0), 1), (f7(5, 24, 30, 0), 1), (f7(5, 100, 30, 0), 1),
+                                    bytes([0xF6, 9, 30, 10, 2, 11]), bytes([0xF6, 12, 30, 10, 2, 13]), WAIT], texts),
+                            {2: home, 4: now + 0x10000, 30: player, 9: 4, 10: 0x22, 11: 0, 12: 5, 13: 1, 40: -1,
+                             41: 3, 42: -1, 43: 2}, 1)
+    o.call(0x4D7140, [player, home, script, 0, 50, 0], ecx=MAILBOX)
+    other_event = next(i for i, a in rt.events(o) if o.u16(a + 6) not in (0x1B, 0xFFFF))
+    print(f'player {player}: home {home}, ship {ship}, script {script}, event not 0x1B {other_event}')
+
+    def during(o):
+        def after(o, t):
+            if t != 2:
+                return
+            letters = chain_letters(o, player)
+            kinds = {}
+            for i, a in letters:
+                kind = o.u8(a + 4)
+                key = o.u8(o.u32(a + 8) + 0xA) if kind in (0x3C, 0x71) else None
+                kinds[(kind, key)] = (i, a)
+            print('letters: ' + ' '.join(f'{i}:{k:#x}/{key}' for (k, key), (i, _) in sorted(kinds.items(),
+                                                                                       key=lambda x: x[1][0])))
+            count = o.u16(MAILBOX + 6)
+            mission, _ = kinds[(0x3C, 20)]
+            events = o.u16(to.EVENTS + 0xC)
+            # 0x74.
+            common = next(i for i, a in letters if o.u8(a + 4) < 0x3C)
+            operation(o, 0x74, events, 21, 9, mission)  # (first: its deadline left)
+            operation(o, 0x74, script, 20, 1, mission)
+            operation(o, 0x74, script, 64, 7, kinds[(0x45, None)][0])
+            operation(o, 0x74, other_event, 21, 7, kinds[(0x71, 21)][0])
+            operation(o, 0x74, script, 65, 7, common)
+            operation(o, 0x74, script, 21, 8, count + 1)  # (the count itself: the game reads past the entries)
+            # 0x54 ({0x54, u16 ship, 0, u8 town, u8 town, u16 event}).
+            fmt = '<IHHIBBHI'
+            operation(o, 0x54, ship, 0, 0, other, home, script, 0, fmt=fmt)
+            operation(o, 0x54, ship, 0, 0, home, home, script, 0, fmt=fmt)
+            operation(o, 0x54, ships, 0, 0, home, home, script, 0, fmt=fmt)
+            operation(o, 0x54, ship, 0, 0, towns, home, script, 0, fmt=fmt)
+            operation(o, 0x54, ship, 0, 0, home, towns, script, 0, fmt=fmt)
+            operation(o, 0x54, ship, 0, 0, home, home, 0xFFFF, 0, fmt=fmt)
+            # 0x55 ({0x55, merchant, entry, amount, bits << 5 | town}).
+            operation(o, 0x55, player, kinds[(0x45, None)][0], 500, 3 << 5 | home)
+            operation(o, 0x55, player, kinds[(0x46, None)][0], 300, 4 << 5 | other)
+            operation(o, 0x55, player, mission, 100, 31)
+            operation(o, 0x55, player, count + 5, 100, home)
+            operation(o, 0x55, merchants, kinds[(0x45, None)][0], 100, home)
+            # 0x76 ({0x76, event, variable << 8 | key, value, merchant}).
+            w16(o, o.u32(kinds[(0x71, 24)][1] + 8) + 8, other_event)
+            operation(o, 0x76, script, 40 << 8 | 21, 0x1234, player)
+            operation(o, 0x76, script, 41 << 8 | 22, 0x2345, player)
+            operation(o, 0x76, script, 255 << 8 | 23, 0x3456, player)
+            operation(o, 0x76, other_event, 42 << 8 | 24, 0x4567, player)
+            operation(o, 0x76, script, 43 << 8 | 100, 0x5678, player)
+            operation(o, 0x76, script, 42 << 8 | 25, 0x6789, player)
+            operation(o, 0x76, script, 42 << 8 | 100, 0x789A, merchants)
+        return after
+    return during
+
+
 def hanse_dev_candidacy(o):
     """0x45 (0x535FA4: standing for mayor, [+0x118]) for the player with 0, 1 and 7, an AI merchant (always 1) and a
     merchant past; 0x4A (0x53B1F0, events_rare.cpp: the Hanse tasks window's developers' tools) on events 0x30 made by
@@ -15329,6 +15422,14 @@ SCENARIOS = {
         '@4f0679', '@4dc800', '@4eea11', '@4ee03c'], missions=True),
     'mission_attack': Scenario(mission_attack, [0x4D85C0, 0x535760], 1, [
         '@53fb3c', '@53fb86', '@53fba1', '@53fbf8', '@53fb36>53fc64'], missions=True),
+    'mission_letter_ops': Scenario(mission_letter_ops, [0x4D85C0, 0x535760], 1, [
+        '@53ec65', '@53ec44>53eca4', '@53ec56>53ec6e', '@53ec63>53ec6e', '@53ec9a', '@53ec7c>53eca4', '@53ec93>53eca4',
+        '@53ec98>53eca4',
+        '@53cab0', '@53caae>53cae1', '@53ca59>53cac6', '@53cac9>53cae1', '@53ca48>53cae1', '@53ca64>53cac6',
+        '@53caa8>53cae1', '@4d73c4',
+        '@4d7554', '@4d754d>4d7554', '@4d7552>4d75bc', '@4d7534', '@4d74db>4d75bc', '@536153>537025', '@53616a',
+        '@53ee99', '@53eeb1', '@53ee97>53eeba', '@53ee5f>53eeba', '@53ee81>53ee9e', '@53ee71>53eeba', '@53eeaf>53eeba',
+        '@4d78c9'], missions=True),
     'harvest_event': Scenario(harvest_event, [0x4D85C0], 1, [
         '@4e2860>4e2b79', '@4e288f', '@4e28a3', '@4e292d', '@4e2913>4e292d', '@4e291b>4e292d', '@4e2923>4e292d',
         '@4e292b>4e2946', '@4e29c6', '@4e29bc>4e29f1', '@4e29c4>4e29f1', '@4e2a05', '@4e2a8a', '@4e2a70>4e2a8a',

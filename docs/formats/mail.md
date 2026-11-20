@@ -150,12 +150,12 @@ the RNG of the senders (rand() calls that build the letters).
 | 0x4D6FD0 | clear the marks of a merchant's letters 0x21 ([+0xE]) and 0x22 ([+0xF]) | operation 0x60 (0x53DA90) | `fn_4d6fd0` |
 | 0x4D7030 | remove the 0x45 letters and mark the 0x46 ones that match two u16 | mission interpreter (0x4EE252) | — |
 | 0x4D7140, 0x4D7200, 0x4D73F0 | add a 0x44 letter, find one, add a 0x45/0x46 letter | none (dead code) | — |
-| 0x4D7340 | remove the 0x44 letter matching [+0x5] and [+0x8] and return its [+0xC] | operation 0x54 (0x53CA30) | — |
-| 0x4D74C0 | pay for a 0x45/0x46 letter: the merchant's money [+0x0] − amount, the letter becomes 0x46, gets the bits in [+0xA], today's date and unread, and moves to the head | operation 0x55 (0x536141) | — |
+| 0x4D7340 | remove the 0x44 letter matching [+0x5] and [+0x8] and return its [+0xC] | operation 0x54 (0x53CA30) | `remove_letter_44` |
+| 0x4D74C0 | pay for a 0x45/0x46 letter: the merchant's money [+0x0] − amount, the letter becomes 0x46, gets the bits in [+0xA], today's date and unread, and moves to the head | operation 0x55 (0x536141) | `pay_map_letter` |
 | 0x4D75D0 | pick a merchant's 0x45/0x46 letter (with rand) | 0x526B40, from the interface (0x5CC942, 0x5CF2EF, 0x5D5C3B) | — |
 | 0x4D7720 | whether a chain has a 0x45/0x46 letter | mission interpreter (0x4EF769) | — |
 | 0x4D7770 | whether a convoy is still the object of a 0x54 letter | mission interpreter (0x4F06AC) | — |
-| 0x4D7870 | remove the 0x71 letter matching its record's [+0x8] and [+0xA] | operation 0x76 (0x53EDF0) | — |
+| 0x4D7870 | remove the 0x71 letter matching its record's [+0x8] and [+0xA] (no limit of steps) | operation 0x76 (0x53EDF0) | `remove_letter_71` |
 | 0x4D7900 | the 0x71 letter for a town still valid (its record's [+0x4] after today) | mission interpreter (0x4F19E0), operation 0x52 (0x53C2C0), the interface (0x5A7xxx, 17 calls) | — |
 | 0x4D7960 | repair the chains: a letter reached twice is cut off (0xFFFF), the chronicle and the free list too | operation 0x71 (0x536B28) | — |
 | 0x4D7AC0 | whether a chain has a 0x5F letter with [+0xA] equal to a rank | 0x4F7559 (0x4F7510) | named in `merchants.cpp` |

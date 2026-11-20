@@ -338,6 +338,81 @@ void treasure_found(SaveGame& save, uint32_t merchant, uint32_t spot) {
 	}
 }
 
+uint16_t remove_letter_44(SaveGame& save, uint8_t merchant, uint8_t town, uint16_t event) {
+	GlobalMemory& g = save.globals;
+	if (merchant >= g.u16(global::kWorldMerchantCount) || merchant >= save.merchants.size()) {
+		return 0xFFFF;
+	}
+	const uint16_t count = g.u16(kMailCount);
+	uint16_t* link = &save.merchants[merchant].memory.u16(0xA);
+	for (int32_t left = count; *link < count && *link < save.mail.size() && left > 0; --left) {
+		const uint16_t entry = *link;
+		GameMemory<0x10>& e = save.mail[entry];
+		if (e.u8(4) == 0x44 && e.u8(5) == town && e.u16(8) == event) {
+			*link = e.u16(6);
+			e.u16(6) = g.u16(kMailFree);
+			g.u16(kMailFree) = entry;
+			const uint16_t kept = e.u16(0xC);
+			release_letter(save, entry);
+			return kept;
+		}
+		link = &e.u16(6);
+	}
+	return 0xFFFF;
+}
+
+void pay_map_letter(SaveGame& save, uint32_t merchant, uint32_t entry, uint32_t amount, uint16_t bits) {
+	GlobalMemory& g = save.globals;
+	if (merchant >= g.u16(global::kWorldMerchantCount) || merchant >= save.merchants.size()) {
+		return;
+	}
+	MerchantMemory& m = save.merchants[merchant].memory;
+	m.u32(0) -= amount;
+	const uint16_t count = g.u16(kMailCount);
+	uint16_t* link = &m.u16(0xA);
+	for (uint32_t left = count; *link < count && *link < save.mail.size() && left > 0; --left) {
+		if (*link == entry) {
+			GameMemory<0x10>& e = save.mail[entry];
+			if (e.u8(4) != 0x45 && e.u8(4) != 0x46) {
+				return;
+			}
+			e.u8(4) = 0x46;
+			e.u16(0xA) |= bits;
+			e.u8(0) = g.u8(global::kWorldDay);
+			e.u8(1) = uint8_t(g.u8(global::kWorldMonth) | 0x80);
+			e.u16(2) = g.u16(global::kWorldYear);
+			*link = e.u16(6);
+			e.u16(6) = m.u16(0xA);
+			m.u16(0xA) = uint16_t(entry);
+			return;
+		}
+		link = &save.mail[*link].u16(6);
+	}
+}
+
+bool remove_letter_71(SaveGame& save, uint16_t& head, uint32_t event, uint8_t key) {
+	GlobalMemory& g = save.globals;
+	const uint16_t count = g.u16(kMailCount);
+	uint16_t* link = &head;
+	// (A guard of the mailbox's size in steps: the game would go round a chain cut into a loop for ever.)
+	for (size_t steps = 0; *link < count && *link < save.mail.size() && steps <= save.mail.size(); ++steps) {
+		const uint16_t entry = *link;
+		GameMemory<0x10>& e = save.mail[entry];
+		// (A letter 0x71 always has its record; the game would read through a null one.)
+		const bool has = entry < save.mail_records.size() && save.mail_records[entry].has_value();
+		if (e.u8(4) == 0x71 && has && save.mail_records[entry]->u16(8) == event &&
+			save.mail_records[entry]->u8(0xA) == key) {
+			*link = e.u16(6);
+			release_letter(save, entry);
+			e.u16(6) = g.u16(kMailFree);
+			g.u16(kMailFree) = entry;
+			return true;
+		}
+		link = &e.u16(6);
+	}
+	return false;
+}
+
 void expire_letters(SaveGame& save, int32_t merchant) {
 	tick::events_towns_detail::fn_4d6780(save, merchant);
 }

@@ -29,6 +29,25 @@ const uint32_t* unwritten_mission_ops();
 // gets in its variable [+0xA] (below its count) the captain's key ([+0x6] << 24 | [+0x7] << 16 | the captain), or −2
 // when no ship came.
 void fn_53fb00(SaveGame& save, Sailing* sailing, const uint8_t* operation);
+// The player's operations on the mission letters (the letters' window and the tavern's; the scripts' variables get
+// what he chose):
+// 0x74 (0x536B56 → 0x53EC30; an answer to a mission letter 0x3C..0x40 of 0xF7): for the event [+0x4] below the
+// events' count (else nothing): if a 0x1B, its variable [+0x8] (up to its count [+0x12]) gets [+0xC]; then the entry
+// [+0x10] (up to the mailbox's count), if a letter 0x3C..0x40, its record's [+0x4] (its deadline) 0.
+void fn_53ec30(SaveGame& save, const uint8_t* operation);
+// 0x54 (0x53611A → 0x53CA30): for the town [+0xC], the ship [+0x4] (a u16) and the town [+0xD] below their counts, the
+// letter 0x44 of the ship's owner for the town and the event [+0xE] (a u16) removed (0x4D7340, mail.cpp); its [+0xC]
+// the variable of that event's script that gets the ship. Nobody queues it (and only dead code makes the letters).
+void fn_53ca30(SaveGame& save, const uint8_t* operation);
+// 0x55 (0x536129, inline; a treasure map's piece bought): the merchant [+0x4] pays [+0xC] for his letter 0x45/0x46
+// [+0x8], which gets the bits [+0x10] >> 5 (0x4D74C0, mail.cpp); the town [+0x10] & 0x1F (below the count) its
+// [+0x82C] 0xFF.
+void fn_536129(SaveGame& save, const uint8_t* operation);
+// 0x76 (0x536B74 → 0x53EDF0; the tavern's mission letter 0x71): the merchant [+0x10]'s letter 0x71 for the event [+0x4]
+// and the key [+0x8] & 0xFF removed (0x4D7870, mail.cpp); if one went and the event (below the events' count) is a
+// 0x1B: its variable [+0x8] >> 8 (below its count), if it holds a merchant (below the merchants' count; else nothing
+// more), gets this one, and its variable [+0x8] & 0xFF (below the count) gets [+0xC].
+void fn_53edf0(SaveGame& save, const uint8_t* operation);
 }  // namespace missions_detail
 
 }  // namespace p3::data

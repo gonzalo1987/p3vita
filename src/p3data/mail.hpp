@@ -71,6 +71,19 @@ void delete_letter(SaveGame& save, int32_t merchant, uint32_t entry);
 // by `merchant` (below the count): in his chain (from his [+0xA], at most the mailbox's count of steps) a letter 0x45
 // for that spot ([+0xC], [+0xE]) goes to the free list with its type 0xFF, a letter 0x46 for it gets [+0xB] |= 0xFE.
 void treasure_found(SaveGame& save, uint32_t merchant, uint32_t spot);
+// 0x4D7340 (on the mailbox; the operation 0x54): in the chain of the merchant `merchant` (below the count; at most
+// the mailbox's count of steps) the first letter 0x44 with [+0x5] `town` and u16 [+0x8] `event` goes to the free list,
+// released (0x51AAB0). Its u16 [+0xC], or 0xFFFF when there is none. (Only dead code makes letters 0x44: 0x4D7140.)
+uint16_t remove_letter_44(SaveGame& save, uint8_t merchant, uint8_t town, uint16_t event);
+// 0x4D74C0 (on the mailbox; the operation 0x55, a treasure map's piece paid): the merchant `merchant` (below the
+// count) pays `amount` ([+0x0], whatever comes next); if the entry `entry` is in his chain (at most the mailbox's count
+// of steps) as a letter 0x45 or 0x46, it becomes a 0x46 with `bits` in its u16 [+0xA], today's date and the «unread»
+// bit, and goes to the head of his chain.
+void pay_map_letter(SaveGame& save, uint32_t merchant, uint32_t entry, uint32_t amount, uint16_t bits);
+// 0x4D7870 (on the mailbox; the operation 0x76): from the link `head` (a merchant's [+0xA]) the first letter 0x71 whose
+// record's u16 [+0x8] is `event` and u8 [+0xA] `key` goes to the free list, released (0x51AAB0). Whether one went.
+// The game follows the chain without a limit.
+bool remove_letter_71(SaveGame& save, uint16_t& head, uint32_t event, uint8_t key);
 // The treasure spot `spot`'s place (the game's 100 spots, u32 x and y: 0x671FD0, the same at 0x672340); false past
 // them.
 bool treasure_spot(uint32_t spot, uint16_t& x, uint16_t& y);
