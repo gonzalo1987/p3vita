@@ -386,7 +386,7 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   `mission_start` (la 0xC0 en todos los modos), la partida nueva entera con la 0xC0, las partidas escritas, ctest
   `missions`. Hasta que estén sus instrucciones, un guion termina en la primera que no está (como antes, que se
   tiraban), y el oráculo y las comprobaciones de siempre siguen sin las misiones.
-- [ ] **Las instrucciones del intérprete**: 70 de las 138 con manejador (tabla en formats/missions.md, con cuántas
+- [ ] **Las instrucciones del intérprete**: 82 de las 138 con manejador, **todas las de la partida de un jugador** (tabla en formats/missions.md, con cuántas
   misiones usan cada una). Hechas (20-11-2026, `re/emu/sesion47/README.md` y `re/emu/sesion48/README.md`): 0x04..0x07,
   0x09..0x0E, 0x11, 0x12, 0x15, 0x17..0x1E, 0x20, 0x21, 0x23, 0x24, 0x26/0x27, 0x29 (con 0x533210, la ciudad más
   cercana), 0x2F (la mercancía que más le falta a una ciudad, 0x51BEB0), 0x35, 0x37 (la ventana de un suceso
@@ -400,7 +400,11 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   con más sitio de un comerciante en una ciudad), 0x22 (un número por debajo de 100), 0x1F (un barco cerca de un
   sitio del tesoro), 0x2C (el estado del capitán pirata de una misión, 0x4D7770), 0x41 (el casco de un barco),
   0x46 (el evento de un encargo), 0x47 y 0x48 (las existencias de una oficina y su [+0x2E8]) y 0x49 (lo que valen unas
-  mercancías para los piratas). **Comprobado: el
+  mercancías para los piratas), 0x4C y 0xEE (meter o sacar existencias de una ciudad o de una oficina), 0x4D (un
+  float del comerciante), 0x4E (la bodega ocupada), 0x50 (las sumas de las cartas 0x72 de un comerciante desde una
+  fecha, 0x531260), 0x54 (un barco que pueda guiar un convoy), 0x61 (el [+0x16] de un comerciante), 0x69 (un evento
+  0x0F), 0x6A (el comerciante n-ésimo con oficina en una ciudad), 0x6C (un bit de un barco), 0x6D (el barco mejor
+  armado) y 0x6F (la ciudad siguiente de un barco, con 0x533210). **Comprobado: el
   mundo entero 30 días con las misiones igual al juego en las 12 partidas**, llamada a llamada
   (`re/emu/sesion48/worldmd.sh`, por tramos), y la cola de eventos y las operaciones 60 días (igual salvo una
   diferencia de las batallas en la partida 4 que sale también sin las misiones: apartado 2); 7 días también en continuo
@@ -408,9 +412,8 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   ejecutan las partidas en 60 días (`opcount.sh`). Las ramas a las que no llegan las partidas, con guiones propios
   en un estado retocado (`retouch_unchecked.py mission_branches`, partidas 3, 5 y 7: 0x07, 0x26 con todos los
   humanos, 0x27, el paso errante de 0x29, los modos de 0x40 y 0x4F, 0x44 con varias oficinas, las ramas de 0xF7 y
-  todos los códigos «%» de sus cartas; `mission_ships_money`, `mission_ships_state` y `mission_misc`, partidas
-  1, 3, 5 y 7: las veinticinco nuevas con sus ramas): iguales (`docs/oracle.md`). Siguen: las otras 12 de la partida
-  de un jugador con estados retocados, luego
+  todos los códigos «%» de sus cartas; `mission_ships_money`, `mission_ships_state`, `mission_misc` y
+  `mission_last`, partidas 1, 3, 5 y 7: las treinta y siete nuevas con sus ramas): iguales (`docs/oracle.md`). Siguen
   las 10 más de la partida en red, las 27 de las campañas y las 19 que no usa ningún fichero. Cuando estén todas, el
   oráculo con las misiones por omisión (y `world.sh` con ellas).
 - [ ] **Lo que cuelga del intérprete**: el evento 0x09 (0x4E2824, las cartas de buena y mala cosecha), sus cartas (tres

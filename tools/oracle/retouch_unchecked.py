@@ -5897,6 +5897,72 @@ def mission_misc(o):
                    {1: home, 2: 3, 3: player, 4: 3, 6: 0, 8: 5, 10: 7, 12: -3, 14: 20, 15: 1}, 5)
 
 
+def mission_last(o):
+    """The free game's last twelve, each script of its own in its own tick: 0x4C and 0xEE (a town's and the player's
+    home office's stock, barrels and loads, in, out, all out; an office that isn't there); 0x4D; 0x4E; 0x50 (two of
+    the player's letters without a buffer or record made letters 0x72, by each bit and with a later date); 0x54; 0x61
+    (up, held at both ends); 0x69; 0x6A (the first, second, past the last, negative); 0x6C (set and clear); 0x6D; 0x6F
+    (the player's biggest ship, wandering, with a town with the bit 1 of [+0x2C8] next to it). Saves 3, 5, 7."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    mine = merchant_ships(o, player)
+    ship = mine[0]
+    town = o.u8(o.ship(ship) + 0x39)
+    big = max(mine, key=lambda s: o.u8(o.ship(s) + 0xE))
+    gate = next((t for t in range(towns) if o.u32(o.town(t) + 0x2C8) & 1), home)
+    stranger = next(m for m in range(merchants) if all(o.u8(o.office(i) + 0x2C6) != home
+                                                       for i in rt.merchant_offices(o, m)))
+    mailbox = o.u32(0x6DD730)
+    letters, at = [], o.u16(o.merchant(player) + 0xA)
+    while at < o.u16(0x6DD736) and len(letters) < 64:
+        letters.append(at)
+        at = o.u16(mailbox + 0x10 * at + 6)
+    plain = [m for m in letters if o.u8(mailbox + 0x10 * m + 4) not in
+             (0x29, 0x47, 0x63, 0x83, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x71)][:2]
+    for k, m in enumerate(plain):
+        entry = mailbox + 0x10 * m
+        w8(o, entry + 4, 0x72)
+        w16(o, entry + 8, 7)
+        w16(o, entry + 0xA, 10 + k)
+        w16(o, entry + 0xC, 20 + k)
+        w16(o, entry + 0xE, 30 + k)
+    # The first letter's date as 0x531260 makes it (with the day cut to the month): 0x50's threshold there and a day on.
+    first = mailbox + 0x10 * plain[0] if plain else None
+    dated = 0
+    if first is not None:
+        day, month, year = o.u8(first), o.u8(first + 1) & 0x7F, o.u16(first + 2)
+        before = (0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)
+        length = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+        days = year * 365 + (365 if month > 11 else before[month] + (min(day, length[month]) - 1 if day > 1 else 0))
+        dated = days << 8
+    print(f'player {player}: ship {ship} in {town}, big {big} (type {o.u8(o.ship(big) + 0xE)}), gate {gate}, '
+          f'stranger {stranger}, letters 0x72 {plain}, the first dated {dated:#x}')
+    mission_script(o, p2m([bytes([0x4C, 1, 2, 3, 4]), bytes([0x4C, 1, 2, 5, 6]), bytes([0x4C, 1, 2, 7, 8]),
+                           bytes([0x4C, 1, 9, 10, 11]), bytes([0xEE, 12, 1, 2, 3, 13]), bytes([0xEE, 12, 1, 2, 7, 14]),
+                           bytes([0xEE, 12, 1, 9, 10, 15]), bytes([0xEE, 16, 1, 2, 3, 17]), WAIT]),
+                   {1: home, 2: 3, 3: 5, 5: -2, 7: -1000000, 9: 0, 10: 3, 12: player, 16: stranger}, 1)
+    mission_script(o, p2m([bytes([0x4D, 1, 2, 3]), bytes([0x4D, 1, 4, 5]), bytes([0x4E, 6, 7]),
+                           bytes([0x50, 1, 8, 9, 10, 11]), bytes([0x50, 1, 8, 9, 12, 13]),
+                           bytes([0x50, 1, 8, 9, 14, 15]), bytes([0x50, 1, 8, 16, 10, 17]), bytes([0x54, 1, 18, 19]),
+                           bytes([0x50, 1, 8, 20, 10, 21]), bytes([0x50, 1, 8, 22, 10, 23]), WAIT]),
+                   {1: player, 2: 2500, 3: home, 4: -700, 5: 0, 6: ship, 8: 7, 9: 0, 10: 7, 12: 1, 14: 6,
+                    16: 0x7FFFFFFF, 18: town, 20: dated, 22: dated + 0x100}, 2)
+    # (0x61 up to its top here and down to its bottom in the last script: one after the other would hide the top.)
+    mission_script(o, p2m([bytes([0x61, 1, 2]), bytes([0x61, 1, 3]), bytes([0x61, 1, 3]),
+                           bytes([0x69, 5, 6, 7]), bytes([0x6A, 5, 8, 9]),
+                           bytes([0x6A, 5, 10, 11]), bytes([0x6A, 5, 12, 13]), bytes([0x6A, 5, 14, 15]),
+                           bytes([0x6C, 16, 17]), bytes([0x6C, 16, 18]), bytes([0x6C, 19, 17]),
+                           bytes([0x6D, 1, 20, 21, 22]), WAIT]),
+                   {1: player, 2: 100, 3: 30000, 4: -30000, 5: home, 6: 3, 7: 9, 8: 0, 10: 1, 12: 50, 14: -1,
+                    16: ship, 17: 1, 18: 0, 19: big, 20: town, 22: gate}, 3)
+    near = sorted((o.u8(o.u32(WORLD + 0x6C) + k * towns + town), k) for k in range(towns) if k != town)
+    mission_script(o, p2m([bytes([0x6F, 1, 2, 3, 4, 5, 6])] * 3 + [bytes([0x6F, 7, 8, 9, 10, 11, 12])] * 2 + [WAIT]),
+                   {1: 0, 2: 1, 3: 2, 4: town, 5: 1, 6: big, 7: 0, 8: 1, 9: 2, 10: town, 11: 0, 12: big}, 4)
+    mission_script(o, p2m([bytes([0x61, 1, 2])] * 3 + [WAIT]), {1: player, 2: -30000}, 5)
+    print(f'nearest to {town}: {near[:4]}')
+
+
 def hanse_dev_candidacy(o):
     """0x45 (0x535FA4: standing for mayor, [+0x118]) for the player with 0, 1 and 7, an AI merchant (always 1) and a
     merchant past; 0x4A (0x53B1F0, events_rare.cpp: the Hanse tasks window's developers' tools) on events 0x30 made by
@@ -15000,6 +15066,10 @@ SCENARIOS = {
     'mission_misc': Scenario(mission_misc, [0x4D85C0], 1, [
         '@4ef518', '@4ef864', '@4ef7ce', '@4ef85f', '@4d7784', '@4d7862', '@4d7842', '@4d7856', '@4f1458', '@4f14c4',
         '@4f14ab', '@4f17a5', '@4f185b', '@4f1874', '@4f1922', '@4f1975'], missions=True),
+    'mission_last': Scenario(mission_last, [0x4D85C0], 1, [
+        '@4ee36a', '@4ee3b4', '@4ee3d2', '@4ee410', '@4ee42d', '@4ee4d5', '@4ee4f7', '@4ee50b', '@4ee51d', '@4f1b09',
+        '@4f1b45', '@4f1d48', '@4f1d78', '@4f1d8f', '@4f1da6', '@4efb2b', '@4f3700', '@4f370b', '@4f3728', '@4f3733',
+        '@4f2b2f', '@4f2bc1', '@4f2c28', '@4f2c33', '@4f008c', '@4efd9d'], missions=True),
     'hanse_dev_candidacy': Scenario(hanse_dev_candidacy, [0x535760], 0, [
         '@4f9397', '@4f93a4', '@535fb2>537025', '@53b247', '@53b283', '@53b24e>53b28a', '@53b255>53b28a',
         '@53b259>53b28a', '@53b281>53b28a', '@53b26c>53b28a', '@53b29e', '@53b2b0', '@53b2ae>53b2b8', '@53b34a',
