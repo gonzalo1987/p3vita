@@ -268,7 +268,7 @@ SoundIni parse_sound_ini(std::string_view text) {
 			}
 			p = next;
 			const std::string s = "SAMPLE" + std::to_string(sample);
-			list.push_back({ini_text(text, s, "SampleFile"), ini_int(text, s, "Loudness", 100)});
+			list.push_back({ini_text(text, s, "SampleFile"), ini_int(text, s, "Loudness", 100), int(sample)});
 		}
 	}
 	return ini;

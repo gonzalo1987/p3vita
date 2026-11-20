@@ -557,6 +557,7 @@ void GameWindowArt::draw_portrait(Portrait p, uint32_t now) {
 				set_face(info.loop, now);
 			} else if (p == Portrait::Sailors && face_.animation == info.loop && int32_t(now - spit_at_) >= 0) {
 				set_face(kSpitFace, now);  // The sailor spits at his loop's end once 7 s have gone (0x5CD6D9; and a sound).
+				spat_ = true;
 			} else if (face_.animation == kSpitFace) {
 				set_face(info.loop, now);  // Back to his loop, the next one 7 s on (0x5CD75F).
 				spit_at_ = now + kSpitWait;

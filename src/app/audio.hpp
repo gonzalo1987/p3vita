@@ -14,6 +14,8 @@
 #include <SDL.h>
 
 #include <cstdint>
+#include <functional>
+#include <list>
 #include <map>
 #include <memory>
 #include <string>
@@ -21,6 +23,8 @@
 
 namespace p3::data {
 class Mp3Stream;
+struct SoundIni;
+struct SoundPcm;
 }
 
 namespace p3::app {
@@ -83,6 +87,33 @@ public:
 	// Out of it: no filter, the music let down back up to its volume, the building's music stopped.
 	void leave_building();
 
+	// The sound effects: sound.ini's lists and a reader of the archive's files (the effects' WAVs).
+	using FileReader = std::function<bool(const std::string& path, std::vector<uint8_t>& out)>;
+	void set_effects(const p3::data::SoundIni& ini, FileReader read);
+	// 0x4439B0: a list of sound.ini loaded (its samples can play), as each screen asks for its own when it is made.
+	void load_list(int id);
+	// 0x443690: its variants' count; 0 without sound or with the list not loaded.
+	int list_variants(int id) const;
+	// 0x443150: the sample `sample` ([SAMPLEn], of a list loaded) on a free one of the 20 channels, at
+	// min(loudness × (sound volume × `volume` / 127) / 100, 127) (`volume` −1: 127; 0: not played) and at `pan`
+	// (0..127, 64 the middle; 127 − pan with «Invert stereo»). `world`: a sound of the town (low-passed in a building);
+	// `reserve`: its channel kept for it until released; `no_start`: only made ready. Not played without `force` in a
+	// building, nor the letters' (6000) while one plays, nor with the 20 channels playing. Its channel, or −1.
+	int play_sample(int sample, bool world, bool reserve, int volume, int pan, bool no_start, bool force);
+	// 0x4430D0: a channel no longer reserved. stop_sample: stopped (the church's prayer when it closes).
+	void release_sample(int channel);
+	void stop_sample(int channel);
+	// 0x442130: how many channels play. 0x443110: whether the prayer (7100) plays.
+	int samples_playing() const;
+	bool prayer_playing() const;
+	// 0x443940: every channel stopped and released.
+	void stop_samples();
+	// SWAPSPEAKER ([+0x1DD]): the samples' left and right swapped.
+	void set_swap_stereo(bool swap) { swap_stereo_ = swap; }
+	// The interface's sounds (*0x6DCCDC, 0x4C45A0): its file `index` (the table 0x6BF118: 0 okbottun_menu.WAV,
+	// 1 alleButtons.WAV...) on one of its 4 channels, at the sound's volume (0x4C4540).
+	void play_interface(int index);
+
 	// The music director's each frame (0x42C080 → 0x444030): the fades moved on.
 	void fade();
 	// Each frame, with the game's clock in ms (*0x6DCCF0): the streams that ended closed.
@@ -91,6 +122,27 @@ public:
 private:
 	struct Stream;
 	enum Slot { kAtmo, kAtmoFading, kMusic, kMusicFading, kBuilding, kSlots };
+	static constexpr int kChannels = 20;  // The sound object's sample handles ([+0x18]).
+	static constexpr int kInterfaceChannels = 4;  // The interface's ([*0x6DCCDC + 0x4]).
+	// A channel of samples: what plays (the audio thread moves `at` and clears `playing`).
+	struct Voice {
+		std::shared_ptr<const p3::data::SoundPcm> pcm;
+		size_t at = 0;
+		bool playing = false;
+		int volume = 127;
+		int pan = 64;
+		bool low_pass = false;
+		float x1[2] = {}, x2[2] = {}, y1[2] = {}, y2[2] = {};
+	};
+	// A sample of the lists loaded ([+0x124] its id, [+0x74] its file, [+0x78] its loudness).
+	struct Sample {
+		std::string file;
+		int loudness = 100;
+	};
+	// A WAV of the archive decoded (kept, the most used, up to kPcmCacheBytes).
+	std::shared_ptr<const p3::data::SoundPcm> pcm_of(const std::string& file);
+	// The audio thread: a channel's samples added to the mix (it stops at its end).
+	void add_voice(Voice& v, int frames);
 
 	static void callback(void* self, Uint8* out, int bytes);
 	void mix(int16_t* out, int frames);
@@ -129,6 +181,19 @@ private:
 	int music_low_ = 2;
 	bool filtered_ = false;  // [+0x1C5]: in a building, the atmospheres low-passed.
 	bool in_building_ = false;  // [+0x1E0]: a building's music plays: no new music or atmosphere.
+	// The effects: sound.ini's lists, the lists loaded and their samples, the channels.
+	std::map<int, std::vector<std::pair<int, Sample>>> ini_lists_;  // By list: its samples' ids and files.
+	std::map<int, int> loaded_lists_;  // [+0x12C]: a list's variants' count.
+	std::map<int, Sample> samples_;  // [+0x124]..: the samples of the lists loaded.
+	FileReader read_file_;
+	std::list<std::pair<std::string, std::shared_ptr<const p3::data::SoundPcm>>> pcm_cache_;
+	size_t pcm_cache_bytes_ = 0;
+	Voice voices_[kChannels];
+	int voice_sample_[kChannels] = {};  // [+0x7C]: each channel's sample id.
+	bool reserved_[kChannels] = {};  // [+0x18C]
+	bool world_[kChannels] = {};  // [+0x1A0]
+	Voice interface_[kInterfaceChannels];
+	bool swap_stereo_ = false;  // [+0x1DD]
 	uint32_t now_ = 0;
 	bool log_ = false;
 	std::vector<int16_t> scratch_;  // The audio thread's decoded samples.

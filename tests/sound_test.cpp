@@ -160,7 +160,7 @@ void test_ini() {
 	check(ini.lists.size() == 1 && ini.lists.count(3000) == 1, "sound lists (3100 without IDs left out)");
 	const std::vector<p3::data::SoundSample>& storm = ini.lists.at(3000);
 	check(storm.size() == 2 && storm[0].file == "musik\\SeekarteWaves\\Sturm1.wav" && storm[0].loudness == 50 &&
-			storm[1].file == "Sturm2.wav" && storm[1].loudness == 100,
+			storm[1].file == "Sturm2.wav" && storm[1].loudness == 100 && storm[0].id == 3000 && storm[1].id == 3001,
 		"a list's samples (case, comment, default loudness)");
 	check(p3::data::ini_text(text, "seamap", "TITEL1") == "musik\\SeekarteMusic\\kurz01.mp3", "ini case");
 	check(p3::data::ini_int(text, "Nothing", "x", -7) == -7, "ini fallback");

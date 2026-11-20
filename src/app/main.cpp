@@ -2825,6 +2825,7 @@ struct PlaceUi {
 	// The bath house: a bath taken (its 0x39 goes once the player goes on) and the game's reaction to it; the page its
 	// side menu lit the frame before (-1 none: the bath's button lighting takes a bath).
 	bool bathed = false;
+	bool praying = false;  // The church's prayer plays (0x443110): its buttons off.
 	int bath_reaction = 0;
 	// The bath house's councillors already talked to while the window is open (its [+0x62F + slot], cleared after a
 	// day) and the answer to the bribe just offered (the window's page 2, [+0x62E]: −1 none).
@@ -4438,11 +4439,13 @@ void church_view(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	// Its side menu (0x5A5296; the parchment from 225, 0x5A5A8C): «Pray», «Feeding the poor», «Donation», «Extension».
 	// «Pray» (0x5A5ADD, 0x5A5B6C..0x5A5BD0) queues nothing: it plays the prayer's sound (0x443150(0x1BBC); while it
 	// plays the four buttons are off, 0x5A5AF9) and shows the picture alone (the window's page 0 draws nothing,
-	// 0x5C98B3; 0x466430(3)), no button lit. (The viewer has no sounds: the picture alone, the buttons on.)
+	// 0x5C98B3; 0x466430(3)), no button lit.
+	const bool praying = ui.praying;
 	place_side_menu(v, ui, exe_text(0x69FEB8, "Catedral", "Church"),
-		{{exe_text(0x69FEA8, "Rezar", "Pray"), kPictureAlone},
-			{exe_text(0x69FEAC, "Donar alimentos", "Feeding the poor"), feeding ? 2 : -1},
-			{exe_text(0x69FEB0, "Donar oro", "Donation"), 0}, {exe_text(0x69FEB4, "Ampliación", "Extension"), 1}},
+		{{exe_text(0x69FEA8, "Rezar", "Pray"), praying ? -1 : kPictureAlone},
+			{exe_text(0x69FEAC, "Donar alimentos", "Feeding the poor"), feeding && !praying ? 2 : -1},
+			{exe_text(0x69FEB0, "Donar oro", "Donation"), praying ? -1 : 0},
+			{exe_text(0x69FEB4, "Ampliación", "Extension"), praying ? -1 : 1}},
 		0xE1);
 	const int32_t money = save.merchants[size_t(save.player)].money();
 	const int fed = church_feeding_level(save, uint32_t(town));
@@ -18362,8 +18365,9 @@ enum class MenuAsk { None, Overwrite, Delete, Quit };
 // over the first at 488. The Vita's screen is lower: the screen drawn at its size into a texture and fitted to the
 // height, in the middle (as the start screen's book).
 // Adapted: the game's first two rows (its screen's resolution and colours) are the viewer's language and its fixes of
-// the game's bugs; the rows the viewer doesn't do yet (details, weather, the videos' volume, stereo, the event videos,
-// the convoys' ships, autosave) show their value with their buttons off. The values chosen apply with «OK». The music's
+// the game's bugs; the rows the viewer doesn't do yet (details, weather, the videos' volume, the event videos, the
+// convoys' ships, autosave) show their value with their buttons off. Its buttons and arrows click when pressed
+// (options.ini's PSoundID=1: alleButtons.WAV of the interface's sounds), not the sliders' ends. The values chosen apply with «OK». The music's
 // and the sound's volumes (0..127) are heard at once as they move, kept with «OK» and put back with «Cancel»: the ball
 // (27 × 25; lit, TEX18's frame 4) along the bar from 530 to 699; a tap on an end moves it by 8 (as ← and → of the pad),
 // on the bar puts it there, and a finger on the bar drags it.
@@ -18394,7 +18398,7 @@ struct OptionPlace {
 };
 constexpr OptionPlace kOptionPlaces[kOptionRows] = {{110, OptionKind::Steps, true}, {142, OptionKind::Steps, true},
 	{174, OptionKind::Steps, false}, {206, OptionKind::Steps, false}, {242, OptionKind::Slider, true},
-	{272, OptionKind::Slider, true}, {302, OptionKind::Slider, false}, {329, OptionKind::Switch, false},
+	{272, OptionKind::Slider, true}, {302, OptionKind::Slider, false}, {329, OptionKind::Switch, true},
 	{365, OptionKind::Steps, true}, {397, OptionKind::Switch, false}, {429, OptionKind::Switch, true},
 	{461, OptionKind::Switch, false}, {493, OptionKind::Steps, false}};
 constexpr int kOptionLabelX = 494;
@@ -18416,7 +18420,7 @@ constexpr int kScreenButtonW = 149;
 constexpr int kScreenButtonH = 36;
 // The pad's stops on the screen: the live rows, then «Quit» and the bottom line's buttons.
 constexpr OptionRow kOptionLiveRows[] = {OptionRow::Language, OptionRow::Fixes, OptionRow::MusicVolume,
-	OptionRow::SoundVolume, OptionRow::GameSpeed, OptionRow::Tooltips};
+	OptionRow::SoundVolume, OptionRow::InvertStereo, OptionRow::GameSpeed, OptionRow::Tooltips};
 constexpr int kOptionLiveCount = int(sizeof(kOptionLiveRows) / sizeof(kOptionLiveRows[0]));
 constexpr OptionButton kOptionStopButtons[] = {OptionButton::Quit, OptionButton::Load, OptionButton::Save,
 	OptionButton::Cancel, OptionButton::Ok};
@@ -18451,6 +18455,7 @@ struct MenuUi {
 	int speed = 3;
 	int music = 48;  // 0..127
 	int sound = 80;
+	bool swap_stereo = false;
 
 	bool open() const { return screen != MenuScreen::Closed; }
 	bool slot_screen() const { return screen == MenuScreen::Save || screen == MenuScreen::Load; }
@@ -18523,7 +18528,7 @@ std::string option_value(const MenuUi& menu, OptionRow row) {
 	case OptionRow::Weather:
 		return exe_text(0x69ADFC, "Bajo", "low");
 	case OptionRow::InvertStereo:
-		return off;
+		return menu.swap_stereo ? on : off;
 	case OptionRow::GameSpeed:
 		return menu.speed < 6 ? speed_name(menu.speed) : tr(kGameSpeeds[menu.speed].name, kGameSpeeds[menu.speed].english);
 	case OptionRow::EventVideos:
@@ -19197,6 +19202,17 @@ int main(int argc, char** argv) {
 	}
 	sound.set_volumes(settings.music_volume, settings.sound_volume);
 	sound.set_building_music(sound_ini.buildings, sound_ini.building_music_volume);
+	// The effects, read from the archive; the main menu's lists (0x42ED3C): the buttons' 8000 and the letters' 6000.
+	sound.set_effects(sound_ini, [&archive](const std::string& path, std::vector<uint8_t>& out) {
+		const CprEntry* entry = archive->find(path);
+		return entry && archive->read(*entry, out);
+	});
+	sound.set_swap_stereo(settings.swap_stereo);
+	sound.load_list(8000);
+	sound.load_list(6000);
+	int prayer_channel = -1;  // The church's prayer's channel (its window's [+0x4D8]), or -1.
+	bool bath_heard = false;  // The bath taken's sound played (place.bathed).
+	bool in_bath_house = false;
 	bool menu_music = false;  // The main menu's music started (while the start screen is open).
 	// The game's music in a game (music_director.hpp) and what it knows: the view (the events 0x42C770: -1 none, 0 the
 	// town view, 1 the sea map), the town the town view showed last, a battle on the screen, the building whose music
@@ -19640,6 +19656,17 @@ int main(int argc, char** argv) {
 		}
 		return true;
 	};
+	// A letter's sound (0x4D7C06): the letters' 6000, forced, for the classes the player's [+0x26] bits 0..2 want.
+	auto letter_sound = [&](uint16_t entry) {
+		if (entry >= save.mail.size() || save.player < 0 || size_t(save.player) >= save.merchants.size()) {
+			return;
+		}
+		const uint8_t cls = letter_class(save.mail[entry].u8(4));
+		const uint8_t bits = save.merchants[size_t(save.player)].memory.u8(0x26);
+		if (cls >= 1 && cls <= 3 && (bits & (1u << (cls - 1))) != 0) {
+			sound.play_sample(6000, false, false, -1, 0x40, false, true);
+		}
+	};
 	// What the viewer keeps of the game in play, forgotten for another one
 	// (loaded or new); the town on screen is the player's home town.
 	auto forget_game = [&]() {
@@ -19684,6 +19711,20 @@ int main(int argc, char** argv) {
 		music_town = -1;
 		music_battle = false;
 		music_building = -1;
+		sound.stop_samples();
+		prayer_channel = -1;
+		bath_heard = false;
+		in_bath_house = false;
+		// The player's unread letters ([+1] & 0x40) told again with their sound (0x548C6E → 0x4D7D50).
+		if (save.player >= 0 && size_t(save.player) < save.merchants.size()) {
+			uint32_t i = save.merchants[size_t(save.player)].memory.u16(0xA);
+			for (size_t steps = 0; i < save.mail.size() && steps < save.mail.size(); ++steps) {
+				if (save.mail[i].u8(1) & 0x40) {
+					letter_sound(uint16_t(i));
+				}
+				i = save.mail[i].u16(6);
+			}
+		}
 	};
 	// Replaces the game in play with the slot's: a new Sailing for it, and
 	// what the viewer keeps of the old one forgotten (forget_game). On a
@@ -19973,6 +20014,7 @@ int main(int argc, char** argv) {
 		menu.speed = game_speed;
 		menu.music = settings.music_volume;
 		menu.sound = settings.sound_volume;
+		menu.swap_stereo = settings.swap_stereo;
 	};
 	const auto menu_game = [&]() { return has_save && save.player >= 0; };
 	// «OK»: the values chosen applied (the fixes, the tooltips, the speed and the volumes at once, the language at the
@@ -19990,11 +20032,14 @@ int main(int argc, char** argv) {
 			}
 		}
 		if (menu.fixes != settings.fix_game_bugs || menu.tooltips != settings.tooltips ||
-			menu.music != settings.music_volume || menu.sound != settings.sound_volume) {
+			menu.music != settings.music_volume || menu.sound != settings.sound_volume ||
+			menu.swap_stereo != settings.swap_stereo) {
 			settings.fix_game_bugs = menu.fixes;
 			settings.tooltips = menu.tooltips;
 			settings.music_volume = menu.music;
 			settings.sound_volume = menu.sound;
+			settings.swap_stereo = menu.swap_stereo;
+			sound.set_swap_stereo(settings.swap_stereo);
 			p3::data::set_fix_game_bugs(settings.fix_game_bugs);
 			g_tooltips = settings.tooltips;
 			if (!script && !p3::app::save_settings(settings_file, settings)) {
@@ -20009,6 +20054,9 @@ int main(int argc, char** argv) {
 	};
 	// A row's «−» or «+» (or ← and →): its next value.
 	auto option_step = [&](OptionRow row, int step) {
+		if (!menu.slider(row)) {
+			sound.play_interface(1);  // (A slider's ends don't click.)
+		}
 		switch (row) {
 		case OptionRow::Language:
 			menu.spanish = !menu.spanish;
@@ -20018,6 +20066,9 @@ int main(int argc, char** argv) {
 			break;
 		case OptionRow::Tooltips:
 			menu.tooltips = !menu.tooltips;
+			break;
+		case OptionRow::InvertStereo:
+			menu.swap_stereo = !menu.swap_stereo;
 			break;
 		case OptionRow::GameSpeed:
 			// The game's six speeds (slowed down .. very fast); the viewer's fast forward, which has no name, goes down to
@@ -20063,6 +20114,7 @@ int main(int argc, char** argv) {
 		if (!option_button_on(menu, b, menu_game())) {
 			return;
 		}
+		sound.play_interface(1);
 		switch (b) {
 		case OptionButton::Load:
 			open_menu(MenuScreen::Load, -1);
@@ -20668,6 +20720,7 @@ int main(int argc, char** argv) {
 					map_select(std::clamp(map_selected < 0 ? 0 : map_selected + step, 0, int(map_names.size()) - 1));
 					map_focus = -1;
 				} else if (button == SDL_CONTROLLER_BUTTON_A) {
+					sound.play_interface(1);  // «Load» (options.ini's BUTTON4, PSoundID=1)
 					map_load();
 				} else if (button == SDL_CONTROLLER_BUTTON_B) {
 					map_choice_open = false;
@@ -20684,6 +20737,9 @@ int main(int argc, char** argv) {
 				map_pressed = -1;
 				if (k < 0 || k != pressed) {
 					break;
+				}
+				if (k == p3::app::NewGameWindow::kMapBack || k == p3::app::NewGameWindow::kMapLoad) {
+					sound.play_interface(1);  // («Back» and «Load»: options.ini's BUTTON4, PSoundID=1.)
 				}
 				if (k == p3::app::NewGameWindow::kMapBack) {
 					map_choice_open = false;
@@ -20743,6 +20799,7 @@ int main(int argc, char** argv) {
 			return;
 		}
 		const NewGameControl k = NewGameControl(control);
+		sound.play_interface(1);  // (Its buttons and balls are options.ini's, PSoundID=1.)
 		if (k == NewGameControl::FirstName || k == NewGameControl::FamilyName) {
 			new_game_start_typing(control);
 			return;
@@ -21052,6 +21109,7 @@ int main(int argc, char** argv) {
 		NewGameChoices& c = new_game_state.choices;
 		if (control >= 0 && control < p3::app::kDetailCancel) {
 			if (new_game_detail_enabled(details_copy, control / 2, control % 2 == 1)) {
+				sound.play_interface(1);
 				press_new_game_detail(details_copy, control / 2, control % 2 == 1);
 			}
 			return;
@@ -21059,6 +21117,7 @@ int main(int argc, char** argv) {
 		if (control != p3::app::kDetailCancel && control != p3::app::kDetailOk) {
 			return;
 		}
+		sound.play_interface(1);
 		if (control == p3::app::kDetailOk) {
 			c.details = details_copy;
 		}
@@ -21141,6 +21200,7 @@ int main(int argc, char** argv) {
 	// menu's slots. «Single player» opens the «Game settings» window, «Load
 	// game» the slots, «Exit» quits; the others aren't in p3vita yet (a notice).
 	auto start_choose = [&](int entry) {
+		sound.play_sample(8000, false, false, -1, 0x40, false, false);  // okbottun_menu.wav (0x42FA82)
 		switch (p3::app::StartEntry(entry)) {
 		case p3::app::StartEntry::Single:
 			open_new_game();
@@ -21505,6 +21565,35 @@ int main(int argc, char** argv) {
 		// The window of a place or of the ship, in the save's towns (never with the market).
 		const bool in_place = place.open != Place::None && !trading && selection.mode == Mode::Saved &&
 			save.player >= 0 && small_text;
+		if (has_save && save.player >= 0) {
+			// The bath house's window (0x5B1D41): the list 7000 (the bath, the prayer, the spit); a bath taken, its sound
+			// (0x5B1ED8, forced).
+			const bool bath_house = in_place && place.open == Place::BathHouse;
+			if (bath_house && !in_bath_house) {
+				sound.load_list(7000);
+			}
+			in_bath_house = bath_house;
+			if (place.bathed && !bath_heard) {
+				sound.play_sample(7000, false, false, -1, 0x40, false, true);
+			}
+			bath_heard = place.bathed;
+			// The church: its buttons off while the prayer plays; closed, the prayer stopped and its channel freed
+			// (0x5A5957).
+			const bool church = in_place && place.open == Place::Church;
+			place.praying = church && sound.prayer_playing();
+			if (!church && prayer_channel >= 0) {
+				sound.stop_sample(prayer_channel);
+				sound.release_sample(prayer_channel);
+				prayer_channel = -1;
+			}
+			// The tavern's sailor spat (0x5CD6D9): his sound if no channel plays (0x5CD6E9, forced).
+			if (game_art->take_spit() && sound.samples_playing() == 0) {
+				if (p3::data::fix_game_bugs()) {
+					sound.load_list(7000);  // (The game's bug: only once the bath house has been opened.)
+				}
+				sound.play_sample(7200, false, false, -1, 0x40, false, true);
+			}
+		}
 		if (has_save && save.player >= 0 && (menu.screen == MenuScreen::Closed || menu.screen == MenuScreen::Options)) {
 			// The music of the game's main screen and of its options screen (not of the saved games' one).
 			const uint32_t now = app_ticks();
@@ -21841,9 +21930,17 @@ int main(int argc, char** argv) {
 			}
 			place.chamber_votes = {};
 			if (alone) {
-				// The church's «Pray»: the picture alone, no button lit (place_side_menu).
+				// The church's «Pray»: the picture alone, no button lit (place_side_menu), and the prayer once if no channel
+				// plays (0x5A5B76..0x5A5BA2: forced, its channel kept; the list 7000 only once the bath house has been
+				// opened, the game's bug: with the fixes, loaded here).
 				place.shown = false;
 				place.inside = false;
+				if (sound.samples_playing() == 0) {
+					if (p3::data::fix_game_bugs()) {
+						sound.load_list(7000);
+					}
+					prayer_channel = sound.play_sample(7100, false, true, -1, 0x40, false, true);
+				}
 				return;
 			}
 			if (place.open == Place::Tavern) {
@@ -23508,6 +23605,7 @@ int main(int argc, char** argv) {
 			// The new letters (0x4D7B10): «Carta personal: Botadura»... as the
 			// game's line, for the classes the player's settings ([+0x26]) want.
 			for (const uint16_t entry : take_new_letters(save)) {
+				letter_sound(entry);  // (0x4D7B10 → 0x4D7C1D)
 				if (g_texts && letter_notice_wanted(save, entry)) {
 					notify_letter(clean_game_text(letter_notice(save, *g_texts, entry)));
 				}

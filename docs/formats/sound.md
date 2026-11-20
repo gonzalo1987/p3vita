@@ -42,12 +42,12 @@ Read with the game's own ini reader (0x4BE0B0 for a number, 0x4BE060 for a text;
 | [SoundListN] | `Count`, `Files`, `IDs` | 0x4439B0 | a list of sound effects: its variants |
 | [SAMPLEn] | `SampleFile`, `Loudness` (100 without it) | 0x4439B0 | a sound effect |
 
-The ini has 51 lists with 200 samples (`re/emu/sesion51/soundini.py` lists them). A list is loaded only when a screen
-asks for it (0x4439B0: the main menu at 0x42ED3C, the sea map at 0x44AA42.., the town at 0x5884A6..); one without
-`Files` or `IDs` (SoundList3100, the calm's, `Count=0`) isn't. Which list sounds when: part of the roadmap's section
-5 still to read (the buttons 8000, the letters 6000, the bath and the church 7000, the sea's 1000..5000, the town's
+The ini has 51 lists with 200 samples (`re/emu/sesion51/soundini.py` lists them); a list's samples have numbers of
+their own (the list 7000: 7000, 7100, 7200). A list is loaded only when a screen asks for it («The sound effects»
+below); one without `Files` or `IDs` (SoundList3100, the calm's, `Count=0`) isn't. Still to read: the town's
 buildings from `GebaeudeSoundListBase` in iso.ini, the church bells 12000, ships in and out 13000, a building falling
-9000, fire 10000, the sea battles 60000.., the sieges 61000..).
+9000, fire 10000 (part 4), the sea's 1000..5000 (0x4598xx..0x45A3xx: their variant by the world's rand() too), the sea
+battles 60000.. and the sieges 61000.. (part 5).
 
 iso.ini's «Sound Stuff»: `GebaeudeSoundListBase=10000`, `SoundsProGebaeude=10`, `GebaeudeTypLockTime=6000`,
 `GebaeudeKanalLockTime=4000`, `GebaeudeMinDist=300`, `PanDist=500`, `VolDist=750`, `ChurchSoundList=12000`,
@@ -111,6 +111,47 @@ sample's, `min(loudness × (sound volume × its own volume / 127) / 100, 127)` (
   music let down back as the one playing fading in, the building's music closed, [+0x1E0] cleared.
 - **0x443690** (list id): its variants' count, 0 without the driver or with the list not loaded. The battles take
   `rand() % count` of the world's rand() when it isn't 0 (`Sailing::battle_sound`).
+
+## The sound effects
+
+The 20 channels of the sound object ([+0x18]; p3vita `GameSound::play_sample`), each with its sample's id ([+0x7C]), a
+reservation ([+0x18C]) and a «world» flag ([+0x1A0]):
+
+- **0x4439B0** (list, file): a list loaded: its samples' ids ([+0x124]), files ([+0x74]) and loudness ([+0x78]);
+  a sample plays only once its list is loaded, and 0x443690 gives 0 for a list not loaded. Loaded when each screen is
+  made: the main menu 8000 and 6000 (0x42ED3C); the sea map 1000..5000 (0x44AA42); the town view its buildings' lists
+  (from iso.ini) and 60000..61100, the battles' and the sieges' (0x5884A6..); and the bath house's window 7000
+  (0x5B1D41), alone: until it has been opened, the prayer (7100) and the spit (7200), samples of that list, don't
+  sound (a bug; p3vita loads it before them with the fixes on).
+- **0x443150** (sample, world, reserve, volume, pan, no start, force): nothing without the driver; without `force`,
+  nothing in a building ([+0x1E0]) or with an event video ([+0x1DF]); the letters' 6000 not while one plays; nothing
+  with the 20 channels playing. The sample's file read into a cache of 20 (0x4432D4..); `volume` −1 is 127, 0 nothing.
+  A channel neither reserved nor playing: its pan (127 − pan with SWAPSPEAKER), unless `no start` its volume
+  `min(loudness × (sound volume × volume / 127) / 100, 127)` and started (the streams serviced); `world`: [+0x1A0] set
+  and, in a building, Miles' low-pass; `reserve`: [+0x18C] set. Its channel.
+- **0x4430D0** (channel): its reservation and flag cleared. **0x442130**: how many channels play. **0x443110**:
+  whether the prayer (7100) plays. **0x443940**: every channel stopped and freed (the town view's own first,
+  0x59C010). 0x4426C0 with crossfade ends the 20 (their reservations stay); 0x4436E0 into a building stops them.
+
+Who plays what (the interface's; the town's and the sea's are parts 4 and 5):
+
+| Where | Sample | How |
+|-|-|-|
+| The main menu, an entry chosen (0x42FA82) | 8000 okbottun_menu.wav | not forced |
+| A new letter (0x4D7B10 → 0x4D7C06) | 6000 Nachrichten.wav | forced, for the classes (0x6C0198) the player's [+0x26] bits 0..2 want |
+| A game loaded (0x548C6E → 0x4D7D50) | 6000, for each unread letter ([+1] & 0x40) | as above (one sounds) |
+| The bath taken (0x5B1EC1) | 7000 Badnehmen.wav | forced |
+| The church's «Pray» (0x5A5B76) | 7100 Beten.wav | forced and reserved, if no channel plays; the four buttons off while it plays (0x5A5AF9); stopped when the window closes (0x5A5957) |
+| The tavern's sailor spits (0x5CD6D9) | 7200 Rotzmitwuerg2.wav | forced, if no channel plays |
+| A window can't close (0x462230, 0x4622F9, 0x462420) | 8001 alleButtons.WAV | (the viewer's Circle has no such case) |
+
+**The interface's sounds** (*0x6DCCDC, made at 0x441FF1: 0x4C4130; 4 channels): the buttons' `HSoundID` (hover,
+[+0x7C]) and `PSoundID` (pressed, [+0x78]) of the screens' ini (0x4B1EC0; −1 without, 0x670F74), indexes in the table
+0x6BF118 (0 okbottun_menu.WAV, 1 alleButtons.WAV, 2..6 hawk.wav, 7..19 sound/sound02..14.wav, not in the data);
+0x4C45A0 plays one on a free channel, at the sound's volume (0x4C4540 with `volume × 100 / 127` as a percentage of 127).
+Only `PSoundID=1` is used: options.ini's buttons (BUTTON3, BUTTON4 the 149 × 36 ones, BUTTON6..10 the «−», «+», «←»
+and «→», BUTTON14) — the options screen and the new game window, its details and its maps' window, which use them —,
+mplayer.ini's and Stadtauswahl.ini's BUTTON4.
 
 ## The music director (0x42C080)
 

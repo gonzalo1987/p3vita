@@ -186,6 +186,12 @@ public:
 	// The priest's faces (the church window's update 0x5C94F0): his talking loop played back and forth (6, with the
 	// altar 8), his thanks (7, 9) once when asked, from the loop's first frame, then the loop again.
 	void draw_portrait(Portrait p, uint32_t now);
+	// Whether the tavern's sailor has spat since it was last asked (his sound, 0x5CD6E9).
+	bool take_spit() {
+		const bool spat = spat_;
+		spat_ = false;
+		return spat;
+	}
 	// The church window's [+0x1D5F]: the priest thanks the player (set by a donation of goods or for the extension,
 	// 0x5CB24D and 0x5CB839; cleared when the window opens, 0x5C937C, and at his thanks' last frame, 0x5C9621).
 	void priest_thanks(bool on) { thanks_ = on; }
@@ -299,6 +305,7 @@ private:
 	uint32_t bath_until_[kTownSlots];
 	int bath_count_ = 1;  // The menu's [+0x6A2]: how many are in the bath (the player and the councillors there).
 	uint32_t spit_at_ = 0;  // The tavern window's [+0x1BE0]: when the sailor may spit again.
+	bool spat_ = false;  // He has spat since take_spit.
 	Portrait portrait_ = Portrait::None;
 	SDL_Texture* portrait_picture_ = nullptr;
 	SDL_Rect portrait_frame_{};

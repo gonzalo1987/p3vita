@@ -37,10 +37,11 @@ struct MusicTitle {
 	int loudness = 100;
 };
 
-// A sound effect, «[SAMPLEn]»: its file in the archive and its loudness (0..100).
+// A sound effect, «[SAMPLEn]»: its number n, its file in the archive and its loudness (0..100).
 struct SoundSample {
 	std::string file;
 	int loudness = 100;
+	int id = 0;
 };
 
 // What scripts/sound.ini says, read as the game reads it (0x427400, 0x42EE1E,

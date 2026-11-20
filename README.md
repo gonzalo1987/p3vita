@@ -113,8 +113,8 @@ dragging a finger scrolls the map, L and R set the game's speed (slower, faster)
 and Start (or the panel's gear) opens the
 game's options screen: its settings (the first two the viewer's: the language,
 Spanish or English, and fixing the game's bugs; the music's and the sound's
-volumes, heard at once as their sliders move; the game speed and the tooltips;
-the others not yet), «Load game» and «Save game» (the game's saved
+volumes, heard at once as their sliders move, and inverting the stereo; the game
+speed and the tooltips; the others not yet), «Load game» and «Save game» (the game's saved
 games' screen: the saves by name, as the game's, in
 `ux0:data/p3vita/savegames/ein/`; Triangle writes the name), «Quit» (to the
 main menu), «Cancel» (Circle) and «OK» (Start); while it is open the game

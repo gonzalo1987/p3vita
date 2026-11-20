@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 #include <map>
 
 #include "p3data/cpr.hpp"
@@ -61,6 +62,18 @@ const LowPass& low_pass() {
 	static const LowPass filter;
 	return filter;
 }
+
+// The interface's files (0x6BF118, by the buttons' HSoundID / PSoundID): the ones past 6 aren't in the game's data.
+const char* const kInterfaceFiles[] = {"musik\\MenueSounds\\okbottun_menu.WAV", "musik\\MenueSounds\\alleButtons.WAV",
+	"musik\\SeekarteWaves\\hawk.wav", "musik\\SeekarteWaves\\hawk.wav", "musik\\SeekarteWaves\\hawk.wav",
+	"musik\\SeekarteWaves\\hawk.wav", "musik\\SeekarteWaves\\hawk.wav", "sound/sound02.wav", "sound/sound03.wav",
+	"sound/sound04.wav", "sound/sound05.wav", "sound/sound06.wav", "sound/sound07.wav", "sound/sound08.wav",
+	"sound/sound09.wav", "sound/sound10.wav", "sound/sound11.wav", "sound/sound12.wav", "sound/sound13.wav",
+	"sound/sound14.wav"};
+constexpr size_t kPcmCacheBytes = 24u << 20;  // The decoded WAVs kept (all of them would be 54 MB).
+constexpr int kLetterSample = 6000;  // Nachrichten.wav: one at a time.
+constexpr int kPrayerSample = 7100;  // Beten.wav
+
 
 }  // namespace
 
@@ -242,6 +255,12 @@ void GameSound::mix(int16_t* out, int frames) {
 	for (auto& s : forgotten_) {
 		add(*s);
 	}
+	for (Voice& v : voices_) {
+		add_voice(v, frames);
+	}
+	for (Voice& v : interface_) {
+		add_voice(v, frames);
+	}
 	for (int i = 0; i < 2 * frames; ++i) {
 		out[i] = int16_t(std::clamp(sum_[size_t(i)], -32768, 32767));
 	}
@@ -331,7 +350,12 @@ uint32_t GameSound::play_music(const std::string& path, int loudness, bool cross
 	}
 	reap();
 	if (crossfade) {
-		// (The sound effects stopped: part 3.) The music playing fades out from where it is.
+		// The 20 channels end (their reservations stay); the music playing fades out from where it is.
+		SDL_LockAudioDevice(device_);
+		for (Voice& v : voices_) {
+			v.playing = false;
+		}
+		SDL_UnlockAudioDevice(device_);
 		if (streams_[kMusic]) {
 			move_slot(kMusic, kMusicFading);
 			loudness_[kMusicFading] = loudness_[kMusic];
@@ -472,7 +496,8 @@ void GameSound::enter_building(int index) {
 	}
 	set_filter(kAtmo, true);
 	set_filter(kAtmoFading, true);
-	// (The sound effects stopped: part 3.) 0x442280: its music, unless one plays already.
+	stop_samples();
+	// 0x442280: its music, unless one plays already.
 	reap();
 	if (streams_[kBuilding] || sound_volume_ == 0 || index < 0 || index >= int(building_titles_.size())) {
 		return;
@@ -605,6 +630,223 @@ void GameSound::fade() {
 	if (music_fade_) {
 		fade_pair(music_fade_, kMusic, kMusicFading, music_volume_, music_out_closes_);
 	}
+}
+
+void GameSound::set_effects(const p3::data::SoundIni& ini, FileReader read) {
+	read_file_ = std::move(read);
+	ini_lists_.clear();
+	for (const auto& [id, list] : ini.lists) {
+		std::vector<std::pair<int, Sample>>& samples = ini_lists_[id];
+		for (const p3::data::SoundSample& s : list) {
+			samples.push_back({s.id, Sample{s.file, s.loudness}});
+		}
+	}
+}
+
+void GameSound::load_list(int id) {
+	const auto it = ini_lists_.find(id);
+	if (!on() || it == ini_lists_.end() || loaded_lists_.count(id) != 0) {
+		return;
+	}
+	loaded_lists_[id] = int(it->second.size());
+	for (const auto& [sample, s] : it->second) {
+		samples_[sample] = s;
+	}
+}
+
+int GameSound::list_variants(int id) const {
+	const auto it = loaded_lists_.find(id);
+	return on() && it != loaded_lists_.end() ? it->second : 0;
+}
+
+std::shared_ptr<const p3::data::SoundPcm> GameSound::pcm_of(const std::string& file) {
+	const std::string key = p3::data::normalize_path(file);
+	for (auto it = pcm_cache_.begin(); it != pcm_cache_.end(); ++it) {
+		if (it->first == key) {
+			pcm_cache_.splice(pcm_cache_.begin(), pcm_cache_, it);
+			return it->second;
+		}
+	}
+	std::vector<uint8_t> bytes;
+	auto pcm = std::make_shared<p3::data::SoundPcm>();
+	if (!read_file_ || !read_file_(file, bytes) || !p3::data::decode_wav(bytes, *pcm)) {
+		return nullptr;
+	}
+	pcm_cache_.emplace_front(key, pcm);
+	pcm_cache_bytes_ += pcm->samples.size() * 2;
+	while (pcm_cache_bytes_ > kPcmCacheBytes && pcm_cache_.size() > 1) {
+		pcm_cache_bytes_ -= pcm_cache_.back().second->samples.size() * 2;
+		pcm_cache_.pop_back();  // (A channel playing it keeps it until it ends.)
+	}
+	return pcm;
+}
+
+void GameSound::add_voice(Voice& v, int frames) {
+	if (!v.playing || !v.pcm) {
+		return;
+	}
+	const p3::data::SoundPcm& p = *v.pcm;
+	const size_t n = p.frames();
+	const size_t ch = size_t(p.channels);
+	// Miles' pan: 64 the middle, both sides whole; towards a side the other one fades.
+	const float left = v.pan <= 64 ? 1.0f : float(127 - v.pan) / 63.0f;
+	const float right = v.pan >= 64 ? 1.0f : float(v.pan) / 64.0f;
+	const float gain = float(v.volume) / 127.0f;
+	const LowPass& f = low_pass();
+	for (int i = 0; i < frames && v.at < n; ++i, ++v.at) {
+		float s[2] = {float(p.samples[v.at * ch]), float(p.samples[v.at * ch + (ch > 1 ? 1 : 0)])};
+		for (int c = 0; c < 2; ++c) {
+			if (v.low_pass) {
+				const float y = f.b0 * s[c] + f.b1 * v.x1[c] + f.b2 * v.x2[c] - f.a1 * v.y1[c] - f.a2 * v.y2[c];
+				v.x2[c] = v.x1[c];
+				v.x1[c] = s[c];
+				v.y2[c] = v.y1[c];
+				v.y1[c] = y;
+				s[c] = y;
+			}
+		}
+		sum_[size_t(2 * i)] += int32_t(s[0] * gain * left);
+		sum_[size_t(2 * i + 1)] += int32_t(s[1] * gain * right);
+	}
+	if (v.at >= n) {
+		v.playing = false;
+	}
+}
+
+int GameSound::play_sample(int sample, bool world, bool reserve, int volume, int pan, bool no_start, bool force) {
+	// ([+0x1DF]: an event video, part 6.)
+	if (!on() || (!force && in_building_)) {
+		return -1;
+	}
+	if (volume == -1) {
+		volume = 127;
+	}
+	SDL_LockAudioDevice(device_);
+	bool letter = false;
+	int playing = 0;
+	for (int k = 0; k < kChannels; ++k) {
+		letter |= voice_sample_[k] == kLetterSample && voices_[k].playing;
+		playing += voices_[k].playing ? 1 : 0;
+	}
+	SDL_UnlockAudioDevice(device_);
+	if ((sample == kLetterSample && letter) || playing == kChannels) {
+		return -1;
+	}
+	const auto it = samples_.find(sample);
+	if (it == samples_.end()) {
+		return -1;  // Its list not loaded.
+	}
+	const std::shared_ptr<const p3::data::SoundPcm> pcm = pcm_of(it->second.file);
+	if (!pcm || volume == 0) {
+		return -1;
+	}
+	Voice v;
+	v.pcm = pcm;
+	v.pan = swap_stereo_ ? 127 - pan : pan;
+	if (!no_start) {
+		v.volume = std::clamp(it->second.loudness * (sound_volume_ * volume / 127) / 100, 0, 127);
+		v.playing = true;
+	}
+	v.low_pass = world && filtered_;
+	int channel = -1;
+	SDL_LockAudioDevice(device_);
+	for (int k = 0; k < kChannels && channel < 0; ++k) {
+		if (!reserved_[k] && !voices_[k].playing) {
+			channel = k;
+			voices_[k] = v;
+		}
+	}
+	SDL_UnlockAudioDevice(device_);
+	if (channel < 0) {
+		return -1;
+	}
+	voice_sample_[channel] = sample;
+	world_[channel] = world;
+	reserved_[channel] = reserve;
+	log("sample " + std::to_string(sample) + " on " + std::to_string(channel), it->second.file, v.volume,
+		uint32_t(pcm->frames() * 1000 / kRate));
+	return channel;
+}
+
+void GameSound::release_sample(int channel) {
+	if (channel >= 0 && channel < kChannels) {
+		reserved_[channel] = false;
+		world_[channel] = false;
+	}
+}
+
+void GameSound::stop_sample(int channel) {
+	if (on() && channel >= 0 && channel < kChannels) {
+		SDL_LockAudioDevice(device_);
+		voices_[channel].playing = false;
+		SDL_UnlockAudioDevice(device_);
+	}
+}
+
+int GameSound::samples_playing() const {
+	if (!on()) {
+		return 0;
+	}
+	int n = 0;
+	SDL_LockAudioDevice(device_);
+	for (const Voice& v : voices_) {
+		n += v.playing ? 1 : 0;
+	}
+	SDL_UnlockAudioDevice(device_);
+	return n;
+}
+
+bool GameSound::prayer_playing() const {
+	if (!on()) {
+		return false;
+	}
+	for (int k = 0; k < kChannels; ++k) {
+		if (voice_sample_[k] == kPrayerSample) {
+			SDL_LockAudioDevice(device_);
+			const bool playing = voices_[k].playing;
+			SDL_UnlockAudioDevice(device_);
+			return playing;
+		}
+	}
+	return false;
+}
+
+void GameSound::stop_samples() {
+	if (!on()) {
+		return;
+	}
+	SDL_LockAudioDevice(device_);
+	for (Voice& v : voices_) {
+		v.playing = false;
+	}
+	SDL_UnlockAudioDevice(device_);
+	for (int k = 0; k < kChannels; ++k) {
+		reserved_[k] = false;
+		world_[k] = false;
+	}
+}
+
+void GameSound::play_interface(int index) {
+	if (!on() || index < 0 || index >= int(std::size(kInterfaceFiles))) {
+		return;
+	}
+	const std::shared_ptr<const p3::data::SoundPcm> pcm = pcm_of(kInterfaceFiles[index]);
+	if (!pcm) {
+		return;
+	}
+	Voice v;
+	v.pcm = pcm;
+	v.volume = sound_volume_ * 100 / 127 * 127 / 100;  // (0x442FC8 → 0x4C4540: a percentage of 127.)
+	v.playing = true;
+	SDL_LockAudioDevice(device_);
+	for (Voice& c : interface_) {
+		if (!c.playing) {
+			c = v;
+			break;
+		}
+	}
+	SDL_UnlockAudioDevice(device_);
+	log("interface " + std::to_string(index), kInterfaceFiles[index], v.volume, uint32_t(pcm->frames() * 1000 / kRate));
 }
 
 }  // namespace p3::app

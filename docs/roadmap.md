@@ -118,7 +118,8 @@ Cómo leerla:
   parte 1): el mezclador con el audio de SDL en el PC y en la Vita, la música MP3 del juego con sus fundidos, los
   efectos WAV y el `sound.ini` leídos, los volúmenes de Música y Sonido de las Opciones y la música del menú principal.
   Después la parte 2: la música en la partida (el director de música del juego, sus atmósferas, el tema de cada ciudad,
-  la música de batalla y la de los edificios).
+  la música de batalla y la de los edificios), y la 3: los sonidos de la interfaz (los botones, las cartas, el baño, la
+  oración, el escupitajo e «Invertir estéreo»).
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): acabados los restos
   de las pantallas (las preguntas del convoy, las sombras y la nieve, el panel lateral con las letras y los textos del
   juego), el intérprete de misiones (apartado 3: la base hecha; ahora sus instrucciones); luego el final de la partida
@@ -147,7 +148,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
-| Sonido, música y vídeos (20-11-2026) | la base: el mezclador (PC y Vita), los 123 MP3 y los 178 WAV del juego leídos, el `sound.ini`, los volúmenes de las Opciones y la música del menú principal; la música en la partida (el director, las atmósferas, el tema de cada ciudad, las batallas, los edificios) | todos los efectos (interfaz, ciudad, mar, batallas, asedio) y los vídeos (apartado 5) |
+| Sonido, música y vídeos (20-11-2026) | la base: el mezclador (PC y Vita), los 123 MP3 y los 178 WAV del juego leídos, el `sound.ini`, los volúmenes de las Opciones y la música del menú principal; la música en la partida (el director, las atmósferas, el tema de cada ciudad, las batallas, los edificios); los efectos de la interfaz (botones, cartas, baño, oración, escupitajo) | los efectos de la ciudad, el mar, las batallas y el asedio, y los vídeos (apartado 5) |
 | Jugar en red con el juego de PC | el motor idéntico, que es la base | todo lo demás (apartado 8) |
 
 ### La medida del código de la simulación
@@ -895,10 +896,15 @@ Lo que hay y cómo lo decide el juego: [formats/sound.md](formats/sound.md). Por
   corregidos con el ajuste (abajo, «Lo que suena»). Falta lo que el visor aún no dibuja: el oscurecimiento del tiempo
   en la ciudad (sus tintes [+0xC178], [+0xC1A8], que callan la atmósfera) y la pantalla 0x6CBA64 (de 0x278 bytes, sin
   identificar), que también elige la música del mar.
-- [ ] **Parte 3, los sonidos de la interfaz**: los 20 canales de efectos del juego (0x443540.., su volumen, su
-  posición a izquierda o derecha y «Invertir estéreo», que pasará entonces a estar vivo en las Opciones), los botones
-  (lista 8000, `HSoundID`/`PSoundID` de los .ini), las cartas y los avisos (6000, con «Reproducir sonido» de los
-  ajustes de las cartas), el baño, rezar y escupir (7000, 7100, 7200).
+- [x] **Parte 3, los sonidos de la interfaz** (20-11-2026, `re/emu/sesion51/`): los 20 canales de efectos del juego
+  (0x443150: su volumen, su posición y «Invertir estéreo», ya vivo en las Opciones; las listas cargadas por pantalla,
+  0x4439B0) y los 4 de la interfaz (0x4C45A0); el menú principal (8000), el clic de los botones de las Opciones y de las
+  ventanas de partida nueva (`PSoundID=1`), las cartas nuevas y las no leídas al cargar (6000, con «Reproducir sonido»
+  de sus ajustes), el baño (7000), la oración de la iglesia con sus botones apagados mientras suena (7100) y el marinero
+  de la taberna que escupe (7200). Un fallo que solo cambia lo que se oye, corregido con el ajuste (abajo, «Lo que
+  suena»). La casilla «Notificación de sucesos» de los ajustes de las cartas no la usa ningún efecto: va con los
+  vídeos (parte 6). El pitido del juego al no poder cerrar una ventana (8001) no tiene caso en el visor (su Círculo
+  abre las Opciones).
 - [ ] **Parte 4, los sonidos de la ciudad**: los de cada edificio según dónde mira la cámara (iso.ini:
   `GebaeudeSoundListBase`, `SoundsProGebaeude`, `PanDist`, `VolDist`, los tiempos de espera), las campanas (12000),
   los barcos que entran y salen (13000), el fuego (10000), un edificio que se cae (9000) y el filtro del juego.
@@ -1287,7 +1293,9 @@ de los textos: corregidos sin preguntar): la atmósfera de la ciudad al mostrarl
 verano con el hielo y la de invierno sin él (la duración que calcula antes es la de la buena); el director de música
 (0x42C080) busca la región de la ciudad en la tabla de StadtDaten.ini por el índice de la ciudad en la partida, no por
 su número (0x6DE4B8), y elige la música de otra región; el tema de Rügenwald es `Ruegenwald.mp3` en StadtDaten.ini y el
-fichero se llama `Rügenwald.mp3`, así que no suena (`music_director.cpp`, `main.cpp`).
+fichero se llama `Rügenwald.mp3`, así que no suena (`music_director.cpp`, `main.cpp`); la lista 7000 (el baño, la
+oración, el escupitajo) solo se carga al abrir el baño (0x5B1D41), así que hasta entonces ni la oración de la iglesia
+ni el marinero de la taberna suenan (`main.cpp`: con el ajuste se carga antes de tocarlos).
 
 **El rival de la ciudad del jugador** (0x532420, la operación 0xC0 al empezar una partida; 19-11-2026, seguro:
 escenario `mission_start`, roto a propósito, y las 12 partidas lo muestran): por cada comerciante humano con un
