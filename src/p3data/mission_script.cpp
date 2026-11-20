@@ -4,8 +4,9 @@
 // numbers (a byte each) and constants.
 //
 // Rewritten so far: the loop and its waits (0x00, 0xFD, 0xFE, 0xFF); the variables' and numbers' 0x04..0x07, 0x09,
-// 0x0A, 0x21; the arithmetic 0x0B..0x0E; the comparisons 0x17..0x1C; the search of a ship 0x26 / 0x27; an office
-// 0x38; the next human 0x3F; a family name 0x24; a wanderer's next town 0x29 (0x533210); a ship by its hull 0x40;
+// 0x0A, 0x21; the arithmetic 0x0B..0x0E; the comparisons 0x17..0x1C, the jump 0x1D; a merchant's rank 0x15; a ship's
+// town 0x1E; a ship name 0x20; the search of a ship 0x26 / 0x27; an office
+// 0x38; the next human 0x3F; a first name 0x23, a family name 0x24; a way between towns 0x53; a wanderer's next town 0x29 (0x533210); a ship by its hull 0x40;
 // the mission letter 0xF7. The handlers come in parts (roadmap, section 3; the order by what the saves run:
 // re/emu/sesion47/opcount.sh); until then an instruction not rewritten ends the script as an unknown one does, and is
 // counted (unwritten_mission_ops).
@@ -306,6 +307,65 @@ Step step(Run& r, uint8_t op) {
 		}
 		return Step::Next;
 	}
+	case 0x1D:  // 0x4EF3DF: on at the section of the u16 at the byte 1.
+		r.jump(1);
+		return Step::Jumped;
+	case 0x1E: {
+		// 0x4EF3F0: b ← −1, then, for a ship a below the ships' count (signed) in a state below 0xF but 2 and 3, its
+		// town ([+0x39]).
+		const SaveGame& s = r.save;
+		const int32_t ship = int32_t(r.var(1));
+		r.var(2) = 0xFFFFFFFFu;
+		if (ship < int32_t(s.globals.u16(global::kShipCount)) && ship >= 0 && size_t(ship) < s.ships.size()) {
+			const uint16_t state = s.ships[size_t(ship)].memory.u16(0x134);
+			if (state < 0xF && state != 2 && state != 3) {
+				r.var(2) = s.ships[size_t(ship)].memory.u8(0x39);
+			}
+		}
+		return Step::Next;
+	}
+	case 0x15: {  // 0x4EF260: b ← the merchant a's rank in his home town (0x4F3760: [+0x39C + [+0x19]]).
+		const uint32_t m = r.var(1);
+		r.var(2) = m < r.save.merchants.size()
+			? r.save.merchants[m].memory.u8(0x39C + r.save.merchants[m].memory.u8(0x19))
+			: 0;
+		return Step::Next;
+	}
+	case 0x20: {
+		// 0x4EF485: v ← the next ship name's number (0x50DF00 on the ships' object, as 0x509A50 names a ship: [+0xEE]
+		// + [+0xF0] modulo 307 into [+0xEE] until below the names' count, 0x6DDB78).
+		GlobalMemory& g = r.save.globals;
+		const uint16_t names = g.u16(0x6DDB78);
+		uint16_t name = g.u16(global::kShips + 0xEE);
+		if (names != 0) {  // (None: the game loops.)
+			const uint16_t step = g.u16(global::kShips + 0xF0);
+			do {
+				name = uint16_t(int32_t(uint16_t(g.u16(global::kShips + 0xEE) + step)) % 0x133);
+				g.u16(global::kShips + 0xEE) = name;
+			} while (name >= names);
+		}
+		r.var(1) = name;
+		return Step::Next;
+	}
+	case 0x23: {
+		// 0x4EF588: b ← a first name's number of the game's own: (now + the event list's [+0x8]) · the town 7's
+		// [+0x348] (the towns' array + 0x4910), its high byte cleared; then by the variable a, 1 a man's (modulo the
+		// men's names' count, the names object's [+0xD0]), 2 a woman's (modulo the women's, [+0xD2], with the bit
+		// 0x80: the women's list), another by its bit 0x80 (set: a woman's).
+		const SaveGame& s = r.save;
+		uint32_t n = s.globals.u32(global::kWorldTick) + s.globals.u16(0x6DD744);
+		n *= s.towns.size() > 7 ? s.towns[7].memory.u32(0x348) : 0;
+		n &= 0x00FFFFFF;
+		const uint32_t mode = r.var(1);
+		const bool man = mode == 1 || (mode != 2 && !(mode & 0x80));
+		const uint16_t names = s.globals.u16(man ? 0x6DDB70 : 0x6DDB72);
+		n = names ? n % names : 0;  // (None: the game divides by 0.)
+		r.var(2) = man ? n : n | 0x80;
+		return Step::Next;
+	}
+	case 0x53:  // 0x4EFB40: c ← the way from the town a to the town b (0x531B70: the world's matrix; 0xFF outside it).
+		r.var(3) = tick::ship_trade_detail::fn_531b70(r.save, r.var(1), r.var(2));
+		return Step::Next;
 	case 0x24: {
 		// 0x4EF65F: v ← a family name's number of the game's own: (the event list's [+0x8] (0x6DD744) + the u32 at
 		// the towns' array + 0x3EEC (the town 6's [+0x31C]) + the one at + 0x4910 (the town 7's [+0x348])) · now's
