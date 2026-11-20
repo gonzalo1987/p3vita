@@ -5963,6 +5963,42 @@ def mission_last(o):
     print(f'nearest to {town}: {near[:4]}')
 
 
+def mission_network(o):
+    """The network game's ten, each script of its own in its own tick, with a second human merchant (an AI one with
+    ships at sea, its [+0x8] 0): 0x08 as a game of one player, then (the settings' [+0xC] 2 from the second tick on) of
+    more; 0x2E; 0x36 in the modes 0, 1, 2, −1 (the second human's ships for 0); 0x3E (barrels and loads); 0x56; 0x57 and
+    0x5A (fish put on the player's ships in his first ship's town); 0x58 and 0x59; 0xEB. Saves 3, 5, 7 (in save 7
+    0x36's picks are all the first: not its step down)."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    mine = merchant_ships(o, player)
+    ship = mine[0]
+    town = o.u8(o.ship(ship) + 0x39)
+    second = next(m for m in range(merchants) if o.u16(o.merchant(m) + 8) != 0 and
+                  any(o.u16(o.ship(s) + 0x134) == 0xF for s in merchant_ships(o, m)))
+    w16(o, o.merchant(second) + 8, 0)
+    for k, s in enumerate(t for t in mine if o.u8(o.ship(t) + 0x39) == town):
+        w32(o, o.ship(s) + 0x54 + 8, 2000 * (k + 1))
+    settings = o.u32(to.SETTINGS_POINTER)
+    print(f'player {player}: ship {ship} in {town}, second human {second}, settings [+0xC] {o.u8(settings + 0xC)}')
+    mission_script(o, p2m([bytes([0x08, 1]), bytes([0x56, 2]), bytes([0x58, 3, 4]), bytes([0x59, 5, 6]),
+                           bytes([0x2E, 7, 8, 9]), bytes([0x3E, 10, 11, 12]), bytes([0x3E, 10, 13, 14]),
+                           bytes([0xEB, 10, 15]), WAIT]),
+                   {3: 20, 20: 0x1234, 5: 21, 6: 0x5678, 7: player, 8: home, 10: ship, 11: 2, 13: 3, 15: 40}, 1)
+    mission_script(o, p2m([bytes([0x08, 1]), bytes([0x36, 2, 3, 4]), bytes([0x36, 2, 5, 6]), bytes([0x36, 2, 7, 8]),
+                           bytes([0x36, 9, 10, 11]), bytes([0x36, 2, 12, 13]), bytes([0x57, 2, 14, 15]),
+                           bytes([0x5A, 2, 14, 16, 17]), WAIT]),
+                   {2: player, 4: 1, 6: 2, 8: -1, 9: second, 11: 0, 13: 0, 14: town, 16: 2}, 2)
+
+    def during(o):
+        def after(o, t):
+            if t == 0:
+                w8(o, settings + 0xC, 2)
+        return after
+    return during
+
+
 def hanse_dev_candidacy(o):
     """0x45 (0x535FA4: standing for mayor, [+0x118]) for the player with 0, 1 and 7, an AI merchant (always 1) and a
     merchant past; 0x4A (0x53B1F0, events_rare.cpp: the Hanse tasks window's developers' tools) on events 0x30 made by
@@ -15070,6 +15106,9 @@ SCENARIOS = {
         '@4ee36a', '@4ee3b4', '@4ee3d2', '@4ee410', '@4ee42d', '@4ee4d5', '@4ee4f7', '@4ee50b', '@4ee51d', '@4f1b09',
         '@4f1b45', '@4f1d48', '@4f1d78', '@4f1d8f', '@4f1da6', '@4efb2b', '@4f3700', '@4f370b', '@4f3728', '@4f3733',
         '@4f2b2f', '@4f2bc1', '@4f2c28', '@4f2c33', '@4f008c', '@4efd9d'], missions=True),
+    'mission_network': Scenario(mission_network, [0x4D85C0], 1, [
+        '@4eedd2', '@4eedbc', '@4f0763', '@4f0b39', '@4f0c32', '@4f0b02', '@4f0b11', '@4f0b1f', '@4f1221', '@4f123a',
+        '@4f1f14', '@4f026b', '@4f0190', '@4f1f2c', '@4f1f47', '@4ee9cd'], missions=True),
     'hanse_dev_candidacy': Scenario(hanse_dev_candidacy, [0x535760], 0, [
         '@4f9397', '@4f93a4', '@535fb2>537025', '@53b247', '@53b283', '@53b24e>53b28a', '@53b255>53b28a',
         '@53b259>53b28a', '@53b281>53b28a', '@53b26c>53b28a', '@53b29e', '@53b2b0', '@53b2ae>53b2b8', '@53b34a',

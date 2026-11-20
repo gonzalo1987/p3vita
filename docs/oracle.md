@@ -2742,7 +2742,7 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
 
 ## The mission interpreter's instructions (2026-11-20)
 
-82 of the 138 handlers, every one of the free game's (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu/sesion48/README.md`).
+92 of the 138 handlers, every one of the free game's and the network game's (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu/sesion48/README.md`).
 - The oracle with the missions (`--misiones`): 0xF7's three calls of 0x4D6530 let through (`MAIL_CALLS`); 0xF7's
   ticker line to the player jumps over the messages window (0x4EDF27 → 0x4EDF31, `EVENT_JUMPS`: 0x47D1F0 on 0x6CC960,
   the interface's); a new region **MP** (each event 0x1B whose program no entry of the list has: u16 event, u32 size,
@@ -2783,6 +2783,10 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
   scripts; 0x69; 0x6A; 0x6C; 0x6D; 0x6F with the player's biggest ship): saves 3, 5, 7, 256 calls equal each, 26 of
   26 targets. Broken on purpose (0x531260's day, 0x61's top): caught (the date in save 7, whose letter isn't of the
   1st).
+- The network game's, `retouch_unchecked.py mission_network` (a second human merchant; 0x08 as a game of one
+  player, then with the settings' [+0xC] 2 from the second tick (the scenario's `after`); 0x2E; 0x36's modes; 0x3E;
+  0x56; 0x57 and 0x5A; 0x58 and 0x59; 0xEB): saves 3, 5, 7, 256 calls equal each, 16 of 16 targets (save 7: 15,
+  0x36's picks all the first). Broken on purpose (0x2E's factor, 0x36's mix): caught.
 
 ## The game's static initializers (2026-11-03)
 
