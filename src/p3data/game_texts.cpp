@@ -234,11 +234,14 @@ constexpr uint32_t kDirect = 0x80000000;
 // build's PE time stamp, u32 a hash of p3vita's slots for that build, u32 the
 // number of texts, and each text as u32 size and its raw bytes.
 constexpr char kCacheMagic[4] = {'P', '3', 'T', 'X'};
-constexpr uint32_t kCacheVersion = 44;  // 4: with the buttons' tooltips (the string table, GameTexts::resource); 5: the new game window's; 6: «Main menu»; 7: the window's sex, start, map and home town's; 8: the goals' times and the map choice's; 9: the trade route windows'; 10: the letter 0x83's (operation 0x77); 11: the bath house's; 12: the guild's; 13: the offers' window's; 14: the weaponsmith's; 15: the tavern's; 16: the arsenal's and the town hall's; 17: the town hall's side menu's; 18: the tavern pages' layout; 19: the tavern's captain hired, weapons dealer's page and burglar's list; the lender's side menu; 20: the lender's titles, the church's, guild's, weaponsmith's and shipyard's side menus; 21: the church's pages; 22: the guild's joining; 23: the guild's members, its side menu's last two buttons; 24: the guild's auctions to come; 25: its auction and the auction's end; 26: its convoys; 27: the church's pages after a donation, the side menus of the market hall, the bath house, the office and the barn; the guild's trading centres' kinds and the network game's auction hall; 28: the market hall's pages, the bath house's councillors' words; 29: the office's «Total» and «Stock of weapons». 30: its «Warehouse», orders and «Personal»; 31: another merchant's office's pages and its selection list, a feast's window. 32: the shipyard's pages. 33: the town hall window's (0x6A94F4..0x6A974C). 34: the town gate's side menu and its page «Overland route». 35: the tavern's order client. 36: the town gate's siege pages. 37: the ship list window's. 38: «Unknown pirate» (the ship menu's pirate name). 39: the crew page's «dismiss sailors» and «dismiss captain». 40: the convoy window's title and «OK». 41: the statistics graphs' y axis' units. 42: the trade window's title, «Loading» and «@-price». 43: the options screen's. 44: the saved games' screen's.
+constexpr uint32_t kCacheVersion = 45;  // 4: with the buttons' tooltips (the string table, GameTexts::resource); 5: the new game window's; 6: «Main menu»; 7: the window's sex, start, map and home town's; 8: the goals' times and the map choice's; 9: the trade route windows'; 10: the letter 0x83's (operation 0x77); 11: the bath house's; 12: the guild's; 13: the offers' window's; 14: the weaponsmith's; 15: the tavern's; 16: the arsenal's and the town hall's; 17: the town hall's side menu's; 18: the tavern pages' layout; 19: the tavern's captain hired, weapons dealer's page and burglar's list; the lender's side menu; 20: the lender's titles, the church's, guild's, weaponsmith's and shipyard's side menus; 21: the church's pages; 22: the guild's joining; 23: the guild's members, its side menu's last two buttons; 24: the guild's auctions to come; 25: its auction and the auction's end; 26: its convoys; 27: the church's pages after a donation, the side menus of the market hall, the bath house, the office and the barn; the guild's trading centres' kinds and the network game's auction hall; 28: the market hall's pages, the bath house's councillors' words; 29: the office's «Total» and «Stock of weapons». 30: its «Warehouse», orders and «Personal»; 31: another merchant's office's pages and its selection list, a feast's window. 32: the shipyard's pages. 33: the town hall window's (0x6A94F4..0x6A974C). 34: the town gate's side menu and its page «Overland route». 35: the tavern's order client. 36: the town gate's siege pages. 37: the ship list window's. 38: «Unknown pirate» (the ship menu's pirate name). 39: the crew page's «dismiss sailors» and «dismiss captain». 40: the convoy window's title and «OK». 41: the statistics graphs' y axis' units. 42: the trade window's title, «Loading» and «@-price». 43: the options screen's. 44: the saved games' screen's. 45: the town view's tooltips (30000..).
 
 // The tooltips read from the string table: 20000.. (the scripts' «ToolTip=»; 20062 the last).
 constexpr uint32_t kTooltipFirst = 20000;
 constexpr uint32_t kTooltipCount = 64;
+// The town view's tooltips (0x593C50: the string 30000 + the type of the object under the mouse; 30105 the last).
+constexpr uint32_t kTownTooltipFirst = 30000;
+constexpr uint32_t kTownTooltipCount = 112;
 constexpr uint32_t kResourceKey = GameTexts::kResourceKey;
 
 // The slots the build's static initializers set, and the pointer each gets.
@@ -507,6 +510,9 @@ std::unique_ptr<GameTexts> GameTexts::parse(const std::vector<uint8_t>& exe, std
 	for (uint32_t id = kTooltipFirst; id < kTooltipFirst + kTooltipCount; ++id) {
 		texts->by_address_.emplace_back(kResourceKey | id, resource_string(exe, sections, id));
 	}
+	for (uint32_t id = kTownTooltipFirst; id < kTownTooltipFirst + kTownTooltipCount; ++id) {
+		texts->by_address_.emplace_back(kResourceKey | id, resource_string(exe, sections, id));
+	}
 	std::sort(texts->by_address_.begin(), texts->by_address_.end());
 	return texts;
 }
@@ -598,7 +604,7 @@ std::unique_ptr<GameTexts> GameTexts::load_cache(const std::string& path, std::s
 	}
 	const size_t by_address = pos + 4 <= data.size() ? u32(data, pos) : 0;
 	// The texts by address and the tooltips of the string table (parse).
-	if (by_address != sizeof(kTextAddresses) / sizeof(kTextAddresses[0]) + kTooltipCount) {
+	if (by_address != sizeof(kTextAddresses) / sizeof(kTextAddresses[0]) + kTooltipCount + kTownTooltipCount) {
 		return fail("made for another version");
 	}
 	pos += 4;

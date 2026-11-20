@@ -7327,7 +7327,9 @@ void offer_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 		{offer_operation(ui.offer_number, ui.offer_price, uint32_t(save.player), uint32_t(ui.offer_to), town, c,
 			c.kind == 1 ? 0 : ui.offer_amount)});
 	if (from_ships) {
-		ui.notice = lender_text(0x6A48C0, "", "");
+		// The game's message (0x5BE1A6: *0x6A0538 = 0x6A48C0 on *0x6CBB10, not official, no buttons, the ratio 0.4),
+		// raw: shown over the town once the window has closed.
+		ui.notice = g_texts ? g_texts->raw_at(0x6A48C0) : std::string();
 	}
 	ui.open = Place::None;  // The window closes (0x5BE16A: its slot 0x118).
 }
@@ -12648,6 +12650,8 @@ constexpr int kPanelPlankHeight = 92;
 enum class PanelIcon { ShipList, FastForward, Messages, Build, LeaveTown, Options, Count };
 constexpr int kPanelIcons = int(PanelIcon::Count);
 constexpr int kPanelIconColumn[kPanelIcons] = {7, 4, 2, 0, 6, 5};
+constexpr Uint32 kMailBlinkTime = 4000;  // ScreenGame.ini NewsDurationMS.
+constexpr Uint32 kMailBlinkFrame = 120;  // ScreenGame.ini [TIMER1] Times.
 // Its four ship buttons (b_schiffe_anker.tga, b_schiffe_see.tga,
 // b_konvoi_anker.tga, b_konvoi_see.tga: normal, pressed, lit): the player's
 // ships in port, at sea, his convoys in port and at sea.
@@ -12692,6 +12696,10 @@ struct SidePanel {
 	uint64_t marks_key = 0;
 	// The ship list window is open (its icon lit).
 	bool ship_list_open = false;
+	// A new letter's line makes the messages' icon blink (0x4237D0: the anim ScreenGame.ini NewsAnimID 78, the icon's
+	// frames 8 and 10 of menu01.tga, 120 ms each by its [TIMER1], over the button for NewsDurationMS 4000, or until it is
+	// pressed, 0x423840): until then (app_ticks), from mail_blink_until − 4000.
+	Uint32 mail_blink_until = 0;
 	// With PanelMenu::OtherShip, the convoy it shows (the menu's state 4), or −1 the ship alone (3).
 	int other_convoy = -1;
 	// With PanelMenu::Ships, the player's ships chosen (the menu's state 0) and its list's first row shown (also the
@@ -13233,7 +13241,11 @@ void draw_side_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 		const bool lit = ui.focus == k || (k == int(PanelIcon::Build) && ui.menu == PanelMenu::Build) ||
 			(k == int(PanelIcon::ShipList) && ui.ship_list_open) ||
 			(k == int(PanelIcon::Messages) && ui.menu == PanelMenu::Messages);
-		const int row = !state.icon_enabled[k] ? 3 : lit ? 2 : 0;
+		int row = !state.icon_enabled[k] ? 3 : lit ? 2 : 0;
+		const Uint32 now = app_ticks();
+		if (k == int(PanelIcon::Messages) && ui.mail_blink_until != 0 && !SDL_TICKS_PASSED(now, ui.mail_blink_until)) {
+			row = (now - (ui.mail_blink_until - kMailBlinkTime)) / kMailBlinkFrame % 2 ? 2 : 0;
+		}
 		const SDL_Rect src = {kPanelIconColumn[k] * 32, row * 32, 32, 32};
 		draw_picture(renderer, art.icons, layout.icons[k], &src);
 	}
@@ -18283,23 +18295,183 @@ uint32_t panel_tooltip(const SidePanel& side, const SaveGame& save, int line, bo
 // The options screen's «Tooltips» (AppSettings::tooltips): off, no tooltip shows.
 bool g_tooltips = true;
 
-// The tooltip's box: to the left of a button of the panel, under one of the top bar.
+// The game's tooltip (its screens' base class: 0x4B80D0 lays it out, 0x4B5A90 draws it; the screen's ini keys TTLayout,
+// TTBGCol, TTCol, TTBorderCol, TTFont, TTDelay, none of its scripts setting them: their defaults at 0x670F44): a box 2
+// wider than its text on each side (TTLayout 0x1011: bit 0x10 the border and that margin, bit 1 the background), filled
+// white at alpha 200 (0xC8FFFFFF), framed by a black line, the text in the game's font 0 in black; its top left at the
+// mouse less its height (bit 0x1000), kept on the screen. `at` is that point (the game's mouse); the viewer's finger
+// covers it, so the panel's and the top bar's take their own places (tooltip_box). Off with the options' «Tooltips».
+constexpr Uint32 kTooltipDelay = 250;  // TTDelay: the mouse still that long before it shows.
+SDL_Rect tooltip_size(TextRenderer& text, const std::string& tip) {
+	TextRenderer& font = g_game_art && g_game_art->head_text() ? *g_game_art->head_text() : text;
+	return {0, 0, font.measure(tip) + 4, font.line_height() + 4};
+}
+
+void draw_tooltip_box(SDL_Renderer* renderer, TextRenderer& text, const std::string& tip, SDL_Rect box) {
+	TextRenderer& font = g_game_art && g_game_art->head_text() ? *g_game_art->head_text() : text;
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 255, 255, 255, 200);
+	SDL_RenderFillRect(renderer, &box);
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+	SDL_RenderDrawRect(renderer, &box);
+	font.draw(tip, box.x + 2, box.y + 2, SDL_Color{0, 0, 0, 255});
+}
+
+// The game's tooltip at the point `at` (its mouse): above it, kept on the screen.
+void draw_tooltip_at(SDL_Renderer* renderer, TextRenderer& text, const std::string& tip, SDL_Point at) {
+	if (tip.empty() || !g_tooltips) {
+		return;
+	}
+	SDL_Rect box = tooltip_size(text, tip);
+	box.x = std::min(at.x, kScreenWidth - box.w);
+	box.y = std::max(0, std::min(at.y, kScreenHeight - box.h) - box.h);
+	draw_tooltip_box(renderer, text, tip, box);
+}
+
+// The tooltip of a button of the panel (to its left) or of the top bar (under it): the viewer's places, clear of the
+// finger held on the button (adapted); the game's box.
 void draw_tooltip(SDL_Renderer* renderer, TextRenderer& text, const std::string& tip, const SDL_Rect& where) {
 	if (tip.empty() || !g_tooltips) {
 		return;
 	}
-	const int w = text.measure(tip) + 12;
-	const int h = text.line_height() + 6;
+	SDL_Rect box = tooltip_size(text, tip);
 	const bool bar = where.y < kBarHeight;
-	SDL_Rect box = bar ? SDL_Rect{where.x + where.w - w, where.y + where.h + 4, w, h}
-		: SDL_Rect{where.x - w - 6, where.y + (where.h - h) / 2, w, h};
-	box.x = std::clamp(box.x, 4, kScreenWidth - w - 4);
-	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(renderer, 250, 240, 200, 245);  // The game's yellowish tooltip.
-	SDL_RenderFillRect(renderer, &box);
-	SDL_SetRenderDrawColor(renderer, 60, 40, 20, 255);
-	SDL_RenderDrawRect(renderer, &box);
-	text.draw(tip, box.x + 6, box.y + 3, SDL_Color{20, 12, 4, 255});
+	box.x = bar ? where.x + where.w - box.w : where.x - box.w - 6;
+	box.y = bar ? where.y + where.h + 4 : where.y + (where.h - box.h) / 2;
+	box.x = std::clamp(box.x, 4, kScreenWidth - box.w - 4);
+	draw_tooltip_box(renderer, text, tip, box);
+}
+
+// The game screen's news lines (the main screen *0x6CBB40; ScreenGame.ini [DYNGFXTEXTBOX0] TexID 37): two sets of five
+// lines ([+0x168] and [+0x494], each a control of 0xA0 bytes, vtable 0x66C458), each a plank of images/text.aim (TEX37:
+// its ends 10 × 25, its middle tiled up to 344 wide, two hooks 10 × 32 hanging it from what is above) with its text in
+// the game's font 0, black, centred. The events' set (0x42B6A0, the lines 0x548CA0 → 0x5483D0 and others through
+// 0x42B4C0) at the view's left, the letters' (0x42BB20, a new letter 0x4D7B10) right-aligned at the view's right (the
+// screen object's width, the town view's: the panel at its right); both under the top bar (the left piece [+0x8E0]'s
+// height: kBarHeight on the Vita), a line each 32 down. A line is 16 wider than its text and shows 12 s (0x2EE0 on the
+// clock 0x6DCCF0); a sixth pushes the first out; when the first runs out (0x42B920, 0x42BE40, each frame) the others
+// move up. Each line is drawn (0x421040) with the span of the line above for its hooks, the first with the first line's
+// span as it was before the last move ([+0x48C], [+0x490]; the letters' [+0x7B8], [+0x7BC], also set at each new line:
+// the game's own, kept).
+struct TickerSet {
+	static constexpr int kLines = 5;
+	static constexpr Uint32 kLife = 12000;
+	static constexpr int kLineHeight = 32;  // The hooks' height (0x420FD0: the control's height).
+	struct Line {
+		std::string text;
+		int w = 0;
+		Uint32 until = 0;
+	};
+	bool right = false;  // The letters' set.
+	std::deque<Line> lines;
+	int span_x = 0;
+	int span_right = 0;
+
+	int x_of(const Line& l, int view_w) const { return right ? view_w - l.w : 0; }
+	void keep_span(int view_w) {
+		if (!lines.empty()) {
+			span_x = x_of(lines.front(), view_w);
+			span_right = span_x + lines.front().w;
+		}
+	}
+	// One line `w` wide (its text's width + 16).
+	void add(const std::string& text, int w, Uint32 now, int view_w) {
+		const bool full = int(lines.size()) >= kLines;
+		if (full) {
+			keep_span(view_w);  // (The first line's before the move: 0x42B7D6, 0x42BCB6.)
+			lines.pop_front();
+		}
+		lines.push_back({text, w, now + kLife});
+		if (!full && (right || lines.size() == 1)) {
+			keep_span(view_w);  // (0x42BC5F: the letters' always; 0x42B771: the events' first line.)
+		}
+	}
+	void expire(Uint32 now, int view_w) {
+		if (!lines.empty() && SDL_TICKS_PASSED(now, lines.front().until) && now != lines.front().until) {
+			keep_span(view_w);
+			lines.pop_front();
+		}
+	}
+	void clear() {  // (0x42BAC0.)
+		lines.clear();
+		span_x = span_right = 0;
+	}
+};
+
+// The pieces of a text for the events' lines (0x42B4C0): while it is wider than the view less 16, its longest start
+// that is narrower (letter by letter) is cut at its last space (the space left at the next piece's start) or, without
+// one before it, whole. (A start with no space at all makes the game add empty lines for ever, as MFC's Left(−1) and
+// Delete(0, −1) leave the text as it was; the viewer cuts it whole.)
+std::vector<std::string> ticker_pieces(const TextRenderer& font, std::string text, int view_w) {
+	std::vector<std::string> out;
+	while (font.measure(text) + 16 > view_w) {
+		size_t fits = 0;
+		size_t n = 0;
+		while (n < text.size()) {
+			size_t next = n + 1;
+			while (next < text.size() && (uint8_t(text[next]) & 0xC0) == 0x80) {
+				++next;  // (A whole UTF-8 letter.)
+			}
+			if (font.measure(text.substr(0, next)) + 16 >= view_w) {
+				break;
+			}
+			n = fits = next;
+		}
+		if (fits == 0) {
+			break;
+		}
+		const std::string left = text.substr(0, fits);
+		const size_t space = left.rfind(' ');
+		if (space == std::string::npos || space == 0) {
+			out.push_back(left);
+			text.erase(0, left.size());
+		} else {
+			out.push_back(text.substr(0, space));
+			text.erase(0, space);
+		}
+	}
+	out.push_back(text);
+	return out;
+}
+
+// A line (0x421040) at (x, y), `w` wide, the span above [span_x, span_right) for its hooks: the left end at x and the
+// right end at x + w − 10 (7 down: the plank's top), its middle tiled from x + 10 to the left hook at max(x, span_x) +
+// 10, from there to the right hook at min(x + w, span_right) − 20 and on to the right end; the text centred on the plank.
+void draw_ticker_line(GameWindowArt& art, TextRenderer& font, const std::string& text, int x, int y, int w, int span_x,
+	int span_right) {
+	constexpr uint32_t kTex = 37;
+	const int left_hook = std::max(x, span_x) + 10;
+	const int right_hook = std::min(x + w, span_right) - 20;
+	art.draw_tex_part(kTex, 0, {0, 0, 10, 25}, x, y + 7);
+	art.draw_tex_part(kTex, 4, {0, 0, 10, 25}, x + w - 10, y + 7);
+	auto middle = [&](int from, int to) {
+		for (int at = from; at < to;) {
+			const int part = std::min(to - at, 344);
+			art.draw_tex_part(kTex, 2, {0, 0, part, 25}, at, y + 7);
+			at += part;
+		}
+	};
+	middle(x + 10, left_hook);
+	art.draw_tex_part(kTex, 1, {0, 0, 10, 32}, left_hook, y);
+	middle(left_hook + 10, right_hook);
+	art.draw_tex_part(kTex, 3, {0, 0, 10, 32}, right_hook, y);
+	middle(right_hook + 10, x + w - 10);
+	font.draw(text, x + (w - font.measure(text)) / 2, y + 7 + (25 - font.line_height()) / 2, SDL_Color{0, 0, 0, 255});
+}
+
+// A set's lines (0x428AE2..0x428BF4) from `top` in a view `view_w` wide.
+void draw_ticker(GameWindowArt& art, TextRenderer& fallback, const TickerSet& set, int view_w, int top) {
+	TextRenderer& font = art.head_text() ? *art.head_text() : fallback;
+	int span_x = set.span_x;
+	int span_right = set.span_right;
+	int y = top;
+	for (const TickerSet::Line& l : set.lines) {
+		const int x = set.x_of(l, view_w);
+		draw_ticker_line(art, font, l.text, x, y, l.w, span_x, span_right);
+		span_x = x;
+		span_right = x + l.w;
+		y += TickerSet::kLineHeight;
+	}
 }
 
 int stick_speed(Sint16 value) {
@@ -19237,28 +19409,43 @@ int main(int argc, char** argv) {
 	size_t fleet_index = 0;  // Barco del jugador al que se dan las órdenes en el mapa del mar.
 	int game_speed = kNormalSpeed;
 	Uint32 clock = app_ticks();  // Hasta dónde se ha convertido el tiempo real en ticks.
-	// The notices under the top bar, each for a few seconds: the viewer's own
-	// (an order, a ship that arrives) and the game's lines (a new letter); the
-	// last kNotices, the newest at the bottom.
-	constexpr size_t kNotices = 4;
-	std::deque<std::pair<std::string, Uint32>> notices;
+	// The game screen's news lines (TickerSet, draw_ticker): the events' set at the view's left (the game's lines, and
+	// the viewer's few: a sea map order that can't be done, the sea map loading), the letters' at its right. Their
+	// width, for the events' pieces and the letters' place, is the view's (the town view's: the panel's left, or the
+	// screen's with it folded), as last drawn.
+	TickerSet ticker_events;
+	TickerSet ticker_letters;
+	ticker_letters.right = true;
+	int ticker_view_w = PanelLayout(false).town_right;
+	auto ticker_font = [&]() -> TextRenderer* {
+		return g_game_art && g_game_art->head_text() ? g_game_art->head_text() : small_text.get();
+	};
+	// The main menu's screens have no lines: their notice (the viewer's: a game that can't start or load) at their
+	// bottom, a few seconds.
+	std::pair<std::string, Uint32> menu_notice;
 	auto notify = [&](const std::string& message) {
-		if (!notices.empty() && notices.back().first == message) {
-			notices.pop_back();  // The same again: only once, for longer.
-		}
-		notices.emplace_back(message, app_ticks() + kMessageTime);
-		while (notices.size() > kNotices) {
-			notices.pop_front();
+		menu_notice = {message, app_ticks() + kMessageTime};
+		if (TextRenderer* font = ticker_font()) {
+			for (const std::string& piece : ticker_pieces(*font, message, ticker_view_w)) {
+				ticker_events.add(piece, font->measure(piece) + 16, app_ticks(), ticker_view_w);
+			}
 		}
 	};
-	// The game's speed told (the panel's icon, L and R in a building): a new one replaces the notice of the one before.
-	auto notify_speed = [&]() {
-		const std::string head = (g_texts ? g_texts->get(GameText::GameSpeed) : tr("Velocidad", "Speed")) + ": ";
-		notices.erase(std::remove_if(notices.begin(), notices.end(),
-						  [&](const std::pair<std::string, Uint32>& n) { return n.first.compare(0, head.size(), head) == 0; }),
-			notices.end());
-		notify(head + speed_name(game_speed));
+	// A new letter's line (0x4D7B10 → 0x42BB20 and 0x4237D0: the messages' icon blinks).
+	auto notify_letter = [&](const std::string& message) {
+		if (TextRenderer* font = ticker_font()) {
+			ticker_letters.add(message, font->measure(message) + 16, app_ticks(), ticker_view_w);
+		}
+		side.mail_blink_until = app_ticks() + kMailBlinkTime;
 	};
+	// The game's speed told (the panel's icon, L and R): the viewer's own (the game sets it in its options), as the
+	// game's tooltip under the top bar's hourglass, a while.
+	Uint32 speed_tip_until = 0;
+	auto notify_speed = [&]() { speed_tip_until = app_ticks() + kMessageTime; };
+	// The town view's tooltip: the building under the cursor, the view's place and since when both are as they are.
+	int town_tip_place = -1;
+	SDL_Point town_tip_camera{};
+	Uint32 town_tip_since = 0;
 	MailUi mail;  // The mailbox.
 	// Triangle in a town before the sea map is loaded: the town stays, with a
 	// notice, while it loads (from the frame after the notice is on screen).
@@ -19318,12 +19505,11 @@ int main(int argc, char** argv) {
 		}
 		run_operations(save, sailing.get(), {route_point_operation(uint32_t(index), kSailRoute, 0, 0)});
 		sea_route.clear();
+		// What can't be done as a line; the route taken, nothing (the game says nothing: the ship sails).
 		if (!problem.empty()) {
 			notify(problem);
 		} else if (!ship.route) {
 			notify(tr("No hay paso por mar entre esos puntos.", "There's no way by sea through those points."));
-		} else {
-			notify(ship.name() + tr(" sigue la ruta.", " follows the route."));
 		}
 	};
 	// X en el mapa del mar: el barco elegido zarpa hacia la ciudad elegida (operación 0x00).
@@ -19341,15 +19527,8 @@ int main(int argc, char** argv) {
 			notify(ship.name() + tr(" ya está en ", " is already in ") + there + ".");
 		} else if (check != Sailing::SailCheck::Ok) {
 			notify(sail_problem(ship, check));
-		} else {
-			const std::string verb = ship.status() == kShipSailing ? tr(" pone rumbo a ", " heads for ")
-				: ship.status() == kShipLeaving && ship.town() == town ? tr(" vuelve a ", " goes back to ")
-				: tr(" zarpa hacia ", " sets sail for ");
-			if (!sailing->set_sail(index, town)) {
-				notify(ship.name() + tr(" no puede zarpar ahora.", " can't set sail now."));
-			} else {
-				notify(ship.name() + verb + there + ".");
-			}
+		} else if (!sailing->set_sail(index, town)) {
+			notify(ship.name() + tr(" no puede zarpar ahora.", " can't set sail now."));
 		}
 	};
 
@@ -19507,7 +19686,6 @@ int main(int argc, char** argv) {
 			notify(tr("No se puede guardar la partida.", "The game can't be saved."));
 			return false;
 		}
-		notify(tr("Partida guardada.", "Game saved."));
 		return true;
 	};
 	// What the viewer keeps of the game in play, forgotten for another one
@@ -19536,7 +19714,8 @@ int main(int argc, char** argv) {
 		reload = true;
 		keep_camera = false;
 		clock = app_ticks();
-		notices.clear();
+		ticker_events.clear();  // (A new game screen: 0x42BAC0.)
+		ticker_letters.clear();
 		mail = MailUi();
 		sea_wanted = false;
 		sea_switch = true;
@@ -20732,12 +20911,12 @@ int main(int argc, char** argv) {
 			return;
 		}
 		new_game_window->draw(renderer, new_game_view());
-		if (text && !notices.empty()) {
-			if (app_ticks() > notices.front().second) {
-				notices.pop_front();
+		if (text && !menu_notice.first.empty()) {
+			if (app_ticks() > menu_notice.second) {
+				menu_notice.first.clear();
 			} else {
-				const int w = text->measure(notices.front().first);
-				text->draw(notices.front().first, (kScreenWidth - w) / 2, kScreenHeight - 2 * text->line_height(),
+				const int w = text->measure(menu_notice.first);
+				text->draw(menu_notice.first, (kScreenWidth - w) / 2, kScreenHeight - 2 * text->line_height(),
 					SDL_Color{255, 255, 255, 255});
 			}
 		}
@@ -21048,12 +21227,12 @@ int main(int argc, char** argv) {
 				draw_saves_screen(renderer, *small_text, menu, false);
 			}
 		}
-		if (text && !notices.empty()) {
-			if (app_ticks() > notices.front().second) {
-				notices.pop_front();
+		if (text && !menu_notice.first.empty()) {
+			if (app_ticks() > menu_notice.second) {
+				menu_notice.first.clear();
 			} else {
-				const int w = text->measure(notices.front().first);
-				text->draw(notices.front().first, (kScreenWidth - w) / 2, kScreenHeight - 2 * text->line_height(),
+				const int w = text->measure(menu_notice.first);
+				text->draw(menu_notice.first, (kScreenWidth - w) / 2, kScreenHeight - 2 * text->line_height(),
 					SDL_Color{255, 255, 255, 255});
 			}
 		}
@@ -21798,7 +21977,8 @@ int main(int argc, char** argv) {
 					place.open_market = false;
 				}
 				if (!place.notice.empty()) {
-					notify(place.notice);
+					screen_message = ScreenMessage{game_message_layout(place.notice, {}, false, 27, 0.4f, kScreenWidth,
+						kScreenHeight)};
 					place.notice.clear();
 				}
 				return true;
@@ -22053,8 +22233,6 @@ int main(int argc, char** argv) {
 			if (paid != 0) {
 				market.coin_price = paid;
 				market.coin_until = app_ticks() + 2000;
-			} else if (!market.message.empty()) {
-				notify(market.message);  // (Moving goods with the office costs nothing: what moved, also in a notice.)
 			}
 		};
 		// Triangle asked for the sea map: it loads now, some rows a frame
@@ -22070,9 +22248,11 @@ int main(int argc, char** argv) {
 		if (sea_wanted && sea && sea->ready()) {
 			sea_wanted = false;
 			sea_notice_shown = false;
-			notices.erase(std::remove_if(notices.begin(), notices.end(),
-							  [&](const std::pair<std::string, Uint32>& n) { return n.first == sea_notice; }),
-				notices.end());
+			// (Its line, once loaded, out.)
+			std::deque<TickerSet::Line>& lines = ticker_events.lines;
+			lines.erase(std::remove_if(lines.begin(), lines.end(),
+							[&](const TickerSet::Line& l) { return l.text == sea_notice; }),
+				lines.end());
 			if (selection.mode == Mode::Saved && sea_switch) {
 				selection.mode = Mode::Sea;
 				reload = true;
@@ -22678,10 +22858,7 @@ int main(int argc, char** argv) {
 			}
 			if (side.ship_page == ShipPage::Crew && side.ship_ui.row < 2) {
 				place_act(save, sailing.get(), town_index, side.ship_ui, ship_now);
-				if (!side.ship_ui.message.empty()) {
-					notify(side.ship_ui.message);  // As the game's lines, over the town.
-					side.ship_ui.message.clear();
-				}
+				side.ship_ui.message.clear();  // (The page shows what changed; the game says nothing.)
 			}
 		};
 		// The trade route page and its windows: what they queue runs at once (trade_route_window.hpp).
@@ -22831,13 +23008,8 @@ int main(int argc, char** argv) {
 			if (!yes || ship < 0 || size_t(ship) >= save.ships.size() || !ship_in_convoy(save, ship)) {
 				return;
 			}
-			const bool guide = save.convoys[save.ships[size_t(ship)].convoy()].u16(0x10) == ship;
-			const std::string name = save.ships[size_t(ship)].name();
+			// (The ship menu shows it; the game says nothing.)
 			run_operations(save, sailing.get(), {leave_convoy_operation(save, uint16_t(ship), false)});
-			if (!ship_in_convoy(save, ship)) {
-				notify(guide ? tr("El convoy se ha deshecho.", "The convoy is disbanded.")
-							 : (g_spanish ? "El " + name + " ha dejado el convoy." : "The " + name + " has left the convoy."));
-			}
 		};
 		// A file (its name into the box) or a bottom button: the box, «Cargar», «Guardar», «Borrar», close.
 		auto route_file_press = [&](int row, int column) {
@@ -23254,7 +23426,7 @@ int main(int argc, char** argv) {
 			// game's line, for the classes the player's settings ([+0x26]) want.
 			for (const uint16_t entry : take_new_letters(save)) {
 				if (g_texts && letter_notice_wanted(save, entry)) {
-					notify(clean_game_text(letter_notice(save, *g_texts, entry)));
+					notify_letter(clean_game_text(letter_notice(save, *g_texts, entry)));
 				}
 			}
 			// The game's ticker lines (0x548CA0 → 0x5483D0): «Tu barco X se ha
@@ -25491,9 +25663,7 @@ int main(int argc, char** argv) {
 						const int chosen = fleet_ship();
 						for (const SeaTarget& t : sea_targets(save, chosen)) {
 							if (SeaMapView::on_ship(save.ships[size_t(t.drawn)], camera_x + touch_start.x, camera_y + touch_start.y)) {
-								run_operations(save, sailing.get(), {target_operation(chosen, t.ship)});
-								notify(save.ships[size_t(chosen)].name() + ": " + tr("objetivo ", "target ") +
-									save.ships[size_t(t.ship)].name());
+								run_operations(save, sailing.get(), {target_operation(chosen, t.ship)});  // (Nothing said.)
 								targeted = true;
 								break;
 							}
@@ -26069,16 +26239,20 @@ int main(int argc, char** argv) {
 				SDL_RenderFillRects(renderer, light, 2);
 				SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 			}
-			if (pointed >= 0 && small_text) {
-				const SDL_Rect b = view->bounds(pointed, {camera_x + town_width / 2, camera_y + kScreenHeight / 2});
-				const std::string name = place_name(pointed);
-				const int padding = 6;
-				const int w = small_text->measure(name) + 2 * padding;
-				const int h = small_text->line_height() + padding;
-				const SDL_Rect box = {std::clamp(b.x + b.w / 2 - camera_x - w / 2, 4, town_width - w - 4),
-					std::clamp(b.y - camera_y - h - 2, kBarHeight + 2, kScreenHeight - h - 4), w, h};
-				draw_panel_box(renderer, box);
-				small_text->draw(name, box.x + padding, box.y + padding / 2, kTextColor);
+			// The town view's tooltip (its vtable 0x677998, slot 0x100 = 0x593C50): the string 30000 + the type of the
+			// object under the mouse (0x593CD0; the .let's type: 30003 «Town Hall»...; none for a type without one, nor
+			// for an object whose slot 0x64 says more than 1, not seen with the buildings), the game's tooltip at the
+			// mouse once it has been still TTDelay. The viewer's mouse is the cursor in the view's middle: still while
+			// the view doesn't move.
+			const Uint32 now_ms = app_ticks();
+			if (pointed != town_tip_place || camera_x != town_tip_camera.x || camera_y != town_tip_camera.y) {
+				town_tip_place = pointed;
+				town_tip_camera = {camera_x, camera_y};
+				town_tip_since = now_ms;
+			}
+			if (pointed >= 0 && small_text && now_ms - town_tip_since >= kTooltipDelay) {
+				draw_tooltip_at(renderer, *small_text, tooltip_text(30000 + uint32_t(pointed)),
+					{town_width / 2, kScreenHeight / 2});
 			}
 			if (selection.mode == Mode::Saved && has_save && panel_art) {
 				// The town's event symbols (0x58BF3A): one for each bit of its [+0x2C8] that is set, at the top right.
@@ -26250,6 +26424,19 @@ int main(int argc, char** argv) {
 					{tr(BTN_SQUARE " barco   L/R: ", BTN_SQUARE " ship   L/R: ") + speed, "L/R: " + speed, speed},
 					town_width);
 			}
+		}
+		// The game screen's news lines: their first runs out (each frame, 0x42B920 and 0x42BE40), over the town or the sea
+		// map and under the windows (the screen draws them; the windows are drawn over it).
+		ticker_view_w = town_width;
+		ticker_events.expire(app_ticks(), town_width);
+		ticker_letters.expire(app_ticks(), town_width);
+		if (mail.open || side.menu == PanelMenu::Messages) {
+			side.mail_blink_until = 0;  // (The blinking icon pressed: 0x42388F, its state 3.)
+		}
+		if (has_save && save.player >= 0 && g_game_art && small_text &&
+			(selection.mode == Mode::Saved || selection.mode == Mode::Sea)) {
+			draw_ticker(*g_game_art, *small_text, ticker_events, town_width, kBarHeight);
+			draw_ticker(*g_game_art, *small_text, ticker_letters, town_width, kBarHeight);
 		}
 		if (trading) {
 			draw_market(renderer, *small_text, save, town_index, market);
@@ -26464,35 +26651,13 @@ int main(int argc, char** argv) {
 			}
 			draw_tooltip(renderer, *small_text, tip, where);
 		}
-		if (small_text) {
-			// The notices still in time, one under another (with the mailbox
-			// open, at the bottom on the right, under its letter; with a place's
-			// window open, in it over its footer, not on its title).
-			const int padding = 8;
-			const int box_height = small_text->line_height() + padding;
-			while (!notices.empty() && SDL_TICKS_PASSED(app_ticks(), notices.front().second)) {
-				notices.pop_front();
-			}
-			const bool mail_full = in_mail && mail.open && !mail_in_panel;  // The whole-screen mailbox (the sea map).
-			const bool over_place = place.open != Place::None && selection.mode == Mode::Saved && has_save &&
-				save.player >= 0 && !market.open;
-			const PlaceLayout place_layout;
-			const SDL_Point place_footer = PlaceLayout::to_screen(place_layout.panel.x + PlaceLayout::kPadding,
-				place_layout.footer_y);
-			const int stacked = int(notices.size()) * (box_height + 2);
-			int y = mail_full ? kScreenHeight - 18 - stacked : over_place ? place_footer.y - 6 - stacked : kBarHeight + 6;
-			for (const auto& [line, until] : notices) {
-				const int width = small_text->measure(line) + 2 * padding;
-				const int x = mail_full ? kScreenWidth - 18 - width : over_place ? place_footer.x : 8;
-				const SDL_Rect box = {x, y, width, box_height};
-				SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-				SDL_SetRenderDrawColor(renderer, 30, 22, 14, 225);
-				SDL_RenderFillRect(renderer, &box);
-				SDL_SetRenderDrawColor(renderer, 150, 120, 70, 255);
-				SDL_RenderDrawRect(renderer, &box);
-				small_text->draw(line, box.x + padding, box.y + padding / 2, kTextColor);
-				y += box.h + 2;
-			}
+		if (small_text && has_save && save.player >= 0 && !in_menu && speed_tip_until != 0 &&
+			!SDL_TICKS_PASSED(app_ticks(), speed_tip_until)) {
+			// The speed set with L and R or the panel's icon: under the top bar's hourglass, as the game's tooltip.
+			draw_tooltip(renderer, *small_text,
+				(g_texts ? g_texts->get(GameText::GameSpeed) : tr("Velocidad del juego", "Game speed")) + ": " +
+					speed_name(game_speed),
+				kHourglassButton);
 		}
 		if (messages.open && small_text) {
 			draw_screen_message(renderer, *small_text, battle_message(messages.raw, {}, true, 38, kBattleMessageRatio));

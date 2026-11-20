@@ -440,8 +440,20 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     ventana. Se quedan, por decisión del usuario del 08-11-2026, el segundo botón de la pregunta («Que luche el
     ordenador»: en el juego, solo el cierre) y su barra del tiempo (improvisada sobre los botones). El abordaje que
     dirige el jugador ya no sale dos veces (la ventana de la batalla y el recuadro de mensajes).
-  - [ ] **Los avisos** de arriba a la izquierda («El Hyphen está siendo atacado», «Información comercial: Factura») y
-    **el nombre del edificio señalado** («Ayuntamiento»): como las líneas de aviso y la ayuda emergente del juego.
+  - [x] **Los avisos** de arriba a la izquierda y **el nombre del edificio señalado** (20-11-2026,
+    `re/emu/sesion47/README.md`): ya son las líneas de noticias de la pantalla del juego (*0x6CBB40, 0x42B4C0,
+    0x42B6A0, 0x42BB20, su dibujo 0x421040): dos tandas de cinco tablillas de images/text.aim colgadas con sus ganchos
+    bajo la barra de arriba, cada una 12 s con su texto negro en la fuente 0; las del juego («El Hyphen está siendo
+    atacado», partidas en trozos si no caben) a la izquierda de la vista y las de las cartas («Información comercial:
+    Factura») a su derecha, con el botón de los mensajes parpadeando 4 s (NewsAnimID 78). Debajo de las ventanas, como
+    en el juego. El nombre del edificio, con la ayuda emergente del juego (la cadena 30000 + su tipo, 0x593C50: textos
+    caché 45), en el cursor tras 250 ms quieto; todas las ayudas emergentes del visor, con el recuadro del juego
+    (blanco con alfa 200, borde negro, fuente 0: 0x4B5A90). Quitados los avisos del visor que el juego no tiene (lo
+    comprado o movido en el mercado, «sigue la ruta», «zarpa hacia», «Partida guardada», el convoy deshecho, el
+    objetivo elegido, la tripulación contratada); la velocidad de L/R, en la ayuda del reloj de arena; el aviso de una
+    oferta desde los barcos, en la ventana de mensajes del juego (0x5BE1A6). Se quedan como líneas los avisos del visor
+    que hacen falta (una orden del mapa del mar que no se puede, la carga del mapa del mar, la elección de Gobernador
+    hasta el final de la partida).
   - [ ] **El pie del mapa del mar** («barco: en el puerto de...», «L/R: velocidad del juego»): del visor, sin igual en el
     juego.
   - [ ] **El buzón a pantalla completa** (sin panel: en una batalla, desde el menú de Start) y sus respuestas
