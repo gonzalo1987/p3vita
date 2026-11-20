@@ -2383,6 +2383,54 @@ const uint32_t* unwritten_mission_ops() {
 	return g_unwritten;
 }
 
+void fn_53fb00(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
+	GlobalMemory& g = save.globals;
+	uint16_t target = 0;
+	std::memcpy(&target, operation + 4, 2);
+	const uint16_t ships = g.u16(global::kShipCount);
+	if (target < ships && target < save.ships.size()) {
+		const uint16_t state = save.ships[target].memory.u16(0x134);
+		if (state != 0xF && state != 0x10) {
+			return;
+		}
+	}
+	if (!sailing) {
+		return;  // (No navigation: p3vita can't make the pirate; the game always has it.)
+	}
+	const uint16_t made = sailing->fn_5063c0(target, operation[0xB]);
+	ShipMemory* pirate = nullptr;
+	if (made < g.u16(global::kShipCount) && made < save.ships.size()) {
+		pirate = &save.ships[made].memory;
+		const uint16_t captain = pirate->u16(0x42);
+		if (captain < g.u16(global::kCaptainCount) && captain < save.captains.size()) {
+			save.captains[captain].u8(0x2) = operation[6];
+			save.captains[captain].u8(0x3) = operation[7];
+		}
+		const uint8_t town = operation[0xC];
+		if (town < g.u32(global::kWorldTownCount)) {
+			// 0x51A820 (on the ship, a town): its [+0x159] that town for a ship of no merchant, else 0xFF.
+			pirate->u8(0x159) = pirate->u8(0x0) >= g.u16(global::kWorldMerchantCount) ? town : 0xFF;
+		}
+		pirate->u8(0x136) = 0x80;
+	}
+	uint16_t event = 0;
+	std::memcpy(&event, operation + 8, 2);
+	if (event >= g.u16(0x6DD748) || event >= save.events.size() || save.events[event].u16(0x6) != 0x1B) {
+		return;
+	}
+	const uint8_t var = operation[0xA];
+	if (var >= save.events[event].u16(0x12)) {
+		return;
+	}
+	auto script = save.missions.scripts.find(event);
+	if (script == save.missions.scripts.end() || var >= script->second.variables.size()) {
+		return;
+	}
+	script->second.variables[var] = pirate
+		? ((uint32_t(operation[6]) << 8 | operation[7]) << 16) + pirate->u16(0x42)
+		: 0xFFFFFFFEu;
+}
+
 uint32_t run_mission_script(SaveGame& save, uint16_t event) {
 	GameMemory<0x18>& e = save.events[event];
 	MissionData::Script& script = save.missions.scripts[event];

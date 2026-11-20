@@ -6145,6 +6145,23 @@ def mission_unused(o):
                    {1: player, 2: town, 3: 1, 5: gate, 6: sunk}, 4)
 
 
+def mission_attack(o):
+    """The operation 0x82 (0x53FB00: a pirate for a mission), queued by a script of its own: 0xF9 on a ship at sea (the
+    state 0xF: the pirate made, its captain and the script's variable given its key) of the kinds 0, 1 and 2, on a
+    docked ship (nothing), and 0xE9 with a town (no target: the pirate at the default place; its [+0x159] the town).
+    The executor (0x535760) recorded too. Saves 3, 5, 7."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    at_sea = [i for i in range(ships) if o.u16(o.ship(i) + 0x134) == 0xF]
+    docked = next(i for i in range(ships) if o.u16(o.ship(i) + 0x134) == 0)
+    print(f'at sea {at_sea[:4]}, docked {docked}, home {home}')
+    mission_script(o, p2m([bytes([0xF9, 1, 2, 3, 4]), bytes([0xF9, 1, 5, 6, 7]), bytes([0xF9, 1, 8, 9, 10]),
+                           bytes([0xF9, 1, 11, 3, 12]), bytes([0xE9, 1, 13, 3, 14]), WAIT]),
+                   {1: 0x0305, 2: at_sea[0], 3: 0, 5: at_sea[1 % len(at_sea)], 6: 1, 8: at_sea[2 % len(at_sea)], 9: 2,
+                    11: docked, 13: home}, 1)
+
+
 def hanse_dev_candidacy(o):
     """0x45 (0x535FA4: standing for mayor, [+0x118]) for the player with 0, 1 and 7, an AI merchant (always 1) and a
     merchant past; 0x4A (0x53B1F0, events_rare.cpp: the Hanse tasks window's developers' tools) on events 0x30 made by
@@ -15266,6 +15283,8 @@ SCENARIOS = {
         '@4eea6e', '@4eef68', '@4eefb6', '@4ef01f', '@4ef1e9', '@4ef230', '@4ef2c7', '@4d775c', '@4d7755', '@4ed066',
         '@4eecaa', '@4f1ec4', '@4eff49', '@4f1142', '@4f1196', '@4f1115', '@4f0974', '@4f19ec', '@4f1a00', '@4f2a67',
         '@4f0679', '@4dc800', '@4eea11', '@4ee03c'], missions=True),
+    'mission_attack': Scenario(mission_attack, [0x4D85C0, 0x535760], 1, [
+        '@53fb3c', '@53fb86', '@53fba1', '@53fbf8', '@53fb36>53fc64'], missions=True),
     'hanse_dev_candidacy': Scenario(hanse_dev_candidacy, [0x535760], 0, [
         '@4f9397', '@4f93a4', '@535fb2>537025', '@53b247', '@53b283', '@53b24e>53b28a', '@53b255>53b28a',
         '@53b259>53b28a', '@53b281>53b28a', '@53b26c>53b28a', '@53b29e', '@53b2b0', '@53b2ae>53b2b8', '@53b34a',

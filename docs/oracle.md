@@ -2801,6 +2801,10 @@ All the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu
   message window the oracle jumps over (0x4EE042 → 0x4EE085); 0x68's letter let through, `MAIL_CALLS` 0x4F2A67):
   saves 5, 7, 256 calls equal each, 24 of 24 targets (save 3: 23). Broken on purpose (0x3C's renewal, 0x68's
   [+0xA]): caught, the second once 0xF7 had its own answers' variable (it overwrote 0x68's y).
+- The operation 0x82 (0x53FB00, `missions_detail::fn_53fb00`; now in the oracle's OPERATIONS),
+  `retouch_unchecked.py mission_attack` (0xF9 on ships at sea of the kinds 0, 1, 2 and on a docked one, 0xE9 with a
+  town; the executor 0x535760 recorded): saves 3, 5, 7, the events and the executor's calls equal, 5 of 5 targets.
+  Broken on purpose (the captain's key, the pirate's [+0x136]): caught. world.sh 7 days: 0.
 
 ## The game's static initializers (2026-11-03)
 

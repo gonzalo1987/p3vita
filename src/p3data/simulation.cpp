@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "p3data/mail.hpp"
+#include "p3data/mission_script.hpp"
 #include "p3data/new_game.hpp"
 #include "p3data/trade.hpp"
 #include "p3data/trade_routes.hpp"
@@ -541,6 +542,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 		break;
 	case 0x7A:  // La dieta de la Hansa: [0x834..0x83F] de una ciudad (0x536570).
 		tick::fn_536570(save, operation);
+		break;
+	case 0x82:  // A pirate for a mission (0x5367A6 → 0x53FB00; mission_script.cpp).
+		missions_detail::fn_53fb00(save, sailing, operation);
 		break;
 	case 0x7B:  // Capitanes y administradores que buscan trabajo (0x5365E3).
 		tick::fn_5365e3(save, operation);
