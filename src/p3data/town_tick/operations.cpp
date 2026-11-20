@@ -1349,6 +1349,20 @@ void fn_53644b(SaveGame& save, const uint8_t* operation) {
 	}
 }
 
+// The variable `var` of the script of the event `event` when the event is below the events' count (0x6DD748), a 0x1B
+// with more variables than `var` ([+0x12]); else null.
+static uint32_t* script_variable_of(SaveGame& save, uint32_t event, uint32_t var) {
+	if (event >= save.globals.u16(0x6DD748) || event >= save.events.size() || save.events[event].u16(6) != 0x1B ||
+		var >= save.events[event].u16(0x12)) {
+		return nullptr;
+	}
+	auto script = save.missions.scripts.find(uint16_t(event));
+	if (script == save.missions.scripts.end() || var >= script->second.variables.size()) {
+		return nullptr;
+	}
+	return &script->second.variables[var];
+}
+
 // The operation 0x52 (0x53C2C0): {0x52, u32 the window's draw (rand() << 16 plus more), u32 merchant, u32 town, u32
 // kind}: the people in the town's tavern (its side menu, 0x5A6604 and 0x5A7A60..0x5A7CED): a merchant (below the
 // merchants, [0x6DE4AA]) who talks to one takes him if he is free (0xFF); past the merchants, he leaves him. By kind:
@@ -1359,10 +1373,14 @@ void fn_53644b(SaveGame& save, const uint8_t* operation) {
 //   10 bits ([+0x4]; for 8, of [+0x6]) are below 0x66 and the town's [+0x9EC] (6), [+0x9F4] (7) or [+0x9F0] (8), the
 //   tick of the last one, is below tick + 0x200, which it becomes; 6 only for one who isn't the Alderman ([0x6DE52D])
 //   nor the town's mayor ([+0x6F1]), in a town without [+0x2C8] & 0xE10;
-//   9 a variable of a mission's script (the event [+0x4] of type 0x1B, the variable [+0x6]), and 10 (he leaves the
-//   tavern: all of his there, the four places and the captains of the town's list [+0x82E], next [+0x0]; then the
-//   script variables named by his letters 0x71 of the town) write the scripts' variables, which p3vita doesn't keep
-//   yet (the mission interpreter, docs/roadmap.md apartado 3: on the heap, not compared); 2, 4 and past 10, nothing.
+//   9 the side room's mission letter (0x53C7A3): the variable [+0x6] (a u16, below the count [+0x12]) of the script of
+//   the event [+0x4] (a u16, below the events, a 0x1B), the letter's addressee: one leaving makes it −1, one taking
+//   it gets it if it holds no merchant (a value not below the merchants' count);
+//   10 he leaves the tavern: all of his there, the four places and the captains of the town's list [+0x82E], next
+//   [+0x0]; then each of his letters 0x71 for the town (0x4D7900 from his chain [+0xA]) whose script (the record's
+//   event, a 0x1B with more variables than the record's [+0xC]) has him in the variable [+0xC]: 0xFFFF there. Game bug:
+//   the loop goes on while the letter's entry is below the merchants' count (0x53C6FB, 0x53C796), not the mailbox's,
+//   so a letter past the first entries is left (and the ones after it); 2, 4 and past 10, nothing.
 // A town past the towns: nothing.
 void fn_53c2c0(SaveGame& save, const uint8_t* operation) {
 	const GlobalMemory& g = save.globals;
@@ -1453,9 +1471,33 @@ void fn_53c2c0(SaveGame& save, const uint8_t* operation) {
 				save.captains[c].u8(0xF) = 0xFF;
 			}
 		}
-		return;  // His letters 0x71's script variables: the mission interpreter's.
+		if (!joins) {
+			return;
+		}
+		for (uint32_t at = find_tavern_letter(save, save.merchants[merchant].memory.u16(0xA), uint16_t(town));
+			 at < g.u16(global::kWorldMerchantCount);) {
+			// (The entry below the merchants' count is below the mailbox's: theirs come first.)
+			const uint16_t next = save.mail[at].u16(6);
+			const GameMemory<0x10>& record = *save.mail_records[at];
+			if (uint32_t* v = script_variable_of(save, record.u16(8), record.u8(0xC))) {
+				if (*v == merchant) {
+					*v = 0xFFFF;
+				}
+			}
+			at = find_tavern_letter(save, next, uint16_t(town));
+		}
+		return;
+	case 9:
+		if (uint32_t* v = script_variable_of(save, draw & 0xFFFF, draw >> 16)) {
+			if (!joins) {
+				*v = 0xFFFFFFFFu;
+			} else if (*v >= g.u16(global::kWorldMerchantCount)) {
+				*v = merchant;
+			}
+		}
+		return;
 	default:
-		return;  // 9: a script variable (the mission interpreter's); 2, 4: nothing.
+		return;  // 2, 4: nothing.
 	}
 }
 

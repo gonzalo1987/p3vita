@@ -283,6 +283,9 @@ void map_picture() {
 	check(p.size() == 6 && p[5].picture == kLetterMapPicture && p[5].made_picture && p[5].align == LetterParagraph::Center,
 		"\\h: a picture made for the letter");
 	check(!letter_paragraphs("\\c\\t16063_ ")[0].made_picture, "\\t: one of the game's graphics");
+	const std::vector<LetterParagraph> mission = letter_paragraphs("\\\\f1_Ah, welcome!");
+	check(mission.size() == 1 && mission[0].text == "Ah, welcome!" && mission[0].font == 1,
+		"a backslash before another sign isn't drawn (the missions' texts)");
 }
 
 }  // namespace

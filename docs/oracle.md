@@ -2821,6 +2821,13 @@ All the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu
   tick 2 the operations through the executor on each branch (its docstring). Saves 3, 5, 7: the events' and the
   executor's calls equal (36, 31, 55), 31 of 31 targets. Broken on purpose (0x74's record [+0x4], 0x54's variable,
   0x55's bits, 0x76's merchant): caught, each. The mission scenarios and the world 7 days with the missions: 0.
+- The operation 0x52's kinds 9 and 10 (the tavern's side room: the mission letters 0x71; `fn_53c2c0`, 0x4D7900 as
+  `find_tavern_letter`), `retouch_unchecked.py tavern_side_room`: two scripts of their own send the player five tavern
+  letters for his home town, three of them into entries below the merchants' count (freed for them); kind 9 taken,
+  held, left, on an event not 0x1B, past the events, a variable past the count; kind 10 elsewhere, by a merchant past
+  the count, by the player (a letter skipped, one let go, one held by an AI, the loop ended by a letter past the
+  merchants' count: the game bug). Saves 3, 5, 7: equal, 12 of 12 targets. Broken on purpose (the loop's bound, kind
+  9's −1): caught. `tavern_people` (saves 1, 3, 5, 7): equal.
 
 ## The game's static initializers (2026-11-03)
 

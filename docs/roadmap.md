@@ -439,9 +439,14 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   del tesoro, 0x4D74C0) y 0x76 (aceptar la carta de misión de la taberna 0x71, 0x53EDF0 con 0x4D7870). Falta la carta
   final 0x3D del evento 0x34 (0x4F3AF0, con su lista de avisos [+0x8], 0x4F3980..0x4F3CE0), que es de la dieta (la caza
   de piratas, `diet.cpp`) y no de las misiones, pero es una carta del tipo de las de misión (registro y texto).
-- [ ] **En el visor**: las cartas de misión con sus botones (0x74), la carta de misión de la taberna (0x5D8100, las
-  0x71), el trozo de mapa del tesoro (0x55 del soplón), lo que enseñe cada misión (la ventana de los sucesos
-  históricos de la instrucción 0x37: 0x469AF0 con 0x16, el título y el texto del programa).
+- [ ] **En el visor**: hechas el 20-11-2026 las cartas de misión con sus botones (0x74; arreglado de paso que los
+  botones de una carta no se iban al responderla) y la carta de misión de la taberna (la «Trastienda», el décimo
+  personaje: su página 0x5D8100 con el título, el texto hasta el «|», «Aceptar» con la respuesta de la carta y la
+  0x76, y la página de después con el texto tras el «|»; el botón de la carta siguiente, que el juego crea sin texto
+  ni dibujo, con la palabra del visor «Siguiente»; la 0x52 de tipo 9 al hablar con ella; estado de depuración
+  `mission-letters`). Falta: el trozo de mapa del tesoro (0x55 del soplón) y lo que enseñe cada misión (la ventana
+  de los sucesos históricos de la instrucción 0x37: 0x469AF0 con 0x16, el título y el texto del programa; las de
+  0xE8, 0xEF, 0xF5 y el aviso de 0xF7).
 - [ ] **Las campañas y el tutorial**: su menú de inicio (`[Campaign_0..7]` del ini: el tutorial, «El ascenso», «El
   comerciante volante», «El auge de la Hansa» y los escenarios del saneamiento, la mala cosecha, el incendio y la
   peste) y las partidas de la versión 0x4D de las que parten (`missav/0100..0204.pat`, apartado 2); el tutorial va
@@ -1079,6 +1084,13 @@ ser a propósito. El detalle, en el comentario del código y en [oracle.md](orac
 
 ### Reproducidos, sin corregir aún
 
+- **Las cartas de misión de la trastienda al salir de la taberna** (operación 0x52 de tipo 10, 0x53C2C0; 20-11-2026,
+  seguro, comprobado con el oráculo, escenario `tavern_side_room`): al irse, el juego quiere soltar las cartas 0x71 de
+  esa ciudad que el comerciante tenía apartadas (la variable del destinatario a 0xFFFF), pero el bucle sigue solo
+  mientras el número de la carta en el buzón es menor que el número de comerciantes (0x53C6FB, 0x53C796), y las cartas
+  suelen estar mucho más allá: casi nunca suelta ninguna. En una partida de un jugador no cambia nada (la carta sigue
+  apartada para él y él la sigue viendo); en red, otro humano no la vería en su taberna. Corregirlo cambia el juego
+  en red: preguntar antes.
 - **La carta de misión a los dueños de las oficinas de una ciudad** (instrucción 0xF7 del intérprete, 0x4ED4A0;
   20-11-2026): con respuestas, el destinatario −3 debería mandar una copia a cada dueño de una oficina de la ciudad
   de la carta, pero antes de mirarlo un `memset` pone a −1 las ocho variables desde la del destinatario, así que la

@@ -6299,6 +6299,61 @@ def mission_letter_ops(o):
     return during
 
 
+def tavern_side_room(o):
+    """The operation 0x52's side room (0x53C2C0, its kinds 9 and 10; town_tick/operations.cpp) on the tavern's mission
+    letters 0x71 for the player's home town, each sent to −1 (each human his copy) by a script of its own: A (tick 1)
+    two, their entries past the merchants' count; then three entries below it freed (0x4D6A50 on the chains that had
+    them) and B (tick 3) three more there, the last's record's variable [+0xC] made 100 (past the count). After the
+    tick 4, kind 9: B's first taken by an AI merchant, then held against the player; B's second and third taken by the
+    player, A's second too, A's first left (−1); an event not 0x1B, one past the events, a variable past the count.
+    Kind 10: in another town (no letters), by a merchant past the count, by the player at home: B's third skipped (its
+    variable past), B's second freed (0xFFFF), the loop on to B's first (held by the AI: kept), then A's second, past
+    the merchants' count, ends it (the game bug: it stays the player's). Saves 3, 5, 7."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    now = o.u32(WORLD + 0x14)
+    ai = next(m for m in range(merchants) if o.u16(o.merchant(m) + 8) != 0)
+
+    def f7(b3, b5):
+        return bytes([0xF7, 5, 2, b3, 4, b5, 1, 0])
+    texts = [b'Tavern\0A job in %t\x02.|Thanks, see you.\0Accept\0']
+    variables = {2: home, 4: now + 0x10000, 31: -1, 32: -1, 33: -1, 34: -1, 35: -1}
+    a = mission_script(o, p2m([(f7(22, 32), 0), (f7(23, 33), 0), WAIT], texts), variables, 1)
+    b = mission_script(o, p2m([(f7(21, 31), 0), (f7(24, 34), 0), (f7(25, 35), 0), WAIT], texts), variables, 3)
+    other_event = next(i for i, e in rt.events(o) if o.u16(e + 6) not in (0x1B, 0xFFFF))
+    print(f'player {player}, home {home}, AI {ai}, scripts A {a} B {b}, event not 0x1B {other_event}')
+
+    def during(o):
+        def after(o, t):
+            if t == 1:
+                owners = [(m, i) for m in range(merchants) for i, _ in chain_letters(o, m) if i < merchants]
+                head, count, k = o.u16(MAILBOX + 8), o.u16(MAILBOX + 6), 0
+                while head < count and k <= count:
+                    if head < merchants:
+                        owners.append((0xFFFFFFFF, head))
+                    head, k = o.u16(o.u32(MAILBOX) + 16 * head + 6), k + 1
+                print(f'low entries: {owners[:3]}')
+                for owner, entry in owners[:3]:
+                    o.call(0x4D6A50, [owner, entry], ecx=MAILBOX)
+            if t != 3:
+                return
+            letters = {o.u8(o.u32(e + 8) + 0xA): (i, e) for i, e in chain_letters(o, player) if o.u8(e + 4) == 0x71}
+            print('side room letters: ' + ' '.join(f'{k}:{i}' for k, (i, _) in sorted(letters.items())))
+            w8(o, o.u32(letters[25][1] + 8) + 0xC, 100)
+            events = o.u16(to.EVENTS + 0xC)
+            for draw, who, town, kind in ((b | 31 << 16, ai, home, 9), (b | 31 << 16, player, home, 9),
+                                          (b | 34 << 16, player, home, 9), (b | 35 << 16, player, home, 9),
+                                          (a | 33 << 16, player, home, 9), (a | 32 << 16, merchants, home, 9),
+                                          (other_event, player, home, 9), (events, player, home, 9),
+                                          (b | 64 << 16, player, home, 9),
+                                          (0, player, (home + 1) % towns, 10), (0, merchants, home, 10),
+                                          (0, player, home, 10)):
+                operation(o, 0x52, draw, who, town, kind)
+        return after
+    return during
+
+
 def hanse_dev_candidacy(o):
     """0x45 (0x535FA4: standing for mayor, [+0x118]) for the player with 0, 1 and 7, an AI merchant (always 1) and a
     merchant past; 0x4A (0x53B1F0, events_rare.cpp: the Hanse tasks window's developers' tools) on events 0x30 made by
@@ -15422,6 +15477,10 @@ SCENARIOS = {
         '@4f0679', '@4dc800', '@4eea11', '@4ee03c'], missions=True),
     'mission_attack': Scenario(mission_attack, [0x4D85C0, 0x535760], 1, [
         '@53fb3c', '@53fb86', '@53fba1', '@53fbf8', '@53fb36>53fc64'], missions=True),
+    'tavern_side_room': Scenario(tavern_side_room, [0x4D85C0, 0x535760], 1, [
+        '@53c808', '@53c806>53c80a', '@53c7ed', '@53c7bf>53c80a', '@53c7d1>53c80a', '@53c7db>53c80a',
+        '@53c6c4>53c80a', '@53c6fd>53c80a', '@53c772', '@53c770>53c778', '@53c798>53c706', '@53c75b>53c778'],
+        missions=True),
     'mission_letter_ops': Scenario(mission_letter_ops, [0x4D85C0, 0x535760], 1, [
         '@53ec65', '@53ec44>53eca4', '@53ec56>53ec6e', '@53ec63>53ec6e', '@53ec9a', '@53ec7c>53eca4', '@53ec93>53eca4',
         '@53ec98>53eca4',

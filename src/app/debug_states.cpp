@@ -670,8 +670,9 @@ void letters_with_buttons(SaveGame& save) {
 // The missions' letters to the player as the interpreter's 0xF7 sends them (mission_script.cpp), from the game's own
 // mission files (their texts in the archive's language; the variables 0, so the «%» codes give the merchant 0, the town
 // 0...): the first 0xF7 with two answers of the mission 19, with one of the mission 200, without answers of the mission
-// 2, and the tavern's 0x71 of the mission 5 for the town of the player's first ship. The record's event the save's first
-// script (an event 0x1B), its deadline in 30 days. False without those files.
+// 2, and the tavern's 0x71 of the missions 5 and 6 for Lübeck (their addressee's variable made −1, free, for the side
+// room). The record's event the save's first script (an event 0x1B), its deadline in 30 days.
+// False without those files.
 bool mission_letters(SaveGame& save) {
 	GlobalMemory& g = save.globals;
 	const uint32_t tick = g.u32(global::kWorldTick);
@@ -682,16 +683,15 @@ bool mission_letters(SaveGame& save) {
 			break;
 		}
 	}
-	const MerchantMemory& m = save.merchants[size_t(save.player)].memory;
-	uint8_t town = m.u8(0x19);
-	for (const SavedShip& ship : save.ships) {
-		if (ship.memory.u8(0) == save.player && ship.memory.u8(0x39) < g.u32(global::kWorldTownCount)) {
-			town = ship.memory.u8(0x39);
-			break;
+	// The tavern's for Lübeck (its number 14: the town the viewer starts in).
+	uint8_t town = save.merchants[size_t(save.player)].memory.u8(0x19);
+	for (size_t t = 0; t < save.towns.size(); ++t) {
+		if (save.towns[t].town_id() == 14) {
+			town = uint8_t(t);
 		}
 	}
 	static constexpr struct { uint16_t mission; uint8_t b1, answers; } kLetters[] = {
-		{19, 2, 2}, {200, 2, 1}, {2, 1, 0}, {5, 5, 1}};
+		{19, 2, 2}, {200, 2, 1}, {2, 1, 0}, {5, 5, 1}, {6, 5, 1}};
 	for (const auto& want : kLetters) {
 		const MissionProgram program = mission_file(save, want.mission);
 		if (!program) {
@@ -720,6 +720,13 @@ bool mission_letters(SaveGame& save) {
 			record.u32(0) = uint32_t(letter.buffer.size());
 			letter.record = record;
 			send_letter(save, save.player, letter);
+			if (want.b1 == 5) {
+				// The tavern's: its addressee's variable free, so that the side room offers it.
+				auto s = save.missions.scripts.find(script);
+				if (s != save.missions.scripts.end() && p[at + 5] < s->second.variables.size()) {
+					s->second.variables[p[at + 5]] = 0xFFFFFFFFu;
+				}
+			}
 			sent = true;
 		}
 		if (!sent) {
@@ -964,7 +971,7 @@ const char kDebugStatesHelp[] =
 	"  letters     letters with buttons: a suitor, a proposal, the prince's request\n"
 	"              and a townsman who can't pay back the player's loan\n"
 	"  mission-letters  the missions' letters from the game's files: two answers, one,\n"
-	"              none, and the tavern's for the town of the player's first ship\n"
+	"              none, and two tavern ones for Lübeck\n"
 	"  auctions    the player in the guild of his first ship's town and two auctions\n"
 	"              of ships there and in the next town with a guild (bidding in 15 days)\n"
 	"  auction     the same with the first auction only\n"

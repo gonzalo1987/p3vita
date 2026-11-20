@@ -2919,6 +2919,11 @@ struct PlaceUi {
 	InformerNews informer;
 	bool informer_done = false;
 	std::string informer_said;
+	// The side room (the tenth person): the letter the menu keeps (its [+0xB1C]; 0xFFFF none), its words when its page
+	// opened, and after its accept button the page 0x11 (the words after the '|').
+	uint16_t side_letter = 0xFFFF;
+	SideRoomWords side_words;
+	bool side_done = false;
 	// How far a page's scrolled text box is scrolled, in pixels (PlaceView::PageScroll; the informer's after buying,
 	// the scroll bar's position, the window's [+0x1B74]).
 	int page_scroll = 0;
@@ -6924,6 +6929,16 @@ void place_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const
 		ui.land.page = 0;
 		ui.land.escorts = 0;
 		ui.row = 0;
+	} else if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::MissionLetter) && !ui.side_done) {
+		// The next letter (0x5A77A0): the one kept left, the next taken, its page set again.
+		const uint16_t next = side_room_next(save, uint32_t(town), ui.side_letter);
+		if (next != 0xFFFF) {
+			const uint32_t merchants = save.globals.u16(global::kWorldMerchantCount);
+			run_operations(save, sailing, {side_room_talk_operation(save, ui.side_letter, merchants, uint32_t(town))});
+			ui.side_letter = next;
+			ui.side_words = side_room_words(save, next);
+			run_operations(save, sailing, {side_room_talk_operation(save, next, uint32_t(save.player), uint32_t(town))});
+		}
 	} else if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::Pirate) && !ui.pirate.done &&
 		!ui.pirate_list.empty()) {
 		// «before <town>» (0x5D584C).
@@ -7325,11 +7340,13 @@ std::vector<int> tavern_rows(const SaveGame& save, int town, const PlaceUi& ui) 
 			(ui.talking == int(TavernPerson::OrderClient) && ui.client_done) ||
 			(ui.talking == int(TavernPerson::Pirate) && ui.pirate.done) ||
 			(ui.talking == int(TavernPerson::Informer) && ui.informer_done) ||
+			(ui.talking == int(TavernPerson::MissionLetter) && ui.side_done) ||
 			(ui.talking == int(TavernPerson::Captain) && ui.hired_captain != 0xFFFF)
 		? ui.talking
 		: -1;
 	for (int k = 0; k < kTavernPeople; ++k) {
-		if (there[size_t(k)] || k == kept) {
+		const bool here = k == int(TavernPerson::MissionLetter) ? ui.side_letter != 0xFFFF : there[size_t(k)];
+		if (here || k == kept) {
 			rows.push_back(k);
 		}
 	}
@@ -7358,6 +7375,8 @@ std::string tavern_person_name(int person) {
 		return exe_text(0x69C9F0, "Ladrón", "Burglar");
 	case TavernPerson::Pirate:
 		return exe_text(0x69C98C, "Pirata", "Pirate");
+	case TavernPerson::MissionLetter:
+		return exe_text(0x6A483C, "Trastienda", "Side room");  // (0x69C9F8, set at the start by 0x46BD05)
 	default:
 		return "?";
 	}
@@ -7376,6 +7395,14 @@ std::string tavern_row_name(const SaveGame& save, int town, const PlaceUi& ui, i
 // The row's person talked to, as the game's menu does when one is chosen (0x5A68A0): the one before left (0x5A7A60,
 // also when there was none) and the new one taken (0x5A7BA0); his page opened (the trader's: 0x5CF59C).
 void tavern_talk(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
+	// The side room's letter each update (0x5A6E60's end): the kept one while it is still there and open; else (its
+	// page closed and the one talked to forgotten, 0x5A71B2: nothing queued) the first open one of the player's.
+	const uint16_t kept = ui.side_letter;
+	ui.side_letter = side_room_letter(save, uint32_t(town), kept);
+	if (ui.side_letter != kept && ui.talking == int(TavernPerson::MissionLetter) && !ui.side_done) {
+		ui.talking = 0xFF;
+		ui.shown = false;
+	}
 	const std::vector<int> rows = tavern_rows(save, town, ui);
 	if (rows.empty()) {
 		ui.inside = false;
@@ -7424,9 +7451,24 @@ void tavern_talk(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
 		return;
 	}
 	const uint32_t merchants = save.globals.u16(global::kWorldMerchantCount);
-	const OperationBytes left = tavern_talk_operation(save, merchants, uint32_t(town), uint32_t(ui.talking));
-	const OperationBytes taken = tavern_talk_operation(save, uint32_t(save.player), uint32_t(town), uint32_t(person));
-	run_operations(save, sailing, {left, taken});
+	// The side room's (the kind 9) by its letter: left, the menu forgets it (0x5A7B62) and finds it again. After its
+	// accept button the letter went and the menu forgot the one talked to (0x5A71DE): nothing to leave.
+	std::vector<OperationBytes> ops;
+	if (ui.talking == int(TavernPerson::MissionLetter)) {
+		if (!ui.side_done) {
+			ops.push_back(side_room_talk_operation(save, ui.side_letter, merchants, uint32_t(town)));
+		}
+		ui.side_letter = 0xFFFF;
+	} else {
+		ops.push_back(tavern_talk_operation(save, merchants, uint32_t(town), uint32_t(ui.talking)));
+	}
+	if (person == int(TavernPerson::MissionLetter) && ui.side_letter == 0xFFFF) {
+		ui.side_letter = side_room_letter(save, uint32_t(town), 0xFFFF);
+	}
+	ops.push_back(person == int(TavernPerson::MissionLetter)
+			? side_room_talk_operation(save, ui.side_letter, uint32_t(save.player), uint32_t(town))
+			: tavern_talk_operation(save, uint32_t(save.player), uint32_t(town), uint32_t(person)));
+	run_operations(save, sailing, ops);
 	ui.talking = person;
 	ui.amount = 0;
 	ui.ship = 0;
@@ -7457,6 +7499,10 @@ void tavern_talk(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
 	if (person == int(TavernPerson::OrderClient)) {
 		ui.client_done = false;  // His page 0 (0x5CF6FA: the order copied, the amount's box 0).
 		ui.amount = 0;
+	}
+	if (person == int(TavernPerson::MissionLetter)) {
+		ui.side_done = false;  // The page 9 (0x5CF665: the letter's words).
+		ui.side_words = side_room_words(save, ui.side_letter);
 	}
 	if (person == int(TavernPerson::Traveller)) {
 		ui.traveller = TravellerWindow();
@@ -7888,6 +7934,35 @@ void pirate_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	add_ship_row(page, save, w.ship < past ? int(w.ship) : -1, ui.pirate_list.size() > 1);
 	page.buttons.push_back(fitted({{kInteriorWidth / 4 - 64, 450, 128, 18}, v.act, PlaceView::PageAction::Act, row.second}));
 	page.buttons.push_back(fitted({{kInteriorWidth * 3 / 4 - 64, 450, 128, 18}, v.act2, PlaceView::PageAction::Act2, v.act2_on}));
+	v.page = std::move(page);
+}
+
+// The side room's page (the page 9: set by 0x5CF665, drawn by 0x5D7FD0; traced with re/emu/sesion49/sidetrace.sh) and
+// its page 0x11 after accepting (0x5D8090): the letter's title on the banner; its words up to the '|' in a box from
+// (70, 235), 285 wide (the window's width − 140); the accept button at the confirm button's place (Bestaet2DPos 148,
+// 450) with the letter's first answer, off without one; the button [+0x2188] 20 under it (0x5CC249) to the next letter
+// of the town, on when there is one (0x5A74B0): the game gives it no words nor picture, «Siguiente» here (the
+// viewer's). After accepting, the title and the words after the '|' in the same box.
+void side_room_page(const SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	const SideRoomWords& w = ui.side_words;
+	v.title = place_name(ui.let_type) + " - " + clean_game_text(w.title);
+	std::pair<std::string, bool>& row = v.rows[size_t(ui.row)];
+	PlaceView::Page page;
+	for (const std::string& line : box_lines(clean_game_text(ui.side_done ? w.after : w.text))) {
+		v.lines.push_back({line, kTextColor});
+	}
+	add_wrapped(page, v.lines, 235);
+	if (ui.side_done) {
+		row.second = false;
+		v.page = std::move(page);
+		return;
+	}
+	v.act = clean_game_text(w.accept);
+	row.second = w.has_accept;
+	v.act2 = tr("Siguiente", "Next");
+	v.act2_on = side_room_next(save, uint32_t(town), ui.side_letter) != 0xFFFF;
+	page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, row.second}));
+	page.buttons.push_back(fitted({{148, 470, 128, 18}, v.act2, PlaceView::PageAction::Act2, v.act2_on}));
 	v.page = std::move(page);
 }
 
@@ -11490,6 +11565,7 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 			case TavernPerson::Burglar: v.portrait = Portrait::Burglar; break;
 			case TavernPerson::Pirate: v.portrait = Portrait::Pirate; break;
 			case TavernPerson::OrderClient: v.portrait = Portrait::Client; break;
+			case TavernPerson::MissionLetter: v.portrait = Portrait::Client; break;  // (TEX31011, its face 13: 0x5CF6F0)
 			default: break;
 			}
 		}
@@ -11532,6 +11608,8 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 			pirate_page(save, town, ui, v);
 		} else if (person == TavernPerson::Informer) {
 			informer_page(save, ui, v);
+		} else if (person == TavernPerson::MissionLetter) {
+			side_room_page(save, town, ui, v);
 		} else if (person == TavernPerson::Burglar) {
 			v.title += " - " + exe_text(0x69D8C0, "Negociar con el ladrón", "Talk to burglar");
 			for (const std::string& line : burglar_lines()) {
@@ -12476,6 +12554,20 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 			run_operations(save, sailing,
 				{dealer_operation(save, uint32_t(town), uint32_t(ui.row - 2), true, uint32_t(std::clamp(ui.dealer_step, 0, 3)),
 					ui.dealer_office, ui.dealer_ship)});
+		}
+		ui.message.clear();
+		return;
+	}
+	if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::MissionLetter)) {
+		// The accept button (0x5D8151): 0x76; with words after the '|' the page 0x11, else the page closed (0x5D8214).
+		if (!ui.side_done && ui.side_words.has_accept && ui.side_letter != 0xFFFF) {
+			run_operations(save, sailing, {side_room_accept_operation(save, ui.side_letter)});
+			if (ui.side_words.after.empty()) {
+				ui.shown = false;
+				ui.talking = 0xFF;
+			} else {
+				ui.side_done = true;
+			}
 		}
 		ui.message.clear();
 		return;

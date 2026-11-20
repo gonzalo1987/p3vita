@@ -84,6 +84,10 @@ void pay_map_letter(SaveGame& save, uint32_t merchant, uint32_t entry, uint32_t 
 // record's u16 [+0x8] is `event` and u8 [+0xA] `key` goes to the free list, released (0x51AAB0). Whether one went.
 // The game follows the chain without a limit.
 bool remove_letter_71(SaveGame& save, uint16_t& head, uint32_t event, uint8_t key);
+// 0x4D7900 (on the mailbox; the tavern's side room, the operation 0x52, the mission interpreter's 0x4A): from the entry
+// `start` (below the mailbox's count) along its chain, the first tavern's mission letter 0x71 for the town `town` (its
+// [+0x5]) whose record's [+0x4] is after now; 0xFFFF for none. The game follows the chain without a limit.
+uint16_t find_tavern_letter(const SaveGame& save, uint16_t start, uint16_t town);
 // The treasure spot `spot`'s place (the game's 100 spots, u32 x and y: 0x671FD0, the same at 0x672340); false past
 // them.
 bool treasure_spot(uint32_t spot, uint16_t& x, uint16_t& y);

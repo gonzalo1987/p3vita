@@ -413,6 +413,23 @@ bool remove_letter_71(SaveGame& save, uint16_t& head, uint32_t event, uint8_t ke
 	return false;
 }
 
+uint16_t find_tavern_letter(const SaveGame& save, uint16_t start, uint16_t town) {
+	const GlobalMemory& g = save.globals;
+	const uint16_t count = g.u16(kMailCount);
+	const uint32_t now = g.u32(global::kWorldTick);
+	// (A guard of the mailbox's size in steps: the game would go round a chain cut into a loop for ever.)
+	uint16_t at = start;
+	for (size_t steps = 0; at < count && at < save.mail.size() && steps <= save.mail.size(); ++steps) {
+		const GameMemory<0x10>& e = save.mail[at];
+		if (e.u8(4) == 0x71 && e.u8(5) == town && at < save.mail_records.size() && save.mail_records[at] &&
+			save.mail_records[at]->u32(4) > now) {
+			return at;
+		}
+		at = e.u16(6);
+	}
+	return 0xFFFF;
+}
+
 void expire_letters(SaveGame& save, int32_t merchant) {
 	tick::events_towns_detail::fn_4d6780(save, merchant);
 }
