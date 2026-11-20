@@ -275,6 +275,8 @@ SoundIni parse_sound_ini(std::string_view text) {
 }
 
 struct Mp3Stream::Impl {
+	std::FILE* file = nullptr;
+	long base = 0;  // The file's byte the decoder takes as its start.
 	drmp3 mp3{};
 	bool ready = false;
 
@@ -282,41 +284,78 @@ struct Mp3Stream::Impl {
 		if (ready) {
 			drmp3_uninit(&mp3);
 		}
+		if (file) {
+			std::fclose(file);
+		}
+	}
+
+	static size_t on_read(void* self, void* out, size_t bytes) {
+		return std::fread(out, 1, bytes, static_cast<Impl*>(self)->file);
+	}
+	static drmp3_bool32 on_seek(void* self, int offset, drmp3_seek_origin origin) {
+		Impl& m = *static_cast<Impl*>(self);
+		if (origin == DRMP3_SEEK_SET) {
+			return std::fseek(m.file, m.base + offset, SEEK_SET) == 0;
+		}
+		return std::fseek(m.file, offset, origin == DRMP3_SEEK_CUR ? SEEK_CUR : SEEK_END) == 0;
+	}
+	static drmp3_bool32 on_tell(void* self, drmp3_int64* at) {
+		Impl& m = *static_cast<Impl*>(self);
+		*at = std::ftell(m.file) - m.base;
+		return DRMP3_TRUE;
+	}
+	// The decoder from the byte `from` of the file.
+	bool start(long from) {
+		if (ready) {
+			drmp3_uninit(&mp3);
+			ready = false;
+		}
+		base = from;
+		if (std::fseek(file, from, SEEK_SET) != 0) {
+			return false;
+		}
+		ready = drmp3_init(&mp3, &on_read, &on_seek, &on_tell, nullptr, this, nullptr) != 0;
+		return ready;
 	}
 };
 
-std::unique_ptr<Mp3Stream> Mp3Stream::open(const std::string& path) {
-	// The length from the file's size and its first frame's bit rate (MPEG-1 layer III).
-	uint32_t length_ms = 0;
-	if (std::FILE* f = std::fopen(path.c_str(), "rb")) {
-		uint8_t head[4096];
-		const size_t got = std::fread(head, 1, sizeof head, f);
-		std::fseek(f, 0, SEEK_END);
-		const long size = std::ftell(f);
-		std::fclose(f);
-		size_t at = 0;
-		if (got >= 10 && std::memcmp(head, "ID3", 3) == 0) {
-			at = 10 + ((size_t(head[6] & 0x7F) << 21) | (size_t(head[7] & 0x7F) << 14) |
-						  (size_t(head[8] & 0x7F) << 7) | size_t(head[9] & 0x7F));
-		}
-		static constexpr int kKbps[16] = {0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0};
-		for (size_t i = at; i + 4 <= got; ++i) {
-			if (head[i] == 0xFF && (head[i + 1] & 0xFE) == 0xFA) {
-				const int kbps = kKbps[head[i + 2] >> 4];
-				if (kbps > 0 && size > long(i)) {
-					length_ms = uint32_t(uint64_t(size - long(i)) * 8 / uint64_t(kbps));
-				}
-				break;
-			}
-		}
-	}
+std::unique_ptr<Mp3Stream> Mp3Stream::open(const std::string& path, uint32_t start_ms) {
 	std::unique_ptr<Mp3Stream> stream(new Mp3Stream);
 	stream->impl_ = std::make_unique<Impl>();
-	if (!drmp3_init_file(&stream->impl_->mp3, path.c_str(), nullptr)) {
+	Impl& m = *stream->impl_;
+	m.file = std::fopen(path.c_str(), "rb");
+	if (!m.file) {
 		return nullptr;
 	}
-	stream->impl_->ready = true;
-	stream->length_ms_ = length_ms;
+	// The length from the file's size and its first frame's bit rate (MPEG-1 layer III), and the byte of `start_ms`.
+	uint8_t head[4096];
+	const size_t got = std::fread(head, 1, sizeof head, m.file);
+	std::fseek(m.file, 0, SEEK_END);
+	const long size = std::ftell(m.file);
+	size_t at = 0;
+	if (got >= 10 && std::memcmp(head, "ID3", 3) == 0) {
+		at = 10 + ((size_t(head[6] & 0x7F) << 21) | (size_t(head[7] & 0x7F) << 14) | (size_t(head[8] & 0x7F) << 7) |
+					  size_t(head[9] & 0x7F));
+	}
+	static constexpr int kKbps[16] = {0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0};
+	int kbps = 0;
+	for (size_t i = at; i + 4 <= got; ++i) {
+		if (head[i] == 0xFF && (head[i + 1] & 0xFE) == 0xFA) {
+			kbps = kKbps[head[i + 2] >> 4];
+			at = i;
+			break;
+		}
+	}
+	if (kbps > 0 && size > long(at)) {
+		stream->length_ms_ = uint32_t(uint64_t(size - long(at)) * 8 / uint64_t(kbps));
+	}
+	long from = 0;
+	if (start_ms > 0 && kbps > 0) {
+		from = std::min<long>(long(at) + long(uint64_t(start_ms) * uint64_t(kbps) / 8), size);
+	}
+	if (!m.start(from)) {
+		return nullptr;
+	}
 	return stream;
 }
 
@@ -331,15 +370,11 @@ int Mp3Stream::rate() const {
 }
 
 size_t Mp3Stream::read(int16_t* out, size_t frames) {
-	return size_t(drmp3_read_pcm_frames_s16(&impl_->mp3, frames, out));
+	return impl_->ready ? size_t(drmp3_read_pcm_frames_s16(&impl_->mp3, frames, out)) : 0;
 }
 
 bool Mp3Stream::rewind() {
-	return drmp3_seek_to_pcm_frame(&impl_->mp3, 0) != 0;
-}
-
-bool Mp3Stream::seek_ms(uint32_t ms) {
-	return drmp3_seek_to_pcm_frame(&impl_->mp3, uint64_t(ms) * impl_->mp3.sampleRate / 1000) != 0;
+	return impl_->start(0);
 }
 
 }  // namespace p3::data

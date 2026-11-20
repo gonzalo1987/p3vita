@@ -82,8 +82,10 @@ int ini_int(std::string_view ini, std::string_view section, std::string_view key
 // An MP3 file read in pieces as it plays (dr_mp3): 16-bit samples.
 class Mp3Stream {
 public:
-	// nullptr if the file can't be opened or isn't an MP3.
-	static std::unique_ptr<Mp3Stream> open(const std::string& path);
+	// nullptr if the file can't be opened or isn't an MP3. From `start_ms` on:
+	// at the byte its constant bit rate gives, without decoding what is
+	// before (the decoder finds the next frame there).
+	static std::unique_ptr<Mp3Stream> open(const std::string& path, uint32_t start_ms = 0);
 	~Mp3Stream();
 	Mp3Stream(const Mp3Stream&) = delete;
 	Mp3Stream& operator=(const Mp3Stream&) = delete;
@@ -95,10 +97,8 @@ public:
 	uint32_t length_ms() const { return length_ms_; }
 	// Up to `frames` frames into `out`; fewer at its end (0 past it).
 	size_t read(int16_t* out, size_t frames);
-	// Back to its start (to play it again).
+	// Back to the file's start (to play it again).
 	bool rewind();
-	// To a point in ms (an atmosphere starts at a random point).
-	bool seek_ms(uint32_t ms);
 
 private:
 	Mp3Stream() = default;

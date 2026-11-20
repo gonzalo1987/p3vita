@@ -61,18 +61,22 @@ each town's `NameDerStadtMusik` and `LautstaerkeDerMusik` (45 for all; read at 0
 |-|-|
 | +0x0, +0x4 | the atmosphere's stream and the one fading out (at the sound's volume) |
 | +0x8, +0xC | the music's stream and the one fading out (at the music's volume) |
-| +0x10 | a third stream (closed when it ends, 0x442180; [+0x1DE]) |
+| +0x10 | a building's music (at the sound's volume; closed when it ends, 0x442180) |
 | +0x18 | 20 sample handles |
 | +0x68 | Miles' digital driver: 0 without sound, and then nothing plays and 0x443690 gives 0 |
-| +0x6C | a filter for the samples ([+0x1C5] on) |
+| +0x6C | Miles' «LowPass Filter» (cutoff 400 Hz, the float 0x66D640), on the atmospheres and the samples in a building |
+| +0xCC | [Gebaeude]'s titles (0x441CD0) |
 | +0x12C, +0x138 | the lists loaded (each its id and its variants' count) and their count |
 | +0x1B8, +0x1BC | the music's and the sound's volumes (LSMUSIK, LSSOUND) |
-| +0x1C4 | the level the music fading out stays at when it isn't closed |
+| +0x1C4 | the level the music fading out stays at when it isn't closed (m_BMusicVolumeInBuildings, 3; 2 when 0) |
+| +0x1C5 | in a building: the filter on |
 | +0x1C6, +0x1C7 | a fade of the atmospheres, of the music |
 | +0x1C8, +0x1CC, +0x1D0, +0x1D4 | the times those four streams' fades last moved |
 | +0x1D8, +0x1D9, +0x1DA, +0x1DB | their loudness (0..100) |
 | +0x1DC | the music fading out ends closed (else at [+0x1C4]) |
 | +0x1DD | SWAPSPEAKER: a sample's pan is 127 − pan |
+| +0x1DE, +0x1DF | (an event video's music: to read) |
+| +0x1E0 | a building's music plays: no music or atmosphere starts |
 
 A stream's volume is `min(volume × loudness / 100, 127)` (the option's volume 0..127, its loudness 0..100); a
 sample's, `min(loudness × (sound volume × its own volume / 127) / 100, 127)` (0x443542).
@@ -89,31 +93,68 @@ sample's, `min(loudness × (sound volume × its own volume / 127) / 100, 127)` (
   since it last moved (5 s from 0 to its volume or back); the one coming in stops at its volume, the one going out is
   closed at 0 (or, the music without [+0x1DC], left at [+0x1C4]). The flag is cleared when the stream going out is
   done, even if the one coming in hasn't reached its volume yet.
-- **0x442D10**: every stream closed at once (a game loaded, 0x460135; quitting to the menu, 0x45FFD8; the score,
-  0x421F79).
-- **0x442180**: the music, the atmosphere and the third stream closed once they ended.
+- **0x442D10**: every stream closed at once, but a building's (the options' «OK» with the music's volume 0, 0x460135;
+  quitting to the menu, 0x45FFD8; the score, 0x421F79).
+- **0x442180**: the music, the atmosphere and a building's music closed once they ended. **0x442230**: whether a
+  piece of music plays, after it.
 - **0x442C20**: what is left of the music in ms (−1 without the driver, 0 without music). **0x442C60** (path): a
   file's length in ms.
-- **0x442A10**: an atmosphere (the music director's; to read).
+- **0x442A10** (path, from, loudness): an atmosphere. Nothing without the driver, in a building, or with the sound's
+  volume 0. The atmosphere playing becomes the one fading out; the new one starts at `from` ms, again and again
+  (the loop count 0), at 0 fading in; the music playing fades out (closed). It gives its length less `from`. (An
+  empty path: only the fading out.)
+- **0x4436E0** (in, building): into a building's window (its [Gebaeude] title: 0 the tavern, 1 the office, 2 the
+  shipyard, 3 the church, 4 the lender, 5 the market hall, 6 the guild, 7 the town hall, 8 the bath house, 9 the
+  weaponsmith, 10 the town gate, 11 the barn; each window's two calls, 0x5A650A..0x5EBAD7): the filter on the
+  atmospheres, the samples stopped, and 0x442280: unless a building's music plays, its title again and again at the
+  sound's volume, the music playing let down to [+0x1C4] ([+0x1DC] = 0), [+0x1E0] set. Out of it: no filter, the
+  music let down back as the one playing fading in, the building's music closed, [+0x1E0] cleared.
 - **0x443690** (list id): its variants' count, 0 without the driver or with the list not loaded. The battles take
   `rand() % count` of the world's rand() when it isn't 0 (`Sailing::battle_sound`).
 
 ## The music director (0x42C080)
 
-Called each frame (0x401ABA, 0x423D26, 0x45F25E) on the game's screen (*0x6CBB40), whose [+0x287C..0x28C8] hold
-what sound.ini's music sections say (loaded at 0x427400). Read so far (to be rewritten, roadmap section 5):
+Called each frame (0x401ABA: the screen *0x6CBA64, of 0x278 bytes, not identified; 0x423D26: the main screen
+*0x6CBB40; 0x45F25E: the options screen *0x6CBDF0; not the saved games' screen), on the main screen, whose
+[+0x287C..0x28C8] hold what sound.ini's music sections say (loaded at 0x427400): [+0x2884] the next piece's time,
+[+0x2888] the last piece's index, [+0x28B4] an atmosphere's length, [+0x28B8] its start, [+0x28C4] its time. Its
+choices take **the world's rand() (0x639C03)**: `f = rand() / 32768.0` (0x66CB34) as a float, then `_ftol(count × f)`
+or `_ftol(f × −15000.0)` (0x66CB30; −10000 0x66CB38, −5000 0x66CB3C). p3vita: `src/app/music_director.hpp`, with a
+generator of its own (as for the buildings' gestures; roadmap section 8).
 
-- With the option at [*0x6CC3E8 + 0x21] on, at [+0x2884] (a time) a new piece: on the sea map (or the battle's screen, or 0x4B2200 of *0x6CBDD8) one of
-  [SeaMap]; in a town one of its region's ([Region], the town's region at 0x6DDBC0 + town × 0x34; without a town the
-  sea battles' three). Chosen with **the world's rand() (0x639C03)**: `int(rand() / 32767.0 × count)`. The same as the
-  last one: tried again 20 s later. Played without crossfade (it fades in and the atmosphere out); the next one at
-  its end + 40 s less a random part; the atmosphere 5 s before its end ([+0x28C4]).
-- At [+0x28C4] the atmosphere (0x442A10), at a random point of it (rand() again, with that option on): in a town the
-  battle's with a battle on the screen, else the rain's when it rains (0x59C050), the winter's when [+0x504] of the
-  town view is 2..5, none with [town+0xC1A8 | +0xC178] & 0xFF000000, else the summer's; at sea the winter's in the
-  months 0x5311D0 says, else the summer's.
-- 0x42C770 (an event: 0, 1, 2; from 0x44F6B9 and the town's 0x589035, 0x589E02, 0x58F975): 2 plays one of the sea
-  battles' three at once.
+1. The fades (0x444030), if one goes on.
+2. With the music's volume not 0 ([*0x6CC3E8 + 0x21], LSMUSIK) and [+0x2884] past: a piece. With the options screen,
+   the screen *0x6CBA64 or the sea map (0x4B2200 on *0x6CBDD8) shown, one of [SeaMap]; else one of the region's of
+   the town view's town ([*0x6E51AC + 0xC324]): the region from [0x6DDBC0 + 0x34 · town], StadtDaten.ini's table by
+   the town's **index** (a bug: the table goes by the town's number, 0x6DE4B8); regions 0..4 their [Region] titles,
+   above 4 the first title; without a town (0xFF, a battle) the sea battles' (Region5). The same index as [+0x2888]:
+   again 20 s later, the atmosphere at once. Else played (0x4426C0 without crossfade, loop or force), the atmosphere
+   at its end − 5 s, the next piece at its end + 40 s + `f · 15 s`.
+3. At [+0x28C4]: with more than 5 s of music left, later by that. Else an atmosphere: with the town view shown
+   (0x4B2200 on *0x6E51AC), a battle's ([SeeschlachtAtmo], at the loudness 100) with a battle on the screen
+   ([0x6E59CC] ≠ 0xFF), else the rain's with a storm by the town (0x59C050: the town's [+0x9C4] & 2, the view's
+   [+0xC7CC] & 2), else the winter's with the town's ice ([*0x6E51AC + 0x504] 2..5), else none with its tints
+   (([+0xC1A8] | [+0xC178]) & 0xFF000000), else the summer's; at sea the winter's in November and December (the month
+   of 0x5311D0 above 10), else the summer's. From `_ftol(length · f)` (0 with the music's volume 0); the next time at
+   its end − 5 s.
 
-p3vita uses an RNG of its own for these choices (as for the buildings' gestures): with the music on, the game's
-choices change the world's random numbers (roadmap section 8).
+**0x42C770** (kind, stop the samples, force), the events:
+- 0, the town view shown (0x589010, its Show: 0x589035 with the samples stopped; 0x58F975, forced, when the view's
+  tints change): with a piece playing (and not forced) the atmosphere at its end − 5 s and the next piece at its end +
+  10 s + `f · 10 s`; else the next piece in 15 s + `f · 5 s` and the town's atmosphere as in 3 (its start a random
+  point leaving at least the time to the next piece, 0 with the music's volume 0) — but played **the summer's with the
+  ice and the winter's without it** (0x42CCD1, a bug; its length is the right one's); none: 0x442A10 with an empty
+  path.
+- 1, the sea map shown (0x44F680, its Show; 0x44F6B9): the same with the sea's atmosphere, also when the town view's
+  town is past the towns' count (a battle's), and its next time at its end, not − 5 s.
+- 2, a battle on the screen (0x589E02, the town view's town 0xFF): one of the sea battles' at once, with crossfade; the
+  next piece at its end + 15 s + `f · 5 s` (the same `f`).
+
+**0x42CD90** (town): the town's own piece (StadtDaten.ini's NameDerStadtMusik and LautstaerkeDerMusik, by its number
+0x6DE4B8; Rügenwald's, `Ruegenwald.mp3`, isn't the file's name, `Rügenwald.mp3`: a bug), played as in 2; the next piece
+at its end + 15 s + `f · 5 s`. From 0x58A4F0 (the town view's town) when its third argument is 1: only from the sea
+map into a town where the player has a ship or an office (0x44A1B7).
+
+The options' «OK» (0x46010A): with the music's slider at 0 and a game, every music stopped (0x442D10) and, with the sea
+map made, [+0x2884] now and [+0x28C4] now − 1 s; from 0 to more, both now. The game's main screen made (0x423385):
+both 0.

@@ -68,6 +68,7 @@
 #include "p3data/wares.hpp"
 #include "audio.hpp"
 #include "battle_view.hpp"
+#include "music_director.hpp"
 #include "debug_states.hpp"
 #include "game_window.hpp"
 #include "script.hpp"
@@ -18995,6 +18996,23 @@ std::vector<std::string> sound_roots(const Options& options, const std::string& 
 	return roots;
 }
 
+// Each town's own piece of music by its number (StadtDaten.ini [StadtN] NameDerStadtMusik, LautstaerkeDerMusik: 45
+// without it, as load_game_scripts reads it into [0x6DDB90 + 0x34 · N + 0x32]).
+p3::app::TownThemes read_town_themes(const CprArchive& archive) {
+	std::vector<uint8_t> file;
+	const CprEntry* entry = archive.find("scripts/StadtDaten.ini");
+	p3::app::TownThemes themes(40);
+	if (!entry || !archive.read(*entry, file)) {
+		return themes;
+	}
+	const std::string_view text(reinterpret_cast<const char*>(file.data()), file.size());
+	for (size_t n = 0; n < themes.size(); ++n) {
+		const std::string section = "Stadt" + std::to_string(n);
+		themes[n] = {ini_text(text, section, "NameDerStadtMusik"), ini_int(text, section, "LautstaerkeDerMusik", 0x2D)};
+	}
+	return themes;
+}
+
 // scripts/sound.ini of the archive (the music and the sound effects), or nothing.
 SoundIni read_sound_ini(const CprArchive& archive) {
 	std::vector<uint8_t> file;
@@ -19178,7 +19196,16 @@ int main(int argc, char** argv) {
 		sound.open(sound_roots(options, data_dir));
 	}
 	sound.set_volumes(settings.music_volume, settings.sound_volume);
+	sound.set_building_music(sound_ini.buildings, sound_ini.building_music_volume);
 	bool menu_music = false;  // The main menu's music started (while the start screen is open).
+	// The game's music in a game (music_director.hpp) and what it knows: the view (the events 0x42C770: -1 none, 0 the
+	// town view, 1 the sea map), the town the town view showed last, a battle on the screen, the building whose music
+	// plays ([Gebaeude], 0x4436E0), or -1.
+	p3::app::MusicDirector music(sound_ini, read_town_themes(*archive));
+	int music_view = -1;
+	int music_town = -1;
+	bool music_battle = false;
+	int music_building = -1;
 	SidePanel side;  // The side panel.
 	ShipListUi ship_list;  // The ship list window (its sort and columns kept while the viewer runs).
 	ConvoyWindowUi convoy_window;  // The game's convoy window («form convoy») over the view.
@@ -19647,6 +19674,16 @@ int main(int argc, char** argv) {
 		sea_notice_shown = false;
 		start_open = false;  // From the start screen, the game begins.
 		new_game_open = false;
+		// The game's music from the start (the main screen made, 0x423385): a piece at once, out of any building.
+		sound.stop_music();
+		if (music_building >= 0) {
+			sound.leave_building();
+		}
+		music.reset();
+		music_view = -1;
+		music_town = -1;
+		music_battle = false;
+		music_building = -1;
 	};
 	// Replaces the game in play with the slot's: a new Sailing for it, and
 	// what the viewer keeps of the old one forgotten (forget_game). On a
@@ -19941,6 +19978,17 @@ int main(int argc, char** argv) {
 	// «OK»: the values chosen applied (the fixes, the tooltips, the speed and the volumes at once, the language at the
 	// next frame).
 	auto options_apply = [&]() {
+		if (has_save && save.player >= 0 && !menu.from_book) {
+			// The game's music (0x46010A..0x4601B1): its volume to 0, all of it stopped and its times now; from 0, a
+			// piece at once.
+			const uint32_t now = app_ticks();
+			if (menu.music == 0) {
+				sound.stop_music();
+				music.set_times(now, now - 1000);
+			} else if (settings.music_volume == 0) {
+				music.set_times(now, now);
+			}
+		}
 		if (menu.fixes != settings.fix_game_bugs || menu.tooltips != settings.tooltips ||
 			menu.music != settings.music_volume || menu.sound != settings.sound_volume) {
 			settings.fix_game_bugs = menu.fixes;
@@ -21457,6 +21505,81 @@ int main(int argc, char** argv) {
 		// The window of a place or of the ship, in the save's towns (never with the market).
 		const bool in_place = place.open != Place::None && !trading && selection.mode == Mode::Saved &&
 			save.player >= 0 && small_text;
+		if (has_save && save.player >= 0 && (menu.screen == MenuScreen::Closed || menu.screen == MenuScreen::Options)) {
+			// The music of the game's main screen and of its options screen (not of the saved games' one).
+			const uint32_t now = app_ticks();
+			const bool town_shown = selection.mode == Mode::Saved && town_index >= 0 && town_index < int(save.towns.size());
+			p3::app::MusicScene scene;
+			scene.music_on = (menu.screen == MenuScreen::Options ? menu.music : settings.music_volume) != 0;
+			scene.sea_list = selection.mode == Mode::Sea || menu.screen == MenuScreen::Options;
+			scene.town_view = selection.mode == Mode::Saved || in_battle;
+			scene.town = town_shown && !in_battle;
+			scene.town_past_count = in_battle;  // (The town view's town in a battle: 0xFF.)
+			scene.battle = in_battle;
+			if (scene.town) {
+				// Its region (Region= of StadtDaten.ini) as the game reads it, by the town's index in the game rather
+				// than by its number (its bug; by its number with the fixes on).
+				const uint32_t number = p3::data::fix_game_bugs() ? save.globals.u8(0x6DE4B8 + uint32_t(town_index))
+																  : uint32_t(town_index);
+				scene.region = number < 40 ? save.globals.u8(0x6DDB90 + 0x34 * number + 0x30) : 0;
+				const auto& t = save.towns[size_t(town_index)].memory;
+				scene.rain = (t.u8(0x9C4) & 2) != 0;  // A storm by the town (the weather's effects on, as the snow).
+				scene.winter = t.u8(0x9BC) >= 2 && t.u8(0x9BC) <= 5;
+			}
+			scene.month = date_from_tick(save.tick()).month + 1;
+			// Into a building (its window, or the market's), out of it.
+			int building = -1;
+			if (trading) {
+				building = 5;
+			} else if (in_place) {
+				switch (place.open) {
+				case Place::Tavern: building = 0; break;
+				case Place::Office: building = 1; break;
+				case Place::Shipyard: building = 2; break;
+				case Place::Church: building = 3; break;
+				case Place::Lender: building = 4; break;
+				case Place::MarketHall: building = 5; break;
+				case Place::Guild: building = 6; break;
+				case Place::TownHall: building = 7; break;
+				case Place::BathHouse: building = 8; break;
+				case Place::Smithy: building = 9; break;
+				case Place::TownGate: building = 10; break;
+				case Place::LandTrade: building = 11; break;
+				default: break;
+				}
+			}
+			if (building != music_building) {
+				if (music_building >= 0) {
+					sound.leave_building();
+				}
+				if (building >= 0) {
+					sound.enter_building(building);
+				}
+				music_building = building;
+			}
+			// The events: a battle on the screen (0x589E02), the town view shown (0x589010; into another town from
+			// the sea map, its own piece first: 0x44A1B7 → 0x42CD90), the sea map shown (0x44F680).
+			if (in_battle && !music_battle) {
+				music.event(sound, scene, 2, false, now);
+			}
+			music_battle = in_battle;
+			const int view = scene.town_view ? 0 : selection.mode == Mode::Sea ? 1 : -1;
+			if (view != music_view) {
+				if (view == 0 && !in_battle) {
+					if (music_view == 1 && town_index != music_town && scene.town) {
+						music.town_theme(sound, save.globals.u8(0x6DE4B8 + uint32_t(town_index)), now);
+					}
+					music.event(sound, scene, 0, false, now);
+				} else if (view == 1) {
+					music.event(sound, scene, 1, false, now);
+				}
+				music_view = view;
+			}
+			if (scene.town) {
+				music_town = town_index;
+			}
+			music.frame(sound, scene, now);
+		}
 		if (place.bathed && (place.open != Place::BathHouse || place.page != 0) && has_save && save.player >= 0) {
 			// The bath taken: its 0x39 with the tick now, once the player goes on (0x5B19F1, 0x5B1E93).
 			run_operations(save, sailing.get(), {bath_operation(uint32_t(save.player), save.globals.u32(global::kWorldTick))});

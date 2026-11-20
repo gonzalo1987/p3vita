@@ -117,6 +117,8 @@ Cómo leerla:
 - **Hecho el 20-11-2026 (en paralelo, a petición del usuario, `re/emu/sesion51/`)**: la base del sonido (apartado 5,
   parte 1): el mezclador con el audio de SDL en el PC y en la Vita, la música MP3 del juego con sus fundidos, los
   efectos WAV y el `sound.ini` leídos, los volúmenes de Música y Sonido de las Opciones y la música del menú principal.
+  Después la parte 2: la música en la partida (el director de música del juego, sus atmósferas, el tema de cada ciudad,
+  la música de batalla y la de los edificios).
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): acabados los restos
   de las pantallas (las preguntas del convoy, las sombras y la nieve, el panel lateral con las letras y los textos del
   juego), el intérprete de misiones (apartado 3: la base hecha; ahora sus instrucciones); luego el final de la partida
@@ -145,7 +147,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
-| Sonido, música y vídeos (20-11-2026) | la base: el mezclador (PC y Vita), los 123 MP3 y los 178 WAV del juego leídos, el `sound.ini`, los volúmenes de las Opciones y la música del menú principal | la música en la partida, todos los efectos (interfaz, ciudad, mar, batallas, asedio) y los vídeos (apartado 5) |
+| Sonido, música y vídeos (20-11-2026) | la base: el mezclador (PC y Vita), los 123 MP3 y los 178 WAV del juego leídos, el `sound.ini`, los volúmenes de las Opciones y la música del menú principal; la música en la partida (el director, las atmósferas, el tema de cada ciudad, las batallas, los edificios) | todos los efectos (interfaz, ciudad, mar, batallas, asedio) y los vídeos (apartado 5) |
 | Jugar en red con el juego de PC | el motor idéntico, que es la base | todo lo demás (apartado 8) |
 
 ### La medida del código de la simulación
@@ -882,12 +884,17 @@ Lo que hay y cómo lo decide el juego: [formats/sound.md](formats/sound.md). Por
   el `sound.ini` (`src/p3data/sound.hpp`, test `sound`); los volúmenes de Música y Sonido en las Opciones (se oyen al
   moverlos; «Cancelar» los devuelve; `p3vita-settings.txt`) y la música del menú principal (para al empezar o cargar
   una partida, como el juego). La música va en `ux0:data/p3vita/Musik/` (el LEEME de `ux0`).
-- [ ] **Parte 2, la música en la partida**: el director de música (0x42C080, cada fotograma) y sus atmósferas
-  (0x442A10, en verano, invierno, con lluvia o con una batalla), la música de la región de la ciudad, la del mapa del
-  mar, la de las batallas (0x42C770), la de los edificios ([Gebaeude], `m_BMusicVolumeInBuildings`) y el tema de cada
-  ciudad (StadtDaten.ini). El juego elige con el `rand()` del mundo (0x639C03): el visor, con un azar aparte (apartado
-  8). Un fallo del juego que solo cambia lo que se oye: Rügenwald pide `Ruegenwald.mp3` y el fichero es
-  `Rügenwald.mp3`, así que no tiene tema propio (apuntarlo en los fallos al hacerlo).
+- [x] **Parte 2, la música en la partida** (20-11-2026, `re/emu/sesion51/`): el director de música
+  (`src/app/music_director.hpp`: 0x42C080 cada fotograma de la pantalla del juego y de las Opciones) con la música de
+  la región de la ciudad, la del mapa del mar (también en las Opciones) y sus atmósferas entre pieza y pieza (0x442A10:
+  la ciudad en verano, en invierno, con tormenta o con una batalla; el mar en verano o en noviembre y diciembre); sus
+  sucesos (0x42C770: la ciudad mostrada, el mapa del mar mostrado, la música de una batalla), el tema de una ciudad al
+  entrar en ella desde el mapa del mar (0x42CD90) y la música de los 12 edificios con ventana (0x4436E0: la de la
+  región baja a 3, la atmósfera con el paso bajo a 400 Hz del juego); el «OK» de las Opciones con el volumen de la
+  música a 0 o desde 0 (0x46010A). Con un azar aparte (apartado 8). Tres fallos que solo cambian lo que se oye,
+  corregidos con el ajuste (abajo, «Lo que suena»). Falta lo que el visor aún no dibuja: el oscurecimiento del tiempo
+  en la ciudad (sus tintes [+0xC178], [+0xC1A8], que callan la atmósfera) y la pantalla 0x6CBA64 (de 0x278 bytes, sin
+  identificar), que también elige la música del mar.
 - [ ] **Parte 3, los sonidos de la interfaz**: los 20 canales de efectos del juego (0x443540.., su volumen, su
   posición a izquierda o derecha y «Invertir estéreo», que pasará entonces a estar vivo en las Opciones), los botones
   (lista 8000, `HSoundID`/`PSoundID` de los .ini), las cartas y los avisos (6000, con «Reproducir sonido» de los
@@ -1274,6 +1281,13 @@ de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; s
   texto: el visor acaba la frase con su punto.
 
 ### Corregidos con el ajuste
+
+**Lo que suena** (20-11-2026, leídos en el código del juego, `re/emu/sesion51/`; solo cambian lo que se oye, como los
+de los textos: corregidos sin preguntar): la atmósfera de la ciudad al mostrarla (0x42C770 con 0: 0x42CCD1) sale la de
+verano con el hielo y la de invierno sin él (la duración que calcula antes es la de la buena); el director de música
+(0x42C080) busca la región de la ciudad en la tabla de StadtDaten.ini por el índice de la ciudad en la partida, no por
+su número (0x6DE4B8), y elige la música de otra región; el tema de Rügenwald es `Ruegenwald.mp3` en StadtDaten.ini y el
+fichero se llama `Rügenwald.mp3`, así que no suena (`music_director.cpp`, `main.cpp`).
 
 **El rival de la ciudad del jugador** (0x532420, la operación 0xC0 al empezar una partida; 19-11-2026, seguro:
 escenario `mission_start`, roto a propósito, y las 12 partidas lo muestran): por cada comerciante humano con un

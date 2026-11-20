@@ -1,4 +1,4 @@
-add_executable(p3vita main.cpp audio.cpp battle_view.cpp script.cpp debug_states.cpp settings.cpp savegames.cpp start_screen.cpp ui_images.cpp new_game_window.cpp
+add_executable(p3vita main.cpp audio.cpp music_director.cpp battle_view.cpp script.cpp debug_states.cpp settings.cpp savegames.cpp start_screen.cpp ui_images.cpp new_game_window.cpp
 	game_window.cpp)
 
 target_link_libraries(p3vita PRIVATE p3data)
