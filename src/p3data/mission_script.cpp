@@ -11,6 +11,8 @@
 
 #include "p3data/mission_script.hpp"
 
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "p3data/game_memory.hpp"
@@ -254,10 +256,30 @@ Step step(Run& r, uint8_t op) {
 		}
 		return Step::Next;
 	}
+	case 0x3F: {
+		// 0x4F1253: b ← the next human merchant (kind 0) after a, round from the last to the merchant 0 (signed,
+		// below the merchants' count); a itself when there is no other. (A −1 with no human: the game loops.)
+		SaveGame& s = r.save;
+		const int32_t from = int32_t(r.var(1));
+		r.var(2) = uint32_t(from);
+		const int32_t merchants = s.globals.u16(global::kWorldMerchantCount);
+		int32_t m = from + 1;
+		for (uint32_t guard = 0; m != from && guard < 0x10000; ++guard) {
+			if (m >= merchants) {
+				m = 0;
+			}
+			if (size_t(m) < s.merchants.size() && s.merchants[size_t(m)].kind() == 0) {
+				r.var(2) = uint32_t(m);
+				break;
+			}
+			++m;
+		}
+		return Step::Next;
+	}
 	case 0x38:
-		// 0x4F0EFA: c ← whether the merchant b has an office in the town a (0x5308A0 with nothing made, the two as
-		// u16): 1 or 0.
-		r.var(3) = tick::facilities_detail::fn_5308a0(r.save, uint16_t(r.var(2)), uint16_t(r.var(1))) >= 0 ? 1 : 0;
+		// 0x4F0EFA: c ← whether the merchant a has an office in the town b (0x5308A0(merchant, town) with nothing
+		// made, the two as u16): 1 or 0.
+		r.var(3) = tick::facilities_detail::fn_5308a0(r.save, uint16_t(r.var(1)), uint16_t(r.var(2))) >= 0 ? 1 : 0;
 		return Step::Next;
 	case 0x26:
 	case 0x27: {
@@ -320,7 +342,21 @@ uint32_t run_mission_script(SaveGame& save, uint16_t event) {
 	Run r{save, event, e, *program, script.variables};
 	const uint32_t now = save.globals.u32(global::kWorldTick);
 	uint8_t op = r.b(0);
+	// (A tool's trace, P3_MISSION_TRACE set: each instruction as re/emu/sesion47/optrace.py prints the game's.)
+	static const bool trace = std::getenv("P3_MISSION_TRACE") != nullptr;
 	while (op != 0 && op < 0xFD) {
+		if (trace) {
+			std::fprintf(stderr, "tick %u event %u mission %u section %u op %#04x", unsigned(now), unsigned(event),
+				unsigned(e.u16(0x10)), unsigned(e.u16(0x14)), unsigned(op));
+			for (uint32_t k = 0; k < 12; ++k) {
+				std::fprintf(stderr, "%s%02x", k ? "" : " ", r.b(k));
+			}
+			std::fprintf(stderr, " vars");
+			for (size_t k = 0; k < r.vars.size() && k < 24; ++k) {
+				std::fprintf(stderr, " %x", r.vars[k]);
+			}
+			std::fprintf(stderr, "\n");
+		}
 		const Step next = step(r, op);
 		if (next == Step::End) {
 			end_script(save, event, script);
