@@ -240,6 +240,8 @@ void fn_51d870(SaveGame& save, int town);
 namespace facilities_detail {
 // 0x5308A0 con create = 0: la oficina del comerciante en la ciudad, o -1.
 int fn_5308a0(const SaveGame& save, uint32_t merchant, uint32_t town);
+// 0x5252F0: the level of the town's walls (0..2; 0xFF none), which limits its soldiers of each type to 10 << level.
+uint8_t fn_5252f0(const SaveGame& save, int town);
 // 0x51D410 and 0x51D4C0: a militia soldier of the type dismissed or recruited (also the operations 0x40 and 0x41).
 void fn_51d410(SaveGame& save, int town, uint32_t type);
 void fn_51d4c0(SaveGame& save, int town, uint32_t type);

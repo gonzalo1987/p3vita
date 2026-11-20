@@ -327,6 +327,11 @@ Cada grupo entra en el visor con su edificio (apartado 4): sin la pantalla no se
 
 ### 2. Lo que queda del motor
 
+- [ ] **Una diferencia en las batallas a los ~50 días** (20-11-2026, encontrada al pasar las misiones a 60 días,
+  `re/emu/sesion48/README.md`): en la partida 4, la operación 0x94 (los pasos de las batallas, 0x536BBF) del tick
+  126953125 deja distintos los campos +0x8, +0xC y +0x10 de un bloque de 0x164 bytes de la batalla (bloque 44 de la
+  región BT); sale igual sin las misiones. `world.sh` mira 7 días y no llega. Buscar qué es ese bloque y qué paso de la
+  batalla lo escribe distinto (`worldmd.sh` con `FUNCS=4d85c0,535760 SAVES=4 MISSIONS=0` lo repite en ~150 s).
 - [ ] **Los estados del barco que p3vita no reproduce** (tablas 0x507CB0 en puerto y 0x507D14 en el mar). En puerto:
   los estados 8 y 9 (0x506B8E: un contador [+0x138] hasta 0x20) y el 10 (0x5067C7: pasa a 0 y sigue como atracado); el
   12 (en subasta, 0x5069E2) no hace nada, como en p3vita; los 6, 7, 11 y 13 a 16 van al caso por omisión (0x506BE5), que
@@ -346,9 +351,9 @@ Cada grupo entra en el visor con su edificio (apartado 4): sin la pantalla no se
   ([+0x5A0], [+0x10], [+0x12]...). Mirar si alguno cambia lo que decide la simulación (para jugar en red cuenta que el
   jugador del PC tenga abierta la ciudad sitiada). Va con el asedio en la vista (apartado 4).
 - [ ] **Las operaciones a las que se llega desde advance_time por partes sin reescribir**: el intérprete de misiones
-  (0x4ECF64: 0x28, 0x7C, 0x7D, 0x82 y 0x8E); los gráficos de la ciudad (0x599040, desde el evento 0x25 y la muralla:
-  0x08, 0x09, 0x0A, 0x2F, 0x39, 0x52, 0x56–0x59, 0x61 y 0x93); y 0x5C7810, desde los objetos del mundo (0x33, 0x34,
-  0x36, 0x37 y 0x98). Mirar si alguna de esas ramas es simulación.
+  (0x4ECF64: 0x28, 0x7C, 0x7D y 0x82; la 0x8E de la instrucción 0xFA, hecha); los gráficos de la ciudad (0x599040,
+  desde el evento 0x25 y la muralla: 0x08, 0x09, 0x0A, 0x2F, 0x39, 0x52, 0x56–0x59, 0x61 y 0x93); y 0x5C7810, desde los
+  objetos del mundo (0x33, 0x34, 0x36, 0x37 y 0x98). Mirar si alguna de esas ramas es simulación.
 - [ ] **La partida nueva**: 0x545650, que la ventana llama al cambiar el año (21 ciudades en 1300 y una más cada 20
   años: rehace los huecos y sortea las producciones; sin leer aún cuándo se usa: las partidas nuevas de otros años ya
   salen iguales al juego). 0x4F99B0 (una ciudad sin plantilla de mapa) no se usa con los datos del juego.
@@ -381,27 +386,32 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   `mission_start` (la 0xC0 en todos los modos), la partida nueva entera con la 0xC0, las partidas escritas, ctest
   `missions`. Hasta que estén sus instrucciones, un guion termina en la primera que no está (como antes, que se
   tiraban), y el oráculo y las comprobaciones de siempre siguen sin las misiones.
-- [ ] **Las instrucciones del intérprete**: 38 de las 138 con manejador (tabla en formats/missions.md, con cuántas
-  misiones usan cada una). Hechas (20-11-2026, `re/emu/sesion47/README.md`): 0x04..0x07, 0x09..0x0E, 0x11, 0x12, 0x15,
-  0x17..0x1E, 0x20, 0x21, 0x23, 0x24, 0x26/0x27, 0x29 (con 0x533210, la ciudad más cercana), 0x38, 0x39, 0x3F, 0x40,
-  0x43, 0x44, 0x4F, 0x53, 0xF0 (un tesoro encontrado: `treasure_found`, 0x4D7030) y 0xF7 (la carta de misión, con su
-  texto y sus códigos «%»: `mission_letter_text`). **Comprobado: el mundo entero 7 días con las misiones, igual al
-  juego en las 12 partidas**, llamada a llamada (`worldm.sh` con CALLS=1) y en continuo desde la carga (`worldm.sh`);
-  tick_probe marca las llamadas con una instrucción sin escribir. Son todas las que ejecutan las partidas en esos días
-  (`opcount.sh`). Siguen: lo que las partidas ejecutan en más días (30, 60), luego las demás de la partida de un
-  jugador con estados retocados (y las que se han escrito sin que las partidas lleguen: 0x07, 0x27, ramas de 0x26,
-  0x29, 0x40, 0x44, los códigos de las cartas que no salen, `f7codes.py`), luego las 10 más de la partida en red, las
-  28 de las campañas y las 14 que no usa ningún fichero. Cuando estén todas, el oráculo con las misiones por omisión
-  (y `world.sh` con ellas).
+- [ ] **Las instrucciones del intérprete**: 45 de las 138 con manejador (tabla en formats/missions.md, con cuántas
+  misiones usan cada una). Hechas (20-11-2026, `re/emu/sesion47/README.md` y `re/emu/sesion48/README.md`): 0x04..0x07,
+  0x09..0x0E, 0x11, 0x12, 0x15, 0x17..0x1E, 0x20, 0x21, 0x23, 0x24, 0x26/0x27, 0x29 (con 0x533210, la ciudad más
+  cercana), 0x2F (la mercancía que más le falta a una ciudad, 0x51BEB0), 0x35, 0x37 (la ventana de un suceso
+  histórico: de la interfaz, para el visor), 0x38, 0x39, 0x3F, 0x40, 0x43, 0x44, 0x45, 0x4B (un precio de venta), 0x4F,
+  0x53, 0x6B (el nivel de la muralla), 0xF0 (un tesoro encontrado: `treasure_found`, 0x4D7030), 0xF7 (la carta de
+  misión, con su texto y sus códigos «%»: `mission_letter_text`) y 0xFA (un asedio: encola la 0x8E). **Comprobado: el
+  mundo entero 30 días con las misiones igual al juego en las 12 partidas**, llamada a llamada
+  (`re/emu/sesion48/worldmd.sh`, por tramos), y la cola de eventos y las operaciones 60 días (igual salvo una
+  diferencia de las batallas en la partida 4 que sale también sin las misiones: apartado 2); 7 días también en continuo
+  desde la carga (`worldm.sh`); tick_probe marca las llamadas con una instrucción sin escribir. Son todas las que
+  ejecutan las partidas en 60 días (`opcount.sh`). Siguen: estados retocados para las ramas a las que no llegan las
+  partidas (0x07, 0x27, ramas de 0x26, 0x29, 0x40, 0x44, 0xF7 y los códigos de las cartas que no salen, `f7codes.py`),
+  las otras 36 de la partida de un jugador con estados retocados, luego las 10 más de la partida en red, las 28 de las
+  campañas y las 19 que no usa ningún fichero. Cuando estén todas, el oráculo con las misiones por omisión (y
+  `world.sh` con ellas).
 - [ ] **Lo que cuelga del intérprete**: el evento 0x09 (0x4E2824, las cartas de buena y mala cosecha), sus cartas (tres
   que compone el guion con los textos del `.p2m`, la del mapa 0x46 o 0x45, la 0x22), las operaciones que encola (0x1B,
-  0x28, 0x4E, 0x7C, 0x7D, 0x82, 0x8E) y la carta final 0x3D del evento 0x34 (0x4F3AF0, con su lista de avisos [+0x8],
-  0x4F3980..0x4F3CE0). Y las cuatro operaciones del jugador que escriben en las variables de un guion o trabajan con las
+  0x28, 0x4E, 0x7C, 0x7D, 0x82; la 0x8E de 0xFA, hecha) y la carta final 0x3D del evento 0x34 (0x4F3AF0, con su lista
+  de avisos [+0x8], 0x4F3980..0x4F3CE0). Y las cuatro operaciones del jugador que escriben en las variables de un guion o trabajan con las
   cartas que solo manda él (0x3C..0x40, 0x44, 0x45/0x46, 0x71): 0x74 (los botones de las cartas de misión, 0x53EC30; sus
   botones y bytes ya están en `letter_window.cpp`), 0x54 (quitar una carta 0x44, 0x53CA30 con 0x4D7340), 0x55 (pagar
   una carta 0x45/0x46, 0x4D74C0) y 0x76 (quitar una carta 0x71, 0x53EDF0 con 0x4D7870).
 - [ ] **En el visor**: las cartas de misión con sus botones (0x74), la carta de misión de la taberna (0x5D8100, las
-  0x71), el trozo de mapa del tesoro (0x55 del soplón), lo que enseñe cada misión.
+  0x71), el trozo de mapa del tesoro (0x55 del soplón), lo que enseñe cada misión (la ventana de los sucesos
+  históricos de la instrucción 0x37: 0x469AF0 con 0x16, el título y el texto del programa).
 - [ ] **Las campañas y el tutorial**: su menú de inicio (`[Campaign_0..7]` del ini: el tutorial, «El ascenso», «El
   comerciante volante», «El auge de la Hansa» y los escenarios del saneamiento, la mala cosecha, el incendio y la
   peste) y las partidas de la versión 0x4D de las que parten (`missav/0100..0204.pat`, apartado 2); el tutorial va
@@ -1044,6 +1054,11 @@ ser a propósito. El detalle, en el comentario del código y en [oracle.md](orac
   de la carta, pero antes de mirarlo un `memset` pone a −1 las ocho variables desde la del destinatario, así que la
   carta va a todos los humanos (la rama del −3, en 0x4EDD57, no se ejecuta nunca). Ninguna misión de las del juego
   parece usarla así; pendiente de comprobar en las campañas antes de corregirlo.
+- **La mercancía que más le falta a una ciudad** (0x51BEB0, la usa la instrucción 0x2F del intérprete; 20-11-2026,
+  parece): de cada mercancía mira los obreros de la instalación con el número de la mercancía ([+0x844 + 16 ·
+  mercancía]) en vez de la de la empresa que la produce (lee ese tipo de 0x672C88 y no lo usa; la rama del aceite de
+  ballena queda muerta), como sí hace la lonja (0x5DE3xx). Cambia qué mercancía pide la misión 6 (y su cantidad):
+  preguntar antes de corregirlo.
 
 **«El carabela»** (las frases del barco patrulla en español, 0x5E1F01; 15-11-2026, seguro, solo texto): el artículo va
 por el tipo de barco (0 y 2 «La», 1 y 3 «El») y la carabela es el tipo 1. Reproducido tal cual.

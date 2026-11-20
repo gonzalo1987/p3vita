@@ -8,12 +8,15 @@
 // town 0x1E; a ship name 0x20; the humans 0x39; the towns 0x43; an office's town 0x44; a treasure found 0xF0; a
 // merchant's names 0x11, 0x12; a town's offices 0x4F; the search of a ship 0x26 / 0x27; an office
 // 0x38; the next human 0x3F; a first name 0x23, a family name 0x24; a way between towns 0x53; a wanderer's next town 0x29 (0x533210); a ship by its hull 0x40;
-// the mission letter 0xF7. The handlers come in parts (roadmap, section 3; the order by what the saves run:
+// the mission letter 0xF7; the ware a town lacks 0x2F (0x51BEB0); the sieges' difficulty 0x35; a history event's window
+// 0x37 (the interface's); a town besieged 0x45; a sell price 0x4B; the walls' level 0x6B; a siege 0xFA (the operation
+// 0x8E). The handlers come in parts (roadmap, section 3; the order by what the saves run:
 // re/emu/sesion47/opcount.sh); until then an instruction not rewritten ends the script as an unknown one does, and is
 // counted (unwritten_mission_ops).
 
 #include "p3data/mission_script.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -128,6 +131,42 @@ uint8_t fn_533210(const SaveGame& save, uint32_t town, const uint32_t* avoid, in
 		}
 	}
 	return uint8_t(found);
+}
+
+// 0x51BEB0 (on the town): the ware it lacks the most: of the wares 0..19 but 6 (spices), those whose u16 [+0x844 + 16 ·
+// the ware] isn't 0 and whose stock ([+0x4 + 4 · ware], signed) is below its [+0x4F4 + 16 · ware], the one with the
+// lowest stock / [+0x4F0 + 16 · ware] (floats) below 400; 0x1F if none. The u16 is the workers of the town's facility
+// [+0x840 + 16 · k] of the business type k numbered as the ware: the game reads the ware's business type (0x672C88)
+// and leaves it unused, its branch for the whale oil (0xFF, with [+0x2CC] above 1000) under a check of the ware's
+// number against 0x15 that is always true; the market hall's 0x5DE3xx reads the facility of the ware's type: it looks
+// like a game bug (reproduced; the roadmap's list).
+uint8_t fn_51beb0(const SavedTown& st) {
+	const TownMemory& t = st.memory;
+	float best = 400.0f;
+	uint8_t found = 0x1F;
+	for (uint32_t ware = 0; ware < 20; ++ware) {
+		if (ware == 6 || t.u16(0x844 + 16 * ware) == 0) {
+			continue;
+		}
+		const int32_t stock = t.s32(4 + 4 * ware);
+		if (stock >= t.s32(0x4F4 + 16 * ware)) {
+			continue;
+		}
+		const int32_t by = t.s32(0x4F0 + 16 * ware);
+		float ratio;
+		if (by != 0) {
+			ratio = float(stock) / float(by);
+		} else if (stock == 0) {
+			continue;  // (0 / 0: the x87's NaN, never below.)
+		} else {
+			ratio = stock > 0 ? HUGE_VALF : -HUGE_VALF;  // (The x87's infinities.)
+		}
+		if (ratio < best) {
+			best = ratio;
+			found = uint8_t(ware);
+		}
+	}
+	return found;
 }
 
 // What an instruction leaves: the script ends there (an unknown instruction, 0x4F2D44: the program let go and the
@@ -546,6 +585,70 @@ Step step(Run& r, uint8_t op) {
 			}
 		}
 		r.var(3) = count > 0 ? found[sum % count] : 0xFFFFFFFFu;
+		return Step::Next;
+	}
+	case 0x2F: {
+		// 0x4F0780: b ← the ware the town a lacks the most (0x51BEB0, a byte: 0x1F if none), c ← an amount of it
+		// (0x672660[ware], 0 from the ware 20 on). (A town past the towns: the game reads past them.)
+		static constexpr uint8_t kAmount[20] = {25, 10, 10, 75, 100, 30, 0, 20, 20, 10, 40, 25, 30, 20, 10, 100, 10, 10, 20, 40};
+		const uint32_t town = r.var(1);
+		const uint8_t ware = town < r.save.towns.size() ? fn_51beb0(r.save.towns[town]) : 0x1F;
+		r.var(2) = ware;
+		r.var(3) = ware < 20 ? kAmount[ware] : 0;
+		return Step::Next;
+	}
+	case 0x35:  // 0x4F0A54: v ← the game's detail 6 (the settings' [+0x16], *0x6CC3E8; the sieges' difficulty).
+		r.var(1) = r.save.settings.u8(0x16);
+		return Step::Next;
+	case 0x37:
+		// 0x4F0E94: a history event's window to the player (*0x6CC7E8: 0x469380, then 0x469AF0 with 0x16, the event's
+		// [+0x8] and [+0xA], and the program's two strings at the u32s of the bytes 1 and 5, its title and its text):
+		// the interface's (the viewer's, roadmap section 3), nothing in the world.
+		return Step::Next;
+	case 0x45: {  // 0x4F167C: b ← whether the town a is besieged ([+0x2C8] & 0x10). (Past the towns: the game reads on.)
+		const uint32_t town = r.var(1);
+		r.var(2) = town < r.save.towns.size() && (r.save.towns[town].memory.u32(0x2C8) & 0x10) ? 1 : 0;
+		return Step::Next;
+	}
+	case 0x4B: {
+		// 0x4F1A0F: d ← what the town c pays for b loads of the ware a (0x52E1D0 on 0x6DE3D8, the sell price of b ·
+		// 2000 units, or b · 200 for a ware in barrels, 0x672C14). (A ware or town past theirs: the game reads on.)
+		static constexpr uint8_t kBarrels[kWareCount] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1};
+		const uint32_t ware = r.var(1);
+		const uint32_t town = r.var(3);
+		if (ware >= uint32_t(kWareCount) || town >= r.save.towns.size()) {
+			r.var(4) = 0;
+			return Step::Next;
+		}
+		const int32_t units = int32_t(r.var(2) * (kBarrels[ware] ? 200u : 2000u));
+		r.var(4) = uint32_t(tick::game_sell_price(r.save, int(ware), int(town), units));
+		return Step::Next;
+	}
+	case 0x6B: {
+		// 0x4ED332: b ← the level of the walls of the town a (0x5252F0; −1 for none). (Past the towns: the game reads
+		// on.)
+		const uint32_t town = r.var(1);
+		const uint8_t level = town < r.save.towns.size() ? tick::facilities_detail::fn_5252f0(r.save, int(town)) : 0;
+		r.var(2) = level == 0xFF ? 0xFFFFFFFFu : level;
+		return Step::Next;
+	}
+	case 0xFA: {
+		// 0x4ED3A6: a siege of the town v (below the towns' count) when it has walls (0x5252F0 not 0xFF): the operation
+		// 0x8E {the town, the army by the year (before 1350 0, before 1400 now & 1, then now % 3), the town 0's [+0x2D4]
+		// signed modulo 256, 0} queued (0x54AA70), as 0x635170 does with random numbers.
+		SaveGame& s = r.save;
+		const uint32_t town = r.var(1);
+		if (town >= s.globals.u32(global::kWorldTownCount) || town >= s.towns.size() ||
+			tick::facilities_detail::fn_5252f0(s, int(town)) == 0xFF) {
+			return Step::Next;
+		}
+		const uint32_t now = s.globals.u32(global::kWorldTick);
+		const uint16_t year = s.globals.u16(global::kWorldYear);
+		uint32_t op[5] = {0x8E, town, year < 0x546 ? 0 : year < 0x578 ? now & 1 : now % 3,
+			uint32_t(s.towns.empty() ? 0 : s.towns[0].memory.s32(0x2D4) % 256), 0};
+		uint8_t bytes[0x14];
+		std::memcpy(bytes, op, sizeof(bytes));
+		tick::enqueue_operation(s, bytes, sizeof(bytes));
 		return Step::Next;
 	}
 	default:

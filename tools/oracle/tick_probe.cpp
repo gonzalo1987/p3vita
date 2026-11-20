@@ -960,7 +960,9 @@ bool pointer_field(const std::string& name, size_t w, const std::vector<uint8_t>
 		// The events' objects (load_events: p3vita keeps 0 there).
 		const size_t field = w % 0x18;
 		const uint16_t type = uint16_t(game[w - field + 6] | game[w - field + 7] << 8);
-		return (type == 0x1B && (field == 0x8 || field == 0xC)) || (type == 0x34 && field == 0x8);
+		// A freed event (0xFFFF) keeps the game's stale pointer there (an ended script's program: p3vita keeps its 1).
+		return (type == 0x1B && (field == 0x8 || field == 0xC)) || (type == 0x34 && field == 0x8) ||
+			(type == 0xFFFF && field == 0x8 && looks_like_pointer(v));
 	}
 	return false;
 }
