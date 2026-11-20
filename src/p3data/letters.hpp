@@ -126,4 +126,12 @@ std::vector<LetterParagraph> letter_paragraphs(const std::string& raw);
 // of 0x51AC60 returns this number.
 constexpr int kLetterMapPicture = 1;
 
+// The mission interpreter's letter text (its instruction 0xF7, 0x4ED56A..0x4EDCD0), the bytes of its buffer: the
+// program's string at `offset` (the title) as it is with its NUL, the next one with its codes («%» and a code, then a
+// variable's byte: a ship's, merchant's or town's name, a title, a date, a ware, a number, the merchant's words by
+// his sex...; «%+» and «%-» write the `record`'s [+0xD], [+0xE], [+0xF] instead) and its NUL, then `answers` strings
+// as they are. The game's texts in the player's language (none: their pieces empty).
+std::vector<uint8_t> mission_letter_text(const SaveGame& save, const GameTexts* texts, const std::vector<uint8_t>& program,
+	uint32_t offset, const std::vector<uint32_t>& vars, uint8_t answers, GameMemory<0x10>& record);
+
 }  // namespace p3::data

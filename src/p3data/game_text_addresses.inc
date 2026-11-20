@@ -2698,3 +2698,15 @@
 	{0x0069AAF0, 0x0069A1FC},
 	{0x0069AAF4, 0x0069A200},
 	{0x0069AAF8, 0x0069A204},
+	// The mission letters (the interpreter's 0xF7, 0x4ED4A0): «%G» and «%g» by the merchant's sex, «%0»..«%9» (the
+	// digits 8 and 9 read past the table: the game's slots there point at the exe's start).
+	{0x006B2A88, 0x006B3494},
+	{0x006B2A8C, 0x006B3498},
+	{0x006B2A90, 0x006B349C},
+	{0x006B2A94, 0x006B34A0},
+	{0x006C3040, 0x006C3748},
+	{0x006C3044, 0x006C374C},
+	{0x006C3080, 0x006C3788},
+	{0x006C3084, 0x006C378C},
+	{0x006C3088, 0x006C3790},
+	{0x006C308C, 0x006C3794},

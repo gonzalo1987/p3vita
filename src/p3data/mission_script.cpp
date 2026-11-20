@@ -4,7 +4,8 @@
 // numbers (a byte each) and constants.
 //
 // Rewritten so far: the loop and its waits (0x00, 0xFD, 0xFE, 0xFF); the variables' and numbers' 0x04..0x07, 0x09,
-// 0x0A, 0x21; the arithmetic 0x0B..0x0E; the comparisons 0x17..0x1C; the search of a ship 0x26 / 0x27. The handlers come in parts (roadmap, section 3; the order by what the saves run:
+// 0x0A, 0x21; the arithmetic 0x0B..0x0E; the comparisons 0x17..0x1C; the search of a ship 0x26 / 0x27; an office
+// 0x38; the mission letter 0xF7. The handlers come in parts (roadmap, section 3; the order by what the saves run:
 // re/emu/sesion47/opcount.sh); until then an instruction not rewritten ends the script as an unknown one does, and is
 // counted (unwritten_mission_ops).
 
@@ -13,8 +14,12 @@
 #include <cstring>
 
 #include "p3data/game_memory.hpp"
+#include "p3data/letters.hpp"
+#include "p3data/mail.hpp"
 #include "p3data/missions.hpp"
+#include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
+#include "p3data/town_tick/internal.hpp"
 
 namespace p3::data::missions_detail {
 
@@ -182,6 +187,78 @@ Step step(Run& r, uint8_t op) {
 		r.var(1) = towns ? mixed % towns : 0;  // (The game divides by 0 without towns: never.)
 		return Step::Next;
 	}
+	case 0xF7: {
+		// 0x4ED4A0: a mission letter. Its type b1 + 0x3C (0x71 past 0x40), its [+0x5] the variable b2's low byte;
+		// its record [+0x4] the variable b4, [+0x8] the event being run (the event list's [+0x8], 0x6DD744), [+0xA]
+		// b3 (the first variable for the answer), [+0xB] b6 (how many answers), [+0xC] b5, [+0xD] 0xFF, [+0xE] and
+		// [+0xF] 0, [+0x0] the buffer's bytes; its text from the program at the u32 of the byte 8
+		// (mission_letter_text). With answers, b1 not 5 and an addressee (the variable b5) below 0: the variables
+		// b3..b3+7 get b6, b5..b5+7 −1 (a memset of 0x20 bytes), then, as b5 is −1 now, each human merchant k his own
+		// copy, the variable b5 + k his index and the record's [+0xA] one more after each (the game's branch for −3,
+		// the owners of the offices of the town [+0x5], comes after the memset: it can't be taken). Otherwise the
+		// variable b3 gets b6 and the letter goes to the variable b5 (0x4D6530). With b7, the ticker line 0x12 for
+		// b5 with b2 (0x548CA0; the player's messages window told, 0x47D1F0: the interface's).
+		SaveGame& s = r.save;
+		const uint8_t b1 = r.b(1);
+		const uint8_t b3 = r.b(3);
+		const uint8_t b5 = r.b(5);
+		const uint8_t answers = r.b(6);
+		uint8_t type = uint8_t(b1 + 0x3C);
+		if (type > 0x40) {
+			type = 0x71;
+		}
+		Letter letter(type);
+		letter.entry.u8(5) = uint8_t(r.var(2));
+		GameMemory<0x10> record{};
+		record.u32(4) = r.var(4);
+		record.u16(8) = s.globals.u16(0x6DD744);
+		record.u8(0xA) = b3;
+		record.u8(0xB) = answers;
+		record.u8(0xC) = b5;
+		record.u8(0xD) = 0xFF;
+		const Sailing* sailing = tick::event_sailing();
+		letter.buffer = mission_letter_text(s, sailing ? sailing->texts() : nullptr, r.p, r.d(8), r.vars, answers, record);
+		record.u32(0) = uint32_t(letter.buffer.size());
+		letter.record = record;
+		auto at = [&](uint32_t index) -> uint32_t* { return index < r.vars.size() ? &r.vars[index] : nullptr; };
+		if (answers != 0 && b1 != 5 && int32_t(r.var(5)) < 0) {
+			for (uint32_t k = 0; k < 8; ++k) {
+				if (uint32_t* v = at(b3 + k)) {
+					*v = answers;
+				}
+			}
+			for (uint32_t k = 0; k < 8; ++k) {
+				if (uint32_t* v = at(b5 + k)) {
+					*v = 0xFFFFFFFFu;
+				}
+			}
+			uint32_t k = 0;
+			for (uint16_t m = 0; m < s.globals.u16(global::kWorldMerchantCount); ++m) {
+				if (m < s.merchants.size() && s.merchants[m].kind() == 0) {
+					if (uint32_t* v = at(b5 + k)) {
+						*v = m;
+					}
+					++k;
+					send_letter(s, m, letter);
+					letter.record->u8(0xA) = uint8_t(letter.record->u8(0xA) + 1);
+				}
+			}
+		} else {
+			if (uint32_t* v = at(b3)) {
+				*v = answers;
+			}
+			send_letter(s, int32_t(r.var(5)), letter);
+		}
+		if (r.b(7) != 0) {
+			send_ticker(s, uint16_t(r.var(5)), 0x12, uint16_t(r.var(2)));
+		}
+		return Step::Next;
+	}
+	case 0x38:
+		// 0x4F0EFA: c ← whether the merchant b has an office in the town a (0x5308A0 with nothing made, the two as
+		// u16): 1 or 0.
+		r.var(3) = tick::facilities_detail::fn_5308a0(r.save, uint16_t(r.var(2)), uint16_t(r.var(1))) >= 0 ? 1 : 0;
+		return Step::Next;
 	case 0x26:
 	case 0x27: {
 		// 0x4EF875 (both): among the ships of the human merchants (kind 0), the one in the variable of the byte 1

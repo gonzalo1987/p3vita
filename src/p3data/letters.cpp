@@ -2597,4 +2597,203 @@ std::vector<LetterParagraph> letter_paragraphs(const std::string& raw) {
 	return paragraphs;
 }
 
+std::vector<uint8_t> mission_letter_text(const SaveGame& save, const GameTexts* texts, const std::vector<uint8_t>& program,
+	uint32_t offset, const std::vector<uint32_t>& vars, uint8_t answers, GameMemory<0x10>& record) {
+	static const GameTexts kNone;
+	static const GameMemory<0x10> kNoEntry{};
+	Composer c{save, texts ? *texts : kNone, kNoEntry, 0xFFFF, {}, {}};
+	const GlobalMemory& g = save.globals;
+	std::string out;
+	size_t p = offset;
+	auto at = [&](size_t k) -> uint8_t { return k < program.size() ? program[k] : 0; };
+	// A variable by the byte at k, a signed index (movsx; the game doesn't check it).
+	auto var = [&](size_t k) -> uint32_t {
+		const int8_t v = int8_t(at(k));
+		return v >= 0 && size_t(v) < vars.size() ? vars[size_t(v)] : 0;
+	};
+	auto copy_string = [&]() {
+		do {
+			out += char(at(p));
+		} while (at(p++) != 0);
+	};
+	// A merchant below the count (the code's check of the u16), or none.
+	const uint16_t merchants = g.u16(global::kWorldMerchantCount);
+	auto merchant = [&](uint32_t v) -> const MerchantMemory* {
+		const uint16_t m = uint16_t(v);
+		return m < merchants && m < save.merchants.size() ? &save.merchants[m].memory : nullptr;
+	};
+	auto sex = [&](const MerchantMemory* m) { return uint32_t(m->u8(0x1A) & 1); };
+	// 0x672C14: the wares counted in barrels (read with any index: the bytes after it as the exe has them).
+	static constexpr uint8_t kBarrels[40] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 6, 6, 6,
+		0x14, 9, 2, 3, 0xC, 5, 0, 1, 0xB, 0, 0, 0, 0};
+	auto barrels = [&](uint32_t ware) { return ware < sizeof kBarrels ? kBarrels[ware] : uint8_t(0); };
+	const uint32_t towns = g.u32(global::kWorldTownCount);
+	copy_string();  // The title, as it is.
+	while (at(p) != 0 && out.size() < 0x1000) {
+		if (at(p) != '%') {
+			out += char(at(p++));
+			continue;
+		}
+		const uint8_t code = at(p + 1);
+		p += 2;  // The variable's byte.
+		const uint32_t v = var(p);
+		std::string piece;  // What the code writes (*0x6DD788.. : an empty string for none).
+		switch (code) {
+		case 's':  // A ship's name ([+0x160]), below the ships' count.
+			if (uint16_t(v) < g.u16(global::kShipCount)) {
+				piece = c.ship_name(uint16_t(v));
+			}
+			break;
+		case 'F': {
+			// The Alderman's names (0x5333C0): the merchant [world+0x8D]'s [+0x1C] and [+0x1D] when there is one;
+			// else, of the town [world+0x8E], its councillor 0 or, when its [+0x6F1] isn't a merchant, (~[+0x8D]) & 3
+			// ([+0x6D4] and [+0x6D8] + it); «%s %s» (0x6C0304), at most 32 bytes (_snprintf).
+			const uint8_t alderman = g.u8(global::kWorld + 0x8D);
+			uint8_t first = 0;
+			uint8_t family = 0;
+			if (alderman < merchants && alderman < save.merchants.size()) {
+				first = save.merchants[alderman].memory.u8(0x1C);
+				family = save.merchants[alderman].memory.u8(0x1D);
+			} else {
+				const uint8_t town = g.u8(global::kWorld + 0x8E);
+				if (town < save.towns.size()) {
+					const TownMemory& t = save.towns[town].memory;
+					const uint32_t k = t.u8(0x6F1) < merchants ? 0 : (~uint32_t(alderman) & 3);
+					first = t.u8(0x6D4 + k);
+					family = t.u8(0x6D8 + k);
+				}
+			}
+			piece = (c.first(first) + " " + c.family(family)).substr(0, 0x20);
+			break;
+		}
+		case 'S':  // A ship type's word (0x6C0CB4).
+			piece = c.table(0x6C0CB4, v & 3);
+			break;
+		case 'R':
+		case 'r':
+			// A merchant's title by his rank in his home town (0x4F3760: [+0x39C + [+0x19]]) and his sex byte
+			// [+0x1A] as it is (0x6A0608 or 0x6A0718, [rank + 8 · sex]).
+			if (const MerchantMemory* m = merchant(v)) {
+				const uint8_t rank = m->u8(0x39C + m->u8(0x19));
+				piece = c.table(code == 'R' ? 0x6A0608 : 0x6A0718, rank + 8u * m->u8(0x1A));
+			}
+			break;
+		case 't':  // A town's name (0x6DDA00), the variable modulo the towns' count.
+			piece = towns ? c.town(v % towns) : std::string();
+			break;
+		case 'K':  // A town's tavern (0x6DD8C0), the same.
+			piece = towns ? c.tavern(v % towns) : std::string();
+			break;
+		case 'V':  // A first name (0x512A60).
+			piece = c.first(v);
+			break;
+		case 'N':
+		case 'P':  // A family name (0x512AE0).
+			piece = c.family(v);
+			break;
+		case 'v':  // A merchant's first name ([+0xE8], as 0x4F6420 keeps it).
+			if (const MerchantMemory* m = merchant(v)) {
+				piece = c.merchant_first(m);
+			}
+			break;
+		case 'n':  // His family name ([+0xE4], 0x4F6450).
+			if (const MerchantMemory* m = merchant(v)) {
+				piece = c.merchant_family(m);
+			}
+			break;
+		case 'Q':  // A name of the ship names' lists (0x512B20).
+			piece = c.list_ship_name(uint16_t(v));
+			break;
+		case 'D': {  // A date (0x5311D0): «%u. %s %u» (0x6C030C) with the month's name (0x6C0D9C).
+			uint8_t day = 0;
+			uint8_t month = 0;
+			uint16_t year = 0;
+			tick::events_mayor_detail::fn_5311d0(v, day, month, year);
+			piece = num(day) + ". " + c.table(0x6C0D9C, month) + " " + num(year);
+			break;
+		}
+		case 'M': {  // A month's name (0x6C0DA0), the variable modulo 12 (signed).
+			const int32_t k = int32_t(v) % 12;
+			piece = k >= 0 ? c.table(0x6C0DA0, uint32_t(k)) : std::string();
+			break;
+		}
+		case 'W': {  // A ware's name (0x6C0BB0), the variable modulo 24 (signed).
+			const int32_t k = int32_t(v) % 24;
+			piece = k >= 0 ? c.table(0x6C0BB0, uint32_t(k)) : std::string();
+			break;
+		}
+		case 'w':  // The ware with its unit's sign: «\B %s» or «\L %s» (0x6C0318, 0x6C0320).
+			piece = std::string(barrels(v) ? "\\B " : "\\L ") + c.table(0x6C0BB0, v);
+			break;
+		case 'e':  // Its unit's sign alone (0x6C0330, 0x6C0334).
+			piece = barrels(v) ? "\\B" : "\\L";
+			break;
+		case 'E':  // By the byte itself, not a variable: «\L» or «\B» (0x6C0338, 0x6C033C).
+			piece = at(p) != 0 ? "\\L" : "\\B";
+			break;
+		case 'c':  // A number and the coin: «%i\C» (0x6C0328).
+			piece = std::to_string(int32_t(v)) + "\\C";
+			break;
+		case 'B':  // A number: «%i» (0x6C0340).
+			piece = std::to_string(int32_t(v));
+			break;
+		case 'k': {
+			// Fives and ones: v / 5 times «\t20014_», v % 5 times «\t20015_» (0x6C0344, 0x6C0350; their counts as
+			// u16), then the last of them once more (the common copy of the pointer left: none without either).
+			const uint16_t fives = uint16_t(int32_t(v) / 5);
+			const uint16_t ones = uint16_t(int32_t(v) % 5);
+			for (uint32_t k = 0; k < fives && out.size() + piece.size() < 0x1000; ++k) {
+				piece += "\\t20014_";
+			}
+			for (uint32_t k = 0; k < ones && out.size() + piece.size() < 0x1000; ++k) {
+				piece += "\\t20015_";
+			}
+			piece += ones ? "\\t20015_" : fives ? "\\t20014_" : "";
+			break;
+		}
+		case 'G':  // «She» / «He» (0x6B2A88), by the merchant's sex.
+		case 'g':  // «she» / «he» (0x6B2A90).
+		case 'A':  // (0x6C0EF8)
+		case 'a':  // (0x6C0ED8)
+		case 'z':  // (0x6C0EE8)
+			if (const MerchantMemory* m = merchant(v)) {
+				const uint32_t table = code == 'G' ? 0x6B2A88 : code == 'g' ? 0x6B2A90 : code == 'A' ? 0x6C0EF8
+					: code == 'a' ? 0x6C0ED8 : 0x6C0EE8;
+				piece = c.table(table, sex(m));
+			}
+			break;
+		case '+':  // The record's [+0xD]: the variable's low byte.
+			record.u8(0xD) = uint8_t(v);
+			break;
+		case '-':  // The record's [+0xE] and [+0xF]: the two bytes after the variable's (three bytes used).
+			record.u8(0xE) = at(p + 1);
+			record.u8(0xF) = at(p + 2);
+			p += 2;
+			break;
+		case '%':  // «%», and the byte after it skipped as a variable's.
+			piece = "%";
+			break;
+		default:
+			if (code >= '0' && code <= '9') {
+				// A merchant's word by his sex (0x6C3040, [digit · 2 + sex]: «Dear »...).
+				if (const MerchantMemory* m = merchant(v)) {
+					piece = c.table(0x6C3040, uint32_t(code - '0') * 2 + sex(m));
+				}
+			}
+			break;  // (Another code writes nothing and skips its byte.)
+		}
+		out += piece;
+		++p;  // Past the variable's byte.
+	}
+	out += '\0';
+	++p;
+	for (uint8_t k = 0; k < answers; ++k) {
+		copy_string();  // Each answer, as it is.
+	}
+	if (out.size() > 0x1000) {
+		out.resize(0x1000);  // (The game's buffer: it would write past it.)
+	}
+	return std::vector<uint8_t>(out.begin(), out.end());
+}
+
 }  // namespace p3::data

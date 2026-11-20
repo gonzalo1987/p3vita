@@ -550,6 +550,11 @@ MAIL_CALLS += (
     # The sieges' operations (sieges.cpp): 0x8F (0x540240) the news 0x38 and the extra tax 0x37; 0x90 (0x634660) 0x38.
     0x5402BF, 0x5403DB, 0x63477B,
 )
+MAIL_CALLS += (
+    # The mission interpreter's letter, its instruction 0xF7 (0x4ED4A0, mission_script.cpp): to the owners of a town's
+    # offices (a dead branch: the memset before it), to each human merchant, or to the addressee as it is.
+    0x4EDDEB, 0x4EDE69, 0x4EDEAA,
+)
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is
 # counted by its call address and printed to stderr at the end (whether it
