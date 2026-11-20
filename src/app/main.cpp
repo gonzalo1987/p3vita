@@ -3708,8 +3708,11 @@ GameMessage game_message_layout(const std::string& raw, std::vector<PlaceView::P
 	GameMessage m = game_message_frame([&](int width) { return game_box(nullptr, raw, 0, 0, width); }, std::move(buttons),
 		official, key, message_ratio, screen_w, screen_h, fixed_width);
 	PlaceView::Page text;
-	game_box(&text, raw, 0, 0, m.text_w);
-	PlaceView::offset_page(text, m.text_x, m.text.y);
+	const int height = game_box(&text, raw, 0, 0, m.text_w);
+	// The text centred in its box when it is shorter (adapted: the game draws it from the box's top, 4 under the
+	// window's, TextYOffset; the window's size, a tile at a time, leaves up to a tile under it; the user saw the text
+	// too close to the top against the game's other parchments, 2026-11-21).
+	PlaceView::offset_page(text, m.text_x, m.text.y + std::max(0, (m.text.h - height) / 2));
 	m.page.texts.insert(m.page.texts.begin(), text.texts.begin(), text.texts.end());
 	m.page.icons.insert(m.page.icons.begin(), text.icons.begin(), text.icons.end());
 	return m;
