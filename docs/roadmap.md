@@ -444,7 +444,8 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   personaje: su página 0x5D8100 con el título, el texto hasta el «|», «Aceptar» con la respuesta de la carta y la
   0x76, y la página de después con el texto tras el «|»; el botón de la carta siguiente, que el juego crea sin texto
   ni dibujo, con la palabra del visor «Siguiente»; la 0x52 de tipo 9 al hablar con ella; estado de depuración
-  `mission-letters`). Falta: el trozo de mapa del tesoro (0x55 del soplón) y lo que enseñe cada misión (la ventana
+  `mission-letters`) y el trozo de mapa del tesoro del soplón (la 0x55 que ya encolaba su página: paga, la carta pasa a
+  0x46 con su trozo, el soplón se va; estado `informer-map`). Falta lo que enseñe cada misión (la ventana
   de los sucesos históricos de la instrucción 0x37: 0x469AF0 con 0x16, el título y el texto del programa; las de
   0xE8, 0xEF, 0xF5 y el aviso de 0xF7).
 - [ ] **Las campañas y el tutorial**: su menú de inicio (`[Campaign_0..7]` del ini: el tutorial, «El ascenso», «El

@@ -736,6 +736,29 @@ bool mission_letters(SaveGame& save) {
 	return true;
 }
 
+// The informer's treasure map's piece (tavern_window.hpp, 0x526B40; the operation 0x55): in Lübeck (its number 14, the
+// town the viewer starts in) the informer there ([+0x82C] 0), and the player a treasure map's letter 0x45 as the
+// mission interpreter's 0xF6 sends it (the spot 4, no piece found). The informer offers the piece every third day:
+// ((tick >> 8) + the town) % 3 == 0 (save 3 starts on one). False without Lübeck.
+bool informer_map(SaveGame& save) {
+	for (size_t t = 0; t < save.towns.size(); ++t) {
+		if (save.towns[t].town_id() != 14) {
+			continue;
+		}
+		save.towns[t].memory.u8(0x82C) = 0;
+		Letter letter(0x45);
+		letter.entry.u8(5) = uint8_t(t);
+		uint16_t x = 0;
+		uint16_t y = 0;
+		treasure_spot(4, x, y);
+		letter.entry.u16(0xC) = x;
+		letter.entry.u16(0xE) = y;
+		send_letter(save, save.player, letter);
+		return true;
+	}
+	return false;
+}
+
 // The guild's auctions (guild_window.hpp): the player a member of the guild of his first ship's town (its bit in his
 // [+0x468]) and two auctions of ships (events 0x0A as 0x4DA510 makes them, in phase 0, which makes their ship) at the
 // next ticks, in that town and in the next one with a guild ([+0x2C8] & 0xC0): they are announced 14 days later and
@@ -970,6 +993,7 @@ const char kDebugStatesHelp[] =
 	"              shares on sale (the moneylender)\n"
 	"  letters     letters with buttons: a suitor, a proposal, the prince's request\n"
 	"              and a townsman who can't pay back the player's loan\n"
+	"  informer-map  the informer in Luebeck and a treasure map's letter of the player's\n"
 	"  mission-letters  the missions' letters from the game's files: two answers, one,\n"
 	"              none, and two tavern ones for Lübeck\n"
 	"  auctions    the player in the guild of his first ship's town and two auctions\n"
@@ -1362,6 +1386,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			}
 		} else if (state == "letters") {
 			letters_with_buttons(save);
+		} else if (state == "informer-map") {
+			if (!informer_map(save)) {
+				error = "the save has no Luebeck";
+				return false;
+			}
 		} else if (state == "mission-letters") {
 			if (!mission_letters(save)) {
 				error = "the game's mission files 2, 5, 19 and 200 aren't there as expected";
