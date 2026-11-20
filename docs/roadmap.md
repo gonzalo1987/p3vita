@@ -454,8 +454,12 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     oferta desde los barcos, en la ventana de mensajes del juego (0x5BE1A6). Se quedan como líneas los avisos del visor
     que hacen falta (una orden del mapa del mar que no se puede, la carga del mapa del mar, la elección de Gobernador
     hasta el final de la partida).
-  - [ ] **El pie del mapa del mar** («barco: en el puerto de...», «L/R: velocidad del juego»): del visor, sin igual en el
-    juego.
+  - [x] **El pie del mapa del mar** (20-11-2026, `re/emu/sesion47/README.md`): quitado, como en el juego. El barco al
+    que van las órdenes es el del menú del barco del panel (Cuadrado elige el siguiente y abre su menú, que dice qué
+    hace) y la velocidad sale en la ayuda del reloj de arena. Los dos botones de la ruta por puntos (del visor: el juego
+    la marca con el ratón), como botones del juego con su tecla dentro, solos y discretos abajo en el centro (el usuario
+    vio un papel de diálogo debajo «demasiado cantoso»): «○ Borrar» a la izquierda y «X Zarpar» a la derecha; con la
+    ruta empezada, la barra de arriba no dice X ni ○.
   - [ ] **El buzón a pantalla completa** (sin panel: en una batalla, desde el menú de Start) y sus respuestas
     (`draw_letter_answers`); y el aviso «Cargando la batalla...».
   - (La ventana del final, `draw_end_window`, va con el final de la partida.)

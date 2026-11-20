@@ -1810,36 +1810,6 @@ OperationBytes ship_delete_operation(const SaveGame& save, int ship) {
 	return op;
 }
 
-// Qué hace un barco: «saliendo de Lübeck hacia Visby».
-std::string ship_activity(const SaveGame& save, const std::vector<std::string>& names, const SavedShip& ship) {
-	const size_t count = save.towns.size();
-	const std::string here = ship.town() < count ? town_name(save, names, ship.town()) : "";
-	const std::string there = ship.destination() < count ? town_name(save, names, ship.destination()) : "";
-	switch (ship.status()) {
-	case kShipDocked:
-		return tr("en el puerto de ", "in the port of ") + here;
-	case kShipWaiting:
-		return tr("esperando en ", "waiting in ") + here;
-	case kShipLeaving:
-		return tr("saliendo de ", "leaving ") + here + (there.empty() ? "" : tr(" hacia ", " for ") + there);
-	case kShipArriving:
-		return tr("entrando en el puerto de ", "entering the port of ") + here;
-	case kShipSailing: {
-		if (!ship.route) {
-			return game_text(GameText::AtSea, tr("sin rumbo en el mar", "at sea"));
-		}
-		std::string text = there.empty() ? tr("navegando", "sailing") : tr("navegando hacia ", "sailing to ") + there;
-		if (ship.arrival_tick() > save.tick()) {
-			const GameDate date = date_from_tick(ship.arrival_tick());
-			text += tr(", llegada prevista el ", ", expected on ") + day_and_month(date.day, date.month);
-		}
-		return text;
-	}
-	default:
-		return "";
-	}
-}
-
 // Cantidad en unidades del juego (barriles, cargas o piezas), redondeada hacia abajo.
 int units(int32_t internal, WareUnit unit) {
 	return internal / ware_scale(unit);
@@ -2416,13 +2386,21 @@ void draw_button(SDL_Renderer* renderer, TextRenderer& text, const SDL_Rect& r, 
 	text.draw(label, r.x + (r.w - text.measure(label)) / 2, r.y + (r.h - text.line_height()) / 2, kTextColor);
 }
 
-// The two buttons over the sea map, above its bottom bar, while a route by points is started: sail along it (X)
-// and clear it (Circle).
-std::array<SDL_Rect, 2> sea_route_buttons(int map_width, int line_height) {
-	const int w = 150;
-	const int h = line_height + 14;
-	const int y = kScreenHeight - kBarHeight - h - 8;
-	return {SDL_Rect{map_width - 2 * w - 16, y, w, h}, SDL_Rect{map_width - w - 8, y, w, h}};
+// The two buttons over the sea map while a route by points is started (the viewer's: the game takes the points with
+// its mouse and needs none): clear it (Circle) and sail along it (X, on the right as the viewer's confirming buttons),
+// the parchments' pills with their keys inside, alone at the map's bottom middle (the user, 20-11-2026: a dialog's
+// paper under them was too much), each pill drawn twice: made for paper, it is see-through. A touch takes them a little
+// wider.
+constexpr int kSeaRouteButtonWidth = 96;
+std::array<SDL_Rect, 2> sea_route_buttons(int map_width) {
+	constexpr int kGap = 12;
+	const int y = kScreenHeight - 18 - 10;
+	const int x = map_width / 2 - kSeaRouteButtonWidth - kGap / 2;
+	return {SDL_Rect{x, y, kSeaRouteButtonWidth, 18}, SDL_Rect{x + kSeaRouteButtonWidth + kGap, y, kSeaRouteButtonWidth, 18}};
+}
+
+bool sea_route_button_hit(const SDL_Rect& r, int x, int y) {
+	return inside(SDL_Rect{r.x - 4, r.y - 8, r.w + 8, r.h + 16}, x, y);
 }
 
 SDL_Color argb_color(uint32_t c);
@@ -24372,11 +24350,14 @@ int main(int argc, char** argv) {
 					}
 					break;
 				case SDL_CONTROLLER_BUTTON_X:
-					// Square: sells; at sea, the player's next ship.
+					// Square: sells; at sea, the player's next ship, chosen in the ship menu (which says which it is).
 					if (trading) {
 						market_trade(false);
 					} else if (selection.mode == Mode::Sea) {
 						fleet_index++;
+						if (fleet_ship() >= 0) {
+							choose_ship(fleet_ship());
+						}
 					}
 					break;
 				case SDL_CONTROLLER_BUTTON_B:
@@ -25637,13 +25618,13 @@ int main(int argc, char** argv) {
 				// The route by points' buttons: sail along it, clear it.
 				if (selection.mode == Mode::Sea && sea && touch_moved < kTapDistance && !sea_route.empty() &&
 					!touch_on_panel && !in_menu && !in_mail) {
-					const std::array<SDL_Rect, 2> b = sea_route_buttons(town_width, small_text->line_height());
-					if (inside(b[0], touch_start.x, touch_start.y)) {
-						sail_route();
+					const std::array<SDL_Rect, 2> b = sea_route_buttons(town_width);
+					if (sea_route_button_hit(b[0], touch_start.x, touch_start.y)) {
+						sea_route.clear();
 						break;
 					}
-					if (inside(b[1], touch_start.x, touch_start.y)) {
-						sea_route.clear();
+					if (sea_route_button_hit(b[1], touch_start.x, touch_start.y)) {
+						sail_route();
 						break;
 					}
 				}
@@ -25699,8 +25680,7 @@ int main(int argc, char** argv) {
 					}
 					// Tapping the sea (or a town once a route is started) adds a point to the chosen ship's route by
 					// points (0x0B); a point at a town ends the route there when it sails.
-					if (!targeted && !chose && (town < 0 || !sea_route.empty()) && on_map &&
-						touch_start.y < kScreenHeight - kBarHeight) {
+					if (!targeted && !chose && (town < 0 || !sea_route.empty()) && on_map) {
 						add_route_point(camera_x + touch_start.x, camera_y + touch_start.y);
 					}
 				}
@@ -26363,12 +26343,18 @@ int main(int argc, char** argv) {
 					(place.open == Place::Lender && place.lender_interest);
 				right_texts = {back ? tr(BTN_CIRCLE " volver", BTN_CIRCLE " back")
 									: tr(BTN_CIRCLE " salir", BTN_CIRCLE " leave")};
+			} else if (at_sea && !sea_route.empty()) {
+				// A route by points started: X and Circle are its buttons' (no two actions for one key on the screen).
+				right_texts = {tr("L/R: velocidad   " BTN_TRIANGLE " entrar", "L/R: speed   " BTN_TRIANGLE " enter"),
+					tr(BTN_TRIANGLE " entrar", BTN_TRIANGLE " enter")};
 			} else if (at_sea) {
-				right_texts = {tr("L/R: velocidad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar   " BTN_CIRCLE " buzón",
-								   "L/R: speed   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter   " BTN_CIRCLE " mailbox"),
+				// (Square, the next ship: was the old footer's.)
+				right_texts = {tr("L/R: velocidad   " BTN_CROSS " zarpar   " BTN_SQUARE " barco   " BTN_TRIANGLE " entrar   " BTN_CIRCLE " buzón",
+								   "L/R: speed   " BTN_CROSS " set sail   " BTN_SQUARE " ship   " BTN_TRIANGLE " enter   " BTN_CIRCLE " mailbox"),
+					tr(BTN_CROSS " zarpar   " BTN_SQUARE " barco   " BTN_TRIANGLE " entrar   " BTN_CIRCLE " buzón",
+						BTN_CROSS " set sail   " BTN_SQUARE " ship   " BTN_TRIANGLE " enter   " BTN_CIRCLE " mailbox"),
 					tr(BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar   " BTN_CIRCLE " buzón",
 						BTN_CROSS " set sail   " BTN_TRIANGLE " enter   " BTN_CIRCLE " mailbox"),
-					tr("L/R: velocidad   " BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", "L/R: speed   " BTN_CROSS " set sail   " BTN_TRIANGLE " enter"),
 					tr(BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", BTN_CROSS " set sail   " BTN_TRIANGLE " enter")};
 			} else if (selection.mode == Mode::Saved) {
 				// X: the building under the cursor, or the market.
@@ -26402,27 +26388,15 @@ int main(int argc, char** argv) {
 				draw_bar(renderer, *text, 0, bar_title(save, town_names, template_ids, selection), right_texts);
 			}
 		}
-		// En el mapa del mar, abajo: el barco al que se dan las órdenes y la velocidad del juego.
-		if (at_sea && small_text) {
-			std::string ship_text = tr("No tienes ningún barco.", "You have no ship.");
-			if (course_ship >= 0) {
-				const SavedShip& ship = save.ships[size_t(course_ship)];
-				ship_text = ship.name() + " (" + ship_type_name(ship.type()) + "): " + ship_activity(save, town_names, ship);
-			}
-			const std::string speed = g_texts ? g_texts->get(GameText::GameSpeed) + ": " + speed_name(game_speed)
-											  : tr("velocidad ", "speed ") + speed_name(game_speed);
-			if (!sea_route.empty()) {
-				// A route by points started: how many points, and its two buttons above the bar.
-				const std::string points = std::to_string(sea_route.size()) +
-					(sea_route.size() == 1 ? tr(" punto de ruta", " route point") : tr(" puntos de ruta", " route points"));
-				draw_bar(renderer, *small_text, kScreenHeight - kBarHeight, ship_text, {points, ""}, town_width);
-				const std::array<SDL_Rect, 2> b = sea_route_buttons(town_width, small_text->line_height());
-				draw_button(renderer, *small_text, b[0], BTN_CROSS + tr(" Zarpar", " Sail"));
-				draw_button(renderer, *small_text, b[1], BTN_CIRCLE + tr(" Borrar", " Clear"));
-			} else {
-				draw_bar(renderer, *small_text, kScreenHeight - kBarHeight, ship_text,
-					{tr(BTN_SQUARE " barco   L/R: ", BTN_SQUARE " ship   L/R: ") + speed, "L/R: " + speed, speed},
-					town_width);
+		// On the sea map, while a route by points is started, its two buttons (the viewer's old footer, with the ship the
+		// orders go to and the speed, is gone: the ship is the ship menu's, the speed the hourglass's tooltip).
+		if (at_sea && small_text && g_game_art && !sea_route.empty()) {
+			const std::array<SDL_Rect, 2> b = sea_route_buttons(town_width);
+			TextRenderer& font = g_game_art->page_text() ? *g_game_art->page_text() : *small_text;
+			const std::string labels[2] = {BTN_CIRCLE " " + tr("Borrar", "Clear"), BTN_CROSS " " + tr("Zarpar", "Sail")};
+			for (int k = 0; k < 2; ++k) {
+				g_game_art->draw_pill(g_game_art->pill_for_label(b[k], font.measure(labels[k])), PillState::Standard);
+				draw_pill_button(*g_game_art, font, b[k], labels[k], true, 0);
 			}
 		}
 		// The game screen's news lines: their first runs out (each frame, 0x42B920 and 0x42BE40), over the town or the sea

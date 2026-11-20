@@ -278,9 +278,12 @@ once: the ship list with them), and touching a town where your ships are in
 port chooses the ship (several: the ship list of that port).
 On the sea map X sends your ship to the chosen town (touch a town to choose it):
 it leaves the port, sails the game's route (its course is drawn) and enters the
-port of destination, where it can trade. Square chooses another of your ships;
-L and R, or Select going round, change the game's speed (slowed, very slow, slow, normal, fast, very fast and fast
-forward). The bottom bar says what the ship does and when it will arrive.
+port of destination, where it can trade. Square chooses another of your ships (the
+panel's ship menu shows it, with what it does); L and R, or Select going round, change the game's speed (slowed, very
+slow, slow, normal, fast, very fast and fast forward: the hourglass's tooltip says which). Touching the sea starts a
+route by points (each touch a point); its two buttons at the map's bottom clear it (Circle) or send the ship along it
+(X). The game's news lines hang under the top bar: its own on the left, the new letters' on the right (the messages'
+icon blinks); each stays 12 seconds.
 Without a game loaded, Select goes through the town's template with all the
 designer's buildings (`.editor`) and with the terrain only (`.town`).
 
