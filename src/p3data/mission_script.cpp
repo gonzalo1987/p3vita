@@ -5,7 +5,8 @@
 //
 // Rewritten so far: the loop and its waits (0x00, 0xFD, 0xFE, 0xFF); the variables' and numbers' 0x04..0x07, 0x09,
 // 0x0A, 0x21; the arithmetic 0x0B..0x0E; the comparisons 0x17..0x1C, the jump 0x1D; a merchant's rank 0x15; a ship's
-// town 0x1E; a ship name 0x20; the search of a ship 0x26 / 0x27; an office
+// town 0x1E; a ship name 0x20; the humans 0x39; the towns 0x43; an office's town 0x44; a treasure found 0xF0; a
+// merchant's names 0x11, 0x12; a town's offices 0x4F; the search of a ship 0x26 / 0x27; an office
 // 0x38; the next human 0x3F; a first name 0x23, a family name 0x24; a way between towns 0x53; a wanderer's next town 0x29 (0x533210); a ship by its hull 0x40;
 // the mission letter 0xF7. The handlers come in parts (roadmap, section 3; the order by what the saves run:
 // re/emu/sesion47/opcount.sh); until then an instruction not rewritten ends the script as an unknown one does, and is
@@ -272,6 +273,13 @@ Step step(Run& r, uint8_t op) {
 		const Sailing* sailing = tick::event_sailing();
 		letter.buffer = mission_letter_text(s, sailing ? sailing->texts() : nullptr, r.p, r.d(8), r.vars, answers, record);
 		record.u32(0) = uint32_t(letter.buffer.size());
+		if (std::getenv("P3_MISSION_TRACE")) {  // (The tools' trace: the letter's text, its NULs as «|».)
+			std::string shown;
+			for (const uint8_t c : letter.buffer) {
+				shown += c == 0 ? '|' : char(c);
+			}
+			std::fprintf(stderr, "letter %s\n", shown.c_str());
+		}
 		letter.record = record;
 		auto at = [&](uint32_t index) -> uint32_t* { return index < r.vars.size() ? &r.vars[index] : nullptr; };
 		if (answers != 0 && b1 != 5 && int32_t(r.var(5)) < 0) {
@@ -347,6 +355,68 @@ Step step(Run& r, uint8_t op) {
 		r.var(1) = name;
 		return Step::Next;
 	}
+	case 0x11:  // 0x4EF112: b ← the merchant a's family name ([+0x1D]).
+	case 0x12: {  // 0x4EF161: b ← his first name ([+0x1C]).
+		const uint32_t m = r.var(1);
+		r.var(2) = m < r.save.merchants.size() ? r.save.merchants[m].memory.u8(op == 0x11 ? 0x1D : 0x1C) : 0;
+		return Step::Next;
+	}
+	case 0x4F: {
+		// 0x4F1B74: c ← how many offices the town b has (from its [+0x784] by [+0x2CA], below the offices' count) by
+		// the mode a: 0 a human's (its owner [+0x2C4] of kind 0), 1 the others', 2 all; another none.
+		const SaveGame& s = r.save;
+		const uint32_t mode = r.var(1);
+		const uint32_t town = r.var(2);
+		r.var(3) = 0;
+		const uint16_t offices = s.globals.u16(global::kWorldOfficeCount);
+		uint16_t i = town < s.towns.size() ? s.towns[town].memory.u16(0x784) : 0xFFFF;
+		for (; i < offices && i < s.offices.size(); i = s.offices[i].memory.u16(0x2CA)) {
+			const uint16_t owner = s.offices[i].memory.u16(0x2C4);
+			const bool human = owner < s.merchants.size() && s.merchants[owner].kind() == 0;
+			if ((mode == 0 && human) || (mode == 1 && !human) || mode == 2) {
+				++r.var(3);
+			}
+		}
+		return Step::Next;
+	}
+	case 0x39: {  // 0x4F0F6A: v ← how many human merchants (kind 0) there are.
+		const SaveGame& s = r.save;
+		uint32_t humans = 0;
+		for (uint32_t m = 0; m < s.globals.u16(global::kWorldMerchantCount); ++m) {
+			humans += m < s.merchants.size() && s.merchants[m].kind() == 0 ? 1 : 0;
+		}
+		r.var(1) = humans;
+		return Step::Next;
+	}
+	case 0x43:  // 0x4F1592: v ← the towns' count (0x4F3680: [0x6DE4B0]).
+		r.var(1) = r.save.globals.u32(global::kWorldTownCount);
+		return Step::Next;
+	case 0x44: {
+		// 0x4F15AC: b ← the town ([+0x2C6]) of one of the merchant a's offices (from his [+0xC] by [+0x2C8], below the
+		// offices' count): the one now modulo how many he has (unsigned) steps from the first. (None: the game
+		// divides by 0.)
+		const SaveGame& s = r.save;
+		const uint32_t who = r.var(1);
+		const uint16_t offices = s.globals.u16(global::kWorldOfficeCount);
+		auto next = [&](uint16_t i) { return i < s.offices.size() ? s.offices[i].memory.u16(0x2C8) : uint16_t(0xFFFF); };
+		const uint16_t first = who < s.merchants.size() ? s.merchants[who].memory.u16(0xC) : 0xFFFF;
+		uint32_t count = 0;
+		for (uint16_t i = first; i < offices && count < 0x10000; i = next(i)) {
+			++count;
+		}
+		if (count == 0) {
+			return Step::Next;
+		}
+		uint16_t at = first;
+		for (uint32_t k = s.globals.u32(global::kWorldTick) % count; k > 0; --k) {
+			at = next(at);
+		}
+		r.var(2) = at < s.offices.size() ? s.offices[at].memory.u8(0x2C6) : 0;
+		return Step::Next;
+	}
+	case 0xF0:  // 0x4EE238: the treasure spot b found by the merchant a (0x4D7030 on the mailbox: his map letters).
+		treasure_found(r.save, r.var(1), r.var(2));
+		return Step::Next;
 	case 0x23: {
 		// 0x4EF588: b ← a first name's number of the game's own: (now + the event list's [+0x8]) · the town 7's
 		// [+0x348] (the towns' array + 0x4910), its high byte cleared; then by the variable a, 1 a man's (modulo the

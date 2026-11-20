@@ -67,6 +67,11 @@ void mark_letter_read(SaveGame& save, int32_t merchant, uint32_t entry);
 // releases it (0x51AAB0). Nothing if it isn't there.
 void delete_letter(SaveGame& save, int32_t merchant, uint32_t entry);
 
+// 0x4D7030 (on the mailbox; the mission interpreter's 0xF0): the treasure spot `spot` (< 100: the table 0x671FD0) found
+// by `merchant` (below the count): in his chain (from his [+0xA], at most the mailbox's count of steps) a letter 0x45
+// for that spot ([+0xC], [+0xE]) goes to the free list with its type 0xFF, a letter 0x46 for it gets [+0xB] |= 0xFE.
+void treasure_found(SaveGame& save, uint32_t merchant, uint32_t spot);
+
 // 0x4D6780 (on the mailbox): removes a merchant's letters kept longer than
 // their class's setting allows (town_tick/events_towns.cpp, fn_4d6780). The
 // letter window calls it for the local player each time it fills its list

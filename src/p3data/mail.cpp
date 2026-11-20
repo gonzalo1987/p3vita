@@ -286,6 +286,47 @@ void delete_letter(SaveGame& save, int32_t merchant, uint32_t entry) {
 	}
 }
 
+void treasure_found(SaveGame& save, uint32_t merchant, uint32_t spot) {
+	// 0x671FD0: the 100 treasure spots (u32 x, u32 y).
+	static constexpr uint16_t kSpots[100][2] = {{84, 330}, {114, 1500}, {153, 462}, {159, 321}, {162, 1521}, {162, 672},
+		{189, 762}, {198, 417}, {201, 330}, {201, 930}, {204, 1695}, {219, 1617}, {219, 621}, {225, 1506}, {243, 492},
+		{252, 570}, {255, 1125}, {258, 351}, {288, 270}, {306, 1599}, {315, 1344}, {321, 1242}, {516, 1356}, {543, 1401},
+		{543, 1479}, {662, 234}, {669, 426}, {699, 474}, {726, 897}, {726, 984}, {747, 813}, {750, 528}, {753, 1110},
+		{771, 1332}, {777, 1182}, {822, 1233}, {837, 768}, {860, 1050}, {867, 516}, {867, 720}, {906, 1008}, {912, 1188},
+		{912, 699}, {924, 864}, {930, 1230}, {936, 1131}, {951, 921}, {970, 1248}, {991, 981}, {996, 1191}, {1026, 516},
+		{1032, 1146}, {1030, 570}, {1065, 618}, {1080, 930}, {1083, 1038}, {1098, 786}, {1111, 825}, {1119, 1128},
+		{1122, 1239}, {1136, 957}, {1149, 867}, {1168, 1288}, {1206, 1338}, {1266, 1029}, {1296, 1098}, {1302, 1281},
+		{1305, 936}, {1320, 1050}, {1389, 915}, {1416, 765}, {1428, 729}, {1431, 126}, {1434, 641}, {1443, 237},
+		{1443, 556}, {1476, 534}, {1488, 264}, {1557, 615}, {1587, 138}, {1593, 1239}, {1629, 273}, {1642, 942},
+		{1656, 858}, {1668, 321}, {1674, 552}, {1683, 591}, {1701, 1137}, {1701, 333}, {1716, 675}, {1740, 519},
+		{1794, 315}, {1956, 387}, {1962, 201}, {2010, 369}, {2034, 186}, {2052, 266}, {2085, 249}, {2178, 105},
+		{2292, 108}};
+	GlobalMemory& g = save.globals;
+	if (merchant >= g.u16(global::kWorldMerchantCount) || merchant >= save.merchants.size() || spot >= 100) {
+		return;
+	}
+	const uint16_t x = kSpots[spot][0];
+	const uint16_t y = kSpots[spot][1];
+	const uint32_t count = g.u16(kMailCount);
+	uint16_t* link = &save.merchants[merchant].memory.u16(0xA);
+	for (uint32_t left = count; *link < count && *link < save.mail.size() && left > 0; --left) {
+		const uint16_t entry = *link;
+		GameMemory<0x10>& e = save.mail[entry];
+		if (e.u8(4) == 0x45 && e.u16(0xC) == x && e.u16(0xE) == y) {
+			// Out of the chain to the free list, its type 0xFF (nothing released: the game doesn't, 0x4D70CD).
+			*link = e.u16(6);
+			e.u8(4) = 0xFF;
+			e.u16(6) = g.u16(kMailFree);
+			g.u16(kMailFree) = entry;
+			continue;
+		}
+		if (e.u8(4) == 0x46 && e.u16(0xC) == x && e.u16(0xE) == y) {
+			e.u8(0xB) |= 0xFE;
+		}
+		link = &e.u16(6);
+	}
+}
+
 void expire_letters(SaveGame& save, int32_t merchant) {
 	tick::events_towns_detail::fn_4d6780(save, merchant);
 }

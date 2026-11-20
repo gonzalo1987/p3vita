@@ -93,7 +93,8 @@ after a handler [+0x14] goes to the next section (0x4F2C93) unless it jumped (0x
 
 The handlers' table: the operand bytes as the game's files have them (each section's length) and how many missions
 use each one (the free game's History and Standard, the network game's Standard2 and Multiplay, the campaigns). The
-free game uses 80 (and the four waits), the network game 10 more, the campaigns 28 more; 14 no file uses.
+free game uses 80 (and the four waits), the network game 10 more, the campaigns 28 more; 20 no file uses (0x27 among
+them, 0x26's handler).
 
 | op | handler | bytes | free game | network | campaigns |
 |-|-|-|-|-|-|
