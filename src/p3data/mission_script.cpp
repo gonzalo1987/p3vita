@@ -90,6 +90,14 @@ struct Run {
 	// A jump: [+0x14] the section of the u16 at the byte `k` (the loop doesn't move it on: 0x4F2C97).
 	void jump(uint32_t k) { e().u16(0x14) = w(k); }
 	uint32_t d(uint32_t k) const { return uint32_t(w(k)) | uint32_t(w(k + 2)) << 16; }
+	// The program's string at the offset of the u32 at the byte `k` (empty past the program).
+	std::string text(uint32_t k) const {
+		std::string out;
+		for (size_t o = d(k); o < p.size() && p[o] != 0; ++o) {
+			out += char(p[o]);
+		}
+		return out;
+	}
 	// A variable by the operand byte `k` (the game indexes the buffer without a check).
 	uint32_t& var(uint32_t k) {
 		static uint32_t outside = 0;
@@ -775,7 +783,8 @@ Step step(Run& r, uint8_t op) {
 	case 0x37:
 		// 0x4F0E94: a history event's window to the player (*0x6CC7E8: 0x469380, then 0x469AF0 with 0x16, the event's
 		// [+0x8] and [+0xA], and the program's two strings at the u32s of the bytes 1 and 5, its title and its text):
-		// the interface's (the viewer's, roadmap section 3), nothing in the world.
+		// the interface's (SaveGame::event_windows), nothing in the world.
+		open_event_window(r.save, 0x16, r.e().u16(0x8), r.e().u16(0xA), r.text(1), r.text(5));
 		return Step::Next;
 	case 0x45: {  // 0x4F167C: b ← whether the town a is besieged ([+0x2C8] & 0x10). (Past the towns: the game reads on.)
 		const uint32_t town = r.var(1);
@@ -877,6 +886,7 @@ Step step(Run& r, uint8_t op) {
 			return Step::End;
 		}
 		send_ticker(s, m, 0x26, s.merchants[m].memory.u8(0x19));
+		open_event_window(s, 0x1D, m, 0, std::string(), std::string());
 		return Step::Next;
 	}
 	case 0xF1: {
@@ -1977,7 +1987,13 @@ Step step(Run& r, uint8_t op) {
 	}
 	case 0xEF:
 		// 0x4EE25C: a window to the player (*0x6CC7E8: 0x469380, 0x469AF0 with 0x19 and the player, or 0x1A and the
-		// merchants' count, by the variable a): the interface's, nothing in the world.
+		// merchants' count, by the variable a; the strings empty): the interface's (SaveGame::event_windows), nothing in
+		// the world.
+		if (r.var(1) != 0) {
+			open_event_window(r.save, 0x19, uint16_t(r.save.globals.u32(global::kPlayer)), 0, std::string(), std::string());
+		} else {
+			open_event_window(r.save, 0x1A, r.save.globals.u16(global::kWorldMerchantCount), 0, std::string(), std::string());
+		}
 		return Step::Next;
 	case 0xE5:
 		// 0x4EE698: unless the session's state ([0x6DF31C]) is set, for the town v (a byte, below the towns' count) the
@@ -2234,8 +2250,12 @@ Step step(Run& r, uint8_t op) {
 		return Step::Next;
 	}
 	case 0xF5:
-		// 0x4EE012: for the player (the variable a), the game's message window (0x41D9B0 on *0x6CBB10) with the text at
-		// the program's offset of the u32 at the byte 2: the interface's, nothing in the world.
+		// 0x4EE012: for the player (the variable a), the game's message window (0x41D9B0 on *0x6CBB10: no buttons, the
+		// ratio 0.5) with the text at the program's offset of the u32 at the byte 2: the interface's
+		// (SaveGame::player_messages), nothing in the world.
+		if (r.var(1) == r.save.globals.u32(global::kPlayer)) {
+			open_player_message(r.save, r.text(2));
+		}
 		return Step::Next;
 	case 0x3C: {
 		// 0x4F1050: a table of keys and times in the script's own variables: n (the variable b) pairs from the

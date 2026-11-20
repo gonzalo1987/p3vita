@@ -519,6 +519,33 @@ std::vector<SaveGame::TickerLine> take_ticker(SaveGame& save) {
 	return lines;
 }
 
+void open_event_window(SaveGame& save, uint32_t code, uint16_t a, uint16_t b, const std::string& first,
+	const std::string& second) {
+	if (save.event_windows.size() >= 32) {
+		save.event_windows.erase(save.event_windows.begin());
+	}
+	save.event_windows.push_back({code, a, b, first, second});
+}
+
+std::vector<SaveGame::EventWindow> take_event_windows(SaveGame& save) {
+	std::vector<SaveGame::EventWindow> windows;
+	windows.swap(save.event_windows);
+	return windows;
+}
+
+void open_player_message(SaveGame& save, const std::string& text) {
+	if (save.player_messages.size() >= 32) {
+		save.player_messages.erase(save.player_messages.begin());
+	}
+	save.player_messages.push_back(text);
+}
+
+std::vector<std::string> take_player_messages(SaveGame& save) {
+	std::vector<std::string> messages;
+	messages.swap(save.player_messages);
+	return messages;
+}
+
 std::vector<uint16_t> take_new_letters(SaveGame& save) {
 	std::vector<uint16_t> letters;
 	letters.swap(save.new_player_letters);

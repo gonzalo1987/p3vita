@@ -135,6 +135,14 @@ void send_ticker_interface(SaveGame& save, uint32_t merchant, uint8_t kind, uint
 // letters.hpp, makes their text). Emptied.
 std::vector<SaveGame::TickerLine> take_ticker(SaveGame& save);
 
+// The event videos' windows (SaveGame::event_windows) and the message windows (SaveGame::player_messages) the world
+// opened for the local player, oldest first. Emptied. (Without a viewer to take them, each keeps its last 32.)
+void open_event_window(SaveGame& save, uint32_t code, uint16_t a, uint16_t b, const std::string& first,
+	const std::string& second);
+std::vector<SaveGame::EventWindow> take_event_windows(SaveGame& save);
+void open_player_message(SaveGame& save, const std::string& text);
+std::vector<std::string> take_player_messages(SaveGame& save);
+
 // The local player's (save.player) new letters, as 0x4D6680 stores them:
 // their entries, oldest first, for the viewer's notice (the game's 0x4D7B10,
 // «Official writing: %s»...: see letters.hpp, letter_notice). Emptied.

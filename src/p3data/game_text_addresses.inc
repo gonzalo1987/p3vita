@@ -1700,6 +1700,9 @@
 	{0x0069C9F0, 0x0069C3BC},
 	// The tenth person's word, the mission letter's «Side room» (set into the table's 0x69C9F8 at the start, 0x46BD05).
 	{0x806A483C, 0x806A4864},
+	// The event videos' window with the videos off, its news line of a treasure found (0x46A185: 0x1D).
+	{0x006AAB90, 0x006AB1D8},
+	{0x006AAB94, 0x006AB1DC},
 	{0x0069D8A8, 0x0069D328},
 	{0x0069D8B4, 0x0069D334},
 	{0x0069D8B8, 0x0069D338},

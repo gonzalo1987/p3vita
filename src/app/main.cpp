@@ -18572,8 +18572,8 @@ std::string option_label(OptionRow row) {
 }
 
 // A row's value: the language's and the switches' as chosen; the rows the viewer doesn't do yet, what it does (the
-// game's details high, weather low as its defaults; no sound; stereo as it is; the convoys' ships all shown; no
-// autosave).
+// game's details high, weather low as its defaults; no sound; stereo as it is; no event videos; the convoys' ships all
+// shown; no autosave).
 std::string option_value(const MenuUi& menu, OptionRow row) {
 	const std::string on = exe_text(0x69AE20, "Sí", "on");
 	const std::string off = exe_text(0x69AE24, "No", "off");
@@ -18591,7 +18591,7 @@ std::string option_value(const MenuUi& menu, OptionRow row) {
 	case OptionRow::GameSpeed:
 		return menu.speed < 6 ? speed_name(menu.speed) : tr(kGameSpeeds[menu.speed].name, kGameSpeeds[menu.speed].english);
 	case OptionRow::EventVideos:
-		return on;
+		return off;  // (No videos yet: the events' windows as the game's with them off, news lines.)
 	case OptionRow::Tooltips:
 		return menu.tooltips ? on : off;
 	case OptionRow::ConvoyShips:
@@ -23359,6 +23359,30 @@ int main(int argc, char** argv) {
 						notify(shown);
 					}
 				}
+			}
+			// The event videos' windows the world opened (0x469AF0; SaveGame::event_windows): the viewer has no videos
+			// yet (roadmap section 5), so as the game with its videos off (0x46A1FA → 0x42B4C0) a news line: the history
+			// event's title (0x16, the mission interpreter's 0x37) and the treasure found (0x1D, its 0xE8: «You have
+			// discovered treasure.» for the player, else «%s %s has discovered treasure.» with the merchant's first and
+			// family names, 0x6AAB94 / 0x6AAB90 → 0x46A185). The codes the game always shows in its window (0x19, 0x1A:
+			// the campaigns' 0xEF) wait for the videos.
+			for (const SaveGame::EventWindow& w : take_event_windows(save)) {
+				if (w.code == 0x16) {
+					notify(one_line(clean_game_text(w.first)));
+				} else if (w.code == 0x1D && int(w.a) == save.player) {
+					notify(clean_game_text(exe_text(0x6AAB94, "Has descubierto el tesoro.", "You have discovered treasure.")));
+				} else if (w.code == 0x1D && w.a < save.merchants.size()) {
+					// (The names raw into the game's raw text, made UTF-8 once.)
+					const MerchantMemory& m = save.merchants[w.a].memory;
+					const std::string first = game_first_name(save, m.u8(0x1C));
+					const std::string family = game_family_name(save, m.u8(0x1D));
+					notify(clean_game_text(exe_format(0x6AAB90, {first, family}, first + " " + family + " has discovered treasure.")));
+				}
+			}
+			// The message windows the world opened for the player (0x41D9B0 on *0x6CBB10; the mission interpreter's
+			// 0xF5): the game's message window with the text, no buttons, its ratio 0.5.
+			for (const std::string& text : take_player_messages(save)) {
+				screen_message = ScreenMessage{game_message_layout(text, {}, false, 27, 0.5f, kScreenWidth, kScreenHeight)};
 			}
 			// The election of the Alderman (event 0x20): its result. The game also
 			// shows a window and, for the player, the video `eldermann` (pending).

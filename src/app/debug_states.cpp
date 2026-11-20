@@ -11,6 +11,7 @@
 #include "p3data/land_trade_window.hpp"
 #include "p3data/letters.hpp"
 #include "p3data/mail.hpp"
+#include "p3data/mission_script.hpp"
 #include "p3data/missions.hpp"
 #include "p3data/player_actions.hpp"
 #include "p3data/sailing.hpp"
@@ -736,6 +737,96 @@ bool mission_letters(SaveGame& save) {
 	return true;
 }
 
+// The mission interpreter's windows to the player (SaveGame::event_windows, player_messages): the save's first script
+// (an event 0x1B) runs at once a program of its own: 0x37 with the history mission 1305's title and text (from the
+// game's file, in the archive's language), 0xE8 for the player and for the first AI merchant (the treasure found),
+// 0xF5 to the player with the same text, then a wait. False without the file or a script.
+bool mission_windows(SaveGame& save) {
+	const MissionProgram history = mission_file(save, 1305);
+	uint16_t event = 0xFFFF;
+	for (size_t k = 0; k < save.events.size(); ++k) {
+		if (save.events[k].u16(6) == 0x1B) {
+			event = uint16_t(k);
+			break;
+		}
+	}
+	if (!history || event == 0xFFFF) {
+		return false;
+	}
+	// The history's strings: its first 0x37's two offsets.
+	const std::vector<uint8_t>& h = *history;
+	auto u32_at = [&](size_t at) {
+		uint32_t v = 0;
+		if (at + 4 <= h.size()) {
+			std::memcpy(&v, h.data() + at, 4);
+		}
+		return v;
+	};
+	auto string_at = [&](size_t at) {
+		std::string out;
+		while (at < h.size() && h[at] != 0) {
+			out += char(h[at++]);
+		}
+		return out;
+	};
+	std::string title;
+	std::string text;
+	const uint16_t sections = uint16_t(h.size() >= 2 ? h[0] | h[1] << 8 : 0);
+	for (uint32_t k = 0; k < sections; ++k) {
+		const size_t at = u32_at(4 + 4 * k);
+		if (at + 9 <= h.size() && h[at] == 0x37) {
+			title = string_at(u32_at(at + 1));
+			text = string_at(u32_at(at + 5));
+			break;
+		}
+	}
+	// The program: five sections (an instruction each), then the two strings.
+	std::vector<std::vector<uint8_t>> code = {{0x37, 0, 0, 0, 0, 0, 0, 0, 0}, {0xE8, 1}, {0xE8, 2}, {0xF5, 1, 0, 0, 0, 0},
+		{0xFE, 63}};
+	size_t at = 4 + 4 * code.size();
+	for (const auto& c : code) {
+		at += c.size();
+	}
+	const uint32_t title_at = uint32_t(at);
+	const uint32_t text_at = uint32_t(at + title.size() + 1);
+	std::memcpy(code[0].data() + 1, &title_at, 4);
+	std::memcpy(code[0].data() + 5, &text_at, 4);
+	std::memcpy(code[3].data() + 2, &text_at, 4);
+	std::vector<uint8_t> program = {uint8_t(code.size()), 0, 64, 0};
+	uint32_t offset = uint32_t(4 + 4 * code.size());
+	for (const auto& c : code) {
+		program.insert(program.end(), {uint8_t(offset), uint8_t(offset >> 8), uint8_t(offset >> 16), uint8_t(offset >> 24)});
+		offset += uint32_t(c.size());
+	}
+	for (const auto& c : code) {
+		program.insert(program.end(), c.begin(), c.end());
+	}
+	program.insert(program.end(), title.begin(), title.end());
+	program.push_back(0);
+	program.insert(program.end(), text.begin(), text.end());
+	program.push_back(0);
+	uint32_t other = 0;
+	while (other < save.merchants.size() && (int(other) == save.player || save.merchants[other].memory.u16(8) == 0)) {
+		++other;
+	}
+	MissionData::Script& script = save.missions.scripts[event];
+	script.program = std::make_shared<const std::vector<uint8_t>>(std::move(program));
+	script.variables.assign(64, 0);
+	script.variables[1] = uint32_t(save.player);
+	script.variables[2] = other;
+	script.variables[63] = 100;
+	GameMemory<0x18>& e = save.events[event];
+	e.u32(8) = 1;
+	e.u32(0xC) = 1;
+	e.u16(0x12) = 64;
+	e.u16(0x14) = 0;
+	// (Its tick kept: the wait moves it, and the queue is kept in order only from its head.)
+	const uint32_t tick = e.u32(0);
+	missions_detail::run_mission_script(save, event);
+	save.events[event].u32(0) = tick;
+	return true;
+}
+
 // The informer's treasure map's piece (tavern_window.hpp, 0x526B40; the operation 0x55): in Lübeck (its number 14, the
 // town the viewer starts in) the informer there ([+0x82C] 0), and the player a treasure map's letter 0x45 as the
 // mission interpreter's 0xF6 sends it (the spot 4, no piece found). The informer offers the piece every third day:
@@ -994,6 +1085,8 @@ const char kDebugStatesHelp[] =
 	"  letters     letters with buttons: a suitor, a proposal, the prince's request\n"
 	"              and a townsman who can't pay back the player's loan\n"
 	"  informer-map  the informer in Luebeck and a treasure map's letter of the player's\n"
+	"  mission-windows  the mission interpreter's windows: a history event, two treasures\n"
+	"              found and a message window\n"
 	"  mission-letters  the missions' letters from the game's files: two answers, one,\n"
 	"              none, and two tavern ones for Lübeck\n"
 	"  auctions    the player in the guild of his first ship's town and two auctions\n"
@@ -1386,6 +1479,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			}
 		} else if (state == "letters") {
 			letters_with_buttons(save);
+		} else if (state == "mission-windows") {
+			if (!mission_windows(save)) {
+				error = "the save has no mission script or the game's mission 1305 isn't there";
+				return false;
+			}
 		} else if (state == "informer-map") {
 			if (!informer_map(save)) {
 				error = "the save has no Luebeck";

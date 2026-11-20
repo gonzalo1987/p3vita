@@ -439,15 +439,18 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   del tesoro, 0x4D74C0) y 0x76 (aceptar la carta de misión de la taberna 0x71, 0x53EDF0 con 0x4D7870). Falta la carta
   final 0x3D del evento 0x34 (0x4F3AF0, con su lista de avisos [+0x8], 0x4F3980..0x4F3CE0), que es de la dieta (la caza
   de piratas, `diet.cpp`) y no de las misiones, pero es una carta del tipo de las de misión (registro y texto).
-- [ ] **En el visor**: hechas el 20-11-2026 las cartas de misión con sus botones (0x74; arreglado de paso que los
-  botones de una carta no se iban al responderla) y la carta de misión de la taberna (la «Trastienda», el décimo
+- [x] **En el visor** (20 y 21-11-2026): las cartas de misión con sus botones (0x74; arreglado de paso que los
+  botones de una carta no se iban al responderla), la carta de misión de la taberna (la «Trastienda», el décimo
   personaje: su página 0x5D8100 con el título, el texto hasta el «|», «Aceptar» con la respuesta de la carta y la
   0x76, y la página de después con el texto tras el «|»; el botón de la carta siguiente, que el juego crea sin texto
-  ni dibujo, con la palabra del visor «Siguiente»; la 0x52 de tipo 9 al hablar con ella; estado de depuración
-  `mission-letters`) y el trozo de mapa del tesoro del soplón (la 0x55 que ya encolaba su página: paga, la carta pasa a
-  0x46 con su trozo, el soplón se va; estado `informer-map`). Falta lo que enseñe cada misión (la ventana
-  de los sucesos históricos de la instrucción 0x37: 0x469AF0 con 0x16, el título y el texto del programa; las de
-  0xE8, 0xEF, 0xF5 y el aviso de 0xF7).
+  ni dibujo, con la palabra del visor «Siguiente»; la 0x52 de tipo 9 al hablar con ella), el trozo de mapa del tesoro
+  del soplón (la 0x55 que ya encolaba su página) y las ventanas que abre el intérprete: el motor las manda al visor
+  (`SaveGame::event_windows` y `player_messages`); la ventana de los vídeos de sucesos (*0x6CC7E8, 0x469AF0) sale, como
+  en el juego con los vídeos apagados (la opción «VIDEOS», [+0x26] de los ajustes), como línea de noticias: el título
+  del suceso histórico de la 0x37 (código 0x16) y el tesoro encontrado de la 0xE8 (0x1D); el mensaje de la 0xF5 en la
+  ventanita de mensajes del juego; el aviso de la 0xF7 (0x47D1F0) es solo que la lista de cartas se rehaga, como hace
+  el visor siempre. Las ventanas con vídeo, en el apartado 5. Estados de depuración `mission-letters`,
+  `informer-map` y `mission-windows`.
 - [ ] **Las campañas y el tutorial**: su menú de inicio (`[Campaign_0..7]` del ini: el tutorial, «El ascenso», «El
   comerciante volante», «El auge de la Hansa» y los escenarios del saneamiento, la mala cosecha, el incendio y la
   peste) y las partidas de la versión 0x4D de las que parten (`missav/0100..0204.pat`, apartado 2); el tutorial va
@@ -883,6 +886,11 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   (0x61F1BF) tendrá que guardar en [+0x14A] lo que devuelve la vista de la ciudad del PC con la vista abierta (1,
   suponiendo un hueco de sonido libre); hoy guarda 0, como el emulador.
 - [ ] Los vídeos Bink (con FFmpeg u otro descodificador): la introducción, el final de Gobernador (`eldermann`)...
+- [ ] La ventana de los vídeos de sucesos (*0x6CC7E8: 0x469380, 0x469AF0 por códigos 0..0x25; 0x25 lanza el programa
+  del vídeo `eldermann`): hoy el visor hace lo del juego con la opción «VIDEOS» apagada (una línea de noticias), y la
+  opción sale como «No». El intérprete de misiones ya la manda al visor (`SaveGame::event_windows`: 0x16, 0x1D y los
+  0x19 y 0x1A de las campañas, que el juego enseña siempre en la ventana y el visor aún no); los demás eventos del motor
+  que la abren (la elección, 0x4DBBD0 con 0x25 o 6; los incendios, los asedios, el monumento...) aún no la mandan.
 
 ### 6. Probar en la Vita
 
