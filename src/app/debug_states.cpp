@@ -9,7 +9,9 @@
 #include "p3data/game_memory.hpp"
 #include "p3data/hanse_tasks.hpp"
 #include "p3data/land_trade_window.hpp"
+#include "p3data/letters.hpp"
 #include "p3data/mail.hpp"
+#include "p3data/missions.hpp"
 #include "p3data/player_actions.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/ship_list_window.hpp"
@@ -665,6 +667,68 @@ void letters_with_buttons(SaveGame& save) {
 	send_letter(save, save.player, debtor);
 }
 
+// The missions' letters to the player as the interpreter's 0xF7 sends them (mission_script.cpp), from the game's own
+// mission files (their texts in the archive's language; the variables 0, so the «%» codes give the merchant 0, the town
+// 0...): the first 0xF7 with two answers of the mission 19, with one of the mission 200, without answers of the mission
+// 2, and the tavern's 0x71 of the mission 5 for the town of the player's first ship. The record's event the save's first
+// script (an event 0x1B), its deadline in 30 days. False without those files.
+bool mission_letters(SaveGame& save) {
+	GlobalMemory& g = save.globals;
+	const uint32_t tick = g.u32(global::kWorldTick);
+	uint16_t script = 0;
+	for (size_t k = 0; k < save.events.size(); ++k) {
+		if (save.events[k].u16(6) == 0x1B) {
+			script = uint16_t(k);
+			break;
+		}
+	}
+	const MerchantMemory& m = save.merchants[size_t(save.player)].memory;
+	uint8_t town = m.u8(0x19);
+	for (const SavedShip& ship : save.ships) {
+		if (ship.memory.u8(0) == save.player && ship.memory.u8(0x39) < g.u32(global::kWorldTownCount)) {
+			town = ship.memory.u8(0x39);
+			break;
+		}
+	}
+	static constexpr struct { uint16_t mission; uint8_t b1, answers; } kLetters[] = {
+		{19, 2, 2}, {200, 2, 1}, {2, 1, 0}, {5, 5, 1}};
+	for (const auto& want : kLetters) {
+		const MissionProgram program = mission_file(save, want.mission);
+		if (!program) {
+			return false;
+		}
+		const std::vector<uint8_t>& p = *program;
+		const auto u16_at = [&](size_t at) { return at + 2 <= p.size() ? uint16_t(p[at] | p[at + 1] << 8) : uint16_t(0); };
+		const auto u32_at = [&](size_t at) { return uint32_t(u16_at(at)) | uint32_t(u16_at(at + 2)) << 16; };
+		bool sent = false;
+		for (uint32_t k = 0; k < u16_at(0) && !sent; ++k) {
+			const size_t at = u32_at(4 + 4 * k);
+			if (at + 12 > p.size() || p[at] != 0xF7 || p[at + 1] != want.b1 || p[at + 6] != want.answers) {
+				continue;
+			}
+			Letter letter(want.b1 == 5 ? 0x71 : uint8_t(0x3C + want.b1));
+			letter.entry.u8(5) = town;
+			GameMemory<0x10> record{};
+			record.u32(4) = tick + 30 * 0x100;
+			record.u16(8) = script;
+			record.u8(0xA) = p[at + 3];
+			record.u8(0xB) = want.answers;
+			record.u8(0xC) = p[at + 5];
+			record.u8(0xD) = 0xFF;
+			letter.buffer = mission_letter_text(save, nullptr, p, u32_at(at + 8), std::vector<uint32_t>(64, 0),
+				want.answers, record);
+			record.u32(0) = uint32_t(letter.buffer.size());
+			letter.record = record;
+			send_letter(save, save.player, letter);
+			sent = true;
+		}
+		if (!sent) {
+			return false;
+		}
+	}
+	return true;
+}
+
 // The guild's auctions (guild_window.hpp): the player a member of the guild of his first ship's town (its bit in his
 // [+0x468]) and two auctions of ships (events 0x0A as 0x4DA510 makes them, in phase 0, which makes their ship) at the
 // next ticks, in that town and in the next one with a guild ([+0x2C8] & 0xC0): they are announced 14 days later and
@@ -899,6 +963,8 @@ const char kDebugStatesHelp[] =
 	"              shares on sale (the moneylender)\n"
 	"  letters     letters with buttons: a suitor, a proposal, the prince's request\n"
 	"              and a townsman who can't pay back the player's loan\n"
+	"  mission-letters  the missions' letters from the game's files: two answers, one,\n"
+	"              none, and the tavern's for the town of the player's first ship\n"
 	"  auctions    the player in the guild of his first ship's town and two auctions\n"
 	"              of ships there and in the next town with a guild (bidding in 15 days)\n"
 	"  auction     the same with the first auction only\n"
@@ -1289,6 +1355,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			}
 		} else if (state == "letters") {
 			letters_with_buttons(save);
+		} else if (state == "mission-letters") {
+			if (!mission_letters(save)) {
+				error = "the game's mission files 2, 5, 19 and 200 aren't there as expected";
+				return false;
+			}
 		} else if (state == "auctions" || state == "auction") {
 			if (!auctions(save, state == "auction" ? 1 : 2)) {
 				error = "the player's first ship isn't in a town";

@@ -21898,6 +21898,7 @@ int main(int argc, char** argv) {
 				queue_operation(save, *op);
 				mail.answered = mail.shown;
 				mail.answers.clear();
+				++mail.version;  // (The letter's window made again, without its buttons.)
 			}
 			return true;
 		};
