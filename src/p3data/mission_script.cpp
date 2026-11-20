@@ -5,7 +5,8 @@
 //
 // Rewritten so far: the loop and its waits (0x00, 0xFD, 0xFE, 0xFF); the variables' and numbers' 0x04..0x07, 0x09,
 // 0x0A, 0x21; the arithmetic 0x0B..0x0E; the comparisons 0x17..0x1C; the search of a ship 0x26 / 0x27; an office
-// 0x38; the mission letter 0xF7. The handlers come in parts (roadmap, section 3; the order by what the saves run:
+// 0x38; the next human 0x3F; a family name 0x24; a wanderer's next town 0x29 (0x533210); a ship by its hull 0x40;
+// the mission letter 0xF7. The handlers come in parts (roadmap, section 3; the order by what the saves run:
 // re/emu/sesion47/opcount.sh); until then an instruction not rewritten ends the script as an unknown one does, and is
 // counted (unwritten_mission_ops).
 
@@ -76,6 +77,55 @@ void end_script(SaveGame& save, uint16_t event, MissionData::Script& script) {
 	fn_4f37e0(save, script.program);
 	script.variables.clear();
 	save.events[event].u32(0xC) = 0;
+}
+
+// 0x533210 (on the world): the town nearest to `town` by the world's matrix (town_travel: [k · n + town], k's way to
+// it), not `town` itself nor one of `avoid`, nor, for a ship (below the ships' count) of a type ([+0xE]) above 1, a
+// town with the bit 1 of its [+0x2C8]; 0 if none. With `wander`, then the first town within the best way + 2 (the
+// same ones left out) whose turn comes: the world's tick, counted up for each such town, a multiple of 3.
+uint8_t fn_533210(const SaveGame& save, uint32_t town, const uint32_t* avoid, int32_t count, bool wander, uint32_t ship) {
+	const GlobalMemory& g = save.globals;
+	const uint32_t n = g.u32(global::kWorldTownCount);
+	const bool has_ship = uint16_t(ship) != 0xFFFF && uint16_t(ship) < g.u16(global::kShipCount) &&
+		uint16_t(ship) < save.ships.size();
+	const uint8_t type = has_ship ? save.ships[uint16_t(ship)].memory.u8(0xE) : 0;
+	auto left_out = [&](uint32_t k) {
+		if (has_ship && k < save.towns.size() && (save.towns[k].memory.u8(0x2C8) & 1) && type > 1) {
+			return true;
+		}
+		for (int32_t i = 0; i < count; ++i) {
+			if (avoid[i] == k) {
+				return true;
+			}
+		}
+		return false;
+	};
+	auto way = [&](uint32_t k) -> uint32_t {
+		const size_t at = size_t(k) * n + town;
+		return at < save.town_travel.size() ? save.town_travel[at] : 0;
+	};
+	uint32_t best = 0x0FFFFFFF;
+	uint32_t found = 0;
+	for (uint32_t k = 0; k < n; ++k) {
+		if (k == town || way(k) >= best || left_out(k)) {
+			continue;
+		}
+		found = k;
+		best = way(k);
+	}
+	if (wander) {
+		uint32_t turn = g.u32(global::kWorldTick);
+		for (uint32_t k = 0; k < n; ++k) {
+			if (k == town || way(k) >= best + 2) {
+				continue;
+			}
+			if (turn++ % 3 != 0 || left_out(k)) {
+				continue;
+			}
+			return uint8_t(k);
+		}
+	}
+	return uint8_t(found);
 }
 
 // What an instruction leaves: the script ends there (an unknown instruction, 0x4F2D44: the program let go and the
@@ -253,6 +303,59 @@ Step step(Run& r, uint8_t op) {
 		}
 		if (r.b(7) != 0) {
 			send_ticker(s, uint16_t(r.var(5)), 0x12, uint16_t(r.var(2)));
+		}
+		return Step::Next;
+	}
+	case 0x24: {
+		// 0x4EF65F: v ← a family name's number of the game's own: (the event list's [+0x8] (0x6DD744) + the u32 at
+		// the towns' array + 0x3EEC (the town 6's [+0x31C]) + the one at + 0x4910 (the town 7's [+0x348])) · now's
+		// low 16 bits, its low 28 bits, modulo the families' count (the names object's [+0xD4], 0x4F38F0).
+		const SaveGame& s = r.save;
+		uint32_t n = s.globals.u16(0x6DD744);
+		n += s.towns.size() > 6 ? s.towns[6].memory.u32(0x31C) : 0;
+		n += s.towns.size() > 7 ? s.towns[7].memory.u32(0x348) : 0;
+		n *= s.globals.u32(global::kWorldTick) & 0xFFFF;
+		n &= 0x0FFFFFFF;
+		const uint16_t families = s.globals.u16(0x6DDB74);
+		r.var(1) = families ? n % families : 0;  // (None: the game divides by 0.)
+		return Step::Next;
+	}
+	case 0x29: {
+		// 0x4EFBAA: the town after d for a wanderer that was in a, b and c (0x533210 on d, those three left out,
+		// wandering by the variable e, no ship); then a ← b, b ← c, c ← d and d ← it.
+		const uint32_t seen[3] = {r.var(1), r.var(2), r.var(3)};
+		const uint8_t next = fn_533210(r.save, r.var(4), seen, 3, r.var(5) != 0, 0xFFFF);
+		r.var(1) = r.var(2);
+		r.var(2) = r.var(3);
+		r.var(3) = r.var(4);
+		r.var(4) = next;
+		return Step::Next;
+	}
+	case 0x40: {
+		// 0x4F12BB: f ← −1, then the first ship of the merchant c (from his [+0xE] by [+0x4], below the ships' count)
+		// whose hull ([+0x18] · 100 / [+0x14], signed) is at least b with the variable a set, below b without it, and
+		// whose state ([+0x134]) the mode d takes: 0 the state 0xF, 1 below 4, 2 and over either; another mode none.
+		SaveGame& s = r.save;
+		const bool above = r.var(1) != 0;
+		const int32_t hull = int32_t(r.var(2));
+		const uint32_t who = r.var(3);
+		const int32_t mode = int32_t(r.var(4));
+		r.var(5) = 0xFFFFFFFFu;
+		const uint16_t ships = s.globals.u16(global::kShipCount);
+		uint16_t id = who < s.merchants.size() ? s.merchants[who].first_ship() : 0xFFFF;
+		for (; id < ships && id < s.ships.size(); id = s.ships[id].memory.u16(0x4)) {
+			const ShipMemory& m = s.ships[id].memory;
+			const int32_t max = m.s32(0x14);
+			const int32_t percent = max ? m.s32(0x18) * 100 / max : 0;  // (A max of 0: the game divides by 0.)
+			if (above ? percent < hull : percent >= hull) {
+				continue;
+			}
+			const uint16_t state = m.u16(0x134);
+			const bool taken = mode >= 2 ? (state == 0xF || state < 4) : mode == 0 ? state == 0xF : mode == 1 && state < 4;
+			if (taken) {
+				r.var(5) = id;
+				break;
+			}
 		}
 		return Step::Next;
 	}
