@@ -1,6 +1,6 @@
 // La cola de eventos (events.cpp): los tipos 0x03 (0x4DDA40), 0x01 (0x4DB4E0),
 // 0x2A (0x4DE4F0), 0x2B (0x4DE790), 0x27 (0x4DDC00), 0x07 (0x4E23A4), 0x1D
-// (0x4E9564) and 0x15 (0x4E7C74).
+// (0x4E9564), 0x15 (0x4E7C74) and 0x09 (0x4E2824).
 //
 //   0x01  deuda de un comerciante ([+0x11]) con otro ([+0x10]; 0xFF: con la
 //         ciudad), u32 [+0x8] lo que debe, [+0x14] la ciudad: cada 10 días
@@ -20,6 +20,8 @@
 //         el evento 0x03): se extiende a los edificios cercanos y los borra.
 //   0x15  a merchant's wedding (operation 0x60, queued only by the mission
 //         interpreter and the interface): the dowry ships and the feast.
+//   0x09  a good or bad harvest in a town (made only by the mission
+//         interpreter's 0xFB): the town's mark and the letters 0x08 and 0x09.
 //
 // Checked with the oracle (town_oracle.py --barcos --cpr --resto 4d85c0) in
 // the 12 saves over 60 days. What they don't reach was checked with retouched
@@ -2734,6 +2736,101 @@ uint32_t fn_4e8804(SaveGame& save, uint16_t event) {
 	return 1;
 }
 
+// 0x4E2824 (event 0x09; made only by the mission interpreter's 0xFB): a good or bad harvest in the town [+0x10] (a
+// u16 below the towns' count; else the event goes, untouched), [+0x14] good (non-zero) or bad, [+0x8] its stage:
+//   0  the town's [+0x2C8] gets 0x4000 (good) or 0x2000 (bad), the other cleared;
+//   1  the letter 0x08 {the town, [+0x14], 1} to the owner of each office of the town with some production of the
+//      day of grain, honey, wine or hemp ([+0xC4], [+0xD8], [+0xE0], [+0x108]);
+//   2  the letter 0x09 {the town, [+0x14], 1} to the chronicle; the next stage after [+0xC] ticks, but if that ends
+//      between the days 0x8E and 0x109 of the year (both left out) it is put off by 15483 ticks at a time past the
+//      day 0x109;
+//   3  the town's 0x2000 and 0x4000 cleared;
+//   4  the letter 0x08 {the town, [+0x14], 0} to the same owners;
+//   5  the bits cleared again and the letter 0x09 {the town, [+0x14], 0} to the chronicle; with the s16 [+0x12] 0 the
+//      event goes; else it comes back at the day 0x1F5 counted from this year's start (the next year's day 0x88),
+//      the stage 0 and [+0x12] 0, [+0x14] turned over when [+0x12] was negative.
+// Each other stage comes back in 7 days; a stage past 5 clears the bits and the event goes. Returns 0 when it goes.
+// Checked with the oracle: scenario harvest_event (tools/oracle/retouch_unchecked.py).
+uint32_t fn_4e2824(SaveGame& save, uint16_t event) {
+	GlobalMemory& g = save.globals;
+	Event& e = save.events[event];
+	Letter letter;  // 0x51A850: one for every stage.
+	if (e.u16(0x10) >= town_count(save)) {
+		return 0;
+	}
+	TownMemory& t = town_of(save, e.u16(0x10));
+	// The letters 0x08 to the owners of the town's offices that produce what a harvest gives.
+	const auto to_producers = [&](uint16_t start) {
+		letter.entry.u8(4) = 0x08;
+		letter.entry.u8(5) = e.u8(0x10);
+		letter.entry.u16(8) = e.u8(0x14);
+		letter.entry.u16(0xA) = start;
+		for (uint32_t o = t.u16(0x784); o < g.u16(global::kWorldOfficeCount);) {
+			const OfficeMemory& office = save.offices[o].memory;
+			if (office.s32(0xD8) > 0 || office.s32(0xE0) > 0 || office.s32(0x108) > 0 || office.s32(0xC4) > 0) {
+				send_letter(save, office.u16(0x2C4), letter);
+			}
+			o = office.u16(0x2CA);
+		}
+	};
+	const auto to_chronicle = [&](uint16_t start) {
+		letter.entry.u8(4) = 0x09;
+		letter.entry.u8(5) = e.u8(0x10);
+		letter.entry.u16(8) = e.u8(0x14);
+		letter.entry.u16(0xA) = start;
+		send_letter(save, kLetterToChronicle, letter);
+	};
+	switch (e.u32(8)) {
+	case 0:
+		t.u32(0x2C8) = e.u8(0x14) != 0 ? (t.u32(0x2C8) & ~0x2000u) | 0x4000 : (t.u32(0x2C8) & ~0x4000u) | 0x2000;
+		e.u32(8) = 1;
+		e.u32(0) += 0x700;
+		return 1;
+	case 1:
+		to_producers(1);
+		e.u32(8) = 2;
+		e.u32(0) += 0x700;
+		return 1;
+	case 2: {
+		to_chronicle(1);
+		const uint32_t day = uint32_t(g.u16(global::kWorldDayOfYear)) << 8;
+		uint32_t end = e.u32(0xC) + day;
+		if (end > 0x8E00 && end < 0x10900) {
+			end += 15483 * ((0x108FF - end) / 15483 + 1);
+		}
+		e.u32(0) += end - day;
+		e.u32(8) = 3;
+		return 1;
+	}
+	case 3:
+		t.u32(0x2C8) &= ~0x6000u;
+		e.u32(0) += 0x700;
+		e.u32(8) = 4;
+		return 1;
+	case 4:
+		to_producers(0);
+		e.u32(8) = 5;
+		e.u32(0) += 0x700;
+		return 1;
+	case 5:
+		t.u32(0x2C8) &= ~0x6000u;
+		to_chronicle(0);
+		if (e.s16(0x12) == 0) {
+			return 0;
+		}
+		if (e.s16(0x12) < 0) {
+			e.u8(0x14) = e.u8(0x14) == 0 ? 1 : 0;
+		}
+		e.u16(0x12) = 0;
+		e.u32(8) = 0;
+		e.u32(0) += (0x1F5 - uint32_t(g.u16(global::kWorldDayOfYear))) << 8;
+		return 1;
+	default:
+		t.u32(0x2C8) &= ~0x6000u;
+		return 0;
+	}
+}
+
 }  // namespace events_towns_detail
 
 using namespace events_towns_detail;
@@ -2764,6 +2861,8 @@ int events_towns(SaveGame& save, uint16_t event, uint16_t type) {
 		return fn_4e7c74(save, event) ? 1 : 0;  // A merchant's wedding.
 	case 0x18:
 		return fn_4e8804(save, event) ? 1 : 0;  // Company shares: the dividends.
+	case 0x09:
+		return fn_4e2824(save, event) ? 1 : 0;  // A harvest's letters (made by the mission interpreter's 0xFB).
 	default:
 		return -1;
 	}

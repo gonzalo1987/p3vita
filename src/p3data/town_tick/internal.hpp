@@ -529,7 +529,7 @@ void fn_4da510(SaveGame& save, uint32_t ship);
 // del grupo, 0 quitarlo (vuelve a la lista de libres) y 1 llevarlo a su sitio
 // por su tick, ya cambiado (0x4D8DD0).
 int events_big(SaveGame& save, uint16_t event, uint16_t type);  // 0x2c, 0x5, 0x16
-int events_towns(SaveGame& save, uint16_t event, uint16_t type);  // 0x3, 0x1, 0x2a, 0x2b, 0x27
+int events_towns(SaveGame& save, uint16_t event, uint16_t type);  // 0x3, 0x1, 0x2a, 0x2b, 0x27, 0x7, 0x1d, 0x15, 0x18, 0x9
 int events_mayor(SaveGame& save, uint16_t event, uint16_t type);  // 0x2, 0xa, 0x36, 0x2d, 0x20, 0x21
 // events_mayor.cpp: 0x5311D0 (on the world), a tick's date: the day of the
 // month (from 1), the month (from 1) and the year ((tick >> 8) / 365), as

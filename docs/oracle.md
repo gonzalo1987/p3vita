@@ -2790,8 +2790,8 @@ All the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu
 - The campaigns', `retouch_unchecked.py mission_campaign_a` (the reading ones: a merchant's, his ships', a town's,
   0x5B, 0x65, 0x66, 0x5C on two chronicle letters made 0x3A and 0x39, 0x5E, 0x31 held at both ends, 0x70 in a convoy;
   saves 3, 5, 7: 21 of 21 targets) and `mission_campaign_b` (0x5D, 0x5F with and without an office (made), 0x63, 0x64,
-  0x67, the fires 0xE5 and 0xED (0x525B90), the plague 0xEC, 0xFB with its event 9 moved away after its tick (its
-  handler isn't rewritten); saves 5, 7: 12 of 12; save 3's home office has no business): 256 calls equal each. 0x63's
+  0x67, the fires 0xE5 and 0xED (0x525B90), the plague 0xEC, 0xFB (its event 9 at a town past the count: it goes at
+  its first tick); saves 5, 7: 12 of 12; save 3's home office has no business): 256 calls equal each. 0x63's
   operands first read the wrong way (b the type, d the town): caught by the scenario. Broken on purpose (0x525B90's
   modulo, 0xEC's factor): caught.
 - The 19 no file uses, `retouch_unchecked.py mission_unused` (0x02, 0x0F, 0x10, 0x13, 0x14, 0x16, 0x25 after a
@@ -2805,6 +2805,15 @@ All the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu
   `retouch_unchecked.py mission_attack` (0xF9 on ships at sea of the kinds 0, 1, 2 and on a docked one, 0xE9 with a
   town; the executor 0x535760 recorded): saves 3, 5, 7, the events and the executor's calls equal, 5 of 5 targets.
   Broken on purpose (the captain's key, the pirate's [+0x136]): caught. world.sh 7 days: 0.
+- The event 0x09 (0x4E2824, `events_towns_detail::fn_4e2824`: a harvest's letters, made by 0xFB; the oracle lets its
+  letters through, `MAIL_CALLS` 0x4E2941, 0x4E299D, 0x4E2A9E, 0x4E2B04), `retouch_unchecked.py harvest_event`: every
+  event 9 moved to the next tick after each tick, so one stage a tick; one made by 0xFB (a bad harvest in the player's
+  home town, its stage 2's end inside the days 0x8E..0x109: put off), one good with [+0x12] −1 (a second round turned
+  over; its end at 0x8E00), one with [+0x12] 1 in another town (its end past 0x10900), a town past the count, the
+  stage 6; the home town's offices producing only honey (the player's) or by turns grain, wine, hemp or none, set again
+  after each tick; the player keeps his class-2 letters. Saves 3, 5, 7: 256 calls equal each, 21 of 21 targets (save 5:
+  19, three offices in its home town). Broken on purpose (the letter 0x08's [+0xA], the put-off's 15483): caught. The
+  mission scenarios, world.sh 7 days and the world 7 days with the missions: 0.
 
 ## The game's static initializers (2026-11-03)
 

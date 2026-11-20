@@ -557,6 +557,9 @@ MAIL_CALLS += (
     0x4EDDEB, 0x4EDE69, 0x4EDEAA,
     # Its 0xF6 (0x4EDF3F): the treasure map's letter 0x45 or 0x46; its 0x68 (0x4F286E, no file uses it): a letter 0x22.
     0x4EDFED, 0x4F2A67,
+    # A harvest, the event 0x09 that its 0xFB makes (0x4E2824, town_tick/events_towns.cpp): the letters 0x08 to the
+    # town's producers and 0x09 to the chronicle, at its start and its end.
+    0x4E2941, 0x4E299D, 0x4E2A9E, 0x4E2B04,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is

@@ -6064,7 +6064,8 @@ def mission_campaign_b(o):
     ship sold to an AI merchant); 0x5F (one of the player's home businesses of a type sold to an AI merchant; then for a
     merchant without an office there: one made); 0x63 (two of a type put on sale: 0x28); 0x64; 0x67 (a crayer, and a
     big ship in a town with the bit 1 of [+0x2C8]); 0xE5, 0xED (its town the operand's number) and 0xEC in the player's
-    home town; 0xFB (the event 9 made, then moved far away after its tick: its handler isn't rewritten). Saves 3, 5, 7."""
+    home town; 0xFB (the event 9 made: its town past the count, it goes at its first tick; harvest_event runs the
+    rest). Saves 3, 5, 7."""
     towns, offices, merchants, ships = o.counts()
     player = o.u32(to.PLAYER)
     home = o.u8(o.merchant(player) + 0x19)
@@ -6090,15 +6091,6 @@ def mission_campaign_b(o):
                    {1: player, 2: 1, 3: 0, 4: home, 6: 3, 7: 100, 8: gate}, 4)
     mission_script(o, p2m([bytes([0xE5, 1]), bytes([0xEC, 1]), bytes([0xED, home]), WAIT]), {1: home, home: home}, 5)
     mission_script(o, p2m([bytes([0xFB, 1, 2]), WAIT]), {1: 0x1234, 2: 0x5678}, 6)
-
-    def during(o):
-        def after(o, t):
-            if t == 5:  # (After the tick of 0xFB's script: its event 9 out of the way.)
-                for i, a in rt.events(o):
-                    if o.u16(a + 6) == 9:
-                        rt.move_event(o, i, a, o.u32(WORLD + 0x14) + 0x10000)
-        return after
-    return during
 
 
 def mission_unused(o):
@@ -6160,6 +6152,58 @@ def mission_attack(o):
                            bytes([0xF9, 1, 11, 3, 12]), bytes([0xE9, 1, 13, 3, 14]), WAIT]),
                    {1: 0x0305, 2: at_sea[0], 3: 0, 5: at_sea[1 % len(at_sea)], 6: 1, 8: at_sea[2 % len(at_sea)], 9: 2,
                     11: docked, 13: home}, 1)
+
+
+def harvest_event(o):
+    """The event 0x09 (0x4E2824, events_towns.cpp: a harvest's letters), each of its stages a tick after the one before
+    (every event 9 moved to the next tick after each tick): A made by 0xFB (a bad harvest in the player's home town,
+    its stage 2's end inside the days 0x8E..0x109: put off); B by hand (a good one there, [+0x12] −1: back for a second
+    round turned over; its end at 0x8E00, left as it is); C ([+0x12] 1: a second round as it was; in another town of
+    the player's, its end past 0x10900); D a town past the count; E the stage 6. The offices of the home town with
+    production of only honey (the player's) or, by turns, grain, wine, hemp or none (set again after each tick); the
+    player keeps his class 2's letters (0x08). Saves 3, 5, 7."""
+    towns, offices, _, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    other = next((o.u8(o.office(i) + 0x2C6) for i in rt.merchant_offices(o, player)
+                  if o.u8(o.office(i) + 0x2C6) != home), (home + 1) % towns)
+    day = o.u16(WORLD + 4) << 8
+    w8(o, o.merchant(player) + 0x39, 0)
+
+    def chain(t):
+        out, i = [], o.u16(o.town(t) + 0x784)
+        while i < offices:
+            out.append(i)
+            i = o.u16(o.office(i) + 0x2CA)
+        return out
+    mine = [i for i in chain(home) if o.u16(o.office(i) + 0x2C4) == player]
+    print(f'player {player}: home {home} (offices {chain(home)}, his {mine}), other {other} ({chain(other)}), day '
+          f'{day >> 8:#x}')
+    mission_script(o, p2m([bytes([0xFB, 1, 2]), WAIT]), {1: home, 2: (0x9000 - day) & 0xFFFFFFFF}, 1)
+    new_event(o, 2, 9, d8=0, dc=(0x8E00 - day) & 0xFFFFFFFF, w10=home, w12=0xFFFF, b14=1)
+    new_event(o, 3, 9, d8=0, dc=0x20000, w10=other, w12=1, b14=0)
+    new_event(o, 2, 9, d8=0, w10=towns)
+    new_event(o, 2, 9, d8=6, w10=home)
+
+    def produce():
+        # The player's office honey; the others by turns grain, wine, hemp or none.
+        others = [i for i in chain(home) if i not in mine]
+        for i in chain(home):
+            what = 0xD8 if i in mine else (0xC4, 0xE0, 0x108, None)[others.index(i) % 4]
+            for field in (0xC4, 0xD8, 0xE0, 0x108):
+                w32(o, o.office(i) + field, 3 if field == what else 0)
+
+    def during(o):
+        produce()
+
+        def after(o, t):
+            produce()
+            now = o.u32(WORLD + 0x14)
+            for i, a in rt.events(o):
+                if o.u16(a + 6) == 9 and o.u32(a) > now + 1:
+                    rt.move_event(o, i, a, now + 1)
+        return after
+    return during
 
 
 def hanse_dev_candidacy(o):
@@ -15285,6 +15329,11 @@ SCENARIOS = {
         '@4f0679', '@4dc800', '@4eea11', '@4ee03c'], missions=True),
     'mission_attack': Scenario(mission_attack, [0x4D85C0, 0x535760], 1, [
         '@53fb3c', '@53fb86', '@53fba1', '@53fbf8', '@53fb36>53fc64'], missions=True),
+    'harvest_event': Scenario(harvest_event, [0x4D85C0], 1, [
+        '@4e2860>4e2b79', '@4e288f', '@4e28a3', '@4e292d', '@4e2913>4e292d', '@4e291b>4e292d', '@4e2923>4e292d',
+        '@4e292b>4e2946', '@4e29c6', '@4e29bc>4e29f1', '@4e29c4>4e29f1', '@4e2a05', '@4e2a8a', '@4e2a70>4e2a8a',
+        '@4e2a78>4e2a8a', '@4e2a80>4e2a8a', '@4e2a88>4e2aa3', '@4e2b10>4e2b79', '@4e2b14', '@4e2b12>4e2b1d',
+        '@4e2b6a'], missions=True),
     'hanse_dev_candidacy': Scenario(hanse_dev_candidacy, [0x535760], 0, [
         '@4f9397', '@4f93a4', '@535fb2>537025', '@53b247', '@53b283', '@53b24e>53b28a', '@53b255>53b28a',
         '@53b259>53b28a', '@53b281>53b28a', '@53b26c>53b28a', '@53b29e', '@53b2b0', '@53b2ae>53b2b8', '@53b34a',

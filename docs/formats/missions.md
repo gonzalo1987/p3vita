@@ -241,6 +241,12 @@ them, 0x26's handler).
 handler) 0x32 0x3C 0x4A 0x52 0x55 0x68 0x71 0x73 0x74 0xE4 0xEA 0xF5. What each one does: the comments of
 `mission_script.cpp` (`step()`), every one rewritten (2026-11-20) and checked with the oracle (`docs/oracle.md`).
 
+What hangs from them in the world: the operations they queue (0x28, 0x7C, 0x7D, 0x82, 0x8E: `run_operation`), the
+letters they compose (0xF7, 0xF6, 0x68) and the event 0x09 that 0xFB makes (0x4E2824, `events_towns.cpp`: a good or bad
+harvest in a town, the town's [+0x2C8] 0x4000 or 0x2000 for [+0xC] ticks or so, the letters 0x08 to the town's
+producers of grain, honey, wine and hemp and 0x09 to the chronicle at its start and its end; with [+0x12] it comes
+back the next year, turned over when negative).
+
 ## Checks
 
 - The loads: the oracle with `--misiones` (TownOracle `missions`) runs 0x511270 and 0x511690 as the game; the regions

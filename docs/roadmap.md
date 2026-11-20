@@ -133,11 +133,11 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 
 | Parte | Hecho | Lo que falta |
 |-|-|-|
-| La simulación sola (sin el jugador) | del código del juego al que llega, el 86 % reescrito con su nombre y otro 12 % hecho sin él (cargar y guardar partidas, la navegación) o saltado a propósito (medida abajo) | el 1 % sin nada son los manejadores de los eventos de las misiones y de la red y de dos que nadie crea; además, los estados raros del barco y unas ramas sueltas (apartado 2) |
-| Las misiones (19-11-2026) | la base: la lista, la 0xC0, cargar y guardar los guiones, el bucle del intérprete y sus 4 esperas | las 138 instrucciones del intérprete (80 de la partida de un jugador, 10 más en red, 28 más en las campañas, 14 sin uso), lo que cuelga de él, el visor, las campañas (apartado 3) |
-| Tipos de evento (58) | 53 | 5: 1 el intérprete de misiones, 1 la partida en red y 3 nadie |
+| La simulación sola (sin el jugador) | del código del juego al que llega, el 87 % reescrito con su nombre y otro 12 % hecho sin él (cargar y guardar partidas, la navegación) o saltado a propósito (medida abajo, 20-11-2026) | el 1 % sin nada son los manejadores del evento de la red y de dos que nadie crea; además, los estados raros del barco y unas ramas sueltas (apartado 2) |
+| Las misiones (20-11-2026) | la base (la lista, la 0xC0, cargar y guardar los guiones, el bucle del intérprete y sus 4 esperas), las 138 instrucciones del intérprete, las operaciones que encola (la 0x82 incluida) y el evento 0x09 que crea | las 4 operaciones del jugador sobre las cartas de misión, la carta final 0x3D, el visor, las campañas (apartado 3) |
+| Tipos de evento (58) | 54 (el 0x09 de las misiones, 20-11-2026) | 4: 1 la partida en red y 3 nadie |
 | Operaciones (193 códigos) | 169: las 37 de la simulación, 102 de las 106 del jugador (la 0x82 de las misiones, 20-11-2026), 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red, la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) y la 0xC0 (el arranque de las misiones, 19-11-2026) | **4 del jugador**, las del intérprete de misiones (0x54, 0x55, 0x74 y 0x76; apartado 3) y 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
-| Cartas (las 154 llamadas del juego que mandan una) | 139 | 15: 10 del intérprete de misiones y de la dieta, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
+| Cartas (las 154 llamadas del juego que mandan una) | 148 (las del intérprete y del evento 0x09, 20-11-2026) | 6: la carta final 0x3D del evento 0x34, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
@@ -161,23 +161,23 @@ Las partes se solapan, y el grafo es estático (no sigue las tablas de métodos 
 | Barcos: navegación, IA y convoyes (0x506720) | 152 | 62 | 69 % | 31 % | 0 % |
 | Lo diario, tareas programadas y objetos del mundo | 12 | 2 | 97 % | 3 % | 0 % |
 | Asedios (0x6349F0, 0x633A90) | 28 | 15 | 89 % | 11 % | 0 % |
-| Cola de eventos (0x4D85C0) | 415 | 193 | 87 % | 11 % | 2 % |
+| Cola de eventos (0x4D85C0) | 415 | 193 | 88 % | 11 % | 1 % |
 | Operaciones que encola la simulación | 172 | 72 | 79 % | 21 % | 1 % |
 | Camino a Gobernador | 223 | 93 | 81 % | 18 % | 1 % |
-| Cargar partida (0x549F40) | 103 | 42 | 16 % | 79 % | 4 % |
+| Cargar partida (0x549F40) | 103 | 42 | 16 % | 80 % | 4 % |
 | Guardar partida (0x549CC0) | 38 | 11 | 0 % | 96 % | 4 % |
 | Tormentas (0x5053C0) | 4 | 5 | 97 % | 3 % | 0 % |
 | Batallas y encuentros | 58 | 32 | 72 % | 28 % | 0 % |
-| Guiones de misiones (0x4ECF64, 0x511270) | 73 | 23 | 27 % | 33 % | 41 % |
-| **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | **86 %** | **12 %** | **1 %** |
+| Guiones de misiones (0x4ECF64, 0x511270) | 73 | 23 | 29 % | 35 % | 36 % |
+| **Toda la simulación** (advance_time y sus operaciones) | 597 | 287 | **87 %** | **12 %** | **1 %** |
 
 - Cargar y guardar partida salen «nombrados», pero están hechos e idénticos al juego en las 12 partidas:
   `savegame.cpp` y `savegame_write.cpp` los reescriben por estructuras, sin funciones `fn_`.
 - Las batallas, por sus tablas de métodos, son mucho más que esta fila: sin la interfaz, 249 funciones (148 KB) en el
   mar y 41 (50 KB) en las ciudades ([cloud/battles.md](cloud/battles.md)), todas hechas.
-- Lo «sin nada» de toda la simulación son los manejadores de los eventos que aún no se atienden (0x4E2824, el 0x09
-  de las misiones; 0x4E7BB4, el 0x14 de la red; apartado 1) y del 0x28 y el 0x29, que nadie crea (recalculado el
-  13-11-2026, con el 0x11 del ayuntamiento ya hecho).
+- Lo «sin nada» de toda la simulación son los manejadores de los eventos que aún no se atienden (0x4E7BB4, el 0x14
+  de la red; apartado 1) y del 0x28 y el 0x29, que nadie crea (recalculado el 13-11-2026, con el 0x11 del ayuntamiento
+  ya hecho; el 0x09 de las misiones, 0x4E2824, hecho el 20-11-2026).
 - **Todo el ejecutable** (`coverage.py`): un 18 % reescrito con los nombres del juego y otro 16 % nombrado. No mide el
   avance de la interfaz: el resto es casi todo código de ventanas y de dibujo, que p3vita no reescribe instrucción a
   instrucción sino que dibuja a su manera; lo que cuenta de ella son las órdenes que encola (las operaciones, arriba) y
@@ -426,10 +426,13 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   `mission_last`, `mission_network`, `mission_campaign_a`, `mission_campaign_b` y `mission_unused`, partidas 1, 3, 5
   y 7: las noventa y tres nuevas con sus ramas): iguales (`docs/oracle.md`). Sigue lo que cuelga del intérprete (abajo);
   luego, el oráculo con las misiones por omisión (y `world.sh` con ellas).
-- [ ] **Lo que cuelga del intérprete**: el evento 0x09 (0x4E2824, las cartas de buena y mala cosecha; lo crea la
-  instrucción 0xFB y p3vita lo quita sin hacer nada; la operación 0x82, el ataque pirata de una misión, está hecha
-  desde el 20-11-2026, `missions_detail::fn_53fb00`, comprobada con `mission_attack`; las demás que encola el
-  intérprete, 0x28, 0x7C, 0x7D y 0x8E, también; las cartas que compone, la 0xF7 con sus textos, la del mapa 0x45/0x46 y la 0x22, también) y la carta
+- [ ] **Lo que cuelga del intérprete**: el evento 0x09 está hecho desde el 20-11-2026 (0x4E2824, la buena o mala
+  cosecha de una ciudad que crea la instrucción 0xFB: la marca de la ciudad [+0x2C8] 0x4000 o 0x2000, las cartas 0x08 a
+  los dueños de las oficinas que producen trigo, miel, vino o cáñamo y 0x09 a la crónica, al empezar y al acabar, y la
+  vuelta al año siguiente; `events_towns_detail::fn_4e2824`, comprobado con `harvest_event`); la operación 0x82, el
+  ataque pirata de una misión, también (20-11-2026, `missions_detail::fn_53fb00`, comprobada con `mission_attack`);
+  las demás que encola el intérprete, 0x28, 0x7C, 0x7D y 0x8E, también; las cartas que compone, la 0xF7 con sus textos,
+  la del mapa 0x45/0x46 y la 0x22, también. Falta la carta
   final 0x3D del evento 0x34 (0x4F3AF0, con su lista de avisos [+0x8], 0x4F3980..0x4F3CE0). Y las cuatro operaciones del jugador que escriben en las variables de un guion o trabajan con las
   cartas que solo manda él (0x3C..0x40, 0x44, 0x45/0x46, 0x71): 0x74 (los botones de las cartas de misión, 0x53EC30; sus
   botones y bytes ya están en `letter_window.cpp`), 0x54 (quitar una carta 0x44, 0x53CA30 con 0x4D7340), 0x55 (pagar

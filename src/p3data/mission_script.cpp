@@ -1959,8 +1959,8 @@ Step step(Run& r, uint8_t op) {
 		return Step::Next;
 	}
 	case 0xFB: {
-		// 0x4ED2A7: a new event (0x4D8CF0 at now + 1, the queue's [+0x4] 0 meanwhile) of the kind 9 (the harvest's
-		// letters, 0x4E2824: roadmap section 3) with [+0x8] 0, [+0xC] b, [+0x10] a (a u16), [+0x12] 0, [+0x14] 0.
+		// 0x4ED2A7: a new event (0x4D8CF0 at now + 1, the queue's [+0x4] 0 meanwhile) of the kind 9 (a harvest's
+		// letters, 0x4E2824 in events_towns.cpp) with [+0x8] 0, [+0xC] b, [+0x10] a (a u16), [+0x12] 0, [+0x14] 0.
 		SaveGame& s = r.save;
 		GlobalMemory& g = s.globals;
 		g.u32(0x6DD740) = 0;
