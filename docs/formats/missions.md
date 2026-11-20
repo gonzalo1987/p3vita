@@ -237,7 +237,9 @@ them, 0x26's handler).
 | 0xFA | 0x4ED3A6 | 2 | 1 |  |  |
 | 0xFB | 0x4ED2A7 | 3 |  |  | 1 |
 
-(`re/emu/sesion45/optable.py` makes it.) What each one does is read as it is rewritten (the roadmap, section 3).
+(`re/emu/sesion45/optable.py` makes it.) The 20 without a file: 0x02 0x0F 0x10 0x13 0x14 0x16 0x25 0x27 (0x26's
+handler) 0x32 0x3C 0x4A 0x52 0x55 0x68 0x71 0x73 0x74 0xE4 0xEA 0xF5. What each one does: the comments of
+`mission_script.cpp` (`step()`), every one rewritten (2026-11-20) and checked with the oracle (`docs/oracle.md`).
 
 ## Checks
 

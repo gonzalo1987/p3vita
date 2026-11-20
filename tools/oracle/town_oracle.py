@@ -554,8 +554,8 @@ MAIL_CALLS += (
     # The mission interpreter's letter, its instruction 0xF7 (0x4ED4A0, mission_script.cpp): to the owners of a town's
     # offices (a dead branch: the memset before it), to each human merchant, or to the addressee as it is.
     0x4EDDEB, 0x4EDE69, 0x4EDEAA,
-    # Its 0xF6 (0x4EDF3F): the treasure map's letter 0x45 or 0x46.
-    0x4EDFED,
+    # Its 0xF6 (0x4EDF3F): the treasure map's letter 0x45 or 0x46; its 0x68 (0x4F286E, no file uses it): a letter 0x22.
+    0x4EDFED, 0x4F2A67,
 )
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is
@@ -598,6 +598,8 @@ EVENT_JUMPS = {
     # The mission interpreter's 0xF7 (0x4ED4A0) with its ticker line to the player: the messages window told
     # (0x47D1F0 on 0x6CC960, the interface's) when no battle window is open (0x4F3940).
     0x4EDF27: 0x4EDF31,
+    # Its 0xF5 (0x4EE012, no file uses it): the game's message window to the player (0x41D9B0 on *0x6CBB10).
+    0x4EE042: 0x4EE085,
 }
 # Functions that read a local before writing it (a game bug: the value is
 # whatever an earlier call left on the stack). p3vita takes it as 0, which is

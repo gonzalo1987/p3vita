@@ -386,8 +386,7 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   `mission_start` (la 0xC0 en todos los modos), la partida nueva entera con la 0xC0, las partidas escritas, ctest
   `missions`. Hasta que estén sus instrucciones, un guion termina en la primera que no está (como antes, que se
   tiraban), y el oráculo y las comprobaciones de siempre siguen sin las misiones.
-- [ ] **Las instrucciones del intérprete**: 119 de las 138 con manejador, **todas las que usan los ficheros del juego**
-  (la partida de un jugador, la de red y las campañas) (tabla en formats/missions.md, con cuántas
+- [x] **Las instrucciones del intérprete**: **las 138 con manejador** (20-11-2026) (tabla en formats/missions.md, con cuántas
   misiones usan cada una). Hechas (20-11-2026, `re/emu/sesion47/README.md` y `re/emu/sesion48/README.md`): 0x04..0x07,
   0x09..0x0E, 0x11, 0x12, 0x15, 0x17..0x1E, 0x20, 0x21, 0x23, 0x24, 0x26/0x27, 0x29 (con 0x533210, la ciudad más
   cercana), 0x2F (la mercancía que más le falta a una ciudad, 0x51BEB0), 0x35, 0x37 (la ventana de un suceso
@@ -413,7 +412,9 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   mar), 0x5C (buscar en la crónica), 0x5D (vender un barco, con 0x509250), 0x5E, 0x5F, 0x63 (los edificios de una
   oficina: contarlos, venderlos con 0x5256F0, ponerlos a la venta con la 0x28), 0x64 (marcar barcos de la IA), 0x65 (una
   ciudad por su nombre), 0x66 (el barco de un capitán pirata), 0x67 (dar un barco, con 0x50E000), 0xE5 y 0xED (un
-  incendio: la 0x7D, con 0x525B90), 0xEC (la peste: la 0x7C), 0xFB (el evento 0x09) y 0xEF (una ventana). **Comprobado: el
+  incendio: la 0x7D, con 0x525B90), 0xEC (la peste: la 0x7C), 0xFB (el evento 0x09) y 0xEF (una ventana); y las 19
+  que no usa ningún fichero (0x02 0x0F 0x10 0x13 0x14 0x16 0x25 0x32 0x3C 0x4A 0x52 0x55 0x68 0x71 0x73 0x74 0xE4 0xEA
+  0xF5). **Comprobado: el
   mundo entero 30 días con las misiones igual al juego en las 12 partidas**, llamada a llamada
   (`re/emu/sesion48/worldmd.sh`, por tramos), y la cola de eventos y las operaciones 60 días (igual salvo una
   diferencia de las batallas en la partida 4 que sale también sin las misiones: apartado 2); 7 días también en continuo
@@ -422,13 +423,14 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   en un estado retocado (`retouch_unchecked.py mission_branches`, partidas 3, 5 y 7: 0x07, 0x26 con todos los
   humanos, 0x27, el paso errante de 0x29, los modos de 0x40 y 0x4F, 0x44 con varias oficinas, las ramas de 0xF7 y
   todos los códigos «%» de sus cartas; `mission_ships_money`, `mission_ships_state`, `mission_misc`,
-  `mission_last`, `mission_network`, `mission_campaign_a` y `mission_campaign_b`, partidas 1, 3, 5 y 7: las setenta y
-  cuatro nuevas con sus ramas): iguales (`docs/oracle.md`). Siguen las 19 que no usa ningún fichero. Cuando estén todas, el
-  oráculo con las misiones por omisión (y `world.sh` con ellas).
-- [ ] **Lo que cuelga del intérprete**: el evento 0x09 (0x4E2824, las cartas de buena y mala cosecha), sus cartas (tres
-  que compone el guion con los textos del `.p2m`, la del mapa 0x46 o 0x45, la 0x22), las operaciones que encola (0x1B,
-  0x28, 0x4E, 0x7C, 0x7D, 0x82; la 0x8E de 0xFA, hecha) y la carta final 0x3D del evento 0x34 (0x4F3AF0, con su lista
-  de avisos [+0x8], 0x4F3980..0x4F3CE0). Y las cuatro operaciones del jugador que escriben en las variables de un guion o trabajan con las
+  `mission_last`, `mission_network`, `mission_campaign_a`, `mission_campaign_b` y `mission_unused`, partidas 1, 3, 5
+  y 7: las noventa y tres nuevas con sus ramas): iguales (`docs/oracle.md`). Sigue lo que cuelga del intérprete (abajo);
+  luego, el oráculo con las misiones por omisión (y `world.sh` con ellas).
+- [ ] **Lo que cuelga del intérprete**: el evento 0x09 (0x4E2824, las cartas de buena y mala cosecha; lo crea la
+  instrucción 0xFB y p3vita lo quita sin hacer nada), la operación 0x82 (el ataque pirata de una misión, que encolan
+  0xF9, 0xE9 y 0xE7 y que escribe en una variable del guion; las demás que encola el intérprete, 0x28, 0x7C, 0x7D y
+  0x8E, ya están; las cartas que compone, la 0xF7 con sus textos, la del mapa 0x45/0x46 y la 0x22, también) y la carta
+  final 0x3D del evento 0x34 (0x4F3AF0, con su lista de avisos [+0x8], 0x4F3980..0x4F3CE0). Y las cuatro operaciones del jugador que escriben en las variables de un guion o trabajan con las
   cartas que solo manda él (0x3C..0x40, 0x44, 0x45/0x46, 0x71): 0x74 (los botones de las cartas de misión, 0x53EC30; sus
   botones y bytes ya están en `letter_window.cpp`), 0x54 (quitar una carta 0x44, 0x53CA30 con 0x4D7340), 0x55 (pagar
   una carta 0x45/0x46, 0x4D74C0) y 0x76 (quitar una carta 0x71, 0x53EDF0 con 0x4D7870).

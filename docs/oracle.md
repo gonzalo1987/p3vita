@@ -2742,7 +2742,7 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
 
 ## The mission interpreter's instructions (2026-11-20)
 
-119 of the 138 handlers, every one the game's files use (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu/sesion48/README.md`).
+All the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu/sesion48/README.md`).
 - The oracle with the missions (`--misiones`): 0xF7's three calls of 0x4D6530 let through (`MAIL_CALLS`); 0xF7's
   ticker line to the player jumps over the messages window (0x4EDF27 → 0x4EDF31, `EVENT_JUMPS`: 0x47D1F0 on 0x6CC960,
   the interface's); a new region **MP** (each event 0x1B whose program no entry of the list has: u16 event, u32 size,
@@ -2794,6 +2794,13 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
   handler isn't rewritten); saves 5, 7: 12 of 12; save 3's home office has no business): 256 calls equal each. 0x63's
   operands first read the wrong way (b the type, d the town): caught by the scenario. Broken on purpose (0x525B90's
   modulo, 0xEC's factor): caught.
+- The 19 no file uses, `retouch_unchecked.py mission_unused` (0x02, 0x0F, 0x10, 0x13, 0x14, 0x16, 0x25 after a
+  0xF6, 0x71, 0x73 (an AI merchant's [+0x31] made a town), 0x52, 0x55; 0x3C's table renewed, active, put in a free
+  pair, emptied; 0x32 with and without towns left out; 0x4A after a tavern's mission letter (0xF7 with b1 5) and 0x68's
+  letters 0x22 (the player's class-2 letters kept: else not received, and not compared); 0x74; 0xE4; 0xEA; 0xF5, whose
+  message window the oracle jumps over (0x4EE042 → 0x4EE085); 0x68's letter let through, `MAIL_CALLS` 0x4F2A67):
+  saves 5, 7, 256 calls equal each, 24 of 24 targets (save 3: 23). Broken on purpose (0x3C's renewal, 0x68's
+  [+0xA]): caught, the second once 0xF7 had its own answers' variable (it overwrote 0x68's y).
 
 ## The game's static initializers (2026-11-03)
 

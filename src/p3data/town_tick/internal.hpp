@@ -61,6 +61,8 @@ namespace events_towns_detail {
 int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town);
 // 0x50E000 (events_towns.cpp): a ship of the type given to the merchant in the town; its index.
 uint16_t fn_50e000(SaveGame& save, uint16_t& type, uint32_t strength, uint32_t town_arg, uint32_t merchant_arg);
+// 0x4DC800 (events_towns.cpp): the towns' specialities drawn again ([+0x82C]).
+void fn_4dc800(SaveGame& save);
 }  // namespace events_towns_detail
 // operations.cpp: the operation 0x4E (0x53B850), a player's ship turns pirate.
 void fn_53b850(SaveGame& save, Sailing* sailing, const uint8_t* operation);
