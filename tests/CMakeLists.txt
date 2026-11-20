@@ -189,3 +189,9 @@ target_link_libraries(missions_test PRIVATE p3data)
 target_compile_options(missions_test PRIVATE -Wall -Wextra)
 
 add_test(NAME missions COMMAND missions_test)
+
+add_executable(town_life_test town_life_test.cpp)
+target_link_libraries(town_life_test PRIVATE p3data)
+target_compile_options(town_life_test PRIVATE -Wall -Wextra)
+
+add_test(NAME town_life COMMAND town_life_test)

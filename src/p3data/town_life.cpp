@@ -1,0 +1,2324 @@
+#include "p3data/town_life.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+
+#include "p3data/game_memory.hpp"
+
+namespace p3::data {
+
+namespace tick::events_towns_detail {
+bool fn_4e2314(const SaveGame& save, uint32_t town, uint8_t& merchant, uint32_t& tick);  // town_tick/events_towns.cpp
+}
+
+namespace {
+
+
+// The .let types the creatures read (docs/formats/town.md).
+constexpr uint8_t kWater = 0x0E;
+constexpr uint8_t kStreet = 0x10;  // srasse_vari_*
+constexpr uint8_t kStreetEdge = 0x17;  // strasse_rand_*
+constexpr uint8_t kPath = 0x18;  // feldweg_*
+constexpr uint8_t kGrass = 0x28;  // GRASS_VARI_*
+constexpr int kGate = 0x2F;  // the walls' gates
+constexpr int kNode = 0x30;  // the editor's nodes and spawners
+constexpr int kSpawner = 0x31;
+
+bool street(uint8_t ground) { return ground == kStreet || ground == kStreetEdge || ground == kPath; }
+
+bool read_u32(const uint8_t* data, size_t size, size_t& at, uint32_t& v) {
+	if (at + 4 > size) {
+		return false;
+	}
+	std::memcpy(&v, data + at, 4);
+	at += 4;
+	return true;
+}
+
+// The walkers' groups' classes (0x595CA0: the beggars, the poor, the middle class, the rich).
+constexpr int kGroupClass[4] = {4, 0, 1, 2};
+
+}  // namespace
+
+bool parse_town_spawn(const uint8_t* data, size_t size, std::vector<std::vector<TownCell2>>& out) {
+	out.clear();
+	size_t at = 0;
+	while (at < size) {
+		uint32_t tag = 0;
+		uint32_t count = 0;
+		if (!read_u32(data, size, at, tag) || !read_u32(data, size, at, count) || tag > 16 || count > 4096) {
+			return false;
+		}
+		if (out.size() <= tag) {
+			out.resize(tag + 1);
+		}
+		for (uint32_t i = 0; i < count; ++i) {
+			uint32_t x = 0;
+			uint32_t y = 0;
+			if (!read_u32(data, size, at, x) || !read_u32(data, size, at, y)) {
+				return false;
+			}
+			out[tag].push_back({int(x), int(y)});
+		}
+	}
+	return true;
+}
+
+bool parse_town_nodes(const uint8_t* data, size_t size, std::vector<std::vector<TownPath>>& out) {
+	out.clear();
+	size_t at = 0;
+	while (at < size) {
+		uint32_t tag = 0;
+		uint32_t count = 0;
+		if (!read_u32(data, size, at, tag) || !read_u32(data, size, at, count) || tag > 16 || count > 4096) {
+			return false;
+		}
+		if (out.size() <= tag) {
+			out.resize(tag + 1);
+		}
+		for (uint32_t i = 0; i < count; ++i) {
+			uint32_t n = 0;
+			if (!read_u32(data, size, at, n) || n > 4096) {
+				return false;
+			}
+			TownPath path;
+			for (uint32_t k = 0; k < n; ++k) {
+				uint32_t x = 0;
+				uint32_t y = 0;
+				if (!read_u32(data, size, at, x) || !read_u32(data, size, at, y)) {
+					return false;
+				}
+				path.push_back({int(int32_t(x)), int(int32_t(y))});
+			}
+			out[tag].push_back(std::move(path));
+		}
+	}
+	return true;
+}
+
+TownCell2 life_cell_pixel(int x, int y) {
+	return {x * kTileWidth + kTileWidth / 2 + (y & 1) * (kTileWidth / 2), y * kRowStep + 10};
+}
+
+TownCell2 life_pixel_cell(int x, int y) {
+	TownCell2 best = {0, 0};
+	double nearest = 1e9;
+	const int row = y / kRowStep;
+	for (int cy = row - 2; cy <= row + 2; ++cy) {
+		if (cy < 0) {
+			continue;
+		}
+		const int column = (x - (cy & 1) * (kTileWidth / 2)) / kTileWidth;
+		for (int cx = column - 1; cx <= column + 1; ++cx) {
+			if (cx < 0) {
+				continue;
+			}
+			const TownCell2 c = life_cell_pixel(cx, cy);
+			const double d = std::abs(x - c[0]) / 17.0 + std::abs(y - c[1] - 0.5) / 10.5;
+			if (d < nearest) {
+				nearest = d;
+				best = {cx, cy};
+			}
+		}
+	}
+	return best;
+}
+
+bool life_neighbour(int& x, int& y, uint8_t direction, int width, int height) {
+	switch (direction) {
+	case 0x00: y -= 2; break;
+	case 0x40: x += 1; break;
+	case 0x80: y += 2; break;
+	case 0xC0: x -= 1; break;
+	case 0x20: x += y & 1; y -= 1; break;
+	case 0x60: x += y & 1; y += 1; break;
+	case 0xA0: y += 1; x -= y & 1; break;
+	case 0xE0: y -= 1; x -= y & 1; break;
+	default: break;
+	}
+	return x >= 0 && y >= 0 && x < width && y < height;
+}
+
+LifeMap life_map(const TownMap& town, const TileSet& tiles, const std::vector<uint8_t>& grid) {
+	LifeMap map;
+	map.width = town.width;
+	map.height = town.height;
+	const size_t cells = size_t(town.width) * size_t(town.height);
+	map.ground.assign(cells, 0);
+	map.object.assign(cells, -1);
+	for (size_t i = 0; i < cells; ++i) {
+		if (i < town.ground.size() && town.ground[i].tile) {
+			const auto it = tiles.find(town.ground[i].tile);
+			if (it != tiles.end()) {
+				map.ground[i] = uint8_t(it->second.type);
+			}
+		}
+		if (i < town.objects.size() && town.objects[i].tile) {
+			const auto it = tiles.find(town.objects[i].tile);
+			if (it != tiles.end() && !it->second.is_editor_marker()) {
+				map.object[i] = int16_t(it->second.type);
+			}
+		}
+	}
+	map.grid = grid;
+	return map;
+}
+
+LifeTown life_town(const SaveGame& save, size_t index) {
+	LifeTown t;
+	if (index >= save.towns.size()) {
+		return t;
+	}
+	const SavedTown& town = save.towns[index];
+	const TownMemory& m = town.memory;
+	for (int g = 0; g < 4; ++g) {
+		t.residents[size_t(g)] = m.u32(0x2E4 - 4 * uint32_t(g));
+	}
+	for (uint32_t k = 0; k < 8; ++k) {
+		const uint8_t x = m.u8(0x7D0 + 2 * k);
+		const uint8_t y = m.u8(0x7D1 + 2 * k);
+		if (x != 0xFF && y != 0xFF) {
+			t.stalls.push_back({int(x), int(y)});
+		}
+	}
+	auto walk = [&](uint32_t head) {
+		size_t walked = 0;
+		for (uint32_t i = head; i < town.records.size() && walked < town.records.size(); i = town.records[i].next, ++walked) {
+			const BuildingRecord& r = town.records[i];
+			t.buildings.push_back({int(r.x), int(r.y), int(r.type)});
+		}
+	};
+	walk(m.u16(0x764));
+	const uint16_t offices = save.globals.u16(global::kWorldOfficeCount);
+	size_t walked = 0;
+	for (uint32_t i = m.u16(0x784); i < offices && i < save.offices.size() && walked < save.offices.size();
+		 i = save.offices[i].memory.u16(0x2CA), ++walked) {
+		walk(save.offices[i].memory.u16(0x2CE));
+	}
+	for (int g = 0; g < 4; ++g) {
+		t.passed[size_t(g)] = m.u32(0x2F4 - 4 * uint32_t(g));
+	}
+	t.plague = (m.u32(0x2C8) & 8) != 0;
+	int64_t mood = 0;
+	for (uint32_t k = 0; k < 4; ++k) {
+		mood += int64_t(int16_t(m.u16(0x300 + 2 * k))) * int64_t(m.u32(0x2D8 + 4 * k));
+	}
+	t.children = t.plague ? 0 : uint32_t((std::max<int64_t>(mood, 0) + 9999) / 10000);
+	t.total = m.u32(0x2D4);
+	t.official = (m.u32(0x76C) & 2) != 0;
+	// 0x677958: by the town's map (0x6DE4E0, the town's [0x2C2]).
+	static constexpr uint8_t kFace[28] = {0x20, 0xE0, 0x60, 0x60, 0x60, 0x60, 0x60, 0xA0, 0x60, 0x60, 0xA0, 0xA0, 0x20,
+		0x60, 0xE0, 0xA0, 0xA0, 0xA0, 0xA0, 0x60, 0xA0, 0x60, 0xE0, 0xA0, 0xA0, 0xA0, 0x20, 0xA0};
+	const int map = town.template_map();
+	t.official_face = map >= 0 && map < 28 ? kFace[map] : 0x20;
+	t.index = int(index);
+	const uint32_t towns = std::min<uint32_t>(save.globals.u32(global::kWorldTownCount), uint32_t(save.towns.size()));
+	for (uint32_t i = 0; i < towns; ++i) {
+		const uint32_t row = 0x6DDB90 + 0x34 * save.globals.u8(0x6DE4B8 + i);
+		t.world.push_back({int(save.globals.s32(row)), int(save.globals.s32(row + 4))});
+	}
+	// The event queue (*0x6DD73C: its head [+0x8], its count [+0xC]), its convoys.
+	const uint32_t count = save.globals.u16(0x6DD73C + 0xC);
+	walked = 0;
+	for (uint32_t i = save.globals.u16(0x6DD73C + 0x8); i < count && i < save.events.size() && walked < save.events.size();
+		 i = save.events[i].u16(4), ++walked) {
+		const auto& e = save.events[i];
+		if (e.u16(6) != 0x0C || !(e.u8(0xB) & 1)) {
+			continue;
+		}
+		LifeTown::Convoy c;
+		c.event = uint16_t(i);
+		c.to = e.u8(9);
+		c.state = e.u8(0x15);
+		c.counter = e.u8(0x16);
+		c.here = (c.state == 1 && e.u8(8) == index) || ((c.state == 6 || c.state == 7) && e.u8(9) == index);
+		if (c.here) {
+			t.convoys.push_back(c);
+		}
+	}
+	t.feeding_poor = (m.u32(0x2C8) & 0x800000) != 0;
+	const uint32_t now = save.globals.u32(global::kWorldTick);
+	uint8_t merchant = 0;
+	uint32_t date = 0xFFFFFFFFu;
+	if (!tick::events_towns_detail::fn_4e2314(save, uint32_t(index), merchant, date)) {
+		date = 0xFFFFFFFFu;
+	}
+	t.feast = now - m.u32(0x2D0) < 0x300 || date - now < 0x300;
+	return t;
+}
+
+size_t Creature::direction_index() const {
+	const size_t n = look ? look->directions.size() : 1;
+	return n ? ((size_t(dir) * n + 0x80) >> 8) & (n - 1) : 0;
+}
+
+const LcrFrame* Creature::current() const {
+	if (!look || look->directions.empty()) {
+		return nullptr;
+	}
+	const std::vector<LcrFrame>& frames = look->directions[direction_index()];
+	return frame < frames.size() ? &frames[frame] : (frames.empty() ? nullptr : &frames[0]);
+}
+
+int TownLife::rand() {
+	rand_state = rand_state * 214013u + 2531011u;
+	return int((rand_state >> 16) & 0x7FFF);
+}
+
+namespace {
+
+uint32_t frame_ms(const LcrAnim& a) {
+	const uint32_t ms = a.fps ? 1000 / a.fps : 0;  // 0x558770: 1000 / fps, at least 1
+	return ms ? ms : 1;
+}
+
+int sequence_index(const LcrAnim& a, int id) {
+	for (size_t i = 0; i < a.sequences.size(); ++i) {
+		if (a.sequences[i].id == (id & 0x1F)) {
+			return int(i);
+		}
+	}
+	return -1;
+}
+
+}  // namespace
+
+// 0x557730: the sequence `request` (its id | its mode) started; its first frame (its last, played backwards), or 0xFF
+// if the look has no such sequence (nothing changed).
+uint8_t TownLife::anim_start(Creature& c, uint8_t request) {
+	const int si = sequence_index(*c.look, request);
+	if (si < 0) {
+		return 0xFF;
+	}
+	c.seq = request;
+	const uint32_t due = now_ + frame_ms(*c.look);
+	if (c.frame_due > due) {
+		c.frame_due = due;
+	}
+	const LcrSequence& q = c.look->sequences[size_t(si)];
+	switch (request & 0xE0) {
+	case 0x00:
+	case 0xC0:
+		c.next_seq = request;
+		return uint8_t(q.first);
+	case 0x40:
+	case 0x80:
+		c.next_seq = uint8_t(request + 0x20);
+		return uint8_t(q.first);
+	case 0x20:
+	case 0xA0:
+		c.next_seq = request;
+		return uint8_t(q.last);
+	default:
+		c.next_seq = uint8_t(request - 0x20);
+		return uint8_t(q.last);
+	}
+}
+
+// Each class's animation's +0x8, at a sequence's end. The citizens' (0x559FE0): after a round of walking, one time
+// in 32 a gesture once (3 or 4) and one in 32 the sequence 5; after anything else, walking again.
+void TownLife::sequence_end(Creature& c) {
+	if (c.cls == 6 || c.cls == 0x1A) {
+		return;  // The juggler, a rat (0x57B240): the same again.
+	}
+	if (c.cls == 7) {
+		// The official (0x563010): his scroll unrolled (3 once), he reads (4) 4 to 11 rounds, rolls it up (3
+		// backwards) and walks back.
+		if (c.seq == 4) {
+			if (--c.reads == 0) {
+				c.next_seq = 0xE3;
+			}
+		} else if (c.seq == 0x83) {
+			c.reads = uint8_t(rand() % 8 + 4);
+			c.next_seq = 4;
+		} else if (c.seq == 0xE3) {
+			c.next_seq = 2;
+			c.back = true;
+			--c.point;
+			official_target(c);
+		}
+		return;
+	}
+	if (c.cls == 5) {
+		// A market seller (0x5724B0): crying (5) or the gesture 3, a third each, or bending to his wares (14 once,
+		// then 4, then 14 backwards).
+		switch (c.seq) {
+		case 0x05:
+		case 0x83:
+			switch (rand() % 3) {
+			case 0: c.next_seq = 5; break;
+			case 1: c.next_seq = 0x83; break;
+			default: c.next_seq = 0x8E; break;
+			}
+			break;
+		case 0xEE: c.next_seq = rand() & 1 ? 5 : 0x83; break;
+		case 0x84: c.next_seq = rand() % 3 == 0 ? 0x84 : 0xEE; break;
+		case 0x8E: c.next_seq = 0x84; break;
+		default: break;
+		}
+		return;
+	}
+	if (c.mode == 0 && c.cls == 3) {
+		// A child (0x56ECA0): after walking or running, a gesture (3 or 4), running, walking or the sequence 5, each
+		// one time in 32; after anything else, walking or running.
+		if (c.seq == 2 || c.seq == 6) {
+			switch (rand() & 0x1F) {
+			case 0: c.next_seq = 0x83; break;
+			case 1: c.next_seq = 0x84; break;
+			case 2: c.next_seq = 6; break;
+			case 3: c.next_seq = 2; break;
+			case 4: c.next_seq = 5; break;
+			default: break;
+			}
+		} else {
+			c.next_seq = rand() & 1 ? 2 : 6;
+		}
+		return;
+	}
+	if (c.mode == 0 && c.cls == 4) {
+		// A beggar (0x5635C0): after walking, one time in 32 he stands (3 once) and one in 32 sits down (14 once); sitting he
+		// begs (7, the gesture 8), and one time in 16 gets up (14 backwards); then walks on or stands.
+		switch (c.seq) {
+		case 0x02:
+			switch (rand() & 0x1F) {
+			case 0: c.next_seq = 0x83; break;
+			case 1: c.next_seq = 0x8E; break;
+			default: break;
+			}
+			break;
+		case 0x07:
+			switch (rand() & 0x0F) {
+			case 0: c.next_seq = 0x88; break;
+			case 1: c.next_seq = 0xEE; break;
+			default: break;
+			}
+			break;
+		case 0x88: c.next_seq = 7; break;
+		case 0x83: c.next_seq = 2; break;
+		case 0x8E: c.next_seq = rand() & 1 ? 7 : 0x88; break;
+		case 0xEE: c.next_seq = rand() & 1 ? 2 : 0x83; break;
+		default: break;
+		}
+		return;
+	}
+	if (c.mode != 0) {
+		// On a road (0x55A03C): walking on, but rounding a corner; a gesture once if the way ahead is taken and it isn't
+		// at the road's point yet (not hurrying). The stack's cells of this branch are read as best they could be.
+		if (c.corner == 2 || c.seq != 2) {
+			c.next_seq = 2;
+			return;
+		}
+		const TownPath* p = road_path(c.mode, c.road);
+		const TownCell2 here = life_pixel_cell(c.px(), c.py());
+		const TownCell2 at = p && c.point < p->size() ? life_pixel_cell((*p)[c.point][0], (*p)[c.point][1]) : here;
+		if (!can_go(c, c.dir, true, true) && here != at && !c.flee) {
+			c.next_seq = 0x83;
+		}
+		return;
+	}
+	if (c.seq != 2) {
+		c.next_seq = 2;
+		return;
+	}
+	switch (rand() & 0x1F) {
+	case 0: c.next_seq = 0x83; break;
+	case 1: c.next_seq = 0x84; break;
+	case 2: c.next_seq = 5; break;
+	default: break;
+	}
+}
+
+// 0x557340: the animation stepped (a frame each 1000 / fps ms, half that running); the frame now.
+uint8_t TownLife::anim_step(Creature& c, uint8_t* counter) {
+	const LcrAnim& a = *c.look;
+	uint8_t f = c.frame;
+	if (now_ < c.frame_due) {
+		return f;
+	}
+	if (counter) {
+		--*counter;
+	}
+	const size_t count = a.directions.empty() ? 0 : a.directions[c.direction_index()].size();
+	const int si = sequence_index(a, c.seq);
+	auto restart = [&] {
+		sequence_end(c);
+		f = anim_start(c, c.next_seq);
+		if (f == 0xFF) {
+			f = anim_start(c, c.seq);
+		}
+	};
+	switch (c.seq & 0xE0) {
+	case 0x00:
+	case 0x40:
+	case 0x80:
+		++f;
+		if (!(f < count && si >= 0 && f < a.sequences[size_t(si)].last + 1)) {
+			restart();
+		}
+		break;
+	case 0xA0:
+	case 0xC0:
+		restart();
+		break;
+	default:
+		--f;
+		if (!(f < count && si >= 0 && int(f) > a.sequences[size_t(si)].first - 1)) {
+			restart();
+		}
+		break;
+	}
+	if (f >= count) {
+		f = 0;
+	}
+	c.frame_due = now_ + (c.seq == 6 ? frame_ms(a) / 2 : frame_ms(a));
+	return f;
+}
+
+// 0x593580: no object but the editor's marks on the cell, no other creature, and a street, a path or (unless
+// `no_grass`) grass.
+bool TownLife::cell_free(int x, int y, bool no_grass, uint16_t id) const {
+	const int object = map_.object_at(x, y);
+	if (object >= 0 && object != kNode && object != kSpawner) {
+		return false;
+	}
+	for (const Creature& o : creatures_) {
+		if (o.id == id) {
+			continue;
+		}
+		for (const TownCell2& cell : o.cells) {
+			if (cell[0] == x && cell[1] == y) {
+				return false;
+			}
+		}
+	}
+	const uint8_t ground = map_.ground_at(x, y);
+	if (no_grass && ground == kGrass) {
+		return false;
+	}
+	return street(ground) || ground == kGrass;
+}
+
+// 0x55AD90: whether the creature may stand on the cell. Off the map, yes (the game's).
+bool TownLife::cell_walkable(const Creature& c, int x, int y, bool land, bool creatures) const {
+	if (!map_.in(x, y)) {
+		return true;
+	}
+	const uint8_t ground = map_.ground_at(x, y);
+	if (!land) {
+		return ground == kWater;
+	}
+	const int object = map_.object_at(x, y);
+	if (object >= 0) {
+		if (object == kGate) {
+			if (!c.cart_pass || !c.street_first || ground != kPath) {
+				return false;
+			}
+		} else if (object != kNode && object != kSpawner) {
+			return false;
+		}
+	}
+	if (creatures) {
+		for (const Creature& o : creatures_) {
+			if (o.id == c.id) {
+				continue;
+			}
+			for (const TownCell2& cell : o.cells) {
+				if (cell[0] == x && cell[1] == y && (!c.cart_pass || o.cls != 0x1F)) {
+					return false;
+				}
+			}
+		}
+	}
+	const bool in_town = map_.inside(x, y);
+	if (street(ground)) {
+		return c.cart_pass || (in_town ? !c.outside : c.outside);
+	}
+	if (ground == kGrass) {
+		return (in_town ? !c.outside : c.outside) && !c.on_street;
+	}
+	return false;
+}
+
+// 0x55A2C0 (a creature of radius 0; a siege's army in the way isn't read yet): whether it may take a step in the
+// direction: the diagonals the next cell, the others the two cells they cross (the nearer first).
+bool TownLife::can_go(Creature& c, uint8_t dir, bool land, bool creatures) const {
+	const TownCell2 here = life_pixel_cell(c.px(), c.py());
+	if (c.street_first) {
+		c.on_street = true;
+		c.on_street = cell_walkable(c, here[0], here[1], land, false);
+	} else {
+		c.on_street = false;
+	}
+	const TownCell2 middle = life_cell_pixel(here[0], here[1]);
+	int x = here[0];
+	int y = here[1];
+	auto test = [&](uint8_t d) {
+		life_neighbour(x, y, d, map_.width, map_.height);
+		return cell_walkable(c, x, y, land, creatures);
+	};
+	if (dir >= 0xF0 || dir < 0x10) {
+		return c.px() < middle[0] ? test(0xE0) && test(0x20) : test(0x20) && test(0xE0);
+	}
+	if (dir < 0x30) {
+		return test(0x20);
+	}
+	if (dir < 0x50) {
+		return c.py() < middle[1] ? test(0x20) && test(0x60) : test(0x60) && test(0x20);
+	}
+	if (dir < 0x70) {
+		return test(0x60);
+	}
+	if (dir < 0x90) {
+		return c.px() > middle[0] ? test(0x60) && test(0xA0) : test(0xA0) && test(0x60);
+	}
+	if (dir < 0xB0) {
+		return test(0xA0);
+	}
+	if (dir < 0xD0) {
+		return c.py() > middle[1] ? test(0xA0) && test(0xE0) : test(0xE0) && test(0xA0);
+	}
+	return test(0xE0);
+}
+
+// 0x55D700: the walker on a cell ahead that this one meets (none if the cell isn't one to walk, or two are there).
+const Creature* TownLife::walker_at(const Creature& c, int x, int y) const {
+	const uint8_t ground = map_.ground_at(x, y);
+	if (ground == kGrass) {
+		if (c.on_street) {
+			return nullptr;
+		}
+	} else if (street(ground)) {
+		if (!c.cart_pass && !map_.inside(x, y)) {
+			return nullptr;
+		}
+	} else {
+		return nullptr;
+	}
+	const int object = map_.object_at(x, y);
+	if (object >= 0) {
+		if (object == kGate) {
+			if (!c.cart_pass || !c.street_first || ground != kPath) {
+				return nullptr;
+			}
+		} else if (object != kNode && object != kSpawner) {
+			return nullptr;
+		}
+	}
+	const Creature* found = nullptr;
+	for (const Creature& o : creatures_) {
+		if (o.id == c.id) {
+			continue;
+		}
+		bool there = false;
+		for (const TownCell2& cell : o.cells) {
+			there = there || (cell[0] == x && cell[1] == y);
+		}
+		if (!there) {
+			continue;
+		}
+		if (o.cls > 8 || o.cls == 5 || o.cls == 6) {
+			return nullptr;
+		}
+		if (found) {
+			return nullptr;
+		}
+		found = &o;
+	}
+	return found;
+}
+
+// 0x5593C0: whether it is seen (its picture on the view).
+bool TownLife::visible(const Creature& c) const {
+	const LcrFrame* f = c.current();
+	if (!f) {
+		return false;
+	}
+	const int left = c.px() - (f->anchor_x - f->body.x);
+	const int top = c.py() - (f->anchor_y - f->body.y);
+	return left < view_[0] + view_[2] && left + f->body.w > view_[0] && top < view_[1] + view_[3] &&
+		top + f->body.h > view_[1];
+}
+
+// 0x559790 / 0x5596C0: the cells its strips stand on (the middle of each strip's bottom).
+void TownLife::place(Creature& c) {
+	c.cells.clear();
+	const LcrFrame* f = c.current();
+	if (!f) {
+		return;
+	}
+	for (const LcrRect& s : f->strips) {
+		const TownCell2 cell =
+			life_pixel_cell(c.px() + s.x - f->anchor_x + s.w / 2, c.py() + s.y - f->anchor_y + s.h);
+		c.cells.push_back(cell);
+	}
+}
+
+// 0x55D910: the diagonal towards its goal ([+0x3D]) and, returned, the other diagonal on the goal's main axis.
+uint8_t TownLife::wish_dir(Creature& c) const {
+	const int x = c.px();
+	const int y = c.py();
+	const int gx = c.goal_x;
+	const int gy = c.goal_y;
+	if (gx > x) {
+		const int a = (gx - x) * 11;
+		if (gy > y) {
+			c.wish = 0x60;
+			return a <= (gy - y) * 17 ? 0xA0 : 0x20;
+		}
+		c.wish = 0x20;
+		return a <= (y - gy) * 17 ? 0xE0 : 0x60;
+	}
+	const int a = (x - gx) * 11;
+	if (gy > y) {
+		c.wish = 0xA0;
+		return a <= (gy - y) * 17 ? 0x60 : 0xE0;
+	}
+	c.wish = 0xE0;
+	return a <= (y - gy) * 17 ? 0x20 : 0xA0;
+}
+
+// 0x55D9D0: a new goal: a beggar fed by the church goes to it; otherwise one of the market's stalls or the town's
+// buildings, on the other side of the old goal: the farthest of those near (within 850 · 550 pixels), or one of those
+// farther at random; at a feast, the stalls only.
+void TownLife::choose_goal(Creature& c) {
+	const int x = c.px();
+	const int y = c.py();
+	const bool goal_left = c.goal_x < x;
+	const bool goal_up = c.goal_y < y;
+	uint16_t far = 0;
+	uint16_t best = 0;
+	if (c.cls == 4 && town_.feeding_poor) {
+		for (const std::array<int, 3>& b : town_.buildings) {
+			if (b[2] == 0x1F) {
+				const TownCell2 p = life_cell_pixel(b[0], b[1] - 4);
+				c.goal_x = uint16_t(p[0]);
+				c.goal_y = uint16_t(p[1]);
+				c.countdown = 3;
+				c.left_turns = 0;
+				c.right_turns = 0;
+				return;
+			}
+		}
+	}
+	auto consider = [&](const TownCell2& p, bool filter) {
+		if (filter && (c.goal_x != x || c.goal_y != y)) {
+			if ((p[0] < x) == goal_left || (p[1] < y) == goal_up) {
+				return;
+			}
+		}
+		const int dx = std::abs(p[0] - x);
+		const int dy = std::abs(p[1] - y);
+		if (dx > 0x352 || dy > 0x226) {
+			++far;
+			if (rand() % far == 0) {
+				c.goal_x = uint16_t(p[0]);
+				c.goal_y = uint16_t(p[1]);
+			}
+			return;
+		}
+		if (far != 0) {
+			return;
+		}
+		int score = (dy * 17) / 11;
+		if ((score & 0xFFFF) < dx) {
+			score = dx;
+		}
+		if (uint16_t(score) > best) {
+			best = uint16_t(score);
+			c.goal_x = uint16_t(p[0]);
+			c.goal_y = uint16_t(p[1]);
+		}
+	};
+	for (const TownCell2& s : town_.stalls) {
+		consider(life_cell_pixel(s[0], s[1]), !town_.feast);
+	}
+	if (town_.feast) {
+		return;
+	}
+	for (const std::array<int, 3>& b : town_.buildings) {
+		if (b[2] >= 0x2F || !map_.inside(b[0], b[1] - 2)) {
+			continue;
+		}
+		consider(life_cell_pixel(b[0], b[1] - 2), true);
+	}
+	if (far == 0 && best == 0) {
+		c.countdown = 3;
+		c.left_turns = 0;
+		c.right_turns = 0;
+	}
+}
+
+// 0x55CF60: a step to the cell's middle (a little aside when another walker is there), its length by the look's
+// speed: dist · 10000 / speed milliseconds.
+void TownLife::begin_step(Creature& c, int cx, int cy) {
+	TownCell2 t = life_cell_pixel(cx, cy);
+	if (walker_at(c, cx, cy)) {
+		t[1] += t[0] >= c.px() ? 3 : -3;
+		t[0] += t[1] >= c.py() ? -4 : 4;
+		c.sidestep = true;
+	} else {
+		c.sidestep = false;
+	}
+	const int dx = t[0] - c.px();
+	const int dy = t[1] - c.py();
+	const double dist = std::sqrt(double(dx * dx + dy * dy));
+	const double speed = double(c.look && c.look->speed ? c.look->speed : 140);
+	const int n = int(dist * 10000.0 / speed + 0.5);
+	c.done = 0;
+	c.total = uint16_t(n);
+	c.step_x = dx;
+	c.step_y = dy;
+	if (n) {
+		c.step_x = int32_t((int64_t(dx) << 16) / n);
+		c.step_y = int32_t((int64_t(dy) << 16) / n);
+	}
+}
+
+// 0x55C820: a free walker's frame. False when it is to go (out of the town, or stuck and unseen).
+bool TownLife::walk(Creature& c) {
+	const uint8_t f = anim_step(c);
+	if (c.dir != c.target) {
+		if (f != c.frame) {
+			const int8_t d = int8_t(uint8_t(c.target - c.dir));
+			if (d < 0) {
+				c.dir = uint8_t(c.dir - 0x20);
+				c.right_turns = 0;
+				++c.left_turns;
+			} else {
+				c.dir = uint8_t(c.dir + 0x20);
+				c.left_turns = 0;
+				++c.right_turns;
+			}
+			if (c.next_seq != 2 && c.next_seq != 6) {
+				c.next_seq = 2;
+			}
+			uint8_t nf = 0;
+			const int walk = sequence_index(*c.look, 2);
+			const int run = sequence_index(*c.look, 6);
+			if (c.seq == 2 && walk >= 0 && int(f) <= c.look->sequences[size_t(walk)].last) {
+				nf = f;
+			} else if (c.seq == 6 && run >= 0 && int(f) <= c.look->sequences[size_t(run)].last) {
+				nf = f;
+			} else {
+				nf = anim_start(c, 2);
+			}
+			c.frame = nf;
+			place(c);
+		}
+		c.countdown = 3;
+		if (c.left_turns > 3 || c.right_turns > 3) {
+			return visible(c);
+		}
+		return true;
+	}
+	const TownCell2 cell = life_pixel_cell(c.px(), c.py());
+	if (!map_.inside(cell[0], cell[1])) {
+		return false;
+	}
+	if (c.done == c.total) {
+		if (c.left_turns > 2 || c.right_turns > 2) {
+			choose_goal(c);
+		}
+		const uint8_t sec = wish_dir(c);
+		const bool straight = c.wish == c.dir;
+		int ax = cell[0];
+		int ay = cell[1];
+		life_neighbour(ax, ay, c.dir, map_.width, map_.height);
+		const Creature* other = walker_at(c, ax, ay);
+		if (c.countdown) {
+			--c.countdown;
+		}
+		auto go = [&](uint8_t to) {
+			int gx = cell[0];
+			int gy = cell[1];
+			c.target = to;
+			life_neighbour(gx, gy, to, map_.width, map_.height);
+			begin_step(c, gx, gy);
+			c.next_seq = 2;
+			return true;
+		};
+		if (straight) {
+			if ((other && other->dir == uint8_t(c.dir + 0x80)) || can_go(c, c.dir, true, true)) {
+				c.target = c.dir;
+				begin_step(c, ax, ay);
+				return true;
+			}
+			if (other && (other->seq == 2 || other->seq == 6)) {
+				uint8_t nf = f;
+				if (c.seq != 0x83) {
+					nf = anim_start(c, 0x83);
+					if (nf == 0xFF) {
+						nf = c.frame;
+					}
+				}
+				c.target = c.dir;
+				begin_step(c, ax, ay);
+				c.frame = nf;
+				place(c);
+				return true;
+			}
+		}
+		const uint8_t old = c.dir;
+		const uint8_t opposite_sec = uint8_t(sec - 0x80);
+		for (int round = 0; round < 2; ++round) {
+			if (round == 1) {
+				c.street_first = false;
+			}
+			if (uint8_t(c.wish - 0x80) != c.dir && can_go(c, c.wish, true, true)) {
+				const uint8_t to = c.wish;
+				c.wish = old;
+				c.street_first = true;
+				return go(to);
+			}
+			if (opposite_sec != c.dir && can_go(c, sec, true, true)) {
+				c.wish = old;
+				c.street_first = true;
+				return go(sec);
+			}
+			if (sec != c.dir) {
+				const uint8_t back = uint8_t(sec + 0x80);
+				if (can_go(c, back, true, true)) {
+					c.wish = old;
+					c.street_first = true;
+					return go(back);
+				}
+			}
+		}
+		c.street_first = true;
+		choose_goal(c);
+		wish_dir(c);
+		uint8_t to = c.wish;
+		bool found = can_go(c, to, true, true);
+		if (!found) {
+			to = uint8_t(c.wish + ((rand() & 1) << 7) - 0x40);
+			found = can_go(c, to, true, true);
+		}
+		if (!found) {
+			to = uint8_t(to + 0x80);
+			found = can_go(c, to, true, true);
+		}
+		if (!found) {
+			if (c.stuck != -1) {
+				c.stuck = int32_t(now_);
+			}
+			to = uint8_t(c.wish + 0x80);
+			found = can_go(c, to, true, true);
+		}
+		if (!found) {
+			c.target = c.dir;
+			c.stuck = -1;
+			return visible(c);
+		}
+		c.done = 0;
+		c.total = 0;
+		return go(to);
+	}
+	// Walking its step (0x55CE2A): the milliseconds of this frame (twice running), while walking or running.
+	int32_t nx = c.x;
+	int32_t ny = c.y;
+	uint32_t d = elapsed_;
+	if (c.seq == 6) {
+		d *= 2;
+	}
+	if (c.seq == 2 || c.seq == 6) {
+		const uint32_t rest = uint32_t(c.total - c.done);
+		if (d > rest) {
+			d = rest;
+		}
+		c.done = uint16_t(c.done + d);
+		nx += c.step_x * int32_t(d);
+		ny += c.step_y * int32_t(d);
+	}
+	bool moved = false;
+	if ((nx >> 16) != c.px() || (ny >> 16) != c.py()) {
+		moved = true;
+		const TownCell2 next = life_pixel_cell(int(nx >> 16), int(ny >> 16));
+		if (uint32_t(c.done) * 3 > uint32_t(c.total) * 2 && !c.sidestep &&
+			!cell_free(next[0], next[1], c.cls == 0xFF, c.id)) {
+			begin_step(c, next[0], next[1]);
+			if (c.sidestep) {
+				return true;
+			}
+		}
+	}
+	c.x = nx;
+	c.y = ny;
+	if (f != c.frame || moved) {
+		c.frame = f;
+		place(c);
+	}
+	return true;
+}
+
+// 0x59A4F0: a cell to start on: 200 at random over the map, then the town's points of its kind (the spawn's tag 1
+// inside the town, 0 outside) from one at random; on its side of the walls, free (cell_free) and, with
+// `visible_check`, out of the view (50 pixels around it).
+bool TownLife::spawn_cell(bool inside, bool visible_check, bool no_grass, TownCell2& out) {
+	const size_t tag = inside ? 1 : 0;
+	static const std::vector<TownCell2> kNone;
+	const std::vector<TownCell2>& points = tag < town_.spawn.size() ? town_.spawn[tag] : kNone;
+	const int n = int(points.size());
+	if (n == 0 || map_.width <= 0 || map_.height <= 0) {
+		return false;
+	}
+	const int start = rand() % n;
+	for (int k = -200; k < n; ++k) {
+		TownCell2 cell;
+		if (k < 0) {
+			cell[0] = rand() % map_.width;
+			cell[1] = rand() % map_.height;
+		} else {
+			cell = points[size_t((k + start) % n)];
+		}
+		if (map_.inside(cell[0], cell[1]) != inside) {
+			continue;
+		}
+		if (!cell_free(cell[0], cell[1], no_grass, 0)) {
+			continue;
+		}
+		if (visible_check) {
+			const TownCell2 p = life_cell_pixel(cell[0], cell[1]);
+			if (p[0] + 50 >= view_[0] && p[0] <= view_[0] + view_[2] + 50 && p[1] + 50 >= view_[1] &&
+				p[1] <= view_[1] + view_[3] + 50) {
+				continue;
+			}
+		}
+		out = cell;
+		return true;
+	}
+	return false;
+}
+
+namespace {
+
+// 0x55C170: a vector's direction of the eight (the table 0x677928).
+uint8_t vec_dir(int dx, int dy) {
+	const uint32_t ax = uint32_t(std::abs(dx));
+	const uint32_t ay = uint32_t(std::abs(dy));
+	if (ax * 4 > ay * 15) {
+		return dx < 0 ? 0xC0 : 0x40;
+	}
+	if (ax * 11 < ay * 7) {
+		return dy < 0 ? 0x00 : 0x80;
+	}
+	if (dx < 0) {
+		return dy < 0 ? 0xE0 : 0xA0;
+	}
+	return dy < 0 ? 0x20 : 0x60;
+}
+
+int32_t hi_signed(int32_t a, int32_t b) { return int32_t((int64_t(a) * int64_t(b)) >> 32); }
+uint32_t hi_unsigned(uint32_t a, uint32_t b) { return uint32_t((uint64_t(a) * uint64_t(b)) >> 32); }
+int32_t toward_zero(int32_t v) { return v + int32_t(uint32_t(v) >> 31); }
+constexpr uint32_t kY = 0xC56106EBu;  // 0.771 (·2^32) as the game multiplies a y step
+constexpr uint32_t kXPos = 0xD1B71759u;  // 0.8192
+constexpr int32_t kXNeg = 0x68DB8BAD;  // 0.4096
+int32_t y_neg(int32_t e) { return toward_zero((hi_signed(e, int32_t(kY)) + e) >> 13); }
+int32_t y_pos(uint32_t e) { return int32_t(hi_unsigned(e, kY) >> 13); }
+int32_t x_pos(uint32_t e) { return int32_t(hi_unsigned(e, kXPos) >> 9); }
+int32_t x_neg(int32_t e) { return toward_zero(hi_signed(e, kXNeg) >> 8); }
+
+// 0x55A1C0: a turn by one of the look's directions towards `target`, the shorter way.
+void turn(uint8_t& dir, uint8_t target, size_t directions) {
+	const uint8_t c = dir;
+	const uint8_t a = target;
+	const uint8_t cw = uint8_t(a - c);
+	const uint8_t ccw = uint8_t(c - a);
+	const uint8_t step = uint8_t(256 / (directions ? directions : 8));
+	if (ccw > cw) {
+		dir = c == 0xE0 ? 0x00 : uint8_t(c + step);
+	} else {
+		dir = c == 0x00 ? 0xE0 : uint8_t(c - step);
+	}
+}
+
+}  // namespace
+
+// 0x55C200: the 16.16 pixels a millisecond of a walk in one of the eight directions at the look's speed (14 pixels a
+// second across, 9 up and down, the diagonals 11 · 7 for the town's people).
+void TownLife::set_steps(Creature& c, uint8_t dir) const {
+	const int32_t s = int32_t(c.look ? c.look->speed : 140);
+	switch (dir) {
+	case 0x00: c.step_x = 0; c.step_y = y_neg(-(s * 11) << 12); break;
+	case 0x20: c.step_y = y_neg(s * -0x7C73); c.step_x = x_pos(uint32_t(s * 181) << 4); break;
+	case 0x40: c.step_y = 0; c.step_x = x_pos(uint32_t(s) << 12); break;
+	case 0x60: c.step_y = y_pos(uint32_t(s * 0x7C73)); c.step_x = x_pos(uint32_t(s * 181) << 4); break;
+	case 0x80: c.step_y = y_pos(uint32_t(s * 0xB000)); c.step_x = 0; break;
+	case 0xA0: c.step_y = y_pos(uint32_t(s * 0x7C73)); c.step_x = x_neg(-(s * 181) << 4); break;
+	case 0xC0: c.step_y = 0; c.step_x = x_neg(-s << 12); break;
+	case 0xE0: c.step_y = y_neg(s * -0x7C73); c.step_x = x_neg(-(s * 181) << 4); break;
+	default: break;
+	}
+}
+
+bool TownLife::roads() const {
+	return town_.nodes.size() > 2 && !town_.nodes[1].empty() && !town_.nodes[2].empty();
+}
+
+const TownPath* TownLife::road_path(int tag, int index) const {
+	if (size_t(tag) >= town_.nodes.size() || size_t(index) >= town_.nodes[size_t(tag)].size()) {
+		return nullptr;
+	}
+	const TownPath& p = town_.nodes[size_t(tag)][size_t(index)];
+	return p.size() >= 2 ? &p : nullptr;
+}
+
+int TownLife::count(int group, uint8_t mode) const {
+	int n = 0;
+	for (const Creature& c : creatures_) {
+		n += c.group == group && c.mode == mode;
+	}
+	return n;
+}
+
+// 0x55B1D0: a walker set on a road. Coming in (`arriving`, the tag 1 road): at its first point, towards its second.
+// Leaving (tag 2): made so (its x the mark 0x1388), at the road's first point out of the town unless it is seen,
+// facing the point before; or a walker in the town near one of the road's points (170 · 110 pixels, the farthest out
+// first) that lies on a diagonal from the middle of its cell, by at most 10 free cells, goes to it.
+bool TownLife::start_road(Creature& c, int road, bool arriving) {
+	if (!roads()) {
+		return false;
+	}
+	c.entered = false;
+	c.lane_x = 0;
+	c.lane_y = 0;
+	c.corner = 0xFF;
+	if (arriving) {
+		const TownPath* p = road_path(1, road);
+		if (!p) {
+			return false;
+		}
+		c.x = (*p)[0][0] << 16;
+		c.y = (*p)[0][1] << 16;
+		c.dir = vec_dir((*p)[1][0] - (*p)[0][0], (*p)[1][1] - (*p)[0][1]);
+		set_steps(c, c.dir);
+		c.road = uint8_t(road);
+		c.point = 1;
+		c.mode = 1;
+		c.cart_pass = true;
+		c.flee = false;
+		return true;
+	}
+	const TownPath* p = road_path(2, road);
+	if (!p) {
+		return false;
+	}
+	const int n = int(p->size());
+	if (c.x == 0x1388) {
+		int k = 0;
+		TownCell2 q = (*p)[1];
+		for (; k < n - 1; ++k) {
+			q = (*p)[size_t(k) + 1];
+			const TownCell2 cell = life_pixel_cell(q[0], q[1]);
+			if (!map_.inside(cell[0], cell[1])) {
+				break;
+			}
+		}
+		if (q[0] + 50 > view_[0] && q[0] < view_[0] + view_[2] + 50 && q[1] + 50 > view_[1] &&
+			q[1] < view_[1] + view_[3] + 50) {
+			return false;
+		}
+		const TownCell2 back = (*p)[size_t(std::min(k, n - 1))];
+		c.x = q[0] << 16;
+		c.y = q[1] << 16;
+		c.dir = vec_dir(back[0] - q[0], back[1] - q[1]);
+		set_steps(c, c.dir);
+		c.point = uint8_t(k);
+		c.road = uint8_t(road);
+		c.mode = 2;
+		c.cart_pass = true;
+		c.flee = false;
+		return true;
+	}
+	for (int k = n - 2; k >= 0; --k) {
+		const TownCell2 at = (*p)[size_t(k) + 1];
+		if (at[0] + 0xAA < c.px() || at[0] - 0xAA > c.px() || at[1] + 0x6E < c.py() || at[1] - 0x6E > c.py()) {
+			continue;
+		}
+		const TownCell2 cell_p = life_pixel_cell(at[0], at[1]);
+		const TownCell2 cell_w = life_pixel_cell(c.px(), c.py());
+		if (cell_w == cell_p) {
+			if (k + 2 >= n) {
+				continue;  // the game reads past the road's end here
+			}
+			const TownCell2 q = (*p)[size_t(k) + 2];
+			c.target = vec_dir(q[0] - at[0], q[1] - at[1]);
+			set_steps(c, c.target);
+			c.point = uint8_t(k + 2);
+			c.road = uint8_t(road);
+			c.mode = 2;
+			c.entered = false;
+			c.x = at[0] << 16;
+			c.y = at[1] << 16;
+			place(c);
+			c.cart_pass = true;
+			c.flee = false;
+			c.corner = 0;
+			return true;
+		}
+		const TownCell2 middle = life_cell_pixel(cell_w[0], cell_w[1]);
+		const int dx = at[0] - middle[0];
+		const int dy = at[1] - middle[1];
+		if (std::abs(dx) * 11 != std::abs(dy) * 17) {
+			continue;
+		}
+		const uint8_t dir = vec_dir(dx, dy);
+		TownCell2 cur = cell_w;
+		bool found = false;
+		for (int i = 0; i <= 10; ++i) {
+			if (cur == cell_p) {
+				found = true;
+				break;
+			}
+			life_neighbour(cur[0], cur[1], dir, map_.width, map_.height);
+			if (!cell_walkable(c, cur[0], cur[1], true, false)) {
+				i = 10;
+			}
+		}
+		if (!found) {
+			continue;
+		}
+		c.target = dir;
+		set_steps(c, dir);
+		c.point = uint8_t(k + 1);
+		c.road = uint8_t(road);
+		c.mode = 2;
+		c.entered = false;
+		c.x = middle[0] << 16;
+		c.y = middle[1] << 16;
+		place(c);
+		c.cart_pass = true;
+		c.flee = false;
+		return true;
+	}
+	return false;
+}
+
+// 0x55B6A0 (a walker on a road): it turns a direction a frame to its road's way, then walks it straight at its look's
+// speed (set_steps) to the road's point (round a right-angled corner by its two cells' middles), there takes the
+// next; coming in, at the first point after it reached the town it walks free (the mode 0); leaving, at the road's end
+// it goes. The carts on its road (0x570BA0, the list *0x6E6280) would put it aside: none yet.
+bool TownLife::road_walk(Creature& c) {
+	if (c.mode == 2 && c.entered) {
+		return false;
+	}
+	if (!roads()) {
+		return false;
+	}
+	const TownPath* p = road_path(c.mode, c.road);
+	if (!p) {
+		return false;
+	}
+	const int n = int(p->size());
+	if (c.corner == 0xFF) {
+		c.corner = 0;
+		if (c.point + 1 < n) {
+			const TownCell2 a = (*p)[c.point];
+			const TownCell2 b = (*p)[size_t(c.point) + 1];
+			if (uint8_t(vec_dir(b[0] - a[0], b[1] - a[1]) + 0x40) == c.target) {
+				TownCell2 cell = life_pixel_cell(a[0], a[1]);
+				life_neighbour(cell[0], cell[1], uint8_t(c.target + 0x80), map_.width, map_.height);
+				c.corner_a = life_cell_pixel(cell[0], cell[1]);
+				cell = life_pixel_cell(a[0], a[1]);
+				life_neighbour(cell[0], cell[1], uint8_t(c.target - 0x40), map_.width, map_.height);
+				c.corner_b = life_cell_pixel(cell[0], cell[1]);
+				c.corner = 1;
+			}
+		}
+	}
+	const uint32_t dt = elapsed_;
+	const uint8_t f = anim_step(c);
+	if (c.dir != c.target) {
+		if (f != c.frame) {
+			turn(c.dir, c.target, c.look ? c.look->directions.size() : 8);
+			c.next_seq = 2;
+			const uint8_t nf = c.seq == 2 ? f : anim_start(c, 2);
+			c.x -= c.lane_x << 16;
+			c.y -= c.lane_y << 16;
+			c.lane_x = 0;
+			c.lane_y = 0;
+			c.frame = nf;
+			place(c);
+		}
+		return true;
+	}
+	int32_t nx = c.x - (c.lane_x << 16);
+	int32_t ny = c.y - (c.lane_y << 16);
+	if (c.seq == 2) {
+		const int32_t m = c.flee ? 3 : 1;
+		nx += c.step_x * int32_t(dt) * m;
+		ny += c.step_y * int32_t(dt) * m;
+	}
+	c.lane_x = 0;
+	c.lane_y = 0;
+	// 0x570BA0: within 68 pixels of a cart on its road it walks aside, to its right.
+	const uint16_t near = cart_distance(int(nx >> 16), int(ny >> 16), c.road);
+	if (near < 0x44) {
+		const int a = near > 0x11 ? (0x44 - near) / 6 : 8;
+		const int side = toward_zero(hi_signed(11 * a, int32_t(0x78787879)) >> 3);
+		switch (c.target) {
+		case 0x00: c.lane_x = a; break;
+		case 0x20: c.lane_x = a; c.lane_y = side; break;
+		case 0x40: c.lane_y = side; break;
+		case 0x60: c.lane_x = -a; c.lane_y = side; break;
+		case 0x80: c.lane_x = -a; break;
+		case 0xA0: c.lane_x = -a; c.lane_y = -side; break;
+		case 0xC0: c.lane_y = -side; break;
+		case 0xE0: c.lane_x = a; c.lane_y = -side; break;
+		default: break;
+		}
+		nx += c.lane_x << 16;
+		ny += c.lane_y << 16;
+	}
+	bool moved = false;
+	if ((nx >> 16) != c.px() || (ny >> 16) != c.py()) {
+		moved = true;
+		const TownCell2 old_cell = life_pixel_cell(c.px(), c.py());
+		const TownCell2 new_cell = life_pixel_cell(int(nx >> 16), int(ny >> 16));
+		const TownCell2 at = (*p)[c.point];
+		TownCell2 aim = at;
+		if (c.corner == 1) {
+			aim = c.corner_a;
+		} else if (c.corner == 2) {
+			aim = c.corner_b;
+		}
+		if (new_cell != old_cell && c.mode == 1 && map_.inside(new_cell[0], new_cell[1])) {
+			c.entered = true;
+		}
+		const int x = int(nx >> 16);
+		const int y = int(ny >> 16);
+		const bool passed = (c.step_x > 0 && x >= aim[0]) || (c.step_x < 0 && x <= aim[0]) ||
+			(c.step_y > 0 && y >= aim[1]) || (c.step_y < 0 && y <= aim[1]);
+		if (passed) {
+			if (c.point + 1 < n && !c.entered) {
+				uint8_t dir = 0;
+				if (c.corner == 1) {
+					dir = vec_dir(c.corner_b[0] - aim[0], c.corner_b[1] - aim[1]);
+					c.corner = 2;
+				} else {
+					++c.point;
+					const TownCell2 q = (*p)[c.point];
+					dir = c.corner == 2 ? uint8_t(c.target - 0x20) : vec_dir(q[0] - aim[0], q[1] - aim[1]);
+					c.corner = 0xFF;
+				}
+				c.target = dir;
+				set_steps(c, dir);
+				nx = (c.lane_x + aim[0]) << 16;
+				ny = (c.lane_y + aim[1]) << 16;
+			} else {
+				if (c.mode != 1) {
+					return false;
+				}
+				nx = at[0] << 16;
+				ny = at[1] << 16;
+				c.mode = 0;
+				c.cart_pass = false;
+			}
+		}
+	}
+	if (f != c.frame || moved) {
+		c.x = nx;
+		c.y = ny;
+		c.frame = f;
+		place(c);
+	} else {
+		c.x = nx;
+		c.y = ny;
+	}
+	return true;
+}
+
+// The class's factory and +0x40 (0x557D10; 0x567C80 → 0x559D60 → 0x55C7A0): a walker of the group, with a look of
+// its class at random; by `mode_word` (its mode << 16 | a road) free at (x, y) (16.16) facing `dir`, coming in by the
+// road, or leaving (the next two roads tried if not). False if it can't be (no look; leaving by no road: the game's
+// is made and goes at once).
+Creature TownLife::make_walker(int group, int32_t x, int32_t y, uint8_t dir, uint32_t mode_word) {
+	Creature c;
+	c.cls = kGroupClass[group];
+	c.group = group;
+	const std::vector<const LcrAnim*>& looks = people[size_t(c.cls)];
+	if (looks.empty()) {
+		c.look = nullptr;
+		return c;
+	}
+	c.look = looks[size_t(rand()) % looks.size()];
+	c.id = next_id_++;
+	if (next_id_ == 0) {
+		next_id_ = 1;
+	}
+	c.street_first = true;  // 0x55A290: 0, 1, 0, 0
+	anim_start(c, 2);
+	const uint32_t mode = mode_word >> 16;
+	const int road = int(mode_word & 0xFF);
+	if (mode == 2) {
+		c.x = 0x1388;
+		if (!start_road(c, road, false) && !start_road(c, (road + 1) % 3, false) &&
+			!start_road(c, (road + 2) % 3, false)) {
+			c.look = nullptr;
+			return c;
+		}
+	} else if (mode == 1) {
+		if (!start_road(c, road, true)) {
+			c.look = nullptr;
+			return c;
+		}
+	} else {
+		c.x = x;
+		c.y = y;
+		c.dir = dir;
+	}
+	// 0x55C7A0: its direction, its goal from where it is, its strips.
+	c.target = c.wish = c.dir;
+	c.goal_x = uint16_t(c.px());
+	c.goal_y = uint16_t(c.py());
+	choose_goal(c);
+	place(c);
+	return c;
+}
+
+void TownLife::start(const LifeMap& map, const LifeTown& town, uint32_t now) {
+	map_ = map;
+	town_ = town;
+	creatures_.clear();
+	now_ = now;
+	place_performers();
+	// 0x595CA0: for each group one walker for every 50 of its residents, each on a town's point, facing a
+	// diagonal, with a look of its class at random (the game's option of the animations on).
+	for (int g = 0; g < 4; ++g) {
+		const uint32_t count = (town.residents[size_t(g)] + 49) / 50;
+		for (uint32_t i = 0; i < count; ++i) {
+			TownCell2 cell;
+			if (!spawn_cell(true, false, true, cell)) {
+				continue;
+			}
+			const TownCell2 p = life_cell_pixel(cell[0], cell[1]);
+			const uint8_t dir = uint8_t((rand() % 4) * 64 + 0x20);
+			Creature c = make_walker(g, p[0] << 16, p[1] << 16, dir, 0);
+			if (c.look) {
+				creatures_.push_back(std::move(c));
+			}
+		}
+	}
+	// 0x595F0F: the children.
+	for (uint32_t i = 0; i < town.children; ++i) {
+		spawn_child(false);
+	}
+	// 0x596293: with the plague, a rat for every 50 residents.
+	if (town.plague) {
+		for (uint32_t i = 0; i < town.total / 50; ++i) {
+			spawn_rat(false, true);
+		}
+	}
+	prefill_roads();
+	tick_due_ = now + 0x616;
+	sync_carts(true);
+}
+
+// A child on a town's point, facing a diagonal (0x595F0F, 0x59797E: `visible_check`, out of sight).
+bool TownLife::spawn_child(bool visible_check) {
+	TownCell2 cell;
+	if (!spawn_cell(true, visible_check, true, cell) || people[3].empty()) {
+		return false;
+	}
+	const TownCell2 p = life_cell_pixel(cell[0], cell[1]);
+	const uint8_t dir = uint8_t((rand() % 4) * 64 + 0x20);
+	Creature c;
+	c.cls = 3;
+	c.look = people[3][size_t(rand()) % people[3].size()];
+	c.id = next_id_++;
+	if (next_id_ == 0) {
+		next_id_ = 1;
+	}
+	c.street_first = true;
+	anim_start(c, 2);
+	c.x = p[0] << 16;
+	c.y = p[1] << 16;
+	c.dir = c.target = c.wish = dir;
+	c.goal_x = uint16_t(p[0]);
+	c.goal_y = uint16_t(p[1]);
+	choose_goal(c);
+	place(c);
+	creatures_.push_back(std::move(c));
+	return true;
+}
+
+// 0x598280, when a town is shown: the juggler on one of the town's points (the spawn's tag 2) at random, facing SE;
+// a market seller on each of the tag 3 points beside a stall (the first diagonal whose next cell has a stall, .let
+// type 6), 8 pixels towards it and 5 up, facing it. Both play their sequence 5 (crying, juggling).
+void TownLife::place_performers() {
+	auto make = [&](int cls, int x, int y, uint8_t dir) {
+		if (people[size_t(cls)].empty()) {
+			return;
+		}
+		Creature c;
+		c.cls = cls;
+		c.mode = 3;
+		c.look = people[size_t(cls)][size_t(rand()) % people[size_t(cls)].size()];
+		c.id = next_id_++;
+		if (next_id_ == 0) {
+			next_id_ = 1;
+		}
+		c.frame = anim_start(c, 5);
+		c.x = x << 16;
+		c.y = y << 16;
+		c.dir = c.target = dir;
+		place(c);
+		creatures_.push_back(std::move(c));
+	};
+	if (town_.spawn.size() > 2 && !town_.spawn[2].empty()) {
+		const TownCell2 cell = town_.spawn[2][size_t(rand()) % town_.spawn[2].size()];
+		const TownCell2 p = life_cell_pixel(cell[0], cell[1]);
+		make(6, p[0], p[1], 0x60);
+	}
+	if (town_.spawn.size() > 3) {
+		for (const TownCell2& cell : town_.spawn[3]) {
+			int d = 0x20;
+			for (; d <= 0xE0; d += 0x40) {
+				int x = cell[0];
+				int y = cell[1];
+				life_neighbour(x, y, uint8_t(d), map_.width, map_.height);
+				if (map_.object_at(x, y) == 6) {
+					break;
+				}
+			}
+			if (d >= 0x100) {
+				continue;
+			}
+			const TownCell2 p = life_cell_pixel(cell[0], cell[1]);
+			make(5, p[0] + (d == 0x60 || d == 0xE0 ? 8 : -8), p[1] - 5, uint8_t(d));
+		}
+	}
+	// 0x5984AA: the official's first coming out in 30 to 60 s.
+	official_due_ = now_ + (uint32_t(rand()) % 60000 + 60000) / 2;
+	if (official_due_ == 0) {
+		official_due_ = 1;
+	}
+}
+
+// 0x563090: the official's next point of his path (`point`), the diagonal towards it and its steps (as the prefilled
+// road walkers', 0x5963F3).
+void TownLife::official_target(Creature& c) const {
+	if (town_.nodes.size() < 4 || town_.nodes[3].empty() || c.point >= town_.nodes[3][0].size()) {
+		return;
+	}
+	const TownCell2 at = town_.nodes[3][0][c.point];
+	c.goal_x = uint16_t(at[0]);
+	c.goal_y = uint16_t(at[1]);
+	const uint32_t s = c.look->speed;
+	const int32_t sx = x_pos(s * 2896);
+	const int32_t sy = y_pos(s * 31856);
+	if (int(c.goal_x) < c.px()) {
+		c.target = int(c.goal_y) < c.py() ? 0xE0 : 0xA0;
+		c.step_x = -sx;
+	} else {
+		c.target = int(c.goal_y) < c.py() ? 0x20 : 0x60;
+		c.step_x = sx;
+	}
+	c.step_y = c.target == 0xE0 || c.target == 0x20 ? -sy : sy;
+}
+
+// 0x562D60: the official walks to his path's points (passing one, it snaps to it); at the last he turns to where he
+// reads and unrolls his scroll; back at the first he goes, and the next comes out in 60 s (*0x677954). He turns by
+// 0x20 a frame while walking.
+bool TownLife::official_walk(Creature& c) {
+	const uint32_t dt = std::min<uint32_t>(elapsed_, 1000);
+	const uint8_t before = c.counter;
+	uint8_t f = anim_step(c, &c.counter);
+	int32_t nx = c.x;
+	int32_t ny = c.y;
+	if (c.seq == 2) {
+		const int x = c.px();
+		const int y = c.py();
+		const int tx = c.goal_x;
+		const int ty = c.goal_y;
+		const bool passed = (x < tx && c.step_x < 0) || (x > tx && c.step_x > 0) || (y < ty && c.step_y < 0) ||
+			(y > ty && c.step_y > 0);
+		if (passed) {
+			nx = tx << 16;
+			ny = ty << 16;
+			const size_t n = town_.nodes.size() > 3 && !town_.nodes[3].empty() ? town_.nodes[3][0].size() : 0;
+			if (c.back) {
+				if (c.point == 0) {
+					official_due_ = now_ + 60000;
+					return false;
+				}
+				--c.point;
+				official_target(c);
+			} else if (c.point + 1u == n) {
+				if (c.face == 0) {
+					c.face = c.dir;
+				}
+				if (c.dir == c.face) {
+					f = anim_start(c, 0x83);
+				} else {
+					c.target = c.face;
+				}
+			} else {
+				++c.point;
+				official_target(c);
+			}
+		} else {
+			nx += c.step_x * int32_t(dt);
+			ny += c.step_y * int32_t(dt);
+		}
+	}
+	uint8_t dir = c.dir;
+	if (c.seq == 2) {
+		if (c.counter != before && c.target != dir) {
+			dir = uint8_t(uint8_t(c.target - dir) < 0x80 ? dir + 0x20 : dir - 0x20);
+		}
+	} else {
+		dir = c.target;
+	}
+	const bool moved = (nx >> 16) != c.px() || (ny >> 16) != c.py() || f != c.frame || dir != c.dir;
+	c.x = nx;
+	c.y = ny;
+	if (moved) {
+		c.frame = f;
+		c.dir = dir;
+		place(c);
+	}
+	return true;
+}
+
+// A rat on a town's point (0x5962D9 when a town is shown with the plague, 0x597E91): facing a diagonal; it may go on
+// grass (0x55A290: 1, 0, 0, 0).
+bool TownLife::spawn_rat(bool visible_check, bool no_grass) {
+	TownCell2 cell;
+	if (people[0x1A].empty() || !spawn_cell(true, visible_check, no_grass, cell)) {
+		return false;
+	}
+	const TownCell2 p = life_cell_pixel(cell[0], cell[1]);
+	const uint8_t dir = uint8_t((rand() % 4) * 64 + 0x20);
+	Creature c;
+	c.cls = 0x1A;
+	c.mode = 5;
+	c.look = people[0x1A][size_t(rand()) % people[0x1A].size()];
+	c.id = next_id_++;
+	if (next_id_ == 0) {
+		next_id_ = 1;
+	}
+	c.street_first = false;
+	c.frame = anim_start(c, 2);
+	c.x = p[0] << 16;
+	c.y = p[1] << 16;
+	c.dir = c.target = dir;
+	place(c);
+	creatures_.push_back(std::move(c));
+	return true;
+}
+
+// 0x573900: a rat runs straight on at its look's speed (across 14 pixels a second for 140, up and down 11/17 of
+// that); at each frame, if the way ahead is free, each time its count of frames passes its look's first parameter
+// (70) it turns a little at random; if not, it turns 0x20 towards the nearest free side. It goes when it leaves the
+// view without the plague, leaves the town or the map, or finds no way.
+bool TownLife::rat_walk(Creature& c) {
+	if (!town_.plague && (c.px() < view_[0] || c.px() > view_[0] + view_[2] || c.py() < view_[1] ||
+							 c.py() > view_[1] + view_[3])) {
+		return false;
+	}
+	const TownCell2 cell = life_pixel_cell(c.px(), c.py());
+	if (!map_.inside(cell[0], cell[1])) {
+		return false;
+	}
+	const uint32_t dt = std::min<uint32_t>(elapsed_, 1000);
+	const int32_t v = int32_t(hi_unsigned((c.look->speed * dt) << 12, kXPos) >> 9);
+	constexpr int32_t kIso = 0x78787879;  // 0.47 (·2^32): 11/17 with the · 2 and >> 4
+	auto iso = [](int32_t e) { return toward_zero(hi_signed(e, kIso) >> 4); };
+	const int32_t a = (v * 181) >> 8;
+	int32_t nx = c.x;
+	int32_t ny = c.y;
+	switch (c.dir) {
+	case 0x00: ny += iso(-22 * v); break;
+	case 0x80: ny += iso(22 * v); break;
+	case 0x40: nx += v; break;
+	case 0xC0: nx -= v; break;
+	case 0x20: nx += a; ny += iso(-22 * a); break;
+	case 0x60: nx += a; ny += iso(22 * a); break;
+	case 0xA0: nx -= a; ny += iso(22 * a); break;
+	case 0xE0: nx -= a; ny += iso(-22 * a); break;
+	default: break;
+	}
+	const uint8_t before = c.counter;
+	uint8_t f = anim_step(c, &c.counter);
+	uint8_t dir = c.dir;
+	bool stuck = false;
+	const uint32_t p0 = c.look->params.size() > 0 ? c.look->params[0] : 70;
+	const uint32_t p1 = std::max<uint32_t>(c.look->params.size() > 1 ? c.look->params[1] : 50, 1);
+	if (c.counter != before) {
+		if (!can_go(c, c.dir, true, true)) {
+			if (c.seq != 2 && c.seq != 0x0B) {
+				f = anim_start(c, 2);
+			}
+			c.counter = uint8_t(p0 - uint32_t(rand()) % p1);
+			uint8_t turn_by = 0x20;
+			for (; turn_by <= 0x80; turn_by = uint8_t(turn_by + 0x20)) {
+				if (can_go(c, uint8_t(c.dir + turn_by), true, true) || can_go(c, uint8_t(c.dir - turn_by), true, true)) {
+					break;
+				}
+			}
+			if (turn_by > 0x80) {
+				stuck = true;
+			}
+			if (!can_go(c, uint8_t(c.dir + turn_by), true, true)) {
+				dir = uint8_t(dir - 0x20);
+			} else if (!can_go(c, uint8_t(c.dir - turn_by), true, true)) {
+				dir = uint8_t(dir + 0x20);
+			} else {
+				dir = uint8_t(dir + ((rand() & 1) << 6) - 0x20);
+			}
+		} else if (c.counter > p0) {
+			c.counter = uint8_t(p0 - uint32_t(rand()) % p1);
+			if ((c.counter & 1) && can_go(c, uint8_t(c.dir - 0x20), true, true)) {
+				dir = uint8_t(dir - 0x20);
+			} else if (can_go(c, uint8_t(c.dir + 0x20), true, true)) {
+				dir = uint8_t(dir + 0x20);
+			}
+		}
+	}
+	if ((nx >> 16) == c.px() && (ny >> 16) == c.py() && f == c.frame && dir == c.dir) {
+		c.x = nx;
+		c.y = ny;
+		return true;
+	}
+	if ((nx >> 16) > map_.width * kTileWidth || (ny >> 16) > map_.height * kRowStep || stuck) {
+		return false;
+	}
+	c.x = nx;
+	c.y = ny;
+	c.frame = f;
+	c.dir = dir;
+	place(c);
+	return true;
+}
+
+// A seller's or the juggler's frame (0x572370, 0x56E770): his animation; the juggler, each time his count down of
+// frames passes his look's first parameter (100), takes it again less a random of the second (50) and, juggling,
+// turns a little (by 0x20, west on odd counts, east on even ones, not past west and east).
+bool TownLife::perform(Creature& c) {
+	const uint8_t before = c.counter;
+	const uint8_t f = anim_step(c, c.cls == 6 ? &c.counter : nullptr);
+	uint8_t dir = c.dir;
+	if (c.cls == 6 && c.counter != before && c.look->params.size() >= 2 && c.counter > c.look->params[0]) {
+		c.counter = uint8_t(c.look->params[0] - uint32_t(rand()) % std::max<uint32_t>(c.look->params[1], 1));
+		if (c.seq == 5) {
+			if ((c.counter & 1) && dir != 0x40) {
+				dir = uint8_t(dir - 0x20);
+			} else if (dir != 0xC0) {
+				dir = uint8_t(dir + 0x20);
+			}
+		}
+	}
+	if (f != c.frame || dir != c.dir) {
+		c.frame = f;
+		c.dir = dir;
+		place(c);
+	}
+	return true;
+}
+
+// 0x5963F3..0x596E75 (no siege): each group's clocks from 0; the three roads in walked a cell a round (1558 ms of a
+// clock of its own) from their first points along their diagonals, and at each round a walker of the first group
+// whose clock is due put on one of them at random where its walk has got to (coming in, facing the road's way; leaving,
+// on the cell to its left, facing back), until each road reached its end or a gate. So the roads aren't empty.
+void TownLife::prefill_roads() {
+	arrive_due_ = {};
+	leave_due_ = {};
+	if (!roads() || town_.nodes[1].size() < 3 || town_.nodes[2].size() < 3) {
+		return;
+	}
+	std::array<uint32_t, 4> in{};
+	std::array<uint32_t, 4> out{};
+	for (size_t g = 0; g < 4; ++g) {
+		const int64_t r = int64_t(town_.residents[g]);
+		const int64_t x = int64_t(town_.passed[g]);
+		in[g] = uint32_t(std::max<int64_t>(10, r - x + 10));
+		out[g] = uint32_t(std::max<int64_t>(10, x - r + 10));
+	}
+	std::array<TownCell2, 3> cursor{};
+	std::array<TownCell2, 3> next_cell{};
+	std::array<int, 3> next{};
+	std::array<uint8_t, 3> dir{};
+	std::array<bool, 3> done{};
+	auto diagonal = [](const TownCell2& a, const TownCell2& b) -> uint8_t {
+		if (a[0] < b[0]) {
+			return a[1] >= b[1] ? 0x20 : 0x60;
+		}
+		return a[1] >= b[1] ? 0xE0 : 0xA0;
+	};
+	for (int r = 0; r < 3; ++r) {
+		const TownPath* p = road_path(1, r);
+		if (!p || !road_path(2, r)) {
+			return;
+		}
+		cursor[size_t(r)] = life_pixel_cell((*p)[0][0], (*p)[0][1]);
+		next_cell[size_t(r)] = life_pixel_cell((*p)[1][0], (*p)[1][1]);
+		next[size_t(r)] = 1;
+		dir[size_t(r)] = diagonal((*p)[0], (*p)[1]);
+	}
+	// The x and y steps of the walkers put on a road (their own sums: 31856 for the y's 31859 of set_steps).
+	auto steps = [](Creature& c, uint8_t way) {
+		const int32_t s = int32_t(c.look->speed);
+		c.step_x = way == 0x60 || way == 0x20 ? x_pos(uint32_t(s * 181) << 4) : x_neg(-(s * 181) << 4);
+		c.step_y = way == 0x60 || way == 0xA0 ? y_pos(uint32_t(s * 31856)) : y_neg(-(s * 1991) << 4);
+	};
+	uint32_t t = 0;
+	for (int round = 0; round < 1000 && !(done[0] && done[1] && done[2]); ++round, t += 0x616) {
+		for (int g = 0; g < 4; ++g) {
+			if (arrive_due_[size_t(g)] <= t) {
+				const int r = rand() % 3;
+				if (!done[size_t(r)]) {
+					Creature c = make_walker(g, 0x100, 0x100, 0x20, 0x10000u | uint32_t(r));
+					if (c.look) {
+						const TownCell2 m = life_cell_pixel(cursor[size_t(r)][0], cursor[size_t(r)][1]);
+						c.dir = c.target = dir[size_t(r)];
+						c.x = (m[0] << 16) | (c.x & 0xFFFF);
+						c.y = (m[1] << 16) | (c.y & 0xFFFF);
+						steps(c, dir[size_t(r)]);
+						c.point = uint8_t(next[size_t(r)]);
+						place(c);
+						creatures_.push_back(std::move(c));
+					}
+				}
+				arrive_due_[size_t(g)] += 2000000 / in[size_t(g)];
+				break;
+			}
+			if (leave_due_[size_t(g)] <= t) {
+				const int r = rand() % 3;
+				if (!done[size_t(r)]) {
+					Creature c = make_walker(g, 0x1388, 0x1388, 0x20, 0x20000u | uint32_t(r));
+					if (c.look) {
+						const uint8_t back = uint8_t(dir[size_t(r)] + 0x80);
+						c.dir = c.target = back;
+						TownCell2 lane = cursor[size_t(r)];
+						life_neighbour(lane[0], lane[1], uint8_t(dir[size_t(r)] - 0x40), map_.width, map_.height);
+						const TownCell2 m = life_cell_pixel(lane[0], lane[1]);
+						c.x = (m[0] << 16) | (c.x & 0xFFFF);
+						c.y = (m[1] << 16) | (c.y & 0xFFFF);
+						steps(c, back);
+						c.road = uint8_t(r);
+						c.point = uint8_t(int(town_.nodes[2][size_t(r)].size()) - next[size_t(r)]);
+						place(c);
+						creatures_.push_back(std::move(c));
+					}
+				}
+				leave_due_[size_t(g)] += 2000000 / out[size_t(g)];
+				break;
+			}
+		}
+		for (int r = 0; r < 3; ++r) {
+			if (done[size_t(r)]) {
+				continue;
+			}
+			TownCell2& c = cursor[size_t(r)];
+			life_neighbour(c[0], c[1], dir[size_t(r)], map_.width, map_.height);
+			const TownPath& p = town_.nodes[1][size_t(r)];
+			if (c == next_cell[size_t(r)]) {
+				const TownCell2 a = p[size_t(next[size_t(r)])];
+				++next[size_t(r)];
+				const int k = next[size_t(r)];
+				if (k >= int(p.size()) || k >= int(town_.nodes[2][size_t(r)].size())) {
+					done[size_t(r)] = true;
+					continue;
+				}
+				const TownCell2 b = p[size_t(k)];
+				next_cell[size_t(r)] = life_pixel_cell(b[0], b[1]);
+				dir[size_t(r)] = diagonal(a, b);
+			}
+			int px = c[0];
+			int py = c[1];
+			life_neighbour(px, py, dir[size_t(r)], map_.width, map_.height);
+			if (map_.object_at(px, py) == kGate || !map_.in(px, py)) {
+				done[size_t(r)] = true;
+			}
+		}
+	}
+}
+
+// The carts' convoys read again (a new tick; when the town is shown, `shown`): a cart made for each convoy leaving the
+// town or unloading in it that has none (0x4D8F00, 0x4E3A88, 0x4E3CA9); each cart its convoy's progress (0x5708F0:
+// leaving its counter, arriving 255 less it; none, 255); a leaving cart whose convoy set out goes, an arriving one
+// whose convoy is done keeps its place (0x570930).
+void TownLife::sync_carts(bool shown) {
+	if (!roads() || town_.nodes[1].size() < 3 || town_.nodes[2].size() < 3) {
+		return;
+	}
+	if (shown) {
+		carted_.clear();
+	}
+	// Each convoy in the state 1 (leaving) or 6 (unloading) gets one cart, once.
+	std::vector<std::pair<uint16_t, uint8_t>> made;
+	for (const LifeTown::Convoy& convoy : town_.convoys) {
+		if (convoy.state != 1 && convoy.state != 6) {
+			continue;
+		}
+		const std::pair<uint16_t, uint8_t> key{convoy.event, convoy.state};
+		if (std::find(carted_.begin(), carted_.end(), key) == carted_.end()) {
+			make_cart(convoy);
+		}
+		made.push_back(key);
+	}
+	carted_ = std::move(made);
+	for (Creature& c : creatures_) {
+		if (c.mode != 6) {
+			continue;
+		}
+		const LifeTown::Convoy* convoy = nullptr;
+		for (const LifeTown::Convoy& k : town_.convoys) {
+			if (int(k.event) == c.event) {
+				convoy = &k;
+			}
+		}
+		if (c.event >= 0 && (!convoy || (!c.arriving && convoy->state != 1))) {
+			c.event = -1;
+			if (!c.arriving) {
+				c.gone_away = true;
+			}
+			convoy = nullptr;
+		}
+		c.progress = convoy ? (c.arriving ? uint8_t(0xFF - convoy->counter) : convoy->counter) : 0xFF;
+		c.progress_at = now_;
+	}
+}
+
+// The middle of a road's two lanes (its way in, tag 1, its point k; its way out, tag 2, the same point from its end).
+TownCell2 TownLife::lane_point(const Creature& c, int k) const {
+	const TownPath& in = town_.nodes[1][c.road];
+	const TownPath& out = town_.nodes[2][c.road];
+	const int n = int(in.size());
+	if (k < 0 || k >= n || n - 1 - k >= int(out.size())) {
+		return in.empty() ? TownCell2{0, 0} : in[0];
+	}
+	return {(out[size_t(n - 1 - k)][0] + in[size_t(k)][0]) >> 1, (out[size_t(n - 1 - k)][1] + in[size_t(k)][1]) >> 1};
+}
+
+// 0x570800: the cart's way to its next point (from where it is): one of the diagonals, a pixel across a step (0.647 up
+// or down).
+void TownLife::cart_way(Creature& c) const {
+	const TownCell2 m = lane_point(c, c.point);
+	if (m[0] > c.px()) {
+		c.step_x = 0x10000;
+		if (m[1] > c.py()) {
+			c.way = 0x60;
+			c.step_y = 0xA5A6;
+		} else {
+			c.way = 0x20;
+			c.step_y = -0xA5A6;
+		}
+	} else {
+		c.step_x = -0x10000;
+		if (m[1] > c.py()) {
+			c.way = 0xA0;
+			c.step_y = 0xA5A6;
+		} else {
+			c.way = 0xE0;
+			c.step_y = -0xA5A6;
+		}
+	}
+}
+
+// 0x5709C0 (`ahead`: the way from the point `from` to the one after it along the cart's road) and 0x570AB0 (not
+// ahead: the way into `from` from the one before it); at the road's end, its way.
+uint8_t TownLife::lane_way(const Creature& c, int from, int ahead) const {
+	const int n = c.points;
+	const bool up = (ahead != 0) == c.arriving;
+	if ((up && from == n - 1) || (!up && from == 0)) {
+		return c.way;
+	}
+	const TownCell2 a = lane_point(c, from);
+	const TownCell2 b = lane_point(c, up ? from + 1 : from - 1);
+	if (ahead) {
+		if (b[0] > a[0]) {
+			return a[1] < b[1] ? 0x60 : 0x20;
+		}
+		return a[1] < b[1] ? 0xA0 : 0xE0;
+	}
+	if (a[0] > b[0]) {
+		return b[1] < a[1] ? 0x60 : 0x20;
+	}
+	return b[1] < a[1] ? 0xA0 : 0xE0;
+}
+
+// 0x56FB20: a cart for a convoy: arriving, on the middle road of the three (the one opposite the farthest apart two
+// starts); leaving, on the road whose start, from the map's middle, points most towards the convoy's town on the world
+// map; at the road's first point (arriving) or last, its length the sum of its lanes' middles' x steps.
+void TownLife::make_cart(const LifeTown::Convoy& convoy) {
+	if (people[0x1F].empty()) {
+		return;
+	}
+	Creature c;
+	c.cls = 0x1F;
+	c.mode = 6;
+	c.look = people[0x1F][size_t(rand()) % people[0x1F].size()];
+	const TownCell2 s0 = town_.nodes[1][0][0];
+	const TownCell2 s1 = town_.nodes[1][1][0];
+	const TownCell2 s2 = town_.nodes[1][2][0];
+	auto d2 = [](const TownCell2& a, const TownCell2& b) {
+		return int64_t(a[0] - b[0]) * (a[0] - b[0]) + int64_t(a[1] - b[1]) * (a[1] - b[1]);
+	};
+	int middle = 2;
+	int64_t far = d2(s0, s1);
+	if (d2(s0, s2) > far) {
+		far = d2(s0, s2);
+		middle = 1;
+	}
+	if (d2(s1, s2) > far) {
+		middle = 0;
+	}
+	c.event = convoy.event;
+	c.arriving = int(convoy.to) == town_.index;
+	if (c.arriving) {
+		c.road = uint8_t(middle);
+	} else {
+		TownCell2 here{0, 0};
+		TownCell2 there{0, 0};
+		if (town_.index >= 0 && size_t(town_.index) < town_.world.size()) {
+			here = town_.world[size_t(town_.index)];
+		}
+		if (convoy.to < town_.world.size()) {
+			there = town_.world[convoy.to];
+		}
+		const int dx = there[0] - here[0];
+		const int dy = there[1] - here[1];
+		const int len = std::max(1, int(std::sqrt(double(dx) * dx + double(dy) * dy)));
+		const int ux = (dx << 8) / len;
+		const int uy = (dy << 8) / len;
+		int64_t best = 0;
+		for (int r = 0; r < 3; ++r) {
+			const TownCell2 st = town_.nodes[1][size_t(r)][0];
+			const int vx = st[0] - map_.width * kTileWidth / 2;
+			const int vy = st[1] - map_.height * kRowStep / 2;
+			const int l = std::max(1, int(std::sqrt(double(vx) * vx + double(vy) * vy)));
+			const int64_t a = (vx << 8) / l + ux;
+			const int64_t b = (vy << 8) / l + uy;
+			if (a * a + b * b > best) {
+				best = a * a + b * b;
+				c.road = uint8_t(r);
+			}
+		}
+	}
+	const int n = int(town_.nodes[1][c.road].size());
+	if (n < 2 || int(town_.nodes[2][c.road].size()) < n) {
+		return;
+	}
+	c.points = uint8_t(n);
+	c.last_point = uint8_t(c.arriving ? 0 : n - 1);
+	c.length = 0;
+	c.gone = 0;
+	for (int k = 1; k < n; ++k) {
+		c.length += uint32_t(std::abs(lane_point(c, k)[0] - lane_point(c, k - 1)[0]));
+	}
+	c.progress = 0;
+	c.progress_at = now_;
+	const TownPath& in = town_.nodes[1][c.road];
+	const TownPath& out = town_.nodes[2][c.road];
+	c.x = (out[size_t(n - 1 - c.last_point)][0] + in[c.last_point][0]) << 15;
+	c.y = (out[size_t(n - 1 - c.last_point)][1] + in[c.last_point][1]) << 15;
+	c.point = uint8_t(c.arriving ? c.last_point + 1 : c.last_point - 1);
+	cart_way(c);
+	c.dir = c.way;
+	while (lane_way(c, c.point, 1) == c.way && c.point != 0 && c.point != n - 1) {
+		c.point = uint8_t(c.arriving ? c.point + 1 : c.point - 1);
+	}
+	c.id = next_id_++;
+	if (next_id_ == 0) {
+		next_id_ = 1;
+	}
+	place(c);
+	creatures_.push_back(std::move(c));
+}
+
+// 0x570BA0: the nearest cart on the road `road` to (x, y): its x distance or its y's · 17 / 11, the larger; 0xFFFF
+// none.
+uint16_t TownLife::cart_distance(int x, int y, uint8_t road) const {
+	uint16_t nearest = 0xFFFF;
+	for (const Creature& c : creatures_) {
+		if (c.mode != 6 || c.road != road) {
+			continue;
+		}
+		const uint16_t dx = uint16_t(std::abs(x - c.px()));
+		const uint16_t dy = uint16_t(std::abs(y - c.py()) * 17 / 11);
+		nearest = std::min(nearest, std::max(dx, dy));
+	}
+	return nearest;
+}
+
+// 0x570120: a cart's frame. How far it has gone is its convoy's progress (the road's length · progress / 255), and
+// between two ticks it goes on by the time since the last (a 255th of the road in a tick, 3375 ms in a battle's pace);
+// it moves along its lane's diagonals by that many pixels across, takes the next point's way at each, and the frames
+// of its look's sequence 2 roll with the pixels gone (a round each 34); within 17 pixels of a turn, the halves of its
+// turning sequences (9 and 10). At the road's end it stays while seen (out of the view by 100 pixels, it goes); a
+// leaving one at the road's first point goes.
+bool TownLife::cart_walk(Creature& c) {
+	if (c.gone_away || !roads()) {
+		return false;
+	}
+	const uint32_t elapsed = now_ - c.progress_at;
+	const uint32_t total = c.length;
+	auto per255 = [](uint32_t v) { return uint32_t(hi_unsigned(v, 0x80808081u) >> 7); };
+	uint32_t extra = 0;
+	if (battle_time_) {
+		extra = elapsed > 3375 ? per255(total) : uint32_t(hi_unsigned(total * elapsed, 0x26FD0AD9u) >> 17);
+	} else {
+		extra = elapsed > ms_per_tick_ ? per255(total) : uint32_t(uint64_t(total) * elapsed / (uint64_t(ms_per_tick_) * 255));
+	}
+	uint32_t dist = per255(uint32_t(c.progress) * total) + extra;
+	if (dist >= total) {
+		if (c.px() + 100 < view_[0] || c.py() + 100 < view_[1] || c.px() > view_[0] + view_[2] + 100 ||
+			c.py() > view_[1] + view_[3] + 100) {
+			return false;
+		}
+		dist = total;
+	}
+	if (dist <= c.gone) {
+		return true;
+	}
+	uint32_t delta = dist - c.gone;
+	c.gone = dist;
+	int32_t fx = c.x;
+	int32_t fy = c.y;
+	const int n = c.points;
+	while (delta) {
+		fx += c.step_x * int32_t(delta);
+		fy += c.step_y * int32_t(delta);
+		const TownCell2 m = lane_point(c, c.point);
+		const bool passed = (c.step_x > 0 && (fx >> 16) >= m[0]) || (c.step_x < 0 && (fx >> 16) <= m[0]);
+		if (!passed) {
+			break;
+		}
+		if (c.point == 0) {
+			return false;
+		}
+		if (c.point == n - 1) {
+			fx = m[0] << 16;
+			fy = m[1] << 16;
+			break;
+		}
+		delta = uint32_t(std::abs((fx >> 16) - m[0]));
+		fx = m[0] << 16;
+		fy = m[1] << 16;
+		c.last_point = c.point;
+		c.point = uint8_t(c.arriving ? c.point + 1 : c.point - 1);
+		cart_way(c);
+		while (lane_way(c, c.point, 1) == c.way && c.point != 0 && c.point != n - 1) {
+			c.point = uint8_t(c.arriving ? c.point + 1 : c.point - 1);
+		}
+		if (c.arriving && c.point == n - 1) {
+			for (Creature& o : creatures_) {
+				if (&o != &c && o.mode == 6 && o.arriving && o.event < 0) {
+					o.gone_away = true;
+				}
+			}
+		}
+	}
+	const LcrAnim& a = *c.look;
+	auto seq = [&](int id) -> const LcrSequence* {
+		const int i = sequence_index(a, id);
+		return i >= 0 ? &a.sequences[size_t(i)] : nullptr;
+	};
+	const int x = int(fx >> 16);
+	int frame = 0;
+	int turn = 0;
+	const int to_next = std::abs(lane_point(c, c.point)[0] - x);
+	const int8_t ahead = int8_t(uint8_t(lane_way(c, c.point, 1) - c.way));
+	const int from_last = std::abs(lane_point(c, c.last_point)[0] - x);
+	const int8_t behind = int8_t(uint8_t(lane_way(c, c.last_point, 0) - c.way));
+	if (to_next <= 0x11 && ahead != 0) {
+		if (const LcrSequence* q = seq(ahead < 0 ? 10 : 9)) {
+			const int half = ((q->last - q->first) >> 1) + 1;
+			frame = q->first + half * (0x11 - to_next) / 18;
+		}
+	} else if (from_last <= 0x11 && behind != 0) {
+		if (const LcrSequence* q = seq(behind < 0 ? 9 : 10)) {
+			const int mid = q->first + ((q->last - q->first) >> 1) + 1;
+			frame = mid + (q->last - mid + 1) * from_last / 18;
+		}
+		turn = behind;
+	} else if (const LcrSequence* q = seq(2)) {
+		frame = q->first + ((from_last + 0x11) % 0x22) * (q->last - q->first + 1) / 34;
+	}
+	c.x = fx;
+	c.y = fy;
+	c.frame = uint8_t(frame);
+	c.dir = uint8_t(c.way + turn);
+	place(c);
+	return true;
+}
+
+// 0x596EE0: each 1558 ms, with the town's three roads in and three out: one walker comes in by a road for the first
+// group whose clock is due (2 000 000 / (its residents − its passed + 10) ms, at least 10); each group whose leaving
+// clock is due sends one of its free walkers out if one is near a road (2 000 000 / (passed − residents + 10) ms), and
+// for the first long overdue one comes out of the town by a road; then each group keeps a walker for every 50
+// residents (100 with the plague): one made out of sight, or one out of sight taken away.
+void TownLife::life_tick() {
+	const bool ready = roads() && town_.nodes[1].size() == 3 && town_.nodes[2].size() == 3 && town_.spawn.size() > 1 &&
+		!town_.spawn[1].empty();
+	if (!ready || tick_due_ >= now_) {
+		return;
+	}
+	tick_due_ = now_ + 0x616;
+	std::array<uint32_t, 4> out{};
+	for (size_t g = 0; g < 4; ++g) {
+		out[g] = uint32_t(std::max<int64_t>(10, int64_t(town_.passed[g]) - int64_t(town_.residents[g]) + 10));
+	}
+	for (int g = 0; g < 4; ++g) {
+		if (arrive_due_[size_t(g)] < now_) {
+			const int r = rand() % 3;
+			Creature c = make_walker(g, 0x100, 0x100, 0x20, 0x10000u | uint32_t(r));
+			if (c.look) {
+				creatures_.push_back(std::move(c));
+			}
+			const int64_t rate =
+				std::max<int64_t>(10, int64_t(town_.residents[size_t(g)]) - int64_t(town_.passed[size_t(g)]) + 10);
+			arrive_due_[size_t(g)] = now_ + uint32_t(2000000 / rate);
+			break;
+		}
+	}
+	for (int g = 0; g < 4; ++g) {
+		if (leave_due_[size_t(g)] >= now_) {
+			continue;
+		}
+		for (Creature& c : creatures_) {
+			if (c.group != g || c.mode != 0) {
+				continue;
+			}
+			if (start_road(c, 0, false) || start_road(c, 1, false) || start_road(c, 2, false)) {
+				leave_due_[size_t(g)] = now_ + 2000000 / out[size_t(g)];
+				break;
+			}
+		}
+	}
+	for (int g = 0; g < 4; ++g) {
+		if (leave_due_[size_t(g)] + 8000000 / (3 * out[size_t(g)]) < now_) {
+			const int r = rand() % 3;
+			Creature c = make_walker(g, 0x1388, 0x1388, 0, 0x20000u | uint32_t(r));
+			if (c.look) {
+				creatures_.push_back(std::move(c));
+			}
+			leave_due_[size_t(g)] = now_ + 2000000 / (4 * out[size_t(g)]);
+			break;
+		}
+	}
+	const uint32_t per = town_.plague ? 100 : 50;
+	for (int g = 0; g < 4; ++g) {
+		const uint32_t active = uint32_t(count(g, 0));
+		const uint32_t residents = town_.residents[size_t(g)];
+		if (per * active < residents) {
+			TownCell2 cell;
+			if (spawn_cell(true, true, true, cell)) {
+				const TownCell2 p = life_cell_pixel(cell[0], cell[1]);
+				const uint8_t dir = uint8_t((rand() % 4) * 64 + 0x20);
+				Creature c = make_walker(g, p[0] << 16, p[1] << 16, dir, 0);
+				if (c.look) {
+					creatures_.push_back(std::move(c));
+				}
+			}
+		} else if (active > 0 && per * (active - 1) > residents) {
+			size_t pick = creatures_.size();
+			uint32_t best = 0;
+			int ties = 0;
+			for (size_t i = 0; i < creatures_.size(); ++i) {
+				const Creature& c = creatures_[i];
+				if (c.group != g || c.mode != 0) {
+					continue;
+				}
+				const bool seen = c.px() + 50 >= view_[0] && c.px() <= view_[0] + view_[2] + 50 &&
+					c.py() + 50 >= view_[1] && c.py() <= view_[1] + view_[3] + 50;
+				if (seen) {
+					continue;
+				}
+				const uint32_t stuck = uint32_t(c.stuck);
+				if (stuck > best) {
+					best = stuck;
+					ties = 1;
+					pick = i;
+				} else if (stuck == best && rand() % ++ties == 0) {
+					pick = i;
+				}
+			}
+			if (pick < creatures_.size()) {
+				creatures_.erase(creatures_.begin() + std::ptrdiff_t(pick));
+			}
+		}
+	}
+	// 0x5978EC: the children: one made out of sight, or the first out of sight taken away.
+	uint32_t children = 0;
+	for (const Creature& c : creatures_) {
+		children += c.cls == 3;
+	}
+	if (children < town_.children) {
+		spawn_child(true);
+	} else if (children > town_.children) {
+		for (size_t i = 0; i < creatures_.size(); ++i) {
+			const Creature& c = creatures_[i];
+			if (c.cls != 3) {
+				continue;
+			}
+			const bool seen = c.px() + 50 >= view_[0] && c.px() <= view_[0] + view_[2] + 50 &&
+				c.py() + 50 >= view_[1] && c.py() <= view_[1] + view_[3] + 50;
+			if (!seen) {
+				creatures_.erase(creatures_.begin() + std::ptrdiff_t(i));
+				break;
+			}
+		}
+	}
+	// 0x597E45: with the plague, a rat more out of sight while there are fewer than one for every 50 residents.
+	if (town_.plague) {
+		uint32_t rats = 0;
+		for (const Creature& c : creatures_) {
+			rats += c.cls == 0x1A;
+		}
+		if (rats < town_.total / 50) {
+			spawn_rat(true, false);
+		}
+	}
+}
+
+void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& view) {
+	now_ = now;
+	elapsed_ = std::min<uint32_t>(elapsed, 1000);
+	view_ = view;
+	// 0x5984E0: the official comes out (the town's [0x76C] & 2, his path, no siege), facing where he will read.
+	if (town_.official && official_due_ != 0 && official_due_ <= now_ && town_.nodes.size() > 3 &&
+		!town_.nodes[3].empty() && town_.nodes[3][0].size() >= 2 && !people[7].empty()) {
+		official_due_ = 0;
+		Creature c;
+		c.cls = 7;
+		c.mode = 4;
+		c.look = people[7][size_t(rand()) % people[7].size()];
+		c.face = town_.official_face;
+		c.id = next_id_++;
+		if (next_id_ == 0) {
+			next_id_ = 1;
+		}
+		c.frame = anim_start(c, 2);
+		const TownCell2 start = town_.nodes[3][0][0];
+		c.x = start[0] << 16;
+		c.y = start[1] << 16;
+		c.point = 1;
+		c.back = false;
+		official_target(c);
+		c.dir = c.target;
+		place(c);
+		creatures_.push_back(std::move(c));
+	}
+	life_tick();
+	for (size_t i = 0; i < creatures_.size();) {
+		Creature& c = creatures_[i];
+		const bool stays = c.mode == 3 ? perform(c)
+			: c.mode == 4             ? official_walk(c)
+			: c.mode == 5             ? rat_walk(c)
+			: c.mode == 6             ? cart_walk(c)
+			: c.mode != 0             ? road_walk(c)
+									  : walk(c);
+		if (stays) {
+			++i;
+		} else {
+			creatures_.erase(creatures_.begin() + std::ptrdiff_t(i));
+		}
+	}
+}
+
+}  // namespace p3::data

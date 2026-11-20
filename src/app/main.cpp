@@ -61,6 +61,7 @@
 #include "p3data/seamap.hpp"
 #include "p3data/town.hpp"
 #include "p3data/town_buildings.hpp"
+#include "p3data/town_life.hpp"
 #include "p3data/trade.hpp"
 #include "p3data/trade_route_window.hpp"
 #include "p3data/trade_routes.hpp"
@@ -609,6 +610,47 @@ public:
 			}
 		}
 		make_minimap(town);
+		life_base_ = p3::data::life_map(town, tiles_, {});
+		++show_serial_;
+	}
+
+	// The living town of the save's town `index` on screen (TownLife): made again when the town on screen changes,
+	// its map and destinations updated when it is drawn again (its buildings changed), then stepped by the
+	// milliseconds since the last frame, `camera_x`, `camera_y` and `width` the view.
+	void step_life(const SaveGame& save, size_t index, uint32_t now, int camera_x, int camera_y, int width,
+		uint32_t ms_per_tick, bool battle_time) {
+		if (int(index) != life_town_ || life_serial_ != show_serial_) {
+			load_people();
+			p3::data::LifeMap map = life_base_;
+			map.grid = save.towns[index].grid;
+			p3::data::LifeTown town = p3::data::life_town(save, index);
+			town.spawn = spawn_points(save.towns[index].template_map());
+			town.nodes = town_nodes(save.towns[index].template_map());
+			if (int(index) != life_town_) {
+				life_.rand_state = now ^ 0x5EEDu;
+				life_.start(map, town, now);
+				life_last_ = now;
+			} else {
+				life_.update_map(map, town);
+			}
+			life_town_ = int(index);
+			life_serial_ = show_serial_;
+		}
+		// Each tick of the world the town read again (its people's counts, its convoys for the carts).
+		if (save.tick() != life_tick_) {
+			life_tick_ = save.tick();
+			p3::data::LifeTown town = p3::data::life_town(save, index);
+			life_.update_town(town);
+		}
+		life_.set_world_time(save.tick(), ms_per_tick, battle_time);
+		const uint32_t elapsed = now - life_last_;
+		life_last_ = now;
+		life_.step(now, elapsed, {camera_x, camera_y, width, kScreenHeight});
+	}
+	// No living town (a template's map, a battle at the town).
+	void stop_life() {
+		life_.clear();
+		life_town_ = -1;
 	}
 
 	// The town under a battle at it (BattleTown, the battles' piece 7, part 3), in two parts so that the battle's
@@ -674,10 +716,17 @@ public:
 	// manual's figure 4-4): another merchant's (below `merchants`) and the rival kontor.
 	void draw(int camera_x, int camera_y, int highlight = -1, int player = -1, int merchants = 0) {
 		const SDL_Rect screen = {camera_x, camera_y, kScreenWidth, kScreenHeight};
+		collect_strips(screen);
+		size_t next_strip = 0;
 		for (size_t i = 0; i < items_.size(); ++i) {
 			const Item& item = items_[i];
 			if (i == first_object_) {
 				draw_shadows(screen);  // After the ground, before the objects (0x588900: 0x590F30, 0x591C50).
+				draw_people_shadows(screen);
+			}
+			// The walkers' strips of the rows above this object's, after those rows' objects.
+			for (; i >= first_object_ && next_strip < strips_.size() && strips_[next_strip].row < item.row; ++next_strip) {
+				draw_strip(strips_[next_strip], camera_x, camera_y);
 			}
 			if (!SDL_HasIntersection(&item.dst, &screen)) {
 				continue;
@@ -694,6 +743,9 @@ public:
 			if (rival) {
 				SDL_SetTextureColorMod(item.texture, 255, 255, 255);
 			}
+		}
+		for (; next_strip < strips_.size(); ++next_strip) {
+			draw_strip(strips_[next_strip], camera_x, camera_y);
 		}
 		if (highlight < 0) {
 			return;
@@ -1036,6 +1088,147 @@ private:
 	std::vector<uint32_t> cell_types_;  // cell_type_at.
 	int width_ = 0;
 	int height_ = 0;
+	// The living town (start_life...): the creatures, their looks (iso/lcr/files.lst's people, in its order: each
+	// class's static array), the map they read as shown (life_base_: no grid), the town and the drawing it was made
+	// for (life_town_, life_serial_ against show_serial_), each town template's points (N.spawn), the last frame's time.
+	p3::data::TownLife life_;
+	std::vector<std::unique_ptr<p3::data::LcrAnim>> people_;
+	bool people_loaded_ = false;
+	p3::data::LifeMap life_base_;
+	int life_town_ = -1;
+	uint64_t show_serial_ = 0;
+	uint64_t life_serial_ = 0;
+	std::map<int, std::vector<std::vector<p3::data::TownCell2>>> spawns_;
+	std::map<int, std::vector<std::vector<p3::data::TownPath>>> nodes_;
+	uint32_t life_last_ = 0;
+	uint32_t life_tick_ = 0xFFFFFFFF;
+	// A walker's strip to draw with the row of its cell (draw()).
+	struct Strip {
+		int row = 0;
+		const p3::data::Creature* creature = nullptr;
+		size_t index = 0;
+	};
+	std::vector<Strip> strips_;
+
+	void load_people() {
+		if (people_loaded_) {
+			return;
+		}
+		people_loaded_ = true;
+		std::vector<uint8_t> list;
+		const CprEntry* entry = archive_.find("iso/lcr/files.lst");
+		if (!entry || !archive_.read(*entry, list)) {
+			return;
+		}
+		size_t begin = 0;
+		for (size_t i = 0; i <= list.size(); ++i) {
+			if (i < list.size() && list[i] != 0 && list[i] != '\r' && list[i] != '\n') {
+				continue;
+			}
+			const std::string name(reinterpret_cast<const char*>(list.data()) + begin, i - begin);
+			begin = i + 1;
+			if (name.empty()) {
+				continue;
+			}
+			std::vector<uint8_t> data;
+			const CprEntry* file = archive_.find("iso/lcr/" + name);
+			auto look = std::make_unique<p3::data::LcrAnim>();
+			if (!file || !archive_.read(*file, data) || !p3::data::parse_lcr(data.data(), data.size(), *look) ||
+				(look->kind > 7 && look->kind != 0x1A && look->kind != 0x1F) || look->directions.empty()) {
+				continue;
+			}
+			life_.people[look->kind].push_back(look.get());
+			people_.push_back(std::move(look));
+		}
+	}
+
+	const std::vector<std::vector<p3::data::TownCell2>>& spawn_points(int map) {
+		auto it = spawns_.find(map);
+		if (it != spawns_.end()) {
+			return it->second;
+		}
+		std::vector<std::vector<p3::data::TownCell2>>& points = spawns_[map];
+		std::vector<uint8_t> data;
+		const CprEntry* entry = archive_.find("iso/towns/" + std::to_string(map) + ".spawn");
+		if (entry && archive_.read(*entry, data) && !p3::data::parse_town_spawn(data.data(), data.size(), points)) {
+			points.clear();
+		}
+		return points;
+	}
+
+	const std::vector<std::vector<p3::data::TownPath>>& town_nodes(int map) {
+		auto it = nodes_.find(map);
+		if (it != nodes_.end()) {
+			return it->second;
+		}
+		std::vector<std::vector<p3::data::TownPath>>& paths = nodes_[map];
+		std::vector<uint8_t> data;
+		const CprEntry* entry = archive_.find("iso/towns/" + std::to_string(map) + ".nodes");
+		if (entry && archive_.read(*entry, data) && !p3::data::parse_town_nodes(data.data(), data.size(), paths)) {
+			paths.clear();
+		}
+		return paths;
+	}
+
+	// The strips of the walkers on `screen` (the town's pixels), by row (0x591C50's cell pass: a cell's creatures
+	// after its object).
+	void collect_strips(const SDL_Rect& screen) {
+		strips_.clear();
+		for (const p3::data::Creature& c : life_.creatures()) {
+			const p3::data::LcrFrame* f = c.current();
+			if (!f || c.cells.size() != f->strips.size()) {
+				continue;
+			}
+			const SDL_Rect body = {c.px() - (f->anchor_x - f->body.x), c.py() - (f->anchor_y - f->body.y), f->body.w,
+				f->body.h};
+			if (!SDL_HasIntersection(&body, &screen)) {
+				continue;
+			}
+			for (size_t k = 0; k < f->strips.size(); ++k) {
+				strips_.push_back({c.cells[k][1], &c, k});
+			}
+		}
+		std::stable_sort(strips_.begin(), strips_.end(), [](const Strip& a, const Strip& b) { return a.row < b.row; });
+	}
+
+	void draw_strip(const Strip& s, int camera_x, int camera_y) {
+		const p3::data::Creature& c = *s.creature;
+		const p3::data::LcrFrame* f = c.current();
+		SDL_Texture* texture = f ? atlas_texture(c.look->image) : nullptr;
+		if (!texture) {
+			return;
+		}
+		const p3::data::LcrRect& r = f->strips[s.index];
+		const SDL_Rect src = {r.x, r.y, r.w, r.h};
+		const SDL_Rect dst = {c.px() + r.x - f->anchor_x - camera_x, c.py() + r.y - f->anchor_y - camera_y, r.w, r.h};
+		SDL_RenderCopy(renderer_, texture, &src, &dst);
+	}
+
+	// The walkers' shadows, with the buildings' (draw_shadows): black at alpha 100.
+	void draw_people_shadows(const SDL_Rect& screen) {
+		for (const p3::data::Creature& c : life_.creatures()) {
+			const p3::data::LcrFrame* f = c.current();
+			if (!f || !f->shadowed || c.look->shadow_image.empty()) {
+				continue;
+			}
+			const SDL_Rect dst = {c.px() + f->shadow_x - f->anchor_x, c.py() + f->shadow_y - f->anchor_y, f->shadow.w,
+				f->shadow.h};
+			if (!SDL_HasIntersection(&dst, &screen)) {
+				continue;
+			}
+			SDL_Texture* texture = atlas_texture(c.look->shadow_image);
+			if (!texture) {
+				continue;
+			}
+			const SDL_Rect src = {f->shadow.x, f->shadow.y, f->shadow.w, f->shadow.h};
+			const SDL_Rect at = {dst.x - screen.x, dst.y - screen.y, dst.w, dst.h};
+			SDL_SetTextureColorMod(texture, 0, 0, 0);
+			SDL_SetTextureAlphaMod(texture, 100);
+			SDL_RenderCopy(renderer_, texture, &src, &at);
+			SDL_SetTextureColorMod(texture, 255, 255, 255);
+			SDL_SetTextureAlphaMod(texture, 255);
+		}
+	}
 };
 
 // Textura de una imagen estándar (BMP, TGA...) del archivo; nullptr si falla.
@@ -26140,6 +26333,13 @@ int main(int argc, char** argv) {
 			const int pointed = free_now && side.menu != PanelMenu::Build
 				? view->place_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2)
 				: -1;
+			// The living town: its walkers (TownLife), only in a save's town.
+			if (selection.mode == Mode::Saved && has_save && town_index >= 0 && size_t(town_index) < save.towns.size()) {
+				view->step_life(save, size_t(town_index), app_ticks(), camera_x, camera_y, town_width,
+					kGameSpeeds[game_speed].ms_per_tick, sailing && sailing->time_mode() == 2);
+			} else {
+				view->stop_life();
+			}
 			view->draw(camera_x, camera_y, pointed, side.shade_rivals && save.player >= 0 ? save.player : -1,
 				int(save.merchant_count));
 			if (placing && side.cell_x >= 0) {

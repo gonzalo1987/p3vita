@@ -573,6 +573,35 @@ bool land_trade(SaveGame& save) {
 	return false;
 }
 
+// As land_trade, then a convoy sent from its town to its partner (the operation 0x3A as the land trade's window queues
+// it: 10 loads of grain, the player told): the town view's cart leaving (the living town, re/emu/sesion50).
+bool land_convoy(SaveGame& save) {
+	const uint32_t player = uint32_t(save.player);
+	const uint32_t home = save.merchants[size_t(save.player)].hometown();
+	for (uint32_t k = 0; k < save.towns.size(); ++k) {
+		const uint32_t town = uint32_t((home + k) % save.towns.size());
+		uint8_t partner = 0xFF;
+		if (fn_5336b0(save, town, partner) != 0) {
+			continue;
+		}
+		if (!land_trade(save)) {
+			return false;
+		}
+		OperationBytes op{};
+		op[0] = 0x3A;
+		op[4] = uint8_t(town);
+		op[5] = partner;
+		op[6] = uint8_t(player);
+		op[7] = 1;
+		const uint16_t amount = 10;
+		std::memcpy(op.data() + 8, &amount, 2);
+		save.queued_operations.push_back(std::vector<uint8_t>(op.begin(), op.end()));
+		std::printf("land-convoy: from town %u to %u\n", town, partner);
+		return true;
+	}
+	return false;
+}
+
 // The moneylender of the town of the player's first ship in port, busy: three
 // loans on offer (the town's slots 0..2, [0x9C6 + 6·k]: rank, names, weeks,
 // amount) and three townsmen asking for one (3..5); the player worth 300000
@@ -1068,6 +1097,7 @@ const char kDebugStatesHelp[] =
 	"              beggars and archers in the town (the arsenal)\n"
 	"  town-orders  three orders of towns in the town hall's notices (grain, beer\n"
 	"              with the bonus, wine), the player's standing enough to take them\n"
+	"  land-convoy  as land-trade, and a convoy of grain sent along the road (its cart)\n"
 	"  land-trade  the player's offices at both ends of the first open road, wares in\n"
 	"              the first (its town and the R presses to it on stdout)\n"
 	"  married     the player married, two children (the office's «Personal»)\n"
@@ -1517,6 +1547,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			}
 		} else if (state == "town-orders") {
 			town_orders(save);
+		} else if (state == "land-convoy") {
+			if (!land_convoy(save)) {
+				error = "no town lets the land trade's window open";
+				return false;
+			}
 		} else if (state == "land-trade") {
 			if (!land_trade(save)) {
 				error = "no town lets the land trade's window open";

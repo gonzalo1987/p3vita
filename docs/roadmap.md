@@ -140,7 +140,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Cartas (las 154 llamadas del juego que mandan una) | 148 (las del intérprete y del evento 0x09, 20-11-2026) | 6: la carta final 0x3D del evento 0x34, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
-| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
+| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026) | los animales, las animaciones de los edificios y los árboles, los barcos del puerto, el agua animada, el tiempo, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
 | Jugar en red con el juego de PC | el motor idéntico, que es la base | todo lo demás (apartado 8) |
@@ -800,15 +800,35 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   usuario: sus encargos y elecciones son las páginas del ayuntamiento, y los materiales de la carretera, la página
   «Ruta terrestre» de la puerta de la ciudad, como las del juego.
 - **La ciudad viva**: la simulación cambia la ciudad como el juego y el visor ya dibuja su estado actual (sus listas de
-  edificios, obras y fortificaciones, y las de cada oficina), pero solo los edificios:
-  - [ ] Antes de seguir, mirar en el juego original qué se ve y qué cambia: si la ciudad se redibuja en cuanto se
-    construye algo, qué se anima (gente, carros, agua, humo...), cómo se ve un asedio.
-  - [ ] Los habitantes y los carros por las calles, y las animaciones de los edificios.
+  edificios, obras y fortificaciones, y las de cada oficina). Lo vivo de la vista (las «criaturas» del juego, sus
+  clases, los ficheros `.nodes`, `.spawn` y `.locked` de cada ciudad, las animaciones de los edificios) está
+  inventariado en `re/emu/sesion50/README.md`; el orden que aceptó el usuario el 20-11-2026: 1) la gente por las
+  calles, 2) los animales, 3) las animaciones de los edificios y los árboles (con el pescador), 4) los barcos en el
+  puerto, 5) el agua, 6) el tiempo, 7) las obras, 8) el fuego, 9) el asedio (con los guardias), 10) el coste en la
+  Vita, 11) el mapa del mar. Va en `src/p3data/town_life.{hpp,cpp}` (TownLife) y el TownView del visor; su azar es
+  el del visor, no el del mundo (apartado 8). Encargo: `ENCARGO_CIUDAD_VIVA.md`.
+  - [x] Mirar en el juego original qué se ve y qué cambia (20-11-2026, el inventario de `re/emu/sesion50/README.md`).
+  - [x] La gente por las calles (20/21-11-2026, `re/emu/sesion50/README.md`, «Part 1»): los paseantes de cada clase,
+    uno por cada 50 habitantes (0x595CA0), con su paseo libre por las calles hacia los puestos del mercado y las
+    puertas de los edificios (0x55C820, 0x55D9D0), sus gestos y los de los mendigos y los niños; las llegadas y
+    salidas por las carreteras con los relojes de cada clase (0x596EE0, 0x55B6A0) y las carreteras con gente al abrir
+    la ciudad; los niños por el ánimo; un vendedor junto a cada puesto y el malabarista (0x598280); el funcionario con
+    su pergamino (0x5984E0); las ratas con la peste; los carros del comercio por tierra (0x56FB20, 0x570120, con
+    el estado de depuración `land-convoy`). Cada figura partida en tiras por la celda de su pie, como el juego, para
+    que los edificios la tapen. Pasan al apartado de cada uno: el pescador (lo crea su cabaña, 0x555BC3: con las
+    animaciones de los edificios) y los guardias ([0x998], la clase de los soldados: con el asedio).
+  - [ ] Los animales: perros y gatos, los del bosque (0x58B1B0), los pájaros (0x58A920, su formato de LCR propio), los
+    peces (0x58C822).
+  - [ ] Las animaciones de los edificios (las variantes de clase 3 a 8 de sus `.let`: humo, gaviotas del astillero,
+    granjas, talleres, el faro...) y el pescador de la cabaña (0x59A420).
   - [ ] Los barcos en el puerto (la lista *0x6E2D50, el objeto 0x6E6220 al que la simulación avisa al atracar y
     zarpar), también como puntos en el minimapa con el color de su dueño (0x56C730: azul los tuyos, gris oscuro los
     piratas, blanco los demás, rojo los de otro jugador humano; el dibujo del minimapa, 0x59C590). Con ellos, el «ir al
     barco» de la lista de barcos centrado en su barco (0x476A30).
-  - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe).
+  - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe), las olas (`welle_*`), el oleaje de los
+    acantilados (`Klippen_Flut`) y los témpanos con el puerto helado (0x58C8A5).
+  - [ ] El tiempo: la nieve y la lluvia (0x58AA30, 0x58AD30), la niebla (clase 0x1C), las nubes (0x14) y las huellas en
+    la nieve (0x55D0B0, 0x55B030).
   - [x] Las sombras y la nieve de los tiles (17-11-2026, `re/emu/sesion39/README.md`; las variantes del `.let`, con
     la clase 1 de la obra y la 2 de la nieve corregidas en `docs/formats/town.md`). **Sombras**: como la pasada del
     juego (0x591C50), todas tras el suelo y antes de los objetos, cada una desde la celda de la franja `cols − 1` de su
@@ -835,7 +855,11 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     una batalla y arde unos 100 ticks como edificio, el evento 0x25; 0x5891C0, 0x599040). Decisión del usuario
     (10-11-2026): con la ciudad animada.
   - [ ] El asedio en la vista: el campamento, las tropas y el ataque a la puerta (0x62C730 y los objetos del ejército
-    [+0x1F8], [+0x574], [+0x5DC..]) y el aviso al jugador; su icono de suceso ya sale.
+    [+0x1F8], [+0x574], [+0x5DC..]) y el aviso al jugador; su icono de suceso ya sale. Con él los guardias de la
+    ciudad ([0x998], la clase 8) y lo que hace el asedio a los paseantes (corren, huyen del ejército: 0x55A2C0).
+  - [ ] Las animaciones del mapa del mar (`images/Animationen_Seekarte`, `scrollmaps.ini` [Wetter]: tormentas, calma,
+    icebergs, ballena, peces, gaviotas, olas), el último punto de la ciudad viva (dijo que sí el usuario el
+    20-11-2026).
   - [ ] Coste en la Vita: cada redibujado rehace la ciudad entera (2 ms en el PC más la lista de sprites); si da tirones
     en avance rápido, redibujar solo las celdas que cambian. Y la nieve: al cambiar de estación (o al entrar en una
     ciudad en invierno) se decodifican los atlas de nieve de sus tiles además de los normales, y se guardan; mirar el
@@ -935,6 +959,8 @@ que van a una cola y ejecuta la simulación, y en red solo viajan esas órdenes.
 - [ ] Ojo: el juego tira los gestos al azar de los interiores (el ayuntamiento, 0x5A94FA, y los demás edificios) con el
   mismo `rand()` de la CRT que usa la simulación: en el PC, tener un edificio abierto cambia los números al azar de la
   partida. El visor usa un azar aparte para esos gestos. Para jugar en red habrá que ver cómo lo resuelve el juego.
+  Lo mismo la ciudad viva (20-11-2026): la gente, los animales, los carros... de la vista de la ciudad gastan ese
+  `rand()` (más de cien llamadas, `re/emu/sesion50/README.md`); en el visor tienen su azar propio (TownLife::rand).
 - [ ] Todas las acciones del jugador como las mismas órdenes que encola el juego.
 - [ ] La red del juego: `Schnelltransfer.dll` (de Ascaron, sobre Winsock: buscar partidas en la red local, unirse por
   IP, mandar y recibir; sus funciones `Network_*`). Estudiar su protocolo y los mensajes de la partida en red, y

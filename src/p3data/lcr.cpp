@@ -62,7 +62,9 @@ struct Reader {
 // u32 the strips n and n × (x, y, w, h), u32 the body's x1, y1, x2, y2
 // (inclusive); after the last direction the main image's name. Some files go
 // on after it (a ship's look of hull state 0: the icons the town view puts
-// over a ship, the white flag, the marker arrow...).
+// over a ship, the white flag, the marker arrow...). The six u32 at 0x1D are the
+// generic head's parameters and sequences (below); the town people's have more
+// sequences, so their shadow's name comes later; their files end with a u32 0.
 bool parse_lcr(const uint8_t* data, size_t size, LcrAnim& out, std::string* error) {
 	out = LcrAnim();
 	if (size < 0x39) {
@@ -75,6 +77,7 @@ bool parse_lcr(const uint8_t* data, size_t size, LcrAnim& out, std::string* erro
 	std::memcpy(&out.key, data + 8, 4);
 	uint32_t directions = 0;
 	std::memcpy(&directions, data + 0x14, 4);
+	std::memcpy(&out.speed, data + 0x10, 4);
 	std::memcpy(&out.fps, data + 0x18, 4);
 	std::memcpy(out.words, data + 0x1D, sizeof(out.words));
 	if (version != 0x0600 || directions == 0 || directions > 64) {
@@ -108,7 +111,36 @@ bool parse_lcr(const uint8_t* data, size_t size, LcrAnim& out, std::string* erro
 		}
 		return true;
 	}
-	Reader r{data, size, 0x35};
+	// The head's parameters and sequences (0x558770 and each class's reader): at 0x1D u32 n, n u32, u32 m, m × (first
+	// frame, last frame, id). An effect has one parameter (the number the game asks it by) and one sequence, a ship's
+	// look three or four and none: both reach 0x35. Files read otherwise (the birds', the snow's, the warning's): the
+	// shadow's name at 0x35, no parameters.
+	Reader r{data, size, 0x1D};
+	{
+		uint32_t n = 0;
+		uint32_t m = 0;
+		bool ok = r.u32(n) && n <= 32;
+		for (uint32_t i = 0; ok && i < n; ++i) {
+			uint32_t v = 0;
+			ok = r.u32(v);
+			out.params.push_back(v);
+		}
+		ok = ok && r.u32(m) && m <= 32;
+		for (uint32_t i = 0; ok && i < m; ++i) {
+			uint32_t first = 0;
+			uint32_t last = 0;
+			uint32_t id = 0;
+			ok = r.u32(first) && r.u32(last) && r.u32(id);
+			out.sequences.push_back({int(first), int(last), int(id)});
+		}
+		Reader probe = r;
+		std::string name;
+		if (!ok || !probe.text(name)) {
+			out.params.clear();
+			out.sequences.clear();
+			r.at = 0x35;
+		}
+	}
 	if (!r.text(out.shadow_image)) {
 		return fail(error, "bad shadow image name");
 	}
@@ -135,7 +167,13 @@ bool parse_lcr(const uint8_t* data, size_t size, LcrAnim& out, std::string* erro
 			if (!r.u32(strips) || strips > 64 || r.at + 16 * size_t(strips) > size) {
 				return fail(error, "bad frame");
 			}
-			r.at += 16 * size_t(strips);
+			f.strips.resize(strips);
+			for (LcrRect& strip : f.strips) {
+				r.s32(strip.x);
+				r.s32(strip.y);
+				r.s32(strip.w);
+				r.s32(strip.h);
+			}
 			if (!r.s32(f.body.x) || !r.s32(f.body.y) || !r.s32(x2) || !r.s32(y2)) {
 				return fail(error, "bad frame");
 			}

@@ -43,6 +43,7 @@ add_library(p3data STATIC
 	player_actions.cpp
 	image.cpp
 	lcr.cpp
+	town_life.cpp
 	letter_picture.cpp
 	letters.cpp
 	lz.cpp
