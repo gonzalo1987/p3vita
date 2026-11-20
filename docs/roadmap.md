@@ -381,8 +381,12 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   `mission_start` (la 0xC0 en todos los modos), la partida nueva entera con la 0xC0, las partidas escritas, ctest
   `missions`. Hasta que estén sus instrucciones, un guion termina en la primera que no está (como antes, que se
   tiraban), y el oráculo y las comprobaciones de siempre siguen sin las misiones.
-- [ ] **Las instrucciones del intérprete**: 0 de las 138 con manejador (tabla en formats/missions.md, con cuántas
-  misiones usan cada una). Por partes: primero las 80 de la partida de un jugador (las de las variables y las cuentas,
+- [ ] **Las instrucciones del intérprete**: 21 de las 138 con manejador (tabla en formats/missions.md, con cuántas
+  misiones usan cada una). Hechas (20-11-2026, `re/emu/sesion47/README.md`): 0x04..0x07, 0x09..0x0E, 0x17..0x1C, 0x21,
+  0x26/0x27; comprobadas con el mundo 7 días con las misiones, llamada a llamada (`worldm.sh`), en las 12 partidas:
+  cada llamada distinta que queda lleva una instrucción sin escribir (tick_probe las marca). Lo que ejecutan las
+  partidas (`opcount.sh`): 34 instrucciones en 7 días; faltan de ellas 0x38 y 0xF7 (en todas), 0x24, 0x29, 0x40, 0x1D,
+  0x20, 0x39, 0x3F, 0x43, 0xF0. Sin llegar aún en las partidas, para un estado retocado: 0x07 y 0x27. Por partes: primero las 80 de la partida de un jugador (las de las variables y las cuentas,
   0x01..0x0E; las de las cartas, 0x17..0x1D y 0xF7; las de las ciudades, los barcos y los comerciantes; las de las
   historias, 0x37...), cada una leída, reescrita y comprobada con el oráculo con `--misiones` (las 12 partidas ya llevan
   misiones en curso) y estados retocados para las ramas a las que no llegan; luego las 10 más de la partida en red, las
@@ -408,7 +412,8 @@ Cada pantalla se adapta a la Vita y se comprueba a ojo frente al juego original 
 gráficos y sus textos; las reglas de lo que enseña y las órdenes que encola, contra el juego como siempre. Las normas
 del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo en «Decisiones del usuario».
 
-- [ ] **Las ventanas que siguen siendo del visor** (19-11-2026: el usuario vio la de comerciar, «no guarda la estética
+- [x] **Las ventanas que siguen siendo del visor** (acabadas el 20-11-2026, salvo la del final, que va con el final de
+  la partida; 19-11-2026: el usuario vio la de comerciar, «no guarda la estética
   del resto», y pidió rehacerlas como las del juego; inventario en `re/emu/sesion45/README.md`, capturas
   `re/emu/sesion31/shots/v1..v8.png`). Con su recuadro oscuro y la letra del visor:
   - [x] **La ventana de comerciar** (19-11-2026, `re/emu/sesion45/README.md`): como la del juego (*0x6D9584, su dibujo

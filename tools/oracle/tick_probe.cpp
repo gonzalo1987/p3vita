@@ -67,6 +67,7 @@
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_texts.hpp"
 #include "p3data/mail.hpp"
+#include "p3data/mission_script.hpp"
 #include "p3data/navigation.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/savegame.hpp"
@@ -1411,6 +1412,7 @@ int main(int argc, char** argv) {
 		}
 	}
 	std::map<uint32_t, std::pair<int, int>> results;  // función → {bien, mal}
+	std::map<uint32_t, int> unwritten_calls;  // Of the differing calls, those with a mission instruction not rewritten.
 	std::map<uint32_t, int> skipped;  // función → muestras que la sonda no puede repetir
 	int missing = 0;
 	// Con --continuo: el [+0x8B] del mundo que advance_time baja tras 0x5315C0.
@@ -1498,7 +1500,17 @@ int main(int argc, char** argv) {
 			save.town_view = town_view;
 		}
 		save.queued_operations.clear();
+		// The mission instructions not rewritten that p3vita meets in this call (each ends its script there).
+		auto unwritten_total = [] {
+			uint64_t n = 0;
+			for (int op = 0; op < 256; ++op) {
+				n += missions_detail::unwritten_mission_ops()[op];
+			}
+			return n;
+		};
+		const uint64_t unwritten_before = unwritten_total();
 		const std::optional<uint32_t> ours = fn->second(save, call);
+		const bool met_unwritten = unwritten_total() != unwritten_before;
 		if (sailing) {
 			for (const std::string& message : sailing->take_player_messages()) {
 				if (print_messages) {
@@ -1523,8 +1535,8 @@ int main(int argc, char** argv) {
 			continue;
 		}
 		char title[160];
-		std::snprintf(title, sizeof(title), "0x%x tick %u ecx %08x arg %08x %08x:", call.function, call.tick, call.ecx,
-			call.args[0], call.args[1]);
+		std::snprintf(title, sizeof(title), "0x%x tick %u ecx %08x arg %08x %08x%s:", call.function, call.tick, call.ecx,
+			call.args[0], call.args[1], met_unwritten ? " (a mission instruction not rewritten)" : "");
 		if (const std::optional<uint32_t> code = call.wide ? call.stack(call.ecx) : std::nullopt) {
 			// A wide sample's operation (newgame_oracle.py): its code.
 			const size_t used = std::strlen(title) - 1;
@@ -1562,6 +1574,9 @@ int main(int argc, char** argv) {
 		}
 		auto& r = results[call.function];
 		(d ? r.second : r.first)++;
+		if (d && met_unwritten) {
+			++unwritten_calls[call.function];
+		}
 		for (const std::vector<uint8_t>& op : save.queued_operations) {
 			if (op.size() >= 0x14 && get<uint32_t>(op.data(), 0) == 0) {
 				pending_sail.push_back(op);
@@ -1571,6 +1586,9 @@ int main(int argc, char** argv) {
 	int bad = 0;
 	for (const auto& [f, r] : results) {
 		std::printf("0x%x: %d llamadas iguales, %d distintas\n", f, r.first, r.second);
+		if (unwritten_calls.count(f)) {
+			std::printf("0x%x: %d of them with a mission instruction not rewritten\n", f, unwritten_calls.at(f));
+		}
 		bad += r.second;
 	}
 	for (const auto& [f, n] : skipped) {
@@ -1578,6 +1596,13 @@ int main(int argc, char** argv) {
 	}
 	if (missing) {
 		std::printf("%d llamadas a funciones sin registrar\n", missing);
+	}
+	// The mission interpreter's instructions not rewritten yet that p3vita met (each ended its script).
+	const uint32_t* unwritten = missions_detail::unwritten_mission_ops();
+	for (int op = 0; op < 256; ++op) {
+		if (unwritten[op] != 0) {
+			std::printf("mission instruction 0x%02x not rewritten: met %u times\n", op, unwritten[op]);
+		}
 	}
 	if (!write_path.empty()) {
 		// The uncompressed .pat of the state reached, as the game's save
