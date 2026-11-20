@@ -386,8 +386,8 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   `mission_start` (la 0xC0 en todos los modos), la partida nueva entera con la 0xC0, las partidas escritas, ctest
   `missions`. Hasta que estén sus instrucciones, un guion termina en la primera que no está (como antes, que se
   tiraban), y el oráculo y las comprobaciones de siempre siguen sin las misiones.
-- [ ] **Las instrucciones del intérprete**: 92 de las 138 con manejador, **todas las de la partida de un jugador y las
-  de la partida en red** (tabla en formats/missions.md, con cuántas
+- [ ] **Las instrucciones del intérprete**: 119 de las 138 con manejador, **todas las que usan los ficheros del juego**
+  (la partida de un jugador, la de red y las campañas) (tabla en formats/missions.md, con cuántas
   misiones usan cada una). Hechas (20-11-2026, `re/emu/sesion47/README.md` y `re/emu/sesion48/README.md`): 0x04..0x07,
   0x09..0x0E, 0x11, 0x12, 0x15, 0x17..0x1E, 0x20, 0x21, 0x23, 0x24, 0x26/0x27, 0x29 (con 0x533210, la ciudad más
   cercana), 0x2F (la mercancía que más le falta a una ciudad, 0x51BEB0), 0x35, 0x37 (la ventana de un suceso
@@ -408,7 +408,12 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   armado) y 0x6F (la ciudad siguiente de un barco, con 0x533210); las de la partida en red: 0x08 (el humano que va
   primero), 0x2E (una reputación), 0x36 (un barco al azar de un comerciante), 0x3E (la carga de un barco), 0x56 (la
   ciudad de la Hansa), 0x57 y 0x5A (el barco más rápido o con más de una mercancía), 0x58 y 0x59 (las variables por
-  número) y 0xEB (los marineros de un barco). **Comprobado: el
+  número) y 0xEB (los marineros de un barco); las de las campañas: 0x01, 0x2D, 0x31 (datos de un comerciante), 0x03,
+  0x33, 0x2B, 0x70, 0x72 (sus barcos), 0x34, 0x60, 0x62, 0xE6 (datos de una ciudad), 0x5B (la ciudad más cercana por
+  mar), 0x5C (buscar en la crónica), 0x5D (vender un barco, con 0x509250), 0x5E, 0x5F, 0x63 (los edificios de una
+  oficina: contarlos, venderlos con 0x5256F0, ponerlos a la venta con la 0x28), 0x64 (marcar barcos de la IA), 0x65 (una
+  ciudad por su nombre), 0x66 (el barco de un capitán pirata), 0x67 (dar un barco, con 0x50E000), 0xE5 y 0xED (un
+  incendio: la 0x7D, con 0x525B90), 0xEC (la peste: la 0x7C), 0xFB (el evento 0x09) y 0xEF (una ventana). **Comprobado: el
   mundo entero 30 días con las misiones igual al juego en las 12 partidas**, llamada a llamada
   (`re/emu/sesion48/worldmd.sh`, por tramos), y la cola de eventos y las operaciones 60 días (igual salvo una
   diferencia de las batallas en la partida 4 que sale también sin las misiones: apartado 2); 7 días también en continuo
@@ -417,8 +422,8 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   en un estado retocado (`retouch_unchecked.py mission_branches`, partidas 3, 5 y 7: 0x07, 0x26 con todos los
   humanos, 0x27, el paso errante de 0x29, los modos de 0x40 y 0x4F, 0x44 con varias oficinas, las ramas de 0xF7 y
   todos los códigos «%» de sus cartas; `mission_ships_money`, `mission_ships_state`, `mission_misc`,
-  `mission_last` y `mission_network`, partidas 1, 3, 5 y 7: las cuarenta y siete nuevas con sus ramas): iguales
-  (`docs/oracle.md`). Siguen las 27 de las campañas y las 19 que no usa ningún fichero. Cuando estén todas, el
+  `mission_last`, `mission_network`, `mission_campaign_a` y `mission_campaign_b`, partidas 1, 3, 5 y 7: las setenta y
+  cuatro nuevas con sus ramas): iguales (`docs/oracle.md`). Siguen las 19 que no usa ningún fichero. Cuando estén todas, el
   oráculo con las misiones por omisión (y `world.sh` con ellas).
 - [ ] **Lo que cuelga del intérprete**: el evento 0x09 (0x4E2824, las cartas de buena y mala cosecha), sus cartas (tres
   que compone el guion con los textos del `.p2m`, la del mapa 0x46 o 0x45, la 0x22), las operaciones que encola (0x1B,
@@ -1088,6 +1093,14 @@ ser a propósito. El detalle, en el comentario del código y en [oracle.md](orac
   misiones de la partida en red; 20-11-2026, parece): compara la velocidad de cada barco (0x5170F0) con la marca, pero
   guarda como marca su potencia de fuego [+0x120], así que el elegido no es el más rápido. Reproducido
   (`mission_network`).
+- **El incendio de la instrucción 0xED** (0x4EE567, campañas; 20-11-2026, parece): busca la ciudad y su sitio con el
+  número del operando (el de la variable) y no con su valor, que sí pone en la operación 0x7D; 0xE5, su pareja, usa el
+  valor. Reproducido (`mission_campaign_b`).
+- **Vender un almacén con 0x5256F0** (la instrucción 0x5F, campañas; 20-11-2026, seguro, leído): el almacén (0x1E)
+  está en la lista de empresas de la oficina [+0x2CE], pero 0x5256F0 lo trata como una casa por su tipo (lo busca en
+  [+0x2D0]) y el recuento 0x4FF2D0 lee fuera de la tabla de las casas. Ninguna venta del juego llega (las subastas no
+  venden almacenes); en p3vita salta la aserción de `fn_4ff2d0`. Si alguna misión lo hace, hay que reproducirlo sin
+  la aserción.
 
 **«El carabela»** (las frases del barco patrulla en español, 0x5E1F01; 15-11-2026, seguro, solo texto): el artículo va
 por el tipo de barco (0 y 2 «La», 1 y 3 «El») y la carabela es el tipo 1. Reproducido tal cual.

@@ -53,7 +53,15 @@ namespace events_mayor_detail {
 void fn_4f5900(SaveGame& save, int merchant);
 void fn_509250(SaveGame& save, Sailing* sailing, uint32_t ship, uint32_t winner, int32_t price90, int32_t price,
 	uint32_t town);
+// 0x5256F0 (on the town): its building `record` sold to `winner` for `price` (the owner before gets `price90`).
+void fn_5256f0(SaveGame& save, int town, uint32_t record, uint32_t winner, int32_t price, int32_t price90);
 }  // namespace events_mayor_detail
+namespace events_towns_detail {
+// 0x5308A0 with create = 1 (events_towns.cpp): the merchant's office in the town, made if he has none; its index.
+int fn_5308a0_create(SaveGame& save, uint32_t merchant, uint32_t town);
+// 0x50E000 (events_towns.cpp): a ship of the type given to the merchant in the town; its index.
+uint16_t fn_50e000(SaveGame& save, uint16_t& type, uint32_t strength, uint32_t town_arg, uint32_t merchant_arg);
+}  // namespace events_towns_detail
 // operations.cpp: the operation 0x4E (0x53B850), a player's ship turns pirate.
 void fn_53b850(SaveGame& save, Sailing* sailing, const uint8_t* operation);
 // ship_operations.cpp: the player's operations on a ship's crew and captain.

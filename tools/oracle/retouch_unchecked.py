@@ -5999,6 +5999,108 @@ def mission_network(o):
     return during
 
 
+def office_buildings(o, office, town):
+    """The records of an office's businesses list ([+0x2CE], next [+0x4]) in the town: [(record, type)]."""
+    t = o.town(town)
+    records, out, r = o.u32(t + 0x75C), [], o.u16(o.office(office) + 0x2CE)
+    while r < o.u16(t + 0x776) and len(out) < 256:
+        out.append((r, o.u8(records + 8 * r + 3)))
+        r = o.u16(records + 8 * r + 4)
+    return out
+
+
+def mission_campaign_a(o):
+    """The campaigns' handlers that read, each script of its own in its own tick: 0x01, 0x2D, 0x31; 0x03 (a type, all);
+    0x33; 0x34; 0x60; 0x62; 0xE6; 0x5B; 0x65 (a name, past the 40); 0x66 (a pirate's captain); 0x2B; 0x70 (modes 0, 1, 2)
+    and 0x72; 0x5E on the player's home office; 0x5C on two chronicle letters made 0x3A and 0x39 (and a later date);
+    0xEF. Saves 3, 5, 7."""
+    towns, offices, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    mine = merchant_ships(o, player)
+    ship = mine[0]
+    town = o.u8(o.ship(ship) + 0x39)
+    pirate = next((i for i in range(ships) if o.u16(o.ship(i) + 0x134) == 0x12), None)
+    captain = o.u16(o.ship(pirate) + 0x42) if pirate is not None else 0
+    office = next(i for i in rt.merchant_offices(o, player) if o.u8(o.office(i) + 0x2C6) == home)
+    buildings = office_buildings(o, office, home)
+    kind = buildings[0][1] if buildings else 4
+    mailbox = o.u32(0x6DD730)
+    chronicle, at = [], o.u16(0x6DD738)
+    while at < o.u16(0x6DD736) and len(chronicle) < 64:
+        chronicle.append(at)
+        at = o.u16(mailbox + 0x10 * at + 6)
+    plain = [m for m in chronicle if o.u8(mailbox + 0x10 * m + 4) not in
+             (0x29, 0x47, 0x63, 0x83, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x71)][:2]
+    for m, kind_ in zip(plain, (0x3A, 0x39)):
+        entry = mailbox + 0x10 * m
+        w8(o, entry + 4, kind_)
+        w8(o, entry + 5, 7)
+        w8(o, entry + (0xF if kind_ == 0x3A else 0xD), 9 if kind_ == 0x3A else 8)
+    ai = next(m for m in range(merchants) if o.u16(o.merchant(m) + 8) != 0)
+    w8(o, o.merchant(player) + 0x17, 100)  # (0x31 held at 20)
+    w8(o, o.merchant(ai) + 0x17, 0x9C)  # (−100: held at −20)
+    convoyed = next((o.u8(o.ship(i)) for i in range(ships) if o.u16(o.ship(i) + 8) < o.u16(to.SHIPS + 0xF6)
+                     and o.u8(o.ship(i)) < merchants), player)
+    print(f'player {player}: ship {ship} in {town}, home office {office} ({len(buildings)} businesses, first of type '
+          f'{kind}), pirate {pirate} (captain {captain}), chronicle letters {plain}, AI {ai}, convoyed {convoyed}')
+    mission_script(o, p2m([bytes([0x01, 1, 2]), bytes([0x2D, 1, 3]), bytes([0x31, 1, 4]), bytes([0x03, 1, 5, 6]),
+                           bytes([0x03, 1, 7, 8]), bytes([0x33, 1, 9]), bytes([0x34, 10, 11]), bytes([0x60, 10, 12]),
+                           bytes([0x62, 13, 10, 14]), bytes([0x62, 15, 10, 16]), bytes([0xE6, 10, 17]),
+                           bytes([0x31, 18, 19]), bytes([0x70, 20, 21, 22]), bytes([0x70, 20, 23, 24]), WAIT]),
+                   {1: player, 5: 1, 7: 4, 10: home, 13: 3, 15: 0, 17: 0x1234, 18: ai, 20: convoyed, 22: 2, 24: 1}, 1)
+    mission_script(o, p2m([bytes([0x5B, 1, 2]), bytes([0x65, 3, 4]), bytes([0x65, 5, 6]), bytes([0x66, 7, 8]),
+                           bytes([0x2B, 9, 10, 11, 12]), bytes([0x70, 9, 13, 14]), bytes([0x70, 9, 15, 16]),
+                           bytes([0x70, 9, 17, 18]), bytes([0x72, 9, 19]), bytes([0x5E, 9, 20, 21, 22]),
+                           bytes([0xEF, 23]), bytes([0xEF, 24]), WAIT]),
+                   {1: ship, 3: 5, 5: 45, 7: captain, 9: player, 10: town, 14: 0, 16: 1, 18: 2, 20: home, 21: kind,
+                    23: 0, 24: 1}, 2)
+    mission_script(o, p2m([bytes([0x5C, 1, 2, 3, 4]), bytes([0x5C, 5, 2, 3, 6]), bytes([0x5C, 1, 2, 7, 8]), WAIT]),
+                   {1: 9, 2: 7, 3: 0, 5: 8, 7: 0x7FFFFFFF}, 3)
+
+
+def mission_campaign_b(o):
+    """The campaigns' handlers that change things, each script of its own in its own tick: 0x5D (the player's docked
+    ship sold to an AI merchant); 0x5F (one of the player's home businesses of a type sold to an AI merchant; then for a
+    merchant without an office there: one made); 0x63 (two of a type put on sale: 0x28); 0x64; 0x67 (a crayer, and a
+    big ship in a town with the bit 1 of [+0x2C8]); 0xE5, 0xED (its town the operand's number) and 0xEC in the player's
+    home town; 0xFB (the event 9 made, then moved far away after its tick: its handler isn't rewritten). Saves 3, 5, 7."""
+    towns, offices, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    mine = merchant_ships(o, player)
+    docked = next((s for s in mine if o.u16(o.ship(s) + 0x134) == 0 and o.u16(o.ship(s) + 8) >= o.u16(to.SHIPS + 0xF6)),
+                  mine[0])
+    ai = next(m for m in range(merchants) if o.u16(o.merchant(m) + 8) != 0 and not o.u16(o.merchant(m) + 8) & 6)
+    office = next(i for i in rt.merchant_offices(o, player) if o.u8(o.office(i) + 0x2C6) == home)
+    buildings = office_buildings(o, office, home)
+    kinds = [k for _, k in buildings if k < 0x15]  # (a business: 0x5256F0 takes a warehouse 0x1E for a house)
+    kind = max(set(kinds), key=kinds.count) if kinds else 4
+    stranger = next(m for m in range(merchants) if all(o.u8(o.office(i) + 0x2C6) != home
+                                                       for i in rt.merchant_offices(o, m)))
+    gate = next((t for t in range(towns) if o.u32(o.town(t) + 0x2C8) & 1), home)
+    print(f'player {player}: docked {docked}, AI {ai}, home {home} office {office} ({len(buildings)} businesses, type '
+          f'{kind} x{kinds.count(kind)}), stranger {stranger}, gate {gate}')
+    mission_script(o, p2m([bytes([0x5D, 1, 2, 3]), WAIT]), {1: docked, 2: ai, 3: 5000}, 1)
+    mission_script(o, p2m([bytes([0x5F, 1, 2, 3, 4, 5, 6]), bytes([0x5F, 7, 2, 3, 4, 5, 6]), WAIT]),
+                   {1: player, 2: ai, 3: home, 4: kind, 5: 1, 6: 1000, 7: stranger}, 2)
+    mission_script(o, p2m([bytes([0x63, 1, 2, 3, 4]), bytes([0x64, 5]), WAIT]),
+                   {1: player, 2: kind, 3: 2, 4: home, 5: 50}, 3)
+    mission_script(o, p2m([bytes([0x67, 1, 2, 3, 4, 5]), bytes([0x67, 1, 6, 7, 8, 9]), WAIT]),
+                   {1: player, 2: 1, 3: 0, 4: home, 6: 3, 7: 100, 8: gate}, 4)
+    mission_script(o, p2m([bytes([0xE5, 1]), bytes([0xEC, 1]), bytes([0xED, home]), WAIT]), {1: home, home: home}, 5)
+    mission_script(o, p2m([bytes([0xFB, 1, 2]), WAIT]), {1: 0x1234, 2: 0x5678}, 6)
+
+    def during(o):
+        def after(o, t):
+            if t == 5:  # (After the tick of 0xFB's script: its event 9 out of the way.)
+                for i, a in rt.events(o):
+                    if o.u16(a + 6) == 9:
+                        rt.move_event(o, i, a, o.u32(WORLD + 0x14) + 0x10000)
+        return after
+    return during
+
+
 def hanse_dev_candidacy(o):
     """0x45 (0x535FA4: standing for mayor, [+0x118]) for the player with 0, 1 and 7, an AI merchant (always 1) and a
     merchant past; 0x4A (0x53B1F0, events_rare.cpp: the Hanse tasks window's developers' tools) on events 0x30 made by
@@ -15109,6 +15211,13 @@ SCENARIOS = {
     'mission_network': Scenario(mission_network, [0x4D85C0], 1, [
         '@4eedd2', '@4eedbc', '@4f0763', '@4f0b39', '@4f0c32', '@4f0b02', '@4f0b11', '@4f0b1f', '@4f1221', '@4f123a',
         '@4f1f14', '@4f026b', '@4f0190', '@4f1f2c', '@4f1f47', '@4ee9cd'], missions=True),
+    'mission_campaign_a': Scenario(mission_campaign_a, [0x4D85C0], 1, [
+        '@4eea54', '@4eeb2e', '@4f0703', '@4f36c7', '@4f0a0b', '@4f0a45', '@4f24fe', '@4f25de', '@4f2c84', '@4f1f91',
+        '@5136f1', '@5136ef', '@4f27b3', '@4f0373', '@4f0dd5', '@4f0e52', '@4ef0f5', '@4f2201', '@4f207d', '@4f20d3',
+        '@4ee2b3'], missions=True),
+    'mission_campaign_b': Scenario(mission_campaign_b, [0x4D85C0], 1, [
+        '@4f2121', '@4f233b', '@4f24ab', '@4f2675', '@4f268c', '@4f284c', '@4ee7bb', '@4ee97a', '@4ee693', '@4ed2ec',
+        '@525c25', '@525c4b'], missions=True),
     'hanse_dev_candidacy': Scenario(hanse_dev_candidacy, [0x535760], 0, [
         '@4f9397', '@4f93a4', '@535fb2>537025', '@53b247', '@53b283', '@53b24e>53b28a', '@53b255>53b28a',
         '@53b259>53b28a', '@53b281>53b28a', '@53b26c>53b28a', '@53b29e', '@53b2b0', '@53b2ae>53b2b8', '@53b34a',

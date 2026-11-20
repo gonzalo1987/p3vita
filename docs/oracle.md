@@ -2742,7 +2742,7 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
 
 ## The mission interpreter's instructions (2026-11-20)
 
-92 of the 138 handlers, every one of the free game's and the network game's (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu/sesion48/README.md`).
+119 of the 138 handlers, every one the game's files use (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu/sesion48/README.md`).
 - The oracle with the missions (`--misiones`): 0xF7's three calls of 0x4D6530 let through (`MAIL_CALLS`); 0xF7's
   ticker line to the player jumps over the messages window (0x4EDF27 → 0x4EDF31, `EVENT_JUMPS`: 0x47D1F0 on 0x6CC960,
   the interface's); a new region **MP** (each event 0x1B whose program no entry of the list has: u16 event, u32 size,
@@ -2787,6 +2787,13 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
   player, then with the settings' [+0xC] 2 from the second tick (the scenario's `after`); 0x2E; 0x36's modes; 0x3E;
   0x56; 0x57 and 0x5A; 0x58 and 0x59; 0xEB): saves 3, 5, 7, 256 calls equal each, 16 of 16 targets (save 7: 15,
   0x36's picks all the first). Broken on purpose (0x2E's factor, 0x36's mix): caught.
+- The campaigns', `retouch_unchecked.py mission_campaign_a` (the reading ones: a merchant's, his ships', a town's,
+  0x5B, 0x65, 0x66, 0x5C on two chronicle letters made 0x3A and 0x39, 0x5E, 0x31 held at both ends, 0x70 in a convoy;
+  saves 3, 5, 7: 21 of 21 targets) and `mission_campaign_b` (0x5D, 0x5F with and without an office (made), 0x63, 0x64,
+  0x67, the fires 0xE5 and 0xED (0x525B90), the plague 0xEC, 0xFB with its event 9 moved away after its tick (its
+  handler isn't rewritten); saves 5, 7: 12 of 12; save 3's home office has no business): 256 calls equal each. 0x63's
+  operands first read the wrong way (b the type, d the town): caught by the scenario. Broken on purpose (0x525B90's
+  modulo, 0xEC's factor): caught.
 
 ## The game's static initializers (2026-11-03)
 
