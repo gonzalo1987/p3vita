@@ -2742,7 +2742,7 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
 
 ## The mission interpreter's instructions (2026-11-20)
 
-55 of the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu/sesion48/README.md`).
+62 of the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu/sesion48/README.md`).
 - The oracle with the missions (`--misiones`): 0xF7's three calls of 0x4D6530 let through (`MAIL_CALLS`); 0xF7's
   ticker line to the player jumps over the messages window (0x4EDF27 → 0x4EDF31, `EVENT_JUMPS`: 0x47D1F0 on 0x6CC960,
   the interface's); a new region **MP** (each event 0x1B whose program no entry of the list has: u16 event, u32 size,
@@ -2768,6 +2768,11 @@ broken on purpose in each and caught; `world.sh 7` still 0 different:
   0x4EDFED, the oracle lets through now): saves 1, 3, 5, 7, 256 calls equal each, 19 of 19 targets. Broken on purpose
   (0xF8's accounts, 0x518640's sum with the new loads): caught once the loads went in twice in a script without
   taking more out than there are (that recalculates the hold).
+- The ships', `retouch_unchecked.py mission_ships_state` (0x3A up, and down on a free ship put in the waiting list
+  [+0xE6] with a hold of 1: back to the free list; 0x3B; 0x28; 0x2A in its town, another, past the count; 0x42 with a
+  hull that rounds to 0; 0x51 on a pirate alone at sea; 0x6E with and without the town's bit 1 for the big ships):
+  saves 3, 5, 7, 256 calls equal each, 13 of 13 targets (save 1: 12, one small ship). Broken on purpose (0x42's
+  rounding, 0x50DF70's move to the free list): caught.
 
 ## The game's static initializers (2026-11-03)
 

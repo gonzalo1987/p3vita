@@ -5802,6 +5802,41 @@ def mission_ships_money(o):
                    {1: 5, 2: player, 3: 0x1234, 4: o.u8(o.merchant(player) + 0x19), 5: 0, 6: 99, 7: 1}, 4)
 
 
+def mission_ships_state(o):
+    """The free game's handlers that read and change ships, each script of its own in its own tick: 0x3A up on a ship
+    and down on a free one put in the waiting list [+0xE6] with a hold of 1 (it goes back to the free list [+0xE2]);
+    0x3B; 0x28 (a ship with hull, one past the count); 0x2A (in its town, in another, past the count); 0x42 (a ship, one
+    retouched to a hull of 1 that rounds to 0); 0x51 (a pirate alone at sea, the state 0x12); 0x6E (the player's ships
+    in his first ship's town, with a town with the bit 1 of [+0x2C8] as e and with his home). Saves 3, 5, 7 (save 1's
+    player has one small ship: not the type's check)."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    mine = merchant_ships(o, player)
+    ship = mine[0]
+    town = o.u8(o.ship(ship) + 0x39)
+    free = o.u16(to.SHIPS + 0xE2)
+    if free < ships:
+        w16(o, to.SHIPS + 0xE2, o.u16(o.ship(free) + 6))
+        w16(o, o.ship(free) + 6, o.u16(to.SHIPS + 0xE6))
+        w16(o, to.SHIPS + 0xE6, free)
+        w8(o, o.ship(free) + 0x137, 1)
+    pirate = next((i for i in range(ships) if o.u16(o.ship(i) + 0x134) == 0x12), None)
+    weak = mine[-1] if len(mine) > 1 else ship
+    w32(o, o.ship(weak) + 0x18, 1)
+    gate = next((t for t in range(towns) if o.u32(o.town(t) + 0x2C8) & 1), o.u8(o.merchant(player) + 0x19))
+    print(f'player {player}: ships {mine} in town {town}, free {free}, pirate {pirate} '
+          f'({o.u16(o.ship(pirate) + 0x42) if pirate is not None else None}), weak {weak}, gate {gate}')
+    mission_script(o, p2m([bytes([0x3A, 1, 2]), bytes([0x3A, 3, 4]), bytes([0x3B, 1, 5]), bytes([0x28, 1, 6]),
+                           bytes([0x28, 7, 8]), bytes([0x2A, 9, 1, 10]), bytes([0x2A, 11, 1, 12]),
+                           bytes([0x2A, 9, 7, 13]), bytes([0x42, 1, 14]), bytes([0x42, 15, 16]), WAIT]),
+                   {1: ship, 2: 1, 3: free if free < ships else ship, 4: 0, 7: ships + 2, 9: town, 11: (town + 1) % towns,
+                    15: weak}, 1)
+    mission_script(o, p2m([bytes([0x6E, 1, 2, 3, 4, 5]), bytes([0x6E, 1, 2, 6, 7, 8]), WAIT]),
+                   {1: player, 2: town, 5: gate, 8: o.u8(o.merchant(player) + 0x19)}, 2)
+    if pirate is not None:
+        mission_script(o, p2m([bytes([0x51, 1]), WAIT]), {1: o.u16(o.ship(pirate) + 0x42)}, 3)
+
+
 def hanse_dev_candidacy(o):
     """0x45 (0x535FA4: standing for mayor, [+0x118]) for the player with 0, 1 and 7, an AI merchant (always 1) and a
     merchant past; 0x4A (0x53B1F0, events_rare.cpp: the Hanse tasks window's developers' tools) on events 0x30 made by
@@ -14899,6 +14934,9 @@ SCENARIOS = {
         '@4ed20d', '@4ed153', '@4ed160', '@4ed1f4', '@4ed0c6', '@4ee1fc', '@4ee22e', '@51868c', '@518694',
         '@51872b', '@518705', '@4ee1c3', '@4f37a8', '@4ee196', '@4ee0f5', '@4ee0ff', '@4ee112', '@4ee11b',
         '@4edfed'], missions=True),
+    'mission_ships_state': Scenario(mission_ships_state, [0x4D85C0], 1, [
+        '@4f0fed', '@4f0ff7', '@50df68', '@50dfcd', '@4f1038', '@4efa45', '@4efe49', '@4efe63', '@4efe7b',
+        '@4f1587', '@4f04dd', '@4f04c7', '@4f1e20'], missions=True),
     'hanse_dev_candidacy': Scenario(hanse_dev_candidacy, [0x535760], 0, [
         '@4f9397', '@4f93a4', '@535fb2>537025', '@53b247', '@53b283', '@53b24e>53b28a', '@53b255>53b28a',
         '@53b259>53b28a', '@53b281>53b28a', '@53b26c>53b28a', '@53b29e', '@53b2b0', '@53b2ae>53b2b8', '@53b34a',
