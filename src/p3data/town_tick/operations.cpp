@@ -1474,8 +1474,11 @@ void fn_53c2c0(SaveGame& save, const uint8_t* operation) {
 		if (!joins) {
 			return;
 		}
+		// GAME BUG (0x53C6FB, 0x53C796): the loop bounded by the merchants' count, not the mailbox's: the letters past it
+		// stay held. Fixed behind fix_game_bugs (the user's word, 21-11-2026): every one of the town's let go.
 		for (uint32_t at = find_tavern_letter(save, save.merchants[merchant].memory.u16(0xA), uint16_t(town));
-			 at < g.u16(global::kWorldMerchantCount);) {
+			 at < (fix_game_bugs() ? uint32_t(std::min<size_t>(save.mail.size(), g.u16(0x6DD736)))
+								   : uint32_t(g.u16(global::kWorldMerchantCount)));) {
 			// (The entry below the merchants' count is below the mailbox's: theirs come first.)
 			const uint16_t next = save.mail[at].u16(6);
 			const GameMemory<0x10>& record = *save.mail_records[at];

@@ -6145,6 +6145,32 @@ def mission_campaign_b(o):
     mission_script(o, p2m([bytes([0xFB, 1, 2]), WAIT]), {1: 0x1234, 2: 0x5678}, 6)
 
 
+def mission_fixes(o):
+    """The interpreter's game bugs fixed behind fix_game_bugs (21-11-2026), each where the fix changes something (as the
+    game here; with tick_probe --fix-game-bugs, PROBE_ARGS, the calls the fixes change): 0xED with an operand and its
+    variable's value naming two towns (the game's fire in the first, the fix's in the second); 0xF7 with answers to −3
+    in a town where the player has no office (the game's letter to every human; the fix's to the human owners of the
+    town's offices: none) and in his home town (him either way); 0x2F in every town (the ware it lacks most: the
+    facility by the ware's type). (0xE8 with a merchant past the count can't be recorded: the game hangs.) Saves 3, 5,
+    7."""
+    towns, offices, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    mine = {o.u8(o.office(i) + 0x2C6) for i in rt.merchant_offices(o, player)}
+    away = next(t for t in range(towns) if t not in mine)
+    other = next(t for t in range(towns) if t not in (home, away) and not o.u32(o.town(t) + 0x2C8) & 0x8000)
+    print(f'player {player}: home {home}, a town without his office {away}, another town {other}')
+    mission_script(o, p2m([bytes([0xED, home]), WAIT]), {home: other}, 1)
+
+    def f7(b1, b2, b3, b4, b5, answers, ticker):
+        return bytes([0xF7, b1, b2, b3, b4, b5, answers, ticker])
+    texts = [b'Title one\0Body to %v\x02 of %t\x03.\0Yes\0No\0']
+    mission_script(o, p2m([(f7(0, 3, 20, 4, 30, 2, 0), 0), WAIT], texts), {2: player, 3: away, 4: 7, 30: -3}, 2)
+    mission_script(o, p2m([(f7(0, 3, 20, 4, 30, 2, 0), 0), WAIT], texts), {2: player, 3: home, 4: 7, 30: -3}, 3)
+    mission_script(o, p2m([bytes([0x2F, 1 + t, 32 + t]) for t in range(min(towns, 30))] + [WAIT]),
+                   {1 + t: t for t in range(min(towns, 30))}, 4)
+
+
 def mission_unused(o):
     """The 19 handlers no file of the game uses, each script of its own in its own tick: 0x02, 0x0F, 0x10, 0x13, 0x14,
     0x16, 0x25 (after a treasure map's letter 0xF6 to the player), 0x71, 0x73, 0x52, 0x55; 0x3C's table (a renewal, a
@@ -15526,6 +15552,7 @@ SCENARIOS = {
     'mission_campaign_b': Scenario(mission_campaign_b, [0x4D85C0], 1, [
         '@4f2121', '@4f233b', '@4f24ab', '@4f2675', '@4f268c', '@4f284c', '@4ee7bb', '@4ee97a', '@4ee693', '@4ed2ec',
         '@525c25', '@525c4b'], missions=True),
+    'mission_fixes': Scenario(mission_fixes, [0x4D85C0], 1, ['@4ee567', '@4edd3b', '@51beb0'], missions=True),
     'mission_unused': Scenario(mission_unused, [0x4D85C0], 1, [
         '@4eea6e', '@4eef68', '@4eefb6', '@4ef01f', '@4ef1e9', '@4ef230', '@4ef2c7', '@4d775c', '@4d7755', '@4ed066',
         '@4eecaa', '@4f1ec4', '@4eff49', '@4f1142', '@4f1196', '@4f1115', '@4f0974', '@4f19ec', '@4f1a00', '@4f2a67',

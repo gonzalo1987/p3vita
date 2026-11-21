@@ -1161,37 +1161,6 @@ ser a propósito. El detalle, en el comentario del código y en [oracle.md](orac
 
 ### Reproducidos, sin corregir aún
 
-- **Las cartas de misión de la trastienda al salir de la taberna** (operación 0x52 de tipo 10, 0x53C2C0; 20-11-2026,
-  seguro, comprobado con el oráculo, escenario `tavern_side_room`): al irse, el juego quiere soltar las cartas 0x71 de
-  esa ciudad que el comerciante tenía apartadas (la variable del destinatario a 0xFFFF), pero el bucle sigue solo
-  mientras el número de la carta en el buzón es menor que el número de comerciantes (0x53C6FB, 0x53C796), y las cartas
-  suelen estar mucho más allá: casi nunca suelta ninguna. En una partida de un jugador no cambia nada (la carta sigue
-  apartada para él y él la sigue viendo); en red, otro humano no la vería en su taberna. Corregirlo cambia el juego
-  en red: preguntar antes.
-- **La carta de misión a los dueños de las oficinas de una ciudad** (instrucción 0xF7 del intérprete, 0x4ED4A0;
-  20-11-2026): con respuestas, el destinatario −3 debería mandar una copia a cada dueño de una oficina de la ciudad
-  de la carta, pero antes de mirarlo un `memset` pone a −1 las ocho variables desde la del destinatario, así que la
-  carta va a todos los humanos (la rama del −3, en 0x4EDD57, no se ejecuta nunca). Ninguna misión de las del juego
-  parece usarla así; pendiente de comprobar en las campañas antes de corregirlo.
-- **La mercancía que más le falta a una ciudad** (0x51BEB0, la usa la instrucción 0x2F del intérprete; 20-11-2026,
-  parece): de cada mercancía mira los obreros de la instalación con el número de la mercancía ([+0x844 + 16 ·
-  mercancía]) en vez de la de la empresa que la produce (lee ese tipo de 0x672C88 y no lo usa; la rama del aceite de
-  ballena queda muerta), como sí hace la lonja (0x5DE3xx). Cambia qué mercancía pide la misión 6 (y su cantidad):
-  preguntar antes de corregirlo.
-- **La instrucción 0xE8 con un comerciante que no existe** (0x4ED086; 20-11-2026, seguro, leído en el código): salta a
-  la misma instrucción sin avanzar (0x4F2C97) y el juego se queda colgado. p3vita termina el guion. Ninguna misión del
-  juego le da un comerciante fuera de la cuenta.
-- **Las cargas que no son mercancía de un barco** (0x518640 y 0x5186D0, las usa la instrucción 0xF1; 20-11-2026,
-  parece): al subirlas, la bodega ocupada [+0x118] suma las cargas nuevas · 2000, no las añadidas; al bajarlas, resta
-  las que quedan, no las quitadas. Solo se nota si ya había cargas al subir o si quedan al bajar, y se arregla en el
-  siguiente recálculo de la bodega (0x5182B0). Comprobado con el oráculo (`mission_ships_money`).
-- **El barco más rápido de un comerciante en una ciudad** (instrucción 0x57 del intérprete, 0x4F01AA, solo en las
-  misiones de la partida en red; 20-11-2026, parece): compara la velocidad de cada barco (0x5170F0) con la marca, pero
-  guarda como marca su potencia de fuego [+0x120], así que el elegido no es el más rápido. Reproducido
-  (`mission_network`).
-- **El incendio de la instrucción 0xED** (0x4EE567, campañas; 20-11-2026, parece): busca la ciudad y su sitio con el
-  número del operando (el de la variable) y no con su valor, que sí pone en la operación 0x7D; 0xE5, su pareja, usa el
-  valor. Reproducido (`mission_campaign_b`).
 - **Vender un almacén con 0x5256F0** (la instrucción 0x5F, campañas; 20-11-2026, seguro, leído): el almacén (0x1E)
   está en la lista de empresas de la oficina [+0x2CE], pero 0x5256F0 lo trata como una casa por su tipo (lo busca en
   [+0x2D0]) y el recuento 0x4FF2D0 lee fuera de la tabla de las casas. Ninguna venta del juego llega (las subastas no
@@ -1333,6 +1302,41 @@ de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; s
   texto: el visor acaba la frase con su punto.
 
 ### Corregidos con el ajuste
+
+**Las cartas de misión de la trastienda al salir de la taberna** (operación 0x52 de tipo 10, 0x53C2C0; 20-11-2026,
+seguro, comprobado con el oráculo, escenario `tavern_side_room`): al irse, el juego quiere soltar las cartas 0x71 de
+esa ciudad que el comerciante tenía apartadas (la variable del destinatario a 0xFFFF), pero el bucle sigue solo
+mientras el número de la carta en el buzón es menor que el número de comerciantes (0x53C6FB, 0x53C796), y las cartas
+suelen estar mucho más allá: casi nunca suelta ninguna. En una partida de un jugador no cambia nada (la carta sigue
+apartada para él y él la sigue viendo); en red, otro humano no la vería en su taberna. Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**La carta de misión a los dueños de las oficinas de una ciudad** (instrucción 0xF7 del intérprete, 0x4ED4A0;
+20-11-2026): con respuestas, el destinatario −3 debería mandar una copia a cada dueño de una oficina de la ciudad
+de la carta, pero antes de mirarlo un `memset` pone a −1 las ocho variables desde la del destinatario, así que la
+carta va a todos los humanos (la rama del −3, en 0x4EDD57, no se ejecuta nunca). Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**La mercancía que más le falta a una ciudad** (0x51BEB0, la usa la instrucción 0x2F del intérprete; 20-11-2026,
+parece): de cada mercancía mira los obreros de la instalación con el número de la mercancía ([+0x844 + 16 ·
+mercancía]) en vez de la de la empresa que la produce (lee ese tipo de 0x672C88 y no lo usa; la rama del aceite de
+ballena queda muerta), como sí hace la lonja (0x5DE3xx). Cambia qué mercancía pide la misión 6 (y su cantidad): Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**La instrucción 0xE8 con un comerciante que no existe** (0x4ED086; 20-11-2026, seguro, leído en el código): salta a
+la misma instrucción sin avanzar (0x4F2C97) y el juego se queda colgado. p3vita termina el guion. Ninguna misión del
+juego le da un comerciante fuera de la cuenta. Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**Las cargas que no son mercancía de un barco** (0x518640 y 0x5186D0, las usa la instrucción 0xF1; 20-11-2026,
+parece): al subirlas, la bodega ocupada [+0x118] suma las cargas nuevas · 2000, no las añadidas; al bajarlas, resta
+las que quedan, no las quitadas. Solo se nota si ya había cargas al subir o si quedan al bajar, y se arregla en el
+siguiente recálculo de la bodega (0x5182B0). Comprobado con el oráculo (`mission_ships_money`). Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**El barco más rápido de un comerciante en una ciudad** (instrucción 0x57 del intérprete, 0x4F01AA, solo en las
+misiones de la partida en red; 20-11-2026, parece): compara la velocidad de cada barco (0x5170F0) con la marca, pero
+guarda como marca su potencia de fuego [+0x120], así que el elegido no es el más rápido. Reproducido
+(`mission_network`). Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**El incendio de la instrucción 0xED** (0x4EE567, campañas; 20-11-2026, parece): busca la ciudad y su sitio con el
+número del operando (el de la variable) y no con su valor, que sí pone en la operación 0x7D; 0xE5, su pareja, usa el
+valor. Reproducido (`mission_campaign_b`). Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
 
 **Una ciudad por su nombre** (instrucción 0x65 del intérprete, 0x4F26C0 → 0x5136A0; 21-11-2026, seguro, leído en el
 código y visto en el oráculo con la campaña 3 en marcha): busca el nombre k del fichero de ciudades en la tabla 0x6DDA00
