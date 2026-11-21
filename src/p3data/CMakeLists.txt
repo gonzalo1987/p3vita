@@ -67,6 +67,7 @@ add_library(p3data STATIC
 	simulation.cpp
 	sound.cpp
 	tile_anims.cpp
+	port_scene.cpp
 	town.cpp
 	town_buildings.cpp
 	thresholds.cpp

@@ -31,3 +31,8 @@ add_executable(player_ops player_ops.cpp)
 
 target_link_libraries(player_ops PRIVATE p3data)
 target_compile_options(player_ops PRIVATE -Wall -Wextra)
+
+add_executable(compare_port compare_port.cpp)
+
+target_link_libraries(compare_port PRIVATE p3data)
+target_compile_options(compare_port PRIVATE -Wall -Wextra)

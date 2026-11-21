@@ -10,6 +10,8 @@
 
 #include "p3data/game_fixes.hpp"
 #include "p3data/lcr.hpp"
+#include "p3data/port_scene.hpp"
+#include "p3data/savegame.hpp"
 #include "p3data/tile_anims.hpp"
 #include "p3data/town_life.hpp"
 
@@ -858,6 +860,80 @@ void test_fisherman() {
 	check(a.drop_fisherman && tile_anim_frames(a).empty(), "stopped: nothing shown, its fisherman let go");
 }
 
+// The port's scene (port_scene.hpp): the player's ships on the first free slot, the others' on the last; a ship coming
+// in on its path, docked at its end; one going out keeps its slot; one gone to sea leaves it; on a straight path a
+// ship going out starts at the quay and one coming in comes from the sea.
+void test_port_scene() {
+	SaveGame save;
+	save.globals.u16(0x6DD894) = 5;  // ships
+	save.globals.u16(0x6DD896) = 0;  // convoys
+	save.globals.u16(0x6DD888) = 0;  // the docked list
+	save.globals.u16(0x6DD88C) = 0xFFFF;
+	save.globals.u32(0x6DFC14) = 0;  // the player
+	save.globals.u32(0x6DFBC4) = 300;  // ms a tick
+	save.towns.resize(1);
+	save.towns[0].memory.u16(0x81E) = 0xFFFF;
+	save.towns[0].memory.u16(0x820) = 0xFFFF;
+	save.ships.resize(5);
+	auto ship = [&](int i, int owner, int town, int state, int counter, int next) {
+		ShipMemory& m = save.ships[size_t(i)].memory;
+		m.u8(0x0) = uint8_t(owner);
+		m.u16(0x6) = uint16_t(next);
+		m.u16(0x8) = 0xFFFF;
+		m.u8(0xE) = 2;
+		m.u8(0x39) = uint8_t(town);
+		m.u16(0x134) = uint16_t(state);
+		m.u16(0x138) = uint16_t(counter);
+	};
+	ship(0, 0, 0, 0, 0, 1);  // the player's, docked
+	ship(1, 5, 0, 0, 0, 2);  // another's, docked
+	ship(2, 5, 0, 3, 0x10, 0xFFFF);  // another's, coming in
+	ship(3, 5, 0xFF, 0xF, 0, 0xFFFF);  // at sea
+	ship(4, 0, 0xFF, 0xF, 0, 0xFFFF);
+	std::vector<std::vector<std::array<int, 2>>> paths;
+	for (int k = 0; k < 8; ++k) {
+		paths.push_back({{100 + 60 * k, 10}, {100 + 60 * k, 300}, {100 + 60 * k, 500}});
+	}
+	PortScene scene;
+	scene.show(save, 0, paths, 1000);
+	auto slot_of = [&](int s) {
+		for (uint16_t slot : scene.order()) {
+			if (scene.at(slot).ship == s) {
+				return int(slot);
+			}
+		}
+		return -1;
+	};
+	check(slot_of(0) == 0 && slot_of(1) == 7 && slot_of(2) == 6 && slot_of(3) == -1, "the slots by owner");
+	const PortShip& own = scene.at(0);
+	check(own.state == 0 && own.place.x == 100 && own.place.y == port_scale_y(500) && own.place.dir == 0x80 &&
+			own.place.sails == 0,
+		"docked at its path's end, its sails furled");
+	check(scene.at(6).state == 1 && scene.at(6).place.y < port_scale_y(500) && scene.at(6).place.sails == 4,
+		"coming in on its path");
+	// A tick: the ship coming in docked, the other docked one going out, one at sea arrives.
+	save.ships[2].memory.u16(0x134) = 0;
+	save.ships[2].memory.u16(0x138) = 0x40;
+	save.ships[1].memory.u16(0x134) = 2;
+	save.ships[3].memory.u8(0x39) = 0;
+	save.ships[3].memory.u16(0x134) = 3;
+	scene.tick(save, 1300);
+	scene.frame(save, 1300);
+	check(scene.at(6).state == 0 && scene.at(7).state == 8 && slot_of(3) == 5 && scene.at(5).state == 1,
+		"docked, going out, another coming in");
+	save.ships[1].memory.u8(0x39) = 0xFF;
+	save.ships[1].memory.u16(0x134) = 0xF;
+	scene.tick(save, 1600);
+	check(slot_of(1) == -1, "gone to sea, its slot freed");
+	// A straight path: going out from the quay, coming in from the sea.
+	const std::vector<std::array<int, 2>> line = {{500, 0}, {500, 400}, {500, 800}};
+	PortPlace o;
+	port_place_on_path(port_path(line, false), 0, true, o);
+	check(o.x == 500 && o.y == port_scale_y(800) && o.dir == 0 && o.sails == 0, "going out from the quay");
+	port_place_on_path(port_path(line, true), 0x800, false, o);
+	check(o.x == 500 && o.y < 0 && o.dir == 0x80 && o.sails == 4, "coming in from beyond the sea's edge");
+}
+
 int main() {
 	test_people_lcr();
 	test_files();
@@ -871,6 +947,7 @@ int main() {
 	test_fish();
 	test_tile_anims();
 	test_fisherman();
+	test_port_scene();
 	if (failures) {
 		std::fprintf(stderr, "%d failures\n", failures);
 		return 1;

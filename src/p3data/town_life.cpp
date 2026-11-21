@@ -1864,6 +1864,38 @@ void TownLife::remove_creature(uint16_t id) {
 	}
 }
 
+uint16_t TownLife::add_figure(int cls, const LcrAnim* look, int32_t x, int32_t y, uint8_t dir) {
+	Creature c;
+	c.cls = cls;
+	c.mode = 11;
+	c.look = look;
+	c.id = new_id();
+	c.x = x;
+	c.y = y;
+	c.dir = dir;
+	c.frame = 0;
+	place(c);
+	creatures_.push_back(std::move(c));
+	return creatures_.back().id;
+}
+
+void TownLife::move_figure(uint16_t id, const LcrAnim* look, int32_t x, int32_t y, uint8_t dir) {
+	for (Creature& c : creatures_) {
+		if (c.id != id) {
+			continue;
+		}
+		if (c.look != look || c.x != x || c.y != y || c.dir != dir) {
+			c.look = look;
+			c.x = x;
+			c.y = y;
+			c.dir = dir;
+			c.frame = 0;
+			place(c);
+		}
+		return;
+	}
+}
+
 // 0x56A240: the fisherman's next point of his path (`point`), the diagonal towards it and its steps (the official's).
 void TownLife::fisher_target(Creature& c) const {
 	if (town_.nodes.size() < 5 || c.road >= town_.nodes[4].size() || c.point >= town_.nodes[4][c.road].size()) {
@@ -3078,6 +3110,7 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 			: c.mode == 8             ? bird_fly(c)
 			: c.mode == 9             ? fish_swim(c)
 			: c.mode == 10            ? fisher_walk(c)
+			: c.mode == 11            ? true
 			: c.mode != 0             ? road_walk(c)
 									  : walk(c);
 		if (stays) {

@@ -64,6 +64,7 @@
 #include "p3data/town.hpp"
 #include "p3data/town_buildings.hpp"
 #include "p3data/tile_anims.hpp"
+#include "p3data/port_scene.hpp"
 #include "p3data/town_life.hpp"
 #include "p3data/trade.hpp"
 #include "p3data/trade_route_window.hpp"
@@ -658,6 +659,12 @@ public:
 				life_.rand_state = now ^ 0x5EEDu;
 				life_.start(map, town, now);
 				life_last_ = now;
+				// The port's scene with the town shown (0x6141D0 from the view, 0x58A152).
+				port_.set_ms_per_tick(ms_per_tick);
+				port_.show(save, int(index), town.nodes.empty() ? std::vector<p3::data::TownPath>() : town.nodes[0],
+					now);
+				port_tick_ = save.tick();
+				sync_port_figures(save);
 				// Its creatures gone, the fisherman's huts as made (their fisherman made again when they work).
 				for (auto& [tile, a] : anims_) {
 					if (tile->type == 0x57) {
@@ -680,6 +687,14 @@ public:
 		const uint32_t elapsed = now - life_last_;
 		life_last_ = now;
 		life_.step(now, elapsed, {camera_x, camera_y, width, kScreenHeight});
+		// The port's ships (0x58CBD5): a tick told (0x613DA0 from the world's tick, 0x531029), each frame placed.
+		port_.set_ms_per_tick(ms_per_tick);
+		if (save.tick() != port_tick_) {
+			port_tick_ = save.tick();
+			port_.tick(save, now);
+		}
+		port_.frame(save, now);
+		sync_port_figures(save);
 		// The tiles' own animations of the cells in view (0x592000), «active» by the town's merchants' businesses.
 		producing_.assign(save.merchants.size(), 0);
 		for (size_t m = 0; m < save.merchants.size(); ++m) {
@@ -777,8 +792,58 @@ public:
 
 	// No living town (a template's map, a battle at the town).
 	void stop_life() {
+		port_.hide();
+		port_.gone.clear();
+		port_.sounds.clear();
 		life_.clear();
 		life_town_ = -1;
+	}
+
+	// The port's scene's ships as figures of the living town (class 0x0D: 0x620BD0 makes one, 0x56B140 moves it): the
+	// look of their type with their sails (the damage 0 of the class's 80, as the port shows them), at x and y · 22 / 34
+	// in the town's pixels, the heading kept while within 2 of their place's.
+	void sync_port_figures(const SaveGame& save) {
+		for (uint16_t id : port_.gone) {
+			life_.remove_creature(id);
+		}
+		port_.gone.clear();
+		port_.sounds.clear();  // (the sound's session's TownSounds::ship_in_out)
+		for (uint16_t slot : port_.order()) {
+			p3::data::PortShip& p = port_.at(slot);
+			if (p.ship >= save.ships.size()) {
+				continue;
+			}
+			const int type = save.ships[p.ship].memory.u8(0xE) & 3;
+			const p3::data::LcrAnim* look = ship_look(type, std::min<int>(p.place.sails, 4));
+			if (!look) {
+				continue;
+			}
+			const int32_t x = int32_t(p.place.x) << 16;
+			const int32_t y = (int32_t(p.place.y) * 22 / 34) << 16;
+			if (p.figure == 0) {
+				p.figure_dir = p.place.dir;
+				p.figure = life_.add_figure(0x0D, look, x, y, p.figure_dir);
+				continue;
+			}
+			if (int(p.place.dir) - int(p.figure_dir) >= 3 || int(p.figure_dir) - int(p.place.dir) >= 3) {
+				p.figure_dir = p.place.dir;
+			}
+			life_.move_figure(p.figure, look, x, y, p.figure_dir);
+		}
+	}
+	// A ship's look in the port (its type's, damage 0, its sails: lcr_ship_path), read once.
+	const p3::data::LcrAnim* ship_look(int type, int sails) {
+		std::unique_ptr<p3::data::LcrAnim>& look = ship_looks_[size_t(type & 3)][size_t(sails % 5)];
+		if (!look) {
+			look = std::make_unique<p3::data::LcrAnim>();
+			std::vector<uint8_t> data;
+			const CprEntry* entry = archive_.find(p3::data::lcr_ship_path(type, 0, sails));
+			if (!entry || !archive_.read(*entry, data) || !p3::data::parse_lcr(data.data(), data.size(), *look) ||
+				look->directions.empty()) {
+				look->directions.clear();
+			}
+		}
+		return look->directions.empty() ? nullptr : look.get();
 	}
 	// A template's map (no town of a save): its tiles' animations all active (no owners to ask).
 	void step_template_anims(uint32_t now, int camera_x, int camera_y, int width) {
@@ -1274,6 +1339,10 @@ private:
 	// for (life_town_, life_serial_ against show_serial_), each town template's points (N.spawn), the last frame's time.
 	p3::data::TownLife life_;
 	std::vector<std::unique_ptr<p3::data::LcrAnim>> people_;
+	// The port's scene (port_scene.hpp), the tick it was last told, the ships' looks by type and sails.
+	p3::data::PortScene port_;
+	uint32_t port_tick_ = 0xFFFFFFFF;
+	std::unique_ptr<p3::data::LcrAnim> ship_looks_[4][5];
 	bool people_loaded_ = false;
 	p3::data::LifeMap life_base_;
 	int life_town_ = -1;

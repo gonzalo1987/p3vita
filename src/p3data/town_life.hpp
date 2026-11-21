@@ -152,7 +152,7 @@ struct Creature {
 	uint8_t point = 0;  // [+0x69]: the road's point it walks to
 	uint8_t mode = 0;  // [+0x6A]: 0 free in the town, 1 coming in by a road (tag 1), 2 leaving by one (tag 2); the
 	// viewer's for the other classes: 3 a market seller or the juggler at his place, 4 the official, 5 a rat, 6 a cart,
-	// 7 an animal, 8 a bird, 9 a fish, 10 the fisherman (his path of the tag 4 in `road`)
+	// 7 an animal, 8 a bird, 9 a fish, 10 the fisherman (his path of the tag 4 in `road`), 11 a figure moved from outside
 	uint8_t corner = 0xFF;  // [+0x6B]: 0xFF to be worked out, 0 none, 1 and 2 the corner's halves
 	bool entered = false;  // [+0x6C]: coming in, it reached the town (it walks free at the next point)
 	bool flee = false;  // [+0x6D]: hurrying from a siege (not yet)
@@ -231,6 +231,10 @@ public:
 	uint16_t spawn_fisherman(int x, int y);
 	// A creature taken away (the hut's fisherman when it stops: the view's list's +0x4).
 	void remove_creature(uint16_t id);
+	// A figure some other piece of the view moves (mode 11: the port's ships, class 0x0D, 0x620BD0 and 0x56B140): made
+	// at (x, y) facing `dir` with its look's frame 0, and put elsewhere (drawn again only when anything changed).
+	uint16_t add_figure(int cls, const LcrAnim* look, int32_t x, int32_t y, uint8_t dir);
+	void move_figure(uint16_t id, const LcrAnim* look, int32_t x, int32_t y, uint8_t dir);
 
 	// The viewer's own random (MSVC's rand(): the game's walkers use the CRT's, the simulation's).
 	uint32_t rand_state = 1;
