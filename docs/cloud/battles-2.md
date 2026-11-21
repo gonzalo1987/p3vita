@@ -941,9 +941,14 @@ Looks like one:
   other three mark 0xFF (the value they compute is unused). Reproduced.
 - **0x60ADBF leaves the side it found unset when the segment meets no
   side of the hull**, and 0x608F70 then reads that byte of its stack, never
-  written, as an index into 0x67AB98. It doesn't happen in the saves (the
-  segment goes from the other ship's centre to a point where the hulls
-  cross). p3vita starts it at 0 (`fn_608f70`).
+  written, as an index into 0x67AB98. It is rare (the segment goes from the
+  other ship's centre to a point where the hulls cross), but save 4 reaches
+  it at ~50 days (tick 126953125, 2026-11-21, `re/emu/sesion53/README.md`):
+  the byte is then the low byte of a pointer 0x60BCDA left there (its ship's
+  block + 0x27 + a direction: 0xBF in the emulator), which changes with the
+  heap's addresses, so no two runs of the game need agree. p3vita starts it
+  at 0 (`fn_608f70`) and the oracle zeroes 0x608F70's locals
+  (`ZEROED_FRAMES`) to match.
 - **0x60BCDA can hang**: its loops never end when the width of the item
   seen from the ship is 0 (a radius of 0: half the box + a − b = 0) and the
   level isn't, or when it is 0x100. Not seen in the saves. p3vita stops the

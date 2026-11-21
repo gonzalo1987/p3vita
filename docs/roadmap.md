@@ -328,11 +328,15 @@ Cada grupo entra en el visor con su edificio (apartado 4): sin la pantalla no se
 
 ### 2. Lo que queda del motor
 
-- [ ] **Una diferencia en las batallas a los ~50 días** (20-11-2026, encontrada al pasar las misiones a 60 días,
-  `re/emu/sesion48/README.md`): en la partida 4, la operación 0x94 (los pasos de las batallas, 0x536BBF) del tick
-  126953125 deja distintos los campos +0x8, +0xC y +0x10 de un bloque de 0x164 bytes de la batalla (bloque 44 de la
-  región BT); sale igual sin las misiones. `world.sh` mira 7 días y no llega. Buscar qué es ese bloque y qué paso de la
-  batalla lo escribe distinto (`worldmd.sh` con `FUNCS=4d85c0,535760 SAVES=4 MISSIONS=0` lo repite en ~150 s).
+- [x] **Una diferencia en las batallas a los ~50 días** (encontrada el 20-11-2026 al pasar las misiones a 60 días;
+  resuelta el 21-11-2026, `re/emu/sesion53/README.md`): en la partida 4, la operación 0x94 del tick 126953125 dejaba
+  distintos la posición y el rumbo (+0x8, +0xC, +0x10) de un barco de la escena de una batalla en el mar. Era el fallo
+  del juego de 0x60ADBF (abajo, «Los piratas y las batallas en el mar»): en un choque de dos barcos (0x608F70) el
+  segmento no tocó el casco y el juego leyó de la pila un lado sin escribir, el byte bajo de una dirección del montón
+  que deja allí 0x60BCDA (0xBF en el emulador; p3vita pone 0). Como ese byte cambia con las direcciones del montón,
+  ni el juego da lo mismo en dos ejecuciones: el oráculo pone a 0 los locales de 0x608F70 (`ZEROED_FRAMES`), como
+  p3vita. Comprobado: la partida 4 60 días con el mundo entero llamada a llamada, 0; las 12 partidas 60 días con la
+  cola de eventos y las operaciones, 0; los escenarios de las batallas, iguales; `world.sh 7`, 0.
 - [ ] **Los estados del barco que p3vita no reproduce** (tablas 0x507CB0 en puerto y 0x507D14 en el mar). En puerto:
   los estados 8 y 9 (0x506B8E: un contador [+0x138] hasta 0x20) y el 10 (0x5067C7: pasa a 0 y sigue como atracado); el
   12 (en subasta, 0x5069E2) no hace nada, como en p3vita; los 6, 7, 11 y 13 a 16 van al caso por omisión (0x506BE5), que
@@ -423,8 +427,8 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   que no usa ningún fichero (0x02 0x0F 0x10 0x13 0x14 0x16 0x25 0x32 0x3C 0x4A 0x52 0x55 0x68 0x71 0x73 0x74 0xE4 0xEA
   0xF5). **Comprobado: el
   mundo entero 30 días con las misiones igual al juego en las 12 partidas**, llamada a llamada
-  (`re/emu/sesion48/worldmd.sh`, por tramos), y la cola de eventos y las operaciones 60 días (igual salvo una
-  diferencia de las batallas en la partida 4 que sale también sin las misiones: apartado 2); 7 días también en continuo
+  (`re/emu/sesion48/worldmd.sh`, por tramos), y la cola de eventos y las operaciones 60 días (igual; la diferencia de
+  las batallas en la partida 4 era un fallo del juego, resuelto el 21-11-2026: apartado 2); 7 días también en continuo
   desde la carga (`worldm.sh`); tick_probe marca las llamadas con una instrucción sin escribir. Son todas las que
   ejecutan las partidas en 60 días (`opcount.sh`). Las ramas a las que no llegan las partidas, con guiones propios
   en un estado retocado (`retouch_unchecked.py mission_branches`, partidas 3, 5 y 7: 0x07, 0x26 con todos los
@@ -1034,6 +1038,11 @@ Lo que ya se sabe que puede separar las partidas:
 - **El asedio con la vista abierta** y **el convoy asaltante que busca su batalla con otro barco** (apartado 2).
 - **El barco nuevo de una guarida sin barcos** toma su fuerza de lo que haya en la memoria (abajo, en los fallos de la
   batalla en una ciudad).
+- **El choque de dos barcos muy montados** en una batalla en el mar (0x608F70, 21-11-2026; la partida 4 llega a los
+  ~50 días): el juego toma el lado del golpe del byte bajo de una dirección del montón que quedó en la pila (abajo,
+  «Los piratas y las batallas en el mar»). Cambia de un PC a otro: ni dos PC con el juego original darían lo mismo;
+  p3vita pone 0. Habrá que ver qué hace el juego en red cuando no cuadran sus sumas de comprobación (0xB8: 0xB9 por
+  barco, 0xD4 con las posiciones de los barcos).
 - **Construir pegado al borde de la rejilla**: el juego escribe fuera de ella (abajo); quizá el visor deba impedirlo.
 - **El reloj de las batallas** depende del reloj real: p3vita fija una operación 0x94 de 84 pasos tras cada tick con
   batallas (el resultado de una batalla automática no cambia; solo el tick en que acaba).
@@ -1218,9 +1227,13 @@ visor). Reproducido; sin decidir cómo corregirlo (¿su ciudad natal?).
   orientación cambiados de sitio. Corrección: cambiarlos.
 - 0x514B80 mejora al capitán del guía una vez por cada barco con capitán (seguro): encola la 0x12 para el guía, no
   para cada barco.
+- 0x60ADBF deja sin poner el lado que 0x608F70 lee de la pila (seguro: visto en la partida 4 a los ~50 días, tick
+  126953125, `re/emu/sesion53/README.md`): cuando el segmento desde el centro del otro barco hasta el cruce de los
+  cascos no toca ningún lado, el juego toma como lado el byte bajo de un puntero que dejó allí 0x60BCDA (el bloque del
+  barco + 0x27 + una dirección), y con él lee 0x67AB98 fuera de su fila. Cambia con las direcciones del montón: no se
+  puede reproducir; p3vita y el oráculo ponen 0. Corrección posible: el lado del casco más cercano al cruce.
 - Parecen, sin comprobar: 0x61A9E0 mira el borde de arriba con la x; 0x605420 y 0x606CC0 leen el primer barco del
-  convoy de un lado sin mirar si existe (p3vita no cuenta ninguno); 0x60ADBF deja sin poner el lado que 0x608F70 lee de
-  la pila (p3vita pone 0); 0x60BCDA se puede colgar con un radio de 0; el bucle de nombres de 0x5063C0 no acaba con
+  convoy de un lado sin mirar si existe (p3vita no cuenta ninguno); 0x60BCDA se puede colgar con un radio de 0; el bucle de nombres de 0x5063C0 no acaba con
   menos de 307 nombres; el convoy pirata sin guía (los piratas apagados con un convoy en el mar, o el jugador que
   captura el guía) hace que 0x507A65 lea fuera de la lista de barcos (p3vita no hace nada con un convoy sin guía; el
   oráculo vuelve en seguida de 0x50D0C0).

@@ -616,6 +616,11 @@ EVENT_JUMPS = {
 # to 0 at their entry.
 ZEROED_FRAMES = {
     0x4F5A20: 0x44,  # the best rent [esp+0x2C] (town_tick/events.cpp, fn_4f5a20)
+    # Two ships' collision (battle/battle_step.cpp, fn_608f70): a side [esp+0x2C] or [esp+0x34] that 0x60ADBF leaves
+    # unset when the segment meets no side of the hull. There the game reads the low byte of a pointer an earlier
+    # 0x60BCDA left (its ship's block + 0x27 + a direction): it changes with the heap's addresses, so no run of the
+    # game gives the same (save 4, tick 126953125: 0xBF in the emulator).
+    0x608F70: 0x44,
 }
 # Los mensajes llevan textos (CString de MFC, sprintf del CRT) que usan unas
 # pocas funciones de KERNEL32: se hacen aquí (ver TownOracle.setup_imports).
