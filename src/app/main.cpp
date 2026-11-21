@@ -19248,6 +19248,10 @@ SDL_Rect campaign_button(CampaignButton b) {
 }
 
 struct CampaignUi {
+	// The tutorial's chapters' screen (*0x6D9594, 0x4AB420 with 0: the same screen's class with [Campaign_0]'s quests,
+	// its Name the title, «Choose mission» 0x69B268 over them, no «Details»).
+	bool tutorial = false;
+	std::string title;  // (The tutorial's, Latin-1.)
 	std::vector<p3::data::CampaignEntry> list;
 	int chosen = 0;  // [+0xCC4]
 	int lit = -1;  // Under the finger ([+0xCA8]).
@@ -19314,10 +19318,12 @@ void draw_campaign_screen(SDL_Renderer* renderer, TextRenderer& fallback, const 
 	const SDL_Color white = {255, 255, 255, 255};
 	gart.begin_sized(layout.panel, kOptionsW, kOptionsH);
 	gart.draw_tex(29, 0, 0, 0);
-	const std::string t = exe_text(0x69B26C, "Campañas", "Campaign");
+	const std::string t = c.tutorial ? p3::data::latin1_to_utf8(c.title) : exe_text(0x69B26C, "Campañas", "Campaign");
 	title.draw(t, 757 - title.measure(t) + 2, 13, SDL_Color{0, 0, 0, 0x90});
 	title.draw(t, 757 - title.measure(t), 11, white);
-	list_font.draw(exe_text(0x69B270, "Elige una campaña", "Choose campaign"), kCampaignListX, 126, white);
+	list_font.draw(c.tutorial ? exe_text(0x69B268, "Elige un capítulo", "Choose mission")
+							  : exe_text(0x69B270, "Elige una campaña", "Choose campaign"),
+		kCampaignListX, 126, white);
 	const bool chosen = c.chosen >= 0 && c.chosen < int(c.list.size());
 	if (chosen && c.list[size_t(c.chosen)].texture) {
 		gart.draw_tex(c.list[size_t(c.chosen)].texture, 0, kCampaignPicture.x, kCampaignPicture.y);
@@ -19353,9 +19359,208 @@ void draw_campaign_screen(SDL_Renderer* renderer, TextRenderer& fallback, const 
 		BTN_CROSS, chosen);
 	draw_screen_button(gart, font, campaign_button(CampaignButton::Back),
 		game_text(GameText::ButtonBack, tr("Atrás", "Back")), BTN_CIRCLE, true);
-	draw_screen_button(gart, font, campaign_button(CampaignButton::Details),
-		game_text(GameText::NewGameDetails, tr("Detalles", "Details")), BTN_SQUARE, true);
+	if (!c.tutorial) {
+		draw_screen_button(gart, font, campaign_button(CampaignButton::Details),
+			game_text(GameText::NewGameDetails, tr("Detalles", "Details")), BTN_SQUARE, true);
+	}
 	gart.end();
+}
+
+// The tutorial's window over the game (the tutorial object *0x6EE120, 0x2B0 bytes, vtable 0x67B6A8; read in the exe,
+// ENCARGO_CAMPANAS.md item 3): a strip as wide as the screen at its bottom (0x637E20: its height the larger of three
+// buttons' and the text's with TopSpacing 4), white at alpha 200 (0xC8FFFFFF), the step's text in black from
+// LeftSpacing 4 (the box's fonts: \f0 the heads' font 0, \f1 the pages' font 1) as wide as the screen less 4 and a
+// button and a half; at its right the two arrows of bttn_tutorial.tga (TEX16061, 18 × 27; screenGame.ini BUTTON16 «up»
+// frames 4..7 the step before, BUTTON15 «down» 0..3 the next one: normal, pressed, lit, off) at 5/4 of a button from
+// the right, the up one 3/7 of a button under three buttons' height from the bottom, the down one as far over it;
+// «up» off at the first step, «down» off at the last step of the last chapter (0x638010). Then the step's rect (0x6374C0
+// from 0x637658): five frames of a pixel, one inside the other, alpha the pulse less 51 a frame away from the middle
+// one, red and green 20 less, blue 255; the pulse goes 25 every 75 ms between 130 and 255 (0x637860). The rect is on
+// the PC's screen (1024 × 768), its x from the right edge (the panel on the right): here moved onto the viewer's own
+// elements (tutorial_mark).
+// Adapted: the strip over the town view only (the panel stays free), the arrows' touches with 10 more round them; the
+// right stick (up the step before, down the next) as their keys.
+constexpr int kTutorialArrowW = 18;
+constexpr int kTutorialArrowH = 27;
+constexpr int kTutorialSpacing = 4;  // [GameTutorialBase] LeftSpacing and TopSpacing.
+struct TutorialFrame {
+	SDL_Rect box{};
+	SDL_Rect up{};
+	SDL_Rect down{};
+	int text_x = 0;
+	int text_y = 0;
+	int text_w = 0;
+};
+SDL_Rect grown(const SDL_Rect& r, int by) {
+	return {r.x - by, r.y - by, r.w + 2 * by, r.h + 2 * by};
+}
+// The step's text as the box draws it (0x462520: each line pieces of text, each in its font, a font code starting a
+// new piece on the same line): its lines of pieces (0 the heads' font, else the pages'), wrapped by words at `width`;
+// the ini's doubled backslash before a code taken as one.
+struct TutorialPiece {
+	std::string text;
+	int x = 0;
+	bool head = false;
+};
+using TutorialLine = std::vector<TutorialPiece>;
+std::vector<TutorialLine> tutorial_lines(const std::string& latin1, int width) {
+	std::string raw = latin1;  // (clean_game_text makes it UTF-8.)
+	for (size_t at = raw.find("\\\\"); at != std::string::npos; at = raw.find("\\\\", at)) {
+		raw.erase(at, 1);
+	}
+	auto font_of = [](bool head) -> const TextRenderer* {
+		return !g_game_art ? nullptr : head ? g_game_art->head_text() : g_game_art->page_text();
+	};
+	std::vector<TutorialLine> out;
+	bool head = false;
+	for (const std::string& paragraph : box_lines(raw)) {
+		// The paragraph's pieces by their font codes.
+		std::vector<std::pair<std::string, bool>> pieces;
+		std::string piece;
+		for (size_t i = 0; i < paragraph.size(); ++i) {
+			if (i + 2 < paragraph.size() && paragraph[i] == '\\' && paragraph[i + 1] == 'f' &&
+				std::isdigit(uint8_t(paragraph[i + 2]))) {
+				if (!piece.empty()) {
+					pieces.push_back({piece, head});
+					piece.clear();
+				}
+				head = paragraph[i + 2] == '0';
+				i += i + 3 < paragraph.size() && paragraph[i + 3] == '_' ? 3 : 2;
+				continue;
+			}
+			piece += paragraph[i];
+		}
+		pieces.push_back({piece, head});
+		// Laid out by words.
+		TutorialLine line;
+		int x = 0;
+		for (const auto& [raw_text, piece_head] : pieces) {
+			const TextRenderer* f = font_of(piece_head);
+			const std::string text = clean_game_text(raw_text);
+			size_t pos = 0;
+			bool first_word = true;
+			while (pos <= text.size()) {
+				size_t next = text.find(' ', pos);
+				if (next == std::string::npos) {
+					next = text.size();
+				}
+				const std::string word = text.substr(pos, next - pos);
+				const std::string with_space = first_word ? word : " " + word;
+				const int w = f ? f->measure(with_space) : 0;
+				if (f && !line.empty() && x + w > width) {
+					out.push_back(std::move(line));
+					line.clear();
+					x = 0;
+					if (!word.empty()) {
+						line.push_back({word, 0, piece_head});
+						x = f->measure(word);
+					}
+				} else if (!with_space.empty()) {
+					if (!line.empty() && line.back().head == piece_head && !first_word) {
+						line.back().text += with_space;
+					} else {
+						line.push_back({with_space, x, piece_head});
+					}
+					x += w;
+				}
+				first_word = false;
+				pos = next + 1;
+			}
+		}
+		out.push_back(std::move(line));
+	}
+	return out;
+}
+TutorialFrame tutorial_frame(const std::string& latin1, int view_w) {
+	TutorialFrame f;
+	f.text_x = kTutorialSpacing;
+	f.text_w = view_w - kTutorialSpacing - kTutorialArrowW * 3 / 2;
+	const int text_h = int(tutorial_lines(latin1, f.text_w).size()) * kBoxLine;
+	const int h = std::max(3 * kTutorialArrowH, text_h + kTutorialSpacing);
+	f.box = {0, kScreenHeight - h, view_w, h};
+	f.text_y = f.box.y + kTutorialSpacing;
+	const int gap = 3 * kTutorialArrowH / 7;
+	const int x = view_w - kTutorialArrowW * 5 / 4;
+	f.up = {x, f.box.y + h - 3 * kTutorialArrowH + gap, kTutorialArrowW, kTutorialArrowH};
+	f.down = {x, f.box.y + h - gap - kTutorialArrowH, kTutorialArrowW, kTutorialArrowH};
+	return f;
+}
+// A step's rect moved onto the viewer: the PC's main view, minimap, title bar, row of icons, the selection window's
+// parts (the side menus are drawn at the game's size from the menus' room's top, the PC's 302) and the title bar's ship
+// buttons (here on the panel's plank); another rect, the PC's screen scaled to this one.
+std::optional<SDL_Rect> tutorial_mark(const p3::data::TutorialWindow& w, const PanelLayout& p, int strip_top) {
+	if (!w.has_rect) {
+		return std::nullopt;
+	}
+	// On the PC's screen, from its left (0x637B60): x to the right edge W − x − 1, its left that less w (at least 0),
+	// its bottom y + h (at most H − 1).
+	constexpr int kPcW = 1024;
+	constexpr int kPcH = 768;
+	const int right = kPcW - w.x - 1;
+	const int left = std::max(0, right - w.w);
+	const int top = w.y;
+	const int bottom = std::min(w.y + w.h, kPcH - 1);
+	constexpr int kPcPanel = kPcW - 1 - kPanelInner - 2;  // (The selection window's left, 762.)
+	constexpr int kPcRoom = 302;
+	auto clip = [&](SDL_Rect r) {
+		SDL_Rect out{};
+		const SDL_Rect area = {0, 0, kScreenWidth, strip_top};
+		if (!SDL_IntersectRect(&r, &area, &out)) {
+			return std::optional<SDL_Rect>();
+		}
+		return std::optional<SDL_Rect>(out);
+	};
+	if (top < 40 && bottom < 40 && right >= kPcW - 100) {
+		return clip({0, 0, kScreenWidth, kBarHeight});  // The title bar (1,0,2000,31).
+	}
+	if (top < 40 && bottom < 40) {
+		// The sea map's title bar's ship buttons (249,0,2000,31): the plank's four.
+		return clip({p.ships[0].x - 2, p.ships[0].y - 2, p.ships[kPanelShipButtons - 1].x +
+				p.ships[kPanelShipButtons - 1].w - p.ships[0].x + 4, p.ships[0].h + 4});
+	}
+	if (left < kPcPanel - 100) {
+		return clip({0, kBarHeight, p.town_right, strip_top - kBarHeight});  // The main view (284,42,2000,2000).
+	}
+	if (top < 265) {
+		return clip(p.map);  // The minimap (5,49,250,213).
+	}
+	if (top < kPcRoom - 1) {
+		return clip({p.plank.x, p.icons[0].y - 2, kPanelInner, kPanelIconSize + 4});  // The icons (1,268,259,30).
+	}
+	SDL_Rect r = {p.room.x + (left - kPcPanel), p.room.y + (top - kPcRoom), right - left, bottom - top};
+	SDL_Rect room = p.room;
+	SDL_Rect out{};
+	return SDL_IntersectRect(&r, &room, &out) ? clip(out) : std::nullopt;
+}
+
+void draw_tutorial_window(SDL_Renderer* renderer, GameWindowArt& gart, TextRenderer& fallback, const std::string& latin1,
+	int view_w, bool before_on, bool next_on, int pressed, const std::optional<SDL_Rect>& mark, int pulse) {
+	const TutorialFrame f = tutorial_frame(latin1, view_w);
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 255, 255, 255, 200);
+	SDL_RenderFillRect(renderer, &f.box);
+	const SDL_Color black = {0, 0, 0, 255};
+	int y = f.text_y;
+	for (const TutorialLine& line : tutorial_lines(latin1, f.text_w)) {
+		for (const TutorialPiece& piece : line) {
+			TextRenderer* font = piece.head ? gart.head_text() : gart.page_text();
+			(font ? *font : fallback).draw(piece.text, f.text_x + piece.x, y, black);
+		}
+		y += kBoxLine;
+	}
+	gart.draw_tex(16061, before_on ? (pressed == 0 ? 5 : 4) : 7, f.up.x, f.up.y);
+	gart.draw_tex(16061, next_on ? (pressed == 1 ? 1 : 0) : 3, f.down.x, f.down.y);
+	if (mark) {
+		for (int k = 0; k < 5; ++k) {
+			const int alpha = std::clamp(pulse - 51 * std::abs(k - 2), 0, 255);
+			const int rg = std::max(0, alpha - 20);
+			SDL_SetRenderDrawColor(renderer, Uint8(rg), Uint8(rg), 255, Uint8(alpha));
+			const SDL_Rect r = {mark->x + k, mark->y + k, mark->w - 2 * k, mark->h - 2 * k};
+			if (r.w > 0 && r.h > 0) {
+				SDL_RenderDrawRect(renderer, &r);
+			}
+		}
+	}
 }
 
 // A black screen with a line in the middle (loading a game).
@@ -19624,6 +19829,21 @@ int main(int argc, char** argv) {
 	// window opened from it has the starting capital and the start off (0x49B180 with 1).
 	bool campaign_open = false;
 	CampaignUi campaign;
+	// The tutorial in play (the tutorial object *0x6EE120): its chapters (tutorial_eng.ini), the chapter played (-1:
+	// none) and its window shown.
+	struct TutorialRun {
+		std::vector<p3::data::TutorialChapter> chapters;
+		int chapter = -1;
+		int window = 0;
+		// Its rect's pulse (the rect's [+0x10] and [+0x12], 0x637860) and when it next moves; the arrow pressed (0 up,
+		// 1 down, -1 none); the right stick pushed (once a push).
+		int pulse = 255;
+		int pulse_step = -25;
+		Uint32 pulse_at = 0;
+		int pressed = -1;
+		bool stick_held = false;
+		bool touch = false;  // The touch began on its window.
+	} tutorial;
 	std::array<uint8_t, p3::app::kDetailRows> details_copy{};
 	int details_focus = p3::app::kDetailOk;
 	int details_pressed = -1;
@@ -19987,6 +20207,7 @@ int main(int argc, char** argv) {
 	// What the viewer keeps of the game in play, forgotten for another one
 	// (loaded or new); the town on screen is the player's home town.
 	auto forget_game = [&]() {
+		tutorial.chapter = -1;  // (A tutorial's start sets it after.)
 		g_feast_delays = feast_delays(save);  // The feast window's constructor 0x5BAC20.
 		battle_icons.clear();
 		battle_info = -1;
@@ -20077,6 +20298,70 @@ int main(int argc, char** argv) {
 		p3::data::after_game_load(loaded, 4, true, p3::data::LoadOptions{});
 		p3::data::start_campaign(loaded, uint8_t(n), speed);
 		use_loaded_game(std::move(loaded));
+		return true;
+	};
+	// A tutorial chapter's start (the tutorial screen's «Start», 0x4ABE3F..0x4ABFA2): its save (SaveGame= of
+	// [GameTutorialBase<k>], missav/tut<k>.pat) loaded in the mode 4 (after_game_load), then start_tutorial; the
+	// tutorial's windows from its first (0x637470). On a failure the game in play stays.
+	// The tutorial's arrows (0x637C20, 0x637CF0): the next step, past the last one the next chapter (0x638080: its save
+	// loaded with 0x4335B0 in the mode 4 and its steps from the first; nothing else), or the step before.
+	auto tutorial_step = [&](int step) {
+		if (tutorial.chapter < 0 || tutorial.chapter >= int(tutorial.chapters.size())) {
+			return;
+		}
+		const int windows = int(tutorial.chapters[size_t(tutorial.chapter)].windows.size());
+		tutorial.pulse = 255;
+		tutorial.pulse_step = -25;
+		if (step < 0) {
+			tutorial.window = std::max(0, tutorial.window - 1);
+			return;
+		}
+		if (tutorial.window < windows - 1) {
+			++tutorial.window;
+			return;
+		}
+		const int next = tutorial.chapter + 1;
+		if (next >= int(tutorial.chapters.size())) {
+			return;
+		}
+		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
+		SaveGame loaded;
+		std::string error;
+		if (!load_savegame(*archive, "missav/" + tutorial.chapters[size_t(next)].save + ".pat", loaded, &error) ||
+			loaded.towns.empty()) {
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return;
+		}
+		p3::data::after_game_load(loaded, 4, true, p3::data::LoadOptions{});
+		std::vector<p3::data::TutorialChapter> chapters = std::move(tutorial.chapters);
+		use_loaded_game(std::move(loaded));
+		tutorial.chapters = std::move(chapters);
+		tutorial.chapter = next;
+		tutorial.window = 0;
+	};
+	auto start_tutorial_game = [&](int chapter) {
+		std::vector<p3::data::TutorialChapter> chapters = p3::data::read_tutorial(*archive);
+		if (chapter < 0 || chapter >= int(chapters.size()) || chapters[size_t(chapter)].save.empty()) {
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return false;
+		}
+		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
+		SaveGame loaded;
+		std::string error;
+		if (!load_savegame(*archive, "missav/" + chapters[size_t(chapter)].save + ".pat", loaded, &error) ||
+			loaded.towns.empty()) {
+#ifndef __vita__
+			std::fprintf(stderr, "%s\n", error.c_str());
+#endif
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return false;
+		}
+		p3::data::after_game_load(loaded, 4, true, p3::data::LoadOptions{});
+		p3::data::start_tutorial(loaded);
+		use_loaded_game(std::move(loaded));
+		tutorial.chapters = std::move(chapters);
+		tutorial.chapter = chapter;
+		tutorial.window = 0;
 		return true;
 	};
 	// A new game (the user's choice, 2026-11-11: from the game's main menu, the
@@ -21457,6 +21742,16 @@ int main(int argc, char** argv) {
 		}
 		campaign_open = true;
 	};
+	auto open_tutorial = [&]() {
+		campaign = CampaignUi();
+		campaign.tutorial = true;
+		campaign.list = p3::data::read_tutorial_chapters(*archive, &campaign.title);
+		if (campaign.list.empty()) {
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return;
+		}
+		campaign_open = true;
+	};
 	auto campaign_choose = [&](int row) {
 		if (row >= 0 && row < int(campaign.list.size()) && row != campaign.chosen) {
 			campaign.chosen = row;
@@ -21467,12 +21762,15 @@ int main(int argc, char** argv) {
 		if (campaign.chosen < 0 || campaign.chosen >= int(campaign.list.size())) {
 			return;
 		}
-		const int n = campaign.chosen + 1;  // (0x430928: the save «%u» of [+0xCC4] + 1.)
-		if (start_campaign_game(n)) {
+		if (campaign.tutorial ? start_tutorial_game(campaign.chosen)
+							  : start_campaign_game(campaign.chosen + 1)) {  // (0x430928: «%u» of [+0xCC4] + 1.)
 			campaign_open = false;
 		}
 	};
 	auto campaign_details = [&]() {
+		if (campaign.tutorial) {
+			return;  // (The tutorial's screen has no «Details».)
+		}
 		if (!new_game_window) {
 			new_game_window = std::make_unique<p3::app::NewGameWindow>(renderer, *archive, kScreenWidth, kScreenHeight);
 		}
@@ -21612,6 +21910,9 @@ int main(int argc, char** argv) {
 		switch (p3::app::StartEntry(entry)) {
 		case p3::app::StartEntry::Single:
 			open_new_game();
+			break;
+		case p3::app::StartEntry::Tutorial:
+			open_tutorial();
 			break;
 		case p3::app::StartEntry::Campaign:
 			open_campaigns();
@@ -24259,6 +24560,21 @@ int main(int argc, char** argv) {
 		// Triangle its sort button, Circle closes it.
 		const bool stats_open = side.menu == PanelMenu::Statistics && panel_shown && !side.folded && has_save &&
 			save.player >= 0 && small_text && !trading && !in_place && !in_mail && !in_menu;
+		// The tutorial's window (draw_tutorial_window): its step, shown over the town or the sea map with no window over
+		// the view (adapted: the game's stays under its windows).
+		const p3::data::TutorialWindow* tutorial_now =
+			tutorial.chapter >= 0 && tutorial.chapter < int(tutorial.chapters.size()) && tutorial.window >= 0 &&
+				tutorial.window < int(tutorial.chapters[size_t(tutorial.chapter)].windows.size())
+			? &tutorial.chapters[size_t(tutorial.chapter)].windows[size_t(tutorial.window)]
+			: nullptr;
+		const bool tutorial_on = tutorial_now && has_save && save.player >= 0 && g_game_art && small_text &&
+			(selection.mode == Mode::Saved || selection.mode == Mode::Sea) && !trading && !in_place && !in_mail &&
+			!in_menu && !stats_open && !ship_list.open && !convoy_window.open && !screen_message && !battle_popup() &&
+			!messages.open && !end_window.open;
+		const bool tutorial_before_on = tutorial.window > 0;
+		const bool tutorial_next_on = tutorial_now &&
+			(tutorial.window < int(tutorial.chapters[size_t(tutorial.chapter)].windows.size()) - 1 ||
+				tutorial.chapter < int(tutorial.chapters.size()) - 1);
 		auto stats_pick_town = [&](int step) {
 			const std::vector<int> towns = statistics_supply_towns(save, uint32_t(save.player));
 			if (towns.empty()) {
@@ -25167,6 +25483,21 @@ int main(int argc, char** argv) {
 					touch_building = false;
 					break;
 				}
+				tutorial.touch = false;
+				if (tutorial_on) {
+					const TutorialFrame tf = tutorial_frame(tutorial_now->text, town_width);
+					if (inside(tf.box, touch_start.x, touch_start.y)) {
+						// The tutorial's window: nothing under it moves; its arrows lit while pressed.
+						tutorial.touch = true;
+						tutorial.pressed = inside(grown(tf.up, 10), touch_start.x, touch_start.y)   ? 0
+							: inside(grown(tf.down, 10), touch_start.x, touch_start.y) ? 1
+																					  : -1;
+						touch_on_side = false;
+						touch_on_panel = true;
+						touch_building = false;
+						break;
+					}
+				}
 				touch_on_convoy = false;
 				if (convoy_window.open && has_save && save.player >= 0 &&
 					((touch_start.x < town_width && touch_start.y >= kBarHeight) ||
@@ -25434,6 +25765,20 @@ int main(int argc, char** argv) {
 				break;
 			case SDL_FINGERUP:
 				finger_down = false;
+				if (tutorial.touch) {
+					tutorial.touch = false;
+					touch_on_panel = false;
+					const int pressed = tutorial.pressed;
+					tutorial.pressed = -1;
+					if (touch_moved < kTapDistance && tutorial_on) {
+						if (pressed == 0 && tutorial_before_on) {
+							tutorial_step(-1);
+						} else if (pressed == 1 && tutorial_next_on) {
+							tutorial_step(1);
+						}
+					}
+					break;
+				}
 				if (touch_on_stats) {
 					touch_on_stats = false;
 					touch_on_panel = false;
@@ -26481,6 +26826,23 @@ int main(int argc, char** argv) {
 				place.page_scroll += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY));
 			}
 		}
+		if ((controller || script) && tutorial_on && !placing) {
+			// The tutorial's arrows' keys (adapted): the right stick pushed up the step before, down the next, once a
+			// push.
+			const int scripted = script ? int(script->right_axis(SDL_CONTROLLER_AXIS_RIGHTY)) : 0;
+			const int ay = scripted != 0 || !controller ? scripted
+														: int(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY));
+			if (std::abs(ay) < 12000) {
+				tutorial.stick_held = false;
+			} else if (!tutorial.stick_held) {
+				tutorial.stick_held = true;
+				if (ay < 0 && tutorial_before_on) {
+					tutorial_step(-1);
+				} else if (ay > 0 && tutorial_next_on) {
+					tutorial_step(1);
+				}
+			}
+		}
 		if ((controller || script) && placing && !in_mail && !in_place && !ship_list.open && !convoy_window.open) {
 			// Placing a building: the right stick moves it as the cross does (left and right a column, up and down a row;
 			// the first push puts it in the middle of the view), again every 250 ms while held, 100 pushed fully; the view
@@ -26907,6 +27269,20 @@ int main(int argc, char** argv) {
 			(selection.mode == Mode::Saved || selection.mode == Mode::Sea)) {
 			draw_ticker(*g_game_art, *small_text, ticker_events, town_width, kBarHeight);
 			draw_ticker(*g_game_art, *small_text, ticker_letters, town_width, kBarHeight);
+		}
+		if (tutorial_on && tutorial_now) {
+			// The tutorial's window (draw_tutorial_window), its rect's pulse moved on (every 75 ms, 0x637860).
+			const Uint32 now_ms = app_ticks();
+			if (now_ms >= tutorial.pulse_at) {
+				tutorial.pulse_at = now_ms + 75;
+				tutorial.pulse += tutorial.pulse_step;
+				if (tutorial.pulse <= 130 || tutorial.pulse >= 255) {
+					tutorial.pulse_step = -tutorial.pulse_step;
+				}
+			}
+			const TutorialFrame tf = tutorial_frame(tutorial_now->text, town_width);
+			draw_tutorial_window(renderer, *g_game_art, *small_text, tutorial_now->text, town_width, tutorial_before_on,
+				tutorial_next_on, tutorial.pressed, tutorial_mark(*tutorial_now, panel_layout, tf.box.y), tutorial.pulse);
 		}
 		if (trading) {
 			draw_market(renderer, *small_text, save, town_index, market);

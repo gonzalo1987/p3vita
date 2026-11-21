@@ -25,6 +25,31 @@ struct CampaignEntry {
 // The screen's list (0x430020): [GENERAL] CampaignCount − 1 entries, the campaigns 1, 2... (the tutorial, [Campaign_0],
 // has its own start).
 std::vector<CampaignEntry> read_campaigns(const CprArchive& archive);
+// The tutorial's chapters, as the main menu's «Tutorial» lists them (the screen *0x6D9594 opened by 0x4AB420 with 0):
+// [Campaign_0]'s QuestCount entries (QuestName_k, QuestText_k with its «\n», QuestTexture_k); its Name, the screen's
+// title, in `title`.
+std::vector<CampaignEntry> read_tutorial_chapters(const CprArchive& archive, std::string* title);
+
+// A window of a tutorial's chapter (the tutorial object *0x6EE120, 0x637080: [GameTutorialBase<k>] of
+// scripts/tutorial_eng.ini, tutorial_spa.ini in Spanish): its text (WindowText<i>, its «\n» made line breaks; the game
+// box's codes «\f1_» in it), its spoken text (WindowMp3_<i>, a path of the archive) and the part of the game's screen it
+// points at (WindowCode<i> «Rect x,y,w,h», on the PC's screen of 1024 × 768; none when empty).
+struct TutorialWindow {
+	std::string text;
+	std::string speech;
+	bool has_rect = false;
+	int32_t x = 0;
+	int32_t y = 0;
+	int32_t w = 0;
+	int32_t h = 0;
+};
+// A chapter: its save (SaveGame=, 0x636DD0: «tut<k>», missav/tut<k>.pat with its .pst) and its windows. Latin-1.
+struct TutorialChapter {
+	std::string save;
+	std::vector<TutorialWindow> windows;
+};
+// The tutorial's chapters ([GameTutorialBase] TutorialCount, each [GameTutorialBase<k>]).
+std::vector<TutorialChapter> read_tutorial(const CprArchive& archive);
 
 // What the options screen (*0x6CBDF0, P2.CFG [OPTIONS]) gives a game's load (0x4335B0): three display options it
 // writes into the settings, and the game's speed.
@@ -54,6 +79,11 @@ void after_game_load(SaveGame& save, uint8_t mode, bool from_screen, const LoadO
 // [+0x4] = `speed` (the game's speed before: the options' [+0x17C], kept at 0x430947), the list of Kampagne<n> with
 // its missions started (0x511270 with 1) and 0x54A480.
 void start_campaign(SaveGame& save, uint8_t campaign, uint32_t speed);
+
+// A tutorial chapter's start once its save (missav/tut<k>.pat) is loaded (after_game_load in the mode 4; the tutorial
+// screen's «Start», 0x4ABF30): the settings' [+0xD] 4 and [+0x14] 0 (Kampagne0: no missions). Nothing else of the
+// world: the mailbox, the scripts and the pirates stay as the save has them.
+void start_tutorial(SaveGame& save);
 
 namespace campaigns_detail {
 // 0x54A480 (on the game's control object 0x6DF2F0; only a campaign's start calls it; not in a network game): the

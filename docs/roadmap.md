@@ -484,7 +484,18 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
     nombre que no cabe en la fuente 2 (el juego lo corta). De paso, la carga desde la pantalla de partidas guardadas
     hace lo del juego tras leer el fichero (`after_game_load` en el modo 3). Las partidas de una campaña se guardan,
     como en el juego, en `ein/` (la página de guardar deja siempre el tipo «individual»).
-  - [ ] El tutorial (`scripts/tutorial_eng.ini`, sus cinco partes con `SaveGame=tut0..4`).
+  - [x] **El tutorial** (21-11-2026; `re/emu/sesion52/README.md`, «Part 4»): la pantalla de capítulos del juego
+    (*0x6D9594, abierta por la entrada «Tutorial» del libro con 0x4AB420(0): los cinco capítulos de [Campaign_0] con
+    su imagen y su texto, «Jugar» y «Atrás»), el arranque de un capítulo (su partida tut<k>.pat en el modo 4 y los
+    ajustes [+0xD] 4 y [+0x14] 0: `start_tutorial`) y la ventana de los pasos sobre el juego (el objeto *0x6EE120:
+    `scripts/tutorial_eng.ini` o `tutorial_spa.ini`, 159 pasos en 5 capítulos): el texto de cada paso en una franja
+    blanca abajo con sus fuentes (también a mitad de línea, como el cuadro de texto del juego), sus flechas
+    (bttn_tutorial.tga; «anterior» apagada en el primer paso, «siguiente» tras el último pasa al capítulo siguiente
+    cargando su partida) y el recuadro que pulsa (cinco marcos azulados, 0x637860) sobre la parte de la pantalla de la
+    que habla. Adaptado: la franja solo sobre la vista (el panel libre), los recuadros del PC (1024 × 768) llevados a
+    los elementos del visor (la vista, el minimapa, la barra de arriba, la fila de iconos, la zona de menús, los
+    botones de barcos de la tabla), el stick derecho como tecla de las flechas y la franja escondida bajo las
+    ventanas. Falta la voz de cada paso (los MP3 de `musik/tutorial`, con el sonido: apartado 5).
 
 ### 4. Las pantallas
 

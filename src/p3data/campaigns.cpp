@@ -24,41 +24,115 @@ uint16_t merchant_count(const SaveGame& save) {
 	return n < save.merchants.size() ? n : uint16_t(save.merchants.size());
 }
 
+// A key of an ini section (lower case names), or `fallback`.
+std::string ini_value(const MissionIni& ini, const std::string& section, const std::string& key,
+	const std::string& fallback) {
+	auto s = ini.find(section);
+	if (s == ini.end()) {
+		return fallback;
+	}
+	auto k = s->second.find(key);
+	return k == s->second.end() ? fallback : k->second;
+}
+
+// GetPrivateProfileInt's: a sign and the leading digits, 0 without them.
+long ini_number(const std::string& v) {
+	size_t i = 0;
+	const bool minus = !v.empty() && v[0] == '-';
+	i = minus ? 1 : 0;
+	long n = 0;
+	for (; i < v.size() && v[i] >= '0' && v[i] <= '9' && n < 0x7FFFFFFF / 10; ++i) {
+		n = n * 10 + (v[i] - '0');
+	}
+	return minus ? -n : n;
+}
+
+// The ini's «\n» made line breaks (CString::Replace, 0x64CE80).
+std::string line_breaks(std::string text) {
+	for (size_t at = text.find("\\n"); at != std::string::npos; at = text.find("\\n", at + 1)) {
+		text.replace(at, 2, "\n");
+	}
+	return text;
+}
+
 }  // namespace
 
 std::vector<CampaignEntry> read_campaigns(const CprArchive& archive) {
 	const MissionIni ini = read_missions_ini(archive);
-	auto value = [&](const std::string& section, const std::string& key, const std::string& fallback) {
-		auto s = ini.find(section);
-		if (s == ini.end()) {
-			return fallback;
-		}
-		auto k = s->second.find(key);
-		return k == s->second.end() ? fallback : k->second;
-	};
-	// (GetPrivateProfileInt: the leading digits, 0 without them.)
-	auto number = [](const std::string& v) {
-		long n = 0;
-		for (size_t i = 0; i < v.size() && v[i] >= '0' && v[i] <= '9' && n < 0x7FFFFFFF / 10; ++i) {
-			n = n * 10 + (v[i] - '0');
-		}
-		return n;
-	};
 	std::vector<CampaignEntry> list;
-	const long count = number(value("general", "campaigncount", "0")) - 1;
+	const long count = ini_number(ini_value(ini, "general", "campaigncount", "0")) - 1;
 	for (long n = 1; n <= count; ++n) {
 		const std::string section = "campaign_" + std::to_string(n);
 		CampaignEntry e;
-		e.name = value(section, "name", "");
-		e.text = value(section, "text", "Default");
-		for (size_t at = e.text.find("\\n"); at != std::string::npos; at = e.text.find("\\n", at + 1)) {
-			e.text.replace(at, 2, "\n");
-		}
-		const long texture = number(value(section, "texture", ""));
+		e.name = ini_value(ini, section, "name", "");
+		e.text = line_breaks(ini_value(ini, section, "text", "Default"));
+		const long texture = ini_number(ini_value(ini, section, "texture", "-1"));
 		e.texture = texture > 0 ? uint32_t(texture) : 0;
 		list.push_back(std::move(e));
 	}
 	return list;
+}
+
+std::vector<CampaignEntry> read_tutorial_chapters(const CprArchive& archive, std::string* title) {
+	// 0x4AB420 with the campaign 0.
+	const MissionIni ini = read_missions_ini(archive);
+	if (title) {
+		*title = ini_value(ini, "campaign_0", "name", "");
+	}
+	std::vector<CampaignEntry> list;
+	const long count = ini_number(ini_value(ini, "campaign_0", "questcount", "0"));
+	for (long k = 0; k < count; ++k) {
+		const std::string n = std::to_string(k);
+		CampaignEntry e;
+		e.name = ini_value(ini, "campaign_0", "questname_" + n, "");
+		e.text = line_breaks(ini_value(ini, "campaign_0", "questtext_" + n, "Default"));
+		const long texture = ini_number(ini_value(ini, "campaign_0", "questtexture_" + n, "-1"));
+		e.texture = texture > 0 ? uint32_t(texture) : 0;
+		list.push_back(std::move(e));
+	}
+	return list;
+}
+
+std::vector<TutorialChapter> read_tutorial(const CprArchive& archive) {
+	const MissionIni ini = read_game_ini(archive, "scripts/tutorial_spa.ini", "scripts/tutorial_eng.ini");
+	std::vector<TutorialChapter> chapters;
+	const long count = ini_number(ini_value(ini, "gametutorialbase", "tutorialcount", "0"));
+	for (long k = 0; k < count; ++k) {
+		const std::string section = "gametutorialbase" + std::to_string(k);
+		TutorialChapter c;
+		c.save = ini_value(ini, section, "savegame", "");
+		const long windows = ini_number(ini_value(ini, section, "windowcnt", "0"));
+		for (long i = 0; i < windows; ++i) {
+			const std::string n = std::to_string(i);
+			TutorialWindow w;
+			w.text = line_breaks(ini_value(ini, section, "windowtext" + n, ""));
+			w.speech = ini_value(ini, section, "windowmp3_" + n, "");
+			// 0x6372F5..0x63740B: «Rect» found, the four numbers after it (strtok and atoi).
+			const std::string code = ini_value(ini, section, "windowcode" + n, "");
+			const size_t at = code.find("Rect");
+			if (at != std::string::npos) {
+				int32_t v[4] = {};
+				size_t pos = at + 4;
+				for (int j = 0; j < 4; ++j) {
+					while (pos < code.size() && (code[pos] == ' ' || code[pos] == ',')) {
+						++pos;
+					}
+					v[j] = int32_t(ini_number(code.substr(pos)));
+					while (pos < code.size() && code[pos] != ',' && code[pos] != ' ') {
+						++pos;
+					}
+				}
+				w.has_rect = true;
+				w.x = v[0];
+				w.y = v[1];
+				w.w = v[2];
+				w.h = v[3];
+			}
+			c.windows.push_back(std::move(w));
+		}
+		chapters.push_back(std::move(c));
+	}
+	return chapters;
 }
 
 void fn_5421e0(SaveGame& save, const uint8_t* operation) {
@@ -131,6 +205,12 @@ void start_campaign(SaveGame& save, uint8_t campaign, uint32_t speed) {
 	save.settings.u32(0x4) = speed;
 	missions_detail::fn_511270(save, true);
 	campaigns_detail::fn_54a480(save);
+}
+
+void start_tutorial(SaveGame& save) {
+	// 0x4ABF30.
+	save.settings.u8(0xD) = 4;
+	save.settings.u8(0x14) = 0;
 }
 
 namespace campaigns_detail {

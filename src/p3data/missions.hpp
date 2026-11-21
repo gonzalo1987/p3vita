@@ -54,6 +54,8 @@ struct MissionData {
 // The missions' ini (scripts/missions_spa.ini when the Spanish archive is mounted, else missions_eng.ini): its
 // sections (lower case) with their keys (lower case) and values (Latin-1; a key twice, its first).
 MissionIni read_missions_ini(const CprArchive& archive);
+// An ini of the game's from the archive: `spanish` when the Spanish archive is mounted (it has it), else `english`.
+MissionIni read_game_ini(const CprArchive& archive, const char* spanish, const char* english);
 
 // The game's data for the missions: scripts/missions_spa.ini when the Spanish archive is mounted (its own .p2m with
 // the Spanish texts), else missions_eng.ini, and the .p2m its [Missions] names (missions_addon/). After it a load

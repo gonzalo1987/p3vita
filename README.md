@@ -117,7 +117,11 @@ stops. On the main menu's book, «Campaign» opens the game's campaign screen:
 the seven campaigns and scenarios with their picture and text (up and down
 choose one, L and R move its text, a touch chooses and a second touch starts
 it), «Start» (X) begins it from its own save as the game does, «Details»
-(Square) the new game's details, «Back» (Circle) to the book. The
+(Square) the new game's details, «Back» (Circle) to the book. «Tutorial»
+opens its five chapters the same way; in a chapter its steps show in a strip
+at the bottom of the town view, with the part of the screen they talk about
+outlined: its arrows (or the right stick, up and down) go through them, and
+past the last one to the next chapter. The
 hints on the screen show the buttons with their symbols (✕, ○, □, △); the rear
 touch pad isn't used.
 

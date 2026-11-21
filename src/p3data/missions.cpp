@@ -104,9 +104,13 @@ uint32_t section_offset(const std::vector<uint8_t>& p, uint32_t s) {
 }  // namespace
 
 MissionIni read_missions_ini(const CprArchive& archive) {
+	return read_game_ini(archive, "scripts/missions_spa.ini", "scripts/missions_eng.ini");
+}
+
+MissionIni read_game_ini(const CprArchive& archive, const char* spanish, const char* english) {
 	MissionIni ini;
 	std::vector<uint8_t> data;
-	for (const char* path : {"scripts/missions_spa.ini", "scripts/missions_eng.ini"}) {
+	for (const char* path : {spanish, english}) {
 		const CprEntry* entry = archive.find(path);
 		if (entry && archive.read(*entry, data)) {
 			break;
