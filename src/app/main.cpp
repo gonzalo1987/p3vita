@@ -540,18 +540,30 @@ public:
 
 	// The season to show (the town's [0x9BC]: 0 from May, 1 from October, 6 from March, the ice's level 2..5 in winter;
 	// 0x58B7F0 → 0x591EC0, only with P2.CFG's [OPTIONS] WEATHER ≥ 1, the game's 3: always here): the tiles' snowy
-	// atlases (season_texture). Nothing when it is the one shown already ([view+0x504]).
-	void set_snow(int mode) {
+	// atlases (season_texture). Nothing when it is the one shown already ([view+0x504]); `month` the world's
+	// (0x6DE4A1), read by the trees only then.
+	void set_snow(int mode, int month) {
 		if (mode == snow_mode_) {
 			return;
 		}
 		snow_mode_ = mode;
+		snow_month_ = month;
 		for (Item& item : items_) {
 			if (item.tile) {
 				if (SDL_Texture* texture = season_texture(item.tile)) {
 					item.texture = texture;
 				}
 			}
+		}
+		for (Shadow& s : shadows_) {
+			if (s.tile->type == kTreeTileType) {
+				if (SDL_Texture* texture = shadow_texture(s.tile, s.variant)) {
+					s.texture = texture;
+				}
+			}
+		}
+		for (size_t k = 0; k < trees_.size(); ++k) {
+			update_tree_sway(tree_tiles_[k], *trees_[k]);
 		}
 	}
 
@@ -581,13 +593,13 @@ public:
 			if (shadow && !shadow->frames.empty() && sprite.slice == int(k) && k < tile->slices.size()) {
 				// Its shadow, placed as 0x551F70 from the cell's left and bottom (the slice cols − 1 stands on the
 				// cell's left side, no more right than the front one).
-				if (SDL_Texture* picture = shadow->atlas.empty() ? tile_texture(tile) : atlas_texture(shadow->atlas)) {
+				if (SDL_Texture* picture = shadow_texture(tile, shadow)) {
 					const TileSlice& s = tile->slices[k];
 					const TileSlice& f = shadow->frames[0];
 					const int left = cell_screen_x(sprite.cell_x, sprite.cell_y);
 					const int bottom = cell_screen_y(sprite.cell_y) + kTileHeight;
 					shadows_.push_back({picture, {f.x, f.y, f.width, f.height},
-						{left + shadow->x - s.x, bottom + shadow->y - s.y - s.height, f.width, f.height}});
+						{left + shadow->x - s.x, bottom + shadow->y - s.y - s.height, f.width, f.height}, tile, shadow});
 				}
 			}
 			if (!sprite.object) {
@@ -632,6 +644,12 @@ public:
 				life_.rand_state = now ^ 0x5EEDu;
 				life_.start(map, town, now);
 				life_last_ = now;
+				// Its creatures gone, the fisherman's huts as made (their fisherman made again when they work).
+				for (auto& [tile, a] : anims_) {
+					if (tile->type == 0x57) {
+						p3::data::reset_fisher_hut(a);
+					}
+				}
 			} else {
 				life_.update_map(map, town);
 			}
@@ -689,8 +707,40 @@ public:
 			town.busy = repair_busy_;
 			town.employees = shipyard_employees_;
 			town.tick = world_tick_;
-			p3::data::step_tile_anims(anims_for(item.tile), now, town, anim_rand_);
+			p3::data::TileAnims& a = anims_for(item.tile);
+			p3::data::step_tile_anims(a, now, town, anim_rand_);
+			// The fisherman's hut's fisherman (0x555BC3: 0x59A420 with this cell's x and its slice's bottom; the
+			// templates have no living town: none there).
+			if (a.want_fisherman) {
+				a.want_fisherman = false;
+				if (!all_active) {
+					a.fisherman = life_.spawn_fisherman(item.dst.x, item.dst.y + item.dst.h);
+				}
+			}
+			if (a.drop_fisherman) {
+				a.drop_fisherman = false;
+				life_.remove_creature(a.fisherman);
+				a.fisherman = 0;
+			}
 		}
+		// Then the trees' sway (0x5927B3..): every tree type, by number ([view+0x2A0]), from the rotating cursor.
+		if (!trees_listed_) {
+			trees_listed_ = true;
+			std::vector<const TileDef*> trees;
+			for (const auto& [id, tile] : tiles_) {
+				if (tile.type == kTreeTileType) {
+					trees.push_back(&tile);
+				}
+			}
+			std::sort(trees.begin(), trees.end(), [](const TileDef* a, const TileDef* b) { return a->id < b->id; });
+			for (const TileDef* tile : trees) {
+				p3::data::TileAnims& a = anims_for(tile);
+				update_tree_sway(tile, a);
+				trees_.push_back(&a);
+				tree_tiles_.push_back(tile);
+			}
+		}
+		p3::data::step_tree_sway(trees_, now, tree_cursor_);
 	}
 
 	p3::data::TileAnims& anims_for(const TileDef* tile) {
@@ -803,7 +853,7 @@ public:
 			if (rival) {
 				SDL_SetTextureColorMod(item.texture, 105, 105, 115);
 			}
-			SDL_RenderCopy(renderer_, item.texture, &item.src, &dst);
+			SDL_RenderCopy(renderer_, item.texture, i >= first_object_ ? &sway_src(item) : &item.src, &dst);
 			if (rival) {
 				SDL_SetTextureColorMod(item.texture, 255, 255, 255);
 			}
@@ -955,6 +1005,8 @@ private:
 		SDL_Texture* texture;
 		SDL_Rect src;
 		SDL_Rect dst;
+		const TileDef* tile;  // Its object's (a tree's picture changes with the season: set_snow).
+		const TileVariant* variant;
 	};
 	// The objects' shadows on `screen` (the camera's rectangle in the town's pixels): black at alpha 100, the ground
 	// under them at 61 %. The game draws them with the graphics library's blend mode 2 and the colour 0x64FFFFFF
@@ -994,27 +1046,62 @@ private:
 	}
 
 	// The tile's atlas for the season shown (0x591EC0: the town's [0x9BC], the mode; the level 0 for the modes 0, 1
-	// and 6, else the mode − 1, every tile's +0x70 but the trees', whose +0x70 takes the mode itself as the index of
-	// their pictures: 1 the autumn's leaves, 2 the blossom and fruit, 3 the bare winter's, `Schnee_*_01..03`; the
-	// conifers only 2 and 3, snowy): its snowy atlas (TileDef::snow, 0x552090), else its own. The trees' modes 5 and 6
-	// index past the end of their five atlases (the array of 0x14 bytes of 0x551482: the heap's next bytes): 5, the
-	// frozen port, taken as 4 (down to the winter's); 6, the spring, as the user's photo of the game's Edinburgh on 17
-	// March 1301 shows them, not as the code reads: the deciduous trees (those with an autumn's picture) in blossom (2:
-	// the pink, the fruit's red dots), the conifers with their own picture (no snow). Its own atlas is decoded first
-	// anyway: its tiles' minimap colours (the winter's minimap stays green in the game) and hit masks come from it.
+	// and 6, else the mode − 1, every tile's +0x70 but the trees'): its snowy atlas (TileDef::snow, 0x552090), else its
+	// own. The trees' +0x70 (0x583330, their class's second vtable) takes the mode and picks one of their pictures
+	// (tree_season_index: 1 the autumn's leaves, 2 the blossom and fruit, 3 the bare winter's, `Schnee_*_01..03`; the
+	// conifers have only 2, a little snow, and 3, snowy), the one it hasn't its own (not the nearest below): as the
+	// user's photos of the game show, Edinburgh on 17 March 1301 its deciduous trees in blossom and its conifers green,
+	// on 3 February bare and snowy. Its own atlas is decoded first anyway: its tiles' minimap colours (the winter's
+	// minimap stays green in the game) and hit masks come from it.
 	SDL_Texture* season_texture(const TileDef* tile) {
 		SDL_Texture* own = tile_texture(tile);
+		if (tile->type == kTreeTileType) {
+			const TileVariant* picture = tree_picture(tile, tree_index(tile));
+			SDL_Texture* texture = picture ? atlas_texture(picture->atlas) : nullptr;
+			return texture ? texture : own;
+		}
 		if (snow_mode_ <= 0 || snow_mode_ > 6) {
 			return own;
 		}
-		const bool tree = tile->type == kTreeTileType;
-		const int index = tree && snow_mode_ == 6			 ? (tile->snow(1) ? 2 : 0)
-			: tree											 ? std::min(snow_mode_, 4)
-			: snow_mode_ == 1 || snow_mode_ == 6 ? 0
-															 : snow_mode_ - 1;
+		const int index = snow_mode_ == 1 || snow_mode_ == 6 ? 0 : snow_mode_ - 1;
 		const TileVariant* snowy = tile->snow(index);
 		SDL_Texture* texture = snowy ? atlas_texture(snowy->atlas) : nullptr;
 		return texture ? texture : own;
+	}
+	// A tree's picture of an index (0x5513F0's array: its kind 2 variant of that first parameter, the last one; the
+	// index 0 its own atlas): null for its own or one it hasn't.
+	static const TileVariant* tree_picture(const TileDef* tile, int index) {
+		const TileVariant* found = nullptr;
+		for (const TileVariant& v : tile->variants) {
+			if (index > 0 && v.kind == 2 && !v.params.empty() && v.params[0] == uint32_t(index) && !v.atlas.empty()) {
+				found = &v;
+			}
+		}
+		return found;
+	}
+	int tree_index(const TileDef* tile) const {
+		return p3::data::tree_season_index(snow_mode_, tree_picture(tile, 1) != nullptr, snow_month_);
+	}
+	// An object's shadow's picture: the .let's shadow variant's atlas (its own: the tile's); a tree with its bare
+	// winter's picture its winter shadow's (0x583330: its kind 4's atlas over the shadow's page, the same frame).
+	SDL_Texture* shadow_texture(const TileDef* tile, const TileVariant* shadow) {
+		if (tile->type == kTreeTileType && tree_index(tile) == 3) {
+			const TileVariant* winter = anims_for(tile).winter_shadow;
+			if (SDL_Texture* texture = winter && !winter->atlas.empty() ? atlas_texture(winter->atlas) : nullptr) {
+				return texture;
+			}
+		}
+		return shadow->atlas.empty() ? tile_texture(tile) : atlas_texture(shadow->atlas);
+	}
+	// Whether a tree type sways with its season's atlas (tree_sways: the atlas's size).
+	void update_tree_sway(const TileDef* tile, p3::data::TileAnims& a) {
+		int w = 0;
+		int h = 0;
+		SDL_Texture* texture = season_texture(tile);
+		if (!texture || SDL_QueryTexture(texture, nullptr, nullptr, &w, &h) != 0) {
+			w = h = 0;
+		}
+		a.sways = p3::data::tree_sways(a, w, h);
 	}
 
 	// Los atlas se decodifican y suben una sola vez, y se comparten entre ciudades.
@@ -1153,6 +1240,7 @@ private:
 	std::vector<Item> items_;
 	std::vector<Shadow> shadows_;  // The objects' shadows (Item::shadow).
 	int snow_mode_ = 0;  // The season shown (set_snow): the town's [0x9BC].
+	int snow_month_ = 0;  // The world's month when it was set (the trees' pictures read it).
 	size_t first_object_ = 0;  // items_: the ground's, then the objects' row by row (build_town_sprites).
 	std::vector<uint32_t> cell_types_;  // cell_type_at.
 	int width_ = 0;
@@ -1175,6 +1263,13 @@ private:
 	// what their buildings' «active» reads of the town shown (each merchant's businesses producing in it, a siege).
 	std::map<const TileDef*, p3::data::TileAnims> anims_;
 	uint32_t anim_rand_ = 1;
+	// The tree types (class 0x14) by number, their anims_ (step_tree_sway), and the sway's rotating cursor
+	// (*0x6E51B4).
+	bool trees_listed_ = false;
+	std::vector<p3::data::TileAnims*> trees_;
+	std::vector<const TileDef*> tree_tiles_;
+	uint16_t tree_cursor_ = 0;
+	SDL_Rect sway_rect_ = {};  // sway_src's.
 	std::vector<uint32_t> producing_;
 	bool siege_ = false;
 	bool repair_busy_ = false;
@@ -1213,7 +1308,7 @@ private:
 			auto look = std::make_unique<p3::data::LcrAnim>();
 			if (!file || !archive_.read(*file, data) || !p3::data::parse_lcr(data.data(), data.size(), *look) ||
 				(look->kind > 7 && look->kind != 0x0F && look->kind != 0x10 && look->kind != 0x11 && look->kind != 0x1A &&
-					look->kind != 0x1B && look->kind != 0x1F) ||
+					look->kind != 0x1B && look->kind != 0x1F && look->kind != 0x18) ||
 				look->directions.empty()) {
 				continue;
 			}
@@ -1309,6 +1404,26 @@ private:
 			SDL_SetTextureColorMod(texture, 255, 255, 255);
 			SDL_SetTextureAlphaMod(texture, 255);
 		}
+	}
+
+	// An object's slice's rectangle in its atlas: a swaying tree's moved by its frame (0x583130: the frame's x, y plus
+	// the slice's, the same size; tree_sway_frame by its anchor cell, 0x590A20), else its own.
+	const SDL_Rect& sway_src(const Item& item) {
+		if (!item.tile || item.tile->type != kTreeTileType) {
+			return item.src;
+		}
+		const auto it = anims_.find(item.tile);
+		if (it == anims_.end() || item.row < 0 || item.col < 0) {
+			return item.src;
+		}
+		const uint32_t cell = uint32_t(item.row) * uint32_t(map_columns_) + uint32_t(item.col);
+		const TileSlice* f = p3::data::tree_sway_frame(it->second,
+			p3::data::tile_anchor_cell(cell, uint32_t(map_columns_), item.slice, item.tile->cols));
+		if (!f) {
+			return item.src;
+		}
+		sway_rect_ = {item.src.x + f->x, item.src.y + f->y, item.src.w, item.src.h};
+		return sway_rect_;
 	}
 
 	// 0x585970 → 0x585550: the frame shown of each of its tile's animations over an object's slice, only its part
@@ -24469,7 +24584,8 @@ int main(int argc, char** argv) {
 		if (view) {
 			const bool saved = selection.mode == Mode::Saved && has_save && town_index >= 0 &&
 				size_t(town_index) < save.towns.size();
-			view->set_snow(saved ? int(save.towns[size_t(town_index)].memory.u8(0x9BC)) : 0);
+			view->set_snow(saved ? int(save.towns[size_t(town_index)].memory.u8(0x9BC)) : 0,
+				has_save ? int(save.globals.u8(0x6DE4A1)) : 0);
 		}
 
 		int town_step = 0;

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/lcr.hpp"
 #include "p3data/tile_anims.hpp"
 #include "p3data/town_life.hpp"
@@ -603,6 +604,55 @@ void test_tile_anims() {
 	town.active = false;
 	step_tile_anims(fa, t, town, rs);
 	check(fa.stage == 0xFF && tile_anim_frames(fa).empty(), "not working, bare and empty");
+
+	// The trees (0x14): the sway's page and the winter shadow, no groups; a type sways with an atlas of its frames,
+	// not with one frame's; its frame steps every its page's milliseconds while its cells are seen, each tree that
+	// frame plus four times its anchor cell; the cells stepped stop the rest at 17 for that frame.
+	TileDef tree;
+	tree.type = 0x14;
+	tree.cols = 1;
+	tree.variants.push_back(variant(3, {125, 0}, 12));
+	tree.variants.push_back(variant(0, {}, 1));
+	tree.variants.push_back(variant(4, {}, 0));
+	std::vector<TileAnims> trees(3, make_tile_anims(tree));
+	check(trees[0].groups.empty() && trees[0].sway && trees[0].winter_shadow, "a tree's pages");
+	check(tree_sways(trees[0], 120, 10) && !tree_sways(trees[0], 10, 10), "it sways with its frames' atlas only");
+	std::vector<TileAnims*> list;
+	for (TileAnims& a : trees) {
+		a.sways = true;
+		list.push_back(&a);
+	}
+	uint16_t cursor = 0;
+	auto see = [&](TileAnims& a, int cells) {
+		for (int k = 0; k < cells; ++k) {
+			step_tile_anims(a, 0, town, rs);
+		}
+	};
+	see(trees[0], 10);
+	see(trees[1], 10);
+	see(trees[2], 2);
+	step_tree_sway(list, 1000, cursor);
+	check(trees[0].sway_frame == 1 && trees[1].sway_frame == 1 && trees[2].sway_frame == 0 && cursor == 2 &&
+			trees[0].seen == 0,
+		"two types stepped, the third left for 17 cells");
+	see(trees[0], 10);
+	see(trees[1], 10);
+	see(trees[2], 2);
+	step_tree_sway(list, 1001, cursor);
+	check(trees[0].sway_frame == 1 && trees[2].sway_frame == 1 && cursor == 2, "the third's turn, the others not due");
+	step_tree_sway(list, 2000, cursor);
+	check(trees[0].sway_frame == 1, "not seen, not stepped");
+	trees[0].sway_frame = 11;
+	check(tree_sway_frame(trees[0], 0) == &trees[0].sway->frames[11] &&
+			tree_sway_frame(trees[0], 1) == &trees[0].sway->frames[3],
+		"each tree its frame moved by its cell");
+	// The anchor: a tree's second slice (cols 1) one row down, left by one from an even row.
+	check(tile_anchor_cell(10 * 128 + 5, 128, 1, 1) == 11 * 128 + 4 && tile_anchor_cell(11 * 128 + 5, 128, 1, 1) ==
+			12 * 128 + 5 && tile_anchor_cell(7, 128, 0, 1) == 7,
+		"a slice's anchor cell");
+	check(tree_season_index(2, true, 1) == 3 && tree_season_index(2, true, 11) == 1 && tree_season_index(2, false, 1) == 0 &&
+			tree_season_index(3, false, 1) == 2 && tree_season_index(6, true, 2) == 2 && tree_season_index(5, false, 0) == 3,
+		"a tree's picture by the season");
 }
 
 // A convoy leaving the town (the event 0x0C in the state 1): its cart starts at its road's inner end, goes out as the
@@ -670,6 +720,144 @@ void test_cart() {
 
 }  // namespace
 
+// The fisherman's look laid out as fischer.lcr's sequences: walking (2), turning right and left (9, 10), casting (12),
+// fishing (13), pulling in (15), picking up (18), 10 frames each (13: 5) in every direction; one strip a frame.
+std::vector<uint8_t> fisher_lcr() {
+	std::vector<uint8_t> d = {0x00, 0x06, 0x04, 0x00};
+	put(d, 0x18);
+	put(d, 0xFFFF00FF);
+	put(d, 1);
+	put(d, 140);  // the speed
+	put(d, 8);  // the directions
+	put(d, 10);  // the frames a second
+	d.push_back(1);
+	put(d, 0);
+	put(d, 7);
+	for (uint32_t v : {0u, 9u, 2u, 10u, 19u, 9u, 20u, 29u, 10u, 30u, 39u, 12u, 40u, 44u, 13u, 45u, 54u, 15u, 55u, 64u, 18u}) {
+		put(d, v);
+	}
+	put_text(d, "images\\creatures/_X_shd.aim");
+	for (int dir = 0; dir < 8; ++dir) {
+		put(d, 65);
+		for (int f = 0; f < 65; ++f) {
+			put(d, 8);
+			put(d, 30);
+			for (uint32_t v : {0u, 0u, 19u, 7u, 2u, 26u}) {
+				put(d, v);
+			}
+			put(d, 1);
+			for (uint32_t v : {0u, 0u, 16u, 31u}) {
+				put(d, v);
+			}
+			for (uint32_t v : {0u, 0u, 15u, 30u}) {
+				put(d, v);
+			}
+		}
+	}
+	put_text(d, "images\\creatures/_X_body.aim");
+	put(d, 0);
+	return d;
+}
+
+// The fisherman (0x59A420, 0x569C20, 0x569E10, 0x56A0C0): none without a free path of the tag 4 starting within 304
+// pixels; else on the nearest free one, walking to its end, fishing, back to its start and out again; a path taken
+// isn't given back when he is taken away. And his hut (0x555B00): it asks for him when it starts working, its net and
+// smoke shown while it works, and it lets him go when it stops.
+void test_fisherman() {
+	const std::vector<uint8_t> d = fisher_lcr();
+	LcrAnim look;
+	check(parse_lcr(d.data(), d.size(), look) && look.sequences.size() == 7, "the fisherman's look");
+	LifeMap map;
+	map.width = 30;
+	map.height = 60;
+	map.ground.assign(30 * 60, 0x10);
+	map.object.assign(30 * 60, -1);
+	map.grid.assign(30 * 60, 0x80);
+	LifeTown town;
+	town.nodes.resize(5);
+	town.nodes[4] = {{{900, 600}, {950, 620}}, {{100, 100}, {140, 124}, {180, 148}}, {{120, 100}, {160, 124}, {200, 148}}};
+	TownLife life;
+	life.people[0x18] = {&look};
+	life.start(map, town, 0);
+	check(life.spawn_fisherman(500, 500) == 0, "no free path near");
+	const uint16_t id = life.spawn_fisherman(150, 120);
+	const Creature* f = nullptr;
+	for (const Creature& c : life.creatures()) {
+		f = c.id == id ? &c : f;
+	}
+	check(id != 0 && f && f->px() == 120 && f->py() == 100 && f->dir == 0x60, "on the nearest free path's start");
+	bool fished = false;
+	bool at_end = false;
+	bool back_home = false;
+	for (uint32_t t = 20; t < 200000 && !back_home; t += 20) {
+		life.step(t, 20, {0, 0, 2000, 2000});
+		f = nullptr;
+		for (const Creature& c : life.creatures()) {
+			f = c.id == id ? &c : f;
+		}
+		if (!f) {
+			break;
+		}
+		at_end = at_end || (f->px() == 200 && f->py() == 148);
+		fished = fished || (at_end && f->seq == 0x0D);
+		back_home = fished && f->px() == 120 && f->py() == 100;
+	}
+	check(at_end && fished && back_home, "to his path's end, fishing, back to its start");
+	const uint16_t second = life.spawn_fisherman(150, 120);
+	bool on_b = false;
+	for (const Creature& c : life.creatures()) {
+		on_b = on_b || (c.id == second && c.px() == 100 && c.py() == 100);
+	}
+	check(second != 0 && on_b, "a second hut's fisherman on the next free path");
+	life.remove_creature(id);
+	int fishermen = 0;
+	for (const Creature& c : life.creatures()) {
+		fishermen += c.cls == 0x18;
+	}
+	check(fishermen == 1, "taken away");
+	check(life.spawn_fisherman(150, 120) == 0, "his path not given back");
+	// Fixed behind fix_game_bugs(): given back when he is taken away.
+	set_fix_game_bugs(true);
+	life.remove_creature(second);
+	const uint16_t third = life.spawn_fisherman(150, 120);
+	bool on_b_again = false;
+	for (const Creature& c : life.creatures()) {
+		on_b_again = on_b_again || (c.id == third && c.px() == 100 && c.py() == 100);
+	}
+	set_fix_game_bugs(false);
+	check(third != 0 && on_b_again, "fixed: his path given back");
+
+	// The hut.
+	auto variant = [](uint32_t kind, std::vector<uint32_t> params, int frames) {
+		TileVariant v;
+		v.kind = kind;
+		v.params = std::move(params);
+		for (int k = 0; k < frames; ++k) {
+			v.frames.push_back({k * 10, 0, 10, 10});
+		}
+		return v;
+	};
+	TileDef hut;
+	hut.type = 0x57;
+	hut.variants.push_back(variant(3, {80, 0}, 11));
+	hut.variants.push_back(variant(4, {100, 0}, 14));
+	TileAnims a = make_tile_anims(hut);
+	TileAnimTown at;
+	uint32_t rs = 1;
+	check(a.groups.empty() && tile_anim_frames(a).empty(), "a hut as made shows nothing");
+	step_tile_anims(a, 1000, at, rs);
+	check(a.want_fisherman && tile_anim_frames(a).size() == 2, "working: its fisherman asked for, its net and smoke");
+	a.want_fisherman = false;
+	a.fisherman = 5;
+	for (uint32_t t = 1000; t < 5000; t += 20) {
+		step_tile_anims(a, t, at, rs);
+	}
+	check(!a.want_fisherman && tile_anim_frames(a).size() == 2, "round and round, one fisherman");
+	at.active = false;
+	step_tile_anims(a, 5000, at, rs);
+	check(a.drop_fisherman && tile_anim_frames(a).empty(), "stopped: nothing shown, its fisherman let go");
+}
+
 int main() {
 	test_people_lcr();
 	test_files();
@@ -682,6 +870,7 @@ int main() {
 	test_birds();
 	test_fish();
 	test_tile_anims();
+	test_fisherman();
 	if (failures) {
 		std::fprintf(stderr, "%d failures\n", failures);
 		return 1;

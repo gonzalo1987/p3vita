@@ -245,7 +245,9 @@ int tile_anim_facility(uint32_t type) {
 	case 0x01:  // the shipyard (its own drawing: tile_anim_frames)
 	case 0x1B:  // the repair yard (its own step and drawing)
 	case 0x15:  // the lighthouse (its fire by day, 0x583A60)
+	case 0x14:  // the trees (their sway: 0x5830D0 counts their cells in view; nothing «active» asked)
 		return -1;
+	case 0x57: return 5;  // the fisherman's hut (its own step, 0x555B00)
 	default: return -2;
 	}
 }
@@ -497,7 +499,51 @@ void step_hemp_farm(TileAnims& a, uint32_t now, const TileAnimTown& town, uint32
 	}
 }
 
+// The fisherman's hut (0x555B00; its building site, 0x550A70, left with the sites): at work and the town shown, a
+// fisherman asked for while it has none and its net is ended (at its start, or after it stopped), then the net and
+// the smoke stepped round and round (each ended starts again at once, 0x555CB0); else its net ended at its last frame
+// (nothing drawn) and its fisherman taken away, unless it was so already.
+void step_fisher_hut(TileAnims& a, uint32_t now, const TileAnimTown& town) {
+	TileAnimGroup& net = a.workers[0];
+	TileAnimGroup& smoke = a.workers[1];
+	if (net.pages.empty() || smoke.pages.empty() || net.pages[0]->frames.empty() || smoke.pages[0]->frames.empty()) {
+		return;
+	}
+	if (town.shown && town.active) {
+		if (a.fisherman == 0 && (net.mode & 0x7F) == kEnded) {
+			a.want_fisherman = true;
+		}
+		for (TileAnimGroup* g : {&net, &smoke}) {
+			if (advance(*g, now) != kWaiting && (g->mode & 0x7F) == kEnded) {
+				g->frame = 0;
+				g->time = now + param(*g->pages[0], 0);
+				g->mode = kStarted;
+			}
+		}
+		return;
+	}
+	if ((net.mode & 0x7F) == kEnded) {
+		return;
+	}
+	net.time = 0;
+	net.frame = uint8_t(net.pages[0]->frames.size() - 1);
+	net.mode = kEnded;
+	if (a.fisherman != 0) {
+		a.drop_fisherman = true;
+	}
+}
+
 }  // namespace
+
+void reset_fisher_hut(TileAnims& a) {
+	TileAnimGroup& net = a.workers[0];
+	net.time = 0;
+	net.frame = uint8_t(net.pages.empty() || net.pages[0]->frames.empty() ? 0 : net.pages[0]->frames.size() - 1);
+	net.mode = kEnded;
+	a.fisherman = 0;
+	a.want_fisherman = false;
+	a.drop_fisherman = false;
+}
 
 TileAnims make_tile_anims(const TileDef& tile) {
 	TileAnims a;
@@ -537,6 +583,31 @@ TileAnims make_tile_anims(const TileDef& tile) {
 		a.person.kind = 9;
 		reset_person(a.person);
 		a.stage = 0xFF;
+	} else if (tile.type == 0x57) {
+		// 0x555EF0: kind 3 the net's page, kind 4 the smoke's (the last of each, into the class's statics); no groups.
+		// The net made ended at its last frame (0x555863), the smoke's state cleared (0x54EB40).
+		a.groups.clear();
+		for (const TileVariant& v : tile.variants) {
+			if (v.kind == 3 || v.kind == 4) {
+				a.workers[v.kind - 3].pages = {&v};
+			}
+		}
+		for (TileAnimGroup& w : a.workers) {
+			w.kind = 2;
+			w.flags = 0;
+			w.mode = kWaiting;
+		}
+		reset_fisher_hut(a);
+	} else if (tile.type == 0x14) {
+		// 0x583530: kind 3 the sway's page, kind 4 the winter shadow's atlas (the last of each); no groups.
+		a.groups.clear();
+		for (const TileVariant& v : tile.variants) {
+			if (v.kind == 3) {
+				a.sway = &v;
+			} else if (v.kind == 4) {
+				a.winter_shadow = &v;
+			}
+		}
 	} else if (tile.type == 0x60 && a.groups.size() >= 3) {
 		a.workers[0].pages = a.groups[0].pages;  // the kettle's pages (kind 3)
 		a.workers[1].pages = {a.groups[2].pages.empty() ? nullptr : a.groups[2].pages.back()};  // the smoke (kind 5)
@@ -556,6 +627,14 @@ void step_tile_anims(TileAnims& a, uint32_t now, const TileAnimTown& town, uint3
 	case 0x60: step_foundry(a, now, town, rand_state); return;
 	case 0x53: step_grain_farm(a, now, town, rand_state); return;
 	case 0x54: step_hemp_farm(a, now, town, rand_state); return;
+	case 0x57: step_fisher_hut(a, now, town); return;
+	case 0x14:
+		// A tree (0x5830D0): its cell counted while its type sways (the game also marks it to be drawn again when
+		// its frame moved on, [+0x5D]: the viewer draws everything each frame).
+		if (a.sways) {
+			++a.seen;
+		}
+		return;
 	default:
 		for (TileAnimGroup& g : a.groups) {
 			step_tile_anim(g, now, town.active, rand_state);
@@ -643,6 +722,16 @@ std::vector<TileAnimFrame> tile_anim_frames(const TileAnims& a) {
 		}
 		return out;
 	}
+	case 0x57: {
+		// The fisherman's hut (0x5559A0): its net's frame and its smoke's while its net isn't ended.
+		const TileAnimGroup& net = a.workers[0];
+		const TileAnimGroup& smoke = a.workers[1];
+		if (!net.pages.empty() && !smoke.pages.empty() && (net.mode & 0x7F) != kEnded) {
+			add(net.pages[0], net.frame);
+			add(smoke.pages[0], smoke.frame);
+		}
+		return out;
+	}
 	case 0x60: {
 		// The foundry (0x555010): its kettle, its smelter and its smoke, while the smelter isn't hidden.
 		if (g.size() < 3 || g[1].pages.empty() || (g[1].flags & kHidden)) {
@@ -661,6 +750,85 @@ std::vector<TileAnimFrame> tile_anim_frames(const TileAnims& a) {
 			add_shown(group, false);
 		}
 		return out;
+	}
+}
+
+bool tree_sways(const TileAnims& a, int atlas_width, int atlas_height) {
+	// 0x5834C0: the size the graphics library gives (0x4BBB20) against the first frame's width and height.
+	if (!a.sway || a.sway->frames.empty()) {
+		return false;
+	}
+	const TileSlice& f = a.sway->frames[0];
+	return atlas_width > f.width || atlas_height > f.height;
+}
+
+void step_tree_sway(const std::vector<TileAnims*>& trees, uint32_t now, uint16_t& cursor) {
+	const size_t count = trees.size();
+	uint32_t drawn = 0;
+	for (size_t k = 0; k < count; ++k) {
+		if (cursor >= count) {
+			cursor = 0;  // (the game's list never shrinks; the viewer's may be another town's tiles)
+		}
+		TileAnims& a = *trees[cursor];
+		cursor = uint16_t(size_t(cursor) + 1 >= count ? 0 : cursor + 1);
+		if (a.seen == 0) {
+			continue;
+		}
+		// 0x583080: while it sways and its frame is due, the frame on (round at its count), the next its parameter 0
+		// later.
+		if (!a.sways || a.sway_time > now) {
+			continue;
+		}
+		const size_t frames = a.sway->frames.size();
+		a.sway_frame = uint8_t(a.sway_frame + 1);
+		if (a.sway_frame >= frames) {
+			a.sway_frame = 0;
+		}
+		a.sway_time = now + (a.sway->params.empty() ? 0 : a.sway->params[0]);
+		drawn += a.seen;
+		if (drawn >= 0x11) {
+			break;
+		}
+	}
+	for (TileAnims* a : trees) {
+		a->seen = 0;
+	}
+}
+
+uint32_t tile_anchor_cell(uint32_t cell, uint32_t width, int slice, int cols) {
+	if (width == 0) {
+		return cell;
+	}
+	const uint32_t row = cell / width;
+	if (slice >= cols) {
+		// A slice right of the anchor's: as many rows down, half as many cells left (a row's cells sit half a cell
+		// right of the row above's when odd).
+		const uint32_t k = uint32_t(slice - cols + 1);
+		return cell + width * k - ((k + (~row & 1)) >> 1);
+	}
+	if (slice + 1 < cols) {
+		const uint32_t k = uint32_t(cols - 1 - slice);
+		return cell + width * k + ((k + (row & 1)) >> 1);
+	}
+	return cell;
+}
+
+const TileSlice* tree_sway_frame(const TileAnims& a, uint32_t anchor_cell) {
+	if (!a.sways) {
+		return nullptr;
+	}
+	const std::vector<TileSlice>& frames = a.sway->frames;
+	return &frames[(4 * anchor_cell + a.sway_frame) % frames.size()];
+}
+
+int tree_season_index(int mode, bool autumn, int month) {
+	switch (mode) {
+	case 0: return 0;
+	case 1: return 1;  // (a conifer has none: its own)
+	case 6: return autumn ? 2 : 1;
+	case 2: return autumn ? (month < 6 ? 3 : 1) : 0;
+	case 3: return autumn ? 3 : 2;
+	default: return mode >= 4 ? 3 : 0;
 	}
 }
 

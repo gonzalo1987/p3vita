@@ -80,10 +80,32 @@ struct TileAnims {
 	TileAnimGroup person;
 	std::vector<const TileVariant*> wife;
 	std::vector<const TileVariant*> farmer;
+	// The trees (class 0x14, 0x582F20; its reader 0x583530 keeps its last kind 3 variant as the sway's page at
+	// [+0x40], and its last kind 4's atlas, the winter shadow, at [+0x64]; the generic reader gets the other kinds):
+	// the sway's frame ([+0x5C]), when the next is due ([+0x58]), whether it sways with the atlas shown ([+0x6A]:
+	// tree_sways), its cells stepped in this frame of the view ([+0x68]).
+	const TileVariant* sway = nullptr;
+	const TileVariant* winter_shadow = nullptr;
+	uint32_t sway_time = 0;
+	uint8_t sway_frame = 0;
+	uint16_t seen = 0;
+	bool sways = false;
+	// The fisherman's hut (0x57, 0x5557E0; its data the class's, *0x6E13E4): its net (kind 3, *0x6E13B0) and smoke
+	// (kind 4, *0x6E13C8) in `workers` (its states [+0x18], [+0x24]: the net's made ended at its last frame), its
+	// fisherman ([+0x30]: the creature's number in the living town, 0 none). A step asks the living town to make one at
+	// the cell's point (`want_fisherman`: 0x59A420 with the cell's x and its slice's bottom) or to take him away
+	// (`drop_fisherman`); the viewer does it and sets `fisherman`.
+	uint16_t fisherman = 0;
+	bool want_fisherman = false;
+	bool drop_fisherman = false;
 };
 
 // A tile type's animations (`tile_anim_facility(tile.type)` not −2).
 TileAnims make_tile_anims(const TileDef& tile);
+
+// A fisherman's hut as made (0x5557E0: its net ended at its last frame, no fisherman); the viewer also so when another
+// town's living town starts (its creatures gone; the game keeps the hut's state between towns, not checked).
+void reset_fisher_hut(TileAnims& a);
 
 // What a step reads of the town and the building.
 struct TileAnimTown {
@@ -105,5 +127,37 @@ struct TileAnimFrame {
 	const TileSlice* frame;
 };
 std::vector<TileAnimFrame> tile_anim_frames(const TileAnims& a);
+
+// The trees' sway (class 0x14). Each tree type keeps one frame for all its trees, stepped every its page's parameter 0
+// milliseconds (0x583080) while it sways; each tree shows that frame moved on by its anchor cell's place (0x583130:
+// the cell's address in the view's map, 0x590A20): a frame of the page is a whole copy of the tree in the atlas shown,
+// drawn by each slice's rectangle moved by the frame's x, y, instead of the tile's own picture.
+
+// Whether a tree type sways with the atlas shown (0x5834C0, 0x582FF0; again at each season, 0x583330): its page has
+// frames, the view's animations are on (*0x6E4778: always in the viewer) and the atlas is wider or higher than the
+// page's first frame (a bare winter tree's atlas has one frame: it stands still).
+bool tree_sways(const TileAnims& a, int atlas_width, int atlas_height);
+
+// The view's frame after its cells' pass (0x5927B3..0x59289E): from the rotating `cursor` (*0x6E51B4, a u16 kept
+// between frames and views), each tree type in the view's list of class 0x14 (its types by number, [view+0x2A0],
+// [view+0xF8]) seen this frame steps its sway (0x583080: when due, the frame on, round, and the next due its
+// parameter 0 later); once the cells of the types stepped on reach 17, the rest wait for the next frame (the game
+// redraws so few). Then no type has been seen.
+void step_tree_sway(const std::vector<TileAnims*>& trees, uint32_t now, uint16_t& cursor);
+
+// The cell (its index in the map, `width` cells a row) a building's anchor stands on (0x590A20, the layer's cell
+// with its slice `cols` − 1), from one of its cells with its slice `slice`.
+uint32_t tile_anchor_cell(uint32_t cell, uint32_t width, int slice, int cols);
+
+// The sway's frame a tree shows (in the page's frames), or null while its type doesn't sway: its type's frame plus
+// its anchor cell's address in the game ((frame + the map's base + 4 · cell) % frames; the heap's base unknown, taken
+// as 0: a shift of all the trees' time alike).
+const TileSlice* tree_sway_frame(const TileAnims& a, uint32_t anchor_cell);
+
+// The tree's atlas for the season shown (0x583330 with the view's mode, the town's [0x9BC]: 0 from May, 1 from
+// October, 6 from March, 2..5 the ice's level): an index of its kind 2 variants (0 its own atlas; one it hasn't is its
+// own too). `autumn` that it has the index 1 (the deciduous trees), `month` the world's (0x6DE4A1: 0 January). The
+// index 3 also gives it its winter shadow (its kind 4's atlas, if it has one).
+int tree_season_index(int mode, bool autumn, int month);
 
 }  // namespace p3::data

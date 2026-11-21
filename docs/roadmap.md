@@ -141,7 +141,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Cartas (las 154 llamadas del juego que mandan una) | 148 (las del intérprete y del evento 0x09, 20-11-2026) | 6: la carta final 0x3D del evento 0x34, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
-| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026); los animales, los pájaros y los peces (21-11-2026) | las animaciones de los edificios y los árboles, los barcos del puerto, el agua animada, el tiempo, las obras, el fuego y el humo, el asedio (apartado 4) |
+| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026); los animales, los pájaros y los peces (21-11-2026); las animaciones de los edificios, los árboles y el pescador (21-11-2026) | los barcos del puerto, el agua animada, el tiempo, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
 | Jugar en red con el juego de PC | el motor idéntico, que es la base | todo lo demás (apartado 8) |
@@ -865,22 +865,29 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     sombra en el suelo, aleteando y planeando (0x58A920, 0x563EF0; su LCR sin tiras, el byte 0x1C); los peces en el
     agua, tantos como da la productividad de los pescadores de la ciudad, que aparecen y se desvanecen (0x58C6CB,
     0x569560); y cada uno que se va, repuesto como el juego (0x593D50). Sus huellas en la nieve van con el tiempo.
-  - [ ] Las animaciones de los edificios (las variantes de clase 3 a 8 de sus `.let`: humo, gaviotas del astillero,
-    granjas, talleres, el faro...) y el pescador de la cabaña (0x59A420). Hecha (21-11-2026, `re/emu/sesion50/README.md`,
+  - [x] Las animaciones de los edificios (las variantes de clase 3 a 8 de sus `.let`: humo, gaviotas del astillero,
+    granjas, talleres, el faro...), los árboles y el pescador de la cabaña (0x59A420). Hecha (21-11-2026, `re/emu/sesion50/README.md`,
     «Part 3, first batch») la maquinaria (sus grupos y las cinco clases de estado, por tipo de casilla, en marcha solo
     a la vista y si el edificio está activo: un taller solo si su dueño tiene ese negocio produciendo) con la taberna,
     el faro, el baño, el arsenal y los talleres de la clase común (caza, cerveza, herrería, tejidos, sal, alfarería,
     cantera, pez); luego la mina, las granjas de animales (ovejas, vacas, abejas, viñedo) y las gaviotas del
     astillero, y las plantillas del visor animadas con todo activo; luego el muelle de reparación (su barco y su fase
     por los empleados del astillero), el aserradero (su carpintero y la mujer), la fundición y las granjas de cereal
-    (sembrar, crecer por días del mundo, segar) y cáñamo. Faltan el balanceo de los árboles y el pescador; de noche la
+    (sembrar, crecer por días del mundo, segar) y cáñamo. Luego («Part 3, third batch») los árboles: su clase de
+    verdad es la 0x582F20 (la vista llama a los métodos de la segunda tabla de cada clase, en [+0x3C]; la 0x676B30 que
+    se tomó antes es la de los acantilados), que los mece (cada tipo de árbol un fotograma cada 125 o 140 ms, cada árbol
+    desfasado por la dirección de su celda, como mucho 17 celdas redibujadas por fotograma, 0x5927B3), elige su dibujo
+    por la estación como en las fotos del juego (0x583330) y en invierno les pone su sombra de ramas
+    (`WinterSchatten`). Y («Part 3, fourth batch») la cabaña del pescador (su red y su humo mientras trabaja) y el
+    pescador en su barca, que rema por su camino de la etiqueta 4 de `.nodes`, pesca y vuelve (0x569E10). De noche la
     taberna, el faro y el astillero se ven iluminados en el juego (el visor no tiene noche).
   - [ ] Los barcos en el puerto (la lista *0x6E2D50, el objeto 0x6E6220 al que la simulación avisa al atracar y
     zarpar), también como puntos en el minimapa con el color de su dueño (0x56C730: azul los tuyos, gris oscuro los
     piratas, blanco los demás, rojo los de otro jugador humano; el dibujo del minimapa, 0x59C590). Con ellos, el «ir al
     barco» de la lista de barcos centrado en su barco (0x476A30).
   - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe), las olas (`welle_*`), el oleaje de los
-    acantilados (`Klippen_Flut`) y los témpanos con el puerto helado (0x58C8A5).
+    acantilados (`Klippen_Flut`: la clase 0x1A, 0x581710 lo pinta sobre la roca con un alfa que sube y baja en 14
+    pasos de 142 ms, 0x581890; su atlas por el nivel de nieve, 0x581C90) y los témpanos con el puerto helado (0x58C8A5).
   - [ ] El tiempo: la nieve y la lluvia (0x58AA30, 0x58AD30), la niebla (clase 0x1C), las nubes (0x14) y las huellas en
     la nieve (0x55D0B0, 0x55B030).
   - [x] Las sombras y la nieve de los tiles (17-11-2026, `re/emu/sesion39/README.md`; las variantes del `.let`, con
@@ -892,16 +899,11 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     por el de nieve de su nivel (0x552090) y los árboles por el de su estación (el otoño, la nieve); las paletas que
     0x54F4F0 retoca no las marca ningún `.let` de los datos (no cambia nada); estado de depuración `season-N`. Los
     árboles: sus dibujos `_01` son el otoño, `_02` la floración (los de hoja caduca) o la nieve ligera (los pinos) y
-    `_03` el invierno (pelados o muy nevados). Como en las fotos del juego del usuario (Edimburgo el 3 de febrero y el
-    17 de marzo de 1301, `re/emu/sesion31/pc_shots/`), y no como lee el código (con la primavera lee más allá de su
-    tabla de atlas): en primavera los de hoja caduca en flor y los pinos sin nieve. Los dos atlas de nieve con el
-    fondo en 254, 0, 254 (la oficina y el ayuntamiento grande), sin marco rosa, que el usuario no ha visto nunca. Las
-    sombras de los árboles son las de siempre también en invierno (su `WinterSchatten`, clase 4, el juego no la lee).
-    Por mirar en el juego: a principios del invierno (el nivel de hielo 2), el código pone a los árboles de hoja
-    caduca su floración.
-  - [ ] Los árboles: su clase propia (0x676B30) los mece con el viento (0x583080; 0x581710 pinta encima el mismo
-    rectángulo con la textura *0x6E3390 de la tabla 0x6E335C y un alfa que sigue al viento); hoy se dibujan quietos
-    con su primer fotograma. Va con la ciudad animada.
+    `_03` el invierno (pelados o muy nevados). Los dos atlas de nieve con el fondo en 254, 0, 254 (la oficina y el
+    ayuntamiento grande), sin marco rosa, que el usuario no ha visto nunca. Lo de los árboles se tomó entonces de la
+    clase equivocada; corregido el 21-11-2026 con la suya (0x583330, arriba): coincide con las fotos del juego del
+    usuario (Edimburgo el 3 de febrero y el 17 de marzo de 1301, `re/emu/sesion31/pc_shots/`) sin regla propia, y con
+    el dibujo de invierno su sombra es la de ramas.
   - [ ] Las obras: hoy lo que está en obras ([0x762] con `pending` ≠ 0) se dibuja terminado; faltan los andamios y los
     bordes de calle de las celdas 0x81. Los andamios y cimientos son la variante de clase 1 del `.let` ([data+0x18]),
     que 0x550770 dibuja con el avance de la obra (17-11-2026, `re/emu/sesion39/README.md`).
@@ -1349,6 +1351,13 @@ guarda como marca su potencia de fuego [+0x120], así que el elegido no es el m�
 **El incendio de la instrucción 0xED** (0x4EE567, campañas; 20-11-2026, parece): busca la ciudad y su sitio con el
 número del operando (el de la variable) y no con su valor, que sí pone en la operación 0x7D; 0xE5, su pareja, usa el
 valor. Reproducido (`mission_campaign_b`). Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**El camino del pescador** (la ciudad viva, 0x569DAD y 0x56A450; 21-11-2026, seguro, leído en el código): al salir, el
+pescador marca su camino de la etiqueta 4 de `.nodes` como ocupado ([vista+0xC59C]) y nadie lo vuelve a liberar (ni su
+destructor ni nada hasta que se carga otra vez la ciudad). Si su cabaña deja de trabajar y vuelve, el siguiente sale
+por otro camino, y cuando se acaban los que empiezan a menos de 304 píxeles, la cabaña se queda sin pescador. Solo es
+la vista (nada de la partida). Corregido a petición del usuario (21-11-2026): al quitar al pescador se libera su
+camino (`TownLife::remove_creature`).
 
 **Una ciudad por su nombre** (instrucción 0x65 del intérprete, 0x4F26C0 → 0x5136A0; 21-11-2026, seguro, leído en el
 código y visto en el oráculo con la campaña 3 en marcha): busca el nombre k del fichero de ciudades en la tabla 0x6DDA00

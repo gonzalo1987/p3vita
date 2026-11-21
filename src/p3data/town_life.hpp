@@ -10,7 +10,8 @@
 // roads (0x55B1D0, 0x55B6A0) as each class's clocks say (0x596EE0, and when the town is shown 0x5963F3..); the
 // children, the market's sellers and the juggler, the official, the rats with the plague, the land trade's carts; the
 // town's dogs and cats and the wild animals outside the walls (0x58B1B0 when the town is shown; 0x57C240, 0x57E840),
-// the birds (0x58A920; 0x563EF0) and the fish (each frame 0x58C6CB; 0x569560), each made again as one goes (0x593D50).
+// the birds (0x58A920; 0x563EF0) and the fish (each frame 0x58C6CB; 0x569560), each made again as one goes (0x593D50);
+// the fisherman, made by his hut at work (0x555B00 → 0x59A420; 0x569E10).
 
 #include <array>
 #include <cstddef>
@@ -151,7 +152,7 @@ struct Creature {
 	uint8_t point = 0;  // [+0x69]: the road's point it walks to
 	uint8_t mode = 0;  // [+0x6A]: 0 free in the town, 1 coming in by a road (tag 1), 2 leaving by one (tag 2); the
 	// viewer's for the other classes: 3 a market seller or the juggler at his place, 4 the official, 5 a rat, 6 a cart,
-	// 7 an animal, 8 a bird, 9 a fish
+	// 7 an animal, 8 a bird, 9 a fish, 10 the fisherman (his path of the tag 4 in `road`)
 	uint8_t corner = 0xFF;  // [+0x6B]: 0xFF to be worked out, 0 none, 1 and 2 the corner's halves
 	bool entered = false;  // [+0x6C]: coming in, it reached the town (it walks free at the next point)
 	bool flee = false;  // [+0x6D]: hurrying from a siege (not yet)
@@ -224,6 +225,12 @@ public:
 	int count(int group, uint8_t mode) const;
 	const std::vector<Creature>& creatures() const { return creatures_; }
 	void clear() { creatures_.clear(); }
+	// A fisherman's hut at work asks for its fisherman (0x59A420, from its step 0x555B00 with its cell's point, the
+	// town's pixels): if a path of the tag 4 still free starts within 304 pixels of it, one made on the nearest free
+	// path (0x569C20) and its number given; else 0.
+	uint16_t spawn_fisherman(int x, int y);
+	// A creature taken away (the hut's fisherman when it stops: the view's list's +0x4).
+	void remove_creature(uint16_t id);
 
 	// The viewer's own random (MSVC's rand(): the game's walkers use the CRT's, the simulation's).
 	uint32_t rand_state = 1;
@@ -254,6 +261,11 @@ private:
 	void official_target(Creature& c) const;
 	bool official_walk(Creature& c);
 	bool rat_walk(Creature& c);
+	// The tag 4 paths free for a fisherman ([view+0xC59C]: each set at the town's load, 0x58EF26; a fisherman takes his,
+	// 0x569DAD, and nothing gives it back: with fix_game_bugs() remove_creature does).
+	std::vector<uint8_t> fisher_free_;
+	void fisher_target(Creature& c) const;
+	bool fisher_walk(Creature& c);
 	bool spawn_rat(bool visible_check, bool no_grass);
 	bool spawn_animal(int cls, bool out_of_sight, const LcrAnim* look, uint16_t id);
 	bool spawn_bird(int32_t x, int32_t y, uint8_t dir, const LcrAnim* look, uint8_t alt, uint16_t id);

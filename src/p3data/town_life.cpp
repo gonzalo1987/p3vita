@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
 
 namespace p3::data {
@@ -428,6 +429,36 @@ void TownLife::sequence_end(Creature& c) {
 			if (wild) {
 				c.next_seq = 0xEE;
 			}
+			break;
+		default: break;
+		}
+		return;
+	}
+	if (c.cls == 0x18) {
+		// The fisherman (0x56A0C0): after a round of walking forward past his path's second point, one time in 16 he
+		// casts his net (12 once); then he fishes (13) 8 to 23 rounds, pulls it in (15), picks it up (18 once), turns
+		// one way or the other (9 or 10 once) and goes back.
+		switch (c.seq) {
+		case 0x02:
+			if (!c.back && c.point > 1 && (rand() & 0xF) == 0) {
+				c.next_seq = 0x8C;
+			}
+			break;
+		case 0x0D:
+			if (--c.counter == 0) {
+				c.next_seq = 0x0F;
+			}
+			break;
+		case 0x0F: c.next_seq = 0x92; break;
+		case 0x8C:
+			c.counter = uint8_t(rand() % 16 + 8);
+			c.next_seq = 0x0D;
+			break;
+		case 0x92:
+			c.next_seq = rand() & 1 ? 0x8A : 0x89;
+			c.back = true;
+			--c.point;
+			fisher_target(c);
 			break;
 		default: break;
 		}
@@ -1545,6 +1576,8 @@ void TownLife::start(const LifeMap& map, const LifeTown& town, uint32_t now) {
 	town_ = town;
 	creatures_.clear();
 	now_ = now;
+	// 0x58EF26: every path of the tag 4 free for a fisherman.
+	fisher_free_.assign(town.nodes.size() > 4 ? town.nodes[4].size() : 0, 1);
 	// 0x58A8A0 (the view's animations on): 0x58A920, 20 birds anywhere over the map, facing one of the eight
 	// directions (kept by their height: drawn so); 0x58B1B0, the town's dogs and cats, then the wild animals.
 	for (int i = 0; i < 20; ++i) {
@@ -1751,6 +1784,155 @@ bool TownLife::official_walk(Creature& c) {
 		}
 	} else {
 		dir = c.target;
+	}
+	const bool moved = (nx >> 16) != c.px() || (ny >> 16) != c.py() || f != c.frame || dir != c.dir;
+	c.x = nx;
+	c.y = ny;
+	if (moved) {
+		c.frame = f;
+		c.dir = dir;
+		place(c);
+	}
+	return true;
+}
+
+uint16_t TownLife::spawn_fisherman(int x, int y) {
+	if (people[0x18].empty() || town_.nodes.size() < 5) {
+		return 0;
+	}
+	const std::vector<TownPath>& paths = town_.nodes[4];
+	auto free_at = [&](size_t k) { return k < fisher_free_.size() && fisher_free_[k] != 0 && !paths[k].empty(); };
+	// 0x59A420: the first free path starting within 304 pixels (its distance squared at most 0x1685A).
+	bool near = false;
+	for (size_t k = 0; k < paths.size() && k < 0x100 && !near; ++k) {
+		if (free_at(k)) {
+			const int dx = x - paths[k][0][0];
+			const int dy = y - paths[k][0][1];
+			near = dy * dy + dx * dx <= 0x1685A;
+		}
+	}
+	if (!near) {
+		return 0;
+	}
+	// 0x569C20: a look at random, the free path starting nearest (the first of the nearest), his first point, walking
+	// to its second; the path taken.
+	Creature c;
+	c.cls = 0x18;
+	c.mode = 10;
+	c.look = people[0x18][size_t(rand()) % people[0x18].size()];
+	c.id = new_id();
+	int best = 0x7FFFFFFF;
+	size_t road = 0;
+	for (size_t k = 0; k < paths.size() && k < 0x100; ++k) {
+		if (free_at(k)) {
+			const int dx = x - paths[k][0][0];
+			const int dy = y - paths[k][0][1];
+			const int d = dy * dy + dx * dx;
+			if (d < best) {
+				best = d;
+				road = k;
+			}
+		}
+	}
+	c.road = uint8_t(road);
+	c.frame = anim_start(c, 2);
+	c.x = paths[road][0][0] << 16;
+	c.y = paths[road][0][1] << 16;
+	c.back = false;
+	c.point = 1;
+	fisher_target(c);
+	c.dir = c.target;
+	place(c);
+	fisher_free_[road] = 0;
+	creatures_.push_back(std::move(c));
+	return creatures_.back().id;
+}
+
+void TownLife::remove_creature(uint16_t id) {
+	for (size_t i = 0; i < creatures_.size(); ++i) {
+		if (creatures_[i].id == id) {
+			// A fisherman's path: the game never gives it back (his destructor 0x56A450 doesn't), so his hut, stopped
+			// and at work again, makes the next on another, and none once those near are all taken, until the town
+			// is loaded again; fixed behind fix_game_bugs() at the user's word (2026-11-21): given back.
+			const Creature& c = creatures_[i];
+			if (fix_game_bugs() && c.mode == 10 && c.road < fisher_free_.size()) {
+				fisher_free_[c.road] = 1;
+			}
+			creatures_.erase(creatures_.begin() + std::ptrdiff_t(i));
+			return;
+		}
+	}
+}
+
+// 0x56A240: the fisherman's next point of his path (`point`), the diagonal towards it and its steps (the official's).
+void TownLife::fisher_target(Creature& c) const {
+	if (town_.nodes.size() < 5 || c.road >= town_.nodes[4].size() || c.point >= town_.nodes[4][c.road].size()) {
+		return;
+	}
+	const TownCell2 at = town_.nodes[4][c.road][c.point];
+	c.goal_x = uint16_t(at[0]);
+	c.goal_y = uint16_t(at[1]);
+	const uint32_t s = c.look->speed;
+	const int32_t sx = x_pos(s * 2896);
+	const int32_t sy = y_pos(s * 31856);
+	if (int(c.goal_x) < c.px()) {
+		c.target = int(c.goal_y) < c.py() ? 0xE0 : 0xA0;
+		c.step_x = -sx;
+	} else {
+		c.target = int(c.goal_y) < c.py() ? 0x20 : 0x60;
+		c.step_x = sx;
+	}
+	c.step_y = c.target == 0xE0 || c.target == 0x20 ? -sy : sy;
+}
+
+// 0x569E10: the fisherman. A turn done (9 or 10 played once, held: 0xA9, 0xAA) he faces 0x40 to the right or left and
+// walks; walking not facing his way he turns (9 if it is to his right, else 10); facing it, passing his point he
+// snaps to it and goes to the next (back at the first, forward again from the second; at the last forward, he casts
+// his net: 12 once), else he walks on.
+bool TownLife::fisher_walk(Creature& c) {
+	const uint32_t dt = std::min<uint32_t>(elapsed_, 1000);
+	uint8_t f = anim_step(c);
+	uint8_t dir = c.dir;
+	if (c.seq == 0xA9 || c.seq == 0xAA) {
+		dir = uint8_t(dir + (c.seq == 0xA9 ? 0x40 : 0xC0));
+		f = anim_start(c, 2);
+	}
+	int32_t nx = c.x;
+	int32_t ny = c.y;
+	if (c.seq == 2) {
+		if (c.target != dir) {
+			f = anim_start(c, uint8_t(c.target - dir) < 0x80 ? 0x89 : 0x8A);
+		} else {
+			const int x = c.px();
+			const int y = c.py();
+			const int tx = c.goal_x;
+			const int ty = c.goal_y;
+			const bool passed = (x < tx && c.step_x < 0) || (x > tx && c.step_x > 0) || (y < ty && c.step_y < 0) ||
+				(y > ty && c.step_y > 0);
+			if (passed) {
+				const size_t n = town_.nodes.size() > 4 && c.road < town_.nodes[4].size() ? town_.nodes[4][c.road].size() : 0;
+				if (c.back) {
+					if (c.point == 0) {
+						c.back = false;
+						c.point = 1;
+					} else {
+						--c.point;
+					}
+				} else if (c.point + 1u == n) {
+					f = anim_start(c, 0x8C);
+				} else {
+					++c.point;
+				}
+				nx = tx << 16;
+				ny = ty << 16;
+				if (c.seq == 2) {
+					fisher_target(c);
+				}
+			} else {
+				nx += c.step_x * int32_t(dt);
+				ny += c.step_y * int32_t(dt);
+			}
+		}
 	}
 	const bool moved = (nx >> 16) != c.px() || (ny >> 16) != c.py() || f != c.frame || dir != c.dir;
 	c.x = nx;
@@ -2895,6 +3077,7 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 			: c.mode == 7             ? animal_walk(c)
 			: c.mode == 8             ? bird_fly(c)
 			: c.mode == 9             ? fish_swim(c)
+			: c.mode == 10            ? fisher_walk(c)
 			: c.mode != 0             ? road_walk(c)
 									  : walk(c);
 		if (stays) {
