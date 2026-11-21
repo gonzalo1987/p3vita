@@ -472,7 +472,9 @@ void Sailing::fn_60adbf(size_t b, uint16_t i, int32_t x0, int32_t y0, int32_t x1
 //
 // When the line meets no side of the hull, 0x60ADBF leaves the side as it
 // was: the game reads a byte of its stack never written (see «Game bugs» in
-// docs/cloud/battles-2.md); here it is 0.
+// docs/cloud/battles-2.md), the low byte of a heap pointer an earlier
+// 0x60BCDA left there, which no run of the game need repeat (save 4 at ~50
+// days); here it is 0, and the oracle zeroes the function's locals to match.
 bool Sailing::fn_608f70(size_t b, uint16_t i, uint16_t j) {
 	BattleGraph& g = save_.battles;
 	if (!(i < j)) {

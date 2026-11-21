@@ -2752,7 +2752,8 @@ All the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu
 - The saves: `re/emu/sesion47/opcount.sh` (the opcodes the game runs: 45 in 60 days, all rewritten);
   `re/emu/sesion48/worldmd.sh` (worldm.sh's calls in chunks of days): the whole world 30 days with the missions, call
   by call, 0 differences in the 12 saves; the events and operations 60 days, 0 but a battles' difference in save 4 at
-  tick 126953125 that is there without the missions too (roadmap section 2); 7 days continuously from the load: 0.
+  tick 126953125 that is there without the missions too (a game bug's unset stack byte: «A collision's unset side»,
+  below); 7 days continuously from the load: 0.
 - The branches the saves don't reach: `retouch_unchecked.py mission_branches` (scripts of their own, `p2m` and
   `mission_script`, each ending in a wait so that its variables stay and are compared; a second human merchant; the
   world's matrix retouched for the wandering pass): 0x07, 0x26 with every human (two merchants' ships in save 7) and
@@ -2852,6 +2853,25 @@ All the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu
   << 16 and its count 0) and the oracle to read 0 where the mission instruction 0x34 reads past the towns
   (`TOWN_RESIDENTS_READ`, 0x4F0A45: the town −1 of 0x65's game bug in the campaign 3; the real game reads memory its
   heap decides, the emulator 0x16CF492; p3vita 0). `world.sh 7` on the 12 saves after both changes: 0.
+
+## A collision's unset side: the battles' difference in save 4 (2026-11-21)
+
+The difference the missions' 60 days found (save 4, tick 126953125: the position and heading +0x8, +0xC, +0x10 of a
+sea battle's scene ship, a 0x164-byte block of vtable 0x67B0D4) narrowed with the scripts of `re/emu/sesion53/`
+(`tickrec.py`: town_oracle.py's recording of only some ticks; `sidehook.py`): of the operation 0x94, the step
+0x606CC0; in it, the first different call is 0x608F70 on the places 2 and 3 (0x608850 and 0x6197F0 only carry it).
+There the first 0x60ADBF's segment (from ship 3's centre to the hulls' crossing) meets no side of ship 2's hull and
+leaves its side [esp+0x2C] unset: the game reads 0xBF, the low byte of a pointer 0x60BCDA left in that slot (0x60C19E:
+its ship's block + 0x27 + the direction it marks), and indexes 0x67AB98 with it; p3vita has 0. The byte follows the
+heap's addresses, so not even two runs of the game agree: the oracle now zeroes 0x608F70's 0x44 bytes of locals at its
+entry (`ZEROED_FRAMES`), as p3vita takes it (the game bug in the roadmap and `cloud/battles-2.md`).
+
+Checked: days 40..60 of save 4 with the events and operations (without the missions, as it was found): 0; save 4's
+whole world 60 days, call by call, with the missions (`worldmd.sh 60 10`): 0; the 12 saves' events and operations 60
+days (`FUNCS=4d85c0,535760 worldmd.sh 60 60`): 0; the battle scenarios (`battle_branches`, `chase_battle`,
+`battle_rocks`, `battle_question`, `battle_orders`, `battle_end_window`, `battle_balls`, `battle_balls_sound`,
+`battle_sounds`, `town_battle_setup`, `town_battle_window`, `town_battle_balls`, `town_battle_orders`): as before;
+`world.sh 7`: 0. Without the new entry, the difference comes back (the break on purpose).
 
 ## The game's static initializers (2026-11-03)
 
