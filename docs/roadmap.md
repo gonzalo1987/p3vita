@@ -141,7 +141,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Cartas (las 154 llamadas del juego que mandan una) | 148 (las del intérprete y del evento 0x09, 20-11-2026) | 6: la carta final 0x3D del evento 0x34, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
-| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026) | los animales, las animaciones de los edificios y los árboles, los barcos del puerto, el agua animada, el tiempo, las obras, el fuego y el humo, el asedio (apartado 4) |
+| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026); los animales, los pájaros y los peces (21-11-2026) | las animaciones de los edificios y los árboles, los barcos del puerto, el agua animada, el tiempo, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos | nada | todo (apartado 5) |
 | Jugar en red con el juego de PC | el motor idéntico, que es la base | todo lo demás (apartado 8) |
@@ -859,8 +859,12 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     el estado de depuración `land-convoy`). Cada figura partida en tiras por la celda de su pie, como el juego, para
     que los edificios la tapen. Pasan al apartado de cada uno: el pescador (lo crea su cabaña, 0x555BC3: con las
     animaciones de los edificios) y los guardias ([0x998], la clase de los soldados: con el asedio).
-  - [ ] Los animales: perros y gatos, los del bosque (0x58B1B0), los pájaros (0x58A920, su formato de LCR propio), los
-    peces (0x58C822).
+  - [x] Los animales (21-11-2026, `re/emu/sesion50/README.md`, «Part 2»): los perros y gatos en la ciudad y los del
+    bosque fuera de la muralla (0x58B1B0: 10 y 20 al abrir la ciudad; 0x57C240, 0x57E840: andan, corren y descansan
+    según su figura, con la prueba de paso con su radio, 0x55A2C0); los pájaros, 20 volando a su altura con su
+    sombra en el suelo, aleteando y planeando (0x58A920, 0x563EF0; su LCR sin tiras, el byte 0x1C); los peces en el
+    agua, tantos como da la productividad de los pescadores de la ciudad, que aparecen y se desvanecen (0x58C6CB,
+    0x569560); y cada uno que se va, repuesto como el juego (0x593D50). Sus huellas en la nieve van con el tiempo.
   - [ ] Las animaciones de los edificios (las variantes de clase 3 a 8 de sus `.let`: humo, gaviotas del astillero,
     granjas, talleres, el faro...) y el pescador de la cabaña (0x59A420).
   - [ ] Los barcos en el puerto (la lista *0x6E2D50, el objeto 0x6E6220 al que la simulación avisa al atracar y

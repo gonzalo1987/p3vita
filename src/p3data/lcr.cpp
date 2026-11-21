@@ -60,7 +60,9 @@ struct Reader {
 // none, the bytes); then each direction: u32 its frames, each u32 the anchor
 // x, y, with a shadow u32 its x, y, w, h and where its corner goes, x, y, then
 // u32 the strips n and n × (x, y, w, h), u32 the body's x1, y1, x2, y2
-// (inclusive); after the last direction the main image's name. Some files go
+// (inclusive), the strips only when the head's byte at 0x1C is set (0x558770's [+0x30]: every class's files but
+// the birds', the snow's, the pennant's and the warning sign's); after the last direction the main image's name.
+// Some files go
 // on after it (a ship's look of hull state 0: the icons the town view puts
 // over a ship, the white flag, the marker arrow...). The six u32 at 0x1D are the
 // generic head's parameters and sequences (below); the town people's have more
@@ -113,8 +115,9 @@ bool parse_lcr(const uint8_t* data, size_t size, LcrAnim& out, std::string* erro
 	}
 	// The head's parameters and sequences (0x558770 and each class's reader): at 0x1D u32 n, n u32, u32 m, m × (first
 	// frame, last frame, id). An effect has one parameter (the number the game asks it by) and one sequence, a ship's
-	// look three or four and none: both reach 0x35. Files read otherwise (the birds', the snow's, the warning's): the
-	// shadow's name at 0x35, no parameters.
+	// look three or four and none: both reach 0x35; a bird's five and two. Files read otherwise: the shadow's name at
+	// 0x35, no parameters.
+	const bool with_strips = data[0x1C] != 0;
 	Reader r{data, size, 0x1D};
 	{
 		uint32_t n = 0;
@@ -164,7 +167,7 @@ bool parse_lcr(const uint8_t* data, size_t size, LcrAnim& out, std::string* erro
 								!r.s32(f.shadow_x) || !r.s32(f.shadow_y))) {
 				return fail(error, "bad frame");
 			}
-			if (!r.u32(strips) || strips > 64 || r.at + 16 * size_t(strips) > size) {
+			if (with_strips && (!r.u32(strips) || strips > 64 || r.at + 16 * size_t(strips) > size)) {
 				return fail(error, "bad frame");
 			}
 			f.strips.resize(strips);

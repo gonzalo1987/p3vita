@@ -26,7 +26,7 @@ don't have (they are version 6), so the layout below comes from the files themse
 | 0x10 | u32 | ? (a ball's 4000) |
 | 0x14 | u32 | the directions (32 a ship's look, 16 the guns' smoke and fire, 8 the town people, 1 most effects) |
 | 0x18 | u32 | frames per second (10 the guns' smoke, whose image is `_X_kanonenqualm_10fps_tp.aim`; 0 a ship's look) |
-| 0x1C | u8 | 1 |
+| 0x1C | u8 | whether the frames have strips (0x558770's [+0x30]): 1 but in the birds' (class 0x0F), the snow's (0x1D), the pennant's (0x1E) and the warning sign's (0x22) files |
 | 0x1D | 6 × u32 | for an effect `[1, S, 1, 0, its last frame, 2]`: **S is the number the game asks for it by**, with its class (the battle code's 0x590610 calls: 0x12/0x24 `brandrauch` the smoke of a burning or sinking ship, 0x12/4..7 the upper part of a sinking snaikka, craier, cog, hulk, 0x12/0x40..0x43 their lower part, 0x12/0x21 a gun's smoke, 0x12/0x25 a heavy gun's fire, 0x12/0 a splash, 0x12/0x20 a puff, 0x12/0x11 an explosion); the variant (the call's high word) picks among the files of one S (a sinking ship's direction, 1..8 from north clockwise: `n`, `no`, `o`, `so`, `s`, `sw`, `w`, `nw`). A ship's look has `[4, 2, 0, 110, 1, 0]`. Classes 0x14 and 0x17 have a longer head and another layout |
 | 0x35 | u32 + bytes | the shadow image's name: its length with the NUL (0: no shadow), the bytes (`\` and `/` mixed) |
 
@@ -39,7 +39,7 @@ Then, for each direction: u32 its frames, and each frame:
 | 2 × s32 | the anchor x, y: the point on the creature's place, in the main image's coordinates |
 | 4 × s32 | (with a shadow) the shadow's rectangle x, y, w, h in the shadow image |
 | 2 × s32 | (with a shadow) where the shadow's corner goes, x, y, in the main image's coordinates |
-| u32 + n × 4 s32 | the strips: n vertical strips (x, y, w, h; 17 pixels wide, half a town cell) by which the town view sorts it with the buildings |
+| u32 + n × 4 s32 | (with the byte at 0x1C) the strips: n vertical strips (x, y, w, h; 17 pixels wide, half a town cell) by which the town view sorts it with the buildings |
 | 4 × s32 | the body's x1, y1, x2, y2 (inclusive) in the main image |
 
 A ship's look has 32 directions of one frame each (so each direction's record starts with its count, 1). After
@@ -69,6 +69,13 @@ reuse them.
   takes the picture's cells. The class's init (0x5803B0) picks `_a` or `_b` by rand() among those of the detail
   level, its speed rand() % 64 − 32 and rand() % 44 − 22; its update (0x580520) moves it by speed · ms / 10000
   pixels, the speed shaken at random: the pieces float where the hit was.
+- **The generic head** (2026-11-21, the living town): at 0x1D u32 n, n u32 parameters, u32 m, m sequences (first
+  frame, last frame, id), then the shadow's name; every class's files read so to their end with the byte at 0x1C
+  (`re/emu/sesion50/lcrgeneric.py`; the pennant's three words are its n, m and shadow's name, all 0), but five of
+  the ships' looks of hull state 0, which go on after it (below). A
+  bird has five parameters (its height and its random, the first frame of its gliding, its count of frames and its
+  random) and two sequences (0 flapping, 1 gliding); a dog's, a cat's or a wild animal's 20 (its count of frames and
+  its random, the footprints' kind, its feet's distance, the frames each foot touches the ground); a fish's two.
 - **A ship's pennant**, class 0x1E (`faehnchen.lcr`, `_X_faehnchen.aim`, a small grey flag). Another layout:
   after the head's byte at 0x1C only three words (0x1D, 0x21, 0x25: 0), no shadow's name, and from 0x29 its 32
   directions, each its count of frames (5) and per frame six s32: the anchor x, y and the body x1, y1, x2, y2

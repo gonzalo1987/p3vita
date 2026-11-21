@@ -1,6 +1,7 @@
 // The living town (town_life.hpp): the town people's LCR head, the towns' .spawn and .nodes, the grid's neighbours
 // and a walker on a synthetic street. No game data.
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -279,6 +280,229 @@ void test_rats() {
 	check(moved, "a rat runs");
 }
 
+// An animal's look laid out as hund2.lcr's: 20 parameters (its count of frames 70 less up to 40, the footprints'),
+// walking (2) and running (0xB) in every direction (0..9), resting (3) in the odd ones only (10..29).
+std::vector<uint8_t> animal_lcr(uint32_t cls) {
+	std::vector<uint8_t> d = people_lcr();
+	std::vector<uint8_t> head(d.begin(), d.begin() + 0x1D);
+	head[4] = uint8_t(cls);
+	put(head, 20);
+	for (uint32_t v : {70u, 40u, 0u, 5u, 5u, 17u, 24u, 255u, 2u, 13u, 24u, 255u, 4u, 13u, 24u, 255u, 1u, 17u, 24u, 255u}) {
+		put(head, v);
+	}
+	put(head, 3);
+	for (uint32_t v : {0u, 9u, 2u, 0u, 9u, 11u, 10u, 29u, 3u}) {
+		put(head, v);
+	}
+	// The rest as the people's: after its head (n = 0, two sequences: 4 + 4 + 24 bytes).
+	head.insert(head.end(), d.begin() + 0x1D + 32, d.end());
+	return head;
+}
+
+// The town's dogs and cats in the town, the wild animals outside the walls (0x58B1B0): they walk, run and rest, keep
+// to their side of the walls, and one that goes is made again (0x593D50).
+void test_animals() {
+	const std::vector<uint8_t> dog = animal_lcr(0x11);
+	const std::vector<uint8_t> fox = animal_lcr(0x10);
+	LcrAnim a;
+	LcrAnim b;
+	check(parse_lcr(dog.data(), dog.size(), a) && parse_lcr(fox.data(), fox.size(), b), "the animals' looks read");
+	check(a.params.size() == 20 && a.params[1] == 40 && a.sequences.size() == 3 && a.sequences[1].id == 11,
+		"their parameters and sequences");
+	LifeMap map;
+	map.width = 30;
+	map.height = 80;
+	map.ground.assign(30 * 80, 0x28);
+	map.object.assign(30 * 80, -1);
+	map.grid.assign(30 * 80, 0);
+	for (int x = 0; x < 30; ++x) {
+		for (int y = 40; y < 80; ++y) {
+			map.grid[size_t(x) * 80 + size_t(y)] = 0x80;
+		}
+	}
+	// Trees round the town (off the map a creature may step, as in the game, and there it goes: the wild ones do).
+	for (int x = 0; x < 30; ++x) {
+		for (int y = 40; y < 80; ++y) {
+			if (x < 1 || x > 28 || y > 77) {
+				map.object[size_t(y) * 30 + size_t(x)] = 0x2A;
+			}
+		}
+	}
+	LifeTown town;
+	town.index = 0;
+	town.spawn.resize(3);
+	town.spawn[0] = {{10, 20}};
+	town.spawn[1] = {{10, 60}};
+	town.spawn[2] = {{12, 60}};
+	TownLife life;
+	life.people[0x11] = {&a};
+	life.people[0x10] = {&b};
+	life.start(map, town, 0);
+	int dogs = 0;
+	int wild = 0;
+	for (const Creature& c : life.creatures()) {
+		dogs += c.cls == 0x11;
+		wild += c.cls == 0x10;
+	}
+	check(dogs == 10 && wild == 20, "10 town animals and 20 wild ones");
+	bool ran = false;
+	bool rested = false;
+	bool moved = false;
+	std::vector<TownCell2> start;
+	for (const Creature& c : life.creatures()) {
+		start.push_back({c.px(), c.py()});
+	}
+	for (uint32_t t = 0; t < 120000; t += 20) {
+		life.step(t, 20, {0, 0, 2000, 2000});
+		for (size_t i = 0; i < life.creatures().size(); ++i) {
+			const Creature& c = life.creatures()[i];
+			const TownCell2 cell = life_pixel_cell(c.px(), c.py());
+			if (map.in(cell[0], cell[1])) {
+				check(map.inside(cell[0], cell[1]) == (c.cls == 0x11), "an animal keeps to its side of the walls");
+			}
+			ran = ran || c.seq == 0x0B;
+			rested = rested || c.seq == 3;
+			moved = moved || (i < start.size() && (c.px() != start[i][0] || c.py() != start[i][1]));
+		}
+	}
+	check(moved && ran && rested, "they walk, run and rest");
+	dogs = 0;
+	wild = 0;
+	for (const Creature& c : life.creatures()) {
+		dogs += c.cls == 0x11;
+		wild += c.cls == 0x10;
+	}
+	check(dogs == 10 && wild == 20, "those that go are made again");
+}
+
+// A look of `cls` with the head's parameters and sequences given, 8 directions of `frames` frames each, a shadow,
+// and the strips only with `strips` (the head's byte at 0x1C: the birds' files have none).
+std::vector<uint8_t> look_lcr(uint32_t cls, bool strips, const std::vector<uint32_t>& params,
+	const std::vector<uint32_t>& sequences, int frames) {
+	std::vector<uint8_t> d = {0x00, 0x06, 0x04, 0x00};
+	put(d, cls);
+	put(d, 0xFFFF00FF);
+	put(d, 1);
+	put(d, 300);  // the speed
+	put(d, 8);
+	put(d, 10);
+	d.push_back(strips ? 1 : 0);
+	put(d, uint32_t(params.size()));
+	for (uint32_t v : params) {
+		put(d, v);
+	}
+	put(d, uint32_t(sequences.size() / 3));
+	for (uint32_t v : sequences) {
+		put(d, v);
+	}
+	put_text(d, "images\\creatures/_X_shd.aim");
+	for (int dir = 0; dir < 8; ++dir) {
+		put(d, uint32_t(frames));
+		for (int f = 0; f < frames; ++f) {
+			put(d, uint32_t(f * 16 + 8));
+			put(d, 12);
+			for (uint32_t v : {0u, 0u, 9u, 5u, 2u, 10u}) {
+				put(d, v);
+			}
+			if (strips) {
+				put(d, 1);
+				for (uint32_t v : {uint32_t(f * 16), 0u, 16u, 13u}) {
+					put(d, v);
+				}
+			}
+			for (uint32_t v : {uint32_t(f * 16), 0u, uint32_t(f * 16 + 15), 12u}) {
+				put(d, v);
+			}
+		}
+	}
+	put_text(d, "images\\creatures/_X_body.aim");
+	put(d, 0);
+	return d;
+}
+
+// The birds: 20 over the map (0x58A920), flying straight on; one that leaves the map is made again out of sight with
+// its height (0x593E89), so there are always 20.
+void test_birds() {
+	const std::vector<uint8_t> d = look_lcr(0x0F, false, {80, 60, 6, 40, 10}, {0, 5, 0, 6, 11, 1}, 12);
+	LcrAnim a;
+	std::string error;
+	check(parse_lcr(d.data(), d.size(), a, &error), "a bird's look (no strips) read");
+	check(a.params.size() == 5 && a.params[3] == 40 && a.sequences.size() == 2 && a.directions.size() == 8 &&
+			a.directions[3].size() == 12 && a.directions[3][2].strips.empty() && a.directions[3][2].shadowed &&
+			a.directions[3][2].body.w == 16,
+		"its parameters, sequences and frames");
+	LifeMap map;
+	map.width = 30;
+	map.height = 40;
+	map.ground.assign(30 * 40, 0x28);
+	map.object.assign(30 * 40, -1);
+	map.grid.assign(30 * 40, 0x80);
+	LifeTown town;
+	TownLife life;
+	life.people[0x0F] = {&a};
+	life.start(map, town, 0);
+	int birds = 0;
+	for (const Creature& c : life.creatures()) {
+		birds += c.cls == 0x0F;
+		check(c.alt >= 80 && c.alt < 140, "a bird's height its parameters'");
+	}
+	check(birds == 20, "20 birds");
+	std::vector<uint8_t> heights;
+	for (const Creature& c : life.creatures()) {
+		heights.push_back(c.alt);
+	}
+	bool moved = false;
+	const int x0 = life.creatures().empty() ? 0 : life.creatures()[0].px();
+	for (uint32_t t = 0; t < 300000; t += 20) {
+		life.step(t, 20, {0, 0, 300, 200});
+		moved = moved || (!life.creatures().empty() && life.creatures()[0].px() != x0);
+	}
+	birds = 0;
+	std::vector<uint8_t> after;
+	for (const Creature& c : life.creatures()) {
+		birds += c.cls == 0x0F;
+		after.push_back(c.alt);
+	}
+	std::sort(heights.begin(), heights.end());
+	std::sort(after.begin(), after.end());
+	check(moved, "they fly");
+	check(birds == 20 && heights == after, "those leaving the map are made again with their heights");
+}
+
+// The fish: with the town's fishermen above 1000, up to 15 on the water, one try a frame; they come up and fade away.
+void test_fish() {
+	const std::vector<uint8_t> d = look_lcr(0x1B, true, {100, 80}, {0, 9, 2}, 10);
+	LcrAnim a;
+	check(parse_lcr(d.data(), d.size(), a), "a fish's look read");
+	LifeMap map;
+	map.width = 128;
+	map.height = 226;
+	map.ground.assign(128 * 226, 0x0E);
+	map.object.assign(128 * 226, -1);
+	map.grid.assign(128 * 226, 0);
+	LifeTown town;
+	town.index = 0;
+	town.fishing = 1024;
+	TownLife life;
+	life.people[0x1B] = {&a};
+	life.start(map, town, 0);
+	size_t most = 0;
+	bool seen = false;
+	bool faded = false;
+	for (uint32_t t = 0; t < 120000; t += 20) {
+		life.step(t, 20, {0, 0, 640, 480});
+		size_t fish = 0;
+		for (const Creature& c : life.creatures()) {
+			fish += c.cls == 0x1B;
+			seen = seen || c.alpha == 0xFF;
+			faded = faded || (!c.appearing && c.alpha < 0xFF);
+		}
+		most = std::max(most, fish);
+	}
+	check(most == 15, "15 fish for the fishermen's 1024");
+	check(seen && faded, "they come up and fade away");
+}
+
 // A convoy leaving the town (the event 0x0C in the state 1): its cart starts at its road's inner end, goes out as the
 // convoy's counter grows, and goes when the convoy sets out (the state 2).
 void test_cart() {
@@ -352,6 +576,9 @@ int main() {
 	test_roads();
 	test_rats();
 	test_cart();
+	test_animals();
+	test_birds();
+	test_fish();
 	if (failures) {
 		std::fprintf(stderr, "%d failures\n", failures);
 		return 1;

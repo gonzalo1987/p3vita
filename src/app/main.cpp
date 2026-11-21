@@ -722,6 +722,7 @@ public:
 		for (size_t i = 0; i < items_.size(); ++i) {
 			const Item& item = items_[i];
 			if (i == first_object_) {
+				draw_fish(screen);  // In the water (0x59A320; the game masks them to it: here under the objects).
 				draw_shadows(screen);  // After the ground, before the objects (0x588900: 0x590F30, 0x591C50).
 				draw_people_shadows(screen);
 			}
@@ -748,6 +749,7 @@ public:
 		for (; next_strip < strips_.size(); ++next_strip) {
 			draw_strip(strips_[next_strip], camera_x, camera_y);
 		}
+		draw_birds(screen);  // Over everything (0x588AA5..0x588BCA).
 		if (highlight < 0) {
 			return;
 		}
@@ -1135,7 +1137,9 @@ private:
 			const CprEntry* file = archive_.find("iso/lcr/" + name);
 			auto look = std::make_unique<p3::data::LcrAnim>();
 			if (!file || !archive_.read(*file, data) || !p3::data::parse_lcr(data.data(), data.size(), *look) ||
-				(look->kind > 7 && look->kind != 0x1A && look->kind != 0x1F) || look->directions.empty()) {
+				(look->kind > 7 && look->kind != 0x0F && look->kind != 0x10 && look->kind != 0x11 && look->kind != 0x1A &&
+					look->kind != 0x1B && look->kind != 0x1F) ||
+				look->directions.empty()) {
 				continue;
 			}
 			life_.people[look->kind].push_back(look.get());
@@ -1205,11 +1209,12 @@ private:
 		SDL_RenderCopy(renderer_, texture, &src, &dst);
 	}
 
-	// The walkers' shadows, with the buildings' (draw_shadows): black at alpha 100.
+	// The walkers' shadows, with the buildings' (draw_shadows): black at alpha 100. (The birds' theirs, after the
+	// town: draw_birds.)
 	void draw_people_shadows(const SDL_Rect& screen) {
 		for (const p3::data::Creature& c : life_.creatures()) {
 			const p3::data::LcrFrame* f = c.current();
-			if (!f || !f->shadowed || c.look->shadow_image.empty()) {
+			if (!f || !f->shadowed || c.look->shadow_image.empty() || c.cls == 0x0F) {
 				continue;
 			}
 			const SDL_Rect dst = {c.px() + f->shadow_x - f->anchor_x, c.py() + f->shadow_y - f->anchor_y, f->shadow.w,
@@ -1228,6 +1233,66 @@ private:
 			SDL_RenderCopy(renderer_, texture, &src, &at);
 			SDL_SetTextureColorMod(texture, 255, 255, 255);
 			SDL_SetTextureAlphaMod(texture, 255);
+		}
+	}
+
+	// A creature's picture at its place, `dx`, `dy` aside, coloured and faded.
+	void draw_creature(const p3::data::Creature& c, const SDL_Rect& screen, int dx, int dy, uint8_t grey, uint8_t alpha) {
+		const p3::data::LcrFrame* f = c.current();
+		SDL_Texture* texture = f ? atlas_texture(c.look->image) : nullptr;
+		if (!texture) {
+			return;
+		}
+		const SDL_Rect dst = {c.px() - (f->anchor_x - f->body.x) + dx, c.py() - (f->anchor_y - f->body.y) + dy, f->body.w,
+			f->body.h};
+		if (!SDL_HasIntersection(&dst, &screen)) {
+			return;
+		}
+		const SDL_Rect src = {f->body.x, f->body.y, f->body.w, f->body.h};
+		const SDL_Rect at = {dst.x - screen.x, dst.y - screen.y, dst.w, dst.h};
+		SDL_SetTextureColorMod(texture, grey, grey, grey);
+		SDL_SetTextureAlphaMod(texture, alpha);
+		SDL_RenderCopy(renderer_, texture, &src, &at);
+		SDL_SetTextureColorMod(texture, 255, 255, 255);
+		SDL_SetTextureAlphaMod(texture, 255);
+	}
+
+	// The fish (0x569250): each at half its [+0x3B] as alpha, its colours by it (coming up and fading away).
+	void draw_fish(const SDL_Rect& screen) {
+		for (const p3::data::Creature& c : life_.creatures()) {
+			if (c.cls == 0x1B) {
+				draw_creature(c, screen, 0, 0, c.alpha, uint8_t(c.alpha / 2));
+			}
+		}
+	}
+
+	// The birds after the town (0x588AA5..0x588BCA), lower ones first (0x58A9E7 keeps them by height): their shadows on
+	// the ground at alpha 100 (0x563B00 → 0x559520), then their bodies their height up and a fifth of it to the left
+	// (0x563BE0).
+	void draw_birds(const SDL_Rect& screen) {
+		std::vector<const p3::data::Creature*> birds;
+		for (const p3::data::Creature& c : life_.creatures()) {
+			if (c.cls == 0x0F) {
+				birds.push_back(&c);
+			}
+		}
+		std::stable_sort(birds.begin(), birds.end(),
+			[](const p3::data::Creature* a, const p3::data::Creature* b) { return a->alt < b->alt; });
+		for (const p3::data::Creature* c : birds) {
+			const p3::data::LcrFrame* f = c->current();
+			SDL_Texture* texture = f && f->shadowed ? atlas_texture(c->look->shadow_image) : nullptr;
+			if (!texture) {
+				continue;
+			}
+			const SDL_Rect dst = {c->px() + f->shadow_x - f->anchor_x - screen.x, c->py() + f->shadow_y - f->anchor_y - screen.y,
+				f->shadow.w, f->shadow.h};
+			const SDL_Rect src = {f->shadow.x, f->shadow.y, f->shadow.w, f->shadow.h};
+			SDL_SetTextureAlphaMod(texture, 100);
+			SDL_RenderCopy(renderer_, texture, &src, &dst);
+			SDL_SetTextureAlphaMod(texture, 255);
+		}
+		for (const p3::data::Creature* c : birds) {
+			draw_creature(*c, screen, -(c->alt / 5), -c->alt, 255, 255);
 		}
 	}
 };

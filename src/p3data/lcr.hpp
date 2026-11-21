@@ -29,7 +29,7 @@ struct LcrRect {
 // (shadow_x, shadow_y) of the main image's coordinates; and the vertical
 // strips (at most 17 pixels wide, in the main image) by which the town view
 // sorts it among the buildings: each strip goes with the cell its bottom
-// middle stands on (0x5596C0).
+// middle stands on (0x5596C0); none in the files without them (the birds', the snow's...).
 struct LcrFrame {
 	int anchor_x = 0;
 	int anchor_y = 0;

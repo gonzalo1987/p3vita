@@ -7,7 +7,10 @@
 //
 // Done: the citizens walking the streets (0x595CA0 makes them when a town is shown; each frame 0x568C80 steps them:
 // their class's +0x14, 0x559EB0 → 0x55B6A0 → 0x55C820 the free walk), coming into the town and leaving it by its land
-// roads (0x55B1D0, 0x55B6A0) as each class's clocks say (0x596EE0, and when the town is shown 0x5963F3..).
+// roads (0x55B1D0, 0x55B6A0) as each class's clocks say (0x596EE0, and when the town is shown 0x5963F3..); the
+// children, the market's sellers and the juggler, the official, the rats with the plague, the land trade's carts; the
+// town's dogs and cats and the wild animals outside the walls (0x58B1B0 when the town is shown; 0x57C240, 0x57E840),
+// the birds (0x58A920; 0x563EF0) and the fish (each frame 0x58C6CB; 0x569560), each made again as one goes (0x593D50).
 
 #include <array>
 #include <cstddef>
@@ -87,6 +90,9 @@ struct LifeTown {
 	std::vector<Convoy> convoys;
 	bool feeding_poor = false;  // [0x2C8] & 0x800000: the church feeds the poor (the beggars go to it)
 	bool feast = false;  // a feast at the market (0x55D9D0: the world's tick − [0x2D0] or an announced one within 0x300)
+	// The fish (0x58C6D9): the fisherman's huts' productivity (the town's s16 [0x898], P3Modding's facility 5 [+0x8],
+	// read unsigned): above 1000 15 fish, above 500 10, else 5; 40 off a town (index −1).
+	uint16_t fishing = 0;
 };
 
 // The map the creatures read: the town drawn (each cell's ground and object .let types, the editor's marks left
@@ -143,17 +149,23 @@ struct Creature {
 	TownCell2 corner_b{};  // [+0x60], [+0x64]
 	uint8_t road = 0;  // [+0x68]: its road (of its mode's tag)
 	uint8_t point = 0;  // [+0x69]: the road's point it walks to
-	uint8_t mode = 0;  // [+0x6A]: 0 free in the town, 1 coming in by a road (tag 1), 2 leaving by one (tag 2); 3 (the
-	// viewer's) a market seller or the juggler at his place
+	uint8_t mode = 0;  // [+0x6A]: 0 free in the town, 1 coming in by a road (tag 1), 2 leaving by one (tag 2); the
+	// viewer's for the other classes: 3 a market seller or the juggler at his place, 4 the official, 5 a rat, 6 a cart,
+	// 7 an animal, 8 a bird, 9 a fish
 	uint8_t corner = 0xFF;  // [+0x6B]: 0xFF to be worked out, 0 none, 1 and 2 the corner's halves
 	bool entered = false;  // [+0x6C]: coming in, it reached the town (it walks free at the next point)
 	bool flee = false;  // [+0x6D]: hurrying from a siege (not yet)
 	int32_t lane_x = 0;  // [+0x70], [+0x74]: aside from the carts on its road (0x570BA0; no carts yet)
 	int32_t lane_y = 0;
-	uint8_t counter = 0;  // The juggler's [+0x2C], the official's, the rat's [+0x38]: down a frame
+	uint8_t counter = 0;  // The juggler's [+0x2C], the official's, the rat's and the animals' [+0x38]: down a frame
 	uint8_t face = 0;  // The official's [+0x41]: where he reads facing
 	bool back = false;  // The official's [+0x38]: walking back along his path
 	uint8_t reads = 0;  // The official's [+0x40]: the rounds of his reading left
+	uint8_t act = 2;  // An animal's [+0x3A]: what it is to do at its sequence's end (2 walk, 3 rest, 0xB run)
+	uint8_t alt = 0;  // A bird's [+0x2C]: how high it flies (its picture that far up and a fifth of it to the left)
+	uint8_t alpha = 0;  // A fish's [+0x3B]: how much it is seen (drawn at half that alpha, its colours by it)
+	bool appearing = true;  // A fish's [+0x3C]: coming up (false: fading away, then it goes)
+	uint8_t turns_left = 0;  // A fish's [+0x3A]: its choices left (3 to 5) before it fades away
 	// A cart (the coachman's [+0x38..+0x64]): its convoy's event (−1 none), whether it arrives, its convoy's progress
 	// (0..255) and when it was read, its road's length in x pixels and how far it has gone, its last and next points
 	// of the road's lane, the lane's points, its way (one of the diagonals).
@@ -243,6 +255,16 @@ private:
 	bool official_walk(Creature& c);
 	bool rat_walk(Creature& c);
 	bool spawn_rat(bool visible_check, bool no_grass);
+	bool spawn_animal(int cls, bool out_of_sight, const LcrAnim* look, uint16_t id);
+	bool spawn_bird(int32_t x, int32_t y, uint8_t dir, const LcrAnim* look, uint8_t alt, uint16_t id);
+	bool bird_fly(Creature& c);
+	TownCell2 out_of_sight_point(int margin_x, int margin_y);
+	void spawn_fish();
+	bool fish_swim(Creature& c);
+	void replace(const Creature& gone);
+	uint16_t new_id();
+	bool animal_has(const Creature& c, uint8_t id) const;
+	bool animal_walk(Creature& c);
 	// The carts (the coachman, class 0x1F; 0x4D8F00 when the town is shown, 0x4E3A88 and 0x4E3CA9 as a convoy leaves or
 	// unloads, 0x5708F0 at each tick, 0x570930 as it sets out or is done).
 	uint32_t world_tick_ = 0xFFFFFFFF;

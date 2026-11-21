@@ -207,6 +207,7 @@ LifeTown life_town(const SaveGame& save, size_t index) {
 	}
 	t.children = t.plague ? 0 : uint32_t((std::max<int64_t>(mood, 0) + 9999) / 10000);
 	t.total = m.u32(0x2D4);
+	t.fishing = m.u16(0x898);
 	t.official = (m.u32(0x76C) & 2) != 0;
 	// 0x677958: by the town's map (0x6DE4E0, the town's [0x2C2]).
 	static constexpr uint8_t kFace[28] = {0x20, 0xE0, 0x60, 0x60, 0x60, 0x60, 0x60, 0xA0, 0x60, 0x60, 0xA0, 0xA0, 0x20,
@@ -267,6 +268,15 @@ int TownLife::rand() {
 	return int((rand_state >> 16) & 0x7FFF);
 }
 
+// 0x568A70: a creature's number (never 0).
+uint16_t TownLife::new_id() {
+	const uint16_t id = next_id_++;
+	if (next_id_ == 0) {
+		next_id_ = 1;
+	}
+	return id;
+}
+
 namespace {
 
 uint32_t frame_ms(const LcrAnim& a) {
@@ -320,8 +330,108 @@ uint8_t TownLife::anim_start(Creature& c, uint8_t request) {
 // Each class's animation's +0x8, at a sequence's end. The citizens' (0x559FE0): after a round of walking, one time
 // in 32 a gesture once (3 or 4) and one in 32 the sequence 5; after anything else, walking again.
 void TownLife::sequence_end(Creature& c) {
-	if (c.cls == 6 || c.cls == 0x1A) {
-		return;  // The juggler, a rat (0x57B240): the same again.
+	if (c.cls == 6 || c.cls == 0x1A || c.cls == 0x1B) {
+		return;  // The juggler, a rat (0x57B240), a fish (0x569A70): the same again.
+	}
+	if (c.cls == 0x0F) {
+		// A bird (0x564410): gliding back (1 backwards once), flapping again.
+		if (c.seq == 0xE1) {
+			c.next_seq = 0;
+		}
+		return;
+	}
+	if (c.cls == 0x10 || c.cls == 0x11) {
+		// An animal (0x57CE90 a dog's or a cat's, 0x57F520 a wild one's): the sequence after by what it is to do
+		// ([+0x3A]): sitting down (5 once) to rest (3), getting up (7 once), starting to run (9 once), running (0xB),
+		// stopping (0xA once), walking (2); each only if its look has it (0x5576C0). A wild one ends its walk so only
+		// on grass (or off the map), and walking there now and then grazes (0xE once, then back) if it may rest
+		// there; resting without getting up it sits on (3 there and back, 0x43 and 0x63, then 5 shown once).
+		const bool wild = c.cls == 0x10;
+		auto has = [&](uint8_t id) { return sequence_index(*c.look, id) >= 0; };
+		auto to_run = [&] { c.next_seq = has(0x89) ? 0x89 : 0x0B; };
+		auto to_rest = [&] { c.next_seq = has(0x85) ? 0x85 : 3; };
+		switch (c.seq) {
+		case 0x02:
+			if (wild) {
+				const TownCell2 cell = life_pixel_cell(c.px(), c.py());
+				if (uint32_t(cell[0]) < uint32_t(map_.width) && uint32_t(cell[1]) < uint32_t(map_.height) &&
+					map_.ground_at(cell[0], cell[1]) != kGrass) {
+					break;
+				}
+			}
+			if (c.act == 3) {
+				to_rest();
+			} else if (c.act == 0x0B) {
+				to_run();
+			} else if (wild && animal_has(c, 3) && (rand() & 7) == 0) {
+				c.next_seq = 0x8E;
+			}
+			break;
+		case 0x03:
+			if (wild && has(0x87)) {
+				if (c.act != 3) {
+					c.next_seq = 0x87;
+				}
+			} else if (c.act == 2) {
+				c.next_seq = has(0x87) ? 0x87 : 2;
+			} else if (c.act == 0x0B) {
+				if (has(0x87)) {
+					c.next_seq = 0x87;
+				} else {
+					to_run();
+				}
+			}
+			break;
+		case 0x85: c.next_seq = !wild || has(0x87) ? 3 : 0x43; break;
+		case 0x63:
+			if (wild && c.act != 3) {
+				c.next_seq = 0xC5;
+			}
+			break;
+		case 0xC5:
+		case 0x87:
+			if (c.seq == 0xC5 && !wild) {
+				break;
+			}
+			if (c.act == 2) {
+				c.next_seq = 2;
+			} else if (c.act == 3) {
+				c.next_seq = 0x85;
+			} else {
+				to_run();
+			}
+			break;
+		case 0x0B:
+			if (c.act == 2) {
+				c.next_seq = has(0x8A) ? 0x8A : 2;
+			} else if (c.act == 3) {
+				if (has(0x8A)) {
+					c.next_seq = 0x8A;
+				} else {
+					to_rest();
+				}
+			}
+			break;
+		case 0x89: c.next_seq = 0x0B; break;
+		case 0x8A:
+		case 0xEE:
+			if (c.seq == 0xEE && !wild) {
+				break;
+			}
+			if (c.act == 2) {
+				c.next_seq = 2;
+			} else if (c.act == 3) {
+				to_rest();
+			}
+			break;
+		case 0x8E:
+			if (wild) {
+				c.next_seq = 0xEE;
+			}
+			break;
+		default: break;
+		}
+		return;
 	}
 	if (c.cls == 7) {
 		// The official (0x563010): his scroll unrolled (3 once), he reads (4) 4 to 11 rounds, rolls it up (3
@@ -541,45 +651,73 @@ bool TownLife::cell_walkable(const Creature& c, int x, int y, bool land, bool cr
 	return false;
 }
 
-// 0x55A2C0 (a creature of radius 0; a siege's army in the way isn't read yet): whether it may take a step in the
-// direction: the diagonals the next cell, the others the two cells they cross (the nearer first).
+// 0x55A2C0 (a siege's army in the way isn't read yet): whether it may take a step in the direction: the diagonals
+// the next cell, the others the two cells they cross (the nearer first). A creature with a radius (the animals: 5 or
+// 10) is tested twice, from the points that far to its left and to its right (the game's isometric thirds and
+// fifths, each rounded towards zero).
 bool TownLife::can_go(Creature& c, uint8_t dir, bool land, bool creatures) const {
-	const TownCell2 here = life_pixel_cell(c.px(), c.py());
-	if (c.street_first) {
-		c.on_street = true;
-		c.on_street = cell_walkable(c, here[0], here[1], land, false);
-	} else {
-		c.on_street = false;
+	int px = c.px();
+	int py = c.py();
+	const int r = c.radius;
+	const int sector = ((dir + 0x10) & 0xFF) >> 5;  // N, NE, E, SE, S, SW, W, NW
+	int passes = 1;
+	if (r > 0) {
+		passes = 2;
+		switch (sector) {
+		case 0: px -= r; break;
+		case 1: px += -17 * r / 20; py += -11 * r / 20; break;
+		case 2: py += -11 * r / 17; break;
+		case 3: px += 17 * r / 20; py += -11 * r / 20; break;
+		case 4: px += r; break;
+		case 5: px += 17 * r / 20; py += 11 * r / 20; break;
+		case 6: py += 11 * r / 17; break;
+		default: px += -17 * r / 20; py += 11 * r / 20; break;
+		}
 	}
-	const TownCell2 middle = life_cell_pixel(here[0], here[1]);
-	int x = here[0];
-	int y = here[1];
-	auto test = [&](uint8_t d) {
-		life_neighbour(x, y, d, map_.width, map_.height);
-		return cell_walkable(c, x, y, land, creatures);
-	};
-	if (dir >= 0xF0 || dir < 0x10) {
-		return c.px() < middle[0] ? test(0xE0) && test(0x20) : test(0x20) && test(0xE0);
+	for (;;) {
+		const TownCell2 here = life_pixel_cell(px, py);
+		if (c.street_first) {
+			c.on_street = true;
+			c.on_street = cell_walkable(c, here[0], here[1], land, false);
+		} else {
+			c.on_street = false;
+		}
+		const TownCell2 middle = life_cell_pixel(here[0], here[1]);
+		int x = here[0];
+		int y = here[1];
+		auto test = [&](uint8_t d) {
+			life_neighbour(x, y, d, map_.width, map_.height);
+			return cell_walkable(c, x, y, land, creatures);
+		};
+		bool ok;
+		switch (sector) {
+		case 0: ok = px < middle[0] ? test(0xE0) && test(0x20) : test(0x20) && test(0xE0); break;
+		case 1: ok = test(0x20); break;
+		case 2: ok = py < middle[1] ? test(0x20) && test(0x60) : test(0x60) && test(0x20); break;
+		case 3: ok = test(0x60); break;
+		case 4: ok = px > middle[0] ? test(0x60) && test(0xA0) : test(0xA0) && test(0x60); break;
+		case 5: ok = test(0xA0); break;
+		case 6: ok = py > middle[1] ? test(0xA0) && test(0xE0) : test(0xE0) && test(0xA0); break;
+		default: ok = test(0xE0); break;
+		}
+		if (!ok) {
+			return false;
+		}
+		if (--passes == 0) {
+			return true;
+		}
+		// Over to its right side.
+		switch (sector) {
+		case 0: px += 2 * r; break;
+		case 1: px += 17 * r / 10; py += 11 * r / 10; break;
+		case 2: py += 22 * r / 17; break;
+		case 3: px += -17 * r / 10; py += 11 * r / 10; break;
+		case 4: px -= 2 * r; break;
+		case 5: px += -17 * r / 10; py += -11 * r / 10; break;
+		case 6: py += -22 * r / 17; break;
+		default: px += 17 * r / 10; py += -11 * r / 10; break;
+		}
 	}
-	if (dir < 0x30) {
-		return test(0x20);
-	}
-	if (dir < 0x50) {
-		return c.py() < middle[1] ? test(0x20) && test(0x60) : test(0x60) && test(0x20);
-	}
-	if (dir < 0x70) {
-		return test(0x60);
-	}
-	if (dir < 0x90) {
-		return c.px() > middle[0] ? test(0x60) && test(0xA0) : test(0xA0) && test(0x60);
-	}
-	if (dir < 0xB0) {
-		return test(0xA0);
-	}
-	if (dir < 0xD0) {
-		return c.py() > middle[1] ? test(0xA0) && test(0xE0) : test(0xE0) && test(0xA0);
-	}
-	return test(0xE0);
 }
 
 // 0x55D700: the walker on a cell ahead that this one meets (none if the cell isn't one to walk, or two are there).
@@ -1034,6 +1172,30 @@ void turn(uint8_t& dir, uint8_t target, size_t directions) {
 	}
 }
 
+// The town's size in pixels as the view keeps it ([+0xC31C] the cells' width · the columns, [+0xC320] (the rows' step
+// + 1) · half the rows).
+uint32_t map_pixels_x(const LifeMap& m) { return uint32_t(m.width * kTileWidth); }
+uint32_t map_pixels_y(const LifeMap& m) { return uint32_t(2 * kRowStep * (m.height / 2)); }
+
+// A rat's or an animal's run straight on (0x573900, 0x57C240, 0x57E840): `v` the 16.16 pixels across, up and down
+// 11/17 of it, the diagonals 181/256 of it each way; none off the eight directions.
+void straight(uint8_t dir, int32_t v, int32_t& nx, int32_t& ny) {
+	constexpr int32_t kIso = 0x78787879;  // 0.47 (·2^32): 11/17 with the · 2 and >> 4
+	auto iso = [](int32_t e) { return toward_zero(hi_signed(e, kIso) >> 4); };
+	const int32_t a = (v * 181) >> 8;
+	switch (dir) {
+	case 0x00: ny += iso(-22 * v); break;
+	case 0x80: ny += iso(22 * v); break;
+	case 0x40: nx += v; break;
+	case 0xC0: nx -= v; break;
+	case 0x20: nx += a; ny += iso(-22 * a); break;
+	case 0x60: nx += a; ny += iso(22 * a); break;
+	case 0xA0: nx -= a; ny += iso(22 * a); break;
+	case 0xE0: nx -= a; ny += iso(-22 * a); break;
+	default: break;
+	}
+}
+
 }  // namespace
 
 // 0x55C200: the 16.16 pixels a millisecond of a walk in one of the eight directions at the look's speed (14 pixels a
@@ -1383,6 +1545,24 @@ void TownLife::start(const LifeMap& map, const LifeTown& town, uint32_t now) {
 	town_ = town;
 	creatures_.clear();
 	now_ = now;
+	// 0x58A8A0 (the view's animations on): 0x58A920, 20 birds anywhere over the map, facing one of the eight
+	// directions (kept by their height: drawn so); 0x58B1B0, the town's dogs and cats, then the wild animals.
+	for (int i = 0; i < 20; ++i) {
+		const uint8_t dir = uint8_t((rand() % 8) * 32);
+		const uint32_t h = map_pixels_y(map_);
+		const uint32_t w = map_pixels_x(map_);
+		const int32_t y = int32_t(h ? uint32_t(rand()) % h : 0);
+		const int32_t x = int32_t(w ? uint32_t(rand()) % w : 0);
+		spawn_bird(x << 16, y << 16, dir, nullptr, 0, 0);
+	}
+	if (town.spawn.size() >= 3 && !town.spawn[0].empty() && !town.spawn[1].empty() && !town.spawn[2].empty()) {
+		for (int i = 0; i < 10; ++i) {
+			spawn_animal(0x11, false, nullptr, 0);
+		}
+		for (int i = 0; i < 20; ++i) {
+			spawn_animal(0x10, false, nullptr, 0);
+		}
+	}
 	place_performers();
 	// 0x595CA0: for each group one walker for every 50 of its residents, each on a town's point, facing a
 	// diagonal, with a look of its class at random (the game's option of the animations on).
@@ -1624,23 +1804,9 @@ bool TownLife::rat_walk(Creature& c) {
 		return false;
 	}
 	const uint32_t dt = std::min<uint32_t>(elapsed_, 1000);
-	const int32_t v = int32_t(hi_unsigned((c.look->speed * dt) << 12, kXPos) >> 9);
-	constexpr int32_t kIso = 0x78787879;  // 0.47 (·2^32): 11/17 with the · 2 and >> 4
-	auto iso = [](int32_t e) { return toward_zero(hi_signed(e, kIso) >> 4); };
-	const int32_t a = (v * 181) >> 8;
 	int32_t nx = c.x;
 	int32_t ny = c.y;
-	switch (c.dir) {
-	case 0x00: ny += iso(-22 * v); break;
-	case 0x80: ny += iso(22 * v); break;
-	case 0x40: nx += v; break;
-	case 0xC0: nx -= v; break;
-	case 0x20: nx += a; ny += iso(-22 * a); break;
-	case 0x60: nx += a; ny += iso(22 * a); break;
-	case 0xA0: nx -= a; ny += iso(22 * a); break;
-	case 0xE0: nx -= a; ny += iso(-22 * a); break;
-	default: break;
-	}
+	straight(c.dir, int32_t(hi_unsigned((c.look->speed * dt) << 12, kXPos) >> 9), nx, ny);
 	const uint8_t before = c.counter;
 	uint8_t f = anim_step(c, &c.counter);
 	uint8_t dir = c.dir;
@@ -1692,6 +1858,420 @@ bool TownLife::rat_walk(Creature& c) {
 	c.dir = dir;
 	place(c);
 	return true;
+}
+
+// An animal on a town's point (0x58B1B0, when a town is shown with the view's animations on: 10 dogs and cats, class
+// 0x11, at the spawn's tag 1 points in the town; 20 wild animals, class 0x10, at its tag 0 points outside the
+// walls), facing one of the eight directions at random, with a look of its class at random. One that goes is made
+// again (0x593FF2, 0x59414D: `out_of_sight`): on a cell out of sight if there is one, a wild one with the same look
+// and number (`look`, `id`). Its start (0x57C090, 0x57E690): where it may walk 0x55A290 (10, 0, 0, 0) for the
+// town's, (20, 0, 1, 0) for the wild ones: the radius 5 or 10, off the streets' rule, inside or outside the walls;
+// its walk (2) started, its first frame due at once.
+bool TownLife::spawn_animal(int cls, bool out_of_sight, const LcrAnim* look, uint16_t id) {
+	TownCell2 cell;
+	const bool inside = cls == 0x11;
+	if (people[size_t(cls)].empty() || !((out_of_sight && spawn_cell(inside, true, false, cell)) ||
+											spawn_cell(inside, false, false, cell))) {
+		return false;
+	}
+	const TownCell2 p = life_cell_pixel(cell[0], cell[1]);
+	const uint8_t dir = uint8_t((rand() % 8) * 32);
+	Creature c;
+	c.cls = cls;
+	c.mode = 7;
+	c.look = look ? look : people[size_t(cls)][size_t(rand()) % people[size_t(cls)].size()];
+	c.id = id ? id : new_id();
+	c.street_first = false;
+	c.outside = cls == 0x10;
+	c.radius = cls == 0x10 ? 10 : 5;
+	c.act = 2;
+	c.counter = 0;
+	c.frame = anim_start(c, 2);
+	c.frame_due = 0;
+	c.x = p[0] << 16;
+	c.y = p[1] << 16;
+	c.dir = c.target = dir;
+	place(c);
+	creatures_.push_back(std::move(c));
+	return true;
+}
+
+// 0x5576C0 and the look's frames in its direction (the look's [+0x20] by the direction >> 5): whether the animal's
+// look has the sequence and it can be shown facing where it faces (the even directions have the walk only, in some
+// looks).
+bool TownLife::animal_has(const Creature& c, uint8_t id) const {
+	const int si = sequence_index(*c.look, id);
+	const size_t d = size_t(c.dir >> 5);
+	return si >= 0 && d < c.look->directions.size() &&
+		uint32_t(c.look->sequences[size_t(si)].first) < uint32_t(c.look->directions[d].size());
+}
+
+// 0x57C240 (a dog or a cat) and 0x57E840 (a wild animal): walking (2) or running (0xB, and 0x89, 0x8A its start and
+// end), with the way ahead free, it goes straight on at its look's speed (the dogs and cats running three times as
+// fast, the wild animals twice); each frame of its animation, if the way ahead is taken it walks again and turns by
+// 0x20 to the nearest free side (none: it goes); if not, each time its count of frames passes its look's first
+// parameter it is set again to it less a random of the second and it chooses at random what to do next ([+0x3A],
+// done at its sequence's end: sequence_end): walking, a turn, resting (3) or running, by what its look has. It goes
+// off the map or stuck. (Each frame within 200 pixels of the view, its feet leave footprints in the snow, 0x55B030 by
+// its look's parameters 2..19: with the weather.)
+bool TownLife::animal_walk(Creature& c) {
+	const bool wild = c.cls == 0x10;
+	int32_t nx = c.x;
+	int32_t ny = c.y;
+	if ((c.seq == 2 || c.seq == 0x0B || c.seq == 0x89 || c.seq == 0x8A) && can_go(c, c.dir, true, true)) {
+		const uint32_t dt = std::min<uint32_t>(elapsed_, 1000);
+		int32_t v = int32_t(hi_unsigned((c.look->speed * dt) << 12, kXPos) >> 9);
+		if (c.seq == 0x0B) {
+			v *= wild ? 2 : 3;
+		}
+		straight(c.dir, v, nx, ny);
+	}
+	const uint8_t before = c.counter;
+	uint8_t f = anim_step(c, &c.counter);
+	uint8_t dir = c.dir;
+	bool stuck = false;
+	const uint32_t p0 = c.look->params.size() > 0 ? c.look->params[0] : 70;
+	const uint32_t p1 = std::max<uint32_t>(c.look->params.size() > 1 ? c.look->params[1] : 50, 1);
+	if (c.counter != before) {
+		if (!can_go(c, c.dir, true, true)) {
+			if (wild) {
+				if (c.seq != 2) {
+					f = anim_start(c, 2);
+				}
+				c.next_seq = 2;
+				c.act = 2;
+			} else {
+				if (c.seq != 2 && c.seq != 0x0B) {
+					f = anim_start(c, 2);
+				}
+				if (c.next_seq != 0x0B) {
+					c.next_seq = 2;
+				}
+				if (c.act != 0x0B) {
+					c.act = 2;
+				}
+			}
+			c.counter = uint8_t(p0 - uint32_t(rand()) % p1);
+			uint8_t turn_by = 0x20;
+			for (; turn_by <= 0x80; turn_by = uint8_t(turn_by + 0x20)) {
+				if (can_go(c, uint8_t(c.dir + turn_by), true, true) || can_go(c, uint8_t(c.dir - turn_by), true, true)) {
+					break;
+				}
+			}
+			if (turn_by > 0x80) {
+				stuck = true;
+			}
+			if (!can_go(c, uint8_t(c.dir + turn_by), true, true)) {
+				dir = uint8_t(dir - 0x20);
+			} else if (!can_go(c, uint8_t(c.dir - turn_by), true, true)) {
+				dir = uint8_t(dir + 0x20);
+			} else {
+				dir = uint8_t(dir + ((rand() & 1) << 6) - 0x20);
+			}
+		} else if (c.counter > p0) {
+			const uint8_t s = c.seq;
+			c.counter = uint8_t(p0 - uint32_t(rand()) % p1);
+			auto turn_a_little = [&] {
+				if ((c.counter & 1) && can_go(c, uint8_t(c.dir - 0x20), true, true)) {
+					dir = uint8_t(dir - 0x20);
+				} else if (can_go(c, uint8_t(c.dir + 0x20), true, true)) {
+					dir = uint8_t(dir + 0x20);
+				}
+			};
+			const bool rest_here = animal_has(c, 3);
+			const bool run_here = animal_has(c, 0x0B);
+			if (s == 2) {
+				// Walking: a turn, resting or running (the wild ones resting 8 times as often).
+				const int tries = (run_here ? 2 : 1) + (rest_here ? (wild ? 8 : 2) : 0);
+				const int r = rand() % tries;
+				if (r == 0) {
+					turn_a_little();
+				} else if (!rest_here || r == (wild ? 9 : 3)) {
+					c.act = 0x0B;
+				} else {
+					c.act = 3;
+				}
+			} else if (s == 0x0B || s == 0x89 || s == 0x8A) {
+				// Running: walking or resting.
+				const int tries = rest_here ? (wild ? 9 : 3) : 1;
+				c.act = rand() % tries != 0 ? 3 : 2;
+			} else if (wild ? s == 3 || s == 0x43 || s == 0x63 || s == 0x85 || s == 0x8E || s == 0xC5
+							: s == 3 || s == 0x85 || s == 0x87) {
+				// Resting: the wild ones go on four times in five; then walking or running.
+				if (wild && rand() % 5 != 0) {
+					c.act = 3;
+				} else {
+					c.act = rand() % (run_here ? 2 : 1) != 0 ? 0x0B : 2;
+				}
+			}
+		}
+	}
+	if ((nx >> 16) == c.px() && (ny >> 16) == c.py() && f == c.frame && dir == c.dir) {
+		c.x = nx;
+		c.y = ny;
+		return true;
+	}
+	if (uint32_t(nx) >> 16 > uint32_t(map_.width * kTileWidth) || uint32_t(ny) >> 16 > uint32_t(map_.height * kRowStep) ||
+		stuck) {
+		return false;
+	}
+	c.x = nx;
+	c.y = ny;
+	c.frame = f;
+	c.dir = dir;
+	place(c);
+	return true;
+}
+
+// 0x563D50: a bird at (x, y) (16.16, the ground under it) facing `dir`, flapping (0) from its first frame at once;
+// a look of its class at random and its height its look's parameter 0 plus a random of the parameter 1 (as a byte),
+// or those given (`look`, `alt`: a bird made again, 0x593E89, with its number `id`).
+bool TownLife::spawn_bird(int32_t x, int32_t y, uint8_t dir, const LcrAnim* look, uint8_t alt, uint16_t id) {
+	const std::vector<const LcrAnim*>& looks = people[0x0F];
+	if (looks.empty()) {
+		return false;
+	}
+	if (!look) {
+		look = looks[size_t(rand()) % looks.size()];
+		const uint32_t p0 = look->params.size() > 0 ? look->params[0] : 80;
+		const uint32_t p1 = std::max<uint32_t>(look->params.size() > 1 ? look->params[1] : 60, 1);
+		alt = uint8_t(uint32_t(rand()) % p1 + p0);
+	}
+	Creature c;
+	c.cls = 0x0F;
+	c.mode = 8;
+	c.look = look;
+	c.alt = alt;
+	c.id = id ? id : new_id();
+	c.counter = 0;
+	c.frame = anim_start(c, 0);
+	c.frame_due = 0;
+	c.x = x;
+	c.y = y;
+	c.dir = c.target = dir;
+	creatures_.push_back(std::move(c));
+	return true;
+}
+
+// 0x563EF0: a bird flies straight on at its look's speed, across the view's (rows' step + 1) / cells' width (22/34,
+// *0x6E51B0) of it up and down, the same each way on the diagonals (the game adds (1 − that) / 2 to the product
+// there); each time its count of frames ([+0x2D]) passes its look's parameter 3 it is set to it less a random of
+// the parameter 4: flapping, one time in two it glides (1 once, then held, 0x81 and 0xA1) if its look has those
+// frames in its direction (the parameter 2 below its count), else turns 0x20 (left on an odd count); gliding, it
+// flaps again (1 backwards once, 0xE1). It goes past the map's right or bottom edge (and its height, a fifth of it
+// right).
+bool TownLife::bird_fly(Creature& c) {
+	const uint32_t dt = std::min<uint32_t>(elapsed_, 1000);
+	const int32_t v = int32_t(hi_unsigned((c.look->speed * dt) << 12, kXPos) >> 9);
+	constexpr float kRatio = 22.0f / 34.0f;
+	const double along = double(float(v)) * double(kRatio);
+	int32_t nx = c.x;
+	int32_t ny = c.y;
+	switch (c.dir) {
+	case 0x00: ny -= int32_t(along); break;
+	case 0x80: ny += int32_t(along); break;
+	case 0x40: nx += v; break;
+	case 0xC0: nx -= v; break;
+	default: {
+		const int32_t e = int32_t(along + (1.0 - double(kRatio)) / 2.0);
+		switch (c.dir) {
+		case 0x20: nx += e; ny -= e; break;
+		case 0x60: nx += e; ny += e; break;
+		case 0xA0: nx -= e; ny += e; break;
+		case 0xE0: nx -= e; ny -= e; break;
+		default: break;
+		}
+		break;
+	}
+	}
+	const uint8_t before = c.counter;
+	const uint8_t f = anim_step(c, &c.counter);
+	uint8_t dir = c.dir;
+	const std::vector<uint32_t>& p = c.look->params;
+	const uint32_t p3 = p.size() > 3 ? p[3] : 40;
+	if (c.counter != before && c.counter > p3) {
+		const uint8_t s = c.seq;
+		c.counter = uint8_t(p3 - uint32_t(rand()) % std::max<uint32_t>(p.size() > 4 ? p[4] : 10, 1));
+		if (s == 0xA1) {
+			c.next_seq = 0xE1;
+		} else if (s == 0) {
+			const size_t d = c.direction_index();
+			const bool glides = d < c.look->directions.size() && (p.size() > 2 ? p[2] : 0) < c.look->directions[d].size() &&
+				rand() % 2 != 0;
+			if (glides) {
+				c.next_seq = 0x81;
+			} else {
+				dir = uint8_t(dir + ((c.counter & 1) ? 0xE0 : 0x20));
+			}
+		}
+	}
+	if ((nx >> 16) == c.px() && (ny >> 16) == c.py() && f == c.frame && dir == c.dir) {
+		c.x = nx;
+		c.y = ny;
+		return true;
+	}
+	c.x = nx;
+	c.y = ny;
+	c.frame = f;
+	c.dir = dir;
+	return uint32_t(nx) >> 16 <= map_pixels_x(map_) + c.alt / 5u && uint32_t(ny) >> 16 <= map_pixels_y(map_) + c.alt;
+}
+
+// 0x594430: a point of the map at random; one in sight (the view `margin_x`, `margin_y` pixels larger: compared
+// unsigned, so near the map's top or left edge nothing is in sight) goes to the middle of the map's quarter away from
+// the view.
+TownCell2 TownLife::out_of_sight_point(int margin_x, int margin_y) {
+	const uint32_t w = map_pixels_x(map_);
+	const uint32_t h = map_pixels_y(map_);
+	uint32_t x = w ? uint32_t(rand()) % w : 0;
+	uint32_t y = h ? uint32_t(rand()) % h : 0;
+	const uint32_t vx = uint32_t(view_[0]);
+	const uint32_t vy = uint32_t(view_[1]);
+	if (x >= vx - uint32_t(margin_x) && x <= vx + uint32_t(view_[2]) + uint32_t(margin_x) &&
+		y >= vy - uint32_t(margin_y) && y <= vy + uint32_t(view_[3]) + uint32_t(margin_y)) {
+		x = w / 4 + (vx > w / 2 ? 0 : w / 2);
+		y = h / 4 + (vy > h / 2 ? 0 : h / 2);
+	}
+	return {int(x), int(y)};
+}
+
+// 0x58C6CB..0x58C85F, each frame (the view's animations on): with fewer fish than the town's allow (`fishing`), one
+// try on a cell at random (x 4..120, y 6..213): on water, a fish (0x569350) there facing a diagonal at random, a look
+// of its class at random, 3 to 5 choices to make ([+0x3A]); where it may swim 0x55A290 (20, 0, 0, 0): the radius 10;
+// coming up from unseen ([+0x3B] 0, [+0x3C] 1), its swimming (2) from its first frame at once.
+void TownLife::spawn_fish() {
+	const std::vector<const LcrAnim*>& looks = people[0x1B];
+	const uint32_t most = town_.index < 0 ? 40 : town_.fishing > 1000 ? 15 : town_.fishing > 500 ? 10 : 5;
+	uint32_t fish = 0;
+	for (const Creature& c : creatures_) {
+		fish += c.cls == 0x1B;
+	}
+	if (looks.empty() || fish >= most) {
+		return;
+	}
+	const int x = rand() % 0x75 + 4;
+	const int y = rand() % 0xD0 + 6;
+	if (map_.ground_at(x, y) != kWater) {
+		return;
+	}
+	const TownCell2 p = life_cell_pixel(x, y);
+	Creature c;
+	c.cls = 0x1B;
+	c.mode = 9;
+	c.dir = c.target = uint8_t((rand() & 0xC0) + 0x20);
+	c.look = looks[size_t(rand()) % looks.size()];
+	c.turns_left = uint8_t(rand() % 3 + 3);
+	c.radius = 10;
+	c.street_first = false;
+	c.outside = false;
+	c.id = new_id();
+	c.frame = anim_start(c, 2);
+	c.frame_due = 0;
+	c.x = p[0] << 16;
+	c.y = p[1] << 16;
+	c.alpha = 0;
+	c.appearing = true;
+	creatures_.push_back(std::move(c));
+}
+
+// 0x569560: a fish comes up (its [+0x3B] up by the milliseconds / 8 a frame, the remainder at random, to 255) or
+// fades away (down by as much; at 0 it goes); it swims straight on at its look's speed (the rat's steps) whatever is
+// ahead; at each frame of its animation, with no water ahead it turns 0x20 to the nearest side with water (none: it
+// fades away); with water, each time its count of frames passes its look's parameter 0 (set again to it less a random
+// of the parameter 1), one of its choices: a little turn to water (left on an odd count; none: it fades away), the
+// last one fading away. It goes off the map's right or bottom edge.
+bool TownLife::fish_swim(Creature& c) {
+	const uint32_t dt = std::min<uint32_t>(elapsed_, 1000);
+	uint8_t step = uint8_t(dt >> 3);
+	if (uint32_t(rand() & 7) < (dt & 7)) {
+		++step;
+	}
+	bool changed = false;
+	if (step) {
+		if (c.appearing) {
+			if (c.alpha != 0xFF) {
+				changed = true;
+				c.alpha = 0xFF - c.alpha > step ? uint8_t(c.alpha + step) : 0xFF;
+			}
+		} else {
+			if (c.alpha < step) {
+				return false;
+			}
+			c.alpha = uint8_t(c.alpha - step);
+			changed = true;
+		}
+	}
+	int32_t nx = c.x;
+	int32_t ny = c.y;
+	straight(c.dir, int32_t(hi_unsigned((c.look->speed * dt) << 12, kXPos) >> 9), nx, ny);
+	const uint8_t before = c.counter;
+	const uint8_t f = anim_step(c, &c.counter);
+	uint8_t dir = c.dir;
+	const uint32_t p0 = c.look->params.size() > 0 ? c.look->params[0] : 100;
+	const uint32_t p1 = std::max<uint32_t>(c.look->params.size() > 1 ? c.look->params[1] : 80, 1);
+	if (c.counter != before) {
+		if (!can_go(c, c.dir, false, true)) {
+			c.counter = uint8_t(p0 - uint32_t(rand()) % p1);
+			uint8_t turn_by = 0x20;
+			for (; turn_by <= 0x80; turn_by = uint8_t(turn_by + 0x20)) {
+				if (can_go(c, uint8_t(c.dir + turn_by), false, true) || can_go(c, uint8_t(c.dir - turn_by), false, true)) {
+					break;
+				}
+			}
+			if (turn_by > 0x80) {
+				c.appearing = false;
+			}
+			if (c.appearing) {
+				if (!can_go(c, uint8_t(c.dir + turn_by), false, true)) {
+					dir = uint8_t(dir - 0x20);
+				} else if (!can_go(c, uint8_t(c.dir - turn_by), false, true)) {
+					dir = uint8_t(dir + 0x20);
+				} else {
+					dir = uint8_t(dir + ((rand() & 1) << 6) - 0x20);
+				}
+			}
+		} else if (c.counter > p0) {
+			c.counter = uint8_t(p0 - uint32_t(rand()) % p1);
+			if (--c.turns_left == 0) {
+				c.appearing = false;
+			} else if ((c.counter & 1) && can_go(c, uint8_t(c.dir - 0x20), false, true)) {
+				dir = uint8_t(dir - 0x20);
+			} else if (can_go(c, uint8_t(c.dir + 0x20), false, true)) {
+				dir = uint8_t(dir + 0x20);
+			} else {
+				c.appearing = false;
+			}
+		}
+	}
+	if ((nx >> 16) == c.px() && (ny >> 16) == c.py() && f == c.frame && dir == c.dir && !changed) {
+		c.x = nx;
+		c.y = ny;
+		return true;
+	}
+	if (uint32_t(nx) >> 16 > map_pixels_x(map_) || uint32_t(ny) >> 16 > map_pixels_y(map_)) {
+		return false;
+	}
+	c.x = nx;
+	c.y = ny;
+	c.frame = f;
+	c.dir = dir;
+	return true;
+}
+
+// 0x593D50, a creature gone (the view's animations on): a bird made again at a point out of sight (0x594430, 50
+// pixels round the view) facing one of the eight directions, with its look, height and number; a wild animal on a
+// cell out of the walls out of sight (else anywhere out of them) with its look and number; a dog or a cat on one in
+// the town out of sight (else anywhere in it), a new one. (The fish are counted again each frame.)
+void TownLife::replace(const Creature& gone) {
+	if (gone.cls == 0x0F) {
+		const TownCell2 p = out_of_sight_point(50, 50);
+		const uint8_t dir = uint8_t((rand() % 8) * 32);
+		spawn_bird(p[0] << 16, p[1] << 16, dir, gone.look, gone.alt, gone.id);
+	} else if (gone.cls == 0x10 && town_.index >= 0) {
+		spawn_animal(0x10, true, gone.look, gone.id);
+	} else if (gone.cls == 0x11 && town_.index >= 0) {
+		spawn_animal(0x11, true, nullptr, 0);
+	}
 }
 
 // A seller's or the juggler's frame (0x572370, 0x56E770): his animation; the juggler, each time his count down of
@@ -2305,18 +2885,24 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 		creatures_.push_back(std::move(c));
 	}
 	life_tick();
+	spawn_fish();
 	for (size_t i = 0; i < creatures_.size();) {
 		Creature& c = creatures_[i];
 		const bool stays = c.mode == 3 ? perform(c)
 			: c.mode == 4             ? official_walk(c)
 			: c.mode == 5             ? rat_walk(c)
 			: c.mode == 6             ? cart_walk(c)
+			: c.mode == 7             ? animal_walk(c)
+			: c.mode == 8             ? bird_fly(c)
+			: c.mode == 9             ? fish_swim(c)
 			: c.mode != 0             ? road_walk(c)
 									  : walk(c);
 		if (stays) {
 			++i;
 		} else {
+			const Creature gone = std::move(creatures_[i]);
 			creatures_.erase(creatures_.begin() + std::ptrdiff_t(i));
+			replace(gone);
 		}
 	}
 }
