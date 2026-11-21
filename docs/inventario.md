@@ -212,7 +212,8 @@ change.
 - [ ] **10 in functions p3vita names but skipped whole** (8 left): the mission
   interpreter 0x4ECF64 (5; three with a letter the script builds), the
   alderman's notification 0x5299F0 (2, done with events_mayor.cpp), the convoy's automatic route
-  0x503230 (done on 2026-11-11, `trade_routes.cpp`), the sinking message 0x519D90, 0x4F3AF0.
+  0x503230 (done on 2026-11-11, `trade_routes.cpp`), the sinking message 0x519D90, 0x4F3AF0 (done on 2026-11-21,
+  `diet.cpp`: the pirate hunt's letter 0x3D).
 - [ ] **47 in events and operations p3vita doesn't have**: events 0x09,
   0x0C, 0x0F, 0x10, 0x11, 0x17 (done on 2026-11-12, `events_big.cpp`), 0x18 (done) and 0x28 (created only by
   player actions or the mission interpreter), the player's operations 0x03, 0x06,

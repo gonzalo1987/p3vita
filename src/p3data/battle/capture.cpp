@@ -533,9 +533,11 @@ void share_crew(ShipMemory& a, ShipMemory& t) {
 // 0xFFFF.
 //
 // The letters (0x4D6530): 0x54 for each captain of a pirate's ship, 0x30
-// with the share. Not reproduced: the UI (0x494990, 0x4778A0), the
-// Hanse event's lists of ships (0x4F3980/0x4F3AD0, not kept in p3vita) and
-// so its [+0xE] mark by a captain's place.
+// with the share. The diet's pirate hunt (town_tick/diet.cpp): a ship of its
+// fleet taken is a notice «seized» at the head of its event's list, a ship
+// the fleet takes one «taken», and the hunted pirate's (the last captain's
+// names those of the event's [+0xC], [+0xD]) its result [+0xE] 1. Not
+// reproduced: the UI (0x494990, 0x4778A0).
 void Sailing::fn_540520(uint16_t wi, uint16_t ti) {
 	GlobalMemory& gl = save_.globals;
 	const uint16_t ships = gl.u16(global::kShipCount);
@@ -611,7 +613,11 @@ void Sailing::fn_540520(uint16_t wi, uint16_t ti) {
 	if (T.u16(0x8) < convoys) {
 		const uint16_t ci = T.u16(0x8);
 		GameMemory<0x3C>& c = save_.convoys[ci];
-		// The Hanse event's list of ships (0x503B00, 0x4F3980): not kept in p3vita.
+		if (fn_503b00(ci)) {
+			// 0x540836..0x5408AA: the Hanse fleet's ship seized (0x672855), its owner and its name [+0x15E].
+			tick::diet_detail::add_hunt_notice(save_, c.u16(0x2), tick::diet_detail::kHuntSeized, T.u8(0x0),
+				T.u16(0x15E));
+		}
 		uint16_t* link = &c.u16(0xA);
 		while (*link < ships) {
 			if (*link == ti) {
@@ -646,11 +652,15 @@ void Sailing::fn_540520(uint16_t wi, uint16_t ti) {
 			m.u8(0x1B) = uint8_t(m.u8(0x1B) + 1);
 		}
 		T.u16(0x134) = 0x14;
+		// [esp+0x13], [esp+0x12]: the names of the last of a pirate's ship's captains (0xFF, 0xFF without one).
+		uint8_t captain_first = 0xFF, captain_family = 0xFF;
 		while (T.u16(0x42) < captains) {
 			if (T.u8(0x0) >= merchants) {
 				// 0x540A1C..0x540A8C: the letter 0x54 to the winner's merchant
 				// about the pirate's captain (his names, him, the ship).
 				const CaptainMemory& c = save_.captains[T.u16(0x42)];
+				captain_first = c.u8(2);
+				captain_family = c.u8(3);
 				Letter letter(0x54);
 				letter.entry.u8(5) = 0;
 				letter.entry.u16(8) = uint16_t((c.u8(2) << 8) + c.u8(3));
@@ -663,6 +673,16 @@ void Sailing::fn_540520(uint16_t wi, uint16_t ti) {
 		T.u32(0x1C) = W.u32(0x1C);
 		T.u32(0x20) = W.u32(0x20);
 		clear_ship_route(tsh);
+		if (W.u16(0x8) < convoys && fn_503b00(W.u16(0x8))) {
+			// 0x540AD6..0x540B97: the Hanse fleet took it: a notice «taken» (0x672857), the taker's owner and the
+			// ship's name; the hunted pirate's captain (the event's [+0xC], [+0xD]): the result «success» (0x67285A).
+			const uint16_t event = save_.convoys[W.u16(0x8)].u16(0x2);
+			tick::diet_detail::add_hunt_notice(save_, event, tick::diet_detail::kHuntTaken, W.u8(0x0), T.u16(0x15E));
+			GameMemory<0x18>& e = save_.events[event];
+			if (captain_family == e.u8(0xD) && captain_first == e.u8(0xC)) {
+				e.u8(0xE) = 1;
+			}
+		}
 		if (W.u16(0x8) < convoys) {
 			const GameMemory<0x3C>& wc = save_.convoys[W.u16(0x8)];
 			T.u8(0x38) = wc.u8(0x1F);

@@ -126,6 +126,12 @@ std::vector<LetterParagraph> letter_paragraphs(const std::string& raw);
 // of 0x51AC60 returns this number.
 constexpr int kLetterMapPicture = 1;
 
+// 0x512B20 (on the names object 0x6DDAA0): a name of the game's ship names ([+0xD8] of them), then of the players'
+// (up to [+0xDA]: none after a load, 0x5121C0 undoes them; the operations 0x2D and 0x2E add them,
+// SaveGame::player_ship_names), and past them a ship type's word by (~n) & 3 (0x6C0CB4: «snaikka», «crayer», «cog»,
+// «hulk»). Raw, in the game's language.
+std::string ship_list_name(const SaveGame& save, const GameTexts& texts, uint32_t n);
+
 // The mission interpreter's letter text (its instruction 0xF7, 0x4ED56A..0x4EDCD0), the bytes of its buffer: the
 // program's string at `offset` (the title) as it is with its NUL, the next one with its codes («%» and a code, then a
 // variable's byte: a ship's, merchant's or town's name, a title, a date, a ware, a number, the merchant's words by

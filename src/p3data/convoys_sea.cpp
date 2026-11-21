@@ -151,11 +151,10 @@ bool Sailing::fn_502110(int convoy, uint32_t every_32) {
 		if (event < g.u16(kEventCount)) {
 			const GameMemory<0x18>& e = save_.events[event];
 			if (e.u16(6) == 0x34 && e.u8(0x15) >= 7 && e.u16(0x16) == ship_convoy) {
-				// El juego añade al principio de la lista del evento ([+0x8]) un
-				// nodo de 8 bytes (0x4F3980, 0x4F3AD0): {siguiente, u8 2 (de
-				// 0x672856), u8 dueño, u16 [+0x15E] del barco}. Esas listas no
-				// existen en p3vita (la lectura de la partida las descarta): not
-				// reproduced (the diet's mission, event 0x34).
+				// 0x5022C6..0x50232E: the diet's pirate hunt's fleet: a notice at the head of its list, the ship
+				// sunk in a storm (0x672856), its owner and its name [+0x15E] (town_tick/diet.cpp).
+				tick::diet_detail::add_hunt_notice(save_, event, tick::diet_detail::kHuntStorm, s.owner(),
+					s.memory.u16(0x15E));
 			}
 		}
 		if (index == c.u16(0x10)) {

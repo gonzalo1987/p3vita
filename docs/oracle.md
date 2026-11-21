@@ -2873,6 +2873,34 @@ days (`FUNCS=4d85c0,535760 worldmd.sh 60 60`): 0; the battle scenarios (`battle_
 `battle_sounds`, `town_battle_setup`, `town_battle_window`, `town_battle_balls`, `town_battle_orders`): as before;
 `world.sh 7`: 0. Without the new entry, the difference comes back (the break on purpose).
 
+## The diet's pirate hunt's list and its final letter 0x3D (2026-11-21)
+
+`town_tick/diet.cpp` (`add_hunt_notice`, `free_hunt_notices`, `fn_4f3ce0`, `fn_4f3af0`, phase 10), the notices' four
+places (`battle_end.cpp` fn_50bfd0, `capture.cpp` fn_540520 twice, `convoys_sea.cpp` fn_502110), `SaveGame::hunt_notices`
+read and written with the events (savegame.cpp, savegame_write.cpp); the scripts in `re/emu/sesion53/` (README).
+
+- The oracle: a new region **HN**, each event 0x34 from its phase 7 with a list in [+0x8] (u16 event, u16 count, each
+  node's kind, merchant and name), which tick_probe loads into `hunt_notices` (the events' [+0x8] p3vita's 1 or 0) and
+  compares; the events' [+0x8] of a 0x34 is skipped as a pointer only from its phase 7 (before, its merchants' bytes
+  are compared now). The letter's call 0x4F3C99 is let through (`MAIL_CALLS`); its record and buffer are compared as
+  the other mission letters' (regions L and LB). Its 16 texts paired with the Spanish exe's (`fn_texts.py`; texts
+  cache 51).
+- `retouch_unchecked.py hunt_notices` (saves 4 and 5, the others lack an AI convoy of 4 ships at sea or a pirate
+  convoy's ship): an AI convoy at sea as the fleet of a new 0x34 in phase 9; 0x502110 with a ship without hull (sunk in
+  a storm), 0x50BFD0 with another sunk (the result 2), the operation 0x91 of a pirate taking one of the fleet's ships
+  (seized), then of the fleet's guide taking a pirate's ship whose captain is the hunted one (taken, the result 1),
+  0x50BFD0 broken up (the result 3): equal, 7 of 7 targets. `hunt_letter` (saves 1, 3, 5, 7): four hunts at their
+  phase 10 with the fleet back (an AI merchant made human beside the player): every branch of 0x4F3CE0 (the heading,
+  the suffixes, the sentences, a notice of no kind and one past 3, a name past the lists) and the result's four texts,
+  the list of one notice of no merchant made when there is none: equal, 10 of 10 targets. Broken on purpose (the
+  suffix « (Seized)» for the kind 1; a seized notice as sunk): caught (the letter's size; HN).
+- The save written after `hunt_notices` (`ws.sh`: a hunt in phase 10 with 4 notices) and read again: 0 bytes
+  different, its reload 0 (saves 4 and 5); the fix of the nodes' names (`fixsave.sh`, p3save --fix-game-bugs): the
+  names kept through two writes, without the fix 0 or 0xFFFF as the game.
+- `retouch.py dieta` days 1..12 and 36..52 (the hunt's whole run to its letter), saves 1, 3, 5, 7: equal; the other
+  scenarios through those places (`diet_branches`, `battle_branches`, `convoy_ship_branches`, `trade_route_release`):
+  as before; `world.sh 7`: 0; the 12 saves' events and operations 60 days: 0; the letters' check in both languages.
+
 ## The game's static initializers (2026-11-03)
 
 At start the CRT runs about 550 initializers (`_initterm`, 0x63E292, on the tables 0x692890..0x6928A4 and 0x692000..0x69288C); the oracle runs none of them but the 4 CString allocators (0x64F005...). Checked by running them all in the emulator before the load (scratchpad `init_oracle.py`, with a few more Windows functions; 16 of them, the interface's, stop half done) and comparing the whole world with p3vita (`world_init.sh`). The simulation reads only two values they set differently:

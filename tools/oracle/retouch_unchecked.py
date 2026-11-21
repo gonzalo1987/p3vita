@@ -1925,6 +1925,136 @@ def diet_branches(o):
     return during
 
 
+def hunt_nodes(o, notices):
+    """A pirate hunt's list (0x4F3980's nodes of 8 bytes: the next, u8 kind, u8 merchant, u16 a ship's name) of
+    [(kind, merchant, name)], head first; its head's address (0 for none)."""
+    head = 0
+    for kind, merchant, name in reversed(notices):
+        node = o.alloc(8)
+        o.uc.mem_write(node, struct.pack('<IBBH', head, kind, merchant, name))
+        head = node
+    return head
+
+
+def hunt_letter(o):
+    """The diet's pirate hunt's end (the event 0x34's phase 10, 0x4E09D4: the fleet back at its town) with its
+    letter 0x3D to each human merchant (0x4F3AF0, 0x4F3CE0), the event queue (0x4D85C0) called directly with one hunt
+    at a time, a listed AI merchant's convoy as the fleet (in state 0x16, its guide put at the town) and an AI
+    merchant H made human ([+0x8] 0) beside the player P: the notices (head first) of P's seized ship, P's crew's
+    take, a sunk ship of the fleet's owner A, A's ship sunk in a storm and a node of no kind (result 1: the list with
+    its heading for P, the sentences for H); A's sunk ship, P's notice of a kind past 3 and a name past the lists
+    (result 2); no list (result 3: one of no merchant made); P's sunk ship alone (result 0)."""
+    towns, _, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    listed = convoy_list(o, CONVOY_HEAD)
+    fleet = next(c for c in listed if o.u8(convoy_at(o, c)) < merchants and o.u8(convoy_at(o, c)) != player and
+                 o.u16(convoy_at(o, c) + 0x10) < ships)
+    a = convoy_at(o, fleet)
+    owner, guide = o.u8(a), o.u16(a + 0x10)
+    h = next(m for m in range(merchants) if m not in (player, owner) and o.u16(o.merchant(m) + 8) != 0)
+    town = 1
+    number = o.u8(0x6DE4B8 + town)
+    tx, ty = o.u32(0x6DDB90 + 0x34 * number + 0x20), o.u32(0x6DDB90 + 0x34 * number + 0x24)
+    names = o.u16(0x6DDB78)  # the game's ship names ([+0xD8] of 0x6DDAA0)
+    print(f'fleet: convoy {fleet} of merchant {owner}, guide {guide}; human H {h}, player {player}; town {town} at '
+          f'({tx}, {ty}); {names} ship names')
+    hunts = [
+        (1, [(1, player, 3), (3, player, 7), (0, owner, 11), (2, owner, 13), (0xFF, 0xFF, 0)]),
+        (2, [(0, owner, 17), (5, player, 0xFFFF)]),
+        (3, None),
+        (0, [(0, player, 19)]),
+    ]
+
+    def during(o):
+        w16(o, o.merchant(h) + 8, 0)
+        for result, notices in hunts:
+            w16(o, a + 0x12, 0x16)
+            w16(o, o.ship(guide) + 0x1E, tx)
+            w16(o, o.ship(guide) + 0x1C, 0)
+            w16(o, o.ship(guide) + 0x22, ty)
+            w16(o, o.ship(guide) + 0x20, 0)
+            head = hunt_nodes(o, notices) if notices else 0
+            new_event(o, 0, 0x34, d8=head, bC=21, bD=23, bE=result, b14=town, b15=10, w16=fleet)
+            direct(o, 0x4D85C0, [o.u32(WORLD + 0x14)], ecx=to.EVENTS)
+            print(f'result {result}: convoy {fleet} state {o.u16(a + 0x12):#x}, the mailbox {o.u16(to.MAIL + 6)} letters')
+    return during
+
+
+def hunt_notices(o):
+    """The diet's pirate hunt's notices (town_tick/diet.cpp) on a fleet: an AI merchant's convoy C at sea (state 0xF,
+    two ships or more) whose event ([+0x2]) is a new 0x34 in its phase 9 with C in [+0x16] and the names of a
+    captain K in [+0xC], [+0xD]. 0x502110 (C's tick at sea) with a ship of C without hull: sunk in a storm (0x5022C6);
+    0x50BFD0 (C after its battle, out of its lists as at a battle's start) with another ship of C sunk, beaten by no
+    merchant (0x50C41A; the result 2, fled); the operation 0x91 (0x540520) of a pirate convoy's ship taking another
+    ship of C (0x54083F: seized), then of C's guide taking a pirate's ship whose captain is K (0x540B0D: taken by the
+    fleet's crew, the result 1); 0x50BFD0 again, broken up (the result 3)."""
+    towns, _, merchants, ships = o.counts()
+    captains = o.u16(to.SHIPS + 0xF2)
+    fleet = None
+    for c in convoy_list(o, CONVOY_HEAD):
+        a = convoy_at(o, c)
+        guide, s, ms = o.u16(a + 0x10), o.u16(a + 0xA), []
+        while s < ships and len(ms) < 50:
+            ms.append(s)
+            s = o.u16(o.ship(s) + 6)
+        if o.u8(a) < merchants and o.u16(a + 0x12) == 0xF and guide < ships and len(ms) >= 4:
+            fleet = (c, guide, [m for m in ms if m != guide])
+            break
+    # Pirates' ships in a convoy (0x540520 reads the guide of the taker's convoy without checking it).
+    pirates = [s for s in range(ships) if o.u8(o.ship(s)) >= merchants and o.u16(o.ship(s) + 0x134) == 0x12 and
+               o.u16(o.ship(s) + 8) < o.u16(CONVOY_COUNT)]
+    if fleet is None or len(pirates) < 2:
+        raise RuntimeError(f'fleet {fleet}, pirate ships {pirates[:4]}')
+    c, guide, rest = fleet
+    a = convoy_at(o, c)
+    storm, seized, sunk = rest[:3]
+    taker, prey = pirates[:2]
+    print(f'fleet: convoy {c} of merchant {o.u8(a)}, guide {guide}; {storm} sinks in a storm, pirate ship {taker} '
+          f'takes {seized}, the guide takes pirate ship {prey}, {sunk} sinks in the battle')
+
+    def out_of_sea_list(o, ship):
+        link = to.SHIPS + 0xEA
+        while o.u16(link) != ship and o.u16(link) < ships:
+            link = o.ship(o.u16(link)) + 6
+        if o.u16(link) == ship:
+            w16(o, link, o.u16(o.ship(ship) + 6))
+            w16(o, o.ship(ship) + 6, 0xFFFF)
+
+    def battle_start(o):
+        # As at a battle's start (0x50BC40): the convoy out of the list of those at sea ([0xEC], next [+0x8]) and its
+        # guide out of the list by x (0x50D040), where 0x50BFD0 puts them back.
+        link, steps = to.SHIPS + 0xEC, 0
+        while o.u16(link) != c and o.u16(link) < o.u16(CONVOY_COUNT) and steps < 200:
+            link, steps = convoy_at(o, o.u16(link)) + 8, steps + 1
+        if o.u16(link) == c:
+            w16(o, link, o.u16(a + 8))
+            w16(o, a + 8, 0xFFFF)
+        direct(o, 0x50D040, [o.u16(a + 0x10)], ecx=to.SHIPS)
+
+    def during(o):
+        k = free_captain(o)
+        kc = o.u32(to.SHIPS) + 0x10 * k
+        w16(o, kc, 0xFFFF)  # (no captain after him: 0x5098B0 goes on with his [+0x0])
+        event, e = new_event(o, 0x4000, 0x34, d8=0, bC=o.u8(kc + 2), bD=o.u8(kc + 3), bE=0, b14=1, b15=9, w16=c)
+        w16(o, a + 2, event)
+        w32(o, o.ship(storm) + 0x18, 0)
+        print(f'0x502110: {direct(o, 0x502110, [0], ecx=a) & 0xFF}, ship {storm} in convoy {o.u16(o.ship(storm) + 8)}')
+        w32(o, o.ship(sunk) + 0x18, 0)
+        battle_start(o)
+        direct(o, 0x50BFD0, [c, 0, 0xFF], ecx=to.SHIPS)
+        print(f'0x50BFD0: convoy {c} state {o.u16(a + 0x12):#x}, phase {o.u8(e + 0x15)}, result {o.u8(e + 0xE)}')
+        out_of_sea_list(o, prey)
+        operation(o, 0x91, taker, seized)
+        print(f'ship {seized}: owner {o.u8(o.ship(seized)):#x}, convoy {o.u16(o.ship(seized) + 8)}')
+        w16(o, o.ship(prey) + 0x42, k)
+        operation(o, 0x91, guide, prey)
+        print(f'ship {prey}: owner {o.u8(o.ship(prey)):#x}, convoy {o.u16(o.ship(prey) + 8)}; result {o.u8(e + 0xE)}')
+        battle_start(o)
+        direct(o, 0x50BFD0, [c, 1, 0xFF], ecx=to.SHIPS)
+        print(f'0x50BFD0 broken up: phase {o.u8(e + 0x15)}, result {o.u8(e + 0xE)}, list {o.u32(e + 8):#x}')
+    return during
+
+
 # --- grid.cpp ---
 
 def grid_branches(o):
@@ -15402,6 +15532,11 @@ SCENARIOS = {
     'diet_branches': Scenario(diet_branches, [0x4D85C0, 0x4F8CA0], 0, [
         '@4e0a10>4e1b36', '@4e0a2e>4e1b36', '@4e1272>4e1830', '@4e13a7>4e1b36', '@4e147d>4e1b18', '@4e1547>4e1b18',
         '@4e16af>4e1b18', '@4e16e7', '@4e170d>4e168f', '@4e18fd>4e1b18', '@4e193d>4e16e9', '@4e195d>4e1b18', '@4f8caf']),
+    'hunt_letter': Scenario(hunt_letter, [0x4D85C0], 0, [
+        '@4e19f8', '@4e1a83', '@4f3d17', '@4f3d6d', '@4f3d6b>4f3d72', '@4f3db8', '@4f3dc9', '@4f3de8', '@4f3e37',
+        '@4f3d8e>4f3e90']),
+    'hunt_notices': Scenario(hunt_notices, [0x502110, 0x535760, 0x540520, 0x50BFD0], 0, [
+        '@5022c6', '@50c41a', '@50c0c6', '@54083f', '@540b0d', '@540b91', '@50c09a']),
     # grid.cpp
     'grid_branches': Scenario(grid_branches, [0x4FACD0, 0x4FD680, 0x4FD830], 0, [
         '@4fb161', '@4fb1f7', '@4fd693>4fd816', '@4fdb0d>4fdc95', '@4fdb21', '@4fdbb4>4fdc91']),

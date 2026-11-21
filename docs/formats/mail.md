@@ -346,6 +346,8 @@ built with rand()).
   (`town_tick/town_hall.cpp`), the home town's move 0x0E (0x3E), the siege's 0x38 and 0x37 of 0x8F (which nobody was
   found to queue) and 0x38 of 0x90 (`town_tick/sieges.cpp`). The 15 left: the mission interpreter and the event 0x09
   it creates (9), the diet's 0x4F3AF0 (1), the event 0x28 that nobody creates (3) and the interface window 0x419EB0
+  (2). On 2026-11-20, **148** (the mission interpreter's and the event 0x09's); on 2026-11-21, **149**: the pirate
+  hunt's final letter 0x3D (0x4F3AF0, `town_tick/diet.cpp`). The 5 left: the event 0x28 (3) and the window 0x419EB0
   (2).
 - **47** are in events and operations p3vita doesn't have yet. Events 0x09,
   0x0C, 0x0F, 0x10, 0x11, 0x17, 0x18 and 0x28 are created only by player
@@ -643,8 +645,11 @@ interpreter's 0x4ED0C6, 0x4EDEDA.
   merchant (u16 [+0xC] the town + 0x100 if it was protected, u16 [+0x8],
   [+0xA] his names, [+0xE] his ships in the fleet's convoy). Phase 1 of the
   0x24 also writes a ticker line (0x548CA0, kind 0x2A) and opens a window
-  for the player; the 0x34's final letter 0x3D (0x4F3AF0) is the mission
-  interpreter's kind, still to be rewritten.
+  for the player; the 0x34's final letter 0x3D (0x4F3AF0, 2026-11-21) is of
+  the mission interpreter's kind (a 16-byte record and a buffer: the title
+  by the hunt's result with its NUL, the text, 4 NULs), to each human
+  merchant when the fleet is back, with the hunt's list of notices
+  (0x4F3CE0; `town_tick/diet.cpp`).
 
 ## Appendix A. The 154 calls
 
@@ -686,7 +691,7 @@ the oracle lets the call run (`MAIL_CALLS` in `tools/oracle/town_oracle.py`,
 | p3data/town_tick/diet.cpp | 0x4E09D4 | 0x4E0CEE | 0x48 | Boycott | 1 | one merchant |  | yes |
 | p3data/town_tick/diet.cpp | 0x4E09D4 | 0x4E0F4C | 0x4C | Boycott | 1 | one merchant |  | yes |
 | p3data/town_tick/diet.cpp | 0x4E09D4 | 0x4E1371 | 0x5C | Boycott ended | 1 | one merchant |  | yes |
-| p3data/town_tick/diet.cpp (named) | 0x4F3AF0 | 0x4F3C99 | 0x3D | Writing | 1 | one merchant |  | |
+| p3data/town_tick/diet.cpp (named) | 0x4F3AF0 | 0x4F3C99 | 0x3D | Writing | 1 | one merchant |  | yes |
 | p3data/town_tick/events.cpp | 0x4E2144 | 0x4E22A8 | 0x81 | Hulk | 2 | -1 (each merchant) |  | yes |
 | p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4EDDEB | script |  |  | one merchant | mission interpreter: letter built by the script (ebx) | |
 | p3data/town_tick/events.cpp (named) | 0x4ECF64 | 0x4EDE69 | script |  |  | one merchant | mission interpreter: letter built by the script (ebx) | |

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -335,7 +336,7 @@ struct SaveOpaque {
 	// For each event of SaveGame::events, what follows the records: [+0x12]
 	// entries of 4 bytes (type 0x1B) or the node list of type 0x34 (with
 	// [+0x15] >= 7 and a list: 4 bytes a node, 0x7F before each next one and
-	// 0 at the end).
+	// 0 at the end; read into SaveGame::hunt_notices, written from there).
 	std::vector<std::vector<uint8_t>> event_extras;
 	// The battles (0x611AE0 on 0x6E55D0), as in the file.
 	std::vector<uint8_t> battles;
@@ -433,6 +434,16 @@ struct SaveGame {
 	// The missions (missions.hpp): the game's data for them, the game's list (*0x6DD8B4) and the script of each event
 	// 0x1B (its program and its variables). In tick_probe, the regions MS and MV.
 	MissionData missions;
+	// The diet's pirate hunts (the events 0x34 from their phase 7, town_tick/diet.cpp): each one's list of notices,
+	// the game's nodes of 8 bytes from the event's [+0x8] (0x4F3980: a pointer to the next, u8 [+0x4] the kind, u8
+	// [+0x5] a merchant, u16 [+0x6] a ship's name), by the event's index, head first; the event's [+0x8] is 1 while it
+	// has one (the game's pointer). Saved after the events (0x4F39E0). In tick_probe, region HN.
+	struct HuntNotice {
+		uint8_t kind = 0xFF;  // 0 sunk, 1 seized, 2 sunk in a storm, 3 a ship seized by the merchant's crew
+		uint8_t merchant = 0xFF;
+		uint16_t name = 0xFFFF;  // 0x512B20's
+	};
+	std::map<uint16_t, std::vector<HuntNotice>> hunt_notices;
 	// The stops of the automatic trade routes (the pool *0x6DD728, 0x4D4BC0):
 	// records of 0xDC bytes, as many as the u16 [0x6DD72A]; the u16 [0x6DD728]
 	// is the free list's head (trade_routes.hpp). In tick_probe, region AU.

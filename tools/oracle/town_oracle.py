@@ -565,6 +565,10 @@ MAIL_CALLS += (
     # town's producers and 0x09 to the chronicle, at its start and its end.
     0x4E2941, 0x4E299D, 0x4E2A9E, 0x4E2B04,
 )
+MAIL_CALLS += (
+    # The diet's pirate hunt's last letter 0x3D (0x4F3AF0, town_tick/diet.cpp) to each human merchant at its phase 10.
+    0x4F3C99,
+)
 MAIL_SITES = {call + 5 for call in MAIL_CALLS}  # return addresses
 # With the environment variable P3_MAIL_STATS, each call to 0x4D6530 is
 # counted by its call address and printed to stderr at the end (whether it
@@ -1641,6 +1645,21 @@ class TownOracle(SaveOracle):
                 mp.append(struct.pack('<HI', i, size) + bytes(read(program, size)))
         out['MV'] = (0, b''.join(mv))
         out['MP'] = (0, b''.join(mp))
+        # HN: the diet's pirate hunts' lists of notices (tick_probe load_hunts): each event 0x34 from its phase 7
+        # with a list in [+0x8], u16 the event, u16 how many and each node's u8 [+0x4] the kind, u8 [+0x5] the
+        # merchant and u16 [+0x6] the ship's name (0x4F3980: [+0x0] the next one), head first.
+        hn = []
+        for i in range(len(ev) // 0x18):
+            if unpack('<H', ev, 0x18 * i + 6)[0] != 0x34 or ev[0x18 * i + 0x15] < 7:
+                continue
+            node, nodes = unpack('<I', ev, 0x18 * i + 8)[0], []
+            while node and len(nodes) < 0x1000:
+                piece = read(node, 8)
+                nodes.append(bytes(piece[4:8]))
+                node = unpack('<I', piece, 0)[0]
+            if nodes:
+                hn.append(struct.pack('<HH', i, len(nodes)) + b''.join(nodes))
+        out['HN'] = (0, b''.join(hn))
         out['MF'] = (0, struct.pack('<B', 1 if getattr(self, 'missions', False) else 0))
         mail = gu32(MAIL)
         out['B'] = (mail, block(mail, gu16(MAIL + 6) * 0x10 if mail else 0))

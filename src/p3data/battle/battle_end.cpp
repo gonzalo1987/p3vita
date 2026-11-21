@@ -913,8 +913,9 @@ void Sailing::fn_504970() {
 // 250; fame down if the loser is no merchant); the towns' wares on the way
 // again (0x504970) if the winner is a merchant.
 //
-// Not reproduced: the Hanse event's list of sunk ships (0x4F3980,
-// 0x4F3AD0; p3vita doesn't keep it), the letters (0x4D6530) and the UI.
+// The Hanse fleet's sunk ships each a notice at the head of its event's list
+// (0x50C412..0x50C47B: 0x4F3980, 0x4F3AD0; town_tick/diet.cpp). Not
+// reproduced: the letters (0x4D6530) and the UI.
 void Sailing::fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other) {
 	GlobalMemory& gl = save_.globals;
 	GameMemory<0x3C>& c = save_.convoys[convoy];
@@ -928,6 +929,7 @@ void Sailing::fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other) {
 	const uint8_t owner = c.u8(0x0);
 	bool broken = flag != 0;
 	bool going_on = false;
+	uint16_t hunt = 0xFFFF;  // The Hanse fleet's event (0x503B00), whose list gets its sunk ships.
 	if (owner >= merchants) {
 		broken = !fn_5017f0(convoy);
 		c.u16(0x12) = 0x12;
@@ -937,6 +939,7 @@ void Sailing::fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other) {
 			broken = true;
 		}
 		if (fn_503b00(convoy)) {
+			hunt = c.u16(0x2);  // [esp+0x18]: the address of its list ([+0x8]); 0 otherwise.
 			GameMemory<0x18>& e = save_.events[c.u16(0x2)];
 			c.u16(0x12) = 0x16;
 			if (broken) {
@@ -1028,7 +1031,11 @@ void Sailing::fn_50bfd0(uint16_t convoy, uint8_t flag, uint8_t other) {
 				s.u16(0x3C) = 0xFFFF;
 				if (s.s32(0x18) < 1) {
 					clear_ship_route(ship);
-					// The Hanse event's list of sunk ships (0x4F3980): not kept in p3vita.
+					if (hunt != 0xFFFF) {
+						// 0x50C412..0x50C47B: sunk (0x672854), its owner and its name [+0x15E].
+						tick::diet_detail::add_hunt_notice(save_, hunt, tick::diet_detail::kHuntSunk, s.u8(0x0),
+							s.u16(0x15E));
+					}
 					*link = s.u16(0x6);
 					s.u16(0x8) = 0xFFFF;
 					s.u16(0x50) = 0xFFFF;

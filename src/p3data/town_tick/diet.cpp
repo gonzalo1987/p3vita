@@ -13,20 +13,29 @@
 //         ella, hasta un plazo o mientras la satisfacción no baje de −10.
 //
 // Campos del evento: [+0x8..+0xF] los comerciantes que participan (0xFF
-// ninguno; en el 0x34, desde la fase 2, [+0x8] u32 una lista de avisos del
-// juego, [+0xC], [+0xD] la posición de los piratas y [+0xE]), u32 [+0x10]
-// un plazo, u8 [+0x14] la ciudad, u8 [+0x15] la fase (0..10), u16 [+0x16] el
-// convoy de la flota. The letters 0x48 (phase 0), 0x4C (phase 2) and 0x5C
-// (phase 5) are sent as in the game (src/p3data/mail.cpp). Not reproduced:
-// the notices and windows to the player (0x548CA0 with kind 0x2A and
-// 0x469380, 0x469AF0, phase 1 of the 0x24) and the final letter 0x3D of
-// the 0x34 (0x4F3AF0, with the list of [+0x8], 0x4F3980..0x4F3CE0: the
-// mission interpreter's kind of letter, still to be rewritten).
+// ninguno; en el 0x34, desde la fase 2, [+0x8] u32 la lista de avisos de la
+// caza, SaveGame::hunt_notices, [+0xC], [+0xD] los nombres del capitán pirata
+// buscado y [+0xE] el resultado), u32 [+0x10] un plazo, u8 [+0x14] la
+// ciudad, u8 [+0x15] la fase (0..10), u16 [+0x16] el convoy de la flota. The
+// letters 0x48 (phase 0), 0x4C (phase 2), 0x5C (phase 5) and the hunt's last
+// one, 0x3D (phase 10, 0x4F3AF0), are sent as in the game (src/p3data/
+// mail.cpp). Not reproduced: the notices and windows to the player (0x548CA0
+// with kind 0x2A and 0x469380, 0x469AF0, phase 1 of the 0x24).
+//
+// The hunt's list (0x4F3980..0x4F3CE0): from phase 7, while the fleet is out
+// (0x503B00), a notice goes to its head for each of its ships sunk (0x50C436,
+// battle_end.cpp fn_50bfd0), seized (0x54086F, capture.cpp fn_540520) or sunk
+// in a storm (0x5022E0, convoys_sea.cpp), and for each ship its crews seize
+// (0x540B3D, fn_540520: with the hunted pirate's captain, [+0xE] 1 the
+// success). The result [+0xE]: 0 he wasn't found (phase 2), 1 success, 2 he
+// fled, 3 the fleet beaten (0x50C09A, 0x50C0C6: fn_50bfd0).
 
 #include <cstring>
 #include <vector>
 
 #include "p3data/game_fixes.hpp"
+#include "p3data/game_texts.hpp"
+#include "p3data/letters.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/sailing.hpp"
 #include "p3data/town_tick/internal.hpp"
@@ -271,11 +280,121 @@ uint16_t fn_50ac40(SaveGame& save, uint32_t town, uint16_t event, bool two, bool
 	return convoy;
 }
 
+void add_hunt_notice(SaveGame& save, uint16_t event, uint8_t kind, uint8_t merchant, uint16_t name) {
+	std::vector<SaveGame::HuntNotice>& list = save.hunt_notices[event];
+	if (save.events[event].u32(0x8) == 0) {
+		list.clear();  // (The game's new node points to [+0x8]: no list before it.)
+	}
+	SaveGame::HuntNotice n;
+	n.kind = kind;
+	n.merchant = merchant;
+	n.name = name;
+	list.insert(list.begin(), n);
+	save.events[event].u32(0x8) = 1;
+}
+
+void free_hunt_notices(SaveGame& save, uint16_t event) {
+	save.hunt_notices.erase(event);
+	save.events[event].u32(0x8) = 0;
+}
+
 namespace {
 
-// El final de la caza de piratas: la lista de avisos de [+0x8] se libera.
-int finish(Event& e) {
-	e.u32(0x8) = 0;
+using HuntNotices = std::vector<SaveGame::HuntNotice>;
+
+// 0x4F3CE0 (on the k-th notice of a hunt's list; a merchant, a flag, the text):
+// the notices for the merchant's letter, appended to `out`. Each notice of
+// his of the kind 3 (a ship his crew took) its line «The %s was seized by
+// crew in your service.» (0x6B1360) on the way down the list; the notices of
+// the kinds 0..2 (the fleet's ships lost), whoever's they are, on the way back
+// up, so the list's last first: the last one, if a notice of his of those
+// kinds came before it (the flag), the heading «The following ships of yours
+// did not see the end of the hunt:» (0x6B135C), its name and the kind's
+// sentence (0x6B136C + 4 · kind) as it is, «%s» and all; each one before it
+// then its name and « (Sunk)» (0x6B1364) for the kind 0, but the sentence
+// 0x6B136C as it is for the kinds 1 and 2; without the flag, the last one and
+// each one before it the kind's sentence with the name (sprintf), until one
+// is the last of a list as above. The ships' names by 0x512B20. Whether it
+// wrote the heading. (The list form looks like a game bug, but it needs a
+// notice of the merchant's own kinds 0..2, and the fleet's ships are AI
+// merchants' (0x50AC40): the human merchants, who get the letters, get the
+// sentences.)
+bool fn_4f3ce0(const SaveGame& save, const GameTexts& t, const HuntNotices& list, size_t k, uint8_t merchant,
+	bool flag, std::string& out) {
+	const SaveGame::HuntNotice& n = list[k];
+	bool mine = flag;
+	if (n.merchant == merchant) {
+		if (n.kind == kHuntTaken) {
+			out += GameTexts::sprintf_raw(t.raw_at(0x6B1360), {ship_list_name(save, t, n.name)});
+		} else if (n.kind < kHuntTaken) {
+			mine = true;
+		}
+	}
+	const bool after = k + 1 < list.size() && fn_4f3ce0(save, t, list, k + 1, merchant, mine, out);
+	if (n.kind >= kHuntTaken) {
+		return after;
+	}
+	const std::string name = ship_list_name(save, t, n.name);
+	if (after) {
+		out += name;
+		out += t.raw_at(n.kind == kHuntSeized ? 0x6B136C : 0x6B1364 + 4u * n.kind);
+		return true;
+	}
+	if (flag) {
+		out += t.raw_at(0x6B135C);
+		out += name;
+		out += t.raw_at(0x6B136C + 4u * n.kind);
+		return true;
+	}
+	out += GameTexts::sprintf_raw(t.raw_at(0x6B136C + 4u * n.kind), {name});
+	return false;
+}
+
+// 0x4F3AF0 (on a hunt's list; a merchant, the pirate's first name and family
+// name, the hunt's result): the letter 0x3D to the merchant, a mission
+// letter's kind (as the interpreter's 0xF7): [+0x5] the Hanse's town; its
+// record [+0x0] the buffer's bytes, [+0x4] 0, u16 [+0x8] 0xFFFF, [+0xA..+0xC]
+// 0, [+0xD] the Hanse's town, [+0xE], [+0xF] 0xFF; its buffer the title by the
+// result (0x6B1348 + 4 · (result & 3): «Flop», «Victory», «Success», «Abject
+// Failure») with its NUL, the text and 4 NULs. The text: the result's (0x6B1338
+// + 4 · (result & 3)) with the pirate's names (0x512A60, 0x512AE0), the
+// notices (0x4F3CE0) and «The ships will shortly be returning home to the port
+// of %s...» (0x6B1358) with the Hanse's town (the table 0x6DDA00 by its index:
+// letter_town_name).
+void fn_4f3af0(SaveGame& save, const HuntNotices& list, uint8_t merchant, uint8_t first, uint8_t family,
+	uint8_t result) {
+	const GameTexts* t = letter_texts();
+	const uint8_t hanse = save.globals.u8(kHanseTown);
+	const uint32_t k = result & 3u;
+	std::string text, title;
+	if (t) {
+		text = GameTexts::sprintf_raw(t->raw_at(0x6B1338 + 4 * k),
+			{game_first_name(save, first), game_family_name(save, family)});
+		if (!list.empty()) {
+			fn_4f3ce0(save, *t, list, 0, merchant, false, text);
+		}
+		text += GameTexts::sprintf_raw(t->raw_at(0x6B1358), {letter_town_name(save, hanse)});
+		title = t->raw_at(0x6B1348 + 4 * k);
+	}
+	Letter letter(0x3D);
+	letter.entry.u8(5) = hanse;
+	letter.buffer.assign(title.begin(), title.end());
+	letter.buffer.push_back(0);
+	letter.buffer.insert(letter.buffer.end(), text.begin(), text.end());
+	letter.buffer.insert(letter.buffer.end(), 4, 0);
+	GameMemory<0x10> record{};
+	record.u32(0) = uint32_t(letter.buffer.size());
+	record.u16(8) = 0xFFFF;
+	record.u8(0xD) = hanse;
+	record.u8(0xE) = 0xFF;
+	record.u8(0xF) = 0xFF;
+	letter.record = record;
+	send_letter(save, merchant, letter);
+}
+
+// El final de la caza de piratas (0x4E1B18): la lista de avisos de [+0x8] se libera.
+int finish(SaveGame& save, uint16_t event) {
+	diet_detail::free_hunt_notices(save, event);
 	return 0;
 }
 
@@ -561,11 +680,11 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 			e.u8(0x8 + k) = 0xFF;
 		}
 		if (type == 0x34) {
-			e.u32(0x8) = 0;
+			free_hunt_notices(save, event);  // [+0x8] 0: the list to come (none yet: it starts in phase 7).
 			e.u32(0) += 1;
-			e.u8(0xE) = 0;  // 0x672859
+			e.u8(0xE) = 0;  // 0x672859: the result, «not found»
 			e.u8(0x15) = 7;
-			// La posición de los piratas: la del capitán ([+0x2], [+0x3]) del
+			// El pirata buscado: los nombres ([+0x2], [+0x3]) del capitán del
 			// primer barco con capitán de los piratas.
 			for (uint32_t k = 0; k < save.pirates.size() && k < 5; ++k) {
 				if (!save.pirates[k]) {
@@ -618,7 +737,7 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 		// La flota de caza se prepara: el convoy al estado 0xB y cuenta 0x40.
 		const uint16_t convoy = e.u16(0x16);
 		if (convoy >= convoy_count(save)) {
-			return finish(e);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
+			return finish(save, event);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 		}
 		GameMemory<0x3C>& c = save.convoys[convoy];
 		uint32_t value = 1;
@@ -647,12 +766,12 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 		// Sale al mar (estado 0x16) desde la posición de la ciudad.
 		const uint16_t convoy = e.u16(0x16);
 		if (convoy >= convoy_count(save)) {
-			return finish(e);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
+			return finish(save, event);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 		}
 		GameMemory<0x3C>& c = save.convoys[convoy];
 		const uint16_t lead_index = c.u16(0x10);
 		if (lead_index >= ship_count(save)) {
-			return finish(e);  // Unreachable: the game doesn't look, and a convoy of the fleet always has
+			return finish(save, event);  // Unreachable: the game doesn't look, and a convoy of the fleet always has
 			// its leading ship.
 		}
 		c.u8(0x1E) = c.u8(0x1C);
@@ -696,12 +815,12 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 		}
 		const uint16_t convoy = e.u16(0x16);
 		if (convoy >= convoy_count(save)) {
-			return finish(e);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
+			return finish(save, event);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 		}
 		GameMemory<0x3C>& c = save.convoys[convoy];
 		const uint16_t lead_index = c.u16(0x10);
 		if (lead_index >= ship_count(save)) {
-			return finish(e);  // Unreachable: the game doesn't look, and a convoy of the fleet always has
+			return finish(save, event);  // Unreachable: the game doesn't look, and a convoy of the fleet always has
 			// its leading ship.
 		}
 		if (c.u16(0x12) == 0x14) {
@@ -774,12 +893,12 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 		return 1;
 	}
 	case 10: {
-		// La vuelta: rumbo a la ciudad; al llegar (a menos de 10), el convoy y
-		// sus barcos pasan del estado 0x16 al 0xF y se acaba (la carta a los
-		// jugadores humanos con lo visto, 0x4F3AF0, no se reproduce).
+		// La vuelta: rumbo a la ciudad; al llegar (a menos de 10), la carta 0x3D
+		// a cada jugador humano con lo visto, y el convoy y sus barcos pasan del
+		// estado 0x16 al 0xF y se acaba.
 		const uint16_t convoy = e.u16(0x16);
 		if (convoy >= convoy_count(save)) {
-			return finish(e);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
+			return finish(save, event);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 		}
 		if (!listed(save, convoy)) {
 			e.u32(0) += 0x40;  // Out of the list. Checked with the oracle: scenario diet_branches (saves 3 and 5).
@@ -787,7 +906,7 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 		}
 		GameMemory<0x3C>& c = save.convoys[convoy];
 		if (c.u16(0x12) != 0x16 || c.u16(0x10) >= ship_count(save)) {
-			return finish(e);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
+			return finish(save, event);  // Checked with the oracle: scenario diet_branches (saves 3 and 5).
 		}
 		SavedShip& lead = save.ships[c.u16(0x10)];
 		lead.memory.u16(0x3A) = 0xFFFF;
@@ -809,7 +928,19 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing) {
 			e.u32(0) += uint32_t(distance - 7);
 			return 1;
 		}
-		e.u32(0x8) = 0;
+		// 0x4E19F1..0x4E1AB3: without a list, one of a notice of no merchant and no kind (0x4F3980, 0x4F3AD0 with
+		// 0xFF, [0x672858] 0xFF, 0, 0); the letter (0x4F3AF0) to each human merchant (from 0 to [0x6DE4AA], the
+		// u8 counter, [+0x8] 0) with the pirate's names [+0xC], [+0xD] and the result [+0xE]; the list freed.
+		if (e.u32(0x8) == 0) {
+			add_hunt_notice(save, event, 0xFF, 0xFF, 0);
+		}
+		const HuntNotices list = save.hunt_notices[event];
+		for (uint32_t m = 0; m < merchant_count(save) && m < 0x100; ++m) {
+			if (save.merchants[m].memory.u16(8) == 0) {
+				fn_4f3af0(save, list, uint8_t(m), e.u8(0xC), e.u8(0xD), e.u8(0xE));
+			}
+		}
+		free_hunt_notices(save, event);
 		c.u32(0x18) |= 0x20;
 		c.u16(0x12) = 0xF;
 		for (uint32_t s = c.u16(0xA); s < ship_count(save); s = save.ships[s].memory.u16(0x6)) {

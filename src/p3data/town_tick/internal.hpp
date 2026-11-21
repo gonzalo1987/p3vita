@@ -548,6 +548,15 @@ int fn_4e09d4(SaveGame& save, uint16_t event, Sailing* sailing);
 // 0x4F8CA0 (on a merchant, a town): his reputation there down 3 (with no such
 // town, in every Hanse town), [+0x22] down 60 and [+0x1E] down 1.
 void fn_4f8ca0(SaveGame& save, uint32_t merchant, uint32_t town);
+// A pirate hunt's notices (the event 0x34's [+0x8], SaveGame::hunt_notices).
+// The kinds, as the constants 0x672854..0x672857 give them:
+constexpr uint8_t kHuntSunk = 0, kHuntSeized = 1, kHuntStorm = 2, kHuntTaken = 3;
+// 0x4F3980 and 0x4F3AD0 (merchant, kind, name, the list's head) at the head of
+// the list of `event`: a ship of the fleet sunk, seized or sunk in a storm,
+// or a ship taken by a merchant's crew (its owner the taker).
+void add_hunt_notice(SaveGame& save, uint16_t event, uint8_t kind, uint8_t merchant, uint16_t name);
+// 0x4F39A0 and the operator delete of the head: the list freed, [+0x8] 0.
+void free_hunt_notices(SaveGame& save, uint16_t event);
 }  // namespace diet_detail
 namespace sieges_detail {
 // 0x633DB0 (on the town's siege object): the town pays a ransom or is

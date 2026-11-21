@@ -477,30 +477,28 @@ void write_mail(Writer& w, const SaveGame& save) {
 	}
 }
 
-// 0x4F39E0: the node list of an event 0x34, from the bytes of the file it
-// was read from (4 a node, 0x7F before each next one). GAME BUG (looks like
-// one): the reader (0x4F3A40) keeps [+0x4] and [+0x5] and makes the u16
-// [+0x6] of the third byte twice (b2 · 0x101), skipping the fourth; the
-// writer writes [+0x4], [+0x5], the sign of the low byte of [+0x6] (`sar dl,
-// 8` on a byte register) and that byte. So each node becomes b0 b1 sign(b2)
-// b2, and the list always ends in 0. Both meant a big-endian u16 (`sar dx, 8`
-// and the fourth byte as its low one); fixed, each node is written as it was
-// read (b0 b1 b2 b3), and the list ends in 0 as the game's.
-void write_event_nodes(Writer& w, const std::vector<uint8_t>& list) {
-	for (size_t p = 0; p + 4 <= list.size(); p += 5) {
-		w.u8(list[p]);
-		w.u8(list[p + 1]);
+// 0x4F39E0: the node list of an event 0x34 (SaveGame::hunt_notices): each
+// node u8 [+0x4] the kind, u8 [+0x5] the merchant and two bytes of the u16
+// [+0x6], 0x7F before each next one, 0 at the end. GAME BUG (looks like one):
+// those two bytes are the sign of the name's low byte (`sar dl, 8` on a byte
+// register) and that byte, and the reader 0x4F3A40 makes the name of the
+// first of them twice (b2 · 0x101), skipping the second: so a name comes
+// back 0 or 0xFFFF. Both meant a big-endian u16 (`sar dx, 8`, the second
+// byte the low one); fixed so (and read so: savegame.cpp, load_events).
+void write_event_nodes(Writer& w, const std::vector<SaveGame::HuntNotice>& list) {
+	for (size_t k = 0; k < list.size(); ++k) {
+		if (k != 0) {
+			w.u8(0x7F);
+		}
+		const SaveGame::HuntNotice& n = list[k];
+		w.u8(n.kind);
+		w.u8(n.merchant);
 		if (fix_game_bugs()) {
-			w.u8(list[p + 2]);
-			w.u8(list[p + 3]);
+			w.u8(uint8_t(n.name >> 8));
 		} else {
-			w.u8(list[p + 2] & 0x80 ? 0xFF : 0);
-			w.u8(list[p + 2]);
+			w.u8(n.name & 0x80 ? 0xFF : 0);
 		}
-		if (p + 4 >= list.size() || list[p + 4] != 0x7F) {
-			break;
-		}
-		w.u8(0x7F);
+		w.u8(uint8_t(n.name));
 	}
 	w.u8(0);
 }
@@ -516,12 +514,20 @@ void write_events(Writer& w, const SaveGame& save) {
 	auto extras_of = [&](size_t i) -> const std::vector<uint8_t>& {
 		return i < save.opaque.event_extras.size() ? save.opaque.event_extras[i] : kNone;
 	};
+	// A pirate hunt's notices (the game writes them only when its [+0x8] has a list).
+	auto hunt_list = [&](size_t i) -> const std::vector<SaveGame::HuntNotice>* {
+		if (save.events[i].u32(8) == 0) {
+			return nullptr;
+		}
+		auto list = save.hunt_notices.find(uint16_t(i));
+		return list == save.hunt_notices.end() || list->second.empty() ? nullptr : &list->second;
+	};
 	for (size_t i = 0; i < save.events.size(); ++i) {
 		GameMemory<0x18> e = save.events[i];
 		if (e.u16(6) == 0x1B) {
 			e.u32(0xC) = pointer(e.u16(0x12) != 0);
 		} else if (e.u16(6) == 0x34 && e.u8(0x15) >= 7) {
-			e.u32(8) = pointer(!extras_of(i).empty());
+			e.u32(8) = pointer(hunt_list(i) != nullptr);
 		}
 		w.from(e, 0, 0x18);
 	}
@@ -538,7 +544,9 @@ void write_events(Writer& w, const SaveGame& save) {
 				w.u32(k < script->second.variables.size() ? script->second.variables[k] : 0);
 			}
 		} else if (e.u16(6) == 0x34 && e.u8(0x15) >= 7) {
-			write_event_nodes(w, extras_of(i));
+			if (const std::vector<SaveGame::HuntNotice>* list = hunt_list(i)) {
+				write_event_nodes(w, *list);
+			}
 		}
 	}
 }

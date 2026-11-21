@@ -313,6 +313,64 @@ void load_missions(const State& state, SaveGame& save) {
 	}
 }
 
+// HN (town_oracle.py): the diet's pirate hunts' lists of notices (SaveGame::hunt_notices): for each event 0x34 from its
+// phase 7 with one, u16 the event, u16 how many and each one's u8 kind, u8 merchant, u16 name. The events' [+0x8]
+// (the game's pointer) becomes p3vita's 1 or 0.
+void load_hunts(const State& state, SaveGame& save) {
+	const Region* hn = find(state, "HN");
+	if (!hn) {
+		return;  // (A recording made before it: the pointers stay.)
+	}
+	save.hunt_notices.clear();
+	const std::vector<uint8_t>& b = hn->bytes;
+	for (size_t o = 0; o + 4 <= b.size();) {
+		const uint16_t i = get<uint16_t>(b.data(), o);
+		const uint16_t n = get<uint16_t>(b.data(), o + 2);
+		o += 4;
+		std::vector<SaveGame::HuntNotice>& list = save.hunt_notices[i];
+		for (uint16_t k = 0; k < n && o + 4 <= b.size(); ++k, o += 4) {
+			SaveGame::HuntNotice notice;
+			notice.kind = b[o];
+			notice.merchant = b[o + 1];
+			notice.name = get<uint16_t>(b.data(), o + 2);
+			list.push_back(notice);
+		}
+	}
+	for (size_t i = 0; i < save.events.size(); ++i) {
+		GameMemory<0x18>& e = save.events[i];
+		if (e.u16(6) == 0x34 && e.u8(0x15) >= 7) {
+			e.u32(8) = save.hunt_notices.count(uint16_t(i)) ? 1 : 0;
+		}
+	}
+}
+
+void store_hunts(const SaveGame& save, State& s) {
+	if (!s.count("HN")) {
+		return;
+	}
+	std::vector<uint8_t>& b = s["HN"].bytes;
+	b.clear();
+	for (size_t i = 0; i < save.events.size(); ++i) {
+		const GameMemory<0x18>& e = save.events[i];
+		if (e.u16(6) != 0x34 || e.u8(0x15) < 7 || e.u32(8) == 0) {
+			continue;
+		}
+		auto list = save.hunt_notices.find(uint16_t(i));
+		if (list == save.hunt_notices.end() || list->second.empty()) {
+			continue;
+		}
+		const size_t o = b.size();
+		b.resize(o + 4 + 4 * list->second.size());
+		put<uint16_t>(b.data(), o, uint16_t(i));
+		put<uint16_t>(b.data(), o + 2, uint16_t(list->second.size()));
+		for (size_t k = 0; k < list->second.size(); ++k) {
+			b[o + 4 + 4 * k] = list->second[k].kind;
+			b[o + 5 + 4 * k] = list->second[k].merchant;
+			put<uint16_t>(b.data(), o + 6 + 4 * k, list->second[k].name);
+		}
+	}
+}
+
 void store_missions(const SaveGame& save, State& s) {
 	if (s.count("MS")) {
 		std::vector<uint8_t>& b = s["MS"].bytes;
@@ -435,6 +493,7 @@ void build_save(const State& state, SaveGame& save) {
 		copy_blocks(*e, save.events);
 	}
 	load_missions(state, save);
+	load_hunts(state, save);
 	if (const Region* m = find(state, "B")) {
 		copy_blocks(*m, save.mail);
 	}
@@ -676,6 +735,7 @@ State dump_save(const SaveGame& save, const State& game) {
 		store_blocks(save.events, s["E"]);
 	}
 	store_missions(save, s);
+	store_hunts(save, s);
 	if (s.count("B")) {
 		store_blocks(save.mail, s["B"]);
 	}
@@ -1001,7 +1061,9 @@ bool pointer_field(const std::string& name, size_t w, const std::vector<uint8_t>
 		const uint16_t type = uint16_t(game[w - field + 6] | game[w - field + 7] << 8);
 		// A freed event (0xFFFF) keeps the game's stale pointers there (an ended script's program; the variables too of
 		// one 0x4D8E70 took out, a campaign's start: p3vita keeps their 1).
-		return (type == 0x1B && (field == 0x8 || field == 0xC)) || (type == 0x34 && field == 0x8) ||
+		// A pirate hunt's list from its phase 7 (region HN; before it, [+0x8..+0xF] are merchants).
+		return (type == 0x1B && (field == 0x8 || field == 0xC)) ||
+			(type == 0x34 && field == 0x8 && game[w - field + 0x15] >= 7) ||
 			(type == 0xFFFF && (field == 0x8 || field == 0xC) && looks_like_pointer(v));
 	}
 	return false;

@@ -123,8 +123,8 @@ Cómo leerla:
   (enganchados a sus animaciones de la ciudad viva) y las campanas; faltan los barcos del puerto, el fuego y el derrumbe.
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): acabados los restos
   de las pantallas (las preguntas del convoy, las sombras y la nieve, el panel lateral con las letras y los textos del
-  juego), el intérprete de misiones y las campañas y el tutorial (apartado 3: hechos el 21-11-2026, salvo la carta final
-  0x3D de la dieta y la voz del tutorial); luego el final de la partida
+  juego), el intérprete de misiones y las campañas y el tutorial (apartado 3: hechos el 21-11-2026, salvo la voz del
+  tutorial; la carta final 0x3D de la dieta, hecha el 21-11-2026); luego el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -142,10 +142,10 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Parte | Hecho | Lo que falta |
 |-|-|-|
 | La simulación sola (sin el jugador) | del código del juego al que llega, el 87 % reescrito con su nombre y otro 12 % hecho sin él (cargar y guardar partidas, la navegación) o saltado a propósito (medida abajo, 20-11-2026) | el 1 % sin nada son los manejadores del evento de la red y de dos que nadie crea; además, los estados raros del barco y unas ramas sueltas (apartado 2) |
-| Las misiones (20-11-2026) | la base (la lista, la 0xC0, cargar y guardar los guiones, el bucle del intérprete y sus 4 esperas), las 138 instrucciones del intérprete, las operaciones que encola (la 0x82 incluida), el evento 0x09 que crea y las 4 operaciones del jugador sobre sus cartas | la carta final 0x3D, el visor, las campañas (apartado 3: hecho su arranque en el motor; faltan su pantalla y el tutorial) |
+| Las misiones (20-11-2026) | la base (la lista, la 0xC0, cargar y guardar los guiones, el bucle del intérprete y sus 4 esperas), las 138 instrucciones del intérprete, las operaciones que encola (la 0x82 incluida), el evento 0x09 que crea y las 4 operaciones del jugador sobre sus cartas | nada del motor (la carta final 0x3D de la dieta, hecha el 21-11-2026; el visor, las campañas y el tutorial, hechos; falta la voz del tutorial, con el sonido) |
 | Tipos de evento (58) | 54 (el 0x09 de las misiones, 20-11-2026) | 4: 1 la partida en red y 3 nadie |
 | Operaciones (193 códigos) | 173: las 37 de la simulación, las 106 del jugador (la 0x82 de las misiones y las 0x54, 0x55, 0x74 y 0x76 de sus cartas, 20-11-2026), 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red, la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) y la 0xC0 (el arranque de las misiones, 19-11-2026) | 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
-| Cartas (las 154 llamadas del juego que mandan una) | 148 (las del intérprete y del evento 0x09, 20-11-2026) | 6: la carta final 0x3D del evento 0x34, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
+| Cartas (las 154 llamadas del juego que mandan una) | 149 (las del intérprete y del evento 0x09, 20-11-2026; la carta final 0x3D de la caza de piratas, 21-11-2026) | 5: 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026); los animales, los pájaros y los peces (21-11-2026); las animaciones de los edificios, los árboles y el pescador (21-11-2026) | los barcos del puerto, el agua animada, el tiempo, las obras, el fuego y el humo, el asedio (apartado 4) |
@@ -455,9 +455,15 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   comprobadas con `mission_letter_ops`): 0x74 (los botones de las cartas de misión 0x3C..0x40: la respuesta a la
   variable del guion y la carta sin plazo, `missions_detail::fn_53ec30`), 0x54 (quitar una carta 0x44 y apuntar el
   barco en el guion, 0x53CA30 con 0x4D7340; las cartas 0x44 solo las crea código muerto), 0x55 (pagar el trozo de mapa
-  del tesoro, 0x4D74C0) y 0x76 (aceptar la carta de misión de la taberna 0x71, 0x53EDF0 con 0x4D7870). Falta la carta
-  final 0x3D del evento 0x34 (0x4F3AF0, con su lista de avisos [+0x8], 0x4F3980..0x4F3CE0), que es de la dieta (la caza
-  de piratas, `diet.cpp`) y no de las misiones, pero es una carta del tipo de las de misión (registro y texto).
+  del tesoro, 0x4D74C0) y 0x76 (aceptar la carta de misión de la taberna 0x71, 0x53EDF0 con 0x4D7870). Y (21-11-2026,
+  `re/emu/sesion53/README.md`) la carta final 0x3D del evento 0x34, que es de la dieta (la caza de piratas, `diet.cpp`)
+  y no de las misiones, pero del tipo de las de misión (registro y texto): su lista de avisos ([+0x8], 0x4F3980..0x4F3CE0;
+  `SaveGame::hunt_notices`, guardada y cargada con el evento, región HN del oráculo), que llenan los barcos de la flota
+  hundidos (0x50BFD0), apresados (0x540520), hundidos por el temporal (0x502110) y los que apresa la flota (0x540520, con
+  el resultado «éxito» si es el pirata buscado), y la carta al volver la flota (0x4F3AF0, 0x4F3CE0) a cada jugador
+  humano; en el visor, como las otras cartas de misión (estados `hunt-letter`, `hunt-beaten`). Comprobado con los
+  escenarios `hunt_notices` (partidas 4 y 5) y `hunt_letter` (1, 3, 5, 7), `dieta` (la caza entera hasta la carta) y la
+  partida escrita y leída tras ella.
 - [x] **En el visor** (20 y 21-11-2026): las cartas de misión con sus botones (0x74; arreglado de paso que los
   botones de una carta no se iban al responderla), la carta de misión de la taberna (la «Trastienda», el décimo
   personaje: su página 0x5D8100 con el título, el texto hasta el «|», «Aceptar» con la respuesta de la carta y la
@@ -1292,6 +1298,11 @@ visor). Reproducido; sin decidir cómo corregirlo (¿su ciudad natal?).
   cascos no toca ningún lado, el juego toma como lado el byte bajo de un puntero que dejó allí 0x60BCDA (el bloque del
   barco + 0x27 + una dirección), y con él lee 0x67AB98 fuera de su fila. Cambia con las direcciones del montón: no se
   puede reproducir; p3vita y el oráculo ponen 0. Corrección posible: el lado del casco más cercano al cruce.
+- La carta final de la caza de piratas (0x4F3CE0, `diet.cpp`; parece, y no se da): los barcos perdidos de la flota
+  salen como «Tu barco...» en la carta de cada jugador, sean de quien sean; con alguno del propio jugador, la lista
+  pone el encabezado y la frase del último con su «%s» sin rellenar, y a los apresados y hundidos por el temporal la
+  frase de «hundido» en vez del sufijo. Solo con barcos del jugador en la flota, que son de la IA (0x50AC40).
+  Reproducido.
 - Parecen, sin comprobar: 0x61A9E0 mira el borde de arriba con la x; 0x605420 y 0x606CC0 leen el primer barco del
   convoy de un lado sin mirar si existe (p3vita no cuenta ninguno); 0x60BCDA se puede colgar con un radio de 0; el bucle de nombres de 0x5063C0 no acaba con
   menos de 307 nombres; el convoy pirata sin guía (los piratas apagados con un convoy en el mar, o el jugador que
@@ -1660,8 +1671,10 @@ retener (`holdable_units`), y la ventana no deja ofrecer más (ctest `offer_wind
 - El nombre de la ciudad natal al guardar (0x549D7D): la tabla 0x6DDA00, que va por número de ciudad, con el índice.
   Corregido: por el número (tabla 0x6DE4B8).
 - El relleno de las batallas (0x611950): 3 bytes por entrada sin inicializar. Corregido: a cero.
-- Los nodos del evento 0x34 cambian en cada carga y guardado (0x4F3A40, 0x4F39E0; parece). Corregido: se guardan como
-  se leyeron.
+- Los avisos de la caza de piratas (los nodos del evento 0x34) pierden el nombre del barco en cada guardado y carga
+  (0x4F39E0 escribe el signo de su byte bajo y ese byte, 0x4F3A40 lee el primero dos veces: el nombre vuelve 0 o
+  0xFFFF y la carta final dice otro barco; parece). Corregido: el nombre en dos bytes (el alto y el bajo), y al leer
+  el signo 0xFF del juego como 0 (21-11-2026; antes, los bytes como se leyeron).
 - Leer un `.pst` pone a cero los contadores del comerciante 0. Corregido (`read_statistics`).
 
 **Los textos** (solo cambian lo que lee el jugador; `tick_probe --fix-game-bugs` en los escenarios):

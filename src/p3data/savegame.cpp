@@ -7,6 +7,7 @@
 #include <map>
 
 #include "p3data/aim.hpp"
+#include "p3data/game_fixes.hpp"
 #include "p3data/lz.hpp"
 #include "p3data/savegame_load.hpp"
 #include "p3data/savegame_write.hpp"
@@ -689,7 +690,8 @@ void load_mail(Reader r, SaveGame& out) {
 // Los de tipo 0x1B guardan después las [+0x12] variables de su guion (u32 cada
 // una: SaveGame::missions.scripts, sin el programa, que pone
 // attach_mission_programs) y los de tipo 0x34 con [+0x15] ≥ 7 una lista de
-// nodos de 5 bytes, que no se usa (su puntero queda a 0).
+// nodos de 5 bytes, los avisos de la caza de piratas (SaveGame::hunt_notices;
+// su puntero queda a 1).
 void load_events(Reader r, SaveGame& out) {
 	GlobalMemory& g = out.globals;
 	for (uint32_t a : {0x6DD744u, 0x6DD746u, 0x6DD748u}) {
@@ -703,6 +705,7 @@ void load_events(Reader r, SaveGame& out) {
 	}
 	out.opaque.event_extras.assign(count, {});
 	out.missions.scripts.clear();
+	out.hunt_notices.clear();
 	for (size_t i = 0; i < out.events.size(); ++i) {
 		GameMemory<0x18>& e = out.events[i];
 		const size_t extra_start = r.position();
@@ -716,10 +719,22 @@ void load_events(Reader r, SaveGame& out) {
 			e.u32(8) = 0;
 			e.u32(0xC) = script.variables.empty() ? 0 : 1;
 		} else if (e.u16(6) == 0x34 && e.u8(0x15) >= 7 && e.u32(8) != 0) {
+			// The pirate hunt's notices (0x4F3A40 on a new node, 0x4D83A8): u8 the kind, u8 the merchant, the name
+			// from the third byte twice (b2 · 0x101) and the fourth skipped, a node more while the next byte is 0x7F.
+			// GAME BUG (looks like one): the writer 0x4F39E0 puts the sign of the name's low byte and that byte there
+			// (savegame_write.cpp), so a name comes back 0 or 0xFFFF. Fixed: the two bytes a big-endian u16, the
+			// writer's sign byte 0xFF taken as 0 (a name's high byte the game's writer lost).
+			std::vector<SaveGame::HuntNotice>& list = out.hunt_notices[uint16_t(i)];
+			list.clear();
 			do {
-				r.skip(4);
+				SaveGame::HuntNotice n;
+				n.kind = r.u8();
+				n.merchant = r.u8();
+				const uint8_t b2 = r.u8(), b3 = r.u8();
+				n.name = fix_game_bugs() ? uint16_t(b2 == 0xFF ? b3 : (b2 << 8) | b3) : uint16_t(b2 * 0x101);
+				list.push_back(n);
 			} while (r.u8() == 0x7F && r.ok());
-			e.u32(8) = 0;
+			e.u32(8) = 1;
 		}
 		out.opaque.event_extras[i] = r.since(extra_start);  // Kept for write_savegame.
 	}

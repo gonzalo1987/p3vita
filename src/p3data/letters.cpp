@@ -78,22 +78,7 @@ struct Composer {
 	std::string tavern(uint32_t i) const { return table_town(save, i, save.opaque.town_taverns); }
 	std::string first(uint32_t i) const { return game_first_name(save, i); }  // 0x512A60
 	std::string family(uint32_t i) const { return game_family_name(save, i); }  // 0x512AE0
-	// 0x512B20 (on the names object 0x6DDAA0): a name of the game's ship
-	// names ([+0xD8] of them), then of the players' (up to [+0xDA]: none
-	// after a load, 0x5121C0 undoes them; the operations 0x2D and 0x2E add
-	// them, SaveGame::player_ship_names), and past them a ship type's word by
-	// (~n) & 3 (0x6C0CB4: «snaikka», «crayer», «cog», «hulk»).
-	std::string list_ship_name(uint32_t n) const {
-		const uint32_t index = n & 0xFFFF;
-		const uint32_t base = save.globals.u16(kShipNameCount);
-		if (index < base) {
-			return index < save.ship_names.size() ? save.ship_names[index] : std::string();
-		}
-		if (index < save.globals.u16(kShipNameCount + 2)) {
-			return index - base < save.player_ship_names.size() ? save.player_ship_names[index - base] : std::string();
-		}
-		return t.raw_at(0x6C0CB4 + 4 * (~n & 3));
-	}
+	std::string list_ship_name(uint32_t n) const { return ship_list_name(save, t, n); }  // 0x512B20 (letters.hpp)
 	// The name in a ship ([+0x160]); the game doesn't check the index.
 	std::string ship_name(uint32_t ship) const {
 		if (ship >= save.ships.size()) {
@@ -2596,6 +2581,18 @@ std::vector<LetterParagraph> letter_paragraphs(const std::string& raw) {
 		}
 	}
 	return paragraphs;
+}
+
+std::string ship_list_name(const SaveGame& save, const GameTexts& texts, uint32_t n) {
+	const uint32_t index = n & 0xFFFF;
+	const uint32_t base = save.globals.u16(kShipNameCount);
+	if (index < base) {
+		return index < save.ship_names.size() ? save.ship_names[index] : std::string();
+	}
+	if (index < save.globals.u16(kShipNameCount + 2)) {
+		return index - base < save.player_ship_names.size() ? save.player_ship_names[index - base] : std::string();
+	}
+	return texts.raw_at(0x6C0CB4 + 4 * (~n & 3));
 }
 
 std::vector<uint8_t> mission_letter_text(const SaveGame& save, const GameTexts* texts, const std::vector<uint8_t>& program,

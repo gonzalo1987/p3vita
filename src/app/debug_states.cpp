@@ -856,6 +856,67 @@ bool mission_windows(SaveGame& save) {
 	return true;
 }
 
+// The diet's pirate hunt's end (town_tick/diet.cpp): a listed AI merchant's convoy as its fleet back at the Hanse's
+// town (state 0x16, its guide at the town), an event 0x34 in its phase 10 at the current tick with the names of the
+// first pirate's captain there is and the result (1 success; 3 the fleet beaten with `beaten`), and with notices: a
+// ship of the fleet sunk, one seized, one sunk in a storm and a ship the player's crew took (none when beaten). The
+// engine sends the letter 0x3D to the player at the next tick.
+bool hunt_letter(SaveGame& save, bool beaten) {
+	GlobalMemory& g = save.globals;
+	const uint32_t ships = g.u16(global::kShipCount);
+	const uint32_t merchants = g.u16(global::kWorldMerchantCount);
+	uint16_t fleet = 0xFFFF;
+	for (uint32_t c = g.u16(global::kShips + 0xEC); c < save.convoys.size() && fleet == 0xFFFF; c = save.convoys[c].u16(8)) {
+		const GameMemory<0x3C>& v = save.convoys[c];
+		if (v.u8(0) < merchants && save.merchants[v.u8(0)].memory.u16(8) != 0 && v.u16(0x10) < ships) {
+			fleet = uint16_t(c);
+		}
+	}
+	if (fleet == 0xFFFF) {
+		return false;
+	}
+	GameMemory<0x3C>& c = save.convoys[fleet];
+	const uint8_t town = g.u8(0x6DE52E);  // the Hanse's town
+	const uint32_t row = 0x6DDB90 + 0x34 * uint32_t(g.u8(0x6DE4B8 + town));
+	ShipMemory& guide = save.ships[c.u16(0x10)].memory;
+	guide.u16(0x1C) = 0;
+	guide.u16(0x1E) = uint16_t(g.u32(row + 0x20));
+	guide.u16(0x20) = 0;
+	guide.u16(0x22) = uint16_t(g.u32(row + 0x24));
+	c.u16(0x12) = 0x16;
+	uint8_t first = 0xFF, family = 0xFF;
+	for (const auto& p : save.pirates) {
+		for (uint32_t s = p ? p->u16(0xC) : ships; s < ships && first == 0xFF; s = save.ships[s].memory.u16(4)) {
+			const uint16_t captain = save.ships[s].memory.u16(0x42);
+			if (captain < save.captains.size()) {
+				first = save.captains[captain].u8(2);
+				family = save.captains[captain].u8(3);
+			}
+		}
+	}
+	const uint16_t event = tick::events_detail::fn_4d8cf0(save, g.u32(global::kWorldTick));
+	GameMemory<0x18>& e = save.events[event];
+	e.u16(6) = 0x34;
+	e.u32(8) = 0;
+	e.u8(0xC) = first;
+	e.u8(0xD) = family;
+	e.u8(0xE) = beaten ? 3 : 1;
+	e.u8(0x14) = town;
+	e.u8(0x15) = 10;
+	e.u16(0x16) = fleet;
+	c.u16(2) = event;
+	if (!beaten) {
+		namespace dd = tick::diet_detail;
+		// Four names of the game's list from the guide's on (0x512B20's).
+		const uint16_t base = guide.u16(0x15E);
+		dd::add_hunt_notice(save, event, dd::kHuntSunk, c.u8(0), uint16_t(base + 1));
+		dd::add_hunt_notice(save, event, dd::kHuntSeized, c.u8(0), uint16_t(base + 2));
+		dd::add_hunt_notice(save, event, dd::kHuntStorm, c.u8(0), uint16_t(base + 3));
+		dd::add_hunt_notice(save, event, dd::kHuntTaken, uint8_t(save.player), uint16_t(base + 4));
+	}
+	return true;
+}
+
 // The informer's treasure map's piece (tavern_window.hpp, 0x526B40; the operation 0x55): in Lübeck (its number 14, the
 // town the viewer starts in) the informer there ([+0x82C] 0), and the player a treasure map's letter 0x45 as the
 // mission interpreter's 0xF6 sends it (the spot 4, no piece found). The informer offers the piece every third day:
@@ -1119,6 +1180,8 @@ const char kDebugStatesHelp[] =
 	"              found and a message window\n"
 	"  mission-letters  the missions' letters from the game's files: two answers, one,\n"
 	"              none, and two tavern ones for Lübeck\n"
+	"  hunt-letter  the diet's pirate hunt back home with notices of each kind: its\n"
+	"              letter 0x3D at the next tick (hunt-beaten: the fleet beaten, none)\n"
 	"  auctions    the player in the guild of his first ship's town and two auctions\n"
 	"              of ships there and in the next town with a guild (bidding in 15 days)\n"
 	"  auction     the same with the first auction only\n"
@@ -1517,6 +1580,11 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "informer-map") {
 			if (!informer_map(save)) {
 				error = "the save has no Luebeck";
+				return false;
+			}
+		} else if (state == "hunt-letter" || state == "hunt-beaten") {
+			if (!hunt_letter(save, state == "hunt-beaten")) {
+				error = "no AI merchant's convoy in the list of those at sea";
 				return false;
 			}
 		} else if (state == "mission-letters") {

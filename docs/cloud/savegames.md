@@ -471,7 +471,9 @@ Certain:
   twice and skips the fourth; the writer writes the sign of the low byte of
   [+0x6] and that byte. A node `b0 b1 b2 b3` is saved as `b0 b1 sign(b2)
   b2`, and the list always ends in 0. Reproduced in `write_event_nodes`,
-  same as the game (§6).
+  same as the game (§6). (Since 2026-11-21 the nodes are kept in memory,
+  `SaveGame::hunt_notices`, read and written as the game; the fix writes
+  the name big-endian.)
 
 Looks like one:
 - The node list of a town ([0x9B4]) turns round at each save and load (the
