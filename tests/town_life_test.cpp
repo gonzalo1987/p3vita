@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "p3data/lcr.hpp"
+#include "p3data/tile_anims.hpp"
 #include "p3data/town_life.hpp"
 
 using namespace p3::data;
@@ -503,6 +504,74 @@ void test_fish() {
 	check(seen && faded, "they come up and fade away");
 }
 
+// A tile's animations (tile_anims.hpp): a loop of 2 parameters runs while active and hides when not; one of 5 waits
+// and starts its pages at random; one of 7 goes from place to place; one of 9 repeats its page.
+void test_tile_anims() {
+	auto variant = [](uint32_t kind, std::vector<uint32_t> params, int frames) {
+		TileVariant v;
+		v.kind = kind;
+		v.params = std::move(params);
+		for (int f = 0; f < frames; ++f) {
+			v.frames.push_back({f * 10, 0, 10, 10});
+		}
+		return v;
+	};
+	TileDef tile;
+	tile.variants.push_back(variant(0, {}, 1));  // its shadow: no group
+	tile.variants.push_back(variant(3, {100, 0}, 4));  // smoke
+	tile.variants.push_back(variant(4, {100, 0, 1000, 2, 500}, 3));  // a sheep
+	tile.variants.push_back(variant(4, {100, 0, 1000, 2, 500}, 5));
+	tile.variants.push_back(variant(5, {100, 0, 0, 1, 100, 0, 1}, 3));  // a gull: from the gate (0) to a post (1)
+	tile.variants.push_back(variant(5, {100, 0, 0, 1, 100, 1, 0}, 3));  // and back
+	tile.variants.push_back(variant(6, {100, 0, 0, 1, 100, 0, 0, 3, 0}, 2));  // a farmer, three rounds
+	std::vector<TileAnimGroup> groups = tile_anim_groups(tile);
+	check(groups.size() == 4 && groups[0].kind == 2 && groups[1].kind == 5 && groups[1].pages.size() == 2 &&
+			groups[2].kind == 7 && groups[3].kind == 9,
+		"the groups by kind and their states by their parameters");
+	if (groups.size() != 4) {
+		return;
+	}
+	uint32_t rs = 1;
+	TileAnimGroup& smoke = groups[0];
+	check(smoke.shown() == nullptr, "hidden before its first step");
+	step_tile_anim(smoke, 1000, true, rs);
+	check(smoke.shown() != nullptr && smoke.frame == 0, "started while active");
+	step_tile_anim(smoke, 1001, true, rs);
+	step_tile_anim(smoke, 1250, true, rs);
+	check(smoke.frame == 2, "a frame each 100 ms");
+	step_tile_anim(smoke, 1500, true, rs);
+	check((smoke.flags & 0x80) != 0 && smoke.frame == 3, "ended at its last frame");
+	step_tile_anim(smoke, 1501, true, rs);
+	check(smoke.frame == 0 && (smoke.flags & 0x80) == 0, "and again");
+	step_tile_anim(smoke, 1502, true, rs);
+	step_tile_anim(smoke, 1700, false, rs);
+	check(smoke.shown() == nullptr, "hidden when not active");
+	// The gull: whatever page it starts leaves its place, and it ends where that page goes.
+	TileAnimGroup& gull = groups[2];
+	uint8_t places_seen = 0;
+	uint32_t t = 0;
+	for (int k = 0; k < 400; ++k, t += 50) {
+		const uint8_t before = gull.place;
+		const bool stopped = (gull.flags & 0x80) != 0;
+		step_tile_anim(gull, t, true, rs);
+		if (stopped && !(gull.flags & 0x80)) {
+			check(gull.pages[gull.flags & 0x3F]->params[5] == before, "a page leaving its place");
+		}
+		places_seen |= uint8_t(1u << gull.place);
+	}
+	check(places_seen == 3, "it goes from place to place");
+	// The farmer: three rounds of his page before he stops.
+	TileAnimGroup& farmer = groups[3];
+	int rounds = 0;
+	t = 0;
+	for (int k = 0; k < 200 && !(rounds > 0 && (farmer.flags & 0x80)); ++k, t += 50) {
+		const uint8_t mode = farmer.mode;
+		step_tile_anim(farmer, t, true, rs);
+		rounds += farmer.mode == 3 && mode != 3;
+	}
+	check(rounds == 3, "his page three times");
+}
+
 // A convoy leaving the town (the event 0x0C in the state 1): its cart starts at its road's inner end, goes out as the
 // convoy's counter grows, and goes when the convoy sets out (the state 2).
 void test_cart() {
@@ -579,6 +648,7 @@ int main() {
 	test_animals();
 	test_birds();
 	test_fish();
+	test_tile_anims();
 	if (failures) {
 		std::fprintf(stderr, "%d failures\n", failures);
 		return 1;

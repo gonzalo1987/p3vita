@@ -65,6 +65,7 @@ add_library(p3data STATIC
 	lz_compress.cpp
 	seamap.cpp
 	simulation.cpp
+	tile_anims.cpp
 	town.cpp
 	town_buildings.cpp
 	thresholds.cpp

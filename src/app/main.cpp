@@ -62,6 +62,7 @@
 #include "p3data/seamap.hpp"
 #include "p3data/town.hpp"
 #include "p3data/town_buildings.hpp"
+#include "p3data/tile_anims.hpp"
 #include "p3data/town_life.hpp"
 #include "p3data/trade.hpp"
 #include "p3data/trade_route_window.hpp"
@@ -573,7 +574,7 @@ public:
 			const uint8_t owner = sprite.object && cell < owners_.size() ? owners_[cell] : kNoBuildingOwner;
 			items_.push_back({texture, {sprite.src_x, sprite.src_y, sprite.width, sprite.height},
 				{sprite.dst_x, sprite.dst_y, sprite.width, sprite.height}, sprite.tile, owner, sprite.cell_y,
-				!sprite.object && sprite.tile->type == kWaterTileType, sprite.cell_x});
+				!sprite.object && sprite.tile->type == kWaterTileType, sprite.cell_x, sprite.slice});
 			const TileDef* tile = sprite.tile;
 			const TileVariant* shadow = sprite.object ? tile->shadow() : nullptr;
 			const size_t k = size_t(std::max(1, tile->cols) - 1);
@@ -647,11 +648,62 @@ public:
 		const uint32_t elapsed = now - life_last_;
 		life_last_ = now;
 		life_.step(now, elapsed, {camera_x, camera_y, width, kScreenHeight});
+		// The tiles' own animations of the cells in view (0x592000), «active» by the town's merchants' businesses.
+		producing_.assign(save.merchants.size(), 0);
+		for (size_t m = 0; m < save.merchants.size(); ++m) {
+			producing_[m] = save.merchants[m].memory.u32(0x40 + 4 * uint32_t(index));
+		}
+		siege_ = (save.towns[index].memory.u32(0x2C8) & 0x10) != 0;
+		step_anims(now, camera_x, camera_y, width, save.towns[index].grid);
 	}
+
+	// 0x592000 (the objects' layer): each cell of the view with an object's slice steps its tile's animations, as the
+	// default +0x38 (0x552C10 → 0x585900) of the classes rewritten (tile_anim_facility), «active» each building's (the
+	// town shown, or a workshop at work: workshop_active with the cell's grid byte).
+	void step_anims(uint32_t now, int camera_x, int camera_y, int width, const std::vector<uint8_t>& grid,
+		bool all_active = false) {
+		for (size_t i = first_object_; i < items_.size(); ++i) {
+			const Item& item = items_[i];
+			const int facility = item.tile ? p3::data::tile_anim_facility(item.tile->type) : -2;
+			if (facility == -2) {
+				continue;
+			}
+			const int x = cell_screen_x(item.col, item.row);
+			const int y = cell_screen_y(item.row);
+			if (x + kTileWidth < camera_x || x > camera_x + width || y + kTileHeight < camera_y ||
+				y > camera_y + kScreenHeight) {
+				continue;
+			}
+			bool active = true;
+			if (facility >= 0 && !all_active) {
+				const size_t cell = size_t(item.col) * size_t(map_rows_) + size_t(item.row);
+				active = item.owner < producing_.size() &&
+					p3::data::workshop_active(producing_[item.owner], facility, siege_, cell < grid.size() ? grid[cell] : 0);
+			}
+			for (p3::data::TileAnimGroup& group : anims_for(item.tile)) {
+				p3::data::step_tile_anim(group, now, active, anim_rand_);
+			}
+		}
+	}
+
+	std::vector<p3::data::TileAnimGroup>& anims_for(const TileDef* tile) {
+		auto it = anims_.find(tile);
+		if (it == anims_.end()) {
+			it = anims_.emplace(tile, p3::data::tile_anim_groups(*tile)).first;
+		}
+		return it->second;
+	}
+
 	// No living town (a template's map, a battle at the town).
 	void stop_life() {
 		life_.clear();
 		life_town_ = -1;
+	}
+	// A template's map (no town of a save): its tiles' animations all active (no owners to ask).
+	void step_template_anims(uint32_t now, int camera_x, int camera_y, int width) {
+		producing_.clear();
+		siege_ = false;
+		step_anims(now, camera_x, camera_y, width, {}, true);
 	}
 
 	// The town under a battle at it (BattleTown, the battles' piece 7, part 3), in two parts so that the battle's
@@ -744,6 +796,9 @@ public:
 			SDL_RenderCopy(renderer_, item.texture, &item.src, &dst);
 			if (rival) {
 				SDL_SetTextureColorMod(item.texture, 255, 255, 255);
+			}
+			if (i >= first_object_ && item.tile) {
+				draw_item_anims(item, camera_x, camera_y, rival);
 			}
 		}
 		for (; next_strip < strips_.size(); ++next_strip) {
@@ -881,6 +936,7 @@ private:
 		int row = 0;  // The row of the cell it stands on.
 		bool water = false;  // A ground tile of the water (.let type 0xE).
 		int col = 0;  // That cell's column.
+		int slice = 0;  // Its tile's slice on that cell.
 	};
 	// A tile's shadow in the town (0x591C50: after the ground and before the objects, 0x568CE0, a pass of shadows
 	// alone, row by row: one where a cell holds its object's slice cols − 1; 0x551F70 places it): the .let's shadow
@@ -1105,6 +1161,12 @@ private:
 	std::map<int, std::vector<std::vector<p3::data::TownPath>>> nodes_;
 	uint32_t life_last_ = 0;
 	uint32_t life_tick_ = 0xFFFFFFFF;
+	// The tiles' own animations (tile_anims.hpp): each animated tile type's groups, the viewer's random for them, and
+	// what their buildings' «active» reads of the town shown (each merchant's businesses producing in it, a siege).
+	std::map<const TileDef*, std::vector<p3::data::TileAnimGroup>> anims_;
+	uint32_t anim_rand_ = 1;
+	std::vector<uint32_t> producing_;
+	bool siege_ = false;
 	// A walker's strip to draw with the row of its cell (draw()).
 	struct Strip {
 		int row = 0;
@@ -1233,6 +1295,50 @@ private:
 			SDL_RenderCopy(renderer_, texture, &src, &at);
 			SDL_SetTextureColorMod(texture, 255, 255, 255);
 			SDL_SetTextureAlphaMod(texture, 255);
+		}
+	}
+
+	// 0x585970 → 0x585550: the frame shown of each of its tile's animations over an object's slice, only its part
+	// within the slice's columns (so it goes with the building's depth), placed in the tile's rectangle.
+	void draw_item_anims(const Item& item, int camera_x, int camera_y, bool rival) {
+		const auto it = anims_.find(item.tile);
+		if (it == anims_.end() || item.slice < 0 || size_t(item.slice) >= item.tile->slices.size()) {
+			return;
+		}
+		const TileSlice& s = item.tile->slices[size_t(item.slice)];
+		const int left = item.dst.x - s.x;
+		const int top = item.dst.y - s.y;
+		for (const p3::data::TileAnimDraw& d : p3::data::tile_anim_drawing(item.tile->type, it->second)) {
+			const TileVariant* page = nullptr;
+			const TileSlice* f = it->second[d.group].shown(&page, d.even_hidden);
+			if (!f) {
+				continue;
+			}
+			int x = left + page->x;
+			int src_x = f->x;
+			int w = f->width;
+			if (x + w <= item.dst.x || x >= item.dst.x + s.width) {
+				continue;
+			}
+			if (x < item.dst.x) {
+				src_x += item.dst.x - x;
+				w -= item.dst.x - x;
+				x = item.dst.x;
+			}
+			w = std::min(w, item.dst.x + s.width - x);
+			SDL_Texture* texture = page->atlas.empty() ? tile_texture(item.tile) : atlas_texture(page->atlas);
+			if (!texture || w <= 0) {
+				continue;
+			}
+			const SDL_Rect src = {src_x, f->y, w, f->height};
+			const SDL_Rect dst = {x - camera_x, top + page->y - camera_y, w, f->height};
+			if (rival) {
+				SDL_SetTextureColorMod(texture, 105, 105, 115);
+			}
+			SDL_RenderCopy(renderer_, texture, &src, &dst);
+			if (rival) {
+				SDL_SetTextureColorMod(texture, 255, 255, 255);
+			}
 		}
 	}
 
@@ -27112,6 +27218,7 @@ int main(int argc, char** argv) {
 					kGameSpeeds[game_speed].ms_per_tick, sailing && sailing->time_mode() == 2);
 			} else {
 				view->stop_life();
+				view->step_template_anims(app_ticks(), camera_x, camera_y, town_width);
 			}
 			view->draw(camera_x, camera_y, pointed, side.shade_rivals && save.player >= 0 ? save.player : -1,
 				int(save.merchant_count));

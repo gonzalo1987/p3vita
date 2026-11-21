@@ -866,7 +866,14 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     agua, tantos como da la productividad de los pescadores de la ciudad, que aparecen y se desvanecen (0x58C6CB,
     0x569560); y cada uno que se va, repuesto como el juego (0x593D50). Sus huellas en la nieve van con el tiempo.
   - [ ] Las animaciones de los edificios (las variantes de clase 3 a 8 de sus `.let`: humo, gaviotas del astillero,
-    granjas, talleres, el faro...) y el pescador de la cabaña (0x59A420).
+    granjas, talleres, el faro...) y el pescador de la cabaña (0x59A420). Hecha (21-11-2026, `re/emu/sesion50/README.md`,
+    «Part 3, first batch») la maquinaria (sus grupos y las cinco clases de estado, por tipo de casilla, en marcha solo
+    a la vista y si el edificio está activo: un taller solo si su dueño tiene ese negocio produciendo) con la taberna,
+    el faro, el baño, el arsenal y los talleres de la clase común (caza, cerveza, herrería, tejidos, sal, alfarería,
+    cantera, pez); luego la mina, las granjas de animales (ovejas, vacas, abejas, viñedo) y las gaviotas del
+    astillero, y las plantillas del visor animadas con todo activo. Faltan el astillero de reparación, las granjas de
+    cereal y cáñamo, el aserradero, la fundición, el balanceo de los árboles y el pescador; de noche la taberna, el
+    faro y el astillero se ven iluminados en el juego (el visor no tiene noche).
   - [ ] Los barcos en el puerto (la lista *0x6E2D50, el objeto 0x6E6220 al que la simulación avisa al atracar y
     zarpar), también como puntos en el minimapa con el color de su dueño (0x56C730: azul los tuyos, gris oscuro los
     piratas, blanco los demás, rojo los de otro jugador humano; el dibujo del minimapa, 0x59C590). Con ellos, el «ir al
