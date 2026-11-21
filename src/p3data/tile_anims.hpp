@@ -51,13 +51,59 @@ bool workshop_active(uint32_t producing, int facility, bool siege, uint8_t grid)
 // enough (0x54EA20), −2 if the class's animations aren't rewritten yet.
 int tile_anim_facility(uint32_t type);
 
-// The groups a class draws over a slice and how (0x585970, or its own drawing): each group's index and whether
-// even hidden; none if its first is hidden (the shipyard's, 0x584F00: its gate's gulls, then its posts' and the
-// flying ones even hidden; the flying ones by day only: the viewer has no night).
-struct TileAnimDraw {
-	size_t group;
-	bool even_hidden;
+// A tile type's animations as its class keeps them: its groups (the generic reader's), and what some classes keep
+// of their own.
+struct TileAnims {
+	uint32_t type = 0;
+	std::vector<TileAnimGroup> groups;
+	// The repair yard (1B, 0x584260): whether it has work ([+0x19]: a ship in one of the town's shipyard lists or a
+	// convoy) and its ship's stage ([+0x18], 0 none).
+	uint8_t busy = 0;
+	uint8_t stage = 0;
+	// Simple states of a class's own over pages it picks (`flags` & 0x3F the page, 0x3F none): the sawmill's woman
+	// and carpenter (0x556860: [+0x18] and [+0x24], their pages [+0x30], [+0x31]), the foundry's kettle and smoke
+	// (0x555190: [+0x18] and [+0x3C], the kettle's page [+0x24]).
+	TileAnimGroup workers[2];
+	// The sawmill's pages (its reader 0x556780: one by kind, the slots 0x6E14B0 + 0x18 · k: kinds 3, 4, 5, 8, 6, 7).
+	std::vector<const TileVariant*> pages;
+	// The grain and hemp farms (53: 0x553AB0, 0x5538D0; 54: 0x554560, 0x5543A0): the field's page (its kind 3), its
+	// stage (0xFF none: [+0x34], [+0x1C]) and when it grows on ([+0x1C], [+0x20]: the world's tick; every days of the
+	// .let's second parameter, ·256), whether it is the farm itself (the .let's third parameter 0: [+0x18] 0) or one of
+	// its fields, its people's state (9 parameters: [+0x20], [+0x24]) over the farmer's wife's (kind 4) or the farmer's
+	// pages (kind 5; the hemp's farmer is its kind 4), and whether it worked at its last step.
+	const TileVariant* field = nullptr;
+	uint32_t field_time = 0;
+	uint32_t days = 0;
+	bool main_farm = false;
+	bool started = false;
+	bool working = false;
+	TileAnimGroup person;
+	std::vector<const TileVariant*> wife;
+	std::vector<const TileVariant*> farmer;
 };
-std::vector<TileAnimDraw> tile_anim_drawing(uint32_t type, const std::vector<TileAnimGroup>& groups);
+
+// A tile type's animations (`tile_anim_facility(tile.type)` not −2).
+TileAnims make_tile_anims(const TileDef& tile);
+
+// What a step reads of the town and the building.
+struct TileAnimTown {
+	bool shown = true;  // [view+0x4F0]: the town shown.
+	bool active = true;  // The class's +0x80 (0x54EA20: shown; a workshop's workshop_active and shown).
+	bool busy = false;  // The repair yard: the town's [0x81C] or [0x81E] below the ships' count, or [0x820] the convoys'.
+	uint16_t employees = 0;  // The repair yard: the town's shipyard's employees (its facility 1's [+0x4], [0x854]).
+	uint32_t tick = 0;  // The world's tick ([0x6DE4B4]): the farms' fields grow by it.
+};
+
+// One step of a tile type's animations for a cell of one of its buildings in view (its class's +0x38: the default
+// 0x552C10, the repair yard's 0x584260, the sawmill's 0x556860, the foundry's 0x555190).
+void step_tile_anims(TileAnims& a, uint32_t now, const TileAnimTown& town, uint32_t& rand_state);
+
+// What a slice of one of its buildings shows over it, in order (0x585970, or the class's own drawing: the shipyard's
+// 0x584F00, the repair yard's 0x5844E0, the sawmill's 0x5564F0, the foundry's 0x555010): each a page and its frame.
+struct TileAnimFrame {
+	const TileVariant* page;
+	const TileSlice* frame;
+};
+std::vector<TileAnimFrame> tile_anim_frames(const TileAnims& a);
 
 }  // namespace p3::data

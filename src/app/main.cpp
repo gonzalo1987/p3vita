@@ -653,7 +653,13 @@ public:
 		for (size_t m = 0; m < save.merchants.size(); ++m) {
 			producing_[m] = save.merchants[m].memory.u32(0x40 + 4 * uint32_t(index));
 		}
-		siege_ = (save.towns[index].memory.u32(0x2C8) & 0x10) != 0;
+		const TownMemory& tm = save.towns[index].memory;
+		siege_ = (tm.u32(0x2C8) & 0x10) != 0;
+		// The repair yard (0x584260): work in the town's shipyard lists or a convoy, the shipyard's employees.
+		const uint16_t ships = save.globals.u16(0x6DD894);
+		repair_busy_ = tm.u16(0x81E) < ships || tm.u16(0x81C) < ships || tm.u16(0x820) < save.globals.u16(0x6DD896);
+		shipyard_employees_ = tm.u16(0x854);
+		world_tick_ = save.tick();
 		step_anims(now, camera_x, camera_y, width, save.towns[index].grid);
 	}
 
@@ -674,22 +680,23 @@ public:
 				y > camera_y + kScreenHeight) {
 				continue;
 			}
-			bool active = true;
+			p3::data::TileAnimTown town;
 			if (facility >= 0 && !all_active) {
 				const size_t cell = size_t(item.col) * size_t(map_rows_) + size_t(item.row);
-				active = item.owner < producing_.size() &&
+				town.active = item.owner < producing_.size() &&
 					p3::data::workshop_active(producing_[item.owner], facility, siege_, cell < grid.size() ? grid[cell] : 0);
 			}
-			for (p3::data::TileAnimGroup& group : anims_for(item.tile)) {
-				p3::data::step_tile_anim(group, now, active, anim_rand_);
-			}
+			town.busy = repair_busy_;
+			town.employees = shipyard_employees_;
+			town.tick = world_tick_;
+			p3::data::step_tile_anims(anims_for(item.tile), now, town, anim_rand_);
 		}
 	}
 
-	std::vector<p3::data::TileAnimGroup>& anims_for(const TileDef* tile) {
+	p3::data::TileAnims& anims_for(const TileDef* tile) {
 		auto it = anims_.find(tile);
 		if (it == anims_.end()) {
-			it = anims_.emplace(tile, p3::data::tile_anim_groups(*tile)).first;
+			it = anims_.emplace(tile, p3::data::make_tile_anims(*tile)).first;
 		}
 		return it->second;
 	}
@@ -703,6 +710,9 @@ public:
 	void step_template_anims(uint32_t now, int camera_x, int camera_y, int width) {
 		producing_.clear();
 		siege_ = false;
+		repair_busy_ = true;
+		shipyard_employees_ = 40;
+		world_tick_ = now / 20;  // A day every 5 s, so that the farms' fields are seen growing.
 		step_anims(now, camera_x, camera_y, width, {}, true);
 	}
 
@@ -1163,10 +1173,13 @@ private:
 	uint32_t life_tick_ = 0xFFFFFFFF;
 	// The tiles' own animations (tile_anims.hpp): each animated tile type's groups, the viewer's random for them, and
 	// what their buildings' «active» reads of the town shown (each merchant's businesses producing in it, a siege).
-	std::map<const TileDef*, std::vector<p3::data::TileAnimGroup>> anims_;
+	std::map<const TileDef*, p3::data::TileAnims> anims_;
 	uint32_t anim_rand_ = 1;
 	std::vector<uint32_t> producing_;
 	bool siege_ = false;
+	bool repair_busy_ = false;
+	uint16_t shipyard_employees_ = 0;
+	uint32_t world_tick_ = 0;
 	// A walker's strip to draw with the row of its cell (draw()).
 	struct Strip {
 		int row = 0;
@@ -1308,12 +1321,9 @@ private:
 		const TileSlice& s = item.tile->slices[size_t(item.slice)];
 		const int left = item.dst.x - s.x;
 		const int top = item.dst.y - s.y;
-		for (const p3::data::TileAnimDraw& d : p3::data::tile_anim_drawing(item.tile->type, it->second)) {
-			const TileVariant* page = nullptr;
-			const TileSlice* f = it->second[d.group].shown(&page, d.even_hidden);
-			if (!f) {
-				continue;
-			}
+		for (const p3::data::TileAnimFrame& shown : p3::data::tile_anim_frames(it->second)) {
+			const TileVariant* page = shown.page;
+			const TileSlice* f = shown.frame;
 			int x = left + page->x;
 			int src_x = f->x;
 			int w = f->width;

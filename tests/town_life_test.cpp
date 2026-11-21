@@ -570,6 +570,39 @@ void test_tile_anims() {
 		rounds += farmer.mode == 3 && mode != 3;
 	}
 	check(rounds == 3, "his page three times");
+
+	// A grain farm (0x553AB0): its wife sows (her last but one page), its field grows a stage a day, its farmer
+	// reaps when it is ripe (his last page), and it is bare again.
+	TileDef farm;
+	farm.type = 0x53;
+	farm.params = {0, 1, 0};
+	farm.variants.push_back(variant(3, {}, 4));  // the field's four stages
+	farm.variants.push_back(variant(4, {100, 0, 0, 1, 100, 0, 1, 1, 0}, 2));  // the wife out
+	farm.variants.push_back(variant(4, {100, 0, 0, 1, 100, 1, 2, 1, 0}, 2));  // she sows
+	farm.variants.push_back(variant(4, {100, 0, 0, 1, 100, 2, 0, 1, 0}, 2));  // she goes in
+	farm.variants.push_back(variant(5, {100, 0, 0, 1, 100, 0, 1, 1, 0}, 2));  // the farmer out
+	farm.variants.push_back(variant(5, {100, 0, 0, 1, 100, 1, 0, 1, 0}, 2));  // he reaps
+	TileAnims fa = make_tile_anims(farm);
+	TileAnimTown town;
+	std::vector<int> stages;
+	t = 0;
+	for (int k = 0; k < 20000; ++k, t += 50) {
+		town.tick = uint32_t(k) * 4;  // a day every 64 steps
+		step_tile_anims(fa, t, town, rs);
+		const int stage = fa.stage == 0xFF ? -1 : int(fa.stage);
+		if (stages.empty() || stages.back() != stage) {
+			stages.push_back(stage);
+		}
+	}
+	// From where it started at random, every stage in its order.
+	bool order = stages.size() > 6;
+	for (size_t k = 1; k < stages.size(); ++k) {
+		order = order && (stages[k] == stages[k - 1] + 1 || (stages[k - 1] == 3 && stages[k] == -1));
+	}
+	check(order, "a grain farm: sown, growing, reaped, bare, again");
+	town.active = false;
+	step_tile_anims(fa, t, town, rs);
+	check(fa.stage == 0xFF && tile_anim_frames(fa).empty(), "not working, bare and empty");
 }
 
 // A convoy leaving the town (the event 0x0C in the state 1): its cart starts at its road's inner end, goes out as the
