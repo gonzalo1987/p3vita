@@ -895,7 +895,15 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   - [ ] Los barcos en el puerto (la lista *0x6E2D50, el objeto 0x6E6220 al que la simulación avisa al atracar y
     zarpar), también como puntos en el minimapa con el color de su dueño (0x56C730: azul los tuyos, gris oscuro los
     piratas, blanco los demás, rojo los de otro jugador humano; el dibujo del minimapa, 0x59C590). Con ellos, el «ir al
-    barco» de la lista de barcos centrado en su barco (0x476A30).
+    barco» de la lista de barcos centrado en su barco (0x476A30). Hecha (21-11-2026, `re/emu/sesion50/README.md`,
+    «Part 4») la escena del puerto (`src/p3data/port_scene.{hpp,cpp}`): un hueco por cada camino de la etiqueta 0 de
+    `.nodes`, los barcos atracados al final de su camino, los que entran y salen por él con sus curvas y sus velas (el
+    seguidor de caminos, 0x617380, comparado con el juego en el emulador: 0 diferencias en 212 868 casos), dibujados
+    entre los edificios, y el sonido al zarpar y al recoger velas (el de la sesión del sonido). Diferencia conocida: el
+    visor no se engancha al motor y saca de los estados de cada tick cuándo un barco empieza a entrar, atraca o sale,
+    así que dos barcos que cambian en el mismo tick toman sus huecos por su número y no por el orden de los avisos del
+    juego. Faltan el banderín (vuelto al viento de la vista), la marca de los barcos elegidos, los puntos del minimapa
+    y el «ir al barco»; el humo de los barcos dañados va con el fuego.
   - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe), las olas (`welle_*`), el oleaje de los
     acantilados (`Klippen_Flut`: la clase 0x1A, 0x581710 lo pinta sobre la roca con un alfa que sube y baja en 14
     pasos de 142 ms, 0x581890; su atlas por el nivel de nieve, 0x581C90) y los témpanos con el puerto helado (0x58C8A5).

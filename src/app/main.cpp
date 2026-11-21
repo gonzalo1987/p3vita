@@ -807,7 +807,6 @@ public:
 			life_.remove_creature(id);
 		}
 		port_.gone.clear();
-		port_.sounds.clear();  // (the sound's session's TownSounds::ship_in_out)
 		for (uint16_t slot : port_.order()) {
 			p3::data::PortShip& p = port_.at(slot);
 			if (p.ship >= save.ships.size()) {
@@ -830,6 +829,12 @@ public:
 			}
 			life_.move_figure(p.figure, look, x, y, p.figure_dir);
 		}
+	}
+	// The port's ships' sounds asked since the last frame (0x59A090: TownSounds::ship_in_out).
+	std::vector<p3::data::PortSound> take_port_sounds() {
+		std::vector<p3::data::PortSound> out;
+		out.swap(port_.sounds);
+		return out;
 	}
 	// A ship's look in the port (its type's, damage 0, its sails: lcr_ship_path), read once.
 	const p3::data::LcrAnim* ship_look(int type, int sails) {
@@ -27809,6 +27814,11 @@ int main(int argc, char** argv) {
 				// the view moved, the others' volume and side), the bells.
 				const uint32_t now = app_ticks();
 				town_sounds.set_view(camera_x, camera_y, town_width, kScreenHeight);
+				// The port's ships (0x59A090 from the port's scene): the game's third argument, 0 a ship leaving the
+				// quay (0x6135C0), 1 its sails taken in coming in (0x615295, 0x61689C).
+				for (const p3::data::PortSound& s : view->take_port_sounds()) {
+					town_sounds.ship_in_out(s.x, s.y, s.kind != 0, now);
+				}
 				for (const SoundOffer& o : view->sound_offers()) {
 					town_sounds.offer(o.x, o.y, o.type, now);
 				}
