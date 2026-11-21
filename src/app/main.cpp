@@ -34,6 +34,7 @@
 #include "p3data/letter_picture.hpp"
 #include "p3data/letters.hpp"
 #include "p3data/building_windows.hpp"
+#include "p3data/campaigns.hpp"
 #include "p3data/guild_window.hpp"
 #include "p3data/offer_window.hpp"
 #include "p3data/office_window.hpp"
@@ -62,6 +63,8 @@
 #include "p3data/sound.hpp"
 #include "p3data/town.hpp"
 #include "p3data/town_buildings.hpp"
+#include "p3data/tile_anims.hpp"
+#include "p3data/town_life.hpp"
 #include "p3data/trade.hpp"
 #include "p3data/trade_route_window.hpp"
 #include "p3data/trade_routes.hpp"
@@ -540,18 +543,30 @@ public:
 
 	// The season to show (the town's [0x9BC]: 0 from May, 1 from October, 6 from March, the ice's level 2..5 in winter;
 	// 0x58B7F0 → 0x591EC0, only with P2.CFG's [OPTIONS] WEATHER ≥ 1, the game's 3: always here): the tiles' snowy
-	// atlases (season_texture). Nothing when it is the one shown already ([view+0x504]).
-	void set_snow(int mode) {
+	// atlases (season_texture). Nothing when it is the one shown already ([view+0x504]); `month` the world's
+	// (0x6DE4A1), read by the trees only then.
+	void set_snow(int mode, int month) {
 		if (mode == snow_mode_) {
 			return;
 		}
 		snow_mode_ = mode;
+		snow_month_ = month;
 		for (Item& item : items_) {
 			if (item.tile) {
 				if (SDL_Texture* texture = season_texture(item.tile)) {
 					item.texture = texture;
 				}
 			}
+		}
+		for (Shadow& s : shadows_) {
+			if (s.tile->type == kTreeTileType) {
+				if (SDL_Texture* texture = shadow_texture(s.tile, s.variant)) {
+					s.texture = texture;
+				}
+			}
+		}
+		for (size_t k = 0; k < trees_.size(); ++k) {
+			update_tree_sway(tree_tiles_[k], *trees_[k]);
 		}
 	}
 
@@ -574,20 +589,20 @@ public:
 			const uint8_t owner = sprite.object && cell < owners_.size() ? owners_[cell] : kNoBuildingOwner;
 			items_.push_back({texture, {sprite.src_x, sprite.src_y, sprite.width, sprite.height},
 				{sprite.dst_x, sprite.dst_y, sprite.width, sprite.height}, sprite.tile, owner, sprite.cell_y,
-				!sprite.object && sprite.tile->type == kWaterTileType, sprite.cell_x});
+				!sprite.object && sprite.tile->type == kWaterTileType, sprite.cell_x, sprite.slice});
 			const TileDef* tile = sprite.tile;
 			const TileVariant* shadow = sprite.object ? tile->shadow() : nullptr;
 			const size_t k = size_t(std::max(1, tile->cols) - 1);
 			if (shadow && !shadow->frames.empty() && sprite.slice == int(k) && k < tile->slices.size()) {
 				// Its shadow, placed as 0x551F70 from the cell's left and bottom (the slice cols − 1 stands on the
 				// cell's left side, no more right than the front one).
-				if (SDL_Texture* picture = shadow->atlas.empty() ? tile_texture(tile) : atlas_texture(shadow->atlas)) {
+				if (SDL_Texture* picture = shadow_texture(tile, shadow)) {
 					const TileSlice& s = tile->slices[k];
 					const TileSlice& f = shadow->frames[0];
 					const int left = cell_screen_x(sprite.cell_x, sprite.cell_y);
 					const int bottom = cell_screen_y(sprite.cell_y) + kTileHeight;
 					shadows_.push_back({picture, {f.x, f.y, f.width, f.height},
-						{left + shadow->x - s.x, bottom + shadow->y - s.y - s.height, f.width, f.height}});
+						{left + shadow->x - s.x, bottom + shadow->y - s.y - s.height, f.width, f.height}, tile, shadow});
 				}
 			}
 			if (!sprite.object) {
@@ -612,6 +627,146 @@ public:
 			}
 		}
 		make_minimap(town);
+		life_base_ = p3::data::life_map(town, tiles_, {});
+		++show_serial_;
+	}
+
+	// The living town of the save's town `index` on screen (TownLife): made again when the town on screen changes,
+	// its map and destinations updated when it is drawn again (its buildings changed), then stepped by the
+	// milliseconds since the last frame, `camera_x`, `camera_y` and `width` the view.
+	void step_life(const SaveGame& save, size_t index, uint32_t now, int camera_x, int camera_y, int width,
+		uint32_t ms_per_tick, bool battle_time) {
+		if (int(index) != life_town_ || life_serial_ != show_serial_) {
+			load_people();
+			p3::data::LifeMap map = life_base_;
+			map.grid = save.towns[index].grid;
+			p3::data::LifeTown town = p3::data::life_town(save, index);
+			town.spawn = spawn_points(save.towns[index].template_map());
+			town.nodes = town_nodes(save.towns[index].template_map());
+			if (int(index) != life_town_) {
+				life_.rand_state = now ^ 0x5EEDu;
+				life_.start(map, town, now);
+				life_last_ = now;
+				// Its creatures gone, the fisherman's huts as made (their fisherman made again when they work).
+				for (auto& [tile, a] : anims_) {
+					if (tile->type == 0x57) {
+						p3::data::reset_fisher_hut(a);
+					}
+				}
+			} else {
+				life_.update_map(map, town);
+			}
+			life_town_ = int(index);
+			life_serial_ = show_serial_;
+		}
+		// Each tick of the world the town read again (its people's counts, its convoys for the carts).
+		if (save.tick() != life_tick_) {
+			life_tick_ = save.tick();
+			p3::data::LifeTown town = p3::data::life_town(save, index);
+			life_.update_town(town);
+		}
+		life_.set_world_time(save.tick(), ms_per_tick, battle_time);
+		const uint32_t elapsed = now - life_last_;
+		life_last_ = now;
+		life_.step(now, elapsed, {camera_x, camera_y, width, kScreenHeight});
+		// The tiles' own animations of the cells in view (0x592000), «active» by the town's merchants' businesses.
+		producing_.assign(save.merchants.size(), 0);
+		for (size_t m = 0; m < save.merchants.size(); ++m) {
+			producing_[m] = save.merchants[m].memory.u32(0x40 + 4 * uint32_t(index));
+		}
+		const TownMemory& tm = save.towns[index].memory;
+		siege_ = (tm.u32(0x2C8) & 0x10) != 0;
+		// The repair yard (0x584260): work in the town's shipyard lists or a convoy, the shipyard's employees.
+		const uint16_t ships = save.globals.u16(0x6DD894);
+		repair_busy_ = tm.u16(0x81E) < ships || tm.u16(0x81C) < ships || tm.u16(0x820) < save.globals.u16(0x6DD896);
+		shipyard_employees_ = tm.u16(0x854);
+		world_tick_ = save.tick();
+		step_anims(now, camera_x, camera_y, width, save.towns[index].grid);
+	}
+
+	// 0x592000 (the objects' layer): each cell of the view with an object's slice steps its tile's animations, as the
+	// default +0x38 (0x552C10 → 0x585900) of the classes rewritten (tile_anim_facility), «active» each building's (the
+	// town shown, or a workshop at work: workshop_active with the cell's grid byte).
+	void step_anims(uint32_t now, int camera_x, int camera_y, int width, const std::vector<uint8_t>& grid,
+		bool all_active = false) {
+		for (size_t i = first_object_; i < items_.size(); ++i) {
+			const Item& item = items_[i];
+			const int facility = item.tile ? p3::data::tile_anim_facility(item.tile->type) : -2;
+			if (facility == -2) {
+				continue;
+			}
+			const int x = cell_screen_x(item.col, item.row);
+			const int y = cell_screen_y(item.row);
+			if (x + kTileWidth < camera_x || x > camera_x + width || y + kTileHeight < camera_y ||
+				y > camera_y + kScreenHeight) {
+				continue;
+			}
+			p3::data::TileAnimTown town;
+			if (facility >= 0 && !all_active) {
+				const size_t cell = size_t(item.col) * size_t(map_rows_) + size_t(item.row);
+				town.active = item.owner < producing_.size() &&
+					p3::data::workshop_active(producing_[item.owner], facility, siege_, cell < grid.size() ? grid[cell] : 0);
+			}
+			town.busy = repair_busy_;
+			town.employees = shipyard_employees_;
+			town.tick = world_tick_;
+			p3::data::TileAnims& a = anims_for(item.tile);
+			p3::data::step_tile_anims(a, now, town, anim_rand_);
+			// The fisherman's hut's fisherman (0x555BC3: 0x59A420 with this cell's x and its slice's bottom; the
+			// templates have no living town: none there).
+			if (a.want_fisherman) {
+				a.want_fisherman = false;
+				if (!all_active) {
+					a.fisherman = life_.spawn_fisherman(item.dst.x, item.dst.y + item.dst.h);
+				}
+			}
+			if (a.drop_fisherman) {
+				a.drop_fisherman = false;
+				life_.remove_creature(a.fisherman);
+				a.fisherman = 0;
+			}
+		}
+		// Then the trees' sway (0x5927B3..): every tree type, by number ([view+0x2A0]), from the rotating cursor.
+		if (!trees_listed_) {
+			trees_listed_ = true;
+			std::vector<const TileDef*> trees;
+			for (const auto& [id, tile] : tiles_) {
+				if (tile.type == kTreeTileType) {
+					trees.push_back(&tile);
+				}
+			}
+			std::sort(trees.begin(), trees.end(), [](const TileDef* a, const TileDef* b) { return a->id < b->id; });
+			for (const TileDef* tile : trees) {
+				p3::data::TileAnims& a = anims_for(tile);
+				update_tree_sway(tile, a);
+				trees_.push_back(&a);
+				tree_tiles_.push_back(tile);
+			}
+		}
+		p3::data::step_tree_sway(trees_, now, tree_cursor_);
+	}
+
+	p3::data::TileAnims& anims_for(const TileDef* tile) {
+		auto it = anims_.find(tile);
+		if (it == anims_.end()) {
+			it = anims_.emplace(tile, p3::data::make_tile_anims(*tile)).first;
+		}
+		return it->second;
+	}
+
+	// No living town (a template's map, a battle at the town).
+	void stop_life() {
+		life_.clear();
+		life_town_ = -1;
+	}
+	// A template's map (no town of a save): its tiles' animations all active (no owners to ask).
+	void step_template_anims(uint32_t now, int camera_x, int camera_y, int width) {
+		producing_.clear();
+		siege_ = false;
+		repair_busy_ = true;
+		shipyard_employees_ = 40;
+		world_tick_ = now / 20;  // A day every 5 s, so that the farms' fields are seen growing.
+		step_anims(now, camera_x, camera_y, width, {}, true);
 	}
 
 	// The town under a battle at it (BattleTown, the battles' piece 7, part 3), in two parts so that the battle's
@@ -677,10 +832,18 @@ public:
 	// manual's figure 4-4): another merchant's (below `merchants`) and the rival kontor.
 	void draw(int camera_x, int camera_y, int highlight = -1, int player = -1, int merchants = 0) {
 		const SDL_Rect screen = {camera_x, camera_y, kScreenWidth, kScreenHeight};
+		collect_strips(screen);
+		size_t next_strip = 0;
 		for (size_t i = 0; i < items_.size(); ++i) {
 			const Item& item = items_[i];
 			if (i == first_object_) {
+				draw_fish(screen);  // In the water (0x59A320; the game masks them to it: here under the objects).
 				draw_shadows(screen);  // After the ground, before the objects (0x588900: 0x590F30, 0x591C50).
+				draw_people_shadows(screen);
+			}
+			// The walkers' strips of the rows above this object's, after those rows' objects.
+			for (; i >= first_object_ && next_strip < strips_.size() && strips_[next_strip].row < item.row; ++next_strip) {
+				draw_strip(strips_[next_strip], camera_x, camera_y);
 			}
 			if (!SDL_HasIntersection(&item.dst, &screen)) {
 				continue;
@@ -693,11 +856,18 @@ public:
 			if (rival) {
 				SDL_SetTextureColorMod(item.texture, 105, 105, 115);
 			}
-			SDL_RenderCopy(renderer_, item.texture, &item.src, &dst);
+			SDL_RenderCopy(renderer_, item.texture, i >= first_object_ ? &sway_src(item) : &item.src, &dst);
 			if (rival) {
 				SDL_SetTextureColorMod(item.texture, 255, 255, 255);
 			}
+			if (i >= first_object_ && item.tile) {
+				draw_item_anims(item, camera_x, camera_y, rival);
+			}
 		}
+		for (; next_strip < strips_.size(); ++next_strip) {
+			draw_strip(strips_[next_strip], camera_x, camera_y);
+		}
+		draw_birds(screen);  // Over everything (0x588AA5..0x588BCA).
 		if (highlight < 0) {
 			return;
 		}
@@ -829,6 +999,7 @@ private:
 		int row = 0;  // The row of the cell it stands on.
 		bool water = false;  // A ground tile of the water (.let type 0xE).
 		int col = 0;  // That cell's column.
+		int slice = 0;  // Its tile's slice on that cell.
 	};
 	// A tile's shadow in the town (0x591C50: after the ground and before the objects, 0x568CE0, a pass of shadows
 	// alone, row by row: one where a cell holds its object's slice cols − 1; 0x551F70 places it): the .let's shadow
@@ -837,6 +1008,8 @@ private:
 		SDL_Texture* texture;
 		SDL_Rect src;
 		SDL_Rect dst;
+		const TileDef* tile;  // Its object's (a tree's picture changes with the season: set_snow).
+		const TileVariant* variant;
 	};
 	// The objects' shadows on `screen` (the camera's rectangle in the town's pixels): black at alpha 100, the ground
 	// under them at 61 %. The game draws them with the graphics library's blend mode 2 and the colour 0x64FFFFFF
@@ -876,27 +1049,62 @@ private:
 	}
 
 	// The tile's atlas for the season shown (0x591EC0: the town's [0x9BC], the mode; the level 0 for the modes 0, 1
-	// and 6, else the mode − 1, every tile's +0x70 but the trees', whose +0x70 takes the mode itself as the index of
-	// their pictures: 1 the autumn's leaves, 2 the blossom and fruit, 3 the bare winter's, `Schnee_*_01..03`; the
-	// conifers only 2 and 3, snowy): its snowy atlas (TileDef::snow, 0x552090), else its own. The trees' modes 5 and 6
-	// index past the end of their five atlases (the array of 0x14 bytes of 0x551482: the heap's next bytes): 5, the
-	// frozen port, taken as 4 (down to the winter's); 6, the spring, as the user's photo of the game's Edinburgh on 17
-	// March 1301 shows them, not as the code reads: the deciduous trees (those with an autumn's picture) in blossom (2:
-	// the pink, the fruit's red dots), the conifers with their own picture (no snow). Its own atlas is decoded first
-	// anyway: its tiles' minimap colours (the winter's minimap stays green in the game) and hit masks come from it.
+	// and 6, else the mode − 1, every tile's +0x70 but the trees'): its snowy atlas (TileDef::snow, 0x552090), else its
+	// own. The trees' +0x70 (0x583330, their class's second vtable) takes the mode and picks one of their pictures
+	// (tree_season_index: 1 the autumn's leaves, 2 the blossom and fruit, 3 the bare winter's, `Schnee_*_01..03`; the
+	// conifers have only 2, a little snow, and 3, snowy), the one it hasn't its own (not the nearest below): as the
+	// user's photos of the game show, Edinburgh on 17 March 1301 its deciduous trees in blossom and its conifers green,
+	// on 3 February bare and snowy. Its own atlas is decoded first anyway: its tiles' minimap colours (the winter's
+	// minimap stays green in the game) and hit masks come from it.
 	SDL_Texture* season_texture(const TileDef* tile) {
 		SDL_Texture* own = tile_texture(tile);
+		if (tile->type == kTreeTileType) {
+			const TileVariant* picture = tree_picture(tile, tree_index(tile));
+			SDL_Texture* texture = picture ? atlas_texture(picture->atlas) : nullptr;
+			return texture ? texture : own;
+		}
 		if (snow_mode_ <= 0 || snow_mode_ > 6) {
 			return own;
 		}
-		const bool tree = tile->type == kTreeTileType;
-		const int index = tree && snow_mode_ == 6			 ? (tile->snow(1) ? 2 : 0)
-			: tree											 ? std::min(snow_mode_, 4)
-			: snow_mode_ == 1 || snow_mode_ == 6 ? 0
-															 : snow_mode_ - 1;
+		const int index = snow_mode_ == 1 || snow_mode_ == 6 ? 0 : snow_mode_ - 1;
 		const TileVariant* snowy = tile->snow(index);
 		SDL_Texture* texture = snowy ? atlas_texture(snowy->atlas) : nullptr;
 		return texture ? texture : own;
+	}
+	// A tree's picture of an index (0x5513F0's array: its kind 2 variant of that first parameter, the last one; the
+	// index 0 its own atlas): null for its own or one it hasn't.
+	static const TileVariant* tree_picture(const TileDef* tile, int index) {
+		const TileVariant* found = nullptr;
+		for (const TileVariant& v : tile->variants) {
+			if (index > 0 && v.kind == 2 && !v.params.empty() && v.params[0] == uint32_t(index) && !v.atlas.empty()) {
+				found = &v;
+			}
+		}
+		return found;
+	}
+	int tree_index(const TileDef* tile) const {
+		return p3::data::tree_season_index(snow_mode_, tree_picture(tile, 1) != nullptr, snow_month_);
+	}
+	// An object's shadow's picture: the .let's shadow variant's atlas (its own: the tile's); a tree with its bare
+	// winter's picture its winter shadow's (0x583330: its kind 4's atlas over the shadow's page, the same frame).
+	SDL_Texture* shadow_texture(const TileDef* tile, const TileVariant* shadow) {
+		if (tile->type == kTreeTileType && tree_index(tile) == 3) {
+			const TileVariant* winter = anims_for(tile).winter_shadow;
+			if (SDL_Texture* texture = winter && !winter->atlas.empty() ? atlas_texture(winter->atlas) : nullptr) {
+				return texture;
+			}
+		}
+		return shadow->atlas.empty() ? tile_texture(tile) : atlas_texture(shadow->atlas);
+	}
+	// Whether a tree type sways with its season's atlas (tree_sways: the atlas's size).
+	void update_tree_sway(const TileDef* tile, p3::data::TileAnims& a) {
+		int w = 0;
+		int h = 0;
+		SDL_Texture* texture = season_texture(tile);
+		if (!texture || SDL_QueryTexture(texture, nullptr, nullptr, &w, &h) != 0) {
+			w = h = 0;
+		}
+		a.sways = p3::data::tree_sways(a, w, h);
 	}
 
 	// Los atlas se decodifican y suben una sola vez, y se comparten entre ciudades.
@@ -1035,10 +1243,292 @@ private:
 	std::vector<Item> items_;
 	std::vector<Shadow> shadows_;  // The objects' shadows (Item::shadow).
 	int snow_mode_ = 0;  // The season shown (set_snow): the town's [0x9BC].
+	int snow_month_ = 0;  // The world's month when it was set (the trees' pictures read it).
 	size_t first_object_ = 0;  // items_: the ground's, then the objects' row by row (build_town_sprites).
 	std::vector<uint32_t> cell_types_;  // cell_type_at.
 	int width_ = 0;
 	int height_ = 0;
+	// The living town (start_life...): the creatures, their looks (iso/lcr/files.lst's people, in its order: each
+	// class's static array), the map they read as shown (life_base_: no grid), the town and the drawing it was made
+	// for (life_town_, life_serial_ against show_serial_), each town template's points (N.spawn), the last frame's time.
+	p3::data::TownLife life_;
+	std::vector<std::unique_ptr<p3::data::LcrAnim>> people_;
+	bool people_loaded_ = false;
+	p3::data::LifeMap life_base_;
+	int life_town_ = -1;
+	uint64_t show_serial_ = 0;
+	uint64_t life_serial_ = 0;
+	std::map<int, std::vector<std::vector<p3::data::TownCell2>>> spawns_;
+	std::map<int, std::vector<std::vector<p3::data::TownPath>>> nodes_;
+	uint32_t life_last_ = 0;
+	uint32_t life_tick_ = 0xFFFFFFFF;
+	// The tiles' own animations (tile_anims.hpp): each animated tile type's groups, the viewer's random for them, and
+	// what their buildings' «active» reads of the town shown (each merchant's businesses producing in it, a siege).
+	std::map<const TileDef*, p3::data::TileAnims> anims_;
+	uint32_t anim_rand_ = 1;
+	// The tree types (class 0x14) by number, their anims_ (step_tree_sway), and the sway's rotating cursor
+	// (*0x6E51B4).
+	bool trees_listed_ = false;
+	std::vector<p3::data::TileAnims*> trees_;
+	std::vector<const TileDef*> tree_tiles_;
+	uint16_t tree_cursor_ = 0;
+	SDL_Rect sway_rect_ = {};  // sway_src's.
+	std::vector<uint32_t> producing_;
+	bool siege_ = false;
+	bool repair_busy_ = false;
+	uint16_t shipyard_employees_ = 0;
+	uint32_t world_tick_ = 0;
+	// A walker's strip to draw with the row of its cell (draw()).
+	struct Strip {
+		int row = 0;
+		const p3::data::Creature* creature = nullptr;
+		size_t index = 0;
+	};
+	std::vector<Strip> strips_;
+
+	void load_people() {
+		if (people_loaded_) {
+			return;
+		}
+		people_loaded_ = true;
+		std::vector<uint8_t> list;
+		const CprEntry* entry = archive_.find("iso/lcr/files.lst");
+		if (!entry || !archive_.read(*entry, list)) {
+			return;
+		}
+		size_t begin = 0;
+		for (size_t i = 0; i <= list.size(); ++i) {
+			if (i < list.size() && list[i] != 0 && list[i] != '\r' && list[i] != '\n') {
+				continue;
+			}
+			const std::string name(reinterpret_cast<const char*>(list.data()) + begin, i - begin);
+			begin = i + 1;
+			if (name.empty()) {
+				continue;
+			}
+			std::vector<uint8_t> data;
+			const CprEntry* file = archive_.find("iso/lcr/" + name);
+			auto look = std::make_unique<p3::data::LcrAnim>();
+			if (!file || !archive_.read(*file, data) || !p3::data::parse_lcr(data.data(), data.size(), *look) ||
+				(look->kind > 7 && look->kind != 0x0F && look->kind != 0x10 && look->kind != 0x11 && look->kind != 0x1A &&
+					look->kind != 0x1B && look->kind != 0x1F && look->kind != 0x18) ||
+				look->directions.empty()) {
+				continue;
+			}
+			life_.people[look->kind].push_back(look.get());
+			people_.push_back(std::move(look));
+		}
+	}
+
+	const std::vector<std::vector<p3::data::TownCell2>>& spawn_points(int map) {
+		auto it = spawns_.find(map);
+		if (it != spawns_.end()) {
+			return it->second;
+		}
+		std::vector<std::vector<p3::data::TownCell2>>& points = spawns_[map];
+		std::vector<uint8_t> data;
+		const CprEntry* entry = archive_.find("iso/towns/" + std::to_string(map) + ".spawn");
+		if (entry && archive_.read(*entry, data) && !p3::data::parse_town_spawn(data.data(), data.size(), points)) {
+			points.clear();
+		}
+		return points;
+	}
+
+	const std::vector<std::vector<p3::data::TownPath>>& town_nodes(int map) {
+		auto it = nodes_.find(map);
+		if (it != nodes_.end()) {
+			return it->second;
+		}
+		std::vector<std::vector<p3::data::TownPath>>& paths = nodes_[map];
+		std::vector<uint8_t> data;
+		const CprEntry* entry = archive_.find("iso/towns/" + std::to_string(map) + ".nodes");
+		if (entry && archive_.read(*entry, data) && !p3::data::parse_town_nodes(data.data(), data.size(), paths)) {
+			paths.clear();
+		}
+		return paths;
+	}
+
+	// The strips of the walkers on `screen` (the town's pixels), by row (0x591C50's cell pass: a cell's creatures
+	// after its object).
+	void collect_strips(const SDL_Rect& screen) {
+		strips_.clear();
+		for (const p3::data::Creature& c : life_.creatures()) {
+			const p3::data::LcrFrame* f = c.current();
+			if (!f || c.cells.size() != f->strips.size()) {
+				continue;
+			}
+			const SDL_Rect body = {c.px() - (f->anchor_x - f->body.x), c.py() - (f->anchor_y - f->body.y), f->body.w,
+				f->body.h};
+			if (!SDL_HasIntersection(&body, &screen)) {
+				continue;
+			}
+			for (size_t k = 0; k < f->strips.size(); ++k) {
+				strips_.push_back({c.cells[k][1], &c, k});
+			}
+		}
+		std::stable_sort(strips_.begin(), strips_.end(), [](const Strip& a, const Strip& b) { return a.row < b.row; });
+	}
+
+	void draw_strip(const Strip& s, int camera_x, int camera_y) {
+		const p3::data::Creature& c = *s.creature;
+		const p3::data::LcrFrame* f = c.current();
+		SDL_Texture* texture = f ? atlas_texture(c.look->image) : nullptr;
+		if (!texture) {
+			return;
+		}
+		const p3::data::LcrRect& r = f->strips[s.index];
+		const SDL_Rect src = {r.x, r.y, r.w, r.h};
+		const SDL_Rect dst = {c.px() + r.x - f->anchor_x - camera_x, c.py() + r.y - f->anchor_y - camera_y, r.w, r.h};
+		SDL_RenderCopy(renderer_, texture, &src, &dst);
+	}
+
+	// The walkers' shadows, with the buildings' (draw_shadows): black at alpha 100. (The birds' theirs, after the
+	// town: draw_birds.)
+	void draw_people_shadows(const SDL_Rect& screen) {
+		for (const p3::data::Creature& c : life_.creatures()) {
+			const p3::data::LcrFrame* f = c.current();
+			if (!f || !f->shadowed || c.look->shadow_image.empty() || c.cls == 0x0F) {
+				continue;
+			}
+			const SDL_Rect dst = {c.px() + f->shadow_x - f->anchor_x, c.py() + f->shadow_y - f->anchor_y, f->shadow.w,
+				f->shadow.h};
+			if (!SDL_HasIntersection(&dst, &screen)) {
+				continue;
+			}
+			SDL_Texture* texture = atlas_texture(c.look->shadow_image);
+			if (!texture) {
+				continue;
+			}
+			const SDL_Rect src = {f->shadow.x, f->shadow.y, f->shadow.w, f->shadow.h};
+			const SDL_Rect at = {dst.x - screen.x, dst.y - screen.y, dst.w, dst.h};
+			SDL_SetTextureColorMod(texture, 0, 0, 0);
+			SDL_SetTextureAlphaMod(texture, 100);
+			SDL_RenderCopy(renderer_, texture, &src, &at);
+			SDL_SetTextureColorMod(texture, 255, 255, 255);
+			SDL_SetTextureAlphaMod(texture, 255);
+		}
+	}
+
+	// An object's slice's rectangle in its atlas: a swaying tree's moved by its frame (0x583130: the frame's x, y plus
+	// the slice's, the same size; tree_sway_frame by its anchor cell, 0x590A20), else its own.
+	const SDL_Rect& sway_src(const Item& item) {
+		if (!item.tile || item.tile->type != kTreeTileType) {
+			return item.src;
+		}
+		const auto it = anims_.find(item.tile);
+		if (it == anims_.end() || item.row < 0 || item.col < 0) {
+			return item.src;
+		}
+		const uint32_t cell = uint32_t(item.row) * uint32_t(map_columns_) + uint32_t(item.col);
+		const TileSlice* f = p3::data::tree_sway_frame(it->second,
+			p3::data::tile_anchor_cell(cell, uint32_t(map_columns_), item.slice, item.tile->cols));
+		if (!f) {
+			return item.src;
+		}
+		sway_rect_ = {item.src.x + f->x, item.src.y + f->y, item.src.w, item.src.h};
+		return sway_rect_;
+	}
+
+	// 0x585970 → 0x585550: the frame shown of each of its tile's animations over an object's slice, only its part
+	// within the slice's columns (so it goes with the building's depth), placed in the tile's rectangle.
+	void draw_item_anims(const Item& item, int camera_x, int camera_y, bool rival) {
+		const auto it = anims_.find(item.tile);
+		if (it == anims_.end() || item.slice < 0 || size_t(item.slice) >= item.tile->slices.size()) {
+			return;
+		}
+		const TileSlice& s = item.tile->slices[size_t(item.slice)];
+		const int left = item.dst.x - s.x;
+		const int top = item.dst.y - s.y;
+		for (const p3::data::TileAnimFrame& shown : p3::data::tile_anim_frames(it->second)) {
+			const TileVariant* page = shown.page;
+			const TileSlice* f = shown.frame;
+			int x = left + page->x;
+			int src_x = f->x;
+			int w = f->width;
+			if (x + w <= item.dst.x || x >= item.dst.x + s.width) {
+				continue;
+			}
+			if (x < item.dst.x) {
+				src_x += item.dst.x - x;
+				w -= item.dst.x - x;
+				x = item.dst.x;
+			}
+			w = std::min(w, item.dst.x + s.width - x);
+			SDL_Texture* texture = page->atlas.empty() ? tile_texture(item.tile) : atlas_texture(page->atlas);
+			if (!texture || w <= 0) {
+				continue;
+			}
+			const SDL_Rect src = {src_x, f->y, w, f->height};
+			const SDL_Rect dst = {x - camera_x, top + page->y - camera_y, w, f->height};
+			if (rival) {
+				SDL_SetTextureColorMod(texture, 105, 105, 115);
+			}
+			SDL_RenderCopy(renderer_, texture, &src, &dst);
+			if (rival) {
+				SDL_SetTextureColorMod(texture, 255, 255, 255);
+			}
+		}
+	}
+
+	// A creature's picture at its place, `dx`, `dy` aside, coloured and faded.
+	void draw_creature(const p3::data::Creature& c, const SDL_Rect& screen, int dx, int dy, uint8_t grey, uint8_t alpha) {
+		const p3::data::LcrFrame* f = c.current();
+		SDL_Texture* texture = f ? atlas_texture(c.look->image) : nullptr;
+		if (!texture) {
+			return;
+		}
+		const SDL_Rect dst = {c.px() - (f->anchor_x - f->body.x) + dx, c.py() - (f->anchor_y - f->body.y) + dy, f->body.w,
+			f->body.h};
+		if (!SDL_HasIntersection(&dst, &screen)) {
+			return;
+		}
+		const SDL_Rect src = {f->body.x, f->body.y, f->body.w, f->body.h};
+		const SDL_Rect at = {dst.x - screen.x, dst.y - screen.y, dst.w, dst.h};
+		SDL_SetTextureColorMod(texture, grey, grey, grey);
+		SDL_SetTextureAlphaMod(texture, alpha);
+		SDL_RenderCopy(renderer_, texture, &src, &at);
+		SDL_SetTextureColorMod(texture, 255, 255, 255);
+		SDL_SetTextureAlphaMod(texture, 255);
+	}
+
+	// The fish (0x569250): each at half its [+0x3B] as alpha, its colours by it (coming up and fading away).
+	void draw_fish(const SDL_Rect& screen) {
+		for (const p3::data::Creature& c : life_.creatures()) {
+			if (c.cls == 0x1B) {
+				draw_creature(c, screen, 0, 0, c.alpha, uint8_t(c.alpha / 2));
+			}
+		}
+	}
+
+	// The birds after the town (0x588AA5..0x588BCA), lower ones first (0x58A9E7 keeps them by height): their shadows on
+	// the ground at alpha 100 (0x563B00 → 0x559520), then their bodies their height up and a fifth of it to the left
+	// (0x563BE0).
+	void draw_birds(const SDL_Rect& screen) {
+		std::vector<const p3::data::Creature*> birds;
+		for (const p3::data::Creature& c : life_.creatures()) {
+			if (c.cls == 0x0F) {
+				birds.push_back(&c);
+			}
+		}
+		std::stable_sort(birds.begin(), birds.end(),
+			[](const p3::data::Creature* a, const p3::data::Creature* b) { return a->alt < b->alt; });
+		for (const p3::data::Creature* c : birds) {
+			const p3::data::LcrFrame* f = c->current();
+			SDL_Texture* texture = f && f->shadowed ? atlas_texture(c->look->shadow_image) : nullptr;
+			if (!texture) {
+				continue;
+			}
+			const SDL_Rect dst = {c->px() + f->shadow_x - f->anchor_x - screen.x, c->py() + f->shadow_y - f->anchor_y - screen.y,
+				f->shadow.w, f->shadow.h};
+			const SDL_Rect src = {f->shadow.x, f->shadow.y, f->shadow.w, f->shadow.h};
+			SDL_SetTextureAlphaMod(texture, 100);
+			SDL_RenderCopy(renderer_, texture, &src, &dst);
+			SDL_SetTextureAlphaMod(texture, 255);
+		}
+		for (const p3::data::Creature* c : birds) {
+			draw_creature(*c, screen, -(c->alt / 5), -c->alt, 255, 255);
+		}
+	}
 };
 
 // Textura de una imagen estándar (BMP, TGA...) del archivo; nullptr si falla.
@@ -2923,6 +3413,11 @@ struct PlaceUi {
 	InformerNews informer;
 	bool informer_done = false;
 	std::string informer_said;
+	// The side room (the tenth person): the letter the menu keeps (its [+0xB1C]; 0xFFFF none), its words when its page
+	// opened, and after its accept button the page 0x11 (the words after the '|').
+	uint16_t side_letter = 0xFFFF;
+	SideRoomWords side_words;
+	bool side_done = false;
 	// How far a page's scrolled text box is scrolled, in pixels (PlaceView::PageScroll; the informer's after buying,
 	// the scroll bar's position, the window's [+0x1B74]).
 	int page_scroll = 0;
@@ -3707,8 +4202,11 @@ GameMessage game_message_layout(const std::string& raw, std::vector<PlaceView::P
 	GameMessage m = game_message_frame([&](int width) { return game_box(nullptr, raw, 0, 0, width); }, std::move(buttons),
 		official, key, message_ratio, screen_w, screen_h, fixed_width);
 	PlaceView::Page text;
-	game_box(&text, raw, 0, 0, m.text_w);
-	PlaceView::offset_page(text, m.text_x, m.text.y);
+	const int height = game_box(&text, raw, 0, 0, m.text_w);
+	// The text centred in its box when it is shorter (adapted: the game draws it from the box's top, 4 under the
+	// window's, TextYOffset; the window's size, a tile at a time, leaves up to a tile under it; the user saw the text
+	// too close to the top against the game's other parchments, 2026-11-21).
+	PlaceView::offset_page(text, m.text_x, m.text.y + std::max(0, (m.text.h - height) / 2));
 	m.page.texts.insert(m.page.texts.begin(), text.texts.begin(), text.texts.end());
 	m.page.icons.insert(m.page.icons.begin(), text.icons.begin(), text.icons.end());
 	return m;
@@ -6930,6 +7428,16 @@ void place_square(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const
 		ui.land.page = 0;
 		ui.land.escorts = 0;
 		ui.row = 0;
+	} else if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::MissionLetter) && !ui.side_done) {
+		// The next letter (0x5A77A0): the one kept left, the next taken, its page set again.
+		const uint16_t next = side_room_next(save, uint32_t(town), ui.side_letter);
+		if (next != 0xFFFF) {
+			const uint32_t merchants = save.globals.u16(global::kWorldMerchantCount);
+			run_operations(save, sailing, {side_room_talk_operation(save, ui.side_letter, merchants, uint32_t(town))});
+			ui.side_letter = next;
+			ui.side_words = side_room_words(save, next);
+			run_operations(save, sailing, {side_room_talk_operation(save, next, uint32_t(save.player), uint32_t(town))});
+		}
 	} else if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::Pirate) && !ui.pirate.done &&
 		!ui.pirate_list.empty()) {
 		// «before <town>» (0x5D584C).
@@ -7331,11 +7839,13 @@ std::vector<int> tavern_rows(const SaveGame& save, int town, const PlaceUi& ui) 
 			(ui.talking == int(TavernPerson::OrderClient) && ui.client_done) ||
 			(ui.talking == int(TavernPerson::Pirate) && ui.pirate.done) ||
 			(ui.talking == int(TavernPerson::Informer) && ui.informer_done) ||
+			(ui.talking == int(TavernPerson::MissionLetter) && ui.side_done) ||
 			(ui.talking == int(TavernPerson::Captain) && ui.hired_captain != 0xFFFF)
 		? ui.talking
 		: -1;
 	for (int k = 0; k < kTavernPeople; ++k) {
-		if (there[size_t(k)] || k == kept) {
+		const bool here = k == int(TavernPerson::MissionLetter) ? ui.side_letter != 0xFFFF : there[size_t(k)];
+		if (here || k == kept) {
 			rows.push_back(k);
 		}
 	}
@@ -7364,6 +7874,8 @@ std::string tavern_person_name(int person) {
 		return exe_text(0x69C9F0, "Ladrón", "Burglar");
 	case TavernPerson::Pirate:
 		return exe_text(0x69C98C, "Pirata", "Pirate");
+	case TavernPerson::MissionLetter:
+		return exe_text(0x6A483C, "Trastienda", "Side room");  // (0x69C9F8, set at the start by 0x46BD05)
 	default:
 		return "?";
 	}
@@ -7382,6 +7894,14 @@ std::string tavern_row_name(const SaveGame& save, int town, const PlaceUi& ui, i
 // The row's person talked to, as the game's menu does when one is chosen (0x5A68A0): the one before left (0x5A7A60,
 // also when there was none) and the new one taken (0x5A7BA0); his page opened (the trader's: 0x5CF59C).
 void tavern_talk(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
+	// The side room's letter each update (0x5A6E60's end): the kept one while it is still there and open; else (its
+	// page closed and the one talked to forgotten, 0x5A71B2: nothing queued) the first open one of the player's.
+	const uint16_t kept = ui.side_letter;
+	ui.side_letter = side_room_letter(save, uint32_t(town), kept);
+	if (ui.side_letter != kept && ui.talking == int(TavernPerson::MissionLetter) && !ui.side_done) {
+		ui.talking = 0xFF;
+		ui.shown = false;
+	}
 	const std::vector<int> rows = tavern_rows(save, town, ui);
 	if (rows.empty()) {
 		ui.inside = false;
@@ -7430,9 +7950,24 @@ void tavern_talk(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
 		return;
 	}
 	const uint32_t merchants = save.globals.u16(global::kWorldMerchantCount);
-	const OperationBytes left = tavern_talk_operation(save, merchants, uint32_t(town), uint32_t(ui.talking));
-	const OperationBytes taken = tavern_talk_operation(save, uint32_t(save.player), uint32_t(town), uint32_t(person));
-	run_operations(save, sailing, {left, taken});
+	// The side room's (the kind 9) by its letter: left, the menu forgets it (0x5A7B62) and finds it again. After its
+	// accept button the letter went and the menu forgot the one talked to (0x5A71DE): nothing to leave.
+	std::vector<OperationBytes> ops;
+	if (ui.talking == int(TavernPerson::MissionLetter)) {
+		if (!ui.side_done) {
+			ops.push_back(side_room_talk_operation(save, ui.side_letter, merchants, uint32_t(town)));
+		}
+		ui.side_letter = 0xFFFF;
+	} else {
+		ops.push_back(tavern_talk_operation(save, merchants, uint32_t(town), uint32_t(ui.talking)));
+	}
+	if (person == int(TavernPerson::MissionLetter) && ui.side_letter == 0xFFFF) {
+		ui.side_letter = side_room_letter(save, uint32_t(town), 0xFFFF);
+	}
+	ops.push_back(person == int(TavernPerson::MissionLetter)
+			? side_room_talk_operation(save, ui.side_letter, uint32_t(save.player), uint32_t(town))
+			: tavern_talk_operation(save, uint32_t(save.player), uint32_t(town), uint32_t(person)));
+	run_operations(save, sailing, ops);
 	ui.talking = person;
 	ui.amount = 0;
 	ui.ship = 0;
@@ -7463,6 +7998,10 @@ void tavern_talk(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui) {
 	if (person == int(TavernPerson::OrderClient)) {
 		ui.client_done = false;  // His page 0 (0x5CF6FA: the order copied, the amount's box 0).
 		ui.amount = 0;
+	}
+	if (person == int(TavernPerson::MissionLetter)) {
+		ui.side_done = false;  // The page 9 (0x5CF665: the letter's words).
+		ui.side_words = side_room_words(save, ui.side_letter);
 	}
 	if (person == int(TavernPerson::Traveller)) {
 		ui.traveller = TravellerWindow();
@@ -7894,6 +8433,35 @@ void pirate_page(SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
 	add_ship_row(page, save, w.ship < past ? int(w.ship) : -1, ui.pirate_list.size() > 1);
 	page.buttons.push_back(fitted({{kInteriorWidth / 4 - 64, 450, 128, 18}, v.act, PlaceView::PageAction::Act, row.second}));
 	page.buttons.push_back(fitted({{kInteriorWidth * 3 / 4 - 64, 450, 128, 18}, v.act2, PlaceView::PageAction::Act2, v.act2_on}));
+	v.page = std::move(page);
+}
+
+// The side room's page (the page 9: set by 0x5CF665, drawn by 0x5D7FD0; traced with re/emu/sesion49/sidetrace.sh) and
+// its page 0x11 after accepting (0x5D8090): the letter's title on the banner; its words up to the '|' in a box from
+// (70, 235), 285 wide (the window's width − 140); the accept button at the confirm button's place (Bestaet2DPos 148,
+// 450) with the letter's first answer, off without one; the button [+0x2188] 20 under it (0x5CC249) to the next letter
+// of the town, on when there is one (0x5A74B0): the game gives it no words nor picture, «Siguiente» here (the
+// viewer's). After accepting, the title and the words after the '|' in the same box.
+void side_room_page(const SaveGame& save, int town, PlaceUi& ui, PlaceView& v) {
+	const SideRoomWords& w = ui.side_words;
+	v.title = place_name(ui.let_type) + " - " + clean_game_text(w.title);
+	std::pair<std::string, bool>& row = v.rows[size_t(ui.row)];
+	PlaceView::Page page;
+	for (const std::string& line : box_lines(clean_game_text(ui.side_done ? w.after : w.text))) {
+		v.lines.push_back({line, kTextColor});
+	}
+	add_wrapped(page, v.lines, 235);
+	if (ui.side_done) {
+		row.second = false;
+		v.page = std::move(page);
+		return;
+	}
+	v.act = clean_game_text(w.accept);
+	row.second = w.has_accept;
+	v.act2 = tr("Siguiente", "Next");
+	v.act2_on = side_room_next(save, uint32_t(town), ui.side_letter) != 0xFFFF;
+	page.buttons.push_back(fitted({{148, 450, 128, 18}, v.act, PlaceView::PageAction::Act, row.second}));
+	page.buttons.push_back(fitted({{148, 470, 128, 18}, v.act2, PlaceView::PageAction::Act2, v.act2_on}));
 	v.page = std::move(page);
 }
 
@@ -11496,6 +12064,7 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 			case TavernPerson::Burglar: v.portrait = Portrait::Burglar; break;
 			case TavernPerson::Pirate: v.portrait = Portrait::Pirate; break;
 			case TavernPerson::OrderClient: v.portrait = Portrait::Client; break;
+			case TavernPerson::MissionLetter: v.portrait = Portrait::Client; break;  // (TEX31011, its face 13: 0x5CF6F0)
 			default: break;
 			}
 		}
@@ -11538,6 +12107,8 @@ PlaceView place_view(SaveGame& save, int town, PlaceUi& ui) {
 			pirate_page(save, town, ui, v);
 		} else if (person == TavernPerson::Informer) {
 			informer_page(save, ui, v);
+		} else if (person == TavernPerson::MissionLetter) {
+			side_room_page(save, town, ui, v);
 		} else if (person == TavernPerson::Burglar) {
 			v.title += " - " + exe_text(0x69D8C0, "Negociar con el ladrón", "Talk to burglar");
 			for (const std::string& line : burglar_lines()) {
@@ -12482,6 +13053,20 @@ void place_act(SaveGame& save, Sailing* sailing, int town, PlaceUi& ui, const Pl
 			run_operations(save, sailing,
 				{dealer_operation(save, uint32_t(town), uint32_t(ui.row - 2), true, uint32_t(std::clamp(ui.dealer_step, 0, 3)),
 					ui.dealer_office, ui.dealer_ship)});
+		}
+		ui.message.clear();
+		return;
+	}
+	if (ui.open == Place::Tavern && ui.talking == int(TavernPerson::MissionLetter)) {
+		// The accept button (0x5D8151): 0x76; with words after the '|' the page 0x11, else the page closed (0x5D8214).
+		if (!ui.side_done && ui.side_words.has_accept && ui.side_letter != 0xFFFF) {
+			run_operations(save, sailing, {side_room_accept_operation(save, ui.side_letter)});
+			if (ui.side_words.after.empty()) {
+				ui.shown = false;
+				ui.talking = 0xFF;
+			} else {
+				ui.side_done = true;
+			}
 		}
 		ui.message.clear();
 		return;
@@ -18513,8 +19098,8 @@ std::string option_label(OptionRow row) {
 }
 
 // A row's value: the language's and the switches' as chosen; the rows the viewer doesn't do yet, what it does (the
-// game's details high, weather low as its defaults; no sound; stereo as it is; the convoys' ships all shown; no
-// autosave).
+// game's details high, weather low as its defaults; no sound; stereo as it is; no event videos; the convoys' ships all
+// shown; no autosave).
 std::string option_value(const MenuUi& menu, OptionRow row) {
 	const std::string on = exe_text(0x69AE20, "Sí", "on");
 	const std::string off = exe_text(0x69AE24, "No", "off");
@@ -18532,7 +19117,7 @@ std::string option_value(const MenuUi& menu, OptionRow row) {
 	case OptionRow::GameSpeed:
 		return menu.speed < 6 ? speed_name(menu.speed) : tr(kGameSpeeds[menu.speed].name, kGameSpeeds[menu.speed].english);
 	case OptionRow::EventVideos:
-		return on;
+		return off;  // (No videos yet: the events' windows as the game's with them off, news lines.)
 	case OptionRow::Tooltips:
 		return menu.tooltips ? on : off;
 	case OptionRow::ConvoyShips:
@@ -18960,6 +19545,360 @@ void draw_saves_screen(SDL_Renderer* renderer, TextRenderer& fallback, const Men
 	gart.end();
 }
 
+// The game's campaign screen (*0x6CBB6C, 0xD0C bytes: its constructor 0x42FBF0, its init 0x430020 with options.ini and
+// the missions' ini, its drawing 0x430A80, its update 0x430570; traced with re/emu/sesion52/camptrace.sh, README «Part
+// 3»): a whole screen of 800 × 600 on tutorial.jpg (options.ini [ANIM47]: TEX29); its title «Campaign» (0x69B26C) in
+// the font 5 right-aligned at (757, 11) over its shadow; «Choose campaign» (0x69B270) in the font 4 at (394, 126); the
+// chosen campaign's picture (its «Texture», 340 × 260) at (41, 123); the campaigns' names (p3data read_campaigns) in the
+// font 4 from (394, 158), a font's height apart in 230, white, the one under the mouse 0xFFF16800 ([+0xCA8], 0x66E110)
+// and the chosen one 0xFFD34000 ([+0xCC4], 0x66E114); the chosen one's text in the font 2, 0xFFDDDDDD, from (47, 394),
+// 673 wide, the lines that fit in 100; the buttons (BUTTON4, 149 × 36) «Start» (0x69B294) at (612, 526), «Back» at
+// (452, 526) and «Details» at (41, 526). A click on a name chooses it (its text from its first line), a second click on
+// the chosen one (0x430A00: within 500 ms) or «Start» starts it (campaigns.hpp); «Details» opens the new game's details
+// window with the starting capital and the start off (0x49B180 with 1: what it chooses stays for the next new game; the
+// campaign takes its save's settings).
+// Adapted: the text's scroll bar (the game's [+0x23C], parchment.ini [P2Scrollbar1], shown only for a text over 200
+// high) at x 723 whenever the text doesn't fit, as the saved games' list's; a name wider than the list (the game cuts
+// it) in the font 2; a second touch on the chosen one at any time; the pad: Up and Down choose, X «Start», Square
+// «Details», Circle «Back», L and R the text's lines.
+constexpr SDL_Point kCampaignPicture = {41, 123};
+constexpr int kCampaignListX = 394;
+constexpr int kCampaignListTop = 158;
+constexpr int kCampaignListRight = 720;
+constexpr int kCampaignListHeight = 230;
+constexpr int kCampaignTextX = 47;
+constexpr int kCampaignTextY = 394;
+constexpr int kCampaignTextW = 673;
+constexpr int kCampaignTextH = 100;
+constexpr int kCampaignBarX = 723;
+enum class CampaignButton { Start, Back, Details, Count };
+SDL_Rect campaign_button(CampaignButton b) {
+	switch (b) {
+	case CampaignButton::Start:
+		return {612, 526, kScreenButtonW, kScreenButtonH};
+	case CampaignButton::Back:
+		return {452, 526, kScreenButtonW, kScreenButtonH};
+	default:
+		return {41, 526, kScreenButtonW, kScreenButtonH};
+	}
+}
+
+struct CampaignUi {
+	// The tutorial's chapters' screen (*0x6D9594, 0x4AB420 with 0: the same screen's class with [Campaign_0]'s quests,
+	// its Name the title, «Choose mission» 0x69B268 over them, no «Details»).
+	bool tutorial = false;
+	std::string title;  // (The tutorial's, Latin-1.)
+	std::vector<p3::data::CampaignEntry> list;
+	int chosen = 0;  // [+0xCC4]
+	int lit = -1;  // Under the finger ([+0xCA8]).
+	int first_line = 0;  // The text's first line shown.
+};
+
+// The fonts the screen uses: the list's (font 4) and the text's (font 2).
+TextRenderer& campaign_list_font(GameWindowArt& gart, TextRenderer& fallback) {
+	return gart.screen_label_text() ? *gart.screen_label_text() : fallback;
+}
+TextRenderer& campaign_text_font(GameWindowArt& gart, TextRenderer& fallback) {
+	return gart.info_text() ? *gart.info_text() : fallback;
+}
+int campaign_rows(TextRenderer& list_font) {
+	return std::max(1, kCampaignListHeight / std::max(1, list_font.line_height()));
+}
+// The row of the list at a point of the game's screen, or -1.
+int campaign_row_at(TextRenderer& list_font, const CampaignUi& c, SDL_Point p) {
+	const int h = std::max(1, list_font.line_height());
+	if (p.x < kCampaignListX || p.x >= kCampaignListRight || p.y < kCampaignListTop ||
+		p.y >= kCampaignListTop + campaign_rows(list_font) * h) {
+		return -1;
+	}
+	const int row = (p.y - kCampaignListTop) / h;
+	return row < int(c.list.size()) ? row : -1;
+}
+std::vector<std::string> campaign_text_lines(TextRenderer& font, const CampaignUi& c) {
+	if (c.chosen < 0 || c.chosen >= int(c.list.size())) {
+		return {};
+	}
+	return wrap_text(font, p3::data::latin1_to_utf8(c.list[size_t(c.chosen)].text), kCampaignTextW);
+}
+int campaign_text_shown(TextRenderer& font) {
+	return std::max(1, kCampaignTextH / std::max(1, font.line_height()));
+}
+// The text's scroll bar (as the saved games' list's), when its lines don't fit.
+std::optional<ScrollBarLayout> campaign_bar(TextRenderer& font, int lines, int first) {
+	const int shown = campaign_text_shown(font);
+	if (lines <= shown) {
+		return std::nullopt;
+	}
+	const int h = font.line_height();
+	PlaceView::PageScroll scroll;
+	scroll.bar = {kCampaignBarX, kCampaignTextY, ScrollBarLayout::kThumbWidth, shown * h};
+	scroll.clip = {kCampaignTextX, kCampaignTextY, kCampaignTextW, shown * h};
+	scroll.total = lines * h;
+	scroll.offset = first * h;
+	scroll.line = h;
+	return ScrollBarLayout(scroll);
+}
+
+void draw_campaign_screen(SDL_Renderer* renderer, TextRenderer& fallback, const CampaignUi& c) {
+	if (!g_game_art) {
+		return;
+	}
+	GameWindowArt& gart = *g_game_art;
+	const GameScreenLayout layout;
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+	SDL_RenderClear(renderer);
+	TextRenderer& title = gart.screen_title_text() ? *gart.screen_title_text() : fallback;
+	TextRenderer& list_font = campaign_list_font(gart, fallback);
+	TextRenderer& text_font = campaign_text_font(gart, fallback);
+	TextRenderer& font = gart.info_text() ? *gart.info_text() : fallback;
+	const SDL_Color white = {255, 255, 255, 255};
+	gart.begin_sized(layout.panel, kOptionsW, kOptionsH);
+	gart.draw_tex(29, 0, 0, 0);
+	const std::string t = c.tutorial ? p3::data::latin1_to_utf8(c.title) : exe_text(0x69B26C, "Campañas", "Campaign");
+	title.draw(t, 757 - title.measure(t) + 2, 13, SDL_Color{0, 0, 0, 0x90});
+	title.draw(t, 757 - title.measure(t), 11, white);
+	list_font.draw(c.tutorial ? exe_text(0x69B268, "Elige un capítulo", "Choose mission")
+							  : exe_text(0x69B270, "Elige una campaña", "Choose campaign"),
+		kCampaignListX, 126, white);
+	const bool chosen = c.chosen >= 0 && c.chosen < int(c.list.size());
+	if (chosen && c.list[size_t(c.chosen)].texture) {
+		gart.draw_tex(c.list[size_t(c.chosen)].texture, 0, kCampaignPicture.x, kCampaignPicture.y);
+	}
+	const int rows = campaign_rows(list_font);
+	for (int k = 0; k < int(c.list.size()) && k < rows; ++k) {
+		const SDL_Color ink = k == c.chosen ? argb_color(0xFFD34000) : k == c.lit ? argb_color(0xFFF16800) : white;
+		const std::string name = p3::data::latin1_to_utf8(c.list[size_t(k)].name);
+		const int y = kCampaignListTop + k * list_font.line_height();
+		if (list_font.measure(name) <= kCampaignListRight - kCampaignListX) {
+			list_font.draw(name, kCampaignListX, y, ink);
+		} else {
+			// (Adapted: the game cuts it at 720; in the font 2 in its row, «Campaign: Rise of the Hanseatic League».)
+			font.draw(clipped(font, name, kCampaignListRight - kCampaignListX), kCampaignListX,
+				y + (list_font.line_height() - font.line_height()) / 2, ink);
+		}
+	}
+	const std::vector<std::string> lines = campaign_text_lines(text_font, c);
+	const int shown = campaign_text_shown(text_font);
+	for (int k = c.first_line; k < int(lines.size()) && k < c.first_line + shown; ++k) {
+		text_font.draw(lines[size_t(k)], kCampaignTextX, kCampaignTextY + (k - c.first_line) * text_font.line_height(),
+			argb_color(0xFFDDDDDD));
+	}
+	if (const std::optional<ScrollBarLayout> bar = campaign_bar(text_font, int(lines.size()), c.first_line)) {
+		for (int y = bar->track.y; y < bar->track.y + bar->track.h; y += 32) {
+			gart.draw_tex(16012, 0, bar->track.x, y);
+		}
+		gart.draw_tex(16010, 0, bar->up.x, bar->up.y);
+		gart.draw_tex(16011, 0, bar->down.x, bar->down.y);
+		gart.draw_tex(16013, 0, bar->thumb.x, bar->thumb.y);
+	}
+	draw_screen_button(gart, font, campaign_button(CampaignButton::Start), exe_text(0x69B294, "Jugar", "Start"),
+		BTN_CROSS, chosen);
+	draw_screen_button(gart, font, campaign_button(CampaignButton::Back),
+		game_text(GameText::ButtonBack, tr("Atrás", "Back")), BTN_CIRCLE, true);
+	if (!c.tutorial) {
+		draw_screen_button(gart, font, campaign_button(CampaignButton::Details),
+			game_text(GameText::NewGameDetails, tr("Detalles", "Details")), BTN_SQUARE, true);
+	}
+	gart.end();
+}
+
+// The tutorial's window over the game (the tutorial object *0x6EE120, 0x2B0 bytes, vtable 0x67B6A8; read in the exe,
+// ENCARGO_CAMPANAS.md item 3): a strip as wide as the screen at its bottom (0x637E20: its height the larger of three
+// buttons' and the text's with TopSpacing 4), white at alpha 200 (0xC8FFFFFF), the step's text in black from
+// LeftSpacing 4 (the box's fonts: \f0 the heads' font 0, \f1 the pages' font 1) as wide as the screen less 4 and a
+// button and a half; at its right the two arrows of bttn_tutorial.tga (TEX16061, 18 × 27; screenGame.ini BUTTON16 «up»
+// frames 4..7 the step before, BUTTON15 «down» 0..3 the next one: normal, pressed, lit, off) at 5/4 of a button from
+// the right, the up one 3/7 of a button under three buttons' height from the bottom, the down one as far over it;
+// «up» off at the first step, «down» off at the last step of the last chapter (0x638010). Then the step's rect (0x6374C0
+// from 0x637658): five frames of a pixel, one inside the other, alpha the pulse less 51 a frame away from the middle
+// one, red and green 20 less, blue 255; the pulse goes 25 every 75 ms between 130 and 255 (0x637860). The rect is on
+// the PC's screen (1024 × 768), its x from the right edge (the panel on the right): here moved onto the viewer's own
+// elements (tutorial_mark).
+// Adapted: the strip over the town view only (the panel stays free), the arrows' touches with 10 more round them; the
+// right stick (up the step before, down the next) as their keys.
+constexpr int kTutorialArrowW = 18;
+constexpr int kTutorialArrowH = 27;
+constexpr int kTutorialSpacing = 4;  // [GameTutorialBase] LeftSpacing and TopSpacing.
+struct TutorialFrame {
+	SDL_Rect box{};
+	SDL_Rect up{};
+	SDL_Rect down{};
+	int text_x = 0;
+	int text_y = 0;
+	int text_w = 0;
+};
+SDL_Rect grown(const SDL_Rect& r, int by) {
+	return {r.x - by, r.y - by, r.w + 2 * by, r.h + 2 * by};
+}
+// The step's text as the box draws it (0x462520: each line pieces of text, each in its font, a font code starting a
+// new piece on the same line): its lines of pieces (0 the heads' font, else the pages'), wrapped by words at `width`;
+// the ini's doubled backslash before a code taken as one.
+struct TutorialPiece {
+	std::string text;
+	int x = 0;
+	bool head = false;
+};
+using TutorialLine = std::vector<TutorialPiece>;
+std::vector<TutorialLine> tutorial_lines(const std::string& latin1, int width) {
+	std::string raw = latin1;  // (clean_game_text makes it UTF-8.)
+	for (size_t at = raw.find("\\\\"); at != std::string::npos; at = raw.find("\\\\", at)) {
+		raw.erase(at, 1);
+	}
+	auto font_of = [](bool head) -> const TextRenderer* {
+		return !g_game_art ? nullptr : head ? g_game_art->head_text() : g_game_art->page_text();
+	};
+	std::vector<TutorialLine> out;
+	bool head = false;
+	for (const std::string& paragraph : box_lines(raw)) {
+		// The paragraph's pieces by their font codes.
+		std::vector<std::pair<std::string, bool>> pieces;
+		std::string piece;
+		for (size_t i = 0; i < paragraph.size(); ++i) {
+			if (i + 2 < paragraph.size() && paragraph[i] == '\\' && paragraph[i + 1] == 'f' &&
+				std::isdigit(uint8_t(paragraph[i + 2]))) {
+				if (!piece.empty()) {
+					pieces.push_back({piece, head});
+					piece.clear();
+				}
+				head = paragraph[i + 2] == '0';
+				i += i + 3 < paragraph.size() && paragraph[i + 3] == '_' ? 3 : 2;
+				continue;
+			}
+			piece += paragraph[i];
+		}
+		pieces.push_back({piece, head});
+		// Laid out by words.
+		TutorialLine line;
+		int x = 0;
+		for (const auto& [raw_text, piece_head] : pieces) {
+			const TextRenderer* f = font_of(piece_head);
+			const std::string text = clean_game_text(raw_text);
+			size_t pos = 0;
+			bool first_word = true;
+			while (pos <= text.size()) {
+				size_t next = text.find(' ', pos);
+				if (next == std::string::npos) {
+					next = text.size();
+				}
+				const std::string word = text.substr(pos, next - pos);
+				const std::string with_space = first_word ? word : " " + word;
+				const int w = f ? f->measure(with_space) : 0;
+				if (f && !line.empty() && x + w > width) {
+					out.push_back(std::move(line));
+					line.clear();
+					x = 0;
+					if (!word.empty()) {
+						line.push_back({word, 0, piece_head});
+						x = f->measure(word);
+					}
+				} else if (!with_space.empty()) {
+					if (!line.empty() && line.back().head == piece_head && !first_word) {
+						line.back().text += with_space;
+					} else {
+						line.push_back({with_space, x, piece_head});
+					}
+					x += w;
+				}
+				first_word = false;
+				pos = next + 1;
+			}
+		}
+		out.push_back(std::move(line));
+	}
+	return out;
+}
+TutorialFrame tutorial_frame(const std::string& latin1, int view_w) {
+	TutorialFrame f;
+	f.text_x = kTutorialSpacing;
+	f.text_w = view_w - kTutorialSpacing - kTutorialArrowW * 3 / 2;
+	const int text_h = int(tutorial_lines(latin1, f.text_w).size()) * kBoxLine;
+	const int h = std::max(3 * kTutorialArrowH, text_h + kTutorialSpacing);
+	f.box = {0, kScreenHeight - h, view_w, h};
+	f.text_y = f.box.y + kTutorialSpacing;
+	const int gap = 3 * kTutorialArrowH / 7;
+	const int x = view_w - kTutorialArrowW * 5 / 4;
+	f.up = {x, f.box.y + h - 3 * kTutorialArrowH + gap, kTutorialArrowW, kTutorialArrowH};
+	f.down = {x, f.box.y + h - gap - kTutorialArrowH, kTutorialArrowW, kTutorialArrowH};
+	return f;
+}
+// A step's rect moved onto the viewer: the PC's main view, minimap, title bar, row of icons, the selection window's
+// parts (the side menus are drawn at the game's size from the menus' room's top, the PC's 302) and the title bar's ship
+// buttons (here on the panel's plank); another rect, the PC's screen scaled to this one.
+std::optional<SDL_Rect> tutorial_mark(const p3::data::TutorialWindow& w, const PanelLayout& p, int strip_top) {
+	if (!w.has_rect) {
+		return std::nullopt;
+	}
+	// On the PC's screen, from its left (0x637B60): x to the right edge W − x − 1, its left that less w (at least 0),
+	// its bottom y + h (at most H − 1).
+	constexpr int kPcW = 1024;
+	constexpr int kPcH = 768;
+	const int right = kPcW - w.x - 1;
+	const int left = std::max(0, right - w.w);
+	const int top = w.y;
+	const int bottom = std::min(w.y + w.h, kPcH - 1);
+	constexpr int kPcPanel = kPcW - 1 - kPanelInner - 2;  // (The selection window's left, 762.)
+	constexpr int kPcRoom = 302;
+	auto clip = [&](SDL_Rect r) {
+		SDL_Rect out{};
+		const SDL_Rect area = {0, 0, kScreenWidth, strip_top};
+		if (!SDL_IntersectRect(&r, &area, &out)) {
+			return std::optional<SDL_Rect>();
+		}
+		return std::optional<SDL_Rect>(out);
+	};
+	if (top < 40 && bottom < 40 && right >= kPcW - 100) {
+		return clip({0, 0, kScreenWidth, kBarHeight});  // The title bar (1,0,2000,31).
+	}
+	if (top < 40 && bottom < 40) {
+		// The sea map's title bar's ship buttons (249,0,2000,31): the plank's four.
+		return clip({p.ships[0].x - 2, p.ships[0].y - 2, p.ships[kPanelShipButtons - 1].x +
+				p.ships[kPanelShipButtons - 1].w - p.ships[0].x + 4, p.ships[0].h + 4});
+	}
+	if (left < kPcPanel - 100) {
+		return clip({0, kBarHeight, p.town_right, strip_top - kBarHeight});  // The main view (284,42,2000,2000).
+	}
+	if (top < 265) {
+		return clip(p.map);  // The minimap (5,49,250,213).
+	}
+	if (top < kPcRoom - 1) {
+		return clip({p.plank.x, p.icons[0].y - 2, kPanelInner, kPanelIconSize + 4});  // The icons (1,268,259,30).
+	}
+	SDL_Rect r = {p.room.x + (left - kPcPanel), p.room.y + (top - kPcRoom), right - left, bottom - top};
+	SDL_Rect room = p.room;
+	SDL_Rect out{};
+	return SDL_IntersectRect(&r, &room, &out) ? clip(out) : std::nullopt;
+}
+
+void draw_tutorial_window(SDL_Renderer* renderer, GameWindowArt& gart, TextRenderer& fallback, const std::string& latin1,
+	int view_w, bool before_on, bool next_on, int pressed, const std::optional<SDL_Rect>& mark, int pulse) {
+	const TutorialFrame f = tutorial_frame(latin1, view_w);
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(renderer, 255, 255, 255, 200);
+	SDL_RenderFillRect(renderer, &f.box);
+	const SDL_Color black = {0, 0, 0, 255};
+	int y = f.text_y;
+	for (const TutorialLine& line : tutorial_lines(latin1, f.text_w)) {
+		for (const TutorialPiece& piece : line) {
+			TextRenderer* font = piece.head ? gart.head_text() : gart.page_text();
+			(font ? *font : fallback).draw(piece.text, f.text_x + piece.x, y, black);
+		}
+		y += kBoxLine;
+	}
+	gart.draw_tex(16061, before_on ? (pressed == 0 ? 5 : 4) : 7, f.up.x, f.up.y);
+	gart.draw_tex(16061, next_on ? (pressed == 1 ? 1 : 0) : 3, f.down.x, f.down.y);
+	if (mark) {
+		for (int k = 0; k < 5; ++k) {
+			const int alpha = std::clamp(pulse - 51 * std::abs(k - 2), 0, 255);
+			const int rg = std::max(0, alpha - 20);
+			SDL_SetRenderDrawColor(renderer, Uint8(rg), Uint8(rg), 255, Uint8(alpha));
+			const SDL_Rect r = {mark->x + k, mark->y + k, mark->w - 2 * k, mark->h - 2 * k};
+			if (r.w > 0 && r.h > 0) {
+				SDL_RenderDrawRect(renderer, &r);
+			}
+		}
+	}
+}
+
 // A black screen with a line in the middle (loading a game).
 void show_loading_text(SDL_Renderer* renderer, TextRenderer* text, const std::string& line) {
 	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -19296,6 +20235,25 @@ int main(int argc, char** argv) {
 	// Its «Details» window: the details being changed (a copy, 0x49B180), the
 	// buttons' cursor and the finger's control.
 	bool details_open = false;
+	// The campaign screen (the book's «Campaign»; draw_campaign_screen): its list read when it opens; the details
+	// window opened from it has the starting capital and the start off (0x49B180 with 1).
+	bool campaign_open = false;
+	CampaignUi campaign;
+	// The tutorial in play (the tutorial object *0x6EE120): its chapters (tutorial_eng.ini), the chapter played (-1:
+	// none) and its window shown.
+	struct TutorialRun {
+		std::vector<p3::data::TutorialChapter> chapters;
+		int chapter = -1;
+		int window = 0;
+		// Its rect's pulse (the rect's [+0x10] and [+0x12], 0x637860) and when it next moves; the arrow pressed (0 up,
+		// 1 down, -1 none); the right stick pushed (once a push).
+		int pulse = 255;
+		int pulse_step = -25;
+		Uint32 pulse_at = 0;
+		int pressed = -1;
+		bool stick_held = false;
+		bool touch = false;  // The touch began on its window.
+	} tutorial;
 	std::array<uint8_t, p3::app::kDetailRows> details_copy{};
 	int details_focus = p3::app::kDetailOk;
 	int details_pressed = -1;
@@ -19670,6 +20628,7 @@ int main(int argc, char** argv) {
 	// What the viewer keeps of the game in play, forgotten for another one
 	// (loaded or new); the town on screen is the player's home town.
 	auto forget_game = [&]() {
+		tutorial.chapter = -1;  // (A tutorial's start sets it after.)
 		g_feast_delays = feast_delays(save);  // The feast window's constructor 0x5BAC20.
 		battle_icons.clear();
 		battle_info = -1;
@@ -19726,21 +20685,9 @@ int main(int argc, char** argv) {
 			}
 		}
 	};
-	// Replaces the game in play with the slot's: a new Sailing for it, and
-	// what the viewer keeps of the old one forgotten (forget_game). On a
-	// failure the game in play stays.
-	auto load_game = [&](const std::string& path) {
-		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
-		SaveGame loaded;
-		std::string error;
-		if (!p3::app::load_game_file(*archive, path, loaded, error) || loaded.towns.empty()) {
-#ifndef __vita__
-			std::fprintf(stderr, "%s\n", error.c_str());
-#endif
-			notify(game_text(GameText::LoadDamaged, tr("No se puede cargar la partida.", "This save game appears to be damaged")) +
-				" " + game_text(GameText::LoadDamagedCannot, tr("El fichero está dañado.", "and can't be loaded.")));
-			return false;
-		}
+	// A game just read replaces the game in play: a new Sailing for it, and what the viewer keeps of the old one
+	// forgotten (forget_game).
+	auto use_loaded_game = [&](SaveGame&& loaded) {
 		sailing.reset();  // It refers to the game it was made for.
 		save = std::move(loaded);
 		has_save = true;
@@ -19757,6 +20704,109 @@ int main(int argc, char** argv) {
 			use_sailing(*sailing);
 		}
 		forget_game();
+	};
+	// Replaces the game in play with the slot's (use_loaded_game). On a failure the game in play stays.
+	auto load_game = [&](const std::string& path) {
+		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
+		SaveGame loaded;
+		std::string error;
+		if (!p3::app::load_game_file(*archive, path, loaded, error) || loaded.towns.empty()) {
+#ifndef __vita__
+			std::fprintf(stderr, "%s\n", error.c_str());
+#endif
+			notify(game_text(GameText::LoadDamaged, tr("No se puede cargar la partida.", "This save game appears to be damaged")) +
+				" " + game_text(GameText::LoadDamagedCannot, tr("El fichero está dañado.", "and can't be loaded.")));
+			return false;
+		}
+		// The saved games' screen's load (0x4335B0 from 0x432B35: a single player game's, the mode 3, Save\Ein; the
+		// game saves a campaign's game there too, its mode 5 becoming 3 here as in the game).
+		p3::data::after_game_load(loaded, 3, true, p3::data::LoadOptions{});
+		use_loaded_game(std::move(loaded));
+		return true;
+	};
+	// A campaign's start (the campaign screen's «Start», p3data/campaigns.hpp): its save missav/<n>.pat loaded in the
+	// mode 4 (after_game_load with the options' display bytes: P2.CFG's 1, 1 and 3), then start_campaign with the
+	// speed of the settings before (0x430947: the game in play's, or the start's). On a failure the game in play
+	// stays.
+	auto start_campaign_game = [&](int n) {
+		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
+		SaveGame loaded;
+		std::string error;
+		if (!load_savegame(*archive, "missav/" + std::to_string(n) + ".pat", loaded, &error) || loaded.towns.empty()) {
+#ifndef __vita__
+			std::fprintf(stderr, "%s\n", error.c_str());
+#endif
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return false;
+		}
+		const uint32_t speed = has_save ? save.settings.u32(0x4) : p3::data::initial_game_settings().u32(0x4);
+		p3::data::after_game_load(loaded, 4, true, p3::data::LoadOptions{});
+		p3::data::start_campaign(loaded, uint8_t(n), speed);
+		use_loaded_game(std::move(loaded));
+		return true;
+	};
+	// A tutorial chapter's start (the tutorial screen's «Start», 0x4ABE3F..0x4ABFA2): its save (SaveGame= of
+	// [GameTutorialBase<k>], missav/tut<k>.pat) loaded in the mode 4 (after_game_load), then start_tutorial; the
+	// tutorial's windows from its first (0x637470). On a failure the game in play stays.
+	// The tutorial's arrows (0x637C20, 0x637CF0): the next step, past the last one the next chapter (0x638080: its save
+	// loaded with 0x4335B0 in the mode 4 and its steps from the first; nothing else), or the step before.
+	auto tutorial_step = [&](int step) {
+		if (tutorial.chapter < 0 || tutorial.chapter >= int(tutorial.chapters.size())) {
+			return;
+		}
+		const int windows = int(tutorial.chapters[size_t(tutorial.chapter)].windows.size());
+		tutorial.pulse = 255;
+		tutorial.pulse_step = -25;
+		if (step < 0) {
+			tutorial.window = std::max(0, tutorial.window - 1);
+			return;
+		}
+		if (tutorial.window < windows - 1) {
+			++tutorial.window;
+			return;
+		}
+		const int next = tutorial.chapter + 1;
+		if (next >= int(tutorial.chapters.size())) {
+			return;
+		}
+		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
+		SaveGame loaded;
+		std::string error;
+		if (!load_savegame(*archive, "missav/" + tutorial.chapters[size_t(next)].save + ".pat", loaded, &error) ||
+			loaded.towns.empty()) {
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return;
+		}
+		p3::data::after_game_load(loaded, 4, true, p3::data::LoadOptions{});
+		std::vector<p3::data::TutorialChapter> chapters = std::move(tutorial.chapters);
+		use_loaded_game(std::move(loaded));
+		tutorial.chapters = std::move(chapters);
+		tutorial.chapter = next;
+		tutorial.window = 0;
+	};
+	auto start_tutorial_game = [&](int chapter) {
+		std::vector<p3::data::TutorialChapter> chapters = p3::data::read_tutorial(*archive);
+		if (chapter < 0 || chapter >= int(chapters.size()) || chapters[size_t(chapter)].save.empty()) {
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return false;
+		}
+		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
+		SaveGame loaded;
+		std::string error;
+		if (!load_savegame(*archive, "missav/" + chapters[size_t(chapter)].save + ".pat", loaded, &error) ||
+			loaded.towns.empty()) {
+#ifndef __vita__
+			std::fprintf(stderr, "%s\n", error.c_str());
+#endif
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return false;
+		}
+		p3::data::after_game_load(loaded, 4, true, p3::data::LoadOptions{});
+		p3::data::start_tutorial(loaded);
+		use_loaded_game(std::move(loaded));
+		tutorial.chapters = std::move(chapters);
+		tutorial.chapter = chapter;
+		tutorial.window = 0;
 		return true;
 	};
 	// A new game (the user's choice, 2026-11-11: from the game's main menu, the
@@ -21096,7 +22146,7 @@ int main(int argc, char** argv) {
 		v.details = &details_copy;
 		v.texts = &new_game_texts;
 		for (int k = 0; k < p3::app::kDetailCancel; ++k) {
-			v.enabled[size_t(k)] = new_game_detail_enabled(details_copy, k / 2, k % 2 == 1);
+			v.enabled[size_t(k)] = new_game_detail_enabled(details_copy, k / 2, k % 2 == 1) && !(campaign_open && k / 2 >= 6);
 		}
 		v.enabled[size_t(p3::app::kDetailCancel)] = true;
 		v.enabled[size_t(p3::app::kDetailOk)] = true;
@@ -21108,7 +22158,7 @@ int main(int argc, char** argv) {
 	auto details_press = [&](int control) {
 		NewGameChoices& c = new_game_state.choices;
 		if (control >= 0 && control < p3::app::kDetailCancel) {
-			if (new_game_detail_enabled(details_copy, control / 2, control % 2 == 1)) {
+			if (new_game_detail_enabled(details_copy, control / 2, control % 2 == 1) && !(campaign_open && control / 2 >= 6)) {
 				sound.play_interface(1);
 				press_new_game_detail(details_copy, control / 2, control % 2 == 1);
 			}
@@ -21195,15 +22245,192 @@ int main(int argc, char** argv) {
 		}
 		SDL_RenderPresent(renderer);
 	};
+	// The campaign screen (draw_campaign_screen): opened from the book's «Campaign» with the first campaign chosen
+	// (0x43051E); «Back» to the book.
+	auto open_campaigns = [&]() {
+		campaign = CampaignUi();
+		campaign.list = p3::data::read_campaigns(*archive);
+		if (campaign.list.empty()) {
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return;
+		}
+		campaign_open = true;
+	};
+	auto open_tutorial = [&]() {
+		campaign = CampaignUi();
+		campaign.tutorial = true;
+		campaign.list = p3::data::read_tutorial_chapters(*archive, &campaign.title);
+		if (campaign.list.empty()) {
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return;
+		}
+		campaign_open = true;
+	};
+	auto campaign_choose = [&](int row) {
+		if (row >= 0 && row < int(campaign.list.size()) && row != campaign.chosen) {
+			campaign.chosen = row;
+			campaign.first_line = 0;  // (0x461DD0 with 0: the text from its top.)
+		}
+	};
+	auto campaign_start = [&]() {
+		if (campaign.chosen < 0 || campaign.chosen >= int(campaign.list.size())) {
+			return;
+		}
+		if (campaign.tutorial ? start_tutorial_game(campaign.chosen)
+							  : start_campaign_game(campaign.chosen + 1)) {  // (0x430928: «%u» of [+0xCC4] + 1.)
+			campaign_open = false;
+		}
+	};
+	auto campaign_details = [&]() {
+		if (campaign.tutorial) {
+			return;  // (The tutorial's screen has no «Details».)
+		}
+		if (!new_game_window) {
+			new_game_window = std::make_unique<p3::app::NewGameWindow>(renderer, *archive, kScreenWidth, kScreenHeight);
+		}
+		if (!new_game_window->ok()) {
+			return;
+		}
+		new_game_texts = make_new_game_texts();
+		details_copy = new_game_state.choices.details;
+		details_focus = p3::app::kDetailOk;
+		details_pressed = -1;
+		details_open = true;
+	};
+	auto campaign_lines = [&](int step) {
+		if (!g_game_art || !small_text) {
+			return;
+		}
+		TextRenderer& f = campaign_text_font(*g_game_art, *small_text);
+		const int lines = int(campaign_text_lines(f, campaign).size());
+		campaign.first_line = std::clamp(campaign.first_line + step, 0, std::max(0, lines - campaign_text_shown(f)));
+	};
+	auto campaign_frame = [&]() {
+		SDL_Event event;
+		while (SDL_PollEvent(&event)) {
+			if ((event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP) &&
+				rear_touch(event.tfinger.touchId)) {
+				continue;
+			}
+			const int x = int(event.tfinger.x * kScreenWidth);
+			const int y = int(event.tfinger.y * kScreenHeight);
+			const GameScreenLayout l;
+			auto row_at = [&](int px, int py) {
+				return g_game_art && small_text
+					? campaign_row_at(campaign_list_font(*g_game_art, *small_text), campaign, l.game(px, py))
+					: -1;
+			};
+			switch (event.type) {
+			case SDL_QUIT:
+				running = false;
+				break;
+			case SDL_CONTROLLERDEVICEADDED:
+				if (!controller) {
+					controller = SDL_GameControllerOpen(event.cdevice.which);
+				}
+				break;
+			case SDL_CONTROLLERBUTTONDOWN: {
+				const Uint8 button = event.cbutton.button;
+				if (button == SDL_CONTROLLER_BUTTON_DPAD_UP || button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+					campaign_choose(std::clamp(campaign.chosen + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1), 0,
+						int(campaign.list.size()) - 1));
+				} else if (button == SDL_CONTROLLER_BUTTON_A) {
+					campaign_start();
+				} else if (button == SDL_CONTROLLER_BUTTON_X) {
+					campaign_details();
+				} else if (button == SDL_CONTROLLER_BUTTON_B) {
+					campaign_open = false;
+				} else if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
+					campaign_lines(button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1);
+				}
+				break;
+			}
+			case SDL_FINGERDOWN:
+				touch_start = {x, y};
+				touch_moved = 0;
+				campaign.lit = row_at(x, y);
+				break;
+			case SDL_FINGERMOTION:
+				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
+					std::abs(int(event.tfinger.dy * kScreenHeight));
+				campaign.lit = row_at(x, y);
+				break;
+			case SDL_FINGERUP: {
+				campaign.lit = -1;
+				if (touch_moved >= kTapDistance) {
+					break;
+				}
+				const int row = row_at(touch_start.x, touch_start.y);
+				std::optional<ScrollBarLayout> bar;
+				if (g_game_art && small_text) {
+					TextRenderer& f = campaign_text_font(*g_game_art, *small_text);
+					bar = campaign_bar(f, int(campaign_text_lines(f, campaign).size()), campaign.first_line);
+				}
+				if (row >= 0) {
+					if (row == campaign.chosen) {
+						campaign_start();  // (A second click on the chosen one, 0x4307E4.)
+					} else {
+						campaign_choose(row);
+					}
+				} else if (l.on(campaign_button(CampaignButton::Start), touch_start.x, touch_start.y)) {
+					campaign_start();
+				} else if (l.on(campaign_button(CampaignButton::Back), touch_start.x, touch_start.y)) {
+					campaign_open = false;
+				} else if (l.on(campaign_button(CampaignButton::Details), touch_start.x, touch_start.y)) {
+					campaign_details();
+				} else if (bar && l.on(bar->up, touch_start.x, touch_start.y, 0)) {
+					campaign_lines(-1);
+				} else if (bar && l.on(bar->down, touch_start.x, touch_start.y, 0)) {
+					campaign_lines(1);
+				}
+				break;
+			}
+			default:
+				break;
+			}
+		}
+		if (!campaign_open || !running || !start_open) {
+			return;
+		}
+		if (small_text) {
+			draw_campaign_screen(renderer, *small_text, campaign);
+		}
+		if (text && !menu_notice.first.empty()) {
+			if (app_ticks() > menu_notice.second) {
+				menu_notice.first.clear();
+			} else {
+				const int w = text->measure(menu_notice.first);
+				text->draw(menu_notice.first, (kScreenWidth - w) / 2, kScreenHeight - 2 * text->line_height(),
+					SDL_Color{255, 255, 255, 255});
+			}
+		}
+		if (script && !script->screenshot().empty()) {
+			std::string error;
+			if (p3::app::save_screenshot(renderer, kScreenWidth, kScreenHeight, script->screenshot(), error)) {
+				std::printf("%s\n", script->screenshot().c_str());
+			} else {
+				std::fprintf(stderr, "%s\n", error.c_str());
+				screenshot_failed = true;
+			}
+		}
+		SDL_RenderPresent(renderer);
+	};
 	// The start screen (the game's main menu): the book, the entry under the
 	// finger or the buttons' (Up and Down; X chooses), and over it the load
-	// menu's slots. «Single player» opens the «Game settings» window, «Load
-	// game» the slots, «Exit» quits; the others aren't in p3vita yet (a notice).
+	// menu's slots. «Single player» opens the «Game settings» window, «Campaign»
+	// the campaign screen, «Load game» the slots, «Exit» quits; the others aren't
+	// in p3vita yet (a notice).
 	auto start_choose = [&](int entry) {
 		sound.play_sample(8000, false, false, -1, 0x40, false, false);  // okbottun_menu.wav (0x42FA82)
 		switch (p3::app::StartEntry(entry)) {
 		case p3::app::StartEntry::Single:
 			open_new_game();
+			break;
+		case p3::app::StartEntry::Tutorial:
+			open_tutorial();
+			break;
+		case p3::app::StartEntry::Campaign:
+			open_campaigns();
 			break;
 		case p3::app::StartEntry::Load:
 			open_menu(MenuScreen::Load, -1);
@@ -21352,6 +22579,10 @@ int main(int argc, char** argv) {
 				details_frame();
 			} else if (new_game_open) {
 				new_game_frame();
+			} else if (campaign_open && details_open) {
+				details_frame();
+			} else if (campaign_open) {
+				campaign_frame();
 			} else {
 				start_frame();
 			}
@@ -22253,6 +23484,7 @@ int main(int argc, char** argv) {
 				queue_operation(save, *op);
 				mail.answered = mail.shown;
 				mail.answers.clear();
+				++mail.version;  // (The letter's window made again, without its buttons.)
 			}
 			return true;
 		};
@@ -23623,6 +24855,30 @@ int main(int argc, char** argv) {
 					}
 				}
 			}
+			// The event videos' windows the world opened (0x469AF0; SaveGame::event_windows): the viewer has no videos
+			// yet (roadmap section 5), so as the game with its videos off (0x46A1FA → 0x42B4C0) a news line: the history
+			// event's title (0x16, the mission interpreter's 0x37) and the treasure found (0x1D, its 0xE8: «You have
+			// discovered treasure.» for the player, else «%s %s has discovered treasure.» with the merchant's first and
+			// family names, 0x6AAB94 / 0x6AAB90 → 0x46A185). The codes the game always shows in its window (0x19, 0x1A:
+			// the campaigns' 0xEF) wait for the videos.
+			for (const SaveGame::EventWindow& w : take_event_windows(save)) {
+				if (w.code == 0x16) {
+					notify(one_line(clean_game_text(w.first)));
+				} else if (w.code == 0x1D && int(w.a) == save.player) {
+					notify(clean_game_text(exe_text(0x6AAB94, "Has descubierto el tesoro.", "You have discovered treasure.")));
+				} else if (w.code == 0x1D && w.a < save.merchants.size()) {
+					// (The names raw into the game's raw text, made UTF-8 once.)
+					const MerchantMemory& m = save.merchants[w.a].memory;
+					const std::string first = game_first_name(save, m.u8(0x1C));
+					const std::string family = game_family_name(save, m.u8(0x1D));
+					notify(clean_game_text(exe_format(0x6AAB90, {first, family}, first + " " + family + " has discovered treasure.")));
+				}
+			}
+			// The message windows the world opened for the player (0x41D9B0 on *0x6CBB10; the mission interpreter's
+			// 0xF5): the game's message window with the text, no buttons, its ratio 0.5.
+			for (const std::string& text : take_player_messages(save)) {
+				screen_message = ScreenMessage{game_message_layout(text, {}, false, 27, 0.5f, kScreenWidth, kScreenHeight)};
+			}
 			// The election of the Alderman (event 0x20): its result. The game also
 			// shows a window and, for the player, the video `eldermann` (pending).
 			const uint32_t election = alderman_election_tick(save);
@@ -23684,7 +24940,8 @@ int main(int argc, char** argv) {
 		if (view) {
 			const bool saved = selection.mode == Mode::Saved && has_save && town_index >= 0 &&
 				size_t(town_index) < save.towns.size();
-			view->set_snow(saved ? int(save.towns[size_t(town_index)].memory.u8(0x9BC)) : 0);
+			view->set_snow(saved ? int(save.towns[size_t(town_index)].memory.u8(0x9BC)) : 0,
+				has_save ? int(save.globals.u8(0x6DE4A1)) : 0);
 		}
 
 		int town_step = 0;
@@ -23956,6 +25213,21 @@ int main(int argc, char** argv) {
 		// Triangle its sort button, Circle closes it.
 		const bool stats_open = side.menu == PanelMenu::Statistics && panel_shown && !side.folded && has_save &&
 			save.player >= 0 && small_text && !trading && !in_place && !in_mail && !in_menu;
+		// The tutorial's window (draw_tutorial_window): its step, shown over the town or the sea map with no window over
+		// the view (adapted: the game's stays under its windows).
+		const p3::data::TutorialWindow* tutorial_now =
+			tutorial.chapter >= 0 && tutorial.chapter < int(tutorial.chapters.size()) && tutorial.window >= 0 &&
+				tutorial.window < int(tutorial.chapters[size_t(tutorial.chapter)].windows.size())
+			? &tutorial.chapters[size_t(tutorial.chapter)].windows[size_t(tutorial.window)]
+			: nullptr;
+		const bool tutorial_on = tutorial_now && has_save && save.player >= 0 && g_game_art && small_text &&
+			(selection.mode == Mode::Saved || selection.mode == Mode::Sea) && !trading && !in_place && !in_mail &&
+			!in_menu && !stats_open && !ship_list.open && !convoy_window.open && !screen_message && !battle_popup() &&
+			!messages.open && !end_window.open;
+		const bool tutorial_before_on = tutorial.window > 0;
+		const bool tutorial_next_on = tutorial_now &&
+			(tutorial.window < int(tutorial.chapters[size_t(tutorial.chapter)].windows.size()) - 1 ||
+				tutorial.chapter < int(tutorial.chapters.size()) - 1);
 		auto stats_pick_town = [&](int step) {
 			const std::vector<int> towns = statistics_supply_towns(save, uint32_t(save.player));
 			if (towns.empty()) {
@@ -24867,6 +26139,21 @@ int main(int argc, char** argv) {
 					touch_building = false;
 					break;
 				}
+				tutorial.touch = false;
+				if (tutorial_on) {
+					const TutorialFrame tf = tutorial_frame(tutorial_now->text, town_width);
+					if (inside(tf.box, touch_start.x, touch_start.y)) {
+						// The tutorial's window: nothing under it moves; its arrows lit while pressed.
+						tutorial.touch = true;
+						tutorial.pressed = inside(grown(tf.up, 10), touch_start.x, touch_start.y)   ? 0
+							: inside(grown(tf.down, 10), touch_start.x, touch_start.y) ? 1
+																					  : -1;
+						touch_on_side = false;
+						touch_on_panel = true;
+						touch_building = false;
+						break;
+					}
+				}
 				touch_on_convoy = false;
 				if (convoy_window.open && has_save && save.player >= 0 &&
 					((touch_start.x < town_width && touch_start.y >= kBarHeight) ||
@@ -25137,6 +26424,20 @@ int main(int argc, char** argv) {
 				break;
 			case SDL_FINGERUP:
 				finger_down = false;
+				if (tutorial.touch) {
+					tutorial.touch = false;
+					touch_on_panel = false;
+					const int pressed = tutorial.pressed;
+					tutorial.pressed = -1;
+					if (touch_moved < kTapDistance && tutorial_on) {
+						if (pressed == 0 && tutorial_before_on) {
+							tutorial_step(-1);
+						} else if (pressed == 1 && tutorial_next_on) {
+							tutorial_step(1);
+						}
+					}
+					break;
+				}
 				if (touch_on_stats) {
 					touch_on_stats = false;
 					touch_on_panel = false;
@@ -26184,6 +27485,23 @@ int main(int argc, char** argv) {
 				place.page_scroll += stick_speed(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY));
 			}
 		}
+		if ((controller || script) && tutorial_on && !placing) {
+			// The tutorial's arrows' keys (adapted): the right stick pushed up the step before, down the next, once a
+			// push.
+			const int scripted = script ? int(script->right_axis(SDL_CONTROLLER_AXIS_RIGHTY)) : 0;
+			const int ay = scripted != 0 || !controller ? scripted
+														: int(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY));
+			if (std::abs(ay) < 12000) {
+				tutorial.stick_held = false;
+			} else if (!tutorial.stick_held) {
+				tutorial.stick_held = true;
+				if (ay < 0 && tutorial_before_on) {
+					tutorial_step(-1);
+				} else if (ay > 0 && tutorial_next_on) {
+					tutorial_step(1);
+				}
+			}
+		}
 		if ((controller || script) && placing && !in_mail && !in_place && !ship_list.open && !convoy_window.open) {
 			// Placing a building: the right stick moves it as the cross does (left and right a column, up and down a row;
 			// the first push puts it in the middle of the view), again every 250 ms while held, 100 pushed fully; the view
@@ -26382,6 +27700,14 @@ int main(int argc, char** argv) {
 			const int pointed = free_now && side.menu != PanelMenu::Build
 				? view->place_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2)
 				: -1;
+			// The living town: its walkers (TownLife), only in a save's town.
+			if (selection.mode == Mode::Saved && has_save && town_index >= 0 && size_t(town_index) < save.towns.size()) {
+				view->step_life(save, size_t(town_index), app_ticks(), camera_x, camera_y, town_width,
+					kGameSpeeds[game_speed].ms_per_tick, sailing && sailing->time_mode() == 2);
+			} else {
+				view->stop_life();
+				view->step_template_anims(app_ticks(), camera_x, camera_y, town_width);
+			}
 			view->draw(camera_x, camera_y, pointed, side.shade_rivals && save.player >= 0 ? save.player : -1,
 				int(save.merchant_count));
 			if (placing && side.cell_x >= 0) {
@@ -26603,6 +27929,20 @@ int main(int argc, char** argv) {
 			(selection.mode == Mode::Saved || selection.mode == Mode::Sea)) {
 			draw_ticker(*g_game_art, *small_text, ticker_events, town_width, kBarHeight);
 			draw_ticker(*g_game_art, *small_text, ticker_letters, town_width, kBarHeight);
+		}
+		if (tutorial_on && tutorial_now) {
+			// The tutorial's window (draw_tutorial_window), its rect's pulse moved on (every 75 ms, 0x637860).
+			const Uint32 now_ms = app_ticks();
+			if (now_ms >= tutorial.pulse_at) {
+				tutorial.pulse_at = now_ms + 75;
+				tutorial.pulse += tutorial.pulse_step;
+				if (tutorial.pulse <= 130 || tutorial.pulse >= 255) {
+					tutorial.pulse_step = -tutorial.pulse_step;
+				}
+			}
+			const TutorialFrame tf = tutorial_frame(tutorial_now->text, town_width);
+			draw_tutorial_window(renderer, *g_game_art, *small_text, tutorial_now->text, town_width, tutorial_before_on,
+				tutorial_next_on, tutorial.pressed, tutorial_mark(*tutorial_now, panel_layout, tf.box.y), tutorial.pulse);
 		}
 		if (trading) {
 			draw_market(renderer, *small_text, save, town_index, market);

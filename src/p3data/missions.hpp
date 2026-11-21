@@ -19,12 +19,14 @@ struct SaveGame;
 // A mission's program: the whole .p2m (u16 sections, u16 variables, u32 offset of each section; each section one
 // instruction; the texts after the last one). Shared, as the game's buffer is by every script of the mission.
 using MissionProgram = std::shared_ptr<const std::vector<uint8_t>>;
+// An ini of the game's: its sections (lower case) with their keys (lower case) and values.
+using MissionIni = std::map<std::string, std::map<std::string, std::string>>;
 
 struct MissionData {
 	// From the game's data (load_mission_files): the ini's sections (lower case) with their keys (lower case) and
 	// values, in Latin-1; and the .p2m of each file name of its [Missions] (lower case), as missions_addon/ has it
 	// (the ones the archive lacks, absent).
-	std::map<std::string, std::map<std::string, std::string>> ini;
+	MissionIni ini;
 	std::map<std::string, MissionProgram> files;
 	// The files the ini misspells («ue» for the file's «ü»: the campaign 3's abduction), by the ini's name, for
 	// fix_game_bugs (a game bug: without the fix they don't load).
@@ -48,6 +50,12 @@ struct MissionData {
 	};
 	std::map<uint16_t, Script> scripts;
 };
+
+// The missions' ini (scripts/missions_spa.ini when the Spanish archive is mounted, else missions_eng.ini): its
+// sections (lower case) with their keys (lower case) and values (Latin-1; a key twice, its first).
+MissionIni read_missions_ini(const CprArchive& archive);
+// An ini of the game's from the archive: `spanish` when the Spanish archive is mounted (it has it), else `english`.
+MissionIni read_game_ini(const CprArchive& archive, const char* spanish, const char* english);
 
 // The game's data for the missions: scripts/missions_spa.ini when the Spanish archive is mounted (its own .p2m with
 // the Spanish texts), else missions_eng.ini, and the .p2m its [Missions] names (missions_addon/). After it a load

@@ -191,6 +191,36 @@ uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick) {
 	return index;
 }
 
+// 0x4D8E70 (on the queue, a type): every event of the type taken out of the list, from the head, and put at the head of
+// the free list with the type 0xFFFF; a mission's script (0x1B) has its variables freed (the game deletes [+0xC] and
+// leaves the pointers in the record; the list keeps its program's count: 0x4F37E0 isn't called).
+void fn_4d8e70(SaveGame& save, uint16_t type) {
+	GlobalMemory& g = save.globals;
+	int before = -1;  // The record whose [+0x4] holds the index looked at (−1: the head).
+	uint16_t index = g.u16(kEventHead);
+	while (index < g.u16(kEventCount) && index < save.events.size()) {
+		Event& e = save.events[index];
+		const uint16_t next = e.u16(4);
+		if (e.u16(6) != type) {
+			before = index;
+			index = next;
+			continue;
+		}
+		if (before >= 0) {
+			save.events[size_t(before)].u16(4) = next;
+		} else {
+			g.u16(kEventHead) = next;
+		}
+		if (type == 0x1B && e.u32(0xC) != 0) {
+			save.missions.scripts.erase(index);
+		}
+		e.u16(6) = 0xFFFF;
+		e.u16(4) = g.u16(kEventFree);
+		g.u16(kEventFree) = index;
+		index = next;
+	}
+}
+
 // 0x4F6C10 (thiscall sobre el comerciante; evento 0x1A, cada 64 ticks):
 // limita [+0x1F] (reputación entre los marineros) a 20 y, en cada ciudad i,
 // sube el byte [+0xF0 + i] en [+0x1F] / 4 (el de antes de limitarlo) sin

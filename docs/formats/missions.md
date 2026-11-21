@@ -16,7 +16,7 @@ network game's contests and the campaigns' scripts. Read in the executable and i
   - A game of one player (`EinzelSpiel`): `History` (48 dated events, 1305..1669) and `Standard` (18 missions, some
     two or three times: 0 1 2 3 4 5 5 6 7 8 8 9 9 9 10 11 12 13 13 15 15 16 16 22 23).
   - Network and hot seat: also `Standard2` (14, the ship's kobold) and `Multiplay` (17..21, the contests).
-  - The campaigns: 0 the tutorial (no group: its own system, `scripts/tutorial.ini` and `missav/Tut*.pst`), 1 (100..103),
+  - The campaigns: 0 the tutorial (no group: its own system, `scripts/tutorial.ini` and `missav/tut0..4.pat`), 1 (100..103),
     2 (200, 201), 3 (300..309), 4..7 the scenarios (400, 500, 600, 700).
 - `missions_addon/<file>.p2m` (94 files; in the Spanish archive the same programs with the Spanish texts):
   - u16 the sections' count, u16 the variables' count (u32 each, a script's own), u32 the offset of each section;
@@ -77,6 +77,23 @@ it (at a start, how many to start).
 - p3vita: `MissionData` in `SaveGame::missions` (the ini, the files, the list, each event's script: its program shared
   with the list's entry, its variables); `load_mission_files` and `attach_mission_programs` in `load_game_scripts`;
   `missions_detail::fn_511270` and the others; the event's [+0x8] and [+0xC] are 1 or 0.
+- A campaign's start (the campaign screen *0x6CBB6C's «Start», 0x4306FB..0x4309D7; 2026-11-21, `campaigns.cpp`): the
+  campaign n (1..7, the screen lists `[Campaign_1..7]`) loads `MISSAV\<n>.pat` (missav/1..7.pat) through 0x4335B0 in
+  the mode 4 (a new list, the load and its 0x511270(0); then `after_game_load`: the humans from the 20th merchant on
+  0x8001, the mode and three display bytes, the operation 0xA8 on the first with the bit 15, the 0xC8 queued); then the
+  mailbox emptied (0x4D64B0), every event 0x1B taken out (0x4D8E70: the variables freed, the list's counts untouched),
+  the settings' [+0xD] 5, [+0x14] n and [+0x4] the speed before the load, 0x511270(1) (the list of `Kampagne<n>`, its
+  missions started; the list is made anew, so the programs of the scripts taken out are dropped with it) and 0x54A480
+  (the trade's difficulty, the player's factor, the pirates by [+0x13]). Its saves go to `Save\Ein\` as any other's
+  (the saved games' screen's save page always keeps the kind «single», 0x431CC0: [+0x11C0] 0; `Save\Kam\` is only
+  listed by its load page's «Campaign»); loaded from there, the mode becomes 3 (0x433747).
+  The tutorial ([Campaign_0], `Kampagne0` with no group) starts otherwise (0x4ABF03: `SaveGame=tut0..4`, the mode 4
+  with [+0x14] 0).
+- **Game bug** in the campaign 3 (instruction 0x65, 0x4F26C0 → 0x5136A0): the town by its name is looked for in the
+  table 0x6DDA00 by town index, but the table goes by town number (k below the towns' count gives the index k, k past
+  it −1); then 0x34 reads the town −1's residents past the array. Its missions 301..303 and 305 watch the wrong towns
+  or memory outside them (the oracle reads 0 there, as p3vita). Fixed behind fix_game_bugs (the user's word,
+  21-11-2026): the town whose number is k (roadmap, «Corregidos con el ajuste»).
 
 ## The interpreter (0x4ECF64)
 
@@ -249,7 +266,10 @@ back the next year, turned over when negative).
 
 ## Checks
 
-- The loads: the oracle with `--misiones` (TownOracle `missions`) runs 0x511270 and 0x511690 as the game; the regions
+- The oracle runs the missions by default since 2026-11-21 (`town_oracle.py` with `--cpr`, and so `world.sh`;
+  `--sin-misiones` without them; the class `TownOracle` keeps `missions=False` unless asked: the scenario tools choose,
+  `retouch_unchecked.py`'s by each scenario's `missions`). `world.sh` 7 days with them: 0 differences in the 12 saves.
+- The loads: the oracle with the missions (TownOracle `missions`) runs 0x511270 and 0x511690 as the game; the regions
   MS (the list), MV (each event 0x1B's script) and MF compared by `tick_probe --carga`: 0 differences in the 12 saves
   (each has 49 to 75 scripts: about 15 of the Standard missions and the History's to come). Without it (as all the
   older checks), the oracle skips 0x511270 and tick_probe gives p3vita's load the same (`detach_mission_programs`).

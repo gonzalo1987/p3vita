@@ -30,8 +30,12 @@ descomprimido. Marcas usadas:
   `Save\Kam\`, `Save\Mehr\`, `MISSAV\`.
 - La primera palabra del `.pat` es `u32 = 0xAFFE | versión << 16` **[código]** (`0x549f40`:
   `shr edi,0x10`). En `missav/`: `1..7.pat` y `tut0..4.pat` son **v0x82**; `0100..0204.pat`
-  son **v0x4D** (no soportadas, ver §14). Todo lo que sigue es para v0x82; el código tiene ramas para versiones anteriores
+  son **v0x4D**, which the game never loads (§15). Todo lo que sigue es para v0x82; el código tiene ramas para versiones anteriores
   que `p3save.py` replica en parte.
+- Which saves the game loads **[código]**: 0x5476E0 (the only file reader, called by 0x4335B0) gets its folder from
+  the game's mode: 0 `Save\Mehr\`, 3 `Save\Ein\`, 4 `MISSAV\`, 5 `Save\Kam\` (table 0x547BC4). `MISSAV\` is asked for
+  by the campaigns, `<n>.pat` for the campaign n = 1..7 (0x430977), and by the tutorial, `SaveGame=tut0..tut4` of
+  `scripts/tutorial_eng.ini` (0x4ABF2B, 0x63813C).
 - Los `.pst` son otra cosa (§10): no contienen edificios.
 
 ## 2. Estructura global de un `.pat` v0x82 (0x549f40)
@@ -636,7 +640,9 @@ su lista de registros de 16 bytes se descarta, vacía en las partidas). Ver
 
 - v0x4D (`0100–0204.pat`): siguiendo 0x549f40 para esa versión (ajustes de 0x28 bytes, sin
   [+0x8dc]) la cabecera del mundo sale incoherente (año 1, 0x849C0000 ciudades) y en 0x34 no
-  hay `0xAFFE`; falta alguna rama que no he localizado.
+  hay `0xAFFE`. Settled on 2026-11-21: the game never loads them (§1: the campaigns load `1..7.pat`); with the old
+  `missions/` folder (`0100xx_k.p2m`...) they are leftovers of an earlier campaign system by chapters, written by a
+  debug build (its heap's 0xCD fill in them), and the release loader doesn't read them. Nothing to do.
 - Kontors en el mapa: las oficinas ya se leen (§11.1); falta dibujar `spielerkontor` y
   `gegnerkontor` (§8.5).
 - Estatua de la ciudad (§8.3), grúas (qué modelo de los 6 elige el exe), capillas,

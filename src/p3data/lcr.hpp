@@ -26,8 +26,10 @@ struct LcrRect {
 // A frame: its picture in the main image, the point of it on the creature's
 // place (its anchor, in the main image's coordinates) and, with a shadow
 // image, its shadow: a rectangle of that image whose corner goes at
-// (shadow_x, shadow_y) of the main image's coordinates. The vertical strips
-// of 17 pixels the town view sorts by depth are left out.
+// (shadow_x, shadow_y) of the main image's coordinates; and the vertical
+// strips (at most 17 pixels wide, in the main image) by which the town view
+// sorts it among the buildings: each strip goes with the cell its bottom
+// middle stands on (0x5596C0); none in the files without them (the birds', the snow's...).
 struct LcrFrame {
 	int anchor_x = 0;
 	int anchor_y = 0;
@@ -36,6 +38,15 @@ struct LcrFrame {
 	LcrRect shadow;
 	int shadow_x = 0;
 	int shadow_y = 0;
+	std::vector<LcrRect> strips;
+};
+
+// A sequence of the town people's animations (their classes' head, 0x558770): its frames first..last of each
+// direction and the number the game asks it by (2 walking; 3, 4, 5... standing and their gestures; 6 running).
+struct LcrSequence {
+	int first = 0;
+	int last = 0;
+	int id = 0;
 };
 
 // A point in an animation's main image.
@@ -49,9 +60,12 @@ struct LcrAnim {
 	uint16_t kind = 0;  // The class: 0x0D a ship's look, 0x12 an effect...
 	uint32_t key = 0;  // 0xFFFF00FF: its images' magenta is transparent; 0xFF000000: black; 0: their own alpha.
 	uint32_t fps = 0;  // Frames per second (0: one frame).
+	uint32_t speed = 0;  // The head's u32 at 0x10 (the look's [+0xC]): a walker's speed, 140 the town's people.
 	// The six words after the head: for an effect, [1, the number the game asks it by with its class, 1, 0,
 	// its last frame, 2] (0x12/0x24 the burning ship's smoke, 0x12/4..7 a sinking ship's upper part...).
 	uint32_t words[6] = {};
+	std::vector<uint32_t> params;  // The head's parameters (an effect's number, a seller's 100 and 50...).
+	std::vector<LcrSequence> sequences;  // Its sequences (the people's walking, standing, gestures...).
 	std::string shadow_image;  // CPR paths, with '/' separators; no shadow: empty.
 	std::string image;
 	std::vector<std::vector<LcrFrame>> directions;  // Each direction's frames.
@@ -61,8 +75,8 @@ struct LcrAnim {
 };
 
 // False (and why in `error`) if the bytes aren't an animation of the layout
-// read here (the ships' and the effects'; the town people's with several
-// sequences aren't).
+// read here: the ships', the effects', the pennant's and the town people's
+// (their sequences after the head's byte at 0x1C, then the same frames).
 bool parse_lcr(const uint8_t* data, size_t size, LcrAnim& out, std::string* error = nullptr);
 
 // A ship's look (iso/lcr/<type>_schadenHH_segelSS.lcr): one per type 0..3

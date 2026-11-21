@@ -30,6 +30,7 @@ int main() {
 		"a picture by its number, a font code without '_', a made picture out");
 	check(clean_game_text("Hanse\xe1tica \x96 \x80") == "Hanse\xc3\xa1tica \xe2\x80\x93 \xe2\x82\xac", "Windows-1252");
 	check(clean_game_text("line\none") == "line\none", "line breaks stay");
+	check(clean_game_text("\\\\f1_Ah, welcome!") == "Ah, welcome!", "a backslash before another sign isn't drawn");
 
 	check(GameTexts::format("%s %s %s %s from %s by %d votes.", {"", "", "Georg Stromberg", "", "Lubeck", "18"}) ==
 			"Georg Stromberg from Lubeck by 18 votes.",

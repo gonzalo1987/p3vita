@@ -42,6 +42,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
 #include "p3data/letters.hpp"
 #include "p3data/mail.hpp"
@@ -90,6 +91,14 @@ struct Run {
 	// A jump: [+0x14] the section of the u16 at the byte `k` (the loop doesn't move it on: 0x4F2C97).
 	void jump(uint32_t k) { e().u16(0x14) = w(k); }
 	uint32_t d(uint32_t k) const { return uint32_t(w(k)) | uint32_t(w(k + 2)) << 16; }
+	// The program's string at the offset of the u32 at the byte `k` (empty past the program).
+	std::string text(uint32_t k) const {
+		std::string out;
+		for (size_t o = d(k); o < p.size() && p[o] != 0; ++o) {
+			out += char(p[o]);
+		}
+		return out;
+	}
 	// A variable by the operand byte `k` (the game indexes the buffer without a check).
 	uint32_t& var(uint32_t k) {
 		static uint32_t outside = 0;
@@ -163,14 +172,26 @@ uint8_t fn_533210(const SaveGame& save, uint32_t town, const uint32_t* avoid, in
 // lowest stock / [+0x4F0 + 16 · ware] (floats) below 400; 0x1F if none. The u16 is the workers of the town's facility
 // [+0x840 + 16 · k] of the business type k numbered as the ware: the game reads the ware's business type (0x672C88)
 // and leaves it unused, its branch for the whale oil (0xFF, with [+0x2CC] above 1000) under a check of the ware's
-// number against 0x15 that is always true; the market hall's 0x5DE3xx reads the facility of the ware's type: it looks
-// like a game bug (reproduced; the roadmap's list).
+// number against 0x15 that is always true; the market hall's 0x5DE3xx reads the facility of the ware's type.
+// GAME BUG (0x51BEE1 compares the ware's number where it means its type): fixed behind fix_game_bugs at the user's word
+// (21-11-2026): the facility of the ware's business type, the whale oil's (0xFF) by the town's [+0x2CC] above 1000.
 uint8_t fn_51beb0(const SavedTown& st) {
+	// 0x672C88: the business type making each ware (0xFF the whale oil).
+	static constexpr uint8_t kWareBusiness[20] = {0x09, 0x0A, 0x05, 0x06, 0x0D, 0x08, 0x00, 0x10, 0x0C, 0x04, 0xFF, 0x0B,
+		0x07, 0x0A, 0x0F, 0x13, 0x0E, 0x14, 0x11, 0x12};
 	const TownMemory& t = st.memory;
 	float best = 400.0f;
 	uint8_t found = 0x1F;
 	for (uint32_t ware = 0; ware < 20; ++ware) {
-		if (ware == 6 || t.u16(0x844 + 16 * ware) == 0) {
+		if (ware == 6) {
+			continue;
+		}
+		const uint8_t type = kWareBusiness[ware];
+		if (fix_game_bugs()) {
+			if (type < 0x15 ? t.u16(0x844 + 16 * uint32_t(type)) == 0 : type != 0xFF || t.u32(0x2CC) <= 1000) {
+				continue;
+			}
+		} else if (t.u16(0x844 + 16 * ware) == 0) {
 			continue;
 		}
 		const int32_t stock = t.s32(4 + 4 * ware);
@@ -494,6 +515,11 @@ Step step(Run& r, uint8_t op) {
 		letter.record = record;
 		auto at = [&](uint32_t index) -> uint32_t* { return index < r.vars.size() ? &r.vars[index] : nullptr; };
 		if (answers != 0 && b1 != 5 && int32_t(r.var(5)) < 0) {
+			// GAME BUG (0x4EDD3B): the addressee looked at after the memset, always −1. Fixed behind fix_game_bugs (the
+			// user's word, 21-11-2026): the one before it, −3 the owners of the offices of the letter's town (0x4EDD57:
+			// from its [+0x784] by their [+0x2CA], each human owner his copy and his index in the variable b5 + k),
+			// −1 every human, another nobody.
+			const int32_t addressee = fix_game_bugs() ? int32_t(r.var(5)) : -1;
 			for (uint32_t k = 0; k < 8; ++k) {
 				if (uint32_t* v = at(b3 + k)) {
 					*v = answers;
@@ -505,14 +531,29 @@ Step step(Run& r, uint8_t op) {
 				}
 			}
 			uint32_t k = 0;
-			for (uint16_t m = 0; m < s.globals.u16(global::kWorldMerchantCount); ++m) {
-				if (m < s.merchants.size() && s.merchants[m].kind() == 0) {
-					if (uint32_t* v = at(b5 + k)) {
-						*v = m;
+			auto tell = [&](uint16_t m) {
+				if (uint32_t* v = at(b5 + k)) {
+					*v = m;
+				}
+				++k;
+				send_letter(s, m, letter);
+				letter.record->u8(0xA) = uint8_t(letter.record->u8(0xA) + 1);
+			};
+			if (addressee == -3) {
+				const uint8_t town = letter.entry.u8(5);
+				const uint16_t offices = s.globals.u16(0x6DE4A8);
+				for (uint16_t o = town < s.towns.size() ? s.towns[town].memory.u16(0x784) : 0xFFFF;
+					 o < offices && o < s.offices.size(); o = s.offices[o].memory.u16(0x2CA)) {
+					const uint16_t owner = s.offices[o].memory.u16(0x2C4);
+					if (owner < s.merchants.size() && s.merchants[owner].kind() == 0) {
+						tell(owner);
 					}
-					++k;
-					send_letter(s, m, letter);
-					letter.record->u8(0xA) = uint8_t(letter.record->u8(0xA) + 1);
+				}
+			} else if (addressee == -1) {
+				for (uint16_t m = 0; m < s.globals.u16(global::kWorldMerchantCount); ++m) {
+					if (m < s.merchants.size() && s.merchants[m].kind() == 0) {
+						tell(m);
+					}
 				}
 			}
 		} else {
@@ -775,7 +816,8 @@ Step step(Run& r, uint8_t op) {
 	case 0x37:
 		// 0x4F0E94: a history event's window to the player (*0x6CC7E8: 0x469380, then 0x469AF0 with 0x16, the event's
 		// [+0x8] and [+0xA], and the program's two strings at the u32s of the bytes 1 and 5, its title and its text):
-		// the interface's (the viewer's, roadmap section 3), nothing in the world.
+		// the interface's (SaveGame::event_windows), nothing in the world.
+		open_event_window(r.save, 0x16, r.e().u16(0x8), r.e().u16(0xA), r.text(1), r.text(5));
 		return Step::Next;
 	case 0x45: {  // 0x4F167C: b ← whether the town a is besieged ([+0x2C8] & 0x10). (Past the towns: the game reads on.)
 		const uint32_t town = r.var(1);
@@ -874,9 +916,11 @@ Step step(Run& r, uint8_t op) {
 		SaveGame& s = r.save;
 		const uint16_t m = uint16_t(r.var(1));
 		if (m >= s.globals.u16(global::kWorldMerchantCount) || m >= s.merchants.size()) {
-			return Step::End;
+			// Fixed behind fix_game_bugs (the user's word, 21-11-2026): nobody to tell, the script goes on.
+			return fix_game_bugs() ? Step::Next : Step::End;
 		}
 		send_ticker(s, m, 0x26, s.merchants[m].memory.u8(0x19));
+		open_event_window(s, 0x1D, m, 0, std::string(), std::string());
 		return Step::Next;
 	}
 	case 0xF1: {
@@ -900,7 +944,9 @@ Step step(Run& r, uint8_t op) {
 			uint8_t done = 0;
 			if (room >= int32_t(uint32_t(n) * 2000u)) {
 				m.u8(0x156) = uint8_t(m.u8(0x156) + n);
-				m.s32(0x118) = int32_t(uint32_t(m.u8(0x156)) * 2000u + uint32_t(m.s32(0x118)));
+				// GAME BUG (0x518640): the new count of loads added, not the loads added. Fixed behind fix_game_bugs (the
+				// user's word, 21-11-2026).
+				m.s32(0x118) = int32_t((fix_game_bugs() ? uint32_t(n) : uint32_t(m.u8(0x156))) * 2000u + uint32_t(m.s32(0x118)));
 				tick::ship_ai_detail::fn_517770(s, int(ship), 4);
 				done = 1;
 			}
@@ -916,7 +962,8 @@ Step step(Run& r, uint8_t op) {
 				if (m.s32(0x118) <= int32_t(uint32_t(n) * 2000u)) {
 					recalculate_cargo(s.ships[ship]);
 				} else {
-					m.s32(0x118) = int32_t(uint32_t(m.s32(0x118)) - uint32_t(m.u8(0x156)) * 2000u);
+					// GAME BUG (0x5186D0): the loads left taken away, not the loads taken. Fixed behind fix_game_bugs.
+					m.s32(0x118) = int32_t(uint32_t(m.s32(0x118)) - (fix_game_bugs() ? uint32_t(n) : uint32_t(m.u8(0x156))) * 2000u);
 				}
 			}
 			tick::ship_ai_detail::fn_517770(s, int(ship), 4);
@@ -1569,7 +1616,9 @@ Step step(Run& r, uint8_t op) {
 					r.var(out) = id;
 				}
 			} else if (Sailing::speed(sh) > best) {
-				best = m.u32(0x120);
+				// GAME BUG (0x4F01AA): the record takes its firepower. Fixed behind fix_game_bugs (the user's word,
+				// 21-11-2026): its speed, the fastest ship.
+				best = fix_game_bugs() ? Sailing::speed(sh) : m.u32(0x120);
 				r.var(out) = id;
 			}
 		}
@@ -1843,12 +1892,19 @@ Step step(Run& r, uint8_t op) {
 	case 0x65: {
 		// 0x4F26C0: b ← the town whose name (the table 0x6DDA00, from the last town) is the name a of the towns' file
 		// (the names object's [+0x0], 0x5136A0; a below 40), a byte; −1 when none or past the towns' count.
+		// GAME BUG: the table 0x6DDA00 goes by town number and 0x5136A0 walks it by town index: k below the towns'
+		// count gives the index k (another town unless its number is k), k past it −1, and 0x34 then reads the town −1
+		// past the array (the campaign 3's missions 301..303). Fixed (the user's word, 21-11-2026): the town whose
+		// number ([+0x18 + index] of the world) is k.
 		const SaveGame& s = r.save;
 		const uint32_t k = r.var(1);
 		uint8_t found = 0xFF;
 		if (k < 0x28 && k < s.opaque.town_names.size()) {
 			for (uint32_t t = s.globals.u32(global::kWorldTownCount); t > 0; --t) {
-				if (t - 1 < s.opaque.town_name_table.size() && s.opaque.town_name_table[t - 1] == s.opaque.town_names[k]) {
+				const bool same = fix_game_bugs() ? s.globals.u8(global::kWorld + 0x18 + (t - 1)) == k
+												  : t - 1 < s.opaque.town_name_table.size() &&
+														s.opaque.town_name_table[t - 1] == s.opaque.town_names[k];
+				if (same) {
 					found = uint8_t(t - 1);
 					break;
 				}
@@ -1977,7 +2033,13 @@ Step step(Run& r, uint8_t op) {
 	}
 	case 0xEF:
 		// 0x4EE25C: a window to the player (*0x6CC7E8: 0x469380, 0x469AF0 with 0x19 and the player, or 0x1A and the
-		// merchants' count, by the variable a): the interface's, nothing in the world.
+		// merchants' count, by the variable a; the strings empty): the interface's (SaveGame::event_windows), nothing in
+		// the world.
+		if (r.var(1) != 0) {
+			open_event_window(r.save, 0x19, uint16_t(r.save.globals.u32(global::kPlayer)), 0, std::string(), std::string());
+		} else {
+			open_event_window(r.save, 0x1A, r.save.globals.u16(global::kWorldMerchantCount), 0, std::string(), std::string());
+		}
 		return Step::Next;
 	case 0xE5:
 		// 0x4EE698: unless the session's state ([0x6DF31C]) is set, for the town v (a byte, below the towns' count) the
@@ -1994,7 +2056,8 @@ Step step(Run& r, uint8_t op) {
 		// with −1) in the town numbered as the operand byte itself — not the variable's value: it looks like a game bug
 		// (the roadmap's list) — when that town hasn't the bit 0x8000 of its [+0x2C8]. (Past the towns: the game reads
 		// on.)
-		const uint8_t town = r.b(1);
+		// Fixed behind fix_game_bugs (the user's word, 21-11-2026): the town by the variable's value, as 0xE5 has it.
+		const uint8_t town = fix_game_bugs() ? uint8_t(r.var(1)) : r.b(1);
 		if (r.save.globals.u32(0x6DF31C) == 0 && town < r.save.towns.size() &&
 			!(r.save.towns[town].memory.u32(0x2C8) & 0x8000)) {
 			queue_fire(r.save, town, uint8_t(r.var(1)), 0xFFFFFFFFu);
@@ -2234,8 +2297,12 @@ Step step(Run& r, uint8_t op) {
 		return Step::Next;
 	}
 	case 0xF5:
-		// 0x4EE012: for the player (the variable a), the game's message window (0x41D9B0 on *0x6CBB10) with the text at
-		// the program's offset of the u32 at the byte 2: the interface's, nothing in the world.
+		// 0x4EE012: for the player (the variable a), the game's message window (0x41D9B0 on *0x6CBB10: no buttons, the
+		// ratio 0.5) with the text at the program's offset of the u32 at the byte 2: the interface's
+		// (SaveGame::player_messages), nothing in the world.
+		if (r.var(1) == r.save.globals.u32(global::kPlayer)) {
+			open_player_message(r.save, r.text(2));
+		}
 		return Step::Next;
 	case 0x3C: {
 		// 0x4F1050: a table of keys and times in the script's own variables: n (the variable b) pairs from the

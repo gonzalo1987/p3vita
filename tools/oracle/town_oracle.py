@@ -130,7 +130,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from save_oracle import (EXPEDITIONS, FILE, SENTINEL, SEPARATOR, SHIPS, STACK, STACK_SIZE, TOWN_TABLE, WORLD,  # noqa: E402
                          SaveOracle)
 from unicorn import UC_HOOK_CODE, UcError  # noqa: E402
-from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESI, UC_X86_REG_ESP  # noqa: E402
+from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_EIP, UC_X86_REG_ESI, UC_X86_REG_ESP  # noqa: E402
 
 TOWN_TICK = 0x51BA10
 MERCHANT_TICK = 0x4F7BB0  # thiscall sobre el comerciante, con su índice
@@ -171,6 +171,10 @@ ARCHIVE_READ = 0x6389EE  # importada: (archivo, ruta, &datos, &tamaño) → asa 
 ARCHIVE_FREE = 0x6389F4  # importada: (archivo, asa); cdecl
 INI_INT = 0x4BE0B0  # thiscall (sección, clave, por omisión, fichero) → entero; ret 0x10
 INI_STRING = 0x4BE060  # thiscall (sección, clave, por omisión, búfer, tamaño, fichero) → longitud; ret 0x18
+# The mission interpreter's 0x34 (a town's residents) reads the town a's [+0x2D4] with no check (0x4F0A45: edx = a ·
+# 319, the town at [*0x6DE508 + edx · 8]); the campaign 3's scripts give it −1 (0x65's game bug, missions.md), and the
+# game reads memory before the towns' array that the real game's heap decides. The oracle gives 0 there, as p3vita.
+TOWN_RESIDENTS_READ, TOWN_RESIDENTS_NEXT = 0x4F0A45, 0x4F0A4C
 # Tabla de las 40 ciudades (0x34 bytes por ciudad, por su número de
 # StadtDaten.ini): la llena 0x51E440 desde 0x5121C0. En +0x28, un CString.
 TOWN_TABLE_SIZE = 0x34
@@ -838,6 +842,7 @@ class TownOracle(SaveOracle):
             # The missions read their ini (0x4BE060) at a load and at a game's start (the operation 0xC0); their
             # files go through Archiver.dll (_import).
             self.uc.hook_add(UC_HOOK_CODE, self._ini_string, begin=INI_STRING, end=INI_STRING)
+            self.uc.hook_add(UC_HOOK_CODE, self._town_residents, begin=TOWN_RESIDENTS_READ, end=TOWN_RESIDENTS_READ)
         self.uc.hook_add(UC_HOOK_CODE, self._rand, begin=RAND, end=RAND)
         # push dword [esp+4]; call 0x51BA10; ret 4
         call = struct.pack('<i', TOWN_TICK - (TRAMPOLINE + 4 + 5))
@@ -1343,6 +1348,13 @@ class TownOracle(SaveOracle):
             if k:
                 value = sign * n
         self._returns(uc, value, 0x10)
+
+    def _town_residents(self, uc, address, size, user_data):
+        # TOWN_RESIDENTS_READ with a town past the towns' count: 0, the read skipped.
+        town = (uc.reg_read(UC_X86_REG_EDX) * pow(319, -1, 1 << 32)) & 0xFFFFFFFF
+        if town >= self.u32(WORLD + 0x10):
+            uc.reg_write(UC_X86_REG_EDX, 0)
+            uc.reg_write(UC_X86_REG_EIP, TOWN_RESIDENTS_NEXT)
 
     def _ini_string(self, uc, address, size, user_data):
         # La clave, o el texto por omisión, en el búfer; devuelve su longitud.
@@ -2079,8 +2091,11 @@ def main():
     p.add_argument('--sin-resto', action='store_true', help='con --barcos, sin el resto de advance_time')
     p.add_argument('--cpr', help='archivo de datos (p2arch0_eng.cpr) del que leer scripts/Namen*.txt')
     p.add_argument('--misiones', action='store_true',
-                   help='the load runs 0x511270 and each script gets its program (missions_addon/, from --cpr): the '
-                        'missions run (TownOracle missions)')
+                   help='on by default now with --cpr (kept for older scripts): the load runs 0x511270 and each script '
+                        'gets its program (missions_addon/, from --cpr): the missions run (TownOracle missions)')
+    p.add_argument('--sin-misiones', action='store_true',
+                   help='without the missions (as every check before 2026-11-19): the load skips 0x511270, the scripts '
+                        'have no program')
     p.add_argument('--write', metavar='OUT', help='at the end, the uncompressed .pat the game writes for the state '
                    'reached (write_oracle.py)')
     p.add_argument('--letters', choices=('connected', 'all', 'none'), default='connected',
@@ -2098,7 +2113,7 @@ def main():
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
                    not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], not a.no_storms,
                    not a.no_pirates, not a.no_statistics, disband=not a.no_disband, battles=a.battles,
-                   letters=a.letters, missions=a.misiones)
+                   letters=a.letters, missions=bool(a.cpr) and not a.sin_misiones)
     o.load()
     if a.pst:
         # The .pst next to the save (uncompressed), as 0x5476E0 reads it.

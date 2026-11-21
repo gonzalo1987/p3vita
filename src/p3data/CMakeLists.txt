@@ -43,12 +43,14 @@ add_library(p3data STATIC
 	player_actions.cpp
 	image.cpp
 	lcr.cpp
+	town_life.cpp
 	letter_picture.cpp
 	letters.cpp
 	lz.cpp
 	mail.cpp
 	mission_script.cpp
 	missions.cpp
+	campaigns.cpp
 	navigation.cpp
 	new_game.cpp
 	prices.cpp
@@ -64,6 +66,7 @@ add_library(p3data STATIC
 	seamap.cpp
 	simulation.cpp
 	sound.cpp
+	tile_anims.cpp
 	town.cpp
 	town_buildings.cpp
 	thresholds.cpp

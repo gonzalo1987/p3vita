@@ -27,13 +27,13 @@ enum class TavernPerson : int {
 	WeaponsDealer,    // 0x526280; 0x5D5C60 queues 0x50
 	Burglar,          // 0x526120; 0x5D68E0 queues 0x4F
 	Pirate,           // 0x5261D0 below the captains; 0x5D5430 queues 0x4E
-	MissionLetter,    // an event 0x1B of the mission scripts for the player (0x5D8100): the mission interpreter's
+	MissionLetter,    // the side room: a tavern's mission letter 0x71 (side_room_letter); its page 0x5D8100 queues 0x76
 };
 constexpr int kTavernPeople = 10;
 
-// 0x5A6E60: who is there in the town's tavern, as the player sees it. The mission letter (the list 0x6DD730 of the
-// mission scripts) is the mission interpreter's: never here. (The menu first sets the one talked to, unless the
-// sailors or the informer, but 0x5A6E60 clears all ten before it looks: it has no effect.)
+// 0x5A6E60: who is there in the town's tavern, as the player sees it, but the side room (it depends on the letter the
+// menu keeps: side_room_letter). (The menu first sets the one talked to, unless the sailors or the informer, but
+// 0x5A6E60 clears all ten before it looks: it has no effect.)
 std::array<bool, kTavernPeople> tavern_people(const SaveGame& save, uint32_t town);
 
 // Who is there, as the town's functions say (thiscall on the town in the game; [0x6DFC14] the player).
@@ -82,6 +82,37 @@ bool tavern_burglar(const SaveGame& save, uint32_t town);
 OperationBytes tavern_talk_operation(SaveGame& save, uint32_t merchant, uint32_t town, uint32_t kind);
 // 0x5A6590, the tavern closed: {0x52, 0xFFFFFFFF, player, town, 10}.
 OperationBytes tavern_leave_operation(uint32_t player, uint32_t town);
+
+// The side room (the menu's tenth person, «Side room», 0x5A6E60's [+0xB15]): a tavern's mission letter 0x71 of the
+// player's for the town, sent by the mission interpreter's 0xF7 (b1 5). The menu keeps the letter shown ([+0xB1C]).
+// Whether the player may take the letter `entry` (0x5A7175..0x5A719A): its record's event [+0x8] a 0x1B whose variable
+// the record's [+0xC] (the addressee) holds the player or no merchant (a value not below the merchants' count). (Past
+// the script's variables the game reads the room after them, which p3vita doesn't keep: no.)
+bool side_room_open(const SaveGame& save, uint16_t entry);
+// 0x5A6E60's end: the letter the side room has: `kept` (0xFFFF none) if 0x4D7900 from it still finds it for the town
+// (a 0x71 of the town, before its deadline) and it is open; else the first open one found from the player's chain;
+// 0xFFFF for none (no tenth person).
+uint16_t side_room_letter(const SaveGame& save, uint32_t town, uint16_t kept);
+// 0x5A74B0 (the page's second button enabled with one) and 0x5A77A0 (going to it): the next open letter of the town
+// after `kept` along the player's chain, else the first from its head; 0xFFFF when that is `kept` itself or none.
+uint16_t side_room_next(const SaveGame& save, uint32_t town, uint16_t kept);
+// The page 9's words (0x5CF665, 0x5D7FD0): the letter's buffer (raw, Windows-1252): its first string the title (the
+// banner's), the second its text up to a '|' (the page's, in the font 1) and after it (the page 0x11's after
+// accepting: none, the page closes), then the record's [+0xB] answers: the first the accept button's label (none
+// without answers: the button stays off).
+struct SideRoomWords {
+	std::string title;
+	std::string text;
+	std::string after;
+	std::string accept;
+	bool has_accept = false;
+};
+SideRoomWords side_room_words(const SaveGame& save, uint16_t entry);
+// The talk with the side room's person (0x5A7BA0 taken, 0x5A7A60 left, the kind 9): 0x52 {the record's event | its
+// [+0xC] << 16, `merchant` (the player, or the merchants' count to leave), town, 9}.
+OperationBytes side_room_talk_operation(const SaveGame& save, uint16_t entry, uint32_t merchant, uint32_t town);
+// The accept button (0x5D81BC..0x5D8202): 0x76 {the record's event, its [+0xC] << 8 | its [+0xA], 0, the player}.
+OperationBytes side_room_accept_operation(const SaveGame& save, uint16_t entry);
 
 // A merchant's first name and family name as the game keeps them in his [+0xE8] and [+0xE4] (0x4F6420: the first
 // name [+0x1C] from the women's list, the bit 0x80, unless [+0x1A]; 0x4F6450: the family name [+0x1D]).

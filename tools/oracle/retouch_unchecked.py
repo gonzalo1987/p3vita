@@ -5640,6 +5640,58 @@ def mission_start(o):
     return during
 
 
+def campaign_start(o):
+    """A campaign's start (campaigns.cpp), on the save the campaign n loads (missav/<n>.pat: saves 1..7): what 0x5476E0
+    and 0x4335B0 do after the file in the mode 4 (from the 20th merchant on the humans 0x8001, the settings' mode 4 and
+    the three display options, the operation 0xA8 (0x5421E0) on the first with the bit 15), then the campaign screen's
+    «Start» (0x43097C..0x4309D2): the mailbox emptied (0x4D64B0), the scripts 0x1B taken out (0x4D8E70), the settings'
+    mode 5, the campaign and the speed kept, the list started (0x511270 with 1) and 0x54A480 (the trade's difficulty,
+    the player's factor, the pirates). The display options and the speed differ from the save's, to be seen written.
+    Then, retouched, 0x54A480 again with the pirates' level [+0x13] 2 and 0 (a missing pirate made; [+0x15])."""
+    import re
+    campaign = int(re.search(r'(\d+)\.raw$', o.scenario_args.save).group(1))
+    settings = o.u32(to.SETTINGS_POINTER)
+    _, _, merchants, _ = o.counts()
+
+    def during(o):
+        speed = o.u32(settings + 4) ^ 3  # (the game's speed before the start: another than the save's)
+        for i in range(0x14, merchants):
+            if o.u16(o.merchant(i) + 8) == 0:
+                w16(o, o.merchant(i) + 8, 0x8001)
+        w8(o, settings + 0xD, 4)
+        w8(o, settings + 0x1F, 2)
+        w8(o, settings + 0x24, 1)
+        w8(o, settings + 0x20, 0)
+        taken = next((i for i in range(0x14, merchants) if o.u16(o.merchant(i) + 8) & 0x8000), None)
+        print(f'campaign {campaign}: merchant taken {taken}, player before {o.u32(to.PLAYER)}, '
+              f'scripts {sum(1 for _, a in rt.events(o) if o.u16(a + 6) == 0x1B)}, '
+              f'pirates {[k for k, _ in pirates(o)]}, [+0x13] {o.u8(settings + 0x13)}')
+        operation(o, 0xA8, o.u32(0x6DF31C), taken if taken is not None else 0x7FFFFFFF)
+        direct(o, 0x4D64B0, [], ecx=0x6DD730)
+        direct(o, 0x4D8E70, [0x1B], ecx=to.EVENTS)
+        w8(o, settings + 0xD, 5)
+        w8(o, settings + 0x14, campaign)
+        w32(o, settings + 4, speed)
+        direct(o, 0x511270, [1], ecx=o.u32(to.MISSIONS))
+        direct(o, 0x54A480, [], ecx=0x6DF2F0)
+        manager = o.u32(to.MISSIONS)
+        print(f'player {o.u32(to.PLAYER)}, missions {o.u16(manager + 8) if manager else 0}, '
+              f'scripts {sum(1 for _, a in rt.events(o) if o.u16(a + 6) == 0x1B)}, '
+              f'pirates {[(k, o.u8(p + 0x14), o.u8(p + 0x15)) for k, p in pirates(o)]}')
+        # Retouched, for 0x54A480's branches no campaign reaches: the pirates' level 2 (the missing ones made) and 0
+        # (the ones past the first: [+0x15] = 1). Not with --write: the save written is the campaign's start
+        # (p3save campaign writes p3vita's).
+        if o.scenario_args.write:
+            return
+        level = o.u8(settings + 0x13)
+        for retouched in (2, 0):
+            w8(o, settings + 0x13, retouched)
+            direct(o, 0x54A480, [], ecx=0x6DF2F0)
+            print(f'[+0x13] {retouched}: pirates {[(k, o.u8(p + 0xE), o.u8(p + 0x14), o.u8(p + 0x15)) for k, p in pirates(o)]}')
+        w8(o, settings + 0x13, level)
+    return during
+
+
 # --- The missions' interpreter (mission_script.cpp): scripts of their own ---
 
 def p2m(sections, texts=()):
@@ -6093,6 +6145,32 @@ def mission_campaign_b(o):
     mission_script(o, p2m([bytes([0xFB, 1, 2]), WAIT]), {1: 0x1234, 2: 0x5678}, 6)
 
 
+def mission_fixes(o):
+    """The interpreter's game bugs fixed behind fix_game_bugs (21-11-2026), each where the fix changes something (as the
+    game here; with tick_probe --fix-game-bugs, PROBE_ARGS, the calls the fixes change): 0xED with an operand and its
+    variable's value naming two towns (the game's fire in the first, the fix's in the second); 0xF7 with answers to −3
+    in a town where the player has no office (the game's letter to every human; the fix's to the human owners of the
+    town's offices: none) and in his home town (him either way); 0x2F in every town (the ware it lacks most: the
+    facility by the ware's type). (0xE8 with a merchant past the count can't be recorded: the game hangs.) Saves 3, 5,
+    7."""
+    towns, offices, merchants, ships = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    mine = {o.u8(o.office(i) + 0x2C6) for i in rt.merchant_offices(o, player)}
+    away = next(t for t in range(towns) if t not in mine)
+    other = next(t for t in range(towns) if t not in (home, away) and not o.u32(o.town(t) + 0x2C8) & 0x8000)
+    print(f'player {player}: home {home}, a town without his office {away}, another town {other}')
+    mission_script(o, p2m([bytes([0xED, home]), WAIT]), {home: other}, 1)
+
+    def f7(b1, b2, b3, b4, b5, answers, ticker):
+        return bytes([0xF7, b1, b2, b3, b4, b5, answers, ticker])
+    texts = [b'Title one\0Body to %v\x02 of %t\x03.\0Yes\0No\0']
+    mission_script(o, p2m([(f7(0, 3, 20, 4, 30, 2, 0), 0), WAIT], texts), {2: player, 3: away, 4: 7, 30: -3}, 2)
+    mission_script(o, p2m([(f7(0, 3, 20, 4, 30, 2, 0), 0), WAIT], texts), {2: player, 3: home, 4: 7, 30: -3}, 3)
+    mission_script(o, p2m([bytes([0x2F, 1 + t, 32 + t]) for t in range(min(towns, 30))] + [WAIT]),
+                   {1 + t: t for t in range(min(towns, 30))}, 4)
+
+
 def mission_unused(o):
     """The 19 handlers no file of the game uses, each script of its own in its own tick: 0x02, 0x0F, 0x10, 0x13, 0x14,
     0x16, 0x25 (after a treasure map's letter 0xF6 to the player), 0x71, 0x73, 0x52, 0x55; 0x3C's table (a renewal, a
@@ -6295,6 +6373,61 @@ def mission_letter_ops(o):
             operation(o, 0x76, script, 43 << 8 | 100, 0x5678, player)
             operation(o, 0x76, script, 42 << 8 | 25, 0x6789, player)
             operation(o, 0x76, script, 42 << 8 | 100, 0x789A, merchants)
+        return after
+    return during
+
+
+def tavern_side_room(o):
+    """The operation 0x52's side room (0x53C2C0, its kinds 9 and 10; town_tick/operations.cpp) on the tavern's mission
+    letters 0x71 for the player's home town, each sent to −1 (each human his copy) by a script of its own: A (tick 1)
+    two, their entries past the merchants' count; then three entries below it freed (0x4D6A50 on the chains that had
+    them) and B (tick 3) three more there, the last's record's variable [+0xC] made 100 (past the count). After the
+    tick 4, kind 9: B's first taken by an AI merchant, then held against the player; B's second and third taken by the
+    player, A's second too, A's first left (−1); an event not 0x1B, one past the events, a variable past the count.
+    Kind 10: in another town (no letters), by a merchant past the count, by the player at home: B's third skipped (its
+    variable past), B's second freed (0xFFFF), the loop on to B's first (held by the AI: kept), then A's second, past
+    the merchants' count, ends it (the game bug: it stays the player's). Saves 3, 5, 7."""
+    towns, _, merchants, _ = o.counts()
+    player = o.u32(to.PLAYER)
+    home = o.u8(o.merchant(player) + 0x19)
+    now = o.u32(WORLD + 0x14)
+    ai = next(m for m in range(merchants) if o.u16(o.merchant(m) + 8) != 0)
+
+    def f7(b3, b5):
+        return bytes([0xF7, 5, 2, b3, 4, b5, 1, 0])
+    texts = [b'Tavern\0A job in %t\x02.|Thanks, see you.\0Accept\0']
+    variables = {2: home, 4: now + 0x10000, 31: -1, 32: -1, 33: -1, 34: -1, 35: -1}
+    a = mission_script(o, p2m([(f7(22, 32), 0), (f7(23, 33), 0), WAIT], texts), variables, 1)
+    b = mission_script(o, p2m([(f7(21, 31), 0), (f7(24, 34), 0), (f7(25, 35), 0), WAIT], texts), variables, 3)
+    other_event = next(i for i, e in rt.events(o) if o.u16(e + 6) not in (0x1B, 0xFFFF))
+    print(f'player {player}, home {home}, AI {ai}, scripts A {a} B {b}, event not 0x1B {other_event}')
+
+    def during(o):
+        def after(o, t):
+            if t == 1:
+                owners = [(m, i) for m in range(merchants) for i, _ in chain_letters(o, m) if i < merchants]
+                head, count, k = o.u16(MAILBOX + 8), o.u16(MAILBOX + 6), 0
+                while head < count and k <= count:
+                    if head < merchants:
+                        owners.append((0xFFFFFFFF, head))
+                    head, k = o.u16(o.u32(MAILBOX) + 16 * head + 6), k + 1
+                print(f'low entries: {owners[:3]}')
+                for owner, entry in owners[:3]:
+                    o.call(0x4D6A50, [owner, entry], ecx=MAILBOX)
+            if t != 3:
+                return
+            letters = {o.u8(o.u32(e + 8) + 0xA): (i, e) for i, e in chain_letters(o, player) if o.u8(e + 4) == 0x71}
+            print('side room letters: ' + ' '.join(f'{k}:{i}' for k, (i, _) in sorted(letters.items())))
+            w8(o, o.u32(letters[25][1] + 8) + 0xC, 100)
+            events = o.u16(to.EVENTS + 0xC)
+            for draw, who, town, kind in ((b | 31 << 16, ai, home, 9), (b | 31 << 16, player, home, 9),
+                                          (b | 34 << 16, player, home, 9), (b | 35 << 16, player, home, 9),
+                                          (a | 33 << 16, player, home, 9), (a | 32 << 16, merchants, home, 9),
+                                          (other_event, player, home, 9), (events, player, home, 9),
+                                          (b | 64 << 16, player, home, 9),
+                                          (0, player, (home + 1) % towns, 10), (0, merchants, home, 10),
+                                          (0, player, home, 10)):
+                operation(o, 0x52, draw, who, town, kind)
         return after
     return during
 
@@ -15388,6 +15521,9 @@ SCENARIOS = {
     'mission_start': Scenario(mission_start, [0x535760], 0, [
         '@5112f8', '@511308', '@511318', '@511328', '@5111be', '@5111d3', '@511428', '@5114ba', '@511500', '@5115d2',
         '@51162e', '@511644', '@532460', '@5324f2', '@53254f', '@532693', '@6351b2', '@6351cc'], missions=True),
+    'campaign_start': Scenario(campaign_start, [0x535760, 0x4D64B0, 0x4D8E70, 0x511270, 0x54A480], 0, [
+        '@542202', '@4d8e9e', '@4d8ec7', '@4d8eea', '@54a4ba', '@54a565', '@54a50b', '@54a57a', '@4f9557'],
+        missions=True),
     'mission_branches': Scenario(mission_branches, [0x4D85C0], 1, [
         '@4eed2d', '@533353', '@4f1637', '@4f1c3d', '@4f1c1a', '@4f1c15', '@4f1c13>4f1c5f', '@4ef8a9', '@4ef952',
         '@4ef98c', '@4ef9c4', '@4f13a5', '@4f13b2', '@4f13c9', '@4f13e9', '@4f13d3', '@4f1404', '@4ede69',
@@ -15416,12 +15552,17 @@ SCENARIOS = {
     'mission_campaign_b': Scenario(mission_campaign_b, [0x4D85C0], 1, [
         '@4f2121', '@4f233b', '@4f24ab', '@4f2675', '@4f268c', '@4f284c', '@4ee7bb', '@4ee97a', '@4ee693', '@4ed2ec',
         '@525c25', '@525c4b'], missions=True),
+    'mission_fixes': Scenario(mission_fixes, [0x4D85C0], 1, ['@4ee567', '@4edd3b', '@51beb0'], missions=True),
     'mission_unused': Scenario(mission_unused, [0x4D85C0], 1, [
         '@4eea6e', '@4eef68', '@4eefb6', '@4ef01f', '@4ef1e9', '@4ef230', '@4ef2c7', '@4d775c', '@4d7755', '@4ed066',
         '@4eecaa', '@4f1ec4', '@4eff49', '@4f1142', '@4f1196', '@4f1115', '@4f0974', '@4f19ec', '@4f1a00', '@4f2a67',
         '@4f0679', '@4dc800', '@4eea11', '@4ee03c'], missions=True),
     'mission_attack': Scenario(mission_attack, [0x4D85C0, 0x535760], 1, [
         '@53fb3c', '@53fb86', '@53fba1', '@53fbf8', '@53fb36>53fc64'], missions=True),
+    'tavern_side_room': Scenario(tavern_side_room, [0x4D85C0, 0x535760], 1, [
+        '@53c808', '@53c806>53c80a', '@53c7ed', '@53c7bf>53c80a', '@53c7d1>53c80a', '@53c7db>53c80a',
+        '@53c6c4>53c80a', '@53c6fd>53c80a', '@53c772', '@53c770>53c778', '@53c798>53c706', '@53c75b>53c778'],
+        missions=True),
     'mission_letter_ops': Scenario(mission_letter_ops, [0x4D85C0, 0x535760], 1, [
         '@53ec65', '@53ec44>53eca4', '@53ec56>53ec6e', '@53ec63>53ec6e', '@53ec9a', '@53ec7c>53eca4', '@53ec93>53eca4',
         '@53ec98>53eca4',

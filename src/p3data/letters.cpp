@@ -2590,7 +2590,8 @@ std::vector<LetterParagraph> letter_paragraphs(const std::string& raw) {
 			++i;
 			break;
 		default:
-			append_cp1252(p.text, c);  // A backslash the box shows as it is.
+			// Another sign after it: the backslash isn't drawn and what follows goes on as it is (the missions'
+			// texts begin «\\f1_»: the user doesn't see a backslash there in the game, 2026-11-20).
 			break;
 		}
 	}

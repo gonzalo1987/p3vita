@@ -122,7 +122,8 @@ Cómo leerla:
   oración, el escupitajo e «Invertir estéreo»).
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): acabados los restos
   de las pantallas (las preguntas del convoy, las sombras y la nieve, el panel lateral con las letras y los textos del
-  juego), el intérprete de misiones (apartado 3: la base hecha; ahora sus instrucciones); luego el final de la partida
+  juego), el intérprete de misiones y las campañas y el tutorial (apartado 3: hechos el 21-11-2026, salvo la carta final
+  0x3D de la dieta y la voz del tutorial); luego el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -140,13 +141,13 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Parte | Hecho | Lo que falta |
 |-|-|-|
 | La simulación sola (sin el jugador) | del código del juego al que llega, el 87 % reescrito con su nombre y otro 12 % hecho sin él (cargar y guardar partidas, la navegación) o saltado a propósito (medida abajo, 20-11-2026) | el 1 % sin nada son los manejadores del evento de la red y de dos que nadie crea; además, los estados raros del barco y unas ramas sueltas (apartado 2) |
-| Las misiones (20-11-2026) | la base (la lista, la 0xC0, cargar y guardar los guiones, el bucle del intérprete y sus 4 esperas), las 138 instrucciones del intérprete, las operaciones que encola (la 0x82 incluida), el evento 0x09 que crea y las 4 operaciones del jugador sobre sus cartas | la carta final 0x3D, el visor, las campañas (apartado 3) |
+| Las misiones (20-11-2026) | la base (la lista, la 0xC0, cargar y guardar los guiones, el bucle del intérprete y sus 4 esperas), las 138 instrucciones del intérprete, las operaciones que encola (la 0x82 incluida), el evento 0x09 que crea y las 4 operaciones del jugador sobre sus cartas | la carta final 0x3D, el visor, las campañas (apartado 3: hecho su arranque en el motor; faltan su pantalla y el tutorial) |
 | Tipos de evento (58) | 54 (el 0x09 de las misiones, 20-11-2026) | 4: 1 la partida en red y 3 nadie |
 | Operaciones (193 códigos) | 173: las 37 de la simulación, las 106 del jugador (la 0x82 de las misiones y las 0x54, 0x55, 0x74 y 0x76 de sus cartas, 20-11-2026), 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red, la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) y la 0xC0 (el arranque de las misiones, 19-11-2026) | 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 148 (las del intérprete y del evento 0x09, 20-11-2026) | 6: la carta final 0x3D del evento 0x34, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
-| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa | la gente y los carros, los barcos del puerto, el agua animada, las obras, el fuego y el humo, el asedio (apartado 4) |
+| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026); los animales, los pájaros y los peces (21-11-2026); las animaciones de los edificios, los árboles y el pescador (21-11-2026) | los barcos del puerto, el agua animada, el tiempo, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos (20-11-2026) | la base: el mezclador (PC y Vita), los 123 MP3 y los 178 WAV del juego leídos, el `sound.ini`, los volúmenes de las Opciones y la música del menú principal; la música en la partida (el director, las atmósferas, el tema de cada ciudad, las batallas, los edificios); los efectos de la interfaz (botones, cartas, baño, oración, escupitajo) | los efectos de la ciudad, el mar, las batallas y el asedio, y los vídeos (apartado 5) |
 | Jugar en red con el juego de PC | el motor idéntico, que es la base | todo lo demás (apartado 8) |
@@ -367,8 +368,14 @@ Cada grupo entra en el visor con su edificio (apartado 4): sin la pantalla no se
   su primer edificio municipal y más de 1000 habitantes. En el emulador (`grow.sh`, partida 1) la ciudad se queda en
   272 habitantes hasta el día 520, y el plazo es de unos dos años. Medir más allá de 550 días (`--desde`) y ver si en
   el juego de verdad crece porque alguien le lleva mercancías. La ciudad nueva, sin probar en el visor de la Vita.
-- [ ] Partidas de la versión 0x4D (`missav/0100–0204.pat`, de las que parten las campañas, apartado 3): el lector
-  solo lee la 0x82 y posteriores.
+- [x] Partidas de la versión 0x4D (`missav/0100–0204.pat`): **el juego no las carga** (21-11-2026, leído en el
+  ejecutable). El único lector de ficheros, 0x5476E0 (desde 0x4335B0), lo piden la pantalla de partidas guardadas
+  (`Save\Ein\`, `Save\Kam\`, `Save\Mehr\`), las campañas 1..7 (0x430977: `MISSAV\<n>.pat`, las partidas `1..7.pat` de
+  la versión 0x82 que p3vita ya lee) y el tutorial (`SaveGame=tut0..tut4` de `scripts/tutorial_eng.ini`); las otras dos
+  llamadas a 0x549F40 (0x544615, 0x5446B1) cargan la partida que llega por red. Las 0x4D, con la carpeta `missions/`
+  (`0100xx_k.p2m`...), son restos de un sistema de campañas por capítulos anterior (escritas por una versión de
+  depuración: relleno 0xCD), y el lector del juego ni siquiera las entiende (la cabecera del mundo sale sin sentido).
+  Nada que leer.
 - [ ] El objeto opcional del mundo (0x533DA0): ninguna partida lo tiene y p3vita lo rechaza al leer. Solo si aparece
   una partida que lo tenga.
 - [ ] Sin comprobar porque no se pueden preparar: las dos persecuciones que alcanzan sin hueco para la batalla (harían
@@ -430,8 +437,9 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   humanos, 0x27, el paso errante de 0x29, los modos de 0x40 y 0x4F, 0x44 con varias oficinas, las ramas de 0xF7 y
   todos los códigos «%» de sus cartas; `mission_ships_money`, `mission_ships_state`, `mission_misc`,
   `mission_last`, `mission_network`, `mission_campaign_a`, `mission_campaign_b` y `mission_unused`, partidas 1, 3, 5
-  y 7: las noventa y tres nuevas con sus ramas): iguales (`docs/oracle.md`). Sigue lo que cuelga del intérprete (abajo);
-  luego, el oráculo con las misiones por omisión (y `world.sh` con ellas).
+  y 7: las noventa y tres nuevas con sus ramas): iguales (`docs/oracle.md`). Lo que cuelga del intérprete,
+  abajo. Desde el 21-11-2026 el oráculo (`town_oracle.py` con `--cpr`, y con él `world.sh`) lleva las misiones por
+  omisión (`--sin-misiones` para quitarlas): `world.sh` 7 días, 0 diferencias en las 12 partidas.
 - [ ] **Lo que cuelga del intérprete**: el evento 0x09 está hecho desde el 20-11-2026 (0x4E2824, la buena o mala
   cosecha de una ciudad que crea la instrucción 0xFB: la marca de la ciudad [+0x2C8] 0x4000 o 0x2000, las cartas 0x08 a
   los dueños de las oficinas que producen trigo, miel, vino o cáñamo y 0x09 a la crónica, al empezar y al acabar, y la
@@ -445,13 +453,56 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   del tesoro, 0x4D74C0) y 0x76 (aceptar la carta de misión de la taberna 0x71, 0x53EDF0 con 0x4D7870). Falta la carta
   final 0x3D del evento 0x34 (0x4F3AF0, con su lista de avisos [+0x8], 0x4F3980..0x4F3CE0), que es de la dieta (la caza
   de piratas, `diet.cpp`) y no de las misiones, pero es una carta del tipo de las de misión (registro y texto).
-- [ ] **En el visor**: las cartas de misión con sus botones (0x74), la carta de misión de la taberna (0x5D8100, las
-  0x71), el trozo de mapa del tesoro (0x55 del soplón), lo que enseñe cada misión (la ventana de los sucesos
-  históricos de la instrucción 0x37: 0x469AF0 con 0x16, el título y el texto del programa).
-- [ ] **Las campañas y el tutorial**: su menú de inicio (`[Campaign_0..7]` del ini: el tutorial, «El ascenso», «El
+- [x] **En el visor** (20 y 21-11-2026): las cartas de misión con sus botones (0x74; arreglado de paso que los
+  botones de una carta no se iban al responderla), la carta de misión de la taberna (la «Trastienda», el décimo
+  personaje: su página 0x5D8100 con el título, el texto hasta el «|», «Aceptar» con la respuesta de la carta y la
+  0x76, y la página de después con el texto tras el «|»; el botón de la carta siguiente, que el juego crea sin texto
+  ni dibujo, con la palabra del visor «Siguiente»; la 0x52 de tipo 9 al hablar con ella), el trozo de mapa del tesoro
+  del soplón (la 0x55 que ya encolaba su página) y las ventanas que abre el intérprete: el motor las manda al visor
+  (`SaveGame::event_windows` y `player_messages`); la ventana de los vídeos de sucesos (*0x6CC7E8, 0x469AF0) sale, como
+  en el juego con los vídeos apagados (la opción «VIDEOS», [+0x26] de los ajustes), como línea de noticias: el título
+  del suceso histórico de la 0x37 (código 0x16) y el tesoro encontrado de la 0xE8 (0x1D); el mensaje de la 0xF5 en la
+  ventanita de mensajes del juego; el aviso de la 0xF7 (0x47D1F0) es solo que la lista de cartas se rehaga, como hace
+  el visor siempre. Las ventanas con vídeo, en el apartado 5. Estados de depuración `mission-letters`,
+  `informer-map` y `mission-windows`.
+- [x] **Las campañas y el tutorial** (21-11-2026; falta solo la voz de los pasos del tutorial, con el sonido, apartado 5): su menú de inicio (`[Campaign_0..7]` del ini: el tutorial, «El ascenso», «El
   comerciante volante», «El auge de la Hansa» y los escenarios del saneamiento, la mala cosecha, el incendio y la
-  peste) y las partidas de la versión 0x4D de las que parten (`missav/0100..0204.pat`, apartado 2); el tutorial va
-  aparte (`scripts/tutorial.ini`, `missav/Tut*.pst`).
+  peste), que parten de `missav/1..7.pat` (0x430900: la campaña n carga `MISSAV\<n>.pat`; las partidas de la versión
+  0x4D no las usa el juego, apartado 2); el tutorial va aparte (`scripts/tutorial.ini`, `missav/tut0..4.pat` con sus
+  `Tut*.pst`).
+  - [x] **El arranque de una campaña en el motor** (21-11-2026, `campaigns.cpp`; `re/emu/sesion52/README.md`): lo que
+    hace la carga tras leer el fichero en el modo 4 (0x5476E0 desde 0x547985 y 0x4335B0: los humanos desde el
+    comerciante 20 marcados 0x8001, el modo y los tres ajustes de pantalla de las opciones, la operación 0xA8 sobre el
+    primero con el bit 15, que pasa a ser el jugador, y la 0xC8 encolada) y el «Comenzar» de la pantalla de campañas
+    (0x43097C..0x4309D2: el buzón vaciado, 0x4D64B0; los guiones de la partida quitados, 0x4D8E70 con 0x1B; el modo 5,
+    la campaña y la velocidad de antes; la lista de la campaña con sus misiones empezadas, 0x511270 con 1; y
+    0x54A480: la dificultad del comercio, el factor del jugador y los cinco piratas por [+0x13]). Comprobado: el
+    escenario `campaign_start` igual en las 7 (con dos ramas de 0x54A480 retocadas; roto a propósito, cazado), la
+    partida que escribe el juego tras el arranque igual byte a byte a la de p3vita en las 7, y el mundo entero 7 días
+    desde cada arranque igual en las 7. De paso, el lector de p3vita con el buzón vacío (un separador falso: arreglado)
+    y un fallo del juego en la campaña 3 (la instrucción 0x65, abajo en «Corregidos con el ajuste»).
+  - [x] **La pantalla de campañas en el visor** (21-11-2026; `re/emu/sesion52/README.md`, «Part 3»): la del juego
+    (*0x6CBB6C, trazada en el emulador con `camptrace.sh`) desde la entrada «Campaña» del libro: el fondo
+    tutorial.jpg, su título, la lista de las 7 con los colores del juego (la elegida y la de bajo el dedo), la imagen y
+    el texto de la elegida ([Campaign_n] del ini de las misiones en cada idioma: `read_campaigns`), «Jugar» (o un
+    segundo toque en la elegida) que la empieza con `start_campaign`, «Atrás» y «Detalles» (la ventana de detalles de
+    la partida nueva con la riqueza inicial y el comienzo apagados, como 0x49B180 con 1: lo que se elige no llega a la
+    campaña). Adaptado: la barra del texto siempre que no cabe (el juego la pone solo con más de 200 de alto) y un
+    nombre que no cabe en la fuente 2 (el juego lo corta). De paso, la carga desde la pantalla de partidas guardadas
+    hace lo del juego tras leer el fichero (`after_game_load` en el modo 3). Las partidas de una campaña se guardan,
+    como en el juego, en `ein/` (la página de guardar deja siempre el tipo «individual»).
+  - [x] **El tutorial** (21-11-2026; `re/emu/sesion52/README.md`, «Part 4»): la pantalla de capítulos del juego
+    (*0x6D9594, abierta por la entrada «Tutorial» del libro con 0x4AB420(0): los cinco capítulos de [Campaign_0] con
+    su imagen y su texto, «Jugar» y «Atrás»), el arranque de un capítulo (su partida tut<k>.pat en el modo 4 y los
+    ajustes [+0xD] 4 y [+0x14] 0: `start_tutorial`) y la ventana de los pasos sobre el juego (el objeto *0x6EE120:
+    `scripts/tutorial_eng.ini` o `tutorial_spa.ini`, 159 pasos en 5 capítulos): el texto de cada paso en una franja
+    blanca abajo con sus fuentes (también a mitad de línea, como el cuadro de texto del juego), sus flechas
+    (bttn_tutorial.tga; «anterior» apagada en el primer paso, «siguiente» tras el último pasa al capítulo siguiente
+    cargando su partida) y el recuadro que pulsa (cinco marcos azulados, 0x637860) sobre la parte de la pantalla de la
+    que habla. Adaptado: la franja solo sobre la vista (el panel libre), los recuadros del PC (1024 × 768) llevados a
+    los elementos del visor (la vista, el minimapa, la barra de arriba, la fila de iconos, la zona de menús, los
+    botones de barcos de la tabla), el stick derecho como tecla de las flechas y la franja escondida bajo las
+    ventanas. Falta la voz de cada paso (los MP3 de `musik/tutorial`, con el sonido: apartado 5).
 
 ### 4. Las pantallas
 
@@ -797,15 +848,54 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
   usuario: sus encargos y elecciones son las páginas del ayuntamiento, y los materiales de la carretera, la página
   «Ruta terrestre» de la puerta de la ciudad, como las del juego.
 - **La ciudad viva**: la simulación cambia la ciudad como el juego y el visor ya dibuja su estado actual (sus listas de
-  edificios, obras y fortificaciones, y las de cada oficina), pero solo los edificios:
-  - [ ] Antes de seguir, mirar en el juego original qué se ve y qué cambia: si la ciudad se redibuja en cuanto se
-    construye algo, qué se anima (gente, carros, agua, humo...), cómo se ve un asedio.
-  - [ ] Los habitantes y los carros por las calles, y las animaciones de los edificios.
+  edificios, obras y fortificaciones, y las de cada oficina). Lo vivo de la vista (las «criaturas» del juego, sus
+  clases, los ficheros `.nodes`, `.spawn` y `.locked` de cada ciudad, las animaciones de los edificios) está
+  inventariado en `re/emu/sesion50/README.md`; el orden que aceptó el usuario el 20-11-2026: 1) la gente por las
+  calles, 2) los animales, 3) las animaciones de los edificios y los árboles (con el pescador), 4) los barcos en el
+  puerto, 5) el agua, 6) el tiempo, 7) las obras, 8) el fuego, 9) el asedio (con los guardias), 10) el coste en la
+  Vita, 11) el mapa del mar. Va en `src/p3data/town_life.{hpp,cpp}` (TownLife) y el TownView del visor; su azar es
+  el del visor, no el del mundo (apartado 8). Encargo: `ENCARGO_CIUDAD_VIVA.md`.
+  - [x] Mirar en el juego original qué se ve y qué cambia (20-11-2026, el inventario de `re/emu/sesion50/README.md`).
+  - [x] La gente por las calles (20/21-11-2026, `re/emu/sesion50/README.md`, «Part 1»): los paseantes de cada clase,
+    uno por cada 50 habitantes (0x595CA0), con su paseo libre por las calles hacia los puestos del mercado y las
+    puertas de los edificios (0x55C820, 0x55D9D0), sus gestos y los de los mendigos y los niños; las llegadas y
+    salidas por las carreteras con los relojes de cada clase (0x596EE0, 0x55B6A0) y las carreteras con gente al abrir
+    la ciudad; los niños por el ánimo; un vendedor junto a cada puesto y el malabarista (0x598280); el funcionario con
+    su pergamino (0x5984E0); las ratas con la peste; los carros del comercio por tierra (0x56FB20, 0x570120, con
+    el estado de depuración `land-convoy`). Cada figura partida en tiras por la celda de su pie, como el juego, para
+    que los edificios la tapen. Pasan al apartado de cada uno: el pescador (lo crea su cabaña, 0x555BC3: con las
+    animaciones de los edificios) y los guardias ([0x998], la clase de los soldados: con el asedio).
+  - [x] Los animales (21-11-2026, `re/emu/sesion50/README.md`, «Part 2»): los perros y gatos en la ciudad y los del
+    bosque fuera de la muralla (0x58B1B0: 10 y 20 al abrir la ciudad; 0x57C240, 0x57E840: andan, corren y descansan
+    según su figura, con la prueba de paso con su radio, 0x55A2C0); los pájaros, 20 volando a su altura con su
+    sombra en el suelo, aleteando y planeando (0x58A920, 0x563EF0; su LCR sin tiras, el byte 0x1C); los peces en el
+    agua, tantos como da la productividad de los pescadores de la ciudad, que aparecen y se desvanecen (0x58C6CB,
+    0x569560); y cada uno que se va, repuesto como el juego (0x593D50). Sus huellas en la nieve van con el tiempo.
+  - [x] Las animaciones de los edificios (las variantes de clase 3 a 8 de sus `.let`: humo, gaviotas del astillero,
+    granjas, talleres, el faro...), los árboles y el pescador de la cabaña (0x59A420). Hecha (21-11-2026, `re/emu/sesion50/README.md`,
+    «Part 3, first batch») la maquinaria (sus grupos y las cinco clases de estado, por tipo de casilla, en marcha solo
+    a la vista y si el edificio está activo: un taller solo si su dueño tiene ese negocio produciendo) con la taberna,
+    el faro, el baño, el arsenal y los talleres de la clase común (caza, cerveza, herrería, tejidos, sal, alfarería,
+    cantera, pez); luego la mina, las granjas de animales (ovejas, vacas, abejas, viñedo) y las gaviotas del
+    astillero, y las plantillas del visor animadas con todo activo; luego el muelle de reparación (su barco y su fase
+    por los empleados del astillero), el aserradero (su carpintero y la mujer), la fundición y las granjas de cereal
+    (sembrar, crecer por días del mundo, segar) y cáñamo. Luego («Part 3, third batch») los árboles: su clase de
+    verdad es la 0x582F20 (la vista llama a los métodos de la segunda tabla de cada clase, en [+0x3C]; la 0x676B30 que
+    se tomó antes es la de los acantilados), que los mece (cada tipo de árbol un fotograma cada 125 o 140 ms, cada árbol
+    desfasado por la dirección de su celda, como mucho 17 celdas redibujadas por fotograma, 0x5927B3), elige su dibujo
+    por la estación como en las fotos del juego (0x583330) y en invierno les pone su sombra de ramas
+    (`WinterSchatten`). Y («Part 3, fourth batch») la cabaña del pescador (su red y su humo mientras trabaja) y el
+    pescador en su barca, que rema por su camino de la etiqueta 4 de `.nodes`, pesca y vuelve (0x569E10). De noche la
+    taberna, el faro y el astillero se ven iluminados en el juego (el visor no tiene noche).
   - [ ] Los barcos en el puerto (la lista *0x6E2D50, el objeto 0x6E6220 al que la simulación avisa al atracar y
     zarpar), también como puntos en el minimapa con el color de su dueño (0x56C730: azul los tuyos, gris oscuro los
     piratas, blanco los demás, rojo los de otro jugador humano; el dibujo del minimapa, 0x59C590). Con ellos, el «ir al
     barco» de la lista de barcos centrado en su barco (0x476A30).
-  - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe).
+  - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe), las olas (`welle_*`), el oleaje de los
+    acantilados (`Klippen_Flut`: la clase 0x1A, 0x581710 lo pinta sobre la roca con un alfa que sube y baja en 14
+    pasos de 142 ms, 0x581890; su atlas por el nivel de nieve, 0x581C90) y los témpanos con el puerto helado (0x58C8A5).
+  - [ ] El tiempo: la nieve y la lluvia (0x58AA30, 0x58AD30), la niebla (clase 0x1C), las nubes (0x14) y las huellas en
+    la nieve (0x55D0B0, 0x55B030).
   - [x] Las sombras y la nieve de los tiles (17-11-2026, `re/emu/sesion39/README.md`; las variantes del `.let`, con
     la clase 1 de la obra y la 2 de la nieve corregidas en `docs/formats/town.md`). **Sombras**: como la pasada del
     juego (0x591C50), todas tras el suelo y antes de los objetos, cada una desde la celda de la franja `cols − 1` de su
@@ -815,16 +905,11 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     por el de nieve de su nivel (0x552090) y los árboles por el de su estación (el otoño, la nieve); las paletas que
     0x54F4F0 retoca no las marca ningún `.let` de los datos (no cambia nada); estado de depuración `season-N`. Los
     árboles: sus dibujos `_01` son el otoño, `_02` la floración (los de hoja caduca) o la nieve ligera (los pinos) y
-    `_03` el invierno (pelados o muy nevados). Como en las fotos del juego del usuario (Edimburgo el 3 de febrero y el
-    17 de marzo de 1301, `re/emu/sesion31/pc_shots/`), y no como lee el código (con la primavera lee más allá de su
-    tabla de atlas): en primavera los de hoja caduca en flor y los pinos sin nieve. Los dos atlas de nieve con el
-    fondo en 254, 0, 254 (la oficina y el ayuntamiento grande), sin marco rosa, que el usuario no ha visto nunca. Las
-    sombras de los árboles son las de siempre también en invierno (su `WinterSchatten`, clase 4, el juego no la lee).
-    Por mirar en el juego: a principios del invierno (el nivel de hielo 2), el código pone a los árboles de hoja
-    caduca su floración.
-  - [ ] Los árboles: su clase propia (0x676B30) los mece con el viento (0x583080; 0x581710 pinta encima el mismo
-    rectángulo con la textura *0x6E3390 de la tabla 0x6E335C y un alfa que sigue al viento); hoy se dibujan quietos
-    con su primer fotograma. Va con la ciudad animada.
+    `_03` el invierno (pelados o muy nevados). Los dos atlas de nieve con el fondo en 254, 0, 254 (la oficina y el
+    ayuntamiento grande), sin marco rosa, que el usuario no ha visto nunca. Lo de los árboles se tomó entonces de la
+    clase equivocada; corregido el 21-11-2026 con la suya (0x583330, arriba): coincide con las fotos del juego del
+    usuario (Edimburgo el 3 de febrero y el 17 de marzo de 1301, `re/emu/sesion31/pc_shots/`) sin regla propia, y con
+    el dibujo de invierno su sombra es la de ramas.
   - [ ] Las obras: hoy lo que está en obras ([0x762] con `pending` ≠ 0) se dibuja terminado; faltan los andamios y los
     bordes de calle de las celdas 0x81. Los andamios y cimientos son la variante de clase 1 del `.let` ([data+0x18]),
     que 0x550770 dibuja con el avance de la obra (17-11-2026, `re/emu/sesion39/README.md`).
@@ -832,7 +917,11 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     una batalla y arde unos 100 ticks como edificio, el evento 0x25; 0x5891C0, 0x599040). Decisión del usuario
     (10-11-2026): con la ciudad animada.
   - [ ] El asedio en la vista: el campamento, las tropas y el ataque a la puerta (0x62C730 y los objetos del ejército
-    [+0x1F8], [+0x574], [+0x5DC..]) y el aviso al jugador; su icono de suceso ya sale.
+    [+0x1F8], [+0x574], [+0x5DC..]) y el aviso al jugador; su icono de suceso ya sale. Con él los guardias de la
+    ciudad ([0x998], la clase 8) y lo que hace el asedio a los paseantes (corren, huyen del ejército: 0x55A2C0).
+  - [ ] Las animaciones del mapa del mar (`images/Animationen_Seekarte`, `scrollmaps.ini` [Wetter]: tormentas, calma,
+    icebergs, ballena, peces, gaviotas, olas), el último punto de la ciudad viva (dijo que sí el usuario el
+    20-11-2026).
   - [ ] Coste en la Vita: cada redibujado rehace la ciudad entera (2 ms en el PC más la lista de sprites); si da tirones
     en avance rápido, redibujar solo las celdas que cambian. Y la nieve: al cambiar de estación (o al entrar en una
     ciudad en invierno) se decodifican los atlas de nieve de sus tiles además de los normales, y se guardan; mirar el
@@ -917,6 +1006,11 @@ Lo que hay y cómo lo decide el juego: [formats/sound.md](formats/sound.md). Por
 - [ ] **Parte 6, los vídeos**: los de los sucesos (`Videos/*.sks`: imágenes JPEG en pase con su música de
   `Musik/Rendering`, [Videos]), el final de Gobernador (`Eldermann.sks`) y la introducción (Bink, `Intro_2.bik`: con
   FFmpeg u otro descodificador).
+- [ ] La ventana de los vídeos de sucesos (*0x6CC7E8: 0x469380, 0x469AF0 por códigos 0..0x25; 0x25 lanza el programa
+  del vídeo `eldermann`): hoy el visor hace lo del juego con la opción «VIDEOS» apagada (una línea de noticias), y la
+  opción sale como «No». El intérprete de misiones ya la manda al visor (`SaveGame::event_windows`: 0x16, 0x1D y los
+  0x19 y 0x1A de las campañas, que el juego enseña siempre en la ventana y el visor aún no); los demás eventos del motor
+  que la abren (la elección, 0x4DBBD0 con 0x25 o 6; los incendios, los asedios, el monumento...) aún no la mandan.
 
 ### 6. Probar en la Vita
 
@@ -961,6 +1055,8 @@ que van a una cola y ejecuta la simulación, y en red solo viajan esas órdenes.
 - [ ] Ojo: el juego tira los gestos al azar de los interiores (el ayuntamiento, 0x5A94FA, y los demás edificios) con el
   mismo `rand()` de la CRT que usa la simulación: en el PC, tener un edificio abierto cambia los números al azar de la
   partida. El visor usa un azar aparte para esos gestos. Para jugar en red habrá que ver cómo lo resuelve el juego.
+  Lo mismo la ciudad viva (20-11-2026): la gente, los animales, los carros... de la vista de la ciudad gastan ese
+  `rand()` (más de cien llamadas, `re/emu/sesion50/README.md`); en el visor tienen su azar propio (TownLife::rand).
 - [ ] Todas las acciones del jugador como las mismas órdenes que encola el juego.
 - [ ] La red del juego: `Schnelltransfer.dll` (de Ascaron, sobre Winsock: buscar partidas en la red local, unirse por
   IP, mandar y recibir; sus funciones `Network_*`). Estudiar su protocolo y los mensajes de la partida en red, y
@@ -1122,30 +1218,6 @@ ser a propósito. El detalle, en el comentario del código y en [oracle.md](orac
 
 ### Reproducidos, sin corregir aún
 
-- **La carta de misión a los dueños de las oficinas de una ciudad** (instrucción 0xF7 del intérprete, 0x4ED4A0;
-  20-11-2026): con respuestas, el destinatario −3 debería mandar una copia a cada dueño de una oficina de la ciudad
-  de la carta, pero antes de mirarlo un `memset` pone a −1 las ocho variables desde la del destinatario, así que la
-  carta va a todos los humanos (la rama del −3, en 0x4EDD57, no se ejecuta nunca). Ninguna misión de las del juego
-  parece usarla así; pendiente de comprobar en las campañas antes de corregirlo.
-- **La mercancía que más le falta a una ciudad** (0x51BEB0, la usa la instrucción 0x2F del intérprete; 20-11-2026,
-  parece): de cada mercancía mira los obreros de la instalación con el número de la mercancía ([+0x844 + 16 ·
-  mercancía]) en vez de la de la empresa que la produce (lee ese tipo de 0x672C88 y no lo usa; la rama del aceite de
-  ballena queda muerta), como sí hace la lonja (0x5DE3xx). Cambia qué mercancía pide la misión 6 (y su cantidad):
-  preguntar antes de corregirlo.
-- **La instrucción 0xE8 con un comerciante que no existe** (0x4ED086; 20-11-2026, seguro, leído en el código): salta a
-  la misma instrucción sin avanzar (0x4F2C97) y el juego se queda colgado. p3vita termina el guion. Ninguna misión del
-  juego le da un comerciante fuera de la cuenta.
-- **Las cargas que no son mercancía de un barco** (0x518640 y 0x5186D0, las usa la instrucción 0xF1; 20-11-2026,
-  parece): al subirlas, la bodega ocupada [+0x118] suma las cargas nuevas · 2000, no las añadidas; al bajarlas, resta
-  las que quedan, no las quitadas. Solo se nota si ya había cargas al subir o si quedan al bajar, y se arregla en el
-  siguiente recálculo de la bodega (0x5182B0). Comprobado con el oráculo (`mission_ships_money`).
-- **El barco más rápido de un comerciante en una ciudad** (instrucción 0x57 del intérprete, 0x4F01AA, solo en las
-  misiones de la partida en red; 20-11-2026, parece): compara la velocidad de cada barco (0x5170F0) con la marca, pero
-  guarda como marca su potencia de fuego [+0x120], así que el elegido no es el más rápido. Reproducido
-  (`mission_network`).
-- **El incendio de la instrucción 0xED** (0x4EE567, campañas; 20-11-2026, parece): busca la ciudad y su sitio con el
-  número del operando (el de la variable) y no con su valor, que sí pone en la operación 0x7D; 0xE5, su pareja, usa el
-  valor. Reproducido (`mission_campaign_b`).
 - **Vender un almacén con 0x5256F0** (la instrucción 0x5F, campañas; 20-11-2026, seguro, leído): el almacén (0x1E)
   está en la lista de empresas de la oficina [+0x2CE], pero 0x5256F0 lo trata como una casa por su tipo (lo busca en
   [+0x2D0]) y el recuento 0x4FF2D0 lee fuera de la tabla de las casas. Ninguna venta del juego llega (las subastas no
@@ -1296,6 +1368,61 @@ su número (0x6DE4B8), y elige la música de otra región; el tema de Rügenwald
 fichero se llama `Rügenwald.mp3`, así que no suena (`music_director.cpp`, `main.cpp`); la lista 7000 (el baño, la
 oración, el escupitajo) solo se carga al abrir el baño (0x5B1D41), así que hasta entonces ni la oración de la iglesia
 ni el marinero de la taberna suenan (`main.cpp`: con el ajuste se carga antes de tocarlos).
+
+**Las cartas de misión de la trastienda al salir de la taberna** (operación 0x52 de tipo 10, 0x53C2C0; 20-11-2026,
+seguro, comprobado con el oráculo, escenario `tavern_side_room`): al irse, el juego quiere soltar las cartas 0x71 de
+esa ciudad que el comerciante tenía apartadas (la variable del destinatario a 0xFFFF), pero el bucle sigue solo
+mientras el número de la carta en el buzón es menor que el número de comerciantes (0x53C6FB, 0x53C796), y las cartas
+suelen estar mucho más allá: casi nunca suelta ninguna. En una partida de un jugador no cambia nada (la carta sigue
+apartada para él y él la sigue viendo); en red, otro humano no la vería en su taberna. Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**La carta de misión a los dueños de las oficinas de una ciudad** (instrucción 0xF7 del intérprete, 0x4ED4A0;
+20-11-2026): con respuestas, el destinatario −3 debería mandar una copia a cada dueño de una oficina de la ciudad
+de la carta, pero antes de mirarlo un `memset` pone a −1 las ocho variables desde la del destinatario, así que la
+carta va a todos los humanos (la rama del −3, en 0x4EDD57, no se ejecuta nunca). Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**La mercancía que más le falta a una ciudad** (0x51BEB0, la usa la instrucción 0x2F del intérprete; 20-11-2026,
+parece): de cada mercancía mira los obreros de la instalación con el número de la mercancía ([+0x844 + 16 ·
+mercancía]) en vez de la de la empresa que la produce (lee ese tipo de 0x672C88 y no lo usa; la rama del aceite de
+ballena queda muerta), como sí hace la lonja (0x5DE3xx). Cambia qué mercancía pide la misión 6 (y su cantidad): Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**La instrucción 0xE8 con un comerciante que no existe** (0x4ED086; 20-11-2026, seguro, leído en el código): salta a
+la misma instrucción sin avanzar (0x4F2C97) y el juego se queda colgado. p3vita termina el guion. Ninguna misión del
+juego le da un comerciante fuera de la cuenta. Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**Las cargas que no son mercancía de un barco** (0x518640 y 0x5186D0, las usa la instrucción 0xF1; 20-11-2026,
+parece): al subirlas, la bodega ocupada [+0x118] suma las cargas nuevas · 2000, no las añadidas; al bajarlas, resta
+las que quedan, no las quitadas. Solo se nota si ya había cargas al subir o si quedan al bajar, y se arregla en el
+siguiente recálculo de la bodega (0x5182B0). Comprobado con el oráculo (`mission_ships_money`). Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**El barco más rápido de un comerciante en una ciudad** (instrucción 0x57 del intérprete, 0x4F01AA, solo en las
+misiones de la partida en red; 20-11-2026, parece): compara la velocidad de cada barco (0x5170F0) con la marca, pero
+guarda como marca su potencia de fuego [+0x120], así que el elegido no es el más rápido. Reproducido
+(`mission_network`). Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**El incendio de la instrucción 0xED** (0x4EE567, campañas; 20-11-2026, parece): busca la ciudad y su sitio con el
+número del operando (el de la variable) y no con su valor, que sí pone en la operación 0x7D; 0xE5, su pareja, usa el
+valor. Reproducido (`mission_campaign_b`). Corregido a petición del usuario (21-11-2026; `re/emu/sesion52/README.md`, «Part 5»).
+
+**El camino del pescador** (la ciudad viva, 0x569DAD y 0x56A450; 21-11-2026, seguro, leído en el código): al salir, el
+pescador marca su camino de la etiqueta 4 de `.nodes` como ocupado ([vista+0xC59C]) y nadie lo vuelve a liberar (ni su
+destructor ni nada hasta que se carga otra vez la ciudad). Si su cabaña deja de trabajar y vuelve, el siguiente sale
+por otro camino, y cuando se acaban los que empiezan a menos de 304 píxeles, la cabaña se queda sin pescador. Solo es
+la vista (nada de la partida). Corregido a petición del usuario (21-11-2026): al quitar al pescador se libera su
+camino (`TownLife::remove_creature`).
+
+**Una ciudad por su nombre** (instrucción 0x65 del intérprete, 0x4F26C0 → 0x5136A0; 21-11-2026, seguro, leído en el
+código y visto en el oráculo con la campaña 3 en marcha): busca el nombre k del fichero de ciudades en la tabla 0x6DDA00
+recorriéndola por índice de ciudad (de la última a la primera), pero esa tabla va por número de ciudad: con k menor que
+el número de ciudades devuelve el índice k, que es otra ciudad salvo que su número sea k, y con k mayor, −1. En «El
+auge de la Hansa» (la campaña 3, la única que la usa) la misión 301 («habitantes de Rostock», número 15) vigila la
+ciudad de índice 15, que es Stockholm; la 305 (Londres, número 4) la de índice 4; y las 302 y 303 (Stettin, 28, y
+Stockholm, 25) reciben −1, con el que 0x34 lee los habitantes de la ciudad −1 sin comprobar nada: memoria de antes de
+las ciudades, que en el juego de verdad decide su montón (en el emulador sale 0x16CF492: la misión cumplida al
+momento, 59 000 monedas y su carta). Sin el ajuste p3vita lee 0 ahí (la misión espera), y el oráculo también
+(town_oracle.py `TOWN_RESIDENTS_READ`). Corregido a petición del usuario (21-11-2026): la ciudad cuyo número es k
+(`mission_script.cpp`, 0x65; `re/emu/sesion52/fix65.sh`: Rostock en el índice 10, Stettin en el 17, Stockholm en el 15
+y Londres en el 2).
 
 **El rival de la ciudad del jugador** (0x532420, la operación 0xC0 al empezar una partida; 19-11-2026, seguro:
 escenario `mission_start`, roto a propósito, y las 12 partidas lo muestran): por cada comerciante humano con un

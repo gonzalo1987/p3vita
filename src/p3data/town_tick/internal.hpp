@@ -517,6 +517,8 @@ void fn_4d8dd0(SaveGame& save);
 // lo pone en la cabeza con el tick `tick` y lo lleva a su sitio. Devuelve su
 // índice.
 uint16_t fn_4d8cf0(SaveGame& save, uint32_t tick);
+// 0x4D8E70: every event of the type taken out to the free list (type 0xFFFF); a script's (0x1B) variables freed.
+void fn_4d8e70(SaveGame& save, uint16_t type);
 // 0x4D9000: the merchant's automatic bid (an event 0x2D) for the lot of the town's auction: its index and its top
 // ([+0x8]) in `top`; 0xFFFF and 0 if he has none.
 uint16_t fn_4d9000(const SaveGame& save, uint32_t merchant, uint32_t town, uint32_t lot, uint32_t& top);

@@ -413,6 +413,23 @@ bool remove_letter_71(SaveGame& save, uint16_t& head, uint32_t event, uint8_t ke
 	return false;
 }
 
+uint16_t find_tavern_letter(const SaveGame& save, uint16_t start, uint16_t town) {
+	const GlobalMemory& g = save.globals;
+	const uint16_t count = g.u16(kMailCount);
+	const uint32_t now = g.u32(global::kWorldTick);
+	// (A guard of the mailbox's size in steps: the game would go round a chain cut into a loop for ever.)
+	uint16_t at = start;
+	for (size_t steps = 0; at < count && at < save.mail.size() && steps <= save.mail.size(); ++steps) {
+		const GameMemory<0x10>& e = save.mail[at];
+		if (e.u8(4) == 0x71 && e.u8(5) == town && at < save.mail_records.size() && save.mail_records[at] &&
+			save.mail_records[at]->u32(4) > now) {
+			return at;
+		}
+		at = e.u16(6);
+	}
+	return 0xFFFF;
+}
+
 void expire_letters(SaveGame& save, int32_t merchant) {
 	tick::events_towns_detail::fn_4d6780(save, merchant);
 }
@@ -500,6 +517,33 @@ std::vector<SaveGame::TickerLine> take_ticker(SaveGame& save) {
 	std::vector<SaveGame::TickerLine> lines;
 	lines.swap(save.player_ticker);
 	return lines;
+}
+
+void open_event_window(SaveGame& save, uint32_t code, uint16_t a, uint16_t b, const std::string& first,
+	const std::string& second) {
+	if (save.event_windows.size() >= 32) {
+		save.event_windows.erase(save.event_windows.begin());
+	}
+	save.event_windows.push_back({code, a, b, first, second});
+}
+
+std::vector<SaveGame::EventWindow> take_event_windows(SaveGame& save) {
+	std::vector<SaveGame::EventWindow> windows;
+	windows.swap(save.event_windows);
+	return windows;
+}
+
+void open_player_message(SaveGame& save, const std::string& text) {
+	if (save.player_messages.size() >= 32) {
+		save.player_messages.erase(save.player_messages.begin());
+	}
+	save.player_messages.push_back(text);
+}
+
+std::vector<std::string> take_player_messages(SaveGame& save) {
+	std::vector<std::string> messages;
+	messages.swap(save.player_messages);
+	return messages;
 }
 
 std::vector<uint16_t> take_new_letters(SaveGame& save) {

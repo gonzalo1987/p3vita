@@ -6,9 +6,12 @@
 #include <optional>
 
 #include "p3data/building_windows.hpp"
+#include "p3data/campaigns.hpp"
 #include "p3data/guild_window.hpp"
 #include "p3data/land_trade_window.hpp"
 #include "p3data/mail.hpp"
+#include "p3data/missions.hpp"
+#include "p3data/new_game.hpp"
 #include "p3data/game_texts.hpp"
 #include "p3data/player_actions.hpp"
 #include "p3data/sailing.hpp"
@@ -1292,6 +1295,25 @@ void register_probes_unchecked(ProbeRegistry& r) {
 				s.globals.u8(at + 0x10 + j) = a.types[j];
 			}
 		}
+		return std::nullopt;
+	};
+	// A campaign's start (campaigns.cpp; scenario campaign_start): the mailbox emptied (on 0x6DD730), the events of a
+	// type taken out (on the queue 0x6DD73C, the type), the missions' list of the mode (on *0x6DD8B4, start) and 0x54A480
+	// (on the game's control object 0x6DF2F0).
+	r[0x4D64B0] = [](SaveGame& s, const ProbeCall&) -> std::optional<uint32_t> {
+		fn_4d64b0(s);
+		return std::nullopt;
+	};
+	r[0x4D8E70] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		tick::events_detail::fn_4d8e70(s, uint16_t(c.args[0]));
+		return std::nullopt;
+	};
+	r[0x511270] = [](SaveGame& s, const ProbeCall& c) -> std::optional<uint32_t> {
+		missions_detail::fn_511270(s, (c.args[0] & 0xFF) != 0);
+		return std::nullopt;
+	};
+	r[0x54A480] = [](SaveGame& s, const ProbeCall&) -> std::optional<uint32_t> {
+		campaigns_detail::fn_54a480(s);
 		return std::nullopt;
 	};
 }

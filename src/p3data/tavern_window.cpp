@@ -8,6 +8,8 @@
 #include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
 #include "p3data/game_texts.hpp"
+#include "p3data/mail.hpp"
+#include "p3data/missions.hpp"
 #include "p3data/navigation.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -204,6 +206,127 @@ std::array<bool, kTavernPeople> tavern_people(const SaveGame& save, uint32_t tow
 	return there;
 }
 
+namespace {
+
+const GameMemory<0x10>* side_room_record(const SaveGame& save, uint16_t entry) {
+	if (entry >= save.mail.size() || entry >= save.mail_records.size() || !save.mail_records[entry]) {
+		return nullptr;
+	}
+	return &*save.mail_records[entry];
+}
+
+}  // namespace
+
+bool side_room_open(const SaveGame& save, uint16_t entry) {
+	const GameMemory<0x10>* record = side_room_record(save, entry);
+	if (!record) {
+		return false;
+	}
+	const uint16_t event = record->u16(8);
+	if (event >= save.events.size() || save.events[event].u16(6) != 0x1B) {
+		return false;
+	}
+	const auto script = save.missions.scripts.find(event);
+	if (script == save.missions.scripts.end() || record->u8(0xC) >= script->second.variables.size()) {
+		return false;
+	}
+	const uint32_t v = script->second.variables[record->u8(0xC)];
+	return v == uint32_t(player_of(save)) || v >= save.globals.u16(global::kWorldMerchantCount);
+}
+
+namespace {
+
+// The open letters of the town from `start` along the chain (0x4D7900 from each next): the first, or 0xFFFF.
+uint16_t first_open(const SaveGame& save, uint32_t town, uint16_t start) {
+	uint16_t at = find_tavern_letter(save, start, uint16_t(town));
+	for (size_t steps = 0; at < save.globals.u16(kMailCount) && at < save.mail.size() && steps <= save.mail.size();
+		 ++steps) {
+		if (side_room_open(save, at)) {
+			return at;
+		}
+		at = find_tavern_letter(save, save.mail[at].u16(6), uint16_t(town));
+	}
+	return 0xFFFF;
+}
+
+uint16_t chain_head(const SaveGame& save) {
+	const int player = player_of(save);
+	return player >= 0 && size_t(player) < save.merchants.size() ? save.merchants[size_t(player)].memory.u16(0xA)
+																 : uint16_t(0xFFFF);
+}
+
+}  // namespace
+
+uint16_t side_room_letter(const SaveGame& save, uint32_t town, uint16_t kept) {
+	const uint16_t count = save.globals.u16(kMailCount);
+	if (kept < count && find_tavern_letter(save, kept, uint16_t(town)) == kept && side_room_open(save, kept)) {
+		return kept;
+	}
+	return first_open(save, town, chain_head(save));
+}
+
+uint16_t side_room_next(const SaveGame& save, uint32_t town, uint16_t kept) {
+	const uint16_t count = save.globals.u16(kMailCount);
+	if (kept < count && kept < save.mail.size()) {
+		const uint16_t after = first_open(save, town, save.mail[kept].u16(6));
+		if (after < count) {
+			return after;
+		}
+	}
+	const uint16_t first = first_open(save, town, chain_head(save));
+	return first == kept ? uint16_t(0xFFFF) : first;
+}
+
+SideRoomWords side_room_words(const SaveGame& save, uint16_t entry) {
+	SideRoomWords w;
+	const GameMemory<0x10>* record = side_room_record(save, entry);
+	if (!record || entry >= save.mail_buffers.size()) {
+		return w;
+	}
+	const std::vector<uint8_t>& b = save.mail_buffers[entry];
+	size_t at = 0;
+	auto next = [&]() {
+		std::string out;
+		while (at < b.size() && b[at] != 0) {
+			out += char(b[at++]);
+		}
+		++at;
+		return out;
+	};
+	w.title = next();
+	const std::string text = next();
+	const size_t bar = text.find('|');
+	w.text = text.substr(0, bar);
+	w.after = bar == std::string::npos ? std::string() : text.substr(bar + 1);
+	if (record->u8(0xB) != 0) {
+		w.accept = next();
+		w.has_accept = true;
+	}
+	return w;
+}
+
+OperationBytes side_room_talk_operation(const SaveGame& save, uint16_t entry, uint32_t merchant, uint32_t town) {
+	OperationBytes op{};
+	const GameMemory<0x10>* record = side_room_record(save, entry);
+	put32(op, 0, 0x52);
+	put32(op, 4, record ? uint32_t(record->u16(8)) | uint32_t(record->u8(0xC)) << 16 : 0);
+	put32(op, 8, merchant);
+	put32(op, 0xC, town);
+	put32(op, 0x10, 9);
+	return op;
+}
+
+OperationBytes side_room_accept_operation(const SaveGame& save, uint16_t entry) {
+	OperationBytes op{};
+	const GameMemory<0x10>* record = side_room_record(save, entry);
+	put32(op, 0, 0x76);
+	put32(op, 4, record ? record->u16(8) : 0);
+	put32(op, 8, record ? uint32_t(record->u8(0xC)) << 8 | record->u8(0xA) : 0);
+	put32(op, 0xC, 0);
+	put32(op, 0x10, uint32_t(player_of(save)));
+	return op;
+}
+
 OperationBytes tavern_talk_operation(SaveGame& save, uint32_t merchant, uint32_t town, uint32_t kind) {
 	uint32_t draw = 0;
 	switch (kind & 0xFF) {
@@ -220,7 +343,7 @@ OperationBytes tavern_talk_operation(SaveGame& save, uint32_t merchant, uint32_t
 		draw = tick::game_rand(save);
 		break;
 	default:
-		break;  // 9, the mission letter, is the mission interpreter's: never asked here.
+		break;  // 9, the side room's letter: side_room_talk_operation.
 	}
 	OperationBytes op{};
 	put32(op, 0, 0x52);
@@ -820,7 +943,6 @@ namespace {
 constexpr uint32_t kTownTable = 0x6DDB90;  // StadtDaten.ini: 0x34 bytes per town number ([+0x20], [+0x24] its place)
 constexpr uint32_t kTownIds = 0x6DE4B8;    // u8 per town index: its number
 constexpr uint32_t kHistory = 0x6DE588;    // the towns' history (0x535300, 0x5353C0)
-constexpr uint32_t kMailCount = 0x6DD736;  // u16
 constexpr uint8_t kSingular[20] = {1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0};  // 0x66E0D4
 constexpr uint8_t kInformerTable[0x14][4] = {{4, 3, 12, 10}, {0, 1, 11, 11}, {0, 2, 18, 12}, {0, 3, 0, 13}, {0, 4, 7, 14},
 	{1, 0, 20, 15}, {1, 2, 13, 16}, {1, 3, 4, 17}, {1, 4, 23, 18}, {2, 0, 12, 19}, {2, 1, 30, 20}, {2, 3, 1, 21},

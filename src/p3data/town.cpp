@@ -165,9 +165,10 @@ bool parse_let(const uint8_t* data, size_t size, TileDef& out, std::string* erro
 		if (!u32(x) || !u32(y) || !u32(frames) || frames > 256) {
 			return true;
 		}
-		// (The game keeps them as u16: 0x5852B7..0x5852DA.)
-		v.x = int(uint16_t(x)) - out.src_x;
-		v.y = int(uint16_t(y)) - out.src_y;
+		// (The game keeps them as 16 bits, 0x5852B7..0x5852DA, signed where it draws them, 0x585550: a smoke's y above
+		// the atlas's top is negative.)
+		v.x = int(int16_t(uint16_t(x))) - out.src_x;
+		v.y = int(int16_t(uint16_t(y))) - out.src_y;
 		for (uint32_t k = 0; k < frames; ++k) {
 			uint32_t f[4] = {};
 			for (uint32_t& e : f) {

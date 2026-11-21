@@ -52,6 +52,12 @@ bool load_game_map_file(const std::string& path, GameMap& out, std::string* erro
 // save.queued_operations.
 void fn_544e50(SaveGame& save, Sailing* sailing, const GameMap& map);
 
+// 0x4D64B0 (on the mailbox 0x6DD730): emptied; every merchant's chain ([+0xA]) too. (Also a campaign's start.)
+void fn_4d64b0(SaveGame& save);
+// 0x52E1A0 (on 0x6DE3D8): the trade's difficulty (0 low, 1 normal, 2 or more high): the factor of [+0x64] (table
+// 0x6739FC). (Also a campaign's start, 0x54A480.)
+void fn_52e1a0(SaveGame& save, uint8_t difficulty);
+
 // The new game's operations (run_operation, simulation.cpp), each the
 // operation's 0x14 bytes.
 // 0xB7 (0x536F0E → 0x5434E0): the game starts: the mailbox, the trade routes,

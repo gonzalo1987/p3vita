@@ -496,6 +496,24 @@ struct SaveGame {
 		bool interface = false;
 	};
 	std::vector<TickerLine> player_ticker;
+	// Not saved: the game's window of the event videos (*0x6CC7E8: 0x469380, then 0x469AF0) opened by the world for
+	// the local player since the viewer last looked (take_event_windows, mail.hpp): the event's code, its two u16 and
+	// its two strings (raw, Windows-1252). With the game's videos off (the settings' VIDEOS, [+0x26] 0, the options
+	// screen's «Event videos») the window gives a news line instead (0x46A1FA → 0x42B4C0), but for the codes 0xF,
+	// 0x10, 0x19, 0x1A and 0x25. Sent by the mission interpreter: 0x37 (0x16, a history event: its title and text),
+	// 0xE8 (0x1D, a treasure found: the merchant), 0xEF (0x19 with the player, 0x1A with the merchants' count).
+	struct EventWindow {
+		uint32_t code = 0;
+		uint16_t a = 0;
+		uint16_t b = 0;
+		std::string first;
+		std::string second;
+	};
+	std::vector<EventWindow> event_windows;
+	// Not saved: the game's message window (0x41D9B0 on *0x6CBB10: no buttons, its ratio 0.5) opened by the world for
+	// the local player since the viewer last looked (take_player_messages): its text (raw; the mission interpreter's
+	// 0xF5).
+	std::vector<std::string> player_messages;
 	// Not saved: the game's window for the battles (*0x6CBB10, 0x41D9B0: a battle's question and its end), which
 	// the viewer is. Without it (`present` false: the checks, as the oracle without a window) a battle's question
 	// takes the game's path of a player busy with another window (operation 0x96 with 1: the computer fights it).
