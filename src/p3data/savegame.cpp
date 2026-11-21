@@ -1090,10 +1090,18 @@ bool parse_savegame(const uint8_t* data, size_t size, SaveGame& out, std::string
 	// por 0xAFFE: la de eventos es la cuarta empezando por el final y la del
 	// buzón (0x4D6350), la sexta, justo tras los barcos (donde se ha quedado
 	// `r` si se han leído los piratas).
+	// The mailbox's section starts with u32 version | 0xAFFE << 16 and then its u16 count: an empty mailbox (a
+	// campaign's start empties it, 0x4D64B0) puts a false separator 2 bytes after the true one, skipped here.
+	auto separator_at = [&](size_t pos) {
+		return data[pos] == 0xFE && data[pos + 1] == 0xAF && data[pos + 2] == 0 && data[pos + 3] == 0;
+	};
 	size_t separators = 0;
 	size_t next_separator = size - 4;  // The one found before (after `pos` in the file).
 	for (size_t pos = size - 4; pos >= r.position() && pos > 0; --pos) {
-		if (data[pos] == 0xFE && data[pos + 1] == 0xAF && data[pos + 2] == 0 && data[pos + 3] == 0) {
+		if (separator_at(pos)) {
+			if (separators == 5 && pos >= 6 && separator_at(pos - 6) && next_separator == pos + 10) {
+				continue;  // (the mailbox's version's high half and its count 0: its 12 bytes end at the next one)
+			}
 			++separators;
 			if (separators == 4 || separators == 6) {
 				Reader section(data, size);

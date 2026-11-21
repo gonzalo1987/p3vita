@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "p3data/campaigns.hpp"
 #include "p3data/cpr.hpp"
 #include "p3data/font.hpp"
 #include "p3data/game_fixes.hpp"
@@ -41,6 +42,7 @@ int usage() {
 	std::fprintf(stderr,
 		"uso: p3save <archivo.cpr> <partida> [ciudad | comerciantes | barcos | raw <salida>]\n"
 		"       p3save <archivo.cpr> <partida> write <out.pat> [<out.raw>]\n"
+		"       p3save <archivo.cpr> missav/<n>.pat campaign <out.pat> <out.raw>\n"
 		"       (--fix-game-bugs anywhere: with the fixes to the game's bugs, game_fixes.hpp)\n"
 		"       p3save compress <in> <out>\n"
 		"       p3save newgame <archivo.cpr> <out.raw> [--seed N] [--year Y] [--home I] [--settings-from SAVE.raw]\n"
@@ -59,6 +61,9 @@ int usage() {
 		"comerciantes y barcos los listan; raw guarda la partida descomprimida.\n"
 		"write saves it again as the game does (version 0x85; with <out.raw>, also uncompressed),\n"
 		"and the .pst of its statistics next to <out.pat>.\n"
+		"campaign starts the campaign n (1..7) on its save as the game's campaign screen does (campaigns.hpp:\n"
+		"after_game_load in the mode 4, start_campaign) with the oracle's scenario campaign_start's options (the\n"
+		"display ones 2, 0, 1 and the speed the save's xor 3), then writes it as write does.\n"
 		"<partida> is read from the archive or, if it isn't there, from the disk.\n"
 		"compress compresses any file as the game does (lz_compress).\n"
 		"texts-cache writes the viewer's texts' cache of the exe and checks that it reads back the same.\n"
@@ -634,7 +639,27 @@ int main(int argc, char** argv) {
 		}
 		return 0;
 	}
-	if (command == "write") {
+	if (command == "campaign") {
+		// As the scenario campaign_start of tools/oracle/retouch_unchecked.py (its --write: the game's save after it).
+		const std::string path = argv[2];
+		const size_t dot = path.rfind('.');
+		size_t digits = dot;
+		while (dot != std::string::npos && digits > 0 && path[digits - 1] >= '0' && path[digits - 1] <= '9') {
+			--digits;
+		}
+		if (argc != 6 || dot == std::string::npos || digits == dot) {
+			return usage();
+		}
+		const uint8_t campaign = uint8_t(std::atoi(path.substr(digits, dot - digits).c_str()));
+		const uint32_t speed = save.settings.u32(0x4) ^ 3;
+		LoadOptions options;
+		options.resolution = 2;
+		options.colour_depth = 0;
+		options.details = 1;
+		after_game_load(save, 4, true, options);
+		start_campaign(save, campaign, speed);
+	}
+	if (command == "write" || command == "campaign") {
 		if (argc < 5) {
 			return usage();
 		}

@@ -56,6 +56,8 @@ uint32_t op_u32(const uint8_t* op, size_t at) {
 	return uint32_t(op[at]) | uint32_t(op[at + 1]) << 8 | uint32_t(op[at + 2]) << 16 | uint32_t(op[at + 3]) << 24;
 }
 
+}  // namespace
+
 // 0x4D64B0 (on the mailbox 0x6DD730): emptied; every merchant's chain too.
 void fn_4d64b0(SaveGame& save) {
 	GlobalMemory& g = save.globals;
@@ -71,6 +73,8 @@ void fn_4d64b0(SaveGame& save) {
 		save.merchants[i].memory.u16(0xA) = 0xFFFF;
 	}
 }
+
+namespace {
 
 // 0x4D4C60 (on the trade routes 0x6DD728): emptied.
 void fn_4d4c60(SaveGame& save) {
@@ -273,6 +277,8 @@ void fn_4d8b10(SaveGame& save, uint32_t tick, uint32_t random) {
 	}
 }
 
+}  // namespace
+
 // 0x52E1A0 (on 0x6DE3D8): the trade's difficulty (0 low, 1 normal, 2 or
 // more high): the factor of [+0x64] (table 0x6739FC).
 void fn_52e1a0(SaveGame& save, uint8_t difficulty) {
@@ -280,6 +286,8 @@ void fn_52e1a0(SaveGame& save, uint8_t difficulty) {
 	save.globals.f32(kSellContext + 0x64) = kFactors[difficulty < 2 ? difficulty : 2];
 	save.trade_difficulty = TradeDifficulty(difficulty < 2 ? difficulty : 2);
 }
+
+namespace {
 
 // 0x4F3EB0: a merchant's constructor (0x4F5FD0, 0x534750 on [+0x4D8]): no
 // home town, offices nor ships, his names' strings, 0x32 in each town's

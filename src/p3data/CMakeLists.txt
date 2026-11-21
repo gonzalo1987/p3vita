@@ -50,6 +50,7 @@ add_library(p3data STATIC
 	mail.cpp
 	mission_script.cpp
 	missions.cpp
+	campaigns.cpp
 	navigation.cpp
 	new_game.cpp
 	prices.cpp

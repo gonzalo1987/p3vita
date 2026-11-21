@@ -134,7 +134,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Parte | Hecho | Lo que falta |
 |-|-|-|
 | La simulación sola (sin el jugador) | del código del juego al que llega, el 87 % reescrito con su nombre y otro 12 % hecho sin él (cargar y guardar partidas, la navegación) o saltado a propósito (medida abajo, 20-11-2026) | el 1 % sin nada son los manejadores del evento de la red y de dos que nadie crea; además, los estados raros del barco y unas ramas sueltas (apartado 2) |
-| Las misiones (20-11-2026) | la base (la lista, la 0xC0, cargar y guardar los guiones, el bucle del intérprete y sus 4 esperas), las 138 instrucciones del intérprete, las operaciones que encola (la 0x82 incluida), el evento 0x09 que crea y las 4 operaciones del jugador sobre sus cartas | la carta final 0x3D, el visor, las campañas (apartado 3) |
+| Las misiones (20-11-2026) | la base (la lista, la 0xC0, cargar y guardar los guiones, el bucle del intérprete y sus 4 esperas), las 138 instrucciones del intérprete, las operaciones que encola (la 0x82 incluida), el evento 0x09 que crea y las 4 operaciones del jugador sobre sus cartas | la carta final 0x3D, el visor, las campañas (apartado 3: hecho su arranque en el motor; faltan su pantalla y el tutorial) |
 | Tipos de evento (58) | 54 (el 0x09 de las misiones, 20-11-2026) | 4: 1 la partida en red y 3 nadie |
 | Operaciones (193 códigos) | 173: las 37 de la simulación, las 106 del jugador (la 0x82 de las misiones y las 0x54, 0x55, 0x74 y 0x76 de sus cartas, 20-11-2026), 12 de las 14 de las batallas, las 8 de la partida nueva que se usan, 8 de las 15 de la red, la 0x8F (el impuesto extraordinario del asedio, sin quien la encole) y la 0xC0 (el arranque de las misiones, 19-11-2026) | 7 de la sala de la partida en red (apartado 8); las otras 14, sin uso: 6 no hacen nada y a 8 no se les ha encontrado quien las encole |
 | Cartas (las 154 llamadas del juego que mandan una) | 148 (las del intérprete y del evento 0x09, 20-11-2026) | 6: la carta final 0x3D del evento 0x34, 3 de un evento que nadie crea y 2 de una ventana de pruebas |
@@ -361,8 +361,14 @@ Cada grupo entra en el visor con su edificio (apartado 4): sin la pantalla no se
   su primer edificio municipal y más de 1000 habitantes. En el emulador (`grow.sh`, partida 1) la ciudad se queda en
   272 habitantes hasta el día 520, y el plazo es de unos dos años. Medir más allá de 550 días (`--desde`) y ver si en
   el juego de verdad crece porque alguien le lleva mercancías. La ciudad nueva, sin probar en el visor de la Vita.
-- [ ] Partidas de la versión 0x4D (`missav/0100–0204.pat`, de las que parten las campañas, apartado 3): el lector
-  solo lee la 0x82 y posteriores.
+- [x] Partidas de la versión 0x4D (`missav/0100–0204.pat`): **el juego no las carga** (21-11-2026, leído en el
+  ejecutable). El único lector de ficheros, 0x5476E0 (desde 0x4335B0), lo piden la pantalla de partidas guardadas
+  (`Save\Ein\`, `Save\Kam\`, `Save\Mehr\`), las campañas 1..7 (0x430977: `MISSAV\<n>.pat`, las partidas `1..7.pat` de
+  la versión 0x82 que p3vita ya lee) y el tutorial (`SaveGame=tut0..tut4` de `scripts/tutorial_eng.ini`); las otras dos
+  llamadas a 0x549F40 (0x544615, 0x5446B1) cargan la partida que llega por red. Las 0x4D, con la carpeta `missions/`
+  (`0100xx_k.p2m`...), son restos de un sistema de campañas por capítulos anterior (escritas por una versión de
+  depuración: relleno 0xCD), y el lector del juego ni siquiera las entiende (la cabecera del mundo sale sin sentido).
+  Nada que leer.
 - [ ] El objeto opcional del mundo (0x533DA0): ninguna partida lo tiene y p3vita lo rechaza al leer. Solo si aparece
   una partida que lo tenga.
 - [ ] Sin comprobar porque no se pueden preparar: las dos persecuciones que alcanzan sin hueco para la batalla (harían
@@ -454,8 +460,23 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   `informer-map` y `mission-windows`.
 - [ ] **Las campañas y el tutorial**: su menú de inicio (`[Campaign_0..7]` del ini: el tutorial, «El ascenso», «El
   comerciante volante», «El auge de la Hansa» y los escenarios del saneamiento, la mala cosecha, el incendio y la
-  peste) y las partidas de la versión 0x4D de las que parten (`missav/0100..0204.pat`, apartado 2); el tutorial va
-  aparte (`scripts/tutorial.ini`, `missav/Tut*.pst`).
+  peste), que parten de `missav/1..7.pat` (0x430900: la campaña n carga `MISSAV\<n>.pat`; las partidas de la versión
+  0x4D no las usa el juego, apartado 2); el tutorial va aparte (`scripts/tutorial.ini`, `missav/tut0..4.pat` con sus
+  `Tut*.pst`).
+  - [x] **El arranque de una campaña en el motor** (21-11-2026, `campaigns.cpp`; `re/emu/sesion52/README.md`): lo que
+    hace la carga tras leer el fichero en el modo 4 (0x5476E0 desde 0x547985 y 0x4335B0: los humanos desde el
+    comerciante 20 marcados 0x8001, el modo y los tres ajustes de pantalla de las opciones, la operación 0xA8 sobre el
+    primero con el bit 15, que pasa a ser el jugador, y la 0xC8 encolada) y el «Comenzar» de la pantalla de campañas
+    (0x43097C..0x4309D2: el buzón vaciado, 0x4D64B0; los guiones de la partida quitados, 0x4D8E70 con 0x1B; el modo 5,
+    la campaña y la velocidad de antes; la lista de la campaña con sus misiones empezadas, 0x511270 con 1; y
+    0x54A480: la dificultad del comercio, el factor del jugador y los cinco piratas por [+0x13]). Comprobado: el
+    escenario `campaign_start` igual en las 7 (con dos ramas de 0x54A480 retocadas; roto a propósito, cazado), la
+    partida que escribe el juego tras el arranque igual byte a byte a la de p3vita en las 7, y el mundo entero 7 días
+    desde cada arranque igual en las 7. De paso, el lector de p3vita con el buzón vacío (un separador falso: arreglado)
+    y un fallo del juego en la campaña 3 (la instrucción 0x65, abajo en «Corregidos con el ajuste»).
+  - [ ] La pantalla de campañas en el visor (*0x6CBB6C: la lista de las 7, sus dos pergaminos y «Comenzar», «Volver» y
+    «Detalles»), trazada en el emulador como las de opciones y partidas guardadas.
+  - [ ] El tutorial (`scripts/tutorial_eng.ini`, sus cinco partes con `SaveGame=tut0..4`).
 
 ### 4. Las pantallas
 
@@ -1292,6 +1313,19 @@ de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; s
   texto: el visor acaba la frase con su punto.
 
 ### Corregidos con el ajuste
+
+**Una ciudad por su nombre** (instrucción 0x65 del intérprete, 0x4F26C0 → 0x5136A0; 21-11-2026, seguro, leído en el
+código y visto en el oráculo con la campaña 3 en marcha): busca el nombre k del fichero de ciudades en la tabla 0x6DDA00
+recorriéndola por índice de ciudad (de la última a la primera), pero esa tabla va por número de ciudad: con k menor que
+el número de ciudades devuelve el índice k, que es otra ciudad salvo que su número sea k, y con k mayor, −1. En «El
+auge de la Hansa» (la campaña 3, la única que la usa) la misión 301 («habitantes de Rostock», número 15) vigila la
+ciudad de índice 15, que es Stockholm; la 305 (Londres, número 4) la de índice 4; y las 302 y 303 (Stettin, 28, y
+Stockholm, 25) reciben −1, con el que 0x34 lee los habitantes de la ciudad −1 sin comprobar nada: memoria de antes de
+las ciudades, que en el juego de verdad decide su montón (en el emulador sale 0x16CF492: la misión cumplida al
+momento, 59 000 monedas y su carta). Sin el ajuste p3vita lee 0 ahí (la misión espera), y el oráculo también
+(town_oracle.py `TOWN_RESIDENTS_READ`). Corregido a petición del usuario (21-11-2026): la ciudad cuyo número es k
+(`mission_script.cpp`, 0x65; `re/emu/sesion52/fix65.sh`: Rostock en el índice 10, Stettin en el 17, Stockholm en el 15
+y Londres en el 2).
 
 **El rival de la ciudad del jugador** (0x532420, la operación 0xC0 al empezar una partida; 19-11-2026, seguro:
 escenario `mission_start`, roto a propósito, y las 12 partidas lo muestran): por cada comerciante humano con un

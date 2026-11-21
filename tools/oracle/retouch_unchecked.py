@@ -5640,6 +5640,58 @@ def mission_start(o):
     return during
 
 
+def campaign_start(o):
+    """A campaign's start (campaigns.cpp), on the save the campaign n loads (missav/<n>.pat: saves 1..7): what 0x5476E0
+    and 0x4335B0 do after the file in the mode 4 (from the 20th merchant on the humans 0x8001, the settings' mode 4 and
+    the three display options, the operation 0xA8 (0x5421E0) on the first with the bit 15), then the campaign screen's
+    «Start» (0x43097C..0x4309D2): the mailbox emptied (0x4D64B0), the scripts 0x1B taken out (0x4D8E70), the settings'
+    mode 5, the campaign and the speed kept, the list started (0x511270 with 1) and 0x54A480 (the trade's difficulty,
+    the player's factor, the pirates). The display options and the speed differ from the save's, to be seen written.
+    Then, retouched, 0x54A480 again with the pirates' level [+0x13] 2 and 0 (a missing pirate made; [+0x15])."""
+    import re
+    campaign = int(re.search(r'(\d+)\.raw$', o.scenario_args.save).group(1))
+    settings = o.u32(to.SETTINGS_POINTER)
+    _, _, merchants, _ = o.counts()
+
+    def during(o):
+        speed = o.u32(settings + 4) ^ 3  # (the game's speed before the start: another than the save's)
+        for i in range(0x14, merchants):
+            if o.u16(o.merchant(i) + 8) == 0:
+                w16(o, o.merchant(i) + 8, 0x8001)
+        w8(o, settings + 0xD, 4)
+        w8(o, settings + 0x1F, 2)
+        w8(o, settings + 0x24, 1)
+        w8(o, settings + 0x20, 0)
+        taken = next((i for i in range(0x14, merchants) if o.u16(o.merchant(i) + 8) & 0x8000), None)
+        print(f'campaign {campaign}: merchant taken {taken}, player before {o.u32(to.PLAYER)}, '
+              f'scripts {sum(1 for _, a in rt.events(o) if o.u16(a + 6) == 0x1B)}, '
+              f'pirates {[k for k, _ in pirates(o)]}, [+0x13] {o.u8(settings + 0x13)}')
+        operation(o, 0xA8, o.u32(0x6DF31C), taken if taken is not None else 0x7FFFFFFF)
+        direct(o, 0x4D64B0, [], ecx=0x6DD730)
+        direct(o, 0x4D8E70, [0x1B], ecx=to.EVENTS)
+        w8(o, settings + 0xD, 5)
+        w8(o, settings + 0x14, campaign)
+        w32(o, settings + 4, speed)
+        direct(o, 0x511270, [1], ecx=o.u32(to.MISSIONS))
+        direct(o, 0x54A480, [], ecx=0x6DF2F0)
+        manager = o.u32(to.MISSIONS)
+        print(f'player {o.u32(to.PLAYER)}, missions {o.u16(manager + 8) if manager else 0}, '
+              f'scripts {sum(1 for _, a in rt.events(o) if o.u16(a + 6) == 0x1B)}, '
+              f'pirates {[(k, o.u8(p + 0x14), o.u8(p + 0x15)) for k, p in pirates(o)]}')
+        # Retouched, for 0x54A480's branches no campaign reaches: the pirates' level 2 (the missing ones made) and 0
+        # (the ones past the first: [+0x15] = 1). Not with --write: the save written is the campaign's start
+        # (p3save campaign writes p3vita's).
+        if o.scenario_args.write:
+            return
+        level = o.u8(settings + 0x13)
+        for retouched in (2, 0):
+            w8(o, settings + 0x13, retouched)
+            direct(o, 0x54A480, [], ecx=0x6DF2F0)
+            print(f'[+0x13] {retouched}: pirates {[(k, o.u8(p + 0xE), o.u8(p + 0x14), o.u8(p + 0x15)) for k, p in pirates(o)]}')
+        w8(o, settings + 0x13, level)
+    return during
+
+
 # --- The missions' interpreter (mission_script.cpp): scripts of their own ---
 
 def p2m(sections, texts=()):
@@ -15443,6 +15495,9 @@ SCENARIOS = {
     'mission_start': Scenario(mission_start, [0x535760], 0, [
         '@5112f8', '@511308', '@511318', '@511328', '@5111be', '@5111d3', '@511428', '@5114ba', '@511500', '@5115d2',
         '@51162e', '@511644', '@532460', '@5324f2', '@53254f', '@532693', '@6351b2', '@6351cc'], missions=True),
+    'campaign_start': Scenario(campaign_start, [0x535760, 0x4D64B0, 0x4D8E70, 0x511270, 0x54A480], 0, [
+        '@542202', '@4d8e9e', '@4d8ec7', '@4d8eea', '@54a4ba', '@54a565', '@54a50b', '@54a57a', '@4f9557'],
+        missions=True),
     'mission_branches': Scenario(mission_branches, [0x4D85C0], 1, [
         '@4eed2d', '@533353', '@4f1637', '@4f1c3d', '@4f1c1a', '@4f1c15', '@4f1c13>4f1c5f', '@4ef8a9', '@4ef952',
         '@4ef98c', '@4ef9c4', '@4f13a5', '@4f13b2', '@4f13c9', '@4f13e9', '@4f13d3', '@4f1404', '@4ede69',

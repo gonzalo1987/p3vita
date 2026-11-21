@@ -42,6 +42,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "p3data/game_fixes.hpp"
 #include "p3data/game_memory.hpp"
 #include "p3data/letters.hpp"
 #include "p3data/mail.hpp"
@@ -1853,12 +1854,19 @@ Step step(Run& r, uint8_t op) {
 	case 0x65: {
 		// 0x4F26C0: b ← the town whose name (the table 0x6DDA00, from the last town) is the name a of the towns' file
 		// (the names object's [+0x0], 0x5136A0; a below 40), a byte; −1 when none or past the towns' count.
+		// GAME BUG: the table 0x6DDA00 goes by town number and 0x5136A0 walks it by town index: k below the towns'
+		// count gives the index k (another town unless its number is k), k past it −1, and 0x34 then reads the town −1
+		// past the array (the campaign 3's missions 301..303). Fixed (the user's word, 21-11-2026): the town whose
+		// number ([+0x18 + index] of the world) is k.
 		const SaveGame& s = r.save;
 		const uint32_t k = r.var(1);
 		uint8_t found = 0xFF;
 		if (k < 0x28 && k < s.opaque.town_names.size()) {
 			for (uint32_t t = s.globals.u32(global::kWorldTownCount); t > 0; --t) {
-				if (t - 1 < s.opaque.town_name_table.size() && s.opaque.town_name_table[t - 1] == s.opaque.town_names[k]) {
+				const bool same = fix_game_bugs() ? s.globals.u8(global::kWorld + 0x18 + (t - 1)) == k
+												  : t - 1 < s.opaque.town_name_table.size() &&
+														s.opaque.town_name_table[t - 1] == s.opaque.town_names[k];
+				if (same) {
 					found = uint8_t(t - 1);
 					break;
 				}

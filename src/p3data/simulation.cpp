@@ -3,6 +3,7 @@
 
 #include <cstring>
 
+#include "p3data/campaigns.hpp"
 #include "p3data/mail.hpp"
 #include "p3data/mission_script.hpp"
 #include "p3data/new_game.hpp"
@@ -659,6 +660,9 @@ void run_operation(SaveGame& save, Sailing* sailing, const uint8_t* operation) {
 			save.globals.u32(global::kShips + 0xC + 4 * uint32_t(fields[1])) != 0) {
 			sailing->fn_514d40(size_t(fields[1]), uint16_t(fields[3]), uint16_t(fields[2]));
 		}
+		break;
+	case 0xA8:  // A merchant to a player (0x536D72 → 0x5421E0; campaigns.cpp): the network lobby's and a game's load.
+		fn_5421e0(save, operation);
 		break;
 	case 0xA7: {  // A human merchant, the player (0x536D63 → 0x541D70; new_game.cpp).
 		uint8_t copy[0x14];
