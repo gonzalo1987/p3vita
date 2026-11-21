@@ -116,7 +116,8 @@ Cómo leerla:
   entera). Faltan las 138 instrucciones del intérprete.
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): acabados los restos
   de las pantallas (las preguntas del convoy, las sombras y la nieve, el panel lateral con las letras y los textos del
-  juego), el intérprete de misiones (apartado 3: la base hecha; ahora sus instrucciones); luego el final de la partida
+  juego), el intérprete de misiones y las campañas y el tutorial (apartado 3: hechos el 21-11-2026, salvo la carta final
+  0x3D de la dieta y la voz del tutorial); luego el final de la partida
   (apartados 1 y 4), la ciudad viva (apartado 4), el sonido (apartado 5), los fallos del juego con su pantalla de
   ajustes (apartado 7) y la partida en red (apartado 8). Antes: las páginas como las del juego de todos los edificios (la última tanda, el
   15-11-2026: las siete del ayuntamiento con su texto tras una misión fallida, la puerta de la ciudad con su «Ruta
@@ -458,7 +459,7 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   ventanita de mensajes del juego; el aviso de la 0xF7 (0x47D1F0) es solo que la lista de cartas se rehaga, como hace
   el visor siempre. Las ventanas con vídeo, en el apartado 5. Estados de depuración `mission-letters`,
   `informer-map` y `mission-windows`.
-- [ ] **Las campañas y el tutorial**: su menú de inicio (`[Campaign_0..7]` del ini: el tutorial, «El ascenso», «El
+- [x] **Las campañas y el tutorial** (21-11-2026; falta solo la voz de los pasos del tutorial, con el sonido, apartado 5): su menú de inicio (`[Campaign_0..7]` del ini: el tutorial, «El ascenso», «El
   comerciante volante», «El auge de la Hansa» y los escenarios del saneamiento, la mala cosecha, el incendio y la
   peste), que parten de `missav/1..7.pat` (0x430900: la campaña n carga `MISSAV\<n>.pat`; las partidas de la versión
   0x4D no las usa el juego, apartado 2); el tutorial va aparte (`scripts/tutorial.ini`, `missav/tut0..4.pat` con sus
