@@ -2821,6 +2821,9 @@ All the 138 handlers (`mission_script.cpp`; `re/emu/sesion47/README.md`, `re/emu
   tick 2 the operations through the executor on each branch (its docstring). Saves 3, 5, 7: the events' and the
   executor's calls equal (36, 31, 55), 31 of 31 targets. Broken on purpose (0x74's record [+0x4], 0x54's variable,
   0x55's bits, 0x76's merchant): caught, each. The mission scenarios and the world 7 days with the missions: 0.
+- Since 2026-11-21 the oracle (`town_oracle.py` with `--cpr`; `world.sh` with it) runs the missions by default
+  (`--sin-misiones` without them; `re/emu/sesion48/worldmd.sh` MISSIONS=0 and `re/emu/sesion45/loadcheck.sh` without
+  `--misiones` pass it): `world.sh` 7 days, 0 differences in the 12 saves.
 - The operation 0x52's kinds 9 and 10 (the tavern's side room: the mission letters 0x71; `fn_53c2c0`, 0x4D7900 as
   `find_tavern_letter`), `retouch_unchecked.py tavern_side_room`: two scripts of their own send the player five tavern
   letters for his home town, three of them into entries below the merchants' count (freed for them); kind 9 taken,

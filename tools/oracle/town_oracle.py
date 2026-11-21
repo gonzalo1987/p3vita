@@ -2079,8 +2079,11 @@ def main():
     p.add_argument('--sin-resto', action='store_true', help='con --barcos, sin el resto de advance_time')
     p.add_argument('--cpr', help='archivo de datos (p2arch0_eng.cpr) del que leer scripts/Namen*.txt')
     p.add_argument('--misiones', action='store_true',
-                   help='the load runs 0x511270 and each script gets its program (missions_addon/, from --cpr): the '
-                        'missions run (TownOracle missions)')
+                   help='on by default now with --cpr (kept for older scripts): the load runs 0x511270 and each script '
+                        'gets its program (missions_addon/, from --cpr): the missions run (TownOracle missions)')
+    p.add_argument('--sin-misiones', action='store_true',
+                   help='without the missions (as every check before 2026-11-19): the load skips 0x511270, the scripts '
+                        'have no program')
     p.add_argument('--write', metavar='OUT', help='at the end, the uncompressed .pat the game writes for the state '
                    'reached (write_oracle.py)')
     p.add_argument('--letters', choices=('connected', 'all', 'none'), default='connected',
@@ -2098,7 +2101,7 @@ def main():
     o = TownOracle(a.exe, open(a.save, 'rb').read(), a.semilla, a.barcos, not a.sin_ia, not a.sin_convoyes,
                    not a.sin_comerciantes, rest, a.cpr, [int(x, 16) for x in a.operaciones.split(',') if x], not a.no_storms,
                    not a.no_pirates, not a.no_statistics, disband=not a.no_disband, battles=a.battles,
-                   letters=a.letters, missions=a.misiones)
+                   letters=a.letters, missions=bool(a.cpr) and not a.sin_misiones)
     o.load()
     if a.pst:
         # The .pst next to the save (uncompressed), as 0x5476E0 reads it.

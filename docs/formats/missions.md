@@ -249,7 +249,10 @@ back the next year, turned over when negative).
 
 ## Checks
 
-- The loads: the oracle with `--misiones` (TownOracle `missions`) runs 0x511270 and 0x511690 as the game; the regions
+- The oracle runs the missions by default since 2026-11-21 (`town_oracle.py` with `--cpr`, and so `world.sh`;
+  `--sin-misiones` without them; the class `TownOracle` keeps `missions=False` unless asked: the scenario tools choose,
+  `retouch_unchecked.py`'s by each scenario's `missions`). `world.sh` 7 days with them: 0 differences in the 12 saves.
+- The loads: the oracle with the missions (TownOracle `missions`) runs 0x511270 and 0x511690 as the game; the regions
   MS (the list), MV (each event 0x1B's script) and MF compared by `tick_probe --carga`: 0 differences in the 12 saves
   (each has 49 to 75 scripts: about 15 of the Standard missions and the History's to come). Without it (as all the
   older checks), the oracle skips 0x511270 and tick_probe gives p3vita's load the same (`detach_mission_programs`).

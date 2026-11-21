@@ -424,8 +424,9 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
   humanos, 0x27, el paso errante de 0x29, los modos de 0x40 y 0x4F, 0x44 con varias oficinas, las ramas de 0xF7 y
   todos los códigos «%» de sus cartas; `mission_ships_money`, `mission_ships_state`, `mission_misc`,
   `mission_last`, `mission_network`, `mission_campaign_a`, `mission_campaign_b` y `mission_unused`, partidas 1, 3, 5
-  y 7: las noventa y tres nuevas con sus ramas): iguales (`docs/oracle.md`). Sigue lo que cuelga del intérprete (abajo);
-  luego, el oráculo con las misiones por omisión (y `world.sh` con ellas).
+  y 7: las noventa y tres nuevas con sus ramas): iguales (`docs/oracle.md`). Lo que cuelga del intérprete,
+  abajo. Desde el 21-11-2026 el oráculo (`town_oracle.py` con `--cpr`, y con él `world.sh`) lleva las misiones por
+  omisión (`--sin-misiones` para quitarlas): `world.sh` 7 días, 0 diferencias en las 12 partidas.
 - [ ] **Lo que cuelga del intérprete**: el evento 0x09 está hecho desde el 20-11-2026 (0x4E2824, la buena o mala
   cosecha de una ciudad que crea la instrucción 0xFB: la marca de la ciudad [+0x2C8] 0x4000 o 0x2000, las cartas 0x08 a
   los dueños de las oficinas que producen trigo, miel, vino o cáñamo y 0x09 a la crónica, al empezar y al acabar, y la
