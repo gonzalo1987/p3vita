@@ -34,6 +34,7 @@
 #include "p3data/letter_picture.hpp"
 #include "p3data/letters.hpp"
 #include "p3data/building_windows.hpp"
+#include "p3data/campaigns.hpp"
 #include "p3data/guild_window.hpp"
 #include "p3data/offer_window.hpp"
 #include "p3data/office_window.hpp"
@@ -19208,6 +19209,155 @@ void draw_saves_screen(SDL_Renderer* renderer, TextRenderer& fallback, const Men
 	gart.end();
 }
 
+// The game's campaign screen (*0x6CBB6C, 0xD0C bytes: its constructor 0x42FBF0, its init 0x430020 with options.ini and
+// the missions' ini, its drawing 0x430A80, its update 0x430570; traced with re/emu/sesion52/camptrace.sh, README «Part
+// 3»): a whole screen of 800 × 600 on tutorial.jpg (options.ini [ANIM47]: TEX29); its title «Campaign» (0x69B26C) in
+// the font 5 right-aligned at (757, 11) over its shadow; «Choose campaign» (0x69B270) in the font 4 at (394, 126); the
+// chosen campaign's picture (its «Texture», 340 × 260) at (41, 123); the campaigns' names (p3data read_campaigns) in the
+// font 4 from (394, 158), a font's height apart in 230, white, the one under the mouse 0xFFF16800 ([+0xCA8], 0x66E110)
+// and the chosen one 0xFFD34000 ([+0xCC4], 0x66E114); the chosen one's text in the font 2, 0xFFDDDDDD, from (47, 394),
+// 673 wide, the lines that fit in 100; the buttons (BUTTON4, 149 × 36) «Start» (0x69B294) at (612, 526), «Back» at
+// (452, 526) and «Details» at (41, 526). A click on a name chooses it (its text from its first line), a second click on
+// the chosen one (0x430A00: within 500 ms) or «Start» starts it (campaigns.hpp); «Details» opens the new game's details
+// window with the starting capital and the start off (0x49B180 with 1: what it chooses stays for the next new game; the
+// campaign takes its save's settings).
+// Adapted: the text's scroll bar (the game's [+0x23C], parchment.ini [P2Scrollbar1], shown only for a text over 200
+// high) at x 723 whenever the text doesn't fit, as the saved games' list's; a name wider than the list (the game cuts
+// it) in the font 2; a second touch on the chosen one at any time; the pad: Up and Down choose, X «Start», Square
+// «Details», Circle «Back», L and R the text's lines.
+constexpr SDL_Point kCampaignPicture = {41, 123};
+constexpr int kCampaignListX = 394;
+constexpr int kCampaignListTop = 158;
+constexpr int kCampaignListRight = 720;
+constexpr int kCampaignListHeight = 230;
+constexpr int kCampaignTextX = 47;
+constexpr int kCampaignTextY = 394;
+constexpr int kCampaignTextW = 673;
+constexpr int kCampaignTextH = 100;
+constexpr int kCampaignBarX = 723;
+enum class CampaignButton { Start, Back, Details, Count };
+SDL_Rect campaign_button(CampaignButton b) {
+	switch (b) {
+	case CampaignButton::Start:
+		return {612, 526, kScreenButtonW, kScreenButtonH};
+	case CampaignButton::Back:
+		return {452, 526, kScreenButtonW, kScreenButtonH};
+	default:
+		return {41, 526, kScreenButtonW, kScreenButtonH};
+	}
+}
+
+struct CampaignUi {
+	std::vector<p3::data::CampaignEntry> list;
+	int chosen = 0;  // [+0xCC4]
+	int lit = -1;  // Under the finger ([+0xCA8]).
+	int first_line = 0;  // The text's first line shown.
+};
+
+// The fonts the screen uses: the list's (font 4) and the text's (font 2).
+TextRenderer& campaign_list_font(GameWindowArt& gart, TextRenderer& fallback) {
+	return gart.screen_label_text() ? *gart.screen_label_text() : fallback;
+}
+TextRenderer& campaign_text_font(GameWindowArt& gart, TextRenderer& fallback) {
+	return gart.info_text() ? *gart.info_text() : fallback;
+}
+int campaign_rows(TextRenderer& list_font) {
+	return std::max(1, kCampaignListHeight / std::max(1, list_font.line_height()));
+}
+// The row of the list at a point of the game's screen, or -1.
+int campaign_row_at(TextRenderer& list_font, const CampaignUi& c, SDL_Point p) {
+	const int h = std::max(1, list_font.line_height());
+	if (p.x < kCampaignListX || p.x >= kCampaignListRight || p.y < kCampaignListTop ||
+		p.y >= kCampaignListTop + campaign_rows(list_font) * h) {
+		return -1;
+	}
+	const int row = (p.y - kCampaignListTop) / h;
+	return row < int(c.list.size()) ? row : -1;
+}
+std::vector<std::string> campaign_text_lines(TextRenderer& font, const CampaignUi& c) {
+	if (c.chosen < 0 || c.chosen >= int(c.list.size())) {
+		return {};
+	}
+	return wrap_text(font, p3::data::latin1_to_utf8(c.list[size_t(c.chosen)].text), kCampaignTextW);
+}
+int campaign_text_shown(TextRenderer& font) {
+	return std::max(1, kCampaignTextH / std::max(1, font.line_height()));
+}
+// The text's scroll bar (as the saved games' list's), when its lines don't fit.
+std::optional<ScrollBarLayout> campaign_bar(TextRenderer& font, int lines, int first) {
+	const int shown = campaign_text_shown(font);
+	if (lines <= shown) {
+		return std::nullopt;
+	}
+	const int h = font.line_height();
+	PlaceView::PageScroll scroll;
+	scroll.bar = {kCampaignBarX, kCampaignTextY, ScrollBarLayout::kThumbWidth, shown * h};
+	scroll.clip = {kCampaignTextX, kCampaignTextY, kCampaignTextW, shown * h};
+	scroll.total = lines * h;
+	scroll.offset = first * h;
+	scroll.line = h;
+	return ScrollBarLayout(scroll);
+}
+
+void draw_campaign_screen(SDL_Renderer* renderer, TextRenderer& fallback, const CampaignUi& c) {
+	if (!g_game_art) {
+		return;
+	}
+	GameWindowArt& gart = *g_game_art;
+	const GameScreenLayout layout;
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+	SDL_RenderClear(renderer);
+	TextRenderer& title = gart.screen_title_text() ? *gart.screen_title_text() : fallback;
+	TextRenderer& list_font = campaign_list_font(gart, fallback);
+	TextRenderer& text_font = campaign_text_font(gart, fallback);
+	TextRenderer& font = gart.info_text() ? *gart.info_text() : fallback;
+	const SDL_Color white = {255, 255, 255, 255};
+	gart.begin_sized(layout.panel, kOptionsW, kOptionsH);
+	gart.draw_tex(29, 0, 0, 0);
+	const std::string t = exe_text(0x69B26C, "Campañas", "Campaign");
+	title.draw(t, 757 - title.measure(t) + 2, 13, SDL_Color{0, 0, 0, 0x90});
+	title.draw(t, 757 - title.measure(t), 11, white);
+	list_font.draw(exe_text(0x69B270, "Elige una campaña", "Choose campaign"), kCampaignListX, 126, white);
+	const bool chosen = c.chosen >= 0 && c.chosen < int(c.list.size());
+	if (chosen && c.list[size_t(c.chosen)].texture) {
+		gart.draw_tex(c.list[size_t(c.chosen)].texture, 0, kCampaignPicture.x, kCampaignPicture.y);
+	}
+	const int rows = campaign_rows(list_font);
+	for (int k = 0; k < int(c.list.size()) && k < rows; ++k) {
+		const SDL_Color ink = k == c.chosen ? argb_color(0xFFD34000) : k == c.lit ? argb_color(0xFFF16800) : white;
+		const std::string name = p3::data::latin1_to_utf8(c.list[size_t(k)].name);
+		const int y = kCampaignListTop + k * list_font.line_height();
+		if (list_font.measure(name) <= kCampaignListRight - kCampaignListX) {
+			list_font.draw(name, kCampaignListX, y, ink);
+		} else {
+			// (Adapted: the game cuts it at 720; in the font 2 in its row, «Campaign: Rise of the Hanseatic League».)
+			font.draw(clipped(font, name, kCampaignListRight - kCampaignListX), kCampaignListX,
+				y + (list_font.line_height() - font.line_height()) / 2, ink);
+		}
+	}
+	const std::vector<std::string> lines = campaign_text_lines(text_font, c);
+	const int shown = campaign_text_shown(text_font);
+	for (int k = c.first_line; k < int(lines.size()) && k < c.first_line + shown; ++k) {
+		text_font.draw(lines[size_t(k)], kCampaignTextX, kCampaignTextY + (k - c.first_line) * text_font.line_height(),
+			argb_color(0xFFDDDDDD));
+	}
+	if (const std::optional<ScrollBarLayout> bar = campaign_bar(text_font, int(lines.size()), c.first_line)) {
+		for (int y = bar->track.y; y < bar->track.y + bar->track.h; y += 32) {
+			gart.draw_tex(16012, 0, bar->track.x, y);
+		}
+		gart.draw_tex(16010, 0, bar->up.x, bar->up.y);
+		gart.draw_tex(16011, 0, bar->down.x, bar->down.y);
+		gart.draw_tex(16013, 0, bar->thumb.x, bar->thumb.y);
+	}
+	draw_screen_button(gart, font, campaign_button(CampaignButton::Start), exe_text(0x69B294, "Jugar", "Start"),
+		BTN_CROSS, chosen);
+	draw_screen_button(gart, font, campaign_button(CampaignButton::Back),
+		game_text(GameText::ButtonBack, tr("Atrás", "Back")), BTN_CIRCLE, true);
+	draw_screen_button(gart, font, campaign_button(CampaignButton::Details),
+		game_text(GameText::NewGameDetails, tr("Detalles", "Details")), BTN_SQUARE, true);
+	gart.end();
+}
+
 // A black screen with a line in the middle (loading a game).
 void show_loading_text(SDL_Renderer* renderer, TextRenderer* text, const std::string& line) {
 	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -19470,6 +19620,10 @@ int main(int argc, char** argv) {
 	// Its «Details» window: the details being changed (a copy, 0x49B180), the
 	// buttons' cursor and the finger's control.
 	bool details_open = false;
+	// The campaign screen (the book's «Campaign»; draw_campaign_screen): its list read when it opens; the details
+	// window opened from it has the starting capital and the start off (0x49B180 with 1).
+	bool campaign_open = false;
+	CampaignUi campaign;
 	std::array<uint8_t, p3::app::kDetailRows> details_copy{};
 	int details_focus = p3::app::kDetailOk;
 	int details_pressed = -1;
@@ -19865,21 +20019,9 @@ int main(int argc, char** argv) {
 		start_open = false;  // From the start screen, the game begins.
 		new_game_open = false;
 	};
-	// Replaces the game in play with the slot's: a new Sailing for it, and
-	// what the viewer keeps of the old one forgotten (forget_game). On a
-	// failure the game in play stays.
-	auto load_game = [&](const std::string& path) {
-		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
-		SaveGame loaded;
-		std::string error;
-		if (!p3::app::load_game_file(*archive, path, loaded, error) || loaded.towns.empty()) {
-#ifndef __vita__
-			std::fprintf(stderr, "%s\n", error.c_str());
-#endif
-			notify(game_text(GameText::LoadDamaged, tr("No se puede cargar la partida.", "This save game appears to be damaged")) +
-				" " + game_text(GameText::LoadDamagedCannot, tr("El fichero está dañado.", "and can't be loaded.")));
-			return false;
-		}
+	// A game just read replaces the game in play: a new Sailing for it, and what the viewer keeps of the old one
+	// forgotten (forget_game).
+	auto use_loaded_game = [&](SaveGame&& loaded) {
 		sailing.reset();  // It refers to the game it was made for.
 		save = std::move(loaded);
 		has_save = true;
@@ -19896,6 +20038,45 @@ int main(int argc, char** argv) {
 			use_sailing(*sailing);
 		}
 		forget_game();
+	};
+	// Replaces the game in play with the slot's (use_loaded_game). On a failure the game in play stays.
+	auto load_game = [&](const std::string& path) {
+		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
+		SaveGame loaded;
+		std::string error;
+		if (!p3::app::load_game_file(*archive, path, loaded, error) || loaded.towns.empty()) {
+#ifndef __vita__
+			std::fprintf(stderr, "%s\n", error.c_str());
+#endif
+			notify(game_text(GameText::LoadDamaged, tr("No se puede cargar la partida.", "This save game appears to be damaged")) +
+				" " + game_text(GameText::LoadDamagedCannot, tr("El fichero está dañado.", "and can't be loaded.")));
+			return false;
+		}
+		// The saved games' screen's load (0x4335B0 from 0x432B35: a single player game's, the mode 3, Save\Ein; the
+		// game saves a campaign's game there too, its mode 5 becoming 3 here as in the game).
+		p3::data::after_game_load(loaded, 3, true, p3::data::LoadOptions{});
+		use_loaded_game(std::move(loaded));
+		return true;
+	};
+	// A campaign's start (the campaign screen's «Start», p3data/campaigns.hpp): its save missav/<n>.pat loaded in the
+	// mode 4 (after_game_load with the options' display bytes: P2.CFG's 1, 1 and 3), then start_campaign with the
+	// speed of the settings before (0x430947: the game in play's, or the start's). On a failure the game in play
+	// stays.
+	auto start_campaign_game = [&](int n) {
+		show_loading_text(renderer, text.get(), game_text(GameText::LoadingGame, tr("Iniciando partida...", "Loading game...")));
+		SaveGame loaded;
+		std::string error;
+		if (!load_savegame(*archive, "missav/" + std::to_string(n) + ".pat", loaded, &error) || loaded.towns.empty()) {
+#ifndef __vita__
+			std::fprintf(stderr, "%s\n", error.c_str());
+#endif
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return false;
+		}
+		const uint32_t speed = has_save ? save.settings.u32(0x4) : p3::data::initial_game_settings().u32(0x4);
+		p3::data::after_game_load(loaded, 4, true, p3::data::LoadOptions{});
+		p3::data::start_campaign(loaded, uint8_t(n), speed);
+		use_loaded_game(std::move(loaded));
 		return true;
 	};
 	// A new game (the user's choice, 2026-11-11: from the game's main menu, the
@@ -21168,7 +21349,7 @@ int main(int argc, char** argv) {
 		v.details = &details_copy;
 		v.texts = &new_game_texts;
 		for (int k = 0; k < p3::app::kDetailCancel; ++k) {
-			v.enabled[size_t(k)] = new_game_detail_enabled(details_copy, k / 2, k % 2 == 1);
+			v.enabled[size_t(k)] = new_game_detail_enabled(details_copy, k / 2, k % 2 == 1) && !(campaign_open && k / 2 >= 6);
 		}
 		v.enabled[size_t(p3::app::kDetailCancel)] = true;
 		v.enabled[size_t(p3::app::kDetailOk)] = true;
@@ -21180,7 +21361,7 @@ int main(int argc, char** argv) {
 	auto details_press = [&](int control) {
 		NewGameChoices& c = new_game_state.choices;
 		if (control >= 0 && control < p3::app::kDetailCancel) {
-			if (new_game_detail_enabled(details_copy, control / 2, control % 2 == 1)) {
+			if (new_game_detail_enabled(details_copy, control / 2, control % 2 == 1) && !(campaign_open && control / 2 >= 6)) {
 				press_new_game_detail(details_copy, control / 2, control % 2 == 1);
 			}
 			return;
@@ -21265,14 +21446,175 @@ int main(int argc, char** argv) {
 		}
 		SDL_RenderPresent(renderer);
 	};
+	// The campaign screen (draw_campaign_screen): opened from the book's «Campaign» with the first campaign chosen
+	// (0x43051E); «Back» to the book.
+	auto open_campaigns = [&]() {
+		campaign = CampaignUi();
+		campaign.list = p3::data::read_campaigns(*archive);
+		if (campaign.list.empty()) {
+			notify(tr("No se puede empezar la partida.", "The game can't be started."));
+			return;
+		}
+		campaign_open = true;
+	};
+	auto campaign_choose = [&](int row) {
+		if (row >= 0 && row < int(campaign.list.size()) && row != campaign.chosen) {
+			campaign.chosen = row;
+			campaign.first_line = 0;  // (0x461DD0 with 0: the text from its top.)
+		}
+	};
+	auto campaign_start = [&]() {
+		if (campaign.chosen < 0 || campaign.chosen >= int(campaign.list.size())) {
+			return;
+		}
+		const int n = campaign.chosen + 1;  // (0x430928: the save «%u» of [+0xCC4] + 1.)
+		if (start_campaign_game(n)) {
+			campaign_open = false;
+		}
+	};
+	auto campaign_details = [&]() {
+		if (!new_game_window) {
+			new_game_window = std::make_unique<p3::app::NewGameWindow>(renderer, *archive, kScreenWidth, kScreenHeight);
+		}
+		if (!new_game_window->ok()) {
+			return;
+		}
+		new_game_texts = make_new_game_texts();
+		details_copy = new_game_state.choices.details;
+		details_focus = p3::app::kDetailOk;
+		details_pressed = -1;
+		details_open = true;
+	};
+	auto campaign_lines = [&](int step) {
+		if (!g_game_art || !small_text) {
+			return;
+		}
+		TextRenderer& f = campaign_text_font(*g_game_art, *small_text);
+		const int lines = int(campaign_text_lines(f, campaign).size());
+		campaign.first_line = std::clamp(campaign.first_line + step, 0, std::max(0, lines - campaign_text_shown(f)));
+	};
+	auto campaign_frame = [&]() {
+		SDL_Event event;
+		while (SDL_PollEvent(&event)) {
+			if ((event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP) &&
+				rear_touch(event.tfinger.touchId)) {
+				continue;
+			}
+			const int x = int(event.tfinger.x * kScreenWidth);
+			const int y = int(event.tfinger.y * kScreenHeight);
+			const GameScreenLayout l;
+			auto row_at = [&](int px, int py) {
+				return g_game_art && small_text
+					? campaign_row_at(campaign_list_font(*g_game_art, *small_text), campaign, l.game(px, py))
+					: -1;
+			};
+			switch (event.type) {
+			case SDL_QUIT:
+				running = false;
+				break;
+			case SDL_CONTROLLERDEVICEADDED:
+				if (!controller) {
+					controller = SDL_GameControllerOpen(event.cdevice.which);
+				}
+				break;
+			case SDL_CONTROLLERBUTTONDOWN: {
+				const Uint8 button = event.cbutton.button;
+				if (button == SDL_CONTROLLER_BUTTON_DPAD_UP || button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+					campaign_choose(std::clamp(campaign.chosen + (button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1), 0,
+						int(campaign.list.size()) - 1));
+				} else if (button == SDL_CONTROLLER_BUTTON_A) {
+					campaign_start();
+				} else if (button == SDL_CONTROLLER_BUTTON_X) {
+					campaign_details();
+				} else if (button == SDL_CONTROLLER_BUTTON_B) {
+					campaign_open = false;
+				} else if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
+					campaign_lines(button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1);
+				}
+				break;
+			}
+			case SDL_FINGERDOWN:
+				touch_start = {x, y};
+				touch_moved = 0;
+				campaign.lit = row_at(x, y);
+				break;
+			case SDL_FINGERMOTION:
+				touch_moved += std::abs(int(event.tfinger.dx * kScreenWidth)) +
+					std::abs(int(event.tfinger.dy * kScreenHeight));
+				campaign.lit = row_at(x, y);
+				break;
+			case SDL_FINGERUP: {
+				campaign.lit = -1;
+				if (touch_moved >= kTapDistance) {
+					break;
+				}
+				const int row = row_at(touch_start.x, touch_start.y);
+				std::optional<ScrollBarLayout> bar;
+				if (g_game_art && small_text) {
+					TextRenderer& f = campaign_text_font(*g_game_art, *small_text);
+					bar = campaign_bar(f, int(campaign_text_lines(f, campaign).size()), campaign.first_line);
+				}
+				if (row >= 0) {
+					if (row == campaign.chosen) {
+						campaign_start();  // (A second click on the chosen one, 0x4307E4.)
+					} else {
+						campaign_choose(row);
+					}
+				} else if (l.on(campaign_button(CampaignButton::Start), touch_start.x, touch_start.y)) {
+					campaign_start();
+				} else if (l.on(campaign_button(CampaignButton::Back), touch_start.x, touch_start.y)) {
+					campaign_open = false;
+				} else if (l.on(campaign_button(CampaignButton::Details), touch_start.x, touch_start.y)) {
+					campaign_details();
+				} else if (bar && l.on(bar->up, touch_start.x, touch_start.y, 0)) {
+					campaign_lines(-1);
+				} else if (bar && l.on(bar->down, touch_start.x, touch_start.y, 0)) {
+					campaign_lines(1);
+				}
+				break;
+			}
+			default:
+				break;
+			}
+		}
+		if (!campaign_open || !running || !start_open) {
+			return;
+		}
+		if (small_text) {
+			draw_campaign_screen(renderer, *small_text, campaign);
+		}
+		if (text && !menu_notice.first.empty()) {
+			if (app_ticks() > menu_notice.second) {
+				menu_notice.first.clear();
+			} else {
+				const int w = text->measure(menu_notice.first);
+				text->draw(menu_notice.first, (kScreenWidth - w) / 2, kScreenHeight - 2 * text->line_height(),
+					SDL_Color{255, 255, 255, 255});
+			}
+		}
+		if (script && !script->screenshot().empty()) {
+			std::string error;
+			if (p3::app::save_screenshot(renderer, kScreenWidth, kScreenHeight, script->screenshot(), error)) {
+				std::printf("%s\n", script->screenshot().c_str());
+			} else {
+				std::fprintf(stderr, "%s\n", error.c_str());
+				screenshot_failed = true;
+			}
+		}
+		SDL_RenderPresent(renderer);
+	};
 	// The start screen (the game's main menu): the book, the entry under the
 	// finger or the buttons' (Up and Down; X chooses), and over it the load
-	// menu's slots. «Single player» opens the «Game settings» window, «Load
-	// game» the slots, «Exit» quits; the others aren't in p3vita yet (a notice).
+	// menu's slots. «Single player» opens the «Game settings» window, «Campaign»
+	// the campaign screen, «Load game» the slots, «Exit» quits; the others aren't
+	// in p3vita yet (a notice).
 	auto start_choose = [&](int entry) {
 		switch (p3::app::StartEntry(entry)) {
 		case p3::app::StartEntry::Single:
 			open_new_game();
+			break;
+		case p3::app::StartEntry::Campaign:
+			open_campaigns();
 			break;
 		case p3::app::StartEntry::Load:
 			open_menu(MenuScreen::Load, -1);
@@ -21397,6 +21739,10 @@ int main(int argc, char** argv) {
 				details_frame();
 			} else if (new_game_open) {
 				new_game_frame();
+			} else if (campaign_open && details_open) {
+				details_frame();
+			} else if (campaign_open) {
+				campaign_frame();
 			} else {
 				start_frame();
 			}

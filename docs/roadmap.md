@@ -474,8 +474,16 @@ ejecuta el intérprete 0x4ECF64, una instrucción por sección. Detalle: [format
     partida que escribe el juego tras el arranque igual byte a byte a la de p3vita en las 7, y el mundo entero 7 días
     desde cada arranque igual en las 7. De paso, el lector de p3vita con el buzón vacío (un separador falso: arreglado)
     y un fallo del juego en la campaña 3 (la instrucción 0x65, abajo en «Corregidos con el ajuste»).
-  - [ ] La pantalla de campañas en el visor (*0x6CBB6C: la lista de las 7, sus dos pergaminos y «Comenzar», «Volver» y
-    «Detalles»), trazada en el emulador como las de opciones y partidas guardadas.
+  - [x] **La pantalla de campañas en el visor** (21-11-2026; `re/emu/sesion52/README.md`, «Part 3»): la del juego
+    (*0x6CBB6C, trazada en el emulador con `camptrace.sh`) desde la entrada «Campaña» del libro: el fondo
+    tutorial.jpg, su título, la lista de las 7 con los colores del juego (la elegida y la de bajo el dedo), la imagen y
+    el texto de la elegida ([Campaign_n] del ini de las misiones en cada idioma: `read_campaigns`), «Jugar» (o un
+    segundo toque en la elegida) que la empieza con `start_campaign`, «Atrás» y «Detalles» (la ventana de detalles de
+    la partida nueva con la riqueza inicial y el comienzo apagados, como 0x49B180 con 1: lo que se elige no llega a la
+    campaña). Adaptado: la barra del texto siempre que no cabe (el juego la pone solo con más de 200 de alto) y un
+    nombre que no cabe en la fuente 2 (el juego lo corta). De paso, la carga desde la pantalla de partidas guardadas
+    hace lo del juego tras leer el fichero (`after_game_load` en el modo 3). Las partidas de una campaña se guardan,
+    como en el juego, en `ein/` (la página de guardar deja siempre el tipo «individual»).
   - [ ] El tutorial (`scripts/tutorial_eng.ini`, sus cinco partes con `SaveGame=tut0..4`).
 
 ### 4. Las pantallas

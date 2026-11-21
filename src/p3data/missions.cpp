@@ -103,10 +103,8 @@ uint32_t section_offset(const std::vector<uint8_t>& p, uint32_t s) {
 
 }  // namespace
 
-void load_mission_files(const CprArchive& archive, SaveGame& save) {
-	MissionData& m = save.missions;
-	m.ini.clear();
-	m.files.clear();
+MissionIni read_missions_ini(const CprArchive& archive) {
+	MissionIni ini;
 	std::vector<uint8_t> data;
 	for (const char* path : {"scripts/missions_spa.ini", "scripts/missions_eng.ini"}) {
 		const CprEntry* entry = archive.find(path);
@@ -125,7 +123,7 @@ void load_mission_files(const CprArchive& archive, SaveGame& save) {
 		const std::string line = trim(text.substr(pos, end - pos));
 		pos = end + 1;
 		if (!line.empty() && line[0] == '[') {
-			section = &m.ini[lower(line.substr(1, line.find(']') - 1))];
+			section = &ini[lower(line.substr(1, line.find(']') - 1))];
 		} else if (section && line.find('=') != std::string::npos) {
 			const size_t equals = line.find('=');
 			const std::string key = lower(trim(line.substr(0, equals)));
@@ -134,6 +132,13 @@ void load_mission_files(const CprArchive& archive, SaveGame& save) {
 			}
 		}
 	}
+	return ini;
+}
+
+void load_mission_files(const CprArchive& archive, SaveGame& save) {
+	MissionData& m = save.missions;
+	m.ini = read_missions_ini(archive);
+	m.files.clear();
 	auto missions = m.ini.find("missions");
 	if (missions == m.ini.end()) {
 		return;

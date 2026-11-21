@@ -84,7 +84,9 @@ it (at a start, how many to start).
   mailbox emptied (0x4D64B0), every event 0x1B taken out (0x4D8E70: the variables freed, the list's counts untouched),
   the settings' [+0xD] 5, [+0x14] n and [+0x4] the speed before the load, 0x511270(1) (the list of `Kampagne<n>`, its
   missions started; the list is made anew, so the programs of the scripts taken out are dropped with it) and 0x54A480
-  (the trade's difficulty, the player's factor, the pirates by [+0x13]). Its saves go to `Save\Kam\` (the mode 5).
+  (the trade's difficulty, the player's factor, the pirates by [+0x13]). Its saves go to `Save\Ein\` as any other's
+  (the saved games' screen's save page always keeps the kind «single», 0x431CC0: [+0x11C0] 0; `Save\Kam\` is only
+  listed by its load page's «Campaign»); loaded from there, the mode becomes 3 (0x433747).
   The tutorial ([Campaign_0], `Kampagne0` with no group) starts otherwise (0x4ABF03: `SaveGame=tut0..4`, the mode 4
   with [+0x14] 0).
 - **Game bug** in the campaign 3 (instruction 0x65, 0x4F26C0 → 0x5136A0): the town by its name is looked for in the

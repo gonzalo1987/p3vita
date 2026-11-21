@@ -6,10 +6,25 @@
 // MISSAV\<n>.pat (missav/1..7.pat), through the game's load 0x4335B0 in the mode 4, and then starts it.
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace p3::data {
 
+class CprArchive;
 struct SaveGame;
+
+// A campaign as the campaign screen lists it (its init 0x430020: [Campaign_<n>] of the missions' ini, read_missions_ini):
+// its name («Name», empty by default), its text («Text», «Default» by default, the ini's «\n» made line breaks,
+// 0x64CE80) and its picture («Texture», a texture of textures.ini, 340 × 260; 0 without one), in Latin-1.
+struct CampaignEntry {
+	std::string name;
+	std::string text;
+	uint32_t texture = 0;
+};
+// The screen's list (0x430020): [GENERAL] CampaignCount − 1 entries, the campaigns 1, 2... (the tutorial, [Campaign_0],
+// has its own start).
+std::vector<CampaignEntry> read_campaigns(const CprArchive& archive);
 
 // What the options screen (*0x6CBDF0, P2.CFG [OPTIONS]) gives a game's load (0x4335B0): three display options it
 // writes into the settings, and the game's speed.

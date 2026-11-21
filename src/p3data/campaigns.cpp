@@ -26,6 +26,41 @@ uint16_t merchant_count(const SaveGame& save) {
 
 }  // namespace
 
+std::vector<CampaignEntry> read_campaigns(const CprArchive& archive) {
+	const MissionIni ini = read_missions_ini(archive);
+	auto value = [&](const std::string& section, const std::string& key, const std::string& fallback) {
+		auto s = ini.find(section);
+		if (s == ini.end()) {
+			return fallback;
+		}
+		auto k = s->second.find(key);
+		return k == s->second.end() ? fallback : k->second;
+	};
+	// (GetPrivateProfileInt: the leading digits, 0 without them.)
+	auto number = [](const std::string& v) {
+		long n = 0;
+		for (size_t i = 0; i < v.size() && v[i] >= '0' && v[i] <= '9' && n < 0x7FFFFFFF / 10; ++i) {
+			n = n * 10 + (v[i] - '0');
+		}
+		return n;
+	};
+	std::vector<CampaignEntry> list;
+	const long count = number(value("general", "campaigncount", "0")) - 1;
+	for (long n = 1; n <= count; ++n) {
+		const std::string section = "campaign_" + std::to_string(n);
+		CampaignEntry e;
+		e.name = value(section, "name", "");
+		e.text = value(section, "text", "Default");
+		for (size_t at = e.text.find("\\n"); at != std::string::npos; at = e.text.find("\\n", at + 1)) {
+			e.text.replace(at, 2, "\n");
+		}
+		const long texture = number(value(section, "texture", ""));
+		e.texture = texture > 0 ? uint32_t(texture) : 0;
+		list.push_back(std::move(e));
+	}
+	return list;
+}
+
 void fn_5421e0(SaveGame& save, const uint8_t* operation) {
 	uint32_t local = 0;
 	uint32_t merchant = 0;
