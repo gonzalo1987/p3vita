@@ -119,7 +119,8 @@ Cómo leerla:
   efectos WAV y el `sound.ini` leídos, los volúmenes de Música y Sonido de las Opciones y la música del menú principal.
   Después la parte 2: la música en la partida (el director de música del juego, sus atmósferas, el tema de cada ciudad,
   la música de batalla y la de los edificios), y la 3: los sonidos de la interfaz (los botones, las cartas, el baño, la
-  oración, el escupitajo e «Invertir estéreo»).
+  oración, el escupitajo e «Invertir estéreo»). El 21-11-2026, la 4 en parte: los sonidos de los edificios de la ciudad
+  (enganchados a sus animaciones de la ciudad viva) y las campanas; faltan los barcos del puerto, el fuego y el derrumbe.
 - **Siguiente**, en el orden que eligió el usuario el 17-11-2026 (abajo, «Decisiones del usuario»): acabados los restos
   de las pantallas (las preguntas del convoy, las sombras y la nieve, el panel lateral con las letras y los textos del
   juego), el intérprete de misiones y las campañas y el tutorial (apartado 3: hechos el 21-11-2026, salvo la carta final
@@ -149,7 +150,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
 | La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026); los animales, los pájaros y los peces (21-11-2026); las animaciones de los edificios, los árboles y el pescador (21-11-2026) | los barcos del puerto, el agua animada, el tiempo, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
-| Sonido, música y vídeos (20-11-2026) | la base: el mezclador (PC y Vita), los 123 MP3 y los 178 WAV del juego leídos, el `sound.ini`, los volúmenes de las Opciones y la música del menú principal; la música en la partida (el director, las atmósferas, el tema de cada ciudad, las batallas, los edificios); los efectos de la interfaz (botones, cartas, baño, oración, escupitajo) | los efectos de la ciudad, el mar, las batallas y el asedio, y los vídeos (apartado 5) |
+| Sonido, música y vídeos (20-11-2026) | la base: el mezclador (PC y Vita), los 123 MP3 y los 178 WAV del juego leídos, el `sound.ini`, los volúmenes de las Opciones y la música del menú principal; la música en la partida (el director, las atmósferas, el tema de cada ciudad, las batallas, los edificios); los efectos de la interfaz (botones, cartas, baño, oración, escupitajo); los de la ciudad en parte (sus edificios y las campanas, 21-11-2026) | de la ciudad, los barcos del puerto, el fuego y el derrumbe (esperan a la ciudad viva); el mar, las batallas, el asedio y los vídeos (apartado 5) |
 | Jugar en red con el juego de PC | el motor idéntico, que es la base | todo lo demás (apartado 8) |
 
 ### La medida del código de la simulación
@@ -994,9 +995,16 @@ Lo que hay y cómo lo decide el juego: [formats/sound.md](formats/sound.md). Por
   suena»). La casilla «Notificación de sucesos» de los ajustes de las cartas no la usa ningún efecto: va con los
   vídeos (parte 6). El pitido del juego al no poder cerrar una ventana (8001) no tiene caso en el visor (su Círculo
   abre las Opciones).
-- [ ] **Parte 4, los sonidos de la ciudad**: los de cada edificio según dónde mira la cámara (iso.ini:
-  `GebaeudeSoundListBase`, `SoundsProGebaeude`, `PanDist`, `VolDist`, los tiempos de espera), las campanas (12000),
-  los barcos que entran y salen (13000), el fuego (10000), un edificio que se cae (9000) y el filtro del juego.
+- [ ] **Parte 4, los sonidos de la ciudad** (en parte, 21-11-2026, `re/emu/sesion51/`): hecho el motor de la vista
+  (`src/app/town_sounds.hpp`: sus 17 huecos, 0x594C00 ofrecer, 0x594770 empezar, 0x5948D0 soltar y seguir a la
+  cámara, el volumen y el lado por la distancia, 0x594B50), con los edificios que lo ofrecen desde su paso de animación
+  de la ciudad viva (`step_anims`: astillero, iglesia, faro, casas, granjas, herrería, mina, fundición, pez, ladrillería,
+  aserradero; solo si trabajan, como su animación), las campanas por el reloj del PC (en punto y a las y media) y los
+  efectos parados al mostrar la ciudad, el mapa del mar o una batalla (0x42C770 con 0x443940, que faltaba en la parte 2).
+  Falta lo que espera a la ciudad viva: el sonido de los barcos del puerto al atracar y zarpar (`TownSounds::ship_in_out`
+  ya hecha, 0x59A090: llamarla desde los barcos del puerto, su paso 4) y el clic al elegir un barco tocándolo en el puerto
+  (1000, 0x5958CD); el fuego (el paso 8: un edificio ardiendo ofrece la lista 10000 desde 0x550A70); y el derrumbe de un
+  edificio (lista 9000, 0x599040: lo avisa la simulación; con el fuego y las ventas).
 - [ ] **Parte 5, el mar y las batallas**: el mapa del mar (elegir un barco 1000, la alarma 2000, la tormenta 3000, los
   icebergs 3200, los barcos 4000, las aves 5000), las batallas en el mar (60000..60100) y los asedios (61000..61100).
 - [ ] Al poner el sonido, el visor tiene que decir al motor si está encendido (`Sailing::set_battle_sound`): con la
@@ -1070,7 +1078,8 @@ que van a una cola y ejecuta la simulación, y en red solo viajan esas órdenes.
 Lo que ya se sabe que puede separar las partidas:
 - **El azar de la música**: el director de música del juego (0x42C080) elige cada pieza y el punto donde empieza cada
   atmósfera con el `rand()` del mundo (0x639C03), fuera de la simulación: en el PC, con la música encendida, cambia
-  los números al azar de la partida. El visor usa un azar aparte (como para los gestos de los edificios).
+  los números al azar de la partida. El visor usa un azar aparte (como para los gestos de los edificios). Igual los
+  sonidos de los edificios de la ciudad (0x594770: su variante y sus esperas) con el sonido encendido.
 - **El azar de los sonidos**: con la batalla en pantalla y el sonido encendido, los sonidos gastan el `rand()` del
   mundo (apartado 5); el dibujo de una batalla también gasta `rand()` por fotogramas (0x62018B, 0x62F0E2), fuera del
   motor: con una batalla a la vista y sonido, no podrá ir exacto.

@@ -44,10 +44,9 @@ Read with the game's own ini reader (0x4BE0B0 for a number, 0x4BE060 for a text;
 
 The ini has 51 lists with 200 samples (`re/emu/sesion51/soundini.py` lists them); a list's samples have numbers of
 their own (the list 7000: 7000, 7100, 7200). A list is loaded only when a screen asks for it («The sound effects»
-below); one without `Files` or `IDs` (SoundList3100, the calm's, `Count=0`) isn't. Still to read: the town's
-buildings from `GebaeudeSoundListBase` in iso.ini, the church bells 12000, ships in and out 13000, a building falling
-9000, fire 10000 (part 4), the sea's 1000..5000 (0x4598xx..0x45A3xx: their variant by the world's rand() too), the sea
-battles 60000.. and the sieges 61000.. (part 5).
+below); one without `Files` or `IDs` (SoundList3100, the calm's, `Count=0`) isn't. The town's: «The town's
+sounds» below. Still to read: the sea's 1000..5000 (0x4598xx..0x45A3xx: their variant by the world's rand() too), the
+sea battles 60000.. and the sieges 61000.. (part 5).
 
 iso.ini's «Sound Stuff»: `GebaeudeSoundListBase=10000`, `SoundsProGebaeude=10`, `GebaeudeTypLockTime=6000`,
 `GebaeudeKanalLockTime=4000`, `GebaeudeMinDist=300`, `PanDist=500`, `VolDist=750`, `ChurchSoundList=12000`,
@@ -152,6 +151,43 @@ Who plays what (the interface's; the town's and the sea's are parts 4 and 5):
 Only `PSoundID=1` is used: options.ini's buttons (BUTTON3, BUTTON4 the 149 × 36 ones, BUTTON6..10 the «−», «+», «←»
 and «→», BUTTON14) — the options screen and the new game window, its details and its maps' window, which use them —,
 mplayer.ini's and Stadtauswahl.ini's BUTTON4.
+
+## The town's sounds
+
+The town view (*0x6E51AC; p3vita `src/app/town_sounds.hpp`) reads iso.ini's [LIGHTNINGVIEW0] «Sound Stuff» at 0x588352
+([+0xC7DC] GebaeudeSoundListBase 10000, [+0xC7E0] SoundsProGebaeude 10, [+0xC7D0] GebaeudeMinDist 300, [+0xC7D4]
+PanDist 500, [+0xC7D8] VolDist 750, [+0xC7E4] GebaeudeTypLockTime 6000, [+0xC7E8] GebaeudeKanalLockTime 4000,
+[+0xC994] BuildingCollapseList 9000, [+0xCBA4] ShipSelSoundID 1000, [+0xCBA0] ShipInOutSoundList 13000, [+0xCB98]
+ChurchSoundList 12000) and loads the lists 13000, 12000, `10000 + 10 · type` for the 106 types, 9000 and
+60000..61100. Its 17 slots ([+0xC998], 0x18 bytes: x, y, the offer's squared distance, the channel, its end, its type,
+taken) are the buildings' (0..3) and the ships' (14..16); 0x59C010 forgets them and the types' waits ([+0xC7EC]).
+
+- **0x594C00** (x, y, type: the view's pixels): a building cell's sound offered, from its class's step (0x592000 →
+  +0x38): the default 0x552C10 after its «active» (+0x80; the workshops 0x54F710), and the sawmill's 0x556860, the
+  foundry's 0x555190 and the fisherman's hut's 0x555B00 with their own; the type is the class's .let type
+  ([[+0x74] + 0x2D], +0x50 0x54E930). The classes with a step and a list: the shipyard (01, 10010), the church (04),
+  the lighthouse (15, 10210), the poorhouses (50, 10800), the sheep (55), cattle (56) and bees (59) farms, the smithy
+  (5B), the mine (5F), the foundry (60), the pitch maker (61), the quarry (62, Ziegelei) and the sawmill (64)
+  (`re/emu/sesion51/soundclasses.py`); the market stalls', the well's and the crane's classes (06/0A/37, 16: their
+  +0x38 0x550370 does nothing) never sound, nor fire's list (type 0) but from a burning building's step (0x550A70 →
+  0x5506D0 → 0x550CC9). Nothing without the list, with the type waiting ([+0xC7EC]), with the 4 taken or farther than
+  GebaeudeMinDist from the view's middle; else (type ≠ 0) a slot offered and not started: the nearer of the two;
+  else a free slot; else a not started farther one. ([+0x56C] with a type ≠ 0 leaves one slot: the fire's.)
+- **0x594770** (each frame): each offered slot not started: a variant (`rand() % count` of the world's rand() with
+  more than one), at **0x594B50**'s volume (`127 − (dx² + dy²) · 127 / VolDist²`, 0 past it) and side (`dx · 64 /
+  PanDist + 64`, 0..127) from the view's middle: 0x443150 (world, reserved). Its end: its length, and for a type ≠ 0
+  `r % KanalLock + KanalLock / 2` more; the type's wait from its end `r % TypLock + TypLock / 2` (one rand() for
+  both). Not played: the slot cleared.
+- **0x5948D0** (each frame): the slots past their end with their sound done, released and cleared; with the view
+  moved ([+0xC640] ≠ [+0xC648]...), the others' volume (0x443000) and side (0x4438D0) again.
+- **0x59A090** (x, y, 0 in / 1 out; from the port's ships, 0x6135C0, 0x615100, 0x616805): with the town shown and a
+  volume, ShipInOutSoundList + kind in the last free of the slots 14..16, unless the same kind's started this very ms.
+- **The bells** (0x58B945..0x58BA5D, each frame with a town, by GetLocalTime): at minute 30 once an hour ([+0xCB9D])
+  12001; at minute 0 once an hour ([+0xCB9C]) the strikes ([+0xCB94]) its hour (13..23: − 12; midnight none), then
+  12000 (reserved, [+0xCB90]) each time the last one is done, one strike less.
+- The ship chosen in the port (0x5958CD, 0x598AB9: after 0x495190): ShipSelSoundID (1000) at 127; a building fallen
+  (0x599040 from the simulation: 0x4E1DBF.., the fires and the sales) its list 9000 by its place; the 4 special slots
+  [+0xCB30] (0x594AA0, by an id; 0x594A20 stops it) only for the battles' (0x595B31).
 
 ## The music director (0x42C080)
 

@@ -824,6 +824,47 @@ void GameSound::stop_samples() {
 		reserved_[k] = false;
 		world_[k] = false;
 	}
+	if (on_stop_samples_) {
+		on_stop_samples_();
+	}
+}
+
+bool GameSound::sample_done(int channel) const {
+	if (!on() || channel < 0 || channel >= kChannels) {
+		return true;
+	}
+	SDL_LockAudioDevice(device_);
+	const bool done = !voices_[channel].playing;
+	SDL_UnlockAudioDevice(device_);
+	return done;
+}
+
+uint32_t GameSound::sample_ms(int channel) const {
+	if (!on() || channel < 0 || channel >= kChannels || !voices_[channel].pcm) {
+		return 0;
+	}
+	return uint32_t(voices_[channel].pcm->frames() * 1000 / kRate);
+}
+
+void GameSound::set_sample_volume(int channel, int volume) {
+	if (!on() || channel < 0 || channel >= kChannels) {
+		return;
+	}
+	const auto it = samples_.find(voice_sample_[channel]);
+	const int loudness = it != samples_.end() ? it->second.loudness : 100;
+	const int v = std::clamp(loudness * (sound_volume_ * volume / 127) / 100, 0, 127);
+	SDL_LockAudioDevice(device_);
+	voices_[channel].volume = v;
+	SDL_UnlockAudioDevice(device_);
+}
+
+void GameSound::set_sample_pan(int channel, int pan) {
+	if (!on() || channel < 0 || channel >= kChannels) {
+		return;
+	}
+	SDL_LockAudioDevice(device_);
+	voices_[channel].pan = swap_stereo_ ? 127 - pan : pan;
+	SDL_UnlockAudioDevice(device_);
 }
 
 void GameSound::play_interface(int index) {

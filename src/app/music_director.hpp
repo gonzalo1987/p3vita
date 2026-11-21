@@ -56,9 +56,9 @@ public:
 	// 0x42C080: each frame of the main screen or the options screen, with the game's clock in ms.
 	void frame(GameSound& sound, const MusicScene& scene, uint32_t now);
 	// 0x42C770: 0 a town shown (its atmosphere), 1 the sea map shown (the sea's), 2 a battle on the screen (a
-	// battle's music); `force` (0 and 1): the atmosphere even with a piece of music playing. (`stop_effects`: the
-	// sound effects stopped, part 3.)
-	void event(GameSound& sound, const MusicScene& scene, int kind, bool force, uint32_t now);
+	// battle's music); `stop_effects`: the sound effects stopped first (0x443940; the three Show's and the battle's
+	// do); `force` (0 and 1): the atmosphere even with a piece of music playing.
+	void event(GameSound& sound, const MusicScene& scene, int kind, bool stop_effects, bool force, uint32_t now);
 	// 0x42CD90: a town's own piece (its index in the game, `number` its StadtDaten.ini number), on going into it
 	// from the sea map (0x44A1B7).
 	void town_theme(GameSound& sound, int number, uint32_t now);

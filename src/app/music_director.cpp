@@ -121,8 +121,11 @@ void MusicDirector::frame(GameSound& sound, const MusicScene& s, uint32_t now) {
 	atmo_at_ = now + rest - 5000;
 }
 
-void MusicDirector::event(GameSound& sound, const MusicScene& s, int kind, bool force, uint32_t now) {
-	// (The sound effects stopped first: part 3.)
+void MusicDirector::event(GameSound& sound, const MusicScene& s, int kind, bool stop_effects, bool force,
+	uint32_t now) {
+	if (stop_effects) {
+		sound.stop_samples();
+	}
 	auto music_plays = [&]() {
 		// A piece plays: the atmosphere at its end, the next piece 10..20 s after.
 		const float f = chance();

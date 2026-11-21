@@ -72,6 +72,7 @@
 #include "audio.hpp"
 #include "battle_view.hpp"
 #include "music_director.hpp"
+#include "town_sounds.hpp"
 #include "debug_states.hpp"
 #include "game_window.hpp"
 #include "script.hpp"
@@ -402,6 +403,14 @@ const PlaceInfo* place_of(uint32_t let_type) {
 	return nullptr;
 }
 
+// A building cell's sound offered in this frame (TownView::step_anims → TownSounds::offer): its point in the town's
+// pixels and its .let type.
+struct SoundOffer {
+	int x = 0;
+	int y = 0;
+	int type = 0;
+};
+
 class TownView {
 public:
 	TownView(SDL_Renderer* renderer, const CprArchive& archive)
@@ -540,6 +549,8 @@ public:
 	}
 
 	const TileSet& tiles() const { return tiles_; }
+	// The cells' sounds offered in the last step of the view's animations.
+	const std::vector<SoundOffer>& sound_offers() const { return sound_offers_; }
 
 	// The season to show (the town's [0x9BC]: 0 from May, 1 from October, 6 from March, the ice's level 2..5 in winter;
 	// 0x58B7F0 → 0x591EC0, only with P2.CFG's [OPTIONS] WEATHER ≥ 1, the game's 3: always here): the tiles' snowy
@@ -687,12 +698,16 @@ public:
 	// 0x592000 (the objects' layer): each cell of the view with an object's slice steps its tile's animations, as the
 	// default +0x38 (0x552C10 → 0x585900) of the classes rewritten (tile_anim_facility), «active» each building's (the
 	// town shown, or a workshop at work: workshop_active with the cell's grid byte).
+	// Each such cell of a class with a sound offers it too, when active (0x552C10 → 0x594C00; the sawmill's, the
+	// foundry's and the fisherman's hut's own steps as well; sound_offers, town_sounds.hpp): not the templates'.
 	void step_anims(uint32_t now, int camera_x, int camera_y, int width, const std::vector<uint8_t>& grid,
 		bool all_active = false) {
+		sound_offers_.clear();
 		for (size_t i = first_object_; i < items_.size(); ++i) {
 			const Item& item = items_[i];
 			const int facility = item.tile ? p3::data::tile_anim_facility(item.tile->type) : -2;
-			if (facility == -2) {
+			const bool offers = item.tile && !all_active && p3::app::tile_offers_sound(item.tile->type);
+			if (facility == -2 && !offers) {
 				continue;
 			}
 			const int x = cell_screen_x(item.col, item.row);
@@ -706,6 +721,12 @@ public:
 				const size_t cell = size_t(item.col) * size_t(map_rows_) + size_t(item.row);
 				town.active = item.owner < producing_.size() &&
 					p3::data::workshop_active(producing_[item.owner], facility, siege_, cell < grid.size() ? grid[cell] : 0);
+			}
+			if (offers && town.active) {
+				sound_offers_.push_back({x, y, int(item.tile->type)});
+			}
+			if (facility == -2) {
+				continue;
 			}
 			town.busy = repair_busy_;
 			town.employees = shipyard_employees_;
@@ -1266,6 +1287,7 @@ private:
 	// what their buildings' «active» reads of the town shown (each merchant's businesses producing in it, a siege).
 	std::map<const TileDef*, p3::data::TileAnims> anims_;
 	uint32_t anim_rand_ = 1;
+	std::vector<SoundOffer> sound_offers_;
 	// The tree types (class 0x14) by number, their anims_ (step_tree_sway), and the sway's rotating cursor
 	// (*0x6E51B4).
 	bool trees_listed_ = false;
@@ -20149,6 +20171,16 @@ int main(int argc, char** argv) {
 	sound.set_swap_stereo(settings.swap_stereo);
 	sound.load_list(8000);
 	sound.load_list(6000);
+	// The town view's sounds (town_sounds.hpp): iso.ini's keys and its lists (the view made at the start, 0x588352).
+	p3::app::TownSounds town_sounds(sound);
+	{
+		std::vector<uint8_t> iso;
+		if (const CprEntry* entry = archive->find("scripts/iso.ini"); entry && archive->read(*entry, iso)) {
+			town_sounds.configure(std::string(reinterpret_cast<const char*>(iso.data()), iso.size()));
+		}
+		town_sounds.load_lists();
+		sound.on_stop_samples([&town_sounds]() { town_sounds.reset(); });
+	}
 	int prayer_channel = -1;  // The church's prayer's channel (its window's [+0x4D8]), or -1.
 	bool bath_heard = false;  // The bath taken's sound played (place.bathed).
 	bool in_bath_house = false;
@@ -22880,7 +22912,7 @@ int main(int argc, char** argv) {
 			// The events: a battle on the screen (0x589E02), the town view shown (0x589010; into another town from
 			// the sea map, its own piece first: 0x44A1B7 → 0x42CD90), the sea map shown (0x44F680).
 			if (in_battle && !music_battle) {
-				music.event(sound, scene, 2, false, now);
+				music.event(sound, scene, 2, true, false, now);
 			}
 			music_battle = in_battle;
 			const int view = scene.town_view ? 0 : selection.mode == Mode::Sea ? 1 : -1;
@@ -22889,9 +22921,9 @@ int main(int argc, char** argv) {
 					if (music_view == 1 && town_index != music_town && scene.town) {
 						music.town_theme(sound, save.globals.u8(0x6DE4B8 + uint32_t(town_index)), now);
 					}
-					music.event(sound, scene, 0, false, now);
+					music.event(sound, scene, 0, true, false, now);
 				} else if (view == 1) {
-					music.event(sound, scene, 1, false, now);
+					music.event(sound, scene, 1, true, false, now);
 				}
 				music_view = view;
 			}
@@ -27704,6 +27736,16 @@ int main(int argc, char** argv) {
 			if (selection.mode == Mode::Saved && has_save && town_index >= 0 && size_t(town_index) < save.towns.size()) {
 				view->step_life(save, size_t(town_index), app_ticks(), camera_x, camera_y, town_width,
 					kGameSpeeds[game_speed].ms_per_tick, sailing && sailing->time_mode() == 2);
+				// The town's sounds: the cells' offers of this frame, their slots started, the ended ones freed (with
+				// the view moved, the others' volume and side), the bells.
+				const uint32_t now = app_ticks();
+				town_sounds.set_view(camera_x, camera_y, town_width, kScreenHeight);
+				for (const SoundOffer& o : view->sound_offers()) {
+					town_sounds.offer(o.x, o.y, o.type, now);
+				}
+				town_sounds.start(now);
+				town_sounds.update(now);
+				town_sounds.bells();
 			} else {
 				view->stop_life();
 				view->step_template_anims(app_ticks(), camera_x, camera_y, town_width);

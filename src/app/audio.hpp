@@ -106,8 +106,15 @@ public:
 	// 0x442130: how many channels play. 0x443110: whether the prayer (7100) plays.
 	int samples_playing() const;
 	bool prayer_playing() const;
-	// 0x443940: every channel stopped and released.
+	// 0x443940: every channel stopped and released (and the town view's sounds forgotten: `on_stop_samples`, 0x59C010).
 	void stop_samples();
+	void on_stop_samples(std::function<void()> f) { on_stop_samples_ = std::move(f); }
+	// A channel's sample ended (Miles' status 2), its length in ms (0x66A628's total); 0x443000: its volume again
+	// (as play_sample's); 0x4438D0: its side again (127 − pan with «Invert stereo»).
+	bool sample_done(int channel) const;
+	uint32_t sample_ms(int channel) const;
+	void set_sample_volume(int channel, int volume);
+	void set_sample_pan(int channel, int pan);
 	// SWAPSPEAKER ([+0x1DD]): the samples' left and right swapped.
 	void set_swap_stereo(bool swap) { swap_stereo_ = swap; }
 	// The interface's sounds (*0x6DCCDC, 0x4C45A0): its file `index` (the table 0x6BF118: 0 okbottun_menu.WAV,
@@ -194,6 +201,7 @@ private:
 	bool world_[kChannels] = {};  // [+0x1A0]
 	Voice interface_[kInterfaceChannels];
 	bool swap_stereo_ = false;  // [+0x1DD]
+	std::function<void()> on_stop_samples_;
 	uint32_t now_ = 0;
 	bool log_ = false;
 	std::vector<int16_t> scratch_;  // The audio thread's decoded samples.
