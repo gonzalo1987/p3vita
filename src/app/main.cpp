@@ -872,6 +872,8 @@ public:
 			// as it starts, whether its ship is in the ship menu's selection (0x56C90D: its mark at full alpha).
 			p.colour = ship_colour(save, p.ship);
 			p.icon = ship_icon(save, p.ship);
+			p.label = int(save.ships[p.ship].memory.u8(0)) == save.player ? clean_game_text(save.ships[p.ship].name())
+																		  : std::string();
 			if (made) {
 				p.chosen = std::find(port_choice_.begin(), port_choice_.end(), p.ship) != port_choice_.end() ? 1 : 0;
 				p.mark_alpha = 0xFF;
@@ -1019,12 +1021,22 @@ public:
 				const std::string name(reinterpret_cast<const char*>(list.data()) + begin, i - begin);
 				begin = i + 1;
 				const bool wave = name.compare(0, 6, "welle_") == 0;
-				if (!wave && name.compare(0, 11, "eisscholle_") != 0) {
+				const bool flake = name.compare(0, 12, "schneeflocke") == 0;
+				if (!wave && !flake && name.compare(0, 11, "eisscholle_") != 0) {
 					continue;
 				}
 				std::vector<uint8_t> data;
 				auto look = std::make_unique<p3::data::LcrAnim>();
 				const CprEntry* file = archive_.find("iso/lcr/" + name);
+				if (flake) {
+					// The snowflakes (class 0x1D, *0x6E2E34 in the list's order).
+					if (file && archive_.read(*file, data) && p3::data::parse_lcr(data.data(), data.size(), *look) &&
+						look->kind == 0x1D && !look->directions.empty() && !look->directions[0].empty()) {
+						life_.flake_looks.push_back(look.get());
+						wave_store_.push_back(std::move(look));
+					}
+					continue;
+				}
 				if (file && archive_.read(*file, data) && p3::data::parse_lcr(data.data(), data.size(), *look) &&
 					look->kind == 0x12 && !look->params.empty() && look->params[0] == (wave ? 0x50u : 0xC7u) &&
 					look->variant >= 1 && look->variant <= 3 && !look->directions.empty()) {
@@ -1255,6 +1267,38 @@ public:
 			SDL_SetTextureAlphaMod(texture, 255);
 		}
 	}
+	// The rain or snow after the birds (0x588BD3..0x588C06, the pool's [view+0xC6F0]): a snowflake its frame (0x576170:
+	// melting at its alpha), a raindrop its line from its place to its drift and fall on (0x5759B0: grey 0x96 at alpha
+	// 180, below a fall of 7 its fall · 40 − 100).
+	void draw_weather(const SDL_Rect& screen) {
+		for (const p3::data::Creature& c : life_.creatures()) {
+			if (c.mode == 14) {
+				const p3::data::LcrFrame* f = c.current();
+				SDL_Texture* texture = f ? page_texture(c.look->image) : nullptr;  // (A TGA with its alpha.)
+				if (!texture) {
+					continue;
+				}
+				const SDL_Rect dst = {c.px() - (f->anchor_x - f->body.x), c.py() - (f->anchor_y - f->body.y), f->body.w,
+					f->body.h};
+				if (!SDL_HasIntersection(&dst, &screen)) {
+					continue;
+				}
+				const SDL_Rect src = {f->body.x, f->body.y, f->body.w, f->body.h};
+				const SDL_Rect at = {dst.x - screen.x, dst.y - screen.y, dst.w, dst.h};
+				SDL_SetTextureAlphaMod(texture, c.melting ? uint8_t(c.fall) : 255);
+				SDL_RenderCopy(renderer_, texture, &src, &at);
+				SDL_SetTextureAlphaMod(texture, 255);
+			} else if (c.mode == 15) {
+				const int dx = int8_t(c.drift >> 8);
+				const int dy = int8_t(c.fall >> 8);
+				const uint8_t alpha = dy < 7 ? uint8_t(uint8_t(dy * 40) - 100) : 180;
+				SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+				SDL_SetRenderDrawColor(renderer_, 0x96, 0x96, 0x96, alpha);
+				SDL_RenderDrawLine(renderer_, c.px() - screen.x, c.py() - screen.y, c.px() + dx - screen.x,
+					c.py() + dy - screen.y);
+			}
+		}
+	}
 	// The cell of the port's figure of the ship `ship` (0x476A82..0x476AC5: the figure whose [+0x38] is it, its point,
 	// 0x58D030); false when it has none (not in the harbour shown, a convoy's other ship).
 	bool port_ship_cell(uint16_t ship, SDL_Point& cell) const {
@@ -1395,6 +1439,38 @@ public:
 						(p->colour & 0xFFFFFF) | uint32_t(p->mark_alpha) << 24, screen);
 				}
 			}
+		}
+	}
+	// 0x56C010 for each figure along the list, last in the view's drawing (0x588E89..0x588E9F): a ship of the player's
+	// its name in the game's font 0, centred on it with its top at the type's mark height (*0x6E1938), on a box a pixel
+	// wider each way in 0xC8FFFFFF (0x64FFFFFF with a battle's ship) framed a pixel further out in black (0x64000000
+	// with one), the name in black.
+	void draw_port_labels(const SDL_Rect& screen) {
+		TextRenderer* font = g_game_art ? g_game_art->head_text() : nullptr;
+		if (!font) {
+			return;
+		}
+		for (const p3::data::PortShip* p : port_figures()) {
+			const p3::data::Creature* c = p->label.empty() ? nullptr : life_.find(p->figure);
+			if (!c || !c->look || c->look->params.size() < 3) {
+				continue;
+			}
+			const int w = font->measure(p->label);
+			const int h = font->line_height();
+			const int x = c->px() - w / 2 - screen.x;
+			const int y = c->py() - int(c->look->params[2]) - screen.y;
+			if (x + w + 2 < 0 || y + h + 2 < 0 || x - 2 > screen.w || y - 2 > screen.h) {
+				continue;
+			}
+			SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+			SDL_SetRenderDrawColor(renderer_, 0xFF, 0xFF, 0xFF, 0xC8);
+			const SDL_Rect box = {x - 1, y - 1, w + 2, h + 2};
+			SDL_RenderFillRect(renderer_, &box);
+			SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0xFF);
+			const SDL_Rect frame[4] = {{x - 2, y - 2, w + 3, 1}, {x - 2, y - 2, 1, h + 3}, {x - 2, y + h + 1, w + 3, 1},
+				{x + w + 1, y - 2, 1, h + 4}};
+			SDL_RenderFillRects(renderer_, frame, 4);
+			font->draw(p->label, x, y, SDL_Color{0, 0, 0, 255});
 		}
 	}
 	// A page's first frame at `dst` (the town's pixels), coloured (ARGB).
@@ -1605,7 +1681,9 @@ public:
 		}
 		draw_pennants(screen);  // After the town (0x588A5A..0x588A80).
 		draw_birds(screen);  // Over everything (0x588AA5..0x588BCA).
+		draw_weather(screen);  // The rain or snow (0x588BD3..0x588C06).
 		draw_port_marks(screen);  // The ships' icons and marks (0x588C08..0x588C1E).
+		draw_port_labels(screen);  // The player's ships' names, last (0x588E89..).
 		if (highlight < 0) {
 			return;
 		}

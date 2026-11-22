@@ -95,6 +95,7 @@ struct LifeTown {
 	// read unsigned): above 1000 15 fish, above 500 10, else 5; 40 off a town (index −1).
 	uint16_t fishing = 0;
 	bool frozen = false;  // [0x2C8] & 0x4000000: the port frozen (the ice floes, 0x58C886; 0x57A9B9)
+	uint8_t weather = 0;  // [0x9C4]: 1 fog, 2 rain, 4 snow (the view's weather, 0x58F51B)
 };
 
 // The map the creatures read: the town drawn (each cell's ground and object .let types, the editor's marks left
@@ -154,7 +155,8 @@ struct Creature {
 	uint8_t mode = 0;  // [+0x6A]: 0 free in the town, 1 coming in by a road (tag 1), 2 leaving by one (tag 2); the
 	// viewer's for the other classes: 3 a market seller or the juggler at his place, 4 the official, 5 a rat, 6 a cart,
 	// 7 an animal, 8 a bird, 9 a fish, 10 the fisherman (his path of the tag 4 in `road`), 11 a figure moved from outside,
-	// 12 a ship figure's pennant, 13 an effect on the water (class 0x12 of the water list: a wave 0x50, an ice floe 0xC7)
+	// 12 a ship figure's pennant, 13 an effect on the water (class 0x12 of the water list: a wave 0x50, an ice floe 0xC7),
+	// 14 a snowflake, 15 a raindrop
 	uint8_t corner = 0xFF;  // [+0x6B]: 0xFF to be worked out, 0 none, 1 and 2 the corner's halves
 	bool entered = false;  // [+0x6C]: coming in, it reached the town (it walks free at the next point)
 	bool flee = false;  // [+0x6D]: hurrying from a siege (not yet)
@@ -190,6 +192,12 @@ struct Creature {
 	int32_t fade_speed = 0;
 	uint32_t fade_delay = 0;
 	int16_t fade_rest = 0;
+	// A snowflake's drift ([+0x25]: −30..29 to the side; 0x80 melting) and fall ([+0x26]: 41..60; its alpha while
+	// melting); a raindrop's ([+0x20], [+0x22]: 8.8, their high bytes [+0x21] its drift and [+0x23] its fall, the line it
+	// is drawn as from its place).
+	int16_t drift = 0;
+	int16_t fall = 0;
+	bool melting = false;
 	std::vector<TownCell2> cells;  // The cells its strips stand on (0x593540): what it blocks, where each is drawn.
 
 	int px() const { return int(x >> 16); }
@@ -208,6 +216,9 @@ public:
 	// (LcrAnim::variant, 1..3).
 	std::array<const LcrAnim*, 4> wave_looks{};
 	std::array<const LcrAnim*, 4> floe_looks{};
+	// The snowflakes' looks (class 0x1D: `schneeflocke0..4`, *0x6E2E34; their two parameters *0x6E2E38: how likely to
+	// melt, by how much a frame).
+	std::vector<const LcrAnim*> flake_looks;
 
 	// A town shown (0x595CA0's first part): its walkers made again.
 	void start(const LifeMap& map, const LifeTown& town, uint32_t now);
@@ -247,7 +258,10 @@ public:
 		}
 		return nullptr;
 	}
-	void clear() { creatures_.clear(); }
+	void clear() {
+		creatures_.clear();
+		precip_count_ = 0;
+	}
 	// A fisherman's hut at work asks for its fisherman (0x59A420, from its step 0x555B00 with its cell's point, the
 	// town's pixels): if a path of the tag 4 still free starts within 304 pixels of it, one made on the nearest free
 	// path (0x569C20) and its number given; else 0.
@@ -319,6 +333,26 @@ private:
 	bool floes_made_ = false;
 	void spawn_floes();
 	bool water_effect_step(Creature& c);
+	// The rain and snow (the view's [+0xC6F0..+0xC7CC]): the weather's kind ([view+0xC184]: 2 rain or snow, 1 the
+	// plague, 3 fog, 0 none) and whether it rained when set; the falling ones ([+0xC7BC]), the most ([+0xC7CC]: 50 with
+	// rain or snow, 0x58B090), the count when the view last stood ([+0xC7C0]), the time between new ones ([+0xC7C4]) and
+	// when the next is due ([+0xC7C8]); the camera of the last frame (its scroll, [view+0xC5F8], [view+0xC5FC]).
+	int weather_kind_ = 0;
+	bool weather_rain_ = false;
+	int precip_count_ = 0;
+	int precip_max_ = 0;
+	int precip_last_ = 0;
+	uint32_t precip_period_ = 0;
+	uint32_t precip_due_ = 0;
+	std::array<int, 4> last_view_{};
+	bool last_view_set_ = false;
+	void update_weather();
+	void spawn_precipitation();
+	void precip_in(const std::array<int, 4>& rect, int count);
+	std::array<int, 4> flake_rect(const Creature& c) const;
+	bool seen(const std::array<int, 4>& r) const;
+	bool flake_fall(Creature& c);
+	bool drop_fall(Creature& c);
 	bool spawn_rat(bool visible_check, bool no_grass);
 	bool spawn_animal(int cls, bool out_of_sight, const LcrAnim* look, uint16_t id);
 	bool spawn_bird(int32_t x, int32_t y, uint8_t dir, const LcrAnim* look, uint8_t alt, uint16_t id);

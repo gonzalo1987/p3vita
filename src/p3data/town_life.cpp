@@ -210,6 +210,7 @@ LifeTown life_town(const SaveGame& save, size_t index) {
 	t.total = m.u32(0x2D4);
 	t.fishing = m.u16(0x898);
 	t.frozen = (m.u32(0x2C8) & 0x4000000) != 0;
+	t.weather = m.u8(0x9C4);
 	t.official = (m.u32(0x76C) & 2) != 0;
 	// 0x677958: by the town's map (0x6DE4E0, the town's [0x2C2]).
 	static constexpr uint8_t kFace[28] = {0x20, 0xE0, 0x60, 0x60, 0x60, 0x60, 0x60, 0xA0, 0x60, 0x60, 0xA0, 0xA0, 0x20,
@@ -1578,6 +1579,9 @@ void TownLife::start(const LifeMap& map, const LifeTown& town, uint32_t now) {
 	creatures_.clear();
 	now_ = now;
 	floes_made_ = false;  // (0x58B5D7: the town left, [view+0xC63C] cleared.)
+	precip_count_ = 0;
+	weather_kind_ = 0;
+	last_view_set_ = false;
 	// 0x58EF26: every path of the tag 4 free for a fisherman.
 	fisher_free_.assign(town.nodes.size() > 4 ? town.nodes[4].size() : 0, 1);
 	// 0x58A8A0 (the view's animations on): 0x58A920, 20 birds anywhere over the map, facing one of the eight
@@ -2136,6 +2140,270 @@ bool TownLife::water_effect_step(Creature& c) {
 	}
 	c.frame = f;
 	return true;
+}
+
+namespace {
+
+// The rain's and the snow's step in 16.16 pixels for a speed `v` over `elapsed` ms (0x575B5E.., 0x5763B2..): `scaled`
+// the speed already scaled by its look (the snow's |v| · speed >> 6; the rain's |v| · 12000 / 64), then · elapsed · 32
+// / 312 (the game's magic 0xD20D20D3), · 32.
+int32_t precip_step(int32_t scaled, uint32_t elapsed) {
+	const int32_t a = int32_t(uint32_t(scaled) * elapsed) << 5;
+	int32_t q = int32_t((int64_t(a) * int32_t(0xD20D20D3u)) >> 32) + a;
+	q >>= 8;
+	q += int32_t(uint32_t(q) >> 31);
+	return q << 5;
+}
+
+}  // namespace
+
+// 0x58F4E0 (each frame, early: 0x58C103) as far as the rain and snow go: the weather's kind (the town's [0x9C4] & 6
+// rain or snow 2, else its [0x2C8] & 8 the plague 1, else [0x9C4] & 1 fog 3, else 0); when it changes (or, raining or
+// snowing, the rain's bit does), 0x58B090: the most 50 with rain or snow, else 0, and a new one every 9000 (snow) or
+// 2500 (rain) ms over that many. (Its tint and fog: part 6, to come. P2.cfg's WEATHER, 3 in the game's files: its
+// second argument 0.)
+void TownLife::update_weather() {
+	const uint8_t w = town_.weather;
+	const int kind = (w & 6) ? 2 : town_.plague ? 1 : (w & 1) ? 3 : 0;
+	const bool rain = (w & 2) != 0;
+	if (kind == weather_kind_ && (kind != 2 || rain == weather_rain_)) {
+		return;
+	}
+	weather_kind_ = kind;
+	weather_rain_ = rain;
+	precip_max_ = kind == 2 ? 50 : 0;
+	precip_period_ = precip_max_ ? uint32_t(((w & 4) ? 9000 : 2500) / precip_max_) : 0;
+}
+
+// 0x58AD30: `count` falling ones in `rect` (x0, y0, x1, y1 in the town's pixels), while fewer than the most: snow (the
+// town's [0x9C4] & 4: class 0x1D) or rain (0x21); each at a point of one rand() (its x by the width, its y by the
+// height), drifting −30..29 (rain −15..−6) and falling 41..60 by it; moved so that it is inside the rect where the rect
+// is the view's edge (a whole width strip: its bottom at the rect's bottom from the top, its top at the strip's from
+// below; else its right or its left).
+void TownLife::precip_in(const std::array<int, 4>& rect, int count) {
+	const bool snow = (town_.weather & 4) != 0;
+	const std::array<int, 4>& v = view_;
+	for (; count > 0 && precip_count_ < precip_max_; --count) {
+		if (snow && flake_looks.empty()) {
+			return;
+		}
+		const int r = rand();
+		int x = r % std::max(1, rect[2] - rect[0]) + rect[0];
+		int y = r % std::max(1, rect[3] - rect[1]) + rect[1];
+		Creature c;
+		c.id = new_id();
+		int xo = 0;
+		int yo = 0;
+		int w = 0;
+		int h = 0;
+		if (snow) {
+			c.cls = 0x1D;
+			c.mode = 14;
+			c.drift = int16_t(int8_t(uint8_t(r % 60 - 30)));
+			c.fall = int16_t(uint8_t(60 - r % 20));
+			// 0x576250: a look at random and a frame of it.
+			c.look = flake_looks[size_t(uint32_t(rand()) % flake_looks.size())];
+			const size_t frames = c.look->directions[0].size();
+			c.frame = frames ? uint8_t(uint32_t(rand()) % frames) : 0;
+			if (const LcrFrame* f = c.current()) {
+				xo = f->body.x - f->anchor_x;
+				yo = f->body.y - f->anchor_y;
+				w = f->body.w;
+				h = f->body.h;
+			}
+		} else {
+			c.cls = 0x21;
+			c.mode = 15;
+			c.drift = int16_t(int8_t(uint8_t(r % 10 - 15)) << 8);
+			c.fall = int16_t(uint8_t(60 - r % 20) << 8);
+			const int dx = c.drift >> 8;
+			const int dy = c.fall >> 8;
+			xo = std::min(0, dx);
+			yo = std::min(0, dy);
+			w = std::abs(dx) + 1;
+			h = std::abs(dy) + 1;
+		}
+		if (rect[0] == v[0] && rect[2] == v[0] + v[2]) {
+			if (rect[1] == v[1]) {
+				if (yo + h + y > rect[3]) {
+					y = rect[3] - h - yo;
+				}
+			} else if (yo + y < v[3] - rect[3] + v[1] + rect[1]) {
+				y = v[3] - yo - rect[3] + v[1] + rect[1];
+			}
+		} else if (rect[0] == v[0]) {
+			if (w + xo + x > rect[2]) {
+				x = rect[2] - w - xo;
+			}
+		} else if (xo + x < v[2] - rect[2] + v[0] + rect[0]) {
+			x = v[2] - xo - rect[2] + v[0] + rect[0];
+		}
+		c.x = x << 16;
+		c.y = y << 16;
+		creatures_.push_back(std::move(c));
+		++precip_count_;
+	}
+	precip_last_ = std::max(precip_last_, precip_count_);
+}
+
+// 0x58AA30 (each frame, after the creatures' step): while fewer than the most, with the view moved, as many as the
+// count when it last stood lacks (or a fifth of the count, never past the most) in the part newly in view, by the
+// strips' areas; when due (its time ± a quarter on), one on the view's top line for snow, for rain one there, one
+// anywhere in the view and one in its lower right quarter. With the view standing, the count kept as that count.
+void TownLife::spawn_precipitation() {
+	const std::array<int, 4>& v = view_;
+	const int dx = last_view_set_ ? v[0] - last_view_[0] : 0;
+	const int dy = last_view_set_ ? v[1] - last_view_[1] : 0;
+	last_view_ = v;
+	last_view_set_ = true;
+	if (precip_count_ >= precip_max_) {
+		return;
+	}
+	if ((dx | dy) != 0 && precip_max_ != precip_count_) {
+		int n = precip_last_ - precip_count_;
+		if (n < precip_count_ / 5) {
+			n = precip_count_ / 5;
+			if (precip_count_ + n > precip_max_) {
+				n = precip_max_ - precip_count_;
+			}
+		}
+		const std::array<int, 4> now_rect = {v[0], v[1], v[0] + v[2], v[1] + v[3]};
+		const std::array<int, 4> old_rect = {now_rect[0] - dx, now_rect[1] - dy, now_rect[2] - dx, now_rect[3] - dy};
+		const std::array<int, 4> in = {std::max(now_rect[0], old_rect[0]), std::max(now_rect[1], old_rect[1]),
+			std::min(now_rect[2], old_rect[2]), std::min(now_rect[3], old_rect[3])};
+		if (in[0] >= in[2] || in[1] >= in[3]) {
+			precip_in(now_rect, n);
+		} else {
+			// SubtractRect of the whole width band and of the whole height band of what stayed in view.
+			const std::array<int, 4> across = {now_rect[0], in[3] == now_rect[3] ? now_rect[1] : in[3], now_rect[2],
+				in[3] == now_rect[3] ? in[1] : now_rect[3]};
+			const std::array<int, 4> down = {in[2] == now_rect[2] ? now_rect[0] : in[2], now_rect[1],
+				in[2] == now_rect[2] ? in[0] : now_rect[2], now_rect[3]};
+			const int a = (across[3] - across[1]) * (across[2] - across[0]);
+			const int b = (down[3] - down[1]) * (down[2] - down[0]);
+			if (a + b > 0) {
+				precip_in(across, n * a / (a + b));
+				precip_in(down, n * b / (a + b));
+			}
+		}
+	}
+	if (now_ >= precip_due_) {
+		const uint32_t p = precip_period_;
+		precip_due_ = (p ? uint32_t(rand()) % p : 0) / 2 - p / 4 + p + now_;
+		const std::array<int, 4> top = {v[0], v[1], v[0] + v[2], v[1] + 1};
+		precip_in(top, 1);
+		if (!(town_.weather & 4)) {
+			precip_in({v[0], v[1], v[0] + v[2], v[1] + v[3]}, 1);
+			precip_in({v[0] + v[2] / 2, v[1] + v[3] / 2, v[0] + v[2], v[1] + v[3]}, 1);
+		}
+	}
+	if ((dx | dy) == 0) {
+		precip_last_ = precip_count_;
+	}
+}
+
+// A snowflake's rectangle (its frame's, x0, y0, x1, y1 in the town's pixels).
+std::array<int, 4> TownLife::flake_rect(const Creature& c) const {
+	const LcrFrame* f = c.current();
+	if (!f) {
+		return {c.px(), c.py(), c.px(), c.py()};
+	}
+	const int x = c.px() - f->anchor_x + f->body.x;
+	const int y = c.py() - f->anchor_y + f->body.y;
+	return {x, y, x + f->body.w, y + f->body.h};
+}
+
+// 0x59B5B0's answer: whether a rectangle (x0, y0, x1, y1) meets the view.
+bool TownLife::seen(const std::array<int, 4>& r) const {
+	return r[2] > view_[0] && r[3] > view_[1] && r[0] < view_[0] + view_[2] && r[1] < view_[1] + view_[3];
+}
+
+// 0x576300 (a snowflake's step, the frame's unclamped time): melting, when due its alpha down by its look's second
+// parameter, gone once it is no more than that or out of the view (+0x18 → 0x5593C0); else moved by its drift and fall
+// scaled by its look's speed, its frame on when due and then, with its look's first parameter, one chance in (the
+// view's height · it · 0x3AB95901 >> 39) to start melting (its alpha 255); moved or on, gone when its rectangle before
+// and after is out of the view (0x559130 → 0x59B5B0). (A look without that parameter never melts: it falls out.)
+bool TownLife::flake_fall(Creature& c) {
+	const LcrAnim& look = *c.look;
+	const uint32_t p0 = look.params.size() > 0 ? look.params[0] : 0;
+	const uint32_t p1 = look.params.size() > 1 ? look.params[1] : 0;
+	if (c.melting) {
+		if (now_ <= c.frame_due) {
+			return true;
+		}
+		if (uint32_t(c.fall) > p1) {
+			c.fall = int16_t(c.fall - int16_t(p1));
+			c.frame_due = frame_ms(look) + now_;
+			return seen(flake_rect(c));
+		}
+		return false;
+	}
+	const std::array<int, 4> before = flake_rect(c);
+	const uint8_t frame = c.frame;
+	int32_t dx = precip_step(int32_t((uint32_t(std::abs(c.drift)) * look.speed) >> 6), raw_elapsed_);
+	int32_t dy = precip_step(int32_t((uint32_t(std::abs(c.fall)) * look.speed) >> 6), raw_elapsed_);
+	if (c.drift < 0) {
+		dx = -dx;
+	}
+	if (c.fall < 0) {
+		dy = -dy;
+	}
+	c.x += dx;
+	c.y += dy;
+	if (now_ > c.frame_due) {
+		++c.frame;
+		if (c.frame >= look.directions[0].size()) {
+			c.frame = 0;
+		}
+		c.frame_due = frame_ms(look) + now_;
+		if (p0 != 0) {
+			const uint32_t k = uint32_t((uint64_t(uint32_t(view_[3]) * p0) * 0x3AB95901u) >> 39);
+			if (k != 0 && uint32_t(rand()) % k == 0) {
+				c.melting = true;
+				c.fall = 0xFF;
+			}
+		}
+	}
+	const std::array<int, 4> after = flake_rect(c);
+	if (before == after && frame == c.frame) {
+		return true;
+	}
+	return seen({std::min(before[0], after[0]), std::min(before[1], after[1]), std::max(before[2], after[2]),
+		std::max(before[3], after[3])});
+}
+
+// 0x575B00 (a raindrop's step): moved by its drift and fall (· 12000 / 64), then, if its place changed, its line
+// shortened (its 8.8 drift and fall each less 6 · their high bytes); gone once its fall is 3 or less or it is out of
+// the view.
+bool TownLife::drop_fall(Creature& c) {
+	const int px = c.px();
+	const int py = c.py();
+	const int8_t drift = int8_t(c.drift >> 8);
+	const int8_t fall = int8_t(c.fall >> 8);
+	int32_t dx = precip_step((std::abs(int(drift)) * 12000) / 64, raw_elapsed_);
+	int32_t dy = precip_step((std::abs(int(fall)) * 12000) / 64, raw_elapsed_);
+	if (drift < 0) {
+		dx = -dx;
+	}
+	if (fall < 0) {
+		dy = -dy;
+	}
+	c.x += dx;
+	c.y += dy;
+	if (c.px() == px && c.py() == py) {
+		return true;
+	}
+	c.drift = int16_t(c.drift - 6 * int16_t(drift));
+	c.fall = int16_t(c.fall - 6 * int16_t(fall));
+	const int ndx = int8_t(c.drift >> 8);
+	const int ndy = int8_t(c.fall >> 8);
+	const std::array<int, 4> before = {std::min(px, px + drift), std::min(py, py + fall), std::max(px, px + drift) + 1,
+		std::max(py, py + fall) + 1};
+	const std::array<int, 4> after = {std::min(c.px(), c.px() + ndx), std::min(c.py(), c.py() + ndy),
+		std::max(c.px(), c.px() + ndx) + 1, std::max(c.py(), c.py() + ndy) + 1};
+	return seen({std::min(before[0], after[0]), std::min(before[1], after[1]), std::max(before[2], after[2]),
+				   std::max(before[3], after[3])}) &&
+		ndy > 3;
 }
 
 // 0x56A240: the fisherman's next point of his path (`point`), the diagonal towards it and its steps (the official's).
@@ -3317,6 +3585,7 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 	raw_elapsed_ = elapsed;
 	elapsed_ = std::min<uint32_t>(elapsed, 1000);
 	view_ = view;
+	update_weather();  // 0x58F4E0 (0x58C103).
 	// 0x5984E0: the official comes out (the town's [0x76C] & 2, his path, no siege), facing where he will read.
 	if (town_.official && official_due_ != 0 && official_due_ <= now_ && town_.nodes.size() > 3 &&
 		!town_.nodes[3].empty() && town_.nodes[3][0].size() >= 2 && !people[7].empty()) {
@@ -3358,6 +3627,8 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 			: c.mode == 11            ? true
 			: c.mode == 12            ? pennant_wave(c)
 			: c.mode == 13            ? water_effect_step(c)
+			: c.mode == 14            ? flake_fall(c)
+			: c.mode == 15            ? drop_fall(c)
 			: c.mode != 0             ? road_walk(c)
 									  : walk(c);
 		if (stays) {
@@ -3365,9 +3636,13 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 		} else {
 			const Creature gone = std::move(creatures_[i]);
 			creatures_.erase(creatures_.begin() + std::ptrdiff_t(i));
+			if (gone.mode == 14 || gone.mode == 15) {
+				--precip_count_;  // (0x593F69: the pool's last in its place, the count down.)
+			}
 			replace(gone);
 		}
 	}
+	spawn_precipitation();  // 0x58AA30 (0x58CBB0, after the creatures' step).
 }
 
 }  // namespace p3::data

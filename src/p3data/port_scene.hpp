@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace p3::data {
@@ -90,6 +91,7 @@ struct PortShip {
 	uint8_t mark_alpha = 0xFF;  // [+0x48]: its mark's alpha.
 	int8_t icon = -1;  // [+0x4A]: the icon over it (its page's tag: 1 the shipyard, 2 the auction, 3 the trade
 	// route), −1 none.
+	std::string label;  // Its name over it (0x56C010: the player's ships only), empty none.
 };
 
 // A sound the scene plays (0x59A090: the sound's session's TownSounds::ship_in_out), at a ship's place in the town's

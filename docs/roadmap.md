@@ -915,8 +915,9 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     lo añade o lo quita), con su clic; y los puntos del minimapa, que parpadean en los elegidos. Y («Part 4, batch
     3») el «ir al barco» de la lista de barcos y de los botones de barcos del panel como el del juego (0x476A30): uno
     en puerto lleva a su ciudad centrada en su barco; uno en construcción, a su astillero; uno fuera de los puertos, o
-    cualquiera con el mapa del mar a la vista, al mapa del mar centrado en él. El humo de los barcos dañados va con el
-    fuego.
+    cualquiera con el mapa del mar a la vista, al mapa del mar centrado en él. Y (22-11-2026) el nombre de cada barco
+    del jugador encima de él, en su etiqueta blanca con marco negro (0x56C010; la foto de Edimburgo del usuario). El
+    humo de los barcos dañados va con el fuego.
   - [x] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe), las olas (`welle_*`), el oleaje de los
     acantilados (`Klippen_Flut`: la clase 0x1A, 0x581710 lo pinta sobre la roca con un alfa que sube y baja en 14
     pasos de 142 ms, 0x581890; su atlas por el nivel de nieve, 0x581C90) y los témpanos con el puerto helado (0x58C8A5).
@@ -930,6 +931,10 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     `frozen-port`). El agua está hecha.
   - [ ] El tiempo: la nieve y la lluvia (0x58AA30, 0x58AD30), la niebla (clase 0x1C), las nubes (0x14) y las huellas en
     la nieve (0x55D0B0, 0x55B030).
+    Hechas (22-11-2026, cuarta sesión, «Part 6, batch 1») la lluvia y la nieve: hasta 50 copos o gotas que entran por
+    arriba y por lo nuevo a la vista al moverla; los copos de cinco tamaños caen con su deriva y algunos se derriten,
+    las gotas son rayas grises que se acortan (estados de depuración `rain` y `snow`). Faltan el tinte del tiempo,
+    la niebla, las nubes y las huellas.
   - [x] Las sombras y la nieve de los tiles (17-11-2026, `re/emu/sesion39/README.md`; las variantes del `.let`, con
     la clase 1 de la obra y la 2 de la nieve corregidas en `docs/formats/town.md`). **Sombras**: como la pasada del
     juego (0x591C50), todas tras el suelo y antes de los objetos, cada una desde la celda de la franja `cols − 1` de su
