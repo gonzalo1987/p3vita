@@ -428,6 +428,11 @@ public:
 		for (auto& [path, texture] : atlases_) {
 			SDL_DestroyTexture(texture);
 		}
+		for (auto& [path, texture] : page_textures_) {
+			if (texture) {
+				SDL_DestroyTexture(texture);
+			}
+		}
 		if (minimap_) {
 			SDL_DestroyTexture(minimap_);
 		}
@@ -686,6 +691,11 @@ public:
 		life_.set_world_time(save.tick(), ms_per_tick, battle_time);
 		const uint32_t elapsed = now - life_last_;
 		life_last_ = now;
+		// The view's wind (0x58B86A → 0x613070 → 0x618D10, no battle shown): the pennants'.
+		uint8_t wind_dir = 0;
+		uint8_t wind_strength = 0;
+		port_.wind(save, wind_dir, wind_strength);
+		life_.set_wind(wind_dir, wind_strength);
 		life_.step(now, elapsed, {camera_x, camera_y, width, kScreenHeight});
 		// The port's ships (0x58CBD5): a tick told (0x613DA0 from the world's tick, 0x531029), each frame placed.
 		port_.set_ms_per_tick(ms_per_tick);
@@ -695,6 +705,7 @@ public:
 		}
 		port_.frame(save, now);
 		sync_port_figures(save);
+		follow_port_choice(now);  // 0x56DB10, 0x56CE40 (0x58CBFD..).
 		// The tiles' own animations of the cells in view (0x592000), «active» by the town's merchants' businesses.
 		producing_.assign(save.merchants.size(), 0);
 		for (size_t m = 0; m < save.merchants.size(); ++m) {
@@ -804,9 +815,10 @@ public:
 	// in the town's pixels, the heading kept while within 2 of their place's.
 	void sync_port_figures(const SaveGame& save) {
 		for (uint16_t id : port_.gone) {
-			life_.remove_creature(id);
+			life_.remove_creature(id);  // Its pennant with it (0x56CD50).
 		}
 		port_.gone.clear();
+		load_pennants();
 		for (uint16_t slot : port_.order()) {
 			p3::data::PortShip& p = port_.at(slot);
 			if (p.ship >= save.ships.size()) {
@@ -819,16 +831,364 @@ public:
 			}
 			const int32_t x = int32_t(p.place.x) << 16;
 			const int32_t y = (int32_t(p.place.y) * 22 / 34) << 16;
-			if (p.figure == 0) {
+			const bool made = p.figure == 0;
+			if (made) {
 				p.figure_dir = p.place.dir;
 				p.figure = life_.add_figure(0x0D, look, x, y, p.figure_dir);
+			} else {
+				if (int(p.place.dir) - int(p.figure_dir) >= 3 || int(p.figure_dir) - int(p.place.dir) >= 3) {
+					p.figure_dir = p.place.dir;
+				}
+				life_.move_figure(p.figure, look, x, y, p.figure_dir);
+			}
+			// Its pennant (0x56C998 as it starts, 0x56B6B0 as it moves): at its place moved by its type's pennant
+			// point of the direction it shows.
+			const std::vector<SDL_Point>& offsets = pennant_offsets_[size_t(type)];
+			if (pennant_look_ && !offsets.empty()) {
+				const size_t dirs = look->directions.size();
+				const size_t d = ((size_t(p.figure_dir) * dirs + 0x80) >> 8) & (dirs - 1);
+				const SDL_Point o = d < offsets.size() ? offsets[d] : SDL_Point{0, 0};
+				const int32_t px = (int32_t(p.place.x) + o.x) << 16;
+				const int32_t py = (int32_t(p.place.y) * 22 / 34 + o.y) << 16;
+				if (made || p.pennant == 0) {
+					p.pennant = life_.add_pennant(pennant_look_.get(), p.figure, px, py);
+				} else {
+					life_.move_pennant(p.pennant, px, py);
+				}
+			}
+			// Its colour and its icon (0x56C7B0 as it starts; 0x56DB10, 0x56CA30 as they change: each frame here) and,
+			// as it starts, whether its ship is in the ship menu's selection (0x56C90D: its mark at full alpha).
+			p.colour = ship_colour(save, p.ship);
+			p.icon = ship_icon(save, p.ship);
+			if (made) {
+				p.chosen = std::find(port_choice_.begin(), port_choice_.end(), p.ship) != port_choice_.end() ? 1 : 0;
+				p.mark_alpha = 0xFF;
+			}
+		}
+	}
+	// The ship menu's selection (0x4885A0 with 1: ship_menu_selection), what the port's figures' marks follow.
+	void set_port_choice(const std::vector<uint16_t>& ships) {
+		if (ships != port_choice_) {
+			port_choice_ = ships;
+			port_choice_changed_ = true;
+		}
+	}
+	// 0x56DB10 (each frame, the view's 0x58CBFD): when the ship menu's selection changed, each figure whose ship came
+	// in or went out of it shows its mark or not (its colour again and its alpha full either way). Then 0x56CE40 (the
+	// marks' bob): every the mark page's second parameter of ms one pixel up, to one past its first parameter, then
+	// down to 0, and so on.
+	void follow_port_choice(uint32_t now) {
+		if (port_choice_changed_) {
+			port_choice_changed_ = false;
+			for (uint16_t slot : port_.order()) {
+				p3::data::PortShip& p = port_.at(slot);
+				const bool in = std::find(port_choice_.begin(), port_choice_.end(), p.ship) != port_choice_.end();
+				if (p.figure != 0 && (p.chosen != 0) != in) {
+					p.chosen = in ? 1 : 0;
+					p.mark_alpha = 0xFF;
+				}
+			}
+		}
+		const p3::data::LcrPage* mark = ship_pages_[0];
+		if (mark && mark->params.size() >= 2 && now >= mark_due_) {
+			if (mark_up_) {
+				if (mark_bob_ >= mark->params[0]) {
+					mark_up_ = false;
+				}
+				++mark_bob_;
+			} else {
+				if (mark_bob_ == 1) {
+					mark_up_ = true;
+				}
+				--mark_bob_;
+			}
+			mark_due_ = mark->params[1] + now;
+		}
+		// The minimap's blink (0x59D180, its step): every 35 ms its grey up or down by its step, turned at 255 and 0.
+		if (now > dot_blink_due_) {
+			dot_blink_due_ += 35;
+			if (dot_blink_due_ < now) {
+				dot_blink_due_ = now;
+			}
+			const int grey = int(dot_blink_) + int(dot_blink_step_);
+			if (grey > 0xFF) {
+				dot_blink_ = 0xFF;
+				dot_blink_step_ = int8_t(-dot_blink_step_);
+			} else if (grey < 0) {
+				dot_blink_ = 0;
+				dot_blink_step_ = int8_t(-dot_blink_step_);
+			} else {
+				dot_blink_ = uint8_t(grey);
+			}
+		}
+	}
+	// The port's ships on the town's minimap (0x59C757..0x59C85D, after the view's frame; `map` where the minimap is on
+	// the screen): for each figure along the list a square of 3 · 3 in its colour at its cell (0x58D030 of its place)
+	// · 2 across, the minimap's width over twice the map's columns + 1, and down, its height over the rows − 1, a pixel
+	// on; a chosen one's then again in the blink's grey at alpha 0x80. The game takes an odd row's dot a row down (its
+	// y + 1 where its minimap puts the row half a cell right): with fix_game_bugs() half a cell right.
+	void draw_port_dots(const SDL_Rect& map) const {
+		if (map_columns_ <= 0 || map_rows_ <= 1) {
+			return;
+		}
+		for (const p3::data::PortShip* p : port_figures()) {
+			const p3::data::Creature* c = life_.find(p->figure);
+			if (!c) {
 				continue;
 			}
-			if (int(p.place.dir) - int(p.figure_dir) >= 3 || int(p.figure_dir) - int(p.place.dir) >= 3) {
-				p.figure_dir = p.place.dir;
+			const p3::data::TownCell2 cell = p3::data::life_pixel_cell(c->px(), c->py());
+			uint32_t cx = uint32_t(std::max(0, cell[0])) * 2;
+			uint32_t cy = uint32_t(std::max(0, cell[1]));
+			if (cy & 1) {
+				if (p3::data::fix_game_bugs()) {
+					++cx;
+				} else {
+					++cy;
+				}
 			}
-			life_.move_figure(p.figure, look, x, y, p.figure_dir);
+			const SDL_Rect dot = {map.x + int(uint32_t(map.w) * cx / uint32_t(2 * map_columns_ + 1)) + 1,
+				map.y + int(uint32_t(map.h) * cy / uint32_t(map_rows_ - 1)) + 1, 3, 3};
+			SDL_SetRenderDrawColor(renderer_, uint8_t(p->colour >> 16), uint8_t(p->colour >> 8), uint8_t(p->colour),
+				uint8_t(p->colour >> 24));
+			SDL_RenderFillRect(renderer_, &dot);
+			if (p->chosen) {
+				SDL_SetRenderDrawColor(renderer_, dot_blink_, dot_blink_, dot_blink_, 0x80);
+				SDL_RenderFillRect(renderer_, &dot);
+			}
 		}
+	}
+	// The icon over a ship figure ([+0x4A], 0x56CA30; which one, 0x56C370): in the shipyard (its [+0x134] 6 or 7) the
+	// shipyard's, at auction (0xC, 0xD) the auction's, on a trade route (its [+0x136] & 1, or its convoy's leader's) the
+	// trade route's shield; else none (the white flag wants a battle's ship, the figure's [+0x4C]: none in the port).
+	static int8_t ship_icon(const SaveGame& save, uint16_t ship) {
+		const ShipMemory& m = save.ships[ship].memory;
+		const uint16_t state = m.u16(0x134);
+		if (state == 6 || state == 7) {
+			return 1;
+		}
+		if (state == 0xC || state == 0xD) {
+			return 2;
+		}
+		bool route = (m.u8(0x136) & 1) != 0;
+		const uint16_t convoy = m.u16(0x8);
+		if (!route && convoy < save.globals.u16(0x6DD896) && convoy < save.convoys.size()) {
+			const uint16_t leader = save.convoys[convoy].u16(0x10);
+			route = leader < save.ships.size() && (save.ships[leader].memory.u8(0x136) & 1) != 0;
+		}
+		return route ? 3 : -1;
+	}
+	// The port's figures in the order of the game's list (*0x6E2D50: each new one at its head, so the last made first).
+	std::vector<const p3::data::PortShip*> port_figures() const {
+		std::vector<const p3::data::PortShip*> out;
+		for (uint16_t slot : port_.order()) {
+			if (port_.at(slot).figure != 0) {
+				out.push_back(&port_.at(slot));
+			}
+		}
+		std::sort(out.begin(), out.end(),
+			[](const p3::data::PortShip* a, const p3::data::PortShip* b) { return a->figure > b->figure; });
+		return out;
+	}
+	// The cell of the port's figure of the ship `ship` (0x476A82..0x476AC5: the figure whose [+0x38] is it, its point,
+	// 0x58D030); false when it has none (not in the harbour shown, a convoy's other ship).
+	bool port_ship_cell(uint16_t ship, SDL_Point& cell) const {
+		for (const p3::data::PortShip* p : port_figures()) {
+			if (p->ship != ship) {
+				continue;
+			}
+			if (const p3::data::Creature* c = life_.find(p->figure)) {
+				const p3::data::TownCell2 at = p3::data::life_pixel_cell(c->px(), c->py());
+				cell = {at[0], at[1]};
+				return true;
+			}
+		}
+		return false;
+	}
+	// The port's ship under the town's pixel (x, y), or −1. The game (0x58D1A0) takes the creature under it (0x58D250:
+	// those of the cells round it, by their frames' strips) when it is no further back than the building there
+	// (0x58D500): here a figure's strips, the front one's row against the row of the building under it.
+	int port_ship_at(int x, int y) const {
+		int best = -1;
+		int best_row = -1;
+		for (const p3::data::PortShip* p : port_figures()) {
+			const p3::data::Creature* c = life_.find(p->figure);
+			const p3::data::LcrFrame* f = c ? c->current() : nullptr;
+			if (!f || c->cells.size() != f->strips.size()) {
+				continue;
+			}
+			for (size_t k = 0; k < f->strips.size(); ++k) {
+				const p3::data::LcrRect& s = f->strips[k];
+				const int sx = c->px() + s.x - f->anchor_x;
+				const int sy = c->py() + s.y - f->anchor_y;
+				if (x >= sx && y >= sy && x < sx + s.w && y < sy + s.h && c->cells[k][1] > best_row) {
+					best_row = c->cells[k][1];
+					best = p->ship;
+				}
+			}
+		}
+		return best >= 0 && place_row_at(x, y) > best_row ? -1 : best;
+	}
+	// A ship figure's colour ([+0x34]: 0x56C7B0 as it starts, 0x56DB10 each frame), ARGB: the player's blue, a
+	// pirate's ([+0x134] 0x12) dark grey, another human's red, any other white.
+	static uint32_t ship_colour(const SaveGame& save, uint16_t ship) {
+		const ShipMemory& m = save.ships[ship].memory;
+		const uint8_t owner = m.u8(0);
+		if (int(owner) == save.player) {
+			return 0xFF0000FF;
+		}
+		if (m.u16(0x134) == 0x12) {
+			return 0xFF282828;
+		}
+		if (owner < save.merchants.size() && save.merchants[owner].kind() == 0) {
+			return 0xFFFF0000;
+		}
+		return 0xFFFFFFFF;
+	}
+	// The pennants' look and each ship type's pennant points (0x56B052: its look of damage 0 and sails 0, each
+	// direction's point less its first frame's anchor), read once.
+	void load_pennants() {
+		if (pennant_loaded_) {
+			return;
+		}
+		pennant_loaded_ = true;
+		std::vector<uint8_t> data;
+		auto look = std::make_unique<p3::data::LcrAnim>();
+		const CprEntry* entry = archive_.find("iso/lcr/faehnchen.lcr");
+		if (entry && archive_.read(*entry, data) && p3::data::parse_lcr(data.data(), data.size(), *look) &&
+			!look->directions.empty()) {
+			pennant_look_ = std::move(look);
+		}
+		for (int type = 0; type < 4; ++type) {
+			const p3::data::LcrAnim* hull = ship_look(type, 0);
+			pennant_offsets_[size_t(type)].clear();
+			if (!hull) {
+				continue;
+			}
+			for (size_t d = 0; d < hull->pennant.size() && d < hull->directions.size(); ++d) {
+				const p3::data::LcrFrame* f = hull->directions[d].empty() ? nullptr : &hull->directions[d][0];
+				pennant_offsets_[size_t(type)].push_back(f ? SDL_Point{hull->pennant[d].x - f->anchor_x,
+					hull->pennant[d].y - f->anchor_y} : SDL_Point{0, 0});
+			}
+			// Its pages (the class's statics, each read into its own: the schnigge's look has them).
+			for (const p3::data::LcrPage& page : hull->pages) {
+				if (page.tag < ship_pages_.size() && page.tag != 4) {
+					ship_pages_[page.tag] = &page;
+				}
+			}
+		}
+	}
+	// The pennants after the town (0x588A5A..0x588A80, along the figures' list): each in its ship figure's colour.
+	void draw_pennants(const SDL_Rect& screen) {
+		for (const p3::data::PortShip* p : port_figures()) {
+			const p3::data::Creature* pennant = p->pennant ? life_.find(p->pennant) : nullptr;
+			if (!pennant) {
+				continue;
+			}
+			const p3::data::Creature& c = *pennant;
+			const uint32_t colour = p->colour;
+			const p3::data::LcrFrame* f = c.current();
+			SDL_Texture* texture = f ? atlas_texture(c.look->image) : nullptr;
+			if (!texture) {
+				continue;
+			}
+			const SDL_Rect dst = {c.px() - (f->anchor_x - f->body.x), c.py() - (f->anchor_y - f->body.y), f->body.w,
+				f->body.h};
+			if (!SDL_HasIntersection(&dst, &screen)) {
+				continue;
+			}
+			const SDL_Rect src = {f->body.x, f->body.y, f->body.w, f->body.h};
+			const SDL_Rect at = {dst.x - screen.x, dst.y - screen.y, dst.w, dst.h};
+			SDL_SetTextureColorMod(texture, uint8_t(colour >> 16), uint8_t(colour >> 8), uint8_t(colour));
+			SDL_SetTextureAlphaMod(texture, uint8_t(colour >> 24));
+			SDL_RenderCopy(renderer_, texture, &src, &at);
+			SDL_SetTextureColorMod(texture, 255, 255, 255);
+			SDL_SetTextureAlphaMod(texture, 255);
+		}
+	}
+	// 0x56C370 for each figure along the list, after the birds (0x588C08..0x588C1E): the icon over a ship in the
+	// shipyard, at auction or on a trade route (white, half its page's width left of the ship, its top its own height
+	// below the type's mark height, *0x6E1938: the looks' third parameter), then a chosen ship's mark (in its colour at
+	// its alpha, its bottom at that height raised by the bob).
+	void draw_port_marks(const SDL_Rect& screen) {
+		for (const p3::data::PortShip* p : port_figures()) {
+			const p3::data::Creature* c = life_.find(p->figure);
+			if (!c || !c->look || c->look->params.size() < 3) {
+				continue;
+			}
+			const int height = int(c->look->params[2]);
+			if (p->icon >= 0) {
+				if (const p3::data::LcrPage* page = ship_pages_[size_t(p->icon)]; page && !page->frames.empty()) {
+					const p3::data::LcrRect& f = page->frames[0];
+					draw_page(*page, {c->px() - f.w / 2, c->py() - height + f.h, f.w, f.h}, 0xFFFFFFFF, screen);
+				}
+			}
+			if (p->chosen) {
+				if (const p3::data::LcrPage* page = ship_pages_[0]; page && !page->frames.empty()) {
+					const p3::data::LcrRect& f = page->frames[0];
+					draw_page(*page, {c->px() - f.w / 2, c->py() - height - mark_bob_ - f.h, f.w, f.h},
+						(p->colour & 0xFFFFFF) | uint32_t(p->mark_alpha) << 24, screen);
+				}
+			}
+		}
+	}
+	// A page's first frame at `dst` (the town's pixels), coloured (ARGB).
+	void draw_page(const p3::data::LcrPage& page, const SDL_Rect& dst, uint32_t colour, const SDL_Rect& screen) {
+		SDL_Texture* texture = page_texture(page.image);
+		if (!texture || !SDL_HasIntersection(&dst, &screen)) {
+			return;
+		}
+		const p3::data::LcrRect& f = page.frames[0];
+		const SDL_Rect src = {f.x, f.y, f.w, f.h};
+		const SDL_Rect at = {dst.x - screen.x, dst.y - screen.y, dst.w, dst.h};
+		SDL_SetTextureColorMod(texture, uint8_t(colour >> 16), uint8_t(colour >> 8), uint8_t(colour));
+		SDL_SetTextureAlphaMod(texture, uint8_t(colour >> 24));
+		SDL_RenderCopy(renderer_, texture, &src, &at);
+		SDL_SetTextureColorMod(texture, 255, 255, 255);
+		SDL_SetTextureAlphaMod(texture, 255);
+	}
+	// A page's image: an AIM as the creatures' (its magenta transparent), a TGA with its own alpha.
+	SDL_Texture* page_texture(const std::string& path) {
+		if (path.size() > 4 && (path.compare(path.size() - 4, 4, ".aim") == 0 || path.compare(path.size() - 4, 4, ".AIM") == 0)) {
+			return atlas_texture(path);
+		}
+		auto it = page_textures_.find(path);
+		if (it != page_textures_.end()) {
+			return it->second;
+		}
+		SDL_Texture*& texture = page_textures_[path];
+		std::vector<uint8_t> data;
+		Image image;
+		const CprEntry* entry = archive_.find(path);
+		if (!entry || !archive_.read(*entry, data) || !decode_standard_image(data.data(), data.size(), image)) {
+			return texture = nullptr;
+		}
+		texture = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, image.width, image.height);
+		if (texture) {
+			SDL_UpdateTexture(texture, nullptr, image.rgba.data(), image.width * 4);
+			SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+		}
+		return texture;
+	}
+	// The row of the building of kPlaces under the town's pixel (x, y) (place_at's), or −1.
+	int place_row_at(int x, int y) const {
+		for (auto it = items_.rbegin(); it != items_.rend(); ++it) {
+			const Item& item = *it;
+			if (!item.tile || x < item.dst.x || y < item.dst.y || x >= item.dst.x + item.dst.w ||
+				y >= item.dst.y + item.dst.h) {
+				continue;
+			}
+			const auto mask = masks_.find(item.tile);
+			if (mask == masks_.end()) {
+				continue;
+			}
+			const int mx = item.src.x - item.tile->src_x + (x - item.dst.x);
+			const int my = item.src.y - item.tile->src_y + (y - item.dst.y);
+			if (mx >= 0 && my >= 0 && mx < mask->second.width && my < mask->second.height &&
+				mask->second.opaque[size_t(my) * size_t(mask->second.width) + size_t(mx)]) {
+				return item.row;
+			}
+		}
+		return -1;
 	}
 	// The port's ships' sounds asked since the last frame (0x59A090: TownSounds::ship_in_out).
 	std::vector<p3::data::PortSound> take_port_sounds() {
@@ -958,7 +1318,9 @@ public:
 		for (; next_strip < strips_.size(); ++next_strip) {
 			draw_strip(strips_[next_strip], camera_x, camera_y);
 		}
+		draw_pennants(screen);  // After the town (0x588A5A..0x588A80).
 		draw_birds(screen);  // Over everything (0x588AA5..0x588BCA).
+		draw_port_marks(screen);  // The ships' icons and marks (0x588C08..0x588C1E).
 		if (highlight < 0) {
 			return;
 		}
@@ -1348,6 +1710,27 @@ private:
 	p3::data::PortScene port_;
 	uint32_t port_tick_ = 0xFFFFFFFF;
 	std::unique_ptr<p3::data::LcrAnim> ship_looks_[4][5];
+	// The pennants' look (class 0x1E, `faehnchen.lcr`), where each ship type's pennant stands in each direction of its
+	// looks (*0x6E1860 + 24 · type + 4, 0x56B052: from its look of damage 0 and sails 0).
+	std::unique_ptr<p3::data::LcrAnim> pennant_look_;
+	bool pennant_loaded_ = false;
+	std::array<std::vector<SDL_Point>, 4> pennant_offsets_{};
+	// The pages of the ships' looks by tag (0x56AFA0: 0 the chosen ships' mark *0x6E1920, 1 the shipyard's icon, 2
+	// the auction's, 3 the trade route's shield, 5 the white flag), the mark's bob (*0x6E2D58 how high, *0x6C3FFC going
+	// up, *0x6E2D5C when next: 0x56AE90 as the class is made) and the ship menu's selection the figures follow
+	// (0x56DB10, *0x6E2D54: whether it changed).
+	std::array<const p3::data::LcrPage*, 6> ship_pages_{};
+	std::map<std::string, SDL_Texture*> page_textures_;
+	uint8_t mark_bob_ = 0;
+	bool mark_up_ = true;
+	uint32_t mark_due_ = 0;
+	std::vector<uint16_t> port_choice_;
+	bool port_choice_changed_ = false;
+	// The minimap's blink over the chosen ships' dots ([minimap+0x1C8] its grey, [+0x1C9] its step, [+0x1C4] when
+	// next: 0x59C2FF..0x59C305 as it is made, 0x59D180).
+	uint8_t dot_blink_ = 0;
+	int8_t dot_blink_step_ = 30;
+	uint32_t dot_blink_due_ = 0;
 	bool people_loaded_ = false;
 	p3::data::LifeMap life_base_;
 	int life_town_ = -1;
@@ -13899,6 +14282,7 @@ void draw_side_panel(SDL_Renderer* renderer, TextRenderer& text, const PanelArt&
 			std::max(2, int(camera.h * px))};
 		SDL_SetRenderDrawColor(renderer, 255, 255, 255, 230);
 		SDL_RenderDrawRect(renderer, &frame);
+		view->draw_port_dots(dst);  // The port's ships (0x59C757..).
 	}
 	// The plank, its icons and its ship buttons.
 	draw_picture(renderer, art.plank, layout.plank);
@@ -20276,6 +20660,12 @@ int main(int argc, char** argv) {
 	std::optional<SDL_Point> look_cell;
 	int look_town = -1;
 	Uint32 look_until = 0;  // Dropped if that town isn't shown by then (the switch from the sea map takes a frame or two).
+	// The ship list's «go to» (go_to_ship, 0x476A30): a ship to centre the town's view on once its figure is in the
+	// harbour (the living town makes it as the town is shown), or the sea map's point to centre on as it is shown.
+	int look_ship = -1;
+	int look_ship_town = -1;
+	Uint32 look_ship_until = 0;
+	std::optional<SDL_Point> sea_look;
 	std::unique_ptr<SeaMapView> sea;  // Se carga la primera vez que se abre.
 	// The sea battle the player directs, on the screen (made the first time; it reads the archive and the town
 	// view's tiles), the block of the battle it shows (-1: none), and the camera it took over.
@@ -23157,7 +23547,11 @@ int main(int argc, char** argv) {
 		// buttons' cursor (as the game's mouse pointer): X goes into it.
 		const bool town_free = selection.mode == Mode::Saved && has_save && save.player >= 0 && !trading &&
 			!in_place && !in_mail && !in_menu && !in_battle;
-		const int hover = town_free ? view->place_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2) : -1;
+		// A ship of the port there comes first (port_ship_at: when it is no further back than the building).
+		const int hover_ship = town_free ? view->port_ship_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2) : -1;
+		const int hover = town_free && hover_ship < 0
+			? view->place_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2)
+			: -1;
 		// Goes into a place: the Market Hall is the market; the tavern rolls its
 		// rand() as the game's window does each time it opens (0x5CC479).
 		// The ship list window (ship_list_window.hpp): the panel's icon opens it with the player's ships, a town's
@@ -23789,7 +24183,9 @@ int main(int argc, char** argv) {
 				show_error(window, tr("No se encuentra el mapa del mar.", "The sea map can't be found."));
 				break;
 			}
-			const SDL_Point focus = sea->town_center(save, selection.saved_index);
+			// (A ship gone to from the town: the sea map centred on it, 0x44F490.)
+			const SDL_Point focus = sea_look ? *sea_look : sea->town_center(save, selection.saved_index);
+			sea_look.reset();
 			const int sea_width = has_save && panel_art && save.player >= 0 ? PanelLayout(side.folded).town_right : kScreenWidth;
 			camera_x = focus.x - sea_width / 2;
 			camera_y = focus.y - kScreenHeight / 2;
@@ -25109,13 +25505,17 @@ int main(int argc, char** argv) {
 				return false;
 			}
 		};
+		// 0x476A30 (the ship list's «go to», 0x476A17, and the panel's ship buttons, 0x42924A..0x42989F), the ship chosen
+		// first (the list's 0x4768B0 and the buttons do it before): one being built (0xE) its town shown, centred on its
+		// shipyard ([0x808], [0x809]); with the sea map shown, or one out of the ports (its [+0x134] above 0xD), the sea
+		// map centred on it (0x44F490); else its town shown (0x58A4F0) and centred on its figure in the harbour (0x593A70
+		// at its cell; the living town's port: a convoy's leader only, nothing more without one). (In a sea battle's view
+		// the game centres on its figure there: the viewer's battles have their own view.)
 		auto go_to_ship = [&](int chosen) {
 			const SavedShip& ship = save.ships[size_t(chosen)];
 			const uint16_t status = ship.status();
-			const bool at_sea = status == kShipLeaving || status == kShipArriving || status == kShipSailing || status == 0x10;
 			choose_ship(chosen);
-			if (!at_sea) {
-				// In its town (from the sea map, into it).
+			auto into_town = [&]() {
 				if (ship.town() < save.towns.size() && (ship.town() != town_index || selection.mode == Mode::Sea)) {
 					selection.saved_index = ship.town();
 					market.open = false;
@@ -25126,12 +25526,29 @@ int main(int argc, char** argv) {
 						reload = true;
 					}
 				}
-			} else if (selection.mode == Mode::Sea) {
-				// On the sea map: it is chosen there, in the middle of the map's part.
-				camera_x = (ship.x() >> 16) - town_width / 2;
-				camera_y = (ship.y() >> 16) - kScreenHeight / 2;
+			};
+			if (status == 0x0E) {
+				into_town();
+				if (ship.town() < save.towns.size()) {
+					const TownMemory& t = save.towns[ship.town()].memory;
+					look_cell = SDL_Point{t.u8(0x808), t.u8(0x809)};
+					look_town = ship.town();
+					look_until = app_ticks() + 2000;
+				}
+			} else if (selection.mode == Mode::Sea || status > 0x0D) {
+				const SDL_Point at = {int(ship.x() >> 16), int(ship.y() >> 16)};
+				if (selection.mode == Mode::Sea) {
+					camera_x = at.x - town_width / 2;
+					camera_y = at.y - kScreenHeight / 2;
+				} else {
+					next_mode = true;
+					sea_look = at;
+				}
 			} else {
-				next_mode = true;
+				into_town();
+				look_ship = chosen;
+				look_ship_town = ship.town();
+				look_ship_until = app_ticks() + 2000;
 			}
 		};
 		// The ship list's row button, or its row touched twice (0x4768B0): a lost ship removed (0x0A; the window stays),
@@ -25148,15 +25565,6 @@ int main(int argc, char** argv) {
 				const PanelMenu menu = side.menu;
 				const int was = side.ship;
 				go_to_ship(ship);
-				const SavedShip& s = save.ships[ship];
-				if (s.status() == 0x0E && s.town() < save.towns.size()) {
-					// Being built: the view on its town's shipyard ([+0x808], [+0x809]). (A docked ship's own picture in the
-					// harbour, 0x6E2D50, comes with the harbour's ships: the living town.)
-					const TownMemory& t = save.towns[s.town()].memory;
-					look_cell = SDL_Point{t.u8(0x808), t.u8(0x809)};
-					look_town = s.town();
-					look_until = app_ticks() + 2000;
-				}
 				if (a == ShipListAction::GoToOnly) {
 					side.menu = menu;
 					side.ship = was;
@@ -25167,11 +25575,14 @@ int main(int argc, char** argv) {
 		// A row touched once (0x477150): its ship chosen in the ship menu, but in the states 0xC..0xE and 0x13: a ship of
 		// the player's (a lost one too) its pages (the menu's state 1), another merchant's his ship's head and telescope
 		// (state 3: PanelMenu::OtherShip).
-		auto ship_list_choose = [&](uint32_t index, uint16_t ship) {
-			ship_list.row = int(index);
+		// (`index` −1: not from the list, a ship of the port touched in the town: 0x5958CD. False if not chosen.)
+		auto ship_list_choose = [&](int index, uint16_t ship) {
+			if (index >= 0) {
+				ship_list.row = index;
+			}
 			const SavedShip& s = save.ships[ship];
 			if (!ship_list_can_choose(save, ship) || !s.in_use()) {
-				return;
+				return false;
 			}
 			if (s.owner() == save.player) {
 				// 0x495190 for his ships too: one in his convoy shows the convoy first (the state 2), touched again the ship
@@ -25194,15 +25605,19 @@ int main(int argc, char** argv) {
 				side.menu = PanelMenu::OtherShip;
 				side.ship = ship;
 			}
+			return true;
 		};
 		// A long touch on a row (the game's Ctrl on it, 0x477286..0x47734F): one of the player's ships (not in the
 		// states 0xC..0xE, 0x13) added to the ship menu's ships or taken out of them; several make its state 0, one is
 		// chosen alone, none closes it. The ships of another merchant's menu aren't kept.
-		auto ship_list_toggle = [&](uint32_t index, uint16_t ship) {
-			ship_list.row = int(index);
+		// (`index` −1: a ship of the port, long touched in the town. False if nothing done.)
+		auto ship_list_toggle = [&](int index, uint16_t ship) {
+			if (index >= 0) {
+				ship_list.row = index;
+			}
 			const SavedShip& s = save.ships[ship];
 			if (!ship_list_can_choose(save, ship) || !s.in_use() || s.owner() != save.player) {
-				return;
+				return false;
 			}
 			std::vector<uint16_t> chosen;
 			if (side.menu == PanelMenu::Ships) {
@@ -25227,6 +25642,7 @@ int main(int argc, char** argv) {
 				side.menu = PanelMenu::None;
 				side.ship = -1;
 			}
+			return true;
 		};
 		// The side panel's icons (0..5) and ship buttons (6..9), tapped or with X.
 		auto side_act = [&](int item) {
@@ -25917,10 +26333,14 @@ int main(int argc, char** argv) {
 					next_mode = true;
 					break;
 				case SDL_CONTROLLER_BUTTON_A:
-					// X en la Vita: en el mercado, compra; en la ciudad, entra en el
+					// X en la Vita: en el mercado, compra; en la ciudad, elige el barco del puerto o entra en el
 					// edificio del centro de la pantalla (o el mercado); en el mar, zarpar.
 					if (trading) {
 						market_trade(true);
+					} else if (selection.mode == Mode::Saved && hover_ship >= 0) {
+						if (ship_list_choose(-1, uint16_t(hover_ship))) {  // As a touch on it.
+							town_sounds.ship_selected();
+						}
 					} else if (selection.mode == Mode::Saved) {
 						const PlaceInfo* p = hover >= 0 ? place_of(uint32_t(hover)) : nullptr;
 						open_place(p ? p->place : Place::MarketHall, hover);
@@ -26181,6 +26601,10 @@ int main(int argc, char** argv) {
 						sail_route();
 					} else if (selection.mode == Mode::Sea) {
 						order_sail();
+					} else if (selection.mode == Mode::Saved && !trading && has_save && hover_ship >= 0) {
+						if (ship_list_choose(-1, uint16_t(hover_ship))) {  // As X: the port's ship in the middle.
+							town_sounds.ship_selected();
+						}
 					} else if (selection.mode == Mode::Saved && !trading && has_save) {
 						// As X: the building in the middle of the screen, or the market.
 						const PlaceInfo* p = hover >= 0 ? place_of(uint32_t(hover)) : nullptr;
@@ -27485,7 +27909,19 @@ int main(int argc, char** argv) {
 					const int building = view->place_at(camera_x + touch_start.x, camera_y + touch_start.y);
 					const SDL_Point cell = TownView::cell_at(camera_x + touch_start.x, camera_y + touch_start.y);
 					const int own = own_building_at(save, uint32_t(town_index), cell.x, cell.y, uint32_t(save.player));
-					if (const PlaceInfo* p = building >= 0 ? place_of(uint32_t(building)) : nullptr) {
+					const int ship = view->port_ship_at(camera_x + touch_start.x, camera_y + touch_start.y);
+					if (ship >= 0) {
+						// A ship of the port (0x5956B0 → 0x595712..0x5958EB): chosen in the ship menu as a row of the ship
+						// list touched (0x495190); a long touch is the game's Ctrl (one of the player's added to the menu's
+						// ships or taken out of them, 0x5957D7..0x59586C); then the click (ShipSelSoundID).
+						const bool held = app_ticks() - touch_down_ms >= kBattleLongPressMs;
+						const bool done = held && save.ships[size_t(ship)].owner() == save.player
+							? ship_list_toggle(-1, uint16_t(ship))
+							: ship_list_choose(-1, uint16_t(ship));
+						if (done) {
+							town_sounds.ship_selected();
+						}
+					} else if (const PlaceInfo* p = building >= 0 ? place_of(uint32_t(building)) : nullptr) {
 						open_place(p->place, building);
 					} else if (own >= 0) {
 						open_place(Place::Building, -1);
@@ -27670,6 +28106,16 @@ int main(int argc, char** argv) {
 			camera_x = cell_screen_x(look_x, look_y) - town_width / 2;
 			camera_y = cell_screen_y(look_y) - kScreenHeight / 2;
 		}
+		SDL_Point ship_cell = {0, 0};
+		if (look_ship >= 0 && SDL_TICKS_PASSED(app_ticks(), look_ship_until)) {
+			look_ship = -1;  // No figure of it in the harbour (a convoy's other ship): the town alone, as the game.
+		} else if (look_ship >= 0 && selection.mode == Mode::Saved && !at_sea && !in_battle && town_index == look_ship_town &&
+			!reload && view->port_ship_cell(uint16_t(look_ship), ship_cell)) {
+			// The ship gone to: the view on its figure's cell (0x593A70).
+			camera_x = cell_screen_x(ship_cell.x, ship_cell.y) - town_width / 2;
+			camera_y = cell_screen_y(ship_cell.y) - kScreenHeight / 2;
+			look_ship = -1;
+		}
 		if (look_cell && SDL_TICKS_PASSED(app_ticks(), look_until)) {
 			look_cell.reset();
 		} else if (look_cell && selection.mode == Mode::Saved && !at_sea && !in_battle && town_index == look_town && !reload) {
@@ -27803,11 +28249,13 @@ int main(int argc, char** argv) {
 			// The building under the cursor now (after this frame's camera): glowing, with its name.
 			const bool free_now = selection.mode == Mode::Saved && has_save && save.player >= 0 && !market.open &&
 				place.open == Place::None && !mail.open && !menu.open();
-			const int pointed = free_now && side.menu != PanelMenu::Build
+			const int pointed = free_now && side.menu != PanelMenu::Build &&
+					view->port_ship_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2) < 0
 				? view->place_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2)
 				: -1;
 			// The living town: its walkers (TownLife), only in a save's town.
 			if (selection.mode == Mode::Saved && has_save && town_index >= 0 && size_t(town_index) < save.towns.size()) {
+				view->set_port_choice(ship_menu_selection(side));  // The port's ships' marks (0x56DB10).
 				view->step_life(save, size_t(town_index), app_ticks(), camera_x, camera_y, town_width,
 					kGameSpeeds[game_speed].ms_per_tick, sailing && sailing->time_mode() == 2);
 				// The town's sounds: the cells' offers of this frame, their slots started, the ended ones freed (with
@@ -27996,9 +28444,13 @@ int main(int argc, char** argv) {
 						BTN_CROSS " set sail   " BTN_TRIANGLE " enter   " BTN_CIRCLE " mailbox"),
 					tr(BTN_CROSS " zarpar   " BTN_TRIANGLE " entrar", BTN_CROSS " set sail   " BTN_TRIANGLE " enter")};
 			} else if (selection.mode == Mode::Saved) {
-				// X: the building under the cursor, or the market.
+				// X: the port's ship under the cursor, else the building under it, or the market.
+				const int pointed_ship = view->port_ship_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2);
 				const int pointed = view->place_at(camera_x + town_width / 2, camera_y + kScreenHeight / 2);
-				const std::string x = BTN_CROSS " " + (pointed >= 0 ? place_name(pointed) : tr("mercado", "market"));
+				const std::string x = BTN_CROSS " " +
+					(pointed_ship >= 0 ? clean_game_text(save.ships[size_t(pointed_ship)].name())
+						: pointed >= 0 ? place_name(pointed)
+									   : tr("mercado", "market"));
 				const std::string ship = tr("   Select: panel", "   Select: panel");
 				const std::string l = tr("L/R: velocidad   ", "L/R: speed   ");
 				const std::string map = tr(BTN_TRIANGLE " mapa   ", BTN_TRIANGLE " map   ");

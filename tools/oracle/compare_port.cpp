@@ -16,9 +16,37 @@
 
 using namespace p3::data;
 
+namespace {
+
+// `compare_port --wind [STEPS]`: the port's wind (port_wind) as re/emu/sesion50/portwind.py prints the game's
+// (0x618D10 in Unicorn): each town index 0..39 and sea side 0..7 from a zeroed state, along the same ticks.
+int compare_wind(int steps) {
+	for (int town = 0; town < 40; ++town) {
+		for (int sea = 0; sea < 8; ++sea) {
+			PortWind wind;
+			uint32_t x = uint32_t(town * 8 + sea) * 2654435761u;
+			uint32_t t = 0x1000u + uint32_t(town) * 997u + uint32_t(sea) * 131u;
+			for (int i = 0; i < steps; ++i) {
+				x = x * 1103515245u + 12345u;
+				const uint32_t r = (x >> 16) & 0x7FFF;
+				t += r % 7 ? r % 23 : r % 400;
+				port_wind(wind, t, town, uint8_t(sea));
+				std::printf("wind town %d sea %d tick %u dir %u strength %u\n", town, sea, t, unsigned(wind.dir),
+					unsigned(wind.strength));
+			}
+		}
+	}
+	return 0;
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
+	if (argc >= 2 && std::string(argv[1]) == "--wind") {
+		return compare_wind(argc > 2 ? std::atoi(argv[2]) : 200);
+	}
 	if (argc < 2) {
-		std::fprintf(stderr, "usage: compare_port TOWNS_DIR [STEPS]\n");
+		std::fprintf(stderr, "usage: compare_port TOWNS_DIR [STEPS] | --wind [STEPS]\n");
 		return 2;
 	}
 	const int steps = argc > 2 ? std::atoi(argv[2]) : 33;

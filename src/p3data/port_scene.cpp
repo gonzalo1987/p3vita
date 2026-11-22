@@ -440,6 +440,9 @@ constexpr uint32_t kPlayer = 0x6DFC14;
 constexpr uint32_t kMsPerTick = 0x6DFBC4;
 constexpr uint32_t kBattlePace = 0x6DFC1C;
 constexpr uint32_t kNetwork = 0x6DFC18;
+constexpr uint32_t kWorldTick = 0x6DE4B4;  // u32, 256 a day
+constexpr uint32_t kTownNumbers = 0x6DE4B8;  // u8 per town: its number in StadtDaten.ini
+constexpr uint32_t kTownTable = 0x6DDB90;  // StadtDaten.ini, 0x34 bytes per number ([+0x31] AusrichtungDesMeeres)
 // P2.cfg's [OPTIONS] ORLOGONLY ([*0x6CBDF0 + 0x18C], 1 in the game's): of a convoy only its leader is shown.
 constexpr bool kLeaderOnly = true;
 
@@ -772,6 +775,54 @@ void PortScene::hide() {
 	}
 	town_ = 0x80;
 	last_state_.clear();
+}
+
+void PortScene::wind(const SaveGame& save, uint8_t& dir, uint8_t& strength) {
+	if (town_ < 0x80) {
+		const uint8_t number = save.globals.u8(kTownNumbers + uint32_t(town_));
+		port_wind(wind_, save.globals.u32(kWorldTick), town_, save.globals.u8(kTownTable + 0x34 * uint32_t(number) + 0x31));
+	}
+	dir = wind_.dir;
+	strength = wind_.strength;
+}
+
+void port_wind(PortWind& wind, uint32_t tick, int town, uint8_t sea) {
+	const uint32_t e = (tick - wind.tick) >> 2;
+	if (e == 0) {
+		return;
+	}
+	// The day's byte plus the town's, · 0x33, from 0xE3, in a half turn; then away from the sea's side.
+	uint8_t d = uint8_t((0xE3 - uint8_t(uint8_t(uint8_t(tick >> 8) + uint8_t(town)) * 0x33)) & 0x7F);
+	if (int(d) + 0x20 > int(sea) * 32) {
+		d = uint8_t(d + 0x40);
+		if (int(d) > (int(sea) + 3) * 32) {
+			d = uint8_t(d + 0x40);
+		}
+	}
+	uint8_t s = uint8_t(((d - 1) & 3) + 4);
+	if (e < 0x10) {
+		int16_t dd = int16_t(int16_t(d) - int16_t(wind.dir));
+		if (dd > 0x80) {
+			dd = int16_t(dd - 0x100);
+		} else if (dd < -0x80) {
+			dd = int16_t(dd + 0x100);
+		}
+		const int16_t turn = int16_t(e * 8);
+		if (dd > turn) {
+			d = uint8_t(wind.dir + e * 8);
+		} else if (-dd > turn) {
+			d = uint8_t(wind.dir - e * 8);
+		}
+		const int16_t ds = int16_t(int16_t(s) - int16_t(wind.strength));
+		if (ds > int16_t(e)) {
+			s = uint8_t(wind.strength + e);
+		} else if (-ds > int16_t(e)) {
+			s = uint8_t(wind.strength - e);
+		}
+	}
+	wind.dir = d;
+	wind.strength = s;
+	wind.tick = tick & ~3u;
 }
 
 void PortScene::tick(const SaveGame& save, uint32_t now) {

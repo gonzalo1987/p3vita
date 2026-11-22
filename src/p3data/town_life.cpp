@@ -1859,6 +1859,13 @@ void TownLife::remove_creature(uint16_t id) {
 				fisher_free_[c.road] = 1;
 			}
 			creatures_.erase(creatures_.begin() + std::ptrdiff_t(i));
+			// A ship figure's pennant goes with it (0x56CD50).
+			for (size_t k = 0; k < creatures_.size(); ++k) {
+				if (creatures_[k].mode == 12 && creatures_[k].owner == id) {
+					creatures_.erase(creatures_.begin() + std::ptrdiff_t(k));
+					break;
+				}
+			}
 			return;
 		}
 	}
@@ -1894,6 +1901,56 @@ void TownLife::move_figure(uint16_t id, const LcrAnim* look, int32_t x, int32_t 
 		}
 		return;
 	}
+}
+
+uint16_t TownLife::add_pennant(const LcrAnim* look, uint16_t owner, int32_t x, int32_t y) {
+	Creature c;
+	c.cls = 0x1E;
+	c.mode = 12;
+	c.look = look;
+	c.owner = owner;
+	c.id = new_id();
+	c.x = x;
+	c.y = y;
+	// 0x568DD0: a frame at random of the first direction's (*0x6E1808), the view's wind, the first frame due within
+	// a frame's time (*0x6E17F8: 1000 / fps).
+	const size_t frames = look->directions[0].size();
+	c.frame = frames ? uint8_t(uint32_t(rand()) % frames) : 0;
+	c.dir = wind_dir_;
+	c.frame_due = uint32_t(rand()) % frame_ms(*look) + now_;
+	creatures_.push_back(std::move(c));
+	return creatures_.back().id;
+}
+
+// 0x568E40: put elsewhere, facing the view's wind.
+void TownLife::move_pennant(uint16_t id, int32_t x, int32_t y) {
+	for (Creature& c : creatures_) {
+		if (c.id == id) {
+			c.x = x;
+			c.y = y;
+			c.dir = wind_dir_;
+			return;
+		}
+	}
+}
+
+// 0x568EA0 (the pennant's step): when due, the next frame of the direction it faced (from the first after the last),
+// turned to the view's wind, and the next due a frame's time less a twentieth of it for each step of the wind's
+// strength (from the step, not from when it was due).
+bool TownLife::pennant_wave(Creature& c) {
+	if (c.frame_due > now_) {
+		return true;
+	}
+	const size_t dirs = c.look->directions.size();
+	const size_t d = ((size_t(c.dir) * dirs + 0x80) >> 8) & (dirs - 1);
+	++c.frame;
+	c.dir = wind_dir_;
+	if (c.frame >= c.look->directions[d].size()) {
+		c.frame = 0;
+	}
+	const uint32_t period = frame_ms(*c.look);
+	c.frame_due = period - period * wind_strength_ / 20 + now_;
+	return true;
 }
 
 // 0x56A240: the fisherman's next point of his path (`point`), the diagonal towards it and its steps (the official's).
@@ -3111,6 +3168,7 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 			: c.mode == 9             ? fish_swim(c)
 			: c.mode == 10            ? fisher_walk(c)
 			: c.mode == 11            ? true
+			: c.mode == 12            ? pennant_wave(c)
 			: c.mode != 0             ? road_walk(c)
 									  : walk(c);
 		if (stays) {

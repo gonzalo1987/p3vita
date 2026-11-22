@@ -58,6 +58,20 @@ void port_place_docked(const std::vector<std::array<int, 2>>& points, PortPlace&
 // 8 and 0x10 going out, at its progress; 0x18 going out held at 0x400; any other, left as it is).
 void port_place(uint8_t state, const std::vector<std::array<int, 2>>& points, const PortPath& path, PortPlace& place);
 
+// The port's wind as the scene keeps it ([+0x7EEC] the world's tick of its last change, a multiple of 4; [+0x7EF0]
+// its direction, 256ths of a turn, 0 north; [+0x7EF1] its strength).
+struct PortWind {
+	uint32_t tick = 0;
+	uint8_t dir = 0;
+	uint8_t strength = 0;
+};
+
+// 0x618D10: the wind at the world's tick `tick` for the town of index `town` ([+0x5C]), `sea` its StadtDaten.ini's
+// AusrichtungDesMeeres (in eighths): when 4 ticks or more passed, a direction by the day and the town in a half turn,
+// a quarter turn on when it would blow from the sea's side (and another past its three eighths), its strength (4..7)
+// by it; moved towards them from the last at most 8 and 1 for each 4 ticks, unless 16 or more of those passed.
+void port_wind(PortWind& wind, uint32_t tick, int town, uint8_t sea);
+
 struct SaveGame;
 
 // A scene ship (the battles' class 0x61A4E0, what the port uses of it).
@@ -70,6 +84,12 @@ struct PortShip {
 	// heading it shows (kept while within 2 of its place's, 0x620C3A).
 	uint16_t figure = 0;
 	uint8_t figure_dir = 0;
+	uint16_t pennant = 0;  // Its figure's pennant (the figure's [+0x50]: the living town's creature, 0 none).
+	uint32_t colour = 0xFFFFFFFF;  // Its figure's colour, ARGB ([+0x34]): its pennant's and its mark's.
+	uint8_t chosen = 0;  // Its figure's [+0x3A]: 1 its ship in the ship menu's selection (its mark shown), 0 not.
+	uint8_t mark_alpha = 0xFF;  // [+0x48]: its mark's alpha.
+	int8_t icon = -1;  // [+0x4A]: the icon over it (its page's tag: 1 the shipyard, 2 the auction, 3 the trade
+	// route), −1 none.
 };
 
 // A sound the scene plays (0x59A090: the sound's session's TownSounds::ship_in_out), at a ship's place in the town's
@@ -95,6 +115,9 @@ public:
 	void frame(const SaveGame& save, uint32_t now);
 	// No town shown (0x6141D0 with 0x80): its ships taken away.
 	void hide();
+	// 0x618D10 (port_wind): the port's wind, what the town view reads each frame into its [+0x598] (the direction)
+	// and [+0x599] (the strength) when no battle is shown (0x58B86A → 0x613070), for the town shown.
+	void wind(const SaveGame& save, uint8_t& dir, uint8_t& strength);
 	// The milliseconds a tick lasts as the viewer runs (the game reads its *0x6DFBC4); 0 the save's.
 	void set_ms_per_tick(uint32_t ms) { ms_per_tick_ = ms; }
 	int town() const { return town_; }
@@ -117,6 +140,7 @@ private:
 	uint32_t tick_ms_ = 0;  // [+0x64]
 	uint32_t ms_per_tick_ = 0;
 	std::map<uint16_t, uint16_t> last_state_;  // the town's ships' states at the last tick (the viewer's)
+	PortWind wind_;  // [+0x7EEC], [+0x7EF0], [+0x7EF1]
 
 	int find(uint16_t ship) const;
 	uint16_t take_slot(const SaveGame& save, uint16_t ship);

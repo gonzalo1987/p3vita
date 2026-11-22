@@ -55,6 +55,18 @@ struct LcrPoint {
 	int y = 0;
 };
 
+// A section of a ship's look of hull state 0 and sails 0 (0x56AFA0, each read into a page by 0x5852A0): its tag (0
+// the chosen ships' mark *0x6E1920, 1 the shipyard's icon *0x6E18F0, 2 the auction's *0x6E1908, 3 the trade route's
+// shield *0x6E18C0, 4 the pennant's points, 5 the white flag *0x6E18D8), its parameters (the mark's: how far it
+// bobs and every how many ms), its frames (x, y, w, h in its image) and its image (empty: the look's own) and key.
+struct LcrPage {
+	uint32_t tag = 0;
+	std::vector<uint32_t> params;
+	std::vector<LcrRect> frames;
+	std::string image;
+	uint32_t key = 0;
+};
+
 struct LcrAnim {
 	uint16_t id = 0;
 	uint16_t kind = 0;  // The class: 0x0D a ship's look, 0x12 an effect...
@@ -72,6 +84,8 @@ struct LcrAnim {
 	// A ship's look of hull state 0 and sails 0: where its pennant goes in each direction, in the main image
 	// (the game takes it less that direction's anchor for every look of the type, 0x56B052); empty otherwise.
 	std::vector<LcrPoint> pennant;
+	// Its sections (the same look; only `schnigge_schaden00_segel00.lcr` has more than the pennant's).
+	std::vector<LcrPage> pages;
 };
 
 // False (and why in `error`) if the bytes aren't an animation of the layout

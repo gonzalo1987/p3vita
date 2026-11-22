@@ -148,7 +148,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Cartas (las 154 llamadas del juego que mandan una) | 149 (las del intérprete y del evento 0x09, 20-11-2026; la carta final 0x3D de la caza de piratas, 21-11-2026) | 5: 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
-| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026); los animales, los pájaros y los peces (21-11-2026); las animaciones de los edificios, los árboles y el pescador (21-11-2026) | los barcos del puerto, el agua animada, el tiempo, las obras, el fuego y el humo, el asedio (apartado 4) |
+| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026); los animales, los pájaros y los peces (21-11-2026); las animaciones de los edificios, los árboles y el pescador (21-11-2026); los barcos del puerto con su banderín, su marca, sus puntos en el minimapa y el «ir al barco» (21-11-2026) | el agua animada, el tiempo, las obras, el fuego y el humo, el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos (20-11-2026) | la base: el mezclador (PC y Vita), los 123 MP3 y los 178 WAV del juego leídos, el `sound.ini`, los volúmenes de las Opciones y la música del menú principal; la música en la partida (el director, las atmósferas, el tema de cada ciudad, las batallas, los edificios); los efectos de la interfaz (botones, cartas, baño, oración, escupitajo); los de la ciudad en parte (sus edificios y las campanas, 21-11-2026) | de la ciudad, los barcos del puerto, el fuego y el derrumbe (esperan a la ciudad viva); el mar, las batallas, el asedio y los vídeos (apartado 5) |
 | Jugar en red con el juego de PC | el motor idéntico, que es la base | todo lo demás (apartado 8) |
@@ -908,8 +908,15 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     entre los edificios, y el sonido al zarpar y al recoger velas (el de la sesión del sonido). Diferencia conocida: el
     visor no se engancha al motor y saca de los estados de cada tick cuándo un barco empieza a entrar, atraca o sale,
     así que dos barcos que cambian en el mismo tick toman sus huecos por su número y no por el orden de los avisos del
-    juego. Faltan el banderín (vuelto al viento de la vista), la marca de los barcos elegidos, los puntos del minimapa
-    y el «ir al barco»; el humo de los barcos dañados va con el fuego.
+    juego. Hechos después (21-11-2026, cuarta sesión, «Part 4, batch 2»): el banderín de cada barco vuelto al viento
+    del puerto (0x618D10, comparado con el juego en el emulador: 0 diferencias en 64 000 casos) y en el color de su
+    dueño; la flecha de los barcos elegidos en el menú de barcos, que sube y baja, y los iconos sobre los barcos en el
+    astillero, en subasta o en ruta automática; tocar un barco del puerto lo elige (el toque largo, el Ctrl del juego,
+    lo añade o lo quita), con su clic; y los puntos del minimapa, que parpadean en los elegidos. Y («Part 4, batch
+    3») el «ir al barco» de la lista de barcos y de los botones de barcos del panel como el del juego (0x476A30): uno
+    en puerto lleva a su ciudad centrada en su barco; uno en construcción, a su astillero; uno fuera de los puertos, o
+    cualquiera con el mapa del mar a la vista, al mapa del mar centrado en él. El humo de los barcos dañados va con el
+    fuego.
   - [ ] El agua animada (`WaterSparkleTexID`; la de la batalla ya existe), las olas (`welle_*`), el oleaje de los
     acantilados (`Klippen_Flut`: la clase 0x1A, 0x581710 lo pinta sobre la roca con un alfa que sube y baja en 14
     pasos de 142 ms, 0x581890; su atlas por el nivel de nieve, 0x581C90) y los témpanos con el puerto helado (0x58C8A5).
@@ -1451,6 +1458,11 @@ destructor ni nada hasta que se carga otra vez la ciudad). Si su cabaña deja de
 por otro camino, y cuando se acaban los que empiezan a menos de 304 píxeles, la cabaña se queda sin pescador. Solo es
 la vista (nada de la partida). Corregido a petición del usuario (21-11-2026): al quitar al pescador se libera su
 camino (`TownLife::remove_creature`).
+
+**Los barcos de las filas impares en el minimapa** (la ciudad viva, 0x59C798; 21-11-2026, parece, leído en el código):
+el punto de un barco va en su celda · 2 de ancho, y en las filas impares el juego suma 1 a la fila en vez de medio
+punto a la derecha, donde el minimapa pone esas filas: el punto queda una fila por debajo y medio punto a la izquierda.
+Solo es la vista. Corregido detrás de `fix_game_bugs()` (medio punto a la derecha; `TownView::draw_port_dots`).
 
 **Una ciudad por su nombre** (instrucción 0x65 del intérprete, 0x4F26C0 → 0x5136A0; 21-11-2026, seguro, leído en el
 código y visto en el oráculo con la campaña 3 en marcha): busca el nombre k del fichero de ciudades en la tabla 0x6DDA00

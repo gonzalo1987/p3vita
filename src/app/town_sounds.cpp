@@ -219,6 +219,10 @@ void TownSounds::ship_in_out(int x, int y, bool leaving, uint32_t now) {
 	s.type = kind;
 }
 
+void TownSounds::ship_selected() {
+	sound_.play_sample(ship_select_, false, false, -1, 0x40, false, false);
+}
+
 void TownSounds::bells() {
 	const std::time_t t = std::time(nullptr);
 	const std::tm* local = std::localtime(&t);

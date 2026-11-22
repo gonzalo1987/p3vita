@@ -48,6 +48,9 @@ public:
 	// 0x59A090: a ship of the port coming in (`leaving` false) or going out, at its point: ShipInOutSoundList + 0
 	// or 1 in one of the slots 14..16, unless that one has just started there (the port's ships, the living town).
 	void ship_in_out(int x, int y, bool leaving, uint32_t now);
+	// 0x5958CD, 0x598AB9: a ship of the port chosen by a touch: ShipSelSoundID ([+0xCBA4]) at the effects' volume
+	// (−1), in the middle (0x40), not looped, not kept.
+	void ship_selected();
 	// 0x58B945..0x58BA5D (the town view's frame, with a town): at half past each hour of the PC's clock one bell
 	// (ChurchSoundList + 1), at each hour as many as its hour (1..12; none at midnight) one after another.
 	void bells();

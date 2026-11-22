@@ -187,24 +187,45 @@ bool parse_lcr(const uint8_t* data, size_t size, LcrAnim& out, std::string* erro
 	if (!r.text(out.image) || out.image.empty()) {
 		return fail(error, "bad image name");
 	}
-	// A ship's look of hull state 0 and sails 0 goes on (0x56AFA0): the number of sections and each one's tag, a
-	// word, two words, its count of points (x, y in the image and two words 1, 1; 0x5852A0), its image's name and
-	// a key. The first is tag 4, the pennant's place in each of the 32 directions; the others (the icons over a
-	// ship: the marker arrow, the white flag...) aren't read.
+	// A ship's look of hull state 0 and sails 0 goes on (0x56AFA0): the number of sections and each one's tag, its
+	// parameters (a count and the values), two words (the page's [+0x10], [+0x12]), its count of frames (x, y, w, h
+	// in its image; 0x5852A0), its image's name (a length, 0 none) and then a key. Tag 4 is the pennant's place in
+	// each of the 32 directions (frames of 1 · 1); the others the icons over a ship (LcrPage).
 	uint32_t sections = 0;
-	uint32_t tag = 0;
-	uint32_t skip = 0;
-	uint32_t count = 0;
-	if (r.u32(sections) && sections > 0 && sections < 16 && r.u32(tag) && tag == 4 && r.u32(skip) && r.u32(skip) &&
-		r.u32(skip) && r.u32(count) && count <= 64 && r.at + 16 * size_t(count) <= size) {
-		out.pennant.resize(count);
-		for (LcrPoint& point : out.pennant) {
-			uint32_t one = 0;
-			r.s32(point.x);
-			r.s32(point.y);
-			r.u32(one);
-			r.u32(one);
+	if (!r.u32(sections) || sections == 0 || sections >= 16) {
+		return true;
+	}
+	for (uint32_t s = 0; s < sections; ++s) {
+		LcrPage page;
+		uint32_t n = 0;
+		uint32_t skip = 0;
+		uint32_t count = 0;
+		if (!r.u32(page.tag) || !r.u32(n) || n > 16) {
+			break;
 		}
+		page.params.resize(n);
+		for (uint32_t& v : page.params) {
+			r.u32(v);
+		}
+		if (!r.u32(skip) || !r.u32(skip) || !r.u32(count) || count > 64 || r.at + 16 * size_t(count) > size) {
+			break;
+		}
+		page.frames.resize(count);
+		for (LcrRect& f : page.frames) {
+			r.s32(f.x);
+			r.s32(f.y);
+			r.s32(f.w);
+			r.s32(f.h);
+		}
+		if (!r.text(page.image) || (!page.image.empty() && !r.u32(page.key))) {
+			break;
+		}
+		if (page.tag == 4 && out.pennant.empty()) {
+			for (const LcrRect& f : page.frames) {
+				out.pennant.push_back({f.x, f.y});
+			}
+		}
+		out.pages.push_back(std::move(page));
 	}
 	return true;
 }
