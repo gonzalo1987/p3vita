@@ -951,6 +951,11 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     hospital, el almacén, la ceca, la escuela, la capilla y los talleres comunes) en gris 165 con alfa 160, el suelo
     visto a través, como en la foto de Stettin en invierno del usuario; antes, todo lo de otro comerciante opaco y
     oscuro.
+  - [x] Los banderines de las torres (22-11-2026, `re/emu/sesion50/README.md`, «The towers' flags»): cada torre de
+    cañones con su banderín en lo alto (el punto de la variante de clase 3 de su `.let`, 0x580DA0), que ondea con el
+    viento del puerto en el color del alcalde de la ciudad (azul el jugador, rojo otro jugador humano, blanco la IA o
+    nadie: 0x59BEE0); con el viento hacia atrás el mástil de la torre lo tapa (0x5811D0), y se ve también sobre la
+    niebla. Falta, con las obras, que una torre en obras no lo tenga hasta acabarse (0x581090).
   - [x] Las sombras y la nieve de los tiles (17-11-2026, `re/emu/sesion39/README.md`; las variantes del `.let`, con
     la clase 1 de la obra y la 2 de la nieve corregidas en `docs/formats/town.md`). **Sombras**: como la pasada del
     juego (0x591C50), todas tras el suelo y antes de los objetos, cada una desde la celda de la franja `cols − 1` de su
@@ -967,7 +972,8 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     el dibujo de invierno su sombra es la de ramas.
   - [ ] Las obras: hoy lo que está en obras ([0x762] con `pending` ≠ 0) se dibuja terminado; faltan los andamios y los
     bordes de calle de las celdas 0x81. Los andamios y cimientos son la variante de clase 1 del `.let` ([data+0x18]),
-    que 0x550770 dibuja con el avance de la obra (17-11-2026, `re/emu/sesion39/README.md`).
+    que 0x550770 dibuja con el avance de la obra (17-11-2026, `re/emu/sesion39/README.md`). Con ellas, una torre en obras
+    sin banderín hasta acabarse (0x581090).
   - [ ] El fuego ([0x76A]): falta el humo y las llamas (los incendios de la ciudad, de un asedio, y la torre que cae en
     una batalla y arde unos 100 ticks como edificio, el evento 0x25; 0x5891C0, 0x599040). Decisión del usuario
     (10-11-2026): con la ciudad animada.

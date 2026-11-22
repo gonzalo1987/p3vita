@@ -148,6 +148,7 @@ constexpr uint8_t kTownHallType = 0x20;
 constexpr uint32_t kWaterTileType = 0xE;  // The water's .let tiles (g_k: frame g, tile k), as the game's 0x60329B.
 constexpr uint32_t kTreeTileType = 0x14;  // The trees' .let tiles (baum*): their snow by the season itself (0x591EC0).
 constexpr uint32_t kCliffTileType = 0x1A;  // The coast's .let tiles (klippen*): their surf (0x581710).
+constexpr uint32_t kTowerTileType = 0x29;  // The towers' .let tiles (gturm*, geschuetzturm): their flags (0x580DA0).
 // Fuente del texto de la interfaz (Font4 de scripts/ttffonts.ini en la versión española).
 constexpr char kUiFont[] = "fonts/Tiepolo_bold.ttf";
 constexpr float kUiFontHeight = 23;
@@ -709,9 +710,11 @@ public:
 			} else {
 				life_.update_map(map, town);
 			}
+			sync_tower_flags();
 			life_town_ = int(index);
 			life_serial_ = show_serial_;
 		}
+		tower_colour_ = mayor_colour(save, index);
 		// Each tick of the world the town read again (its people's counts, its convoys for the carts).
 		if (save.tick() != life_tick_) {
 			life_tick_ = save.tick();
@@ -839,6 +842,7 @@ public:
 		port_.gone.clear();
 		port_.sounds.clear();
 		life_.clear();
+		tower_flags_.clear();
 		life_town_ = -1;
 	}
 
@@ -1390,6 +1394,83 @@ public:
 		}
 		return best >= 0 && place_row_at(x, y) > best_row ? -1 : best;
 	}
+	// The towers' flags' colour ([view+0x59C], 0x59BEE0 from the view's periodic 0x58B7F0), ARGB, by the town's mayor
+	// ([0x6F1]): the player's blue, another human's (his kind 0) red, an AI merchant's or none (past the merchants)
+	// white. (A view past the towns, a battle's, dark grey.)
+	static uint32_t mayor_colour(const SaveGame& save, size_t town) {
+		const uint8_t mayor = save.towns[town].memory.u8(0x6F1);
+		if (int(mayor) == save.player) {
+			return 0xFF0000FF;
+		}
+		if (mayor >= save.merchant_count || mayor >= save.merchants.size()) {
+			return 0xFFFFFFFF;
+		}
+		return save.merchants[mayor].kind() == 0 ? 0xFFFF0000 : 0xFFFFFFFF;
+	}
+	// The towers' flags (0x590741 → 0x580DA0: each tower placed in the view, tile class 0x29, a pennant of class 0x1E,
+	// waving in the view's wind as the ships', at its picture's point of its .let's kind 3 variant (0x580FB0 keeps it in
+	// *0x6E2F30 by the tower's type; none: its picture's corner); kept in the list *0x6E31E0). Made again with the town.
+	void sync_tower_flags() {
+		for (const TowerFlag& t : tower_flags_) {
+			life_.remove_creature(t.pennant);
+		}
+		tower_flags_.clear();
+		load_pennants();
+		if (!pennant_look_) {
+			return;
+		}
+		for (size_t i = first_object_; i < items_.size(); ++i) {
+			const Item& item = items_[i];
+			if (!item.tile || item.tile->type != kTowerTileType || item.slice != 0 || item.tile->slices.empty()) {
+				continue;
+			}
+			int fx = 0;
+			int fy = 0;
+			for (const TileVariant& v : item.tile->variants) {
+				if (v.kind == 3) {
+					fx = v.x;
+					fy = v.y;
+				}
+			}
+			const TileSlice& s = item.tile->slices[0];
+			const int x = item.dst.x - s.x + fx;
+			const int y = item.dst.y - s.y + fy;
+			tower_flags_.push_back({life_.add_pennant(pennant_look_.get(), 0, x << 16, y << 16), item.tile, fx, fy});		}
+	}
+	// 0x580D10 → 0x568F60 for each tower (0x588A82..0x588AA3, after the ships' pennants, in [view+0x59C]'s colour; again
+	// over the weather's tint at the buildings' colour's alpha, 0x588B5B): its pennant's frame, then, with the wind
+	// blowing it back (its direction above 0xC0 or below 0x40), the tower's 3 · 9 pixels at the pole (a pixel left of
+	// its point) drawn again over it, white (0x5811D0(−1, 0, 3, 9), from its atlas of the season).
+	void draw_tower_flags(const SDL_Rect& screen, uint32_t colour) {
+		for (const TowerFlag& t : tower_flags_) {
+			const p3::data::Creature* pennant = life_.find(t.pennant);
+			const p3::data::LcrFrame* f = pennant ? pennant->current() : nullptr;
+			SDL_Texture* texture = f ? atlas_texture(pennant->look->image) : nullptr;
+			if (!texture) {
+				continue;
+			}
+			const p3::data::Creature& c = *pennant;
+			const SDL_Rect dst = {c.px() - (f->anchor_x - f->body.x), c.py() - (f->anchor_y - f->body.y), f->body.w,
+				f->body.h};
+			if (!SDL_HasIntersection(&dst, &screen)) {
+				continue;
+			}
+			const SDL_Rect src = {f->body.x, f->body.y, f->body.w, f->body.h};
+			const SDL_Rect at = {dst.x - screen.x, dst.y - screen.y, dst.w, dst.h};
+			SDL_SetTextureColorMod(texture, uint8_t(colour >> 16), uint8_t(colour >> 8), uint8_t(colour));
+			SDL_SetTextureAlphaMod(texture, uint8_t(colour >> 24));
+			SDL_RenderCopy(renderer_, texture, &src, &at);
+			SDL_SetTextureColorMod(texture, 255, 255, 255);
+			SDL_SetTextureAlphaMod(texture, 255);
+			if (c.dir > 0xC0 || c.dir < 0x40) {
+				if (SDL_Texture* tower = season_texture(t.tile)) {
+					const SDL_Rect pole = {t.tile->src_x + t.fx - 1, t.tile->src_y + t.fy, 3, 9};
+					const SDL_Rect over = {c.px() - 1 - screen.x, c.py() - screen.y, 3, 9};
+					SDL_RenderCopy(renderer_, tower, &pole, &over);
+				}
+			}
+		}
+	}
 	// A ship figure's colour ([+0x34]: 0x56C7B0 as it starts, 0x56DB10 each frame), ARGB: the player's blue, a
 	// pirate's ([+0x134] 0x12) dark grey, another human's red, any other white.
 	static uint32_t ship_colour(const SaveGame& save, uint16_t ship) {
@@ -1735,8 +1816,13 @@ public:
 			draw_strip(strips_[next_strip], camera_x, camera_y);
 		}
 		draw_pennants(screen);  // After the town (0x588A5A..0x588A80).
+		draw_tower_flags(screen, tower_colour_);  // The towers' (0x588A82..0x588AA3).
 		draw_bird_shadows(screen);  // At alpha 100 (0x588AA5..0x588AD7).
 		draw_tint(screen, player);  // The weather's tint (0x58FF40, 0x588ADB).
+		if ((tint.over >> 24) != 0 && (tint.colour >> 24) != 0) {
+			// The towers' flags again over it (0x588AE0..0x588B81: [view+0x59C]'s colour at [view+0xC180]'s alpha).
+			draw_tower_flags(screen, (tint.over & 0xFF000000u) | (tower_colour_ & 0xFFFFFFu));
+		}
 		draw_birds(screen);  // Over everything, in the tint's colour (0x588B83..0x588BCA).
 		draw_weather(screen);  // The rain or snow (0x588BD3..0x588C06).
 		draw_port_marks(screen);  // The ships' icons and marks (0x588C08..0x588C1E).
@@ -2206,6 +2292,14 @@ private:
 	// The pennants' look (class 0x1E, `faehnchen.lcr`), where each ship type's pennant stands in each direction of its
 	// looks (*0x6E1860 + 24 · type + 4, 0x56B052: from its look of damage 0 and sails 0).
 	std::unique_ptr<p3::data::LcrAnim> pennant_look_;
+	struct TowerFlag {
+		uint16_t pennant;  // Its creature.
+		const TileDef* tile;  // Its tower's.
+		int fx;  // Its point in the tower's picture (the kind 3 variant's).
+		int fy;
+	};
+	std::vector<TowerFlag> tower_flags_;
+	uint32_t tower_colour_ = 0xFFFFFFFF;
 	bool pennant_loaded_ = false;
 	std::array<std::vector<SDL_Point>, 4> pennant_offsets_{};
 	// The pages of the ships' looks by tag (0x56AFA0: 0 the chosen ships' mark *0x6E1920, 1 the shipyard's icon, 2
