@@ -146,6 +146,7 @@ constexpr int kLuebeck = 14;
 constexpr uint8_t kTownHallType = 0x20;
 constexpr uint32_t kWaterTileType = 0xE;  // The water's .let tiles (g_k: frame g, tile k), as the game's 0x60329B.
 constexpr uint32_t kTreeTileType = 0x14;  // The trees' .let tiles (baum*): their snow by the season itself (0x591EC0).
+constexpr uint32_t kCliffTileType = 0x1A;  // The coast's .let tiles (klippen*): their surf (0x581710).
 // Fuente del texto de la interfaz (Font4 de scripts/ttffonts.ini en la versión española).
 constexpr char kUiFont[] = "fonts/Tiepolo_bold.ttf";
 constexpr float kUiFontHeight = 23;
@@ -433,6 +434,9 @@ public:
 				SDL_DestroyTexture(texture);
 			}
 		}
+		if (sparkle_texture_) {
+			SDL_DestroyTexture(sparkle_texture_);
+		}
 		if (minimap_) {
 			SDL_DestroyTexture(minimap_);
 		}
@@ -645,6 +649,11 @@ public:
 		}
 		make_minimap(town);
 		life_base_ = p3::data::life_map(town, tiles_, {});
+		// The surf's list of the coast in view made again (its items are others now).
+		surf_cells_.clear();
+		surf_place_.clear();
+		surf_cursor_ = 0;
+		surf_dirty_ = true;
 		++show_serial_;
 	}
 
@@ -655,6 +664,7 @@ public:
 		uint32_t ms_per_tick, bool battle_time) {
 		if (int(index) != life_town_ || life_serial_ != show_serial_) {
 			load_people();
+			load_water();
 			p3::data::LifeMap map = life_base_;
 			map.grid = save.towns[index].grid;
 			p3::data::LifeTown town = p3::data::life_town(save, index);
@@ -706,6 +716,7 @@ public:
 		port_.frame(save, now);
 		sync_port_figures(save);
 		follow_port_choice(now);  // 0x56DB10, 0x56CE40 (0x58CBFD..).
+		step_sparkles(now);  // 0x598D00 (0x58CC13).
 		// The tiles' own animations of the cells in view (0x592000), «active» by the town's merchants' businesses.
 		producing_.assign(save.merchants.size(), 0);
 		for (size_t m = 0; m < save.merchants.size(); ++m) {
@@ -719,6 +730,7 @@ public:
 		shipyard_employees_ = tm.u16(0x854);
 		world_tick_ = save.tick();
 		step_anims(now, camera_x, camera_y, width, save.towns[index].grid);
+		step_surf(now, camera_x, camera_y, width);  // The coast's surf (0x581890, the view's frame).
 	}
 
 	// 0x592000 (the objects' layer): each cell of the view with an object's slice steps its tile's animations, as the
@@ -989,6 +1001,260 @@ public:
 			[](const p3::data::PortShip* a, const p3::data::PortShip* b) { return a->figure > b->figure; });
 		return out;
 	}
+	// The water's pictures, read once: the waves' and the ice floes' looks (the effects numbered 0x50 and 0xC7 by their
+	// size: the three `welle_*.lcr` and `eisscholle_*.lcr` of iso/lcr/files.lst, the class's only ones of those numbers)
+	// and the sparkle (iso.ini's WaterSparkleTexID in textures.ini: its file, frames and colour key).
+	void load_water() {
+		if (water_loaded_) {
+			return;
+		}
+		water_loaded_ = true;
+		std::vector<uint8_t> list;
+		if (const CprEntry* entry = archive_.find("iso/lcr/files.lst"); entry && archive_.read(*entry, list)) {
+			size_t begin = 0;
+			for (size_t i = 0; i <= list.size(); ++i) {
+				if (i < list.size() && list[i] != 0 && list[i] != '\r' && list[i] != '\n') {
+					continue;
+				}
+				const std::string name(reinterpret_cast<const char*>(list.data()) + begin, i - begin);
+				begin = i + 1;
+				const bool wave = name.compare(0, 6, "welle_") == 0;
+				if (!wave && name.compare(0, 11, "eisscholle_") != 0) {
+					continue;
+				}
+				std::vector<uint8_t> data;
+				auto look = std::make_unique<p3::data::LcrAnim>();
+				const CprEntry* file = archive_.find("iso/lcr/" + name);
+				if (file && archive_.read(*file, data) && p3::data::parse_lcr(data.data(), data.size(), *look) &&
+					look->kind == 0x12 && !look->params.empty() && look->params[0] == (wave ? 0x50u : 0xC7u) &&
+					look->variant >= 1 && look->variant <= 3 && !look->directions.empty()) {
+					(wave ? life_.wave_looks : life_.floe_looks)[look->variant] = look.get();
+					wave_store_.push_back(std::move(look));
+				}
+			}
+		}
+		std::vector<uint8_t> iso;
+		std::vector<uint8_t> textures;
+		const CprEntry* iso_entry = archive_.find("scripts/iso.ini");
+		const CprEntry* tex_entry = archive_.find("scripts/textures.ini");
+		if (!iso_entry || !archive_.read(*iso_entry, iso) || !tex_entry || !archive_.read(*tex_entry, textures)) {
+			return;
+		}
+		const std::string_view iso_text(reinterpret_cast<const char*>(iso.data()), iso.size());
+		const std::string_view tex_text(reinterpret_cast<const char*>(textures.data()), textures.size());
+		const int id = p3::data::ini_int(iso_text, "LIGHTNINGVIEW0", "WaterSparkleTexID", 0);
+		const std::string section = "TEX" + std::to_string(id);
+		std::string file = p3::data::ini_text(tex_text, section, "TextureFile");
+		std::replace(file.begin(), file.end(), '\\', '/');
+		const int count = p3::data::ini_int(tex_text, section, "Count", 0);
+		for (int k = 0; k < count; ++k) {
+			const std::string v = p3::data::ini_text(tex_text, section, "OffsetNSize" + std::to_string(k));
+			SDL_Rect r = {0, 0, 0, 0};
+			if (std::sscanf(v.c_str(), "%d %d %d %d", &r.x, &r.y, &r.w, &r.h) == 4) {
+				sparkle_frames_.push_back(r);
+			}
+		}
+		std::vector<uint8_t> data;
+		Image image;
+		const CprEntry* entry = archive_.find(file);
+		if (!entry || !archive_.read(*entry, data) || !decode_standard_image(data.data(), data.size(), image)) {
+			return;
+		}
+		// Its colour key (0xFF000000: black) transparent.
+		const std::string key = p3::data::ini_text(tex_text, section, "ColorKey");
+		const uint32_t k = uint32_t(std::strtoul(key.c_str(), nullptr, 16));
+		if (p3::data::ini_text(tex_text, section, "UseColorKey") == "true") {
+			for (size_t i = 0; i + 3 < image.rgba.size(); i += 4) {
+				uint8_t* p = &image.rgba[i];
+				if (p[0] == uint8_t(k >> 16) && p[1] == uint8_t(k >> 8) && p[2] == uint8_t(k)) {
+					p[3] = 0;
+				} else {
+					p[3] = 0xFF;  // UseAlpha=false: opaque.
+				}
+			}
+		}
+		sparkle_texture_ =
+			SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, image.width, image.height);
+		if (sparkle_texture_) {
+			SDL_UpdateTexture(sparkle_texture_, nullptr, image.rgba.data(), image.width * 4);
+			SDL_SetTextureBlendMode(sparkle_texture_, SDL_BLENDMODE_BLEND);
+		}
+	}
+	// 0x598D00 (each frame, with [view+0xC304], always on): each sparkle when due: a free one a point at random of the
+	// map (34 · its columns by 22 · half its rows) and, when its ground is water (.let type 0xE), its first frame there;
+	// due again in 100 ms either way; a shown one its next frame 100 ms after the last, free past its picture's last.
+	void step_sparkles(uint32_t now) {
+		if (sparkle_frames_.empty() || map_columns_ <= 0 || map_rows_ <= 0) {
+			return;
+		}
+		const uint32_t width = uint32_t(34 * map_columns_);
+		const uint32_t height = uint32_t(22 * (map_rows_ >> 1));
+		for (Sparkle& s : sparkles_) {
+			if (now < s.due) {
+				continue;
+			}
+			if (s.frame < 0) {
+				s.x = int(uint32_t(life_.rand()) % width);
+				s.y = int(uint32_t(life_.rand()) % height);
+				const p3::data::TownCell2 cell = p3::data::life_pixel_cell(s.x, s.y);
+				if (life_base_.in(cell[0], cell[1]) && life_base_.ground_at(cell[0], cell[1]) == kWaterTileType) {
+					s.frame = 0;
+				}
+				s.due = now + 100;
+			} else {
+				++s.frame;
+				s.due += 100;
+				if (s.frame >= int(sparkle_frames_.size())) {
+					s.frame = -1;
+				}
+			}
+		}
+	}
+	// 0x598C30 (after the ground, before the shadows: 0x588988): each shown sparkle's frame at its point, at alpha 0xAF.
+	void draw_sparkles(const SDL_Rect& screen) {
+		if (!sparkle_texture_) {
+			return;
+		}
+		SDL_SetTextureAlphaMod(sparkle_texture_, 0xAF);
+		for (const Sparkle& s : sparkles_) {
+			if (s.frame < 0 || size_t(s.frame) >= sparkle_frames_.size()) {
+				continue;
+			}
+			const SDL_Rect& f = sparkle_frames_[size_t(s.frame)];
+			const SDL_Rect dst = {s.x - screen.x, s.y - screen.y, f.w, f.h};
+			SDL_RenderCopy(renderer_, sparkle_texture_, &f, &dst);
+		}
+		SDL_SetTextureAlphaMod(sparkle_texture_, 255);
+	}
+	// The water list's waves (0x59A320's second pass, the effects 0x50; 0x579B80): under the blend mode 3 with the
+	// constant colour (its alpha) | 0xFFFFFF, which ddraw_Dll.dll blits by its blitter 6 (0x508EDE5): each channel
+	// added, saturated, the alpha left out. So the wave's alpha changes nothing: added at full.
+	void draw_waves(const SDL_Rect& screen) {
+		for (const p3::data::Creature& c : life_.creatures()) {
+			if (c.mode != 13 || c.effect != 0x50) {
+				continue;
+			}
+			const p3::data::LcrFrame* f = c.current();
+			SDL_Texture* texture = f ? atlas_texture(c.look->image) : nullptr;
+			if (!texture) {
+				continue;
+			}
+			const SDL_Rect dst = {c.px() - (f->anchor_x - f->body.x), c.py() - (f->anchor_y - f->body.y), f->body.w,
+				f->body.h};
+			if (!SDL_HasIntersection(&dst, &screen)) {
+				continue;
+			}
+			const SDL_Rect src = {f->body.x, f->body.y, f->body.w, f->body.h};
+			const SDL_Rect at = {dst.x - screen.x, dst.y - screen.y, dst.w, dst.h};
+			SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_ADD);
+			SDL_RenderCopy(renderer_, texture, &src, &at);
+			SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+		}
+	}
+	// The cliffs' surf's atlases by the snow's level (0x581B00, each cliff tile's reader: a kind 3 variant into
+	// *0x6E335C[its first parameter], the last read; all the coast's tiles share one atlas, `klippen.aim`, and the
+	// surf's is its copy with the surf, `Klippen_Flut.bmp` and `Schnee_Klippen_Flut _1..4.aim`).
+	void load_surf() {
+		if (surf_loaded_) {
+			return;
+		}
+		surf_loaded_ = true;
+		std::vector<const TileDef*> cliffs;
+		for (const auto& [id, tile] : tiles_) {
+			if (tile.type == kCliffTileType) {
+				cliffs.push_back(&tile);
+			}
+		}
+		std::sort(cliffs.begin(), cliffs.end(), [](const TileDef* a, const TileDef* b) { return a->id < b->id; });
+		for (const TileDef* tile : cliffs) {
+			for (const TileVariant& v : tile->variants) {
+				if (v.kind == 3 && !v.params.empty() && v.params[0] < surf_pages_.size() && !v.atlas.empty()) {
+					surf_pages_[v.params[0]] = v.atlas;
+				}
+			}
+		}
+	}
+	// The surf's atlas of the snow shown (0x581C90, the class's +0x70: *0x6E3390 = *0x6E335C[the level], the level 0
+	// for the modes 0, 1 and 6, else the mode − 1), null without one.
+	SDL_Texture* surf_texture() {
+		const int level = snow_mode_ >= 2 && snow_mode_ <= 5 ? snow_mode_ - 1 : 0;
+		const std::string& page = surf_pages_[size_t(level)];
+		return page.empty() ? nullptr : page_texture(page, true);
+	}
+	// 0x581890 (the view's frame, 0x58CB6D, with the view's scroll since the last frame): the list's redraw of the new
+	// step goes on, at most 3 slices a frame, as many as 142 ms spread over the list allow since the last; once the whole
+	// list is redrawn and 142 ms passed since the last step, the next step (of 14, then round), and the list made again
+	// if the view moved (here at once: the coast's slices in view, in the drawing's order, as the class's +0x38 0x581BC0
+	// lists them from the cells' step). (The game takes P2.cfg's DETAILS, 3 in its files: the surf on.)
+	void step_surf(uint32_t now, int camera_x, int camera_y, int width) {
+		load_surf();
+		if (camera_x != surf_camera_x_ || camera_y != surf_camera_y_) {
+			surf_dirty_ = true;
+			surf_camera_x_ = camera_x;
+			surf_camera_y_ = camera_y;
+		}
+		if (surf_cursor_ < surf_cells_.size()) {
+			const uint32_t per_cell = uint32_t(0x8E / int(surf_cells_.size()));
+			const uint32_t due = per_cell ? (now - surf_redrawn_) / per_cell : 3;
+			if (due == 0) {
+				return;
+			}
+			surf_cursor_ = std::min(surf_cells_.size(), surf_cursor_ + std::min<uint32_t>(due, 3));
+			surf_redrawn_ = now;
+			return;
+		}
+		if (now < surf_due_) {
+			return;
+		}
+		surf_cursor_ = 0;
+		if (surf_dirty_) {
+			surf_dirty_ = false;
+			surf_cells_.clear();
+			surf_place_.assign(items_.size(), -1);
+			const SDL_Rect screen = {camera_x, camera_y, width, kScreenHeight};
+			for (size_t i = 0; i < items_.size(); ++i) {
+				if (items_[i].tile && items_[i].tile->type == kCliffTileType && SDL_HasIntersection(&items_[i].dst, &screen)) {
+					surf_place_[i] = int(surf_cells_.size());
+					surf_cells_.push_back(i);
+				}
+			}
+		}
+		surf_last_step_ = surf_step_;
+		surf_step_ = uint8_t(surf_step_ + 1 >= 14 ? 0 : surf_step_ + 1);
+		surf_redrawn_ = now;
+		surf_due_ = now + 0x8E;
+	}
+	// A coast slice's fade (0x581710: *0x6C4504 by the step, the previous step's for a listed slice not yet redrawn):
+	// 0 the surf alone, 255 the coast alone, between the surf over the coast at 255 less it.
+	uint8_t surf_fade(size_t item) const {
+		static constexpr uint8_t kFade[14] = {0, 30, 70, 140, 180, 230, 255, 240, 230, 180, 140, 100, 60, 30};
+		const int at = item < surf_place_.size() ? surf_place_[item] : -1;
+		return at >= int(surf_cursor_) ? kFade[surf_last_step_] : kFade[surf_step_];
+	}
+	// The water list's other effects after its waves (0x59A320's third pass; 0x579B80): the ice floes, each at its
+	// alpha as the constant colour (their number without 0x10: the usual blend), fading in and out.
+	void draw_floes(const SDL_Rect& screen) {
+		for (const p3::data::Creature& c : life_.creatures()) {
+			if (c.mode != 13 || c.effect == 0x50) {
+				continue;
+			}
+			const p3::data::LcrFrame* f = c.current();
+			SDL_Texture* texture = f ? atlas_texture(c.look->image) : nullptr;
+			if (!texture) {
+				continue;
+			}
+			const SDL_Rect dst = {c.px() - (f->anchor_x - f->body.x), c.py() - (f->anchor_y - f->body.y), f->body.w,
+				f->body.h};
+			if (!SDL_HasIntersection(&dst, &screen)) {
+				continue;
+			}
+			const SDL_Rect src = {f->body.x, f->body.y, f->body.w, f->body.h};
+			const SDL_Rect at = {dst.x - screen.x, dst.y - screen.y, dst.w, dst.h};
+			SDL_SetTextureAlphaMod(texture, c.alpha);
+			SDL_RenderCopy(renderer_, texture, &src, &at);
+			SDL_SetTextureAlphaMod(texture, 255);
+		}
+	}
 	// The cell of the port's figure of the ship `ship` (0x476A82..0x476AC5: the figure whose [+0x38] is it, its point,
 	// 0x58D030); false when it has none (not in the harbour shown, a convoy's other ship).
 	bool port_ship_cell(uint16_t ship, SDL_Point& cell) const {
@@ -1146,8 +1412,9 @@ public:
 		SDL_SetTextureColorMod(texture, 255, 255, 255);
 		SDL_SetTextureAlphaMod(texture, 255);
 	}
-	// A page's image: an AIM as the creatures' (its magenta transparent), a TGA with its own alpha.
-	SDL_Texture* page_texture(const std::string& path) {
+	// A page's image: an AIM as the creatures' (its magenta transparent), a TGA with its own alpha (a BMP with its
+	// magenta transparent, `magenta`: the cliffs' surf's).
+	SDL_Texture* page_texture(const std::string& path, bool magenta = false) {
 		if (path.size() > 4 && (path.compare(path.size() - 4, 4, ".aim") == 0 || path.compare(path.size() - 4, 4, ".AIM") == 0)) {
 			return atlas_texture(path);
 		}
@@ -1161,6 +1428,9 @@ public:
 		const CprEntry* entry = archive_.find(path);
 		if (!entry || !archive_.read(*entry, data) || !decode_standard_image(data.data(), data.size(), image)) {
 			return texture = nullptr;
+		}
+		if (magenta) {
+			apply_magenta_key(image);
 		}
 		texture = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, image.width, image.height);
 		if (texture) {
@@ -1218,6 +1488,7 @@ public:
 		shipyard_employees_ = 40;
 		world_tick_ = now / 20;  // A day every 5 s, so that the farms' fields are seen growing.
 		step_anims(now, camera_x, camera_y, width, {}, true);
+		step_surf(now, camera_x, camera_y, width);  // The coast's surf (0x581890, the view's frame).
 	}
 
 	// The town under a battle at it (BattleTown, the battles' piece 7, part 3), in two parts so that the battle's
@@ -1288,7 +1559,10 @@ public:
 		for (size_t i = 0; i < items_.size(); ++i) {
 			const Item& item = items_[i];
 			if (i == first_object_) {
+				draw_sparkles(screen);  // The water's sparkles, after the ground (0x588988).
 				draw_fish(screen);  // In the water (0x59A320; the game masks them to it: here under the objects).
+				draw_waves(screen);  // The water list's waves after its fish (0x59A371..).
+				draw_floes(screen);  // Then its other effects: the ice floes (0x59A3C3..).
 				draw_shadows(screen);  // After the ground, before the objects (0x588900: 0x590F30, 0x591C50).
 				draw_people_shadows(screen);
 			}
@@ -1307,7 +1581,18 @@ public:
 			if (rival) {
 				SDL_SetTextureColorMod(item.texture, 105, 105, 115);
 			}
-			SDL_RenderCopy(renderer_, item.texture, i >= first_object_ ? &sway_src(item) : &item.src, &dst);
+			// The coast's surf (0x581710): the coast, then its surf's copy over it faded by the step (the surf alone at
+			// 0, the coast alone at 255).
+			const uint8_t fade = item.tile && item.tile->type == kCliffTileType ? surf_fade(i) : 0xFF;
+			SDL_Texture* surf = fade != 0xFF ? surf_texture() : nullptr;
+			if (!surf || fade != 0) {
+				SDL_RenderCopy(renderer_, item.texture, i >= first_object_ ? &sway_src(item) : &item.src, &dst);
+			}
+			if (surf) {
+				SDL_SetTextureAlphaMod(surf, uint8_t(0xFF - fade));
+				SDL_RenderCopy(renderer_, surf, &item.src, &dst);
+				SDL_SetTextureAlphaMod(surf, 255);
+			}
 			if (rival) {
 				SDL_SetTextureColorMod(item.texture, 255, 255, 255);
 			}
@@ -1731,6 +2016,37 @@ private:
 	uint8_t dot_blink_ = 0;
 	int8_t dot_blink_step_ = 30;
 	uint32_t dot_blink_due_ = 0;
+	// The waves' looks (TownLife::wave_looks), and the water's sparkles (0x598D00, 0x598C30): iso.ini's
+	// WaterSparkleTexID's picture of textures.ini and its frames ([view+0xC1C0]), the 20 sparkles ([view+0xC1C4], 16
+	// bytes each: x, y in the town's pixels, when next, the frame shown, −1 none).
+	std::vector<std::unique_ptr<p3::data::LcrAnim>> wave_store_;
+	bool water_loaded_ = false;
+	SDL_Texture* sparkle_texture_ = nullptr;
+	std::vector<SDL_Rect> sparkle_frames_;
+	struct Sparkle {
+		int x = 0;
+		int y = 0;
+		uint32_t due = 0;
+		int8_t frame = -1;
+	};
+	std::array<Sparkle, 20> sparkles_{};
+	// The cliffs' surf (the coast's tiles, class 0x1A; 0x581690..0x581CB2): the surf's atlas of each snow level (their
+	// kind 3 variants by their first parameter, *0x6E335C), the step of its fade now and before (*0x6C4500,
+	// *0x6C4501), when the next is due (*0x6E3370) and the last cells' redraw (*0x6E3378), the coast's slices in view
+	// as listed (*0x6E337C: items_'s indices; their place in it by item), how far their redraw has gone (*0x6E3384),
+	// whether the list is to be made again (*0x6C4512: the view moved) and the camera of the last frame.
+	std::array<std::string, 5> surf_pages_{};
+	bool surf_loaded_ = false;
+	uint8_t surf_step_ = 6;
+	uint8_t surf_last_step_ = 6;
+	uint32_t surf_due_ = 0;
+	uint32_t surf_redrawn_ = 0;
+	std::vector<size_t> surf_cells_;
+	std::vector<int> surf_place_;
+	size_t surf_cursor_ = 0;
+	bool surf_dirty_ = true;
+	int surf_camera_x_ = 0;
+	int surf_camera_y_ = 0;
 	bool people_loaded_ = false;
 	p3::data::LifeMap life_base_;
 	int life_town_ = -1;

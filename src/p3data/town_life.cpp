@@ -209,6 +209,7 @@ LifeTown life_town(const SaveGame& save, size_t index) {
 	t.children = t.plague ? 0 : uint32_t((std::max<int64_t>(mood, 0) + 9999) / 10000);
 	t.total = m.u32(0x2D4);
 	t.fishing = m.u16(0x898);
+	t.frozen = (m.u32(0x2C8) & 0x4000000) != 0;
 	t.official = (m.u32(0x76C) & 2) != 0;
 	// 0x677958: by the town's map (0x6DE4E0, the town's [0x2C2]).
 	static constexpr uint8_t kFace[28] = {0x20, 0xE0, 0x60, 0x60, 0x60, 0x60, 0x60, 0xA0, 0x60, 0x60, 0xA0, 0xA0, 0x20,
@@ -1576,6 +1577,7 @@ void TownLife::start(const LifeMap& map, const LifeTown& town, uint32_t now) {
 	town_ = town;
 	creatures_.clear();
 	now_ = now;
+	floes_made_ = false;  // (0x58B5D7: the town left, [view+0xC63C] cleared.)
 	// 0x58EF26: every path of the tag 4 free for a fisherman.
 	fisher_free_.assign(town.nodes.size() > 4 ? town.nodes[4].size() : 0, 1);
 	// 0x58A8A0 (the view's animations on): 0x58A920, 20 birds anywhere over the map, facing one of the eight
@@ -1950,6 +1952,189 @@ bool TownLife::pennant_wave(Creature& c) {
 	}
 	const uint32_t period = frame_ms(*c.look);
 	c.frame_due = period - period * wind_strength_ / 20 + now_;
+	return true;
+}
+
+// 0x58C345..0x58C6B5 (the view's frame, with the animations on): the waves. While the next is due: the two counters on
+// (5 columns' worth of 13, a row of parts 3 on at each round), a cell at random in their part of the map (x from 9
+// columns' worth, y from 16 rows' worth, by the game's magic divisions) and a size 1..3; when every ground cell within
+// that many columns and twice that many rows is water, a wave of that size there (the effect 0x50 | size << 8, at
+// the cell's middle, an alpha 0x40..0x7F). Then the next due by the port's wind: 4950 / (4 · strength² + 95) ms on,
+// from now when more than 100 ms behind, 50 ms from now without wind; more in this frame while still behind, never
+// more than 50 ms ahead. (In a sea battle's view, [view+0xC324] 0xFF, two by two in its quarters: not here.)
+void TownLife::spawn_waves() {
+	if (wave_due_ >= now_) {
+		return;
+	}
+	for (;;) {
+		wave_col_ = uint8_t(wave_col_ + 5);
+		if (wave_col_ >= 13) {
+			wave_col_ = uint8_t(wave_col_ - 13);
+			wave_row_ = uint8_t((wave_row_ + 3) % 13);
+		}
+		const int32_t a = int32_t((uint32_t(rand()) % 9 + 9u * wave_col_) << 7);
+		int32_t qx = int32_t((int64_t(a) * int32_t(0x84210843u)) >> 32) + a;
+		qx >>= 6;
+		qx += int32_t(uint32_t(qx) >> 31);
+		const uint16_t x = uint16_t(qx + 4);
+		const int32_t b = ((rand() & 15) + (int32_t(wave_row_) << 4)) * 226;
+		int32_t qy = int32_t((int64_t(b) * int32_t(0x95A02569u)) >> 32) + b;
+		qy >>= 7;
+		qy += int32_t(uint32_t(qy) >> 31);
+		const uint16_t y = uint16_t(qy + 6);
+		const int size = rand() % 3 + 1;
+		// Its box all water (the cells by their index in 16 bits, as the game's: one off the map is not water here).
+		bool water = true;
+		const uint32_t cells = uint32_t(map_.width) * uint32_t(map_.height);
+		for (int dx = -size; dx <= size && water; ++dx) {
+			for (int dy = -2 * size; dy <= 2 * size; ++dy) {
+				const uint16_t index = uint16_t(uint16_t(map_.width * (int(y) + dy)) + dx + int(x));
+				if (index >= cells || map_.ground[index] != kWater) {
+					water = false;
+					break;
+				}
+			}
+		}
+		if (water && wave_looks[size_t(size)]) {
+			Creature c;
+			c.cls = 0x12;
+			c.mode = 13;
+			c.look = wave_looks[size_t(size)];
+			c.id = new_id();
+			const TownCell2 at = life_cell_pixel(x, y);
+			c.x = at[0] << 16;
+			c.y = at[1] << 16;
+			c.dir = 0x20;
+			c.effect = 0x50;
+			c.frame = anim_start(c, 2);  // 0x57A264
+			c.frame_due = now_ + frame_ms(*c.look);
+			(void)rand();  // 0x57A1F2: its look among those of its number and size (one: rand() % 1).
+			c.alpha = uint8_t((rand() & 63) + 0x40);  // 0x58C5EB
+			creatures_.push_back(std::move(c));
+		}
+		const uint32_t s = wind_strength_;
+		if (now_ - wave_due_ > 100) {
+			wave_due_ = now_;
+		} else if (s != 0) {
+			wave_due_ += uint32_t(0x1356 / int32_t(4 * s * s + 0x5F));
+		} else {
+			wave_due_ = now_ + 50;
+		}
+		if (wave_due_ >= now_) {
+			break;
+		}
+	}
+	if (wave_due_ - 50 > now_) {
+		wave_due_ = now_ + 50;
+	}
+}
+
+// 0x58C865..0x58CB51 (the view's frame, after the fish): with the town's port frozen, once ([view+0xC63C], cleared
+// when it thaws) the ice floes: in each part of a 15 · 15 grid a cell at random (x from 7 columns' worth, y from 13
+// rows' worth, by the game's magic divisions) and a size 1..3 (1 with the animations off); when every cell within that
+// many columns and twice that many rows is water with no object, an ice floe of that size there (the effect 0xC7 |
+// size << 8, at the cell's middle) fading in (0x57AF40(0, 0x80): its alpha from 1, 128 a second), its first frame due
+// (its pixel's x + y) % 3000 ms on.
+void TownLife::spawn_floes() {
+	if (!town_.frozen) {
+		floes_made_ = false;
+		return;
+	}
+	if (floes_made_) {
+		return;
+	}
+	floes_made_ = true;
+	const uint32_t cells = uint32_t(map_.width) * uint32_t(map_.height);
+	for (int gy = 0; gy < 15; ++gy) {
+		for (int gx = 0; gx < 15; ++gx) {
+			const int32_t a = (rand() % 7 + gx * 10) * 121;
+			int32_t qx = int32_t((int64_t(a) * int32_t(0xE070381Du)) >> 32) + a;
+			qx >>= 7;
+			qx += int32_t(uint32_t(qx) >> 31);
+			const uint16_t x = uint16_t(qx + 3);
+			const int32_t b = (rand() % 13 + gy * 20) * 213;
+			int32_t qy = int32_t((int64_t(b) * int32_t(0xE070381Du)) >> 32) + b;
+			qy >>= 8;
+			qy += int32_t(uint32_t(qy) >> 31);
+			const uint16_t y = uint16_t(qy + 6);
+			const int size = rand() % 3 + 1;  // (The animations on: always in the viewer.)
+			bool clear = true;
+			for (int dx = -size; dx <= size && clear; ++dx) {
+				for (int dy = -2 * size; dy <= 2 * size; ++dy) {
+					const uint16_t index = uint16_t(uint16_t(map_.width * (int(y) + dy)) + dx + int(x));
+					if (index >= cells || map_.ground[index] != kWater || map_.object[index] >= 0) {
+						clear = false;
+						break;
+					}
+				}
+			}
+			if (!clear || !floe_looks[size_t(size)]) {
+				continue;
+			}
+			Creature c;
+			c.cls = 0x12;
+			c.mode = 13;
+			c.look = floe_looks[size_t(size)];
+			c.id = new_id();
+			const TownCell2 at = life_cell_pixel(x, y);
+			c.x = at[0] << 16;
+			c.y = at[1] << 16;
+			c.dir = 0x20;
+			c.effect = 0xC7;
+			c.frame = anim_start(c, 2);
+			(void)rand();  // 0x57A1F2: its look among those of its number and size (one: rand() % 1).
+			c.fade_delay = 0;
+			c.fade_speed = 0x80;
+			c.alpha = 1;
+			c.frame_due = uint32_t(at[1] + at[0]) % 3000 + now_;
+			creatures_.push_back(std::move(c));
+		}
+	}
+}
+
+// 0x57A8C0 (an effect's step) for an effect on the water: gone after a frame of more than 2 s when its number is below
+// 0x80 (0x57A906: the waves); its fade (after its delay, its alpha by its speed in steps of 16, the rest kept: gone at
+// 0 or below, stopped at 255), or an ice floe with the port thawed starting to fade out (0x57A9A1: −0x80); its frames on
+// (0x557340), a wave's each frame's time · 9 / (the wind's strength + 8) (0x57A9E6: the stronger, the faster); gone when
+// its sequence (2) starts again with its number below 0x80 (0x57AA9B: a wave played once; the floes go round).
+bool TownLife::water_effect_step(Creature& c) {
+	if (raw_elapsed_ > 2000 && c.effect < 0x80) {
+		return false;
+	}
+	if (c.fade_speed != 0) {
+		if (c.fade_delay > raw_elapsed_) {
+			c.fade_delay -= raw_elapsed_;
+		} else {
+			const int32_t v = int32_t(raw_elapsed_ - c.fade_delay) * c.fade_speed + c.fade_rest;
+			c.fade_delay = 0;
+			const int32_t q = v / 16000;
+			c.fade_rest = int16_t(v - q * 16000);
+			if (q != 0) {
+				const int32_t alpha = int32_t(c.alpha) + q * 16;
+				if (alpha <= 0) {
+					return false;
+				}
+				if (alpha >= 0xFF) {
+					c.alpha = 0xFF;
+					c.fade_speed = 0;
+				} else {
+					c.alpha = uint8_t(alpha);
+				}
+			}
+		}
+	} else if (c.effect == 0xC7 && !town_.frozen) {
+		c.fade_delay = 0;
+		c.fade_speed = -0x80;
+	}
+	const uint8_t old = c.frame;
+	const uint8_t f = anim_step(c);
+	if (f != old && c.effect == 0x50) {
+		c.frame_due = (c.frame_due - now_) * 9 / (uint32_t(wind_strength_) + 8) + now_;
+	}
+	if (f < old && c.effect < 0x80 && c.seq == 2) {
+		return false;
+	}
+	c.frame = f;
 	return true;
 }
 
@@ -3129,6 +3314,7 @@ void TownLife::life_tick() {
 
 void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& view) {
 	now_ = now;
+	raw_elapsed_ = elapsed;
 	elapsed_ = std::min<uint32_t>(elapsed, 1000);
 	view_ = view;
 	// 0x5984E0: the official comes out (the town's [0x76C] & 2, his path, no siege), facing where he will read.
@@ -3156,7 +3342,9 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 		creatures_.push_back(std::move(c));
 	}
 	life_tick();
+	spawn_waves();
 	spawn_fish();
+	spawn_floes();
 	for (size_t i = 0; i < creatures_.size();) {
 		Creature& c = creatures_[i];
 		const bool stays = c.mode == 3 ? perform(c)
@@ -3169,6 +3357,7 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 			: c.mode == 10            ? fisher_walk(c)
 			: c.mode == 11            ? true
 			: c.mode == 12            ? pennant_wave(c)
+			: c.mode == 13            ? water_effect_step(c)
 			: c.mode != 0             ? road_walk(c)
 									  : walk(c);
 		if (stays) {

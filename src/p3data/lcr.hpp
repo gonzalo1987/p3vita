@@ -71,6 +71,9 @@ struct LcrAnim {
 	uint16_t id = 0;
 	uint16_t kind = 0;  // The class: 0x0D a ship's look, 0x12 an effect...
 	uint32_t key = 0;  // 0xFFFF00FF: its images' magenta is transparent; 0xFF000000: black; 0: their own alpha.
+	// The head's u32 at 0x0C (the look's [+0x4], 0x558770): an effect's size among the looks of its number, which its
+	// start asks by (0x57A150: the waves' welle_c 1, welle_b 2, welle_a 3; the ice floes' the same).
+	uint32_t variant = 0;
 	uint32_t fps = 0;  // Frames per second (0: one frame).
 	uint32_t speed = 0;  // The head's u32 at 0x10 (the look's [+0xC]): a walker's speed, 140 the town's people.
 	// The six words after the head: for an effect, [1, the number the game asks it by with its class, 1, 0,

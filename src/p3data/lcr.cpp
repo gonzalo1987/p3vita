@@ -77,6 +77,7 @@ bool parse_lcr(const uint8_t* data, size_t size, LcrAnim& out, std::string* erro
 	std::memcpy(&out.id, data + 2, 2);
 	std::memcpy(&out.kind, data + 4, 2);
 	std::memcpy(&out.key, data + 8, 4);
+	std::memcpy(&out.variant, data + 0xC, 4);
 	uint32_t directions = 0;
 	std::memcpy(&directions, data + 0x14, 4);
 	std::memcpy(&out.speed, data + 0x10, 4);
