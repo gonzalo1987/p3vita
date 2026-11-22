@@ -1530,6 +1530,7 @@ bool fn_4e9564(SaveGame& save, uint16_t event) {
 			--b.pending;
 		} else {
 			const uint16_t index = *link;
+			save.building_fallen(town, b.x, b.y);  // (0x4E98CB: the view's 0x599040.)
 			*link = b.next;
 			b.next = 0xFFFF;
 			construction_detail::fn_521240(save, int(town), index);

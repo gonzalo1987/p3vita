@@ -5,6 +5,8 @@
 #include <cstring>
 #include <map>
 
+#include "p3data/town_tick/internal.hpp"
+
 namespace p3::data {
 
 namespace {
@@ -105,6 +107,8 @@ constexpr uint32_t kTileChapel = 0x69;
 constexpr uint32_t kTileLighthouse = 0x15;
 constexpr uint32_t kTileCrane = 0x16;
 constexpr uint32_t kTileMarketStall = 0x06;
+constexpr uint32_t kTileRoadEdge = 0x17;  // strasse_rand*: a paved street's edges (its second parameter their kind)
+constexpr uint32_t kTileTree = 0x14;
 
 // Banderas de la ciudad que activan objetos fijos.
 constexpr uint32_t kFlagMarketStalls = 0x100;
@@ -116,6 +120,7 @@ struct Placed {
 	int y;
 	const TileDef* tile;
 	uint8_t owner = kNoBuildingOwner;  // The record's owner (kRivalOwner: the rival kontor), for the owners' map.
+	uint16_t site = kNoSite;  // Where its building site's progress is read (CellBuildings::sites).
 };
 
 // Tiles por tipo, en el orden por bytes de sus nombres: cuando varios encajan,
@@ -226,9 +231,10 @@ std::vector<FootprintCell> footprint(int x, int y, int cols, int rows) {
 	return cells;
 }
 
-// (`town` null: a pirate nest's, without a church or a statue.)
-void building_objects(const BuildingRecord& record, const SavedTown* town, int region, int merchant_count,
-	const TileIndex& index, std::vector<Placed>& out, size_t& missing) {
+// (`town` null: a pirate nest's, without a church or a statue. `site`: the record's index, kNoSite for a nest's;
+// `burning`: in the town's burning list [0x76A].)
+void building_objects(const BuildingRecord& record, uint16_t site, const SavedTown* town, int region,
+	int merchant_count, const TileIndex& index, std::vector<Placed>& out, size_t& missing, bool burning = false) {
 	if (record.type >= sizeof(kBuildingTileType)) {
 		missing++;
 		return;
@@ -241,8 +247,10 @@ void building_objects(const BuildingRecord& record, const SavedTown* town, int r
 	case kTilePoorHouse:
 	case kTileMiddleHouse:
 	case kTileRichHouse: {
-		// Variante (las tres de cada clase) y orientación; las casas en obras usan la 0.
-		const uint32_t variant = record.pending ? 0 : uint32_t(record.type - 0x15) % 3;
+		// Variante (las tres de cada clase) y orientación; las casas en obras usan la 0. Burning, its own while its
+		// life [+0x6] is above 44, then the 0 (0x54E5E0: the view's call with 44 or less makes it the variant 0).
+		const uint32_t own = uint32_t(record.type - 0x15) % 3;
+		const uint32_t variant = burning ? (record.pending > 0x2C ? own : 0) : record.pending ? 0 : own;
 		tile = index.find_regional(tile_type, [&](const auto& p) {
 			return p.size() >= 4 && p[1] == variant && p[2] == param;
 		}, region, 3);
@@ -267,7 +275,7 @@ void building_objects(const BuildingRecord& record, const SavedTown* town, int r
 				return p.size() >= 4 && p[1] == piece && p[2] == param;
 			}, region, 3);
 			if (part) {
-				out.push_back({x, y, part, record.owner});
+				out.push_back({x, y, part, record.owner, site});
 			} else {
 				missing++;
 			}
@@ -311,7 +319,7 @@ void building_objects(const BuildingRecord& record, const SavedTown* town, int r
 	}
 
 	if (tile) {
-		out.push_back({record.x, record.y, tile, record.owner});
+		out.push_back({record.x, record.y, tile, record.owner, site});
 	} else {
 		missing++;
 	}
@@ -388,7 +396,7 @@ void kontor_objects(const TownFixedPoints& f, const TownMap& map, const TileInde
 	if (kontors.player_variant >= 0 && in_map(map, f.sites[2], f.sites[3])) {
 		const uint32_t variant = uint32_t(kontors.player_variant);
 		if (const TileDef* tile = index.find(0x2C, [&](const auto& p) { return has(p, 1, variant); })) {
-			out.push_back({f.sites[2], f.sites[3], tile});
+			out.push_back({f.sites[2], f.sites[3], tile, kNoBuildingOwner, kKontorSite});  // (Its works: his office's.)
 		}
 	}
 	if (kontors.rival && in_map(map, f.sites[4], f.sites[5])) {
@@ -398,7 +406,8 @@ void kontor_objects(const TownFixedPoints& f, const TownMap& map, const TileInde
 	}
 }
 
-void put_placed(const TileSet& tiles, const std::vector<Placed>& placed, TownMap& town, std::vector<uint8_t>* owners);
+void put_placed(const TileSet& tiles, const std::vector<Placed>& placed, TownMap& town, CellBuildings* cells);
+void pave_built_streets(const SavedTown& saved, const TileSet& tiles, TownMap& town, int dx, int dy);
 
 }  // namespace
 
@@ -466,15 +475,22 @@ std::vector<int> load_town_regions(const CprArchive& archive) {
 }
 
 size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int region, const TileSet& tiles,
-	const TownMap* editor, TownMap& town, const KontorView* kontors, std::vector<uint8_t>* owners,
+	const TownMap* editor, TownMap& town, const KontorView* kontors, CellBuildings* cells,
 	const std::vector<uint16_t>& office_heads, int dx, int dy) {
 	const TileIndex index(tiles);
 	std::vector<Placed> placed;
 	size_t missing = 0;
 
 	// Las listas que dibuja el juego, siguiendo el campo `next` de cada registro.
+	std::vector<bool> burning(saved.records.size(), false);
+	size_t walked = 0;
+	for (size_t i = saved.memory.u16(kBurningListHead); i < saved.records.size() && walked < kMaxListWalk;
+		 i = saved.records[i].next, ++walked) {
+		burning[i] = true;
+	}
 	walk_drawn_records(saved, office_heads, [&](const BuildingRecord& record) {
-		building_objects(record, &saved, region, merchant_count, index, placed, missing);
+		const size_t k = size_t(&record - saved.records.data());
+		building_objects(record, uint16_t(k), &saved, region, merchant_count, index, placed, missing, burning[k]);
 	});
 	fixed_objects(saved, current_fixed_points(saved.memory), town, index, editor, tiles, placed, dx, dy);
 	if (kontors) {
@@ -484,25 +500,28 @@ size_t place_saved_buildings(const SavedTown& saved, int merchant_count, int reg
 		p.x += dx;
 		p.y += dy;
 	}
-	put_placed(tiles, placed, town, owners);
+	put_placed(tiles, placed, town, cells);
+	pave_built_streets(saved, tiles, town, dx, dy);
 	return missing;
 }
 
 namespace {
 
-// What place_saved_buildings and place_nest_buildings have to place, put on the map: the natural objects it
-// covers taken away whole, each cell to the last one placed on it.
-void put_placed(const TileSet& tiles, const std::vector<Placed>& placed, TownMap& town, std::vector<uint8_t>* owners) {
-	// Objetos naturales del mapa (árboles, rocas...), agrupados por huella desde
-	// su celda delantera, para poder quitarlos enteros si un edificio los pisa.
-	const size_t cells = size_t(town.width) * size_t(town.height);
+// Objetos naturales del mapa (árboles, rocas...), agrupados por huella desde
+// su celda delantera, para poder quitarlos enteros si un edificio los pisa:
+// each cell's group (−1 none) and each group's cells.
+struct NaturalGroups {
+	std::vector<int> owner;
+	std::vector<std::vector<size_t>> cells;
+};
+NaturalGroups natural_groups(const TileSet& tiles, const TownMap& town) {
+	NaturalGroups g;
 	auto at = [&](int x, int y) { return size_t(y) * size_t(town.width) + size_t(x); };
-	std::vector<int> natural_owner(cells, -1);
-	std::vector<std::vector<size_t>> natural_cells;
+	g.owner.assign(size_t(town.width) * size_t(town.height), -1);
 	for (int y = town.height - 1; y >= 0; --y) {
 		for (int x = 0; x < town.width; ++x) {
 			const TownCell& cell = town.objects[at(x, y)];
-			if (cell.tile == 0 || natural_owner[at(x, y)] >= 0) {
+			if (cell.tile == 0 || g.owner[at(x, y)] >= 0) {
 				continue;
 			}
 			std::vector<size_t> group = {at(x, y)};
@@ -512,17 +531,28 @@ void put_placed(const TileSet& tiles, const std::vector<Placed>& placed, TownMap
 				group.clear();
 				for (const FootprintCell& c : footprint(x, y, it->second.cols, it->second.rows)) {
 					if (in_map(town, c.x, c.y) && town.objects[at(c.x, c.y)].tile == cell.tile &&
-						natural_owner[at(c.x, c.y)] < 0) {
+						g.owner[at(c.x, c.y)] < 0) {
 						group.push_back(at(c.x, c.y));
 					}
 				}
 			}
 			for (const size_t c : group) {
-				natural_owner[c] = int(natural_cells.size());
+				g.owner[c] = int(g.cells.size());
 			}
-			natural_cells.push_back(std::move(group));
+			g.cells.push_back(std::move(group));
 		}
 	}
+	return g;
+}
+
+// What place_saved_buildings and place_nest_buildings have to place, put on the map: the natural objects it
+// covers taken away whole, each cell to the last one placed on it.
+void put_placed(const TileSet& tiles, const std::vector<Placed>& placed, TownMap& town, CellBuildings* out) {
+	const size_t cells = size_t(town.width) * size_t(town.height);
+	auto at = [&](int x, int y) { return size_t(y) * size_t(town.width) + size_t(x); };
+	const NaturalGroups naturals = natural_groups(tiles, town);
+	const std::vector<int>& natural_owner = naturals.owner;
+	const std::vector<std::vector<size_t>>& natural_cells = naturals.cells;
 
 	// Cada celda se queda con el último objeto colocado que la pisa.
 	std::vector<int> layer_owner(cells, -1);
@@ -542,15 +572,93 @@ void put_placed(const TileSet& tiles, const std::vector<Placed>& placed, TownMap
 			layer_owner[at(c.x, c.y)] = int(i);
 		}
 	}
-	if (owners) {
-		owners->assign(cells, kNoBuildingOwner);
+	if (out) {
+		out->owners.assign(cells, kNoBuildingOwner);
+		out->sites.assign(cells, kNoSite);
 	}
 	for (size_t i = 0; i < placed.size(); ++i) {
 		for (const FootprintCell& c : footprint(placed[i].x, placed[i].y, placed[i].tile->cols, placed[i].tile->rows)) {
 			if (in_map(town, c.x, c.y) && layer_owner[at(c.x, c.y)] == int(i)) {
 				town.objects[at(c.x, c.y)] = {placed[i].tile->id, c.slice};
-				if (owners) {
-					(*owners)[at(c.x, c.y)] = placed[i].owner;
+				if (out) {
+					out->owners[at(c.x, c.y)] = placed[i].owner;
+					out->sites[at(c.x, c.y)] = placed[i].site;
+				}
+			}
+		}
+	}
+}
+
+// The town's built streets (0x5218A3, the end of 0x521580), after its buildings: each cell 0x81 of its grid (a street
+// the town has paved: 0x4FB580; its [x · height + y], from the last column and row back) gets a road's edge (.let
+// type 0x17) through 0x590680: 0x5928A0 picks of the class's tiles (by number, 0x586EB0) sorted by their second
+// parameter (their [+0x40], 0x582E90; the swaps of 0x5898A9) one of the first kind's (0), the cell's (x + 1) · y + x
+// modulo their count; 0x58DB40 puts it in the ground (0x58DF80, 0x58E180) and, unless the ground there was already a
+// road's edge or of class 0x10, takes away the tree standing on it (0x58DC81: a whole tree, 0x58DF80 on the objects).
+// `dx`, `dy` as place_saved_buildings's.
+void pave_built_streets(const SavedTown& saved, const TileSet& tiles, TownMap& town, int dx, int dy) {
+	const int32_t width = saved.memory.s32(0x7A8);
+	const int32_t height = saved.memory.s32(0x7AC);
+	if (width <= 0 || height <= 0 || saved.grid.size() < size_t(width) * size_t(height)) {
+		return;
+	}
+	std::vector<const TileDef*> edges;
+	for (const auto& [id, tile] : tiles) {
+		if (tile.type == kTileRoadEdge) {
+			edges.push_back(&tile);
+		}
+	}
+	std::sort(edges.begin(), edges.end(), [](const TileDef* a, const TileDef* b) { return a->id < b->id; });
+	auto kind = [](const TileDef* t) { return t->params.size() >= 2 ? uint8_t(t->params[1]) : uint8_t(0); };
+	for (size_t i = 0; i < edges.size(); ++i) {
+		for (size_t j = i + 1; j < edges.size(); ++j) {
+			if (kind(edges[i]) > kind(edges[j])) {
+				std::swap(edges[i], edges[j]);
+			}
+		}
+	}
+	size_t first_kind = 0;
+	while (first_kind < edges.size() && kind(edges[first_kind]) == 0) {
+		++first_kind;
+	}
+	if (first_kind == 0) {
+		return;
+	}
+	auto at = [&](int x, int y) { return size_t(y) * size_t(town.width) + size_t(x); };
+	NaturalGroups naturals;
+	bool grouped = false;
+	for (int32_t x = width - 1; x >= 0; --x) {
+		for (int32_t y = height - 1; y >= 0; --y) {
+			if (saved.grid[size_t(x) * size_t(height) + size_t(y)] != 0x81) {
+				continue;
+			}
+			const int vx = x + dx;
+			const int vy = y + dy;
+			if (!in_map(town, vx, vy)) {
+				continue;
+			}
+			const uint32_t pick = (uint32_t(x + 1) * uint32_t(y) + uint32_t(x)) % uint32_t(first_kind);
+			TownCell& ground = town.ground[at(vx, vy)];
+			const auto old = tiles.find(ground.tile);
+			const uint32_t old_type = old != tiles.end() ? old->second.type : 0;
+			ground = {edges[pick]->id, 0};
+			if (old_type == 0x10 || old_type == kTileRoadEdge) {
+				continue;
+			}
+			const TownCell& object = town.objects[at(vx, vy)];
+			const auto tree = tiles.find(object.tile);
+			if (object.tile == 0 || tree == tiles.end() || tree->second.type != kTileTree) {
+				continue;
+			}
+			if (!grouped) {
+				naturals = natural_groups(tiles, town);
+				grouped = true;
+			}
+			const int group = naturals.owner[at(vx, vy)];
+			if (group >= 0) {
+				for (const size_t c : naturals.cells[size_t(group)]) {
+					town.objects[c] = TownCell();
+					naturals.owner[c] = -1;
 				}
 			}
 		}
@@ -560,27 +668,34 @@ void put_placed(const TileSet& tiles, const std::vector<Placed>& placed, TownMap
 }  // namespace
 
 size_t place_nest_buildings(const PirateNest& nest, uint32_t count, int region, const TileSet& tiles,
-	TownMap& town, std::vector<uint8_t>* owners, int dx, int dy) {
+	TownMap& town, CellBuildings* cells, int dx, int dy, const std::vector<bool>* kept, std::vector<bool>* drawn) {
 	const TileIndex index(tiles);
 	std::vector<Placed> placed;
 	size_t missing = 0;
+	std::vector<bool> now(nest.pool.size(), false);
 	walk_nest_entries(nest, count, [&](const GameMemory<8>& e) {
-		if (e.u8(0x6) >= 0xC8) {
+		const size_t k = size_t(&e - nest.pool.data());
+		const bool burning = e.u8(0x6) >= 0xC8 && e.u8(0x6) < 0xFA && kept && k < kept->size() && (*kept)[k];
+		if (e.u8(0x6) >= 0xC8 && !burning) {
 			return;  // Fallen (0x515BB0): not drawn.
 		}
+		now[k] = true;
 		BuildingRecord record;
 		record.x = e.u8(0x0);
 		record.y = e.u8(0x1);
 		record.type = e.u8(0x3);
 		record.param = e.u8(0x7);
 		record.owner = kRivalOwner;  // Not a merchant's.
-		building_objects(record, nullptr, region, 0, index, placed, missing);
+		building_objects(record, uint16_t(kNestSite | k), nullptr, region, 0, index, placed, missing);
 	});
+	if (drawn) {
+		*drawn = std::move(now);
+	}
 	for (Placed& p : placed) {
 		p.x += dx;
 		p.y += dy;
 	}
-	put_placed(tiles, placed, town, owners);
+	put_placed(tiles, placed, town, cells);
 	return missing;
 }
 
@@ -625,13 +740,15 @@ uint64_t drawn_buildings_key(const SavedTown& saved, const std::vector<uint16_t>
 	add(uint32_t(saved.town_id()), 1);
 	add(saved.flags(), 4);
 	add(saved.church_level(), 1);
+	add(saved.memory.u16(0x790), 2);  // The built streets' count: more when the town paves some (0x5244F0).
 	for (size_t o = kFixedPoints; o < kFixedPoints + sizeof(TownFixedPoints); ++o) {
 		add(saved.memory.u8(o), 1);
 	}
 	// The records in drawing order (which list each one is in doesn't change the drawing).
 	walk_drawn_records(saved, office_heads, [&](const BuildingRecord& r) {
 		add(uint32_t(r.x) | uint32_t(r.y) << 8 | uint32_t(r.owner) << 16 | uint32_t(r.type) << 24, 4);
-		add(uint32_t(r.pending != 0) | uint32_t(r.param) << 8, 2);
+		// (Its works or fire, and a burning house's life above 44: its variant, building_objects.)
+		add(uint32_t(r.pending != 0) | uint32_t(r.pending > 0x2C) << 1 | uint32_t(r.param) << 8, 2);
 	});
 	return key;
 }
@@ -661,11 +778,11 @@ bool load_battle_town_template(const CprArchive& archive, const SavedTown& saved
 }
 
 void place_saved_town(const SavedTownTemplate& base, const SaveGame& save, size_t index, const TileSet& tiles,
-	TownMap& out, std::vector<uint8_t>* owners, int dx, int dy) {
+	TownMap& out, CellBuildings* cells, int dx, int dy) {
 	out = base.town;
 	const KontorView kontors = kontor_view(save, index);
 	place_saved_buildings(save.towns[index], save.merchant_count, base.region, tiles,
-		base.has_editor ? &base.editor : nullptr, out, &kontors, owners, office_list_heads(save, index), dx, dy);
+		base.has_editor ? &base.editor : nullptr, out, &kontors, cells, office_list_heads(save, index), dx, dy);
 }
 
 uint64_t drawn_buildings_key(const SaveGame& save, size_t index) {
@@ -687,6 +804,73 @@ bool load_saved_town(const CprArchive& archive, const SaveGame& save, size_t ind
 		return false;
 	}
 	place_saved_town(base, save, index, tiles, out);
+	return true;
+}
+
+bool site_progress(const SaveGame& save, size_t town, uint16_t source, SiteProgress& out) {
+	if (town >= save.towns.size()) {
+		// A pirate nest's (0xFE − k) tower burning (0x515C00 → 0x5891C0 at 0x515CB6): its [+0x6] 0xC9 up to 0xF9, the
+		// fire's life 0xFA less it, of 50; at 0xFA it leaves the pool's list.
+		const size_t k = size_t(0xFE - town);
+		if (town > 0xFE || k >= save.pirate_nests.size() || k >= save.pirates.size() || !save.pirates[k] ||
+			!(source & kNestSite) || source == kNoSite || source == kKontorSite) {
+			return false;
+		}
+		const size_t entry = source & ~kNestSite;
+		bool found = false;
+		walk_nest_entries(save.pirate_nests[k], save.pirates[k]->u16(0x8), [&](const GameMemory<8>& e) {
+			if (size_t(&e - save.pirate_nests[k].pool.data()) != entry) {
+				return;
+			}
+			const uint8_t fallen = e.u8(0x6);
+			if (fallen > 0xC8 && fallen < 0xFA) {
+				out = {uint16_t(0xFA - fallen), 50, true, true};
+				found = true;
+			}
+		});
+		return found;
+	}
+	const SavedTown& saved = save.towns[town];
+	if (source == kKontorSite) {
+		// 0x5216B5..0x52175A: the town's office ([0x784] along [+0x2CA]) of the player, its works' days left.
+		constexpr uint16_t kKontorDays = 0x28;  // 0x672A48
+		const uint16_t offices = save.globals.u16(global::kWorldOfficeCount);
+		size_t walked = 0;
+		for (uint32_t i = saved.memory.u16(0x784); i < offices && i < save.offices.size() && walked < kMaxListWalk;
+			 i = save.offices[i].memory.u16(0x2CA), ++walked) {
+			const auto& o = save.offices[i].memory;
+			if (save.player >= 0 && o.u16(0x2C4) == uint16_t(save.player)) {
+				const uint16_t left = o.u16(0x2F0);
+				if (left == 0) {
+					return false;
+				}
+				out = {uint16_t(kKontorDays - left), kKontorDays, false, true};
+				return true;
+			}
+		}
+		return false;
+	}
+	if (source >= saved.records.size()) {
+		return false;
+	}
+	const BuildingRecord& r = saved.records[source];
+	if (r.type == 0x28) {
+		return false;
+	}
+	// 0x521465: in the burning list (0x52596A's walk of [0x76A] along [+0x4]) its fire, else its works.
+	size_t walked = 0;
+	for (size_t i = saved.memory.u16(kBurningListHead); i < saved.records.size() && walked < kMaxListWalk;
+		 i = saved.records[i].next, ++walked) {
+		if (i == source) {
+			out = {r.pending, 50, true, r.pending != 0};
+			return true;
+		}
+	}
+	if (r.pending == 0) {
+		return false;
+	}
+	const uint8_t days = tick::construction_detail::build_days(r.type);
+	out = {uint16_t(days - r.pending), days, false, true};
 	return true;
 }
 

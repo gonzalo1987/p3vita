@@ -76,6 +76,18 @@ struct TileDef {
 		return nullptr;
 	}
 
+	// Its building site (the variant of kind 1, [data+0x18]: the last one 0x5513F0 reads), or null: the scaffolding,
+	// timber frame or foundations a building under works is drawn with (0x550770).
+	const TileVariant* site() const {
+		const TileVariant* found = nullptr;
+		for (const TileVariant& v : variants) {
+			if (v.kind == 1 && !v.frames.empty()) {
+				found = &v;
+			}
+		}
+		return found;
+	}
+
 	// Its atlas for a snow index (0x552090 on [data+0x1C], filled by 0x5513F0: the kind 2 variant at the index of its
 	// first parameter, the last one read there; the index 0 its own atlas, 0x551250): the one at `index`, else the
 	// nearest below it that it has; null for its own atlas.

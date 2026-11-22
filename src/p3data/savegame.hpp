@@ -507,6 +507,29 @@ struct SaveGame {
 		bool interface = false;
 	};
 	std::vector<TickerLine> player_ticker;
+	// Not saved: the buildings the world took away whose view the game would tell (0x599040, called by the simulation
+	// when its town view shows the place: a fire's end 0x4E1DBF, 0x4E1E20 (a tower turned ruin), 0x4E20CF, 0x4E98CB; a
+	// pirate nest's tower 0x515CE9; the walls closed 0x5231A4.. (a gate's three cells), 0x5232DA; a merchant's building
+	// demolished 0x53D0BC), since the viewer last looked (take_fallen_buildings): the place (a town's index, or a nest's
+	// 0xFE − k) and the cell (the town's, or the nest's map's); the viewer smokes it as the game's view does. At most 64
+	// kept (the oldest dropped): nothing reads them without a viewer.
+	struct FallenBuilding {
+		uint8_t place = 0;
+		uint8_t x = 0;
+		uint8_t y = 0;
+	};
+	std::vector<FallenBuilding> fallen_buildings;
+	void building_fallen(uint32_t place, uint32_t x, uint32_t y) {
+		if (fallen_buildings.size() >= 64) {
+			fallen_buildings.erase(fallen_buildings.begin());
+		}
+		fallen_buildings.push_back({uint8_t(place), uint8_t(x), uint8_t(y)});
+	}
+	std::vector<FallenBuilding> take_fallen_buildings() {
+		std::vector<FallenBuilding> taken;
+		taken.swap(fallen_buildings);
+		return taken;
+	}
 	// Not saved: the game's window of the event videos (*0x6CC7E8: 0x469380, then 0x469AF0) opened by the world for
 	// the local player since the viewer last looked (take_event_windows, mail.hpp): the event's code, its two u16 and
 	// its two strings (raw, Windows-1252). With the game's videos off (the settings' VIDEOS, [+0x26] 0, the options

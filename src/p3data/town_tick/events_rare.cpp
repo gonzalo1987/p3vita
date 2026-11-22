@@ -809,8 +809,10 @@ bool fn_4e1b84(SaveGame& save, uint16_t event) {
 		b.pending = 0;
 		b.next = t.u16(0x768);
 		t.u16(0x768) = e.u16(0x8);
+		save.building_fallen(town, b.x, b.y);  // (0x4E1E20: the view's 0x599040, then the ruin placed.)
 		return false;
 	}
+	save.building_fallen(town, e.u16(0xC), e.u16(0xE));  // (0x4E1DBF: the view's 0x599040.)
 	b.next = 0xFFFF;
 	construction_detail::fn_521240(save, int(town), e.u16(0x8));
 	return false;
@@ -891,6 +893,7 @@ bool fn_4e1e54(SaveGame& save, uint16_t event) {
 	if (!link) {
 		return false;  // Checked with the oracle: scenario siege_fire_branches (saves 1, 3, 5, 7).
 	}
+	save.building_fallen(town, e.u16(0xC), e.u16(0xE));  // (0x4E20CF: the view's 0x599040.)
 	*link = st.records[index].next;
 	st.records[index].next = 0xFFFF;
 	construction_detail::fn_521240(save, int(town), index);

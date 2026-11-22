@@ -2177,6 +2177,42 @@ void TownLife::footprint(uint8_t effect, int x, int y, uint8_t dir) {
 	made_.push_back(std::move(c));  // (Made during the creatures' step: added after it.)
 }
 
+void TownLife::smoke(int32_t x16, int32_t y16, uint16_t rise, uint8_t dir, uint8_t alpha, int32_t move_x,
+	int32_t move_y) {
+	if (!smoke_look || smoke_look->directions.empty()) {
+		return;
+	}
+	Creature c;
+	c.cls = 0x12;
+	c.mode = 17;
+	c.look = smoke_look;
+	c.id = new_id();
+	c.x = x16;
+	c.y = int32_t(uint32_t(y16) + 0x300000u);  // (0x57A2C4.)
+	c.dir = dir;
+	c.effect = 0x24;
+	c.rise = rise;
+	c.alpha = alpha;
+	c.move_x = move_x;
+	c.move_y = move_y;
+	c.frame = anim_start(c, 2);
+	(void)rand();  // 0x57A1F2: its look among those of its number (one: rand() % 1).
+	place(c);
+	made_.push_back(std::move(c));
+}
+
+// The effects among the strips (0x57A8C0, as the water's: the smoke has no fade), moved by their motion · the frame's
+// ms (0x57AA36), their cells again.
+bool TownLife::strip_effect_step(Creature& c) {
+	if (!water_effect_step(c)) {
+		return false;
+	}
+	c.x = int32_t(uint32_t(c.x) + uint32_t(c.move_x) * raw_elapsed_);
+	c.y = int32_t(uint32_t(c.y) + uint32_t(c.move_y) * raw_elapsed_);
+	place(c);
+	return true;
+}
+
 // Within 200 pixels of the view (0x55D0E3.., 0x57C451..).
 bool TownLife::near_view(const Creature& c) const {
 	return c.px() + 200 >= view_[0] && c.py() + 200 >= view_[1] && c.px() <= view_[0] + view_[2] + 200 &&
@@ -3993,6 +4029,7 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 			: c.mode == 14            ? flake_fall(c)
 			: c.mode == 15            ? drop_fall(c)
 			: c.mode == 16            ? fog_drift(c)
+			: c.mode == 17            ? strip_effect_step(c)
 			: c.mode != 0             ? road_walk(c)
 									  : walk(c);
 		if (stays) {

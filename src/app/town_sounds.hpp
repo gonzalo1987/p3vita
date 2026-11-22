@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace p3::app {
@@ -48,6 +49,16 @@ public:
 	// 0x59A090: a ship of the port coming in (`leaving` false) or going out, at its point: ShipInOutSoundList + 0
 	// or 1 in one of the slots 14..16, unless that one has just started there (the port's ships, the living town).
 	void ship_in_out(int x, int y, bool leaving, uint32_t now);
+	// 0x5993AA..0x599415 (0x599040, a building taken away by its fire's end, the living town): with the town view on the
+	// screen, a variant at random of BuildingCollapseList (9000, [+0xC994]) at the cell's point, by its volume and side
+	// (0x594B50), not looped and not kept (0x443150), unless it is too far to be heard.
+	void collapse(int x, int y);
+	// 0x5990A2..0x59912F (0x599040's first part): the buildings' slots taken by a fire's sound (the type 0) at one of
+	// the fallen building's cells (`points`: their points as offered), stopped, released and cleared.
+	void stop_fire(const std::vector<std::pair<int, int>>& points);
+	// 0x58B82E ([+0x56C], the view's periodic 0x58B7F0): whether the town shown has something burning (its list [0x76A]
+	// not empty); the buildings' offers of another type then leave the last of their 4 slots to the fire's (0x594C67).
+	void set_burning(bool burning) { burning_ = burning; }
 	// 0x5958CD, 0x598AB9: a ship of the port chosen by a touch: ShipSelSoundID ([+0xCBA4]) at the effects' volume
 	// (−1), in the middle (0x40), not looped, not kept.
 	void ship_selected();
@@ -98,6 +109,7 @@ private:
 	int strikes_ = 0;
 	int bell_channel_ = -1;
 	uint32_t seed_ = 1;
+	bool burning_ = false;  // set_burning
 };
 
 }  // namespace p3::app

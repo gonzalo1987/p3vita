@@ -2000,6 +2000,14 @@ void fn_522c70(SaveGame& save, int town, uint32_t owner, uint32_t kind) {
 				fn_4facd0(save, town, rec.x, rec.y, rec.type, rec.param);
 				done.push_back(rec.x);
 				done.push_back(rec.y);
+				// (0x5231A4..0x5231F1: the view's 0x599040 at it and, for a gate's 0x34, 0x37 and 0x35, 0x38, at its
+				// two other pieces, up the wall to the right or to the left.)
+				save.building_fallen(uint32_t(town), rec.x, rec.y);
+				if (rec.type == 0x34 || rec.type == 0x37 || rec.type == 0x35 || rec.type == 0x38) {
+					const int dx = rec.type == 0x34 || rec.type == 0x37 ? 1 : -1;
+					save.building_fallen(uint32_t(town), uint32_t(rec.x + dx), uint32_t(rec.y - 2));
+					save.building_fallen(uint32_t(town), uint32_t(rec.x + 2 * dx), uint32_t(rec.y - 4));
+				}
 				*l = rec.next;
 				rec.next = t.u16(0x760);
 				t.u16(0x760) = i;
@@ -2019,6 +2027,7 @@ void fn_522c70(SaveGame& save, int town, uint32_t owner, uint32_t kind) {
 			BuildingRecord& rec = recs[i];
 			if (side < rec.owner && rec.type >= 0x32) {
 				fn_4facd0(save, town, rec.x, rec.y, rec.type, rec.param);
+				save.building_fallen(uint32_t(town), rec.x, rec.y);  // (0x5232DA: the view's 0x599040.)
 				*l = rec.next;
 				rec.next = t.u16(0x760);
 				t.u16(0x760) = i;
@@ -2343,6 +2352,7 @@ void fn_53cf50(SaveGame& save, const uint8_t* operation) {
 	r.next = 0xFFFF;
 	fn_4facd0(save, int(town), x, y, r.type, r.param);
 	fn_4ff2d0(save, office);
+	save.building_fallen(town, x, y);  // (0x53D0BC: the view's 0x599040.)
 	if (st.records[record].type < 0x15) {
 		// 0x4F8D70 (on the merchant, the town's byte): his reputation there − 1.
 		MerchantMemory& m = save.merchants[merchant].memory;

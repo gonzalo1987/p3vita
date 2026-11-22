@@ -600,6 +600,58 @@ void test_weather() {
 
 // A tile's animations (tile_anims.hpp): a loop of 2 parameters runs while active and hides when not; one of 5 waits
 // and starts its pages at random; one of 7 goes from place to place; one of 9 repeats its page.
+// The smoke (the effect 0x24, 0x57A150): made after the creatures' next step, its creature 48 pixels lower, its alpha
+// and motion as given (a damaged ship's, 0x620CC1), played once and gone.
+void test_smoke() {
+	LcrAnim smoke;
+	smoke.kind = 0x12;
+	smoke.fps = 10;
+	smoke.params = {0x24};
+	smoke.sequences = {{0, 3, 2}};
+	LcrFrame frame;
+	frame.body = {0, 0, 32, 32};
+	frame.anchor_x = 16;
+	frame.anchor_y = 32;
+	frame.strips = {{0, 0, 32, 32}};
+	smoke.directions = {std::vector<LcrFrame>(4, frame)};
+	LifeMap map;
+	map.width = 40;
+	map.height = 80;
+	map.ground.assign(40 * 80, 0x0E);
+	map.object.assign(40 * 80, -1);
+	map.grid.assign(40 * 80, 0);
+	LifeTown town;
+	town.index = 0;
+	TownLife life;
+	life.smoke_look = &smoke;
+	life.start(map, town, 1000);
+	life.smoke(300 << 16, 200 << 16, 30, 0x20, 197, 1 << 16, 0);
+	auto find_smoke = [&]() -> const Creature* {
+		for (const Creature& c : life.creatures()) {
+			if (c.mode == 17) {
+				return &c;
+			}
+		}
+		return nullptr;
+	};
+	check(!find_smoke(), "made after the creatures' step");
+	life.step(1010, 10, {0, 0, 640, 480});
+	const Creature* c = find_smoke();
+	check(c && c->cls == 0x12 && c->effect == 0x24 && c->rise == 30 && c->alpha == 197 && c->py() == 248 &&
+			c->cells.size() == 1,
+		"a puff: 48 pixels lower, its rise and alpha, its strip's cell");
+	const int x0 = c ? c->px() : 0;
+	life.step(1110, 100, {0, 0, 640, 480});
+	c = find_smoke();
+	check(c && c->px() - x0 == 100, "moved a pixel a ms");
+	uint32_t now = 1110;
+	for (int k = 0; k < 10 && find_smoke(); ++k) {
+		now += 100;
+		life.step(now, 100, {0, 0, 640, 480});
+	}
+	check(!find_smoke(), "its four frames played once: gone");
+}
+
 void test_tile_anims() {
 	auto variant = [](uint32_t kind, std::vector<uint32_t> params, int frames) {
 		TileVariant v;
@@ -1053,6 +1105,7 @@ int main() {
 	test_birds();
 	test_fish();
 	test_weather();
+	test_smoke();
 	test_tile_anims();
 	test_fisherman();
 	test_port_scene();

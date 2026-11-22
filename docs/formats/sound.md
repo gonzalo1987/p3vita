@@ -172,7 +172,9 @@ taken) are the buildings' (0..3) and the ships' (14..16); 0x59C010 forgets them 
   +0x38 0x550370 does nothing) never sound, nor fire's list (type 0) but from a burning building's step (0x550A70 →
   0x5506D0 → 0x550CC9). Nothing without the list, with the type waiting ([+0xC7EC]), with the 4 taken or farther than
   GebaeudeMinDist from the view's middle; else (type ≠ 0) a slot offered and not started: the nearer of the two;
-  else a free slot; else a not started farther one. ([+0x56C] with a type ≠ 0 leaves one slot: the fire's.)
+  else a free slot; else a not started farther one. ([+0x56C] with a type ≠ 0 leaves one slot: the fire's. [+0x56C] is
+  set by the view's periodic 0x58B82E: the town shown's burning list [0x76A] not empty; `TownSounds::set_burning`,
+  the living town's part 8.)
 - **0x594770** (each frame): each offered slot not started: a variant (`rand() % count` of the world's rand() with
   more than one), at **0x594B50**'s volume (`127 − (dx² + dy²) · 127 / VolDist²`, 0 past it) and side (`dx · 64 /
   PanDist + 64`, 0..127) from the view's middle: 0x443150 (world, reserved). Its end: its length, and for a type ≠ 0
@@ -186,7 +188,10 @@ taken) are the buildings' (0..3) and the ships' (14..16); 0x59C010 forgets them 
   12001; at minute 0 once an hour ([+0xCB9C]) the strikes ([+0xCB94]) its hour (13..23: − 12; midnight none), then
   12000 (reserved, [+0xCB90]) each time the last one is done, one strike less.
 - The ship chosen in the port (0x5958CD, 0x598AB9: after 0x495190): ShipSelSoundID (1000) at 127; a building fallen
-  (0x599040 from the simulation: 0x4E1DBF.., the fires and the sales) its list 9000 by its place; the 4 special slots
+  (0x599040 from the simulation: 0x4E1DBF.., the fires and the sales) its list 9000 by its place (0x5993AA: with the
+  town view on the screen, a variant `rand() % count`, 0x594B50's volume and side at the cell's point, 0x443150 not
+  kept; `TownSounds::collapse`, the living town's part 8; before it, 0x5990A2: the slots of a fire's sound on that
+  building's cells stopped and cleared, `TownSounds::stop_fire`); the 4 special slots
   [+0xCB30] (0x594AA0, by an id; 0x594A20 stops it) only for the battles' (0x595B31).
 
 ## The music director (0x42C080)

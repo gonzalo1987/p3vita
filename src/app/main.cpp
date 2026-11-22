@@ -18,6 +18,7 @@
 #include <deque>
 #include <dirent.h>
 #include <map>
+#include <utility>
 #include <memory>
 #include <optional>
 #include <string>
@@ -33,6 +34,8 @@
 #include "p3data/image.hpp"
 #include "p3data/letter_picture.hpp"
 #include "p3data/letters.hpp"
+#include "p3data/battle/battle_math.hpp"
+#include "p3data/building_site.hpp"
 #include "p3data/building_windows.hpp"
 #include "p3data/campaigns.hpp"
 #include "p3data/guild_window.hpp"
@@ -571,6 +574,15 @@ public:
 	const TileSet& tiles() const { return tiles_; }
 	// The cells' sounds offered in the last step of the view's animations.
 	const std::vector<SoundOffer>& sound_offers() const { return sound_offers_; }
+	// The buildings fallen since the sounds last took them (buildings_fallen), at their points: their sound
+	// (TownSounds::collapse); and their cells' points, where a fire's sound stops (TownSounds::stop_fire).
+	std::vector<SDL_Point> take_collapses() { return std::exchange(collapses_, {}); }
+	std::vector<std::pair<int, int>> take_fire_stops() { return std::exchange(fire_stops_, {}); }
+	// Whether the town shown has something burning (its [0x76A] list not empty: 0x58B82E, [view+0x56C]).
+	static bool town_burning(const SaveGame& save, size_t index) {
+		return index < save.towns.size() &&
+			save.towns[index].memory.u16(0x76A) < save.towns[index].memory.u16(0x776);
+	}
 
 	// The season to show (the town's [0x9BC]: 0 from May, 1 from October, 6 from March, the ice's level 2..5 in winter;
 	// 0x58B7F0 → 0x591EC0, only with P2.CFG's [OPTIONS] WEATHER ≥ 1, the game's 3: always here): the tiles' snowy
@@ -612,14 +624,19 @@ public:
 		}
 	}
 
-	// The town's drawing; `owners`, each cell's building owner (place_saved_town; empty for a template map).
-	void show(const TownMap& town, std::vector<uint8_t> owners = {}) {
+	// The town's drawing; `cells`, each cell's building (place_saved_town; empty for a template map): its owner, and
+	// its building site's source, a site of sites_ for each (the objects of a record share it: a gate's three pieces,
+	// 0x582820).
+	void show(const TownMap& town, CellBuildings cells = {}) {
 		items_.clear();
 		shadows_.clear();
 		width_ = 0;
 		height_ = 0;
 		first_object_ = 0;
-		owners_ = std::move(owners);
+		owners_ = std::move(cells.owners);
+		const std::vector<ViewSite> before = std::move(sites_);
+		sites_.clear();
+		std::map<uint16_t, int> site_index;
 		const std::vector<TownSprite> sprites = build_town_sprites(town, tiles_);
 		items_.reserve(sprites.size());
 		for (const TownSprite& sprite : sprites) {
@@ -629,9 +646,32 @@ public:
 			}
 			const size_t cell = size_t(sprite.cell_y) * size_t(town.width) + size_t(sprite.cell_x);
 			const uint8_t owner = sprite.object && cell < owners_.size() ? owners_[cell] : kNoBuildingOwner;
+			const uint16_t source = sprite.object && cell < cells.sites.size() ? cells.sites[cell] : kNoSite;
+			int site = -1;
+			if (source != kNoSite) {
+				const auto [it, made] = site_index.emplace(source, int(sites_.size()));
+				if (made) {
+					ViewSite v;
+					v.source = source;
+					v.type = sprite.tile->type;
+					v.col = sprite.cell_x;
+					v.row = sprite.cell_y;
+					// The same building drawn again (its works or fire begun or ended, a house's variant changed): its
+					// object kept, as the game's view does (it makes again only what is new: 0x590680, 0x599040).
+					for (const ViewSite& old : before) {
+						if (old.source == v.source && old.type == v.type && old.col == v.col && old.row == v.row) {
+							v.state = old.state;
+							v.works = old.works;
+							break;
+						}
+					}
+					sites_.push_back(v);
+				}
+				site = it->second;
+			}
 			items_.push_back({texture, {sprite.src_x, sprite.src_y, sprite.width, sprite.height},
 				{sprite.dst_x, sprite.dst_y, sprite.width, sprite.height}, sprite.tile, owner, sprite.cell_y,
-				!sprite.object && sprite.tile->type == kWaterTileType, sprite.cell_x, sprite.slice});
+				!sprite.object && sprite.tile->type == kWaterTileType, sprite.cell_x, sprite.slice, site});
 			const TileDef* tile = sprite.tile;
 			const TileVariant* shadow = sprite.object ? tile->shadow() : nullptr;
 			const size_t k = size_t(std::max(1, tile->cols) - 1);
@@ -738,6 +778,7 @@ public:
 		}
 		port_.frame(save, now);
 		sync_port_figures(save);
+		port_smoke(save, now, wind_dir, wind_strength);
 		follow_port_choice(now);  // 0x56DB10, 0x56CE40 (0x58CBFD..).
 		step_sparkles(now);  // 0x598D00 (0x58CC13).
 		// The tiles' own animations of the cells in view (0x592000), «active» by the town's merchants' businesses.
@@ -768,13 +809,18 @@ public:
 			const Item& item = items_[i];
 			const int facility = item.tile ? p3::data::tile_anim_facility(item.tile->type) : -2;
 			const bool offers = item.tile && !all_active && p3::app::tile_offers_sound(item.tile->type);
-			if (facility == -2 && !offers) {
+			const bool site = site_shown(item) != nullptr;
+			if (facility == -2 && !offers && !site) {
 				continue;
 			}
 			const int x = cell_screen_x(item.col, item.row);
 			const int y = cell_screen_y(item.row);
 			if (x + kTileWidth < camera_x || x > camera_x + width || y + kTileHeight < camera_y ||
 				y > camera_y + kScreenHeight) {
+				continue;
+			}
+			if (site) {
+				step_site(item, now, x, y);  // (Its step 0x550A70 says «a site», and nothing more: 0x552C2F.)
 				continue;
 			}
 			p3::data::TileAnimTown town;
@@ -846,6 +892,43 @@ public:
 		life_town_ = -1;
 	}
 
+	// 0x620CC1 (a scene ship's figure moved, each frame, with the animations on): a ship whose hull is 2/3 of its most or
+	// less smokes: past its time ([+0x14C]), a puff (the effect 0x24, facing 0x20) a rand() % 20 − 10 about its place
+	// (y first, then x; y · 22 / 34 as its figure's, 16.16), its alpha 25 + 345 · hull / most (the more damaged the
+	// darker), moving with the port's wind (the strength · its direction's sine and minus its cosine, by 1000 rounded:
+	// 16.16 a ms; the scene's [+0x670], [+0x671]); the next one 200 + 1200 · hull / most ms on; before its time, that
+	// brought nearer when it is less.
+	void port_smoke(const SaveGame& save, uint32_t now, uint8_t wind_dir, uint8_t wind_strength) {
+		for (uint16_t slot : port_.order()) {
+			p3::data::PortShip& p = port_.at(slot);
+			if (p.figure == 0 || p.ship >= save.ships.size()) {
+				continue;
+			}
+			const uint32_t hull = uint32_t(save.ships[p.ship].health());
+			const uint32_t most = uint32_t(save.ships[p.ship].max_health());
+			if (most == 0 || hull * 3 > most * 2) {
+				continue;
+			}
+			const uint32_t wait = hull * 1200 / most + 200;
+			if (now <= p.smoke_due) {
+				if (now + wait < p.smoke_due) {
+					p.smoke_due = now + wait;
+				}
+				continue;
+			}
+			anim_rand_ = anim_rand_ * 214013u + 2531011u;
+			const int ry = int((anim_rand_ >> 16) & 0x7FFF);
+			anim_rand_ = anim_rand_ * 214013u + 2531011u;
+			const int rx = int((anim_rand_ >> 16) & 0x7FFF);
+			const int32_t y16 = int32_t((int64_t(ry % 20 + p.place.y - 10) << 16) / 34 * 22);
+			const int32_t x16 = int32_t(uint32_t(rx % 20 + p.place.x - 10) << 16);
+			const int32_t s = wind_strength;
+			const int32_t move_x = (p3::data::battle_math::sine(wind_dir) * s + 500) / 1000;
+			const int32_t move_y = (500 - p3::data::battle_math::cosine(wind_dir) * s) / 1000;
+			life_.smoke(x16, y16, 0, 0x20, uint8_t(hull * 345 / most + 0x19), move_x, move_y);
+			p.smoke_due = now + wait;
+		}
+	}
 	// The port's scene's ships as figures of the living town (class 0x0D: 0x620BD0 makes one, 0x56B140 moves it): the
 	// look of their type with their sails (the damage 0 of the class's 80, as the port shows them), at x and y · 22 / 34
 	// in the town's pixels, the heading kept while within 2 of their place's.
@@ -1048,12 +1131,22 @@ public:
 				const bool flake = name.compare(0, 12, "schneeflocke") == 0;
 				const bool fog = name.compare(0, 5, "nebel") == 0;
 				const bool feet = name.compare(0, 9, "fussspur_") == 0;
-				if (!wave && !flake && !fog && !feet && name.compare(0, 11, "eisscholle_") != 0) {
+				const bool smoke = name.compare(0, 10, "brandrauch") == 0;
+				if (!wave && !flake && !fog && !feet && !smoke && name.compare(0, 11, "eisscholle_") != 0) {
 					continue;
 				}
 				std::vector<uint8_t> data;
 				auto look = std::make_unique<p3::data::LcrAnim>();
 				const CprEntry* file = archive_.find("iso/lcr/" + name);
+				if (smoke) {
+					// The smoke (class 0x12 numbered 0x24: a fire's, a building fallen's).
+					if (file && archive_.read(*file, data) && p3::data::parse_lcr(data.data(), data.size(), *look) &&
+						look->kind == 0x12 && !look->params.empty() && look->params[0] == 0x24 && !look->directions.empty()) {
+						life_.smoke_look = look.get();
+						wave_store_.push_back(std::move(look));
+					}
+					continue;
+				}
 				if (feet) {
 					// The footprints (class 0x12 numbered 0xC3..0xC6; the walls' 0xA0, 0xA1 are a siege's).
 					if (file && archive_.read(*file, data) && p3::data::parse_lcr(data.data(), data.size(), *look) &&
@@ -1409,7 +1502,8 @@ public:
 	}
 	// The towers' flags (0x590741 → 0x580DA0: each tower placed in the view, tile class 0x29, a pennant of class 0x1E,
 	// waving in the view's wind as the ships', at its picture's point of its .let's kind 3 variant (0x580FB0 keeps it in
-	// *0x6E2F30 by the tower's type; none: its picture's corner); kept in the list *0x6E31E0). Made again with the town.
+	// *0x6E2F30 by the tower's type; none: its picture's corner); kept in the list *0x6E31E0). Made again with the town;
+	// none for a tower under works (0x581090: update_tower_flags).
 	void sync_tower_flags() {
 		for (const TowerFlag& t : tower_flags_) {
 			life_.remove_creature(t.pennant);
@@ -1421,21 +1515,96 @@ public:
 		}
 		for (size_t i = first_object_; i < items_.size(); ++i) {
 			const Item& item = items_[i];
-			if (!item.tile || item.tile->type != kTowerTileType || item.slice != 0 || item.tile->slices.empty()) {
+			if (tower_flag_item(item) && (item.site < 0 || !sites_[size_t(item.site)].works)) {
+				add_tower_flag(item);
+			}
+		}
+	}
+	// The buildings' sites of the save's town `index` as the engine leaves them (site_progress: what 0x521310 gives
+	// when the town is shown, then each day of the works; a fire's waits for the living town's part 8): each one's
+	// change (0x550550; a site without works now as one whose works ended, `cur` = `total`), and the towers' flags.
+	// With a fire, its call with the life left (0x550550 with fire: the flames), but not for a burning record with nothing
+	// left when the town is just shown (0x521310 asks [+0x6] ≠ 0: the building as it stands until it is taken away);
+	// a fire's site whose record is no more read so keeps what it shows (the game makes no call; the record's going
+	// draws the town again).
+	void update_sites(const SaveGame& save, size_t index) {
+		load_flames();
+		if (int(index) != sites_town_) {
+			sites_town_ = int(index);
+			for (ViewSite& v : sites_) {
+				v.state = p3::data::BuildingSite();  // (Another town: its objects all new.)
+				v.works = false;
+			}
+		}
+		for (size_t k = 0; k < sites_.size(); ++k) {
+			ViewSite& v = sites_[k];
+			SiteProgress p;
+			bool called = false;
+			if (site_progress(save, index, v.source, p)) {
+				if (!p.fire) {
+					if (v.state.flames[2] >= -1) {
+						v.state = p3::data::BuildingSite();  // (Works where a fire was: a new building, a new object.)
+					}
+					p3::data::change_site(v.state, p.cur, p.total);
+					called = true;
+				} else if (p.at_load || v.state.active()) {
+					p3::data::change_site_fire(v.state, p.cur, p.total, flame_tables_, anim_rand_);
+					called = true;
+				}
+			} else if (v.state.flames[2] < -1) {
+				p3::data::change_site(v.state, v.state.total, v.state.total);  // (Its works ended: 0x520068's call.)
+				p = {v.state.total, v.state.total, false, true};
+				called = true;
+			}
+			const bool building = p.cur < p.total;
+			if (called && building != v.works) {
+				v.works = building;
+				update_tower_flags(int(k));
+			}
+		}
+	}
+	// Under a battle at the town (its map; a pirate nest's): its burning buildings' flames stepped for the cells in view
+	// as the view's step does (0x550A70); their smoke and sound wait for the living town in a battle's view (the viewer
+	// steps no creatures there: the siege, part 9).
+	void step_battle_sites(uint32_t now, int camera_x, int camera_y, int width) {
+		load_flames();
+		for (size_t i = first_object_; i < items_.size(); ++i) {
+			const Item& item = items_[i];
+			if (!site_shown(item)) {
 				continue;
 			}
-			int fx = 0;
-			int fy = 0;
-			for (const TileVariant& v : item.tile->variants) {
-				if (v.kind == 3) {
-					fx = v.x;
-					fy = v.y;
+			const int x = cell_screen_x(item.col, item.row);
+			const int y = cell_screen_y(item.row);
+			if (x + kTileWidth < camera_x || x > camera_x + width || y + kTileHeight < camera_y ||
+				y > camera_y + kScreenHeight) {
+				continue;
+			}
+			step_site(item, now, x, y, false);
+		}
+	}
+	// The fire's flames (0x54E310: the house `.let`s' variants of kinds 3 and 4 into 0x6E11E8 and 0x6E1200, the last
+	// read; only `armenhausb_s1` has them): their pictures and their counts, loop and time.
+	void load_flames() {
+		if (flames_loaded_) {
+			return;
+		}
+		flames_loaded_ = true;
+		std::vector<const TileDef*> houses;
+		for (const auto& [id, tile] : tiles_) {
+			if (tile.type == 0x2A || tile.type == 0x50 || tile.type == 0x51) {
+				houses.push_back(&tile);
+			}
+		}
+		std::sort(houses.begin(), houses.end(), [](const TileDef* a, const TileDef* b) { return a->id < b->id; });
+		for (const TileDef* tile : houses) {
+			for (const TileVariant& v : tile->variants) {
+				if ((v.kind == 3 || v.kind == 4) && !v.frames.empty() && v.params.size() >= 2) {
+					const size_t k = v.kind - 3;
+					flame_pages_[k] = &v;
+					flame_tables_[k] = {int(v.frames.size()), int(v.params[1]), v.params[0]};
 				}
 			}
-			const TileSlice& s = item.tile->slices[0];
-			const int x = item.dst.x - s.x + fx;
-			const int y = item.dst.y - s.y + fy;
-			tower_flags_.push_back({life_.add_pennant(pennant_look_.get(), 0, x << 16, y << 16), item.tile, fx, fy});		}
+		}
 	}
 	// 0x580D10 → 0x568F60 for each tower (0x588A82..0x588AA3, after the ships' pennants, in [view+0x59C]'s colour; again
 	// over the weather's tint at the buildings' colour's alpha, 0x588B5B): its pennant's frame, then, with the wind
@@ -1716,11 +1885,15 @@ public:
 		draw_shadows(screen);  // Over the ground, under the objects.
 	}
 	size_t first_object() const { return first_object_; }
-	void draw_objects(size_t& cursor, int last_row, int camera_x, int camera_y) const {
+	void draw_objects(size_t& cursor, int last_row, int camera_x, int camera_y) {
 		const SDL_Rect screen = {camera_x, camera_y, kScreenWidth, kScreenHeight};
 		for (; cursor < items_.size() && items_[cursor].row <= last_row; ++cursor) {
 			const Item& item = items_[cursor];
 			if (!SDL_HasIntersection(&item.dst, &screen)) {
+				continue;
+			}
+			if (const p3::data::BuildingSite* site = site_shown(item)) {
+				draw_site(item, *site, camera_x, camera_y, false);
 				continue;
 			}
 			const SDL_Rect dst = {item.dst.x - camera_x, item.dst.y - camera_y, item.dst.w, item.dst.h};
@@ -1788,6 +1961,10 @@ public:
 			dst.x -= camera_x;
 			dst.y -= camera_y;
 			const bool rival = rival_shaded(item, player);
+			if (const p3::data::BuildingSite* site = site_shown(item)) {
+				draw_site(item, *site, camera_x, camera_y, rival);  // (Without its animations: 0x552D07.)
+				continue;
+			}
 			if (rival) {
 				SDL_SetTextureColorMod(item.texture, kRivalGrey, kRivalGrey, kRivalGrey);
 				SDL_SetTextureAlphaMod(item.texture, kRivalAlpha);
@@ -1959,7 +2136,342 @@ private:
 		bool water = false;  // A ground tile of the water (.let type 0xE).
 		int col = 0;  // That cell's column.
 		int slice = 0;  // Its tile's slice on that cell.
+		int site = -1;  // Its building's site in sites_ (CellBuildings::sites), or −1.
 	};
+	// A tower's object that has its flag (its slice 0).
+	static bool tower_flag_item(const Item& item) {
+		return item.tile && item.tile->type == kTowerTileType && item.slice == 0 && !item.tile->slices.empty();
+	}
+	void add_tower_flag(const Item& item) {
+		int fx = 0;
+		int fy = 0;
+		for (const TileVariant& v : item.tile->variants) {
+			if (v.kind == 3) {
+				fx = v.x;
+				fy = v.y;
+			}
+		}
+		const TileSlice& s = item.tile->slices[0];
+		const int x = item.dst.x - s.x + fx;
+		const int y = item.dst.y - s.y + fy;
+		tower_flags_.push_back(
+			{life_.add_pennant(pennant_look_.get(), 0, x << 16, y << 16), item.tile, fx, fy, item.site});
+	}
+	// The tower's +0x68 (0x581090) after its site's change: while the engine's days are below its works' (a tower being
+	// built) its flag taken away (0x5810DC), else made when it has none (0x5811B3, the way 0x580DA0 makes it). Only
+	// over the flags of the town shown (sync_tower_flags makes them again for a town drawn again).
+	void update_tower_flags(int site) {
+		if (life_town_ < 0 || life_serial_ != show_serial_ || !pennant_look_) {
+			return;
+		}
+		if (sites_[size_t(site)].works) {
+			for (auto it = tower_flags_.begin(); it != tower_flags_.end();) {
+				if (it->site == site) {
+					life_.remove_creature(it->pennant);
+					it = tower_flags_.erase(it);
+				} else {
+					++it;
+				}
+			}
+			return;
+		}
+		for (size_t i = first_object_; i < items_.size(); ++i) {
+			const Item& item = items_[i];
+			if (item.site == site && tower_flag_item(item) &&
+				std::none_of(tower_flags_.begin(), tower_flags_.end(), [&](const TowerFlag& t) { return t.site == site; })) {
+				add_tower_flag(item);
+			}
+		}
+	}
+
+	// A tile's site picture (TileDef::site), or for a house (0x2A, 0x50, 0x51) without one, its variant 0's of the same
+	// orientation and region, as 0x54E5E0 makes it when it catches fire (0x54E607..: the same frames, points and picture,
+	// its y moved by the two pictures' heights' difference: the bottoms aligned); null without either.
+	const TileVariant* site_picture(const TileDef* tile) {
+		if (const TileVariant* own = tile->site()) {
+			return own;
+		}
+		if (tile->type != 0x2A && tile->type != 0x50 && tile->type != 0x51) {
+			return nullptr;
+		}
+		auto found = borrowed_sites_.find(tile);
+		if (found == borrowed_sites_.end()) {
+			std::unique_ptr<TileVariant> borrowed;
+			if (tile->params.size() >= 4) {
+				for (const auto& [id, base] : tiles_) {
+					const TileVariant* site = base.site();
+					if (site && base.type == tile->type && base.params.size() >= 4 && base.params[1] == 0 &&
+						base.params[2] == tile->params[2] && base.params[3] == tile->params[3]) {
+						borrowed = std::make_unique<TileVariant>(*site);
+						borrowed->y += tile->height - base.height;
+						break;
+					}
+				}
+			}
+			found = borrowed_sites_.emplace(tile, std::move(borrowed)).first;
+		}
+		return found->second.get();
+	}
+	// The site an object is drawn as (0x552C90 → 0x550770: its building's site while active, when its tile has a site's
+	// picture; the shipyard's, the tavern's and the lighthouse's own drawings never ask), or null.
+	const p3::data::BuildingSite* site_shown(const Item& item) {
+		if (item.site < 0 || !item.tile || !site_picture(item.tile) || item.slice < 0 ||
+			size_t(item.slice) >= item.tile->slices.size()) {
+			return nullptr;
+		}
+		const uint32_t type = item.tile->type;
+		if (type == 0x01 || type == 0x02 || type == 0x15) {
+			return nullptr;
+		}
+		const p3::data::BuildingSite& site = sites_[size_t(item.site)].state;
+		return site.active() ? &site : nullptr;
+	}
+	// 0x550770 (from 0x552C90 instead of the slice and its animations): a building under works over its slice: its
+	// site's picture (the .let's kind 1 variant's first frame at its place, within the slice's columns: 0x585550),
+	// then the building's own rows from the bottom as far as its works have come (site_rows: sgl_DrawBitmapRect), the
+	// rows above fading out a row at a time (site_fade, from the constant colour's alpha), all in the constant colour:
+	// white, or for a rival's with the house shown 0xA0A5A5A5 (0x552CE5).
+	// With a fire (its flames −1 or more) the site's picture charred, at 0x282828 with the colour's alpha (0x550800), and
+	// burnt out (−1) nothing more; burning, the building's rows as far as its life goes (its share of 50: the building
+	// going down from the top as it burns), then its flames (draw_flames).
+	void draw_site(const Item& item, const p3::data::BuildingSite& site, int camera_x, int camera_y, bool rival) {
+		const TileVariant* picture = site_picture(item.tile);
+		if (site.flames[2] >= -1) {
+			draw_anim_frames(item, {{picture, &picture->frames[0]}}, camera_x, camera_y, false, 0x282828,
+				rival ? kRivalAlpha : 255);
+			if (site.flames[2] == -1) {
+				return;
+			}
+		} else {
+			draw_anim_frames(item, {{picture, &picture->frames[0]}}, camera_x, camera_y, rival);
+		}
+		draw_site_rows(item, site, camera_x, camera_y, rival);
+		if (site.flames[2] >= 0) {
+			draw_flames(item, site, camera_x, camera_y, rival);
+		}
+	}
+	// 0x5509CF: a burning site's four flames at its picture's points (each packed: y the low word, x the high one; 0 none),
+	// the first two of 0x6E11E8, the last two of 0x6E1200 (load_flames), each placed its first frame's width / 2 left of
+	// and its height above the point (in 16 bits, 0x5509E5..), its frame within the slice's columns (0x585550), added:
+	// the flames' pictures are loaded with 0x3000000 (0x54E330 → 0x54F290 → sgl_LoadMemoryTexture), taken as the blend
+	// mode 3 the waves have (each channel added; opaque pictures on black), in the constant colour (the house's grey).
+	void draw_flames(const Item& item, const p3::data::BuildingSite& site, int camera_x, int camera_y, bool rival) {
+		const TileVariant* picture = site_picture(item.tile);
+		for (size_t k = 0; k < 4 && k < picture->params.size(); ++k) {
+			const uint32_t point = picture->params[k];
+			const TileVariant* page = flame_pages_[k < 2 ? 0 : 1];
+			const int frame = site.flames[k];
+			if (point == 0 || !page || frame < 0 || size_t(frame) >= page->frames.size()) {
+				continue;
+			}
+			const TileSlice& first = page->frames[0];
+			const int x = int16_t(picture->x - (first.width >> 1) + int(point >> 16));
+			const int y = int16_t(picture->y - first.height + int(point & 0xFFFF));
+			draw_frame_clipped(item, atlas_texture(page->atlas), page->frames[size_t(frame)], x, y, camera_x, camera_y,
+				rival, 0xFFFFFF, 255, SDL_BLENDMODE_ADD);
+		}
+	}
+	// 0x550A70 for a burning site (from its building's step, for its cells in view, `x`, `y` the cell's): its flames
+	// a frame on when their time is past (step_site_flames), a puff of smoke for some (0x550B65: with P2.cfg's DETAILS 2
+	// or more, the game's 3) at its flame's base, a random quarter of its loop's first frame's width across and a tenth of
+	// its height up, rising the frame's height / 4 (its number's third byte, 0x550C4A); and each time its sound, the type
+	// 0 at the cell (0x550CC9 → 0x594C00: the sound's fire).
+	void step_site(const Item& item, uint32_t now, int x, int y, bool living = true) {
+		ViewSite& v = sites_[size_t(item.site)];
+		const TileVariant* picture = site_picture(item.tile);
+		std::array<bool, 4> with_point{};
+		for (size_t k = 0; k < 4; ++k) {
+			with_point[k] = k < picture->params.size() && picture->params[k] != 0;
+		}
+		std::vector<p3::data::FlameSmoke> smoke;
+		if (!p3::data::step_site_flames(v.state, now, flame_tables_, with_point, anim_rand_, smoke) || !living) {
+			return;
+		}
+		const TileSlice& s = item.tile->slices[size_t(item.slice)];
+		for (const p3::data::FlameSmoke& puff : smoke) {
+			const TileVariant* page = flame_pages_[puff.flame < 2 ? 0 : 1];
+			const p3::data::FlameTable& t = p3::data::flame_table(flame_tables_, puff.flame);
+			if (!page || t.loop < 0 || size_t(t.loop) >= page->frames.size()) {
+				continue;
+			}
+			const TileSlice& f = page->frames[size_t(t.loop)];
+			const uint32_t point = picture->params[size_t(puff.flame)];
+			const int quarter = f.width >> 2;
+			const int tenth = f.height / 10;
+			const int px = item.dst.x - s.x + picture->x + int(point >> 16) + (quarter ? puff.r % quarter : 0) -
+				(f.width >> 3);
+			const int py = item.dst.y - s.y + picture->y + int(point & 0xFFFF) - (tenth ? puff.r % tenth : 0);
+			life_.smoke(px << 16, py << 16, uint16_t((f.height & 0xFC) >> 2), 0x20);
+		}
+		sound_offers_.push_back({x, y, 0});
+	}
+public:
+	// The buildings the world took away on the place `place` shown (SaveGame::building_fallen, taken before the town is
+	// drawn again: these objects are still the view's), their cells moved by `origin` (a battle map's, 0x599040's first
+	// lines): the object standing on each one's cell (0x599144: none, nothing) taken away (collapse).
+	void buildings_fallen(const std::vector<SaveGame::FallenBuilding>& fallen, int place, SDL_Point origin) {
+		for (const SaveGame::FallenBuilding& f : fallen) {
+			if (int(f.place) != place) {
+				continue;
+			}
+			const int x = int(f.x) + origin.x;
+			const int y = int(f.y) + origin.y;
+			for (size_t i = first_object_; i < items_.size(); ++i) {
+				const Item& item = items_[i];
+				if (item.col == x && item.row == y && item.tile) {
+					collapse(x, y, item.tile->cols, item.tile->rows);
+					break;
+				}
+			}
+		}
+	}
+private:
+	// 0x599040 (a building taken away, its front cell (x, y), its tile cols by rows): over each cell of its footprint
+	// (rows of 0x58B740's steps 0x20, each of cols steps 0xE0), three tries of a point, a rand()'s remainders by the
+	// tile size, 34 and 21 (iso.ini's TileSize, [view+0x510], [+0x514]): where it falls in the cell's diamond (the
+	// DetectBitmap's key, load_detect: 0x58DA10 at it plus 1, 1), a puff of smoke there, the cell's box 22 pixels up
+	// (x from the cell's left, y from 11 · its row − 22: 0x5992BD, with the DownVector 17, 11); its sound at the cell's
+	// point (0x58DAC0: 17 left of the cell, 11 below its top; collapses_). Only with the living town (its creatures).
+	void collapse(int x, int y, int cols, int rows) {
+		if (life_town_ < 0) {
+			return;
+		}
+		load_detect();
+		collapses_.push_back({cell_screen_x(x, y) - kTileWidth / 2, cell_screen_y(y) + kRowStep});
+		int row_x = x;
+		int row_y = y;
+		for (int r = 0; r < rows; ++r) {
+			int cx = row_x;
+			int cy = row_y;
+			for (int c = 0; c < cols; ++c) {
+				fire_stops_.emplace_back(cell_screen_x(cx, cy), cell_screen_y(cy));
+				if (cx >= 0 && cy >= 0 && cx < map_columns_ && cy < map_rows_) {
+					for (int k = 0; k < 3; ++k) {
+						anim_rand_ = anim_rand_ * 214013u + 2531011u;  // (The CRT's rand(), the view's own.)
+						const int rnd = int((anim_rand_ >> 16) & 0x7FFF);
+						const int px = rnd % kTileWidth;
+						const int py = rnd % kTileHeight;
+						const int mx = px + 1;
+						const int my = py + 1;
+						if (mx < detect_w_ && my < detect_h_ && detect_[size_t(my) * size_t(detect_w_) + size_t(mx)]) {
+							life_.smoke((cell_screen_x(cx, cy) + px) << 16, (cell_screen_y(cy) - 2 * kRowStep + py) << 16, 0,
+								0x20);
+						}
+					}
+				}
+				cx += (cy & 1) - 1;  // (0xE0.)
+				cy -= 1;
+			}
+			row_x += row_y & 1;  // (0x20.)
+			row_y -= 1;
+		}
+	}
+	// iso.ini's DetectBitmap (33: images/module_stadtkarte/detect.aim, 36 · 23, keyed 0xFF00FF): its key, the cell's
+	// diamond (its corners coloured by the neighbour they belong to).
+	void load_detect() {
+		if (detect_loaded_) {
+			return;
+		}
+		detect_loaded_ = true;
+		Image image;
+		if (decode_atlas("images/module_stadtkarte/detect.aim", image)) {
+			detect_w_ = image.width;
+			detect_h_ = image.height;
+			detect_.resize(size_t(image.width) * size_t(image.height));
+			for (size_t i = 0; i < detect_.size(); ++i) {
+				detect_[i] = image.rgba[i * 4 + 3] == 0;
+			}
+		}
+	}
+	// The building's own rows of a site (0x550860..0x5509B7): as far as its works (or its fire's life) have come, the
+	// rows above fading out.
+	void draw_site_rows(const Item& item, const p3::data::BuildingSite& site, int camera_x, int camera_y, bool rival) {
+		const TileSlice& s = item.tile->slices[size_t(item.slice)];
+		int rows = p3::data::site_rows(site, item.tile->height, s.y, s.height);
+		if (rows + 22 <= 0) {
+			return;  // (0x55086E.)
+		}
+		rows = std::min(rows, s.height);
+		const uint8_t grey = rival ? kRivalGrey : 255;
+		const uint8_t alpha = rival ? kRivalAlpha : 255;
+		SDL_SetTextureColorMod(item.texture, grey, grey, grey);
+		if (rows > 0) {
+			SDL_SetTextureAlphaMod(item.texture, alpha);
+			const SDL_Rect src = {item.src.x, item.src.y + s.height - rows, item.src.w, rows};
+			const SDL_Rect dst = {item.dst.x - camera_x, item.dst.y + s.height - rows - camera_y, item.dst.w, rows};
+			SDL_RenderCopy(renderer_, item.texture, &src, &dst);
+		}
+		// (0x55091B: a row up each time, from the slice's top no further; drawn only within the slice.)
+		int row = s.height - rows;
+		for (const uint8_t a : p3::data::site_fade(alpha)) {
+			if (--row < 0) {
+				break;
+			}
+			if (row < s.height) {
+				SDL_SetTextureAlphaMod(item.texture, a);
+				const SDL_Rect src = {item.src.x, item.src.y + row, item.src.w, 1};
+				const SDL_Rect dst = {item.dst.x - camera_x, item.dst.y + row - camera_y, item.dst.w, 1};
+				SDL_RenderCopy(renderer_, item.texture, &src, &dst);
+			}
+		}
+		SDL_SetTextureColorMod(item.texture, 255, 255, 255);
+		SDL_SetTextureAlphaMod(item.texture, 255);
+	}
+	// 0x550CE0, the fog pass's (from 0x552D90, the building having its fog map, `masked`: its picture through it): the
+	// site's picture through its own fog map (its picture's namesake in FogMaps, 0x551534: the `Geruest_*`, `*_BGeruest`,
+	// `* copy` ones; each of the 69 buildings with a site and a fog map has one for its site), then the building's rows
+	// as far as its works have come and the rows above fading out, through the building's fog map, all in the
+	// buildings' colour over the tint (`rgb`, `alpha`; a rival's with the house shown 0xA0A5A5A5); the fade from the
+	// colour's alpha / 5 · 4.
+	void draw_site_fog(const Item& item, const p3::data::BuildingSite& site, SDL_Texture* masked, const SDL_Rect& screen,
+		bool rival, uint32_t rgb, uint8_t alpha, int& budget) {
+		const TileVariant* picture = site_picture(item.tile);
+		auto found = site_fog_maps_.find(picture);
+		if (found == site_fog_maps_.end()) {
+			found = site_fog_maps_.emplace(picture, fog_map_path(picture->atlas)).first;
+		}
+		SDL_Texture* scaffold = found->second.empty() ? nullptr : masked_texture(picture->atlas, found->second, budget);
+		const bool fire = site.flames[2] >= -1;
+		if (scaffold && fire) {
+			// (0x550D65: charred, at 0x282828 with the colour's alpha; burnt out, nothing more.)
+			draw_anim_frames(item, {{picture, &picture->frames[0]}}, screen.x, screen.y, false, 0x282828,
+				rival ? kRivalAlpha : alpha, scaffold);
+		} else if (scaffold) {
+			draw_anim_frames(item, {{picture, &picture->frames[0]}}, screen.x, screen.y, rival, rgb, alpha, scaffold);
+		}
+		if (site.flames[2] == -1) {
+			return;
+		}
+		const TileSlice& s = item.tile->slices[size_t(item.slice)];
+		int rows = p3::data::site_rows(site, item.tile->height, s.y, s.height);
+		if (rows + 22 <= 0) {
+			return;  // (0x550DE3.)
+		}
+		rows = std::min(rows, s.height);
+		const uint32_t colour = rival ? uint32_t(kRivalGrey) * 0x010101u : rgb;
+		const uint8_t a = rival ? kRivalAlpha : alpha;
+		SDL_SetTextureColorMod(masked, uint8_t(colour >> 16), uint8_t(colour >> 8), uint8_t(colour));
+		if (rows > 0) {
+			SDL_SetTextureAlphaMod(masked, a);
+			const SDL_Rect src = {item.src.x, item.src.y + s.height - rows, item.src.w, rows};
+			const SDL_Rect dst = {item.dst.x - screen.x, item.dst.y + s.height - rows - screen.y, item.dst.w, rows};
+			SDL_RenderCopy(renderer_, masked, &src, &dst);
+		}
+		int row = s.height - rows;
+		for (const uint8_t fade : p3::data::site_fade(p3::data::site_fog_fade_alpha(a))) {
+			if (--row < 0) {
+				break;
+			}
+			if (row < s.height) {
+				SDL_SetTextureAlphaMod(masked, fade);
+				const SDL_Rect src = {item.src.x, item.src.y + row, item.src.w, 1};
+				const SDL_Rect dst = {item.dst.x - screen.x, item.dst.y + row - screen.y, item.dst.w, 1};
+				SDL_RenderCopy(renderer_, masked, &src, &dst);
+			}
+		}
+		SDL_SetTextureColorMod(masked, 255, 255, 255);
+		SDL_SetTextureAlphaMod(masked, 255);
+	}
 	// A tile's shadow in the town (0x591C50: after the ground and before the objects, 0x568CE0, a pass of shadows
 	// alone, row by row: one where a cell holds its object's slice cols − 1; 0x551F70 places it): the .let's shadow
 	// picture (its first frame, in its own atlas), in the town's pixels. The objects drawn after it cover it.
@@ -2263,11 +2775,36 @@ private:
 	std::unordered_map<const TileDef*, uint32_t> tile_colors_;  // Their average colours (RGBA32 words).
 	SDL_Texture* minimap_ = nullptr;
 	std::vector<uint8_t> owners_;  // Each cell's building owner (show()).
+	// A building's site in the view (the game's object at its tile objects' [+0x4]): where its progress is read
+	// (site_progress), its state (p3data/building_site.hpp), and whether the engine's last days were below its works'
+	// (a building being built: the towers' flags, 0x581090).
+	// Its first object's .let type and cell tell the same building when the town is drawn again (show: its state kept).
+	struct ViewSite {
+		uint16_t source = kNoSite;
+		p3::data::BuildingSite state;
+		bool works = false;
+		uint32_t type = 0;
+		int col = 0;
+		int row = 0;
+	};
+	std::vector<ViewSite> sites_;
+	int sites_town_ = -1;  // The save's town whose sites these are (update_sites).
+	std::vector<SDL_Point> collapses_;  // The buildings fallen (buildings_fallen), for their sound (collapses).
+	std::vector<std::pair<int, int>> fire_stops_;  // Their cells' points, whose fire sounds stop (0x5990A2).
+	std::vector<uint8_t> detect_;  // The DetectBitmap's key (1) by pixel (load_detect), detect_w_ by detect_h_.
+	int detect_w_ = 0;
+	int detect_h_ = 0;
+	bool detect_loaded_ = false;
+	p3::data::FlameTables flame_tables_{};  // load_flames
+	std::array<const TileVariant*, 2> flame_pages_{};
+	bool flames_loaded_ = false;
 	int map_columns_ = 0;
 	int map_rows_ = 0;
 	std::map<std::string, SDL_Texture*> atlases_;
 	// The fog pass's (the weather's tint): each tile's fog map (fog_map_of) and the atlases through them.
 	std::unordered_map<const TileDef*, std::string> fog_maps_;
+	std::unordered_map<const TileVariant*, std::string> site_fog_maps_;  // The sites' pictures' (0x551534).
+	std::unordered_map<const TileDef*, std::unique_ptr<TileVariant>> borrowed_sites_;  // site_picture
 	std::map<std::string, SDL_Texture*> masked_;
 	std::unordered_map<const TileDef*, SDL_Texture*> tile_textures_;
 	std::map<std::string, std::vector<const TileDef*>> places_by_atlas_;  // The tiles of kPlaces, by atlas.
@@ -2297,6 +2834,7 @@ private:
 		const TileDef* tile;  // Its tower's.
 		int fx;  // Its point in the tower's picture (the kind 3 variant's).
 		int fy;
+		int site;  // Its tower's site (Item::site).
 	};
 	std::vector<TowerFlag> tower_flags_;
 	uint32_t tower_colour_ = 0xFFFFFFFF;
@@ -2455,8 +2993,8 @@ private:
 			if (!f || c.cells.size() != f->strips.size()) {
 				continue;
 			}
-			const SDL_Rect body = {c.px() - (f->anchor_x - f->body.x), c.py() - (f->anchor_y - f->body.y), f->body.w,
-				f->body.h};
+			const SDL_Rect body = {c.px() - (f->anchor_x - f->body.x), c.py() - (f->anchor_y - f->body.y) - strip_lift(c),
+				f->body.w, f->body.h};
 			if (!SDL_HasIntersection(&body, &screen)) {
 				continue;
 			}
@@ -2476,8 +3014,22 @@ private:
 		}
 		const p3::data::LcrRect& r = f->strips[s.index];
 		const SDL_Rect src = {r.x, r.y, r.w, r.h};
-		const SDL_Rect dst = {c.px() + r.x - f->anchor_x - camera_x, c.py() + r.y - f->anchor_y - camera_y, r.w, r.h};
+		const SDL_Rect dst = {c.px() + r.x - f->anchor_x - camera_x, c.py() + r.y - f->anchor_y - strip_lift(c) - camera_y,
+			r.w, r.h};
+		// (0x579D66: the smoke with its [+0x30] below 0xFF in a grey that dark, opaque.)
+		const bool grey = c.mode == 17 && c.effect == 0x24 && c.alpha != 0xFF;
+		if (grey) {
+			SDL_SetTextureColorMod(texture, c.alpha, c.alpha, c.alpha);
+		}
 		SDL_RenderCopy(renderer_, texture, &src, &dst);
+		if (grey) {
+			SDL_SetTextureColorMod(texture, 255, 255, 255);
+		}
+	}
+	// How far up a creature among the strips is drawn: the smoke (the effect 0x24) 48 pixels, which its place has more
+	// (0x57A2C4, 0x579DC3), and its [+0x2E] (0x579D9F).
+	static int strip_lift(const p3::data::Creature& c) {
+		return c.mode == 17 ? (c.effect == 0x24 ? 48 : 0) + int(c.rise) : 0;
 	}
 
 	// The walkers' shadows, with the buildings' (draw_shadows): black at alpha 100. (The birds' theirs, after the
@@ -2538,45 +3090,59 @@ private:
 	}
 	// The frames over a slice (0x585550: each clipped to the slice's columns), in `rgb` at `alpha`.
 	void draw_anim_frames(const Item& item, const std::vector<p3::data::TileAnimFrame>& frames, int camera_x,
-		int camera_y, bool rival, uint32_t rgb = 0xFFFFFF, uint8_t alpha = 255) {
-		if (item.slice < 0 || size_t(item.slice) >= item.tile->slices.size()) {
+		int camera_y, bool rival, uint32_t rgb = 0xFFFFFF, uint8_t alpha = 255, SDL_Texture* picture = nullptr) {
+		for (const p3::data::TileAnimFrame& shown : frames) {
+			const TileVariant* page = shown.page;
+			SDL_Texture* texture = picture ? picture
+				: page->atlas.empty()      ? tile_texture(item.tile)
+										   : atlas_texture(page->atlas);
+			draw_frame_clipped(item, texture, *shown.frame, page->x, page->y, camera_x, camera_y, rival, rgb, alpha);
+		}
+	}
+	// A frame `f` of `texture` at (`x`, `y`) of the object's tile's picture, only its part within the slice's columns
+	// (0x585550), in `rgb` at `alpha` (a rival's with the house shown: the house's grey), with `blend`.
+	void draw_frame_clipped(const Item& item, SDL_Texture* texture, const TileSlice& f, int x_in_tile, int y_in_tile,
+		int camera_x, int camera_y, bool rival, uint32_t rgb = 0xFFFFFF, uint8_t alpha = 255,
+		SDL_BlendMode blend = SDL_BLENDMODE_BLEND) {
+		if (!texture || item.slice < 0 || size_t(item.slice) >= item.tile->slices.size()) {
 			return;
 		}
 		const TileSlice& s = item.tile->slices[size_t(item.slice)];
 		const int left = item.dst.x - s.x;
 		const int top = item.dst.y - s.y;
-		for (const p3::data::TileAnimFrame& shown : frames) {
-			const TileVariant* page = shown.page;
-			const TileSlice* f = shown.frame;
-			int x = left + page->x;
-			int src_x = f->x;
-			int w = f->width;
-			if (x + w <= item.dst.x || x >= item.dst.x + s.width) {
-				continue;
-			}
-			if (x < item.dst.x) {
-				src_x += item.dst.x - x;
-				w -= item.dst.x - x;
-				x = item.dst.x;
-			}
-			w = std::min(w, item.dst.x + s.width - x);
-			SDL_Texture* texture = page->atlas.empty() ? tile_texture(item.tile) : atlas_texture(page->atlas);
-			if (!texture || w <= 0) {
-				continue;
-			}
-			const SDL_Rect src = {src_x, f->y, w, f->height};
-			const SDL_Rect dst = {x - camera_x, top + page->y - camera_y, w, f->height};
-			if (rival) {
-				SDL_SetTextureColorMod(texture, kRivalGrey, kRivalGrey, kRivalGrey);
-				SDL_SetTextureAlphaMod(texture, kRivalAlpha);
-			} else {
-				SDL_SetTextureColorMod(texture, uint8_t(rgb >> 16), uint8_t(rgb >> 8), uint8_t(rgb));
-				SDL_SetTextureAlphaMod(texture, alpha);
-			}
-			SDL_RenderCopy(renderer_, texture, &src, &dst);
-			SDL_SetTextureColorMod(texture, 255, 255, 255);
-			SDL_SetTextureAlphaMod(texture, 255);
+		int x = left + x_in_tile;
+		int src_x = f.x;
+		int w = f.width;
+		if (x + w <= item.dst.x || x >= item.dst.x + s.width) {
+			return;
 		}
+		if (x < item.dst.x) {
+			src_x += item.dst.x - x;
+			w -= item.dst.x - x;
+			x = item.dst.x;
+		}
+		w = std::min(w, item.dst.x + s.width - x);
+		if (w <= 0) {
+			return;
+		}
+		const SDL_Rect src = {src_x, f.y, w, f.height};
+		const SDL_Rect dst = {x - camera_x, top + y_in_tile - camera_y, w, f.height};
+		if (rival) {
+			SDL_SetTextureColorMod(texture, kRivalGrey, kRivalGrey, kRivalGrey);
+			SDL_SetTextureAlphaMod(texture, blend == SDL_BLENDMODE_ADD ? 255 : kRivalAlpha);
+		} else {
+			SDL_SetTextureColorMod(texture, uint8_t(rgb >> 16), uint8_t(rgb >> 8), uint8_t(rgb));
+			SDL_SetTextureAlphaMod(texture, alpha);
+		}
+		if (blend != SDL_BLENDMODE_BLEND) {
+			SDL_SetTextureBlendMode(texture, blend);
+		}
+		SDL_RenderCopy(renderer_, texture, &src, &dst);
+		if (blend != SDL_BLENDMODE_BLEND) {
+			SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+		}
+		SDL_SetTextureColorMod(texture, 255, 255, 255);
+		SDL_SetTextureAlphaMod(texture, 255);
 	}
 
 	// The top bar's house (0x59A1E0 toggles [view+0x564]): the classes drawn by 0x552C90 (its fog pass 0x552D90) whose
@@ -2732,6 +3298,13 @@ private:
 			const std::string& map = fog_map_of(item.tile);
 			SDL_Texture* masked = map.empty() ? nullptr : masked_texture(season_atlas(item.tile), map, budget);
 			const bool rival = rival_shaded(item, player);
+			if (const p3::data::BuildingSite* site = site_shown(item)) {
+				// (0x552D90: nothing without the building's own fog map; else 0x550CE0 instead of the slice.)
+				if (masked) {
+					draw_site_fog(item, *site, masked, screen, rival, t.over, a, budget);
+				}
+				continue;
+			}
 			const SDL_Rect dst = {item.dst.x - screen.x, item.dst.y - screen.y, item.dst.w, item.dst.h};
 			auto picture = [&](uint32_t rgb, uint8_t alpha) {
 				if (!masked) {
@@ -3332,9 +3905,9 @@ public:
 		return loaded_ && drawn_ && index == index_ && !changed(save);
 	}
 
-	// The town as it is now (and each cell's building owner).
-	void draw(const SaveGame& save, const TileSet& tiles, TownMap& out, std::vector<uint8_t>* owners = nullptr) {
-		place_saved_town(base_, save, index_, tiles, out, owners);
+	// The town as it is now (and each cell's building: its owner, its site's source).
+	void draw(const SaveGame& save, const TileSet& tiles, TownMap& out, CellBuildings* cells = nullptr) {
+		place_saved_town(base_, save, index_, tiles, out, cells);
 		key_ = drawn_buildings_key(save, index_);
 		drawn_ = true;
 	}
@@ -3377,6 +3950,7 @@ public:
 			return false;
 		}
 		const int map = nest ? 0xFE - (save.pirates[k]->u8(0xF) & 3) : save.towns[place].template_map() | 0x80;
+		nest_drawn_.clear();  // (The battle shown: 0x515B80 places the nest's standing buildings anew.)
 		if (loaded_ && place == place_ && map == map_) {
 			return true;
 		}
@@ -3398,14 +3972,16 @@ public:
 		return loaded_;
 	}
 
-	void draw(const SaveGame& save, const TileSet& tiles, TownMap& out, std::vector<uint8_t>* owners) {
+	void draw(const SaveGame& save, const TileSet& tiles, TownMap& out, CellBuildings* cells) {
 		if (nest_) {
 			const size_t k = size_t(0xFE - place_);
 			out = base_.town;
-			place_nest_buildings(save.pirate_nests[k], save.pirates[k]->u16(0x8), base_.region, tiles, out, owners,
-				origin_.x, origin_.y);
+			// (A tower drawn and then fallen keeps its object while it burns: 0x515C00.)
+			const std::vector<bool> kept = nest_drawn_;
+			place_nest_buildings(save.pirate_nests[k], save.pirates[k]->u16(0x8), base_.region, tiles, out, cells,
+				origin_.x, origin_.y, &kept, &nest_drawn_);
 		} else {
-			place_saved_town(base_, save, place_, tiles, out, owners, origin_.x, origin_.y);
+			place_saved_town(base_, save, place_, tiles, out, cells, origin_.x, origin_.y);
 		}
 		key_ = key(save);
 	}
@@ -3428,6 +4004,7 @@ private:
 	size_t place_ = 0;  // The town, or the nest's 0xFE − k.
 	int map_ = -1;
 	bool nest_ = false;
+	std::vector<bool> nest_drawn_;  // The nest's pool entries drawn (place_nest_buildings).
 	SDL_Point origin_ = {0, 0};
 	bool loaded_ = false;
 	uint64_t key_ = 0;
@@ -21892,6 +22469,8 @@ int main(int argc, char** argv) {
 	BattleTown battle_town;  // The town's battle map under the battle on the screen at a town.
 	const bool debug_weak_towers =
 		options.debug_state && std::string(options.debug_state).find("weak-towers") != std::string::npos;
+	const bool debug_nest_fire =
+		options.debug_state && std::string(options.debug_state).find("nest-fire") != std::string::npos;
 	bool debug_nest_attack =
 		options.debug_state && std::string(options.debug_state).find("nest-attack") != std::string::npos;
 	int battle_town_index = -1;  // That town, while its battle map is shown; −1.
@@ -23911,10 +24490,10 @@ int main(int argc, char** argv) {
 		}
 		auto show_battle_town = [&](size_t b) {
 			TownMap map;
-			std::vector<uint8_t> owners;
+			CellBuildings cells;
 			(void)b;
-			battle_town.draw(save, view->tiles(), map, &owners);
-			view->show(map, std::move(owners));
+			battle_town.draw(save, view->tiles(), map, &cells);
+			view->show(map, std::move(cells));
 			live.forget_drawn();
 		};
 		{
@@ -23938,6 +24517,9 @@ int main(int argc, char** argv) {
 						town_now = town;
 						if (debug_weak_towers) {
 							p3::app::weaken_towers(save, size_t(on_screen));
+						}
+						if (debug_nest_fire) {
+							p3::app::nest_tower_fire(save, size_t(on_screen));
 						}
 					} else {
 						std::fprintf(stderr, "the battle map: %s\n", error.c_str());
@@ -25014,7 +25596,7 @@ int main(int argc, char** argv) {
 				show_loading(renderer);
 			}
 			TownMap town;
-			std::vector<uint8_t> owners;
+			CellBuildings cells;
 			std::string error;
 			bool loaded = false;
 			bool drawn = false;
@@ -25022,7 +25604,7 @@ int main(int argc, char** argv) {
 				drawn = live.drawn(save, selection.saved_index);
 				loaded = drawn || live.load(*archive, save, selection.saved_index, regions, error);
 				if (loaded && !drawn) {
-					live.draw(save, view->tiles(), town, &owners);
+					live.draw(save, view->tiles(), town, &cells);
 				}
 			} else {
 				loaded = load_template(*archive, template_ids, selection, town, error);
@@ -25033,7 +25615,7 @@ int main(int argc, char** argv) {
 				break;
 			}
 			if (!drawn) {
-				view->show(town, std::move(owners));
+				view->show(town, std::move(cells));
 			}
 			if (!keep_camera) {
 				// In the middle of the town's part of the screen (left of the side panel).
@@ -26236,15 +26818,27 @@ int main(int argc, char** argv) {
 			}
 		}
 
+		// The buildings the world took away (0x599040, SaveGame::building_fallen), before the town is drawn again: on
+		// the place shown (its battle map's, at the battle's origin) their objects smoked away, with their sound.
+		if (has_save) {
+			const std::vector<SaveGame::FallenBuilding> fallen = save.take_fallen_buildings();
+			if (view && !fallen.empty()) {
+				if (battle_town_index >= 0 && battle_shown >= 0) {
+					view->buildings_fallen(fallen, battle_town_index, battle_town.origin());
+				} else if (selection.mode == Mode::Saved) {
+					view->buildings_fallen(fallen, int(selection.saved_index), {0, 0});
+				}
+			}
+		}
 		// The living town: when the simulation changes the buildings of the town
 		// on screen, it is drawn again, with the camera where it was (under a battle at a town, its battle map).
 		if (battle_town_index >= 0 && battle_shown >= 0 && battle_town.changed(save)) {
 			show_battle_town(size_t(battle_shown));
 		} else if (selection.mode == Mode::Saved && live.changed(save) && battle_town_index < 0) {
 			TownMap town;
-			std::vector<uint8_t> owners;
-			live.draw(save, view->tiles(), town, &owners);
-			view->show(town, std::move(owners));
+			CellBuildings cells;
+			live.draw(save, view->tiles(), town, &cells);
+			view->show(town, std::move(cells));
 		}
 		// The season of the town on screen, its [0x9BC] (0x58B7F0 with the view's town): the tiles' snow. A town's
 		// template map (not a save's) as in summer.
@@ -28957,6 +29551,10 @@ int main(int argc, char** argv) {
 			// The sea battle the player directs: the water, the ships, the balls and the clouds; over each ship
 			// its label (its name; its sailors, hull and guns).
 			std::vector<p3::app::BattleLabel> labels;
+			if (battle_town_index >= 0) {
+				view->update_sites(save, size_t(battle_town_index));  // (The town's buildings under works, as in its view.)
+				view->step_battle_sites(app_ticks(), camera_x, camera_y, town_width);
+			}
 			size_t town_cursor = view->first_object();
 			p3::app::BattleTownLayer town_layer = battle_town_layer;
 			town_layer.ground = [&](int x, int y) { view->draw_ground(x, y, true); };
@@ -29065,6 +29663,7 @@ int main(int argc, char** argv) {
 			// The living town: its walkers (TownLife), only in a save's town.
 			if (selection.mode == Mode::Saved && has_save && town_index >= 0 && size_t(town_index) < save.towns.size()) {
 				view->set_port_choice(ship_menu_selection(side));  // The port's ships' marks (0x56DB10).
+				view->update_sites(save, size_t(town_index));  // Its buildings under works (before the towers' flags).
 				view->step_life(save, size_t(town_index), app_ticks(), camera_x, camera_y, town_width,
 					kGameSpeeds[game_speed].ms_per_tick, sailing && sailing->time_mode() == 2);
 				// The town's sounds: the cells' offers of this frame, their slots started, the ended ones freed (with
@@ -29076,8 +29675,13 @@ int main(int argc, char** argv) {
 				for (const p3::data::PortSound& s : view->take_port_sounds()) {
 					town_sounds.ship_in_out(s.x, s.y, s.kind != 0, now);
 				}
+				town_sounds.set_burning(TownView::town_burning(save, size_t(town_index)));
 				for (const SoundOffer& o : view->sound_offers()) {
 					town_sounds.offer(o.x, o.y, o.type, now);
+				}
+				town_sounds.stop_fire(view->take_fire_stops());
+				for (const SDL_Point& p : view->take_collapses()) {
+					town_sounds.collapse(p.x, p.y);
 				}
 				town_sounds.start(now);
 				town_sounds.update(now);

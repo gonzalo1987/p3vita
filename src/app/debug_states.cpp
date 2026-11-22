@@ -17,6 +17,7 @@
 #include "p3data/sailing.hpp"
 #include "p3data/ship_list_window.hpp"
 #include "p3data/simulation.hpp"
+#include "p3data/town_buildings.hpp"
 #include "p3data/town_hall_window.hpp"
 #include "p3data/town_tick/internal.hpp"
 #include "p3data/trade.hpp"
@@ -1099,6 +1100,76 @@ void trade_contracts(SaveGame& save) {
 	}
 }
 
+// The debug state `demolish`: the first record of the player's office's lists in his home town (its businesses
+// [+0x2CE], then its houses [+0x2D0]) demolished by the operation 0x26 queued for the next tick.
+bool demolish_first(SaveGame& save) {
+	if (save.player < 0 || size_t(save.player) >= save.merchants.size()) {
+		return false;
+	}
+	const uint8_t home = save.merchants[size_t(save.player)].memory.u8(0x19);
+	if (home >= save.towns.size()) {
+		return false;
+	}
+	const SavedTown& town = save.towns[home];
+	const uint16_t offices = save.globals.u16(global::kWorldOfficeCount);
+	for (uint32_t o = town.memory.u16(0x784); o < offices && o < save.offices.size();
+		 o = save.offices[o].memory.u16(0x2CA)) {
+		const auto& om = save.offices[o].memory;
+		if (int(om.u16(0x2C4)) != save.player) {
+			continue;
+		}
+		for (const uint16_t head : {om.u16(0x2CE), om.u16(0x2D0)}) {
+			if (head < town.records.size() && head < town.memory.u16(0x776)) {
+				const BuildingRecord& r = town.records[head];
+				queue_operation(save, demolish_operation(home, uint32_t(save.player), r.x, r.y));
+				std::printf("demolish: town %u cell %u,%u type 0x%02X\n", unsigned(home), unsigned(r.x), unsigned(r.y),
+					unsigned(r.type));
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// The debug state `fire`: a town fire in the player's home town (the event 0x1D the operation 0x7D makes, 0x5366A0,
+// a tick on) at the cell of its first house (types 0x15..0x1D) of the town's buildings [0x764] or its offices' lists,
+// to burn 4 buildings (it spreads to the nearest flammable one each 64 ticks, 0x4E9564).
+bool houses_on_fire(SaveGame& save) {
+	if (save.player < 0 || size_t(save.player) >= save.merchants.size()) {
+		return false;
+	}
+	const uint8_t home = save.merchants[size_t(save.player)].memory.u8(0x19);
+	if (home >= save.towns.size()) {
+		return false;
+	}
+	SavedTown& town = save.towns[home];
+	std::vector<uint16_t> heads = {town.memory.u16(0x764)};
+	for (const uint16_t head : office_list_heads(save, home)) {
+		heads.push_back(head);
+	}
+	for (const uint16_t head : heads) {
+		size_t walked = 0;
+		for (size_t i = head; i < town.records.size() && i < town.memory.u16(0x776) && walked < 5000;
+			 i = town.records[i].next, ++walked) {
+			const BuildingRecord& r = town.records[i];
+			if (r.type < 0x15 || r.type > 0x1D || r.pending != 0) {
+				continue;
+			}
+			const uint32_t tick = save.globals.u32(global::kWorldTick);
+			GameMemory<0x18>& e = save.events[tick::events_detail::fn_4d8cf0(save, tick + 1)];
+			e.u16(0x6) = 0x1D;
+			e.u16(0xC) = 0;
+			e.u16(0xE) = 4;
+			e.u8(0x10) = r.x;
+			e.u8(0x11) = r.y;
+			e.u8(0x12) = home;
+			std::printf("fire: town %u from the cell %u,%u\n", unsigned(home), unsigned(r.x), unsigned(r.y));
+			return true;
+		}
+	}
+	return false;
+}
+
 }  // namespace
 
 const char kDebugStatesHelp[] =
@@ -1144,6 +1215,8 @@ const char kDebugStatesHelp[] =
 	"              battle at the nest against the player\n"
 	"  weak-towers  the towers of a town battle weakened when its screen opens: smoke\n"
 	"              and fire (only to look at them)\n"
+	"  nest-fire   with nest-attack: when the nest's battle's screen opens, its first tower falls 30\n"
+	"              ticks on (the event 0x25 a nest's battle makes, 0x60130B): it burns in the view\n"
 	"  damaged     the player's ships in port with half their hull (the shipyard)\n"
 	"  season-N    every town's season [0x9BC] N (0 summer, 1 autumn, 2..5 the snow, 6\n"
 	"              spring): the town view's snow (only to look at it, until it changes)\n"
@@ -1153,6 +1226,12 @@ const char kDebugStatesHelp[] =
 	"  plague      every town with the plague ([0x2C8] | 8): its dark tint, its rats\n"
 	"  frozen-port  every town's port frozen ([0x2C8] | 0x4000000) and its season 5: the\n"
 	"              living town's ice floes (only to look at them, until it changes)\n"
+	"  streets     every town paves 16 of its planned streets (0x4FB580, as a street built by\n"
+	"              its mayor, 0x5244F0): the cells 0x81 the town view draws as roads' edges\n"
+	"  fire        a town fire in the player's home town (the event 0x1D, 0x4E9564, a tick on)\n"
+	"              from its first house, to burn 4 buildings: the cell on stdout\n"
+	"  demolish    the player's first building in his home town demolished (the operation 0x26\n"
+	"              queued, 0x53CF50, run at the next tick: the view's 0x599040): its cell on stdout\n"
 	"  tavern-captain  a free captain in the tavern of the player's first ship's town\n"
 	"  tavern-people   all the tavern's people there (a captain, the trader, the informer, the traveller, ...)\n"
 	"  convoy-leader  the player's first ship in port fit to guide a convoy\n"
@@ -1255,6 +1334,36 @@ bool nest_attack(SaveGame& save) {
 	e.u16(0x16) = 0;
 	save.merchants[size_t(save.player)].memory.u8(0xE1) = nest;
 	return true;
+}
+
+// The debug state `nest-fire` (nest_tower_fire, when the viewer opens a nest's battle's screen: the pool's cells are
+// set then): the event 0x25 (0x4E1B84) for the nest's first standing tower (its pool's kinds 0x30, 0x31, from entry 0
+// along [+0x4]) 30 ticks on, as the battle makes it when the tower falls (0x60130B): 0x515C00 burns it a step a tick
+// ([+0x6] from 0xC9 to 0xFA, then it is taken away). Its cell on stdout.
+bool nest_tower_fire(SaveGame& save, size_t battle) {
+	const uint8_t place = save.battles.get<uint8_t>(battle, 0x1E98);
+	const size_t k = size_t(0xFE - place);
+	if (place < 0xFA || k >= save.pirate_nests.size() || !save.pirates[k]) {
+		return false;
+	}
+	const std::vector<GameMemory<8>>& pool = save.pirate_nests[k].pool;
+	const uint16_t count = save.pirates[k]->u16(0x8);
+	size_t walked = 0;
+	for (uint32_t i = 0; i < count && i < pool.size() && walked < pool.size(); i = pool[i].u16(0x4), ++walked) {
+		if ((pool[i].u8(0x3) != 0x30 && pool[i].u8(0x3) != 0x31) || pool[i].u8(0x0) == 0xFF || pool[i].u8(0x6) >= 0xC8) {
+			continue;  // (Not a tower standing.)
+		}
+		const uint32_t now = save.globals.u32(global::kWorldTick);
+		GameMemory<0x18>& e = save.events[tick::events_detail::fn_4d8cf0(save, now + 30)];
+		e.u16(0x6) = 0x25;
+		e.u16(0xC) = pool[i].u8(0x0);
+		e.u16(0xE) = pool[i].u8(0x1);
+		e.u8(0x10) = place;
+		e.u8(0x11) = 1;
+		std::printf("nest-fire: nest %zu tower %u,%u\n", k, unsigned(pool[i].u8(0x0)), unsigned(pool[i].u8(0x1)));
+		return true;
+	}
+	return false;
 }
 
 bool follow_nest_attack(SaveGame& save) {
@@ -1555,6 +1664,8 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			}
 		} else if (state == "weak-towers") {
 			// The viewer weakens them when the battle's screen opens (weaken_towers).
+		} else if (state == "nest-fire") {
+			// The viewer sets it when a nest's battle's screen opens (nest_tower_fire).
 		} else if (state == "damaged") {
 			damage_ships(save);
 		} else if (state.size() == 8 && state.compare(0, 7, "season-") == 0 && state[7] >= '0' && state[7] <= '6') {
@@ -1571,6 +1682,21 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 		} else if (state == "plague") {
 			for (auto& town : save.towns) {
 				town.memory.u32(0x2C8) |= 8u;
+			}
+		} else if (state == "demolish") {
+			if (!demolish_first(save)) {
+				error = "the player has no building in his home town";
+				return false;
+			}
+		} else if (state == "fire") {
+			if (!houses_on_fire(save)) {
+				error = "the player has no home town with houses";
+				return false;
+			}
+		} else if (state == "streets") {
+			for (size_t t = 0; t < save.towns.size(); ++t) {
+				SavedTown& town = save.towns[t];
+				town.memory.u16(0x790) = uint16_t(town.memory.u16(0x790) + tick::fn_4fb580(save, int(t)));
 			}
 		} else if (state == "frozen-port") {
 			for (auto& town : save.towns) {

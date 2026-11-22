@@ -92,6 +92,7 @@ struct PortShip {
 	int8_t icon = -1;  // [+0x4A]: the icon over it (its page's tag: 1 the shipyard, 2 the auction, 3 the trade
 	// route), −1 none.
 	std::string label;  // Its name over it (0x56C010: the player's ships only), empty none.
+	uint32_t smoke_due = 0;  // [+0x14C]: a damaged ship's next puff of smoke (0x620CC1: the viewer's port_smoke).
 };
 
 // A sound the scene plays (0x59A090: the sound's session's TownSounds::ship_in_out), at a ship's place in the town's

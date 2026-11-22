@@ -148,7 +148,7 @@ se ve, que no se mide en las mismas unidades. Por eso, cada parte con su propia 
 | Cartas (las 154 llamadas del juego que mandan una) | 149 (las del intérprete y del evento 0x09, 20-11-2026; la carta final 0x3D de la caza de piratas, 21-11-2026) | 5: 3 de un evento que nadie crea y 2 de una ventana de pruebas |
 | Edificios con vista propia en el juego (13) | Las 13 con ventana en el visor (lonja, taberna, astillero con el muelle, oficina, prestamista, iglesia, baño, gremio, herrería, el granero —la caballeriza del transporte por tierra, «Overland Trade Office»—, la armería de la milicia, el ayuntamiento y la puerta de la ciudad; y la oficina de otro comerciante, con las ofertas). Con la vista del juego (marco, imagen y gestos, menú lateral; o el rollo de papel sobre la ciudad, como en el juego, la oficina de otro comerciante y la armería): las 13; con todas sus páginas como las del juego: la taberna (con el cliente de un pedido desde el 15-11-2026), el prestamista, la iglesia, el gremio, la herrería, la lonja, la oficina, el baño, la caballeriza, la oficina de otro comerciante (con la lista «Escoge oferta»), la armería el astillero con el muelle (sus seis páginas, la lista de reparaciones incluida) y el ayuntamiento (sus ocho páginas); y la fiesta en los puestos del mercado | Ninguna (las ocho páginas de la puerta de la ciudad, también las del asedio, desde el 15-11-2026) |
 | El panel lateral y sus ventanas como los del juego (19-11-2026) | Las 7 partes: la lista de barcos, el menú del barco entero (con la ventana de formar convoy y las de la ruta), el menú de construir, las estadísticas (su menú y su ventana con las 19 entradas de sus cuatro páginas; las 9 de depuración el juego no las enseña), los mensajes (su menú, la carta y la crónica en la ventanita del juego, la ventana de ajustes), el panel de las batallas (el menú del barco sobre la selección de la batalla, «ver convoy», la fila de acciones y el minimapa como el juego) y la barra de arriba | Nada |
-| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026); los animales, los pájaros y los peces (21-11-2026); las animaciones de los edificios, los árboles y el pescador (21-11-2026); los barcos del puerto con su banderín, su marca, sus puntos en el minimapa y el «ir al barco» (21-11-2026); el agua: las olas, los destellos, el oleaje de la costa y los témpanos (22-11-2026) | el tiempo, las obras, el fuego y el humo, el asedio (apartado 4) |
+| La ciudad en pantalla | los edificios, los kontors, los iconos de suceso, el minimapa; la gente por las calles y los carros (21-11-2026); los animales, los pájaros y los peces (21-11-2026); las animaciones de los edificios, los árboles y el pescador (21-11-2026); los barcos del puerto con su banderín, su marca, sus puntos en el minimapa y el «ir al barco» (21-11-2026); el agua: las olas, los destellos, el oleaje de la costa y los témpanos (22-11-2026); el tiempo (22-11-2026); las obras y las calles empedradas (22-11-2026); el fuego y el humo (22-11-2026) | el asedio (apartado 4) |
 | Batallas | enteras, en el motor y en pantalla | corregir con el ajuste los fallos apuntados (apartado 7) |
 | Sonido, música y vídeos (20-11-2026) | la base: el mezclador (PC y Vita), los 123 MP3 y los 178 WAV del juego leídos, el `sound.ini`, los volúmenes de las Opciones y la música del menú principal; la música en la partida (el director, las atmósferas, el tema de cada ciudad, las batallas, los edificios); los efectos de la interfaz (botones, cartas, baño, oración, escupitajo); los de la ciudad en parte (sus edificios y las campanas, 21-11-2026) | de la ciudad, los barcos del puerto, el fuego y el derrumbe (esperan a la ciudad viva); el mar, las batallas, el asedio y los vídeos (apartado 5) |
 | Jugar en red con el juego de PC | el motor idéntico, que es la base | todo lo demás (apartado 8) |
@@ -955,7 +955,7 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     cañones con su banderín en lo alto (el punto de la variante de clase 3 de su `.let`, 0x580DA0), que ondea con el
     viento del puerto en el color del alcalde de la ciudad (azul el jugador, rojo otro jugador humano, blanco la IA o
     nadie: 0x59BEE0); con el viento hacia atrás el mástil de la torre lo tapa (0x5811D0), y se ve también sobre la
-    niebla. Falta, con las obras, que una torre en obras no lo tenga hasta acabarse (0x581090).
+    niebla. Una torre en obras no lo tiene hasta acabarse (0x581090; con las obras, 22-11-2026).
   - [x] Las sombras y la nieve de los tiles (17-11-2026, `re/emu/sesion39/README.md`; las variantes del `.let`, con
     la clase 1 de la obra y la 2 de la nieve corregidas en `docs/formats/town.md`). **Sombras**: como la pasada del
     juego (0x591C50), todas tras el suelo y antes de los objetos, cada una desde la celda de la franja `cols − 1` de su
@@ -970,13 +970,28 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     clase equivocada; corregido el 21-11-2026 con la suya (0x583330, arriba): coincide con las fotos del juego del
     usuario (Edimburgo el 3 de febrero y el 17 de marzo de 1301, `re/emu/sesion31/pc_shots/`) sin regla propia, y con
     el dibujo de invierno su sombra es la de ramas.
-  - [ ] Las obras: hoy lo que está en obras ([0x762] con `pending` ≠ 0) se dibuja terminado; faltan los andamios y los
-    bordes de calle de las celdas 0x81. Los andamios y cimientos son la variante de clase 1 del `.let` ([data+0x18]),
-    que 0x550770 dibuja con el avance de la obra (17-11-2026, `re/emu/sesion39/README.md`). Con ellas, una torre en obras
-    sin banderín hasta acabarse (0x581090).
-  - [ ] El fuego ([0x76A]): falta el humo y las llamas (los incendios de la ciudad, de un asedio, y la torre que cae en
-    una batalla y arde unos 100 ticks como edificio, el evento 0x25; 0x5891C0, 0x599040). Decisión del usuario
-    (10-11-2026): con la ciudad animada.
+  - [x] Las obras (22-11-2026, `re/emu/sesion50/README.md`, «Part 7»): cada edificio con obra pendiente (un registro
+    con [+0x6] ≠ 0, salvo la calle 0x28; el kontor del jugador por su oficina) se dibuja como el juego (0x550770): el
+    andamio, armazón o cimientos de su `.let` (la variante de clase 1) y, encima, el edificio creciendo desde abajo
+    hasta donde llega la obra (los días hechos de los de su tipo, 0x672BB4, menos una décima del total: 0x550550), con
+    las 21 filas de arriba difuminándose; sin animaciones ni sonido mientras dura; con la niebla y la peste, el andamio
+    por su propio mapa de `FogMaps` (0x550CE0); una torre en obras sin banderín hasta acabarse (0x581090). Y las calles
+    que empiedra la ciudad (las celdas 0x81: «construir calle» del alcalde, 0x5244F0 → 0x4FB580; ninguna partida tiene)
+    con un borde de calle del primer grupo en el suelo, elegido por la celda como 0x5218A3 → 0x5928A0, y sin el árbol
+    que hubiera (estado de depuración `streets`). El fuego usa el mismo objeto de la obra (sus cuatro llamas, la ruina
+    quemada): con la parte siguiente.
+  - [x] El fuego ([0x76A]; 22-11-2026, `re/emu/sesion50/README.md`, «Part 8»): lo que arde (el incendio de la ciudad,
+    el evento 0x1D, y los de un asedio, 0x25 y 0x26) se dibuja como el juego con el mismo objeto de la obra (0x550550,
+    0x550770): sus cuatro llamas (`Feuer_Haus`, sumadas) en los puntos del armazón, el armazón carbonizado y el edificio
+    bajando según la vida del fuego; quemado del todo, la ruina hasta que se quita, y entonces el derrumbe con su humo y
+    su sonido (0x599040); el humo de las llamas (`brandrauch`, 0x550A70) y el de los barcos dañados del puerto (0x620CC1:
+    más oscuro cuanto más dañado, llevado por el viento); el sonido del fuego y el hueco que le guarda la ciudad cuando
+    algo arde ([view+0x56C]). Las casas que arden pasan a su variante pequeña al bajar de 45 de vida (0x54E5E0). Estados
+    de depuración `fire`, `demolish` y `nest-fire`. El derrumbe sale cada vez que el juego quita un edificio de la
+    ciudad que se ve (el fuego, el cierre de la muralla, el derribo): el motor lo avisa donde el juego llama a 0x599040
+    (`SaveGame::building_fallen`, sin cambiar la simulación). La torre del nido pirata que cae en una batalla arde en la
+    vista de la batalla (0x515C00). Falta, con el asedio, el humo de las llamas y de los derrumbes en la vista de una
+    batalla (allí el visor no mueve la ciudad viva).
   - [ ] El asedio en la vista: el campamento, las tropas y el ataque a la puerta (0x62C730 y los objetos del ejército
     [+0x1F8], [+0x574], [+0x5DC..]) y el aviso al jugador; su icono de suceso ya sale. Con él los guardias de la
     ciudad ([0x998], la clase 8) y lo que hace el asedio a los paseantes (corren, huyen del ejército: 0x55A2C0).
@@ -1805,4 +1820,6 @@ juego se puede pulsar (apartado 4, «Mirar en el juego original»).
   cae en la rejilla (0x28, 0x53D213); 0x62B2B0 no mira cuántos objetivos caben (p3vita agranda el vector); 0x4D8DB0 da
   también el registro siguiente al último de la cola; la 0x9F no acaba con 32 768 barcos o más (0x611309); un convoy
   en el «otro estado» del bucle con un estado que no sea el 5 se quedaría dando vueltas; las divisiones por 0 de
-  0x52F030 y del informe de la expedición, que no se dan con los datos del juego.
+  0x52F030 y del informe de la expedición, que no se dan con los datos del juego; el humo de un fuego y de un derrumbe
+  (0x550A70, 0x599040) no fija su alfa [+0x30], que da su gris (0x579D6B): el juego lo pinta del que dejara la memoria;
+  p3vita, como su dibujo (0xFF).

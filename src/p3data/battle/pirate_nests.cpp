@@ -273,7 +273,8 @@ bool fn_515c00(SaveGame& save, size_t k, uint32_t x, uint32_t y) {
 			if (e.u8(0x6) < 0xFA) {
 				return true;  // (0x5891C0, the fire's graphics when the view shows the nest.)
 			}
-			*link = e.u16(0x4);  // (0x599040, the view's.)
+			*link = e.u16(0x4);
+			save.building_fallen(0xFE - k, x, y);  // (0x515CE9: the view's 0x599040.)
 			return false;
 		}
 		link = &e.u16(0x4);

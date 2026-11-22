@@ -129,6 +129,12 @@ objetos (0x568CE0): fila a fila, una sombra en cada celda donde está la franja
 multiplicación) y el color 0x64FFFFFF; los objetos, encima, las tapan. p3vita las
 dibuja en negro con alfa 100 (el suelo al 61 %, como se ve en el juego).
 
+The building site (kind 1; 2026-11-22, `re/emu/sesion50/README.md`, «Part 7»): while a building is under works
+(0x550550 keeps its days, less a tenth of their total), 0x550770 draws instead of its slice the site's first frame
+(at its place, within the slice's columns), then the building's own rows from its picture's bottom as far as the works
+have come (`cur` · height / `total`), the 21 rows above fading out (a 22nd of the alpha less each); its four
+parameters pack the fire's flame points (y the low word, x the high one). 175 `.let`s have one (`letsites.py`).
+
 La nieve: el byte `[0x9BC]` de la ciudad es el modo (0 desde mayo, 1 desde
 octubre, 6 desde marzo, el nivel del hielo 2 a 5 en invierno); 0x591EC0 da a cada
 tipo de tile, salvo los árboles (tipo 0x14), el nivel 0 con los modos 0, 1 y 6 y

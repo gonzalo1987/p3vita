@@ -256,7 +256,7 @@ en los datos (valor del `.tow` en el ancla de cada edificio de 1.pat y tut0.pat,
 | 0x0F | muelle `maulwurf` (0x2F) |
 | 0xA0–0xA2 | zonas de casas (en el `.tow`); al construir pasan a 0x8B |
 | 0x8B | celda ocupada por un edificio (en la partida) |
-| 0x81 | el exe pone un borde de calle aleatorio (.let tipo 0x17) **[código]** (ninguna en 1.pat) |
+| 0x81 | a street the town has paved (0x4FB580, from the planned 0x82/0x83); the view puts in its ground a road's edge (.let type 0x17) of the first kind, chosen by the cell, (x + 1) · y + x (0x5218A3) **[código]** (none in the saves) |
 
 Observadas sin código **[datos]**: 0x0C agua, 0x0D acantilado/muelle/pasarelas, 0x03 y
 0x80/0x83 calles y plaza, 0x0B astillero y faros, 0x1E zona de pescadores, 0x9F celdas
@@ -647,7 +647,8 @@ su lista de registros de 16 bytes se descarta, vacía en las partidas). Ver
   `gegnerkontor` (§8.5).
 - Estatua de la ciudad (§8.3), grúas (qué modelo de los 6 elige el exe), capillas,
   ayuntamiento de las plantillas 21–23 y significado de `b2` = 0xFE/0xFD en murallas.
-- Andamios de edificios en obras (0x5891c0) y bordes de calle de las celdas 0x81
-  (elección aleatoria 0x592cfd): no se dibujan.
+- Done 2026-11-22 (`re/emu/sesion50/README.md`, «Part 7»): the buildings under works drawn with their sites
+  (0x5891C0 → 0x550550, 0x550770) and the cells 0x81 with a road's edge in the ground (0x5218A3 → 0x5928A0: not at
+  random, by the cell).
 - Tras los barcos: encargos (0x4d6350) y las secciones de 0x4d4bc0, 0x4d81e0 y 0x611ae0 solo
   están delimitadas.

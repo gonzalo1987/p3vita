@@ -84,8 +84,9 @@ void TownSounds::offer(int x, int y, int type, uint32_t now) {
 	if (type < 0 || type >= kTypes || sound_.list_variants(list_base_ + per_type_ * type) == 0) {
 		return;
 	}
-	// ([+0x56C] with a type other than 0 keeps the last slot for the fire's: not set in the viewer.)
-	const int usable = kBuildingSlots;
+	// ([+0x56C], something burning, with a type other than 0: the last slot kept for the fire's. The full test below
+	// is still against the 4, 0x594CB7.)
+	const int usable = burning_ && type != 0 ? kBuildingSlots - 1 : kBuildingSlots;
 	if (type_until_[type] > now) {
 		return;
 	}
@@ -182,6 +183,39 @@ void TownSounds::update(uint32_t now) {
 			volume_and_pan(s.x, s.y, volume, pan);
 			sound_.set_sample_volume(s.channel, volume);
 			sound_.set_sample_pan(s.channel, pan);
+		}
+	}
+}
+
+void TownSounds::collapse(int x, int y) {
+	const int variants = sound_.list_variants(collapse_list_);
+	if (variants == 0) {
+		return;
+	}
+	int volume = 0;
+	int pan = 64;
+	volume_and_pan(x, y, volume, pan);
+	if (volume == 0) {
+		return;
+	}
+	sound_.play_sample(collapse_list_ + rand15() % variants, false, false, volume, pan, false, false);
+}
+
+void TownSounds::stop_fire(const std::vector<std::pair<int, int>>& points) {
+	for (int k = 0; k < kBuildingSlots; ++k) {
+		Slot& s = slots_[k];
+		if (!s.taken || s.type != 0) {
+			continue;
+		}
+		for (const auto& [x, y] : points) {
+			if (x == s.x && y == s.y) {
+				if (s.channel >= 0) {
+					sound_.stop_sample(s.channel);
+					sound_.release_sample(s.channel);
+				}
+				s = Slot{};
+				break;
+			}
 		}
 	}
 }

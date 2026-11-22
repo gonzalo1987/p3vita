@@ -45,6 +45,7 @@ add_library(p3data STATIC
 	lcr.cpp
 	town_life.cpp
 	battle_clouds.cpp
+	building_site.cpp
 	letter_picture.cpp
 	letters.cpp
 	lz.cpp

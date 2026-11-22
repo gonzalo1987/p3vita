@@ -189,7 +189,8 @@ struct Creature {
 	// viewer's for the other classes: 3 a market seller or the juggler at his place, 4 the official, 5 a rat, 6 a cart,
 	// 7 an animal, 8 a bird, 9 a fish, 10 the fisherman (his path of the tag 4 in `road`), 11 a figure moved from outside,
 	// 12 a ship figure's pennant, 13 an effect on the water (class 0x12 of the water list: a wave 0x50, an ice floe 0xC7),
-	// 14 a snowflake, 15 a raindrop, 16 a fog bank
+	// 14 a snowflake, 15 a raindrop, 16 a fog bank, 17 an effect among the strips (class 0x12 not of the water list:
+	// the smoke 0x24)
 	uint8_t corner = 0xFF;  // [+0x6B]: 0xFF to be worked out, 0 none, 1 and 2 the corner's halves
 	bool entered = false;  // [+0x6C]: coming in, it reached the town (it walks free at the next point)
 	bool flee = false;  // [+0x6D]: hurrying from a siege (not yet)
@@ -231,6 +232,9 @@ struct Creature {
 	int16_t drift = 0;
 	int16_t fall = 0;
 	bool melting = false;
+	uint16_t rise = 0;  // An effect's [+0x2E] (with its look's number's 0x20): drawn that far up (the smoke's).
+	int32_t move_x = 0;  // An effect's [+0x40], [+0x44]: its motion, 16.16 a ms (0x57AA36).
+	int32_t move_y = 0;
 	std::vector<TownCell2> cells;  // The cells its strips stand on (0x593540): what it blocks, where each is drawn.
 
 	int px() const { return int(x >> 16); }
@@ -260,6 +264,17 @@ public:
 	// The footprints' looks (class 0x12, `fussspur_*`, by their number less 0xC3: 0xC3 a left foot, 0xC4 a right one,
 	// 0xC5, 0xC6 small ones).
 	std::array<const LcrAnim*, 4> footprint_looks{};
+	// The smoke's look (class 0x12, `brandrauch`, the effect numbered 0x24: a burning building's flames' and a fallen
+	// one's).
+	const LcrAnim* smoke_look = nullptr;
+	// 0x590610 → 0x57A150 for the effect 0x24 (`rise` its number's third byte: the flame's height / 4 from 0x550A70, 0
+	// from 0x599040 and 0x620CC1): a puff of smoke at the town's point (`x16`, `y16`, 16.16), its creature 48 pixels lower
+	// (0x57A2C4: so that it stands before what burns) and drawn as much and `rise` higher (0x579D96..); played once, then
+	// gone (0x57A8C0), moving by (`move_x`, `move_y`) (16.16 a ms: a damaged ship's, by the port's wind). `alpha` its
+	// [+0x30], drawn as a grey that dark (0x579D6B; a ship's by its hull); 0x550A70 and 0x599040 never set it (the
+	// heap's leftover, whatever it held): taken as 0xFF there, the picture as it is. Added after the creatures' next step.
+	void smoke(int32_t x16, int32_t y16, uint16_t rise, uint8_t dir, uint8_t alpha = 0xFF, int32_t move_x = 0,
+		int32_t move_y = 0);
 	// The snow shown ([view+0x504], the season's mode: 2..5 the snow's levels): the footprints only then.
 	void set_snow(int mode) { snow_mode_ = mode; }
 
@@ -381,6 +396,7 @@ private:
 	bool floes_made_ = false;
 	void spawn_floes();
 	bool water_effect_step(Creature& c);
+	bool strip_effect_step(Creature& c);
 	// The footprints in the snow (0x55B030; 0x55D0B0 the walkers' in their free walk, 0x57C61E.. the dogs' and cats',
 	// 0x57EC12.. the wild animals'), each time a creature's frame is about to change, while within 200 pixels of the view.
 	int snow_mode_ = 0;
