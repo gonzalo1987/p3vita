@@ -78,6 +78,7 @@
 #include "game_window.hpp"
 #include "script.hpp"
 #include "savegames.hpp"
+#include "ui_images.hpp"
 #include "settings.hpp"
 #include "new_game_window.hpp"
 #include "start_screen.hpp"
@@ -437,6 +438,14 @@ public:
 		if (sparkle_texture_) {
 			SDL_DestroyTexture(sparkle_texture_);
 		}
+		for (auto& [number, texture] : fog_textures_) {
+			SDL_DestroyTexture(texture);
+		}
+		for (auto& [key, texture] : masked_) {
+			if (texture) {
+				SDL_DestroyTexture(texture);
+			}
+		}
 		if (minimap_) {
 			SDL_DestroyTexture(minimap_);
 		}
@@ -567,6 +576,7 @@ public:
 	// atlases (season_texture). Nothing when it is the one shown already ([view+0x504]); `month` the world's
 	// (0x6DE4A1), read by the trees only then.
 	void set_snow(int mode, int month) {
+		life_.set_snow(mode);  // The footprints in the snow ([view+0x504]).
 		if (mode == snow_mode_) {
 			return;
 		}
@@ -588,6 +598,16 @@ public:
 		}
 		for (size_t k = 0; k < trees_.size(); ++k) {
 			update_tree_sway(tree_tiles_[k], *trees_[k]);
+		}
+		// The trees' fog maps (0x583330): their new picture's when it has one, else the one before.
+		for (const auto& [id, tile] : tiles_) {
+			if (tile.type == kTreeTileType) {
+				fog_map_of(&tile);
+				std::string map = fog_map_path(season_atlas(&tile));
+				if (!map.empty()) {
+					fog_maps_[&tile] = std::move(map);
+				}
+			}
 		}
 	}
 
@@ -1022,17 +1042,30 @@ public:
 				begin = i + 1;
 				const bool wave = name.compare(0, 6, "welle_") == 0;
 				const bool flake = name.compare(0, 12, "schneeflocke") == 0;
-				if (!wave && !flake && name.compare(0, 11, "eisscholle_") != 0) {
+				const bool fog = name.compare(0, 5, "nebel") == 0;
+				const bool feet = name.compare(0, 9, "fussspur_") == 0;
+				if (!wave && !flake && !fog && !feet && name.compare(0, 11, "eisscholle_") != 0) {
 					continue;
 				}
 				std::vector<uint8_t> data;
 				auto look = std::make_unique<p3::data::LcrAnim>();
 				const CprEntry* file = archive_.find("iso/lcr/" + name);
-				if (flake) {
-					// The snowflakes (class 0x1D, *0x6E2E34 in the list's order).
+				if (feet) {
+					// The footprints (class 0x12 numbered 0xC3..0xC6; the walls' 0xA0, 0xA1 are a siege's).
 					if (file && archive_.read(*file, data) && p3::data::parse_lcr(data.data(), data.size(), *look) &&
-						look->kind == 0x1D && !look->directions.empty() && !look->directions[0].empty()) {
-						life_.flake_looks.push_back(look.get());
+						look->kind == 0x12 && !look->params.empty() && look->params[0] >= 0xC3 && look->params[0] <= 0xC6 &&
+						!look->directions.empty()) {
+						life_.footprint_looks[look->params[0] - 0xC3] = look.get();
+						wave_store_.push_back(std::move(look));
+					}
+					continue;
+				}
+				if (flake || fog) {
+					// The snowflakes (class 0x1D, *0x6E2E34 in the list's order) and the fog banks (0x1C, *0x6E2DF4).
+					const uint16_t kind = flake ? 0x1D : 0x1C;
+					if (file && archive_.read(*file, data) && p3::data::parse_lcr(data.data(), data.size(), *look) &&
+						look->kind == kind && !look->directions.empty() && !look->directions[0].empty()) {
+						(flake ? life_.flake_looks : life_.fog_looks).push_back(look.get());
 						wave_store_.push_back(std::move(look));
 					}
 					continue;
@@ -1054,6 +1087,25 @@ public:
 		}
 		const std::string_view iso_text(reinterpret_cast<const char*>(iso.data()), iso.size());
 		const std::string_view tex_text(reinterpret_cast<const char*>(textures.data()), textures.size());
+		// The fog texture (0x58F5E1: [view+0xC1B8] + rand() % [view+0xC1BC], iso.ini's FogTexBase 100 and FogTexCnt 1:
+		// textures.ini's TEX100, images/fog.bmp, 256 · 256 greys, «UseAlpha=true» with no alpha in its palette: opaque).
+		life_.fog_tex_base = p3::data::ini_int(iso_text, "LIGHTNINGVIEW0", "FogTexBase", 100);
+		life_.fog_tex_count = p3::data::ini_int(iso_text, "LIGHTNINGVIEW0", "FogTexCnt", 1);
+		for (int k = 0; k < life_.fog_tex_count && k < 8; ++k) {
+			const std::string fog_section = "TEX" + std::to_string(life_.fog_tex_base + k);
+			std::string fog_file = p3::data::ini_text(tex_text, fog_section, "TextureFile");
+			std::replace(fog_file.begin(), fog_file.end(), '\\', '/');
+			Image fog_image;
+			if (fog_file.empty() || !p3::app::read_cpr_image(archive_, fog_file.c_str(), fog_image)) {
+				continue;
+			}
+			if (p3::data::ini_text(tex_text, fog_section, "UseAlpha") == "true") {
+				p3::app::apply_bmp_palette_alpha(archive_, fog_file.c_str(), fog_image);
+			}
+			if (SDL_Texture* texture = p3::app::make_texture(renderer_, fog_image)) {
+				fog_textures_[life_.fog_tex_base + k] = texture;
+			}
+		}
 		const int id = p3::data::ini_int(iso_text, "LIGHTNINGVIEW0", "WaterSparkleTexID", 0);
 		const std::string section = "TEX" + std::to_string(id);
 		std::string file = p3::data::ini_text(tex_text, section, "TextureFile");
@@ -1627,11 +1679,13 @@ public:
 	// The building of the .let type `highlight` (one of kPlaces) is drawn once
 	// more on top, added, so that it glows (the one the cursor points at). With
 	// `player` >= 0, the competition's buildings shaded (the top bar's house, the
-	// manual's figure 4-4): another merchant's (below `merchants`) and the rival kontor.
-	void draw(int camera_x, int camera_y, int highlight = -1, int player = -1, int merchants = 0) {
+	// manual's figure 4-4: rival_shaded).
+	void draw(int camera_x, int camera_y, int highlight = -1, int player = -1) {
 		const SDL_Rect screen = {camera_x, camera_y, kScreenWidth, kScreenHeight};
 		collect_strips(screen);
 		size_t next_strip = 0;
+		const p3::data::WeatherTint& tint = life_.tint();
+		const int over = ((tint.colour | tint.previous) >> 24) != 0 ? int(tint.over >> 24) : -1;
 		for (size_t i = 0; i < items_.size(); ++i) {
 			const Item& item = items_[i];
 			if (i == first_object_) {
@@ -1652,10 +1706,10 @@ public:
 			SDL_Rect dst = item.dst;
 			dst.x -= camera_x;
 			dst.y -= camera_y;
-			const bool rival = player >= 0 && (item.owner == kRivalOwner ||
-				(item.owner != kNoBuildingOwner && int(item.owner) < merchants && int(item.owner) != player));
+			const bool rival = rival_shaded(item, player);
 			if (rival) {
-				SDL_SetTextureColorMod(item.texture, 105, 105, 115);
+				SDL_SetTextureColorMod(item.texture, kRivalGrey, kRivalGrey, kRivalGrey);
+				SDL_SetTextureAlphaMod(item.texture, kRivalAlpha);
 			}
 			// The coast's surf (0x581710): the coast, then its surf's copy over it faded by the step (the surf alone at
 			// 0, the coast alone at 255).
@@ -1671,16 +1725,19 @@ public:
 			}
 			if (rival) {
 				SDL_SetTextureColorMod(item.texture, 255, 255, 255);
+				SDL_SetTextureAlphaMod(item.texture, 255);
 			}
 			if (i >= first_object_ && item.tile) {
-				draw_item_anims(item, camera_x, camera_y, rival);
+				draw_item_anims(item, camera_x, camera_y, rival, over);
 			}
 		}
 		for (; next_strip < strips_.size(); ++next_strip) {
 			draw_strip(strips_[next_strip], camera_x, camera_y);
 		}
 		draw_pennants(screen);  // After the town (0x588A5A..0x588A80).
-		draw_birds(screen);  // Over everything (0x588AA5..0x588BCA).
+		draw_bird_shadows(screen);  // At alpha 100 (0x588AA5..0x588AD7).
+		draw_tint(screen, player);  // The weather's tint (0x58FF40, 0x588ADB).
+		draw_birds(screen);  // Over everything, in the tint's colour (0x588B83..0x588BCA).
 		draw_weather(screen);  // The rain or snow (0x588BD3..0x588C06).
 		draw_port_marks(screen);  // The ships' icons and marks (0x588C08..0x588C1E).
 		draw_port_labels(screen);  // The player's ships' names, last (0x588E89..).
@@ -1923,18 +1980,12 @@ private:
 		a.sways = p3::data::tree_sways(a, w, h);
 	}
 
-	// Los atlas se decodifican y suben una sola vez, y se comparten entre ciudades.
-	SDL_Texture* atlas_texture(const std::string& path) {
-		auto it = atlases_.find(path);
-		if (it != atlases_.end()) {
-			return it->second;
-		}
-		SDL_Texture*& texture = atlases_[path];
+	// A tile's atlas decoded, its colour key transparent.
+	bool decode_atlas(const std::string& path, Image& image) const {
 		std::vector<uint8_t> data;
-		Image image;
 		const CprEntry* entry = archive_.find(path);
 		if (!entry || !archive_.read(*entry, data) || !decode_aim(data.data(), data.size(), image)) {
-			return texture = nullptr;
+			return false;
 		}
 		apply_magenta_key(image);
 		{
@@ -1949,6 +2000,82 @@ private:
 					p[3] = 0;
 				}
 			}
+		}
+		return true;
+	}
+
+	// The fog map of a tile's picture (0x5511F5, 0x5833FD: «fogmaps/» put after its path's last '/': its namesake in
+	// images/module_stadtkarte/FogMaps, an 8-bit grey picture of the same size, white where the picture stands out of
+	// the fog), or "" when there is none.
+	std::string fog_map_path(const std::string& atlas) const {
+		const size_t slash = atlas.rfind('/');
+		const std::string path = atlas.substr(0, slash + 1) + "fogmaps/" + atlas.substr(slash + 1);
+		return archive_.find(path) ? path : std::string();
+	}
+	// The fog map a tile is drawn through over the weather's tint: its own picture's (0x551000, [+0x4]; its snowy
+	// atlases drawn through it); a tree's that of the last season's picture it was shown with that has one (0x583330:
+	// a picture without one keeps the one before).
+	const std::string& fog_map_of(const TileDef* tile) {
+		auto it = fog_maps_.find(tile);
+		if (it == fog_maps_.end()) {
+			it = fog_maps_.emplace(tile, fog_map_path(tile->atlas)).first;
+		}
+		return it->second;
+	}
+	// The path of the atlas a tile is drawn with now (season_texture's choice).
+	const std::string& season_atlas(const TileDef* tile) const {
+		if (tile->type == kTreeTileType) {
+			const TileVariant* picture = tree_picture(tile, tree_index(tile));
+			return picture ? picture->atlas : tile->atlas;
+		}
+		if (snow_mode_ <= 0 || snow_mode_ > 6) {
+			return tile->atlas;
+		}
+		const TileVariant* snowy = tile->snow(snow_mode_ == 1 || snow_mode_ == 6 ? 0 : snow_mode_ - 1);
+		return snowy && !snowy->atlas.empty() ? snowy->atlas : tile->atlas;
+	}
+	// An atlas through a fog map (sgl_DrawBitmapRectWithAlphaMask): its pixels' alpha times the map's grey at the same
+	// place (none past the map), a texture of its own, made the first time it is asked for (at most `budget` of them a
+	// frame: those after wait for the next) and kept; null without one.
+	SDL_Texture* masked_texture(const std::string& atlas, const std::string& map, int& budget) {
+		const std::string key = atlas + '|' + map;
+		if (const auto it = masked_.find(key); it != masked_.end()) {
+			return it->second;
+		}
+		if (budget <= 0) {
+			return nullptr;
+		}
+		--budget;
+		SDL_Texture*& texture = masked_[key];
+		Image image;
+		Image grey;
+		std::vector<uint8_t> data;
+		const CprEntry* entry = archive_.find(map);
+		if (!decode_atlas(atlas, image) || !entry || !archive_.read(*entry, data) ||
+			!decode_aim(data.data(), data.size(), grey)) {
+			return texture = nullptr;
+		}
+		for (int y = 0; y < image.height; ++y) {
+			for (int x = 0; x < image.width; ++x) {
+				uint8_t& a = image.rgba[(size_t(y) * size_t(image.width) + size_t(x)) * 4 + 3];
+				const uint8_t g = x < grey.width && y < grey.height ?
+					grey.rgba[(size_t(y) * size_t(grey.width) + size_t(x)) * 4] : 0;
+				a = uint8_t(a * g / 255);
+			}
+		}
+		return texture = p3::app::make_texture(renderer_, image);
+	}
+
+	// Los atlas se decodifican y suben una sola vez, y se comparten entre ciudades.
+	SDL_Texture* atlas_texture(const std::string& path) {
+		auto it = atlases_.find(path);
+		if (it != atlases_.end()) {
+			return it->second;
+		}
+		SDL_Texture*& texture = atlases_[path];
+		Image image;
+		if (!decode_atlas(path, image)) {
+			return texture = nullptr;
 		}
 		if (const auto all = tiles_by_atlas_.find(path); all != tiles_by_atlas_.end()) {
 			// Each tile's average colour (its opaque pixels), for the minimap.
@@ -2053,6 +2180,9 @@ private:
 	int map_columns_ = 0;
 	int map_rows_ = 0;
 	std::map<std::string, SDL_Texture*> atlases_;
+	// The fog pass's (the weather's tint): each tile's fog map (fog_map_of) and the atlases through them.
+	std::unordered_map<const TileDef*, std::string> fog_maps_;
+	std::map<std::string, SDL_Texture*> masked_;
 	std::unordered_map<const TileDef*, SDL_Texture*> tile_textures_;
 	std::map<std::string, std::vector<const TileDef*>> places_by_atlas_;  // The tiles of kPlaces, by atlas.
 	std::unordered_map<const TileDef*, Mask> masks_;
@@ -2101,6 +2231,7 @@ private:
 	bool water_loaded_ = false;
 	SDL_Texture* sparkle_texture_ = nullptr;
 	std::vector<SDL_Rect> sparkle_frames_;
+	std::map<int, SDL_Texture*> fog_textures_;  // The weather's fog textures by their number (textures.ini's TEXn).
 	struct Sparkle {
 		int x = 0;
 		int y = 0;
@@ -2304,15 +2435,23 @@ private:
 
 	// 0x585970 → 0x585550: the frame shown of each of its tile's animations over an object's slice, only its part
 	// within the slice's columns (so it goes with the building's depth), placed in the tile's rectangle.
-	void draw_item_anims(const Item& item, int camera_x, int camera_y, bool rival) {
+	// `over`: the weather's tint's buildings' alpha (−1 without the tint: tile_anim_frames).
+	void draw_item_anims(const Item& item, int camera_x, int camera_y, bool rival, int over) {
 		const auto it = anims_.find(item.tile);
-		if (it == anims_.end() || item.slice < 0 || size_t(item.slice) >= item.tile->slices.size()) {
+		if (it != anims_.end()) {
+			draw_anim_frames(item, p3::data::tile_anim_frames(it->second, over), camera_x, camera_y, rival);
+		}
+	}
+	// The frames over a slice (0x585550: each clipped to the slice's columns), in `rgb` at `alpha`.
+	void draw_anim_frames(const Item& item, const std::vector<p3::data::TileAnimFrame>& frames, int camera_x,
+		int camera_y, bool rival, uint32_t rgb = 0xFFFFFF, uint8_t alpha = 255) {
+		if (item.slice < 0 || size_t(item.slice) >= item.tile->slices.size()) {
 			return;
 		}
 		const TileSlice& s = item.tile->slices[size_t(item.slice)];
 		const int left = item.dst.x - s.x;
 		const int top = item.dst.y - s.y;
-		for (const p3::data::TileAnimFrame& shown : p3::data::tile_anim_frames(it->second)) {
+		for (const p3::data::TileAnimFrame& shown : frames) {
 			const TileVariant* page = shown.page;
 			const TileSlice* f = shown.frame;
 			int x = left + page->x;
@@ -2334,17 +2473,46 @@ private:
 			const SDL_Rect src = {src_x, f->y, w, f->height};
 			const SDL_Rect dst = {x - camera_x, top + page->y - camera_y, w, f->height};
 			if (rival) {
-				SDL_SetTextureColorMod(texture, 105, 105, 115);
+				SDL_SetTextureColorMod(texture, kRivalGrey, kRivalGrey, kRivalGrey);
+				SDL_SetTextureAlphaMod(texture, kRivalAlpha);
+			} else {
+				SDL_SetTextureColorMod(texture, uint8_t(rgb >> 16), uint8_t(rgb >> 8), uint8_t(rgb));
+				SDL_SetTextureAlphaMod(texture, alpha);
 			}
 			SDL_RenderCopy(renderer_, texture, &src, &dst);
-			if (rival) {
-				SDL_SetTextureColorMod(texture, 255, 255, 255);
-			}
+			SDL_SetTextureColorMod(texture, 255, 255, 255);
+			SDL_SetTextureAlphaMod(texture, 255);
 		}
 	}
 
+	// The top bar's house (0x59A1E0 toggles [view+0x564]): the classes drawn by 0x552C90 (its fog pass 0x552D90) whose
+	// +0x84 is 0x54EA40 (their cell's owner, [view+0xC310]'s [+0x3], not the player, with the house on) drawn with their
+	// animations at the constant colour 0xA0A5A5A5 (*0x677940): grey 165 at alpha 160, the ground seen through them, as
+	// the user's photo of Stettin in winter shows. Those are the houses (0x2A, 0x50, 0x51), the hospital (0x65), the
+	// warehouse (0x66), the mint (0x67), the school (0x68), the chapel (0x69) and the workshops drawn by 0x552C90 (0x55,
+	// 0x56, 0x58, 0x59, 0x5A..0x5E, 0x61..0x63); the others are drawn as they are (the grain and hemp farms, the sawmill,
+	// the foundry, the fisherman's hut, the shipyard and the repair yard by their own drawing, the mine, the rival's office
+	// and the town's buildings, whose +0x84 is false, and the plain tiles, 0x551C80).
+	static constexpr uint8_t kRivalGrey = 0xA5;
+	static constexpr uint8_t kRivalAlpha = 0xA0;
+	static bool rival_shading_type(uint32_t type) {
+		switch (type) {
+		case 0x2A: case 0x50: case 0x51: case 0x65: case 0x66: case 0x67: case 0x68: case 0x69:
+		case 0x55: case 0x56: case 0x58: case 0x59: case 0x5A: case 0x5B: case 0x5C: case 0x5D: case 0x5E:
+		case 0x61: case 0x62: case 0x63:
+			return true;
+		default:
+			return false;
+		}
+	}
+	bool rival_shaded(const Item& item, int player) const {
+		return player >= 0 && item.tile && rival_shading_type(item.tile->type) && int(item.owner) != player;
+	}
+
 	// A creature's picture at its place, `dx`, `dy` aside, coloured and faded.
-	void draw_creature(const p3::data::Creature& c, const SDL_Rect& screen, int dx, int dy, uint8_t grey, uint8_t alpha) {
+	// `grey` times the colour `rgb` (0xRRGGBB) its colours' factor (the constant colour of the graphics library).
+	void draw_creature(const p3::data::Creature& c, const SDL_Rect& screen, int dx, int dy, uint8_t grey, uint8_t alpha,
+		uint32_t rgb = 0xFFFFFF) {
 		const p3::data::LcrFrame* f = c.current();
 		SDL_Texture* texture = f ? atlas_texture(c.look->image) : nullptr;
 		if (!texture) {
@@ -2357,7 +2525,8 @@ private:
 		}
 		const SDL_Rect src = {f->body.x, f->body.y, f->body.w, f->body.h};
 		const SDL_Rect at = {dst.x - screen.x, dst.y - screen.y, dst.w, dst.h};
-		SDL_SetTextureColorMod(texture, grey, grey, grey);
+		SDL_SetTextureColorMod(texture, uint8_t(grey * ((rgb >> 16) & 0xFF) / 255), uint8_t(grey * ((rgb >> 8) & 0xFF) / 255),
+			uint8_t(grey * (rgb & 0xFF) / 255));
 		SDL_SetTextureAlphaMod(texture, alpha);
 		SDL_RenderCopy(renderer_, texture, &src, &at);
 		SDL_SetTextureColorMod(texture, 255, 255, 255);
@@ -2373,19 +2542,174 @@ private:
 		}
 	}
 
-	// The birds after the town (0x588AA5..0x588BCA), lower ones first (0x58A9E7 keeps them by height): their shadows on
-	// the ground at alpha 100 (0x563B00 → 0x559520), then their bodies their height up and a fifth of it to the left
-	// (0x563BE0).
-	void draw_birds(const SDL_Rect& screen) {
-		std::vector<const p3::data::Creature*> birds;
+	// The birds after the town, lower ones first (0x58A9E7 keeps them by height): their shadows on the ground at alpha
+	// 100 (0x588AA5..0x588AD7: 0x563B00 → 0x559520), then (after the weather's tint) their bodies their height up and a
+	// fifth of it to the left (0x563BE0), in the tint's colour at full alpha (0x588B83..0x588BCA).
+	std::vector<const p3::data::Creature*> birds() const {
+		std::vector<const p3::data::Creature*> out;
 		for (const p3::data::Creature& c : life_.creatures()) {
 			if (c.cls == 0x0F) {
-				birds.push_back(&c);
+				out.push_back(&c);
 			}
 		}
-		std::stable_sort(birds.begin(), birds.end(),
+		std::stable_sort(out.begin(), out.end(),
 			[](const p3::data::Creature* a, const p3::data::Creature* b) { return a->alt < b->alt; });
-		for (const p3::data::Creature* c : birds) {
+		return out;
+	}
+	void draw_birds(const SDL_Rect& screen) {
+		const uint32_t tint = life_.tint().colour;
+		for (const p3::data::Creature* c : birds()) {
+			draw_creature(*c, screen, -(c->alt / 5), -c->alt, 255, 255, tint);
+		}
+	}
+	// 0x58FF40 (with the weather on, [view+0xC329]: P2.cfg's WEATHER ≥ 2, the game's 3): the weather's tint, its fog
+	// texture (textures.ini's TEX of iso.ini's FogTexBase: images/fog.bmp, 256 · 256) stretched to 1024 · 1024 and laid
+	// over the view from the town's origin (0x58FEA0: its scroll [view+0xC650], [view+0xC654]) in the tint's colour (the
+	// texture's greys times its RGB, at its alpha); while a step sweeps down the view, the part not yet swept in the
+	// colour before the step ([view+0xC1A8], clipped to the sweep's rectangle), the rest in the new one (clipped out of
+	// it: sgl_CreateClipper, sgl_CopyClipper, sgl_SubClipRect_r).
+	void draw_tint(const SDL_Rect& screen, int player) {
+		const p3::data::WeatherTint& t = life_.tint();
+		if (((t.colour | t.previous) >> 24) == 0) {
+			return;
+		}
+		const auto found = fog_textures_.find(t.texture);
+		if (found == fog_textures_.end()) {
+			return;
+		}
+		SDL_Texture* fog = found->second;
+		SDL_Rect old_clip;
+		SDL_RenderGetClipRect(renderer_, &old_clip);
+		const bool clipped = SDL_RenderIsClipEnabled(renderer_);
+		const int w = screen.w;
+		const int h = screen.h;
+		auto fill = [&](uint32_t colour, SDL_Rect clip) {
+			if ((colour >> 24) == 0 || clip.w <= 0 || clip.h <= 0 ||
+				(clipped && !SDL_IntersectRect(&clip, &old_clip, &clip))) {
+				return;
+			}
+			SDL_RenderSetClipRect(renderer_, &clip);
+			SDL_SetTextureColorMod(fog, uint8_t(colour >> 16), uint8_t(colour >> 8), uint8_t(colour));
+			SDL_SetTextureAlphaMod(fog, uint8_t(colour >> 24));
+			for (int y = ((-screen.y) & 0x3FF) - 0x400; y < h; y += 0x400) {
+				for (int x = ((-screen.x) & 0x3FF) - 0x400; x < w; x += 0x400) {
+					const SDL_Rect dst = {x, y, 0x400, 0x400};
+					SDL_RenderCopy(renderer_, fog, nullptr, &dst);
+				}
+			}
+		};
+		if (t.rect_empty()) {
+			fill(t.colour, {0, 0, w, h});
+		} else {
+			const SDL_Rect in = {t.rect[0], t.rect[1], t.rect[2] - t.rect[0], t.rect[3] - t.rect[1]};
+			fill(t.previous, in);
+			fill(t.colour, {0, 0, w, in.y});
+			fill(t.colour, {0, in.y + in.h, w, h - in.y - in.h});
+			fill(t.colour, {0, in.y, in.x, in.h});
+			fill(t.colour, {in.x + in.w, in.y, w - in.x - in.w, in.h});
+		}
+		SDL_RenderSetClipRect(renderer_, clipped ? &old_clip : nullptr);
+		SDL_SetTextureColorMod(fog, 255, 255, 255);
+		SDL_SetTextureAlphaMod(fog, 255);
+		draw_fog_pass(screen, player);
+		draw_fog_banks(screen);
+	}
+	// The fog pass (0x5900D9..0x590543, with alpha in the buildings' colour [view+0xC180]: the plague's and the fog's,
+	// fading in and out with the tint): the objects in view drawn again in their order, each through its fog map in that
+	// colour (0x552010, 0x552D90; a tree its sway's frame, 0x583220), so their tops stand out of the tint and their feet
+	// fade into it; the tavern and the lighthouse their picture so at alpha 2A − 255 when above 0 and their animations
+	// white at full alpha, else only their animations at 2A (0x583E60, 0x583B60: the lighthouse's fire and the tavern's
+	// smoke through the fog); the shipyard its picture, then its flying gulls in the tint's colour at full alpha
+	// (0x5850E0); a rival's building with the house shown in the viewer's shading (the game's 0xA0A5A5A5 for some
+	// classes). A picture's fog map made the first time it is drawn (8 a frame at most).
+	void draw_fog_pass(const SDL_Rect& screen, int player) {
+		const p3::data::WeatherTint& t = life_.tint();
+		const uint8_t a = uint8_t(t.over >> 24);
+		if (a == 0) {
+			return;
+		}
+		int budget = 8;
+		for (size_t i = first_object_; i < items_.size(); ++i) {
+			const Item& item = items_[i];
+			if (!item.tile || !SDL_HasIntersection(&item.dst, &screen)) {
+				continue;
+			}
+			const uint32_t type = item.tile->type;
+			const std::string& map = fog_map_of(item.tile);
+			SDL_Texture* masked = map.empty() ? nullptr : masked_texture(season_atlas(item.tile), map, budget);
+			const bool rival = rival_shaded(item, player);
+			const SDL_Rect dst = {item.dst.x - screen.x, item.dst.y - screen.y, item.dst.w, item.dst.h};
+			auto picture = [&](uint32_t rgb, uint8_t alpha) {
+				if (!masked) {
+					return;
+				}
+				if (rival) {
+					// (0x552D90: the house's 0xA0A5A5A5 instead of the buildings' colour over the tint.)
+					SDL_SetTextureColorMod(masked, kRivalGrey, kRivalGrey, kRivalGrey);
+					SDL_SetTextureAlphaMod(masked, kRivalAlpha);
+				} else {
+					SDL_SetTextureColorMod(masked, uint8_t(rgb >> 16), uint8_t(rgb >> 8), uint8_t(rgb));
+					SDL_SetTextureAlphaMod(masked, alpha);
+				}
+				SDL_RenderCopy(renderer_, masked, &sway_src(item), &dst);
+				SDL_SetTextureColorMod(masked, 255, 255, 255);
+				SDL_SetTextureAlphaMod(masked, 255);
+			};
+			const auto anims = anims_.find(item.tile);
+			if (type == 0x02 || type == 0x15) {
+				const int lit = 2 * a - 255;
+				if (lit > 0) {
+					picture(0xFFFFFF, uint8_t(lit));
+				}
+				if (anims != anims_.end()) {
+					draw_anim_frames(item, p3::data::tile_anim_fog_frames(anims->second), screen.x, screen.y, rival,
+						0xFFFFFF, lit > 0 ? 255 : uint8_t(2 * a));
+				}
+			} else {
+				picture(t.over, a);
+				if (type == 0x01 && anims != anims_.end()) {
+					draw_anim_frames(item, p3::data::tile_anim_fog_frames(anims->second), screen.x, screen.y, rival,
+						t.colour, 255);
+				}
+			}
+		}
+	}
+	// The fog banks (0x590543..0x5905BA, while there are any): in their colour [view+0xC1AC], the rows the view shows
+	// (its top / (H / 20) to its bottom / (H / 20) + 1, no further than 19), each row's first three of its five
+	// (+0x8 → 0x559470: the picture at the bank's place, its top left).
+	void draw_fog_banks(const SDL_Rect& screen) {
+		const p3::data::WeatherTint& t = life_.tint();
+		const std::array<uint16_t, 100>& banks = life_.fog_banks();
+		const int h20 = 22 * (map_rows_ >> 1) / 20;
+		if (banks[0] == 0 || (t.banks >> 24) == 0 || h20 <= 0) {
+			return;
+		}
+		const int first = std::max(0, screen.y) / h20;
+		int last = (std::max(0, screen.y) + screen.h) / h20 + 1;
+		if (last >= 20) {
+			last = 19;
+		}
+		for (int row = first; row < last; ++row) {
+			for (int col = 0; col < 3; ++col) {
+				const p3::data::Creature* c = life_.find(banks[size_t(row * 5 + col)]);
+				const p3::data::LcrFrame* f = c ? c->current() : nullptr;
+				SDL_Texture* texture = f ? page_texture(c->look->image) : nullptr;  // (A TGA with its alpha.)
+				if (!texture) {
+					continue;
+				}
+				const SDL_Rect src = {f->body.x, f->body.y, f->body.w, f->body.h};
+				const SDL_Rect dst = {c->px() - (f->anchor_x - f->body.x) - screen.x,
+					c->py() - (f->anchor_y - f->body.y) - screen.y, f->body.w, f->body.h};
+				SDL_SetTextureColorMod(texture, uint8_t(t.banks >> 16), uint8_t(t.banks >> 8), uint8_t(t.banks));
+				SDL_SetTextureAlphaMod(texture, uint8_t(t.banks >> 24));
+				SDL_RenderCopy(renderer_, texture, &src, &dst);
+				SDL_SetTextureColorMod(texture, 255, 255, 255);
+				SDL_SetTextureAlphaMod(texture, 255);
+			}
+		}
+	}
+	void draw_bird_shadows(const SDL_Rect& screen) {
+		for (const p3::data::Creature* c : birds()) {
 			const p3::data::LcrFrame* f = c->current();
 			SDL_Texture* texture = f && f->shadowed ? atlas_texture(c->look->shadow_image) : nullptr;
 			if (!texture) {
@@ -2397,9 +2721,6 @@ private:
 			SDL_SetTextureAlphaMod(texture, 100);
 			SDL_RenderCopy(renderer_, texture, &src, &dst);
 			SDL_SetTextureAlphaMod(texture, 255);
-		}
-		for (const p3::data::Creature* c : birds) {
-			draw_creature(*c, screen, -(c->alt / 5), -c->alt, 255, 255);
 		}
 	}
 };
@@ -28671,8 +28992,7 @@ int main(int argc, char** argv) {
 				view->stop_life();
 				view->step_template_anims(app_ticks(), camera_x, camera_y, town_width);
 			}
-			view->draw(camera_x, camera_y, pointed, side.shade_rivals && save.player >= 0 ? save.player : -1,
-				int(save.merchant_count));
+			view->draw(camera_x, camera_y, pointed, side.shade_rivals && save.player >= 0 ? save.player : -1);
 			if (placing && side.cell_x >= 0) {
 				// After this frame's touches: whether it fits where it is now.
 				int type = side.build_type;

@@ -238,13 +238,13 @@ int tile_anim_facility(uint32_t type) {
 	case 0x63: return 0x11;  // the pottery (0x556F00)
 	case 0x62: return 0x12;  // the quarry (0x5572E0)
 	case 0x61: return 0x13;  // the pitch maker (0x556280)
-	case 0x02:  // the tavern (its smoke by day, 0x583D60)
+	case 0x02:  // the tavern (its smoke, 0x583D60; over the weather's tint 0x583E60)
 	case 0x09:  // the bath house
 	case 0x0B:  // the arsenal
 	case 0x5F:  // the mine (its left or right .let's data, 0x554B70)
 	case 0x01:  // the shipyard (its own drawing: tile_anim_frames)
 	case 0x1B:  // the repair yard (its own step and drawing)
-	case 0x15:  // the lighthouse (its fire by day, 0x583A60)
+	case 0x15:  // the lighthouse (its fire, 0x583A60; over the weather's tint 0x583B60)
 	case 0x14:  // the trees (their sway: 0x5830D0 counts their cells in view; nothing «active» asked)
 		return -1;
 	case 0x57: return 5;  // the fisherman's hut (its own step, 0x555B00)
@@ -643,8 +643,26 @@ void step_tile_anims(TileAnims& a, uint32_t now, const TileAnimTown& town, uint3
 	}
 }
 
-std::vector<TileAnimFrame> tile_anim_frames(const TileAnims& a) {
+std::vector<TileAnimFrame> tile_anim_fog_frames(const TileAnims& a) {
 	std::vector<TileAnimFrame> out;
+	if (a.type == 0x01) {
+		const TileVariant* page = nullptr;
+		if (a.groups.size() > 2) {
+			if (const TileSlice* f = a.groups[2].shown(&page, true)) {
+				out.push_back({page, f});
+			}
+		}
+	} else if (a.type == 0x02 || a.type == 0x15) {
+		out = tile_anim_frames(a);
+	}
+	return out;
+}
+
+std::vector<TileAnimFrame> tile_anim_frames(const TileAnims& a, int over) {
+	std::vector<TileAnimFrame> out;
+	if ((a.type == 0x02 || a.type == 0x15) && over >= 0x80) {
+		return out;
+	}
 	auto add = [&](const TileVariant* page, size_t frame) {
 		if (const TileSlice* f = frame_of(page, frame)) {
 			out.push_back({page, f});
@@ -660,9 +678,9 @@ std::vector<TileAnimFrame> tile_anim_frames(const TileAnims& a) {
 	switch (a.type) {
 	case 0x01:
 		// The shipyard (0x584F00): its gate's gulls hidden, nothing; else they, its posts' and the flying ones even
-		// hidden (those by day: the viewer has no night).
+		// hidden (those not under the weather's tint with the buildings drawn over it: the fog pass draws them).
 		if (!g.empty() && g[0].shown()) {
-			for (size_t k = 0; k < g.size() && k < 3; ++k) {
+			for (size_t k = 0; k < g.size() && k < 3 && (k < 2 || over <= 0); ++k) {
 				add_shown(g[k], k > 0);
 			}
 		}

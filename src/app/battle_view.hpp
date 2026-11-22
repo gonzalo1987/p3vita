@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "p3data/battle_clouds.hpp"
 #include "p3data/cpr.hpp"
 #include "p3data/lcr.hpp"
 #include "p3data/sailing.hpp"
@@ -188,12 +189,6 @@ private:
 		int image = 0;
 		int frame = 0;
 	};
-	struct Cloud {
-		float x = 0;  // In the area's screen pixels.
-		float y = 0;
-		int image = 0;
-		Uint8 alpha = 0;
-	};
 
 	SDL_Texture* texture(const std::string& path, bool magenta);
 	void make_water();
@@ -249,8 +244,11 @@ private:
 	std::vector<const p3::data::TileDef*> islet_tiles_;
 	std::map<uint16_t, const p3::data::TileDef*> tile_ids_;
 	std::vector<SDL_Texture*> pinned_;  // The reefs' atlases (kept when the looks are freed).
-	std::array<SDL_Texture*, 6> cloud_images_{};
-	std::vector<Cloud> clouds_;
+	// The clouds (battle_clouds.hpp): the class's looks (`wolke`..`wolke6`, iso/lcr/files.lst's order) and their
+	// pictures, the battle's clouds and the time of their last step.
+	std::vector<p3::data::LcrAnim> cloud_looks_;
+	std::vector<SDL_Texture*> cloud_images_;
+	std::vector<p3::data::BattleCloud> clouds_;
 	uint32_t clouds_time_ = 0;
 	std::vector<Effect> effects_;
 	std::map<size_t, Sinking> sinking_;  // By the scene's ship.

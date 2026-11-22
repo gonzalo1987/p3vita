@@ -341,6 +341,21 @@ void test_animals() {
 	TownLife life;
 	life.people[0x11] = {&a};
 	life.people[0x10] = {&b};
+	// The footprints in the snow (their parameters 2, 3: small prints, the feet 5 apart; the frames 5, 17, 24...).
+	LcrAnim small_left;
+	LcrAnim small_right;
+	for (LcrAnim* f : {&small_left, &small_right}) {
+		f->kind = 0x12;
+		f->fps = 1;
+		f->params = {f == &small_left ? 0xC5u : 0xC6u};
+		f->sequences = {{0, 0, 2}};
+		LcrFrame one;
+		one.body = {0, 0, 8, 16};
+		f->directions.assign(8, std::vector<LcrFrame>{one});
+	}
+	life.footprint_looks[2] = &small_left;
+	life.footprint_looks[3] = &small_right;
+	life.set_snow(3);
 	life.start(map, town, 0);
 	int dogs = 0;
 	int wild = 0;
@@ -352,6 +367,8 @@ void test_animals() {
 	bool ran = false;
 	bool rested = false;
 	bool moved = false;
+	size_t prints = 0;
+	bool faint = true;
 	std::vector<TownCell2> start;
 	for (const Creature& c : life.creatures()) {
 		start.push_back({c.px(), c.py()});
@@ -361,15 +378,27 @@ void test_animals() {
 		for (size_t i = 0; i < life.creatures().size(); ++i) {
 			const Creature& c = life.creatures()[i];
 			const TownCell2 cell = life_pixel_cell(c.px(), c.py());
-			if (map.in(cell[0], cell[1])) {
+			if (map.in(cell[0], cell[1]) && (c.cls == 0x10 || c.cls == 0x11)) {
 				check(map.inside(cell[0], cell[1]) == (c.cls == 0x11), "an animal keeps to its side of the walls");
 			}
 			ran = ran || c.seq == 0x0B;
 			rested = rested || c.seq == 3;
+			if (c.mode == 13 && (c.effect == 0xC5 || c.effect == 0xC6)) {
+				++prints;
+				faint = faint && c.alpha <= 0xB4;
+			}
 			moved = moved || (i < start.size() && (c.px() != start[i][0] || c.py() != start[i][1]));
 		}
 	}
 	check(moved && ran && rested, "they walk, run and rest");
+	check(prints > 0 && faint, "their small footprints in the snow, at alpha 180 at most");
+	// Without the snow none more, and those left fade away within 11 s.
+	life.set_snow(0);
+	for (uint32_t t = 120000; t < 132000; t += 20) {
+		life.step(t, 20, {0, 0, 2000, 2000});
+	}
+	check(std::none_of(life.creatures().begin(), life.creatures().end(), [](const Creature& c) { return c.mode == 13; }),
+		"no footprints without the snow, the old ones faded");
 	dogs = 0;
 	wild = 0;
 	for (const Creature& c : life.creatures()) {
@@ -507,6 +536,68 @@ void test_fish() {
 	check(seen && faded, "they come up and fade away");
 }
 
+// The weather's tint (0x58F4E0): its byte steps; a foggy town's tint and fog banks set at once when it is shown, the
+// banks drifting right; the fog gone, the tint back to none a step every 220 ms (200 and the sweep's tenths of the view a
+// frame), each step swept down the view, the banks taken away at the end.
+void test_weather() {
+	uint32_t step = 0;
+	check(tint_steps(0x00FFFFFF, 0xA0E0E1E2, 2, step) == 80 && step == 0x02FEFEFE, "the colour's steps");
+	tint_split(0xFFFFFFFF, 0x00FFFFFF, 80, step);
+	check(step == 0xFC000000, "the others' steps, as many");
+	check(tint_move(0x10FFFFFF, 0x00FFFFFF, 0xFC000000) == 0x0CFFFFFF &&
+			tint_move(0x02FFFFFF, 0x00FFFFFF, 0xFC000000) == 0x00FFFFFF,
+		"a step, not past its target");
+	LcrAnim fog;
+	fog.kind = 0x1C;
+	fog.speed = 60;
+	LcrFrame frame;
+	frame.body = {0, 0, 128, 128};
+	fog.directions = {{frame}};
+	LifeMap map;
+	map.width = 128;
+	map.height = 226;
+	map.ground.assign(128 * 226, 0x0E);
+	map.object.assign(128 * 226, -1);
+	map.grid.assign(128 * 226, 0);
+	LifeTown town;
+	town.index = 0;
+	town.weather = 1;
+	TownLife life;
+	life.fog_looks = {&fog};
+	life.start(map, town, 1000);
+	const WeatherTint& t = life.tint();
+	check(t.colour == t.target && (t.colour >> 24) >= 146 && (t.colour >> 24) <= 185 && t.over == 0xFFFFFFFF &&
+			t.banks == 0xFFFFFFFF && t.rect_empty() && t.texture == 100,
+		"a foggy town's tint at once");
+	check(std::count_if(life.fog_banks().begin(), life.fog_banks().end(), [](uint16_t id) { return id != 0; }) == 100,
+		"its 100 fog banks");
+	const Creature* bank = life.find(life.fog_banks()[7]);  // the row 1's third
+	const int x0 = bank ? bank->px() : 0;
+	check(bank && bank->py() == 2486 / 20 && x0 >= 2 * 870 - 435 && x0 < 2 * 870 + 435, "a bank's place");
+	uint32_t now = 1000;
+	for (; now < 11000; now += 20) {
+		life.step(now, 20, {0, 0, 640, 480});
+	}
+	bank = life.find(life.fog_banks()[7]);
+	check(bank && bank->px() - x0 >= 59 && bank->px() - x0 <= 60, "it drifts 6 pixels a second");
+	town.weather = 0;
+	life.update_town(town);
+	const int steps = int((t.colour >> 24) + 1) / 2;
+	const uint32_t from = now;
+	bool swept = false;
+	bool lifted = false;
+	for (; now < 60000 && !lifted; now += 20) {
+		life.step(now, 20, {0, 0, 640, 480});
+		swept = swept || (!t.rect_empty() && t.previous != t.colour && t.rect[1] > 0 && t.rect[3] == 480);
+		lifted = t.colour == 0x00FFFFFF && t.rect_empty();
+	}
+	check(swept, "each step swept down the view");
+	check(lifted && std::abs(int(now - from) - steps * 220) <= 440, "the tint gone, a step every 220 ms");
+	check(life.fog_banks()[0] == 0 &&
+			std::none_of(life.creatures().begin(), life.creatures().end(), [](const Creature& c) { return c.cls == 0x1C; }),
+		"the banks gone with it");
+}
+
 // A tile's animations (tile_anims.hpp): a loop of 2 parameters runs while active and hides when not; one of 5 waits
 // and starts its pages at random; one of 7 goes from place to place; one of 9 repeats its page.
 void test_tile_anims() {
@@ -539,6 +630,22 @@ void test_tile_anims() {
 	check(smoke.shown() == nullptr, "hidden before its first step");
 	step_tile_anim(smoke, 1000, true, rs);
 	check(smoke.shown() != nullptr && smoke.frame == 0, "started while active");
+	{
+		// Under the weather's tint: the lighthouse's animations left to the fog pass with the buildings' alpha at 0x80
+		// or more, the shipyard's flying gulls with any.
+		TileAnims lit;
+		lit.type = 0x15;
+		lit.groups = {smoke};
+		check(tile_anim_frames(lit).size() == 1 && tile_anim_frames(lit, 0x7F).size() == 1 &&
+				tile_anim_frames(lit, 0x80).empty() && tile_anim_fog_frames(lit).size() == 1,
+			"the lighthouse's fire over the tint: the fog pass's");
+		TileAnims yard;
+		yard.type = 0x01;
+		yard.groups = {smoke, smoke, smoke};
+		check(tile_anim_frames(yard).size() == 3 && tile_anim_frames(yard, 0).size() == 3 &&
+				tile_anim_frames(yard, 1).size() == 2 && tile_anim_fog_frames(yard).size() == 1,
+			"the shipyard's flying gulls over the tint: the fog pass's");
+	}
 	step_tile_anim(smoke, 1001, true, rs);
 	step_tile_anim(smoke, 1250, true, rs);
 	check(smoke.frame == 2, "a frame each 100 ms");
@@ -945,6 +1052,7 @@ int main() {
 	test_animals();
 	test_birds();
 	test_fish();
+	test_weather();
 	test_tile_anims();
 	test_fisherman();
 	test_port_scene();

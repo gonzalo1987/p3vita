@@ -126,7 +126,13 @@ struct TileAnimFrame {
 	const TileVariant* page;
 	const TileSlice* frame;
 };
-std::vector<TileAnimFrame> tile_anim_frames(const TileAnims& a);
+// `over`: −1 without the weather's tint, else the alpha of the buildings' colour over it ([view+0xC180]): the normal
+// drawing leaves out what the tint's fog pass draws (the tavern's and the lighthouse's animations with 0x80 or more,
+// 0x583D60, 0x583A60; the shipyard's flying gulls with any, 0x584F00).
+std::vector<TileAnimFrame> tile_anim_frames(const TileAnims& a, int over = -1);
+// What the fog pass draws of them over the tint (0x583E60, 0x583B60: the tavern's and the lighthouse's animations;
+// 0x5850E0: the shipyard's flying gulls, even with its gate's hidden); nothing for the others.
+std::vector<TileAnimFrame> tile_anim_fog_frames(const TileAnims& a);
 
 // The trees' sway (class 0x14). Each tree type keeps one frame for all its trees, stepped every its page's parameter 0
 // milliseconds (0x583080) while it sways; each tree shows that frame moved on by its anchor cell's place (0x583130:

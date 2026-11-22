@@ -112,6 +112,39 @@ TownCell2 life_pixel_cell(int x, int y);
 // neighbours, the others two rows or a column away). False off the map.
 bool life_neighbour(int& x, int& y, uint8_t direction, int width, int height);
 
+// The weather's tint over the town view (0x58F4E0 each frame, drawn by 0x58FF40): colours as 0xAARRGGBB, each byte
+// moved on its own.
+// 0x58F3C0: each byte's step from `current` towards `target`, ±`speed` (0 where they are equal), into `step`; the
+// steps that takes (the most of (|difference| + speed − 1) / speed).
+int tint_steps(uint32_t current, uint32_t target, uint8_t speed, uint32_t& step);
+// 0x58F440: each byte's step to reach `target` in `count` steps (its difference / count away from 0, at least ±1; 0
+// where they are equal), into `step`; all 0 when the count's low byte is 0.
+void tint_split(uint32_t current, uint32_t target, int count, uint32_t& step);
+// 0x58FC91 (inline in 0x58F4E0): each byte moved by its step (signed), not past its target's.
+uint32_t tint_move(uint32_t current, uint32_t target, uint32_t step);
+
+// The view's weather tint ([view+0xC174..+0xC1B4]): the weather's kind sets its targets (0x58F4E0), and the colours
+// go to them a step of 2 at a time (the others in as many steps), one step every 200 ms once the last one's sweep down
+// the view is done (or at once when a town is shown).
+struct WeatherTint {
+	uint32_t target = 0x00FFFFFF;  // [+0xC174]: the fog texture's colour the weather asks for
+	uint32_t colour = 0x00FFFFFF;  // [+0xC178]: the colour the fog texture is drawn in over the view
+	uint32_t previous = 0x00FFFFFF;  // [+0xC1A8]: the colour before the last step, drawn where its sweep hasn't been
+	uint32_t over_target = 0xFFFFFFFF;  // [+0xC17C]
+	uint32_t over = 0xFFFFFFFF;  // [+0xC180]: the buildings drawn again over the fog through their fog maps
+	uint32_t banks_target = 0;  // [+0xC1B0]
+	uint32_t banks = 0;  // [+0xC1AC]: the fog banks' colour
+	uint32_t step = 0;  // [+0xC18C]: each byte's step (signed)
+	uint32_t over_step = 0;  // [+0xC190]
+	uint32_t banks_step = 0;  // [+0xC1B4]
+	uint32_t due = 0;  // [+0xC188]: the next step
+	uint32_t swept_at = 0;  // [+0xC1A4]: when the sweep last moved
+	// [+0xC194]: what the sweep has still to cover (x0, y0, x1, y1 in the view, its top left 0, 0), in `previous`.
+	std::array<int, 4> rect{};
+	int texture = -1;  // [+0xC330]: the fog texture's number (iso.ini's FogTexBase + rand() % FogTexCnt), −1 none
+	bool rect_empty() const { return rect[0] >= rect[2] || rect[1] >= rect[3]; }
+};
+
 // A creature of the town view.
 struct Creature {
 	int cls = 0;  // Its LCR class (0 the poor, 1 the middle class, 2 the rich, 3 a child, 4 a beggar, 5 a market
@@ -156,7 +189,7 @@ struct Creature {
 	// viewer's for the other classes: 3 a market seller or the juggler at his place, 4 the official, 5 a rat, 6 a cart,
 	// 7 an animal, 8 a bird, 9 a fish, 10 the fisherman (his path of the tag 4 in `road`), 11 a figure moved from outside,
 	// 12 a ship figure's pennant, 13 an effect on the water (class 0x12 of the water list: a wave 0x50, an ice floe 0xC7),
-	// 14 a snowflake, 15 a raindrop
+	// 14 a snowflake, 15 a raindrop, 16 a fog bank
 	uint8_t corner = 0xFF;  // [+0x6B]: 0xFF to be worked out, 0 none, 1 and 2 the corner's halves
 	bool entered = false;  // [+0x6C]: coming in, it reached the town (it walks free at the next point)
 	bool flee = false;  // [+0x6D]: hurrying from a siege (not yet)
@@ -186,7 +219,7 @@ struct Creature {
 	uint8_t way = 0;  // [+0x58]
 	bool gone_away = false;  // [+0x5A]
 	uint16_t owner = 0;  // A pennant's [+0x24]: its ship figure (it goes with it, 0x56CD50)
-	// An effect's number's low byte (class 0x12: 0x50 a wave, 0xC7 an ice floe) and its fade (0x57AF40, 0x57A91C): the
+	// An effect's number's low byte (class 0x12: 0x50 a wave, 0xC7 an ice floe, 0xC3..0xC6 a footprint) and its fade (0x57AF40, 0x57A91C): the
 	// alpha's speed in 1000ths a ms ([+0x34]), the ms before it starts ([+0x3C]) and its rest ([+0x38]).
 	uint8_t effect = 0;
 	int32_t fade_speed = 0;
@@ -219,6 +252,16 @@ public:
 	// The snowflakes' looks (class 0x1D: `schneeflocke0..4`, *0x6E2E34; their two parameters *0x6E2E38: how likely to
 	// melt, by how much a frame).
 	std::vector<const LcrAnim*> flake_looks;
+	// The fog banks' looks (class 0x1C: `nebel01..03`, *0x6E2DF4 in the list's order) and the fog texture's numbers
+	// (iso.ini's FogTexBase and FogTexCnt: [view+0xC1B8], [view+0xC1BC]).
+	std::vector<const LcrAnim*> fog_looks;
+	int fog_tex_base = 100;
+	int fog_tex_count = 1;
+	// The footprints' looks (class 0x12, `fussspur_*`, by their number less 0xC3: 0xC3 a left foot, 0xC4 a right one,
+	// 0xC5, 0xC6 small ones).
+	std::array<const LcrAnim*, 4> footprint_looks{};
+	// The snow shown ([view+0x504], the season's mode: 2..5 the snow's levels): the footprints only then.
+	void set_snow(int mode) { snow_mode_ = mode; }
 
 	// A town shown (0x595CA0's first part): its walkers made again.
 	void start(const LifeMap& map, const LifeTown& town, uint32_t now);
@@ -261,7 +304,12 @@ public:
 	void clear() {
 		creatures_.clear();
 		precip_count_ = 0;
+		fog_banks_.fill(0);
+		made_.clear();
 	}
+	// The weather's tint (0x58F4E0) and the fog banks ([view+0xC334]: 20 rows of 5 columns, their numbers; 0 none).
+	const WeatherTint& tint() const { return tint_; }
+	const std::array<uint16_t, 100>& fog_banks() const { return fog_banks_; }
 	// A fisherman's hut at work asks for its fisherman (0x59A420, from its step 0x555B00 with its cell's point, the
 	// town's pixels): if a path of the tag 4 still free starts within 304 pixels of it, one made on the nearest free
 	// path (0x569C20) and its number given; else 0.
@@ -333,12 +381,21 @@ private:
 	bool floes_made_ = false;
 	void spawn_floes();
 	bool water_effect_step(Creature& c);
+	// The footprints in the snow (0x55B030; 0x55D0B0 the walkers' in their free walk, 0x57C61E.. the dogs' and cats',
+	// 0x57EC12.. the wild animals'), each time a creature's frame is about to change, while within 200 pixels of the view.
+	int snow_mode_ = 0;
+	std::vector<Creature> made_;  // The footprints made during the creatures' step, added after it.
+	void footprint(uint8_t effect, int x, int y, uint8_t dir);
+	bool near_view(const Creature& c) const;
+	void walker_footprints(const Creature& c);
+	void animal_footprints(const Creature& c);
 	// The rain and snow (the view's [+0xC6F0..+0xC7CC]): the weather's kind ([view+0xC184]: 2 rain or snow, 1 the
-	// plague, 3 fog, 0 none) and whether it rained when set; the falling ones ([+0xC7BC]), the most ([+0xC7CC]: 50 with
+	// plague, 3 fog, 0 none), its tint and fog banks; the falling ones ([+0xC7BC]), the most ([+0xC7CC]: 50 with
 	// rain or snow, 0x58B090), the count when the view last stood ([+0xC7C0]), the time between new ones ([+0xC7C4]) and
 	// when the next is due ([+0xC7C8]); the camera of the last frame (its scroll, [view+0xC5F8], [view+0xC5FC]).
 	int weather_kind_ = 0;
-	bool weather_rain_ = false;
+	WeatherTint tint_;
+	std::array<uint16_t, 100> fog_banks_{};
 	int precip_count_ = 0;
 	int precip_max_ = 0;
 	int precip_last_ = 0;
@@ -346,7 +403,13 @@ private:
 	uint32_t precip_due_ = 0;
 	std::array<int, 4> last_view_{};
 	bool last_view_set_ = false;
-	void update_weather();
+	// 0x58F4E0 (`at_once` its argument: when a town is shown, 0x58A68B; each frame P2.cfg's WEATHER < 3, the game's 3:
+	// false); 0x59B410 (a town shown or left: the tint back to none, the fog banks gone); the fog banks (class 0x1C).
+	void update_weather(bool at_once);
+	void reset_weather();
+	void make_fog_banks();
+	void remove_fog_banks();
+	bool fog_drift(Creature& c);
 	void spawn_precipitation();
 	void precip_in(const std::array<int, 4>& rect, int count);
 	std::array<int, 4> flake_rect(const Creature& c) const;

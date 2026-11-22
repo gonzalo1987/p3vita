@@ -950,6 +950,9 @@ void TownLife::begin_step(Creature& c, int cx, int cy) {
 // 0x55C820: a free walker's frame. False when it is to go (out of the town, or stuck and unseen).
 bool TownLife::walk(Creature& c) {
 	const uint8_t f = anim_step(c);
+	if (f != c.frame) {
+		walker_footprints(c);  // 0x55C8D9: the frame shown before it changes.
+	}
 	if (c.dir != c.target) {
 		if (f != c.frame) {
 			const int8_t d = int8_t(uint8_t(c.target - c.dir));
@@ -1580,8 +1583,11 @@ void TownLife::start(const LifeMap& map, const LifeTown& town, uint32_t now) {
 	now_ = now;
 	floes_made_ = false;  // (0x58B5D7: the town left, [view+0xC63C] cleared.)
 	precip_count_ = 0;
-	weather_kind_ = 0;
 	last_view_set_ = false;
+	// 0x59B410, then 0x58F4E0 at once (0x58A20D, 0x58A68B): the weather's tint as it is, its fog banks made.
+	fog_banks_.fill(0);
+	reset_weather();
+	update_weather(true);
 	// 0x58EF26: every path of the tag 4 free for a fisherman.
 	fisher_free_.assign(town.nodes.size() > 4 ? town.nodes[4].size() : 0, 1);
 	// 0x58A8A0 (the view's animations on): 0x58A920, 20 birds anywhere over the map, facing one of the eight
@@ -2142,6 +2148,126 @@ bool TownLife::water_effect_step(Creature& c) {
 	return true;
 }
 
+// 0x55B030 (its flag 0; with it, a soldier's on the town's walls: a siege's): with the snow shown, a footprint (an effect
+// of class 0x12 of the water list) at (x, y) facing `dir`, but not on a street or its edges (the cell's ground class
+// 0x10, 0x17 or 0x18); at alpha 180, starting to fade after a second at 18 a second (0x57AF40(1000, −18)).
+void TownLife::footprint(uint8_t effect, int x, int y, uint8_t dir) {
+	if (snow_mode_ <= 1 || snow_mode_ >= 6 || effect < 0xC3 || effect > 0xC6 || !footprint_looks[effect - 0xC3]) {
+		return;
+	}
+	const TownCell2 cell = life_pixel_cell(x, y);
+	const uint8_t ground = map_.ground_at(cell[0], cell[1]);
+	if (ground == 0x10 || ground == 0x17 || ground == 0x18) {
+		return;
+	}
+	Creature c;
+	c.cls = 0x12;
+	c.mode = 13;
+	c.look = footprint_looks[effect - 0xC3];
+	c.id = new_id();
+	c.x = int32_t(uint32_t(x) << 16);
+	c.y = int32_t(uint32_t(y) << 16);
+	c.dir = dir;
+	c.effect = effect;
+	c.frame = anim_start(c, 2);
+	(void)rand();  // 0x57A1F2: its look among those of its number (one: rand() % 1).
+	c.fade_delay = 1000;
+	c.fade_speed = -18;
+	c.alpha = 0xB4;
+	made_.push_back(std::move(c));  // (Made during the creatures' step: added after it.)
+}
+
+// Within 200 pixels of the view (0x55D0E3.., 0x57C451..).
+bool TownLife::near_view(const Creature& c) const {
+	return c.px() + 200 >= view_[0] && c.py() + 200 >= view_[1] && c.px() <= view_[0] + view_[2] + 200 &&
+		c.py() <= view_[1] + view_[3] + 200;
+}
+
+// 0x55D0B0 (from the free walk, 0x55C8D9, as its frame is about to change; its look's class not the prince's): by the
+// sequence playing ([+0x34] − 2, the table 0x55D60C): walking (2), running (6), 0xB and 0x13 a left foot at its frame 4
+// of the sequence and a right one at its 9; 5, 0xD, 0xF, 0x14, 0x83, 0x84, 0x8C, 0x92, 0xEC and 0xEE both at its first
+// frame; at its place, small ones for a child (class 3).
+void TownLife::walker_footprints(const Creature& c) {
+	if (snow_mode_ <= 1 || snow_mode_ >= 6 || !c.look || c.look->kind == 0x23 || !near_view(c)) {
+		return;
+	}
+	const bool child = c.look->kind == 3;
+	const uint8_t left = child ? 0xC5 : 0xC3;
+	const uint8_t right = child ? 0xC6 : 0xC4;
+	const int si = sequence_index(*c.look, c.seq);
+	if (si < 0) {
+		return;
+	}
+	const int first = c.look->sequences[size_t(si)].first;
+	switch (c.seq) {
+	case 0x02: case 0x06: case 0x0B: case 0x13:
+		if (c.frame - first == 4) {
+			footprint(left, c.px(), c.py(), c.dir);
+		} else if (c.frame - first == 9) {
+			footprint(right, c.px(), c.py(), c.dir);
+		}
+		break;
+	case 0x05: case 0x0D: case 0x0F: case 0x14: case 0x83: case 0x84: case 0x8C: case 0x92: case 0xEC: case 0xEE:
+		if (c.frame == first) {
+			footprint(left, c.px(), c.py(), c.dir);
+			footprint(right, c.px(), c.py(), c.dir);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+// The animals' feet (0x57C61E.. the dogs and cats, 0x57EC12.. the wild ones; as the frame is about to change): their
+// look's parameter 2 the kind (0 small prints 0xC5, 0xC6; else 0xC3, 0xC4), 3 the feet's distance d, 4..7 the frames a
+// left front foot touches the ground, 8..11 a left back one, 12..15 a right front one, 16..19 a right back one (255
+// none). The front feet at the place moved by (dx, dy) along the way it faces, the back ones by the opposite, d lower
+// (2d the wild ones); (dx, dy) by its direction: d across, 11d/17 up and down, the diagonals 5d/7 and (the dogs and
+// cats) 5d/7 or (the wild ones) 55d/119, toward zero. A wild one of kind 1 (the bear) its left feet a quarter of the
+// way's normal to one side and its right feet to the other.
+void TownLife::animal_footprints(const Creature& c) {
+	const std::vector<uint32_t>& p = c.look->params;
+	if (snow_mode_ <= 1 || snow_mode_ >= 6 || p.size() < 20 || !near_view(c)) {
+		return;
+	}
+	const bool wild = c.cls == 0x10;
+	const int d = int(p[3]);
+	int dx = 0;
+	int dy = 0;
+	switch (c.dir) {
+	case 0x00: dy = -(11 * d / 17); break;
+	case 0x20: dx = 5 * d / 7; dy = -(wild ? 55 * d / 119 : 5 * d / 7); break;
+	case 0x40: dx = d; break;
+	case 0x60: dx = 5 * d / 7; dy = wild ? 55 * d / 119 : 5 * d / 7; break;
+	case 0x80: dy = 11 * d / 17; break;
+	case 0xA0: dx = -(5 * d / 7); dy = wild ? 55 * d / 119 : 5 * d / 7; break;
+	case 0xC0: dx = -d; break;
+	case 0xE0: dx = -(5 * d / 7); dy = -(wild ? 55 * d / 119 : 5 * d / 7); break;
+	default: return;  // (Off the eight directions the game reads a stale value: never, they turn by 0x20.)
+	}
+	const bool big = p[2] != 0;
+	const int below = wild ? 2 * d : d;
+	// The bear's sideways quarter (its left feet: (dy >> 2, −dx >> 2); its right ones the other way).
+	const int sx = wild && big ? dy >> 2 : 0;
+	const int sy = wild && big ? -(dx >> 2) : 0;
+	const int x = c.px();
+	const int y = c.py() + below;
+	for (int k = 0; k < 4; ++k) {
+		if (c.frame == p[size_t(4 + k)]) {
+			footprint(big ? 0xC3 : 0xC5, x + dx + sx, y + dy + sy, c.dir);
+		}
+		if (c.frame == p[size_t(8 + k)]) {
+			footprint(big ? 0xC3 : 0xC5, x - dx + sx, y - dy + sy, c.dir);
+		}
+		if (c.frame == p[size_t(12 + k)]) {
+			footprint(big ? 0xC4 : 0xC6, x + dx - sx, y + dy - sy, c.dir);
+		}
+		if (c.frame == p[size_t(16 + k)]) {
+			footprint(big ? 0xC4 : 0xC6, x - dx - sx, y - dy - sy, c.dir);
+		}
+	}
+}
+
 namespace {
 
 // The rain's and the snow's step in 16.16 pixels for a speed `v` over `elapsed` ms (0x575B5E.., 0x5763B2..): `scaled`
@@ -2162,17 +2288,252 @@ int32_t precip_step(int32_t scaled, uint32_t elapsed) {
 // snowing, the rain's bit does), 0x58B090: the most 50 with rain or snow, else 0, and a new one every 9000 (snow) or
 // 2500 (rain) ms over that many. (Its tint and fog: part 6, to come. P2.cfg's WEATHER, 3 in the game's files: its
 // second argument 0.)
-void TownLife::update_weather() {
+int tint_steps(uint32_t current, uint32_t target, uint8_t speed, uint32_t& step) {
+	step = 0;
+	int count = 0;
+	for (int i = 0; i < 4; ++i) {
+		const int d = int((target >> (8 * i)) & 0xFF) - int((current >> (8 * i)) & 0xFF);
+		if (d == 0) {
+			continue;
+		}
+		step |= uint32_t(uint8_t(d > 0 ? speed : -speed)) << (8 * i);
+		count = std::max(count, (std::abs(d) + speed - 1) / speed);
+	}
+	return count;
+}
+
+void tint_split(uint32_t current, uint32_t target, int count, uint32_t& step) {
+	step = 0;
+	const int n = count & 0xFF;
+	if (n == 0) {
+		return;
+	}
+	for (int i = 0; i < 4; ++i) {
+		const int d = int((target >> (8 * i)) & 0xFF) - int((current >> (8 * i)) & 0xFF);
+		int s = 0;
+		if (d > 0) {
+			s = d + n - 1 > n ? (d + n - 1) / n : 1;
+		} else if (d < 0) {
+			s = d + 1 - n < -n ? (d + 1 - n) / n : -1;
+		} else {
+			continue;
+		}
+		step |= uint32_t(uint8_t(s)) << (8 * i);
+	}
+}
+
+uint32_t tint_move(uint32_t current, uint32_t target, uint32_t step) {
+	uint32_t out = 0;
+	for (int i = 0; i < 4; ++i) {
+		const int s = int8_t(uint8_t(step >> (8 * i)));
+		const int t = int((target >> (8 * i)) & 0xFF);
+		int v = int((current >> (8 * i)) & 0xFF) + s;
+		if ((s > 0 && v > t) || (s < 0 && v < t)) {
+			v = t;
+		}
+		out |= uint32_t(uint8_t(v)) << (8 * i);
+	}
+	return out;
+}
+
+// 0x59B410: the fog banks gone (with a fog texture chosen), the colours back to none and the sweep done (the objects'
+// target [+0xC17C] kept).
+void TownLife::reset_weather() {
+	if (tint_.texture >= 0) {
+		remove_fog_banks();
+	}
+	tint_.swept_at = 0;
+	tint_.step = 0;
+	tint_.over_step = 0;
+	tint_.target = tint_.colour = tint_.previous = tint_.over = 0x00FFFFFF;
+	tint_.texture = -1;
+	weather_kind_ = 0;
+	tint_.banks = tint_.banks_target = tint_.banks_step = 0;
+	tint_.rect = {0, 0, 0, 0};
+}
+
+// The fog banks (0x58F76F, fog with WEATHER 3): 20 rows of 5, a row at every twentieth of the map's height, each
+// column's at a fifth of its width and within a tenth of it either way (rand() % (W / 5) − W / 10), facing 0x20.
+void TownLife::make_fog_banks() {
+	if (fog_looks.empty()) {
+		return;
+	}
+	const uint32_t w5 = map_pixels_x(map_) / 5;
+	const uint32_t h20 = map_pixels_y(map_) / 20;
+	size_t k = 0;
+	for (uint32_t row = 0; row < 20; ++row) {
+		for (uint32_t col = 0; col < 5; ++col, ++k) {
+			const int32_t x = int32_t((w5 ? uint32_t(rand()) % w5 : 0) - (w5 >> 1) + col * w5);
+			// 0x5732B0: its look one of the class's at random, a random fraction of a pixel to its x.
+			Creature c;
+			c.cls = 0x1C;
+			c.mode = 16;
+			c.id = new_id();
+			c.look = fog_looks[size_t(uint32_t(rand()) % fog_looks.size())];
+			c.x = int32_t((uint32_t(x) << 16) + uint32_t(rand()));
+			c.y = int32_t(row * h20) << 16;
+			c.dir = 0x20;
+			fog_banks_[k] = c.id;
+			creatures_.push_back(std::move(c));
+		}
+	}
+}
+
+void TownLife::remove_fog_banks() {
+	for (uint16_t& id : fog_banks_) {
+		if (id != 0) {
+			remove_creature(id);
+			id = 0;
+		}
+	}
+}
+
+// 0x573350 (a fog bank's step, the frame's unclamped time): to the right by its look's speed (the LCR head's 0x10,
+// 60: 6 pixels a second; the product of the 16.16 speed and the ms kept to 32 bits), from past the map's right edge
+// back to its picture's width left of its left; never gone.
+bool TownLife::fog_drift(Creature& c) {
+	const uint32_t v = (uint32_t(c.look->speed) << 16) * raw_elapsed_;
+	c.x = int32_t(uint32_t(c.x) + uint32_t((uint64_t(v) * 0xD1B71759u) >> 45));
+	if (int16_t(uint32_t(c.x) >> 16) > int(map_pixels_x(map_))) {
+		const LcrFrame* f = c.current();
+		c.x = int32_t(uint32_t(-(f ? f->body.w : 0)) << 16);
+	}
+	return true;
+}
+
+// 0x58F4E0: the weather's kind (the town's [0x9C4] & 6 rain or snow, else its plague, else its [0x9C4] & 1 fog) and,
+// when it changes (or the rain's bit against the tint's alpha), its rain or snow (0x58B090: 50 at most, a new one every
+// (snow 9000, rain 2500) / 50 ms), a fog texture if none (rand() % FogTexCnt), and the tint's targets: the plague
+// alpha 155 − rand() % 40 and a base 70; rain the same alpha and a base 150 − rand() % 40 (snow none); fog alpha 185 −
+// rand() % 40, base 255 − rand() % 20, and its banks; each of red, green and blue the base − rand() % 10. The buildings'
+// colour over it white for the plague and fog, none else; the banks' white for fog. Then the steps to them (2 a byte
+// for the colour, the rest in as many). Each frame the colours go on: at once, or (WEATHER 3) a step when the last
+// one's sweep down the view is over and 200 ms have passed since it began, the sweep moving with the view's scroll; a
+// tint come to its target with its banks' alpha 0 takes the banks away.
+void TownLife::update_weather(bool at_once) {
 	const uint8_t w = town_.weather;
 	const int kind = (w & 6) ? 2 : town_.plague ? 1 : (w & 1) ? 3 : 0;
 	const bool rain = (w & 2) != 0;
-	if (kind == weather_kind_ && (kind != 2 || rain == weather_rain_)) {
+	WeatherTint& t = tint_;
+	if (kind != weather_kind_ || (kind == 2 && rain != ((t.target >> 24) != 0))) {
+		precip_max_ = kind == 2 ? 50 : 0;
+		precip_period_ = precip_max_ ? uint32_t(((w & 4) ? 9000 : 2500) / precip_max_) : 0;
+		if (kind == 0) {
+			t.banks_target = 0;
+			t.target = 0x00FFFFFF;
+		} else {
+			if (t.texture < 0) {
+				t.texture = fog_tex_base + (fog_tex_count > 0 ? int(uint32_t(rand()) % uint32_t(fog_tex_count)) : 0);
+			}
+			uint8_t a = 0;
+			uint8_t base = 0;
+			if (kind == 1) {
+				t.banks_target = 0;
+				t.over_target = 0xFFFFFFFF;
+				a = uint8_t(155 - rand() % 40);
+				base = 0x46;
+			} else if (kind == 2) {
+				t.over_target = 0x00FFFFFF;
+				t.banks_target = 0;
+				if ((t.over >> 24) == 0) {
+					t.over = 0x00FFFFFF;
+				}
+				if (rain) {
+					a = uint8_t(155 - rand() % 40);
+					base = uint8_t(150 - rand() % 40);
+				}
+			} else {
+				if (t.colour == 0) {
+					t.colour = 0x00FFFFFF;
+				}
+				t.over_target = 0xFFFFFFFF;
+				a = uint8_t(185 - rand() % 40);
+				base = uint8_t(255 - rand() % 20);
+				t.banks_target = 0xFFFFFFFF;
+				if (fog_banks_[0] == 0) {
+					make_fog_banks();
+				}
+			}
+			uint8_t r = 0xFF;
+			uint8_t g = 0xFF;
+			uint8_t b = 0xFF;
+			if (a != 0) {
+				r = uint8_t(base - rand() % 10);
+				g = uint8_t(base - rand() % 10);
+				b = uint8_t(base - rand() % 10);
+			}
+			t.target = uint32_t(a) << 24 | uint32_t(r) << 16 | uint32_t(g) << 8 | b;
+		}
+		const int n = tint_steps(t.colour, t.target, 2, t.step);
+		tint_split(t.over, t.over_target, n, t.over_step);
+		tint_split(t.banks, t.banks_target, n, t.banks_step);
+		weather_kind_ = kind;
+	}
+	// 0x58F97A: the colours on.
+	const int dx = last_view_set_ ? view_[0] - last_view_[0] : 0;
+	const int dy = last_view_set_ ? view_[1] - last_view_[1] : 0;
+	auto arrived = [&] {
+		if (t.colour == t.target && t.rect_empty()) {
+			t.previous = t.colour;
+			if ((t.banks >> 24) == 0 && fog_banks_[0] != 0) {
+				remove_fog_banks();
+			}
+		}
+	};
+	if (t.colour == t.target && t.rect_empty()) {
 		return;
 	}
-	weather_kind_ = kind;
-	weather_rain_ = rain;
-	precip_max_ = kind == 2 ? 50 : 0;
-	precip_period_ = precip_max_ ? uint32_t(((w & 4) ? 9000 : 2500) / precip_max_) : 0;
+	if (at_once) {
+		t.colour = t.target;
+		t.banks = t.banks_target;
+		t.over = t.over_target;
+		t.rect = {0, 0, 0, 0};
+		arrived();
+		return;
+	}
+	if ((dx | dy) != 0 && !t.rect_empty()) {
+		// OffsetRect by the scroll, IntersectRect with the view.
+		t.rect = {std::max(t.rect[0] - dx, 0), std::max(t.rect[1] - dy, 0), std::min(t.rect[2] - dx, view_[2]),
+			std::min(t.rect[3] - dy, view_[3])};
+		if (t.rect_empty()) {
+			t.rect = {0, 0, 0, 0};
+		}
+	}
+	if (!t.rect_empty()) {
+		// 0x58FB17: the sweep down, the part of the rest the time since its last move is of the time left to the step's
+		// end (all of it past that), whole tenths of the view's height while more than one is left, at most one.
+		const int left = t.rect[3] - t.rect[1];
+		int rows = left;
+		if (int32_t(t.due - now_) > 0) {
+			rows = int(uint32_t(left) * (now_ - t.swept_at) / uint32_t(t.due - now_));
+		}
+		const int tenth = view_[3] / 10;
+		if (left > tenth && tenth > 0) {
+			rows -= rows % tenth;
+			if (rows == 0) {
+				return;
+			}
+		}
+		rows = std::min(std::min(rows, tenth), left);
+		t.rect[1] += rows;
+		arrived();
+		t.swept_at = now_;
+		return;
+	}
+	// 0x58FC49: the next step when due, the sweep begun over the whole view.
+	if (now_ < t.due) {
+		return;
+	}
+	if (t.over_step != 0) {
+		t.over = tint_move(t.over, t.over_target, t.over_step);
+	}
+	if (t.banks_step != 0) {
+		t.banks = tint_move(t.banks, t.banks_target, t.banks_step);
+	}
+	t.previous = t.colour;
+	t.colour = tint_move(t.colour, t.target, t.step);
+	t.rect = {0, 0, view_[2], view_[3]};
+	t.due = now_ + 200;
 }
 
 // 0x58AD30: `count` falling ones in `rect` (x0, y0, x1, y1 in the town's pixels), while fewer than the most: snow (the
@@ -2636,8 +2997,7 @@ bool TownLife::animal_has(const Creature& c, uint8_t id) const {
 // 0x20 to the nearest free side (none: it goes); if not, each time its count of frames passes its look's first
 // parameter it is set again to it less a random of the second and it chooses at random what to do next ([+0x3A],
 // done at its sequence's end: sequence_end): walking, a turn, resting (3) or running, by what its look has. It goes
-// off the map or stuck. (Each frame within 200 pixels of the view, its feet leave footprints in the snow, 0x55B030 by
-// its look's parameters 2..19: with the weather.)
+// off the map or stuck. (As its frame changes, its feet leave footprints in the snow: animal_footprints.)
 bool TownLife::animal_walk(Creature& c) {
 	const bool wild = c.cls == 0x10;
 	int32_t nx = c.x;
@@ -2652,6 +3012,9 @@ bool TownLife::animal_walk(Creature& c) {
 	}
 	const uint8_t before = c.counter;
 	uint8_t f = anim_step(c, &c.counter);
+	if (f != c.frame) {
+		animal_footprints(c);  // 0x57C449, 0x57EA41: the frame shown before it changes.
+	}
 	uint8_t dir = c.dir;
 	bool stuck = false;
 	const uint32_t p0 = c.look->params.size() > 0 ? c.look->params[0] : 70;
@@ -3585,7 +3948,7 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 	raw_elapsed_ = elapsed;
 	elapsed_ = std::min<uint32_t>(elapsed, 1000);
 	view_ = view;
-	update_weather();  // 0x58F4E0 (0x58C103).
+	update_weather(false);  // 0x58F4E0 (0x58C103; P2.cfg's WEATHER 3: not at once).
 	// 0x5984E0: the official comes out (the town's [0x76C] & 2, his path, no siege), facing where he will read.
 	if (town_.official && official_due_ != 0 && official_due_ <= now_ && town_.nodes.size() > 3 &&
 		!town_.nodes[3].empty() && town_.nodes[3][0].size() >= 2 && !people[7].empty()) {
@@ -3629,6 +3992,7 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 			: c.mode == 13            ? water_effect_step(c)
 			: c.mode == 14            ? flake_fall(c)
 			: c.mode == 15            ? drop_fall(c)
+			: c.mode == 16            ? fog_drift(c)
 			: c.mode != 0             ? road_walk(c)
 									  : walk(c);
 		if (stays) {
@@ -3642,6 +4006,10 @@ void TownLife::step(uint32_t now, uint32_t elapsed, const std::array<int, 4>& vi
 			replace(gone);
 		}
 	}
+	for (Creature& c : made_) {
+		creatures_.push_back(std::move(c));
+	}
+	made_.clear();
 	spawn_precipitation();  // 0x58AA30 (0x58CBB0, after the creatures' step).
 }
 

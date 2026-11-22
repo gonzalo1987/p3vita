@@ -896,8 +896,8 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     desfasado por la dirección de su celda, como mucho 17 celdas redibujadas por fotograma, 0x5927B3), elige su dibujo
     por la estación como en las fotos del juego (0x583330) y en invierno les pone su sombra de ramas
     (`WinterSchatten`). Y («Part 3, fourth batch») la cabaña del pescador (su red y su humo mientras trabaja) y el
-    pescador en su barca, que rema por su camino de la etiqueta 4 de `.nodes`, pesca y vuelve (0x569E10). De noche la
-    taberna, el faro y el astillero se ven iluminados en el juego (el visor no tiene noche).
+    pescador en su barca, que rema por su camino de la etiqueta 4 de `.nodes`, pesca y vuelve (0x569E10). (Lo que se
+    tomó por «de noche» en la taberna, el faro y el astillero es su dibujo sobre la niebla: la vista no tiene noche.)
   - [ ] Los barcos en el puerto (la lista *0x6E2D50, el objeto 0x6E6220 al que la simulación avisa al atracar y
     zarpar), también como puntos en el minimapa con el color de su dueño (0x56C730: azul los tuyos, gris oscuro los
     piratas, blanco los demás, rojo los de otro jugador humano; el dibujo del minimapa, 0x59C590). Con ellos, el «ir al
@@ -929,12 +929,28 @@ del visor (tocar los edificios, táctil primero, las ventanas emergentes), abajo
     de sus ficheros). Y («Part 5, batch 3») los témpanos con el puerto helado: una rejilla de 15 · 15 trozos de hielo de
     tres tamaños donde cabe en el agua libre, que aparecen y, al deshelar, desaparecen fundiéndose (estado de depuración
     `frozen-port`). El agua está hecha.
-  - [ ] El tiempo: la nieve y la lluvia (0x58AA30, 0x58AD30), la niebla (clase 0x1C), las nubes (0x14) y las huellas en
+  - [x] El tiempo: la nieve y la lluvia (0x58AA30, 0x58AD30), la niebla (clase 0x1C), las nubes (0x14) y las huellas en
     la nieve (0x55D0B0, 0x55B030).
     Hechas (22-11-2026, cuarta sesión, «Part 6, batch 1») la lluvia y la nieve: hasta 50 copos o gotas que entran por
     arriba y por lo nuevo a la vista al moverla; los copos de cinco tamaños caen con su deriva y algunos se derriten,
-    las gotas son rayas grises que se acortan (estados de depuración `rain` y `snow`). Faltan el tinte del tiempo,
-    la niebla, las nubes y las huellas.
+    las gotas son rayas grises que se acortan (estados de depuración `rain` y `snow`). Luego (22-11-2026, quinta
+    sesión, «Part 6, batch 2», «2a», «2b») el tinte del tiempo: la textura de niebla (`images/fog.bmp`, ×4, pegada a
+    la ciudad) en el color que pide el tiempo (la lluvia oscura, la niebla gris clara, la peste muy oscura; la nieve
+    sin tinte), puesto de golpe al abrir la ciudad y luego paso a paso, cada paso barriendo la vista de arriba abajo
+    (0x58F4E0; sus pasos de byte, 0x58F3C0 y 0x58F440, comparados con el juego en el emulador: 0 diferencias en 40 000
+    casos); con la niebla y la peste, los edificios y árboles dibujados otra vez sobre él a través de su máscara de
+    `FogMaps` (los tejados fuera, los pies dentro), el fuego del faro, el humo de la taberna y las gaviotas del astillero
+    por encima; y los 100 bancos de niebla que derivan (estados de depuración `fog` y `plague`). Las nubes (0x14) no
+    son de la ciudad sino de las batallas navales («Part 6, batch 3»): las 224 (56 junto a una ciudad) del juego con su
+    sombra, en lugar de las 8 que se inventaba la vista de batalla (creación, arranque y paso comparados con el juego
+    en el emulador: 0 diferencias en 8200 casos). Y («Part 6, batch 4») las huellas en la nieve de los paseantes, los
+    perros y gatos y los animales del bosque, por sus fotogramas, fuera de las calles. Las de los soldados en la
+    muralla y las del príncipe, con el asedio.
+  - [x] La casa de la barra de arriba (la competencia sombreada; 22-11-2026, `re/emu/sesion50/README.md`, «The
+    competition's buildings with the house on»): como el juego, solo las clases que lo preguntan (las casas, el
+    hospital, el almacén, la ceca, la escuela, la capilla y los talleres comunes) en gris 165 con alfa 160, el suelo
+    visto a través, como en la foto de Stettin en invierno del usuario; antes, todo lo de otro comerciante opaco y
+    oscuro.
   - [x] Las sombras y la nieve de los tiles (17-11-2026, `re/emu/sesion39/README.md`; las variantes del `.let`, con
     la clase 1 de la obra y la 2 de la nieve corregidas en `docs/formats/town.md`). **Sombras**: como la pasada del
     juego (0x591C50), todas tras el suelo y antes de los objetos, cada una desde la celda de la franja `cols − 1` de su
@@ -1270,6 +1286,10 @@ ser a propósito. El detalle, en el comentario del código y en [oracle.md](orac
 
 ### Reproducidos, sin corregir aún
 
+- **Los bancos de niebla sin dibujar** (la ciudad viva, 0x590543..0x5905BA; 22-11-2026, parece, leído en el código):
+  el juego hace 20 filas de 5 bancos, pero dibuja de cada fila solo los 3 primeros, y deja sin dibujar la última fila
+  (la cuenta se corta en 19 en vez de 20). Solo es la vista; puede ser a propósito (menos niebla): sin corregir.
+
 - **Vender un almacén con 0x5256F0** (la instrucción 0x5F, campañas; 20-11-2026, seguro, leído): el almacén (0x1E)
   está en la lista de empresas de la oficina [+0x2CE], pero 0x5256F0 lo trata como una casa por su tipo (lo busca en
   [+0x2D0]) y el recuento 0x4FF2D0 lee fuera de la tabla de las casas. Ninguna venta del juego llega (las subastas no
@@ -1420,6 +1440,11 @@ de cada ciudad ([0x9B4]) da la vuelta en cada guardado y carga (sin confirmar; s
   texto: el visor acaba la frase con su punto.
 
 ### Corregidos con el ajuste
+
+**El viento de las nubes de una batalla** (0x580520; 22-11-2026, seguro, leído en el código): el paso de cada nube
+mira si su velocidad sigue cerca de la del viento comparando la de lado dos veces (con 32 y con 22) y nunca la de
+arriba abajo, que así no vuelve nunca a la del viento salvo cuando la de lado se aleja. Solo es la vista. Reproducido
+(`cloudcmp.sh`). Corregido detrás de `fix_game_bugs()` (la segunda, la de arriba abajo; `battle_cloud_step`).
 
 **Lo que suena** (20-11-2026, leídos en el código del juego, `re/emu/sesion51/`; solo cambian lo que se oye, como los
 de los textos: corregidos sin preguntar): la atmósfera de la ciudad al mostrarla (0x42C770 con 0: 0x42CCD1) sale la de

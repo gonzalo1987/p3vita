@@ -23,9 +23,6 @@ namespace {
 constexpr int kWaterWidth = 102;  // The water's 3 × 3 tiles repeat every 102 × 66 pixels.
 constexpr int kWaterHeight = 66;
 constexpr uint32_t kWaterFrameMs = 150;  // The water's frames (a guess: the game's town view animates them).
-constexpr uint32_t kCloudStepMs = 40;
-constexpr int kCloudTile = 1200;  // The clouds repeat over the area every kCloudTile² pixels.
-constexpr int kClouds = 8;
 constexpr Uint8 kShadowAlpha = 110;
 constexpr size_t kMaxEffects = 400;
 
@@ -141,7 +138,8 @@ void BattleView::clear() {
 	pinned_.clear();
 	hits_.clear();
 	order_marked_ = false;
-	cloud_images_.fill(nullptr);
+	cloud_looks_.clear();
+	cloud_images_.clear();
 	clouds_.clear();
 	effects_.clear();
 	sinking_.clear();
@@ -345,8 +343,30 @@ void BattleView::load_step() {
 		if (arrow_) {
 			SDL_SetTextureColorMod(arrow_, 90, 150, 255);  // The manual's blue arrow.
 		}
-		for (int i = 0; i < 6; ++i) {
-			cloud_images_[size_t(i)] = texture("images/creatures/clouds_lokal0" + std::to_string(i + 3) + ".aim", false);
+		// The clouds' looks (class 0x14: their reader 0x580290 keeps them in *0x6E2F2C in iso/lcr/files.lst's order).
+		cloud_looks_.clear();
+		cloud_images_.clear();
+		std::vector<uint8_t> list;
+		if (const CprEntry* entry = archive_.find("iso/lcr/files.lst"); entry && archive_.read(*entry, list)) {
+			size_t begin = 0;
+			for (size_t i = 0; i <= list.size(); ++i) {
+				if (i < list.size() && list[i] != 0 && list[i] != '\r' && list[i] != '\n') {
+					continue;
+				}
+				const std::string name(reinterpret_cast<const char*>(list.data()) + begin, i - begin);
+				begin = i + 1;
+				if (name.compare(0, 5, "wolke") != 0) {
+					continue;
+				}
+				std::vector<uint8_t> data;
+				LcrAnim look;
+				const CprEntry* file = archive_.find("iso/lcr/" + name);
+				if (file && archive_.read(*file, data) && p3::data::parse_lcr(data.data(), data.size(), look) &&
+					look.kind == 0x14 && !look.directions.empty() && !look.directions[0].empty()) {
+					cloud_images_.push_back(texture(look.image, look.key == 0xFFFF00FFu));
+					cloud_looks_.push_back(std::move(look));
+				}
+			}
 		}
 		for (size_t i = 0; i < splinter_images_.size(); ++i) {
 			splinter_images_[i] = texture(kSplinterImages[i], true);
@@ -1451,55 +1471,58 @@ void BattleView::ripple_draw(int camera_x, int camera_y, int top) {
 	SDL_RenderCopy(renderer_, ripple_texture_, nullptr, &dst);
 }
 
-// The clouds of the wind (the battle's [+0x670] direction, [+0x671] strength; the game makes them with
-// 0x6107B9, white and half see-through): a few over a tile of the area that repeats, drifting with the wind.
+// The clouds (battle_clouds.hpp): made once for the battle (0x6107B9 fills its empty slots: 56 at a town, 224 at sea,
+// the wind's of then their speed), each stepped every frame by the frame's time (0x580520, from the view's list of
+// creatures) and drawn by 0x610709 after the rest (0x588C6C): first every cloud's shadow, its picture black at alpha 50
+// down to 40 by its slot, 30 pixels right and 150 down (0x5802F0: P2.cfg's DETAILS 2 or more, the game's 3), then the
+// clouds white at alpha 128 down to 100. Their places are the view's pixels, wrapped in the area and 200 more (so that at
+// sea, whose view is 0x1E04 · 11 / 17 high, the clouds below it are out of sight). Their look by DETAILS (3: all
+// `wolke3`).
 void BattleView::draw_clouds(const SaveGame& save, size_t battle, int camera_x, int camera_y, int top,
 	int view_width, int view_height, uint32_t now) {
 	const BattleGraph& g = save.battles;
+	if (cloud_looks_.empty()) {
+		return;
+	}
+	constexpr int kDetails = 3;  // P2.cfg's DETAILS (the game's files').
+	const p3::data::CloudRand rand = [this] { return int(next_random()); };
 	if (clouds_.empty()) {
-		for (int i = 0; i < kClouds; ++i) {
-			Cloud c;
-			c.x = float(next_random() % kCloudTile);
-			c.y = float(next_random() % kCloudTile);
-			c.image = int(next_random() % 6);
-			c.alpha = Uint8(80 + next_random() % 30);
-			clouds_.push_back(c);
+		std::vector<uint32_t> variants;
+		for (const LcrAnim& look : cloud_looks_) {
+			variants.push_back(look.variant);
 		}
+		clouds_ = p3::data::make_battle_clouds(at_town(save, battle), g.get<uint8_t>(battle, 0x670),
+			g.get<uint8_t>(battle, 0x671), variants, kDetails, rand);
 		clouds_time_ = now;
 	}
-	const int dir = g.get<uint8_t>(battle, 0x670);
-	const float strength = float(g.get<uint8_t>(battle, 0x671));
-	const float vx = sine256(dir) * strength / 64.0f;
-	const float vy = -sine256(dir + 0x40) * strength / 64.0f * 11.0f / 17.0f;
-	while (now - clouds_time_ >= kCloudStepMs) {
-		clouds_time_ += kCloudStepMs;
-		for (Cloud& c : clouds_) {
-			c.x = std::fmod(c.x + vx + kCloudTile, float(kCloudTile));
-			c.y = std::fmod(c.y + vy + kCloudTile, float(kCloudTile));
-		}
+	const uint32_t elapsed = now - clouds_time_;
+	clouds_time_ = now;
+	for (p3::data::BattleCloud& c : clouds_) {
+		p3::data::battle_cloud_step(c, elapsed, rand);
 	}
-	for (const Cloud& c : clouds_) {
-		SDL_Texture* image = cloud_images_[size_t(c.image)];
-		if (!image) {
-			continue;
-		}
-		int w = 0;
-		int h = 0;
-		SDL_QueryTexture(image, nullptr, nullptr, &w, &h);
-		SDL_SetTextureAlphaMod(image, c.alpha);
-		// Each copy of the tile that the screen part reaches.
-		const int first_x = int(std::floor(float(camera_x - w) / kCloudTile));
-		const int first_y = int(std::floor(float(camera_y - h) / kCloudTile));
-		for (int ty = first_y; ty * kCloudTile < camera_y + view_height + h; ++ty) {
-			for (int tx = first_x; tx * kCloudTile < camera_x + view_width + w; ++tx) {
-				const int x = int(c.x) + tx * kCloudTile - camera_x - w / 2;
-				const int y = top + int(c.y) + ty * kCloudTile - camera_y - h / 2;
-				if (x + w < 0 || x > view_width || y + h < top || y > top + view_height) {
-					continue;
-				}
-				const SDL_Rect dst = {x, y, w, h};
-				SDL_RenderCopy(renderer_, image, nullptr, &dst);
+	for (int pass = kDetails >= 2 ? 0 : 1; pass < 2; ++pass) {
+		for (size_t k = 0; k < clouds_.size(); ++k) {
+			const p3::data::BattleCloud& c = clouds_[k];
+			const size_t look = c.look < cloud_looks_.size() ? c.look : 0;
+			SDL_Texture* image = cloud_images_[look];
+			const LcrFrame& f = cloud_looks_[look].directions[0][0];
+			if (!image) {
+				continue;
 			}
+			const int x = (c.x >> 16) - (f.anchor_x - f.body.x) - camera_x + (pass == 0 ? 30 : 0);
+			const int y = top + (c.y >> 16) - (f.anchor_y - f.body.y) - camera_y + (pass == 0 ? 150 : 0);
+			if (x + f.body.w < 0 || x > view_width || y + f.body.h < top || y > top + view_height) {
+				continue;
+			}
+			const SDL_Rect src = {f.body.x, f.body.y, f.body.w, f.body.h};
+			const SDL_Rect dst = {x, y, f.body.w, f.body.h};
+			const uint8_t grey = pass == 0 ? 0 : 255;
+			SDL_SetTextureColorMod(image, grey, grey, grey);
+			SDL_SetTextureAlphaMod(image, pass == 0 ? p3::data::battle_cloud_shadow_alpha(int(k)) :
+													  p3::data::battle_cloud_alpha(int(k)));
+			SDL_RenderCopy(renderer_, image, &src, &dst);
+			SDL_SetTextureColorMod(image, 255, 255, 255);
+			SDL_SetTextureAlphaMod(image, 255);
 		}
 	}
 }

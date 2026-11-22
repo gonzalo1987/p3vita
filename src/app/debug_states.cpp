@@ -1149,6 +1149,8 @@ const char kDebugStatesHelp[] =
 	"              spring): the town view's snow (only to look at it, until it changes)\n"
 	"  rain        every town's weather [0x9C4] raining (2): the living town's rain\n"
 	"  snow        every town's weather [0x9C4] snowing (4) and its season 3: its snow\n"
+	"  fog         every town's weather [0x9C4] foggy (1): the living town's fog\n"
+	"  plague      every town with the plague ([0x2C8] | 8): its dark tint, its rats\n"
 	"  frozen-port  every town's port frozen ([0x2C8] | 0x4000000) and its season 5: the\n"
 	"              living town's ice floes (only to look at them, until it changes)\n"
 	"  tavern-captain  a free captain in the tavern of the player's first ship's town\n"
@@ -1559,12 +1561,16 @@ bool apply_debug_states(SaveGame& save, const std::string& states, std::string& 
 			for (auto& town : save.towns) {
 				town.memory.u8(0x9BC) = uint8_t(state[7] - '0');
 			}
-		} else if (state == "rain" || state == "snow") {
+		} else if (state == "rain" || state == "snow" || state == "fog") {
 			for (auto& town : save.towns) {
-				town.memory.u8(0x9C4) = state == "rain" ? 2 : 4;
+				town.memory.u8(0x9C4) = state == "rain" ? 2 : state == "snow" ? 4 : 1;
 				if (state == "snow") {
 					town.memory.u8(0x9BC) = 3;
 				}
+			}
+		} else if (state == "plague") {
+			for (auto& town : save.towns) {
+				town.memory.u32(0x2C8) |= 8u;
 			}
 		} else if (state == "frozen-port") {
 			for (auto& town : save.towns) {
