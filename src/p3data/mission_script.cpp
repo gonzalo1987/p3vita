@@ -31,9 +31,9 @@
 // treasure map's letter 0x25 (0x4D7720), a docked ship out of some towns 0x32, a table of keys and times 0x3C, a
 // tavern's mission letter 0x4A (0x4D7900), a week's use of a ware 0x52, the best armed ship 0x55, a letter 0x22 0x68,
 // the towns with a speciality 0x71, a merchant's [+0x31] 0x73, a ship with room 0x74, the specialities again 0xE4
-// (0x4DC800), a ship sunk 0xEA, a message window 0xF5. The handlers come in parts (roadmap, section 3; the order by what the saves run:
-// re/emu/sesion47/opcount.sh); until then an instruction not rewritten ends the script as an unknown one does, and is
-// counted (unwritten_mission_ops).
+// (0x4DC800), a ship sunk 0xEA, a message window 0xF5. The handlers came in parts, in the order the saves run them
+// (re/emu/sesion47/opcount.sh), all 138 by 2026-11-20; an instruction without a handler ends the script as an unknown
+// one does, and is counted (unwritten_mission_ops).
 
 #include "p3data/mission_script.hpp"
 

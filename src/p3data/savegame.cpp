@@ -842,6 +842,7 @@ bool parse_world_tail(Reader& r, size_t town_count, uint16_t record_count, uint1
 	return r.ok() || fail(error, std::string(kTruncated) + " (fin del mundo)");
 }
 
+// @fn 0x504230: the ships object's read (ecx 0x6DD7A0, called by the load 0x549F40 at 0x54A111), by structures.
 bool parse_ships(Reader& r, SaveGame& out, std::string* error) {
 	const int version = r.u16();
 	std::array<uint16_t, 16> header{};

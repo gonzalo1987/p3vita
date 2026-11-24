@@ -1,6 +1,6 @@
 #pragma once
 
-// The campaigns (roadmap section 3, «Las campañas y el tutorial»; docs/formats/missions.md): what starting one does.
+// The campaigns (docs/formats/missions.md; re/emu/sesion52/README.md): what starting one does.
 // The game's campaign screen (*0x6CBB6C, 0x42FBF0) lists the [Campaign_1..7] of scripts/missions_eng.ini (the
 // tutorial, [Campaign_0], has its own start); its «Start» (0x4306FB..0x4309D7) loads the campaign n's save,
 // MISSAV\<n>.pat (missav/1..7.pat), through the game's load 0x4335B0 in the mode 4, and then starts it.

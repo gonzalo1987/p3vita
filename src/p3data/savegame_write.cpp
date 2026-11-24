@@ -126,6 +126,7 @@ void update_settings(SaveGame& save) {
 // 0x525D80 (part 2): [0x82C, 0x840). 0x51EA30 (part 3) with 0x4FE1E0 (church)
 // and 0x4F9680 (town_class1). 0x52A200 (part 4, without [0x822]), 0x5287A0
 // (part 5: [0x6D4, 0x75C)), 0x50FFF0 (facilities) and 0x50FCE0 (nodes).
+// @fn 0x51B330: a town's write (called by the world's 0x52F870 at 0x52F9CA), the marker 0x7F before each part.
 void write_town(Writer& w, const SavedTown& town) {
 	const TownMemory& m = town.memory;
 	w.u8(0x7F);
